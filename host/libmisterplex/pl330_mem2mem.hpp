@@ -9,10 +9,17 @@
 // (kPl330ProgScratchPhys / kPl330StagingPhys in ddr_frame_layout.hpp) so the
 // PL330 can fetch microcode by PA without CMA/hugepages/pagemap.
 //
-// Pre-register (device, after scratch wired):
-//   P1: pl330_transfer started=1 (no longer needs_prog_scratch_phys)
-//   P2: DMA wall for 1382400 B into bank ≤ serial CPU copy (~15.9 ms)
-//   P3: copy_under_burn inflate_ms small ⇒ max(decode,dma) credible
+// INCIDENT (parent 2026-08-03): prior bench reported 98k fps / 136 GB/s — impossible.
+// Root cause: DBGINST0 DMAGO encoding was wrong (channel in bits[15:8], opcode in
+// low byte). Linux pl330.c uses (opcode<<16)|(chan<<24) as manager. Channel never
+// left STOPPED; wait loop treated already-stopped as success. ok_frac only checked
+// CSR, never destination bytes. All prior "DMA works" timings are INVALID.
+//
+// Hard rules now:
+//   - DMAGO encoding matches Linux _execute_DBGINSN(..., as_manager=true)
+//   - ok requires saw_executing then stopped (not stopped-from-idle)
+//   - bench must content-verify destination; throughput > ceiling → hard fail
+//   - completion wait is usleep-backed (no tight spin that steals the decode core)
 //
 // Do NOT ring the frame doorbell from this header — caller owns ordering
 // (DdrIngestSession::mayRingDoorbell).
@@ -58,11 +65,76 @@ struct Pl330Mem2MemResult {
     bool ok = false;
     bool hardware_present = false;
     bool channel_started = false;
+    bool saw_executing = false; // must leave STOPPED before STOPPED-is-done
     int channel_used = -1;
     std::string detail;
     uint32_t dsr = 0;
     uint32_t cr0 = 0;
+    uint32_t csr_final = 0;
+    uint32_t dbginst0 = 0;
+    unsigned ns_used = 0;
 };
+
+// Channel status low nibble (DS/CS) — DDI0424 / linux pl330.c
+constexpr uint32_t kPl330StStopped = 0x0;
+constexpr uint32_t kPl330StExecuting = 0x1;
+constexpr uint32_t kPl330StFaulting = 0xf;
+
+// DE10-Nano DDR3 controller theoretical peak ~3.2 GB/s (parent). Any single
+// userspace mem2mem claim above this is instrument failure, not a result.
+constexpr double kPl330MaxPlausibleThroughputGBs = 3.2;
+// Floor: even an ideal controller needs >0.4 ms for one 720p I420 frame.
+inline double pl330MinPlausibleMsForBytes(size_t nbytes) {
+    if (nbytes == 0)
+        return 0.0;
+    return (static_cast<double>(nbytes) / (kPl330MaxPlausibleThroughputGBs * 1e9)) * 1000.0;
+}
+inline double pl330ThroughputGBs(size_t nbytes, double ms_per_frame) {
+    if (ms_per_frame <= 0.0)
+        return 1e99;
+    return (static_cast<double>(nbytes) / (ms_per_frame / 1000.0)) / 1e9;
+}
+// true if measured rate is physically impossible on this SoC.
+inline bool pl330ThroughputImpossible(size_t nbytes, double ms_per_frame) {
+    if (ms_per_frame <= 0.0)
+        return true;
+    // 5% slack only for timer jitter; never allow 2x over peak.
+    const double min_ms = pl330MinPlausibleMsForBytes(nbytes) * 0.95;
+    return ms_per_frame < min_ms;
+}
+
+// Linux pl330.c _execute_DBGINSN(as_manager=true) for DMAGO:
+//   insn[0]=CMD_DMAGO|(ns<<1), insn[1]=chan, insn[2..5]=pc LE
+//   DBGINST0 = (insn[0]<<16) | (insn[1]<<24)
+//   DBGINST1 = pc
+// Prior bug put opcode in bits[7:0] and chan in [15:8] — never started channel.
+inline uint32_t pl330DbgInst0GoManager(unsigned chan, unsigned ns) {
+    const uint8_t op = static_cast<uint8_t>(0xA0u | ((ns & 1u) << 1));
+    const uint8_t ch = static_cast<uint8_t>(chan & 7u);
+    return (static_cast<uint32_t>(op) << 16) | (static_cast<uint32_t>(ch) << 24);
+}
+
+// Content check helpers (bench + unit). Sample ends + middle; full optional.
+inline bool pl330BufferSamplesMatch(const uint8_t* dst, const uint8_t* src, size_t len) {
+    if (!dst || !src || len == 0)
+        return false;
+    const size_t n = len < 64 ? len : 64;
+    if (std::memcmp(dst, src, n) != 0)
+        return false;
+    if (std::memcmp(dst + (len - n), src + (len - n), n) != 0)
+        return false;
+    if (len > 128) {
+        const size_t mid = len / 2;
+        if (std::memcmp(dst + mid, src + mid, n) != 0)
+            return false;
+    }
+    return true;
+}
+inline bool pl330BufferFullMatch(const uint8_t* dst, const uint8_t* src, size_t len) {
+    if (!dst || !src || len == 0)
+        return false;
+    return std::memcmp(dst, src, len) == 0;
+}
 
 // CCR: SA/DA inc, SS32/DS32, symmetric burst_len in 1..16 (encoded as len-1).
 // Returns 0 on bad args. See ARM DDI0424 CCR.
@@ -383,6 +455,56 @@ private:
     // We expose descriptor build + probe; transferOneBlock attempts DMAGO with
     // inline DMAMOV sequence via debug for very small transfers only, else
     // returns not-implemented for full frame so bench reports honestly.
+    void dbgWaitIdle(int spins = 10000) {
+        for (int i = 0; i < spins; ++i) {
+            if ((read32(kPl330_DBGSTATUS) & 1u) == 0)
+                return;
+            if (i > 100)
+                usleep(10);
+        }
+    }
+
+    // Debug-instruction inject (manager thread). Matches linux _execute_DBGINSN.
+    void dbgExecManager(uint8_t insn0, uint8_t insn1, uint32_t inst1_imm) {
+        dbgWaitIdle();
+        const uint32_t inst0 =
+            (static_cast<uint32_t>(insn0) << 16) | (static_cast<uint32_t>(insn1) << 24);
+        write32(kPl330_DBGINST0, inst0);
+        write32(kPl330_DBGINST1, inst1_imm);
+        write32(kPl330_DBGCMD, 0);
+    }
+
+    void killChannel(int ch) {
+        // DMAKILL via debug as channel thread (not manager): linux uses as_manager=false
+        // for KILL on channel. DBGINST0 low bits mark channel target.
+        dbgWaitIdle();
+        const uint32_t val = (0x01u << 16) | (1u << 0) | (static_cast<uint32_t>(ch & 7) << 8);
+        write32(kPl330_DBGINST0, val);
+        write32(kPl330_DBGINST1, 0);
+        write32(kPl330_DBGCMD, 0);
+        const uint32_t csr_off = kPl330_CSR0 + static_cast<uint32_t>(ch) * 8u;
+        for (int i = 0; i < 1000; ++i) {
+            if ((read32(csr_off) & 0xFu) == kPl330StStopped)
+                return;
+            usleep(10);
+        }
+    }
+
+    // Fire DMAGO as manager with Linux encoding. Returns DBGINST0 written.
+    uint32_t fireGo(int ch, unsigned ns) {
+        // insn: [0]=DMAGO|ns<<1, [1]=chan, [2..5]=pc — DBGINST1 holds pc only
+        const uint8_t op = static_cast<uint8_t>(0xA0u | ((ns & 1u) << 1));
+        const uint8_t c = static_cast<uint8_t>(ch & 7);
+        const uint32_t inst0 = pl330DbgInst0GoManager(static_cast<unsigned>(ch), ns);
+        dbgWaitIdle();
+        write32(kPl330_DBGINST0, inst0);
+        write32(kPl330_DBGINST1, prog_scratch_phys_);
+        write32(kPl330_DBGCMD, 0);
+        (void)op;
+        (void)c;
+        return inst0;
+    }
+
     Pl330Mem2MemResult goProgram(const uint8_t* prog, size_t plen, int channel, int timeout_ms,
                                  const char* tag) {
         Pl330Mem2MemResult r;
@@ -409,42 +531,66 @@ private:
         __sync_synchronize();
 
         const int ch = (channel >= 0 && channel < 8) ? channel : 0;
-        for (int i = 0; i < 10000; ++i) {
-            if ((read32(kPl330_DBGSTATUS) & 1u) == 0)
-                break;
-            if (i == 9999) {
-                r.detail = "dbgstatus sticky busy";
-                return r;
-            }
-        }
-        const uint32_t ns = 0;
-        const uint32_t inst0 = (0u << 16) | (static_cast<uint32_t>(ch) << 8) | (0xA0u | (ns << 1));
-        write32(kPl330_DBGINST0, inst0);
-        write32(kPl330_DBGINST1, prog_scratch_phys_);
-        write32(kPl330_DBGCMD, 0);
-        r.channel_started = true;
         r.channel_used = ch;
+        killChannel(ch);
 
+        // NS DMAC: try ns=1 first (HPS non-secure), then ns=0 if never executes.
+        // CR0 BOOT_MAN_NS (bit2) is a hint only — parent device read 0 with NS base.
+        const unsigned ns_try[2] = {1u, 0u};
         const uint32_t csr_off = kPl330_CSR0 + static_cast<uint32_t>(ch) * 8u;
-        // Busy-spin first ~2 ms, then usleep — full-frame must not pay 10us/chunk tax.
-        const int spins = timeout_ms * 200;
-        for (int i = 0; i < spins; ++i) {
-            const uint32_t csr = read32(csr_off);
-            if ((csr & 0xFu) == 0) {
-                r.ok = true;
-                r.detail = tag ? tag : "dma stopped ok";
-                return r;
+        // Completion wait: usleep-backed only. Tight spin steals the decode core and
+        // makes Route A look like a CPU burner (parent incident: 98k fake fps).
+        const int poll_us = 100;
+        const int max_polls = (timeout_ms > 0 ? timeout_ms : 50) * 1000 / poll_us;
+        const char* base_tag = tag ? tag : "dma";
+
+        for (unsigned nsi = 0; nsi < 2; ++nsi) {
+            const unsigned ns = ns_try[nsi];
+            r.ns_used = ns;
+            r.dbginst0 = fireGo(ch, ns);
+            r.channel_started = true;
+            r.saw_executing = false;
+
+            bool fault = false;
+            for (int i = 0; i < max_polls; ++i) {
+                const uint32_t csr = read32(csr_off);
+                const uint32_t st = csr & 0xFu;
+                r.csr_final = csr;
+                if (read32(kPl330_FSRC) & (1u << ch)) {
+                    fault = true;
+                    r.detail = std::string(base_tag) + " channel fault";
+                    r.ok = false;
+                    break;
+                }
+                if (st == kPl330StExecuting || st == 0x2 || st == 0x3 || st == 0x9) {
+                    r.saw_executing = true;
+                }
+                // Done only if we observed work, then STOPPED.
+                if (r.saw_executing && st == kPl330StStopped) {
+                    r.ok = true;
+                    r.detail = std::string(base_tag) + " saw_exec+stopped ok";
+                    return r;
+                }
+                // Still stopped with no execute after a few polls → GO ignored; try other ns.
+                if (!r.saw_executing && st == kPl330StStopped && i >= 5) {
+                    r.detail = std::string(base_tag) + " go_ignored_still_stopped";
+                    break;
+                }
+                usleep(static_cast<useconds_t>(poll_us));
             }
-            if (read32(kPl330_FSRC) & (1u << ch)) {
-                r.detail = "channel fault";
+            if (fault)
+                return r;
+            if (r.saw_executing) {
                 r.ok = false;
+                r.detail = std::string(base_tag) + " timeout after exec";
                 return r;
             }
-            if (i > 400)
-                usleep(10);
+            killChannel(ch);
+            // retry other ns
         }
-        r.detail = "timeout";
         r.ok = false;
+        if (r.detail.empty())
+            r.detail = std::string(base_tag) + " never_executed (false-complete guard)";
         return r;
     }
 

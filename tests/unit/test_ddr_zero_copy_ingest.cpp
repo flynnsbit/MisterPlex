@@ -141,6 +141,39 @@ int main() {
     CHECK(pl330BuildCcrBurst(0) == 0, "NEG burst0");
     CHECK(pl330BuildCcrBurst(17) == 0, "NEG burst17");
 
+    // Linux DMAGO DBGINST0 encode (incident fix) — NOT low-byte opcode form.
+    {
+        const uint32_t g0 = pl330DbgInst0GoManager(0, 0);
+        const uint32_t g1 = pl330DbgInst0GoManager(0, 1);
+        const uint32_t g3 = pl330DbgInst0GoManager(3, 1);
+        // linux: DBGINST0 = (op<<16)|(chan<<24)
+        CHECK(g0 == 0x00A00000u, "DMAGO ch0 ns0");
+        CHECK(g1 == 0x00A20000u, "DMAGO ch0 ns1");
+        CHECK(g3 == 0x03A20000u, "DMAGO ch3 ns1");
+        // NEG: the old buggy encoding must not equal linux form
+        const uint32_t buggy = (0u << 16) | (0u << 8) | 0xA0u; // 0x000000A0
+        CHECK(buggy != g0, "NEG old encode != linux");
+    }
+
+    // Throughput ceiling: 0.010 ms @ 1382400 B is impossible
+    CHECK(pl330ThroughputImpossible(1382400, 0.010), "NEG 0.01ms impossible");
+    CHECK(pl330ThroughputImpossible(1382400, 0.0), "NEG zero ms");
+    CHECK(!pl330ThroughputImpossible(1382400, 15.0), "15ms plausible");
+    CHECK(pl330MinPlausibleMsForBytes(1382400) > 0.4 &&
+              pl330MinPlausibleMsForBytes(1382400) < 0.5,
+          "min ms ~0.43");
+
+    // Content sample match
+    {
+        std::vector<uint8_t> a(256, 1), b(256, 1);
+        CHECK(pl330BufferSamplesMatch(a.data(), b.data(), 256), "sample match");
+        a[0] = 9;
+        CHECK(!pl330BufferSamplesMatch(a.data(), b.data(), 256), "NEG sample mismatch");
+        a[0] = 1;
+        a[255] = 2;
+        CHECK(!pl330BufferFullMatch(a.data(), b.data(), 256), "NEG full mismatch");
+    }
+
     // 720p frame bytes constant still 1382400
     CHECK(kPlex720pYuv420pBytes == 1382400u || kPlex720pYuv420pBytes == 1280 * 720 * 3 / 2,
           "720p bytes");

@@ -1,17 +1,20 @@
 // Parent-facing bench: serial bank copy vs PL330 with fixed ABI scratch.
 // Does NOT ring the frame doorbell (safe on a live core).
 //
-// PRE-REGISTER (device, this build) — publish hits/misses:
-//   P1 dma-only: pl330_transfer started=1 ok_frac=1.0 for full-frame auto burst
-//   P2 dma-only pure (no restage): dma_ms_per_frame < serial_cpu (prior 21ms was
-//      restage+chunk tax; pure DMA expected ~8–18 ms — MISS if still > serial)
-//   P3 --bank-sweep: serial@0x30200000 within 1.5 ms of serial@0x30300000 when
-//      same mmap/O_SYNC recipe (if not → address/alignment real; if yes → harness)
-//   P4 sustained --dma-only --duration-s 20 runnable alongside ffmpeg_cpu_probe
+// INCIDENT FIX: prior --dma-only reported 98k fps / 136 GB/s (impossible).
+// DMAGO DBGINST0 encoding was wrong; CSR stayed STOPPED; loop counted fakes.
+// This build: Linux DMAGO encode, require saw_executing, content verify, ceiling fail.
 //
-// Parent architecture gate (dma-only in bg + decode 300f real720p_2600k):
-//   decode stays < 41.667 ms/f → Route A REAL
-//   decode inflates past deadline → Route A dead for serial-style overlap claim
+// PRE-REGISTER (device):
+//   P1: first transfer either real (saw_exec+content match) OR honest never_executed
+//   P2: if real, dma_ms >= pl330MinPlausibleMs (~0.43ms @3.2GB/s) else INSTRUMENT_FAIL
+//   P3: ok_frac == content match fraction (can be < 1.0); full memcmp every N
+//   P4: poll_mode=usleep (no tight spin); cpu_time_s << wall if DMA is real off-CPU
+//   P5: bank-sweep STAND DOWN (parent: contaminated by rogue awk)
+//
+// Parent gate (only if bench exits 0 with verified frames > 0):
+//   --dma-only --duration-s 25 + ffmpeg_cpu_probe 300f real720p_2600k
+//   decode < 41.667 → Route A REAL; else fabric owns pixels
 //
 // Usage on MiSTer (parent):
 //   # Sustained DMA for decode-overlap experiment (THE gate):
@@ -36,6 +39,7 @@
 #include <pthread.h>
 #include <string>
 #include <sys/mman.h>
+#include <sys/resource.h>
 #include <unistd.h>
 #include <vector>
 
@@ -204,7 +208,11 @@ int main(int argc, char** argv) {
     const uint32_t bank_phys =
         phys_override ? phys_override : (phys_base + static_cast<uint32_t>(bank) * stride);
 
-    std::printf("PRE P1 dma_started P2 pure_dma_ms P3 bank_sweep_delta P4 duration_ok\n");
+    std::printf("PRE P1 real_or_honest_fail P2 ceiling P3 content_ok_frac P4 usleep_poll "
+                "P5 bank_sweep_standdown\n");
+    std::printf("INSTRUMENT: DMAGO=linux_manager_encode; require saw_executing; "
+                "ok=content_match; fail if >%.1f GB/s\n",
+                misterplex::kPl330MaxPlausibleThroughputGBs);
     std::printf("len=%zu loops=%d bank=%d burn_ms=%.3f duration_s=%.3f dma_only=%d "
                 "bank_sweep=%d restage=%d host_only=%d option_c=%d\n",
                 len, loops, bank, burn_ms, duration_s, dma_only ? 1 : 0, bank_sweep ? 1 : 0,
@@ -222,51 +230,9 @@ int main(int argc, char** argv) {
 
     // -------- bank-sweep: serial only, several phys (anomaly chase) --------
     if (bank_sweep) {
-        struct Tgt {
-            const char* name;
-            uint32_t phys;
-        };
-        const Tgt tgts[] = {
-            {"option_c_bank0", misterplex::kPlex720pDdrFramePhysBase},
-            {"option_c_bank1",
-             misterplex::kPlex720pDdrFramePhysBase + misterplex::kPlex720pYuv420pBankStride},
-            {"prior_0x30200000", 0x30200000u},
-            {"legacy_base", misterplex::kDdrFramePhysBase},
-            {"legacy_yuv_bank1",
-             misterplex::kDdrFramePhysBase + misterplex::kPlex480pYuv420pBankStride},
-            {"pl330_staging", misterplex::kPl330StagingPhys},
-        };
-        std::printf("BANK_SWEEP begin loops=%d len=%zu (same O_SYNC /dev/mem recipe)\n", loops,
-                    len);
-        MapWin win;
-        std::string err;
-        // Cover legacy base through PL330 staging end (0x30781000).
-        if (!mapWindow(win, 0x30000000u, 0x00900000u, &err)) {
-            std::printf("bank_sweep mmap FAIL %s\n", err.c_str());
-            return 1;
-        }
-        {
-            std::vector<uint8_t> host(len);
-            const double host_ms = timeSerialCopy(host.data(), src.data(), len, loops);
-            std::printf("bank_sweep name=host_ram phys=n/a ms_per_frame=%.3f\n", host_ms);
-        }
-        uint8_t* ref = win.ptrAt(misterplex::kPlex720pDdrFramePhysBase +
-                                 misterplex::kPlex720pYuv420pBankStride);
-        const double ref_ms = ref ? timeSerialCopy(ref, src.data(), len, loops) : -1;
-        std::printf("bank_sweep_ref option_c_bank1 phys=0x%08x ms=%.3f\n",
-                    misterplex::kPlex720pDdrFramePhysBase + misterplex::kPlex720pYuv420pBankStride,
-                    ref_ms);
-        for (const auto& t : tgts) {
-            uint8_t* d = win.ptrAt(t.phys);
-            if (!d || (static_cast<uint64_t>(t.phys - win.map_phys) + len) > win.map_len) {
-                std::printf("bank_sweep name=%s phys=0x%08x SKIP out_of_map\n", t.name, t.phys);
-                continue;
-            }
-            const double ms = timeSerialCopy(d, src.data(), len, loops);
-            std::printf("bank_sweep_delta name=%s phys=0x%08x ms=%.3f delta_vs_oc_b1=%.3f\n",
-                        t.name, t.phys, ms, ms - ref_ms);
-        }
-        win.close();
+        // Parent 2026-08-03: stand down — prior table contaminated by rogue awk;
+        // same address read 20.5 and 25.6 ms in one run. Do not emit numbers.
+        std::printf("bank_sweep=STAND_DOWN parent_contaminated_by_awk\n");
         std::printf("ddr_pl330_ingest_bench: DONE true_rc=0\n");
         return 0;
     }
@@ -335,17 +301,18 @@ int main(int argc, char** argv) {
             std::printf("pl330_encode_auto ok=%d prog_bytes=%zu burst=%u\n", pn ? 1 : 0, pn,
                         burst);
 
+            // Unique payload so a no-op transfer cannot match by accident.
+            for (size_t i = 0; i < len; ++i)
+                src[i] = static_cast<uint8_t>((i * 131u) ^ 0x5Au);
+            // Embed a marker the verifier can spot at offset 0.
+            src[0] = 0xD3;
+            src[1] = 0x30;
+            src[2] = 0xA1;
+            src[3] = 0x11;
+
             if (!dma.loadStaging(src.data(), len, &err)) {
                 std::printf("pl330_staging_load=FAIL detail=%s\n", err.c_str());
             } else {
-                {
-                    const double t0 = nowSec();
-                    for (int i = 0; i < loops; ++i)
-                        dma.loadStaging(src.data(), len);
-                    const double st_ms = (nowSec() - t0) * 1000.0 / loops;
-                    std::printf("staging_load_ms_per_frame=%.3f\n", st_ms);
-                }
-
                 misterplex::Pl330Mem2MemRequest req;
                 req.src_phys = dma.stagingPhys();
                 req.dst_phys = bank_phys;
@@ -353,79 +320,164 @@ int main(int argc, char** argv) {
                 req.channel = 0;
                 std::printf("pl330_src_phys=0x%08x dst_phys=0x%08x len=%zu\n", req.src_phys,
                             req.dst_phys, req.len);
+                std::printf("pl330_dbginst0_go_ns1=0x%08x (linux manager encode)\n",
+                            misterplex::pl330DbgInst0GoManager(0, 1));
+                std::printf("poll_mode=usleep_100us (no tight spin)\n");
+                std::printf("min_plausible_ms=%.3f (ceiling %.1f GB/s)\n",
+                            misterplex::pl330MinPlausibleMsForBytes(len),
+                            misterplex::kPl330MaxPlausibleThroughputGBs);
 
-                auto tr0 = dma.transferBlocking(req, 500);
-                std::printf("pl330_transfer ok=%d started=%d ch=%d detail=%s\n", tr0.ok ? 1 : 0,
-                            tr0.channel_started ? 1 : 0, tr0.channel_used, tr0.detail.c_str());
+                // Poison destination so idle/false-complete cannot content-match.
+                std::memset(dst, 0xA5, len);
+                __sync_synchronize();
 
-                if (tr0.ok || tr0.channel_started) {
-                    if (verify_each) {
-                        dma.loadStaging(src.data(), len);
-                        dma.transferBlocking(req, 500);
-                        const int cmp = std::memcmp(dst, src.data(), len);
-                        std::printf("pl330_verify_memcmp=%s\n",
-                                    cmp == 0 ? "match" : "MISMATCH");
-                    }
+                auto tr0 = dma.transferBlocking(req, 2000);
+                std::printf("pl330_transfer ok=%d started=%d saw_exec=%d ch=%d ns=%u "
+                            "dbginst0=0x%08x csr=0x%08x detail=%s\n",
+                            tr0.ok ? 1 : 0, tr0.channel_started ? 1 : 0,
+                            tr0.saw_executing ? 1 : 0, tr0.channel_used, tr0.ns_used,
+                            tr0.dbginst0, tr0.csr_final, tr0.detail.c_str());
 
-                    int ok_n = 0;
-                    int iters = 0;
-                    const double t0 = nowSec();
-                    if (duration_s > 0.0) {
-                        const double deadline = t0 + duration_s;
-                        while (nowSec() < deadline) {
-                            if (restage_each)
-                                dma.loadStaging(src.data(), len);
-                            auto tr = dma.transferBlocking(req, 500);
-                            if (tr.ok)
-                                ++ok_n;
-                            ++iters;
-                        }
-                    } else {
-                        for (int i = 0; i < loops; ++i) {
-                            if (restage_each)
-                                dma.loadStaging(src.data(), len);
-                            auto tr = dma.transferBlocking(req, 500);
-                            if (tr.ok)
-                                ++ok_n;
-                            ++iters;
-                        }
-                    }
-                    const double wall_s = nowSec() - t0;
-                    const double dma_ms = iters > 0 ? (wall_s * 1000.0 / iters) : -1;
-                    const double fps = wall_s > 0 ? iters / wall_s : 0;
-                    std::printf("pl330_dma_ms_per_frame=%.3f ok_frac=%.3f iters=%d wall_s=%.3f "
-                                "sustained_fps=%.2f restage_each=%d\n",
-                                dma_ms, iters ? static_cast<double>(ok_n) / iters : 0.0, iters,
-                                wall_s, fps, restage_each ? 1 : 0);
-                    if (serial_ms > 0)
-                        std::printf("dma_minus_serial=%.3f serial_ms=%.3f\n", dma_ms - serial_ms,
-                                    serial_ms);
-                    std::printf("NOTE: default times PURE dma (staging prefilled). "
-                                "Prior 23.8ms included restage+1KB chunk poll tax.\n");
+                const bool sample0 = misterplex::pl330BufferSamplesMatch(dst, src.data(), len);
+                const bool full0 = misterplex::pl330BufferFullMatch(dst, src.data(), len);
+                std::printf("pl330_content_sample_match=%d full_match=%d "
+                            "(ok_frac requires content, not CSR alone)\n",
+                            sample0 ? 1 : 0, full0 ? 1 : 0);
 
-                    if (burn_ms > 0.0 && !dma_only) {
-                        std::atomic<int> stop{0};
-                        BurnArg ba{&stop};
-                        pthread_t th;
-                        pthread_create(&th, nullptr, burnThread, &ba);
-                        usleep(1000);
-                        const double t1 = nowSec();
-                        int ok2 = 0;
-                        for (int i = 0; i < loops; ++i) {
-                            if (restage_each)
-                                dma.loadStaging(src.data(), len);
-                            auto tr = dma.transferBlocking(req, 500);
-                            if (tr.ok)
-                                ++ok2;
-                        }
-                        const double wall = (nowSec() - t1) * 1000.0 / loops;
-                        stop.store(1);
-                        pthread_join(th, nullptr);
-                        std::printf("pl330_under_burn_ms_per_frame=%.3f inflate_vs_dma_ms=%.3f "
-                                    "ok_frac=%.3f\n",
-                                    wall, wall - dma_ms, static_cast<double>(ok2) / loops);
-                    }
+                if (!tr0.ok || !tr0.saw_executing) {
+                    std::printf("pl330_verdict=NO_REAL_DMA detail=%s\n", tr0.detail.c_str());
+                    std::printf("NOTE: prior 23.8ms/0.01ms figures INVALID (false complete). "
+                                "Route A concurrency unmeasured until content-verified DMA.\n");
+                    dma.close();
+                    win.close();
+                    std::printf("ddr_pl330_ingest_bench: DONE true_rc=0 (honest_no_dma)\n");
+                    return 0;
                 }
+                if (!full0) {
+                    std::printf("pl330_verdict=EXEC_BUT_CONTENT_MISMATCH "
+                                "saw_exec=1 but bank bytes != staging\n");
+                    dma.close();
+                    win.close();
+                    std::printf("ddr_pl330_ingest_bench: DONE true_rc=1\n");
+                    return 1;
+                }
+
+                // Timed loop: count only content-verified frames.
+                // Poison ONLY sentinel windows (not full 1.38MB) so the instrument
+                // itself is not a DDR writer competing with DMA/decode.
+                // Full-bank memcmp every 8th frame (+ first). --verify-each → every frame.
+                int attempts = 0;
+                int verified = 0;
+                int content_fail = 0;
+                int csr_fail = 0;
+                double pure_dma_ms_sum = 0.0;
+                dma.loadStaging(src.data(), len);
+                const size_t sn = len < 64 ? len : 64;
+                const size_t mid = len / 2;
+                auto poison_sentinels = [&]() {
+                    std::memset(dst, 0xA5, sn);
+                    std::memset(dst + (len - sn), 0xA5, sn);
+                    if (len > 128)
+                        std::memset(dst + mid, 0xA5, sn);
+                    __sync_synchronize();
+                };
+                auto sentinels_match = [&]() -> bool {
+                    return misterplex::pl330BufferSamplesMatch(dst, src.data(), len);
+                };
+
+                struct rusage ru0 {};
+                getrusage(RUSAGE_SELF, &ru0);
+                const double t0 = nowSec();
+                auto one_verified = [&](int seq) -> bool {
+                    if (restage_each)
+                        dma.loadStaging(src.data(), len);
+                    poison_sentinels();
+                    const double td0 = nowSec();
+                    auto tr = dma.transferBlocking(req, 2000);
+                    const double td1 = nowSec();
+                    ++attempts;
+                    if (!tr.ok || !tr.saw_executing) {
+                        ++csr_fail;
+                        return false;
+                    }
+                    pure_dma_ms_sum += (td1 - td0) * 1000.0;
+                    const bool do_full = verify_each || (seq % 8) == 0;
+                    const bool match =
+                        do_full ? misterplex::pl330BufferFullMatch(dst, src.data(), len)
+                                : sentinels_match();
+                    if (!match) {
+                        ++content_fail;
+                        return false;
+                    }
+                    ++verified;
+                    return true;
+                };
+
+                if (duration_s > 0.0) {
+                    const double deadline = t0 + duration_s;
+                    int seq = 0;
+                    while (nowSec() < deadline) {
+                        one_verified(seq++);
+                    }
+                } else {
+                    for (int i = 0; i < loops; ++i)
+                        one_verified(i);
+                }
+                const double wall_s = nowSec() - t0;
+                struct rusage ru1 {};
+                getrusage(RUSAGE_SELF, &ru1);
+                const double cpu_s =
+                    (ru1.ru_utime.tv_sec - ru0.ru_utime.tv_sec) +
+                    (ru1.ru_utime.tv_usec - ru0.ru_utime.tv_usec) / 1e6 +
+                    (ru1.ru_stime.tv_sec - ru0.ru_stime.tv_sec) +
+                    (ru1.ru_stime.tv_usec - ru0.ru_stime.tv_usec) / 1e6;
+
+                if (verified <= 0) {
+                    std::printf("pl330_verdict=ZERO_VERIFIED attempts=%d csr_fail=%d "
+                                "content_fail=%d\n",
+                                attempts, csr_fail, content_fail);
+                    dma.close();
+                    win.close();
+                    std::printf("ddr_pl330_ingest_bench: DONE true_rc=1\n");
+                    return 1;
+                }
+
+                // Primary metric: pure transferBlocking wall / verified (no poison).
+                const double dma_ms = pure_dma_ms_sum / static_cast<double>(verified);
+                // Secondary: whole-loop wall / verified (includes sentinel poison+check).
+                const double loop_ms = (wall_s * 1000.0) / static_cast<double>(verified);
+                const double gbs = misterplex::pl330ThroughputGBs(len, dma_ms);
+                const double fps = wall_s > 0 ? verified / wall_s : 0;
+                const double ok_frac =
+                    attempts ? static_cast<double>(verified) / attempts : 0.0;
+                std::printf("pl330_dma_ms_per_frame=%.3f (pure transferBlocking/verified)\n",
+                            dma_ms);
+                std::printf("pl330_loop_ms_per_frame=%.3f (wall includes sentinel "
+                            "poison+verify)\n",
+                            loop_ms);
+                std::printf("verified_frames=%d attempts=%d ok_frac=%.3f content_fail=%d "
+                            "csr_fail=%d\n",
+                            verified, attempts, ok_frac, content_fail, csr_fail);
+                std::printf("pl330_throughput_GBs=%.3f sustained_verified_fps=%.2f wall_s=%.3f "
+                            "cpu_time_s=%.3f cpu_over_wall=%.3f\n",
+                            gbs, fps, wall_s, cpu_s, wall_s > 0 ? cpu_s / wall_s : -1);
+                if (serial_ms > 0)
+                    std::printf("dma_minus_serial=%.3f serial_ms=%.3f\n", dma_ms - serial_ms,
+                                serial_ms);
+
+                if (misterplex::pl330ThroughputImpossible(len, dma_ms)) {
+                    std::printf("INSTRUMENT_FAIL throughput=%.3f GB/s exceeds ceiling %.1f "
+                                "GB/s (min_ms=%.3f measured_ms=%.3f) — refusing fiction\n",
+                                gbs, misterplex::kPl330MaxPlausibleThroughputGBs,
+                                misterplex::pl330MinPlausibleMsForBytes(len), dma_ms);
+                    dma.close();
+                    win.close();
+                    std::printf("ddr_pl330_ingest_bench: DONE true_rc=2\n");
+                    return 2;
+                }
+                std::printf("pl330_verdict=VERIFIED_REAL_DMA\n");
+                std::printf("NOTE: cpu_over_wall near 1.0 means completion wait still "
+                            "burns a core — Route A off-CPU claim weak even if DMA real.\n");
             }
             dma.close();
         }
