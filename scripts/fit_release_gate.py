@@ -508,6 +508,78 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
                     "in Plex.sv (legacy 624 storage remains when force off)."
                 )
 
+        # --- B9: aspect — Original defaults 4:3; 960×540 true-DE needs 16:9/FS ---
+        # Quoted: assign VIDEO_ARX = (!ar) ? 12'd4 : (ar - 1'd1);
+        #         assign VIDEO_ARY = (!ar) ? 12'd3 : 12'd0;
+        # OSD O[122:121] Aspect ratio,Original,Full Screen,...
+        # ar==0 → 4:3. Full Screen is ar==1 → ARX=0 ARY=0. 960×540 is 16:9 content;
+        # ascal will pillar as 4:3 unless status Full Screen or macro forces AR.
+        ar_original_4_3 = bool(
+            re.search(r"VIDEO_ARX\s*=\s*\(\s*!ar\s*\)\s*\?\s*12'd4", plex_txt)
+        ) and bool(
+            re.search(r"VIDEO_ARY\s*=\s*\(\s*!ar\s*\)\s*\?\s*12'd3", plex_txt)
+        )
+        conf_aspect_original_first = (
+            "Aspect ratio,Original,Full Screen" in plex_txt
+            or "Aspect ratio,Original" in plex_txt
+        )
+        # Scalar/ascal proof must force Full Screen (0/0) or 16:9 under beam macro.
+        beam_forces_fs = bool(
+            re.search(
+                r"`ifdef\s+PRESENT_BEAM_960[\s\S]{0,1200}?"
+                r"VIDEO_ARX\s*=\s*12'd0[\s\S]{0,200}?VIDEO_ARY\s*=\s*12'd0",
+                plex_txt,
+            )
+        )
+        beam_forces_16_9 = bool(
+            re.search(
+                r"`ifdef\s+PRESENT_BEAM_960[\s\S]{0,1200}?"
+                r"VIDEO_ARX\s*=\s*12'd16[\s\S]{0,200}?VIDEO_ARY\s*=\s*12'd9",
+                plex_txt,
+            )
+        )
+        # Also accept dedicated proof macro.
+        proof_forces_ar = bool(
+            re.search(
+                r"`ifdef\s+FIT_FORCE_AR_(FS|16_9)[\s\S]{0,400}?VIDEO_ARX\s*=",
+                plex_txt,
+            )
+        )
+        ar_forced_for_960 = beam_forces_fs or beam_forces_16_9 or proof_forces_ar
+        msgs.append(
+            f"LEG0_ASPECT original_4_3={int(ar_original_4_3)} "
+            f"conf_original_first={int(conf_aspect_original_first)} "
+            f"beam_force_ar={int(ar_forced_for_960)} "
+            f"(fs={int(beam_forces_fs)} 16_9={int(beam_forces_16_9)})"
+        )
+        if (ar_original_4_3 or conf_aspect_original_first) and not ar_forced_for_960:
+            errors.append(
+                "B9_ASPECT_ORIGINAL_4_3: Plex.sv defaults VIDEO_ARX/ARY to 4/3 when "
+                "status[122:121]==Original (`(!ar)?12'd4` / `12'd3`). A 960×540 "
+                "true-DE input is 16:9 content and will present as 4:3 unless Full "
+                "Screen (ARX=ARY=0) or 16:9 is forced. Scalar proof must "
+                "`ifdef PRESENT_BEAM_960` force FS/16:9 (or FIT_FORCE_AR_*) — fit "
+                "card omitted aspect (rd-duck)."
+            )
+
+        # Require a test that samples real top-level AR outputs (not fit-card prose).
+        ar_tests: list[str] = []
+        tests_root = ROOT / "tests"
+        for path in tests_root.rglob("*"):
+            if not path.is_file() or path.suffix not in {".sv", ".cpp", ".sh", ".py"}:
+                continue
+            t = _read(path)
+            if "VIDEO_ARX" in t and "VIDEO_ARY" in t:
+                ar_tests.append(str(path.relative_to(ROOT)))
+        if not ar_tests:
+            errors.append(
+                "B9_NO_AR_TOPLEVEL_TEST: no test under tests/ asserts Plex.sv "
+                "VIDEO_ARX/VIDEO_ARY top-level outputs (rd-duck: test real AR pins; "
+                "fit-card table is not evidence)."
+            )
+        else:
+            msgs.append("LEG0_AR_TESTS " + " ".join(ar_tests[:8]))
+
     # --- Runtime-OFF OSD / colorbars timing cargo when candidate is ascal ---
     if cand and cand.get("architecture") == "ascal_true_de_960":
         # present_core still has colorbars Template path when PRESENT_BEAM_960 undefined.

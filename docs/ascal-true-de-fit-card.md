@@ -16,6 +16,7 @@
 | Beam class | w-clock **MODE=0**: H_DE=960 V_ACT=540 **H_TOTAL=1182 V_TOTAL=564** (Hblank=222, Vblank=24) |
 | clk | `clk_sys` **20 MHz**, `ce_pix=1` (1 px/clk) |
 | DE_LAG | keep **3** (present_core) |
+| **Aspect (VIDEO_ARX/ARY)** | **Required for scalar/ascal proof.** Live `Plex.sv` defaults `status[122:121]==Original` → **`VIDEO_ARX=4`, `VIDEO_ARY=3` (4:3)**. 960×540 true-DE is **16:9** content — Original will present as 4:3. Must force **Full Screen** (`ARX=ARY=0`, OSD second option) or **16:9** (`16/9`) under `PRESENT_BEAM_960` (or known conf/status gate). Gate B9 inspects real top-level assigns + requires an AR pin test — fit-card prose alone is not evidence (rd-duck). |
 
 ## Runtime mailbox / PLXG (before first present)
 
