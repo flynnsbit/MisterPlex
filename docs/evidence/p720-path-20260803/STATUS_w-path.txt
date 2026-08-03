@@ -1,6 +1,6 @@
 lane=w-path
 status=DMA_ONLY_BANK_SWEEP_LANDED
-tip=pending
+tip=172a0111
 DMA: pure --dma-only --duration-s N (no serial); default no restage
 PL330: auto burst16 nested full-frame encode (unit n=31)
 BANK: --bank-sweep serial 0x30200000 vs Option-C 0x30300000
