@@ -10,6 +10,7 @@
 // Always (safe for callers that omit conf).
 #pragma once
 
+#include <algorithm>
 #include <cctype>
 #include <cstdint>
 #include <cstdio>
@@ -242,6 +243,52 @@ inline std::string buildScalePadCentered(int coded_w, int coded_h,
     // (crop path keeps color=black). Do not "fix" that here — default must match.
     return scaleFilterGeom(scale, sws_flags) +
            ":force_original_aspect_ratio=decrease,pad=" + scale + ":(ow-iw)/2:(oh-ih)/2";
+}
+
+// Pure horizontal/vertical pad into the coded bank — NO scale= (no swscale).
+// Direct Part store align-up (426×240 → 432×240) must use this; FOAR scale would
+// resample every sample even when H already matches (rd-duck 2026-08-03).
+inline std::string buildPadOnlyNoScale(int coded_w, int coded_h) {
+    return "pad=" + std::to_string(coded_w) + ":" + std::to_string(coded_h) +
+           ":(ow-iw)/2:(oh-ih)/2:color=black";
+}
+
+// Integer model of ffmpeg pad=W:H:(ow-iw)/2:(oh-ih)/2 for even dims (YUV420-safe).
+// Returns left/top pad insets; false if dims invalid or source does not fit.
+inline bool padOnlyInsets(int src_w, int src_h, int coded_w, int coded_h, int* pad_x,
+                          int* pad_y) {
+    if (!pad_x || !pad_y)
+        return false;
+    if (src_w <= 0 || src_h <= 0 || coded_w <= 0 || coded_h <= 0)
+        return false;
+    if ((src_w & 1) || (src_h & 1) || (coded_w & 1) || (coded_h & 1))
+        return false;
+    if (src_w > coded_w || src_h > coded_h)
+        return false;
+    *pad_x = (coded_w - src_w) / 2;
+    *pad_y = (coded_h - src_h) / 2;
+    return true;
+}
+
+// Y-plane pad model: source columns are copied unchanged into the padded frame.
+// Used by unit tests to pin "first/last source columns unchanged" without ffmpeg.
+inline bool padYPlaneCopyUnchanged(const uint8_t* src, int src_w, int src_h, uint8_t* dst,
+                                   int coded_w, int coded_h) {
+    if (!src || !dst)
+        return false;
+    int pad_x = 0, pad_y = 0;
+    if (!padOnlyInsets(src_w, src_h, coded_w, coded_h, &pad_x, &pad_y))
+        return false;
+    const size_t dst_bytes = static_cast<size_t>(coded_w) * static_cast<size_t>(coded_h);
+    std::fill(dst, dst + dst_bytes, static_cast<uint8_t>(0));
+    for (int y = 0; y < src_h; ++y) {
+        const uint8_t* srow = src + static_cast<size_t>(y) * static_cast<size_t>(src_w);
+        uint8_t* drow =
+            dst + static_cast<size_t>(y + pad_y) * static_cast<size_t>(coded_w) +
+            static_cast<size_t>(pad_x);
+        std::copy(srow, srow + src_w, drow);
+    }
+    return true;
 }
 
 // Numeric WxH match is necessary but not sufficient for identity_skip.
@@ -554,6 +601,22 @@ inline FfmpegVfPlan buildFfmpegVideoFilter(const FfmpegVfRequest& req) {
         return finish(true, false,
                       flags.empty() ? "unverified_claim_scale_pad_coded"
                                     : "unverified_claim_scale_pad_coded_flags");
+    }
+
+    // Verified same-height pad-only (Direct Part 426×240 → store 432×240).
+    // H already matches bank; W source <= coded; even YUV dims. Emit pad= only —
+    // never FOAR scale (would resample every column). hasCrop+wide path above
+    // already handles display-crop; this covers display==coded bank (no crop).
+    const bool yuvEvenOk = (req.source_w % 2) == 0 && (req.source_h % 2) == 0 &&
+                           (req.coded_w % 2) == 0 && (req.coded_h % 2) == 0 &&
+                           (dispW % 2) == 0 && (dispH % 2) == 0;
+    const bool verifiedSameHeightFit =
+        req.delivery_geometry_verified && yuvEvenOk && req.source_w > 0 && req.source_h > 0 &&
+        req.source_h == req.coded_h && req.source_h == dispH && req.source_w <= req.coded_w &&
+        req.source_w <= dispW;
+    if (verifiedSameHeightFit && req.source_w < req.coded_w) {
+        append(buildPadOnlyNoScale(req.coded_w, req.coded_h));
+        return finish(false, false, "verified_same_height_pad_only");
     }
 
     // Non-exact / unknown source that needs resample: FOAR into the CODED bank

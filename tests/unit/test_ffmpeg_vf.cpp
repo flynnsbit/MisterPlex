@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <string>
+#include <vector>
 
 static int g_fails = 0;
 
@@ -436,6 +437,106 @@ int main() {
         const auto p = buildFfmpegVideoFilter(r);
         expect(!p.identity_skip && p.scale_applied,
                "NEG: 720x404 into 1280x720 must scale (not true 720p)");
+    }
+
+    // --- Direct Part 426→432: verified same-height MUST be pad-only (rd-duck) ---
+    // Resolver: source=426x240, coded bank=432x240, verified. display==coded ⇒ no
+    // hasCrop; old path fell through to buildScalePadCentered (scale_applied=1).
+    {
+        FfmpegVfRequest r;
+        r.coded_w = 432;
+        r.coded_h = 240;
+        r.display_w = 432;
+        r.display_h = 240;
+        r.scale_mode = FfmpegScaleMode::Always;
+        r.source_w = 426;
+        r.source_h = 240;
+        r.delivery_geometry_verified = true;
+        const auto p = buildFfmpegVideoFilter(r);
+        expect(!p.scale_applied, "DP 426→432 pad-only: scale_applied=0");
+        expect(!p.identity_skip, "DP 426→432 still emits pad (not empty identity)");
+        expect(p.vf.find("scale=") == std::string::npos, "DP 426→432: no scale=");
+        expect(p.vf.find("force_original_aspect_ratio") == std::string::npos,
+               "DP 426→432: no FOAR");
+        expect(p.vf.find("pad=432:240") != std::string::npos, "DP 426→432: pad=432:240");
+        expect_eq(p.reason, "verified_same_height_pad_only", "DP 426→432 reason");
+        expect(vfPreservesBankHeightSource(p.vf), "DP 426→432 preserves bank-height predicate");
+        const size_t out_bytes = yuv420pFrameBytesWH(432, 240);
+        expect(out_bytes == 432u * 240u * 3u / 2u, "output bytes 432*240*3/2");
+        expect(out_bytes == 155520u, "432x240 I420 == 155520");
+
+        // Column preservation model: first/last of the 426 source cols unchanged.
+        int pad_x = -1, pad_y = -1;
+        expect(padOnlyInsets(426, 240, 432, 240, &pad_x, &pad_y) && pad_x == 3 && pad_y == 0,
+               "426→432 insets pad_x=3 pad_y=0");
+        std::vector<uint8_t> src(static_cast<size_t>(426 * 240));
+        for (int y = 0; y < 240; ++y)
+            for (int x = 0; x < 426; ++x)
+                src[static_cast<size_t>(y * 426 + x)] =
+                    static_cast<uint8_t>((x + y * 3) & 0xFF);
+        std::vector<uint8_t> dst(static_cast<size_t>(432 * 240), 0xEE);
+        expect(padYPlaneCopyUnchanged(src.data(), 426, 240, dst.data(), 432, 240),
+               "Y pad model ok");
+        bool cols_ok = true;
+        for (int y = 0; y < 240 && cols_ok; ++y) {
+            // First and last source columns (and full row interior) unchanged.
+            if (dst[static_cast<size_t>(y * 432 + pad_x)] != src[static_cast<size_t>(y * 426)])
+                cols_ok = false;
+            if (dst[static_cast<size_t>(y * 432 + pad_x + 425)] !=
+                src[static_cast<size_t>(y * 426 + 425)])
+                cols_ok = false;
+            for (int x = 0; x < 426; ++x) {
+                if (dst[static_cast<size_t>(y * 432 + pad_x + x)] !=
+                    src[static_cast<size_t>(y * 426 + x)]) {
+                    cols_ok = false;
+                    break;
+                }
+            }
+            // Pad columns black (0).
+            if (dst[static_cast<size_t>(y * 432 + 0)] != 0 ||
+                dst[static_cast<size_t>(y * 432 + 431)] != 0)
+                cols_ok = false;
+        }
+        expect(cols_ok, "first/last 426 source columns unchanged after pad");
+
+        // SkipIdentity mode same contract (daemon conf default).
+        r.scale_mode = FfmpegScaleMode::SkipIdentity;
+        const auto p2 = buildFfmpegVideoFilter(r);
+        expect(!p2.scale_applied && p2.vf.find("pad=432:240") != std::string::npos,
+               "SkipIdentity 426→432 also pad-only");
+    }
+    // NEG: unverified 426 claim must still FOAR-scale (not trust pad-only)
+    {
+        FfmpegVfRequest r;
+        r.coded_w = 432;
+        r.coded_h = 240;
+        r.display_w = 432;
+        r.display_h = 240;
+        r.scale_mode = FfmpegScaleMode::Always;
+        r.source_w = 426;
+        r.source_h = 240;
+        r.delivery_geometry_verified = false;
+        const auto p = buildFfmpegVideoFilter(r);
+        expect(p.scale_applied && p.vf.find("scale=") != std::string::npos,
+               "NEG: unverified 426→432 must scale (not pad-only)");
+    }
+    // NEG: odd width must not take pad-only (YUV420 contract)
+    {
+        FfmpegVfRequest r;
+        r.coded_w = 432;
+        r.coded_h = 240;
+        r.display_w = 432;
+        r.display_h = 240;
+        r.scale_mode = FfmpegScaleMode::Always;
+        r.source_w = 425;
+        r.source_h = 240;
+        r.delivery_geometry_verified = true;
+        const auto p = buildFfmpegVideoFilter(r);
+        expect(p.scale_applied || p.vf.find("pad=") == std::string::npos ||
+                   p.reason != "verified_same_height_pad_only",
+               "NEG: odd 425 must not verified_same_height_pad_only");
+        expect(p.reason != "verified_same_height_pad_only",
+               "NEG: odd width rejects pad-only reason");
     }
     // Negative: unverified exact claim still FOAR (universal ceiling trap class)
     {
