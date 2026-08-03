@@ -74,11 +74,12 @@ GRC=$?
 set -e
 echo "$GOUT"
 assert_sim_executed "green" "$GOUT" \
-  "CASE export_capture EXECUTED" \
+  "CASE aligned_capture EXECUTED" \
+  "CASE straddle_capture EXECUTED" \
   "PASS Y qword gradient discriminator" \
-  "CASE lane0 EXECUTED" \
-  "CASE lane3 EXECUTED" \
   "PASS green multi-lane free-lunch" \
+  "PASS green straddle y_qword_hi" \
+  "PASS red-check neg_ignore_hi" \
   "QWORD_EXPORT_GREEN_DONE"
 if [[ "$GRC" -ne 0 ]]; then
   echo "FAIL green qword export true rc=$GRC" >&2
@@ -103,7 +104,7 @@ RRC=$?
 set -e
 echo "$ROUT"
 assert_sim_executed "red" "$ROUT" \
-  "CASE export_capture EXECUTED" \
+  "CASE aligned_capture EXECUTED" \
   "PASS red-check FAULT_QWORD_LANE0" \
   "QWORD_EXPORT_RED_DONE"
 if [[ "$RRC" -ne 0 ]]; then

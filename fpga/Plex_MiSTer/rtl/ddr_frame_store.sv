@@ -73,6 +73,8 @@ module ddr_frame_store #(
 	// DDR_FRAME_STORE_EXPORT_QWORDS is defined so legacy TBs stay pin-compatible.
 `ifdef DDR_FRAME_STORE_EXPORT_QWORDS
 	output reg  [63:0] rd_y_qword,
+	output reg  [63:0] rd_y_qword_hi,
+	output reg         rd_y_hi_valid,
 	output reg  [63:0] rd_u_qword,
 	output reg  [63:0] rd_v_qword,
 	output reg  [10:0] rd_src_x_q,
@@ -311,6 +313,7 @@ module ddr_frame_store #(
 	reg [C_QW_AW-1:0] c_wr_addr;
 	reg [63:0] y_wr_data, u_wr_data, v_wr_data;
 	wire [63:0] y_q [0:LINE_SLOTS-1];
+	wire [63:0] y_q_hi [0:LINE_SLOTS-1];
 	wire [63:0] u_q [0:LINE_SLOTS-1];
 	wire [63:0] v_q [0:LINE_SLOTS-1];
 	wire rd_x_at_or_after_origin;
@@ -347,6 +350,8 @@ module ddr_frame_store #(
 	wire [CODED_Y_W-1:0] src_y_line = rd_y_visible ? (display_y + CROP_TOP_L) : '0;
 	wire [CODED_Y_W-1:0] pref_y = WANT_Y_LINE_ONLY ? src_y_line : src_y;
 	wire [Y_QW_AW-1:0] y_rd_addr = src_x[CODED_X_W-1:3];
+	// Next Y qword for multi-pixel lanes that cross an 8-byte boundary.
+	wire [Y_QW_AW-1:0] y_rd_addr_hi = y_rd_addr + Y_QW_AW'(1'b1);
 	wire [C_QW_AW-1:0] c_rd_addr = src_x[CODED_X_W-1:4];
 
 	genvar li;
@@ -355,15 +360,18 @@ module ddr_frame_store #(
 			// Physical WIDTH = max line; active fetch length is eff_*_fetch_qw.
 			line_buf_ram #(.WIDTH(Y_LINE_QWORDS_MAX), .AW(Y_QW_AW), .DATA_W(64)) yram (
 				.wr_clk(clk_ddr), .wr_en(y_wr[li]), .wr_addr(y_wr_addr), .wr_data(y_wr_data),
-				.rd_clk(clk), .rd_addr(y_rd_addr), .rd_data(y_q[li])
+				.rd_clk(clk), .rd_addr(y_rd_addr), .rd_data(y_q[li]),
+				.rd_addr_b(y_rd_addr_hi), .rd_data_b(y_q_hi[li])
 			);
 			line_buf_ram #(.WIDTH(C_LINE_QWORDS_MAX), .AW(C_QW_AW), .DATA_W(64)) uram (
 				.wr_clk(clk_ddr), .wr_en(u_wr[li]), .wr_addr(c_wr_addr), .wr_data(u_wr_data),
-				.rd_clk(clk), .rd_addr(c_rd_addr), .rd_data(u_q[li])
+				.rd_clk(clk), .rd_addr(c_rd_addr), .rd_data(u_q[li]),
+				.rd_addr_b({C_QW_AW{1'b0}}), .rd_data_b()
 			);
 			line_buf_ram #(.WIDTH(C_LINE_QWORDS_MAX), .AW(C_QW_AW), .DATA_W(64)) vram (
 				.wr_clk(clk_ddr), .wr_en(v_wr[li]), .wr_addr(c_wr_addr), .wr_data(v_wr_data),
-				.rd_clk(clk), .rd_addr(c_rd_addr), .rd_data(v_q[li])
+				.rd_clk(clk), .rd_addr(c_rd_addr), .rd_data(v_q[li]),
+				.rd_addr_b({C_QW_AW{1'b0}}), .rd_data_b()
 			);
 		end
 	endgenerate
@@ -495,7 +503,7 @@ module ddr_frame_store #(
 	integer vi;
 	reg y_hit_now, c_hit_now;
 	reg [SLOT_W-1:0] y_hit_idx_now, c_hit_idx_now;
-	reg [63:0] selected_y_q, selected_u_q, selected_v_q;
+	reg [63:0] selected_y_q, selected_y_q_hi, selected_u_q, selected_v_q;
 	reg [SLOT_W-1:0] video_slot;
 `ifdef DDR_FRAME_STORE_FAULT_CHROMA_VERTICAL_FULLRES
 	wire [CODED_Y_W-2:0] rd_cy = src_y_line[CODED_Y_W-2:0];
@@ -508,6 +516,7 @@ module ddr_frame_store #(
 		y_hit_idx_now = '0;
 		c_hit_idx_now = '0;
 		selected_y_q = 64'd0;
+		selected_y_q_hi = 64'd0;
 		selected_u_q = 64'd0;
 		selected_v_q = 64'd0;
 		for (vi = 0; vi < LINE_COUNT; vi = vi + 1) begin
@@ -523,8 +532,10 @@ module ddr_frame_store #(
 				c_hit_now = 1'b1;
 				c_hit_idx_now = video_slot;
 			end
-			if (y_hit_idx_r == video_slot)
+			if (y_hit_idx_r == video_slot) begin
 				selected_y_q = y_q[video_slot];
+				selected_y_q_hi = y_q_hi[video_slot];
+			end
 			if (c_hit_idx_r == video_slot) begin
 				selected_u_q = u_q[video_slot];
 				selected_v_q = v_q[video_slot];
@@ -579,6 +590,8 @@ module ddr_frame_store #(
 			c_sel_r <= 3'd0;
 `ifdef DDR_FRAME_STORE_EXPORT_QWORDS
 			rd_y_qword <= 64'd0;
+			rd_y_qword_hi <= 64'd0;
+			rd_y_hi_valid <= 1'b0;
 			rd_u_qword <= 64'd0;
 			rd_v_qword <= 64'd0;
 			rd_src_x_q <= 11'd0;
@@ -632,12 +645,15 @@ module ddr_frame_store #(
 			// Delay src_x one cycle to pair with y_sel_r / selected_* (hit_idx_r).
 			src_x_d <= src_x[10:0];
 `ifdef DDR_FRAME_STORE_EXPORT_QWORDS
-			// Export at the YUV-calc stage: selected_* uses y_hit_idx_r and
-			// y_sel_r/src_x_d are the prior beam sample. rd_r/g/b register
-			// r_calc one cycle later — same data the multi-pixel free-lunch
-			// path (w-clock yuv_bt601_npx) should consume. N<=8 from one Y qword
-			// when lanes share src_x_d[10:3].
+			// Export at the YUV-calc stage (matches yuv_bt601_npx inputs).
+			// y_qword_hi is the next 8 Y samples when lanes straddle a qword
+			// boundary (src_x_d[2:0] near 7, N>1). Single-pixel path ignores hi.
 			rd_y_qword <= selected_y_q;
+			rd_y_qword_hi <= selected_y_q_hi;
+			// Valid when next qword index is inside the max linebuf (not past end).
+			rd_y_hi_valid <= rd_active_r && rd_visible_r && has_frame && y_hit_r && c_hit_r
+			                 && (src_x_d[10:3] != 8'hFF)
+			                 && ({1'b0, src_x_d[10:3]} + 9'd1 < 9'(Y_LINE_QWORDS_MAX));
 			rd_u_qword <= selected_u_q;
 			rd_v_qword <= selected_v_q;
 			rd_src_x_q <= src_x_d;

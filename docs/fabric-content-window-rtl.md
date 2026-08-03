@@ -150,12 +150,16 @@ native_480p rc=0  (geom tied off)
 | Port | Width | Meaning |
 |------|-------|---------|
 | `rd_y_qword` | 64 | Y linebuf qword at the YUV-calc stage |
+| `rd_y_qword_hi` | 64 | Next Y qword (straddle when lanes cross 8-byte boundary) |
+| `rd_y_hi_valid` | 1 | Hi qword in-range for this line |
 | `rd_u_qword` / `rd_v_qword` | 64 | Chroma qwords (same stage) |
 | `rd_src_x_q` | 11 | Store X aligned with `y_sel_r` (one beam cycle) |
 | `rd_qword_valid` | 1 | Hit + visible + has_frame at that stage |
 
 One luma qword holds **8** samples → N≤8 pixels/clk with no extra DDR read when
-lanes share `src_x[10:3]`. Chroma 4:2:0: byte index `(x>>1)[2:0]`.
+lanes share `src_x[10:3]`. Straddle uses `y_qword_hi` (dual-port Y linebuf read).
+Chroma 4:2:0: byte index `(x>>1)[2:0]`. `line_buf_ram` second read port is
+tied off on chroma and on `frame_store` (legacy).
 
 Consumer: w-clock `yuv_bt601_npx` (do not duplicate). Product path leaves the
 define off so pinout and ALM stay identical for w-nostub.

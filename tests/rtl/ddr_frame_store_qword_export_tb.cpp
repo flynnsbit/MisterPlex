@@ -204,12 +204,21 @@ struct Sim {
 	}
 };
 
-uint8_t lane_y(uint64_t yq, int base_x, int lane) {
+uint8_t lane_y(uint64_t yq, uint64_t yq_hi, bool hi_valid, int base_x, int lane) {
 	const int x = base_x + lane;
 #ifdef DDR_FRAME_STORE_FAULT_QWORD_LANE0
 	(void)x;
+	(void)yq_hi;
+	(void)hi_valid;
 	return pick8(yq, 0);
 #else
+	const int base_qw = base_x >> 3;
+	const int x_qw = x >> 3;
+	if (x_qw != base_qw) {
+		if (!hi_valid)
+			return 0; // force mismatch if hi missing on straddle
+		return pick8(yq_hi, unsigned(x) & 7u);
+	}
 	return pick8(yq, unsigned(x) & 7u);
 #endif
 }
@@ -242,110 +251,139 @@ int main(int argc, char** argv) {
 		sim.tickScan();
 
 	const int line_y = 10;
-	const int base_x = 16; // qword-aligned; bytes 16..23 = 26..33 on line 10
 
-	// Hold beam on base_x long enough to capture export + RGB.
-	uint64_t yq = 0, uq = 0, vq = 0;
-	int bx = -1;
-	bool got_export = false;
-	uint8_t sp_r[4] = {}, sp_g[4] = {}, sp_b[4] = {};
-	bool got_rgb[4] = {};
-
-	// Warm target line
-	for (int i = 0; i < 2000; ++i)
-		sim.tickHold(0, line_y, true);
-
-	for (int i = 0; i < 80; ++i) {
-		sim.tickHold(base_x, line_y, true);
-		if (sim.top.rd_qword_valid) {
-			yq = sim.top.rd_y_qword;
-			uq = sim.top.rd_u_qword;
-			vq = sim.top.rd_v_qword;
-			bx = int(sim.top.rd_src_x_q);
-			got_export = true;
-		}
-		// Single-pixel RGB at base (lane0) while parked.
-		if (sim.top.rd_r || sim.top.rd_g || sim.top.rd_b || sim.top.has_frame) {
-			// Accept after pipeline; non-black expected for Y!=0.
-			if (!got_rgb[0] && (sim.top.rd_r != 0 || sim.top.rd_g != 0 || sim.top.rd_b != 0)) {
-				sp_r[0] = sim.top.rd_r;
-				sp_g[0] = sim.top.rd_g;
-				sp_b[0] = sim.top.rd_b;
-				got_rgb[0] = true;
+	auto capture_at = [&](int base_x, uint64_t& yq, uint64_t& yq_hi, bool& hi_ok,
+	                      uint64_t& uq, uint64_t& vq, int& bx) -> bool {
+		yq = yq_hi = uq = vq = 0;
+		bx = -1;
+		hi_ok = false;
+		bool got = false;
+		for (int i = 0; i < 2000; ++i)
+			sim.tickHold(0, line_y, true);
+		for (int i = 0; i < 80; ++i) {
+			sim.tickHold(base_x, line_y, true);
+			if (sim.top.rd_qword_valid) {
+				yq = sim.top.rd_y_qword;
+				yq_hi = sim.top.rd_y_qword_hi;
+				hi_ok = sim.top.rd_y_hi_valid != 0;
+				uq = sim.top.rd_u_qword;
+				vq = sim.top.rd_v_qword;
+				bx = int(sim.top.rd_src_x_q);
+				got = true;
 			}
 		}
-	}
+		return got;
+	};
 
-	if (!got_export) {
-		std::cerr << "FAIL: no rd_qword_valid\n";
-		return 1;
-	}
-	std::cout << "CASE export_capture EXECUTED base_x=" << base_x << " rd_src_x_q=" << bx
-	          << " y0=" << int(pick8(yq, 0)) << " y1=" << int(pick8(yq, 1))
-	          << " y2=" << int(pick8(yq, 2)) << " y3=" << int(pick8(yq, 3)) << "\n";
-
-	if (bx != base_x) {
-		std::cerr << "FAIL: rd_src_x_q=" << bx << " expected " << base_x << "\n";
-		return 1;
-	}
-	// Discriminator: gradient must differ across lanes.
-	if (pick8(yq, 0) == pick8(yq, 1) && pick8(yq, 1) == pick8(yq, 2)) {
-		std::cerr << "FAIL: Y qword not gradient — cannot catch FAULT_QWORD_LANE0\n";
-		return 1;
-	}
-	std::cout << "PASS Y qword gradient discriminator\n";
-
-	// Sample single-pixel RGB at each lane X independently.
-	for (int lane = 0; lane < 4; ++lane) {
-		const int x = base_x + lane;
-		got_rgb[lane] = false;
+	auto sample_rgb = [&](int x, uint8_t& r, uint8_t& g, uint8_t& b) -> bool {
+		bool got = false;
 		for (int i = 0; i < 60; ++i) {
 			sim.tickHold(x, line_y, true);
 			if (sim.top.rd_r != 0 || sim.top.rd_g != 0 || sim.top.rd_b != 0) {
-				sp_r[lane] = sim.top.rd_r;
-				sp_g[lane] = sim.top.rd_g;
-				sp_b[lane] = sim.top.rd_b;
-				got_rgb[lane] = true;
+				r = sim.top.rd_r;
+				g = sim.top.rd_g;
+				b = sim.top.rd_b;
+				got = true;
 			}
 		}
-		if (!got_rgb[lane]) {
-			std::cerr << "FAIL: no single-pixel RGB at x=" << x << "\n";
+		return got;
+	};
+
+	auto run_group = [&](const char* name, int base_x, int nlanes, bool expect_straddle) -> int {
+		uint64_t yq, yq_hi, uq, vq;
+		bool hi_ok;
+		int bx;
+		if (!capture_at(base_x, yq, yq_hi, hi_ok, uq, vq, bx)) {
+			std::cerr << "FAIL " << name << ": no rd_qword_valid\n";
 			return 1;
 		}
-	}
+		std::cout << "CASE " << name << "_capture EXECUTED base_x=" << base_x
+		          << " rd_src_x_q=" << bx << " hi_valid=" << (hi_ok ? 1 : 0)
+		          << " y0=" << int(pick8(yq, 0)) << " y7=" << int(pick8(yq, 7))
+		          << " hi0=" << int(pick8(yq_hi, 0)) << "\n";
+		if (bx != base_x) {
+			std::cerr << "FAIL " << name << ": rd_src_x_q=" << bx << " expected " << base_x << "\n";
+			return 1;
+		}
+		if (expect_straddle && !hi_ok) {
+			std::cerr << "FAIL " << name << ": expected rd_y_hi_valid on straddle base\n";
+			return 1;
+		}
+		if (pick8(yq, 0) == pick8(yq, 1) && pick8(yq, 1) == pick8(yq, 7)) {
+			std::cerr << "FAIL " << name << ": Y qword not gradient\n";
+			return 1;
+		}
 
-	int fails = 0;
-	for (int lane = 0; lane < 4; ++lane) {
-		const uint8_t y = lane_y(yq, bx, lane);
-		const int x = bx + lane;
-		const uint8_t u = pick8(uq, unsigned(x >> 1) & 7u);
-		const uint8_t v = pick8(vq, unsigned(x >> 1) & 7u);
-		uint8_t er, eg, eb;
-		yuv_to_rgb(y, u, v, er, eg, eb);
-		const bool ok = (er == sp_r[lane] && eg == sp_g[lane] && eb == sp_b[lane]);
-		std::cout << "CASE lane" << lane << " EXECUTED x=" << x << " y=" << int(y)
-		          << " single=" << std::hex << int(sp_r[lane]) << int(sp_g[lane]) << int(sp_b[lane])
-		          << " export=" << int(er) << int(eg) << int(eb) << std::dec
-		          << (ok ? " OK\n" : " MISMATCH\n");
-		if (!ok)
-			++fails;
+		int fails = 0;
+		for (int lane = 0; lane < nlanes; ++lane) {
+			const int x = base_x + lane;
+			uint8_t sp_r, sp_g, sp_b;
+			if (!sample_rgb(x, sp_r, sp_g, sp_b)) {
+				std::cerr << "FAIL " << name << ": no RGB at x=" << x << "\n";
+				return 1;
+			}
+			const uint8_t y = lane_y(yq, yq_hi, hi_ok, bx, lane);
+			const uint8_t u = pick8(uq, unsigned(x >> 1) & 7u);
+			const uint8_t v = pick8(vq, unsigned(x >> 1) & 7u);
+			uint8_t er, eg, eb;
+			yuv_to_rgb(y, u, v, er, eg, eb);
+			const bool ok = (er == sp_r && eg == sp_g && eb == sp_b);
+			std::cout << "CASE " << name << "_lane" << lane << " EXECUTED x=" << x
+			          << " y=" << int(y) << " single=" << std::hex << int(sp_r) << int(sp_g)
+			          << int(sp_b) << " export=" << int(er) << int(eg) << int(eb) << std::dec
+			          << (ok ? " OK\n" : " MISMATCH\n");
+			if (!ok)
+				++fails;
+		}
+		return fails;
+	};
+
+	// A) aligned free-lunch (no straddle for N=4)
+	int fails_a = run_group("aligned", /*base_x=*/16, /*nlanes=*/4, /*straddle=*/false);
+	// B) straddle: base_x=23 → lane0 in qw2 byte7, lane1 in qw3 byte0
+	int fails_b = run_group("straddle", /*base_x=*/23, /*nlanes=*/2, /*straddle=*/true);
+
+	// Negative: a consumer that ignores hi on straddle must fail (structural red-check)
+	{
+		uint64_t yq, yq_hi, uq, vq;
+		bool hi_ok;
+		int bx;
+		if (!capture_at(23, yq, yq_hi, hi_ok, uq, vq, bx) || !hi_ok) {
+			std::cerr << "FAIL neg_no_hi setup\n";
+			return 1;
+		}
+		const uint8_t y_wrong = pick8(yq, unsigned(24) & 7u); // byte0 of LO, not HI
+		const uint8_t y_right = pick8(yq_hi, 0);
+		std::cout << "CASE neg_ignore_hi EXECUTED wrong_y=" << int(y_wrong)
+		          << " right_y=" << int(y_right) << "\n";
+		if (y_wrong == y_right) {
+			std::cerr << "FAIL neg_ignore_hi: lo/hi bytes collided — cannot discriminate\n";
+			return 1;
+		}
+		std::cout << "PASS red-check neg_ignore_hi: lo-byte != hi-byte on straddle\n";
 	}
 
 #ifdef DDR_FRAME_STORE_FAULT_QWORD_LANE0
-	// Red twin must disagree on at least one non-zero lane.
+	const int fails = fails_a + fails_b;
 	if (fails == 0) {
-		std::cerr << "FAIL red: FAULT_QWORD_LANE0 unexpectedly matched all lanes\n";
+		std::cerr << "FAIL red: FAULT_QWORD_LANE0 unexpectedly matched\n";
 		return 1;
 	}
 	std::cout << "PASS red-check FAULT_QWORD_LANE0 mismatches=" << fails << "\n";
 	std::cout << "QWORD_EXPORT_RED_DONE rc=0\n";
 	return 0;
 #else
-	if (fails != 0) {
-		std::cerr << "FAIL green multi-lane free-lunch fails=" << fails << "\n";
+	if (fails_a != 0) {
+		std::cerr << "FAIL green aligned fails=" << fails_a << "\n";
 		return 1;
 	}
+	if (fails_b != 0) {
+		std::cerr << "FAIL green straddle fails=" << fails_b << "\n";
+		return 1;
+	}
+	std::cout << "PASS Y qword gradient discriminator\n";
 	std::cout << "PASS green multi-lane free-lunch\n";
+	std::cout << "PASS green straddle y_qword_hi\n";
 	std::cout << "QWORD_EXPORT_GREEN_DONE fails=0\n";
 	return 0;
 #endif

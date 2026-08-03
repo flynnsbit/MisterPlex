@@ -19,6 +19,8 @@ module ddr_frame_store_qword_export_tb #(
 	output wire [7:0]  rd_g,
 	output wire [7:0]  rd_b,
 	output wire [63:0] rd_y_qword,
+	output wire [63:0] rd_y_qword_hi,
+	output wire        rd_y_hi_valid,
 	output wire [63:0] rd_u_qword,
 	output wire [63:0] rd_v_qword,
 	output wire [10:0] rd_src_x_q,
@@ -81,6 +83,8 @@ module ddr_frame_store_qword_export_tb #(
 		.rd_b(rd_b),
 `ifdef DDR_FRAME_STORE_EXPORT_QWORDS
 		.rd_y_qword(rd_y_qword),
+		.rd_y_qword_hi(rd_y_qword_hi),
+		.rd_y_hi_valid(rd_y_hi_valid),
 		.rd_u_qword(rd_u_qword),
 		.rd_v_qword(rd_v_qword),
 		.rd_src_x_q(rd_src_x_q),
@@ -128,6 +132,8 @@ module ddr_frame_store_qword_export_tb #(
 
 `ifndef DDR_FRAME_STORE_EXPORT_QWORDS
 	assign rd_y_qword = 64'd0;
+	assign rd_y_qword_hi = 64'd0;
+	assign rd_y_hi_valid = 1'b0;
 	assign rd_u_qword = 64'd0;
 	assign rd_v_qword = 64'd0;
 	assign rd_src_x_q = 11'd0;
