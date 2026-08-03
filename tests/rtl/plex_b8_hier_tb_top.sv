@@ -60,8 +60,9 @@ module plex_b8_hier_tb_top (
 		.plxg_ch(inject_ch),
 		.plxg_cx0(11'd0),
 		.plxg_cy0(11'd0),
-		.plxg_hde(11'd0),
-		.plxg_vde(11'd0),
+		// True-DE tracks content when PLXG live (B13); inject DE == content.
+		.plxg_hde(inject_cw),
+		.plxg_vde(inject_ch),
 		.plxg_coded_w(inject_coded_w),
 		.plxg_coded_h(inject_coded_h),
 		.plxg_y_stride(inject_y_stride),

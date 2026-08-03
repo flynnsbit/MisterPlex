@@ -430,18 +430,32 @@ int main() {
         CHECK(!makeDdrNativeContentLayout(968, 540).valid);
         CHECK(makeDdrNativeContentLayout(960, 540).valid);
         // --- PMS alignment / pad / tight bank (parent N=142 survey) ---
-        // 720×480 tight I420: y_stride=720, chroma=360 → 518400; usable=520192
-        // spare = 1792. Store does NOT add row pad beyond host y_stride.
+        // 720×480 knife-edge: y_stride==width (no round-up). Parent: library widths
+        // are 8-aligned → stride==width for tight I420. Spare 1792 B (99.66%).
+        // ASSERT not comment — silent stride pad must fail here before DDR corruption.
         {
-            constexpr size_t k720x480Tight = 720u * 480u + 360u * 480u; // 518400
-            CHECK(k720x480Tight == 518400u);
-            CHECK(ddrI420PayloadBytes(720, 360, 480) == 518400u);
-            CHECK(k720x480Tight + 1792u == kPlex480pYuv420pBankUsableBytes);
-            CHECK(!ddrI420PayloadNeedsOptionCBank(k720x480Tight));
-            CHECK(plxgGeomDimsOk(720, 480, 720, 360));
-            // Hypothetical y_stride pad to next 16 beyond 720 → 736: 480*(736+368)=529920
+            constexpr int kW = 720;
+            constexpr int kH = 480;
+            static_assert((kW % 8) == 0, "720 must stay 8-aligned");
+            static_assert((kW % 16) == 0, "720 must stay 16-aligned for chroma>>4");
+            constexpr size_t kTight = static_cast<size_t>(kW) * kH +
+                                      static_cast<size_t>(kW / 2) * kH; // 518400
+            static_assert(kTight == 518400u, "720x480 tight I420 bytes");
+            static_assert(kTight + 1792u == 520192u, "spare must be 1792 vs usable");
+            CHECK(kTight == 518400u);
+            CHECK(ddrI420PayloadBytes(kW, kW / 2, kH) == 518400u);
+            // Tight path: y_stride MUST equal width (no pad).
+            CHECK(ddrI420PayloadBytes(kW, kW / 2, kH) ==
+                  static_cast<size_t>(kW) * kH + static_cast<size_t>(kW / 2) * kH);
+            CHECK(kTight + 1792u == kPlex480pYuv420pBankUsableBytes);
+            CHECK(!ddrI420PayloadNeedsOptionCBank(kTight));
+            CHECK(plxgGeomDimsOk(kW, kH, kW, kW / 2));
+            // NEG: pad past width overflows usable → Option-C
             CHECK(ddrI420PayloadBytes(736, 368, 480) == 529920u);
-            CHECK(ddrI420PayloadNeedsOptionCBank(529920u)); // > usable → Option-C
+            CHECK(ddrI420PayloadNeedsOptionCBank(529920u));
+            CHECK(ddrI420PayloadBytes(728, 364, 480) == 524160u);
+            CHECK(ddrI420PayloadNeedsOptionCBank(524160u));
+            CHECK(524160u > kPlex480pYuv420pBankUsableBytes);
         }
         // 426×240 native fails w%16; pad coded_w=432, display=426, crop_right=6
         {

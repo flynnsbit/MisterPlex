@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# B8 product hierarchy: PRESENT_BEAM_960 → 960×540 at present_core via product mux.
-# Red twin FAULT_B8_NO_BEAM must exit non-zero with REPRO marker.
+# B8/B13 product hierarchy: PRESENT_BEAM_960 fallback + PLXG runtime DE.
+# Red twin FAULT_B8_NO_BEAM: no beam → legacy O[4] (rc!=0 + REPRO).
+# Red twin FAULT_B8_FORCE_ALWAYS: COLLISION #5 unconditional force (rc!=0 + REPRO).
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 RUN_VERILATOR="$ROOT/scripts/run_verilator.sh"
@@ -33,7 +34,6 @@ build_one() {
     "$ROOT/tests/rtl/plex_b8_hier_tb_top.sv"
     "$ROOT/tests/rtl/plex_b8_hier_tb.cpp"
   )
-  # Verilator noise → stderr; only the exe path on stdout for capture.
   OSS_CAD_SUITE="$OSS_CAD_SUITE" "$RUN_VERILATOR" --cc --exe --build \
     +incdir+$ROOT/fpga/Plex_MiSTer/rtl \
     --Mdir "$BUILD_DIR" \
@@ -45,8 +45,7 @@ build_one() {
 
 echo "RTL SIM: using $VERILATOR_VERSION" >&2
 
-# --- Good arm: PRESENT_BEAM_960 + DDR_FRAME_STORE ---
-# SV macros need +define+; -D is C++ only (would leave beam force OFF → false green risk).
+# --- Good arm: PRESENT_BEAM_960 + runtime PLXG DE ---
 EXE_GOOD="$(build_one good \
   +define+PRESENT_BEAM_960 \
   +define+DDR_FRAME_STORE \
@@ -61,8 +60,12 @@ if [[ "$RC_GOOD" -ne 0 ]]; then
   echo "B8 good arm FAILED" >&2
   exit "$RC_GOOD"
 fi
+if ! printf '%s\n' "$OUT_GOOD" | grep -q 'PASS plxg runtime DE exact equality'; then
+  echo "FAIL good arm missing PLXG runtime DE proof" >&2
+  exit 1
+fi
 
-# --- Red twin: no beam force (PLXG idle → legacy 320) ---
+# --- Red twin A: no beam force (PLXG idle → legacy 320) ---
 EXE_FAULT="$(build_one fault \
   +define+FAULT_B8_NO_BEAM \
   +define+DDR_FRAME_STORE \
@@ -81,17 +84,49 @@ if ! printf '%s\n' "$OUT_FAULT" | grep -q 'REPRO b8-plxg-tied-legacy'; then
   echo "FAIL red twin missing REPRO marker" >&2
   exit 1
 fi
-echo "PASS red twin REPRO (rc=$RC_FAULT)"
+echo "PASS red twin NO_BEAM REPRO (rc=$RC_FAULT)"
 
-# --- Static: Plex.sv must not tie plxg_wr_en/commit and must force 960 ---
+# --- Red twin B: COLLISION #5 unconditional force overrides PLXG ---
+EXE_C5="$(build_one force_always \
+  +define+PRESENT_BEAM_960 \
+  +define+FAULT_B8_FORCE_ALWAYS \
+  +define+DDR_FRAME_STORE \
+  -CFLAGS "-std=c++17 -O2 -DFAULT_B8_FORCE_ALWAYS")"
+set +e
+OUT_C5="$("$EXE_C5" 2>&1)"
+RC_C5=$?
+set -e
+printf '%s\n' "$OUT_C5"
+echo "plex_b8_hier_force_always true rc=$RC_C5"
+if [[ "$RC_C5" -eq 0 ]]; then
+  echo "FAIL COLLISION #5 twin passed — cannot see force-overrides-plxg" >&2
+  exit 1
+fi
+if ! printf '%s\n' "$OUT_C5" | grep -q 'REPRO collision5-force-overrides-plxg'; then
+  echo "FAIL COLLISION #5 twin missing REPRO marker" >&2
+  exit 1
+fi
+echo "PASS red twin COLLISION #5 REPRO (rc=$RC_C5)"
+
+# --- Static: mux must use plxg_live fallback, not unconditional force ---
+MUX="$ROOT/fpga/Plex_MiSTer/rtl/plex_present_geom_mux.sv"
+if ! grep -q 'force_native_960 = ~plxg_live' "$MUX"; then
+  echo "FAIL mux missing force_native_960 = ~plxg_live (COLLISION #5 fix)" >&2
+  exit 1
+fi
+if grep -n "force_native_960 = 1'b1" "$MUX" | grep -v FAULT_B8_FORCE_ALWAYS | grep -q .; then
+  # Only allowed inside FAULT_B8_FORCE_ALWAYS ifdef — reject bare unconditional.
+  if grep -B2 "force_native_960 = 1'b1" "$MUX" | grep -q 'FAULT_B8_FORCE_ALWAYS'; then
+    :
+  else
+    echo "FAIL mux still has unconditional force_native_960=1 outside fault twin" >&2
+    exit 1
+  fi
+fi
 PLEX="$ROOT/fpga/Plex_MiSTer/Plex.sv"
 if grep -E -q "plxg_wr_en[[:space:]]*=[[:space:]]*1'b0" "$PLEX" && \
    grep -E -q "plxg_commit[[:space:]]*=[[:space:]]*1'b0" "$PLEX"; then
   echo "FAIL Plex.sv still ties plxg_wr_en and plxg_commit to 0" >&2
-  exit 1
-fi
-if ! grep -q "PRESENT_BEAM_960" "$PLEX" || ! grep -q "11'd960" "$PLEX"; then
-  echo "FAIL Plex.sv missing PRESENT_BEAM_960 960 force" >&2
   exit 1
 fi
 if ! grep -q "plex_present_geom_mux" "$PLEX"; then
@@ -102,6 +137,6 @@ if ! grep -q "PHYS_BASE_720P" "$ROOT/fpga/Plex_MiSTer/rtl/present_core.sv"; then
   echo "FAIL present_core missing PHYS_BASE_720P" >&2
   exit 1
 fi
-echo "PASS Plex.sv B8 static (untied PLXG + 960 force + mux + OPTC params)"
+echo "PASS static (mux ~plxg_live + untied PLXG + OPTC params)"
 echo "plex_b8_hier ALL PASS"
 exit 0

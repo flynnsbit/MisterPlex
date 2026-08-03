@@ -1,9 +1,11 @@
-// plex_present_geom_mux — product content/window/geom hierarchy (B8)
+// plex_present_geom_mux — product content/window/geom hierarchy (B8 + B13)
 //
-// Single source used by Plex.sv and the top-level B8 hierarchy TB.
-// Priority: PRESENT_BEAM_960 (960×540) > FABRIC_NATIVE_720P_GEOM (1280) >
-//           PLXG live > O[4] 640/320 ladder.
-// Storage under beam is 960×540 (U@518400), NOT DE canvas 1280.
+// COLLISION #5 (parent): PRESENT_BEAM_960 must NOT pin content to 960×540 when
+// PLXG is live — that killed runtime DE for 96.5% of the library.
+// force_native_960 is a MAX-TIER FALLBACK when PLXG is idle, never an override.
+// Priority: PLXG live > PRESENT_BEAM_960 fallback > FABRIC_NATIVE_720P_GEOM
+//           (deliberate; unchanged) > O[4] 640/320 ladder.
+// Storage under beam fallback is 960×540 (U@518400), NOT DE canvas 1280.
 
 `timescale 1ns / 1ps
 `default_nettype none
@@ -50,15 +52,24 @@ module plex_present_geom_mux (
 	output wire [10:0] present_geom_crop_left,
 	output wire [10:0] present_geom_crop_top
 );
+	// Live PLXG: non-zero content (parent B13 / COLLISION #5).
+	wire plxg_live = plxg_live_valid && (plxg_cw != 11'd0) && (plxg_ch != 11'd0);
+
 	wire [10:0] content_width_base =
-		(plxg_live_valid && (plxg_cw != 11'd0)) ? plxg_cw :
+		plxg_live ? plxg_cw :
 		(content_res_640x480 ? 11'd640 : 11'd320);
 	wire [10:0] content_height_base =
-		(plxg_live_valid && (plxg_ch != 11'd0)) ? plxg_ch :
+		plxg_live ? plxg_ch :
 		(content_res_640x480 ? 11'd480 : 11'd240);
 
+	// PRESENT_BEAM_960: max-tier DEFAULT only when PLXG is not live.
+	// FAULT_B8_FORCE_ALWAYS: unconditional force (red twin for COLLISION #5).
 `ifdef PRESENT_BEAM_960
+`ifdef FAULT_B8_FORCE_ALWAYS
 	wire force_native_960 = 1'b1;
+`else
+	wire force_native_960 = ~plxg_live;
+`endif
 `else
 	wire force_native_960 = 1'b0;
 `endif
