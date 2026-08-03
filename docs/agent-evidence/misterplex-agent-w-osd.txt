@@ -1,14 +1,42 @@
-w-osd status after PARENT ARBITRATION #3
-integ tip: a31c8391 (q5 plxg_* end-to-end)
-osd tip:   e393ba9f (PLXC seqlock)
+w-osd integ rollcall + R1 — 2026-08-03
+branch: integ/fab-720p-product-v2
 
-OWNERSHIP (binding):
-  Plex.sv → w-osd INTEGRATION ONLY (patches in, never whole-file lane copies)
-  Canonical ABI#2 nets: plxg_* (fabric_* banned)
-  Never whole-file adopt mem/clock/scaler owned files
+PREDICTIONS:
+  P1 unit-rollcall PASS rc=0 after Makefile↔registry sync
+  P2 q5 test REGISTERED and RUN in unit-unlocked
+  P3 all 26+ missing scripts PULL (artifacts were in-tree; recipe gap)
+  P4 R1 hollow m_gnt=0 removed; single loader on plxc_c_gnt
+MISSES: none on P1–P4
 
-COMPLIANCE checked:
-  integ Plex.sv: plxg_dar_*/u_content_fps_sel wired; no fabric_dar_*
-  osd: PLXC seqlock host+loader; CDC FIFO prior
+ROLLCALL:
+  before: UNIT_ROLLCALL_FAIL rc=1 (54 MISSING_COMMAND, 2 UNREGISTERED incl q5)
+  after:  UNIT_ROLLCALL_OK prereqs=78 cmds=226 protected=223  make unit-rollcall true rc=0
 
-OPEN: R1 m_gnt=0 (w-mem). No Quartus. No device.
+RECONCILE POLICY (docs/agent-evidence/rollcall-reconcile.txt):
+  PULL 54 commands — artifacts already in tree, only Makefile recipe missing
+  PULL 9 prereqs + 17 build rules from wt-mem/wt-path
+  DROP 0 registry entries (every missing name had an on-tree artifact)
+  REG  test_plex_q5_product_wire_rtl_sim.sh + test_plex_chrome_counted_rtl_sim.sh
+  REG  test_path_public_symbols + test_plxg_q5_aspect_cadence as RUN cmds
+
+q5 wire (CI path): test_plex_q5_product_wire_rtl_sim true rc=0 (green+drop)
+
+R1 PLXC grant (Plex.sv OWNER w-osd):
+  WAS: dual u_plxc_ddr_loader — product m3 path (plxc_c_gnt) AND hollow m_gnt=0
+       hollow drove PLXC_EXT_*; real path drove orphan plxc_host_* → chrome starved
+  NOW: single loader under DDR_FRAME_STORE && !FABRIC_DDR_WRITER
+       .m_gnt(plxc_c_gnt) .host_we(plxc_core_we) MAX_CMDS=112
+       FABRIC_DDR_WRITER / !DDR_FRAME_STORE tie PLXC_EXT quiet
+  REAL not TB artefact. Coordinate: w-mem owns arbiter/bridge; w-osd owns Plex.sv wire.
+  Note: DOORBELL still 0x300FF000 (mem product); 720p map uses 0x3047F000 — flag for w-mem.
+
+SURFACED BREAKS (not fixed — route to owners):
+  w-path: test_path_public_symbols FAIL compile — kPlex540p* missing; ddrFfmpegGeometryForPresent
+          arity (2 vs 3); ddr_frame_layout.hpp duplicate kDdrFramePlxg* defs (merge residue)
+  w-mem:  test_fabric_ddr_top_wire FAIL — greps "ddr_bus_arbiter ddr_arb" but product is
+          ddr_bus_arbiter_plxc (name evolved; test stale OR arbiter rename incomplete)
+  w-mem:  test_bitstream_ring_abi / test_h264_level_limits build rc=2 (see build-*.log)
+
+hdmi_capture_idle.sh: PRESENT on this tree (scripts/). main still stale per parent.
+
+OPEN: full make unit will now pass rollcall then hit path_public / fabric_ddr_top_wire fails.

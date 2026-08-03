@@ -1281,6 +1281,10 @@ host_bank_ingest_credit hbic (
 	fabric_swap_pending | |fabric_frames_done | |fabric_phase |
 	|FAB_BASE[15:0] | |FAB_DB[15:0] |
 	|hbic_may_fill | hbic_err_no_credit | hbic_err_double;
+// FABRIC_DDR_WRITER path owns m2; PLXC chrome slot is the product else-branch.
+assign plxc_core_we    = 1'b0;
+assign plxc_core_addr  = 8'd0;
+assign plxc_core_wdata = 64'd0;
 `else
 // Product path: m0 scanout + m1 stream/PLXG + m3 PLXC chrome (lowest prio).
 // STARVE_VIDEO tied 0 — m0 always preempts chrome. See tests/unit/test_ddr_plxc_grant_verilator.sh.
@@ -1297,10 +1301,9 @@ wire [31:0] plxc_ld_loads, plxc_ld_plxo, plxc_ld_bad;
 wire [31:0] plxc_br_gnt, plxc_br_rd, plxc_br_we;
 wire        plxc_grant_m3_live;
 wire [31:0] plxc_arb_m0, plxc_arb_m1, plxc_arb_m3;
-wire        plxc_host_we;
-wire  [7:0] plxc_host_addr;
-wire [63:0] plxc_host_wdata;
 
+// R1: single product loader — w-mem m3 arbiter grant is real, not tied-0.
+// Host beats drive PLXC_EXT_* (plxc_core_*) into sys_top chrome CDC.
 `ifdef PLEX_CHROME_DDR
 localparam bit PLXC_DDR_EN = 1'b1;
 `else
@@ -1309,7 +1312,7 @@ localparam bit PLXC_DDR_EN = 1'b0;
 
 plex_chrome_ddr_loader #(
 	.ENABLE(PLXC_DDR_EN),
-	.MAX_CMDS(48),
+	.MAX_CMDS(112),
 	.DOORBELL_PHYS(32'h300F_F000),
 	.PLXC_OFF(32'h130),
 	.PLXO_OFF(32'h138),
@@ -1324,9 +1327,9 @@ plex_chrome_ddr_loader #(
 	.m_gnt(plxc_c_gnt),
 	.m_rd_valid(plxc_c_rd_valid),
 	.m_rdata(plxc_c_rdata),
-	.host_we(plxc_host_we),
-	.host_addr(plxc_host_addr),
-	.host_wdata(plxc_host_wdata),
+	.host_we(plxc_core_we),
+	.host_addr(plxc_core_addr),
+	.host_wdata(plxc_core_wdata),
 	.chrome_hw(1'b1),
 	.mon_w(12'd1280),
 	.mon_h(12'd720),
@@ -1415,13 +1418,13 @@ ddr_bus_arbiter_plxc #(
 	.DDRAM_WE(DDRAM_WE)
 );
 
-// Retain PLXC hierarchy; host beats quiet until PLEX_CHROME_DDR + w-osd plane ports.
+// Retain PLXC hierarchy + exported host beats (sys_top chrome path).
 (* keep = 1 *) wire _keep_plxc_slot =
 	plxc_c_req | plxc_c_gnt | plxc_c_rd_valid | plxc_grant_m3_live |
-	plxc_host_we | plxc_ld_busy | |plxc_ld_loads | |plxc_br_gnt |
-	|plxc_arb_m3 | |plxc_host_addr | |plxc_host_wdata[7:0] | |plxc_ld_seq;
-`endif
-`endif
+	plxc_core_we | plxc_ld_busy | |plxc_ld_loads | |plxc_br_gnt |
+	|plxc_arb_m3 | |plxc_core_addr | |plxc_core_wdata[7:0] | |plxc_ld_seq;
+`endif // !FABRIC_DDR_WRITER
+`endif // DDR_FRAME_STORE
 
 assign CLK_VIDEO = clk_sys;
 assign CE_PIXEL  = ce_pix;
@@ -1596,50 +1599,14 @@ always @(posedge clk_sys) begin
 	end
 end
 
-// --- PLXC DDR loader (ARM semantic list → host_if beats) ---------------------
-// Default ENABLE=0: zero DDR traffic, host_we stuck 0 (nostub-safe).
-// PLEX_CHROME_DDR: ENABLE=1 but m_gnt stays 0 until w-mem gives an arbiter
-// slot — host beats remain 0 until that lands (honest: not fake-live).
-wire        plxc_m_req, plxc_m_we;
-wire [28:0] plxc_m_addr;
-wire [63:0] plxc_m_wdata;
-wire        plxc_ld_busy;
-wire [15:0] plxc_ld_seq;
-wire [31:0] plxc_ld_loads, plxc_ld_plxo, plxc_ld_bad;
-
-`ifdef PLEX_CHROME_DDR
-localparam bit PLXC_DDR_EN = 1'b1;
-`else
-localparam bit PLXC_DDR_EN = 1'b0;
+// PLXC DDR loader lives once under DDR_FRAME_STORE && !FABRIC_DDR_WRITER
+// (w-mem m3 arbiter + bridge). R1 closed: no second instance with m_gnt=0.
+// When that product path is not compiled, keep PLXC_EXT_* quiet:
+`ifndef DDR_FRAME_STORE
+assign plxc_core_we    = 1'b0;
+assign plxc_core_addr  = 8'd0;
+assign plxc_core_wdata = 64'd0;
 `endif
-
-plex_chrome_ddr_loader #(
-	.ENABLE(PLXC_DDR_EN),
-	.MAX_CMDS(112)
-) u_plxc_ddr_loader (
-	.clk(clk_sys),
-	.reset(reset),
-	.m_req(plxc_m_req),
-	.m_we(plxc_m_we),
-	.m_addr(plxc_m_addr),
-	.m_wdata(plxc_m_wdata),
-	// No grant until w-mem mailbox arbiter owns a PLXC slot (shared map).
-	.m_gnt(1'b0),
-	.m_rd_valid(1'b0),
-	.m_rdata(64'd0),
-	.host_we(plxc_core_we),
-	.host_addr(plxc_core_addr),
-	.host_wdata(plxc_core_wdata),
-	.chrome_hw(1'b1),
-	.mon_w(12'd1280),
-	.mon_h(12'd720),
-	.mon_scale(4'd3),
-	.last_seq(plxc_ld_seq),
-	.busy(plxc_ld_busy),
-	.cnt_loads(plxc_ld_loads),
-	.cnt_plxo_wr(plxc_ld_plxo),
-	.cnt_bad_magic(plxc_ld_bad)
-);
 
 // Silence unused
 wire _unused = |{disp_i, cont_i, advance, ingest_pixels, ingest_dl, af_active, ioctl_addr,
@@ -1653,8 +1620,6 @@ wire _unused = |{disp_i, cont_i, advance, ingest_pixels, ingest_dl, af_active, i
 	stream_fifo_level, ddr_frames, stream_ddr_active, stream_ddr_bytes_out,
 	stream_ddr_underruns, stream_ddr_overruns, stream_ddr_host_write,
 	stream_ddr_fpga_read, stream_ddr_bus_want, stream_ddr_burstcnt, stream_ddr_addr,
-	stream_ddr_rd, stream_ddr_din, stream_ddr_be, stream_ddr_we, _host_wr_unused,
-	plxc_m_req, plxc_m_we, plxc_m_addr, plxc_m_wdata, plxc_ld_busy, plxc_ld_seq,
-	plxc_ld_loads, plxc_ld_plxo, plxc_ld_bad};
+	stream_ddr_rd, stream_ddr_din, stream_ddr_be, stream_ddr_we, _host_wr_unused};
 
 endmodule
