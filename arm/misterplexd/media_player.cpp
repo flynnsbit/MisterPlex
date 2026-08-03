@@ -2921,7 +2921,12 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             ? (std::to_string(ffmpegScaleSourceW_) + "x" + std::to_string(ffmpegScaleSourceH_))
             : "unknown";
     const std::string codedStr = std::to_string(rawW) + "x" + std::to_string(rawH);
-    if (vfPlan.reason.find("unverified_delivery") != std::string::npos) {
+    // GEOM_GUARD observability: planner refuses identity_skip on unverified claims.
+    // Reasons evolved: live ea643e99 used *unverified_delivery*; product now uses
+    // force_unverified_claim_scale_pad_coded / unverified_claim_scale_pad_coded.
+    // Match any "unverified" token so the log cannot go silently dead on rename.
+    if (!vfPlan.identity_skip &&
+        vfPlan.reason.find("unverified") != std::string::npos) {
         log(std::string("media: GEOM_GUARD refused identity_skip — delivery not verified "
                         "(PMS request ≠ measured size); forcing scale. reason=") +
             vfPlan.reason + " claimed=" + srcStr + " coded=" + codedStr);

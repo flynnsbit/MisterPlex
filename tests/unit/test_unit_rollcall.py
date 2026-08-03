@@ -143,6 +143,7 @@ EXPECTED_COMMANDS = [
     "bash $(ROOT)/tests/unit/test_force_scale_sws_cost.sh",
     "bash $(ROOT)/tests/unit/test_fabric_scaler_delta.sh",
     "bash $(ROOT)/tests/unit/test_624x350_force_scale_out.sh",
+    "bash $(ROOT)/tests/unit/test_delivered_350_capability.sh",
     "$(ROOT)/build/test_yuv420p_chroma_480p",
     "$(ROOT)/build/test_geom_frame_cost",
     "$(ROOT)/build/test_glass_loss_death_points",
