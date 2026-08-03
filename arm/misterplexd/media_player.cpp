@@ -12,6 +12,7 @@
 #include "libmisterplex/last_frame_latch.hpp"
 #include "libmisterplex/osd_menu.hpp"
 #include "libmisterplex/pms_delivery_geom.hpp"
+#include "libmisterplex/plxg_q5_aspect_cadence.hpp"
 #include "libmisterplex/h264_nal_dispatch.hpp"
 #include "libmisterplex/h264_recon.hpp"
 #include "libmisterplex/raw_video_pipe.hpp"
@@ -477,6 +478,7 @@ void MediaPlayer::setContentFpsRational(int num, int den) {
     if (num <= 0 || den <= 0) {
         fpsNum_ = 0;
         fpsDen_ = 0;
+        refreshPlxgAspectCadence();
         return;
     }
     // Sanity clamp: 1..240 fps. Keeps a bogus PMS value from wedging the schedule.
@@ -484,10 +486,47 @@ void MediaPlayer::setContentFpsRational(int num, int den) {
     if (v < 1.0 || v > 240.0) {
         fpsNum_ = 0;
         fpsDen_ = 0;
+        refreshPlxgAspectCadence();
         return;
     }
     fpsNum_ = num;
     fpsDen_ = den;
+    refreshPlxgAspectCadence();
+}
+
+void MediaPlayer::setContentAspectMeta(std::string pixelAspectRatio,
+                                       std::string mediaAspectRatio) {
+    pixelAspectRatio_ = std::move(pixelAspectRatio);
+    mediaAspectRatio_ = std::move(mediaAspectRatio);
+    refreshPlxgAspectCadence();
+}
+
+void MediaPlayer::refreshPlxgAspectCadence() {
+    // Prefer measured delivery (ffmpeg banner); else play-time scale-source claim.
+    int w = measuredDeliveryW_.load(std::memory_order_relaxed);
+    int h = measuredDeliveryH_.load(std::memory_order_relaxed);
+    if (w <= 0 || h <= 0) {
+        w = ffmpegScaleSourceW_;
+        h = ffmpegScaleSourceH_;
+    }
+    const PlxgAspectCadence c =
+        selectPlxgAspectCadence(w, h, pixelAspectRatio_, mediaAspectRatio_, fpsNum_, fpsDen_);
+    uint64_t q = 0;
+    if (!packPlxgQ5(c, &q))
+        q = 0;
+    plxgQ5_.store(q, std::memory_order_relaxed);
+    uint32_t flags = 0;
+    if (c.dar_valid)
+        flags |= 1u;
+    if (c.fps_valid)
+        flags |= 2u;
+    plxgQ5Flags_.store(flags, std::memory_order_relaxed);
+    // Greppable publish line — values from PMS/FFmpeg only; valid=0 when unknown.
+    log(std::string("media: ") + formatPlxgQ5LogLine(c, q) +
+        " coded=" + std::to_string(w) + "x" + std::to_string(h) +
+        " sar=" + (pixelAspectRatio_.empty() ? "-" : pixelAspectRatio_) +
+        " media_ar=" + (mediaAspectRatio_.empty() ? "-" : mediaAspectRatio_) +
+        " fps_rational=" + std::to_string(fpsNum_) + "/" + std::to_string(fpsDen_));
 }
 
 void MediaPlayer::setFfmpegScaleMode(std::string mode) {
@@ -1540,6 +1579,9 @@ void MediaPlayer::ffmpegStderrPump(int errReadFd, size_t codedFrameBytes, bool i
                 (changed ? " MID_STREAM_CHANGE=1" : " MID_STREAM_CHANGE=0") +
                 " tag=measured" +
                 (changed ? " — size changed after play start" : ""));
+            // PLXG q5: re-pack DAR/fps against *measured* coded size (SAR from PMS).
+            // Fabric consumes under B16 frame-boundary (w-mem); we only publish values.
+            refreshPlxgAspectCadence();
             // Mismatch vs coded bank must be LOUD even when FORCE_SCALE keeps the
             // pipe safe (desync_risk may stay 0 with identity_skip=0).
             // Parent user symptom: "480p didn't look like 480p" when measured_h

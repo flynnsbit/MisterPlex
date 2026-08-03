@@ -1116,7 +1116,8 @@ int main(int argc, char** argv) {
         // a fixed 640x360/960x540 bank). Ceiling weakForPlay is updated for logs.
         if (resolved.sourceAwareApplied && resolved.storeWidth > 0 &&
             resolved.storeHeight > 0) {
-            player.setDecodeSize(resolved.storeWidth, resolved.storeHeight);
+            player.setDecodeSize(misterplex::CodedWidth{resolved.storeWidth},
+                                 misterplex::CodedHeight{resolved.storeHeight});
             player.setDecodeSizeSource("source_aware_store");
             if (resolved.requestWidth > 0 && resolved.requestHeight > 0) {
                 weakForPlay.videoResolution = std::to_string(resolved.requestWidth) + "x" +
@@ -1195,10 +1196,10 @@ int main(int argc, char** argv) {
         // Bank for GEOM predict = source-aware store when applied, else tier ceiling.
         const int bankW = (resolved.sourceAwareApplied && resolved.storeWidth > 0)
                               ? resolved.storeWidth
-                              : contentRes.width;
+                              : contentRes.width.get();
         const int bankH = (resolved.sourceAwareApplied && resolved.storeHeight > 0)
                               ? resolved.storeHeight
-                              : contentRes.height;
+                              : contentRes.height.get();
         const auto codedGeom =
             wantFpgaDdrCanvas
                 ? misterplex::ddrFrameGeometryForFpgaPresent(bankW, bankH)
@@ -1306,10 +1307,23 @@ int main(int argc, char** argv) {
             int fden = resolved.fpsDen;
             misterplex::applyContentFpsConf(loadConf(confPath, "AV_CONTENT_FPS"), fnum, fden);
             player.setContentFpsRational(fnum, fden);
+            // PLXG q5 sources: PMS SAR/Media AR + content fps. DAR uses measured
+            // coded size once ffmpeg_banner lands; until then scale-source dims.
+            player.setContentAspectMeta(resolved.pixelAspectRatio, resolved.mediaAspectRatio);
             std::fprintf(stderr, "misterplexd: content fps exact=%d/%d (pms frameRate=%s vfr=%s)\n",
                          fnum, fden,
                          resolved.frameRate.empty() ? "-" : resolved.frameRate.c_str(),
                          resolved.videoFrameRate.empty() ? "-" : resolved.videoFrameRate.c_str());
+            std::fprintf(stderr,
+                         "misterplexd: PLXG_Q5_SRC sar=%s media_ar=%s packed=0x%016llx "
+                         "dar_valid=%d fps_valid=%d (wire +0x828; latch=w-mem B16)\n",
+                         resolved.pixelAspectRatio.empty() ? "-"
+                                                           : resolved.pixelAspectRatio.c_str(),
+                         resolved.mediaAspectRatio.empty() ? "-"
+                                                           : resolved.mediaAspectRatio.c_str(),
+                         static_cast<unsigned long long>(player.lastPlxgQ5()),
+                         player.lastPlxgDarValid() ? 1 : 0,
+                         player.lastPlxgFpsValid() ? 1 : 0);
         }
 
         if (!req.offsetPresent && resolved.viewOffsetMs > 0)
