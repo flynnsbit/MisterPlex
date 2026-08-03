@@ -26,7 +26,8 @@
     "plxg_bank_atomic": "w-path+w-mem+w-clock",
     "store_applied_bus": "w-mem",
     "app_from_store_applied": "w-clock (blocked on bus)",
-    "swap_applied_pulse_export": "w-mem"
+    "swap_applied_pulse_export": "w-mem",
+    "B9_bank_gen_dar_match": "w-scaler+w-mem (store_applied_seq\u2192sys_top.bank_gen; DAR\u2227bank match)"
   },
   "red_twins": [
     "FAULT_B20_BEAM_FREE_RUN",
@@ -47,5 +48,7 @@
       "app_from_applied": "w-clock",
       "hierarchy_tb": "joint"
     }
-  }
+  },
+  "B9_bank_gen_coupled": false,
+  "b9_fence": ".agent-work/w-clock/B9_BANK_GEN_ACK_FENCE.md"
 }

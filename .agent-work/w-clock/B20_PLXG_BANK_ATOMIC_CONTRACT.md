@@ -69,3 +69,9 @@ swap_applied_pulse   // same edge as bank flip
 ## Prior B20 work still valid (narrower scope)
 Product polarity, fstart-qualify vs mid-active ready, mode-exit hold, app_win map —
 these remain necessary but **insufficient** for generation↔bank atomicity.
+
+## Cross-link: B9 DAR black release (w-scaler)
+rd-duck (B9 still unsafe): `sys_top` ties `bank_gen=0`; `disp_matches_live` is DAR-only;
+release is `disp_match && gen_after_hold` without bank. **Same** `store_applied_seq` must
+feed `plex_ar_out_hold.bank_gen` and match on display tag. See
+`B9_BANK_GEN_ACK_FENCE.md`. w-clock does not own plex_ar_*.
