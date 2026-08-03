@@ -298,37 +298,72 @@ inline DdrFrameGeometry productDdrFrameStoreGeometry() {
     return plex480pDdrFrameGeometry();
 }
 
+// w-mem rt_raw_ok: coded_w % 16 == 0 && height even. Path must not emit banks
+// the store will reject (rd-duck / parent source-aware programme).
+inline bool ddrFabricStoreAligned(int coded_w, int coded_h) {
+    return coded_w >= 16 && coded_h >= 2 && (coded_w % 16) == 0 && (coded_h % 2) == 0 &&
+           coded_w <= 1280 && coded_h <= 720 && !(coded_w & 1) && !(coded_h & 1);
+}
+
+// Pad (never crop) to fabric-aligned store dims. Shared contract with
+// pms_delivery_geom::alignGeometryForFabricStore — kept here so storage
+// selection does not depend on PMS headers.
+inline void ddrAlignGeometryForFabricStore(int in_w, int in_h, int& out_w, int& out_h) {
+    int w = in_w < 16 ? 16 : in_w;
+    int h = in_h < 2 ? 2 : in_h;
+    out_w = (w + 15) & ~15; // align up 16
+    out_h = h & ~1;         // even floor
+    if (out_h < h)
+        out_h = (h + 1) & ~1; // even ceil if odd source
+    if (out_h < 2)
+        out_h = 2;
+    if (out_w > 1280)
+        out_w = 1280 - (1280 % 16);
+    if (out_h > 720)
+        out_h = 720 - (720 % 2);
+}
+
+// True when identity I420 storage is eligible (aligned + non-zero payload).
+// Legacy 480p canvas fallback is ONLY for unknown/unusable sizes — not for
+// every non-allowlist tier (rd-duck 2026-08-03: allowlist forced ARM scale of
+// 320x240/416x234/624x352/720x480 into 624x480 despite source-aware request).
+inline bool ddrNativeStorageEligible(int coded_w, int coded_h) {
+    if (!ddrFabricStoreAligned(coded_w, coded_h))
+        return false;
+    return yuv420pFrameBytes(coded_w, coded_h) > 0;
+}
+
 // Storage geometry the daemon FFmpeg/rawvideo path must emit (media_player rawW/H).
 //
-// rd-duck 2026-08-03: rawW/rawH came solely from this selector. If it always
-// returned the 480p canvas, DECODE=960x540 still forced scale+copy into 624x480
-// and the measured +7.16 ms tight-540 budget was dead code. If it returned the
-// Option-C *DE canvas* 1280x720, FFmpeg would emit 1_382_400 B and kill the
-// budget the other way. Both are wrong for the product 540→720-glass path.
-//
-// Rules:
-//   - 960x540 content → identity STORAGE 960x540 (777600 B). Never 1280 canvas.
-//   - 640x360 content → identity STORAGE 640x360 (345600 B) for exact-2× glass.
-//     Never force 624x480 canvas (would destroy 2× and reintroduce scale).
-//   - 1280x720 content → identity STORAGE 1280x720 (true-720 upgrade path).
-//   - All other tiers (320x240, 624x480, …) → product 480p silicon canvas
-//     (scale+pad). Returning identity-320 is the shear defect (line_bytes=320
-//     vs RTL CODED_W=624).
-// DE/glass canvas (1280x720) is a separate fabric concept — not this function.
+// Rules (PLXG runtime DE + source-aware programme):
+//   - Named product contracts: 960×540, 640×360, 1280×720 identity; 624×480
+//     keeps plex480p crop/pillarbox metadata.
+//   - Any other fabric-aligned WxH → **identity storage** (variable DE; ascal
+//     lifts to glass). Do NOT force 624×480 canvas — that reintroduces ARM scale.
+//   - Unaligned input → pad via ddrAlignGeometryForFabricStore then identity.
+//   - Unusable → last-resort product 480p canvas.
+// DE/glass canvas (1280×720 scanout) is fabric/ascal — not this function's job.
 inline DdrFrameGeometry ddrStorageGeometryForContent(CodedWidth contentW,
                                                      CodedHeight contentH) {
-    if (contentW.get() == kPlex540pCodedWidth.get() &&
-        contentH.get() == kPlex540pCodedHeight.get())
+    const int w = contentW.get();
+    const int h = contentH.get();
+    if (w == kPlex540pCodedWidth.get() && h == kPlex540pCodedHeight.get())
         return makeDdrFrameGeometry(kPlex540pCodedWidth, kPlex540pCodedHeight);
-    if (contentW.get() == kPlex360pCodedWidth.get() &&
-        contentH.get() == kPlex360pCodedHeight.get())
+    if (w == kPlex360pCodedWidth.get() && h == kPlex360pCodedHeight.get())
         return makeDdrFrameGeometry(kPlex360pCodedWidth, kPlex360pCodedHeight);
-    if (contentW.get() == kPlex720pCodedWidth.get() &&
-        contentH.get() == kPlex720pCodedHeight.get())
+    if (w == kPlex720pCodedWidth.get() && h == kPlex720pCodedHeight.get())
         return makeDdrFrameGeometry(kPlex720pCodedWidth, kPlex720pCodedHeight);
-    if (contentW.get() == kPlex480pCodedWidth.get() &&
-        contentH.get() == kPlex480pCodedHeight.get())
+    if (w == kPlex480pCodedWidth.get() && h == kPlex480pCodedHeight.get())
         return plex480pDdrFrameGeometry();
+
+    if (ddrNativeStorageEligible(w, h))
+        return makeDdrFrameGeometry(CodedWidth{w}, CodedHeight{h});
+
+    int aw = 0, ah = 0;
+    ddrAlignGeometryForFabricStore(w, h, aw, ah);
+    if (ddrNativeStorageEligible(aw, ah))
+        return makeDdrFrameGeometry(CodedWidth{aw}, CodedHeight{ah});
+
     return productDdrFrameStoreGeometry();
 }
 

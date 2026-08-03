@@ -159,34 +159,75 @@ inline bool contentFpsIntegerForPlxg(int fps_num, int fps_den, uint8_t* out_fps)
     return false;
 }
 
-// DAR from explicit SAR (preferred) or Media@aspectRatio. NEVER falls back to
-// coded_w/coded_h storage aspect — 720×480 proves storage AR is unsound.
-// coded dims are only used with SAR to form display aspect.
+// Provenance for DAR (rd-duck adversarial audit):
+//   DirectPlay  — coded samples are the source; apply Stream@pixelAspectRatio
+//                 to coded WxH (source SAR is real).
+//   Transcode   — PMS square-pixel fit already baked SAR into delivered dims.
+//                 Applying *source* SAR to delivered 624×350 double-counts
+//                 anamorphic (624×350×160:117 → 256:105 wrong; true DAR 16:9).
+//                 Prefer Media@aspectRatio; else delivered stream SAR if 1:1 or
+//                 present; else delivered storage aspect (square-pixel xcode).
+enum class PlxgDarProvenance {
+    DirectPlay = 0,
+    Transcode = 1,
+};
+
+inline bool darFromCodedTimesSar(int coded_w, int coded_h, int sar_n, int sar_d, uint16_t* dar_x,
+                                 uint16_t* dar_y) {
+    if (!dar_x || !dar_y || coded_w <= 0 || coded_h <= 0 || sar_n <= 0 || sar_d <= 0)
+        return false;
+    uint64_t n = static_cast<uint64_t>(coded_w) * static_cast<uint64_t>(sar_n);
+    uint64_t d = static_cast<uint64_t>(coded_h) * static_cast<uint64_t>(sar_d);
+    const uint64_t g = std::gcd(n, d);
+    n /= g;
+    d /= g;
+    if (n == 0 || d == 0 || n > 0xFFFFFFFFull || d > 0xFFFFFFFFull)
+        return false;
+    return fitDar12(static_cast<uint32_t>(n), static_cast<uint32_t>(d), *dar_x, *dar_y);
+}
+
+// DAR selection with explicit provenance. NEVER invents 16:9 defaults.
+// pixelAspectRatio: for DirectPlay = source Stream SAR; for Transcode =
+//   *delivered* stream SAR only (usually 1:1) — do not pass source SAR.
 inline bool contentDarForPlxg(int coded_w, int coded_h, const std::string& pixelAspectRatio,
                               const std::string& mediaAspectRatio, uint16_t* dar_x,
-                              uint16_t* dar_y) {
+                              uint16_t* dar_y,
+                              PlxgDarProvenance prov = PlxgDarProvenance::DirectPlay) {
     if (!dar_x || !dar_y)
         return false;
+
+    if (prov == PlxgDarProvenance::Transcode) {
+        // 1) Media display aspect (title-level) — survives square-pixel xcode.
+        RationalAspect mar;
+        if (parseAspectRatioToken(mediaAspectRatio, mar) && mar.valid()) {
+            return fitDar12(static_cast<uint32_t>(mar.num), static_cast<uint32_t>(mar.den),
+                            *dar_x, *dar_y);
+        }
+        // 2) Delivered SAR (if caller passed delivered, not source).
+        RationalAspect sar;
+        if (parseAspectRatioToken(pixelAspectRatio, sar) && sar.valid() && coded_w > 0 &&
+            coded_h > 0) {
+            return darFromCodedTimesSar(coded_w, coded_h, sar.num, sar.den, dar_x, dar_y);
+        }
+        // 3) Square-pixel universal delivery: DAR = storage aspect of coded.
+        if (coded_w > 0 && coded_h > 0)
+            return fitDar12(static_cast<uint32_t>(coded_w), static_cast<uint32_t>(coded_h),
+                            *dar_x, *dar_y);
+        return false;
+    }
+
+    // DirectPlay: coded × source SAR first.
     RationalAspect sar;
     if (parseAspectRatioToken(pixelAspectRatio, sar) && sar.valid() && coded_w > 0 &&
         coded_h > 0) {
-        // DAR = (w*sar_n) : (h*sar_d)
-        uint64_t n = static_cast<uint64_t>(coded_w) * static_cast<uint64_t>(sar.num);
-        uint64_t d = static_cast<uint64_t>(coded_h) * static_cast<uint64_t>(sar.den);
-        // Reduce 64-bit before fitDar12.
-        const uint64_t g = std::gcd(n, d);
-        n /= g;
-        d /= g;
-        if (n == 0 || d == 0 || n > 0xFFFFFFFFull || d > 0xFFFFFFFFull)
-            return false;
-        return fitDar12(static_cast<uint32_t>(n), static_cast<uint32_t>(d), *dar_x, *dar_y);
+        return darFromCodedTimesSar(coded_w, coded_h, sar.num, sar.den, dar_x, dar_y);
     }
     RationalAspect mar;
     if (parseAspectRatioToken(mediaAspectRatio, mar) && mar.valid()) {
         return fitDar12(static_cast<uint32_t>(mar.num), static_cast<uint32_t>(mar.den), *dar_x,
                         *dar_y);
     }
-    // Unknown — do not invent storage aspect.
+    // Unknown — do not invent storage aspect for anamorphic DP without SAR.
     return false;
 }
 
@@ -195,10 +236,13 @@ inline bool contentDarForPlxg(int coded_w, int coded_h, const std::string& pixel
 inline PlxgAspectCadence selectPlxgAspectCadence(int coded_w, int coded_h,
                                                  const std::string& pixelAspectRatio,
                                                  const std::string& mediaAspectRatio,
-                                                 int fps_num, int fps_den) {
+                                                 int fps_num, int fps_den,
+                                                 PlxgDarProvenance prov =
+                                                     PlxgDarProvenance::DirectPlay) {
     PlxgAspectCadence c{};
     uint16_t dx = 0, dy = 0;
-    if (contentDarForPlxg(coded_w, coded_h, pixelAspectRatio, mediaAspectRatio, &dx, &dy)) {
+    if (contentDarForPlxg(coded_w, coded_h, pixelAspectRatio, mediaAspectRatio, &dx, &dy,
+                          prov)) {
         c.dar_x = dx;
         c.dar_y = dy;
         c.dar_valid = true;

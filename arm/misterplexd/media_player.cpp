@@ -509,8 +509,13 @@ void MediaPlayer::refreshPlxgAspectCadence() {
         w = ffmpegScaleSourceW_;
         h = ffmpegScaleSourceH_;
     }
-    const PlxgAspectCadence c =
-        selectPlxgAspectCadence(w, h, pixelAspectRatio_, mediaAspectRatio_, fpsNum_, fpsDen_);
+    const PlxgDarProvenance prov = plxgDarTranscode_ ? PlxgDarProvenance::Transcode
+                                                     : PlxgDarProvenance::DirectPlay;
+    // Transcode: do not pass source SAR into coded×SAR (double anamorphic).
+    // Media@aspectRatio carries display intent; delivered xcode is square-pixel.
+    const PlxgAspectCadence c = selectPlxgAspectCadence(
+        w, h, plxgDarTranscode_ ? std::string{} : pixelAspectRatio_, mediaAspectRatio_,
+        fpsNum_, fpsDen_, prov);
     uint64_t q = 0;
     if (!packPlxgQ5(c, &q))
         q = 0;
@@ -522,10 +527,13 @@ void MediaPlayer::refreshPlxgAspectCadence() {
         flags |= 2u;
     plxgQ5Flags_.store(flags, std::memory_order_relaxed);
     // Greppable publish line — values from PMS/FFmpeg only; valid=0 when unknown.
+    // Note: lastPlxgQ5() is the value source; w-mem wire writer integration is
+    // a separate atomic merge (B16) — path does not claim DDR PLXG write here.
     log(std::string("media: ") + formatPlxgQ5LogLine(c, q) +
         " coded=" + std::to_string(w) + "x" + std::to_string(h) +
         " sar=" + (pixelAspectRatio_.empty() ? "-" : pixelAspectRatio_) +
         " media_ar=" + (mediaAspectRatio_.empty() ? "-" : mediaAspectRatio_) +
+        " dar_prov=" + (plxgDarTranscode_ ? "transcode" : "direct_play") +
         " fps_rational=" + std::to_string(fpsNum_) + "/" + std::to_string(fpsDen_));
 }
 
@@ -2926,10 +2934,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         onProgress_("buffering", startMs, durationMs);
 
     // STORAGE geometry for FFmpeg rawvideo + DDR publish payload (not DE canvas).
-    // 960x540 → identity 960x540 / 777600 B (product 540→720-glass; rd-duck #3).
-    // 320x240 / default → still 624x480 silicon canvas (scale+pad; shear-safe).
-    // NEVER take Option-C 1280x720 DE canvas as rawW/H — that forces 1_382_400 B
-    // copy and destroys the measured +7.16 ms budget.
+    // Source-aware / native: fabric-aligned outW×outH → identity bank (variable DE).
+    // Named contracts: 960×540, 640×360, 1280×720 identity; 624×480 pillarbox meta.
+    // NEVER take Option-C 1280×720 *scanout* as rawW/H unless content is 1280×720.
     const bool wantFpgaDdrCanvas =
         (presentMode_ == "fpga" || presentMode_ == "both");
     const DdrFrameGeometry ddrGeometry =

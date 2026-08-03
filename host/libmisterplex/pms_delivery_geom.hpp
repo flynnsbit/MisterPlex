@@ -301,14 +301,32 @@ inline SourceAwarePmsRequest selectSourceAwarePmsRequest(int src_w, int src_h, i
     // Measured 426x240 class (rk69, 2026-08-04 prove align-check):
     //   request 426 → deliv 426 (w%16=10) STORE REJECT
     //   request 432 → deliv 426 (no upscale) STORE REJECT
-    //   request 416 → deliv 416x234 (aligned) — floor-snap wins
+    //   request 416 → deliv 416x234 (aligned) — floor-snap + AR-fit height
+    // rd-duck: store must track measured 416x234, not claim 416x240.
     o.host_may_need_pad = (src_w > 0) && ((src_w % 16) != 0);
     o.request_w = alignWidthDown16(w);
     o.request_h = evenFloorHeight(h);
-    // Bank tracks the request (already 16×even). Do not align-up native 426→432:
-    // PMS will not deliver 432; it either keeps 426 or AR-fits into the floor box.
-    o.store_w = o.request_w;
-    o.store_h = o.request_h;
+    // When width floor-snap shrinks the box, PMS AR-fits into the new ceiling
+    // (never upscales). Predict delivered height so store matches measurement.
+    if (src_w > 0 && src_h > 0 && o.request_w < src_w) {
+        const double ar = static_cast<double>(src_w) / static_cast<double>(src_h);
+        if (ar > 0.0) {
+            int h_fit = static_cast<int>(std::floor(static_cast<double>(o.request_w) / ar));
+            h_fit = evenFloorHeight(h_fit);
+            if (h_fit > 0 && h_fit <= o.request_h)
+                o.request_h = h_fit;
+        }
+    }
+    // Bank = request when already fabric-aligned; else pad (runtime caller of
+    // alignGeometryForFabricStore — was previously dead code).
+    if (isFabricStoreAligned(o.request_w, o.request_h)) {
+        o.store_w = o.request_w;
+        o.store_h = o.request_h;
+    } else {
+        alignGeometryForFabricStore(o.request_w, o.request_h, o.store_w, o.store_h);
+        o.host_may_need_pad = true;
+        o.policy = "source_snap_store_pad";
+    }
     o.videoResolution =
         std::to_string(o.request_w) + "x" + std::to_string(o.request_h);
     return o;

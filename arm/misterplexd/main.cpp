@@ -1310,6 +1310,7 @@ int main(int argc, char** argv) {
             // PLXG q5 sources: PMS SAR/Media AR + content fps. DAR uses measured
             // coded size once ffmpeg_banner lands; until then scale-source dims.
             player.setContentAspectMeta(resolved.pixelAspectRatio, resolved.mediaAspectRatio);
+            player.setPlxgDarProvenanceTranscode(resolved.transcoded);
             std::fprintf(stderr, "misterplexd: content fps exact=%d/%d (pms frameRate=%s vfr=%s)\n",
                          fnum, fden,
                          resolved.frameRate.empty() ? "-" : resolved.frameRate.c_str(),

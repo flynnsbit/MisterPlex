@@ -106,17 +106,27 @@ static void test_no_storage_aspect_fallback_720x480() {
     expect(e.fps_valid && e.content_fps == 30, "30000/1001 → fps=30");
 }
 
-static void test_lab_624x350_sar_160_117() {
-    // Coded*SAR math: 624*160 : 350*117 = 99840:40950 = 256:105.
-    // NOTE: ebec8ab3's "16:9 exactly" used (624/480)*(160/117) — display box
-    // height 480, not coded 350. PLXG must use measured coded size, not invent 480.
-    const auto c = selectPlxgAspectCadence(624, 350, "160:117", "", 24000, 1001);
-    expect(c.dar_valid, "624x350+160:117 dar_valid");
-    expect(c.dar_x == 256 && c.dar_y == 105, "624x350+160:117 → 256:105 (coded*SAR)");
-    expect(c.fps_valid && c.content_fps == 24, "24000/1001 → 24");
-    // When Media@aspectRatio carries display intent, use it if SAR absent.
-    const auto m = selectPlxgAspectCadence(624, 350, "", "1.78", 24000, 1001);
-    expect(m.dar_valid && m.dar_x == 89 && m.dar_y == 50, "media 1.78 → 89/50");
+static void test_lab_624x350_dar_provenance() {
+    // rd-duck: xcode 624x350 is square-pixel fit; source SAR×350 double-counts.
+    const auto bad = selectPlxgAspectCadence(624, 350, "160:117", "1.78", 24000, 1001,
+                                             PlxgDarProvenance::DirectPlay);
+    expect(bad.dar_valid && bad.dar_x == 256 && bad.dar_y == 105,
+           "DP coded×SAR on 350 rows → 256:105 (math only)");
+
+    const auto xc = selectPlxgAspectCadence(624, 350, "160:117", "1.78", 24000, 1001,
+                                            PlxgDarProvenance::Transcode);
+    expect(xc.dar_valid && xc.dar_x == 89 && xc.dar_y == 50,
+           "transcode Media 1.78 → 89/50 NOT 256:105");
+    expect(xc.fps_valid && xc.content_fps == 24, "24000/1001 → 24");
+
+    const auto sp = selectPlxgAspectCadence(624, 350, "", "", 24, 1, PlxgDarProvenance::Transcode);
+    expect(sp.dar_valid && sp.dar_x == 312 && sp.dar_y == 175,
+           "transcode square-pixel 624:350 → 312:175");
+
+    // True DP anamorphic full frame: 624x480 × 160:117 → 16:9.
+    const auto dp = selectPlxgAspectCadence(624, 480, "160:117", "", 24000, 1001,
+                                            PlxgDarProvenance::DirectPlay);
+    expect(dp.dar_valid && dp.dar_x == 16 && dp.dar_y == 9, "DP 624x480×160:117 → 16:9");
 }
 
 static void test_media_aspect_decimal() {
@@ -144,7 +154,7 @@ int main() {
     test_reserved_reject_red_twin();
     test_unknown_no_invent_red_twin();
     test_no_storage_aspect_fallback_720x480();
-    test_lab_624x350_sar_160_117();
+    test_lab_624x350_dar_provenance();
     test_media_aspect_decimal();
     test_fps_families();
     if (g_fails) {

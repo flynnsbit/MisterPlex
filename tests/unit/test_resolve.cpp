@@ -689,16 +689,17 @@ int main() {
         CHECK(s320.request_w == 320 && s320.request_h == 240);
         CHECK(isFabricStoreAligned(s320.store_w, s320.store_h));
 
-        // 426x240: W%16=10 → request floor 416 (measured → deliv 416x234 aligned).
+        // 426x240: W%16=10 → request floor 416; PMS AR-fits H → 416x234 (measured).
+        // Store must match delivery, not claim 416x240 (rd-duck native mismatch).
         // NEG: align-up 432 does NOT work (PMS keeps 426) — never select 432.
         const auto s426 = selectSourceAwarePmsRequest(426, 240, 960, 540);
         CHECK(s426.request_w == 416);
-        CHECK(s426.request_h == 240);
-        CHECK(s426.host_may_need_pad);
+        CHECK(s426.request_h == 234);
         CHECK(s426.store_w == 416);
-        CHECK(s426.store_h == 240);
+        CHECK(s426.store_h == 234);
         CHECK(isFabricStoreAligned(s426.store_w, s426.store_h));
         CHECK(s426.store_w != 432);
+        CHECK(s426.store_h != 240); // red: old store_h=request_h before AR-fit predict
 
         // 720x480: identity; bank spare check (parent 1792 B).
         const auto s720 = selectSourceAwarePmsRequest(720, 480, 960, 540);

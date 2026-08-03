@@ -145,6 +145,10 @@ public:
     // PMS Stream@pixelAspectRatio + Media@aspectRatio for PLXG q5 DAR publish.
     // Empty = unknown → dar_valid=0 (never invent storage AR).
     void setContentAspectMeta(std::string pixelAspectRatio, std::string mediaAspectRatio);
+    // rd-duck: Transcode must not apply source SAR to delivered square-pixel dims.
+    void setPlxgDarProvenanceTranscode(bool transcode) {
+        plxgDarTranscode_ = transcode;
+    }
     // Rebuild PLXG q5 from PMS meta + measured/claimed geometry + content fps.
     // Logs greppable media: PLXG_Q5 … Offsets: doorbell+0x828. Wire write is
     // owned with w-mem record store (B16); path owns the value source.
@@ -406,6 +410,8 @@ private:
     // Aspect tokens from resolve (PMS). Used only for PLXG q5; empty = unknown.
     std::string pixelAspectRatio_;
     std::string mediaAspectRatio_;
+    // true → PlxgDarProvenance::Transcode (Media AR / delivered; no source SAR×coded).
+    bool plxgDarTranscode_ = false;
     // Last packed PLXG q5 (doorbell+0x828). Flags: bit0=dar_valid bit1=fps_valid.
     std::atomic<uint64_t> plxgQ5_{0};
     std::atomic<uint32_t> plxgQ5Flags_{0};

@@ -30,6 +30,21 @@ int main() {
     const auto s540 = ddrFfmpegGeometryForPresent(960, 540);
     expect(s540.coded_width.get() == 960 && s540.coded_height.get() == 540, "540 storage identity");
 
+    // rd-duck: native classes must NOT fall back to 624x480 canvas.
+    const auto n320 = ddrStorageGeometryForContent(320, 240);
+    expect(n320.coded_width.get() == 320 && n320.coded_height.get() == 240, "native 320x240");
+    const auto n720 = ddrStorageGeometryForContent(720, 480);
+    expect(n720.coded_width.get() == 720 && n720.coded_height.get() == 480, "native 720x480");
+    const auto n416 = ddrStorageGeometryForContent(416, 234);
+    expect(n416.coded_width.get() == 416 && n416.coded_height.get() == 234, "native 416x234");
+    const auto n352 = ddrStorageGeometryForContent(624, 352);
+    expect(n352.coded_width.get() == 624 && n352.coded_height.get() == 352, "native 624x352");
+    // Unaligned 426 → pad store (align-up), not silent 624 canvas.
+    const auto n426 = ddrStorageGeometryForContent(426, 240);
+    expect(n426.coded_width.get() == 432 && n426.coded_height.get() == 240,
+           "unaligned 426 pads to 432x240");
+    expect(n320.coded_width.get() != 624, "red: 320 must not become 624 canvas");
+
     // 360p constants greppable and consistent.
     expect(kPlex360pCodedWidth.get() == 640, "kPlex360pCodedWidth");
     expect(kPlex360pCodedHeight.get() == 360, "kPlex360pCodedHeight");
