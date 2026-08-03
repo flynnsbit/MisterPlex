@@ -1,5 +1,6 @@
 #include "plex_resolve.hpp"
 
+#include "libmisterplex/h264_fabric_stream_gate.hpp"
 #include "libmisterplex/osd_menu.hpp"
 
 #include <algorithm>
@@ -329,8 +330,8 @@ bool validateWeakLadder(const WeakLadder& weak, std::string* why) {
         return fail("videoCodec must be h264");
     if (weak.audioCodec != "aac")
         return fail("audioCodec must be aac");
-    if (weak.h264Profile != "baseline")
-        return fail("H.264 profile must be baseline for the current decoder");
+    if (weak.h264Profile != kPlexH264ProfilePin)
+        return fail("H.264 profile must be baseline (fabric CAVLC pin; no High/CABAC)");
     const bool isPath720 = (w == kPlex720pCodedWidth.get() && h == kPlex720pCodedHeight.get());
     // 480p path stays L3.0; path-720p ladder may request L3.1 (kPlex720pH264Level).
     const int maxLevel = isPath720 ? kPlex720pH264Level : 30;
@@ -440,12 +441,12 @@ std::string plexClientProfileExtra(const WeakLadder& weak) {
       << "add-transcode-target-audio-codec(type=videoProfile&context=streaming&protocol=http"
       << "&audioCodec=" << weak.audioCodec << "&replace=true)+"
       << "add-limitation(scope=videoCodec&scopeName=h264&type=match&name=video.profile"
-      << "&list=" << weak.h264Profile << "&replace=true)+"
+      << "&list=" << kPlexH264ProfilePin << "&replace=true)+"
       << "add-limitation(scope=videoCodec&scopeName=h264&type=upperBound&name=video.level"
       << "&value=" << weak.h264Level << "&replace=true)+"
       << "add-limitation(scope=videoTranscodeTarget&scopeName=h264&scopeType=videoCodec"
       << "&context=streaming&protocol=http&type=match&name=video.profile"
-      << "&list=" << weak.h264Profile << "&isRequired=true)+"
+      << "&list=" << kPlexH264ProfilePin << "&isRequired=true)+"
       << "add-limitation(scope=videoTranscodeTarget&scopeName=h264&scopeType=videoCodec"
       << "&context=streaming&protocol=http&type=upperBound&name=video.level"
       << "&value=" << weak.h264Level << "&isRequired=true)";
@@ -463,7 +464,7 @@ std::string plexClientCapabilities(const WeakLadder& weak) {
     parseResolution(weak.videoResolution, w, h);
     std::ostringstream o;
     o << "protocols=http-streaming-video,http-mp2t-video;"
-      << "videoDecoders=h264{profile:" << weak.h264Profile << "&resolution:" << w << "x" << h
+      << "videoDecoders=h264{profile:" << kPlexH264ProfilePin << "&resolution:" << w << "x" << h
       << "&level:" << weak.h264Level << "};"
       << "audioDecoders=" << weak.audioCodec << "{channels:2}";
     return o.str();
@@ -494,7 +495,9 @@ std::string buildUniversalTranscodeUrl(const std::string& base,
       << "&maxVideoBitrate=" << weak.maxVideoBitrateKbps
       << "&videoCodec=" << urlEncodeQuery(weak.videoCodec)
       << "&audioCodec=" << urlEncodeQuery(weak.audioCodec)
-      << "&videoProfile=" << urlEncodeQuery(weak.h264Profile)
+      // Defense-in-depth: always emit the Baseline pin even if WeakLadder was
+      // mutated after validateWeakLadder (never request Main/High from PMS).
+      << "&videoProfile=" << urlEncodeQuery(kPlexH264ProfilePin)
       << "&videoLevel=" << weak.h264Level;
     // Phase 4: PMS-side burn-in (preferred over dual-A9 FFmpeg subtitles filter).
     if (weak.burnSubtitles) {
@@ -621,9 +624,9 @@ bool ensureUniversalDecision(const std::string& startUrl, const std::string& ses
     std::string acodec = qparam("audioCodec");
     if (acodec.empty())
         acodec = weak.audioCodec;
-    std::string vprofile = qparam("videoProfile");
-    if (vprofile.empty())
-        vprofile = weak.h264Profile;
+    // Always pin Baseline on the decision URL — ignore query overrides that
+    // would request High/Main (fabric has no CABAC).
+    std::string vprofile = kPlexH264ProfilePin;
     std::string vlevel = qparam("videoLevel");
     if (vlevel.empty())
         vlevel = std::to_string(weak.h264Level);
@@ -1299,6 +1302,10 @@ bool applyContentFpsConf(const std::string& conf, int& num, int& den) {
     if (end != s.c_str() && v > 0.0)
         return snapStdFps(v, num, den);
     return false;
+}
+
+bool plexDeliveryProfileIsFabricSafe(const std::string& videoProfileAttr) {
+    return plexVideoProfileAttrIsFabricSafe(videoProfileAttr);
 }
 
 } // namespace misterplex

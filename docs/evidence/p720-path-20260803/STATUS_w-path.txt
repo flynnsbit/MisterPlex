@@ -1,12 +1,21 @@
-lane=w-path
-status=GAP_ANALYSIS_LANDED
-tip=a16439fe
-PARENT: bitstream move SOLVED (worst AU 60915 B = 0.66 ms); decode remains
-GAP: docs/evidence/p720-path-20260803/H264_GAP_ANALYSIS.md
-  decode_top = coeff-in I-luma bit-exact ≠ product decoder
-  durable PMS 720p bitstream on glass ~8-16 cal weeks; first I-frame 3-6
-  long pole: inter+DPB+deblock-before-ref @ 86400 MB/s
-  CABAC off critical path if CB pin holds
-RING: 256KiB >= 4*60915 static_assert; mean 13507 worst 60915 constants
-DMA: still open backup; instrument ready
-DecodeIntoBank: SUSPECT no build
+w-path STATUS 2026-08-03 (profile pin + fabric gate)
+
+DONE this tick:
+- kPlexH264ProfilePin="baseline" — universal + decision URL always emit it
+- h264_fabric_stream_gate.hpp — refuse High/Main/CABAC/B-slice (honest, no noise)
+- test_h264_fabric_stream_gate green (negatives included)
+- test_resolve pin clamp + delivery attr gate green
+- H264_GAP_ANALYSIS corrected: RTL inventory has inter/MC/DPB/deblock; gap=integration
+- PROFILE_PIN_FABRIC_GATE.md
+
+PARENT ALIGNMENT:
+- CB L3.1 no-B stream matches CAVLC RTL subset
+- CABAC off critical path while pin holds
+- Still unproven: fitted fabric decode on glass
+
+OPEN (parent HW):
+- VERIFIED_REAL_DMA gate (fixed bench)
+- route_a_bank_probe falsify
+- present/scale/idle fit (other lanes)
+
+NO device SSH. Branch w-path-720p only.

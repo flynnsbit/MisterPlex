@@ -11,14 +11,16 @@ This is weeks and module truth — not vibes, not a plan that dies in month two.
 
 ## One-sentence verdict
 
-`h264_decode_top` is a **real, bit-exact intra luma MB recon engine fed pre-parsed
-coefficients**. A PMS 720p24 cast needs a **Baseline CAVLC annex-B → full-frame
-YUV → present** product pipeline at 80×45 MB, with working **P-frames, deblock
-before DPB, and DDR ref traffic**. That is **not 10% left**; it is the other
-**~80% of a decoder**, much of it integration. **Honest calendar: ~8–16 weeks
-focused** to durable glass; **~3–6 weeks** to first correct I-frame only if
-stream_path integration is staffed hard. **CABAC is not on the critical path
-if the CB profile pin holds.**
+**Correction (parent 2026-08-03):** the RTL *inventory* is far larger than
+`h264_decode_top` alone — ~10k lines including CAVLC residual, inter + P-slice
+modes, qpel/epel MC, deblock, DPB, IQ/IDCT. CABAC grep count **0**. Lab PMS
+true-720 is **Constrained Baseline L3.1, no B-frames** — the same subset.
+What remains is **not “write inter from scratch”**; it is **product integration +
+timing + glass**: annex-B→MB schedule→deblock-before-DPB→present at 86 400 MB/s,
+fitted and soaked. **Honest calendar still ~8–16 weeks** durable cast glass;
+**~3–6 weeks** first correct I-frame on HDMI if stream_path is staffed hard.
+**CABAC is off the critical path while the Baseline pin holds**
+(`kPlexH264ProfilePin` + `h264_fabric_stream_gate.hpp`).
 
 ---
 
@@ -78,13 +80,14 @@ Luma-only bit-exact ≠ watchable frame. Chroma DC/AC, 8×8 pred, pack to I420
 bank, first pixel on HDMI.
 **Weeks: 1–3** after G1 I-path (modules exist; glue is the bill).
 
-### G3 — Inter prediction + DPB @ 720p (long pole after first I)
+### G3 — Inter + DPB *integration* @ 720p (long pole after first I)
 80×45 MB/frame × 24 = **86 400 MB/s** (w-clock’s number).  
-Need: MV pred, qpel/epel MC, ref slot commit **after deblock**, DDR ref read
-vs scanout/bitstream reader arbitration, multi-ref if any (CB often 1–2).
-Modules `h264_inter_*`, `h264_mc_*`, `h264_dpb*` exist with TBs; product
-scheduling and **DDR contention** are the month-two killer if underestimated.
-**Weeks: 4–8** to short-GOP watchable; more if DPB in on-chip RAM thrash.
+**Modules already on tree** (parent inventory): `h264_inter_pred`,
+`h264_inter_nb_ctx`, `h264_p_slice_modes`, `h264_mc_luma_qpel`,
+`h264_mc_chroma_epel`, `h264_mc_block`, `h264_dpb`, `h264_dpb_ref_commit`,
+deblock family. Gap is **wire + schedule + DDR ref vs scanout**, not greenfield
+RTL. Still the integration long pole.
+**Weeks: 4–8** to short-GOP watchable; more if DPB/DDR thrash.
 
 ### G4 — Deblock before DPB
 Core header: recon can write **unfiltered** samples today; Baseline needs LF
@@ -104,8 +107,12 @@ behavior not locked**.
 
 ### G7 — CABAC (contingency only)
 **Not required** for lab PMS true-720 after `MiSTerPlex.xml` (Constrained
-Baseline). If profile leaks Main+CABAC: refuse (hybrid) or **+8–16 weeks**
-engine. **Protect the pin like a beam.**
+Baseline). If profile leaks Main+CABAC: **refuse honestly** via
+`gateFabricH264AnnexB` / `plexDeliveryProfileIsFabricSafe` — never render
+noise — or **+8–16 weeks** engine. **Protect the pin like a beam.**
+Pin surfaces: `kPlexH264ProfilePin`, universal/decision `videoProfile=baseline`,
+`MiSTerPlex.xml` VideoEncodeFlags + Match baseline, unit
+`test_h264_fabric_stream_gate`.
 
 ---
 

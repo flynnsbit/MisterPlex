@@ -76,6 +76,15 @@ std::vector<std::string> mergePlexServers(const std::string& serversCsv,
 std::string buildPlexBase(const std::string& protocol, const std::string& address,
                           const std::string& port, const std::string& lanFallback = {});
 
+// Hard pin for every PMS universal request and ladder default.
+// Parent 2026-08-03: fabric RTL is CAVLC-only (CABAC ABSENT); lab true-720 is
+// Constrained Baseline L3.1. Never advertise Main/High — a High leak renders
+// fabric garbage. Bitstream gate: h264_fabric_stream_gate.hpp.
+inline constexpr const char* kPlexH264ProfilePin = "baseline";
+// Plex integer level form: 31 == Level 3.1 (MaxFS covers 1280x720).
+inline constexpr int kPlexH264LevelPin720 = 31;
+inline constexpr int kPlexH264LevelPin480 = 30;
+
 struct PlexTranscodeProfile {
     std::string name;
     std::string videoResolution;
@@ -83,10 +92,14 @@ struct PlexTranscodeProfile {
     int videoQuality = 0;
     // H.264 constraints advertised to PMS. Keep these aligned with the FPGA/host
     // decoder; do not ask PMS for Main/High/CABAC when only baseline-ish vectors
-    // are proven.
+    // are proven. Must equal kPlexH264ProfilePin ("baseline").
     std::string h264Profile;
     int h264Level = 0; // Plex capability/profile-extra integer form: 30 == Level 3.0.
 };
+
+// True when a PMS decision/Media videoProfile attribute is fabric-safe Baseline.
+// Rejects high/main/empty. Implemented via h264_fabric_stream_gate.hpp.
+bool plexDeliveryProfileIsFabricSafe(const std::string& videoProfileAttr);
 
 // Built-in PMS universal transcode profiles. 240p is the legacy shipping profile;
 // 480p requests 624x480 coded to match the proven DDR frame-store geometry;
@@ -105,7 +118,7 @@ struct WeakLadder {
     int videoQuality = 40;
     std::string videoCodec = "h264";
     std::string audioCodec = "aac";
-    std::string h264Profile = "baseline";
+    std::string h264Profile = kPlexH264ProfilePin; // always "baseline" — fabric CAVLC pin
     int h264Level = 30;
     // Server-side PMS profile that forces Baseline/CAVLC/ref=1 transcodes.
     // If the XML is absent, tested PMS versions fall back gracefully to Generic.

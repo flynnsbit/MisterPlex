@@ -458,6 +458,28 @@ int main() {
         CHECK(start720.find("videoLevel=31") != std::string::npos);
         CHECK(start720.find("videoProfile=baseline") != std::string::npos);
         CHECK(start720.find("directPlay=0") != std::string::npos);
+        // Fabric CAVLC pin: kPlexH264ProfilePin must stay baseline on every ladder.
+        CHECK(std::string(kPlexH264ProfilePin) == "baseline");
+        CHECK(w720.h264Profile == kPlexH264ProfilePin);
+        // Defense-in-depth: even if WeakLadder is mutated to high after validate,
+        // the universal URL still emits videoProfile=baseline (never High).
+        {
+            WeakLadder evil = w720;
+            evil.h264Profile = "high";
+            CHECK(!validateWeakLadder(evil));
+            const auto evilUrl =
+                buildUniversalTranscodeUrl("http://pms.example:32400", "/library/metadata/7",
+                                           "tok", "sessEvil", 0, evil);
+            CHECK(evilUrl.find("videoProfile=baseline") != std::string::npos);
+            CHECK(evilUrl.find("videoProfile=high") == std::string::npos);
+        }
+        // Decision/Media @videoProfile attribute gate (honest refuse, not garbage).
+        CHECK(plexDeliveryProfileIsFabricSafe("baseline"));
+        CHECK(plexDeliveryProfileIsFabricSafe("constrained baseline"));
+        CHECK(!plexDeliveryProfileIsFabricSafe("high"));
+        CHECK(!plexDeliveryProfileIsFabricSafe("High"));
+        CHECK(!plexDeliveryProfileIsFabricSafe("main"));
+        CHECK(!plexDeliveryProfileIsFabricSafe(""));
         CHECK(recommendedMinVideoBitrateKbps(w720) == kPlex720pWeakBitrateKbps);
         CHECK(kPlex720pWeakBitrateKbps == 3100);
         CHECK(kPlex720pDecodeOptimalBitrateKbps == 1500);
