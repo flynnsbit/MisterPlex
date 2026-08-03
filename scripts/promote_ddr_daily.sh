@@ -47,6 +47,29 @@ EXECUTE="${PROMOTE_EXECUTE:-0}"
 EXPECT_CORE_MD5="${PROMOTE_EXPECT_CORE_MD5:-$RBF_PIN_DDR_CANDIDATE_FULL}"
 EXPECT_DAEMON_MD5="${PROMOTE_EXPECT_DAEMON_MD5:-$DAEMON_PIN_DDR_CANDIDATE_FULL}"
 
+# A missing promotion_gate_check.sh is RED (PINNOTFOUND / command-not-found
+# family). Never treat bash rc=127 as "opened the gate path successfully".
+PROMOTION_GATE_CHECK="$ROOT/scripts/promotion_gate_check.sh"
+require_promotion_gate_check() {
+  if [ ! -e "$PROMOTION_GATE_CHECK" ]; then
+    echo "GATE_MISSING path=$PROMOTION_GATE_CHECK reason=absent"
+    echo "A gate that cannot run is HARD FAIL — not a skip, not success."
+    echo "true rc=127"
+    return 127
+  fi
+  if [ ! -x "$PROMOTION_GATE_CHECK" ]; then
+    echo "GATE_MISSING path=$PROMOTION_GATE_CHECK reason=not_executable"
+    echo "A gate that cannot run is HARD FAIL — not a skip, not success."
+    echo "true rc=127"
+    return 127
+  fi
+  return 0
+}
+run_promotion_gate_check() {
+  require_promotion_gate_check || return $?
+  "$PROMOTION_GATE_CHECK" "$@"
+}
+
 default_rbf() {
   local c
   for c in \
@@ -205,10 +228,10 @@ cmd_plan() {
   echo "rbf_policy_daily_promote_ready true rc=$ready_rc"
   if [ -n "$rbf" ] && [ -n "$daemon" ]; then
     set +e
-    "$ROOT/scripts/promotion_gate_check.sh" policy-local "$rbf" "$daemon"
+    run_promotion_gate_check policy-local "$rbf" "$daemon"
     local prc=$?
     set -e
-    # Readiness block does not hide pair policy failures.
+    # Readiness block does not hide pair policy failures or GATE_MISSING.
     if [ "$prc" -ne 0 ]; then
       echo "true rc=$prc"
       return "$prc"
@@ -236,7 +259,7 @@ cmd_stage() {
   refuse_daily_if_not_ready "$EXPECT_CORE_MD5" || return $?
 
   set +e
-  "$ROOT/scripts/promotion_gate_check.sh" policy-local "$rbf" "$daemon"
+  run_promotion_gate_check policy-local "$rbf" "$daemon"
   local prc=$?
   set -e
   if [ "$prc" -ne 0 ]; then
@@ -280,7 +303,7 @@ cmd_activate() {
   refuse_daily_if_not_ready "$EXPECT_CORE_MD5" || return $?
 
   set +e
-  "$ROOT/scripts/promotion_gate_check.sh" policy-local "$rbf" "$daemon"
+  run_promotion_gate_check policy-local "$rbf" "$daemon"
   local prc=$?
   set -e
   if [ "$prc" -ne 0 ]; then
@@ -331,7 +354,7 @@ cmd_activate() {
 }
 
 cmd_verify() {
-  "$ROOT/scripts/promotion_gate_check.sh" verify-live
+  run_promotion_gate_check verify-live
 }
 
 cmd_rollback() {
