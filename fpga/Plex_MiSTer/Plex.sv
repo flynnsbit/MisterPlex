@@ -232,11 +232,15 @@ wire reset = RESET | status[0] | buttons[1];
 //   Do NOT auto-assert win_enable from O[4] alone — that breaks ARM-scaled 624
 //   frames still published today (quarter-size / wrong sample class).
 wire        content_res_640x480 = status[4];
-wire [9:0]  content_width       = content_res_640x480 ? 10'd640 : 10'd320;
-wire [9:0]  content_height      = content_res_640x480 ? 10'd480 : 10'd240;
+// 11-bit content geometry (720p-native). O[4] remains the coarse 320/640 ladder;
+// PLXW mailbox will program exact delivery including 1280×720.
+wire [10:0] content_width       = content_res_640x480 ? 11'd640 : 11'd320;
+wire [10:0] content_height      = content_res_640x480 ? 11'd480 : 11'd240;
 wire        fabric_win_enable   = 1'b0; // host mailbox override (V1 safe default)
-wire [9:0]  fabric_content_x0   = 10'd0;
-wire [9:0]  fabric_content_y0   = 10'd0;
+wire [10:0] fabric_content_x0   = 11'd0;
+wire [10:0] fabric_content_y0   = 11'd0;
+wire [10:0] fabric_h_de         = 11'd0; // 0 → 529 FBAR default inside window
+wire [10:0] fabric_v_de         = 11'd0; // 0 → 480 default
 
 // Legacy cadence input is now fixed; the daemon handles exact content pacing.
 wire [7:0] content_fps = 8'd24;
@@ -763,6 +767,8 @@ present_core #(
 	.content_h(content_height),
 	.content_x0(fabric_content_x0),
 	.content_y0(fabric_content_y0),
+	.win_h_de(fabric_h_de),
+	.win_v_de(fabric_v_de),
 	.fs_wr_en(fs_wr_en),
 	.fs_wr_pixel(fs_wr_pixel),
 	.fs_wr_reset(fs_wr_reset),

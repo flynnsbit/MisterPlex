@@ -40,12 +40,15 @@ module present_core #(
 
 	// Fabric content window (runtime). win_enable=0 → legacy full FRAME map.
 	// When 1, NN-stretch content_w×content_h at (content_x0,content_y0) across DE.
-	// Host programs these before switching ARM off scale (see register map card).
+	// 11-bit geometry is 720p-native (1280×720); host programs before ARM drops scale.
 	input  wire        win_enable,
-	input  wire [9:0]  content_w,
-	input  wire [9:0]  content_h,
-	input  wire [9:0]  content_x0,
-	input  wire [9:0]  content_y0,
+	input  wire [10:0] content_w,
+	input  wire [10:0] content_h,
+	input  wire [10:0] content_x0,
+	input  wire [10:0] content_y0,
+	// 0 → defaults (h=529 FBAR, v=480). 720p DE is a reg write, not a redesign.
+	input  wire [10:0] win_h_de,
+	input  wire [10:0] win_v_de,
 
 	// frame_store write (from ingest)
 	input  wire        fs_wr_en,
@@ -180,8 +183,9 @@ module present_core #(
 	// STORE_X still samples 529 of FRAME_W via the 39647 mul-shift.
 	//
 	// Fabric content window (win_enable): when 1, SX/SY come from runtime
-	// content_w/h instead of FRAME_* so ARM can publish native WxH (e.g. 320x240)
-	// and fabric NN-stretches across DE. win_enable=0 is bit-compatible legacy.
+	// content_w/h instead of FRAME_* so ARM publishes native WxH (320…1280) and
+	// fabric NN-stretches across DE — ARM scale path goes to zero, not "cheaper".
+	// win_enable=0 is bit-compatible legacy. STORE_W=1280 sized for 720p (1 M10K/line).
 	// Mapping lives in present_content_window (NN V1; ascal remains HDMI scaler).
 	localparam H_DE = 10'd529;
 	localparam bit NATIVE_V_1TO1 = (FRAME_H > 240);
@@ -202,33 +206,47 @@ module present_core #(
 	// Identity hc→read_hc kept at this layer for source-lock + DE_LAG docs;
 	// present_content_window also treats hc as free-running (no blank force-0).
 	wire [9:0] read_hc = hc;
-	wire [FRAME_X_W-1:0] store_x;
-	wire [FRAME_Y_W-1:0] store_y;
+	// Window emits 11b store coords (STORE 1280×720). Current ddr_frame_store
+	// ports are clog2(FRAME_*) — slice LSBs for product 480p FRAME 640×480.
+	// w-mem 720p fit raises FRAME_/CODED_ and drops the slice.
+	localparam int STORE_W_MAX = 1280;
+	localparam int STORE_H_MAX = 720;
+	localparam int WIN_X_W = $clog2(STORE_W_MAX);
+	localparam int WIN_Y_W = $clog2(STORE_H_MAX);
+	wire [WIN_X_W-1:0] store_x_win;
+	wire [WIN_Y_W-1:0] store_y_win;
 	wire                 de_r; // registered in_content for frame_store read align
 	wire                 past_last_row;
 
 	present_content_window #(
 		.FRAME_W(FRAME_W),
 		.FRAME_H(FRAME_H),
-		.H_DE_I(529),
-		.V_STORE_I(V_STORE_I)
+		.STORE_W(STORE_W_MAX),
+		.STORE_H(STORE_H_MAX),
+		.H_DE_DEFAULT(529),
+		.V_DE_DEFAULT(V_STORE_I)
 	) content_win (
 		.clk(clk),
 		.reset(reset),
 		.ce_pix(ce_pix_i),
-		.hc(read_hc),
-		.py(py),
+		.hc({1'b0, read_hc}),
+		.py({1'b0, py}),
 		.in_content(in_content),
 		.win_enable(win_enable),
 		.content_w(content_w),
 		.content_h(content_h),
 		.content_x0(content_x0),
 		.content_y0(content_y0),
-		.store_x(store_x),
-		.store_y(store_y),
+		.h_de(win_h_de),
+		.v_de(win_v_de),
+		.store_x(store_x_win),
+		.store_y(store_y_win),
 		.de_r(de_r),
 		.past_last_row(past_last_row)
 	);
+
+	wire [FRAME_X_W-1:0] store_x = store_x_win[FRAME_X_W-1:0];
+	wire [FRAME_Y_W-1:0] store_y = store_y_win[FRAME_Y_W-1:0];
 
 	// Keep legacy scale localparams live for elab/source-lock (child has its own).
 	(* keep = 1 *) wire [31:0] _keep_legacy_store_scale =

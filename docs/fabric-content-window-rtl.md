@@ -1,89 +1,98 @@
-# Fabric content window — RTL slice (w-scaler)
+# Fabric content window — RTL (w-scaler), 720p-native
 
-**Branch:** `w-scaler-window` · **No Quartus** (design + sim only)  
-**Extends:** `FABRIC_CONTENT_WINDOW_DESIGN.md` (dce73e89) + `PRESENT_DDR_OFFLOAD_RERANK.md` (aec09272)
+**Branch:** `w-scaler-window` · **No Quartus**  
+**Mandate:** move work off ARM so 720p fits the 41.7 ms/f budget.  
+**Extends:** `FABRIC_CONTENT_WINDOW_DESIGN.md` + `PRESENT_DDR_OFFLOAD_RERANK.md`
 
 ---
 
-## What landed
+## Design choice (ARM out, not ARM cheaper)
 
-| Item | Path |
-|------|------|
-| NN window mapper | `fpga/Plex_MiSTer/rtl/present_content_window.sv` |
-| present_core integration | `fpga/Plex_MiSTer/rtl/present_core.sv` (ports + instance) |
-| Safe Plex wiring | `fpga/Plex_MiSTer/Plex.sv` (`fabric_win_enable=0` default) |
-| QIP | `fpga/Plex_MiSTer/files.qip` |
-| Verilator RBG gate | `tests/unit/test_present_content_window_rtl_sim.sh` + `tests/rtl/present_content_window_tb*` |
-| Host math lock | `tests/unit/test_fabric_content_window_math.cpp` |
+| Option | ARM still does | Chosen? |
+|--------|----------------|---------|
+| fast_bilinear / cheaper swscale | scale every frame | **No** — still burns the budget 720p needs |
+| Pad-only to 624, fabric samples island | pad + full-bank present | **No** — quarter-size dead end (w-cpu-1) |
+| **Fabric NN window + native publish** | **no scale** (memcpy only until stride/zero-copy) | **Yes** |
 
-## Behaviour
+NN in fabric is “uglier” than polyphase, but **ARM leaves the scale loop entirely**. ascal keeps HDMI quality.
 
-- `win_enable=0` (reset/default): legacy FRAME_W×FRAME_H map — product 640×480 → unique Y=480, unique X=529 max 638.
-- `win_enable=1`, content 320×240 @ (0,0): NN stretch across H_DE=529 × V_DE=480 → unique X=320 (0..319), unique Y=240 (0..239).
-- H_DE remains **529** (FBAR/Template lock). DE timing unchanged.
-- Quality V1: **nearest-neighbour** only. ascal stays HDMI polyphase. Double-scale (NN→480, poly→1080) is intentional MiSTer-class tradeoff: blocky 2× on 320 content before HDMI soften.
+---
 
-## Register map (proposed — reconcile with w-mem / mailbox owner)
+## 720p from day one
 
-Doorbell-relative control page (product doorbell `0x300FF000`). Existing: PLXS +0x100, PLXF +0x118, PLXD +0x128.
+| Parameter | Value | Why |
+|-----------|------:|-----|
+| `STORE_W` | **1280** | one M10K per luma line |
+| `STORE_H` | **720** | 720p frame |
+| `content_w/h/x0/y0` | **11 bits** | covers 1280×720 |
+| `h_de` / `v_de` | **11 bits**, 0→default 529/480 | 720p DE = reg write, not redesign |
+| Window SX | `floor(cw * 65536 / h_de)` | any DE |
+| Legacy SX | `FRAME_W * 39647 / 320` | bit-exact 480p product when `win_enable=0` |
 
-| Offset | Name | Bits | Reset | Role |
-|-------:|------|-----:|------:|------|
-| +0x130 | **PLXW** magic | [63:32]=`PLXW` (0x504C5857) | 0 | Host write valid marker |
-| +0x130 | win_enable | [0] | 0 | 0=legacy full-bank; 1=content window |
-| +0x130 | reserved | [7:1] | 0 | |
-| +0x132 | content_w | [9:0] in low of next half | 624 | Active content width in bank |
-| +0x134 | content_h | [9:0] | 480 | Active content height |
-| +0x136 | content_x0 | [9:0] | 0 | Origin x in coded bank |
-| +0x138 | content_y0 | [9:0] | 0 | Origin y |
-| +0x13A | y_stride | [10:0] | 624 | Luma bytes/line (ddr_frame_store follow-on) |
-| +0x13C | chroma_stride | [10:0] | 312 | Chroma bytes/line |
-| +0x13E | status ack | [0]=applied, [1]=legacy_active | — | Core → HPS readback |
+Product 480p still uses H_DE=529 FBAR lock. 720p DE retiming is separate (colorbars/Template); the mapper already accepts `h_de=1280,v_de=720`.
 
-**Packing alternative (single 64-bit PLXW word @ +0x130):**
+`present_core` currently slices store coords to `clog2(FRAME_*)` for today’s `ddr_frame_store` (FRAME 640). **w-mem 720p fit** raises FRAME/CODED and drops the slice.
 
-```
-[63:48] content_h[9:0] | content_w[9:0] in 20b field  — exact pack TBD with mailbox owner
-[47:32] content_y0[9:0] | content_x0[9:0]
-[31:16] y_stride[10:0]
-[15:1]  chroma_stride / flags
-[0]     win_enable
-```
+---
 
-**V1 shipped wiring:** ports on `present_core`; `Plex.sv` holds `fabric_win_enable=1'b0` and feeds O[4] coarse `content_width/height` as the default programmed size. **Do not** auto-enable from O[4] alone while ARM still scale/pads to 624.
+## ARM milliseconds removed
 
-**720p lane (w-mem):** same regs; content_w/h vary per delivery. Bank capacity / stride follow-on is ddr_frame_store runtime stride (not in this slice).
+| Lever | ms/f | How known | Condition |
+|-------|-----:|-----------|-----------|
+| **Scale leg** | **2.954** | FEED table `docs/evidence/p480/p720-bus-and-bitrate-margin.md` (+scale delta on 624×480, 1800 frames) | ARM vf scale **off** after `win_enable=1` + native WxH publish |
+| Present/DDR bytes (320 path) | **unknown (pre-reg 2.5–5.5)** | linear-in-bytes bound on FEED present 10.411; **not measured** with this RTL on device | Needs `copy_us`/`flush_us` after native publish **and** runtime stride (not in this slice) |
+| 720p scale leg | **unknown** | would be ≥320-path scale cost when ARM up/down scales 720 | Measure FEED-class scale delta on real 720p content (parent) |
 
-## Area / timing estimate (pre-fit — no Quartus this lane)
+**This slice alone does not turn off ARM scale** — `fabric_win_enable` defaults **0** (safe with today’s 624 publish). Full ARM evacuation = this RTL + mailbox enable + ARM identity publish (+ stride for byte win).
 
-Baseline artifact: RBF `8fdf440f` — ALM 23585/41910, M10K 465/553 (88 free), DSP 44/112, clk_sys 20 MHz.
+Parent 1080p blip (32.4 ms/f decode) shows decode is bitrate-dominated; **evacuating scale/present is what frees 720p headroom**. Do not over-claim from the synthetic blip.
 
-| Resource | Δ pre-reg | Reasoning |
-|----------|----------:|-----------|
-| ALM | **+80 … +200** | 18b scale regs, two 10×18 muls (or DSP), add/clamp, mux win_enable, tiny control |
-| M10K | **0** | No line buffers (NN V1) |
-| DSP | **0 … 2** | Optional map of hc×sx / py×sy; else soft mul in ALM |
-| Fmax risk | **Low–moderate** | Pixel path = mul + add + clamp (same family as legacy `store_x_prod`). **Dividers only on scale recompute** (content_* change), registered into `sx_r/sy_r` — off ce_pix critical path. |
+---
 
-**Threats to flag for fit owner:**
+## Register map (PLXW @ doorbell+0x130 — reconcile w/ mailbox + w-mem)
 
-1. If Quartus folds the `/320` and `/V_STORE` into the pixel path by accident → STA fail risk. Keep scale regs; do not feed comb sx into hc mul without a register cut.
-2. 18×10 multiplier on clk_sys 20 MHz is comfortable; do **not** introduce a per-pixel divide by 529.
-3. Does not need decode_stub reclaim.
+| Field | Bits | Reset | Notes |
+|-------|-----:|------:|-------|
+| win_enable | 1 | 0 | 0=legacy full-bank |
+| content_w | 11 | 624 | delivery width (320…1280) |
+| content_h | 11 | 480 | delivery height (240…720) |
+| content_x0/y0 | 11 | 0 | origin in bank |
+| h_de | 11 | 0→529 | active DE width for SX |
+| v_de | 11 | 0→480 | active DE height for SY |
+| y_stride | 12 | 624 | **ddr_frame_store follow-on** (1280 for 720p) |
+| chroma_stride | 11 | stride/2 | follow-on |
 
-## Follow-ons (not this commit)
+---
 
-1. PLXW mailbox decode in `ddram_frame_rd` / control page.
-2. `ddr_frame_store` runtime `y_stride` + plane offsets from content_w/h (V1a publish 115200 bytes).
-3. ARM: native publish + FORCE_SCALE retarget when win ack’d.
-4. ONE fit (w-nostub/w-fit owner) + parent glass.
+## Area / timing pre-reg
+
+Baseline RBF `8fdf440f`: ALM 56%, M10K 84% blocks / 53% bits, DSP 39%, clk_sys 20 MHz.
+
+| Resource | Δ | Reasoning |
+|----------|--:|-----------|
+| ALM | +100…+250 | 20b scales, 11×20 muls, add/clamp, DE mux |
+| M10K | 0 | NN, no linebufs |
+| DSP | 0…2 | optional hc×sx |
+| Fmax | low–mod risk | dividers **only** on reg update → `sx_r/sy_r`; pixel path mul+add |
+
+Threat: synth folding `/h_de` into pixel path — keep register cut.
+
+---
 
 ## Sim evidence (true rc)
 
 ```
-legacy  true rc=0  REPRO_OK legacy_fixed_map quarter_class=1 full_stretch=0
-window  true rc=0  PASS present_content_window_320 unique_x=320 unique_y=240
-legacy480 true rc=0 PASS legacy_480p_identity unique_y=480 unique_x=529
-host math true rc=0
-present_store_scale_math true rc=0
+legacy     rc=0  REPRO quarter_class
+window320  rc=0  PASS unique 320×240
+legacy480  rc=0  PASS identity 480
+720de480   rc=0  PASS x→1279 y→719 on 529×480 DE
+720id      rc=0  PASS 1280×720 identity
+host math  rc=0
 ```
+
+## Follow-ons
+
+1. PLXW mailbox decode  
+2. `ddr_frame_store` runtime stride + 1280 CODED (w-mem)  
+3. ARM native publish + win_enable=1  
+4. Parent glass + FEED remeasure  
