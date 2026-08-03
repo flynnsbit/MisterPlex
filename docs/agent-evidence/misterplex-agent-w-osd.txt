@@ -117,3 +117,18 @@ E2E: nonzero DAR/fps survives full record+poller both LEG and Option-C.
 w-osd: fabric q5 wire FENCED ≠ host publish; added
   test_plxg_q5_host_seqlock_static (PASS while writePlxgQ5 absent).
 HEAD=61c0b8a7
+
+=== rd-duck 2026-08-03T08:58:48-05:00 B20 BROADER than beam DE — two-phase promote ===
+w-mem Plex.sv:832-854 promotes PLXG on raw VSync before doorbell/cache ready.
+latch then changes content_w/x0/display/crop/DAR/fps live at boundary;
+only w-clock beam H_DE gated by swap_fire. store app_* old until matched
+doorbell/prep. Sequence: host q0+doorbell → observe before 6-read poll OR
+PLXG promote at VS → mux/window/q5 NEW + bank/pitch OLD; no blackout
+(geom_hold_black only later app change; DAR blackout only tuple change).
+Fix: true two-phase pending/live — pending geom to cache prep; promote ALL
+  visual consumers (beam, window/crop, DAR/fps, app map, bank) on one swap
+  ack; OR hold HDMI black from PLXG promote until that ack.
+beam-only rt_de_apply gate INSUFFICIENT.
+Owners: w-mem (+ w-clock beam). w-osd: HOLD B16/B20 product-closed claim.
+This tree: u_plxg_latch frame_boundary tied 0 (idle) — fabric wire only.
+HEAD=439b80fa
