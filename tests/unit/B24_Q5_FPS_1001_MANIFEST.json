@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "title": "B24 PLXG q5 fps_1001 merged path (ABI merge-loss)",
+  "defect": {
+    "id": "rd-duck-2026-08-03-q5-bit34",
+    "w_path": "f31a6eb9 packs q5[34]=fps_1001 reserved[63:35] for 24000/1001",
+    "w_mem": "present_geom_latch q5_reserved_nz=|sh5[63:34] → E4 wholesale reject",
+    "w_clock": "no fps_1001 consumer; integer bucket outruns 23.976",
+    "note": "Static q5@0x828 / B17 presence is insufficient"
+  },
+  "contract": [
+    "Gate RUNS the script; prose/comment/B17 markers never clear.",
+    "Host packs canonical 24000/1001 qword (content_fps=24, bit34=1, fps_valid=1).",
+    "Merged poller + latch + consumer must ACCEPT (q5_reserved_reject=0) and surface fps_1001=1.",
+    "Stdout: CASE + PASS + VERILATOR_RUN=1|SIM_RUN=1 + all measured_* tokens + true rc=0.",
+    "Script body must invoke real TB (verilator/make/python); echo-only rejected.",
+    "Soft-skip rc=77 is NOT a pass."
+  ],
+  "scenarios": [
+    {
+      "token": "B24_Q5_FPS_1001_MERGED_PATH",
+      "script": "tests/unit/test_b24_q5_fps_1001_merged_path.sh",
+      "case": "CASE B24_Q5_FPS_1001 EXECUTED",
+      "pass": "PASS B24_Q5_FPS_1001",
+      "why": "canonical host-packed 24000/1001 q5 through merged poller+latch+consumer; prove accept + fps_1001 (bit34); static q5 presence insufficient (rd-duck: w-path f31a6eb9 vs w-mem |sh5[63:34] E4 reject vs w-clock no consumer)",
+      "require_stdout": [
+        "measured_host_pack_24000_1001=1",
+        "measured_q5_bit34_fps_1001=1",
+        "measured_latch_accept=1",
+        "measured_q5_reserved_reject=0",
+        "measured_consumer_fps_1001=1",
+        "content_fps=24",
+        "fps_num=24000",
+        "fps_den=1001"
+      ]
+    }
+  ]
+}

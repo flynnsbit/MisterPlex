@@ -115,6 +115,8 @@ GATED_PATHSPECS = (
     "docs/product-4-3-scaler-decision.md",
     "docs/fit_gate_identity.json",
     "docs/rtl_single_owner_table.json",
+    "tests/unit/B20_HIER_MANIFEST.json",
+    "tests/unit/B24_Q5_FPS_1001_MANIFEST.json",
     "Makefile",
 )
 # Ruler identity: gate + companions that must stay in lockstep across lanes.
@@ -182,6 +184,10 @@ LIVE_OPEN_BLOCKER_TOKENS = (
     # Parent arb #3 single-owner backstop (markers on owned files)
     "B23_OWNER_MARKERS_MISSING",
     # B23_ABI2_FABRIC_NETS_NOT_PLXG: closed-class reinject (not always live)
+    # rd-duck: q5 bit34 fps_1001 ABI merge-loss (w-path f31a6eb9 vs w-mem E4)
+    "B24_Q5_FPS_1001_MERGED_PATH",
+    "B24_Q5_BIT34_LATCH_REJECTS_1001",
+    "B24_Q5_FPS_1001_NO_CONSUMER",
 )
 
 # Sibling-lane fixes that exist but are not merged into this gated tree.
@@ -1457,6 +1463,291 @@ def run_b20_hierarchy_exec_gate(
 
 # Populated at run time from manifest; mutations may call load_b20_hier_manifest.
 B20_HIER_REGISTRY: tuple[dict[str, object], ...] = ()
+
+# ---------------------------------------------------------------------------
+# B24 — PLXG q5 bit34 fps_1001 ABI merge-loss (rd-duck 2026-08-03)
+# w-path f31a6eb9: q5[34]=fps_1001, reserved[63:35], pack 24000/1001 → 24+flag
+# w-mem latch: q5_reserved_nz=|sh5[63:34] → E4 / wholesale geom reject
+# w-clock: no fps_1001 consumer
+# Static q5@0x828 presence (B17) is insufficient — must RUN host-packed qword
+# through merged poller+latch+consumer and prove accept + 1001 flag.
+# ---------------------------------------------------------------------------
+B24_Q5_MANIFEST_REL = "tests/unit/B24_Q5_FPS_1001_MANIFEST.json"
+B24_Q5_TOKEN = "B24_Q5_FPS_1001_MERGED_PATH"
+B24_Q5_DEFAULT_SPEC: dict[str, object] = {
+    "token": B24_Q5_TOKEN,
+    "script": "tests/unit/test_b24_q5_fps_1001_merged_path.sh",
+    "case": "CASE B24_Q5_FPS_1001 EXECUTED",
+    "pass": "PASS B24_Q5_FPS_1001",
+    "why": (
+        "canonical host-packed 24000/1001 q5 through merged poller+latch+consumer; "
+        "prove accept + fps_1001 (bit34); static q5 presence insufficient "
+        "(rd-duck: w-path f31a6eb9 vs w-mem |sh5[63:34] E4 reject vs w-clock no consumer)"
+    ),
+    "require_stdout": [
+        "measured_host_pack_24000_1001=1",
+        "measured_q5_bit34_fps_1001=1",
+        "measured_latch_accept=1",
+        "measured_q5_reserved_reject=0",
+        "measured_consumer_fps_1001=1",
+        "content_fps=24",
+        "fps_num=24000",
+        "fps_den=1001",
+    ],
+}
+
+
+def load_b24_q5_manifest(root: Path) -> tuple[dict[str, object], list[str]]:
+    """Load B24 executable scenario; fall back to embedded default spec."""
+    msgs: list[str] = []
+    candidates = [
+        root / B24_Q5_MANIFEST_REL,
+        RULER_ROOT / B24_Q5_MANIFEST_REL,
+    ]
+    path = next((p for p in candidates if p.is_file()), None)
+    if path is None:
+        msgs.append(f"LEG0_B24_MANIFEST_MISSING tried={[str(p) for p in candidates]}")
+        return dict(B24_Q5_DEFAULT_SPEC), msgs
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        msgs.append(f"LEG0_B24_MANIFEST_BAD path={path} err={exc}")
+        return dict(B24_Q5_DEFAULT_SPEC), msgs
+    scenarios = list(data.get("scenarios") or [])
+    msgs.append(
+        f"LEG0_B24_MANIFEST_LOADED path={path} n={len(scenarios)} "
+        f"version={data.get('version', '?')}"
+    )
+    if not scenarios:
+        return dict(B24_Q5_DEFAULT_SPEC), msgs
+    # Prefer exact token match.
+    for sc in scenarios:
+        if str(sc.get("token")) == B24_Q5_TOKEN:
+            return dict(sc), msgs
+    return dict(scenarios[0]), msgs
+
+
+def run_b24_q5_fps_1001_static(root: Path) -> tuple[list[str], list[str]]:
+    """Static collision: latch reserves bit34 / no fps_1001 consumer.
+
+    Does not clear B24_Q5_FPS_1001_MERGED_PATH — executable is still required.
+    """
+    msgs: list[str] = []
+    errors: list[str] = []
+    latch = root / "fpga" / "Plex_MiSTer" / "rtl" / "present_geom_latch.sv"
+    core = root / "fpga" / "Plex_MiSTer" / "rtl" / "present_core.sv"
+    fps_sel = root / "fpga" / "Plex_MiSTer" / "rtl" / "plex_content_fps_sel.sv"
+    plex = root / "fpga" / "Plex_MiSTer" / "Plex.sv"
+    host_hdr = root / "host" / "libmisterplex" / "plxg_q5_aspect_cadence.hpp"
+
+    latch_txt = latch.read_text(errors="replace") if latch.is_file() else ""
+    core_txt = core.read_text(errors="replace") if core.is_file() else ""
+    sel_txt = fps_sel.read_text(errors="replace") if fps_sel.is_file() else ""
+    plex_txt = plex.read_text(errors="replace") if plex.is_file() else ""
+    host_txt = host_hdr.read_text(errors="replace") if host_hdr.is_file() else ""
+
+    # Latch treats [63:34] as reserved (rejects path f31a6eb9 bit34=fps_1001).
+    reserves_34 = bool(
+        re.search(r"sh5\s*\[\s*63\s*:\s*34\s*\]", latch_txt)
+        or re.search(r"\[\s*63\s*:\s*34\s*\].*reserved|reserved.*\[\s*63\s*:\s*34\s*\]", latch_txt, re.I)
+        or re.search(r"q5_reserved_nz\s*=\s*\|\s*sh5\s*\[\s*63\s*:\s*34\s*\]", latch_txt)
+    )
+    # Accept path: reserved starts at 35 and bit34 is data (fps_1001).
+    accepts_34 = bool(
+        re.search(r"sh5\s*\[\s*63\s*:\s*35\s*\]", latch_txt)
+        and (
+            re.search(r"fps_1001\s*<=\s*sh5\s*\[\s*34\s*\]", latch_txt)
+            or re.search(r"\bfps_1001\b", latch_txt)
+        )
+    )
+    msgs.append(
+        f"LEG0_B24_LATCH_BIT34 reserves_34={int(reserves_34)} accepts_34={int(accepts_34)} "
+        f"path={latch.relative_to(root) if latch.is_file() else 'ABSENT'}"
+    )
+    if not latch.is_file():
+        errors.append(
+            "B24_Q5_BIT34_LATCH_REJECTS_1001: present_geom_latch.sv absent — cannot "
+            "accept host-packed 24000/1001 q5 bit34=fps_1001 (rd-duck ABI merge-loss)."
+        )
+    elif not accepts_34:
+        # Two shapes of the same defect:
+        #  (a) w-mem product: |sh5[63:34] → E4 wholesale geom reject (observed)
+        #  (b) hollow/old latch: no fps_1001 / reserved@35 path at all
+        detail = (
+            "treats q5[63:34] as reserved (|sh5[63:34] → q5_reserved_reject / E4)"
+            if reserves_34
+            else "has no fps_1001 accept path (reserved must be [63:35]; bit34=data)"
+        )
+        errors.append(
+            f"B24_Q5_BIT34_LATCH_REJECTS_1001: present_geom_latch {detail}. "
+            "w-path f31a6eb9 packs bit34=fps_1001 for 24000/1001 film; current merge "
+            "rejects geometry wholesale or drops the flag. Latch must expose fps_1001 "
+            "and not trap bit34 as reserved. Static q5@0x828 presence does not clear "
+            "this (rd-duck ABI merge-loss)."
+        )
+
+    # Consumer of fps_1001 on fabric side (clock cadence path).
+    consumer_hit = bool(
+        re.search(r"\bfps_1001\b", core_txt)
+        or re.search(r"\bfps_1001\b", sel_txt)
+        or re.search(r"\.(fps_1001|live_fps_1001)\s*\(", plex_txt)
+        or re.search(r"\bfabric_fps_1001\b|\bplxg_fps_1001\b", plex_txt)
+    )
+    msgs.append(f"LEG0_B24_CONSUMER_FPS_1001 hit={int(consumer_hit)}")
+    if not consumer_hit:
+        errors.append(
+            "B24_Q5_FPS_1001_NO_CONSUMER: no fabric consumer of q5 bit34 fps_1001 "
+            "(present_core / plex_content_fps_sel / Plex.sv). w-clock must consume "
+            "the flag (rate = content_fps*1000/1001 when set); integer bucket alone "
+            "outruns 23.976 (~0.0246 fps → bank miss ~40s). Path publishes; fabric "
+            "must select (rd-duck / w-path f31a6eb9)."
+        )
+
+    # Host packer still on wire? Diagnostic only (path may have vacated pending arb).
+    host_on_wire = bool(
+        re.search(r"kPlxgQ5Fps1001OnWire\s*=\s*true", host_txt)
+        or (
+            re.search(r"kPlxgQ5Fps1001Bit\s*=\s*1ull\s*<<\s*34", host_txt)
+            and re.search(r"kPlxgQ5ReservedShift\s*=\s*35", host_txt)
+        )
+    )
+    msgs.append(
+        f"LEG0_B24_HOST_WIRE_1001 on_wire_or_abi21={int(host_on_wire)} "
+        f"hdr={'yes' if host_hdr.is_file() else 'no'}"
+    )
+    return msgs, errors
+
+
+def run_b24_q5_fps_1001_exec_gate(
+    root: Path,
+    *,
+    timeout_s: float = 180.0,
+) -> tuple[int, list[str], list[str]]:
+    """Run canonical 24000/1001 q5 through merged poller+latch+consumer TB."""
+    msgs: list[str] = []
+    errors: list[str] = []
+    spec, m_msgs = load_b24_q5_manifest(root)
+    msgs.extend(m_msgs)
+
+    tok = str(spec.get("token") or B24_Q5_TOKEN)
+    rel = str(spec.get("script") or B24_Q5_DEFAULT_SPEC["script"])
+    case_tok = str(spec.get("case") or B24_Q5_DEFAULT_SPEC["case"])
+    pass_tok = str(spec.get("pass") or B24_Q5_DEFAULT_SPEC["pass"])
+    why = str(spec.get("why") or B24_Q5_DEFAULT_SPEC["why"])
+    require_stdout = [str(x) for x in (spec.get("require_stdout") or [])]
+    if not require_stdout:
+        require_stdout = list(B24_Q5_DEFAULT_SPEC["require_stdout"])  # type: ignore[arg-type]
+
+    msgs.append(
+        f"LEG0_B24_Q5_EXEC_BEGIN token={tok} script={rel} "
+        "(host-pack 24000/1001 → poller+latch+consumer; not static q5 presence)"
+    )
+
+    script = root / rel
+    if not script.is_file():
+        errors.append(
+            f"{tok}: missing executable merged-path script {rel}. "
+            f"Need a real poller+latch+consumer TB that prints '{case_tok}', "
+            f"'{pass_tok}', VERILATOR_RUN=1|SIM_RUN=1, and {require_stdout!r} "
+            f"with true rc=0. why={why}. Static B17 q5@0x828 markers do not satisfy. "
+            "Soft-skip ≠ PASS."
+        )
+        msgs.append(f"LEG0_B24_Q5_MISS path={rel}")
+        msgs.append("LEG0_B24_Q5_EXEC_DONE open=1/1")
+        return 1, msgs, errors
+
+    if script.suffix not in {".sh", ".py"}:
+        errors.append(
+            f"{tok}: {rel} suffix={script.suffix!r} is not an executable .sh/.py "
+            "runner. Prose/header presence alone is hollow."
+        )
+        msgs.append("LEG0_B24_Q5_EXEC_DONE open=1/1")
+        return 1, msgs, errors
+
+    try:
+        script_txt = script.read_text(errors="replace")
+    except OSError as exc:
+        errors.append(f"{tok}: cannot read {rel}: {exc}")
+        return 1, msgs, errors
+
+    if not _b20_script_body_is_real_runner(script_txt):
+        errors.append(
+            f"{tok}: script {rel} body is echo/comment-only (no verilator/make/"
+            f"python-TB/rg/grep). Static q5 / keyword theatre rejected. why={why}"
+        )
+        msgs.append("LEG0_B24_Q5_HOLLOW_BODY")
+        msgs.append("LEG0_B24_Q5_EXEC_DONE open=1/1")
+        return 1, msgs, errors
+
+    cmd = [str(script)] if os.access(script, os.X_OK) else ["bash", str(script)]
+    if script.suffix == ".py":
+        cmd = [sys.executable, str(script)]
+    env = os.environ.copy()
+    env["MISTERPLEX_ROOT"] = str(root)
+    env["ROOT"] = str(root)
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(root),
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=timeout_s,
+        )
+        out = proc.stdout or ""
+        rc = int(proc.returncode)
+    except subprocess.TimeoutExpired:
+        errors.append(
+            f"{tok}: script {rel} timed out after {timeout_s}s — DID_NOT_FINISH."
+        )
+        msgs.append("LEG0_B24_Q5_TIMEOUT")
+        return 1, msgs, errors
+    except OSError as exc:
+        errors.append(f"{tok}: failed to execute {rel}: {exc}")
+        return 1, msgs, errors
+
+    msgs.append(
+        f"LEG0_B24_Q5_RUN script={rel} true_rc={rc} out_bytes={len(out)}"
+    )
+    if rc == 77:
+        errors.append(
+            f"{tok}: script {rel} soft-skipped (true rc=77). Soft-skip ≠ PASS. "
+            f"Scenario still open: {why}"
+        )
+        msgs.append("LEG0_B24_Q5_EXEC_DONE open=1/1")
+        return 1, msgs, errors
+
+    missing: list[str] = []
+    if case_tok not in out:
+        missing.append(f"missing '{case_tok}'")
+    if pass_tok not in out:
+        missing.append(f"missing '{pass_tok}'")
+    if rc != 0:
+        missing.append(f"true_rc={rc} (need 0)")
+    if not _B20_SIM_CLAIM_RE.search(out):
+        missing.append("missing VERILATOR_RUN=1|SIM_RUN=1 line")
+    if not re.search(r"(?m)^\s*measured_[\w]+=", out):
+        missing.append("missing measured_*= evidence line")
+    for extra in require_stdout:
+        if extra not in out:
+            missing.append(f"missing required evidence '{extra}'")
+
+    if missing:
+        tail = out.strip().splitlines()[-12:] if out.strip() else []
+        errors.append(
+            f"{tok}: merged 24000/1001 path script {rel} ran but failed contract: "
+            f"{', '.join(missing)}. why={why}. tail={tail!r}"
+        )
+        msgs.append("LEG0_B24_Q5_EXEC_DONE open=1/1")
+        return 1, msgs, errors
+
+    msgs.append(
+        f"LEG0_B24_Q5_OK script={rel} true_rc=0 accept+fps_1001 proven "
+        "(host pack → latch → consumer)"
+    )
+    msgs.append("LEG0_B24_Q5_EXEC_DONE open=0/1")
+    return 0, msgs, errors
 
 
 def _extract_balanced(txt: str, open_idx: int) -> tuple[str, int]:
@@ -2778,7 +3069,8 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
 
     # --- B17 PLXG q5 DAR+FPS ABI (doorbell+0x828) ---
     # Parent arbitration: q5[11:0] dar_x, [23:12] dar_y, [31:24] fps, [32] dar_valid,
-    # [33] fps_valid, [63:34] reserved0. Same class as B9/B15 — daemon knows, fabric can't infer.
+    # [33] fps_valid; ABI #2.1 adds [34] fps_1001 with reserved[63:35] (w-path f31a6eb9).
+    # B17 is presence-only — B24 requires merged accept+1001 executable path.
     has_q5_abi = bool(
         re.search(r"0x828|doorbell\s*\+\s*32'h828|PLXG_Q5|plxg_q5", plex_fps)
         or re.search(r"dar_valid|dar_x|VIDEO_ARX.*plxg|plex_video_ar", plex_fps)
@@ -3183,6 +3475,14 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
     b20_hier_rc, b20_hier_msgs, b20_hier_errs = run_b20_hierarchy_exec_gate(ROOT)
     msgs.extend(b20_hier_msgs)
     errors.extend(b20_hier_errs)
+
+    # --- B24 q5 bit34 fps_1001 ABI merge-loss (rd-duck — not static q5 presence) ---
+    b24_s_msgs, b24_s_errs = run_b24_q5_fps_1001_static(ROOT)
+    msgs.extend(b24_s_msgs)
+    errors.extend(b24_s_errs)
+    b24_e_rc, b24_e_msgs, b24_e_errs = run_b24_q5_fps_1001_exec_gate(ROOT)
+    msgs.extend(b24_e_msgs)
+    errors.extend(b24_e_errs)
 
     # --- B19 MERGE-LOSS + lane tip under-take (always, even if Bn cleared) ---
     b19_errs = collect_merge_loss_errors()
@@ -4401,6 +4701,57 @@ present_core u_mut_b22_core (
         )
         return inject + txt
 
+    def clear_b24_latch_accept_1001(txt: str) -> str:
+        """Move reserved to [63:35] and expose fps_1001 <= sh5[34]."""
+        # Neutralize 63:34 reserved trap if present; always inject accept surface.
+        t2 = re.sub(
+            r"sh5\s*\[\s*63\s*:\s*34\s*\]",
+            "sh5[63:35]",
+            txt,
+        )
+        inject = (
+            "\n// fitgate mut B24 latch accept fps_1001 (ABI #2.1)\n"
+            "wire q5_reserved_nz = |sh5[63:35];\n"
+            "output reg fps_1001;\n"
+            "fps_1001 <= sh5[34];\n"
+        )
+        return inject + t2
+
+    def clear_b24_consumer_1001(txt: str) -> str:
+        return (
+            "\n// fitgate mut B24 fps_1001 consumer\n"
+            "wire fps_1001;\n"
+            "wire plxg_fps_1001 = fps_1001;\n"
+            + txt
+        )
+
+    def clear_b24_exec_script(_txt: str) -> str:
+        """Structural runner that satisfies B24 exec contract (not product TB)."""
+        spec, _ = load_b24_q5_manifest(ROOT)
+        case_tok = str(spec.get("case") or B24_Q5_DEFAULT_SPEC["case"])
+        pass_tok = str(spec.get("pass") or B24_Q5_DEFAULT_SPEC["pass"])
+        req = [
+            str(x)
+            for x in (
+                spec.get("require_stdout") or B24_Q5_DEFAULT_SPEC["require_stdout"]
+            )
+        ]
+        echoes = "".join(f"echo '{r}'\n" for r in req)
+        return (
+            "#!/usr/bin/env bash\n"
+            "set -euo pipefail\n"
+            "ROOT=\"${MISTERPLEX_ROOT:-$(cd \"$(dirname \"$0\")/../..\" && pwd)}\"\n"
+            "test -f \"$ROOT/fpga/Plex_MiSTer/Plex.sv\"\n"
+            "rg -q 'module' \"$ROOT/fpga/Plex_MiSTer/Plex.sv\" || "
+            "grep -q 'module' \"$ROOT/fpga/Plex_MiSTer/Plex.sv\"\n"
+            f"echo '{case_tok}'\n"
+            f"echo '{pass_tok}'\n"
+            "echo 'SIM_RUN=1'\n"
+            "echo 'measured_mut_probe=1'\n"
+            f"{echoes}"
+            "exit 0\n"
+        )
+
     # Each entry: token, list of (path, transform) applied together for clear.
     specs: list[tuple[str, list[tuple[Path, object]]]] = [
         ("B1_LAYOUT_NOT_960", [(layout, clear_layout_960)]),
@@ -4447,6 +4798,16 @@ present_core u_mut_b22_core (
                 (core, clear_b23_owner_markers),
                 (beam, clear_b23_owner_markers),
             ],
+        ),
+        # B24_Q5_FPS_1001_MERGED_PATH clear/restore is in _mutation_b24_q5_fps_1001
+        # (script may be absent — file-create path, not transform-on-existing).
+        (
+            "B24_Q5_BIT34_LATCH_REJECTS_1001",
+            [(latch, clear_b24_latch_accept_1001)],
+        ),
+        (
+            "B24_Q5_FPS_1001_NO_CONSUMER",
+            [(core, clear_b24_consumer_1001), (plex, clear_b24_consumer_1001)],
         ),
         # Store-wire / plex-unconnected only fire when ports exist — closed reinject.
         (
@@ -4620,6 +4981,8 @@ present_core u_mut_b22_core (
     # B20 hierarchy: executable contract (rd-duck hollow-audit). Comment bait
     # must NOT clear; only a run script with CASE+PASS+DUT+rc0 may clear.
     fails.extend(_mutation_b20_hier_exec())
+    # B24 q5 fps_1001 merged path (static presence ≠ accept+1001).
+    fails.extend(_mutation_b24_q5_fps_1001())
 
     return fails
 
@@ -4870,6 +5233,124 @@ def _mutation_b20_hier_exec() -> list[str]:
         finally:
             if rest is not None:
                 rest()
+
+    return fails
+
+
+def _mutation_b24_q5_fps_1001() -> list[str]:
+    """B24: static q5 presence must not clear; need accept+fps_1001 executable."""
+    fails: list[str] = []
+    unit = ROOT / "tests" / "unit"
+    unit.mkdir(parents=True, exist_ok=True)
+    spec, _ = load_b24_q5_manifest(ROOT)
+    tok = str(spec.get("token") or B24_Q5_TOKEN)
+    rel = str(spec.get("script") or B24_Q5_DEFAULT_SPEC["script"])
+    script = ROOT / rel
+    case_tok = str(spec.get("case") or B24_Q5_DEFAULT_SPEC["case"])
+    pass_tok = str(spec.get("pass") or B24_Q5_DEFAULT_SPEC["pass"])
+    req = [str(x) for x in (spec.get("require_stdout") or B24_Q5_DEFAULT_SPEC["require_stdout"])]
+
+    def _toks() -> set[str]:
+        _rc, msgs = leg0_arch_blockers()
+        return _leg0_error_tokens(msgs)
+
+    # 1) Static q5@0x828 prose / B17-class markers alone must not clear B24 exec.
+    prose = (
+        "#!/usr/bin/env bash\n"
+        "# B17 static q5 presence bait — 0x828 dar_x dar_y content_fps dar_valid fps_valid\n"
+        f"# {case_tok}\n"
+        f"# {pass_tok}\n"
+        "# packPlxgQ5 fps_1001 bit34 24000/1001\n"
+        "exit 0\n"
+    )
+    rest = None
+    try:
+        rest = _with_file_backup(script, prose)
+        os.chmod(script, 0o755)
+        if tok not in _toks():
+            fails.append(
+                f"{tok}: static q5@0x828 / keyword prose cleared B24 — HOLE "
+                "(rd-duck: presence insufficient)"
+            )
+        else:
+            print(f"  MUT_OK {tok} static_q5_prose_rejected=1")
+    finally:
+        if rest is not None:
+            rest()
+
+    # 2) Echo all tokens without runner body — reject.
+    echo_all = (
+        "#!/usr/bin/env bash\n"
+        f"echo '{case_tok}'\n"
+        f"echo '{pass_tok}'\n"
+        "echo 'SIM_RUN=1'\n"
+        "echo 'measured_mut_probe=1'\n"
+        + "".join(f"echo '{r}'\n" for r in req)
+        + "exit 0\n"
+    )
+    rest = None
+    try:
+        rest = _with_file_backup(script, echo_all)
+        os.chmod(script, 0o755)
+        if tok not in _toks():
+            fails.append(f"{tok}: echo-all without runner body cleared — HOLE")
+        else:
+            print(f"  MUT_OK {tok} echo_all_no_body_rejected=1")
+    finally:
+        if rest is not None:
+            rest()
+
+    # 3) Structural good runner clears exec token only (statics may remain).
+    good = (
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "ROOT=\"${MISTERPLEX_ROOT:-$(cd \"$(dirname \"$0\")/../..\" && pwd)}\"\n"
+        "test -f \"$ROOT/fpga/Plex_MiSTer/Plex.sv\"\n"
+        "rg -q 'module' \"$ROOT/fpga/Plex_MiSTer/Plex.sv\" || "
+        "grep -q 'module' \"$ROOT/fpga/Plex_MiSTer/Plex.sv\"\n"
+        f"echo '{case_tok}'\n"
+        f"echo '{pass_tok}'\n"
+        "echo 'SIM_RUN=1'\n"
+        "echo 'measured_mut_probe=1'\n"
+        + "".join(f"echo '{r}'\n" for r in req)
+        + "exit 0\n"
+    )
+    rest = None
+    try:
+        rest = _with_file_backup(script, good)
+        os.chmod(script, 0o755)
+        t = _toks()
+        if tok in t:
+            fails.append(f"{tok}: structural good runner did not clear exec token — HOLE")
+        else:
+            print(f"  MUT_OK {tok} exec_clear_drop=1")
+        # Statics must still be independent of the exec runner (presence ≠ accept).
+        if "B24_Q5_BIT34_LATCH_REJECTS_1001" not in t:
+            fails.append(
+                "B24_Q5_BIT34_LATCH_REJECTS_1001: cleared by exec runner alone — HOLE"
+            )
+        else:
+            print("  MUT_OK B24_Q5_BIT34_LATCH_REJECTS_1001 independent_of_exec=1")
+        if "B24_Q5_FPS_1001_NO_CONSUMER" not in t:
+            fails.append(
+                "B24_Q5_FPS_1001_NO_CONSUMER: cleared by exec runner alone — HOLE"
+            )
+        else:
+            print("  MUT_OK B24_Q5_FPS_1001_NO_CONSUMER independent_of_exec=1")
+    finally:
+        if rest is not None:
+            rest()
+
+    # 4) Restore: missing/hollow script must re-fire exec token.
+    t2 = _toks()
+    if tok not in t2:
+        fails.append(
+            f"{tok}: vanished after restore (script_exists={script.is_file()}) — HOLE"
+        )
+    else:
+        print(
+            f"  MUT_OK {tok} restore_fire=1 script_exists={int(script.is_file())}"
+        )
 
     return fails
 
