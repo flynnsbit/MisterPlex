@@ -1,0 +1,53 @@
+{
+  "id": "decode_clk_domain",
+  "title": "Separate decoder PLL domain vs Route A (beam fixed at 20 MHz)",
+  "route_a_native_720p_beam": "still_killed",
+  "verdict": "SEPARATE_DOMAIN_USEFUL_AFTER_PATH_CUT_NOT_50MHZ_ALONE",
+  "today": {
+    "decode_clock": "clk_sys",
+    "decode_mhz": 20.0,
+    "pll_sot": "fpga/Plex_MiSTer/rtl/pll/pll_0002.v",
+    "stream_path_clk": "Plex.sv .clk(clk_sys)",
+    "dedicated_clk_decode": false
+  },
+  "pll_outputs_default": {
+    "outclk_0_mhz": 20.0,
+    "outclk_1": "sdram_selectable",
+    "outclk_2_mhz": 90.0,
+    "outclk_3_default_mhz": 0,
+    "outclk_4_plus_default_mhz": 0,
+    "spare_counter_for_clk_dec": true
+  },
+  "fmax_measured": {
+    "stub_in_clk_sys_mhz": 23.46,
+    "stub_in_source": "deploy2/8fdf440f STA + JOB1 lat_p_mb_addr→mv_col_al_x 42.333ns",
+    "nostub_clk_sys_mhz": 32.59,
+    "nostub_note": "empty-of-stub product class — not decode Fmax",
+    "h264_decode_top_fmax_mhz": null,
+    "h264_decode_top_in_files_qip": false,
+    "h264_decode_top_instantiated": false
+  },
+  "throughput": {
+    "cavlc_cy_per_mb_nominal": 2200,
+    "624x480_24_cy_per_mb_at_20": 712.3,
+    "624x480_24_cy_per_mb_at_50": 1780.6,
+    "short_at_20": 3.09,
+    "short_at_50": 1.24,
+    "fifty_mhz_alone_closes_dominant_class": false
+  },
+  "cdc": {
+    "product_fabric_fs_wr_reaches_ddr_store": false,
+    "product_pixels": "ARM_to_HPS_DDR_to_ddr_frame_store",
+    "existing_sys_ddr": "gray_async_fifo_related_pll",
+    "third_domain_free": false
+  },
+  "proposal_applied": false,
+  "proposed_pll_string": ".output_clock_frequency4(\"50.000000 MHz\")",
+  "work_order": [
+    "cy_per_mb_diet_and_pipeline",
+    "w_mem_fabric_write_port_if_fabric_dp",
+    "clk_dec_pll_plus_cdc_parent_fit_sta"
+  ],
+  "gate": "tests/unit/test_decode_clk_domain_wall.sh",
+  "report": ".agent-work/w-clock/DECODE_CLK_DOMAIN_VERDICT.md"
+}
