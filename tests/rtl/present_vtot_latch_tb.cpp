@@ -82,6 +82,9 @@ int main(int argc, char **argv)
 	top->win_v_de = 540;
 	top->use_rt_vtotal = 1;
 	top->rt_vtotal = 705; // start film
+	top->use_rt_geom = 0;
+	top->rt_h_de = 0;
+	top->rt_v_active = 0;
 
 	top->reset = 1;
 	top->clk = 0;

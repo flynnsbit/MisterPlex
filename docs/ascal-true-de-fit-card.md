@@ -105,3 +105,28 @@ cd <wt-scaler>
 tests/unit/test_present_true_de_count_rtl_sim.sh; echo tde=$?
 # expect product30+product24 true_de=1 de=960x540; RED island + vtot_bad true_rc=1
 ```
+
+## B6 store coordinate oracle (w-scaler)
+
+`tests/unit/test_present_true_de_count_rtl_sim.sh` requires:
+- `store_id_checked == CW*CH`
+- visitation bitmap: every `(x,y)` in `[0,CW)×[0,CH)` **exactly once**
+- identity `store_(x,y) == beam (hc,vc)` (1-cycle align)
+- RED: `FAULT_STORE_ORACLE_PERM` (x^=1 bijection — count can greenwash) and `DROP` (x0→x1)
+
+## Runtime multi-geometry (PMS source-native)
+
+Beam `use_rt_geom=1` with `rt_h_de/content_w`, `rt_v_active/content_h`, latched at frame wrap.
+Counted green: **320×240**, **640×360**, **960×540** (`oracle_full=1`, `line_req=W..W`).
+`H_TOTAL=1182` fixed — smaller DE widens blanking (ascal-friendly).
+
+### Fmax (runtime DE vs constant)
+
+Pixel path remains **11-bit compares** (`hc_n >= hde_act`) plus existing content_window
+Q16 mul (unchanged). No new divide on ce_pix. vs param-folded `>= 960`: one register
+operand instead of a constant — same comparator structure. At clk_sys **20 MHz** with
+stub-era Fmax ~23.5 MHz (~17% margin), this is not the binding path; the content_window
+mul and DDR store remain larger. **No Quartus proof here** — estimate only; w-clock owns STA.
+
+Host must publish `content_w/h` = delivered coded size. Beam DE tracks them; window
+`h_de/v_de` tied to `beam_*_act` under `PRESENT_BEAM_960` for identity true DE.

@@ -118,10 +118,12 @@ module present_beam_ddr_store_tb (
 	) beam (
 		.clk(clk), .reset(reset),
 		.use_rt_vtotal(1'b0), .rt_vtotal(11'd0),
+		.use_rt_geom(1'b0), .rt_h_de(11'd0), .rt_v_active(11'd0),
 		.ce_pix(ce_pix_i),
 		.HBlank(hb), .HSync(hs), .VBlank(vb), .VSync(vs),
 		.frame_start(fstart),
-		.hc_out(hc_i), .vc_out(vc_i), .vtot_active(vtot_act_i)
+		.hc_out(hc_i), .vc_out(vc_i), .vtot_active(vtot_act_i),
+		.hde_active(), .vact_active()
 	);
 
 	wire [10:0] py = vc_i;
