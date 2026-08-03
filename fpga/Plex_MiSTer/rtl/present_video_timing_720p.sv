@@ -8,7 +8,7 @@
 //     f_pix = 1650 * 750 * 60 = 74_250_000 Hz = **74.25 MHz**
 //   VIC 60 720p24: H_TOTAL=3300, V_TOTAL=750  (double H blanking)
 //     f_pix = 3300 * 750 * 24 = 59_400_000 Hz = **59.40 MHz**
-//   Same H/V as VIC4 @ 24 fps (non-VIC, used by this pack + PRESENT_CLK_PIX_PLL):
+//   Same H/V as VIC4 @ 24 fps (non-VIC, used by this pack + PRESENT_CLK_SYS_24 / MULTI pack):
 //     f_pix = 1650 * 750 * 24 = 29_700_000 Hz = **29.70 MHz**
 //   PIX_PER_FRAME (this pack) = 1650 * 750 = 1_237_500
 //
@@ -18,7 +18,7 @@
 //   PX_PER_CLK raises *fabric* group rate into async FIFO; unpack is on clk_pix.
 //   Same-clock 2ppc does NOT raise scan-out above clk_pix Mpix/s.
 //
-// Until PRESENT_CLK_PIX_PLL, same-clock mode runs CEA totals at reduced refresh:
+// Until PRESENT_CLK_SYS_24 / MULTI pack, same-clock mode runs CEA totals at reduced refresh:
 //   fps_eff = clk_pix / (H_TOTAL * V_TOTAL)
 //   @20 MHz, 1650×750: fps_eff = 20e6/1_237_500 ≈ **16.16 Hz**
 // Active geometry is still genuine 1280×720 DE.

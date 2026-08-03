@@ -12,9 +12,10 @@
 //   `define PRESENT_MULTI_PIXEL  — CEA 720p beam + present_npx_path (PPC path)
 //   `define PRESENT_PX_PER_CLK N — 1|2|4 with MULTI_PIXEL (product land uses 1 until
 //                                  ddr_frame_store grows N-wide RGB ports)
-//   `define PRESENT_CLK_PIX_PLL  — separate clk_pix + rate-match (optional)
+//   `define PRESENT_CLK_SYS_24   — retune clk_sys to 24 MHz (L4 1312x762 @ ~24 fps)
 // Macros off → bit-identical Template H_DE=529 / DE_LAG=3 path (v0.3.0 baseline).
 // Mutually exclusive: L4 vs BEAM_960 vs MULTI_PIXEL. Parent enables in fit QSF only.
+// Separate clk_pix PLL was reverted: L4 beam is on clk_sys; CLK_VIDEO=clk_sys.
 
 `ifdef PRESENT_MULTI_PIXEL
 	`ifndef PRESENT_PX_PER_CLK
@@ -68,7 +69,7 @@ module present_core #(
 	input  wire        clk,
 	input  wire        clk_sdram,
 	input  wire        clk_audio,
-	// Optional pix clock (PRESENT_CLK_PIX_PLL). Product ties to clk_sys.
+	// Pix clock input: product ties to clk_sys (single domain). Kept for MULTI path port.
 	input  wire        clk_pix,
 	input  wire        reset,
 
@@ -194,12 +195,17 @@ module present_core #(
 	// when BEAM/MULTI macros are off. Outputs are observational only on
 	// the default path — they do not drive HDMI.
 	// ------------------------------------------------------------------
+`ifdef PRESENT_CLK_SYS_24
+	localparam int KEEP_CLK_SYS_HZ = 24_000_000;
+`else
+	localparam int KEEP_CLK_SYS_HZ = 20_000_000;
+`endif
 	(* noprune *) wire [11:0] keep_720_hde, keep_720_htot, keep_720_vact, keep_720_vtot;
 	(* noprune *) wire [11:0] keep_720_hss, keep_720_hse, keep_720_vss, keep_720_vse;
 	(* noprune *) wire [15:0] keep_720_fps_milli;
 	(* noprune *) wire        keep_720_needs_fast;
 	present_video_timing_720p #(
-		.CLK_PIX_HZ(20_000_000)
+		.CLK_PIX_HZ(KEEP_CLK_SYS_HZ)
 	) u_keep_timing_720p (
 		.h_de(keep_720_hde),
 		.h_total(keep_720_htot),
@@ -218,7 +224,7 @@ module present_core #(
 	(* noprune *) wire        keep_960_mode30, keep_960_wide_fifo;
 	present_video_timing_960 #(
 		.MODE(0),
-		.CLK_PIX_HZ(20_000_000)
+		.CLK_PIX_HZ(KEEP_CLK_SYS_HZ)
 	) u_keep_timing_960 (
 		.h_de(keep_960_hde),
 		.h_total(keep_960_htot),
@@ -709,8 +715,8 @@ module present_core #(
 	wire                mp_out_hb, mp_out_hs, mp_out_vb, mp_out_vs, mp_out_fs;
 	wire                mp_wr_full, mp_wr_af, mp_rd_ur, mp_rd_empty;
 
-`ifdef PRESENT_CLK_PIX_PLL
-	localparam int MP_CLK_PIX_HZ = 29_700_000;
+`ifdef PRESENT_CLK_SYS_24
+	localparam int MP_CLK_PIX_HZ = 24_000_000;
 `else
 	localparam int MP_CLK_PIX_HZ = 20_000_000;
 `endif
@@ -792,21 +798,8 @@ module present_core #(
 	end
 	wire mp_push = mp_tq_v[MP_STORE_LAT-1];
 
-`ifdef PRESENT_CLK_PIX_PLL
-	(* noprune *) reg mp_rst_pix0, mp_rst_pix1;
-	always @(posedge clk_pix or posedge reset) begin
-		if (reset) begin
-			mp_rst_pix0 <= 1'b1;
-			mp_rst_pix1 <= 1'b1;
-		end else begin
-			mp_rst_pix0 <= 1'b0;
-			mp_rst_pix1 <= mp_rst_pix0;
-		end
-	end
-	wire mp_reset_pix = mp_rst_pix1;
-`else
+// clk_pix == clk_sys in product; same-domain reset (no 2FF).
 	wire mp_reset_pix = reset;
-`endif
 
 	present_npx_path #(
 		.PX_PER_CLK(PRESENT_PPC),
