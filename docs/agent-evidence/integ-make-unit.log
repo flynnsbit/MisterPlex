@@ -1,0 +1,50 @@
+Makefile:774: warning: overriding recipe for target '/home/flynnsbit/Projects/MisterPlex-wt-integ-product/build/test_ddr_720p_abi'
+Makefile:631: warning: ignoring old recipe for target '/home/flynnsbit/Projects/MisterPlex-wt-integ-product/build/test_ddr_720p_abi'
+resource-preflight: waiting for exclusive heavy-validation slot: /home/flynnsbit/Projects/MisterPlex-wt-integ-product/build/resource-preflight.lock
+resource-preflight: acquired slot for: python3 /home/flynnsbit/Projects/MisterPlex-wt-integ-product/scripts/run_with_skip_summary.py --label make-unit -- make unit-rollcall unit-unlocked
+Local Quartus processes detected:
+    pid=566537 rss=225948KB quartus_sh
+    pid=566624 rss=2502560KB quartus_map
+PREFLIGHT REFUSED: a local Quartus fit is running (fits are remote-only: scripts/build_rbf_remote.sh slotN)
+  Results produced under this condition are not trustworthy.
+  Fix the cause, or set MISTERPLEX_ALLOW_LOW_MEMORY_TESTS=1 to override.
+resource-preflight: refusal is correct; backoff 30s (attempt 1/20, MemAvailable=61896MB SwapFree=95608MB)
+Local Quartus processes detected:
+    pid=566537 rss=226164KB quartus_sh
+    pid=566624 rss=2510532KB quartus_map
+    pid=568890 rss=525576KB quartus_map
+    pid=568891 rss=0KB quartus_map
+PREFLIGHT REFUSED: a local Quartus fit is running (fits are remote-only: scripts/build_rbf_remote.sh slotN)
+  Results produced under this condition are not trustworthy.
+  Fix the cause, or set MISTERPLEX_ALLOW_LOW_MEMORY_TESTS=1 to override.
+resource-preflight: refusal is correct; backoff 30s (attempt 2/20, MemAvailable=61550MB SwapFree=95608MB)
+Local Quartus processes detected:
+    pid=566537 rss=229504KB quartus_sh
+    pid=566624 rss=2513016KB quartus_map
+PREFLIGHT REFUSED: a local Quartus fit is running (fits are remote-only: scripts/build_rbf_remote.sh slotN)
+  Results produced under this condition are not trustworthy.
+  Fix the cause, or set MISTERPLEX_ALLOW_LOW_MEMORY_TESTS=1 to override.
+resource-preflight: refusal is correct; backoff 30s (attempt 3/20, MemAvailable=61991MB SwapFree=95608MB)
+preflight: paging 0 pages/s over 2s (limit 200)
+preflight: MemAvailable 62258MB (floor 4096MB)
+preflight: SwapFree 95608MB (floor 32MB)
+preflight OK: no local Quartus, no active paging, 62258MB available, 95608MB swap free
+resource-preflight: preflight OK on attempt 4; running command
+make[1]: Entering directory '/home/flynnsbit/Projects/MisterPlex-wt-integ-product'
+Makefile:774: warning: overriding recipe for target '/home/flynnsbit/Projects/MisterPlex-wt-integ-product/build/test_ddr_720p_abi'
+Makefile:631: warning: ignoring old recipe for target '/home/flynnsbit/Projects/MisterPlex-wt-integ-product/build/test_ddr_720p_abi'
+python3 /home/flynnsbit/Projects/MisterPlex-wt-integ-product/tests/unit/test_unit_rollcall.py
+UNIT_ROLLCALL_FAIL
+UNIT_ROLLCALL_COUNTS actual_prereqs=73 expected_prereqs=73 actual_commands=206 protected_commands=203 expected_commands=205 actual_ignored_commands=3 expected_ignored_commands=3
+MISSING_COMMAND $(ROOT)/tests/unit/test_fabric_decode_inventory.sh
+MISSING_COMMAND python3 $(ROOT)/tests/unit/test_telem_flags_abi.py
+MISSING_COMMAND $(ROOT)/tests/unit/test_product_no_stub_dark_silicon.sh
+MISSING_COMMAND $(ROOT)/tests/unit/test_plex_chrome_elision_guard.sh
+UNREGISTERED_COMMAND $(ROOT)/tests/unit/test_plex_chrome_counted_rtl_sim.sh -- register this unit-unlocked command
+make[1]: *** [Makefile:53: unit-rollcall] Error 1
+make[1]: Leaving directory '/home/flynnsbit/Projects/MisterPlex-wt-integ-product'
+GATE_SKIP_SUMMARY_BEGIN
+GATE_SKIP_SUMMARY total=0 critical=0 high=0 advisory=0
+GATE_SKIP_NONE all registered critical/soft-skip checks covered or not emitted
+GATE_SKIP_SUMMARY_END
+make: *** [Makefile:50: unit] Error 2

@@ -1117,3 +1117,11 @@ package:
 
 clean:
 	rm -rf $(ROOT)/build
+
+
+fit-gate:
+	$(ROOT)/scripts/fit_release_gate.sh $(if $(QSF),--qsf "$(QSF)",)
+
+fit-gate-selftest:
+	$(ROOT)/scripts/fit_release_gate.sh --self-test
+

@@ -1,0 +1,91 @@
+Makefile:774: warning: overriding recipe for target '/home/flynnsbit/Projects/MisterPlex-wt-integ-product/build/test_ddr_720p_abi'
+Makefile:631: warning: ignoring old recipe for target '/home/flynnsbit/Projects/MisterPlex-wt-integ-product/build/test_ddr_720p_abi'
+/home/flynnsbit/Projects/MisterPlex-wt-integ-product/scripts/fit_release_gate.sh 
+CROSS_LANE_MACRO_NOTE: w-scaler fit card (docs/ascal-true-de-fit-card.md) requires PRESENT_BEAM_960 + FRAME 960/540 and says do NOT set PRESENT_MULTI_PIXEL / PRESENT_SCALE_4_3 / PRESENT_SCALE_2X for this path. integ/fab-720p-planes QSF comments list PRESENT_MULTI_PIXEL, PRESENT_PX_PER_CLK, FABRIC_DDR_WRITER as features to enable. rd-duck: complex/mp path ≠ product until coherent FIT_CANDIDATE; 40 Mpix/s bridge claim is not a product raster. Gate enforces one locked architecture + ascal-true-DE macro set when candidate=ascal_true_de_960.
+FIT_RELEASE_GATE qsf=/home/flynnsbit/Projects/MisterPlex-wt-integ-product/fpga/Plex_MiSTer/Plex.qsf
+FIT_RELEASE_GATE_EXECUTED begin
+FIT_RELEASE_GATE_CLASS=partial_precheck_until_leg0_clear (not fit release while B0–B11 open — rd-duck adc9292)
+FIT_RELEASE_GATE_IDENTITY live=70c23618376921b85dff7ae518d7fd219822f7a1
+GATE_IDENTITY live=70c23618376921b85dff7ae518d7fd219822f7a1
+GATE_IDENTITY canonical=70c23618376921b85dff7ae518d7fd219822f7a1 src=/home/flynnsbit/Projects/MisterPlex-wt-integ-product/docs/fit_gate_identity.json
+GATE_IDENTITY_MATCH EXECUTED
+gate_identity true rc=0
+LEG_TREE gate_root=/home/flynnsbit/Projects/MisterPlex-wt-integ-product qsf=/home/flynnsbit/Projects/MisterPlex-wt-integ-product/fpga/Plex_MiSTer/Plex.qsf qsf_root=/home/flynnsbit/Projects/MisterPlex-wt-integ-product
+LEG_TREE_MATCH EXECUTED QSF and gate RTL share one root
+tree_match true rc=0
+LEG0_ARCH_BLOCKERS_EXECUTED begin
+LEG0_SCAN_ROOT root=/home/flynnsbit/Projects/MisterPlex-wt-integ-product ruler=/home/flynnsbit/Projects/MisterPlex-wt-integ-product
+LEG0_SIBLING_SCAN_EXECUTED begin
+LEG0_SIBLING_HIT token=B2_FPS_INT_OVERFLOW lane=w-clock commit=b110520899ed ts=2026-08-03 05:15:45 -0500 tip_newer_than_static_tag=1 artefact=fpga/Plex_MiSTer/rtl/present_video_timing_960.sv
+LEG0_SIBLING_HIT token=B6_HBLANK_OLD_HC_EPOCH lane=w-scaler commit=3c872e8e1ac7 ts=2026-08-03 05:11:28 -0500 tip_newer_than_static_tag=1 artefact=fpga/Plex_MiSTer/rtl/present_beam_content_de.sv
+LEG0_SIBLING_HIT token=B6_STORE_ORACLE_UNTESTED lane=w-scaler commit=3c872e8e1ac7 ts=2026-08-03 05:11:28 -0500 tip_newer_than_static_tag=1 artefact=tests/rtl/present_true_de_count_tb.cpp
+LEG0_SIBLING_HIT token=B7_OPTC_WIDTH_ONLY lane=w-mem commit=90517fa262d4 ts=2026-08-03 05:12:19 -0500 tip_newer_than_static_tag=1 artefact=fpga/Plex_MiSTer/rtl/ddr_frame_store.sv
+LEG0_SIBLING_HIT token=B7_PRESENT_CORE_NO_OPTC_PHYS lane=w-mem commit=90517fa262d4 ts=2026-08-03 05:12:19 -0500 tip_newer_than_static_tag=1 artefact=fpga/Plex_MiSTer/rtl/present_core.sv
+LEG0_SIBLING_HIT token=B7_PRESENT_CORE_NO_OPTC_STRIDE lane=w-mem commit=90517fa262d4 ts=2026-08-03 05:12:19 -0500 tip_newer_than_static_tag=1 artefact=fpga/Plex_MiSTer/rtl/present_core.sv
+LEG0_SIBLING_HIT token=B7_PRESENT_CORE_NO_OPTC_DOORBELL lane=w-mem commit=90517fa262d4 ts=2026-08-03 05:12:19 -0500 tip_newer_than_static_tag=1 artefact=fpga/Plex_MiSTer/rtl/present_core.sv
+LEG0_SIBLING_HIT token=B8_PLXG_WR_COMMIT_TIED_ZERO lane=w-mem commit=90517fa262d4 ts=2026-08-03 05:12:19 -0500 tip_newer_than_static_tag=0 artefact=fpga/Plex_MiSTer/Plex.sv
+LEG0_SIBLING_HIT token=B8_CONTENT_BASE_NOT_960 lane=w-mem commit=90517fa262d4 ts=2026-08-03 05:12:19 -0500 tip_newer_than_static_tag=0 artefact=fpga/Plex_MiSTer/rtl/plex_present_geom_mux.sv
+LEG0_SIBLING_HIT token=B8_FORCE_GEOM_1280_NOT_960 lane=w-mem commit=90517fa262d4 ts=2026-08-03 05:12:19 -0500 tip_newer_than_static_tag=0 artefact=fpga/Plex_MiSTer/rtl/plex_present_geom_mux.sv
+LEG0_SIBLING_HIT token=B13_FIXED_RASTER_NO_RUNTIME_DE lane=w-clock commit=b110520899ed ts=2026-08-03 05:15:45 -0500 tip_newer_than_static_tag=1 artefact=fpga/Plex_MiSTer/rtl/present_core.sv
+LEG0_SIBLING_HIT token=B14_CODED_W_16_ALIGN_UNENFORCED lane=w-mem commit=90517fa262d4 ts=2026-08-03 05:12:19 -0500 tip_newer_than_static_tag=1 artefact=fpga/Plex_MiSTer/rtl/ddr_frame_store.sv
+LEG0_SIBLING_HIT token=B4_PLXG_SAME_SEQ_ABA lane=w-mem commit=90517fa262d4 ts=2026-08-03 05:12:19 -0500 tip_newer_than_static_tag=0 artefact=fpga/Plex_MiSTer/rtl/present_geom_latch.sv
+LEG0_SIBLING_HIT token=B1_NO_COMPILE_TIME_OPTC lane=w-mem commit=90517fa262d4 ts=2026-08-03 05:12:19 -0500 tip_newer_than_static_tag=0 artefact=fpga/Plex_MiSTer/rtl/ddr_frame_store.sv
+LEG0_SIBLING_HIT token=B1_LAYOUT_NOT_960 lane=w-mem commit=90517fa262d4 ts=2026-08-03 05:12:19 -0500 tip_newer_than_static_tag=0 artefact=fpga/Plex_MiSTer/rtl/ddr_frame_layout_params.svh
+LEG0_SIBLING_HIT token=B12_DE_LAG_RGB_LATENCY_UNPROVEN lane=w-mem commit=90517fa262d4 ts=2026-08-03 05:12:19 -0500 tip_newer_than_static_tag=0 artefact=fpga/Plex_MiSTer/rtl/present_core.sv
+LEG0_SIBLING_HIT token=B9_ASPECT_ORIGINAL_4_3 lane=w-mem commit=90517fa262d4 ts=2026-08-03 05:12:19 -0500 tip_newer_than_static_tag=0 artefact=fpga/Plex_MiSTer/Plex.sv
+LEG0_SIBLING_TIP lane=w-clock commit=b110520899ed ts=2026-08-03 05:15:45 -0500 subject='w-clock: STATUS tip d99c126f'
+LEG0_SIBLING_TIP lane=w-integ commit=86e533a2441b ts=2026-08-03 00:36:21 -0500 subject='integ/fab-720p-planes: merge fabric planes default-OFF on nostub'
+LEG0_SIBLING_TIP lane=w-mem commit=90517fa262d4 ts=2026-08-03 05:12:19 -0500 subject='w-mem: COLLISION #5 — force_native_960 is PLXG-idle fallback only'
+LEG0_SIBLING_TIP lane=w-nostub commit=78717396fc95 ts=2026-08-02 23:47:16 -0500 subject='fab-nostub: correct make-unit failure attribution (rule 0)'
+LEG0_SIBLING_TIP lane=w-osd commit=4c379a84e0a3 ts=2026-08-03 04:53:20 -0500 subject='fix(abi): pin PLXG at FIXED 0x800 independent of MAX_CMDS'
+LEG0_SIBLING_TIP lane=w-path commit=9e10eb63c434 ts=2026-08-03 05:10:01 -0500 subject='p720-path: split FRAME_COST_LEDGER stages; decode-only class table'
+LEG0_SIBLING_TIP lane=w-scaler commit=3c872e8e1ac7 ts=2026-08-03 05:11:28 -0500 subject='test(scaler): library geoms 624/720/352 + non-16 RED + 720 store capacity'
+LEG0_SIBLING_SCAN_EXECUTED hits=17
+LEG0_GATED_TREE_HASH live=bc5b076c9958f7e1552de12608dba9989bc6e2d2 HEAD=86c0c39d7ca5
+LEG0_CANDIDATE path=/home/flynnsbit/Projects/MisterPlex-wt-integ-product/docs/fit_candidate.json architecture='ascal_true_de_960' hash='ea077ec2e62b36ddba4a71c5baf1a4a1c82739ff'
+LEG0_RASTER_POLICY mode='runtime_variable_true_de' max=960x540
+LEG0_LAYOUT presented=640x480 coded=624x480
+LEG0_EVIDENCE geom_enable=0 assigns LEG_BASE_W0/LEG_DOORBELL_W (ddr_frame_store.sv) — no compile-time Option-C bank map
+LEG0_EVIDENCE present_video_timing_960.sv exists (3427 B)
+LEG0_EVIDENCE present_core.sv does not instantiate present_video_timing_960
+LEG0_DDR_BEAM_TESTS tests/rtl/present_beam_ddr_store_tb.cpp tests/rtl/present_beam_ddr_store_tb_top.sv tests/unit/test_plex_b8_hier_verilator.sh tests/unit/test_present_beam_960_elab.sh tests/unit/test_present_beam_ddr_store_rtl_sim.sh
+LEG0_EVIDENCE true_de_count asserts store_req==area + coordinate oracle
+LEG0_BANK_MAP width_only_optc=1 capacity_select=0 (960x540 I420=777600 > usable=520192 → must Option-C)
+LEG0_PLEX_SV path=/home/flynnsbit/Projects/MisterPlex-wt-integ-product/fpga/Plex_MiSTer/Plex.sv bytes=41982
+LEG0_PLXG_TIES wr_en_tied0=1 commit_tied0=1
+LEG0_CONTENT_HIER content_base_legacy=1 has_960_content_force=0 force_720p_1280=1
+LEG0_ASPECT original_4_3=1 conf_original_first=1 beam_force_ar=0 (fs=0 16_9=0)
+LEG0_AR_TESTS tests/rtl/plex_b8_hier_tb.cpp
+LEG0_QIP beam_in_qip=1 beam_on_disk=1 qip=/home/flynnsbit/Projects/MisterPlex-wt-integ-product/fpga/Plex_MiSTer/files.qip
+LEG0_DISCOVER_DESIGN EXECUTED beam_in_quartus_file_list=1 n_files=99
+LEG0_CODED_W_ALIGN cw16_check=0 rt_raw_aligned=0
+LEG0_DE_LAG unproven_comment=1 has_960_lag_closure=0
+LEG0_RUNTIME_DE beam_rt_ports=0 core_wires_rt=0 core_hard_960=1 beam_param_960=1
+LEG0_NOTE: colorbars Template path remains under `ifndef PRESENT_BEAM_960` — acceptable only if QSF forces PRESENT_BEAM_960=1 (leg1)
+LEG0_COLLISION_SCAN core_rt=1 force_const_960=0 core_hard_and_rt=1 src=none
+LEG0_COLLISION_TRACTABILITY: full multi-driver/SV elaboration not attempted; B15 covers named PRESENT_BEAM_960 enable-vs-force pair across present_core + plex_present_geom_mux/Plex.sv (observed class). General 'two modules drive same signal with contradictory policies' requires elaboration — not statically complete here.
+LEG0_FAIL EXECUTED reasons:
+  - B0_TREE_HASH_MISMATCH: candidate git_tree_hash=ea077ec2e62b36ddba4a71c5baf1a4a1c82739ff live_gated=bc5b076c9958f7e1552de12608dba9989bc6e2d2. Candidate is not a bypass — update hash only after intentional gated-artefact change, or restore artefacts to the locked tree. [fix=unimplemented — no known sibling-lane fix; new work]
+  - B1_NO_COMPILE_TIME_OPTC: ddr_frame_layout_params.svh still PRESENTED=640x480 CODED=624x480; ddr_frame_store has no `ifdef FABRIC_NATIVE_720P_GEOM/OPTION_C compile-time bank path; geom_enable=0 stays legacy PHYS/stride/doorbell. FRAME_W=960 QSF alone does not re-base the store (rd-duck #3). [fix=unmerged lane=w-mem tip=90517fa262d4 ts=2026-08-03 05:12:19 -0500 artefact=fpga/Plex_MiSTer/rtl/ddr_frame_store.sv evidence='live scan matched 2 patterns @ tip']
+  - B1_LAYOUT_NOT_960: candidate ascal_true_de_960 but layout params PRESENTED=640x480 CODED=624x480 — still legacy 480p bank map. Need capacity/layout for max tier 960×540 (runtime DE tracks delivered geometry; 960×540 is ceiling not a fixed-only raster). Hardcoding PRESENTED=960 without runtime DE fails B13. [fix=unmerged lane=w-mem tip=90517fa262d4 ts=2026-08-03 05:12:19 -0500 artefact=fpga/Plex_MiSTer/rtl/ddr_frame_layout_params.svh evidence='live scan matched 2 patterns @ tip']
+  - B2_NO_RASTER_GENERATOR: present_video_timing_960.sv is constants-only (assign h_de/h_total/… from localparams; no hc/vc beam). Not a product raster (rd-duck #2). Product beam is present_beam_content_de with hardcoded totals — timing_960 is not wired as SoT. [fix=unimplemented — no known sibling-lane fix; new work]
+  - B2_TIMING960_IN_QIP_WITHOUT_RASTER: constants module listed in files.qip without being a real generator — cargo risk [fix=unimplemented — no known sibling-lane fix; new work]
+  - B4_PLXG_SAME_SEQ_ABA: present_geom_latch.sv accepts commit only when `sh_seq != last_seq` with no epoch/session token. After FPGA reset last_seq=0, retained DDR q0 seq=N can ABA on restart (rd-duck #4; host plxg_record.hpp documents the class — RTL still open). [fix=unmerged lane=w-mem tip=90517fa262d4 ts=2026-08-03 05:12:19 -0500 artefact=fpga/Plex_MiSTer/rtl/present_geom_latch.sv evidence='live scan matched 2 patterns @ tip']
+  - B6_HBLANK_OLD_HC_EPOCH: present_beam_content_de.sv must drive HBlank/VBlank/HSync from hc_next/vc_next (same epoch as registered counters). Old-hc NBA blank drops store x=0 every line (store_id_checked=959*540=517860 vs de_pixels=518400) — rd-duck 34ddf031 scalar-ascal proof. [fix=unmerged lane=w-scaler tip=3c872e8e1ac7 ts=2026-08-03 05:11:28 -0500 artefact=fpga/Plex_MiSTer/rtl/present_beam_content_de.sv evidence='live scan matched 2 patterns @ tip' static_tag=bb4e5346 tip_newer=1]
+  - B7_OPTC_WIDTH_ONLY: ddr_frame_store.sv selects Option-C via `rt_cw_cl >= 11'd1280` (or lacks rt_need_optc/rt_payload_bytes/LEG_BANK_USABLE capacity path). Product 960×540 is <1280 wide but 777600 B > 520192 B legacy usable and MUST use Option-C — width gate overruns LEG bank (rd-duck; w-mem capacity fix is the reference). [fix=unmerged lane=w-mem tip=90517fa262d4 ts=2026-08-03 05:12:19 -0500 artefact=fpga/Plex_MiSTer/rtl/ddr_frame_store.sv evidence='live scan matched 3 patterns @ tip' static_tag=e82e5d5e tip_newer=1]
+  - B7_PRESENT_CORE_NO_OPTC_PHYS: present_core.sv ddr_frame_store #() does not pass .PHYS_BASE_720P(...) — only legacy PHYS_BASE/stride/doorbell. Merge/verify PLXG Option-C param wiring (w-mem present_core reference). [fix=unmerged lane=w-mem tip=90517fa262d4 ts=2026-08-03 05:12:19 -0500 artefact=fpga/Plex_MiSTer/rtl/present_core.sv evidence='live scan matched 1 patterns @ tip' static_tag=a1fad081 tip_newer=1]
+  - B7_PRESENT_CORE_NO_OPTC_STRIDE: present_core.sv missing .HPS_BANK_STRIDE_BYTES_720P(...) on ddr_frame_store [fix=unmerged lane=w-mem tip=90517fa262d4 ts=2026-08-03 05:12:19 -0500 artefact=fpga/Plex_MiSTer/rtl/present_core.sv evidence='live scan matched 1 patterns @ tip' static_tag=a1fad081 tip_newer=1]
+  - B7_PRESENT_CORE_NO_OPTC_DOORBELL: present_core.sv missing .DOORBELL_PHYS_720P(...) on ddr_frame_store [fix=unmerged lane=w-mem tip=90517fa262d4 ts=2026-08-03 05:12:19 -0500 artefact=fpga/Plex_MiSTer/rtl/present_core.sv evidence='live scan matched 1 patterns @ tip' static_tag=a1fad081 tip_newer=1]
+  - B7_FIT_CARD_CAPACITY_CLAIM: docs/ascal-true-de-fit-card.md mentions usable-capacity while ddr_frame_store still width-gates Option-C — do not treat the card claim as present code (rd-duck). [fix=unimplemented — no known sibling-lane fix; new work]
+  - B8_PLXG_WR_COMMIT_TIED_ZERO: Plex.sv has plxg_wr_en=1'b0 and plxg_commit=1'b0 (lines ~239–242 class). fabric_geom_enable stays 0; geom/window latch never leaves reset-zero. PRESENT_BEAM_960 alone does not program content/geom (rd-duck product hierarchy). [fix=unmerged lane=w-mem tip=90517fa262d4 ts=2026-08-03 05:12:19 -0500 artefact=fpga/Plex_MiSTer/Plex.sv evidence='live scan matched 2 patterns @ tip']
+  - B8_CONTENT_BASE_NOT_960: Plex.sv content_width_base falls back to O[4] 640×480 / 320×240 when PLXG idle — and there is no live product path that programs content_w/h from PMS-delivered geometry (max tier 960×540). Thin true_de TB drives 960 ports directly; product hierarchy does not (rd-duck). Gate inspects Plex.sv, not the harness. Do not clear by hardcoding only 960 — that fails B13. [fix=unmerged lane=w-mem tip=90517fa262d4 ts=2026-08-03 05:12:19 -0500 artefact=fpga/Plex_MiSTer/rtl/plex_present_geom_mux.sv evidence='live scan matched 3 patterns @ tip']
+  - B8_FORCE_GEOM_1280_NOT_960: only FABRIC_NATIVE_720P_GEOM force path exists and it sets content+geom to 1280×720, not 960×540. Cannot substitute for ascal true-DE 960 product wiring (rd-duck). [fix=unmerged lane=w-mem tip=90517fa262d4 ts=2026-08-03 05:12:19 -0500 artefact=fpga/Plex_MiSTer/rtl/plex_present_geom_mux.sv evidence='live scan matched 3 patterns @ tip']
+  - B9_ASPECT_ORIGINAL_4_3: Plex.sv defaults VIDEO_ARX/ARY to 4/3 when status[122:121]==Original (`(!ar)?12'd4` / `12'd3`). A 960×540 true-DE input is 16:9 content and will present as 4:3 unless Full Screen (ARX=ARY=0) or 16:9 is forced. Scalar proof must `ifdef PRESENT_BEAM_960` force FS/16:9 (or FIT_FORCE_AR_*) — fit card omitted aspect (rd-duck). [fix=unmerged lane=w-mem tip=90517fa262d4 ts=2026-08-03 05:12:19 -0500 artefact=fpga/Plex_MiSTer/Plex.sv evidence='live scan matched 3 patterns @ tip']
+  - B14_CODED_W_16_ALIGN_UNENFORCED: ddr_frame_store.sv must reject non-16-aligned coded_w (rt_coded_w[3:0]==0 in rt_raw_aligned → rt_raw_ok). Parent lab: PMS AR-fit widths 468/638/626 fail 16-align; chroma fetch is coded_w>>4. Silent accept = UV plane corruption. Observed defect class, not speculative. [fix=unmerged lane=w-mem tip=90517fa262d4 ts=2026-08-03 05:12:19 -0500 artefact=fpga/Plex_MiSTer/rtl/ddr_frame_store.sv evidence='live scan matched 2 patterns @ tip' static_tag=e82e5d5e tip_newer=1]
+  - B12_DE_LAG_RGB_LATENCY_UNPROVEN: present_core.sv still states DE_LAG has NOT been re-swept for DDR path (measured at 640-class). No 960 store/RGB latency closure — gate refuses fit until lag is re-proven for max-tier / runtime DE path (rd-duck adc9292). [fix=unmerged lane=w-mem tip=90517fa262d4 ts=2026-08-03 05:12:19 -0500 artefact=fpga/Plex_MiSTer/rtl/present_core.sv evidence='live scan matched 1 patterns @ tip']
+  - B13_FIXED_RASTER_NO_RUNTIME_DE: product hardcodes a fixed content DE (present_beam_content_de parameter H_DE/V_ACTIVE defaults 960×540; present_core `PRESENT_BEAM_960` binds .H_DE(960),.V_ACTIVE(540) / H_DE_I=960) with no runtime ports driven from delivered content_w/h. Parent PMS lab: SD source 320×240 is delivered as 320×240 (no upscale). True-DE architecture requires DE==content at runtime; 960×540 is the maximum tier, not a fixed raster. Asserts against beam+present_core RTL. [fix=unmerged lane=w-clock tip=b110520899ed ts=2026-08-03 05:15:45 -0500 artefact=fpga/Plex_MiSTer/rtl/present_core.sv evidence='live scan matched 3 patterns @ tip' static_tag=5b1cbe46 tip_newer=1]
+LEG0_FAIL count=19
+LEG0_FIX_STATUS unmerged=15 unimplemented=4 (unmerged = sibling lane has fix — route merge; unimplemented = no known fix — dispatch work)
+leg0 true rc=1
+FIT_RELEASE_GATE_FAIL leg=0 (architecture blockers / rd-duck)
+make: *** [Makefile:1123: fit-gate] Error 1

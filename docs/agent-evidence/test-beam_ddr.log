@@ -1,0 +1,153 @@
+RTL SIM: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+=== BUILD PRODUCT_LEGACY ===
+make: Entering directory '/home/flynnsbit/Projects/MisterPlex-wt-integ-product/build/verilator/present_beam_ddr_legacy'
+make: Nothing to be done for 'default'.
+make: Leaving directory '/home/flynnsbit/Projects/MisterPlex-wt-integ-product/build/verilator/present_beam_ddr_legacy'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
+- Verilator: Walltime 0.007 s (elab=0.000, cvt=0.000, bld=0.007); cpu 0.001 s on 1 threads; allocated 20.324 MB
+  pre_measure underrun=0 has_frame=1 frames_done=2
+CASE PRODUCT_LEGACY EXECUTED
+  target_de=960x540 pixels=518400 i420_bytes=449280 bank=0x80000 usable=0x7f000 capacity_ok=1 align16_ok=1
+  svh coded=624x480 presented=640x480 legacy_svh=1
+  store_param FRAME=640x480 CODED=624x480 DISP=618x480 PRES=11,0 shape_960=0 shape_720=0
+  has_frame=1 frames_done=4 doorbell_ok=1 debug=0x10
+  ddr_rd_cmds=21445 ddr_rd_beats=304805 starve=0
+  de_pixels=518400 de_w=960..960 de_lines=540 de_ok=1
+  store_req=518400 line_req=960..960 req_full=1 visible_req=296640
+  store_accepted=296160 line_acc=617..617 acc_full=0
+  underrun_start=0 end=0 delta=0 clear=1
+  PASS de_raster_960x540
+  PASS store_req_full_518400
+  PASS svh_still_legacy_624x480
+  PASS STORE_LEGACY_SHAPE coded=624 frame=640
+  PASS PRODUCT_NOT_FALSE_GREEN accepted=296160 ur_d=0
+  STORE_LEGACY_SHAPE=1
+  VERDICT B5_PRODUCT_NOT_READY store_accepted=296160 need=518400 (B1_NO_COMPILE_TIME_OPTC)
+  OVERALL FAIL fails=1 (expected for PRODUCT_LEGACY)
+true_rc_candidate=1
+PRODUCT_LEGACY true rc=1
+OK PRODUCT_LEGACY honest FAIL
+=== BUILD TB_LOCAL_960 ===
+make: Entering directory '/home/flynnsbit/Projects/MisterPlex-wt-integ-product/build/verilator/present_beam_ddr_tb960'
+make: Nothing to be done for 'default'.
+make: Leaving directory '/home/flynnsbit/Projects/MisterPlex-wt-integ-product/build/verilator/present_beam_ddr_tb960'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
+- Verilator: Walltime 0.009 s (elab=0.000, cvt=0.000, bld=0.008); cpu 0.001 s on 1 threads; allocated 20.324 MB
+  pre_measure underrun=0 has_frame=1 frames_done=2
+CASE TB_LOCAL_960 EXECUTED
+  target_de=960x540 pixels=518400 i420_bytes=777600 bank=0x100000 usable=0xff000 capacity_ok=1 align16_ok=1
+  svh coded=624x480 presented=640x480 legacy_svh=1
+  store_param FRAME=960x540 CODED=960x540 DISP=960x540 PRES=0,0 shape_960=1 shape_720=0
+  has_frame=1 frames_done=3 doorbell_ok=1 debug=0x10
+  ddr_rd_cmds=21224 ddr_rd_beats=513216 starve=0
+  de_pixels=518400 de_w=960..960 de_lines=540 de_ok=1
+  store_req=518400 line_req=960..960 req_full=1 visible_req=518400
+  store_accepted=518400 line_acc=960..960 acc_full=1
+  underrun_start=0 end=0 delta=0 clear=1
+  PASS de_raster_960x540
+  PASS store_req_full_518400
+  NOTE TB_LOCAL_960_NOT_PRODUCT_SVH
+  PASS tb_local_960_shape
+  PASS has_frame
+  PASS store_accepted_full_518400
+  PASS rd_underrun_clear
+  PASS accepted_N_is_518400
+  OVERALL PASS fails=0
+true_rc_candidate=0
+TB_LOCAL_960 true rc=0
+OK TB_LOCAL_960 green (experimental, not product svh)
+=== BUILD RED_STARVE ===
+make: Entering directory '/home/flynnsbit/Projects/MisterPlex-wt-integ-product/build/verilator/present_beam_ddr_starve'
+make: Nothing to be done for 'default'.
+make: Leaving directory '/home/flynnsbit/Projects/MisterPlex-wt-integ-product/build/verilator/present_beam_ddr_starve'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
+- Verilator: Walltime 0.008 s (elab=0.000, cvt=0.000, bld=0.007); cpu 0.001 s on 1 threads; allocated 20.324 MB
+  pre_measure underrun=0 has_frame=1 frames_done=2
+CASE RED_STARVE EXECUTED
+  target_de=960x540 pixels=518400 i420_bytes=777600 bank=0x100000 usable=0xff000 capacity_ok=1 align16_ok=1
+  svh coded=624x480 presented=640x480 legacy_svh=1
+  store_param FRAME=960x540 CODED=960x540 DISP=960x540 PRES=0,0 shape_960=1 shape_720=0
+  has_frame=1 frames_done=2 doorbell_ok=1 debug=0x13
+  ddr_rd_cmds=14791 ddr_rd_beats=314543 starve=1
+  de_pixels=518400 de_w=960..960 de_lines=540 de_ok=1
+  store_req=518400 line_req=960..960 req_full=1 visible_req=518400
+  store_accepted=30720 line_acc=960..960 acc_full=0
+  underrun_start=0 end=65535 delta=65535 clear=0
+  PASS de_raster_960x540
+  PASS store_req_full_518400
+  PASS tb_local_960_shape
+  PASS has_frame_before_starve
+  PASS UNDERRUN_FIRED
+  PASS STARVE_ACCEPTED_BELOW_FULL accepted=30720
+  OVERALL PASS_CHECKS_BUT_RED fails=0 (RED twin expects FAIL exit)
+true_rc_candidate=1
+RED_STARVE true rc=1
+OK RED_STARVE underrun fired
+=== BUILD TB_LOCAL_720x480 ===
+make: Entering directory '/home/flynnsbit/Projects/MisterPlex-wt-integ-product/build/verilator/present_beam_ddr_tb720'
+make: Nothing to be done for 'default'.
+make: Leaving directory '/home/flynnsbit/Projects/MisterPlex-wt-integ-product/build/verilator/present_beam_ddr_tb720'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
+- Verilator: Walltime 0.009 s (elab=0.000, cvt=0.000, bld=0.009); cpu 0.000 s on 1 threads; allocated 20.324 MB
+  pre_measure underrun=0 has_frame=1 frames_done=2
+CASE TB_LOCAL_720x480 EXECUTED
+  target_de=720x480 pixels=345600 i420_bytes=518400 bank=0x80000 usable=0x7f000 capacity_ok=1 align16_ok=1
+  svh coded=624x480 presented=640x480 legacy_svh=1
+  store_param FRAME=720x480 CODED=720x480 DISP=720x480 PRES=0,0 shape_960=0 shape_720=1
+  has_frame=1 frames_done=3 doorbell_ok=1 debug=0x10
+  ddr_rd_cmds=21283 ddr_rd_beats=348995 starve=0
+  de_pixels=345600 de_w=720..720 de_lines=480 de_ok=1
+  store_req=345600 line_req=720..720 req_full=1 visible_req=345600
+  store_accepted=345600 line_acc=720..720 acc_full=1
+  underrun_start=0 end=0 delta=0 clear=1
+  PASS de_raster_720x480
+  PASS store_req_full_345600
+  NOTE TB_LOCAL_720x480 capacity-tight (NOT claiming product svh)
+  PASS tb_local_720x480_shape
+  PASS i420_fits_usable_bank
+  PASS i420_bytes_518400
+  PASS usable_bank_520192
+  PASS spare_1792
+  PASS align16_ok
+  PASS has_frame
+  PASS store_accepted_full_345600
+  PASS rd_underrun_clear
+  PASS accepted_N_is_345600
+  PASS de_pixels_345600
+  OVERALL PASS fails=0
+true_rc_candidate=0
+TB_LOCAL_720x480 true rc=0
+OK TB_LOCAL_720x480 capacity-tight green
+=== BUILD RED_NON16 ===
+make: Entering directory '/home/flynnsbit/Projects/MisterPlex-wt-integ-product/build/verilator/present_beam_ddr_non16'
+make: Nothing to be done for 'default'.
+make: Leaving directory '/home/flynnsbit/Projects/MisterPlex-wt-integ-product/build/verilator/present_beam_ddr_non16'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
+- Verilator: Walltime 0.008 s (elab=0.000, cvt=0.000, bld=0.007); cpu 0.001 s on 1 threads; allocated 20.324 MB
+  pre_measure underrun=0 has_frame=1 frames_done=2
+CASE RED_NON16 EXECUTED
+  target_de=468x360 pixels=168480 i420_bytes=252720 bank=0x80000 usable=0x7f000 capacity_ok=1 align16_ok=0
+  svh coded=624x480 presented=640x480 legacy_svh=1
+  store_param FRAME=468x360 CODED=468x360 DISP=468x360 PRES=0,0 shape_960=0 shape_720=0
+  has_frame=1 frames_done=4 doorbell_ok=1 debug=0x10
+  ddr_rd_cmds=20742 ddr_rd_beats=179182 starve=0
+  de_pixels=168480 de_w=468..468 de_lines=360 de_ok=1
+  store_req=168480 line_req=468..468 req_full=1 visible_req=168480
+  store_accepted=168480 line_acc=468..468 acc_full=1
+  underrun_start=0 end=0 delta=0 clear=1
+  PASS de_raster_468x360
+  PASS store_req_full_168480
+  PASS align16_ok=0
+  PASS coded_468x360
+  FAIL NON16_FALSE_GREEN accepted=168480 (shear class; store does not reject non-16 — w-mem owns fix)
+  OVERALL FAIL fails=1 (RED NON16)
+true_rc_candidate=1
+RED_NON16 true rc=1
+PASS red-check NON16 caught STORE_FALSE_GREEN (shear; store does not reject non-16)
+OK RED_NON16 loud reject true_rc=1
+OK B5 present_beam_ddr_store: LEGACY + TB960 + TB720 + STARVE + NON16

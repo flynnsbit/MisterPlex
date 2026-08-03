@@ -1,14 +1,97 @@
-lane=w-osd tip=parent_playing_gate runbook
-beacon=5c498b29 PLEX_FAB_PLAY_BEACON
-hunt=6431aaa3 coded-size refuse
-sps=e218fed6 544→540 display
+# w-osd INTEGRATION STATUS — integ/fab-720p-product
 
-## parent_playing_gate.sh
-EXPECT_RBF_MD5=… scripts/parent_playing_gate.sh full
-rc: 0=A 1=scored-non-A 3=UNKNOWN_GRABBER 4=PRECOND(not fabric) 5=B1
-offline-selftest true rc=0
-docs/fab-playing-parent-runbook.md
-pair cards: docs/evidence/p720-path-20260803/
+Date: 2026-08-03T10:33:53.398943+00:00
+Worktree: /home/flynnsbit/Projects/MisterPlex-wt-integ-product
+Branch: integ/fab-720p-product @ 86c0c39d7ca5619d792caaa8509b264c3ab22307
+Base: main 77e1e78d (fresh branch — not reuse of integ/fab-720p-e2e or integ/fab-720p-planes)
 
-## Fit
-w-mem Option-C capacity. Beacon ready. No device/Quartus from this lane.
+## Merge order (executed)
+1. w-mem-720p-abi @ 90517fa2 — CLEAN
+2. w-clock-bump @ df0dbb09 — CONFLICT → resolved (policy below)
+3. w-scaler-window @ 3c872e8e — CONFLICT → resolved
+4. w-osd-fabric-plane @ 4c379a84 — CONFLICT → resolved
+5. w-path-720p @ 9e10eb63 — CONFLICT → resolved
+
+Conflict log: docs/agent-evidence/integ-fab-720p-product-conflicts.md
+
+## Fit-gate (canonical ruler from wt-fitgate)
+- gate_identity live=70c23618376921b85dff7ae518d7fd219822f7a1 MATCH canonical
+  (parent quoted 633befb… — wt-fitgate tip now locks 70c236…; files byte-identical to wt-fitgate)
+- make fit-gate-selftest true rc=2  (FIT_RELEASE_GATE_SELFTEST_FAIL failures=20; many HOLE sticky clears on product tree)
+- make fit-gate true rc=2
+  - LEG0_FAIL count=19
+  - LEG0_FIX_STATUS unmerged=15 unimplemented=4
+  - LEG0_DISCOVER_DESIGN EXECUTED beam_in_quartus_file_list=1 n_files=99
+  - Full blockers: docs/agent-evidence/integ-leg0-blockers.txt
+  - Full log: docs/agent-evidence/integ-fit-gate.log
+
+Note: count=19 equals hollow wt-fitgate number but reasons differ in content — product tree still trips B0–B14 class checks. Sibling scan claims w-mem/w-clock/w-scaler tips have fixes, yet merged RTL still matches defect patterns (see INTEGRATION BREAKS).
+
+## Lane tests on MERGED tree (true rc)
+| Test | true rc | Notes |
+|------|---------|-------|
+| test_ddr_720p_abi (g++ direct after layout restore) | 0 | PLXG FIXED 0x800 |
+| test_plex_chrome_counted_rtl_sim.sh | 0 | all cases EXECUTED |
+| test_plex_chrome_cmds | 0 | content-invariance + budget 102/112 |
+| test_present_true_de_count_rtl_sim.sh | 0 | B6 + library geoms + RED non16 |
+| test_present_beam_960_arith.sh | 0 | |
+| test_present_beam_ddr_store_rtl_sim.sh | 0 | B5 + RED NON16 |
+| test_ddr_m1_subarb_verilator | 0 | |
+| test_present_beam_960_oracle.sh | 1 | PINNOTFOUND rt_h_total/htot_active |
+| test_present_beam_960_elab.sh | 1 | timing_960 missing demotion banner |
+| make unit | 2 | UNIT_ROLLCALL_FAIL (see below) |
+| media_player.cpp compile | FAIL | path APIs missing from layout header |
+
+## INTEGRATION BREAKS (do not silent-fix — route to owners)
+
+### 1. Beam port ABI split (clock tests vs scaler beam) — PARENT DECIDE
+- w-clock `present_beam_content_de` has `rt_h_total` + `htot_active`
+- w-scaler beam (in merge) drops them; only `rt_h_de`/`rt_v_active` + fixed H_TOTAL
+- Tests from clock still bind `.rt_h_total` / `.htot_active` → Verilator PINNOTFOUND
+- Owner: w-clock vs w-scaler must agree on runtime H_TOTAL port set
+
+### 2. path ARM vs layout header API — w-path / w-mem
+media_player.cpp (from path) calls symbols absent after scaler layout won the merge:
+- ddrStorageGeometryForContent
+- ddrFfmpegGeometryForPresent
+- ddrIsProduct960x540Content
+- makePlex720pOutputFrom540pSourcePlan
+- kPlex360pCodedWidth/Height
+- fabricOwnedPresent_ (header/member)
+Compile error quoted in agent log. **Not fixed in integ** (no silent lane patch).
+
+### 3. LEG0 patterns still red after "unmerged" claims
+Merged present_core still:
+- LEG0_RUNTIME_DE beam_rt_ports=0 core_wires_rt=0 core_hard_960=1 (B13)
+- missing .PHYS_BASE_720P / STRIDE / DOORBELL on store (B7)
+- plxg_wr_en/commit tied 0 (B8)
+- layout params PRESENTED=640x480 (B1)
+Gate says unmerged=w-mem tip 90517fa2 — but those artefacts are IN this tree and still match fail patterns. Either tip tags are stale relative to pattern, or "fix" is incomplete vs gate oracle.
+
+### 4. UNIT_ROLLCALL_FAIL
+actual_commands=206 expected=205; MISSING_COMMAND fabric_decode_inventory/telem_flags/product_no_stub/chrome_elision; UNREGISTERED counted_rtl_sim. Makefile unit-unlocked token-union drifted from rollcall registry.
+
+### 5. Makefile duplicate rules
+Duplicate `$(ROOT)/build/test_ddr_720p_abi` recipes (override warning). Relative `make build/foo` fails; need `$(ROOT)/build/foo`.
+
+## Conflict resolution policy (summary)
+| Merge | Hot files | Choice |
+|-------|-----------|--------|
+| clock | present_*, Plex, store | mem/ours (geom stack); clock B13 deferred to scaler |
+| scaler | present stack | **scaler** (claimed mem∪clock union) |
+| osd | Makefile/mailbox/hdmi/arm | UNION; ABI stay 0x800; PLXG bytes 40 |
+| path | geom ARM/layout | path for storage geom; PLXG single 0x800; later layout restored to **scaler clean** after path duplicate constexpr broke compile |
+
+## PLXG ABI
+FIXED 0x800 throughout mailbox_abi_spec + ddr_frame_layout (scaler tip restore). list_end 0x4C0 <= 0x800. MAX_CMDS=112 unchanged.
+
+## Not done / constraints honored
+- No Quartus fit launched by this lane
+- No device access
+- No silent patches of other lanes' product logic beyond merge conflict resolution + compile-blocker dedupe of duplicate constexpr
+
+## Parent actions needed
+1. Decide beam runtime H_TOTAL ports (clock full vs scaler simplified)
+2. Route path layout API symbols into single ddr_frame_layout.hpp owner (w-mem) without breaking freeze
+3. Explain/fix why w-mem tip still matches B1/B7/B8/B13 patterns in-tree
+4. Rollcall registry vs unit-unlocked sync

@@ -1,0 +1,42 @@
+RTL SIM: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+FAIL oracle build rc=2
+   23 | module present_beam_content_de #(
+      |        ^~~~~~~~~~~~~~~~~~~~~~~
+%Error-PINNOTFOUND: /home/flynnsbit/Projects/MisterPlex-wt-integ-product/tests/rtl/present_beam_960_oracle_tb.sv:56:41: Pin not found: 'rt_h_total'
+                                                                                                                      : ... Suggested alternative: 'rt_vtotal'
+   56 |   .use_rt_geom(1'b0), .rt_h_de(11'd0), .rt_h_total(11'd0), .rt_v_active(11'd0),
+      |                                         ^~~~~~~~~~
+                                                                                                                      : ... Location of instance's module declaration
+   23 | module present_beam_content_de #(
+      |        ^~~~~~~~~~~~~~~~~~~~~~~
+%Error-PINNOTFOUND: /home/flynnsbit/Projects/MisterPlex-wt-integ-product/tests/rtl/present_beam_960_oracle_tb.sv:59:48: Pin not found: 'htot_active'
+                                                                                                                      : ... Suggested alternative: 'vtot_active'
+   59 |   .vtot_active(vtot705), .hde_active(hde705), .htot_active(htot705),
+      |                                                ^~~~~~~~~~~
+                                                                                                                      : ... Location of instance's module declaration
+   23 | module present_beam_content_de #(
+      |        ^~~~~~~~~~~~~~~~~~~~~~~
+%Error-PINNOTFOUND: /home/flynnsbit/Projects/MisterPlex-wt-integ-product/tests/rtl/present_beam_960_oracle_tb.sv:74:42: Pin not found: 'rt_h_total'
+                                                                                                                      : ... Suggested alternative: 'rt_vtotal'
+   74 |   .use_rt_geom(use_g), .rt_h_de(rthde), .rt_h_total(rtht), .rt_v_active(rtvact),
+      |                                          ^~~~~~~~~~
+                                                                                                                      : ... Location of instance's module declaration
+   23 | module present_beam_content_de #(
+      |        ^~~~~~~~~~~~~~~~~~~~~~~
+%Error-PINNOTFOUND: /home/flynnsbit/Projects/MisterPlex-wt-integ-product/tests/rtl/present_beam_960_oracle_tb.sv:77:47: Pin not found: 'htot_active'
+                                                                                                                      : ... Suggested alternative: 'vtot_active'
+   77 |   .vtot_active(vtotrt), .hde_active(hde_rt), .htot_active(htot_rt),
+      |                                               ^~~~~~~~~~~
+                                                                                                                      : ... Location of instance's module declaration
+   23 | module present_beam_content_de #(
+      |        ^~~~~~~~~~~~~~~~~~~~~~~
+%Error: Exiting due to 6 error(s)
+run_verilator: HARD FAIL — Verilator reported elab/bind/compile error (PINNOTFOUND/%Error). Not a pass, not a skip.
+%Error-PINNOTFOUND: /home/flynnsbit/Projects/MisterPlex-wt-integ-product/tests/rtl/present_beam_960_oracle_tb.sv:39:41: Pin not found: 'rt_h_total'
+                    ... For error description see https://verilator.org/warn/PINNOTFOUND?v=5.051
+%Error-PINNOTFOUND: /home/flynnsbit/Projects/MisterPlex-wt-integ-product/tests/rtl/present_beam_960_oracle_tb.sv:42:50: Pin not found: 'htot_active'
+%Error-PINNOTFOUND: /home/flynnsbit/Projects/MisterPlex-wt-integ-product/tests/rtl/present_beam_960_oracle_tb.sv:56:41: Pin not found: 'rt_h_total'
+%Error-PINNOTFOUND: /home/flynnsbit/Projects/MisterPlex-wt-integ-product/tests/rtl/present_beam_960_oracle_tb.sv:59:48: Pin not found: 'htot_active'
+%Error-PINNOTFOUND: /home/flynnsbit/Projects/MisterPlex-wt-integ-product/tests/rtl/present_beam_960_oracle_tb.sv:74:42: Pin not found: 'rt_h_total'
+%Error-PINNOTFOUND: /home/flynnsbit/Projects/MisterPlex-wt-integ-product/tests/rtl/present_beam_960_oracle_tb.sv:77:47: Pin not found: 'htot_active'
+%Error: Exiting due to 6 error(s)

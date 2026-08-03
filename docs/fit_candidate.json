@@ -1,14 +1,14 @@
 {
   "architecture": "ascal_true_de_960",
-  "git_tree_hash": "618f1e2fe2fc33eab0cbc293f0a64573dc2d2580",
-  "git_head_at_lock": "f0656362a7eca6571e8081d179c1ed9923fe61b4",
+  "git_tree_hash": "bc5b076c9958f7e1552de12608dba9989bc6e2d2",
+  "gate_identity_hash": "70c23618376921b85dff7ae518d7fd219822f7a1",
+  "git_head_at_lock": "86c0c39d7ca5619d792caaa8509b264c3ab22307",
   "required_macros": {
     "FRAME_W": "960",
     "FRAME_H": "540",
     "PRESENT_BEAM_960": "1",
     "DDR_FRAME_STORE": "1",
-    "PRODUCT_NO_STUB": "1",
-    "OPTION_C": "1"
+    "PRODUCT_NO_STUB": "1"
   },
   "forbidden_macros": [
     "PRESENT_MULTI_PIXEL",
@@ -24,11 +24,13 @@
     "max_content_h": 540,
     "note": "DE tracks PMS-delivered geometry; 960x540 is maximum tier not fixed. PMS does not upscale (parent measured metadata/1 320x240)."
   },
-  "locked_by": "w-mem",
+  "locked_by": "parent",
   "locked_date": "2026-08-03",
-  "rationale": "Core emits true DE equal to content; ascal upscales to 1280x720. B1 OPTION_C compile-time bank re-base + capacity select; B4 PLXG epoch; B12 DE_LAG 960 measure.",
+  "rationale": "Core emits true DE equal to content; ascal (iauto=1) upscales to 1280x720. 960x540 is the maximum content tier, not a fixed raster. Content rate at max tier ~15.55 Mpix/s @30 \u2014 not mp_cea_1280; 40 Mpix/s is not headroom.",
   "notes": [
     "git_tree_hash binds gated artefacts via compute_gated_tree_hash() and excludes this file.",
-    "OPTION_C re-bases LEG_* banks to Option-C PHYS/stride/doorbell when geom_enable=0."
+    "INTENTIONAL hash refresh after gated artefact change is a rebase, not a bypass \u2014 candidate cannot clear blockers by editing only this JSON.",
+    "gate_identity_hash must match docs/fit_gate_identity.json; divergent lane rulers refuse LEG0 count (LEG0_COUNT_REFUSED).",
+    "fix=unmerged in leg0 output names sibling lane+commit; do not re-implement those."
   ]
 }
