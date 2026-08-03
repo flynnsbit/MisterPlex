@@ -409,7 +409,11 @@ private:
     int plxgBootFd_ = -1;
     uint8_t* plxgBootMap_ = nullptr;
     size_t plxgBootMapLen_ = 0;
+    // Process-local only. Cold-start 0 is OK: ensurePlxgBootstrapMap + every
+    // writePlxgRecord seed from retained DDR q0 (rd-duck restart/ABA). Never
+    // emit useSeq from plxgLastSeq_+1 alone while FPGA last_seq may still be N.
     uint16_t plxgLastSeq_ = 0;
+    void seedPlxgLastSeqFromRetainedLocked();
     int bitstreamMemFd_ = -1;
     uint8_t* bitstreamMap_ = nullptr;
     size_t bitstreamMapLen_ = 0;

@@ -796,36 +796,49 @@ int main() {
             }
         }
         // ---- Daemon/FpgaSpi restart vs live FPGA last_seq (rd-duck) ----
-        // plxgLastSeq_=0 on new object; retained q0 + FPGA last_seq still N.
-        // Naive useSeq=1 is rejected when N==1 → single mode-disable never commits.
+        // Process-local plxgLastSeq_=0 is expected after reconstruct; the FIX is
+        // every write seeds from retained DDR q0 (not sw+1 alone).
         {
             CHECK(plxgNextSeq(/*sw*/ 0, /*ret*/ true, /*rseq*/ 1) == 2);
             CHECK(plxgNextSeq(0, true, 5) == 6);
             CHECK(plxgNextSeq(5, true, 5) == 6);
             CHECK(plxgNextSeq(5, true, 3) == 6); // software ahead
-            CHECK(plxgNextSeqFaultIgnoreRetained(0) == 1); // FAULT
-            // liveSeq=1 is the concrete daemon-restart trap.
+            CHECK(plxgNextSeqFaultIgnoreRetained(0) == 1); // FAULT pre-fix
+            // Two-lifetime model: process A committed seq=1; process B sw=0.
             CHECK(plxgDaemonRestartDisableCommits(/*liveSeq=*/1, /*honor*/ true));
             CHECK(!plxgDaemonRestartDisableCommits(/*liveSeq=*/1, /*honor*/ false));
             CHECK(plxgDaemonRestartDisableCommits(/*liveSeq=*/7, true));
-            // Walk: software object seeds from retained, disable commits, geom off.
+            // Full lifetime handoff on one page (write path mirrors writePlxgRecord).
             {
                 std::vector<uint8_t> page(0x1000, 0);
-                const auto live = makePlxgRecord960x540Native(1);
-                for (int i = 0; i < 5; ++i)
-                    plxgCtrlStoreQ(page.data(), i, live.q[i]);
-                uint16_t sw = 0;
+                // --- process A ---
+                uint16_t swA = 0;
+                const uint16_t a1 = plxgHostWriteRecordRestartSafe(
+                    page.data(), makePlxgRecord960x540Native(1), &swA, true);
+                CHECK(a1 == 1 && swA == 1);
+                // --- process B (new FpgaSpi): sw=0, retained q0=1, FPGA last=1 ---
+                uint16_t swB = 0;
                 PlxgLatchModel lm{};
-                lm.last_seq = 1; // FPGA still live
-                const uint16_t used = plxgHostWriteRecordRestartSafe(
-                    page.data(), makePlxgRecordDisable(1), &sw, true);
-                CHECK(used == 2);
-                CHECK(sw == 2);
+                lm.last_seq = 1;
+                const uint16_t bDis = plxgHostWriteRecordRestartSafe(
+                    page.data(), makePlxgRecordDisable(1), &swB, true);
+                CHECK(bDis == 2);
+                CHECK(swB == 2);
                 for (unsigned i = 0; i < 5; ++i)
                     plxgLatchWrite(lm, i, plxgCtrlLoadQ(page.data(), static_cast<int>(i)));
                 CHECK(plxgLatchCommit(lm));
                 CHECK(!lm.geom_enable);
                 CHECK(lm.live_seq == 2);
+                // --- process C another restart: sw=0, retained=2 → must emit 3 ---
+                uint16_t swC = 0;
+                lm.last_seq = 2;
+                const uint16_t c3 = plxgHostWriteRecordRestartSafe(
+                    page.data(), makePlxgRecord960x540Native(1), &swC, true);
+                CHECK(c3 == 3 && swC == 3);
+                for (unsigned i = 0; i < 5; ++i)
+                    plxgLatchWrite(lm, i, plxgCtrlLoadQ(page.data(), static_cast<int>(i)));
+                CHECK(plxgLatchCommit(lm));
+                CHECK(lm.geom_enable && lm.live_seq == 3);
             }
         }
         // ---- ABA tear: FPGA reset last_seq=0 + daemon restart same seq=1 ----

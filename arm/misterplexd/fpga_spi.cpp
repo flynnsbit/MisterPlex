@@ -785,6 +785,23 @@ void FpgaSpi::releaseDdrMap() {
     }
 }
 
+void FpgaSpi::seedPlxgLastSeqFromRetainedLocked() {
+    // DDR retained q0 is source of truth across daemon/FpgaSpi lifetimes.
+    // Process-local plxgLastSeq_ may be 0 after restart; catch up before +1.
+    if (!plxgBootMap_ || plxgBootMapLen_ < mailbox_abi::kPlxgOffset + 8u)
+        return;
+    const size_t off = static_cast<size_t>(mailbox_abi::kPlxgOffset);
+    volatile uint32_t* base =
+        reinterpret_cast<volatile uint32_t*>(plxgBootMap_ + off);
+    const uint32_t lo = base[0];
+    const uint32_t hi = base[1];
+    if (lo != mailbox_abi::kPlxgMagic)
+        return;
+    const uint16_t retained = static_cast<uint16_t>(hi >> 16); // q0[63:48]
+    if (static_cast<uint32_t>(retained) > static_cast<uint32_t>(plxgLastSeq_))
+        plxgLastSeq_ = retained;
+}
+
 bool FpgaSpi::ensurePlxgBootstrapMap() {
     if (plxgBootMap_ && plxgBootFd_ >= 0)
         return true;
@@ -809,6 +826,7 @@ bool FpgaSpi::ensurePlxgBootstrapMap() {
     }
     plxgBootMap_ = static_cast<uint8_t*>(p);
     plxgBootMapLen_ = kPage;
+    seedPlxgLastSeqFromRetainedLocked();
     return true;
 }
 
@@ -839,12 +857,13 @@ bool FpgaSpi::writePlxgRecord(const uint64_t q[5], uint16_t seq) {
     // Always advance seq (rd-duck: never sticky seq=1 across frames/mode exits).
     // Caller seq is advisory only — latch requires seq != last_seq every program.
     (void)seq;
-    // Restart-safe seed (rd-duck): plxgLastSeq_ alone is 0 after daemon/FpgaSpi
-    // reconstruct while FPGA last_seq + retained DDR q0 may still be N. If N==1,
-    // naive useSeq=1 is rejected as stale and a single mode-disable never lands.
-    // Read valid retained q0 BEFORE invalidate; seed max(sw, retained)+1.
+    // Restart-safe seed (rd-duck restart + ABA): never use process-local
+    // plxgLastSeq_+1 alone. Re-read retained q0 BEFORE invalidate every write
+    // (map-open seed is not enough if another agent published meanwhile).
+    // useSeq must differ from retained valid q0 or poller can ABA-accept torn body.
     volatile uint32_t* base =
         reinterpret_cast<volatile uint32_t*>(plxgBootMap_ + off);
+    seedPlxgLastSeqFromRetainedLocked();
     uint16_t retainedSeq = 0;
     bool retainedValid = false;
     {
