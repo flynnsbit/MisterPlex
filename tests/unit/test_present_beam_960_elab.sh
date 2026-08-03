@@ -57,6 +57,19 @@ if ! grep -q "localparam H_DE    = 10'd529" "$RTL/present_core.sv"; then
   echo "FAIL RED: Template H_DE=529 missing on non-BEAM path"
   exit 1
 fi
+# B13: runtime DE driven from content_w/h (not fixed 960 bind-only)
+if ! grep -q "use_rt_geom(1'b1)" "$RTL/present_core.sv"; then
+  echo "FAIL RED B13: present_core must drive use_rt_geom(1'b1)"
+  exit 1
+fi
+if ! grep -q "input  wire \[10:0\] content_w" "$RTL/present_core.sv"; then
+  echo "FAIL RED B13: present_core missing content_w port"
+  exit 1
+fi
+if grep -q "use_rt_geom(1'b0)" "$RTL/present_core.sv"; then
+  echo "FAIL RED B13: use_rt_geom still tied off"
+  exit 1
+fi
 echo "OK beam960_elab structural markers"
 
 BUILD="$ROOT/build/verilator/present_beam960_elab"
@@ -85,6 +98,7 @@ module wrap;
     .clk(clk), .clk_sdram(clk_sdram), .clk_audio(clk_audio), .clk_pix(clk), .reset(reset),
     .pal(1'b0), .scandouble(1'b0), .content_fps(8'd30), .display_hz(8'd60),
     .pattern(2'd0), .audio_en(1'b0), .use_frame_store(1'b0),
+    .content_w(11'd960), .content_h(11'd540),
     .fs_wr_en(1'b0), .fs_wr_pixel(16'd0), .fs_wr_reset(1'b0), .fs_swap(1'b0), .fs_wr_ready(),
     .sdram_dout(16'd0), .sdram_ready(1'b0), .sdram_sel(), .sdram_addr(), .sdram_din(),
     .sdram_wr(), .sdram_rd(), .sdram_bs(), .sdram_refresh(),
@@ -162,6 +176,7 @@ module wrap;
     .clk(clk), .clk_sdram(clk_sdram), .clk_audio(clk_audio), .clk_pix(clk), .reset(reset),
     .pal(1'b0), .scandouble(1'b0), .content_fps(8'd30), .display_hz(8'd60),
     .pattern(2'd0), .audio_en(1'b0), .use_frame_store(1'b0),
+    .content_w(11'd960), .content_h(11'd540),
     .fs_wr_en(1'b0), .fs_wr_pixel(16'd0), .fs_wr_reset(1'b0), .fs_swap(1'b0), .fs_wr_ready(),
     .sdram_dout(16'd0), .sdram_ready(1'b0), .sdram_sel(), .sdram_addr(), .sdram_din(),
     .sdram_wr(), .sdram_rd(), .sdram_bs(), .sdram_refresh(),
@@ -232,6 +247,7 @@ module wrap;
     .clk(clk), .clk_sdram(clk_sdram), .clk_audio(clk_audio), .clk_pix(clk), .reset(reset),
     .pal(1'b0), .scandouble(1'b1), .content_fps(8'd24), .display_hz(8'd60),
     .pattern(2'd0), .audio_en(1'b0), .use_frame_store(1'b0),
+    .content_w(11'd960), .content_h(11'd540),
     .fs_wr_en(1'b0), .fs_wr_pixel(16'd0), .fs_wr_reset(1'b0), .fs_swap(1'b0), .fs_wr_ready(),
     .sdram_dout(16'd0), .sdram_ready(1'b0), .sdram_sel(), .sdram_addr(), .sdram_din(),
     .sdram_wr(), .sdram_rd(), .sdram_bs(), .sdram_refresh(),

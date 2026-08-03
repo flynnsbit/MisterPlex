@@ -236,6 +236,10 @@ wire reset = RESET | status[0] | buttons[1];
 wire        content_res_640x480 = status[4];
 wire [9:0]  content_width       = content_res_640x480 ? 10'd640 : 10'd320;
 wire [9:0]  content_height      = content_res_640x480 ? 10'd480 : 10'd240;
+// B13: present_core consumes 11-bit delivered geom (PLXG when w-mem mux present).
+// Until PLXG live path is merged, OSD ladder still drives 640/320 here.
+wire [10:0] present_content_w = {1'b0, content_width};
+wire [10:0] present_content_h = {1'b0, content_height};
 
 // Legacy cadence input is now fixed; the daemon handles exact content pacing.
 wire [7:0] content_fps = 8'd24;
@@ -761,6 +765,8 @@ present_core #(
 	.pattern(2'd0),
 	.audio_en(1'b0),
 	.use_frame_store(1'b0),
+	.content_w(present_content_w),
+	.content_h(present_content_h),
 	.fs_wr_en(fs_wr_en),
 	.fs_wr_pixel(fs_wr_pixel),
 	.fs_wr_reset(fs_wr_reset),

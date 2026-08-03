@@ -6,7 +6,7 @@
 // `define PRESENT_MULTI_PIXEL  — connect beam → ddr N-wide → present_npx_path → RGB/CE
 // `define PRESENT_PX_PER_CLK N — 1|2|4 (only meaningful with PRESENT_MULTI_PIXEL)
 // `define PRESENT_CLK_PIX_PLL — separate clk_pix (outclk_3); rate-match + sync sideband
-// `define PRESENT_BEAM_960 — ascal-native true 960×540@30 DE (1182×564); identity store
+// `define PRESENT_BEAM_960 — ascal-native true-DE beam; 960×540 is MAX tier, runtime content_w/h
 // Macros default OFF. Parent/w-nostub enables in fit grant QSF — not default shipping.
 
 `ifdef PRESENT_MULTI_PIXEL
@@ -54,6 +54,11 @@ module present_core #(
 	input  wire [1:0]  pattern,
 	input  wire        audio_en,        // OSD tone enable (when no FIFO audio)
 	input  wire        use_frame_store, // OSD force bars when 1
+
+	// Delivered content geometry (PLXG / plex_present_geom_mux). B13 true-DE.
+	// 0 → fall back to max-tier 960×540. w-mem owns mailbox; we only consume.
+	input  wire [10:0] content_w,
+	input  wire [10:0] content_h,
 
 	// frame_store write (from ingest)
 	input  wire        fs_wr_en,
@@ -189,9 +194,24 @@ module present_core #(
 	// synthesis translate_on
 
 	// B2b: present_beam_content_de is the ONLY raster SoT.
-	// present_video_timing_960 is math-only (oracles); not instantiated here.
+	// B13: runtime true-DE from content_w/h (PLXG-delivered). 960×540 = max tier
+	// defaults only — not a fixed product raster (96.5% of library is smaller).
+	// Frame-boundary latch inside beam (rd-duck). Totals stay 1182×564@30 /
+	// 1182×705@24 for ascal-friendly blanking independent of active size.
 	wire [10:0] hc11, vc11, vtot_act11;
 	wire [10:0] hde_act11, htot_act11, vact_act11;
+
+	// Clamp delivered geom into bank max; 0 → max-tier fallback (idle/bars).
+	wire [10:0] beam_hde_req =
+		(content_w == 11'd0) ? 11'd960 :
+		(content_w > 11'(FRAME_W)) ? 11'(FRAME_W) : content_w;
+	wire [10:0] beam_vact_req =
+		(content_h == 11'd0) ? 11'd540 :
+		(content_h > 11'(FRAME_H)) ? 11'(FRAME_H) : content_h;
+	// Fixed line class @20 MHz: 1182 clocks/line. V_TOTAL selects 30 vs 24 Hz.
+	wire [10:0] beam_htot_req = 11'd1182;
+	wire [10:0] beam_vtot_req = (content_fps <= 8'd25) ? 11'd705 : 11'd564;
+
 	(* noprune *) present_beam_content_de #(
 		.H_DE(960),
 		.V_ACTIVE(540),
@@ -204,15 +224,13 @@ module present_core #(
 	) u_beam_960 (
 		.clk(clk),
 		.reset(reset),
-		// Runtime V_TOTAL for 24 Hz tier (705) — latched at v_wrap inside beam.
-		// Full runtime H/V geom ports exist but stay OFF until parent fit grant
-		// (PMS-delivered DE; see RUNTIME_VARIABLE_RASTER_STA.md).
-		.use_rt_vtotal(1'b0),
-		.rt_vtotal(11'd0),
-		.use_rt_geom(1'b0),
-		.rt_h_de(11'd0),
-		.rt_h_total(11'd0),
-		.rt_v_active(11'd0),
+		// B13 ON: drive runtime ports from delivered content_w/h.
+		.use_rt_vtotal(1'b1),
+		.rt_vtotal(beam_vtot_req),
+		.use_rt_geom(1'b1),
+		.rt_h_de(beam_hde_req),
+		.rt_h_total(beam_htot_req),
+		.rt_v_active(beam_vact_req),
 		.ce_pix(ce_pix_i),
 		.HBlank(hb),
 		.HSync(hs),
@@ -228,7 +246,7 @@ module present_core #(
 	);
 
 	// Identity map: DE extent == latched content (true_de). No /529 stretch.
-	// Uses hde_act/vact_act so a future use_rt_geom=1 tracks PMS-delivered size.
+	// hde_act/vact_act track content_w/h via use_rt_geom (B13).
 	assign in_content = (hc11 < hde_act11) && (vc11 < vact_act11) && ~hb && ~vb;
 	assign past_last_row = (vc11 >= vact_act11);
 	wire [FRAME_X_W-1:0] store_x_id =
@@ -254,10 +272,12 @@ module present_core #(
 	assign bb = 8'h40;
 	// Anti-DCE: beam counters + active vtotal must survive map.
 	wire _unused_beam960 = (|hc11) | (|vc11) | (|vtot_act11)
-		| (|hde_act11) | (|htot_act11) | (|vact_act11) | ce_pix_i;
+		| (|hde_act11) | (|htot_act11) | (|vact_act11) | ce_pix_i
+		| (|content_w) | (|content_h) | (|beam_hde_req) | (|beam_vact_req);
 
 `else
 	// ---- Legacy Template path: colorbars H_DE=529 (FBAR) ----
+	wire _unused_content_geom = |content_w | |content_h;
 	wire [9:0] hc, vc;
 
 	localparam bit PRODUCT_V_480 = 1'b1;

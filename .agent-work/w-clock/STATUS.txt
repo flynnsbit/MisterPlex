@@ -1,21 +1,21 @@
-w-clock STATUS 2026-08-03
+w-clock STATUS 2026-08-03 B13
+head: pending-commit
 branch: w-clock-bump
-head: d739c4b5
-oracle_commit: 44a397c6
 
-DONE:
-- Exact whole-frame oracle: pix==W*H*frames, line_acc=W..W
-- Ladder 320x240 / 640x360 / 960x540
-- RED FAULT_DROP_ONE_PER_LINE → line_acc=959..959 FAIL (sim rc=1)
-- STA V705: sim exact OK; timing NOT closed (needs Plex.sta.rpt)
-- Overclock: no ceiling above 20 MHz until stub reclaimed; 25 blocked (23.46)
+B13 DONE:
+- present_core: content_w/h ports; use_rt_geom=1; use_rt_vtotal=1
+- H_DE/V_ACT from content (0→960x540); H_TOTAL=1182; V_TOTAL=564|705 via fps
+- Plex.sv wires present_content_w/h (ladder until PLXG mux merge)
+- Oracle exact: 320/624/640/960 + red per-geom drop-one
+- STA V705: sim exact; Fmax UNKNOWN until sta.rpt
+- Overclock: ceiling 20 MHz; 25 blocked on stub 23.46; runtime Fmax UNKNOWN (~17% stub margin)
+
+COORD w-mem: must stop force_native_960 when PLXG live (mux still forces 960 in their tree).
 
 TESTS true rc=0:
-  tests/unit/test_present_beam_960_oracle.sh
-  tests/unit/test_present_beam_960_elab.sh
-  tests/unit/test_present_beam_960_arith.sh
+  test_present_beam_960_oracle.sh
+  test_present_beam_960_elab.sh
+  test_present_beam_960_arith.sh
 
-NO fit. NO device. PLL unapplied (20/90).
-Docs:
-  .agent-work/w-clock/STA_V705_AND_OVERCLOCK_CEILING.md
-  .agent-work/w-clock/RUNTIME_VARIABLE_RASTER_STA.md
+NO fit. NO device. PLL 20/90 unapplied.
+Docs: .agent-work/w-clock/B13_RUNTIME_TRUE_DE.md

@@ -1,80 +1,61 @@
 #!/usr/bin/env bash
-# RTL oracle: exact whole-frame DE accounting (fixed + V705 + runtime geom ladder).
-# GREEN: equality pix == W*H*frames and line_acc == W..W for 320/640/960.
-# RED:  FAULT_DROP_ONE_PER_LINE must fail those equalities (not a soft lower-bound).
+# Exact whole-frame DE oracle + B13 runtime ladder + per-geometry red twin.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 RV="$ROOT/scripts/run_verilator.sh"
 command -v "$RV" >/dev/null || RV=$(command -v verilator)
 OUT="$ROOT/build/verilator/present_beam_960_oracle"
-RTL_TB="$ROOT/tests/rtl/present_beam_960_oracle_tb.sv"
-RTL_T="$ROOT/fpga/Plex_MiSTer/rtl/present_video_timing_960.sv"
-RTL_B="$ROOT/fpga/Plex_MiSTer/rtl/present_beam_content_de.sv"
 mkdir -p "$OUT"
+rm -rf "$OUT/run"
 echo "RTL SIM: $($RV --version 2>&1 | head -1)"
 
-# Writes sim rc to $1_RC file so set -e never swallows red-twin non-zero.
-build_run() {
-  local tag="$1"; shift
-  local mdir="$OUT/$tag"
-  rm -rf "$mdir"
-  mkdir -p "$mdir"
-  set +e
-  "$RV" -Wno-fatal --binary --timing --top-module present_beam_960_oracle_tb \
-    -Mdir "$mdir" "$@" \
-    "$RTL_TB" "$RTL_T" "$RTL_B" >"$mdir/build.log" 2>&1
-  local brc=$?
-  set -e
-  if [[ "$brc" -ne 0 ]]; then
-    echo "FAIL $tag build rc=$brc"
-    tail -40 "$mdir/build.log"
-    echo "$brc" >"$mdir/sim.rc"
-    return 0
-  fi
-  set +e
-  "$mdir/Vpresent_beam_960_oracle_tb" >"$mdir/run.log" 2>&1
-  local rrc=$?
-  set -e
-  echo "$rrc" >"$mdir/sim.rc"
-  cat "$mdir/run.log"
-  echo "true rc=$rrc tag=$tag"
-  return 0
-}
+# B13 structural (product path)
+if ! grep -q "use_rt_geom(1'b1)" "$ROOT/fpga/Plex_MiSTer/rtl/present_core.sv"; then
+  echo "FAIL B13: present_core use_rt_geom not ON"
+  exit 1
+fi
+if ! grep -q "content_w" "$ROOT/fpga/Plex_MiSTer/rtl/present_core.sv"; then
+  echo "FAIL B13: content_w port missing"
+  exit 1
+fi
 
-# ----- GREEN -----
-build_run green
-GRC="$(cat "$OUT/green/sim.rc")"
-if [[ "$GRC" -ne 0 ]]; then
-  echo "FAIL oracle GREEN rc=$GRC"
+set +e
+"$RV" -Wno-fatal --binary --timing --top-module present_beam_960_oracle_tb \
+  -Mdir "$OUT/run" \
+  "$ROOT/tests/rtl/present_beam_960_oracle_tb.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/present_video_timing_960.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/present_beam_content_de.sv" >"$OUT/build.log" 2>&1
+BRC=$?
+set -e
+if [[ "$BRC" -ne 0 ]]; then
+  echo "FAIL oracle build rc=$BRC"
+  tail -40 "$OUT/build.log"
   exit 1
 fi
-grep -q "PASS present_beam_960_oracle" "$OUT/green/run.log" || { echo "FAIL no PASS"; exit 1; }
-grep -q "fps_milli=30000" "$OUT/green/run.log" || { echo "FAIL fps not 30000"; exit 1; }
-grep -q "true_de=1" "$OUT/green/run.log" || { echo "FAIL true_de"; exit 1; }
-grep -q "OK FIXED_960x540 exact" "$OUT/green/run.log" || { echo "FAIL fixed exact"; exit 1; }
-grep -q "OK V705_960x540 exact" "$OUT/green/run.log" || { echo "FAIL v705 exact"; exit 1; }
-grep -q "OK RTGEOM_320x240 exact" "$OUT/green/run.log" || { echo "FAIL rt 320 exact"; exit 1; }
-grep -q "OK RTGEOM_640x360 exact" "$OUT/green/run.log" || { echo "FAIL rt 640 exact"; exit 1; }
-grep -q "OK RTGEOM_960x540 exact" "$OUT/green/run.log" || { echo "FAIL rt 960 exact"; exit 1; }
-grep -q "OK FIXED_960x540 exact pix=1036800" "$OUT/green/run.log" \
-  || { echo "FAIL fixed pix equality marker"; exit 1; }
-grep -q "line_acc=320..320" "$OUT/green/run.log" || { echo "FAIL line_acc 320"; exit 1; }
-grep -q "line_acc=640..640" "$OUT/green/run.log" || { echo "FAIL line_acc 640"; exit 1; }
-grep -q "line_acc=960..960" "$OUT/green/run.log" || { echo "FAIL line_acc 960"; exit 1; }
-echo "OK oracle GREEN rc=0"
-
-# ----- RED twin: drop-one-per-line must be caught -----
-build_run red -DFAULT_DROP_ONE_PER_LINE
-RRC="$(cat "$OUT/red/sim.rc")"
-if [[ "$RRC" -eq 0 ]]; then
-  echo "FAIL RED_TWIN: expected non-zero rc (exact checks should catch drop)"
+set +e
+"$OUT/run/Vpresent_beam_960_oracle_tb" >"$OUT/run.log" 2>&1
+RC=$?
+set -e
+cat "$OUT/run.log"
+echo "true rc=$RC"
+if [[ "$RC" -ne 0 ]]; then
+  echo "FAIL oracle sim rc=$RC"
   exit 1
 fi
-if ! grep -qE "FAIL .*line_acc=|FAIL .*pix=|drop/dup class" "$OUT/red/run.log"; then
-  echo "FAIL RED_TWIN: rc=$RRC but no exact-fail marker"
-  tail -30 "$OUT/red/run.log"
-  exit 1
-fi
-echo "OK oracle RED_TWIN rc=$RRC (caught drop-one-per-line)"
+grep -q "PASS present_beam_960_oracle" "$OUT/run.log" || { echo "FAIL no PASS"; exit 1; }
+grep -q "fps_milli=30000" "$OUT/run.log" || { echo "FAIL fps"; exit 1; }
+grep -q "OK FIXED_960x540 exact" "$OUT/run.log" || { echo "FAIL fixed"; exit 1; }
+grep -q "OK V705_960x540 exact" "$OUT/run.log" || { echo "FAIL v705"; exit 1; }
+grep -q "OK RTGEOM_320x240 exact" "$OUT/run.log" || { echo "FAIL 320"; exit 1; }
+grep -q "OK RTGEOM_624x480 exact" "$OUT/run.log" || { echo "FAIL 624"; exit 1; }
+grep -q "OK RTGEOM_640x360 exact" "$OUT/run.log" || { echo "FAIL 640"; exit 1; }
+grep -q "OK RTGEOM_960x540 exact" "$OUT/run.log" || { echo "FAIL 960"; exit 1; }
+grep -q "line_acc=624..624" "$OUT/run.log" || { echo "FAIL line 624"; exit 1; }
+grep -q "OK RED RTGEOM_320x240 caught" "$OUT/run.log" || { echo "FAIL red 320"; exit 1; }
+grep -q "OK RED RTGEOM_624x480 caught" "$OUT/run.log" || { echo "FAIL red 624"; exit 1; }
+grep -q "OK RED RTGEOM_640x360 caught" "$OUT/run.log" || { echo "FAIL red 640"; exit 1; }
+grep -q "OK RED RTGEOM_960x540 caught" "$OUT/run.log" || { echo "FAIL red 960"; exit 1; }
+grep -q "STA_ACK V705" "$OUT/run.log" || { echo "FAIL sta ack"; exit 1; }
+grep -q "b13_rtgeom_exact=1" "$OUT/run.log" || { echo "FAIL b13 marker"; exit 1; }
 echo "PASS test_present_beam_960_oracle true rc=0"
 exit 0
