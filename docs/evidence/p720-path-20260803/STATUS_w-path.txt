@@ -1,6 +1,6 @@
 lane=w-path
 status=DMA_INSTRUMENT_FIXED
-tip=pending
+tip=c4cf0392
 RETRACT: prior DMA timings (23.8ms and 0.01ms/98kfps) INVALID — false CSR complete
 FIX: linux DMAGO encode; saw_executing; content verify; ceiling 3.2GB/s rc=2
 bank-sweep STAND DOWN (parent awk)
