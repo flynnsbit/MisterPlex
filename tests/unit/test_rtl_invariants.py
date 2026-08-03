@@ -1232,17 +1232,51 @@ def check_present_geometry_stride_contract() -> None:
     if missing:
         fail(f"present geometry/stride contract: {missing[0]}")
 
+    # Default (non-L4) arm must still bind the 480p layout symbols. L4 arm binds
+    # DDR_FRAME_720P_* via FS_* localparams (see present_core.sv). Accept either
+    # direct .CODED_W(DDR_FRAME_*) or FS_CODED_W = DDR_FRAME_* (parameterized form).
+    default_480_bind = (
+        (
+            ".CODED_W(DDR_FRAME_CODED_WIDTH)" in present_nt
+            and ".DISPLAY_W(DDR_FRAME_DISPLAY_WIDTH)" in present_nt
+            and ".PRESENT_X(DDR_FRAME_PILLARBOX_LEFT)" in present_nt
+            and ".HPS_BANK_STRIDE_BYTES(DDR_FRAME_YUV420P_BANK_STRIDE)" in present_nt
+            and ".DOORBELL_PHYS(DDR_FRAME_YUV420P_DOORBELL_PHYS)" in present_nt
+        )
+        or (
+            "FS_CODED_W=DDR_FRAME_CODED_WIDTH" in present_nt
+            and "FS_DISPLAY_W=DDR_FRAME_DISPLAY_WIDTH" in present_nt
+            and "FS_PRESENT_X=DDR_FRAME_PILLARBOX_LEFT" in present_nt
+            and "FS_BANK_STRIDE=DDR_FRAME_YUV420P_BANK_STRIDE" in present_nt
+            and "FS_DOORBELL=DDR_FRAME_YUV420P_DOORBELL_PHYS" in present_nt
+            and ".CODED_W(FS_CODED_W)" in present_nt
+            and ".HPS_BANK_STRIDE_BYTES(FS_BANK_STRIDE)" in present_nt
+        )
+    )
     check(
         ".FRAME_W(FRAME_W)" in present_nt
         and ".FRAME_H(FRAME_H)" in present_nt
-        and ".CODED_W(DDR_FRAME_CODED_WIDTH)" in present_nt
-        and ".DISPLAY_W(DDR_FRAME_DISPLAY_WIDTH)" in present_nt
-        and ".PRESENT_X(DDR_FRAME_PILLARBOX_LEFT)" in present_nt
-        and ".HPS_BANK_STRIDE_BYTES(DDR_FRAME_YUV420P_BANK_STRIDE)" in present_nt
-        and ".DOORBELL_PHYS(DDR_FRAME_YUV420P_DOORBELL_PHYS)" in present_nt,
+        and default_480_bind,
         "present_core must instantiate ddr_frame_store from the shared layout params: "
         "FRAME_W=640 for scanout, CODED_W=624 for DDR stride, DISPLAY_W=618 for crop, "
         "PRESENT_X=11 for pillarbox.",
+    )
+    # L4 consumer wiring (must not leave 720p constants unreferenced).
+    l4_720_bind = (
+        "FS_CODED_W=DDR_FRAME_720P_CODED_WIDTH" in present_nt
+        and "FS_CODED_H=DDR_FRAME_720P_CODED_HEIGHT" in present_nt
+        and "FS_DISPLAY_W=DDR_FRAME_720P_DISPLAY_WIDTH" in present_nt
+        and "FS_DISPLAY_H=DDR_FRAME_720P_DISPLAY_HEIGHT" in present_nt
+        and "FS_PRESENT_X=DDR_FRAME_720P_PILLARBOX_LEFT" in present_nt
+        and "FS_BANK_STRIDE=DDR_FRAME_720P_YUV420P_BANK_STRIDE" in present_nt
+        and "FS_DOORBELL=DDR_FRAME_720P_YUV420P_DOORBELL_PHYS" in present_nt
+        and "FS_PHYS_BASE=DDR_FRAME_720P_PHYS_BASE" in present_nt
+        and "ifdefPLEX_PRESENT_720P_L4" in present_nt
+    )
+    check(
+        l4_720_bind,
+        "present_core L4 arm must wire DDR_FRAME_720P_* into ddr_frame_store "
+        "(coded/display/pillar/stride/doorbell/phys_base) behind PLEX_PRESENT_720P_L4.",
     )
     check(
         'set_global_assignment-nameVERILOG_MACRO"DDR_FRAME_STORE=1"' in qsf_nt

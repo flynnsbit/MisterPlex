@@ -542,22 +542,52 @@ module present_core #(
 
 `include "ddr_frame_layout_params.svh"
 
+	// Active DDR reader geometry. Default = 480p layout (coded 624 / display
+	// 618 / pillar 11 / stride 0x80000). L4 selects the 720p block from the
+	// same svh — without this, FRAME_W/H=1280x720 still fed 624x480 into the
+	// store and visibility ended at x≈628 y=479 (reviewer point 5).
+`ifdef PLEX_PRESENT_720P_L4
+	localparam int FS_CODED_W     = DDR_FRAME_720P_CODED_WIDTH;
+	localparam int FS_CODED_H     = DDR_FRAME_720P_CODED_HEIGHT;
+	localparam int FS_DISPLAY_W   = DDR_FRAME_720P_DISPLAY_WIDTH;
+	localparam int FS_DISPLAY_H   = DDR_FRAME_720P_DISPLAY_HEIGHT;
+	localparam int FS_CROP_LEFT   = 0; // 720p: display == coded (host kPlex720p*)
+	localparam int FS_CROP_TOP    = 0;
+	localparam int FS_PRESENT_X   = DDR_FRAME_720P_PILLARBOX_LEFT;
+	localparam int FS_PRESENT_Y   = 0;
+	localparam [31:0] FS_PHYS_BASE = DDR_FRAME_720P_PHYS_BASE;
+	localparam int FS_BANK_STRIDE = DDR_FRAME_720P_YUV420P_BANK_STRIDE;
+	localparam [31:0] FS_DOORBELL = DDR_FRAME_720P_YUV420P_DOORBELL_PHYS;
+`else
+	localparam int FS_CODED_W     = DDR_FRAME_CODED_WIDTH;
+	localparam int FS_CODED_H     = DDR_FRAME_CODED_HEIGHT;
+	localparam int FS_DISPLAY_W   = DDR_FRAME_DISPLAY_WIDTH;
+	localparam int FS_DISPLAY_H   = DDR_FRAME_DISPLAY_HEIGHT;
+	localparam int FS_CROP_LEFT   = DDR_FRAME_CROP_LEFT;
+	localparam int FS_CROP_TOP    = DDR_FRAME_CROP_TOP;
+	localparam int FS_PRESENT_X   = DDR_FRAME_PILLARBOX_LEFT;
+	localparam int FS_PRESENT_Y   = 0;
+	localparam [31:0] FS_PHYS_BASE = 32'h3000_0000;
+	localparam int FS_BANK_STRIDE = DDR_FRAME_YUV420P_BANK_STRIDE;
+	localparam [31:0] FS_DOORBELL = DDR_FRAME_YUV420P_DOORBELL_PHYS;
+`endif
+
 	ddr_frame_store #(
 		.FRAME_W(FRAME_W),
 		.FRAME_H(FRAME_H),
 		.FRAME_STRIDE(FRAME_STRIDE),
-		.CODED_W(DDR_FRAME_CODED_WIDTH),
-		.CODED_H(DDR_FRAME_CODED_HEIGHT),
-		.DISPLAY_W(DDR_FRAME_DISPLAY_WIDTH),
-		.DISPLAY_H(DDR_FRAME_DISPLAY_HEIGHT),
-		.CROP_LEFT(DDR_FRAME_CROP_LEFT),
-		.CROP_TOP(DDR_FRAME_CROP_TOP),
-		.PRESENT_X(DDR_FRAME_PILLARBOX_LEFT),
-		.PRESENT_Y(0),
+		.CODED_W(FS_CODED_W),
+		.CODED_H(FS_CODED_H),
+		.DISPLAY_W(FS_DISPLAY_W),
+		.DISPLAY_H(FS_DISPLAY_H),
+		.CROP_LEFT(FS_CROP_LEFT),
+		.CROP_TOP(FS_CROP_TOP),
+		.PRESENT_X(FS_PRESENT_X),
+		.PRESENT_Y(FS_PRESENT_Y),
 		.LINE_COUNT(FRAME_LINE_COUNT),
-		.PHYS_BASE(32'h3000_0000),
-		.HPS_BANK_STRIDE_BYTES(DDR_FRAME_YUV420P_BANK_STRIDE),
-		.DOORBELL_PHYS(DDR_FRAME_YUV420P_DOORBELL_PHYS)
+		.PHYS_BASE(FS_PHYS_BASE),
+		.HPS_BANK_STRIDE_BYTES(FS_BANK_STRIDE),
+		.DOORBELL_PHYS(FS_DOORBELL)
 	) fstore (
 		.clk(clk),
 		.clk_ddr(clk_ddr),
