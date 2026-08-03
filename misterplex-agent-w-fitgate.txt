@@ -1,7 +1,7 @@
 lane=w-fitgate
 branch=w-fitgate
-sha=1bf0839a
-ref_measured=w-fitgate@1bf0839a
+sha=c612858c
+ref_measured=w-fitgate@c612858c
 GRANT=NO
 status=B40_COMPLETE_PUSHED
 
@@ -27,6 +27,6 @@ Parent:
 LANDING inventory (scripts/docs only):
   product RTL modules authored by this lane: 0
   ON_MAIN=no IN_FILES_QIP=n/a INSTANTIATED=n/a ENABLED=n/a
-  measured_ref=w-fitgate@1bf0839a
+  measured_ref=w-fitgate@c612858c
 
 NO Quartus. NO device. GRANT=NO. No unilateral main merge.
