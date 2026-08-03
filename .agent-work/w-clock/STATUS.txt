@@ -1,18 +1,21 @@
 w-clock STATUS 2026-08-03
-tip: pending commit (exact rtgeom oracle)
+tip: c4429260
+oracle: 44a397c6 exact rtgeom + red twin
 prev: fdbef70f B2b + runtime geom OFF
 
-DONE this turn:
+DONE:
 - Exact whole-frame oracle: pix==W*H*frames, line_acc=W..W
 - Ladder 320x240 / 640x360 / 960x540
-- RED FAULT_DROP_ONE_PER_LINE catches 959..959 (true rc=1)
-- STA V705 ack: sim proven, timing NOT proven (needs sta.rpt)
-- Overclock: no headroom above 20 until stub reclaimed; 25 blocked on 23.46
+- RED FAULT_DROP_ONE_PER_LINE → line_acc=959..959 FAIL (sim rc=1)
+- STA V705: sim exact OK; timing NOT closed (needs Plex.sta.rpt)
+- Overclock: no ceiling above 20 MHz until stub reclaimed; 25 blocked (23.46)
 
 TESTS:
-  test_present_beam_960_oracle.sh  true rc=0 (green+red)
-  test_present_beam_960_elab.sh    true rc=0
-  test_present_beam_960_arith.sh   true rc=0
+  tests/unit/test_present_beam_960_oracle.sh  true rc=0
+  tests/unit/test_present_beam_960_elab.sh    true rc=0
+  tests/unit/test_present_beam_960_arith.sh   true rc=0
 
-NO fit. NO device. PLL unapplied.
-Report: .agent-work/w-clock/STA_V705_AND_OVERCLOCK_CEILING.md
+NO fit. NO device. PLL unapplied (20/90).
+Docs:
+  .agent-work/w-clock/STA_V705_AND_OVERCLOCK_CEILING.md
+  .agent-work/w-clock/RUNTIME_VARIABLE_RASTER_STA.md
