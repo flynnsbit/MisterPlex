@@ -1,8 +1,8 @@
 {
   "architecture": "ascal_true_de_960",
-  "git_tree_hash": "17f88f13705ef3d53852ffb835d9a81be6c5c934",
-  "gate_identity_hash": "81f99aabfb3b30a1f5900cb5130dacf231e50191",
-  "git_head_at_lock": "8d196b29c0a49a9d62b01168a2737130e4dd9610",
+  "git_tree_hash": "a263843e0e9fef501687f0419bb783668aa22ec7",
+  "gate_identity_hash": "358a05bcb8b9080eefbd223e19fe8013e6ba7b97",
+  "git_head_at_lock": "94a490c556c133880d1eb7f72a77bab8acf09bb8",
   "required_macros": {
     "FRAME_W": "960",
     "FRAME_H": "540",
@@ -31,7 +31,6 @@
     "git_tree_hash binds gated artefacts via compute_gated_tree_hash() and excludes this file.",
     "INTENTIONAL hash refresh after gated artefact change is a rebase, not a bypass \u2014 candidate cannot clear blockers by editing only this JSON.",
     "gate_identity_hash must match docs/fit_gate_identity.json; divergent lane rulers refuse LEG0 count (LEG0_COUNT_REFUSED).",
-    "fix=unmerged in leg0 output names sibling lane+commit; do not re-implement those.",
-    "Last git_tree_hash refresh: intentional rebase of gated artefacts (not a bypass)."
+    "fix=unmerged in leg0 output names sibling lane+commit; do not re-implement those."
   ]
 }

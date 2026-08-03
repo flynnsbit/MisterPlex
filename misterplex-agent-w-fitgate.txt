@@ -1,33 +1,55 @@
 lane=w-fitgate
-role=fit_release_gate_ruler
-GRANT=NO
-HEAD=1e0c585a00620a98342102269b0783c445c3bf15
-code_sha=1e0c585a00620a98342102269b0783c445c3bf15
 branch=w-fitgate
 worktree=/home/flynnsbit/Projects/MisterPlex-wt-fitgate
-origin=origin/w-fitgate
+tip_at_status_write=94a490c5 (pre-commit; post-commit sha follows push)
+GRANT=NO
+FIT_SLOT=HELD (parent only; this lane never takes Quartus)
 
-SELFTEST=PASS
-SELFTEST_MATRIX rows=56 red=56 fail_holes=0
-SELFTEST_CMD=python3 scripts/fit_release_gate.py --self-test
-SELFTEST_TRUE_RC=0
-SELFTEST_MARKER=FIT_RELEASE_GATE_SELFTEST_PASS
+=== PARENT CORRECTION ACKNOWLEDGED (retraction) ===
+Parent retracted the claim that main@ad928cb1 has 720p present modules
+at L2/L3 dead-code. That claim was false (measured on wrong branch).
 
-B33=STRENGTHENED_44981ab0
-B33_cite=rd-duck: delayed busy_comb→r→s1→s2 cannot retract !busy; S_ISSUE drops want→WAIT_R; m0_ov drops use_m3; never retries
-B33_reject=delayed_busy_only,comment_atomic_accept,m3_beats_ge1,collision_edges_WARN
-B33_require=req/accept_OR_skid/held_cmd; TB m0+m1 + m0+m3-rd + m0+m3-wr; per-request IDs; product both-complete; FAULT loses lower
-B33_tokens_live=B33_PLXC_ARB_ABSENT,B33_BRIDGE_BUSY_ACCEPT_RACE,B33_LOST_READ_TB_WEAK,B33_TB_NO_PER_REQUEST_ID,B33_TB_NO_PRODUCT_BOTH_COMPLETE,B33_TB_NO_FAULT_TWIN_LOSE_LOWER
-B33_token_reinject=B33_M0_OV_MASKS_ISSUED_LOWER,B33_DELAYED_BUSY_NOT_ACCEPT
-B33_wmem_measured_RED=M0_OV+DELAYED_BUSY+BRIDGE_BUSY_ACCEPT+TB_WEAK+NO_PER_REQ+NO_BOTH+COMMENT_ATOMIC (n=8; fault_twin present but weak TB)
+TRUE main@ad928cb1 (pinned detached worktree MisterPlex-wt-fitgate-meas-main):
+  git rev-parse --abbrev-ref HEAD = HEAD (detached)
+  git rev-parse --short HEAD     = ad928cb1
+  files.qip ~34 entries
+  present_video_timing_720p  ON_DISK=0 IN_QIP=0 INST=0 ENABLED=0 level=ABSENT
+  present_content_window     ON_DISK=0 IN_QIP=0 INST=0 ENABLED=0 level=ABSENT
+  present_geom_latch         ON_DISK=0 IN_QIP=0 INST=0 ENABLED=0 level=ABSENT
+  present_beam_content_de    ON_DISK=0 IN_QIP=0 INST=0 ENABLED=0 level=ABSENT
+  plex_present_geom_mux      ON_DISK=0 IN_QIP=0 INST=0 ENABLED=0 level=ABSENT
+  h264_intra_nb_ctx          ON_DISK=1 IN_QIP=0 INST=0 ENABLED=0 level=L0
+  ddr_frame_store            IN_QIP=1  INST=0 → real L2 DEAD (pre-existing)
+  FRAME_W=640 FRAME_H=480; PRESENT_BEAM_960 commented; use_frame_store(1'b0)
+  720p present path is L0/L1 on w-osd-land-720p-present — NOT L2/L3 on main.
 
-B34=LIVE (prior)
-OPEN_PRODUCT_REDS=B9,B31,B32,B33(44981ab0),B34
+GATE FIX (this commit):
+  - B37 DEAD_CODE only for L2∧¬L3 (in qip, zero product inst). ABSENT ≠ dead.
+  - B37_LADDER_NOT_L4 text no longer implies present_* are dead on main.
+  - Every B37 run prints LEG0_B37_MEASURED_REF branch=… sha=… root=…
+  - Errors cite measured_ref=branch@sha
 
-PARENT_RUN:
+SELFTEST (captured true rc, not piped):
+  python3 scripts/fit_release_gate.py --self-test; echo "true rc=$?"
+  true rc=0
+  MUTATION_MATRIX_SUMMARY rows=79 red=79 fail_holes=0
+  FIT_RELEASE_GATE_SELFTEST_PASS EXECUTED
+  GATE_IDENTITY_MATCH live=358a05bcb8b9080eefbd223e19fe8013e6ba7b97
+
+PARENT INDEPENDENT RUN (do not need our SHA reachable as tree content):
   git fetch origin w-fitgate
   RULER=/home/flynnsbit/Projects/MisterPlex-wt-fitgate
+  # or: git worktree add --detach /path/wt-fitgate-ro origin/w-fitgate
   "$RULER/scripts/fit_release_gate.sh" --root "$MERGE" --qsf "$MERGE/fpga/Plex_MiSTer/Plex.qsf"
+  echo "true rc=$?"
+  Expect GRANT=NO / FIT_RELEASE_GATE_FAIL while product not L4.
 
-LANDING: product_rtl=0; scripts ON_MAIN=no; no unilateral main merge
-CONSTRAINTS=no_quartus no_device capture_true_rc
+OPEN BLOCKERS (still GRANT=NO): B9 bank+VS sideband, B31 HIT_SCAN, B32 PLXG↔bank,
+B33 arb accept, B34 host pad geom, B35 ascal tag, B36 hollow hierarchy, B37 L4 ladder.
+
+LANDING INVENTORY (this lane — scripts/docs only, 0 product RTL modules):
+  fit_release_gate.py/.sh  ON_MAIN=no IN_FILES_QIP=n/a INSTANTIATED=n/a ENABLED=n/a
+  To land: parent sequences merge after main green + review; lane will NOT merge unilaterally.
+
+NO Quartus. NO device. NO main merge by this lane.
+status_utc=2026-08-03T19:05:58.991866Z

@@ -6512,15 +6512,39 @@ def check_b36_merged_hierarchy_live(root: Path) -> tuple[list[str], list[str]]:
 def check_b37_integration_ladder(root: Path) -> tuple[list[str], list[str]]:
     """B37: integration ladder L2/L3/L4 — qip-only is DEAD CODE, not shipped.
 
-    Parent broadcast 2 (measured main@ad928cb1):
-      present_content_window / present_geom_latch / plex_present_geom_mux in qip
-      but 0 instantiations → Quartus strips them (DEAD CODE).
-      use_frame_store(1'b0), FRAME 640/480, #PRESENT_BEAM_960 → not L4 ENABLED.
-    Ladder: L0 written → L1 ON_MAIN → L2 IN_FILES_QIP → L3 INSTANTIATED → L4 ENABLED.
-    ONLY L4 is in the product. Gate fails DEAD_CODE (L2∧¬L3) and L3_NOT_ENABLED.
+    Parent broadcast 2 + correction:
+      Ladder L0 written → L1 ON_MAIN → L2 IN_FILES_QIP → L3 INSTANTIATED → L4 ENABLED.
+      ONLY L4 is in the product. L2∧¬L3 = DEAD CODE (Quartus strips).
+      RETRACTED: claim that present_* were L2-dead on main — true main has them
+      ABSENT (not in qip). DEAD_CODE still applies when a module IS in qip with
+      inst_n=0 (e.g. ddr_frame_store). Always print git ref of measured tree.
     """
     msgs: list[str] = ["LEG0_B37_INTEGRATION_LADDER_EXECUTED begin"]
     errors: list[str] = []
+
+    # Parent correction: every repo-state claim must quote measured ref.
+    branch = "UNKNOWN"
+    sha = "UNKNOWN"
+    try:
+        br = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--abbrev-ref", "HEAD"],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        sh = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--short", "HEAD"],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        if br.returncode == 0:
+            branch = (br.stdout or "").strip() or "UNKNOWN"
+        if sh.returncode == 0:
+            sha = (sh.stdout or "").strip() or "UNKNOWN"
+    except OSError:
+        pass
+    msgs.append(f"LEG0_B37_MEASURED_REF branch={branch} sha={sha} root={root}")
 
     qsf = root / "fpga" / "Plex_MiSTer" / "Plex.qsf"
     qip = root / "fpga" / "Plex_MiSTer" / "files.qip"
@@ -6738,9 +6762,9 @@ def check_b37_integration_ladder(root: Path) -> tuple[list[str], list[str]]:
         errors.append(
             "B37_DEAD_CODE_IN_QIP: modules in files.qip with ZERO product "
             "instantiations (Plex.sv/sys_top) — Quartus strips them; L2≠shipped. "
-            f"dead={dead}. Parent broadcast 2: present_content_window/"
-            "present_geom_latch/plex_present_geom_mux measured inst_n=0 on main. "
-            "ONLY L4 is in the product."
+            f"dead={dead}. ABSENT (not in qip) is a different class — do not "
+            "call ABSENT modules 'dead code'. ONLY L4 is in the product. "
+            f"measured_ref={branch}@{sha}."
         )
     if l3_not_en:
         errors.append(
@@ -6765,8 +6789,9 @@ def check_b37_integration_ladder(root: Path) -> tuple[list[str], list[str]]:
             f"PRESENT_BEAM_960={int(beam_on)} FRAME_960x540={int(fw960 and fh540)} "
             f"DDR_FRAME_STORE={int(ddr_on)} PRODUCT_NO_STUB={int(nostub)} "
             f"use_frame_store_1b0={int(ufs_force0)}. "
-            "Parent: remaining blocker is L3/L4 not physics. "
-            "ON_MAIN+IN_QIP alone is not a completion claim."
+            "ABSENT modules are L0/not-on-tree — not L2 dead code. "
+            "ON_MAIN+IN_QIP alone is not a completion claim. "
+            f"measured_ref={branch}@{sha}."
         )
     if not errors:
         msgs.append("LEG0_B37_PASS integration ladder L4 for present path")
