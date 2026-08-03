@@ -518,7 +518,8 @@ module ddr_frame_store #(
 	// PLXF frame-debug: geom_enable=1 but rt_raw_ok=0 (unaligned/over-max/zero).
 	// Was silent legacy fallback → sheared picture. Now sticky + black + 0xE2.
 	localparam [7:0] DEBUG_GEOM_REJECT = 8'hE2;
-	// PLXF: geom was live then dropped → silent legacy fallback (hollow / missing commit).
+	// PLXF: applied geom was live then lost while geom_enable still 1
+	// (hollow / missing commit). Intentional geom_enable=0 mode-exit is NOT E3.
 	localparam [7:0] DEBUG_GEOM_HOLLOW = 8'hE3;
 	// PLXF: PLXG q5 reserved[63:34] nonzero — forward-compat trap (must be loud).
 	localparam [7:0] DEBUG_Q5_RESERVED = 8'hE4;
@@ -778,6 +779,9 @@ module ddr_frame_store #(
 					app_base_w0 <= pend_app_base_w0;
 					app_base_w1 <= pend_app_base_w1;
 					app_doorbell_w <= pend_app_doorbell_w;
+					// Consume snapshot so a later free-run path cannot see a
+					// stale pend, and so mode-exit disable is one-shot with bank.
+					pend_app_valid <= 1'b0;
 				end
 				disp_buf <= ~disp_buf;
 				has_frame <= 1'b1;
@@ -846,14 +850,29 @@ module ddr_frame_store #(
 			end
 
 			// B16 epoch / hold-black / hollow — on applied app_* change.
-			if (geom_en_r)
+			// had_geom tracks *applied* live geom so free-running eff drop during
+			// B20 hold does not arm hollow before the bank adopts the change.
+			if (app_geom_en)
 				had_geom_r <= 1'b1;
 `ifdef DDR_FRAME_STORE_FAULT_SILENT_HOLLOW
 			geom_hollow_r <= 1'b0;
-`else
+`elsif DDR_FRAME_STORE_FAULT_HOLLOW_ON_DISABLE
+			// RED TWIN: old hollow treated intentional disable as fault →
+			// permanent black (rd-duck mode-exit). Product excludes !enable.
 			if (had_geom_r && !geom_en_r && !geom_reject_r && has_frame)
 				geom_hollow_r <= 1'b1;
 			else if (geom_en_r)
+				geom_hollow_r <= 1'b0;
+`else
+			// Hollow = prior applied geom lost while host still asserts
+			// geom_enable (missing commit → silent legacy). Intentional
+			// mode-exit (geom_enable=0, optionally bank-atomic disable) is
+			// NOT hollow — old predicate fired on every disable and forced
+			// permanent RGB black via geom_hollow_r (rd-duck mode-exit).
+			if (had_geom_r && !geom_en_r && !geom_reject_r && has_frame &&
+			    geom_enable)
+				geom_hollow_r <= 1'b1;
+			else if (geom_en_r || !geom_enable)
 				geom_hollow_r <= 1'b0;
 `endif
 			if (geom_layout_chg) begin

@@ -1,6 +1,7 @@
 // B20 bank+geometry atomicity oracle.
 // Product: PLXG live+seq ⇒ app_* holds until bank-swap vsync; FAULT free-run
 // moves app with candidate immediately (REPRO new pitch before swap).
+// Mode-exit: intentional geom_enable=0 must not sticky-hollow (permanent black).
 `default_nettype none
 
 module ddr_frame_store_b20_tb (
@@ -19,6 +20,9 @@ module ddr_frame_store_b20_tb (
 	input  wire        vsync_pulse,
 	input  wire        start_req,
 	input  wire        bank_sel,
+	input  wire  [6:0] rd_x,
+	input  wire  [5:0] rd_y,
+	input  wire        rd_active,
 	input  wire        DDRAM_BUSY,
 	input  wire [63:0] DDRAM_DOUT,
 	input  wire        DDRAM_DOUT_READY,
@@ -31,17 +35,24 @@ module ddr_frame_store_b20_tb (
 	output wire        swap_pending,
 	output wire        doorbell_ok,
 	output wire [15:0] frames_done,
+	output wire [7:0]  rd_r,
+	output wire [7:0]  rd_g,
+	output wire [7:0]  rd_b,
 	output wire [10:0] obs_eff_coded_w,
 	output wire [10:0] obs_app_coded_w,
+	output wire [10:0] obs_app_disp_w,
+	output wire [10:0] obs_app_disp_h,
 	output wire        obs_app_geom_en,
 	output wire        obs_b20_atomic,
 	output wire        obs_pend_app_valid,
 	output wire        obs_disp_bank,
-	output wire        obs_pending_bank
+	output wire        obs_pending_bank,
+	output wire        obs_geom_hollow,
+	output wire        obs_geom_hold_black
 );
 	wire DDRAM_CLK;
 	wire [7:0] DDRAM_BE;
-	wire [7:0] rd_r, rd_g, rd_b, debug_state;
+	wire [7:0] debug_state;
 	wire [15:0] underrun_count;
 	wire geom_hold_black, geom_hollow_fault;
 
@@ -77,9 +88,9 @@ module ddr_frame_store_b20_tb (
 		.clk(clk),
 		.clk_ddr(clk_ddr),
 		.reset(reset),
-		.rd_x(7'd0),
-		.rd_y(6'd0),
-		.rd_active(1'b0),
+		.rd_x(rd_x),
+		.rd_y(rd_y),
+		.rd_active(rd_active),
 		.rd_r(rd_r),
 		.rd_g(rd_g),
 		.rd_b(rd_b),
@@ -125,13 +136,17 @@ module ddr_frame_store_b20_tb (
 		.geom_hollow_fault(geom_hollow_fault)
 	);
 
-	assign obs_eff_coded_w   = dut.eff_coded_w;
-	assign obs_app_coded_w   = dut.app_coded_w;
-	assign obs_app_geom_en   = dut.app_geom_en;
-	assign obs_b20_atomic    = dut.b20_atomic;
+	assign obs_eff_coded_w    = dut.eff_coded_w;
+	assign obs_app_coded_w    = dut.app_coded_w;
+	assign obs_app_disp_w     = dut.app_disp_w;
+	assign obs_app_disp_h     = dut.app_disp_h;
+	assign obs_app_geom_en    = dut.app_geom_en;
+	assign obs_b20_atomic     = dut.b20_atomic;
 	assign obs_pend_app_valid = dut.pend_app_valid;
-	assign obs_disp_bank     = dut.disp_bank;
-	assign obs_pending_bank  = dut.pending_bank;
+	assign obs_disp_bank      = dut.disp_bank;
+	assign obs_pending_bank   = dut.pending_bank;
+	assign obs_geom_hollow    = geom_hollow_fault;
+	assign obs_geom_hold_black = geom_hold_black;
 endmodule
 
 `default_nettype wire

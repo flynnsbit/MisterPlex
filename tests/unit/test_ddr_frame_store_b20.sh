@@ -41,6 +41,8 @@ fi
 
 FAULT_BUILD="$ROOT/build/verilator/ddr_b20_fault"
 GOOD_BUILD="$ROOT/build/verilator/ddr_b20_good"
+# Force rebuild — source edits must not hit stale "Nothing to be done".
+rm -rf "$FAULT_BUILD" "$GOOD_BUILD"
 mkdir -p "$FAULT_BUILD" "$GOOD_BUILD"
 echo "RTL SIM: using $VERILATOR_VERSION" >&2
 
@@ -82,7 +84,9 @@ printf '%s\n' "$GOOD_OUT"
 echo "product true rc=$GOOD_RC"
 assert_sim_executed "b20-product" "$GOOD_OUT" \
   "OK delayed-promotion" "OK B20 product" "OK B20 mode-exit" \
-  "MEASURED after_promote" "MEASURED after_swap" "MEASURED mode_exit"
+  "OK B20 mode-exit pixel oracle" \
+  "MEASURED after_promote" "MEASURED after_swap" "MEASURED mode_exit" \
+  "MEASURED mode_exit_scan"
 if [[ "$GOOD_RC" -ne 0 ]]; then
   echo "FAIL b20 product rc=$GOOD_RC" >&2
   exit "$GOOD_RC"
@@ -90,6 +94,7 @@ fi
 
 # --- C) FAULT SPI ungated: SPI swaps before promote (REPRO corruption class) ---
 SPI_BUILD="$ROOT/build/verilator/ddr_b20_spi_fault"
+rm -rf "$SPI_BUILD"
 mkdir -p "$SPI_BUILD"
 echo "=== C) FAULT_SPI_UNGATED delayed-promo SPI (expect swap REPRO) ===" >&2
 "$RUN_VERILATOR" "${vflags[@]}" --Mdir "$SPI_BUILD" \
