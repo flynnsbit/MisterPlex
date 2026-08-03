@@ -30,11 +30,13 @@ using DdrFfmpegGeometryForPresentFn = DdrFrameGeometry (*)(int, int);
 using DdrFrameGeometryForFpgaPresentFn = DdrFrameGeometry (*)(int, int);
 
 inline constexpr DdrStorageGeometryForContentFn kSymDdrStorageGeometryForContent =
-    &ddrStorageGeometryForContent;
+    static_cast<DdrStorageGeometryForContentFn>(&ddrStorageGeometryForContent);
+// Bind the two-arg public overload (3-arg wantFpga override also exists).
 inline constexpr DdrFfmpegGeometryForPresentFn kSymDdrFfmpegGeometryForPresent =
-    &ddrFfmpegGeometryForPresent;
+    static_cast<DdrFfmpegGeometryForPresentFn>(
+        static_cast<DdrFrameGeometry (*)(int, int)>(&ddrFfmpegGeometryForPresent));
 inline constexpr DdrFrameGeometryForFpgaPresentFn kSymDdrFrameGeometryForFpgaPresent =
-    &ddrFrameGeometryForFpgaPresent;
+    static_cast<DdrFrameGeometryForFpgaPresentFn>(&ddrFrameGeometryForFpgaPresent);
 
 // --- PLXG q5 aspect/cadence (path ABI #2 publish) ---
 static_assert(kPlxgQ5ByteOffset == 0x828u, "PLXG q5 offset");

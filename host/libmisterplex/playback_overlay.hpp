@@ -64,6 +64,12 @@ public:
         durationMs_ = clampNonNegative(durationMs);
     }
 
+    // Transport state for PLXC republish (flash skip while plane=1).
+    PlaybackOverlayState state() const {
+        std::lock_guard<std::mutex> lock(mu_);
+        return state_;
+    }
+
     void flashSkip(int64_t deltaMs, int64_t positionMs, int64_t durationMs) {
         flashSkipAt(deltaMs, positionMs, durationMs, monotonicMs());
     }

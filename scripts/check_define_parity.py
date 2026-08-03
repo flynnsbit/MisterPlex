@@ -7,10 +7,13 @@
 
 2) host/libmisterplex/ddr_frame_layout.hpp must match
    fpga/.../ddr_frame_layout_params.svh for coded/display/presented geometry,
-   YUV line qwords, strides, bank/doorbell. QSF FRAME_W/H must equal the
-   *presented* canvas (640x480), not the coded DDR pitch (624). Without (2)
-   this gate was GREEN while a 624-writer vs 640-reader pitch shear was still
-   possible at the constant layer.
+   YUV line qwords, strides, bank/doorbell. Product max-tier presented is
+   DDR_FRAME_PRESENTED_* ↔ kDdrFramePresented* (960×540 ceiling). Legacy 480p
+   pillarbox canvas is DDR_FRAME_LEGACY480_PRESENTED_* ↔ kPlex480pPresented*
+   (640×480). QSF FRAME_W/H must equal the *legacy default product* canvas
+   (640x480), not the coded DDR pitch (624) and not the max-tier ceiling.
+   Without (2) this gate was GREEN while a 624-writer vs 640-reader pitch
+   shear was still possible at the constant layer.
 """
 from __future__ import annotations
 
@@ -36,8 +39,12 @@ DDR_LAYOUT_PAIRS: tuple[tuple[str, str], ...] = (
     ("kPlex480pCodedHeight", "DDR_FRAME_CODED_HEIGHT"),
     ("kPlex480pDisplayWidth", "DDR_FRAME_DISPLAY_WIDTH"),
     ("kPlex480pDisplayHeight", "DDR_FRAME_DISPLAY_HEIGHT"),
-    ("kPlex480pPresentedWidth", "DDR_FRAME_PRESENTED_WIDTH"),
-    ("kPlex480pPresentedHeight", "DDR_FRAME_PRESENTED_HEIGHT"),
+    # Product max-tier presented ceiling (960×540), not default QSF canvas.
+    ("kDdrFramePresentedWidth", "DDR_FRAME_PRESENTED_WIDTH"),
+    ("kDdrFramePresentedHeight", "DDR_FRAME_PRESENTED_HEIGHT"),
+    # Legacy 480p pillarbox presented (640×480) — default product canvas.
+    ("kPlex480pPresentedWidth", "DDR_FRAME_LEGACY480_PRESENTED_WIDTH"),
+    ("kPlex480pPresentedHeight", "DDR_FRAME_LEGACY480_PRESENTED_HEIGHT"),
     ("kPlex480pCropLeft", "DDR_FRAME_CROP_LEFT"),
     ("kPlex480pCropRight", "DDR_FRAME_CROP_RIGHT"),
     ("kPlex480pCropTop", "DDR_FRAME_CROP_TOP"),
@@ -295,8 +302,11 @@ def check_ddr_layout_parity(
     print("DEFINE_PARITY_DDR_LAYOUT_END")
 
     # Internal product relations (source-proven; kill 640-as-pitch theories).
+    # Max-tier PRESENTED_* may be 960×540; shear/pillar math uses LEGACY480 canvas.
     coded = rtl_eff.get("DDR_FRAME_CODED_WIDTH")
-    presented = rtl_eff.get("DDR_FRAME_PRESENTED_WIDTH")
+    presented_max = rtl_eff.get("DDR_FRAME_PRESENTED_WIDTH")
+    presented_legacy = rtl_eff.get("DDR_FRAME_LEGACY480_PRESENTED_WIDTH")
+    presented_h_legacy = rtl_eff.get("DDR_FRAME_LEGACY480_PRESENTED_HEIGHT")
     display = rtl_eff.get("DDR_FRAME_DISPLAY_WIDTH")
     y_stride = rtl_eff.get("DDR_FRAME_Y_STRIDE_BYTES")
     y_qw = rtl_eff.get("DDR_FRAME_YUV_LUMA_LINE_QWORDS")
@@ -316,20 +326,28 @@ def check_ddr_layout_parity(
         errors.append(
             f"DDR_FRAME_YUV_CHROMA_LINE_QWORDS={c_qw} must equal CODED_WIDTH/16={coded // 16 if coded is not None else '?'}"
         )
-    if None not in (pillar_l, display, pillar_r, presented) and (
-        pillar_l + display + pillar_r != presented
+    if None not in (pillar_l, display, pillar_r, presented_legacy) and (
+        pillar_l + display + pillar_r != presented_legacy
     ):
         errors.append(
-            f"pillarbox math broken: {pillar_l}+{display}+{pillar_r} != presented {presented}"
+            f"pillarbox math broken: {pillar_l}+{display}+{pillar_r} != "
+            f"LEGACY480 presented {presented_legacy}"
         )
-    if None not in (coded, presented) and (presented - coded) != 16:
+    if None not in (coded, presented_legacy) and (presented_legacy - coded) != 16:
         # Pin the 16 px figure used in the 624-vs-640 shear arithmetic.
         errors.append(
-            f"presented-coded delta is {presented - coded}, expected 16 "
+            f"legacy presented-coded delta is {presented_legacy - coded}, expected 16 "
             f"(640-624); used when reasoning about wrong FRAME_W pitch"
         )
+    if presented_max is None:
+        errors.append("DDR_FRAME_PRESENTED_WIDTH missing (product max-tier ceiling)")
+    elif presented_max < 960:
+        errors.append(
+            f"DDR_FRAME_PRESENTED_WIDTH={presented_max} below product max-tier ceiling 960"
+        )
 
-    # QSF FRAME_W/H are the *presented* scanout canvas, not coded DDR pitch.
+    # QSF FRAME_W/H are the *default product* scanout canvas (legacy 640×480),
+    # not coded DDR pitch (624) and not the max-tier ceiling (960).
     fw = quartus.get("FRAME_W")
     fh = quartus.get("FRAME_H")
     if fw is None:
@@ -340,10 +358,15 @@ def check_ddr_layout_parity(
         except ValueError:
             fw_v = None
             errors.append(f"FRAME_W: unparseable Quartus value {fw.value!r}")
-        if fw_v is not None and presented is not None and fw_v != presented:
+        if (
+            fw_v is not None
+            and presented_legacy is not None
+            and fw_v != presented_legacy
+        ):
             errors.append(
-                f"FRAME_W Quartus={fw_v} != DDR_FRAME_PRESENTED_WIDTH={presented}: "
-                f"scanout canvas must match presented width (not coded {coded})"
+                f"FRAME_W Quartus={fw_v} != DDR_FRAME_LEGACY480_PRESENTED_WIDTH={presented_legacy}: "
+                f"default scanout canvas must match legacy presented width (not coded {coded}, "
+                f"not max-tier {presented_max})"
             )
         if fw_v is not None and coded is not None and fw_v == coded:
             errors.append(
@@ -358,10 +381,9 @@ def check_ddr_layout_parity(
         except ValueError:
             fh_v = None
             errors.append(f"FRAME_H: unparseable Quartus value {fh.value!r}")
-        rtl_ph = rtl_eff.get("DDR_FRAME_PRESENTED_HEIGHT")
-        if fh_v is not None and rtl_ph is not None and fh_v != rtl_ph:
+        if fh_v is not None and presented_h_legacy is not None and fh_v != presented_h_legacy:
             errors.append(
-                f"FRAME_H Quartus={fh_v} != DDR_FRAME_PRESENTED_HEIGHT={rtl_ph}"
+                f"FRAME_H Quartus={fh_v} != DDR_FRAME_LEGACY480_PRESENTED_HEIGHT={presented_h_legacy}"
             )
 
     return errors

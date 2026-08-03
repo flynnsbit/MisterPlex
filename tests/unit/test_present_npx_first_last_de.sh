@@ -6,6 +6,7 @@ RV="$ROOT/scripts/run_verilator.sh"
 OUT="$ROOT/build/verilator/present_npx_first_last_de"
 mkdir -p "$OUT"
 RTL="$ROOT/fpga/Plex_MiSTer/rtl"
+PC="$PC"
 
 run_one() {
   local tag=$1
@@ -49,24 +50,24 @@ grep -q "PASS present_npx_first_last_de RED_DIRECT_SYNC" "$OUT/red/run.log" || {
   echo "FAIL red marker"; exit 1; }
 
 # Structural: product same-clock must INCLUDE_SYNC and use mp_out_hb
-if ! grep -q "localparam bit MP_INCLUDE_SYNC = 1'b1" "$RTL/present_core.sv"; then
+if ! grep -q "localparam bit MP_INCLUDE_SYNC = 1'b1" "$PC"; then
   echo "FAIL present_core MP_INCLUDE_SYNC not hard-1"
   exit 1
 fi
-if grep -n "wire mp_hb_d = mp_hb" "$RTL/present_core.sv"; then
+if grep -n "wire mp_hb_d = mp_hb" "$PC"; then
   echo "FAIL present_core still uses direct beam mp_hb for DE"
   exit 1
 fi
-if ! grep -q "wire mp_hb_d = mp_out_hb" "$RTL/present_core.sv"; then
+if ! grep -q "wire mp_hb_d = mp_out_hb" "$PC"; then
   echo "FAIL present_core missing FIFO sideband mp_out_hb"
   exit 1
 fi
-if ! grep -q "vsync_pulse(mp_out_fs)" "$RTL/present_core.sv"; then
+if ! grep -q "vsync_pulse(mp_out_fs)" "$PC"; then
   echo "FAIL present_core vsync_pulse not FIFO-aligned mp_out_fs"
   exit 1
 fi
 # BEAM_960 must not be the MP path
-if ! grep -q "Do NOT implement BEAM_960 by parameterizing MULTI_PIXEL" "$RTL/present_core.sv"; then
+if ! grep -q "Do NOT implement BEAM_960 by parameterizing MULTI_PIXEL" "$PC"; then
   echo "FAIL missing BEAM_960 vs MP separation comment"
   exit 1
 fi

@@ -21,4 +21,6 @@ OUT="$("$BUILD/Vfabric_luma_linebuf_tb_top" 2>&1)"; RC=$?
 set -e
 printf '%s\n' "$OUT"
 echo "fabric_luma_linebuf_sim true rc=$RC"
-exit "$RC"
+[[ "$RC" -eq 0 ]] || exit "$RC"
+assert_sim_executed "fabric_luma_linebuf" "$OUT" "OK fabric_luma_linebuf"
+exit 0

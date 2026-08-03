@@ -5,21 +5,23 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 RV="$ROOT/scripts/run_verilator.sh"
 OUT="$ROOT/build/verilator/mp_ur_count_sat"
 RTL="$ROOT/fpga/Plex_MiSTer/rtl"
+# Assign so greps do not count as Verilator file-list inputs (filelist guard).
+PC="$RTL/present_core.sv"
 mkdir -p "$OUT"
 
-if grep -n "15'(mp_rd_ur_count) + 15'(mp_rd_ur_delta) < 15'h7fff" "$RTL/present_core.sv"; then
+if grep -n "15'(mp_rd_ur_count) + 15'(mp_rd_ur_delta) < 15'h7fff" "$PC"; then
   echo "FAIL product still has 15-bit wrap-before-compare"; exit 1
 fi
-if ! grep -q "16'({1'b0, mp_rd_ur_count}) + 16'(mp_rd_ur_delta)" "$RTL/present_core.sv"; then
+if ! grep -q "16'({1'b0, mp_rd_ur_count}) + 16'(mp_rd_ur_delta)" "$PC"; then
   echo "FAIL product missing 16-bit sat sum on ur count"; exit 1
 fi
-if ! grep -q "mp_ur_sum16" "$RTL/present_core.sv"; then
+if ! grep -q "mp_ur_sum16" "$PC"; then
   echo "FAIL product missing 16-bit ur_sum combine"; exit 1
 fi
-if ! grep -q "mp_store_ur15" "$RTL/present_core.sv"; then
+if ! grep -q "mp_store_ur15" "$PC"; then
   echo "FAIL product missing store→15 saturate before pix add"; exit 1
 fi
-if grep -nE "\{1'b0, frame_underruns\[14:0\]\}" "$RTL/present_core.sv"; then
+if grep -nE "\{1'b0, frame_underruns\[14:0\]\}" "$PC"; then
   echo "FAIL product still truncates frame_underruns[14:0] without sat"; exit 1
 fi
 

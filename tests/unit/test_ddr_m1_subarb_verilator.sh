@@ -33,6 +33,7 @@ OSS_CAD_SUITE="$OSS_CAD_SUITE" "$RUN_VERILATOR" --cc --exe --build \
   -CFLAGS "-std=c++17 -O2" \
   "${RTL[@]}"
 
+source "$ROOT/tests/unit/lib_rtl_sim_gate.sh"
 EXE="$BUILD_DIR/Vddr_m1_subarb_tb_top"
 set +e
 OUT="$("$EXE" 2>&1)"
@@ -40,4 +41,6 @@ RC=$?
 set -e
 printf '%s\n' "$OUT"
 echo "ddr_m1_subarb_sim true rc=$RC"
-exit "$RC"
+[[ "$RC" -eq 0 ]] || exit "$RC"
+assert_sim_executed "ddr_m1_subarb" "$OUT" "ddr_m1_subarb_tb: OK"
+exit 0

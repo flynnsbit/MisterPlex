@@ -17,12 +17,13 @@ elif [[ "$VERILATOR_RC" -ne 0 ]]; then
 fi
 
 RTL="$ROOT/fpga/Plex_MiSTer/rtl"
+PC="$RTL/present_core.sv"
 # RED structural: timing alone is NOT a raster generator / fit candidate.
-if ! grep -q "present_beam_content_de" "$RTL/present_core.sv"; then
+if ! grep -q "present_beam_content_de" "$PC"; then
   echo "FAIL RED: present_core missing present_beam_content_de instance path"
   exit 1
 fi
-if ! grep -q "PRESENT_BEAM_960" "$RTL/present_core.sv"; then
+if ! grep -q "PRESENT_BEAM_960" "$PC"; then
   echo "FAIL RED: PRESENT_BEAM_960 path missing"
   exit 1
 fi
@@ -40,11 +41,11 @@ if ! grep -qE "NOT a raster generator|CONSTANT / MATH|math-only|not a generator"
   echo "FAIL RED: timing_960 missing demotion/math-only banner"
   exit 1
 fi
-if grep -qE "u_timing_960|present_video_timing_960[[:space:]]*#\(" "$RTL/present_core.sv"; then
+if grep -qE "u_timing_960|present_video_timing_960[[:space:]]*#\(" "$PC"; then
   echo "FAIL RED: present_core still instantiates timing_960 (dual SoT)"
   exit 1
 fi
-if ! grep -q "u_beam_960" "$RTL/present_core.sv"; then
+if ! grep -q "u_beam_960" "$PC"; then
   echo "FAIL RED: present_core missing u_beam_960 raster SoT"
   exit 1
 fi
@@ -53,20 +54,20 @@ if ! grep -q "B2b RASTER SOURCE OF TRUTH" "$RTL/present_beam_content_de.sv"; the
   exit 1
 fi
 # Template 529 remains on default path
-if ! grep -q "localparam H_DE    = 10'd529" "$RTL/present_core.sv"; then
+if ! grep -qE "localparam[[:space:]]+H_DE[[:space:]]*=[[:space:]]*10'd529" "$PC"; then
   echo "FAIL RED: Template H_DE=529 missing on non-BEAM path"
   exit 1
 fi
 # B13: runtime DE driven from content_w/h (not fixed 960 bind-only)
-if ! grep -q "use_rt_geom(1'b1)" "$RTL/present_core.sv"; then
+if ! grep -q "use_rt_geom(1'b1)" "$PC"; then
   echo "FAIL RED B13: present_core must drive use_rt_geom(1'b1)"
   exit 1
 fi
-if ! grep -q "input  wire \[10:0\] content_w" "$RTL/present_core.sv"; then
+if ! grep -q "input  wire \[10:0\] content_w" "$PC"; then
   echo "FAIL RED B13: present_core missing content_w port"
   exit 1
 fi
-if grep -q "use_rt_geom(1'b0)" "$RTL/present_core.sv"; then
+if grep -q "use_rt_geom(1'b0)" "$PC"; then
   echo "FAIL RED B13: use_rt_geom still tied off"
   exit 1
 fi
@@ -129,8 +130,10 @@ COMMON=(
   --top-module wrap
   "$WRAP"
   "$RTL/present_core.sv" "$RTL/present_cadence.sv" "$RTL/colorbars.sv"
-  "$RTL/ddr_frame_store.sv"
+  "$RTL/ddr_frame_store.sv" "$RTL/frame_store.sv"
   "$RTL/present_video_timing_960.sv" "$RTL/present_beam_content_de.sv"
+  "$RTL/present_video_timing_720p.sv" "$RTL/present_npx_path.sv"
+  "$RTL/present_beam_ppc.sv" "$RTL/present_pix_rate_match.sv"
   "$RTL/yuv_bt601_npx.sv" "$RTL/async_fifo.sv" "$RTL/line_buf_ram.sv"
   "$RTL/audio_fifo.sv" "$RTL/audio_tone.sv"
 )
@@ -206,8 +209,10 @@ set +e
   --top-module wrap \
   "$RBUILD/wrap_bad.sv" \
   "$RTL/present_core.sv" "$RTL/present_cadence.sv" "$RTL/colorbars.sv" \
-  "$RTL/ddr_frame_store.sv" \
+  "$RTL/ddr_frame_store.sv" "$RTL/frame_store.sv" \
   "$RTL/present_video_timing_960.sv" "$RTL/present_beam_content_de.sv" \
+  "$RTL/present_video_timing_720p.sv" "$RTL/present_npx_path.sv" \
+  "$RTL/present_beam_ppc.sv" "$RTL/present_pix_rate_match.sv" \
   "$RTL/yuv_bt601_npx.sv" "$RTL/async_fifo.sv" "$RTL/line_buf_ram.sv" \
   "$RTL/audio_fifo.sv" "$RTL/audio_tone.sv" \
   -Mdir "$RBUILD" >"$RBUILD/log.txt" 2>&1
@@ -277,8 +282,10 @@ set +e
   --top-module wrap \
   "$DBUILD/wrap.sv" \
   "$RTL/present_core.sv" "$RTL/present_cadence.sv" "$RTL/colorbars.sv" \
-  "$RTL/ddr_frame_store.sv" \
+  "$RTL/ddr_frame_store.sv" "$RTL/frame_store.sv" \
   "$RTL/present_video_timing_960.sv" "$RTL/present_beam_content_de.sv" \
+  "$RTL/present_video_timing_720p.sv" "$RTL/present_npx_path.sv" \
+  "$RTL/present_beam_ppc.sv" "$RTL/present_pix_rate_match.sv" \
   "$RTL/yuv_bt601_npx.sv" "$RTL/async_fifo.sv" "$RTL/line_buf_ram.sv" \
   "$RTL/audio_fifo.sv" "$RTL/audio_tone.sv" \
   -Mdir "$DBUILD" >"$DBUILD/log.txt" 2>&1

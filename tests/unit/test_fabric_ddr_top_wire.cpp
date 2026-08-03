@@ -36,7 +36,8 @@ int main() {
     CHECK(top.find("ddr_bus_arbiter3") != std::string::npos);
     CHECK(top.find("fabric_ddr_attach") != std::string::npos);
     CHECK(top.find("`ifdef FABRIC_DDR_WRITER") != std::string::npos);
-    CHECK(top.find("ddr_bus_arbiter ddr_arb") != std::string::npos); // default path
+    // Product default (FABRIC_DDR_WRITER off): m0+m1+m3 PLXC chrome arbiter.
+    CHECK(top.find("ddr_bus_arbiter_plxc") != std::string::npos);
     // Idle producer must not paint over has_frame (synced).
     CHECK(top.find("has_frame_s2") != std::string::npos);
     CHECK(top.find("DDR_FRAME_720P_PHYS_BASE") != std::string::npos); // Option-C default

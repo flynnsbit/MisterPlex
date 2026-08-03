@@ -114,9 +114,14 @@ int main() {
            "present_core instantiates window");
     EXPECT(file_contains("fpga/Plex_MiSTer/Plex.sv", "present_geom_latch"),
            "Plex instantiates PLXG latch");
-    EXPECT(file_contains("fpga/Plex_MiSTer/Plex.sv", "plxg_wr_en   = 1'b0"),
-           "PLXG writes tied off (safe default)");
-    EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_geom_latch.sv", "504C_5847"),
+    // Product path: plxg_ddr_poller drives wr_en/commit (NOT tied 1'b0).
+    EXPECT(file_contains("fpga/Plex_MiSTer/Plex.sv", "plxg_ddr_poller"),
+           "Plex instantiates PLXG DDR poller");
+    EXPECT(file_contains("fpga/Plex_MiSTer/Plex.sv",
+                         "PLXG wr_en/commit driven by plxg_ddr_poller (NOT tied 1'b0)"),
+           "PLXG writes from poller (not tied-off stub)");
+    // LE word of ASCII "PLXG" (host 0x504C5847 on wire is BE label; RTL compares LE).
+    EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_geom_latch.sv", "4758_4C50"),
            "PLXG magic not PLXW");
 
     // --- Legacy full-bank ---

@@ -74,13 +74,14 @@ else
   echo "OK C1/B15: no product hardwired content_fps=24"
 fi
 
-# cadence.hpp not included from arm/
-if grep -rn --include='*.cpp' --include='*.hpp' 'cadence.hpp' "$ROOT/arm" >/dev/null 2>&1; then
-  echo "FAIL C1: cadence.hpp referenced from arm/" >&2
-  grep -rn --include='*.cpp' --include='*.hpp' 'cadence.hpp' "$ROOT/arm" >&2 || true
+# present-swap cadence.hpp must not be included from arm/ (test-only product path).
+# Do NOT match plxg_q5_aspect_cadence.hpp — that is ABI#2 PLXG q5 packing (allowed).
+if grep -rn --include='*.cpp' --include='*.hpp' 'libmisterplex/cadence.hpp' "$ROOT/arm" >/dev/null 2>&1; then
+  echo "FAIL C1: libmisterplex/cadence.hpp referenced from arm/" >&2
+  grep -rn --include='*.cpp' --include='*.hpp' 'libmisterplex/cadence.hpp' "$ROOT/arm" >&2 || true
   FAIL=1
 else
-  echo "OK C1: cadence.hpp not referenced from arm/"
+  echo "OK C1: libmisterplex/cadence.hpp not referenced from arm/"
 fi
 
 # bank_vsync_count not in PLXD pack (fabric hist limitation)

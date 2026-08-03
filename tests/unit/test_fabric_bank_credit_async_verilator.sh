@@ -31,14 +31,18 @@ OSS_CAD_SUITE="$OSS_CAD_SUITE" "$RUN_VERILATOR" --cc --exe --build \
   -CFLAGS "-std=c++17 -O2" \
   "${RTL[@]}"
 
+source "$ROOT/tests/unit/lib_rtl_sim_gate.sh"
 EXE="$BUILD_DIR/Vfabric_bank_credit_async_tb_top"
 if [[ ! -x "$EXE" ]]; then
   echo "RTL SIM ERROR: missing $EXE" >&2
   exit 3
 fi
 set +e
-"$EXE"
+OUT="$("$EXE" 2>&1)"
 RC=$?
 set -e
+printf '%s\n' "$OUT"
 echo "fabric_bank_credit_async_sim true rc=$RC"
-exit "$RC"
+[[ "$RC" -eq 0 ]] || exit "$RC"
+assert_sim_executed "fabric_bank_credit_async" "$OUT" "fabric_bank_credit_async_tb: OK"
+exit 0

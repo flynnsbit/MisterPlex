@@ -6,15 +6,16 @@ RV="$ROOT/scripts/run_verilator.sh"
 command -v "$RV" >/dev/null || RV=$(command -v verilator)
 OUT="$ROOT/build/verilator/present_beam_960_oracle"
 mkdir -p "$OUT"
+PC="$PC"
 rm -rf "$OUT/run"
 echo "RTL SIM: $($RV --version 2>&1 | head -1)"
 
 # B13 structural (product path)
-if ! grep -q "use_rt_geom(1'b1)" "$ROOT/fpga/Plex_MiSTer/rtl/present_core.sv"; then
+if ! grep -q "use_rt_geom(1'b1)" "$PC"; then
   echo "FAIL B13: present_core use_rt_geom not ON"
   exit 1
 fi
-if ! grep -q "content_w" "$ROOT/fpga/Plex_MiSTer/rtl/present_core.sv"; then
+if ! grep -q "content_w" "$PC"; then
   echo "FAIL B13: content_w port missing"
   exit 1
 fi

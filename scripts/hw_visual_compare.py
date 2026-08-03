@@ -632,13 +632,15 @@ def _parse_svh_constants(path: Path) -> dict[str, int]:
 def load_geometry() -> Geometry:
     cpp = _parse_cpp_constants(HOST_LAYOUT)
     svh = _parse_svh_constants(RTL_LAYOUT)
+    # Product DDR_FRAME_PRESENTED_* is the 960×540 max tier; 480p visual
+    # compare uses legacy pillarbox canvas (kPlex480p ↔ LEGACY480).
     pairs = {
         "CodedWidth": "CODED_WIDTH",
         "CodedHeight": "CODED_HEIGHT",
         "DisplayWidth": "DISPLAY_WIDTH",
         "DisplayHeight": "DISPLAY_HEIGHT",
-        "PresentedWidth": "PRESENTED_WIDTH",
-        "PresentedHeight": "PRESENTED_HEIGHT",
+        "PresentedWidth": "LEGACY480_PRESENTED_WIDTH",
+        "PresentedHeight": "LEGACY480_PRESENTED_HEIGHT",
         "CropLeft": "CROP_LEFT",
         "CropRight": "CROP_RIGHT",
         "CropTop": "CROP_TOP",

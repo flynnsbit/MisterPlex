@@ -77,7 +77,8 @@ int main() {
     EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
                          "localparam int V_STORE_I = NATIVE_V_1TO1 ? FRAME_H : 240"),
            "V_STORE_I from FRAME_H when native");
-    EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv", "localparam H_DE = 10'd529"),
+    // Spacing matches assets/present_720p_fit_contract.json greppable marker.
+    EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv", "localparam H_DE    = 10'd529"),
            "H_DE hardcoded 529");
     EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv", "wire [9:0] read_hc = hc"),
            "read_hc is hc (identity)");

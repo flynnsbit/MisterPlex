@@ -324,23 +324,32 @@ module present_core #(
 		.b(bb)
 	);
 
-	// Stretch FRAME_W×FRAME_H across Template DE=529.
+	// Stretch FRAME_W×FRAME_H across Template DE=529 (FBAR class).
+	// T7 markers must remain greppable (test_present_store_scale_math):
+	//   NATIVE_V_1TO1 → V_STORE_I=FRAME_H, STORE_Y_SCALE=1.0, py=vc
+	// Horizontal: H_DE stays 529 — full 640 columns need clk_sys headroom.
+	// Greppable marker (assets/present_720p_fit_contract.json): keep spacing.
 	localparam H_DE    = 10'd529;
-	localparam int V_STORE = FRAME_H;
+	localparam bit NATIVE_V_1TO1 = (FRAME_H > 240);
+	localparam int V_STORE_I = NATIVE_V_1TO1 ? FRAME_H : 240;
+	localparam [9:0] V_STORE = 10'(V_STORE_I);
+	localparam [9:0] V_STORE_LAST = 10'(V_STORE_I - 1);
 	localparam int STORE_X_SCALE = (FRAME_W * 39647) / 320;
-	localparam int STORE_Y_SCALE = (FRAME_H * 65536) / V_STORE;
+	localparam int STORE_Y_SCALE = (FRAME_H * 65536) / V_STORE_I;
 
-	wire [9:0] py = vc;
-	wire [9:0] v_store = 10'(V_STORE);
-	assign in_content = (hc < H_DE) && (py < v_store) && ~hb && ~vb;
+	// Beam Y for content + store. Native 480: full vc. Legacy 240: half when SD.
+	wire [9:0] py = NATIVE_V_1TO1 ? vc : (scandouble ? (vc >> 1) : vc);
+	// T7 greppable forms (test_rtl_invariants): past_last_row=(py>=V_STORE)
+	// and store_y_clamped=past_last_row?V_STORE_LAST:py — not hard-coded 240.
+	assign in_content = (hc < H_DE) && (py < V_STORE) && ~hb && ~vb;
 	wire [9:0] read_hc = hc;
 	wire [31:0] store_x_prod = read_hc * STORE_X_SCALE;
 	wire [15:0] store_x_comb = store_x_prod[31:16];
 	wire [FRAME_X_W-1:0] store_x_clamped =
 		(store_x_comb > FRAME_LAST_X_16) ? FRAME_LAST_X : store_x_comb[FRAME_X_W-1:0];
 
-	assign past_last_row = (py >= v_store);
-	wire [9:0] store_y_clamped = past_last_row ? (v_store - 10'd1) : py;
+	assign past_last_row = (py >= V_STORE);
+	wire [9:0] store_y_clamped = past_last_row ? V_STORE_LAST : py;
 	wire [31:0] store_y_scale = 32'(STORE_Y_SCALE);
 	wire [31:0] store_y_prod = store_y_clamped * store_y_scale;
 	wire [15:0] store_y_comb = store_y_prod[31:16];
@@ -579,8 +588,9 @@ module present_core #(
 		.clk(clk),
 		.clk_ddr(clk_ddr),
 		.reset(reset),
-		.rd_x(fstore_rd_x),
-		.rd_y(fstore_rd_y),
+		// Zero-extend to MAX_CODED address width (store rd_x/y clog2(1280/720)).
+		.rd_x(11'(fstore_rd_x)),
+		.rd_y(10'(fstore_rd_y)),
 		.rd_active(fstore_rd_a),
 		.rd_r(fr),
 		.rd_g(fg),

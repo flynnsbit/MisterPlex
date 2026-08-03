@@ -87,6 +87,28 @@ def drop_qip_membership_checks(text):
     return "\n".join(kept)
 
 
+def drop_source_read_checks(text):
+    """Remove structural source greps/seds before detecting simulator inputs.
+
+    Benches often `grep` product RTL for markers (H_DE, use_rt_geom, …) without
+    handing those files to Verilator. Counting those greps as compile inputs
+    forces every grepped module's full transitive graph onto pure TB benches
+    (e.g. mp_ur_count_sat) and is a false MODMISSING scare. Simulator file
+    lists remain fully checked.
+    """
+    lines = text.splitlines()
+    kept = []
+    # grep/egrep/fgrep/rg/sed reading a path (possibly via $VAR)
+    src_read = re.compile(
+        r"^\s*(?:if\s+!?|)\s*(?:command\s+)?(?:grep|egrep|fgrep|rg|sed)\b"
+    )
+    for line in lines:
+        if src_read.search(line):
+            continue
+        kept.append(line)
+    return "\n".join(kept)
+
+
 def listed_files(text, known):
     """Files actually handed to the simulator.
 
@@ -94,11 +116,12 @@ def listed_files(text, known):
     its own assignment is NOT evidence it is compiled -- the variable may never
     be referenced. Resolve assignments, drop them, then look at what remains.
 
-    Likewise, filenames that appear only in QIP membership checks are not
-    simulator inputs. Drop grep-against-$QIP checks before scanning so the guard
-    catches stale Verilator file lists without penalizing product-QIP asserts.
+    Likewise, filenames that appear only in QIP membership checks or structural
+    source greps are not simulator inputs. Drop those before scanning so the
+    guard catches stale Verilator file lists without penalizing marker greps.
     """
     text = drop_qip_membership_checks(text)
+    text = drop_source_read_checks(text)
     var_file, body_lines = {}, []
     assign = re.compile(r"^\s*(\w+)=[\"\']?\S*?([\w.]+\.s?v)[\"\']?\s*$")
     for line in text.splitlines():

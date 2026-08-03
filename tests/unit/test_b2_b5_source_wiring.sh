@@ -71,8 +71,9 @@ check GEOM_predicted_square_fit "$MAIN_GEOM" 'predicted_square_fit='
 check GEOM_videoResolution_ceiling_note "$MAIN_GEOM" 'videoResolution_is_ceiling_not_exact'
 check GEOM_pms_delivery_geom_hdr "$MAIN_GEOM" 'pms_delivery_geom.hpp'
 
-# B4 measured only
-check B4_measured_only "$YF" 'return std::string(deliveryBasis) == "measured"'
+# B4: only verified bases (measured + direct_play_part). library_media never qualifies.
+check B4_measured_only "$YF" 'b == "measured"'
+check B4_direct_play_part "$YF" 'b == "direct_play_part"'
 check B4_reject_library_media "$YF" 'library_media is PMS *scanner display metadata*'
 
 # FORCE_SCALE product default ON (not opt-in) — parent "should default 1?" = already true

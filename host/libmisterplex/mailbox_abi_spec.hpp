@@ -64,9 +64,24 @@ constexpr uint32_t kPlxlOffset = 0x140u; // list payload base (64-bit cmds)
 // PLXG is a FIXED wire ABI at +0x800 — NOT derived from list depth.
 // (Parent freeze: UI tuning must not relocate present-geometry mailbox.)
 constexpr uint32_t kPlxcListMaxCmds = 112u;
-constexpr uint32_t kPlxgOffset = 0x800u; // FIXED — do not re-derive from MAX_CMDS
+// PLXG — 5-qword atomic geometry record (ARM→FPGA). Matches present_geom_latch.sv
+// / plxg_ddr_poller.sv (BOOT_DOORBELL + PLXG_OFF).
+// ABI FREEZE: FIXED offset 0x800 — NOT derived from MAX_CMDS.
 // HARD RULE: PLXG must never be placed at kPlxcOffset (0x130). PLXC owns it.
 // HARD RULE: chrome list must not grow into PLXG (bound, not equality).
+constexpr uint32_t kPlxgOffset = 0x800u; // FIXED — do not re-derive from MAX_CMDS
+constexpr uint32_t kPlxgMagic = 0x504C5847u; // "PLXG"
+constexpr uint32_t kPlxgBytes = 40u; // 5 qwords
+// Product 480p YUV control page (ddr_frame_layout_params DDR_FRAME_YUV420P_DOORBELL).
+// RTL plxg_ddr_poller: BOOT_DOORBELL=0x300FF000, PLXG_OFF=0x800 → Q0 at 0x300FF800.
+// Addressing scheme: DOORBELL-RELATIVE offsets. Absolute product live =
+//   product_doorbell + offset (0x300FF000 + 0x128 = PLXD 0x300FF128, etc).
+// The 0x3007Fxxx k*Addr table below is LEGACY EXAMPLE base only (collision gates).
+constexpr uint32_t kPlxgBootstrapDoorbellPhys = 0x300FF000u;
+constexpr uint32_t kPlxgBootstrapPhys = 0x300FF800u; // bootstrap doorbell + kPlxgOffset
+static_assert(kPlxgBootstrapPhys == kPlxgBootstrapDoorbellPhys + kPlxgOffset,
+              "PLXG bootstrap phys = product doorbell + FIXED 0x800");
+static_assert(kPlxgBytes == 40u, "PLXG is 5 qwords");
 
 // Legacy example doorbell base (historical 0x3007F000 control page).
 constexpr uint32_t kLegacyFrameStoreDoorbellPhys = 0x3007F000u;
@@ -130,16 +145,19 @@ constexpr uint32_t kPlxoAddr  = 0x3007F138u;
 constexpr uint32_t kPlxoMagic = 0x504C584Fu; // "PLXO"
 
 // PLXG — Present / glass geometry (ARM→FPGA). Coded + display window for scaler.
-// FIXED offset +0x800 (parent ABI freeze). Magic "PLXG". w-scaler/w-mem; not w-osd.
+// FIXED offset +0x800 (parent ABI freeze). Magic/bytes/bootstrap defined above.
 // History: +0x2C0 @48-cmd, briefly +0x4C0 when list grew with MAX_CMDS — frozen off that.
+// kPlxgAddr is LEGACY EXAMPLE base (0x3007F000+0x800) for collision table parsers only.
+// Product live bootstrap is kPlxgBootstrapPhys (0x300FF800), not this absolute.
 constexpr uint32_t kPlxgAddr  = 0x3007F800u; // legacy example base + FIXED 0x800
-constexpr uint32_t kPlxgMagic = 0x504C5847u; // "PLXG"
 static_assert(kPlxgOffset != kPlxcOffset, "PLXG must not collide with PLXC +0x130");
 static_assert(kPlxgOffset == 0x800u, "PLXG wire ABI is FIXED at +0x800");
 // Bound only: list may leave a hole before PLXG; it must not overrun into PLXG.
 static_assert(kPlxlOffset + kPlxcListMaxCmds * 8u <= kPlxgOffset,
               "chrome list must not grow into fixed PLXG +0x800");
 static_assert(kPlxcListMaxCmds == 112u, "list depth must match kMaxCmds/RTL MAX_CMDS");
+static_assert(kPlxgAddr == kLegacyFrameStoreDoorbellPhys + kPlxgOffset,
+              "legacy example PLXG abs = legacy doorbell + offset");
 // Bit-field positions (in the upper 32 bits, i.e. offset from bit 32):
 constexpr unsigned kPlxdFreeBankMaskBit = 0;  // bits [33:32] → [1:0] of upper word
 constexpr unsigned kPlxdFreeBankMaskWidth = 2;
@@ -190,7 +208,7 @@ constexpr std::array<MailboxEntry, 11> kAllMailboxes = {{
     {"PLXD", kPlxdAddr,     kPlxdMagic,     8, "fpga_to_arm",  true},
     {"PLXC", kPlxcAddr,     kPlxcMagic,     8, "arm_to_fpga",  true},
     {"PLXO", kPlxoAddr,     kPlxoMagic,     8, "fpga_to_arm",  true},
-    {"PLXG", kPlxgAddr,     kPlxgMagic,     8, "arm_to_fpga",  true},
+    {"PLXG", kPlxgAddr,     kPlxgMagic,    40, "arm_to_fpga",  true}, // 5 qwords; legacy abs table
     {"PLXB", kPlxbAddr,     kPlxbMagic,     8, "arm_to_fpga",  true},
 }};
 

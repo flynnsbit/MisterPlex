@@ -126,8 +126,8 @@ module present_content_window #(
 	// ceil(a/b) = (a + b - 1) / b for a>=0,b>0
 	wire [31:0] sx_num_ceil = sx_num_gen + {21'd0, hd_m1} - 32'd1;
 	wire [31:0] sy_num_ceil = sy_num_gen + {21'd0, vd_m1} - 32'd1;
-	wire [19:0] sx_win_true = sx_num_ceil[31:0] / {21'd0, hd_m1};
-	wire [19:0] sy_win_true = sy_num_ceil[31:0] / {21'd0, vd_m1};
+	wire [19:0] sx_win_true = 20'(sx_num_ceil[31:0] / {21'd0, hd_m1});
+	wire [19:0] sy_win_true = 20'(sy_num_ceil[31:0] / {21'd0, vd_m1});
 	// FAULT twins (sim-only +define) — green must be capable of going red:
 	//   IDENTITY_SCALE — sx=sy=65536 (midpoint fails on 720→1280)
 	//   FLOOR_SCALE    — floor Q16 instead of ceil (last DE pixel undershoots)
@@ -136,7 +136,7 @@ module present_content_window #(
 	wire [19:0] sx_win = 20'd65536;
 	wire [19:0] sy_win = 20'd65536;
 `elsif PRESENT_WINDOW_FAULT_FLOOR_SCALE
-	wire [19:0] sx_win = sx_num_gen[31:0] / {21'd0, hd_m1};
+	wire [19:0] sx_win = 20'(sx_num_gen[31:0] / {21'd0, hd_m1});
 	wire [19:0] sy_win = sy_num_gen[31:0] / {21'd0, vd_m1};
 `elsif PRESENT_WINDOW_FAULT_INVERT_RATIO
 	// Invert: map as if content were the DE size — huge sx, wrong mid & last.
@@ -222,12 +222,13 @@ module present_content_window #(
 	// forced 0 so lerp collapses to NN (no OOB read).
 	wire [15:0] x1_sum = store_x_comb + 16'd1;
 	wire [15:0] y1_sum = store_y_comb + 16'd1;
-	wire at_x_last = (store_x_comb >= {1'b0, last_x_r});
-	wire at_y_last = (store_y_comb >= {1'b0, last_y_r});
+	// last_x_r/y_r are 16-bit; do not zero-extend to 17 (WIDTHEXPAND).
+	wire at_x_last = (store_x_comb >= last_x_r);
+	wire at_y_last = (store_y_comb >= last_y_r);
 	wire [15:0] store_x1_comb = at_x_last ? store_x_comb :
-		((x1_sum > {1'b0, last_x_r}) ? last_x_r : x1_sum);
+		((x1_sum > last_x_r) ? last_x_r : x1_sum);
 	wire [15:0] store_y1_comb = at_y_last ? store_y_comb :
-		((y1_sum > {1'b0, last_y_r}) ? last_y_r : y1_sum);
+		((y1_sum > last_y_r) ? last_y_r : y1_sum);
 	wire [7:0] frac_x_raw = store_x_prod[15:8];
 	wire [7:0] frac_y_raw = store_y_prod[15:8];
 	wire [7:0] frac_x_comb = at_x_last ? 8'd0 : frac_x_raw;

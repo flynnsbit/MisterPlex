@@ -19,4 +19,6 @@ source "$ROOT/tests/unit/lib_rtl_sim_gate.sh"
 set +e; OUT="$("$B/Vfabric_ddr_write_path_tb_top" 2>&1)"; RC=$?; set -e
 printf '%s\n' "$OUT"
 echo "fabric_ddr_write_path_sim true rc=$RC"
-exit "$RC"
+[[ "$RC" -eq 0 ]] || exit "$RC"
+assert_sim_executed "fabric_ddr_write_path" "$OUT" "OK fabric_ddr_write_path"
+exit 0

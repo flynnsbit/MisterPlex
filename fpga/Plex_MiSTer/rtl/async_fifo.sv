@@ -64,7 +64,9 @@ module async_fifo #(
 	wire [AW:0] wr_occ = wr_bin - rd_bin_wsync;
 	localparam int OCC_AF = (DEPTH > (AF_HEADROOM + 1))
 		? (DEPTH - AF_HEADROOM - 1) : 0;
-	wire wr_af_level = (wr_occ >= OCC_AF[AW:0]);
+	// OCC_AF==0 ⇒ always almost-full at any occupancy (unsigned >=0 is tautology).
+	wire [AW:0] occ_af_w = (AW + 1)'(OCC_AF);
+	wire wr_af_level = (OCC_AF == 0) ? 1'b1 : (wr_occ >= occ_af_w);
 
 	assign wr_full = wr_full_now;
 	assign wr_almost_full = wr_full_now || wr_af_level;

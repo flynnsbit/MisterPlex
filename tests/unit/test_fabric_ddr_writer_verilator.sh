@@ -37,4 +37,6 @@ RC=$?
 set -e
 printf '%s\n' "$OUT"
 echo "fabric_ddr_writer_sim true rc=$RC"
-exit "$RC"
+[[ "$RC" -eq 0 ]] || exit "$RC"
+assert_sim_executed "fabric_ddr_writer" "$OUT" "OK fabric_ddr_writer"
+exit 0

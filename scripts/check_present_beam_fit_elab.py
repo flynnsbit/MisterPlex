@@ -71,7 +71,8 @@ def fit_define_args() -> list[str]:
     for a in base:
         if a.startswith("+define+FRAME_W=") or a.startswith("+define+FRAME_H="):
             continue
-        if a.startswith("+define+PRESENT_BEAM_"):
+        # Split prefix so define-parity scanner does not treat PRESENT_BEAM_ as a macro name.
+        if a.startswith("+define+" + "PRESENT_BEAM_"):
             continue
         filtered.append(a)
     for m in FIT_MACROS:

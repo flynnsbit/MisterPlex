@@ -925,6 +925,23 @@ $(ROOT)/build/test_bitstream_ring_lifecycle: $(ROOT)/tests/unit/test_bitstream_r
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_bitstream_ring_lifecycle.cpp
 
+# Build identity. A running misterplexd must name the source it was built from
+# (daily driver ea643e99 was only an md5 — git cat-file cannot resolve it).
+# Header rewrite only when revision changes so stamp is a real dependency
+# (bare -D would not retrigger a link → silent stale stamp).
+MPLEX_GIT_REV := $(shell git -C $(ROOT) rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
+# Tracked changes only — untracked lab captures must not dirtystamp (test_daemon_build_identity).
+MPLEX_GIT_DIRTY := $(shell test -n "$$(git -C $(ROOT) status --porcelain --untracked-files=no 2>/dev/null)" && echo -dirty || echo)
+MPLEX_BUILD_ID_H := $(ROOT)/build/generated/misterplex_build_id.h
+
+.PHONY: $(ROOT)/build/generated/.build-id-stamp
+$(MPLEX_BUILD_ID_H): $(ROOT)/build/generated/.build-id-stamp
+	@mkdir -p $(dir $@)
+	@printf '#pragma once\n#define MISTERPLEX_GIT_REV "%s%s"\n' \
+		'$(MPLEX_GIT_REV)' '$(MPLEX_GIT_DIRTY)' > $@.tmp
+	@if ! cmp -s $@.tmp $@; then mv $@.tmp $@; else rm -f $@.tmp; fi
+$(ROOT)/build/generated/.build-id-stamp: ;
+
 # Native host daemon for local smoke
 MPLEX_SRC := \
 	$(ROOT)/arm/misterplexd/main.cpp \
@@ -937,7 +954,7 @@ MPLEX_SRC := \
 	$(ROOT)/arm/misterplexd/plex_resolve.cpp \
 	$(ROOT)/arm/misterplexd/fpga_spi.cpp \
 	$(ROOT)/host/libmisterplex/frame_ledger.cpp
-MPLEX_INC := -I$(ROOT)/arm/misterplexd -I$(ROOT)/host
+MPLEX_INC := -I$(ROOT)/arm/misterplexd -I$(ROOT)/host -I$(ROOT)/build/generated
 # Host recon headers (Phase 3.3i STREAM path)
 MPLEX_HDR := \
 	$(ROOT)/host/libmisterplex/h264_recon.hpp \
@@ -952,7 +969,8 @@ MPLEX_HDR := \
 	$(ROOT)/host/libmisterplex/idle_screen.hpp \
 	$(ROOT)/host/libmisterplex/input_mailbox.hpp \
 	$(ROOT)/host/libmisterplex/playback_overlay.hpp \
-	$(ROOT)/host/libmisterplex/pixel_format.hpp
+	$(ROOT)/host/libmisterplex/pixel_format.hpp \
+	$(MPLEX_BUILD_ID_H)
 
 $(ROOT)/build/misterplexd: $(MPLEX_SRC) \
 		$(ROOT)/arm/misterplexd/companion.hpp \
