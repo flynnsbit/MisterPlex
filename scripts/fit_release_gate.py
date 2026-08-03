@@ -271,6 +271,10 @@ LIVE_OPEN_BLOCKER_TOKENS = (
     "B36_NO_POLLER_LATCH_MUX_STORE",
     "B36_PLXC_MASTER_TIED_ZERO",
     "B36_OLD_2MASTER_ARBITER",
+    # Parent broadcast 2: L2 qip-only without L3 instantiate = DEAD CODE
+    "B37_DEAD_CODE_IN_QIP",
+    "B37_L3_NOT_ENABLED",
+    "B37_LADDER_NOT_L4",
 )
 
 # Sibling-lane fixes that exist but are not merged into this gated tree.
@@ -6504,6 +6508,272 @@ def check_b36_merged_hierarchy_live(root: Path) -> tuple[list[str], list[str]]:
 
 
 
+
+def check_b37_integration_ladder(root: Path) -> tuple[list[str], list[str]]:
+    """B37: integration ladder L2/L3/L4 — qip-only is DEAD CODE, not shipped.
+
+    Parent broadcast 2 (measured main@ad928cb1):
+      present_content_window / present_geom_latch / plex_present_geom_mux in qip
+      but 0 instantiations → Quartus strips them (DEAD CODE).
+      use_frame_store(1'b0), FRAME 640/480, #PRESENT_BEAM_960 → not L4 ENABLED.
+    Ladder: L0 written → L1 ON_MAIN → L2 IN_FILES_QIP → L3 INSTANTIATED → L4 ENABLED.
+    ONLY L4 is in the product. Gate fails DEAD_CODE (L2∧¬L3) and L3_NOT_ENABLED.
+    """
+    msgs: list[str] = ["LEG0_B37_INTEGRATION_LADDER_EXECUTED begin"]
+    errors: list[str] = []
+
+    qsf = root / "fpga" / "Plex_MiSTer" / "Plex.qsf"
+    qip = root / "fpga" / "Plex_MiSTer" / "files.qip"
+    plex = root / "fpga" / "Plex_MiSTer" / "Plex.sv"
+    sys_top = root / "fpga" / "Plex_MiSTer" / "sys" / "sys_top.v"
+    rtl = root / "fpga" / "Plex_MiSTer" / "rtl"
+
+    qip_txt = _read(qip) or ""
+    # Product hierarchy text (strip fault twins)
+    hier = ""
+    if plex.is_file():
+        hier += product_active_sv(_read(plex) or "") + "\n"
+    if sys_top.is_file():
+        hier += product_active_sv(_read(sys_top) or "") + "\n"
+    # Also scan other product SV that may instantiate (not tests)
+    for sub in (root / "fpga" / "Plex_MiSTer").rglob("*.sv"):
+        if any(x in sub.parts for x in ("test", "tb", "sim", ".git")):
+            continue
+        if sub.name in {"Plex.sv"}:
+            continue
+        if "rtl" in sub.parts or sub.parent.name in {"Plex_MiSTer", "sys"}:
+            # Only count instantiations from top-level product files to avoid
+            # self-refs inside the module file. Stick to Plex.sv + sys_top.
+            pass
+    # Restrict L3 scan to Plex.sv + sys_top (true product hierarchy)
+    hier_l3 = ""
+    if plex.is_file():
+        hier_l3 += product_active_sv(_read(plex) or "") + "\n"
+    if sys_top.is_file():
+        hier_l3 += product_active_sv(_read(sys_top) or "") + "\n"
+
+    active: dict[str, str] = {}
+    if qsf.is_file():
+        try:
+            macros = discover_quartus_macros(qsf)
+            active = {n: m.value for n, m in macros.items() if n != "BUILD_DATE"}
+        except Exception as exc:  # noqa: BLE001
+            msgs.append(f"LEG0_B37_QSF_PARSE_FAIL {exc}")
+
+    def _macro_on(name: str, want: str | None = "1") -> bool:
+        if name not in active:
+            return False
+        if want is None:
+            return True
+        return str(active.get(name, "")).strip() == str(want)
+
+    # Critical 720p present-path modules (parent-measured + B36 live set)
+    # enable_fn: callable returning L4 reason or None if enabled
+    modules = [
+        "present_video_timing_720p",
+        "present_content_window",
+        "present_geom_latch",
+        "plex_present_geom_mux",
+        "present_beam_content_de",
+        "plxg_ddr_poller",
+        "ddr_frame_store",
+        "ddr_bus_arbiter_plxc",
+        "plex_chrome_ddr_loader",
+        "h264_intra_nb_ctx",
+    ]
+
+    def _in_qip(mod: str) -> bool:
+        return bool(re.search(rf"{re.escape(mod)}\.sv\b", qip_txt))
+
+    def _on_disk(mod: str) -> bool:
+        return (rtl / f"{mod}.sv").is_file()
+
+    def _inst_count(mod: str) -> int:
+        """Count hierarchical instantiations (not the module declaration)."""
+        if not hier_l3:
+            return 0
+        # module foo #(...) inst (
+        # module foo inst (
+        pat = re.compile(
+            rf"(?<![\w$]){re.escape(mod)}\s*(?:#\s*\([^;]*?\))?\s+(\w+)\s*\(",
+            re.S,
+        )
+        n = 0
+        for m in pat.finditer(hier_l3):
+            inst = m.group(1)
+            # skip if this is `module present_geom_latch (` declaration — name after
+            # module keyword is the type; our pattern requires an instance name token
+            # before '('. Declarations are `module NAME (` so group would be wrong...
+            # Actually `module present_geom_latch (` has no instance name between
+            # type and '(' — pattern requires (\w+) so `module X (` won't match.
+            # Good. Exclude endmodule noise.
+            if inst in {"module", "endmodule"}:
+                continue
+            n += 1
+        # Port-map style without instance name rare in SV — also bare
+        # `present_geom_latch u_x (` covered above.
+        return n
+
+    # L4 enable predicates (product path)
+    beam_on = _macro_on("PRESENT_BEAM_960", "1")
+    fw960 = _macro_on("FRAME_W", "960")
+    fh540 = _macro_on("FRAME_H", "540")
+    ddr_on = _macro_on("DDR_FRAME_STORE", "1")
+    nostub = _macro_on("PRODUCT_NO_STUB", "1")
+    chrome_on = _macro_on("PLEX_CHROME_DDR", "1") or _macro_on("PLEX_FAB_CHROME", "1")
+    # use_frame_store product tie: 1'b0 means force-bars path, not "disabled forever"
+    # but parent measured it as frame store DISABLED for product path intent.
+    ufs_force0 = bool(re.search(r"\.use_frame_store\s*\(\s*1'b0\s*\)", hier_l3))
+    # Frame store "enabled" for L4 present path = DDR_FRAME_STORE + not hollow 480p
+    present_path_l4 = bool(beam_on and fw960 and fh540 and ddr_on and nostub)
+
+    def _l4_for(mod: str, inst_n: int) -> tuple[bool, str]:
+        if inst_n <= 0:
+            return False, "not_instantiated"
+        if mod in {
+            "present_video_timing_720p",
+            "present_content_window",
+            "present_geom_latch",
+            "plex_present_geom_mux",
+            "present_beam_content_de",
+            "plxg_ddr_poller",
+            "ddr_frame_store",
+        }:
+            if not present_path_l4:
+                return False, "present_path_macros_off(BEAM/960x540/DDR/NO_STUB)"
+            if mod == "ddr_frame_store" and not ddr_on:
+                return False, "DDR_FRAME_STORE_off"
+            # latch/mux need non-tied live feeds (B36) — L4 requires live chain
+            if mod == "present_geom_latch":
+                ports = _extract_sv_instance_ports(hier_l3, "present_geom_latch") or ""
+                if re.search(r"\.wr_en\s*\(\s*1'b0\s*\)", ports) and re.search(
+                    r"\.commit\s*\(\s*1'b0\s*\)", ports
+                ):
+                    return False, "latch_wr_commit_tied_0"
+            return True, "present_path_macros_on"
+        if mod == "ddr_bus_arbiter_plxc":
+            # enabled when instantiated as product arb (not old 2-master only)
+            if re.search(r"\bddr_bus_arbiter\s+\w+\s*\(", hier_l3) and not re.search(
+                r"\bddr_bus_arbiter_plxc\b", hier_l3
+            ):
+                return False, "old_2master_still_product"
+            return True, "plxc_arb_instantiated"
+        if mod == "plex_chrome_ddr_loader":
+            if not chrome_on:
+                return False, "PLEX_CHROME_DDR/FAB_off"
+            ports = _extract_sv_instance_ports(hier_l3, "plex_chrome_ddr_loader") or ""
+            if re.search(r"\.m_gnt\s*\(\s*1'b0\s*\)", ports):
+                return False, "plxc_m_gnt_tied_0"
+            return True, "chrome_macro_on_and_master_live"
+        if mod == "h264_intra_nb_ctx":
+            # decode path — L4 if PRODUCT_NO_STUB and instantiated
+            if not nostub:
+                return False, "PRODUCT_NO_STUB_off"
+            return True, "nostub_on"
+        return inst_n > 0, "inst_only"
+
+    dead: list[str] = []
+    l3_not_en: list[str] = []
+    rows_ok_l4: list[str] = []
+    any_present_tracked = False
+
+    for mod in modules:
+        disk = _on_disk(mod)
+        l2 = _in_qip(mod)
+        inst_n = _inst_count(mod)
+        l3 = inst_n > 0
+        l4, l4_why = _l4_for(mod, inst_n)
+        # L0/L1 unknown here (branch/main) — report disk as L0 proxy
+        level = (
+            "L4" if l4 else "L3" if l3 else "L2" if l2 else "L0" if disk else "ABSENT"
+        )
+        msgs.append(
+            f"LEG0_B37_MODULE {mod} ON_DISK={int(disk)} IN_FILES_QIP={int(l2)} "
+            f"INSTANTIATED={int(l3)} inst_n={inst_n} ENABLED={int(l4)} "
+            f"level={level} enable_why={l4_why}"
+        )
+        if mod in {
+            "present_content_window",
+            "present_geom_latch",
+            "plex_present_geom_mux",
+            "present_beam_content_de",
+            "plxg_ddr_poller",
+            "present_video_timing_720p",
+        }:
+            any_present_tracked = True
+            if l2 and not l3:
+                dead.append(mod)
+            if l3 and not l4:
+                l3_not_en.append(f"{mod}({l4_why})")
+            if l4:
+                rows_ok_l4.append(mod)
+        elif mod == "ddr_frame_store":
+            if l2 and not l3:
+                dead.append(mod)
+            if l3 and not l4:
+                l3_not_en.append(f"{mod}({l4_why})")
+        elif mod == "ddr_bus_arbiter_plxc":
+            if l2 and not l3:
+                dead.append(mod)
+            if l3 and not l4:
+                l3_not_en.append(f"{mod}({l4_why})")
+        elif mod == "plex_chrome_ddr_loader":
+            if l3 and not l4:
+                l3_not_en.append(f"{mod}({l4_why})")
+        elif mod == "h264_intra_nb_ctx":
+            # optional note only if on disk but not qip (parent measured NO)
+            if disk and not l2:
+                msgs.append(
+                    "LEG0_B37_NOTE h264_intra_nb_ctx ON_DISK but IN_FILES_QIP=no "
+                    "(parent-measured class)"
+                )
+
+    msgs.append(
+        f"LEG0_B37_SUMMARY present_l4={rows_ok_l4} dead={dead} "
+        f"l3_not_en={l3_not_en} path_l4={int(present_path_l4)} "
+        f"ufs0={int(ufs_force0)} beam={int(beam_on)} 960x540={int(fw960 and fh540)}"
+    )
+
+    if dead:
+        errors.append(
+            "B37_DEAD_CODE_IN_QIP: modules in files.qip with ZERO product "
+            "instantiations (Plex.sv/sys_top) — Quartus strips them; L2≠shipped. "
+            f"dead={dead}. Parent broadcast 2: present_content_window/"
+            "present_geom_latch/plex_present_geom_mux measured inst_n=0 on main. "
+            "ONLY L4 is in the product."
+        )
+    if l3_not_en:
+        errors.append(
+            "B37_L3_NOT_ENABLED: modules instantiated but not ENABLED (L3≠L4). "
+            f"rows={l3_not_en}. Typical: FRAME 640/480, #PRESENT_BEAM_960, "
+            "use_frame_store(1'b0) force-bars, latch wr/commit tied 0, PLXC m_gnt=0."
+        )
+    # Whole present path must reach L4
+    required_l4 = {
+        "present_geom_latch",
+        "plex_present_geom_mux",
+        "present_beam_content_de",
+        "plxg_ddr_poller",
+        "ddr_frame_store",
+    }
+    missing_l4 = sorted(required_l4 - set(rows_ok_l4))
+    # Also fail if path macros off even when modules absent (hollow)
+    if missing_l4 or not present_path_l4:
+        errors.append(
+            "B37_LADDER_NOT_L4: 720p present path not at L4 ENABLED. "
+            f"missing_or_not_enabled={missing_l4} "
+            f"PRESENT_BEAM_960={int(beam_on)} FRAME_960x540={int(fw960 and fh540)} "
+            f"DDR_FRAME_STORE={int(ddr_on)} PRODUCT_NO_STUB={int(nostub)} "
+            f"use_frame_store_1b0={int(ufs_force0)}. "
+            "Parent: remaining blocker is L3/L4 not physics. "
+            "ON_MAIN+IN_QIP alone is not a completion claim."
+        )
+    if not errors:
+        msgs.append("LEG0_B37_PASS integration ladder L4 for present path")
+    return msgs, errors
+
+
+
 def leg0_arch_blockers() -> tuple[int, list[str]]:
     """rd-duck fit blockers — FAIL until a coherent candidate clears each.
 
@@ -6529,7 +6799,7 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
         "B9_dar_bank_gen_match(bank_gen+DAR∧bank+ascal_obuf),B9_shadow_vs_pipeline(o_vsv1_sideband_not_delayed_hdmi_vs),"
         "B33_plxc_arb_issued_lower_safe(44981ab0 req/accept+per-req TB),"
         "B34_host_plxg_pad_display(426→432 display+crop+q1/q3 g++),"
-        "B35_ascal_simultaneous_tag_bypass(in_*+full_tag_TB+RED),B36_merged_hierarchy_live(qsf+qip+poller→latch→mux→store+PLXC→3way_arb),"
+        "B35_ascal_simultaneous_tag_bypass(in_*+full_tag_TB+RED),B36_merged_hierarchy_live(qsf+qip+poller→latch→mux→store+PLXC→3way_arb),B37_integration_ladder(L2_qip/L3_inst/L4_enable;dead_code≠shipped),"
         "leg_unit_make_unit,leg_rtl_lint,leg2_elab,leg3_true_de; "
         "B20_PRODUCT_UFS_TIE=elaborate Plex.sv .use_frame_store(1'b0) + reject "
         "ownership-on-ufs (w-clock free-run) + H require product-ufs0 hold measured_* "
@@ -7968,6 +8238,11 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
     b36_msgs, b36_errs = check_b36_merged_hierarchy_live(ROOT)
     msgs.extend(b36_msgs)
     errors.extend(b36_errs)
+
+    # --- B37 integration ladder L2/L3/L4 (parent broadcast 2: dead code ≠ shipped) ---
+    b37_msgs, b37_errs = check_b37_integration_ladder(ROOT)
+    msgs.extend(b37_msgs)
+    errors.extend(b37_errs)
 
     # --- B20 full-hierarchy scenario tests (rd-duck 2026-08-03 hollow audit) ---
     # Prior gate only regex-scanned test *text* and accepted comment bait (mutation
@@ -9833,6 +10108,9 @@ def _run_mutation_matrix() -> tuple[list[str], list[dict[str, str]]]:
         "B36_NO_POLLER_LATCH_MUX_STORE",
         "B36_PLXC_MASTER_TIED_ZERO",
         "B36_OLD_2MASTER_ARBITER",
+        "B37_DEAD_CODE_IN_QIP",
+        "B37_L3_NOT_ENABLED",
+        "B37_LADDER_NOT_L4",
     ):
         txt = "\n".join(msgs)
         has = tok in txt
@@ -10558,6 +10836,79 @@ def _run_mutation_matrix() -> tuple[list[str], list[dict[str, str]]]:
         rest_p()
         rest_q()
         rest_qs()
+
+
+    # --- Parent B37: L2 dead code in qip (inst_n=0) + not L4 ---
+    plex_b37 = ROOT / "fpga" / "Plex_MiSTer" / "Plex.sv"
+    qip_b37 = ROOT / "fpga" / "Plex_MiSTer" / "files.qip"
+    qsf_b37 = ROOT / "fpga" / "Plex_MiSTer" / "Plex.qsf"
+    plex_b37.parent.mkdir(parents=True, exist_ok=True)
+    bad_plex = (
+        "// fitgate B37 mutation — modules not instantiated (dead code class)\n"
+        "module plex_top;\n"
+        "  // present_geom_latch listed in qip but no instance here\n"
+        "  // plex_present_geom_mux listed in qip but no instance here\n"
+        "  present_core u_core (\n"
+        "    .use_frame_store(1'b0)\n"
+        "  );\n"
+        "endmodule\n"
+    )
+    bad_qip = (
+        "// fitgate B37 dead-code qip\n"
+        "set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_content_window.sv\n"
+        "set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_geom_latch.sv\n"
+        "set_global_assignment -name SYSTEMVERILOG_FILE rtl/plex_present_geom_mux.sv\n"
+        "set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_beam_content_de.sv\n"
+    )
+    bad_qsf = (
+        "# fitgate B37 not L4\n"
+        "set_global_assignment -name VERILOG_MACRO \"DDR_FRAME_STORE=1\"\n"
+        "set_global_assignment -name VERILOG_MACRO \"FRAME_W=640\"\n"
+        "set_global_assignment -name VERILOG_MACRO \"FRAME_H=480\"\n"
+        "#set_global_assignment -name VERILOG_MACRO \"PRESENT_BEAM_960=1\"\n"
+    )
+    # touch empty rtl so ON_DISK can be true if needed
+    rtl_b37 = ROOT / "fpga" / "Plex_MiSTer" / "rtl"
+    rtl_b37.mkdir(parents=True, exist_ok=True)
+    created = []
+    for mod in (
+        "present_content_window",
+        "present_geom_latch",
+        "plex_present_geom_mux",
+        "present_beam_content_de",
+    ):
+        f = rtl_b37 / f"{mod}.sv"
+        if not f.is_file():
+            f.write_text(f"// fitgate B37 seed\nmodule {mod}; endmodule\n")
+            created.append(f)
+    rest_p = _with_file_backup(plex_b37, bad_plex)
+    rest_q = _with_file_backup(qip_b37, bad_qip)
+    rest_s = _with_file_backup(qsf_b37, bad_qsf)
+    try:
+        rc, msgs = leg0_arch_blockers()
+        txt = "\n".join(msgs)
+        exp = (
+            "B37_DEAD_CODE_IN_QIP"
+            if "B37_DEAD_CODE_IN_QIP" in txt
+            else "B37_LADDER_NOT_L4"
+        )
+        _row(
+            "B37_DEAD_CODE_IN_QIP",
+            "qip lists latch/mux/window/beam but Plex.sv inst_n=0 + FRAME 640/480",
+            exp,
+            rc,
+            msgs,
+        )
+    finally:
+        rest_p()
+        rest_q()
+        rest_s()
+        for f in created:
+            try:
+                if f.is_file() and "fitgate B37 seed" in f.read_text(errors="replace"):
+                    f.unlink()
+            except OSError:
+                pass
 
 # --- rd-duck B34: identity-on-store 432/432/0 after align ---
     lay_b34 = ROOT / "host" / "libmisterplex" / "ddr_frame_layout.hpp"

@@ -1,5 +1,5 @@
 {
-  "gate_identity_hash": "c8ff7970adace8263ad1720a4b83addcdd041f6d",
+  "gate_identity_hash": "81f99aabfb3b30a1f5900cb5130dacf231e50191",
   "paths": [
     "scripts/fit_release_gate.py",
     "scripts/fit_release_gate.sh",
@@ -9,7 +9,7 @@
   ],
   "locked_by": "w-fitgate",
   "locked_date": "2026-08-03",
-  "reason": "selftest intentional identity lock after B36 hollow w-osd/integ merged hierarchy \u2014 not a bypass",
+  "reason": "selftest intentional identity lock after B37 L2/L3/L4 integration ladder \u2014 not a bypass",
   "notes": [
     "INTENTIONAL REBASE of ruler identity after gate script change \u2014 not a bypass.",
     "Lanes must run this same identity; divergent fit_release_gate.py/rtl_lint.py must not report LEG0 counts (LEG0_COUNT_REFUSED).",

@@ -345,6 +345,30 @@
       "token_hit": "1"
     },
     {
+      "check": "B37_DEAD_CODE_IN_QIP",
+      "inject": "live hollow / missing product TB",
+      "expect": "B37_DEAD_CODE_IN_QIP",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B37_L3_NOT_ENABLED",
+      "inject": "live hollow / missing product TB",
+      "expect": "B37_L3_NOT_ENABLED",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B37_LADDER_NOT_L4",
+      "inject": "live hollow / missing product TB",
+      "expect": "B37_LADDER_NOT_L4",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
       "check": "B9_SYS_TOP_AR_OUT_HOLD_MISSING",
       "inject": "live defective/hollow tree (no inject)",
       "expect": "B9_SYS_TOP_AR_OUT_HOLD_MISSING",
@@ -577,6 +601,14 @@
       "token_hit": "1"
     },
     {
+      "check": "B37_DEAD_CODE_IN_QIP",
+      "inject": "qip lists latch/mux/window/beam but Plex.sv inst_n=0 + FRAME 640/480",
+      "expect": "B37_DEAD_CODE_IN_QIP",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
       "check": "B34_IDENTITY_ON_STORE",
       "inject": "align then makeDdrFrameGeometry(store) loses display 426/crop_left=2",
       "expect": "B34_IDENTITY_ON_STORE",
@@ -602,6 +634,6 @@
     }
   ],
   "failures": [],
-  "n_red": 75,
-  "head": "dd864d0151ee"
+  "n_red": 79,
+  "head": "8d196b29c0a4"
 }
