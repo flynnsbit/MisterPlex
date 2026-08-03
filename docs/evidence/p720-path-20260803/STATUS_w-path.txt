@@ -1,5 +1,5 @@
 lane=w-path todo=p720-path branch=w-path-720p
-status=DELIVERED_ARM_EVAC_FOLLOWUP
+status=DELIVERED_ARM_EVAC_FOLLOWUP commit=ee1124bc
 mandate=720p is reward for evacuating ARM; prefer ARM-out designs
 
 ## PMS 720p (prior + still valid)
