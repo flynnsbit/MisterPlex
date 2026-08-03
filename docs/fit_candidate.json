@@ -2,7 +2,7 @@
   "architecture": "ascal_true_de_960",
   "git_tree_hash": "a263843e0e9fef501687f0419bb783668aa22ec7",
   "gate_identity_hash": "358a05bcb8b9080eefbd223e19fe8013e6ba7b97",
-  "git_head_at_lock": "94a490c556c133880d1eb7f72a77bab8acf09bb8",
+  "git_head_at_lock": "307f868501f3b30f66eee5b4a811d9b8d9f8f456",
   "required_macros": {
     "FRAME_W": "960",
     "FRAME_H": "540",

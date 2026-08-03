@@ -1,7 +1,7 @@
 lane=w-fitgate
 branch=w-fitgate
 worktree=/home/flynnsbit/Projects/MisterPlex-wt-fitgate
-tip_at_status_write=94a490c5 (pre-commit; post-commit sha follows push)
+tip=307f8685 (+ follow-up lock refresh commit)
 GRANT=NO
 FIT_SLOT=HELD (parent only; this lane never takes Quartus)
 
