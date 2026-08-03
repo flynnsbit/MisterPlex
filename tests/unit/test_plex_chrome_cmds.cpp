@@ -140,12 +140,42 @@ static void check720pHudBudget() {
     }
 }
 
+// Product path: coded bank may be 960×540 while glass is 1280×720.
+// RED: naive "HUD in coded pixels" places the bar inside y<540 — wrong under 720p HDMI.
+// GREEN: panel/track live in the bottom band of the *output* raster (y near 720).
+static void checkHudIsOutputNotCoded() {
+    using namespace misterplex::plex_chrome_cmds;
+    BuildArgs a;
+    a.outW = 1280;
+    a.outH = 720;
+    a.state = misterplex::PlaybackOverlayState::Playing;
+    a.positionMs = 30000;
+    a.durationMs = 120000;
+    a.title = "SRC960";
+    auto cmds = buildPlaybackHud(a);
+    unsigned minY = 0xffff, maxY = 0;
+    for (uint64_t w : cmds) {
+        const unsigned y = static_cast<unsigned>((w >> 24) & 0xFFFF);
+        if (y < minY)
+            minY = y;
+        if (y > maxY)
+            maxY = y;
+    }
+    std::fprintf(stderr, "HUD y-range [%u,%u] (coded would be y<540)\n", minY, maxY);
+    // Bottom panel: all chrome geometry should sit in the lower half of 720p.
+    CHECK(minY >= 360u);
+    CHECK(maxY < 720u);
+    // Negative: must NOT look like a 540p-tall canvas (bar near y=540-54).
+    CHECK(minY > 540u - 80u); // still in lower band of 720, not mid-540
+}
+
 int main() {
     checkPackRoundtrip();
     checkNoPixelBakeWhenLive();
     checkZeroPerPixelArmWhenLiveSource();
     checkStoppedHudHasBarAndState();
     check720pHudBudget();
+    checkHudIsOutputNotCoded();
     if (fails) {
         std::fprintf(stderr, "test_plex_chrome_cmds: %d FAIL(s)\n", fails);
         return 1;

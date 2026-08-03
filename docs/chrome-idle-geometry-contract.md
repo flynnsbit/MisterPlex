@@ -108,3 +108,37 @@ scripts/hdmi_capture_idle.sh docs/agent-evidence/idle720-live.png
 
 See **`docs/fab-idle-video-mode-sequence.md`** (single sequence, ACTIVE per step).
 Playback chrome: **`docs/fab-chrome-parent-capture-contract.md`** (`PLEX_FAB_CHROME`).
+Post-fit hard gate: **`docs/fab-idle-postfit-gate.md`**.
+
+## 9. Product path (parent measured) — 960×540 source → 1280×720 **output**
+
+Standing target (all measured on device; margins include sws):
+
+```
+PMS  -> Constrained Baseline 960×540  (videoProfile=baseline, pinned)
+ARM  -> decode + minimal sws + bank copy ≈ 34.50 ms vs 41.667  (+7.16)
+FABRIC -> upscale 960×540 → native 1280×720 raster on glass
+```
+
+| Layer | Resolution | Owner |
+|-------|------------|--------|
+| Coded / bank | **960×540** | w-mem store + w-scaler read geom |
+| HDMI / glass | **1280×720** | w-clock `clk_pix` + video_mode=0 + ascal |
+| Chrome / idle | **HDMI space only** | w-osd — **never** 960×540 |
+
+**Hard rule for ARM PLXC:** `BuildArgs.outW/outH` and `chromeOutW_/H_` default **1280×720**.
+Do **not** set them to coded 960×540 — that would place the STOPPED bar in the
+wrong place under a 720p HDMI beam. Fabric idle chevron math uses `HDMI_WIDTH/HEIGHT`
+from the beam, not coded size.
+
+**Honesty label:** this ships **720p output**, not 720p source. True 1280×720 source
+needs DMA (w-path) to drop the 14.97 ms copy.
+
+## 10. rd-duck fit audit checklist (w-osd claims)
+
+- [ ] `PLEX_FAB_IDLE` / `PLEX_FAB_CHROME` **undefined** in shipping QSF (default OFF)
+- [ ] `u_plex_chrome` on path: ascal → shadowmask → chrome → osd
+- [ ] `make post-fit-fab-idle` rc=0 (M10K/regs/ALUTs + stuck list)
+- [ ] PLXG **not** at +0x130 (PLXC owns it)
+- [ ] Glass: vs control `CYAN=0 ACTIVE=923×717` → fabric `CYAN≥2000` + ACTIVE growth + motion
+- [ ] ARM-out: `kill <PID>` still cyan+motion (partial: cyan no motion = phase stuck)
