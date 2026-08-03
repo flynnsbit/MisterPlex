@@ -164,9 +164,12 @@ inline bool decodeStat6StatusWord(uint64_t word, Status& status) {
 
 
 // ---------------------------------------------------------------------------
-// Fabric-decode ingest map (w-mem). Default product ring kept; this documents
-// the reserved-window placement so Option-C / PL330 collisions are compile-time
-// impossible to miss. Mirror constants live in ddr_frame_layout_params.svh.
+// Bitstream ingest map (w-mem). Default product ring kept; documents reserved-
+// window placement so Option-C / PL330 collisions are compile-time impossible
+// to miss. Mirror constants live in ddr_frame_layout_params.svh.
+//
+// PLAN ROLE (parent 2026-08-03): multi-month endgame path only. Near-term 720p
+// is ARM decode + DMA into Option-C banks + fabric present — NOT fabric H.264.
 // ---------------------------------------------------------------------------
 
 // Reserved DDR window (parent-verified memmap=513M$511M).

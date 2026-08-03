@@ -18,7 +18,26 @@ PMS output** `real720p_2600k.mp4` (maxBR=3100, 1440 frames, prereg 4/4 HIT):
 
 Even the worst keyframe is **22.7× smaller** than one decoded frame and **0.66 ms
 vs a 41.667 ms deadline**. Sustained ingest ~0.32 MB/s = 0.35% of the ceiling.
-ARM job collapses to HTTP + demux — no decode.
+Bitstream-across-boundary is effectively free — **proven**.
+
+### Role in the plan (parent correction 2026-08-03 — read this)
+
+Full fabric H.264 decode is **NOT** the near-term 720p path. w-path header-level
+audit + w-clock MB-rate arithmetic independently show existing RTL is a partial
+intra/MB datapath (~20% of a decoder), not a stream decoder; calendar **8–16 weeks**
+and no credible Cyclone V path to the clocks a full decode would need.
+
+**Near-term architecture that survives all parent sweeps:**
+1. PMS Constrained Baseline 1280×720 @~2585k — PROVEN
+2. **ARM decodes** 35.94 ms/f vs 41.667 — PROVEN (+5.73 ms)
+3. Frame reaches Option-C bank **without CPU store** — OPEN (w-path PL330 DMA)
+4. Fabric present/scale/overlay native 720p — in flight (needs `clk_pix` ≠ `clk_sys`)
+5. ARM never touches scale/overlay/idle — fabric lanes
+
+This ring ABI remains the **multi-month endgame** ingest path (ARM=HTTP+demux,
+fabric=decode) and stays default-OFF / non-blocking. Near-term critical path is
+**DMA → Option-C banks** (`0x30180000`, doorbell `0x3047F000`), not bitstream→fabric
+decode. Do not staff this ring as if it unblocks 720p glass this week.
 
 ## Published map (low → high)
 
@@ -113,9 +132,10 @@ Measured PMS delivery for our 720p path:
 - `has_b_frames = 0` (I,P,P,P… only)
 - Entropy: **CAVLC** (no CABAC)
 
-Existing fabric RTL inventory matches this subset (CAVLC + intra + inter + MC +
-deblock + DPB). CABAC is absent in tree (`grep` count 0) and **not required**
-for the stream we receive.
+Parent measured the stream subset (CAVLC, no B-frames). CABAC is absent in tree
+and not required for that stream. **Module filenames are not capability** —
+`h264_decode_top` is a pre-parsed coeff recon engine, not annex-B in (w-path
+`a16439fe`). Gate still refuses High/CABAC so a future decoder never sees garbage.
 
 ### Compatibility gate (this ABI)
 
@@ -129,3 +149,13 @@ for the stream we receive.
 `isFabricDecodeCompatible()` accepts Baseline (66) without CABAC only.
 High/Main/CABAC → **Fatal refuse** (no silent garbage). w-path owns pinning the
 PMS request; this gate is the ring-side last line of defence.
+
+
+## Near-term vs endgame (do not confuse)
+
+| Path | Status | Owner |
+|------|--------|--------|
+| CPU I420 → bank | DEAD (88 MiB/s structural) | — |
+| PL330 DMA → Option-C bank | **critical path / OPEN** | w-path |
+| Fabric present/scale @720p | in flight; needs clk_pix | w-scaler/osd/clock/nostub |
+| Bitstream ring → fabric decode | **endgame, 8–16 weeks** | future; ABI frozen here |

@@ -7,7 +7,8 @@
 //   CPU bank store STRUCTURAL ~88 MiB/s (14.97 ms/f) — map flags inert
 //   (bank outside kernel System RAM → uncached /dev/mem always)
 //   decode+CPU move >=50.9 FAIL — closed. "Faster copy" family DEAD.
-//   Fabric decode = endgame; PL330 = open (w-path); Route A into bank SUSPECT.
+//   Fabric full H.264 decode = multi-month endgame (NOT near-term; w-path/w-clock).
+//   Near-term unknown = PL330 DMA → Option-C bank (w-path). Route A SUSPECT.
 //
 // f2sdram peak (theoretical): clk_ddr * 8 B/cycle if 100% util.
 // Real efficiency unknown until parent measures — do not claim closes on glass.
