@@ -112,8 +112,12 @@ int main() {
            "endpoint-exact ceil SX");
     EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv", "present_content_window"),
            "present_core instantiates window");
-    EXPECT(file_contains("fpga/Plex_MiSTer/Plex.sv", "fabric_win_enable   = 1'b0"),
-           "win_enable defaults 0");
+    EXPECT(file_contains("fpga/Plex_MiSTer/Plex.sv", "present_geom_latch"),
+           "Plex instantiates PLXG latch");
+    EXPECT(file_contains("fpga/Plex_MiSTer/Plex.sv", "plxg_wr_en   = 1'b0"),
+           "PLXG writes tied off (safe default)");
+    EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_geom_latch.sv", "504C_5847"),
+           "PLXG magic not PLXW");
 
     // --- Legacy full-bank ---
     {
@@ -200,8 +204,8 @@ int main() {
                "runtime y pitch");
         EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv", "geom_enable"),
                "present_core geom ports");
-        EXPECT(file_contains("fpga/Plex_MiSTer/Plex.sv", "fabric_geom_enable        = 1'b0"),
-               "geom_enable defaults 0");
+        EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_geom_latch.sv", "geom_enable"),
+               "latch drives geom_enable");
 
         // Legacy 624×480 tight pack (geom off defaults).
         EXPECT(plane_u_base_q(624, 480) == 37440, "legacy U base q");

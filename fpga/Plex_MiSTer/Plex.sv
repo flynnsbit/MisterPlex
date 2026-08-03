@@ -232,29 +232,69 @@ wire reset = RESET | status[0] | buttons[1];
 //   Do NOT auto-assert win_enable from O[4] alone — that breaks ARM-scaled 624
 //   frames still published today (quarter-size / wrong sample class).
 wire        content_res_640x480 = status[4];
-// 11-bit content geometry (720p-native). O[4] remains the coarse 320/640 ladder;
-// PLXW mailbox will program exact delivery including 1280×720.
-wire [10:0] content_width       = content_res_640x480 ? 11'd640 : 11'd320;
-wire [10:0] content_height      = content_res_640x480 ? 11'd480 : 11'd240;
-wire        fabric_win_enable   = 1'b0; // host mailbox override (V1 safe default)
-wire [10:0] fabric_content_x0   = 11'd0;
-wire [10:0] fabric_content_y0   = 11'd0;
-wire [10:0] fabric_h_de         = 11'd0; // 0 → 529 FBAR default inside window
-wire [10:0] fabric_v_de         = 11'd0; // 0 → 480 default
-// Runtime DDR bank geometry (PLXW). geom_enable=0 → synthesis CODED 624 path.
-// Host programs coded/stride for native delivery (incl. 1280×720, y_stride=1280).
-// Defaults keep reset-value device bit-exact with pre-runtime-stride RBFs.
-wire        fabric_geom_enable        = 1'b0;
-wire [10:0] fabric_geom_coded_w       = 11'd0;
-wire [10:0] fabric_geom_coded_h       = 11'd0;
-wire [11:0] fabric_geom_y_stride      = 12'd0;
-wire [10:0] fabric_geom_chroma_stride = 11'd0;
-wire [10:0] fabric_geom_display_w     = 11'd0;
-wire [10:0] fabric_geom_display_h     = 11'd0;
-wire [10:0] fabric_geom_present_x     = 11'd0;
-wire [10:0] fabric_geom_present_y     = 11'd0;
-wire [10:0] fabric_geom_crop_left     = 11'd0;
-wire [10:0] fabric_geom_crop_top      = 11'd0;
+// PLXG geom latch (present_geom_latch): host programs window + bank geometry.
+// Magic PLXG 0x504C5847 @ proposed doorbell+0x130 — NOT PLXW (bitstream stat).
+// wr_en/commit tied 0 until DDR poller / w-mem ABI lands → reset-safe all-zero
+// outputs keep win_enable=0 and geom_enable=0 (legacy bit-exact 480p path).
+wire        plxg_wr_en   = 1'b0;
+wire [2:0]  plxg_wr_idx  = 3'd0;
+wire [63:0] plxg_wr_data = 64'd0;
+wire        plxg_commit  = 1'b0;
+wire        fabric_win_enable;
+wire        fabric_geom_enable;
+wire [10:0] fabric_content_w_lat;
+wire [10:0] fabric_content_h_lat;
+wire [10:0] fabric_content_x0;
+wire [10:0] fabric_content_y0;
+wire [10:0] fabric_h_de;
+wire [10:0] fabric_v_de;
+wire [10:0] fabric_geom_coded_w;
+wire [10:0] fabric_geom_coded_h;
+wire [11:0] fabric_geom_y_stride;
+wire [10:0] fabric_geom_chroma_stride;
+wire [10:0] fabric_geom_display_w;
+wire [10:0] fabric_geom_display_h;
+wire [10:0] fabric_geom_present_x;
+wire [10:0] fabric_geom_present_y;
+wire [10:0] fabric_geom_crop_left;
+wire [10:0] fabric_geom_crop_top;
+wire        fabric_plxg_live;
+wire [15:0] fabric_plxg_seq;
+present_geom_latch plxg_latch (
+	.clk(clk_sys),
+	.reset(reset),
+	.wr_en(plxg_wr_en),
+	.wr_idx(plxg_wr_idx),
+	.wr_data(plxg_wr_data),
+	.commit(plxg_commit),
+	.win_enable(fabric_win_enable),
+	.geom_enable(fabric_geom_enable),
+	.content_w(fabric_content_w_lat),
+	.content_h(fabric_content_h_lat),
+	.content_x0(fabric_content_x0),
+	.content_y0(fabric_content_y0),
+	.h_de(fabric_h_de),
+	.v_de(fabric_v_de),
+	.coded_w(fabric_geom_coded_w),
+	.coded_h(fabric_geom_coded_h),
+	.y_stride(fabric_geom_y_stride),
+	.chroma_stride(fabric_geom_chroma_stride),
+	.display_w(fabric_geom_display_w),
+	.display_h(fabric_geom_display_h),
+	.present_x(fabric_geom_present_x),
+	.present_y(fabric_geom_present_y),
+	.crop_left(fabric_geom_crop_left),
+	.crop_top(fabric_geom_crop_top),
+	.live_valid(fabric_plxg_live),
+	.live_seq(fabric_plxg_seq)
+);
+// O[4] coarse ladder when latch idle; PLXG content_* wins once live+nonzero.
+wire [10:0] content_width  = (fabric_plxg_live && (fabric_content_w_lat != 11'd0))
+	? fabric_content_w_lat
+	: (content_res_640x480 ? 11'd640 : 11'd320);
+wire [10:0] content_height = (fabric_plxg_live && (fabric_content_h_lat != 11'd0))
+	? fabric_content_h_lat
+	: (content_res_640x480 ? 11'd480 : 11'd240);
 
 // Legacy cadence input is now fixed; the daemon handles exact content pacing.
 wire [7:0] content_fps = 8'd24;

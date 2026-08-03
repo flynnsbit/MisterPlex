@@ -70,9 +70,21 @@ Parent real 720p decode: **41.073 ms/f** (98.6% of 41.667 budget). Non-decode mu
 
 ---
 
-## Register map (PLXW — reconcile w/ w-mem ABI)
+## Register map (PLXG — reconcile w/ w-mem ABI)
 
-Proposed block @ doorbell+0x130 (host-writable; w-mem owns final ABI headers):
+**Magic is PLXG (`0x504C5847`), not PLXW** — PLXW is already the bitstream session-low stat.
+
+Proposed block @ doorbell+0x130 (host-writable; w-mem owns final ABI headers).
+RTL latch: `present_geom_latch.sv` (wired in `Plex.sv`, wr tied 0 until poller).
+
+| Off | Field | Bits | Reset | Notes |
+|----:|-------|-----:|------:|-------|
+| +0 | magic | 32 | — | PLXG |
+| +0 | win_enable / geom_enable | 1/1 | 0 | Q0 bits 32/33 |
+| +0 | seq | 16 | 0 | Q0 [63:48]; must change to commit |
+| +8..+28 | content/DE/coded/stride/present/crop | — | 0 | see pack in present_geom_latch.sv |
+
+Legacy table (logical fields):
 
 | Off | Field | Bits | Reset | Notes |
 |----:|-------|-----:|------:|-------|
