@@ -151,6 +151,7 @@ LIVE_OPEN_BLOCKER_TOKENS = (
     "B12_DE_LAG_RGB_LATENCY_UNPROVEN",
     "B13_FIXED_RASTER_NO_RUNTIME_DE",
     "B14_CODED_W_16_ALIGN_UNENFORCED",
+    "B17_PLXG_Q5_DAR_FPS_ABI_MISSING",
 )
 
 # Sibling-lane fixes that exist but are not merged into this gated tree.
@@ -543,11 +544,56 @@ def _git_tip_meta(worktree: Path) -> dict[str, str]:
     }
 
 
+def _git_is_ancestor(repo: Path, maybe_ancestor: str, tip: str = "HEAD") -> bool | None:
+    """True if maybe_ancestor is ancestor of tip in repo. None if git unavailable."""
+    if not repo.is_dir() or not maybe_ancestor:
+        return None
+    proc = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "merge-base",
+            "--is-ancestor",
+            maybe_ancestor,
+            tip,
+        ],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if proc.returncode == 0:
+        return True
+    if proc.returncode == 1:
+        return False
+    return None
+
+
+def _git_head_short(repo: Path) -> str:
+    proc = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "--short=12", "HEAD"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if proc.returncode != 0:
+        return "?"
+    return proc.stdout.strip() or "?"
+
+
 def _file_has_all(path: Path, patterns: list[str]) -> bool:
     if not path.is_file():
         return False
     txt = path.read_text(errors="ignore")
     return all(re.search(p, txt) for p in patterns)
+
+
+def _file_missing_patterns(path: Path, patterns: list[str]) -> list[str]:
+    """Return patterns not found in path (all missing if file absent)."""
+    if not path.is_file():
+        return list(patterns)
+    txt = path.read_text(errors="ignore")
+    return [p for p in patterns if not re.search(p, txt)]
 
 
 def scan_sibling_attribution() -> tuple[dict[str, dict[str, str]], list[str]]:
@@ -698,6 +744,8 @@ def scan_sibling_attribution() -> tuple[dict[str, dict[str, str]], list[str]]:
 
     out: dict[str, dict[str, str]] = {}
     tip_cache: dict[str, dict[str, str]] = {}
+    gated_head = _git_head_short(ROOT)
+    msgs.append(f"LEG0_GATED_HEAD root={ROOT} head={gated_head}")
 
     for token, plist in probes.items():
         hit = None
@@ -712,8 +760,10 @@ def scan_sibling_attribution() -> tuple[dict[str, dict[str, str]], list[str]]:
                 continue
             path = wt / rel
             if _file_has_all(path, pats):
+                # Evidence strings are the live probe patterns — asserted on ROOT.
+                ev_str = " && ".join(pats)
                 hit = {
-                    "status": "unmerged",
+                    "status": "unmerged",  # refined below vs gated tree
                     "lane": lane,
                     "commit": tip["commit_short"],
                     "commit_full": tip["commit"],
@@ -721,7 +771,8 @@ def scan_sibling_attribution() -> tuple[dict[str, dict[str, str]], list[str]]:
                     "subject": tip["subject"],
                     "artefact": rel,
                     "worktree": tip["worktree"],
-                    "evidence": f"live scan matched {len(pats)} patterns @ tip",
+                    "patterns": pats,  # type: ignore[dict-item]
+                    "evidence": ev_str,
                 }
                 break
         static = FIX_STATUS.get(token, {})
@@ -732,17 +783,65 @@ def scan_sibling_attribution() -> tuple[dict[str, dict[str, str]], list[str]]:
             if static_c and hit["commit_full"].startswith(static_c):
                 tip_newer = "0"  # tag is exact tip prefix
             elif static_c:
-                # tip differs from static tag — almost always tip is newer work
                 tip_newer = "1"
                 hit["static_tag_commit"] = static_c
                 hit["note"] = (
                     f"static FIX_STATUS commit={static_c} differs from live tip "
                     f"{hit['commit']}; using live tip (parent: do not trust stale tag)"
                 )
+            # --- B19 three-way vs GATED tree (ROOT), not the sibling tip ---
+            # Parent 2026-08-03 observed: merge commit IS ancestor, content GONE
+            # (integ took w-scaler ddr_frame_store wholesale after w-mem merge).
+            # Critical: live tip may have moved past the absorbed commit — check
+            # tip AND static FIX_STATUS commit (and short SHAs) for ancestry.
+            pats = hit.get("patterns") or []
+            if isinstance(pats, str):
+                pats = [pats]
+            gated_art = ROOT / str(hit["artefact"])
+            missing = _file_missing_patterns(gated_art, list(pats))
+            evidence_on_gated = len(missing) == 0 and gated_art.is_file()
+            anc_candidates = [str(hit["commit_full"]), str(hit.get("commit", ""))]
+            if static_c:
+                anc_candidates.append(static_c)
+            # FIX_STATUS full table commit for this token
+            fs_c = str(static.get("commit", ""))
+            if fs_c and fs_c not in anc_candidates:
+                anc_candidates.append(fs_c)
+            anc = False
+            anc_which = ""
+            anc_unknown = True
+            for c in anc_candidates:
+                if not c or c == "?":
+                    continue
+                r = _git_is_ancestor(ROOT, c)
+                if r is True:
+                    anc = True
+                    anc_which = c[:12]
+                    anc_unknown = False
+                    break
+                if r is False:
+                    anc_unknown = False
+            hit["ancestor_of_gated"] = (
+                "1" if anc else ("?" if anc_unknown else "0")
+            )
+            if anc_which:
+                hit["ancestor_commit"] = anc_which
+            hit["evidence_on_gated"] = "1" if evidence_on_gated else "0"
+            if missing:
+                hit["missing_patterns"] = missing  # type: ignore[assignment]
+            if evidence_on_gated:
+                hit["status"] = "merged"
+            elif anc:
+                # Loudest class: ancestry satisfied, content absent.
+                hit["status"] = "merge_loss"
+            else:
+                hit["status"] = "unmerged"
             out[token] = hit
             msgs.append(
                 f"LEG0_SIBLING_HIT token={token} lane={hit['lane']} "
-                f"commit={hit['commit']} ts={hit['timestamp']} "
+                f"tip={hit['commit']} ts={hit['timestamp']} "
+                f"status={hit['status']} ancestor={hit['ancestor_of_gated']} "
+                f"evidence_on_gated={hit['evidence_on_gated']} "
                 f"tip_newer_than_static_tag={tip_newer} artefact={hit['artefact']}"
             )
         else:
@@ -750,7 +849,6 @@ def scan_sibling_attribution() -> tuple[dict[str, dict[str, str]], list[str]]:
                 "status": "unimplemented",
                 "evidence": "no sibling tip matched live probes",
             }
-            # Still report lane tips we checked for this token's preferred lanes.
             lanes_tried = sorted({p[0] for p in plist})
             tips = []
             for ln in lanes_tried:
@@ -762,27 +860,131 @@ def scan_sibling_attribution() -> tuple[dict[str, dict[str, str]], list[str]]:
                 f"LEG0_SIBLING_MISS token={token} tried={','.join(tips) or 'none'}"
             )
 
-    # Always print tip roster for routing.
+    # Tip roster + under-take. Under-take hard errors only when gated tree already
+    # absorbed *some* sibling tip (partial integration). Pure feature branches
+    # where no sibling is ancestor would otherwise drown in false under-takes.
+    any_sibling_absorbed = any(
+        _git_is_ancestor(ROOT, (tip_cache.get(ln) or _git_tip_meta(wt)).get("commit", ""))
+        is True
+        for ln, wt in SIBLING_LANES.items()
+        if (tip_cache.get(ln) or _git_tip_meta(wt)).get("commit")
+    )
+    # Also treat merge_loss as proof of partial absorption (ancestor yes, content no).
+    if any(v.get("status") == "merge_loss" for v in out.values()):
+        any_sibling_absorbed = True
+    msgs.append(f"LEG0_PARTIAL_INTEGRATION absorbed_sibling={int(any_sibling_absorbed)}")
+
+    under_take_lanes: list[str] = []
     for lane, wt in sorted(SIBLING_LANES.items()):
         t = tip_cache.get(lane) or _git_tip_meta(wt)
         if t:
+            anc_tip = _git_is_ancestor(ROOT, t["commit"])
+            anc_s = "1" if anc_tip is True else ("0" if anc_tip is False else "?")
             msgs.append(
-                f"LEG0_SIBLING_TIP lane={lane} commit={t['commit_short']} "
-                f"ts={t['timestamp']} subject={t['subject']!r}"
+                f"LEG0_SIBLING_TIP lane={lane} tip={t['commit_short']} "
+                f"ts={t['timestamp']} ancestor_of_gated={anc_s} "
+                f"subject={t['subject']!r}"
             )
+            lane_tokens = [
+                tok
+                for tok, meta in out.items()
+                if meta.get("lane") == lane
+                and meta.get("status") in {"unmerged", "merge_loss"}
+            ]
+            if anc_tip is False and lane_tokens:
+                msgs.append(
+                    f"LEG0_LANE_TIP_NOT_MERGED_INFO lane={lane} tip={t['commit_short']} "
+                    f"ts={t['timestamp']} tokens={','.join(lane_tokens)} "
+                    f"head={gated_head} hard_error={int(any_sibling_absorbed)}"
+                )
+                if any_sibling_absorbed:
+                    under_take_lanes.append(lane)
+                    out[f"_LANE_TIP_NOT_MERGED_{lane}"] = {
+                        "status": "lane_tip_not_merged",
+                        "lane": lane,
+                        "commit": t["commit_short"],
+                        "commit_full": t["commit"],
+                        "timestamp": t["timestamp"],
+                        "tokens": ",".join(lane_tokens),
+                        "evidence": (
+                            f"tip {t['commit_short']} not ancestor of gated HEAD "
+                            f"(partial integration under-take)"
+                        ),
+                    }
         else:
             msgs.append(f"LEG0_SIBLING_TIP lane={lane} UNAVAILABLE path={wt}")
 
-    msgs.append(f"LEG0_SIBLING_SCAN_EXECUTED hits={sum(1 for v in out.values() if v.get('status')=='unmerged')}")
+    n_unmerged = sum(1 for v in out.values() if v.get("status") == "unmerged")
+    n_merged = sum(1 for v in out.values() if v.get("status") == "merged")
+    n_loss = sum(1 for v in out.values() if v.get("status") == "merge_loss")
+    msgs.append(
+        f"LEG0_SIBLING_SCAN_EXECUTED unmerged={n_unmerged} merged={n_merged} "
+        f"merge_loss={n_loss} under_take_lanes={len(under_take_lanes)}"
+    )
     return out, msgs
 
 
+def collect_merge_loss_errors() -> list[str]:
+    """B19: commit IS ancestor but evidence ABSENT on gated tree.
+
+    Independent of whether the matching Bn_* content check also fires — ancestry
+    alone must never clear a missing-evidence fix (parent integ-product 0d95c91a:
+    mem tip ancestor, scaler store file wholesale, B7/B14 content gone).
+    """
+    errors: list[str] = []
+    for token, meta in sorted(_LIVE_ATTR.items()):
+        if token.startswith("_"):
+            continue
+        if meta.get("status") != "merge_loss":
+            continue
+        missing = meta.get("missing_patterns")
+        if isinstance(missing, list):
+            miss_s = " | ".join(missing)
+        else:
+            miss_s = str(meta.get("evidence", "?"))
+        anc_c = meta.get("ancestor_commit") or meta.get("commit")
+        errors.append(
+            f"B19_MERGE_LOSS: token={token} lane={meta.get('lane')} "
+            f"tip={meta.get('commit')} ancestor_commit={anc_c} "
+            f"ts={meta.get('timestamp', '?')} "
+            f"IS ancestor of gated HEAD but evidence ABSENT from "
+            f"{meta.get('artefact')}. missing=[{miss_s}]. "
+            "Commit ancestry ≠ content (merge took another lane's file wholesale). "
+            "Route: re-merge/restore the missing evidence — do not trust log alone."
+        )
+    # Inverse under-take: lane tip not ancestor while tokens still open.
+    for token, meta in sorted(_LIVE_ATTR.items()):
+        if meta.get("status") != "lane_tip_not_merged":
+            continue
+        errors.append(
+            f"B19_LANE_TIP_NOT_MERGED: lane={meta.get('lane')} "
+            f"tip={meta.get('commit')} ts={meta.get('timestamp', '?')} "
+            f"is NOT an ancestor of gated HEAD; open tokens=[{meta.get('tokens')}]. "
+            "Under-take: integration never absorbed this tip (parent: scaler B9 DAR "
+            "tip 76aa4272 vs integ over-taking scaler store)."
+        )
+    return errors
+
+
 def _fix_status_suffix(token: str) -> str:
-    """Annotate blocker with live unmerged sibling fix vs unimplemented."""
+    """Annotate blocker: merged | unmerged | merge_loss | unimplemented."""
     meta = _LIVE_ATTR.get(token) or FIX_STATUS.get(token)
     if meta is None:
         return " [fix=unimplemented — no known sibling-lane fix; new work]"
     st = meta.get("status", "unimplemented")
+    if st == "merge_loss":
+        return (
+            f" [fix=merge_loss lane={meta.get('lane')} tip={meta.get('commit')} "
+            f"ts={meta.get('timestamp', '?')} artefact={meta.get('artefact')} "
+            f"evidence={meta.get('evidence')!r} "
+            "B19: ancestor yes, content no — RE-MERGE]"
+        )
+    if st == "merged":
+        return (
+            f" [fix=merged lane={meta.get('lane')} tip={meta.get('commit')} "
+            f"evidence_on_gated=1 — content present; if this Bn still fires, "
+            f"probe/check mismatch]"
+        )
     if st == "unmerged":
         ts = meta.get("timestamp", "?")
         extra = ""
@@ -790,10 +992,10 @@ def _fix_status_suffix(token: str) -> str:
             extra = f" static_tag={meta['static_tag_commit']} tip_newer=1"
         elif meta.get("note"):
             extra = " tip_refreshed=1"
-        # Use tip= not commit= — error bodies often contain plxg_commit=1'b0.
+        anc = meta.get("ancestor_of_gated", "?")
         return (
             f" [fix=unmerged lane={meta.get('lane')} tip={meta.get('commit')} "
-            f"ts={ts} artefact={meta.get('artefact')} "
+            f"ts={ts} ancestor={anc} artefact={meta.get('artefact')} "
             f"evidence={meta.get('evidence')!r}{extra}]"
         )
     return (
@@ -1711,6 +1913,95 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
         "requires elaboration — not statically complete here."
     )
 
+    # --- B15 cadence / hardwired 24 Hz (parent ABI arbitration) ---
+    # Plex.sv content_fps = 8'd24 + present_core V_TOTAL from content_fps<=25 → 705
+    # means beam is permanently film rate unless q5 fps_valid drives it.
+    plex_fps = _read(ROOT / "fpga" / "Plex_MiSTer" / "Plex.sv")
+    core_fps = _read(RTL / "present_core.sv")
+    hard_24 = bool(re.search(r"\bcontent_fps\s*=\s*8'd24\b", plex_fps))
+    uses_fps_for_vtot = bool(
+        re.search(r"content_fps\s*<=\s*8'd25", core_fps)
+        or re.search(r"V_TOTAL\s*=\s*\(\s*content_fps", core_fps)
+        or re.search(r"beam_vtot_req\s*=\s*\(\s*content_fps", core_fps)
+    )
+    has_q5_fps = bool(
+        re.search(r"fps_valid|plxg_q5|q5_fps|content_fps_sel|plex_content_fps", plex_fps)
+        or re.search(r"fps_valid|plxg_q5", core_fps)
+    )
+    msgs.append(
+        f"LEG0_CADENCE hard_content_fps_24={int(hard_24)} "
+        f"core_uses_fps_vtot={int(uses_fps_for_vtot)} q5_fps_path={int(has_q5_fps)}"
+    )
+    if hard_24 and uses_fps_for_vtot and not has_q5_fps:
+        errors.append(
+            "B15_HARDWIRED_CONTENT_FPS_24: Plex.sv ties content_fps=8'd24 and "
+            "present_core selects V_TOTAL from content_fps (<=25 → 705 film) with no "
+            "PLXG q5 fps_valid path. Beam is permanently ~24 Hz; a '30 fps capable' "
+            "claim is false as built (parent ABI: q5[31:24] content_fps + [33] fps_valid)."
+        )
+
+    # --- B17 PLXG q5 DAR+FPS ABI (doorbell+0x828) ---
+    # Parent arbitration: q5[11:0] dar_x, [23:12] dar_y, [31:24] fps, [32] dar_valid,
+    # [33] fps_valid, [63:34] reserved0. Same class as B9/B15 — daemon knows, fabric can't infer.
+    has_q5_abi = bool(
+        re.search(r"0x828|doorbell\s*\+\s*32'h828|PLXG_Q5|plxg_q5", plex_fps)
+        or re.search(r"dar_valid|dar_x|VIDEO_ARX.*plxg|plex_video_ar", plex_fps)
+    )
+    # Host-side packer also acceptable evidence of ABI landing.
+    host_hits = []
+    for hp in (
+        ROOT / "arm" ,
+        ROOT / "src",
+        ROOT / "misterplexd",
+    ):
+        if not hp.is_dir():
+            continue
+        for f in hp.rglob("*"):
+            if f.suffix not in {".hpp", ".h", ".cpp", ".c", ".rs"}:
+                continue
+            try:
+                t = f.read_text(errors="ignore")
+            except OSError:
+                continue
+            if re.search(r"0x828|dar_valid|packPlxgQ5|plxg_q5", t):
+                host_hits.append(str(f.relative_to(ROOT)))
+                if len(host_hits) >= 3:
+                    break
+        if len(host_hits) >= 3:
+            break
+    msgs.append(
+        f"LEG0_PLXG_Q5 fabric_markers={int(has_q5_abi)} host_hits={len(host_hits)} "
+        f"{' '.join(host_hits[:3])}"
+    )
+    if not has_q5_abi and not host_hits:
+        errors.append(
+            "B17_PLXG_Q5_DAR_FPS_ABI_MISSING: no fabric/host evidence of PLXG q5 @ "
+            "doorbell+0x828 (dar_x/dar_y/content_fps + dar_valid/fps_valid). Parent "
+            "arbitrated this ABI because B9 aspect and B15 cadence are the same class: "
+            "values the daemon knows and the fabric cannot infer. Gate asserts markers "
+            "in Plex.sv / host packer — not a marker file."
+        )
+
+    # --- B18 cheap undeclared-id smell (main decode_stub class) ---
+    # Parent: main does not compile — dpb_mem_rd_q used, declared nowhere (merge 8ed788b3).
+    # Full elab is leg2; this is a targeted static smell for the observed symbol.
+    stub = _read(RTL / "decode_stub.sv")
+    if stub and re.search(r"\bdpb_mem_rd_q\b", stub):
+        if not re.search(r"\b(reg|wire|logic)\s+.*\bdpb_mem_rd_q\b", stub):
+            errors.append(
+                "B18_UNDECLARED_DPB_MEM_RD_Q: decode_stub.sv references dpb_mem_rd_q "
+                "without a reg/wire/logic declaration — observed main compile break "
+                "(parent merge drop class, same family as B19). w-nostub lane owns fix."
+            )
+
+    # --- B19 MERGE-LOSS + lane tip under-take (always, even if Bn cleared) ---
+    b19_errs = collect_merge_loss_errors()
+    if b19_errs:
+        msgs.append(f"LEG0_B19_MERGE_LOSS_EXECUTED n={len(b19_errs)}")
+        errors.extend(b19_errs)
+    else:
+        msgs.append("LEG0_B19_MERGE_LOSS_EXECUTED n=0")
+
     # Anti-theatre: gate source must not define self-pass switches (not mere mentions).
     gate_src = _read(Path(__file__))
     if re.search(r"^\s*LEG0_FORCE_PASS\s*=\s*True", gate_src, re.M) or re.search(
@@ -1727,19 +2018,27 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
         for e in errors:
             m = re.match(r"^(B[0-9]+_[A-Z0-9_]+):", e)
             if m and "[fix=" not in e:
-                tagged.append(e + _fix_status_suffix(m.group(1)))
+                tok = m.group(1)
+                # B19_* carry their own detail; still tag if a sibling meta exists.
+                if tok.startswith("B19_"):
+                    tagged.append(e)
+                else:
+                    tagged.append(e + _fix_status_suffix(tok))
             else:
                 tagged.append(e)
         errors = tagged
         n_unmerged = sum(1 for e in errors if "fix=unmerged" in e)
         n_unimpl = sum(1 for e in errors if "fix=unimplemented" in e)
+        n_mloss = sum(1 for e in errors if "B19_MERGE_LOSS" in e)
+        n_under = sum(1 for e in errors if "B19_LANE_TIP_NOT_MERGED" in e)
         msgs.append("LEG0_FAIL EXECUTED reasons:")
         msgs.extend(f"  - {e}" for e in errors)
         msgs.append(f"LEG0_FAIL count={len(errors)}")
         msgs.append(
             f"LEG0_FIX_STATUS unmerged={n_unmerged} unimplemented={n_unimpl} "
-            "(unmerged = sibling lane has fix — route merge; "
-            "unimplemented = no known fix — dispatch work)"
+            f"merge_loss={n_mloss} lane_tip_not_merged={n_under} "
+            "(unmerged = route merge; merge_loss = B19 re-merge content; "
+            "unimplemented = dispatch new work; lane_tip_not_merged = under-take)"
         )
         return 1, msgs
 
@@ -2378,6 +2677,15 @@ def self_test() -> int:
     else:
         print("PASS SELFTEST mutation_closed_class_reinject EXECUTED")
 
+    print("\n=== SELFTEST mutation_b19_merge_loss ===")
+    b19_fails = _mutation_b19_merge_loss()
+    if b19_fails:
+        for bf in b19_fails:
+            print(f"FAIL mutation_b19: {bf}")
+            failures += 1
+    else:
+        print("PASS SELFTEST mutation_b19_merge_loss EXECUTED")
+
     # Candidate hash mismatch must FAIL (candidate is not a bypass).
     print("\n=== SELFTEST mutation_b0_bad_hash ===")
     cand_path = ROOT / "docs" / "fit_candidate.json"
@@ -2822,6 +3130,18 @@ def _mutation_per_blocker_clear_restore() -> list[str]:
                 )
             ],
         ),
+        (
+            "B17_PLXG_Q5_DAR_FPS_ABI_MISSING",
+            [
+                (
+                    plex,
+                    lambda t: t
+                    + "\n// mut PLXG q5 ABI @ doorbell+0x828\n"
+                    "// plxg_q5 dar_valid fps_valid dar_x dar_y\n"
+                    "wire plxg_q5_present = 1'b1;\n",
+                )
+            ],
+        ),
     ]
 
     # B5 / B9_NO_AR_TOPLEVEL_TEST: create dummy tests then remove.
@@ -2904,6 +3224,117 @@ def _mutation_per_blocker_clear_restore() -> list[str]:
                     path.unlink()
                 except OSError:
                     pass
+
+    return fails
+
+
+def _mutation_b19_merge_loss() -> list[str]:
+    """B19: ancestor≠content. Must not be satisfiable by ancestry alone.
+
+    1) Synthetic _LIVE_ATTR merge_loss → collect_merge_loss_errors must fire;
+       status=merged with evidence must not emit B19 for that token.
+    2) Read-only integ-product --root RED twin (parent-observed wholesale drop).
+    Never edits sibling worktrees.
+    """
+    global _LIVE_ATTR
+    fails: list[str] = []
+    saved_root = ROOT
+    saved_attr = dict(_LIVE_ATTR)
+    integ = Path("/home/flynnsbit/Projects/MisterPlex-wt-integ-product")
+
+    # --- Synthetic classify ---
+    _LIVE_ATTR = {
+        "B7_OPTC_WIDTH_ONLY": {
+            "status": "merge_loss",
+            "lane": "w-mem",
+            "commit": "90517fa262d4",
+            "timestamp": "mut",
+            "artefact": "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv",
+            "evidence": r"\brt_need_optc\b",
+            "missing_patterns": [r"\brt_need_optc\b", r"rt_payload_bytes"],
+        }
+    }
+    errs = collect_merge_loss_errors()
+    if not any("B19_MERGE_LOSS" in e and "B7_OPTC_WIDTH_ONLY" in e for e in errs):
+        fails.append("synthetic merge_loss: collect_merge_loss_errors did not fire — HOLE")
+    else:
+        print("  MUT_OK B19_synthetic_merge_loss fire=1")
+
+    # Ancestry alone (merged status) must NOT produce B19
+    _LIVE_ATTR = {
+        "B7_OPTC_WIDTH_ONLY": {
+            "status": "merged",
+            "lane": "w-mem",
+            "commit": "90517fa262d4",
+            "timestamp": "mut",
+            "artefact": "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv",
+            "evidence": r"\brt_need_optc\b",
+            "evidence_on_gated": "1",
+            "ancestor_of_gated": "1",
+        }
+    }
+    errs2 = collect_merge_loss_errors()
+    if any("B7_OPTC_WIDTH_ONLY" in e for e in errs2):
+        fails.append("synthetic merged: B19 must not fire when evidence present — HOLE")
+    else:
+        print("  MUT_OK B19_synthetic_merged_no_fire ancestry_alone=0")
+
+    # Under-take synthetic
+    _LIVE_ATTR = {
+        "_LANE_TIP_NOT_MERGED_w-scaler": {
+            "status": "lane_tip_not_merged",
+            "lane": "w-scaler",
+            "commit": "76aa4272cf85",
+            "timestamp": "mut",
+            "tokens": "B6_STORE_ORACLE_UNTESTED,B9_ASPECT_ORIGINAL_4_3",
+            "evidence": "tip not ancestor",
+        }
+    }
+    errs3 = collect_merge_loss_errors()
+    if not any("B19_LANE_TIP_NOT_MERGED" in e and "w-scaler" in e for e in errs3):
+        fails.append("synthetic under-take: B19_LANE_TIP_NOT_MERGED did not fire — HOLE")
+    else:
+        print("  MUT_OK B19_synthetic_lane_tip_not_merged fire=1")
+
+    _LIVE_ATTR = saved_attr
+
+    # --- Real observed twin: integ-product (read-only) ---
+    if integ.is_dir() and (integ / "fpga" / "Plex_MiSTer").is_dir():
+        try:
+            apply_scan_root(integ)
+            _rc, msgs = leg0_arch_blockers()
+            txt = "\n".join(msgs)
+            if "B19_MERGE_LOSS" not in txt:
+                fails.append(
+                    "integ-product: expected B19_MERGE_LOSS (mem ancestor, "
+                    "scaler store wholesale) — HOLE"
+                )
+            else:
+                # Must not mark B7_OPTC as merged without evidence
+                bad_merged = any(
+                    "token=B7_OPTC_WIDTH_ONLY" in ln and "status=merged" in ln
+                    for ln in msgs
+                )
+                if bad_merged:
+                    fails.append(
+                        "integ-product: B7_OPTC status=merged without evidence — HOLE"
+                    )
+                else:
+                    n = sum(1 for ln in msgs if "B19_MERGE_LOSS:" in ln)
+                    print(f"  MUT_OK B19_integ_product_red fire=1 n_lines={n}")
+            # Under-take should hard-error on partial integ (scaler tip not ancestor)
+            if "B19_LANE_TIP_NOT_MERGED" not in txt and "LEG0_LANE_TIP_NOT_MERGED" not in txt:
+                # soft: info may exist without hard if no absorbed — but integ absorbed mem
+                if "LEG0_PARTIAL_INTEGRATION absorbed_sibling=1" in txt:
+                    fails.append(
+                        "integ-product: partial integration but no lane tip "
+                        "not-merged signal — HOLE"
+                    )
+        finally:
+            apply_scan_root(saved_root)
+            _LIVE_ATTR = saved_attr
+    else:
+        print("  SKIP B19_integ_product (tree unavailable)")
 
     return fails
 

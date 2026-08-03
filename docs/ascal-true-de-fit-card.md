@@ -13,6 +13,8 @@ MERGE=/path/to/merged-tree
 ```
 `--root` unifies QSF+RTL (B11). Sibling fix tags are **live-scanned** at gate time (`tip=` + timestamp; `tip_newer=1` if static table lagged).  
 
+**B19 MERGE-LOSS (parent 2026-08-03 observed on integ/fab-720p-product):** when a fix commit **is** an ancestor of gated HEAD but the **evidence string is absent** from the artefact, status=`merge_loss` and leg0 emits hard `B19_MERGE_LOSS` (independent of whether the matching Bn_* also fires). Ancestry alone never clears a missing-evidence fix. Inverse under-take: `B19_LANE_TIP_NOT_MERGED` when partial integration absorbed some sibling commits but a live tip is not an ancestor.  
+
 **B10:** `discover_design(macro_qsf=)` must actually run (`LEG0_DISCOVER_DESIGN EXECUTED`); TypeError/stale `rtl_lint` → `B10_DISCOVER_DESIGN_DID_NOT_RUN` (check did not execute).  
 **B14:** `coded_w` 16-align reject required (`rt_coded_w[3:0]==0`); PMS AR-fit 468/638/626 is an observed defect class.  
 
