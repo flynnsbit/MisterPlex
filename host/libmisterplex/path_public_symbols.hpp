@@ -9,6 +9,7 @@
 // Do NOT remove entries without parent arbitration. Add new path ABI exports here.
 
 #include "libmisterplex/ddr_frame_layout.hpp"
+#include "libmisterplex/h264_fabric_stream_gate.hpp"
 #include "libmisterplex/plxg_q5_aspect_cadence.hpp"
 #include "libmisterplex/pms_delivery_geom.hpp"
 
@@ -66,6 +67,14 @@ inline const char* pathPublicSymbolRollCall() {
     bool f1001 = false;
     (void)contentFpsForPlxg(24000, 1001, &fps, &f1001);
     (void)kPlxgQ5Fps1001Bit;
+    // Fabric bitstream gate disposition (Refuse* → ARM fallback, not outage).
+    FabricStreamGateResult gr;
+    gr.ok = false;
+    gr.verdict = FabricStreamVerdict::RefuseProfile;
+    (void)fabricDecodeRoute(gr);
+    (void)fabricDecodeRouteStr(FabricDecodeRoute::ArmFfmpegFallback);
+    (void)armFfmpegDecodeRequired(gr);
+    (void)fabricBitstreamPathOpen(gr);
     return "path_public_symbols_ok";
 }
 

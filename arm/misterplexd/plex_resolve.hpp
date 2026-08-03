@@ -87,10 +87,12 @@ std::vector<std::string> mergePlexServers(const std::string& serversCsv,
 std::string buildPlexBase(const std::string& protocol, const std::string& address,
                           const std::string& port, const std::string& lanFallback = {});
 
-// Hard pin for every PMS universal request and ladder default.
-// Parent 2026-08-03: fabric RTL is CAVLC-only (CABAC ABSENT); lab true-720 is
-// Constrained Baseline L3.1. Never advertise Main/High — a High leak renders
-// fabric garbage. Bitstream gate: h264_fabric_stream_gate.hpp.
+// Request-side H.264 profile hint for universal URLs (still "baseline").
+// Measured lab PMS 1.43.3 (2026-08-03): videoProfile= + Client-Profile-Extra
+// match/isRequired do NOT force baseline on High/Main sources (18/18 High).
+// Pin remains a request preference only — never trust decision XML; the
+// bitstream gate (h264_fabric_stream_gate.hpp) selects fabric vs ARM route.
+// Refuse* ⇒ ArmFfmpegFallback (product continues). Not a defense-in-depth claim.
 inline constexpr const char* kPlexH264ProfilePin = "baseline";
 // Plex integer level form: 31 == Level 3.1 (MaxFS covers 1280x720).
 inline constexpr int kPlexH264LevelPin720 = 31;

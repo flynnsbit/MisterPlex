@@ -544,8 +544,8 @@ std::string buildUniversalTranscodeUrl(const std::string& base,
       << "&maxVideoBitrate=" << weak.maxVideoBitrateKbps
       << "&videoCodec=" << urlEncodeQuery(weak.videoCodec)
       << "&audioCodec=" << urlEncodeQuery(weak.audioCodec)
-      // Defense-in-depth: always emit the Baseline pin even if WeakLadder was
-      // mutated after validateWeakLadder (never request Main/High from PMS).
+      // Request preference only (lab PMS may ignore — measured High on rk118/119).
+      // Bitstream gate routes Refuse* → ARM FFmpeg; do not treat pin as delivery.
       << "&videoProfile=" << urlEncodeQuery(kPlexH264ProfilePin)
       << "&videoLevel=" << weak.h264Level;
     // Phase 4: PMS-side burn-in (preferred over dual-A9 FFmpeg subtitles filter).

@@ -1,0 +1,1 @@
+PREDICTIONS: all levers PIN_IGNORED on rk118/119 (parent: bare pin ignored; isRequired also miss)

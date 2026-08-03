@@ -1,10 +1,22 @@
-// Fabric H.264 stream gate — refuse High/CABAC/B-slice before noise on glass.
-// Parent (2026-08-03): PMS delivered Constrained Baseline L3.1 CAVLC no-B on the
-// true-720 path; RTL inventory is CAVLC+intra+inter+MC+deblock+DPB with CABAC
-// ABSENT. A silent High/CABAC feed is worse than an honest refuse.
+// Fabric H.264 bitstream gate — route selector, not a product hard-fail.
+//
+// Lab PMS 1.43.3 (measured 2026-08-03, rk=118 High + rk=119 Main, N=18 stable
+// replications + parent pin matrix): force-transcode delivers High (often B=2;
+// entropy CABAC or CAVLC) and **no request lever forces Constrained Baseline**.
+// videoProfile=baseline + X-Plex-Client-Profile-Extra match/isRequired are
+// request-only; the server may ignore them. A gate that hard-stops the product
+// on Refuse* would outage 100% of that real xcode traffic.
+//
+// Disposition (product rule):
+//   Ok            → FabricBitstreamEligible (optional fabric-decode track)
+//   any Refuse*   → ArmFfmpegFallback (host FFmpeg continues; present path lives)
+//
+// Fabric-decode still assumes Baseline+CAVLC+no-B (CABAC is bit-serial — worst
+// H.264 tool in fabric). "Assume High in fabric" is explicitly NOT chosen.
+// 720p@30 win remains fabric owning PRESENT, not fabric decode.
 //
 // Use before any fabric bitstream path consumes an AU. Host FFmpeg pixel path
-// may still decode High; this gate is the fabric contract only.
+// must ignore Refuse* as a kill switch.
 #pragma once
 
 #include "libmisterplex/h264_nal.hpp"
@@ -32,6 +44,12 @@ enum class FabricStreamVerdict : uint8_t {
     RefuseUnsupportedPps,
 };
 
+// Product decode route after the bitstream gate. Refuse is fallback, not outage.
+enum class FabricDecodeRoute : uint8_t {
+    FabricBitstreamEligible = 0,
+    ArmFfmpegFallback = 1,
+};
+
 struct FabricStreamGateResult {
     bool ok = false;
     FabricStreamVerdict verdict = FabricStreamVerdict::RefuseNoSps;
@@ -40,6 +58,31 @@ struct FabricStreamGateResult {
     bool entropy_cabac = false;
     bool constrained_baseline = false;
 };
+
+// Map gate verdict → product route. ok=false never means "stop playback".
+inline FabricDecodeRoute fabricDecodeRoute(const FabricStreamGateResult& r) {
+    return r.ok ? FabricDecodeRoute::FabricBitstreamEligible
+                : FabricDecodeRoute::ArmFfmpegFallback;
+}
+
+inline const char* fabricDecodeRouteStr(FabricDecodeRoute route) {
+    switch (route) {
+    case FabricDecodeRoute::FabricBitstreamEligible:
+        return "fabric_bitstream_eligible";
+    case FabricDecodeRoute::ArmFfmpegFallback:
+        return "arm_ffmpeg_fallback";
+    }
+    return "arm_ffmpeg_fallback";
+}
+
+inline bool fabricBitstreamPathOpen(const FabricStreamGateResult& r) {
+    return fabricDecodeRoute(r) == FabricDecodeRoute::FabricBitstreamEligible;
+}
+
+// Host FFmpeg / present path must stay open whenever fabric bitstream is closed.
+inline bool armFfmpegDecodeRequired(const FabricStreamGateResult& r) {
+    return fabricDecodeRoute(r) == FabricDecodeRoute::ArmFfmpegFallback;
+}
 
 inline const char* fabricStreamVerdictStr(FabricStreamVerdict v) {
     switch (v) {

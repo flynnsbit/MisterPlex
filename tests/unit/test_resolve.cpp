@@ -461,7 +461,7 @@ int main() {
         CHECK(start720.find("videoLevel=31") != std::string::npos);
         CHECK(start720.find("videoProfile=baseline") != std::string::npos);
         CHECK(start720.find("directPlay=0") != std::string::npos);
-        // Fabric CAVLC pin: kPlexH264ProfilePin must stay baseline on every ladder.
+        // Request pin string stays baseline; delivery truth is bitstream gate route.
         CHECK(std::string(kPlexH264ProfilePin) == "baseline");
         CHECK(w720.h264Profile == kPlexH264ProfilePin);
         // Defense-in-depth: even if WeakLadder is mutated to high after validate,

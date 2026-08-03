@@ -1,0 +1,15 @@
+rk	lever	pred	dec_prof	dec_decision	deliv_prof	has_b	entropy	wh	bytes	curl_rc	ff_rc	match_pred
+118	L0_http_match	PIN_IGNORED	lc	transcode	High	2	unknown	624x480	28996932	0	0	HIT
+118	L1_http_isRequired	PIN_IGNORED	lc	transcode	High	2	unknown	624x480	29022124	0	0	HIT
+118	L2_hls_isRequired	PIN_IGNORED	lc	transcode	NO_DATA	NO_DATA	NO_DATA	NO_DATA	0	3	1	HIT
+118	L3_chrome_profile_name	PIN_IGNORED	lc	transcode	High	2	unknown	624x480	29018176	0	0	HIT
+118	L4_target_settings	PIN_IGNORED	lc	transcode	High	2	unknown	624x480	28995240	0	0	HIT
+118	L5_videoDecoders_only	PIN_IGNORED	lc	transcode	High	2	unknown	624x480	29004452	0	0	HIT
+118	L6_no_pin_control	PIN_IGNORED	lc	transcode	Constrained Baseline	0	unknown	624x480	40176540	0	0	MISS_PRED_IGNORED_WAS_FORCED
+119	L0_http_match	PIN_IGNORED	lc	transcode	High	2	unknown	624x480	27106592	0	0	HIT
+119	L1_http_isRequired	PIN_IGNORED	lc	transcode	High	2	unknown	624x480	27094560	0	0	HIT
+119	L2_hls_isRequired	PIN_IGNORED	lc	transcode	NO_DATA	NO_DATA	NO_DATA	NO_DATA	0	3	1	HIT
+119	L3_chrome_profile_name	PIN_IGNORED	lc	transcode	High	2	unknown	624x480	27096440	0	0	HIT
+119	L4_target_settings	PIN_IGNORED	lc	transcode	High	2	unknown	624x480	27094936	0	0	HIT
+119	L5_videoDecoders_only	PIN_IGNORED	lc	transcode	High	2	unknown	624x480	27106968	0	0	HIT
+119	L6_no_pin_control	PIN_IGNORED	lc	transcode	Constrained Baseline	0	unknown	624x480	39758616	0	0	MISS_PRED_IGNORED_WAS_FORCED

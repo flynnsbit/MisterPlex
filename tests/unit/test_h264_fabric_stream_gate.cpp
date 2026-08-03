@@ -1,5 +1,5 @@
-// Fabric stream gate: Baseline/CAVLC accept; High/CABAC/B-slice refuse (honest, no noise).
-// Negative cases a naive "any SPS is fine" implementation would fail open on.
+// Fabric stream gate: Baseline/CAVLC → fabric eligible; High/CABAC/B → ARM fallback.
+// Refuse is a route, not a product kill. Negative cases a naive open gate would miss.
 #include "libmisterplex/h264_fabric_stream_gate.hpp"
 
 #include <cstdio>
@@ -146,6 +146,45 @@ int main() {
         s.constraint_flags = 0;
         CHECK(s.isBaselineProfileIdc());
         CHECK(!s.isConstrainedBaseline());
+    }
+
+    // --- Disposition: Refuse* is ArmFfmpegFallback, never a product hard-fail ---
+    // Red twin: a naive "if (!gate.ok) abort playback" would treat High xcode as
+    // outage. Lab PMS delivers High on force-xcode of rk118/119 (measured).
+    {
+        NalChainInfo high;
+        high.sps.valid = true;
+        high.sps.profile_idc = kH264ProfileHigh;
+        high.pps.valid = true;
+        high.pps.entropy_cabac = true;
+        auto r = gateFabricH264FromChain(high);
+        CHECK(!r.ok);
+        CHECK(r.verdict == FabricStreamVerdict::RefuseProfile);
+        CHECK(fabricDecodeRoute(r) == FabricDecodeRoute::ArmFfmpegFallback);
+        CHECK(armFfmpegDecodeRequired(r));
+        CHECK(!fabricBitstreamPathOpen(r));
+        CHECK(std::string(fabricDecodeRouteStr(fabricDecodeRoute(r))) == "arm_ffmpeg_fallback");
+    }
+    {
+        auto base2 = loadBaselineAnnexB();
+        CHECK(!base2.empty());
+        auto r = gateFabricH264AnnexB(base2.data(), base2.size());
+        CHECK(r.ok);
+        CHECK(fabricDecodeRoute(r) == FabricDecodeRoute::FabricBitstreamEligible);
+        CHECK(fabricBitstreamPathOpen(r));
+        CHECK(!armFfmpegDecodeRequired(r));
+        CHECK(std::string(fabricDecodeRouteStr(fabricDecodeRoute(r))) ==
+              "fabric_bitstream_eligible");
+    }
+    // CABAC refuse still falls back to ARM (fabric-decode track stays closed).
+    {
+        NalChainInfo c;
+        c.sps.valid = true;
+        c.sps.profile_idc = kH264ProfileBaseline;
+        c.pps.entropy_cabac = true;
+        auto r = gateFabricH264FromChain(c);
+        CHECK(armFfmpegDecodeRequired(r));
+        CHECK(!fabricBitstreamPathOpen(r));
     }
 
     std::printf("test_h264_fabric_stream_gate: OK\n");
