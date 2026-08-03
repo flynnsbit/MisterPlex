@@ -350,7 +350,10 @@ module decode_stub #(
 	wire signed [15:0] dpb_chroma_origin_x, dpb_chroma_origin_y;
 	wire              dpb_mem_rd;
 	wire [31:0]       dpb_mem_raddr;
-	reg               dpb_mem_rd_q;
+	// 1-cycle read pipe only (raddr_q → comb rdata). Do NOT add a second
+	// stage on rvalid: h264_dpb samples mem_rdata when mem_rvalid &&
+	// pending_valid_d1 (exactly one cycle after mem_rd). See h264_dpb.sv
+	// comment at the pending_*_d1 regs.
 	reg [31:0]        dpb_mem_raddr_q;
 	reg               dpb_mem_rvalid;
 	wire [7:0]        dpb_mem_rdata;
@@ -537,8 +540,8 @@ module decode_stub #(
 		swap_req      <= 1'b0;
 		dpb_fetch_start <= 1'b0;
 		dpb_frame_done_pulse <= 1'b0;
-		dpb_mem_rvalid <= dpb_mem_rd_q;
-		dpb_mem_rd_q <= dpb_mem_rd;
+		// Align rvalid with rdata: both visible 1 cycle after mem_rd/mem_raddr.
+		dpb_mem_rvalid  <= dpb_mem_rd;
 		dpb_mem_raddr_q <= dpb_mem_raddr;
 		if (dpb_luma_window_valid)
 			dpb_luma_win[dpb_luma_window_idx] <= dpb_luma_window_sample;
@@ -597,7 +600,6 @@ module decode_stub #(
 			dpb_fill_mb_addr <= '0;
 			dpb_fill_sample_idx <= 9'd0;
 			dpb_mem_raddr_q <= 0;
-			dpb_mem_rd_q <= 0;
 			dpb_mem_rvalid <= 0;
 			wr_pixel      <= 0;
 		end else begin
