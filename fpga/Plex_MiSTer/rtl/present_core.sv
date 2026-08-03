@@ -6,8 +6,11 @@
 // `define PRESENT_MULTI_PIXEL  — connect beam → ddr N-wide → present_npx_path → RGB/CE
 // `define PRESENT_PX_PER_CLK N — 1|2|4 (only meaningful with PRESENT_MULTI_PIXEL)
 // `define PRESENT_CLK_PIX_PLL — separate clk_pix (outclk_3); rate-match + sync sideband
-// `define PRESENT_BEAM_960 — ascal-native true-DE beam; 960×540 is MAX tier, runtime content_w/h
-// Macros default OFF. Parent/w-nostub enables in fit grant QSF — not default shipping.
+// `define PRESENT_BEAM_960 — ascal-native true-DE beam (name historical).
+//   Max tier = min(FRAME_*, 1280×720). Glass is already 720p via ascal+video_mode;
+//   this feeds CONTENT-sized DE so ascal does not upscale 640×480 (parent FACT 2).
+//   @20 MHz 1ppc: 1280×720 min-blank → ~20.71 Hz core tick (not 24) — cadence holds.
+// Macros default OFF. Parent enables in fit grant QSF after w-mem stride guard.
 
 `ifdef PRESENT_MULTI_PIXEL
 	`ifndef PRESENT_PX_PER_CLK
@@ -206,7 +209,10 @@ module present_core #(
 	// NOTE: DDR bank swap uses vsync_pulse=fstart && swap_pending — NOT advance.
 	// advance still feeds colorbars content_index + stat_advance only (C1).
 `ifdef PRESENT_BEAM_960
-	wire [7:0] cadence_display_hz = beam_film_class ? 8'd24 : 8'd30;
+	// Wide 1280 tier @20 MHz min-blank ≈20.71 Hz — use 21 for cadence math.
+	// Narrow 1182 tier keeps 24/30 class (Bresenham V). Not glass Hz (ascal ~60).
+	wire [7:0] cadence_display_hz =
+		((FRAME_W > 1150) ? 8'd21 : (beam_film_class ? 8'd24 : 8'd30));
 `else
 	wire [7:0] cadence_display_hz = display_hz;
 `endif
@@ -406,41 +412,39 @@ module present_core #(
 
 `ifdef PRESENT_BEAM_960
 	// =====================================================================
-	// Ascal-native TRUE content DE (w-clock / w-scaler). Default OFF.
-	// Do NOT implement BEAM_960 by parameterizing MULTI_PIXEL/npx (rd-duck):
-	// that path has FIFO LAT+prefill; this path is 1px CE=1 + DE_LAG only.
-	// Replaces colorbars Template H_DE=529. Identity store: rd_x=hc, rd_y=vc.
-	// Requires FRAME_W=960, FRAME_H=540 (QSF `FRAME_W=960` etc.).
-	// Bank swap uses this beam's fstart (not colorbars).
-	// Mutually exclusive with PRESENT_MULTI_PIXEL for first-fit (ascal path).
+	// Ascal-native TRUE content DE (w-clock). Default OFF.
+	// TARGET (parent FACT 2): glass is already 720p via ascal+video_mode=0;
+	// this path makes the CORE emit content-sized DE (up to FRAME_*/1280×720)
+	// so ascal passes through instead of upscaling Template 529←640×480.
+	// Do NOT implement via MULTI_PIXEL/npx alone (rd-duck FIFO LAT path).
+	// Identity store: rd_x=hc, rd_y=vc. Bank swap uses this beam's fstart.
+	// Mutually exclusive with PRESENT_MULTI_PIXEL.
+	//
+	// Line class @ clk_sys 20 MHz 1ppc (MEASURED arithmetic):
+	//   DE≤1150 → H_TOTAL=1182 (legacy 960 tier; ~30/24 via Bresenham V)
+	//   DE≥1151 (1280 tier) → H_TOTAL=1312; V=vact+16 (min blank)
+	//     1312×736 @20 MHz → fps≈20.71 (cannot hit 24 Hz without PLL — parked)
 	// =====================================================================
 	// synthesis translate_off
 	initial begin
-		if (FRAME_W != 960 || FRAME_H != 540)
-			$error("PRESENT_BEAM_960 requires FRAME_W=960 FRAME_H=540 (got %0d x %0d)",
+		if (FRAME_W < 16 || FRAME_H < 16)
+			$error("PRESENT_BEAM_960 FRAME too small (%0d x %0d)", FRAME_W, FRAME_H);
+		if (FRAME_W > 1280 || FRAME_H > 720)
+			$error("PRESENT_BEAM_960 max content tier 1280x720 (got %0d x %0d)",
 				FRAME_W, FRAME_H);
-		// Route B first-fit: bank must not exceed max tier (1280 content DE is glass-only).
-		if (FRAME_W > 960 || FRAME_H > 540)
-			$error("PRESENT_BEAM_960 first-fit forbids FRAME >960x540 without MULTI_PIXEL");
 `ifdef PRESENT_MULTI_PIXEL
-		$error("PRESENT_BEAM_960 and PRESENT_MULTI_PIXEL are mutually exclusive (first fit ascal path)");
+		$error("PRESENT_BEAM_960 and PRESENT_MULTI_PIXEL are mutually exclusive");
 `endif
 	end
 	// synthesis translate_on
 
 	// B2b: present_beam_content_de is the ONLY raster SoT.
-	// B13: runtime true-DE from content_w/h (PLXG-delivered). 960×540 = max tier
-	// defaults only — not a fixed product raster (96.5% of library is smaller).
-	// Frame-boundary latch inside beam (rd-duck). Totals stay 1182×564@30 /
-	// 1182×705@24 for ascal-friendly blanking independent of active size.
+	// B13: runtime true-DE from content_w/h (PLXG). Max tier = FRAME_* bank.
 	wire [10:0] hc11, vc11, vtot_act11;
 	wire [10:0] hde_act11, htot_act11, vact_act11;
 
 	// Clamp content into bank max; 0 → max-tier fallback (idle/bars only).
-	// Mux native→legacy disable must emit content 624×480, not 0 (island if 0→960).
-	// Product: DE from applied shadow, with swap-armed feed-forward so v_wrap
-	// latches NEW the cycle before fstart promotes app_*/bank (rd-duck NBA lag).
-	// FAULT_B20_* free-run uses candidate always; NO_BEAM_FEEDFORWARD uses app only.
+	// Product: DE from applied shadow + swap-armed feed-forward (B20 NBA lag).
 `ifdef FAULT_B20_BEAM_FREE_RUN
 	wire [10:0] beam_src_w = content_w;
 	wire [10:0] beam_src_h = content_h;
@@ -453,44 +457,36 @@ module present_core #(
 	wire [10:0] beam_src_w = app_content_w;
 	wire [10:0] beam_src_h = app_content_h;
 `else
-	// Armed: present the tuple app_* will take on the impending fstart ack.
-	// Still LIVE content_* until w-mem store_applied_* bus lands (B20 OPEN).
 	wire [10:0] beam_src_w = b20_swap_armed ? content_w : app_content_w;
 	wire [10:0] beam_src_h = b20_swap_armed ? content_h : app_content_h;
 `endif
 `endif
 `endif
-	// Route B max-tier clamp (960×540): host/PLXG must not drive a 1280×720
-	// content DE on 1ppc@20MHz (min-blank beam → ~20.7 Hz). FRAME_W is 960 on
-	// first-fit; keep an explicit tier ceiling so a mis-set FRAME cannot open 1280.
-	localparam int RT_MAX_HDE  = 960;
-	localparam int RT_MAX_VACT = 540;
-	wire [10:0] beam_hde_cap = (11'(FRAME_W) < 11'(RT_MAX_HDE)) ? 11'(FRAME_W) : 11'(RT_MAX_HDE);
-	wire [10:0] beam_vact_cap = (11'(FRAME_H) < 11'(RT_MAX_VACT)) ? 11'(FRAME_H) : 11'(RT_MAX_VACT);
+	// Max tier = bank size, capped at 1280×720 content (not glass — glass is ascal).
+	localparam int RT_MAX_HDE  = (FRAME_W > 1280) ? 1280 : FRAME_W;
+	localparam int RT_MAX_VACT = (FRAME_H > 720)  ? 720  : FRAME_H;
+	localparam bit BEAM_WIDE_TIER = (RT_MAX_HDE > 1150);
+	localparam int BEAM_HTOT_NARROW = 1182;
+	localparam int BEAM_HTOT_WIDE   = 1312; // 1280 DE + 32 min pad @20 MHz
+	wire [10:0] beam_hde_cap = 11'(RT_MAX_HDE);
+	wire [10:0] beam_vact_cap = 11'(RT_MAX_VACT);
 	wire [10:0] beam_hde_req =
 		(beam_src_w == 11'd0) ? beam_hde_cap :
 		(beam_src_w > beam_hde_cap) ? beam_hde_cap : beam_src_w;
 	wire [10:0] beam_vact_req =
 		(beam_src_h == 11'd0) ? beam_vact_cap :
 		(beam_src_h > beam_vact_cap) ? beam_vact_cap : beam_src_h;
-	// Fixed line class @20 MHz: 1182 clocks/line. V_TOTAL selects 30 vs 24 Hz.
-	// beam_film_class from app_content_fps (shared with cadence_display_hz).
-	// Fixed line class @20 MHz: 1182 clocks/line. V_TOTAL selects 30 vs 24 Hz.
-	// beam_film_class from app_content_fps. B20 apply/hold is above (all paths).
-	wire [10:0] beam_htot_req = 11'd1182;
-	// DE apply always 1: gating is beam_src_* (app shadow + swap-armed feed-forward).
-	// Do NOT pulse-qualify with fstart — fstart is 1-cycle NBA after v_wrap so a
-	// pulse apply misses the latch edge (hold forever).
+	wire [10:0] beam_htot_req = BEAM_WIDE_TIER ? 11'(BEAM_HTOT_WIDE) : 11'(BEAM_HTOT_NARROW);
 	wire beam_de_apply = 1'b1;
 
-	// Bresenham V_TOTAL: exact long-run NTSC (default) or fixed under FAULT.
-	// Updates on fstart after beam latches current vtot (registered).
+	// Bresenham V only valid for H=1182 @20 MHz (narrow tier).
+	// Wide tier: min-blank V = vact+16 (beam module also floors).
 	wire [10:0] beam_vtot_bres;
 	wire        beam_vtot_hi;
 	present_vtotal_bresenham u_vtot_bres (
 		.clk(clk),
 		.reset(reset),
-		.enable(1'b1),
+		.enable(~BEAM_WIDE_TIER),
 		.film_class(beam_film_class),
 		.frame_tick(fstart),
 		.vtotal_out(beam_vtot_bres),
@@ -498,18 +494,25 @@ module present_core #(
 		.v_hi_out(),
 		.chose_hi(beam_vtot_hi)
 	);
-	wire [10:0] beam_vtot_req = beam_vtot_bres;
+	wire [10:0] beam_vtot_minblank = beam_vact_req + 11'd16;
+	wire [10:0] beam_vtot_req = BEAM_WIDE_TIER ? beam_vtot_minblank : beam_vtot_bres;
 	wire _unused_vtot_hi = beam_vtot_hi;
 
+	// Elab defaults follow tier; runtime rt_* override at v_wrap.
+	localparam int BEAM_ELAB_HDE  = RT_MAX_HDE;
+	localparam int BEAM_ELAB_VACT = RT_MAX_VACT;
+	localparam int BEAM_ELAB_HTOT = BEAM_WIDE_TIER ? BEAM_HTOT_WIDE : BEAM_HTOT_NARROW;
+	localparam int BEAM_ELAB_VTOT = BEAM_WIDE_TIER ? (BEAM_ELAB_VACT + 16) : 564;
+
 	(* noprune *) present_beam_content_de #(
-		.H_DE(960),
-		.V_ACTIVE(540),
-		.H_TOTAL(1182),
-		.V_TOTAL(564),
-		.H_SYNC_S(992),
-		.H_SYNC_E(1056),
-		.V_SYNC_S(548),
-		.V_SYNC_E(554)
+		.H_DE(BEAM_ELAB_HDE),
+		.V_ACTIVE(BEAM_ELAB_VACT),
+		.H_TOTAL(BEAM_ELAB_HTOT),
+		.V_TOTAL(BEAM_ELAB_VTOT),
+		.H_SYNC_S(BEAM_ELAB_HDE + 32),
+		.H_SYNC_E(BEAM_ELAB_HDE + 32 + 64),
+		.V_SYNC_S(BEAM_ELAB_VACT + 8),
+		.V_SYNC_E(BEAM_ELAB_VACT + 8 + 6)
 	) u_beam_960 (
 		.clk(clk),
 		.reset(reset),

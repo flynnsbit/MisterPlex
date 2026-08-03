@@ -183,3 +183,7 @@ w-clock branch extras (NBA B20, VGA_SCALER always-1, PLL kit docs): **ON_MAIN=no
 | B20 NBA / PLXG fences | Still open; orthogonal |
 
 **Ship-proof for native core 720p@24 PLL: N/A (retired as near-term requirement).**
+
+## Post-broadcast RTL (w-clock-bump)
+BEAM max tier follows FRAME_* ≤1280×720; wide H_TOTAL=1312; default OFF.
+QSF commented content-1280 recipe. Enable blocked on w-mem stride.

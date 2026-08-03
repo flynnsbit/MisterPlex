@@ -1,18 +1,18 @@
 lane: w-clock
 branch: w-clock-bump
-HEAD: 778fa676
-MEASURE_REF_MAIN: detached 3fa01a9b (MisterPlex-wt-clock-pin-3fa01a9b)
+HEAD: a85760b8
+MEASURE_REF_MAIN: detached 3fa01a9b
 
-## VERDICT: native 720p core raster
-(b) NOT NEEDED for glass 720p — ascal+video_mode=0 already 1280x720@60
-(c) ONLY IF wide content DE / >=24Hz 1ppc 1280 scan / Direct Video raw
-PLL kit + CDC 4:15 PARKED
+## Fleet broadcast ACK
+FACT1: main@3fa01a9b qip=45 L2 present land — rebased claims
+FACT2: glass already 720p; target = CONTENT 1280x720 into ascal
+PLL kit PARKED (b/c verdict stands)
 
-## 1280 content @ 20 MHz
-Write: HPS 33.2 MB/s class — not clk_sys pixel
-Read product: H_DE=529 stretch — works, quality loss
-True 1280 DE 1ppc minblank: fps<=20.71 @20MHz — no PLL required for ascal
-BEAM_960 incompatible with FRAME_1280 without retarget
+## RTL this turn (default OFF)
+present_core BEAM: max tier FRAME_* up to 1280x720; H_TOTAL=1312 wide
+Plex.qsf commented FRAME_1280+BEAM recipe (active still 640x480)
+BLOCKED enable: w-mem stride 512KiB < I420 1280
+Gate: test_content_1280_beam_tier.sh true rc=0
 
-## Ladder main@3fa01a9b
-qip=45; present L2 land; BEAM/MULTI off; geom_latch/mux L2 dead
+## Still OPEN
+B20 atomic PLXG; PLXG reset liveness; stride guard w-mem

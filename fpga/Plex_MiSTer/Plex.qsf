@@ -83,6 +83,15 @@ set_global_assignment -name VERILOG_MACRO "DDR_FRAME_STORE=1"
 set_global_assignment -name VERILOG_MACRO "FRAME_W=640"
 set_global_assignment -name VERILOG_MACRO "FRAME_H=480"
 set_global_assignment -name VERILOG_MACRO "FRAME_LINES_8=1"
+# --- Content 1280×720 recipe (DEFAULT OFF — parent fit grant only) ---
+# Glass is already 720p (video_mode=0 + ascal). Enabling FRAME_1280 feeds
+# content-sized DE into ascal (quality), not "make the output 720p".
+# BLOCKED until w-mem HPS_BANK_STRIDE fits I420 1280 (1.38 MiB > 512 KiB today).
+#set_global_assignment -name VERILOG_MACRO "FRAME_W=1280"
+#set_global_assignment -name VERILOG_MACRO "FRAME_H=720"
+#set_global_assignment -name VERILOG_MACRO "PRESENT_BEAM_960=1"
+# BEAM name historical: max tier follows FRAME_*; wide H_TOTAL=1312 @20 MHz.
+# Do NOT enable PRODUCT_NO_STUB / PLL bump for glass-720p alone (PLL kit parked).
 # Product reclaim: omit decode_stub from stream_path (dark under DDR_FRAME_STORE).
 # Default OFF (commented). Enable only with parent fit grant + ALLOW_PRODUCT_NO_STUB_ACTIVE=1.
 # Proven nostub RBF: c74c6863 (Fmax sys 32.59; stub 0 hierarchy rows). Research/STREAM leave off.
