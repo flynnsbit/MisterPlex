@@ -196,6 +196,12 @@ module present_core #(
 	// (20e6/60/524 ≈ 636 clocks/line max; see test_present_store_scale_math).
 	// STORE_X still samples 529 of FRAME_W via the 39647 mul-shift.
 	//
+	// ASCAL NEAR-TERM FIT (true content DE — NOT this Template path):
+	// Core must emit DE extent == content (960×540 or 640×360), identity store
+	// map, no pad inside DE. Island-in-529/1280 is the quarter-glass dead end.
+	// Integrator gate: tests/unit/test_true_content_de_contract.sh
+	// Contract doc: docs/product-4-3-scaler-decision.md § True 960×540 DE.
+	//
 	// Fabric content window (win_enable): when 1, SX/SY come from runtime
 	// content_w/h instead of FRAME_* so ARM publishes native WxH (320…1280) and
 	// fabric NN-stretches across DE — ARM scale path goes to zero, not "cheaper".

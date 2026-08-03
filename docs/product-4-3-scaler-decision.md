@@ -8,7 +8,7 @@
 | | General `present_content_window` | Product `present_scale_4_3` |
 |--|----------------------------------|-----------------------------|
 | Map | Q16 `ceil((cw-1)·65536/(de-1))` × hc | `src = dst·3/4` integer |
-| Phase | free-running frac from mul residue | **4 fixed phases** `dst[1:0]` |
+| Phase | free-running frac from mul residue | **4 fixed phases** `(3·dst)mod4` = `x_num[1:0]` → **0,3,2,1** (NOT `dst[1:0]`) |
 | Weights | runtime frac | **4-entry ROM** 0,¼,½,¾ |
 | Pixel arith | 11×20 mul + >>16 | `*3` + `>>2` |
 | Divider | on reg update | **none** |
@@ -140,24 +140,91 @@ timing + HDMI capture MEAN/ACTIVE — parent-owned.
 | 1280×720×24 Mpix/s | 22.118 |
 | 960×540×24 Mpix/s | 12.441 |
 
-## Exact 2× tier (640×360 → 1280×720) — TV / 30 fps
+## Exact 2× tier under the **ascal pivot** (parent ask)
 
-Frame-rate-aware select (parent):
+### Recommendation for near-term fit
+
+**Do not wire in-core exact-2× into the ascal near-term fit.**  
+True **640×360 DE** + sys_top `ascal iauto=1` already performs 640→1280 / 360→720.
+Building a second doubler on that path earns **nothing on glass** for B4.
+
+| Path | Near-term ascal fit | Later upgrade (pre-ascal 1280 canvas / HUD) |
+|------|---------------------|-----------------------------------------------|
+| 960×540@24/30 | true DE → ascal | `present_scale_4_3` (+2ppc) default-OFF |
+| 640×360@30 | true DE → ascal | `present_scale_2x` default-OFF (already on branch) |
+
+**Why keep `present_scale_2x` at all (upgrade only):**
+1. Forced NN replication (ascal polyphase softens; 2× has no phase ROM to mis-index).
+2. 0 mul on pixel path vs Q16 general.
+3. Explicit tier select when core emits native 720 DE later.
+
+**Why it does not earn a near-term seat:** ascal already paid (~2.9k ALM); true content
+DE is the load-bearing constraint, not the scaler algebra.
+
+Module + RBG remain on branch (`d7084b18`, `test_present_scale_2x_rtl_sim.sh`) —
+**default-OFF, not cancelled, not fit-critical.**
+
+### SETTLED: why `max_diff=1` hid the 4/3 phase bug
+
+**Finding (not hypothesis):** general path does **not** share the defect.  
+Evidence: `35927575` / `./build/test_scale_4_3_vs_general` — pred_hit=P11/P21/P31/P41.
+
+| # | Claim | Observation that would falsify it |
+|---|--------|-----------------------------------|
+| P1 | General frac = Q16 `prod[15:8]`, not `dst mod 4` | frac@hc1 near 64 (dst-bug) instead of ~192 |
+| P2 | Old vs_general was **floor-only** | floor max_diff would move when phase ROM swaps |
+| P3 | Unit ramp hides phase bug at ≤1 LSB | unit-ramp \|oracle−bug\| ≥ 64 |
+| P4 | Not “both paths wrong” | general closer to oracle than dst-mod4 on hi-contrast |
+
+Measured (host rerun): `floor_max_diff=1`, `unit_ramp_phase_bug_max=1`,
+`hi_contrast_phase_bug_max=127`, `frac1=191`, `bug_vs_or_hi_max=127`.  
+→ **We fixed one specialised-path bug; general Q16 bilin is a different (OK) class.**
+
+## True 960×540 (or 640×360) DE — integrator contract
+
+**Ballgame:** ascal `iauto=1` sets `i_hsize/i_vsize` from **i_de** edges
+(`ascal.vhd` iauto path; `sys_top.v` `.iauto(1)`).  
+If DE is larger than content, ascal upscales the **whole DE** (pad included).
+
+### present_core → sys_top boundary (checkable)
+
+| # | Requirement | How to verify |
+|---|-------------|----------------|
+| 1 | DE width (cycles with DE=1 per active line) **== content_w** | count `~HBlank` run; ≠529 Template, ≠1280 canvas |
+| 2 | DE height (lines with any DE=1) **== content_h** | count lines; 540 film / 360 TV |
+| 3 | Every DE=1 sample is **content** (no black pad inside DE) | content_on_de == de_pixels |
+| 4 | Store map **identity** inside DE: `store_x==hc`, `store_y==py` | not `floor(hc*cw/H_DE_large)` |
+| 5 | Runtime `win_h_de` / beam H_DE **== content_w** | mailbox/PLXG storage dims, not glass canvas |
+| 6 | ascal-measured ihsize/ivsize **== content_w/h** | follows from 1–2 when iauto=1 |
+
+**True:** DE rectangle ≡ content rectangle.  
+**Forbidden island examples:**
+- 320×240 paint inside Template **529×480** DE (classic quarter-glass)
+- **960×540** paint inside **1280×720** core DE (canvas/storage conflation)
+- Claiming 960-wide content while `H_DE` left at **529**
+
+### Automated gate (no device)
+
+```bash
+tests/unit/test_true_content_de_contract.sh   # product + RED FAULT_ISLAND_PASSES
+./build/test_true_content_de_contract
 ```
-24 fps film  → 960×540 + present_scale_4_3 (detail)
-30 fps TV    → 640×360 + present_scale_2x  (motion, no judder)
-```
 
-`present_scale_2x.sv`: `store = dst >> 1`, NN weights 256/0, **no phase ROM**.
-General Q16 NN also matches floors exactly (sx=32768) — specialised still ships
-because: 0 muls, bilin cannot soften, explicit tier select.
+Product prints `CONTRACT true_960x540 ... true_de=1` and
+`CONTRACT island_960in1280x720 ... true_de=0`.  
+RED: `-DFAULT_ISLAND_PASSES` must yield `true rc≠0` with `EXECUTED`.
 
-Resources: ~tens of ALMs, 0 M10K, 0 DSP — **coexist with 4/3**.
-RBG: `test_present_scale_2x_rtl_sim.sh` (RED IDENTITY / PLUS1).
+### Cadence note (24 vs 30 → HDMI 60) — source-backed, limited claim
 
-### Outstanding: why max_diff=1 hid 4/3 phase bug
+ascal has a **DDR framebuffer** (`vbuf_*` on `ascal` in `sys_top.v`); `i_clk`/`i_ce`
+are independent of `o_clk` (hdmi). So ascal **does** decouple core frame rate from
+HDMI line rate: input frames are written, output scans at 60.
 
-**Answered in `35927575` / `test_scale_4_3_vs_general` diagnosis (all P1–P4 HIT):**
-- General path uses **Q16 residue** `frac=prod[15:8]`, **not** dst-mod-4 — no shared bug.
-- Old `vs_general` compared **floors only** → blind to weight swap.
-- Unit ramp hides phase error at ≤1 LSB; high-contrast shows |Δ|=128 at dst1.
+**What that does *not* remove:** display **repeat pattern** on glass.
+- 24→60 = **5:2** (some frames shown 2×, some 3×) → film judder class
+- 30→60 = **2:1** (every frame shown twice) → no 3:2-style cadence
+
+Whether that is acceptable is product taste + parent capture — not a silicon forbid.
+**Budget:** 960×540×30 ≈ 15.55 Mpix/s is inside w-clock’s 40 Mpix/s bridge; prefer
+**30** when PMS/ARM margin allows if judder is the concern. Unknown until measured:
+ascal first-frame lock on 960×540@30 — parent HDMI check.
