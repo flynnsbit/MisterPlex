@@ -33,21 +33,33 @@ If map.rpt shows u_mp_beam / u_mp_npx_path / u_mp_timing **removed**, the fit is
 - Template H_DE=529 path must remain when macro OFF.
 
 ## Parent device checks (not agent)
-1. ONE menu deploy of new RBF
-2. Idle still paints (daemon) — may differ canvas if profile 480p
-3. With a frame in bank: no sustained black; capture via `scripts/hdmi_capture_idle.sh`
-4. Edge sweep before claiming DE lock (MP_SYNC_LAG=0 uncalibrated)
-5. Rollback: baseline `c5382bee` / prior good RBF
+1. ONE menu deploy of new RBF (beam already `video_mode=0` 1280×720@60 HDMI)
+2. Capture via `scripts/hdmi_capture_idle.sh` only (never bare ffmpeg 1-frame)
+3. **Control arm (parent, core `d1b24e0c`, ARM idle):**  
+   `CYAN_PX=0` · `ACTIVE=923x717` · orange chevron · no cyan  
+   File class: parent `/tmp/prereg_control720.txt` (4/4 HIT)
+4. **Fabric discriminators (must both move vs control):**
+   - Colour: w-osd PASS ⇒ `CYAN_PX>=2000` (`#00C8FF` L-brackets; ARM cannot emit)
+   - Geometry: native 1280×720 path ⇒ `ACTIVE` grows toward full 720p raster  
+     (control is 480p-class letterboxed). Colour and geometry must **agree**.
+5. w-clock mode ON + `use_ext`: core DE 1280×720 (beam); same-clock refresh ~16 Hz  
+   until clk_pix — do not claim CEA 24/60 fps from this alone
+6. Edge sweep before claiming DE lock (MP_SYNC_LAG=0 uncalibrated)
+7. Rollback: baseline `c5382bee`; restore `video_mode=8` from `MiSTer.ini.bak-parent720` if needed
 
 ## Explicit non-claims until measured
 - DE_LAG / MP_SYNC_LAG
 - Fmax with PPC=2/4 wider YUV
 - ARM ms removed (expect present/scale bucket ↓ — parent profiles)
 
-## Parent decode evidence (clean re-measure; contaminated session WITHDRAWN)
-Parent killed a rogue on-device CPU burner that polluted prior sweeps.
-**Clean (exit=0):** decode alone **35.94 ms/f** mean (35.82/36.05) vs 41.667 → **+5.73 ms** margin.
-Any concurrent ARM-side peer tested so far still pushes past the deadline.
-Route A (decode under verified full-frame DMA) is **unmeasured** — prior DMA/pl330 and
-"CPU-theft dominated" claims are **retracted**. Fabric planes remain mandatory for 720p.
-Do not cite bank-sweep / serial-copy-anomaly numbers from the contaminated window.
+## Consolidated clean budget (parent — cite only this)
+```
+  720p24 deadline .............. 41.667 ms/f
+  ARM decode alone ............. 35.94 ms/f   PASS, margin 5.73
+  ARM CPU copy into bank ....... 14.978 ms/f
+  serial decode + copy ......... 50.92 ms/f   FAIL by 9.25
+  decode + ANY concurrent peer . 45-48 ms/f   FAIL
+  decode + verified sust. DMA .. UNMEASURED (instrument bug)
+```
+Anomaly chase closed: clean `frame_ms=14.978` matches original ~15.0–15.3.  
+Fabric planes remain mandatory. Contaminated session figures stay withdrawn.

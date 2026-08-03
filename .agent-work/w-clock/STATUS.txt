@@ -1,21 +1,14 @@
-w-clock STATUS — fit survival + 720p60 plan
-==========================================
-Branch: w-clock-bump
-Macro: PRESENT_MULTI_PIXEL default OFF
+w-clock STATUS
+==============
+Branch: w-clock-bump · HEAD includes e0f23e5a fit-survival package
+Macro PRESENT_MULTI_PIXEL default OFF
 
-LANDED:
-- 1280x720 mode path (8003ef89)
-- FIT_SURVIVAL_CDC_720P.md — constrained paths; STA slack UNKNOWN pre-fit
-- H_OWNERSHIP_W_SCALER.md — beam owns glass H; scaler maps store; 1280%8=0 no DE straddle
-- P720P60_4PPC_PLAN.md — cea60 @4ppc = 18.5625 MHz fabric OK; out still needs clk_pix 74.25
-- assets/present_720p_fit_contract.json + check_present_720p_fit_contract.py
-- Beam TB PPC=2 and PPC=4 (1650%4=2 short step)
+PARENT CONTROL ARM (device, not this lane):
+  core d1b24e0c · video_mode=0 (1280x720@60 HDMI)
+  CYAN_PX=0 ACTIVE=923x717 orange ARM idle — fabric PASS needs cyan+geometry move
 
-PARENT VERIFY (device after integration fit):
-  Enable PRESENT_MULTI_PIXEL PRESENT_PX_PER_CLK=2 (+ scaler 1280 geom, has_frame)
-  DEPLOY_LOAD=menu ./scripts/deploy_plex_core.sh
-  scripts/hdmi_capture_idle.sh <png>
-  make post-fit-timing STA_RPT=...   # hard fail on neg slack
-  make post-fit-hierarchy FIT_RPT=...  # u_mp_* rows > 0
+LANE READY FOR INTEGRATION:
+  1280 DE beam + npx path + CDC/SDC contract + H ownership + 4ppc 60 plan
+  STA slack: unknown until parent post-fit-timing
 
-HONEST: no STA slack claimed. Same-clock != 24/60 fps.
+Clean budget: decode 35.94 / copy 14.978 / serial FAIL — fabric mandatory
