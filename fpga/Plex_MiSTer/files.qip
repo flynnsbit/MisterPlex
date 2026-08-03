@@ -15,6 +15,9 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddram_frame_rd.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/sdram.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/sdram_memtest.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_bus_arbiter.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_bus_arbiter_plxc.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_plxc_master_bridge.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/plex_chrome_ddr_loader.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_bitstream_reader.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/bitstream_fifo.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/stream_ingest.sv

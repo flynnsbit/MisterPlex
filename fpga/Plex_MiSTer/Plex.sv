@@ -1128,11 +1128,97 @@ host_bank_ingest_credit hbic (
 	|FAB_BASE[15:0] | |FAB_DB[15:0] |
 	|hbic_may_fill | hbic_err_no_credit | hbic_err_double;
 `else
-ddr_bus_arbiter ddr_arb (
+// Product path: m0 scanout + m1 stream/PLXG + m3 PLXC chrome (lowest prio).
+// STARVE_VIDEO tied 0 — m0 always preempts chrome. See tests/unit/test_ddr_plxc_grant_verilator.sh.
+wire        plxc_c_req, plxc_c_we, plxc_c_gnt, plxc_c_rd_valid;
+wire [28:0] plxc_c_addr;
+wire [63:0] plxc_c_wdata, plxc_c_rdata;
+wire        plxc_a_want, plxc_a_busy, plxc_a_rd, plxc_a_we, plxc_a_dout_ready;
+wire  [7:0] plxc_a_burstcnt, plxc_a_be;
+wire [28:0] plxc_a_addr;
+wire [63:0] plxc_a_din, plxc_a_dout;
+wire        plxc_ld_busy;
+wire [15:0] plxc_ld_seq;
+wire [31:0] plxc_ld_loads, plxc_ld_plxo, plxc_ld_bad;
+wire [31:0] plxc_br_gnt, plxc_br_rd, plxc_br_we;
+wire        plxc_grant_m3_live;
+wire [31:0] plxc_arb_m0, plxc_arb_m1, plxc_arb_m3;
+wire        plxc_host_we;
+wire  [7:0] plxc_host_addr;
+wire [63:0] plxc_host_wdata;
+
+`ifdef PLEX_CHROME_DDR
+localparam bit PLXC_DDR_EN = 1'b1;
+`else
+localparam bit PLXC_DDR_EN = 1'b0;
+`endif
+
+plex_chrome_ddr_loader #(
+	.ENABLE(PLXC_DDR_EN),
+	.MAX_CMDS(48),
+	.DOORBELL_PHYS(32'h300F_F000),
+	.PLXC_OFF(32'h130),
+	.PLXO_OFF(32'h138),
+	.PLXL_OFF(32'h140)
+) u_plxc_ddr_loader (
+	.clk(clk_sys),
+	.reset(reset),
+	.m_req(plxc_c_req),
+	.m_we(plxc_c_we),
+	.m_addr(plxc_c_addr),
+	.m_wdata(plxc_c_wdata),
+	.m_gnt(plxc_c_gnt),
+	.m_rd_valid(plxc_c_rd_valid),
+	.m_rdata(plxc_c_rdata),
+	.host_we(plxc_host_we),
+	.host_addr(plxc_host_addr),
+	.host_wdata(plxc_host_wdata),
+	.chrome_hw(1'b1),
+	.mon_w(12'd1280),
+	.mon_h(12'd720),
+	.mon_scale(4'd3),
+	.last_seq(plxc_ld_seq),
+	.busy(plxc_ld_busy),
+	.cnt_loads(plxc_ld_loads),
+	.cnt_plxo_wr(plxc_ld_plxo),
+	.cnt_bad_magic(plxc_ld_bad)
+);
+
+ddr_plxc_master_bridge u_plxc_bridge (
+	.clk(clk_sys),
+	.reset(reset),
+	.c_req(plxc_c_req),
+	.c_we(plxc_c_we),
+	.c_addr(plxc_c_addr),
+	.c_wdata(plxc_c_wdata),
+	.c_gnt(plxc_c_gnt),
+	.c_rd_valid(plxc_c_rd_valid),
+	.c_rdata(plxc_c_rdata),
+	.a_want(plxc_a_want),
+	.a_busy(plxc_a_busy),
+	.a_burstcnt(plxc_a_burstcnt),
+	.a_addr(plxc_a_addr),
+	.a_dout(plxc_a_dout),
+	.a_dout_ready(plxc_a_dout_ready),
+	.a_rd(plxc_a_rd),
+	.a_din(plxc_a_din),
+	.a_be(plxc_a_be),
+	.a_we(plxc_a_we),
+	.cnt_gnt(plxc_br_gnt),
+	.cnt_rd_beats(plxc_br_rd),
+	.cnt_we_beats(plxc_br_we)
+);
+
+ddr_bus_arbiter_plxc #(
+	.STARVE_VIDEO(1'b0)
+) ddr_arb (
 	.clk(clk_ddr),
 	.clk_m1(clk_sys),
+	.clk_m3(clk_sys),
 	.reset(reset),
+	.starve_video(1'b0),
 	.m1_want(m1c_want),
+	.m3_want(plxc_a_want),
 	.m0_busy(present_ddr_busy),
 	.m0_burstcnt(present_ddr_burstcnt),
 	.m0_addr(present_ddr_addr),
@@ -1151,6 +1237,19 @@ ddr_bus_arbiter ddr_arb (
 	.m1_din(m1c_din),
 	.m1_be(m1c_be),
 	.m1_we(m1c_we),
+	.m3_busy(plxc_a_busy),
+	.m3_burstcnt(plxc_a_burstcnt),
+	.m3_addr(plxc_a_addr),
+	.m3_dout(plxc_a_dout),
+	.m3_dout_ready(plxc_a_dout_ready),
+	.m3_rd(plxc_a_rd),
+	.m3_din(plxc_a_din),
+	.m3_be(plxc_a_be),
+	.m3_we(plxc_a_we),
+	.grant_m3_live(plxc_grant_m3_live),
+	.cnt_grant_m0(plxc_arb_m0),
+	.cnt_grant_m1(plxc_arb_m1),
+	.cnt_grant_m3(plxc_arb_m3),
 	.DDRAM_BUSY(DDRAM_BUSY),
 	.DDRAM_BURSTCNT(DDRAM_BURSTCNT),
 	.DDRAM_ADDR(DDRAM_ADDR),
@@ -1161,6 +1260,12 @@ ddr_bus_arbiter ddr_arb (
 	.DDRAM_BE(DDRAM_BE),
 	.DDRAM_WE(DDRAM_WE)
 );
+
+// Retain PLXC hierarchy; host beats quiet until PLEX_CHROME_DDR + w-osd plane ports.
+(* keep = 1 *) wire _keep_plxc_slot =
+	plxc_c_req | plxc_c_gnt | plxc_c_rd_valid | plxc_grant_m3_live |
+	plxc_host_we | plxc_ld_busy | |plxc_ld_loads | |plxc_br_gnt |
+	|plxc_arb_m3 | |plxc_host_addr | |plxc_host_wdata[7:0] | |plxc_ld_seq;
 `endif
 `endif
 
