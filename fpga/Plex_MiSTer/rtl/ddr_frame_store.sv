@@ -8,14 +8,8 @@
 //
 // geom_enable=0 (reset): bit-exact parameter path (CODED_W/H, stride=CODED_W,
 // bank map PHYS_BASE/0x80000/doorbell product).
-// geom_enable=1: runtime plane pitch; bank map is CAPACITY-selected:
-//   I420 frame_bytes = y_stride*coded_h + 2*(chroma_stride*coded_h/2)
-//   usable = HPS_BANK_STRIDE − 0x1000 (doorbell/control page on bank1 tail)
-//   if frame_bytes > usable (520192, NOT full 512 KiB) → Option-C
-//     (0x30180000 / 0x180000 / 0x3047F000)
-//   else → legacy product banks.
-// Width alone must NOT select the map: product 960x540 is <1280 wide but
-// 777600 B > 520192 B usable and MUST use Option-C (w-mem / parent 2026-08-03).
+// geom_enable=1 && coded_w>=1280: Option-C bank map (0x30180000/0x180000/0x3047F000)
+// + runtime plane pitch — contract with w-mem fabric_ddr_writer 720p tier.
 
 module ddr_frame_store #(
 	parameter int FRAME_W = 640,
@@ -37,8 +31,7 @@ module ddr_frame_store #(
 	parameter int HPS_BANK_STRIDE_BYTES = 524288,
 	parameter [31:0] DOORBELL_PHYS = PHYS_BASE + (2 * HPS_BANK_STRIDE_BYTES) - 32'h1000,
 	// Option-C 720p map (parent-verified 0x30180000 / 0x180000 / 0x3047F000).
-	// Runtime-selected when geom_enable && I420 payload exceeds legacy bank stride.
-	// Default path uses PHYS_* (480p). Do not key Option-C on coded_w alone.
+	// Runtime-selected when geom_enable && coded_w>=1280. Default path uses PHYS_*.
 	parameter [31:0] PHYS_BASE_720P = 32'h3018_0000,
 	parameter int HPS_BANK_STRIDE_BYTES_720P = 32'h0018_0000,
 	parameter [31:0] DOORBELL_PHYS_720P = 32'h3047_F000,
@@ -97,17 +90,17 @@ module ddr_frame_store #(
 	// Runtime bank geometry (PLXW). geom_enable=0 → parameter legacy path.
 	// Callers must tie these (product: Plex/present_core; TBs: 0).
 	// No port defaults — Verilator was ignoring C++ drivers when defaults existed.
-	input  wire        geom_enable = 1'b0,
-	input  wire [10:0] rt_coded_w = 11'd0,
-	input  wire [10:0] rt_coded_h = 11'd0,
-	input  wire [11:0] rt_y_stride = 12'd0,
-	input  wire [10:0] rt_chroma_stride = 11'd0,
-	input  wire [10:0] rt_display_w = 11'd0,
-	input  wire [10:0] rt_display_h = 11'd0,
-	input  wire [10:0] rt_present_x = 11'd0,
-	input  wire [10:0] rt_present_y = 11'd0,
-	input  wire [10:0] rt_crop_left = 11'd0,
-	input  wire [10:0] rt_crop_top = 11'd0,
+	input  wire        geom_enable,
+	input  wire [10:0] rt_coded_w,
+	input  wire [10:0] rt_coded_h,
+	input  wire [11:0] rt_y_stride,
+	input  wire [10:0] rt_chroma_stride,
+	input  wire [10:0] rt_display_w,
+	input  wire [10:0] rt_display_h,
+	input  wire [10:0] rt_present_x,
+	input  wire [10:0] rt_present_y,
+	input  wire [10:0] rt_crop_left,
+	input  wire [10:0] rt_crop_top,
 
 	input  wire        start_req,
 	input  wire        bank_sel,
@@ -163,29 +156,10 @@ module ddr_frame_store #(
 	localparam [Y_W-1:0] LEG_PRESENT_END_Y = Y_W'(PRESENT_Y + DISPLAY_H);
 	localparam [CODED_X_W-1:0] LEG_CROP_LEFT = CODED_X_W'(CROP_LEFT);
 	localparam [CODED_Y_W-1:0] LEG_CROP_TOP = CODED_Y_W'(CROP_TOP);
-	// ---- Compile-time bank map (B1) ----------------------------------------
-	// Without OPTION_C: LEG_* = module PHYS_BASE/stride/doorbell (480p product).
-	// With OPTION_C: LEG_* re-bases to Option-C so geom_enable=0 is still on a
-	// capacity-safe map for the 960×540 max tier. Capacity *predicate* always
-	// compares against fixed 480p usable (0x7F000), not the active LEG stride —
-	// otherwise OPTION_C would make rt_need_optc vacuously false.
-	// `ifdef OPTION_C is the compile-time bank path the fit gate requires;
-	// FRAME_W=960 QSF alone does not re-base these localparams.
-`ifdef OPTION_C
-	localparam [28:0] LEG_BASE_W0 = PHYS_BASE_720P[31:3];
-	localparam [28:0] LEG_BANK_STRIDE_QWORDS = 29'(HPS_BANK_STRIDE_BYTES_720P / 8);
-	localparam [28:0] LEG_BASE_W1 = PHYS_BASE_720P[31:3] + LEG_BANK_STRIDE_QWORDS;
-	// Frame doorbell follows Option-C; PLXG bootstrap stays on 0x300FF000 via poller.
-	localparam [28:0] LEG_DOORBELL_W = DOORBELL_PHYS_720P[31:3];
-`else
 	localparam [28:0] LEG_BASE_W0 = PHYS_BASE[31:3];
 	localparam [28:0] LEG_BANK_STRIDE_QWORDS = 29'(HPS_BANK_STRIDE_BYTES / 8);
 	localparam [28:0] LEG_BASE_W1 = PHYS_BASE[31:3] + LEG_BANK_STRIDE_QWORDS;
 	localparam [28:0] LEG_DOORBELL_W = DOORBELL_PHYS[31:3];
-`endif
-	// Usable payload threshold for capacity select = legacy 480p stride − 4KiB.
-	// Fixed (not derived from LEG stride) so OPTION_C re-base cannot hide oversize.
-	localparam [28:0] LEG_BANK_USABLE_QWORDS = 29'(32'h0007_F000 / 8); // 520192/8
 	localparam [28:0] OPTC_BASE_W0 = PHYS_BASE_720P[31:3];
 	localparam [28:0] OPTC_BANK_STRIDE_QWORDS = 29'(HPS_BANK_STRIDE_BYTES_720P / 8);
 	localparam [28:0] OPTC_BASE_W1 = PHYS_BASE_720P[31:3] + OPTC_BANK_STRIDE_QWORDS;
@@ -241,63 +215,32 @@ module ddr_frame_store #(
 	reg [28:0] eff_base_w1;
 	reg [28:0] eff_doorbell_w;
 
-	// RAW (pre-clamp) geometry — over-max must REJECT, not clamp-then-accept (rd-duck).
-	wire rt_raw_nonzero = (rt_coded_w != 11'd0) && (rt_coded_h != 11'd0) &&
-	                      (rt_y_stride != 12'd0) && (rt_chroma_stride != 11'd0);
-	wire rt_raw_in_range = (rt_coded_w <= 11'(MAX_CODED_W)) &&
-	                       (rt_coded_h <= 11'(MAX_CODED_H)) &&
-	                       (rt_y_stride <= 12'(MAX_CODED_W)) &&
-	                       (rt_chroma_stride <= 11'(MAX_CODED_W/2));
-	// coded_w must be 16-aligned: chroma fetch is coded_w>>4 qwords (= w/2 bytes).
-	// 8-aligned-only traps (e.g. 968) pass stride%8 but drop 4 chroma bytes (rd-duck).
-	// Height: even only (4:2:0). Display 540 is valid; MB-align is NOT required here.
-	wire rt_raw_aligned = (rt_coded_w[3:0] == 4'd0) && !rt_coded_h[0] &&
-	                      (rt_y_stride[2:0] == 3'd0) && (rt_chroma_stride[2:0] == 3'd0) &&
-	                      (rt_y_stride >= {1'b0, rt_coded_w}) &&
-	                      (rt_chroma_stride >= {1'b0, rt_coded_w[10:1]});
-	wire rt_raw_ok = rt_raw_nonzero && rt_raw_in_range && rt_raw_aligned;
+	wire [10:0] rt_cw_nz = (rt_coded_w == 11'd0) ? 11'(CODED_W) : rt_coded_w;
+	wire [10:0] rt_ch_nz = (rt_coded_h == 11'd0) ? 11'(CODED_H) : rt_coded_h;
+	wire [11:0] rt_ys_nz = (rt_y_stride == 12'd0) ? 12'(CODED_W) : rt_y_stride;
+	wire [10:0] rt_cs_nz = (rt_chroma_stride == 11'd0) ? 11'(CODED_W/2) : rt_chroma_stride;
+	wire [10:0] rt_dw_nz = (rt_display_w == 11'd0) ? rt_cw_nz : rt_display_w;
+	wire [10:0] rt_dh_nz = (rt_display_h == 11'd0) ? rt_ch_nz : rt_display_h;
 
-	// Effective dims only when raw_ok (else unused; legacy path selected).
-	wire [10:0] rt_cw_cl = rt_coded_w;
-	wire [10:0] rt_ch_cl = rt_coded_h;
-	wire [11:0] rt_ys_cl = rt_y_stride;
-	wire [10:0] rt_cs_cl = rt_chroma_stride;
-	wire [10:0] rt_dw_nz = (rt_display_w == 11'd0) ? rt_cw_cl : rt_display_w;
-	wire [10:0] rt_dh_nz = (rt_display_h == 11'd0) ? rt_ch_cl : rt_display_h;
+	// Clamp coded to MAX so line RAM addr never overflows.
+	wire [10:0] rt_cw_cl = (rt_cw_nz > 11'(MAX_CODED_W)) ? 11'(MAX_CODED_W) : rt_cw_nz;
+	wire [10:0] rt_ch_cl = (rt_ch_nz > 11'(MAX_CODED_H)) ? 11'(MAX_CODED_H) : rt_ch_nz;
+	wire [11:0] rt_ys_cl = (rt_ys_nz > 12'(MAX_CODED_W)) ? 12'(MAX_CODED_W) : rt_ys_nz;
+	wire [10:0] rt_cs_cl = (rt_cs_nz > 11'(MAX_CODED_W/2)) ? 11'(MAX_CODED_W/2) : rt_cs_nz;
 
-	wire [28:0] rt_y_bytes_qw = ({17'd0, rt_ys_cl} * {18'd0, rt_ch_cl}) >> 3;
-	wire [28:0] rt_c_bytes_qw = ({18'd0, rt_cs_cl} * {19'd0, rt_ch_cl[10:1]}) >> 3;
-	// Exact-byte I420 payload from RAW dims (no silent clamp into plane math).
-	wire [31:0] rt_payload_bytes =
-		({20'd0, rt_ys_cl} * {20'd0, rt_ch_cl}) +
-		({21'd0, rt_cs_cl} * {21'd0, rt_ch_cl});
-	// Capacity threshold = legacy 480p usable (stride 0x80000 − 0x1000). Not the
-	// active LEG stride — under OPTION_C LEG is already Option-C sized.
-	localparam [31:0] LEG_BANK_USABLE_BYTES = 32'h0007_F000; // 520192
-	wire rt_need_optc = rt_raw_ok && (rt_payload_bytes > LEG_BANK_USABLE_BYTES);
+	wire [28:0] rt_y_bytes_qw = ({17'd0, rt_ys_cl} * {18'd0, rt_ch_cl}) >> 3; // (ys*ch)/8
+	wire [28:0] rt_c_bytes_qw = ({18'd0, rt_cs_cl} * {19'd0, rt_ch_cl[10:1]}) >> 3; // (cs*ch/2)/8
 
 	// FAULT: ignore geom_enable (always legacy pitch) — red twin for runtime-stride gate.
 `ifdef DDR_FRAME_STORE_FAULT_IGNORE_GEOM
 	wire geom_enable_eff = 1'b0;
 `else
-	// Reject malformed / over-max raw geometry — no clamp-then-accept.
-	wire geom_enable_eff = geom_enable & rt_raw_ok;
+	wire geom_enable_eff = geom_enable;
 `endif
-	// Loud reject (parent PMS AR-fit): geom requested but raw fails → sticky fault.
-	// Without this, !geom_enable_eff silently reloads LEGACY 624×480 and scans a
-	// host native buffer as the wrong pitch (shear). Prefer black + PLXF 0xE2.
-	// FAULT twin: silent fallthrough (no sticky, no 0xE2) — red REPRO for loud path.
-`ifdef DDR_FRAME_STORE_FAULT_SILENT_GEOM_REJECT
-	wire geom_reject_now = 1'b0;
-`else
-	wire geom_reject_now = geom_enable & ~rt_raw_ok;
-`endif
-	reg  geom_reject_r;
 
 	always @(posedge clk) begin
 		if (reset) begin
 			geom_en_r      <= 1'b0;
-			geom_reject_r  <= 1'b0;
 			eff_coded_w    <= 11'(CODED_W);
 			eff_coded_h    <= 11'(CODED_H);
 			eff_y_stride   <= 12'(CODED_W);
@@ -320,12 +263,6 @@ module ddr_frame_store #(
 			eff_doorbell_w <= LEG_DOORBELL_W;
 		end else if (!geom_enable_eff) begin
 			geom_en_r      <= 1'b0;
-			// Sticky reject while host still asserts geom_enable with bad raw;
-			// clear only when geom is off (mode exit) — not on silent legacy fallthrough.
-			if (geom_reject_now)
-				geom_reject_r <= 1'b1;
-			else if (!geom_enable)
-				geom_reject_r <= 1'b0;
 			eff_coded_w    <= 11'(CODED_W);
 			eff_coded_h    <= 11'(CODED_H);
 			eff_y_stride   <= 12'(CODED_W);
@@ -348,7 +285,6 @@ module ddr_frame_store #(
 			eff_doorbell_w <= LEG_DOORBELL_W;
 		end else begin
 			geom_en_r      <= 1'b1;
-			geom_reject_r  <= 1'b0; // accepted good geom clears sticky
 			eff_coded_w    <= rt_cw_cl;
 			eff_coded_h    <= rt_ch_cl;
 			eff_y_stride   <= rt_ys_cl;
@@ -359,22 +295,20 @@ module ddr_frame_store #(
 			eff_pres_y     <= rt_present_y;
 			eff_crop_l     <= rt_crop_left;
 			eff_crop_t     <= rt_crop_top;
-			eff_y_fetch_qw <= rt_cw_cl[10:3]; // coded_w/8  (w%16==0 ⇒ exact)
-			eff_c_fetch_qw <= rt_cw_cl[10:4]; // coded_w/16 (chroma bytes = w/2)
+			eff_y_fetch_qw <= rt_cw_cl[10:3]; // coded_w/8 (require multiple of 8)
+			eff_c_fetch_qw <= rt_cw_cl[10:4]; // coded_w/16
 			eff_y_pitch_qw <= rt_ys_cl[11:3]; // stride/8
 			eff_c_pitch_qw <= rt_cs_cl[10:3];
 			eff_u_base_qw  <= rt_y_bytes_qw;
 			eff_v_base_qw  <= rt_y_bytes_qw + rt_c_bytes_qw;
-			// Option-C when exact I420 payload > legacy usable (stride−4KiB).
-			// NOT full stride, NOT coded_w>=1280. 720x482=520560→Option-C;
-			// 960x540=777600→Option-C; 624x480 stays legacy. Unaligned rejected above.
+			// Option-C banks for native 720p coded width (w-mem writer contract).
 `ifdef DDR_FRAME_STORE_FAULT_FORCE_LEGACY_BANK_MAP
 			eff_optc_map   <= 1'b0;
 			eff_base_w0    <= LEG_BASE_W0;
 			eff_base_w1    <= LEG_BASE_W1;
 			eff_doorbell_w <= LEG_DOORBELL_W;
 `else
-			if (rt_need_optc) begin
+			if (rt_cw_cl >= 11'd1280) begin
 				eff_optc_map   <= 1'b1;
 				eff_base_w0    <= OPTC_BASE_W0;
 				eff_base_w1    <= OPTC_BASE_W1;
@@ -403,9 +337,6 @@ module ddr_frame_store #(
 	localparam [31:0] MAGIC_D = 32'h504C_5844; // PLXD bank-release (Display-bank)
 	localparam [1:0] DOORBELL_FORMAT_YUV420P = 2'd1;
 	localparam [7:0] DEBUG_FORMAT_ERROR = 8'hE1; // PLXF frame-debug: rejected non-YUV doorbell
-	// PLXF frame-debug: geom_enable=1 but rt_raw_ok=0 (unaligned/over-max/zero).
-	// Was silent legacy fallback → sheared picture. Now sticky + black + 0xE2.
-	localparam [7:0] DEBUG_GEOM_REJECT = 8'hE2;
 
 	// Gray-code conversions for safe multi-bit CDC (want_y crossing)
 	function automatic [Y_W-1:0] y_bin2gray(input [Y_W-1:0] b);
@@ -474,25 +405,17 @@ module ddr_frame_store #(
 	generate
 		for (li = 0; li < LINE_SLOTS; li = li + 1) begin : gen_line
 			// Physical WIDTH = max line; active fetch length is eff_*_fetch_qw.
-			// Y: DUAL_RD=1 for qword-straddle (y_rd_addr_hi) — 2× M10K per slot.
-			// U/V: single-port (DUAL_RD=0); ports tied for module interface parity.
-			line_buf_ram #(
-				.WIDTH(Y_LINE_QWORDS_MAX), .AW(Y_QW_AW), .DATA_W(64), .DUAL_RD(1'b1)
-			) yram (
+			line_buf_ram #(.WIDTH(Y_LINE_QWORDS_MAX), .AW(Y_QW_AW), .DATA_W(64)) yram (
 				.wr_clk(clk_ddr), .wr_en(y_wr[li]), .wr_addr(y_wr_addr), .wr_data(y_wr_data),
 				.rd_clk(clk), .rd_addr(y_rd_addr), .rd_data(y_q[li]),
 				.rd_addr_b(y_rd_addr_hi), .rd_data_b(y_q_hi[li])
 			);
-			line_buf_ram #(
-				.WIDTH(C_LINE_QWORDS_MAX), .AW(C_QW_AW), .DATA_W(64), .DUAL_RD(1'b0)
-			) uram (
+			line_buf_ram #(.WIDTH(C_LINE_QWORDS_MAX), .AW(C_QW_AW), .DATA_W(64)) uram (
 				.wr_clk(clk_ddr), .wr_en(u_wr[li]), .wr_addr(c_wr_addr), .wr_data(u_wr_data),
 				.rd_clk(clk), .rd_addr(c_rd_addr), .rd_data(u_q[li]),
 				.rd_addr_b({C_QW_AW{1'b0}}), .rd_data_b()
 			);
-			line_buf_ram #(
-				.WIDTH(C_LINE_QWORDS_MAX), .AW(C_QW_AW), .DATA_W(64), .DUAL_RD(1'b0)
-			) vram (
+			line_buf_ram #(.WIDTH(C_LINE_QWORDS_MAX), .AW(C_QW_AW), .DATA_W(64)) vram (
 				.wr_clk(clk_ddr), .wr_en(v_wr[li]), .wr_addr(c_wr_addr), .wr_data(v_wr_data),
 				.rd_clk(clk), .rd_addr(c_rd_addr), .rd_data(v_q[li]),
 				.rd_addr_b({C_QW_AW{1'b0}}), .rd_data_b()
@@ -789,12 +712,7 @@ module ddr_frame_store #(
 				frame_miss_toggle <= ~frame_miss_toggle;
 			end
 
-			// geom_reject_r: force black — never scan legacy pitch over a native buffer.
-			if (geom_reject_r) begin
-				rd_r <= 8'd0;
-				rd_g <= 8'd0;
-				rd_b <= 8'd0;
-			end else if ((rd_active_d || !rd_active) && rd_visible_d && has_frame && !miss_d && y_hit_r && c_hit_r) begin
+			if ((rd_active_d || !rd_active) && rd_visible_d && has_frame && !miss_d && y_hit_r && c_hit_r) begin
 				rd_r <= sat8(r_calc);
 				rd_g <= sat8(g_calc);
 				rd_b <= sat8(b_calc);
@@ -1168,20 +1086,7 @@ module ddr_frame_store #(
 	                  db_stale_fallback;
 	wire spi_edge_ddr = start_d2 != start_seen;
 
-	// geom_reject_r (clk) → 2FF → clk_ddr for PLXF debug_state.
-	reg geom_reject_s1, geom_reject_s2;
-	always @(posedge clk_ddr) begin
-		if (reset_ddr) begin
-			geom_reject_s1 <= 1'b0;
-			geom_reject_s2 <= 1'b0;
-		end else begin
-			geom_reject_s1 <= geom_reject_r;
-			geom_reject_s2 <= geom_reject_s1;
-		end
-	end
-	assign debug_state = format_error ? DEBUG_FORMAT_ERROR :
-	                     (geom_reject_s2 ? DEBUG_GEOM_REJECT :
-	                      {LINE_COUNT[2:0], |y_valid, state_ddr});
+	assign debug_state = format_error ? DEBUG_FORMAT_ERROR : {LINE_COUNT[2:0], |y_valid, state_ddr};
 
 	always @(posedge clk_ddr) begin
 		if (reset_ddr) begin

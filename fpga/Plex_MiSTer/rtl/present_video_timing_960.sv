@@ -1,16 +1,18 @@
-// present_video_timing_960 — CONSTANT / MATH pack only (w-clock).
+// 960×540 ascal-native core timing (w-clock).
+// Copied into w-scaler worktree for true-DE count sim + fit card; owner remains w-clock.
+// First-fit beam class: clk_sys=20 MHz, CE=1, DE=960×540.
+// HDMI 1280×720@60 remains HPS/ascal output — not this module.
 //
-// B2b OWNERSHIP (parent 2026-08-03):
-//   * This module is NOT a raster generator and NOT a fit timing SoT.
-//   * Product beam counters live ONLY in present_beam_content_de.sv.
-//   * Role here: longint fps/geometry arithmetic for oracles + host docs.
-//   * Do not instantiate this as the sole timing path in a fit QSF.
+// Primary: ~30.0008 Hz  (H_TOTAL=1182, V_TOTAL=564)
+//   20e6/(1182*564) = 30.0008…  Hblank=222  Vblank=24
+// Alternate exact-ish 30.012: 1190×560 (Hblank=230, Vblank=20)
+// Film 24 Hz option: 1389×600 → 23.997 Hz (Hblank=429, Vblank=60)
 //
-// Primary MODE=0 numbers match beam defaults: 1182×564 @ 20 MHz → fps_milli=30000.
-// MODE=1: 1190×560. MODE=2 film legacy: 1389×600 → fps_milli trunc 23997..23998.
-// Film companion preferred: same H=1182, V=705 via beam rt_vtotal (not MODE=2).
+// Default OFF — selected only when PRESENT_BEAM_960 (parent fit grant).
+// Does NOT enable PRESENT_CLK_PIX_PLL / MULTI_PIXEL.
 
 module present_video_timing_960 #(
+	// 0 = 30 Hz primary (1182×564), 1 = 30 Hz roomy-H (1190×560), 2 = 24 Hz film
 	parameter int MODE = 0,
 	parameter int CLK_PIX_HZ = 20_000_000
 )(
@@ -24,12 +26,14 @@ module present_video_timing_960 #(
 	output wire [11:0] v_sync_e,
 	output wire [15:0] fps_eff_milli,
 	output wire        mode_30hz,
-	output wire        needs_wide_fifo
+	output wire        needs_wide_fifo  // 1 if active mpix > 13.33 (legacy serialize); 0 on 1px path
 );
 	localparam int H_DE_L = 960;
 	localparam int V_ACT_L = 540;
 
-	localparam int H_TOTAL_30A = 1182;
+	// Sync placement: porch after DE, pulse width comfortable for ascal iauto.
+	// Not CEA-legal (ascal input need not be); keep HS/VS away from DE edges.
+	localparam int H_TOTAL_30A = 1182; // primary
 	localparam int V_TOTAL_30A = 564;
 	localparam int H_TOTAL_30B = 1190;
 	localparam int V_TOTAL_30B = 560;
@@ -41,18 +45,21 @@ module present_video_timing_960 #(
 	localparam int VT = (MODE == 2) ? V_TOTAL_24  :
 	                    (MODE == 1) ? V_TOTAL_30B : V_TOTAL_30A;
 
+	// HS: 64 px pulse starting 32 px after DE end
 	localparam int HS_S = H_DE_L + 32;
 	localparam int HS_E = HS_S + 64;
+	// VS: 6 lines starting 8 lines after DE end (clamped into blank)
 	localparam int VS_S = V_ACT_L + 8;
 	localparam int VS_E = VS_S + 6;
 
+	// fps_milli = 1000 * CLK / (HT*VT) — must be 64-bit (rd-duck B2):
+	// 20e6*1000 = 2e10 overflows 32-bit signed (max 2.1e9) → was -2212 not 30000.
 	localparam longint PIX_FRAME = longint'(HT) * longint'(VT);
-	// 64-bit only: CLK*1000 = 20e9 overflows 32-bit int (B2 closed: was −2212).
-	localparam longint FPS_MILLI =
-		(longint'(CLK_PIX_HZ) * 64'd1000) / PIX_FRAME;
+	localparam longint FPS_MILLI_L = (longint'(CLK_PIX_HZ) * 1000) / PIX_FRAME;
+	localparam int FPS_MILLI = int'(FPS_MILLI_L);
 
-	localparam longint ACT_MPIX_MILLI =
-		(longint'(H_DE_L) * longint'(V_ACT_L) * FPS_MILLI) / 64'd1000;
+	// Active content rate
+	localparam int ACT_MPIX_MILLI = (H_DE_L * V_ACT_L * (FPS_MILLI)) / 1000; // approx
 
 	assign h_de      = 12'(H_DE_L);
 	assign h_total   = 12'(HT);
@@ -63,8 +70,15 @@ module present_video_timing_960 #(
 	assign v_sync_s  = 12'(VS_S);
 	assign v_sync_e  = 12'(VS_E);
 	assign fps_eff_milli = 16'(FPS_MILLI);
+	// synthesis translate_off
+	initial begin
+		if (FPS_MILLI_L <= 0 || FPS_MILLI_L > 120000)
+			$error("present_video_timing_960: FPS_MILLI_L=%0d out of range (32-bit overflow class)", FPS_MILLI_L);
+		if (MODE == 0 && (FPS_MILLI < 29900 || FPS_MILLI > 30100))
+			$error("present_video_timing_960 MODE0: FPS_MILLI=%0d expect ~30000", FPS_MILLI);
+	end
+	// synthesis translate_on
 	assign mode_30hz = (MODE != 2) ? 1'b1 : 1'b0;
-	wire _act_over_serialize_wall = (ACT_MPIX_MILLI > 13330);
+	// 1px @20 MHz peak=20 Mpix/s; 15.55 needs B1 only if serialize PPC path ON.
 	assign needs_wide_fifo = 1'b0;
-	wire _unused_act = _act_over_serialize_wall;
 endmodule

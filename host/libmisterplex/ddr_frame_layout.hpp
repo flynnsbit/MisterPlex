@@ -1,9 +1,7 @@
 #pragma once
 
 #include "libmisterplex/geometry_units.hpp"
-#include "libmisterplex/ddr_mem_map_policy.hpp"
 #include "libmisterplex/mailbox_abi_spec.hpp"
-#include "libmisterplex/plxg_record.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -11,16 +9,10 @@
 
 namespace misterplex {
 
-// Product max-tier presented (ascal_true_de_960 ceiling). Runtime DE tracks
-// delivered content; 960×540 is maximum not a fixed raster. Mirrors
-// DDR_FRAME_PRESENTED_* in ddr_frame_layout_params.svh (dual-header lockstep).
-constexpr PresentedWidth kDdrFramePresentedWidth{960};
-constexpr PresentedHeight kDdrFramePresentedHeight{540};
-
 // 480p geometry contract (coded / display-cropped / presented are NOT interchangeable):
 //   coded 624x480  — H.264 payload and DDR bank layout
 //   display 618x480 — after right crop of 6
-//   presented 640x480 — VGA scanout after 11+11 pillarbox (legacy silicon)
+//   presented 640x480 — VGA scanout after 11+11 pillarbox
 constexpr CodedWidth kPlex480pCodedWidth{624};
 constexpr CodedHeight kPlex480pCodedHeight{480};
 constexpr DisplayWidth kPlex480pDisplayWidth{618};
@@ -66,10 +58,8 @@ constexpr uint8_t kYuv420BlackU = 128;
 constexpr uint8_t kYuv420BlackV = 128;
 
 // ---- Aggressive 720p tier (opt-in; mirror ddr_frame_layout_params.svh) ----
-// Shipping product remains 480p. 720p requires matching RBF + PLXG handshake so
-// core and daemon never disagree on bank stride/doorbell (88509163 class stall).
-// Phys base is Option-C (after bitstream ring), NOT 0x30000000 — naive enlarge
-// of the 480p window stomps ring @0x30100000 and PLXB @0x30140000.
+// Shipping product remains 480p. 720p requires matching RBF + PLXG handshake.
+// Phys base is Option-C (after bitstream ring), NOT 0x30000000.
 constexpr CodedWidth kPlex720pCodedWidth{1280};
 constexpr CodedHeight kPlex720pCodedHeight{720};
 constexpr DisplayWidth kPlex720pDisplayWidth{1280};
@@ -96,94 +86,173 @@ static_assert(kPlex720pChromaStrideBytes == kPlex720pCodedWidth.get() / 2,
               "720p chroma stride must equal coded width/2");
 static_assert(kPlex720pYuv420pBytes == 1280 * 720 * 3 / 2,
               "720p I420 byte count");
-// alignUp(1382400, 0x40000) = 0x180000; doorbell = phys + 2*stride - 0x1000.
 constexpr uint32_t kPlex720pYuv420pBankStride = 0x00180000u;
 constexpr uint32_t kPlex720pDdrFramePhysBase = 0x30180000u;
 constexpr uint32_t kPlex720pYuv420pDoorbellPhys = 0x3047F000u;
-
-// Compressed bitstream ring (fabric-decode ingest) — mirror ddr_bitstream_ring.hpp
-// and ddr_frame_layout_params.svh. Collision fence vs Option-C + PL330.
-constexpr uint32_t kDdrBitstreamRingDataPhys = 0x30100000u;
-constexpr uint32_t kDdrBitstreamRingBytes = 262144u;
-constexpr uint32_t kDdrBitstreamRingCtrlPhys = 0x30140000u;
-constexpr uint32_t kDdrBitstreamRingReadPhys = 0x30140008u;
-constexpr uint32_t kDdrBitstreamRingErrPhys = 0x30140010u;
-constexpr uint32_t kDdrPl330ScratchPhys = 0x30600000u;
-constexpr int kDdrBitstreamRecordHeaderBytes = 32;
-
-// Parent-measured AU sizes (real720p_2600k.mp4, 1440 frames) — ring headroom SoT.
-constexpr uint32_t kDdrBitstreamMeasuredMeanAuBytes = 13507u;
-constexpr uint32_t kDdrBitstreamMeasuredMinAuBytes = 413u;
-constexpr uint32_t kDdrBitstreamMeasuredWorstAuBytes = 60915u;
-constexpr uint32_t kDdrBitstreamMinWorstAuSlots = 3u;
-constexpr uint32_t kDdrBitstreamWorstAuRecordBytes =
-    static_cast<uint32_t>(kDdrBitstreamRecordHeaderBytes) + kDdrBitstreamMeasuredWorstAuBytes;
-static_assert(kDdrBitstreamRingBytes >=
-                  kDdrBitstreamMinWorstAuSlots * kDdrBitstreamWorstAuRecordBytes,
-              "256 KiB ring must hold >=3 worst-case AUs (60915+32)");
-constexpr uint8_t kDdrBitstreamProfileIdcBaseline = 66u;
-constexpr uint8_t kDdrBitstreamCodecFlagConstraintSet1 = 1u;
-constexpr uint8_t kDdrBitstreamCodecFlagCabac = 2u;
-
-// H.264 level request vs delivery (DPB sizing — see h264_level_limits.hpp).
-constexpr int kDdrH264RequestedLevel = 30;
-constexpr int kDdrH264DeliveredLevel720p = 31;
-constexpr uint32_t kDdrH264720pFrameSizeMbs = 3600u;
-constexpr uint32_t kDdrH264L31MaxDpbFrames720p = 5u;
-constexpr uint32_t kDdrH264OptionCPresentBanks = 2u;
-constexpr int kDdr720pOutputSourceWidth = 960;
-constexpr int kDdr720pOutputSourceHeight = 540;
-constexpr int kDdr720pOutputSourceBytes = 777600;
-
-
-
-
-
-// Parent-verified 2026-08-02 on device: cmdline mem=511M memmap=513M$511M
-// reserves 0x1FF00000..0x40000000; /proc/iomem claims nothing in 0x3xxxxxxx.
-// Option-C base/doorbell/end all inside reserved → treat as confirmed free.
-// Headroom doorbell→0x40000000 ≈ 251.5 MB — take triple-buffer/prefetch freely.
 constexpr uint32_t kPlexDdrReservedWindowStart = 0x1FF00000u;
 constexpr uint32_t kPlexDdrReservedWindowEnd = 0x40000000u;
-
-static_assert(kDdrBitstreamRingDataPhys + kDdrBitstreamRingBytes == kDdrBitstreamRingCtrlPhys,
-              "PLXB sits at ring data end");
-static_assert(kDdrBitstreamRingDataPhys + kDdrBitstreamRingBytes <= kPlex720pDdrFramePhysBase,
-              "bitstream ring must not overlap Option-C banks");
-static_assert(kDdrBitstreamRingCtrlPhys + 0x50u <= kPlex720pDdrFramePhysBase,
-              "PLXB mailbox page must not overlap Option-C");
-static_assert(kPlex720pYuv420pDoorbellPhys + 0x1000u <= kDdrPl330ScratchPhys,
-              "doorbell page must not reach PL330");
-static_assert(kDdrBitstreamRingDataPhys >= kPlexDdrReservedWindowStart &&
-                  kDdrBitstreamRingCtrlPhys + 0x50u <= kPlexDdrReservedWindowEnd,
-              "bitstream ring inside reserved window");
-
-constexpr uint32_t kPlex720pMapBytes2Bank = 0x00300000u; // 2 * 0x180000
-constexpr uint32_t kPlex720pMapBytes3Bank = 0x00480000u; // 3 * 0x180000
-// Candidate only: base + 3*stride - 0x1000. Not product until bank field >1 bit.
-constexpr uint32_t kPlex720pTripleDoorbellPhys = 0x305FF000u;
-// PLXG — FIXED wire ABI at doorbell+0x800 (parent freeze). Literals here so
-// source-text invariant parsers resolve them; static_assert ties to mailbox_abi
-// (reachable compile-time guard — not test-only). Never re-derive from MAX_CMDS.
-// PLXC owns +0x130; list +0x140.. must not grow into PLXG (bound assert).
+constexpr uint32_t kPlex720pMapBytes2Bank = 0x00300000u;
+// PLXG — ABI FREEZE (parent 2026-08-03): FIXED doorbell+0x800.
+// Independent of MAX_CMDS / chrome list length. Never 0x130 (PLXC).
+// Single source: mailbox_abi::kPlxgOffset; duplicate is compile-checked below.
 constexpr uint32_t kDdrFramePlxgOffset = 0x800u;
 constexpr uint32_t kDdrFramePlxgMagic = 0x504C5847u; // "PLXG"
 constexpr uint32_t kDdrFramePlxgBytes = 40u;
 constexpr uint32_t kDdrFramePlxgBootstrapPhys = 0x300FF800u;
 static_assert(kDdrFramePlxgOffset == mailbox_abi::kPlxgOffset,
-              "ddr_frame_layout PLXG offset must equal mailbox_abi (reachable guard)");
+              "kDdrFramePlxgOffset must equal mailbox_abi::kPlxgOffset (ABI freeze)");
 static_assert(kDdrFramePlxgMagic == mailbox_abi::kPlxgMagic,
-              "PLXG magic must match mailbox_abi");
-static_assert(kDdrFramePlxgBytes == mailbox_abi::kPlxgBytes,
-              "PLXG size must match mailbox_abi (5 qwords)");
-static_assert(kDdrFramePlxgBootstrapPhys == mailbox_abi::kPlxgBootstrapPhys,
-              "PLXG bootstrap phys must match mailbox_abi");
-static_assert(kDdrFramePlxgOffset == 0x800u, "PLXG wire ABI FIXED at +0x800");
+              "PLXG magic must match mailbox_abi_spec");
 static_assert(kDdrFramePlxgOffset != mailbox_abi::kPlxcOffset,
               "PLXG must not collide with PLXC +0x130");
-static_assert(mailbox_abi::kPlxlOffset + mailbox_abi::kPlxcListMaxCmds * 8u <=
-                  kDdrFramePlxgOffset,
-              "chrome list must not grow into fixed PLXG +0x800");
+static_assert(kDdrFramePlxgOffset == 0x800u, "PLXG offset is ABI-frozen at 0x800");
+static_assert(kDdrFramePlxgBootstrapPhys == mailbox_abi::kPlxgBootstrapPhys,
+              "PLXG bootstrap phys must match mailbox_abi_spec");
+inline constexpr uint32_t plxgMailboxPhys(uint32_t doorbell_phys) {
+    return doorbell_phys + kDdrFramePlxgOffset;
+}
+
+// ---- Product ship path: STORAGE vs CANVAS (must not conflate) ----
+//
+// Three independent fields (rd-duck):
+//   1) STORAGE  — bank payload / plane bases / rt_coded_* / y_stride
+//                 Product ARM path: **960×540**, strides 960/480, **777600 B**
+//                 (libavcodec already applied SPS crop; FFmpeg owns 544→540)
+//   2) CANVAS   — glass DE / OSD / present scale destination: **1280×720**
+//   3) MAP TIER — phys/stride/doorbell: Option-C when storage does not fit
+//                 *usable* legacy bank payload (see below)
+//
+// ddr_frame_store derives U/V bases from rt_coded_w/h + strides (= STORAGE).
+// Passing canvas 1280×720 as rt_coded_* yields U base 921600 and 1280-wide
+// fetches against a 960-wide tight payload → shear. PLXG may still describe
+// canvas tier separately from content window; do not overload coded_* with DE.
+//
+// ddrFrameGeometryForFpgaPresent() remains the **product 480p silicon canvas**
+// for daemon rawW/H today — do NOT repoint it at 960×540 (would force FFmpeg
+// output/copy to the wrong size and kill the measured budget).
+//
+// SPS (bitstream, fabric-decoder/ring only): coded 544, crop_bottom 4 → 540.
+// Product bank planes use **540**, never 544. See ddr_bitstream_ring.hpp.
+//
+// Bank usable payload (rd-duck; **w-mem owns** RTL Option-C predicate):
+//   doorbell = phys + 2*stride - 0x1000
+//   usable   = stride - 0x1000   (legacy: 524288-4096 = 520192)
+// Full-stride compare is WRONG: 720×482 = 520560 < 524288 but overlaps doorbell.
+// w-scaler does NOT land the ddr_frame_store map select — coordinate with w-mem.
+constexpr uint32_t kDdrFrameControlPageBytes = 0x1000u;
+constexpr uint32_t kPlex480pYuv420pUsablePayloadBytes =
+    kPlex480pYuv420pBankStride - kDdrFrameControlPageBytes; // 520192
+constexpr uint32_t kPlex720pYuv420pUsablePayloadBytes =
+    kPlex720pYuv420pBankStride - kDdrFrameControlPageBytes; // 1572864
+
+constexpr int kPlexProductStorageW = 960;
+constexpr int kPlexProductStorageH = 540;
+constexpr int kPlexProductCanvasW = 1280;
+constexpr int kPlexProductCanvasH = 720;
+constexpr int kPlexProductSrcW = kPlexProductStorageW; // alias: scale source
+constexpr int kPlexProductDisplayH = kPlexProductStorageH;
+constexpr int kPlexProductSpsCodedH = 544; // bitstream only — not bank planes
+constexpr int kPlexProductSpsCropBottomLines = 4;
+constexpr int kPlexProductYStrideBytes = 960;
+constexpr int kPlexProductChromaStrideBytes = 480;
+constexpr int kPlexProductStorageI420Bytes = 960 * 540 * 3 / 2; // 777600
+constexpr int kPlexProductDisplayI420Bytes = kPlexProductStorageI420Bytes;
+constexpr int kPlexProductSpsCodedI420Bytes = 960 * 544 * 3 / 2; // 783360 future
+// Plane offsets for tight 960×540 storage (NOT canvas 1280×720 offsets).
+constexpr uint32_t kPlexProductStorageUPlaneOffset = 518400u; // 960*540
+constexpr uint32_t kPlexProductStorageVPlaneOffset = 648000u; // 518400+129600
+// Deprecated name kept for one cycle of callers; means SPS coded bytes only.
+constexpr int kPlexProductCodedHMbAligned = kPlexProductSpsCodedH;
+constexpr int kPlexProductCodedMbI420Bytes = kPlexProductSpsCodedI420Bytes;
+
+static_assert(kPlex480pYuv420pUsablePayloadBytes == 520192u, "legacy usable");
+static_assert(kPlexProductStorageI420Bytes == 777600, "product storage I420");
+static_assert(kPlexProductSpsCodedI420Bytes == 783360, "SPS coded I420");
+static_assert(kPlexProductSpsCodedH - kPlexProductSpsCropBottomLines ==
+                  kPlexProductStorageH,
+              "SPS crop: 544-4=540");
+static_assert(kPlexProductStorageI420Bytes > int(kPlex480pYuv420pUsablePayloadBytes),
+              "product storage must not fit legacy usable → Option-C");
+static_assert(kPlexProductStorageI420Bytes <= int(kPlex720pYuv420pUsablePayloadBytes),
+              "product storage fits Option-C usable");
+static_assert(kPlexProductStorageUPlaneOffset == 518400u, "storage U");
+static_assert(kPlexProductStorageVPlaneOffset == 648000u, "storage V");
+static_assert(kPlexProductStorageW * 4 == kPlexProductCanvasW * 3, "W exact 4/3");
+static_assert(kPlexProductStorageH * 4 == kPlexProductCanvasH * 3, "H exact 4/3");
+static_assert((kPlexProductStorageH & 15) == 12, "540 not MB-aligned");
+static_assert((kPlexProductSpsCodedH & 15) == 0, "544 is MB-aligned");
+
+// Usable payload bytes inside one bank (control page reserved at end of bank1).
+inline uint32_t ddrBankUsablePayloadBytes(uint32_t bankStride) {
+    if (bankStride <= kDdrFrameControlPageBytes)
+        return 0;
+    return bankStride - kDdrFrameControlPageBytes;
+}
+
+// True when frame_bytes fit without overlapping the doorbell control page.
+// Mirrors ddrFrameLayoutValid: bank1 + frame_bytes <= doorbell.
+inline bool ddrFramePayloadFitsBankUsable(size_t frameBytes, uint32_t bankStride) {
+    return frameBytes > 0 && frameBytes <= ddrBankUsablePayloadBytes(bankStride);
+}
+
+// Tight native I420 storage layout (native_push). Planes use content strides —
+// NOT canvas line_bytes. Fabric READ must use these when storage ≠ canvas.
+struct DdrNativeContentLayout {
+    int width = 0;
+    int height = 0;
+    int y_stride = 0;
+    int chroma_stride = 0;
+    uint32_t y_offset = 0;
+    uint32_t u_offset = 0;
+    uint32_t v_offset = 0;
+    size_t frame_bytes = 0;
+    bool valid = false;
+};
+
+inline DdrNativeContentLayout makeDdrNativeContentLayout(int w, int h) {
+    DdrNativeContentLayout c{};
+    if (w <= 0 || h <= 0 || (w & 1) || (h & 1))
+        return c;
+    c.width = w;
+    c.height = h;
+    c.y_stride = w;
+    c.chroma_stride = w / 2;
+    const uint32_t yBytes = static_cast<uint32_t>(w) * static_cast<uint32_t>(h);
+    const uint32_t cBytes =
+        static_cast<uint32_t>(c.chroma_stride) * static_cast<uint32_t>(h / 2);
+    c.y_offset = 0;
+    c.u_offset = yBytes;
+    c.v_offset = yBytes + cBytes;
+    c.frame_bytes = static_cast<size_t>(yBytes + 2u * cBytes);
+    c.valid = (c.frame_bytes == size_t(w) * size_t(h) * 3u / 2u);
+    return c;
+}
+
+inline DdrNativeContentLayout plexProduct960x540StorageLayout() {
+    return makeDdrNativeContentLayout(kPlexProductStorageW, kPlexProductStorageH);
+}
+
+// Fits bank *usable* payload (not full stride). rd-duck: disagreeing with
+// ddrFrameLayoutValid here is a contract bug.
+inline bool ddrNativeContentFitsBank(const DdrNativeContentLayout& c, uint32_t bankStride) {
+    return c.valid && ddrFramePayloadFitsBankUsable(c.frame_bytes, bankStride);
+}
+
+// I420 bytes from storage strides/height. Mirror ddr_frame_store plane math.
+inline size_t ddrI420BytesFromStrides(int yStrideBytes, int chromaStrideBytes, int storageH) {
+    if (yStrideBytes <= 0 || chromaStrideBytes <= 0 || storageH <= 0)
+        return 0;
+    return size_t(storageH) * size_t(yStrideBytes) +
+           size_t(storageH / 2) * size_t(chromaStrideBytes) * 2u;
+}
+
+// Host-side usable-capacity helper (spec). RTL map select is **w-mem owned** —
+// do not treat this as proof that ddr_frame_store implements it yet.
+inline bool ddrFrameNeedsOptionCMap(int yStrideBytes, int chromaStrideBytes, int storageH,
+                                    uint32_t legacyBankStride = kPlex480pYuv420pBankStride) {
+    const size_t bytes = ddrI420BytesFromStrides(yStrideBytes, chromaStrideBytes, storageH);
+    return bytes > 0 && !ddrFramePayloadFitsBankUsable(bytes, legacyBankStride);
+}
 
 enum class DdrFramePlacement {
     None,
@@ -358,168 +427,23 @@ inline DdrFrameGeometry ddrFrameGeometryForPresentedSize(int width, int height) 
 // present_core.sv wires ddr_frame_store with:
 //   CODED_W = DDR_FRAME_CODED_WIDTH (624), Y_LINE_QWORDS = CODED_W/8,
 //   FRAME_W = 640 presented scanout, bank/doorbell from ddr_frame_layout_params.svh.
-// Shipping RBFs have no runtime stride/width register the ARM can program.
-// DECODE/OSD O[4] only selects the PMS source ladder; the writer must always
-// emit this canvas (scale+pad content into it) or the image shears line-to-line.
-// 720p tier is opt-in via plex720pDdrFrameGeometry() + matching RBF/PLXG — never
-// silently substituted here (would recreate 88509163 bank/doorbell desync).
+// There is no runtime stride/width register the ARM can program. DECODE/OSD O[4]
+// only selects the PMS source ladder; the writer must always emit this canvas
+// (scale+pad content into it) or the image shears line-to-line.
 inline DdrFrameGeometry productDdrFrameStoreGeometry() {
     return plex480pDdrFrameGeometry();
 }
-
-// Aggressive 720p canvas (identity 16:9). Not product silicon until RBF wires
-// DDR_FRAME_720P_* into ddr_frame_store and daemon completes PLXG handshake.
-inline DdrFrameGeometry plex720pDdrFrameGeometry() {
-    DdrFrameGeometry g = makeDdrFrameGeometry(
-        kPlex720pCodedWidth, kPlex720pCodedHeight, kPlex720pDisplayWidth,
-        kPlex720pDisplayHeight, kPlex720pPresentedWidth, kPlex720pPresentedHeight,
-        DdrFramePlacement::None);
-    g.crop_left = kPlex720pCropLeft;
-    g.crop_right = kPlex720pCropRight;
-    g.crop_top = kPlex720pCropTop;
-    g.crop_bottom = kPlex720pCropBottom;
-    g.present_x = kPlex720pPillarboxLeft;
-    g.present_y = 0;
-    return g;
-}
-
-// Doorbell/control page occupies the final 4 KiB of the two-bank map:
-//   doorbell = phys + 2*bank_stride - kDdrBankDoorbellPageBytes
-// Bank1 payload must end at or before doorbell, so usable payload per bank is:
-//   usable = bank_stride - kDdrBankDoorbellPageBytes
-// (rd-duck: full-stride capacity is WRONG — bank1 would overlap the doorbell page.)
-constexpr uint32_t kDdrBankDoorbellPageBytes = 0x1000u;
-// Literals so rtl_invariants parity parser and static locks match .svh.
-constexpr uint32_t kPlex480pYuv420pBankUsableBytes = 520192u;  // 0x80000 - 0x1000
-constexpr uint32_t kPlex720pYuv420pBankUsableBytes = 1568768u; // 0x180000 - 0x1000
-static_assert(kPlex480pYuv420pBankUsableBytes ==
-                  kPlex480pYuv420pBankStride - kDdrBankDoorbellPageBytes,
-              "legacy usable = 0x80000-0x1000");
-static_assert(kPlex720pYuv420pBankUsableBytes ==
-                  kPlex720pYuv420pBankStride - kDdrBankDoorbellPageBytes,
-              "Option-C usable = 0x180000-0x1000");
-// Edge example (rd-duck): tight 720x482 = 520560 > 520192 → must select Option-C
-// even though 520560 < full stride 524288.
-constexpr size_t kDdrLegacyUsableEdgeBytes = 520560u; // 720*482*3/2
-
-inline uint32_t ddrBankUsablePayloadBytes(uint32_t bankStride) {
-    return (bankStride > kDdrBankDoorbellPageBytes) ? (bankStride - kDdrBankDoorbellPageBytes)
-                                                    : 0u;
-}
-
-// True when an I420 payload cannot fit the legacy bank's *usable* capacity
-// (stride minus doorbell page). Mirrors ddr_frame_store.sv Option-C select.
-// Capacity, NOT coded_w>=1280. 624x480 (449280) → false; 720x482 (520560) → true;
-// 960x540 (777600) → true; 1280x720 → true.
-inline bool ddrI420PayloadNeedsOptionCBank(size_t frameBytes) {
-    return frameBytes > static_cast<size_t>(kPlex480pYuv420pBankUsableBytes);
-}
-
-// Same predicate from plane geometry (tight or strided). frame_bytes =
-// y_stride*h + 2*(chroma_stride*h/2). h must be even (4:2:0).
-inline bool ddrI420PlanesNeedOptionCBank(int yStride, int chromaStride, int height) {
-    if (yStride <= 0 || chromaStride <= 0 || height <= 0 || (height & 1))
-        return false;
-    const uint64_t yb = static_cast<uint64_t>(yStride) * static_cast<uint64_t>(height);
-    const uint64_t cb =
-        static_cast<uint64_t>(chromaStride) * static_cast<uint64_t>(height / 2);
-    const uint64_t bytes = yb + 2ull * cb;
-    if (bytes > 0xFFFFFFFFull)
-        return true;
-    return ddrI420PayloadNeedsOptionCBank(static_cast<size_t>(bytes));
-}
-
-// Bank map for a content rectangle: Legacy (0x30000000/0x80000) vs Option-C.
-enum class DdrBankMap : uint8_t { Legacy480p = 0, OptionC720p = 1 };
-
-inline DdrBankMap ddrSelectBankMapForI420(int yStride, int chromaStride, int height) {
-    return ddrI420PlanesNeedOptionCBank(yStride, chromaStride, height)
-               ? DdrBankMap::OptionC720p
-               : DdrBankMap::Legacy480p;
-}
-
-inline DdrBankMap ddrSelectBankMapForContent(int contentW, int contentH) {
-    if (contentW <= 0 || contentH <= 0 || (contentW & 1) || (contentH & 1))
-        return DdrBankMap::Legacy480p;
-    return ddrSelectBankMapForI420(contentW, contentW / 2, contentH);
-}
-
-// DE / glass canvas for a bank map tier (scaler output). NOT storage / FFmpeg size.
-inline DdrFrameGeometry ddrCanvasGeometryForBankMap(DdrBankMap map) {
-    return (map == DdrBankMap::OptionC720p) ? plex720pDdrFrameGeometry()
-                                            : productDdrFrameStoreGeometry();
-}
-
-// Storage geometry the daemon FFmpeg/rawvideo path must emit (media_player rawW/H).
-//
-// Ownership: w-path owns this selector's *contract* (68be1bf9). w-mem keeps the
-// body lockstep with that contract so merge order cannot silently re-downscale
-// 960×540 → 624×480 (parent STOP on c03afc46 item 3).
-//
-// Rules (strict allowlist — NOT "any even dims"):
-//   - 960×540 content → identity STORAGE 960×540 (777600 B). Never 1280 canvas.
-//   - 1280×720 content → identity STORAGE 1280×720 (true-720 upgrade path).
-//   - 624×480 → product 480p silicon canvas (plex480p).
-//   - All other tiers (320×240, …) → product 480p canvas (scale+pad).
-//     Identity-320 is the shear defect (line_bytes=320 vs RTL CODED_W=624).
-// DE/glass canvas (1280×720 as *output*) is separate — not this function.
-inline DdrFrameGeometry ddrStorageGeometryForContent(int contentW, int contentH) {
-    if (contentW == kDdr720pOutputSourceWidth && contentH == kDdr720pOutputSourceHeight)
-        return makeDdrFrameGeometry(CodedWidth{contentW}, CodedHeight{contentH});
-    if (contentW == 1280 && contentH == 720)
-        return makeDdrFrameGeometry(CodedWidth{1280}, CodedHeight{720});
-    if (contentW == kPlex480pCodedWidth.get() && contentH == kPlex480pCodedHeight.get())
-        return plex480pDdrFrameGeometry();
+// FPGA-present geometry for any content/decode tier. Decode WxH is intentionally
+// ignored: a 320x240 source still occupies the 624-byte-stride coded bank after
+// force_original_aspect_ratio=decrease + pad. Returning identity-320 here is the
+// shear defect (ARM line_bytes=320 vs RTL CODED_W=624).
+inline DdrFrameGeometry ddrFrameGeometryForFpgaPresent(CodedWidth /*decodeWidth*/,
+                                                      CodedHeight /*decodeHeight*/) {
     return productDdrFrameStoreGeometry();
-}
-
-inline DdrFrameGeometry ddrStorageGeometryForContent(CodedWidth contentW, CodedHeight contentH) {
-    return ddrStorageGeometryForContent(contentW.get(), contentH.get());
-}
-
-// FPGA-present geometry for the daemon path: STORAGE, not DE canvas.
-// w-path owns this symbol (parent ruling). Delegates to storage allowlist.
-// 960×540 → 960×540; 1280×720 → 1280×720; else product 624 canvas.
-// MUST NOT ignore decode dims (always-624 was the silent downscale defect).
-inline DdrFrameGeometry ddrFrameGeometryForFpgaPresent(CodedWidth decodeWidth,
-                                                      CodedHeight decodeHeight) {
-    return ddrStorageGeometryForContent(decodeWidth, decodeHeight);
 }
 
 inline DdrFrameGeometry ddrFrameGeometryForFpgaPresent(int decodeWidth, int decodeHeight) {
     return ddrFrameGeometryForFpgaPresent(CodedWidth{decodeWidth}, CodedHeight{decodeHeight});
-}
-
-// Product intermediate tier (PMS Constrained Baseline 960×540 → fabric upscale).
-inline bool ddrIsProduct960x540Content(int w, int h) {
-    return w == kDdr720pOutputSourceWidth && h == kDdr720pOutputSourceHeight;
-}
-
-// FFmpeg / rawvideo geometry for PRESENT=fpga|both — same storage contract.
-// Never returns DE-only canvas sizing that FFmpeg did not decode.
-inline DdrFrameGeometry ddrFfmpegGeometryForPresent(int outW, int outH, bool wantFpgaDdrCanvas) {
-    if (wantFpgaDdrCanvas)
-        return ddrFrameGeometryForFpgaPresent(outW, outH);
-    return makeDdrFrameGeometry(outW, outH);
-}
-
-// Plane U offset from storage coded dims (I420, stride=width). Red-twin oracle:
-// canvas 1280×720 → U@921600; storage 960×540 → U@518400. Conflating them shears.
-inline uint32_t ddrI420UPlaneOffset(int codedW, int codedH) {
-    if (codedW <= 0 || codedH <= 0 || (codedW & 1) || (codedH & 1))
-        return 0;
-    return static_cast<uint32_t>(codedW) * static_cast<uint32_t>(codedH);
-}
-inline bool ddrPlxgStorageNotCanvasUBase(int plxgCodedW, int plxgCodedH, uint32_t uOff) {
-    // Product native path: PLXG coded must be storage 960×540 → U@518400.
-    if (ddrIsProduct960x540Content(plxgCodedW, plxgCodedH))
-        return uOff == static_cast<uint32_t>(kDdr720pOutputSourceWidth) *
-                           static_cast<uint32_t>(kDdr720pOutputSourceHeight); // 518400
-    return uOff == ddrI420UPlaneOffset(plxgCodedW, plxgCodedH);
-}
-// Fault twin: programming DE canvas dims into PLXG coded fields.
-inline bool ddrPlxgCanvasDimsFault(int plxgCodedW, int plxgCodedH) {
-    return plxgCodedW == 1280 && plxgCodedH == 720;
 }
 
 inline DdrFrameLayout makeDdrFrameLayout(const DdrFrameGeometry& geom,
@@ -600,12 +524,39 @@ inline DdrFrameLayout makeDdrFrameLayout(int width, int height,
                               format);
 }
 
-// 720p tier layout at Option-C phys base (not product 0x30000000).
+// Aggressive 720p canvas (identity 16:9). Not product silicon until RBF + PLXG.
+inline DdrFrameGeometry plex720pDdrFrameGeometry() {
+    DdrFrameGeometry g = makeDdrFrameGeometry(
+        kPlex720pCodedWidth, kPlex720pCodedHeight, kPlex720pDisplayWidth,
+        kPlex720pDisplayHeight, kPlex720pPresentedWidth, kPlex720pPresentedHeight,
+        DdrFramePlacement::None);
+    g.crop_left = kPlex720pCropLeft;
+    g.crop_right = kPlex720pCropRight;
+    g.crop_top = kPlex720pCropTop;
+    g.crop_bottom = kPlex720pCropBottom;
+    g.present_x = kPlex720pPillarboxLeft;
+    g.present_y = 0;
+    return g;
+}
+
+// 720p tier layout at Option-C phys map (not product 0x30000000).
+// Bank stride and doorbell are parent-verified fixed ABI — do NOT derive them
+// from align(frame_bytes); that yields a different doorbell than 0x3047F000 and
+// desyncs w-mem fabric_ddr_writer / fabric READ.
 inline DdrFrameLayout makePlex720pDdrFrameLayout(
     DdrFrameFormat format = DdrFrameFormat::Yuv420p) {
-    return makeDdrFrameLayout(plex720pDdrFrameGeometry(), kPlex720pDdrFramePhysBase,
-                              kDdrFrameStrideAlign, format);
+    DdrFrameLayout out =
+        makeDdrFrameLayout(plex720pDdrFrameGeometry(), kPlex720pDdrFramePhysBase,
+                           kDdrFrameStrideAlign, format);
+    out.phys_base = kPlex720pDdrFramePhysBase;
+    out.bank_stride = kPlex720pYuv420pBankStride;
+    out.doorbell_phys = kPlex720pYuv420pDoorbellPhys;
+    out.map_bytes = kPlex720pMapBytes2Bank;
+    out.format = format;
+    out.doorbell_format = ddrFrameFormatCode(format);
+    return out;
 }
+
 
 inline bool ddrFrameLayoutValid(const DdrFrameLayout& l) {
     if (l.phys_base == 0 || l.width <= 0 || l.height <= 0 || l.frame_bytes == 0)
@@ -659,35 +610,6 @@ inline bool ddrFrameLayoutMatchesProductSilicon(const DdrFrameLayout& l) {
         return false;
     if (l.bank_stride != kPlex480pYuv420pBankStride ||
         l.doorbell_phys != kPlex480pYuv420pDoorbellPhys)
-        return false;
-    return true;
-}
-
-// True when a layout matches the ratified 720p Option-C tier (not shipping silicon).
-inline bool ddrFrameLayoutMatches720pTier(const DdrFrameLayout& l) {
-    if (!ddrFrameLayoutValid(l))
-        return false;
-    if (l.format != DdrFrameFormat::Yuv420p)
-        return false;
-    if (l.phys_base != kPlex720pDdrFramePhysBase)
-        return false;
-    if (l.coded_width.get() != kPlex720pCodedWidth.get() ||
-        l.coded_height.get() != kPlex720pCodedHeight.get())
-        return false;
-    if (l.line_bytes != kPlex720pYStrideBytes ||
-        l.chroma_line_bytes != kPlex720pChromaStrideBytes)
-        return false;
-    if (l.line_qwords != kPlex720pYuvLumaLineQwords ||
-        l.chroma_line_qwords != kPlex720pYuvChromaLineQwords)
-        return false;
-    if (l.frame_bytes != static_cast<size_t>(kPlex720pYuv420pBytes))
-        return false;
-    if (l.y_offset != static_cast<uint32_t>(kPlex720pYPlaneOffset) ||
-        l.u_offset != static_cast<uint32_t>(kPlex720pUPlaneOffset) ||
-        l.v_offset != static_cast<uint32_t>(kPlex720pVPlaneOffset))
-        return false;
-    if (l.bank_stride != kPlex720pYuv420pBankStride ||
-        l.doorbell_phys != kPlex720pYuv420pDoorbellPhys)
         return false;
     return true;
 }
@@ -803,22 +725,20 @@ inline bool decodeDdrDoorbell(uint32_t lo, uint32_t hi, DdrFrameFormat expectedF
     return true;
 }
 
-// Maximum coded width the *shipping* RTL frame store can present (FRAME_W=640).
+// Maximum coded width the RTL frame store can present (ddr_frame_store.sv FRAME_W).
 // Typed as CodedWidth because acceptance checks coded stream size against it.
 // Numerically equal to presented 480p width; the type prevents using the
 // presented constant by accident in coded-only math without an explicit claim.
-// 720p tier raises the ceiling via kDdrFrameStore720pMax* — never silently here.
 constexpr CodedWidth kDdrFrameStoreMaxWidth{640};
 constexpr CodedHeight kDdrFrameStoreMaxHeight{480};
-constexpr CodedWidth kDdrFrameStore720pMaxWidth{1280};
-constexpr CodedHeight kDdrFrameStore720pMaxHeight{720};
 
-// Check whether a decoded frame resolution is acceptable for the *product* DDR
-// frame store (480p silicon). Requirements:
+// Check whether a decoded frame resolution is acceptable for the DDR frame store.
+// Requirements:
 //   1. MB-aligned (width and height are multiples of 16)
 //   2. Width <= RTL FRAME_W (640) and Height <= RTL FRAME_H (480)
 //   3. YUV420p payload fits within bank stride (currently 512 KiB)
-// 1280x720 is intentionally rejected here — use ddrFrameStoreAccepts720pTier.
+// This replaces the old hardcoded equality check against 624x480 and accepts
+// any valid resolution the frame store can handle, including 640x480 streams.
 inline bool ddrFrameStoreAcceptsResolution(CodedWidth codedWidth, CodedHeight codedHeight) {
     if (codedWidth.get() <= 0 || codedHeight.get() <= 0)
         return false;
@@ -837,703 +757,6 @@ inline bool ddrFrameStoreAcceptsResolution(CodedWidth codedWidth, CodedHeight co
 // Decoder-boundary overload: the caller claims these bare ints are coded size.
 inline bool ddrFrameStoreAcceptsResolution(int codedWidth, int codedHeight) {
     return ddrFrameStoreAcceptsResolution(CodedWidth{codedWidth}, CodedHeight{codedHeight});
-}
-
-// 720p-tier acceptance for MB-aligned *coded canvas* sizes on Option-C map.
-// 960x540 display content is NOT accepted here (540 not MB-aligned) — use
-// ddrFrameStoreAcceptsOptionCContent / native_push into 1280x720 canvas.
-inline bool ddrFrameStoreAccepts720pTier(CodedWidth codedWidth, CodedHeight codedHeight) {
-    if (codedWidth.get() <= 0 || codedHeight.get() <= 0)
-        return false;
-    if ((codedWidth.get() & 15) != 0 || (codedHeight.get() & 15) != 0)
-        return false;
-    if (codedWidth.get() > kDdrFrameStore720pMaxWidth.get() ||
-        codedHeight.get() > kDdrFrameStore720pMaxHeight.get())
-        return false;
-    const size_t frameBytes = yuv420pFrameBytes(codedWidth, codedHeight);
-    if (frameBytes == 0)
-        return false;
-    const uint32_t bankStride = alignUpU32(static_cast<uint32_t>(frameBytes), kDdrFrameStrideAlign);
-    return bankStride <= kPlex720pYuv420pBankStride;
-}
-
-inline bool ddrFrameStoreAccepts720pTier(int codedWidth, int codedHeight) {
-    return ddrFrameStoreAccepts720pTier(CodedWidth{codedWidth}, CodedHeight{codedHeight});
-}
-
-// Option-C *content* acceptance (native_push display geometry).
-// Width must be 16-aligned (chroma fetch = w>>4 qwords). Height even only —
-// MB-align not required (540 is a valid display height). Capacity must need
-// Option-C or explicitly fit under Option-C stride, and reject legacy-only path
-// when payload overruns 512 KiB.
-inline bool ddrFrameStoreAcceptsOptionCContent(int contentW, int contentH) {
-    if (contentW <= 0 || contentH <= 0 || (contentW & 15) || (contentH & 1))
-        return false;
-    if (contentW > kDdrFrameStore720pMaxWidth.get() ||
-        contentH > kDdrFrameStore720pMaxHeight.get())
-        return false;
-    const size_t frameBytes = yuv420pFrameBytes(contentW, contentH);
-    if (frameBytes == 0)
-        return false;
-    if (frameBytes > static_cast<size_t>(kPlex720pYuv420pBankUsableBytes))
-        return false;
-    // Must actually need Option-C OR be placed on Option-C canvas deliberately.
-    // Oversize-for-legacy is the product 960x540 case.
-    return true;
-}
-
-// ---- fab-dma / fabric-owned present (evacuate ARM, not just cheapen it) ----
-//
-// Mandate: 720p is the reward for moving work into the FPGA. Prefer designs
-// where ARM does *none* of scale/pad/pillar/black-fill/centered-pack over
-// designs where ARM still does a smaller version of the same job.
-//
-// Product today (ARM still in the loop):
-//   ffmpeg scale+pad → full coded canvas I420 → optional packYuv centered →
-//   clearYuv crop pad → memcpy(layout.frame_bytes) → doorbell.
-// Fabric-owned present (ARM out of pad/scale/pack):
-//   decode (or PMS-native) tight I420 → memcpy(native_bytes only) → PLXG
-//   content window + native_push → doorbell. Fabric scales across DE, emits
-//   studio black for non-content columns/rows, owns pillar/letterbox.
-//
-// Measured anchors (do not invent new numbers):
-//   FEED archive full-stack (docs/evidence/p480-scale-skip/SCALE_SKIP_PREREG.md):
-//     decode_null ~21.56 + scale ~2.95 + pipe ~5.26 + present ~10.41 ms/f
-//   DDR pure fill (docs/evidence/p480/p480-bandwidth.md): 59.521 MiB/s no-sync
-//   Product present wall mean ~10.41 ms/f includes prep/PLXD/doorbell, not only copy.
-
-// Archive no-sync bank-fill rate used for *copy-term* projections only.
-// Archive pure-fill (p480-bandwidth.md) — superseded for 720p budget by parent
-// 2026-08-03 ddr_write_bench mapped-bank measure (kept for comparison only).
-constexpr double kDdrArchiveNoSyncMibps = 59.521;
-// Parent mapped-bank / host-copy rates: ddr_mem_map_policy.hpp
-// Default budget projection uses mapped-bank rate (proven on device).
-constexpr double kParentDdrMappedBankMibps = kParentDdrMappedBank720pMibps;
-constexpr double kDdrBudgetCopyMibps = kParentDdrMappedBank720pMibps;
-// FEED archive scale-stage wall bucket (ms/f) — recovered only when ARM stops vf scale.
-constexpr double kFeedArchiveScaleMs = 2.95;
-// FEED archive product present wall mean (ms/f) — not equal to pure copy.
-constexpr double kFeedArchivePresentMs = 10.41;
-// FEED non-decode ARM buckets @480p (present+pipe+scale), quoted parent rollup.
-constexpr double kFeedArchiveNonDecodeMs = 10.411 + 5.263 + 2.954; // 18.628
-// Parent device real-content 720p decode-only (both cores), ms/f.
-// Cross-session archive (2026-08-02, do not interpolate across sessions):
-//   1500k 32.427 | 2500k 36.845 | 3500k 38.751 | 4000k 41.073
-// In-session product-tier re-anchor (parent HW evidence #3, 2026-08-03):
-//   maxBR geometry floor = 3100 kbit (w-path d273d6f8; below → 720x404)
-//   server content ~2585k at maxBR=3100; controlled 2600k asset mean 36.27 ms/f
-//   same-session 2500k re-measure 35.87 ms/f (not archive 36.845)
-//   margin @24fps = 41.667-36.27 = 5.40 ms. Serial+copy still FAIL (~51.55).
-// Candidate pin: maxBR 3100 / content-rate decode 36.27 ms/f.
-// Headroom is jitter/overlap margin ONLY — not permission for ARM memcpy.
-constexpr double kParent720pDecodeMs1500k = 32.427;
-constexpr double kParent720pDecodeMs2500kArchive = 36.845; // cross-session archive
-constexpr double kParent720pDecodeMs2500k = 35.87;         // in-session re-anchor
-constexpr double kParent720pDecodeMs2600k = 36.27;         // product-tier content
-constexpr double kParent720pDecodeMs3500k = 38.751;        // archive
-constexpr double kParent720pDecodeMs4000k = 41.073;
-// Default keeps the 4000k figure for conservative residual.
-constexpr double kParent720pDecodeMsDefaultThreads = kParent720pDecodeMs4000k;
-constexpr double kParent480pDecodeMsDefaultThreads = 15.969;
-constexpr double kFrameBudget24fpsMs = 41.667;
-
-// ---- Product path: 720p OUTPUT from intermediate source (parent 2026-08-03) ----
-// Measured proxies (Constrained Baseline, real PMS content re-encode), 300 frames,
-// instrument control 1280x720 proxy within 0.4% of genuine PMS decode. 5/5 HIT.
-// This is 720p *output* (fabric upscale to Option-C 1280x720 canvas). NOT 720p source.
-// DMA (w-path) remains the upgrade to true 1280x720 source (~kill 14.97 ms copy).
-// Caveat (parent): -f null is decode-only upper bound on headroom — not E2E promise.
-//
-// Coded vs display (H.264 16×16 MB grid):
-//   Display / PMS picture   : 960×540  (540 & 15 == 12 — NOT MB-aligned)
-//   MB-aligned coded size   : 960×544  (ceil(540/16)*16) — bitstream/DPB only
-//   Bank canvas (Option-C)  : 1280×720 — MB-aligned; PLXG geometry beat
-//   native_push payload     : DISPLAY 960×540 tight I420 = 777600 B
-//   Fabric reader strides   : DISPLAY (960/480); plane offs from display dims
-//   783360 (960×544 I420) must NOT be used as native_push publish_bytes.
-constexpr int kPlex720pOutputSourceWidth = 960;          // display (= coded W)
-constexpr int kPlex720pOutputSourceHeight = 540;         // display
-constexpr int kPlex720pOutputSourceDisplayWidth = 960;
-constexpr int kPlex720pOutputSourceDisplayHeight = 540;
-constexpr int kPlex720pOutputSourceCodedWidth = 960;
-constexpr int kPlex720pOutputSourceCodedHeight = 544; // MB-align 540
-// Literals so rtl_invariants parity parser matches .svh.
-constexpr int kPlex720pOutputSourceBytes = 777600; // DISPLAY tight I420
-constexpr int kPlex720pOutputSourceDisplayBytes = 777600;
-constexpr int kPlex720pOutputSourceCodedBytes = 783360; // 960*544*3/2 — not native_push
-// Tight native I420 plane contract (mirror ddr_frame_layout_params.svh).
-// Fabric reader MUST use these when PLXG native_push=1 — not canvas 1280/640.
-constexpr int kPlex720pOutputYStrideBytes = 960;
-constexpr int kPlex720pOutputChromaStrideBytes = 480;
-constexpr int kPlex720pOutputYPlaneOffset = 0;
-constexpr int kPlex720pOutputUPlaneOffset = 518400;
-constexpr int kPlex720pOutputVPlaneOffset = 648000;
-constexpr int kPlex720pOutputYLineQwords = 120;
-constexpr int kPlex720pOutputChromaLineQwords = 60;
-// Parent wall ms — corrected 2026-08-03 (decode+sws, not -f null alone).
-// Sweep-18 proxy decode-only 22.75 was optimistic by ~3.33 ms on product total.
-// Device conf: FFMPEG_SWS_FLAGS=fast_bilinear, DDR_YUV_FORCE_SCALE=1.
-constexpr double kParent960x540DecodeOnlyMs = 22.51;          // -f null remeasure
-constexpr double kParent960x540DecodeOnlyMsProxyArchive = 22.75; // sweep-18 proxy
-constexpr double kParent960x540DecodeSwsOutMs = 26.08;        // decode+sws+rawvideo
-constexpr double kParent960x540SwsOverheadMs = 3.57;          // 26.08 - 22.51
-// Alias: product path MUST budget sws/out, not decode-only.
-constexpr double kParent960x540DecodeMs = kParent960x540DecodeSwsOutMs;
-constexpr double kParent960x540CopyMs = 8.42; // native I420 @ structural ~88 MiB/s
-constexpr double kParent960x540TotalMs = 34.50;   // 26.08 + 8.42 product
-constexpr double kParent960x540MarginMs = 7.16;   // vs 41.667 — PASS, not +10.49
-constexpr double kParent960x540DecodeOnlyTotalMs = 31.17; // archive decode-only+copy
-constexpr double kParent960x540DecodeOnlyMarginMs = 10.49; // retracted as ship figure
-// Sibling probes (decode-only proxy table) — 1024x576 still too thin.
-constexpr double kParent1024x576DecodeMs = 26.03;
-constexpr double kParent1024x576CopyMs = 9.58;
-constexpr double kParent1024x576TotalMs = 35.61;
-constexpr double kParent1024x576MarginMs = 6.05;
-constexpr double kParent854x480DecodeMs = 20.70;
-constexpr double kParent854x480CopyMs = 6.66;
-constexpr double kParent854x480TotalMs = 27.36;
-constexpr double kParent854x480MarginMs = 14.31;
-// True 720p source still FAIL with CPU copy (control + PMS):
-constexpr double kParent720pSourceDecodeProxyMs = 35.33;
-constexpr double kParent720pSourceCopyMs = 14.97;
-constexpr double kParent720pSourceTotalMs = 50.31;
-constexpr double kParent720pSourceMarginMs = -8.64;
-// TRAP: fetch 720p and ARM-downscale (parent arms C/D) — FAIL before copy.
-constexpr double kParent720pArmDownscaleTo960Ms = 51.78;
-constexpr double kParent720pArmDownscaleTo624Ms = 44.95;
-// Product margin floor = measured +7.16 path (not the retracted +10.49 decode-only).
-// Concurrent peer still dangerous; E2E cast is parent-only proof.
-constexpr double kPlex720pOutputMinMarginMs = 7.0;
-
-static_assert(kPlex720pOutputSourceBytes == 777600, "960x540 I420 bytes");
-static_assert(kPlex720pOutputSourceDisplayBytes == kPlex720pOutputSourceBytes, "display alias");
-static_assert(kPlex720pOutputSourceCodedBytes == 783360, "MB-coded 960x544 I420");
-static_assert(kPlex720pOutputSourceCodedBytes != kPlex720pOutputSourceDisplayBytes,
-              "coded vs display must not be conflated");
-static_assert((kPlex720pOutputSourceDisplayHeight & 15) != 0, "540 is not MB-aligned");
-static_assert((kPlex720pOutputSourceCodedHeight & 15) == 0, "544 is MB-aligned");
-static_assert(kPlex720pOutputSourceWidth < 1280 && kPlex720pOutputSourceHeight < 720,
-              "source is intermediate; canvas is 720p");
-static_assert(kPlex720pOutputUPlaneOffset == 518400, "960x540 U plane");
-static_assert(kPlex720pOutputVPlaneOffset == 648000, "960x540 V plane");
-static_assert(kPlex720pOutputYStrideBytes != kPlex720pYStrideBytes,
-              "native content stride must differ from canvas 1280");
-static_assert(kPlex720pOutputSourceBytes < kPlex720pYuv420pBankUsableBytes,
-              "960x540 must fit Option-C usable capacity (stride-4KiB)");
-static_assert(kPlex720pOutputSourceBytes > kPlex480pYuv420pBankUsableBytes,
-              "960x540 must NOT fit legacy usable capacity — forces Option-C");
-static_assert(kDdrLegacyUsableEdgeBytes > kPlex480pYuv420pBankUsableBytes &&
-                  kDdrLegacyUsableEdgeBytes < kPlex480pYuv420pBankStride,
-              "rd-duck edge: 720x482 fits full stride but not usable");
-
-// Tight native I420 layout for a content rectangle (native_push=1).
-// Planes are contiguous with content strides — NOT canvas line_bytes.
-// Fabric reader MUST use these strides when native_push is set; using canvas
-// 1280-stride on a 960-wide tight payload shears the image (88509163-class).
-struct DdrNativeContentLayout {
-    int width = 0;
-    int height = 0;
-    int y_stride = 0;      // == width
-    int chroma_stride = 0; // == width/2
-    uint32_t y_offset = 0;
-    uint32_t u_offset = 0;
-    uint32_t v_offset = 0;
-    size_t frame_bytes = 0;
-    int y_line_qwords = 0;
-    int chroma_line_qwords = 0;
-    bool valid = false;
-};
-
-inline DdrNativeContentLayout makeDdrNativeContentLayout(int w, int h) {
-    DdrNativeContentLayout c{};
-    // w%16: fabric chroma fetch is w>>4 qwords; w%2 alone is not enough (968 trap).
-    if (w <= 0 || h <= 0 || (w & 15) || (h & 1))
-        return c;
-    c.width = w;
-    c.height = h;
-    c.y_stride = w;
-    c.chroma_stride = w / 2;
-    c.y_offset = 0;
-    const uint32_t y_bytes = static_cast<uint32_t>(w) * static_cast<uint32_t>(h);
-    const uint32_t c_bytes = static_cast<uint32_t>(c.chroma_stride) * static_cast<uint32_t>(h / 2);
-    c.u_offset = y_bytes;
-    c.v_offset = y_bytes + c_bytes;
-    c.frame_bytes = static_cast<size_t>(y_bytes + 2u * c_bytes);
-    c.y_line_qwords = w / 8;
-    c.chroma_line_qwords = c.chroma_stride / 8; // == w/16 when w%16==0
-    c.valid = (c.frame_bytes == yuv420pFrameBytes(w, h)) && (c.y_line_qwords * 8 == w) &&
-              (c.chroma_line_qwords * 8 == c.chroma_stride) &&
-              (c.chroma_line_qwords == (w >> 4)) && ((c.chroma_stride % 8) == 0);
-    return c;
-}
-
-inline DdrNativeContentLayout plex960x540NativeContentLayout() {
-    return makeDdrNativeContentLayout(kPlex720pOutputSourceWidth, kPlex720pOutputSourceHeight);
-}
-
-// Tight content must fit bank *usable* payload (stride − doorbell page), matching
-// ddrFrameLayoutValid's bank1End <= doorbell rule. Full-stride compare is wrong.
-inline bool ddrNativeContentFitsBank(const DdrNativeContentLayout& c, uint32_t bank_stride) {
-    const uint32_t usable = ddrBankUsablePayloadBytes(bank_stride);
-    return c.valid && c.frame_bytes > 0 && c.frame_bytes <= static_cast<size_t>(usable);
-}
-
-// PMS maxBR floor for real 1280x720 (w-path). Content bitrate ~2600k class.
-constexpr int kPlex720pCandidateBitrateKbit = 3100;
-constexpr int kPlex720pCandidateContentBitrateKbit = 2600;
-constexpr double kParent720pDecodeMsCandidateTier = kParent720pDecodeMs2600k;
-// Alias kept for older call sites that said "3500 floor".
-constexpr double kParent720pDecodeMsPmsFloorArchive = kParent720pDecodeMs3500k;
-constexpr double kParent720pDecodeBudgetFraction =
-    kParent720pDecodeMsDefaultThreads / kFrameBudget24fpsMs;
-constexpr double kParent720pDecodeBudgetFractionCandidate =
-    kParent720pDecodeMsCandidateTier / kFrameBudget24fpsMs;
-
-struct DdrNativePushPlan {
-    size_t native_bytes = 0;  // tight content I420
-    size_t canvas_bytes = 0;  // full coded-bank payload product memcpy uses
-    size_t saved_bytes = 0;   // canvas - native (0 if native >= canvas)
-    double save_ratio = 0.0;  // saved/canvas in [0,1]
-    int content_w = 0;
-    int content_h = 0;
-    int canvas_w = 0;
-    int canvas_h = 0;
-    bool valid = false;
-};
-
-inline DdrNativePushPlan makeDdrNativePushPlan(int contentW, int contentH,
-                                               const DdrFrameGeometry& canvasGeom) {
-    DdrNativePushPlan p{};
-    p.content_w = contentW;
-    p.content_h = contentH;
-    p.canvas_w = canvasGeom.coded_width.get();
-    p.canvas_h = canvasGeom.coded_height.get();
-    p.native_bytes = yuv420pFrameBytes(contentW, contentH);
-    p.canvas_bytes = yuv420pFrameBytes(canvasGeom.coded_width, canvasGeom.coded_height);
-    if (p.native_bytes == 0 || p.canvas_bytes == 0)
-        return p;
-    if (contentW > p.canvas_w || contentH > p.canvas_h)
-        return p;
-    p.saved_bytes = (p.canvas_bytes > p.native_bytes) ? (p.canvas_bytes - p.native_bytes) : 0;
-    p.save_ratio = static_cast<double>(p.saved_bytes) / static_cast<double>(p.canvas_bytes);
-    p.valid = true;
-    return p;
-}
-
-// Tight I420 → bank origin. Fabric-owned path: no black-fill of canvas remainder.
-inline bool copyYuv420pNativeOrigin(const uint8_t* src, int srcW, int srcH, uint8_t* dst,
-                                    size_t dstCap) {
-    if (!src || !dst || srcW <= 0 || srcH <= 0 || (srcW & 1) || (srcH & 1))
-        return false;
-    const size_t need = yuv420pFrameBytes(srcW, srcH);
-    if (need == 0 || dstCap < need)
-        return false;
-    std::memcpy(dst, src, need);
-    return true;
-}
-
-// Projected wall-ms for a pure DDR bank fill at a measured MiB/s rate.
-// rate_mib_s must come from a measured artifact (e.g. kDdrArchiveNoSyncMibps).
-inline double ddrPushMsAtRate(size_t bytes, double rate_mib_s) {
-    if (bytes == 0 || rate_mib_s <= 0.0)
-        return 0.0;
-    const double mib = static_cast<double>(bytes) / (1024.0 * 1024.0);
-    return (mib / rate_mib_s) * 1000.0;
-}
-
-// PLXG geometry-program word (ARM→FPGA). enable=0 keeps synthesis-fixed product
-// geometry. When enable=1, fabric latches coded_w/h (tier bank) before doorbell.
-// native_push=1 ⇒ payload is tight content I420; window beats supply WxH/x0/y0.
-inline uint64_t encodePlxgGeometryWord(int codedW, int codedH, bool enable,
-                                       bool nativePush) {
-    const uint32_t w = static_cast<uint32_t>(codedW) & 0xFFFu;
-    const uint32_t h = static_cast<uint32_t>(codedH) & 0xFFFu;
-    const uint64_t hi = (static_cast<uint64_t>(w)) | (static_cast<uint64_t>(h) << 12) |
-                        (enable ? (1ull << 24) : 0ull) | (nativePush ? (1ull << 25) : 0ull);
-    return (hi << 32) | static_cast<uint64_t>(kDdrFramePlxgMagic);
-}
-
-inline bool decodePlxgGeometryWord(uint64_t raw, int& codedW, int& codedH, bool& enable,
-                                   bool& nativePush) {
-    if (static_cast<uint32_t>(raw) != kDdrFramePlxgMagic)
-        return false;
-    const uint32_t hi = static_cast<uint32_t>(raw >> 32);
-    if ((hi >> 26) & 1u)
-        return false; // window/origin beat, not geometry
-    codedW = static_cast<int>(hi & 0xFFFu);
-    codedH = static_cast<int>((hi >> 12) & 0xFFFu);
-    enable = ((hi >> 24) & 1u) != 0;
-    nativePush = ((hi >> 25) & 1u) != 0;
-    return true;
-}
-
-// Which present-path jobs fabric takes so ARM stops doing them.
-enum class DdrPresentOffload : uint8_t {
-    None = 0,
-    // Fabric scales content_w×content_h across DE (w-scaler window). ARM must NOT
-    // run ffmpeg scale/pad into the coded canvas for present.
-    FabricScale = 1u << 0,
-    // Fabric emits studio black outside the content window. ARM must NOT
-    // black-fill the coded bank or clearYuv crop padding for present.
-    FabricBlackPad = 1u << 1,
-    // Fabric places content (x0,y0) / pillar. ARM must NOT packYuv420pCentered.
-    FabricPlacement = 1u << 2,
-};
-
-inline constexpr DdrPresentOffload operator|(DdrPresentOffload a, DdrPresentOffload b) {
-    return static_cast<DdrPresentOffload>(static_cast<uint8_t>(a) | static_cast<uint8_t>(b));
-}
-inline constexpr bool ddrPresentOffloadHas(DdrPresentOffload set, DdrPresentOffload bit) {
-    return (static_cast<uint8_t>(set) & static_cast<uint8_t>(bit)) != 0;
-}
-
-// Full fabric-owned present: scale + black + placement — ARM only tight write.
-constexpr DdrPresentOffload kDdrPresentOffloadFabricOwned =
-    DdrPresentOffload::FabricScale | DdrPresentOffload::FabricBlackPad |
-    DdrPresentOffload::FabricPlacement;
-
-// ARM wall-ms budget for one present path choice. Every field is either a
-// measured anchor, a rate×bytes projection from a measured rate, or NaN-style
-// unknown (negative) with a named settling check in comments/docs.
-struct DdrArmPresentBudget {
-    // Bytes ARM still memcpy's into the DDR window this path.
-    size_t arm_push_bytes = 0;
-    // Copy-term ms @ kDdrArchiveNoSyncMibps for arm_push_bytes (projection).
-    double arm_copy_ms = 0.0;
-    // Copy-term ms if ARM still pushed full canvas (for delta).
-    double canvas_copy_ms = 0.0;
-    // canvas_copy_ms - arm_copy_ms (pad bytes evacuated). Known projection.
-    double copy_ms_removed = 0.0;
-    // FEED scale bucket removed when FabricScale is on and ARM skips vf scale.
-    // 2.95 ms is the 480p FEED archive figure — NOT remeasured at 720p.
-    double scale_ms_removed_feed480 = 0.0;
-    // True when path asks fabric to own scale+black+placement.
-    bool fabric_owned = false;
-    // ARM still participates in pixel push (true until FPGA writes banks).
-    bool arm_still_pushes_pixels = true;
-    // Hard 720p24 ship gate: arm_push_bytes==0 AND no ARM scale/pad/pack.
-    // Parent measure: 4000k decode 41.073 ms/f (0.59 ms); 1500k 32.427 (9.24 ms).
-    // Tight 1280x720 memcpy ~22.15 ms exceeds BOTH residuals — unshippable.
-    bool zero_arm_per_pixel = false;
-    // Sum of *known* removed walls (copy projection + optional FEED scale).
-    // Does NOT claim packYuv/clearYuv/PLXD overhead — those are unknown.
-    double known_ms_removed_floor = 0.0;
-    bool valid = false;
-};
-
-// 720p24 ship acceptance for the present/memory plane: ARM does zero per-pixel
-// work. Decode may remain on ARM only if every other plane is evacuated AND
-// fabric (or non-CPU DMA that ARM does not await per pixel) fills banks.
-inline bool ddr720p24ShipAcceptsZeroArmPerPixel(const DdrArmPresentBudget& b) {
-    return b.valid && b.zero_arm_per_pixel && b.arm_push_bytes == 0 &&
-           b.arm_copy_ms == 0.0 && !b.arm_still_pushes_pixels;
-}
-
-// Accept 720p-OUTPUT product path: native push of intermediate source into Option-C
-// canvas with fabric scale. Distinct from ddr720p24ShipAcceptsZeroArmPerPixel (true
-// 720p source / FPGA-written banks).
-// armNonCopyMs MUST include sws/output when that work is on the ARM (parent 26.08),
-// not decode-only -f null (22.51). Default = kParent960x540DecodeSwsOutMs.
-inline bool ddr720pOutputProductPathAccepts(
-    const DdrArmPresentBudget& b, double armNonCopyMs = kParent960x540DecodeSwsOutMs,
-    double marginFloorMs = kPlex720pOutputMinMarginMs) {
-    if (!b.valid || !b.arm_still_pushes_pixels || b.arm_push_bytes == 0)
-        return false;
-    if (!b.fabric_owned)
-        return false; // must not ARM scale/pad into canvas
-    // Refuse the trap path: ARM downscale-from-720p already exceeds the deadline.
-    if (armNonCopyMs >= kFrameBudget24fpsMs)
-        return false;
-    const double total = armNonCopyMs + b.arm_copy_ms;
-    const double margin = kFrameBudget24fpsMs - total;
-    return margin >= marginFloorMs;
-}
-
-// Explicit reject: fetch 720p and shrink on ARM (parent 51.78 / 44.95 ms).
-inline bool ddr720pArmDownscalePathRejected(double armDownscaleMs) {
-    return armDownscaleMs >= kFrameBudget24fpsMs ||
-           armDownscaleMs >= kParent720pArmDownscaleTo960Ms - 0.01;
-}
-
-// Second PLXG beat: content window inside the tier bank. Magic still PLXG;
-// bit26 distinguishes window beat from geometry beat (bit26=1 → window).
-inline uint64_t encodePlxgContentWindow(int contentW, int contentH, int x0, int y0) {
-    const uint32_t w = static_cast<uint32_t>(contentW) & 0xFFFu;
-    const uint32_t h = static_cast<uint32_t>(contentH) & 0xFFFu;
-    const uint32_t x = static_cast<uint32_t>(x0) & 0xFFFu;
-    const uint32_t y = static_cast<uint32_t>(y0) & 0xFFFu;
-    // hi: [11:0]w [23:12]h [24]=0 [25]=0 [26]=1 window [27:28] unused
-    // Extended x/y need a third word on wire; pack x in lo magic replacement?
-    // Keep lo=magic; put x in hi[27:30] limited — instead use hi fully for w/h
-    // and a dedicated packing: hi = w | h<<12 | x<<24 (x only 8 bits) — too small
-    // for 1280. Use: hi = w | (h<<12) | (1u<<26); x/y in a *second* uint64 via
-    // encodePlxgContentOrigin. Here encode w/h + window flag only.
-    const uint64_t hi = static_cast<uint64_t>(w) | (static_cast<uint64_t>(h) << 12) |
-                        (1ull << 26);
-    (void)x;
-    (void)y;
-    return (hi << 32) | static_cast<uint64_t>(kDdrFramePlxgMagic);
-}
-
-// Origin beat: hi = x0 | (y0<<12) | (1<<26)|(1<<27); lo = PLXG magic.
-inline uint64_t encodePlxgContentOrigin(int x0, int y0) {
-    const uint32_t x = static_cast<uint32_t>(x0) & 0xFFFu;
-    const uint32_t y = static_cast<uint32_t>(y0) & 0xFFFu;
-    const uint64_t hi =
-        static_cast<uint64_t>(x) | (static_cast<uint64_t>(y) << 12) | (1ull << 26) | (1ull << 27);
-    return (hi << 32) | static_cast<uint64_t>(kDdrFramePlxgMagic);
-}
-
-inline bool decodePlxgContentWindow(uint64_t raw, int& contentW, int& contentH) {
-    if (static_cast<uint32_t>(raw) != kDdrFramePlxgMagic)
-        return false;
-    const uint32_t hi = static_cast<uint32_t>(raw >> 32);
-    if (((hi >> 26) & 1u) == 0 || ((hi >> 27) & 1u) != 0)
-        return false; // not window beat
-    contentW = static_cast<int>(hi & 0xFFFu);
-    contentH = static_cast<int>((hi >> 12) & 0xFFFu);
-    return true;
-}
-
-inline bool decodePlxgContentOrigin(uint64_t raw, int& x0, int& y0) {
-    if (static_cast<uint32_t>(raw) != kDdrFramePlxgMagic)
-        return false;
-    const uint32_t hi = static_cast<uint32_t>(raw >> 32);
-    if (((hi >> 26) & 1u) == 0 || ((hi >> 27) & 1u) == 0)
-        return false;
-    x0 = static_cast<int>(hi & 0xFFFu);
-    y0 = static_cast<int>((hi >> 12) & 0xFFFu);
-    return true;
-}
-
-
-// Build the fabric-owned present contract for a content rectangle inside a tier
-// canvas. publish_bytes == native I420 only; PLXG must carry the window.
-struct DdrFabricOwnedPresentPlan {
-    DdrNativePushPlan native{};
-    DdrArmPresentBudget budget{};
-    DdrPresentOffload offload = DdrPresentOffload::None;
-    // Bank geometry (tier) — fabric still double-buffers at this stride.
-    DdrFrameGeometry canvas{};
-    DdrFrameLayout canvas_layout{};
-    // Tight content plane layout (strides/offsets) — NOT canvas line_bytes.
-    DdrNativeContentLayout content_layout{};
-    // Content rectangle ARM actually writes (tight, origin in bank via PLXG).
-    int content_w = 0;
-    int content_h = 0;
-    int content_x0 = 0; // even-aligned; fabric placement
-    int content_y0 = 0;
-    // Bytes ARM may memcpy — NEVER canvas frame_bytes on this path.
-    size_t publish_bytes = 0;
-    // Atomic 5-qword PLXG record (present_geom_latch). NOT three temporal beats.
-    // q[0..4] written contiguously at bootstrap phys 0x300FF800 before doorbell.
-    uint64_t plxg_q[5]{};
-    uint16_t plxg_seq = 1;
-    // Legacy single-word fields retained for tests that decode Q0/window-shaped
-    // views — populated as aliases of the atomic record, not separate wire beats.
-    uint64_t plxg_word = 0;
-    uint64_t plxg_window_word = 0;
-    uint64_t plxg_origin_word = 0;
-    bool valid = false;
-};
-
-inline DdrArmPresentBudget makeDdrArmPresentBudget(const DdrNativePushPlan& native,
-                                                   DdrPresentOffload offload,
-                                                   bool countFeedScaleRemoval,
-                                                   bool armPushesPixels = true) {
-    DdrArmPresentBudget b{};
-    if (!native.valid)
-        return b;
-    b.arm_push_bytes = armPushesPixels ? native.native_bytes : 0;
-    b.arm_copy_ms =
-        armPushesPixels ? ddrPushMsAtRate(native.native_bytes, kDdrBudgetCopyMibps) : 0.0;
-    b.canvas_copy_ms = ddrPushMsAtRate(native.canvas_bytes, kDdrBudgetCopyMibps);
-    // When ARM pushes nothing, the entire canvas copy term is evacuated.
-    b.copy_ms_removed =
-        armPushesPixels ? (b.canvas_copy_ms - b.arm_copy_ms) : b.canvas_copy_ms;
-    if (b.copy_ms_removed < 0.0)
-        b.copy_ms_removed = 0.0;
-    b.fabric_owned = ddrPresentOffloadHas(offload, DdrPresentOffload::FabricScale) &&
-                     ddrPresentOffloadHas(offload, DdrPresentOffload::FabricBlackPad) &&
-                     ddrPresentOffloadHas(offload, DdrPresentOffload::FabricPlacement);
-    if (countFeedScaleRemoval &&
-        ddrPresentOffloadHas(offload, DdrPresentOffload::FabricScale))
-        b.scale_ms_removed_feed480 = kFeedArchiveScaleMs;
-    b.arm_still_pushes_pixels = armPushesPixels;
-    b.zero_arm_per_pixel = !armPushesPixels && b.fabric_owned;
-    b.known_ms_removed_floor = b.copy_ms_removed + b.scale_ms_removed_feed480;
-    b.valid = true;
-    return b;
-}
-
-// Fabric-owned present plan.
-//   contentW/H  = STORAGE (what ARM writes; plane bases/strides) — e.g. 960x540
-//   canvasGeom  = DE/glass canvas (scaler output) — e.g. 1280x720; NOT storage
-//   bank map    = capacity-selected from content payload (usable, not full stride)
-// PLXG geometry beat programs STORAGE dims so ddr_frame_store U/V bases match
-// native_push (U@518400 for 960x540). Programming canvas 1280x720 here would set
-// U@921600 and fetch 1280-wide rows against a 960-wide payload (rd-duck #3).
-inline DdrFabricOwnedPresentPlan makeDdrFabricOwnedPresentPlan(
-    int contentW, int contentH, const DdrFrameGeometry& canvasGeom,
-    uint32_t canvasPhysBase = kDdrFramePhysBase, int contentX0 = 0, int contentY0 = 0,
-    bool countFeedScaleRemoval = true) {
-    DdrFabricOwnedPresentPlan p{};
-    p.canvas = canvasGeom;
-    p.content_w = contentW;
-    p.content_h = contentH;
-    p.content_x0 = contentX0 & ~1;
-    p.content_y0 = contentY0 & ~1;
-    p.offload = kDdrPresentOffloadFabricOwned;
-    p.native = makeDdrNativePushPlan(contentW, contentH, canvasGeom);
-    if (!p.native.valid)
-        return p;
-    if (p.content_x0 < 0 || p.content_y0 < 0)
-        return p;
-    // Content must fit inside the DE canvas (scaler input window), not redefine it.
-    if (p.content_x0 + contentW > canvasGeom.coded_width.get() ||
-        p.content_y0 + contentH > canvasGeom.coded_height.get())
-        return p;
-    // Map tier from *content* usable capacity; phys base must match the map.
-    const DdrBankMap map = ddrSelectBankMapForContent(contentW, contentH);
-    const uint32_t mapBase = (map == DdrBankMap::OptionC720p) ? kPlex720pDdrFramePhysBase
-                                                              : kDdrFramePhysBase;
-    // If caller passed a canvas phys base, prefer it only when it matches the map
-    // (Option-C callers pass kPlex720pDdrFramePhysBase). Mismatch → reject.
-    if (canvasPhysBase != mapBase && canvasPhysBase != kDdrFramePhysBase &&
-        canvasPhysBase != kPlex720pDdrFramePhysBase)
-        return p;
-    const uint32_t phys = (map == DdrBankMap::OptionC720p)
-                              ? ((canvasPhysBase == kPlex720pDdrFramePhysBase ||
-                                  canvasPhysBase == kDdrFramePhysBase)
-                                     ? kPlex720pDdrFramePhysBase
-                                     : canvasPhysBase)
-                              : kDdrFramePhysBase;
-    // canvas_layout describes the *bank window* (stride/doorbell/map) for the tier.
-    // Use fixed product/Option-C layout geometry for the map, not content dims.
-    const DdrFrameGeometry mapGeom = ddrCanvasGeometryForBankMap(map);
-    p.canvas_layout = makeDdrFrameLayout(mapGeom, phys, kDdrFrameStrideAlign);
-    // For Option-C product, pin fixed stride/doorbell even if alignUp would differ.
-    if (map == DdrBankMap::OptionC720p) {
-        p.canvas_layout.phys_base = kPlex720pDdrFramePhysBase;
-        p.canvas_layout.bank_stride = kPlex720pYuv420pBankStride;
-        p.canvas_layout.doorbell_phys = kPlex720pYuv420pDoorbellPhys;
-        p.canvas_layout.map_bytes = kPlex720pYuv420pBankStride * 2u;
-    }
-    if (!ddrFrameLayoutValid(p.canvas_layout))
-        return p;
-    p.publish_bytes = p.native.native_bytes;
-    p.content_layout = makeDdrNativeContentLayout(contentW, contentH);
-    if (!p.content_layout.valid || p.content_layout.frame_bytes != p.publish_bytes)
-        return p;
-    if (!ddrNativeContentFitsBank(p.content_layout, p.canvas_layout.bank_stride))
-        return p;
-    // Content strides must not silently equal canvas when geometry differs.
-    if (p.content_w != mapGeom.coded_width.get() &&
-        p.content_layout.y_stride == p.canvas_layout.line_bytes)
-        return p;
-    // native_push publish length must be display storage, never MB-coded 544 path.
-    if (contentW == kPlex720pOutputSourceWidth && contentH == kPlex720pOutputSourceHeight &&
-        p.publish_bytes != static_cast<size_t>(kPlex720pOutputSourceDisplayBytes))
-        return p;
-    p.budget = makeDdrArmPresentBudget(p.native, p.offload, countFeedScaleRemoval,
-                                       /*armPushesPixels=*/true);
-    // Atomic 5-qword PLXG (present_geom_latch). STORAGE coded/stride; DE in h_de/v_de.
-    const int deW = canvasGeom.presented_width.get() > 0 ? canvasGeom.presented_width.get()
-                                                         : canvasGeom.coded_width.get();
-    const int deH = canvasGeom.presented_height.get() > 0 ? canvasGeom.presented_height.get()
-                                                          : canvasGeom.coded_height.get();
-    // Non-zero seed for host latch models; writePlxgRecord always advances past last.
-    p.plxg_seq = 1;
-    p.plxg_q[0] = packPlxgQ0(/*win*/ true, /*geom*/ true, /*seq*/ 1);
-    p.plxg_q[1] = packPlxgQ1(contentW, contentH, p.content_x0, p.content_y0);
-    p.plxg_q[2] = packPlxgQ2(deW, deH, contentW, contentH);
-    p.plxg_q[3] = packPlxgQ3(p.content_layout.y_stride, p.content_layout.chroma_stride,
-                             contentW, contentH);
-    p.plxg_q[4] = packPlxgQ4(0, 0, 0, 0);
-    // Aliases for older tests (not separate wire beats).
-    p.plxg_word = p.plxg_q[0];
-    p.plxg_window_word = p.plxg_q[1];
-    p.plxg_origin_word = packPlxgQ1(0, 0, p.content_x0, p.content_y0); // x0/y0 view
-    p.valid = p.budget.valid && p.plxg_q[0] != 0 &&
-              plxgGeomDimsOk(contentW, contentH, p.content_layout.y_stride,
-                             p.content_layout.chroma_stride);
-    return p;
-}
-
-
-// Product 720p-OUTPUT plan: ARM decodes 960x540 tight I420, native-pushes into
-// Option-C 1280x720 bank; fabric scales (w-scaler). publish_bytes = 777600.
-inline DdrFabricOwnedPresentPlan makePlex720pOutputFrom540pSourcePlan(
-    uint32_t canvasPhysBase = kPlex720pDdrFramePhysBase, bool countFeedScaleRemoval = false) {
-    return makeDdrFabricOwnedPresentPlan(
-        kPlex720pOutputSourceWidth, kPlex720pOutputSourceHeight, plex720pDdrFrameGeometry(),
-        canvasPhysBase, 0, 0, countFeedScaleRemoval);
-}
-
-// FPGA-written banks: ARM publishes **zero** pixel bytes. Fabric decode/MC/IDCT
-// (or other fabric producer) fills Option-C / product banks; ARM only programs
-// PLXG + rings doorbell / feeds bitstream ring. This is the only present path
-// that can meet ddr720p24ShipAcceptsZeroArmPerPixel. Serial ARM decode+bank
-// copy is DEAD at every tier (Sweep-3 best bank 15.283 ms; product 2600k
-// decode 36.27 → serial sum ~51.55). Host-copy ordinary RAM is unreachable.
-// Fabric publish_bytes=0 is the only ship path; PL330 overlap unproven concurrent.
-inline DdrFabricOwnedPresentPlan makeDdrFpgaWrittenBankPlan(
-    const DdrFrameGeometry& canvasGeom, uint32_t canvasPhysBase = kPlex720pDdrFramePhysBase,
-    bool countFeedScaleRemoval = true) {
-    // Content == full canvas; producer is fabric, not ARM.
-    DdrFabricOwnedPresentPlan p = makeDdrFabricOwnedPresentPlan(
-        canvasGeom.coded_width.get(), canvasGeom.coded_height.get(), canvasGeom,
-        canvasPhysBase, 0, 0, countFeedScaleRemoval);
-    if (!p.valid)
-        return p;
-    p.publish_bytes = 0; // hard: ARM memcpy length
-    p.budget = makeDdrArmPresentBudget(p.native, p.offload, countFeedScaleRemoval,
-                                       /*armPushesPixels=*/false);
-    // native_push=0: fabric is the pixel producer; window still full-frame.
-    p.plxg_word = encodePlxgGeometryWord(canvasGeom.coded_width.get(),
-                                         canvasGeom.coded_height.get(),
-                                         /*enable=*/true, /*nativePush=*/false);
-    p.valid = p.budget.valid && ddr720p24ShipAcceptsZeroArmPerPixel(p.budget);
-    return p;
-}
-
-// Residual headroom after parent-measured 720p decode if non-decode is fully off ARM.
-// Returns budget - decode_ms. Positive means room for jitter only — not for memcpy.
-// Default decodeMs is 4000k (worst archive). Pass kParent720pDecodeMsCandidateTier
-// (2600k product content / maxBR 3100) for delivery residual (~5.40 ms).
-inline double ddr720p24ResidualMsAfterDecodeOnly(
-    double decodeMs = kParent720pDecodeMsDefaultThreads,
-    double budgetMs = kFrameBudget24fpsMs) {
-    return budgetMs - decodeMs;
-}
-
-// True when a projected ARM copy term alone would blow residual at the given tier.
-inline bool ddr720p24ArmCopyExceedsDecodeMarginAt(size_t armPushBytes, double decodeMs) {
-    const double copyMs = ddrPushMsAtRate(armPushBytes, kDdrBudgetCopyMibps);
-    return copyMs > ddr720p24ResidualMsAfterDecodeOnly(decodeMs);
-}
-
-// Conservative: exceeds even the 4000k residual (0.59 ms).
-inline bool ddr720p24ArmCopyExceedsDecodeMargin(size_t armPushBytes) {
-    return ddr720p24ArmCopyExceedsDecodeMarginAt(armPushBytes,
-                                                 kParent720pDecodeMsDefaultThreads);
-}
-
-// Candidate product tier: full 720p ARM bank copy ~15.28 ms >> residual ~5.40 ms.
-// Ship gate remains publish_bytes=0 (serial still fails by ~9.9 ms).
-inline bool ddr720p24ArmCopyExceedsCandidateTierMargin(size_t armPushBytes) {
-    return ddr720p24ArmCopyExceedsDecodeMarginAt(armPushBytes,
-                                                 kParent720pDecodeMsCandidateTier);
-}
-
-// Jobs fabric-owned present **forbids** on ARM (compile-time documentation via
-// tests). Returning true means the named ARM helper must not run on this path.
-inline bool fabricOwnedForbidsArmCanvasPack() { return true; }
-inline bool fabricOwnedForbidsArmFfmpegScalePad() { return true; }
-inline bool fabricOwnedForbidsArmClearYuvCropPad() { return true; }
-
-inline uint32_t plxgMailboxPhys(uint32_t doorbellPhys) {
-    return doorbellPhys + kDdrFramePlxgOffset;
 }
 
 } // namespace misterplex

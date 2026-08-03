@@ -50,6 +50,11 @@ module present_core #(
 	input  wire [10:0] win_h_de,
 	input  wire [10:0] win_v_de,
 
+	// PRESENT_BEAM_960 only: runtime V_TOTAL (0 → param 564). 564→~30.0008 Hz,
+	// 705→~24.0007 Hz at H_TOTAL=1182 / 20 MHz. Latch at frame boundary.
+	input  wire        beam_use_rt_vtotal,
+	input  wire [10:0] beam_rt_vtotal,
+
 	// Runtime DDR bank geometry (PLXW). geom_enable=0 → legacy CODED 624 path.
 	// Sized for 1280×720 (y_stride bytes). Safe default = all zero / disable.
 	input  wire        geom_enable,
@@ -155,7 +160,10 @@ module present_core #(
 `ifdef PRESENT_BEAM_960
 	// ascal-native true content DE (w-clock 1182×564 @20 MHz ≈ 30.0008 Hz).
 	// Default OFF. FAULT: PRESENT_BEAM_FAULT_ISLAND_1280 → DE 1280×720 (must RED).
+	// Runtime DE: PMS delivers source-native WxH (320×240 / 640×360 / 960×540 max).
+	// Beam H_DE/V_ACTIVE track content_w/h (frame-latched) so DE extent == content.
 	wire [10:0] hc, vc;
+	wire [10:0] beam_hde_act, beam_vact_act;
 	assign br = 8'd0; assign bg = 8'd0; assign bb = 8'd0;
 	// Pattern unused on beam path (no colorbars paint); keep for port parity.
 	wire [1:0] eff_pattern = use_frame_store ? 2'd1 : pattern;
@@ -167,16 +175,16 @@ module present_core #(
 		.H_SYNC_S(1280 + 32), .H_SYNC_E(1280 + 32 + 64),
 		.V_SYNC_S(720 + 8), .V_SYNC_E(720 + 8 + 6)
 	) beam960 (
-`else
-	present_beam_content_de #(
-		.H_DE(960), .V_ACTIVE(540),
-		.H_TOTAL(1182), .V_TOTAL(564),
-		.H_SYNC_S(960 + 32), .H_SYNC_E(960 + 32 + 64),
-		.V_SYNC_S(540 + 8), .V_SYNC_E(540 + 8 + 6)
-	) beam960 (
-`endif
 		.clk(clk),
 		.reset(reset),
+		.use_rt_vtotal(beam_use_rt_vtotal),
+		.rt_vtotal(beam_rt_vtotal),
+		.use_rt_geom(1'b0),
+		.rt_h_de(11'd0),
+		.rt_v_active(11'd0),
+		.vtot_active(),
+		.hde_active(beam_hde_act),
+		.vact_active(beam_vact_act),
 		.ce_pix(ce_pix_i),
 		.HBlank(hb),
 		.HSync(hs),
@@ -186,6 +194,34 @@ module present_core #(
 		.hc_out(hc),
 		.vc_out(vc)
 	);
+`else
+	present_beam_content_de #(
+		.H_DE(960), .V_ACTIVE(540),
+		.H_TOTAL(1182), .V_TOTAL(564),
+		.H_SYNC_S(960 + 32), .H_SYNC_E(960 + 32 + 64),
+		.V_SYNC_S(540 + 8), .V_SYNC_E(540 + 8 + 6)
+	) beam960 (
+		.clk(clk),
+		.reset(reset),
+		.use_rt_vtotal(beam_use_rt_vtotal),
+		.rt_vtotal(beam_rt_vtotal),
+		// True DE = content size (PMS source-native). 0 clamps to param 960×540.
+		.use_rt_geom(1'b1),
+		.rt_h_de(content_w),
+		.rt_v_active(content_h),
+		.vtot_active(),
+		.hde_active(beam_hde_act),
+		.vact_active(beam_vact_act),
+		.ce_pix(ce_pix_i),
+		.HBlank(hb),
+		.HSync(hs),
+		.VBlank(vb),
+		.VSync(vs),
+		.frame_start(fstart),
+		.hc_out(hc),
+		.vc_out(vc)
+	);
+`endif
 `else
 	wire [9:0] hc, vc; // from colorbars — same counters as full-DE bar paint
 
@@ -254,12 +290,14 @@ module present_core #(
 	localparam int V_STORE_I = 540;
 `endif
 	localparam bit NATIVE_V_1TO1 = 1'b1;
-	localparam [10:0] H_DE = 11'(H_DE_I);
+	localparam [10:0] H_DE = 11'(H_DE_I); // elab default / docs; live DE = beam_*_act
 	localparam [10:0] V_STORE = 11'(V_STORE_I);
 	localparam int STORE_X_SCALE = 65536; // identity placeholder (window owns map)
 	localparam int STORE_Y_SCALE = 65536;
 	wire [10:0] py = vc;
-	wire in_content = (hc < H_DE) && (py < V_STORE) && ~hb && ~vb;
+	// True-DE: content island follows *active* beam DE (runtime content_w/h), not
+	// a fixed 960×540 param — else 320×240 becomes a pad island inside 960 DE.
+	wire in_content = (hc < beam_hde_act) && (py < beam_vact_act) && ~hb && ~vb;
 	wire [10:0] read_hc = hc;
 	localparam int WIN_H_DE_DEFAULT = H_DE_I;
 	localparam int WIN_V_DE_DEFAULT = V_STORE_I;
@@ -321,8 +359,16 @@ module present_core #(
 		.content_h(content_h),
 		.content_x0(content_x0),
 		.content_y0(content_y0),
+`ifdef PRESENT_BEAM_960
+		// Scale denom = live DE (beam tracks content_w/h) → identity when
+		// content_* match delivered size. Ignores stale win_h_de/v_de so a
+		// 320×240 publish cannot NN-stretch into a leftover 960 DE program.
+		.h_de(beam_hde_act),
+		.v_de(beam_vact_act),
+`else
 		.h_de(win_h_de),
 		.v_de(win_v_de),
+`endif
 		.store_x(store_x_win),
 		.store_y(store_y_win),
 		.de_r(de_r),
@@ -362,9 +408,6 @@ module present_core #(
 
 `include "ddr_frame_layout_params.svh"
 
-	// B1: under PRESENT_BEAM_960 / OPTION_C the store compile-time LEG map is
-	// Option-C (see ddr_frame_store `ifdef OPTION_C). PHYS_BASE_720P params are
-	// always passed so capacity select and OPTION_C re-base share one source.
 	ddr_frame_store #(
 		.FRAME_W(FRAME_W),
 		.FRAME_H(FRAME_H),
@@ -380,11 +423,7 @@ module present_core #(
 		.LINE_COUNT(FRAME_LINE_COUNT),
 		.PHYS_BASE(32'h3000_0000),
 		.HPS_BANK_STRIDE_BYTES(DDR_FRAME_YUV420P_BANK_STRIDE),
-		.DOORBELL_PHYS(DDR_FRAME_YUV420P_DOORBELL_PHYS),
-		// Option-C banks (capacity select + compile-time OPTION_C LEG re-base)
-		.PHYS_BASE_720P(DDR_FRAME_720P_PHYS_BASE),
-		.HPS_BANK_STRIDE_BYTES_720P(DDR_FRAME_720P_YUV420P_BANK_STRIDE),
-		.DOORBELL_PHYS_720P(DDR_FRAME_720P_YUV420P_DOORBELL_PHYS)
+		.DOORBELL_PHYS(DDR_FRAME_YUV420P_DOORBELL_PHYS)
 	) fstore (
 		.clk(clk),
 		.clk_ddr(clk_ddr),
@@ -505,14 +544,13 @@ module present_core #(
 	// Each extra clk of lag eats ~0.6 of a source column off the left and repeats it
 	// on the right, which is precisely the right-edge "bar".
 	//
-	// B12 DE_LAG @ DDR_FRAME_STORE + 960 max tier (build-host Verilator measure):
-	//   tests/unit/test_ddr_store_rgb_lag.sh → store rd_active→RGB lag_cycles=1
-	//   at both coded_w=960 (Option-C) and coded_w=624 (legacy). Geometry does
-	//   NOT change store RGB pipeline depth (B12_COMPARE lag960=lag624).
-	//   DE_LAG=3 keeps HBlank/HSync delayed past store RGB + content_window de_r
-	//   on PRESENT_BEAM_960 / FRAME_W=960 the same way as 640-class.
-	//   Evidence: DE_LAG 960 store lag_cycles=1 (script true rc=0).
-	// Parent HDMI edge paint remains the glass-level confirmation after fit.
+	// REQUIRES_FIT (DDR_FRAME_STORE @ FRAME_W=640): DE_LAG has NOT been re-swept for
+	// ddr_frame_store's deeper path (rd_visible pipeline + YUV + BRAM). A too-small
+	// lag wraps previous-line right columns onto the left edge (ragged boundary +
+	// left clip). Parent HDMI after ARM stride fix still saw ~44 px per-line left
+	// wander — retune with gen_edge_markers.py on an authorised fit; do not guess
+	// a new constant here without that sweep. Keep the frame_store-proven value
+	// until then so we do not silently eat left columns.
 	localparam DE_LAG = 3'd3;
 	reg [DE_LAG-1:0] hb_sr, hs_sr;
 	always @(posedge clk) begin

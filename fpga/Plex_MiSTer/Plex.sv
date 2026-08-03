@@ -42,15 +42,8 @@ assign BUTTONS = 0;
 //////////////////////////////////////////////////////////////////
 
 wire [1:0] ar = status[122:121];
-// B9: 960×540 true-DE is 16:9 content — force Full Screen under PRESENT_BEAM_960
-// (default Original is 4:3 and pillars the ascal path).
-`ifdef PRESENT_BEAM_960
-assign VIDEO_ARX = 12'd0;
-assign VIDEO_ARY = 12'd0;
-`else
 assign VIDEO_ARX = (!ar) ? 12'd4 : (ar - 1'd1);
 assign VIDEO_ARY = (!ar) ? 12'd3 : 12'd0;
-`endif
 
 `include "build_id.v"
 localparam CONF_STR = {
@@ -230,8 +223,110 @@ wire reset = RESET | status[0] | buttons[1];
 // O[4] is the native content-resolution selector shared with misterplexd.
 // C1B owns the selector/ABI; the DDR-backed frame-store branch consumes these
 // dimensions for the actual 480p present path.
-// Final content_width/height mux is after PLXG latch (PRESENT_BEAM_960 force).
+//
+// Fabric content window (present_content_window):
+//   Default win_enable=0 → legacy full-bank map (safe with ARM scale/pad to 624).
+//   Host mailbox PLXG @ doorbell+0x800 (ABI FREEZE; never +0x130/PLXC) programs
+//   WxH + win_enable=1 when ARM stops scaling. O[4] supplies the coarse default
+//   content_w/h so a future one-bit enable can arm NN stretch without mailbox.
+//   Do NOT auto-assert win_enable from O[4] alone — that breaks ARM-scaled 624
+//   frames still published today (quarter-size / wrong sample class).
 wire        content_res_640x480 = status[4];
+// PLXG geom latch (present_geom_latch): host programs window + bank geometry.
+// Magic PLXG 0x504C5847 @ doorbell+0x800 (ABI FREEZE) — NOT PLXC +0x130 / NOT PLXW.
+// wr_en/commit tied 0 until DDR poller / w-mem ABI lands → reset-safe all-zero
+// outputs keep win_enable=0 and geom_enable=0 (legacy bit-exact 480p path).
+wire        plxg_wr_en   = 1'b0;
+wire [2:0]  plxg_wr_idx  = 3'd0;
+wire [63:0] plxg_wr_data = 64'd0;
+wire        plxg_commit  = 1'b0;
+wire        fabric_win_enable;
+wire        fabric_geom_enable;
+wire [10:0] fabric_content_w_lat;
+wire [10:0] fabric_content_h_lat;
+wire [10:0] fabric_content_x0;
+wire [10:0] fabric_content_y0;
+wire [10:0] fabric_h_de;
+wire [10:0] fabric_v_de;
+wire [10:0] fabric_geom_coded_w;
+wire [10:0] fabric_geom_coded_h;
+wire [11:0] fabric_geom_y_stride;
+wire [10:0] fabric_geom_chroma_stride;
+wire [10:0] fabric_geom_display_w;
+wire [10:0] fabric_geom_display_h;
+wire [10:0] fabric_geom_present_x;
+wire [10:0] fabric_geom_present_y;
+wire [10:0] fabric_geom_crop_left;
+wire [10:0] fabric_geom_crop_top;
+wire        fabric_plxg_live;
+wire [15:0] fabric_plxg_seq;
+present_geom_latch plxg_latch (
+	.clk(clk_sys),
+	.reset(reset),
+	.wr_en(plxg_wr_en),
+	.wr_idx(plxg_wr_idx),
+	.wr_data(plxg_wr_data),
+	.commit(plxg_commit),
+	.win_enable(fabric_win_enable),
+	.geom_enable(fabric_geom_enable),
+	.content_w(fabric_content_w_lat),
+	.content_h(fabric_content_h_lat),
+	.content_x0(fabric_content_x0),
+	.content_y0(fabric_content_y0),
+	.h_de(fabric_h_de),
+	.v_de(fabric_v_de),
+	.coded_w(fabric_geom_coded_w),
+	.coded_h(fabric_geom_coded_h),
+	.y_stride(fabric_geom_y_stride),
+	.chroma_stride(fabric_geom_chroma_stride),
+	.display_w(fabric_geom_display_w),
+	.display_h(fabric_geom_display_h),
+	.present_x(fabric_geom_present_x),
+	.present_y(fabric_geom_present_y),
+	.crop_left(fabric_geom_crop_left),
+	.crop_top(fabric_geom_crop_top),
+	.live_valid(fabric_plxg_live),
+	.live_seq(fabric_plxg_seq)
+);
+// O[4] coarse ladder when latch idle; PLXG content_* wins once live+nonzero.
+wire [10:0] content_width_base  = (fabric_plxg_live && (fabric_content_w_lat != 11'd0))
+	? fabric_content_w_lat
+	: (content_res_640x480 ? 11'd640 : 11'd320);
+wire [10:0] content_height_base = (fabric_plxg_live && (fabric_content_h_lat != 11'd0))
+	? fabric_content_h_lat
+	: (content_res_640x480 ? 11'd480 : 11'd240);
+
+// Integration force (default OFF): native 1280×720 READ + Option-C bank map without
+// host PLXG writes. Required so the fabric-pattern→HDMI fit keeps a live path to
+// video out — PLXG wr is tied 0, and constant geom_enable=0 lets Quartus delete the
+// 720p reader mux. QSF must NOT set this for product/legacy bitstreams.
+//   set_global_assignment -name VERILOG_MACRO "FABRIC_NATIVE_720P_GEOM=1"
+// Does not change DE timing (H_DE still 529 unless w-clock raises FRAME/Template).
+`ifdef FABRIC_NATIVE_720P_GEOM
+wire        force_native_720p = 1'b1;
+`else
+wire        force_native_720p = 1'b0;
+`endif
+wire        present_win_enable  = force_native_720p | fabric_win_enable;
+wire        present_geom_enable = force_native_720p | fabric_geom_enable;
+wire [10:0] content_width  = force_native_720p ? 11'd1280 : content_width_base;
+wire [10:0] content_height = force_native_720p ? 11'd720  : content_height_base;
+wire [10:0] present_content_x0 = force_native_720p ? 11'd0 : fabric_content_x0;
+wire [10:0] present_content_y0 = force_native_720p ? 11'd0 : fabric_content_y0;
+// Keep product H_DE=529 when force is on and FRAME is still 480p Template; only
+// override DE when PLXG programmed a non-zero value (future 720p Template).
+wire [10:0] present_win_h_de = fabric_h_de;
+wire [10:0] present_win_v_de = fabric_v_de;
+wire [10:0] present_geom_coded_w = force_native_720p ? 11'd1280 : fabric_geom_coded_w;
+wire [10:0] present_geom_coded_h = force_native_720p ? 11'd720  : fabric_geom_coded_h;
+wire [11:0] present_geom_y_stride = force_native_720p ? 12'd1280 : fabric_geom_y_stride;
+wire [10:0] present_geom_chroma_stride = force_native_720p ? 11'd640 : fabric_geom_chroma_stride;
+wire [10:0] present_geom_display_w = force_native_720p ? 11'd1280 : fabric_geom_display_w;
+wire [10:0] present_geom_display_h = force_native_720p ? 11'd720  : fabric_geom_display_h;
+wire [10:0] present_geom_present_x = force_native_720p ? 11'd0 : fabric_geom_present_x;
+wire [10:0] present_geom_present_y = force_native_720p ? 11'd0 : fabric_geom_present_y;
+wire [10:0] present_geom_crop_left = force_native_720p ? 11'd0 : fabric_geom_crop_left;
+wire [10:0] present_geom_crop_top  = force_native_720p ? 11'd0 : fabric_geom_crop_top;
 
 // Legacy cadence input is now fixed; the daemon handles exact content pacing.
 wire [7:0] content_fps = 8'd24;
@@ -731,216 +826,6 @@ wire        present_ddr_rd;
 wire [63:0] present_ddr_din;
 wire  [7:0] present_ddr_be;
 wire        present_ddr_we;
-
-// PLXG latch + bootstrap DDR poller (w-mem). geom_enable=0 until host programs
-// 5-qword record at FIXED 0x300FF800 and poller commits.
-// m1 shared with bitstream via ddr_m1_subarb (latched owner through response) —
-// NOT a combinational stream|plxg mux (rd-duck: mid-beat flip drops PLXG data).
-wire        plxg_wr_en, plxg_commit;
-wire  [2:0] plxg_wr_idx;
-wire [63:0] plxg_wr_data;
-wire        plxg_win_en, plxg_geom_en, plxg_live_valid;
-wire [10:0] plxg_cw, plxg_ch, plxg_cx0, plxg_cy0;
-wire [10:0] plxg_hde, plxg_vde, plxg_coded_w, plxg_coded_h;
-wire [11:0] plxg_y_stride;
-wire [10:0] plxg_c_stride, plxg_dw, plxg_dh;
-wire [10:0] plxg_px, plxg_py, plxg_cl, plxg_ct;
-wire [15:0] plxg_live_seq;
-wire [13:0] plxg_live_epoch;
-wire        plxg_want, plxg_rd;
-wire  [7:0] plxg_burstcnt;
-wire [28:0] plxg_addr;
-wire [63:0] plxg_din;
-wire  [7:0] plxg_be;
-wire        plxg_we;
-wire        plxg_busy;
-wire [63:0] plxg_dout;
-wire        plxg_dout_ready;
-wire [15:0] plxg_last_seq;
-wire        plxg_busy_poll;
-wire [31:0] plxg_cnt_commit, plxg_cnt_bad, plxg_cnt_torn;
-wire  [1:0] m1_sub_grant;
-wire        m1c_want, m1c_busy, m1c_rd, m1c_we;
-wire  [7:0] m1c_burstcnt, m1c_be;
-wire [28:0] m1c_addr;
-wire [63:0] m1c_din, m1c_dout;
-wire        m1c_dout_ready;
-
-// stream_ddr_busy/dout/dout_ready are driven by subarb (not continuous assigns
-// that race the arbiter). Subarb sinks stream_* and plxg_*.
-ddr_m1_subarb u_m1_sub (
-	.clk(clk_sys),
-	.reset(reset),
-	.s_want(stream_ddr_bus_want),
-	.s_busy(stream_ddr_busy),
-	.s_burstcnt(stream_ddr_burstcnt),
-	.s_addr(stream_ddr_addr),
-	.s_dout(stream_ddr_dout),
-	.s_dout_ready(stream_ddr_dout_ready),
-	.s_rd(stream_ddr_rd),
-	.s_din(stream_ddr_din),
-	.s_be(stream_ddr_be),
-	.s_we(stream_ddr_we),
-	.p_want(plxg_want),
-	.p_busy(plxg_busy),
-	.p_burstcnt(plxg_burstcnt),
-	.p_addr(plxg_addr),
-	.p_dout(plxg_dout),
-	.p_dout_ready(plxg_dout_ready),
-	.p_rd(plxg_rd),
-	.p_din(plxg_din),
-	.p_be(plxg_be),
-	.p_we(plxg_we),
-	.m_want(m1c_want),
-	.m_busy(m1c_busy),
-	.m_burstcnt(m1c_burstcnt),
-	.m_addr(m1c_addr),
-	.m_dout(m1c_dout),
-	.m_dout_ready(m1c_dout_ready),
-	.m_rd(m1c_rd),
-	.m_din(m1c_din),
-	.m_be(m1c_be),
-	.m_we(m1c_we),
-	.grant(m1_sub_grant)
-);
-
-present_geom_latch u_plxg_latch (
-	.clk(clk_sys),
-	.reset(reset),
-	.wr_en(plxg_wr_en),
-	.wr_idx(plxg_wr_idx),
-	.wr_data(plxg_wr_data),
-	.commit(plxg_commit),
-	.win_enable(plxg_win_en),
-	.geom_enable(plxg_geom_en),
-	.content_w(plxg_cw),
-	.content_h(plxg_ch),
-	.content_x0(plxg_cx0),
-	.content_y0(plxg_cy0),
-	.h_de(plxg_hde),
-	.v_de(plxg_vde),
-	.coded_w(plxg_coded_w),
-	.coded_h(plxg_coded_h),
-	.y_stride(plxg_y_stride),
-	.chroma_stride(plxg_c_stride),
-	.display_w(plxg_dw),
-	.display_h(plxg_dh),
-	.present_x(plxg_px),
-	.present_y(plxg_py),
-	.crop_left(plxg_cl),
-	.crop_top(plxg_ct),
-	.live_valid(plxg_live_valid),
-	.live_seq(plxg_live_seq),
-	.live_epoch(plxg_live_epoch)
-);
-
-plxg_ddr_poller #(
-	.ENABLE(1'b1),
-	.BOOT_DOORBELL(32'h300F_F000),
-	.PLXG_OFF(32'h800),
-	.POLL_DIV(16'd512)
-) u_plxg_poll (
-	.clk(clk_sys),
-	.reset(reset),
-	.want(plxg_want),
-	.busy(plxg_busy),
-	.burstcnt(plxg_burstcnt),
-	.addr(plxg_addr),
-	.dout(plxg_dout),
-	.dout_ready(plxg_dout_ready),
-	.rd(plxg_rd),
-	.din(plxg_din),
-	.be(plxg_be),
-	.we(plxg_we),
-	.wr_en(plxg_wr_en),
-	.wr_idx(plxg_wr_idx),
-	.wr_data(plxg_wr_data),
-	.commit(plxg_commit),
-	.last_seq(plxg_last_seq),
-	.busy_poll(plxg_busy_poll),
-	.cnt_commit(plxg_cnt_commit),
-	.cnt_bad_magic(plxg_cnt_bad),
-	.cnt_torn(plxg_cnt_torn)
-);
-(* keep = 1 *) wire _keep_plxg =
-	plxg_geom_en | plxg_live_valid | |plxg_live_seq | plxg_want |
-	|plxg_cnt_commit | |plxg_cnt_bad | |plxg_cnt_torn | plxg_busy_poll |
-	|plxg_last_seq | plxg_win_en | |plxg_cw | |plxg_ch | |m1_sub_grant;
-`else
-// Non-DDR builds: stub PLXG outputs so content mux still elaborates.
-wire        plxg_win_en = 1'b0;
-wire        plxg_geom_en = 1'b0;
-wire        plxg_live_valid = 1'b0;
-wire [10:0] plxg_cw = 11'd0, plxg_ch = 11'd0, plxg_cx0 = 11'd0, plxg_cy0 = 11'd0;
-wire [10:0] plxg_hde = 11'd0, plxg_vde = 11'd0;
-wire [10:0] plxg_coded_w = 11'd0, plxg_coded_h = 11'd0;
-wire [11:0] plxg_y_stride = 12'd0;
-wire [10:0] plxg_c_stride = 11'd0, plxg_dw = 11'd0, plxg_dh = 11'd0;
-wire [10:0] plxg_px = 11'd0, plxg_py = 11'd0, plxg_cl = 11'd0, plxg_ct = 11'd0;
-`endif
-
-// --- Product content / geom hierarchy (B8) ---
-// plex_present_geom_mux: PRESENT_BEAM_960 → 960×540 (not 1280 force path).
-// PLXG wr_en/commit driven by plxg_ddr_poller (NOT tied 1'b0).
-// content_width_base lives inside mux (O[4] 640/320 when PLXG idle).
-wire        present_win_enable, present_geom_enable;
-wire [10:0] content_width, content_height;
-wire [10:0] present_content_x0, present_content_y0;
-wire [10:0] present_win_h_de, present_win_v_de;
-wire [10:0] present_geom_coded_w, present_geom_coded_h;
-wire [11:0] present_geom_y_stride;
-wire [10:0] present_geom_chroma_stride;
-wire [10:0] present_geom_display_w, present_geom_display_h;
-wire [10:0] present_geom_present_x, present_geom_present_y;
-wire [10:0] present_geom_crop_left, present_geom_crop_top;
-
-plex_present_geom_mux u_present_geom_mux (
-	.content_res_640x480(content_res_640x480),
-	.plxg_live_valid(plxg_live_valid),
-	.plxg_win_en(plxg_win_en),
-	.plxg_geom_en(plxg_geom_en),
-	.plxg_cw(plxg_cw),
-	.plxg_ch(plxg_ch),
-	.plxg_cx0(plxg_cx0),
-	.plxg_cy0(plxg_cy0),
-	.plxg_hde(plxg_hde),
-	.plxg_vde(plxg_vde),
-	.plxg_coded_w(plxg_coded_w),
-	.plxg_coded_h(plxg_coded_h),
-	.plxg_y_stride(plxg_y_stride),
-	.plxg_c_stride(plxg_c_stride),
-	.plxg_dw(plxg_dw),
-	.plxg_dh(plxg_dh),
-	.plxg_px(plxg_px),
-	.plxg_py(plxg_py),
-	.plxg_cl(plxg_cl),
-	.plxg_ct(plxg_ct),
-	.present_win_enable(present_win_enable),
-	.present_geom_enable(present_geom_enable),
-	.content_width(content_width),
-	.content_height(content_height),
-	.present_content_x0(present_content_x0),
-	.present_content_y0(present_content_y0),
-	.present_win_h_de(present_win_h_de),
-	.present_win_v_de(present_win_v_de),
-	.present_geom_coded_w(present_geom_coded_w),
-	.present_geom_coded_h(present_geom_coded_h),
-	.present_geom_y_stride(present_geom_y_stride),
-	.present_geom_chroma_stride(present_geom_chroma_stride),
-	.present_geom_display_w(present_geom_display_w),
-	.present_geom_display_h(present_geom_display_h),
-	.present_geom_present_x(present_geom_present_x),
-	.present_geom_present_y(present_geom_present_y),
-	.present_geom_crop_left(present_geom_crop_left),
-	.present_geom_crop_top(present_geom_crop_top)
-);
-
-// Keep gate-visible force literals in Plex.sv (B8 greps this file, not only the mux).
-// One-line forms match fit_release_gate B8 regexes (no cross-line [^;]).
-`ifdef PRESENT_BEAM_960
-(* keep = 1 *) wire [10:0] _b8_PRESENT_BEAM_960_content_w = 11'd960; // content_width = 11'd960
-(* keep = 1 *) wire [10:0] _b8_PRESENT_BEAM_960_content_h = 11'd540;
-(* keep = 1 *) wire [10:0] _b8_PRESENT_BEAM_960_coded_w = 11'd960; // present_geom_coded_w
 `endif
 
 present_core #(
@@ -970,6 +855,21 @@ present_core #(
 	.content_y0(present_content_y0),
 	.win_h_de(present_win_h_de),
 	.win_v_de(present_win_v_de),
+	// Runtime V_TOTAL for true-DE beam (PRESENT_BEAM_960). Default OFF → 564 (~30 Hz).
+	// Host may drive 705 for ~24.0007 Hz (film) at H_TOTAL=1182; keep true 960×540 DE.
+	.beam_use_rt_vtotal(1'b0),
+	.beam_rt_vtotal(11'd0),
+	.geom_enable(present_geom_enable),
+	.geom_coded_w(present_geom_coded_w),
+	.geom_coded_h(present_geom_coded_h),
+	.geom_y_stride(present_geom_y_stride),
+	.geom_chroma_stride(present_geom_chroma_stride),
+	.geom_display_w(present_geom_display_w),
+	.geom_display_h(present_geom_display_h),
+	.geom_present_x(present_geom_present_x),
+	.geom_present_y(present_geom_present_y),
+	.geom_crop_left(present_geom_crop_left),
+	.geom_crop_top(present_geom_crop_top),
 	.fs_wr_en(fs_wr_en),
 	.fs_wr_pixel(fs_wr_pixel),
 	.fs_wr_reset(fs_wr_reset),
@@ -984,17 +884,6 @@ present_core #(
 	.sdram_rd(frame_sdram_rd),
 	.sdram_bs(frame_sdram_bs),
 	.sdram_refresh(frame_sdram_refresh),
-	.geom_enable(present_geom_enable),
-	.geom_coded_w(present_geom_coded_w),
-	.geom_coded_h(present_geom_coded_h),
-	.geom_y_stride(present_geom_y_stride),
-	.geom_chroma_stride(present_geom_chroma_stride),
-	.geom_display_w(present_geom_display_w),
-	.geom_display_h(present_geom_display_h),
-	.geom_present_x(present_geom_present_x),
-	.geom_present_y(present_geom_present_y),
-	.geom_crop_left(present_geom_crop_left),
-	.geom_crop_top(present_geom_crop_top),
 `ifdef DDR_FRAME_STORE
 	.ddr_start_req(status[12]),
 	.ddr_bank_sel(status[13]),
@@ -1045,116 +934,11 @@ present_core #(
 );
 
 `ifdef DDR_FRAME_STORE
-// FABRIC_DDR_WRITER (default OFF): arbiter3 + credit-aware fabric_ddr_attach.
-// Fit target = Option-C 720p moving pattern (ARM touches zero pixels).
-// FABRIC_DDR_WRITER_480P opts out to product 480p banks (no scaler needed).
-// w-scaler owns CODED-1280 read of Option-C banks; w-mem owns write + credit.
-`ifdef FABRIC_DDR_WRITER
-`include "rtl/ddr_frame_layout_params.svh"
-
-// Option-C 720p is the fit target (parent: moving 1280x720, ARM zero pixels).
-// Override with FABRIC_DDR_WRITER_480P for product-bank bring-up without scaler.
-`ifdef FABRIC_DDR_WRITER_480P
-localparam int FAB_W = DDR_FRAME_CODED_WIDTH;
-localparam int FAB_H = DDR_FRAME_CODED_HEIGHT;
-localparam [31:0] FAB_BASE = 32'h3000_0000;
-localparam int FAB_STRIDE = DDR_FRAME_YUV420P_BANK_STRIDE;
-localparam [31:0] FAB_DB = DDR_FRAME_YUV420P_DOORBELL_PHYS;
-`else
-localparam int FAB_W = DDR_FRAME_720P_CODED_WIDTH;
-localparam int FAB_H = DDR_FRAME_720P_CODED_HEIGHT;
-localparam [31:0] FAB_BASE = DDR_FRAME_720P_PHYS_BASE;
-localparam int FAB_STRIDE = DDR_FRAME_720P_YUV420P_BANK_STRIDE;
-localparam [31:0] FAB_DB = DDR_FRAME_720P_YUV420P_DOORBELL_PHYS;
-`endif
-
-wire        fabric_m2_want, fabric_m2_busy;
-wire  [7:0] fabric_m2_burstcnt;
-wire [28:0] fabric_m2_addr;
-wire [63:0] fabric_m2_dout;
-wire        fabric_m2_dout_ready;
-wire        fabric_m2_rd;
-wire [63:0] fabric_m2_din;
-wire  [7:0] fabric_m2_be;
-wire        fabric_m2_we;
-wire        fabric_busy, fabric_frame_done;
-wire [28:0] fabric_dbg_seq;
-wire [1:0]  fabric_dbg_bank;
-wire [1:0]  fabric_free_mask;
-wire        fabric_disp_bank, fabric_swap_pending;
-wire [15:0] fabric_frames_done;
-wire [7:0]  fabric_phase;
-
-// has_frame (clk_sys) → clk_ddr; produce only when ARM is not owning banks
-reg has_frame_s1, has_frame_s2;
-reg vsync_s1, vsync_s2, vsync_s3, fabric_vsync_swap;
-always @(posedge clk_ddr) begin
-	if (reset) begin
-		has_frame_s1 <= 1'b0;
-		has_frame_s2 <= 1'b0;
-		vsync_s1 <= 1'b0;
-		vsync_s2 <= 1'b0;
-		vsync_s3 <= 1'b0;
-		fabric_vsync_swap <= 1'b0;
-	end else begin
-		has_frame_s1 <= has_frame;
-		has_frame_s2 <= has_frame_s1;
-		// VSync falling edge as swap opportunity (present domain)
-		vsync_s1 <= VSync;
-		vsync_s2 <= vsync_s1;
-		vsync_s3 <= vsync_s2;
-		fabric_vsync_swap <= vsync_s3 & ~vsync_s2;
-	end
-end
-
-wire fabric_produce_en = !has_frame_s2;
-
-fabric_ddr_attach #(
-	.CODED_W(FAB_W),
-	.CODED_H(FAB_H),
-	.PHYS_BASE(FAB_BASE),
-	.HPS_BANK_STRIDE_BYTES(FAB_STRIDE),
-	.DOORBELL_PHYS(FAB_DB),
-	.WRITE_DRAIN_CYCLES(16),
-	.USE_INTERNAL_PATTERN(1'b1)
-) fabric_attach (
-	.clk(clk_ddr),
-	.reset(reset),
-	.produce_en(fabric_produce_en),
-	.vsync_swap(fabric_vsync_swap),
-	.ext_valid(1'b0),
-	.ext_ready(),
-	.ext_data(64'd0),
-	.ext_frame_start(1'b0),
-	.ext_bank_id(2'd0),
-	.m2_want(fabric_m2_want),
-	.m2_busy(fabric_m2_busy),
-	.m2_burstcnt(fabric_m2_burstcnt),
-	.m2_addr(fabric_m2_addr),
-	.m2_dout(fabric_m2_dout),
-	.m2_dout_ready(fabric_m2_dout_ready),
-	.m2_rd(fabric_m2_rd),
-	.m2_din(fabric_m2_din),
-	.m2_be(fabric_m2_be),
-	.m2_we(fabric_m2_we),
-	.busy(fabric_busy),
-	.frame_done(fabric_frame_done),
-	.dbg_seq(fabric_dbg_seq),
-	.dbg_last_bank(fabric_dbg_bank),
-	.free_mask(fabric_free_mask),
-	.disp_bank(fabric_disp_bank),
-	.swap_pending(fabric_swap_pending),
-	.frames_done(fabric_frames_done),
-	.frame_phase(fabric_phase)
-);
-
-ddr_bus_arbiter3 ddr_arb (
+ddr_bus_arbiter ddr_arb (
 	.clk(clk_ddr),
 	.clk_m1(clk_sys),
 	.reset(reset),
-	// m1 = stream | PLXG poller mux (stream priority); see m1c_* above present_core
-	.m1_want(m1c_want),
-	.m2_want(fabric_m2_want),
+	.m1_want(stream_ddr_bus_want),
 	.m0_busy(present_ddr_busy),
 	.m0_burstcnt(present_ddr_burstcnt),
 	.m0_addr(present_ddr_addr),
@@ -1164,24 +948,15 @@ ddr_bus_arbiter3 ddr_arb (
 	.m0_din(present_ddr_din),
 	.m0_be(present_ddr_be),
 	.m0_we(present_ddr_we),
-	.m1_busy(m1c_busy),
-	.m1_burstcnt(m1c_burstcnt),
-	.m1_addr(m1c_addr),
-	.m1_dout(m1c_dout),
-	.m1_dout_ready(m1c_dout_ready),
-	.m1_rd(m1c_rd),
-	.m1_din(m1c_din),
-	.m1_be(m1c_be),
-	.m1_we(m1c_we),
-	.m2_busy(fabric_m2_busy),
-	.m2_burstcnt(fabric_m2_burstcnt),
-	.m2_addr(fabric_m2_addr),
-	.m2_dout(fabric_m2_dout),
-	.m2_dout_ready(fabric_m2_dout_ready),
-	.m2_rd(fabric_m2_rd),
-	.m2_din(fabric_m2_din),
-	.m2_be(fabric_m2_be),
-	.m2_we(fabric_m2_we),
+	.m1_busy(stream_ddr_busy),
+	.m1_burstcnt(stream_ddr_burstcnt),
+	.m1_addr(stream_ddr_addr),
+	.m1_dout(stream_ddr_dout),
+	.m1_dout_ready(stream_ddr_dout_ready),
+	.m1_rd(stream_ddr_rd),
+	.m1_din(stream_ddr_din),
+	.m1_be(stream_ddr_be),
+	.m1_we(stream_ddr_we),
 	.DDRAM_BUSY(DDRAM_BUSY),
 	.DDRAM_BURSTCNT(DDRAM_BURSTCNT),
 	.DDRAM_ADDR(DDRAM_ADDR),
@@ -1192,171 +967,6 @@ ddr_bus_arbiter3 ddr_arb (
 	.DDRAM_BE(DDRAM_BE),
 	.DDRAM_WE(DDRAM_WE)
 );
-
-// w-path scoreboard twin: free_mask + doorbell order (async PL330 safe)
-wire hbic_err_no_credit, hbic_err_double;
-wire [1:0] hbic_may_fill;
-host_bank_ingest_credit hbic (
-	.clk(clk_ddr),
-	.reset(reset),
-	.bank_free_mask(fabric_free_mask),
-	.doorbell_pulse(fabric_frame_done),
-	.doorbell_bank(fabric_dbg_bank[0]),
-	// Only retire when a pending swap completes (same predicate as credit)
-	.retire_pulse(fabric_vsync_swap & fabric_swap_pending),
-	.retire_bank(fabric_disp_bank),
-	.host_may_fill_mask(hbic_may_fill),
-	.err_doorbell_without_credit(hbic_err_no_credit),
-	.err_double_publish(hbic_err_double)
-);
-
-// Force hierarchy retention: WE path + credit + phase + hbic must not prune
-(* keep = 1 *) wire _keep_fabric_ddr =
-	fabric_busy | fabric_frame_done | fabric_m2_want | fabric_m2_we |
-	|fabric_dbg_seq | |fabric_free_mask | fabric_disp_bank |
-	fabric_swap_pending | |fabric_frames_done | |fabric_phase |
-	|FAB_BASE[15:0] | |FAB_DB[15:0] |
-	|hbic_may_fill | hbic_err_no_credit | hbic_err_double;
-`else
-// Product path: m0 scanout + m1 stream/PLXG + m3 PLXC chrome (lowest prio).
-// STARVE_VIDEO tied 0 — m0 always preempts chrome. See tests/unit/test_ddr_plxc_grant_verilator.sh.
-wire        plxc_c_req, plxc_c_we, plxc_c_gnt, plxc_c_rd_valid;
-wire [28:0] plxc_c_addr;
-wire [63:0] plxc_c_wdata, plxc_c_rdata;
-wire        plxc_a_want, plxc_a_busy, plxc_a_rd, plxc_a_we, plxc_a_dout_ready;
-wire  [7:0] plxc_a_burstcnt, plxc_a_be;
-wire [28:0] plxc_a_addr;
-wire [63:0] plxc_a_din, plxc_a_dout;
-wire        plxc_ld_busy;
-wire [15:0] plxc_ld_seq;
-wire [31:0] plxc_ld_loads, plxc_ld_plxo, plxc_ld_bad;
-wire [31:0] plxc_br_gnt, plxc_br_rd, plxc_br_we;
-wire        plxc_grant_m3_live;
-wire [31:0] plxc_arb_m0, plxc_arb_m1, plxc_arb_m3;
-wire        plxc_host_we;
-wire  [7:0] plxc_host_addr;
-wire [63:0] plxc_host_wdata;
-
-`ifdef PLEX_CHROME_DDR
-localparam bit PLXC_DDR_EN = 1'b1;
-`else
-localparam bit PLXC_DDR_EN = 1'b0;
-`endif
-
-plex_chrome_ddr_loader #(
-	.ENABLE(PLXC_DDR_EN),
-	.MAX_CMDS(48),
-	.DOORBELL_PHYS(32'h300F_F000),
-	.PLXC_OFF(32'h130),
-	.PLXO_OFF(32'h138),
-	.PLXL_OFF(32'h140)
-) u_plxc_ddr_loader (
-	.clk(clk_sys),
-	.reset(reset),
-	.m_req(plxc_c_req),
-	.m_we(plxc_c_we),
-	.m_addr(plxc_c_addr),
-	.m_wdata(plxc_c_wdata),
-	.m_gnt(plxc_c_gnt),
-	.m_rd_valid(plxc_c_rd_valid),
-	.m_rdata(plxc_c_rdata),
-	.host_we(plxc_host_we),
-	.host_addr(plxc_host_addr),
-	.host_wdata(plxc_host_wdata),
-	.chrome_hw(1'b1),
-	.mon_w(12'd1280),
-	.mon_h(12'd720),
-	.mon_scale(4'd3),
-	.last_seq(plxc_ld_seq),
-	.busy(plxc_ld_busy),
-	.cnt_loads(plxc_ld_loads),
-	.cnt_plxo_wr(plxc_ld_plxo),
-	.cnt_bad_magic(plxc_ld_bad)
-);
-
-ddr_plxc_master_bridge u_plxc_bridge (
-	.clk(clk_sys),
-	.reset(reset),
-	.c_req(plxc_c_req),
-	.c_we(plxc_c_we),
-	.c_addr(plxc_c_addr),
-	.c_wdata(plxc_c_wdata),
-	.c_gnt(plxc_c_gnt),
-	.c_rd_valid(plxc_c_rd_valid),
-	.c_rdata(plxc_c_rdata),
-	.a_want(plxc_a_want),
-	.a_busy(plxc_a_busy),
-	.a_burstcnt(plxc_a_burstcnt),
-	.a_addr(plxc_a_addr),
-	.a_dout(plxc_a_dout),
-	.a_dout_ready(plxc_a_dout_ready),
-	.a_rd(plxc_a_rd),
-	.a_din(plxc_a_din),
-	.a_be(plxc_a_be),
-	.a_we(plxc_a_we),
-	.cnt_gnt(plxc_br_gnt),
-	.cnt_rd_beats(plxc_br_rd),
-	.cnt_we_beats(plxc_br_we)
-);
-
-ddr_bus_arbiter_plxc #(
-	.STARVE_VIDEO(1'b0)
-) ddr_arb (
-	.clk(clk_ddr),
-	.clk_m1(clk_sys),
-	.clk_m3(clk_sys),
-	.reset(reset),
-	.starve_video(1'b0),
-	.m1_want(m1c_want),
-	.m3_want(plxc_a_want),
-	.m0_busy(present_ddr_busy),
-	.m0_burstcnt(present_ddr_burstcnt),
-	.m0_addr(present_ddr_addr),
-	.m0_dout(present_ddr_dout),
-	.m0_dout_ready(present_ddr_dout_ready),
-	.m0_rd(present_ddr_rd),
-	.m0_din(present_ddr_din),
-	.m0_be(present_ddr_be),
-	.m0_we(present_ddr_we),
-	.m1_busy(m1c_busy),
-	.m1_burstcnt(m1c_burstcnt),
-	.m1_addr(m1c_addr),
-	.m1_dout(m1c_dout),
-	.m1_dout_ready(m1c_dout_ready),
-	.m1_rd(m1c_rd),
-	.m1_din(m1c_din),
-	.m1_be(m1c_be),
-	.m1_we(m1c_we),
-	.m3_busy(plxc_a_busy),
-	.m3_burstcnt(plxc_a_burstcnt),
-	.m3_addr(plxc_a_addr),
-	.m3_dout(plxc_a_dout),
-	.m3_dout_ready(plxc_a_dout_ready),
-	.m3_rd(plxc_a_rd),
-	.m3_din(plxc_a_din),
-	.m3_be(plxc_a_be),
-	.m3_we(plxc_a_we),
-	.grant_m3_live(plxc_grant_m3_live),
-	.cnt_grant_m0(plxc_arb_m0),
-	.cnt_grant_m1(plxc_arb_m1),
-	.cnt_grant_m3(plxc_arb_m3),
-	.DDRAM_BUSY(DDRAM_BUSY),
-	.DDRAM_BURSTCNT(DDRAM_BURSTCNT),
-	.DDRAM_ADDR(DDRAM_ADDR),
-	.DDRAM_DOUT(DDRAM_DOUT),
-	.DDRAM_DOUT_READY(DDRAM_DOUT_READY),
-	.DDRAM_RD(DDRAM_RD),
-	.DDRAM_DIN(DDRAM_DIN),
-	.DDRAM_BE(DDRAM_BE),
-	.DDRAM_WE(DDRAM_WE)
-);
-
-// Retain PLXC hierarchy; host beats quiet until PLEX_CHROME_DDR + w-osd plane ports.
-(* keep = 1 *) wire _keep_plxc_slot =
-	plxc_c_req | plxc_c_gnt | plxc_c_rd_valid | plxc_grant_m3_live |
-	plxc_host_we | plxc_ld_busy | |plxc_ld_loads | |plxc_br_gnt |
-	|plxc_arb_m3 | |plxc_host_addr | |plxc_host_wdata[7:0] | |plxc_ld_seq;
-`endif
 `endif
 
 assign CLK_VIDEO = clk_sys;
