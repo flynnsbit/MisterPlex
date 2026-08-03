@@ -184,6 +184,9 @@ public:
     misterplex::OsdCapability osdCapability() const {
         return static_cast<misterplex::OsdCapability>(osdCapability_.load());
     }
+    // Default OFF: O[5:4]=11 stays safe 480p until fabric-ready. Conf OSD_TIER11_720P=1.
+    void setOsdTier11Path720p(bool on) { osdTier11Path720p_ = on; }
+    bool osdTier11Path720p() const { return osdTier11Path720p_; }
     // True when decoded OSD bits may drive idle / A/V / content tier.
     bool osdApplyActive() const;
     void startOsdPoll();
@@ -366,6 +369,7 @@ private:
     static std::string hex16(uint16_t v);
 
     misterplex::OsdControlMode osdMode_ = misterplex::OsdControlMode::Auto;
+    bool osdTier11Path720p_ = false;
     std::atomic<int> osdCapability_{static_cast<int>(misterplex::OsdCapability::Unknown)};
     std::atomic<bool> osdInertNotified_{false};
     std::atomic<bool> osdRun_{false};

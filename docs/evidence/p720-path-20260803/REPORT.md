@@ -221,3 +221,14 @@ docker restart plex
 PROFILE_SAMPLE=... WIDTH=1280 HEIGHT=720 FRAMES=300 \
   scripts/run_arm_decode_profile.sh
 ```
+
+---
+
+## Lab PMS re-proof (daemon path, unique session) — parent 400 RCA
+
+Parent hand requests returned HTTP 400 at both 720 and 480 — **request construction**, not PMS refusing 720.
+Daemon `buildUniversalTranscodeUrl` + full Chrome/MiSTerPlex headers + **unique session** → **HTTP 200**.
+
+See `LAB_PMS_720_DAEMON_PATH.md` for the coded-size matrix and bitrate pin (product **4000**, geometry min **3500**).
+
+OSD product: `OSD_TIER11_720P` default **0**; when 1, O[5:4]=11 → Path720p.

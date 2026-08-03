@@ -207,7 +207,13 @@ inline bool preferDirectH264ForContent(bool conf_explicit, bool conf_prefer,
     return stream_enabled;
 }
 
-inline ContentResolution contentResolutionFromOsdWord(uint16_t word) {
+// O[5:4]=11 → Path720p ladder ONLY when enable_tier11_720p is true (conf
+// OSD_TIER11_720P=1). Default false: reserved → safe 480p canvas so a v8 menu
+// bit cannot ship 720p until fabric (w-mem/w-scaler) is ready.
+// Path 720p is also selected via DECODE=1280x720 / TRANSCODE_PROFILE=720p
+// (conf path does not need this flag).
+inline ContentResolution contentResolutionFromOsdWord(uint16_t word,
+                                                      bool enable_tier11_720p = false) {
     switch (osdContentTierFromWord(word)) {
     case 0:
         return contentResolutionFor240p();
@@ -216,8 +222,9 @@ inline ContentResolution contentResolutionFromOsdWord(uint16_t word) {
     case 2:
         return contentResolutionForWidescreen480pCanvas();
     default:
-        // 11 = reserved. Safe 480p canvas until an RBF/OSD ABI claims 720p.
-        // Path 720p is selected via DECODE=1280x720 / TRANSCODE_PROFILE=720p.
+        // case 3 = O[5:4] binary 11
+        if (enable_tier11_720p)
+            return contentResolutionFor720p();
         return contentResolutionFor480p();
     }
 }
@@ -259,9 +266,9 @@ inline int weakBitrateKbpsForCodedSize(int w, int h) {
     return weakBitrateKbpsForCodedSize(CodedWidth{w}, CodedHeight{h});
 }
 
-inline OsdSettings decodeOsdWord(uint16_t word) {
+inline OsdSettings decodeOsdWord(uint16_t word, bool enable_tier11_720p = false) {
     OsdSettings s;
-    s.contentResolution = contentResolutionFromOsdWord(word);
+    s.contentResolution = contentResolutionFromOsdWord(word, enable_tier11_720p);
     s.resyncEnabled = ((word >> 1) & 1u) == 0u;
     s.audioClockTrimEnabled = ((word >> 3) & 1u) == 0u;
     s.avOffsetMs = osdAvOffsetMsFromIndex((word >> 6) & 0x0Fu);

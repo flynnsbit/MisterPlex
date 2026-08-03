@@ -122,10 +122,22 @@ int main() {
     CHECK(preferDirectH264ForContent(false, false, true, ContentPresentPolicy::NativeCanvas));
     CHECK(!preferDirectH264ForContent(true, false, true, ContentPresentPolicy::Path720p));
     CHECK(preferDirectH264ForContent(true, true, false, ContentPresentPolicy::NativeCanvas));
-    // OSD reserved tier 11 still must not invent 720p (safe 480p canvas).
+    // OSD tier 11 default OFF → safe 480p canvas (fabric not ready).
     const auto osdRsvd720guard = contentResolutionFromOsdWord(3u << 4);
     CHECK(osdRsvd720guard.width == kPlex480pCodedWidth);
     CHECK(osdRsvd720guard.presentPolicy == ContentPresentPolicy::NativeCanvas);
+    CHECK(contentResolutionFromOsdWord(3u << 4, false).presentPolicy ==
+          ContentPresentPolicy::NativeCanvas);
+    // Flag ON → Path720p ladder (1280x720 / 4000 kbps).
+    const auto osdT11 = contentResolutionFromOsdWord(3u << 4, true);
+    CHECK(osdT11.width == kPlex720pCodedWidth);
+    CHECK(osdT11.height == kPlex720pCodedHeight);
+    CHECK(osdT11.presentPolicy == ContentPresentPolicy::Path720p);
+    CHECK(osdT11.weakBitrateKbps == kPlex720pWeakBitrateKbps);
+    const auto decT11 = decodeOsdWord(3u << 4, true);
+    CHECK(decT11.contentResolution.presentPolicy == ContentPresentPolicy::Path720p);
+    const auto decOff = decodeOsdWord(3u << 4, false);
+    CHECK(decOff.contentResolution.presentPolicy == ContentPresentPolicy::NativeCanvas);
 
     // --- change detection ignores core traffic ---
     // [10]/[11] flush pulses and [12]/[13] DDR kick/bank toggle constantly during

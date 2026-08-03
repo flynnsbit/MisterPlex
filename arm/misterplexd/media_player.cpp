@@ -732,7 +732,7 @@ void MediaPlayer::dispatchPlaybackInput(PlaybackCommand command) {
 
 void MediaPlayer::applyOsd(uint16_t word, bool applyIdle) {
     ignoreInputUntilMs_.store(steadyMs() + 300);
-    const OsdSettings s = decodeOsdWord(word);
+    const OsdSettings s = decodeOsdWord(word, osdTier11Path720p_);
     setAvOffsetMs(s.avOffsetMs);
     // Takes effect on the next session: the feed rate is captured when audioPump
     // opens MrAudio, and re-timing it mid-stream would step the audio clock.

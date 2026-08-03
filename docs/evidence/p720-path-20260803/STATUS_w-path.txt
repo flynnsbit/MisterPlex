@@ -1,17 +1,12 @@
-lane=w-path todo=p720-path branch=w-path-720p
-status=LANDED commits=98a7f0fd,ee1124bc,4629178c
-parent_decode=41.073ms/f@720p4000k (98.6% of 41.667 budget) — path critical path
+lane=w-path branch=w-path-720p
+status=LAB_720_PROVED_OSD_TIER11_LANDED
 
-LANDED (not plans):
-- PMS genuine 720: maxBR>=3500 → coded 1280x720; <=3000 → 720x404; DP → 1280x720; rk6+720ceil → 852x480 (quoted XML in REPORT)
-- Ladder 720p@4000/L31 + MiSTerPlex.xml 1280/L31 + isGenuine720pDelivery + bitrate gate
-- Path720p default preferDirect; direct_play_part verified → identity_skip (ARM scale=0)
-- Units true_rc=0: resolve/vf/osd/chroma
-
-INVALIDATED by parent 41.073:
-- Host bucket-lift / "scale skip alone ships 24fps" — decode alone eats budget; fabric offload mandatory
-- Synthetic 1080p 32.4 ms/f as 720 cost proxy — discarded
-
-BLOCKER for parent: install assets/plex-profiles/MiSTerPlex.xml on lab PMS + confirm device DP path720 logs delivery_basis=direct_play_part identity_skip=1 (no agent SSH)
-
-Coord: w-mem DDR reject 720 until remap; w-scaler after measured 1280x720 only
+HTTP: daemon buildUniversalTranscodeUrl → lab PMS 200 (parent 400s = bad hand shape/session)
+CODED (unique session, ffprobe):
+  rk2 16:9 @>=3500 → 1280x720 SAR1:1 CB L31
+  rk2 @<=3000 → 720x404 SAR404:405
+  rk7 native @4000 → 1280x720
+  rk83 4:3 @4000 → 960x720 (ceiling fit, not full width)
+PIN: product maxVideoBitrate=4000; geometry min 3500; parent measure 3500 vs 4000 decode ms/f
+OSD: tier11 Path720p behind OSD_TIER11_720P default 0; DECODE=1280x720 still works
+tests: osd/resolve/vf true_rc=0 misterplexd builds

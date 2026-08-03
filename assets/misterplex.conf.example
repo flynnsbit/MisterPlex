@@ -74,6 +74,12 @@ PRESENT=fpga
 # PREFER_DIRECT_H264=1    # always try Part when source is H.264
 # PREFER_DIRECT_H264=0    # force universal even on Path720p / STREAM=1
 # PREFER_DIRECT_H264=auto # explicit default (same as unset)
+#
+# OSD_TIER11_720P — map F12 O[5:4]=11 to Path720p (1280x720 ladder). Default 0:
+# tier 11 stays reserved → safe 480p canvas until w-mem/w-scaler are ready.
+# DECODE=1280x720 still selects Path720p without this flag.
+# OSD_TIER11_720P=0
+# OSD_TIER11_720P=1
 
 # --- Phase 4 UX ---
 # AUTO_NEXT=1  # on media EOF, play next playQueue item when bound (default on)

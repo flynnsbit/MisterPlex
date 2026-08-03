@@ -799,6 +799,16 @@ int main(int argc, char** argv) {
                      "CONF_STR has O[15:14],Idle screen; on=force; off=F12 inert\n",
                      misterplex::osdControlModeName(osdMode),
                      osdRaw.empty() ? "(default auto)" : osdRaw.c_str());
+        // Default OFF — O[5:4]=11 maps Path720p only when fabric path is ready.
+        {
+            const auto t11 = loadConf(confPath, "OSD_TIER11_720P");
+            const bool en = !t11.empty() && confTruthy(t11);
+            player.setOsdTier11Path720p(en);
+            std::fprintf(stderr,
+                         "misterplexd: OSD_TIER11_720P=%d — O[5:4]=11 → %s "
+                         "(default 0 = safe 480p canvas)\n",
+                         en ? 1 : 0, en ? "Path720p 1280x720" : "reserved/480p");
+        }
         if (osdMode == misterplex::OsdControlMode::ForcedOff) {
             std::fprintf(stderr,
                          "misterplexd: OSD_CONTROL=off — F12 menu Idle Screen is inert; "
@@ -963,7 +973,8 @@ int main(int argc, char** argv) {
     auto contentResolutionForNextPlay = [&]() -> misterplex::ContentResolution {
         // Re-read apply gate each play: Auto may flip to LIVE after boot probe.
         if (player.osdApplyActive())
-            return misterplex::contentResolutionFromOsdWord(player.lastOsdWord());
+            return misterplex::contentResolutionFromOsdWord(player.lastOsdWord(),
+                                                           player.osdTier11Path720p());
         return misterplex::contentResolutionFromCodedSize(decodeSize.width, decodeSize.height);
     };
 

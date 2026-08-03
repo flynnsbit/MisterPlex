@@ -152,9 +152,12 @@ inline bool isGenuine720pDelivery(int delivered_w, int delivered_h) {
     return isGenuineTierDelivery(delivered_w, delivered_h, 1280, 720);
 }
 
-// Lab-measured maxVideoBitrate gate for true 1280x720 on native 720p source
-// (rk7, 2026-08-03): <=3000 → 720x404; >=3500 → 1280x720. Exposed for tests /
-// logs — product default remains kPlex720pWeakBitrateKbps (4000).
+// Lab-measured maxVideoBitrate gate for true 1280x720 on 16:9 HD sources
+// (daemon URL builder + unique session, lab PMS 2026-08-03):
+//   rk2 1920x1080: maxBR<=3000 → coded 720x404 SAR~1:1; >=3500 → 1280x720 SAR 1:1
+//   rk7 native 720: maxBR=4000 → 1280x720 SAR 1:1
+//   rk83 1440x1080 4:3 @4000 → coded **960x720** (square-pixel fit — not full width)
+// Product default remains kPlex720pWeakBitrateKbps (4000) above the geometry step.
 inline constexpr int kPmsTrue720pMinBitrateKbpsMeasured = 3500;
 
 inline bool pmsBitrateLikelyTrue720p(int maxVideoBitrateKbps) {
