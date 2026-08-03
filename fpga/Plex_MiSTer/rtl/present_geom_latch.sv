@@ -7,6 +7,7 @@
 // ABI #2: q5 carries DAR + content_fps; reserved[63:34] MUST be zero or reject.
 //
 // FAULT_IMMEDIATE_COMMIT: restore pre-B16 promote-on-commit (red twin REPRO).
+// FAULT_LOSE_COINCIDENT: split ifs lose commit+boundary same-cycle (rd-duck).
 // FAULT_NO_EPOCH: seq-only accept (B4 red twin).
 // FAULT_IGNORE_Q5_RESERVED: accept nonzero reserved (ABI #2 red twin).
 //
@@ -168,10 +169,17 @@ module present_geom_latch (
 			if (commit_reserved_fault)
 				q5_reserved_reject <= 1'b1;
 
-			// Stage on commit (or immediate promote under fault).
-			if (commit && seq_new) begin
+			// Promote helpers (shadow sh* or pending pend_*).
+			// rd-duck: commit && frame_boundary same cycle must NOT lose the new
+			// record (old code: boundary read stale pend_*, then pending_valid<=0
+			// overwrote commit's stage). Priority:
+			//   1) FAULT_IMMEDIATE: always live on commit
+			//   2) commit+boundary+seq_new: promote SHADOW directly to live
+			//   3) commit only: stage to pending
+			//   4) boundary+pending: promote pending
+			// FAULT_LOSE_COINCIDENT: restore split ifs (red twin loses record).
 `ifdef PRESENT_GEOM_LATCH_FAULT_IMMEDIATE_COMMIT
-				// RED twin: mid-raster live update (pre-B16 defect).
+			if (commit && seq_new) begin
 				win_enable     <= sh_win;
 				geom_enable    <= sh_geom;
 				content_w      <= sh1[10:0];
@@ -200,7 +208,10 @@ module present_geom_latch (
 				live_valid     <= 1'b1;
 				pending_valid  <= 1'b0;
 				promote_pulse  <= 1'b1;
-`else
+			end
+`elsif PRESENT_GEOM_LATCH_FAULT_LOSE_COINCIDENT
+			// RED twin: independent ifs — same-cycle commit+boundary drops new.
+			if (commit && seq_new) begin
 				pend_win_en    <= sh_win;
 				pend_geom_en   <= sh_geom;
 				pend_cw        <= sh1[10:0];
@@ -227,12 +238,96 @@ module present_geom_latch (
 				pend_seq       <= sh_seq;
 				pend_epoch     <= sh_epoch;
 				pending_valid  <= 1'b1;
-`endif
 			end
-
-			// Atomic promote at frame boundary only (product path).
-`ifndef PRESENT_GEOM_LATCH_FAULT_IMMEDIATE_COMMIT
 			if (frame_boundary && pending_valid) begin
+				win_enable     <= pend_win_en;
+				geom_enable    <= pend_geom_en;
+				content_w      <= pend_cw;
+				content_h      <= pend_ch;
+				content_x0     <= pend_cx0;
+				content_y0     <= pend_cy0;
+				h_de           <= pend_hde;
+				v_de           <= pend_vde;
+				coded_w        <= pend_coded_w;
+				coded_h        <= pend_coded_h;
+				y_stride       <= pend_y_stride;
+				chroma_stride  <= pend_c_stride;
+				display_w      <= pend_dw;
+				display_h      <= pend_dh;
+				present_x      <= pend_px;
+				present_y      <= pend_py;
+				crop_left      <= pend_cl;
+				crop_top       <= pend_ct;
+				dar_x          <= pend_dar_x;
+				dar_y          <= pend_dar_y;
+				content_fps    <= pend_fps;
+				dar_valid      <= pend_dar_valid;
+				fps_valid      <= pend_fps_valid;
+				live_seq       <= pend_seq;
+				live_epoch     <= pend_epoch;
+				live_valid     <= 1'b1;
+				pending_valid  <= 1'b0;
+				promote_pulse  <= 1'b1;
+			end
+`else
+			if (commit && seq_new && frame_boundary) begin
+				// Same-cycle stage+promote from shadow (atomic).
+				win_enable     <= sh_win;
+				geom_enable    <= sh_geom;
+				content_w      <= sh1[10:0];
+				content_h      <= sh1[26:16];
+				content_x0     <= sh1[42:32];
+				content_y0     <= sh1[58:48];
+				h_de           <= sh2[11:0];
+				v_de           <= sh2[27:16];
+				coded_w        <= sh2[42:32];
+				coded_h        <= sh2[58:48];
+				y_stride       <= sh3[11:0];
+				chroma_stride  <= sh3[26:16];
+				display_w      <= sh3[42:32];
+				display_h      <= sh3[58:48];
+				present_x      <= sh4[10:0];
+				present_y      <= sh4[26:16];
+				crop_left      <= sh4[42:32];
+				crop_top       <= sh4[58:48];
+				dar_x          <= sh5[11:0];
+				dar_y          <= sh5[23:12];
+				content_fps    <= sh5[31:24];
+				dar_valid      <= sh5[32];
+				fps_valid      <= sh5[33];
+				live_seq       <= sh_seq;
+				live_epoch     <= sh_epoch;
+				live_valid     <= 1'b1;
+				pending_valid  <= 1'b0;
+				promote_pulse  <= 1'b1;
+			end else if (commit && seq_new) begin
+				pend_win_en    <= sh_win;
+				pend_geom_en   <= sh_geom;
+				pend_cw        <= sh1[10:0];
+				pend_ch        <= sh1[26:16];
+				pend_cx0       <= sh1[42:32];
+				pend_cy0       <= sh1[58:48];
+				pend_hde       <= sh2[11:0];
+				pend_vde       <= sh2[27:16];
+				pend_coded_w   <= sh2[42:32];
+				pend_coded_h   <= sh2[58:48];
+				pend_y_stride  <= sh3[11:0];
+				pend_c_stride  <= sh3[26:16];
+				pend_dw        <= sh3[42:32];
+				pend_dh        <= sh3[58:48];
+				pend_px        <= sh4[10:0];
+				pend_py        <= sh4[26:16];
+				pend_cl        <= sh4[42:32];
+				pend_ct        <= sh4[58:48];
+				pend_dar_x     <= sh5[11:0];
+				pend_dar_y     <= sh5[23:12];
+				pend_fps       <= sh5[31:24];
+				pend_dar_valid <= sh5[32];
+				pend_fps_valid <= sh5[33];
+				pend_seq       <= sh_seq;
+				pend_epoch     <= sh_epoch;
+				pending_valid  <= 1'b1;
+			end else if (frame_boundary && pending_valid) begin
 				win_enable     <= pend_win_en;
 				geom_enable    <= pend_geom_en;
 				content_w      <= pend_cw;

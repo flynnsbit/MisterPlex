@@ -108,14 +108,39 @@ if ! printf '%s\n' "$OUT_C5" | grep -q 'REPRO collision5-force-overrides-plxg'; 
 fi
 echo "PASS red twin COLLISION #5 REPRO (rc=$RC_C5)"
 
-# --- Static: mux must use plxg_live fallback, not unconditional force ---
+# --- Red twin C: disable ignored (store geom forced under owned disable) ---
+EXE_DIS="$(build_one disable_ign \
+  +define+PRESENT_BEAM_960 \
+  +define+DDR_FRAME_STORE \
+  +define+FAULT_B8_DISABLE_IGNORED \
+  -CFLAGS "-std=c++17 -O2 -DFAULT_B8_DISABLE_IGNORED")"
+set +e
+OUT_DIS="$("$EXE_DIS" 2>&1)"
+RC_DIS=$?
+set -e
+printf '%s\n' "$OUT_DIS"
+echo "plex_b8_hier_disable_ign true rc=$RC_DIS"
+if [[ "$RC_DIS" -ne 2 ]] || ! printf '%s\n' "$OUT_DIS" | grep -q 'REPRO disable-ignored'; then
+  echo "FAIL disable-ignored red twin did not REPRO (rc=$RC_DIS)" >&2
+  exit 1
+fi
+echo "PASS red twin disable-ignored REPRO (rc=2)"
+
+# --- Static: mux idle fallback + owned disable ---
 MUX="$ROOT/fpga/Plex_MiSTer/rtl/plex_present_geom_mux.sv"
-if ! grep -q 'force_native_960 = ~plxg_live' "$MUX"; then
-  echo "FAIL mux missing force_native_960 = ~plxg_live (COLLISION #5 fix)" >&2
+if ! grep -qE 'beam_fallback_960 = ~plxg_owned|force_native_960 = ~plxg_live' "$MUX"; then
+  echo "FAIL mux missing idle-only beam fallback (COLLISION #5 / disable fix)" >&2
+  exit 1
+fi
+if ! grep -q 'plxg_owned' "$MUX"; then
+  echo "FAIL mux missing plxg_owned (explicit-disable ownership)" >&2
+  exit 1
+fi
+if ! grep -q 'present_geom_enable = (beam_fallback_960 & ~plxg_owned)' "$MUX"; then
+  echo "FAIL mux geom_enable still forced under owned disable" >&2
   exit 1
 fi
 if grep -n "force_native_960 = 1'b1" "$MUX" | grep -v FAULT_B8_FORCE_ALWAYS | grep -q .; then
-  # Only allowed inside FAULT_B8_FORCE_ALWAYS ifdef — reject bare unconditional.
   if grep -B2 "force_native_960 = 1'b1" "$MUX" | grep -q 'FAULT_B8_FORCE_ALWAYS'; then
     :
   else
@@ -133,10 +158,18 @@ if ! grep -q "plex_present_geom_mux" "$PLEX"; then
   echo "FAIL Plex.sv does not instantiate product mux" >&2
   exit 1
 fi
+if ! grep -q 'plxg_frame_boundary' "$PLEX"; then
+  echo "FAIL Plex.sv missing clk_sys plxg_frame_boundary (rd-duck #1)" >&2
+  exit 1
+fi
+if grep -n 'frame_boundary(fabric_vsync_swap)' "$PLEX" | grep -q .; then
+  echo "FAIL latch still driven by fabric_vsync_swap" >&2
+  exit 1
+fi
 if ! grep -q "PHYS_BASE_720P" "$ROOT/fpga/Plex_MiSTer/rtl/present_core.sv"; then
   echo "FAIL present_core missing PHYS_BASE_720P" >&2
   exit 1
 fi
-echo "PASS static (mux ~plxg_live + untied PLXG + OPTC params)"
+echo "PASS static (mux owned-disable + clk_sys boundary + untied PLXG + OPTC)"
 echo "plex_b8_hier ALL PASS"
 exit 0

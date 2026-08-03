@@ -27,6 +27,8 @@ static void tick(Vplex_b8_hier_tb_top* t) {
 
 static void clear_inject(Vplex_b8_hier_tb_top* t) {
 	t->inject_plxg_live = 0;
+	t->inject_plxg_win = 0;
+	t->inject_plxg_geom = 0;
 	t->inject_cw = 0;
 	t->inject_ch = 0;
 	t->inject_coded_w = 0;
@@ -37,12 +39,29 @@ static void clear_inject(Vplex_b8_hier_tb_top* t) {
 
 static void inject_geom(Vplex_b8_hier_tb_top* t, int w, int h, int ys, int cs) {
 	t->inject_plxg_live = 1;
+	t->inject_plxg_win = 1;
+	t->inject_plxg_geom = 1;
 	t->inject_cw = w;
 	t->inject_ch = h;
 	t->inject_coded_w = w;
 	t->inject_coded_h = h;
 	t->inject_y_stride = ys;
 	t->inject_c_stride = cs;
+	for (int i = 0; i < 8; ++i)
+		tick(t);
+}
+
+// makePlxgRecordDisable: live_valid=1, win=geom=0, cw=ch=0.
+static void inject_disable(Vplex_b8_hier_tb_top* t) {
+	t->inject_plxg_live = 1;
+	t->inject_plxg_win = 0;
+	t->inject_plxg_geom = 0;
+	t->inject_cw = 0;
+	t->inject_ch = 0;
+	t->inject_coded_w = 0;
+	t->inject_coded_h = 0;
+	t->inject_y_stride = 0;
+	t->inject_c_stride = 0;
 	for (int i = 0; i < 8; ++i)
 		tick(t);
 }
@@ -111,6 +130,19 @@ int main(int argc, char** argv) {
 	delete t;
 	return 2; // harness expects non-zero
 
+#elif defined(FAULT_B8_DISABLE_IGNORED)
+	std::fprintf(stderr, "=== FAULT_B8_DISABLE_IGNORED (rd-duck disable twin) ===\n");
+	inject_disable(t);
+	std::fprintf(stderr, "fault_disable: geom=%u yst=%u cw=%u\n",
+	             t->obs_geom_en, t->obs_y_stride, t->obs_content_w);
+	if (!t->obs_geom_en || t->obs_y_stride != 960) {
+		fail("fault twin did not re-arm 960 geom on disable — cannot see defect");
+		delete t;
+		return 1;
+	}
+	std::fprintf(stderr, "REPRO disable-ignored geom_en=1 yst=960 (mode exit broken)\n");
+	delete t;
+	return 2;
 #else
 	std::fprintf(stderr, "=== PRODUCT PRESENT_BEAM_960 + PLXG runtime DE ===\n");
 
@@ -199,6 +231,25 @@ int main(int argc, char** argv) {
 		fail("oracle: 960×540 payload must exceed usable (Option-C)");
 	std::fprintf(stderr, "Option-C capacity: p960=%u p1280=%u usable=%u\n", payload_960,
 	             payload_1280, usable);
+
+	// --- 3) Explicit disable must NOT re-arm 960 store geom (rd-duck) ---
+	inject_disable(t);
+	std::fprintf(stderr,
+	             "disable: win=%u geom=%u cw=%u ch=%u coded=%ux%u yst=%u de=%ux%u\n",
+	             t->obs_win_en, t->obs_geom_en, t->obs_content_w, t->obs_content_h,
+	             t->obs_coded_w, t->obs_coded_h, t->obs_y_stride,
+	             t->obs_win_h_de, t->obs_win_v_de);
+	if (t->obs_geom_en)
+		fail("disable: present_geom_enable must be 0 (legacy store path)");
+	if (t->obs_y_stride == 960 && t->obs_geom_en)
+		fail("disable: store still forced to 960 stride");
+	// Beam DE may stay 960 for glass; that is separate from store geom.
+	if (t->obs_win_h_de != 960 || t->obs_win_v_de != 540)
+		fail("disable: beam DE should keep 960×540 max-tier window");
+#if defined(FAULT_B8_DISABLE_IGNORED)
+	// Built only under red twin compile - not this product path.
+#endif
+	std::fprintf(stderr, "PASS explicit disable: geom_en=0, beam DE retained\n");
 
 	// Return to idle fallback after live PLXG.
 	clear_inject(t);

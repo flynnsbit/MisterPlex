@@ -98,6 +98,9 @@ module ddr_frame_store #(
 	// Callers must tie these (product: Plex/present_core; TBs: 0).
 	// No port defaults — Verilator was ignoring C++ drivers when defaults existed.
 	input  wire        geom_enable = 1'b0,
+	// PLXG↔doorbell generation coupling (rd-duck #5). Default 0 = ungated legacy.
+	input  wire [15:0] rt_geom_seq = 16'd0,
+	input  wire        rt_geom_live = 1'b0,
 	input  wire [10:0] rt_coded_w = 11'd0,
 	input  wire [10:0] rt_coded_h = 11'd0,
 	input  wire [11:0] rt_y_stride = 12'd0,
@@ -918,6 +921,8 @@ module ddr_frame_store #(
 	localparam [3:0] S_WRITE_WAIT = 4'd4;
 
 	reg [3:0] state_ddr;
+	// rd-duck: sticky poison so a completing burst cannot tag new epoch.
+	reg        fill_abort;
 	reg [LINE_SLOTS-1:0] y_valid, c_valid;
 	reg [LINE_SLOTS-1:0] y_bank, c_bank;
 	reg [Y_W-1:0] y_line [0:LINE_SLOTS-1];
@@ -926,6 +931,8 @@ module ddr_frame_store #(
 	reg [3:0] y_epoch [0:LINE_SLOTS-1];
 	reg [3:0] c_epoch [0:LINE_SLOTS-1];
 	reg [3:0] d_geom_epoch, d_geom_epoch_m;
+	reg [15:0] d_geom_seq_m, d_geom_seq;
+	reg        d_geom_live_m, d_geom_live;
 	reg        d_inv_s1, d_inv_s2, d_inv_seen;
 	wire       d_geom_invalidate = (d_inv_s2 != d_inv_seen);
 	reg disp_bank_d1, disp_bank_d2;
@@ -1211,6 +1218,10 @@ module ddr_frame_store #(
 			d_doorbell_w   <= LEG_DOORBELL_W;
 			d_geom_epoch_m <= 4'd0;
 			d_geom_epoch   <= 4'd0;
+			d_geom_seq_m   <= 16'd0;
+			d_geom_seq     <= 16'd0;
+			d_geom_live_m  <= 1'b0;
+			d_geom_live    <= 1'b0;
 			d_inv_s1       <= 1'b0;
 			d_inv_s2       <= 1'b0;
 		end else begin
@@ -1236,6 +1247,10 @@ module ddr_frame_store #(
 			d_doorbell_w   <= d_doorbell_w_m;
 			d_geom_epoch_m <= geom_epoch_r;
 			d_geom_epoch   <= d_geom_epoch_m;
+			d_geom_seq_m   <= rt_geom_seq;
+			d_geom_seq     <= d_geom_seq_m;
+			d_geom_live_m  <= rt_geom_live;
+			d_geom_live    <= d_geom_live_m;
 			d_inv_s1       <= geom_inv_tog;
 			d_inv_s2       <= d_inv_s1;
 		end
@@ -1278,7 +1293,13 @@ module ddr_frame_store #(
 	wire db_format_ok = (db_format == DOORBELL_FORMAT_YUV420P) || !STRICT_YUV_DOORBELL;
 	wire db_bad_format = db_magic_ok && !db_format_ok;
 	wire db_valid_token = db_magic_ok && db_format_ok;
-	wire db_token_new = db_valid_token && (!have_seq || (db_token != last_seq));
+	wire [12:0] db_plxg_seq = db_token[28:16];
+	// Coupling: plxg_seq==0 → ungated; else require CDC live PLXG seq match.
+	wire db_geom_coupled =
+		(db_plxg_seq == 13'd0) ||
+		(d_geom_live && (db_plxg_seq == d_geom_seq[12:0]));
+	wire db_token_new = db_valid_token && db_geom_coupled &&
+	                    (!have_seq || (db_token != last_seq));
 	wire db_token_same = db_valid_token && have_seq && (db_token == last_seq);
 	wire db_stale_fallback = db_token_same && IGNORE_STALE_DOORBELL_AFTER_RESET &&
 	                         doorbell_primed &&
@@ -1317,6 +1338,7 @@ module ddr_frame_store #(
 	always @(posedge clk_ddr) begin
 		if (reset_ddr) begin
 			state_ddr <= S_IDLE;
+			fill_abort <= 1'b0;
 			d_inv_seen <= 1'b0;
 			DDRAM_RD <= 1'b0;
 			DDRAM_WE <= 1'b0;
@@ -1510,7 +1532,9 @@ module ddr_frame_store #(
 			if (!bank_mbox_valid || (bank_mbox_hb == 18'd0))
 				bank_mbox_req <= 1'b1;
 
-			// B16: layout invalidate — drop line tags, abort in-flight DDR line fills.
+			// B16/rd-duck: invalidate MUST dominate case(state_ddr). Same-cycle
+			// case NBA can re-enter S_LINE_ISSUE and tag an old fill with the
+			// *new* geom_epoch. Abort+poison: clear tags, force IDLE, skip case.
 			if (d_geom_invalidate) begin
 				d_inv_seen <= d_inv_s2;
 				y_valid <= '0;
@@ -1519,6 +1543,7 @@ module ddr_frame_store #(
 				poll_pending <= 1'b0;
 				DDRAM_RD <= 1'b0;
 				DDRAM_WE <= 1'b0;
+				fill_abort <= 1'b1;
 				state_ddr <= S_IDLE;
 			end
 			if (db_bad_format) begin
@@ -1551,6 +1576,7 @@ module ddr_frame_store #(
 				end
 			end
 
+			if (!d_geom_invalidate) begin
 			case (state_ddr)
 				S_IDLE: begin
 					// Product (PENDING_READY_STICKY_PREP=1): once prep lines are
@@ -1744,17 +1770,21 @@ module ddr_frame_store #(
 								qwords_remaining <= {{(Y_QW_AW+1-8){1'b0}}, d_c_fetch_qw}; // ddr-domain c fetch
 								state_ddr <= S_LINE_ISSUE;
 							end else begin
-								if (fill_is_chroma) begin
-									c_line[fill_idx] <= fill_cy;
-									c_bank[fill_idx] <= fill_bank;
-									c_epoch[fill_idx] <= d_geom_epoch;
-									c_valid[fill_idx] <= 1'b1;
-								end else begin
-									y_line[fill_idx] <= fill_y;
-									y_bank[fill_idx] <= fill_bank;
-									y_epoch[fill_idx] <= d_geom_epoch;
-									y_valid[fill_idx] <= 1'b1;
+								// Never tag a poisoned/aborted fill with current epoch.
+								if (!fill_abort) begin
+									if (fill_is_chroma) begin
+										c_line[fill_idx] <= fill_cy;
+										c_bank[fill_idx] <= fill_bank;
+										c_epoch[fill_idx] <= d_geom_epoch;
+										c_valid[fill_idx] <= 1'b1;
+									end else begin
+										y_line[fill_idx] <= fill_y;
+										y_bank[fill_idx] <= fill_bank;
+										y_epoch[fill_idx] <= d_geom_epoch;
+										y_valid[fill_idx] <= 1'b1;
+									end
 								end
+								fill_abort <= 1'b0;
 								state_ddr <= S_IDLE;
 							end
 						end else if (burst_left == 1) begin
@@ -1778,6 +1808,11 @@ module ddr_frame_store #(
 
 				default: state_ddr <= S_IDLE;
 			endcase
+			end else begin
+				// Invalidate cycle: do not accept new fills; clear abort once IDLE.
+				if (fill_abort && !DDRAM_DOUT_READY)
+					fill_abort <= 1'b0;
+			end
 		end
 	end
 endmodule

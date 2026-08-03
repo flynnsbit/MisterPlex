@@ -390,7 +390,7 @@ private:
     void publishBitstreamCtrl();
     bool waitCoreFlag(bool wantBusy, bool wantPending, int maxUs);
     bool kickDdrSpi(int bank, bool first_verify, bool& saw_busy, bool& saw_kick, bool& saw_frame);
-    bool kickDdrDoorbell(int bank);
+    bool kickDdrDoorbell(int bank, uint16_t plxgSeq = 0);
     uint32_t ddrStatusMailboxPhys() const {
         return ddrLayout_.doorbell_phys + (kDdrMailboxPhys - kDdrDoorbellPhys);
     }

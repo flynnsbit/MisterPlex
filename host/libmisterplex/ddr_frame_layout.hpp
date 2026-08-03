@@ -794,21 +794,111 @@ inline bool packYuv420pCenteredIntoCodedBank(const uint8_t* src, int srcW, int s
     return true;
 }
 
-inline uint32_t ddrDoorbellHi(uint32_t seq, int bank, DdrFrameFormat format) {
+// Doorbell hi packing (rd-duck PLXG↔bank coupling):
+//   [31]     bank
+//   [30:29]  format
+//   [28:16]  plxg_seq (13b) — 0 = ungated legacy (no geom coupling)
+//   [15:0]   frame_seq (16b)
+// Full 29-bit seq mask retained as (plxg_seq<<16)|frame_seq for token identity.
+constexpr uint32_t kDdrDoorbellFrameSeqMask = 0xFFFFu;
+constexpr uint32_t kDdrDoorbellPlxgSeqMask = 0x1FFFu;
+constexpr unsigned kDdrDoorbellPlxgSeqShift = 16u;
+
+inline uint32_t ddrDoorbellHi(uint32_t seq, int bank, DdrFrameFormat format,
+                              uint16_t plxgSeq = 0) {
+    const uint32_t frameSeq = seq & kDdrDoorbellFrameSeqMask;
+    const uint32_t ps = static_cast<uint32_t>(plxgSeq) & kDdrDoorbellPlxgSeqMask;
     return (static_cast<uint32_t>(bank & 1) << 31) |
-           ((ddrFrameFormatCode(format) & 0x3u) << 29) | (seq & kDdrFrameDoorbellSeqMask);
+           ((ddrFrameFormatCode(format) & 0x3u) << 29) |
+           (ps << kDdrDoorbellPlxgSeqShift) | frameSeq;
+}
+
+inline uint16_t ddrDoorbellPlxgSeq(uint32_t hi) {
+    return static_cast<uint16_t>((hi >> kDdrDoorbellPlxgSeqShift) & kDdrDoorbellPlxgSeqMask);
+}
+
+inline uint16_t ddrDoorbellFrameSeq(uint32_t hi) {
+    return static_cast<uint16_t>(hi & kDdrDoorbellFrameSeqMask);
 }
 
 inline bool decodeDdrDoorbell(uint32_t lo, uint32_t hi, DdrFrameFormat expectedFormat,
-                              uint32_t& seq, int& bank) {
+                              uint32_t& seq, int& bank, uint16_t* plxgSeqOut = nullptr) {
     if (lo != kDdrFrameDoorbellMagic)
         return false;
     const uint32_t format = (hi >> 29) & 0x3u;
     if (format != ddrFrameFormatCode(expectedFormat))
         return false;
     bank = static_cast<int>((hi >> 31) & 0x1u);
+    // Token identity remains full low-29 for have_seq compare.
     seq = hi & kDdrFrameDoorbellSeqMask;
+    if (plxgSeqOut)
+        *plxgSeqOut = ddrDoorbellPlxgSeq(hi);
     return true;
+}
+
+// Bank accept under geom coupling: plxg_seq==0 → legacy ungated; else must match
+// live PLXG seq (after promote). Independent observer delay without this → mix.
+inline bool ddrDoorbellGeomCoupledOk(uint16_t doorbellPlxgSeq, uint16_t livePlxgSeq,
+                                     bool liveValid, bool faultIgnoreCoupling = false) {
+    if (faultIgnoreCoupling)
+        return true;
+    if (doorbellPlxgSeq == 0)
+        return true; // legacy ungated
+    if (!liveValid)
+        return false;
+    return doorbellPlxgSeq == livePlxgSeq;
+}
+
+// rd-duck: independent PLXG vs doorbell observers without generation coupling.
+struct DdrGeomBankCouplingModel {
+    bool geom_live = false;
+    uint16_t geom_seq = 0;
+    bool bank_pending = false;
+    bool bank_displayed = false;
+    int bank = 0;
+    uint16_t bank_req_plxg_seq = 0;
+    bool fault_ignore_coupling = false;
+
+    void observePlxgPromote(uint16_t seq) {
+        geom_live = true;
+        geom_seq = seq;
+        tryAcceptBank();
+    }
+
+    bool observeDoorbell(int b, uint16_t plxgSeq) {
+        bank = b;
+        bank_req_plxg_seq = plxgSeq;
+        bank_pending = true;
+        return tryAcceptBank();
+    }
+
+    bool tryAcceptBank() {
+        if (!bank_pending)
+            return false;
+        if (!ddrDoorbellGeomCoupledOk(bank_req_plxg_seq, geom_seq, geom_live,
+                                      fault_ignore_coupling))
+            return false;
+        bank_pending = false;
+        bank_displayed = true;
+        return true;
+    }
+};
+
+inline bool ddrCouplingFaultAcceptsBankBeforeGeom() {
+    DdrGeomBankCouplingModel m;
+    m.fault_ignore_coupling = true;
+    m.observeDoorbell(/*bank*/1, /*plxgSeq*/7);
+    return m.bank_displayed && !m.geom_live;
+}
+
+inline bool ddrCouplingProductHoldsBankUntilGeom() {
+    DdrGeomBankCouplingModel m;
+    if (m.observeDoorbell(1, 7))
+        return false;
+    if (m.bank_displayed)
+        return false;
+    m.observePlxgPromote(7);
+    return m.bank_displayed && m.geom_seq == 7;
 }
 
 // Maximum coded width the *shipping* RTL frame store can present (FRAME_W=640).

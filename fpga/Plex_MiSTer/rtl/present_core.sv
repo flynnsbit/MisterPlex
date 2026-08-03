@@ -53,6 +53,8 @@ module present_core #(
 	// Runtime DDR bank geometry (PLXW). geom_enable=0 → legacy CODED 624 path.
 	// Sized for 1280×720 (y_stride bytes). Safe default = all zero / disable.
 	input  wire        geom_enable,
+	input  wire [15:0] geom_live_seq = 16'd0,
+	input  wire        geom_live_valid = 1'b0,
 	input  wire [10:0] geom_coded_w,
 	input  wire [10:0] geom_coded_h,
 	input  wire [11:0] geom_y_stride,
@@ -401,6 +403,8 @@ module present_core #(
 		.rd_g(fg),
 		.rd_b(fb),
 		.geom_enable(geom_enable),
+		.rt_geom_seq(geom_live_seq),
+		.rt_geom_live(geom_live_valid),
 		.rt_coded_w(geom_coded_w),
 		.rt_coded_h(geom_coded_h),
 		.rt_y_stride(geom_y_stride),

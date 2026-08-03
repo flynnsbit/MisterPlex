@@ -5,6 +5,8 @@
 // Atomic snapshot (rd-duck): host publishes q1..q5 then q0 last. Poller reads
 // q0..q5 then RE-READS q0; commit only if magic+seq match the first q0 sample
 // (rejects torn mid-write snapshots). q5 reserved must be zero (latch enforces).
+// Stale check is (epoch,seq) pair — seq-only would suppress epoch bump same seq
+// and accept retained epoch=0 after reset (rd-duck B4/poller gap).
 //
 // Master port matches ddr_bus_arbiter m1 (single-beat RD). Share m1 only via
 // ddr_m1_subarb (latched owner through response) — never combinational mux.
@@ -38,10 +40,12 @@ module plxg_ddr_poller #(
 	output reg         commit,
 
 	output reg  [15:0] last_seq,
+	output reg  [13:0] last_epoch,
 	output reg         busy_poll,
 	output reg  [31:0] cnt_commit,
 	output reg  [31:0] cnt_bad_magic,
-	output reg  [31:0] cnt_torn
+	output reg  [31:0] cnt_torn,
+	output reg  [31:0] cnt_bad_epoch
 );
 
 	assign din = 64'd0;
@@ -64,6 +68,7 @@ module plxg_ddr_poller #(
 	reg [2:0]  qi;
 	reg [63:0] snap [0:5];
 	reg [15:0] snap_seq;
+	reg [13:0] snap_epoch;
 	reg        verify_phase; // 1 = issuing q0 re-read
 
 	integer ti;
@@ -81,11 +86,14 @@ module plxg_ddr_poller #(
 			wr_data     <= 64'd0;
 			commit      <= 1'b0;
 			last_seq    <= 16'd0;
+			last_epoch  <= 14'd0;
 			busy_poll   <= 1'b0;
 			cnt_commit  <= 32'd0;
 			cnt_bad_magic <= 32'd0;
 			cnt_torn    <= 32'd0;
+			cnt_bad_epoch <= 32'd0;
 			snap_seq    <= 16'd0;
+			snap_epoch  <= 14'd0;
 			verify_phase <= 1'b0;
 			for (ti = 0; ti < 6; ti = ti + 1)
 				snap[ti] <= 64'd0;
@@ -133,13 +141,22 @@ module plxg_ddr_poller #(
 								want <= 1'b0;
 								st   <= S_IDLE;
 								busy_poll <= 1'b0;
-							end else if (dout[63:48] == last_seq) begin
-								// stale seq — nothing new
+							// rd-duck: epoch==0 is illegal (B4 ABA); do NOT advance
+							// last_seq on reject — else epoch=1 same seq is suppressed.
+							end else if (dout[47:34] == 14'd0) begin
+								cnt_bad_epoch <= cnt_bad_epoch + 32'd1;
+								want <= 1'b0;
+								st   <= S_IDLE;
+								busy_poll <= 1'b0;
+							end else if ({dout[47:34], dout[63:48]} ==
+							             {last_epoch, last_seq}) begin
+								// stale (epoch,seq) pair — nothing new
 								want <= 1'b0;
 								st   <= S_IDLE;
 								busy_poll <= 1'b0;
 							end else begin
-								snap_seq <= dout[63:48];
+								snap_seq   <= dout[63:48];
+								snap_epoch <= dout[47:34];
 								qi <= 3'd1;
 								st <= S_ISSUE;
 							end
@@ -193,6 +210,7 @@ module plxg_ddr_poller #(
 					want       <= 1'b0;
 					commit     <= 1'b1;
 					last_seq   <= snap_seq;
+					last_epoch <= snap_epoch;
 					cnt_commit <= cnt_commit + 32'd1;
 					st         <= S_IDLE;
 					busy_poll  <= 1'b0;

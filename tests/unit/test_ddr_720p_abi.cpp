@@ -995,7 +995,30 @@ int main() {
         std::fprintf(stderr, "  PLXG_ABA_SEQ_TEAR OK\n");
     }
 
-    if (fails) {
+    
+    // ---- rd-duck: PLXG↔doorbell generation coupling ----
+    {
+        CHECK(ddrCouplingFaultAcceptsBankBeforeGeom()); // REPRO without coupling
+        CHECK(ddrCouplingProductHoldsBankUntilGeom());
+        // Doorbell pack: plxg_seq in [28:16], frame in [15:0]
+        const uint32_t hi = ddrDoorbellHi(/*frame*/ 42, /*bank*/1, DdrFrameFormat::Yuv420p,
+                                          /*plxg*/ 7);
+        CHECK(ddrDoorbellPlxgSeq(hi) == 7);
+        CHECK(ddrDoorbellFrameSeq(hi) == 42);
+        CHECK(((hi >> 31) & 1u) == 1u);
+        uint32_t seq = 0;
+        int bank = 0;
+        uint16_t ps = 0;
+        CHECK(decodeDdrDoorbell(kDdrFrameDoorbellMagic, hi, DdrFrameFormat::Yuv420p, seq, bank,
+                                &ps));
+        CHECK(bank == 1 && ps == 7);
+        CHECK(ddrDoorbellGeomCoupledOk(/*db*/7, /*live*/7, true));
+        CHECK(!ddrDoorbellGeomCoupledOk(7, 0, false));
+        CHECK(ddrDoorbellGeomCoupledOk(0, 0, false)); // ungated legacy
+        std::fprintf(stderr, "  PLXG_DOORBELL_COUPLING OK\n");
+    }
+
+if (fails) {
         std::fprintf(stderr, "test_ddr_720p_abi: %d fails\n", fails);
         return 1;
     }

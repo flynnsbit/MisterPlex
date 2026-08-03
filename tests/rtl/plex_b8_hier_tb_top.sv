@@ -14,6 +14,8 @@ module plex_b8_hier_tb_top (
 	input  wire        content_res_640x480,
 	// Optional PLXG live injection (product poller path)
 	input  wire        inject_plxg_live,
+	input  wire        inject_plxg_win,
+	input  wire        inject_plxg_geom,
 	input  wire [10:0] inject_cw,
 	input  wire [10:0] inject_ch,
 	input  wire [10:0] inject_coded_w,
@@ -43,8 +45,8 @@ module plex_b8_hier_tb_top (
 );
 
 	wire plxg_live = inject_plxg_live;
-	wire plxg_win  = inject_plxg_live;
-	wire plxg_geom = inject_plxg_live;
+	wire plxg_win  = inject_plxg_win;
+	wire plxg_geom = inject_plxg_geom;
 
 	wire        win_en, geom_en;
 	wire [10:0] cw, ch, cx0, cy0, hde, vde;
@@ -162,6 +164,8 @@ module plex_b8_hier_tb_top (
 		.win_h_de(hde),
 		.win_v_de(vde),
 		.geom_enable(geom_en),
+		.geom_live_seq(16'd0),
+		.geom_live_valid(1'b0),
 		.geom_coded_w(gcw),
 		.geom_coded_h(gch),
 		.geom_y_stride(gys),

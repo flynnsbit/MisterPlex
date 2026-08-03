@@ -772,8 +772,9 @@ wire        plxg_busy;
 wire [63:0] plxg_dout;
 wire        plxg_dout_ready;
 wire [15:0] plxg_last_seq;
+wire [13:0] plxg_last_epoch;
 wire        plxg_busy_poll;
-wire [31:0] plxg_cnt_commit, plxg_cnt_bad, plxg_cnt_torn;
+wire [31:0] plxg_cnt_commit, plxg_cnt_bad, plxg_cnt_torn, plxg_cnt_bad_epoch;
 wire  [1:0] m1_sub_grant;
 wire        m1c_want, m1c_busy, m1c_rd, m1c_we;
 wire  [7:0] m1c_burstcnt, m1c_be;
@@ -819,6 +820,24 @@ ddr_m1_subarb u_m1_sub (
 	.grant(m1_sub_grant)
 );
 
+// B16/rd-duck: frame_boundary MUST be clk_sys. fabric_vsync_swap lives only
+// under FABRIC_DDR_WRITER (product path leaves it undriven) and is clk_ddr —
+// unsynchronized into clk_sys latch. Use local VSync rising edge on clk_sys.
+reg plxg_vs_d1, plxg_vs_d2;
+reg plxg_frame_boundary;
+always @(posedge clk_sys) begin
+	if (reset) begin
+		plxg_vs_d1 <= 1'b0;
+		plxg_vs_d2 <= 1'b0;
+		plxg_frame_boundary <= 1'b0;
+	end else begin
+		plxg_vs_d1 <= VSync;
+		plxg_vs_d2 <= plxg_vs_d1;
+		// Rising edge of VSync = frame start in present domain (clk_sys).
+		plxg_frame_boundary <= plxg_vs_d1 & ~plxg_vs_d2;
+	end
+end
+
 present_geom_latch u_plxg_latch (
 	.clk(clk_sys),
 	.reset(reset),
@@ -826,8 +845,7 @@ present_geom_latch u_plxg_latch (
 	.wr_idx(plxg_wr_idx),
 	.wr_data(plxg_wr_data),
 	.commit(plxg_commit),
-	// B16: promote pending PLXG only at fabric vsync (frame start) — never mid-raster.
-	.frame_boundary(fabric_vsync_swap),
+	.frame_boundary(plxg_frame_boundary),
 	.win_enable(plxg_win_en),
 	.geom_enable(plxg_geom_en),
 	.content_w(plxg_cw),
@@ -882,15 +900,18 @@ plxg_ddr_poller #(
 	.wr_data(plxg_wr_data),
 	.commit(plxg_commit),
 	.last_seq(plxg_last_seq),
+	.last_epoch(plxg_last_epoch),
 	.busy_poll(plxg_busy_poll),
 	.cnt_commit(plxg_cnt_commit),
 	.cnt_bad_magic(plxg_cnt_bad),
-	.cnt_torn(plxg_cnt_torn)
+	.cnt_torn(plxg_cnt_torn),
+	.cnt_bad_epoch(plxg_cnt_bad_epoch)
 );
 (* keep = 1 *) wire _keep_plxg =
 	plxg_geom_en | plxg_live_valid | |plxg_live_seq | plxg_want |
 	|plxg_cnt_commit | |plxg_cnt_bad | |plxg_cnt_torn | plxg_busy_poll |
-	|plxg_last_seq | plxg_win_en | |plxg_cw | |plxg_ch | |m1_sub_grant |
+	|plxg_last_seq | |plxg_last_epoch | plxg_win_en | |plxg_cw | |plxg_ch | |m1_sub_grant |
+	|plxg_cnt_bad_epoch |
 	plxg_dar_valid | plxg_fps_valid | |plxg_dar_x | |plxg_content_fps |
 	plxg_q5_reserved_reject;
 `else
@@ -898,6 +919,7 @@ plxg_ddr_poller #(
 wire        plxg_win_en = 1'b0;
 wire        plxg_geom_en = 1'b0;
 wire        plxg_live_valid = 1'b0;
+wire [15:0] plxg_live_seq = 16'd0;
 wire [10:0] plxg_cw = 11'd0, plxg_ch = 11'd0, plxg_cx0 = 11'd0, plxg_cy0 = 11'd0;
 wire [10:0] plxg_hde = 11'd0, plxg_vde = 11'd0;
 wire [10:0] plxg_coded_w = 11'd0, plxg_coded_h = 11'd0;
@@ -1012,6 +1034,8 @@ present_core #(
 	.sdram_bs(frame_sdram_bs),
 	.sdram_refresh(frame_sdram_refresh),
 	.geom_enable(present_geom_enable),
+	.geom_live_seq(plxg_live_seq),
+	.geom_live_valid(plxg_live_valid),
 	.geom_coded_w(present_geom_coded_w),
 	.geom_coded_h(present_geom_coded_h),
 	.geom_y_stride(present_geom_y_stride),

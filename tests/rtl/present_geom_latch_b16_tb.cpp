@@ -188,7 +188,57 @@ int main(int argc, char** argv) {
 	promote(t);
 	if (check_live(t, g416, "after_vs_416")) return 1;
 
-	std::printf("PASS B16+q5 stage/promote 624->320->960->416; mid-active never mixed\n");
+	// rd-duck: commit + frame_boundary SAME cycle must promote new, not lose it.
+	{
+		Geom gcoin{640, 360, 640, 320, 5, 1, 16, 9, 24, true, true, 0};
+		// Stage one pending first so FAULT_LOSE_COINCIDENT has stale pend to promote.
+		Geom gpend{800, 448, 800, 400, 6, 1, 16, 9, 24, true, true, 0};
+		write_geom(t, gpend); // stages pending, no promote
+		if (t->live_seq == 6) {
+			std::fprintf(stderr, "FAIL setup: promote without boundary\n");
+			return 1;
+		}
+		// Write gcoin shadows then commit|boundary same cycle.
+		uint64_t q0 = pack_q0(true, true, gcoin.seq, gcoin.epoch);
+		uint64_t qs[6] = {
+			q0,
+			(uint64_t)gcoin.cw | ((uint64_t)gcoin.ch << 16),
+			(uint64_t)gcoin.cw | ((uint64_t)gcoin.ch << 16)
+			  | ((uint64_t)gcoin.cw << 32) | ((uint64_t)gcoin.ch << 48),
+			(uint64_t)gcoin.yst | ((uint64_t)gcoin.cst << 16)
+			  | ((uint64_t)gcoin.cw << 32) | ((uint64_t)gcoin.ch << 48),
+			0,
+			pack_q5(gcoin.dar_x, gcoin.dar_y, gcoin.fps, gcoin.dar_v, gcoin.fps_v)
+		};
+		for (int i = 0; i < 6; i++) {
+			t->wr_en = 1; t->wr_idx = i; t->wr_data = qs[i];
+			tick(t); t->wr_en = 0; tick(t);
+		}
+		t->commit = 1;
+		t->frame_boundary = 1;
+		tick(t);
+		t->commit = 0;
+		t->frame_boundary = 0;
+		tick(t); tick(t);
+		const bool fault_lose = (std::getenv("FAULT_LOSE_COINCIDENT") != nullptr);
+		if (fault_lose) {
+			// Old split-if: promotes stale pend (800) or clears pending losing 640.
+			if (t->content_w == 640 && t->live_seq == 5) {
+				std::fprintf(stderr, "FAIL red twin: coincident unexpectedly kept new\n");
+				return 1;
+			}
+			std::printf("REPRO B16_LOSE_COINCIDENT live_cw=%u seq=%u pend=%u\n",
+			            (unsigned)t->content_w, (unsigned)t->live_seq,
+			            (unsigned)t->pending_valid);
+			delete t;
+			return 2;
+		}
+		if (check_live(t, gcoin, "coincident_commit_boundary")) return 1;
+		std::printf("coincident_ok cw=%u seq=%u\n", (unsigned)t->content_w,
+		            (unsigned)t->live_seq);
+	}
+
+	std::printf("PASS B16+q5 stage/promote 624->320->960->416; mid-active never mixed; coincident ok\n");
 	delete t;
 	return 0;
 }

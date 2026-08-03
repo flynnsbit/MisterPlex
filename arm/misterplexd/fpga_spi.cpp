@@ -958,7 +958,7 @@ bool FpgaSpi::waitCoreFlag(bool clearBusy, bool clearPending, int maxUs) {
     return false;
 }
 
-bool FpgaSpi::kickDdrDoorbell(int bank) {
+bool FpgaSpi::kickDdrDoorbell(int bank, uint16_t plxgSeq) {
     if (!ddrMap_ || bank < 0 || bank > 1)
         return false;
     const size_t kOff = static_cast<size_t>(ddrLayout_.doorbell_phys - ddrLayout_.phys_base);
@@ -966,9 +966,12 @@ bool FpgaSpi::kickDdrDoorbell(int bank) {
         return false;
     volatile uint32_t* dw = reinterpret_cast<volatile uint32_t*>(ddrMap_ + kOff);
     ++doorbellSeq_;
-    // Pack: [31:0]=magic, high=[31]=bank, [30:29]=format, [28:0]=sequence.
-    const uint32_t seq = doorbellSeq_ & 0x1FFFFFFFu;
-    const uint32_t hi = ddrDoorbellHi(seq, bank, ddrLayout_.format);
+    // Pack: lo=magic; hi=[31]bank [30:29]fmt [28:16]plxg_seq [15:0]frame_seq.
+    // plxg_seq couples bank accept to PLXG promote (rd-duck); 0 = ungated legacy.
+    // plxgSeq==0 is intentional ungated legacy. Do not substitute plxgLastSeq_
+    // (that would silently couple every bank kick after first PLXG write).
+    const uint32_t seq = doorbellSeq_ & 0xFFFFu;
+    const uint32_t hi = misterplex::ddrDoorbellHi(seq, bank, ddrLayout_.format, plxgSeq);
     // Publish the complete token before magic. On a cold mailbox this prevents
     // the reader from seeing PLXK paired with a zero/old format; on a warm
     // mailbox the already-valid magic may expose the new token immediately,
@@ -1773,7 +1776,7 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
     bool kicked = false;
     auto tKick0 = std::chrono::steady_clock::now();
     if (ddrKickMode_ == 1 || ddrKickMode_ == 0) {
-        if (kickDdrDoorbell(bank)) {
+        if (kickDdrDoorbell(bank, plan.program_plxg ? plan.plxg_seq : static_cast<uint16_t>(0))) {
             kicked = true;
             if (first) {
                 // Give poller time to see seq; expect busy / pending / has_frame.

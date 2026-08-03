@@ -60,4 +60,16 @@ echo "fault_res true rc=$frrc"
 [[ "$frrc" -eq 2 ]]
 grep -q "REPRO Q5_RESERVED_ACCEPTED" "$OUT/fault_res_run.txt"
 
+echo "== B16 red twin FAULT_LOSE_COINCIDENT (rc=2) =="
+mkdir -p "$OUT/fault_coin"
+"$RV" "${common[@]}" --Mdir "$OUT/fault_coin" -DPRESENT_GEOM_LATCH_FAULT_LOSE_COINCIDENT -o b16_fault_coin
+set +e
+FAULT_LOSE_COINCIDENT=1 "$OUT/fault_coin/b16_fault_coin" >"$OUT/fault_coin_run.txt" 2>&1
+crc=$?
+set -e
+cat "$OUT/fault_coin_run.txt"
+echo "fault_coin true rc=$crc"
+[[ "$crc" -eq 2 ]]
+grep -q "REPRO B16_LOSE_COINCIDENT" "$OUT/fault_coin_run.txt"
+
 echo "PASS test_present_geom_latch_b16 product+q5+REPROs"
