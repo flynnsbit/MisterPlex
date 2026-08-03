@@ -1,0 +1,7 @@
+Makefile
+arm/misterplexd/main.cpp
+arm/misterplexd/media_player.cpp
+docs/evidence/p720-path-20260803/PARENT_DEPLOY_PAIR_540P.md
+fpga/Plex_MiSTer/rtl/ddr_frame_layout_params.svh
+host/libmisterplex/ddr_frame_layout.hpp
+host/libmisterplex/ddr_present_bank.hpp

@@ -1,0 +1,12 @@
+profile=Constrained Baseline
+width=960
+height=720
+sample_aspect_ratio=N/A
+display_aspect_ratio=N/A
+level=31
+profile=Constrained Baseline
+width=960
+height=720
+sample_aspect_ratio=N/A
+display_aspect_ratio=N/A
+level=31

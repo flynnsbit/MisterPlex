@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MediaContainer size="1" allowSync="1" identifier="com.plexapp.plugins.library" librarySectionID="2" librarySectionTitle="MiSTerPlex Tests" librarySectionUUID="c97f403c-4a89-4620-a388-a7a88c9a6c1c" mdeDecisionCode="1000" mdeDecisionText="Direct play OK." mediaTagPrefix="/system/bundle/media/flags/" mediaTagVersion="1783932891" resourceSession="w-path-720p2-rk7_direct">
+<Video addedAt="1785436059" art="/library/metadata/7/art/1785730073" createdAtAccuracy="epoch" createdAtTZOffset="-18000" duration="30016" guid="tv.plex.agents.none://7" key="/library/metadata/7" librarySectionID="2" librarySectionKey="/library/sections/2" librarySectionTitle="MiSTerPlex Tests" ratingKey="7" subtype="clip" thumb="/library/metadata/7/thumb/1785730073" title="MiSTerPlex Test 720p (2026)" type="movie" updatedAt="1785730073">
+<Media aspectRatio="1.78" audioChannels="2" audioCodec="aac" bitrate="508" container="mp4" duration="30016" has64bitOffsets="0" height="720" id="7" optimizedForStreaming="1" videoCodec="h264" videoFrameRate="24p" videoProfile="constrained baseline" videoResolution="720" width="1280" selected="1">
+<Part container="mp4" deepAnalysisVersion="6" duration="30016" file="/data/movies/MiSTerPlex Test 720p (2026).mp4" has64bitOffsets="0" id="7" key="/library/parts/7/1785436059/file.mp4" optimizedForStreaming="1" requiredBandwidths="437,437,437,437,437,437,437,437" size="1905005" videoProfile="constrained baseline" decision="directplay" selected="1">
+<Stream bitDepth="8" bitrate="488" chromaLocation="left" chromaSubsampling="4:2:0" codec="h264" codedHeight="720" codedWidth="1280" default="1" displayTitle="720p" extendedDisplayTitle="720p (H.264 Constrained Baseline)" frameRate="24.000" hasScalingMatrix="0" height="720" id="5" index="0" level="30" profile="constrained baseline" refFrames="1" requiredBandwidths="423,423,423,423,423,423,423,423" scanType="progressive" streamIdentifier="1" streamType="1" width="1280" location="direct" />
+<Stream bitrate="16" channels="2" codec="aac" default="1" displayTitle="Unknown (AAC Stereo)" extendedDisplayTitle="Unknown (AAC Stereo)" id="6" index="1" requiredBandwidths="15,15,15,15,15,15,15,15" samplingRate="48000" selected="1" streamIdentifier="2" streamType="2" location="direct" />
+</Part>
+</Media>
+<UltraBlurColors bottomLeft="b00c11" bottomRight="b20101" topLeft="342e0f" topRight="400384" />
+</Video>
+</MediaContainer>

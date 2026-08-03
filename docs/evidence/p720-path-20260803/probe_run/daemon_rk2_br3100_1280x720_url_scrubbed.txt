@@ -1,0 +1,7 @@
+http://127.0.0.1:32400/video/:/transcode/universal/start.mp4?hasMDE=1&path=%2Flibrary%2Fmetadata%2F2&mediaIndex=0&partIndex=0&protocol=http&fastSeek=1&directPlay=0&directStream=0&subtitleSize=100&audioBoost=100&location=lan&copyts=1&session=w-path-1280x720-3100-1785740149&videoQuality=70&videoResolution=1280x720&maxVideoBitrate=3100&videoCodec=h264&audioCodec=aac&videoProfile=baseline&videoLevel=31&X-Plex-Token=<redacted>
+videoResolution=1280x720
+maxVideoBitrate=3100
+videoQuality=70
+videoLevel=31
+videoProfile=baseline
+clientProfile=MiSTerPlex

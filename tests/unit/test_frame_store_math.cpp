@@ -410,6 +410,21 @@ int main() {
     unsigned r8 = (p >> 11) << 3;
     CHECK(r8 >= 240);
 
+    // 720×480 legacy bank knife-edge: 518400 payload, 1792 spare, stride==width.
+    {
+        CHECK(misterplex::kPlex720x480Yuv420pBytes == 518400u);
+        CHECK(misterplex::kPlex480pYuv420pBankUsableBytes == 520192u);
+        CHECK(misterplex::kPlex720x480LegacyBankSpareBytes == 1792u);
+        CHECK(!misterplex::ddrI420PayloadNeedsOptionCBank(misterplex::kPlex720x480Yuv420pBytes));
+        // stride==width fits; any pad (stride 728) would overflow usable.
+        CHECK(misterplex::ddrI420StrideEqualsWidthFitsLegacy720x480(720, 480, 720));
+        CHECK(!misterplex::ddrI420StrideEqualsWidthFitsLegacy720x480(720, 480, 728));
+        // NEG: padded I420 payload estimate exceeds usable
+        const uint32_t padded = 728u * 480u + (728u / 2u) * (480u / 2u) * 2u;
+        CHECK(padded > misterplex::kPlex480pYuv420pBankUsableBytes);
+        CHECK(misterplex::ddrI420PayloadNeedsOptionCBank(padded));
+    }
+
     if (fails) {
         std::fprintf(stderr, "test_frame_store_math: %d fails\n", fails);
         return 1;

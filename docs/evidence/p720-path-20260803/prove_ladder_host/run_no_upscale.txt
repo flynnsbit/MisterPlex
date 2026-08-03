@@ -1,0 +1,23 @@
+no-upscale subject PLEX_KEY=/library/metadata/1 SOURCE=320x240
+=== RUNG no-upscale-540 requested=960x540 maxBR=2000 maxFR=0 mode=no_upscale expect=320x240 ===
+requested_url_nolog=http://127.0.0.1:32400/video/:/transcode/universal/start.mp4?hasMDE=1&path=%2Flibrary%2Fmetadata%2F1&mediaIndex=0&partIndex=0&protocol=http&fastSeek=1&directPlay=0&directStream=0&subtitleSize=100&audioBoost=100&location=lan&copyts=1&session=prove-ladder-104249-no-upscale-540&videoQuality=100&videoResolution=960x540&maxVideoBitrate=2000&videoCodec=h264&audioCodec=aac&videoProfile=baseline&videoLevel=31
+requested_pms=960x540 maxVideoBitrate=2000
+decision_curl true rc=0
+sample_curl true rc=0 bytes=5718396
+ffmpeg true rc=0
+ffmpeg_banner=  Stream #0:0[0x100]: Video: h264 (High) ([27][0][0][0] / 0x001B), yuv420p(progressive), 320x240 [SAR 1:1 DAR 4:3], 23.98 fps, 23.98 tbr, 90k tbn, start 1.483422
+delivered_src=ffmpeg_banner
+RESULT tag=no-upscale-540 requested=960x540 maxBR=2000 delivered_banner=320x240 decision_xml=320x240 fps=23.98 decoded=320x240 src=ffmpeg_banner
+PASS no-upscale-540: no-upscale held source=320x240 requested=960x540 delivered=320x240 src=ffmpeg_banner
+=== RUNG no-upscale-360 requested=640x360 maxBR=1000 maxFR=0 mode=no_upscale expect=320x240 ===
+requested_url_nolog=http://127.0.0.1:32400/video/:/transcode/universal/start.mp4?hasMDE=1&path=%2Flibrary%2Fmetadata%2F1&mediaIndex=0&partIndex=0&protocol=http&fastSeek=1&directPlay=0&directStream=0&subtitleSize=100&audioBoost=100&location=lan&copyts=1&session=prove-ladder-104249-no-upscale-360&videoQuality=100&videoResolution=640x360&maxVideoBitrate=1000&videoCodec=h264&audioCodec=aac&videoProfile=baseline&videoLevel=30
+requested_pms=640x360 maxVideoBitrate=1000
+decision_curl true rc=0
+sample_curl true rc=0 bytes=5718396
+ffmpeg true rc=0
+ffmpeg_banner=  Stream #0:0[0x100]: Video: h264 (High) ([27][0][0][0] / 0x001B), yuv420p(progressive), 320x240 [SAR 1:1 DAR 4:3], 23.98 fps, 23.98 tbr, 90k tbn, start 1.483422
+delivered_src=ffmpeg_banner
+RESULT tag=no-upscale-360 requested=640x360 maxBR=1000 delivered_banner=320x240 decision_xml=320x240 fps=23.98 decoded=320x240 src=ffmpeg_banner
+PASS no-upscale-360: no-upscale held source=320x240 requested=640x360 delivered=320x240 src=ffmpeg_banner
+SUMMARY prove_ladder_delivery FAILS=0
+true rc=0

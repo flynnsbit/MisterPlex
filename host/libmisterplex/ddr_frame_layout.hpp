@@ -20,6 +20,68 @@ constexpr DisplayWidth kPlex480pDisplayWidth{618};
 constexpr DisplayHeight kPlex480pDisplayHeight{480};
 constexpr PresentedWidth kPlex480pPresentedWidth{640};
 constexpr PresentedHeight kPlex480pPresentedHeight{480};
+// Path-tier 720p (PMS/vf ladder). DDR bank acceptance remains w-mem owned —
+// ddrFrameStoreAcceptsResolution still rejects until the ABI remap lands.
+constexpr CodedWidth kPlex720pCodedWidth{1280};
+constexpr CodedHeight kPlex720pCodedHeight{720};
+// YUV420p bytes = 1280*720*3/2 = 1_382_400 (host push arithmetic).
+constexpr int kPlex720pYuv420pBytes = 1382400;
+static_assert(kPlex720pYuv420pBytes ==
+                  kPlex720pCodedWidth.get() * kPlex720pCodedHeight.get() * 3 / 2,
+              "720p I420 byte count");
+// Shippable "720p glass" source tier (parent 2026-08-03 proxy ladder, 5/5 HIT):
+// ARM decode+copy of 960x540 fits deadline; fabric upscales to 1280x720 raster.
+// NOT true 720p source — never label as such. I420 = 960*540*3/2 = 777_600.
+//
+// PMS delivery (measured local docker PMS, daemon URL, HD 16:9 rk2/rk7, maxBR≥2000):
+//   ffprobe width=height=coded_width=coded_height=960x540, SAR 1:1, CB L3.1.
+// SPS (trace_headers): pic_width_in_mbs=60 → 960; pic_height_in_map_units=34 → 544;
+//   frame_crop_bottom_offset=2 → 4 luma lines cropped → **display 540**.
+// ARM publishes **display** planes after ffmpeg crop (777600 B), never the 544-line
+// MB buffer (783360 B). Fabric content window + bank payload = 960x540 / 777600.
+// maxBR=1500 on same request → 720x404 (bitrate ceiling trap — not genuine 540p).
+constexpr CodedWidth kPlex540pCodedWidth{960};
+constexpr CodedHeight kPlex540pCodedHeight{540};
+constexpr int kPlex540pYuv420pBytes = 777600;
+// H.264 MB grid before crop (SPS only; not the DDR publish size).
+constexpr int kPlex540pSpsMbHeight = 544;
+constexpr int kPlex540pSpsCropBottomLuma = 4; // frame_crop_bottom_offset=2 × 2
+constexpr int kPlex540pSpsMbYuv420pBytes = 960 * 544 * 3 / 2; // 783360 — do NOT size banks to this
+static_assert(kPlex540pYuv420pBytes ==
+                  kPlex540pCodedWidth.get() * kPlex540pCodedHeight.get() * 3 / 2,
+              "540p I420 byte count");
+static_assert(kPlex540pSpsMbHeight - kPlex540pSpsCropBottomLuma == kPlex540pCodedHeight.get(),
+              "SPS MB height minus crop must equal display 540");
+static_assert(kPlex540pSpsMbYuv420pBytes == 783360, "SPS MB I420");
+// Fits inside Option-C 720p bank stride (1.5 MiB) with headroom — w-mem owns ABI.
+static_assert(kPlex540pYuv420pBytes < kPlex720pYuv420pBytes, "540p smaller than 720p bank");
+static_assert(kPlex540pYuv420pBytes != kPlex540pSpsMbYuv420pBytes,
+              "display I420 must differ from uncropped MB I420");
+
+// 640x360 motion tier for 29.97/30 → exact 2× fabric double to 1280x720 glass.
+// PMS (lab 2026-08-03): ceiling 640x360 + maxBR≥1000 → display 640x360 SAR 1:1 CB;
+// maxBR=750 → 480x270; maxBR=400 → 320x180. Uncapped rate pass-through on rk142.
+// SPS: pic_width_mbs=40 → 640; pic_height_map=23 → 368; crop_bottom_offset=4 →
+// CropUnitY=2 → 8 luma lines cropped → **display 360**. ARM I420 = 345600 after crop.
+// 360 is NOT MB-aligned (360&15=8) — do not use display height in MB-only guards.
+constexpr CodedWidth kPlex360pCodedWidth{640};
+constexpr CodedHeight kPlex360pCodedHeight{360};
+constexpr int kPlex360pYuv420pBytes = 345600;
+constexpr int kPlex360pSpsMbHeight = 368;
+constexpr int kPlex360pSpsCropBottomLuma = 8; // frame_crop_bottom_offset=4 × 2
+constexpr int kPlex360pSpsMbYuv420pBytes = 640 * 368 * 3 / 2; // 353280
+static_assert(kPlex360pYuv420pBytes ==
+                  kPlex360pCodedWidth.get() * kPlex360pCodedHeight.get() * 3 / 2,
+              "360p I420 byte count");
+static_assert(kPlex360pSpsMbHeight - kPlex360pSpsCropBottomLuma == kPlex360pCodedHeight.get(),
+              "SPS MB height minus crop must equal display 360");
+static_assert(kPlex360pSpsMbYuv420pBytes == 353280, "360p SPS MB I420");
+static_assert(kPlex360pYuv420pBytes < kPlex540pYuv420pBytes, "360p smaller than 540p");
+static_assert(kPlex360pYuv420pBytes != kPlex360pSpsMbYuv420pBytes,
+              "360p display I420 must differ from uncropped MB I420");
+// Fits legacy 480p bank usable (520192) — no Option-C required for 345600 payload.
+static_assert(kPlex360pYuv420pBytes < 520192, "360p fits legacy bank usable");
+
 constexpr int kPlex480pCropLeft = 0;
 constexpr int kPlex480pCropRight = 6;
 constexpr int kPlex480pCropTop = 0;
@@ -290,20 +352,6 @@ enum class DdrFrameFormat {
     Yuv420p,
 };
 
-// PLXG present-geometry mailbox — MUST match mailbox_abi::kPlxgOffset (FIXED 0x800).
-// Parent freeze: not a function of MAX_CMDS. Compile-time reachable cross-header guard.
-constexpr uint32_t kDdrFramePlxgOffset = mailbox_abi::kPlxgOffset;
-constexpr uint32_t kDdrFramePlxgMagic = mailbox_abi::kPlxgMagic;
-constexpr uint32_t kDdrFramePlxgBytes = 40u;
-// Product doorbell 0x300FF000 + FIXED PLXG (not legacy 0x3007F example base).
-constexpr uint32_t kDdrFramePlxgBootstrapPhys = 0x300FF000u + mailbox_abi::kPlxgOffset;
-static_assert(kDdrFramePlxgOffset == mailbox_abi::kPlxgOffset,
-              "ddr_frame_layout PLXG must equal mailbox_abi PLXG");
-static_assert(kDdrFramePlxgOffset == 0x800u, "PLXG wire ABI FIXED at +0x800");
-static_assert(kDdrFramePlxgOffset != mailbox_abi::kPlxcOffset,
-              "PLXG must not collide with PLXC +0x130");
-static_assert(mailbox_abi::kPlxlOffset + mailbox_abi::kPlxcListMaxCmds * 8u <= kDdrFramePlxgOffset,
-              "chrome list must not grow into PLXG");
 
 
 inline uint32_t ddrFrameFormatCode(DdrFrameFormat) {
@@ -450,17 +498,86 @@ inline DdrFrameGeometry ddrFrameGeometryForPresentedSize(int width, int height) 
 inline DdrFrameGeometry productDdrFrameStoreGeometry() {
     return plex480pDdrFrameGeometry();
 }
-// FPGA-present geometry for any content/decode tier. Decode WxH is intentionally
-// ignored: a 320x240 source still occupies the 624-byte-stride coded bank after
-// force_original_aspect_ratio=decrease + pad. Returning identity-320 here is the
-// shear defect (ARM line_bytes=320 vs RTL CODED_W=624).
-inline DdrFrameGeometry ddrFrameGeometryForFpgaPresent(CodedWidth /*decodeWidth*/,
-                                                      CodedHeight /*decodeHeight*/) {
+
+// Storage geometry the daemon FFmpeg/rawvideo path must emit (media_player rawW/H).
+//
+// rd-duck 2026-08-03: rawW/rawH came solely from this selector. If it always
+// returned the 480p canvas, DECODE=960x540 still forced scale+copy into 624x480
+// and the measured +7.16 ms tight-540 budget was dead code. If it returned the
+// Option-C *DE canvas* 1280x720, FFmpeg would emit 1_382_400 B and kill the
+// budget the other way. Both are wrong for the product 540→720-glass path.
+//
+// Rules:
+//   - 960x540 content → identity STORAGE 960x540 (777600 B). Never 1280 canvas.
+//   - 640x360 content → identity STORAGE 640x360 (345600 B) for exact-2× glass.
+//     Never force 624x480 canvas (would destroy 2× and reintroduce scale).
+//   - 1280x720 content → identity STORAGE 1280x720 (true-720 upgrade path).
+//   - All other tiers (320x240, 624x480, …) → product 480p silicon canvas
+//     (scale+pad). Returning identity-320 is the shear defect (line_bytes=320
+//     vs RTL CODED_W=624).
+// DE/glass canvas (1280x720) is a separate fabric concept — not this function.
+inline DdrFrameGeometry ddrStorageGeometryForContent(CodedWidth contentW,
+                                                     CodedHeight contentH) {
+    if (contentW.get() == kPlex540pCodedWidth.get() &&
+        contentH.get() == kPlex540pCodedHeight.get())
+        return makeDdrFrameGeometry(kPlex540pCodedWidth, kPlex540pCodedHeight);
+    if (contentW.get() == kPlex360pCodedWidth.get() &&
+        contentH.get() == kPlex360pCodedHeight.get())
+        return makeDdrFrameGeometry(kPlex360pCodedWidth, kPlex360pCodedHeight);
+    if (contentW.get() == kPlex720pCodedWidth.get() &&
+        contentH.get() == kPlex720pCodedHeight.get())
+        return makeDdrFrameGeometry(kPlex720pCodedWidth, kPlex720pCodedHeight);
+    if (contentW.get() == kPlex480pCodedWidth.get() &&
+        contentH.get() == kPlex480pCodedHeight.get())
+        return plex480pDdrFrameGeometry();
     return productDdrFrameStoreGeometry();
+}
+
+inline DdrFrameGeometry ddrStorageGeometryForContent(int contentW, int contentH) {
+    return ddrStorageGeometryForContent(CodedWidth{contentW}, CodedHeight{contentH});
+}
+
+// FPGA-present geometry for the daemon path: STORAGE, not DE canvas.
+// Decode tier selects tight 540/720 identity; everything else stays 480p canvas.
+inline DdrFrameGeometry ddrFrameGeometryForFpgaPresent(CodedWidth decodeWidth,
+                                                      CodedHeight decodeHeight) {
+    return ddrStorageGeometryForContent(decodeWidth, decodeHeight);
 }
 
 inline DdrFrameGeometry ddrFrameGeometryForFpgaPresent(int decodeWidth, int decodeHeight) {
     return ddrFrameGeometryForFpgaPresent(CodedWidth{decodeWidth}, CodedHeight{decodeHeight});
+}
+
+// True when I420 payload cannot fit legacy 480p bank usable capacity
+// (stride 0x80000 minus doorbell page 0x1000 = 520192). Mirrors w-mem/capacity
+// Option-C select — NOT coded_w>=1280.
+constexpr uint32_t kDdrBankDoorbellPageBytes = 0x1000u;
+constexpr uint32_t kPlex480pYuv420pBankUsableBytes =
+    kPlex480pYuv420pBankStride - kDdrBankDoorbellPageBytes; // 520192
+// 720×480 I420 knife-edge (parent 2026-08-04): 518400 vs usable 520192 → 1792 spare.
+// Library widths are 8-aligned so product stride==width (no pad). Any future
+// stride rounding that eats the 1792 B spare must fail compile, not corrupt DDR.
+constexpr uint32_t kPlex720x480Yuv420pBytes = 720u * 480u * 3u / 2u; // 518400
+constexpr uint32_t kPlex720x480LegacyBankSpareBytes =
+    kPlex480pYuv420pBankUsableBytes - kPlex720x480Yuv420pBytes; // 1792
+static_assert(kPlex720x480Yuv420pBytes == 518400u, "720x480 I420 payload bytes");
+static_assert(kPlex480pYuv420pBankUsableBytes == 520192u, "legacy bank usable");
+static_assert(kPlex720x480LegacyBankSpareBytes == 1792u, "720x480 legacy spare");
+static_assert(kPlex720x480Yuv420pBytes <= kPlex480pYuv420pBankUsableBytes,
+              "720x480 must fit legacy bank when stride==width");
+// Stride==width for 8-aligned widths (720%8==0): I420 with y_stride=w fits spare.
+static_assert((720u % 8u) == 0u, "720 width 8-aligned → stride may equal width");
+static_assert((720u % 16u) == 0u, "720 width 16-aligned for rt_raw_ok");
+inline bool ddrI420PayloadNeedsOptionCBank(size_t frameBytes) {
+    return frameBytes > static_cast<size_t>(kPlex480pYuv420pBankUsableBytes);
+}
+// True when y_stride==coded_w (no pad). 720×480 only fits legacy under this contract.
+inline bool ddrI420StrideEqualsWidthFitsLegacy720x480(int coded_w, int coded_h, int y_stride) {
+    if (coded_w != 720 || coded_h != 480)
+        return true; // not the knife-edge class
+    return y_stride == coded_w &&
+           (static_cast<uint32_t>(coded_w) * static_cast<uint32_t>(coded_h) * 3u / 2u) <=
+               kPlex480pYuv420pBankUsableBytes;
 }
 
 inline DdrFrameLayout makeDdrFrameLayout(const DdrFrameGeometry& geom,
@@ -774,6 +891,71 @@ inline bool ddrFrameStoreAcceptsResolution(CodedWidth codedWidth, CodedHeight co
 // Decoder-boundary overload: the caller claims these bare ints are coded size.
 inline bool ddrFrameStoreAcceptsResolution(int codedWidth, int codedHeight) {
     return ddrFrameStoreAcceptsResolution(CodedWidth{codedWidth}, CodedHeight{codedHeight});
+}
+
+// ---------------------------------------------------------------------------
+// Option-C 720p bank window (w-mem ABI) + PL330 scratch (w-path Route A)
+// Parent-verified reserved window: memmap=513M$511M → 0x1FF00000..0x40000000.
+// Option-C: base 0x30180000, stride 0x180000, doorbell 0x3047F000.
+// Triple-buffer map end = base + 3*stride = 0x30600000.
+// PL330 ABI starts at that boundary so it never overlaps 2- or 3-bank Option-C.
+// ---------------------------------------------------------------------------
+constexpr uint32_t kPlexDdrReservedWindowStart = 0x1FF00000u;
+constexpr uint32_t kPlexDdrReservedWindowEnd = 0x40000000u;
+constexpr uint32_t kPlex720pDdrFramePhysBase = 0x30180000u;
+constexpr uint32_t kPlex720pYuv420pBankStride = 0x00180000u;
+constexpr uint32_t kPlex720pYuv420pDoorbellPhys = 0x3047F000u;
+constexpr uint32_t kPlex720pMapBytes2Bank = 0x00300000u; // 2 * stride
+constexpr uint32_t kPlex720pMapBytes3Bank = 0x00480000u; // 3 * stride
+// First byte after triple-bank Option-C window (base + 3*stride).
+constexpr uint32_t kPlex720pOptionCTripleEndPhys =
+    kPlex720pDdrFramePhysBase + kPlex720pMapBytes3Bank; // 0x30600000
+
+// PL330 program scratch + optional contiguous staging (HPS DMA src).
+// Mirrored in ddr_frame_layout_params.svh — keep lockstep with w-mem/w-scaler.
+constexpr uint32_t kPl330AbiRegionPhys = kPlex720pOptionCTripleEndPhys; // 0x30600000
+constexpr uint32_t kPl330ProgScratchPhys = kPl330AbiRegionPhys;
+constexpr uint32_t kPl330ProgScratchBytes = 0x1000u; // 4 KiB (program is ~27 B)
+constexpr uint32_t kPl330StagingPhys = kPl330ProgScratchPhys + kPl330ProgScratchBytes;
+// One 720p I420 frame, stride-aligned — decode/DMA source without pagemap.
+constexpr uint32_t kPl330StagingBytes = kPlex720pYuv420pBankStride; // 0x180000
+constexpr uint32_t kPl330AbiRegionBytes = kPl330ProgScratchBytes + kPl330StagingBytes;
+constexpr uint32_t kPl330AbiRegionEndPhys = kPl330AbiRegionPhys + kPl330AbiRegionBytes;
+
+static_assert(kPl330AbiRegionPhys == 0x30600000u, "PL330 ABI base");
+static_assert(kPl330AbiRegionPhys == kPlex720pDdrFramePhysBase + 3u * kPlex720pYuv420pBankStride,
+              "PL330 sits exactly after Option-C triple banks");
+static_assert(kPl330AbiRegionPhys >= kPlexDdrReservedWindowStart &&
+                  kPl330AbiRegionEndPhys <= kPlexDdrReservedWindowEnd,
+              "PL330 ABI inside memmap reserved window");
+static_assert(kPlex720pYuv420pDoorbellPhys + 0x1000u <= kPl330AbiRegionPhys,
+              "PL330 must not overlap Option-C doorbell page");
+// 480p product window ends at base+2*yuv_stride = 0x30100000; gap before Option-C.
+static_assert(kDdrFramePhysBase + 2u * kPlex480pYuv420pBankStride <= kPlex720pDdrFramePhysBase,
+              "480p map must not overlap Option-C base");
+
+inline bool pl330PhysInProgScratch(uint32_t phys, uint32_t len = 1) {
+    if (len == 0)
+        return false;
+    if (phys < kPl330ProgScratchPhys)
+        return false;
+    return phys + len <= kPl330ProgScratchPhys + kPl330ProgScratchBytes;
+}
+
+inline bool pl330PhysInStaging(uint32_t phys, uint32_t len = 1) {
+    if (len == 0)
+        return false;
+    if (phys < kPl330StagingPhys)
+        return false;
+    return phys + len <= kPl330StagingPhys + kPl330StagingBytes;
+}
+
+inline bool pl330AbiOverlapsOptionCBanks(uint32_t phys, uint32_t len) {
+    const uint32_t a0 = phys;
+    const uint32_t a1 = phys + len;
+    const uint32_t b0 = kPlex720pDdrFramePhysBase;
+    const uint32_t b1 = kPlex720pOptionCTripleEndPhys;
+    return a0 < b1 && b0 < a1;
 }
 
 } // namespace misterplex

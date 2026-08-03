@@ -1,0 +1,39 @@
+{
+    "programs": [
+        {
+            "streams": [
+                {
+                    "profile": "Constrained Baseline",
+                    "width": 720,
+                    "height": 404,
+                    "coded_width": 720,
+                    "coded_height": 404,
+                    "has_b_frames": 0,
+                    "sample_aspect_ratio": "404:405",
+                    "display_aspect_ratio": "16:9",
+                    "pix_fmt": "yuv420p",
+                    "level": 31,
+                    "r_frame_rate": "24/1"
+                }
+            ]
+        }
+    ],
+    "stream_groups": [
+
+    ],
+    "streams": [
+        {
+            "profile": "Constrained Baseline",
+            "width": 720,
+            "height": 404,
+            "coded_width": 720,
+            "coded_height": 404,
+            "has_b_frames": 0,
+            "sample_aspect_ratio": "404:405",
+            "display_aspect_ratio": "16:9",
+            "pix_fmt": "yuv420p",
+            "level": 31,
+            "r_frame_rate": "24/1"
+        }
+    ]
+}

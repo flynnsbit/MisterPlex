@@ -1,0 +1,5 @@
+# Measured 2026-08-04 rk69 prove-style (baseline Extra)
+req=426x240 br=1000 -> 426x240 aligned=False w%16=10
+req=416x240 br=1000 -> 416x234 aligned=True  w%16=0
+req=432x240 br=1000 -> 426x240 aligned=False w%16=10
+# Policy: floor-snap to 416; never 432 (no PMS upscale)

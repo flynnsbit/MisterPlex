@@ -52,7 +52,7 @@ unit:
 unit-rollcall:
 	python3 $(ROOT)/tests/unit/test_unit_rollcall.py
 
-unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/test_cadence_swap_path $(ROOT)/build/test_publish_interval_ledger $(ROOT)/build/test_publish_swap_delta_ledger $(ROOT)/build/test_plxd_liveness $(ROOT)/build/test_present_store_scale_math $(ROOT)/build/test_fabric_content_window_math $(ROOT)/build/test_ddr_720p_abi $(ROOT)/build/test_present_scale_4_3_math $(ROOT)/build/test_present_scale_4_3_phase_oracle $(ROOT)/build/test_scale_4_3_vs_general $(ROOT)/build/test_present_scale_2x_math $(ROOT)/build/test_true_content_de_contract $(ROOT)/build/test_avclock $(ROOT)/build/test_audio_delay $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_av_phase_rtl_quanta $(ROOT)/build/test_osd_menu $(ROOT)/build/test_osd_control $(ROOT)/build/test_last_frame_latch $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_pixel_format $(ROOT)/build/test_main_guard $(ROOT)/build/test_death_breadcrumb $(ROOT)/build/test_frame_ledger $(ROOT)/build/test_supply_bucket $(ROOT)/build/test_raw_video_pipe $(ROOT)/build/test_status_telemetry $(ROOT)/build/test_resolve $(ROOT)/build/test_log_redact $(ROOT)/build/test_pms_timeline $(ROOT)/build/test_plextv_device $(ROOT)/build/test_companion_eof $(ROOT)/build/test_companion_plant_seek $(ROOT)/build/test_gdm_resources_parity $(ROOT)/build/pms_baseline_probe $(ROOT)/build/test_h264_bitstream_source $(ROOT)/build/test_bitstream_ring_lifecycle $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_720p_geometry_lane_agree $(ROOT)/build/test_coded_size_adopt $(ROOT)/build/test_ffmpeg_vf $(ROOT)/build/test_force_scale_construction $(ROOT)/build/test_yuv420p_chroma_480p $(ROOT)/build/test_geom_frame_cost $(ROOT)/build/test_glass_loss_death_points $(ROOT)/build/test_frame_store_sdram_sim $(ROOT)/build/test_frame_store_ddr_prefetch_sim $(ROOT)/build/test_ddr_want_y_hblank_thrash $(ROOT)/build/test_ddr_bank_mailbox_phys $(ROOT)/build/test_ddr_scanout_multiframe $(ROOT)/build/test_sdram_memtest_sim $(ROOT)/build/test_sdram_mailbox $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant $(ROOT)/build/test_p3_host_recon_vectors $(ROOT)/build/test_p3_idct_reference_model $(ROOT)/build/test_p3_inter_pred_vectors $(ROOT)/build/extract_h264_golden $(ROOT)/build/misterplexd $(ROOT)/build/test_plex_chrome_sim $(ROOT)/build/test_plex_chrome_cmds $(ROOT)/build/test_present_pace $(ROOT)/build/test_plex_chrome_ddr_loader
+unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/test_cadence_swap_path $(ROOT)/build/test_publish_interval_ledger $(ROOT)/build/test_publish_swap_delta_ledger $(ROOT)/build/test_plxd_liveness $(ROOT)/build/test_present_store_scale_math $(ROOT)/build/test_fabric_content_window_math $(ROOT)/build/test_ddr_720p_abi $(ROOT)/build/test_present_scale_4_3_math $(ROOT)/build/test_present_scale_4_3_phase_oracle $(ROOT)/build/test_scale_4_3_vs_general $(ROOT)/build/test_present_scale_2x_math $(ROOT)/build/test_true_content_de_contract $(ROOT)/build/test_avclock $(ROOT)/build/test_audio_delay $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_av_phase_rtl_quanta $(ROOT)/build/test_osd_menu $(ROOT)/build/test_osd_control $(ROOT)/build/test_last_frame_latch $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_pixel_format $(ROOT)/build/test_main_guard $(ROOT)/build/test_death_breadcrumb $(ROOT)/build/test_frame_ledger $(ROOT)/build/test_supply_bucket $(ROOT)/build/test_raw_video_pipe $(ROOT)/build/test_status_telemetry $(ROOT)/build/test_resolve $(ROOT)/build/test_log_redact $(ROOT)/build/test_pms_timeline $(ROOT)/build/test_plextv_device $(ROOT)/build/test_companion_eof $(ROOT)/build/test_companion_plant_seek $(ROOT)/build/test_gdm_resources_parity $(ROOT)/build/pms_baseline_probe $(ROOT)/build/test_h264_bitstream_source $(ROOT)/build/test_bitstream_ring_lifecycle $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_720p_geometry_lane_agree $(ROOT)/build/test_coded_size_adopt $(ROOT)/build/test_ffmpeg_vf $(ROOT)/build/test_force_scale_construction $(ROOT)/build/test_yuv420p_chroma_480p $(ROOT)/build/test_geom_frame_cost $(ROOT)/build/test_glass_loss_death_points $(ROOT)/build/test_frame_store_sdram_sim $(ROOT)/build/test_frame_store_ddr_prefetch_sim $(ROOT)/build/test_ddr_want_y_hblank_thrash $(ROOT)/build/test_ddr_bank_mailbox_phys $(ROOT)/build/test_ddr_scanout_multiframe $(ROOT)/build/test_sdram_memtest_sim $(ROOT)/build/test_sdram_mailbox $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant $(ROOT)/build/test_p3_host_recon_vectors $(ROOT)/build/test_p3_idct_reference_model $(ROOT)/build/test_p3_inter_pred_vectors $(ROOT)/build/extract_h264_golden $(ROOT)/build/misterplexd $(ROOT)/build/test_plex_chrome_sim $(ROOT)/build/test_plex_chrome_cmds $(ROOT)/build/test_present_pace $(ROOT)/build/test_plex_chrome_ddr_loader $(ROOT)/build/test_frame_cost_ledger $(ROOT)/build/test_ddr_zero_copy_ingest $(ROOT)/build/test_h264_fabric_stream_gate
 	$(ROOT)/build/test_cadence
 	$(ROOT)/build/test_cadence_swap_path
 	$(ROOT)/tests/unit/test_cadence_swap_path_source.sh
@@ -140,11 +140,13 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	bash $(ROOT)/tests/unit/test_b2_b5_source_wiring.sh
 	$(ROOT)/build/test_yuv420p_chroma_480p
 	$(ROOT)/build/test_geom_frame_cost
+	$(ROOT)/build/test_frame_cost_ledger
 	$(ROOT)/build/test_glass_loss_death_points
 	bash $(ROOT)/tests/unit/test_geometry_type_safety.sh
 	$(ROOT)/build/test_frame_store_sdram_sim
 	$(ROOT)/build/test_frame_store_ddr_prefetch_sim
 	$(ROOT)/build/test_ddr_want_y_hblank_thrash
+	$(ROOT)/build/test_ddr_zero_copy_ingest
 	$(ROOT)/build/test_ddr_bank_mailbox_phys
 	$(ROOT)/build/test_ddr_scanout_multiframe
 	$(ROOT)/build/test_sdram_memtest_sim
@@ -156,6 +158,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/build/test_status_telemetry $(UNIT_ANNEXB)
 	$(ROOT)/build/test_sps_parse $(UNIT_ANNEXB)
 	$(ROOT)/build/test_slice_hdr $(UNIT_ANNEXB)
+	$(ROOT)/build/test_h264_fabric_stream_gate
 	$(ROOT)/build/test_cavlc_dc $(UNIT_ANNEXB)
 	$(ROOT)/build/test_idct_quant $(UNIT_ANNEXB)
 	$(ROOT)/build/test_p3_host_recon_vectors
@@ -476,6 +479,14 @@ $(ROOT)/build/test_slice_hdr: $(ROOT)/tests/unit/test_slice_hdr.cpp \
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_slice_hdr.cpp
 
+
+$(ROOT)/build/test_h264_fabric_stream_gate: $(ROOT)/tests/unit/test_h264_fabric_stream_gate.cpp \
+		$(ROOT)/host/libmisterplex/h264_fabric_stream_gate.hpp \
+		$(ROOT)/host/libmisterplex/h264_nal.hpp $(ROOT)/host/libmisterplex/h264_sps.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_h264_fabric_stream_gate.cpp
+
+
 $(ROOT)/build/test_frame_store_math: $(ROOT)/tests/unit/test_frame_store_math.cpp \
 		$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp \
 		$(ROOT)/host/libmisterplex/geometry_units.hpp \
@@ -537,6 +548,11 @@ $(ROOT)/build/test_geom_frame_cost: $(ROOT)/tests/unit/test_geom_frame_cost.cpp 
 		$(ROOT)/host/libmisterplex/yuv420p_chroma_health.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -I$(ROOT)/host -o $@ $(ROOT)/tests/unit/test_geom_frame_cost.cpp
+
+$(ROOT)/build/test_frame_cost_ledger: $(ROOT)/tests/unit/test_frame_cost_ledger.cpp \
+		$(ROOT)/host/libmisterplex/frame_cost_ledger.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -I$(ROOT)/host -o $@ $(ROOT)/tests/unit/test_frame_cost_ledger.cpp
 
 $(ROOT)/build/test_glass_loss_death_points: $(ROOT)/tests/unit/test_glass_loss_death_points.cpp \
 		$(ROOT)/host/libmisterplex/av_clock.hpp \
@@ -969,6 +985,56 @@ $(ROOT)/build/ddr_write_bench: $(ROOT)/tools/ddr_write_bench.cpp
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tools/ddr_write_bench.cpp
 
 ddr-bench: $(ROOT)/build/ddr_write_bench
+
+$(ROOT)/build/test_ddr_zero_copy_ingest: $(ROOT)/tests/unit/test_ddr_zero_copy_ingest.cpp \
+		$(ROOT)/host/libmisterplex/ddr_zero_copy_ingest.hpp \
+		$(ROOT)/host/libmisterplex/pl330_mem2mem.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -I$(ROOT)/host -o $@ $(ROOT)/tests/unit/test_ddr_zero_copy_ingest.cpp
+
+$(ROOT)/build/ddr_pl330_ingest_bench: $(ROOT)/tools/ddr_pl330_ingest_bench.cpp \
+		$(ROOT)/host/libmisterplex/ddr_zero_copy_ingest.hpp \
+		$(ROOT)/host/libmisterplex/pl330_mem2mem.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -pthread -I$(ROOT)/host -o $@ $(ROOT)/tools/ddr_pl330_ingest_bench.cpp
+
+arm-pl330-ingest-bench:
+	@if [ -z "$(ARM_CXX)" ]; then echo "No armhf g++ found"; exit 1; fi
+	@mkdir -p $(ROOT)/build/arm
+	$(ARM_CXX) -std=c++17 -O2 -Wall -pthread -I$(ROOT)/host \
+		-o $(ROOT)/build/arm/ddr_pl330_ingest_bench \
+		$(ROOT)/tools/ddr_pl330_ingest_bench.cpp \
+		-static
+	@file $(ROOT)/build/arm/ddr_pl330_ingest_bench
+
+$(ROOT)/build/misterplex_bank_wc_bench: $(ROOT)/tools/misterplex_bank_wc_bench.cpp \
+		$(ROOT)/host/libmisterplex/misterplex_bank_kabi.hpp \
+		$(ROOT)/host/libmisterplex/ddr_zero_copy_ingest.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -I$(ROOT)/host -o $@ $(ROOT)/tools/misterplex_bank_wc_bench.cpp
+
+arm-misterplex-bank-wc-bench:
+	@if [ -z "$(ARM_CXX)" ]; then echo "No armhf g++ found"; exit 1; fi
+	@mkdir -p $(ROOT)/build/arm
+	$(ARM_CXX) -std=c++17 -O2 -Wall -I$(ROOT)/host \
+		-o $(ROOT)/build/arm/misterplex_bank_wc_bench \
+		$(ROOT)/tools/misterplex_bank_wc_bench.cpp \
+		-static
+	@file $(ROOT)/build/arm/misterplex_bank_wc_bench
+
+$(ROOT)/build/route_a_bank_probe: $(ROOT)/tools/route_a_bank_probe.cpp \
+		$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -I$(ROOT)/host -o $@ $(ROOT)/tools/route_a_bank_probe.cpp
+
+arm-route-a-bank-probe:
+	@if [ -z "$(ARM_CXX)" ]; then echo "No armhf g++ found"; exit 1; fi
+	@mkdir -p $(ROOT)/build/arm
+	$(ARM_CXX) -std=c++17 -O2 -Wall -I$(ROOT)/host \
+		-o $(ROOT)/build/arm/route_a_bank_probe \
+		$(ROOT)/tools/route_a_bank_probe.cpp \
+		-static
+	@file $(ROOT)/build/arm/route_a_bank_probe
 
 $(ROOT)/build/present_loop_harness: $(ROOT)/tools/present_loop_harness.cpp
 	@mkdir -p $(ROOT)/build

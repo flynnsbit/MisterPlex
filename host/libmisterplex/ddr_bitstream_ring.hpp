@@ -20,6 +20,41 @@ constexpr uint32_t kStat4Phys = 0x30140038u;
 constexpr uint32_t kStat5Phys = 0x30140040u;
 constexpr uint32_t kStat6Phys = 0x30140048u;
 constexpr size_t kRingBytes = 262144u;
+// Parent-measured real720p_2600k.mp4 (1440f): mean AU 13506.6 B, worst 60915 B.
+// Ring holds ~4.3x worst AU — do not shrink below 4x without consumer proof.
+constexpr size_t kParentMeasuredBitstreamMeanAuBytes = 13507u;
+constexpr size_t kParentMeasuredBitstreamWorstAuBytes = 60915u;
+static_assert(kRingBytes >= 4u * kParentMeasuredBitstreamWorstAuBytes,
+              "ring must hold >=4 worst-case AUs (parent 60915 B)");
+
+// ---------------------------------------------------------------------------
+// Geometry contract — coded (SPS MB) vs display (post-crop)
+// Parent+path SPS (trace_headers) on product 960x540 tier, settled 2026-08-03:
+//   pic_width_in_mbs=60 → 960; pic_height_in_map_units=34 → 544;
+//   frame_crop_bottom_offset=2 → CropUnitY=2 → 4 luma lines; display H=540.
+//
+// THIS RING carries annex-B NAL bitstream (coded domain). A future fabric
+// decoder / coefficient consumer MUST use SPS MB height 544 and I420 783360
+// (or crop 4 bottom lines itself). Do NOT assume 540 inside the ring path.
+//
+// The shipping ARM path is the opposite: libavcodec applies SPS crop before
+// AVFrame handoff → DDR YUV banks publish display 960x540 / 777600 B
+// (see ddr_frame_layout.hpp kPlex540p*). Scaler/clock/osd use 540 source lines.
+// ffprobe coded_height=540 is post-crop — never treat it as SPS MB height.
+// ---------------------------------------------------------------------------
+constexpr int kRing540pSpsCodedWidth = 960;
+constexpr int kRing540pSpsCodedHeight = 544; // MB grid — fabric decoder / DPB
+constexpr int kRing540pDisplayHeight = 540;  // after SPS bottom crop (ARM YUV only)
+constexpr int kRing540pSpsCropBottomLuma = 4;
+constexpr int kRing540pSpsMbYuv420pBytes = 960 * 544 * 3 / 2; // 783360
+constexpr int kRing540pDisplayYuv420pBytes = 960 * 540 * 3 / 2; // 777600 — YUV bank, not ring
+static_assert(kRing540pSpsCodedHeight - kRing540pSpsCropBottomLuma == kRing540pDisplayHeight,
+              "ring ABI: SPS MB minus crop == display");
+static_assert(kRing540pSpsMbYuv420pBytes == 783360, "ring ABI: SPS MB I420");
+static_assert(kRing540pDisplayYuv420pBytes == 777600, "ring ABI: display I420");
+static_assert(kRing540pSpsMbYuv420pBytes != kRing540pDisplayYuv420pBytes,
+              "coded vs display must stay distinct in the ring ABI");
+
 
 // ---- Product SPS geometry for fabric-decoder / ring consumers (parent measured) ----
 // Bitstream is MB-coded 960×544 with SPS bottom crop 4 → display 540.

@@ -91,3 +91,16 @@ Order: w-mem-720p-abi → w-clock-bump → w-scaler-window → w-osd-fabric-plan
 | `fpga_spi.cpp` / `main.cpp` | **UNION** | plxd_liveness + chrome cmds; decode size + chrome plane conf |
 | `test_unit_rollcall.py` | **osd adds** | chrome RTL inventory entries |
 
+## Merge `w-path-720p` (9e10eb63)
+- result: CONFLICT
+
+### Resolution policy for `w-path-720p`
+
+| File | Choice | Why |
+|------|--------|-----|
+| `main.cpp` / `media_player.cpp` / `ddr_present_bank.hpp` | **path** | source-aware bank + rd-duck #3 540 storage geometry |
+| `ddr_frame_layout.hpp` geometry selector | **path** | identity 960×540 storage; not always-624; not DE 1280 |
+| PLXG constants | **keep single FIXED 0x800 block** | merge produced duplicate constexpr — removed second only |
+| `ddr_frame_layout_params.svh` | **path** | Option-C + PL330 window |
+| Makefile unit-unlocked | **UNION** | token merge |
+

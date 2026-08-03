@@ -1,0 +1,19 @@
+Auto-merging Makefile
+CONFLICT (content): Merge conflict in Makefile
+Auto-merging arm/misterplexd/main.cpp
+CONFLICT (content): Merge conflict in arm/misterplexd/main.cpp
+Auto-merging arm/misterplexd/media_player.cpp
+CONFLICT (content): Merge conflict in arm/misterplexd/media_player.cpp
+Auto-merging arm/misterplexd/media_player.hpp
+Auto-merging docs/evidence/p720-path-20260803/PARENT_DEPLOY_PAIR_540P.md
+CONFLICT (add/add): Merge conflict in docs/evidence/p720-path-20260803/PARENT_DEPLOY_PAIR_540P.md
+Auto-merging docs/p720-scope-arm.md
+Auto-merging fpga/Plex_MiSTer/rtl/ddr_frame_layout_params.svh
+CONFLICT (content): Merge conflict in fpga/Plex_MiSTer/rtl/ddr_frame_layout_params.svh
+Auto-merging host/libmisterplex/ddr_bitstream_ring.hpp
+Auto-merging host/libmisterplex/ddr_frame_layout.hpp
+CONFLICT (content): Merge conflict in host/libmisterplex/ddr_frame_layout.hpp
+Auto-merging host/libmisterplex/ddr_present_bank.hpp
+CONFLICT (content): Merge conflict in host/libmisterplex/ddr_present_bank.hpp
+Auto-merging tests/unit/test_unit_rollcall.py
+Automatic merge failed; fix conflicts and then commit the result.

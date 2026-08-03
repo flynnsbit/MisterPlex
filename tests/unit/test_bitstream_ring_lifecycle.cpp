@@ -554,6 +554,14 @@ static void testContentVariation() {
 }
 
 int main() {
+    // Geometry ABI (parent+path SPS 2026-08-03): ring = coded 544; YUV bank = display 540.
+    CHECK(ring::kRing540pSpsCodedHeight == 544);
+    CHECK(ring::kRing540pDisplayHeight == 540);
+    CHECK(ring::kRing540pSpsCropBottomLuma == 4);
+    CHECK(ring::kRing540pSpsMbYuv420pBytes == 783360);
+    CHECK(ring::kRing540pDisplayYuv420pBytes == 777600);
+    CHECK(ring::kRing540pSpsMbYuv420pBytes != ring::kRing540pDisplayYuv420pBytes);
+
     testBasicSessionLifecycle();
     testFixtureFullStream();
     testSeekFlushReset();

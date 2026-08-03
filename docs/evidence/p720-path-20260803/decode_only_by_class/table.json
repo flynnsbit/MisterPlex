@@ -1,0 +1,75 @@
+{
+  "host": "x86_64 Linux-7.1.5-arch1-1-x86_64-with-glibc2.44",
+  "kind": "x86_build_machine",
+  "frames": 240,
+  "rows": [
+    {
+      "geom": "320x240",
+      "w": 320,
+      "h": 240,
+      "wall_ms_f": 0.1815,
+      "child_cpu_ms_f": 0.377,
+      "wall_s": 0.043557,
+      "child_cpu_s": 0.090483,
+      "frames": 240
+    },
+    {
+      "geom": "416x234",
+      "w": 416,
+      "h": 234,
+      "wall_ms_f": 0.1995,
+      "child_cpu_ms_f": 0.4287,
+      "wall_s": 0.047888,
+      "child_cpu_s": 0.102886,
+      "frames": 240
+    },
+    {
+      "geom": "624x352",
+      "w": 624,
+      "h": 352,
+      "wall_ms_f": 0.2418,
+      "child_cpu_ms_f": 0.6155,
+      "wall_s": 0.058022,
+      "child_cpu_s": 0.147717,
+      "frames": 240
+    },
+    {
+      "geom": "624x480",
+      "w": 624,
+      "h": 480,
+      "wall_ms_f": 0.2822,
+      "child_cpu_ms_f": 0.7241,
+      "wall_s": 0.067736,
+      "child_cpu_s": 0.173793,
+      "frames": 240
+    },
+    {
+      "geom": "640x480",
+      "w": 640,
+      "h": 480,
+      "wall_ms_f": 0.2398,
+      "child_cpu_ms_f": 0.6905,
+      "wall_s": 0.057543,
+      "child_cpu_s": 0.165728,
+      "frames": 240
+    },
+    {
+      "geom": "720x480",
+      "w": 720,
+      "h": 480,
+      "wall_ms_f": 0.2706,
+      "child_cpu_ms_f": 0.8247,
+      "wall_s": 0.064951,
+      "child_cpu_s": 0.197932,
+      "frames": 240
+    }
+  ],
+  "device_feed_624": {
+    "decode_null": 21.5619,
+    "present_ddr": 10.4106,
+    "pipe": 5.2634,
+    "scale": 2.9543,
+    "parent_copy": 2.3094,
+    "sum": 40.1902
+  }
+}

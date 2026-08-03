@@ -160,16 +160,24 @@ void logDaemon(const std::string& s) {
 // bitrate and H.264 caps track the tier — not only videoResolution.
 misterplex::WeakLadder weakForContentResolution(const misterplex::WeakLadder& base,
                                                 const misterplex::ContentResolution& res,
-                                                bool bitrateExplicit) {
+                                                bool bitrateExplicit,
+                                                bool maxFrameRateExplicit = false) {
     misterplex::WeakLadder weak = base;
     const int keepBitrate = base.maxVideoBitrateKbps;
+    const int keepMaxFrameRate = base.maxVideoFrameRate;
     if (!misterplex::applyPlexTranscodeProfile(res.label, weak)) {
         weak.profileName = "custom";
         weak.videoResolution = res.label;
         if (!bitrateExplicit)
             weak.maxVideoBitrateKbps = res.weakBitrateKbps;
-    } else if (bitrateExplicit) {
-        weak.maxVideoBitrateKbps = keepBitrate;
+        // custom geometry: keep base fps cap (0 unless conf set WEAK_MAX_FRAME_RATE)
+        weak.maxVideoFrameRate = keepMaxFrameRate;
+    } else {
+        if (bitrateExplicit)
+            weak.maxVideoBitrateKbps = keepBitrate;
+        // Profile sets 540→24; conf WEAK_MAX_FRAME_RATE wins when explicit.
+        if (maxFrameRateExplicit)
+            weak.maxVideoFrameRate = keepMaxFrameRate;
     }
     weak.burnSubtitles = base.burnSubtitles;
     weak.subtitleStreamId = base.subtitleStreamId;
@@ -216,7 +224,15 @@ int main(int argc, char** argv) {
     bool ddrMemSync = true;
     bool ddrMemFlush = false;
     bool presentProfile = false;
+    bool frameCostLedger = false;
     bool streamEnabled = false;
+    // Prefer library H.264 Part (transcoded=0) instead of PMS universal.
+    // Default tracks STREAM unless PREFER_DIRECT_H264 overrides, except Path720p
+    // play which defaults DP when conf unset (ARM-evac: no transcoder + identity).
+    // PREFER_DIRECT_H264=0 forces universal even on Path720p / STREAM=1.
+    // PREFER_DIRECT_H264=auto (or unset) → preferDirectH264ForContent(...).
+    bool preferDirectH264ConfSet = false;
+    bool preferDirectH264Conf = false;
     std::string streamSkipRgb = "auto"; // auto | on | off — skip heavy RGB when PRESENT=fpga
     // STREAM=0 -vf scale: skip_identity omits scale+pad when expected delivery
     // WxH is known and equals the coded bank (or ASSUME_MATCH). Unknown delivery
@@ -243,6 +259,7 @@ int main(int argc, char** argv) {
     bool transcodeProfileExplicit = false;
     bool weakResExplicit = false;
     bool weakBitrateExplicit = false;
+    bool weakMaxFrameRateExplicit = false;
     // When supply_class=STARVED is sustained, apply nextLowerLadderBitrate and
     // restart the same title (geometry unchanged). Default off — log-only is safe.
     bool autoLadderStepdown = false;
@@ -398,6 +415,12 @@ int main(int argc, char** argv) {
             weakBitrateExplicit = true;
             weak.maxVideoBitrateKbps = std::atoi(v.c_str());
         }
+        // 0 = no Extra fps cap. 540p ladder defaults to 24; conf can override.
+        v = loadConf(confPath, "WEAK_MAX_FRAME_RATE");
+        if (!v.empty()) {
+            weakMaxFrameRateExplicit = true;
+            weak.maxVideoFrameRate = std::max(0, std::atoi(v.c_str()));
+        }
         v = loadConf(confPath, "AUTO_LADDER_STEPDOWN");
         if (!v.empty())
             autoLadderStepdown = confTruthy(v);
@@ -433,9 +456,20 @@ int main(int argc, char** argv) {
         v = loadConf(confPath, "PRESENT_PROFILE");
         if (!v.empty())
             presentProfile = confTruthy(v);
+        v = loadConf(confPath, "FRAME_COST_LEDGER");
+        if (!v.empty())
+            frameCostLedger = confTruthy(v);
         v = loadConf(confPath, "STREAM");
         if (!v.empty())
             streamEnabled = confTruthy(v);
+        v = loadConf(confPath, "PREFER_DIRECT_H264");
+        if (!v.empty()) {
+            preferDirectH264ConfSet = true;
+            if (v == "auto" || v == "AUTO")
+                preferDirectH264ConfSet = false; // fall through to policy default
+            else
+                preferDirectH264Conf = confTruthy(v);
+        }
         v = loadConf(confPath, "STREAM_SKIP_RGB");
         if (!v.empty())
             streamSkipRgb = v;
@@ -687,6 +721,7 @@ int main(int argc, char** argv) {
     player.setDdrMemSync(ddrMemSync);
     player.setDdrMemFlush(ddrMemFlush);
     player.setPresentProfile(presentProfile);
+    player.setFrameCostLedger(frameCostLedger);
     player.setStreamEnabled(streamEnabled);
     player.setStreamSkipRgb(streamSkipRgb);
     player.setFfmpegScaleMode(ffmpegScaleMode);
@@ -797,6 +832,16 @@ int main(int argc, char** argv) {
                      "CONF_STR has O[15:14],Idle screen; on=force; off=F12 inert\n",
                      misterplex::osdControlModeName(osdMode),
                      osdRaw.empty() ? "(default auto)" : osdRaw.c_str());
+        // Default OFF — O[5:4]=11 maps Path720p only when fabric path is ready.
+        {
+            const auto t11 = loadConf(confPath, "OSD_TIER11_720P");
+            const bool en = !t11.empty() && confTruthy(t11);
+            player.setOsdTier11Path720p(en);
+            std::fprintf(stderr,
+                         "misterplexd: OSD_TIER11_720P=%d — O[5:4]=11 → %s "
+                         "(default 0 = safe 480p canvas)\n",
+                         en ? 1 : 0, en ? "Path720p 1280x720" : "reserved/480p");
+        }
         if (osdMode == misterplex::OsdControlMode::ForcedOff) {
             std::fprintf(stderr,
                          "misterplexd: OSD_CONTROL=off — F12 menu Idle Screen is inert; "
@@ -819,14 +864,20 @@ int main(int argc, char** argv) {
     player.setLog([](const std::string& s) { logDaemon(s); });
     if (streamEnabled) {
         std::fprintf(stderr,
-                     "misterplexd: STREAM=1 (annex-B → host I-recon F1 + F3; preferDirectH264; "
+                     "misterplexd: STREAM=1 (annex-B → host I-recon F1 + F3; "
                      "PRESENT=%s STREAM_SKIP_RGB=%s — skip RGB only when PRESENT=fpga)\n",
                      presentMode.c_str(), streamSkipRgb.c_str());
     }
+    std::fprintf(stderr,
+                 "misterplexd: PREFER_DIRECT_H264 conf_set=%d conf_val=%d STREAM=%d — "
+                 "Path720p defaults DP when conf unset; 1=>Part transcode=0; 0=>universal\n",
+                 preferDirectH264ConfSet ? 1 : 0, preferDirectH264Conf ? 1 : 0,
+                 streamEnabled ? 1 : 0);
     std::fprintf(stderr, "misterplexd: DDR_MEM_SYNC=%s DDR_MEM_FLUSH=%s\n",
                  ddrMemSync ? "1" : "0", ddrMemFlush ? "1" : "0");
     std::fprintf(stderr, "misterplexd: DDR_FRAME_FORMAT=yuv420p\n");
-    std::fprintf(stderr, "misterplexd: PRESENT_PROFILE=%s\n", presentProfile ? "1" : "0");
+    std::fprintf(stderr, "misterplexd: PRESENT_PROFILE=%s FRAME_COST_LEDGER=%s\n",
+                 presentProfile ? "1" : "0", frameCostLedger ? "1" : "0");
     std::fprintf(stderr,
                  "misterplexd: FFMPEG_SCALE=%s FFMPEG_SWS_FLAGS=%s "
                  "FFMPEG_SCALE_ASSUME_MATCH=%s DDR_YUV_FORCE_SCALE=%s "
@@ -956,13 +1007,15 @@ int main(int argc, char** argv) {
     auto contentResolutionForNextPlay = [&]() -> misterplex::ContentResolution {
         // Re-read apply gate each play: Auto may flip to LIVE after boot probe.
         if (player.osdApplyActive())
-            return misterplex::contentResolutionFromOsdWord(player.lastOsdWord());
+            return misterplex::contentResolutionFromOsdWord(player.lastOsdWord(),
+                                                           player.osdTier11Path720p());
         return misterplex::contentResolutionFromCodedSize(decodeSize.width, decodeSize.height);
     };
 
     auto resolveAgainstServers = [&](const misterplex::PlayRequest& req,
                                      const std::string& preferredBase, int64_t off,
-                                     const misterplex::WeakLadder& weakForPlay)
+                                     const misterplex::WeakLadder& weakForPlay,
+                                     misterplex::ContentPresentPolicy contentPolicy)
         -> std::pair<misterplex::ResolveResult, std::string> {
         std::string token = req.token.empty() ? confToken : req.token;
         // Cast-selected base wins when address present.
@@ -972,11 +1025,14 @@ int main(int argc, char** argv) {
             selected = preferredBase.empty() ? defaultPms : preferredBase;
 
         auto tryBase = [&](const std::string& base) -> misterplex::ResolveResult {
-            // STREAM=1: prefer direct H.264 Part for CAVLC host recon; still weakAlways for
-            // non-H.264. STREAM=0: always weak universal (dual-A9 cast path).
+            // preferDirectH264: library H.264 → Part URL, transcoded=false.
+            // Path720p defaults DP when conf unset (ARM-evac). STREAM couples
+            // otherwise. weakAlways covers non-H.264 / missing Part → universal.
+            const bool wantDirect = misterplex::preferDirectH264ForContent(
+                preferDirectH264ConfSet, preferDirectH264Conf, streamEnabled, contentPolicy);
             return misterplex::resolvePlayTarget(req.key, base, token, off, /*weakAlways=*/true,
                                                  weakForPlay,
-                                                 /*preferDirectH264=*/streamEnabled);
+                                                 /*preferDirectH264=*/wantDirect);
         };
 
         auto resolved = tryBase(selected);
@@ -1003,6 +1059,7 @@ int main(int argc, char** argv) {
         const uint64_t gen = ++playGen;
         int64_t off = req.offsetMs;
         const auto contentRes = contentResolutionForNextPlay();
+        // Initial bank = product ceiling; may shrink to source-aware store after resolve.
         player.setDecodeSize(contentRes.width, contentRes.height);
         // Partition key for instruments: lab argv vs conf vs OSD (parent fleet rule).
         if (player.osdApplyActive())
@@ -1010,12 +1067,13 @@ int main(int argc, char** argv) {
         else
             player.setDecodeSizeSource(decodeSizeSource);
         auto weakForPlay =
-            weakForContentResolution(weak, contentRes, weakBitrateExplicit);
+            weakForContentResolution(weak, contentRes, weakBitrateExplicit,
+                                     weakMaxFrameRateExplicit);
         // Physical cap after tier/WEAK_BITRATE — never invents capacity when unset.
         applyLinkCapacityToWeak(weakForPlay, "play");
         std::fprintf(stderr,
                      "misterplexd: content resolution=%s source=%s status_word=0x%04x "
-                     "weak=%s bitrate=%d recommended_min_bitrate=%d "
+                     "weak_ceiling=%s bitrate=%d recommended_min_bitrate=%d "
                      "WEAK_BITRATE_explicit=%d link_capacity_kbps=%d "
                      "decode_src=%s\n",
                      contentRes.label, player.osdApplyActive() ? "OSD O[4]" : "conf/--decode",
@@ -1033,7 +1091,8 @@ int main(int argc, char** argv) {
                              brAdv.c_str(), weakBitrateExplicit ? 1 : 0);
             }
         }
-        auto [resolved, base] = resolveAgainstServers(req, defaultPms, off, weakForPlay);
+        auto [resolved, base] = resolveAgainstServers(req, defaultPms, off, weakForPlay,
+                                                      contentRes.presentPolicy);
 
         if (gen != playGen.load()) {
             std::fprintf(stderr, "misterplexd: PLAY superseded during resolve key=%s\n",
@@ -1055,6 +1114,9 @@ int main(int argc, char** argv) {
             resolved.mediaAspectRatio.clear();
             resolved.pixelAspectRatio.clear();
             resolved.transcoded = false;
+            resolved.sourceAwareApplied = false;
+            resolved.requestWidth = resolved.requestHeight = 0;
+            resolved.storeWidth = resolved.storeHeight = 0;
         } else {
             std::fprintf(stderr, "misterplexd: resolved %s title=%s dur=%lld transcode=%d base=%s\n",
                          resolved.detail.c_str(), resolved.title.c_str(),
@@ -1062,35 +1124,65 @@ int main(int argc, char** argv) {
                          resolved.transcoded ? 1 : 0, base.c_str());
         }
 
+        // Source-aware bank: after resolve, adopt fabric-aligned store geometry so
+        // DECODE matches the PMS request (avoids AR-fit unaligned deliveries into
+        // a fixed 640x360/960x540 bank). Ceiling weakForPlay is updated for logs.
+        if (resolved.sourceAwareApplied && resolved.storeWidth > 0 &&
+            resolved.storeHeight > 0) {
+            player.setDecodeSize(resolved.storeWidth, resolved.storeHeight);
+            player.setDecodeSizeSource("source_aware_store");
+            if (resolved.requestWidth > 0 && resolved.requestHeight > 0) {
+                weakForPlay.videoResolution = std::to_string(resolved.requestWidth) + "x" +
+                                              std::to_string(resolved.requestHeight);
+            }
+            std::fprintf(stderr,
+                         "misterplexd: SOURCE_AWARE policy=%s media=%dx%d "
+                         "request=%dx%d store=%dx%d host_pad_class=%d "
+                         "legacy_bank_fit=%d\n",
+                         resolved.sourceAwarePolicy.c_str(), resolved.mediaWidth,
+                         resolved.mediaHeight, resolved.requestWidth, resolved.requestHeight,
+                         resolved.storeWidth, resolved.storeHeight,
+                         (resolved.mediaWidth > 0 && (resolved.mediaWidth % 16) != 0) ? 1 : 0,
+                         misterplex::i420FitsLegacyBank(resolved.storeWidth,
+                                                        resolved.storeHeight)
+                             ? 1
+                             : 0);
+        }
+
         // Expected delivery geometry for identity-scale decisions:
         // - universal transcode: we *request* weakForPlay.videoResolution — NOT
         //   verified delivery. PMS client profile only sets upperBound(w/h)
         //   (plex_resolve.cpp plexClientProfileExtra). delivery_verified=0.
-        // - direct play: library Media/Stream WxH is a CLAIM only (basis=
-        //   library_media). deliveryGeometryVerifiedFromBasis accepts ONLY
-        //   "measured" — live silicon saw library_media=624x480 with measured=
-        //   624x350 on the same asset.
+        // - direct play Part: container sample WxH IS delivery (basis=
+        //   direct_play_part) — verified so identity_skip can fire when
+        //   samples==coded bank (ARM scale evacuated). Universal ceiling trap
+        //   (624x480→624x350) does not apply to Part.
         // - unknown: leave 0 so skip_identity still emits scale (safe).
         // Always re-set each play so a prior session cannot leak source dims.
         int expectW = 0, expectH = 0;
-        const char* deliveryBasis = "unknown";
+        bool hasTranscodeReqWh = false;
         if (resolved.transcoded) {
-            if (std::sscanf(weakForPlay.videoResolution.c_str(), "%dx%d", &expectW, &expectH) ==
-                    2 &&
-                expectW > 0 && expectH > 0) {
-                deliveryBasis = "transcode_request";
+            if (resolved.requestWidth > 0 && resolved.requestHeight > 0) {
+                expectW = resolved.requestWidth;
+                expectH = resolved.requestHeight;
+                hasTranscodeReqWh = true;
+            } else if (std::sscanf(weakForPlay.videoResolution.c_str(), "%dx%d", &expectW,
+                                   &expectH) == 2 &&
+                       expectW > 0 && expectH > 0) {
+                hasTranscodeReqWh = true;
             } else {
                 expectW = expectH = 0;
             }
         } else if (resolved.mediaWidth > 0 && resolved.mediaHeight > 0) {
             expectW = resolved.mediaWidth;
             expectH = resolved.mediaHeight;
-            deliveryBasis = "library_media"; // claim — never sets delivery_verified
         }
+        const char* deliveryBasis = misterplex::deliveryBasisForResolve(
+            resolved.ok, resolved.transcoded, resolved.mediaWidth, resolved.mediaHeight,
+            hasTranscodeReqWh);
         player.setFfmpegScaleSourceSize(expectW, expectH);
-        // Play-time basis is never "measured" (that arrives later from ffmpeg
-        // stderr). So delivery_verified stays 0 here; identity_skip needs
-        // force-scale OFF + later measured match (or stays scaled).
+        // direct_play_part verifies at plan time; measured arrives later from
+        // ffmpeg stderr for universal paths (cannot rebuild vf mid-session).
         const bool deliveryVerified =
             misterplex::deliveryGeometryVerifiedFromBasis(deliveryBasis);
         player.setDeliveryGeometryVerified(deliveryVerified);
@@ -1113,8 +1205,17 @@ int main(int argc, char** argv) {
         const bool forceScale = wantFpgaDdrCanvas && ddrYuvForceScale;
         const auto scaleMode =
             misterplex::ffmpegScaleModeForDdrYuvPresent(confScaleMode, forceScale);
-        const auto codedGeom = misterplex::ddrFfmpegGeometryForPresent(
-            contentRes.width.get(), contentRes.height.get(), wantFpgaDdrCanvas);
+        // Bank for GEOM predict = source-aware store when applied, else tier ceiling.
+        const int bankW = (resolved.sourceAwareApplied && resolved.storeWidth > 0)
+                              ? resolved.storeWidth
+                              : contentRes.width;
+        const int bankH = (resolved.sourceAwareApplied && resolved.storeHeight > 0)
+                              ? resolved.storeHeight
+                              : contentRes.height;
+        const auto codedGeom =
+            wantFpgaDdrCanvas
+                ? misterplex::ddrFrameGeometryForFpgaPresent(bankW, bankH)
+                : misterplex::makeDdrFrameGeometry(bankW, bankH);
         const int codedW = codedGeom.coded_width.get();
         const int codedH = codedGeom.coded_height.get();
         // Predict arm_rescale from the same buildFfmpegVideoFilter media_player uses
@@ -1141,7 +1242,8 @@ int main(int argc, char** argv) {
         }
         // Greppable single-line geometry contract for parent device logs.
         // Keys: requested_pms expected_delivery decode_target arm_rescale
-        // decode_target is the coded bank (624 on FPGA), content_tier is DECODE/OSD.
+        // decode_target is STORAGE bank (624 canvas for 240/480; 960x540 tight for
+        // 540p glass; never DE 1280 canvas). content_tier is DECODE/OSD.
         const std::string libraryStr =
             (resolved.mediaWidth > 0 && resolved.mediaHeight > 0)
                 ? (std::to_string(resolved.mediaWidth) + "x" +
@@ -1174,7 +1276,7 @@ int main(int argc, char** argv) {
                      "content_tier=%s arm_rescale=%d yuv_ddr_force_scale=%d "
                      "transcoded=%d sws=%s scale_mode=%s library_media=%s "
                      "media_ar=%s sar=%s content_dar=%.4f predicted_square_fit=%s "
-                     "square_px_w_at_coded_h=%d "
+                     "square_px_w_at_coded_h=%d max_video_frame_rate=%d "
                      "note=videoResolution_is_ceiling_not_exact\n",
                      requestedPms.c_str(), expectStr.c_str(), deliveryBasis,
                      deliveryVerified ? 1 : 0, codedTarget.c_str(), decodeTarget.c_str(),
@@ -1183,7 +1285,7 @@ int main(int argc, char** argv) {
                      misterplex::ffmpegScaleModeName(scaleMode), libraryStr.c_str(),
                      resolved.mediaAspectRatio.empty() ? "-" : resolved.mediaAspectRatio.c_str(),
                      resolved.pixelAspectRatio.empty() ? "-" : resolved.pixelAspectRatio.c_str(),
-                     contentDar, predStr.c_str(), sq480w);
+                     contentDar, predStr.c_str(), sq480w, weakForPlay.maxVideoFrameRate);
 
         // Wire SOURCE_FPS / MATCH_SOURCE_HZ into play path (software Content FPS hint).
         {

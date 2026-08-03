@@ -12,12 +12,14 @@
 #include "libmisterplex/idle_screen.hpp"
 #include "libmisterplex/last_frame_latch.hpp"
 #include "libmisterplex/osd_menu.hpp"
+#include "libmisterplex/pms_delivery_geom.hpp"
 #include "libmisterplex/h264_nal_dispatch.hpp"
 #include "libmisterplex/h264_recon.hpp"
 #include "libmisterplex/raw_video_pipe.hpp"
 #include "libmisterplex/yuv420p_chroma_health.hpp"
 #include "libmisterplex/publish_interval_ledger.hpp"
 #include "libmisterplex/publish_swap_delta_ledger.hpp"
+#include "libmisterplex/frame_cost_ledger.hpp"
 #include <algorithm>
 #include <atomic>
 #include <cctype>
@@ -733,7 +735,7 @@ void MediaPlayer::dispatchPlaybackInput(PlaybackCommand command) {
 
 void MediaPlayer::applyOsd(uint16_t word, bool applyIdle) {
     ignoreInputUntilMs_.store(steadyMs() + 300);
-    const OsdSettings s = decodeOsdWord(word);
+    const OsdSettings s = decodeOsdWord(word, osdTier11Path720p_);
     setAvOffsetMs(s.avOffsetMs);
     // Takes effect on the next session: the feed rate is captured when audioPump
     // opens MrAudio, and re-timing it mid-stream would step the audio clock.
@@ -1627,6 +1629,20 @@ void MediaPlayer::ffmpegStderrPump(int errReadFd, size_t codedFrameBytes, bool i
                     " force_scale_protects=" + (identitySkip ? "0" : "1") +
                     " vertical_detail_frac=" + std::to_string(vfrac) +
                     " note=measured_ne_coded_bank_videoResolution_is_ceiling tag=measured");
+                // Named traps: PMS bitrate starvation / wrong raster (silent soft picture).
+                if (outW_ == kPlex540pCodedWidth.get() && outH_ == kPlex540pCodedHeight.get() &&
+                    !isGenuine540pDelivery(g.w, g.h)) {
+                    log("ERROR media: GENUINE_540_FAIL measured=" + std::to_string(g.w) + "x" +
+                        std::to_string(g.h) +
+                        " expected=960x540 note=bitrate_knee_or_non_hd_source_"
+                        "class_includes_720x404 tag=measured");
+                }
+                if (outW_ == kPlex360pCodedWidth.get() && outH_ == kPlex360pCodedHeight.get() &&
+                    !isGenuine360pDelivery(g.w, g.h)) {
+                    log("ERROR media: GENUINE_360_FAIL measured=" + std::to_string(g.w) + "x" +
+                        std::to_string(g.h) +
+                        " expected=640x360 note=bitrate_knee_or_ceiling_trap tag=measured");
+                }
             }
             if (risk) {
                 log("ERROR media: PIPE_DESYNC_RISK measured=" + std::to_string(g.w) + "x" +
@@ -2936,10 +2952,11 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     if (onProgress_)
         onProgress_("buffering", startMs, durationMs);
 
-    // FFmpeg rawvideo geometry:
-    //   960×540 product intermediate + fpga present → STORAGE 960×540 (777600)
-    //   other tiers + fpga present → product 624×480 canvas (scale+pad)
-    // Never size FFmpeg to DE canvas 1280×720 (kills +7.16 ms budget).
+    // STORAGE geometry for FFmpeg rawvideo + DDR publish payload (not DE canvas).
+    // 960x540 → identity 960x540 / 777600 B (product 540→720-glass; rd-duck #3).
+    // 320x240 / default → still 624x480 silicon canvas (scale+pad; shear-safe).
+    // NEVER take Option-C 1280x720 DE canvas as rawW/H — that forces 1_382_400 B
+    // copy and destroys the measured +7.16 ms budget.
     const bool wantFpgaDdrCanvas =
         (presentMode_ == "fpga" || presentMode_ == "both");
     fabricOwnedPresent_ = {};
@@ -3594,6 +3611,17 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             int64_t drops = 0;
         } prof;
         const bool profilePresent = presentProfile_;
+        // FRAME_COST_LEDGER: pipe_us + pixel_us + present_us (and work=sum);
+        // excludes A/V Hold pacing. Light wall stamps only when profile is off.
+        const bool frameCostOn = frameCostLedger_ || profilePresent;
+        misterplex::FrameCostLedger frameCost{};
+        int64_t frameCostReadUs = 0;
+        int64_t frameCostPixelUs = 0;
+        auto logFrameCost = [&](const char* tag) {
+            if (!frameCostLedger_ || frameCost.empty())
+                return;
+            log(std::string("media: ") + frameCost.formatLine(tag));
+        };
         auto logProfile = [&]() {
             if (!profilePresent || prof.frames <= 0)
                 return;
@@ -3655,6 +3683,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 " ddr_cpu_us_p=" + std::to_string(avgPresented(prof.ddrCpuUs)) +
                 " frame_bytes=" + std::to_string(frameBytes) +
                 " fmt=" + ffmpegPixFmt(videoFmt));
+            // Percentiles sit beside means; do not reset frameCost (session ring).
+            logFrameCost("present_profile_tick");
             prof = PresentProfileAccum{};
         };
 
@@ -3782,24 +3812,42 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     } else {
                         ok = false;
                     }
-                    if (profilePresent && ok) {
-                        const int64_t ddrCpu1 = threadCpuMicros();
+                    if (ok && (profilePresent || frameCostOn)) {
                         const auto dt = fpga_.lastDdrTiming();
-                        const int64_t accounted = dt.prep_wait_us + dt.copy_us + dt.flush_us +
-                                                  dt.doorbell_us + dt.post_wait_us;
-                        prof.ddrPrepWaitUs += dt.prep_wait_us;
-                        prof.ddrCopyUs += dt.copy_us;
-                        prof.ddrFlushUs += dt.flush_us;
-                        prof.ddrDoorbellUs += dt.doorbell_us;
-                        prof.ddrPostWaitUs += dt.post_wait_us;
-                        prof.ddrBankReuseWaitUs += dt.bank_reuse_wait_us;
-                        prof.ddrPlxdPollUs += dt.plxa_poll_us;
-                        prof.ddrPlxdPollIters += dt.plxa_poll_iters;
-                        prof.ddrPlxdUsed += dt.plxa_used ? 1 : 0;
-                        prof.ddrTotalUs += dt.total_us;
-                        prof.ddrCpuUs += ddrCpu1 - ddrCpu0;
-                        if (dt.total_us > accounted)
-                            prof.ddrUnaccountedUs += dt.total_us - accounted;
+                        if (profilePresent) {
+                            const int64_t ddrCpu1 = threadCpuMicros();
+                            const int64_t accounted = dt.prep_wait_us + dt.copy_us + dt.flush_us +
+                                                      dt.doorbell_us + dt.post_wait_us;
+                            prof.ddrPrepWaitUs += dt.prep_wait_us;
+                            prof.ddrCopyUs += dt.copy_us;
+                            prof.ddrFlushUs += dt.flush_us;
+                            prof.ddrDoorbellUs += dt.doorbell_us;
+                            prof.ddrPostWaitUs += dt.post_wait_us;
+                            prof.ddrBankReuseWaitUs += dt.bank_reuse_wait_us;
+                            prof.ddrPlxdPollUs += dt.plxa_poll_us;
+                            prof.ddrPlxdPollIters += dt.plxa_poll_iters;
+                            prof.ddrPlxdUsed += dt.plxa_used ? 1 : 0;
+                            prof.ddrTotalUs += dt.total_us;
+                            prof.ddrCpuUs += ddrCpu1 - ddrCpu0;
+                            if (dt.total_us > accounted)
+                                prof.ddrUnaccountedUs += dt.total_us - accounted;
+                        }
+                        // Deadline cost: pipe-fill + chroma pad + DDR present.
+                        // EXCLUDES A/V Hold sleep (pacing). Cap to uint32.
+                        if (frameCostLedger_ && countPresent) {
+                            auto clamp_u32 = [](int64_t v) -> uint32_t {
+                                if (v < 0)
+                                    return 0u;
+                                if (v > static_cast<int64_t>(UINT32_MAX))
+                                    return UINT32_MAX;
+                                return static_cast<uint32_t>(v);
+                            };
+                            // Split stages permanently (parent 2026-08-04):
+                            // pipe=read wall, pixel=chroma pad, present=DDR total.
+                            frameCost.note(clamp_u32(frameCostReadUs),
+                                           clamp_u32(frameCostPixelUs),
+                                           clamp_u32(static_cast<int64_t>(dt.total_us)));
+                        }
                     }
                     if (!ok)
                         log("media: DDR YUV420p F1 unavailable: " +
@@ -4059,7 +4107,10 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             std::chrono::steady_clock::time_point readEnd;
             int64_t readCpuStart = 0;
             int64_t readCpuEnd = 0;
-            if (profilePresent)
+            frameCostReadUs = 0;
+            frameCostPixelUs = 0;
+            // Wall stamp for cost ledger (VDSO) even when full PRESENT_PROFILE is off.
+            if (profilePresent || frameCostOn)
                 readStart = std::chrono::steady_clock::now();
             if (profilePresent)
                 readCpuStart = threadCpuMicros();
@@ -4157,10 +4208,12 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     frameReadMaxBytes = n;
                 totalBytes += static_cast<size_t>(n);
             }
-            if (profilePresent) {
-                readCpuEnd = threadCpuMicros();
+            if (profilePresent || frameCostOn)
                 readEnd = std::chrono::steady_clock::now();
-            }
+            if (profilePresent)
+                readCpuEnd = threadCpuMicros();
+            if (frameCostOn && got >= frameBytes)
+                frameCostReadUs = microsBetween(readStart, readEnd);
             if (paused_.load())
                 continue;
             if (got < frameBytes) {
@@ -4182,9 +4235,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             got = 0;
 
             if (videoFmt == RawVideoFormat::Yuv420p) {
-                if (profilePresent) {
+                if (profilePresent || frameCostOn) {
                     const auto pix0 = std::chrono::steady_clock::now();
-                    const int64_t pixCpu0 = threadCpuMicros();
+                    const int64_t pixCpu0 = profilePresent ? threadCpuMicros() : 0;
                     clearYuv420pCropPadding(frame.data(), ddrGeometry);
                     // Safety net for defect A: if U/V stayed near 0 (green-cast
                     // class), force studio-neutral chroma so scanout is greyscale
@@ -4197,10 +4250,13 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                                 std::to_string(rawW) + "x" + std::to_string(rawH) +
                                 " — green-cast class; check identity_skip / PMS delivery");
                     }
-                    const int64_t pixCpu1 = threadCpuMicros();
                     const auto pix1 = std::chrono::steady_clock::now();
-                    prof.pixelUs += microsBetween(pix0, pix1);
-                    prof.pixelCpuUs += pixCpu1 - pixCpu0;
+                    frameCostPixelUs = microsBetween(pix0, pix1);
+                    if (profilePresent) {
+                        const int64_t pixCpu1 = threadCpuMicros();
+                        prof.pixelUs += frameCostPixelUs;
+                        prof.pixelCpuUs += pixCpu1 - pixCpu0;
+                    }
                 } else {
                     clearYuv420pCropPadding(frame.data(), ddrGeometry);
                     if (repairDeadYuv420pChroma(frame.data(), rawW, rawH)) {
@@ -4603,10 +4659,15 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             }
             if (profilePresent && prof.frames >= 300)
                 logProfile();
+            // Ledger-only path (no PRESENT_PROFILE): dump every 300 notes.
+            if (frameCostLedger_ && !profilePresent && frameCost.count > 0 &&
+                (frameCost.count % 300ull) == 0ull)
+                logFrameCost("periodic");
         }
 
         if (profilePresent)
             logProfile();
+        logFrameCost("session_end");
         if (rfd >= 0)
             ::close(rfd);
         // Close video first so ffmpeg can exit and EOF stderr for the pump join.
