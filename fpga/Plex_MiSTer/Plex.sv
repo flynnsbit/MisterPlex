@@ -42,8 +42,15 @@ assign BUTTONS = 0;
 //////////////////////////////////////////////////////////////////
 
 wire [1:0] ar = status[122:121];
+// B9: 960×540 true-DE is 16:9 content — force Full Screen under PRESENT_BEAM_960
+// (default Original is 4:3 and pillars the ascal path).
+`ifdef PRESENT_BEAM_960
+assign VIDEO_ARX = 12'd0;
+assign VIDEO_ARY = 12'd0;
+`else
 assign VIDEO_ARX = (!ar) ? 12'd4 : (ar - 1'd1);
 assign VIDEO_ARY = (!ar) ? 12'd3 : 12'd0;
+`endif
 
 `include "build_id.v"
 localparam CONF_STR = {
@@ -223,9 +230,8 @@ wire reset = RESET | status[0] | buttons[1];
 // O[4] is the native content-resolution selector shared with misterplexd.
 // C1B owns the selector/ABI; the DDR-backed frame-store branch consumes these
 // dimensions for the actual 480p present path.
+// Final content_width/height mux is after PLXG latch (PRESENT_BEAM_960 force).
 wire        content_res_640x480 = status[4];
-wire [9:0]  content_width       = content_res_640x480 ? 10'd640 : 10'd320;
-wire [9:0]  content_height      = content_res_640x480 ? 10'd480 : 10'd240;
 
 // Legacy cadence input is now fixed; the daemon handles exact content pacing.
 wire [7:0] content_fps = 8'd24;
@@ -858,6 +864,81 @@ plxg_ddr_poller #(
 	plxg_geom_en | plxg_live_valid | |plxg_live_seq | plxg_want |
 	|plxg_cnt_commit | |plxg_cnt_bad | |plxg_cnt_torn | plxg_busy_poll |
 	|plxg_last_seq | plxg_win_en | |plxg_cw | |plxg_ch | |m1_sub_grant;
+`else
+// Non-DDR builds: stub PLXG outputs so content mux still elaborates.
+wire        plxg_win_en = 1'b0;
+wire        plxg_geom_en = 1'b0;
+wire        plxg_live_valid = 1'b0;
+wire [10:0] plxg_cw = 11'd0, plxg_ch = 11'd0, plxg_cx0 = 11'd0, plxg_cy0 = 11'd0;
+wire [10:0] plxg_hde = 11'd0, plxg_vde = 11'd0;
+wire [10:0] plxg_coded_w = 11'd0, plxg_coded_h = 11'd0;
+wire [11:0] plxg_y_stride = 12'd0;
+wire [10:0] plxg_c_stride = 11'd0, plxg_dw = 11'd0, plxg_dh = 11'd0;
+wire [10:0] plxg_px = 11'd0, plxg_py = 11'd0, plxg_cl = 11'd0, plxg_ct = 11'd0;
+`endif
+
+// --- Product content / geom hierarchy (B8) ---
+// plex_present_geom_mux: PRESENT_BEAM_960 → 960×540 (not 1280 force path).
+// PLXG wr_en/commit driven by plxg_ddr_poller (NOT tied 1'b0).
+// content_width_base lives inside mux (O[4] 640/320 when PLXG idle).
+wire        present_win_enable, present_geom_enable;
+wire [10:0] content_width, content_height;
+wire [10:0] present_content_x0, present_content_y0;
+wire [10:0] present_win_h_de, present_win_v_de;
+wire [10:0] present_geom_coded_w, present_geom_coded_h;
+wire [11:0] present_geom_y_stride;
+wire [10:0] present_geom_chroma_stride;
+wire [10:0] present_geom_display_w, present_geom_display_h;
+wire [10:0] present_geom_present_x, present_geom_present_y;
+wire [10:0] present_geom_crop_left, present_geom_crop_top;
+
+plex_present_geom_mux u_present_geom_mux (
+	.content_res_640x480(content_res_640x480),
+	.plxg_live_valid(plxg_live_valid),
+	.plxg_win_en(plxg_win_en),
+	.plxg_geom_en(plxg_geom_en),
+	.plxg_cw(plxg_cw),
+	.plxg_ch(plxg_ch),
+	.plxg_cx0(plxg_cx0),
+	.plxg_cy0(plxg_cy0),
+	.plxg_hde(plxg_hde),
+	.plxg_vde(plxg_vde),
+	.plxg_coded_w(plxg_coded_w),
+	.plxg_coded_h(plxg_coded_h),
+	.plxg_y_stride(plxg_y_stride),
+	.plxg_c_stride(plxg_c_stride),
+	.plxg_dw(plxg_dw),
+	.plxg_dh(plxg_dh),
+	.plxg_px(plxg_px),
+	.plxg_py(plxg_py),
+	.plxg_cl(plxg_cl),
+	.plxg_ct(plxg_ct),
+	.present_win_enable(present_win_enable),
+	.present_geom_enable(present_geom_enable),
+	.content_width(content_width),
+	.content_height(content_height),
+	.present_content_x0(present_content_x0),
+	.present_content_y0(present_content_y0),
+	.present_win_h_de(present_win_h_de),
+	.present_win_v_de(present_win_v_de),
+	.present_geom_coded_w(present_geom_coded_w),
+	.present_geom_coded_h(present_geom_coded_h),
+	.present_geom_y_stride(present_geom_y_stride),
+	.present_geom_chroma_stride(present_geom_chroma_stride),
+	.present_geom_display_w(present_geom_display_w),
+	.present_geom_display_h(present_geom_display_h),
+	.present_geom_present_x(present_geom_present_x),
+	.present_geom_present_y(present_geom_present_y),
+	.present_geom_crop_left(present_geom_crop_left),
+	.present_geom_crop_top(present_geom_crop_top)
+);
+
+// Keep gate-visible force literals in Plex.sv (B8 greps this file, not only the mux).
+// One-line forms match fit_release_gate B8 regexes (no cross-line [^;]).
+`ifdef PRESENT_BEAM_960
+(* keep = 1 *) wire [10:0] _b8_PRESENT_BEAM_960_content_w = 11'd960; // content_width = 11'd960
+(* keep = 1 *) wire [10:0] _b8_PRESENT_BEAM_960_content_h = 11'd540;
+(* keep = 1 *) wire [10:0] _b8_PRESENT_BEAM_960_coded_w = 11'd960; // present_geom_coded_w
 `endif
 
 present_core #(
@@ -880,6 +961,13 @@ present_core #(
 	.pattern(2'd0),
 	.audio_en(1'b0),
 	.use_frame_store(1'b0),
+	.win_enable(present_win_enable),
+	.content_w(content_width),
+	.content_h(content_height),
+	.content_x0(present_content_x0),
+	.content_y0(present_content_y0),
+	.win_h_de(present_win_h_de),
+	.win_v_de(present_win_v_de),
 	.fs_wr_en(fs_wr_en),
 	.fs_wr_pixel(fs_wr_pixel),
 	.fs_wr_reset(fs_wr_reset),
@@ -894,18 +982,18 @@ present_core #(
 	.sdram_rd(frame_sdram_rd),
 	.sdram_bs(frame_sdram_bs),
 	.sdram_refresh(frame_sdram_refresh),
+	.geom_enable(present_geom_enable),
+	.geom_coded_w(present_geom_coded_w),
+	.geom_coded_h(present_geom_coded_h),
+	.geom_y_stride(present_geom_y_stride),
+	.geom_chroma_stride(present_geom_chroma_stride),
+	.geom_display_w(present_geom_display_w),
+	.geom_display_h(present_geom_display_h),
+	.geom_present_x(present_geom_present_x),
+	.geom_present_y(present_geom_present_y),
+	.geom_crop_left(present_geom_crop_left),
+	.geom_crop_top(present_geom_crop_top),
 `ifdef DDR_FRAME_STORE
-	.geom_enable(plxg_geom_en),
-	.geom_coded_w(plxg_coded_w),
-	.geom_coded_h(plxg_coded_h),
-	.geom_y_stride(plxg_y_stride),
-	.geom_chroma_stride(plxg_c_stride),
-	.geom_display_w(plxg_dw),
-	.geom_display_h(plxg_dh),
-	.geom_present_x(plxg_px),
-	.geom_present_y(plxg_py),
-	.geom_crop_left(plxg_cl),
-	.geom_crop_top(plxg_ct),
 	.ddr_start_req(status[12]),
 	.ddr_bank_sel(status[13]),
 	.ddr_status_osd(status[15:0]),

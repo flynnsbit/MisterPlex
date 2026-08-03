@@ -8,6 +8,9 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/line_buf_ram.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/frame_store.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_frame_store.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_geom_latch.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/plex_present_geom_mux.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_content_window.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_beam_content_de.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/plxg_ddr_poller.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_m1_subarb.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/frame_ingest.sv
