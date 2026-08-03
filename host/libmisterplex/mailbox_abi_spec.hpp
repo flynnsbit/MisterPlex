@@ -52,6 +52,11 @@ constexpr uint32_t kPlxmOffset = 0x110u;
 constexpr uint32_t kPlxfOffset = 0x118u;
 constexpr uint32_t kSdramDiagOffset = 0x120u;
 constexpr uint32_t kPlxdOffset = 0x128u;
+// PLXG — geometry program (ARM→FPGA). Opt-in variable canvas / native-push.
+// Not consumed by shipping RBF; reserved so 720p tier + w-scaler content window
+// share one doorbell-relative slot. Layout: see encodePlxgGeometryWord().
+constexpr uint32_t kPlxgOffset = 0x130u;
+constexpr uint32_t kPlxgMagic = 0x504C5847u; // "PLXG"
 
 // Legacy example doorbell base (historical 0x3007F000 control page).
 constexpr uint32_t kLegacyFrameStoreDoorbellPhys = 0x3007F000u;

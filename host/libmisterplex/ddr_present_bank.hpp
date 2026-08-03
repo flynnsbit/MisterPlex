@@ -32,7 +32,8 @@ struct DdrPublishPlan {
 };
 
 inline bool makeDdrPublishPlan(const DdrPublishFrame& frame, int bank, DdrPublishPlan& out,
-                               std::string* err = nullptr) {
+                               std::string* err = nullptr,
+                               uint32_t physBase = kDdrFramePhysBase) {
     if (!frame.payload) {
         if (err)
             *err = "publishDdrFrame: null frame payload";
@@ -44,12 +45,15 @@ inline bool makeDdrPublishPlan(const DdrPublishFrame& frame, int bank, DdrPublis
         return false;
     }
     DdrFrameLayout layout =
-        makeDdrFrameLayout(frame.geometry, kDdrFramePhysBase, kDdrFrameStrideAlign, frame.format);
+        makeDdrFrameLayout(frame.geometry, physBase, kDdrFrameStrideAlign, frame.format);
     if (!ddrFrameLayoutValid(layout)) {
         if (err)
             *err = "publishDdrFrame: invalid DDR frame geometry";
         return false;
     }
+    // Payload must match derived geometry frame_bytes (full coded bank).
+    // Tight native-into-larger-canvas is a separate pack step
+    // (packYuv420pCentered / copyYuv420pNativeOrigin) before publish.
     if (frame.len != layout.frame_bytes) {
         if (err)
             *err = "publishDdrFrame: frame size does not match derived DDR geometry";
@@ -66,6 +70,12 @@ inline bool makeDdrPublishPlan(const DdrPublishFrame& frame, int bank, DdrPublis
     out.bank_offset = bankOff;
     out.bank_phys = layout.phys_base + static_cast<uint32_t>(bankOff);
     return true;
+}
+
+// 720p Option-C publish plan (phys base after bitstream ring).
+inline bool makePlex720pDdrPublishPlan(const DdrPublishFrame& frame, int bank, DdrPublishPlan& out,
+                                       std::string* err = nullptr) {
+    return makeDdrPublishPlan(frame, bank, out, err, kPlex720pDdrFramePhysBase);
 }
 
 inline void encodeDdrSpiKickStatusWord(const uint8_t in[16], int bank, bool startPulse,

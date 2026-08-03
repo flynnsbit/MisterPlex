@@ -1268,6 +1268,31 @@ def check_ddr_frame_layout_contract() -> None:
         ("kYuv420BlackY", "DDR_FRAME_YUV_BLACK_Y"),
         ("kYuv420BlackU", "DDR_FRAME_YUV_BLACK_U"),
         ("kYuv420BlackV", "DDR_FRAME_YUV_BLACK_V"),
+        # Aggressive 720p tier (opt-in; must stay locked across host/RTL).
+        ("kPlex720pCodedWidth", "DDR_FRAME_720P_CODED_WIDTH"),
+        ("kPlex720pCodedHeight", "DDR_FRAME_720P_CODED_HEIGHT"),
+        ("kPlex720pDisplayWidth", "DDR_FRAME_720P_DISPLAY_WIDTH"),
+        ("kPlex720pDisplayHeight", "DDR_FRAME_720P_DISPLAY_HEIGHT"),
+        ("kPlex720pPresentedWidth", "DDR_FRAME_720P_PRESENTED_WIDTH"),
+        ("kPlex720pPresentedHeight", "DDR_FRAME_720P_PRESENTED_HEIGHT"),
+        ("kPlex720pCropLeft", "DDR_FRAME_720P_CROP_LEFT"),
+        ("kPlex720pCropRight", "DDR_FRAME_720P_CROP_RIGHT"),
+        ("kPlex720pCropTop", "DDR_FRAME_720P_CROP_TOP"),
+        ("kPlex720pCropBottom", "DDR_FRAME_720P_CROP_BOTTOM"),
+        ("kPlex720pPillarboxLeft", "DDR_FRAME_720P_PILLARBOX_LEFT"),
+        ("kPlex720pPillarboxRight", "DDR_FRAME_720P_PILLARBOX_RIGHT"),
+        ("kPlex720pYuvLumaLineQwords", "DDR_FRAME_720P_YUV_LUMA_LINE_QWORDS"),
+        ("kPlex720pYuvChromaLineQwords", "DDR_FRAME_720P_YUV_CHROMA_LINE_QWORDS"),
+        ("kPlex720pYuv420pBytes", "DDR_FRAME_720P_YUV420P_BYTES"),
+        ("kPlex720pYPlaneOffset", "DDR_FRAME_720P_Y_PLANE_OFFSET"),
+        ("kPlex720pUPlaneOffset", "DDR_FRAME_720P_U_PLANE_OFFSET"),
+        ("kPlex720pVPlaneOffset", "DDR_FRAME_720P_V_PLANE_OFFSET"),
+        ("kPlex720pYStrideBytes", "DDR_FRAME_720P_Y_STRIDE_BYTES"),
+        ("kPlex720pChromaStrideBytes", "DDR_FRAME_720P_CHROMA_STRIDE_BYTES"),
+        ("kPlex720pYuv420pBankStride", "DDR_FRAME_720P_YUV420P_BANK_STRIDE"),
+        ("kPlex720pDdrFramePhysBase", "DDR_FRAME_720P_PHYS_BASE"),
+        ("kPlex720pYuv420pDoorbellPhys", "DDR_FRAME_720P_YUV420P_DOORBELL_PHYS"),
+        ("kDdrFramePlxgOffset", "DDR_FRAME_PLXG_OFFSET"),
     ]
     for host_name, rtl_name in pairs:
         hv = cpp_const(host, host_name)
@@ -1284,6 +1309,24 @@ def check_ddr_frame_layout_contract() -> None:
         + cpp_const(host, "kPlex480pPillarboxRight")
         == cpp_const(host, "kPlex480pPresentedWidth"),
         "480p pillarbox math no longer lands display width exactly in presented width",
+    )
+    # 720p identity geometry: no pillar/crop; doorbell = Option-C base + 2*stride - 4KiB.
+    check(
+        cpp_const(host, "kPlex720pCodedWidth") == 1280
+        and cpp_const(host, "kPlex720pCodedHeight") == 720
+        and cpp_const(host, "kPlex720pYuv420pBytes") == 1382400
+        and cpp_const(host, "kPlex720pYuv420pBankStride") == 0x180000
+        and cpp_const(host, "kPlex720pDdrFramePhysBase") == 0x30180000
+        and cpp_const(host, "kPlex720pYuv420pDoorbellPhys") == 0x3047F000,
+        "720p tier constants drifted from ratified Option-C ABI "
+        "(1280x720 / 1382400 / stride 0x180000 / base 0x30180000 / db 0x3047F000)",
+    )
+    check(
+        cpp_const(host, "kPlex720pYuv420pDoorbellPhys")
+        == cpp_const(host, "kPlex720pDdrFramePhysBase")
+        + 2 * cpp_const(host, "kPlex720pYuv420pBankStride")
+        - 0x1000,
+        "720p doorbell must equal phys_base + 2*bank_stride - 0x1000",
     )
     # Vacuity / red-check: a deliberate RTL coded-width edit must disagree with the
     # host writer constants (this is the shear: ARM line_bytes vs CODED_W).

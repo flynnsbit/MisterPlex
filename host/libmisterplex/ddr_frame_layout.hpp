@@ -56,6 +56,45 @@ constexpr uint8_t kYuv420BlackY = 16;
 constexpr uint8_t kYuv420BlackU = 128;
 constexpr uint8_t kYuv420BlackV = 128;
 
+// ---- Aggressive 720p tier (opt-in; mirror ddr_frame_layout_params.svh) ----
+// Shipping product remains 480p. 720p requires matching RBF + PLXG handshake so
+// core and daemon never disagree on bank stride/doorbell (88509163 class stall).
+// Phys base is Option-C (after bitstream ring), NOT 0x30000000 — naive enlarge
+// of the 480p window stomps ring @0x30100000 and PLXB @0x30140000.
+constexpr CodedWidth kPlex720pCodedWidth{1280};
+constexpr CodedHeight kPlex720pCodedHeight{720};
+constexpr DisplayWidth kPlex720pDisplayWidth{1280};
+constexpr DisplayHeight kPlex720pDisplayHeight{720};
+constexpr PresentedWidth kPlex720pPresentedWidth{1280};
+constexpr PresentedHeight kPlex720pPresentedHeight{720};
+constexpr int kPlex720pCropLeft = 0;
+constexpr int kPlex720pCropRight = 0;
+constexpr int kPlex720pCropTop = 0;
+constexpr int kPlex720pCropBottom = 0;
+constexpr int kPlex720pPillarboxLeft = 0;
+constexpr int kPlex720pPillarboxRight = 0;
+constexpr int kPlex720pYuvLumaLineQwords = 160;
+constexpr int kPlex720pYuvChromaLineQwords = 80;
+constexpr int kPlex720pYuv420pBytes = 1382400;
+constexpr int kPlex720pYPlaneOffset = 0;
+constexpr int kPlex720pUPlaneOffset = 921600;
+constexpr int kPlex720pVPlaneOffset = 1152000;
+constexpr int kPlex720pYStrideBytes = 1280;
+constexpr int kPlex720pChromaStrideBytes = 640;
+static_assert(kPlex720pYStrideBytes == kPlex720pCodedWidth.get(),
+              "720p Y stride must equal coded width");
+static_assert(kPlex720pChromaStrideBytes == kPlex720pCodedWidth.get() / 2,
+              "720p chroma stride must equal coded width/2");
+static_assert(kPlex720pYuv420pBytes == 1280 * 720 * 3 / 2,
+              "720p I420 byte count");
+// alignUp(1382400, 0x40000) = 0x180000; doorbell = phys + 2*stride - 0x1000.
+constexpr uint32_t kPlex720pYuv420pBankStride = 0x00180000u;
+constexpr uint32_t kPlex720pDdrFramePhysBase = 0x30180000u;
+constexpr uint32_t kPlex720pYuv420pDoorbellPhys = 0x3047F000u;
+// PLXG — geometry program mailbox, doorbell-relative (see mailbox_abi_spec).
+constexpr uint32_t kDdrFramePlxgOffset = 0x130u;
+constexpr uint32_t kDdrFramePlxgMagic = 0x504C5847u; // "PLXG"
+
 enum class DdrFramePlacement {
     None,
     Pillarbox,
@@ -229,11 +268,29 @@ inline DdrFrameGeometry ddrFrameGeometryForPresentedSize(int width, int height) 
 // present_core.sv wires ddr_frame_store with:
 //   CODED_W = DDR_FRAME_CODED_WIDTH (624), Y_LINE_QWORDS = CODED_W/8,
 //   FRAME_W = 640 presented scanout, bank/doorbell from ddr_frame_layout_params.svh.
-// There is no runtime stride/width register the ARM can program. DECODE/OSD O[4]
-// only selects the PMS source ladder; the writer must always emit this canvas
-// (scale+pad content into it) or the image shears line-to-line.
+// Shipping RBFs have no runtime stride/width register the ARM can program.
+// DECODE/OSD O[4] only selects the PMS source ladder; the writer must always
+// emit this canvas (scale+pad content into it) or the image shears line-to-line.
+// 720p tier is opt-in via plex720pDdrFrameGeometry() + matching RBF/PLXG — never
+// silently substituted here (would recreate 88509163 bank/doorbell desync).
 inline DdrFrameGeometry productDdrFrameStoreGeometry() {
     return plex480pDdrFrameGeometry();
+}
+
+// Aggressive 720p canvas (identity 16:9). Not product silicon until RBF wires
+// DDR_FRAME_720P_* into ddr_frame_store and daemon completes PLXG handshake.
+inline DdrFrameGeometry plex720pDdrFrameGeometry() {
+    DdrFrameGeometry g = makeDdrFrameGeometry(
+        kPlex720pCodedWidth, kPlex720pCodedHeight, kPlex720pDisplayWidth,
+        kPlex720pDisplayHeight, kPlex720pPresentedWidth, kPlex720pPresentedHeight,
+        DdrFramePlacement::None);
+    g.crop_left = kPlex720pCropLeft;
+    g.crop_right = kPlex720pCropRight;
+    g.crop_top = kPlex720pCropTop;
+    g.crop_bottom = kPlex720pCropBottom;
+    g.present_x = kPlex720pPillarboxLeft;
+    g.present_y = 0;
+    return g;
 }
 
 // FPGA-present geometry for any content/decode tier. Decode WxH is intentionally
@@ -327,6 +384,13 @@ inline DdrFrameLayout makeDdrFrameLayout(int width, int height,
                               format);
 }
 
+// 720p tier layout at Option-C phys base (not product 0x30000000).
+inline DdrFrameLayout makePlex720pDdrFrameLayout(
+    DdrFrameFormat format = DdrFrameFormat::Yuv420p) {
+    return makeDdrFrameLayout(plex720pDdrFrameGeometry(), kPlex720pDdrFramePhysBase,
+                              kDdrFrameStrideAlign, format);
+}
+
 inline bool ddrFrameLayoutValid(const DdrFrameLayout& l) {
     if (l.phys_base == 0 || l.width <= 0 || l.height <= 0 || l.frame_bytes == 0)
         return false;
@@ -379,6 +443,35 @@ inline bool ddrFrameLayoutMatchesProductSilicon(const DdrFrameLayout& l) {
         return false;
     if (l.bank_stride != kPlex480pYuv420pBankStride ||
         l.doorbell_phys != kPlex480pYuv420pDoorbellPhys)
+        return false;
+    return true;
+}
+
+// True when a layout matches the ratified 720p Option-C tier (not shipping silicon).
+inline bool ddrFrameLayoutMatches720pTier(const DdrFrameLayout& l) {
+    if (!ddrFrameLayoutValid(l))
+        return false;
+    if (l.format != DdrFrameFormat::Yuv420p)
+        return false;
+    if (l.phys_base != kPlex720pDdrFramePhysBase)
+        return false;
+    if (l.coded_width.get() != kPlex720pCodedWidth.get() ||
+        l.coded_height.get() != kPlex720pCodedHeight.get())
+        return false;
+    if (l.line_bytes != kPlex720pYStrideBytes ||
+        l.chroma_line_bytes != kPlex720pChromaStrideBytes)
+        return false;
+    if (l.line_qwords != kPlex720pYuvLumaLineQwords ||
+        l.chroma_line_qwords != kPlex720pYuvChromaLineQwords)
+        return false;
+    if (l.frame_bytes != static_cast<size_t>(kPlex720pYuv420pBytes))
+        return false;
+    if (l.y_offset != static_cast<uint32_t>(kPlex720pYPlaneOffset) ||
+        l.u_offset != static_cast<uint32_t>(kPlex720pUPlaneOffset) ||
+        l.v_offset != static_cast<uint32_t>(kPlex720pVPlaneOffset))
+        return false;
+    if (l.bank_stride != kPlex720pYuv420pBankStride ||
+        l.doorbell_phys != kPlex720pYuv420pDoorbellPhys)
         return false;
     return true;
 }
@@ -494,20 +587,22 @@ inline bool decodeDdrDoorbell(uint32_t lo, uint32_t hi, DdrFrameFormat expectedF
     return true;
 }
 
-// Maximum coded width the RTL frame store can present (ddr_frame_store.sv FRAME_W).
+// Maximum coded width the *shipping* RTL frame store can present (FRAME_W=640).
 // Typed as CodedWidth because acceptance checks coded stream size against it.
 // Numerically equal to presented 480p width; the type prevents using the
 // presented constant by accident in coded-only math without an explicit claim.
+// 720p tier raises the ceiling via kDdrFrameStore720pMax* — never silently here.
 constexpr CodedWidth kDdrFrameStoreMaxWidth{640};
 constexpr CodedHeight kDdrFrameStoreMaxHeight{480};
+constexpr CodedWidth kDdrFrameStore720pMaxWidth{1280};
+constexpr CodedHeight kDdrFrameStore720pMaxHeight{720};
 
-// Check whether a decoded frame resolution is acceptable for the DDR frame store.
-// Requirements:
+// Check whether a decoded frame resolution is acceptable for the *product* DDR
+// frame store (480p silicon). Requirements:
 //   1. MB-aligned (width and height are multiples of 16)
 //   2. Width <= RTL FRAME_W (640) and Height <= RTL FRAME_H (480)
 //   3. YUV420p payload fits within bank stride (currently 512 KiB)
-// This replaces the old hardcoded equality check against 624x480 and accepts
-// any valid resolution the frame store can handle, including 640x480 streams.
+// 1280x720 is intentionally rejected here — use ddrFrameStoreAccepts720pTier.
 inline bool ddrFrameStoreAcceptsResolution(CodedWidth codedWidth, CodedHeight codedHeight) {
     if (codedWidth.get() <= 0 || codedHeight.get() <= 0)
         return false;
@@ -526,6 +621,115 @@ inline bool ddrFrameStoreAcceptsResolution(CodedWidth codedWidth, CodedHeight co
 // Decoder-boundary overload: the caller claims these bare ints are coded size.
 inline bool ddrFrameStoreAcceptsResolution(int codedWidth, int codedHeight) {
     return ddrFrameStoreAcceptsResolution(CodedWidth{codedWidth}, CodedHeight{codedHeight});
+}
+
+// 720p-tier acceptance (Option-C map). Not product silicon until RBF+PLXG.
+inline bool ddrFrameStoreAccepts720pTier(CodedWidth codedWidth, CodedHeight codedHeight) {
+    if (codedWidth.get() <= 0 || codedHeight.get() <= 0)
+        return false;
+    if ((codedWidth.get() & 15) != 0 || (codedHeight.get() & 15) != 0)
+        return false;
+    if (codedWidth.get() > kDdrFrameStore720pMaxWidth.get() ||
+        codedHeight.get() > kDdrFrameStore720pMaxHeight.get())
+        return false;
+    const size_t frameBytes = yuv420pFrameBytes(codedWidth, codedHeight);
+    if (frameBytes == 0)
+        return false;
+    const uint32_t bankStride = alignUpU32(static_cast<uint32_t>(frameBytes), kDdrFrameStrideAlign);
+    return bankStride <= kPlex720pYuv420pBankStride;
+}
+
+inline bool ddrFrameStoreAccepts720pTier(int codedWidth, int codedHeight) {
+    return ddrFrameStoreAccepts720pTier(CodedWidth{codedWidth}, CodedHeight{codedHeight});
+}
+
+// ---- fab-dma: native-geometry push cost (content bytes vs canvas pad) ----
+// Product today always memcpy's layout.frame_bytes (full coded bank). With a
+// fabric content window (w-scaler runtime content_w/h) ARM can push only the
+// tight I420 rectangle and let fabric scale across DE — saving the black pad.
+struct DdrNativePushPlan {
+    size_t native_bytes = 0;  // tight content I420
+    size_t canvas_bytes = 0;  // full coded-bank payload product memcpy uses
+    size_t saved_bytes = 0;   // canvas - native (0 if native >= canvas)
+    double save_ratio = 0.0;  // saved/canvas in [0,1]
+    int content_w = 0;
+    int content_h = 0;
+    int canvas_w = 0;
+    int canvas_h = 0;
+    bool valid = false;
+};
+
+inline DdrNativePushPlan makeDdrNativePushPlan(int contentW, int contentH,
+                                               const DdrFrameGeometry& canvasGeom) {
+    DdrNativePushPlan p{};
+    p.content_w = contentW;
+    p.content_h = contentH;
+    p.canvas_w = canvasGeom.coded_width.get();
+    p.canvas_h = canvasGeom.coded_height.get();
+    p.native_bytes = yuv420pFrameBytes(contentW, contentH);
+    p.canvas_bytes = yuv420pFrameBytes(canvasGeom.coded_width, canvasGeom.coded_height);
+    if (p.native_bytes == 0 || p.canvas_bytes == 0)
+        return p;
+    if (contentW > p.canvas_w || contentH > p.canvas_h)
+        return p;
+    p.saved_bytes = (p.canvas_bytes > p.native_bytes) ? (p.canvas_bytes - p.native_bytes) : 0;
+    p.save_ratio = static_cast<double>(p.saved_bytes) / static_cast<double>(p.canvas_bytes);
+    p.valid = true;
+    return p;
+}
+
+// Tight plane-wise copy of srcW×srcH I420 into dst bank at (0,0). Does NOT
+// black-fill the rest of a larger canvas — caller must either use fabric window
+// mode (content == bank geometry) or clear the bank first. dstCap must hold at
+// least yuv420pFrameBytes(srcW,srcH); when writing into a larger bank, dstCap
+// must be the full bank size and planes use src strides packed at origin.
+inline bool copyYuv420pNativeOrigin(const uint8_t* src, int srcW, int srcH, uint8_t* dst,
+                                    size_t dstCap) {
+    if (!src || !dst || srcW <= 0 || srcH <= 0 || (srcW & 1) || (srcH & 1))
+        return false;
+    const size_t need = yuv420pFrameBytes(srcW, srcH);
+    if (need == 0 || dstCap < need)
+        return false;
+    // Contiguous tight I420: one memcpy of the whole payload.
+    std::memcpy(dst, src, need);
+    return true;
+}
+
+// Projected wall-ms for a pure DDR bank fill at a measured MiB/s rate.
+// rate_mib_s must come from a measured artifact (e.g. 59.521 no-sync archive).
+inline double ddrPushMsAtRate(size_t bytes, double rate_mib_s) {
+    if (bytes == 0 || rate_mib_s <= 0.0)
+        return 0.0;
+    const double mib = static_cast<double>(bytes) / (1024.0 * 1024.0);
+    return (mib / rate_mib_s) * 1000.0;
+}
+
+// PLXG geometry-program word (ARM→FPGA). enable=0 keeps synthesis-fixed product
+// geometry. When enable=1, fabric latches coded_w/h (and optional content window)
+// before the next doorbell; mismatched core/daemon tier must refuse publish.
+inline uint64_t encodePlxgGeometryWord(int codedW, int codedH, bool enable,
+                                       bool nativePush) {
+    const uint32_t w = static_cast<uint32_t>(codedW) & 0xFFFu;
+    const uint32_t h = static_cast<uint32_t>(codedH) & 0xFFFu;
+    const uint64_t hi = (static_cast<uint64_t>(w)) | (static_cast<uint64_t>(h) << 12) |
+                        (enable ? (1ull << 24) : 0ull) | (nativePush ? (1ull << 25) : 0ull);
+    return (hi << 32) | static_cast<uint64_t>(kDdrFramePlxgMagic);
+}
+
+inline bool decodePlxgGeometryWord(uint64_t raw, int& codedW, int& codedH, bool& enable,
+                                   bool& nativePush) {
+    if (static_cast<uint32_t>(raw) != kDdrFramePlxgMagic)
+        return false;
+    const uint32_t hi = static_cast<uint32_t>(raw >> 32);
+    codedW = static_cast<int>(hi & 0xFFFu);
+    codedH = static_cast<int>((hi >> 12) & 0xFFFu);
+    enable = ((hi >> 24) & 1u) != 0;
+    nativePush = ((hi >> 25) & 1u) != 0;
+    return true;
+}
+
+inline uint32_t plxgMailboxPhys(uint32_t doorbellPhys) {
+    return doorbellPhys + kDdrFramePlxgOffset;
 }
 
 } // namespace misterplex
