@@ -12,18 +12,20 @@ mkdir -p "$OUT"
 
 echo "RTL SIM: $($RV --version 2>&1 | head -1)"
 
-# Structural: beam gate + core formula + store export
+# Structural: beam gate + core two-phase visual + store export
 grep -q 'rt_de_apply' "$BEAM" || { echo "FAIL beam missing rt_de_apply"; exit 1; }
 grep -q 'FAULT_B20_BEAM_FREE_RUN' "$BEAM" || { echo "FAIL no red twin"; exit 1; }
-grep -q 'beam_de_apply' "$CORE" || { echo "FAIL core missing beam_de_apply"; exit 1; }
+grep -q 'visual_geom_apply' "$CORE" || { echo "FAIL core missing visual_geom_apply"; exit 1; }
+grep -q 'app_content_w' "$CORE" || { echo "FAIL core missing app_content_w shadow"; exit 1; }
 grep -q 'swap_pending && store_pending_ready' "$CORE" || { echo "FAIL no swap_fire"; exit 1; }
+grep -q 'b20_visual_hold' "$CORE" || { echo "FAIL no b20_visual_hold"; exit 1; }
 grep -q 'pending_ready' "$STORE" || { echo "FAIL store no pending_ready export"; exit 1; }
 grep -q 'assign pending_ready = pending_ready_s2' "$STORE" || { echo "FAIL assign"; exit 1; }
-# Must not free-run DE when live pending without ready
-if grep -n 'rt_de_apply(1'\''b1)' "$CORE" | grep -v beam_de; then
-  echo "FAIL core hardwires apply=1 on product beam"; exit 1
-fi
-echo "OK structure B20 beam/store coupling"
+# Product beam DE must come from applied shadow, not free-running content_w
+grep -q 'beam_src_w = app_content_w' "$CORE" || { echo "FAIL beam not on app shadow"; exit 1; }
+# Candidate free-run only under FAULT
+grep -q 'FAULT_B20_BEAM_FREE_RUN' "$CORE" || { echo "FAIL core no FAULT_B20"; exit 1; }
+echo "OK structure B20 beam/store/visual coupling"
 
 run_one() {
   local tag="$1"; shift

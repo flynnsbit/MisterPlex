@@ -167,12 +167,35 @@ module present_core #(
 	wire advance;
 	wire [31:0] disp_i, cont_i;
 
+	// ---- B20 two-phase visual geom (rd-duck: broader than beam DE) ----
+	// Latch may promote PLXG live at raw VSync while store app_*/bank stay OLD
+	// until swap_pending&&pending_ready. Display consumers MUST NOT free-run on
+	// candidate: hold applied shadows until the same swap fire that commits bank.
+	// Store still receives free-running candidate rt_* for cache prep (w-mem).
+	// DAR/ascal live outside this module — OR stat_geom_hold_black into HDMI_BLACKOUT.
+	wire        store_pending_ready;
+	wire        swap_pending; // driven by fstore below (SV net)
+	reg  [7:0]  app_content_fps;
+	reg  [10:0] app_content_w;
+	reg  [10:0] app_content_h;
+	reg  [10:0] app_content_x0;
+	reg  [10:0] app_content_y0;
+	reg         app_win_enable;
+	reg  [10:0] app_win_h_de;
+	reg  [10:0] app_win_v_de;
+	reg  [15:0] app_live_seq;
+	reg         app_live_valid;
+	// Update qualifier — defined with B20 beam block (swap_fire / free / idle).
+	wire        visual_geom_apply;
+	wire        b20_visual_hold;
+
 	// Film vs TV class for beam V_TOTAL and BEAM_960 cadence Hz (rd-duck B15).
 	// fps<=24 → film ~24.0007 (V=705). fps>=25 → TV ~30.0008 (V=564).
 	// 25 must NOT fall into film (host may publish valid 25).
 	// INTEGER content_fps only (q5). NTSC 24000/1001 bucketed to 24 is ~1028 ppm
 	// fast vs true 23.976 — NOT source-locked (ntsc_rational_cadence_wall.json).
-	wire beam_film_class = (content_fps <= 8'd24);
+	// Use APPLIED fps (not free-running candidate) so film↔TV class cannot race bank.
+	wire beam_film_class = (app_content_fps <= 8'd24);
 
 	// Cadence display_hz must match the *tick source* rate (rd-duck B15).
 	// BEAM_960: frame_start is core raster @24/30, NOT HDMI 50/60. Passing 60
@@ -182,7 +205,6 @@ module present_core #(
 	// Legacy non-beam: keep top-level display_hz (50/60).
 	// NOTE: DDR bank swap uses vsync_pulse=fstart && swap_pending — NOT advance.
 	// advance still feeds colorbars content_index + stat_advance only (C1).
-wire       store_pending_ready;
 `ifdef PRESENT_BEAM_960
 	wire [7:0] cadence_display_hz = beam_film_class ? 8'd24 : 8'd30;
 `else
@@ -192,7 +214,7 @@ wire       store_pending_ready;
 		.clk(clk),
 		.reset(reset),
 		.display_tick(frame_start),
-		.content_fps(content_fps),
+		.content_fps(app_content_fps),
 		.display_hz(cadence_display_hz),
 		.advance_unique(advance),
 		.display_index(disp_i),
@@ -219,6 +241,61 @@ wire       store_pending_ready;
 	reg       de_r;
 	wire       past_last_row;
 	wire       in_content;
+
+	// ---- B20 visual two-phase (all paths; not BEAM-only) ----
+	// Latch may promote PLXG at VSync while store bank stays OLD until
+	// swap_pending&&pending_ready. Hold applied DE/fps/window/seq until that fire.
+`ifdef DDR_FRAME_STORE
+	wire beam_swap_fire_g = swap_pending && store_pending_ready;
+	wire beam_de_free_g   = !use_frame_store;
+	wire beam_de_idle_g   = use_frame_store && !swap_pending &&
+	                       ((content_w == 11'd0) || !geom_enable);
+`ifdef FAULT_B20_VISUAL_FREE_RUN
+	assign visual_geom_apply = 1'b1;
+`else
+	assign visual_geom_apply = beam_de_free_g || beam_swap_fire_g || beam_de_idle_g;
+`endif
+`else
+	assign visual_geom_apply = 1'b1;
+	assign store_pending_ready = 1'b1;
+`endif
+
+	always @(posedge clk) begin
+		if (reset) begin
+			app_content_fps <= 8'd24;
+			app_content_w   <= 11'd0;
+			app_content_h   <= 11'd0;
+			app_content_x0  <= 11'd0;
+			app_content_y0  <= 11'd0;
+			app_win_enable  <= 1'b0;
+			app_win_h_de    <= 11'd0;
+			app_win_v_de    <= 11'd0;
+			app_live_seq    <= 16'd0;
+			app_live_valid  <= 1'b0;
+		end else if (visual_geom_apply) begin
+			app_content_fps <= content_fps;
+			app_content_w   <= content_w;
+			app_content_h   <= content_h;
+			app_content_x0  <= content_x0;
+			app_content_y0  <= content_y0;
+			app_win_enable  <= win_enable;
+			app_win_h_de    <= win_h_de;
+			app_win_v_de    <= win_v_de;
+			app_live_seq    <= geom_live_seq;
+			app_live_valid  <= geom_live_valid;
+		end
+	end
+
+`ifdef FAULT_B20_VISUAL_FREE_RUN
+	assign b20_visual_hold = 1'b0;
+`else
+`ifdef DDR_FRAME_STORE
+	assign b20_visual_hold = use_frame_store && geom_live_valid && geom_enable &&
+		(geom_live_seq != app_live_seq);
+`else
+	assign b20_visual_hold = 1'b0;
+`endif
+`endif
 
 `ifdef PRESENT_BEAM_960
 	// =====================================================================
@@ -249,34 +326,33 @@ wire       store_pending_ready;
 	wire [10:0] hc11, vc11, vtot_act11;
 	wire [10:0] hde_act11, htot_act11, vact_act11;
 
-	// Clamp delivered geom into bank max; 0 → max-tier fallback (idle/bars only).
+	// Clamp content into bank max; 0 → max-tier fallback (idle/bars only).
 	// Mux native→legacy disable must emit content 624×480, not 0 (island if 0→960).
-	wire [10:0] beam_hde_req =
-		(content_w == 11'd0) ? 11'd960 :
-		(content_w > 11'(FRAME_W)) ? 11'(FRAME_W) : content_w;
-	wire [10:0] beam_vact_req =
-		(content_h == 11'd0) ? 11'd540 :
-		(content_h > 11'(FRAME_H)) ? 11'(FRAME_H) : content_h;
-	// Fixed line class @20 MHz: 1182 clocks/line. V_TOTAL selects 30 vs 24 Hz.
-	// beam_film_class defined above (shared with cadence_display_hz).
-	wire [10:0] beam_htot_req = 11'd1182;
-	// B20 (rd-duck): beam DE apply must share the store swap qualifier.
-	// Candidate content_w/h may promote at geom latch VSync while store keeps
-	// old app_*/bank until swap_pending && pending_ready. Free-running beam DE
-	// would paint NEW H_DE over OLD store columns (island under delayed ready).
-	// apply = free-run (bars) OR swap_fire OR idle/legacy (no live pending wait).
-	// FAULT_B20_BEAM_FREE_RUN handled inside beam (always apply DE).
-`ifdef DDR_FRAME_STORE
-	wire beam_swap_fire = swap_pending && store_pending_ready;
-	wire beam_de_free   = !use_frame_store;
-	// Idle/bars content_w=0 fallback and legacy geom_enable=0: no bank wait.
-	wire beam_de_idle   = use_frame_store && !swap_pending &&
-	                     ((content_w == 11'd0) || !geom_enable);
-	wire beam_de_apply  = beam_de_free || beam_swap_fire || beam_de_idle;
+	// Product: DE from applied shadow. FAULT_B20_* free-run uses candidate (RED).
+`ifdef FAULT_B20_BEAM_FREE_RUN
+	wire [10:0] beam_src_w = content_w;
+	wire [10:0] beam_src_h = content_h;
 `else
-	wire beam_de_apply  = 1'b1;
-	assign store_pending_ready = 1'b1; // unused without DDR store
+`ifdef FAULT_B20_VISUAL_FREE_RUN
+	wire [10:0] beam_src_w = content_w;
+	wire [10:0] beam_src_h = content_h;
+`else
+	wire [10:0] beam_src_w = app_content_w;
+	wire [10:0] beam_src_h = app_content_h;
 `endif
+`endif
+	wire [10:0] beam_hde_req =
+		(beam_src_w == 11'd0) ? 11'd960 :
+		(beam_src_w > 11'(FRAME_W)) ? 11'(FRAME_W) : beam_src_w;
+	wire [10:0] beam_vact_req =
+		(beam_src_h == 11'd0) ? 11'd540 :
+		(beam_src_h > 11'(FRAME_H)) ? 11'(FRAME_H) : beam_src_h;
+	// Fixed line class @20 MHz: 1182 clocks/line. V_TOTAL selects 30 vs 24 Hz.
+	// beam_film_class from app_content_fps (shared with cadence_display_hz).
+	// Fixed line class @20 MHz: 1182 clocks/line. V_TOTAL selects 30 vs 24 Hz.
+	// beam_film_class from app_content_fps. B20 apply/hold is above (all paths).
+	wire [10:0] beam_htot_req = 11'd1182;
+	wire beam_de_apply = 1'b1;
 
 	// Bresenham V_TOTAL: exact long-run NTSC (default) or fixed under FAULT.
 	// Updates on fstart after beam latches current vtot (registered).
@@ -425,7 +501,7 @@ wire       store_pending_ready;
 
 	wire [7:0] fr, fg, fb;
 	wire       has_frame;
-	wire       swap_pending;
+	// swap_pending declared earlier (B20 visual two-phase); driven by fstore.
 	wire [31:0] wr_count;
 	wire        wr_done;
 	wire [15:0] frame_underruns;
@@ -833,8 +909,7 @@ wire       store_pending_ready;
 		.underrun_count(frame_underruns),
 		.debug_state(frame_sdram_state)
 	);
-	// SDRAM frame_store has no pending_ready — free-run DE apply (no DDR prep).
-	assign store_pending_ready = 1'b1;
+	// store_pending_ready tied 1 above when !DDR_FRAME_STORE (B20 free-run).
 `endif
 
 `ifdef PRESENT_MULTI_PIXEL
@@ -1079,6 +1154,10 @@ wire       store_pending_ready;
 	// Pattern=None (0) + no frame → black (nothing “runs” behind cast).
 	wire use_ext = has_frame && !use_frame_store;
 	wire show_pattern = !use_ext && (use_frame_store || (pattern != 2'd0));
+	// B20: force core RGB black while candidate visual epoch != applied (and/or
+	// store B16 hold). ascal HDMI_BLACKOUT is size-only; this covers fps/window
+	// and DE/bank mismatch without relying on ascal iauto alone.
+	wire visual_force_black = b20_visual_hold | geom_hold_black;
 	// --- Align sync/blank to the pixel pipeline -------------------------------
 	// hc -> fr costs 5 clk: store_x registers on ce_pix (2 clk) then frame_store
 	// does rd_addr_r -> rd_q -> rd_r (3 clk). hc -> hb/hs costs only 1 clk. So the
@@ -1159,9 +1238,9 @@ wire       store_pending_ready;
 	// Npx path already pushes black on !has_frame / store miss; a second gate on
 	// async status tears DE. Pass mp_* pixels straight out.
 `ifdef PRESENT_CLK_PIX_PLL
-	assign r = mp_de_out ? mp_r_px : 8'd0;
-	assign g = mp_de_out ? mp_g_px : 8'd0;
-	assign b = mp_de_out ? mp_b_px : 8'd0;
+	assign r = visual_force_black ? 8'd0 : (mp_de_out ? mp_r_px : 8'd0);
+	assign g = visual_force_black ? 8'd0 : (mp_de_out ? mp_g_px : 8'd0);
+	assign b = visual_force_black ? 8'd0 : (mp_de_out ? mp_b_px : 8'd0);
 	assign ce_pix = 1'b1; // CLK_VIDEO==clk_pix; CE always
 	assign HBlank = mp_hb_d;
 	assign HSync  = mp_hs_d;
@@ -1169,9 +1248,12 @@ wire       store_pending_ready;
 	assign VSync  = mp_vs_d;
 	assign frame_start = mp_out_fs;
 `else
-	assign r = use_ext ? (mp_de_out ? mp_r_px : 8'd0) : (show_pattern ? br : 8'd0);
-	assign g = use_ext ? (mp_de_out ? mp_g_px : 8'd0) : (show_pattern ? bg : 8'd0);
-	assign b = use_ext ? (mp_de_out ? mp_b_px : 8'd0) : (show_pattern ? bb : 8'd0);
+	assign r = visual_force_black ? 8'd0 :
+		(use_ext ? (mp_de_out ? mp_r_px : 8'd0) : (show_pattern ? br : 8'd0));
+	assign g = visual_force_black ? 8'd0 :
+		(use_ext ? (mp_de_out ? mp_g_px : 8'd0) : (show_pattern ? bg : 8'd0));
+	assign b = visual_force_black ? 8'd0 :
+		(use_ext ? (mp_de_out ? mp_b_px : 8'd0) : (show_pattern ? bb : 8'd0));
 	assign ce_pix = 1'b1;
 	// Same-clock: still prefer mp timing when multi-pixel mode is on so DE matches beam.
 	assign HBlank = mp_hb_d;
@@ -1182,9 +1264,12 @@ wire       store_pending_ready;
 `endif
 `else
 	// Multi-pixel macro without DDR store: keep legacy 1ppc path.
-	assign r = use_ext ? (de_out ? fr : 8'd0) : (show_pattern ? br : 8'd0);
-	assign g = use_ext ? (de_out ? fg : 8'd0) : (show_pattern ? bg : 8'd0);
-	assign b = use_ext ? (de_out ? fb : 8'd0) : (show_pattern ? bb : 8'd0);
+	assign r = visual_force_black ? 8'd0 :
+		(use_ext ? (de_out ? fr : 8'd0) : (show_pattern ? br : 8'd0));
+	assign g = visual_force_black ? 8'd0 :
+		(use_ext ? (de_out ? fg : 8'd0) : (show_pattern ? bg : 8'd0));
+	assign b = visual_force_black ? 8'd0 :
+		(use_ext ? (de_out ? fb : 8'd0) : (show_pattern ? bb : 8'd0));
 	assign ce_pix = ce_pix_i;
 	assign HBlank = hb_d;
 	assign HSync  = hs_d;
@@ -1193,9 +1278,12 @@ wire       store_pending_ready;
 	assign frame_start = fstart;
 `endif
 `else
-	assign r = use_ext ? (de_out ? fr : 8'd0) : (show_pattern ? br : 8'd0);
-	assign g = use_ext ? (de_out ? fg : 8'd0) : (show_pattern ? bg : 8'd0);
-	assign b = use_ext ? (de_out ? fb : 8'd0) : (show_pattern ? bb : 8'd0);
+	assign r = visual_force_black ? 8'd0 :
+		(use_ext ? (de_out ? fr : 8'd0) : (show_pattern ? br : 8'd0));
+	assign g = visual_force_black ? 8'd0 :
+		(use_ext ? (de_out ? fg : 8'd0) : (show_pattern ? bg : 8'd0));
+	assign b = visual_force_black ? 8'd0 :
+		(use_ext ? (de_out ? fb : 8'd0) : (show_pattern ? bb : 8'd0));
 
 	assign ce_pix = ce_pix_i;
 	assign HBlank = hb_d;
@@ -1264,8 +1352,11 @@ wire       store_pending_ready;
 	assign stat_frame_underruns = frame_underruns;
 `endif
 	assign stat_frame_sdram_state = frame_sdram_state;
-	assign stat_geom_hold_black = geom_hold_black;
+	// B16 store hold OR B20 visual epoch hold (candidate live_seq != applied).
+	assign stat_geom_hold_black = geom_hold_black | b20_visual_hold;
 	assign stat_geom_hollow     = geom_hollow_fault;
-	wire _keep_b16_stats = stat_geom_hold_black | stat_geom_hollow | _keep_win_geom_ports;
+	wire _keep_b16_stats = stat_geom_hold_black | stat_geom_hollow | _keep_win_geom_ports
+		| (|app_content_fps) | (|app_content_w) | (|app_content_h)
+		| app_win_enable | (|app_live_seq) | app_live_valid | visual_force_black;
 
 endmodule
