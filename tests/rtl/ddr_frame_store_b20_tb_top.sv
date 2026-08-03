@@ -194,7 +194,14 @@ module ddr_frame_store_b20_tb (
 		.app_fps_o(obs_app_fps),
 		.app_dar_valid_o(),
 		.app_fps_valid_o(),
-		.swap_applied_pulse(obs_swap_applied_pulse)
+		.swap_applied_pulse(obs_swap_applied_pulse),
+		.pending_ready_o(),
+		.pend_app_valid_o(),
+		.pend_app_seq_o(),
+		.pend_beam_cw_o(),
+		.pend_beam_ch_o(),
+		.pend_beam_hde_o(),
+		.pend_beam_vde_o()
 	);
 
 	present_beam_geom_lock beam_lock (

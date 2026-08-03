@@ -203,7 +203,17 @@ module ddr_frame_store #(
 	output wire        app_dar_valid_o,
 	output wire        app_fps_valid_o,
 	// 1-clk pulse when bank+tuple+seq promote together.
-	output reg         swap_applied_pulse
+	output reg         swap_applied_pulse,
+	// B20 feed-forward / integrated timing (rd-duck one-frame island):
+	// pending bank ready + snapshotted beam tuple for NEXT swap (not live mux).
+	// Beam must see pend_* at v_wrap when swap_armed; app_* alone is one clk late.
+	output wire        pending_ready_o,
+	output wire        pend_app_valid_o,
+	output wire [15:0] pend_app_seq_o,
+	output wire [10:0] pend_beam_cw_o,
+	output wire [10:0] pend_beam_ch_o,
+	output wire [10:0] pend_beam_hde_o,
+	output wire [10:0] pend_beam_vde_o
 );
 	// Port/scan domain: cover presentation FRAME and max content.
 	localparam int RD_W_MAX = (FRAME_W > MAX_CODED_W) ? FRAME_W : MAX_CODED_W;
@@ -580,7 +590,16 @@ module ddr_frame_store #(
 	assign app_fps_valid_o = app_fps_v_r;
 	// Live PLXG seq advanced (latch VSync promote) but bank/app not yet applied.
 	// Covers mux/window/crop/q5 free-run until swap ack (beam lock is not enough).
+	// NOT sufficient alone for integrated beam NBA lag (rd-duck): clear at hc=1
+	// while beam DE still OLD for the frame — see present_core beam_ack hold.
 	assign b20_visual_hold = b20_atomic && (applied_geom_seq_r != rt_geom_seq);
+	assign pending_ready_o   = pending_ready_s2 & ~tb_block_pending_ready;
+	assign pend_app_valid_o  = pend_app_valid;
+	assign pend_app_seq_o    = pend_app_seq;
+	assign pend_beam_cw_o    = pend_beam_cw;
+	assign pend_beam_ch_o    = pend_beam_ch;
+	assign pend_beam_hde_o   = pend_beam_hde;
+	assign pend_beam_vde_o   = pend_beam_vde;
 
 	// ---- B16: atomic geom epoch, hold-black, hollow loud-reject --------------------
 	// Layout change tracks *applied* app_* (not free-running eff_*) so B20 delay

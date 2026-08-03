@@ -168,14 +168,66 @@ module present_core #(
 
 	wire [7:0] br, bg, bb;
 	wire       ce_pix_i, hb, hs, vb, vs, fstart;
+	// Forward decls: fstore drives these; beam (optional) consumes pend at v_wrap.
+	wire        swap_pending;
+`ifdef DDR_FRAME_STORE
+	wire        store_pending_ready;
+	wire        pend_app_valid_w;
+	wire [15:0] pend_app_seq_w;
+	wire [10:0] pend_beam_cw_w, pend_beam_ch_w, pend_beam_hde_w, pend_beam_vde_w;
+	wire [10:0] app_beam_cw, app_beam_ch, app_beam_hde, app_beam_vde;
+	wire [15:0] applied_geom_seq_o;
+	wire        swap_applied_pulse_w;
+	wire        b20_visual_hold_store;
+	// Product external-store path (use_frame_store=force-bars only; product ties 0).
+	wire b20_ext_store_path = !use_frame_store;
+	// Armed: next fstart will bank-swap with snapshotted pend (not live mux).
+	wire b20_swap_armed = b20_ext_store_path && swap_pending && store_pending_ready
+		&& pend_app_valid_w;
+`else
+	wire b20_ext_store_path = 1'b0;
+	wire b20_swap_armed = 1'b0;
+`endif
+
 `ifdef PRESENT_BEAM_960
-	// ascal-native true content DE (w-clock 1182×564 @20 MHz ≈ 30.0008 Hz).
-	// Default OFF. FAULT: PRESENT_BEAM_FAULT_ISLAND_1280 → DE 1280×720 (must RED).
+	// ascal-native true content DE. Runtime DE latches at v_wrap only.
+	// B20: when swap_armed, feed pend beam dims so DE matches bank on the SAME
+	// wrap that store will ack next clk (rd-duck NBA lag / island class).
 	wire [10:0] hc, vc;
 	assign br = 8'd0; assign bg = 8'd0; assign bb = 8'd0;
-	// Pattern unused on beam path (no colorbars paint); keep for port parity.
 	wire [1:0] eff_pattern = use_frame_store ? 2'd1 : pattern;
 	(* keep = 1 *) wire _beam960_keep_pat = |eff_pattern;
+`ifdef DDR_FRAME_STORE
+`ifdef FAULT_B20_NO_BEAM_FEEDFORWARD
+	// RED: app-only at v_wrap → DE stays OLD whole frame after hc=1 bank swap.
+	wire [10:0] beam_rt_hde = app_beam_hde;
+	wire [10:0] beam_rt_vact = app_beam_vde;
+	wire [10:0] beam_rt_htot = (app_beam_hde != 11'd0) ? (app_beam_hde + 11'd222) : 11'd0;
+	wire        beam_rt_de_apply = 1'b1;
+`else
+	wire [10:0] beam_src_hde = b20_swap_armed ? pend_beam_hde_w : app_beam_hde;
+	wire [10:0] beam_src_vact = b20_swap_armed ? pend_beam_vde_w : app_beam_vde;
+	wire [10:0] beam_rt_hde = beam_src_hde;
+	wire [10:0] beam_rt_vact = beam_src_vact;
+	// Keep blanking class (~1182 for 960); grow with DE when wider.
+	wire [10:0] beam_rt_htot =
+		(beam_src_hde != 11'd0) ? (beam_src_hde + 11'd222) : 11'd0;
+	// Apply DE when free-run (force bars) OR idle OR swap armed (pend matches bank).
+	wire beam_rt_de_apply =
+`ifdef FAULT_B20_BEAM_FREE_RUN
+		1'b1
+`else
+		(!b20_ext_store_path) || b20_swap_armed ||
+		(b20_ext_store_path && !swap_pending && !geom_live_valid)
+`endif
+		;
+`endif
+`else
+	wire [10:0] beam_rt_hde = 11'd0;
+	wire [10:0] beam_rt_vact = 11'd0;
+	wire [10:0] beam_rt_htot = 11'd0;
+	wire        beam_rt_de_apply = 1'b1;
+`endif
 `ifdef PRESENT_BEAM_FAULT_ISLAND_1280
 	present_beam_content_de #(
 		.H_DE(1280), .V_ACTIVE(720),
@@ -193,6 +245,21 @@ module present_core #(
 `endif
 		.clk(clk),
 		.reset(reset),
+		.use_rt_vtotal(1'b0),
+		.rt_vtotal(11'd0),
+`ifdef DDR_FRAME_STORE
+		.use_rt_geom(b20_ext_store_path && (beam_rt_hde != 11'd0)),
+		.rt_h_de(beam_rt_hde),
+		.rt_h_total(beam_rt_htot),
+		.rt_v_active(beam_rt_vact),
+		.rt_de_apply(beam_rt_de_apply),
+`else
+		.use_rt_geom(1'b0),
+		.rt_h_de(11'd0),
+		.rt_h_total(11'd0),
+		.rt_v_active(11'd0),
+		.rt_de_apply(1'b1),
+`endif
 		.ce_pix(ce_pix_i),
 		.HBlank(hb),
 		.HSync(hs),
@@ -200,7 +267,11 @@ module present_core #(
 		.VSync(vs),
 		.frame_start(fstart),
 		.hc_out(hc),
-		.vc_out(vc)
+		.vc_out(vc),
+		.vtot_active(),
+		.hde_active(),
+		.htot_active(),
+		.vact_active()
 	);
 `else
 	wire [9:0] hc, vc; // from colorbars — same counters as full-DE bar paint
@@ -317,23 +388,32 @@ module present_core #(
 	// beam dims (bank-coupled), not free-running latch promote (rd-duck).
 	// store_geom_owned = PLXG live+seq — NOT use_frame_store (product ties 0).
 `ifdef DDR_FRAME_STORE
-	wire [10:0] app_beam_cw, app_beam_ch, app_beam_hde, app_beam_vde;
 	wire [10:0] app_disp_w_o, app_disp_h_o;
 	wire        app_geom_en_o;
-	wire [15:0] applied_geom_seq_o;
-	wire        b20_visual_hold;
 	wire        app_win_en_w;
 	wire [10:0] app_cx0_w, app_cy0_w;
 	wire [11:0] app_dar_x_w, app_dar_y_w;
 	wire  [7:0] app_fps_w;
 	wire        app_dar_v_w, app_fps_v_w;
-	wire        swap_applied_pulse_w;
 	wire        beam_use_app;
 	wire [10:0] locked_cw, locked_ch, locked_hde, locked_vde;
 	// Real ownership gate (integration must match product top tie-offs).
 	// Equals beam_use_app inside present_beam_geom_lock — not force_bars.
 	(* keep = 1 *) wire store_geom_owned =
 		geom_live_valid && (geom_live_seq != 16'd0);
+	// Window/map: when swap_armed, feed pend dims so content map tracks the
+	// DE the beam is about to latch at v_wrap (same generation as pending bank).
+`ifdef FAULT_B20_NO_BEAM_FEEDFORWARD
+	wire [10:0] lock_app_cw  = app_beam_cw;
+	wire [10:0] lock_app_ch  = app_beam_ch;
+	wire [10:0] lock_app_hde = app_beam_hde;
+	wire [10:0] lock_app_vde = app_beam_vde;
+`else
+	wire [10:0] lock_app_cw  = b20_swap_armed ? pend_beam_cw_w  : app_beam_cw;
+	wire [10:0] lock_app_ch  = b20_swap_armed ? pend_beam_ch_w  : app_beam_ch;
+	wire [10:0] lock_app_hde = b20_swap_armed ? pend_beam_hde_w : app_beam_hde;
+	wire [10:0] lock_app_vde = b20_swap_armed ? pend_beam_vde_w : app_beam_vde;
+`endif
 	present_beam_geom_lock beam_lock (
 		.live_valid(geom_live_valid),
 		.live_seq(geom_live_seq),
@@ -341,10 +421,10 @@ module present_core #(
 		.live_ch(content_h),
 		.live_hde(win_h_de),
 		.live_vde(win_v_de),
-		.app_cw(app_beam_cw),
-		.app_ch(app_beam_ch),
-		.app_hde(app_beam_hde),
-		.app_vde(app_beam_vde),
+		.app_cw(lock_app_cw),
+		.app_ch(lock_app_ch),
+		.app_hde(lock_app_hde),
+		.app_vde(lock_app_vde),
 		.use_app(beam_use_app),
 		.out_cw(locked_cw),
 		.out_ch(locked_ch),
@@ -414,7 +494,7 @@ module present_core #(
 	wire       has_frame;
 	wire       geom_hold_black;
 	wire       geom_hollow_fault;
-	wire       swap_pending;
+	// swap_pending forward-declared above (beam feed-forward).
 	wire [31:0] wr_count;
 	wire        wr_done;
 	wire [15:0] frame_underruns;
@@ -532,7 +612,7 @@ module present_core #(
 		.app_disp_h_o(app_disp_h_o),
 		.app_geom_en_o(app_geom_en_o),
 		.applied_geom_seq_o(applied_geom_seq_o),
-		.b20_visual_hold(b20_visual_hold),
+		.b20_visual_hold(b20_visual_hold_store),
 		.app_win_en_o(app_win_en_w),
 		.app_cx0_o(app_cx0_w),
 		.app_cy0_o(app_cy0_w),
@@ -541,14 +621,65 @@ module present_core #(
 		.app_fps_o(app_fps_w),
 		.app_dar_valid_o(app_dar_v_w),
 		.app_fps_valid_o(app_fps_v_w),
-		.swap_applied_pulse(swap_applied_pulse_w)
+		.swap_applied_pulse(swap_applied_pulse_w),
+		.pending_ready_o(store_pending_ready),
+		.pend_app_valid_o(pend_app_valid_w),
+		.pend_app_seq_o(pend_app_seq_w),
+		.pend_beam_cw_o(pend_beam_cw_w),
+		.pend_beam_ch_o(pend_beam_ch_w),
+		.pend_beam_hde_o(pend_beam_hde_w),
+		.pend_beam_vde_o(pend_beam_vde_w)
 	);
 	assign ddr_applied_geom_seq = applied_geom_seq_o;
+
+	// ---- B20 beam-applied seq ACK (rd-duck integrated NBA lag) ----
+	// frame_start is registered at v_wrap; store/app observe it next clk (hc=1).
+	// live-vs-app hold clears at that hc=1 edge while beam DE (latched at v_wrap)
+	// can still be OLD for the whole frame → NEW bank in OLD DE island.
+	// Hold content black until beam_ack_seq catches applied_geom_seq after a
+	// post-swap frame_start where swap_applied is not simultaneous (NBA settle).
+	reg [15:0] beam_ack_seq;
+	reg        beam_ack_pending;
+	reg [15:0] beam_disp_seq;
+	always @(posedge clk) begin
+		if (reset) begin
+			beam_ack_seq     <= 16'd0;
+			beam_ack_pending <= 1'b0;
+			beam_disp_seq    <= 16'd0;
+		end else begin
+			if (swap_applied_pulse_w)
+				beam_ack_pending <= 1'b1;
+			// Capture what DE generation the beam will display this frame:
+			// at frame_start (observer cycle = hc=1), pend was armed at prior
+			// v_wrap or app is current; prefer applied once pulse settled.
+			if (fstart) begin
+				if (beam_ack_pending && !swap_applied_pulse_w) begin
+					beam_ack_seq     <= applied_geom_seq_o;
+					beam_ack_pending <= 1'b0;
+					beam_disp_seq    <= applied_geom_seq_o;
+				end else if (!beam_ack_pending) begin
+					beam_disp_seq <= applied_geom_seq_o;
+				end
+			end
+		end
+	end
+`ifdef FAULT_B20_NO_BEAM_HOLD
+	// RED: live-vs-app only — island class with NBA lag.
+	wire b20_beam_hold = 1'b0;
+`else
+	wire b20_beam_hold = b20_ext_store_path && (
+		beam_ack_pending ||
+		(applied_geom_seq_o != 16'd0 && beam_ack_seq != applied_geom_seq_o)
+	);
+`endif
+	wire b20_visual_hold = b20_visual_hold_store | b20_beam_hold;
+
 	// Keep applied exports live for hierarchy debug (no dead-strip).
 	(* keep = 1 *) wire _b20_beam_keep =
 		beam_use_app | (|app_disp_w_o) | (|app_disp_h_o) | app_geom_en_o |
 		(|applied_geom_seq_o) | b20_visual_hold | app_win_en_w |
-		(|app_cx0_w) | (|app_fps_w) | swap_applied_pulse_w;
+		(|app_cx0_w) | (|app_fps_w) | swap_applied_pulse_w |
+		b20_swap_armed | (|pend_app_seq_w) | b20_beam_hold | (|beam_disp_seq);
 `else
 	frame_store #(
 		.FRAME_W(FRAME_W),
