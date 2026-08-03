@@ -1,0 +1,95 @@
+w-osd 720p present land — status
+================================
+worker: w-osd
+branch: w-osd-land-720p-present
+HEAD:   dc0755d1 (land efb30629 + label + this status)
+base:   da64f7a9 (main tip at branch creation; main has since moved)
+date:   2026-local session
+
+SOURCE CHOICE
+-------------
+Chose integ/fab-720p-product-v2 over integ/fab-720p-e2e, integ/fab-720p-product,
+w-clock-bump, w-path-fit-layout-fix.
+
+Why: fullest present module set already wired into a product-shaped present_core
+with BOTH PRESENT_BEAM_960 and PRESENT_MULTI_PIXEL ifdef gates, plus QIP entries
+and dual keep-instances for 720p/960 timing packs. e2e/product lacked the later
+beam/npx consolidation; w-clock-bump contributed present_vtotal_bresenham only.
+
+DEFAULT_OFF = YES
+-----------------
+Plex.qsf active macros (no PRESENT_*):
+  SDRAM_CLK_142=1 SDRAM_CL3=1 DDR_FRAME_STORE=1 FRAME_W=640 FRAME_H=480 FRAME_LINES_8=1
+PRESENT macros are COMMENTED only:
+  # PRESENT_BEAM_960=1
+  # PRESENT_MULTI_PIXEL=1
+  # PRESENT_PX_PER_CLK=1
+  # PRESENT_CLK_PIX_PLL=1
+present_core keeps legacy Template H_DE / colorbars / DE_LAG=3 / G-VID1 when
+macros off. Always-on (* noprune *) u_keep_timing_720p/960 do not drive HDMI.
+Plex.sv ties .clk_pix(clk_sys), .content_w/h(0).
+
+GATES (true rc, not piped)
+--------------------------
+make rtl-lint                          -> true rc=0
+make unit                              -> true rc=0
+python3 tests/unit/test_present_720p_land_static.py -> true rc=0
+./tests/unit/test_p3_dpb_mc_rtl_sim.sh -> true rc=0
+python3 scripts/check_define_parity.py -> true rc=0
+
+NO Quartus fit (held by parent).
+NO device access.
+
+MODULE LAND TABLE (mandatory fields)
+------------------------------------
+# path is relative to fpga/Plex_MiSTer/rtl/
+# ON_MAIN = is commit on main branch? (parent merge required)
+# IN_FILES_QIP = listed in fpga/Plex_MiSTer/files.qip?
+
+module                         ON_MAIN   IN_FILES_QIP
+-----------------------------  --------  ------------
+present_video_timing_720p.sv   no        yes
+present_video_timing_960.sv    no        yes
+present_beam_content_de.sv     no        yes
+present_beam_ppc.sv            no        yes
+present_npx_path.sv            no        yes
+present_pix_rate_match.sv      no        yes
+present_content_window.sv      no        yes
+present_geom_latch.sv          no        yes
+present_vtotal_bresenham.sv    no        yes
+yuv_bt601_npx.sv               no        yes
+plex_present_geom_mux.sv       no        yes
+async_fifo.sv (AF_HEADROOM)    no*       yes (pre-existing QIP; body updated)
+present_core.sv (gated wire)   no*       yes (pre-existing QIP; body updated)
+
+* ON_MAIN=no until parent merges w-osd-land-720p-present → main.
+  After merge both fields become yes/yes for all rows above.
+
+Also updated (not new product modules):
+- ddr_frame_layout_params.svh + ddr_frame_layout.hpp : DDR_FRAME_720P_*/960_* dual-header
+  (DDR_FRAME_PRESENTED_* stay 640×480)
+- Plex.sv present_core port ties
+- Plex.qsf commented enable recipes
+- tests/unit/test_present_720p_land_static.py (land gate + QIP drop red twin)
+- tests/rtl/h264_dpb_mc_tb_top.sv BANK1_BASE pin (624×480 fixture vs product 1280×720 default)
+- tests/rtl/h264_rtl_recon_scorer_tb.sv widen coeff/dequant/residual to product 16/29b
+- tests/fixtures/define_parity_allowlist.json FAULT_NB_CTX_NO_GEOM_REJECT (base tip red)
+- tests/unit/test_rtl_invariants.py skip nested .worktrees/artifacts lab junk
+
+NOT LANDED (other lanes)
+------------------------
+h264_mc_*, h264_deblock_*, h264_residual_*, plex_chrome product live plane,
+present_scale_2x/4_3/bilinear_lerp (not required for default-off timing land).
+
+PARENT NEXT
+-----------
+1. Review/merge w-osd-land-720p-present (efb30629) onto main
+2. Release Quartus fit with macros still OFF to prove v0.3.0 unchanged
+3. Later grant PRESENT_BEAM_960 or PRESENT_MULTI_PIXEL for glass 720p photo
+
+AGGREGATE (pre-merge honest)
+----------------------------
+ON_MAIN=no
+IN_FILES_QIP=yes  (all landed modules listed in files.qip on this branch)
+DEFAULT_OFF=yes
+FIT=not_run (held)
