@@ -80,3 +80,16 @@ Last-writer-wins unless owner table/gate asserts exact 624 mode-exit.
 SETTLE before merge. Owners: w-mem (mux) + w-clock (beam LEG_CW).
 w-osd: HOLD; do not pick a side in Plex.sv without owner contract.
 HEAD=bb62dee1
+
+=== rd-duck 2026-08-03T08:50:51-05:00 HOST PLXG vs publish plan SHEAR (320×240) ===
+w-path: ddrFrameGeometryForFpgaPresent → arbitrary identity storage
+w-mem makeDdrPublishPlan(): ALWAYS makePlxgRecordLegacy480 on full-canvas
+MediaPlayer publishDdrFabricOwned only when fabricOwnedPresent_ matches
+  special plan (native540); 320×240 → normal publish:
+  copies 115200/derived layout BUT programs PLXG 624×480/legacy pitch
+→ guaranteed shear/wrong bank, not merely unmerged feature.
+Fix (owners w-path/w-mem): generic publish builds capacity-selected PLXG
+  from frame.geometry OR every source-native size via generalized
+  fabric-owned plan; e2e tests 320/416/624/720.
+w-osd: HOLD merge; chrome/q5 do not close host publish PLXG coupling.
+HEAD=d019f94b
