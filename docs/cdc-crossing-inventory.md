@@ -175,6 +175,41 @@ require approximately:
 
 ---
 
+## Related-edge sensitivity (clk_sys overclock / 720p plan)
+
+Both domains stay in one `set_clock_groups -exclusive` PLL group (`sys_top.sdc`), so
+STA times crossings with the **minimum positive related rising-edge Δ**, not as fully
+async. Shipping **20/90 → 5.556 ns** matches STA path panels on `8fdf440f`
+(`c_line[*] → c_line_v1[*]`, data delay **3.5–3.8 ns**, slack **+0.793**).
+
+| clk_sys | clk_ddr | Min related Δ | vs data-delay class ~3.5–3.8 ns | Gate / fit |
+|--------:|--------:|--------------:|----------------------------------|------------|
+| 20 MHz (ship) | 90 | **5.556 ns** | Headroom (~1.7 ns class) | Measured PASS |
+| 25 MHz (A) | 90 | **2.222 ns** | **Tighter than data delay → expect setup HARD_FAIL** | PROPOSED; STA required |
+| 27 MHz (C) | 90 | **3.704 ns** | Marginal / likely fail after uncertainty | PROPOSED; not preferred |
+| 30 MHz (B) | 90 | **11.111 ns** (3:1) | Setup comfortable; **same-edge hold family** | **Preferred** first bump |
+
+### Crossings re-audited for a ratio change (no new false_path)
+
+| # | Signal / path | Dir | Current protection | At 25/90 (2.22 ns) | At 30/90 (11.11 ns) |
+|---|---------------|-----|--------------------|--------------------|---------------------|
+| 1–4,10–12 | reset, swap/start toggles, bank levels | sys→ddr | 2-FF / toggle | Pulse width shrinks with sys period; toggles still OK if held ≥1 sys clk | OK if held ≥1 sys clk |
+| 5–9 | disp_bank/buf, has_frame, swap_pending, pending_bank | ddr→sys | 2-FF level | Level sync OK; latency in sys cycles unchanged count | Same |
+| 13 | `want_y` Gray | sys→ddr | Gray 2-FF | Gray still sound; faster sys updates Gray more often | OK |
+| 14–15 | status_osd / sdram_status snapshot | sys→ddr | Toggle-snapshot | Data must remain stable across tighter edge — protocol already holds through toggle | OK |
+| 16,28 | `input_fifo` | sys→ddr | async_fifo Gray AW=2 | Pointer CDC OK; **throughput** scales with sys; depth may need +1 if burstier | Check fill under 720p |
+| 17 | line_buf_ram dual-port | ddr wr / sys rd | M10K dual clock | Not edge-related STA path; address stability still required | Same |
+| 18–21 | arbiter want/busy/cmd | sys↔ddr | 2-FF + protocol hold | **m1_busy** 2-FF OK; cmd multi-bit must stay stable while busy low — shorter sys period reduces hold window in ns | OK with same protocol |
+| 22–23,30 | `m1_rsp_fifo` dout | ddr→sys | async_fifo Gray AW=3 | Pointer CDC OK; FWFT registered; **do not** expand false_path | OK |
+| meta | `y_line`/`c_line`/`y_bank` → `*_v1/*_v2` | ddr→sys | Direct related-clock sample (STA-timed) | **Binding class** — 3.8 ns data into 2.22 ns edge → **FAIL unless shortened** | 11.11 ns edge → setup OK if data stays ~4 ns; **hold STA mandatory** |
+
+**Mitigations allowed:** deepen async_fifo only with beat-conservation proof; keep Gray/toggle protocols; retime meta holds on ddr before crossing; **never** `set_false_path` the meta bus or whole general[0]↔general[2].
+
+Contract + gate: `assets/pll_clock_contract.json`, `scripts/check_pll_clock_contract.py`.
+Full proposal: `.agent-work/w-clock/P720_CLOCK_OVERCLOCK_PROPOSAL.md`.
+
+---
+
 ## Changelog
 
 | Date | Commit | Change |

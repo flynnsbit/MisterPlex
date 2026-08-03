@@ -1,0 +1,32 @@
+worker: w-clock
+todo: p720-clock
+branch: w-clock-bump
+base: w-fit-ceiling-fd-min @ fab34b23
+status: DONE
+pll_applied: NO (still 20/90 shipping)
+fit_run: NO
+device: NO
+
+## Headline
+720p clk_sys need derived from present_core/colorbars timing.
+Preferred overclock: Target B 30/90 (not 25/90).
+1280-wide@60 1pix/clk is a WALL (69–74 MHz >> nostub Fmax 32.59).
+Gates: assets/pll_clock_contract.json + scripts/check_pll_clock_contract.py + unit mutations PASS.
+
+## Evidence paths
+- .agent-work/w-clock/P720_CLOCK_OVERCLOCK_PROPOSAL.md
+- assets/pll_clock_contract.json
+- docs/cdc-crossing-inventory.md (related-edge section)
+- fpga/Plex_MiSTer/Plex.sdc (comment contract only)
+- tests/unit/test_pll_clock_contract.sh rc=0
+- make pll-clock-contract rc=0
+- make timing-exclusion rc=0
+
+## Parent next
+1. Wait w-nostub fresh STA
+2. If granting fit: apply B_30_90 only, PRODUCT_NO_STUB, no clk_ddr raise
+3. STA must close CDC hold+setup at 11.111 ns related edge
+4. make pll-clock-contract STA_RPT=… ACTIVATE_TARGET=B_30_90 ALLOW_PLL_BUMP=1
+
+## Note on /tmp report
+Runtime forbids /tmp writes; this file is the agent report stand-in.
