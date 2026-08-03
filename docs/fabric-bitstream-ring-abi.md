@@ -159,3 +159,19 @@ PMS request; this gate is the ring-side last line of defence.
 | PL330 DMA → Option-C bank | **critical path / OPEN** | w-path |
 | Fabric present/scale @720p | in flight; needs clk_pix | w-scaler/osd/clock/nostub |
 | Bitstream ring → fabric decode | **endgame, 8–16 weeks** | future; ABI frozen here |
+
+
+## Delivered level vs requested (DPB sizing)
+
+Product `plex_resolve` already pins `h264Profile=baseline` and `videoLevel=30`.
+Parent measured PMS **raises** 1280x720 to **level 3.1** (MaxFS 3600 MBs — 720p is
+exactly MaxFS of 3.1 and illegal at 3.0's 1620).
+
+| | Level | MaxFS (MBs) | DPB frames @720p |
+|--|------:|------------:|-----------------:|
+| Requested | 3.0 (30) | 1620 | **0 (illegal)** |
+| Delivered | 3.1 (31) | 3600 | **5** |
+
+`h264_level_limits.hpp`: always size ref/DPB from **SPS level_idc / delivered**,
+never from `kPlexRequestedH264Level`. Option-C present banks remain **2** (display
+double-buffer) and must not be conflated with DPB frame count.

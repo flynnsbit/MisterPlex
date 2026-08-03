@@ -101,3 +101,10 @@ localparam int DDR_BITSTREAM_WORST_AU_RECORD_BYTES =
 localparam int DDR_BITSTREAM_PROFILE_IDC_BASELINE = 66;
 localparam int DDR_BITSTREAM_CODEC_FLAG_CONSTRAINT_SET1 = 1;
 localparam int DDR_BITSTREAM_CODEC_FLAG_CABAC = 2;
+// H.264 level: product REQUESTS 30; PMS DELIVERS 31 for 1280x720 (MaxFS).
+// DPB / ref buffer sizing must use delivered level (see h264_level_limits.hpp).
+localparam int DDR_H264_REQUESTED_LEVEL = 30;
+localparam int DDR_H264_DELIVERED_LEVEL_720P = 31;
+localparam int DDR_H264_720P_FRAME_SIZE_MBS = 3600; // 80*45
+localparam int DDR_H264_L31_MAX_DPB_FRAMES_720P = 5; // 18000/3600
+localparam int DDR_H264_OPTIONC_PRESENT_BANKS = 2;   // display double-buffer != DPB

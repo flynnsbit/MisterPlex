@@ -1,27 +1,21 @@
-w-mem STATUS — architecture correction absorbed
+w-mem STATUS — delivered level 3.1 sizes DPB
 
-HEAD: (pending) doc/status retract fabric-decode-as-near-term
+HEAD: (pending) h264_level_limits.hpp
 
-PARENT CORRECTION (rule-0 self-hit) — ACK WITHOUT DEFENDING PRIOR CLAIM
-  File-count ≠ capability. h264_decode_top = pre-parsed coeff recon, not annex-B.
-  w-path: ~80% of decoder missing, 8–16 weeks. w-clock: 17.4× over at 20 MHz.
-  Full fabric H.264 decode is NOT the near-term 720p path.
+PARENT
+  Profile pin ALREADY exists (baseline + videoLevel=30).
+  PMS delivers level 31 for 720p (MaxFS). DPB uses DELIVERED not REQUESTED.
+  True 720p source FAIL with CPU copy; DMA = true 720p source path.
+  Near-term glass = 720p OUTPUT from affordable source + fabric scale.
 
-SURVIVING ARCHITECTURE
-  1 PMS Baseline 720p @2585k ........ PROVEN
-  2 ARM decode 35.94 / 41.667 ....... PROVEN (+5.73)
-  3 Frame→bank without CPU store .... OPEN = w-path DMA (critical path)
-  4 Fabric present/scale @720p ...... in flight (clk_pix separate PLL)
-  5 ARM off scale/overlay/idle ...... fabric lanes
+LANDED
+  h264_level_limits.hpp: L3.0/3.1 MaxFS/MaxDpbMbs; NEG request vs deliver
+  720p @ L30 -> 0 DPB slots; @ L31 -> 5 frames / 6.91 MB bound
+  Option-C present banks=2 != DPB; svh mirrors; test_h264_level_limits
 
-w-mem POSITION
-  Bitstream ring ABI (8485c445/eb7fc70b/efc7ed81) = ENDGAME freeze, default OFF
-  Near-term memory surface = Option-C banks + credit + fabric writer for present
-  Do not staff ring→fabric-decode as this week's glass unblocker
-
-PARENT VERIFY (still green; no behaviour change required)
+PARENT VERIFY
   cd /home/flynnsbit/Projects/MisterPlex-wt-mem
-  make $(pwd)/build/test_bitstream_ring_abi $(pwd)/build/test_ddr_720p_abi
-  ./build/test_bitstream_ring_abi; echo "true rc=$?"
+  make $(pwd)/build/test_h264_level_limits && ./build/test_h264_level_limits; echo "true rc=$?"
+  # expect: dpb_L30=0 dpb_L31=5 present_banks=2
 
-No device. No Quartus. Present/scale/idle fit unchanged.
+No device. No Quartus.

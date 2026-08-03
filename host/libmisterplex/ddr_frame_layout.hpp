@@ -117,6 +117,14 @@ constexpr uint8_t kDdrBitstreamProfileIdcBaseline = 66u;
 constexpr uint8_t kDdrBitstreamCodecFlagConstraintSet1 = 1u;
 constexpr uint8_t kDdrBitstreamCodecFlagCabac = 2u;
 
+// H.264 level request vs delivery (DPB sizing — see h264_level_limits.hpp).
+constexpr int kDdrH264RequestedLevel = 30;
+constexpr int kDdrH264DeliveredLevel720p = 31;
+constexpr uint32_t kDdrH264720pFrameSizeMbs = 3600u;
+constexpr uint32_t kDdrH264L31MaxDpbFrames720p = 5u;
+constexpr uint32_t kDdrH264OptionCPresentBanks = 2u;
+
+
 
 
 // Parent-verified 2026-08-02 on device: cmdline mem=511M memmap=513M$511M

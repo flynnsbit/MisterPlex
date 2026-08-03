@@ -269,7 +269,7 @@ inline bool ringHasWorstAuHeadroom(size_t level, size_t cap = kRingBytes) {
 
 // H.264 codec tag on Event::Begin — fabric-decode compatibility gate.
 // Parent 2026-08-03: PMS delivers Constrained Baseline L3.1, no B-frames, CAVLC.
-// RTL inventory: CAVLC+intra+inter+MC+deblock+DPB; CABAC grep count 0.
+// Stream: Baseline+CAVLC (product request). Fabric full decode = endgame only.
 // w-path owns PMS request pin; this gate refuses unexpected profiles honestly.
 constexpr uint8_t kH264ProfileIdcBaseline = 66u;
 constexpr uint8_t kH264ProfileIdcMain = 77u;
