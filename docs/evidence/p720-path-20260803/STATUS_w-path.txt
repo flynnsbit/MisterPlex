@@ -1,6 +1,6 @@
 lane=w-path
 status=GEOMETRY_FLOOR_3100_LANDED
-tip=pending commit
+tip=d273d6f8
 FINDING: lab maxBR=3100 → true 1280x720 (ffprobe); 3000 → 720x404
   decision content BR @3100 ≈ 2585 (PMS under-runs cap)
   prior floor 3500 was coarse-matrix overstatement
