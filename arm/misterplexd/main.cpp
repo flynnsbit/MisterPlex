@@ -1168,7 +1168,8 @@ int main(int argc, char** argv) {
         }
         // Greppable single-line geometry contract for parent device logs.
         // Keys: requested_pms expected_delivery decode_target arm_rescale
-        // decode_target is the coded bank (624 on FPGA), content_tier is DECODE/OSD.
+        // decode_target is STORAGE bank (624 canvas for 240/480; 960x540 tight for
+        // 540p glass; never DE 1280 canvas). content_tier is DECODE/OSD.
         const std::string libraryStr =
             (resolved.mediaWidth > 0 && resolved.mediaHeight > 0)
                 ? (std::to_string(resolved.mediaWidth) + "x" +

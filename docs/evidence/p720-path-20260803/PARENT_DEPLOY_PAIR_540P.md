@@ -74,6 +74,10 @@ misterplexd: content resolution=960x540 source=conf/--decode ... weak=960x540 bi
 misterplexd: GEOM requested_pms=960x540 ... decode_target=960x540 content_tier=960x540 ...
 ```
 
+**Also require** (post rd-duck #3 fix): decode_target / coded bank is **960x540**, not
+`624x480` (old always-canvas bug) and not `1280x720` (DE canvas leak). FFmpeg/publish
+payload must be **777600** B.
+
 Also expect resolve detail / URL side to carry `videoLevel=31` and `videoProfile=baseline` (ladder pin).
 
 **FAIL / wrong pair:**

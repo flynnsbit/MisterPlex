@@ -45,7 +45,14 @@ int main() {
     const size_t fb480 = yuv420pCodedFrameBytes(g480);
     expect(fb240 == 449280u && fb480 == 449280u, "P1 same frame_bytes 449280");
     expect(fb240 == fb480, "P1 240 decode does NOT shrink DDR publish");
-    std::printf("P1_OK coded=624x480 display=618 crop_right=6 frame_bytes=%zu (both tiers)\n",
+    // P1b: 960x540 is tight storage (777600), not 480 canvas and not 1280 canvas.
+    const auto g540 = ddrFrameGeometryForFpgaPresent(960, 540);
+    expect(g540.coded_width.get() == 960 && g540.coded_height.get() == 540, "P1b 540 storage");
+    expect(yuv420pCodedFrameBytes(g540) == 777600u, "P1b 540 frame_bytes");
+    expect(g540.coded_width.get() != 1280 && g540.coded_height.get() != 720,
+           "P1b 540 is NOT DE canvas 1280x720");
+    std::printf("P1_OK coded=624x480 display=618 crop_right=6 frame_bytes=%zu (both tiers); "
+                "540p storage=960x540 bytes=777600\n",
                 fb240);
 
     // --- P2: FORCE_SCALE Always for both source sizes ---

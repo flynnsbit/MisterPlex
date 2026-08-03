@@ -273,17 +273,58 @@ inline DdrFrameGeometry productDdrFrameStoreGeometry() {
     return plex480pDdrFrameGeometry();
 }
 
-// FPGA-present geometry for any content/decode tier. Decode WxH is intentionally
-// ignored: a 320x240 source still occupies the 624-byte-stride coded bank after
-// force_original_aspect_ratio=decrease + pad. Returning identity-320 here is the
-// shear defect (ARM line_bytes=320 vs RTL CODED_W=624).
-inline DdrFrameGeometry ddrFrameGeometryForFpgaPresent(CodedWidth /*decodeWidth*/,
-                                                      CodedHeight /*decodeHeight*/) {
+// Storage geometry the daemon FFmpeg/rawvideo path must emit (media_player rawW/H).
+//
+// rd-duck 2026-08-03: rawW/rawH came solely from this selector. If it always
+// returned the 480p canvas, DECODE=960x540 still forced scale+copy into 624x480
+// and the measured +7.16 ms tight-540 budget was dead code. If it returned the
+// Option-C *DE canvas* 1280x720, FFmpeg would emit 1_382_400 B and kill the
+// budget the other way. Both are wrong for the product 540→720-glass path.
+//
+// Rules:
+//   - 960x540 content → identity STORAGE 960x540 (777600 B). Never 1280 canvas.
+//   - 1280x720 content → identity STORAGE 1280x720 (true-720 upgrade path).
+//   - All other tiers (320x240, 624x480, …) → product 480p silicon canvas
+//     (scale+pad). Returning identity-320 is the shear defect (line_bytes=320
+//     vs RTL CODED_W=624).
+// DE/glass canvas (1280x720) is a separate fabric concept — not this function.
+inline DdrFrameGeometry ddrStorageGeometryForContent(CodedWidth contentW,
+                                                     CodedHeight contentH) {
+    if (contentW.get() == kPlex540pCodedWidth.get() &&
+        contentH.get() == kPlex540pCodedHeight.get())
+        return makeDdrFrameGeometry(kPlex540pCodedWidth, kPlex540pCodedHeight);
+    if (contentW.get() == kPlex720pCodedWidth.get() &&
+        contentH.get() == kPlex720pCodedHeight.get())
+        return makeDdrFrameGeometry(kPlex720pCodedWidth, kPlex720pCodedHeight);
+    if (contentW.get() == kPlex480pCodedWidth.get() &&
+        contentH.get() == kPlex480pCodedHeight.get())
+        return plex480pDdrFrameGeometry();
     return productDdrFrameStoreGeometry();
+}
+
+inline DdrFrameGeometry ddrStorageGeometryForContent(int contentW, int contentH) {
+    return ddrStorageGeometryForContent(CodedWidth{contentW}, CodedHeight{contentH});
+}
+
+// FPGA-present geometry for the daemon path: STORAGE, not DE canvas.
+// Decode tier selects tight 540/720 identity; everything else stays 480p canvas.
+inline DdrFrameGeometry ddrFrameGeometryForFpgaPresent(CodedWidth decodeWidth,
+                                                      CodedHeight decodeHeight) {
+    return ddrStorageGeometryForContent(decodeWidth, decodeHeight);
 }
 
 inline DdrFrameGeometry ddrFrameGeometryForFpgaPresent(int decodeWidth, int decodeHeight) {
     return ddrFrameGeometryForFpgaPresent(CodedWidth{decodeWidth}, CodedHeight{decodeHeight});
+}
+
+// True when I420 payload cannot fit legacy 480p bank usable capacity
+// (stride 0x80000 minus doorbell page 0x1000 = 520192). Mirrors w-mem/capacity
+// Option-C select — NOT coded_w>=1280.
+constexpr uint32_t kDdrBankDoorbellPageBytes = 0x1000u;
+constexpr uint32_t kPlex480pYuv420pBankUsableBytes =
+    kPlex480pYuv420pBankStride - kDdrBankDoorbellPageBytes; // 520192
+inline bool ddrI420PayloadNeedsOptionCBank(size_t frameBytes) {
+    return frameBytes > static_cast<size_t>(kPlex480pYuv420pBankUsableBytes);
 }
 
 inline DdrFrameLayout makeDdrFrameLayout(const DdrFrameGeometry& geom,

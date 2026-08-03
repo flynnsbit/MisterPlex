@@ -43,8 +43,20 @@ inline bool makeDdrPublishPlan(const DdrPublishFrame& frame, int bank, DdrPublis
             *err = "publishDdrFrame: bank must be 0 or 1";
         return false;
     }
+    // Phys base from *payload capacity*, not canvas tier label. 960x540 =
+    // 777600 > legacy usable 520192 → Option-C window (w-mem capacity predicate).
+    // Never publish 540p into 0x30000000/0x80000 — that overruns the bank.
+    const bool optionC = ddrI420PayloadNeedsOptionCBank(frame.len);
+    const uint32_t physBase = optionC ? kPlex720pDdrFramePhysBase : kDdrFramePhysBase;
     DdrFrameLayout layout =
-        makeDdrFrameLayout(frame.geometry, kDdrFramePhysBase, kDdrFrameStrideAlign, frame.format);
+        makeDdrFrameLayout(frame.geometry, physBase, kDdrFrameStrideAlign, frame.format);
+    if (optionC && ddrFrameLayoutValid(layout)) {
+        // Pin Option-C stride/doorbell (alignUp of 777600 alone is not the ABI).
+        layout.phys_base = kPlex720pDdrFramePhysBase;
+        layout.bank_stride = kPlex720pYuv420pBankStride;
+        layout.doorbell_phys = kPlex720pYuv420pDoorbellPhys;
+        layout.map_bytes = kPlex720pMapBytes2Bank;
+    }
     if (!ddrFrameLayoutValid(layout)) {
         if (err)
             *err = "publishDdrFrame: invalid DDR frame geometry";

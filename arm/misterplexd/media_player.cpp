@@ -2867,9 +2867,11 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     if (onProgress_)
         onProgress_("buffering", startMs, durationMs);
 
-    // Product silicon CODED_W/H are compile-time (624x480). DECODE/outW_ only
-    // selects the PMS source ladder; FPGA DDR publish must always use the
-    // silicon canvas or line-stride shears (ARM 320 vs RTL 624).
+    // STORAGE geometry for FFmpeg rawvideo + DDR publish payload (not DE canvas).
+    // 960x540 → identity 960x540 / 777600 B (product 540→720-glass; rd-duck #3).
+    // 320x240 / default → still 624x480 silicon canvas (scale+pad; shear-safe).
+    // NEVER take Option-C 1280x720 DE canvas as rawW/H — that forces 1_382_400 B
+    // copy and destroys the measured +7.16 ms budget.
     const bool wantFpgaDdrCanvas =
         (presentMode_ == "fpga" || presentMode_ == "both");
     const DdrFrameGeometry ddrGeometry =
