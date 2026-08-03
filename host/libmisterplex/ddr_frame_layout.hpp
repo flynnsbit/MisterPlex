@@ -601,6 +601,11 @@ inline bool ddrRtRawWindowCropTopPlus1Fail() {
     return !ddrRtRawWindowOk(624, 480, 624, 480, 0, 1);
 }
 
+// Geometry-math layout: bank_stride = alignUp(frame_bytes, strideAlign).
+// WARNING (rd-duck): for 320×240 this yields stride 0x40000 / doorbell
+// 0x3007F000 — NOT the RTL legacy map (0x80000 / 0x300FF000). Product
+// publish / setDdrFrameLayout / FPGA kick MUST use
+// makeDdrFrameLayoutCapacitySelected (or ddrPinTierBankWindow after).
 inline DdrFrameLayout makeDdrFrameLayout(const DdrFrameGeometry& geom,
                                          uint32_t physBase = kDdrFramePhysBase,
                                          uint32_t strideAlign = kDdrFrameStrideAlign,
@@ -663,6 +668,32 @@ inline DdrFrameLayout makeDdrFrameLayout(const DdrFrameGeometry& geom,
     return out;
 }
 
+// Product / RTL-matched layout: plane fields from storage geometry; bank window
+// is the fixed LEG (0x80000 / 0x300FF000) or Option-C (0x180000 / 0x3047F000)
+// map selected by payload capacity — same selector as ddr_frame_store.
+// This is the only layout constructor safe for mmap + doorbell kick.
+inline DdrFrameLayout makeDdrFrameLayoutCapacitySelected(
+    const DdrFrameGeometry& geom, DdrFrameFormat format = DdrFrameFormat::Yuv420p) {
+    const int cw = geom.coded_width.get();
+    const int ch = geom.coded_height.get();
+    if (cw <= 0 || ch <= 0)
+        return DdrFrameLayout{};
+    const DdrBankMap map = ddrSelectBankMapForContent(cw, ch);
+    const uint32_t phys = (map == DdrBankMap::OptionC720p) ? kPlex720pDdrFramePhysBase
+                                                           : kDdrFramePhysBase;
+    DdrFrameLayout out = makeDdrFrameLayout(geom, phys, kDdrFrameStrideAlign, format);
+    if (out.frame_bytes == 0)
+        return out;
+    ddrPinTierBankWindow(out, map);
+    return out;
+}
+
+// FAULT twin: geometry-derived bank window (320 → 0x40000 / 0x3007F000).
+inline DdrFrameLayout makeDdrFrameLayoutFaultGeomDerivedMap(
+    const DdrFrameGeometry& geom, DdrFrameFormat format = DdrFrameFormat::Yuv420p) {
+    return makeDdrFrameLayout(geom, kDdrFramePhysBase, kDdrFrameStrideAlign, format);
+}
+
 // Bare WxH → coded identity geometry layout.
 inline DdrFrameLayout makeDdrFrameLayout(CodedWidth width, CodedHeight height,
                                          uint32_t physBase = kDdrFramePhysBase,
@@ -711,6 +742,24 @@ inline bool ddrFrameLayoutValid(const DdrFrameLayout& l) {
     const uint32_t bank1End = bank1 + static_cast<uint32_t>(l.frame_bytes);
     return bank0End <= bank1 && bank1End <= l.doorbell_phys && l.doorbell_phys + 0x1000u <=
                                                         l.phys_base + l.map_bytes;
+}
+
+// True when layout bank window matches RTL capacity map for its payload size
+// (LEG 0x80000/0x300FF000 or Option-C 0x180000/0x3047F000). Rejects geom-derived
+// 320×240 maps (0x40000/0x3007F000).
+inline bool ddrFrameLayoutMatchesRtlCapacityMap(const DdrFrameLayout& l) {
+    if (!ddrFrameLayoutValid(l) || l.frame_bytes == 0)
+        return false;
+    const DdrBankMap map = ddrI420PayloadNeedsOptionCBank(l.frame_bytes)
+                               ? DdrBankMap::OptionC720p
+                               : DdrBankMap::Legacy480p;
+    if (map == DdrBankMap::OptionC720p) {
+        return l.phys_base == kPlex720pDdrFramePhysBase &&
+               l.bank_stride == kPlex720pYuv420pBankStride &&
+               l.doorbell_phys == kPlex720pYuv420pDoorbellPhys;
+    }
+    return l.phys_base == kDdrFramePhysBase && l.bank_stride == kPlex480pYuv420pBankStride &&
+           l.doorbell_phys == kPlex480pYuv420pDoorbellPhys;
 }
 
 // True when a layout matches the product silicon frame-store contract (stride,

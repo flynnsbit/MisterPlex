@@ -85,29 +85,26 @@ inline bool makeDdrPublishPlan(const DdrPublishFrame& frame, int bank, DdrPublis
             *err = "publishDdrFrame: coded geometry fails B14/alignment";
         return false;
     }
-    // Capacity-selected tier map (LEG vs Option-C). Do NOT leave bank_stride as
-    // alignUp(frame_bytes) — 320×240 → 0x40000 rings a non-product doorbell.
+    // Capacity-selected tier map (LEG vs Option-C) — same fixed windows as RTL.
+    // NEVER leave bank_stride as alignUp(frame_bytes): 320×240 → 0x40000 /
+    // doorbell 0x3007F000 while RTL legacy is 0x80000 / 0x300FF000 (rd-duck).
     const DdrBankMap map = ddrSelectBankMapForContent(cw, ch);
-    const uint32_t tierPhys = (map == DdrBankMap::OptionC720p) ? kPlex720pDdrFramePhysBase
-                                                               : kDdrFramePhysBase;
-    // Explicit exotic physBase (neither LEG nor Option-C default) is honored for
-    // tests; otherwise pin the capacity tier so host and RTL share a map.
-    const uint32_t phys =
-        (physBase != kDdrFramePhysBase && physBase != kPlex720pDdrFramePhysBase) ? physBase
-                                                                                 : tierPhys;
-    DdrFrameLayout layout =
-        makeDdrFrameLayout(frame.geometry, phys, kDdrFrameStrideAlign, frame.format);
-    if (layout.frame_bytes == 0) {
+    DdrFrameLayout layout{};
+    if (physBase != kDdrFramePhysBase && physBase != kPlex720pDdrFramePhysBase) {
+        // Exotic test phys only: geometry-derived window at caller base.
+        layout = makeDdrFrameLayout(frame.geometry, physBase, kDdrFrameStrideAlign, frame.format);
+    } else {
+        layout = makeDdrFrameLayoutCapacitySelected(frame.geometry, frame.format);
+    }
+    if (layout.frame_bytes == 0 || !ddrFrameLayoutValid(layout)) {
         if (err)
             *err = "publishDdrFrame: invalid DDR frame geometry";
         return false;
     }
-    // Always pin product tier window when using a known map phys base.
-    if (phys == kDdrFramePhysBase || phys == kPlex720pDdrFramePhysBase)
-        ddrPinTierBankWindow(layout, map);
-    if (!ddrFrameLayoutValid(layout)) {
+    if (!ddrFrameLayoutMatchesRtlCapacityMap(layout) &&
+        (physBase == kDdrFramePhysBase || physBase == kPlex720pDdrFramePhysBase)) {
         if (err)
-            *err = "publishDdrFrame: invalid DDR frame geometry";
+            *err = "publishDdrFrame: layout bank window != RTL capacity map";
         return false;
     }
     if (frame.len > static_cast<size_t>(ddrBankUsablePayloadBytes(layout.bank_stride))) {

@@ -752,8 +752,13 @@ bool FpgaSpi::setDdrFrameLayout(const DdrFrameLayout& layout) {
 }
 
 bool FpgaSpi::setDdrFrameLayout(const DdrFrameGeometry& geometry, DdrFrameFormat format) {
-    DdrFrameLayout next =
-        makeDdrFrameLayout(geometry, kDdrFrameBase, kDdrFrameStrideAlign, format);
+    // Capacity-selected LEG/Option-C map (RTL lockstep). Geometry-derived
+    // alignUp(frame_bytes) for 320×240 yields 0x40000/0x3007F000 — wrong kick.
+    DdrFrameLayout next = makeDdrFrameLayoutCapacitySelected(geometry, format);
+    if (!ddrFrameLayoutValid(next) || !ddrFrameLayoutMatchesRtlCapacityMap(next)) {
+        setErr("setDdrFrameLayout: capacity-selected map invalid for geometry");
+        return false;
+    }
     return setDdrFrameLayout(next);
 }
 

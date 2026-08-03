@@ -914,6 +914,33 @@ int main() {
             checkTier(416, 240, 0x300FF000u, /*native*/ true, /*optc*/ false);
             checkTier(624, 480, 0x300FF000u, /*native*/ false, /*optc*/ false);
             checkTier(1280, 720, 0x3047F000u, /*native*/ false, /*optc*/ true);
+            // Amplifier (rd-duck): raw makeDdrFrameLayout(320) is geom-derived
+            // 0x40000/0x3007F000; capacity-selected + publish must use RTL LEG.
+            {
+                const auto g320 = makeDdrFrameGeometry(320, 240);
+                const auto raw = makeDdrFrameLayoutFaultGeomDerivedMap(g320);
+                CHECK(raw.bank_stride == 0x40000u);
+                CHECK(raw.doorbell_phys == 0x3007F000u);
+                CHECK(!ddrFrameLayoutMatchesRtlCapacityMap(raw));
+                const auto cap = makeDdrFrameLayoutCapacitySelected(g320);
+                CHECK(cap.bank_stride == 0x80000u);
+                CHECK(cap.doorbell_phys == 0x300FF000u);
+                CHECK(cap.phys_base == 0x30000000u);
+                CHECK(cap.frame_bytes == 115200u);
+                CHECK(cap.line_bytes == 320);
+                CHECK(ddrFrameLayoutMatchesRtlCapacityMap(cap));
+                // Publish plan must equal capacity-selected, never raw.
+                std::vector<uint8_t> pay(115200u, 0);
+                DdrPublishFrame fr{pay.data(), pay.size(), g320, DdrFrameFormat::Yuv420p};
+                DdrPublishPlan plan{};
+                std::string e;
+                CHECK(makeDdrPublishPlan(fr, 1, plan, &e));
+                CHECK(plan.layout.bank_stride == cap.bank_stride);
+                CHECK(plan.layout.doorbell_phys == cap.doorbell_phys);
+                CHECK(plan.bank_offset == 0x80000u);
+                CHECK(plan.bank_phys == 0x30080000u);
+                CHECK(plan.layout.doorbell_phys != raw.doorbell_phys);
+            }
             // 960×540 intermediate → Option-C + native_push + PLXG 960.
             {
                 const size_t n = yuv420pFrameBytes(960, 540);
