@@ -1,41 +1,22 @@
-# w-clock status — multi-pixel present design
-# Branch: w-clock-bump · No fit · No device · PLL still 20/90
+# w-clock status
+# Branch: w-clock-bump · No fit · No device · PLL 20/90 · PRESENT_MULTI_PIXEL OFF
 
-## LANDED (one line)
-MULTI_PIXEL_PRESENT_DESIGN.md + yuv_bt601_npx/present_beam_ppc RTL (PRESENT_MULTI_PIXEL default OFF) + multi-pixel arith contract gate; parent 2ppc 11–15/37 MHz confirmed; CEA60 needs 4ppc.
+## LANDED
+4a786ae6 multi-pixel design+RTL+arith gate; + verilator red/green for yuv_bt601_npx + present_beam_ppc.
 
-## Headline arithmetic (exact)
-| Goal | N=1 | N=2 | N=4 | ship20 | nostub32.59 |
-|------|----:|----:|----:|:------:|:-----------:|
-| 720p24 content | 22.12 | **11.06** | 5.53 | N≥2 | N≥1 thin |
-| 720p24 CEA | 29.70 | **14.85** | 7.43 | N≥2 | N≥1@B_30 |
-| 720p60 content | 55.30 | 27.65 | **13.82** | N=4 | N≥2 |
-| 720p60 CEA | 74.25 | **37.13** | **18.56** | **N=4 only** | **N=4 only** |
+## Evidence #3 (parent device — not this lane)
+ARM mapped-bank write ~86.7 MiB/s (15.21 ms/f @720p); host-copy ceiling 439 MiB/s unproven on bank.
+w-mem owns mmap cache policy. w-clock: fabric clk_ddr 90MHz×8B >> ARM write; not the glass scan-out limit.
+Multi-pixel present still required for 720p60 CEA; 720p24@≥2ppc needs no overclock.
 
-Parent expectation: 2ppc→11–15 (720p24) and ~37 (720p60) — CONFIRMED.
-Correction: 2ppc does NOT clear CEA720p60 vs nostub 32.59; need 4 ppc.
+## Arithmetic (unchanged)
+720p24 @2ppc: 11.06–14.85 MHz OK@20. CEA720p60 @2ppc 37.13 FAIL nostub; @4ppc 18.56 OK@20.
 
-## Roadmap reframe
-- 720p24 @ ≥2 ppc: no overclock required on shipping 20 MHz.
-- 720p60 CEA glass: 4 ppc @ 18.56 MHz (paper OK on ship20); 2 ppc still WALL on Fmax.
-- PLL B_30_90 optional for 720p24 scan-out if multi-pixel lands; still useful for 1ppc/decode cy.
-
-## Files
-- .agent-work/w-clock/MULTI_PIXEL_PRESENT_DESIGN.md
-- assets/multi_pixel_present_contract.json
-- scripts/check_multi_pixel_present.py / make multi-pixel-present-contract
-- tests/unit/test_multi_pixel_present.sh
-- fpga/Plex_MiSTer/rtl/yuv_bt601_npx.sv
-- fpga/Plex_MiSTer/rtl/present_beam_ppc.sv
-- present_core.sv ifdef PRESENT_MULTI_PIXEL dead hooks only (enable=0)
-- files.qip lists modules; product path unchanged
-
-## ARM ms removed
-0 until wired replacing ARM scale/present. Settling measurement: parent profile fabric present ON vs ARM scale.
-
-## Blocker
-w-nostub fit before PRESENT_MULTI_PIXEL enable. Freeze w-scaler interface §5 before merge.
+## ARM ms removed by this lane
+0 until multi-pixel wired to replace ARM present/scale. Mmap win is w-mem.
 
 ## Validated
-test_multi_pixel_present.sh rc=0; make multi-pixel-present-contract rc=0;
-make pll-clock-contract rc=0; test_unit_rollcall.py rc=0; rtl_lint rc=0
+test_multi_pixel_present.sh rc=0
+test_yuv_bt601_npx_verilator.sh rc=0
+make multi-pixel-present-contract rc=0
+rtl_lint rc=0
