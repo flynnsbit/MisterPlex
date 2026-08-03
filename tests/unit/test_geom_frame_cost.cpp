@@ -51,8 +51,14 @@ int main() {
     expect(yuv420pCodedFrameBytes(g540) == 777600u, "P1b 540 frame_bytes");
     expect(g540.coded_width.get() != 1280 && g540.coded_height.get() != 720,
            "P1b 540 is NOT DE canvas 1280x720");
+    // P1c: 640x360 identity storage (345600) — NOT 624x480 canvas (2× glass path).
+    const auto g360 = ddrFrameGeometryForFpgaPresent(640, 360);
+    expect(g360.coded_width.get() == 640 && g360.coded_height.get() == 360, "P1c 360 storage");
+    expect(yuv420pCodedFrameBytes(g360) == 345600u, "P1c 360 frame_bytes");
+    expect(!(g360.coded_width.get() == 624 && g360.coded_height.get() == 480),
+           "P1c 360 must NOT collapse to 480 canvas");
     std::printf("P1_OK coded=624x480 display=618 crop_right=6 frame_bytes=%zu (both tiers); "
-                "540p storage=960x540 bytes=777600\n",
+                "540p storage=960x540 bytes=777600; 360p storage=640x360 bytes=345600\n",
                 fb240);
 
     // --- P2: FORCE_SCALE Always for both source sizes ---

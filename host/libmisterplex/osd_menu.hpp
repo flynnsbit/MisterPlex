@@ -53,6 +53,8 @@ namespace misterplex {
 constexpr int kOsdAvOffsetSteps = 16;
 constexpr int kOsdAvOffsetStepMs = 20;
 constexpr int kPlex240pWeakBitrateKbps = 1000;
+// 640x360 motion tier (exact 2× → 1280x720). Lab knee maxBR≥1000 → true 640x360;
+// 1500 sits above the knee with quality headroom (not a geometry floor formula).
 constexpr int kPlex360pWeakBitrateKbps = 1500;
 constexpr int kPlex480pWeakBitrateKbps = 2000;
 // Dual 720p bitrate contract (lab PMS + parent device decode, 2026-08-03):
@@ -95,7 +97,16 @@ constexpr double kPlex540pDecodeSwsMsPerFrame = 26.08;
 constexpr double kPlex540pCopyMsPerFrame = 8.42; // 777600 B @ 88.045 MiB/s structural
 constexpr double kPlex540pTotalMsPerFrame = 34.50;
 constexpr double kPlex24fpsDeadlineMs = 41.667;
+constexpr double kPlex30fpsDeadlineMs = 33.333;
 constexpr double kPlex540pMarginMs = 7.16;
+// 640x360 device-class estimate (2026-08-03): scale parent 540 decode+sws by
+// host ST decode-null CPU ratio 0.5488 → 14.31; copy 345600@88.045 → 3.74;
+// total 18.05 vs 33.333 → +15.28 @30. Pixel-linear alt total 15.33. NOT device soak.
+constexpr double kPlex360pDecodeSwsMsPerFrame = 14.31;
+constexpr double kPlex360pCopyMsPerFrame = 3.74;
+constexpr double kPlex360pTotalMsPerFrame = 18.05;
+constexpr double kPlex360pMarginMsAt30 = 15.28;
+constexpr int kPlex360pH264Level = 30; // MaxFS OK; lab PMS may still tag L3.1
 
 // Menu index 0 is the power-on default. The present loop waits for the audio
 // clock to reach `frameContentMs + avOffsetMs`, so POSITIVE holds the frame back
@@ -133,6 +144,9 @@ enum class ContentPresentPolicy : uint8_t {
     // 960x540 ARM source; fabric upscales to native 1280x720 raster on glass.
     // HONEST name: 720p *output*, never "720p source". Parent product target.
     Source540pFabric720p = 3,
+    // 640x360 ARM source; fabric exact 2× doubles to 1280x720 glass (motion tier).
+    // Softer than 540×4/3; native 29.97/30 without PMS 24 fps judder.
+    Source360pFabric720p = 4,
 };
 
 struct ContentResolution {
@@ -182,6 +196,19 @@ inline const char* plexWidescreen480pCanvasUserLabel() {
 // Honest: glass is 720p; source is 540p. Never "true 720p" / "720p source".
 inline const char* plex540pFabric720pUserLabel() {
     return "540p source / 720p glass";
+}
+
+inline const char* plex360pCodedResolutionLabel() {
+    static_assert(kPlex360pCodedWidth.get() == 640,
+                  "update plex360pCodedResolutionLabel when coded width changes");
+    static_assert(kPlex360pCodedHeight.get() == 360,
+                  "update plex360pCodedResolutionLabel when coded height changes");
+    return "640x360";
+}
+
+// Honest: glass is 720p via exact 2×; source is 360p. Never "720p source".
+inline const char* plex360pFabric720pUserLabel() {
+    return "360p source / 720p glass (2x)";
 }
 
 struct OsdSettings {
@@ -250,6 +277,22 @@ inline ContentResolution contentResolutionFor540pFabric720p() {
             plex540pFabric720pUserLabel()};
 }
 
+// Motion 720p *glass*: 640x360 + fabric exact 2× (budget PASS @30; softer detail).
+inline ContentResolution contentResolutionFor360pFabric720p() {
+    return {kPlex360pCodedWidth, kPlex360pCodedHeight, plex360pCodedResolutionLabel(),
+            kPlex360pWeakBitrateKbps, ContentPresentPolicy::Source360pFabric720p,
+            plex360pFabric720pUserLabel()};
+}
+
+// Frame-rate-aware glass pick (library cadence). Hint from PMS Stream@frameRate.
+// >=28 → 360@native 30 (no 24-cap judder). Else → 540@24 detail path.
+// Does not replace explicit DECODE=; callers opt in (conf/auto).
+inline ContentResolution contentResolutionFor720GlassBySourceFps(int sourceFpsHint) {
+    if (sourceFpsHint >= 28)
+        return contentResolutionFor360pFabric720p();
+    return contentResolutionFor540pFabric720p();
+}
+
 // Prefer library H.264 Part (transcode=0) vs PMS universal.
 // conf_explicit: PREFER_DIRECT_H264 was set (not auto/unset).
 // Path720p defaults ON when conf unset — removes PMS transcoder from the ARM
@@ -297,6 +340,9 @@ inline ContentResolution contentResolutionFromCodedSize(CodedWidth w, CodedHeigh
         return contentResolutionFor720p();
     if (w.get() == kPlex540pCodedWidth.get() && h.get() == kPlex540pCodedHeight.get())
         return contentResolutionFor540pFabric720p();
+    // Before the 480p "w>=624" catch: 640x360 would otherwise become 480p canvas.
+    if (w.get() == kPlex360pCodedWidth.get() && h.get() == kPlex360pCodedHeight.get())
+        return contentResolutionFor360pFabric720p();
     if (w.get() >= kPlex480pCodedWidth.get() || h.get() >= kPlex480pCodedHeight.get())
         return contentResolutionFor480p();
     return contentResolutionFor240p();
@@ -311,6 +357,8 @@ inline int weakBitrateKbpsForCodedSize(CodedWidth w, CodedHeight h) {
         return kPlex720pWeakBitrateKbps;
     if (w.get() == kPlex540pCodedWidth.get() && h.get() == kPlex540pCodedHeight.get())
         return kPlex540pWeakBitrateKbps;
+    if (w.get() == kPlex360pCodedWidth.get() && h.get() == kPlex360pCodedHeight.get())
+        return kPlex360pWeakBitrateKbps;
     if (w.get() >= kPlex480pCodedWidth.get() || h.get() >= kPlex480pCodedHeight.get()) {
 #ifdef OSD_MENU_FAULT_FALLBACK_624_BITRATE
         return kPlex360pWeakBitrateKbps;

@@ -90,6 +90,10 @@ Also expect resolve detail / URL side to carry `videoLevel=31` and `videoProfile
 cap, PMS **passes through 30000/1001** and serial budget is FAIL (−1.17 ms). See
 `FPS_RESULTS_20260803.md`.
 
+**Motion alternative (30 fps native, softer glass):** `DECODE=640x360` — exact 2×
+tier, no fps Extra (`max_video_frame_rate=0`), weak 1500 / knee 1000. See
+`T360_RESULTS_20260803.md`. Prefer for NTSC/TV; keep 540@24 for film.
+
 **FAIL / wrong pair:**
 
 ```text

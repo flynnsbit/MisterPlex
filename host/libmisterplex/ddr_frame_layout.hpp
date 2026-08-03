@@ -55,6 +55,31 @@ static_assert(kPlex540pSpsMbYuv420pBytes == 783360, "SPS MB I420");
 static_assert(kPlex540pYuv420pBytes < kPlex720pYuv420pBytes, "540p smaller than 720p bank");
 static_assert(kPlex540pYuv420pBytes != kPlex540pSpsMbYuv420pBytes,
               "display I420 must differ from uncropped MB I420");
+
+// 640x360 motion tier for 29.97/30 → exact 2× fabric double to 1280x720 glass.
+// PMS (lab 2026-08-03): ceiling 640x360 + maxBR≥1000 → display 640x360 SAR 1:1 CB;
+// maxBR=750 → 480x270; maxBR=400 → 320x180. Uncapped rate pass-through on rk142.
+// SPS: pic_width_mbs=40 → 640; pic_height_map=23 → 368; crop_bottom_offset=4 →
+// CropUnitY=2 → 8 luma lines cropped → **display 360**. ARM I420 = 345600 after crop.
+// 360 is NOT MB-aligned (360&15=8) — do not use display height in MB-only guards.
+constexpr CodedWidth kPlex360pCodedWidth{640};
+constexpr CodedHeight kPlex360pCodedHeight{360};
+constexpr int kPlex360pYuv420pBytes = 345600;
+constexpr int kPlex360pSpsMbHeight = 368;
+constexpr int kPlex360pSpsCropBottomLuma = 8; // frame_crop_bottom_offset=4 × 2
+constexpr int kPlex360pSpsMbYuv420pBytes = 640 * 368 * 3 / 2; // 353280
+static_assert(kPlex360pYuv420pBytes ==
+                  kPlex360pCodedWidth.get() * kPlex360pCodedHeight.get() * 3 / 2,
+              "360p I420 byte count");
+static_assert(kPlex360pSpsMbHeight - kPlex360pSpsCropBottomLuma == kPlex360pCodedHeight.get(),
+              "SPS MB height minus crop must equal display 360");
+static_assert(kPlex360pSpsMbYuv420pBytes == 353280, "360p SPS MB I420");
+static_assert(kPlex360pYuv420pBytes < kPlex540pYuv420pBytes, "360p smaller than 540p");
+static_assert(kPlex360pYuv420pBytes != kPlex360pSpsMbYuv420pBytes,
+              "360p display I420 must differ from uncropped MB I420");
+// Fits legacy 480p bank usable (520192) — no Option-C required for 345600 payload.
+static_assert(kPlex360pYuv420pBytes < 520192, "360p fits legacy bank usable");
+
 constexpr int kPlex480pCropLeft = 0;
 constexpr int kPlex480pCropRight = 6;
 constexpr int kPlex480pCropTop = 0;
@@ -283,6 +308,8 @@ inline DdrFrameGeometry productDdrFrameStoreGeometry() {
 //
 // Rules:
 //   - 960x540 content → identity STORAGE 960x540 (777600 B). Never 1280 canvas.
+//   - 640x360 content → identity STORAGE 640x360 (345600 B) for exact-2× glass.
+//     Never force 624x480 canvas (would destroy 2× and reintroduce scale).
 //   - 1280x720 content → identity STORAGE 1280x720 (true-720 upgrade path).
 //   - All other tiers (320x240, 624x480, …) → product 480p silicon canvas
 //     (scale+pad). Returning identity-320 is the shear defect (line_bytes=320
@@ -293,6 +320,9 @@ inline DdrFrameGeometry ddrStorageGeometryForContent(CodedWidth contentW,
     if (contentW.get() == kPlex540pCodedWidth.get() &&
         contentH.get() == kPlex540pCodedHeight.get())
         return makeDdrFrameGeometry(kPlex540pCodedWidth, kPlex540pCodedHeight);
+    if (contentW.get() == kPlex360pCodedWidth.get() &&
+        contentH.get() == kPlex360pCodedHeight.get())
+        return makeDdrFrameGeometry(kPlex360pCodedWidth, kPlex360pCodedHeight);
     if (contentW.get() == kPlex720pCodedWidth.get() &&
         contentH.get() == kPlex720pCodedHeight.get())
         return makeDdrFrameGeometry(kPlex720pCodedWidth, kPlex720pCodedHeight);

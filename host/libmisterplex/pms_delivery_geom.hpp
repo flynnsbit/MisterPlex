@@ -160,6 +160,12 @@ inline bool isGenuine540pDelivery(int delivered_w, int delivered_h) {
     return isGenuineTierDelivery(delivered_w, delivered_h, 960, 540);
 }
 
+// Exact 640x360 display after libav crop (SPS MB 368 / crop 8). Exact 2× glass.
+// Negatives: 480x270 (maxBR=750), 320x180 (maxBR=400), 640x368 MB height.
+inline bool isGenuine360pDelivery(int delivered_w, int delivered_h) {
+    return isGenuineTierDelivery(delivered_w, delivered_h, 640, 360);
+}
+
 // Lab-measured maxVideoBitrate knee for genuine 960x540 on 16:9 HD sources
 // (daemon path + unique session, local PMS 2026-08-03):
 //   rk2/rk7: maxBR=1500 → 720x404; maxBR≥2000 → 960x540 SAR 1:1.
@@ -168,6 +174,14 @@ inline constexpr int kPmsTrue540pMinBitrateKbpsMeasured = 2000;
 
 inline bool pmsBitrateLikelyTrue540p(int maxVideoBitrateKbps) {
     return maxVideoBitrateKbps >= kPmsTrue540pMinBitrateKbpsMeasured;
+}
+
+// Lab knee for genuine 640x360 (rk2/rk142, ceiling 640x360, 2026-08-03):
+//   maxBR=400 → 320x180; 750 → 480x270; ≥1000 → 640x360 SAR 1:1.
+inline constexpr int kPmsTrue360pMinBitrateKbpsMeasured = 1000;
+
+inline bool pmsBitrateLikelyTrue360p(int maxVideoBitrateKbps) {
+    return maxVideoBitrateKbps >= kPmsTrue360pMinBitrateKbpsMeasured;
 }
 
 // Lab-measured maxVideoBitrate gate for true 1280x720 on 16:9 HD sources

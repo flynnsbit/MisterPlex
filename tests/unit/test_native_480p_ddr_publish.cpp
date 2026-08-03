@@ -69,6 +69,15 @@ int main() {
     CHECK(g540.coded_height.get() != 720);
     // NEG: canvas DE size must not leak into storage selector.
     CHECK(!(g540.coded_width.get() == 1280 && g540.coded_height.get() == 720));
+    // Motion 360→720-glass: STORAGE == 640x360 (345600), NEVER 624x480 canvas.
+    const auto g360 = ddrFrameGeometryForFpgaPresent(640, 360);
+    CHECK(g360.coded_width.get() == 640);
+    CHECK(g360.coded_height.get() == 360);
+    CHECK(yuv420pFrameBytes(g360.coded_width, g360.coded_height) == 345600u);
+    CHECK(!(g360.coded_width.get() == 624 && g360.coded_height.get() == 480));
+    // 345600 fits legacy usable; publish plan must not force Option-C for 360 alone.
+    CHECK(!ddrI420PayloadNeedsOptionCBank(345600u));
+    CHECK(ddrI420PayloadNeedsOptionCBank(777600u)); // 540 still needs capacity path
     CHECK(gProduct.display_width.get() == 618);
     CHECK(gProduct.presented_width.get() == 640);
     CHECK(gProduct.present_x == 11);

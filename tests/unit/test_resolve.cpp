@@ -64,9 +64,9 @@ int main() {
     CHECK(h.find("X-Plex-Session-Identifier: sess1") != std::string::npos);
     CHECK(h.find("X-Plex-Token: tok") != std::string::npos);
 
-    // --- PMS universal transcode profile table / 480p+540p+720p guard ---
+    // --- PMS universal transcode profile table / 360p+480p+540p+720p guard ---
     const auto& profiles = plexTranscodeProfiles();
-    CHECK(profiles.size() == 4);
+    CHECK(profiles.size() == 5);
     const auto osd240 = contentResolutionFromOsdWord(0);
     const auto osd480 = contentResolutionFromOsdWord(1u << 4);
     const auto path720 = contentResolutionFor720p();
@@ -597,6 +597,61 @@ int main() {
         CHECK(url540.find("videoResolution=1280x720") == std::string::npos);
         CHECK(c540.width.get() == 960 && c540.height.get() == 540);
         std::printf("GREEN_PATH_540p_fabric720_glass url+honest_label+genuine_gate\n");
+    }
+
+    // Motion 720p glass: 640x360 exact 2×. No fps Extra; knee maxBR≥1000.
+    {
+        WeakLadder w360;
+        CHECK(applyPlexTranscodeProfile("360p", w360));
+        CHECK(w360.videoResolution == std::string("640x360"));
+        CHECK(w360.maxVideoBitrateKbps == kPlex360pWeakBitrateKbps);
+        CHECK(w360.h264Level == kPlex360pH264Level);
+        CHECK(w360.maxVideoFrameRate == 0); // pass-through 29.97
+        CHECK(validateWeakLadder(w360));
+        WeakLadder byRes360;
+        CHECK(applyPlexTranscodeProfile("640x360", byRes360));
+        CHECK(byRes360.videoResolution == std::string("640x360"));
+        const auto url360 =
+            buildUniversalTranscodeUrl("http://pms.example:32400", "/library/metadata/10", "tok",
+                                       "sess360", 0, w360);
+        CHECK(url360.find("videoResolution=640x360") != std::string::npos);
+        CHECK(url360.find("maxVideoBitrate=1500") != std::string::npos);
+        CHECK(url360.find("videoLevel=30") != std::string::npos);
+        const auto hdr360 = plexFfmpegHeaders("sess360", "tok", w360);
+        // MiSTerPlex + no fps cap → no Extra (encode flags stay in XML).
+        CHECK(hdr360.find("X-Plex-Client-Profile-Extra: ") == std::string::npos);
+        const auto c360 = contentResolutionFor360pFabric720p();
+        CHECK(c360.presentPolicy == ContentPresentPolicy::Source360pFabric720p);
+        CHECK(std::string(c360.userLabel).find("360p") != std::string::npos);
+        CHECK(std::string(c360.userLabel).find("720p source") == std::string::npos);
+        CHECK(isGenuine360pDelivery(640, 360));
+        CHECK(!isGenuine360pDelivery(480, 270)); // NEG maxBR=750 class
+        CHECK(!isGenuine360pDelivery(320, 180)); // NEG maxBR=400 class
+        CHECK(!isGenuine360pDelivery(640, 368)); // NEG SPS MB height
+        CHECK(!isGenuine360pDelivery(640, 480)); // NEG presented-ish
+        CHECK(!isGenuine540pDelivery(640, 360));
+        CHECK(kPlex360pYuv420pBytes == 345600);
+        CHECK(kPlex360pSpsMbHeight == 368);
+        CHECK(kPlex360pSpsCropBottomLuma == 8);
+        CHECK(kPmsTrue360pMinBitrateKbpsMeasured == 1000);
+        CHECK(pmsBitrateLikelyTrue360p(1000));
+        CHECK(!pmsBitrateLikelyTrue360p(750));
+        CHECK(w360.maxVideoBitrateKbps >= kPmsTrue360pMinBitrateKbpsMeasured);
+        // Budget estimate constants (device-class, not soak).
+        CHECK(kPlex360pTotalMsPerFrame < kPlex30fpsDeadlineMs);
+        CHECK(kPlex360pMarginMsAt30 > 15.0 && kPlex360pMarginMsAt30 < 15.5);
+        // fps-aware glass helper
+        CHECK(contentResolutionFor720GlassBySourceFps(30).label ==
+              std::string("640x360"));
+        CHECK(contentResolutionFor720GlassBySourceFps(24).label ==
+              std::string("960x540"));
+        CHECK(contentResolutionFor720GlassBySourceFps(23).label ==
+              std::string("960x540"));
+        // DECODE=640x360 must not collapse to 480p canvas (w=640 >= 624 trap).
+        const auto fromDecode = contentResolutionFromCodedSize(CodedWidth{640}, CodedHeight{360});
+        CHECK(fromDecode.label == std::string("640x360"));
+        CHECK(fromDecode.presentPolicy == ContentPresentPolicy::Source360pFabric720p);
+        std::printf("GREEN_PATH_360p_fabric720_2x url+genuine_gate+fps_helper\n");
     }
 
     if (fails) {

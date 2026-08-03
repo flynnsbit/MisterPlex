@@ -162,11 +162,15 @@ bool videoCodecIsH264(const std::string& codecRaw) {
 const std::vector<PlexTranscodeProfile>& plexTranscodeProfiles() {
     static const std::vector<PlexTranscodeProfile> profiles = [] {
         const auto p240 = contentResolutionFor240p();
+        const auto p360 = contentResolutionFor360pFabric720p();
         const auto p480 = contentResolutionFor480p();
         const auto p540 = contentResolutionFor540pFabric720p();
         const auto p720 = contentResolutionFor720p();
         return std::vector<PlexTranscodeProfile>{
             {"240p", p240.label, p240.weakBitrateKbps, 40, "baseline", 30},
+            // 360p: motion 720p glass (exact 2×). maxBR knee 1000; weak 1500.
+            // No fps Extra cap — pass-through 29.97 is the point of this tier.
+            {"360p", p360.label, p360.weakBitrateKbps, 50, "baseline", kPlex360pH264Level},
             {"480p", p480.label, p480.weakBitrateKbps, 60, "baseline", 30},
             // 540p: shippable 720p *glass* source (parent decode+copy PASS). Match
             // name "540p" / "960x540". L3.1 required (MaxFS). Bitrate = quality default.
@@ -317,6 +321,7 @@ bool applyPlexTranscodeProfile(const std::string& nameOrResolution, WeakLadder& 
             weak.h264Profile = p.h264Profile;
             weak.h264Level = p.h264Level;
             // 540p serial budget fails at 29.97; pin PMS to 24 via Extra (measured).
+            // 360p leaves 0 so 29.97 pass-through (motion tier / no judder).
             // Other tiers leave 0 (MiSTerPlex.xml UpperBound 30 allows pass-through).
             weak.maxVideoFrameRate =
                 (p.name == "540p") ? kPlex540pMaxVideoFrameRate : 0;
@@ -343,7 +348,8 @@ bool validateWeakLadder(const WeakLadder& weak, std::string* why) {
         return fail("H.264 profile must be baseline (fabric CAVLC pin; no High/CABAC)");
     const bool isPath720 = (w == kPlex720pCodedWidth.get() && h == kPlex720pCodedHeight.get());
     const bool isPath540 = (w == kPlex540pCodedWidth.get() && h == kPlex540pCodedHeight.get());
-    // 480p path stays L3.0; 540p/720p ladders request L3.1 (MaxFS).
+    const bool isPath360 = (w == kPlex360pCodedWidth.get() && h == kPlex360pCodedHeight.get());
+    // 480p/360p stay ≤L3.0 request; 540p/720p ladders request L3.1 (MaxFS).
     const int maxLevel = (isPath720 || isPath540) ? kPlex720pH264Level : 30;
     if (weak.h264Level > maxLevel)
         return fail((isPath720 || isPath540)
@@ -353,15 +359,15 @@ bool validateWeakLadder(const WeakLadder& weak, std::string* why) {
         return fail("built-in path profiles stop at " +
                     std::to_string(kPlex720pCodedWidth.get()) + "x" +
                     std::to_string(kPlex720pCodedHeight.get()));
-    if (w >= kPlex480pCodedWidth.get() || h >= kPlex480pCodedHeight.get()) {
-        // Legacy DDR max 640x480. Exact path-720 and path-540 (fabric→720 glass)
-        // are the only allowed geometries above that ceiling.
+    if (w >= kPlex480pCodedWidth.get() || h >= kPlex480pCodedHeight.get() || isPath360) {
+        // Legacy DDR max 640x480. Exact path-720/540/360 (fabric→720 glass)
+        // are the only allowed geometries above / outside the 480 canvas contract.
         if (w > kDdrFrameStoreMaxWidth.get() || h > kDdrFrameStoreMaxHeight.get()) {
-            if (!isPath720 && !isPath540)
+            if (!isPath720 && !isPath540 && !isPath360)
                 return fail("current DDR-backed profiles stop at " +
                             std::to_string(kDdrFrameStoreMaxWidth.get()) + "x" +
                             std::to_string(kDdrFrameStoreMaxHeight.get()) +
-                            " (path 540p=960x540 or 720p=1280x720 only)");
+                            " (path 360p=640x360, 540p=960x540 or 720p=1280x720 only)");
         }
         // Bitrate floors are NOT decoder contracts (see recommendedMinVideoBitrateKbps).
         // A hard 2000 kbps reject forced PMS requests above slow links and silently
@@ -382,6 +388,8 @@ int recommendedMinVideoBitrateKbps(const WeakLadder& weak) {
         return kPlex720pWeakBitrateKbps;
     if (w == kPlex540pCodedWidth.get() && h == kPlex540pCodedHeight.get())
         return kPlex540pWeakBitrateKbps;
+    if (w == kPlex360pCodedWidth.get() && h == kPlex360pCodedHeight.get())
+        return kPlex360pWeakBitrateKbps;
     // 480p default = kPlex480pWeakBitrateKbps (2000).
     if (w >= kPlex480pCodedWidth.get() || h >= kPlex480pCodedHeight.get())
         return kPlex480pWeakBitrateKbps;
