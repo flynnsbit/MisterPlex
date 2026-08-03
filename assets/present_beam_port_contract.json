@@ -1,0 +1,54 @@
+{
+  "schema": 1,
+  "name": "present_beam_content_de-port-contract",
+  "owner": "w-clock",
+  "module": "fpga/Plex_MiSTer/rtl/present_beam_content_de.sv",
+  "collision": "COLLISION #7 — w-clock owns beam port list; w-scaler consumes",
+  "rule": "Merges must not drop ports. test_beam_port_contract.sh is the loud gate.",
+  "parameters": {
+    "H_DE": {"default": 960, "meaning": "max-tier default active width (not product freeze)"},
+    "V_ACTIVE": {"default": 540, "meaning": "max-tier default active height"},
+    "H_TOTAL": {"default": 1182, "meaning": "fixed line class @20 MHz → f_h≈16920.5 Hz"},
+    "V_TOTAL": {"default": 564, "meaning": "default TV 30.0008 Hz; film uses rt_vtotal=705"},
+    "H_FP": {"default": 32, "meaning": "H front porch for derived runtime sync"},
+    "H_SW": {"default": 64, "meaning": "H sync width"},
+    "V_FP": {"default": 8, "meaning": "V front porch"},
+    "V_SW": {"default": 6, "meaning": "V sync width"}
+  },
+  "ports": [
+    {"name": "clk", "dir": "input", "width": 1, "frame_latch": false, "reset_value": "n/a", "meaning": "clk_sys pixel domain (20 MHz product)"},
+    {"name": "reset", "dir": "input", "width": 1, "frame_latch": false, "reset_value": "asserted", "meaning": "loads actives from req; clears counters"},
+    {"name": "use_rt_vtotal", "dir": "input", "width": 1, "frame_latch": false, "reset_value": "n/a", "meaning": "1 = V_TOTAL from rt_vtotal"},
+    {"name": "rt_vtotal", "dir": "input", "width": 11, "frame_latch": true, "reset_value": "n/a", "meaning": "requested V_TOTAL (564 TV / 705 film); apply at v_wrap/reset"},
+    {"name": "use_rt_geom", "dir": "input", "width": 1, "frame_latch": false, "reset_value": "n/a", "meaning": "1 = H_DE/H_TOTAL/V_ACTIVE from rt_*; sync derived"},
+    {"name": "rt_h_de", "dir": "input", "width": 11, "frame_latch": true, "reset_value": "n/a", "meaning": "requested active width (true-DE); clamp >=16; v_wrap"},
+    {"name": "rt_h_total", "dir": "input", "width": 11, "frame_latch": true, "reset_value": "n/a", "meaning": "requested H_TOTAL (product fixed 1182); floor hde+32; v_wrap"},
+    {"name": "rt_v_active", "dir": "input", "width": 11, "frame_latch": true, "reset_value": "n/a", "meaning": "requested active height (true-DE); clamp >=16; v_wrap"},
+    {"name": "ce_pix", "dir": "output", "width": 1, "frame_latch": false, "reset_value": "0", "meaning": "pixel enable"},
+    {"name": "HBlank", "dir": "output", "width": 1, "frame_latch": false, "reset_value": "0", "meaning": "1 when hc >= hde_act"},
+    {"name": "HSync", "dir": "output", "width": 1, "frame_latch": false, "reset_value": "0", "meaning": "derived sync when use_rt_geom"},
+    {"name": "VBlank", "dir": "output", "width": 1, "frame_latch": false, "reset_value": "0", "meaning": "1 when vc >= vact_act"},
+    {"name": "VSync", "dir": "output", "width": 1, "frame_latch": false, "reset_value": "0", "meaning": "derived sync when use_rt_geom"},
+    {"name": "frame_start", "dir": "output", "width": 1, "frame_latch": false, "reset_value": "0", "meaning": "1-cycle pulse at v_wrap"},
+    {"name": "hc_out", "dir": "output", "width": 11, "frame_latch": false, "reset_value": "0", "meaning": "horizontal counter"},
+    {"name": "vc_out", "dir": "output", "width": 11, "frame_latch": false, "reset_value": "0", "meaning": "vertical counter"},
+    {"name": "hde_active", "dir": "output", "width": 11, "frame_latch": true, "reset_value": "hde_req", "meaning": "latched true-DE width"},
+    {"name": "htot_active", "dir": "output", "width": 11, "frame_latch": true, "reset_value": "htot_req", "meaning": "latched H_TOTAL (load-bearing COLLISION #7)"},
+    {"name": "vact_active", "dir": "output", "width": 11, "frame_latch": true, "reset_value": "vact_req", "meaning": "latched true-DE height"},
+    {"name": "vtot_active", "dir": "output", "width": 11, "frame_latch": true, "reset_value": "vtot_req", "meaning": "latched V_TOTAL (564/705)"}
+  ],
+  "required_port_names": [
+    "clk", "reset",
+    "use_rt_vtotal", "rt_vtotal",
+    "use_rt_geom", "rt_h_de", "rt_h_total", "rt_v_active",
+    "ce_pix", "HBlank", "HSync", "VBlank", "VSync", "frame_start",
+    "hc_out", "vc_out",
+    "hde_active", "htot_active", "vact_active", "vtot_active"
+  ],
+  "invariants": [
+    "All rt_* geometry applied only at reset or v_wrap",
+    "Product H_TOTAL request is fixed 1182 (constant f_h)",
+    "true_de: DE extent equals hde_active x vact_active",
+    "htot_active and rt_h_total are mandatory"
+  ]
+}

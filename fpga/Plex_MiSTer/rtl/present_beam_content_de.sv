@@ -1,5 +1,11 @@
 // present_beam_content_de — progressive content-sized DE beam (ascal-native).
 //
+// BEAM PORT CONTRACT (COLLISION #7 — w-clock owns; w-scaler consumes):
+//   assets/present_beam_port_contract.json
+//   .agent-work/w-clock/BEAM_PORT_CONTRACT.md
+//   Gate: tests/unit/test_beam_port_contract.sh
+//   (fails loudly if rt_h_total / htot_active or other load-bearing ports drop)
+//
 // B2b RASTER SOURCE OF TRUTH — the only module that emits hc/vc/DE/HS/VS.
 // present_video_timing_960.sv is math/constant pack only (not a generator).
 //

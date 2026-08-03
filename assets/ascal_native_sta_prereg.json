@@ -99,23 +99,12 @@
     "v_total": 705,
     "h_total": 1182,
     "clk_sys_mhz": 20.0,
-    "fps_hz_arithmetic": 24.000672018816527,
-    "sim_exact_de": "PROVEN present_beam_960_oracle V705_960x540",
-    "timing_closure": "NOT_PROVEN",
-    "prediction_preregistered_before_fit": {
-      "expect_pass_at_20mhz": true,
-      "confidence": "medium",
-      "basis": "V_TOTAL is data in existing vtot_act latch/compare; same path class as 564",
-      "explicit_unknown": "exact Fmax/slack until Plex.sta.rpt Fmax Summary on BEAM_960+runtime netlist",
-      "miss_policy": "fmax_clk_sys < 20.0 OR any setup slack < 0 \u2192 HARD FAIL; publish miss; no BUILD_OK"
-    },
-    "recorded_by": "w-clock",
-    "recorded_note": "parent 2026-08-03: sim exact OK \u2260 closure; prereg before fit for publishable miss",
-    "sim_exact": "PROVEN oracle",
+    "sim_exact": "PROVEN",
     "sta_closure": "UNKNOWN_UNTIL_FIT",
     "prereg_expect_pass_20mhz": true,
     "confidence": "medium",
-    "basis": "data value in existing vtot_act path, not new structure"
+    "miss_if": "fmax_clk_sys < 20.0 OR any setup slack < 0",
+    "basis": "705 is data in existing vtot_act path"
   },
   "b13_runtime_de": {
     "use_rt_geom": true,
@@ -148,5 +137,16 @@
     "red": "FAULT_B15_IGNORE_FPS_VALID: valid=1 fps=30 \u2192 4 frames",
     "w_mem": "q5 latch/poller/B16 atomic; staged wires 0 until merge",
     "v705_sta": "UNKNOWN until fit"
+  },
+  "beam_port_contract": {
+    "json": "assets/present_beam_port_contract.json",
+    "gate": "tests/unit/test_beam_port_contract.sh",
+    "owner": "w-clock"
+  },
+  "ascal_iauto_blanking": {
+    "verdict": "benign",
+    "evidence": "ascal.vhd iauto ih from DE-high himax not H_TOTAL",
+    "gate": "tests/unit/test_ascal_iauto_de_only.sh",
+    "extreme": "H_DE=320 blank=862 ratio=2.69 iauto_ih=320"
   }
 }
