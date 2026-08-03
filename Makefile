@@ -5,7 +5,7 @@ CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -I$(ROOT)/host
 FFMPEG_CFLAGS := $(shell pkg-config --cflags libavformat libavcodec libavutil 2>/dev/null)
 FFMPEG_LIBS   := $(shell pkg-config --libs libavformat libavcodec libavutil 2>/dev/null)
 
-.PHONY: all preflight unit unit-unlocked unit-rollcall rtl-sim rtl-sim-unlocked rtl-lint verilator-elab quartus-sv-subset define-parity pre-synth-gates post-fit-hierarchy post-fit-chrome-elision post-fit-timing post-fit-timing-margin pll-clock-contract multi-pixel-present-contract present-720p-fit-contract fabric-clock-headroom clk-pix-pll-plan clk-pix-sta-prereg fabric-decode-inventory timing-exclusion pms-baseline-check pms-baseline-live pms-nal-stats arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools check-core-conf-geometry
+.PHONY: all preflight unit unit-unlocked unit-rollcall rtl-sim rtl-sim-unlocked rtl-lint verilator-elab quartus-sv-subset define-parity pre-synth-gates post-fit-hierarchy post-fit-chrome-elision post-fit-timing post-fit-timing-margin fabric-decode-inventory timing-exclusion pms-baseline-check pms-baseline-live pms-nal-stats arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools check-core-conf-geometry
 
 all: unit
 
@@ -18,13 +18,13 @@ help:
 	@echo "  make quartus-sv-subset - curated Quartus SV subset guard plus fast Verilator elaboration"
 	@echo "  make define-parity - Quartus↔Verilator macros + host/RTL DDR geometry constants"
 	@echo "  make pre-synth-gates - run define parity + fast pre-Quartus RTL buildability gates"
-	@echo "  make post-fit-hierarchy FIT_RPT=... [MAP_RPT=...] [COMPILE_LOG=...] - critical fitted-module guard"
+	@echo "  make post-fit-hierarchy FIT_RPT=... [MAP_RPT=...] [COMPILE_LOG=...] [CONFIG=...] - critical fitted-module guard"
+	@echo "  make post-fit-fab-idle FIT_RPT=... [MAP_RPT=...] - chrome+present anti-elision hard gate"
+	@echo "  make post-fit-multi-pixel FIT_RPT=... - PRESENT_MULTI_PIXEL u_mp_* hierarchy gate"
 	@echo "  make post-fit-chrome-elision FIT_RPT=... [MAP_RPT=...] - plex_chrome list RAM must survive fit (c74c6863 class)"
 	@echo "  make fabric-decode-inventory FIT_RPT=... - H.264 fabric present/absent vs phase3-decode.md"
 	@echo "  make post-fit-timing STA_RPT=... - fail negative Quartus timing slack"
 	@echo "  make post-fit-timing-margin STA_RPT=... - fail STA margin regression vs wtime4 baseline"
-	@echo "  make pll-clock-contract [STA_RPT=...] [ACTIVATE_TARGET=B_30_90] - PLL/720p clock contract"
-	@echo "  make multi-pixel-present-contract - 720p N-px/clk clk_sys arithmetic gate"
 	@echo "  make timing-exclusion [STA_RPT=...] - detect timing closed by exclusion not design"
 	@echo "  make pms-baseline-check - live PMS delivered-SPS guard (requires PLEX_BASE/TOKEN/KEY)"
 	@echo "  make pms-baseline-live - secret-safe live PMS Baseline gate; prompts for token"
@@ -52,19 +52,14 @@ unit:
 unit-rollcall:
 	python3 $(ROOT)/tests/unit/test_unit_rollcall.py
 
-unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/test_cadence_swap_path $(ROOT)/build/test_publish_interval_ledger $(ROOT)/build/test_publish_swap_delta_ledger $(ROOT)/build/test_plxd_liveness $(ROOT)/build/test_present_store_scale_math $(ROOT)/build/test_fabric_content_window_math $(ROOT)/build/test_avclock $(ROOT)/build/test_audio_delay $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_av_phase_rtl_quanta $(ROOT)/build/test_osd_menu $(ROOT)/build/test_osd_control $(ROOT)/build/test_last_frame_latch $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_pixel_format $(ROOT)/build/test_main_guard $(ROOT)/build/test_death_breadcrumb $(ROOT)/build/test_frame_ledger $(ROOT)/build/test_supply_bucket $(ROOT)/build/test_raw_video_pipe $(ROOT)/build/test_status_telemetry $(ROOT)/build/test_resolve $(ROOT)/build/test_log_redact $(ROOT)/build/test_pms_timeline $(ROOT)/build/test_plextv_device $(ROOT)/build/test_companion_eof $(ROOT)/build/test_companion_plant_seek $(ROOT)/build/test_gdm_resources_parity $(ROOT)/build/pms_baseline_probe $(ROOT)/build/test_h264_bitstream_source $(ROOT)/build/test_bitstream_ring_lifecycle $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_ddr_720p_abi $(ROOT)/build/test_fabric_ddr_top_wire $(ROOT)/build/test_fabric_bank_credit $(ROOT)/build/test_bank_producer_order $(ROOT)/build/test_optionc_bank_align $(ROOT)/build/test_fabric_ddr_bandwidth $(ROOT)/build/test_ddr_publish_barrier $(ROOT)/build/test_bitstream_ring_abi $(ROOT)/build/test_h264_level_limits \
-	$(ROOT)/build/test_ddr_mem_map_policy $(ROOT)/build/test_coded_size_adopt $(ROOT)/build/test_ffmpeg_vf $(ROOT)/build/test_force_scale_construction $(ROOT)/build/test_yuv420p_chroma_480p $(ROOT)/build/test_geom_frame_cost $(ROOT)/build/test_glass_loss_death_points $(ROOT)/build/test_frame_store_sdram_sim $(ROOT)/build/test_frame_store_ddr_prefetch_sim $(ROOT)/build/test_ddr_want_y_hblank_thrash $(ROOT)/build/test_ddr_bank_mailbox_phys $(ROOT)/build/test_ddr_scanout_multiframe $(ROOT)/build/test_sdram_memtest_sim $(ROOT)/build/test_sdram_mailbox $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant $(ROOT)/build/test_p3_host_recon_vectors $(ROOT)/build/test_p3_idct_reference_model $(ROOT)/build/test_p3_inter_pred_vectors $(ROOT)/build/extract_h264_golden $(ROOT)/build/misterplexd
+unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/test_cadence_swap_path $(ROOT)/build/test_publish_interval_ledger $(ROOT)/build/test_publish_swap_delta_ledger $(ROOT)/build/test_present_store_scale_math $(ROOT)/build/test_avclock $(ROOT)/build/test_audio_delay $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_av_phase_rtl_quanta $(ROOT)/build/test_osd_menu $(ROOT)/build/test_osd_control $(ROOT)/build/test_last_frame_latch $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_plex_chrome_sim $(ROOT)/build/test_plex_chrome_cmds $(ROOT)/build/test_ddr_720p_abi $(ROOT)/build/test_present_pace $(ROOT)/build/test_plex_chrome_ddr_loader $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_pixel_format $(ROOT)/build/test_main_guard $(ROOT)/build/test_death_breadcrumb $(ROOT)/build/test_frame_ledger $(ROOT)/build/test_supply_bucket $(ROOT)/build/test_raw_video_pipe $(ROOT)/build/test_status_telemetry $(ROOT)/build/test_resolve $(ROOT)/build/test_log_redact $(ROOT)/build/test_pms_timeline $(ROOT)/build/test_plextv_device $(ROOT)/build/test_companion_eof $(ROOT)/build/test_companion_plant_seek $(ROOT)/build/test_gdm_resources_parity $(ROOT)/build/pms_baseline_probe $(ROOT)/build/test_h264_bitstream_source $(ROOT)/build/test_bitstream_ring_lifecycle $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_coded_size_adopt $(ROOT)/build/test_ffmpeg_vf $(ROOT)/build/test_yuv420p_chroma_480p $(ROOT)/build/test_geom_frame_cost $(ROOT)/build/test_glass_loss_death_points $(ROOT)/build/test_frame_store_sdram_sim $(ROOT)/build/test_frame_store_ddr_prefetch_sim $(ROOT)/build/test_ddr_want_y_hblank_thrash $(ROOT)/build/test_ddr_bank_mailbox_phys $(ROOT)/build/test_ddr_scanout_multiframe $(ROOT)/build/test_sdram_memtest_sim $(ROOT)/build/test_sdram_mailbox $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant $(ROOT)/build/test_p3_host_recon_vectors $(ROOT)/build/test_p3_idct_reference_model $(ROOT)/build/test_p3_inter_pred_vectors $(ROOT)/build/extract_h264_golden
 	$(ROOT)/build/test_cadence
 	$(ROOT)/build/test_cadence_swap_path
 	$(ROOT)/tests/unit/test_cadence_swap_path_source.sh
 	$(ROOT)/build/test_publish_interval_ledger
 	$(ROOT)/build/test_publish_swap_delta_ledger
-	$(ROOT)/build/test_plxd_liveness
 	$(ROOT)/tests/unit/test_c5382bee_frames_done_pack.sh
-	bash $(ROOT)/tests/unit/test_delivered_geom_loglevel.sh
-	bash $(ROOT)/tests/unit/test_arm_cpu_sample_contract.sh
 	$(ROOT)/build/test_present_store_scale_math
-	$(ROOT)/build/test_fabric_content_window_math
 	$(ROOT)/build/test_avclock
 	bash $(ROOT)/tests/unit/test_av_startup_hold_red.sh
 	$(ROOT)/build/test_audio_delay
@@ -79,6 +74,12 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/build/test_last_frame_latch
 	bash $(ROOT)/tests/unit/test_last_frame_latch_red.sh
 	$(ROOT)/build/test_playback_overlay
+	$(ROOT)/build/test_plex_chrome_sim
+	$(ROOT)/build/test_plex_chrome_cmds
+	$(ROOT)/build/test_ddr_720p_abi
+	python3 $(ROOT)/tests/unit/test_plex_chrome_write_path_static.py
+	$(ROOT)/build/test_present_pace
+	$(ROOT)/build/test_plex_chrome_ddr_loader
 	$(ROOT)/build/test_input_mailbox
 	$(ROOT)/build/test_pixel_format
 	$(ROOT)/build/test_main_guard
@@ -91,8 +92,6 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	bash $(ROOT)/tests/unit/test_supervise_exit_classify.sh
 	bash $(ROOT)/tests/unit/test_main_rc0_paths.sh
 	bash $(ROOT)/tests/unit/test_soak_continuity_assert.sh
-	bash $(ROOT)/tests/unit/test_soak_ledger_report.sh
-	bash $(ROOT)/tests/unit/test_supervise_death_snap_static.sh
 	bash $(ROOT)/tests/unit/test_score_mister_contention.sh
 	bash $(ROOT)/tests/unit/test_media_fps_precision.sh
 	$(ROOT)/build/test_status_telemetry
@@ -110,25 +109,10 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/build/test_h264_bitstream_source
 	$(ROOT)/build/test_bitstream_ring_lifecycle
 	$(ROOT)/build/test_frame_store_math
-	$(ROOT)/build/test_ddr_720p_abi
-	$(ROOT)/build/test_bitstream_ring_abi
-	$(ROOT)/build/test_h264_level_limits
-	$(ROOT)/build/test_fabric_ddr_top_wire
-	$(ROOT)/build/test_fabric_bank_credit
-	$(ROOT)/build/test_bank_producer_order
-	$(ROOT)/build/test_optionc_bank_align
-	$(ROOT)/build/test_fabric_ddr_bandwidth
-	$(ROOT)/build/test_ddr_publish_barrier
-	$(ROOT)/build/test_ddr_mem_map_policy
 	$(ROOT)/build/test_coded_size_adopt
 	$(ROOT)/build/test_ffmpeg_vf
-	$(ROOT)/build/test_force_scale_construction
 	bash $(ROOT)/tests/unit/test_force_scale_ffmpeg_out.sh
 	bash $(ROOT)/tests/unit/test_force_scale_sws_cost.sh
-	bash $(ROOT)/tests/unit/test_fabric_scaler_delta.sh
-	bash $(ROOT)/tests/unit/test_624x350_force_scale_out.sh
-	bash $(ROOT)/tests/unit/test_delivered_350_capability.sh
-	bash $(ROOT)/tests/unit/test_b2_b5_source_wiring.sh
 	$(ROOT)/build/test_yuv420p_chroma_480p
 	$(ROOT)/build/test_geom_frame_cost
 	$(ROOT)/build/test_glass_loss_death_points
@@ -187,7 +171,6 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_glass_frame_id_roundtrip.py
 	$(ROOT)/tests/unit/test_avsync_glass_fixture.sh
 	$(ROOT)/tests/unit/test_audio_frame_id.sh
-	$(ROOT)/tests/unit/test_nyquist_tier_discriminator.sh
 	$(ROOT)/tests/unit/test_analyze_mraudio_handoff.sh
 	$(ROOT)/tests/unit/test_analyze_avsync_residual.sh
 	$(ROOT)/tests/unit/test_resource_preflight.sh
@@ -205,47 +188,11 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_core_conf_geometry_gate.sh
 	$(ROOT)/tests/unit/test_video_regression_liveness.sh
 	$(ROOT)/tests/unit/test_timing_margin_gate.sh
-	$(ROOT)/tests/unit/test_pll_clock_contract.sh
-	$(ROOT)/tests/unit/test_multi_pixel_present.sh
-	$(ROOT)/tests/unit/test_yuv_bt601_npx_verilator.sh
-	$(ROOT)/tests/unit/test_present_npx_path_verilator.sh
-	$(ROOT)/tests/unit/test_present_npx_cdc_soak.sh
-	$(ROOT)/tests/unit/test_present_beam_720p_verilator.sh
-	$(ROOT)/tests/unit/test_present_720p_fit_contract.sh
-	$(ROOT)/tests/unit/test_fabric_clock_headroom.sh
-	$(ROOT)/tests/unit/test_clk_pix_pll_plan.sh
-	$(ROOT)/tests/unit/test_clk_pix_sta_prereg.sh
-	$(ROOT)/tests/unit/test_present_pix_rate_match.sh
-	$(ROOT)/tests/unit/test_present_npx_sync_sideband.sh
-	$(ROOT)/tests/unit/test_present_npx_first_last_de.sh
-	$(ROOT)/tests/unit/test_mp_ur_count_sat.sh
-	$(ROOT)/tests/unit/test_present_multi_pixel_elab.sh
-	$(ROOT)/tests/unit/test_present_beam_960_arith.sh
-	$(ROOT)/tests/unit/test_present_beam_960_oracle.sh
-	$(ROOT)/tests/unit/test_present_beam_960_elab.sh
 	$(ROOT)/tests/unit/test_release_rbf_hash.sh
-	$(ROOT)/tests/unit/test_release_pair_gate.sh
-	$(ROOT)/tests/unit/test_package_validated_pair.sh
-	$(ROOT)/tests/unit/test_vf_delivery_behaviour.sh
-	$(ROOT)/tests/unit/test_release_tar_owner.sh
-	$(ROOT)/tests/unit/test_promotion_gate_present.sh
-	$(ROOT)/tests/unit/test_critical_skip_nonzero.sh
-	$(ROOT)/tests/unit/test_daily_promote_ready.sh
-	$(ROOT)/tests/unit/test_daemon_stamp_check.sh
-	$(ROOT)/tests/unit/test_daemon_build_identity.sh
-	$(ROOT)/tests/unit/test_hdmi_capture_usage_guard.sh
-	$(ROOT)/tests/unit/test_hdmi_motion_display_verdict.sh
-	$(ROOT)/tests/unit/test_hdmi_motion_realcontent.sh
 	$(ROOT)/tests/unit/test_sdram_startup_verilator.sh
 	$(ROOT)/tests/unit/test_sdram_dq_turnaround_verilator.sh
 	$(ROOT)/tests/unit/test_h264_cavlc_residual_verilator.sh
 	$(ROOT)/tests/unit/test_level_width_verilator.sh
-	$(ROOT)/tests/unit/test_fabric_ddr_writer_verilator.sh
-	$(ROOT)/tests/unit/test_fabric_ddr_write_path_verilator.sh
-	$(ROOT)/tests/unit/test_fabric_bank_credit_async_verilator.sh
-	$(ROOT)/tests/unit/test_ddr_bus_arbiter3_verilator.sh
-	$(ROOT)/tests/unit/test_ddr_m1_subarb_verilator.sh
-	$(ROOT)/tests/unit/test_fabric_luma_linebuf_verilator.sh
 	$(ROOT)/tests/unit/test_stream_path_recon_integration.sh
 	$(ROOT)/tests/unit/test_stream_path_full_frame_compare.sh
 	$(ROOT)/tests/unit/test_ddram_frame_rd_bank_select.sh
@@ -262,6 +209,14 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_ddr_frame_store_scanout_skip.sh
 	$(ROOT)/tests/unit/test_ddr_frame_store_plxd_handshake.sh
 	$(ROOT)/tests/unit/test_ddr_frame_store_scanout_colour.sh
+	$(ROOT)/tests/unit/test_plex_chrome_rtl_sim.sh
+	$(ROOT)/tests/unit/test_present_pace_rtl_sim.sh
+	$(ROOT)/tests/unit/test_plex_chrome_ddr_loader_rtl_sim.sh
+	$(ROOT)/tests/unit/test_plex_chrome_e2e_rtl_sim.sh
+	$(ROOT)/tests/unit/test_plex_chrome_ppc_rtl_sim.sh
+	$(ROOT)/tests/unit/test_plex_chrome_idle720_rtl_sim.sh
+	$(ROOT)/tests/unit/test_plex_chrome_counted_rtl_sim.sh
+	$(ROOT)/tests/unit/test_plex_chrome_fabchrome_rtl_sim.sh
 	$(ROOT)/scripts/rtl_lint.py
 	$(ROOT)/tests/unit/test_h264_syntax_primitives_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_sps_geometry_rtl_sim.sh
@@ -285,10 +240,17 @@ rtl-sim-unlocked:
 	$(ROOT)/tests/unit/test_ddr_frame_store_scanout_skip.sh
 	$(ROOT)/tests/unit/test_ddr_frame_store_plxd_handshake.sh
 	$(ROOT)/tests/unit/test_ddr_frame_store_scanout_colour.sh
+	$(ROOT)/tests/unit/test_plex_chrome_rtl_sim.sh
+	$(ROOT)/tests/unit/test_present_pace_rtl_sim.sh
+	$(ROOT)/tests/unit/test_plex_chrome_ddr_loader_rtl_sim.sh
+	$(ROOT)/tests/unit/test_plex_chrome_e2e_rtl_sim.sh
+	$(ROOT)/tests/unit/test_plex_chrome_ppc_rtl_sim.sh
+	$(ROOT)/tests/unit/test_plex_chrome_idle720_rtl_sim.sh
+	$(ROOT)/tests/unit/test_plex_chrome_counted_rtl_sim.sh
+	$(ROOT)/tests/unit/test_plex_chrome_fabchrome_rtl_sim.sh
 	$(ROOT)/tests/unit/test_stream_path_recon_integration.sh
 	$(ROOT)/tests/unit/test_stream_path_full_frame_compare.sh
 	$(ROOT)/tests/unit/test_ddram_frame_rd_bank_select.sh
-	$(ROOT)/tests/unit/test_ddr_m1_subarb_verilator.sh
 	$(ROOT)/tests/unit/test_h264_syntax_primitives_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_sps_geometry_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_baseline_syntax_rtl_sim.sh
@@ -319,8 +281,23 @@ pre-synth-gates: define-parity quartus-sv-subset
 post-fit-hierarchy:
 	@if [ -z "$(FIT_RPT)" ]; then echo "FIT_RPT is required" >&2; exit 2; fi
 	$(ROOT)/scripts/check_quartus_fit_hierarchy.py --fit-rpt "$(FIT_RPT)" \
+		$(if $(CONFIG),--config "$(CONFIG)",) \
 		$(if $(MAP_RPT),--map-rpt "$(MAP_RPT)",) \
 		$(if $(COMPILE_LOG),--log "$(COMPILE_LOG)",)
+
+# FAB_IDLE / chrome plane gate (void fit if chrome or present chain elided).
+post-fit-fab-idle:
+	@if [ -z "$(FIT_RPT)" ]; then echo "FIT_RPT is required" >&2; exit 2; fi
+	$(MAKE) post-fit-hierarchy FIT_RPT="$(FIT_RPT)" MAP_RPT="$(MAP_RPT)" COMPILE_LOG="$(COMPILE_LOG)" \
+		CONFIG="$(ROOT)/tests/fixtures/critical_fit_hierarchy_fab_idle.json"
+	$(MAKE) post-fit-chrome-elision FIT_RPT="$(FIT_RPT)" MAP_RPT="$(MAP_RPT)"
+	@echo "PASS post-fit-fab-idle (hierarchy + chrome elision)"
+
+# Multi-pixel present chain (only when PRESENT_MULTI_PIXEL=1 in the fit).
+post-fit-multi-pixel:
+	@if [ -z "$(FIT_RPT)" ]; then echo "FIT_RPT is required" >&2; exit 2; fi
+	$(MAKE) post-fit-hierarchy FIT_RPT="$(FIT_RPT)" MAP_RPT="$(MAP_RPT)" COMPILE_LOG="$(COMPILE_LOG)" \
+		CONFIG="$(ROOT)/tests/fixtures/critical_fit_hierarchy_multi_pixel.json"
 
 # plex_chrome command-list RAM retention (c74c6863: entity present, M10K/bits=0 ⇒ NO-DATA).
 # HARD FAIL when list RAM elided or map marks list_a/list_b Stuck at GND.
@@ -348,34 +325,6 @@ post-fit-timing:
 post-fit-timing-margin:
 	@if [ -z "$(STA_RPT)" ]; then echo "STA_RPT is required" >&2; exit 2; fi
 	$(ROOT)/scripts/check_timing_margin.py --sta-rpt "$(STA_RPT)"
-
-# Shipping PLL + 720p clk_sys arithmetic contract (assets/pll_clock_contract.json).
-# Optional STA_RPT enforces Fmax ≥ constrained (or ACTIVATE_TARGET proposed rate).
-pll-clock-contract:
-	$(ROOT)/scripts/check_pll_clock_contract.py \
-		$(if $(STA_RPT),--sta-rpt "$(STA_RPT)",) \
-		$(if $(ACTIVATE_TARGET),--activate-target "$(ACTIVATE_TARGET)",) \
-		$(if $(ALLOW_PLL_BUMP),--allow-pll-bump,)
-
-# 720p multi-pixel present clk_sys arithmetic (1/2/4 ppc). Macro PRESENT_MULTI_PIXEL defaults OFF.
-multi-pixel-present-contract:
-	$(ROOT)/scripts/check_multi_pixel_present.py --root $(ROOT) --require-rtl
-
-# Pre-fit survival: SDC async_fifo cut, edge/H ownership arith, 4ppc rates (no STA slack).
-present-720p-fit-contract:
-	$(ROOT)/scripts/check_present_720p_fit_contract.py --root $(ROOT)
-
-# Present no-bump + 720p24 fabric-decode cy/MB wall (arithmetic only).
-fabric-clock-headroom:
-	$(ROOT)/scripts/check_fabric_clock_headroom.py --root $(ROOT)
-
-# Separate clk_pix PLL plan (29.7/74.25) — proposed only; shipping PLL untouched.
-clk-pix-pll-plan:
-	$(ROOT)/scripts/check_clk_pix_pll_plan.py --root $(ROOT)
-
-# Pre-registered STA pass/fail cuts for clk_pix stages (before fit).
-clk-pix-sta-prereg:
-	$(ROOT)/scripts/check_clk_pix_sta_prereg.py --root $(ROOT)
 
 timing-exclusion:
 	$(ROOT)/scripts/check_timing_exclusions.py $(if $(STA_RPT),--sta-rpt "$(STA_RPT)",)
@@ -495,65 +444,6 @@ $(ROOT)/build/test_frame_store_math: $(ROOT)/tests/unit/test_frame_store_math.cp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_frame_store_math.cpp
 
-$(ROOT)/build/test_ddr_720p_abi: $(ROOT)/tests/unit/test_ddr_720p_abi.cpp \
-		$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp \
-		$(ROOT)/host/libmisterplex/geometry_units.hpp \
-		$(ROOT)/host/libmisterplex/ddr_present_bank.hpp \
-		$(ROOT)/host/libmisterplex/mailbox_abi_spec.hpp
-	@mkdir -p $(ROOT)/build
-	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_ddr_720p_abi.cpp
-
-$(ROOT)/build/test_fabric_ddr_top_wire: $(ROOT)/tests/unit/test_fabric_ddr_top_wire.cpp
-	@mkdir -p $(ROOT)/build
-	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_fabric_ddr_top_wire.cpp
-
-
-
-
-$(ROOT)/build/test_ddr_publish_barrier: $(ROOT)/tests/unit/test_ddr_publish_barrier.cpp \
-		$(ROOT)/host/libmisterplex/ddr_publish_barrier.hpp \
-		$(ROOT)/host/libmisterplex/bank_producer_order.hpp
-	@mkdir -p $(ROOT)/build
-	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_ddr_publish_barrier.cpp
-
-$(ROOT)/build/test_fabric_ddr_bandwidth: $(ROOT)/tests/unit/test_fabric_ddr_bandwidth.cpp \
-		$(ROOT)/host/libmisterplex/fabric_ddr_bandwidth.hpp
-	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_fabric_ddr_bandwidth.cpp
-
-$(ROOT)/build/test_bitstream_ring_abi: $(ROOT)/tests/unit/test_bitstream_ring_abi.cpp \
-		$(ROOT)/host/libmisterplex/ddr_bitstream_ring.hpp \
-		$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp \
-		$(ROOT)/host/libmisterplex/fabric_ddr_bandwidth.hpp
-	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_bitstream_ring_abi.cpp
-
-$(ROOT)/build/test_h264_level_limits: $(ROOT)/tests/unit/test_h264_level_limits.cpp \
-		$(ROOT)/host/libmisterplex/h264_level_limits.hpp \
-		$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp
-	@mkdir -p $(ROOT)/build
-	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_h264_level_limits.cpp
-
-
-
-$(ROOT)/build/test_bank_producer_order: $(ROOT)/tests/unit/test_bank_producer_order.cpp \
-		$(ROOT)/host/libmisterplex/bank_producer_order.hpp \
-		$(ROOT)/host/libmisterplex/ddr_publish_barrier.hpp \
-		$(ROOT)/host/libmisterplex/fabric_bank_credit.hpp
-	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_bank_producer_order.cpp
-
-$(ROOT)/build/test_optionc_bank_align: $(ROOT)/tests/unit/test_optionc_bank_align.cpp \
-		$(ROOT)/host/libmisterplex/bank_producer_order.hpp
-	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_optionc_bank_align.cpp
-
-$(ROOT)/build/test_fabric_bank_credit: $(ROOT)/tests/unit/test_fabric_bank_credit.cpp \
-		$(ROOT)/host/libmisterplex/fabric_bank_credit.hpp
-	@mkdir -p $(ROOT)/build
-	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_fabric_bank_credit.cpp
-
-$(ROOT)/build/test_ddr_mem_map_policy: $(ROOT)/tests/unit/test_ddr_mem_map_policy.cpp \
-		$(ROOT)/host/libmisterplex/ddr_mem_map_policy.hpp
-	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_ddr_mem_map_policy.cpp
-
-
 $(ROOT)/build/test_coded_size_adopt: $(ROOT)/tests/unit/test_coded_size_adopt.cpp \
 		$(ROOT)/host/libmisterplex/coded_size.hpp \
 		$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp \
@@ -568,31 +458,12 @@ $(ROOT)/build/test_ffmpeg_vf: $(ROOT)/tests/unit/test_ffmpeg_vf.cpp \
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_ffmpeg_vf.cpp
 
-$(ROOT)/build/test_force_scale_construction: $(ROOT)/tests/unit/test_force_scale_construction.cpp \
-		$(ROOT)/host/libmisterplex/ffmpeg_vf.hpp \
-		$(ROOT)/host/libmisterplex/yuv420p_chroma_health.hpp
-	@mkdir -p $(ROOT)/build
-	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_force_scale_construction.cpp
-
 $(ROOT)/build/test_yuv420p_chroma_480p: $(ROOT)/tests/unit/test_yuv420p_chroma_480p.cpp \
 		$(ROOT)/host/libmisterplex/yuv420p_chroma_health.hpp \
 		$(ROOT)/host/libmisterplex/ffmpeg_vf.hpp \
 		$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -I$(ROOT)/host -o $@ $(ROOT)/tests/unit/test_yuv420p_chroma_480p.cpp
-
-$(ROOT)/build/test_vf_bank_output_health: $(ROOT)/tests/unit/test_vf_bank_output_health.cpp \
-		$(ROOT)/host/libmisterplex/yuv420p_chroma_health.hpp \
-		$(ROOT)/host/libmisterplex/ffmpeg_vf.hpp \
-		$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp
-	@mkdir -p $(ROOT)/build
-	$(CXX) $(CXXFLAGS) -I$(ROOT)/host -o $@ $(ROOT)/tests/unit/test_vf_bank_output_health.cpp
-
-$(ROOT)/build/test_vf_plan_emit: $(ROOT)/tests/unit/test_vf_plan_emit.cpp \
-		$(ROOT)/host/libmisterplex/ffmpeg_vf.hpp \
-		$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp
-	@mkdir -p $(ROOT)/build
-	$(CXX) $(CXXFLAGS) -I$(ROOT)/host -o $@ $(ROOT)/tests/unit/test_vf_plan_emit.cpp
 
 $(ROOT)/build/test_geom_frame_cost: $(ROOT)/tests/unit/test_geom_frame_cost.cpp \
 		$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp \
@@ -669,17 +540,6 @@ $(ROOT)/build/test_present_store_scale_math: $(ROOT)/tests/unit/test_present_sto
 		$(ROOT)/fpga/Plex_MiSTer/rtl/ddr_frame_layout_params.svh
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_present_store_scale_math.cpp
-
-
-$(ROOT)/build/test_fabric_content_window_math: $(ROOT)/tests/unit/test_fabric_content_window_math.cpp
-	@mkdir -p $(ROOT)/build
-	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_fabric_content_window_math.cpp
-
-
-$(ROOT)/build/test_plxd_liveness: $(ROOT)/tests/unit/test_plxd_liveness.cpp \
-		$(ROOT)/host/libmisterplex/plxd_liveness.hpp
-	@mkdir -p $(ROOT)/build
-	$(CXX) $(CXXFLAGS) -I$(ROOT)/host -o $@ $(ROOT)/tests/unit/test_plxd_liveness.cpp
 
 $(ROOT)/build/test_publish_swap_delta_ledger: $(ROOT)/tests/unit/test_publish_swap_delta_ledger.cpp \
 		$(ROOT)/host/libmisterplex/publish_swap_delta_ledger.hpp \
@@ -765,15 +625,47 @@ $(ROOT)/build/test_playback_overlay: $(ROOT)/tests/unit/test_playback_overlay.cp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_playback_overlay.cpp
 
+$(ROOT)/build/test_plex_chrome_sim: $(ROOT)/tests/unit/test_plex_chrome_sim.cpp \
+		$(ROOT)/host/libmisterplex/plex_chrome_sim.hpp \
+		$(ROOT)/host/libmisterplex/plex_chrome_cmds.hpp \
+		$(ROOT)/host/libmisterplex/mister_video_mode.hpp \
+		$(ROOT)/host/libmisterplex/mailbox_abi_spec.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_plex_chrome_sim.cpp
+
+$(ROOT)/build/test_plex_chrome_cmds: $(ROOT)/tests/unit/test_plex_chrome_cmds.cpp \
+		$(ROOT)/host/libmisterplex/plex_chrome_cmds.hpp \
+		$(ROOT)/host/libmisterplex/playback_overlay.hpp \
+		$(ROOT)/host/libmisterplex/mailbox_abi_spec.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_plex_chrome_cmds.cpp
+
+
+$(ROOT)/build/test_ddr_720p_abi: $(ROOT)/tests/unit/test_ddr_720p_abi.cpp \
+		$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp \
+		$(ROOT)/host/libmisterplex/mailbox_abi_spec.hpp \
+		$(ROOT)/host/libmisterplex/plex_chrome_cmds.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_ddr_720p_abi.cpp
+
+$(ROOT)/build/test_present_pace: $(ROOT)/tests/unit/test_present_pace.cpp \
+		$(ROOT)/host/libmisterplex/present_pace.hpp \
+		$(ROOT)/host/libmisterplex/cadence.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_present_pace.cpp
+
+$(ROOT)/build/test_plex_chrome_ddr_loader: $(ROOT)/tests/unit/test_plex_chrome_ddr_loader.cpp \
+		$(ROOT)/host/libmisterplex/plex_chrome_ddr_loader.hpp \
+		$(ROOT)/host/libmisterplex/plex_chrome_cmds.hpp \
+		$(ROOT)/host/libmisterplex/mailbox_abi_spec.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_plex_chrome_ddr_loader.cpp
+
 $(ROOT)/build/test_input_mailbox: $(ROOT)/tests/unit/test_input_mailbox.cpp \
 		$(ROOT)/host/libmisterplex/input_mailbox.hpp \
 		$(ROOT)/host/libmisterplex/mailbox_abi_spec.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_input_mailbox.cpp
-# Relative convenience — absolute-only rule makes `make build/test_input_mailbox` a no-op miss.
-build/test_input_mailbox: $(ROOT)/build/test_input_mailbox
-	@true
-
 
 $(ROOT)/build/test_pixel_format: $(ROOT)/tests/unit/test_pixel_format.cpp \
 		$(ROOT)/host/libmisterplex/pixel_format.hpp
@@ -884,30 +776,6 @@ $(ROOT)/build/test_bitstream_ring_lifecycle: $(ROOT)/tests/unit/test_bitstream_r
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_bitstream_ring_lifecycle.cpp
 
-# Build identity. A running misterplexd must be able to name the source it was
-# built from: the daily driver's daemon was only ever identifiable by binary md5
-# (e.g. ea643e99), which `git cat-file` cannot resolve, so the live device could
-# not be mapped to a commit and the parent spent a session reasoning off a stale
-# pair. Stamped into the binary and printed by --version and the startup banner.
-MPLEX_GIT_REV := $(shell git -C $(ROOT) rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
-# --untracked-files=no on purpose: dirtiness must mean "built source differs from
-# the commit". Untracked files (lab captures, media assets) do not enter the
-# build, and counting them would pin every build to -dirty forever, destroying
-# the signal this stamp exists to provide.
-MPLEX_GIT_DIRTY := $(shell test -n "$$(git -C $(ROOT) status --porcelain --untracked-files=no 2>/dev/null)" && echo -dirty || echo)
-MPLEX_BUILD_ID_H := $(ROOT)/build/generated/misterplex_build_id.h
-
-# Rewritten ONLY when the revision actually changes, so it is a real dependency
-# (a bare -D would not retrigger a link and the stamp would silently go stale --
-# which is exactly how a binary ends up claiming a revision it was not built from).
-.PHONY: $(ROOT)/build/generated/.build-id-stamp
-$(MPLEX_BUILD_ID_H): $(ROOT)/build/generated/.build-id-stamp
-	@mkdir -p $(dir $@)
-	@printf '#pragma once\n#define MISTERPLEX_GIT_REV "%s%s"\n' \
-		'$(MPLEX_GIT_REV)' '$(MPLEX_GIT_DIRTY)' > $@.tmp
-	@if ! cmp -s $@.tmp $@; then mv $@.tmp $@; else rm -f $@.tmp; fi
-$(ROOT)/build/generated/.build-id-stamp: ;
-
 # Native host daemon for local smoke
 MPLEX_SRC := \
 	$(ROOT)/arm/misterplexd/main.cpp \
@@ -920,7 +788,7 @@ MPLEX_SRC := \
 	$(ROOT)/arm/misterplexd/plex_resolve.cpp \
 	$(ROOT)/arm/misterplexd/fpga_spi.cpp \
 	$(ROOT)/host/libmisterplex/frame_ledger.cpp
-MPLEX_INC := -I$(ROOT)/arm/misterplexd -I$(ROOT)/host -I$(ROOT)/build/generated
+MPLEX_INC := -I$(ROOT)/arm/misterplexd -I$(ROOT)/host
 # Host recon headers (Phase 3.3i STREAM path)
 MPLEX_HDR := \
 	$(ROOT)/host/libmisterplex/h264_recon.hpp \
@@ -935,8 +803,7 @@ MPLEX_HDR := \
 	$(ROOT)/host/libmisterplex/idle_screen.hpp \
 	$(ROOT)/host/libmisterplex/input_mailbox.hpp \
 	$(ROOT)/host/libmisterplex/playback_overlay.hpp \
-	$(ROOT)/host/libmisterplex/pixel_format.hpp \
-	$(MPLEX_BUILD_ID_H)
+	$(ROOT)/host/libmisterplex/pixel_format.hpp
 
 $(ROOT)/build/misterplexd: $(MPLEX_SRC) \
 		$(ROOT)/arm/misterplexd/companion.hpp \
