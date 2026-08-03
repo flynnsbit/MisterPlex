@@ -2,6 +2,7 @@
   "schema": "misterplex.define_parity_allowlist.v1",
   "test_only_macros": {
     "CAVLC_NEGATIVE_TEST": "Injected CAVLC residual fault for expected-red simulation only.",
+    "CAVLC_CYCLE_PROBE": "Test-only stage cycle counters on h264_cavlc_residual for cy/MB measurement harness.",
     "DDR_FRAME_STORE_FAULT_CHROMA_LUMA_STRIDE": "Injected DDR frame-store expected-red fault.",
     "DDR_FRAME_STORE_FAULT_CHROMA_VERTICAL_FULLRES": "Injected DDR frame-store expected-red fault.",
     "DDR_FRAME_STORE_FAULT_SWAP_UV_READ": "Injected DDR frame-store expected-red fault.",
