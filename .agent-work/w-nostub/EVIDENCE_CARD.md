@@ -129,7 +129,7 @@ DDR present path untouched (present_core.sv / ddr_frame_store.sv md5 unchanged f
 ## (e) Unknown / not proven
 
 1. **Device HDMI / black-screen:** no deploy, no capture — parent only.  
-2. **Full `make unit` green in this worktree:** rc=2 due to missing `tests/fixtures/fabric_decode_fit_hierarchy_8fdf440f.excerpt.rpt` (also absent on main tree). Pre-existing fixture gap; not caused by PRODUCT_NO_STUB. product_no_stub gate itself **rc=0**.  
+2. **Full `make unit` green in this worktree:** rc=2. **product_no_stub gate itself rc=0.** Parent measured main `make unit` GREEN (rc=0). Real worktree failures include `test_avclock.cpp:216/217` (early drops) and `test_osd_menu.cpp:126` (shouldApplyOsdIdle) — from base `fab34b23`, not commit `1374a0d7` (QSF/docs/evidence only). Earlier attribution to a missing fabric_decode fixture was **wrong** (named cause without confirming the failing tests).  
 3. **Bit-identity vs prior nostub `c74c6863`:** not compared this lane (chrome/path-cut base differs). New md5 is intentional product-default nostub candidate.  
 4. **PLL bump safety at 25/30 MHz:** owned by w-clock; this lane only provides headroom (Fmax 32.04).
 
