@@ -129,7 +129,7 @@ private:
     std::string err_;
 };
 
-// Option-C bank alignment facts (not causal claims). Parent measures copy rates.
+// Option-C bank alignment facts (geometry only). Rate A/B retracted 2026-08-03.
 struct OptionCBankAlignFacts {
     uint32_t bank0 = kFabric720pPhysBase;
     uint32_t bank1 = kFabric720pPhysBase + kFabric720pBankStride;

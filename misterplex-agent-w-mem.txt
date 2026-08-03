@@ -1,29 +1,20 @@
 agent=w-mem
 branch=w-mem-720p-abi
 status=READY_FOR_INTEGRATION_FIT (macro OFF)
+HEAD=bf6567da + retract-note commit
 
-## This delivery
-- Async credit: filling_mask + visible_mask + err_doorbell_before_visible
-- host_bank_ingest_credit.sv wired under FABRIC_DDR_WRITER (keep)
-- bank_producer_order.hpp agrees w-path credit→fill→visible→doorbell
-- Option-C align FACTS only (no causal claim on 15 vs 21 ms)
-- Moving pattern still drives writer (frame_phase); hierarchy keep expanded
+## Parent incident 2026-08-03 — ACK
+- Stand down bank-address anomaly chase (15 vs 21 ms) — contaminated
+- DMA 23.839 / 0.010 ms figures invalid (instrument / burner)
+- Clean: decode alone 35.94 ms/f, margin 5.73 ms
+- Route A real DMA: unmeasured
+- Fit milestone UNCHANGED: moving 1280x720 fabric pattern, ARM zero pixels
 
-## true rc
-- test_bank_producer_order: 0
-- test_optionc_bank_align: 0
-- fabric_bank_credit_async_verilator: 0
-- arbiter3 / writer / path / top_wire / bank_credit: 0
+## RTL ready (bf6567da)
+- fabric_bank_credit async + host_bank_ingest_credit keep
+- moving pattern → Option-C writer
+- FABRIC_DDR_WRITER default OFF
 
-## Fit enable (parent)
-FABRIC_DDR_WRITER=1 + SV:
-  fabric_ddr_writer, i420_pattern_src, write_path, attach,
-  fabric_bank_credit, host_bank_ingest_credit, arbiter3, luma_linebuf
-Optional FABRIC_DDR_WRITER_480P=1 without scaler
-
-## Parent measure
-1. post-fit-hierarchy non-zero: attach, fabric_bank_credit, host_bank_ingest_credit,
-   fabric_ddr_writer, fabric_i420_pattern_src, ddr_bus_arbiter3
-2. hdmi_capture_idle.sh — motion, ARM idle
-3. Copy anomaly A/B (cause unknown):
-   ddr_write_bench --len 1382400 @ 0x30180000 / 0x30300000 / 0x30200000
+## Parent fit enable
+FABRIC_DDR_WRITER=1 + SV stack incl fabric_bank_credit, host_bank_ingest_credit
+post-fit-hierarchy non-zero rows; hdmi_capture_idle.sh motion

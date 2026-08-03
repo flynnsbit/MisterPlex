@@ -139,18 +139,20 @@ External path ports on credit: `ext_payload_visible_pulse`, `ext_doorbell_pulse`
 
 NEG test: `./tests/unit/test_fabric_bank_credit_async_verilator.sh`
 
-## Option-C bank alignment facts (copy-rate anomaly — cause unknown)
+## Option-C bank alignment facts (geometry only)
 
 | Addr | role | mod 1MiB | mod 2MiB |
 |------|------|----------|----------|
 | `0x30180000` | bank0 | `0x80000` | `0x180000` |
 | `0x30300000` | bank1 | `0` | `0x100000` |
-| `0x30200000` | parent A/B probe | `0` | `0` |
 
-Parent saw ~15 ms @ `0x30200000` vs ~21 ms @ bank1. **Do not name a cause** until A/B:
-```bash
-# on device (parent): same len, three destinations
-ddr_write_bench --len 1382400 --bank-phys 0x30180000
-ddr_write_bench --len 1382400 --bank-phys 0x30300000
-ddr_write_bench --len 1382400 --bank-phys 0x30200000
-```
+**Parent incident 2026-08-03:** bank-address copy A/B (~15 vs ~21 ms), bank-sweep
+table, and `pl330_dma_ms_per_frame=23.839` were measured under a **rogue remote
+CPU burner** left after a hung control experiment — **RETRACTED**. DMA "sustained"
+arm also invalid (poll-iteration counter → impossible 136 GB/s). Stand down on
+anomaly chase until parent clean re-measure.
+
+**Clean numbers that survive (parent):** decode alone mean **35.94 ms/f** (margin
+5.73 ms @24fps). Any concurrent ARM peer still blows the deadline in clean runs
+tested so far. Route A under real full-frame DMA: **unmeasured**. Fabric
+zero-ARM path remains the robust ship route and the fit milestone.
