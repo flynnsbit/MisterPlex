@@ -842,7 +842,8 @@ void FpgaSpi::releasePlxgBootstrapMap() {
     }
 }
 
-bool FpgaSpi::writePlxgRecord(const uint64_t q[6], uint16_t seq) {
+bool FpgaSpi::writePlxgRecord(const uint64_t q[6], uint16_t seq,
+                              uint16_t* committedSeqOut) {
     if (!q) {
         setErr("writePlxgRecord: null q");
         return false;
@@ -856,6 +857,7 @@ bool FpgaSpi::writePlxgRecord(const uint64_t q[6], uint16_t seq) {
     }
     // Always advance seq (rd-duck: never sticky seq=1 across frames/mode exits).
     // Caller seq is advisory only — latch requires seq != last_seq every program.
+    // committedSeqOut MUST feed kickDdrDoorbell; plan.plxg_seq is often sticky 1.
     (void)seq;
     // Restart-safe seed (rd-duck restart + ABA): never use process-local
     // plxgLastSeq_+1 alone. Re-read retained q0 BEFORE invalidate every write
@@ -934,6 +936,8 @@ bool FpgaSpi::writePlxgRecord(const uint64_t q[6], uint16_t seq) {
         }
     }
     plxgLastSeq_ = useSeq;
+    if (committedSeqOut)
+        *committedSeqOut = useSeq;
     return true;
 }
 
@@ -1747,11 +1751,15 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
         timing.flush_us = elapsedUs(tFlush0, tFlush1);
     }
 
-    // PLXG atomic 5-qword record at bootstrap phys 0x300FF800 (legacy doorbell
+    // PLXG atomic 6-qword record at bootstrap phys 0x300FF800 (legacy doorbell
     // +0x800). Fabric poller always reads this fixed page — chicken-egg safe when
     // Option-C moves the active doorbell. Never three temporal writes to one slot.
+    // rd-duck: embed the *committed* useSeq in the doorbell, not plan.plxg_seq
+    // (native plans seed seq=1 every construction; second publish commits seq=2
+    // while doorbell-with-plan still carries 1 → db_geom_coupled rejects forever).
+    uint16_t committedPlxgSeq = 0;
     if (plan.program_plxg) {
-        if (!writePlxgRecord(plan.plxg_q, plan.plxg_seq))
+        if (!writePlxgRecord(plan.plxg_q, plan.plxg_seq, &committedPlxgSeq))
             return false;
     }
 
@@ -1779,7 +1787,7 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
     bool kicked = false;
     auto tKick0 = std::chrono::steady_clock::now();
     if (ddrKickMode_ == 1 || ddrKickMode_ == 0) {
-        if (kickDdrDoorbell(bank, plan.program_plxg ? plan.plxg_seq : static_cast<uint16_t>(0))) {
+        if (kickDdrDoorbell(bank, plan.program_plxg ? committedPlxgSeq : static_cast<uint16_t>(0))) {
             kicked = true;
             if (first) {
                 // Give poller time to see seq; expect busy / pending / has_frame.

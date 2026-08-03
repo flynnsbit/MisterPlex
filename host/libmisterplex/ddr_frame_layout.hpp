@@ -992,6 +992,96 @@ inline bool ddrB20IndependentObserversNoMix() {
     return m.app_w == 960 && m.disp_bank == 1;
 }
 
+// rd-duck: writePlxgRecord computes useSeq but sendDdrFrame used plan.plxg_seq
+// (native plans seed seq=1 every construction). Second publish commits seq=2
+// while doorbell still carries 1 → db_geom_coupled rejects forever.
+// Model: commit PLXG → kick doorbell; product embeds committed seq.
+struct DdrPlxgDoorbellSeqModel {
+    uint16_t software_last = 0;
+    uint16_t retained_seq = 0;
+    bool retained_valid = false;
+    uint16_t last_committed = 0;
+    uint16_t last_doorbell_plxg = 0;
+    bool fault_embed_plan_seq = false; // REPRO: kick with advisory plan seq
+
+    // Returns committed useSeq (mirrors writePlxgRecord).
+    uint16_t writePlxg(uint16_t /*advisoryPlanSeq*/) {
+        const uint16_t use = plxgNextSeq(software_last, retained_valid, retained_seq);
+        software_last = use;
+        last_committed = use;
+        retained_seq = use;
+        retained_valid = true;
+        return use;
+    }
+
+    void kickDoorbell(uint16_t planSeq, uint16_t committedSeq, bool programPlxg) {
+        if (!programPlxg) {
+            last_doorbell_plxg = 0; // ungated legacy
+            return;
+        }
+        last_doorbell_plxg = fault_embed_plan_seq ? planSeq : committedSeq;
+    }
+
+    // Fabric coupling after both observers: doorbell plxg must match live geom seq.
+    bool coupledOk(uint16_t liveGeomSeq, bool live) const {
+        return ddrDoorbellGeomCoupledOk(last_doorbell_plxg, liveGeomSeq, live, false);
+    }
+};
+
+// FAULT REPRO: two publishes with sticky plan.seq=1 — second doorbell stays 1.
+inline bool ddrPlxgDoorbellFaultSecondPublishMismatches() {
+    DdrPlxgDoorbellSeqModel m;
+    m.fault_embed_plan_seq = true;
+    constexpr uint16_t kPlanSeq = 1; // native plan seed every construction
+    const uint16_t c1 = m.writePlxg(kPlanSeq);
+    m.kickDoorbell(kPlanSeq, c1, true);
+    if (c1 != 1 || m.last_doorbell_plxg != 1)
+        return false; // first may still match
+    const uint16_t c2 = m.writePlxg(kPlanSeq);
+    m.kickDoorbell(kPlanSeq, c2, true);
+    // Defect: doorbell=1, committed=2
+    return c2 == 2 && m.last_doorbell_plxg == 1 && !m.coupledOk(/*live*/2, true);
+}
+
+// PRODUCT: two sequential publishes embed exact committed generations.
+inline bool ddrPlxgDoorbellProductTwoPublishesMatch() {
+    DdrPlxgDoorbellSeqModel m;
+    constexpr uint16_t kPlanSeq = 1;
+    const uint16_t c1 = m.writePlxg(kPlanSeq);
+    m.kickDoorbell(kPlanSeq, c1, true);
+    if (c1 != 1 || m.last_doorbell_plxg != 1 || !m.coupledOk(c1, true))
+        return false;
+    const uint16_t c2 = m.writePlxg(kPlanSeq);
+    m.kickDoorbell(kPlanSeq, c2, true);
+    return c2 == 2 && m.last_doorbell_plxg == 2 && m.coupledOk(c2, true);
+}
+
+// PRODUCT: daemon restart (software_last=0) with retained DDR q0=N.
+inline bool ddrPlxgDoorbellProductDaemonRestartMatches() {
+    DdrPlxgDoorbellSeqModel m;
+    m.retained_valid = true;
+    m.retained_seq = 7; // prior process left seq=7 in DDR
+    m.software_last = 0; // new FpgaSpi object
+    constexpr uint16_t kPlanSeq = 1;
+    const uint16_t c = m.writePlxg(kPlanSeq);
+    m.kickDoorbell(kPlanSeq, c, true);
+    // plxgNextSeq(0, retained=7) → 8
+    return c == 8 && m.last_doorbell_plxg == 8 && m.coupledOk(8, true);
+}
+
+// FAULT under restart: plan seq=1 embedded while committed=8.
+inline bool ddrPlxgDoorbellFaultDaemonRestartMismatches() {
+    DdrPlxgDoorbellSeqModel m;
+    m.fault_embed_plan_seq = true;
+    m.retained_valid = true;
+    m.retained_seq = 7;
+    m.software_last = 0;
+    constexpr uint16_t kPlanSeq = 1;
+    const uint16_t c = m.writePlxg(kPlanSeq);
+    m.kickDoorbell(kPlanSeq, c, true);
+    return c == 8 && m.last_doorbell_plxg == 1 && !m.coupledOk(8, true);
+}
+
 // Maximum coded width the *shipping* RTL frame store can present (FRAME_W=640).
 // Typed as CodedWidth because acceptance checks coded stream size against it.
 // Numerically equal to presented 480p width; the type prevents using the

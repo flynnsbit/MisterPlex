@@ -374,8 +374,13 @@ private:
     void releaseDdrMap();
     bool ensurePlxgBootstrapMap();
     void releasePlxgBootstrapMap();
-    // Write atomic 5-qword PLXG at bootstrap phys 0x300FF800 (fence each qword).
-    bool writePlxgRecord(const uint64_t q[6], uint16_t seq);
+    // Write atomic 6-qword PLXG at bootstrap phys 0x300FF800 (seqlock).
+    // `seq` is advisory only — actual generation is computed (restart-safe) and
+    // written to q0. On success *committedSeqOut receives that generation; the
+    // doorbell MUST embed exactly this value (rd-duck B20 coupling), never the
+    // advisory plan.plxg_seq seed (often sticky 1).
+    bool writePlxgRecord(const uint64_t q[6], uint16_t seq,
+                         uint16_t* committedSeqOut = nullptr);
     bool ensureBitstreamDdrMap();
     void releaseBitstreamDdrMap();
     bool readBitstreamFpgaCount(uint32_t& readCount);
