@@ -1,6 +1,6 @@
 lane=w-path
 status=CRITICAL_PATH_PACK_READY
-tip=pending
+tip=2616c894
 (1) DMA gate cmds: docs/evidence/.../PARENT_COMMANDS_DMA_AND_ROUTE_A.md
     ddr_pl330_ingest_bench --dma-only --duration-s 25 --bank 1
 (2) Route A falsify: route_a_bank_probe --sink ram|bank (proxy output store)
