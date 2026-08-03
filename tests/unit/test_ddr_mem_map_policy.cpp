@@ -37,15 +37,18 @@ int main() {
     CHECK(ddrMemMapPolicyFromConf(false, true) == DdrMemMapPolicy::CachedExplicitFlush);
 
     // Sweep-3 bank arithmetic (parent true rc=0)
-    CHECK(kParentDdrBestBank720pFrameMs == 15.283);
-    CHECK(kParentDdrMappedBank720pMibps == 86.262);
+    CHECK(kParentDdrBestBank720pFrameMs == 14.974);
+    CHECK(kParentDdrMappedBank720pMibps == 88.045);
+    CHECK(kParentDdrMappedBank720pMibpsArchiveSweep3 == 86.262);
     CHECK(kParentDdrCoherentFlush720pFrameMs == 19.861);
-    CHECK(ddr720p24CoherentFlushPenaltyMs() > 4.5 &&
-          ddr720p24CoherentFlushPenaltyMs() < 4.6);
+    CHECK(ddr720p24CoherentFlushPenaltyMs() > 4.8 &&
+          ddr720p24CoherentFlushPenaltyMs() < 5.0);
     CHECK(!ddr720p24MappedPathFitsAt1500k());
     CHECK(!ddr720p24SerialPathFitsAt3500k());
     CHECK(!ddr720p24SerialPathFitsAt4000k());
     CHECK(!ddr720p24HostCopyIsReachableBankRate());
+    CHECK(ddrBankCpuStoreIsStructuralUncachedCeiling());
+    CHECK(ddr720p24CpuFullFrameMovePathIsDead());
     CHECK(!ddr720p24HostCopyCeilingFitsAt1500k()); // RETRACTED ship claim
     CHECK(ddr720p24MappedToHostCopyMsSaved() == 0.0);
     // Ordinary-RAM figure retained only as non-bank reference.

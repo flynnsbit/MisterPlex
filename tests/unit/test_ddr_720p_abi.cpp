@@ -103,10 +103,10 @@ int main() {
     const double ms720 = ddrPushMsAtRate(1382400u, kMappedMibps);
     const double ms480 = ddrPushMsAtRate(449280u, kMappedMibps);
     const double ms720archive = ddrPushMsAtRate(1382400u, kArchiveMibps);
-    CHECK(ms720 > 15.2 && ms720 < 15.4); // Sweep-3 best bank 15.283
+    CHECK(ms720 > 14.9 && ms720 < 15.1); // structural ~14.974 @ 88.045
     CHECK(ms720archive > 22.0 && ms720archive < 22.3); // old archive 22.15
-    CHECK(ms480 > 4.7 && ms480 < 5.1);   // ~4.96 @ 86.262
-    CHECK(kParentDdrBestBank720pFrameMs > 15.2 && kParentDdrBestBank720pFrameMs < 15.3);
+    CHECK(ms480 > 4.6 && ms480 < 5.0);   // canvas @ 88.045
+    CHECK(kParentDdrBestBank720pFrameMs > 14.9 && kParentDdrBestBank720pFrameMs < 15.1);
     // Push payload rate (decimal MB/s) at 24/30 fps.
     const double push24 = 1382400.0 * 24.0 / 1e6;
     const double push30 = 1382400.0 * 30.0 / 1e6;
@@ -246,22 +246,25 @@ int main() {
     CHECK(kFeedArchiveNonDecodeMs > 18.6 && kFeedArchiveNonDecodeMs < 18.7);
 
     // Sweep-3: best bank ~15.28 ms; serial FAIL all tiers; host-copy unreachable.
-    CHECK(kParentDdrMappedBankMibps == 86.262);
-    CHECK(kParentDdrBestBank720pFrameMs == 15.283);
+    CHECK(kParentDdrMappedBankMibps == 88.045);
+    CHECK(kParentDdrBestBank720pFrameMs == 14.974);
     CHECK(kParentDdrCoherentFlush720pFrameMs == 19.861);
-    CHECK(ddr720p24CoherentFlushPenaltyMs() > 4.5 &&
-          ddr720p24CoherentFlushPenaltyMs() < 4.6);
+    CHECK(ddr720p24CoherentFlushPenaltyMs() > 4.8 &&
+          ddr720p24CoherentFlushPenaltyMs() < 5.0); // vs 14.974 best
     CHECK(!ddr720p24MappedPathFitsAt1500k());
     CHECK(!ddr720p24SerialPathFitsAt2600k()); // product tier serial FAIL ~51.55
     CHECK(!ddr720p24SerialPathFitsAt3500k());
     CHECK(!ddr720p24SerialPathFitsAt4000k());
     CHECK(!ddr720p24HostCopyIsReachableBankRate());
+    CHECK(ddrBankCpuStoreMapFlagIsInert());
+    CHECK(ddrBankCpuStoreIsStructuralUncachedCeiling());
+    CHECK(ddr720p24CpuFullFrameMovePathIsDead());
     CHECK(!ddr720p24HostCopyCeilingFitsAt1500k()); // RETRACTED
     CHECK(ddr720p24MappedToHostCopyMsSaved() == 0.0);
     // Route A sketch (unproven contention): max(36.27,15.283)=36.27 PASS.
     CHECK(ddr720p24OverlapSketchFitsAt2600k());
-    CHECK(ddr720p24OverlapMaxDecodeCopyFits(36.27, 15.283));
-    CHECK(!ddr720p24OverlapMaxDecodeCopyFits(36.27, 15.283, 36.0));
+    CHECK(ddr720p24OverlapMaxDecodeCopyFits(36.27, 14.974));
+    CHECK(!ddr720p24OverlapMaxDecodeCopyFits(36.27, 14.974, 36.0));
     // Map policy: cached path must not ring doorbell without flush (red-green).
     CHECK(ddrMemMapConfPublishSafe(true, false));
     CHECK(ddrMemMapConfPublishSafe(true, true));
@@ -291,7 +294,7 @@ int main() {
     CHECK(fpgaBanks.budget.zero_arm_per_pixel);
     CHECK(ddr720p24ShipAcceptsZeroArmPerPixel(fpgaBanks.budget));
     // Entire canvas copy term counted as removed vs ARM-push baseline.
-    CHECK(fpgaBanks.budget.copy_ms_removed > 15.2 && fpgaBanks.budget.copy_ms_removed < 15.4);
+    CHECK(fpgaBanks.budget.copy_ms_removed > 14.9 && fpgaBanks.budget.copy_ms_removed < 15.1);
     CHECK(fpgaBanks.budget.known_ms_removed_floor >
           fpgaBanks.budget.copy_ms_removed); // + FEED scale
 
@@ -301,8 +304,8 @@ int main() {
         624, 480, plex720pDdrFrameGeometry(), kPlex720pDdrFramePhysBase);
     CHECK(fab480on720.valid);
     CHECK(fab480on720.publish_bytes == 449280u);
-    CHECK(fab480on720.budget.copy_ms_removed > 10.2 &&
-          fab480on720.budget.copy_ms_removed < 10.5); // 15.28-4.96 class
+    CHECK(fab480on720.budget.copy_ms_removed > 10.0 &&
+          fab480on720.budget.copy_ms_removed < 10.4); // ~14.97-canvas class
     CHECK(fab480on720.budget.known_ms_removed_floor >
           fab480on720.budget.copy_ms_removed); // includes scale floor
 

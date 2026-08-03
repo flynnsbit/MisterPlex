@@ -38,6 +38,8 @@ int main() {
     CHECK(near(kParentCleanDecodeAloneMs, 35.94));
     CHECK(near(kParentCleanDecodeMarginMs, 5.727));
     CHECK(kParentCleanDecodePlusMemPeerMs > kFrameBudget24Ms);
+    CHECK(kParentBankCpuStoreStructuralCeiling);
+    CHECK(near(kParentCleanBankStoreMibps, 88.045));
 
     // IMPORTANT: theoretical peak fit ≠ device PASS. Mark unknown for glass.
     // Device sustained fabric BW: parent post-fit only.

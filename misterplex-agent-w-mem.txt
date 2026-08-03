@@ -1,34 +1,17 @@
 agent=w-mem
 branch=w-mem-720p-abi
-HEAD=e44eebb7
-status=READY_FOR_INTEGRATION_FIT (macro OFF default)
+status=READY_FOR_INTEGRATION_FIT (macro OFF)
 
-## Parent control arm (cite this)
-- video_mode=0 (1280x720@60), core d1b24e0c
-- MEAN=14.4 STD=24.4 ORANGE_PX=12889 CYAN_PX=0 ACTIVE=923x717
-- ARM idle path: orange chevron, no cyan — fabric PASS needs CYAN_PX>=2000 (w-osd)
-- ACTIVE 923x717 = 480p-class letterbox; native 720p fabric canvas should grow ACTIVE
-- Beam stays 720p60 across fit so only core changes
+## Parent structural ceiling ACK
+- CPU→bank ~88 MiB/s STRUCTURAL (uncached; outside System RAM); map flags inert
+- decode+CPU move DEAD for 720p24; "faster copy" family closed
+- Route A into bank SUSPECT (w-path); PL330 open (w-path); fabric decode endgame
+- Fit path UNCHANGED — fabric owns pixels
 
-## Clean budget (all lanes)
-deadline 41.667 | decode 35.94 (+5.73) | copy 14.978
-serial 50.92 FAIL | any peer 45-48 FAIL | DMA UNMEASURED
+## Clean budget
+deadline 41.667 | decode 35.94 (+5.73) | CPU move 14.974 @ 88.045 MiB/s
 
-## w-mem deliverables for fit
-Option-C writer + moving pattern + fabric_bank_credit + host_bank_ingest_credit
-arbiter3 m0/m2 fair | BW theoretical in fabric_ddr_bandwidth.hpp
-FABRIC_DDR_WRITER default OFF
-
-## Parent enable (QSF uncomment)
-FABRIC_DDR_WRITER=1
-SV: fabric_ddr_writer, fabric_i420_pattern_src, fabric_ddr_write_path,
-    fabric_ddr_attach, fabric_bank_credit, host_bank_ingest_credit,
-    ddr_bus_arbiter3, fabric_luma_linebuf
-Optional without scaler: FABRIC_DDR_WRITER_480P=1
-
-## Parent measure post-fit
-make post-fit-hierarchy  # non-zero: attach, bank_credit, host_bank_ingest_credit,
-                         # writer, pattern_src, arbiter3
-scripts/hdmi_capture_idle.sh out.png
-# expect: motion; if w-osd cyan brackets enabled CYAN_PX>=2000; ACTIVE growth if 720p canvas
-# ARM must not DDR-push (publish_bytes=0 path)
+## Fit enable
+FABRIC_DDR_WRITER=1 + writer/pattern/path/attach/bank_credit/
+host_bank_ingest_credit/arbiter3/luma_linebuf
+post-fit-hierarchy + hdmi_capture_idle vs control CYAN_PX=0

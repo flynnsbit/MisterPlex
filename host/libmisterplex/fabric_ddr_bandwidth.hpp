@@ -2,10 +2,12 @@
 // Fabric-side DDR bandwidth budget (w-mem). Numbers from layout constants +
 // product clocks — NOT device-measured fabric BW (parent measures post-fit).
 //
-// Clean parent ARM baseline (2026-08-03, rogue burner killed):
+// Clean parent ARM baseline (2026-08-03):
 //   decode alone 35.94 ms/f  budget 41.667  margin +5.73
-//   copy bank1   14.978 ms/f  (88.022 MiB/s) — ABI exonerated
-//   decode+mem peer 46.57 FAIL; serial decode+copy 50.92 FAIL
+//   CPU bank store STRUCTURAL ~88 MiB/s (14.97 ms/f) — map flags inert
+//   (bank outside kernel System RAM → uncached /dev/mem always)
+//   decode+CPU move >=50.9 FAIL — closed. "Faster copy" family DEAD.
+//   Fabric decode = endgame; PL330 = open (w-path); Route A into bank SUSPECT.
 //
 // f2sdram peak (theoretical): clk_ddr * 8 B/cycle if 100% util.
 // Real efficiency unknown until parent measures — do not claim closes on glass.
@@ -94,7 +96,9 @@ constexpr double kCombinedFracPeak60 = kCombinedMBps60 / 720.0; // ~0.2304
 
 // ARM clean budget (parent).
 constexpr double kParentCleanDecodeAloneMs = 35.94;
-constexpr double kParentCleanCopyBank1Ms = 14.978;
+constexpr double kParentCleanCopyBank1Ms = 14.974; // --sync control
+constexpr double kParentCleanBankStoreMibps = 88.045;
+constexpr bool kParentBankCpuStoreStructuralCeiling = true;
 constexpr double kParentCleanDecodePlusMemPeerMs = 46.57;
 constexpr double kFrameBudget24Ms = 41.667;
 constexpr double kParentCleanDecodeMarginMs = kFrameBudget24Ms - kParentCleanDecodeAloneMs; // ~5.727
