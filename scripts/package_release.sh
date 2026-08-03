@@ -334,6 +334,25 @@ if [[ -f "$STAGE/cores/Plex.rbf" ]]; then
   fi
 fi
 
+# Behavioural vf delivery gate (parent hardware 2026-08-02, adversarial redesign):
+# packaged daemon's vf policy must pin OUTPUT I420 to coded-bank bytes for real
+# PMS deliveries including non-bank-exact 624x350, with non-dead chroma.
+# Artifact-only (not device state). No content-md5 allow/deny. Exit 7 refuse.
+# Scope: ARM producer only — not DDR/scanout (gate output states this).
+if [[ -f "$STAGE/bin/misterplexd" ]]; then
+  if ! vf_verdict="$("$ROOT/scripts/vf_delivery_behaviour_check.sh" "$STAGE/bin/misterplexd" 2>&1)"; then
+    {
+      echo "ERROR: refusing to package a daemon whose vf policy fails delivery behaviour."
+      echo "$vf_verdict"
+      echo "       Real PMS 624x350 into identity/unverified skip desyncs the raw pipe"
+      echo "       (green field / zero frames). Rebuild misterplexd with product FOAR"
+      echo "       into coded 624x480 and re-pin; do not ship a legacy identity policy."
+    } >&2
+    exit 7
+  fi
+  echo "package_release: vf delivery behaviour OK — $(printf '%s\n' "$vf_verdict" | grep 'VF_DELIVERY_OK' | tail -1)"
+fi
+
 mkdir -p "$OUT_DIR"
 # Extract as misterplex-<version>/ rather than leaking the staging directory name.
 # Force uid/gid 0 in the archive. /media/fat is exfat (no UNIX ownership);

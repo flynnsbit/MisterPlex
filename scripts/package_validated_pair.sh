@@ -103,6 +103,17 @@ printf '%s\n' "$pair_out" | grep -q 'id=ddr-c5382bee-509b0c75' || {
   exit 6
 }
 
+# Behavioural vf gate: the daemon being packaged must produce whole bank frames
+# and live chroma for a non-bank-exact delivery (real PMS RK6 is 624x350).
+# Parent 2026-08-02: the previous pin desynced here and rendered a green field
+# on glass while every other gate stayed green.
+if ! vf_out=$("$ROOT/scripts/vf_delivery_behaviour_check.sh" "$DAEMON" 2>&1); then
+  echo "ERROR: vf delivery behaviour gate refused daemon:" >&2
+  printf '%s\n' "$vf_out" >&2
+  exit 7
+fi
+printf '%s\n' "$vf_out"
+
 # ffmpeg: prefer tracked release_artifacts path, then env, then allow-no.
 if [ -z "${FFMPEG_ARMHF:-}" ]; then
   if [ -f "$ROOT/release_artifacts/ffmpeg-armhf/ffmpeg" ]; then
