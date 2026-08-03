@@ -1,0 +1,36 @@
+=== null_noscale ===
+ffmpeg_probe label=null_noscale exit=0 wall_s=0.091996 child_user_s=0.289697 child_sys_s=0.040546 child_cpu_s=0.330243 child_cpu_pct_1c=359.0 child_cpu_pct_2c=179.5 maxrss_kb=109056 nvcsw=7460 nivcsw=198 frame_bytes=0 frames=0 fps=0.000 bytes=0 pipe_size=-1 read_calls=0 read_ok_calls=0 read_eagain=0 read_zero=0 read_wall_s=0.000000 read_cpu_s=0.000000 syscall_cpu_s=0.000000 sleep_wall_s=0.000000 sleep_cpu_s=0.000000 copy_wall_s=0.000000 copy_cpu_s=0.000000 max_read=0 checksum=0
+=== null_scale ===
+ffmpeg_probe label=null_scale exit=0 wall_s=0.095748 child_user_s=0.305529 child_sys_s=0.046287 child_cpu_s=0.351816 child_cpu_pct_1c=367.4 child_cpu_pct_2c=183.7 maxrss_kb=107952 nvcsw=7800 nivcsw=114 frame_bytes=0 frames=0 fps=0.000 bytes=0 pipe_size=-1 read_calls=0 read_ok_calls=0 read_eagain=0 read_zero=0 read_wall_s=0.000000 read_cpu_s=0.000000 syscall_cpu_s=0.000000 sleep_wall_s=0.000000 sleep_cpu_s=0.000000 copy_wall_s=0.000000 copy_cpu_s=0.000000 max_read=0 checksum=0
+=== null_scale_pad ===
+ffmpeg_probe label=null_scale_pad exit=0 wall_s=0.082877 child_user_s=0.257925 child_sys_s=0.040191 child_cpu_s=0.298116 child_cpu_pct_1c=359.7 child_cpu_pct_2c=179.9 maxrss_kb=109360 nvcsw=7552 nivcsw=118 frame_bytes=0 frames=0 fps=0.000 bytes=0 pipe_size=-1 read_calls=0 read_ok_calls=0 read_eagain=0 read_zero=0 read_wall_s=0.000000 read_cpu_s=0.000000 syscall_cpu_s=0.000000 sleep_wall_s=0.000000 sleep_cpu_s=0.000000 copy_wall_s=0.000000 copy_cpu_s=0.000000 max_read=0 checksum=0
+=== raw_noscale ===
+ffmpeg_probe label=raw_noscale exit=0 wall_s=9.054509 child_user_s=0.405173 child_sys_s=0.123180 child_cpu_s=0.528353 child_cpu_pct_1c=5.8 child_cpu_pct_2c=2.9 maxrss_kb=134304 nvcsw=6653 nivcsw=87 frame_bytes=777600 frames=360 fps=39.759 bytes=279936000 pipe_size=65536 read_calls=8572 read_ok_calls=4276 read_eagain=4295 read_zero=1 read_wall_s=9.053936 read_cpu_s=0.122541 syscall_cpu_s=0.075443 sleep_wall_s=8.961427 sleep_cpu_s=0.037477 copy_wall_s=0.000000 copy_cpu_s=0.000000 max_read=65536 checksum=0
+=== raw_scale ===
+ffmpeg_probe label=raw_scale exit=0 wall_s=9.082907 child_user_s=0.388604 child_sys_s=0.134530 child_cpu_s=0.523134 child_cpu_pct_1c=5.8 child_cpu_pct_2c=2.9 maxrss_kb=138268 nvcsw=6613 nivcsw=64 frame_bytes=777600 frames=360 fps=39.635 bytes=279936000 pipe_size=65536 read_calls=8573 read_ok_calls=4283 read_eagain=4289 read_zero=1 read_wall_s=9.082432 read_cpu_s=0.111529 syscall_cpu_s=0.062531 sleep_wall_s=9.002608 sleep_cpu_s=0.040516 copy_wall_s=0.000000 copy_cpu_s=0.000000 max_read=65536 checksum=0
+PRODUCT_VF_RULE from ffmpeg_vf.hpp:428-438:
+  Always + exact claim + unverified → scale_applied=1 reason=force_unverified_claim_scale_pad_coded
+  Always + exact + verified → identity_skip scale_applied=0
+  Play-time freezes plan before banner → product is UNVERIFIED path → scale STILL IN -vf
+unverified force: scale_applied=1 identity_skip=0 reason=force_unverified_claim_scale_pad_coded vf=scale=960:540:force_original_aspect_ratio=decrease,pad=960:540:(ow-iw)/2:(oh-ih)/2
+verified force:   scale_applied=0 identity_skip=1 reason=force_exact_identity vf=(none)
+360 unverified:   scale_applied=1 identity_skip=0 reason=force_unverified_claim_scale_pad_coded vf=scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2
+label            cpu_ms  wall_ms  pct1c
+null_noscale       0.917    0.256  359.0 rc=0
+null_scale         0.977    0.266  367.4 rc=0
+null_scale_pad     0.828    0.230  359.7 rc=0
+raw_noscale        1.468   25.151    5.8 rc=0
+raw_scale          1.453   25.230    5.8 rc=0
+
+host null scale tax cpu_ms=0.060 (6.5% of null)
+host null scale+pad tax cpu_ms=-0.089
+host raw scale+pad tax cpu_ms=-0.014 (-1.0% of raw_id)
+device-class scale tax (map via decode 14.03): 0.92 ms
+device-class scale+pad tax (via decode): -1.36 ms
+device-class scale+pad tax (via full FF 26.08 raw ratio): -0.26 ms
+34.50 - best_scale_tax vs 33.333:
+  remove null_map 0.92 → total 33.58 margin -0.25 FAIL
+  remove null_pad_map -1.36 → total 35.86 margin -2.53 FAIL
+  remove raw_map -0.26 → total 34.76 margin -1.42 FAIL
+P-cost predict 0.5-4ms: null_map=0.92 raw_map=-0.26
+P-prize-close-gap: any PASS? False
