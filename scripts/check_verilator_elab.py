@@ -6,9 +6,14 @@ curated static Quartus subset scanner: it elaborates the product Quartus RTL
 file list with the product macro set and fails on Verilator errors physically
 reported against MiSTerPlex-owned RTL. It exists to catch undeclared identifiers
 and related build-stopping RTL mistakes before a scarce Quartus slot is used.
+
+Optional --qsf points macro discovery at an alternate Quartus settings file so
+the fit-release gate can elaborate with the *real* fit macro set rather than a
+hollow default still sitting in the live project QSF.
 """
 from __future__ import annotations
 
+import argparse
 import subprocess
 import sys
 from pathlib import Path
@@ -19,9 +24,20 @@ REFUSE_RC = 3
 REJECT_RC = 1
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument(
+        "--qsf",
+        type=Path,
+        default=None,
+        help="QSF whose active VERILOG_MACRO set is injected into elaboration "
+        "(default: fpga/Plex_MiSTer/Plex.qsf)",
+    )
+    args = ap.parse_args(argv)
+
     root = rtl_lint.ROOT
     project = rtl_lint.PROJECT
+    macro_qsf = args.qsf.resolve() if args.qsf is not None else None
     probe = subprocess.run(
         [str(root / "scripts" / "run_verilator.sh"), "--version"],
         cwd=root,
@@ -46,11 +62,11 @@ def main() -> int:
         print(probe.stdout, file=sys.stderr)
         return probe.returncode
 
-    files, macros = rtl_lint.discover_design()
+    files, macros = rtl_lint.discover_design(macro_qsf=macro_qsf)
     reportable = {rtl_lint.rel(p) for p in files if not rtl_lint.is_excluded(p)}
     plex_rel = "fpga/Plex_MiSTer/Plex.sv"
     module_files = [p for p in files if rtl_lint.rel(p) in reportable and rtl_lint.rel(p) != plex_rel]
-    rc, output = rtl_lint.run_verilator(module_files, macros)
+    rc, output = rtl_lint.run_verilator(module_files, macros, macro_qsf=macro_qsf)
 
     plex_files = [p for p in files if rtl_lint.rel(p) == plex_rel]
     top_output = ""
@@ -63,7 +79,9 @@ def main() -> int:
                 if p.suffix.lower() in {".sv", ".v"} and p not in plex_files
             }
         )
-        top_rc, top_output = rtl_lint.run_verilator(plex_files + all_context, macros)
+        top_rc, top_output = rtl_lint.run_verilator(
+            plex_files + all_context, macros, macro_qsf=macro_qsf
+        )
 
     (root / "build").mkdir(exist_ok=True)
     (root / "build" / "verilator_elab.log").write_text(
@@ -79,6 +97,8 @@ def main() -> int:
     errors = owned_errors + top_owned_errors
 
     print(f"Verilator elaboration: using {probe.stdout.strip()}")
+    if macro_qsf is not None:
+        print(f"Verilator elaboration: macro QSF = {macro_qsf}")
     print(
         f"Verilator elaboration: parsed {len(files)} Quartus RTL/context files; "
         f"checking {len(reportable)} owned files"

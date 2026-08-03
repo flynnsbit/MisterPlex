@@ -1,0 +1,10 @@
+# CONSTRUCTED fixture for fit-release gate GREEN path — NOT the live integ QSF.
+# Unique marker: FITGATE_FIXTURE_GREEN_ASCAL_960_20260803
+set_global_assignment -name VERILOG_MACRO "SDRAM_CLK_142=1"
+set_global_assignment -name VERILOG_MACRO "SDRAM_CL3=1"
+set_global_assignment -name VERILOG_MACRO "DDR_FRAME_STORE=1"
+set_global_assignment -name VERILOG_MACRO "FRAME_W=960"
+set_global_assignment -name VERILOG_MACRO "FRAME_H=540"
+set_global_assignment -name VERILOG_MACRO "FRAME_LINES_8=1"
+set_global_assignment -name VERILOG_MACRO "PRODUCT_NO_STUB=1"
+set_global_assignment -name VERILOG_MACRO "PRESENT_BEAM_960=1"

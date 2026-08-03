@@ -125,14 +125,23 @@ int main(int argc, char **argv)
 	Verilated::commandArgs(argc, argv);
 	auto *top = new Vpresent_true_de_count_tb;
 
-	// Product contract under test is always 960×540 true DE.
-	// Island fault only changes the *beam*; expectations stay product so RED fails.
-	const int CW = 960, CH = 540;
+	// Content raster: fit-release gate may override via -DFIT_GATE_CW/CH from QSF.
+	// Default remains product 960×540. Island fault only changes the *beam*.
+#if defined(FIT_GATE_CW)
+	const int CW = FIT_GATE_CW;
+#else
+	const int CW = 960;
+#endif
+#if defined(FIT_GATE_CH)
+	const int CH = FIT_GATE_CH;
+#else
+	const int CH = 540;
+#endif
 #ifdef PRESENT_BEAM_FAULT_ISLAND_1280
 	const int H_BEAM = 1280, V_BEAM = 720, H_TOT = 1650, V_TOT = 750;
 	const char *mode = "ISLAND_1280";
 #else
-	const int H_BEAM = 960, V_BEAM = 540, H_TOT = 1182, V_TOT = 564;
+	const int H_BEAM = CW, V_BEAM = CH, H_TOT = 1182, V_TOT = 564;
 	const char *mode = "PRODUCT_960";
 #endif
 	(void)H_BEAM;
@@ -146,12 +155,12 @@ int main(int argc, char **argv)
 	top->content_y0 = 0;
 	// Island mistake often programs canvas into win_h_de — product must use content size.
 #ifdef PRESENT_BEAM_FAULT_ISLAND_1280
-	// FAULT wiring: beam is 1280 DE; window told DE is 1280 (canvas) while content 960.
+	// FAULT wiring: beam is 1280 DE; window told DE is 1280 (canvas) while content stays CW×CH.
 	top->win_h_de = 1280;
 	top->win_v_de = 720;
 #else
-	top->win_h_de = 960;
-	top->win_v_de = 540;
+	top->win_h_de = CW;
+	top->win_v_de = CH;
 #endif
 
 	top->reset = 1;
@@ -194,19 +203,19 @@ int main(int argc, char **argv)
 		}                                                                           \
 	} while (0)
 
-	// Same product assertions always — island beam must RED these.
-	CHECK(de_w == 960, "de_w==960 (true content DE width)");
-	CHECK(de_h == 540, "de_h==540 (true content DE height)");
-	CHECK(st.de_pixels == 960 * 540, "de_pixels==518400");
+	// Assert measured DE == configured content (CW×CH). Island beam must RED these.
+	CHECK(de_w == CW, "de_w==content_w (true content DE width)");
+	CHECK(de_h == CH, "de_h==content_h (true content DE height)");
+	CHECK(st.de_pixels == CW * CH, "de_pixels==content area");
 	CHECK(de_w_uniform, "uniform DE width every active line");
-	CHECK(st.min_de_w == 960 && st.max_de_w == 960, "every line exactly 960 DE cycles");
+	CHECK(st.min_de_w == CW && st.max_de_w == CW, "every line exactly content_w DE cycles");
 	CHECK(true_de == 1, "true_de==1");
 #ifndef PRESENT_BEAM_FAULT_ISLAND_1280
 	CHECK(st.store_id_ok == 1, "identity store map on window cadence");
 	CHECK(st.store_id_fail == 0, "zero store identity fails");
-	CHECK(H_TOT == 1182 && V_TOT == 564, "w-clock primary 1182x564");
-	CHECK(H_TOT * V_TOT == 666648, "clks/frame 666648");
-	{
+	if (CW == 960 && CH == 540) {
+		CHECK(H_TOT == 1182 && V_TOT == 564, "w-clock primary 1182x564");
+		CHECK(H_TOT * V_TOT == 666648, "clks/frame 666648");
 		const double fps = 20e6 / double(H_TOT * V_TOT);
 		CHECK(fps > 29.95 && fps < 30.05, "fps ~30.0008");
 	}

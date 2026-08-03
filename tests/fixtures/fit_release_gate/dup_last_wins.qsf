@@ -1,0 +1,7 @@
+# last-wins: hollow first, correct second
+set_global_assignment -name VERILOG_MACRO "DDR_FRAME_STORE=1"
+set_global_assignment -name VERILOG_MACRO "FRAME_W=640"
+set_global_assignment -name VERILOG_MACRO "FRAME_H=480"
+set_global_assignment -name VERILOG_MACRO "FRAME_W=960"
+set_global_assignment -name VERILOG_MACRO "FRAME_H=540"
+set_global_assignment -name VERILOG_MACRO "PRESENT_BEAM_960=1"

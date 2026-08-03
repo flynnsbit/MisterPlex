@@ -83,16 +83,30 @@ def parse_verilog_macro(raw: str, source: str) -> Macro | None:
     return Macro(m.group(1), normalize_value(m.group(2)), source)
 
 
+def _source_label(path: Path, line_no: int) -> str:
+    try:
+        return f"{path.resolve().relative_to(ROOT)}:{line_no}"
+    except ValueError:
+        return f"{path.resolve()}:{line_no}"
+
+
 def discover_quartus_macros(qsf: Path = PROJECT / "Plex.qsf") -> dict[str, Macro]:
+    """Parse active VERILOG_MACRO assignments from a QSF.
+
+    Rules (evidence-backed by this parser + Verilator -D last-effective):
+    - `#` comments strip the assignment → macro absent
+    - Duplicate keys: **last active assignment wins** (dict overwrite)
+    """
     macros: dict[str, Macro] = {}
+    qsf = Path(qsf)
     for line_no, raw in enumerate(qsf.read_text(errors="ignore").splitlines(), 1):
         line = strip_hash_comment(raw)
         m = re.search(r"\bset_global_assignment\b.*?-name\s+VERILOG_MACRO\s+(.+)$", line)
         if not m:
             continue
-        macro = parse_verilog_macro(m.group(1), f"{qsf.relative_to(ROOT)}:{line_no}")
+        macro = parse_verilog_macro(m.group(1), _source_label(qsf, line_no))
         if macro:
-            macros[macro.name] = macro
+            macros[macro.name] = macro  # last wins
 
     build_id = PROJECT / "sys" / "build_id.tcl"
     if build_id.exists() and "`define BUILD_DATE" in build_id.read_text(errors="ignore"):

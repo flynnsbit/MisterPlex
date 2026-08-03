@@ -40,6 +40,9 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/decode_stub.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/stream_path.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_content_window.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_geom_latch.sv
+# ascal-native true content DE beam (PRESENT_BEAM_960). Required in the file
+# list whenever that macro is active — otherwise fit/elab misses the module.
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_beam_content_de.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_core.sv
 set_global_assignment -name SDC_FILE Plex.sdc
 set_global_assignment -name SYSTEMVERILOG_FILE Plex.sv

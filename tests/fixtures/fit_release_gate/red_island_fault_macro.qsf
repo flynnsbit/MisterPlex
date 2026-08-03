@@ -1,0 +1,6 @@
+# Otherwise-green macros + island fault — leg3 must reject true_de
+set_global_assignment -name VERILOG_MACRO "DDR_FRAME_STORE=1"
+set_global_assignment -name VERILOG_MACRO "FRAME_W=960"
+set_global_assignment -name VERILOG_MACRO "FRAME_H=540"
+set_global_assignment -name VERILOG_MACRO "PRESENT_BEAM_960=1"
+set_global_assignment -name VERILOG_MACRO "PRESENT_BEAM_FAULT_ISLAND_1280=1"

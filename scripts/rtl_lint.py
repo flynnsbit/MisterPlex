@@ -94,12 +94,30 @@ def parse_assignment_file(path: Path, seen: set[Path], ordered: list[Path], macr
                     ordered.append(source)
 
 
-def discover_design() -> tuple[list[Path], list[str]]:
+def discover_design(macro_qsf: Path | None = None) -> tuple[list[Path], list[str]]:
+    """Discover Quartus RTL file list + product macros.
+
+    File list always comes from the project Plex.qsf + files.qip (what the fit
+    compiles). Macros may be taken from an alternate QSF (fit-release gate) so
+    elaboration can be forced to the *intended* fit macro set without editing
+    the live project file mid-gate.
+    """
     ordered: list[Path] = []
-    macros: list[str] = []
+    file_macros: list[str] = []
     seen: set[Path] = set()
-    parse_assignment_file(PROJECT / "Plex.qsf", seen, ordered, macros)
-    parse_assignment_file(PROJECT / "files.qip", seen, ordered, macros)
+    parse_assignment_file(PROJECT / "Plex.qsf", seen, ordered, file_macros)
+    parse_assignment_file(PROJECT / "files.qip", seen, ordered, file_macros)
+    if macro_qsf is None:
+        return ordered, file_macros
+    # Prefer last-wins name=value map from check_define_parity for the gate QSF.
+    from check_define_parity import discover_quartus_macros
+
+    mapped = discover_quartus_macros(Path(macro_qsf))
+    macros = [
+        f"{name}={macro.value}"
+        for name, macro in sorted(mapped.items())
+        if name != "BUILD_DATE"
+    ]
     return ordered, macros
 
 
@@ -158,9 +176,34 @@ module altddio_out #(parameter extend_oe_disable = "", parameter intended_device
     return stub
 
 
-def run_verilator(files: list[Path], macros: list[str]) -> tuple[int, str]:
+def run_verilator(
+    files: list[Path],
+    macros: list[str],
+    *,
+    macro_qsf: Path | None = None,
+) -> tuple[int, str]:
+    """Lint/elaborate files with product macros.
+
+    Prefer explicit macro_qsf (fit gate). Else if macros list is provided as
+    NAME=VALUE strings from discover_design, emit -D from that list (last-wins
+    already applied). Else fall back to project Plex.qsf via verilator_define_args.
+    """
     stub = write_intel_stubs()
     ordered_files = sorted(files, key=lambda p: (is_excluded(p), rel(p) if p.exists() else str(p)))
+    if macro_qsf is not None:
+        define_args = verilator_define_args(Path(macro_qsf))
+    elif macros:
+        define_args = []
+        for raw in macros:
+            raw = raw.strip()
+            if not raw:
+                continue
+            if raw.startswith("-D"):
+                define_args.append(raw)
+            else:
+                define_args.append(f"-D{raw}")
+    else:
+        define_args = verilator_define_args()
     cmd = [
         str(ROOT / "scripts" / "run_verilator.sh"),
         "--lint-only", "-Wall", "-Wno-fatal",
@@ -169,7 +212,7 @@ def run_verilator(files: list[Path], macros: list[str]) -> tuple[int, str]:
         f"-I{ROOT / 'build' / 'rtl_lint_generated'}",
         f"-I{PROJECT}", f"-I{PROJECT / 'sys'}", f"-I{PROJECT / 'rtl'}",
         str(stub),
-    ] + verilator_define_args() + [str(p) for p in ordered_files]
+    ] + define_args + [str(p) for p in ordered_files]
     proc = subprocess.run(cmd, cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     return proc.returncode, proc.stdout
 
