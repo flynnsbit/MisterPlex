@@ -740,6 +740,9 @@ finalize_verdict() {
 # Fail-closed: if the baseline leg cannot be scored, that is a PRECOND of the
 # A/B itself — never evidence about the candidate. No auto-deploy; parent loads
 # baseline live first, then switches candidate (optional poll timeout).
+#
+# ACTIVE/DIFF/ORANGE/CYAN are glass (HDMI_OUT post-ascal). Core DE 960×540 does
+# not change PASS-A ACTIVE floors; 24 vs 30 Hz may only change pair DIFF character.
 
 wait_live_md5() {
   local exp="$1" timeout_s="${2:-0}" tag="$3"

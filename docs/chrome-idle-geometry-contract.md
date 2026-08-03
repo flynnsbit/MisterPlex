@@ -4,23 +4,24 @@
 **Macro:** `PLEX_FAB_IDLE` default **undefined/OFF** — integration fit bit-identical to
 nostub-proven path when macros at reset (chrome still in path; idle takeover OFF).
 
-## 1. Two geometry domains (do not conflate)
+## 1. Three geometry domains (do not conflate)
 
 | Domain | Owner | Units | What it programs |
 |--------|-------|-------|------------------|
-| **HDMI scanout** | MiSTer video_mode / ascal / `hdmi_width`·`hdmi_height` | output pixels | Where `plex_chrome` composites |
-| **Bank / content window** | w-scaler `present_geom_latch` (PLXG) + w-mem store | coded + display + window | DDR read map, pillar/letterbox |
+| **STORAGE** | w-mem bank / ARM decode | coded display 960×540, 777 600 B | DDR payload only — **never** PLXC canvas |
+| **CORE_DE** | core raster → ascal | near-term 960×540 DE | Pre-ascal video; chrome only if moved pre-ascal |
+| **HDMI_OUT** | MiSTer `video_mode` + ascal | post-ascal 1280×720@60 | **Where product `plex_chrome` paints** |
 
-**`plex_chrome` composites only in HDMI pixel space.** It takes
-`HDMI_WIDTH`/`HDMI_HEIGHT` from `sys_top` (`hdmi_width`/`hdmi_height` post-ascal).
-It does **not** read PLXG `coded_w`/`display_w`. A 1280×720 idle means the **HDMI
-mode** is 1280×720 (or ascal outputs that active area); chrome then sizes the
-chevron as `min(W,H)/3` centered.
+**Product wiring (`sys_top.v`):** `ascal → shadowmask → plex_chrome → osd → pins`.
+Chrome is on **HDMI_OUT**, not CORE_DE. Near-term fit: core emits 960×540; ascal
+upscales to glass 1280×720; chrome layout uses **1280×720** paint-beam ports.
 
-w-scaler's `present_geom_latch` `display_w`/`display_h` / content window describe
-**where video sits inside the frame store**, not the OSD plane. If those disagree
-with HDMI active size, video letterboxes — chrome still paints full HDMI raster
-when `idle_en`.
+It does **not** read PLXG `coded_w`/`display_w`. PLXG describes bank/window, not
+the OSD plane. Soft cost if chrome ever moves pre-ascal: ascal upscales glyphs
+~1.333× — refused for product unless measured fit forces it
+(`docs/fab-chrome-paint-domain.md`).
+
+w-scaler `present_geom_latch` content window is STORAGE/present, not chrome.
 
 ## 2. ABI ownership (collision — surface, do not silent-pick)
 

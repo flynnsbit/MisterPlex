@@ -27,8 +27,9 @@ static void tick(Vplex_chrome_idle720_tb* t) {
 }
 
 // Drive to absolute pixel (x,y) with DE; return dout after 1-cycle chrome pipe.
-// Assumes PPC=1. Resets beam via vs edge then walks.
+// Assumes PPC=1. Resets beam via vs edge then walks. Line width from mon_width.
 static uint32_t sampleAt(Vplex_chrome_idle720_tb* t, int tx, int ty, uint32_t din_color) {
+    const int line_w = static_cast<int>(t->mon_width) > 0 ? static_cast<int>(t->mon_width) - 1 : 1279;
     // vs rising resets counters
     t->de_in = 0;
     t->vs_in = 0;
@@ -42,7 +43,7 @@ static uint32_t sampleAt(Vplex_chrome_idle720_tb* t, int tx, int ty, uint32_t di
         t->de_in = 0;
         tick(t);
         t->de_in = 1;
-        const int x_end = (y == ty) ? tx : 1279;
+        const int x_end = (y == ty) ? tx : line_w;
         for (int x = 0; x <= x_end; ++x) {
             t->din = din_color;
             tick(t);
@@ -78,9 +79,13 @@ static bool goldenChevron(int x, int y, int ox, int oy, int size) {
 int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
     const char* mode = std::getenv("IDLE720_MODE");
-    // red: FAULT_480P_GEOM port clamp. legacy: FAULT_LEGACY_480P_LAYOUT paint.
+    // red: FAULT_480P_GEOM. legacy: 480p paint on 720p beam.
+    // hdmi_on_de: HDMI 1280×720 paint math on CORE_DE 960×540 beam (pivot class).
+    // corede: green pre-ascal insertion (beam+layout 960×540).
     const bool expect_fault = mode && std::strcmp(mode, "red") == 0;
     const bool expect_legacy = mode && std::strcmp(mode, "legacy") == 0;
+    const bool expect_hdmi_on_de = mode && std::strcmp(mode, "hdmi_on_de") == 0;
+    const bool expect_corede = mode && std::strcmp(mode, "corede") == 0;
 
     auto* t = new Vplex_chrome_idle720_tb;
     t->reset = 1;
@@ -121,8 +126,9 @@ int main(int argc, char** argv) {
     const unsigned sc = t->mon_body_scale;
     std::fprintf(stderr, "mon %ux%u scale=%u\n", mw, mh, sc);
 
-    // 720p product expectations
+    // Beam telemetry expectations (mon tracks paint beam, not fault layout)
     const bool geom720 = (mw == 1280 && mh == 720 && sc == 3);
+    const bool geom540 = (mw == 960 && mh == 540 && sc == 2);
     if (expect_fault) {
         // RED build: FAULT clamps HDMI ports to 624×480 → scale 2
         if (geom720)
@@ -138,6 +144,64 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "plex_chrome_idle720_tb: PASS (red fault engaged)\n");
         return 0;
     }
+
+    if (expect_hdmi_on_de) {
+        // Beam is CORE_DE 960×540; layout fault forces 1280×720 paint math.
+        // Correct DE chevron: size=180 ox=390 oy=180. HDMI math: size=240 ox=520 oy=240.
+        std::fprintf(stderr, "=== idle720 hdmi-layout-on-core-DE red-twin ===\n");
+        if (!geom540)
+            fail("hdmi_on_de expected mon 960x540 scale=2");
+        t->idle_sig_en = 0;
+        for (int i = 0; i < 2; ++i)
+            tick(t);
+        constexpr int kOxDe = 390, kOyDe = 180;
+        constexpr int kOxHdmi = 520, kOyHdmi = 240;
+        const uint32_t at_de = sampleAt(t, kOxDe, kOyDe, 0x00FF00);
+        const uint32_t at_hdmi = sampleAt(t, kOxHdmi, kOyHdmi, 0x00FF00);
+        std::fprintf(stderr, "hdmi_on_de pix (390,180)=%06x (520,240)=%06x\n", at_de, at_hdmi);
+        if (at_de == 0xE5A00D)
+            fail("hdmi_on_de still paints amber at CORE_DE chevron origin");
+        if (at_hdmi != 0xE5A00D)
+            fail("hdmi_on_de must paint amber at HDMI-derived origin on 540 beam");
+        if (fails == 0)
+            std::fprintf(stderr, "PASS idle720-hdmi-layout-on-core-de\n");
+        delete t;
+        if (fails) {
+            std::fprintf(stderr, "plex_chrome_idle720_tb HDMI_ON_DE: %d FAIL(s)\n", fails);
+            return 1;
+        }
+        std::fprintf(stderr, "plex_chrome_idle720_tb: PASS (hdmi layout on core DE fault engaged)\n");
+        return 0;
+    }
+
+    if (expect_corede) {
+        // Green pre-ascal insertion: beam+layout 960×540.
+        std::fprintf(stderr, "=== idle720 CORE_DE green (pre-ascal insertion) ===\n");
+        if (!geom540)
+            fail("corede expected mon 960x540 scale=2");
+        t->idle_sig_en = 0;
+        for (int i = 0; i < 2; ++i)
+            tick(t);
+        constexpr int kOx = 390, kOy = 180;
+        const uint32_t at = sampleAt(t, kOx, kOy, 0x00FF00);
+        std::fprintf(stderr, "corede pix (390,180)=%06x\n", at);
+        if (at != 0xE5A00D)
+            fail("corede chevron missing at 960x540 origin");
+        // HDMI origin must not be the chevron centre on this beam
+        const uint32_t at_hdmi = sampleAt(t, 520, 240, 0x00FF00);
+        if (at_hdmi == 0xE5A00D)
+            fail("corede must not use HDMI 720p chevron origin");
+        if (fails == 0)
+            std::fprintf(stderr, "PASS idle720-corede-geom\n");
+        delete t;
+        if (fails) {
+            std::fprintf(stderr, "plex_chrome_idle720_tb COREDE: %d FAIL(s)\n", fails);
+            return 1;
+        }
+        std::fprintf(stderr, "plex_chrome_idle720_tb: PASS (core DE green)\n");
+        return 0;
+    }
+
     if (!geom720)
         fail("expected mon 1280x720 scale=3");
 

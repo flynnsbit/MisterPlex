@@ -169,7 +169,7 @@ static void checkHudIsOutputNotCoded() {
     CHECK(minY > 540u - 80u); // still in lower band of 720, not mid-540
 }
 
-// Active-canvas derivation: 720p OK; 480p/coded refused (red twin of layout_w).
+// Active-canvas derivation: HDMI_OUT 720p OK; STORAGE/CORE_DE sizes refused for product.
 static void checkLayoutFromActiveHdmi() {
     using namespace misterplex::plex_chrome_cmds;
     int ow = 0, oh = 0, sc = 0;
@@ -178,13 +178,17 @@ static void checkLayoutFromActiveHdmi() {
     // 1080p glass also OK (scale 4 or 5)
     CHECK(chromeLayoutFromActiveHdmi(1920, 1080, ow, oh, sc));
     CHECK(ow == 1920 && oh == 1080 && sc == bodyScale(1080));
-    // RED: legacy 480p canvas must not become layout
+    // RED: legacy 480p canvas must not become product layout
     CHECK(!chromeLayoutFromActiveHdmi(624, 480, ow, oh, sc));
     CHECK(!chromeLayoutFromActiveHdmi(640, 480, ow, oh, sc));
+    // RED (ascal pivot class): CORE_DE/STORAGE 960×540 is not HDMI_OUT paint
     CHECK(!chromeLayoutFromActiveHdmi(960, 540, ow, oh, sc));
-    // BuildArgs must track active layout, not coded bank defaults for product path
+    CHECK(!chromeLayoutFromActiveHdmi(kStorageW, kStorageH, ow, oh, sc));
+    CHECK(!chromeLayoutFromActiveHdmi(kCoreDeW, kCoreDeH, ow, oh, sc));
+    // BuildArgs must track HDMI_OUT, not coded bank defaults
     BuildArgs a;
     CHECK(chromeLayoutFromActiveHdmi(kTargetOutW, kTargetOutH, a.outW, a.outH, sc));
+    CHECK(kTargetOutW == kHdmiOutW && kTargetOutH == kHdmiOutH);
     auto cmds = buildPlaybackHud(a);
     unsigned minY = 0xffff;
     for (uint64_t w : cmds) {
@@ -193,6 +197,25 @@ static void checkLayoutFromActiveHdmi() {
             minY = y;
     }
     CHECK(minY >= 572u); // bottom band of 720p (matches geometry contract)
+}
+
+// Three paint domains: STORAGE refused; CORE_DE only when domain tagged; HDMI_OUT product.
+static void checkPaintDomains() {
+    using namespace misterplex::plex_chrome_cmds;
+    int ow = 0, oh = 0, sc = 0;
+    CHECK(!chromeLayoutFromPaintDomain(PaintDomain::Storage, 960, 540, ow, oh, sc));
+    CHECK(!chromeLayoutFromPaintDomain(PaintDomain::Storage, 1280, 720, ow, oh, sc));
+    // CORE_DE green (pre-ascal insertion experiment only)
+    CHECK(chromeLayoutFromPaintDomain(PaintDomain::CoreDe, kCoreDeW, kCoreDeH, ow, oh, sc));
+    CHECK(ow == 960 && oh == 540 && sc == bodyScale(540));
+    CHECK(sc == 2);
+    // CORE_DE must not accept HDMI glass size as "core DE"
+    CHECK(!chromeLayoutFromPaintDomain(PaintDomain::CoreDe, 1280, 720, ow, oh, sc));
+    // HDMI_OUT product
+    CHECK(chromeLayoutFromPaintDomain(PaintDomain::HdmiOut, kHdmiOutW, kHdmiOutH, ow, oh, sc));
+    CHECK(ow == 1280 && oh == 720 && sc == 3);
+    // RED twin of FAULT_HDMI_LAYOUT_ON_CORE_DE: HdmiOut API on CORE_DE beam size
+    CHECK(!chromeLayoutFromPaintDomain(PaintDomain::HdmiOut, 960, 540, ow, oh, sc));
 }
 
 // Width-keyed defect class: coded sizes must never be accepted as HDMI chrome.
@@ -207,6 +230,8 @@ static void checkCodedSizeRejectedForChrome() {
     CHECK(isHdmiChromeRaster(1280, 720));
     CHECK(!isHdmiChromeRaster(960, 540));
     CHECK(!isHdmiChromeRaster(923, 717)); // control letterbox — not a chrome canvas setter
+    CHECK(isCoreDeChromeRaster(960, 540));
+    CHECK(!isCoreDeChromeRaster(1280, 720));
 
     // If HUD is wrongly built in coded 960×540, bar lives below mid-540 — RED shape.
     BuildArgs bad;
@@ -235,6 +260,7 @@ int main() {
     checkZeroPerPixelArmWhenLiveSource();
     checkStoppedHudHasBarAndState();
     check720pHudBudget();
+    checkPaintDomains();
     checkHudIsOutputNotCoded();
     checkLayoutFromActiveHdmi();
     checkCodedSizeRejectedForChrome();

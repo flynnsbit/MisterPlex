@@ -124,7 +124,7 @@ scripts/hdmi_score_pair.sh $EV/play-nodaemon-t0.png $EV/play-nodaemon-t1.png
 
 | Metric | PASS | vs control | Why |
 |--------|------|------------|-----|
-| **ACTIVE_W** | **≥ 1100** | control **923** | Geometry: fabric fills toward 1280-class |
+| **ACTIVE_W** | **≥ 1100** | control **923** | Geometry: fabric fills toward 1280-class **glass** (post-ascal HDMI_OUT). Core DE 960×540 does not retarget this gate. |
 | **ACTIVE_H** | **≥ 680** | control **717** is tall letterbox; width is the weak axis — **both** gates | H alone can false-green a pillar box |
 | **ACTIVE area** | **≥ 1100×680 = 748000** | control 923×717≈661k | Area must grow, not just reshape |
 | **FULLFILL** (informational) | ACTIVE ≥1240×700 | — | Coarse full-raster hint only; **does not** catch a 5-line crop |

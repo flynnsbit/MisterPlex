@@ -91,6 +91,12 @@ Fail-closed:
 Baseline leg **skips** the 540p daemon/delivery preflight (rel is pre-720p-class).
 Candidate leg runs full pair + `MEASURED_DELIVERY 960x540`.
 
+**Glass basis (ascal pivot):** capture ACTIVE/DIFF/ORANGE/CYAN are always
+**HDMI_OUT / post-ascal** (1280-class glass). Core DE near-term is 960×540;
+that does **not** retarget PASS-A `ACTIVE≥1100×680` or control `≈923×717`.
+24 vs 30 Hz core may change 1 s DIFF pair character, not the ACTIVE geometry basis.
+See `docs/fab-chrome-paint-domain.md`.
+
 ## Offline check (build host)
 
 ```bash

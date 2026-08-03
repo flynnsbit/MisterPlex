@@ -1,13 +1,27 @@
-// plex_chrome — post-ascal player chrome + fabric idle plane
+// plex_chrome — player chrome + fabric idle plane
 //
-// Owner: w-osd · 720p is the target, not a later bolt-on.
-// Insertion (sys_top.v HDMI path):
-//   ascal → shadowmask → plex_chrome → osd hdmi_osd → pins
+// Owner: w-osd
 //
-// Geometry: HDMI_WIDTH/HEIGHT are 12-bit (0..4095) — covers 1280×720 and 1920×1080.
-// No line buffers: a 720p luma line is exactly one M10K; we refuse that cost by
-// scanning the command list per pixel instead of buffering a scanline.
-// body_scale from HDMI_HEIGHT (half-even /240, clamp 2..8) → scale=3 @720p.
+// === THREE DOMAINS (do not conflate — parent 2026-08-03 pivot class) =========
+//   STORAGE  : DDR bank payload (product 960×540 I420 = 777600 B). Never a
+//              chrome canvas. PLXG describes window into this, not HUD coords.
+//   CORE_DE  : Raster the *core* emits into ascal (near-term fit: 960×540).
+//              Pre-ascal only. If chrome were inserted here it would be
+//              upscaled ~4/3 by ascal → softer glyphs on glass.
+//   HDMI_OUT : Post-ascal glass raster (HPS video_mode → 1280×720@60).
+//              *** Product chrome lives HERE (sys_top): ***
+//                ascal → shadowmask → plex_chrome → osd → pins
+//              Ports HDMI_WIDTH/HEIGHT are the *paint beam* (= HDMI_OUT).
+//              Layout derives from that beam — NOT from STORAGE, NOT from a
+//              frozen 1280 constant while the beam is something else.
+//
+// Architectural choice (stated, not discovered): keep chrome on HDMI_OUT so
+// glyphs/HUD are native glass pixels. Moving chrome to CORE_DE would save no
+// ALM of consequence and would soft-upscale chrome 1.333× — refuse unless a
+// measured fit forces pre-ascal insertion.
+//
+// Geometry: paint beam W/H are 12-bit (0..4095). body_scale from layout_h
+// (half-even /240, clamp 2..8) → scale=3 @720p HDMI_OUT, scale=2 @540 CORE_DE.
 //
 // ARM: semantic PLXC list only (doorbell + 0x130 / list @ +0x140). Never pixels.
 // When cfg_enable=0 and idle_en=0, video passes through unmodified (1-cycle delay).
@@ -44,12 +58,19 @@ module plex_chrome #(
     parameter int PX_PER_CLK = 1,  // 1|2|4 — default 1 product-safe
     // Red-twin only (sim): paint idle/HUD/beacon as if the canvas were legacy
     // 624×480 while the DE beam is still true HDMI (1280×720). mon_* always
-    // reports the real HDMI raster. Default 0 = product bit-identical.
-    parameter bit FAULT_LEGACY_480P_LAYOUT = 1'b0
+    // reports the real paint beam. Default 0 = product bit-identical.
+    parameter bit FAULT_LEGACY_480P_LAYOUT = 1'b0,
+    // Red-twin (ascal-pivot class): paint with HDMI_OUT 1280×720 layout math
+    // while the *beam* ports are CORE_DE 960×540. Catches "layout from glass
+    // while chrome sits on core DE" — 1.333× overflow / wrong origin.
+    // Mutually exclusive with FAULT_LEGACY_480P_LAYOUT in tests.
+    parameter bit FAULT_HDMI_LAYOUT_ON_CORE_DE = 1'b0
 ) (
     input  wire        clk_hdmi,
     input  wire        reset,
 
+    // Paint-beam size (product = HDMI_OUT post-ascal). Name is historical;
+    // these are NOT "always 1280×720" — they track the DE this module sees.
     input  wire [11:0] HDMI_WIDTH,
     input  wire [11:0] HDMI_HEIGHT,
 
@@ -108,14 +129,21 @@ module plex_chrome #(
     endfunction
 
     // Active *layout* canvas for paint (idle / demo HUD / beacon / glyph scale).
-    // Must track the HDMI DE raster in product builds. FAULT forces 480p-derived
-    // constants so a 720p beam paints the chevron/HUD in the wrong place — the
-    // red-twin that catches "looks basically right" geometry bugs.
-    wire [11:0] layout_w = FAULT_LEGACY_480P_LAYOUT ? 12'd624 : HDMI_WIDTH;
-    wire [11:0] layout_h = FAULT_LEGACY_480P_LAYOUT ? 12'd480 : HDMI_HEIGHT;
+    // Product: layout == paint beam (HDMI_WIDTH/HEIGHT). Faults force a wrong
+    // domain so red-twins catch silent geometry bugs:
+    //   FAULT_LEGACY_480P_LAYOUT     → 624×480 math on true beam
+    //   FAULT_HDMI_LAYOUT_ON_CORE_DE → 1280×720 math on CORE_DE beam (960×540)
+    wire [11:0] layout_w =
+        FAULT_LEGACY_480P_LAYOUT     ? 12'd624  :
+        FAULT_HDMI_LAYOUT_ON_CORE_DE ? 12'd1280 :
+                                       HDMI_WIDTH;
+    wire [11:0] layout_h =
+        FAULT_LEGACY_480P_LAYOUT     ? 12'd480 :
+        FAULT_HDMI_LAYOUT_ON_CORE_DE ? 12'd720 :
+                                       HDMI_HEIGHT;
     wire [3:0]  body_scale = body_scale_f(layout_h);
-    // Telemetry always reports the true glass raster (and its scale), never the
-    // fault layout — so mon alone cannot green-wash a 480p paint bug.
+    // Telemetry always reports the true *beam* (and its scale), never the
+    // fault layout — so mon alone cannot green-wash a domain bug.
     wire [3:0]  glass_scale = body_scale_f(HDMI_HEIGHT);
 
     // mon_* / chrome_hw always update so a post-fit hierarchy row cannot be

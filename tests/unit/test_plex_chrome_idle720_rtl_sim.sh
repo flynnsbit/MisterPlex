@@ -42,8 +42,8 @@ VFLAGS=(--cc --exe --build --top-module plex_chrome_idle720_tb
 BUILD_RED="$ROOT/build/verilator/plex_chrome_idle720_red"
 mkdir -p "$BUILD_RED"
 echo "=== BUILD idle720 RED (FAULT_480P_GEOM=1) ===" >&2
-"$RUN" "${VFLAGS[@]}" -GFAULT_480P_GEOM=1 -GFAULT_LEGACY_480P_LAYOUT=0 --Mdir "$BUILD_RED" "${SV[@]}"
-
+"$RUN" "${VFLAGS[@]}" -GFAULT_480P_GEOM=1 -GFAULT_LEGACY_480P_LAYOUT=0 \
+  -GFAULT_HDMI_LAYOUT_ON_CORE_DE=0 -GCORE_DE_BEAM=0 --Mdir "$BUILD_RED" "${SV[@]}"
 echo "=== RUN idle720 RED ===" >&2
 set +e
 OUT_RED="$(IDLE720_MODE=red "$BUILD_RED/Vplex_chrome_idle720_tb" 2>&1)"
@@ -58,7 +58,8 @@ assert_sim_executed "idle720-red" "$OUT_RED" "PASS idle720-red-mon" "plex_chrome
 BUILD_LEG="$ROOT/build/verilator/plex_chrome_idle720_legacy"
 mkdir -p "$BUILD_LEG"
 echo "=== BUILD idle720 LEGACY (FAULT_LEGACY_480P_LAYOUT=1) ===" >&2
-"$RUN" "${VFLAGS[@]}" -GFAULT_480P_GEOM=0 -GFAULT_LEGACY_480P_LAYOUT=1 --Mdir "$BUILD_LEG" "${SV[@]}"
+"$RUN" "${VFLAGS[@]}" -GFAULT_480P_GEOM=0 -GFAULT_LEGACY_480P_LAYOUT=1 \
+  -GFAULT_HDMI_LAYOUT_ON_CORE_DE=0 -GCORE_DE_BEAM=0 --Mdir "$BUILD_LEG" "${SV[@]}"
 
 echo "=== RUN idle720 LEGACY ===" >&2
 set +e
@@ -72,11 +73,50 @@ assert_sim_executed "idle720-legacy" "$OUT_LEG" \
   "plex_chrome_idle720_tb: PASS (legacy 480p layout fault engaged)"
 [[ "$RC_LEG" -eq 0 ]] || { echo "FAIL legacy rc=$RC_LEG" >&2; exit "$RC_LEG"; }
 
-# --- GREEN: full 720p idle ---
+# --- HDMI-on-CORE_DE RED: beam 960×540, layout forced 1280×720 (ascal-pivot class) ---
+BUILD_HOD="$ROOT/build/verilator/plex_chrome_idle720_hdmi_on_de"
+mkdir -p "$BUILD_HOD"
+echo "=== BUILD idle720 HDMI_ON_DE (FAULT_HDMI_LAYOUT_ON_CORE_DE=1) ===" >&2
+"$RUN" "${VFLAGS[@]}" -GFAULT_480P_GEOM=0 -GFAULT_LEGACY_480P_LAYOUT=0 \
+  -GFAULT_HDMI_LAYOUT_ON_CORE_DE=1 -GCORE_DE_BEAM=0 --Mdir "$BUILD_HOD" "${SV[@]}"
+
+echo "=== RUN idle720 HDMI_ON_DE ===" >&2
+set +e
+OUT_HOD="$(IDLE720_MODE=hdmi_on_de "$BUILD_HOD/Vplex_chrome_idle720_tb" 2>&1)"
+RC_HOD=$?
+set -e
+printf '%s\n' "$OUT_HOD"
+echo "idle720_hdmi_on_de true rc=$RC_HOD"
+assert_sim_executed "idle720-hdmi-on-de" "$OUT_HOD" \
+  "PASS idle720-hdmi-layout-on-core-de" \
+  "plex_chrome_idle720_tb: PASS (hdmi layout on core DE fault engaged)"
+[[ "$RC_HOD" -eq 0 ]] || { echo "FAIL hdmi_on_de rc=$RC_HOD" >&2; exit "$RC_HOD"; }
+
+# --- CORE_DE GREEN: pre-ascal insertion path (beam+layout 960×540) ---
+BUILD_CDE="$ROOT/build/verilator/plex_chrome_idle720_corede"
+mkdir -p "$BUILD_CDE"
+echo "=== BUILD idle720 CORE_DE green ===" >&2
+"$RUN" "${VFLAGS[@]}" -GFAULT_480P_GEOM=0 -GFAULT_LEGACY_480P_LAYOUT=0 \
+  -GFAULT_HDMI_LAYOUT_ON_CORE_DE=0 -GCORE_DE_BEAM=1 --Mdir "$BUILD_CDE" "${SV[@]}"
+
+echo "=== RUN idle720 CORE_DE ===" >&2
+set +e
+OUT_CDE="$(IDLE720_MODE=corede "$BUILD_CDE/Vplex_chrome_idle720_tb" 2>&1)"
+RC_CDE=$?
+set -e
+printf '%s\n' "$OUT_CDE"
+echo "idle720_corede true rc=$RC_CDE"
+assert_sim_executed "idle720-corede" "$OUT_CDE" \
+  "PASS idle720-corede-geom" \
+  "plex_chrome_idle720_tb: PASS (core DE green)"
+[[ "$RC_CDE" -eq 0 ]] || { echo "FAIL corede rc=$RC_CDE" >&2; exit "$RC_CDE"; }
+
+# --- GREEN: full HDMI_OUT 720p idle (product insertion) ---
 BUILD_G="$ROOT/build/verilator/plex_chrome_idle720"
 mkdir -p "$BUILD_G"
-echo "=== BUILD idle720 GREEN ===" >&2
-"$RUN" "${VFLAGS[@]}" -GFAULT_480P_GEOM=0 -GFAULT_LEGACY_480P_LAYOUT=0 --Mdir "$BUILD_G" "${SV[@]}"
+echo "=== BUILD idle720 GREEN (HDMI_OUT) ===" >&2
+"$RUN" "${VFLAGS[@]}" -GFAULT_480P_GEOM=0 -GFAULT_LEGACY_480P_LAYOUT=0 \
+  -GFAULT_HDMI_LAYOUT_ON_CORE_DE=0 -GCORE_DE_BEAM=0 --Mdir "$BUILD_G" "${SV[@]}"
 
 echo "=== RUN idle720 GREEN ===" >&2
 set +e

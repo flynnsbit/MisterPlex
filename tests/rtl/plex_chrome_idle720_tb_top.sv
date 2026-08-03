@@ -1,12 +1,16 @@
-// Native 1280×720 fabric idle + vsync phase — PX_PER_CLK=1 and fault hooks.
-// FAULT_480P_GEOM=1 clamps HDMI mon ports to 624×480 (old red path).
-// FAULT_LEGACY_480P_LAYOUT=1 keeps DE at 1280×720 but paints with 480p-derived
-// layout constants — the stronger red-twin (mediocre wrong place, not mon lie).
+// Fabric idle layout red-twins + green HDMI_OUT path.
+// FAULT_480P_GEOM=1 clamps beam to 624×480 (old red path).
+// FAULT_LEGACY_480P_LAYOUT=1: beam 1280×720, paint 480p-derived.
+// FAULT_HDMI_LAYOUT_ON_CORE_DE=1: beam CORE_DE 960×540, paint HDMI 1280×720 math
+//   (ascal-pivot class — wrong domain).
+// CORE_DE_BEAM=1 (green optional): beam+layout 960×540 (pre-ascal insertion sim).
 `timescale 1ns / 1ps
 
 module plex_chrome_idle720_tb #(
     parameter bit FAULT_480P_GEOM = 1'b0,
     parameter bit FAULT_LEGACY_480P_LAYOUT = 1'b0,
+    parameter bit FAULT_HDMI_LAYOUT_ON_CORE_DE = 1'b0,
+    parameter bit CORE_DE_BEAM = 1'b0,
     parameter int PX_PER_CLK = 1
 ) (
     input  wire        clk,
@@ -29,9 +33,15 @@ module plex_chrome_idle720_tb #(
     output wire [3:0]  mon_body_scale
 );
 
-    // Product geometry under test: 1280×720. Fault path pretends 480p clamp.
-    wire [11:0] geom_w = FAULT_480P_GEOM ? 12'd624 : 12'd1280;
-    wire [11:0] geom_h = FAULT_480P_GEOM ? 12'd480 : 12'd720;
+    // Paint beam: product HDMI_OUT 1280×720; CORE_DE / hdmi-on-de fault 960×540.
+    wire [11:0] geom_w =
+        FAULT_480P_GEOM              ? 12'd624  :
+        (FAULT_HDMI_LAYOUT_ON_CORE_DE || CORE_DE_BEAM) ? 12'd960 :
+                                         12'd1280;
+    wire [11:0] geom_h =
+        FAULT_480P_GEOM              ? 12'd480 :
+        (FAULT_HDMI_LAYOUT_ON_CORE_DE || CORE_DE_BEAM) ? 12'd540 :
+                                         12'd720;
 
     wire        list_we;
     wire [7:0]  list_waddr;
@@ -75,7 +85,8 @@ module plex_chrome_idle720_tb #(
         .MAX_CMDS(48),
         .HIT_SCAN(48),
         .PX_PER_CLK(PX_PER_CLK),
-        .FAULT_LEGACY_480P_LAYOUT(FAULT_LEGACY_480P_LAYOUT)
+        .FAULT_LEGACY_480P_LAYOUT(FAULT_LEGACY_480P_LAYOUT),
+        .FAULT_HDMI_LAYOUT_ON_CORE_DE(FAULT_HDMI_LAYOUT_ON_CORE_DE)
     ) u_chrome (
         .clk_hdmi(clk),
         .reset(reset),

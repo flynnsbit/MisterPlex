@@ -1,10 +1,18 @@
 #pragma once
 // plex_chrome_cmds — ARM→FPGA semantic command list (PLXC).
 //
-// 720p-first: default geometry is 1280×720. Fabric owns body_scale from
-// HDMI_HEIGHT. ARM emits geometry in OUTPUT pixels and never writes overlay
-// pixels when plane is live — the whole point is evacuating ARM ms/frame so
-// decode can spend the 41.7 ms budget on 720p content, not HUD bake.
+// === THREE DOMAINS (keep separate — storage / DE / glass) ==================
+//   STORAGE  : DDR bank (product 960×540 I420). Never PLXC canvas.
+//   CORE_DE  : Core→ascal raster (near-term fit 960×540). Pre-ascal only.
+//   HDMI_OUT : Post-ascal glass (1280×720@60). *** Product chrome paints here ***
+//              (sys_top: ascal → shadowmask → plex_chrome → osd).
+//
+// Product PLXC coordinates are HDMI_OUT pixels. Fabric owns body_scale from
+// the paint beam height. ARM never writes overlay pixels when plane is live.
+//
+// If chrome were moved pre-ascal onto CORE_DE, layout must switch to 960×540
+// and ascal would soft-upscale chrome ~1.333× — refused for product unless a
+// measured fit forces it (see docs/fab-chrome-paint-domain.md).
 //
 // Packing MUST match fpga/Plex_MiSTer/rtl/plex_chrome.sv.
 
@@ -28,18 +36,30 @@ inline constexpr int kHitScan = 48; // match RTL HIT_SCAN
 inline constexpr int kFontW = 8;
 inline constexpr int kFontH = 8;
 inline constexpr int kFontAdvance = 9; // 8 + 1 gap
-// Product target raster (parameter, not a 480p-era leftover).
-// OUTPUT / HDMI space only — never coded bank (960×540) or legacy 624×480.
-inline constexpr int kTargetOutW = 1280;
-inline constexpr int kTargetOutH = 720;
+// Named domain sizes (product path numbers — not interchangeable).
+inline constexpr int kStorageW = 960;   // DDR bank / coded display after SPS crop
+inline constexpr int kStorageH = 540;
+inline constexpr int kCoreDeW  = 960;   // core→ascal DE (near-term ascal fit)
+inline constexpr int kCoreDeH  = 540;
+inline constexpr int kHdmiOutW = 1280;  // post-ascal glass / product chrome canvas
+inline constexpr int kHdmiOutH = 720;
 
-// True when (w,h) is a known *coded/bank* size that must not drive PLXC geometry.
-// Defect class (parent 2026-08-03): code that keys "720p work" on source width
-// (e.g. coded_w>=1280) while product source is 960×540 and only glass is 1280×720.
+// Product target = HDMI_OUT (post-ascal paint). Alias kept for call sites.
+inline constexpr int kTargetOutW = kHdmiOutW;
+inline constexpr int kTargetOutH = kHdmiOutH;
+
+enum class PaintDomain : uint8_t {
+    Storage = 0, // illegal for PLXC
+    CoreDe  = 1, // only if chrome moves pre-ascal
+    HdmiOut = 2, // product
+};
+
+// True when (w,h) is STORAGE / coded bank — must not drive product HDMI chrome.
+// Defect class: keying "720p work" on source width while glass is 1280×720.
 inline bool isCodedBankSizeNotHdmi(int w, int h) {
     if (w <= 0 || h <= 0)
         return false;
-    if (w == 960 && h == 540)
+    if (w == kStorageW && h == kStorageH)
         return true;
     if (w == 624 && h == 480)
         return true;
@@ -53,12 +73,17 @@ inline bool isCodedBankSizeNotHdmi(int w, int h) {
     return false;
 }
 
-// HDMI/output-class raster suitable for PLXC / fabric chrome composite.
+// HDMI_OUT-class raster suitable for product PLXC composite (post-ascal).
 inline bool isHdmiChromeRaster(int w, int h) {
     if (isCodedBankSizeNotHdmi(w, h))
         return false;
     // Loose floor: below ~720p-class letterbox control is not an HDMI chrome canvas
     return w >= 1100 && h >= 680;
+}
+
+// CORE_DE-class raster (960×540) — legal only for pre-ascal chrome insertion.
+inline bool isCoreDeChromeRaster(int w, int h) {
+    return w == kCoreDeW && h == kCoreDeH;
 }
 
 enum class Op : uint8_t { End = 0, Rect = 1, Glyph = 2, RectPal = 3 };
@@ -90,18 +115,42 @@ inline int bodyScale(int hdmiH) {
     return raw;
 }
 
-// Derive PLXC paint canvas from the *active HDMI* raster only.
-// Returns false for coded/bank sizes (960×540, 624×480, …) — those must never
-// drive HUD coordinates. scale = bodyScale(outH) matching RTL layout_h path.
+// Derive PLXC paint canvas from the active *paint domain* raster.
+// Product: PaintDomain::HdmiOut (post-ascal). Storage always refused.
+// CoreDe accepted only when domain==CoreDe (pre-ascal insertion experiments).
+inline bool chromeLayoutFromPaintDomain(PaintDomain domain, int beamW, int beamH,
+                                        int& outW, int& outH, int& scale) {
+    outW = outH = scale = 0;
+    // STORAGE is never a chrome canvas (bank payload ≠ paint beam).
+    if (domain == PaintDomain::Storage)
+        return false;
+    if (domain == PaintDomain::HdmiOut) {
+        // Product: post-ascal glass only. 960×540 CORE_DE/STORAGE refused here.
+        if (!isHdmiChromeRaster(beamW, beamH))
+            return false;
+        outW = beamW;
+        outH = beamH;
+        scale = bodyScale(beamH);
+        return true;
+    }
+    if (domain == PaintDomain::CoreDe) {
+        // Pre-ascal insertion only. Same numbers as STORAGE but different domain —
+        // caller must opt in; product path uses HdmiOut.
+        if (!isCoreDeChromeRaster(beamW, beamH))
+            return false;
+        outW = beamW;
+        outH = beamH;
+        scale = bodyScale(beamH);
+        return true;
+    }
+    return false;
+}
+
+// Product helper: HDMI_OUT paint only (refuses STORAGE / CORE_DE sizes).
 inline bool chromeLayoutFromActiveHdmi(int hdmiW, int hdmiH, int& outW, int& outH,
                                        int& scale) {
-    outW = outH = scale = 0;
-    if (!isHdmiChromeRaster(hdmiW, hdmiH))
-        return false;
-    outW = hdmiW;
-    outH = hdmiH;
-    scale = bodyScale(hdmiH);
-    return true;
+    return chromeLayoutFromPaintDomain(PaintDomain::HdmiOut, hdmiW, hdmiH, outW, outH,
+                                       scale);
 }
 
 inline uint64_t packGlyph(uint16_t x, uint16_t y, char code) {
