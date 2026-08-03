@@ -1,5 +1,6 @@
 // Unit tests for slim plex_resolve (no network required for pure helpers).
 #include "libmisterplex/ddr_frame_layout.hpp"
+#include "libmisterplex/ddr_present_bank.hpp"
 #include "libmisterplex/osd_menu.hpp"
 #include "libmisterplex/plxg_record.hpp"
 #include "libmisterplex/pms_delivery_geom.hpp"
@@ -442,6 +443,55 @@ int main() {
         ch = 720;
         CHECK(!clampCodedSizeToRouteBHostCap(cw, ch, /*multi*/ true));
         CHECK(cw == 1280 && ch == 720);
+
+        // resolve → target size (no silent 1280 under 1ppc)
+        using misterplex::routeBDefaultDecisionResolution;
+        using misterplex::routeBHdTranscodeTargetSize;
+        using misterplex::routeBResolvedSizeLegal;
+        int tw = 0, th = 0;
+        CHECK(std::string(routeBHdTranscodeTargetSize(false, &tw, &th)) == "540p");
+        CHECK(tw == 960 && th == 540);
+        CHECK(routeBResolvedSizeLegal(tw, th, 24, false));
+        CHECK(std::string(routeBDefaultDecisionResolution(false)) == "960x540");
+        CHECK(std::string(routeBDefaultDecisionResolution(true)) == "1280x720");
+        // NEG: lab 720 tier only with multi; bare 1280 illegal on Route-B 1ppc
+        CHECK(!routeBResolvedSizeLegal(1280, 720, 24, false));
+        tw = th = 0;
+        CHECK(std::string(routeBHdTranscodeTargetSize(true, &tw, &th)) == "720p");
+        CHECK(tw == 1280 && th == 720);
+        // multi lifts size ceiling; pure 1ppc pixel budget still fails @24 (honest)
+        CHECK(!routeBContentDeFitsFps(1280, 720, 24, true));
+
+        // Cross-contract: HD target → storage geom → beam ceiling (publish side).
+        {
+            using misterplex::DdrPublishFrame;
+            using misterplex::DdrPublishPlan;
+            using misterplex::ddrFrameGeometryForFpgaPresent;
+            using misterplex::makeDdrPublishPlan;
+            using misterplex::unpackPlxgQ2;
+            using misterplex::yuv420pFrameBytes;
+            int rw = 0, rh = 0;
+            routeBHdTranscodeTargetSize(false, &rw, &rh);
+            CHECK(rw == 960 && rh == 540);
+            const auto g = ddrFrameGeometryForFpgaPresent(rw, rh);
+            CHECK(g.coded_width.get() == 960 && g.coded_height.get() == 540);
+            CHECK(routeBResolvedSizeLegal(g.coded_width.get(), g.coded_height.get(), 24, false));
+            const size_t bytes = yuv420pFrameBytes(g.coded_width, g.coded_height);
+            std::vector<uint8_t> yuv(bytes, 0x10);
+            DdrPublishFrame f{yuv.data(), yuv.size(), g, misterplex::DdrFrameFormat::Yuv420p};
+            DdrPublishPlan plan{};
+            std::string err;
+            CHECK(makeDdrPublishPlan(f, 0, plan, &err));
+            int pcw = 0, pch = 0, deW = 0, deH = 0;
+            unpackPlxgQ2(plan.plxg_q[2], &deW, &deH, &pcw, &pch);
+            CHECK(pcw == 960 && pch == 540);
+            CHECK(deW == 960 && deH == 540);
+            CHECK(routeBContentDeFitsFps(deW, deH, 24, false));
+            // NEG: publishing 1280 DE must fail beam ceiling under Route-B 1ppc
+            CHECK(!routeBContentDeFitsFps(1280, 720, 24, false));
+            CHECK(!routeBResolvedSizeLegal(1280, 720, 24, false));
+        }
+
         // miss #15: HD xcode class is ARM for fabric even if attr says CB
         CHECK(!plexDeliveryIsFabricEligible(true, "constrained baseline"));
         CHECK(plexDeliveryIsFabricEligible(false, "constrained baseline"));
@@ -454,6 +504,7 @@ int main() {
         CHECK(thin.find("X-Plex-Product:") == std::string::npos);
         CHECK(thin.find("X-Plex-Client-Identifier:") == std::string::npos);
 
+        // Lab 720 profile still builds URLs (multi/lab-only); product default is 540.
         WeakLadder w720;
         applyPlexTranscodeProfile("720p", w720);
         const auto decDp =
@@ -465,6 +516,13 @@ int main() {
         CHECK(decDp.find("hasMDE=1") != std::string::npos);
         CHECK(decDp.find("location=lan") != std::string::npos);
         CHECK(decDp.find("videoResolution=1280x720") != std::string::npos);
+        WeakLadder wDef;
+        wDef.videoResolution = routeBDefaultDecisionResolution(false);
+        const auto decDef =
+            buildUniversalDecisionUrl("http://pms.example:32400", "/library/metadata/36", "tok",
+                                      "sid-def", wDef, /*allow_direct=*/true);
+        CHECK(decDef.find("videoResolution=960x540") != std::string::npos);
+        CHECK(decDef.find("videoResolution=1280x720") == std::string::npos);
         const auto decXc =
             buildUniversalDecisionUrl("http://pms.example:32400", "/library/metadata/2", "tok",
                                       "sid-xc", w720, /*allow_direct=*/false);

@@ -66,6 +66,10 @@ inline const char* pathPublicSymbolRollCall() {
     (void)routeBContentDeFitsFps(1280, 720, 24); // must remain callable; returns false
     (void)selectPlayDeliveryRegime(1920, 1080, true, true, false);
     (void)playDeliveryRegimeName(PlayDeliveryRegime::TranscodeHd720);
+    int rbw = 0, rbh = 0;
+    (void)routeBHdTranscodeTargetSize(false, &rbw, &rbh);
+    (void)routeBDefaultDecisionResolution(false);
+    (void)routeBResolvedSizeLegal(960, 540, 24, false);
     (void)classifyPathScaleClass("transcode_request", false, true, false);
     (void)pathScaleClassName(PathScaleClass::ArmScaleFallback);
     uint8_t fps = 0;

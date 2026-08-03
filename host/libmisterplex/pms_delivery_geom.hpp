@@ -400,6 +400,37 @@ inline PlayDeliveryRegime selectPlayDeliveryRegime(int media_w, int media_h,
     return PlayDeliveryRegime::ForceUniversal;
 }
 
+// Product HD xcode target under Route-B first-fit (rd-duck + w-clock 4f1a6a28).
+// multi_pixel=0 → 960×540 only (never silent 1280 DE). multi=1 → lab 1280×720.
+// Returns profile name applied ("540p" / "720p"); fills request/store WxH.
+inline const char* routeBHdTranscodeTargetSize(bool present_multi_pixel, int* out_w,
+                                              int* out_h) {
+    if (present_multi_pixel) {
+        if (out_w)
+            *out_w = 1280;
+        if (out_h)
+            *out_h = 720;
+        return "720p";
+    }
+    if (out_w)
+        *out_w = kRouteBHostContentMaxW;
+    if (out_h)
+        *out_h = kRouteBHostContentMaxH;
+    return "540p";
+}
+
+// Default decision/start ceiling when conf left videoResolution empty.
+// Must not default to 1280 under Route-B 1ppc (beam clamp + Option-C diverge).
+inline const char* routeBDefaultDecisionResolution(bool present_multi_pixel) {
+    return present_multi_pixel ? "1280x720" : "960x540";
+}
+
+// True when a resolved/publish coded size is legal under the beam contract.
+inline bool routeBResolvedSizeLegal(int coded_w, int coded_h, int fps = 24,
+                                    bool present_multi_pixel = false) {
+    return routeBHostMayEmitContentSize(coded_w, coded_h, fps, present_multi_pixel);
+}
+
 // PMS may tweak an already 16-aligned request by ±2 (MB) — measured class:
 // 624x352 request → 626x352 delivery. Aligned request ≠ aligned delivery guarantee.
 // Universal path must keep ARM scale/pad until measured geometry is known.

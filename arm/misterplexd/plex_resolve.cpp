@@ -1063,8 +1063,11 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
         std::string dpDecisionDetail;
         {
             WeakLadder weakDp = weak;
+            // Decision ceiling only — PMS never upscales. Route-B default is
+            // 960×540 (not 1280) so conf-empty cannot advertise a RED DE tier.
             if (weakDp.videoResolution.empty())
-                weakDp.videoResolution = "1280x720";
+                weakDp.videoResolution =
+                    routeBDefaultDecisionResolution(multiPixel);
             if (weakDp.maxVideoBitrateKbps <= 0)
                 weakDp.maxVideoBitrateKbps = 20000;
             if (weakDp.videoQuality <= 0)
@@ -1157,16 +1160,18 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
         WeakLadder weakEff = weak;
         if (regime == PlayDeliveryRegime::TranscodeHd720) {
             r.playRegime = playDeliveryRegimeName(PlayDeliveryRegime::TranscodeHd720);
+            int tw = 0, th = 0;
+            const char* tier = routeBHdTranscodeTargetSize(multiPixel, &tw, &th);
+            applyPlexTranscodeProfile(tier, weakEff);
+            r.requestWidth = tw;
+            r.requestHeight = th;
+            r.storeWidth = tw;
+            r.storeHeight = th;
+            r.sourceAwareApplied = true;
             if (multiPixel) {
-                applyPlexTranscodeProfile("720p", weakEff);
-                r.requestWidth = kPlex720pCodedWidth.get();
-                r.requestHeight = kPlex720pCodedHeight.get();
                 r.sourceAwarePolicy = "transcode_hd_720_multi_pixel";
             } else {
                 // LOUD fallback: never silently emit 1280 DE on Route-B 1ppc.
-                applyPlexTranscodeProfile("540p", weakEff);
-                r.requestWidth = kPlex540pCodedWidth.get();
-                r.requestHeight = kPlex540pCodedHeight.get();
                 r.sourceAwarePolicy = "transcode_hd_route_b_540";
                 if (!r.detail.empty())
                     r.detail += "; ";
@@ -1175,9 +1180,15 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
                             " → request 960x540 (1280 DE forbidden @1ppc/20MHz; "
                             "PRESENT_MULTI_PIXEL=0)";
             }
-            r.storeWidth = r.requestWidth;
-            r.storeHeight = r.requestHeight;
-            r.sourceAwareApplied = true;
+            // Hard invariant: product HD target must fit beam without multi.
+            if (!routeBResolvedSizeLegal(r.requestWidth, r.requestHeight, 24, multiPixel)) {
+                r.ok = false;
+                r.detail = "ROUTE_B_HOST_CAP refuse: HD target " +
+                           std::to_string(r.requestWidth) + "x" +
+                           std::to_string(r.requestHeight) +
+                           " exceeds beam (PRESENT_MULTI_PIXEL required for 1280)";
+                return r;
+            }
         } else if (r.mediaWidth > 0 && r.mediaHeight > 0) {
             int maxW = 0, maxH = 0;
             parseResolution(weak.videoResolution, maxW, maxH);
