@@ -130,20 +130,21 @@ int main() {
         expect(!makeDdrPublishPlan(bad, 0, plan, &err), "NEG 320 bytes vs 480 geom rejected");
     }
 
-    // rd-duck: Direct-Part 426→432 coded≠display must survive makeDdrPublishPlan.
-    // Payload is the padded bank (432×240); PLXG keeps display/H_DE=426 + crop_left=2.
+    // rd-duck: Direct-Part 426→432 coded≠display must survive makeDdrPublishPlan
+    // and host→record→mux latch. Canvas H_DE=432, content DE=426 at x0=2, cropL=2.
     {
         const auto g = ddrStorageGeometryForContent(426, 240);
         expect(g.coded_width.get() == 432 && g.display_width.get() == 426 &&
-                   g.presented_width.get() == 426 && g.crop_left == 2 && g.crop_right == 4 &&
-                   g.present_x == 0 && g.present_y == 0,
-               "426 pad geom coded≠display cropL=2");
+                   g.presented_width.get() == 432 && g.crop_left == 2 && g.crop_right == 4 &&
+                   g.present_x == 2 && g.present_y == 0,
+               "426 pad geom coded432 display426 present_x=2");
         const auto layout = makeDdrFrameLayout(g);
         expect(ddrFrameLayoutValid(layout), "426 pad layout valid");
         expect(layout.line_bytes == 432 && layout.chroma_line_bytes == 216,
                "426 pad layout stride=coded 432");
-        expect(layout.display_width.get() == 426 && layout.crop_left == 2,
-               "426 pad layout preserves display/crop");
+        expect(layout.display_width.get() == 426 && layout.crop_left == 2 &&
+                   layout.present_x == 2,
+               "426 pad layout preserves display/crop/present_x");
 
         const size_t bytes = yuv420pFrameBytes(432, 240);
         std::vector<uint8_t> yuv(bytes, 0x10);
@@ -165,15 +166,39 @@ int main() {
         unpackPlxgQ2(plan.plxg_q[2], &deW, &deH, &cw, &ch);
         unpackPlxgQ3(plan.plxg_q[3], &ys, &cs, &dw, &dh);
         unpackPlxgQ4(plan.plxg_q[4], &px, &py, &cl, &ct);
-        expect(q1w == 426 && q1h == 240 && q1x == 0 && q1y == 0, "426 pad q1 content DE");
-        expect(deW == 426 && deH == 240, "426 pad q2 H_DE/V_DE=display");
+        expect(q1w == 426 && q1h == 240 && q1x == 2 && q1y == 0,
+               "426 pad q1 content DE + present_x=2");
+        expect(deW == 432 && deH == 240, "426 pad q2 H_DE=store canvas 432");
         expect(cw == 432 && ch == 240, "426 pad q2 coded=store");
         expect(ys == 432 && cs == 216, "426 pad q3 stride=coded");
         expect(dw == 426 && dh == 240, "426 pad q3 display preserved (coded≠display)");
-        expect(px == 0 && py == 0 && cl == 2 && ct == 0, "426 pad q4 crop_left=2");
+        expect(px == 2 && py == 0 && cl == 2 && ct == 0,
+               "426 pad q4 present_x=crop_left=2");
         // NEG: identity-on-432 PLXG would squeeze 426/432 under DAR.
         expect(!(q1w == 432 && cw == 432 && dw == 432 && cl == 0),
                "NEG 426 pad must not publish all-432 content");
+
+        // host→record→mux→store oracle (catches 432/432 producer the 624/618
+        // mux fixture cannot).
+        PlxgRecord rec{};
+        rec.valid = true;
+        rec.seq = plan.plxg_seq;
+        for (int i = 0; i < 6; ++i)
+            rec.q[static_cast<size_t>(i)] = plan.plxg_q[static_cast<size_t>(i)];
+        const auto mux = plxgMuxLatchVisual(rec);
+        expect(plxgMuxIsPad426In432(mux), "host→record→mux 426@x2 in 432 canvas");
+
+        // NEG oracle: store-only identity plan fails pad mux predicate.
+        const auto gId = ddrStorageGeometryForContent(432, 240);
+        DdrPublishFrame fId{yuv.data(), yuv.size(), gId, DdrFrameFormat::Yuv420p};
+        DdrPublishPlan planId{};
+        expect(makeDdrPublishPlan(fId, 0, planId, &err), "identity 432 plan builds");
+        PlxgRecord recId{};
+        recId.valid = true;
+        for (int i = 0; i < 6; ++i)
+            recId.q[static_cast<size_t>(i)] = planId.plxg_q[static_cast<size_t>(i)];
+        expect(!plxgMuxIsPad426In432(plxgMuxLatchVisual(recId)),
+               "NEG store-only 432 fails 426-pad mux predicate");
     }
 
     // NEG: store-only 432 identity must NOT invent display 426 / crop 2.

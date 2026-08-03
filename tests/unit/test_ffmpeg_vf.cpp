@@ -442,7 +442,7 @@ int main() {
     }
 
     // --- Direct Part 426→432: verified same-height MUST be pad-only (rd-duck) ---
-    // Product geom: coded=432 store, display/H_DE=426, crop_left=2 (not identity-432).
+    // Product geom: coded/canvas H_DE=432, display=426, present_x=crop_left=2.
     // Legacy display==coded still pad-only. crop_pad-first would emit invalid
     // crop=426:240:2 on a 426-wide source — pad-only must win first.
     //

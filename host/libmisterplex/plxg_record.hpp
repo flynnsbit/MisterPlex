@@ -205,6 +205,56 @@ inline bool plxgLegacy480MismatchesPayload(int payloadCodedW, int payloadCodedH)
     return payloadCodedW != 624 || payloadCodedH != 480;
 }
 
+// Host-facing PLXG→visual latch (mux half of host→record→mux→store oracle).
+// Models a consumer that keeps BOTH q3 display and q1 origin + q4 crop — the
+// fields w-mem must not discard. A producer that emits identity 432/432 fails
+// contentVisibleW==426 / cropLeft==2 checks even if payload bytes are right.
+struct PlxgMuxLatchedVisual {
+    int content_w = 0;
+    int content_h = 0;
+    int content_x0 = 0;
+    int content_y0 = 0;
+    int h_de = 0;
+    int v_de = 0;
+    int coded_w = 0;
+    int coded_h = 0;
+    int y_stride = 0;
+    int display_w = 0;
+    int display_h = 0;
+    int present_x = 0;
+    int present_y = 0;
+    int crop_left = 0;
+    int crop_top = 0;
+    bool valid = false;
+};
+
+inline PlxgMuxLatchedVisual plxgMuxLatchVisual(const PlxgRecord& r) {
+    PlxgMuxLatchedVisual v{};
+    if (!r.valid)
+        return v;
+    unpackPlxgQ1(r.q[1], &v.content_w, &v.content_h, &v.content_x0, &v.content_y0);
+    unpackPlxgQ2(r.q[2], &v.h_de, &v.v_de, &v.coded_w, &v.coded_h);
+    unpackPlxgQ3(r.q[3], &v.y_stride, nullptr, &v.display_w, &v.display_h);
+    unpackPlxgQ4(r.q[4], &v.present_x, &v.present_y, &v.crop_left, &v.crop_top);
+    // Prefer q3 display when present (coded≠display); else content window.
+    if (v.display_w <= 0)
+        v.display_w = v.content_w;
+    if (v.display_h <= 0)
+        v.display_h = v.content_h;
+    v.valid = v.coded_w > 0 && v.coded_h > 0 && v.display_w > 0 && v.display_h > 0;
+    return v;
+}
+
+// True for DP 426→432 pad contract after host→record→mux latch.
+inline bool plxgMuxIsPad426In432(const PlxgMuxLatchedVisual& v) {
+    return v.valid && v.coded_w == 432 && v.coded_h == 240 && v.y_stride == 432 &&
+           v.display_w == 426 && v.display_h == 240 && v.content_w == 426 &&
+           v.content_h == 240 && v.content_x0 == 2 && v.crop_left == 2 &&
+           v.h_de == 432 && v.v_de == 240 &&
+           // NEG shape: not identity-on-store.
+           !(v.display_w == 432 && v.crop_left == 0 && v.content_x0 == 0);
+}
+
 // Bootstrap page (poller fixed read) — product LEG doorbell. NOT Option-C active.
 // Route through ddr_frame_layout single-source (rtl_invariants literal ban).
 constexpr uint32_t kPlxgBootstrapDoorbellPhys = kPlex480pYuv420pDoorbellPhys;

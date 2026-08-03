@@ -342,12 +342,18 @@ inline int ddrPadInsetChromaEven(int ideal_inset) {
 }
 
 // Direct-Part / host pad-only storage: coded bank = store (aligned), visible
-// content DE = source samples, crops = FFmpeg pad insets (chroma-even).
+// content = source samples, crops = FFmpeg pad insets (chroma-even).
 //
-// rd-duck 2026-08-03: if PLXG sets coded=display=H_DE=432 while q5 DAR is
-// 426:240, ascal scales the padded raster and squeezes real pixels by 426/432
-// (~1.39%) plus asymmetric 2/4 black. Correct contract:
-//   coded/stride = store (432), display/H_DE = content (426), crop_left = pad_x.
+// rd-duck: identity-on-432 (coded=display=presented=432, crop=0) loses visible
+// 426 and pad x=2 so fabric treats pad columns as content. Correct contract
+// (mirrors product 480p pillarbox shape: presented=canvas, display=content):
+//   coded/stride = store (432)
+//   presented/H_DE = store (432) — bank canvas
+//   display = content (426)
+//   present_x = crop_left = pad inset (2) — output placement in canvas
+//   crop_right = 4
+// present_x is OUTPUT placement (q1 x0), not a second name for storage crop;
+// both q1 x0 and q4 crop carry the same inset so a mux that latches either wins.
 inline DdrFrameGeometry ddrPadOnlyStorageGeometry(int content_w, int content_h,
                                                   int store_w, int store_h) {
     DdrFrameGeometry g{};
@@ -356,9 +362,10 @@ inline DdrFrameGeometry ddrPadOnlyStorageGeometry(int content_w, int content_h,
         !ddrNativeStorageEligible(store_w, store_h)) {
         return g;
     }
+    // presented = store canvas (not content) so present_x+display fits presented.
     g = makeDdrFrameGeometry(CodedWidth{store_w}, CodedHeight{store_h},
                              DisplayWidth{content_w}, DisplayHeight{content_h},
-                             PresentedWidth{content_w}, PresentedHeight{content_h});
+                             PresentedWidth{store_w}, PresentedHeight{store_h});
     const int ideal_x = (store_w - content_w) / 2;
     const int ideal_y = (store_h - content_h) / 2;
     g.crop_left = ddrPadInsetChromaEven(ideal_x);
@@ -369,12 +376,8 @@ inline DdrFrameGeometry ddrPadOnlyStorageGeometry(int content_w, int content_h,
         g.crop_right = 0;
     if (g.crop_bottom < 0)
         g.crop_bottom = 0;
-    // Content DE is the visible window size (426×240). Pad inset lives in
-    // crop_left/top (q4) — NOT present_x — because present_x+display must fit
-    // inside presented (display==presented here). A mux that only reads q1 x0
-    // still needs q4 crop; w-mem must latch crop for coded≠display.
-    g.present_x = 0;
-    g.present_y = 0;
+    g.present_x = g.crop_left;
+    g.present_y = g.crop_top;
     g.placement = DdrFramePlacement::None;
     return g;
 }
