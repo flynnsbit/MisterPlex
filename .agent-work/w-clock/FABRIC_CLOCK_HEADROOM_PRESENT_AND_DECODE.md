@@ -9,7 +9,10 @@ Sources of truth:
 - Multi-pixel path Fmax: **unknown** until integration STA  
 - Decode cycle evidence: `docs/decode-throughput.md`, `docs/evidence/cycles_per_mb_breakdown_788aa5f.txt`, `docs/p3-mc-dpb-bandwidth.md`
 
-Parent closed fact this note builds on: CPU bank move **~14.97 ms/f @ ~88 MiB/s is structural**; decode+CPU copy cannot meet 720p24. Fabric decode is the endgame.
+Parent closed facts this note builds on:
+- CPU bank move **~14.97 ms/f @ ~88 MiB/s is structural**; decode+CPU copy cannot meet 720p24.
+- **Bitstream ARM→DDR is free** (parent prereg HIT): mean AU ~13.5 kB → 0.146 ms/f; worst keyframe 60 915 B → **0.660 ms/f** vs 41.667. Ingest ~0.32 MB/s. Uncached ceiling is irrelevant to a compressed ring.
+- Bottleneck is therefore **fabric decode cycles only** — not data movement.
 
 ---
 
@@ -142,7 +145,17 @@ That is not a PLL bump. It is **multi-block / multi-transform / wide MC + coales
 
 DPB bandwidth (`docs/p3-mc-dpb-bandwidth.md`): even at **480p25**, raw byte-serial DPB alone was shown to **exceed** the 684 cy/MB budget; 64-bit coalesce was required to fit. **720p24 multiplies MB rate by 3600/1170 ≈ 3.08×** vs that 480p25 case → DPB pressure **harder**, not easier.
 
-### 3.5 Honest programme statement
+### 3.5 Buildability verdict (plain — bitstream free does not change this)
+
+Parent moved the programme bottleneck from uncached **pixel** move to **decode**. That is the right architecture. Clock arithmetic for the decoder is unchanged by free bitstream ingest:
+
+| Question | Answer |
+|----------|--------|
+| Is 720p24 fabric decode *clocked away* at 20–32 MHz with today’s serial cost class (~2k–4k cy/MB)? | **NO. Wall.** Need ~100–350 MHz class — unreachable as full-decode `clk_sys` on this part. |
+| Is it *buildable at all* on DE10-Nano Cyclone V? | **Only if average ≤ ~231 cy/MB @20 (or ≤ ~371 @32 nostub optimistic).** That is a **≥10× architecture** problem (parallel MB/transform/MC, coalesced DPB, strip the diagnostic paint tax), **not** a PLL story. |
+| Does free bitstream / ring ABI make the wall softer? | **No.** 0.66 ms/f worst AU leaves almost the entire 41.667 ms for fabric. The wall is **cycles/MB**, not bytes across HPS. |
+| Does bit-exact `h264_decode_top` (`0fe67f0e`) close realtime? | **No.** Correctness ≠ throughput. Intra-only also understates full PMS cost (inter + deblock + CABAC add, not subtract). |
+| Should the fleet invest weeks on “raise clk_sys”? | **No.** Invest on **cy/MB architecture** inside a **20–32 MHz** band. Clock is a secondary lever after path cuts, not the plan. |
 
 | Claim | Verdict |
 |-------|---------|
@@ -152,8 +165,11 @@ DPB bandwidth (`docs/p3-mc-dpb-bandwidth.md`): even at **480p25**, raw byte-seri
 | Fabric 720p24 decode fits if we only “raise clock to nostub 32” | **FALSE** unless cost ≤ ~371 cy/MB (**~11×** better than measured paint class) |
 | 720p24 fabric decode is impossible forever on DE10-Nano | **Not proven** — but it is **impossible without a redesign that buys ~10×+ throughput**, not a PLL tweak |
 | Bit-exact `h264_decode_top` (parent `0fe67f0e`) proves realtime 720p24 | **FALSE** — correctness ≠ cycles |
+| Bitstream free ⇒ decode clock problem is solved | **FALSE** — movement ≠ decode |
 
 **If the fleet is about to invest weeks assuming “clock it up and 720p24 fabric decode closes,” stop.** The arithmetic says the investment must be **parallel architecture and memory subsystem**, with clock as a secondary lever inside a ~20–32 MHz band.
+
+**w-clock programme decision for parent:** treat **86 400 MB/s → 231 cy/MB @ ship clock** as the hard acceptance budget for any fabric decode proposal. Anything that cannot show a path to that budget (or a measured multi-MB parallel design that lands there) is **not** a 720p24 plan.
 
 ---
 
