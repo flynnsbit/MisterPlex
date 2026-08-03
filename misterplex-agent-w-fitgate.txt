@@ -1,7 +1,7 @@
 lane=w-fitgate
 branch=w-fitgate
-sha=PENDING
-ref_measured=w-fitgate@PENDING
+sha=012f0ef8
+ref_measured=w-fitgate@012f0ef8
 GRANT=NO
 status=B41_DIRECT_VIDEO_ASCAL_BYPASS_PUSHED
 
