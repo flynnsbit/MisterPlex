@@ -13,7 +13,8 @@
 
 namespace misterplex {
 
-// Re-export from the single-source-of-truth spec.
+// Re-export magics + *legacy example* absolute addrs from the spec.
+// Runtime consumers: prefer k*Offset + frameStoreMailboxPhys(doorbell).
 constexpr uint32_t kDdrStatusMailboxPhys   = mailbox_abi::kPlxsAddr;
 constexpr uint32_t kDdrStatusMailboxMagic  = mailbox_abi::kPlxsMagic;
 constexpr uint32_t kInputMailboxPhys       = mailbox_abi::kPlxiAddr;
@@ -22,9 +23,34 @@ constexpr uint32_t kMemtestMailboxPhys     = mailbox_abi::kPlxmAddr;
 constexpr uint32_t kMemtestMailboxMagic    = mailbox_abi::kPlxmMagic;
 constexpr uint32_t kUnderrunMailboxPhys    = mailbox_abi::kPlxfAddr;
 constexpr uint32_t kUnderrunMailboxMagic   = mailbox_abi::kPlxfMagic;
+// Legacy absolute PLXD (0x3007F128). Do NOT use for product doorbell 0x300FF000.
 constexpr uint32_t kBankReleaseMailboxPhys  = mailbox_abi::kPlxdAddr;
 constexpr uint32_t kBankReleaseMailboxMagic = mailbox_abi::kPlxdMagic;
 constexpr uint8_t kFrameStoreDebugFormatError = 0xE1;
+
+// Offsets from live DOORBELL_PHYS (RTL: DOORBELL_PHYS + offset).
+constexpr uint32_t kDdrStatusMailboxOffset = mailbox_abi::kPlxsOffset;
+constexpr uint32_t kInputMailboxOffset = mailbox_abi::kPlxiOffset;
+constexpr uint32_t kMemtestMailboxOffset = mailbox_abi::kPlxmOffset;
+constexpr uint32_t kUnderrunMailboxOffset = mailbox_abi::kPlxfOffset;
+constexpr uint32_t kBankReleaseMailboxOffset = mailbox_abi::kPlxdOffset;
+
+// Resolve a frame-store control mailbox against the active doorbell.
+inline constexpr uint32_t frameStoreMailboxPhys(uint32_t doorbell_phys, uint32_t offset) {
+    return mailbox_abi::frameStoreMailboxPhys(doorbell_phys, offset);
+}
+inline constexpr uint32_t bankReleaseMailboxPhys(uint32_t doorbell_phys) {
+    return frameStoreMailboxPhys(doorbell_phys, kBankReleaseMailboxOffset);
+}
+inline constexpr uint32_t underrunMailboxPhys(uint32_t doorbell_phys) {
+    return frameStoreMailboxPhys(doorbell_phys, kUnderrunMailboxOffset);
+}
+inline constexpr uint32_t statusMailboxPhys(uint32_t doorbell_phys) {
+    return frameStoreMailboxPhys(doorbell_phys, kDdrStatusMailboxOffset);
+}
+inline constexpr uint32_t inputMailboxPhys(uint32_t doorbell_phys) {
+    return frameStoreMailboxPhys(doorbell_phys, kInputMailboxOffset);
+}
 
 enum class PlaybackCommand : uint8_t {
     None = 0,
@@ -78,7 +104,10 @@ struct BankReleaseStatus {
     uint8_t free_bank_mask = 0; // bit 0 = bank 0 free, bit 1 = bank 1 free
     uint8_t disp_bank = 0;     // 0 or 1
     bool swap_pending = false;
-    uint16_t frames_done = 0;  // monotonic swap count
+    // Derivation depends on fitted RTL pack of PLXD[63:48]:
+    //   tip source: frames_done_d2 (real bank swaps) — NOT YET on c5382bee daily RBF
+    //   c5382bee:   bank_vsync_count (every vsync) — do NOT treat as swap proof
+    uint16_t frames_done = 0;
 
     bool bank0Free() const { return free_bank_mask & 1u; }
     bool bank1Free() const { return (free_bank_mask >> 1) & 1u; }

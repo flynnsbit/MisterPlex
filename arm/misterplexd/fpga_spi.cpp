@@ -1,5 +1,6 @@
 #include "fpga_spi.hpp"
 
+#include "libmisterplex/ddr_bank_release_select.hpp"
 #include "libmisterplex/status_telemetry.hpp"
 #include "libmisterplex/pixel_format.hpp"
 
@@ -1339,13 +1340,9 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
     auto t0 = std::chrono::steady_clock::now();
 
     // --- Bank selection via PLXD bank-release ACK ---
-    // If the FPGA publishes a valid PLXD mailbox, use it to determine which
-    // bank is free instead of relying on fixed delays.  Fall back to the old
-    // timing-based mitigation only when PLXD is absent (pre-PLXD RBF).
-    //
-    // PLXD semantics (w-a3 b187df5):
-    //   free_bank_mask != 0 → at least one bank is safe to write
-    //   free_bank_mask == 0 → swap pending, both banks in use; poll or timeout
+    // free/disp identity is authoritative. Never freeBank()-blind or force
+    // disp^1 on timeout (overwrites live display under rate). Protocol:
+    // host/libmisterplex/ddr_bank_release_select.hpp (selectDdrWriteBank).
     auto tPrep0 = std::chrono::steady_clock::now();
     bool plxdUsed = false;
     {
@@ -1353,37 +1350,41 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
         constexpr int kPlxdPollMaxIters = 50;  // 50 × 1ms = 50ms max
         int plxdIters = 0;
         if (readBankRelease(brs)) {
-            // PLXD present — use it for bank selection.
-            if (brs.anyFree()) {
-                bank = brs.freeBank();
+            DdrBankSelectResult sel =
+                selectDdrWriteBank(brs, ddrBankSelect_, kPlxdPollMaxIters);
+            while (sel.action == DdrBankSelectAction::Wait) {
+                usleep(1000);
+                ++plxdIters;
+                if (!readBankRelease(brs))
+                    break;
+                sel = selectDdrWriteBank(brs, ddrBankSelect_, kPlxdPollMaxIters);
+            }
+            if (sel.action == DdrBankSelectAction::Write) {
+                bank = sel.bank & 1;
                 plxdUsed = true;
             } else {
-                // Both banks in use (swap pending). Poll until free or timeout.
-                for (int i = 0; i < kPlxdPollMaxIters; ++i) {
-                    usleep(1000);
-                    ++plxdIters;
-                    if (readBankRelease(brs) && brs.anyFree()) {
-                        bank = brs.freeBank();
-                        plxdUsed = true;
-                        break;
-                    }
-                }
-                if (!plxdUsed) {
-                    // LOUD timeout — never silently fall back to old delay.
-                    fprintf(stderr,
-                            "[STALL] sendDdrFrame: PLXD bank-release timeout after %d ms "
-                            "(free_bank_mask=0, frames_done=%u disp_bank=%u swap_pending=%d)\n",
-                            plxdIters, static_cast<unsigned>(brs.frames_done),
-                            static_cast<unsigned>(brs.disp_bank),
-                            static_cast<int>(brs.swap_pending));
-                    // Use the opposite of disp_bank as a best-effort guess.
-                    bank = brs.disp_bank ^ 1;
-                }
+                // Drop — no force-write on PLXD timeout.
+                fprintf(stderr,
+                        "[STALL] sendDdrFrame: PLXD bank-select %s after %d ms "
+                        "(free_mask=%u frames_done=%u disp=%u swap=%d last_pub=%d "
+                        "seen_disp=%d) — dropping frame (no force-write)\n",
+                        sel.reason ? sel.reason : "drop", plxdIters,
+                        static_cast<unsigned>(brs.free_bank_mask),
+                        static_cast<unsigned>(brs.frames_done),
+                        static_cast<unsigned>(brs.disp_bank),
+                        static_cast<int>(brs.swap_pending), lastPublishedBank_,
+                        ddrBankSelect_.last_publish_seen_on_display ? 1 : 0);
+                timing.plxa_poll_us = elapsedUs(tPrep0, std::chrono::steady_clock::now());
+                timing.plxa_poll_iters = plxdIters;
+                timing.plxa_used = true;
+                setErr(std::string("sendDdrFrame: PLXD bank-select drop (") +
+                       (sel.reason ? sel.reason : "drop") + ")");
+                return false;
             }
             auto tPlxd1 = std::chrono::steady_clock::now();
             timing.plxa_poll_us = elapsedUs(tPrep0, tPlxd1);
             timing.plxa_poll_iters = plxdIters;
-            timing.plxa_used = plxdUsed || (!plxdUsed && plxdIters > 0);
+            timing.plxa_used = plxdUsed;
         } else {
             // PLXD absent — pre-PLXD RBF or mailbox not yet written.
             // Fall back to the old timing-based mitigation: brief yield for
@@ -1524,6 +1525,8 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
     lastPushMs_ = std::chrono::duration<double, std::milli>(t1 - t0).count();
     timing.total_us = elapsedUs(t0, t1);
     lastDdrTiming_ = timing;
+    lastPublishedBank_ = bank & 1;
+    noteDdrBankPublished(ddrBankSelect_, bank);
     clearErr();
     return true;
 }
@@ -1533,11 +1536,13 @@ bool FpgaSpi::readFrameStoreStatus(FrameStoreStatus& out) {
         return false;
     if (!ensureDdrMap())
         return false;
-    if (kUnderrunMailboxPhys < ddrLayout_.phys_base) {
+    // PLXF is doorbell-relative (product: 0x300FF118), not legacy 0x3007F118.
+    const uint32_t plxfPhys = underrunMailboxPhys(ddrLayout_.doorbell_phys);
+    if (plxfPhys < ddrLayout_.phys_base) {
         setErr("readFrameStoreStatus: PLXF mailbox is outside DDR frame window");
         return false;
     }
-    const size_t off = static_cast<size_t>(kUnderrunMailboxPhys - ddrLayout_.phys_base);
+    const size_t off = static_cast<size_t>(plxfPhys - ddrLayout_.phys_base);
     if (off + 8 > ddrMapLen_) {
         setErr("readFrameStoreStatus: PLXF mailbox is outside mapped DDR frame window");
         return false;
@@ -1579,11 +1584,13 @@ bool FpgaSpi::readBankRelease(BankReleaseStatus& out) {
         return false;
     if (!ensureDdrMap())
         return false;
-    if (kBankReleaseMailboxPhys < ddrLayout_.phys_base) {
+    // PLXD is doorbell-relative. Product YUV doorbell 0x300FF000 → 0x300FF128.
+    const uint32_t plxdPhys = bankReleaseMailboxPhys(ddrLayout_.doorbell_phys);
+    if (plxdPhys < ddrLayout_.phys_base) {
         setErr("readBankRelease: PLXD mailbox is outside DDR frame window");
         return false;
     }
-    const size_t off = static_cast<size_t>(kBankReleaseMailboxPhys - ddrLayout_.phys_base);
+    const size_t off = static_cast<size_t>(plxdPhys - ddrLayout_.phys_base);
     if (off + 8 > ddrMapLen_) {
         setErr("readBankRelease: PLXD mailbox is outside mapped DDR frame window");
         return false;

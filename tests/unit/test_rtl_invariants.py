@@ -132,6 +132,16 @@ def strip_comments(text: str) -> str:
     return "".join(out)
 
 
+def sv_module_text(text: str, module_name: str) -> str:
+    m = re.search(rf"\bmodule\s+{re.escape(module_name)}\b.*?\bendmodule\b", text, re.S)
+    check(
+        m is not None,
+        f"could not find active SystemVerilog module {module_name}; source-text invariants "
+        "must be scoped to the module that carries the property, not the whole file.",
+    )
+    return m.group(0)
+
+
 def select_default_sv_fault_branches(text: str) -> str:
     """Return the product/default view of small fault-injection `ifdef blocks."""
     return re.sub(
@@ -181,6 +191,25 @@ def sv_const(text: str, name: str) -> int:
             "restore the fixed mailbox/scanout parameter or update the matching host side and tests."
         )
     return parse_num(m.group(1))
+
+
+def sv_param_expr(text: str, name: str) -> str:
+    m = re.search(
+        rf"(?:localparam|parameter)(?:\s+\w+)?(?:\s*\[[^\]]+\])?\s+{re.escape(name)}\s*=\s*([^,\n;)]+)",
+        text,
+    )
+    if not m:
+        fail(f"{name} is missing from RTL")
+    return m.group(1).strip()
+
+
+def sv_expr_uses_doorbell_offset(expr: str, offset: int) -> bool:
+    compact = norm(expr).replace("_", "")
+    return compact in {
+        f"DOORBELLPHYS+32'h{offset:X}",
+        f"DOORBELLPHYS+32'h{offset:x}",
+        f"DOORBELLPHYS+{offset}",
+    }
 
 
 def cpp_const_map(text: str) -> dict[str, str]:
@@ -472,8 +501,8 @@ def check_mailboxes() -> None:
     # (input_mailbox.hpp, sdram_mailbox.hpp, ddr_bitstream_ring.hpp, fpga_spi.hpp)
     # consume from the spec and haven't drifted.
     spec_text = strip_comments(read(MAILBOX_ABI_SPEC))
-    rtl = strip_comments(read(DDRAM_FRAME_RD))
-    ddr_fs = strip_comments(read(DDR_FRAME_STORE))
+    rtl = sv_module_text(strip_comments(read(DDRAM_FRAME_RD)), "ddram_frame_rd")
+    ddr_fs = sv_module_text(strip_comments(read(DDR_FRAME_STORE)), "ddr_frame_store")
     fpga_spi = strip_comments(read(FPGA_SPI_HPP))
     input_h = strip_comments(read(INPUT_MAILBOX_HPP))
     host = spec_text + "\n" + fpga_spi + "\n" + input_h
@@ -487,6 +516,7 @@ def check_mailboxes() -> None:
         "PLXF": ("kPlxfAddr", "kPlxfMagic", 0x3007F118, 0x504C5846),
         "DIAG": ("kSdramDiagAddr", None, 0x3007F120, None),
         "PLXD": ("kPlxdAddr", "kPlxdMagic", 0x3007F128, 0x504C5844),
+        "PLXC": ("kPlxcAddr", "kPlxcMagic", 0x3007F130, 0x504C5843),
         "PLXB": ("kPlxbAddr", "kPlxbMagic", 0x30140000, 0x504C5842),
     }
     for name, (addr_sym, magic_sym, exp_addr, exp_magic) in spec_entries.items():
@@ -514,13 +544,13 @@ def check_mailboxes() -> None:
 
     # --- Cross-check RTL against spec for frame-store mailboxes ---
     rtl_cases = [
-        ("PLXS", "MAILBOX_PHYS", "MAGIC_S", 0x3007F100, 0x504C5853),
-        ("PLXI", "INPUT_MAILBOX_PHYS", "MAGIC_I", 0x3007F108, 0x504C5849),
-        ("PLXM", "MEMTEST_MAILBOX_PHYS", "MAGIC_M", 0x3007F110, 0x504C584D),
-        ("PLXF", "UNDERRUN_MAILBOX_PHYS", "MAGIC_F", 0x3007F118, 0x504C5846),
+        ("PLXS", "MAILBOX_PHYS", "MAGIC_S", 0x3007F100, 0x504C5853, 0x100),
+        ("PLXI", "INPUT_MAILBOX_PHYS", "MAGIC_I", 0x3007F108, 0x504C5849, 0x108),
+        ("PLXM", "MEMTEST_MAILBOX_PHYS", "MAGIC_M", 0x3007F110, 0x504C584D, 0x110),
+        ("PLXF", "UNDERRUN_MAILBOX_PHYS", "MAGIC_F", 0x3007F118, 0x504C5846, 0x118),
     ]
-    for magic, rtl_addr, rtl_magic, expected_addr, expected_magic in rtl_cases:
-        ra = sv_const(rtl, rtl_addr)
+    for magic, rtl_addr, rtl_magic, expected_addr, expected_magic, offset in rtl_cases:
+        ra_expr = sv_param_expr(rtl, rtl_addr)
         rm = sv_const(rtl, rtl_magic)
         host_addr = cpp_const(host, {"PLXS": "kDdrMailboxPhys",
                                      "PLXI": "kInputMailboxPhys",
@@ -531,19 +561,56 @@ def check_mailboxes() -> None:
                                       "PLXM": "kMemtestMailboxMagic",
                                       "PLXF": "kUnderrunMailboxMagic"}[magic])
         check(
-            ra == host_addr == expected_addr and rm == host_magic == expected_magic,
-            f"DDR mailbox `{magic}` mismatch: RTL {rtl_addr}=0x{ra:08X}/{rtl_magic}=0x{rm:08X}, "
+            sv_expr_uses_doorbell_offset(ra_expr, offset)
+            and host_addr == expected_addr and rm == host_magic == expected_magic,
+            f"DDR mailbox `{magic}` mismatch: RTL {rtl_addr}={ra_expr}/{rtl_magic}=0x{rm:08X}, "
             f"host=0x{host_addr:08X}/0x{host_magic:08X}, spec=0x{expected_addr:08X}/0x{expected_magic:08X}. "
-            "All three must agree — see mailbox_abi_spec.hpp.",
+            "RTL mailbox addresses must derive from DOORBELL_PHYS + the mailbox offset; "
+            "host/spec define the base offsets in mailbox_abi_spec.hpp.",
         )
+        fs_expr = sv_param_expr(ddr_fs, {
+            "PLXS": "MAILBOX_PHYS",
+            "PLXI": "INPUT_MAILBOX_PHYS",
+            "PLXM": "SDRAM_MAILBOX_PHYS",
+            "PLXF": "FRAME_MAILBOX_PHYS",
+        }[magic])
+        check(
+            sv_expr_uses_doorbell_offset(fs_expr, offset),
+            f"ddr_frame_store {magic} mailbox must derive from DOORBELL_PHYS + 0x{offset:X}, "
+            f"got {fs_expr}",
+        )
+    check(
+        sv_expr_uses_doorbell_offset(sv_param_expr(rtl, "MEMTEST_DIAG_MAILBOX_PHYS"), 0x120),
+        "ddram_frame_rd diagnostic mailbox must derive from DOORBELL_PHYS + 0x120",
+    )
+    check(
+        sv_expr_uses_doorbell_offset(sv_param_expr(ddr_fs, "BANK_MAILBOX_PHYS"), 0x128),
+        "ddr_frame_store PLXD mailbox must derive from DOORBELL_PHYS + 0x128",
+    )
 
     # --- Cross-check PLXD bank-release against spec ---
+    # Legacy example absolute (doorbell base 0x3007F000) still equals 0x3007F128.
+    # Product doorbell is 0x300FF000 → live PLXD is 0x300FF128 via offset 0x128.
     plxd_addr = cpp_const(host, "kBankReleaseMailboxPhys")
     plxd_magic = cpp_const(host, "kBankReleaseMailboxMagic")
     check(plxd_addr == 0x3007F128,
-          f"PLXD bank-release address must be 0x3007F128 (got 0x{plxd_addr:08X})")
+          f"legacy example PLXD address must be 0x3007F128 (got 0x{plxd_addr:08X})")
     check(plxd_magic == 0x504C5844,
           f"PLXD bank-release magic must be 0x504C5844 'PLXD' (got 0x{plxd_magic:08X})")
+    plxd_off = cpp_const(spec_text, "kPlxdOffset")
+    check(plxd_off == 0x128,
+          f"kPlxdOffset must be 0x128 (got 0x{plxd_off:X})")
+    product_doorbell = 0x300FF000
+    product_plxd = product_doorbell + plxd_off
+    check(product_plxd == 0x300FF128,
+          f"product PLXD must be 0x300FF128 (got 0x{product_plxd:08X})")
+    check(product_plxd != 0x3007F128,
+          "product PLXD must not collapse to legacy absolute 0x3007F128")
+    spi = (ROOT / "arm" / "misterplexd" / "fpga_spi.cpp").read_text()
+    check("bankReleaseMailboxPhys(ddrLayout_.doorbell_phys)" in spi,
+          "fpga_spi readBankRelease must use bankReleaseMailboxPhys(doorbell)")
+    check("kBankReleaseMailboxPhys - ddrLayout_.phys_base" not in spi,
+          "fpga_spi must not map PLXD via legacy absolute kBankReleaseMailboxPhys")
 
     # Verify PLXD bit-field positions in the spec are what the RTL packs.
     check(cpp_const(spec_text, "kPlxdFreeBankMaskBit") == 0,
@@ -558,6 +625,24 @@ def check_mailboxes() -> None:
           "PLXD frames_done starts at bit 16 of upper word (bits [63:48])")
     check(cpp_const(spec_text, "kPlxdFramesDoneWidth") == 16,
           "PLXD frames_done is 16 bits wide")
+    # c5382bee packed bank_vsync_count as frames_done — liveness never saw stuck
+    # swaps. Product must pack the CDC'd real swap counter into DDRAM_DIN.
+    plxd_din = ""
+    for chunk in ddr_fs.split("DDRAM_DIN <="):
+        if "MAGIC_D" in chunk[:400]:
+            plxd_din = chunk[:400]
+            break
+    check(plxd_din != "", "PLXD DDRAM_DIN assignment with MAGIC_D must exist")
+    check("bank_vsync_count" not in plxd_din,
+          "PLXD DIN must not pack bank_vsync_count as frames_done")
+    check("frames_done_d2" in plxd_din,
+          "PLXD DIN must pack frames_done_d2 (CDC'd real swap counter)")
+    check("selectDdrWriteBank" in spi,
+          "sendDdrFrame must use selectDdrWriteBank (display-ack / stale-free guard)")
+    check("no force-write" in spi,
+          "sendDdrFrame must log/drop on PLXD timeout (no force-write)")
+    check("bank = brs.disp_bank ^ 1" not in spi,
+          "sendDdrFrame must not force-write disp^1 on PLXD timeout")
 
     # --- Address collision detection ---
     # Reject any two mailboxes at the same physical address.
@@ -641,8 +726,9 @@ def check_mailbox_map_collisions() -> None:
         all_magics[magic] = rname
 
     # ── Cross-check RTL constants against registry ──
-    frame_store_rtl = strip_comments(read(DDR_FRAME_STORE))
-    ddram_frame_rd_rtl = strip_comments(read(DDRAM_FRAME_RD))
+    frame_store_rtl = sv_module_text(strip_comments(read(DDR_FRAME_STORE)), "ddr_frame_store")
+    ddram_frame_rd_rtl = sv_module_text(strip_comments(read(DDRAM_FRAME_RD)), "ddram_frame_rd")
+    mailbox_base = int(next(mb["address"] for mb in mailboxes if mb["name"] == "PLXS"), 16) - 0x100
 
     for mb in mailboxes:
         name = mb["name"]
@@ -655,13 +741,15 @@ def check_mailbox_map_collisions() -> None:
 
         # Try ddr_frame_store first, fall back to ddram_frame_rd
         ra = None
+        ra_expr = None
         for rtl_src in (frame_store_rtl, ddram_frame_rd_rtl):
             m = re.search(
                 rf"(?:localparam|parameter)(?:\s+\w+)?(?:\s*\[[^\]]+\])?\s+{re.escape(rtl_addr_param)}\s*=\s*([^,\n;)]+)",
                 rtl_src,
             )
             if m:
-                ra = parse_num(m.group(1))
+                ra_expr = m.group(1).strip()
+                ra = parse_num(ra_expr)
                 break
 
         check(
@@ -669,12 +757,15 @@ def check_mailbox_map_collisions() -> None:
             f"Mailbox map references RTL param {rtl_addr_param} for {name}, "
             "but it was not found in ddr_frame_store.sv or ddram_frame_rd.sv.",
         )
+        offset = expected_addr - mailbox_base
+        derived = ra_expr is not None and sv_expr_uses_doorbell_offset(ra_expr, offset)
         check(
-            ra == expected_addr,
-            f"Mailbox map drift: {name} RTL {rtl_addr_param}=0x{ra:08X} != "
-            f"registry 0x{expected_addr:08X}. Update docs/plx_mailbox_map.json OR the RTL "
-            "— they must agree. This gate exists because the PLXA/PLXD ABI collision "
-            "proved that two hand-maintained copies WILL drift.",
+            derived or ra == expected_addr,
+            f"Mailbox map drift: {name} RTL {rtl_addr_param}={ra_expr} != "
+            f"registry 0x{expected_addr:08X} or DOORBELL_PHYS+0x{offset:X}. "
+            "Update docs/plx_mailbox_map.json OR the RTL — they must agree. "
+            "This gate exists because the PLXA/PLXD ABI collision proved that two "
+            "hand-maintained copies WILL drift.",
         )
 
         if rtl_magic_param is not None:
@@ -943,7 +1034,8 @@ def check_ddr_frame_layout_contract() -> None:
 
 
 def check_ddr_frame_store_yuv_read_contract() -> None:
-    rtl = select_default_sv_fault_branches(strip_comments(read(DDR_FRAME_STORE)))
+    frame_store_source = select_default_sv_fault_branches(strip_comments(read(DDR_FRAME_STORE)))
+    rtl = sv_module_text(frame_store_source, "ddr_frame_store")
     layout = strip_comments(read(DDR_FRAME_LAYOUT_SVH))
     nt = norm(rtl)
 
@@ -994,7 +1086,49 @@ def check_ddr_frame_store_yuv_read_contract() -> None:
                 "line_addr=fill_is_chroma?chroma_addr:y_addr",
                 "chroma fill path must issue the selected chroma address",
             ),
-            ("rd_cy=src_y[CODED_Y_W-1:1]", "chroma line lookup must halve the source Y"),
+            # Prefetch/hit Y must follow vertical beam (rd_y_visible), never full
+            # rd_visible. X-gating src_y→0 every HBlank thrashes want_y to line 0
+            # and starves the beam line → left black prefix (parent median ~420 px).
+            (
+                "src_y_line=rd_y_visible?(display_y+CROP_TOP_L):'0",
+                "line identity must track rd_y_visible (not X-gated rd_visible)",
+            ),
+            (
+                "pref_y=WANT_Y_LINE_ONLY?src_y_line:src_y",
+                "product pref_y must default to src_y_line (WANT_Y_LINE_ONLY); thrash control uses src_y",
+            ),
+            (
+                "y_line_v2[video_slot]==Y_W'(pref_y)",
+                "Y linebuf hit must match pref_y (product=src_y_line), not bare X-gated src_y",
+            ),
+            (
+                "want_y_sys<=Y_W'(pref_y)",
+                "want_y prefetcher must follow pref_y/src_y_line; src_y thrash is the left-edge class",
+            ),
+            # Sustained high-rate publish: same-cycle swap_req + vsync must not
+            # NBA-clear swap_pending after latching a new pending_bank (playback
+            # freeze while idle still animates).
+            (
+                "parameterbitSWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC=1'b1",
+                "product must default SWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC=1",
+            ),
+            (
+                "if(SWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC&&(swap_req_s2!=swap_req_seen))swap_pending<=1'b1;elseswap_pending<=1'b0;",
+                "vsync swap must retain swap_pending when a new swap_req collides same cycle",
+            ),
+            # PLXD free_bank_mask: 00 while swap_pending else single free bit = ~disp.
+            (
+                "swap_pending_d2?2'b00:(disp_bank_d2?2'b01:2'b10)",
+                "PLXD free_bank_mask must be 00 while pending else ~disp_bank",
+            ),
+            (
+                "DDRAM_DIN<={frames_done_d2,12'd0,swap_pending_d2,disp_bank_d2,swap_pending_d2?2'b00:(disp_bank_d2?2'b01:2'b10),MAGIC_D}",
+                "PLXD pack must use real frames_done (not vsync-only) + free/disp/pending",
+            ),
+            (
+                "rd_cy=src_y_line[CODED_Y_W-1:1]",
+                "chroma line lookup must halve src_y_line (same vertical beam as Y)",
+            ),
             (
                 "c_line_v2[video_slot]==(Y_W-1)'(rd_cy)",
                 "chroma line-buffer hit must compare against the halved source Y",
@@ -1045,7 +1179,7 @@ def check_ddr_frame_store_yuv_read_contract() -> None:
     if not missing_requirements(swapped_coeffs):
         fail("deliberately swapped YUV→RGB R/B chroma inputs did not make the gate red")
     bad_geometry = (
-        nt.replace("rd_cy=src_y[CODED_Y_W-1:1]", "rd_cy=src_y[CODED_Y_W-2:0]")
+        nt.replace("rd_cy=src_y_line[CODED_Y_W-1:1]", "rd_cy=src_y_line[CODED_Y_W-2:0]")
         .replace("c_sel_r<=src_x[3:1]", "c_sel_r<=src_x[2:0]")
         .replace(
             "fill_cy_qword={{(30-Y_W){1'b0}},fill_cy}*C_LINE_QWORDS_W",
@@ -1054,6 +1188,50 @@ def check_ddr_frame_store_yuv_read_contract() -> None:
     )
     if not missing_requirements(bad_geometry):
         fail("deliberately broken chroma half-resolution geometry did not make the gate red")
+    # Legacy left-edge class: want_y / hit from X-gated src_y (HEAD before src_y_line).
+    thrash_want_y = (
+        nt.replace("pref_y=WANT_Y_LINE_ONLY?src_y_line:src_y", "pref_y=src_y")
+        .replace("want_y_sys<=Y_W'(pref_y)", "want_y_sys<=Y_W'(src_y)")
+        .replace("y_line_v2[video_slot]==Y_W'(pref_y)", "y_line_v2[video_slot]==Y_W'(src_y)")
+        .replace(
+            "src_y_line=rd_y_visible?(display_y+CROP_TOP_L):'0",
+            "src_y_line=rd_visible?(display_y+CROP_TOP_L):'0",
+        )
+    )
+    if not missing_requirements(thrash_want_y):
+        fail(
+            "deliberately restored X-gated want_y/src_y thrash "
+            "(left black-prefix class) did not make the DDR frame-store gate red"
+        )
+    drop_holds = nt.replace(
+        "parameterbitSWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC=1'b1",
+        "parameterbitSWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC=1'b0",
+    ).replace(
+        "if(SWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC&&(swap_req_s2!=swap_req_seen))swap_pending<=1'b1;elseswap_pending<=1'b0;",
+        "swap_pending<=1'b0;",
+    )
+    if not missing_requirements(drop_holds):
+        fail(
+            "deliberately dropped SWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC "
+            "(same-cycle doorbell+vsync lost-pending class) did not make the gate red"
+        )
+    drop_plxd_free = nt.replace(
+        "swap_pending_d2?2'b00:(disp_bank_d2?2'b01:2'b10)",
+        "2'b11",
+    )
+    if not missing_requirements(drop_plxd_free):
+        fail(
+            "deliberately broken PLXD free_bank_mask packing "
+            "(always both-free) did not make the gate red"
+        )
+    unused_module_decoy = frame_store_source.replace(
+        "localparam int C_LINE_QWORDS = CODED_W / 16;",
+        "localparam int C_LINE_QWORDS = FRAME_W / 16;",
+        1,
+    ) + "\nmodule wgate_unused_ddr_frame_store_decoy;\n  localparam int C_LINE_QWORDS = CODED_W / 16;\nendmodule\n"
+    unused_module_decoy_nt = norm(sv_module_text(unused_module_decoy, "ddr_frame_store"))
+    if not missing_requirements(unused_module_decoy_nt):
+        fail("unused module decoy satisfied the DDR frame-store source-text gate")
 
     y_stride = coded_w
     c_stride = coded_w // 2

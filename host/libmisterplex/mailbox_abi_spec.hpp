@@ -33,8 +33,38 @@ struct MailboxEntry {
 };
 
 // ---- Core frame-store mailboxes (ddram_frame_rd / ddr_frame_store) ----
+//
+// RTL places the control page relative to DOORBELL_PHYS:
+//   PLXK +0x000, PLXS +0x100, PLXI +0x108, PLXM +0x110,
+//   PLXF +0x118, DIAG +0x120, PLXD +0x128, PLXC +0x130 (reserved; next fit)
+// Product 480p YUV doorbell is 0x300FF000 → PLXD live at 0x300FF128.
+// The 0x3007F000 family below is the *legacy example base* (older packed-320
+// map). Consumers MUST resolve via frameStoreMailboxPhys(doorbell, offset),
+// never hard-read the legacy absolute PLXD/PLXF addresses against a product
+// doorbell — that reads bank0 padding / boot residue and desyncs bank select
+// (parent bank0 U≈0x04/0x19 green-cast class on c5382bee).
 
-// PLXK — Doorbell (ARM→FPGA). ARM writes bank|format|seq to trigger a frame swap.
+// Byte offsets from DOORBELL_PHYS (single source for ARM + invariant gates).
+constexpr uint32_t kPlxkOffset = 0x000u;
+constexpr uint32_t kPlxsOffset = 0x100u;
+constexpr uint32_t kPlxiOffset = 0x108u;
+constexpr uint32_t kPlxmOffset = 0x110u;
+constexpr uint32_t kPlxfOffset = 0x118u;
+constexpr uint32_t kSdramDiagOffset = 0x120u;
+constexpr uint32_t kPlxdOffset = 0x128u;
+constexpr uint32_t kPlxcOffset = 0x130u; // running-bitstream build id (not yet RTL)
+
+// Legacy example doorbell base (historical 0x3007F000 control page).
+constexpr uint32_t kLegacyFrameStoreDoorbellPhys = 0x3007F000u;
+
+inline constexpr uint32_t frameStoreMailboxPhys(uint32_t doorbell_phys, uint32_t offset) {
+    return doorbell_phys + offset;
+}
+
+// Absolute addresses for the legacy example base — table/collision gates only.
+// Literals (not base+offset expressions) so static parsers in test_rtl_invariants
+// can resolve them. Must equal kLegacyFrameStoreDoorbellPhys + k*Offset.
+// Runtime ARM paths must use frameStoreMailboxPhys(ddrLayout_.doorbell_phys, …).
 constexpr uint32_t kPlxkAddr  = 0x3007F000u;
 constexpr uint32_t kPlxkMagic = 0x504C584Bu; // "PLXK"
 
@@ -71,6 +101,7 @@ constexpr uint32_t kSdramDiagAddr = 0x3007F120u;
 //   !swap_pending → free_bank_mask = disp_bank ? 0b01 : 0b10
 //   swap_pending  → free_bank_mask = 0b00 (both banks in use)
 //   On vsync swap: old disp_bank becomes free, frames_done++
+// Legacy absolute (example base only) — product live addr is doorbell+0x128:
 constexpr uint32_t kPlxdAddr  = 0x3007F128u;
 constexpr uint32_t kPlxdMagic = 0x504C5844u; // "PLXD"
 // Bit-field positions (in the upper 32 bits, i.e. offset from bit 32):
@@ -81,11 +112,22 @@ constexpr unsigned kPlxdSwapPendingBit = 3;   // bit [35] → bit 3 of upper wor
 constexpr unsigned kPlxdFramesDoneBit = 16;   // bits [63:48] → [31:16] of upper word
 constexpr unsigned kPlxdFramesDoneWidth = 16;
 
+// PLXC — Running bitstream build identity (FPGA→ARM). RESERVED for next fit.
+// Layout (64-bit LE): [31:0]=magic "PLXC", [63:32]=CORE_BUILD_STAMP.
+// Product live: doorbell+0x130 → 0x300FF130. See docs/core-running-bitstream-identity.md.
+// Until RTL publishes this word, gates must use .running_core_claim (not disk md5 alone).
+constexpr uint32_t kPlxcAddr  = 0x3007F130u;
+constexpr uint32_t kPlxcMagic = 0x504C5843u; // "PLXC"
+
 // ---- Bitstream ring mailboxes (ddr_bitstream_reader) ----
 
 // PLXB — Ring CTRL (ARM→FPGA). Bitstream ring control word.
 constexpr uint32_t kPlxbAddr  = 0x30140000u;
 constexpr uint32_t kPlxbMagic = 0x504C5842u; // "PLXB"
+// PLXD in the PLXB CTRL slot marks the bitstream producer intentionally dormant
+// (STREAM=0). This is an in-band diagnostic value at kPlxbAddr, not a separate
+// addressed mailbox; it intentionally reuses the PLXD magic value defined above.
+constexpr uint32_t kPlxbDormantMagic = kPlxdMagic;
 
 // ---- All magics (for collision detection) ----
 // Every PLX-prefixed magic in the system. Gate rejects duplicates.
@@ -94,19 +136,20 @@ struct MagicEntry {
     uint32_t magic;
 };
 
-constexpr std::array<MagicEntry, 7> kAllMagics = {{
+constexpr std::array<MagicEntry, 8> kAllMagics = {{
     {"PLXK", kPlxkMagic},
     {"PLXS", kPlxsMagic},
     {"PLXI", kPlxiMagic},
     {"PLXM", kPlxmMagic},
     {"PLXF", kPlxfMagic},
     {"PLXD", kPlxdMagic},
+    {"PLXC", kPlxcMagic},
     {"PLXB", kPlxbMagic},
 }};
 
 // ---- All addressed mailboxes (for address-collision detection) ----
 // Every occupied DDR mailbox slot. Gate rejects overlapping addresses.
-constexpr std::array<MailboxEntry, 8> kAllMailboxes = {{
+constexpr std::array<MailboxEntry, 9> kAllMailboxes = {{
     {"PLXK", kPlxkAddr,     kPlxkMagic,     8, "arm_to_fpga",  true},
     {"PLXS", kPlxsAddr,     kPlxsMagic,     8, "fpga_to_arm",  true},
     {"PLXI", kPlxiAddr,     kPlxiMagic,     8, "fpga_to_arm",  true},
@@ -114,6 +157,7 @@ constexpr std::array<MailboxEntry, 8> kAllMailboxes = {{
     {"PLXF", kPlxfAddr,     kPlxfMagic,     8, "fpga_to_arm",  true},
     {"DIAG", kSdramDiagAddr, 0,             8, "fpga_to_arm",  false},
     {"PLXD", kPlxdAddr,     kPlxdMagic,     8, "fpga_to_arm",  true},
+    {"PLXC", kPlxcAddr,     kPlxcMagic,     8, "fpga_to_arm",  true},
     {"PLXB", kPlxbAddr,     kPlxbMagic,     8, "arm_to_fpga",  true},
 }};
 

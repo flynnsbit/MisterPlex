@@ -6,7 +6,8 @@ module ddr_frame_store_warm_reset_tb #(
 	parameter bit IGNORE_STALE_DOORBELL_AFTER_RESET = 1'b1,
 	parameter int STALE_DOORBELL_FALLBACK_POLLS = 4096,
 	parameter bit PIPELINE_REFILL_SCHEDULER = 1'b1,
-	parameter bit STRICT_YUV_DOORBELL = 1'b1
+	parameter bit STRICT_YUV_DOORBELL = 1'b1,
+	parameter int LINE_COUNT = 4
 )(
 	input  wire        clk,
 	input  wire        clk_ddr,
@@ -26,6 +27,9 @@ module ddr_frame_store_warm_reset_tb #(
 	output wire [15:0] frames_done,
 	output wire        doorbell_ok,
 	output wire        debug_sched_valid,
+	output wire        debug_disp_bank,
+	output wire        debug_pending_bank,
+	output wire        debug_pending_ready,
 	output wire [7:0]  debug_state,
 	input  wire        DDRAM_BUSY,
 	input  wire [63:0] DDRAM_DOUT,
@@ -49,7 +53,7 @@ module ddr_frame_store_warm_reset_tb #(
 		.CODED_H(48),
 		.DISPLAY_W(64),
 		.DISPLAY_H(48),
-		.LINE_COUNT(4),
+		.LINE_COUNT(LINE_COUNT),
 		.PHYS_BASE(32'h3000_0000),
 		.HPS_BANK_STRIDE_BYTES(65536),
 		.DOORBELL_PHYS(32'h3001_F000),
@@ -99,6 +103,9 @@ module ddr_frame_store_warm_reset_tb #(
 		.debug_state(debug_state)
 	);
 	assign debug_sched_valid = dut.sched_valid;
+	assign debug_disp_bank = dut.disp_bank;
+	assign debug_pending_bank = dut.pending_bank;
+	assign debug_pending_ready = dut.pending_ready_s2;
 endmodule
 
 `default_nettype wire

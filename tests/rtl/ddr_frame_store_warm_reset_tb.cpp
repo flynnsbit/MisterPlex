@@ -725,6 +725,70 @@ bool runEqualTokenRefreshAfterAccept() {
     return sim.schedulerProven();
 }
 
+bool runAlternatingBankFlips() {
+    Sim sim;
+    sim.fillFrame(0, 83);
+    sim.fillFrame(1, 201);
+    sim.resetCore();
+    for (int i = 0; i < 3000; ++i)
+        sim.tick();
+
+    sim.ringDoorbell(1, 21);
+    if (!sim.waitForFrame(800000))
+        throw std::runtime_error("alternating bank flip: bank1 frame did not present");
+    expectFreshSample("alternating bank flip bank1", sim, 201);
+    if (!sim.top.debug_disp_bank || sim.top.frames_done != 1) {
+        std::cerr << "FAIL ddr_frame_store warm-reset: alternating bank flip did not select bank1"
+                  << " disp_bank=" << int(sim.top.debug_disp_bank)
+                  << " pending_bank=" << int(sim.top.debug_pending_bank)
+                  << " pending_ready=" << int(sim.top.debug_pending_ready)
+                  << " frames=" << sim.top.frames_done
+                  << " has_frame=" << int(sim.top.has_frame)
+                  << " swap_pending=" << int(sim.top.swap_pending) << "\n";
+        std::exit(1);
+    }
+
+    sim.fillFrame(0, 84);
+    sim.ringDoorbell(0, 22);
+    if (!sim.waitForFrameCountStatic(2, 800000))
+        throw std::runtime_error("alternating bank flip: bank0 frame did not present");
+    expectFreshSample("alternating bank flip bank0", sim, 84);
+    if (sim.top.debug_disp_bank || sim.top.frames_done != 2) {
+        std::cerr << "FAIL ddr_frame_store warm-reset: alternating bank flip did not select bank0"
+                  << " disp_bank=" << int(sim.top.debug_disp_bank)
+                  << " pending_bank=" << int(sim.top.debug_pending_bank)
+                  << " pending_ready=" << int(sim.top.debug_pending_ready)
+                  << " frames=" << sim.top.frames_done
+                  << " has_frame=" << int(sim.top.has_frame)
+                  << " swap_pending=" << int(sim.top.swap_pending) << "\n";
+        std::exit(1);
+    }
+
+    sim.fillFrame(1, 202);
+    sim.ringDoorbell(1, 23);
+    if (!sim.waitForFrameCountStatic(3, 800000))
+        throw std::runtime_error("alternating bank flip: second bank1 frame did not present");
+    expectFreshSample("alternating bank flip bank1 again", sim, 202);
+    if (!sim.top.debug_disp_bank || sim.top.frames_done != 3) {
+        std::cerr << "FAIL ddr_frame_store warm-reset: alternating bank flip did not return to bank1"
+                  << " disp_bank=" << int(sim.top.debug_disp_bank)
+                  << " pending_bank=" << int(sim.top.debug_pending_bank)
+                  << " pending_ready=" << int(sim.top.debug_pending_ready)
+                  << " frames=" << sim.top.frames_done
+                  << " has_frame=" << int(sim.top.has_frame)
+                  << " swap_pending=" << int(sim.top.swap_pending) << "\n";
+        std::exit(1);
+    }
+
+    std::cout << "ddr_frame_store bank-swap raw: seqs=21,22,23 disp_bank_path=0->1->0->1"
+              << " frames=" << sim.top.frames_done
+              << " samples=201,84,202"
+              << " swap_pending=" << int(sim.top.swap_pending)
+              << " pending_ready=" << int(sim.top.debug_pending_ready)
+              << " cycles=" << sim.cycle << "\n";
+    return sim.schedulerProven();
+}
+
 void run() {
     bool schedulerSeen = false;
     schedulerSeen |= runInitialFrameMailboxPublish();
@@ -742,6 +806,7 @@ void run() {
     schedulerSeen |= runEqualTokenFallback();
     schedulerSeen |= runLiveValidYuvResetPrimedDoorbell();
     schedulerSeen |= runEqualTokenRefreshAfterAccept();
+    schedulerSeen |= runAlternatingBankFlips();
     if (!schedulerSeen) {
         std::cerr << "FAIL ddr_frame_store warm-reset: refill scheduler pipeline not observed\n";
         std::exit(1);
@@ -753,6 +818,14 @@ void run() {
 int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
     try {
+        if (argc > 1 && std::string(argv[1]) == "--bank-swap-only") {
+            if (!runAlternatingBankFlips()) {
+                std::cerr << "FAIL ddr_frame_store warm-reset: bank-swap-only did not observe scheduler\n";
+                return 1;
+            }
+            std::cout << "OK ddr_frame_store bank-swap-only: alternating doorbells flip disp_bank\n";
+            return 0;
+        }
         run();
         return 0;
     } catch (const std::exception& e) {
