@@ -431,17 +431,25 @@ module ddr_frame_store #(
 	generate
 		for (li = 0; li < LINE_SLOTS; li = li + 1) begin : gen_line
 			// Physical WIDTH = max line; active fetch length is eff_*_fetch_qw.
-			line_buf_ram #(.WIDTH(Y_LINE_QWORDS_MAX), .AW(Y_QW_AW), .DATA_W(64)) yram (
+			// Y: DUAL_RD=1 for qword-straddle (y_rd_addr_hi) — 2× M10K per slot.
+			// U/V: single-port (DUAL_RD=0); ports tied for module interface parity.
+			line_buf_ram #(
+				.WIDTH(Y_LINE_QWORDS_MAX), .AW(Y_QW_AW), .DATA_W(64), .DUAL_RD(1'b1)
+			) yram (
 				.wr_clk(clk_ddr), .wr_en(y_wr[li]), .wr_addr(y_wr_addr), .wr_data(y_wr_data),
 				.rd_clk(clk), .rd_addr(y_rd_addr), .rd_data(y_q[li]),
 				.rd_addr_b(y_rd_addr_hi), .rd_data_b(y_q_hi[li])
 			);
-			line_buf_ram #(.WIDTH(C_LINE_QWORDS_MAX), .AW(C_QW_AW), .DATA_W(64)) uram (
+			line_buf_ram #(
+				.WIDTH(C_LINE_QWORDS_MAX), .AW(C_QW_AW), .DATA_W(64), .DUAL_RD(1'b0)
+			) uram (
 				.wr_clk(clk_ddr), .wr_en(u_wr[li]), .wr_addr(c_wr_addr), .wr_data(u_wr_data),
 				.rd_clk(clk), .rd_addr(c_rd_addr), .rd_data(u_q[li]),
 				.rd_addr_b({C_QW_AW{1'b0}}), .rd_data_b()
 			);
-			line_buf_ram #(.WIDTH(C_LINE_QWORDS_MAX), .AW(C_QW_AW), .DATA_W(64)) vram (
+			line_buf_ram #(
+				.WIDTH(C_LINE_QWORDS_MAX), .AW(C_QW_AW), .DATA_W(64), .DUAL_RD(1'b0)
+			) vram (
 				.wr_clk(clk_ddr), .wr_en(v_wr[li]), .wr_addr(c_wr_addr), .wr_data(v_wr_data),
 				.rd_clk(clk), .rd_addr(c_rd_addr), .rd_data(v_q[li]),
 				.rd_addr_b({C_QW_AW{1'b0}}), .rd_data_b()

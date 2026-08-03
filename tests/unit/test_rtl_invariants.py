@@ -745,14 +745,29 @@ def check_frame_store_cdc_contract() -> None:
         check(needle in nft, f"ddr_frame_store CDC contract: {msg}")
     # Linebuf WIDTH may be Y_LINE_QWORDS (480p) or Y_LINE_QWORDS_MAX (720p-capable);
     # CDC requirement is wr_clk(clk_ddr) on yram, not a fixed WIDTH token.
+    # Y path uses DUAL_RD=1 (rd_addr_b) for qword-straddle — ports must exist on module.
     check(
         (
-            "line_buf_ram#(.WIDTH(Y_LINE_QWORDS),.AW(Y_QW_AW),.DATA_W(64))yram(.wr_clk(clk_ddr)"
+            "line_buf_ram#(.WIDTH(Y_LINE_QWORDS_MAX),.AW(Y_QW_AW),.DATA_W(64),.DUAL_RD(1'b1))yram(.wr_clk(clk_ddr)"
+            in nft
+            or "line_buf_ram#(.WIDTH(Y_LINE_QWORDS),.AW(Y_QW_AW),.DATA_W(64),.DUAL_RD(1'b1))yram(.wr_clk(clk_ddr)"
             in nft
             or "line_buf_ram#(.WIDTH(Y_LINE_QWORDS_MAX),.AW(Y_QW_AW),.DATA_W(64))yram(.wr_clk(clk_ddr)"
             in nft
         ),
         "ddr_frame_store CDC contract: frame line-buffer RAM writes must remain in clk_ddr",
+    )
+    check(
+        ".rd_addr_b(y_rd_addr_hi),.rd_data_b(y_q_hi[li])" in nft,
+        "ddr_frame_store Y linebuf must connect dual-read B port (qword-straddle)",
+    )
+    lb = strip_comments((ROOT / "fpga/Plex_MiSTer/rtl/line_buf_ram.sv").read_text(
+        encoding="utf-8", errors="replace"
+    ))
+    lb_ns = lb.replace(" ", "").replace("\t", "").replace("\n", "")
+    check(
+        "rd_addr_b" in lb_ns and "rd_data_b" in lb_ns and "DUAL_RD" in lb_ns,
+        "line_buf_ram must declare rd_addr_b/rd_data_b + DUAL_RD (rd-duck PINNOTFOUND class)",
     )
 
     check(
