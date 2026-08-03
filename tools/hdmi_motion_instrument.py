@@ -190,6 +190,8 @@ RC_FREEZE = 1
 RC_COLOR_FAIL = 2
 RC_STRUCTURE_FAIL = 3
 RC_RATE_FAIL = 4
+# Unhandled instrument exception (same numeric band as RATE_FAIL; VERDICT token differs).
+RC_INSTRUMENT_ERROR = 4
 RC_UNSCORED = 77
 
 DEFAULT_WARMUP_SKIP = 15  # measured: MacroSilicon warm-up junk length
@@ -229,6 +231,53 @@ def _is_cap_auth_prov(src: str | None) -> bool:
         PROVENANCE_CONTAINER,
         PROVENANCE_MEASURED,
     )
+
+
+def format_prov_value(
+    name: str,
+    value: Any,
+    tag: str | None,
+    *,
+    digits: int = 3,
+) -> str:
+    """Emit numeric with mandatory provenance: name=24.000(DEFAULT_ASSUMED).
+
+    PARENT ERROR 17: a bare constant next to measured fields is numerology.
+    """
+    t = str(tag or PROVENANCE_DEFAULT_ASSUMED)
+    if value is None:
+        return f"{name}=None({t})"
+    try:
+        v = float(value)
+        if digits is None:
+            return f"{name}={v}({t})"
+        return f"{name}={v:.{int(digits)}f}({t})"
+    except (TypeError, ValueError):
+        return f"{name}={value}({t})"
+
+
+def annotate_reason_fps_provenance(report: dict[str, Any]) -> dict[str, Any]:
+    """If any fps used in the report is DEFAULT_ASSUMED, say so in reason.
+
+    Scoring that depends on an assumed rate must not look measured (ERROR 17).
+    """
+    s_tag = str(report.get("source_fps_src") or PROVENANCE_DEFAULT_ASSUMED)
+    c_tag = str(report.get("capture_fps_src") or PROVENANCE_DEFAULT_ASSUMED)
+    if s_tag != PROVENANCE_DEFAULT_ASSUMED and c_tag != PROVENANCE_DEFAULT_ASSUMED:
+        return report
+    bit = (
+        f"{format_prov_value('src_fps', report.get('source_fps'), s_tag)} "
+        f"{format_prov_value('cap_fps', report.get('capture_fps'), c_tag)}"
+    )
+    reason = str(report.get("reason") or "")
+    if "DEFAULT_ASSUMED" not in reason and "fps_assumed" not in reason:
+        report["reason"] = f"{reason} {bit}".strip() if reason else bit
+    # Hard rate fail without authoritative fps is a logic bug — surface it.
+    if report.get("rate") == "RATE_FAIL" and not report.get("fps_authoritative"):
+        report["reason"] = (
+            f"{report['reason']} WARN_rate_fail_without_authoritative_fps"
+        ).strip()
+    return report
 
 # Display-level skip measurement (burned-in counter jumps). Not a hard verdict
 # dimension: reported as count + confidence. Parent: drops/av_drift_ms are
@@ -290,11 +339,12 @@ def parse_fps_token(token: str | float | int | None) -> float | None:
     return v
 
 
-def try_probe_capture_fps(path: str | Path) -> tuple[float | None, str]:
-    """Best-effort capture fps from a video container via ffprobe.
+def try_probe_container_fps(path: str | Path) -> tuple[float | None, str]:
+    """Best-effort fps from a video/media container via ffprobe.
 
     PNG burst directories cannot yield fps (no container timeline). Returns
     (None, reason) when unreadable — caller keeps DEFAULT_ASSUMED.
+    Used for both --probe-capture (grabber file) and --probe-source (asset).
     """
     p = Path(path)
     if p.is_dir():
@@ -337,6 +387,16 @@ def try_probe_capture_fps(path: str | Path) -> tuple[float | None, str]:
         if v is not None and 1.0 <= v <= 240.0:
             return v, PROVENANCE_CONTAINER
     return None, f"ffprobe_no_rate lines={lines!r}"
+
+
+# Back-compat name (capture path).
+def try_probe_capture_fps(path: str | Path) -> tuple[float | None, str]:
+    return try_probe_container_fps(path)
+
+
+def try_probe_source_fps(path: str | Path) -> tuple[float | None, str]:
+    """Probe library/asset container for true source fps (ERROR 17 fix path)."""
+    return try_probe_container_fps(path)
 
 
 def measure_capture_fps_from_paths(
@@ -4151,11 +4211,26 @@ def _print_human(report: dict[str, Any], src: str) -> None:
         pw_s = " plateau_warn=1" if pw else ""
         auth = report.get("fps_authoritative")
         auth_s = "fps_authoritative=1" if auth else "fps_authoritative=0"
+        s_tag = str(report.get("source_fps_src") or PROVENANCE_DEFAULT_ASSUMED)
+        c_tag = str(report.get("capture_fps_src") or PROVENANCE_DEFAULT_ASSUMED)
+        # ERROR 17: every rate numeric carries (measured|caller_supplied|DEFAULT_ASSUMED).
+        exp_tag = (
+            "measured"
+            if auth
+            else (
+                s_tag
+                if s_tag == PROVENANCE_DEFAULT_ASSUMED
+                or c_tag == PROVENANCE_DEFAULT_ASSUMED
+                else "derived"
+            )
+        )
+        ur_tag = "measured" if report.get("unique_ratio") is not None else s_tag
+        er_tag = "measured" if report.get("endpoint_rate") is not None else s_tag
         print(
             f"rate_metrics "
-            f"unique_ratio={report.get('unique_ratio')} "
-            f"endpoint_rate={report.get('endpoint_rate')} "
-            f"expected={report.get('expected_ratio')} "
+            f"{format_prov_value('unique_ratio', report.get('unique_ratio'), ur_tag)} "
+            f"{format_prov_value('endpoint_rate', report.get('endpoint_rate'), er_tag)} "
+            f"{format_prov_value('expected', report.get('expected_ratio'), exp_tag)} "
             f"(unique_ratio and endpoint_rate comparable to expected only when "
             f"fps_authoritative) "
             f"max_plateau={report.get('max_plateau')}/"
@@ -4163,14 +4238,12 @@ def _print_human(report: dict[str, Any], src: str) -> None:
             f"plateau_hist={report.get('plateau_hist')} "
             f"revisits={report.get('non_adjacent_revisits')} "
             f"ctr_span={report.get('ctr_span')} cap_span={report.get('cap_span')} "
-            f"src_fps={report.get('source_fps')} "
-            f"src_fps_der=cli_or_default_NOT_asset_probe "
-            f"src_fps_tag={report.get('source_fps_src', PROVENANCE_DEFAULT_ASSUMED)} "
-            f"cap_fps={report.get('capture_fps')} "
-            f"cap_fps_der=cli_or_default_or_pts "
-            f"cap_fps_tag={report.get('capture_fps_src', PROVENANCE_DEFAULT_ASSUMED)} "
+            f"{format_prov_value('src_fps', report.get('source_fps'), s_tag)} "
+            f"src_fps_der=cli_or_probe_or_default "
+            f"{format_prov_value('cap_fps', report.get('capture_fps'), c_tag)} "
+            f"cap_fps_der=cli_or_mtime_or_probe_or_default "
             f"{auth_s} "
-            f"NOTE_ERROR17=src_fps_tag_DEFAULT_ASSUMED_is_not_a_measurement"
+            f"NOTE_ERROR17=DEFAULT_ASSUMED_is_not_a_measurement"
         )
         notes = report.get("rate_notes") or []
         if notes:
@@ -4258,8 +4331,10 @@ def _print_human(report: dict[str, Any], src: str) -> None:
                 f"class={h.get('class')} dt_s={h.get('dt_s')} "
                 f"dt_ratio={h.get('dt_ratio')}"
             )
+    annotate_reason_fps_provenance(report)
     print(f"reason={report['reason']}")
     # Always emit parent display vocabulary + applied_matches (mutation → NO-DATA).
+    # This MUST be the last stdout line on the human path.
     display = str(report.get("display_verdict") or report.get("verdict") or "UNKNOWN")
     emit_verdict_line(
         display=display,
@@ -4931,11 +5006,79 @@ def _self_test() -> int:
     out_o = _apply_strict_fps(fake_ok, True, PROVENANCE_DEFAULT_ASSUMED, PROVENANCE_CALLER)
     assert out_o["rc"] == RC_UNSCORED and out_o["verdict"] == "REFUSE_DEFAULT_ASSUMED", out_o
 
+    # ERROR 17: format_prov_value always tags; never bare 23.976 default.
+    assert format_prov_value("src_fps", 24.0, PROVENANCE_DEFAULT_ASSUMED) == (
+        "src_fps=24.000(DEFAULT_ASSUMED)"
+    ), format_prov_value("src_fps", 24.0, PROVENANCE_DEFAULT_ASSUMED)
+    assert format_prov_value("src_fps", 24.0, PROVENANCE_CALLER) == (
+        "src_fps=24.000(caller_supplied)"
+    )
+    assert "23.976" not in format_prov_value(
+        "src_fps", DEFAULT_ASSUMED_SOURCE_FPS, PROVENANCE_DEFAULT_ASSUMED
+    )
+    ann = annotate_reason_fps_provenance(
+        {
+            "reason": "single_frame_counter_ok",
+            "source_fps": 24.0,
+            "capture_fps": 30.0,
+            "source_fps_src": PROVENANCE_DEFAULT_ASSUMED,
+            "capture_fps_src": PROVENANCE_DEFAULT_ASSUMED,
+        }
+    )
+    assert "DEFAULT_ASSUMED" in str(ann.get("reason")), ann
+    # Exception wrapper: last stdout line is VERDICT=INSTRUMENT_ERROR (not traceback-only).
+    import contextlib
+    import io as _io
+
+    real_impl = _main_impl
+
+    def _boom(_argv=None):
+        raise RuntimeError("forced_instrument_error")
+
+    g = globals()
+    g["_main_impl"] = _boom
+    buf2 = _io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf2):
+            rc_boom = main([])
+    finally:
+        g["_main_impl"] = real_impl
+    last = [ln for ln in buf2.getvalue().splitlines() if ln.strip()][-1]
+    assert last.startswith("VERDICT=INSTRUMENT_ERROR"), last
+    assert "rc=4" in last, last
+    assert rc_boom == RC_INSTRUMENT_ERROR, rc_boom
+
     print("SELF_TEST_OK")
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Entry: every exit path ends with exactly one stdout VERDICT=… rc=… line."""
+    try:
+        return _main_impl(argv)
+    except SystemExit:
+        # Argparse already emitted VERDICT via _ArgParser.error.
+        raise
+    except Exception as e:  # noqa: BLE001 — instrument must never traceback-only
+        try:
+            emit_verdict_line(
+                display="INSTRUMENT_ERROR",
+                reason=f"exception:{type(e).__name__}:{e}",
+                frames=0,
+                rc=RC_INSTRUMENT_ERROR,
+                applied_matches=0,
+                legacy_verdict="INSTRUMENT_ERROR",
+            )
+        except Exception:
+            print(
+                f"VERDICT=INSTRUMENT_ERROR rc={RC_INSTRUMENT_ERROR} "
+                f"reason=emit_failed frames=0",
+                flush=True,
+            )
+        return RC_INSTRUMENT_ERROR
+
+
+def _main_impl(argv: list[str] | None = None) -> int:
     # Ownership note (not a silent no-op): this tool OWNS TREK24 OCR + COLOR/
     # STRUCTURE + display class (GREEN_FIELD/OVERLAY_DUPLICATED/IDLE_SCREEN).
     # Display-loss G-fixture skip scoring is glass_template_skip.py — named below
@@ -5029,6 +5172,16 @@ def main(argv: list[str] | None = None) -> int:
         help=(
             "optional video container path; if --capture-fps omitted, try "
             "ffprobe r_frame_rate and label cap=container on success"
+        ),
+    )
+    ap.add_argument(
+        "--probe-source",
+        default=None,
+        metavar="MEDIA",
+        help=(
+            "optional library/asset media path; if --source-fps omitted, try "
+            "ffprobe r_frame_rate/avg_frame_rate and label src=container on "
+            "success (ERROR 17: prefer real asset rate over DEFAULT_ASSUMED 24.0)"
         ),
     )
     ap.add_argument(
@@ -5148,10 +5301,29 @@ def main(argv: list[str] | None = None) -> int:
             src_parsed = parse_fps_token(args.source_fps)
         except ValueError as e:
             print(f"ERROR: --source-fps: {e}", file=sys.stderr)
+            emit_verdict_line(
+                display="UNKNOWN",
+                reason=f"source_fps_parse_error:{e}",
+                frames=0,
+                rc=RC_UNSCORED,
+                applied_matches=0,
+                legacy_verdict="UNSCORED",
+            )
             raise SystemExit(RC_UNSCORED) from e
         if src_parsed is None:
             source_fps = DEFAULT_ASSUMED_SOURCE_FPS
             source_fps_src = PROVENANCE_DEFAULT_ASSUMED
+            if args.probe_source:
+                probed_s, how_s = try_probe_source_fps(args.probe_source)
+                if probed_s is not None:
+                    source_fps = float(probed_s)
+                    source_fps_src = PROVENANCE_CONTAINER
+                else:
+                    print(
+                        f"WARN: --probe-source failed ({how_s}); "
+                        f"src_fps stays DEFAULT_ASSUMED={source_fps}",
+                        file=sys.stderr,
+                    )
         else:
             source_fps = src_parsed
             source_fps_src = PROVENANCE_CALLER
@@ -5159,6 +5331,14 @@ def main(argv: list[str] | None = None) -> int:
             cap_parsed = parse_fps_token(args.capture_fps)
         except ValueError as e:
             print(f"ERROR: --capture-fps: {e}", file=sys.stderr)
+            emit_verdict_line(
+                display="UNKNOWN",
+                reason=f"capture_fps_parse_error:{e}",
+                frames=0,
+                rc=RC_UNSCORED,
+                applied_matches=0,
+                legacy_verdict="UNSCORED",
+            )
             raise SystemExit(RC_UNSCORED) from e
         cap_measure_meta: dict[str, Any] | None = None
         if cap_parsed is not None:
@@ -5245,8 +5425,21 @@ def main(argv: list[str] | None = None) -> int:
         report["src"] = str(args.counters_csv)
         report["counters_csv_meta"] = ctr_meta
         report = _apply_strict_fps(report, args.strict_fps, source_fps_src, capture_fps_src)
+        annotate_reason_fps_provenance(report)
         if args.json:
             print(json.dumps(report, indent=2))
+            emit_verdict_line(
+                display=str(
+                    report.get("display_verdict") or report.get("verdict") or "UNKNOWN"
+                ),
+                reason=str(report.get("reason") or ""),
+                frames=int(report.get("frames_total") or 0),
+                rc=int(
+                    report.get("rc") if report.get("rc") is not None else RC_UNSCORED
+                ),
+                applied_matches=report.get("applied_matches"),
+                legacy_verdict=str(report.get("verdict") or ""),
+            )
         else:
             _print_human(report, str(args.counters_csv))
         return int(report["rc"])
@@ -5266,6 +5459,14 @@ def main(argv: list[str] | None = None) -> int:
             frames.append(str(p))
         else:
             print(f"ERROR: not found: {inp}", file=sys.stderr)
+            emit_verdict_line(
+                display="UNKNOWN",
+                reason=f"path_not_found:{inp}",
+                frames=0,
+                rc=RC_UNSCORED,
+                applied_matches=0,
+                legacy_verdict="UNSCORED",
+            )
             return RC_UNSCORED
 
     if not frames:
@@ -5350,15 +5551,35 @@ def main(argv: list[str] | None = None) -> int:
         return rc_one
 
     # Provenance: anything not supplied on the CLI is DEFAULT_ASSUMED (ERROR 17).
-    # RATE_OK requires BOTH caller-supplied (or container-probed capture).
+    # RATE_OK requires BOTH caller-supplied (or container-probed capture/source).
     try:
         src_parsed = parse_fps_token(args.source_fps)
     except ValueError as e:
         print(f"ERROR: --source-fps: {e}", file=sys.stderr)
+        emit_verdict_line(
+            display="UNKNOWN",
+            reason=f"source_fps_parse_error:{e}",
+            frames=0,
+            rc=RC_UNSCORED,
+            applied_matches=0,
+            legacy_verdict="UNSCORED",
+        )
         return RC_UNSCORED
     if src_parsed is None:
         source_fps = DEFAULT_ASSUMED_SOURCE_FPS
         source_fps_src = PROVENANCE_DEFAULT_ASSUMED
+        # Prefer real asset rate when parent provides a media path.
+        if args.probe_source:
+            probed_s, how_s = try_probe_source_fps(args.probe_source)
+            if probed_s is not None:
+                source_fps = float(probed_s)
+                source_fps_src = PROVENANCE_CONTAINER
+            else:
+                print(
+                    f"WARN: --probe-source failed ({how_s}); "
+                    f"src_fps stays DEFAULT_ASSUMED={source_fps}",
+                    file=sys.stderr,
+                )
     else:
         source_fps = src_parsed
         source_fps_src = PROVENANCE_CALLER
@@ -5367,6 +5588,14 @@ def main(argv: list[str] | None = None) -> int:
         cap_parsed = parse_fps_token(args.capture_fps)
     except ValueError as e:
         print(f"ERROR: --capture-fps: {e}", file=sys.stderr)
+        emit_verdict_line(
+            display="UNKNOWN",
+            reason=f"capture_fps_parse_error:{e}",
+            frames=0,
+            rc=RC_UNSCORED,
+            applied_matches=0,
+            legacy_verdict="UNSCORED",
+        )
         return RC_UNSCORED
     cap_measure_meta: dict[str, Any] | None = None
     if cap_parsed is not None:
@@ -5438,10 +5667,11 @@ def main(argv: list[str] | None = None) -> int:
     if cap_measure_meta is not None:
         report["cap_fps_measure"] = cap_measure_meta
     report = _apply_strict_fps(report, args.strict_fps, source_fps_src, capture_fps_src)
+    annotate_reason_fps_provenance(report)
     if args.json:
         # Drop bulky per-frame list unless explicitly wanted — keep it, parent wants evidence.
         print(json.dumps(report, indent=2))
-        # Still emit one-line VERDICT (parent: never exit with only bulk JSON).
+        # Still emit one-line VERDICT as LAST stdout line (parent: never exit without it).
         emit_verdict_line(
             display=str(report.get("display_verdict") or report.get("verdict") or "UNKNOWN"),
             reason=str(report.get("reason") or ""),
@@ -5452,12 +5682,14 @@ def main(argv: list[str] | None = None) -> int:
         )
     else:
         if cap_measure_meta is not None:
+            cm_src = str(
+                cap_measure_meta.get("capture_fps_src") or PROVENANCE_DEFAULT_ASSUMED
+            )
             print(
                 f"cap_fps_measure method={cap_measure_meta.get('method')} "
-                f"wall_s={cap_measure_meta.get('wall_s')} "
+                f"{format_prov_value('wall_s', cap_measure_meta.get('wall_s'), cm_src)} "
                 f"n_frames={cap_measure_meta.get('n_frames')} "
-                f"fps={cap_measure_meta.get('capture_fps')} "
-                f"src={cap_measure_meta.get('capture_fps_src')} "
+                f"{format_prov_value('fps', cap_measure_meta.get('capture_fps'), cm_src)} "
                 f"reason={cap_measure_meta.get('reason')}"
             )
         _print_human(report, src_label)

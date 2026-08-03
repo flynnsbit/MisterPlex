@@ -88,10 +88,46 @@ out="$(python3 "$TOOL" --not-a-real-flag 2>/dev/null)"; rc=$?
 echo "true rc_badarg=$rc"
 echo "$out" | grep -q '^VERDICT=' || fail "badarg: missing VERDICT="
 [ "$rc" -eq 2 ] || fail "badarg: want rc=2 got $rc"
+# LAST line must be VERDICT=
+last="$(printf '%s\n' "$out" | awk 'NF{l=$0} END{print l}')"
+echo "$last" | grep -q '^VERDICT=' || fail "badarg: last stdout line must be VERDICT= got: $last"
+
+# --- missing path: was empty stdout rc=77 (parent gap) ---
+out="$(python3 "$TOOL" /no/such/hdmi_path_xyz 2>/dev/null)"; rc=$?
+echo "true rc_miss=$rc"
+echo "$out" | tail -3
+echo "$out" | grep -q '^VERDICT=' || fail "miss: missing VERDICT= line"
+last="$(printf '%s\n' "$out" | awk 'NF{l=$0} END{print l}')"
+echo "$last" | grep -q '^VERDICT=' || fail "miss: last line must be VERDICT= got: $last"
+echo "$last" | grep -q 'path_not_found' || fail "miss: want path_not_found reason"
+[ "$rc" -eq 77 ] || fail "miss: want rc=77 got $rc"
+# 77 is never a pass — just typed
+[ "$rc" -ne 0 ] || fail "miss: rc=0 would be false pass"
+
+# --- CORRECT: VERDICT is last line + provenance-tagged src_fps ---
+out="$(python3 "$TOOL" "$FIX/CORRECT.png" 2>/dev/null)"; rc=$?
+echo "true rc_prov=$rc"
+last="$(printf '%s\n' "$out" | awk 'NF{l=$0} END{print l}')"
+echo "$last" | grep -q '^VERDICT=OK ' || fail "prov: last line want VERDICT=OK got: $last"
+echo "$out" | grep -E 'src_fps=[0-9.]+ \(DEFAULT_ASSUMED\)|src_fps=[0-9.]+\(DEFAULT_ASSUMED\)' \
+  || fail "prov: want src_fps=…(DEFAULT_ASSUMED) tagged numeric"
+echo "$out" | grep -E 'src_fps=23\.976[^0-9]' && fail "prov: bare/forbidden 23.976 must not appear" || true
+# reason must admit DEFAULT_ASSUMED when used
+echo "$last" | grep -q 'DEFAULT_ASSUMED' || fail "prov: VERDICT reason must mention DEFAULT_ASSUMED when fps assumed"
+# applied_matches printed
+echo "$last" | grep -q 'applied_matches=[1-9]' || fail "prov: applied_matches>0 on CORRECT"
+
+# --- self-test covers exception wrapper + format_prov ---
+out="$(python3 "$TOOL" --self-test 2>/dev/null)"; rc=$?
+echo "true rc_self=$rc"
+echo "$out" | tail -3
+[ "$rc" -eq 0 ] || fail "self-test: want rc=0 got $rc"
+last="$(printf '%s\n' "$out" | awk 'NF{l=$0} END{print l}')"
+echo "$last" | grep -q '^VERDICT=' || fail "self-test: last line must be VERDICT="
 
 if [ "$FAILED" -ne 0 ]; then
   echo "FAILED hdmi_motion_display_verdict"
   exit 1
 fi
-echo "OK hdmi_motion_display_verdict: GREEN_FIELD+OVERLAY_DUP / OK / IDLE_SCREEN + VERDICT always"
+echo "OK hdmi_motion_display_verdict: GREEN_FIELD+OVERLAY_DUP / OK / IDLE + always-last VERDICT + provenance"
 exit 0
