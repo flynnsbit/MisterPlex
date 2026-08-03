@@ -1,11 +1,12 @@
 lane=w-fitgate
 role=fit_release_gate_ruler
 GRANT=NO
-HEAD=PENDING_COMMIT
-code_sha=PENDING
+HEAD=774482905798807619af902f527d5f7c17da96eb
+code_sha=774482905798807619af902f527d5f7c17da96eb
 branch=w-fitgate
 worktree=/home/flynnsbit/Projects/MisterPlex-wt-fitgate
 origin=origin/w-fitgate
+pushed=PENDING
 
 SELFTEST=PASS
 SELFTEST_MATRIX rows=47 red=47 fail_holes=0
@@ -17,22 +18,24 @@ B33=LIVE
 B33_cite=rd-duck: m0_ov masks issued m1/m3; bridge S_ISSUE !a_busy race; weak TB m3_beats>=1
 B33_tokens_live=B33_PLXC_ARB_ABSENT,B33_BRIDGE_BUSY_ACCEPT_RACE,B33_LOST_READ_TB_WEAK
 B33_token_reinject=B33_M0_OV_MASKS_ISSUED_LOWER
-B33_wmem_RED=B33_M0_OV_MASKS_ISSUED_LOWER+B33_BRIDGE_BUSY_ACCEPT_RACE+B33_LOST_READ_TB_WEAK
+B33_wmem_measured_RED=B33_M0_OV_MASKS_ISSUED_LOWER+B33_BRIDGE_BUSY_ACCEPT_RACE+B33_LOST_READ_TB_WEAK
 
-OPEN_PRODUCT_REDS_ON_SIBLINGS=
+OPEN_PRODUCT_REDS=
   B9 bank_gen/DAR∧applied-gen (w-scaler)
   B31 HIT_SCAN=48 product (w-osd)
   B32 PLXG↔bank couple (w-mem/w-path)
   B33 m0_ov issued-lower safe (w-mem)
 
-PARENT_RUN=
+PARENT_RUN:
   git fetch origin w-fitgate
   RULER=/home/flynnsbit/Projects/MisterPlex-wt-fitgate
   "$RULER/scripts/fit_release_gate.sh" --root "$MERGE" --qsf "$MERGE/fpga/Plex_MiSTer/Plex.qsf"
 
-LANDING_REPORT=
+LANDING_REPORT:
   product_rtl_authored_by_w_fitgate=0
-  gate_scripts ON_MAIN=no IN_FILES_QIP=n/a
-  land_path=scripts+docs+tests/unit gate helpers only; parent sequences; no unilateral main merge
+  scripts/fit_release_gate.py ON_MAIN=no IN_FILES_QIP=n/a
+  scripts/fit_release_gate.sh ON_MAIN=no IN_FILES_QIP=n/a
+  docs/fit_gate_*.json ON_MAIN=no
+  land_path=scripts+docs+tests helpers only; parent sequences; no unilateral main merge
 
 CONSTRAINTS=no_quartus no_device no_main_merge capture_true_rc
