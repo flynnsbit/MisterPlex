@@ -16,7 +16,20 @@ grep -q 'plxg_owned' "$MUX" || { echo "FAIL mux missing plxg_owned"; exit 1; }
 grep -q 'disable_legacy' "$MUX" || { echo "FAIL mux missing disable_legacy"; exit 1; }
 grep -q 'FAULT_B13_DISABLE_ISLAND' "$MUX" || { echo "FAIL mux missing island RED hook"; exit 1; }
 grep -q 'FAULT_B8_FORCE_ALWAYS' "$MUX" || { echo "FAIL mux missing FORCE red hook"; exit 1; }
+# Mode-exit DE SoT: coded 624 (ddr_frame_layout), NOT presented 640 (rd-duck).
+LAYOUT="$ROOT/host/libmisterplex/ddr_frame_layout.hpp"
+grep -q 'kPlex480pCodedWidth{624}' "$LAYOUT" || { echo "FAIL layout coded width"; exit 1; }
+grep -q 'kPlex480pPresentedWidth{640}' "$LAYOUT" || { echo "FAIL layout presented"; exit 1; }
 grep -q "LEG_CW = 11'd624" "$MUX" || { echo "FAIL LEG_CW not 624"; exit 1; }
+if grep -E "LEG_DE_W[[:space:]]*=[[:space:]]*11'd640|LEG_CW[[:space:]]*=[[:space:]]*11'd640" "$MUX"; then
+  echo "FAIL mode-exit uses presented 640 as beam DE (624-store island)"; exit 1
+fi
+if grep -nE "beam_de_leg \? 11'd640|disable_legacy \? 11'd640" "$MUX"; then
+  echo "FAIL disable path hardcodes 640 DE"; exit 1
+fi
+grep -q 'beam_de_leg ? LEG_CW' "$MUX" || { echo "FAIL content_width disable not LEG_CW"; exit 1; }
+grep -q 'beam_de_leg ? LEG_CH' "$MUX" || { echo "FAIL content_height disable not LEG_CH"; exit 1; }
+echo "OK mode-exit DE SoT = coded 624 (layout); presented 640 rejected"
 
 python3 - "$MUX" <<'PY'
 import re, sys

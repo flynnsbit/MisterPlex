@@ -65,9 +65,20 @@ module plex_present_geom_mux (
 	// Any committed PLXG record — including explicit disable (cw=ch=0, geom=0).
 	wire plxg_owned = plxg_live_valid;
 
-	// Product legacy coded canvas (host ddr_frame_layout kPlex480pCodedWidth).
-	localparam [10:0] LEG_CW = 11'd624;
-	localparam [10:0] LEG_CH = 11'd480;
+	// Product legacy TRUE content DE = coded store columns (ddr_frame_layout.hpp):
+	//   kPlex480pCodedWidth/Height = 624×480  ← mode-exit beam DE + geom_enable=0 bank
+	//   kPlex480pDisplayWidth      = 618      ← crop window inside coded (q3)
+	//   kPlex480pPresentedWidth    = 640      ← VGA pillarbox AFTER present (NOT beam DE)
+	// w-mem LEG_DE_W=640 is WRONG for mode-exit: 624-wide store inside 640 DE = island.
+	// Owner: w-clock beam/content DE (parent arb #3 + source-native rule).
+	localparam [10:0] LEG_CW = 11'd624; // == kPlex480pCodedWidth — NEVER 640
+	localparam [10:0] LEG_CH = 11'd480; // == kPlex480pCodedHeight
+	// synthesis translate_off
+	initial begin
+		if (LEG_CW != 11'd624 || LEG_CH != 11'd480)
+			$error("plex_present_geom_mux: LEG_* must be coded 624×480 not presented 640");
+	end
+	// synthesis translate_on
 
 	wire [10:0] ladder_w = content_res_640x480 ? 11'd640 : 11'd320;
 	wire [10:0] ladder_h = content_res_640x480 ? 11'd480 : 11'd240;
