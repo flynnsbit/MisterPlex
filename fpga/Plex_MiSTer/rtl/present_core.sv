@@ -484,7 +484,12 @@ module present_core #(
 		.DDRAM_DIN(DDRAM_DIN),
 		.DDRAM_BE(DDRAM_BE),
 		.DDRAM_WE(DDRAM_WE),
+`ifdef PRESENT_MULTI_PIXEL
+		// Bank swap on multi-pixel beam frame boundary — not legacy colorbars fstart.
+		.vsync_pulse(mp_fstart),
+`else
 		.vsync_pulse(fstart),
+`endif
 		.has_frame(has_frame),
 		.swap_pending(swap_pending),
 		.underrun_count(frame_underruns),
@@ -539,48 +544,78 @@ module present_core #(
 `ifdef PRESENT_MULTI_PIXEL
 `ifdef DDR_FRAME_STORE
 	// N-wide store RGB → wide-group npx FIFO → 1 px/clk.
-	// Same-clock (INCLUDE_SYNC=0): push on fs_n_valid only; sync from beam.
-	// Dual-clock (INCLUDE_SYNC=1): also push black+sync on blank beam steps so
-	// clk_pix HS/VS advance through blanking (FIFO is the only sync path).
-	// DE groups still come from store (fs_n_valid) with sync sampled at beam.
-	// Delayed beam sync sample for npx sideband (not timing package mp_hs_s).
-	reg mp_hb_sam, mp_hs_sam, mp_vb_sam, mp_vs_sam;
-	reg mp_blank_push;
+	//
+	// rd-duck integration fixes (quoted intent):
+	// 1) Tag sync at *beam request*; delay MP_STORE_LAT sys clk to meet fs_n_valid.
+	//    Sampling mp_hb_sam at response time skews line-edge RGB vs HS/DE.
+	// 2) Every beam group → npx push after LAT: blank=black+sync; DE+fs=store RGB;
+	//    DE without fs (no frame / miss)=black. No-frame still runs continuous raster.
+	// 3) Mode-on H/V/ce always from mp path — never legacy hb_d while CLK_VIDEO=clk_pix.
+	// 4) ddr vsync_pulse = mp_fstart (bank swap on 720 beam, not colorbars fstart).
+	//
+	// LAT: beam_ce→mp_de_r(1) + rd_active_r(1) + rd_active_d(1) + yuv(1) = 4.
+	localparam int MP_STORE_LAT = 4;
+
+	reg [MP_STORE_LAT-1:0]          mp_tq_v;
+	reg                             mp_tq_hb [0:MP_STORE_LAT-1];
+	reg                             mp_tq_hs [0:MP_STORE_LAT-1];
+	reg                             mp_tq_vb [0:MP_STORE_LAT-1];
+	reg                             mp_tq_vs [0:MP_STORE_LAT-1];
+	reg [PRESENT_PPC-1:0]           mp_tq_lde [0:MP_STORE_LAT-1];
+	integer                         mp_ti;
+
 	always @(posedge clk) begin
 		if (reset) begin
-			mp_hb_sam <= 1'b1;
-			mp_hs_sam <= 1'b0;
-			mp_vb_sam <= 1'b1;
-			mp_vs_sam <= 1'b0;
-			mp_blank_push <= 1'b0;
-		end else begin
-			mp_blank_push <= 1'b0;
-			if (mp_beam_ce) begin
-				mp_hb_sam <= mp_hb;
-				mp_hs_sam <= mp_hs;
-				mp_vb_sam <= mp_vb;
-				mp_vs_sam <= mp_vs;
-				// Blank group: no store commit; inject black into npx.
-				if (MP_INCLUDE_SYNC && !(|mp_lane_de))
-					mp_blank_push <= 1'b1;
+			mp_tq_v <= '0;
+			for (mp_ti = 0; mp_ti < MP_STORE_LAT; mp_ti = mp_ti + 1) begin
+				mp_tq_hb[mp_ti]  <= 1'b1;
+				mp_tq_hs[mp_ti]  <= 1'b0;
+				mp_tq_vb[mp_ti]  <= 1'b1;
+				mp_tq_vs[mp_ti]  <= 1'b0;
+				mp_tq_lde[mp_ti] <= '0;
 			end
+		end else begin
+			// Shift toward [LAT-1]; load [0] on beam_ce, else bubble (v=0).
+			for (mp_ti = MP_STORE_LAT-1; mp_ti > 0; mp_ti = mp_ti - 1) begin
+				mp_tq_v[mp_ti]   <= mp_tq_v[mp_ti-1];
+				mp_tq_hb[mp_ti]  <= mp_tq_hb[mp_ti-1];
+				mp_tq_hs[mp_ti]  <= mp_tq_hs[mp_ti-1];
+				mp_tq_vb[mp_ti]  <= mp_tq_vb[mp_ti-1];
+				mp_tq_vs[mp_ti]  <= mp_tq_vs[mp_ti-1];
+				mp_tq_lde[mp_ti] <= mp_tq_lde[mp_ti-1];
+			end
+			mp_tq_v[0]   <= mp_beam_ce;
+			mp_tq_hb[0]  <= mp_beam_ce ? mp_hb : 1'b1;
+			mp_tq_hs[0]  <= mp_beam_ce ? mp_hs : 1'b0;
+			mp_tq_vb[0]  <= mp_beam_ce ? mp_vb : 1'b1;
+			mp_tq_vs[0]  <= mp_beam_ce ? mp_vs : 1'b0;
+			mp_tq_lde[0] <= mp_beam_ce ? mp_lane_de : '0;
 		end
 	end
-	wire mp_npx_valid = fs_n_valid | mp_blank_push;
+
+	wire                    mp_push     = mp_tq_v[MP_STORE_LAT-1];
+	wire                    mp_push_hb  = mp_tq_hb[MP_STORE_LAT-1];
+	wire                    mp_push_hs  = mp_tq_hs[MP_STORE_LAT-1];
+	wire                    mp_push_vb  = mp_tq_vb[MP_STORE_LAT-1];
+	wire                    mp_push_vs  = mp_tq_vs[MP_STORE_LAT-1];
+	wire [PRESENT_PPC-1:0]  mp_push_lde = mp_tq_lde[MP_STORE_LAT-1];
+	wire                    mp_push_de  = |mp_push_lde;
+	// Store RGB only when response aligns with a DE-tagged slot.
+	wire                    mp_use_fs   = mp_push && mp_push_de && fs_n_valid;
+
+	wire mp_npx_valid = mp_push;
 	wire [PRESENT_PPC*8-1:0] mp_npx_r =
-		fs_n_valid ? fs_r_n : {PRESENT_PPC{8'd0}};
+		mp_use_fs ? fs_r_n : {PRESENT_PPC{8'd0}};
 	wire [PRESENT_PPC*8-1:0] mp_npx_g =
-		fs_n_valid ? fs_g_n : {PRESENT_PPC{8'd0}};
+		mp_use_fs ? fs_g_n : {PRESENT_PPC{8'd0}};
 	wire [PRESENT_PPC*8-1:0] mp_npx_b =
-		fs_n_valid ? fs_b_n : {PRESENT_PPC{8'd0}};
-	wire [PRESENT_PPC-1:0] mp_npx_lane =
-		fs_n_valid ? {PRESENT_PPC{1'b1}} :
-		(mp_blank_push ? {PRESENT_PPC{1'b1}} : {PRESENT_PPC{1'b0}});
-	// Sync: prefer sampled beam flags with store/blank push.
-	wire mp_npx_hb = mp_hb_sam;
-	wire mp_npx_hs = mp_hs_sam;
-	wire mp_npx_vb = mp_vb_sam;
-	wire mp_npx_vs = mp_vs_sam;
+		mp_use_fs ? fs_b_n : {PRESENT_PPC{8'd0}};
+	// Any push → all lanes valid black or store RGB (PPC-aligned product groups).
+	wire [PRESENT_PPC-1:0] mp_npx_lane_q = mp_push ? {PRESENT_PPC{1'b1}} : {PRESENT_PPC{1'b0}};
+	wire mp_npx_hb = mp_push_hb;
+	wire mp_npx_hs = mp_push_hs;
+	wire mp_npx_vb = mp_push_vb;
+	wire mp_npx_vs = mp_push_vs;
 
 	present_npx_path #(
 		.PX_PER_CLK(PRESENT_PPC),
@@ -595,7 +630,7 @@ module present_core #(
 		.in_r(mp_npx_r),
 		.in_g(mp_npx_g),
 		.in_b(mp_npx_b),
-		.in_lane_valid(mp_npx_lane),
+		.in_lane_valid(mp_npx_lane_q),
 		.in_hblank(mp_npx_hb),
 		.in_hsync(mp_npx_hs),
 		.in_vblank(mp_npx_vb),
@@ -614,11 +649,7 @@ module present_core #(
 		.rd_underrun(mp_rd_ur),
 		.rd_empty(mp_rd_empty)
 	);
-	// DE_LAG for multi-pixel is UNKNOWN until parent HDMI edge sweep on an
-	// authorised multi-pixel fit. Start with 0 delay on beam blank (data path
-	// has its own store+npx latency); do not claim calibration.
-	// Dual-clock: prefer FIFO sideband sync (pixel-aligned). Same-clock: beam.
-	localparam int MP_SYNC_LAG = 0;
+	// Dual-clock: FIFO sideband owns H/V. Same-clock: beam direct (low LAT).
 `ifdef PRESENT_CLK_PIX_PLL
 	wire mp_hb_d = mp_out_hb;
 	wire mp_hs_d = mp_out_hs;
@@ -631,13 +662,12 @@ module present_core #(
 	wire mp_vs_d = mp_vs;
 `endif
 	wire mp_de_out = ~mp_hb_d & ~mp_vb_d;
-	// Sanity: beam DE must match timing package (elab-time constants).
-	// If this ever mismatches, integration fit is wrong — fail closed in sim.
 	wire mp_mode_ok = (mp_h_de == 12'd1280) && (mp_v_act == 12'd720)
 		&& (mp_h_total == 12'd1650) && (mp_v_total == 12'd750);
 	wire _unused_mp_flags = mp_beam_ce | mp_wr_full | mp_wr_af | mp_rd_ur
-		| mp_rd_empty | (|mp_lane_de_r) | (|fs_lane_v_n) | (MP_SYNC_LAG == 0)
-		| mp_mode_ok | mp_needs_fast_pix | (|mp_fps_milli) | mp_identity_geom_ok;
+		| mp_rd_empty | (|mp_lane_de_r) | (|fs_lane_v_n) | (MP_STORE_LAT == 4)
+		| mp_mode_ok | mp_needs_fast_pix | (|mp_fps_milli) | mp_identity_geom_ok
+		| mp_use_fs;
 `endif
 `endif
 
@@ -719,19 +749,32 @@ module present_core #(
 	wire [7:0] mp_r_px = mp_out_ce ? mp_out_r : mp_r_hold;
 	wire [7:0] mp_g_px = mp_out_ce ? mp_out_g : mp_g_hold;
 	wire [7:0] mp_b_px = mp_out_ce ? mp_out_b : mp_b_hold;
+	// Mode-on (PRESENT_MULTI_PIXEL+DDR): mp path owns H/V always.
+	// CLK_VIDEO may be clk_pix — never fall back to legacy hb_d/br (20 MHz state).
+	// RGB: frame pixels when has_frame & !force-bars; else black (continuous raster).
+	// Force-bars (use_frame_store) still allowed only on same-clock builds.
+`ifdef PRESENT_CLK_PIX_PLL
+	assign r = mp_de_out ? ((has_frame && !use_frame_store) ? mp_r_px : 8'd0) : 8'd0;
+	assign g = mp_de_out ? ((has_frame && !use_frame_store) ? mp_g_px : 8'd0) : 8'd0;
+	assign b = mp_de_out ? ((has_frame && !use_frame_store) ? mp_b_px : 8'd0) : 8'd0;
+	assign ce_pix = 1'b1; // CLK_VIDEO==clk_pix; CE always
+	assign HBlank = mp_hb_d;
+	assign HSync  = mp_hs_d;
+	assign VBlank = mp_vb_d;
+	assign VSync  = mp_vs_d;
+	assign frame_start = mp_fstart;
+`else
 	assign r = use_ext ? (mp_de_out ? mp_r_px : 8'd0) : (show_pattern ? br : 8'd0);
 	assign g = use_ext ? (mp_de_out ? mp_g_px : 8'd0) : (show_pattern ? bg : 8'd0);
 	assign b = use_ext ? (mp_de_out ? mp_b_px : 8'd0) : (show_pattern ? bb : 8'd0);
-`ifdef PRESENT_CLK_PIX_PLL
-	assign ce_pix = 1'b1; // CLK_VIDEO==clk_pix; CE always
-`else
 	assign ce_pix = 1'b1;
+	// Same-clock: still prefer mp timing when multi-pixel mode is on so DE matches beam.
+	assign HBlank = mp_hb_d;
+	assign HSync  = mp_hs_d;
+	assign VBlank = mp_vb_d;
+	assign VSync  = mp_vs_d;
+	assign frame_start = mp_fstart;
 `endif
-	assign HBlank = use_ext ? mp_hb_d : hb_d;
-	assign HSync  = use_ext ? mp_hs_d : hs_d;
-	assign VBlank = use_ext ? mp_vb_d : vb_d;
-	assign VSync  = use_ext ? mp_vs_d : vs_d;
-	assign frame_start = use_ext ? mp_fstart : fstart;
 `else
 	// Multi-pixel macro without DDR store: keep legacy 1ppc path.
 	assign r = use_ext ? (de_out ? fr : 8'd0) : (show_pattern ? br : 8'd0);

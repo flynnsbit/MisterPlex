@@ -1,9 +1,7 @@
 w-clock STATUS
 branch: w-clock-bump
-top: npx wide-FIFO + prefill/skid (rd-duck audit closed in unit sim)
-tests: full_raster PASS; cea+phase PASS; path/sync/cdc PASS
-open: integrated store backpressure cosim; fit; glass
+top: mp integration sync ownership + black DE fill + mp_fstart
+tests: mp_integrated NO_FRAME+FRAME PASS; cea/full/path PASS
 macros: PRESENT_* default OFF
 fit: NOT run
 device: none
-claim: do NOT assert 29.7 glass sustained
