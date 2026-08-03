@@ -1,6 +1,6 @@
 lane=w-path
 status=PL330_SCRATCH_ABI_LANDED
-tip=pending
+tip=e8f1710a
 ABI: kPl330ProgScratchPhys=0x30600000 staging=0x30601000 (after Option-C triple end)
 open() maps scratch via /dev/mem — no pagemap/CMA
 bench uses Option-C banks + staging→bank DMA
