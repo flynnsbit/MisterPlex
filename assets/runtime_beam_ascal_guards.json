@@ -1,0 +1,24 @@
+{
+  "title": "Runtime beam ascal path guards (rd-duck stale geometry)",
+  "owner": "w-clock",
+  "define": "PRESENT_BEAM_960",
+  "required_when_beam": {
+    "VGA_SCALER": 1,
+    "HDMI_BLACKOUT": 1
+  },
+  "legacy_when_not_beam": {
+    "VGA_SCALER": 0,
+    "HDMI_BLACKOUT": 0
+  },
+  "wiring": {
+    "VGA_SCALER": "emu.VGA_SCALER → sys_top.vga_force_scaler → vga_fb|vga_scaler; disables direct_video HDMI raw mux",
+    "HDMI_BLACKOUT": "emu.HDMI_BLACKOUT → sys_top.hdmi_blackout → ascal.swblack"
+  },
+  "ascal_swblack_scope": "SIZE only: o_ihsize/o_ivsize vs i_hrsize/i_vrsize; 3 frames. Not DAR-only. Not mid-frame geom without size change.",
+  "files": {
+    "emu": "fpga/Plex_MiSTer/Plex.sv",
+    "sys_top": "fpga/Plex_MiSTer/sys/sys_top.v",
+    "ascal": "fpga/Plex_MiSTer/sys/ascal.vhd"
+  },
+  "gate": "tests/unit/test_runtime_beam_ascal_guards.sh"
+}

@@ -28,10 +28,22 @@ assign {SD_SCK, SD_MOSI, SD_CS} = 'Z;
 
 assign VGA_SL = 0;
 assign VGA_F1 = 0;
-assign VGA_SCALER  = 0;
+// Runtime beam (PRESENT_BEAM_960): nonstandard ~16.92 kHz core raster must NOT
+// bypass ascal. VGA_SCALER=1 → vga_force_scaler → vga_fb|vga_scaler, which
+// disables sys_top direct_video raw path (~vga_fb & direct_video) and forces
+// VGA through the scaler (vgas_en). Legacy fixed path keeps 0.
+// HDMI_BLACKOUT=1 → ascal.swblack: 3 black frames on *input size* change
+// (ih/iv). Size-only — same-size DAR change is NOT covered (parent ABI#2 note).
+// Do not claim blackout protects arbitrary geometry/DAR without size delta.
+`ifdef PRESENT_BEAM_960
+assign VGA_SCALER    = 1;
+assign HDMI_BLACKOUT = 1;
+`else
+assign VGA_SCALER    = 0;
+assign HDMI_BLACKOUT = 0;
+`endif
 assign VGA_DISABLE = 0;
 assign HDMI_FREEZE = 0;
-assign HDMI_BLACKOUT = 0;
 assign HDMI_BOB_DEINT = 0;
 
 assign AUDIO_MIX = 0;
