@@ -1,0 +1,162 @@
+// plex_chrome_plxc_cdc — clk_sys → clk_hdmi PLXC host beat bridge
+//
+// rd-duck combined-path blocker: sys_top used rising-edge detect
+//   plxc_ext_we_d2 & ~plxc_ext_we_d3
+// on a multi-cycle host_we burst from plex_chrome_ddr_loader (S_PUSH_LIST /
+// S_PUSH_CTRL asserts we=1 every consecutive clk_sys cycle). That collapses
+// the whole burst to ONE clk_hdmi pulse; later list words + ctrl are dropped.
+// Same-clock loader/host_if TBs cannot see this.
+//
+// Fix: small async FIFO. Every wr_clk cycle with wr_en=1 enqueues {addr,data}.
+// rd_clk dequeues one beat per cycle (rd_we pulse) with coherent multi-bit data.
+// Depth is power-of-two; gray-coded pointers. No toggle/ack round-trip required
+// when rd_clk > wr_clk (hdmi 74.25 MHz vs sys 20 MHz) — still safe if briefly
+// inverted via almost_full (loader may ignore until backpressure is wired).
+//
+// FAULT_EDGE_DETECT: compile the broken edge path for the red twin TB only.
+
+`timescale 1ns / 1ps
+`default_nettype none
+
+module plex_chrome_plxc_cdc #(
+	parameter int DEPTH = 16  // power of 2, >= 4
+) (
+	input  wire        wr_clk,
+	input  wire        wr_rst,
+	input  wire        wr_en,
+	input  wire [7:0]  wr_addr,
+	input  wire [63:0] wr_data,
+	output wire        wr_full,
+	output wire        wr_almost_full,
+
+	input  wire        rd_clk,
+	input  wire        rd_rst,
+	output reg         rd_we,
+	output reg  [7:0]  rd_addr,
+	output reg  [63:0] rd_data,
+	output wire        rd_empty
+);
+	localparam int AW = $clog2(DEPTH);
+
+	reg [71:0] mem [0:DEPTH-1];
+
+	// --- write pointer (binary + gray) ---
+	reg [AW:0] wr_ptr_bin, wr_ptr_gray;
+	reg [AW:0] rd_ptr_gray_w1, rd_ptr_gray_w2;
+
+	// --- read pointer ---
+	reg [AW:0] rd_ptr_bin, rd_ptr_gray;
+	reg [AW:0] wr_ptr_gray_r1, wr_ptr_gray_r2;
+
+	function automatic [AW:0] bin2gray;
+		input [AW:0] b;
+		bin2gray = b ^ (b >> 1);
+	endfunction
+
+	wire [AW:0] wr_ptr_bin_next = wr_ptr_bin + {{AW{1'b0}}, 1'b1};
+	wire [AW:0] rd_ptr_bin_next = rd_ptr_bin + {{AW{1'b0}}, 1'b1};
+
+	wire [AW:0] rd_ptr_bin_w;
+	// reconstruct approx binary from synced gray for full check
+	// full when next wr gray == {~rd_gray_sync[AW:AW-1], rd_gray_sync[AW-2:0]}
+	wire [AW:0] rd_gray_sync = rd_ptr_gray_w2;
+	wire [AW:0] wr_gray_sync = wr_ptr_gray_r2;
+
+	assign wr_full = (bin2gray(wr_ptr_bin_next) ==
+		{ ~rd_gray_sync[AW:AW-1], rd_gray_sync[AW-2:0] });
+	// almost full: two slots or fewer free (conservative)
+	wire [AW:0] wr_ptr_bin_p2 = wr_ptr_bin + 2'd2;
+	assign wr_almost_full = wr_full ||
+		(bin2gray(wr_ptr_bin_p2) == { ~rd_gray_sync[AW:AW-1], rd_gray_sync[AW-2:0] }) ||
+		(bin2gray(wr_ptr_bin_next) == { ~rd_gray_sync[AW:AW-1], rd_gray_sync[AW-2:0] });
+
+	assign rd_empty = (rd_ptr_gray == wr_gray_sync);
+
+	// Write domain
+	integer wi;
+	always @(posedge wr_clk) begin
+		if (wr_rst) begin
+			wr_ptr_bin      <= '0;
+			wr_ptr_gray     <= '0;
+			rd_ptr_gray_w1  <= '0;
+			rd_ptr_gray_w2  <= '0;
+		end else begin
+			rd_ptr_gray_w1 <= rd_ptr_gray;
+			rd_ptr_gray_w2 <= rd_ptr_gray_w1;
+			if (wr_en && !wr_full) begin
+				mem[wr_ptr_bin[AW-1:0]] <= {wr_addr, wr_data};
+				wr_ptr_bin  <= wr_ptr_bin_next;
+				wr_ptr_gray <= bin2gray(wr_ptr_bin_next);
+			end
+		end
+	end
+
+	// Read domain — one beat per cycle when not empty
+	always @(posedge rd_clk) begin
+		if (rd_rst) begin
+			rd_ptr_bin      <= '0;
+			rd_ptr_gray     <= '0;
+			wr_ptr_gray_r1  <= '0;
+			wr_ptr_gray_r2  <= '0;
+			rd_we           <= 1'b0;
+			rd_addr         <= 8'd0;
+			rd_data         <= 64'd0;
+		end else begin
+			wr_ptr_gray_r1 <= wr_ptr_gray;
+			wr_ptr_gray_r2 <= wr_ptr_gray_r1;
+			rd_we <= 1'b0;
+			if (!rd_empty) begin
+				{rd_addr, rd_data} <= mem[rd_ptr_bin[AW-1:0]];
+				rd_we       <= 1'b1;
+				rd_ptr_bin  <= rd_ptr_bin_next;
+				rd_ptr_gray <= bin2gray(rd_ptr_bin_next);
+			end
+		end
+	end
+
+endmodule
+
+// Broken edge-detect twin (red path only). Same ports as product consumer side.
+module plex_chrome_plxc_cdc_edge_fault (
+	input  wire        wr_clk,   // unused — samples on rd_clk only (the bug)
+	input  wire        wr_rst,
+	input  wire        wr_en,
+	input  wire [7:0]  wr_addr,
+	input  wire [63:0] wr_data,
+	output wire        wr_full,
+	output wire        wr_almost_full,
+	input  wire        rd_clk,
+	input  wire        rd_rst,
+	output wire        rd_we,
+	output wire [7:0]  rd_addr,
+	output wire [63:0] rd_data,
+	output wire        rd_empty
+);
+	assign wr_full = 1'b0;
+	assign wr_almost_full = 1'b0;
+	assign rd_empty = 1'b0;
+	reg we_d1, we_d2, we_d3;
+	reg [7:0] a_d1, a_d2;
+	reg [63:0] d_d1, d_d2;
+	always @(posedge rd_clk) begin
+		if (rd_rst) begin
+			we_d1 <= 1'b0; we_d2 <= 1'b0; we_d3 <= 1'b0;
+			a_d1 <= 8'd0; a_d2 <= 8'd0;
+			d_d1 <= 64'd0; d_d2 <= 64'd0;
+		end else begin
+			// Unsynchronized multi-bit sample + rising-edge we (product defect class)
+			we_d1 <= wr_en;
+			we_d2 <= we_d1;
+			we_d3 <= we_d2;
+			a_d1  <= wr_addr;
+			a_d2  <= a_d1;
+			d_d1  <= wr_data;
+			d_d2  <= d_d1;
+		end
+	end
+	assign rd_we   = we_d2 & ~we_d3;
+	assign rd_addr = a_d2;
+	assign rd_data = d_d2;
+endmodule
+
+`default_nettype wire

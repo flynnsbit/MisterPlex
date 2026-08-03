@@ -1196,40 +1196,41 @@ cyclonev_hps_interface_peripheral_i2c hdmi_i2c
 	wire        plxc_host_we;
 	wire [7:0]  plxc_host_addr;
 	wire [63:0] plxc_host_wdata;
-	// 2FF CDC into clk_hdmi (level for has_frame; we/addr/data held one HDMI cycle).
+	// has_frame: 2FF level CDC (single bit).
 	reg  [1:0]  has_frame_cdc;
-	reg         plxc_ext_we_d1, plxc_ext_we_d2, plxc_ext_we_d3;
-	reg  [7:0]  plxc_ext_addr_d1, plxc_ext_addr_d2;
-	reg  [63:0] plxc_ext_wdata_d1, plxc_ext_wdata_d2;
+	always @(posedge clk_hdmi) begin
+		if (reset_req)
+			has_frame_cdc <= 2'b00;
+		else
+			has_frame_cdc <= {has_frame_cdc[0], has_frame_sys};
+	end
+	wire has_frame_hdmi = has_frame_cdc[1];
+
+	// PLXC host beats: async FIFO clk_sys → clk_hdmi (rd-duck combined-path fix).
+	// Rising-edge detect on multi-cycle host_we drops all but the first beat —
+	// plex_chrome_ddr_loader S_PUSH_LIST holds we=1 for every consecutive cmd.
+	// Do NOT restore d2&~d3 here; see plex_chrome_plxc_cdc.sv + hierarchy TB.
 	wire        plxc_ext_we;
 	wire [7:0]  plxc_ext_addr;
 	wire [63:0] plxc_ext_wdata;
-	always @(posedge clk_hdmi) begin
-		if (reset_req) begin
-			has_frame_cdc    <= 2'b00;
-			plxc_ext_we_d1   <= 1'b0;
-			plxc_ext_we_d2   <= 1'b0;
-			plxc_ext_we_d3   <= 1'b0;
-			plxc_ext_addr_d1 <= 8'd0;
-			plxc_ext_addr_d2 <= 8'd0;
-			plxc_ext_wdata_d1<= 64'd0;
-			plxc_ext_wdata_d2<= 64'd0;
-		end else begin
-			has_frame_cdc    <= {has_frame_cdc[0], has_frame_sys};
-			plxc_ext_we_d1   <= plxc_ext_we_sys;
-			plxc_ext_we_d2   <= plxc_ext_we_d1;
-			plxc_ext_we_d3   <= plxc_ext_we_d2;
-			plxc_ext_addr_d1 <= plxc_ext_addr_sys;
-			plxc_ext_addr_d2 <= plxc_ext_addr_d1;
-			plxc_ext_wdata_d1<= plxc_ext_wdata_sys;
-			plxc_ext_wdata_d2<= plxc_ext_wdata_d1;
-		end
-	end
-	// Rising edge of sys we → single HDMI-domain pulse (may stretch if sys>>hdmi).
-	assign plxc_ext_we    = plxc_ext_we_d2 & ~plxc_ext_we_d3;
-	assign plxc_ext_addr  = plxc_ext_addr_d2;
-	assign plxc_ext_wdata = plxc_ext_wdata_d2;
-	wire has_frame_hdmi = has_frame_cdc[1];
+	wire        plxc_cdc_full, plxc_cdc_afull, plxc_cdc_empty;
+	plex_chrome_plxc_cdc #(
+		.DEPTH(16)
+	) u_plxc_cdc (
+		.wr_clk(clk_sys),
+		.wr_rst(reset_req),
+		.wr_en(plxc_ext_we_sys),
+		.wr_addr(plxc_ext_addr_sys),
+		.wr_data(plxc_ext_wdata_sys),
+		.wr_full(plxc_cdc_full),
+		.wr_almost_full(plxc_cdc_afull),
+		.rd_clk(clk_hdmi),
+		.rd_rst(reset_req),
+		.rd_we(plxc_ext_we),
+		.rd_addr(plxc_ext_addr),
+		.rd_data(plxc_ext_wdata),
+		.rd_empty(plxc_cdc_empty)
+	);
 
 	// Boot keepalive: list_we must toggle (anti-elision). PLXC enable bit is 0
 	// unless PLEX_FAB_BOOT_PLXC — default-OFF is honest pass-through.

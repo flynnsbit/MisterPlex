@@ -1,14 +1,24 @@
-lane=w-osd tip=parent_playing_gate runbook
-beacon=5c498b29 PLEX_FAB_PLAY_BEACON
-hunt=6431aaa3 coded-size refuse
-sps=e218fed6 544→540 display
+w-osd PLXC CDC fix (rd-duck combined-path)
+branch: w-osd-fabric-plane
+date: 2026-08-03
 
-## parent_playing_gate.sh
-EXPECT_RBF_MD5=… scripts/parent_playing_gate.sh full
-rc: 0=A 1=scored-non-A 3=UNKNOWN_GRABBER 4=PRECOND(not fabric) 5=B1
-offline-selftest true rc=0
-docs/fab-playing-parent-runbook.md
-pair cards: docs/evidence/p720-path-20260803/
+FINDING (rd-duck): plex_chrome_ddr_loader S_PUSH_LIST/CTRL asserts host_we=1
+every consecutive clk_sys cycle. sys_top used rising-edge d2&~d3 → ONE hdmi
+pulse; later list+ctrl dropped. Same-clock TBs blind.
 
-## Fit
-w-mem Option-C capacity. Beacon ready. No device/Quartus from this lane.
+FIX:
+- fpga/Plex_MiSTer/rtl/plex_chrome_plxc_cdc.sv — async FIFO DEPTH=16 gray ptrs
+  + plex_chrome_plxc_cdc_edge_fault red twin (old edge path)
+- sys_top.v: u_plxc_cdc replaces d2&~d3
+- files.qip + Makefile rtl-sim entry
+- tests/unit/test_plex_chrome_plxc_cdc_rtl_sim.sh hierarchy 20→74.25 MHz
+
+EVIDENCE (true rc):
+  test_plex_chrome_plxc_cdc_rtl_sim.sh  true rc=0
+    prod_beats=3 fault_beats=1 list_we=2 cfg_en=1 cfg_cnt=2 cfg_seq=7
+    EXECUTED product_burst / edge_fault_burst / single_beat all PASS
+  test_plex_chrome_ddr_loader_rtl_sim.sh true rc=0
+  test_plex_chrome_counted_rtl_sim.sh    true rc=0
+
+RESIDUAL R1: Plex.sv loader m_gnt/m_rd_valid tied 0 — armed≠product-live (w-mem).
+No Quartus. No device.
