@@ -9,14 +9,13 @@
 //   [33]    fps_valid
 //   [63:34] RESERVED — must be zero; pack/validate MUST reject non-zero
 //
-// *** ABI FREEZE — do not grab reserved bits in this lane ***
-// rd-duck BLOCKER (2026-08-03): a unilateral "ABI #2.1" fps_1001 on bit 34
-// collides with w-mem present_geom_latch (`q5_reserved_nz = |sh5[63:34]`) and
-// PLXF E4 — every 23.976/29.97 record would be rejected wholesale (DAR+geom too).
-// Film/NTSC 1000/1001 stays HOST-ONLY (fps_num/fps_den + struct fps_1001 for
-// logs/ARM pacing) until parent arbitrates mem+latch+poller+clock atomically.
-// Wire content_fps remains the integer family (24/30); fabric may slip vs film
-// until arbitration — that is preferred over a loud reserved reject.
+// *** PARENT ARBITRATION #4 (2026-08-03): bit-34 fps_1001 is VACATED ***
+// Parent freeze #2: q5[63:34] RESERVED. Unilateral #2.1 (f31a6eb9) vacated —
+// w-mem rejects |sh5[63:34]; film packs must NOT set bit34 or entire q5 (DAR+fps)
+// is dropped → fallback AR 4:3 / fps=24. Concept (fps_1001 flag) provisionally
+// awarded for freeze #4 single-window merge — kPlxgQ5Fps1001OnWire stays false
+// until parent signs. Host keeps fps_num/den + fps_1001 for logs/ARM only.
+// Wire content_fps = integer family; residual film slip ~40.57s documented.
 //
 // w-path owns publishing values from PMS metadata + measured FFmpeg only.
 // Never invent defaults: *_valid=0 when unknown. Fabric (w-scaler/w-clock)
@@ -31,13 +30,15 @@
 
 namespace misterplex {
 
-// Parent freeze: q5 sits immediately after q0..q4 (0x800 + 5*8).
+// Parent freeze: PLXG record at doorbell+0x800; q5 is sixth qword.
+constexpr uint32_t kPlxgRecordByteOffset = 0x800u;
 constexpr uint32_t kPlxgQ5ByteOffset = 0x828u;
 constexpr uint32_t kPlxgQ5Index = 5u;
 constexpr uint32_t kPlxgRecordQwordsAspectCadence = 6u;
 constexpr uint32_t kPlxgRecordBytesAspectCadence = kPlxgRecordQwordsAspectCadence * 8u; // 48
 
-static_assert(kPlxgQ5ByteOffset == 0x800u + 5u * 8u, "q5 must be sixth qword at +0x828");
+static_assert(kPlxgQ5ByteOffset == kPlxgRecordByteOffset + 5u * 8u,
+              "q5 must be sixth qword at +0x828");
 static_assert(kPlxgRecordBytesAspectCadence == 48u, "PLXG grows to 6 qwords / 48 bytes");
 
 // 12-bit field maxima for dar_x / dar_y.
@@ -146,6 +147,16 @@ inline bool unpackPlxgQ5(uint64_t q5, PlxgAspectCadence* out) {
 // Reject path used by host-side models of the fabric receiver (w-mem E4).
 inline bool plxgQ5ReceiverAccepts(uint64_t q5) {
     return plxgQ5ReservedOk(q5);
+}
+
+// Split q5 into little-endian mailbox words for doorbell+0x828 write.
+// Fails closed if reserved [63:34] nonzero (must not poison the latch).
+inline bool plxgQ5ToMailboxWords(uint64_t q5, uint32_t* lo, uint32_t* hi) {
+    if (!lo || !hi || !plxgQ5ReservedOk(q5))
+        return false;
+    *lo = static_cast<uint32_t>(q5 & 0xFFFFFFFFu);
+    *hi = static_cast<uint32_t>((q5 >> 32) & 0xFFFFFFFFu);
+    return true;
 }
 
 // --- Selection: PMS metadata + measured geometry only; never invent defaults. ---

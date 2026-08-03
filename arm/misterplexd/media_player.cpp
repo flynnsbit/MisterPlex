@@ -531,15 +531,23 @@ void MediaPlayer::refreshPlxgAspectCadence() {
     if (c.fps_valid)
         flags |= 2u;
     plxgQ5Flags_.store(flags, std::memory_order_relaxed);
-    // Greppable publish line — values from PMS/FFmpeg only; valid=0 when unknown.
-    // Note: lastPlxgQ5() is the value source; w-mem wire writer integration is
-    // a separate atomic merge (B16) — path does not claim DDR PLXG write here.
+    // Host half of ABI #2: write doorbell+0x828 when FPGA map is available.
+    // Fabric latch/plxg_* consumers remain w-mem (not claimed live here).
+    int wire_write = 0;
+    if (q != 0 && fpga_.ok()) {
+        if (fpga_.writePlxgQ5(q))
+            wire_write = 1;
+        else
+            log(std::string("media: plxg_q5 wire write failed: ") + fpga_.lastError());
+    }
     log(std::string("media: ") + formatPlxgQ5LogLine(c, q) +
         " coded=" + std::to_string(w) + "x" + std::to_string(h) +
         " sar=" + (pixelAspectRatio_.empty() ? "-" : pixelAspectRatio_) +
         " media_ar=" + (mediaAspectRatio_.empty() ? "-" : mediaAspectRatio_) +
         " dar_prov=" + (plxgDarTranscode_ ? "transcode" : "direct_play") +
-        " fps_rational=" + std::to_string(fpsNum_) + "/" + std::to_string(fpsDen_));
+        " fps_rational=" + std::to_string(fpsNum_) + "/" + std::to_string(fpsDen_) +
+        " wire_write=" + std::to_string(wire_write) +
+        " wire_off=+0x828");
 }
 
 void MediaPlayer::setFfmpegScaleMode(std::string mode) {

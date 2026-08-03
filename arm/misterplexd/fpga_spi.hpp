@@ -106,6 +106,13 @@ public:
     // bank that was actually written + doorbelled on the last successful publish.
     bool publishDdrFrame(const DdrPublishFrame& frame, int bank = 0);
     int lastPublishedBank() const { return lastPublishedBank_; }
+
+    // PLXG q5 (doorbell+0x828) — ABI #2 DAR+content_fps. Reserved [63:34] must
+    // be zero (parent arb #4: no fps_1001 on wire). Latched for next publish and
+    // written immediately when DDR map is live. Latch atomicity B16 = w-mem.
+    bool writePlxgQ5(uint64_t q5);
+    void setPlxgQ5Pending(uint64_t q5) { plxgQ5Pending_ = q5; plxgQ5PendingValid_ = true; }
+    uint64_t lastWrittenPlxgQ5() const { return plxgQ5LastWritten_; }
     // DDR frame mmap policy. Default true keeps the proven strongly-ordered/device
     // mapping; false is a lab knob for write-combine/cacheable /dev/mem tests.
     // If a lab proves the no-sync mapping is cacheable, enable flush so the FPGA
@@ -348,6 +355,10 @@ private:
     // leave the doorbell/stride at the packed-320 layout or the first frame shears.
     DdrFrameLayout ddrLayout_ = makeDdrFrameLayout(productDdrFrameStoreGeometry());
     uint32_t doorbellSeq_ = 0;
+    // Pending PLXG q5 for publish path (doorbell+0x828).
+    uint64_t plxgQ5Pending_ = 0;
+    bool plxgQ5PendingValid_ = false;
+    uint64_t plxgQ5LastWritten_ = 0;
     double lastDdrBankDoorbellMs_[2] = {-1.0, -1.0};
     int lastPublishedBank_ = 0;
     DdrBankSelectState ddrBankSelect_{};

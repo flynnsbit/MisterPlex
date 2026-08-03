@@ -1,6 +1,7 @@
 #include "fpga_spi.hpp"
 
 #include "libmisterplex/ddr_bank_release_select.hpp"
+#include "libmisterplex/plxg_q5_aspect_cadence.hpp"
 #include "libmisterplex/plxd_liveness.hpp"
 #include "libmisterplex/status_telemetry.hpp"
 #include "libmisterplex/pixel_format.hpp"
@@ -820,6 +821,33 @@ bool FpgaSpi::kickDdrDoorbell(int bank) {
     return true;
 }
 
+bool FpgaSpi::writePlxgQ5(uint64_t q5) {
+    // Parent arb #4: refuse reserved [63:34] (no fps_1001 on wire).
+    uint32_t lo = 0, hi = 0;
+    if (!plxgQ5ToMailboxWords(q5, &lo, &hi)) {
+        setErr("writePlxgQ5: reserved[63:34] nonzero or bad q5 (ABI #2)");
+        return false;
+    }
+    if (!ensureDdrMap())
+        return false;
+    const size_t off =
+        static_cast<size_t>(ddrLayout_.doorbell_phys - ddrLayout_.phys_base) +
+        static_cast<size_t>(kPlxgQ5ByteOffset);
+    if (off + 8 > ddrMapLen_) {
+        setErr("writePlxgQ5: doorbell page too small for +0x828");
+        return false;
+    }
+    volatile uint32_t* qw = reinterpret_cast<volatile uint32_t*>(ddrMap_ + off);
+    // Little-endian qword: lo then hi. Fence before any subsequent doorbell.
+    qw[0] = lo;
+    qw[1] = hi;
+    __sync_synchronize();
+    plxgQ5Pending_ = q5;
+    plxgQ5PendingValid_ = true;
+    plxgQ5LastWritten_ = q5;
+    return true;
+}
+
 bool FpgaSpi::readOsdMailbox(uint16_t& osd) {
     if (!ensureDdrMap())
         return false;
@@ -1580,6 +1608,11 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
     };
 
     // Prefer mmap doorbell (no SPI on hot path). Fall back to SPI kick.
+    // Re-apply pending PLXG q5 before kick so aspect/cadence is visible with
+    // the new bank token (host half of ABI #2; fabric latch = w-mem).
+    if (plxgQ5PendingValid_) {
+        (void)writePlxgQ5(plxgQ5Pending_);
+    }
     bool kicked = false;
     auto tKick0 = std::chrono::steady_clock::now();
     if (ddrKickMode_ == 1 || ddrKickMode_ == 0) {

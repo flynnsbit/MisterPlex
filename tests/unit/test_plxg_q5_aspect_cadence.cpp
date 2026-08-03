@@ -284,6 +284,34 @@ static void test_film_cadence_host_only_not_wire_bit34() {
     expect(slip30 > 31.0 && slip30 < 34.0, "29.97 vs int-fabric slip ~32.4s");
 }
 
+static void test_mailbox_words_abi2() {
+    // Clean ABI #2 pack → LE words for doorbell+0x828 (host half of wire).
+    PlxgAspectCadence c{};
+    c.dar_x = 16;
+    c.dar_y = 9;
+    c.content_fps = 24;
+    c.dar_valid = true;
+    c.fps_valid = true;
+    c.fps_1001 = true; // host-only; must not poison words
+    uint64_t q = 0;
+    expect(packPlxgQ5(c, &q), "mailbox: pack clean 16:9@24");
+    uint32_t lo = 0xdeadbeefu, hi = 0xdeadbeefu;
+    expect(plxgQ5ToMailboxWords(q, &lo, &hi), "mailbox: clean q5 → words");
+    expect(lo == static_cast<uint32_t>(q & 0xffffffffu), "mailbox: lo matches");
+    expect(hi == static_cast<uint32_t>((q >> 32) & 0xffffffffu), "mailbox: hi matches");
+    expect((hi >> 2) == 0, "mailbox: hi[31:2] zero (reserved beyond valid bits)");
+    expect((hi & 3u) == 3u, "mailbox: dar_valid|fps_valid in hi[1:0]");
+
+    // Negative: bit34 dirty must refuse words (fail-closed; no poison latch).
+    const uint64_t dirty = q | (1ull << 34);
+    uint32_t dlo = 1, dhi = 1;
+    expect(!plxgQ5ToMailboxWords(dirty, &dlo, &dhi),
+           "red: mailbox words reject bit34 (arb#4 vacated)");
+    expect(dlo == 1 && dhi == 1, "red: rejected words leave outs unchanged");
+    expect(!plxgQ5ToMailboxWords(q, nullptr, &hi), "null lo fails");
+    expect(!plxgQ5ToMailboxWords(q, &lo, nullptr), "null hi fails");
+}
+
 int main() {
     test_offsets();
     test_pack_16x9_24();
@@ -295,6 +323,7 @@ int main() {
     test_media_aspect_decimal();
     test_fps_families();
     test_film_cadence_host_only_not_wire_bit34();
+    test_mailbox_words_abi2();
     if (g_fails) {
         std::fprintf(stderr, "test_plxg_q5_aspect_cadence: %d FAIL(s)\n", g_fails);
         return 1;

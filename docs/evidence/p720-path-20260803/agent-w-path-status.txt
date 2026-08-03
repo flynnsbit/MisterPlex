@@ -1,0 +1,37 @@
+w-path status — parent arbitration #4
+branch: w-path-720p  worktree: MisterPlex-wt-path
+time: 2026-08-03 (build-host)
+
+ACK bit34 VACATED
+- kPlxgQ5Fps1001OnWire=false; kPlxgQ5Fps1001Bit=0
+- pack never ORs bit34; film host fields retained
+- plxgQ5ToMailboxWords fail-closed on reserved[63:34]
+- commit 9dec62e7 already reverted live #2.1; arb#4 confirmed
+
+q5 MAILBOX WIRE (host half ABI #2) — LANDED this tick
+- FpgaSpi::writePlxgQ5(q5) → LE words @ doorbell+0x828
+- refreshPlxgAspectCadence: wire_write=0|1 log; no fabric latch claim
+- sendDdrFrame re-applies pending q5 before kick
+- unit: test_mailbox_words_abi2 PASS (clean accept; bit34 reject)
+- misterplexd host build PASS
+- NOT claimed: w-mem latch, Plex.sv plxg_* drivers (still stubbed fabric side)
+
+baseline pin levers
+- measured negative: 0/18 baseline on rk=118/119 force-xcode matrix
+- kPlexH264ProfilePin remains request-only / inert on this PMS
+- h264_fabric_stream_gate: Refuse* → ArmFfmpegFallback (not product kill)
+
+identity fail-closed
+- mid-stream geom change under identity_skip → IDENTITY_GEOM_ABORT, 0 publish
+- test_ffmpeg_vf GREEN mutation_624_to_320=0_publish
+
+freeze #4 fps_1001
+- host draft only: docs/evidence/p720-path-20260803/freeze4_fps1001_draft/HOST_SIDE_DRAFT.md
+- DO NOT commit live bit34 until parent multi-lane freeze
+
+priorities remaining
+- (a) tree fit = parent/HELD
+- (b) 720p present path (fabric present owns budget; HD→exact 1280x720 measured)
+- (c) cadence exactness = freeze #4 only
+
+constraints honored: no Quartus, no MiSTer, no token in argv/logs, awk not bc
