@@ -1,15 +1,30 @@
 {
-  "schema": 2,
+  "schema": 3,
   "name": "misterplex-ascal-native-sta-prereg",
-  "description": "STA cuts for first ascal-native 960x540@30 fit. Locked BEFORE fit (rule 0).",
+  "description": "STA cuts for ascal-native beam @20 MHz. Fixed 960x540@30 (564) and film V_TOTAL=705 both required. Runtime H/V geom ports default OFF; when ON, exact Fmax UNKNOWN until fit \u2014 do not invent BUILD_OK.",
   "hard_rule": "negative_slack_equals_hard_fail",
   "prediction_preregistered_before_fit": {
-    "timestamp_note": "preregistered 2026-08-03 by w-clock; fit not run by this lane",
-    "expect_pass": true,
-    "confidence": "medium",
-    "basis": "clk_sys remains 20 MHz; no clk_pix PLL; DE/beam logic is counters + muxes comparable to existing colorbars path; prior nostub Fmax ~32 MHz leaves ~12 MHz headroom if hierarchy similar",
-    "explicit_unknown": "exact Fmax and worst path — unknown until Plex.sta.rpt Fmax Summary",
-    "miss_policy": "if fmax_clk_sys < 20.0 or any setup slack < 0 → HARD FAIL; publish miss, do not invent BUILD_OK"
+    "timestamp_note": "updated 2026-08-03 w-clock; still no fit by this lane",
+    "fixed_beam_564": {
+      "expect_pass_at_20mhz": true,
+      "confidence": "medium",
+      "basis": "clk_sys 20 MHz; counters+muxes; nostub Fmax history ~32 MHz"
+    },
+    "film_vtotal_705": {
+      "expect_pass_at_20mhz": true,
+      "confidence": "medium",
+      "basis": "same 11-bit compares; only latch constant changes; no new multi-cycle path",
+      "explicit": "V_TOTAL width already runtime via vtot_act \u2014 705 vs 564 is data not structure"
+    },
+    "runtime_h_v_geom_ON": {
+      "expect_pass_at_20mhz": "UNKNOWN_UNTIL_STA",
+      "confidence": "low-medium structural",
+      "structural_note": "Replaces constant H_DE/H_TOTAL compares with registered compares (same class as existing vtot_act path). Expect +0..1 LUT level on blanking cone \u2014 usually not Fmax-critical vs decode/stub history.",
+      "stub_margin_warning": "stub-in Fmax 23.46 MHz (~17% over 20). If runtime geom lengthens a shared critical path, 20 MHz can FAIL. Nostub 32.59 has more room.",
+      "miss_policy": "if fmax_clk_sys < 20.0 or setup slack < 0 \u2192 HARD FAIL; publish miss"
+    },
+    "explicit_unknown": "exact Fmax/worst path \u2014 unknown until Plex.sta.rpt Fmax Summary",
+    "miss_policy": "if fmax_clk_sys < 20.0 or any setup slack < 0 \u2192 HARD FAIL; no invented BUILD_OK"
   },
   "stage_ascal_native_960_30": {
     "macros": {
@@ -28,14 +43,17 @@
       "v_active": 540,
       "h_total": 1182,
       "v_total": 564,
-      "true_de": 1
+      "true_de": 1,
+      "v_total_film_companion": 705,
+      "runtime_geom_default": "OFF"
     },
     "pass": {
       "fmax_clk_sys_mhz_min": 20.0,
       "setup_slack_all_constrained_ns_min": 0.0,
       "hold_slack_min_ns": 0.0,
-      "hierarchy_present_beam_or_timing_960_survives": true,
-      "h_de_not_529": true
+      "h_de_not_529": true,
+      "v_total_705_supported_via_rt_vtotal": true,
+      "hierarchy_present_beam_survives": true
     },
     "fail": [
       "fmax_clk_sys < 20.0",
@@ -54,5 +72,25 @@
     "mpix_s": 15.552,
     "vs_1px_peak_20": "PASS margin 1.286x",
     "vs_serialize_13_33": "N/A on 1px path; FAIL if MULTI_PIXEL serialize ON without B1"
+  },
+  "b2b_ownership": {
+    "raster_sot": "present_beam_content_de.sv",
+    "math_pack_only": "present_video_timing_960.sv",
+    "present_core_instantiates_timing_960": false
+  },
+  "overclock_honesty": {
+    "pll_applied": false,
+    "clk_sys_mhz": 20.0,
+    "clk_ddr_mhz": 90.0,
+    "stub_fmax_8fdf440f_mhz": 23.46,
+    "nostub_fmax_c74c6863_mhz": 32.59,
+    "target_a_25mhz_stub": "FAIL_STA_class \u2014 25 > 23.46",
+    "target_a_25mhz_nostub": "plausible intra-sys only; CDC 25/90 edge ~2.22ns needs STA",
+    "target_b_30mhz_nostub": "tight (~2.6 MHz margin vs 32.59); placement risk",
+    "realistic_ceiling": "unknown beyond measured Fmax without new BEAM_960 fit",
+    "sources": [
+      ".agent-work/w-clock/FABRIC_CLOCK_HEADROOM_PRESENT_AND_DECODE.md",
+      "assets/fabric_clock_headroom_contract.json"
+    ]
   }
 }

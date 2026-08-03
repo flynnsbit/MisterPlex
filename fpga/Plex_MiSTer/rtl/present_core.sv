@@ -188,29 +188,11 @@ module present_core #(
 	end
 	// synthesis translate_on
 
-	wire [11:0] t960_h_de, t960_h_tot, t960_v_act, t960_v_tot;
-	wire [11:0] t960_hss, t960_hse, t960_vss, t960_vse;
-	(* noprune *) wire [15:0] beam960_fps_milli;
-	wire        beam960_mode30, beam960_need_wfifo;
-	present_video_timing_960 #(
-		.MODE(0),
-		.CLK_PIX_HZ(20_000_000)
-	) u_timing_960 (
-		.h_de(t960_h_de),
-		.h_total(t960_h_tot),
-		.v_active(t960_v_act),
-		.v_total(t960_v_tot),
-		.h_sync_s(t960_hss),
-		.h_sync_e(t960_hse),
-		.v_sync_s(t960_vss),
-		.v_sync_e(t960_vse),
-		.fps_eff_milli(beam960_fps_milli),
-		.mode_30hz(beam960_mode30),
-		.needs_wide_fifo(beam960_need_wfifo)
-	);
-
+	// B2b: present_beam_content_de is the ONLY raster SoT.
+	// present_video_timing_960 is math-only (oracles); not instantiated here.
 	wire [10:0] hc11, vc11, vtot_act11;
-	present_beam_content_de #(
+	wire [10:0] hde_act11, htot_act11, vact_act11;
+	(* noprune *) present_beam_content_de #(
 		.H_DE(960),
 		.V_ACTIVE(540),
 		.H_TOTAL(1182),
@@ -222,8 +204,15 @@ module present_core #(
 	) u_beam_960 (
 		.clk(clk),
 		.reset(reset),
+		// Runtime V_TOTAL for 24 Hz tier (705) — latched at v_wrap inside beam.
+		// Full runtime H/V geom ports exist but stay OFF until parent fit grant
+		// (PMS-delivered DE; see RUNTIME_VARIABLE_RASTER_STA.md).
 		.use_rt_vtotal(1'b0),
 		.rt_vtotal(11'd0),
+		.use_rt_geom(1'b0),
+		.rt_h_de(11'd0),
+		.rt_h_total(11'd0),
+		.rt_v_active(11'd0),
 		.ce_pix(ce_pix_i),
 		.HBlank(hb),
 		.HSync(hs),
@@ -232,12 +221,16 @@ module present_core #(
 		.frame_start(fstart),
 		.hc_out(hc11),
 		.vc_out(vc11),
-		.vtot_active(vtot_act11)
+		.vtot_active(vtot_act11),
+		.hde_active(hde_act11),
+		.htot_active(htot_act11),
+		.vact_active(vact_act11)
 	);
 
-	// Identity map: every DE sample is content (true_de). No /529 stretch.
-	assign in_content = (hc11 < 11'd960) && (vc11 < 11'd540) && ~hb && ~vb;
-	assign past_last_row = (vc11 >= 11'd540);
+	// Identity map: DE extent == latched content (true_de). No /529 stretch.
+	// Uses hde_act/vact_act so a future use_rt_geom=1 tracks PMS-delivered size.
+	assign in_content = (hc11 < hde_act11) && (vc11 < vact_act11) && ~hb && ~vb;
+	assign past_last_row = (vc11 >= vact_act11);
 	wire [FRAME_X_W-1:0] store_x_id =
 		(hc11 >= 11'(FRAME_W)) ? FRAME_LAST_X : FRAME_X_W'(hc11);
 	wire [FRAME_Y_W-1:0] store_y_id =
@@ -259,12 +252,9 @@ module present_core #(
 	assign br = hc11[7:0] ^ {6'b0, eff_pattern};
 	assign bg = vc11[7:0];
 	assign bb = 8'h40;
-	// Keep timing outputs referenced (anti-DCE) + fps pin for post-fit hierarchy.
-	wire _unused_beam960 = beam960_mode30 | beam960_need_wfifo
-		| (beam960_fps_milli == 16'd30000)
-		| (t960_h_de == 12'd960) | (t960_h_tot == 12'd1182)
-		| (t960_v_act == 12'd540) | (t960_v_tot == 12'd564)
-		| (|vtot_act11) | (|t960_hss) | (|t960_hse) | (|t960_vss) | (|t960_vse);
+	// Anti-DCE: beam counters + active vtotal must survive map.
+	wire _unused_beam960 = (|hc11) | (|vc11) | (|vtot_act11)
+		| (|hde_act11) | (|htot_act11) | (|vact_act11) | ce_pix_i;
 
 `else
 	// ---- Legacy Template path: colorbars H_DE=529 (FBAR) ----

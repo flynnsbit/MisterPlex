@@ -102,3 +102,12 @@ bash tests/unit/test_present_beam_960_elab.sh
 ```
 
 **Stale log:** `.agent-work/w-clock/npx_full_raster_run.txt` must not exist.
+
+## B2b / runtime geom (w-clock follow-up)
+
+- Raster SoT: `present_beam_content_de` only. Do **not** require `u_timing_960` in hierarchy.
+- `present_video_timing_960` = math pack for oracles; may remain in `files.qip`.
+- Runtime geom ports default **OFF** (`use_rt_geom=0`). Film V=705 via `use_rt_vtotal` when host wires it.
+- STA prereg: `assets/ascal_native_sta_prereg.json` schema 3 (564 + 705 + runtime UNKNOWN).
+- Report: `.agent-work/w-clock/RUNTIME_VARIABLE_RASTER_STA.md`
+

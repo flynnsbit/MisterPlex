@@ -34,9 +34,22 @@ if ! grep -q "present_beam_content_de.sv" "$ROOT/fpga/Plex_MiSTer/files.qip"; th
   echo "FAIL RED: files.qip missing present_beam_content_de.sv"
   exit 1
 fi
-# timing_960 must document not-solo-fit
-if ! grep -q "NOT a fit candidate alone" "$RTL/present_video_timing_960.sv"; then
-  echo "FAIL RED: timing_960 missing not-solo-fit banner"
+# B2b: timing_960 is math-only; beam is sole raster SoT in present_core
+if ! grep -qE "NOT a raster generator|CONSTANT / MATH|math-only|not a generator" \
+    "$RTL/present_video_timing_960.sv"; then
+  echo "FAIL RED: timing_960 missing demotion/math-only banner"
+  exit 1
+fi
+if grep -qE "u_timing_960|present_video_timing_960[[:space:]]*#\(" "$RTL/present_core.sv"; then
+  echo "FAIL RED: present_core still instantiates timing_960 (dual SoT)"
+  exit 1
+fi
+if ! grep -q "u_beam_960" "$RTL/present_core.sv"; then
+  echo "FAIL RED: present_core missing u_beam_960 raster SoT"
+  exit 1
+fi
+if ! grep -q "B2b RASTER SOURCE OF TRUTH" "$RTL/present_beam_content_de.sv"; then
+  echo "FAIL RED: beam missing B2b SoT banner"
   exit 1
 fi
 # Template 529 remains on default path

@@ -1,15 +1,23 @@
 // present_beam_content_de — progressive content-sized DE beam (ascal-native).
 //
+// B2b RASTER SOURCE OF TRUTH — the only module that emits hc/vc/DE/HS/VS.
+// present_video_timing_960.sv is math/constant pack only (not a generator).
+//
 // Emits true content DE: HBlank low for H_DE cycles, VBlank low for V_ACTIVE lines.
-// Default numbers match w-clock present_video_timing_960 MODE=0 (1182×564 @ 20 MHz → ~30.0008 Hz).
-// Film companion (parent): same H_TOTAL=1182, V_TOTAL=705 → ~24.0007 Hz (20e6/24/1182≈705.02).
+// Default: 1182×564 @ 20 MHz → ~30.0008 Hz (fps_milli=30000).
+// Film companion: same H_TOTAL=1182, V_TOTAL=705 via rt_vtotal → ~24.0007 Hz.
 //
-// Runtime V_TOTAL (use_rt_vtotal=1): host may write rt_vtotal anytime (CDC-safe).
-// Request is *captured* every cycle; *applied* only on frame wrap (v_wrap) or reset.
-// Combinational use of rt_vtotal as v_last is FORBIDDEN — a mid-frame 705→564 with
-// vc>563 never hits vc==v_last and stalls frame_start (rd-duck).
+// Runtime geometry (use_rt_geom / use_rt_vtotal):
+//   Host may change requests anytime. Captured every cycle; *applied* only at
+//   frame wrap (v_wrap) or reset. Mid-frame apply is FORBIDDEN (stall / torn DE).
+//   H_DE/H_TOTAL/V_ACTIVE latch together; V_TOTAL may also move via rt_vtotal.
+//   Sync windows are derived from latched actives (+fixed porch/width) so a single
+//   true_de extent always matches content without separate sync programming.
 //
-// Same-epoch blanking: blanks/sync from *next* hc/vc so levels match hc_out/vc_out.
+// STA (honest): exact Fmax with runtime compares is UNKNOWN until Plex.sta.rpt.
+// Structure is 11-bit magnitude compares vs registers (same class as colorbars).
+// Pre-register: expect meet 20 MHz if nostub-class; stub Fmax 23.46 leaves ~17% —
+// thin if this cone ever becomes critical. Never invent BUILD_OK.
 
 `default_nettype none
 
@@ -18,16 +26,26 @@ module present_beam_content_de #(
 	parameter int V_ACTIVE  = 540,
 	parameter int H_TOTAL   = 1182,
 	parameter int V_TOTAL   = 564,
+	// Legacy fixed sync (used when use_rt_geom=0). Runtime mode derives sync.
 	parameter int H_SYNC_S  = 960 + 32,
 	parameter int H_SYNC_E  = 960 + 32 + 64,
 	parameter int V_SYNC_S  = 540 + 8,
-	parameter int V_SYNC_E  = 540 + 8 + 6
+	parameter int V_SYNC_E  = 540 + 8 + 6,
+	parameter int H_FP      = 32,
+	parameter int H_SW      = 64,
+	parameter int V_FP      = 8,
+	parameter int V_SW      = 6
 )(
 	input  wire        clk,
 	input  wire        reset,
-	// Runtime V_TOTAL request (applied at frame boundary only).
+	// Runtime V_TOTAL only (existing path). Applied at v_wrap/reset.
 	input  wire        use_rt_vtotal,
 	input  wire [10:0] rt_vtotal,
+	// Full runtime geometry (H_DE/H_TOTAL/V_ACTIVE + optional V_TOTAL). Default OFF.
+	input  wire        use_rt_geom,
+	input  wire [10:0] rt_h_de,
+	input  wire [10:0] rt_h_total,
+	input  wire [10:0] rt_v_active,
 	output reg         ce_pix,
 	output reg         HBlank,
 	output reg         HSync,
@@ -36,14 +54,32 @@ module present_beam_content_de #(
 	output reg         frame_start,
 	output wire [10:0] hc_out,
 	output wire [10:0] vc_out,
-	// Active V_TOTAL for the frame currently in progress (post-latch).
-	output wire [10:0] vtot_active
+	// Active totals for the frame currently in progress (post-latch).
+	output wire [10:0] vtot_active,
+	output wire [10:0] hde_active,
+	output wire [10:0] htot_active,
+	output wire [10:0] vact_active
 );
-	wire [10:0] vtot_min = 11'(V_ACTIVE + 16);
-	wire [10:0] vtot_req_raw = use_rt_vtotal ? rt_vtotal : 11'(V_TOTAL);
-	wire [10:0] vtot_req = (vtot_req_raw < vtot_min) ? vtot_min : vtot_req_raw;
+	// --- request mux + clamps (combinational; only sampled into regs at boundary) ---
+	wire [10:0] hde_min  = 11'd16;
+	wire [10:0] vact_min = 11'd16;
+	wire [10:0] htot_min_pad = 11'd32; // at least 32 clocks blanking
+	wire [10:0] vtot_min_pad = 11'd16;
 
-	// Elab pins — parameter defaults.
+	wire [10:0] hde_req0  = use_rt_geom ? rt_h_de     : 11'(H_DE);
+	wire [10:0] htot_req0 = use_rt_geom ? rt_h_total  : 11'(H_TOTAL);
+	wire [10:0] vact_req0 = use_rt_geom ? rt_v_active : 11'(V_ACTIVE);
+	wire [10:0] vtot_src  = use_rt_geom ? (use_rt_vtotal ? rt_vtotal : 11'(V_TOTAL))
+	                                    : (use_rt_vtotal ? rt_vtotal : 11'(V_TOTAL));
+
+	wire [10:0] hde_req  = (hde_req0 < hde_min) ? hde_min : hde_req0;
+	wire [10:0] vact_req = (vact_req0 < vact_min) ? vact_min : vact_req0;
+	wire [10:0] htot_floor = hde_req + htot_min_pad;
+	wire [10:0] htot_req = (htot_req0 < htot_floor) ? htot_floor : htot_req0;
+	wire [10:0] vtot_floor = vact_req + vtot_min_pad;
+	wire [10:0] vtot_req = (vtot_src < vtot_floor) ? vtot_floor : vtot_src;
+
+	// Elab pins — parameter defaults only (runtime not known at elab).
 	// synthesis translate_off
 	initial begin
 		if (H_TOTAL <= H_DE) $error("present_beam_content_de: H_TOTAL must exceed H_DE");
@@ -55,15 +91,27 @@ module present_beam_content_de #(
 
 	reg [10:0] hc;
 	reg [10:0] vc;
-	reg [10:0] vtot_act; // latched — drives v_last for this frame only
+	reg [10:0] hde_act;
+	reg [10:0] htot_act;
+	reg [10:0] vact_act;
+	reg [10:0] vtot_act;
+
 	assign hc_out = hc;
 	assign vc_out = vc;
+	assign hde_active  = hde_act;
+	assign htot_active = htot_act;
+	assign vact_active = vact_act;
 	assign vtot_active = vtot_act;
 
-	wire [10:0] h_last = 11'(H_TOTAL - 1);
+	wire [10:0] h_last = htot_act - 11'd1;
 	wire [10:0] v_last = vtot_act - 11'd1;
 
-	// Next-cycle counters — blanks/sync register from these so levels match hc/vc after NBA.
+	// Derived sync from latched actives (runtime) or fixed params (legacy).
+	wire [10:0] hs_s = use_rt_geom ? (hde_act + 11'(H_FP)) : 11'(H_SYNC_S);
+	wire [10:0] hs_e = use_rt_geom ? (hde_act + 11'(H_FP) + 11'(H_SW)) : 11'(H_SYNC_E);
+	wire [10:0] vs_s = use_rt_geom ? (vact_act + 11'(V_FP)) : 11'(V_SYNC_S);
+	wire [10:0] vs_e = use_rt_geom ? (vact_act + 11'(V_FP) + 11'(V_SW)) : 11'(V_SYNC_E);
+
 	wire        h_wrap = (hc == h_last);
 	wire        v_wrap = h_wrap && (vc == v_last);
 	wire [10:0] hc_n   = h_wrap ? 11'd0 : (hc + 11'd1);
@@ -76,27 +124,33 @@ module present_beam_content_de #(
 		if (reset) begin
 			hc <= 11'd0;
 			vc <= 11'd0;
-			// Sample request at reset so first frame matches host without waiting a wrap.
+			hde_act  <= hde_req;
+			htot_act <= htot_req;
+			vact_act <= vact_req;
 			vtot_act <= vtot_req;
 			ce_pix <= 1'b0;
 			HBlank <= 1'b0;
 			HSync  <= 1'b0;
-			VBlank <= (11'(0) >= 11'(V_ACTIVE));
+			VBlank <= 1'b0;
 			VSync  <= 1'b0;
 		end else begin
-			// Apply pending request only when completing a frame → next frame uses new V.
-			if (v_wrap)
+			// Apply pending geometry only when completing a frame.
+			if (v_wrap) begin
+				hde_act  <= hde_req;
+				htot_act <= htot_req;
+				vact_act <= vact_req;
 				vtot_act <= vtot_req;
+				frame_start <= 1'b1;
+			end
 
 			hc <= hc_n;
 			vc <= vc_n;
-			if (v_wrap)
-				frame_start <= 1'b1;
 
-			HBlank <= (hc_n >= 11'(H_DE));
-			VBlank <= (vc_n >= 11'(V_ACTIVE));
-			HSync  <= (hc_n >= 11'(H_SYNC_S)) && (hc_n < 11'(H_SYNC_E));
-			VSync  <= (vc_n >= 11'(V_SYNC_S)) && (vc_n < 11'(V_SYNC_E));
+			// Blanks/sync from *next* counters so levels match hc_out/vc_out after NBA.
+			HBlank <= (hc_n >= hde_act);
+			VBlank <= (vc_n >= vact_act);
+			HSync  <= (hc_n >= hs_s) && (hc_n < hs_e);
+			VSync  <= (vc_n >= vs_s) && (vc_n < vs_e);
 		end
 	end
 endmodule
