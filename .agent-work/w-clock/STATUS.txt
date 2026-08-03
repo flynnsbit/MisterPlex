@@ -1,7 +1,7 @@
 w-clock STATUS 2026-08-03
 branch: w-clock-bump
+head: d739c4b5
 oracle_commit: 44a397c6
-head: see git rev-parse HEAD
 
 DONE:
 - Exact whole-frame oracle: pix==W*H*frames, line_acc=W..W
@@ -10,13 +10,12 @@ DONE:
 - STA V705: sim exact OK; timing NOT closed (needs Plex.sta.rpt)
 - Overclock: no ceiling above 20 MHz until stub reclaimed; 25 blocked (23.46)
 
-TESTS:
-  tests/unit/test_present_beam_960_oracle.sh  true rc=0
-  tests/unit/test_present_beam_960_elab.sh    true rc=0
-  tests/unit/test_present_beam_960_arith.sh   true rc=0
+TESTS true rc=0:
+  tests/unit/test_present_beam_960_oracle.sh
+  tests/unit/test_present_beam_960_elab.sh
+  tests/unit/test_present_beam_960_arith.sh
 
 NO fit. NO device. PLL unapplied (20/90).
 Docs:
   .agent-work/w-clock/STA_V705_AND_OVERCLOCK_CEILING.md
   .agent-work/w-clock/RUNTIME_VARIABLE_RASTER_STA.md
-head: 6ebf8aa1
