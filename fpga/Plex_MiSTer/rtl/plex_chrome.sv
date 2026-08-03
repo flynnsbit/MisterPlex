@@ -12,6 +12,12 @@
 // ARM: semantic PLXC list only (doorbell + 0x130 / list @ +0x140). Never pixels.
 // When cfg_enable=0 and idle_en=0, video passes through unmodified (1-cycle delay).
 //
+// Multi-pixel present (w-clock present_beam_ppc): this module sits post-ascal on
+// clk_hdmi and composites ONE HDMI pixel per clock today. Pre-ascal PPC on clk_sys
+// does not fan out into this plane. If a future N-lane HDMI path lands here, hit
+// detection must OR glyph/rect coverage across x0..x0+N-1 in the same cycle — do
+// not assume single-x scans once multi-pixel reaches clk_hdmi.
+//
 // Cmd pack (64-bit LE, host + RTL):
 //   [7:0]   op     0=END 1=RECT 2=GLYPH 3=RECT_PAL
 //   [23:8]  x      output pixels

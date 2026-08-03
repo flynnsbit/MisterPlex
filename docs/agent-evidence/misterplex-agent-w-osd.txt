@@ -153,4 +153,43 @@ Why we chose "ARM out" over "cheaper ARM":
 7. Mid-play list rebuild every 15 frames still uses ARM; progress-fraction reg TBD.
 
 READY_FOR_PARENT: design+sim complete; fit/deploy/HDMI/profile = parent after nostub.
+
+========================================================================
+(g) fab-pace — present_pace_seq (LANDED this commit)
+========================================================================
+Module: fpga/Plex_MiSTer/rtl/present_pace_seq.sv
+  parameter ENABLE default 0 (nostub-safe; not wired into ddr_frame_store yet)
+Contract: docs/present-pace-doorbell-contract.md
+  Writer (w-mem): bank payload → pending_bank + pending_ready + swap_req_toggle edge
+  Consumer (pace): do_swap only on vsync_pulse; never mid-scan
+  Late: repeat prior bank (cnt_late/cnt_repeats) — never black
+  Early: hold pending (cnt_early_hold) until cadence advance_unique
+  Drop: new doorbell while pending (cnt_drops)
+Judder default: floor(n*cf/dh) 24-in-60 → 2:3 via cadence.hpp lockstep
+  Match-source 24/48 Hz is a separate w-clock product switch — not silent.
+
+Host model: host/libmisterplex/present_pace.hpp
+Unit: tests/unit/test_present_pace.cpp → true rc=0
+  24in60 presented=24 repeats=36 early=0 late=0
+RTL: tests/unit/test_present_pace_rtl_sim.sh → true rc=0
+  PASS legacy / PASS late / PASS early / PASS film / PASS tear-guard
+  film presented=24 vsync=60 late=0 snaps=24
+rollcall: true rc=0 (prereqs=58 commands=158)
+
+Multi-pixel (w-clock):
+  pace = frame-level → PPC-invariant
+  chrome post-ascal clk_hdmi 1 px/clk today — header note in plex_chrome.sv
+  if N-lane HDMI reaches chrome: hit OR x0..x0+N-1 (not done; not required yet)
+
+ARM ms removed by fab-pace:
+  UNKNOWN — sequencer default OFF and not product-wired.
+  Measurement: PRESENT_PROFILE plane paths with ENABLE=0 vs ENABLE=1 RBF;
+  sum ARM present-deadline sleeps / hold waits; diff ms/f.
+  Class expected: remove wall-clock present pacing; DDR write remains other lanes.
+
+NOT done (explicit):
+  - No wire into ddr_frame_store product path (needs macro + nostub coord)
+  - No Quartus / no device
+  - No SPI/status export of counters yet (ports exist on module)
+
 ========================================================================
