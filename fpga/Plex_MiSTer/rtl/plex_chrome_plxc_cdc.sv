@@ -10,9 +10,9 @@
 // Fix: small async FIFO. Every wr_clk cycle with wr_en=1 && !wr_full enqueues.
 // rd_clk dequeues one beat per cycle (rd_we pulse) with coherent multi-bit data.
 // Depth is power-of-two; gray-coded pointers.
-// Backpressure (rd-duck silent-loss): wr_full/almost_full MUST gate the loader
-// host_ready. Loader advances li / commits last_seq only on accepted beats.
-// Dropping wr_en while full without stall is a silent body/ctrl loss mode.
+// Backpressure: wr_full → loader host_ready=0. Loader host_we is COMB valid;
+// advance only on valid&&ready same edge as wr_en&&!wr_full. Registered we +
+// advance-on-ready drops the fill-last-slot beat (rd-duck on 96e4a50d).
 //
 // FAULT_EDGE_DETECT: compile the broken edge path for the red twin TB only.
 

@@ -180,3 +180,8 @@ Audit (to w-clock): visual apply uses ready LEVEL without fstart/actual
 w-osd: B16/B20 product-closed claim remains HOLD.
 This tree: u_plxg_latch frame_boundary=0 idle; connectivity only.
 HEAD=16000c7d
+
+=== rd-duck 2026-08-03T09:26:35-05:00 PLXC registered-valid one-slot drop FIXED ===
+host_we/addr/data COMB valid; advance li/last_seq only on ready same edge FIFO accepts.
+connected TB: freeze saw_full=1 last_seq=0 we_held; resume out=13/13 seq42 PASS
+true rc=0: connected, cdc, loader product, e2e

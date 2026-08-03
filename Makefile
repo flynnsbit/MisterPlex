@@ -218,6 +218,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_plex_chrome_counted_rtl_sim.sh
 	$(ROOT)/tests/unit/test_plex_chrome_vs_bank_rtl_sim.sh
 	$(ROOT)/tests/unit/test_plex_chrome_plxc_cdc_rtl_sim.sh
+	$(ROOT)/tests/unit/test_plex_chrome_plxc_connected_rtl_sim.sh
 	$(ROOT)/tests/unit/test_plex_q5_product_wire_rtl_sim.sh
 	python3 $(ROOT)/tests/unit/test_plxg_q5_host_seqlock_static.py
 	python3 $(ROOT)/tests/unit/test_dp_verified_vf_plan_order_static.py
@@ -255,6 +256,7 @@ rtl-sim-unlocked:
 	$(ROOT)/tests/unit/test_plex_chrome_counted_rtl_sim.sh
 	$(ROOT)/tests/unit/test_plex_chrome_vs_bank_rtl_sim.sh
 	$(ROOT)/tests/unit/test_plex_chrome_plxc_cdc_rtl_sim.sh
+	$(ROOT)/tests/unit/test_plex_chrome_plxc_connected_rtl_sim.sh
 	$(ROOT)/tests/unit/test_plex_q5_product_wire_rtl_sim.sh
 	python3 $(ROOT)/tests/unit/test_plxg_q5_host_seqlock_static.py
 	python3 $(ROOT)/tests/unit/test_dp_verified_vf_plan_order_static.py

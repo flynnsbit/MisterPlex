@@ -62,6 +62,9 @@ assert_exec "plxc-cdc" "$OUT" \
   "PASS single_beat" \
   "EXECUTED full_list_conservation" \
   "PASS full_list_conservation" \
+  "EXECUTED stopped_rd_fill_resume" \
+  "PASS stopped_rd_fill_resume" \
+  "EXECUTED stopped_rd_drop_twin" \
   "prod_beats=113" \
   "plex_chrome_plxc_cdc_tb: PASS"
 
