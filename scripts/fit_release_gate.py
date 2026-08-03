@@ -174,6 +174,10 @@ LIVE_OPEN_BLOCKER_TOKENS = (
     "B21_HDMI_BLACKOUT_DISABLED",
     "B21_VGA_SCALER_DISABLED",
     # B21 wiring tokens currently clear on stock sys_top — closed-class reinject only
+    # B22 present_core merge-semantics (rd-duck c5bd6009 wholesale drop class)
+    "B22_PRESENT_CORE_GEOM_LIVE_PORTS",
+    "B22_PRESENT_CORE_BLACKOUT_HOLLOW_PORTS",
+    "B22_PRESENT_CORE_CADENCE_CORE_HZ",
 )
 
 # Sibling-lane fixes that exist but are not merged into this gated tree.
@@ -760,6 +764,75 @@ def scan_sibling_attribution() -> tuple[dict[str, dict[str, str]], list[str]]:
                 [r"`ifdef\s+PRESENT_BEAM_960", r"VIDEO_ARX\s*=\s*12'd0", r"VIDEO_ARY\s*=\s*12'd0"],
             )
         ],
+        # B22 merge-semantics: evidence is *connections*, not file presence.
+        "B22_PRESENT_CORE_GEOM_LIVE_PORTS": [
+            (
+                "w-mem",
+                "fpga/Plex_MiSTer/rtl/present_core.sv",
+                [
+                    r"input\s+wire\s+\[15:0\]\s+geom_live_seq",
+                    r"input\s+wire\s+geom_live_valid",
+                    r"\.rt_geom_seq\s*\(\s*geom_live_seq\s*\)",
+                    r"\.rt_geom_live\s*\(\s*geom_live_valid\s*\)",
+                ],
+            )
+        ],
+        "B22_PRESENT_CORE_BLACKOUT_HOLLOW_PORTS": [
+            (
+                "w-mem",
+                "fpga/Plex_MiSTer/rtl/present_core.sv",
+                [
+                    r"output\s+wire\s+stat_geom_hold_black",
+                    r"output\s+wire\s+stat_geom_hollow",
+                    r"\.geom_hold_black\s*\(",
+                    r"\.geom_hollow_fault\s*\(",
+                ],
+            )
+        ],
+        "B22_PRESENT_CORE_CADENCE_CORE_HZ": [
+            (
+                "w-clock",
+                "fpga/Plex_MiSTer/rtl/present_core.sv",
+                [
+                    r"beam_film_class",
+                    r"cadence_display_hz\s*=\s*beam_film_class\s*\?\s*8'd24\s*:\s*8'd30",
+                    r"\.display_hz\s*\(\s*cadence_display_hz\s*\)",
+                ],
+            ),
+            (
+                "w-scaler",
+                "fpga/Plex_MiSTer/rtl/present_core.sv",
+                [
+                    r"beam_film_class",
+                    r"cadence_display_hz\s*=\s*beam_film_class\s*\?\s*8'd24\s*:\s*8'd30",
+                    r"\.display_hz\s*\(\s*cadence_display_hz\s*\)",
+                ],
+            ),
+        ],
+        "B22_PRESENT_CORE_GEOM_LIVE_STORE_WIRE": [
+            (
+                "w-mem",
+                "fpga/Plex_MiSTer/rtl/present_core.sv",
+                [
+                    r"\.rt_geom_seq\s*\(\s*geom_live_seq\s*\)",
+                    r"\.rt_geom_live\s*\(\s*geom_live_valid\s*\)",
+                ],
+            )
+        ],
+        "B22_PLEX_GEOM_LIVE_UNCONNECTED": [
+            (
+                "w-mem",
+                "fpga/Plex_MiSTer/Plex.sv",
+                [r"\.geom_live_seq\s*\(", r"\.geom_live_valid\s*\("],
+            )
+        ],
+        "B22_PLEX_BLACKOUT_HOLLOW_UNCONNECTED": [
+            (
+                "w-mem",
+                "fpga/Plex_MiSTer/Plex.sv",
+                [r"\.stat_geom_hold_black\s*\(", r"\.stat_geom_hollow\s*\("],
+            )
+        ],
     }
 
     out: dict[str, dict[str, str]] = {}
@@ -1285,6 +1358,261 @@ def run_b20_hierarchy_exec_gate(
     return (1 if n_err else 0), msgs, errors
 
 
+def _extract_balanced(txt: str, open_idx: int) -> tuple[str, int]:
+    """Return (inside, end_idx_exclusive) for (...) starting at open_idx on '('."""
+    if open_idx < 0 or open_idx >= len(txt) or txt[open_idx] != "(":
+        return "", open_idx
+    depth = 0
+    for i in range(open_idx, len(txt)):
+        c = txt[i]
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                return txt[open_idx + 1 : i], i + 1
+    return "", open_idx
+
+
+def _extract_sv_instance_ports(txt: str, module: str) -> str:
+    """Port-list body of first `module #(...) inst (` or `module inst (` (nested-safe)."""
+    if not txt:
+        return ""
+    for m in re.finditer(rf"\b{re.escape(module)}\b", txt):
+        i = m.end()
+        # skip whitespace
+        while i < len(txt) and txt[i].isspace():
+            i += 1
+        if i < len(txt) and txt[i] == "#":
+            # skip #(...)
+            while i < len(txt) and txt[i].isspace():
+                i += 1
+            # move to '(' after #
+            j = i + 1
+            while j < len(txt) and txt[j].isspace():
+                j += 1
+            if j < len(txt) and txt[j] == "(":
+                _inside, j = _extract_balanced(txt, j)
+                i = j
+            while i < len(txt) and txt[i].isspace():
+                i += 1
+        # optional instance name
+        mname = re.match(r"[A-Za-z_]\w*", txt[i:])
+        if not mname:
+            continue
+        i += mname.end()
+        while i < len(txt) and txt[i].isspace():
+            i += 1
+        if i < len(txt) and txt[i] == "(":
+            inside, _end = _extract_balanced(txt, i)
+            return inside
+    return ""
+
+
+def _check_present_core_merge_semantics(
+    core: str, plex: str
+) -> tuple[list[str], list[str]]:
+    """B22 — semantic present_core ports + instance nets (rd-duck c5bd6009).
+
+    Not file presence. Not ancestry. Connections must survive merge.
+    Returns (msgs, errors).
+    """
+    msgs: list[str] = []
+    errors: list[str] = []
+    msgs.append(
+        "LEG0_B22_PRESENT_CORE_MERGE_SEMANTICS_EXECUTED "
+        "(ports+instance nets; c5bd6009 wholesale drop class)"
+    )
+    if not core:
+        errors.append(
+            "B22_PRESENT_CORE_MISSING: present_core.sv unreadable — cannot prove "
+            "B16 geom_live / blackout / B15 cadence / Option-C instance wiring."
+        )
+        return msgs, errors
+
+    # --- Port declarations on present_core (w-mem B16) ---
+    has_port_seq = bool(
+        re.search(r"\binput\s+wire\s+\[15:0\]\s+geom_live_seq\b", core)
+        or re.search(r"\binput\s+.*?geom_live_seq\b", core)
+    )
+    has_port_live = bool(
+        re.search(r"\binput\s+wire\s+geom_live_valid\b", core)
+        or re.search(r"\binput\s+.*?geom_live_valid\b", core)
+    )
+    has_out_hold = bool(
+        re.search(r"\boutput\s+wire\s+stat_geom_hold_black\b", core)
+        or re.search(r"\boutput\s+.*?stat_geom_hold_black\b", core)
+    )
+    has_out_hollow = bool(
+        re.search(r"\boutput\s+wire\s+stat_geom_hollow\b", core)
+        or re.search(r"\boutput\s+.*?stat_geom_hollow\b", core)
+    )
+    msgs.append(
+        f"LEG0_B22_PORTS geom_live_seq={int(has_port_seq)} "
+        f"geom_live_valid={int(has_port_live)} "
+        f"stat_geom_hold_black={int(has_out_hold)} "
+        f"stat_geom_hollow={int(has_out_hollow)}"
+    )
+    if not has_port_seq or not has_port_live:
+        errors.append(
+            "B22_PRESENT_CORE_GEOM_LIVE_PORTS: present_core.sv missing "
+            "input geom_live_seq and/or geom_live_valid. w-scaler wholesale "
+            "present_core (c5bd6009 class) drops w-mem B16 live-geometry ports — "
+            "merge must keep the ports, not only a sibling commit ancestor."
+        )
+    if not has_out_hold or not has_out_hollow:
+        errors.append(
+            "B22_PRESENT_CORE_BLACKOUT_HOLLOW_PORTS: present_core.sv missing "
+            "output stat_geom_hold_black and/or stat_geom_hollow. Product raises "
+            "HDMI_BLACKOUT from store geom_hold_black via these ports (w-mem B16); "
+            "wholesale scaler core drops them."
+        )
+
+    # --- ddr_frame_store *instance* port connections (not # params alone) ---
+    fstore_ports = _extract_sv_instance_ports(core, "ddr_frame_store")
+    msgs.append(f"LEG0_B22_FSTORE_PORT_CHARS n={len(fstore_ports)}")
+    # Require non-constant connection from the live ports.
+    rt_seq_ok = bool(
+        re.search(r"\.rt_geom_seq\s*\(\s*geom_live_seq\s*\)", fstore_ports)
+    )
+    rt_live_ok = bool(
+        re.search(r"\.rt_geom_live\s*\(\s*geom_live_valid\s*\)", fstore_ports)
+    )
+    # Reject constant ties that look "connected" but are hollow.
+    rt_seq_const = bool(
+        re.search(r"\.rt_geom_seq\s*\(\s*\d|'0|'1|16'd0", fstore_ports)
+    )
+    rt_live_const = bool(
+        re.search(r"\.rt_geom_live\s*\(\s*1'b0\s*\)", fstore_ports)
+    )
+    hold_to_store = bool(
+        re.search(r"\.geom_hold_black\s*\(\s*\w+", fstore_ports)
+    )
+    hollow_to_store = bool(
+        re.search(r"\.geom_hollow_fault\s*\(\s*\w+", fstore_ports)
+    )
+    # Option-C instance params already B7; re-assert on *instance* as B22 companion
+    # so a merge that keeps ports but drops #() wiring still fails this class.
+    optc_inst = bool(
+        re.search(r"\.PHYS_BASE_720P\s*\(", fstore_ports)
+        or re.search(
+            r"ddr_frame_store\s*#\s*\([\s\S]*?\.PHYS_BASE_720P\s*\(",
+            core,
+        )
+    )
+    msgs.append(
+        f"LEG0_B22_FSTORE_NETS rt_seq={int(rt_seq_ok)} rt_live={int(rt_live_ok)} "
+        f"hold={int(hold_to_store)} hollow={int(hollow_to_store)} "
+        f"optc_inst={int(optc_inst)} const_tie={int(rt_seq_const or rt_live_const)}"
+    )
+    if has_port_seq and has_port_live and not (rt_seq_ok and rt_live_ok):
+        errors.append(
+            "B22_PRESENT_CORE_GEOM_LIVE_STORE_WIRE: present_core declares "
+            "geom_live_seq/valid but ddr_frame_store instance does not connect "
+            ".rt_geom_seq(geom_live_seq) and .rt_geom_live(geom_live_valid). "
+            "Port presence without instance net = B20 unconnected class on merge."
+        )
+    if rt_seq_const or rt_live_const:
+        errors.append(
+            "B22_PRESENT_CORE_GEOM_LIVE_TIED_CONST: ddr_frame_store .rt_geom_seq/"
+            ".rt_geom_live tied to a constant — not the live ports (hollow wire)."
+        )
+    if has_out_hold and not hold_to_store:
+        # Allow internal assign from store net name if port exists on store
+        if not re.search(r"\.geom_hold_black\s*\(", core):
+            errors.append(
+                "B22_PRESENT_CORE_BLACKOUT_STORE_WIRE: stat_geom_hold_black port "
+                "exists but ddr_frame_store .geom_hold_black(...) is not connected. "
+                "HDMI_BLACKOUT path dies after wholesale merge (rd-duck B16)."
+            )
+    if has_out_hollow and not hollow_to_store:
+        if not re.search(r"\.geom_hollow_fault\s*\(", core):
+            errors.append(
+                "B22_PRESENT_CORE_HOLLOW_STORE_WIRE: stat_geom_hollow port exists "
+                "but ddr_frame_store .geom_hollow_fault(...) is not connected."
+            )
+    # Outputs permanently 1'b0 with no store driver path (greenwash after drop)
+    if has_out_hold and re.search(
+        r"assign\s+stat_geom_hold_black\s*=\s*1'b0\b", core
+    ) and not hold_to_store:
+        errors.append(
+            "B22_PRESENT_CORE_BLACKOUT_TIED_ZERO: stat_geom_hold_black assign 1'b0 "
+            "with no store .geom_hold_black connection — blackout path dead."
+        )
+
+    # --- B15 core-Hz cadence selection (w-clock) on present_cadence instance ---
+    cad_ports = _extract_sv_instance_ports(core, "present_cadence")
+    has_beam_film = bool(re.search(r"\bbeam_film_class\b", core))
+    has_cad_hz_wire = bool(re.search(r"\bcadence_display_hz\b", core))
+    cad_hz_conn = bool(
+        re.search(r"\.display_hz\s*\(\s*cadence_display_hz\s*\)", cad_ports)
+        or re.search(r"\.display_hz\s*\(\s*cadence_display_hz\s*\)", core)
+    )
+    # Under PRESENT_BEAM_960 must select 24/30 core Hz, not raw OSD display_hz only.
+    beam_cadence_sel = bool(
+        re.search(
+            r"`ifdef\s+PRESENT_BEAM_960[\s\S]{0,600}?cadence_display_hz\s*=\s*"
+            r"beam_film_class\s*\?\s*8'd24\s*:\s*8'd30",
+            core,
+        )
+        or (
+            has_beam_film
+            and has_cad_hz_wire
+            and re.search(
+                r"cadence_display_hz\s*=\s*beam_film_class\s*\?\s*8'd24\s*:\s*8'd30",
+                core,
+            )
+        )
+    )
+    msgs.append(
+        f"LEG0_B22_CADENCE beam_film={int(has_beam_film)} "
+        f"cadence_display_hz={int(has_cad_hz_wire)} "
+        f"cad_conn={int(cad_hz_conn)} beam_sel={int(beam_cadence_sel)} "
+        f"cad_port_chars={len(cad_ports)}"
+    )
+    if not (beam_cadence_sel and cad_hz_conn):
+        errors.append(
+            "B22_PRESENT_CORE_CADENCE_CORE_HZ: present_core lacks w-clock B15 "
+            "core-Hz cadence selection — need beam_film_class → "
+            "cadence_display_hz (24/30) wired to present_cadence .display_hz(...). "
+            "Passing top-level display_hz (50/60) under PRESENT_BEAM_960 yields "
+            "wrong advance_unique (rd-duck: content_fps != cadence_display_hz). "
+            "Scaler wholesale core without this path is merge-loss vs w-clock."
+        )
+
+    # --- Product hierarchy: Plex.sv must connect the ports (not leave defaults) ---
+    if plex:
+        pc_ports = _extract_sv_instance_ports(plex, "present_core")
+        msgs.append(f"LEG0_B22_PLEX_PRESENT_CORE_PORTS n={len(pc_ports)}")
+        plex_seq = bool(re.search(r"\.geom_live_seq\s*\(\s*\w+", pc_ports))
+        plex_live = bool(re.search(r"\.geom_live_valid\s*\(\s*\w+", pc_ports))
+        plex_hold = bool(re.search(r"\.stat_geom_hold_black\s*\(\s*\w+", pc_ports))
+        plex_hollow = bool(re.search(r"\.stat_geom_hollow\s*\(\s*\w+", pc_ports))
+        msgs.append(
+            f"LEG0_B22_PLEX_NETS seq={int(plex_seq)} live={int(plex_live)} "
+            f"hold={int(plex_hold)} hollow={int(plex_hollow)}"
+        )
+        if has_port_seq and has_port_live and not (plex_seq and plex_live):
+            errors.append(
+                "B22_PLEX_GEOM_LIVE_UNCONNECTED: Plex.sv present_core instance "
+                "omits .geom_live_seq/.geom_live_valid connections — producer "
+                "(latch/poller) and core ports exist in isolation but are not "
+                "wired at product hierarchy (B20/B22 merge class)."
+            )
+        if has_out_hold and has_out_hollow and not (plex_hold and plex_hollow):
+            errors.append(
+                "B22_PLEX_BLACKOUT_HOLLOW_UNCONNECTED: Plex.sv present_core "
+                "omits .stat_geom_hold_black/.stat_geom_hollow — HDMI_BLACKOUT "
+                "cannot track store geometry transitions after merge."
+            )
+    else:
+        msgs.append("LEG0_B22_PLEX_SV_ABSENT skip hierarchy port wiring")
+
+    if not errors:
+        msgs.append("LEG0_B22_OK present_core merge-semantics ports+nets intact")
+    return msgs, errors
+
+
 def leg0_arch_blockers() -> tuple[int, list[str]]:
     """rd-duck fit blockers — FAIL until a coherent candidate clears each.
 
@@ -1746,6 +2074,18 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
         )
     if has_phys720 and has_stride720 and has_db720:
         msgs.append("LEG0_EVIDENCE present_core passes PHYS_BASE_720P/stride/doorbell720")
+
+    # --- B22: present_core merge-semantics (rd-duck c5bd6009 collision) ---
+    # Observed: w-scaler present_core cannot win wholesale — drops w-mem B16
+    # geom_live_seq/live_valid + blackout/hollow outs + Option-C instance wiring,
+    # and lacks w-clock B15 core-Hz cadence selection. Same-symbol opposite-
+    # direction green-in-isolation class: each lane alone is green; post-merge
+    # file presence / ancestry is green; *connections* are gone. Assert ports
+    # AND instance nets (not ancestor, not file presence alone).
+    plex_for_b22 = _read(ROOT / "fpga" / "Plex_MiSTer" / "Plex.sv")
+    b22_msgs, b22_errs = _check_present_core_merge_semantics(core, plex_for_b22)
+    msgs.extend(b22_msgs)
+    errors.extend(b22_errs)
 
     # Fit card must not claim usable-capacity is already product code while stale.
     fit_card = _read(ROOT / "docs" / "ascal-true-de-fit-card.md")
@@ -3789,6 +4129,46 @@ def _mutation_per_blocker_clear_restore() -> list[str]:
             txt2 += "\n// mut .H_DE(content_width) .V_ACTIVE(content_height)\n"
         return txt2
 
+    def clear_b22_present_core(txt: str) -> str:
+        """Inject B22 ports + store nets + B15 cadence (merge-semantics surface)."""
+        inject = """
+// fitgate mut B22 present_core merge-semantics clear
+input  wire [15:0] geom_live_seq;
+input  wire        geom_live_valid;
+output wire        stat_geom_hold_black;
+output wire        stat_geom_hollow;
+wire beam_film_class = (content_fps <= 8'd24);
+wire [7:0] cadence_display_hz = beam_film_class ? 8'd24 : 8'd30;
+present_cadence u_mut_cadence (
+	.content_fps(content_fps),
+	.display_hz(cadence_display_hz)
+);
+ddr_frame_store #(
+	.PHYS_BASE_720P(32'h3018_0000),
+	.HPS_BANK_STRIDE_BYTES_720P(32'h0),
+	.DOORBELL_PHYS_720P(32'h0)
+) u_mut_fstore (
+	.rt_geom_seq(geom_live_seq),
+	.rt_geom_live(geom_live_valid),
+	.geom_hold_black(stat_geom_hold_black),
+	.geom_hollow_fault(stat_geom_hollow)
+);
+"""
+        return inject + txt
+
+    def clear_b22_plex(txt: str) -> str:
+        """Inject Plex.sv present_core port connections for B22 hierarchy."""
+        inject = """
+// fitgate mut B22 plex present_core nets
+present_core u_mut_b22_core (
+	.geom_live_seq(plxg_live_seq),
+	.geom_live_valid(plxg_live_valid),
+	.stat_geom_hold_black(geom_hold_black),
+	.stat_geom_hollow(geom_hollow_fault)
+);
+"""
+        return inject + txt
+
     # Each entry: token, list of (path, transform) applied together for clear.
     specs: list[tuple[str, list[tuple[Path, object]]]] = [
         ("B1_LAYOUT_NOT_960", [(layout, clear_layout_960)]),
@@ -3813,6 +4193,19 @@ def _mutation_per_blocker_clear_restore() -> list[str]:
             "B13_FIXED_RASTER_NO_RUNTIME_DE",
             [(beam, clear_runtime_de_beam), (core, clear_runtime_de_core)],
         ),
+        (
+            "B22_PRESENT_CORE_GEOM_LIVE_PORTS",
+            [(core, clear_b22_present_core), (plex, clear_b22_plex)],
+        ),
+        (
+            "B22_PRESENT_CORE_BLACKOUT_HOLLOW_PORTS",
+            [(core, clear_b22_present_core), (plex, clear_b22_plex)],
+        ),
+        (
+            "B22_PRESENT_CORE_CADENCE_CORE_HZ",
+            [(core, clear_b22_present_core)],
+        ),
+        # Store-wire / plex-unconnected only fire when ports exist — closed reinject.
         (
             "B14_CODED_W_16_ALIGN_UNENFORCED",
             [
@@ -4515,6 +4908,158 @@ def _mutation_closed_class_reinject() -> list[str]:
                     print("  MUT_OK B21_HDMI_BLACKOUT_DISABLED reinject_fire=1")
             finally:
                 rest()
+
+    # B22 merge-semantics (rd-duck c5bd6009): connection drop while ports kept.
+    core_p = RTL / "present_core.sv"
+    plex_p = ROOT / "fpga" / "Plex_MiSTer" / "Plex.sv"
+    if core_p.is_file():
+        old_c = core_p.read_text()
+        # 1) Wholesale c5bd6009-shaped core (no geom_live ports) must fire port tokens.
+        try:
+            import subprocess as _sp
+
+            c5 = _sp.check_output(
+                [
+                    "git",
+                    "-C",
+                    "/home/flynnsbit/Projects/MisterPlex-wt-scaler",
+                    "show",
+                    "c5bd6009:fpga/Plex_MiSTer/rtl/present_core.sv",
+                ],
+                text=True,
+                stderr=_sp.DEVNULL,
+            )
+        except (OSError, _sp.CalledProcessError, _sp.TimeoutExpired):
+            c5 = ""
+        if c5 and "module present_core" in c5:
+            rest = _with_file_backup(core_p, c5)
+            try:
+                _rc, msgs = leg0_arch_blockers()
+                toks = _leg0_error_tokens(msgs)
+                need = {
+                    "B22_PRESENT_CORE_GEOM_LIVE_PORTS",
+                    "B22_PRESENT_CORE_BLACKOUT_HOLLOW_PORTS",
+                    "B22_PRESENT_CORE_CADENCE_CORE_HZ",
+                }
+                missing = sorted(need - toks)
+                if missing:
+                    fails.append(
+                        f"B22 c5bd6009 RED twin missing fire {missing} — HOLE"
+                    )
+                else:
+                    print(
+                        "  MUT_OK B22_c5bd6009_wholesale_red "
+                        "geom_live+blackout+cadence=1"
+                    )
+            finally:
+                rest()
+
+        # 2) Ports present but store nets stripped → STORE_WIRE must fire.
+        good_core = (
+            "module present_core(\n"
+            "input wire [15:0] geom_live_seq,\n"
+            "input wire geom_live_valid,\n"
+            "input wire [7:0] content_fps,\n"
+            "output wire stat_geom_hold_black,\n"
+            "output wire stat_geom_hollow\n"
+            ");\n"
+            "wire beam_film_class = (content_fps <= 8'd24);\n"
+            "wire [7:0] cadence_display_hz = beam_film_class ? 8'd24 : 8'd30;\n"
+            "present_cadence u_cad (.display_hz(cadence_display_hz), .content_fps(content_fps));\n"
+            "ddr_frame_store u_fs (\n"
+            "  // mut: ports exist but NOT wired to live geom — hole if gate green\n"
+            "  .rt_geom_seq(16'd0),\n"
+            "  .rt_geom_live(1'b0)\n"
+            ");\n"
+            "assign stat_geom_hold_black = 1'b0;\n"
+            "assign stat_geom_hollow = 1'b0;\n"
+            "endmodule\n"
+        )
+        rest = _with_file_backup(core_p, good_core)
+        try:
+            _rc, msgs = leg0_arch_blockers()
+            toks = _leg0_error_tokens(msgs)
+            if "B22_PRESENT_CORE_GEOM_LIVE_STORE_WIRE" not in toks and (
+                "B22_PRESENT_CORE_GEOM_LIVE_TIED_CONST" not in toks
+            ):
+                fails.append(
+                    "B22_PRESENT_CORE_GEOM_LIVE_STORE_WIRE/TIED_CONST: "
+                    "const-tied rt_geom reinject did not fire — HOLE"
+                )
+            else:
+                print("  MUT_OK B22_GEOM_LIVE_STORE_WIRE reinject_fire=1")
+            if "B22_PRESENT_CORE_BLACKOUT_TIED_ZERO" not in toks and (
+                "B22_PRESENT_CORE_BLACKOUT_STORE_WIRE" not in toks
+            ):
+                fails.append(
+                    "B22 blackout store/tie reinject did not fire — HOLE"
+                )
+            else:
+                print("  MUT_OK B22_BLACKOUT_STORE_WIRE reinject_fire=1")
+        finally:
+            rest()
+
+    if plex_p.is_file() and core_p.is_file():
+        # 3) Core ports OK, Plex omits hierarchy nets → PLEX_UNCONNECTED.
+        old_c = core_p.read_text()
+        old_p = plex_p.read_text()
+        core_ok = (
+            old_c
+            + "\n// mut B22 core ports for plex-unconnected test\n"
+            "input wire [15:0] geom_live_seq;\n"
+            "input wire geom_live_valid;\n"
+            "output wire stat_geom_hold_black;\n"
+            "output wire stat_geom_hollow;\n"
+            "wire beam_film_class = 1'b0;\n"
+            "wire [7:0] cadence_display_hz = beam_film_class ? 8'd24 : 8'd30;\n"
+            "present_cadence u_cad (.display_hz(cadence_display_hz));\n"
+            "ddr_frame_store u_fs (\n"
+            "  .rt_geom_seq(geom_live_seq),\n"
+            "  .rt_geom_live(geom_live_valid),\n"
+            "  .geom_hold_black(stat_geom_hold_black),\n"
+            "  .geom_hollow_fault(stat_geom_hollow)\n"
+            ");\n"
+        )
+        # Ensure Plex has a present_core instance without B22 nets.
+        plex_bad = re.sub(
+            r"\.geom_live_seq\s*\([^)]*\)\s*,?",
+            "",
+            old_p,
+        )
+        plex_bad = re.sub(r"\.geom_live_valid\s*\([^)]*\)\s*,?", "", plex_bad)
+        plex_bad = re.sub(
+            r"\.stat_geom_hold_black\s*\([^)]*\)\s*,?", "", plex_bad
+        )
+        plex_bad = re.sub(r"\.stat_geom_hollow\s*\([^)]*\)\s*,?", "", plex_bad)
+        if "present_core" not in plex_bad:
+            plex_bad += (
+                "\npresent_core u_core (\n"
+                "  .clk(clk)\n"
+                "  // deliberately no geom_live / blackout ports\n"
+                ");\n"
+            )
+        rc1 = _with_file_backup(core_p, core_ok)
+        rc2 = _with_file_backup(plex_p, plex_bad)
+        try:
+            _rc, msgs = leg0_arch_blockers()
+            toks = _leg0_error_tokens(msgs)
+            if "B22_PLEX_GEOM_LIVE_UNCONNECTED" not in toks:
+                fails.append(
+                    "B22_PLEX_GEOM_LIVE_UNCONNECTED: plex omit reinject did not fire — HOLE"
+                )
+            else:
+                print("  MUT_OK B22_PLEX_GEOM_LIVE_UNCONNECTED reinject_fire=1")
+            if "B22_PLEX_BLACKOUT_HOLLOW_UNCONNECTED" not in toks:
+                fails.append(
+                    "B22_PLEX_BLACKOUT_HOLLOW_UNCONNECTED: plex omit reinject did not fire — HOLE"
+                )
+            else:
+                print(
+                    "  MUT_OK B22_PLEX_BLACKOUT_HOLLOW_UNCONNECTED reinject_fire=1"
+                )
+        finally:
+            rc1()
+            rc2()
 
     # B1_OPTION_C_REBASES_LEGACY (rd-duck): closed when LEG_* stay legacy.
     # Reinject OPTION_C LEG→720P rebase; must fire. Ancestry alone never clears.

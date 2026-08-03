@@ -28,6 +28,10 @@ MERGE=/path/to/merged-tree
 **B10:** `discover_design(macro_qsf=)` must actually run (`LEG0_DISCOVER_DESIGN EXECUTED`); TypeError/stale `rtl_lint` → `B10_DISCOVER_DESIGN_DID_NOT_RUN` (check did not execute).  
 **B14:** `coded_w` 16-align reject required (`rt_coded_w[3:0]==0`); PMS AR-fit 468/638/626 is an observed defect class.  
 
+**B22 present_core merge-semantics (rd-duck c5bd6009):**  
+w-scaler `present_core` **must not win wholesale**. That tip dropped w-mem B16 `geom_live_seq`/`geom_live_valid`, `stat_geom_hold_black`/`stat_geom_hollow`, store `.rt_geom_*` / `.geom_hold_black` nets, and Option-C `#()` wiring; and lacked w-clock B15 `beam_film_class` → `cadence_display_hz` (24/30) into `present_cadence.display_hz`.  
+**Same-symbol opposite-direction green-in-isolation:** each lane alone is green; ancestry/file presence stay green after a bad merge; **connections** are gone. Gate asserts **ports + instance nets + Plex.sv hierarchy wiring**, not ancestor SHA. Measured: mem has B16 ports+nets+Plex; scaler/clock tip core OK but Plex unconnected; c5bd6009 core missing ports+cadence.  
+
 **B1 OPTION_C vs geom-off legacy (rd-duck — architecture):**  
 Host `makeDdrPublishPlan` (ddr_present_bank.hpp) on mode-exit / PLXG disable programs **legacy** phys base + doorbell **`0x300FF000`**. FPGA `geom_enable=0` must poll that map.  
 **Forbidden:** `` `ifdef OPTION_C `` rebinding `LEG_BASE_W0`/`LEG_DOORBELL_W` to `PHYS_BASE_720P`/`DOORBELL_PHYS_720P` — then geom-off still polls Option-C and **ignores host legacy frames**. Gate token **`B1_OPTION_C_REBASES_LEGACY`**.  

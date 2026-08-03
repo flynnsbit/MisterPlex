@@ -1,5 +1,5 @@
 {
-  "gate_identity_hash": "5087d258cd4405813ac4db0ef35bb53a6e08525a",
+  "gate_identity_hash": "437497ad033d32e1c9da43730f0832bca180d878",
   "paths": [
     "scripts/fit_release_gate.py",
     "scripts/fit_release_gate.sh",
@@ -9,10 +9,11 @@
   ],
   "locked_by": "w-fitgate",
   "locked_date": "2026-08-03",
-  "reason": "selftest intentional identity lock after gate edits \u2014 not a bypass",
+  "reason": "INTENTIONAL REBASE after B22 present_core merge-semantics (rd-duck c5bd6009): ports+instance nets+Plex hierarchy for geom_live/blackout/cadence \u2014 not a bypass",
   "notes": [
     "INTENTIONAL REBASE of ruler identity after gate script change \u2014 not a bypass.",
-    "Lanes must run this same identity; divergent fit_release_gate.py/rtl_lint.py must not report LEG0 counts (LEG0_COUNT_REFUSED).",
-    "Refresh only when scripts/fit_release_gate.py or companions change on purpose."
+    "B22: same-symbol opposite-direction green-in-isolation; assert connections not ancestry.",
+    "B1: Option-C via rt_need_optc only; no LEG_* compile rebase.",
+    "Lanes must run this same identity; divergent rulers get LEG0_COUNT_REFUSED."
   ]
 }
