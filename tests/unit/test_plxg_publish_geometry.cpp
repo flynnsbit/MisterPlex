@@ -130,11 +130,76 @@ int main() {
         expect(!makeDdrPublishPlan(bad, 0, plan, &err), "NEG 320 bytes vs 480 geom rejected");
     }
 
+    // rd-duck: Direct-Part 426→432 coded≠display must survive makeDdrPublishPlan.
+    // Payload is the padded bank (432×240); PLXG keeps display/H_DE=426 + crop_left=2.
+    {
+        const auto g = ddrStorageGeometryForContent(426, 240);
+        expect(g.coded_width.get() == 432 && g.display_width.get() == 426 &&
+                   g.presented_width.get() == 426 && g.crop_left == 2 && g.crop_right == 4 &&
+                   g.present_x == 0 && g.present_y == 0,
+               "426 pad geom coded≠display cropL=2");
+        const auto layout = makeDdrFrameLayout(g);
+        expect(ddrFrameLayoutValid(layout), "426 pad layout valid");
+        expect(layout.line_bytes == 432 && layout.chroma_line_bytes == 216,
+               "426 pad layout stride=coded 432");
+        expect(layout.display_width.get() == 426 && layout.crop_left == 2,
+               "426 pad layout preserves display/crop");
+
+        const size_t bytes = yuv420pFrameBytes(432, 240);
+        std::vector<uint8_t> yuv(bytes, 0x10);
+        DdrPublishFrame f{yuv.data(), yuv.size(), g, DdrFrameFormat::Yuv420p};
+        DdrPublishPlan plan{};
+        std::string err;
+        expect(makeDdrPublishPlan(f, 0, plan, &err),
+               (std::string("426 pad plan ok: ") + err).c_str());
+        expect(plan.program_plxg, "426 pad program_plxg");
+        expect(plan.copy_bytes == bytes, "426 pad copy_bytes=bank");
+        expect(plan.layout.line_bytes == 432, "426 pad plan y_stride=432");
+        expect(plan.bank_map == DdrBankMap::Legacy480p, "426 pad LEG bank map");
+
+        int q1w = 0, q1h = 0, q1x = 0, q1y = 0;
+        int deW = 0, deH = 0, cw = 0, ch = 0;
+        int ys = 0, cs = 0, dw = 0, dh = 0;
+        int px = 0, py = 0, cl = 0, ct = 0;
+        unpackPlxgQ1(plan.plxg_q[1], &q1w, &q1h, &q1x, &q1y);
+        unpackPlxgQ2(plan.plxg_q[2], &deW, &deH, &cw, &ch);
+        unpackPlxgQ3(plan.plxg_q[3], &ys, &cs, &dw, &dh);
+        unpackPlxgQ4(plan.plxg_q[4], &px, &py, &cl, &ct);
+        expect(q1w == 426 && q1h == 240 && q1x == 0 && q1y == 0, "426 pad q1 content DE");
+        expect(deW == 426 && deH == 240, "426 pad q2 H_DE/V_DE=display");
+        expect(cw == 432 && ch == 240, "426 pad q2 coded=store");
+        expect(ys == 432 && cs == 216, "426 pad q3 stride=coded");
+        expect(dw == 426 && dh == 240, "426 pad q3 display preserved (coded≠display)");
+        expect(px == 0 && py == 0 && cl == 2 && ct == 0, "426 pad q4 crop_left=2");
+        // NEG: identity-on-432 PLXG would squeeze 426/432 under DAR.
+        expect(!(q1w == 432 && cw == 432 && dw == 432 && cl == 0),
+               "NEG 426 pad must not publish all-432 content");
+    }
+
+    // NEG: store-only 432 identity must NOT invent display 426 / crop 2.
+    {
+        const auto g = ddrStorageGeometryForContent(432, 240);
+        expect(g.coded_width.get() == 432 && g.display_width.get() == 432 && g.crop_left == 0,
+               "NEG store-only 432 is identity");
+        const size_t bytes = yuv420pFrameBytes(432, 240);
+        std::vector<uint8_t> yuv(bytes, 0x20);
+        DdrPublishFrame f{yuv.data(), yuv.size(), g, DdrFrameFormat::Yuv420p};
+        DdrPublishPlan plan{};
+        std::string err;
+        expect(makeDdrPublishPlan(f, 0, plan, &err), "store-only 432 plan");
+        int dw = 0, cl = 0, cw = 0;
+        unpackPlxgQ2(plan.plxg_q[2], nullptr, nullptr, &cw, nullptr);
+        unpackPlxgQ3(plan.plxg_q[3], nullptr, nullptr, &dw, nullptr);
+        unpackPlxgQ4(plan.plxg_q[4], nullptr, nullptr, &cl, nullptr);
+        expect(cw == 432 && dw == 432 && cl == 0,
+               "NEG store-only 432 PLXG stays identity (no fake crop)");
+    }
+
     if (g_fails) {
         std::fprintf(stderr, "test_plxg_publish_geometry: %d FAIL(s)\n", g_fails);
         return 1;
     }
     std::printf("PASS test_plxg_publish_geometry tiers=320/416/624/720/540/720p "
-                "PLXG_matches_payload NO_LEGACY480_SHEAR\n");
+                "pad426_coded_ne_display NO_LEGACY480_SHEAR\n");
     return 0;
 }

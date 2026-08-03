@@ -369,7 +369,10 @@ inline DdrFrameGeometry ddrPadOnlyStorageGeometry(int content_w, int content_h,
         g.crop_right = 0;
     if (g.crop_bottom < 0)
         g.crop_bottom = 0;
-    // Content DE origin — crop places samples inside the coded bank.
+    // Content DE is the visible window size (426×240). Pad inset lives in
+    // crop_left/top (q4) — NOT present_x — because present_x+display must fit
+    // inside presented (display==presented here). A mux that only reads q1 x0
+    // still needs q4 crop; w-mem must latch crop for coded≠display.
     g.present_x = 0;
     g.present_y = 0;
     g.placement = DdrFramePlacement::None;
