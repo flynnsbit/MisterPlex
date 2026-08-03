@@ -4,8 +4,9 @@
 //                   Must FAIL: STORE_LEGACY_SHAPE, accepted != 518400.
 // TB_LOCAL_960    — compile-time 960×540 store (NOT product svh). Proves
 //                   accepted==518400 + underrun clear when bank is shaped.
+// TB_LOCAL_720x480— capacity-tight: I420=518400 B in 0x80000 bank (1792 B spare).
 // RED_STARVE      — TB_LOCAL shape; service until has_frame then starve DDR.
-//                   underrun_count must rise (falsifiable).
+// RED_NON16       — 468×360; coded_w not 16-aligned — must not full-accept.
 //
 // Soft-skip ≠ pass. true rc direct.
 
@@ -22,15 +23,42 @@
 static vluint64_t main_time = 0;
 double sc_time_stamp() { return static_cast<double>(main_time); }
 
+#if defined(BEAM_DDR_FAULT_NON16)
+static constexpr int kHDe = 468;
+static constexpr int kVAct = 360;
+static constexpr int kCodedW = 468;
+static constexpr int kCodedH = 360;
+static constexpr uint32_t kBankStride = 0x80000u;
+#elif defined(BEAM_DDR_TB_LOCAL_720x480)
+static constexpr int kHDe = 720;
+static constexpr int kVAct = 480;
+static constexpr int kCodedW = 720;
+static constexpr int kCodedH = 480;
+static constexpr uint32_t kBankStride = 0x80000u;
+#elif defined(BEAM_DDR_TB_LOCAL_960) || defined(BEAM_DDR_STARVE)
 static constexpr int kHDe = 960;
 static constexpr int kVAct = 540;
+static constexpr int kCodedW = 960;
+static constexpr int kCodedH = 540;
+static constexpr uint32_t kBankStride = 0x100000u;
+#else
+static constexpr int kHDe = 960;
+static constexpr int kVAct = 540;
+static constexpr int kCodedW = 624;
+static constexpr int kCodedH = 480;
+static constexpr uint32_t kBankStride = 0x80000u;
+#endif
+
 static constexpr int kHTot = 1182;
 static constexpr int kVTot = 564;
-static constexpr int kTarget = kHDe * kVAct; // 518400
+static constexpr int kTarget = kHDe * kVAct;
 static constexpr uint32_t kBasePhys = 0x30000000u;
 static constexpr uint32_t kMagic = 0x504C584Bu;
+// Parent capacity: usable = bank_stride - 0x1000 (doorbell page).
+static constexpr uint32_t kUsableBank = kBankStride - 0x1000u;
+static constexpr int kI420Bytes = kCodedW * kCodedH * 3 / 2;
 
-enum class Mode { Legacy, Tb960, Starve };
+enum class Mode { Legacy, Tb960, Tb720, Starve, Non16 };
 
 static Mode parseMode(int argc, char** argv) {
 	for (int i = 1; i < argc; ++i) {
@@ -38,11 +66,19 @@ static Mode parseMode(int argc, char** argv) {
 			return Mode::Legacy;
 		if (!std::strcmp(argv[i], "TB960") || !std::strcmp(argv[i], "TB_LOCAL_960"))
 			return Mode::Tb960;
+		if (!std::strcmp(argv[i], "TB720") || !std::strcmp(argv[i], "TB_LOCAL_720x480"))
+			return Mode::Tb720;
 		if (!std::strcmp(argv[i], "STARVE") || !std::strcmp(argv[i], "RED_STARVE"))
 			return Mode::Starve;
+		if (!std::strcmp(argv[i], "NON16") || !std::strcmp(argv[i], "RED_NON16"))
+			return Mode::Non16;
 	}
-#if defined(BEAM_DDR_STARVE)
+#if defined(BEAM_DDR_FAULT_NON16)
+	return Mode::Non16;
+#elif defined(BEAM_DDR_STARVE)
 	return Mode::Starve;
+#elif defined(BEAM_DDR_TB_LOCAL_720x480)
+	return Mode::Tb720;
 #elif defined(BEAM_DDR_TB_LOCAL_960)
 	return Mode::Tb960;
 #else
@@ -100,17 +136,16 @@ struct Sim {
 		top.DDRAM_DOUT = 0;
 		top.DDRAM_DOUT_READY = 0;
 
+		codedW = kCodedW;
+		codedH = kCodedH;
+		bankStride = kBankStride;
+		doorbellPhys = kBasePhys + (2u * bankStride) - 0x1000u;
 		if (m == Mode::Legacy) {
+			// LEGACY fill still uses svh coded; beam remains 960 DE (mismatch intentional).
 			codedW = 624;
 			codedH = 480;
 			bankStride = 0x80000u;
 			doorbellPhys = 0x300FF000u;
-		} else {
-			// Match TB_LOCAL_960 top params
-			codedW = 960;
-			codedH = 540;
-			bankStride = 0x100000u;
-			doorbellPhys = 0x30000000u + (2u * bankStride) - 0x1000u; // 0x301FF000
 		}
 		// Cover base → doorbell page + slack
 		const size_t bytes = static_cast<size_t>(doorbellPhys - basePhys) + 0x2000u;
@@ -383,8 +418,10 @@ static FrameScore measureOneFrame(Sim& sim, int pres_x, int disp_w, int pres_y, 
 }
 
 static int run(Mode mode) {
-	const char* name = mode == Mode::Legacy   ? "PRODUCT_LEGACY"
+	const char* name = mode == Mode::Legacy ? "PRODUCT_LEGACY"
 	                   : mode == Mode::Starve ? "RED_STARVE"
+	                   : mode == Mode::Non16  ? "RED_NON16"
+	                   : mode == Mode::Tb720  ? "TB_LOCAL_720x480"
 	                                          : "TB_LOCAL_960";
 	Sim sim(mode);
 	sim.resetCore();
@@ -444,7 +481,9 @@ static int run(Mode mode) {
 	const uint16_t ur_delta = static_cast<uint16_t>(sc.ur1 - sc.ur0);
 
 	const bool shape_960 = (param_cw >= 960 && param_ch >= 540 && param_fw >= 960 && param_fh >= 540);
+	const bool shape_720 = (param_cw == 720 && param_ch == 480 && param_fw == 720 && param_fh == 480);
 	const bool svh_legacy = (svh_cw == 624 && svh_ch == 480 && svh_pw == 640 && svh_ph == 480);
+	const int align16_ok = ((param_cw & 15) == 0) ? 1 : 0;
 	const bool de_ok = (sc.de_pixels == static_cast<uint64_t>(kTarget)) && (sc.de_w_min == kHDe) &&
 	                   (sc.de_w_max == kHDe) && (sc.de_lines == kVAct);
 	const bool req_full = (sc.store_req == static_cast<uint64_t>(kTarget)) &&
@@ -452,13 +491,19 @@ static int run(Mode mode) {
 	const bool acc_full = (sc.store_accepted == static_cast<uint64_t>(kTarget)) &&
 	                      (sc.line_acc_min == kHDe) && (sc.line_acc_max == kHDe);
 	const bool underrun_clear = (ur_delta == 0);
+	const bool capacity_ok = (static_cast<uint32_t>(kI420Bytes) <= kUsableBank);
 
 	std::printf("CASE %s EXECUTED\n", name);
+	std::printf("  target_de=%dx%d pixels=%d i420_bytes=%d bank=0x%x usable=0x%x capacity_ok=%d "
+	            "align16_ok=%d\n",
+	            kHDe, kVAct, kTarget, kI420Bytes, kBankStride, kUsableBank, capacity_ok ? 1 : 0,
+	            align16_ok);
 	std::printf("  svh coded=%dx%d presented=%dx%d legacy_svh=%d\n", svh_cw, svh_ch, svh_pw, svh_ph,
 	            svh_legacy ? 1 : 0);
-	std::printf("  store_param FRAME=%dx%d CODED=%dx%d DISP=%dx%d PRES=%d,%d shape_960=%d\n",
+	std::printf("  store_param FRAME=%dx%d CODED=%dx%d DISP=%dx%d PRES=%d,%d shape_960=%d "
+	            "shape_720=%d\n",
 	            param_fw, param_fh, param_cw, param_ch, disp_w, disp_h, pres_x, pres_y,
-	            shape_960 ? 1 : 0);
+	            shape_960 ? 1 : 0, shape_720 ? 1 : 0);
 	std::printf("  has_frame=%d frames_done=%u doorbell_ok=%d debug=0x%02x\n",
 	            sim.top.has_frame ? 1 : 0, static_cast<unsigned>(sim.top.frames_done),
 	            sim.top.doorbell_ok ? 1 : 0, static_cast<unsigned>(sim.top.debug_state));
@@ -489,9 +534,12 @@ static int run(Mode mode) {
 		}
 	};
 
-	// Beam side always required
-	expect(de_ok, "de_raster_960x540");
-	expect(req_full, "store_req_full_518400");
+	char de_tag[64];
+	std::snprintf(de_tag, sizeof(de_tag), "de_raster_%dx%d", kHDe, kVAct);
+	char req_tag[64];
+	std::snprintf(req_tag, sizeof(req_tag), "store_req_full_%d", kTarget);
+	expect(de_ok, de_tag);
+	expect(req_full, req_tag);
 
 	if (mode == Mode::Legacy) {
 		expect(svh_legacy, "svh_still_legacy_624x480");
@@ -535,6 +583,45 @@ static int run(Mode mode) {
 		std::printf("  OVERALL %s fails=%d (RED twin expects FAIL exit)\n",
 		            fails ? "FAIL" : "PASS_CHECKS_BUT_RED", fails);
 		return 1; // red twin always nonzero
+	}
+
+	if (mode == Mode::Non16) {
+		// Loud reject: non-16 coded_w must not look like a full clean accept.
+		expect(align16_ok == 0, "align16_ok=0");
+		expect(param_cw == 468 && param_ch == 360, "coded_468x360");
+		if (acc_full && underrun_clear) {
+			// Measured: store chroma uses coded_w[10:4] without rejecting [3:0]!=0.
+			// Full accept here is shear-class paint — twin must stay RED (rc!=0).
+			std::printf("  FAIL NON16_FALSE_GREEN accepted=%llu (shear class; "
+			            "store does not reject non-16 — w-mem owns fix)\n",
+			            static_cast<unsigned long long>(sc.store_accepted));
+			++fails;
+		} else {
+			std::printf("  PASS NON16_NOT_FULL_ACCEPT accepted=%llu ur_d=%u\n",
+			            static_cast<unsigned long long>(sc.store_accepted),
+			            static_cast<unsigned>(ur_delta));
+		}
+		if (fails == 0)
+			fails = 1; // red twin always nonzero
+		std::printf("  OVERALL FAIL fails=%d (RED NON16)\n", fails);
+		return 1;
+	}
+
+	if (mode == Mode::Tb720) {
+		std::printf("  NOTE TB_LOCAL_720x480 capacity-tight (NOT claiming product svh)\n");
+		expect(shape_720, "tb_local_720x480_shape");
+		expect(capacity_ok, "i420_fits_usable_bank");
+		expect(kI420Bytes == 518400, "i420_bytes_518400");
+		expect(kUsableBank == 520192u, "usable_bank_520192");
+		expect(kUsableBank - static_cast<uint32_t>(kI420Bytes) == 1792u, "spare_1792");
+		expect(align16_ok == 1, "align16_ok");
+		expect(got_frame, "has_frame");
+		expect(acc_full, "store_accepted_full_345600");
+		expect(underrun_clear, "rd_underrun_clear");
+		expect(sc.store_accepted == static_cast<uint64_t>(kTarget), "accepted_N_is_345600");
+		expect(sc.de_pixels == 345600ull, "de_pixels_345600");
+		std::printf("  OVERALL %s fails=%d\n", fails ? "FAIL" : "PASS", fails);
+		return fails ? 1 : 0;
 	}
 
 	// TB_LOCAL_960 experimental

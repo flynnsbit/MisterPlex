@@ -1,18 +1,22 @@
 // Counted true-DE + B6 full store coordinate oracle.
 //
 // Product 30/24: 960×540 identity window, DE extent == content.
-// Multi-geom (runtime H_DE/V_ACTIVE): 320×240, 640×360, 960×540.
+// Multi-geom (runtime H_DE/V_ACTIVE): library + tier set
+//   320×240, 640×360, 960×540 (tiers)
+//   624×480, 720×480, 624×352 (PMS-dominant / capacity-tight)
 //
 // B6 oracle (DE-only greenwash forbidden):
 //   store_id_checked == CW*CH
 //   every (x,y) in [0,CW)×[0,CH) visited *exactly once* (bitmap)
 //   identity: delayed store_(x,y) == beam (hc,vc) at sample
 //   no dups, no OOB, no omissions
+//   CW % 16 == 0 (store chroma fetch coded_w[10:4]; PMS aspect-fit often breaks this)
 //
 // RED twins:
 //   ISLAND_1280 / FAULT_VTOT_BAD_DE (existing)
 //   FAULT_STORE_ORACLE_PERM — x^=1 bijection (count can lie; oracle must RED)
 //   FAULT_STORE_ORACLE_DROP — x0→x1 (missing 0, dup 1)
+//   FAULT_NON16_W — e.g. 468×360: loud reject (not silent accept / shear)
 //
 // true rc direct. EXECUTED before accept.
 
@@ -205,10 +209,14 @@ enum class CaseKind {
 	Geom320,
 	Geom640,
 	Geom960,
+	Geom624x480,
+	Geom720x480,
+	Geom624x352,
 	Island,
 	VtotBad,
 	OraclePerm,
-	OracleDrop
+	OracleDrop,
+	Non16W
 };
 
 static CaseKind parse_case()
@@ -217,6 +225,8 @@ static CaseKind parse_case()
 	return CaseKind::OraclePerm;
 #elif defined(PRESENT_BEAM_FAULT_STORE_ORACLE_DROP)
 	return CaseKind::OracleDrop;
+#elif defined(PRESENT_BEAM_FAULT_NON16_W)
+	return CaseKind::Non16W;
 #elif defined(PRESENT_BEAM_FAULT_ISLAND_1280)
 	return CaseKind::Island;
 #elif defined(PRESENT_BEAM_FAULT_VTOT_BAD_DE)
@@ -229,9 +239,22 @@ static CaseKind parse_case()
 	return CaseKind::Geom640;
 #elif defined(PRESENT_BEAM_GEOM_960)
 	return CaseKind::Geom960;
+#elif defined(PRESENT_BEAM_GEOM_624x480)
+	return CaseKind::Geom624x480;
+#elif defined(PRESENT_BEAM_GEOM_720x480)
+	return CaseKind::Geom720x480;
+#elif defined(PRESENT_BEAM_GEOM_624x352)
+	return CaseKind::Geom624x352;
 #else
 	return CaseKind::Product30;
 #endif
+}
+
+static bool is_green_geom(CaseKind ck)
+{
+	return ck == CaseKind::Product30 || ck == CaseKind::Product24 || ck == CaseKind::Geom320 ||
+	       ck == CaseKind::Geom640 || ck == CaseKind::Geom960 || ck == CaseKind::Geom624x480 ||
+	       ck == CaseKind::Geom720x480 || ck == CaseKind::Geom624x352;
 }
 
 int main(int argc, char **argv)
@@ -288,6 +311,52 @@ int main(int argc, char **argv)
 		use_rt_g = 1;
 		rt_hde = 960;
 		rt_vact = 540;
+		break;
+	case CaseKind::Geom624x480:
+		// PMS dominant class (parent survey N=142: 72 items / 51%)
+		mode = "GEOM_624x480";
+		CW = 624;
+		CH = 480;
+		win_h = 624;
+		win_v = 480;
+		use_rt_g = 1;
+		rt_hde = 624;
+		rt_vact = 480;
+		break;
+	case CaseKind::Geom720x480:
+		// Capacity-tight: I420=518400 B vs usable bank ~520192 (1792 B spare)
+		mode = "GEOM_720x480";
+		CW = 720;
+		CH = 480;
+		win_h = 720;
+		win_v = 480;
+		use_rt_g = 1;
+		rt_hde = 720;
+		rt_vact = 480;
+		break;
+	case CaseKind::Geom624x352:
+		mode = "GEOM_624x352";
+		CW = 624;
+		CH = 352;
+		win_h = 624;
+		win_v = 352;
+		use_rt_g = 1;
+		rt_hde = 624;
+		rt_vact = 352;
+		break;
+	case CaseKind::Non16W:
+		// PMS aspect-fit widths that break store chroma fetch (coded_w[3:0]!=0).
+		// 468×360 measured in library; must LOUD-fail, not silently paint shear.
+		mode = "FAULT_NON16_W";
+		CW = 468;
+		CH = 360;
+		win_h = 468;
+		win_v = 360;
+		use_rt_g = 1;
+		rt_hde = 468;
+		rt_vact = 360;
+		product_true_de = 0; // contract rejects before claiming true_de product
+		require_oracle = 0;
 		break;
 	case CaseKind::Island:
 		mode = "ISLAND_1280";
@@ -385,10 +454,13 @@ int main(int argc, char **argv)
 		}
 	};
 
+	const int align16_ok = ((CW & 15) == 0) ? 1 : 0;
+	std::printf("  align16_ok=%d CW=%d CH=%d need_pixels=%d\n", align16_ok, CW, CH, CW * CH);
+
 	// B6 hard requirements whenever we claim identity true-DE product/geom.
-	if (require_oracle && product_true_de &&
-	    (ck == CaseKind::Product30 || ck == CaseKind::Product24 || ck == CaseKind::Geom320 ||
-	     ck == CaseKind::Geom640 || ck == CaseKind::Geom960)) {
+	if (require_oracle && product_true_de && is_green_geom(ck)) {
+		// Store chroma path uses coded_w[10:4] — non-16 widths are illegal.
+		CHECK(align16_ok == 1, "CW 16-aligned (store rt_coded_w[3:0]==0)");
 		CHECK(true_de == 1, "true_de==1");
 		CHECK(st.de_pixels == CW * CH, "de_pixels==CW*CH");
 		CHECK(de_w_uniform && st.min_de_w == CW && st.max_de_w == CW, "de_w uniform ==CW");
@@ -405,6 +477,32 @@ int main(int argc, char **argv)
 		CHECK(st.store_x_min == 0 && st.store_x_max == CW - 1, "store_x full span");
 		CHECK(st.store_y_min == 0 && st.store_y_max == CH - 1, "store_y full span");
 		CHECK(st.line_req_min == CW && st.line_req_max == CW, "line_req==CW each line");
+		// Exact library pixel counts (parent hand-checked).
+		if (ck == CaseKind::Geom624x480)
+			CHECK(st.de_pixels == 299520, "624x480 de_pixels==299520");
+		if (ck == CaseKind::Geom720x480)
+			CHECK(st.de_pixels == 345600, "720x480 de_pixels==345600");
+		if (ck == CaseKind::Geom624x352)
+			CHECK(st.de_pixels == 219648, "624x352 de_pixels==219648");
+	}
+
+	if (ck == CaseKind::Non16W) {
+		// RED: must not greenwash non-16 width as product true_de.
+		CHECK(align16_ok == 0, "control: CW not 16-aligned");
+		CHECK(CW == 468 && CH == 360, "control: 468x360 PMS aspect-fit class");
+		// Even if beam identity oracle happens to count, contract rejects.
+		if (align16_ok == 1) {
+			std::fprintf(stderr, "FAIL NON16 greenwashed align16_ok=1\n");
+			++fails;
+		}
+		// Loud reject path
+		if (fails == 0)
+			fails = 1;
+		std::printf("FAIL true_de_count RED mode=%s align16_ok=%d oracle_full=%d "
+		            "true_de=%d de=%dx%d (store requires CW%%16==0)\n",
+		            mode, align16_ok, st.oracle_full, true_de, de_w, de_h);
+		delete top;
+		return 1;
 	}
 
 	if (ck == CaseKind::Product30) {

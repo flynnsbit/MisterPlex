@@ -1,6 +1,8 @@
 // B5: present_beam_content_de + present_content_window + ddr_frame_store.
 // Default: product-like LEGACY svh params (624/640) — must NOT claim 960 accept.
 // +define+BEAM_DDR_TB_LOCAL_960: compile-time 960×540 store (NOT product svh).
+// +define+BEAM_DDR_TB_LOCAL_720x480: capacity-tight 720×480 (I420=518400, bank 0x80000).
+// +define+BEAM_DDR_FAULT_NON16: 468×360 non-16 width — must not full-accept.
 `default_nettype none
 `include "ddr_frame_layout_params.svh"
 
@@ -58,13 +60,46 @@ module present_beam_ddr_store_tb (
 	output wire [15:0] store_param_pres_x,
 	output wire [15:0] store_param_pres_y
 );
-	localparam int P_H_DE = 960;
-	localparam int P_V_ACT = 540;
 	localparam int P_H_TOT = 1182;
 	localparam int P_V_TOT = 564;
 
-`ifdef BEAM_DDR_TB_LOCAL_960
+`ifdef BEAM_DDR_FAULT_NON16
+	// PMS aspect-fit 468×360 — coded_w[3:0]!=0; store chroma fetch truncates.
+	localparam int P_H_DE = 468;
+	localparam int P_V_ACT = 360;
+	localparam int ST_FW = 468;
+	localparam int ST_FH = 360;
+	localparam int ST_CW = 468;
+	localparam int ST_CH = 360;
+	localparam int ST_DW = 468;
+	localparam int ST_DH = 360;
+	localparam int ST_PX = 0;
+	localparam int ST_PY = 0;
+	localparam int ST_CL = 0;
+	localparam int ST_CT = 0;
+	localparam int ST_BANK = 32'h0008_0000;
+	localparam [31:0] ST_DOORBELL = 32'h3000_0000 + (2 * ST_BANK) - 32'h1000;
+`elsif BEAM_DDR_TB_LOCAL_720x480
+	// Capacity-tight library class: I420 = 720*480*3/2 = 518400 B
+	// usable bank (parent) = 520192 = 0x80000-0x1000 → 1792 B spare.
+	localparam int P_H_DE = 720;
+	localparam int P_V_ACT = 480;
+	localparam int ST_FW = 720;
+	localparam int ST_FH = 480;
+	localparam int ST_CW = 720;
+	localparam int ST_CH = 480;
+	localparam int ST_DW = 720;
+	localparam int ST_DH = 480;
+	localparam int ST_PX = 0;
+	localparam int ST_PY = 0;
+	localparam int ST_CL = 0;
+	localparam int ST_CT = 0;
+	localparam int ST_BANK = 32'h0008_0000;
+	localparam [31:0] ST_DOORBELL = 32'h3000_0000 + (2 * ST_BANK) - 32'h1000; // 0x300FF000
+`elsif BEAM_DDR_TB_LOCAL_960
 	// TB-local experimental 960 bank — NOT ddr_frame_layout_params.svh product.
+	localparam int P_H_DE = 960;
+	localparam int P_V_ACT = 540;
 	localparam int ST_FW = 960;
 	localparam int ST_FH = 540;
 	localparam int ST_CW = 960;
@@ -79,7 +114,9 @@ module present_beam_ddr_store_tb (
 	localparam int ST_BANK = 32'h0010_0000;
 	localparam [31:0] ST_DOORBELL = 32'h3000_0000 + (2 * ST_BANK) - 32'h1000; // 0x301FF000
 `else
-	// present_core product-like: QSF FRAME may be 960 but store still svh-coded.
+	// present_core product-like: beam 960 DE vs store still svh-coded (B1 mismatch).
+	localparam int P_H_DE = 960;
+	localparam int P_V_ACT = 540;
 	localparam int ST_FW = 640;
 	localparam int ST_FH = 480;
 	localparam int ST_CW = DDR_FRAME_CODED_WIDTH;
@@ -140,9 +177,9 @@ module present_beam_ddr_store_tb (
 		.clk(clk), .reset(reset), .ce_pix(ce_pix_i),
 		.hc(hc_i), .py(py), .in_content(in_content),
 		.win_enable(1'b1),
-		.content_w(11'd960), .content_h(11'd540),
+		.content_w(11'(P_H_DE)), .content_h(11'(P_V_ACT)),
 		.content_x0(11'd0), .content_y0(11'd0),
-		.h_de(11'd960), .v_de(11'd540),
+		.h_de(11'(P_H_DE)), .v_de(11'(P_V_ACT)),
 		.store_x(store_x_w), .store_y(store_y_w),
 		.de_r(de_r), .past_last_row(past_last_row)
 	);

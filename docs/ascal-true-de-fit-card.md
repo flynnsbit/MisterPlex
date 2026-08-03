@@ -134,3 +134,22 @@ mul and DDR store remain larger. **No Quartus proof here** — estimate only; w-
 
 Host must publish `content_w/h` = delivered coded size. Beam DE tracks them; window
 `h_de/v_de` tied to `beam_*_act` under `PRESENT_BEAM_960` for identity true DE.
+
+## Library geometries (B6 oracle, parent PMS N=142)
+
+Counted true-DE + full (x,y) oracle (beam+window), `rt_geom=1`:
+
+| Geom | de_pixels | align16 | notes |
+|------|----------:|:-------:|-------|
+| 320×240 | 76800 | yes | tier |
+| 640×360 | 230400 | yes | tier |
+| 960×540 | 518400 | yes | max tier |
+| **624×480** | **299520** | yes | **51% of library** |
+| **720×480** | **345600** | yes | capacity-tight I420=518400 / usable 520192 (1792 spare) |
+| 624×352 | 219648 | yes | library class |
+
+**16-align RED:** 468×360 → `align16_ok=0`, twin rc=1. Beam identity can still count (`oracle_full=1`); contract rejects. Store path currently **false-greens** full accept (shear class) — w-mem owns reject-in-store.
+
+**B13:** product `present_core` fixed H_DE/V_ACTIVE is w-clock; this lane does not wire it.
+
+**PLXG ABI FREEZE:** doorbell+`0x800` (`kDdrFramePlxgOffset`), not `0x130`.

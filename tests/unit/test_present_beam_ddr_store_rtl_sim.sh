@@ -144,5 +144,64 @@ grep -q "PASS UNDERRUN_FIRED" <<<"$OUT3" || {
 }
 echo "OK RED_STARVE underrun fired"
 
-echo "OK B5 present_beam_ddr_store: LEGACY honest-fail + TB960 accept gate + STARVE underrun"
+# --- 4) TB_LOCAL_720x480 capacity-tight ---
+B4="$ROOT/build/verilator/present_beam_ddr_tb720"
+mkdir -p "$B4"
+echo "=== BUILD TB_LOCAL_720x480 ===" >&2
+"$RUN" "${base_flags[@]}" +define+BEAM_DDR_TB_LOCAL_720x480 \
+  -CFLAGS "-std=c++17 -O2 -DBEAM_DDR_TB_LOCAL_720x480" \
+  --Mdir "$B4" "${sv_common[@]}"
+set +e
+OUT4="$("$B4/Vpresent_beam_ddr_store_tb" TB720 2>&1)"; RC4=$?
+set -e
+printf '%s\n' "$OUT4"
+echo "TB_LOCAL_720x480 true rc=$RC4"
+assert_exec TB_LOCAL_720x480 "$OUT4" \
+  "CASE TB_LOCAL_720x480 EXECUTED" \
+  "i420_bytes=518400" \
+  "usable=0x7f000" \
+  "capacity_ok=1" \
+  "align16_ok=1" \
+  "shape_720=1"
+[[ "$RC4" -eq 0 ]] || { echo "FAIL TB720 must green" >&2; exit 1; }
+assert_exec TB720_green "$OUT4" \
+  "store_accepted=345600" \
+  "acc_full=1" \
+  "de_pixels=345600" \
+  "PASS store_accepted_full_345600" \
+  "PASS spare_1792" \
+  "OVERALL PASS"
+echo "OK TB_LOCAL_720x480 capacity-tight green"
+
+# --- 5) RED NON16 468×360 ---
+B5="$ROOT/build/verilator/present_beam_ddr_non16"
+mkdir -p "$B5"
+echo "=== BUILD RED_NON16 ===" >&2
+"$RUN" "${base_flags[@]}" +define+BEAM_DDR_FAULT_NON16 \
+  -CFLAGS "-std=c++17 -O2 -DBEAM_DDR_FAULT_NON16" \
+  --Mdir "$B5" "${sv_common[@]}"
+set +e
+OUT5="$("$B5/Vpresent_beam_ddr_store_tb" NON16 2>&1)"; RC5=$?
+set -e
+printf '%s\n' "$OUT5"
+echo "RED_NON16 true rc=$RC5"
+assert_exec RED_NON16 "$OUT5" \
+  "CASE RED_NON16 EXECUTED" \
+  "align16_ok=0" \
+  "coded_468x360"
+[[ "$RC5" -ne 0 ]] || { echo "FAIL NON16 must rc!=0 (loud reject)" >&2; exit 1; }
+# Two valid RED outcomes:
+#   NOT_FULL_ACCEPT — store/underrun path already broken (good)
+#   FALSE_GREEN     — store full-accepted non-16 (shear class); twin must still rc!=0
+if grep -q "FAIL NON16_FALSE_GREEN" <<<"$OUT5"; then
+  echo "PASS red-check NON16 caught STORE_FALSE_GREEN (shear; store does not reject non-16)"
+elif grep -q "PASS NON16_NOT_FULL_ACCEPT" <<<"$OUT5"; then
+  echo "PASS red-check NON16 not full accept"
+else
+  echo "FAIL NON16 missing accept verdict" >&2
+  exit 1
+fi
+echo "OK RED_NON16 loud reject true_rc=$RC5"
+
+echo "OK B5 present_beam_ddr_store: LEGACY + TB960 + TB720 + STARVE + NON16"
 exit 0
