@@ -377,6 +377,7 @@ private:
     // Names kept for rtl_invariants / diagnostics (mirrors plxdLive_).
     int plxdStaleCount_ = 0;
     bool plxdLivenessProven_ = false;
+    uint16_t plxdLastFramesDone_ = 0; // last observed PLXD frames_done (stale detect)
     bool ensureDdrMap();
     void releaseDdrMap();
     bool ensurePlxgBootstrapMap();

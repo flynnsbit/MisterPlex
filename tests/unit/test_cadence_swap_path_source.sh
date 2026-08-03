@@ -74,13 +74,16 @@ else
   echo "OK C1/B15: no product hardwired content_fps=24"
 fi
 
-# cadence.hpp not included from arm/
-if grep -rn --include='*.cpp' --include='*.hpp' 'cadence.hpp' "$ROOT/arm" >/dev/null 2>&1; then
-  echo "FAIL C1: cadence.hpp referenced from arm/" >&2
-  grep -rn --include='*.cpp' --include='*.hpp' 'cadence.hpp' "$ROOT/arm" >&2 || true
+# present_cadence / film cadence.hpp not included from arm/
+# plxg_q5_aspect_cadence.hpp is path ABI #2 (DAR/fps q5) — not present_cadence.
+if grep -rn --include='*.cpp' --include='*.hpp' -E '(^|/)cadence\.hpp|present_cadence\.hpp' \
+    "$ROOT/arm" 2>/dev/null | grep -v 'plxg_q5_aspect_cadence' >/dev/null 2>&1; then
+  echo "FAIL C1: present film cadence.hpp referenced from arm/" >&2
+  grep -rn --include='*.cpp' --include='*.hpp' -E '(^|/)cadence\.hpp|present_cadence\.hpp' \
+    "$ROOT/arm" 2>/dev/null | grep -v 'plxg_q5_aspect_cadence' >&2 || true
   FAIL=1
 else
-  echo "OK C1: cadence.hpp not referenced from arm/"
+  echo "OK C1: present film cadence.hpp not referenced from arm/"
 fi
 
 # bank_vsync_count not in PLXD pack (fabric hist limitation)

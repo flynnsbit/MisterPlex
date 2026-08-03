@@ -435,6 +435,27 @@ void FpgaSpi::close() {
     doorbellSeq_ = 0;
 }
 
+void FpgaSpi::forceDdrKickReprobe() {
+    ddrKickMode_ = 0;
+    ddrKickFailMs_ = -1.0;
+    plxdLive_ = PlxdLivenessState{};
+    plxdLastFramesDone_ = 0;
+    plxdStaleCount_ = 0;
+    plxdLivenessProven_ = false;
+}
+
+bool FpgaSpi::reopenPresentPath() {
+    // close() already zeroes ddrKickMode_ / maps; open() rebuilds manager map.
+    const bool okOpen = open();
+    forceDdrKickReprobe();
+    if (!okOpen)
+        return false;
+    // Re-establish DDR frame window for the (possibly new) core layout.
+    if (!ensureDdrMap())
+        return false;
+    return true;
+}
+
 bool FpgaSpi::ensureBitstreamDdrMap() {
     namespace ring = ddr_bitstream_ring;
     if (bitstreamMap_ && bitstreamMemFd_ >= 0)

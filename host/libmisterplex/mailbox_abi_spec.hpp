@@ -134,8 +134,14 @@ constexpr uint32_t kPlxoMagic = 0x504C584Fu; // "PLXO"
 // History: +0x2C0 @48-cmd, briefly +0x4C0 when list grew with MAX_CMDS — frozen off that.
 constexpr uint32_t kPlxgAddr  = 0x3007F800u; // legacy example base + FIXED 0x800
 constexpr uint32_t kPlxgMagic = 0x504C5847u; // "PLXG"
+// Product doorbell 0x300FF000 + FIXED PLXG (not legacy 0x3007F example base).
+constexpr uint32_t kPlxgBootstrapPhys = 0x300FF800u;
+// Geometry/window beat region (5×8); aspect q5 may grow host record beyond this.
+constexpr uint32_t kPlxgBytes = 40u;
 static_assert(kPlxgOffset != kPlxcOffset, "PLXG must not collide with PLXC +0x130");
 static_assert(kPlxgOffset == 0x800u, "PLXG wire ABI is FIXED at +0x800");
+static_assert(kPlxgBootstrapPhys == 0x300FF000u + kPlxgOffset, "product PLXG phys");
+static_assert(kPlxgBytes == 40u, "PLXG geometry beat size");
 // Bound only: list may leave a hole before PLXG; it must not overrun into PLXG.
 static_assert(kPlxlOffset + kPlxcListMaxCmds * 8u <= kPlxgOffset,
               "chrome list must not grow into fixed PLXG +0x800");
