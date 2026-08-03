@@ -19,6 +19,8 @@ MERGE=/path/to/merged-tree
 
 **B20 full-hierarchy tests (rd-duck hold a–g):** multi-module TBs required for (a) explicit PLXG disable under BEAM, (b) commit@frame_boundary, (c) DDR fill during geom invalidate, (d) retained DDR across FPGA reset+daemon restart, (e) delayed poll vs early doorbell atomic bank+geom, (f) distinct bank swaps @24/30 not frame_start counts, **(g) async CDC PLXC_EXT_WE**: continuous `host_we` over N×`S_PUSH_LIST`+`S_PUSH_CTRL` vs sys_top edge-detect `d2&~d3` (20→74.25MHz) with **≥2 cmds+ctrl** — same-clock component TBs are blind. Isolated latch-only TBs do not clear.  
 
+**B21 hierarchy constants (rd-duck, observed):** product `Plex.sv` currently `assign HDMI_BLACKOUT=0` and `assign VGA_SCALER=0`. ascal's 3-frame resolution-change blackout (`ascal.vhd` `swblack` → `o_newres<=3`) is **disabled** when BLACKOUT=0 — **do not claim it protects runtime geometry changes**. `VGA_SCALER=0` leaves `vga_force_scaler` low so sys_top may take **direct_video / raw VGA** paths that **bypass ascal** for the nonstandard ~16.92 kHz 24/30 Hz beam. Runtime-beam product must force **`HDMI_BLACKOUT=1`** and **`VGA_SCALER=1`** (or hard-reject bypass). Gate asserts exact hierarchy: emu assigns, `.HDMI_BLACKOUT(hdmi_blackout)`, `.VGA_SCALER(vga_force_scaler)`, `.swblack(hdmi_blackout)`, and `vga_fb`/`vga_scaler` OR of `vga_force_scaler`.  
+
 **B10:** `discover_design(macro_qsf=)` must actually run (`LEG0_DISCOVER_DESIGN EXECUTED`); TypeError/stale `rtl_lint` → `B10_DISCOVER_DESIGN_DID_NOT_RUN` (check did not execute).  
 **B14:** `coded_w` 16-align reject required (`rt_coded_w[3:0]==0`); PMS AR-fit 468/638/626 is an observed defect class.  
 

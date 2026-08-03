@@ -164,6 +164,10 @@ LIVE_OPEN_BLOCKER_TOKENS = (
     "B20_HIER_E_POLL_DOORBELL_ATOMIC",
     "B20_HIER_F_BANK_SWAP_24_30",
     "B20_HIER_G_PLXC_ASYNC_CDC_MULTIBEAT",
+    # rd-duck: runtime-beam must force ascal blackout + scaler (live open on product)
+    "B21_HDMI_BLACKOUT_DISABLED",
+    "B21_VGA_SCALER_DISABLED",
+    # B21 wiring tokens currently clear on stock sys_top — closed-class reinject only
 )
 
 # Sibling-lane fixes that exist but are not merged into this gated tree.
@@ -2094,6 +2098,132 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
                 "rd-duck: merged QSF must enable B13 beam path — hollow 480p QSF is not product."
             )
 
+    # --- B21 hierarchy constants: HDMI_BLACKOUT + VGA_SCALER (rd-duck) ---
+    # Observed defect: Plex.sv assigns HDMI_BLACKOUT=0 and VGA_SCALER=0.
+    # ascal.vhd gates 3-frame res-change blackout on swblack:
+    #   IF (swblack='1' and ... ihsize/ivsize change) then o_newres <= 3
+    # sys_top passes .swblack(hdmi_blackout) from emu.HDMI_BLACKOUT — so
+    # BLACKOUT=0 disables that protection for runtime geometry changes.
+    # VGA_SCALER=0 leaves vga_force_scaler low; sys_top then allows
+    # direct_video / raw VGA paths (~1299/1352, select ~1381/1551) that
+    # bypass ascal for the nonstandard ~16.92 kHz 24/30 Hz beam.
+    # Runtime-beam product must force HDMI_BLACKOUT=1 and VGA_SCALER=1
+    # (or an equivalent hard reject of bypass). Gate exact hierarchy constants.
+    def _emu_assign_bit(src: str, name: str) -> str | None:
+        """Last active assign NAME = … ; value as '0'/'1'/other. Comments ignored."""
+        vals: list[str] = []
+        for m in re.finditer(
+            rf"^\s*assign\s+{re.escape(name)}\s*=\s*(.+?)\s*;",
+            src,
+            re.M,
+        ):
+            line_start = src.rfind("\n", 0, m.start()) + 1
+            prefix = src[line_start : m.start()]
+            if prefix.lstrip().startswith("//"):
+                continue
+            raw = m.group(1).strip()
+            if re.fullmatch(r"1\'b1|1", raw):
+                vals.append("1")
+            elif re.fullmatch(r"1\'b0|0", raw):
+                vals.append("0")
+            else:
+                vals.append(raw)
+        return vals[-1] if vals else None
+
+    msgs.append("LEG0_B21_HIER_CONST_SCAN_EXECUTED")
+    sys_top_path = ROOT / "fpga" / "Plex_MiSTer" / "sys" / "sys_top.v"
+    sys_top_txt = _read(sys_top_path)
+    if not sys_top_txt:
+        errors.append(
+            "B21_ASCAL_SWBLACK_NOT_WIRED: missing fpga/Plex_MiSTer/sys/sys_top.v "
+            "— cannot verify ascal.swblack / VGA_SCALER hierarchy constants."
+        )
+        sys_top_txt = ""
+    bo = _emu_assign_bit(plex_txt, "HDMI_BLACKOUT")
+    vs = _emu_assign_bit(plex_txt, "VGA_SCALER")
+    if bo is None:
+        errors.append(
+            "B21_HDMI_BLACKOUT_DISABLED: fpga/Plex_MiSTer/Plex.sv has no "
+            "assign HDMI_BLACKOUT = … (cannot prove ascal swblack enable). "
+            "rd-duck: runtime-beam product must force HDMI_BLACKOUT=1 — "
+            "ascal 3-frame res-change blackout is gated on swblack."
+        )
+    elif bo != "1":
+        errors.append(
+            f"B21_HDMI_BLACKOUT_DISABLED: Plex.sv assign HDMI_BLACKOUT={bo} "
+            "(need =1). ascal.vhd:1951-52 3-frame o_newres blackout only runs "
+            "when swblack=1; HDMI_BLACKOUT=0 disables it — do not claim it "
+            "protects arbitrary runtime geometry changes."
+        )
+    else:
+        msgs.append("LEG0_B21_OK HDMI_BLACKOUT=1")
+
+    if vs is None:
+        errors.append(
+            "B21_VGA_SCALER_DISABLED: fpga/Plex_MiSTer/Plex.sv has no "
+            "assign VGA_SCALER = … . rd-duck: runtime-beam must force "
+            "VGA_SCALER=1 so vga_force_scaler blocks direct_video/raw VGA "
+            "bypass of ascal for the nonstandard 16.92kHz beam."
+        )
+    elif vs != "1":
+        errors.append(
+            f"B21_VGA_SCALER_DISABLED: Plex.sv assign VGA_SCALER={vs} "
+            "(need =1). With VGA_SCALER=0, sys_top may select direct_video / "
+            "raw VGA paths that bypass ascal (sys_top direct_video ~1299/1352, "
+            "VGA select ~1381/1551) — nonstandard 24/30 Hz beam must not skip ascal."
+        )
+    else:
+        msgs.append("LEG0_B21_OK VGA_SCALER=1")
+
+    # Hierarchy wiring: emu ports → sys_top locals → ascal.swblack / scaler force.
+    if not re.search(r"\.swblack\s*\(\s*hdmi_blackout\s*\)", sys_top_txt):
+        errors.append(
+            "B21_ASCAL_SWBLACK_NOT_WIRED: sys_top.v ascal instance missing "
+            ".swblack(hdmi_blackout). Without this, HDMI_BLACKOUT cannot reach "
+            "ascal's resolution-change blackout (observed defect class)."
+        )
+    else:
+        msgs.append("LEG0_B21_OK ascal.swblack<-hdmi_blackout")
+    # Reject hard-tied-off swblack even if a second port looks wired.
+    if re.search(r"\.swblack\s*\(\s*(1\'b0|0)\s*\)", sys_top_txt):
+        errors.append(
+            "B21_ASCAL_SWBLACK_NOT_WIRED: sys_top.v ties .swblack(0) — "
+            "ascal 3-frame blackout hard-disabled regardless of HDMI_BLACKOUT."
+        )
+
+    if not re.search(r"\.HDMI_BLACKOUT\s*\(\s*hdmi_blackout\s*\)", sys_top_txt):
+        errors.append(
+            "B21_HIER_BLACKOUT_PORT_NOT_WIRED: sys_top.v emu instance missing "
+            ".HDMI_BLACKOUT(hdmi_blackout) — hierarchy constant path broken."
+        )
+    else:
+        msgs.append("LEG0_B21_OK emu.HDMI_BLACKOUT->hdmi_blackout")
+
+    if not re.search(r"\.VGA_SCALER\s*\(\s*vga_force_scaler\s*\)", sys_top_txt):
+        errors.append(
+            "B21_HIER_VGA_SCALER_PORT_NOT_WIRED: sys_top.v emu instance missing "
+            ".VGA_SCALER(vga_force_scaler) — cannot force scaler/FB over direct_video."
+        )
+    else:
+        msgs.append("LEG0_B21_OK emu.VGA_SCALER->vga_force_scaler")
+
+    # Force-scaler must actually OR into vga_fb / vga_scaler (exact hierarchy).
+    if not re.search(
+        r"vga_fb\s*=\s*cfg\[12\]\s*\|\s*vga_force_scaler", sys_top_txt
+    ):
+        errors.append(
+            "B21_HIER_VGA_SCALER_PORT_NOT_WIRED: sys_top.v vga_fb does not "
+            "OR vga_force_scaler (cfg[12]|vga_force_scaler required) — "
+            "VGA_SCALER=1 would not block direct_video FB bypass."
+        )
+    if not re.search(
+        r"vga_scaler\s*=\s*cfg\[2\]\s*\|\s*vga_force_scaler", sys_top_txt
+    ):
+        errors.append(
+            "B21_HIER_VGA_SCALER_PORT_NOT_WIRED: sys_top.v vga_scaler does not "
+            "OR vga_force_scaler (cfg[2]|vga_force_scaler required)."
+        )
+
     # --- B20 full-hierarchy scenario tests (rd-duck hold/release a–f) ---
     # Require tests under tests/ that are multi-module (hierarchy), not thin unit
     # sims of a single latch. Each scenario needs distinctive evidence strings.
@@ -3383,6 +3513,34 @@ def _mutation_per_blocker_clear_restore() -> list[str]:
                     )
                 ],
             ),
+            (
+                "B21_HDMI_BLACKOUT_DISABLED",
+                [
+                    (
+                        plex,
+                        lambda t: re.sub(
+                            r"assign\s+HDMI_BLACKOUT\s*=\s*0\s*;",
+                            "assign HDMI_BLACKOUT = 1;",
+                            t,
+                            count=1,
+                        ),
+                    )
+                ],
+            ),
+            (
+                "B21_VGA_SCALER_DISABLED",
+                [
+                    (
+                        plex,
+                        lambda t: re.sub(
+                            r"assign\s+VGA_SCALER\s*=\s*0\s*;",
+                            "assign VGA_SCALER = 1;",
+                            t,
+                            count=1,
+                        ),
+                    )
+                ],
+            ),
         ]
     )
 
@@ -3738,6 +3896,95 @@ def _mutation_closed_class_reinject() -> list[str]:
                 print("  MUT_OK GATE_IDENTITY_MISMATCH reinject_fire=1")
         finally:
             rest()
+
+    # B21 hierarchy wiring (currently clear on stock sys_top) — reinject must fire.
+    sys_top = ROOT / "fpga" / "Plex_MiSTer" / "sys" / "sys_top.v"
+    if sys_top.is_file():
+        old_st = sys_top.read_text()
+        # Break ascal.swblack binding.
+        if ".swblack" in old_st and "hdmi_blackout" in old_st:
+            bad_st = re.sub(
+                r"\.swblack\s*\(\s*hdmi_blackout\s*\)",
+                ".swblack(1'b0)",
+                old_st,
+                count=1,
+            )
+            rest = _with_file_backup(sys_top, bad_st)
+            try:
+                _rc, msgs = leg0_arch_blockers()
+                toks = _leg0_error_tokens(msgs)
+                if "B21_ASCAL_SWBLACK_NOT_WIRED" not in toks:
+                    fails.append(
+                        "B21_ASCAL_SWBLACK_NOT_WIRED: swblack=0 reinject did not fire — HOLE"
+                    )
+                else:
+                    print("  MUT_OK B21_ASCAL_SWBLACK_NOT_WIRED reinject_fire=1")
+            finally:
+                rest()
+        # Break emu.HDMI_BLACKOUT port.
+        if re.search(r"\.HDMI_BLACKOUT\s*\(\s*hdmi_blackout\s*\)", old_st):
+            bad_st = re.sub(
+                r"\.HDMI_BLACKOUT\s*\(\s*hdmi_blackout\s*\)",
+                ".HDMI_BLACKOUT(hdmi_blackout_UNWIRED)",
+                old_st,
+                count=1,
+            )
+            rest = _with_file_backup(sys_top, bad_st)
+            try:
+                _rc, msgs = leg0_arch_blockers()
+                toks = _leg0_error_tokens(msgs)
+                if "B21_HIER_BLACKOUT_PORT_NOT_WIRED" not in toks:
+                    fails.append(
+                        "B21_HIER_BLACKOUT_PORT_NOT_WIRED: port rename reinject did not fire — HOLE"
+                    )
+                else:
+                    print("  MUT_OK B21_HIER_BLACKOUT_PORT_NOT_WIRED reinject_fire=1")
+            finally:
+                rest()
+        # Break vga_force_scaler OR into vga_fb.
+        if "vga_force_scaler" in old_st:
+            bad_st = re.sub(
+                r"vga_fb\s*=\s*cfg\[12\]\s*\|\s*vga_force_scaler",
+                "vga_fb       = cfg[12]",
+                old_st,
+                count=1,
+            )
+            rest = _with_file_backup(sys_top, bad_st)
+            try:
+                _rc, msgs = leg0_arch_blockers()
+                toks = _leg0_error_tokens(msgs)
+                if "B21_HIER_VGA_SCALER_PORT_NOT_WIRED" not in toks:
+                    fails.append(
+                        "B21_HIER_VGA_SCALER_PORT_NOT_WIRED: vga_fb OR strip reinject did not fire — HOLE"
+                    )
+                else:
+                    print("  MUT_OK B21_HIER_VGA_SCALER_PORT_NOT_WIRED reinject_fire=1")
+            finally:
+                rest()
+
+    # B21 product constants: force HDMI_BLACKOUT/VGA_SCALER back to 0 if cleared.
+    plex_p = ROOT / "fpga" / "Plex_MiSTer" / "Plex.sv"
+    if plex_p.is_file():
+        old_px = plex_p.read_text()
+        if re.search(r"assign\s+HDMI_BLACKOUT\s*=\s*1\s*;", old_px):
+            bad_px = re.sub(
+                r"assign\s+HDMI_BLACKOUT\s*=\s*1\s*;",
+                "assign HDMI_BLACKOUT = 0;",
+                old_px,
+                count=1,
+            )
+            rest = _with_file_backup(plex_p, bad_px)
+            try:
+                _rc, msgs = leg0_arch_blockers()
+                toks = _leg0_error_tokens(msgs)
+                if "B21_HDMI_BLACKOUT_DISABLED" not in toks:
+                    fails.append(
+                        "B21_HDMI_BLACKOUT_DISABLED: =0 reinject did not fire — HOLE"
+                    )
+                else:
+                    print("  MUT_OK B21_HDMI_BLACKOUT_DISABLED reinject_fire=1")
+            finally:
+                rest()
 
     return fails
 
