@@ -1,7 +1,7 @@
 lane=w-fitgate
 branch=w-fitgate
 worktree=/home/flynnsbit/Projects/MisterPlex-wt-fitgate
-tip=fd88baa1 full=fd88baa15e28acf2a3431d522e196ab1c2560bfe
+tip=0a58ef53 full=0a58ef53f2f56f3150daed590582f69a7ec0ca7e
 origin=origin/w-fitgate
 GRANT=NO
 FIT_SLOT=HELD
