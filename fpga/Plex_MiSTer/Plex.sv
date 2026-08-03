@@ -34,13 +34,14 @@ assign HDMI_FREEZE = 0;
 // Forward decl: driven by present_core under PRESENT_BEAM_960 (else tied 0 in core).
 wire geom_hold_black;
 wire geom_hollow_fault;
-// B16 blackout:
-//   geom_hold_black — store layout change (enable/W/H/stride/map) + epoch.
+// B16/B20 blackout:
+//   geom_hold_black — store layout change + B20 visual hold (live seq ahead of
+//                     applied bank/app; present_core ORs b20_visual_hold in).
 //   dar_hold_black  — aspect path: same WxH/stride DAR change (q5).
-// Content RGB black is the real same-size effect (store + present_core).
+// Content RGB black is the real same-size / pre-swap effect (store + present_core).
 // HDMI_BLACKOUT → ascal.swblack only arms o_newres when *input size* changes
-// (ascal.vhd ~1951); OR still helps size transitions, not 4:3→16:9 same WxH.
-// (rd-duck: flag-only tests greenlit dead ascal path — fixed via content black.)
+// (ascal.vhd ~1951); OR still helps size transitions + forces black during
+// B20 live-ahead-of-applied gap (rd-duck: beam-only gate insufficient).
 wire dar_hold_black;
 `ifdef PRESENT_BEAM_960
 assign HDMI_BLACKOUT = geom_hold_black | dar_hold_black;

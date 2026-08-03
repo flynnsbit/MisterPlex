@@ -179,7 +179,11 @@ module ddr_frame_store #(
 	output wire [10:0] app_disp_w_o,
 	output wire [10:0] app_disp_h_o,
 	output wire        app_geom_en_o,
-	output wire [15:0] applied_geom_seq_o
+	output wire [15:0] applied_geom_seq_o,
+	// B20 visual hold (rd-duck): PLXG live promoted at VSync before bank/app
+	// swap. Beam lock alone is insufficient — window/crop/DAR/mux can free-run.
+	// Hold content RGB + HDMI black until applied_geom_seq matches live seq.
+	output wire        b20_visual_hold
 );
 	// Port/scan domain: cover presentation FRAME and max content.
 	localparam int RD_W_MAX = (FRAME_W > MAX_CODED_W) ? FRAME_W : MAX_CODED_W;
@@ -513,6 +517,9 @@ module ddr_frame_store #(
 	assign app_disp_h_o      = app_disp_h;
 	assign app_geom_en_o     = app_geom_en;
 	assign applied_geom_seq_o = applied_geom_seq_r;
+	// Live PLXG seq advanced (latch VSync promote) but bank/app not yet applied.
+	// Covers mux/window/crop/q5 free-run until swap ack (beam lock is not enough).
+	assign b20_visual_hold = b20_atomic && (applied_geom_seq_r != rt_geom_seq);
 
 	// ---- B16: atomic geom epoch, hold-black, hollow loud-reject --------------------
 	// Layout change tracks *applied* app_* (not free-running eff_*) so B20 delay
@@ -1199,13 +1206,15 @@ module ddr_frame_store #(
 				frame_miss_toggle <= ~frame_miss_toggle;
 			end
 
-			// geom_reject / B16 hold-black / hollow / DAR: force black.
+			// geom_reject / B16 hold-black / hollow / DAR / B20 visual: force black.
 			// dar_hold_black MUST black here — ascal swblack is size-only
 			// (rd-duck: HDMI_BLACKOUT OR is hollow for same-size DAR).
+			// b20_visual_hold: live PLXG ahead of applied bank/app (rd-duck B20).
 `ifdef DDR_FRAME_STORE_FAULT_DAR_BLACK_ASCAL_ONLY
 			if (geom_reject_r || geom_hold_black || geom_hollow_r) begin
 `else
-			if (geom_reject_r || geom_hold_black || geom_hollow_r || dar_hold_black) begin
+			if (geom_reject_r || geom_hold_black || geom_hollow_r || dar_hold_black
+			    || b20_visual_hold) begin
 `endif
 				rd_r <= 8'd0;
 				rd_g <= 8'd0;

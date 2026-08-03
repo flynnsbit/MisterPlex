@@ -624,6 +624,12 @@ int runProduct() {
 		std::cerr << "FAIL beam-hier: product lock must use_app under live seq\n";
 		return 1;
 	}
+	// B20 visual hold: live seq ahead of applied → content/HDMI black (rd-duck
+	// broader than beam DE — window/crop/DAR free-run must not paint).
+	if (!sim.top.obs_b20_visual_hold) {
+		std::cerr << "FAIL beam-hier: b20_visual_hold must assert while live≠applied\n";
+		return 1;
+	}
 	// Unblock ready — next fstart couples bank+app+beam.
 	sim.top.tb_block_pending_ready = 0;
 	for (int i = 0; i < 4000; ++i) {
@@ -644,7 +650,17 @@ int runProduct() {
 		std::cerr << "FAIL beam-hier: after ready app/beam/lock must be NEW\n";
 		return 1;
 	}
+	if (sim.top.obs_b20_visual_hold) {
+		std::cerr << "FAIL beam-hier: b20_visual_hold must clear after swap ack\n";
+		return 1;
+	}
+	if ((int)sim.top.obs_applied_seq != 11) {
+		std::cerr << "FAIL beam-hier: applied_seq must match live after swap got "
+		          << (int)sim.top.obs_applied_seq << "\n";
+		return 1;
+	}
 	std::cout << "OK B20 beam lock holds OLD DE until pending_ready swap\n";
+	std::cout << "OK B20 visual hold black until swap ack (live≠applied)\n";
 	return 0;
 }
 

@@ -1050,6 +1050,7 @@ inline bool ddrCouplingProductHoldsBankUntilGeom() {
 struct DdrBankGeomAtomicModel {
     bool geom_live = false;
     uint16_t geom_seq = 0;
+    uint16_t applied_seq = 0; // bank-coupled applied generation (product)
     bool geom_enable = false; // product PLXG geom_enable; false ⇒ cand LEG
     int cand_w = 624;   // free-running candidate after PLXG promote
     int app_w = 624;    // applied display pitch width
@@ -1060,6 +1061,16 @@ struct DdrBankGeomAtomicModel {
     int pend_bank = 0;
     uint16_t pend_plxg_seq = 0;
     bool fault_free_run_geom = false; // FAULT: app tracks cand immediately
+    bool fault_no_visual_hold = false; // FAULT: no black while live≠applied
+
+    // b20_atomic && applied_seq != geom_seq → hold all visual consumers black
+    // (rd-duck: beam lock alone insufficient for window/crop/DAR free-run).
+    bool b20Atomic() const { return geom_live && geom_seq != 0 && !fault_free_run_geom; }
+    bool visualHold() const {
+        if (fault_no_visual_hold)
+            return false;
+        return b20Atomic() && (applied_seq != geom_seq);
+    }
 
     void promoteGeom(int w, uint16_t seq) {
         geom_live = true;
@@ -1097,8 +1108,10 @@ struct DdrBankGeomAtomicModel {
         disp_bank = pend_bank;
         bank_displayed = true;
         bank_pending = false;
-        if (!fault_free_run_geom)
+        if (!fault_free_run_geom) {
             app_w = pend_w;
+            applied_seq = pend_plxg_seq; // couples visual consumers with bank
+        }
     }
 
     // True if display path would use new cand pitch on old bank (mixed frame).
@@ -1109,6 +1122,28 @@ struct DdrBankGeomAtomicModel {
         return geom_live && bank_pending && (app_w == cand_w) && (app_w != 624);
     }
 };
+
+// Promote then delayed pending_ready: product holds black until swap ack.
+inline bool ddrB20ProductVisualHoldUntilSwapAck() {
+    DdrBankGeomAtomicModel m;
+    m.promoteGeom(960, 5);
+    if (!m.visualHold() || m.app_w != 624)
+        return false; // live ahead of applied → black
+    if (!m.observeDoorbell(1, 5))
+        return false;
+    if (!m.visualHold() || m.app_w != 624)
+        return false; // still hold through accept (no swap yet)
+    m.frameSwap();
+    return !m.visualHold() && m.app_w == 960 && m.applied_seq == 5;
+}
+
+// FAULT: no visual hold while live≠applied (mux/window free-run visible).
+inline bool ddrB20FaultNoVisualHoldExposesLiveBeforeSwap() {
+    DdrBankGeomAtomicModel m;
+    m.fault_no_visual_hold = true;
+    m.promoteGeom(960, 5);
+    return !m.visualHold() && m.app_w == 624 && m.geom_seq == 5;
+}
 
 inline bool ddrB20FaultFreeRunExposesNewPitchBeforeSwap() {
     DdrBankGeomAtomicModel m;

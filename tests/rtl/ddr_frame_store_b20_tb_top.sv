@@ -62,7 +62,8 @@ module ddr_frame_store_b20_tb (
 	output wire [10:0] obs_locked_beam_cw,
 	output wire [10:0] obs_locked_beam_hde,
 	output wire        obs_beam_use_app,
-	output wire [15:0] obs_applied_seq
+	output wire [15:0] obs_applied_seq,
+	output wire        obs_b20_visual_hold
 );
 	wire DDRAM_CLK;
 	wire [7:0] DDRAM_BE;
@@ -162,7 +163,8 @@ module ddr_frame_store_b20_tb (
 		.app_disp_w_o(),
 		.app_disp_h_o(),
 		.app_geom_en_o(),
-		.applied_geom_seq_o(obs_applied_seq)
+		.applied_geom_seq_o(obs_applied_seq),
+		.b20_visual_hold(obs_b20_visual_hold)
 	);
 
 	present_beam_geom_lock beam_lock (

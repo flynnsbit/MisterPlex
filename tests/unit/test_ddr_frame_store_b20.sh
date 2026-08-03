@@ -87,6 +87,7 @@ assert_sim_executed "b20-product" "$GOOD_OUT" \
   "OK delayed-promotion" "OK B20 product" "OK B20 mode-exit" \
   "OK B20 mode-exit pixel oracle" "OK B20 dar_hold content RGB black" \
   "OK B20 beam lock holds OLD DE until pending_ready swap" \
+  "OK B20 visual hold black until swap ack" \
   "MEASURED after_promote" "MEASURED after_swap" "MEASURED mode_exit" \
   "MEASURED mode_exit_scan" "MEASURED dar_hold_rgb" "MEASURED beam_delay"
 if [[ "$GOOD_RC" -ne 0 ]]; then

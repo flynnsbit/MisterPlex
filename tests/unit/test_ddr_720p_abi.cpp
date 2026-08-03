@@ -1207,8 +1207,11 @@ int main() {
         CHECK(ddrB20IndependentObserversNoMix());
         CHECK(ddrB20ProductModeExitHoldsUntilSwap());
         CHECK(ddrB20FaultModeExitFreeRunsBeforeSwap()); // REPRO
+        CHECK(ddrB20ProductVisualHoldUntilSwapAck());
+        CHECK(ddrB20FaultNoVisualHoldExposesLiveBeforeSwap()); // REPRO
         std::fprintf(stderr, "  B20_BANK_GEOM_ATOMIC OK\n");
         std::fprintf(stderr, "  B20_MODE_EXIT_ATOMIC OK\n");
+        std::fprintf(stderr, "  B20_VISUAL_HOLD_UNTIL_SWAP_ACK OK\n");
         // rd-duck: doorbell must embed writePlxg committed useSeq, not plan.plxg_seq.
         CHECK(ddrPlxgDoorbellFaultSecondPublishMismatches()); // REPRO sticky plan=1
         CHECK(ddrPlxgDoorbellProductTwoPublishesMatch());

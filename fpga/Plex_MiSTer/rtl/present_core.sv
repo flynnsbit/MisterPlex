@@ -313,6 +313,7 @@ module present_core #(
 	wire [10:0] app_disp_w_o, app_disp_h_o;
 	wire        app_geom_en_o;
 	wire [15:0] applied_geom_seq_o;
+	wire        b20_visual_hold;
 	wire        beam_use_app;
 	wire [10:0] locked_cw, locked_ch, locked_hde, locked_vde;
 	present_beam_geom_lock beam_lock (
@@ -494,12 +495,13 @@ module present_core #(
 		.app_disp_w_o(app_disp_w_o),
 		.app_disp_h_o(app_disp_h_o),
 		.app_geom_en_o(app_geom_en_o),
-		.applied_geom_seq_o(applied_geom_seq_o)
+		.applied_geom_seq_o(applied_geom_seq_o),
+		.b20_visual_hold(b20_visual_hold)
 	);
 	// Keep applied exports live for hierarchy debug (no dead-strip).
 	(* keep = 1 *) wire _b20_beam_keep =
 		beam_use_app | (|app_disp_w_o) | (|app_disp_h_o) | app_geom_en_o |
-		(|applied_geom_seq_o);
+		(|applied_geom_seq_o) | b20_visual_hold;
 `else
 	frame_store #(
 		.FRAME_W(FRAME_W),
@@ -598,10 +600,15 @@ module present_core #(
 
 	// Gate the frame pixels with EXACTLY the delayed signal that drives VGA_DE.
 	wire de_out = ~hb_d & ~vb_d;
-	// Content-path blackout: store already zeros fr/fg/fb on geom/dar hold;
-	// also force here so same-size DAR cannot leak if store path is lagging.
+	// Content-path blackout: store already zeros fr/fg/fb on geom/dar/B20 hold;
+	// also force here so same-size DAR / pre-swap live PLXG cannot leak.
 	// (ascal.swblack is size-only — do not rely on HDMI_BLACKOUT alone.)
+	// b20_visual_hold: live seq ahead of applied bank/app (rd-duck B20 broader).
+`ifdef DDR_FRAME_STORE
+	wire force_black = geom_hold_black | dar_hold_black | b20_visual_hold;
+`else
 	wire force_black = geom_hold_black | dar_hold_black;
+`endif
 	assign r = force_black ? 8'd0 : (use_ext ? (de_out ? fr : 8'd0) : (show_pattern ? br : 8'd0));
 	assign g = force_black ? 8'd0 : (use_ext ? (de_out ? fg : 8'd0) : (show_pattern ? bg : 8'd0));
 	assign b = force_black ? 8'd0 : (use_ext ? (de_out ? fb : 8'd0) : (show_pattern ? bb : 8'd0));
@@ -663,7 +670,13 @@ module present_core #(
 	assign stat_swap_pending  = swap_pending;
 	assign stat_frame_underruns = frame_underruns;
 	assign stat_frame_sdram_state = frame_sdram_state;
+	// Include B20 visual hold so HDMI_BLACKOUT covers pre-swap live PLXG
+	// (rd-duck: beam lock alone insufficient for window/crop/DAR free-run).
+`ifdef DDR_FRAME_STORE
+	assign stat_geom_hold_black = geom_hold_black | b20_visual_hold;
+`else
 	assign stat_geom_hold_black = geom_hold_black;
+`endif
 	assign stat_geom_hollow     = geom_hollow_fault;
 
 endmodule
