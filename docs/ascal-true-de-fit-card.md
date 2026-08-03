@@ -28,7 +28,7 @@
 | `content_y0` | **0** | |
 | `win_h_de` | **960** | **== content_w** — never 529, never 1280 |
 | `win_v_de` | **540** | **== content_h** — never 480, never 720 |
-| `geom_coded_w/h` | **960 / 540** | bank payload 777600; w-mem usable-capacity path |
+| `geom_coded_w/h` | **960 / 540** | I420 payload **777600 B** > legacy usable **520192** (0x80000−0x1000) → **must Option-C**. Stale trees that pick OPTC only when `coded_w>=1280` **overrun LEG banks** — not fit-ready (rd-duck). Require w-mem `rt_need_optc` capacity select + `present_core` `.PHYS_BASE_720P`/stride720/doorbell720 wiring. **Do not treat this row as present until gate B7 is clear.** |
 | `geom_display_*` | canvas/HDMI only | do **not** feed into coded/store |
 
 Identity: with content_w==win_h_de and content_h==win_v_de, Q16 SX=SY=65536 → `store_x==hc`, `store_y==py` (1-cycle window register lag).

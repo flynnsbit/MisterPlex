@@ -3,8 +3,10 @@
 
 Leg 0 — rd-duck architecture blockers (must clear before any fit grant):
         coherent FIT_CANDIDATE, no int FPS overflow cargo, real raster SoT,
-        compile-time Option-C / layout match, PLXG ABA closed, ddr_frame_store
-        exercised on the beam/clock path. Soft-skip ≠ PASS.
+        compile-time Option-C / layout match, capacity-selected Option-C
+        (not width>=1280; 960×540 must not overrun LEG bank), present_core
+        OPTC phys wiring, PLXG ABA closed, ddr_frame_store on beam path,
+        blank/store oracle. Soft-skip ≠ PASS.
 Leg 1 — active VERILOG_MACRO set from the QSF under test is the 720p ascal path
         (FRAME_W=960 FRAME_H=540 PRESENT_BEAM_960 DDR_FRAME_STORE). Hollow
         640×480 and commented-out macros fail here.
@@ -330,6 +332,72 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
         else:
             msgs.append(
                 "LEG0_EVIDENCE true_de_count asserts store_req==area + coordinate oracle"
+            )
+
+    # --- B7: Option-C must be capacity-selected (not width>=1280) — rd-duck ---
+    # 960×540 I420 = 777600 B > legacy usable 520192 (stride 0x80000 − 0x1000).
+    # Width-only gate leaves 960×540 on LEG banks → bank overrun.
+    # present_core must pass PHYS_BASE_720P / stride720 / doorbell720 (not legacy-only).
+    # Fit-card "w-mem usable-capacity path" is NOT present code until this clears.
+    store = _read(RTL / "ddr_frame_store.sv") if not store else store
+    width_only_optc = bool(
+        re.search(r"if\s*\(\s*rt_cw_cl\s*>=\s*11'd1280\s*\)", store)
+    )
+    has_rt_need_optc = "rt_need_optc" in store
+    has_payload_bytes = "rt_payload_bytes" in store and "LEG_BANK_USABLE" in store
+    capacity_select = has_rt_need_optc and has_payload_bytes and (
+        "if (rt_need_optc)" in store or "if(rt_need_optc)" in store
+    )
+    msgs.append(
+        f"LEG0_BANK_MAP width_only_optc={int(width_only_optc)} "
+        f"capacity_select={int(capacity_select)} "
+        f"(960x540 I420=777600 > usable=520192 → must Option-C)"
+    )
+    if width_only_optc or not capacity_select:
+        errors.append(
+            "B7_OPTC_WIDTH_ONLY: ddr_frame_store.sv selects Option-C via "
+            "`rt_cw_cl >= 11'd1280` (or lacks rt_need_optc/rt_payload_bytes/"
+            "LEG_BANK_USABLE capacity path). Product 960×540 is <1280 wide but "
+            "777600 B > 520192 B legacy usable and MUST use Option-C — width gate "
+            "overruns LEG bank (rd-duck; w-mem capacity fix is the reference)."
+        )
+    else:
+        msgs.append("LEG0_EVIDENCE Option-C capacity-selected via rt_need_optc")
+
+    # present_core must wire Option-C phys params (not leave module defaults only
+    # while claiming PLXG/usable-capacity). Defaults exist on the module but
+    # product lock is explicit DDR_FRAME_720P_* from layout params.
+    if ".PHYS_BASE_720P(" not in core:
+        errors.append(
+            "B7_PRESENT_CORE_NO_OPTC_PHYS: present_core.sv ddr_frame_store #() does not "
+            "pass .PHYS_BASE_720P(...) — only legacy PHYS_BASE/stride/doorbell. "
+            "Merge/verify PLXG Option-C param wiring (w-mem present_core reference)."
+        )
+    if ".HPS_BANK_STRIDE_BYTES_720P(" not in core:
+        errors.append(
+            "B7_PRESENT_CORE_NO_OPTC_STRIDE: present_core.sv missing "
+            ".HPS_BANK_STRIDE_BYTES_720P(...) on ddr_frame_store"
+        )
+    if ".DOORBELL_PHYS_720P(" not in core:
+        errors.append(
+            "B7_PRESENT_CORE_NO_OPTC_DOORBELL: present_core.sv missing "
+            ".DOORBELL_PHYS_720P(...) on ddr_frame_store"
+        )
+    if (
+        ".PHYS_BASE_720P(" in core
+        and ".HPS_BANK_STRIDE_BYTES_720P(" in core
+        and ".DOORBELL_PHYS_720P(" in core
+    ):
+        msgs.append("LEG0_EVIDENCE present_core passes PHYS_BASE_720P/stride/doorbell720")
+
+    # Fit card must not claim usable-capacity is already product code while stale.
+    fit_card = _read(ROOT / "docs" / "ascal-true-de-fit-card.md")
+    if fit_card and "usable-capacity" in fit_card.lower():
+        if width_only_optc or not capacity_select:
+            errors.append(
+                "B7_FIT_CARD_CAPACITY_CLAIM: docs/ascal-true-de-fit-card.md mentions "
+                "usable-capacity while ddr_frame_store still width-gates Option-C — "
+                "do not treat the card claim as present code (rd-duck)."
             )
 
     # --- Runtime-OFF OSD / colorbars timing cargo when candidate is ascal ---
