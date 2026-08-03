@@ -52,6 +52,26 @@ int main() {
     // IMPORTANT: theoretical peak fit ≠ device PASS. Mark unknown for glass.
     // Device sustained fabric BW: parent post-fit only.
 
+    // --- Product 960x540 → 1280x720 OUTPUT path DDR arithmetic ---
+    CHECK(kFabricProductSourceBytes == 777600);
+    CHECK(near(kProductHostWriteMBps24, 18.6624));
+    CHECK(near(kProductDirectMBps24, 37.3248));
+    CHECK(near(kProductWritebackMBps24, 37.3248 + 66.3552)); // ~103.68
+    CHECK(near(fabricProductPathDirectMBps(24.0), kProductDirectMBps24));
+    CHECK(near(fabricProductPathWritebackMBps(24.0), kProductWritebackMBps24));
+    CHECK(kProductDirectFracPeak24 < 0.06);     // ~5.2% peak
+    CHECK(kProductWritebackFracPeak24 < 0.15);  // ~14.4% peak
+    CHECK(fabricProductPathFitsTheoreticalPeak(24.0));
+    CHECK(fabricProductPathFitsTheoreticalPeak(30.0)); // still under 25% writeback
+    // clk_pix gate: ship clk_sys 20 MHz alone cannot CEA 720p24; 29.7 can.
+    CHECK(near(kFabricClkPixHz720p24, 29.7e6));
+    CHECK(fabricClkPixCovers720p24(29.7e6));
+    CHECK(!fabricClkPixCovers720p24(20.0e6));
+    CHECK(!fabricShipClkSysAloneCovers720p24Cea());
+    CHECK(near(fabricClkPixActiveMpixPerSec(24.0), 22.1184)); // 1280*720*24/1e6
+    // Direct product path well under half-share writer budget class.
+    CHECK(fabricProductPathDirectMBps(24.0) < 0.5 * kFabricDdrPeakMBps);
+
     if (fails) { std::fprintf(stderr,"test_fabric_ddr_bandwidth: %d fails\n", fails); return 1; }
     std::printf("test_fabric_ddr_bandwidth: OK\n");
     std::printf("  peak_MBps=%.1f writer24=%.3f scan24=%.3f comb24=%.3f frac24=%.4f\n",
@@ -65,6 +85,9 @@ int main() {
                 clkSysHzForPpc(60.0, 4) / 1e6);
     std::printf("  decode_present24=%.1f decode_present60=%.1f bitstream_rd=%.3f\n",
                 dec24, dec60, fabricBitstreamRingReadMBps(2585.0));
+    std::printf("  product540 direct24=%.3f wb24=%.3f frac_d=%.4f frac_wb=%.4f clk_pix_ok=%d\n",
+                kProductDirectMBps24, kProductWritebackMBps24, kProductDirectFracPeak24,
+                kProductWritebackFracPeak24, fabricClkPixCovers720p24() ? 1 : 0);
     std::printf("  THEORETICAL_ONLY device_fabric_BW=unknown_until_parent_fit\n");
     return 0;
 }

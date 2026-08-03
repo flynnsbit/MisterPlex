@@ -1298,6 +1298,17 @@ def check_ddr_frame_layout_contract() -> None:
         ("kPlex720pTripleDoorbellPhys", "DDR_FRAME_720P_TRIPLE_DOORBELL_PHYS"),
         ("kPlex720pYuv420pDoorbellPhys", "DDR_FRAME_720P_YUV420P_DOORBELL_PHYS"),
         ("kDdrFramePlxgOffset", "DDR_FRAME_PLXG_OFFSET"),
+        # Product 720p OUTPUT source (960x540 tight native_push layout).
+        ("kPlex720pOutputSourceWidth", "DDR_FRAME_720P_OUTPUT_SOURCE_WIDTH"),
+        ("kPlex720pOutputSourceHeight", "DDR_FRAME_720P_OUTPUT_SOURCE_HEIGHT"),
+        ("kPlex720pOutputSourceBytes", "DDR_FRAME_720P_OUTPUT_SOURCE_BYTES"),
+        ("kPlex720pOutputYStrideBytes", "DDR_FRAME_720P_OUTPUT_Y_STRIDE_BYTES"),
+        ("kPlex720pOutputChromaStrideBytes", "DDR_FRAME_720P_OUTPUT_CHROMA_STRIDE_BYTES"),
+        ("kPlex720pOutputYPlaneOffset", "DDR_FRAME_720P_OUTPUT_Y_PLANE_OFFSET"),
+        ("kPlex720pOutputUPlaneOffset", "DDR_FRAME_720P_OUTPUT_U_PLANE_OFFSET"),
+        ("kPlex720pOutputVPlaneOffset", "DDR_FRAME_720P_OUTPUT_V_PLANE_OFFSET"),
+        ("kPlex720pOutputYLineQwords", "DDR_FRAME_720P_OUTPUT_Y_LINE_QWORDS"),
+        ("kPlex720pOutputChromaLineQwords", "DDR_FRAME_720P_OUTPUT_CHROMA_LINE_QWORDS"),
     ]
     for host_name, rtl_name in pairs:
         hv = cpp_const(host, host_name)

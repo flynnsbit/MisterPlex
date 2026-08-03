@@ -769,7 +769,17 @@ constexpr double kFrameBudget24fpsMs = 41.667;
 // Caveat (parent): -f null is decode-only upper bound on headroom — not E2E promise.
 constexpr int kPlex720pOutputSourceWidth = 960;
 constexpr int kPlex720pOutputSourceHeight = 540;
-constexpr int kPlex720pOutputSourceBytes = 960 * 540 * 3 / 2; // 777600
+// Literals (not 960*540*3/2) so rtl_invariants parity parser matches .svh.
+constexpr int kPlex720pOutputSourceBytes = 777600;
+// Tight native I420 plane contract (mirror ddr_frame_layout_params.svh).
+// Fabric reader MUST use these when PLXG native_push=1 — not canvas 1280/640.
+constexpr int kPlex720pOutputYStrideBytes = 960;
+constexpr int kPlex720pOutputChromaStrideBytes = 480;
+constexpr int kPlex720pOutputYPlaneOffset = 0;
+constexpr int kPlex720pOutputUPlaneOffset = 518400;
+constexpr int kPlex720pOutputVPlaneOffset = 648000;
+constexpr int kPlex720pOutputYLineQwords = 120;
+constexpr int kPlex720pOutputChromaLineQwords = 60;
 // Parent wall ms — corrected 2026-08-03 (decode+sws, not -f null alone).
 // Sweep-18 proxy decode-only 22.75 was optimistic by ~3.33 ms on product total.
 // Device conf: FFMPEG_SWS_FLAGS=fast_bilinear, DDR_YUV_FORCE_SCALE=1.
@@ -808,6 +818,60 @@ constexpr double kPlex720pOutputMinMarginMs = 7.0;
 static_assert(kPlex720pOutputSourceBytes == 777600, "960x540 I420 bytes");
 static_assert(kPlex720pOutputSourceWidth < 1280 && kPlex720pOutputSourceHeight < 720,
               "source is intermediate; canvas is 720p");
+static_assert(kPlex720pOutputUPlaneOffset == 518400, "960x540 U plane");
+static_assert(kPlex720pOutputVPlaneOffset == 648000, "960x540 V plane");
+static_assert(kPlex720pOutputYStrideBytes != kPlex720pYStrideBytes,
+              "native content stride must differ from canvas 1280");
+static_assert(kPlex720pOutputSourceBytes < kPlex720pYuv420pBankStride,
+              "960x540 must fit Option-C bank stride");
+
+// Tight native I420 layout for a content rectangle (native_push=1).
+// Planes are contiguous with content strides — NOT canvas line_bytes.
+// Fabric reader MUST use these strides when native_push is set; using canvas
+// 1280-stride on a 960-wide tight payload shears the image (88509163-class).
+struct DdrNativeContentLayout {
+    int width = 0;
+    int height = 0;
+    int y_stride = 0;      // == width
+    int chroma_stride = 0; // == width/2
+    uint32_t y_offset = 0;
+    uint32_t u_offset = 0;
+    uint32_t v_offset = 0;
+    size_t frame_bytes = 0;
+    int y_line_qwords = 0;
+    int chroma_line_qwords = 0;
+    bool valid = false;
+};
+
+inline DdrNativeContentLayout makeDdrNativeContentLayout(int w, int h) {
+    DdrNativeContentLayout c{};
+    if (w <= 0 || h <= 0 || (w & 1) || (h & 1))
+        return c;
+    c.width = w;
+    c.height = h;
+    c.y_stride = w;
+    c.chroma_stride = w / 2;
+    c.y_offset = 0;
+    const uint32_t y_bytes = static_cast<uint32_t>(w) * static_cast<uint32_t>(h);
+    const uint32_t c_bytes = static_cast<uint32_t>(c.chroma_stride) * static_cast<uint32_t>(h / 2);
+    c.u_offset = y_bytes;
+    c.v_offset = y_bytes + c_bytes;
+    c.frame_bytes = static_cast<size_t>(y_bytes + 2u * c_bytes);
+    c.y_line_qwords = w / 8;
+    c.chroma_line_qwords = c.chroma_stride / 8;
+    c.valid = (c.frame_bytes == yuv420pFrameBytes(w, h)) && (c.y_line_qwords * 8 == w) &&
+              ((c.chroma_stride % 8) == 0);
+    return c;
+}
+
+inline DdrNativeContentLayout plex960x540NativeContentLayout() {
+    return makeDdrNativeContentLayout(kPlex720pOutputSourceWidth, kPlex720pOutputSourceHeight);
+}
+
+// 960x540 tight must fit Option-C bank stride with room for doorbell page rules.
+inline bool ddrNativeContentFitsBank(const DdrNativeContentLayout& c, uint32_t bank_stride) {
+    return c.valid && c.frame_bytes > 0 && c.frame_bytes <= bank_stride;
+}
 
 // PMS maxBR floor for real 1280x720 (w-path). Content bitrate ~2600k class.
 constexpr int kPlex720pCandidateBitrateKbit = 3100;
@@ -986,6 +1050,58 @@ inline bool ddr720pArmDownscalePathRejected(double armDownscaleMs) {
            armDownscaleMs >= kParent720pArmDownscaleTo960Ms - 0.01;
 }
 
+// Second PLXG beat: content window inside the tier bank. Magic still PLXG;
+// bit26 distinguishes window beat from geometry beat (bit26=1 → window).
+inline uint64_t encodePlxgContentWindow(int contentW, int contentH, int x0, int y0) {
+    const uint32_t w = static_cast<uint32_t>(contentW) & 0xFFFu;
+    const uint32_t h = static_cast<uint32_t>(contentH) & 0xFFFu;
+    const uint32_t x = static_cast<uint32_t>(x0) & 0xFFFu;
+    const uint32_t y = static_cast<uint32_t>(y0) & 0xFFFu;
+    // hi: [11:0]w [23:12]h [24]=0 [25]=0 [26]=1 window [27:28] unused
+    // Extended x/y need a third word on wire; pack x in lo magic replacement?
+    // Keep lo=magic; put x in hi[27:30] limited — instead use hi fully for w/h
+    // and a dedicated packing: hi = w | h<<12 | x<<24 (x only 8 bits) — too small
+    // for 1280. Use: hi = w | (h<<12) | (1u<<26); x/y in a *second* uint64 via
+    // encodePlxgContentOrigin. Here encode w/h + window flag only.
+    const uint64_t hi = static_cast<uint64_t>(w) | (static_cast<uint64_t>(h) << 12) |
+                        (1ull << 26);
+    (void)x;
+    (void)y;
+    return (hi << 32) | static_cast<uint64_t>(kDdrFramePlxgMagic);
+}
+
+// Origin beat: hi = x0 | (y0<<12) | (1<<26)|(1<<27); lo = PLXG magic.
+inline uint64_t encodePlxgContentOrigin(int x0, int y0) {
+    const uint32_t x = static_cast<uint32_t>(x0) & 0xFFFu;
+    const uint32_t y = static_cast<uint32_t>(y0) & 0xFFFu;
+    const uint64_t hi =
+        static_cast<uint64_t>(x) | (static_cast<uint64_t>(y) << 12) | (1ull << 26) | (1ull << 27);
+    return (hi << 32) | static_cast<uint64_t>(kDdrFramePlxgMagic);
+}
+
+inline bool decodePlxgContentWindow(uint64_t raw, int& contentW, int& contentH) {
+    if (static_cast<uint32_t>(raw) != kDdrFramePlxgMagic)
+        return false;
+    const uint32_t hi = static_cast<uint32_t>(raw >> 32);
+    if (((hi >> 26) & 1u) == 0 || ((hi >> 27) & 1u) != 0)
+        return false; // not window beat
+    contentW = static_cast<int>(hi & 0xFFFu);
+    contentH = static_cast<int>((hi >> 12) & 0xFFFu);
+    return true;
+}
+
+inline bool decodePlxgContentOrigin(uint64_t raw, int& x0, int& y0) {
+    if (static_cast<uint32_t>(raw) != kDdrFramePlxgMagic)
+        return false;
+    const uint32_t hi = static_cast<uint32_t>(raw >> 32);
+    if (((hi >> 26) & 1u) == 0 || ((hi >> 27) & 1u) == 0)
+        return false;
+    x0 = static_cast<int>(hi & 0xFFFu);
+    y0 = static_cast<int>((hi >> 12) & 0xFFFu);
+    return true;
+}
+
+
 // Build the fabric-owned present contract for a content rectangle inside a tier
 // canvas. publish_bytes == native I420 only; PLXG must carry the window.
 struct DdrFabricOwnedPresentPlan {
@@ -995,6 +1111,8 @@ struct DdrFabricOwnedPresentPlan {
     // Bank geometry (tier) — fabric still double-buffers at this stride.
     DdrFrameGeometry canvas{};
     DdrFrameLayout canvas_layout{};
+    // Tight content plane layout (strides/offsets) — NOT canvas line_bytes.
+    DdrNativeContentLayout content_layout{};
     // Content rectangle ARM actually writes (tight, origin in bank via PLXG).
     int content_w = 0;
     int content_h = 0;
@@ -1002,8 +1120,10 @@ struct DdrFabricOwnedPresentPlan {
     int content_y0 = 0;
     // Bytes ARM may memcpy — NEVER canvas frame_bytes on this path.
     size_t publish_bytes = 0;
-    // PLXG word to program before doorbell (enable + native_push + coded tier).
-    uint64_t plxg_word = 0;
+    // PLXG beats to program before doorbell (order: geometry → window → origin).
+    uint64_t plxg_word = 0;          // canvas tier + native_push
+    uint64_t plxg_window_word = 0;   // content w/h
+    uint64_t plxg_origin_word = 0;   // x0/y0
     bool valid = false;
 };
 
@@ -1063,15 +1183,25 @@ inline DdrFabricOwnedPresentPlan makeDdrFabricOwnedPresentPlan(
     if (!ddrFrameLayoutValid(p.canvas_layout))
         return p;
     p.publish_bytes = p.native.native_bytes;
+    p.content_layout = makeDdrNativeContentLayout(contentW, contentH);
+    if (!p.content_layout.valid || p.content_layout.frame_bytes != p.publish_bytes)
+        return p;
+    if (!ddrNativeContentFitsBank(p.content_layout, p.canvas_layout.bank_stride))
+        return p;
+    // Content strides must not silently equal canvas when geometry differs
+    // (would mean we built the wrong layout object).
+    if (p.content_w != p.canvas_layout.coded_width &&
+        p.content_layout.y_stride == p.canvas_layout.line_bytes)
+        return p;
     p.budget = makeDdrArmPresentBudget(p.native, p.offload, countFeedScaleRemoval,
                                        /*armPushesPixels=*/true);
-    // PLXG coded size = tier canvas (bank stride/doorbell family); native_push=1
-    // tells fabric the payload is content_w×content_h tight at (x0,y0).
-    // Content window words are a second mailbox beat (see encodePlxgContentWindow).
+    // PLXG: geometry (canvas + native_push) → window (cw/ch) → origin (x0/y0).
     p.plxg_word = encodePlxgGeometryWord(canvasGeom.coded_width.get(),
                                          canvasGeom.coded_height.get(),
                                          /*enable=*/true, /*nativePush=*/true);
-    p.valid = p.budget.valid;
+    p.plxg_window_word = encodePlxgContentWindow(contentW, contentH, p.content_x0, p.content_y0);
+    p.plxg_origin_word = encodePlxgContentOrigin(p.content_x0, p.content_y0);
+    p.valid = p.budget.valid && p.plxg_window_word != 0 && p.plxg_origin_word != 0;
     return p;
 }
 
@@ -1139,57 +1269,6 @@ inline bool ddr720p24ArmCopyExceedsDecodeMargin(size_t armPushBytes) {
 inline bool ddr720p24ArmCopyExceedsCandidateTierMargin(size_t armPushBytes) {
     return ddr720p24ArmCopyExceedsDecodeMarginAt(armPushBytes,
                                                  kParent720pDecodeMsCandidateTier);
-}
-
-// Second PLXG beat: content window inside the tier bank. Magic still PLXG;
-// bit26 distinguishes window beat from geometry beat (bit26=1 → window).
-inline uint64_t encodePlxgContentWindow(int contentW, int contentH, int x0, int y0) {
-    const uint32_t w = static_cast<uint32_t>(contentW) & 0xFFFu;
-    const uint32_t h = static_cast<uint32_t>(contentH) & 0xFFFu;
-    const uint32_t x = static_cast<uint32_t>(x0) & 0xFFFu;
-    const uint32_t y = static_cast<uint32_t>(y0) & 0xFFFu;
-    // hi: [11:0]w [23:12]h [24]=0 [25]=0 [26]=1 window [27:28] unused
-    // Extended x/y need a third word on wire; pack x in lo magic replacement?
-    // Keep lo=magic; put x in hi[27:30] limited — instead use hi fully for w/h
-    // and a dedicated packing: hi = w | h<<12 | x<<24 (x only 8 bits) — too small
-    // for 1280. Use: hi = w | (h<<12) | (1u<<26); x/y in a *second* uint64 via
-    // encodePlxgContentOrigin. Here encode w/h + window flag only.
-    const uint64_t hi = static_cast<uint64_t>(w) | (static_cast<uint64_t>(h) << 12) |
-                        (1ull << 26);
-    (void)x;
-    (void)y;
-    return (hi << 32) | static_cast<uint64_t>(kDdrFramePlxgMagic);
-}
-
-// Origin beat: hi = x0 | (y0<<12) | (1<<26)|(1<<27); lo = PLXG magic.
-inline uint64_t encodePlxgContentOrigin(int x0, int y0) {
-    const uint32_t x = static_cast<uint32_t>(x0) & 0xFFFu;
-    const uint32_t y = static_cast<uint32_t>(y0) & 0xFFFu;
-    const uint64_t hi =
-        static_cast<uint64_t>(x) | (static_cast<uint64_t>(y) << 12) | (1ull << 26) | (1ull << 27);
-    return (hi << 32) | static_cast<uint64_t>(kDdrFramePlxgMagic);
-}
-
-inline bool decodePlxgContentWindow(uint64_t raw, int& contentW, int& contentH) {
-    if (static_cast<uint32_t>(raw) != kDdrFramePlxgMagic)
-        return false;
-    const uint32_t hi = static_cast<uint32_t>(raw >> 32);
-    if (((hi >> 26) & 1u) == 0 || ((hi >> 27) & 1u) != 0)
-        return false; // not window beat
-    contentW = static_cast<int>(hi & 0xFFFu);
-    contentH = static_cast<int>((hi >> 12) & 0xFFFu);
-    return true;
-}
-
-inline bool decodePlxgContentOrigin(uint64_t raw, int& x0, int& y0) {
-    if (static_cast<uint32_t>(raw) != kDdrFramePlxgMagic)
-        return false;
-    const uint32_t hi = static_cast<uint32_t>(raw >> 32);
-    if (((hi >> 26) & 1u) == 0 || ((hi >> 27) & 1u) == 0)
-        return false;
-    x0 = static_cast<int>(hi & 0xFFFu);
-    y0 = static_cast<int>((hi >> 12) & 0xFFFu);
-    return true;
 }
 
 // Jobs fabric-owned present **forbids** on ARM (compile-time documentation via

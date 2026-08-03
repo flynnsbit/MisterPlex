@@ -110,6 +110,15 @@ localparam int DDR_H264_L31_MAX_DPB_FRAMES_720P = 5; // 18000/3600
 localparam int DDR_H264_OPTIONC_PRESENT_BANKS = 2;   // display double-buffer != DPB
 // Product 720p OUTPUT path (parent 2026-08-03): ARM source 960x540 native push,
 // fabric upscales to 1280x720 canvas. NOT 720p source. PLXG native_push=1.
+// Tight content layout (native_push=1): strides are CONTENT, not canvas 1280.
+// Using canvas Y_STRIDE on a 960-wide tight payload shears (88509163-class).
 localparam int DDR_FRAME_720P_OUTPUT_SOURCE_WIDTH = 960;
 localparam int DDR_FRAME_720P_OUTPUT_SOURCE_HEIGHT = 540;
 localparam int DDR_FRAME_720P_OUTPUT_SOURCE_BYTES = 777600;
+localparam int DDR_FRAME_720P_OUTPUT_Y_STRIDE_BYTES = 960;
+localparam int DDR_FRAME_720P_OUTPUT_CHROMA_STRIDE_BYTES = 480;
+localparam int DDR_FRAME_720P_OUTPUT_Y_PLANE_OFFSET = 0;
+localparam int DDR_FRAME_720P_OUTPUT_U_PLANE_OFFSET = 518400; // 960*540
+localparam int DDR_FRAME_720P_OUTPUT_V_PLANE_OFFSET = 648000; // 518400+480*270
+localparam int DDR_FRAME_720P_OUTPUT_Y_LINE_QWORDS = 120;     // 960/8
+localparam int DDR_FRAME_720P_OUTPUT_CHROMA_LINE_QWORDS = 60; // 480/8

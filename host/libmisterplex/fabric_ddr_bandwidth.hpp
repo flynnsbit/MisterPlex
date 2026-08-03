@@ -96,6 +96,68 @@ constexpr double kCombinedMBps60 = kWriterMBps60 + kScanMBps60; // 165.888
 constexpr double kCombinedFracPeak24 = kCombinedMBps24 / 720.0; // ~0.0922
 constexpr double kCombinedFracPeak60 = kCombinedMBps60 / 720.0; // ~0.2304
 
+// Product path 960x540 → 1280x720 @ fps (parent shipping geometry).
+// ARM writes tight 960x540 into Option-C bank (host→DDR). Fabric:
+//   (1) reads native content once for scale source
+//   (2) emits 1280x720 raster on clk_pix (may be direct scaler→HDMI with BRAM
+//       linebufs — then no second full-frame DDR write; or writeback canvas).
+// Two models:
+//   A direct: host_wr + fabric_rd_source + scan is on-chip after scale
+//            → DDR = host_wr + fabric_rd_native  (scanout not from DDR)
+//   B writeback: host_wr + fabric_rd_native + fabric_wr_canvas + fabric_rd_scan
+// clk_pix ~29.7 MHz (w-clock) is pixel domain; does not change DDR byte rates.
+constexpr int kFabricProductSourceBytes = kPlex720pOutputSourceBytes; // 777600
+constexpr int kFabricProductCanvasBytes = kFabric720pFrameBytes;      // 1382400
+// w-clock: separate PLL out; CEA 1650*750*24 = 29.7e6 (not a clk_sys bump).
+constexpr double kFabricClkPixHz720p24 = 29.7e6;
+// Compile-time product path @24 (direct scaler→HDMI model preferred).
+constexpr double kProductHostWriteMBps24 = (777600.0 * 24.0) / 1.0e6; // 18.6624
+constexpr double kProductNativeReadMBps24 = kProductHostWriteMBps24;
+constexpr double kProductDirectMBps24 = kProductHostWriteMBps24 + kProductNativeReadMBps24; // 37.3248
+constexpr double kProductWritebackMBps24 =
+    kProductDirectMBps24 + kWriterMBps24 + kScanMBps24; // ~103.68
+constexpr double kProductDirectFracPeak24 = kProductDirectMBps24 / 720.0;     // ~0.0518
+constexpr double kProductWritebackFracPeak24 = kProductWritebackMBps24 / 720.0; // ~0.144
+
+inline double fabricHostNativeWriteMBps(double fps) {
+    return (static_cast<double>(kFabricProductSourceBytes) * fps) / 1.0e6;
+}
+inline double fabricNativeSourceReadMBps(double fps) {
+    return fabricHostNativeWriteMBps(fps); // same payload once
+}
+inline double fabricProductPathDirectMBps(double fps) {
+    // host write + fabric read of native; scanout from scaler linebufs
+    return fabricHostNativeWriteMBps(fps) + fabricNativeSourceReadMBps(fps);
+}
+inline double fabricProductPathWritebackMBps(double fps) {
+    // + canvas write + canvas scan read (worst DDR if scaler writebacks bank)
+    return fabricProductPathDirectMBps(fps) + fabricWriterMBps(fps) + fabricScanoutReadMBps(fps);
+}
+inline double fabricProductPathDirectFracPeak(double fps) {
+    return fabricProductPathDirectMBps(fps) / kFabricDdrPeakMBps;
+}
+inline double fabricProductPathWritebackFracPeak(double fps) {
+    return fabricProductPathWritebackMBps(fps) / kFabricDdrPeakMBps;
+}
+// Honest pre-fit gate: both models under 25% theoretical peak @24.
+// Does NOT prove glass — parent measures post-fit with real arbiter clients.
+inline bool fabricProductPathFitsTheoreticalPeak(double fps = 24.0, double util_cap = 0.25) {
+    return fabricProductPathWritebackFracPeak(fps) <= util_cap;
+}
+// clk_pix demand: active pixels/s for 720p output (blanking separate in CEA rate).
+inline double fabricClkPixActiveMpixPerSec(double fps) {
+    return (1280.0 * 720.0 * fps) / 1.0e6;
+}
+inline bool fabricClkPixCovers720p24(double clk_pix_hz = kFabricClkPixHz720p24) {
+    // CEA total 29.7 MHz required; active alone is 22.12 — must compare to CEA.
+    return clk_pix_hz + 1.0 >= kFabricClkPixHz720p24;
+}
+// Product 20 MHz clk_sys alone cannot clock CEA 720p24 totals (needs ~29.7).
+inline bool fabricShipClkSysAloneCovers720p24Cea() {
+    return kClkSysHz + 1.0 >= kFabricClkPixHz720p24;
+}
+
+
 // ARM clean budget (parent).
 constexpr double kParentCleanDecodeAloneMs = 35.94;
 constexpr double kParentCleanCopyBank1Ms = 14.974; // --sync control

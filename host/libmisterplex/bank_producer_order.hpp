@@ -5,6 +5,7 @@
 // enforce the same scoreboard on the fabric side.
 
 #include "libmisterplex/ddr_frame_layout.hpp"
+#include "libmisterplex/ddr_publish_barrier.hpp"
 #include "libmisterplex/fabric_bank_credit.hpp"
 
 #include <cstdint>
@@ -49,6 +50,7 @@ public:
         bank_ = bank;
         bytes_expected_ = 0;
         bytes_written_ = 0;
+        barrier_done_ = false;
         phase_ = BankProducerPhase::Filling;
         return true;
     }
@@ -73,6 +75,9 @@ public:
             fail("markPayloadVisible: incomplete payload");
             return false;
         }
+        // Real store barrier before PayloadVisible (not atomic_signal_fence).
+        ddrPublishPayloadBarrier();
+        barrier_done_ = true;
         phase_ = BankProducerPhase::PayloadVisible;
         return true;
     }
@@ -83,6 +88,8 @@ public:
             fail("markFabricDrainDone: not filling");
             return false;
         }
+        ddrPublishPayloadBarrier();
+        barrier_done_ = true;
         phase_ = BankProducerPhase::PayloadVisible;
         return true;
     }
@@ -91,7 +98,8 @@ public:
         if (!c_.enforce_payload_before_doorbell)
             return phase_ == BankProducerPhase::PayloadVisible ||
                    phase_ == BankProducerPhase::DoorbellRung;
-        return phase_ == BankProducerPhase::PayloadVisible;
+        // Visible phase requires barrier; doorbel without barrier is tear class.
+        return phase_ == BankProducerPhase::PayloadVisible && barrier_done_;
     }
 
     bool markDoorbellRung() {
@@ -104,6 +112,8 @@ public:
         return true;
     }
 
+    bool barrierDone() const { return barrier_done_; }
+
     // After vsync retire of this bank (credit returns via free_mask).
     bool markRetired() {
         if (phase_ != BankProducerPhase::DoorbellRung) {
@@ -112,6 +122,7 @@ public:
         }
         phase_ = BankProducerPhase::Idle;
         bank_ = -1;
+        barrier_done_ = false;
         return true;
     }
 
@@ -126,6 +137,7 @@ private:
     int bank_ = -1;
     size_t bytes_written_ = 0;
     size_t bytes_expected_ = 0;
+    bool barrier_done_ = false;
     std::string err_;
 };
 

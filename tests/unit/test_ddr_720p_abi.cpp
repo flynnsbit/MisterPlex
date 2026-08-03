@@ -370,9 +370,69 @@ int main() {
         CHECK(p1024.valid);
         CHECK(!ddr720pOutputProductPathAccepts(p1024.budget, kParent1024x576DecodeMs));
     }
+
+    // --- Airtight 960x540 content layout (native_push strides ≠ canvas) ---
+    {
+        const auto cl = plex960x540NativeContentLayout();
+        CHECK(cl.valid);
+        CHECK(cl.width == 960 && cl.height == 540);
+        CHECK(cl.y_stride == kPlex720pOutputYStrideBytes);
+        CHECK(cl.chroma_stride == kPlex720pOutputChromaStrideBytes);
+        CHECK(cl.y_stride == 960);
+        CHECK(cl.chroma_stride == 480);
+        CHECK(cl.y_offset == 0u);
+        CHECK(cl.u_offset == 518400u);
+        CHECK(cl.v_offset == 648000u);
+        CHECK(cl.u_offset == static_cast<uint32_t>(kPlex720pOutputUPlaneOffset));
+        CHECK(cl.v_offset == static_cast<uint32_t>(kPlex720pOutputVPlaneOffset));
+        CHECK(cl.frame_bytes == 777600u);
+        CHECK(cl.y_line_qwords == 120);
+        CHECK(cl.chroma_line_qwords == 60);
+        CHECK(ddrNativeContentFitsBank(cl, kPlex720pYuv420pBankStride));
+        // Shear class: content y_stride must NOT equal canvas line_bytes 1280.
+        CHECK(cl.y_stride != kPlex720pYStrideBytes);
+        CHECK(cl.y_stride != out540.canvas_layout.line_bytes);
+        CHECK(out540.content_layout.valid);
+        CHECK(out540.content_layout.y_stride == 960);
+        CHECK(out540.content_layout.frame_bytes == out540.publish_bytes);
+        CHECK(out540.publish_bytes != out540.canvas_layout.frame_bytes);
+        // Fabric-owned publish plan accepts tight 777600, refuses canvas length.
+        std::vector<uint8_t> tight(777600u, 0x10);
+        DdrFabricOwnedPublishPlan pub{};
+        std::string err;
+        CHECK(makeDdrFabricOwnedPublishPlan(tight.data(), 0, out540, pub, &err));
+        CHECK(pub.payload_bytes == 777600u);
+        CHECK(pub.publish.bank_offset == 0u);
+        // NEG: full canvas payload on fabric-owned path when content smaller.
+        DdrFabricOwnedPresentPlan bad = out540;
+        bad.publish_bytes = out540.canvas_layout.frame_bytes; // 1382400 shear/pad path
+        CHECK(!makeDdrFabricOwnedPublishPlan(tight.data(), 0, bad, pub, &err));
+        // PLXG chain: geometry (native_push) → window 960x540 → origin 0,0
+        int cw = 0, ch = 0, x0 = 0, y0 = 0;
+        bool en = false, np = false;
+        CHECK(decodePlxgGeometryWord(out540.plxg_word, cw, ch, en, np));
+        CHECK(cw == 1280 && ch == 720 && en && np);
+        CHECK(decodePlxgContentWindow(out540.plxg_window_word, cw, ch));
+        CHECK(cw == 960 && ch == 540);
+        CHECK(decodePlxgContentOrigin(out540.plxg_origin_word, x0, y0));
+        CHECK(x0 == 0 && y0 == 0);
+        // Non-zero origin plan still emits matching PLXG origin beat.
+        auto inset = makeDdrFabricOwnedPresentPlan(960, 540, plex720pDdrFrameGeometry(),
+                                                   kPlex720pDdrFramePhysBase, 32, 16, false);
+        CHECK(inset.valid);
+        CHECK(inset.content_x0 == 32 && inset.content_y0 == 16);
+        CHECK(decodePlxgContentOrigin(inset.plxg_origin_word, x0, y0));
+        CHECK(x0 == 32 && y0 == 16);
+        // Odd dims rejected (4:2:0).
+        CHECK(!makeDdrNativeContentLayout(961, 540).valid);
+        CHECK(!makeDdrNativeContentLayout(960, 541).valid);
+    }
     std::fprintf(stderr,
-                 "  720p_OUTPUT 960x540 publish=%zu copy_ms=%.3f arm=%.2f(sws) margin~%.2f ACCEPT\n",
-                 out540.publish_bytes, out540.budget.arm_copy_ms, kParent960x540DecodeSwsOutMs,
+                 "  720p_OUTPUT 960x540 publish=%zu y_stride=%d u=%u v=%u copy_ms=%.3f "
+                 "arm=%.2f(sws) margin~%.2f ACCEPT\n",
+                 out540.publish_bytes, out540.content_layout.y_stride,
+                 out540.content_layout.u_offset, out540.content_layout.v_offset,
+                 out540.budget.arm_copy_ms, kParent960x540DecodeSwsOutMs,
                  kFrameBudget24fpsMs - (kParent960x540DecodeSwsOutMs + out540.budget.arm_copy_ms));
 
 
