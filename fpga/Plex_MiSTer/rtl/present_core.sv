@@ -286,7 +286,7 @@ module present_core #(
 	// (FBAR/DE_LAG) is UNTOUCHED. Do not move H_DE=529 without parent grant.
 	//
 	// Beam (CEA 720p geometry) → store read at glass_x0 → N-wide RGB →
-	// present_npx_path serializer → 1 px/clk.
+	// present_npx_path wide-group FIFO → 1 px/clk (prefill+skid).
 	// Same-clock bring-up: clk_pix==clk, beam backpressured by in_ready.
 	// PRESENT_CLK_PIX_PLL: Bresenham rate-match to F_PIX + FIFO sync sideband
 	// so line time matches clk_pix (see CLK_PIX_PLL_PLAN.md).
@@ -538,7 +538,7 @@ module present_core #(
 
 `ifdef PRESENT_MULTI_PIXEL
 `ifdef DDR_FRAME_STORE
-	// Serialize N-wide store RGB → 1 px/clk.
+	// N-wide store RGB → wide-group npx FIFO → 1 px/clk.
 	// Same-clock (INCLUDE_SYNC=0): push on fs_n_valid only; sync from beam.
 	// Dual-clock (INCLUDE_SYNC=1): also push black+sync on blank beam steps so
 	// clk_pix HS/VS advance through blanking (FIFO is the only sync path).

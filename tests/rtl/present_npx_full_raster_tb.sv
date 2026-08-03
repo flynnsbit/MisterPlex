@@ -1,3 +1,4 @@
+`timescale 1ps/1ps
 // Full-raster no-gap cadence: wide-group FIFO sustains 1280×720 @ PIX24 clocks.
 // GREEN: beat conservation, zero underrun after start.
 // RED (RED_STARVE): producer hole → rd_underrun must fire.
@@ -12,10 +13,11 @@ module present_npx_full_raster_tb #(
 	localparam int PIXELS = H_ACTIVE * V_ACTIVE;
 	localparam int GROUPS = PIXELS / PX_PER_CLK;
 
+	// Integer ps half-periods — Verilator truncates fractional #delays.
 	reg clk_sys = 1'b0;
 	reg clk_pix = 1'b0;
-	always #25 clk_sys = ~clk_sys;
-	always #16.835 clk_pix = ~clk_pix;
+	always #25000 clk_sys = ~clk_sys;   // 20.000 MHz
+	always #16835 clk_pix = ~clk_pix;   // 29.700 MHz
 
 	reg reset_sys = 1'b1;
 	reg reset_pix = 1'b1;
@@ -34,7 +36,8 @@ module present_npx_full_raster_tb #(
 	present_npx_path #(
 		.PX_PER_CLK(PX_PER_CLK),
 		.FIFO_AW(6),
-		.INCLUDE_SYNC(1'b1)
+		.INCLUDE_SYNC(1'b1),
+		.PREFILL_GROUPS(8)
 	) dut (
 		.clk_sys(clk_sys),
 		.reset_sys(reset_sys),
@@ -67,6 +70,7 @@ module present_npx_full_raster_tb #(
 	integer wr_px, rd_px, ur_count, g, li, stall, timeout, exp_r;
 	integer acc, hole_left;
 	reg hole_done;
+	reg producer_active;
 	// F_PIX/F_SYS scaled integers (29.7/20 → 297/200)
 	localparam int F_PIX = 297;
 	localparam int F_SYS = 200;
@@ -89,7 +93,7 @@ module present_npx_full_raster_tb #(
 					$fatal(1);
 				end
 			end
-			if (rd_underrun)
+			if (rd_underrun && producer_active)
 				ur_count = ur_count + 1;
 		end
 	end
@@ -101,6 +105,7 @@ module present_npx_full_raster_tb #(
 		acc = 0;
 		g = 0;
 		hole_done = 1'b0;
+		producer_active = 1'b1;
 		if (PIXELS % PX_PER_CLK != 0) begin
 			$display("FAIL PIXELS %% PPC");
 			$fatal(1);
@@ -131,17 +136,9 @@ module present_npx_full_raster_tb #(
 				$display("PASS present_npx_full_raster RED ur=%0d", ur_count);
 				$finish;
 			end
-			stall = 0;
-			while (!in_ready && stall < 100000) begin
-				sys_tick;
-				stall = stall + 1;
-			end
-			if (!in_ready) begin
-				$display("FAIL in_ready stuck g=%0d", g);
-				$fatal(1);
-			end
+			// Accrue always; fire only if in_ready (same as present_pix_rate_match).
 			acc = acc + F_PIX;
-			if (acc >= THRESH) begin
+			if (in_ready && acc >= THRESH) begin
 				acc = acc - THRESH;
 				in_r = '0;
 				in_g = '0;
@@ -166,6 +163,7 @@ module present_npx_full_raster_tb #(
 				sys_tick;
 			end
 		end
+		producer_active = 1'b0;
 
 		timeout = 0;
 		while (rd_px < wr_px && timeout < 5_000_000) begin

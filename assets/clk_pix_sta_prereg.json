@@ -2,7 +2,7 @@
   "schema": 1,
   "name": "misterplex-clk-pix-sta-prereg",
   "description": "Pre-registered STA pass/fail cuts for clk_pix stages. Locked before fit so results are scored, not rationalised. No predicted Fmax decimals without a report.",
-  "locked_at_commit_note": "w-clock shipping gate — update only with parent-visible miss publish",
+  "locked_at_commit_note": "w-clock shipping gate \u2014 update only with parent-visible miss publish",
   "hard_rule": "negative_slack_equals_hard_fail",
   "shipping_pll": {
     "clk_sys_mhz": 20.0,
@@ -11,13 +11,20 @@
     "related_edge_ns_20_90": 5.555556
   },
   "stage0_multipixel_same_clock": {
-    "macros": ["PRESENT_MULTI_PIXEL", "PRESENT_PX_PER_CLK=2"],
+    "macros": [
+      "PRESENT_MULTI_PIXEL",
+      "PRESENT_PX_PER_CLK=2"
+    ],
     "clk_pix": "tied_to_clk_sys",
     "pass": {
       "fmax_clk_sys_mhz_min": 20.0,
       "setup_slack_clk_sys_ns_min": 0.0,
       "setup_slack_clk_ddr_ns_min": 0.0,
-      "hierarchy_nonzero": ["u_mp_timing", "u_mp_beam", "u_mp_npx_path"]
+      "hierarchy_nonzero": [
+        "u_mp_timing",
+        "u_mp_beam",
+        "u_mp_npx_path"
+      ]
     },
     "fail": [
       "fmax_clk_sys < 20.0",
@@ -30,7 +37,11 @@
     ]
   },
   "stage1_pix24": {
-    "macros": ["PRESENT_MULTI_PIXEL", "PRESENT_PX_PER_CLK=2", "PRESENT_CLK_PIX_PLL"],
+    "macros": [
+      "PRESENT_MULTI_PIXEL",
+      "PRESENT_PX_PER_CLK=2",
+      "PRESENT_CLK_PIX_PLL"
+    ],
     "pll": {
       "number_of_clocks": 4,
       "output_clock_frequency3": "29.700000 MHz",
@@ -38,17 +49,30 @@
       "clk_ddr_unchanged": "90.000000 MHz"
     },
     "npx_fifo": {
-      "architecture": "wide_group_async_fifo",
-      "note": "Groups cross CDC; unpack on clk_pix. Old sys-domain serialize peak was F_sys*PPC/(1+PPC)=13.33@20/2 — insufficient for 29.7. New peak F_sys*PPC=40.",
+      "architecture": "wide_group_async_fifo_plus_sys_skid",
+      "note": "Groups cross CDC after sys skid; unpack on clk_pix. Prefill avoids Bresenham/phase start underrun. Old serialize 13.33@20/2; new peak 40.",
       "word_includes_sync_when": "INCLUDE_SYNC=1 under PRESENT_CLK_PIX_PLL",
-      "rd_underrun": "real mid-stream empty pulse — never hard-tied 0",
-      "evidence": ".agent-work/w-clock/NPX_WIDE_FIFO_PRODUCER_FIX.md"
+      "rd_underrun": "real mid-stream empty pulse \u2014 never hard-tied 0",
+      "evidence": ".agent-work/w-clock/NPX_WIDE_FIFO_PRODUCER_FIX.md",
+      "prefill_groups_default": 8,
+      "skid_depth": 16,
+      "skid_ready_headroom": 4,
+      "open": [
+        "exact Fmax unknown until fit",
+        "integrated ddr_frame_store in-flight under backpressure cosim",
+        "FULL=1 750-line CEA default CI not required"
+      ]
     },
     "pass": {
       "fmax_clk_sys_mhz_min": 20.0,
       "fmax_clk_pix_mhz_min": 29.7,
       "setup_slack_all_constrained_ns_min": 0.0,
-      "hierarchy_nonzero": ["u_mp_timing", "u_mp_beam", "u_mp_npx_path", "u_mp_rate"],
+      "hierarchy_nonzero": [
+        "u_mp_timing",
+        "u_mp_beam",
+        "u_mp_npx_path",
+        "u_mp_rate"
+      ],
       "async_fifo_mem_false_path_still_present": true,
       "no_whole_domain_false_path_sys_pix": true,
       "wider_fifo_word_same_gray_cdc": true
@@ -57,12 +81,12 @@
       "fmax_clk_pix < 29.7",
       "fmax_clk_sys < 20.0",
       "neg setup slack on gray pointer / pix cone",
-      "new whole-domain false_path clk_sys↔clk_pix",
+      "new whole-domain false_path clk_sys\u2194clk_pix",
       "u_mp_rate elided",
       "rd_underrun hard-tied or stripped from hierarchy"
     ],
-    "on_fmax_pix_short": "pipeline pix domain — do not false_path; do not bump clk_sys",
-    "on_fmax_sys_short_from_wide_fifo": "narrow MLAB packing or AW — do not re-introduce sys-side serialize"
+    "on_fmax_pix_short": "pipeline pix domain \u2014 do not false_path; do not bump clk_sys",
+    "on_fmax_sys_short_from_wide_fifo": "narrow MLAB packing or AW \u2014 do not re-introduce sys-side serialize"
   },
   "stage2_pix60": {
     "pll_output_clock_frequency3": "74.250000 MHz",
@@ -71,9 +95,12 @@
       "fmax_clk_pix_mhz_min": 74.25,
       "fmax_clk_sys_mhz_min": 20.0
     },
-    "fail": ["fmax_clk_pix < 74.25", "PPC < 4 with PIX60"]
+    "fail": [
+      "fmax_clk_pix < 74.25",
+      "PPC < 4 with PIX60"
+    ]
   },
-  "cdc_risky_pair": "wide-group async_fifo gray dual-clock + Bresenham rate balance (underrun → mid-line black/tear; rd_underrun must report)",
+  "cdc_risky_pair": "wide-group async_fifo gray + 2FF prefill_go + Bresenham rate balance (mid-frame underrun \u2192 tear; rd_underrun must report; skid headroom for store pipe)",
   "parent_commands": [
     "make post-fit-timing STA_RPT=path/to/Plex.sta.rpt",
     "make post-fit-timing-margin STA_RPT=path/to/Plex.sta.rpt",

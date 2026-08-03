@@ -3,7 +3,7 @@
 **Status:** PLL PIX24 strings **landed under `PRESENT_CLK_PIX_PLL`** (default OFF = 3-clock shipping).  
 **ascal:** core `CLK_VIDEO` → ascal **input**; HDMI = HPS `video_mode` (see `ASCAL_VS_CORE_RASTER.md`). 29.7 is correct for core content rate.  
 **Why load-bearing:** parent product path is PMS 960×540 → ARM 34.50 ms (+7.16) → fabric 1280×720 glass. Without `clk_pix` @ **29.7 MHz**, content scan-out is capped at **20 Mpix/s ≈ 16.16 Hz**.  
-**Producer fix (rd-duck):** old `present_npx_path` sys-serialized before FIFO → **13.33 Mpix/s @20/PPC2**. Wide group FIFO now peak **40 Mpix/s**; real `rd_underrun`. See `NPX_WIDE_FIFO_PRODUCER_FIX.md`.  
+**Producer fix (rd-duck ×2):** serialize wall 13.33 → wide FIFO peak 40; **prefill=8 + skid=16** for phase/Bresenham + in-flight store headroom; CEA+phase unit GREEN. See `NPX_WIDE_FIFO_PRODUCER_FIX.md`. **No glass 29.7 claim yet.**  
 **Fit scope:** **960×540 / 24 only.** Multi-rate parked. PIX30=37.125 proposed, not this fit.
 
 No device. No fit by this lane. Negative STA slack = hard fail (parent).
