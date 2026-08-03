@@ -81,3 +81,61 @@ Registered: `test_present_scale_4_3_*` host + `test_present_scale_4_3_rtl_sim.sh
 - **`RAM_LAT=1`**: meta (phase/weights/ix/DE) delayed to meet `rd_data` taps.
 - Registered `tap_base_x/store_*` are diagnostics only — never same-cycle RAM addr.
 - Still default-OFF until dual-line Y provider wired through `ddr_frame_store`.
+
+## ascal near-term fork (rd-duck challenge) — verdict for parent
+
+**Question:** Can the core emit a **true** 960×540 DE at ≤20 MHz / ~24 Hz and let
+sys_top `ascal` (`iauto=1`) do 960→1280×720 HDMI, deferring custom 4/3 + 2-PPC +
+29.7 MHz clk_pix?
+
+### Source facts (not inference)
+
+| Fact | Where |
+|------|--------|
+| `ascal` already on HDMI; **`iauto=1`** autodetects input image from `i_de` | `sys_top.v:758` `.iauto(1)`; `ascal.vhd` iauto comment |
+| Output raster = HPS `WIDTH`/`HEIGHT` (ship 1280×720 class) | `sys_top.v` `hdisp(WIDTH)` / `vdisp(HEIGHT)` |
+| Dead end was **island-in-large-DE** (pad + full-bank sample) → quarter glass | design mandate / `docs/fabric-content-window-rtl.md` pad-only row; **not** true content DE |
+| `H_DE=640` **impossible** at **clk_sys=20 MHz / 60 Hz / 524 lines** (max H_total=636) | `present_core.sv:194-196`, `test_present_store_scale_math.cpp:160-166` |
+| That forbid is **60 Hz + ~524-line** class — it does **not** by itself forbid 960-wide at **~24 Hz** with a longer line period | same arithmetic: `20e6/24/600 ≈ 1389` clocks/line > 960+blank |
+| Product Template FBAR lock is **H_DE=529** | `present_core.sv:204`, lane contract |
+| Custom path needs **1280×720 core DE @ ~29.7 MHz** (w-clock PLL still placeholder) | lane contract; parent fit HOLD on PLL |
+| Active rate 960×540×24 ≈ **12.4 Mpix/s** vs 1280×720×24 ≈ **22.1 Mpix/s** | arithmetic |
+
+### Verdict
+
+**No source-backed hard forbid of the ascal near-term path** for ship 960×540→720p
+HDMI **if and only if**:
+
+1. Core DE is **exactly content-sized** 960×540 (not a 960 island inside 529/1280 DE).
+2. Beam/timing is a **new class** (w-clock): ~24 Hz capable line totals on clk_sys —
+   **not** the 60 Hz / 524-line Template that caps H_total at 636.
+3. Lab accepts FBAR/Template 529 instruments **do not** apply to this mode (or are
+   retargeted). That is process/lab, not silicon forbidding ascal.
+
+**What ascal path buys now:** drops custom 2-PPC/Y-tap provider + core 29.7 CDC from
+the **near-term fit critical path**; reuses already-paid ascal polyphase (~2.9k ALM);
+ARM still publishes **960×540 / 777600** only.
+
+**What it does not buy:** identity core DE for HUD/chrome alignment experiments that
+assume 1280×720 pre-ascal; exact 4/3 phase control in-core; removing ascal later.
+
+**Keep w-scaler 4/3 + 2ppc as upgrade/fallback** (default-OFF): when w-clock real
+`clk_pix` lands and dual-line Y is wired, core can emit native 720p DE and ascal
+becomes near-identity (`docs/fabric-content-window-rtl.md`: ascal does not re-filter
+when DE equals output raster).
+
+**Unknown until parent measures (not claimed):** ascal lock on 960×540@~24→HDMI@60
+cadence, VS relationship, first-frame black. Check = one menu with true 960×540 DE
+timing + HDMI capture MEAN/ACTIVE — parent-owned.
+
+### Pre-registered numbers (ascal-path feasibility arithmetic)
+
+| Quantity | Value |
+|----------|------:|
+| clk_sys | 20_000_000 |
+| max H_total @60 Hz / 524 lines | 636 |
+| clocks/frame @24 Hz | 833_333 |
+| 960×540 active pix/frame | 518_400 |
+| min clocks/frame if 1 clk/pix active | 518_400 (+ blanking) |
+| 1280×720×24 Mpix/s | 22.118 |
+| 960×540×24 Mpix/s | 12.441 |
