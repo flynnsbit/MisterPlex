@@ -855,6 +855,10 @@ present_core #(
 	.content_y0(present_content_y0),
 	.win_h_de(present_win_h_de),
 	.win_v_de(present_win_v_de),
+	// Runtime V_TOTAL for true-DE beam (PRESENT_BEAM_960). Default OFF → 564 (~30 Hz).
+	// Host may drive 705 for ~24.0007 Hz (film) at H_TOTAL=1182; keep true 960×540 DE.
+	.beam_use_rt_vtotal(1'b0),
+	.beam_rt_vtotal(11'd0),
 	.geom_enable(present_geom_enable),
 	.geom_coded_w(present_geom_coded_w),
 	.geom_coded_h(present_geom_coded_h),

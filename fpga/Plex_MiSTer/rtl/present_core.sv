@@ -50,6 +50,11 @@ module present_core #(
 	input  wire [10:0] win_h_de,
 	input  wire [10:0] win_v_de,
 
+	// PRESENT_BEAM_960 only: runtime V_TOTAL (0 → param 564). 564→~30.0008 Hz,
+	// 705→~24.0007 Hz at H_TOTAL=1182 / 20 MHz. Latch at frame boundary.
+	input  wire        beam_use_rt_vtotal,
+	input  wire [10:0] beam_rt_vtotal,
+
 	// Runtime DDR bank geometry (PLXW). geom_enable=0 → legacy CODED 624 path.
 	// Sized for 1280×720 (y_stride bytes). Safe default = all zero / disable.
 	input  wire        geom_enable,
@@ -177,6 +182,8 @@ module present_core #(
 `endif
 		.clk(clk),
 		.reset(reset),
+		.use_rt_vtotal(beam_use_rt_vtotal),
+		.rt_vtotal(beam_rt_vtotal),
 		.ce_pix(ce_pix_i),
 		.HBlank(hb),
 		.HSync(hs),

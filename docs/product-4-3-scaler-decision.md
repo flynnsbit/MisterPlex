@@ -213,24 +213,39 @@ tests/unit/test_true_content_de_contract.sh   # product + RED FAULT_ISLAND_PASSE
 **Counted RTL raster** (elaborated beam + window + DE_LAG — load-bearing for fit):
 ```bash
 tests/unit/test_present_true_de_count_rtl_sim.sh
-# PRODUCT: true_de=1 de_w=960 de_lines=540 de_pixels=518400
-#          H_TOT=1182 V_TOT=564 fps@20M=30.0008 store_id_ok=1
-# RED PRESENT_BEAM_FAULT_ISLAND_1280: de=1280x720 true_de=0 rc≠0 + EXECUTED
+# PRODUCT_30_V564: true_de=1 de=960x540 de_uniform=1 fps@20M=30.0008
+# PRODUCT_24_V705: true_de=1 de=960x540 de_uniform=1 fps@20M=24.0007
+# RED ISLAND_1280: de=1280x720 true_de=0 rc≠0 + EXECUTED
+# RED FAULT_VTOT_BAD_DE: rt V=705 + de_w=1280 → true_de=0 rc≠0 + EXECUTED
 ```
 
 **Fit card (w-nostub drop-in):** `docs/ascal-true-de-fit-card.md`  
-Macros: `PRESENT_BEAM_960`; runtime `win_enable=1`, `content_w/h=960/540`, `win_h_de/v_de=960/540`.
-### Cadence note (24 vs 30 → HDMI 60) — source-backed, limited claim
+Macros: `PRESENT_BEAM_960`; runtime `win_enable=1`, `content_w/h=960/540`, `win_h_de/v_de=960/540`;
+optional `beam_use_rt_vtotal` + `beam_rt_vtotal` ∈ {564,705}.
 
-ascal has a **DDR framebuffer** (`vbuf_*` on `ascal` in `sys_top.v`); `i_clk`/`i_ce`
-are independent of `o_clk` (hdmi). So ascal **does** decouple core frame rate from
-HDMI line rate: input frames are written, output scans at 60.
+### Cadence resolution — runtime V_TOTAL (parent arithmetic **accepted**)
 
-**What that does *not* remove:** display **repeat pattern** on glass.
-- 24→60 = **5:2** (some frames shown 2×, some 3×) → film judder class
-- 30→60 = **2:1** (every frame shown twice) → no 3:2-style cadence
+Fixed 30 Hz alone conflicts with ARM 960×540 **34.50 ms** vs 33.33 ms budget, and
+re-quantises 24 film through a 30 store before HDMI (`{2,2,2,4}` class, max dev 1.5
+frames vs direct 3:2 max 0.5). **One beam class, one RBF:**
 
-Whether that is acceptable is product taste + parent capture — not a silicon forbid.
-**Budget:** 960×540×30 ≈ 15.55 Mpix/s is inside w-clock’s 40 Mpix/s bridge; prefer
-**30** when PMS/ARM margin allows if judder is the concern. Unknown until measured:
-ascal first-frame lock on 960×540@30 — parent HDMI check.
+```
+H_TOTAL=1182 fixed @ 20 MHz
+V_TOTAL=564 → 666648 clks → 30.0008 Hz   (TV)
+V_TOTAL=705 → 833310 clks → 24.0007 Hz   (film; 20e6/24/1182≈705.02)
+```
+
+Counted sim proves **both** keep `de_uniform=1` / `true_de=1`.  
+w-clock: MODE=0 is 1182×564; **1182×705 needs STA ack** (V blank only). MODE=2
+copy is still 1389×600 — different H; not this path.
+
+### ascal rate-switch + buffering (quoted RTL — gating)
+
+| Question | Answer | Source |
+|----------|--------|--------|
+| Re-lock on rate-only V_TOT change? | **No size blackout** if ih×iv unchanged. `swblack` arms 3 black frames only when `o_ihsize/o_ivsize` differ from new input size. No dedicated FPS re-lock FSM. Switch V_TOT at **frame boundary**; mid-frame undefined on core beam. | `ascal.vhd:226`, `:1951-1952`, `:1941-1942` |
+| Frame-repeat or tear? | Default **triple buffer** (`MODE[3]=1` via `sys_top` `{~lowlat,...}`, `lowlat=0`). Write buf toggles on input end-frame; **output swaps at VS falling** → whole-frame hold/repeat. Single-FB (`MODE[3]=0` / lowlat) forces bufs to 0 — tear-prone. | `ascal.vhd:88-90`, `:1256-1258`, `:1918-1940`, `:1974-1979`; `sys_top.v:329`, `:791` |
+
+**Judder implication:** under default triple buffer, parent’s `{2,2,2,4}` analysis is about **upstream** fixed-30 re-quantise of 24 content — **not** ascal line-tearing. Tracking core V_TOT to content rate is the right fix; ascal then whole-frame repeats 24→60 as 5:2 (standard film class) or 30→60 as 2:1.
+
+DDR FB still decouples **clocks** (i_clk vs o_clk); it does **not** erase the repeat pattern on glass.

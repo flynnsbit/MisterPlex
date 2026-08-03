@@ -1,13 +1,17 @@
 // Thin present_core DE path for counted true-DE sim.
 // Mirrors PRESENT_BEAM_960 branch: beam → in_content → content_window → DE_LAG.
-// Not a full present_core (no DDR/SDRAM) — same blanking/window/lag algebra.
+//
+// Modes (C++ / +define):
+//   product 30: H=1182 V=564  DE=960×540
+//   product 24: H=1182 V=705  DE=960×540  (parent fixed-H film class)
+//   island:     beam 1280×720
+//   FAULT_VTOT_BAD_DE: V_TOT=705 but DE width left at 1280
 
 `default_nettype none
 
 module present_true_de_count_tb (
 	input  wire        clk,
 	input  wire        reset,
-	// Runtime window (product identity 960×540)
 	input  wire        win_enable,
 	input  wire [10:0] content_w,
 	input  wire [10:0] content_h,
@@ -15,7 +19,8 @@ module present_true_de_count_tb (
 	input  wire [10:0] content_y0,
 	input  wire [10:0] win_h_de,
 	input  wire [10:0] win_v_de,
-	// Observed raster (after DE_LAG, like present_core HBlank/VBlank outs)
+	input  wire        use_rt_vtotal,
+	input  wire [10:0] rt_vtotal,
 	output wire        ce_pix,
 	output wire        HBlank,
 	output wire        VBlank,
@@ -34,8 +39,20 @@ module present_true_de_count_tb (
 	localparam int P_V_ACT = 720;
 	localparam int P_H_TOT = 1650;
 	localparam int P_V_TOT = 750;
+`elsif PRESENT_BEAM_FAULT_VTOT_BAD_DE
+	// Film-rate blanking intent (V via rt=705) but DE left at canvas width.
+	// H_TOTAL must exceed H_DE; keep generous line like 1400×705 class.
+	localparam int P_H_DE = 1280;
+	localparam int P_V_ACT = 540;
+	localparam int P_H_TOT = 1400;
+	localparam int P_V_TOT = 564;
+`elsif PRESENT_BEAM_24_V705
+	// Same param defaults as 30; film rate via runtime rt_vtotal=705 (parent design).
+	localparam int P_H_DE = 960;
+	localparam int P_V_ACT = 540;
+	localparam int P_H_TOT = 1182;
+	localparam int P_V_TOT = 564;
 `else
-	// w-clock present_video_timing_960 MODE=0
 	localparam int P_H_DE = 960;
 	localparam int P_V_ACT = 540;
 	localparam int P_H_TOT = 1182;
@@ -57,6 +74,8 @@ module present_true_de_count_tb (
 	) beam (
 		.clk(clk),
 		.reset(reset),
+		.use_rt_vtotal(use_rt_vtotal),
+		.rt_vtotal(rt_vtotal),
 		.ce_pix(ce_pix_i),
 		.HBlank(hb),
 		.HSync(hs),
@@ -100,7 +119,6 @@ module present_true_de_count_tb (
 		.past_last_row(past_last_row)
 	);
 
-	// present_core DE_LAG=3 on HBlank/HSync; VBlank ORs past_last_row
 	localparam int DE_LAG = 3;
 	reg [DE_LAG-1:0] hb_sr, hs_sr;
 	always @(posedge clk) begin

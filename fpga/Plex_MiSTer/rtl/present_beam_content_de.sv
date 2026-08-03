@@ -2,10 +2,15 @@
 //
 // Emits true content DE: HBlank low for H_DE cycles, VBlank low for V_ACTIVE lines.
 // Default numbers match w-clock present_video_timing_960 MODE=0 (1182×564 @ 20 MHz → ~30.0008 Hz).
+// Film companion (parent): same H_TOTAL=1182, V_TOTAL=705 → ~24.0007 Hz (20e6/24/1182≈705.02).
+// w-clock MODE=2 is still 1389×600; 1182×705 is the fixed-H runtime-select proposal.
 //
 // Default OFF at present_core: `PRESENT_BEAM_960`. Does not replace Template colorbars
 // unless that macro is set. Island FAULT twin: PRESENT_BEAM_FAULT_ISLAND_1280 forces
 // H_DE=1280 / V_ACTIVE=720 while product content remains 960×540 (counter must RED).
+//
+// Optional runtime V_TOTAL (use_rt_vtotal=1): host may switch 564↔705 at frame boundary.
+// Mid-frame writes are undefined — latch only when vc==0 && hc==0 recommended.
 
 `default_nettype none
 
@@ -21,6 +26,9 @@ module present_beam_content_de #(
 )(
 	input  wire        clk,
 	input  wire        reset,
+	// Runtime V_TOTAL override (0 = use parameter V_TOTAL). Clamped >= V_ACTIVE+16.
+	input  wire        use_rt_vtotal,
+	input  wire [10:0] rt_vtotal,
 	output reg         ce_pix,
 	output reg         HBlank,
 	output reg         HSync,
@@ -30,16 +38,19 @@ module present_beam_content_de #(
 	output wire [10:0] hc_out,
 	output wire [10:0] vc_out
 );
-	localparam int H_LAST = H_TOTAL - 1;
-	localparam int V_LAST = V_TOTAL - 1;
+	wire [10:0] vtot_min = 11'(V_ACTIVE + 16);
+	wire [10:0] vtot_raw = use_rt_vtotal ? rt_vtotal : 11'(V_TOTAL);
+	wire [10:0] vtot_eff = (vtot_raw < vtot_min) ? vtot_min : vtot_raw;
+	wire [10:0] h_last = 11'(H_TOTAL - 1);
+	wire [10:0] v_last = vtot_eff - 11'd1;
 
-	// Elab pins — must match w-clock primary class for product MODE.
+	// Elab pins — parameter defaults; runtime vtot checked in sim.
 	// synthesis translate_off
 	initial begin
 		if (H_TOTAL <= H_DE) $error("present_beam_content_de: H_TOTAL must exceed H_DE");
 		if (V_TOTAL <= V_ACTIVE) $error("present_beam_content_de: V_TOTAL must exceed V_ACTIVE");
-		if (H_SYNC_E > H_LAST) $error("present_beam_content_de: H_SYNC past line");
-		if (V_SYNC_E > V_LAST) $error("present_beam_content_de: V_SYNC past frame");
+		if (H_SYNC_E >= H_TOTAL) $error("present_beam_content_de: H_SYNC past line");
+		if (V_SYNC_E >= V_TOTAL) $error("present_beam_content_de: V_SYNC past default frame");
 	end
 	// synthesis translate_on
 
@@ -63,9 +74,9 @@ module present_beam_content_de #(
 			VSync  <= 1'b0;
 		end else begin
 			// Advance on every cycle (ce_pix sticky 1 after reset release).
-			if (hc == 11'(H_LAST)) begin
+			if (hc == h_last) begin
 				hc <= 11'd0;
-				if (vc == 11'(V_LAST)) begin
+				if (vc == v_last) begin
 					vc <= 11'd0;
 					frame_start <= 1'b1;
 				end else begin
