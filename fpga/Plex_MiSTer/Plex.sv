@@ -1118,7 +1118,11 @@ present_core #(
 `ifdef FABRIC_DDR_WRITER
 `include "rtl/ddr_frame_layout_params.svh"
 
-// Option-C 720p is the fit target (parent: moving 1280x720, ARM zero pixels).
+// FAB_* sizes the OPTIONAL fabric_ddr_attach pattern writer ONLY
+// (`FABRIC_DDR_WRITER=1`). Product Route B (writer OFF) does not instantiate
+// this block — host/native push is content-sized; ascal does glass 720p.
+// Default FAB 1280×720 = fit/demo pattern into Option-C capacity, NOT a
+// mandate to upscale content into DDR (see docs/route-b-fab-writer-sizing.md).
 // Override with FABRIC_DDR_WRITER_480P for product-bank bring-up without scaler.
 `ifdef FABRIC_DDR_WRITER_480P
 localparam int FAB_W = DDR_FRAME_CODED_WIDTH;

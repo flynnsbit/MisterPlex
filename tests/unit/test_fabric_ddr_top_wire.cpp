@@ -33,13 +33,21 @@ int main() {
         }
         CHECK(!live);
     }
-    CHECK(top.find("ddr_bus_arbiter3") != std::string::npos);
+    CHECK(top.find("ddr_bus_arbiter3") != std::string::npos); // FABRIC_DDR_WRITER path
     CHECK(top.find("fabric_ddr_attach") != std::string::npos);
     CHECK(top.find("`ifdef FABRIC_DDR_WRITER") != std::string::npos);
-    CHECK(top.find("ddr_bus_arbiter ddr_arb") != std::string::npos); // default path
+    // Product DEFAULT (writer OFF): ddr_bus_arbiter_plxc instance name ddr_arb.
+    // Legacy 2-port "ddr_bus_arbiter ddr_arb" was retired — test was stale, not the RTL.
+    CHECK(top.find("ddr_bus_arbiter_plxc") != std::string::npos);
+    CHECK(top.find("ddr_arb") != std::string::npos);
+    CHECK(top.find("ddr_bus_arbiter ddr_arb") == std::string::npos);
+    // PLXC chrome grant path (m_gnt) must be wired, not hollow 1'b0.
+    CHECK(top.find(".m_gnt(plxc_c_gnt)") != std::string::npos);
+    CHECK(top.find("ddr_plxc_master_bridge") != std::string::npos);
+    CHECK(top.find(".m_gnt(1'b0)") == std::string::npos);
     // Idle producer must not paint over has_frame (synced).
     CHECK(top.find("has_frame_s2") != std::string::npos);
-    CHECK(top.find("DDR_FRAME_720P_PHYS_BASE") != std::string::npos); // Option-C default
+    CHECK(top.find("DDR_FRAME_720P_PHYS_BASE") != std::string::npos); // Option-C capacity default
     CHECK(top.find("produce_en") != std::string::npos);
     CHECK(top.find("FABRIC_DDR_WRITER_480P") != std::string::npos); // opt-out to product banks
     CHECK(top.find("fabric_bank_credit") != std::string::npos ||
@@ -49,6 +57,6 @@ int main() {
     CHECK(top.find("host_bank_ingest_credit") != std::string::npos);
     CHECK(qsf.find("FABRIC_DDR_WRITER_480P=1") != std::string::npos);
     if (fails) { std::fprintf(stderr,"test_fabric_ddr_top_wire: %d fails\n", fails); return 1; }
-    std::printf("test_fabric_ddr_top_wire: OK default_off=1 arb3_wired=1 optionc_default=1\n");
+    std::printf("test_fabric_ddr_top_wire: OK default_off=1 arb3_wired=1 plxc_arb=1 m_gnt_wired=1 optionc_default=1\n");
     return 0;
 }
