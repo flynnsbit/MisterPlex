@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
-"""Fit-release gate: one command, three independent legs, QSF is SoT.
+"""Fit-release gate: QSF macros + elab + true_de + architecture blockers.
 
+Leg 0 — rd-duck architecture blockers (must clear before any fit grant):
+        coherent FIT_CANDIDATE, no int FPS overflow cargo, real raster SoT,
+        compile-time Option-C / layout match, PLXG ABA closed, ddr_frame_store
+        exercised on the beam/clock path. Soft-skip ≠ PASS.
 Leg 1 — active VERILOG_MACRO set from the QSF under test is the 720p ascal path
         (FRAME_W=960 FRAME_H=540 PRESENT_BEAM_960 DDR_FRAME_STORE). Hollow
         640×480 and commented-out macros fail here.
-Leg 2 — verilator-elab with *exactly* that parsed macro set (not the hollow
-        default still sitting in a sibling worktree's live QSF).
-Leg 3 — counted true-DE RTL sim for the raster the QSF configures; require
-        true_de=1 (DE extent == content extent). Soft-skip ≠ PASS.
+Leg 2 — verilator-elab with *exactly* that parsed macro set.
+Leg 3 — counted true-DE RTL sim for the raster the QSF configures; true_de=1.
 
-Source of truth is the QSF Quartus reads. A hardcoded macro list would
-reproduce the hollow-elaboration defect one level up.
+Source of truth for macros is the QSF Quartus reads. Architecture blockers are
+source-scanned against this tree (quoted paths in FAIL lines).
 
 Exit codes:
   0  all legs PASS (EXECUTED)
@@ -22,12 +24,11 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
-import os
+import json
 import re
 import shutil
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -37,10 +38,17 @@ from check_define_parity import discover_quartus_macros  # noqa: E402
 
 DEFAULT_QSF = ROOT / "fpga" / "Plex_MiSTer" / "Plex.qsf"
 FIX = ROOT / "tests" / "fixtures" / "fit_release_gate"
+CANDIDATE_PATHS = (
+    ROOT / "docs" / "fit_candidate.json",
+    ROOT / "assets" / "fit_candidate.json",
+    FIX / "fit_candidate.json",
+)
 # Real hollow integration QSF (sibling worktree) — RED twin target.
 HOLLOW_INTEG_QSF = Path(
     "/home/flynnsbit/Projects/MisterPlex-wt-integ-720p/fpga/Plex_MiSTer/Plex.qsf"
 )
+RTL = ROOT / "fpga" / "Plex_MiSTer" / "rtl"
+ALLOWED_ARCH = frozenset({"ascal_true_de_960", "mp_cea_1280"})
 
 # Required for ascal-native 960×540 content DE fit (docs/ascal-true-de-fit-card.md).
 REQUIRED_EXACT = {
@@ -66,9 +74,10 @@ CROSS_LANE = (
     "requires PRESENT_BEAM_960 + FRAME 960/540 and says do NOT set "
     "PRESENT_MULTI_PIXEL / PRESENT_SCALE_4_3 / PRESENT_SCALE_2X for this path. "
     "integ/fab-720p-planes QSF comments list PRESENT_MULTI_PIXEL, "
-    "PRESENT_PX_PER_CLK, FABRIC_DDR_WRITER as features to enable. This gate "
-    "enforces the scaler ascal-true-DE set only; multi-pixel/fabric-writer are "
-    "NOT required here."
+    "PRESENT_PX_PER_CLK, FABRIC_DDR_WRITER as features to enable. "
+    "rd-duck: complex/mp path ≠ product until coherent FIT_CANDIDATE; "
+    "40 Mpix/s bridge claim is not a product raster. Gate enforces one locked "
+    "architecture + ascal-true-DE macro set when candidate=ascal_true_de_960."
 )
 
 
@@ -82,6 +91,233 @@ def _run(cmd: list[str], *, cwd: Path | None = None, env: dict | None = None) ->
         stderr=subprocess.STDOUT,
     )
     return proc.returncode, proc.stdout
+
+
+def _read(path: Path) -> str:
+    return path.read_text(errors="ignore") if path.is_file() else ""
+
+
+def _layout_param(name: str) -> str | None:
+    text = _read(RTL / "ddr_frame_layout_params.svh")
+    m = re.search(rf"localparam\s+int\s+{re.escape(name)}\s*=\s*(\d+)", text)
+    return m.group(1) if m else None
+
+
+def leg0_arch_blockers() -> tuple[int, list[str]]:
+    """rd-duck fit blockers — FAIL until a coherent candidate clears each.
+
+    Evidence is quoted from this tree's source (rule 0). Checks auto-pass only
+    when the cited defect is gone from the files.
+    """
+    msgs: list[str] = ["LEG0_ARCH_BLOCKERS_EXECUTED begin"]
+    errors: list[str] = []
+
+    # --- B0: one coherent FIT_CANDIDATE lock ---
+    cand_path = next((p for p in CANDIDATE_PATHS if p.is_file()), None)
+    cand: dict | None = None
+    if cand_path is None:
+        errors.append(
+            "B0_NO_CANDIDATE: missing docs/fit_candidate.json (or assets/ / "
+            "tests/fixtures/fit_release_gate/). Gate refuses fit until one "
+            "architecture is locked with a tree hash. Allowed architecture: "
+            + ",".join(sorted(ALLOWED_ARCH))
+        )
+    else:
+        try:
+            cand = json.loads(cand_path.read_text())
+        except json.JSONDecodeError as e:
+            errors.append(f"B0_BAD_CANDIDATE_JSON: {cand_path}: {e}")
+            cand = None
+        if cand is not None:
+            arch = str(cand.get("architecture", ""))
+            th = str(cand.get("git_tree_hash", cand.get("tree_hash", "")))
+            msgs.append(f"LEG0_CANDIDATE path={cand_path} architecture={arch!r} hash={th!r}")
+            if arch not in ALLOWED_ARCH:
+                errors.append(
+                    f"B0_BAD_ARCH: architecture={arch!r} not in {sorted(ALLOWED_ARCH)}"
+                )
+            if not re.fullmatch(r"[0-9a-f]{7,40}", th):
+                errors.append(
+                    "B0_BAD_HASH: git_tree_hash must be 7–40 hex chars naming the "
+                    "coherent candidate tree (not empty)"
+                )
+            # Refuse dual-path cargo: candidate must not require both beams.
+            req = cand.get("required_macros") or cand.get("qsf_macros") or {}
+            if isinstance(req, dict):
+                has_beam = str(req.get("PRESENT_BEAM_960", "")).lower() in {"1", "true"}
+                has_mp = str(req.get("PRESENT_MULTI_PIXEL", "")).lower() in {"1", "true"}
+                if has_beam and has_mp:
+                    errors.append(
+                        "B0_DUAL_PATH: candidate requires both PRESENT_BEAM_960 and "
+                        "PRESENT_MULTI_PIXEL — pick one architecture"
+                    )
+                if arch == "ascal_true_de_960" and has_mp:
+                    errors.append(
+                        "B0_ASCAL_VS_MP: ascal_true_de_960 candidate must not enable "
+                        "PRESENT_MULTI_PIXEL (rd-duck: complex/mp path separate)"
+                    )
+                if arch == "mp_cea_1280" and has_beam:
+                    errors.append(
+                        "B0_MP_VS_ASCAL: mp_cea_1280 candidate must not enable "
+                        "PRESENT_BEAM_960"
+                    )
+
+    # --- B1: layout / compile-time Option-C vs FRAME 960 claim ---
+    # Evidence: ddr_frame_layout_params.svh hardwires 480p presented; present_core
+    # passes DDR_FRAME_* into ddr_frame_store; geom_enable=0 reloads LEG_* only.
+    pw = _layout_param("DDR_FRAME_PRESENTED_WIDTH")
+    ph = _layout_param("DDR_FRAME_PRESENTED_HEIGHT")
+    cw = _layout_param("DDR_FRAME_CODED_WIDTH")
+    ch = _layout_param("DDR_FRAME_CODED_HEIGHT")
+    msgs.append(f"LEG0_LAYOUT presented={pw}x{ph} coded={cw}x{ch}")
+    core = _read(RTL / "present_core.sv")
+    store = _read(RTL / "ddr_frame_store.sv")
+    if ".CODED_W(DDR_FRAME_CODED_WIDTH)" not in core:
+        errors.append(
+            "B1_PRESENT_CORE_WIRING: present_core.sv does not pass "
+            ".CODED_W(DDR_FRAME_CODED_WIDTH) — cannot verify layout lock"
+        )
+    # geom-disabled branch hardwires legacy base/stride/doorbell (quoted).
+    if "eff_base_w0    <= LEG_BASE_W0" not in store or "eff_doorbell_w <= LEG_DOORBELL_W" not in store:
+        errors.append(
+            "B1_GEOM_OFF_LEGACY_MARKERS_MOVED: expected geom_enable=0 path to assign "
+            "LEG_BASE_W0/LEG_DOORBELL_W (ddr_frame_store.sv) — re-audit"
+        )
+    else:
+        msgs.append(
+            "LEG0_EVIDENCE geom_enable=0 assigns LEG_BASE_W0/LEG_DOORBELL_W "
+            "(ddr_frame_store.sv) — no compile-time Option-C bank map"
+        )
+    # Compile-time Option-C does not exist: no ifdef selecting OPTC_* as localparam defaults.
+    if re.search(r"`ifdef\s+FABRIC_NATIVE_720P_GEOM", store) is None and re.search(
+        r"`ifdef\s+OPTION_C", store
+    ) is None:
+        if pw == "640" and ph == "480":
+            errors.append(
+                "B1_NO_COMPILE_TIME_OPTC: ddr_frame_layout_params.svh still "
+                f"PRESENTED={pw}x{ph} CODED={cw}x{ch}; ddr_frame_store has no "
+                "`ifdef FABRIC_NATIVE_720P_GEOM/OPTION_C compile-time bank path; "
+                "geom_enable=0 stays legacy PHYS/stride/doorbell. FRAME_W=960 QSF "
+                "alone does not re-base the store (rd-duck #3)."
+            )
+    if cand and cand.get("architecture") == "ascal_true_de_960":
+        if pw != "960" or ph != "540":
+            errors.append(
+                f"B1_LAYOUT_NOT_960: candidate ascal_true_de_960 but layout params "
+                f"PRESENTED={pw}x{ph} (need 960x540 compile-time match)"
+            )
+
+    # --- B2: scalar-ascal timing_960 constants-only + int overflow ---
+    t960 = RTL / "present_video_timing_960.sv"
+    t960_txt = _read(t960)
+    if t960_txt:
+        msgs.append(f"LEG0_EVIDENCE present_video_timing_960.sv exists ({t960.stat().st_size} B)")
+        # Overflow: clock's 720p file documents and uses longint; 960 still uses int.
+        if "localparam int FPS_MILLI = (CLK_PIX_HZ * 1000)" in t960_txt or re.search(
+            r"localparam\s+int\s+FPS_MILLI\s*=\s*\(\s*CLK_PIX_HZ\s*\*\s*1000", t960_txt
+        ):
+            errors.append(
+                "B2_FPS_INT_OVERFLOW: present_video_timing_960.sv uses "
+                "`localparam int FPS_MILLI = (CLK_PIX_HZ * 1000) / …` — "
+                "20_000_000*1000 overflows 32-bit signed int (rd-duck #2). "
+                "present_video_timing_720p.sv already uses longint for this."
+            )
+        # No raster generator: no hc/vc counters; only assign of localparams.
+        has_hc_reg = bool(re.search(r"\breg\s+\[[^\]]+\]\s*hc\b", t960_txt))
+        has_always_raster = "always @(posedge" in t960_txt and has_hc_reg
+        if not has_always_raster:
+            errors.append(
+                "B2_NO_RASTER_GENERATOR: present_video_timing_960.sv is constants-only "
+                "(assign h_de/h_total/… from localparams; no hc/vc beam). Not a product "
+                "raster (rd-duck #2). Product beam is present_beam_content_de with "
+                "hardcoded totals — timing_960 is not wired as SoT."
+            )
+        # Not instantiated in present_core
+        if "present_video_timing_960" not in core:
+            msgs.append(
+                "LEG0_EVIDENCE present_core.sv does not instantiate present_video_timing_960"
+            )
+        qip = _read(ROOT / "fpga" / "Plex_MiSTer" / "files.qip")
+        if "present_video_timing_960.sv" in qip and not has_always_raster:
+            errors.append(
+                "B2_TIMING960_IN_QIP_WITHOUT_RASTER: constants module listed in files.qip "
+                "without being a real generator — cargo risk"
+            )
+        # 40 Mpix claim is not product raster (doc budget line).
+        dec = _read(ROOT / "docs" / "product-4-3-scaler-decision.md")
+        if "40 Mpix/s" in dec or "40 Mpix" in dec:
+            if cand is None or cand.get("architecture") != "mp_cea_1280":
+                errors.append(
+                    "B1_40MPIX_NOT_PRODUCT: docs/product-4-3-scaler-decision.md cites "
+                    "w-clock 40 Mpix/s bridge; rd-duck: nominal 40 Mpix/s is not product "
+                    "unless FIT_CANDIDATE architecture=mp_cea_1280 with real clk_pix path. "
+                    "ascal_true_de_960 product rate is ~15.55 Mpix/s content @30."
+                )
+
+    # --- B4: PLXG same-seq ABA remains in FPGA latch ---
+    latch = _read(RTL / "present_geom_latch.sv")
+    if latch:
+        if "seq_new  = magic_ok && (sh_seq != last_seq)" in latch or re.search(
+            r"seq_new\s*=\s*magic_ok\s*&&\s*\(\s*sh_seq\s*!=\s*last_seq\s*\)", latch
+        ):
+            # Still no session/epoch distinct from seq — restart same-seq ABA class.
+            if "epoch" not in latch and "session_id" not in latch and "generation" not in latch:
+                errors.append(
+                    "B4_PLXG_SAME_SEQ_ABA: present_geom_latch.sv accepts commit only when "
+                    "`sh_seq != last_seq` with no epoch/session token. After FPGA reset "
+                    "last_seq=0, retained DDR q0 seq=N can ABA on restart "
+                    "(rd-duck #4; host plxg_record.hpp documents the class — RTL still open)."
+                )
+            else:
+                msgs.append("LEG0_PLXG: epoch/session marker present — ABA check soft-clear")
+        else:
+            msgs.append("LEG0_PLXG: seq_new pattern changed — re-audit ABA")
+
+    # --- B5: no test uses real ddr_frame_store on beam/clock path ---
+    tests_root = ROOT / "tests"
+    beam_ddr_tests: list[str] = []
+    for path in tests_root.rglob("*"):
+        if not path.is_file() or path.suffix not in {".sv", ".sh", ".cpp", ".py"}:
+            continue
+        txt = _read(path)
+        has_ddr = "ddr_frame_store" in txt
+        has_beam = ("present_beam_content_de" in txt) or ("PRESENT_BEAM_960" in txt)
+        if has_ddr and has_beam:
+            beam_ddr_tests.append(str(path.relative_to(ROOT)))
+    if not beam_ddr_tests:
+        errors.append(
+            "B5_NO_DDR_ON_BEAM_TEST: no test under tests/ instantiates/drives "
+            "ddr_frame_store together with present_beam_content_de/PRESENT_BEAM_960 "
+            "(rd-duck #5). true_de_count covers beam+window only — not the store path."
+        )
+    else:
+        msgs.append("LEG0_DDR_BEAM_TESTS " + " ".join(beam_ddr_tests))
+
+    # --- Runtime-OFF OSD / colorbars timing cargo when candidate is ascal ---
+    if cand and cand.get("architecture") == "ascal_true_de_960":
+        # present_core still has colorbars Template path when PRESENT_BEAM_960 undefined.
+        if "`else" in core and "colorbars bars" in core and "PRESENT_BEAM_960" in core:
+            msgs.append(
+                "LEG0_NOTE: colorbars Template path remains under `ifndef PRESENT_BEAM_960` "
+                "— acceptable only if QSF forces PRESENT_BEAM_960=1 (leg1) and candidate "
+                "forbids shipping without it"
+            )
+        # Reject candidate that leaves beam default-OFF as ship.
+        req = cand.get("required_macros") or cand.get("qsf_macros") or {}
+        if isinstance(req, dict) and str(req.get("PRESENT_BEAM_960", "")) not in {"1", "true"}:
+            errors.append(
+                "B0_BEAM_RUNTIME_OFF_CARGO: ascal_true_de_960 candidate must list "
+                "PRESENT_BEAM_960=1 as required (no runtime-OFF beam / Template DE cargo)"
+            )
+
+    if errors:
+        msgs.append("LEG0_FAIL EXECUTED reasons:")
+        msgs.extend(f"  - {e}" for e in errors)
+        msgs.append(f"LEG0_FAIL count={len(errors)}")
+        return 1, msgs
+
+    msgs.append("LEG0_PASS EXECUTED architecture blockers clear")
+    return 0, msgs
 
 
 def leg1_macros(qsf: Path) -> tuple[int, list[str], dict[str, str]]:
@@ -274,6 +510,7 @@ def leg3_true_de(
 def run_gate(
     qsf: Path,
     *,
+    skip_arch: bool = False,
     skip_elab: bool = False,
     skip_true_de: bool = False,
     force_island: bool = False,
@@ -281,6 +518,16 @@ def run_gate(
     print(CROSS_LANE)
     print(f"FIT_RELEASE_GATE qsf={qsf}")
     print("FIT_RELEASE_GATE_EXECUTED begin")
+
+    if not skip_arch:
+        rc0, msgs0 = leg0_arch_blockers()
+        print("\n".join(msgs0))
+        print(f"leg0 true rc={rc0}")
+        if rc0 != 0:
+            print("FIT_RELEASE_GATE_FAIL leg=0 (architecture blockers / rd-duck)")
+            return rc0
+    else:
+        print("LEG0_SKIP isolation path — not valid for fit grant")
 
     rc1, msgs1, active = leg1_macros(qsf)
     print("\n".join(msgs1))
@@ -291,14 +538,14 @@ def run_gate(
 
     if skip_elab:
         print("LEG2_SKIP requested — not a pass path for release")
-        rc2 = 1
-    else:
-        rc2, msgs2 = leg2_elab(qsf)
-        print("\n".join(msgs2))
-        print(f"leg2 true rc={rc2}")
-        if rc2 != 0:
-            print("FIT_RELEASE_GATE_FAIL leg=2 (verilator-elab)")
-            return rc2
+        return 1
+
+    rc2, msgs2 = leg2_elab(qsf)
+    print("\n".join(msgs2))
+    print(f"leg2 true rc={rc2}")
+    if rc2 != 0:
+        print("FIT_RELEASE_GATE_FAIL leg=2 (verilator-elab)")
+        return rc2
 
     if skip_true_de:
         print("LEG3_SKIP requested — not a pass path for release")
@@ -311,7 +558,10 @@ def run_gate(
         print("FIT_RELEASE_GATE_FAIL leg=3 (true_de)")
         return rc3
 
-    print("FIT_RELEASE_GATE_PASS EXECUTED legs=1+2+3")
+    if skip_arch:
+        print("FIT_RELEASE_GATE_PASS EXECUTED legs=1+2+3 (arch skipped — NOT a fit grant)")
+    else:
+        print("FIT_RELEASE_GATE_PASS EXECUTED legs=0+1+2+3")
     return 0
 
 
@@ -396,20 +646,30 @@ set_global_assignment -name VERILOG_MACRO "PRESENT_BEAM_FAULT_ISLAND_1280=1"
 
 
 def self_test() -> int:
-    """Mandatory RED twins + GREEN. Each case prints EXECUTED."""
+    """Mandatory RED twins + isolation GREEN + full-gate arch RED. Each EXECUTED."""
     print("FIT_RELEASE_GATE_SELFTEST_EXECUTED begin")
     fx = ensure_fixtures()
     failures = 0
 
-    def expect(label: str, qsf: Path, want_rc: int, *, force_island: bool = False, legs: str = "all") -> None:
+    def expect(
+        label: str,
+        qsf: Path,
+        want_rc: int,
+        *,
+        force_island: bool = False,
+        legs: str = "all",
+    ) -> None:
         nonlocal failures
         print(f"\n=== SELFTEST {label} want_rc={want_rc} ===")
-        if legs == "leg1":
+        if legs == "leg0":
+            rc, msgs = leg0_arch_blockers()
+            print("\n".join(msgs))
+            print(f"{label} true rc={rc}")
+        elif legs == "leg1":
             rc, msgs, _ = leg1_macros(qsf)
             print("\n".join(msgs))
             print(f"{label} true rc={rc}")
         elif legs == "leg1+3island":
-            # Independence: leg1 on green, leg3 forced island → leg3 fails alone.
             rc1, msgs1, active = leg1_macros(qsf)
             print("\n".join(msgs1))
             print(f"{label}_leg1 true rc={rc1}")
@@ -421,6 +681,10 @@ def self_test() -> int:
             print("\n".join(msgs3))
             print(f"{label}_leg3 true rc={rc3}")
             rc = rc3
+        elif legs == "macros_elab_tde":
+            # Isolation: prove legs 1–3 can go green without claiming fit grant.
+            rc = run_gate(qsf, skip_arch=True, force_island=force_island)
+            print(f"{label} gate true rc={rc}")
         else:
             rc = run_gate(qsf, force_island=force_island)
             print(f"{label} gate true rc={rc}")
@@ -430,7 +694,9 @@ def self_test() -> int:
         else:
             print(f"PASS SELFTEST {label} EXECUTED rc={rc}")
 
-    # P1 hollow real integ QSF
+    # rd-duck arch blockers must FAIL on today's tree (not soft-skip).
+    expect("arch_blockers_open", fx["green"], 1, legs="leg0")
+
     hollow = HOLLOW_INTEG_QSF if HOLLOW_INTEG_QSF.is_file() else None
     if hollow is None:
         print("FAIL SELFTEST hollow: integ QSF path missing")
@@ -441,24 +707,25 @@ def self_test() -> int:
     expect("commented_beam", fx["commented"], 1, legs="leg1")
     expect("mismatch_960x480", fx["mismatch"], 1, legs="leg1")
 
-    # last-wins: leg1 must PASS (960/540 wins)
     rc_dup, msgs_dup, act_dup = leg1_macros(fx["dup"])
     print("\n".join(msgs_dup))
     print(f"dup_last_wins true rc={rc_dup}")
     if rc_dup != 0 or act_dup.get("FRAME_W") != "960" or act_dup.get("FRAME_H") != "540":
-        print(f"FAIL dup_last_wins: rc={rc_dup} FRAME={act_dup.get('FRAME_W')}x{act_dup.get('FRAME_H')}")
+        print(
+            f"FAIL dup_last_wins: rc={rc_dup} FRAME={act_dup.get('FRAME_W')}x{act_dup.get('FRAME_H')}"
+        )
         failures += 1
     else:
         print("PASS SELFTEST dup_last_wins EXECUTED last=960x540")
 
-    # Island fault macro in QSF → leg1 forbids FAULT (release QSF must not carry it)
     expect("island_fault_in_qsf", fx["island"], 1, legs="leg1")
-
-    # Independence: legs 1 green, leg3 island inject fails alone
     expect("island_leg3_independent", fx["green"], 1, legs="leg1+3island")
 
-    # Full green path
-    expect("green_ascal_960x540", fx["green"], 0)
+    # Legs 1–3 isolation GREEN (constructed fixture) — does NOT authorize fit.
+    expect("green_macros_elab_tde_isolation", fx["green"], 0, legs="macros_elab_tde")
+
+    # Full gate on green fixture must still FAIL while arch blockers open (rd-duck).
+    expect("full_gate_blocked_by_arch", fx["green"], 1, legs="all")
 
     if failures:
         print(f"FIT_RELEASE_GATE_SELFTEST_FAIL failures={failures}")
@@ -485,10 +752,19 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Inject island beam into leg3 (independence / red twin)",
     )
+    ap.add_argument(
+        "--skip-arch",
+        action="store_true",
+        help="Isolation only: skip leg0 architecture blockers (NOT a fit grant)",
+    )
     args = ap.parse_args(argv)
     if args.self_test:
         return self_test()
-    return run_gate(args.qsf.resolve(), force_island=args.force_island_leg3)
+    return run_gate(
+        args.qsf.resolve(),
+        skip_arch=args.skip_arch,
+        force_island=args.force_island_leg3,
+    )
 
 
 if __name__ == "__main__":
