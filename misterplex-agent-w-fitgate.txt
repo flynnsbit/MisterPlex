@@ -1,22 +1,12 @@
 lane: w-fitgate
-role: fit-release gate ruler (scripts/fit_release_gate.py OWNER)
+role: fit-release gate ruler
 GRANT: NO
 selftest: PASS true_rc=0
-mutation_matrix: rows=27 red=27 fail_holes=0
-NEW parent traps (2026-08-03) matrix true_rc per row:
-  UNIT_SUITE_RED                 inject make unit rc=2 h264_dpb_mc     → RED true_rc=1
-  UNIT_SOFT_SKIP_LAUNDER         inject rc=0 + SKIP Verilator missing → RED true_rc=1
-  UNIT_SOFT_SKIP_RC77            inject exit 77                       → RED true_rc=1
-  SUBSET_NOT_ELAB                inject quartus-sv-subset STATIC_PASS → RED true_rc=1
-  RTL_LINT_RED                   inject rtl_lint rc=2 dpb_mem_rd_q    → RED true_rc=1
-  UNIT_CMD_SOFT_LAUNDER_OVERRIDE FIT_GATE_UNIT_CMD SKIP+exit0         → RED true_rc=1
-  RTL_LINT_SUBSET_BAIT_OVERRIDE  FIT_GATE_RTL_LINT_CMD subset only    → RED true_rc=1
-grant_path_probe: unit clamp-fail → FIT_RELEASE_GATE_FAIL leg=unit true_rc=1
-preconditions:
-  leg_unit     = full make unit GREEN; print observed true rc; rc77/78/tool-miss SKIP ≠ PASS
-  leg_rtl_lint = scripts/rtl_lint.py explicit; quartus-sv-subset STATIC_PASS ≠ elab
-notes:
-  - main make unit RED (h264_dpb_mc) correctly refuses GRANT
-  - no Quartus fit taken; no device
-  - B2_NO_RASTER_GENERATOR still RETIRED
-identity: 3fbfd16ddaee6f5f714d4f619ffc2a6673c29f56 (rebased after unit+lint legs)
+mutation_matrix: rows=29 red=29 fail_holes=0
+rd-duck B20 product use_frame_store tie (2026-08-03):
+  - Elaborate Plex.sv .use_frame_store(1'b0) Force bars=No
+  - B20_PRODUCT_UFS_FORCE_BARS_AS_OWNERSHIP: w-clock hold/free on ufs + product 0 → free-run RED (closed-class reinject; matrix true_rc=1)
+  - B20_HIER_H_PRODUCT_UFS0_HOLD_UNPROVEN: H must measure product-ufs0 hold; isolated ufs=1 TB = false evidence (live open; matrix true_rc=1)
+  - B20_HIER_MANIFEST H require_stdout += measured_product_use_frame_store_tie=0, measured_b20_hold_under_product_ufs0=1, measured_isolated_ufs1_false_evidence=1
+notes: no Quartus; no device; ownership must be geom_live/store swap not O[9]
+identity: rebased after ufs gate

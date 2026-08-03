@@ -103,7 +103,7 @@
       "case": "CASE B20_HIER_H EXECUTED",
       "pass": "PASS B20_HIER_H",
       "fault_env": {"B20_HIER_FAULT": "1"},
-      "why": "delayed pending_ready: ALL window/crop/DAR/fps/DE/store/bank remain old-or-black until ready — not beam DE alone (rd-duck)",
+      "why": "delayed pending_ready under PRODUCT .use_frame_store(1'b0) Force-bars=No: ALL window/crop/DAR/fps/DE/store/bank remain old-or-black until ready — not beam DE alone; isolated present_core use_frame_store=1 is FALSE EVIDENCE (rd-duck: w-clock B20 ownership-on-ufs free-runs in product)",
       "require_stdout": [
         "measured_delayed_pending_ready=1",
         "measured_window_hold_old_or_black=1",
@@ -113,7 +113,10 @@
         "measured_de_hold_old_or_black=1",
         "measured_store_hold_old_or_black=1",
         "measured_bank_hold_old_or_black=1",
-        "measured_beam_de_alone_not_sufficient=1"
+        "measured_beam_de_alone_not_sufficient=1",
+        "measured_product_use_frame_store_tie=0",
+        "measured_b20_hold_under_product_ufs0=1",
+        "measured_isolated_ufs1_false_evidence=1"
       ]
     }
   ]

@@ -161,6 +161,22 @@
       "token_hit": "1"
     },
     {
+      "check": "B20_PRODUCT_UFS_FORCE_BARS_AS_OWNERSHIP",
+      "inject": "present_core B20 hold/free on use_frame_store; product ufs=0",
+      "expect": "B20_PRODUCT_UFS_FORCE_BARS_AS_OWNERSHIP",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B20_HIER_H_PRODUCT_UFS0_HOLD_UNPROVEN",
+      "inject": "live hollow H missing product-ufs0 hold proof",
+      "expect": "B20_HIER_H_PRODUCT_UFS0_HOLD_UNPROVEN",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
       "check": "UNIT_SUITE_RED",
       "inject": "make unit true rc=2 (h264_dpb_mc clamp)",
       "expect": "UNIT_SUITE_RED",
@@ -218,6 +234,6 @@
     }
   ],
   "failures": [],
-  "n_red": 27,
-  "head": "c706ded3d621"
+  "n_red": 29,
+  "head": "b3a1f8c05ceb"
 }

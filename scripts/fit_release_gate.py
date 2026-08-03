@@ -190,6 +190,9 @@ LIVE_OPEN_BLOCKER_TOKENS = (
     "B20_HIER_F_BANK_SWAP_24_30",
     "B20_HIER_G_PLXC_ASYNC_CDC_MULTIBEAT",
     "B20_HIER_H_DELAYED_PENDING_READY",
+    # rd-duck: H must prove delayed pending_ready under product ufs=0 (Force bars=No)
+    "B20_HIER_H_PRODUCT_UFS0_HOLD_UNPROVEN",
+    # B20_PRODUCT_UFS_FORCE_BARS_AS_OWNERSHIP: closed-class reinject (w-clock ownership-on-ufs)
     # B20_UNCONNECTED_PRODUCER: not always live — mutation + integ RED twin prove it.
     # rd-duck: runtime-beam must force ascal blackout + scaler (live open on product)
     "B21_HDMI_BLACKOUT_DISABLED",
@@ -1726,6 +1729,248 @@ def run_b20_hierarchy_exec_gate(
 
 # Populated at run time from manifest; mutations may call load_b20_hier_manifest.
 B20_HIER_REGISTRY: tuple[dict[str, object], ...] = ()
+
+# ---------------------------------------------------------------------------
+# B20 product use_frame_store tie (rd-duck 2026-08-03)
+# w-clock B20 gates visual hold on use_frame_store:
+#   beam_de_free_g  = !use_frame_store
+#   b20_visual_hold = use_frame_store && geom_live_valid && …
+# Product Plex.sv hardwires .use_frame_store(1'b0) — historical "Force bars=No"
+# (OSD O[9] reclaimed). Under that product tie, free_g=1 and hold=0 always →
+# visual apply free-runs; delayed pending_ready hold is dead in product.
+# Isolated present_core TBs with use_frame_store=1 are FALSE EVIDENCE.
+# ---------------------------------------------------------------------------
+_B20_UFS_PORT_RE = re.compile(
+    r"\.use_frame_store\s*\(\s*([^)]+?)\s*\)",
+    re.M,
+)
+# Ownership anti-pattern: hold/free gated on the force-bars pin.
+_B20_UFS_AS_OWNER_RES = (
+    re.compile(r"\bb20_visual_hold\b[^=\n]{0,80}=\s*[^\n]*\buse_frame_store\b"),
+    re.compile(r"\bbeam_de_free_g\b[^=\n]{0,40}=\s*!\s*use_frame_store\b"),
+    re.compile(
+        r"\bvisual_geom_apply\b[^=\n]{0,80}=\s*[^\n]*\bbeam_de_free_g\b"
+    ),
+    re.compile(
+        r"assign\s+visual_geom_apply\s*=\s*[^\n]*!\s*use_frame_store"
+    ),
+)
+
+
+def _parse_product_use_frame_store_tie(plex_txt: str) -> tuple[str | None, str]:
+    """Return (normalized_expr, detail) for present_core .use_frame_store tie."""
+    if not plex_txt:
+        return None, "Plex.sv missing/empty"
+    # Prefer the present_core instance region when present.
+    region = plex_txt
+    m_inst = re.search(
+        r"\bpresent_core\b[\s\S]{0,4000}?\.use_frame_store\s*\(\s*([^)]+?)\s*\)",
+        plex_txt,
+    )
+    if m_inst:
+        expr = m_inst.group(1).strip()
+        return expr, f"present_core.use_frame_store({expr})"
+    m = _B20_UFS_PORT_RE.search(plex_txt)
+    if not m:
+        return None, "no .use_frame_store(...) port connection in Plex.sv"
+    expr = m.group(1).strip()
+    return expr, f"use_frame_store({expr})"
+
+
+def _ufs_tie_is_constant_zero(expr: str | None) -> bool:
+    if expr is None:
+        return False
+    e = re.sub(r"\s+", "", expr)
+    return e in {
+        "1'b0",
+        "1'h0",
+        "1'd0",
+        "0",
+        "1'B0",
+        "1'H0",
+        "1'D0",
+    }
+
+
+def _core_uses_ufs_as_b20_ownership(core_txt: str) -> list[str]:
+    """Return hit labels if present_core gates B20 hold/free on use_frame_store."""
+    if not core_txt:
+        return []
+    active = product_active_sv(core_txt)
+    hits: list[str] = []
+    if _B20_UFS_AS_OWNER_RES[0].search(active):
+        hits.append("b20_visual_hold&=use_frame_store")
+    if _B20_UFS_AS_OWNER_RES[1].search(active):
+        hits.append("beam_de_free_g=!use_frame_store")
+    if _B20_UFS_AS_OWNER_RES[2].search(active) and (
+        "beam_de_free_g" in active and "!use_frame_store" in active
+    ):
+        hits.append("visual_geom_apply<-beam_de_free_g(ufs)")
+    if _B20_UFS_AS_OWNER_RES[3].search(active):
+        hits.append("visual_geom_apply=!use_frame_store")
+    # Also catch: hold requires ufs without naming b20_visual_hold
+    if re.search(
+        r"\b(?:hold|visual_hold|geom_hold)\b[^=\n]{0,60}=\s*[^\n]*\buse_frame_store\b",
+        active,
+    ) and "force bars" not in active.lower():
+        if "use_frame_store_as_owner" not in hits:
+            hits.append("hold*=use_frame_store")
+    return hits
+
+
+def check_b20_product_use_frame_store_tie(
+    root: Path,
+) -> tuple[list[str], list[str]]:
+    """rd-duck: product ufs=0 + B20 ownership-on-ufs → free-run; ufs=1 TB ≠ product.
+
+    Elaboration of the top/product tie is mandatory. Delayed pending_ready hold must
+    be proven under the product tie (Force bars=No / 1'b0), not under isolated
+    present_core tests that drive use_frame_store=1.
+    """
+    msgs: list[str] = ["LEG0_B20_PRODUCT_UFS_TIE_EXECUTED begin"]
+    errors: list[str] = []
+    plex_path = root / "fpga" / "Plex_MiSTer" / "Plex.sv"
+    core_path = root / "fpga" / "Plex_MiSTer" / "rtl" / "present_core.sv"
+    plex_txt = product_active_sv(_read(plex_path) or "")
+    core_txt = _read(core_path) or ""
+
+    expr, detail = _parse_product_use_frame_store_tie(plex_txt)
+    msgs.append(f"LEG0_B20_PRODUCT_UFS_TIE detail={detail}")
+    if expr is None:
+        errors.append(
+            "B20_PRODUCT_UFS_TIE_MISSING: Plex.sv present_core instance has no "
+            ".use_frame_store(...) connection — cannot elaborate product tie "
+            "(rd-duck: ownership vs force-bars pin)."
+        )
+        return msgs, errors
+
+    zero = _ufs_tie_is_constant_zero(expr)
+    msgs.append(
+        f"LEG0_B20_PRODUCT_UFS_TIE expr={expr!r} constant_zero={int(zero)} "
+        "(1'b0 = Force bars=No historical default; NOT store ownership)"
+    )
+
+    owner_hits = _core_uses_ufs_as_b20_ownership(core_txt)
+    msgs.append(
+        f"LEG0_B20_UFS_AS_OWNERSHIP hits={owner_hits if owner_hits else 'none'}"
+    )
+
+    # Port comment still documents force-bars semantics — keep that honest.
+    if "OSD force bars" not in core_txt and "force bars" not in core_txt.lower():
+        msgs.append(
+            "LEG0_B20_UFS_PORT_COMMENT_MISSING present_core lacks force-bars "
+            "comment on use_frame_store (informational)"
+        )
+
+    if zero and owner_hits:
+        errors.append(
+            "B20_PRODUCT_UFS_FORCE_BARS_AS_OWNERSHIP: product ties "
+            f".use_frame_store({expr}) (Force bars=No) but present_core gates B20 "
+            f"visual hold/free-run on use_frame_store ({', '.join(owner_hits)}). "
+            "Under the product tie beam_de_free_g=1 and b20_visual_hold=0 always → "
+            "visual apply free-runs; delayed pending_ready hold is dead in product. "
+            "Isolated present_core tests with use_frame_store=1 are FALSE EVIDENCE "
+            "(rd-duck 2026-08-03). Ownership must be geom_live/store swap — not O[9]."
+        )
+
+    # B20_H must prove hold under product ufs=0 when hierarchy H is claimed.
+    scenarios, _ = load_b20_hier_manifest(root)
+    h_specs = [
+        s
+        for s in scenarios
+        if "DELAYED_PENDING_READY" in str(s.get("token", ""))
+        or str(s.get("token", "")).endswith("_H_DELAYED_PENDING_READY")
+        or str(s.get("token", "")) == "B20_HIER_H_DELAYED_PENDING_READY"
+    ]
+    product_ufs0_reqs = (
+        "measured_product_use_frame_store_tie=0",
+        "measured_b20_hold_under_product_ufs0=1",
+        "measured_isolated_ufs1_false_evidence=1",
+    )
+    if not h_specs:
+        errors.append(
+            "B20_HIER_H_PRODUCT_UFS0_HOLD_UNPROVEN: no B20_HIER_H delayed "
+            "pending_ready scenario in manifest — cannot prove hold under product "
+            "use_frame_store tie."
+        )
+    else:
+        for hs in h_specs:
+            rel = str(hs.get("script") or "")
+            req = [str(x) for x in (hs.get("require_stdout") or [])]
+            script_path = root / rel if rel else None
+            script_exists = bool(script_path and script_path.is_file())
+            script_txt = _read(script_path) if script_exists else ""
+            missing_req = [r for r in product_ufs0_reqs if r not in req]
+            # Script must not treat use_frame_store=1 as the only green path.
+            ufs1_only = bool(
+                re.search(
+                    r"use_frame_store\s*=\s*1'b1|use_frame_store\s*\(\s*1'b1\s*\)",
+                    script_txt,
+                )
+            ) and not bool(
+                re.search(
+                    r"use_frame_store\s*=\s*1'b0|use_frame_store\s*\(\s*1'b0\s*\)|"
+                    r"product_use_frame_store_tie|PRODUCT_UFS|"
+                    r"measured_product_use_frame_store_tie|"
+                    r"measured_b20_hold_under_product_ufs0",
+                    script_txt,
+                )
+            )
+            if missing_req:
+                errors.append(
+                    "B20_HIER_H_PRODUCT_UFS0_HOLD_UNPROVEN: B20_H scenario "
+                    f"{hs.get('token')} script={rel} require_stdout missing "
+                    f"{missing_req}. Delayed pending_ready must be proven under "
+                    "product .use_frame_store(1'b0); isolated ufs=1 TBs are false "
+                    "evidence (rd-duck)."
+                )
+            if not script_exists:
+                errors.append(
+                    "B20_HIER_H_PRODUCT_UFS0_HOLD_UNPROVEN: missing hierarchy H "
+                    f"script {rel} — cannot prove delayed pending_ready hold under "
+                    "product use_frame_store=0 (Force bars=No). Soft-skip ≠ PASS."
+                )
+            elif ufs1_only:
+                errors.append(
+                    "B20_HIER_H_PRODUCT_UFS0_HOLD_UNPROVEN: hierarchy H script "
+                    f"{rel} drives use_frame_store=1 without product ufs=0 path — "
+                    "false evidence under product Force-bars=No tie."
+                )
+            if not missing_req and script_exists and not ufs1_only:
+                msgs.append(
+                    f"LEG0_B20_H_PRODUCT_UFS0_REQ_OK token={hs.get('token')} "
+                    f"script={rel} (exec still must print product-ufs0 measured_*)"
+                )
+
+    # When product is zero and core has no ownership-on-ufs, still OK only if H
+    # requirements are present (above). If hold exists without ufs gate, good.
+    if zero and not owner_hits:
+        # Require that if B20 two-phase exists, it is not free-run via missing hold.
+        active_core = product_active_sv(core_txt)
+        has_two_phase = bool(
+            re.search(r"\bvisual_geom_apply\b|\bb20_visual_hold\b", active_core)
+        )
+        if has_two_phase and re.search(
+            r"assign\s+visual_geom_apply\s*=\s*1'b1", active_core
+        ):
+            errors.append(
+                "B20_PRODUCT_UFS_FORCE_BARS_AS_OWNERSHIP: visual_geom_apply tied "
+                "1'b1 (unconditional free-run) while product Force-bars=No — "
+                "delayed pending_ready cannot hold app geom (rd-duck)."
+            )
+        elif not has_two_phase:
+            msgs.append(
+                "LEG0_B20_PRODUCT_UFS_TIE_OK constant_zero=1 ownership_on_ufs=0 "
+                "(two-phase hold not yet in core — H exec still required)"
+            )
+        else:
+            msgs.append(
+                "LEG0_B20_PRODUCT_UFS_TIE_OK constant_zero=1 ownership_on_ufs=0 "
+                "two_phase_present=1"
+            )
+
+    return msgs, errors
+
 
 # ---------------------------------------------------------------------------
 # B24 — PLXG q5 bit34 fps_1001 ABI merge-loss (rd-duck 2026-08-03)
@@ -3474,7 +3719,9 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
         "(scripts/run_verilator.sh→oss-cad-suite; missing=HARD FAIL not soft-skip); "
         "EXECUTABLE=B20_hier_manifest,B24_q5_fps_1001,B25_plxc_dual_map,"
         "B28_q5_atomic_poller,B29_direct_part_vf,B30_plxc_cdc_stopped_rd,"
-        "leg_unit_make_unit,leg_rtl_lint,leg2_elab,leg3_true_de "
+        "leg_unit_make_unit,leg_rtl_lint,leg2_elab,leg3_true_de; "
+        "B20_PRODUCT_UFS_TIE=elaborate Plex.sv .use_frame_store(1'b0) + reject "
+        "ownership-on-ufs (w-clock free-run) + H require product-ufs0 hold measured_* "
         "(named scripts + CASE EXECUTED + rc0; fault twin rc!=0); "
         "OWNERSHIP=B23_single_owner_table; "
         "PRECONDITION_UNIT=full_make_unit_GREEN_true_rc "
@@ -4874,6 +5121,13 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
     else:
         msgs.append("LEG0_B20_ORPHAN_MODULES n=0")
 
+    # --- B20 product use_frame_store tie (rd-duck: force bars ≠ ownership) ---
+    # Product .use_frame_store(1'b0); w-clock B20 hold on ufs → free-run in product.
+    # Isolated present_core ufs=1 TBs are false evidence.
+    ufs_msgs, ufs_errs = check_b20_product_use_frame_store_tie(ROOT)
+    msgs.extend(ufs_msgs)
+    errors.extend(ufs_errs)
+
     # --- B20 full-hierarchy scenario tests (rd-duck 2026-08-03 hollow audit) ---
     # Prior gate only regex-scanned test *text* and accepted comment bait (mutation
     # hier_body cleared all six tokens without running anything). That violates the
@@ -4885,6 +5139,7 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
     #   3. Require CASE <tok> EXECUTED + PASS <tok> in stdout + true rc=0.
     #   4. Soft-skip rc=77 is NOT a pass. Missing script is NOT a pass.
     #   5. Comment-only / non-executable bait must not clear the blocker.
+    #   6. B20_H must prove hold under product ufs=0 (not isolated ufs=1).
     b20_hier_rc, b20_hier_msgs, b20_hier_errs = run_b20_hierarchy_exec_gate(ROOT)
     msgs.extend(b20_hier_msgs)
     errors.extend(b20_hier_errs)
@@ -6520,6 +6775,58 @@ def _run_mutation_matrix() -> tuple[list[str], list[dict[str, str]]]:
         # Live-open rows only fail matrix if token is in LIVE_OPEN and missing
         if tok in LIVE_OPEN_BLOCKER_TOKENS and not red:
             fails.append(f"{tok}: live-open matrix row not RED")
+
+    # --- rd-duck: product ufs=0 + B20 ownership-on-ufs free-run ---
+    core_p = ROOT / "fpga" / "Plex_MiSTer" / "rtl" / "present_core.sv"
+    plex_p = ROOT / "fpga" / "Plex_MiSTer" / "Plex.sv"
+    if core_p.is_file() and plex_p.is_file():
+        old_c = core_p.read_text()
+        # Inject w-clock anti-pattern: hold/free gated on force-bars pin.
+        inject_c = old_c
+        if "b20_visual_hold" not in old_c:
+            inject_c = old_c.replace(
+                "input  wire        use_frame_store, // OSD force bars when 1",
+                "input  wire        use_frame_store, // OSD force bars when 1\n"
+                "\t// fitgate MATRIX inject: ufs-as-ownership (rd-duck freerun)\n"
+                "\twire beam_de_free_g = !use_frame_store;\n"
+                "\twire b20_visual_hold = use_frame_store && geom_live_valid;\n"
+                "\tassign visual_geom_apply = beam_de_free_g || 1'b0;\n",
+                1,
+            )
+            if inject_c == old_c:
+                # Port comment variant
+                inject_c = (
+                    old_c
+                    + "\n// fitgate MATRIX inject B20 ufs ownership\n"
+                    + "wire beam_de_free_g = !use_frame_store;\n"
+                    + "wire b20_visual_hold = use_frame_store && 1'b1;\n"
+                    + "assign visual_geom_apply = beam_de_free_g;\n"
+                )
+        rest_c = _with_file_backup(core_p, inject_c)
+        try:
+            # Ensure product tie is 1'b0 (should already be).
+            rc, msgs = leg0_arch_blockers()
+            _row(
+                "B20_PRODUCT_UFS_FORCE_BARS_AS_OWNERSHIP",
+                "present_core B20 hold/free on use_frame_store; product ufs=0",
+                "B20_PRODUCT_UFS_FORCE_BARS_AS_OWNERSHIP",
+                rc,
+                msgs,
+            )
+        finally:
+            rest_c()
+
+    # Live-open: product ufs0 hold unproven (H require tokens / missing script)
+    rc, msgs = leg0_arch_blockers()
+    _row(
+        "B20_HIER_H_PRODUCT_UFS0_HOLD_UNPROVEN",
+        "live hollow H missing product-ufs0 hold proof",
+        "B20_HIER_H_PRODUCT_UFS0_HOLD_UNPROVEN",
+        rc,
+        msgs,
+        extra_ok=any("B20_HIER_H_PRODUCT_UFS0" in m or "PRODUCT_UFS" in m for m in msgs)
+        or any("B20_HIER_H_DELAYED" in m for m in msgs),
+    )
 
     # --- Parent 2026-08-03: unit RED / soft-skip launder / subset≠elab ---
     # Fast pure scoring (no full make unit in matrix); overrides exercise run path.
