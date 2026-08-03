@@ -1,10 +1,10 @@
 {
-  "schema": 3,
+  "schema": 4,
   "name": "misterplex-ascal-native-sta-prereg",
-  "description": "STA cuts for ascal-native beam @20 MHz. Fixed 960x540@30 (564) and film V_TOTAL=705 both required. Runtime H/V geom ports default OFF; when ON, exact Fmax UNKNOWN until fit \u2014 do not invent BUILD_OK.",
+  "description": "STA cuts for ascal-native beam @20 MHz. Fixed max-tier 960x540@30 (V=564) and film V_TOTAL=705 both required. B13 runtime H/V geom ON (content_w/h \u2192 DE); exact Fmax UNKNOWN until fit \u2014 do not invent BUILD_OK.",
   "hard_rule": "negative_slack_equals_hard_fail",
   "prediction_preregistered_before_fit": {
-    "timestamp_note": "updated 2026-08-03 w-clock; still no fit by this lane",
+    "timestamp_note": "updated 2026-08-03 w-clock collision#5 E2E; still no fit by this lane",
     "fixed_beam_564": {
       "expect_pass_at_20mhz": true,
       "confidence": "medium",
@@ -18,9 +18,10 @@
     },
     "runtime_h_v_geom_ON": {
       "expect_pass_at_20mhz": "UNKNOWN_UNTIL_STA",
+      "status": "B13_ON_product_path",
       "confidence": "low-medium structural",
-      "structural_note": "Replaces constant H_DE/H_TOTAL compares with registered compares (same class as existing vtot_act path). Expect +0..1 LUT level on blanking cone \u2014 usually not Fmax-critical vs decode/stub history.",
-      "stub_margin_warning": "stub-in Fmax 23.46 MHz (~17% over 20). If runtime geom lengthens a shared critical path, 20 MHz can FAIL. Nostub 32.59 has more room.",
+      "structural_note": "Registered compares same class as vtot_act. Expect +0..1 LUT on blanking cone. stub Fmax 23.46 leaves ~17% at 20 MHz \u2014 if runtime lengthens shared critical path, FAIL.",
+      "stub_margin_warning": "23.46 MHz stub-in; 25 MHz blocked. Nostub 32.59 more room.",
       "miss_policy": "if fmax_clk_sys < 20.0 or setup slack < 0 \u2192 HARD FAIL; publish miss"
     },
     "explicit_unknown": "exact Fmax/worst path \u2014 unknown until Plex.sta.rpt Fmax Summary",
@@ -45,7 +46,8 @@
       "v_total": 564,
       "true_de": 1,
       "v_total_film_companion": 705,
-      "runtime_geom_default": "OFF"
+      "runtime_geom_default": "ON_B13",
+      "h_total_rationale": "fixed 1182 \u2192 f_h\u224816.920 kHz all DE; blanking absorbs W span (see H_TOTAL_1182_LINE_RATE.md)"
     },
     "pass": {
       "fmax_clk_sys_mhz_min": 20.0,
@@ -92,5 +94,45 @@
       ".agent-work/w-clock/FABRIC_CLOCK_HEADROOM_PRESENT_AND_DECODE.md",
       "assets/fabric_clock_headroom_contract.json"
     ]
+  },
+  "v705_film_companion": {
+    "v_total": 705,
+    "h_total": 1182,
+    "clk_sys_mhz": 20.0,
+    "fps_hz_arithmetic": 24.000672018816527,
+    "sim_exact_de": "PROVEN present_beam_960_oracle V705_960x540",
+    "timing_closure": "NOT_PROVEN",
+    "prediction_preregistered_before_fit": {
+      "expect_pass_at_20mhz": true,
+      "confidence": "medium",
+      "basis": "V_TOTAL is data in existing vtot_act latch/compare; same path class as 564",
+      "explicit_unknown": "exact Fmax/slack until Plex.sta.rpt Fmax Summary on BEAM_960+runtime netlist",
+      "miss_policy": "fmax_clk_sys < 20.0 OR any setup slack < 0 \u2192 HARD FAIL; publish miss; no BUILD_OK"
+    },
+    "recorded_by": "w-clock",
+    "recorded_note": "parent 2026-08-03: sim exact OK \u2260 closure; prereg before fit for publishable miss",
+    "sim_exact": "PROVEN oracle",
+    "sta_closure": "UNKNOWN_UNTIL_FIT",
+    "prereg_expect_pass_20mhz": true,
+    "confidence": "medium",
+    "basis": "data value in existing vtot_act path, not new structure"
+  },
+  "b13_runtime_de": {
+    "use_rt_geom": true,
+    "h_total_fixed": 1182,
+    "prediction_preregistered_before_fit": {
+      "expect_pass_at_20mhz": true,
+      "confidence": "low-medium",
+      "stub_fmax_mhz": 23.46,
+      "stub_margin_pct": 17.3,
+      "miss_policy": "fmax < 20 \u2192 wall; publish miss"
+    }
+  },
+  "collision5_e2e": {
+    "mux_owner": "w-mem",
+    "w_clock_edits_mux": false,
+    "product_force": "force_native_960 = ~plxg_live under PRESENT_BEAM_960",
+    "green": "tests/unit/test_present_b13_mux_e2e.sh product mux\u2192beam 624/416/320/960 exact + idle 960",
+    "red": "FAULT_B8_FORCE_ALWAYS pins 960 over live PLXG 624"
   }
 }

@@ -47,11 +47,14 @@ grep -q "fps_milli=30000" "$OUT/run.log" || { echo "FAIL fps"; exit 1; }
 grep -q "OK FIXED_960x540 exact" "$OUT/run.log" || { echo "FAIL fixed"; exit 1; }
 grep -q "OK V705_960x540 exact" "$OUT/run.log" || { echo "FAIL v705"; exit 1; }
 grep -q "OK RTGEOM_320x240 exact" "$OUT/run.log" || { echo "FAIL 320"; exit 1; }
+grep -q "OK RTGEOM_416x234 exact" "$OUT/run.log" || { echo "FAIL 416"; exit 1; }
+grep -q "line_acc=416..416" "$OUT/run.log" || { echo "FAIL line 416"; exit 1; }
 grep -q "OK RTGEOM_624x480 exact" "$OUT/run.log" || { echo "FAIL 624"; exit 1; }
 grep -q "OK RTGEOM_640x360 exact" "$OUT/run.log" || { echo "FAIL 640"; exit 1; }
 grep -q "OK RTGEOM_960x540 exact" "$OUT/run.log" || { echo "FAIL 960"; exit 1; }
 grep -q "line_acc=624..624" "$OUT/run.log" || { echo "FAIL line 624"; exit 1; }
 grep -q "OK RED RTGEOM_320x240 caught" "$OUT/run.log" || { echo "FAIL red 320"; exit 1; }
+grep -q "OK RED RTGEOM_416x234 caught" "$OUT/run.log" || { echo "FAIL red 416"; exit 1; }
 grep -q "OK RED RTGEOM_624x480 caught" "$OUT/run.log" || { echo "FAIL red 624"; exit 1; }
 grep -q "OK RED RTGEOM_640x360 caught" "$OUT/run.log" || { echo "FAIL red 640"; exit 1; }
 grep -q "OK RED RTGEOM_960x540 caught" "$OUT/run.log" || { echo "FAIL red 960"; exit 1; }

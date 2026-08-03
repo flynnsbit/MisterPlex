@@ -292,6 +292,7 @@ module present_beam_960_oracle_tb;
 		// ===== B13 runtime ladder (product totals 1182×564 @30) =====
 		// Parent library: 320x240 SD, 624x480 dominant, 640x360 motion, 960x540 max
 		run_rtgeom(320, 240, 1182, 564, 2, 1'b1);
+		run_rtgeom(416, 234, 1182, 564, 2, 1'b1);
 		run_rtgeom(624, 480, 1182, 564, 2, 1'b1);
 		run_rtgeom(640, 360, 1182, 564, 2, 1'b1);
 		run_rtgeom(960, 540, 1182, 564, 2, 1'b1);
@@ -300,6 +301,7 @@ module present_beam_960_oracle_tb;
 		fault_drop_one = 1'b1;
 		$display("RED_TWIN fault_drop_one per geometry");
 		run_rtgeom(320, 240, 1182, 564, 2, 1'b0);
+		run_rtgeom(416, 234, 1182, 564, 2, 1'b0);
 		run_rtgeom(624, 480, 1182, 564, 2, 1'b0);
 		run_rtgeom(640, 360, 1182, 564, 2, 1'b0);
 		run_rtgeom(960, 540, 1182, 564, 2, 1'b0);

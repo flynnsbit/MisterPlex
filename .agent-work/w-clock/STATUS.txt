@@ -1,21 +1,10 @@
-w-clock STATUS 2026-08-03 B13
-head: ac4932ea
-branch: w-clock-bump
-
-B13 DONE:
-- present_core: content_w/h ports; use_rt_geom=1; use_rt_vtotal=1
-- H_DE/V_ACT from content (0→960x540); H_TOTAL=1182; V_TOTAL=564|705 via fps
-- Plex.sv wires present_content_w/h (ladder until PLXG mux merge)
-- Oracle exact: 320/624/640/960 + red per-geom drop-one
-- STA V705: sim exact; Fmax UNKNOWN until sta.rpt
-- Overclock: ceiling 20 MHz; 25 blocked on stub 23.46; runtime Fmax UNKNOWN (~17% stub margin)
-
-COORD w-mem: must stop force_native_960 when PLXG live (mux still forces 960 in their tree).
-
-TESTS true rc=0:
-  test_present_beam_960_oracle.sh
-  test_present_beam_960_elab.sh
-  test_present_beam_960_arith.sh
-
-NO fit. NO device. PLL 20/90 unapplied.
-Docs: .agent-work/w-clock/B13_RUNTIME_TRUE_DE.md
+w-clock STATUS
+tip: c945c1f6
+B13: ON (ac4932ea) parent-verified exact ladder
+Collision#5 E2E: GREEN product mux→beam 624/416/320/960 + idle 960; RED FAULT_B8_FORCE_ALWAYS
+mux: w-mem owned force=~plxg_live; w-clock did NOT edit force policy (copy for compile/E2E)
+416x234: oracle + E2E exact
+H_TOTAL=1182: f_h≈16.920 kHz all DE (test_beam_htotal_line_rate rc=0)
+V705 STA: prereg medium expect@20; sim exact; Fmax UNKNOWN until fit
+Overclock: PLL 20/90 unapplied; stub Fmax 23.46 → no 25 ship; ceiling 20 until BEAM_960 STA
+NO Quartus fit. NO device.

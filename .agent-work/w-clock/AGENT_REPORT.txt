@@ -1,34 +1,21 @@
-w-clock AGENT_REPORT — fit survival + 720p60
-============================================
-Branch: w-clock-bump
-Fit: NOT run | Device: NOT touched | Macro default OFF
+# w-clock agent report — collision #5 follow-up
 
-1) TIMING / CDC (constrained, not estimated slack)
-- Same-clock bring-up: clk_pix=clk_sys → no new related-edge; risk is clk_sys Fmax
-  of wider YUV/beam — STA slack UNKNOWN until integration Plex.sta.rpt
-- Dual-clock future: only async_fifo gray + mem→rd_data_r false_path (Plex.sdc)
-- Gate: make present-720p-fit-contract (SDC cut must stay; red if stripped)
-- Parent must run: make post-fit-timing STA_RPT=... (neg slack hard fail)
+## Delivered this turn
+1. **E2E mux→beam** `tests/unit/test_present_b13_mux_e2e.sh` true rc=0
+   - GREEN product `plex_present_geom_mux` + beam: PLXG 624×480, **416×234**, 320×240, 960×540
+     exact whole-frame pix + line_acc=W..W; idle !live → 960 fallback
+   - RED `-DFAULT_B8_FORCE_ALWAYS`: pins 960 over live 624 (collision #5 regression class)
+2. **416×234** in oracle green+red (measured PMS aligned delivery)
+3. **H_TOTAL=1182 line-rate arithmetic** gate + doc — f_h constant 16.920 kHz
+4. **STA prereg schema4** V705 + B13 ON + overclock honesty
+5. Did **not** edit mux force logic (w-mem SoT). Tree carries mux copy for E2E/qip.
 
-2) ASSEMBLED DATAPATH vs w-scaler
-- Glass H: w-clock beam (+PPC). Store map: scaler window or identity @1280
-- 1280%8=0, last DE groups PPC2/4 stay in Y qword 159 — no active straddle
-- 1650%4=2: beam short step proven in TB ppc4 cycles=309750/frame
-- Merge hazard: scaler must not keep H_DE=529 hc under multi-pixel use_ext
-- Doc: H_OWNERSHIP_W_SCALER.md
+## Counts (evidence)
+624×480×2=599040 line 624..624
+416×234×2=194688 line 416..416
+320×240×2=153600; 960×540×2=1036800
 
-3) 720p60 @4ppc
-- CEA 74.25/4 = 18.5625 MHz fabric OK vs ship 20; ppc2 37.125 FAIL nostub
-- M10K: PPC does not grow line BRAM; dual-port B free; 4x YUV is ALM/Fmax
-- DDR YUV420 read 82.94 MB/s vs 720 peak (~11.5%) — paper OK; arbiter unmeasured
-- Same-clock still cannot emit 74.25 Mpix/s — need clk_pix PLL for real 60 Hz
-- Doc: P720P60_4PPC_PLAN.md
-
-PARENT DEVICE VERIFY
-  QSF: PRESENT_MULTI_PIXEL + PRESENT_PX_PER_CLK=2 (+ scaler 1280, has_frame)
-  DEPLOY_LOAD=menu ./scripts/deploy_plex_core.sh
-  scripts/hdmi_capture_idle.sh <png>
-  make post-fit-timing STA_RPT=<Plex.sta.rpt>
-  make post-fit-hierarchy FIT_RPT=<Plex.fit.rpt>  # u_mp_timing/beam/npx_path
-
-TESTS true rc=0: present_720p_fit_contract, beam ppc2+4, npx_cdc_soak, mp_elab, rollcall
+## Outstanding (parent/fit)
+- STA Fmax for BEAM_960+B13+V705 — UNKNOWN until exclusive fit
+- Plex.sv still ladder-wires content_w/h until full PLXG merge (E2E proves mux path)
+- PLL unapplied 20/90; 25 MHz blocked on stub 23.46
