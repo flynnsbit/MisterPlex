@@ -151,8 +151,9 @@ REMOTE
 boot_hook_line_is_misterplex() {
   local line="${1:-}"
   case "$line" in
-    *misterplexd_supervise.sh*) return 0 ;;
+    *misterplexd_supervise.sh*|*plexctl_supervise.sh*) return 0 ;;
     */misterplex/bin/misterplexd*|*/misterplex_v2/bin/misterplexd*) return 0 ;;
+    *misterplex/bin/misterplexd*|*misterplex_v2/bin/misterplexd*) return 0 ;;
     *misterplexd\ *--conf*|*misterplexd\ --name*) return 0 ;;
     *) return 1 ;;
   esac
@@ -304,8 +305,10 @@ boot_hook_render_inert_decoy() {
 }
 
 boot_hook_idempotence_patterns() {
+  # Must cover v1 + v2 + plexctl_supervise so a dual-line boot cannot survive rewrite.
   cat <<'EOF'
 misterplexd_supervise\.sh
+plexctl_supervise\.sh
 /misterplex/bin/misterplexd
 /misterplex_v2/bin/misterplexd
 misterplex/bin/misterplexd

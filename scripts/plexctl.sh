@@ -154,125 +154,32 @@ status() {
   done
 }
 
-# Writes the supervisor that actually holds the lock for its whole lifetime.
-write_supervisor() {
+# Supervisor SoT is scripts/misterplexd_supervise.sh, installed by
+# deploy_misterplexd.sh to $root/bin/misterplexd_supervise.sh. plexctl must NOT
+# embed a second divergent copy (device drift class: md5 59286a1d in no commit).
+require_durable_supervisor() {
   root="$1"
-  cat > /tmp/plexctl_supervise.sh <<EOF
-#!/bin/sh
-set -u
-ROOT=$root
-BIN=\$ROOT/bin/misterplexd
-CONF=\$ROOT/misterplex.conf
-LOG=\$ROOT/misterplexd.log
-SUPLOG=\$ROOT/misterplexd_supervise.log
-backoff=2
-ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
-# kill -9 / crash with no handler cannot run daemon atexit. Before every spawn
-# and after every exit, SIGCONT any stopped product Main so F12/OSD return.
-# argv0 must be EXACTLY /media/fat/MiSTer (first cmdline token) — no substring.
-resume_stopped_main() {
-  for d in /proc/[0-9]*; do
-    [ -r "\$d/cmdline" ] || continue
-    a0=\$(tr '\\0' '\\n' < "\$d/cmdline" 2>/dev/null | head -n1) || continue
-    [ -n "\$a0" ] || continue
-    [ "\$a0" = "/media/fat/MiSTer" ] || continue
-    p=\${d#/proc/}
-    st=\$(tr ')' '\\n' < "\$d/stat" 2>/dev/null | tail -n 1 | awk '{print \$1}')
-    if [ "\$st" = "T" ]; then
-      kill -CONT "\$p" 2>/dev/null || true
-      echo "\$(ts) RESUME_MAIN pid=\$p (was T)" >>"\$SUPLOG"
-    fi
-  done
-}
-echo "\$(ts) PLEXCTL_SUPERVISE_START root=\$ROOT" >>"\$SUPLOG"
-trap 'kill \$child 2>/dev/null || true; resume_stopped_main; exit 0' TERM INT
-# After a sustained healthy run, forget prior crash-loop backoff. 120s is long
-# enough that a 1s crash-loop still doubles backoff, short enough that a late
-# intermittent SIGSEGV does not leave the daily driver dark for 64s hours later.
-HEALTHY_SECS=120
-while true; do
-  resume_stopped_main
-  [ -x "\$BIN" ] || { echo "\$(ts) MISSING \$BIN" >>"\$SUPLOG"; sleep 5; continue; }
-  echo "\$(ts) SPAWN \$BIN" >>"\$SUPLOG"
-  spawn_ts=\$(date +%s)
-  "\$BIN" --name $NAME --id $ID --port $PORT --conf "\$CONF" >>"\$LOG" 2>&1 &
-  child=\$!
-  wait "\$child"; st=\$?
-  now_ts=\$(date +%s)
-  ran_s=\$((now_ts - spawn_ts))
-  # Shell wait status is NOT full waitpid WIF*. Busybox/bash convention used here:
-  #   st < 128  → WIFEXITED-like, exit_status=st  (handled SIGTERM → often st=0)
-  #   st >= 128 → WIFSIGNALED-like, signal=(st-128)  (unhandled fatal / default action)
-  # SIGKILL=9 cannot run daemon EXIT_REASON; look for signal=9 + stale misterplexd.death.
-  if [ "\$st" -ge 128 ]; then
-    sig=\$((st - 128))
-    how="WIFSIGNALED_approx signal=\$sig"
-  else
-    how="WIFEXITED_approx exit_status=\$st"
-  fi
-  death_snap="(absent)"
-  [ -f "\$ROOT/misterplexd.death" ] && death_snap=\$(tr '\\n' ' ' <"\$ROOT/misterplexd.death" | sed 's/[[:space:]]\\+/ /g')
-  last_snap="(absent)"
-  [ -f "\$ROOT/misterplexd.last" ] && last_snap=\$(tr '\\n' ' ' <"\$ROOT/misterplexd.last" | sed 's/[[:space:]]\\+/ /g')
-  # Snapshot sender AT DETECTION TIME (not later). si_pid alone is often /bin/sh
-  # (kill is a shell builtin) and may be recycled before a human reads the file.
-  # Handler already wrote si_code (SI_USER vs SI_KERNEL) async-signal-safely.
-  sender_cmd="(gone)"
-  sender_ppid="?"
-  sender_chain="?"
-  si_pid=\$(printf '%s' "\$death_snap" | sed -n 's/.*si_pid=\([-0-9][0-9]*\).*/\1/p' | head -n1)
-  si_code=\$(printf '%s' "\$death_snap" | sed -n 's/.*si_code=\([-0-9][0-9]*\).*/\1/p' | head -n1)
-  si_code_name=\$(printf '%s' "\$death_snap" | sed -n 's/.*si_code_name=\([^ ]*\).*/\1/p' | head -n1)
-  if [ -n "\$si_pid" ] && [ "\$si_pid" -gt 0 ] 2>/dev/null && [ -r "/proc/\$si_pid/cmdline" ]; then
-    sender_cmd=\$(tr '\\0' ' ' <"/proc/\$si_pid/cmdline" 2>/dev/null | sed 's/[[:space:]]\\+/ /g')
-    sender_ppid=\$(awk '{print \$4}' "/proc/\$si_pid/stat" 2>/dev/null || echo '?')
-    chain="\$si_pid"
-    walk=\$sender_ppid
-    i=0
-    while [ -n "\$walk" ] && [ "\$walk" != "0" ] && [ "\$walk" != "1" ] && [ "\$i" -lt 6 ]; do
-      if [ -r "/proc/\$walk/cmdline" ]; then
-        c=\$(tr '\\0' ' ' <"/proc/\$walk/cmdline" 2>/dev/null | sed 's/[[:space:]]\\+/ /g' | cut -c1-80)
-        chain="\$chain <- \$walk:\$c"
-        walk=\$(awk '{print \$4}' "/proc/\$walk/stat" 2>/dev/null || echo 0)
-      else
-        chain="\$chain <- \$walk:(gone)"
-        break
-      fi
-      i=\$((i + 1))
-    done
-    sender_chain="\$chain"
-  elif [ -n "\$si_pid" ]; then
-    sender_cmd="(pid_gone si_pid=\$si_pid)"
-  fi
-  if [ "\$ran_s" -ge "\$HEALTHY_SECS" ]; then
-    if [ "\$backoff" -ne 2 ]; then
-      echo "\$(ts) BACKOFF_RESET after healthy run_s=\$ran_s (was \${backoff}s → 2s)" >>"\$SUPLOG"
-    fi
-    backoff=2
-  fi
-  echo "\$(ts) SUPERVISE_EXIT pid=\$child wait_st=\$st \$how run_s=\$ran_s death=[\$death_snap] last=[\$last_snap] si_code=\${si_code:-?} si_code_name=\${si_code_name:-?} si_pid=\${si_pid:-?} sender_cmd=[\$sender_cmd] sender_ppid=\$sender_ppid sender_chain=[\$sender_chain] — respawn in \${backoff}s" >>"\$SUPLOG"
-  resume_stopped_main
-  sleep "\$backoff"
-  # Grow backoff only after short (unhealthy) runs — not after a reset-worthy life.
-  if [ "\$ran_s" -lt "\$HEALTHY_SECS" ]; then
-    [ "\$backoff" -lt 60 ] && backoff=\$((backoff * 2))
-  fi
-done
-EOF
-  chmod +x /tmp/plexctl_supervise.sh
+  sup="$root/bin/misterplexd_supervise.sh"
+  [ -x "$sup" ] || {
+    echo "ERROR missing durable supervisor at $sup" >&2
+    echo "     install via scripts/deploy_misterplexd.sh (ships repo SoT + verifies md5)" >&2
+    return 2
+  }
+  printf '%s' "$sup"
 }
 
 start_bundle() {
   root="$1"
   [ -x "$root/bin/misterplexd" ] || { echo "ERROR no daemon at $root/bin/misterplexd"; exit 2; }
   [ -f "$root/misterplex.conf" ] || { echo "ERROR no conf at $root/misterplex.conf"; exit 2; }
+  sup=$(require_durable_supervisor "$root") || exit 2
 
   stop_all || exit 9
-  write_supervisor "$root"
 
-  # flock -n: if another supervisor already holds it, fail rather than duplicate.
-  # The lock is held for the supervisor's entire lifetime via fd 9.
-  nohup flock -n "$LOCK" /tmp/plexctl_supervise.sh >/dev/null 2>&1 &
+  # Durable supervisor self-flocks /tmp/misterplexd_supervise.lock (fd 9).
+  # Do not wrap a second flock on $LOCK (/tmp/misterplexd.lock) — that path is
+  # historical and does not coordinate with cold-boot. Never rewrite /tmp.
+  nohup "$sup" >/dev/null 2>&1 &
   sleep 3
 
   n=$(pids_matching "$DAEMON" | wc -w)

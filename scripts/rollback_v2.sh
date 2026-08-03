@@ -185,6 +185,17 @@ classify_hash() {
       return 2
       ;;
   esac
+  # V2_MD5 capture class: refuse non-32-hex BEFORE equality (never fuzzy-trim
+  # `…81848set +e` glue into a green). Shape fail is rc=3 malformed_capture.
+  if ! printf '%s' "$got" | grep -Eq '^[0-9a-fA-F]{32}$'; then
+    echo "FAIL $label reason=malformed_capture got='$got' want=exactly_32_hex"
+    echo "FAIL $label detail=never_fuzzy_trim_set_+e_glue"
+    return 3
+  fi
+  if [ -n "$want" ] && ! printf '%s' "$want" | grep -Eq '^[0-9a-fA-F]{8,32}$'; then
+    echo "FAIL $label reason=malformed_want want='$want'"
+    return 3
+  fi
   if [ "$got" = "$want" ] || { [ -n "$alt" ] && [ "$got" = "$alt" ]; }; then
     echo "OK $label $got"
     return 0

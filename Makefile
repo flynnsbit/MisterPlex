@@ -88,6 +88,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	bash $(ROOT)/tests/unit/test_soak_continuity_assert.sh
 	bash $(ROOT)/tests/unit/test_soak_ledger_report.sh
 	bash $(ROOT)/tests/unit/test_supervise_death_snap_static.sh
+	bash $(ROOT)/tests/unit/test_supervisor_policy.sh
 	bash $(ROOT)/tests/unit/test_score_mister_contention.sh
 	bash $(ROOT)/tests/unit/test_media_fps_precision.sh
 	$(ROOT)/build/test_status_telemetry

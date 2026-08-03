@@ -48,6 +48,7 @@ require_deploy_deps() {
   if [[ "${DEPLOY_SKIP_BOOT_HOOK:-0}" != "1" ]]; then
     for f in \
       "$ROOT/scripts/boot_hook_policy.sh" \
+      "$ROOT/scripts/supervisor_policy.sh" \
       "$ROOT/scripts/misterplexd_supervise.sh"
     do
       if [[ ! -f "$f" ]]; then
@@ -72,6 +73,8 @@ source "$ROOT/scripts/deploy_misterplexd_lib.sh"
 if [[ "${DEPLOY_SKIP_BOOT_HOOK:-0}" != "1" ]]; then
   # shellcheck source=boot_hook_policy.sh
   source "$ROOT/scripts/boot_hook_policy.sh"
+  # shellcheck source=supervisor_policy.sh
+  source "$ROOT/scripts/supervisor_policy.sh"
 fi
 
 HOST="${MISTER_HOST:-192.168.1.183}"
@@ -726,20 +729,38 @@ echo "deploy: LIVE /proc/PID/exe md5 == host (not disk alone); n_daemon=1; HTTP 
 # --- boot path: durable supervisor + user-startup from S99user (P0 decoy fix) ---
 # Policy already sourced at top (require_deploy_deps). Never source after live OK.
 if [[ "${DEPLOY_SKIP_BOOT_HOOK:-0}" != "1" ]]; then
-  SUP_SRC="$ROOT/scripts/misterplexd_supervise.sh"
+  SUP_SRC="$(supervisor_repo_path "$ROOT")"
   [[ -f "$SUP_SRC" ]] || die "missing $SUP_SRC (should have been caught by require_deploy_deps)"
+  set +e
+  supervisor_assert_capabilities "$SUP_SRC"
+  cap_rc=$?
+  set -e
+  report_rc "supervisor_caps" "$cap_rc" || die "repo supervisor failed capability gate (rc=$cap_rc)"
+  SUP_HOST_MD5="$(supervisor_repo_md5 "$SUP_SRC")"
   echo "deploy: install supervisor + boot hook for root=$TARGET_ROOT (path from S99user)"
+  echo "deploy: supervisor_repo_md5=$SUP_HOST_MD5 path=$SUP_SRC"
   set +e
   scp_to "$SUP_SRC" "/tmp/misterplexd_supervise.deploy.$$"
   scp_rc=$?
   set -e
   report_rc "scp_supervise" "$scp_rc" || die "scp supervisor failed"
+  # Strip pattern must match v1 AND v2 (and plexctl_supervise) so dual lines cannot remain.
+  SUP_STRIP_RE="$(supervisor_boot_strip_eregex)"
   set +e
   ssh_m "set -e
     root='$TARGET_ROOT'
+    want_md5='$SUP_HOST_MD5'
+    strip_re='$SUP_STRIP_RE'
     mkdir -p \"\$root/bin\"
     mv -f /tmp/misterplexd_supervise.deploy.$$ \"\$root/bin/misterplexd_supervise.sh\"
     chmod +x \"\$root/bin/misterplexd_supervise.sh\"
+    got_md5=\$(md5sum \"\$root/bin/misterplexd_supervise.sh\" | awk '{print \$1}')
+    echo SUP_DISK_MD5=\$got_md5
+    if [ \"\$got_md5\" != \"\$want_md5\" ]; then
+      echo FAIL_SUP_MD5 got=\$got_md5 want=\$want_md5
+      exit 8
+    fi
+    echo SUP_MD5_MATCH_OK md5=\$got_md5
     INIT=/etc/init.d/S99user
     DECOY=/media/fat/linux/_user-startup.sh
     if [ ! -f \"\$INIT\" ]; then echo FAIL_NO_S99user; exit 8; fi
@@ -755,7 +776,7 @@ if [[ "${DEPLOY_SKIP_BOOT_HOOK:-0}" != "1" ]]; then
     bak=\${hook}.bak.\$(date -u +%Y%m%dT%H%M%SZ)
     cp -f \"\$hook\" \"\$bak\"
     tmp=\$(mktemp)
-    grep -vE 'misterplexd_supervise\\.sh|/misterplex/bin/misterplexd|/misterplex_v2/bin/misterplexd' \"\$hook\" >\"\$tmp\" || true
+    grep -vE \"\$strip_re\" \"\$hook\" >\"\$tmp\" || true
     grep -vE '^# MiSTerPlex (pair autostart|companion|DECOY)' \"\$tmp\" >\"\$tmp.2\" || true
     mv -f \"\$tmp.2\" \"\$tmp\"
     printf '\\n# MiSTerPlex pair autostart (atomic with core+daemon+conf; do not hand-edit)\\n' >>\"\$tmp\"
@@ -763,7 +784,7 @@ if [[ "${DEPLOY_SKIP_BOOT_HOOK:-0}" != "1" ]]; then
     mv -f \"\$tmp\" \"\$hook\"
     if [ -f \"\$DECOY\" ]; then
       dtmp=\$(mktemp)
-      grep -vE 'misterplexd_supervise\\.sh|/misterplex/bin/misterplexd|/misterplex_v2/bin/misterplexd' \"\$DECOY\" >\"\$dtmp\" || true
+      grep -vE \"\$strip_re\" \"\$DECOY\" >\"\$dtmp\" || true
       grep -vE '^# MiSTerPlex (pair autostart|companion|DECOY)' \"\$dtmp\" >\"\$dtmp.2\" || true
       printf '\\n# MiSTerPlex DECOY: underscore file is NOT run by S99user.\\n' >>\"\$dtmp.2\"
       mv -f \"\$dtmp.2\" \"\$DECOY\"
@@ -773,12 +794,16 @@ if [[ "${DEPLOY_SKIP_BOOT_HOOK:-0}" != "1" ]]; then
     sync
     echo HOOK_BAK=\$bak
     echo HOOK_LINE=\$(grep misterplexd_supervise.sh \"\$hook\" | head -1)
-    n=\$(grep -c misterplexd_supervise.sh \"\$hook\" || true)
+    n=\$(grep -cE 'misterplexd_supervise\\.sh|plexctl_supervise\\.sh' \"\$hook\" || true)
     if [ \"\$n\" -ne 1 ]; then echo FAIL_HOOK_N=\$n; exit 8; fi
-    if [ \"\$root\" = /media/fat/misterplex_v2 ] && grep -q '/misterplex/bin/misterplexd' \"\$hook\"; then
+    # Any leftover v1 root autostart (bare daemon OR supervise) is dual-daemon class.
+    if [ \"\$root\" = /media/fat/misterplex_v2 ] && grep -qE '/misterplex/bin/misterplexd|misterplex/bin/misterplexd' \"\$hook\"; then
       echo FAIL_HOOK_V1_STILL_PRESENT; exit 8
     fi
-    if [ -f \"\$DECOY\" ] && grep -qE 'misterplexd_supervise|/misterplex.*/bin/misterplexd' \"\$DECOY\"; then
+    if [ \"\$root\" = /media/fat/misterplex ] && grep -qE '/misterplex_v2/bin/misterplexd|misterplex_v2/bin/misterplexd' \"\$hook\"; then
+      echo FAIL_HOOK_V2_STILL_PRESENT; exit 8
+    fi
+    if [ -f \"\$DECOY\" ] && grep -qE \"\$strip_re\" \"\$DECOY\"; then
       echo FAIL_DECOY_STILL_ARMED; exit 8
     fi
     echo BOOT_HOOK_OK
