@@ -26,6 +26,9 @@ module present_npx_path #(
 	input  wire [PX_PER_CLK*8-1:0] in_g,
 	input  wire [PX_PER_CLK*8-1:0] in_b,
 	input  wire [PX_PER_CLK-1:0]   in_lane_valid,
+	// Backpressure: 1 when a new group can be accepted this cycle.
+	// Same-clock bring-up: throttle beam with in_ready so fill rate ≤ drain.
+	output wire                 in_ready,
 
 	// 1 px/clk output (clk_pix) — CE_PIXEL-class
 	output reg                  out_ce,
@@ -77,6 +80,8 @@ module present_npx_path #(
 	// Simple multi-cycle expander: when in_valid pulses, latch the group and
 	// emit one write per cycle for each valid lane (LSB lane first).
 	reg                     hold_busy;
+	// Accept only when expander idle and FIFO has room for a full group.
+	assign in_ready = !reset_sys && !hold_busy && !fifo_almost;
 	reg  [PX_PER_CLK*8-1:0] hold_r, hold_g, hold_b;
 	reg  [PX_PER_CLK-1:0]   hold_valid;
 	// lane_idx only needs to index 0..PX_PER_CLK-1

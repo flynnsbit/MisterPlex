@@ -8,25 +8,77 @@
     "nostub_c74c6863": 32.59,
     "source": "Plex.sta.rpt Fmax Summary via scripts/check_quartus_timing.py / pll_clock_contract"
   },
-  "px_per_clk_legal": [1, 2, 4],
+  "px_per_clk_legal": [
+    1,
+    2,
+    4
+  ],
   "modes": {
-    "content_720p24": {"w": 1280, "h": 720, "fps": 24, "kind": "content"},
-    "content_720p60": {"w": 1280, "h": 720, "fps": 60, "kind": "content"},
-    "cea_720p24": {"h_total": 1650, "v_total": 750, "fps": 24, "kind": "cea"},
-    "cea_720p60": {"h_total": 1650, "v_total": 750, "fps": 60, "kind": "cea"},
-    "template_60": {"h_total": 638, "v_total": 524, "fps": 60, "kind": "template"}
+    "content_720p24": {
+      "w": 1280,
+      "h": 720,
+      "fps": 24,
+      "kind": "content"
+    },
+    "content_720p60": {
+      "w": 1280,
+      "h": 720,
+      "fps": 60,
+      "kind": "content"
+    },
+    "cea_720p24": {
+      "h_total": 1650,
+      "v_total": 750,
+      "fps": 24,
+      "kind": "cea"
+    },
+    "cea_720p60": {
+      "h_total": 1650,
+      "v_total": 750,
+      "fps": 60,
+      "kind": "cea"
+    },
+    "template_60": {
+      "h_total": 638,
+      "v_total": 524,
+      "fps": 60,
+      "kind": "template"
+    }
   },
   "expected_need_mhz": {
-    "content_720p24": {"1": 22.1184, "2": 11.0592, "4": 5.5296},
-    "content_720p60": {"1": 55.296, "2": 27.648, "4": 13.824},
-    "cea_720p24": {"1": 29.7, "2": 14.85, "4": 7.425},
-    "cea_720p60": {"1": 74.25, "2": 37.125, "4": 18.5625},
-    "template_60": {"1": 20.0592, "2": 10.0296, "4": 5.0148}
+    "content_720p24": {
+      "1": 22.1184,
+      "2": 11.0592,
+      "4": 5.5296
+    },
+    "content_720p60": {
+      "1": 55.296,
+      "2": 27.648,
+      "4": 13.824
+    },
+    "cea_720p24": {
+      "1": 29.7,
+      "2": 14.85,
+      "4": 7.425
+    },
+    "cea_720p60": {
+      "1": 74.25,
+      "2": 37.125,
+      "4": 18.5625
+    },
+    "template_60": {
+      "1": 20.0592,
+      "2": 10.0296,
+      "4": 5.0148
+    }
   },
   "parent_expectation": {
-    "ppc2_720p24_mhz_range": [11.0, 15.0],
+    "ppc2_720p24_mhz_range": [
+      11.0,
+      15.0
+    ],
     "ppc2_720p60_mhz_near": 37.0,
-    "note": "2 ppc rescues 720p24 under ship 20 MHz; 2 ppc CEA720p60 still FAILS nostub 32.59 — need 4 ppc."
+    "note": "2 ppc rescues 720p24 under ship 20 MHz; 2 ppc CEA720p60 still FAILS nostub 32.59 \u2014 need 4 ppc."
   },
   "verdicts_vs_fmax": {
     "content_720p24_ppc1_ship20": "FAIL",
@@ -43,7 +95,9 @@
       "fpga/Plex_MiSTer/rtl/present_npx_path.sv"
     ],
     "product_wired": false,
-    "cea_h_total_notes": "1650 is EVEN (1650%2=0). 1650%4=2 so PPC=4 needs short final step of 2."
+    "cea_h_total_notes": "1650 is EVEN (1650%2=0). 1650%4=2 so PPC=4 needs short final step of 2.",
+    "structurally_connected": true,
+    "connection_note": "present_core under PRESENT_MULTI_PIXEL: beam\u2192ddr PX_PER_CLK\u2192present_npx_path\u2192RGB/CE. Default QSF does not define macro. clk_pix=clk until PLL grant."
   },
   "w_scaler_interface": {
     "doc": ".agent-work/w-clock/MULTI_PIXEL_PRESENT_DESIGN.md section 5",

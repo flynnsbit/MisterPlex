@@ -205,6 +205,7 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/tests/unit/test_multi_pixel_present.sh",
     "$(ROOT)/tests/unit/test_yuv_bt601_npx_verilator.sh",
     "$(ROOT)/tests/unit/test_present_npx_path_verilator.sh",
+    "$(ROOT)/tests/unit/test_present_multi_pixel_elab.sh",
     "$(ROOT)/tests/unit/test_release_rbf_hash.sh",
     "$(ROOT)/tests/unit/test_sdram_startup_verilator.sh",
     "$(ROOT)/tests/unit/test_sdram_dq_turnaround_verilator.sh",

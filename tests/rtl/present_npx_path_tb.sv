@@ -22,6 +22,7 @@ module present_npx_path_tb #(
 	wire [7:0] out_r, out_g, out_b;
 	wire wr_full, wr_almost_full, rd_empty;
 	wire rd_underrun;
+	wire in_ready;
 
 	present_npx_path #(
 		.PX_PER_CLK(PX_PER_CLK),
@@ -36,6 +37,7 @@ module present_npx_path_tb #(
 		.in_g(in_g),
 		.in_b(in_b),
 		.in_lane_valid(in_lane_valid),
+		.in_ready(in_ready),
 		.out_ce(out_ce),
 		.out_r(out_r),
 		.out_g(out_g),

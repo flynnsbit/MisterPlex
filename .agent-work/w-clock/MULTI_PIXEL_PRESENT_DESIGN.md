@@ -2,9 +2,9 @@
 
 **Lane:** w-clock · **No fit · No device**  
 **Macro default:** `PRESENT_MULTI_PIXEL` **undefined** (OFF) · `PRESENT_PX_PER_CLK` defaults to **1**  
-**Status:** design + gated RTL landed; **NOT product-wired**. Parent correction: claiming
-"scanout done" is overstated — modules are macro-OFF and MiSTer still takes 1 RGB/CE_PIXEL.
-Honest claim: **no clk_sys overclock is likely needed** once N-wide path is connected.
+**Status:** structurally **connected** under `PRESENT_MULTI_PIXEL` (beam→store N-wide→npx_path→RGB).
+QSF default still OFF (default-safe). Not on glass until parent integration fit.
+Honest: **no clk_sys overclock likely needed** at ≥2ppc; DE_LAG/MP sync **unmeasured**.
 
 Parent confirmed programme facts from scan-out table:
 1. 22.12 Mpix/s content touch > shipping 20 MHz @ 1 ppc → nostub is a hard gate for 1 ppc 720p24.

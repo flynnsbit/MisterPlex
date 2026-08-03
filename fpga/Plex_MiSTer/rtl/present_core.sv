@@ -3,9 +3,16 @@
 //
 // Multi-pixel present (720p path): see .agent-work/w-clock/MULTI_PIXEL_PRESENT_DESIGN.md
 // and assets/multi_pixel_present_contract.json. Product default is 1 px/clk.
-// `define PRESENT_MULTI_PIXEL  — opt-in wire-up of present_beam_ppc / yuv_bt601_npx
+// `define PRESENT_MULTI_PIXEL  — connect beam → ddr N-wide → present_npx_path → RGB/CE
 // `define PRESENT_PX_PER_CLK N — 1|2|4 (only meaningful with PRESENT_MULTI_PIXEL)
-// Neither macro is defined in the shipping / nostub fit.
+// Neither macro is defined in shipping / default fits (default-safe).
+// Parent enables both in an integration fit grant — do not define in QSF without grant.
+
+`ifdef PRESENT_MULTI_PIXEL
+	`ifndef PRESENT_PX_PER_CLK
+		`define PRESENT_PX_PER_CLK 2
+	`endif
+`endif
 
 module present_core #(
 	parameter int FRAME_W = 320,
@@ -114,6 +121,11 @@ module present_core #(
 	output wire [15:0] stat_frame_underruns,
 	output wire  [7:0] stat_frame_sdram_state
 );
+`ifdef PRESENT_MULTI_PIXEL
+	localparam int PRESENT_PPC = `PRESENT_PX_PER_CLK;
+`else
+	localparam int PRESENT_PPC = 1;
+`endif
 
 	wire frame_start;
 	wire advance;
@@ -258,6 +270,91 @@ module present_core #(
 
 `include "ddr_frame_layout_params.svh"
 
+	// N-wide frame-store ports (PPC=1 ⇒ rd_*_n is scalar passthrough).
+	wire [PRESENT_PPC*8-1:0] fs_r_n, fs_g_n, fs_b_n;
+	wire [PRESENT_PPC-1:0]   fs_lane_v_n;
+	wire                     fs_n_valid;
+
+`ifdef PRESENT_MULTI_PIXEL
+	// ------------------------------------------------------------------
+	// Multi-pixel path (macro ON only). Default build leaves this ifdef off.
+	// Beam (CEA 720p geometry) → store read at glass_x0 → N-wide RGB →
+	// present_npx_path serializer → 1 px/clk. clk_pix tied to clk until a
+	// dedicated PLL out is granted (CLK_PIX_PLL_PLAN.md).
+	// Same-clock: beam is backpressured by present_npx_path.in_ready so
+	// fill rate cannot exceed drain (N px/group needs N drain cycles).
+	// ------------------------------------------------------------------
+	wire                mp_in_ready;
+	wire                mp_beam_ce;
+	wire [11:0]         mp_glass_x0, mp_glass_y;
+	wire [PRESENT_PPC-1:0] mp_lane_de;
+	wire                mp_hb, mp_hs, mp_vb, mp_vs, mp_fstart;
+	wire                mp_out_ce;
+	wire [7:0]          mp_out_r, mp_out_g, mp_out_b;
+	wire                mp_wr_full, mp_wr_af, mp_rd_ur, mp_rd_empty;
+
+	present_beam_ppc #(
+		.PX_PER_CLK(PRESENT_PPC),
+		.H_DE(1280),
+		.H_TOTAL(1650),
+		.V_ACTIVE(720),
+		.V_TOTAL(750),
+		.H_SYNC_S(1390),
+		.H_SYNC_E(1430),
+		.V_SYNC_S(725),
+		.V_SYNC_E(730)
+	) u_mp_beam (
+		.clk(clk),
+		.reset(reset),
+		.enable(~reset & mp_in_ready),
+		.beam_ce(mp_beam_ce),
+		.glass_x0(mp_glass_x0),
+		.glass_y(mp_glass_y),
+		.lane_de(mp_lane_de),
+		.HBlank(mp_hb),
+		.HSync(mp_hs),
+		.VBlank(mp_vb),
+		.VSync(mp_vs),
+		.frame_start(mp_fstart)
+	);
+
+	// Identity store map (w-scaler replaces when CODED≠glass). Clamp to FRAME_*.
+	wire [FRAME_X_W-1:0] mp_store_x =
+		(mp_glass_x0 > 12'(FRAME_LAST_X)) ? FRAME_LAST_X
+			: mp_glass_x0[FRAME_X_W-1:0];
+	wire [FRAME_Y_W-1:0] mp_store_y =
+		(mp_glass_y > 12'(FRAME_LAST_Y)) ? FRAME_LAST_Y
+			: mp_glass_y[FRAME_Y_W-1:0];
+	wire mp_de_any = |mp_lane_de;
+
+	// Register beam→store one cycle (align with product store_x style).
+	reg [FRAME_X_W-1:0] mp_store_x_r;
+	reg [FRAME_Y_W-1:0] mp_store_y_r;
+	reg                 mp_de_r;
+	reg [PRESENT_PPC-1:0] mp_lane_de_r;
+	always @(posedge clk) begin
+		if (reset) begin
+			mp_store_x_r <= '0;
+			mp_store_y_r <= '0;
+			mp_de_r      <= 1'b0;
+			mp_lane_de_r <= '0;
+		end else if (mp_beam_ce) begin
+			mp_store_x_r <= mp_store_x;
+			mp_store_y_r <= mp_store_y;
+			mp_de_r      <= mp_de_any;
+			mp_lane_de_r <= mp_lane_de;
+		end
+	end
+
+	wire [FRAME_X_W-1:0] fstore_rd_x = mp_store_x_r;
+	wire [FRAME_Y_W-1:0] fstore_rd_y = mp_store_y_r;
+	wire                 fstore_rd_a = mp_de_r;
+`else
+	wire [FRAME_X_W-1:0] fstore_rd_x = store_x;
+	wire [FRAME_Y_W-1:0] fstore_rd_y = store_y;
+	wire                 fstore_rd_a = de_r;
+`endif
+
 	ddr_frame_store #(
 		.FRAME_W(FRAME_W),
 		.FRAME_H(FRAME_H),
@@ -273,22 +370,23 @@ module present_core #(
 		.LINE_COUNT(FRAME_LINE_COUNT),
 		.PHYS_BASE(32'h3000_0000),
 		.HPS_BANK_STRIDE_BYTES(DDR_FRAME_YUV420P_BANK_STRIDE),
-		.DOORBELL_PHYS(DDR_FRAME_YUV420P_DOORBELL_PHYS)
+		.DOORBELL_PHYS(DDR_FRAME_YUV420P_DOORBELL_PHYS),
+		.PX_PER_CLK(PRESENT_PPC)
 	) fstore (
 		.clk(clk),
 		.clk_ddr(clk_ddr),
 		.reset(reset),
-		.rd_x(store_x),
-		.rd_y(store_y),
-		.rd_active(de_r),
+		.rd_x(fstore_rd_x),
+		.rd_y(fstore_rd_y),
+		.rd_active(fstore_rd_a),
 		.rd_r(fr),
 		.rd_g(fg),
 		.rd_b(fb),
-		.rd_r_n(),
-		.rd_g_n(),
-		.rd_b_n(),
-		.rd_lane_valid_n(),
-		.rd_n_valid(),
+		.rd_r_n(fs_r_n),
+		.rd_g_n(fs_g_n),
+		.rd_b_n(fs_b_n),
+		.rd_lane_valid_n(fs_lane_v_n),
+		.rd_n_valid(fs_n_valid),
 		.start_req(ddr_start_req),
 		.bank_sel(ddr_bank_sel),
 		.status_osd(ddr_status_osd),
@@ -340,11 +438,6 @@ module present_core #(
 		.rd_r(fr),
 		.rd_g(fg),
 		.rd_b(fb),
-		.rd_r_n(),
-		.rd_g_n(),
-		.rd_b_n(),
-		.rd_lane_valid_n(),
-		.rd_n_valid(),
 		.sdram_dout(sdram_dout),
 		.sdram_ready(sdram_ready),
 		.sdram_sel(sdram_sel),
@@ -362,6 +455,46 @@ module present_core #(
 		.underrun_count(frame_underruns),
 		.debug_state(frame_sdram_state)
 	);
+`endif
+
+`ifdef PRESENT_MULTI_PIXEL
+`ifdef DDR_FRAME_STORE
+	// Serialize N-wide store RGB → 1 px/clk. Feed on fs_n_valid (commit pulse).
+	present_npx_path #(
+		.PX_PER_CLK(PRESENT_PPC),
+		.FIFO_AW(6)
+	) u_mp_npx_path (
+		.clk_sys(clk),
+		.reset_sys(reset),
+		.clk_pix(clk),
+		.reset_pix(reset),
+		.in_valid(fs_n_valid),
+		.in_r(fs_r_n),
+		.in_g(fs_g_n),
+		.in_b(fs_b_n),
+		.in_lane_valid(fs_n_valid ? {PRESENT_PPC{1'b1}} : {PRESENT_PPC{1'b0}}),
+		.in_ready(mp_in_ready),
+		.out_ce(mp_out_ce),
+		.out_r(mp_out_r),
+		.out_g(mp_out_g),
+		.out_b(mp_out_b),
+		.wr_full(mp_wr_full),
+		.wr_almost_full(mp_wr_af),
+		.rd_underrun(mp_rd_ur),
+		.rd_empty(mp_rd_empty)
+	);
+	// DE_LAG for multi-pixel is UNKNOWN until parent HDMI edge sweep on an
+	// authorised multi-pixel fit. Start with 0 delay on beam blank (data path
+	// has its own store+npx latency); do not claim calibration.
+	localparam int MP_SYNC_LAG = 0;
+	wire mp_hb_d = mp_hb;
+	wire mp_hs_d = mp_hs;
+	wire mp_vb_d = mp_vb;
+	wire mp_vs_d = mp_vs;
+	wire mp_de_out = ~mp_hb_d & ~mp_vb_d;
+	wire _unused_mp_flags = mp_beam_ce | mp_wr_full | mp_wr_af | mp_rd_ur
+		| mp_rd_empty | (|mp_lane_de_r) | (|fs_lane_v_n) | (MP_SYNC_LAG == 0);
+`endif
 `endif
 
 	// Product: once a frame is ingested, always show frame_store unless O[9] Force bars.
@@ -413,6 +546,35 @@ module present_core #(
 
 	// Gate the frame pixels with EXACTLY the delayed signal that drives VGA_DE.
 	wire de_out = ~hb_d & ~vb_d;
+
+`ifdef PRESENT_MULTI_PIXEL
+`ifdef DDR_FRAME_STORE
+	// Multi-pixel takeover for frame path. Pattern/bars still use colorbars.
+	// ce_pix stays 1 (product scandouble class) so CLK_VIDEO pacing is stable;
+	// RGB is black when serializer has no pixel (blank / underrun).
+	wire mp_rgb_de = use_ext && mp_out_ce && mp_de_out;
+	assign r = use_ext ? (mp_rgb_de ? mp_out_r : 8'd0) : (show_pattern ? br : 8'd0);
+	assign g = use_ext ? (mp_rgb_de ? mp_out_g : 8'd0) : (show_pattern ? bg : 8'd0);
+	assign b = use_ext ? (mp_rgb_de ? mp_out_b : 8'd0) : (show_pattern ? bb : 8'd0);
+	assign ce_pix = 1'b1;
+	assign HBlank = use_ext ? mp_hb_d : hb_d;
+	assign HSync  = use_ext ? mp_hs_d : hs_d;
+	assign VBlank = use_ext ? mp_vb_d : vb_d;
+	assign VSync  = use_ext ? mp_vs_d : vs_d;
+	assign frame_start = use_ext ? mp_fstart : fstart;
+`else
+	// Multi-pixel macro without DDR store: keep legacy 1ppc path.
+	assign r = use_ext ? (de_out ? fr : 8'd0) : (show_pattern ? br : 8'd0);
+	assign g = use_ext ? (de_out ? fg : 8'd0) : (show_pattern ? bg : 8'd0);
+	assign b = use_ext ? (de_out ? fb : 8'd0) : (show_pattern ? bb : 8'd0);
+	assign ce_pix = ce_pix_i;
+	assign HBlank = hb_d;
+	assign HSync  = hs_d;
+	assign VBlank = vb_d;
+	assign VSync  = vs_d;
+	assign frame_start = fstart;
+`endif
+`else
 	assign r = use_ext ? (de_out ? fr : 8'd0) : (show_pattern ? br : 8'd0);
 	assign g = use_ext ? (de_out ? fg : 8'd0) : (show_pattern ? bg : 8'd0);
 	assign b = use_ext ? (de_out ? fb : 8'd0) : (show_pattern ? bb : 8'd0);
@@ -423,101 +585,6 @@ module present_core #(
 	assign VBlank = vb_d;
 	assign VSync  = vs_d;
 	assign frame_start = fstart;
-
-	// ------------------------------------------------------------------
-	// Multi-pixel present bring-up (DEFAULT OFF).
-	// Elaboration-only hooks so yuv_bt601_npx / present_beam_ppc stay in the
-	// lint/elab graph when PRESENT_MULTI_PIXEL is set, without touching the
-	// product RGB/sync path. Do not enable in nostub fit without parent grant.
-	// ------------------------------------------------------------------
-`ifdef PRESENT_MULTI_PIXEL
-	`ifndef PRESENT_PX_PER_CLK
-		`define PRESENT_PX_PER_CLK 2
-	`endif
-	localparam int PPC_MP = `PRESENT_PX_PER_CLK;
-	wire                mp_beam_ce;
-	wire [11:0]         mp_glass_x0, mp_glass_y;
-	wire [PPC_MP-1:0]   mp_lane_de;
-	wire                mp_hb, mp_hs, mp_vb, mp_vs, mp_fstart;
-	// Beam generator is free-running under reset/enable for elab only; outputs
-	// are intentionally unused by product assigns above (w-scaler merges later).
-	present_beam_ppc #(
-		.PX_PER_CLK(PPC_MP),
-		.H_DE(1280),
-		.H_TOTAL(1650),
-		.V_ACTIVE(720),
-		.V_TOTAL(750),
-		.H_SYNC_S(1390),
-		.H_SYNC_E(1430),
-		.V_SYNC_S(725),
-		.V_SYNC_E(730)
-	) u_mp_beam (
-		.clk(clk),
-		.reset(reset),
-		.enable(1'b0),
-		.beam_ce(mp_beam_ce),
-		.glass_x0(mp_glass_x0),
-		.glass_y(mp_glass_y),
-		.lane_de(mp_lane_de),
-		.HBlank(mp_hb),
-		.HSync(mp_hs),
-		.VBlank(mp_vb),
-		.VSync(mp_vs),
-		.frame_start(mp_fstart)
-	);
-	wire mp_yuv_valid;
-	wire [PPC_MP*8-1:0] mp_r, mp_g, mp_b;
-	wire [PPC_MP-1:0] mp_lane_v;
-	yuv_bt601_npx #(
-		.PX_PER_CLK(PPC_MP),
-		.X_W(12)
-	) u_mp_yuv (
-		.clk(clk),
-		.reset(reset),
-		.in_valid(1'b0),
-		.src_x0(12'd0),
-		.y_qword(64'd0),
-		.u_qword(64'd0),
-		.v_qword(64'd0),
-		.y_qword_hi(64'd0),
-		.y_hi_valid(1'b0),
-		.out_valid(mp_yuv_valid),
-		.out_r(mp_r),
-		.out_g(mp_g),
-		.out_b(mp_b),
-		.out_lane_valid(mp_lane_v)
-	);
-	// P1 bridge: N-wide sys → async_fifo → 1 px/clk. clk_pix tied to clk here
-	// for elab only; real wiring needs a dedicated pix PLL out (parent grant).
-	wire mp_out_ce, mp_wr_full, mp_wr_af, mp_rd_ur, mp_rd_empty;
-	wire [7:0] mp_out_r, mp_out_g, mp_out_b;
-	present_npx_path #(
-		.PX_PER_CLK(PPC_MP),
-		.FIFO_AW(4)
-	) u_mp_npx_path (
-		.clk_sys(clk),
-		.reset_sys(reset),
-		.clk_pix(clk),
-		.reset_pix(reset),
-		.in_valid(1'b0),
-		.in_r({(PPC_MP*8){1'b0}}),
-		.in_g({(PPC_MP*8){1'b0}}),
-		.in_b({(PPC_MP*8){1'b0}}),
-		.in_lane_valid({PPC_MP{1'b0}}),
-		.out_ce(mp_out_ce),
-		.out_r(mp_out_r),
-		.out_g(mp_out_g),
-		.out_b(mp_out_b),
-		.wr_full(mp_wr_full),
-		.wr_almost_full(mp_wr_af),
-		.rd_underrun(mp_rd_ur),
-		.rd_empty(mp_rd_empty)
-	);
-	wire _unused_mp = mp_beam_ce | (|mp_glass_x0) | (|mp_glass_y) | (|mp_lane_de)
-		| mp_hb | mp_hs | mp_vb | mp_vs | mp_fstart | mp_yuv_valid
-		| (|mp_r) | (|mp_g) | (|mp_b) | (|mp_lane_v)
-		| mp_out_ce | (|mp_out_r) | (|mp_out_g) | (|mp_out_b)
-		| mp_wr_full | mp_wr_af | mp_rd_ur | mp_rd_empty;
 `endif
 
 	// --- Audio: FIFO preferred, else OSD tone ---
