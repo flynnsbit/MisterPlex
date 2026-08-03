@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "title": "B29 Direct-Part verification survives to vf plan",
+  "defect": {
+    "id": "rd-duck-2026-08-03-direct-part-vf",
+    "threadMain": "clears deliveryGeometryVerified_ before vf plan freeze",
+    "need": "320x240 identity (no scale=); 426x240 pad-only (no scale=)",
+    "note": "Main→MediaPlayer Direct-Part measured geometry must reach buildFfmpegVideoFilter"
+  },
+  "contract": [
+    "Gate RUNS script; GEOM log greps alone never clear.",
+    "GREEN: 320x240 → identity_skip + vf without scale=;",
+    "  426x240 → pad-only + vf without scale=;",
+    "  verified flag still true at plan build (survives threadMain).",
+    "FAULT twin: clear-verified-before-plan or force scale → rc!=0.",
+    "Soft-skip 77 ≠ PASS."
+  ],
+  "scenarios": [
+    {
+      "token": "B29_DIRECT_PART_VF_SURVIVE",
+      "script": "tests/unit/test_b29_direct_part_vf_survive.sh",
+      "case": "CASE B29_DIRECT_PART_VF EXECUTED",
+      "pass": "PASS B29_DIRECT_PART_VF",
+      "fault_env": {"B29_DP_FAULT": "1"},
+      "why": "Direct-Part verification must survive to vf plan: 320x240 identity, 426x240 pad-only, no scale=; threadMain must not clear verified before plan (rd-duck)",
+      "require_stdout": [
+        "measured_320x240_identity=1",
+        "measured_320x240_no_scale=1",
+        "measured_426x240_pad_only=1",
+        "measured_426x240_no_scale=1",
+        "measured_verified_survives_to_vf_plan=1",
+        "measured_scale_absent_both=1"
+      ]
+    }
+  ]
+}

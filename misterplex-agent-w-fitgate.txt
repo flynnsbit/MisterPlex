@@ -1,12 +1,14 @@
 lane: w-fitgate
-HEAD: 1137e20639b5
+HEAD: f3194114f596
 branch: w-fitgate
-worktree: /home/flynnsbit/Projects/MisterPlex-wt-fitgate
 GRANT: NO
-selftest: FIT_RELEASE_GATE_SELFTEST_PASS EXECUTED true_rc=0
-mutation_matrix: docs/fit_gate_mutation_matrix.json rows=14 red=14 fail_holes=0
-  (each row RED with true_rc=1 — see JSON for inject/expect)
-B20: run_verilator.sh→oss-cad-suite; missing=HARD FAIL; pin-drop matrix RED
-string: product_active_sv FAULT_* strip (B15/B19 protected)
-B2_NO_RASTER_GENERATOR: RETIRED
-hollow_leg0: FAIL ~49 reasons GRANT=NO
+selftest: FIT_RELEASE_GATE_SELFTEST_PASS true_rc=0
+mutation_matrix: rows=20 red=20 fail_holes=0
+new_gates:
+  B20_HIER_H_DELAYED_PENDING_READY — all holds old/black not DE alone
+  B28_Q5_ATOMIC_POLLER_BOTH_MAPS — q5 nonzero + full q0..q5 LEG+OPTC
+  B28_Q5_PLAN_FIELD_MISSING — DdrPublishPlan.plxg_q[6]
+  B29_DIRECT_PART_VF_SURVIVE — 320 id / 426 pad; verified→plan
+  B30_PLXC_CDC_STOPPED_RD_FULL — stopped-rd + full-list conserve
+  B30_PLXC_CDC_TB_ABSENT — TB surface
+hollow: leg0 RED (expected)

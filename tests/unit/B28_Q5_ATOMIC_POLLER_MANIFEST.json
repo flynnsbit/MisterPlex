@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "title": "B28 PLXG q5 nonzero + full q0..q5 atomic poller both maps",
+  "defect": {
+    "id": "rd-duck-2026-08-03-q5-atomic-poller",
+    "host": "DdrPublishPlan.plxg_q[5] must be nonzero for content publish (DAR/fps ABI)",
+    "poller": "q1..q5 + q0 reread must survive full poller+doorbell on LEG and Option-C",
+    "reject": "standalone active-doorbell+0x828 write must NOT count (bootstrap poller; same-q0 skip)",
+    "note": "B17/B24 static q5 presence or single-offset poke is insufficient"
+  },
+  "contract": [
+    "Gate RUNS script; doorbell+0x828 prose never clears.",
+    "GREEN: plan.plxg_q[5]!=0; host packs full q[0..5]; poller observes q1..q5 then q0 reread;",
+    "  commit on LEG map AND Option-C map; same-q0 bootstrap skip is NOT a commit;",
+    "  standalone +0x828 without full q0..q5 atomic write = FAIL path.",
+    "FAULT twin rc!=0. Soft-skip 77 ≠ PASS. Simulator required."
+  ],
+  "scenarios": [
+    {
+      "token": "B28_Q5_ATOMIC_POLLER_BOTH_MAPS",
+      "script": "tests/unit/test_b28_q5_atomic_poller_both_maps.sh",
+      "case": "CASE B28_Q5_ATOMIC_POLLER EXECUTED",
+      "pass": "PASS B28_Q5_ATOMIC_POLLER",
+      "fault_env": {"B28_Q5_FAULT": "1"},
+      "why": "q5 nonzero in DdrPublishPlan.plxg_q[5]; atomic full q1..q5/q0 poller+doorbell LEG+Option-C; standalone +0x828 and same-q0 bootstrap must not count (rd-duck)",
+      "require_stdout": [
+        "measured_plxg_q5_nonzero=1",
+        "measured_plan_plxg_q5_nonzero=1",
+        "measured_full_q0_q5_atomic=1",
+        "measured_poller_commit_leg=1",
+        "measured_poller_commit_optc=1",
+        "measured_same_q0_bootstrap_skipped=1",
+        "measured_standalone_828_rejected=1",
+        "measured_doorbell_after_body=1"
+      ]
+    }
+  ]
+}

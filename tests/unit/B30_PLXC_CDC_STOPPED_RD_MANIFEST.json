@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "title": "B30 PLXC CDC stopped-read-clock + full-list conservation",
+  "defect": {
+    "id": "rd-duck-2026-08-03-plxc-stopped-rd",
+    "cdc": "stopped rd clock fill-to-full then resume must not drop list beats or ctrl",
+    "full": "MAX_CMDS list + ctrl-last conservation under stall",
+    "note": "B20_G multi-beat edge-detect alone is insufficient; B25 dual-map alone is insufficient"
+  },
+  "contract": [
+    "Gate RUNS hierarchy CDC TB with stopped-rd + full-list cases.",
+    "GREEN: measured stopped-rd conserve + ctrl last + no drop; full list beats.",
+    "FAULT twin drops on full ignore → rc!=0.",
+    "Soft-skip 77 ≠ PASS. Same-clock TB blind."
+  ],
+  "scenarios": [
+    {
+      "token": "B30_PLXC_CDC_STOPPED_RD_FULL",
+      "script": "tests/unit/test_b30_plxc_cdc_stopped_rd_full.sh",
+      "case": "CASE B30_PLXC_CDC_STOPPED_RD EXECUTED",
+      "pass": "PASS B30_PLXC_CDC_STOPPED_RD",
+      "fault_env": {"B30_CDC_FAULT": "1"},
+      "why": "PLXC CDC stopped-read-clock/full must not drop beats/ctrl (rd-duck); B20_G multi-beat alone insufficient",
+      "require_stdout": [
+        "measured_stopped_rd_fill_full=1",
+        "measured_stopped_rd_resume_conserve=1",
+        "measured_ctrl_not_dropped=1",
+        "measured_full_list_beats>=113",
+        "measured_list_plus_ctrl_order=1",
+        "measured_wr_holds_on_full=1"
+      ]
+    }
+  ]
+}

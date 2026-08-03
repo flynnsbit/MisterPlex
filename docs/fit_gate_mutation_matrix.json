@@ -73,6 +73,54 @@
       "token_hit": "1"
     },
     {
+      "check": "B28_Q5_ATOMIC_POLLER_BOTH_MAPS",
+      "inject": "live hollow / missing product TB",
+      "expect": "B28_Q5_ATOMIC_POLLER_BOTH_MAPS",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B28_Q5_PLAN_FIELD_MISSING",
+      "inject": "live hollow / missing product TB",
+      "expect": "B28_Q5_PLAN_FIELD_MISSING",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B29_DIRECT_PART_VF_SURVIVE",
+      "inject": "live hollow / missing product TB",
+      "expect": "B29_DIRECT_PART_VF_SURVIVE",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B30_PLXC_CDC_STOPPED_RD_FULL",
+      "inject": "live hollow / missing product TB",
+      "expect": "B30_PLXC_CDC_STOPPED_RD_FULL",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B30_PLXC_CDC_TB_ABSENT",
+      "inject": "live hollow / missing product TB",
+      "expect": "B30_PLXC_CDC_TB_ABSENT",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B20_HIER_H_DELAYED_PENDING_READY",
+      "inject": "live hollow / missing product TB",
+      "expect": "B20_HIER_H_DELAYED_PENDING_READY",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
       "check": "B9_SYS_TOP_AR_OUT_HOLD_MISSING",
       "inject": "live defective/hollow tree (no inject)",
       "expect": "B9_SYS_TOP_AR_OUT_HOLD_MISSING",
@@ -114,6 +162,6 @@
     }
   ],
   "failures": [],
-  "n_red": 14,
-  "head": "3a3d36686cca"
+  "n_red": 20,
+  "head": "37ef85e9ffc8"
 }

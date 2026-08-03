@@ -96,6 +96,25 @@
         "measured_plxc_ext_we_rising>=2",
         "clk_host_ne_clk_plxc=1"
       ]
+    },
+    {
+      "token": "B20_HIER_H_DELAYED_PENDING_READY",
+      "script": "tests/unit/test_b20_hier_h_delayed_pending_ready.sh",
+      "case": "CASE B20_HIER_H EXECUTED",
+      "pass": "PASS B20_HIER_H",
+      "fault_env": {"B20_HIER_FAULT": "1"},
+      "why": "delayed pending_ready: ALL window/crop/DAR/fps/DE/store/bank remain old-or-black until ready — not beam DE alone (rd-duck)",
+      "require_stdout": [
+        "measured_delayed_pending_ready=1",
+        "measured_window_hold_old_or_black=1",
+        "measured_crop_hold_old_or_black=1",
+        "measured_dar_hold_old_or_black=1",
+        "measured_fps_hold_old_or_black=1",
+        "measured_de_hold_old_or_black=1",
+        "measured_store_hold_old_or_black=1",
+        "measured_bank_hold_old_or_black=1",
+        "measured_beam_de_alone_not_sufficient=1"
+      ]
     }
   ]
 }

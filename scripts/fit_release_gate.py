@@ -118,6 +118,9 @@ GATED_PATHSPECS = (
     "tests/unit/B20_HIER_MANIFEST.json",
     "tests/unit/B24_Q5_FPS_1001_MANIFEST.json",
     "tests/unit/B25_PLXC_DOORBELL_DUAL_MAP_MANIFEST.json",
+    "tests/unit/B28_Q5_ATOMIC_POLLER_MANIFEST.json",
+    "tests/unit/B29_DIRECT_PART_VF_MANIFEST.json",
+    "tests/unit/B30_PLXC_CDC_STOPPED_RD_MANIFEST.json",
     "Makefile",
 )
 # Ruler identity: gate + companions that must stay in lockstep across lanes.
@@ -181,6 +184,7 @@ LIVE_OPEN_BLOCKER_TOKENS = (
     "B20_HIER_E_POLL_DOORBELL_ATOMIC",
     "B20_HIER_F_BANK_SWAP_24_30",
     "B20_HIER_G_PLXC_ASYNC_CDC_MULTIBEAT",
+    "B20_HIER_H_DELAYED_PENDING_READY",
     # B20_UNCONNECTED_PRODUCER: not always live — mutation + integ RED twin prove it.
     # rd-duck: runtime-beam must force ascal blackout + scaler (live open on product)
     "B21_HDMI_BLACKOUT_DISABLED",
@@ -200,6 +204,14 @@ LIVE_OPEN_BLOCKER_TOKENS = (
     # rd-duck: PLXC host→loader must hit legacy 0x300FF000 AND Option-C 0x3047F000
     # (stale 0x3007F000 default/inst are closed-class reinject when loader present)
     "B25_PLXC_HOST_LOADER_BOTH_MAPS",
+    # rd-duck: q5 nonzero + full q0..q5 atomic poller LEG+OPTC (not +0x828 alone)
+    "B28_Q5_ATOMIC_POLLER_BOTH_MAPS",
+    "B28_Q5_PLAN_FIELD_MISSING",
+    # rd-duck: Direct-Part verified must survive to vf plan (320 id / 426 pad)
+    "B29_DIRECT_PART_VF_SURVIVE",
+    # rd-duck: PLXC CDC stopped-rd + full-list conservation
+    "B30_PLXC_CDC_STOPPED_RD_FULL",
+    "B30_PLXC_CDC_TB_ABSENT",
 )
 
 # Sibling-lane fixes that exist but are not merged into this gated tree.
@@ -1330,6 +1342,7 @@ B20_HIER_FALLBACK_TOKENS: tuple[str, ...] = (
     "B20_HIER_E_POLL_DOORBELL_ATOMIC",
     "B20_HIER_F_BANK_SWAP_24_30",
     "B20_HIER_G_PLXC_ASYNC_CDC_MULTIBEAT",
+    "B20_HIER_H_DELAYED_PENDING_READY",
 )
 
 # Body must invoke a *simulator* (rd-duck 2026-08-03): verilator / run_verilator.sh /
@@ -2307,6 +2320,505 @@ def run_b25_plxc_doorbell_exec_gate(
     return 0, msgs, errors
 
 
+# ---------------------------------------------------------------------------
+# Generic named-exec scenario (B28/B29/B30) — same anti-theatre contract as B25.
+# ---------------------------------------------------------------------------
+def _run_named_exec_scenario(
+    root: Path,
+    *,
+    leg: str,
+    default_spec: dict[str, object],
+    manifest_rel: str,
+    token_key: str,
+    begin_note: str,
+    timeout_s: float = 180.0,
+    reject_body_re: re.Pattern[str] | None = None,
+    reject_body_msg: str = "",
+) -> tuple[int, list[str], list[str]]:
+    """Load one-scenario manifest and run green+fault simulator contract."""
+    msgs: list[str] = []
+    errors: list[str] = []
+    candidates = [root / manifest_rel, RULER_ROOT / manifest_rel]
+    path = next((p for p in candidates if p.is_file()), None)
+    spec = dict(default_spec)
+    if path is None:
+        msgs.append(f"LEG0_{leg}_MANIFEST_MISSING tried={[str(p) for p in candidates]}")
+    else:
+        try:
+            data = json.loads(path.read_text())
+            scenarios = list(data.get("scenarios") or [])
+            msgs.append(
+                f"LEG0_{leg}_MANIFEST_LOADED path={path} n={len(scenarios)} "
+                f"version={data.get('version', '?')}"
+            )
+            matched = False
+            for sc in scenarios:
+                if str(sc.get("token")) == token_key:
+                    spec = dict(sc)
+                    matched = True
+                    break
+            if not matched and scenarios:
+                spec = dict(scenarios[0])
+        except (OSError, json.JSONDecodeError) as exc:
+            msgs.append(f"LEG0_{leg}_MANIFEST_BAD path={path} err={exc}")
+
+    tok = str(spec.get("token") or token_key)
+    rel = str(spec.get("script") or default_spec["script"])
+    case_tok = str(spec.get("case") or default_spec["case"])
+    pass_tok = str(spec.get("pass") or default_spec["pass"])
+    why = str(spec.get("why") or default_spec.get("why") or "")
+    require_stdout = [str(x) for x in (spec.get("require_stdout") or [])]
+    if not require_stdout:
+        require_stdout = [str(x) for x in (default_spec.get("require_stdout") or [])]
+    fault_env_raw = spec.get("fault_env") or default_spec.get("fault_env") or {
+        f"{leg}_FAULT": "1"
+    }
+    fault_env = (
+        {str(k): str(v) for k, v in fault_env_raw.items()}
+        if isinstance(fault_env_raw, dict)
+        else {f"{leg}_FAULT": "1"}
+    )
+    fault_case = str(spec.get("fault_case") or case_tok)
+
+    msgs.append(f"LEG0_{leg}_EXEC_BEGIN token={tok} script={rel} {begin_note}")
+
+    script = root / rel
+    if not script.is_file():
+        errors.append(
+            f"{tok}: missing executable script {rel}. "
+            f"Need simulator TB: GREEN '{case_tok}'+'{pass_tok}'+{require_stdout!r} "
+            f"rc=0 + sim evidence; FAULT env {fault_env} '{fault_case}' rc!=0. "
+            f"why={why}. Soft-skip ≠ PASS."
+        )
+        msgs.append(f"LEG0_{leg}_MISS path={rel}")
+        msgs.append(f"LEG0_{leg}_EXEC_DONE open=1/1")
+        return 1, msgs, errors
+
+    if script.suffix not in {".sh", ".py"}:
+        errors.append(
+            f"{tok}: {rel} suffix={script.suffix!r} is not .sh/.py — prose hollow."
+        )
+        msgs.append(f"LEG0_{leg}_EXEC_DONE open=1/1")
+        return 1, msgs, errors
+
+    try:
+        script_txt = script.read_text(errors="replace")
+    except OSError as exc:
+        errors.append(f"{tok}: cannot read {rel}: {exc}")
+        return 1, msgs, errors
+
+    if not _b20_script_invokes_simulator(script_txt):
+        errors.append(
+            f"{tok}: script {rel} does not invoke a simulator "
+            f"(verilator|run_verilator.sh|make…sim|python TB). "
+            f"test -f/rg/echo theatre rejected. why={why}"
+        )
+        msgs.append(f"LEG0_{leg}_HOLLOW_BODY")
+        msgs.append(f"LEG0_{leg}_EXEC_DONE open=1/1")
+        return 1, msgs, errors
+
+    if reject_body_re is not None:
+        body = "\n".join(_b20_script_body_lines(script_txt))
+        if reject_body_re.search(body):
+            errors.append(
+                f"{tok}: script {rel} rejected body shape — {reject_body_msg or reject_body_re.pattern}"
+            )
+            msgs.append(f"LEG0_{leg}_BODY_REJECT")
+            msgs.append(f"LEG0_{leg}_EXEC_DONE open=1/1")
+            return 1, msgs, errors
+
+    try:
+        rc_g, out_g = _b20_run_script(script, root, {}, timeout_s)
+        rc_f, out_f = _b20_run_script(script, root, fault_env, timeout_s)
+    except subprocess.TimeoutExpired:
+        errors.append(f"{tok}: script {rel} timed out — DID_NOT_FINISH.")
+        msgs.append(f"LEG0_{leg}_TIMEOUT")
+        return 1, msgs, errors
+    except OSError as exc:
+        errors.append(f"{tok}: failed to execute {rel}: {exc}")
+        return 1, msgs, errors
+
+    msgs.append(
+        f"LEG0_{leg}_RUN_GREEN script={rel} true_rc={rc_g} out_bytes={len(out_g)}"
+    )
+    msgs.append(
+        f"LEG0_{leg}_RUN_FAULT script={rel} true_rc={rc_f} env={fault_env} "
+        f"out_bytes={len(out_f)}"
+    )
+
+    missing: list[str] = []
+    if rc_g == 77:
+        missing.append("GREEN soft-skip rc=77")
+    if case_tok not in out_g:
+        missing.append(f"GREEN missing '{case_tok}'")
+    if pass_tok not in out_g:
+        missing.append(f"GREEN missing '{pass_tok}'")
+    if rc_g != 0:
+        missing.append(f"GREEN true_rc={rc_g} (need 0)")
+    if not _b20_sim_evidence(out_g, root):
+        missing.append("GREEN missing sim evidence (not SIM_RUN self-report)")
+    if not re.search(r"(?m)^\s*measured_[\w]+=", out_g):
+        missing.append("GREEN missing measured_*=")
+    missing.extend(
+        [f"GREEN {m}" for m in _b20_require_stdout_missing(out_g, require_stdout)]
+    )
+    if fault_case not in out_f:
+        missing.append(f"FAULT missing '{fault_case}'")
+    if rc_f == 0:
+        missing.append("FAULT true_rc=0 (need nonzero behavioral fail)")
+    if rc_f == 77:
+        missing.append("FAULT soft-skip rc=77")
+
+    if missing:
+        tail = (out_g.strip().splitlines()[-6:] if out_g.strip() else []) + (
+            out_f.strip().splitlines()[-6:] if out_f.strip() else []
+        )
+        errors.append(
+            f"{tok}: green+fault contract failed: {', '.join(missing)}. "
+            f"why={why}. tail={tail!r}"
+        )
+        msgs.append(f"LEG0_{leg}_EXEC_DONE open=1/1")
+        return 1, msgs, errors
+
+    msgs.append(
+        f"LEG0_{leg}_OK script={rel} green_rc=0 fault_rc={rc_f} (simulator path)"
+    )
+    msgs.append(f"LEG0_{leg}_EXEC_DONE open=0/1")
+    return 0, msgs, errors
+
+
+# ---------------------------------------------------------------------------
+# B28 — q5 nonzero + full q0..q5 atomic poller LEG+Option-C (rd-duck)
+# ---------------------------------------------------------------------------
+B28_Q5_MANIFEST_REL = "tests/unit/B28_Q5_ATOMIC_POLLER_MANIFEST.json"
+B28_Q5_TOKEN = "B28_Q5_ATOMIC_POLLER_BOTH_MAPS"
+B28_Q5_DEFAULT_SPEC: dict[str, object] = {
+    "token": B28_Q5_TOKEN,
+    "script": "tests/unit/test_b28_q5_atomic_poller_both_maps.sh",
+    "case": "CASE B28_Q5_ATOMIC_POLLER EXECUTED",
+    "pass": "PASS B28_Q5_ATOMIC_POLLER",
+    "fault_env": {"B28_Q5_FAULT": "1"},
+    "why": (
+        "q5 nonzero in DdrPublishPlan.plxg_q[5]; atomic full q1..q5/q0 poller+"
+        "doorbell LEG+Option-C; standalone +0x828 and same-q0 bootstrap must not "
+        "count (rd-duck)"
+    ),
+    "require_stdout": [
+        "measured_plxg_q5_nonzero=1",
+        "measured_plan_plxg_q5_nonzero=1",
+        "measured_full_q0_q5_atomic=1",
+        "measured_poller_commit_leg=1",
+        "measured_poller_commit_optc=1",
+        "measured_same_q0_bootstrap_skipped=1",
+        "measured_standalone_828_rejected=1",
+        "measured_doorbell_after_body=1",
+    ],
+}
+
+
+def run_b28_q5_atomic_static(root: Path) -> tuple[list[str], list[str]]:
+    """Static: plan field + nonzero q5 packing + poller model presence."""
+    msgs: list[str] = []
+    errors: list[str] = []
+    plan_h = root / "host" / "libmisterplex" / "ddr_present_bank.hpp"
+    layout_h = root / "host" / "libmisterplex" / "ddr_frame_layout.hpp"
+    rec_h = root / "host" / "libmisterplex" / "plxg_record.hpp"
+    plan_txt = plan_h.read_text(errors="replace") if plan_h.is_file() else ""
+    layout_txt = layout_h.read_text(errors="replace") if layout_h.is_file() else ""
+    rec_txt = rec_h.read_text(errors="replace") if rec_h.is_file() else ""
+
+    has_field = bool(
+        re.search(r"struct\s+DdrPublishPlan[\s\S]{0,800}?plxg_q\s*\[\s*6\s*\]", plan_txt)
+        or re.search(r"plxg_q\s*\[\s*6\s*\]", plan_txt)
+    )
+    msgs.append(f"LEG0_B28_PLAN_PLXG_Q field={int(has_field)}")
+    if not has_field:
+        errors.append(
+            "B28_Q5_PLAN_FIELD_MISSING: DdrPublishPlan lacks plxg_q[6] "
+            "(host/libmisterplex/ddr_present_bank.hpp). Content q5 cannot be "
+            "nonzero in the plan the poller/doorbell consume (rd-duck)."
+        )
+
+    # Zero-only packPlxgQ5(0,0,0,...) for product content is a known hollow.
+    zero_q5_only = bool(
+        re.search(
+            r"plxg_q\s*\[\s*5\s*\]\s*=\s*packPlxgQ5\s*\(\s*/\*[^*]*\*/\s*0\s*,",
+            layout_txt + plan_txt,
+        )
+        or re.search(
+            r"plxg_q\s*\[\s*5\s*\]\s*=\s*packPlxgQ5\s*\(\s*0\s*,\s*0\s*,\s*0\s*,",
+            layout_txt + plan_txt + rec_txt,
+        )
+    )
+    # Nonzero content packing evidence (dar/fps valid true with non-zero fps or dar).
+    nonzero_pack = bool(
+        re.search(
+            r"packPlxgQ5\s*\([^;]{0,120}?(?:true|1'b1|/[*].*valid)[^;]{0,80}?"
+            r"(?:1[6-9]|2[0-9]|3[0-9]|dar|fps)",
+            layout_txt + rec_txt,
+            re.I,
+        )
+        or re.search(
+            r"packPlxgQ5\s*\(\s*[^0][^,]*,\s*[^0]",
+            layout_txt + rec_txt,
+        )
+    )
+    msgs.append(
+        f"LEG0_B28_Q5_PACK zero_only_hit={int(zero_q5_only)} nonzero_pack={int(nonzero_pack)}"
+    )
+    if has_field and zero_q5_only and not nonzero_pack:
+        errors.append(
+            "B28_Q5_PLAN_ZERO_ONLY: product packs plxg_q[5]=packPlxgQ5(0,0,0,…) "
+            "with no nonzero DAR/fps content path — q5 is hollow (rd-duck: must be "
+            "nonzero in DdrPublishPlan.plxg_q[5] for content publish)."
+        )
+
+    poller_model = bool(
+        re.search(r"plxgPollerObserveVerified|PlxgPollerModel", rec_txt)
+        or re.search(r"plxg_ddr_poller", rec_txt)
+    )
+    msgs.append(f"LEG0_B28_POLLER_MODEL hit={int(poller_model)}")
+    if has_field and not poller_model:
+        errors.append(
+            "B28_Q5_POLLER_MODEL_MISSING: no host PlxgPollerModel / "
+            "plxgPollerObserveVerified for full q0..q5 atomic observe. "
+            "Standalone +0x828 poke is not a poller (rd-duck)."
+        )
+    return msgs, errors
+
+
+def run_b28_q5_atomic_exec_gate(
+    root: Path, *, timeout_s: float = 180.0
+) -> tuple[int, list[str], list[str]]:
+    return _run_named_exec_scenario(
+        root,
+        leg="B28",
+        default_spec=B28_Q5_DEFAULT_SPEC,
+        manifest_rel=B28_Q5_MANIFEST_REL,
+        token_key=B28_Q5_TOKEN,
+        begin_note="(q5 nonzero + full q0..q5 atomic LEG+OPTC; not +0x828 alone)",
+        timeout_s=timeout_s,
+    )
+
+
+# ---------------------------------------------------------------------------
+# B29 — Direct-Part verification survives to vf plan (rd-duck)
+# ---------------------------------------------------------------------------
+B29_DP_MANIFEST_REL = "tests/unit/B29_DIRECT_PART_VF_MANIFEST.json"
+B29_DP_TOKEN = "B29_DIRECT_PART_VF_SURVIVE"
+B29_DP_DEFAULT_SPEC: dict[str, object] = {
+    "token": B29_DP_TOKEN,
+    "script": "tests/unit/test_b29_direct_part_vf_survive.sh",
+    "case": "CASE B29_DIRECT_PART_VF EXECUTED",
+    "pass": "PASS B29_DIRECT_PART_VF",
+    "fault_env": {"B29_DP_FAULT": "1"},
+    "why": (
+        "Direct-Part verification must survive to vf plan: 320x240 identity, "
+        "426x240 pad-only, no scale=; threadMain must not clear verified before "
+        "plan (rd-duck)"
+    ),
+    "require_stdout": [
+        "measured_320x240_identity=1",
+        "measured_320x240_no_scale=1",
+        "measured_426x240_pad_only=1",
+        "measured_426x240_no_scale=1",
+        "measured_verified_survives_to_vf_plan=1",
+        "measured_scale_absent_both=1",
+    ],
+}
+
+
+def run_b29_direct_part_vf_static(root: Path) -> tuple[list[str], list[str]]:
+    """Static: threadMain must not clear verified before vf plan freeze."""
+    msgs: list[str] = []
+    errors: list[str] = []
+    mp = root / "arm" / "misterplexd" / "media_player.cpp"
+    vf = root / "host" / "libmisterplex" / "ffmpeg_vf.hpp"
+    mp_txt = mp.read_text(errors="replace") if mp.is_file() else ""
+    vf_txt = vf.read_text(errors="replace") if vf.is_file() else ""
+
+    if not mp.is_file():
+        errors.append(
+            "B29_DIRECT_PART_VF_SURVIVE: arm/misterplexd/media_player.cpp absent."
+        )
+        return msgs, errors
+
+    # Locate threadMain body roughly.
+    tm = re.search(r"void\s+MediaPlayer::threadMain\b", mp_txt)
+    msgs.append(f"LEG0_B29_THREADMAIN hit={int(bool(tm))}")
+    if not tm:
+        errors.append(
+            "B29_DIRECT_PART_VF_SURVIVE: MediaPlayer::threadMain not found — "
+            "cannot prove verified survives to vf plan."
+        )
+        return msgs, errors
+
+    body = mp_txt[tm.start() : tm.start() + 160000]
+    plan_hits = list(re.finditer(r"buildFfmpegVideoFilter\s*\(", body))
+    clear_hits = list(
+        re.finditer(r"deliveryGeometryVerified_\.store\s*\(\s*false", body)
+    )
+    true_hits = list(
+        re.finditer(r"deliveryGeometryVerified_\.store\s*\(\s*true", body)
+    )
+    plan_pos = plan_hits[0].start() if plan_hits else -1
+    clear_pos = clear_hits[0].start() if clear_hits else -1
+    msgs.append(
+        f"LEG0_B29_ORDER n_plan={len(plan_hits)} n_clear={len(clear_hits)} "
+        f"n_verified_true={len(true_hits)} first_plan={plan_pos} first_clear={clear_pos}"
+    )
+    if plan_pos < 0:
+        errors.append(
+            "B29_DIRECT_PART_VF_SURVIVE: no buildFfmpegVideoFilter in threadMain — "
+            "Direct-Part vf plan freeze not found (rd-duck)."
+        )
+    elif clear_pos >= 0 and clear_pos < plan_pos:
+        errors.append(
+            "B29_DIRECT_PART_VF_CLEARED_BEFORE_PLAN: threadMain stores "
+            "deliveryGeometryVerified_=false before buildFfmpegVideoFilter. "
+            "Direct-Part 320x240 identity / 426 pad-only cannot reach the plan "
+            "(rd-duck measured hole)."
+        )
+    # rd-duck: verified must survive *to* plan — a store(true) with no later
+    # buildFfmpegVideoFilter means measure never freezes into vf (plan stays
+    # session-start unverified).
+    orphan_true = 0
+    for th in true_hits:
+        if not any(p.start() > th.start() for p in plan_hits):
+            orphan_true += 1
+    msgs.append(f"LEG0_B29_VERIFIED_TRUE_WITHOUT_LATER_PLAN n={orphan_true}")
+    if true_hits and orphan_true == len(true_hits):
+        errors.append(
+            "B29_DIRECT_PART_VF_NO_REPLAN_AFTER_VERIFIED: deliveryGeometryVerified_ "
+            "is set true but no buildFfmpegVideoFilter follows — Direct-Part "
+            "measure never reaches vf plan (320 identity / 426 pad-only lost; "
+            "rd-duck: threadMain clears/freezes verified before plan)."
+        )
+    elif not true_hits and plan_hits:
+        # Always plan once unverified, never set true in threadMain at all.
+        errors.append(
+            "B29_DIRECT_PART_VF_NEVER_VERIFIED_IN_THREAD: threadMain never stores "
+            "deliveryGeometryVerified_=true before/with a plan rebuild — "
+            "Direct-Part identity/pad-only path cannot arm (rd-duck)."
+        )
+
+    # Product planner must support identity + pad-only without scale.
+    has_identity = bool(re.search(r"identity_skip", vf_txt))
+    has_pad = bool(re.search(r"padOnly|pad_only|pad=", vf_txt))
+    msgs.append(
+        f"LEG0_B29_VF_API identity_skip={int(has_identity)} pad={int(has_pad)}"
+    )
+    if not has_identity or not has_pad:
+        errors.append(
+            "B29_DIRECT_PART_VF_SURVIVE: ffmpeg_vf.hpp must expose identity_skip "
+            "and pad-only path for 320x240 / 426x240 Direct-Part (rd-duck)."
+        )
+    return msgs, errors
+
+
+def run_b29_direct_part_vf_exec_gate(
+    root: Path, *, timeout_s: float = 180.0
+) -> tuple[int, list[str], list[str]]:
+    return _run_named_exec_scenario(
+        root,
+        leg="B29",
+        default_spec=B29_DP_DEFAULT_SPEC,
+        manifest_rel=B29_DP_MANIFEST_REL,
+        token_key=B29_DP_TOKEN,
+        begin_note="(320 identity + 426 pad-only; verified survives to plan)",
+        timeout_s=timeout_s,
+    )
+
+
+# ---------------------------------------------------------------------------
+# B30 — PLXC CDC stopped-rd-clock + full-list conservation (rd-duck)
+# ---------------------------------------------------------------------------
+B30_CDC_MANIFEST_REL = "tests/unit/B30_PLXC_CDC_STOPPED_RD_MANIFEST.json"
+B30_CDC_TOKEN = "B30_PLXC_CDC_STOPPED_RD_FULL"
+B30_CDC_DEFAULT_SPEC: dict[str, object] = {
+    "token": B30_CDC_TOKEN,
+    "script": "tests/unit/test_b30_plxc_cdc_stopped_rd_full.sh",
+    "case": "CASE B30_PLXC_CDC_STOPPED_RD EXECUTED",
+    "pass": "PASS B30_PLXC_CDC_STOPPED_RD",
+    "fault_env": {"B30_CDC_FAULT": "1"},
+    "why": (
+        "PLXC CDC stopped-read-clock/full must not drop beats/ctrl (rd-duck); "
+        "B20_G multi-beat alone insufficient"
+    ),
+    "require_stdout": [
+        "measured_stopped_rd_fill_full=1",
+        "measured_stopped_rd_resume_conserve=1",
+        "measured_ctrl_not_dropped=1",
+        "measured_full_list_beats>=113",
+        "measured_list_plus_ctrl_order=1",
+        "measured_wr_holds_on_full=1",
+    ],
+}
+
+
+def run_b30_plxc_cdc_stopped_static(root: Path) -> tuple[list[str], list[str]]:
+    """Static: CDC TB must name stopped-rd + full-list conservation."""
+    msgs: list[str] = []
+    errors: list[str] = []
+    tb = root / "tests" / "rtl" / "plex_chrome_plxc_cdc_tb.cpp"
+    top = root / "tests" / "rtl" / "plex_chrome_plxc_cdc_tb_top.sv"
+    tb_txt = tb.read_text(errors="replace") if tb.is_file() else ""
+    top_txt = top.read_text(errors="replace") if top.is_file() else ""
+    blob = tb_txt + "\n" + top_txt
+
+    stopped = bool(
+        re.search(r"stopped[-_ ]?rd|rd clock stopped|clk_rd.*stop|stop.*rd", blob, re.I)
+    )
+    full_list = bool(
+        re.search(r"full_list|MAX_CMDS|113\s*beats|112\s*list", blob, re.I)
+    )
+    conserve = bool(
+        re.search(r"conserv|no drop|wr_full|host_ready", blob, re.I)
+    )
+    msgs.append(
+        f"LEG0_B30_CDC_TB stopped_rd={int(stopped)} full_list={int(full_list)} "
+        f"conserve={int(conserve)} path={'yes' if tb.is_file() else 'ABSENT'}"
+    )
+    if not tb.is_file():
+        errors.append(
+            "B30_PLXC_CDC_TB_ABSENT: missing tests/rtl/plex_chrome_plxc_cdc_tb.cpp "
+            "with stopped-rd fill-to-full + full-list conservation (rd-duck). "
+            "B20_G multi-beat alone does not clear. Exec token "
+            "B30_PLXC_CDC_STOPPED_RD_FULL still required."
+        )
+    else:
+        if not stopped:
+            errors.append(
+                "B30_PLXC_CDC_TB_NO_STOPPED_RD: CDC TB lacks stopped-read-clock "
+                "fill-to-full/resume case — beats/ctrl can drop under stall (rd-duck)."
+            )
+        if not full_list:
+            errors.append(
+                "B30_PLXC_CDC_TB_NO_FULL_LIST: CDC TB lacks full MAX_CMDS list+ctrl "
+                "conservation case (rd-duck)."
+            )
+        if not conserve:
+            errors.append(
+                "B30_PLXC_CDC_TB_NO_CONSERVE: CDC TB does not assert conservation / "
+                "wr_full hold (rd-duck)."
+            )
+    return msgs, errors
+
+
+def run_b30_plxc_cdc_stopped_exec_gate(
+    root: Path, *, timeout_s: float = 300.0
+) -> tuple[int, list[str], list[str]]:
+    return _run_named_exec_scenario(
+        root,
+        leg="B30",
+        default_spec=B30_CDC_DEFAULT_SPEC,
+        manifest_rel=B30_CDC_MANIFEST_REL,
+        token_key=B30_CDC_TOKEN,
+        begin_note="(stopped-rd + full-list CDC; not B20_G multi-beat alone)",
+        timeout_s=timeout_s,
+    )
+
+
 def _extract_balanced(txt: str, open_idx: int) -> tuple[str, int]:
     """Return (inside, end_idx_exclusive) for (...) starting at open_idx on '('."""
     if open_idx < 0 or open_idx >= len(txt) or txt[open_idx] != "(":
@@ -2956,6 +3468,7 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
         "STRUCTURAL=B20_Verilator_PINMISSING_UNDRIVEN "
         "(scripts/run_verilator.sh→oss-cad-suite; missing=HARD FAIL not soft-skip); "
         "EXECUTABLE=B20_hier_manifest,B24_q5_fps_1001,B25_plxc_dual_map,"
+        "B28_q5_atomic_poller,B29_direct_part_vf,B30_plxc_cdc_stopped_rd,"
         "leg2_elab,leg3_true_de "
         "(named scripts + CASE EXECUTED + rc0; fault twin rc!=0); "
         "OWNERSHIP=B23_single_owner_table; "
@@ -4383,6 +4896,30 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
     msgs.extend(b25_e_msgs)
     errors.extend(b25_e_errs)
 
+    # --- B28 q5 nonzero + full q0..q5 atomic poller both maps (rd-duck) ---
+    b28_s_msgs, b28_s_errs = run_b28_q5_atomic_static(ROOT)
+    msgs.extend(b28_s_msgs)
+    errors.extend(b28_s_errs)
+    b28_e_rc, b28_e_msgs, b28_e_errs = run_b28_q5_atomic_exec_gate(ROOT)
+    msgs.extend(b28_e_msgs)
+    errors.extend(b28_e_errs)
+
+    # --- B29 Direct-Part verified → vf plan (320 identity / 426 pad) ---
+    b29_s_msgs, b29_s_errs = run_b29_direct_part_vf_static(ROOT)
+    msgs.extend(b29_s_msgs)
+    errors.extend(b29_s_errs)
+    b29_e_rc, b29_e_msgs, b29_e_errs = run_b29_direct_part_vf_exec_gate(ROOT)
+    msgs.extend(b29_e_msgs)
+    errors.extend(b29_e_errs)
+
+    # --- B30 PLXC CDC stopped-rd + full-list (not B20_G alone) ---
+    b30_s_msgs, b30_s_errs = run_b30_plxc_cdc_stopped_static(ROOT)
+    msgs.extend(b30_s_msgs)
+    errors.extend(b30_s_errs)
+    b30_e_rc, b30_e_msgs, b30_e_errs = run_b30_plxc_cdc_stopped_exec_gate(ROOT)
+    msgs.extend(b30_e_msgs)
+    errors.extend(b30_e_errs)
+
     # --- B19 MERGE-LOSS + lane tip under-take (always, even if Bn cleared) ---
     b19_errs = collect_merge_loss_errors()
     if b19_errs:
@@ -5613,6 +6150,37 @@ def _run_mutation_matrix() -> tuple[list[str], list[dict[str, str]]]:
         finally:
             rest()
 
+    # --- B28/B29/B30 live open (rd-duck 2026-08-03) ---
+    rc, msgs = leg0_arch_blockers()
+    for tok in (
+        "B28_Q5_ATOMIC_POLLER_BOTH_MAPS",
+        "B28_Q5_PLAN_FIELD_MISSING",
+        "B29_DIRECT_PART_VF_SURVIVE",
+        "B30_PLXC_CDC_STOPPED_RD_FULL",
+        "B30_PLXC_CDC_TB_ABSENT",
+        "B20_HIER_H_DELAYED_PENDING_READY",
+    ):
+        txt = "\n".join(msgs)
+        has = tok in txt
+        red = rc not in (0, 77) and has
+        rows.append(
+            {
+                "check": tok,
+                "inject": "live hollow / missing product TB",
+                "expect": tok,
+                "verdict": "RED" if red else "GREEN_OR_MISS",
+                "true_rc": str(rc),
+                "token_hit": "1" if has else "0",
+            }
+        )
+        print(
+            f"MATRIX_ROW check={tok} inject='live' expect={tok} "
+            f"verdict={'RED' if red else 'GREEN_OR_MISS'} "
+            f"token_hit={int(has)} true_rc={rc}"
+        )
+        if tok in LIVE_OPEN_BLOCKER_TOKENS and not red:
+            fails.append(f"{tok}: live-open matrix row not RED")
+
     # --- B9 hold ---
     sys_top = ROOT / "fpga" / "Plex_MiSTer" / "sys" / "sys_top.v"
     if not sys_top.is_file():
@@ -6396,7 +6964,286 @@ present_core u_mut_b22_core (
     fails.extend(_mutation_b24_q5_fps_1001())
     # B25 PLXC dual-map host→loader (CDC-only must not clear).
     fails.extend(_mutation_b25_plxc_dual_map())
+    fails.extend(_mutation_b28_b29_b30_rd_duck())
     fails.extend(_mutation_b9_b26_b27_rd_duck())
+
+    return fails
+
+
+def _mutation_named_exec_pair(
+    *,
+    tok: str,
+    script_rel: str,
+    case_tok: str,
+    pass_tok: str,
+    req: list[str],
+    fault_env_key: str,
+    fault_plusarg: str,
+    work_tag: str,
+) -> list[str]:
+    """Theatre reject + real sim clear + restore fire for a named exec token."""
+    fails: list[str] = []
+    unit = ROOT / "tests" / "unit"
+    rtl_mut = ROOT / "tests" / "rtl"
+    unit.mkdir(parents=True, exist_ok=True)
+    rtl_mut.mkdir(parents=True, exist_ok=True)
+    script = ROOT / script_rel
+
+    def _toks() -> set[str]:
+        _rc, msgs = leg0_arch_blockers()
+        return _leg0_error_tokens(msgs)
+
+    # Theatre must NOT clear.
+    theatre = (
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "ROOT=\"${MISTERPLEX_ROOT:-$(cd \"$(dirname \"$0\")/../..\" && pwd)}\"\n"
+        "test -f \"$ROOT/fpga/Plex_MiSTer/Plex.sv\"\n"
+        f"echo '{case_tok}'\n"
+        f"echo '{pass_tok}'\n"
+        "echo 'SIM_RUN=1'\n"
+        "echo 'DUT_TOUCHED=1'\n"
+        + "".join(f"echo '{r}'\n" for r in req)
+        + "exit 0\n"
+    )
+    rest = _with_file_backup(script, theatre)
+    os.chmod(script, 0o755)
+    try:
+        if tok not in _toks():
+            fails.append(f"{tok}: file-existence/echo theatre cleared — HOLE")
+        else:
+            print(f"  MUT_OK {tok} theatre_rejected=1")
+    finally:
+        rest()
+
+    # Real green+fault sim clears.
+    letter = work_tag
+    sv = rtl_mut / f"_fitgate_{letter}_mut.sv"
+    displays = "\n".join(f'      $display("{r}");' for r in req)
+    sv_body = f"""`timescale 1ns/1ps
+module fitgate_{letter}_mut;
+  localparam int DUT_MARKER = 1;
+  initial begin
+    $display("{case_tok}");
+    if ($test$plusargs("{fault_plusarg}")) begin
+      $fatal(1, "{fault_plusarg} twin");
+    end
+    if (DUT_MARKER != 1) $fatal(1, "DUT");
+    $display("{pass_tok}");
+    $display("measured_mut_sim=1");
+{displays}
+    $finish;
+  end
+endmodule
+"""
+    sh_body = f"""#!/usr/bin/env bash
+set -euo pipefail
+ROOT="${{MISTERPLEX_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}}"
+VL="$ROOT/scripts/run_verilator.sh"
+MD="$ROOT/.agent-work/{letter}_mut"
+SV="$ROOT/tests/rtl/_fitgate_{letter}_mut.sv"
+mkdir -p "$MD"
+"$VL" --binary -j 2 -o {letter}sim --Mdir "$MD" --top-module fitgate_{letter}_mut "$SV"
+SIM="$MD/{letter}sim"
+echo "SIM_ARTIFACT=$SIM"
+if [[ "${{{fault_env_key}:-0}}" == "1" ]]; then
+  echo "{case_tok}"
+  set +e
+  "$SIM" +{fault_plusarg}
+  rc=$?
+  set -e
+  exit "$rc"
+fi
+set +e
+"$SIM"
+rc=$?
+set -e
+exit "$rc"
+"""
+    r_sv = _with_file_backup(sv, sv_body)
+    r_sh = _with_file_backup(script, sh_body)
+    os.chmod(script, 0o755)
+    try:
+        if tok in _toks():
+            fails.append(f"{tok}: real sim green+fault did not clear — HOLE")
+        else:
+            print(f"  MUT_OK {tok} real_sim_clear=1")
+    finally:
+        r_sh()
+        r_sv()
+        import shutil as _sh
+
+        md = ROOT / f".agent-work/{letter}_mut"
+        if md.is_dir():
+            try:
+                _sh.rmtree(md)
+            except OSError:
+                pass
+        if sv.is_file() and "fitgate_" in sv.name:
+            try:
+                sv.unlink()
+            except OSError:
+                pass
+
+    if tok not in _toks():
+        fails.append(f"{tok}: vanished after restore — HOLE")
+    else:
+        print(f"  MUT_OK {tok} restore_fire=1")
+    return fails
+
+
+def _mutation_b28_b29_b30_rd_duck() -> list[str]:
+    """Mutations for B28 q5 atomic, B29 Direct-Part vf, B30 CDC stopped-rd."""
+    fails: list[str] = []
+    # B28 exec
+    fails.extend(
+        _mutation_named_exec_pair(
+            tok=B28_Q5_TOKEN,
+            script_rel=str(B28_Q5_DEFAULT_SPEC["script"]),
+            case_tok=str(B28_Q5_DEFAULT_SPEC["case"]),
+            pass_tok=str(B28_Q5_DEFAULT_SPEC["pass"]),
+            req=[str(x) for x in B28_Q5_DEFAULT_SPEC["require_stdout"]],  # type: ignore[arg-type]
+            fault_env_key="B28_Q5_FAULT",
+            fault_plusarg="B28_Q5_FAULT",
+            work_tag="b28",
+        )
+    )
+    # B28 static field: inject plxg_q[6] must clear PLAN_FIELD_MISSING (exec may remain).
+    plan_h = ROOT / "host" / "libmisterplex" / "ddr_present_bank.hpp"
+    if plan_h.is_file():
+        old = plan_h.read_text(errors="replace")
+        if "plxg_q" not in old:
+            inj = old.replace(
+                "struct DdrPublishPlan {",
+                "struct DdrPublishPlan {\n    uint64_t plxg_q[6]{}; // mut B28 field\n",
+                1,
+            )
+            if inj != old:
+                r = _with_file_backup(plan_h, inj)
+                try:
+                    _rc, msgs = leg0_arch_blockers()
+                    txt = "\n".join(msgs)
+                    if "B28_Q5_PLAN_FIELD_MISSING" in txt:
+                        fails.append(
+                            "B28_Q5_PLAN_FIELD_MISSING: field inject did not clear — HOLE"
+                        )
+                    else:
+                        print("  MUT_OK B28_Q5_PLAN_FIELD_MISSING clear_drop=1")
+                finally:
+                    r()
+                _rc2, msgs2 = leg0_arch_blockers()
+                if "B28_Q5_PLAN_FIELD_MISSING" not in "\n".join(msgs2):
+                    # only if still hollow without field
+                    if "plxg_q" not in plan_h.read_text(errors="replace"):
+                        fails.append(
+                            "B28_Q5_PLAN_FIELD_MISSING: restore did not re-fire — HOLE"
+                        )
+                    else:
+                        print("  MUT_OK B28_Q5_PLAN_FIELD_MISSING restore_na_field_present")
+                else:
+                    print("  MUT_OK B28_Q5_PLAN_FIELD_MISSING restore_fire=1")
+
+    # B29 exec
+    fails.extend(
+        _mutation_named_exec_pair(
+            tok=B29_DP_TOKEN,
+            script_rel=str(B29_DP_DEFAULT_SPEC["script"]),
+            case_tok=str(B29_DP_DEFAULT_SPEC["case"]),
+            pass_tok=str(B29_DP_DEFAULT_SPEC["pass"]),
+            req=[str(x) for x in B29_DP_DEFAULT_SPEC["require_stdout"]],  # type: ignore[arg-type]
+            fault_env_key="B29_DP_FAULT",
+            fault_plusarg="B29_DP_FAULT",
+            work_tag="b29",
+        )
+    )
+    # B29 static: inject store(true)+later plan must clear NEVER_VERIFIED / NO_REPLAN
+    mp = ROOT / "arm" / "misterplexd" / "media_player.cpp"
+    if mp.is_file():
+        old = mp.read_text(errors="replace")
+        inj = (
+            old
+            + "\n// fitgate mut B29 verified survives to plan\n"
+            + "void fitgate_mut_b29() {\n"
+            + "  deliveryGeometryVerified_.store(true, std::memory_order_relaxed);\n"
+            + "  (void)buildFfmpegVideoFilter(FfmpegVfRequest{});\n"
+            + "}\n"
+        )
+        # Note: inject outside threadMain — static scans threadMain only.
+        # Instead patch inside threadMain after first plan.
+        if "void MediaPlayer::threadMain" in old:
+            inj = re.sub(
+                r"(void\s+MediaPlayer::threadMain\b[\s\S]{0,8000}?buildFfmpegVideoFilter\s*\([^;]*;\n)",
+                r"\1"
+                "    // fitgate mut B29: verified then replan\n"
+                "    deliveryGeometryVerified_.store(true, std::memory_order_relaxed);\n"
+                "    const FfmpegVfPlan vfPlanMut = buildFfmpegVideoFilter(vfReq);\n"
+                "    (void)vfPlanMut;\n",
+                old,
+                count=1,
+            )
+        r = _with_file_backup(mp, inj)
+        try:
+            _rc, msgs = leg0_arch_blockers()
+            txt = "\n".join(msgs)
+            sticky = (
+                "B29_DIRECT_PART_VF_NEVER_VERIFIED_IN_THREAD" in txt
+                or "B29_DIRECT_PART_VF_NO_REPLAN_AFTER_VERIFIED" in txt
+                or "B29_DIRECT_PART_VF_CLEARED_BEFORE_PLAN" in txt
+            )
+            if sticky:
+                fails.append(
+                    f"B29 static clear failed — still have verified-order tokens: "
+                    f"{[t for t in ['B29_DIRECT_PART_VF_NEVER_VERIFIED_IN_THREAD','B29_DIRECT_PART_VF_NO_REPLAN_AFTER_VERIFIED','B29_DIRECT_PART_VF_CLEARED_BEFORE_PLAN'] if t in txt]}"
+                )
+            else:
+                print("  MUT_OK B29_static_verified_replan clear_drop=1")
+        finally:
+            r()
+        print("  MUT_OK B29_static_verified_replan restore_done=1")
+
+    # B30 exec
+    fails.extend(
+        _mutation_named_exec_pair(
+            tok=B30_CDC_TOKEN,
+            script_rel=str(B30_CDC_DEFAULT_SPEC["script"]),
+            case_tok=str(B30_CDC_DEFAULT_SPEC["case"]),
+            pass_tok=str(B30_CDC_DEFAULT_SPEC["pass"]),
+            req=[str(x) for x in B30_CDC_DEFAULT_SPEC["require_stdout"]],  # type: ignore[arg-type]
+            fault_env_key="B30_CDC_FAULT",
+            fault_plusarg="B30_CDC_FAULT",
+            work_tag="b30",
+        )
+    )
+    # B30 static TB: create minimal TB text with stopped-rd + full + conserve
+    tb = ROOT / "tests" / "rtl" / "plex_chrome_plxc_cdc_tb.cpp"
+    if not tb.is_file():
+        body = (
+            "// fitgate mut B30 CDC TB surface\n"
+            "// stopped-rd fill-to-full then resume conservation\n"
+            "// full_list MAX_CMDS 113 beats wr_full host_ready no drop\n"
+        )
+        r = _with_file_backup(tb, body)
+        try:
+            _rc, msgs = leg0_arch_blockers()
+            txt = "\n".join(msgs)
+            still = (
+                "B30_PLXC_CDC_TB_ABSENT" in txt
+                or "B30_PLXC_CDC_TB_NO_STOPPED_RD" in txt
+                or "B30_PLXC_CDC_TB_NO_FULL_LIST" in txt
+                or "B30_PLXC_CDC_TB_NO_CONSERVE" in txt
+            )
+            if still:
+                fails.append("B30 static TB inject did not clear static tokens — HOLE")
+            else:
+                print("  MUT_OK B30_static_tb_surface clear_drop=1")
+        finally:
+            r()
+            if tb.is_file() and "fitgate mut B30" in tb.read_text(errors="replace"):
+                try:
+                    tb.unlink()
+                except OSError:
+                    pass
+        print("  MUT_OK B30_static_tb_surface restore_done=1")
 
     return fails
 
