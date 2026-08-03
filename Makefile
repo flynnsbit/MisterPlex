@@ -216,6 +216,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_plex_chrome_ppc_rtl_sim.sh
 	$(ROOT)/tests/unit/test_plex_chrome_idle720_rtl_sim.sh
 	$(ROOT)/tests/unit/test_plex_chrome_counted_rtl_sim.sh
+	$(ROOT)/tests/unit/test_plex_chrome_vs_bank_rtl_sim.sh
 	$(ROOT)/tests/unit/test_plex_chrome_plxc_cdc_rtl_sim.sh
 	$(ROOT)/tests/unit/test_plex_chrome_fabchrome_rtl_sim.sh
 	$(ROOT)/scripts/rtl_lint.py
@@ -248,6 +249,7 @@ rtl-sim-unlocked:
 	$(ROOT)/tests/unit/test_plex_chrome_ppc_rtl_sim.sh
 	$(ROOT)/tests/unit/test_plex_chrome_idle720_rtl_sim.sh
 	$(ROOT)/tests/unit/test_plex_chrome_counted_rtl_sim.sh
+	$(ROOT)/tests/unit/test_plex_chrome_vs_bank_rtl_sim.sh
 	$(ROOT)/tests/unit/test_plex_chrome_plxc_cdc_rtl_sim.sh
 	$(ROOT)/tests/unit/test_plex_chrome_fabchrome_rtl_sim.sh
 	$(ROOT)/tests/unit/test_stream_path_recon_integration.sh

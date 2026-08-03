@@ -42,16 +42,36 @@ inline uint64_t packPlxo(bool hw, uint16_t w, uint16_t h, uint8_t scale) {
 }
 
 // Host-side seqlock publish into a qword-indexed mailbox image (tests).
+// Half-word order: invalidate → body → ctrl hi → magic lo LAST (rd-duck hole 1).
 inline void hostPublishSeqlock(uint64_t* mem, const uint64_t* cmds, unsigned n, bool enable,
                                uint16_t seq) {
     const size_t c = mailbox_abi::kPlxcOffset / 8;
     const size_t base = mailbox_abi::kPlxlOffset / 8;
     if (n > static_cast<unsigned>(plex_chrome_cmds::kMaxCmds))
         n = static_cast<unsigned>(plex_chrome_cmds::kMaxCmds);
-    mem[c] = 0; // invalidate magic first
+    mem[c] = 0; // invalidate both halves first
     for (unsigned i = 0; i < n; ++i)
         mem[base + i] = cmds[i];
-    mem[c] = plex_chrome_cmds::packPlxcCtrl(enable, n, seq);
+    const uint64_t ctrl = plex_chrome_cmds::packPlxcCtrl(enable, n, seq);
+    auto* cw = reinterpret_cast<uint32_t*>(&mem[c]);
+    cw[1] = static_cast<uint32_t>(ctrl >> 32); // high first; magic still 0
+    cw[0] = static_cast<uint32_t>(ctrl);       // magic LAST
+}
+
+// Red twin: magic low THEN high — creates accept window for stale/zero hi.
+inline void hostPublishSeqlockMagicFirst(uint64_t* mem, const uint64_t* cmds, unsigned n,
+                                         bool enable, uint16_t seq) {
+    const size_t c = mailbox_abi::kPlxcOffset / 8;
+    const size_t base = mailbox_abi::kPlxlOffset / 8;
+    if (n > static_cast<unsigned>(plex_chrome_cmds::kMaxCmds))
+        n = static_cast<unsigned>(plex_chrome_cmds::kMaxCmds);
+    mem[c] = 0;
+    for (unsigned i = 0; i < n; ++i)
+        mem[base + i] = cmds[i];
+    const uint64_t ctrl = plex_chrome_cmds::packPlxcCtrl(enable, n, seq);
+    auto* cw = reinterpret_cast<uint32_t*>(&mem[c]);
+    cw[0] = static_cast<uint32_t>(ctrl);       // magic first — FAULT
+    cw[1] = static_cast<uint32_t>(ctrl >> 32);
 }
 
 // Legacy broken host: body while old ctrl still valid, then new ctrl.

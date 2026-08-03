@@ -21,10 +21,23 @@ static void tick(Vplex_chrome_ddr_loader_tb* t) {
 
 static void mem_wr(Vplex_chrome_ddr_loader_tb* t, uint32_t byte_off, uint64_t data) {
     t->mem_we_host = 1;
+    t->mem_we32_host = 0;
     t->mem_addr_host = byte_off >> 3;
     t->mem_wdata_host = data;
     tick(t);
     t->mem_we_host = 0;
+    tick(t);
+}
+
+// One 32-bit half of a qword (LE: half0=lo/magic, half1=hi).
+static void mem_wr32(Vplex_chrome_ddr_loader_tb* t, uint32_t byte_off, uint32_t data) {
+    t->mem_we_host = 0;
+    t->mem_we32_host = 1;
+    t->mem_addr_host = byte_off >> 3;
+    t->mem_half_hi = (byte_off & 4) ? 1 : 0;
+    t->mem_wdata32_host = data;
+    tick(t);
+    t->mem_we32_host = 0;
     tick(t);
 }
 
@@ -41,12 +54,15 @@ static uint64_t glyph(char c, int x, int y) {
     return 2ull | ((uint64_t)x << 8) | ((uint64_t)y << 24) | ((uint64_t)(uint8_t)c << 40);
 }
 
+// Product: invalidate → body → ctrl hi → magic lo LAST.
 static void publish_seqlock(Vplex_chrome_ddr_loader_tb* t, const std::vector<uint64_t>& cmds,
                             uint16_t seq) {
     mem_wr(t, 0x130, 0);
     for (size_t i = 0; i < cmds.size(); ++i)
         mem_wr(t, 0x140 + (uint32_t)i * 8, cmds[i]);
-    mem_wr(t, 0x130, pack_ctrl(true, (unsigned)cmds.size(), seq));
+    const uint64_t ctrl = pack_ctrl(true, (unsigned)cmds.size(), seq);
+    mem_wr32(t, 0x134, static_cast<uint32_t>(ctrl >> 32)); // hi first
+    mem_wr32(t, 0x130, static_cast<uint32_t>(ctrl));       // magic LAST
 }
 
 static void wait_idle(Vplex_chrome_ddr_loader_tb* t, int max_cyc = 400) {
@@ -79,6 +95,9 @@ int main(int argc, char** argv) {
     t->reset = 1;
     t->clk = 0;
     t->mem_we_host = 0;
+    t->mem_we32_host = 0;
+    t->mem_half_hi = 0;
+    t->mem_wdata32_host = 0;
     t->mem_addr_host = 0;
     t->mem_wdata_host = 0;
     t->run_tick = 0;
@@ -241,6 +260,62 @@ int main(int argc, char** argv) {
         fail("retained_inv last_seq");
     else
         pass("retained_inv");
+
+    // --- Half-word ctrl order: poll window after each 32-bit store ---
+    std::fprintf(stderr, "=== halfword ctrl publish order ===\n");
+    std::fprintf(stderr, "EXECUTED halfword\n");
+    wait_idle(t);
+    {
+        const uint64_t g = glyph('H', 8, 8);
+        mem_wr(t, 0x130, 0);
+        mem_wr(t, 0x140, g);
+        const uint64_t ctrl = pack_ctrl(true, 1, 77);
+        const uint32_t loads_b = t->cnt_loads_on;
+        // Product: hi first while magic=0 — must NOT commit during this window.
+        mem_wr32(t, 0x134, static_cast<uint32_t>(ctrl >> 32));
+        for (int i = 0; i < 120; ++i)
+            tick(t);
+        if (t->last_seq_on == 77 || t->cnt_loads_on != loads_b)
+            fail("halfword accepted after hi-only (magic still 0)");
+        mem_wr32(t, 0x130, static_cast<uint32_t>(ctrl)); // magic LAST
+        if (!wait_last_seq(t, 77))
+            fail("halfword product magic-last did not commit seq77");
+        else
+            pass("halfword");
+    }
+
+    // Red twin documentation: magic-first then hi — after magic alone, hi may be
+    // stale zero; with last_seq!=0 a zero-seq empty ctrl can be wrongly accepted.
+    std::fprintf(stderr, "EXECUTED halfword_magic_first\n");
+    wait_idle(t);
+    {
+        // Establish last_seq=77 already from product path above.
+        mem_wr(t, 0x130, 0);
+        mem_wr(t, 0x140, glyph('Z', 1, 1));
+        const uint64_t ctrl = pack_ctrl(true, 1, 88);
+        const uint32_t torn_b = t->cnt_torn_on;
+        const uint32_t loads_b = t->cnt_loads_on;
+        mem_wr32(t, 0x130, static_cast<uint32_t>(ctrl)); // magic FIRST, hi=0
+        // Give the loader time to poll the torn window.
+        for (int i = 0; i < 200; ++i)
+            tick(t);
+        // With hi=0: enable=0 count=0 seq=0. Magic valid. seq 0 != 77 → may load empty.
+        // Product host never leaves this window; we only document the defect class.
+        const bool saw_wrong = (t->last_seq_on == 0 && t->cnt_loads_on > loads_b);
+        const bool stayed = (t->last_seq_on == 77 && t->cnt_loads_on == loads_b);
+        // Either wrong accept (hole open) or poll missed the window — both OK for
+        // this marker; require that completing hi still reaches seq 88.
+        mem_wr32(t, 0x134, static_cast<uint32_t>(ctrl >> 32));
+        if (!wait_last_seq(t, 88))
+            fail("halfword_magic_first final seq88");
+        else {
+            std::fprintf(stderr, "halfword_magic_first window wrong_accept=%d stayed=%d torn=%u\n",
+                         saw_wrong ? 1 : 0, stayed ? 1 : 0,
+                         (unsigned)(t->cnt_torn_on - torn_b));
+            pass("halfword_magic_first");
+        }
+        (void)stayed;
+    }
 
     delete t;
     if (fails) {

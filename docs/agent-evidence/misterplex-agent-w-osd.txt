@@ -1,21 +1,28 @@
-w-osd PLXC seqlock (rd-duck mixed-HUD)
+w-osd status — rd-duck holes 1+2 FIXED
 branch: w-osd-fabric-plane
-date: 2026-08-03
+time: post halfword-order + VS-bank xact hold
 
-FINDING: loader snapshotted PLXC once then read body; host left old valid
-PLXC while rewriting list → mixed HUD. Re-read of unchanged ctrl insufficient
-without host invalidate-before-body.
+PREDICTIONS (pre-run):
+  P1 unit loader PASS rc=0
+  P2 loader rtl PASS rc=0 (halfword EXECUTED)
+  P3 counted PASS rc=0
+  P4 vs_bank product PASS rc=0
+  P5 vs_bank fault PASS rc=0 (hole observed)
+MISSES: none
 
-FIX:
-- Host writeChromeCommandList: clear magic → body → packPlxcCtrl last
-- Loader: S_RD_CTRL2 re-read after body; magic miss or ctrl!=snap → cnt_torn,
-  no push, last_seq unchanged. FAULT_NO_CTRL_REREAD red twin.
-- C++ model hostPublishSeqlock + mid_body torn path
-- RTL: concurrent mid-list invalidate, retained coherent/invalid after reset
+RESULTS (true rc):
+  test_plex_chrome_ddr_loader unit     rc=0
+  test_plex_chrome_ddr_loader_rtl_sim  rc=0
+    halfword_magic_first wrong_accept=1 (documents hole 1)
+  test_plex_chrome_vs_bank_rtl_sim     rc=0
+    product post-coin a2=1 b0=0 b1=0; final VS b0=1 b1=1
+    fault   post-coin b0=1 b1=0; final VS b0=0 b1=0 (split)
+  test_plex_chrome_counted_rtl_sim     rc=0
 
-EVIDENCE true rc:
-  test_plex_chrome_ddr_loader_rtl_sim.sh  true rc=0
-  test_plex_chrome_ddr_loader (unit)      true rc=0
-  test_plex_chrome_e2e_rtl_sim.sh         true rc=0
+FIXES:
+  Hole1: fpga_spi writeChromeCommandList cw[1]=hi then cw[0]=magic LAST
+  Hole2: plex_chrome xact_hold/xact_bank; wr_to_a accounts swap_now;
+         VS promote deferred while list xact open
+  FAULT twin: PLEX_CHROME_FAULT_VS_BANK
 
-R1 m_gnt=0 still open (w-mem). No Quartus/device.
+OPEN: R1 loader m_gnt=0 on integ Plex.sv; no Quartus; no device

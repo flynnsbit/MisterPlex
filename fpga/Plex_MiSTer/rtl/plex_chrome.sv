@@ -369,6 +369,11 @@ module plex_chrome #(
     reg [15:0] latched_seq;
     reg [7:0]  latched_count;
     reg        latched_en;
+    // Transaction-held staging bank (rd-duck hole 2): list beats must not flip
+    // target when VS promotes a pending cfg on the same edge as list_we.
+    reg        xact_hold;
+    reg        xact_bank;
+    reg [15:0] cfg_seq_d;
 
     localparam [63:0] BOOT_DEMO_CMD =
         {8'h00, 8'h00, 8'h23, 16'd64, 16'd64, 8'd2};
@@ -391,22 +396,33 @@ module plex_chrome #(
             latched_count = 8'd0;
             latched_en    = 1'b0;
         end
+        xact_hold = 1'b0;
+        xact_bank = 1'b0;
+        cfg_seq_d = 16'd0;
     end
 
     localparam int AW = $clog2(MAX_CMDS);
 
-    always @(posedge clk_hdmi) begin
-        if (list_we && (list_waddr < MAX_CMDS[7:0])) begin
-            if (live_bank)
-                list_a[list_waddr[AW-1:0]] <= list_wdata;
-            else
-                list_b[list_waddr[AW-1:0]] <= list_wdata;
-        end
-    end
-
     reg vs_d;
+    // Staging write target: list_a when live_bank==1, list_b when live_bank==0
+    // (opposite of scan). On a VS edge that promotes, post-swap staging is the
+    // old live bank → wr_to_a = ~live_bank. Account for that atomically with
+    // list_we (rd-duck hole 2).
+    wire vs_rise   = vs_in && !vs_d;
+    wire want_swap = (cfg_seq != latched_seq);
+    // FAULT twin: always use pre-edge bank; swap still fires under list_we.
+`ifdef PLEX_CHROME_FAULT_VS_BANK
+    wire swap_now  = vs_rise && want_swap; // do not defer — hole 2
+    wire wr_to_a   = xact_hold ? xact_bank : live_bank;
+`else
+    wire swap_now  = vs_rise && want_swap && !xact_hold;
+    wire wr_to_a   = xact_hold ? xact_bank
+                               : (swap_now ? ~live_bank : live_bank);
+`endif
+
     always @(posedge clk_hdmi) begin
-        vs_d <= vs_in;
+        vs_d      <= vs_in;
+        cfg_seq_d <= cfg_seq;
         if (reset) begin
             if (BOOT_DEMO) begin
                 latched_en    <= 1'b1;
@@ -419,8 +435,27 @@ module plex_chrome #(
                 latched_count <= 8'd0;
                 live_bank     <= 1'b0;
             end
-        end else if (vs_in && !vs_d) begin
-            if (cfg_seq != latched_seq) begin
+            xact_hold <= 1'b0;
+            xact_bank <= 1'b0;
+            cfg_seq_d <= 16'd0;
+        end else begin
+            // List write: freeze staging bank for the whole host transaction.
+            if (list_we && (list_waddr < MAX_CMDS[7:0])) begin
+                if (!xact_hold) begin
+                    xact_hold <= 1'b1;
+                    xact_bank <= wr_to_a;
+                end
+                if (wr_to_a)
+                    list_a[list_waddr[AW-1:0]] <= list_wdata;
+                else
+                    list_b[list_waddr[AW-1:0]] <= list_wdata;
+            end
+            // Ctrl commit ends the list transaction (host: list then ctrl).
+            if (cfg_seq != cfg_seq_d)
+                xact_hold <= 1'b0;
+            // Product: VS promote only when no list transaction is open.
+            // FAULT: swap even under list_we (same-cycle corruption).
+            if (swap_now) begin
                 latched_seq   <= cfg_seq;
                 latched_count <= (cfg_cmd_count > MAX_CMDS[7:0]) ? MAX_CMDS[7:0]
                                                                 : cfg_cmd_count;

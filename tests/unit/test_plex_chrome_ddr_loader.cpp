@@ -128,7 +128,7 @@ static void checkRetainedInvalid() {
     CHECK(m.cnt_bad >= 1);
 }
 
-// ARM source must invalidate magic before body (not body-first).
+// ARM source must invalidate magic before body, and publish ctrl hi before magic lo.
 static void checkFpgaSpiSeqlockSource() {
     const char* paths[] = {
         "arm/misterplexd/fpga_spi.cpp",
@@ -151,12 +151,76 @@ static void checkFpgaSpiSeqlockSource() {
     const auto inv = body.find("cw[0] = 0");
     const auto list = body.find("list[i] = cmds[i]");
     const auto pack = body.find("packPlxcCtrl");
+    const auto hi = body.find("cw[1] = static_cast<uint32_t>(ctrl >> 32)");
+    const auto lo = body.find("cw[0] = static_cast<uint32_t>(ctrl)");
     CHECK(inv != std::string::npos);
     CHECK(list != std::string::npos);
     CHECK(pack != std::string::npos);
+    CHECK(hi != std::string::npos);
+    CHECK(lo != std::string::npos);
     CHECK(inv < list);
     CHECK(list < pack);
+    CHECK(pack < hi);
+    CHECK(hi < lo); // magic LAST
     CHECK(body.find("seqlock") != std::string::npos || body.find("Invalidate") != std::string::npos);
+    CHECK(body.find("magic LAST") != std::string::npos);
+}
+
+// Interleave a loader poll after each 32-bit half of ctrl publish.
+// Product (hi→magic): no accept until magic lands; final poll commits full ctrl.
+// FAULT (magic→hi): poll after magic alone can see magic+stale hi (empty/old).
+static void checkHalfWordPublishOrder() {
+    std::vector<uint64_t> mem(512, 0);
+    const uint64_t g = misterplex::plex_chrome_cmds::packGlyph(8, 8, 'H');
+    const size_t c = mailbox_abi::kPlxcOffset / 8;
+    const size_t base = mailbox_abi::kPlxlOffset / 8;
+    auto* cw = reinterpret_cast<uint32_t*>(&mem[c]);
+
+    // --- Product order: hi then magic ---
+    {
+        misterplex::plex_chrome_ddr::Model m;
+        m.enable = true;
+        m.last_seq = 0;
+        mem[c] = 0;
+        mem[base] = g;
+        const uint64_t ctrl = misterplex::plex_chrome_cmds::packPlxcCtrl(true, 1, 7);
+        cw[1] = static_cast<uint32_t>(ctrl >> 32);
+        // Magic still 0: must not accept.
+        CHECK(!misterplex::plex_chrome_ddr::stepLoad(m, mem.data(), false, false, 0, 0, 0));
+        CHECK(m.cnt_loads == 0);
+        cw[0] = static_cast<uint32_t>(ctrl);
+        CHECK(misterplex::plex_chrome_ddr::stepLoad(m, mem.data(), false, false, 0, 0, 0));
+        CHECK(m.cnt_loads == 1);
+        CHECK(m.last_seq == 7);
+        CHECK(m.beats.size() >= 1 && m.beats[0].data == g);
+    }
+
+    // --- After invalidate, magic-first with zero hi: transient empty ctrl ---
+    {
+        misterplex::plex_chrome_ddr::Model m;
+        m.enable = true;
+        m.last_seq = 0;
+        mem[c] = 0;
+        mem[base] = g;
+        const uint64_t ctrl = misterplex::plex_chrome_cmds::packPlxcCtrl(true, 1, 9);
+        cw[0] = static_cast<uint32_t>(ctrl); // magic first, hi still 0
+        // seq=0 from hi==0 → looks like seq 0 == last_seq 0 → no load, OR
+        // enable/count zeroed. Either way must not commit count=1 body as seq 9.
+        const bool accepted = misterplex::plex_chrome_ddr::stepLoad(m, mem.data(), false, false, 0, 0, 0);
+        if (accepted) {
+            // If accepted, it must not be the full intended ctrl (seq 9, count 1).
+            CHECK(m.last_seq != 9);
+        } else {
+            CHECK(m.cnt_loads == 0);
+        }
+        cw[1] = static_cast<uint32_t>(ctrl >> 32);
+        // After both halves, product model accepts once.
+        misterplex::plex_chrome_ddr::Model m2;
+        m2.enable = true;
+        m2.last_seq = 0;
+        CHECK(misterplex::plex_chrome_ddr::stepLoad(m2, mem.data(), false, false, 0, 0, 0));
+        CHECK(m2.last_seq == 9);
+    }
 }
 
 int main() {
@@ -168,6 +232,7 @@ int main() {
     checkRetainedCoherent();
     checkRetainedInvalid();
     checkFpgaSpiSeqlockSource();
+    checkHalfWordPublishOrder();
     if (fails) {
         std::fprintf(stderr, "test_plex_chrome_ddr_loader: %d FAIL(s)\n", fails);
         return 1;

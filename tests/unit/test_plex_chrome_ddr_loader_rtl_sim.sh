@@ -68,6 +68,8 @@ assert_sim_executed "chrome_ddr" "$OUT" \
   "EXECUTED torn_mid" "PASS torn_mid" \
   "EXECUTED retained" "PASS retained" \
   "EXECUTED retained_inv" "PASS retained_inv" \
+  "EXECUTED halfword" "PASS halfword" \
+  "EXECUTED halfword_magic_first" "PASS halfword_magic_first" \
   "plex_chrome_ddr_loader_tb: PASS"
 if [[ "$RC" -ne 0 ]]; then
   echo "FAIL rc=$RC" >&2

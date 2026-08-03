@@ -4,9 +4,13 @@
 module plex_chrome_ddr_loader_tb (
     input  wire        clk,
     input  wire        reset,
-    input  wire        mem_we_host,   // TB preload
+    input  wire        mem_we_host,   // TB preload full qword
     input  wire [28:0] mem_addr_host,
     input  wire [63:0] mem_wdata_host,
+    // 32-bit half-word host store (rd-duck hole 1 interleave)
+    input  wire        mem_we32_host,
+    input  wire        mem_half_hi,   // 0=lo[31:0], 1=hi[63:32]
+    input  wire [31:0] mem_wdata32_host,
     input  wire        run_tick,      // advance soft time (unused; clk is enough)
     // observe ENABLE=1
     output wire        host_we_on,
@@ -37,6 +41,12 @@ module plex_chrome_ddr_loader_tb (
     always @(posedge clk) begin
         if (mem_we_host && mem_addr_host < 29'd512)
             mem[mem_addr_host[8:0]] <= mem_wdata_host;
+        if (mem_we32_host && mem_addr_host < 29'd512) begin
+            if (mem_half_hi)
+                mem[mem_addr_host[8:0]][63:32] <= mem_wdata32_host;
+            else
+                mem[mem_addr_host[8:0]][31:0]  <= mem_wdata32_host;
+        end
     end
 
     // Arbiter: 2-phase — cycle0 req, cycle1 gnt(+write), cycle2 rd_valid for reads.

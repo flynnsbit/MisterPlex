@@ -925,11 +925,13 @@ bool FpgaSpi::writeChromeCommandList(const uint64_t* cmds, size_t count, bool en
         setErr("writeChromeCommandList: PLXC/list outside mapped window");
         return false;
     }
-    // PLXC seqlock (rd-duck / PLXG-style):
-    //   1) Invalidate magic so fabric cannot pair OLD ctrl with NEW body.
+    // PLXC seqlock (rd-duck / PLXG-style), 32-bit half order matters:
+    //   1) Invalidate both halves so fabric cannot pair OLD ctrl with NEW body.
     //   2) Write list body.
-    //   3) Publish new PLXC magic+seq last (single commit edge).
-    // Fabric re-reads ctrl after body; mismatch/invalid → torn abort, no push.
+    //   3) Write ctrl HIGH half first (enable/count/seq) while magic still 0.
+    //   4) DMB, then magic LOW last.
+    // Magic-then-hi leaves a window where a re-read sees stable magic + stale/zero
+    // hi and can accept a transient empty/old control (rd-duck hole 1).
     auto* cw = reinterpret_cast<volatile uint32_t*>(ddrMap_ + ctrlOff);
     cw[0] = 0;
     cw[1] = 0;
@@ -939,8 +941,9 @@ bool FpgaSpi::writeChromeCommandList(const uint64_t* cmds, size_t count, bool en
         list[i] = cmds[i];
     __sync_synchronize();
     const uint64_t ctrl = plex_chrome_cmds::packPlxcCtrl(enable, static_cast<unsigned>(n), seq);
-    cw[0] = static_cast<uint32_t>(ctrl);
-    cw[1] = static_cast<uint32_t>(ctrl >> 32);
+    cw[1] = static_cast<uint32_t>(ctrl >> 32); // high first; magic still 0
+    __sync_synchronize();
+    cw[0] = static_cast<uint32_t>(ctrl); // magic LAST
     __sync_synchronize();
     clearErr();
     return true;
