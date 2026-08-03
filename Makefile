@@ -639,6 +639,10 @@ $(ROOT)/build/test_input_mailbox: $(ROOT)/tests/unit/test_input_mailbox.cpp \
 		$(ROOT)/host/libmisterplex/mailbox_abi_spec.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_input_mailbox.cpp
+# Relative convenience — absolute-only rule makes `make build/test_input_mailbox` a no-op miss.
+build/test_input_mailbox: $(ROOT)/build/test_input_mailbox
+	@true
+
 
 $(ROOT)/build/test_pixel_format: $(ROOT)/tests/unit/test_pixel_format.cpp \
 		$(ROOT)/host/libmisterplex/pixel_format.hpp
