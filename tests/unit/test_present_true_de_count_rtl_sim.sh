@@ -64,7 +64,8 @@ printf '%s\n' "$OUT30"
 echo "product30 true rc=$RC30"
 assert_exec product30 "$OUT30" \
   "CASE true_de_count EXECUTED" "mode=PRODUCT_30_V564" "true_de=1" \
-  "de_w_max=960" "de_lines=540" "PASS true_de_count"
+  "de_w_max=960" "de_lines=540" "store_req=518400" "store_full=1" \
+  "store_x_range=0..959" "PASS true_de_count"
 [[ "$RC30" -eq 0 ]] || exit 1
 
 # --- PRODUCT 24 V_TOT=705 ---
@@ -78,7 +79,8 @@ printf '%s\n' "$OUT24"
 echo "product24 true rc=$RC24"
 assert_exec product24 "$OUT24" \
   "CASE true_de_count EXECUTED" "mode=PRODUCT_24_V705" "true_de=1" \
-  "de_w_max=960" "de_lines=540" "V_TOT=705" "rt_vt=705" "PASS true_de_count"
+  "de_w_max=960" "de_lines=540" "V_TOT=705" "rt_vt=705" \
+  "store_req=518400" "store_full=1" "store_x_range=0..959" "PASS true_de_count"
 [[ "$RC24" -eq 0 ]] || exit 1
 # fps pin
 grep -qE 'fps@20M=24\.00' <<<"$OUT24" || { echo "FAIL fps not ~24" >&2; exit 1; }
