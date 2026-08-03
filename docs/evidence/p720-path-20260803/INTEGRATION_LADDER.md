@@ -1,71 +1,73 @@
-# w-path integration ladder (parent broadcast 2)
+# w-path integration ladder (broadcast 2 + parent retraction)
 
-**Branch tip:** `aec131d1` (`w-path-720p`)  
-**Pinned truth:** main GREEN at parent-verified commits; do not claim L4 without all four fields.  
-**Rule:** ONLY L4 is in the product. L0–L3 are not shipped.
+**Measured from worktree:** branch **w-path-720p**  
+**Branch SHA at doc commit:** see `git rev-parse --short HEAD`  
+**Authority main for fleet truth:** **`origin/main`**, not local `main` (local main may be ahead with unpushed lands).
 
-Ladder:
-- L0 written (exists on some branch)
-- L1 ON_MAIN
-- L2 IN_FILES_QIP
-- L3 INSTANTIATED
-- L4 ENABLED (macro/param on)
+## Measurement identity (mandatory)
+
+| Label | Ref | SHA (measure time) | How measured |
+|-------|-----|--------------------|--------------|
+| path branch | `w-path-720p` | this worktree HEAD | worktree files |
+| fleet main | `origin/main` | **85bef583** | `git show origin/main:…` blobs only |
+| parent-cited main | `ad928cb1` | ad928cb1 | pinned commit blobs |
+| local `main` (not fleet truth) | `main` | **035fae51** in this clone | ahead of origin — w-osd merges local only |
+
+```text
+# origin/main@85bef583: present_*720p FILE=no QIP=no; host_bank FILE=no
+# ad928cb1: files.qip ~33 SV lines; present_* FILE=no QIP=no  (matches parent retraction)
+# local main@035fae51: HAS present_* in QIP — NOT fleet main; ignore for ON_MAIN claims
+```
+
+**Parent retraction accepted:** 720p present modules are **not** on fleet main.  
+Prior parent “34→45 / L2 dead code on main@ad928cb1” was **false** (wrong tree).  
+**IF any path plan assumed dead-code instantiation on main: REVERTED — no such work.**
 
 ## Path-owned RTL
 
-| Module | ON_MAIN | IN_FILES_QIP | INSTANTIATED | ENABLED | Level | Notes |
-|--------|---------|--------------|--------------|---------|-------|-------|
-| `host_bank_ingest_credit.sv` | **no** | **no** | **no** | **no** | **L0** | Route-A HPS credit card. On branch only. Not needed for Route-B DP+ascal 720 glass. **Do not land until parent sequences** — avoid 47-module pile-up. To reach L4: merge → files.qip → instantiate under `Plex.sv` ingest path → enable with named param default-off then lab-on. |
+| Module | Ref measured | ON_MAIN | IN_FILES_QIP | INSTANTIATED | ENABLED | Level |
+|--------|--------------|---------|--------------|--------------|---------|-------|
+| `host_bank_ingest_credit.sv` | origin/main@85bef583 | **no** | **no** | **no** | **no** | absent |
+| `host_bank_ingest_credit.sv` | w-path-720p@HEAD | n/a | **no** | **no** | **no** | **L0** |
 
-Evidence commands (branch worktree, not live main mid-land):
+Route-A only. Not Route-B critical. **No land / no instantiate** until parent sequences.
 
-```bash
-test -f fpga/Plex_MiSTer/rtl/host_bank_ingest_credit.sv && echo L0=yes
-git cat-file -e main:fpga/Plex_MiSTer/rtl/host_bank_ingest_credit.sv 2>&1 || echo ON_MAIN=no
-rg host_bank_ingest_credit fpga/Plex_MiSTer/files.qip || echo IN_QIP=no
-rg host_bank_ingest_credit fpga/Plex_MiSTer/Plex.sv || echo INSTANTIATED=no
-```
+## 720p present path (not path-owned — status only, pinned)
 
-## Path-owned host software (not QIP — binary product ladder)
+| Module | origin/main@85bef583 file | IN_QIP | INST | EN | Level |
+|--------|---------------------------|--------|------|-----|-------|
+| present_video_timing_720p | no | no | 0 | no | **absent on fleet main** |
+| present_content_window | no | no | 0 | no | absent |
+| present_geom_latch | no | no | 0 | no | absent |
+| present_beam_content_de | no | no | 0 | no | absent |
+| plex_present_geom_mux | no | no | 0 | no | absent |
 
-Host is not `files.qip`. Analog for honesty:
+Owner: **w-osd** (in flight on their branch). Path does **not** hunt “dead QIP” on main.
 
-| Unit | ON_MAIN | IN_DAEMON_BUILD (branch) | WIRED_HOT_PATH (branch) | DEFAULT_ON (branch) | Level vs main |
-|------|---------|--------------------------|-------------------------|---------------------|---------------|
-| `ddr_frame_layout.hpp` pad426 + LEG pin + B20 pack | **no** | yes | yes | yes | **L0** until merge |
-| `plxg_record.hpp` seqlock helpers + B20 store oracle | **no** | yes | yes (via fpga_spi) | yes | **L0** |
-| `ddr_present_bank.hpp` capacity PLXG plan | **no** | yes | yes | yes | **L0** |
-| `fpga_spi.cpp` writePlxgRecord + coupled kick | **no** | yes | yes | yes | **L0** |
-| `plex_resolve.cpp` DP default + Route-B ≤960×540 | **no** | yes | yes | yes | **L0** |
-| `media_player.cpp` plan-trust vs measured | **no** | yes | yes | yes | **L0** |
-| `main.cpp` DP setDecodeSize(content) | **no** | yes | yes | yes | **L0** |
-| `ffmpeg_vf.hpp` pad-only 426→432 | **no** | yes | yes | yes | **L0** |
-| `h264_fabric_stream_gate.hpp` byte CB gate | **no** | yes | yes | yes | **L0** |
-| `pms_delivery_geom.hpp` Route-B caps | **no** | yes | yes | yes | **L0** |
+## Path-owned host software vs origin/main@85bef583
 
-**Honest aggregate:** entire p720-path host stack is **L0 relative to main** (feature-complete on branch, unit-green, **not merged**). After parent merge it becomes product without a separate QIP step — still need parent HW proof for device behavior.
+Host is not QIP. Entire p720-path host stack is **unmerged = L0** vs fleet main.
 
-## Shared product pins (observed on this branch tree; not path-owned)
+| Unit | ON_MAIN | Branch wired | Level |
+|------|---------|--------------|-------|
+| ddr_frame_layout / pad426 / B20 pack | no | yes | **L0** |
+| plxg_record / B20 N→N+1 oracle | no | yes | **L0** |
+| fpga_spi writePlxgRecord + coupled kick | no | yes | **L0** |
+| plex_resolve DP + Route-B ≤960 | no | yes | **L0** |
+| media_player plan-trust | no | yes | **L0** |
+| main.cpp DP content decode size | no | yes | **L0** |
+| ffmpeg_vf pad-only 426 | no | yes | **L0** |
+| h264_fabric_stream_gate | no | yes | **L0** |
 
-| Pin | Branch observation | Product impact |
-|-----|--------------------|----------------|
-| `Plex.sv` `.use_frame_store(1'b0)` | present | frame store **DISABLED** (L3 missing for store path) |
-| `Plex.qsf` `FRAME_W=640` `FRAME_H=480` | present | still 480p canvas macros |
-| `PRESENT_BEAM_960` | commented / off | beam not 960 |
-| 720p present modules | owned by w-osd | parent: some L2 dead / L3–L4 in flight on main — **not path claims** |
+## Plan impact of retraction
 
-## What landing would take (path)
-
-1. **Host stack:** parent sequences merge of `w-path-720p` (or cherry-picks) onto green main after rebase. No QIP. Risk: hot-path PLXG/doorbell couple + Route-B caps + DP plan-trust.
-2. **`host_bank_ingest_credit.sv`:** defer unless Route-A zero-copy is scheduled. Ladder L0→L4 needs parent slot; not a silent drive-by instantiate.
-3. **B20 store match / applied_seq / w-clock store-applied:** **w-mem / w-clock** RTL — path only owns host doorbell pack + contract oracle (still L0 until host merge).
-
-## What path will NOT claim
-
-- "Integrated PLXG/present" without per-module L0–L4 fields.
-- L4 for any RTL path does not own or has not enabled.
-- Device/fit results (parent-only).
+| Decision | Action |
+|----------|--------|
+| “Instantiate dead L2 present modules on main” | **Never started; will not start** |
+| Path host work | **Unchanged** — branch unit-green L0 |
+| host_bank land | **Still deferred** |
+| Trust local `main` for ON_MAIN | **No** — use origin/main or pinned SHA |
 
 ## Status line
 
-`w-path aec131d1 ladder: host stack L0 (branch unit-green); host_bank_ingest_credit L0/L0/L0/L0; B20 store/clock RTL-owed; no unilateral main land`
+`w-path ladder: host L0 vs origin/main@85bef583; host_bank L0; 720p present absent on fleet main (retraction); no L4; no dead-code hunt`
