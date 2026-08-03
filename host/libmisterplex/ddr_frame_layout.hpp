@@ -356,12 +356,54 @@ inline DdrFrameGeometry plex720pDdrFrameGeometry() {
     return g;
 }
 
-// FPGA-present geometry for any content/decode tier. Decode WxH is intentionally
-// ignored: a 320x240 source still occupies the 624-byte-stride coded bank after
-// force_original_aspect_ratio=decrease + pad. Returning identity-320 here is the
-// shear defect (ARM line_bytes=320 vs RTL CODED_W=624).
-inline DdrFrameGeometry ddrFrameGeometryForFpgaPresent(CodedWidth /*decodeWidth*/,
-                                                      CodedHeight /*decodeHeight*/) {
+// True when an I420 payload cannot fit the legacy 512 KiB bank stride.
+// Mirrors ddr_frame_store.sv Option-C select: capacity, NOT coded_w>=1280.
+// 624x480 (449280) → false; 960x540 (777600) → true; 1280x720 → true.
+inline bool ddrI420PayloadNeedsOptionCBank(size_t frameBytes) {
+    return frameBytes > static_cast<size_t>(kPlex480pYuv420pBankStride);
+}
+
+// Same predicate from plane geometry (tight or strided). frame_bytes =
+// y_stride*h + 2*(chroma_stride*h/2). h must be even (4:2:0).
+inline bool ddrI420PlanesNeedOptionCBank(int yStride, int chromaStride, int height) {
+    if (yStride <= 0 || chromaStride <= 0 || height <= 0 || (height & 1))
+        return false;
+    const uint64_t yb = static_cast<uint64_t>(yStride) * static_cast<uint64_t>(height);
+    const uint64_t cb =
+        static_cast<uint64_t>(chromaStride) * static_cast<uint64_t>(height / 2);
+    const uint64_t bytes = yb + 2ull * cb;
+    if (bytes > 0xFFFFFFFFull)
+        return true;
+    return ddrI420PayloadNeedsOptionCBank(static_cast<size_t>(bytes));
+}
+
+// Bank map for a content rectangle: Legacy (0x30000000/0x80000) vs Option-C.
+enum class DdrBankMap : uint8_t { Legacy480p = 0, OptionC720p = 1 };
+
+inline DdrBankMap ddrSelectBankMapForI420(int yStride, int chromaStride, int height) {
+    return ddrI420PlanesNeedOptionCBank(yStride, chromaStride, height)
+               ? DdrBankMap::OptionC720p
+               : DdrBankMap::Legacy480p;
+}
+
+inline DdrBankMap ddrSelectBankMapForContent(int contentW, int contentH) {
+    if (contentW <= 0 || contentH <= 0 || (contentW & 1) || (contentH & 1))
+        return DdrBankMap::Legacy480p;
+    return ddrSelectBankMapForI420(contentW, contentW / 2, contentH);
+}
+
+// FPGA-present *canvas* geometry for a content/decode tier.
+// - Content whose tight I420 fits the legacy 512 KiB bank → product 480p canvas
+//   (624-stride). 320x240 still maps here (scale+pad); identity-320 is the shear defect.
+// - Content that overruns legacy capacity (e.g. 960x540 = 777600) → Option-C
+//   1280x720 canvas. Width alone must not decide (960 < 1280 but needs Option-C).
+inline DdrFrameGeometry ddrFrameGeometryForFpgaPresent(CodedWidth decodeWidth,
+                                                      CodedHeight decodeHeight) {
+    const int w = decodeWidth.get();
+    const int h = decodeHeight.get();
+    if (w > 0 && h > 0 && (w % 2) == 0 && (h % 2) == 0 &&
+        ddrSelectBankMapForContent(w, h) == DdrBankMap::OptionC720p)
+        return plex720pDdrFrameGeometry();
     return productDdrFrameStoreGeometry();
 }
 
@@ -686,7 +728,9 @@ inline bool ddrFrameStoreAcceptsResolution(int codedWidth, int codedHeight) {
     return ddrFrameStoreAcceptsResolution(CodedWidth{codedWidth}, CodedHeight{codedHeight});
 }
 
-// 720p-tier acceptance (Option-C map). Not product silicon until RBF+PLXG.
+// 720p-tier acceptance for MB-aligned *coded canvas* sizes on Option-C map.
+// 960x540 display content is NOT accepted here (540 not MB-aligned) — use
+// ddrFrameStoreAcceptsOptionCContent / native_push into 1280x720 canvas.
 inline bool ddrFrameStoreAccepts720pTier(CodedWidth codedWidth, CodedHeight codedHeight) {
     if (codedWidth.get() <= 0 || codedHeight.get() <= 0)
         return false;
@@ -704,6 +748,26 @@ inline bool ddrFrameStoreAccepts720pTier(CodedWidth codedWidth, CodedHeight code
 
 inline bool ddrFrameStoreAccepts720pTier(int codedWidth, int codedHeight) {
     return ddrFrameStoreAccepts720pTier(CodedWidth{codedWidth}, CodedHeight{codedHeight});
+}
+
+// Option-C *content* acceptance (native_push display geometry). Even dims only;
+// MB-align not required (540 is a valid display height). Capacity must need
+// Option-C or explicitly fit under Option-C stride, and reject legacy-only path
+// when payload overruns 512 KiB.
+inline bool ddrFrameStoreAcceptsOptionCContent(int contentW, int contentH) {
+    if (contentW <= 0 || contentH <= 0 || (contentW & 1) || (contentH & 1))
+        return false;
+    if (contentW > kDdrFrameStore720pMaxWidth.get() ||
+        contentH > kDdrFrameStore720pMaxHeight.get())
+        return false;
+    const size_t frameBytes = yuv420pFrameBytes(contentW, contentH);
+    if (frameBytes == 0)
+        return false;
+    if (frameBytes > static_cast<size_t>(kPlex720pYuv420pBankStride))
+        return false;
+    // Must actually need Option-C OR be placed on Option-C canvas deliberately.
+    // Oversize-for-legacy is the product 960x540 case.
+    return true;
 }
 
 // ---- fab-dma / fabric-owned present (evacuate ARM, not just cheapen it) ----
@@ -767,10 +831,24 @@ constexpr double kFrameBudget24fpsMs = 41.667;
 // This is 720p *output* (fabric upscale to Option-C 1280x720 canvas). NOT 720p source.
 // DMA (w-path) remains the upgrade to true 1280x720 source (~kill 14.97 ms copy).
 // Caveat (parent): -f null is decode-only upper bound on headroom — not E2E promise.
-constexpr int kPlex720pOutputSourceWidth = 960;
-constexpr int kPlex720pOutputSourceHeight = 540;
-// Literals (not 960*540*3/2) so rtl_invariants parity parser matches .svh.
-constexpr int kPlex720pOutputSourceBytes = 777600;
+//
+// Coded vs display (H.264 16×16 MB grid):
+//   Display / PMS picture   : 960×540  (540 & 15 == 12 — NOT MB-aligned)
+//   MB-aligned coded size   : 960×544  (ceil(540/16)*16) — bitstream/DPB only
+//   Bank canvas (Option-C)  : 1280×720 — MB-aligned; PLXG geometry beat
+//   native_push payload     : DISPLAY 960×540 tight I420 = 777600 B
+//   Fabric reader strides   : DISPLAY (960/480); plane offs from display dims
+//   783360 (960×544 I420) must NOT be used as native_push publish_bytes.
+constexpr int kPlex720pOutputSourceWidth = 960;          // display (= coded W)
+constexpr int kPlex720pOutputSourceHeight = 540;         // display
+constexpr int kPlex720pOutputSourceDisplayWidth = 960;
+constexpr int kPlex720pOutputSourceDisplayHeight = 540;
+constexpr int kPlex720pOutputSourceCodedWidth = 960;
+constexpr int kPlex720pOutputSourceCodedHeight = 544; // MB-align 540
+// Literals so rtl_invariants parity parser matches .svh.
+constexpr int kPlex720pOutputSourceBytes = 777600; // DISPLAY tight I420
+constexpr int kPlex720pOutputSourceDisplayBytes = 777600;
+constexpr int kPlex720pOutputSourceCodedBytes = 783360; // 960*544*3/2 — not native_push
 // Tight native I420 plane contract (mirror ddr_frame_layout_params.svh).
 // Fabric reader MUST use these when PLXG native_push=1 — not canvas 1280/640.
 constexpr int kPlex720pOutputYStrideBytes = 960;
@@ -816,6 +894,12 @@ constexpr double kParent720pArmDownscaleTo624Ms = 44.95;
 constexpr double kPlex720pOutputMinMarginMs = 7.0;
 
 static_assert(kPlex720pOutputSourceBytes == 777600, "960x540 I420 bytes");
+static_assert(kPlex720pOutputSourceDisplayBytes == kPlex720pOutputSourceBytes, "display alias");
+static_assert(kPlex720pOutputSourceCodedBytes == 783360, "MB-coded 960x544 I420");
+static_assert(kPlex720pOutputSourceCodedBytes != kPlex720pOutputSourceDisplayBytes,
+              "coded vs display must not be conflated");
+static_assert((kPlex720pOutputSourceDisplayHeight & 15) != 0, "540 is not MB-aligned");
+static_assert((kPlex720pOutputSourceCodedHeight & 15) == 0, "544 is MB-aligned");
 static_assert(kPlex720pOutputSourceWidth < 1280 && kPlex720pOutputSourceHeight < 720,
               "source is intermediate; canvas is 720p");
 static_assert(kPlex720pOutputUPlaneOffset == 518400, "960x540 U plane");
@@ -824,6 +908,8 @@ static_assert(kPlex720pOutputYStrideBytes != kPlex720pYStrideBytes,
               "native content stride must differ from canvas 1280");
 static_assert(kPlex720pOutputSourceBytes < kPlex720pYuv420pBankStride,
               "960x540 must fit Option-C bank stride");
+static_assert(kPlex720pOutputSourceBytes > kPlex480pYuv420pBankStride,
+              "960x540 must NOT fit legacy 512KiB bank — forces Option-C");
 
 // Tight native I420 layout for a content rectangle (native_push=1).
 // Planes are contiguous with content strides — NOT canvas line_bytes.

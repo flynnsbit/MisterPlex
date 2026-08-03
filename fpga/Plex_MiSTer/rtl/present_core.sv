@@ -38,6 +38,21 @@ module present_core #(
 	input  wire        audio_en,        // OSD tone enable (when no FIFO audio)
 	input  wire        use_frame_store, // OSD force bars when 1
 
+	// Runtime DDR bank geometry (PLXW). geom_enable=0 → legacy CODED 624 path.
+	// Capacity (not width>=1280) selects Option-C inside ddr_frame_store.
+	// Safe default when unconnected: all-zero / disable (legacy banks).
+	input  wire        geom_enable = 1'b0,
+	input  wire [10:0] geom_coded_w = 11'd0,
+	input  wire [10:0] geom_coded_h = 11'd0,
+	input  wire [11:0] geom_y_stride = 12'd0,
+	input  wire [10:0] geom_chroma_stride = 11'd0,
+	input  wire [10:0] geom_display_w = 11'd0,
+	input  wire [10:0] geom_display_h = 11'd0,
+	input  wire [10:0] geom_present_x = 11'd0,
+	input  wire [10:0] geom_present_y = 11'd0,
+	input  wire [10:0] geom_crop_left = 11'd0,
+	input  wire [10:0] geom_crop_top = 11'd0,
+
 	// frame_store write (from ingest)
 	input  wire        fs_wr_en,
 	input  wire [15:0] fs_wr_pixel,
@@ -257,11 +272,25 @@ module present_core #(
 		.LINE_COUNT(FRAME_LINE_COUNT),
 		.PHYS_BASE(32'h3000_0000),
 		.HPS_BANK_STRIDE_BYTES(DDR_FRAME_YUV420P_BANK_STRIDE),
-		.DOORBELL_PHYS(DDR_FRAME_YUV420P_DOORBELL_PHYS)
+		.DOORBELL_PHYS(DDR_FRAME_YUV420P_DOORBELL_PHYS),
+		.PHYS_BASE_720P(DDR_FRAME_720P_PHYS_BASE),
+		.HPS_BANK_STRIDE_BYTES_720P(DDR_FRAME_720P_YUV420P_BANK_STRIDE),
+		.DOORBELL_PHYS_720P(DDR_FRAME_720P_YUV420P_DOORBELL_PHYS)
 	) fstore (
 		.clk(clk),
 		.clk_ddr(clk_ddr),
 		.reset(reset),
+		.geom_enable(geom_enable),
+		.rt_coded_w(geom_coded_w),
+		.rt_coded_h(geom_coded_h),
+		.rt_y_stride(geom_y_stride),
+		.rt_chroma_stride(geom_chroma_stride),
+		.rt_display_w(geom_display_w),
+		.rt_display_h(geom_display_h),
+		.rt_present_x(geom_present_x),
+		.rt_present_y(geom_present_y),
+		.rt_crop_left(geom_crop_left),
+		.rt_crop_top(geom_crop_top),
 		.rd_x(store_x),
 		.rd_y(store_y),
 		.rd_active(de_r),

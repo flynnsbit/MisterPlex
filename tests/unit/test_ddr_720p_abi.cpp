@@ -371,6 +371,64 @@ int main() {
         CHECK(!ddr720pOutputProductPathAccepts(p1024.budget, kParent1024x576DecodeMs));
     }
 
+    // --- Option-C capacity select (NOT coded_w>=1280) — parent fit blocker ---
+    {
+        CHECK(kPlex480pYuv420pBankStride == 0x80000u);
+        CHECK(kPlex720pOutputSourceBytes == 777600);
+        CHECK(kPlex720pOutputSourceBytes > kPlex480pYuv420pBankStride);
+        CHECK(!ddrI420PayloadNeedsOptionCBank(449280u)); // 624x480
+        CHECK(ddrI420PayloadNeedsOptionCBank(777600u));  // 960x540 display
+        CHECK(ddrI420PayloadNeedsOptionCBank(783360u));  // 960x544 MB-coded
+        CHECK(ddrI420PayloadNeedsOptionCBank(1382400u)); // 1280x720
+        CHECK(ddrSelectBankMapForContent(624, 480) == DdrBankMap::Legacy480p);
+        CHECK(ddrSelectBankMapForContent(320, 240) == DdrBankMap::Legacy480p);
+        CHECK(ddrSelectBankMapForContent(960, 540) == DdrBankMap::OptionC720p);
+        CHECK(ddrSelectBankMapForContent(1280, 720) == DdrBankMap::OptionC720p);
+        // Width-only bug class: 960 < 1280 must still be Option-C.
+        CHECK(960 < 1280);
+        CHECK(ddrSelectBankMapForI420(960, 480, 540) == DdrBankMap::OptionC720p);
+        // Present geometry: 960x540 → Option-C canvas, not legacy 624x480.
+        const auto g540 = ddrFrameGeometryForFpgaPresent(960, 540);
+        CHECK(g540.coded_width.get() == 1280);
+        CHECK(g540.coded_height.get() == 720);
+        const auto l540 =
+            makeDdrFrameLayout(g540, kPlex720pDdrFramePhysBase, kDdrFrameStrideAlign);
+        CHECK(ddrFrameLayoutValid(l540));
+        CHECK(l540.phys_base == kPlex720pDdrFramePhysBase);
+        CHECK(l540.bank_stride == kPlex720pYuv420pBankStride);
+        CHECK(l540.bank_stride == 0x180000u);
+        // Historical: small content still 480p canvas (shear-safe).
+        const auto g240 = ddrFrameGeometryForFpgaPresent(320, 240);
+        CHECK(g240.coded_width.get() == 624);
+        CHECK(g240.coded_height.get() == 480);
+        // Coded vs display: native_push uses DISPLAY bytes, not MB-coded.
+        CHECK(kPlex720pOutputSourceDisplayHeight == 540);
+        CHECK(kPlex720pOutputSourceCodedHeight == 544);
+        CHECK((kPlex720pOutputSourceDisplayHeight & 15) == 12);
+        CHECK((kPlex720pOutputSourceCodedHeight & 15) == 0);
+        CHECK(kPlex720pOutputSourceDisplayBytes == 777600);
+        CHECK(kPlex720pOutputSourceCodedBytes == 783360);
+        CHECK(kPlex720pOutputSourceBytes == kPlex720pOutputSourceDisplayBytes);
+        CHECK(kPlex720pOutputSourceBytes != kPlex720pOutputSourceCodedBytes);
+        CHECK(static_cast<size_t>(kPlex720pOutputSourceCodedBytes) ==
+              yuv420pFrameBytes(960, 544));
+        CHECK(static_cast<size_t>(kPlex720pOutputSourceDisplayBytes) ==
+              yuv420pFrameBytes(960, 540));
+        // 720p tier MB gate rejects 540; Option-C content accept allows display.
+        CHECK(!ddrFrameStoreAccepts720pTier(960, 540));
+        CHECK(ddrFrameStoreAccepts720pTier(960, 544));
+        CHECK(ddrFrameStoreAcceptsOptionCContent(960, 540));
+        CHECK(!ddrFrameStoreAcceptsResolution(960, 540)); // not product 480p silicon
+        // Product plan publish_bytes is display, never MB-coded.
+        const auto out = makePlex720pOutputFrom540pSourcePlan();
+        CHECK(out.valid);
+        CHECK(out.publish_bytes == 777600u);
+        CHECK(out.publish_bytes != 783360u);
+        CHECK(out.content_layout.frame_bytes == 777600u);
+        CHECK(ddrSelectBankMapForContent(out.content_w, out.content_h) ==
+              DdrBankMap::OptionC720p);
+    }
+
     // --- Airtight 960x540 content layout (native_push strides ≠ canvas) ---
     {
         const auto cl = plex960x540NativeContentLayout();

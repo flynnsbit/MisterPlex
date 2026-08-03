@@ -1,8 +1,20 @@
 // HPS-DDR-backed YUV420p frame store.
 //
-// The ARM writes planar YUV420 frames into two HPS DDR banks using the layout
-// from host/libmisterplex/ddr_frame_layout.hpp. The FPGA reads Y, U, and V
-// source lines directly from HPS DDR into bank-tagged M10K line buffers.
+// Reads planar YUV420 from HPS DDR banks into bank-tagged M10K line buffers.
+// Legacy defaults match host/libmisterplex/ddr_frame_layout.hpp (624×480).
+// Runtime geometry (PLXW / geom_enable) sizes the *fetch* for native content
+// up to MAX_CODED 1280×720 (one M10K per luma line). Line RAMs are synthesis-
+// sized to the max; active line qwords/pitch come from registers.
+//
+// geom_enable=0 (reset): bit-exact parameter path (CODED_W/H, stride=CODED_W,
+// bank map PHYS_BASE/0x80000/doorbell product).
+// geom_enable=1: runtime plane pitch; bank map is CAPACITY-selected:
+//   I420 frame_bytes = y_stride*coded_h + 2*(chroma_stride*coded_h/2)
+//   if frame_bytes > legacy HPS_BANK_STRIDE (512 KiB) → Option-C
+//     (0x30180000 / 0x180000 / 0x3047F000)
+//   else → legacy product banks.
+// Width alone must NOT select the map: product 960x540 is <1280 wide but
+// 777600 B > 524288 B and MUST use Option-C (w-mem / parent 2026-08-03).
 
 module ddr_frame_store #(
 	parameter int FRAME_W = 640,
@@ -10,6 +22,9 @@ module ddr_frame_store #(
 	parameter int FRAME_STRIDE = FRAME_W,
 	parameter int CODED_W = FRAME_W,
 	parameter int CODED_H = FRAME_H,
+	// Max content the linebufs/datapath can address (720p-native).
+	parameter int MAX_CODED_W = 1280,
+	parameter int MAX_CODED_H = 720,
 	parameter int DISPLAY_W = FRAME_W,
 	parameter int DISPLAY_H = FRAME_H,
 	parameter int CROP_LEFT = 0,
@@ -20,6 +35,12 @@ module ddr_frame_store #(
 	parameter [31:0] PHYS_BASE = 32'h3000_0000,
 	parameter int HPS_BANK_STRIDE_BYTES = 524288,
 	parameter [31:0] DOORBELL_PHYS = PHYS_BASE + (2 * HPS_BANK_STRIDE_BYTES) - 32'h1000,
+	// Option-C 720p map (parent-verified 0x30180000 / 0x180000 / 0x3047F000).
+	// Runtime-selected when geom_enable && I420 payload exceeds legacy bank stride.
+	// Default path uses PHYS_* (480p). Do not key Option-C on coded_w alone.
+	parameter [31:0] PHYS_BASE_720P = 32'h3018_0000,
+	parameter int HPS_BANK_STRIDE_BYTES_720P = 32'h0018_0000,
+	parameter [31:0] DOORBELL_PHYS_720P = 32'h3047_F000,
 	parameter [31:0] MAILBOX_PHYS  = DOORBELL_PHYS + 32'h100,
 	parameter [31:0] INPUT_MAILBOX_PHYS = DOORBELL_PHYS + 32'h108,
 	parameter [31:0] SDRAM_MAILBOX_PHYS = DOORBELL_PHYS + 32'h110,
@@ -52,12 +73,40 @@ module ddr_frame_store #(
 	input  wire        clk_ddr,
 	input  wire        reset,
 
-	input  wire [$clog2(FRAME_W)-1:0] rd_x,
-	input  wire [$clog2(FRAME_H)-1:0] rd_y,
+	// rd_x/y: presentation or content coords (up to max(FRAME, MAX_CODED)).
+	input  wire [$clog2((FRAME_W > MAX_CODED_W) ? FRAME_W : MAX_CODED_W)-1:0] rd_x,
+	input  wire [$clog2((FRAME_H > MAX_CODED_H) ? FRAME_H : MAX_CODED_H)-1:0] rd_y,
 	input  wire        rd_active,
 	output reg  [7:0]  rd_r,
 	output reg  [7:0]  rd_g,
 	output reg  [7:0]  rd_b,
+
+	// Optional multi-pixel handoff (w-clock yuv_bt601_npx). Enabled only when
+	// DDR_FRAME_STORE_EXPORT_QWORDS is defined so legacy TBs stay pin-compatible.
+`ifdef DDR_FRAME_STORE_EXPORT_QWORDS
+	output reg  [63:0] rd_y_qword,
+	output reg  [63:0] rd_y_qword_hi,
+	output reg         rd_y_hi_valid,
+	output reg  [63:0] rd_u_qword,
+	output reg  [63:0] rd_v_qword,
+	output reg  [10:0] rd_src_x_q,
+	output reg         rd_qword_valid,
+`endif
+
+	// Runtime bank geometry (PLXW). geom_enable=0 → parameter legacy path.
+	// Callers must tie these (product: Plex/present_core; TBs: 0).
+	// No port defaults — Verilator was ignoring C++ drivers when defaults existed.
+	input  wire        geom_enable = 1'b0,
+	input  wire [10:0] rt_coded_w = 11'd0,
+	input  wire [10:0] rt_coded_h = 11'd0,
+	input  wire [11:0] rt_y_stride = 12'd0,
+	input  wire [10:0] rt_chroma_stride = 11'd0,
+	input  wire [10:0] rt_display_w = 11'd0,
+	input  wire [10:0] rt_display_h = 11'd0,
+	input  wire [10:0] rt_present_x = 11'd0,
+	input  wire [10:0] rt_present_y = 11'd0,
+	input  wire [10:0] rt_crop_left = 11'd0,
+	input  wire [10:0] rt_crop_top = 11'd0,
 
 	input  wire        start_req,
 	input  wire        bank_sel,
@@ -87,41 +136,207 @@ module ddr_frame_store #(
 	output reg         doorbell_ok,
 	output wire  [7:0] debug_state
 );
-	localparam int X_W = $clog2(FRAME_W);
-	localparam int Y_W = $clog2(FRAME_H);
-	localparam int CODED_X_W = $clog2(CODED_W);
-	localparam int CODED_Y_W = $clog2(CODED_H);
-	localparam int Y_LINE_QWORDS = CODED_W / 8;
+	// Port/scan domain: cover presentation FRAME and max content.
+	localparam int RD_W_MAX = (FRAME_W > MAX_CODED_W) ? FRAME_W : MAX_CODED_W;
+	localparam int RD_H_MAX = (FRAME_H > MAX_CODED_H) ? FRAME_H : MAX_CODED_H;
+	localparam int X_W = $clog2(RD_W_MAX);
+	localparam int Y_W = $clog2(RD_H_MAX);
+	// Line RAM physical size = max coded line (1280 → 160 qwords = 1 M10K @64b).
+	localparam int Y_LINE_QWORDS_MAX = MAX_CODED_W / 8;   // 160
+	localparam int C_LINE_QWORDS_MAX = MAX_CODED_W / 16;  // 80
+	localparam int Y_QW_AW = $clog2(Y_LINE_QWORDS_MAX);
+	localparam int C_QW_AW = $clog2(C_LINE_QWORDS_MAX);
+	// Legacy parameter path (geom_enable=0) — keep names used below.
+	localparam int CODED_X_W = $clog2(MAX_CODED_W);
+	localparam int CODED_Y_W = $clog2(MAX_CODED_H);
+	localparam int Y_LINE_QWORDS = CODED_W / 8;           // legacy default fetch
 	localparam int C_LINE_QWORDS = CODED_W / 16;
-	localparam int Y_QW_AW = $clog2(Y_LINE_QWORDS);
-	localparam int C_QW_AW = $clog2(C_LINE_QWORDS);
 	localparam int LINE_SLOTS = LINE_COUNT * 2;
 	localparam int SLOT_W = $clog2(LINE_SLOTS);
 	localparam [SLOT_W-1:0] SECOND_SET_BASE = SLOT_W'(LINE_COUNT);
 	localparam [X_W-1:0] LAST_X = X_W'(FRAME_W - 1);
 	localparam [Y_W-1:0] LAST_Y = Y_W'(FRAME_H - 1);
-	localparam [X_W-1:0] PRESENT_X_L = X_W'(PRESENT_X);
-	localparam [Y_W-1:0] PRESENT_Y_L = Y_W'(PRESENT_Y);
-	localparam [X_W-1:0] PRESENT_END_X = X_W'(PRESENT_X + DISPLAY_W);
-	localparam [Y_W-1:0] PRESENT_END_Y = Y_W'(PRESENT_Y + DISPLAY_H);
-	localparam [CODED_X_W-1:0] CROP_LEFT_L = CODED_X_W'(CROP_LEFT);
-	localparam [CODED_Y_W-1:0] CROP_TOP_L = CODED_Y_W'(CROP_TOP);
-	localparam [28:0] BASE_W0 = PHYS_BASE[31:3];
-	localparam [28:0] HPS_BANK_STRIDE_QWORDS = 29'(HPS_BANK_STRIDE_BYTES / 8);
-	localparam [28:0] BASE_W1 = PHYS_BASE[31:3] + HPS_BANK_STRIDE_QWORDS;
-	localparam [28:0] DOORBELL_W = DOORBELL_PHYS[31:3];
+	localparam [X_W-1:0] LEG_PRESENT_X = X_W'(PRESENT_X);
+	localparam [Y_W-1:0] LEG_PRESENT_Y = Y_W'(PRESENT_Y);
+	localparam [X_W-1:0] LEG_PRESENT_END_X = X_W'(PRESENT_X + DISPLAY_W);
+	localparam [Y_W-1:0] LEG_PRESENT_END_Y = Y_W'(PRESENT_Y + DISPLAY_H);
+	localparam [CODED_X_W-1:0] LEG_CROP_LEFT = CODED_X_W'(CROP_LEFT);
+	localparam [CODED_Y_W-1:0] LEG_CROP_TOP = CODED_Y_W'(CROP_TOP);
+	localparam [28:0] LEG_BASE_W0 = PHYS_BASE[31:3];
+	localparam [28:0] LEG_BANK_STRIDE_QWORDS = 29'(HPS_BANK_STRIDE_BYTES / 8);
+	localparam [28:0] LEG_BASE_W1 = PHYS_BASE[31:3] + LEG_BANK_STRIDE_QWORDS;
+	localparam [28:0] LEG_DOORBELL_W = DOORBELL_PHYS[31:3];
+	localparam [28:0] OPTC_BASE_W0 = PHYS_BASE_720P[31:3];
+	localparam [28:0] OPTC_BANK_STRIDE_QWORDS = 29'(HPS_BANK_STRIDE_BYTES_720P / 8);
+	localparam [28:0] OPTC_BASE_W1 = PHYS_BASE_720P[31:3] + OPTC_BANK_STRIDE_QWORDS;
+	localparam [28:0] OPTC_DOORBELL_W = DOORBELL_PHYS_720P[31:3];
+	// Legacy names kept for MAILBOX_* offsets (product control page on 480p doorbell).
+	// Runtime fill/poll use eff_*/d_* bank map (LEG vs Option-C).
+	localparam [28:0] BASE_W0 = LEG_BASE_W0;
+	localparam [28:0] BASE_W1 = LEG_BASE_W1;
+	localparam [28:0] DOORBELL_W = LEG_DOORBELL_W;
+	localparam [28:0] HPS_BANK_STRIDE_QWORDS = LEG_BANK_STRIDE_QWORDS;
 	localparam [28:0] MAILBOX_W  = MAILBOX_PHYS[31:3];
 	localparam [28:0] INPUT_MAILBOX_W = INPUT_MAILBOX_PHYS[31:3];
 	localparam [28:0] SDRAM_MAILBOX_W = SDRAM_MAILBOX_PHYS[31:3];
 	localparam [28:0] FRAME_MAILBOX_W = FRAME_MAILBOX_PHYS[31:3];
 	localparam [28:0] BANK_MAILBOX_W  = BANK_MAILBOX_PHYS[31:3];
-	localparam [28:0] Y_PLANE_QWORDS = 29'((CODED_W * CODED_H) / 8);
-	localparam [28:0] C_PLANE_QWORDS = 29'((CODED_W * CODED_H) / 32);
-	localparam [28:0] U_PLANE_BASE = Y_PLANE_QWORDS;
-	localparam [28:0] V_PLANE_BASE = Y_PLANE_QWORDS + C_PLANE_QWORDS;
-	localparam [28:0] Y_LINE_QWORDS_W = 29'(Y_LINE_QWORDS);
-	localparam [28:0] C_LINE_QWORDS_W = 29'(C_LINE_QWORDS);
+	// Legacy plane layout (stride == CODED_W).
+	localparam [28:0] LEG_Y_PLANE_QWORDS = 29'((CODED_W * CODED_H) / 8);
+	localparam [28:0] LEG_C_PLANE_QWORDS = 29'((CODED_W * CODED_H) / 32);
+	localparam [28:0] LEG_U_PLANE_BASE = LEG_Y_PLANE_QWORDS;
+	localparam [28:0] LEG_V_PLANE_BASE = LEG_Y_PLANE_QWORDS + LEG_C_PLANE_QWORDS;
+	localparam [28:0] LEG_Y_LINE_QWORDS_W = 29'(Y_LINE_QWORDS);
+	localparam [28:0] LEG_C_LINE_QWORDS_W = 29'(C_LINE_QWORDS);
+	// Back-compat aliases (fault defines / older refs).
+	localparam [28:0] Y_PLANE_QWORDS = LEG_Y_PLANE_QWORDS;
+	localparam [28:0] C_PLANE_QWORDS = LEG_C_PLANE_QWORDS;
+	localparam [28:0] U_PLANE_BASE = LEG_U_PLANE_BASE;
+	localparam [28:0] V_PLANE_BASE = LEG_V_PLANE_BASE;
+	localparam [28:0] Y_LINE_QWORDS_W = LEG_Y_LINE_QWORDS_W;
+	localparam [28:0] C_LINE_QWORDS_W = LEG_C_LINE_QWORDS_W;
 	localparam [Y_QW_AW:0] DDR_BURST_MAX_QWORDS = (Y_QW_AW+1)'(DDR_BURST_MAX);
+
+	// ---- Runtime effective geometry (registered on clk; safe default = legacy) ----
+	reg        geom_en_r;
+	reg [10:0] eff_coded_w;
+	reg [10:0] eff_coded_h;
+	reg [11:0] eff_y_stride;
+	reg [10:0] eff_c_stride;
+	reg [10:0] eff_disp_w;
+	reg [10:0] eff_disp_h;
+	reg [10:0] eff_pres_x;
+	reg [10:0] eff_pres_y;
+	reg [10:0] eff_crop_l;
+	reg [10:0] eff_crop_t;
+	// Derived (qwords / plane bases) — recomputed with regs.
+	reg [8:0]  eff_y_fetch_qw;   // ceil active luma line fetch (coded_w/8)
+	reg [7:0]  eff_c_fetch_qw;   // coded_w/16
+	reg [8:0]  eff_y_pitch_qw;   // y_stride/8
+	reg [7:0]  eff_c_pitch_qw;   // chroma_stride/8
+	reg [28:0] eff_u_base_qw;
+	reg [28:0] eff_v_base_qw;
+	reg        eff_optc_map;
+	reg [28:0] eff_base_w0;
+	reg [28:0] eff_base_w1;
+	reg [28:0] eff_doorbell_w;
+
+	wire [10:0] rt_cw_nz = (rt_coded_w == 11'd0) ? 11'(CODED_W) : rt_coded_w;
+	wire [10:0] rt_ch_nz = (rt_coded_h == 11'd0) ? 11'(CODED_H) : rt_coded_h;
+	wire [11:0] rt_ys_nz = (rt_y_stride == 12'd0) ? 12'(CODED_W) : rt_y_stride;
+	wire [10:0] rt_cs_nz = (rt_chroma_stride == 11'd0) ? 11'(CODED_W/2) : rt_chroma_stride;
+	wire [10:0] rt_dw_nz = (rt_display_w == 11'd0) ? rt_cw_nz : rt_display_w;
+	wire [10:0] rt_dh_nz = (rt_display_h == 11'd0) ? rt_ch_nz : rt_display_h;
+
+	// Clamp coded to MAX so line RAM addr never overflows.
+	wire [10:0] rt_cw_cl = (rt_cw_nz > 11'(MAX_CODED_W)) ? 11'(MAX_CODED_W) : rt_cw_nz;
+	wire [10:0] rt_ch_cl = (rt_ch_nz > 11'(MAX_CODED_H)) ? 11'(MAX_CODED_H) : rt_ch_nz;
+	wire [11:0] rt_ys_cl = (rt_ys_nz > 12'(MAX_CODED_W)) ? 12'(MAX_CODED_W) : rt_ys_nz;
+	wire [10:0] rt_cs_cl = (rt_cs_nz > 11'(MAX_CODED_W/2)) ? 11'(MAX_CODED_W/2) : rt_cs_nz;
+
+	wire [28:0] rt_y_bytes_qw = ({17'd0, rt_ys_cl} * {18'd0, rt_ch_cl}) >> 3; // (ys*ch)/8
+	wire [28:0] rt_c_bytes_qw = ({18'd0, rt_cs_cl} * {19'd0, rt_ch_cl[10:1]}) >> 3; // (cs*ch/2)/8
+
+	// FAULT: ignore geom_enable (always legacy pitch) — red twin for runtime-stride gate.
+`ifdef DDR_FRAME_STORE_FAULT_IGNORE_GEOM
+	wire geom_enable_eff = 1'b0;
+`else
+	wire geom_enable_eff = geom_enable;
+`endif
+
+	always @(posedge clk) begin
+		if (reset) begin
+			geom_en_r      <= 1'b0;
+			eff_coded_w    <= 11'(CODED_W);
+			eff_coded_h    <= 11'(CODED_H);
+			eff_y_stride   <= 12'(CODED_W);
+			eff_c_stride   <= 11'(CODED_W/2);
+			eff_disp_w     <= 11'(DISPLAY_W);
+			eff_disp_h     <= 11'(DISPLAY_H);
+			eff_pres_x     <= 11'(PRESENT_X);
+			eff_pres_y     <= 11'(PRESENT_Y);
+			eff_crop_l     <= 11'(CROP_LEFT);
+			eff_crop_t     <= 11'(CROP_TOP);
+			eff_y_fetch_qw <= 9'(Y_LINE_QWORDS);
+			eff_c_fetch_qw <= 8'(C_LINE_QWORDS);
+			eff_y_pitch_qw <= 9'(Y_LINE_QWORDS);
+			eff_c_pitch_qw <= 8'(C_LINE_QWORDS);
+			eff_u_base_qw  <= LEG_U_PLANE_BASE;
+			eff_v_base_qw  <= LEG_V_PLANE_BASE;
+			eff_optc_map   <= 1'b0;
+			eff_base_w0    <= LEG_BASE_W0;
+			eff_base_w1    <= LEG_BASE_W1;
+			eff_doorbell_w <= LEG_DOORBELL_W;
+		end else if (!geom_enable_eff) begin
+			geom_en_r      <= 1'b0;
+			eff_coded_w    <= 11'(CODED_W);
+			eff_coded_h    <= 11'(CODED_H);
+			eff_y_stride   <= 12'(CODED_W);
+			eff_c_stride   <= 11'(CODED_W/2);
+			eff_disp_w     <= 11'(DISPLAY_W);
+			eff_disp_h     <= 11'(DISPLAY_H);
+			eff_pres_x     <= 11'(PRESENT_X);
+			eff_pres_y     <= 11'(PRESENT_Y);
+			eff_crop_l     <= 11'(CROP_LEFT);
+			eff_crop_t     <= 11'(CROP_TOP);
+			eff_y_fetch_qw <= 9'(Y_LINE_QWORDS);
+			eff_c_fetch_qw <= 8'(C_LINE_QWORDS);
+			eff_y_pitch_qw <= 9'(Y_LINE_QWORDS);
+			eff_c_pitch_qw <= 8'(C_LINE_QWORDS);
+			eff_u_base_qw  <= LEG_U_PLANE_BASE;
+			eff_v_base_qw  <= LEG_V_PLANE_BASE;
+			eff_optc_map   <= 1'b0;
+			eff_base_w0    <= LEG_BASE_W0;
+			eff_base_w1    <= LEG_BASE_W1;
+			eff_doorbell_w <= LEG_DOORBELL_W;
+		end else begin
+			geom_en_r      <= 1'b1;
+			eff_coded_w    <= rt_cw_cl;
+			eff_coded_h    <= rt_ch_cl;
+			eff_y_stride   <= rt_ys_cl;
+			eff_c_stride   <= rt_cs_cl;
+			eff_disp_w     <= rt_dw_nz;
+			eff_disp_h     <= rt_dh_nz;
+			eff_pres_x     <= rt_present_x;
+			eff_pres_y     <= rt_present_y;
+			eff_crop_l     <= rt_crop_left;
+			eff_crop_t     <= rt_crop_top;
+			eff_y_fetch_qw <= rt_cw_cl[10:3]; // coded_w/8 (require multiple of 8)
+			eff_c_fetch_qw <= rt_cw_cl[10:4]; // coded_w/16
+			eff_y_pitch_qw <= rt_ys_cl[11:3]; // stride/8
+			eff_c_pitch_qw <= rt_cs_cl[10:3];
+			eff_u_base_qw  <= rt_y_bytes_qw;
+			eff_v_base_qw  <= rt_y_bytes_qw + rt_c_bytes_qw;
+			// Option-C when I420 payload cannot fit legacy 512 KiB bank stride.
+			// Compare frame qwords to LEG_BANK_STRIDE_QWORDS (not coded_w>=1280):
+			// 960x540 tight = 777600 B > 524288 → Option-C; 624x480 stays legacy.
+`ifdef DDR_FRAME_STORE_FAULT_FORCE_LEGACY_BANK_MAP
+			eff_optc_map   <= 1'b0;
+			eff_base_w0    <= LEG_BASE_W0;
+			eff_base_w1    <= LEG_BASE_W1;
+			eff_doorbell_w <= LEG_DOORBELL_W;
+`else
+			if ((rt_y_bytes_qw + (rt_c_bytes_qw << 1)) > LEG_BANK_STRIDE_QWORDS) begin
+				eff_optc_map   <= 1'b1;
+				eff_base_w0    <= OPTC_BASE_W0;
+				eff_base_w1    <= OPTC_BASE_W1;
+				eff_doorbell_w <= OPTC_DOORBELL_W;
+			end else begin
+				eff_optc_map   <= 1'b0;
+				eff_base_w0    <= LEG_BASE_W0;
+				eff_base_w1    <= LEG_BASE_W1;
+				eff_doorbell_w <= LEG_DOORBELL_W;
+			end
+`endif
+		end
+	end
+
+	wire [X_W-1:0] PRESENT_X_L = X_W'(eff_pres_x);
+	wire [Y_W-1:0] PRESENT_Y_L = Y_W'(eff_pres_y);
+	wire [X_W-1:0] PRESENT_END_X = X_W'(eff_pres_x + eff_disp_w);
+	wire [Y_W-1:0] PRESENT_END_Y = Y_W'(eff_pres_y + eff_disp_h);
+	wire [CODED_X_W-1:0] CROP_LEFT_L = CODED_X_W'(eff_crop_l);
+	wire [CODED_Y_W-1:0] CROP_TOP_L = CODED_Y_W'(eff_crop_t);
 	localparam [31:0] MAGIC = 32'h504C_584B;
 	localparam [31:0] MAGIC_S = 32'h504C_5853;
 	localparam [31:0] MAGIC_I = 32'h504C_5849;
@@ -153,6 +368,7 @@ module ddr_frame_store #(
 	reg [C_QW_AW-1:0] c_wr_addr;
 	reg [63:0] y_wr_data, u_wr_data, v_wr_data;
 	wire [63:0] y_q [0:LINE_SLOTS-1];
+	wire [63:0] y_q_hi [0:LINE_SLOTS-1];
 	wire [63:0] u_q [0:LINE_SLOTS-1];
 	wire [63:0] v_q [0:LINE_SLOTS-1];
 	wire rd_x_at_or_after_origin;
@@ -189,22 +405,28 @@ module ddr_frame_store #(
 	wire [CODED_Y_W-1:0] src_y_line = rd_y_visible ? (display_y + CROP_TOP_L) : '0;
 	wire [CODED_Y_W-1:0] pref_y = WANT_Y_LINE_ONLY ? src_y_line : src_y;
 	wire [Y_QW_AW-1:0] y_rd_addr = src_x[CODED_X_W-1:3];
+	// Next Y qword for multi-pixel lanes that cross an 8-byte boundary.
+	wire [Y_QW_AW-1:0] y_rd_addr_hi = y_rd_addr + Y_QW_AW'(1'b1);
 	wire [C_QW_AW-1:0] c_rd_addr = src_x[CODED_X_W-1:4];
 
 	genvar li;
 	generate
 		for (li = 0; li < LINE_SLOTS; li = li + 1) begin : gen_line
-			line_buf_ram #(.WIDTH(Y_LINE_QWORDS), .AW(Y_QW_AW), .DATA_W(64)) yram (
+			// Physical WIDTH = max line; active fetch length is eff_*_fetch_qw.
+			line_buf_ram #(.WIDTH(Y_LINE_QWORDS_MAX), .AW(Y_QW_AW), .DATA_W(64)) yram (
 				.wr_clk(clk_ddr), .wr_en(y_wr[li]), .wr_addr(y_wr_addr), .wr_data(y_wr_data),
-				.rd_clk(clk), .rd_addr(y_rd_addr), .rd_data(y_q[li])
+				.rd_clk(clk), .rd_addr(y_rd_addr), .rd_data(y_q[li]),
+				.rd_addr_b(y_rd_addr_hi), .rd_data_b(y_q_hi[li])
 			);
-			line_buf_ram #(.WIDTH(C_LINE_QWORDS), .AW(C_QW_AW), .DATA_W(64)) uram (
+			line_buf_ram #(.WIDTH(C_LINE_QWORDS_MAX), .AW(C_QW_AW), .DATA_W(64)) uram (
 				.wr_clk(clk_ddr), .wr_en(u_wr[li]), .wr_addr(c_wr_addr), .wr_data(u_wr_data),
-				.rd_clk(clk), .rd_addr(c_rd_addr), .rd_data(u_q[li])
+				.rd_clk(clk), .rd_addr(c_rd_addr), .rd_data(u_q[li]),
+				.rd_addr_b({C_QW_AW{1'b0}}), .rd_data_b()
 			);
-			line_buf_ram #(.WIDTH(C_LINE_QWORDS), .AW(C_QW_AW), .DATA_W(64)) vram (
+			line_buf_ram #(.WIDTH(C_LINE_QWORDS_MAX), .AW(C_QW_AW), .DATA_W(64)) vram (
 				.wr_clk(clk_ddr), .wr_en(v_wr[li]), .wr_addr(c_wr_addr), .wr_data(v_wr_data),
-				.rd_clk(clk), .rd_addr(c_rd_addr), .rd_data(v_q[li])
+				.rd_clk(clk), .rd_addr(c_rd_addr), .rd_data(v_q[li]),
+				.rd_addr_b({C_QW_AW{1'b0}}), .rd_data_b()
 			);
 		end
 	endgenerate
@@ -331,11 +553,12 @@ module ddr_frame_store #(
 	reg y_hit_r, c_hit_r;
 	reg [SLOT_W-1:0] y_hit_idx_r, c_hit_idx_r;
 	reg [2:0] y_sel_r, c_sel_r;
+	reg [10:0] src_x_d;  // aligns with y_sel_r (one beam cycle)
 
 	integer vi;
 	reg y_hit_now, c_hit_now;
 	reg [SLOT_W-1:0] y_hit_idx_now, c_hit_idx_now;
-	reg [63:0] selected_y_q, selected_u_q, selected_v_q;
+	reg [63:0] selected_y_q, selected_y_q_hi, selected_u_q, selected_v_q;
 	reg [SLOT_W-1:0] video_slot;
 `ifdef DDR_FRAME_STORE_FAULT_CHROMA_VERTICAL_FULLRES
 	wire [CODED_Y_W-2:0] rd_cy = src_y_line[CODED_Y_W-2:0];
@@ -348,6 +571,7 @@ module ddr_frame_store #(
 		y_hit_idx_now = '0;
 		c_hit_idx_now = '0;
 		selected_y_q = 64'd0;
+		selected_y_q_hi = 64'd0;
 		selected_u_q = 64'd0;
 		selected_v_q = 64'd0;
 		for (vi = 0; vi < LINE_COUNT; vi = vi + 1) begin
@@ -363,8 +587,10 @@ module ddr_frame_store #(
 				c_hit_now = 1'b1;
 				c_hit_idx_now = video_slot;
 			end
-			if (y_hit_idx_r == video_slot)
+			if (y_hit_idx_r == video_slot) begin
 				selected_y_q = y_q[video_slot];
+				selected_y_q_hi = y_q_hi[video_slot];
+			end
 			if (c_hit_idx_r == video_slot) begin
 				selected_u_q = u_q[video_slot];
 				selected_v_q = v_q[video_slot];
@@ -417,6 +643,16 @@ module ddr_frame_store #(
 			c_hit_idx_r <= '0;
 			y_sel_r <= 3'd0;
 			c_sel_r <= 3'd0;
+`ifdef DDR_FRAME_STORE_EXPORT_QWORDS
+			rd_y_qword <= 64'd0;
+			rd_y_qword_hi <= 64'd0;
+			rd_y_hi_valid <= 1'b0;
+			rd_u_qword <= 64'd0;
+			rd_v_qword <= 64'd0;
+			rd_src_x_q <= 11'd0;
+			rd_qword_valid <= 1'b0;
+`endif
+			src_x_d <= 11'd0;
 		end else begin
 			y_valid_v1 <= y_valid_hold;
 			y_valid_v2 <= y_valid_v1;
@@ -461,6 +697,23 @@ module ddr_frame_store #(
 			c_hit_idx_r <= c_hit_idx_now;
 			y_sel_r <= src_x[2:0];
 			c_sel_r <= src_x[3:1];
+			// Delay src_x one cycle to pair with y_sel_r / selected_* (hit_idx_r).
+			src_x_d <= src_x[10:0];
+`ifdef DDR_FRAME_STORE_EXPORT_QWORDS
+			// Export at the YUV-calc stage (matches yuv_bt601_npx inputs).
+			// y_qword_hi is the next 8 Y samples when lanes straddle a qword
+			// boundary (src_x_d[2:0] near 7, N>1). Single-pixel path ignores hi.
+			rd_y_qword <= selected_y_q;
+			rd_y_qword_hi <= selected_y_q_hi;
+			// Valid when next qword index is inside the max linebuf (not past end).
+			rd_y_hi_valid <= rd_active_r && rd_visible_r && has_frame && y_hit_r && c_hit_r
+			                 && (src_x_d[10:3] != 8'hFF)
+			                 && ({1'b0, src_x_d[10:3]} + 9'd1 < 9'(Y_LINE_QWORDS_MAX));
+			rd_u_qword <= selected_u_q;
+			rd_v_qword <= selected_v_q;
+			rd_src_x_q <= src_x_d;
+			rd_qword_valid <= rd_active_r && rd_visible_r && has_frame && y_hit_r && c_hit_r;
+`endif
 			miss_d <= rd_miss_now;
 			if (miss_d && underrun_count != 16'hFFFF) begin
 				underrun_count <= underrun_count + 16'd1;
@@ -563,12 +816,15 @@ module ddr_frame_store #(
 		.rd_clk(clk_ddr), .rd_reset(reset_ddr), .rd_en(cmd_pop), .rd_data(cmd_rdata), .rd_empty(cmd_empty)
 	);
 
-	function automatic [Y_W-1:0] clamp_ahead(input [Y_W-1:0] base, input integer ahead);
+	// max_h = effective coded height (legacy FRAME_H/CODED_H when geom off).
+	function automatic [Y_W-1:0] clamp_ahead(input [Y_W-1:0] base, input integer ahead, input integer max_h);
 		integer sum;
+		integer last;
 		begin
 			sum = {{(32-Y_W){1'b0}}, base};
 			sum = sum + ahead;
-			clamp_ahead = (sum >= FRAME_H) ? LAST_Y : sum[Y_W-1:0];
+			last = (max_h > 0) ? (max_h - 1) : 0;
+			clamp_ahead = (sum >= max_h) ? Y_W'(last) : sum[Y_W-1:0];
 		end
 	endfunction
 
@@ -734,18 +990,87 @@ module ddr_frame_store #(
 	reg [Y_QW_AW:0] qwords_remaining;
 	reg [7:0] imbox_cmd_seq;
 	reg [15:0] imbox_seq;
-	wire [28:0] fill_bank_base = fill_bank ? BASE_W1 : BASE_W0;
-	wire [28:0] fill_y_qword = {{(29-Y_W){1'b0}}, fill_y} * Y_LINE_QWORDS_W;
+	// Geometry is session-static (programmed before play). Two-flop into clk_ddr
+	// for fill address math; pixel path stays on clk with eff_*.
+	reg [8:0]  d_y_fetch_qw, d_y_pitch_qw;
+	reg [7:0]  d_c_fetch_qw, d_c_pitch_qw;
+	reg [28:0] d_u_base_qw, d_v_base_qw;
+	reg [10:0] d_coded_h;
+	reg [28:0] d_base_w0, d_base_w1, d_doorbell_w;
+	reg [8:0]  d_y_fetch_qw_m, d_y_pitch_qw_m;
+	reg [7:0]  d_c_fetch_qw_m, d_c_pitch_qw_m;
+	reg [28:0] d_u_base_qw_m, d_v_base_qw_m;
+	reg [10:0] d_coded_h_m;
+	reg [28:0] d_base_w0_m, d_base_w1_m, d_doorbell_w_m;
+	always @(posedge clk_ddr) begin
+		if (reset_ddr) begin
+			d_y_fetch_qw_m <= 9'(Y_LINE_QWORDS);
+			d_c_fetch_qw_m <= 8'(C_LINE_QWORDS);
+			d_y_pitch_qw_m <= 9'(Y_LINE_QWORDS);
+			d_c_pitch_qw_m <= 8'(C_LINE_QWORDS);
+			d_u_base_qw_m  <= LEG_U_PLANE_BASE;
+			d_v_base_qw_m  <= LEG_V_PLANE_BASE;
+			d_coded_h_m    <= 11'(CODED_H);
+			d_base_w0_m    <= LEG_BASE_W0;
+			d_base_w1_m    <= LEG_BASE_W1;
+			d_doorbell_w_m <= LEG_DOORBELL_W;
+			d_y_fetch_qw   <= 9'(Y_LINE_QWORDS);
+			d_c_fetch_qw   <= 8'(C_LINE_QWORDS);
+			d_y_pitch_qw   <= 9'(Y_LINE_QWORDS);
+			d_c_pitch_qw   <= 8'(C_LINE_QWORDS);
+			d_u_base_qw    <= LEG_U_PLANE_BASE;
+			d_v_base_qw    <= LEG_V_PLANE_BASE;
+			d_coded_h      <= 11'(CODED_H);
+			d_base_w0      <= LEG_BASE_W0;
+			d_base_w1      <= LEG_BASE_W1;
+			d_doorbell_w   <= LEG_DOORBELL_W;
+		end else begin
+			d_y_fetch_qw_m <= eff_y_fetch_qw;
+			d_c_fetch_qw_m <= eff_c_fetch_qw;
+			d_y_pitch_qw_m <= eff_y_pitch_qw;
+			d_c_pitch_qw_m <= eff_c_pitch_qw;
+			d_u_base_qw_m  <= eff_u_base_qw;
+			d_v_base_qw_m  <= eff_v_base_qw;
+			d_coded_h_m    <= eff_coded_h;
+			d_base_w0_m    <= eff_base_w0;
+			d_base_w1_m    <= eff_base_w1;
+			d_doorbell_w_m <= eff_doorbell_w;
+			d_y_fetch_qw   <= d_y_fetch_qw_m;
+			d_c_fetch_qw   <= d_c_fetch_qw_m;
+			d_y_pitch_qw   <= d_y_pitch_qw_m;
+			d_c_pitch_qw   <= d_c_pitch_qw_m;
+			d_u_base_qw    <= d_u_base_qw_m;
+			d_v_base_qw    <= d_v_base_qw_m;
+			d_coded_h      <= d_coded_h_m;
+			d_base_w0      <= d_base_w0_m;
+			d_base_w1      <= d_base_w1_m;
+			d_doorbell_w   <= d_doorbell_w_m;
+		end
+	end
+
+	// Runtime bank map: legacy 0x30000000 or Option-C 0x30180000.
+	wire [28:0] fill_bank_base = fill_bank ? d_base_w1 : d_base_w0;
+	// Control page is doorbell-relative (0x100..0x128 bytes → +0x20..+0x25 qwords).
+	wire [28:0] poll_doorbell_w = d_doorbell_w;
+	wire [28:0] poll_mailbox_w  = d_doorbell_w + 29'h20; // +0x100
+	wire [28:0] poll_imbox_w    = d_doorbell_w + 29'h21; // +0x108
+	wire [28:0] poll_sdram_w    = d_doorbell_w + 29'h22; // +0x110
+	wire [28:0] poll_frame_w    = d_doorbell_w + 29'h23; // +0x118
+	wire [28:0] poll_bank_w     = d_doorbell_w + 29'h25; // +0x128 PLXD
+	// Pitch from runtime y_stride/chroma_stride (legacy: pitch == fetch == CODED_W/8).
+	wire [28:0] y_pitch_qw_w = {20'd0, d_y_pitch_qw};
+	wire [28:0] c_pitch_qw_w = {21'd0, d_c_pitch_qw};
+	wire [28:0] fill_y_qword = {{(29-Y_W){1'b0}}, fill_y} * y_pitch_qw_w;
 `ifdef DDR_FRAME_STORE_FAULT_CHROMA_LUMA_STRIDE
-	wire [28:0] fill_cy_qword = {{(30-Y_W){1'b0}}, fill_cy} * Y_LINE_QWORDS_W;
+	wire [28:0] fill_cy_qword = {{(30-Y_W){1'b0}}, fill_cy} * y_pitch_qw_w;
 `else
-	wire [28:0] fill_cy_qword = {{(30-Y_W){1'b0}}, fill_cy} * C_LINE_QWORDS_W;
+	wire [28:0] fill_cy_qword = {{(30-Y_W){1'b0}}, fill_cy} * c_pitch_qw_w;
 `endif
 	wire [28:0] fill_qword_y = {{(29-Y_QW_AW){1'b0}}, fill_qword[Y_QW_AW-1:0]};
 	wire [28:0] fill_qword_c = {{(29-C_QW_AW){1'b0}}, fill_qword[C_QW_AW-1:0]};
 	wire [28:0] y_addr = fill_bank_base + fill_y_qword + fill_qword_y;
-	wire [28:0] u_addr = fill_bank_base + U_PLANE_BASE + fill_cy_qword + fill_qword_c;
-	wire [28:0] v_addr = fill_bank_base + V_PLANE_BASE + fill_cy_qword + fill_qword_c;
+	wire [28:0] u_addr = fill_bank_base + d_u_base_qw + fill_cy_qword + fill_qword_c;
+	wire [28:0] v_addr = fill_bank_base + d_v_base_qw + fill_cy_qword + fill_qword_c;
 `ifdef DDR_FRAME_STORE_FAULT_SWAP_UV_READ
 	wire [28:0] chroma_addr = fill_plane_v ? u_addr : v_addr;
 `else
@@ -908,7 +1233,7 @@ module ddr_frame_store #(
 			want_y_gray_s1 <= want_y_gray;
 			want_y_gray_s2 <= want_y_gray_s1;
 			for (ti = 0; ti < LINE_COUNT; ti = ti + 1)
-				desired_y_r[ti] <= clamp_ahead(y_gray2bin(want_y_gray_s2), ti);
+				desired_y_r[ti] <= clamp_ahead(y_gray2bin(want_y_gray_s2), ti, integer'(d_coded_h));
 
 			start_d1 <= start_req;
 			start_d2 <= start_d1;
@@ -1019,7 +1344,7 @@ module ddr_frame_store #(
 					poll_div <= poll_div + 16'd1;
 					if (frame_mbox_req && (!frame_mbox_valid || poll_div[7:0] == 8'd224)
 					    && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
-						DDRAM_ADDR <= FRAME_MAILBOX_W;
+						DDRAM_ADDR <= poll_frame_w;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_DIN <= {frame_status_ddr, frame_mbox_seq + 8'd1, MAGIC_F};
 						DDRAM_WE <= 1'b1;
@@ -1038,7 +1363,7 @@ module ddr_frame_store #(
 						// swaps stuck — ARM stale detector could not fire
 						// (playback freeze class on c5382bee). ARM now also
 						// gates on free/disp identity; keep ABI honest.
-						DDRAM_ADDR <= BANK_MAILBOX_W;
+						DDRAM_ADDR <= poll_bank_w;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_DIN <= {frames_done_d2,                       // [63:48] real swaps (CDC)
 						              12'd0,                                // [47:36] reserved
@@ -1063,13 +1388,13 @@ module ddr_frame_store #(
 							fill_y <= sched_y;
 							y_valid[sched_idx] <= 1'b0;
 							y_bank[sched_idx] <= sched_bank;
-							qwords_remaining <= Y_LINE_QWORDS[Y_QW_AW:0];
+							qwords_remaining <= d_y_fetch_qw[Y_QW_AW:0]; // ddr-domain y fetch
 							fill_is_chroma <= 1'b0;
 						end else begin
 							fill_cy <= sched_cy;
 							c_valid[sched_idx] <= 1'b0;
 							c_bank[sched_idx] <= sched_bank;
-							qwords_remaining <= C_LINE_QWORDS[Y_QW_AW:0];
+							qwords_remaining <= {{(Y_QW_AW+1-8){1'b0}}, d_c_fetch_qw}; // ddr-domain c fetch
 							fill_is_chroma <= 1'b1;
 						end
 						state_ddr <= S_LINE_ISSUE;
@@ -1091,7 +1416,7 @@ module ddr_frame_store #(
 							fill_is_chroma <= 1'b0;
 							fill_plane_v <= 1'b0;
 							fill_qword <= '0;
-							qwords_remaining <= Y_LINE_QWORDS[Y_QW_AW:0];
+							qwords_remaining <= d_y_fetch_qw[Y_QW_AW:0]; // ddr-domain y fetch
 							state_ddr <= S_LINE_ISSUE;
 						end
 					end else if ((swap_pending_d2 && need_c_prep_c) || (has_frame_d2 && need_c_cur_c)) begin
@@ -1112,17 +1437,17 @@ module ddr_frame_store #(
 							fill_is_chroma <= 1'b1;
 							fill_plane_v <= 1'b0;
 							fill_qword <= '0;
-							qwords_remaining <= C_LINE_QWORDS[Y_QW_AW:0];
+							qwords_remaining <= {{(Y_QW_AW+1-8){1'b0}}, d_c_fetch_qw}; // ddr-domain c fetch
 							state_ddr <= S_LINE_ISSUE;
 						end
 					end else if (!poll_pending && poll_div[7:0] == 8'd0 && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
-						DDRAM_ADDR <= DOORBELL_W;
+						DDRAM_ADDR <= poll_doorbell_w;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_RD <= 1'b1;
 						poll_pending <= 1'b1;
 						state_ddr <= S_POLL_WAIT;
 					end else if (!cmd_empty && poll_div[7:0] == 8'd64 && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
-						DDRAM_ADDR <= INPUT_MAILBOX_W;
+						DDRAM_ADDR <= poll_imbox_w;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_DIN <= {imbox_seq + 16'd1, imbox_cmd_seq + 8'd1, cmd_rdata, MAGIC_I};
 						DDRAM_WE <= 1'b1;
@@ -1131,7 +1456,7 @@ module ddr_frame_store #(
 						imbox_cmd_seq <= imbox_cmd_seq + 8'd1;
 						state_ddr <= S_WRITE_WAIT;
 					end else if (mbox_req && poll_div[7:0] == 8'd128 && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
-						DDRAM_ADDR <= MAILBOX_W;
+						DDRAM_ADDR <= poll_mailbox_w;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_DIN <= {mbox_seq + 16'd1, status_osd_safe, MAGIC_S};
 						DDRAM_WE <= 1'b1;
@@ -1141,7 +1466,7 @@ module ddr_frame_store #(
 						mbox_req <= 1'b0;
 						state_ddr <= S_WRITE_WAIT;
 					end else if (sdram_mbox_req && poll_div[7:0] == 8'd192 && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
-						DDRAM_ADDR <= SDRAM_MAILBOX_W;
+						DDRAM_ADDR <= poll_sdram_w;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_DIN <= {sdram_status_safe, sdram_mbox_seq + 8'd1, MAGIC_M};
 						DDRAM_WE <= 1'b1;
@@ -1186,7 +1511,7 @@ module ddr_frame_store #(
 							if (fill_is_chroma && !fill_plane_v) begin
 								fill_plane_v <= 1'b1;
 								fill_qword <= '0;
-								qwords_remaining <= C_LINE_QWORDS[Y_QW_AW:0];
+								qwords_remaining <= {{(Y_QW_AW+1-8){1'b0}}, d_c_fetch_qw}; // ddr-domain c fetch
 								state_ddr <= S_LINE_ISSUE;
 							end else begin
 								if (fill_is_chroma) begin
