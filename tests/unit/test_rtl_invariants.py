@@ -915,6 +915,11 @@ def check_ddr_frame_layout_contract() -> None:
         ("kPlex720pYuv420pBankStride", "DDR_FRAME_720P_YUV420P_BANK_STRIDE"),
         ("kPlex720pPhysBase", "DDR_FRAME_720P_PHYS_BASE"),
         ("kPlex720pYuv420pDoorbellPhys", "DDR_FRAME_720P_YUV420P_DOORBELL_PHYS"),
+        ("kPlex720p24BeamHTotal", "DDR_FRAME_720P24_BEAM_H_TOTAL"),
+        ("kPlex720p24BeamVTotal", "DDR_FRAME_720P24_BEAM_V_TOTAL"),
+        ("kPlex720p24BeamHDe", "DDR_FRAME_720P24_BEAM_H_DE"),
+        ("kPlex720p24BeamVActive", "DDR_FRAME_720P24_BEAM_V_ACTIVE"),
+        ("kPlex720p24ClkSysHz", "DDR_FRAME_720P24_CLK_SYS_HZ"),
         ("kPlex960PresentedWidth", "DDR_FRAME_960_PRESENTED_WIDTH"),
         ("kPlex960PresentedHeight", "DDR_FRAME_960_PRESENTED_HEIGHT"),
     ]

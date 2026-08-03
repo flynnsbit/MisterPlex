@@ -54,6 +54,12 @@ constexpr int kPlex720pChromaStrideBytes = 640;
 constexpr uint32_t kPlex720pYuv420pBankStride = 0x00180000u;
 constexpr uint32_t kPlex720pPhysBase = 0x30180000u;
 constexpr uint32_t kPlex720pYuv420pDoorbellPhys = 0x3047F000u;
+// L4 beam (w-clock): 24 MHz, H=1312, V=762 → 24.006 Hz with DE 1280×720.
+constexpr int kPlex720p24BeamHTotal = 1312;
+constexpr int kPlex720p24BeamVTotal = 762;
+constexpr int kPlex720p24BeamHDe = 1280;
+constexpr int kPlex720p24BeamVActive = 720;
+constexpr int kPlex720p24ClkSysHz = 24000000;
 constexpr int kPlex960PresentedWidth = 960;
 constexpr int kPlex960PresentedHeight = 540;
 
