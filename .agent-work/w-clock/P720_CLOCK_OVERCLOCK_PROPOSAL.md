@@ -6,6 +6,38 @@
 
 ---
 
+## Mandate (parent 2026-08-03)
+
+> The whole point is to move as much into the FPGA so we can do 720p.
+
+720p is the **reward for evacuating the ARM**, not a side feature. Dual ARMv7,
+**41.7 ms/frame @24 fps**. Parent device evidence tonight:
+
+| Workload | ms/frame | Source |
+|----------|---------:|--------|
+| 1920×1080 Constrained Baseline synthetic blip, 200 frames | **32.4** | parent wall 6.486 s / 200, true rc=0 |
+| 624×480 real-content `decode_null` (archived) | **21.562** | parent archive |
+| Pixel ratio 1080p/480p | 6.9× | arithmetic |
+| Time ratio | **1.5×** | 32.4 / 21.562 |
+
+**Steer:** ARM H.264 cost here tracks **content/bitrate more than pixel count**
+(caveat: 1080p clip is synthetic low-bitrate; real 720p content pending parent).
+Therefore the budget 720p needs is freed by **removing non-decode ARM work and
+eventually decode itself into fabric** — scale, overlay, idle paint, pacing,
+memcpy — not by shaving a few percent off swscale.
+
+**Clock-lane doctrine under this mandate:**
+
+1. Prefer the clock plan that makes **ARM do none of the job** (fabric decode +
+   native 720p present) over one that only makes ARM’s remaining job cheaper.
+2. Size every present/decode timing assumption for **1280×720** as the first-class
+   geometry (line = 1280 B = **exactly one M10K** for 8-bit luma bytes; Y line
+   qwords = 160 @64b).
+3. Quantify ARM ms/frame removed — or say **unknown** + the measurement.
+4. When elegant-but-ARM-still-in-loop vs ugly-but-ARM-out: **choose ARM-out.**
+
+---
+
 ## (a) Verified clock / Fmax facts
 
 ### PLL source of truth
@@ -68,13 +100,41 @@ clk_sys_needed ≈ H_TOTAL × V_TOTAL × fps
 20e6 / (638 × 524) ≈ 59.82 Hz   ✓ matches ~60 Hz product display
 ```
 
-### Three 720p modes (do not conflate)
+### Three 720p modes — ranked by ARM evacuation (mandate order)
 
-| Mode | What changes | clk_sys need | Notes |
-|------|--------------|-------------:|-------|
-| **M0 — Scale-into-template** | FRAME 1280×720 → existing 529×480 DE | **20 MHz (no bump)** | DDR BW + linebufs + stride (w-mem/w-scaler). Scanout budget unchanged. |
-| **M1 — Native 720-line DE, keep H_TOTAL=638** | V_ACTIVE=720, V_TOTAL≈750–786, 60 Hz display | **28.71–30.09 MHz** | `638×V_TOTAL×60` |
-| **M2 — Native 1280-wide DE @60** | H_TOTAL≈1544 (scaled porches) or CEA 1650 | **69.48 / 74.25 MHz** | **WALL** vs nostub Fmax 32.59 |
+| Rank | Mode | clk_sys need | ARM still in loop? | Verdict under mandate |
+|-----:|------|-------------:|--------------------|------------------------|
+| **1** | **F — Fabric decode + native 720p present** | **≥25–30 MHz** (cy/MB below) + present need | **Decode: no. Scale: no.** | **Primary goal.** Clock exists to make this realtime. |
+| **2** | **M2 — Native 1280×720 DE @60, 1 pix/clk** | **69–74 MHz** | Present path fabric; ARM may only feed bitstream/frames | **WALL** on Fmax 32.59 without multi-pixel/clk datapath |
+| **3** | **M1 — Native 720-line DE, H_TOTAL=638 @60** | **28.7–30.1 MHz** | ARM can push full 720p frames w/o downscale to 480 canvas | **Best present-only step** reachable by overclock alone |
+| **4** | **M0 — Scale 720p store into 529×480 Template DE** | **20 MHz** | ARM or fabric still **destroys 720p detail** into 480-class canvas | **Rejected as product end-state** — keeps a reduced job on the path. Interim glass-only only. |
+
+**Why M0 loses:** it is the elegant “no clock bump” path, but it leaves the system
+doing 480p-class presentation forever. Mandate: ugly multi-pixel M2 or fabric
+decode at 30 MHz beats polished M0.
+
+### Fabric-decode clk_sys budget (primary overclock driver)
+
+Decode runs on **clk_sys** (`docs/decode-throughput.md`). Geometry 1280×720 =
+**80×45 = 3600 MB/frame**.
+
+Measured full-frame class cost (480p fixture): **~259 cy/MB**
+(`plex_inter_p16_baseline_624x480_12f.264` in decode-throughput.md).  
+**Unknown** whether 720p content lands at the same cy/MB — settle with the same
+harness on a 1280×720 fixture after fabric decode accepts that size.
+
+| clk_sys | fps | cy/frame | budget cy/MB | vs 259 cy/MB |
+|--------:|----:|---------:|-------------:|--------------|
+| 20 | 24 | 833 333 | **231.5** | **MISS** (0.89×) |
+| **25** | 24 | 1 041 667 | **289.4** | PASS ~1.12× (paper) |
+| **30** | 24 | 1 250 000 | **347.2** | PASS ~1.34× (paper) |
+| 20 | 30 | 666 667 | 185.2 | MISS |
+| 30 | 30 | 1 000 000 | 277.8 | PASS ~1.07× thin |
+
+So: **shipping 20 MHz cannot carry fabric-decode 720p24 at measured cy/MB.**
+That alone justifies a nostub overclock **independent of present DE**. Target B
+(30 MHz) is preferred over A (25 MHz) because CDC related-edge is safer **and**
+720p30 fabric decode stays on the right side of 259 cy/MB.
 
 ### Arithmetic (authoritative)
 
@@ -225,13 +285,36 @@ python3 scripts/check_pll_clock_contract.py \
 
 | Goal | Reachable with overclock alone? |
 |------|----------------------------------|
-| M0 720p **store** scaled into Template DE | **Yes at 20 MHz** — not a clk_sys problem |
+| **F** Fabric-decode 720p24 @ ~259 cy/MB | **Needs ≥25 MHz paper; prefer 30 MHz** + nostub Fmax ≥ target + CDC close. **20 MHz is a hard miss (231 < 259).** |
 | M1 720-**line** DE @60, H=638, 1 pix/clk | **Only nostub + ~30 MHz** (Target B); stub-in 23.46 is a hard no; margin to Fmax 32.59 is thin |
-| M2 1280-**wide** DE @60, 1 pix/clk | **No** — need 69–74 MHz ≫ 32.59 measured. **This is the wall.** |
+| M2 1280-**wide** DE @60, 1 pix/clk | **No** — need 69–74 MHz ≫ 32.59. **Present-path wall.** Escape: **N-pixels/clk** (N≥3 for ~25 MHz, N=4 for ~18.6 MHz) sized for 1280 from day one |
+| M0 scale-into-480-canvas | Works at 20 MHz but **fails the mandate** as an end-state |
 | M2 @30 Hz 1 pix/clk | **No** — CEA 37.1 > 32.59 |
-| Fabric decode cy/MB “25 MHz paper pass” | Possible nostub **if** CDC closes — but 25/90 CDC is the worse ratio; prefer 30/90 for CDC even if cy/MB was the original 25 MHz motivation |
 
-Aggression without STA is forbidden; aggression **with** evidence means: ship nostub, try **B_30_90** once, publish CDC hold/setup, and if M2 is mandatory invent **multi-pixel scanout** rather than dreaming of 74 MHz clk_sys.
+Aggression without STA is forbidden. Aggression **with** evidence: ship nostub → fit **B_30_90** once → publish CDC hold/setup → unlock fabric-decode 720p24 cy/MB gate **and** M1 present. For true 1280-wide glass at 60 Hz, **do not wait for a fantasy 74 MHz clk_sys** — design multi-pixel scanout (ARM-out present) instead of M0 forever.
+
+---
+
+## (f2) ARM milliseconds removed — clock lane claim
+
+Frame budget @24 fps = **41.67 ms**.
+
+| Offload unlocked by this clock plan | ARM ms/frame removed | How we know |
+|-------------------------------------|---------------------:|-------------|
+| **Fabric decode replaces ARM H.264** (end-state F) | **21.562 ms/frame** class at 480p real `decode_null`; **32.4 ms/frame** at parent’s 1080p synthetic blip | Parent/device decode_null and tonight’s wall measurement. **720p real-content decode_null: unknown — parent measuring.** Not extrapolated from pixel count (parent showed 6.9× pixels ≠ 6.9× time). |
+| **Native 720p present eliminates ARM swscale-to-tier** | **~21 ms/frame** class **if** 480p soak vf~50.4% onecpu was scale and is fully dropped | `docs/evidence/p480-headroom-*` + p720-scope-arm: vf~50.4% onecpu → 0.504×41.67≈**21.0 ms/frame** CPU-equivalent under realtime. **Only counts when scale is actually gone** (PMS delivers 1280×720 **or** fabric outputs 720p and host skips vf). S1 stream geometry still open in that report. |
+| **clk_sys bump alone with ARM still decoding+scaling** | **0 ms** | Clock does not run ARM code. Paper cy/MB is fabric-side. |
+| **M0 scale-into-template** | **0 ms decode; scale may remain on ARM** | Canvas still 480-class; host path often still has vf. |
+
+**This lane’s direct, honest claim today:**  
+shipping **20 MHz blocks fabric-decode 720p24** (cy/MB arithmetic). Moving to **30 MHz (B)** is a **necessary enabler** for the offload that removes the **21–32 ms/frame decode class** — but the bump **by itself removes 0 ms** until fabric decode is the product path.  
+**Do not credit scale ms to the PLL file.** Credit scale ms only when present is native 720p **and** host drops vf (host/w-mem/w-scaler evidence).
+
+**Measurement that would settle residual unknowns:**
+
+1. Parent: real 720p content `decode_null` ms/frame on device (in flight).  
+2. Parent: ffmpeg `-benchmark` / `time=...` with vf on vs vf omitted on same 720p URL.  
+3. After fabric decode accepts 1280×720: Verilator cy/MB on a 720p fixture at clk_sys=20 vs 30.
 
 ---
 
@@ -239,15 +322,19 @@ Aggression without STA is forbidden; aggression **with** evidence means: ship no
 
 1. **Fresh nostub Fmax** after w-nostub product default lands — unknown until that STA exists.  
 2. **Actual STA slack at 30/90 or 25/90** — unknown without a fit (predict 25/90 CDC fail; 30/90 setup OK / hold unknown).  
-3. **Physical M10K delta** at CODED_W=1280 — unknown without fit (w-scaler/w-mem).  
-4. **w-mem final bank map / 33.2 MB/s contention under Linux+ascal** — model only; parent device measures.  
-5. **Whether product will choose M0 vs M1** — product call; clock lane sizes both.  
-6. **slot11 negative TNS report** in this worktree — provenance unknown; not used as headroom.
+3. **720p fabric-decode cy/MB** — unknown; 259 cy/MB is 480p fixture class only.  
+4. **Real 720p ARM decode_null ms/frame** — parent measuring; do not use 32.4 as 720p truth.  
+5. **Physical M10K delta** at CODED_W=1280 — unknown without fit (note: 1280 luma bytes = 1 M10K depth class).  
+6. **w-mem final bank map / 33.2 MB/s contention under Linux+ascal** — model only.  
+7. **Whether host will skip scale** when fabric is native 720p — unknown until daemon policy lands.  
+8. **slot11 negative TNS report** in this worktree — not used as headroom.
 
 ---
 
 ## Coordination notes
 
-- **w-mem:** 720p24 YUV420 = **33.1776 MB/s** bidirectional present; clk_ddr 90 remains the BW clock; clk_sys bump does not buy DDR beats.  
-- **w-scaler / w-nostub:** M1 needs V timing + nostub Fmax; M0 needs linebuf width only.  
-- **Parent:** exclusive fit slot for any PLL apply; one menu deploy after BUILD_OK; this lane does not deploy.
+- **w-mem:** size banks/strides for **1280×720 from the start** (1.32 MiB/frame, stride ≥2 MiB class); 33.18 MB/s @24fps; clk_ddr 90 stays BW clock.  
+- **w-scaler:** prefer native 720p window / multi-pixel scanout over eternal Template-529 pillar; M0 is not the mandate end-state.  
+- **w-nostub:** required before any bump (Fmax 23.46 → ≥30 class).  
+- **Decode lanes:** 30 MHz is the fabric-decode 720p24/30 enabler; keep cy/MB harness honest.  
+- **Parent:** exclusive fit for PLL apply; all device ms/frame scores are parent-owned.

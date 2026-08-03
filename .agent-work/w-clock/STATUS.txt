@@ -2,31 +2,38 @@ worker: w-clock
 todo: p720-clock
 branch: w-clock-bump
 base: w-fit-ceiling-fd-min @ fab34b23
-status: DONE
+status: DONE (mandate-reframed)
 pll_applied: NO (still 20/90 shipping)
 fit_run: NO
 device: NO
 
-## Headline
-720p clk_sys need derived from present_core/colorbars timing.
-Preferred overclock: Target B 30/90 (not 25/90).
-1280-wide@60 1pix/clk is a WALL (69–74 MHz >> nostub Fmax 32.59).
-Gates: assets/pll_clock_contract.json + scripts/check_pll_clock_contract.py + unit mutations PASS.
+## Mandate frame
+720p = reward for evacuating ARM. Prefer ARM-out designs. Geometry first-class 1280x720.
 
-## Evidence paths
-- .agent-work/w-clock/P720_CLOCK_OVERCLOCK_PROPOSAL.md
-- assets/pll_clock_contract.json
-- docs/cdc-crossing-inventory.md (related-edge section)
-- fpga/Plex_MiSTer/Plex.sdc (comment contract only)
-- tests/unit/test_pll_clock_contract.sh rc=0
-- make pll-clock-contract rc=0
-- make timing-exclusion rc=0
+## Headline
+- Fabric-decode 720p24 @~259 cy/MB: **20 MHz MISS (231)**; **30 MHz PASS paper (347)**.
+- Present: M1 720-line@60 needs ~29–30 MHz; M2 1280-wide@60 = WALL 69–74 MHz → multi-pixel not M0 forever.
+- Preferred PLL target: **B 30/90** (CDC 11.11 ns). A 25/90 CDC-hostile (2.22 ns).
+- M0 scale-into-480-canvas rejected as end-state under mandate.
+
+## ARM ms/frame (honest)
+| Effect | ms/frame | Evidence |
+|--------|--------:|----------|
+| Fabric decode replaces ARM H.264 | **21.562** (480p real decode_null); **32.4** (1080p synthetic blip) | parent; **720p real = unknown (parent measuring)** |
+| Drop ARM swscale when native 720p + vf omit | **~21** class if 480p vf~50.4%onecpu fully gone | p480 headroom; only if scale actually removed |
+| PLL bump alone | **0** | clock does not run ARM |
+Enabler claim: 30 MHz is **necessary** for fabric-decode 720p24 offload; bump alone removes 0 ms until that path ships.
+
+## Gates
+test_pll_clock_contract.sh + make pll-clock-contract — must stay green.
+Proposal: .agent-work/w-clock/P720_CLOCK_OVERCLOCK_PROPOSAL.md
 
 ## Parent next
-1. Wait w-nostub fresh STA
-2. If granting fit: apply B_30_90 only, PRODUCT_NO_STUB, no clk_ddr raise
-3. STA must close CDC hold+setup at 11.111 ns related edge
-4. make pll-clock-contract STA_RPT=… ACTIVATE_TARGET=B_30_90 ALLOW_PLL_BUMP=1
+1. w-nostub fresh STA
+2. Fit grant → B_30_90 only, nostub, no clk_ddr raise
+3. CDC hold+setup @11.111 ns; activate-target B_30_90
+4. Real 720p decode_null ms when ready
+5. Multi-pixel scanout design if M2 glass required (not 74 MHz fantasy)
 
 ## Note on /tmp report
-Runtime forbids /tmp writes; this file is the agent report stand-in.
+Runtime forbids /tmp; this file is the agent report stand-in.

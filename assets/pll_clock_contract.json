@@ -94,10 +94,41 @@
       "use_case": "Intermediate only if 30 MHz intra-sys Fmax fails; still CDC-risky"
     }
   },
+  "mandate": {
+    "text": "move as much into the fpga so we can do 720p",
+    "arm_frame_budget_ms_24fps": 41.6667,
+    "parent_decode_null_ms": {
+      "624x480_real_archived": 21.562,
+      "1920x1080_synthetic_blip": 32.4,
+      "1280x720_real": null,
+      "note": "720p real unknown — parent measuring. Do not scale ms by pixel count."
+    },
+    "prefer_arm_out_over_arm_cheaper": true,
+    "geometry_first_class": "1280x720"
+  },
   "p720_clk_sys_requirements": {
+    "fabric_decode_720p24": {
+      "mb_per_frame": 3600,
+      "reference_cy_per_mb": 259.391,
+      "reference_cy_per_mb_source": "docs/decode-throughput.md 624x480 fixture — 720p cy/MB unknown until measured",
+      "budget_cy_per_mb": {
+        "20": 231.48,
+        "25": 289.35,
+        "30": 347.22
+      },
+      "verdict_20mhz": "MISS vs 259 cy/MB",
+      "verdict_25mhz": "PASS paper ~1.12x if cy/MB holds",
+      "verdict_30mhz": "PASS paper ~1.34x if cy/MB holds; preferred with CDC",
+      "preferred_target": "B_30_90",
+      "arm_ms_removed_when_offload_ships": {
+        "claim": "enables removal of ARM decode class 21.562–32.4 ms/frame; bump alone removes 0 ms",
+        "720p_real_ms": null
+      }
+    },
     "scale_into_template_529de": {
       "clk_sys_mhz_required": 20.0,
-      "note": "1280×720 store scaled into existing H_DE=529 / V≈480 DE keeps 1 pix/clk at current Template rate. No clk_sys bump for scanout. Binding: DDR BW, linebufs, bank stride (w-mem/w-scaler)."
+      "mandate_rank": 4,
+      "note": "Works without bump but REJECTED as product end-state under ARM-evacuation mandate (keeps 480-class canvas)."
     },
     "native_720_line_de_template_h_60hz": {
       "H_TOTAL": 638,
@@ -108,6 +139,7 @@
       },
       "clk_sys_mhz_required_range": [28.71, 30.09],
       "preferred_target": "B_30_90",
+      "mandate_rank": 3,
       "arithmetic": "clk_sys = H_TOTAL × V_TOTAL × 60 with ce_pix=1"
     },
     "native_1280_wide_de_60hz": {
@@ -119,12 +151,13 @@
         "cea_30": 37.125,
         "cea_24": 29.7
       },
-      "verdict": "60 Hz 1-pix/clk is above nostub Fmax 32.59 — WALL. Need multi-pixel/clock datapath or accept scale-into-template / lower tier."
+      "mandate_rank": 2,
+      "verdict": "60 Hz 1-pix/clk WALL vs nostub Fmax 32.59. Escape: multi-pixel/clock datapath sized for 1280 from day one — not eternal M0."
     },
     "ddr_bw_720p24_yuv420": {
       "frame_bytes": 1382400,
       "mb_s": 33.1776,
-      "note": "Matches parent 33.2 MB/s; clk_ddr 90 MHz peak 720 MB/s; pessimistic 25% read budget 180 MB/s — BW OK. Coordinate w-mem."
+      "note": "Matches parent 33.2 MB/s; clk_ddr 90 MHz peak 720 MB/s; pessimistic 25% read budget 180 MB/s — BW OK. Coordinate w-mem. Luma line 1280 B = one M10K."
     }
   },
   "rules": {

@@ -159,6 +159,31 @@ def check_720p_arithmetic(contract: dict, failures: list[str]) -> None:
     print(f"| DDR 720p24 YUV420 | {frame}*24/1e6 | {mb_s:.4f} MB/s |")
     if not approx_equal(mb_s, exp_mb, 0.05):
         failures.append(f"720p24 BW got {mb_s:.4f} want {exp_mb}")
+    # Fabric-decode cy/MB budgets (mandate: evacuate ARM decode)
+    fd = reqs.get("fabric_decode_720p24") or {}
+    mb_pf = int(fd.get("mb_per_frame", 3600))
+    ref_cy = float(fd.get("reference_cy_per_mb", 259.391))
+    budgets = fd.get("budget_cy_per_mb") or {}
+    for fsys_s, exp_budget in sorted(budgets.items(), key=lambda kv: float(kv[0])):
+        fsys = float(fsys_s)
+        got_budget = (fsys * 1e6 / 24.0) / mb_pf
+        print(
+            f"| fabric-decode 720p24 @{fsys:g}MHz | "
+            f"({fsys}*1e6/24)/{mb_pf} | {got_budget:.2f} cy/MB |"
+        )
+        if not approx_equal(got_budget, float(exp_budget), 0.5):
+            failures.append(
+                f"fabric decode budget @{fsys:g}: got {got_budget:.2f} want {exp_budget}"
+            )
+    print(
+        f"| fabric-decode vs ref {ref_cy:.3f} cy/MB | "
+        f"20MHz={'MISS' if float(budgets.get('20', 231)) < ref_cy else 'PASS'} "
+        f"30MHz={'MISS' if float(budgets.get('30', 347)) < ref_cy else 'PASS'} | — |"
+    )
+    if float(budgets.get("20", 231.48)) >= ref_cy:
+        failures.append("contract: 20 MHz fabric-decode budget must stay MISS vs ref cy/MB")
+    if float(budgets.get("30", 347.22)) < ref_cy:
+        failures.append("contract: 30 MHz fabric-decode budget must PASS vs ref cy/MB")
     # Ceiling honesty vs measured nostub Fmax
     nostub = float(
         ((contract.get("measured_fmax") or {}).get("nostub_c74c6863") or {}).get(
@@ -167,6 +192,7 @@ def check_720p_arithmetic(contract: dict, failures: list[str]) -> None:
     )
     print(f"| nostub measured Fmax (evidence) | STA c74c6863 | {nostub:.2f} |")
     print(f"| WALL: 1280-wide DE @60 1pix/clk | need ≥{got_wide60:.1f} | above Fmax |")
+    print(f"| mandate end-state | fabric decode + native 720p | ARM out |")
     print("P720_CLK_ARITH_END")
     if got_wide60 <= nostub:
         failures.append(
