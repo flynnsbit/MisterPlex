@@ -79,24 +79,47 @@ int main() {
 	chk(kProductSrcW < kMultiHDe, "product needs fabric upscale X");
 	chk(kProductSrcH < kMultiVDe, "product needs fabric upscale Y");
 	// Product bank = source-sized (native publish), NOT full Option-C 1280 frame.
-	// Option-C remains the true-720p-source / upgrade-path bank map.
+	// Option-C phys map is still required: capacity (payload > legacy 512 KiB).
 	constexpr int kProductYStride = 960;
 	constexpr int kProductBankBytes = 960 * 540 * 3 / 2; // 777600
+	constexpr int kProductCodedHMb = 544;
+	constexpr int kProductCodedBytes = 960 * 544 * 3 / 2; // 783360
 	chk(kProductYStride == kProductSrcW, "product y_stride = src_w");
 	chk(kProductBankBytes == 777600, "product I420 bytes");
-	chk(kProductBankBytes < int(kPlex720pYuv420pBytes), "product bank < Option-C frame");
+	chk(kProductBankBytes == kPlexProductDisplayI420Bytes, "header product display bytes");
+	chk(kProductCodedBytes == kPlexProductCodedMbI420Bytes, "header product coded-MB bytes");
+	chk(kProductBankBytes < int(kPlex720pYuv420pBytes), "product bank < Option-C full frame");
+	chk(kProductBankBytes > int(kPlex480pYuv420pBankStride), "product display overflows legacy bank");
+	chk(kProductCodedBytes > int(kPlex480pYuv420pBankStride), "product coded-MB overflows legacy bank");
+	// Runtime predicate (host mirror of ddr_frame_store rt_need_optc_map).
+	// Geometry-agree alone is NOT enough — parent over-inferred from constants.
+	chk(ddrFrameNeedsOptionCMap(960, 480, 540), "capacity: 960x540 → Option-C");
+	chk(ddrFrameNeedsOptionCMap(960, 480, 544), "capacity: 960x544 → Option-C");
+	chk(!ddrFrameNeedsOptionCMap(624, 312, 480), "capacity: legacy 624x480 stays legacy");
+	chk(ddrFrameNeedsOptionCMap(1280, 640, 720), "capacity: 1280x720 → Option-C");
+	// Negative: width-only predicate would miss product 960 (the defect).
+	const bool widthOnlyWouldOptc = (kProductSrcW >= 1280);
+	chk(!widthOnlyWouldOptc, "NEG: width>=1280 misses product 960 (defect class)");
+	chk(ddrFrameNeedsOptionCMap(960, 480, 540) != widthOnlyWouldOptc,
+	    "capacity ≠ width-only for product 960");
+	// Coded vs display: 4/3 SRC_H is display 540, not coded 544.
+	chk(kProductSrcH == kPlexProductDisplayH, "scale SRC_H = display 540");
+	chk(kProductCodedHMb == kPlexProductCodedHMbAligned, "coded MB height 544");
+	chk((kProductSrcH & 15) == 12, "540 not MB-aligned");
+	chk((kProductCodedHMb & 15) == 0, "544 is MB-aligned");
+	chk(kProductSrcH * 4 == 720 * 3, "display 540 exact 4/3 → 720");
 	// Four-lane freeze table (single source of truth for rd-duck / fit):
-	//   src:     960×540     w-path/PMS + ARM publish
-	//   bank:    stride 960  w-mem WRITE / w-scaler READ (product)
-	//   Option-C:0x30180000/0x180000/0x3047F000  true-720p-source map
+	//   src:     960×540 display (coded may be 544)  w-path/PMS + ARM publish
+	//   bank:    stride 960, Option-C map by capacity  w-mem WRITE / w-scaler READ
+	//   Option-C:0x30180000/0x180000/0x3047F000
 	//   glass:   1280×720    w-clock PRESENT_MULTI_PIXEL
 	//   HUD:     1280×720    w-osd kTargetOut
-	//   scale:   exact 4/3   present_scale_4_3 (macro OFF until enable)
+	//   scale:   exact 4/3 on DISPLAY 540  present_scale_4_3 (macro OFF until enable)
 	chk(kPlex720pDdrFramePhysBase == 0x30180000u, "freeze Option-C base");
 	chk(kPlex720pYuv420pBankStride == 0x00180000u, "freeze Option-C stride");
 	chk(kMultiHDe == 1280 && kMultiVDe == 720, "freeze glass DE");
 	chk(kOsdTargetW == 1280 && kOsdTargetH == 720, "freeze HUD");
-	chk(kProductSrcW == 960 && kProductSrcH == 540, "freeze product src");
+	chk(kProductSrcW == 960 && kProductSrcH == 540, "freeze product src display");
 	// H ownership: under multi-pixel, beam glass_x0 drives the window hc input
 	// with h_de=1280 — NOT colorbars hc with H_DE=529 (shear class).
 	chk(kMultiHDe != kProductHDe, "H_OWNERSHIP: multi DE must not equal Template 529");
@@ -135,6 +158,8 @@ int main() {
 	          << "PPC_W%4=0 "
 	          << "DE_product=529x480 DE_multi=1280x720 osd_canvas=1280x720 "
 	          << "H_OWNERSHIP=beam_glass+scaler_map+osd_hdmi "
-	          << "pms_deg=720x404 product_src=960x540 product_bytes=777600 freeze=src960/bank960/glass1280/hud1280/optC\n";
+	          << "pms_deg=720x404 product_src=960x540 product_bytes=777600 "
+	          << "coded_h_mb=544 coded_bytes=783360 optc=capacity "
+	          << "scale_src_h=display540 freeze=src960/bank960+optCcap/glass1280/hud1280\n";
 	return 0;
 }

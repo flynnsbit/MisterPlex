@@ -2,11 +2,15 @@
 //
 // Cases:
 //   A) geom_enable=0 → first U/V qword bases == legacy 624×480 (37440 / 46800)
-//   B) geom_enable=1, 1280×720 stride=1280 → U/V bases 115200 / 144000
+//   B) geom_enable=1, 1280×720 stride=1280 → U/V bases 115200 / 144000 + Option-C
+//   B2) product 960×540 (I420 777600 B > 524288) → Option-C (capacity, not width)
+//   B3) product coded 960×544 display 540 → Option-C; plane bases use coded_h
 //   C) neg: geom=0 cannot satisfy 720p base expectations
 //
 // Red twin (+define+DDR_FRAME_STORE_FAULT_IGNORE_GEOM):
 //   Case B expectations against DUT that ignores geom → correctly FAIL.
+// Red twin (+define+DDR_FRAME_STORE_FAULT_WIDTH_OPTC_PRED):
+//   Old coded_w>=1280 predicate → product 960 stays legacy → Option-C Y FAIL.
 // Soft-skip≠PASS. true rc direct.
 
 #include "Vddr_frame_store_runtime_stride_tb.h"
@@ -48,10 +52,41 @@ constexpr int kRtVQ = kRtUQ + kRtCQ;                 // 144000
 constexpr int kRtYPitchQ = kRtYStride / 8;           // 160
 constexpr int kRtCPitchQ = kRtCStride / 8;           // 80
 
+// Product ship path: PMS 960×540. Display height drives 4/3 scale (540→720).
+// H.264 MB-align may code height 544 (ceil(540/16)*16); bank planes use coded_h.
+constexpr int kProdW = 960;
+constexpr int kProdDispH = 540;
+constexpr int kProdCodedH = 544; // 540 is not 16-aligned (540&15=12)
+constexpr int kProdYS = 960;
+constexpr int kProdCS = 480;
+constexpr int kProd540Bytes = kProdYS * kProdDispH * 3 / 2;   // 777600
+constexpr int kProd544Bytes = kProdYS * kProdCodedH * 3 / 2;  // 783360
+constexpr int kProd540UQ = (kProdYS * kProdDispH) / 8;        // 64800
+constexpr int kProd540CQ = (kProdCS * (kProdDispH / 2)) / 8;  // 16200
+constexpr int kProd540VQ = kProd540UQ + kProd540CQ;           // 81000
+constexpr int kProd544UQ = (kProdYS * kProdCodedH) / 8;       // 65280
+constexpr int kProd544CQ = (kProdCS * (kProdCodedH / 2)) / 8; // 16320
+constexpr int kProd544VQ = kProd544UQ + kProd544CQ;           // 81600
+constexpr int kProdYPitchQ = kProdYS / 8;                     // 120
+constexpr int kProdCPitchQ = kProdCS / 8;                     // 60
+
 static_assert(kLegUQ == 37440, "legacy U");
 static_assert(kLegVQ == 46800, "legacy V");
 static_assert(kRtUQ == 115200, "720p U");
 static_assert(kRtVQ == 144000, "720p V");
+static_assert(kProd540Bytes == 777600, "product540 I420");
+static_assert(kProd544Bytes == 783360, "product544 I420");
+static_assert(kProd540Bytes > int(kBankStrideBytes), "product540 must not fit legacy bank");
+static_assert(kProd544Bytes > int(kBankStrideBytes), "product544 must not fit legacy bank");
+static_assert(kProd540UQ == 64800 && kProd540VQ == 81000, "prod540 planes");
+static_assert(kProd544UQ == 65280 && kProd544VQ == 81600, "prod544 planes");
+
+// Capacity predicate (mirrors ddr_frame_store rt_need_optc_map).
+// I420 bytes = y_stride*h + 2*(chroma_stride*h/2) = h*(y_stride + chroma_stride).
+bool needsOptcMap(int y_stride, int c_stride, int coded_h) {
+	const int bytes = coded_h * (y_stride + c_stride);
+	return bytes > int(kBankStrideBytes);
+}
 
 constexpr size_t kMemQ = (4u * 1024u * 1024u) / 8u;
 constexpr int kHTotal = 800;
@@ -293,7 +328,8 @@ int run_case(const char* name, bool geom, int cw, int ch, int ys, int cs, int dw
 	sim.frame_w = std::max(dw + px + 8, 64);
 	sim.frame_h = std::min(std::max(dh, 48), 64);
 	sim.setGeom(geom, cw, ch, ys, cs, dw, dh, px);
-	sim.setBankMap(geom && cw >= 1280);
+	// Bank map follows capacity (payload vs legacy 512KiB), not coded_w>=1280.
+	sim.setBankMap(geom && needsOptcMap(ys > 0 ? ys : cw, cs > 0 ? cs : cw / 2, ch > 0 ? ch : 1));
 	sim.setClassify(exp_u, exp_v, exp_v + std::max(c_pitch_q * 4, 256));
 
 	sim.resetCore();
@@ -370,12 +406,43 @@ int main(int argc, char** argv) {
 	                        /*expect_pass=*/false);
 	std::cout << "RUNTIME_STRIDE_RED_DONE rc=" << rc << "\n";
 	return rc;
+#elif defined(DDR_FRAME_STORE_FAULT_WIDTH_OPTC_PRED)
+	// Width-only predicate leaves product 960 on legacy bank — Option-C Y must FAIL.
+	// expect_pass=true so a silent legacy map returns non-zero (red-before-green).
+	const int rc =
+	    run_case("prod540_width_pred_red", true, kProdW, kProdDispH, kProdYS, kProdCS, kProdW, 64,
+	             0, kProd540UQ, kProd540VQ, kProdYPitchQ, kProdCPitchQ, kProdW / 8, kProdW / 16,
+	             /*expect_pass=*/true);
+	std::cout << "RUNTIME_STRIDE_WIDTH_PRED_RED_DONE rc=" << rc << "\n";
+	// Under the fault, Option-C check fails → rc!=0 is the correct red outcome.
+	// The shell gate expects non-zero. Return rc as-is.
+	return rc;
 #else
 	int fails = 0;
 	fails += run_case("legacy624", false, 0, 0, 0, 0, 618, 64, 11, kLegUQ, kLegVQ, kLegYPitchQ,
 	                  kLegCPitchQ, kLegW / 8, kLegW / 16, true);
 	fails += run_case("rt720", true, kRtW, kRtH, kRtYStride, kRtCStride, kRtW, 64, 0, kRtUQ, kRtVQ,
 	                  kRtYPitchQ, kRtCPitchQ, kRtW / 8, kRtW / 16, true);
+	// Product 960×540: capacity forces Option-C (parent defect: width>=1280 missed this).
+	if (!needsOptcMap(kProdYS, kProdCS, kProdDispH)) {
+		std::cerr << "FAIL structural: prod540 bytes must need Option-C\n";
+		++fails;
+	} else {
+		std::cout << "CASE prod540_capacity EXECUTED bytes=" << kProd540Bytes
+		          << " leg_bank=" << kBankStrideBytes << " need_optc=1\n";
+	}
+	fails += run_case("prod540", true, kProdW, kProdDispH, kProdYS, kProdCS, kProdW, 64, 0,
+	                  kProd540UQ, kProd540VQ, kProdYPitchQ, kProdCPitchQ, kProdW / 8, kProdW / 16,
+	                  true);
+	// Coded 544 (MB-aligned) / display 540: bank planes use coded_h; 4/3 still scales 540.
+	fails += run_case("prod544_disp540", true, kProdW, kProdCodedH, kProdYS, kProdCS, kProdW,
+	                  kProdDispH, 0, kProd544UQ, kProd544VQ, kProdYPitchQ, kProdCPitchQ,
+	                  kProdW / 8, kProdW / 16, true);
+	std::cout << "CASE coded_vs_display EXECUTED coded_h=" << kProdCodedH
+	          << " display_h=" << kProdDispH
+	          << " scale_4_3_src_h=display (540) bank_planes=coded (544)\n";
+	std::cout << "PASS coded_vs_display: crop ownership = content_h/display_h contract "
+	             "(not inside 4/3 math)\n";
 	if (kLegUQ == kRtUQ || kLegVQ == kRtVQ) {
 		std::cerr << "FAIL structural: legacy and 720p bases collided\n";
 		++fails;

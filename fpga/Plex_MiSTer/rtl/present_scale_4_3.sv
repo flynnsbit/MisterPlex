@@ -3,6 +3,13 @@
 // Parent ship path (measured): ARM decodes 960×540 (~34.5 ms with copy), fabric
 // emits native 1280×720 OUTPUT. Scale is exactly 4/3 — rational, not general.
 //
+// CODED vs DISPLAY (contract with w-mem):
+//   SRC_H = **display** height 540 (active picture). Exact 4/3 depends on 540.
+//   H.264 may code height 544 (MB-align; 540&15=12). Bank plane bases use
+//   coded_h=544 so chroma offsets land correctly. Bottom (544-540)=4 lines are
+//   cropped via PLXG display_h / content_h / crop — NOT by changing SRC_H to 544
+//   (that would yield ~725.3 glass lines and look like a "scaler quality" bug).
+//
 //   src = dst * 3 / 4     (integer; dst=1279 → src=959 exact)
 //   phase = dst[1:0]      // 0,1,2,3 → frac 0, 1/4, 1/2, 3/4 repeating
 //

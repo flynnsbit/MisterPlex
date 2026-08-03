@@ -70,7 +70,8 @@ w-scaler bank width alone does **not** grow ACTIVE. Full-raster ACTIVE needs
 |------|----------|----------|
 | **Source** `content_w×content_h` (+ x0/y0) | Host PLXG / integration force | 1280×720 native, **720×404** PMS, 320×240 legacy |
 | **Destination** `h_de×v_de` | Matches **glass DE owner** | 529×480 product; **1280×720** multi-pixel |
-| **Bank coded/stride** | PLXG geom or `FABRIC_NATIVE_720P_GEOM` | Option-C when coded_w≥1280 |
+| **Bank coded/stride** | PLXG geom or `FABRIC_NATIVE_720P_GEOM` | Option-C when I420 payload **> legacy 512 KiB** (capacity; product 960×540=777600 B). NOT `coded_w≥1280`. |
+| **Coded vs display H** | w-mem WRITE / ARM publish | Display **540** drives 4/3 (`present_scale_4_3` SRC_H). Coded may be **544** (MB). Crop bottom 4 = content_h contract. |
 
 Under `PRESENT_MULTI_PIXEL` + `use_ext`: window **must** take beam `glass_x0` and
 `h_de=1280`. Mapping from colorbars `hc` with H_DE=529 while beam is 1280 is a
