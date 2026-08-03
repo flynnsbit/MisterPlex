@@ -1,6 +1,6 @@
 lane=w-path
 status=GAP_ANALYSIS_LANDED
-tip=pending
+tip=a16439fe
 PARENT: bitstream move SOLVED (worst AU 60915 B = 0.66 ms); decode remains
 GAP: docs/evidence/p720-path-20260803/H264_GAP_ANALYSIS.md
   decode_top = coeff-in I-luma bit-exact ≠ product decoder
