@@ -33,7 +33,7 @@ build_one() {
 
 EXE="$(build_one product -CFLAGS "-std=c++17 -O2")"
 set +e
-OUTP="$("$EXE" 2>&1)"; PRC=$?
+OUTP="$(PLXG_BASELINE_MODE=retained "$EXE" 2>&1)"; PRC=$?
 set -e
 printf '%s\n' "$OUTP"
 echo "plxg_boot_baseline_product true rc=$PRC"
@@ -41,10 +41,14 @@ if [[ "$PRC" -ne 0 ]] || ! printf '%s\n' "$OUTP" | grep -q 'PASS boot baseline';
   echo "FAIL product boot baseline" >&2
   exit 1
 fi
+if ! printf '%s\n' "$OUTP" | grep -q 'PASS fresh zero'; then
+  echo "FAIL product fresh-zero one-publish" >&2
+  exit 1
+fi
 
 EXF="$(build_one fault +define+FAULT_PLXG_NO_BASELINE -CFLAGS "-std=c++17 -O2 -DFAULT_PLXG_NO_BASELINE")"
 set +e
-OUTF="$("$EXF" 2>&1)"; FRC=$?
+OUTF="$(PLXG_BASELINE_MODE=retained "$EXF" 2>&1)"; FRC=$?
 set -e
 printf '%s\n' "$OUTF"
 echo "plxg_boot_baseline_fault true rc=$FRC"
@@ -52,5 +56,16 @@ if [[ "$FRC" -ne 2 ]] || ! printf '%s\n' "$OUTF" | grep -q 'REPRO retained-promo
   echo "FAIL red twin did not REPRO" >&2
   exit 1
 fi
-echo "PASS test_plxg_boot_baseline product+REPRO"
+
+EXE2="$(build_one fault_empty +define+FAULT_PLXG_EMPTY_NO_BASELINE -CFLAGS "-std=c++17 -O2 -DFAULT_PLXG_EMPTY_NO_BASELINE")"
+set +e
+OUTFE="$(PLXG_BASELINE_MODE=fresh "$EXE2" 2>&1)"; FERC=$?
+set -e
+printf '%s\n' "$OUTFE"
+echo "plxg_boot_baseline_fault_empty true rc=$FERC"
+if [[ "$FERC" -ne 2 ]] || ! printf '%s\n' "$OUTFE" | grep -q 'REPRO empty-no-baseline'; then
+  echo "FAIL empty-no-baseline red twin did not REPRO" >&2
+  exit 1
+fi
+echo "PASS test_plxg_boot_baseline product+REPROs (retained+fresh+empty)"
 exit 0

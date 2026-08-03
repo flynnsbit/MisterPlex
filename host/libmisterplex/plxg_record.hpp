@@ -350,6 +350,8 @@ inline uint16_t plxgHostWriteRecordRestartSafe(uint8_t* ctrlPage, PlxgRecord rec
 
 // Behavioral poller (matches plxg_ddr_poller.sv boot baseline).
 // fault_no_baseline=true → FAULT_PLXG_NO_BASELINE (immediate promote retained).
+// fault_empty_no_baseline=true → FAULT_PLXG_EMPTY_NO_BASELINE (empty q0 does
+// not complete baseline — first valid is swallowed; coupled doorbell forever).
 struct PlxgPollerModel {
     uint16_t last_seq = 0;
     uint16_t last_epoch = 0;
@@ -357,20 +359,36 @@ struct PlxgPollerModel {
     uint32_t cnt_commit = 0;
     uint32_t cnt_baseline = 0;
     bool fault_no_baseline = false;
+    bool fault_empty_no_baseline = false;
 };
+
+// Empty/invalid q0 observation (bad magic or epoch==0). Product completes
+// baseline with last staying (0,0) so the first valid host write commits.
+// LIMITATION (rd-duck): passive baseline cannot distinguish a fresh record
+// written just before first poll from retained DDR.
+inline void plxgPollerObserveEmpty(PlxgPollerModel& p) {
+    if (p.fault_no_baseline || p.fault_empty_no_baseline)
+        return;
+    if (!p.boot_baseline_done)
+        p.boot_baseline_done = true;
+}
 
 // Try one verified snapshot against poller state. Returns true if commit pulse
 // would fire (push to latch). Baseline-only success returns false but updates last_*.
 inline bool plxgPollerObserveVerified(PlxgPollerModel& p, const uint64_t snap[6],
                                       uint64_t q0_reread) {
-    if (static_cast<uint32_t>(snap[0]) != mailbox_abi::kPlxgMagic)
+    if (static_cast<uint32_t>(snap[0]) != mailbox_abi::kPlxgMagic) {
+        plxgPollerObserveEmpty(p);
         return false;
+    }
     if (q0_reread != snap[0])
-        return false; // torn
+        return false; // torn — does not complete empty baseline
     const uint16_t seq = static_cast<uint16_t>(snap[0] >> 48);
     const uint16_t epoch = plxgQ0Epoch(snap[0]);
-    if (epoch == 0)
+    if (epoch == 0) {
+        plxgPollerObserveEmpty(p);
         return false;
+    }
     if (epoch == p.last_epoch && seq == p.last_seq)
         return false; // stale
     if (!p.fault_no_baseline && !p.boot_baseline_done) {
@@ -385,6 +403,52 @@ inline bool plxgPollerObserveVerified(PlxgPollerModel& p, const uint64_t snap[6]
     p.boot_baseline_done = true;
     ++p.cnt_commit;
     return true;
+}
+
+// rd-duck: fresh/zero DDR + exactly one post-reset publication must commit.
+inline bool plxgBootBaselineFreshZeroOnePublishCommits() {
+    PlxgPollerModel p; // FPGA reset, DDR empty
+    uint64_t zero[6]{};
+    // Empty observation (bad magic)
+    if (plxgPollerObserveVerified(p, zero, zero[0]))
+        return false;
+    if (!p.boot_baseline_done || p.cnt_baseline != 0 || p.cnt_commit != 0)
+        return false;
+    if (p.last_seq != 0 || p.last_epoch != 0)
+        return false;
+    // Exactly one valid host publication
+    std::uint8_t page[0x1000]{};
+    uint16_t sw = 0;
+    const uint16_t used =
+        plxgHostWriteRecordRestartSafe(page, makePlxgRecord960x540Native(1), &sw, false);
+    uint64_t snap[6];
+    for (int i = 0; i < 6; ++i)
+        snap[i] = plxgCtrlLoadQ(page, static_cast<unsigned>(i));
+    if (!plxgPollerObserveVerified(p, snap, snap[0]))
+        return false;
+    return p.cnt_commit == 1 && p.cnt_baseline == 0 && p.last_seq == used;
+}
+
+// FAULT REPRO: empty does not complete baseline → first valid swallowed.
+inline bool plxgBootBaselineFaultEmptySwallowsFirstPublish() {
+    PlxgPollerModel p;
+    p.fault_empty_no_baseline = true;
+    uint64_t zero[6]{};
+    (void)plxgPollerObserveVerified(p, zero, zero[0]);
+    if (p.boot_baseline_done)
+        return false; // defect requires baseline still open
+    std::uint8_t page[0x1000]{};
+    uint16_t sw = 0;
+    const uint16_t used =
+        plxgHostWriteRecordRestartSafe(page, makePlxgRecord960x540Native(1), &sw, false);
+    uint64_t snap[6];
+    for (int i = 0; i < 6; ++i)
+        snap[i] = plxgCtrlLoadQ(page, static_cast<unsigned>(i));
+    // First valid becomes baseline, no commit
+    if (plxgPollerObserveVerified(p, snap, snap[0]))
+        return false;
+    return p.cnt_baseline == 1 && p.cnt_commit == 0 && p.last_seq == used &&
+           p.boot_baseline_done;
 }
 
 // rd-duck retained-DDR reset proof (product):

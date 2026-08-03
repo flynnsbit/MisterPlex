@@ -1001,7 +1001,10 @@ int main() {
         CHECK(plxgBootBaselineFaultPromotesRetained(7)); // REPRO no-baseline
         CHECK(plxgBootBaselineHoldsRetainedUntilPostResetPublish(7));
         CHECK(plxgBootBaselineHoldsRetainedUntilPostResetPublish(1));
+        CHECK(plxgBootBaselineFreshZeroOnePublishCommits());
+        CHECK(plxgBootBaselineFaultEmptySwallowsFirstPublish()); // REPRO
         std::fprintf(stderr, "  PLXG_BOOT_BASELINE_RETAINED OK\n");
+        std::fprintf(stderr, "  PLXG_BOOT_BASELINE_FRESH_ZERO OK\n");
         std::fprintf(stderr, "  PLXG_SEQLOCK_RETAINED_DDR_RESET OK\n");
         std::fprintf(stderr, "  PLXG_SEQ_RESTART_SAFE OK\n");
         std::fprintf(stderr, "  PLXG_ABA_SEQ_TEAR OK\n");

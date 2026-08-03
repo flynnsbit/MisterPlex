@@ -10,12 +10,19 @@
 //   After FPGA reset last=(0,0). Retained DDR may still hold a valid (epoch,seq)
 //   e.g. (1,N). Pair-compare alone PROMOTES that retained record immediately —
 //   epoch!=0 does NOT prove fresh-this-boot (host defaults epoch to constant 1).
-//   Product: first successful verified snapshot after reset BASELINES last_*
-//   WITHOUT commit/push (no live_valid). Only a later NEW (epoch,seq) pair
-//   (post-reset host publication) may promote. Cold empty DDR: first host
-//   write baselines; second bumped-seq write promotes (daemon always bumps).
+//   Product:
+//     - First *valid coherent* snapshot after reset BASELINES last_* WITHOUT
+//       commit (no live_valid). A later NEW (epoch,seq) may promote.
+//     - First *empty* observation (bad magic or epoch==0) also completes
+//       baseline with last staying (0,0) so the first valid post-reset host
+//       record COMMITS (rd-duck liveness: previously empty kept baseline=0 and
+//       the first valid was swallowed as baseline — coupled doorbell forever).
+//   LIMITATION: passive baseline cannot distinguish a fresh host record written
+//   just before the first poll from retained DDR (reset/publication race). A
+//   true host↔FPGA boot nonce/ACK would close that; not claimed here.
 //
 // FAULT_PLXG_NO_BASELINE: skip baseline (pre-fix immediate promote of retained).
+// FAULT_PLXG_EMPTY_NO_BASELINE: empty q0 does not complete baseline (liveness REPRO).
 //
 // Master port matches ddr_bus_arbiter m1 (single-beat RD). Share m1 only via
 // ddr_m1_subarb (latched owner through response) — never combinational mux.
@@ -152,11 +159,21 @@ module plxg_ddr_poller #(
 						if (qi == 3'd0) begin
 							if (dout[31:0] != MAGIC) begin
 								cnt_bad_magic <= cnt_bad_magic + 32'd1;
+								// Empty observation completes baseline (product).
+								// last_* stay (0,0); first valid host write commits.
+`ifndef FAULT_PLXG_EMPTY_NO_BASELINE
+								if (!boot_baseline_done)
+									boot_baseline_done <= 1'b1;
+`endif
 								want <= 1'b0;
 								st   <= S_IDLE;
 								busy_poll <= 1'b0;
 							end else if (dout[47:34] == 14'd0) begin
 								cnt_bad_epoch <= cnt_bad_epoch + 32'd1;
+`ifndef FAULT_PLXG_EMPTY_NO_BASELINE
+								if (!boot_baseline_done)
+									boot_baseline_done <= 1'b1;
+`endif
 								want <= 1'b0;
 								st   <= S_IDLE;
 								busy_poll <= 1'b0;
