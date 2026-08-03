@@ -1,7 +1,7 @@
 lane: w-fitgate
 role: fit-release gate ruler (scripts/fit_release_gate.py OWNER)
 branch: w-fitgate
-HEAD: ed295d1c (code 64854f01)
+HEAD: bf68899c (B31 code 64854f01)
 GRANT: NO
 selftest: PASS (FIT_RELEASE_GATE_SELFTEST_PASS true_rc=0)
 mutation_matrix: rows=34 red=34 fail_holes=0
