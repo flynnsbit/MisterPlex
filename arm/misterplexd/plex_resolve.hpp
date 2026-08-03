@@ -52,6 +52,12 @@ struct ResolveResult {
     // Set from library Media WxH after metadata — never from hardcoded ratingKey.
     std::string playRegime;      // playDeliveryRegimeName(...)
     std::string videoProfile;    // Stream/Media profile attribute when known
+    // PMS /universal/decision @decision (directplay|transcode|…). Empty if not probed.
+    std::string decisionAttr;
+    // True only when decision endpoint granted directplay (not Part-URL assumption).
+    bool decisionVerifiedDirectPlay = false;
+    // fabricDecodeRouteStr at resolve time (provisional until STREAM SPS confirm).
+    std::string fabricRoute;
 };
 
 struct QueueItem {
@@ -252,6 +258,14 @@ std::string plexThinClientIdentityHeadersForTest(const std::string& sessionId,
 std::string buildUniversalDecisionUrl(const std::string& base, const std::string& metadataKey,
                                       const std::string& token, const std::string& session,
                                       const WeakLadder& weak, bool allow_direct);
+
+// Parse decision= from PMS decision XML (VideoStream / Media / any tag).
+// Returns lowercased token or empty.
+std::string plexParseDecisionAttr(const std::string& decisionXml);
+// True when decision="directplay" (case-insensitive).
+bool plexDecisionXmlIsDirectPlay(const std::string& decisionXml);
+// True when decision="transcode".
+bool plexDecisionXmlIsTranscode(const std::string& decisionXml);
 
 // Best-effort PMS GET using the same curl-based Plex client identity as resolve.
 // Headers are name/value pairs; response body is discarded by callers.

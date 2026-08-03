@@ -648,6 +648,30 @@ std::string buildUniversalDecisionUrl(const std::string& base, const std::string
     return q.str();
 }
 
+std::string plexParseDecisionAttr(const std::string& decisionXml) {
+    // Prefer explicit decision="..." anywhere in the payload (VideoStream/Media).
+    const std::string key = "decision=\"";
+    auto p = decisionXml.find(key);
+    if (p == std::string::npos)
+        return {};
+    p += key.size();
+    auto e = decisionXml.find('"', p);
+    if (e == std::string::npos || e <= p)
+        return {};
+    std::string s = decisionXml.substr(p, e - p);
+    for (char& c : s)
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return s;
+}
+
+bool plexDecisionXmlIsDirectPlay(const std::string& decisionXml) {
+    return plexParseDecisionAttr(decisionXml) == "directplay";
+}
+
+bool plexDecisionXmlIsTranscode(const std::string& decisionXml) {
+    return plexParseDecisionAttr(decisionXml) == "transcode";
+}
+
 bool plexHttpGetNoBody(const std::string& url,
                        const std::vector<std::pair<std::string, std::string>>& headers,
                        int timeoutSec) {
@@ -1030,41 +1054,95 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
 
     if (directH264) {
         const std::string profSuffix = profNote.empty() ? "" : (" profile=" + profNote);
-        auto partKey = attr(xml, "Part", "key");
-        if (!partKey.empty()) {
-            if (partKey[0] != '/')
-                partKey = "/" + partKey;
-            r.playable = plexBase + partKey;
-            if (!token.empty())
-                r.playable += (r.playable.find('?') == std::string::npos ? "?" : "&") +
-                              std::string("X-Plex-Token=") + urlEncodeQuery(token);
-            r.ok = true;
-            r.transcoded = false;
-            {
-                const auto fr = gateFabricFromPmsDelivery(false, profNote);
-                r.detail = "direct H.264 Part (regime=direct_play_sd" + profSuffix +
-                           " fabric_route=" +
-                           std::string(fabricDecodeRouteStr(fabricDecodeRoute(fr))) + ")";
+        // Parent recipe: call /universal/decision with directPlay=1 + full identity
+        // and require decision="directplay" before opening Part. Thin headers → 400
+        // must not silently fall into xcode CABAC.
+        bool dpGranted = false;
+        std::string dpDecisionDetail;
+        {
+            WeakLadder weakDp = weak;
+            if (weakDp.videoResolution.empty())
+                weakDp.videoResolution = "1280x720";
+            if (weakDp.maxVideoBitrateKbps <= 0)
+                weakDp.maxVideoBitrateKbps = 20000;
+            if (weakDp.videoQuality <= 0)
+                weakDp.videoQuality = 100;
+            const std::string sid = makeSessionId();
+            const std::string hdrBlock = plexFfmpegHeaders(sid, token, weakDp);
+            if (!plexClientIdentityHeadersComplete(hdrBlock)) {
+                dpDecisionDetail = "DP decision skipped: thin identity headers (400 trap)";
+            } else {
+                const std::string decUrl =
+                    buildUniversalDecisionUrl(plexBase, key, token, sid, weakDp,
+                                              /*allow_direct=*/true);
+                // Reuse curl identity; pass session header extras via extraHeaders.
+                std::ostringstream extra;
+                extra << " -H " << shellQuote("X-Plex-Session-Identifier: " + sid);
+                if (weakDp.clientProfileName != "MiSTerPlex") {
+                    extra << " -H "
+                          << shellQuote("X-Plex-Client-Capabilities: " +
+                                        plexClientCapabilities(weakDp));
+                    extra << " -H "
+                          << shellQuote("X-Plex-Client-Profile-Extra: " +
+                                        plexClientProfileExtra(weakDp));
+                }
+                const std::string body = httpGet(decUrl, 20, extra.str());
+                r.decisionAttr = plexParseDecisionAttr(body);
+                if (body.empty()) {
+                    dpDecisionDetail = "DP decision empty body (identity/400?)";
+                } else if (plexDecisionXmlIsDirectPlay(body)) {
+                    dpGranted = true;
+                    r.decisionVerifiedDirectPlay = true;
+                    dpDecisionDetail = "decision=directplay";
+                } else {
+                    dpDecisionDetail = "DP not granted decision=" +
+                                       (r.decisionAttr.empty() ? "?" : r.decisionAttr);
+                }
             }
-            applyDirectPartNativeStore();
-            return r;
         }
-        auto file = attr(xml, "Part", "file");
-        if (!file.empty()) {
-            r.playable = urlDecode(file);
-            r.ok = true;
-            r.transcoded = false;
-            {
-                const auto fr = gateFabricFromPmsDelivery(false, profNote);
-                r.detail = "direct H.264 Part file (regime=direct_play_sd" + profSuffix +
-                           " fabric_route=" +
-                           std::string(fabricDecodeRouteStr(fabricDecodeRoute(fr))) + ")";
+        if (dpGranted) {
+            auto partKey = attr(xml, "Part", "key");
+            if (!partKey.empty()) {
+                if (partKey[0] != '/')
+                    partKey = "/" + partKey;
+                r.playable = plexBase + partKey;
+                if (!token.empty())
+                    r.playable += (r.playable.find('?') == std::string::npos ? "?" : "&") +
+                                  std::string("X-Plex-Token=") + urlEncodeQuery(token);
+                r.ok = true;
+                r.transcoded = false;
+                {
+                    const auto fr = gateFabricFromPmsDelivery(false, profNote);
+                    r.fabricRoute = fabricDecodeRouteStr(fabricDecodeRoute(fr));
+                    r.detail = "direct H.264 Part (regime=direct_play_sd" + profSuffix +
+                               " " + dpDecisionDetail + " fabric_route=" + r.fabricRoute +
+                               " bitstream=pending_sps)";
+                }
+                applyDirectPartNativeStore();
+                return r;
             }
-            applyDirectPartNativeStore();
-            return r;
+            auto file = attr(xml, "Part", "file");
+            if (!file.empty()) {
+                r.playable = urlDecode(file);
+                r.ok = true;
+                r.transcoded = false;
+                {
+                    const auto fr = gateFabricFromPmsDelivery(false, profNote);
+                    r.fabricRoute = fabricDecodeRouteStr(fabricDecodeRoute(fr));
+                    r.detail = "direct H.264 Part file (regime=direct_play_sd" + profSuffix +
+                               " " + dpDecisionDetail + " fabric_route=" + r.fabricRoute +
+                               " bitstream=pending_sps)";
+                }
+                applyDirectPartNativeStore();
+                return r;
+            }
+            // Decision said DP but Part missing — fall through.
+            dpDecisionDetail += "; Part missing";
         }
-        // Fall through to universal if Part missing
+        // Fall through to universal if DP not granted or Part missing
         r.playRegime = playDeliveryRegimeName(PlayDeliveryRegime::ForceUniversal);
+        if (!dpDecisionDetail.empty())
+            r.detail = dpDecisionDetail;
     }
 
     // Prefer weak universal for dual A9 (STREAM=0 cast path / non-H.264 STREAM)
@@ -1127,9 +1205,10 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
             {
                 // miss #15: xcode never fabric-eligible regardless of advertised profile.
                 const auto fr = gateFabricFromPmsDelivery(true, profNote);
+                r.fabricRoute = fabricDecodeRouteStr(fabricDecodeRoute(fr));
+                r.decisionAttr = "transcode"; // universal start path
                 r.detail = "PMS universal " + weakEff.profileName + " " + weakEff.videoResolution +
-                           " regime=" + r.playRegime + " fabric_route=" +
-                           std::string(fabricDecodeRouteStr(fabricDecodeRoute(fr))) +
+                           " regime=" + r.playRegime + " fabric_route=" + r.fabricRoute +
                            " (" + std::string(fr.reason ? fr.reason : "") + ") " + key;
             }
             // STREAM preferDirect fallthrough: operator can see why recon may hit CABAC.

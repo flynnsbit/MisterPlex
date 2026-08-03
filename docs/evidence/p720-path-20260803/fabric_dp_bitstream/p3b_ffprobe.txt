@@ -1,0 +1,16 @@
+codec_name=h264
+profile=Constrained Baseline
+width=1280
+height=720
+has_b_frames=0
+level=31
+codec_name=aac
+profile=LC
+codec_name=h264
+profile=Constrained Baseline
+width=1280
+height=720
+has_b_frames=0
+level=31
+codec_name=aac
+profile=LC

@@ -433,6 +433,23 @@ int main() {
                                       "sid-xc", w720, /*allow_direct=*/false);
         CHECK(decXc.find("directPlay=0") != std::string::npos);
         CHECK(decXc.find("directStream=0") != std::string::npos);
+
+        // Decision attribute parse (no network) — parent 400/DP recipe
+        const std::string dpXml =
+            R"(<MediaContainer><VideoStream decision="directplay" videoProfile="constrained baseline"/></MediaContainer>)";
+        const std::string xcXml =
+            R"(<MediaContainer><VideoStream decision="transcode" videoProfile="constrained baseline"/></MediaContainer>)";
+        CHECK(plexParseDecisionAttr(dpXml) == "directplay");
+        CHECK(plexDecisionXmlIsDirectPlay(dpXml));
+        CHECK(!plexDecisionXmlIsTranscode(dpXml));
+        CHECK(plexParseDecisionAttr(xcXml) == "transcode");
+        CHECK(plexDecisionXmlIsTranscode(xcXml));
+        CHECK(!plexDecisionXmlIsDirectPlay(xcXml));
+        // Case fold
+        CHECK(plexDecisionXmlIsDirectPlay(
+            R"(<Video decision="DirectPlay" />)"));
+        CHECK(plexParseDecisionAttr("").empty());
+        CHECK(!plexDecisionXmlIsDirectPlay(""));
     }
 
     // --- STREAM preferDirectH264 helpers (no network) ---

@@ -247,6 +247,45 @@ int main() {
               FabricDecodeRoute::ArmFfmpegFallback);
     }
 
+    // --- Positive path (full credit): DP + real Baseline bytes → confirmed ---
+    // Refusal-only implementations never close this item; this opens fabric.
+    {
+        auto base3 = loadBaselineAnnexB();
+        CHECK(!base3.empty());
+        auto chain = parseAnnexBChain(base3.data(), base3.size());
+        auto conf = confirmFabricFromDeliveryAndBitstream(/*xcode=*/false, chain);
+        CHECK(conf.ok);
+        CHECK(std::string(conf.reason) == "ok_baseline_cavlc_confirmed");
+        CHECK(fabricDecodeRouteForPmsDelivery(false, conf) ==
+              FabricDecodeRoute::FabricBitstreamEligible);
+        CHECK(fabricBitstreamPathOpenForPmsDelivery(false, conf));
+        // SPS+PPS NAL helper (STREAM demux shape)
+        // Extract first SPS and PPS from annex-B for NAL-split confirm.
+        // Use full chain via annex-B when split is hard — also test xcode NEG:
+        auto confX = confirmFabricFromDeliveryAndBitstream(/*xcode=*/true, chain);
+        CHECK(!confX.ok);
+        CHECK(confX.refused_as_transcode);
+        CHECK(std::string(confX.reason) == "refuse_transcode_delivery");
+        CHECK(fabricDecodeRouteForPmsDelivery(true, confX) ==
+              FabricDecodeRoute::ArmFfmpegFallback);
+        // Even with ok bitstream object, delivery wrapper blocks:
+        CHECK(!fabricBitstreamPathOpenForPmsDelivery(true, conf));
+    }
+
+    // --- RED: advertised CB + Main bitstream under DP → refuse_profile ---
+    {
+        NalChainInfo main;
+        main.sps.valid = true;
+        main.sps.profile_idc = kH264ProfileMain;
+        main.pps.valid = true;
+        main.pps.entropy_cabac = false;
+        auto conf = confirmFabricFromDeliveryAndBitstream(false, main);
+        CHECK(!conf.ok);
+        CHECK(conf.verdict == FabricStreamVerdict::RefuseProfile);
+        CHECK(fabricDecodeRouteForPmsDelivery(false, conf) ==
+              FabricDecodeRoute::ArmFfmpegFallback);
+    }
+
     std::printf("test_h264_fabric_stream_gate: OK\n");
     return 0;
 }

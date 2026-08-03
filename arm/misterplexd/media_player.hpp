@@ -153,6 +153,23 @@ public:
     // Always refresh q5 — main must also call this *before* aspect/fps setters
     // that refresh, but a late call must not leave a stale DirectPlay pack.
     void setPlxgDarProvenanceTranscode(bool transcode);
+    // PMS delivery class for fabric gate (miss #15): true → never open fabric F3.
+    // Set from ResolveResult.transcoded before STREAM demux.
+    void setPmsDeliveryTranscoded(bool transcoded) {
+        pmsDeliveryTranscoded_.store(transcoded, std::memory_order_relaxed);
+    }
+    bool pmsDeliveryTranscoded() const {
+        return pmsDeliveryTranscoded_.load(std::memory_order_relaxed);
+    }
+    // Bitstream-confirmed fabric route (after first SPS+PPS). Empty until probe.
+    std::string lastFabricRoute() const;
+    std::string lastFabricReason() const;
+    bool fabricBitstreamConfirmed() const {
+        return fabricBitstreamConfirmed_.load(std::memory_order_relaxed);
+    }
+    bool fabricBitstreamEligible() const {
+        return fabricBitstreamEligible_.load(std::memory_order_relaxed);
+    }
     // Rebuild PLXG q5 from PMS meta + measured/claimed geometry + content fps.
     // Logs greppable media: PLXG_Q5 … Offsets: doorbell+0x828. Wire write is
     // owned with w-mem record store (B16); path owns the value source.
@@ -420,6 +437,13 @@ private:
     std::string mediaAspectRatio_;
     // true → PlxgDarProvenance::Transcode (Media AR / delivered; no source SAR×coded).
     bool plxgDarTranscode_ = false;
+    // miss #15 delivery class for STREAM fabric gate (set before demux).
+    std::atomic<bool> pmsDeliveryTranscoded_{false};
+    std::atomic<bool> fabricBitstreamConfirmed_{false};
+    std::atomic<bool> fabricBitstreamEligible_{false};
+    mutable std::mutex fabricGateMu_;
+    std::string fabricRoute_;
+    std::string fabricReason_;
     // Last packed PLXG q5 (doorbell+0x828). Flags: bit0=dar_valid bit1=fps_valid.
     std::atomic<uint64_t> plxgQ5_{0};
     std::atomic<uint32_t> plxgQ5Flags_{0};

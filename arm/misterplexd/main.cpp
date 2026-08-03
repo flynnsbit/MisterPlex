@@ -1328,6 +1328,17 @@ int main(int argc, char** argv) {
             // if provenance is still default DirectPlay, transcode 624x350 + source
             // SAR 160:117 double-applies → 256:105 instead of Media 16:9 family.
             player.setPlxgDarProvenanceTranscode(resolved.transcoded);
+            // miss #15: STREAM fabric gate needs delivery class before SPS probe.
+            player.setPmsDeliveryTranscoded(resolved.transcoded);
+            if (!resolved.fabricRoute.empty()) {
+                std::fprintf(stderr,
+                             "misterplexd: resolve fabric_route=%s decision=%s "
+                             "decision_verified_dp=%d regime=%s (bitstream confirm pending)\n",
+                             resolved.fabricRoute.c_str(),
+                             resolved.decisionAttr.empty() ? "-" : resolved.decisionAttr.c_str(),
+                             resolved.decisionVerifiedDirectPlay ? 1 : 0,
+                             resolved.playRegime.empty() ? "-" : resolved.playRegime.c_str());
+            }
             player.setContentFpsRational(fnum, fden);
             player.setContentAspectMeta(resolved.pixelAspectRatio, resolved.mediaAspectRatio);
             std::fprintf(stderr, "misterplexd: content fps exact=%d/%d (pms frameRate=%s vfr=%s)\n",

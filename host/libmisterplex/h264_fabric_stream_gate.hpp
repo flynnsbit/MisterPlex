@@ -264,6 +264,41 @@ inline FabricStreamGateResult gateFabricH264FromChain(const NalChainInfo& chain)
     return r;
 }
 
+// Byte-level confirm: PMS delivery class + real SPS/PPS (not XML profile).
+// Positive: !xcode && Baseline/CAVLC/no-B → ok_baseline_cavlc_confirmed.
+// RED: xcode + perfect CB chain still RefuseTranscodeDelivery (miss #15).
+inline FabricStreamGateResult confirmFabricFromDeliveryAndBitstream(
+    bool is_transcoded, const NalChainInfo& chain) {
+    if (is_transcoded) {
+        FabricStreamGateResult r;
+        r.ok = false;
+        r.verdict = FabricStreamVerdict::RefuseTranscodeDelivery;
+        r.reason = fabricStreamVerdictStr(FabricStreamVerdict::RefuseTranscodeDelivery);
+        r.refused_as_transcode = true;
+        if (chain.sps.valid)
+            r.profile_idc = chain.sps.profile_idc;
+        if (chain.pps.valid || chain.pps.entropy_cabac)
+            r.entropy_cabac = chain.pps.entropy_cabac;
+        return r;
+    }
+    FabricStreamGateResult r = gateFabricH264FromChain(chain);
+    if (r.ok)
+        r.reason = "ok_baseline_cavlc_confirmed";
+    return r;
+}
+
+// STREAM demux: retained annex-B SPS+PPS NALs → confirmed fabric route.
+inline FabricStreamGateResult confirmFabricFromSpsPpsNals(bool is_transcoded,
+                                                         const uint8_t* sps, size_t sps_n,
+                                                         const uint8_t* pps, size_t pps_n) {
+    NalChainInfo chain;
+    if (sps && sps_n > 0)
+        chain.sps = parseAnnexBChain(sps, sps_n).sps;
+    if (pps && pps_n > 0)
+        chain.pps = parseAnnexBChain(pps, pps_n).pps;
+    return confirmFabricFromDeliveryAndBitstream(is_transcoded, chain);
+}
+
 inline FabricStreamGateResult gateFabricH264AnnexB(const uint8_t* data, size_t n) {
     return gateFabricH264FromChain(parseAnnexBChain(data, n));
 }

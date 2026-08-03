@@ -1,0 +1,8 @@
+codec_name=h264
+profile=Constrained Baseline
+width=624
+height=480
+has_b_frames=0
+level=30
+codec_name=aac
+profile=LC

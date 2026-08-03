@@ -13,6 +13,7 @@
 #include "libmisterplex/osd_menu.hpp"
 #include "libmisterplex/pms_delivery_geom.hpp"
 #include "libmisterplex/plxg_q5_aspect_cadence.hpp"
+#include "libmisterplex/h264_fabric_stream_gate.hpp"
 #include "libmisterplex/h264_nal_dispatch.hpp"
 #include "libmisterplex/h264_recon.hpp"
 #include "libmisterplex/raw_video_pipe.hpp"
@@ -504,6 +505,16 @@ void MediaPlayer::setContentAspectMeta(std::string pixelAspectRatio,
 void MediaPlayer::setPlxgDarProvenanceTranscode(bool transcode) {
     plxgDarTranscode_ = transcode;
     refreshPlxgAspectCadence();
+}
+
+std::string MediaPlayer::lastFabricRoute() const {
+    std::lock_guard<std::mutex> lk(fabricGateMu_);
+    return fabricRoute_;
+}
+
+std::string MediaPlayer::lastFabricReason() const {
+    std::lock_guard<std::mutex> lk(fabricGateMu_);
+    return fabricReason_;
 }
 
 void MediaPlayer::refreshPlxgAspectCadence() {
@@ -1372,6 +1383,13 @@ bool MediaPlayer::play(const std::string& urlOrPath, int64_t startOffsetMs,
         reconFrames_.store(0);
         reconPresentOk_.store(false);
         cabacSkip_.store(false);
+        fabricBitstreamConfirmed_.store(false, std::memory_order_relaxed);
+        fabricBitstreamEligible_.store(false, std::memory_order_relaxed);
+        {
+            std::lock_guard<std::mutex> lk(fabricGateMu_);
+            fabricRoute_.clear();
+            fabricReason_.clear();
+        }
         // Stream generation: bump at START so telemetry session_epoch is stable
         // for the whole stream and changes on every play/seek restart.
         const uint64_t sseq = streamSeq_.fetch_add(1, std::memory_order_acq_rel) + 1;
@@ -1848,12 +1866,24 @@ void MediaPlayer::streamPump(int sfd) {
     bool f3Paused = false;
     static std::atomic<uint64_t> nextStreamSession{1};
     const uint64_t streamSession = nextStreamSession.fetch_add(1);
-    if (wantF3) {
+    // miss #15: never open fabric bitstream ring for known PMS xcode (Main+B).
+    const bool pmsXcode = pmsDeliveryTranscoded_.load(std::memory_order_relaxed);
+    if (wantF3 && pmsXcode) {
+        log("media: F3 NAL producer skipped — pms_transcoded=1 (miss#15 ARM fallback; "
+            "bitstream gate would refuse regardless of advertised profile)");
+        {
+            std::lock_guard<std::mutex> lk(fabricGateMu_);
+            fabricRoute_ = fabricDecodeRouteStr(FabricDecodeRoute::ArmFfmpegFallback);
+            fabricReason_ = fabricStreamVerdictStr(FabricStreamVerdict::RefuseTranscodeDelivery);
+        }
+        fabricBitstreamConfirmed_.store(true, std::memory_order_relaxed);
+        fabricBitstreamEligible_.store(false, std::memory_order_relaxed);
+    } else if (wantF3) {
         const auto br = f3Dispatch.begin(streamSession);
         if (br == h264stream::ControlResult::Ok) {
             f3Active = true;
             log("media: F3 NAL producer begin session=" + std::to_string(streamSession) +
-                " " + readDdrBitstreamStatusString());
+                " " + readDdrBitstreamStatusString() + " (pending SPS/PPS fabric confirm)");
         } else {
             f3Fatal = true;
             log("media: F3 NAL producer begin failed " +
@@ -1907,8 +1937,54 @@ void MediaPlayer::streamPump(int sfd) {
         }
     };
 
+    // miss #15: fabric F3 only after byte-level confirm (DP + Baseline/CAVLC).
+    // Until SPS+PPS gate runs, hold VCL; parameter sets may buffer for confirm.
+    bool fabricGateRan = false;
+    bool fabricEligible = false;
+    auto runFabricBitstreamGate = [&]() {
+        if (fabricGateRan || spsNal.empty() || ppsNal.empty())
+            return;
+        fabricGateRan = true;
+        const bool xcode = pmsDeliveryTranscoded_.load(std::memory_order_relaxed);
+        const auto gr = confirmFabricFromSpsPpsNals(xcode, spsNal.data(), spsNal.size(),
+                                                    ppsNal.data(), ppsNal.size());
+        const auto route = fabricDecodeRouteForPmsDelivery(xcode, gr);
+        fabricEligible = (route == FabricDecodeRoute::FabricBitstreamEligible);
+        {
+            std::lock_guard<std::mutex> lk(fabricGateMu_);
+            fabricRoute_ = fabricDecodeRouteStr(route);
+            fabricReason_ = gr.reason ? gr.reason : "?";
+        }
+        fabricBitstreamConfirmed_.store(true, std::memory_order_relaxed);
+        fabricBitstreamEligible_.store(fabricEligible, std::memory_order_relaxed);
+        log(std::string("media: FABRIC_GATE confirmed=1 route=") + fabricDecodeRouteStr(route) +
+            " reason=" + (gr.reason ? gr.reason : "?") +
+            " profile_idc=" + std::to_string(static_cast<unsigned>(gr.profile_idc)) +
+            " cabac=" + (gr.entropy_cabac ? "1" : "0") +
+            " pms_transcoded=" + (xcode ? "1" : "0") +
+            " constrained_baseline=" + (gr.constrained_baseline ? "1" : "0") +
+            (fabricEligible ? " action=f3_open" : " action=f3_hold_arm_fallback"));
+        if (!fabricEligible && f3Active) {
+            // Loud ARM fallback — do not feed Main/B-frame xcode into fabric.
+            f3Dispatch.end();
+            f3Active = false;
+            log("media: FABRIC_GATE closed F3 NAL producer — ARM/ffmpeg pixel path owns decode");
+        }
+    };
+
     auto pushF3Nal = [&](const uint8_t* nalSc, size_t nalLen) {
         if (!f3Active || f3Fatal || !wantF3)
+            return;
+        // NAL type from annex-B header
+        size_t sc0 = annexBStartLen(nalSc, nalLen, 0);
+        const uint8_t ntype =
+            (sc0 && sc0 < nalLen) ? static_cast<uint8_t>(nalSc[sc0] & 0x1f) : 0;
+        const bool isParam = (ntype == 7 || ntype == 8);
+        if (!fabricGateRan && !isParam) {
+            // Wait for SPS+PPS confirm before VCL — positive path opens below.
+            return;
+        }
+        if (fabricGateRan && !fabricEligible)
             return;
         const uint64_t beforeNals = f3Dispatch.stats().nal_pushed;
         const auto r = f3Dispatch.handleNal(nalSc, nalLen);
@@ -2185,10 +2261,12 @@ void MediaPlayer::streamPump(int sfd) {
                     // SPS alone does not change entropy mode — keep sticky CABAC.
                     spsNal.assign(acc.begin() + static_cast<std::ptrdiff_t>(i),
                                   acc.begin() + static_cast<std::ptrdiff_t>(j));
+                    runFabricBitstreamGate();
                 } else if (ntype == 8) {
                     ppsNal.assign(acc.begin() + static_cast<std::ptrdiff_t>(i),
                                   acc.begin() + static_cast<std::ptrdiff_t>(j));
                     applyPpsEntropy(acc.data() + i, nalLen);
+                    runFabricBitstreamGate();
                 } else if ((ntype == 5 || ntype == 1) && !paused_.load()) {
                     tryReconNal(acc.data() + i, nalLen, ntype);
                 }
@@ -2248,9 +2326,12 @@ void MediaPlayer::streamPump(int sfd) {
                 ppsNal.assign(acc.begin() + static_cast<std::ptrdiff_t>(parseFrom),
                               acc.end());
                 applyPpsEntropy(acc.data() + parseFrom, nalLen);
+                runFabricBitstreamGate();
             } else if ((ntype == 5 || ntype == 1) && !paused_.load()) {
                 tryReconNal(acc.data() + parseFrom, nalLen, ntype);
             }
+            if (ntype == 7)
+                runFabricBitstreamGate();
             parseFrom = acc.size();
         }
     }
