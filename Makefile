@@ -195,6 +195,9 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_present_pix_rate_match.sh
 	$(ROOT)/tests/unit/test_present_npx_sync_sideband.sh
 	$(ROOT)/tests/unit/test_present_multi_pixel_elab.sh
+	$(ROOT)/tests/unit/test_present_beam_960_arith.sh
+	$(ROOT)/tests/unit/test_present_beam_960_oracle.sh
+	$(ROOT)/tests/unit/test_present_beam_960_elab.sh
 	$(ROOT)/tests/unit/test_release_rbf_hash.sh
 	$(ROOT)/tests/unit/test_sdram_startup_verilator.sh
 	$(ROOT)/tests/unit/test_sdram_dq_turnaround_verilator.sh

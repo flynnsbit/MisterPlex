@@ -133,3 +133,12 @@ So HDMI 60 Hz **reads** completed input frames from DDR FB; core **writes** at c
 2. **ascal does not need f_core | 60** — default triple-buffer decouples input EOF from output VS (`MODE[3]`, `buf_next` on both sides).  
 3. **Scan ≠ content** — agree; pick 30 for ascal/TV tier; film unique still from banks.  
 4. **STA:** ≥20 MHz sys, no clk_pix floor; B1 not required on 1px path.
+
+
+## rd-duck audit (post-lock)
+
+- `present_video_timing_960.sv` is **constants only** — not a fit candidate alone.
+- FPS math uses **longint** (`CLK*1000` = 20e9 overflows 32-bit int).
+- Executable oracle: `test_present_beam_960_oracle.sh` → fps_milli=30000, hs_w=64, true_de=1.
+- `PRESENT_BEAM_960` wires beam + identity store in `present_core` (default OFF).
+- Elab: `test_present_beam_960_elab.sh` GREEN with fit macros.
