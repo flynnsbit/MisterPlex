@@ -121,6 +121,14 @@
       "token_hit": "1"
     },
     {
+      "check": "B31_HIT_SCAN_PRODUCT_ABSENT",
+      "inject": "live hollow / missing product TB",
+      "expect": "B31_HIT_SCAN_PRODUCT_ABSENT",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
       "check": "B9_SYS_TOP_AR_OUT_HOLD_MISSING",
       "inject": "live defective/hollow tree (no inject)",
       "expect": "B9_SYS_TOP_AR_OUT_HOLD_MISSING",
@@ -233,6 +241,22 @@
       "token_hit": "1"
     },
     {
+      "check": "B31_HIT_SCAN_NOT_48",
+      "inject": "plex_chrome HIT_SCAN default forced 112 (seeded hollow)",
+      "expect": "B31_HIT_SCAN_NOT_48",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B31_HIT_SCAN_112_FORBIDDEN",
+      "inject": "sys_top .HIT_SCAN(112) (seeded)",
+      "expect": "B31_HIT_SCAN_112_FORBIDDEN",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
       "check": "STA_PATH_OWNER_UNRESOLVABLE",
       "inject": "STA present (Fmax summary) but path owner unresolvable",
       "expect": "STA_PATH_OWNER_UNRESOLVABLE",
@@ -250,6 +274,6 @@
     }
   ],
   "failures": [],
-  "n_red": 31,
-  "head": "270dbabc87f4"
+  "n_red": 34,
+  "head": "4f347e76fed7"
 }

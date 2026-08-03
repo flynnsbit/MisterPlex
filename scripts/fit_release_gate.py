@@ -193,6 +193,9 @@ LIVE_OPEN_BLOCKER_TOKENS = (
     "B20_HIER_H_DELAYED_PENDING_READY",
     # rd-duck: H must prove delayed pending_ready under product ufs=0 (Force bars=No)
     "B20_HIER_H_PRODUCT_UFS0_HOLD_UNPROVEN",
+    # rd-duck: HIT_SCAN=48 pre-fit (not 112); shipping cmds ≤48
+    "B31_HIT_SCAN_PRODUCT_ABSENT",
+    # B31_HIT_SCAN_NOT_48 / B31_HIT_SCAN_112_FORBIDDEN: closed-class reinject
     # B20_PRODUCT_UFS_FORCE_BARS_AS_OWNERSHIP: closed-class reinject (w-clock ownership-on-ufs)
     # B20_UNCONNECTED_PRODUCER: not always live — mutation + integ RED twin prove it.
     # rd-duck: runtime-beam must force ascal blackout + scaler (live open on product)
@@ -1974,6 +1977,276 @@ def check_b20_product_use_frame_store_tie(
 
 
 # ---------------------------------------------------------------------------
+# B31 — HIT_SCAN pre-fit cap (rd-duck 2026-08-03 data-driven)
+# Yosys: MAX_CMDS=112 HIT_SCAN=48 → 35,541 cells vs 112/112=77,749 (−54.3%).
+# chrome_at loops HIT_SCAN (plex_chrome.sv); storage depth is not the cost
+# (+32 cells 112-store/48-scan vs 48/48). Shipping daemon path ≤41 cmds
+# (publishPlxcHud title/notice=null). Do NOT first-fit HIT_SCAN=112.
+# Gate: product HIT_SCAN=48 + MAX_CMDS=112 + runtime shipping ≤48.
+# ---------------------------------------------------------------------------
+B31_HIT_SCAN_PRODUCT = 48
+B31_MAX_CMDS_PRODUCT = 112
+B31_SHIPPING_CMDS_CAP = 48  # HIT_SCAN; measured shipping worst ~41
+
+
+def check_b31_hit_scan_prefit_cap(root: Path) -> tuple[list[str], list[str]]:
+    """Pre-fit: HIT_SCAN=48 paint, MAX_CMDS=112 storage, shipping cmds≤48."""
+    msgs: list[str] = ["LEG0_B31_HIT_SCAN_PREFIT_EXECUTED begin"]
+    errors: list[str] = []
+    chrome = root / "fpga" / "Plex_MiSTer" / "rtl" / "plex_chrome.sv"
+    sys_top = root / "fpga" / "Plex_MiSTer" / "sys" / "sys_top.v"
+    if not sys_top.is_file():
+        sys_top = root / "fpga" / "Plex_MiSTer" / "sys_top.v"
+    hdr = root / "host" / "libmisterplex" / "plex_chrome_cmds.hpp"
+    mp_candidates = (
+        root / "arm" / "misterplexd" / "media_player.cpp",
+        root / "host" / "misterplexd" / "media_player.cpp",
+    )
+    mp = next((p for p in mp_candidates if p.is_file()), mp_candidates[0])
+
+    if not chrome.is_file():
+        errors.append(
+            "B31_HIT_SCAN_PRODUCT_ABSENT: missing fpga/Plex_MiSTer/rtl/plex_chrome.sv "
+            f"— cannot lock HIT_SCAN={B31_HIT_SCAN_PRODUCT}/MAX_CMDS={B31_MAX_CMDS_PRODUCT} "
+            "pre-fit cap (rd-duck: do not fit HIT_SCAN=112)."
+        )
+        return msgs, errors
+
+    chrome_txt = product_active_sv(_read(chrome) or "")
+    sys_txt = product_active_sv(_read(sys_top) or "") if sys_top.is_file() else ""
+    hdr_txt = _read(hdr) or ""
+    mp_txt = _read(mp) or ""
+
+    # --- RTL defaults ---
+    m_hs = re.search(r"parameter\s+int\s+HIT_SCAN\s*=\s*(\d+)", chrome_txt)
+    m_mc = re.search(r"parameter\s+int\s+MAX_CMDS\s*=\s*(\d+)", chrome_txt)
+    hs_def = int(m_hs.group(1)) if m_hs else None
+    mc_def = int(m_mc.group(1)) if m_mc else None
+    msgs.append(
+        f"LEG0_B31_RTL_DEFAULTS HIT_SCAN={hs_def} MAX_CMDS={mc_def} "
+        f"(need {B31_HIT_SCAN_PRODUCT}/{B31_MAX_CMDS_PRODUCT})"
+    )
+    if hs_def != B31_HIT_SCAN_PRODUCT:
+        errors.append(
+            f"B31_HIT_SCAN_NOT_48: plex_chrome.sv HIT_SCAN default={hs_def} "
+            f"need {B31_HIT_SCAN_PRODUCT}. rd-duck yosys: HIT_SCAN=112 doubles cells "
+            "(77k vs 35k); first fit must paint-scan 48 with storage 112."
+        )
+    if mc_def != B31_MAX_CMDS_PRODUCT:
+        errors.append(
+            f"B31_MAX_CMDS_NOT_112: plex_chrome.sv MAX_CMDS default={mc_def} "
+            f"need {B31_MAX_CMDS_PRODUCT} (ABI/loader storage; not the combo cost)."
+        )
+    # chrome_at must walk HIT_SCAN (not MAX_CMDS) — load-bearing cost split
+    if not re.search(r"for\s*\(\s*ci\s*=\s*0\s*;\s*ci\s*<\s*HIT_SCAN", chrome_txt):
+        errors.append(
+            "B31_HIT_SCAN_LOOP_MISSING: plex_chrome.sv chrome_at must loop "
+            "`for (ci = 0; ci < HIT_SCAN; …)` — if the walk uses MAX_CMDS, "
+            "storage depth becomes paint cost (rd-duck yosys evidence)."
+        )
+    else:
+        msgs.append("LEG0_B31_OK chrome_at loops HIT_SCAN")
+
+    # --- sys_top product instance ---
+    if not sys_top.is_file():
+        errors.append(
+            "B31_HIT_SCAN_SYS_TOP_ABSENT: missing sys_top.v — cannot prove product "
+            f"instance .HIT_SCAN({B31_HIT_SCAN_PRODUCT})"
+        )
+    else:
+        # Extract plex_chrome #(...) parameter block
+        inst = re.search(
+            r"plex_chrome\s*#\s*\(([\s\S]{0,800}?)\)\s*\w+",
+            sys_txt,
+        )
+        block = inst.group(1) if inst else sys_txt
+        m_ihs = re.search(r"\.HIT_SCAN\s*\(\s*(\d+)\s*\)", block)
+        m_imc = re.search(r"\.MAX_CMDS\s*\(\s*(\d+)\s*\)", block)
+        ihs = int(m_ihs.group(1)) if m_ihs else None
+        imc = int(m_imc.group(1)) if m_imc else None
+        msgs.append(f"LEG0_B31_SYS_TOP_INST HIT_SCAN={ihs} MAX_CMDS={imc}")
+        if ihs == 112 or (m_ihs and int(m_ihs.group(1)) > B31_HIT_SCAN_PRODUCT):
+            errors.append(
+                f"B31_HIT_SCAN_112_FORBIDDEN: sys_top product .HIT_SCAN({ihs}) — "
+                "do not first-fit HIT_SCAN=112 (rd-duck −54% cell evidence). "
+                f"Product paint scan must be {B31_HIT_SCAN_PRODUCT}."
+            )
+        elif ihs != B31_HIT_SCAN_PRODUCT:
+            errors.append(
+                f"B31_HIT_SCAN_SYS_TOP_NOT_48: sys_top .HIT_SCAN({ihs}) "
+                f"need {B31_HIT_SCAN_PRODUCT}"
+            )
+        if imc is not None and imc != B31_MAX_CMDS_PRODUCT:
+            errors.append(
+                f"B31_MAX_CMDS_SYS_TOP_NOT_112: sys_top .MAX_CMDS({imc}) "
+                f"need {B31_MAX_CMDS_PRODUCT}"
+            )
+        if ihs == B31_HIT_SCAN_PRODUCT and (
+            imc is None or imc == B31_MAX_CMDS_PRODUCT
+        ):
+            msgs.append("LEG0_B31_OK sys_top HIT_SCAN=48 MAX_CMDS=112")
+
+    # --- Host constants ---
+    if not hdr.is_file():
+        errors.append(
+            "B31_HIT_SCAN_HOST_HDR_ABSENT: missing host/libmisterplex/"
+            "plex_chrome_cmds.hpp (kHitScan/kMaxCmds lock)"
+        )
+    else:
+        m_khs = re.search(r"kHitScan\s*=\s*(\d+)", hdr_txt)
+        m_kmc = re.search(r"kMaxCmds\s*=\s*(\d+)", hdr_txt)
+        khs = int(m_khs.group(1)) if m_khs else None
+        kmc = int(m_kmc.group(1)) if m_kmc else None
+        msgs.append(f"LEG0_B31_HOST kHitScan={khs} kMaxCmds={kmc}")
+        if khs != B31_HIT_SCAN_PRODUCT:
+            errors.append(
+                f"B31_HIT_SCAN_HOST_NOT_48: kHitScan={khs} need {B31_HIT_SCAN_PRODUCT}"
+            )
+        if kmc != B31_MAX_CMDS_PRODUCT:
+            errors.append(
+                f"B31_MAX_CMDS_HOST_NOT_112: kMaxCmds={kmc} need {B31_MAX_CMDS_PRODUCT}"
+            )
+        # Product feed must truncate/cap to kHitScan
+        if not re.search(
+            r"kHitScan|resize\s*\(\s*static_cast\s*<\s*size_t\s*>\s*\(\s*kHitScan",
+            hdr_txt,
+        ):
+            errors.append(
+                "B31_HIT_SCAN_HOST_NO_FEED_CAP: plex_chrome_cmds.hpp must cap "
+                "product buildPlaybackHud feed at kHitScan (paint depth)."
+            )
+
+    # --- Shipping path: title/notice null (daemon) ---
+    if mp.is_file():
+        # publishPlxcHud(..., nullptr) for title — shipping never feeds title/notice
+        pub_null = len(
+            re.findall(r"publishPlxcHud\s*\([^;]*nullptr", mp_txt, re.S)
+        )
+        msgs.append(f"LEG0_B31_MEDIA_PLAYER publishPlxcHud_nullptr_sites={pub_null}")
+        if pub_null < 1:
+            errors.append(
+                "B31_SHIPPING_HUD_TITLE_NOT_NULL: media_player.cpp must call "
+                "publishPlxcHud(..., nullptr) for title on shipping path "
+                "(rd-duck: daemon never supplies title/notice/buffering; "
+                "budget assumes that)."
+            )
+        else:
+            msgs.append("LEG0_B31_OK shipping publishPlxcHud uses nullptr title")
+    else:
+        errors.append(
+            "B31_SHIPPING_MEDIA_PLAYER_ABSENT: missing media_player.cpp — "
+            "cannot prove shipping HUD cmd inventory"
+        )
+
+    # --- Executable shipping budget ≤48 (compile header oracle when present) ---
+    if hdr.is_file() and not any(
+        e.startswith("B31_HIT_SCAN_HOST") for e in errors
+    ):
+        work = root / ".agent-work" / "b31_hit_scan_budget"
+        work.mkdir(parents=True, exist_ok=True)
+        src = work / "ship_budget.cpp"
+        bin_p = work / "ship_budget"
+        src.write_text(
+            r"""#include <cstdio>
+#include <cstring>
+#include "libmisterplex/plex_chrome_cmds.hpp"
+int main() {
+  using namespace misterplex::plex_chrome_cmds;
+  BuildArgs ship{};
+  ship.outW = kHdmiOutW;
+  ship.outH = kHdmiOutH;
+  ship.state = misterplex::PlaybackOverlayState::Playing;
+  ship.positionMs = 359999000;
+  ship.durationMs = 359999000;
+  ship.title = nullptr;
+  ship.notice = nullptr;
+  ship.buffering = false;
+  ship.skipDeltaMs = 999999000;
+  HudBudget b = countHudBudget(ship);
+  std::printf("CASE B31_SHIPPING_BUDGET EXECUTED\n");
+  std::printf("measured_shipping_cmds=%d\n", b.totalUncapped);
+  std::printf("measured_fits_hit_scan=%d\n", b.fitsHitScan ? 1 : 0);
+  std::printf("measured_k_hit_scan=%d\n", kHitScan);
+  std::printf("measured_k_max_cmds=%d\n", kMaxCmds);
+  if (kHitScan != 48 || kMaxCmds != 112) return 2;
+  if (b.totalUncapped > 48 || !b.fitsHitScan) return 1;
+  if (b.totalUncapped > 41) {
+    std::printf("measured_shipping_above_41_headroom=%d\n", b.totalUncapped - 41);
+  }
+  std::printf("PASS B31_SHIPPING_BUDGET\n");
+  return 0;
+}
+"""
+        )
+        # Headers use #include "libmisterplex/..." → -I host
+        cmd = [
+            "g++",
+            "-std=c++17",
+            "-O0",
+            f"-I{root / 'host'}",
+            str(src),
+            "-o",
+            str(bin_p),
+        ]
+        rc_c, out_c = _run(cmd, cwd=root)
+        msgs.append(f"LEG0_B31_BUDGET_COMPILE true_rc={rc_c}")
+        if rc_c != 0:
+            # Try with more include roots used by this repo
+            for extra in (
+                root / "host" / "libmisterplex",
+                root / "host",
+            ):
+                pass
+            tail = "\n".join((out_c or "").splitlines()[-15:])
+            errors.append(
+                "B31_SHIPPING_BUDGET_COMPILE_FAIL: could not compile shipping "
+                f"cmd oracle (g++ rc={rc_c}). tail={tail!r}. "
+                "Merged gate requires runtime-produced cmd count ≤48."
+            )
+        else:
+            rc_r, out_r = _run([str(bin_p)], cwd=root)
+            msgs.append(out_r.rstrip())
+            msgs.append(f"LEG0_B31_BUDGET_RUN true_rc={rc_r}")
+            m_n = re.search(r"measured_shipping_cmds=(\d+)", out_r or "")
+            n_cmds = int(m_n.group(1)) if m_n else None
+            if rc_r != 0 or n_cmds is None:
+                errors.append(
+                    f"B31_SHIPPING_CMDS_EXCEED_HIT_SCAN: shipping budget oracle "
+                    f"true_rc={rc_r} cmds={n_cmds} — need ≤{B31_SHIPPING_CMDS_CAP} "
+                    f"and fitsHitScan (rd-duck: shipping path ≤41, HIT_SCAN=48)."
+                )
+            elif n_cmds > B31_SHIPPING_CMDS_CAP:
+                errors.append(
+                    f"B31_SHIPPING_CMDS_EXCEED_HIT_SCAN: measured_shipping_cmds="
+                    f"{n_cmds} > HIT_SCAN={B31_SHIPPING_CMDS_CAP}"
+                )
+            else:
+                msgs.append(
+                    f"LEG0_B31_OK shipping_cmds={n_cmds}<={B31_SHIPPING_CMDS_CAP} "
+                    f"HIT_SCAN={B31_HIT_SCAN_PRODUCT} MAX_CMDS={B31_MAX_CMDS_PRODUCT}"
+                )
+
+    # Static shell twin (if present) — must not be the only check, but run it.
+    sh = root / "tests" / "unit" / "test_plex_chrome_hit_scan_static.sh"
+    if sh.is_file():
+        rc_s, out_s = _run(["bash", str(sh)], cwd=root)
+        msgs.append(f"LEG0_B31_STATIC_SH true_rc={rc_s}")
+        if rc_s != 0:
+            errors.append(
+                f"B31_HIT_SCAN_STATIC_SH_FAIL: {sh} true_rc={rc_s} "
+                f"out={out_s[-200:]!r}"
+            )
+        else:
+            msgs.append("LEG0_B31_OK test_plex_chrome_hit_scan_static PASS")
+
+    if not errors:
+        msgs.append(
+            "LEG0_B31_PASS HIT_SCAN=48 MAX_CMDS=112 shipping≤48 pre-fit cap locked"
+        )
+    return msgs, errors
+
+
+# ---------------------------------------------------------------------------
 # B24 — PLXG q5 bit34 fps_1001 ABI merge-loss (rd-duck 2026-08-03)
 # w-path f31a6eb9: q5[34]=fps_1001, reserved[63:35], pack 24000/1001 → 24+flag
 # w-mem latch: q5_reserved_nz=|sh5[63:34] → E4 / wholesale geom reject
@@ -3720,6 +3993,7 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
         "(scripts/run_verilator.sh→oss-cad-suite; missing=HARD FAIL not soft-skip); "
         "EXECUTABLE=B20_hier_manifest,B24_q5_fps_1001,B25_plxc_dual_map,"
         "B28_q5_atomic_poller,B29_direct_part_vf,B30_plxc_cdc_stopped_rd,"
+        "B31_hit_scan_prefit_cap(shipping_budget_g++),"
         "leg_unit_make_unit,leg_rtl_lint,leg2_elab,leg3_true_de; "
         "B20_PRODUCT_UFS_TIE=elaborate Plex.sv .use_frame_store(1'b0) + reject "
         "ownership-on-ufs (w-clock free-run) + H require product-ufs0 hold measured_* "
@@ -5128,6 +5402,11 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
     ufs_msgs, ufs_errs = check_b20_product_use_frame_store_tie(ROOT)
     msgs.extend(ufs_msgs)
     errors.extend(ufs_errs)
+
+    # --- B31 HIT_SCAN pre-fit cap (rd-duck yosys: 48-scan not 112) ---
+    b31_msgs, b31_errs = check_b31_hit_scan_prefit_cap(ROOT)
+    msgs.extend(b31_msgs)
+    errors.extend(b31_errs)
 
     # --- B20 full-hierarchy scenario tests (rd-duck 2026-08-03 hollow audit) ---
     # Prior gate only regex-scanned test *text* and accepted comment bait (mutation
@@ -6965,6 +7244,7 @@ def _run_mutation_matrix() -> tuple[list[str], list[dict[str, str]]]:
         "B30_PLXC_CDC_STOPPED_RD_FULL",
         "B30_PLXC_CDC_TB_ABSENT",
         "B20_HIER_H_DELAYED_PENDING_READY",
+        "B31_HIT_SCAN_PRODUCT_ABSENT",
     ):
         txt = "\n".join(msgs)
         has = tok in txt
@@ -7186,6 +7466,133 @@ def _run_mutation_matrix() -> tuple[list[str], list[dict[str, str]]]:
             os.environ.pop("FIT_GATE_RTL_LINT_CMD", None)
         else:
             os.environ["FIT_GATE_RTL_LINT_CMD"] = old_le
+
+    # --- rd-duck: HIT_SCAN=112 forbidden (pre-fit cap 48) ---
+    # Seed minimal chrome when hollow so NOT_48 / 112_FORBIDDEN rows always run
+    # (ABSENT alone is already covered by LIVE_OPEN + matrix live row above).
+    chrome_m = ROOT / "fpga" / "Plex_MiSTer" / "rtl" / "plex_chrome.sv"
+    chrome_m.parent.mkdir(parents=True, exist_ok=True)
+    seeded_chrome = not chrome_m.is_file()
+    min_chrome_112 = (
+        "// fitgate B31 mutation seed — HIT_SCAN=112 is the forbidden first-fit\n"
+        "module plex_chrome #(\n"
+        "  parameter int MAX_CMDS = 112,\n"
+        "  parameter int HIT_SCAN = 112\n"
+        ") (\n"
+        "  input wire clk\n"
+        ");\n"
+        "  integer ci;\n"
+        "  // load-bearing: walk HIT_SCAN (not MAX_CMDS)\n"
+        "  always @(*) begin\n"
+        "    for (ci = 0; ci < HIT_SCAN; ci = ci + 1) begin\n"
+        "    end\n"
+        "  end\n"
+        "endmodule\n"
+    )
+    if chrome_m.is_file():
+        old_ch = chrome_m.read_text()
+        bad_ch = re.sub(
+            r"parameter\s+int\s+HIT_SCAN\s*=\s*\d+",
+            "parameter int HIT_SCAN = 112",
+            old_ch,
+            count=1,
+        )
+        if bad_ch == old_ch:
+            bad_ch = min_chrome_112
+        rest_ch = _with_file_backup(chrome_m, bad_ch)
+    else:
+        rest_ch = _with_file_backup(chrome_m, min_chrome_112)
+    try:
+        rc, msgs = leg0_arch_blockers()
+        _row(
+            "B31_HIT_SCAN_NOT_48",
+            "plex_chrome HIT_SCAN default forced 112"
+            + (" (seeded hollow)" if seeded_chrome else ""),
+            "B31_HIT_SCAN_NOT_48",
+            rc,
+            msgs,
+        )
+    finally:
+        rest_ch()
+        if seeded_chrome and chrome_m.is_file():
+            try:
+                if "fitgate B31 mutation seed" in chrome_m.read_text(errors="replace"):
+                    chrome_m.unlink()
+            except OSError:
+                pass
+
+    sys_m = ROOT / "fpga" / "Plex_MiSTer" / "sys" / "sys_top.v"
+    if not sys_m.is_file():
+        sys_m = ROOT / "fpga" / "Plex_MiSTer" / "sys_top.v"
+    sys_m.parent.mkdir(parents=True, exist_ok=True)
+    seeded_sys = not sys_m.is_file()
+    # Always need chrome present for sys_top 112 check path past ABSENT
+    chrome_seed2 = not chrome_m.is_file()
+    rest_ch2 = None
+    if chrome_seed2:
+        rest_ch2 = _with_file_backup(
+            chrome_m,
+            min_chrome_112.replace("HIT_SCAN = 112", "HIT_SCAN = 48", 1),
+        )
+    min_sys_112 = (
+        "// fitgate B31 mutation seed sys_top HIT_SCAN=112\n"
+        "module sys_top;\n"
+        "  plex_chrome #(\n"
+        "    .MAX_CMDS(112),\n"
+        "    .HIT_SCAN(112)\n"
+        "  ) chrome (\n"
+        "    .clk(1'b0)\n"
+        "  );\n"
+        "endmodule\n"
+    )
+    if sys_m.is_file():
+        old_s = sys_m.read_text()
+        bad_s = re.sub(
+            r"\.HIT_SCAN\s*\(\s*\d+\s*\)",
+            ".HIT_SCAN(112)",
+            old_s,
+            count=1,
+        )
+        if bad_s == old_s:
+            if "plex_chrome" in old_s:
+                bad_s = old_s.replace(
+                    "plex_chrome",
+                    "plex_chrome #(.MAX_CMDS(112), .HIT_SCAN(112))",
+                    1,
+                )
+            else:
+                bad_s = old_s + "\n" + min_sys_112
+        rest_s = _with_file_backup(sys_m, bad_s)
+    else:
+        rest_s = _with_file_backup(sys_m, min_sys_112)
+    try:
+        rc, msgs = leg0_arch_blockers()
+        _row(
+            "B31_HIT_SCAN_112_FORBIDDEN",
+            "sys_top .HIT_SCAN(112)"
+            + (" (seeded)" if seeded_sys or chrome_seed2 else ""),
+            "B31_HIT_SCAN_112_FORBIDDEN",
+            rc,
+            msgs,
+        )
+    finally:
+        rest_s()
+        if rest_ch2 is not None:
+            rest_ch2()
+            if chrome_m.is_file():
+                try:
+                    if "fitgate B31 mutation seed" in chrome_m.read_text(
+                        errors="replace"
+                    ):
+                        chrome_m.unlink()
+                except OSError:
+                    pass
+        if seeded_sys and sys_m.is_file():
+            try:
+                if "fitgate B31 mutation seed" in sys_m.read_text(errors="replace"):
+                    sys_m.unlink()
+            except OSError:
+                pass
 
     # --- Parent 2026-08-03: POST-FIT STA path owner + Fmax floor ---
     fix = RULER_ROOT / "tests" / "fixtures" / "fit_release_gate"
