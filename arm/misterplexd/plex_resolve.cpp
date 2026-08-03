@@ -316,6 +316,10 @@ bool applyPlexTranscodeProfile(const std::string& nameOrResolution, WeakLadder& 
             weak.audioCodec = "aac";
             weak.h264Profile = p.h264Profile;
             weak.h264Level = p.h264Level;
+            // 540p serial budget fails at 29.97; pin PMS to 24 via Extra (measured).
+            // Other tiers leave 0 (MiSTerPlex.xml UpperBound 30 allows pass-through).
+            weak.maxVideoFrameRate =
+                (p.name == "540p") ? kPlex540pMaxVideoFrameRate : 0;
             return true;
         }
     }
@@ -437,6 +441,20 @@ int applyLinkCapacityCapKbps(int requestedKbps, int capacityKbps, int headroomPc
     return requestedKbps < cap ? requestedKbps : cap;
 }
 
+std::string plexClientProfileFrameRateExtra(const WeakLadder& weak) {
+    if (weak.maxVideoFrameRate <= 0)
+        return {};
+    // Lab PMS (rk142 29.97 source @ 960x540): this form yields decision
+    // frameRate=24 and ffprobe r_frame_rate=24/1. Query maxFrameRate= is ignored.
+    std::ostringstream o;
+    o << "add-limitation(scope=videoCodec&scopeName=*&type=upperBound&name=video.frameRate"
+      << "&value=" << weak.maxVideoFrameRate << "&isRequired=true)+"
+      << "add-limitation(scope=videoTranscodeTarget&scopeName=h264&scopeType=videoCodec"
+      << "&context=streaming&protocol=http&type=upperBound&name=video.frameRate"
+      << "&value=" << weak.maxVideoFrameRate << "&isRequired=true)";
+    return o.str();
+}
+
 std::string plexClientProfileExtra(const WeakLadder& weak) {
     int w = 0, h = 0;
     parseResolution(weak.videoResolution, w, h);
@@ -465,6 +483,9 @@ std::string plexClientProfileExtra(const WeakLadder& weak) {
           << "+add-limitation(scope=videoCodec&scopeName=*&type=upperBound&name=video.height"
           << "&value=" << h << "&replace=true)";
     }
+    const std::string fr = plexClientProfileFrameRateExtra(weak);
+    if (!fr.empty())
+        o << "+" << fr;
     return o.str();
 }
 
@@ -540,12 +561,17 @@ std::string plexFfmpegHeaders(const std::string& sessionId, const std::string& t
       << "X-Plex-Client-Profile-Name: " << weak.clientProfileName << "\r\n"
       << "X-Plex-Model: bundled\r\n"
       << "X-Plex-Provides: player\r\n";
-    // With the server-side MiSTerPlex.xml profile installed, Profile-Extra is
-    // counterproductive: it overrides the XML transcode target and drops the
+    // With the server-side MiSTerPlex.xml profile installed, a *full* Profile-Extra
+    // is counterproductive: it overrides the XML transcode target and drops the
     // VideoEncodeFlags that force Baseline/CAVLC/ref=1.
+    // Frame-rate-only Extra is the measured exception: caps 29.97→24 while
+    // retaining Constrained Baseline (rk142 + MiSTerPlex, 2026-08-03).
     if (weak.clientProfileName != "MiSTerPlex") {
         o << "X-Plex-Client-Capabilities: " << plexClientCapabilities(weak) << "\r\n"
           << "X-Plex-Client-Profile-Extra: " << plexClientProfileExtra(weak) << "\r\n";
+    } else if (weak.maxVideoFrameRate > 0) {
+        o << "X-Plex-Client-Profile-Extra: " << plexClientProfileFrameRateExtra(weak)
+          << "\r\n";
     }
     o << "X-Plex-Session-Identifier: " << sessionId << "\r\n";
     if (!token.empty())
@@ -658,6 +684,9 @@ bool ensureUniversalDecision(const std::string& startUrl, const std::string& ses
     if (weak.clientProfileName != "MiSTerPlex") {
         decisionHeaders.push_back({"X-Plex-Client-Capabilities", plexClientCapabilities(weak)});
         decisionHeaders.push_back({"X-Plex-Client-Profile-Extra", plexClientProfileExtra(weak)});
+    } else if (weak.maxVideoFrameRate > 0) {
+        decisionHeaders.push_back(
+            {"X-Plex-Client-Profile-Extra", plexClientProfileFrameRateExtra(weak)});
     }
     std::ostringstream sessHdr;
     sessHdr << curlHeaderArgs(decisionHeaders);

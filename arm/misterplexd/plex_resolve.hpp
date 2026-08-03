@@ -126,7 +126,14 @@ struct WeakLadder {
     // Phase 4: ask PMS to burn subtitles into the universal ladder when set.
     bool burnSubtitles = false;
     int subtitleStreamId = -1; // -1 = PMS default / first
+    // PMS upperBound video.frameRate via Client-Profile-Extra (0 = no Extra cap).
+    // Query params maxFrameRate/frameRate are ignored by lab PMS (measured).
+    // 540p defaults to 24: serial 960x540 budget PASS @24, FAIL @29.97 (34.50 vs 33.33).
+    int maxVideoFrameRate = 0;
 };
+
+// Product 540p glass path: PMS frame-rate ceiling (measured Extra lever).
+inline constexpr int kPlex540pMaxVideoFrameRate = 24;
 
 // Guard rails for built-in and configured ladders.
 // Hard fails: resolution parse, codecs, H.264 baseline, level ≤ 3.0, positive
@@ -166,6 +173,9 @@ int applyLinkCapacityCapKbps(int requestedKbps, int capacityKbps,
                              int headroomPct = kLinkCapacityHeadroomPctDefault);
 
 std::string plexClientProfileExtra(const WeakLadder& weak);
+// Frame-rate-only Extra (safe with MiSTerPlex server XML; full Extra is not).
+// Empty when maxVideoFrameRate <= 0.
+std::string plexClientProfileFrameRateExtra(const WeakLadder& weak);
 std::string plexClientCapabilities(const WeakLadder& weak);
 std::string buildUniversalTranscodeUrl(const std::string& base,
                                        const std::string& metadataKey,

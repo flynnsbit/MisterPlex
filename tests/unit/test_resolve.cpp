@@ -218,6 +218,8 @@ int main() {
     CHECK(headers480.find("X-Plex-Client-Profile-Name: Generic") == std::string::npos);
     CHECK(headers480.find("X-Plex-Client-Profile-Name: Chrome") == std::string::npos);
     CHECK(headers480.find("X-Plex-Client-Capabilities: ") == std::string::npos);
+    // 480p leaves maxVideoFrameRate=0 → no Extra on MiSTerPlex (encode flags stay in XML).
+    CHECK(w480.maxVideoFrameRate == 0);
     CHECK(headers480.find("X-Plex-Client-Profile-Extra: ") == std::string::npos);
 
     w480.clientProfileName = "Generic";
@@ -527,10 +529,13 @@ int main() {
         CHECK(w540.maxVideoBitrateKbps == kPlex540pWeakBitrateKbps);
         CHECK(w540.h264Level == kPlex540pH264Level);
         CHECK(w540.h264Profile == kPlexH264ProfilePin);
+        CHECK(w540.maxVideoFrameRate == kPlex540pMaxVideoFrameRate);
+        CHECK(kPlex540pMaxVideoFrameRate == 24);
         CHECK(validateWeakLadder(w540));
         WeakLadder byRes;
         CHECK(applyPlexTranscodeProfile("960x540", byRes));
         CHECK(byRes.videoResolution == std::string("960x540"));
+        CHECK(byRes.maxVideoFrameRate == 24);
         const auto url540 =
             buildUniversalTranscodeUrl("http://pms.example:32400", "/library/metadata/9", "tok",
                                        "sess540", 0, w540);
@@ -538,6 +543,27 @@ int main() {
         CHECK(url540.find("videoProfile=baseline") != std::string::npos);
         CHECK(url540.find("videoLevel=31") != std::string::npos);
         CHECK(url540.find("maxVideoBitrate=2000") != std::string::npos);
+        // Query fps params are NOT the lever (measured MISS). Cap is Extra only.
+        CHECK(url540.find("maxFrameRate=") == std::string::npos);
+        CHECK(url540.find("frameRate=") == std::string::npos);
+        const auto fr540 = plexClientProfileFrameRateExtra(w540);
+        CHECK(fr540.find("name=video.frameRate&value=24") != std::string::npos);
+        CHECK(fr540.find("scope=videoTranscodeTarget") != std::string::npos);
+        // MiSTerPlex path: frame-rate-only Extra (not full Extra / no Capabilities).
+        const auto hdr540 = plexFfmpegHeaders("sess540", "tok", w540);
+        CHECK(hdr540.find("X-Plex-Client-Profile-Name: MiSTerPlex") != std::string::npos);
+        CHECK(hdr540.find("X-Plex-Client-Capabilities: ") == std::string::npos);
+        CHECK(hdr540.find("X-Plex-Client-Profile-Extra: ") != std::string::npos);
+        CHECK(hdr540.find("name=video.frameRate&value=24") != std::string::npos);
+        // NEG: full Extra encode-target rewrite must not ride on MiSTerPlex 540 path.
+        CHECK(hdr540.find("add-transcode-target(type=videoProfile") == std::string::npos);
+        // NEG: 480p must not inherit a sticky 24 fps Extra after 540 apply.
+        WeakLadder back480 = w540;
+        CHECK(applyPlexTranscodeProfile("480p", back480));
+        CHECK(back480.maxVideoFrameRate == 0);
+        CHECK(plexClientProfileFrameRateExtra(back480).empty());
+        CHECK(plexFfmpegHeaders("s", "t", back480)
+                  .find("X-Plex-Client-Profile-Extra: ") == std::string::npos);
         const auto c540 = contentResolutionFor540pFabric720p();
         CHECK(c540.presentPolicy == ContentPresentPolicy::Source540pFabric720p);
         CHECK(std::string(c540.userLabel).find("720p source") == std::string::npos);

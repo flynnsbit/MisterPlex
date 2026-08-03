@@ -26,6 +26,9 @@
       <Limitations>
         <UpperBound name="video.width" value="1280" isRequired="true" />
         <UpperBound name="video.height" value="720" isRequired="true" />
+        <!-- 30 allows NTSC 29.97 pass-through (measured). Product 540p caps to
+             24 via Client-Profile-Extra frameRate-only (daemon WeakLadder);
+             do not lower this XML bound globally — true-720 may want 30 later. -->
         <UpperBound name="video.frameRate" value="30" isRequired="true" />
         <UpperBound name="video.bitDepth" value="8" isRequired="true" />
       </Limitations>

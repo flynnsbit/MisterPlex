@@ -160,16 +160,24 @@ void logDaemon(const std::string& s) {
 // bitrate and H.264 caps track the tier — not only videoResolution.
 misterplex::WeakLadder weakForContentResolution(const misterplex::WeakLadder& base,
                                                 const misterplex::ContentResolution& res,
-                                                bool bitrateExplicit) {
+                                                bool bitrateExplicit,
+                                                bool maxFrameRateExplicit = false) {
     misterplex::WeakLadder weak = base;
     const int keepBitrate = base.maxVideoBitrateKbps;
+    const int keepMaxFrameRate = base.maxVideoFrameRate;
     if (!misterplex::applyPlexTranscodeProfile(res.label, weak)) {
         weak.profileName = "custom";
         weak.videoResolution = res.label;
         if (!bitrateExplicit)
             weak.maxVideoBitrateKbps = res.weakBitrateKbps;
-    } else if (bitrateExplicit) {
-        weak.maxVideoBitrateKbps = keepBitrate;
+        // custom geometry: keep base fps cap (0 unless conf set WEAK_MAX_FRAME_RATE)
+        weak.maxVideoFrameRate = keepMaxFrameRate;
+    } else {
+        if (bitrateExplicit)
+            weak.maxVideoBitrateKbps = keepBitrate;
+        // Profile sets 540→24; conf WEAK_MAX_FRAME_RATE wins when explicit.
+        if (maxFrameRateExplicit)
+            weak.maxVideoFrameRate = keepMaxFrameRate;
     }
     weak.burnSubtitles = base.burnSubtitles;
     weak.subtitleStreamId = base.subtitleStreamId;
@@ -249,6 +257,7 @@ int main(int argc, char** argv) {
     bool transcodeProfileExplicit = false;
     bool weakResExplicit = false;
     bool weakBitrateExplicit = false;
+    bool weakMaxFrameRateExplicit = false;
     // When supply_class=STARVED is sustained, apply nextLowerLadderBitrate and
     // restart the same title (geometry unchanged). Default off — log-only is safe.
     bool autoLadderStepdown = false;
@@ -403,6 +412,12 @@ int main(int argc, char** argv) {
         if (!v.empty()) {
             weakBitrateExplicit = true;
             weak.maxVideoBitrateKbps = std::atoi(v.c_str());
+        }
+        // 0 = no Extra fps cap. 540p ladder defaults to 24; conf can override.
+        v = loadConf(confPath, "WEAK_MAX_FRAME_RATE");
+        if (!v.empty()) {
+            weakMaxFrameRateExplicit = true;
+            weak.maxVideoFrameRate = std::max(0, std::atoi(v.c_str()));
         }
         v = loadConf(confPath, "AUTO_LADDER_STEPDOWN");
         if (!v.empty())
@@ -1032,7 +1047,8 @@ int main(int argc, char** argv) {
         else
             player.setDecodeSizeSource(decodeSizeSource);
         auto weakForPlay =
-            weakForContentResolution(weak, contentRes, weakBitrateExplicit);
+            weakForContentResolution(weak, contentRes, weakBitrateExplicit,
+                                     weakMaxFrameRateExplicit);
         // Physical cap after tier/WEAK_BITRATE — never invents capacity when unset.
         applyLinkCapacityToWeak(weakForPlay, "play");
         std::fprintf(stderr,
@@ -1202,7 +1218,7 @@ int main(int argc, char** argv) {
                      "content_tier=%s arm_rescale=%d yuv_ddr_force_scale=%d "
                      "transcoded=%d sws=%s scale_mode=%s library_media=%s "
                      "media_ar=%s sar=%s content_dar=%.4f predicted_square_fit=%s "
-                     "square_px_w_at_coded_h=%d "
+                     "square_px_w_at_coded_h=%d max_video_frame_rate=%d "
                      "note=videoResolution_is_ceiling_not_exact\n",
                      requestedPms.c_str(), expectStr.c_str(), deliveryBasis,
                      deliveryVerified ? 1 : 0, codedTarget.c_str(), decodeTarget.c_str(),
@@ -1211,7 +1227,7 @@ int main(int argc, char** argv) {
                      misterplex::ffmpegScaleModeName(scaleMode), libraryStr.c_str(),
                      resolved.mediaAspectRatio.empty() ? "-" : resolved.mediaAspectRatio.c_str(),
                      resolved.pixelAspectRatio.empty() ? "-" : resolved.pixelAspectRatio.c_str(),
-                     contentDar, predStr.c_str(), sq480w);
+                     contentDar, predStr.c_str(), sq480w, weakForPlay.maxVideoFrameRate);
 
         // Wire SOURCE_FPS / MATCH_SOURCE_HZ into play path (software Content FPS hint).
         {
