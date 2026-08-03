@@ -1,0 +1,58 @@
+# Integration collision deltas (report-only)
+
+## Collision #7 — present_beam_content_de port list
+Owner (parent): w-clock. Consumer: w-scaler.
+
+### w-clock ports
+39:	input  wire        clk,
+40:	input  wire        reset,
+42:	input  wire        use_rt_vtotal,
+43:	input  wire [10:0] rt_vtotal,
+45:	input  wire        use_rt_geom,
+46:	input  wire [10:0] rt_h_de,
+47:	input  wire [10:0] rt_h_total,
+48:	input  wire [10:0] rt_v_active,
+55:	output wire [10:0] hc_out,
+56:	output wire [10:0] vc_out,
+58:	output wire [10:0] vtot_active,
+59:	output wire [10:0] hde_active,
+60:	output wire [10:0] htot_active,
+61:	output wire [10:0] vact_active
+
+### w-scaler ports
+39:	input  wire        clk,
+40:	input  wire        reset,
+42:	input  wire        use_rt_vtotal,
+43:	input  wire [10:0] rt_vtotal,
+45:	input  wire        use_rt_geom,
+46:	input  wire [10:0] rt_h_de,
+47:	input  wire [10:0] rt_h_total,
+48:	input  wire [10:0] rt_v_active,
+55:	output wire [10:0] hc_out,
+56:	output wire [10:0] vc_out,
+58:	output wire [10:0] vtot_active,
+59:	output wire [10:0] hde_active,
+60:	output wire [10:0] htot_active,
+61:	output wire [10:0] vact_active
+
+clock_only: []
+scaler_only: []
+shared: ['clk', 'hc_out', 'hde_active', 'htot_active', 'reset', 'rt_h_de', 'rt_h_total', 'rt_v_active', 'rt_vtotal', 'use_rt_geom', 'use_rt_vtotal', 'vact_active', 'vc_out', 'vtot_active']
+
+## Collision #8 — path layout symbols vs scaler/mem layout
+symbol                                   path mem scaler
+ddrStorageGeometryForContent             Y    Y   n
+ddrFfmpegGeometryForPresent              n    Y   n
+kPlex360pCodedWidth                      Y    n   n
+kPlex360pCodedHeight                     Y    n   n
+ddrIsProduct960x540Content               n    Y   n
+makePlex720pOutputFrom540pSourcePlan     n    Y   n
+kDdrFramePlxgOffset                      n    Y   Y
+kPlxgOffset                              n    Y   Y
+path_only_funcs sample: ['ddrI420PayloadNeedsOptionCBank', 'ddrI420StrideEqualsWidthFitsLegacy720x480', 'ddrStorageGeometryForContent', 'pl330AbiOverlapsOptionCBanks', 'pl330PhysInProgScratch', 'pl330PhysInStaging']
+scaler_only_funcs sample: ['ddrBankUsablePayloadBytes', 'ddrFrameNeedsOptionCMap', 'ddrFramePayloadFitsBankUsable', 'ddrI420BytesFromStrides', 'ddrNativeContentFitsBank', 'makeDdrNativeContentLayout', 'makePlex720pDdrFrameLayout', 'plex720pDdrFrameGeometry', 'plexProduct960x540StorageLayout', 'plxgMailboxPhys']
+
+## Store marker counts
+mem lines=1806 rt_need_optc=3 align=1 geom_reject=22
+scaler lines=1806 rt_need_optc=3 align=1 geom_reject=22
+integ lines=1079 rt_need_optc=0 align=0 geom_reject=0

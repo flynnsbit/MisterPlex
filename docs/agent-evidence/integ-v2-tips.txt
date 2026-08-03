@@ -1,0 +1,11 @@
+redo tips 2026-08-03T05:45:48-05:00
+w-mem: d691d947
+d691d947 B16: atomic PLXG promote + line-cache geom epoch (silent mix fix)
+w-clock: e8064a4b
+e8064a4b w-clock: C1 model string matches ABI#2 q5 fps (no idle-30)
+w-scaler: c19a679c
+c19a679c align(scaler): PLXG q5 ABI #2 DAR+fps packing (dar_y[23:12])
+w-osd: 4c379a84
+4c379a84 fix(abi): pin PLXG at FIXED 0x800 independent of MAX_CMDS
+w-path: 6c0a20d2
+6c0a20d2 p720-path: publish PLXG q5 DAR+content_fps (ABI #2)
