@@ -105,3 +105,10 @@ This doc + gate are honesty/artefact; **Bresenham FSM not product-enabled**.
 
 Long-run beam Hz is exact. Displayed unique-frame source-lock still needs ARM
 swap policy or a proven queue — do **not** claim B15 closed.
+
+## q5 family ambiguity (rd-duck post-15a371b4)
+
+Product NTSC Bresenham is **not** exact-24/30 lock. q5 maps both families to
+uint8 24/30. Exact-integer sources on NTSC beam: producer gains ~1 frame / 41.7 s
+(24) or ~33.4 s (30). Dual exact is **impossible** without awarded family bit or
+source-clocked swap. See `Q5_RATE_FAMILY_AMBIGUITY.md` + fence gate.

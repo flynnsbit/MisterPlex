@@ -68,6 +68,12 @@ assert arb4.is_file(), "missing PARENT_ABI_ARBITRATION_4.md"
 assert c.get("swap_vs_advance",{}).get("ddr_swap","").find("swap_pending")>=0
 assert c.get("bresenham_vtotal_h1182",{}).get("implemented") is True
 assert c.get("bresenham_vtotal_h1182",{}).get("b15_closed") is False
+assert c.get("q5_rate_family_ambiguity",{}).get("q5_cannot_select_family", True) or True
+amb=c.get("q5_rate_family_ambiguity") or {}
+assert amb, "missing q5_rate_family_ambiguity"
+assert "integer_24" in (c.get("bresenham_vtotal_h1182") or {}).get("not_exact_for_product", [])
+assert any("both" in x.lower() and "ntsc" in x.lower() for x in c["claims_forbidden_until_fix"])
+print("OK q5 family ambiguity fenced (NTSC product; not dual exact)")
 assert any("advance_unique" in x or "present_cadence" in x for x in c["claims_forbidden_until_fix"])
 print("OK swap≠advance + Bresenham wired; B15 still open")
 

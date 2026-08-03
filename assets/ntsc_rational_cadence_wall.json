@@ -1,7 +1,7 @@
 {
   "title": "NTSC rational cadence wall (rd-duck B15 follow-up)",
   "owner": "w-clock",
-  "status": "OPEN_B15_SWAP \u2014 Bresenham V_TOTAL product-wired (NTSC class default); B15 still not closed on cadence/advance; bit34 RESERVED",
+  "status": "OPEN \u2014 product Bresenham locks NTSC means only; q5 cannot select exact 24/30 vs 24000/1001; exact-integer sources slip vs NTSC beam; B15 unique-bank still open; bit34 RESERVED",
   "parent_arbitration_4": {
     "bit34": "RESERVED stays; w-path #2.1 VACATED",
     "w_mem_reserved_check": "CORRECT stays",
@@ -71,14 +71,22 @@
     "23.976 record accepted end-to-end on current multi-tip tree",
     "B15 closed via present_cadence / advance_unique alone",
     "B15 closed via fps_1001 wire flag alone",
-    "source-locked displayed unique frames without Bresenham beam or proven swap queue"
+    "source-locked displayed unique frames without Bresenham beam or proven swap queue",
+    "product beam exact for both NTSC and integer 24/30 under current q5",
+    "exact 24 source source-locked while product NTSC Bresenham is selected",
+    "exact 30 source source-locked while product NTSC Bresenham is selected",
+    "q5 uint8 alone distinguishes 24 vs 24000/1001",
+    "arithmetic test alone resolves NTSC vs integer family ambiguity"
   ],
   "claims_allowed": [
     "parent miss: duty 0.72476 at V=706 not 705",
     "beam line rate fixed f_h=20e6/1182",
-    "Bresenham V_TOTAL long-run beam Hz exact NTSC over 1773 frames (module+arith)",
     "unspecified fps_valid=0 \u2192 film 24 (no invent 30)",
-    "integer 24/25/30 class selection and short-window advance math"
+    "integer 24/25/30 class selection and short-window advance math",
+    "product Bresenham long-run beam Hz exact NTSC (not integer 24/30)",
+    "FAULT_BRES_EXACT_INT lab mode exact integer 24/30 only",
+    "honest fence: dual exact impossible under current q5",
+    "Bresenham module can hit NTSC or exact-int family exactly \u2014 product wires NTSC only"
   ],
   "options_for_parent_abi": [
     {
@@ -183,12 +191,49 @@
       "bit34 RESERVED \u2014 no fps_1001 consumer; INT vs NTSC not ABI-selected yet",
       "B15 NOT closed: DDR swap still fstart&&swap_pending, not advance",
       "ascal lowlat=0 absorbs 59.1us one-line jitter (prior Route B evidence)"
-    ]
+    ],
+    "long_run_exact_for": "ntsc_24000_1001_and_30000_1001_only_when_product_default",
+    "not_exact_for_product": [
+      "integer_24",
+      "integer_30"
+    ],
+    "q5_cannot_select_family": true
   },
   "b15_close_requires": [
     "beam mean period matches content rational (Bresenham V or equiv)",
     "unique-bank count under fstart&&swap_pending policy (not advance-only)",
     "long-window evidence",
     "parent ABI if mode select needs new q5 bits (#4 bit34 still RESERVED)"
-  ]
+  ],
+  "q5_rate_family_ambiguity": {
+    "problem": "q5 content_fps uint8 maps both exact 24 and 24000/1001 \u2192 24; exact 30 and 30000/1001 \u2192 30",
+    "w_path_bucket": "plxg_q5_aspect_cadence.hpp integer + NTSC both \u2192 same uint8",
+    "product_bresenham": "unconditional NTSC duties (1285/1773 @706, 1028/1773 @565)",
+    "exact_24_on_ntsc_beam": {
+      "beam_hz": 23.976023976024,
+      "source_hz": 24.0,
+      "delta_hz": 0.023976023976,
+      "producer_gain_frame_s": 41.708333,
+      "note": "beam slower than exact-24 source \u2014 producer gains ~1 frame / 41.7 s"
+    },
+    "exact_30_on_ntsc_beam": {
+      "beam_hz": 29.97002997003,
+      "source_hz": 30.0,
+      "delta_hz": 0.02997002997,
+      "producer_gain_frame_s": 33.366667,
+      "note": "beam slower than exact-30 source \u2014 producer gains ~1 frame / 33.4 s"
+    },
+    "impossible_without": [
+      "awarded rational-family bit (fps_1001 / freeze #4 single-window) OR",
+      "source-clocked ARM publication/swap policy (beam class secondary)"
+    ],
+    "claims_forbidden": [
+      "product exact for both NTSC and integer 24/30 under current q5",
+      "Bresenham closes exact-24 source lock without family bit",
+      "another arithmetic-only test resolves the family ambiguity"
+    ],
+    "product_policy": "prefer NTSC long-run (library majority film/TV)",
+    "lab_exact_int": "FAULT_BRES_EXACT_INT only \u2014 not product",
+    "acc_on_class_transition": "clear acc + reload vlo (explicit policy)"
+  }
 }

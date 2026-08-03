@@ -10,9 +10,13 @@
 //
 // PARENT MISS: "72.48% at 705" is wrong — 0.72476 is the fraction at **706**.
 //
-// ABI: bit34 fps_1001 still RESERVED (#4). Default product uses NTSC means for
-// film/TV class (matches library "24fps film" = 23.976). FAULT_BRES_EXACT_INT
-// selects exact 24/30. FAULT_FIXED_VTOTAL disables dither (red twin).
+// ABI: bit34 fps_1001 still RESERVED (#4). q5 uint8 cannot distinguish exact
+// 24/30 from 24000/1001 / 30000/1001 (w-path buckets both to 24/30).
+// PRODUCT DEFAULT = NTSC duties (library majority). Exact-integer 24/30 sources
+// are therefore scanned ~23.976/29.97 (producer gains ~1 frame / 41.7s or 33.4s)
+// until an awarded rational-family bit or ARM source-clocked swap lands.
+// FAULT_BRES_EXACT_INT = exact 24/30 only (lab). FAULT_FIXED_VTOTAL = red fixed V.
+// No claim: "exact for both NTSC and integer" under current q5 — impossible.
 //
 // Advance: frame_tick should be beam frame_start (v_wrap). V_out is stable for
 // the frame being scanned; updates after tick for the *next* frame (beam latches
@@ -48,7 +52,7 @@ module present_vtotal_bresenham (
 `ifdef FAULT_BRES_EXACT_INT
 	wire [11:0] num = film_class ? 12'(INT_FILM_NUM) : 12'(INT_TV_NUM);
 `else
-	// Product default: NTSC long-run (library film/TV). bit34 later selects INT.
+	// Product default: NTSC long-run ONLY (not exact 24/30 — q5 cannot tell).
 	wire [11:0] num = film_class ? 12'(NTSC_FILM_NUM) : 12'(NTSC_TV_NUM);
 `endif
 
@@ -72,15 +76,25 @@ module present_vtotal_bresenham (
 		end
 	end
 `else
+	reg film_class_d;
 	always @(posedge clk) begin
 		if (reset) begin
-			acc        <= 12'd0;
-			vtotal_out <= vlo;
-			chose_hi   <= 1'b0;
+			acc          <= 12'd0;
+			vtotal_out   <= vlo;
+			chose_hi     <= 1'b0;
+			film_class_d <= film_class;
 		end else if (!enable) begin
-			acc        <= 12'd0;
-			vtotal_out <= vlo;
-			chose_hi   <= 1'b0;
+			acc          <= 12'd0;
+			vtotal_out   <= vlo;
+			chose_hi     <= 1'b0;
+			film_class_d <= film_class;
+		end else if (film_class != film_class_d) begin
+			// Policy: class transition clears Bresenham phase (no retained acc
+			// across film↔TV). Transient only; next frame_tick starts clean.
+			acc          <= 12'd0;
+			vtotal_out   <= vlo; // new class base
+			chose_hi     <= 1'b0;
+			film_class_d <= film_class;
 		end else if (frame_tick) begin
 			// Bresenham: acc += num; if acc >= DEN → HI and acc -= DEN else LO
 			// Use next-acc so first frame after reset uses vlo, then evolves.
