@@ -18,7 +18,9 @@ help:
 	@echo "  make quartus-sv-subset - curated Quartus SV subset guard plus fast Verilator elaboration"
 	@echo "  make define-parity - Quartus↔Verilator macros + host/RTL DDR geometry constants"
 	@echo "  make pre-synth-gates - run define parity + fast pre-Quartus RTL buildability gates"
-	@echo "  make post-fit-hierarchy FIT_RPT=... [MAP_RPT=...] [COMPILE_LOG=...] - critical fitted-module guard"
+	@echo "  make post-fit-hierarchy FIT_RPT=... [MAP_RPT=...] [COMPILE_LOG=...] [CONFIG=...] - critical fitted-module guard"
+	@echo "  make post-fit-fab-idle FIT_RPT=... [MAP_RPT=...] - chrome+present anti-elision hard gate"
+	@echo "  make post-fit-multi-pixel FIT_RPT=... - PRESENT_MULTI_PIXEL u_mp_* hierarchy gate"
 	@echo "  make post-fit-chrome-elision FIT_RPT=... [MAP_RPT=...] - plex_chrome list RAM must survive fit (c74c6863 class)"
 	@echo "  make fabric-decode-inventory FIT_RPT=... - H.264 fabric present/absent vs phase3-decode.md"
 	@echo "  make post-fit-timing STA_RPT=... - fail negative Quartus timing slack"
@@ -276,8 +278,23 @@ pre-synth-gates: define-parity quartus-sv-subset
 post-fit-hierarchy:
 	@if [ -z "$(FIT_RPT)" ]; then echo "FIT_RPT is required" >&2; exit 2; fi
 	$(ROOT)/scripts/check_quartus_fit_hierarchy.py --fit-rpt "$(FIT_RPT)" \
+		$(if $(CONFIG),--config "$(CONFIG)",) \
 		$(if $(MAP_RPT),--map-rpt "$(MAP_RPT)",) \
 		$(if $(COMPILE_LOG),--log "$(COMPILE_LOG)",)
+
+# FAB_IDLE / chrome plane gate (void fit if chrome or present chain elided).
+post-fit-fab-idle:
+	@if [ -z "$(FIT_RPT)" ]; then echo "FIT_RPT is required" >&2; exit 2; fi
+	$(MAKE) post-fit-hierarchy FIT_RPT="$(FIT_RPT)" MAP_RPT="$(MAP_RPT)" COMPILE_LOG="$(COMPILE_LOG)" \
+		CONFIG="$(ROOT)/tests/fixtures/critical_fit_hierarchy_fab_idle.json"
+	$(MAKE) post-fit-chrome-elision FIT_RPT="$(FIT_RPT)" MAP_RPT="$(MAP_RPT)"
+	@echo "PASS post-fit-fab-idle (hierarchy + chrome elision)"
+
+# Multi-pixel present chain (only when PRESENT_MULTI_PIXEL=1 in the fit).
+post-fit-multi-pixel:
+	@if [ -z "$(FIT_RPT)" ]; then echo "FIT_RPT is required" >&2; exit 2; fi
+	$(MAKE) post-fit-hierarchy FIT_RPT="$(FIT_RPT)" MAP_RPT="$(MAP_RPT)" COMPILE_LOG="$(COMPILE_LOG)" \
+		CONFIG="$(ROOT)/tests/fixtures/critical_fit_hierarchy_multi_pixel.json"
 
 # plex_chrome command-list RAM retention (c74c6863: entity present, M10K/bits=0 ⇒ NO-DATA).
 # HARD FAIL when list RAM elided or map marks list_a/list_b Stuck at GND.

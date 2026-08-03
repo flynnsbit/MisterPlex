@@ -102,6 +102,10 @@ module plex_chrome #(
 
     wire [3:0] body_scale = body_scale_f(HDMI_HEIGHT);
 
+    // mon_* / chrome_hw always update so a post-fit hierarchy row cannot be
+    // "entity present, 0 regs" while still claiming a live plane. sys_top folds
+    // these into a blanking keep-sink (noprune) so they are not dangling.
+    (* noprune *) (* preserve *)
     always @(posedge clk_hdmi) begin
         chrome_hw      <= 1'b1;
         mon_width      <= HDMI_WIDTH;

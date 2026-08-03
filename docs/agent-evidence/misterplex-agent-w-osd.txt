@@ -1,45 +1,26 @@
-lane=w-osd
-branch=w-osd-fabric-plane
-status=READY_FOR_INTEGRATION (default OFF macros)
+lane=w-osd branch=w-osd-fabric-plane
+status=READY — anti-elision + glass gates documented
 
-## Delivered this turn
-1. w-clock video_mode sequence AGREED in writing:
-   docs/fab-idle-video-mode-sequence.md
-   - Step0 control no ini
-   - Step1 PLEX_FAB_IDLE only (no ini) → CYAN
-   - Step2 same RBF + video_mode=0 → 720p HDMI canvas
-   - Step3 optional PRESENT_MULTI_PIXEL fit (core DE; not HDMI mode)
-   Chrome canvas = hdmi_width/height (post-ascal). Core DE ≠ OSD size.
+## Parent commands (post BUILD_OK)
+make post-fit-fab-idle FIT_RPT=$FITDIR/Plex.fit.rpt MAP_RPT=$FITDIR/Plex.map.rpt
+# asserts: plex_chrome (M10K>=1 bits>=4096 regs>=40 alut>=50),
+#          plex_chrome_host_if, ddr_frame_store, present_core
+# + chrome elision stuck-list scan
+# rc!=0 → VOID FIT
 
-2. FAB_CHROME playback plane off ARM:
-   - plex_chrome: chrome_demo_en STOPPED HUD + chrome_sig_en magenta TR+BL #FF2D95
-   - PLEX_FAB_CHROME macro (default OFF; IDLE wins if both)
-   - ARM: PLXC publish state-change only (removed per-15-frame list rewrite)
-   - docs/fab-chrome-parent-capture-contract.md
-   - hdmi_capture_idle.sh MAGENTA_PX
+make post-fit-multi-pixel FIT_RPT=...   # only if PRESENT_MULTI_PIXEL=1
+# u_mp_beam / u_mp_npx / u_mp_timing non-zero
 
-## Sim true rc
-fabchrome RED+GREEN: true rc=0
-chrome/idle720/ppc/e2e: true rc=0
-test_plex_chrome_cmds: true rc=0
+## RTL anti-elision
+- list_we boot toggle + noprune list RAM
+- mon_* noprune always-clocked
+- sys_top chrome_keep_r: mon+sig enables XOR into RGB when DE=0 only
 
-## Parent control arm (MEASURED glass, binding)
-d1b24e0c + video_mode=0:
-  MEAN=14.4 STD=24.4 ORANGE_PX=12889 CYAN_PX=0 ACTIVE=923x717 rc=0
-CYAN=0 on real chain. ACTIVE=923x717 = 480p-class letterbox (2nd discriminator).
+## ARM-out (PID only)
+kill <pidof misterplexd>; dual capture 3s
+PASS: CYAN>=2000 ORANGE>=500 ACTIVE>923x717 motion
+PARTIAL: cyan+orange no motion = one-shot/phase stuck
+NEG: d1b24e0c control CYAN=0 — scorer must RED
 
-## Parent capture — idle (FAB_IDLE)
-docs/fab-idle-parent-capture-contract.md
-PASS: CYAN>=2000 + ACTIVE > 923x717 + motion; kill PID still moves
-Colour and geometry must agree.
-
-## Parent capture — chrome (FAB_CHROME)
-docs/fab-chrome-parent-capture-contract.md
-PASS: MAGENTA>=1500 ORANGE>=200 CYAN~0; kill PID still STOPPED+magenta
-
-## Enable
-# idle glass:  VERILOG_MACRO "PLEX_FAB_IDLE=1"
-# chrome demo: VERILOG_MACRO "PLEX_FAB_CHROME=1"   # not both
-# HDMI 720p:   video_mode=0 (after Step1, separate from RBF)
-
-NO Quartus. NO device.
+docs/fab-idle-postfit-gate.md is the single parent card.
+Control arm binding: MEAN=14.4 CYAN=0 ACTIVE=923x717

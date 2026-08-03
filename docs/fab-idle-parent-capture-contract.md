@@ -124,24 +124,28 @@ scripts/hdmi_capture_idle.sh docs/agent-evidence/fab-idle-nodaemon.png
 
 ## 4. Prove ARM is out of the loop
 
-### Strongest (preferred)
+**Full procedure + partials + negative tests:** `docs/fab-idle-postfit-gate.md` §3–4.
 
-1. FAB_IDLE RBF loaded, `video_mode=0`
-2. **`killall misterplexd`** (or never start it)
-3. Capture: **CYAN_PX≥2000**, orange chevron, **motion across 3s**
-4. ⇒ No ARM process ⇒ cannot be daemon paint
+### Strongest (preferred) — PID only (`killall` banned)
 
-### If daemon must stay up
+1. FAB_IDLE RBF loaded, `video_mode=0` (already on device)
+2. `pidof misterplexd` → `kill <PID>`
+3. Dual capture 3s apart: **CYAN≥2000**, ORANGE≥500, **motion**, ACTIVE&gt;923×717
+4. No ARM process ⇒ cannot be daemon paint
 
-| Check | Expect |
-|-------|--------|
-| Log line **present** | `media: idle fabric plane=1 skip ALL ARM paint` |
-| Log line **absent** | `media: idle screen painted` / `idle paint DDR failed` |
-| Conf | `CHROME_PLANE=1` **and** PLXO `chrome_hw` (fail-closed otherwise) |
-| Note | Without PLXO, daemon may still paint DDR while fabric **covers** HDMI — pixels on glass can still be fabric; log proof needs plane live |
+### Partials (name them — not full PASS)
 
-FAB_IDLE alone covers HDMI (`idle_en` replaces `din`) even if ARM writes banks.
-Daemon-stop test removes ambiguity.
+| Result | Meaning |
+|--------|---------|
+| Cyan+orange, **no motion** | One-shot / phase stuck — not live vsync fabric |
+| Cyan, no orange | Sig only; chevron dead |
+| Orange+motion, cyan=0 | ARM path (control class) |
+| Hierarchy OK, glass cyan=0 | Wrong RBF/macro or functional elision |
+
+### Negative (must go RED)
+
+Control core `d1b24e0c` + mode0 + daemon: **CYAN_PX=0 ACTIVE≈923×717**.  
+Any scorer that PASSes that frame is broken.
 
 ---
 

@@ -1358,6 +1358,26 @@ cyclonev_hps_interface_peripheral_i2c hdmi_i2c
 		.mon_body_scale(plex_chrome_mon_scale)
 	);
 
+	// Anti-elision keep-sink: mon_* / chrome_hw / sig enables were otherwise
+	// dangling and Quartus could drop them (and, with them, prove-nothing fits).
+	// XOR into RGB only when DE=0 so active video is bit-identical; blanking
+	// carries a sticky hash so the nets remain observable to the fitter.
+	(* noprune *) (* preserve *) reg [23:0] chrome_keep_r;
+	always @(posedge clk_hdmi) begin
+		if (reset_req)
+			chrome_keep_r <= 24'd0;
+		else
+			chrome_keep_r <= chrome_keep_r
+				^ {plex_chrome_mon_w[11:0], plex_chrome_mon_h[11:0]}
+				^ {12'd0, plex_chrome_mon_scale[3:0],
+				   plex_chrome_hw, fab_idle_sig_en, fab_chrome_sig_en,
+				   fab_chrome_demo_en, plxc_idle_en, fab_idle_phase_en,
+				   has_frame_chrome, 1'b1};
+	end
+	wire [23:0] hdmi_data_chrome_kept =
+		hdmi_de_chrome ? hdmi_data_chrome
+		               : (hdmi_data_chrome ^ chrome_keep_r);
+
 	wire [23:0] hdmi_data_osd;
 	wire        hdmi_de_osd, hdmi_vs_osd, hdmi_hs_osd;
 
@@ -1370,7 +1390,7 @@ cyclonev_hps_interface_peripheral_i2c hdmi_i2c
 		.io_din(io_din),
 
 		.clk_video(clk_hdmi),
-		.din(hdmi_data_chrome),
+		.din(hdmi_data_chrome_kept),
 		.hs_in(hdmi_hs_chrome),
 		.vs_in(hdmi_vs_chrome),
 		.de_in(hdmi_de_chrome),
