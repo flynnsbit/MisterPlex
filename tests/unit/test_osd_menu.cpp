@@ -118,9 +118,9 @@ int main() {
     CHECK(kPlex720pDecodeOptimalBitrateKbps == 1500);
     CHECK(conf720.presentPolicy == ContentPresentPolicy::Path720p);
     CHECK(std::string(conf720.userLabel) == "1280x720");
-    // Path720p defaults preferDirect when conf unset (ARM-evac); 480p tracks STREAM.
+    // Parent miss #13: DP default when conf unset (all policies); conf=0 still forces off.
     CHECK(preferDirectH264ForContent(false, false, false, ContentPresentPolicy::Path720p));
-    CHECK(!preferDirectH264ForContent(false, false, false, ContentPresentPolicy::NativeCanvas));
+    CHECK(preferDirectH264ForContent(false, false, false, ContentPresentPolicy::NativeCanvas));
     CHECK(preferDirectH264ForContent(false, false, true, ContentPresentPolicy::NativeCanvas));
     CHECK(!preferDirectH264ForContent(true, false, true, ContentPresentPolicy::Path720p));
     CHECK(preferDirectH264ForContent(true, true, false, ContentPresentPolicy::NativeCanvas));

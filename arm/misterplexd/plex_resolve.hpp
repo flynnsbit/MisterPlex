@@ -48,6 +48,10 @@ struct ResolveResult {
     int storeHeight = 0;
     bool sourceAwareApplied = false;
     std::string sourceAwarePolicy; // e.g. source_clamp_snap16 / direct_part_native
+    // Two-regime play policy (parent miss #13): SD→DP, HD>720→xcode 1280×720.
+    // Set from library Media WxH after metadata — never from hardcoded ratingKey.
+    std::string playRegime;      // playDeliveryRegimeName(...)
+    std::string videoProfile;    // Stream/Media profile attribute when known
 };
 
 struct QueueItem {
@@ -228,6 +232,22 @@ inline int64_t universalOffsetSeconds(int64_t offsetMs) {
 std::string plexFfmpegHeaders(const std::string& sessionId, const std::string& token);
 std::string plexFfmpegHeaders(const std::string& sessionId, const std::string& token,
                               const WeakLadder& weak);
+
+// Full client identity required for PMS decision/start (parent 2026-08-03):
+// thin header sets return HTTP 400 empty body — must not silently degrade to a
+// different path that re-imports CABAC via accidental xcode.
+// Required names (case-sensitive as emitted): Client-Identifier, Product,
+// Version, Platform, Device, Device-Name, Client-Profile-Name.
+bool plexClientIdentityHeadersComplete(const std::string& headerBlockCrLf);
+// Negative twin: deliberately thin block (token-only / session-only) must fail.
+std::string plexThinClientIdentityHeadersForTest(const std::string& sessionId,
+                                                 const std::string& token);
+
+// Universal decision URL builder (lab / prove). allow_direct=true →
+// directPlay=1&directStream=1 (profile-preserving DP decision). false → xcode.
+std::string buildUniversalDecisionUrl(const std::string& base, const std::string& metadataKey,
+                                      const std::string& token, const std::string& session,
+                                      const WeakLadder& weak, bool allow_direct);
 
 // Best-effort PMS GET using the same curl-based Plex client identity as resolve.
 // Headers are name/value pairs; response body is discarded by callers.

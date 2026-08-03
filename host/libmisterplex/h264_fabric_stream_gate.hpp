@@ -1,15 +1,14 @@
 // Fabric H.264 bitstream gate — route selector, not a product hard-fail.
 //
-// Lab PMS 1.43.3 (measured 2026-08-03, rk=118 High + rk=119 Main, N=18 stable
-// replications + parent pin matrix): force-transcode delivers High (often B=2;
-// entropy CABAC or CAVLC) and **no request lever forces Constrained Baseline**.
-// videoProfile=baseline + X-Plex-Client-Profile-Extra match/isRequired are
-// request-only; the server may ignore them. A gate that hard-stops the product
-// on Refuse* would outage 100% of that real xcode traffic.
+// Parent miss #13 (2026-08-03): library N=142 is 98.6% constrained baseline.
+// PMS will not *transcode to* baseline (pin inert on High/Main force-xcode),
+// but **direct play preserves** source profile. Product path: prefer DP for SD
+// → gate admits baseline/CB (majority traffic) → FabricBitstreamEligible.
+// Main/High (xcode HD→720 or rare library High) → Refuse* → ArmFfmpegFallback.
 //
 // Disposition (product rule):
-//   Ok            → FabricBitstreamEligible (optional fabric-decode track)
-//   any Refuse*   → ArmFfmpegFallback (host FFmpeg continues; present path lives)
+//   Ok (baseline/CB + CAVLC + no B) → FabricBitstreamEligible
+//   any Refuse*                     → ArmFfmpegFallback (host FFmpeg; not outage)
 //
 // Fabric-decode still assumes Baseline+CAVLC+no-B (CABAC is bit-serial — worst
 // H.264 tool in fabric). "Assume High in fabric" is explicitly NOT chosen.

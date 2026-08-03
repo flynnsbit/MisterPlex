@@ -375,6 +375,62 @@ int main() {
     CHECK(applySourceFpsConf("24", 0) == 24);
     CHECK(applySourceFpsConf("auto", 0) == 0);
 
+    // --- Two-regime + DP default + full identity headers (parent miss #13) ---
+    {
+        using misterplex::PlayDeliveryRegime;
+        using misterplex::mediaIsHdAbove720p;
+        using misterplex::playDeliveryRegimeName;
+        using misterplex::selectPlayDeliveryRegime;
+        CHECK(!mediaIsHdAbove720p(624, 480));
+        CHECK(!mediaIsHdAbove720p(1280, 720)); // exact path tier stays DP-eligible
+        CHECK(mediaIsHdAbove720p(1920, 1080));
+        CHECK(mediaIsHdAbove720p(1440, 1080));
+        CHECK(!mediaIsHdAbove720p(0, 0));
+        CHECK(selectPlayDeliveryRegime(624, 480, true, true) ==
+              PlayDeliveryRegime::DirectPlaySd);
+        CHECK(selectPlayDeliveryRegime(320, 240, true, true) ==
+              PlayDeliveryRegime::DirectPlaySd);
+        CHECK(selectPlayDeliveryRegime(1280, 720, true, true) ==
+              PlayDeliveryRegime::DirectPlaySd);
+        CHECK(selectPlayDeliveryRegime(1920, 1080, true, true) ==
+              PlayDeliveryRegime::TranscodeHd720);
+        // NEG: never hardcode rk — geometry alone selects HD xcode.
+        CHECK(selectPlayDeliveryRegime(1920, 1080, true, true) !=
+              PlayDeliveryRegime::DirectPlaySd);
+        CHECK(selectPlayDeliveryRegime(624, 480, false, true) ==
+              PlayDeliveryRegime::ForceUniversal);
+        CHECK(selectPlayDeliveryRegime(624, 480, true, false) ==
+              PlayDeliveryRegime::ForceUniversal);
+        CHECK(std::string(playDeliveryRegimeName(PlayDeliveryRegime::DirectPlaySd)) ==
+              "direct_play_sd");
+        CHECK(std::string(playDeliveryRegimeName(PlayDeliveryRegime::TranscodeHd720)) ==
+              "transcode_hd_720");
+
+        const auto full = plexFfmpegHeaders("sess-full", "tok", WeakLadder{});
+        CHECK(plexClientIdentityHeadersComplete(full));
+        const auto thin = plexThinClientIdentityHeadersForTest("sess-thin", "tok");
+        CHECK(!plexClientIdentityHeadersComplete(thin)); // NEG: thin must not pass
+        CHECK(thin.find("X-Plex-Product:") == std::string::npos);
+        CHECK(thin.find("X-Plex-Client-Identifier:") == std::string::npos);
+
+        WeakLadder w720;
+        applyPlexTranscodeProfile("720p", w720);
+        const auto decDp =
+            buildUniversalDecisionUrl("http://pms.example:32400", "/library/metadata/36", "tok",
+                                      "sid-dp", w720, /*allow_direct=*/true);
+        CHECK(decDp.find("/video/:/transcode/universal/decision") != std::string::npos);
+        CHECK(decDp.find("directPlay=1") != std::string::npos);
+        CHECK(decDp.find("directStream=1") != std::string::npos);
+        CHECK(decDp.find("hasMDE=1") != std::string::npos);
+        CHECK(decDp.find("location=lan") != std::string::npos);
+        CHECK(decDp.find("videoResolution=1280x720") != std::string::npos);
+        const auto decXc =
+            buildUniversalDecisionUrl("http://pms.example:32400", "/library/metadata/2", "tok",
+                                      "sid-xc", w720, /*allow_direct=*/false);
+        CHECK(decXc.find("directPlay=0") != std::string::npos);
+        CHECK(decXc.find("directStream=0") != std::string::npos);
+    }
+
     // --- STREAM preferDirectH264 helpers (no network) ---
     CHECK(mediaVideoIsH264("") == false);
     CHECK(mediaVideoIsH264("<Media videoCodec=\"h264\" />") == true);

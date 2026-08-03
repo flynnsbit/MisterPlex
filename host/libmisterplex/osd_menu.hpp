@@ -295,17 +295,20 @@ inline ContentResolution contentResolutionFor720GlassBySourceFps(int sourceFpsHi
 
 // Prefer library H.264 Part (transcode=0) vs PMS universal.
 // conf_explicit: PREFER_DIRECT_H264 was set (not auto/unset).
-// Path720p defaults ON when conf unset — removes PMS transcoder from the ARM
-// budget and unlocks direct_play_part identity (ARM scale=0 when file==bank).
-// Explicit PREFER_DIRECT_H264=0 still forces universal on Path720p.
+// Parent 2026-08-03 (miss #13): DP by default — library is 98.6% constrained
+// baseline; profile pin cannot force baseline on xcode, but DP preserves it.
+// HD>720p is forced to universal *inside resolve* from media WxH (two-regime),
+// not by this conf default. Explicit PREFER_DIRECT_H264=0 still forces universal
+// allow=false (resolve may still xcode HD). stream_enabled / policy kept for
+// call-site compatibility; defaults no longer gate on STREAM alone.
 inline bool preferDirectH264ForContent(bool conf_explicit, bool conf_prefer,
                                        bool stream_enabled,
                                        ContentPresentPolicy policy) {
+    (void)stream_enabled;
+    (void)policy;
     if (conf_explicit)
         return conf_prefer;
-    if (policy == ContentPresentPolicy::Path720p)
-        return true;
-    return stream_enabled;
+    return true;
 }
 
 // O[5:4]=11 → Path720p ladder ONLY when enable_tier11_720p is true (conf

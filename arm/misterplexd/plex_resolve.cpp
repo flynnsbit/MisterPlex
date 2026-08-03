@@ -598,6 +598,56 @@ std::string plexFfmpegHeaders(const std::string& sessionId, const std::string& t
     return o.str();
 }
 
+bool plexClientIdentityHeadersComplete(const std::string& headerBlockCrLf) {
+    // Parent-measured: omitting the full client identity set → HTTP 400 empty body
+    // on universal/decision. Detect incompleteness rather than treating empty as
+    // "try another path" that might silently force-xcode.
+    static const char* kRequired[] = {
+        "X-Plex-Client-Identifier:", "X-Plex-Product:", "X-Plex-Version:",
+        "X-Plex-Platform:",         "X-Plex-Device:",  "X-Plex-Device-Name:",
+        "X-Plex-Client-Profile-Name:",
+    };
+    for (const char* need : kRequired) {
+        if (headerBlockCrLf.find(need) == std::string::npos)
+            return false;
+    }
+    return true;
+}
+
+std::string plexThinClientIdentityHeadersForTest(const std::string& sessionId,
+                                                 const std::string& token) {
+    // Deliberately incomplete — only session (+ optional token). Parent 400 trap.
+    std::ostringstream o;
+    o << "X-Plex-Session-Identifier: " << sessionId << "\r\n";
+    if (!token.empty())
+        o << "X-Plex-Token: " << token << "\r\n";
+    return o.str();
+}
+
+std::string buildUniversalDecisionUrl(const std::string& base, const std::string& metadataKey,
+                                      const std::string& token, const std::string& session,
+                                      const WeakLadder& weak, bool allow_direct) {
+    std::ostringstream q;
+    q << base << "/video/:/transcode/universal/decision"
+      << "?hasMDE=1"
+      << "&path=" << urlEncodeQuery(metadataKey)
+      << "&mediaIndex=0&partIndex=0"
+      << "&protocol=http&fastSeek=1"
+      << (allow_direct ? "&directPlay=1&directStream=1" : "&directPlay=0&directStream=0")
+      << "&location=lan"
+      << "&session=" << urlEncodeQuery(session)
+      << "&videoQuality=" << weak.videoQuality
+      << "&videoResolution=" << urlEncodeQuery(weak.videoResolution)
+      << "&maxVideoBitrate=" << weak.maxVideoBitrateKbps
+      << "&videoCodec=" << urlEncodeQuery(weak.videoCodec)
+      << "&audioCodec=" << urlEncodeQuery(weak.audioCodec)
+      << "&videoProfile=" << urlEncodeQuery(kPlexH264ProfilePin)
+      << "&videoLevel=" << weak.h264Level;
+    if (!token.empty())
+        q << "&X-Plex-Token=" << urlEncodeQuery(token);
+    return q.str();
+}
+
 bool plexHttpGetNoBody(const std::string& url,
                        const std::vector<std::pair<std::string, std::string>>& headers,
                        int timeoutSec) {
@@ -920,12 +970,12 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
         }
     }
 
-    // STREAM product path: prefer direct H.264 Part (elementary after demux) so host
-    // CAVLC recon can work on Baseline/Main. PMS Chrome universal often emits High/CABAC.
+    // Two-regime (parent miss #13): SD H.264 → DP Part (profile preserved; 98.6%
+    // constrained baseline). HD >720p → universal exact 1280×720 (not full HD DP).
+    // preferDirectH264 is the conf allow flag (default true); geometry overrides.
     const bool metaOk = metaFound;
     const bool isH264 = metaOk && mediaVideoIsH264(xml);
     const bool wantDirect = preferDirectH264 && key.rfind("/library", 0) == 0;
-    const bool directH264 = wantDirect && isH264;
     // Optional profile tag for operator logs (High often implies CABAC sticky skip).
     auto videoProfileNote = [&]() -> std::string {
         if (!metaOk)
@@ -954,6 +1004,12 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
             p = attr(xml, "Media", "videoCodec");
         return p;
     };
+    const std::string profNote = videoProfileNote();
+    r.videoProfile = profNote;
+    const PlayDeliveryRegime regime =
+        selectPlayDeliveryRegime(r.mediaWidth, r.mediaHeight, wantDirect, isH264);
+    r.playRegime = playDeliveryRegimeName(regime);
+    const bool directH264 = (regime == PlayDeliveryRegime::DirectPlaySd);
     // Direct Part bank geometry: pad-only align-up of media samples (rd-duck).
     // Must run BEFORE any DP return — source-aware PMS selection below is skipped
     // on preferDirect H.264 Part, which previously left storeWidth=0 and main kept
@@ -973,8 +1029,7 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
     };
 
     if (directH264) {
-        const std::string prof = videoProfileNote();
-        const std::string profSuffix = prof.empty() ? "" : (" profile=" + prof);
+        const std::string profSuffix = profNote.empty() ? "" : (" profile=" + profNote);
         auto partKey = attr(xml, "Part", "key");
         if (!partKey.empty()) {
             if (partKey[0] != '/')
@@ -985,7 +1040,7 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
                               std::string("X-Plex-Token=") + urlEncodeQuery(token);
             r.ok = true;
             r.transcoded = false;
-            r.detail = "direct H.264 Part (STREAM" + profSuffix + ")";
+            r.detail = "direct H.264 Part (regime=direct_play_sd" + profSuffix + ")";
             applyDirectPartNativeStore();
             return r;
         }
@@ -994,11 +1049,12 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
             r.playable = urlDecode(file);
             r.ok = true;
             r.transcoded = false;
-            r.detail = "direct H.264 Part file (STREAM" + profSuffix + ")";
+            r.detail = "direct H.264 Part file (regime=direct_play_sd" + profSuffix + ")";
             applyDirectPartNativeStore();
             return r;
         }
         // Fall through to universal if Part missing
+        r.playRegime = playDeliveryRegimeName(PlayDeliveryRegime::ForceUniversal);
     }
 
     // Prefer weak universal for dual A9 (STREAM=0 cast path / non-H.264 STREAM)
@@ -1007,8 +1063,18 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
         // rd-duck: universal remains arm_scale_fallback (delivery_verified=0,
         // force-scale, vf frozen pre-banner; PMS ±2 tweak can unalign delivery).
         // Do NOT treat this as fabric-native / ARM-scale-removed.
+        // HD>720p regime: pin exact 1280×720 ceiling (measured true-720 delivery).
         WeakLadder weakEff = weak;
-        if (r.mediaWidth > 0 && r.mediaHeight > 0) {
+        if (regime == PlayDeliveryRegime::TranscodeHd720) {
+            applyPlexTranscodeProfile("720p", weakEff);
+            r.playRegime = playDeliveryRegimeName(PlayDeliveryRegime::TranscodeHd720);
+            r.requestWidth = kPlex720pCodedWidth.get();
+            r.requestHeight = kPlex720pCodedHeight.get();
+            r.storeWidth = r.requestWidth;
+            r.storeHeight = r.requestHeight;
+            r.sourceAwareApplied = true;
+            r.sourceAwarePolicy = "transcode_hd_720";
+        } else if (r.mediaWidth > 0 && r.mediaHeight > 0) {
             int maxW = 0, maxH = 0;
             parseResolution(weak.videoResolution, maxW, maxH);
             const auto sel = selectSourceAwarePmsRequest(r.mediaWidth, r.mediaHeight, maxW, maxH);
@@ -1043,7 +1109,13 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
             r.transcoded = true;
             r.playable = start;
             r.httpHeaders = plexFfmpegHeaders(session, token, weakEff);
-            r.detail = "PMS universal " + weakEff.profileName + " " + weakEff.videoResolution + " " + key;
+            if (!plexClientIdentityHeadersComplete(r.httpHeaders)) {
+                r.ok = false;
+                r.detail = "PMS universal headers incomplete (thin identity → HTTP 400 trap)";
+                return r;
+            }
+            r.detail = "PMS universal " + weakEff.profileName + " " + weakEff.videoResolution +
+                       " regime=" + r.playRegime + " " + key;
             // STREAM preferDirect fallthrough: operator can see why recon may hit CABAC.
             if (preferDirectH264) {
                 if (!metaOk)

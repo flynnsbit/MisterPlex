@@ -50,7 +50,7 @@ int main() {
     CHECK(plexVideoProfileAttrLooksLikeCabacRisk("Main"));
     CHECK(!plexVideoProfileAttrLooksLikeCabacRisk("baseline"));
 
-    // --- Positive: real Baseline annex-B (host fixture) ---
+    // --- Positive: real Baseline annex-B (host fixture) — 98.6% library path ---
     auto base = loadBaselineAnnexB();
     CHECK(!base.empty());
     {
@@ -60,6 +60,24 @@ int main() {
         CHECK(r.profile_idc == kH264ProfileBaseline);
         CHECK(!r.entropy_cabac);
         CHECK(std::string(r.reason) == "ok_baseline_cavlc");
+        CHECK(fabricDecodeRoute(r) == FabricDecodeRoute::FabricBitstreamEligible);
+        CHECK(fabricBitstreamPathOpen(r));
+        CHECK(!armFfmpegDecodeRequired(r));
+    }
+    // Constrained Baseline SPS (library majority) — must open fabric path.
+    {
+        NalChainInfo c;
+        c.sps.valid = true;
+        c.sps.profile_idc = kH264ProfileBaseline;
+        c.sps.constraint_flags = 0xC0; // constraint_set0+set1
+        c.sps.width = 624;
+        c.sps.height = 480;
+        c.pps.valid = true;
+        c.pps.entropy_cabac = false;
+        auto r = gateFabricH264FromChain(c);
+        CHECK(r.ok);
+        CHECK(r.constrained_baseline || fabricProfileIdcIsBaseline(r.profile_idc));
+        CHECK(fabricDecodeRoute(r) == FabricDecodeRoute::FabricBitstreamEligible);
     }
 
     // --- Negative: High profile_idc (naive accept-any-SPS would OK this) ---

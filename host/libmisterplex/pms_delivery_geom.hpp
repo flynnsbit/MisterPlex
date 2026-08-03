@@ -274,6 +274,54 @@ inline bool pathMayBeFabricNative(const char* delivery_basis, bool delivery_veri
                                   /*identity*/ true) == PathScaleClass::FabricNative;
 }
 
+// --- Two-regime play policy (parent 2026-08-03, miss #13 correction) ---
+// Library census N=142: 98.6% constrained baseline; PMS never transcodes *to*
+// baseline, but DP preserves source profile. SD majority → DP native; HD above
+// 720p bank → universal exact 1280×720 (measured). Never hardcode ratingKeys.
+//
+// Threshold: strictly larger than the 1280×720 bank on either axis (1080p class).
+// Exact 1280×720 source stays DP-eligible (already path tier).
+enum class PlayDeliveryRegime : uint8_t {
+    Unknown = 0,
+    DirectPlaySd = 1,   // native SD/≤720 H.264 Part — fabric profile when baseline
+    TranscodeHd720 = 2, // source >720p → PMS xcode 1280×720 (often High → ARM)
+    ForceUniversal = 3, // conf / non-H.264 / missing Part
+};
+
+inline const char* playDeliveryRegimeName(PlayDeliveryRegime r) {
+    switch (r) {
+    case PlayDeliveryRegime::DirectPlaySd:
+        return "direct_play_sd";
+    case PlayDeliveryRegime::TranscodeHd720:
+        return "transcode_hd_720";
+    case PlayDeliveryRegime::ForceUniversal:
+        return "force_universal";
+    default:
+        return "unknown";
+    }
+}
+
+// True when library media is above the 720p path bank (DP would pull full HD DPB).
+inline bool mediaIsHdAbove720p(int media_w, int media_h) {
+    if (media_w <= 0 || media_h <= 0)
+        return false;
+    return media_w > 1280 || media_h > 720;
+}
+
+// Select regime from *item* geometry (and optional allow_direct). Profile main/high
+// does not force xcode here — DP preserves bits; fabric gate → ARM fallback.
+inline PlayDeliveryRegime selectPlayDeliveryRegime(int media_w, int media_h,
+                                                   bool allow_direct_h264,
+                                                   bool source_is_h264) {
+    if (!source_is_h264)
+        return PlayDeliveryRegime::ForceUniversal;
+    if (mediaIsHdAbove720p(media_w, media_h))
+        return PlayDeliveryRegime::TranscodeHd720;
+    if (allow_direct_h264)
+        return PlayDeliveryRegime::DirectPlaySd;
+    return PlayDeliveryRegime::ForceUniversal;
+}
+
 // PMS may tweak an already 16-aligned request by ±2 (MB) — measured class:
 // 624x352 request → 626x352 delivery. Aligned request ≠ aligned delivery guarantee.
 // Universal path must keep ARM scale/pad until measured geometry is known.

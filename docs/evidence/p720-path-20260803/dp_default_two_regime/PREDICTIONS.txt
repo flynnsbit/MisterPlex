@@ -1,0 +1,5 @@
+PRE-REGISTER 2026-08-03 w-path DP-default / two-regime
+P1: decision directPlay=1+full headers on SD rk=36 → decision=directplay, videoProfile contains baseline
+P2: same on HD-class source (find media height>720) with directPlay=0 → decision=transcode, delivered ~1280x720 if sampled
+P3: thin headers only → HTTP 400 or empty (parent trap)
+P4: directPlay=1 on SD with videoResolution=1280x720 still DP at native (no upscale)

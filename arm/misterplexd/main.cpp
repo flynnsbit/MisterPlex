@@ -857,7 +857,8 @@ int main(int argc, char** argv) {
     }
     std::fprintf(stderr,
                  "misterplexd: PREFER_DIRECT_H264 conf_set=%d conf_val=%d STREAM=%d — "
-                 "Path720p defaults DP when conf unset; 1=>Part transcode=0; 0=>universal\n",
+                 "DP default when conf unset (miss#13); HD>720→xcode 1280x720; "
+                 "0=>SD universal allow=off\n",
                  preferDirectH264ConfSet ? 1 : 0, preferDirectH264Conf ? 1 : 0,
                  streamEnabled ? 1 : 0);
     std::fprintf(stderr, "misterplexd: DDR_MEM_SYNC=%s DDR_MEM_FLUSH=%s\n",
