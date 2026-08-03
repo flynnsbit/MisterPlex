@@ -75,3 +75,11 @@ rd-duck (B9 still unsafe): `sys_top` ties `bank_gen=0`; `disp_matches_live` is D
 release is `disp_match && gen_after_hold` without bank. **Same** `store_applied_seq` must
 feed `plex_ar_out_hold.bank_gen` and match on display tag. See
 `B9_BANK_GEN_ACK_FENCE.md`. w-clock does not own plex_ar_*.
+
+## w-mem residual (rd-duck re-audit, measured on wt-mem)
+- IMPROVED: pend beam/pitch at doorbell; db_plxg_seq match field.
+- STILL OPEN: `applied_geom_seq_r <= rt_geom_seq` (live) at swap ~845 — must be
+  `pend_geom_seq` from doorbell accept.
+- STILL OPEN: pend lacks win_enable, x0/y0, fps, DAR for present app_*.
+- STILL OPEN: w-clock live app_* capture.
+- Detail + N→N+1 oracle: `B20_WMEM_RESIDUAL_rd_duck.md`

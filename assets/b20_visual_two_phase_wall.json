@@ -50,5 +50,12 @@
     }
   },
   "B9_bank_gen_coupled": false,
-  "b9_fence": ".agent-work/w-clock/B9_BANK_GEN_ACK_FENCE.md"
+  "b9_fence": ".agent-work/w-clock/B9_BANK_GEN_ACK_FENCE.md",
+  "wmem_residual": {
+    "applied_seq_at_swap": "rt_geom_seq LIVE not pend \u2014 wt-mem ~845",
+    "pend_tuple": "cw/ch/hde/vde+pitch; missing win/x0/y0/fps/DAR",
+    "wclock_app": "still live content_* on visual_geom_apply",
+    "oracle": "doorbell N; promote N+1 before N swap; expect seq N with bank N",
+    "doc": ".agent-work/w-clock/B20_WMEM_RESIDUAL_rd_duck.md"
+  }
 }
