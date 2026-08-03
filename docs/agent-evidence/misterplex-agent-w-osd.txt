@@ -1,28 +1,28 @@
-w-osd status — rd-duck holes 1+2 FIXED
+worker: w-osd
 branch: w-osd-fabric-plane
-time: post halfword-order + VS-bank xact hold
+time: 2026-08-03T (local)
+status: rd-duck STOP bank selector — ACK + fixed/proved
 
-PREDICTIONS (pre-run):
-  P1 unit loader PASS rc=0
-  P2 loader rtl PASS rc=0 (halfword EXECUTED)
-  P3 counted PASS rc=0
-  P4 vs_bank product PASS rc=0
-  P5 vs_bank fault PASS rc=0 (hole observed)
-MISSES: none
+rd-duck claim:
+  dirty VS-bank fix inverted selector; product must be
+  wr_to_a = (swap_now ? ~live_bank : live_bank)
+  chrome_at LIVE = live_bank ? list_b : list_a
+  write if(wr_to_a) list_a else list_b  => normal wr_to_a == live_bank
 
-RESULTS (true rc):
-  test_plex_chrome_ddr_loader unit     rc=0
-  test_plex_chrome_ddr_loader_rtl_sim  rc=0
-    halfword_magic_first wrong_accept=1 (documents hole 1)
-  test_plex_chrome_vs_bank_rtl_sim     rc=0
-    product post-coin a2=1 b0=0 b1=0; final VS b0=1 b1=1
-    fault   post-coin b0=1 b1=0; final VS b0=0 b1=0 (split)
-  test_plex_chrome_counted_rtl_sim     rc=0
+evidence (quoted):
+  plex_chrome.sv product:
+    wire wr_to_a = xact_hold ? xact_bank
+                             : (swap_now ? ~live_bank : live_bank);
+  FAULT_VS_BANK: swap_now=vs&&want (no defer); wr_to_a=live_bank (naive)
+  FAULT_INVERT_STAGING: normal ~live_bank (live-hold red twin)
 
-FIXES:
-  Hole1: fpga_spi writeChromeCommandList cw[1]=hi then cw[0]=magic LAST
-  Hole2: plex_chrome xact_hold/xact_bank; wr_to_a accounts swap_now;
-         VS promote deferred while list xact open
-  FAULT twin: PLEX_CHROME_FAULT_VS_BANK
+tests/unit/test_plex_chrome_vs_bank_rtl_sim.sh:
+  product: PASS live_hold + PASS vs_bank_product  true rc=0
+  fault:   PASS vs_bank_fault                     true rc=0
+  invert:  PASS live_hold_invert                  true rc=0
+  suite:   test_plex_chrome_vs_bank_rtl_sim: PASS true rc=0
 
-OPEN: R1 loader m_gnt=0 on integ Plex.sv; no Quartus; no device
+live_hold oracle: after A live, 6 staging beats keep amber@12,12 (no white).
+TB fix: captureFrame re-arms VS (y_cnt was walking off-screen).
+
+no Quartus / no device

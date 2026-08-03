@@ -404,20 +404,33 @@ module plex_chrome #(
     localparam int AW = $clog2(MAX_CMDS);
 
     reg vs_d;
-    // Staging write target: list_a when live_bank==1, list_b when live_bank==0
-    // (opposite of scan). On a VS edge that promotes, post-swap staging is the
-    // old live bank → wr_to_a = ~live_bank. Account for that atomically with
-    // list_we (rd-duck hole 2).
+    // Bank map (rd-duck, do not invert):
+    //   chrome_at LIVE  : live_bank ? list_b : list_a
+    //   list_we STAGING : if (wr_to_a) list_a else list_b
+    //   original write  : if (live_bank) list_a else list_b
+    // Therefore normal wr_to_a == live_bank (live_bank=0 → write B, A stays live).
+    // Imminent VS swap: post-swap staging is the old live bank → wr_to_a = ~live_bank.
+    // FAULT_INVERT_STAGING: normal wr_to_a = ~live_bank (overwrites LIVE HUD).
+    // FAULT_VS_BANK: swap under list_we + naive wr_to_a=live_bank (no swap remap).
     wire vs_rise   = vs_in && !vs_d;
     wire want_swap = (cfg_seq != latched_seq);
-    // FAULT twin: always use pre-edge bank; swap still fires under list_we.
 `ifdef PLEX_CHROME_FAULT_VS_BANK
-    wire swap_now  = vs_rise && want_swap; // do not defer — hole 2
+    // Red twin hole-2: allow VS swap under list_we AND use pre-edge live_bank
+    // only (no swap_now bank remap). B cmd0 lands on the bank that becomes
+    // LIVE on the same edge; later beats can split or leave staging incomplete.
+    wire swap_now  = vs_rise && want_swap; // do not defer
     wire wr_to_a   = xact_hold ? xact_bank : live_bank;
-`else
+`elsif PLEX_CHROME_FAULT_INVERT_STAGING
+    // Red twin: normal path writes the LIVE bank (inverted selector).
     wire swap_now  = vs_rise && want_swap && !xact_hold;
-    wire wr_to_a   = xact_hold ? xact_bank
-                               : (swap_now ? ~live_bank : live_bank);
+    wire wr_to_a = xact_hold ? xact_bank
+                             : (swap_now ? live_bank : ~live_bank);
+`else
+    // Product (rd-duck): defer swap while list xact held; bank map
+    // wr_to_a = (swap_now ? ~live_bank : live_bank).
+    wire swap_now  = vs_rise && want_swap && !xact_hold;
+    wire wr_to_a = xact_hold ? xact_bank
+                             : (swap_now ? ~live_bank : live_bank);
 `endif
 
     always @(posedge clk_hdmi) begin
@@ -440,6 +453,7 @@ module plex_chrome #(
             cfg_seq_d <= 16'd0;
         end else begin
             // List write: freeze staging bank for the whole host transaction.
+            // Must never target the LIVE bank on a normal (non-swap) beat.
             if (list_we && (list_waddr < MAX_CMDS[7:0])) begin
                 if (!xact_hold) begin
                     xact_hold <= 1'b1;
@@ -453,8 +467,6 @@ module plex_chrome #(
             // Ctrl commit ends the list transaction (host: list then ctrl).
             if (cfg_seq != cfg_seq_d)
                 xact_hold <= 1'b0;
-            // Product: VS promote only when no list transaction is open.
-            // FAULT: swap even under list_we (same-cycle corruption).
             if (swap_now) begin
                 latched_seq   <= cfg_seq;
                 latched_count <= (cfg_cmd_count > MAX_CMDS[7:0]) ? MAX_CMDS[7:0]
