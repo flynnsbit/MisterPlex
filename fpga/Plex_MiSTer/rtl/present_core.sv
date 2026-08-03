@@ -233,15 +233,22 @@ module present_core #(
 	end
 	// synthesis translate_on
 
-	// w-clock NATIVE_720P_GO_NOGO / Plex_native720p24.sdc
+	// w-clock NATIVE_720P_GO_NOGO / Plex_native720p24.sdc + dual-header constants.
+	// H blank is only 32 clocks (1312-1280). Default beam H_FP=32 H_SW=64 does NOT
+	// fit when use_rt_geom=1 (hs_s=hde+32 == htot → HSync never asserts). Use H_FP=8
+	// H_SW=8 so runtime geom and fixed sync both fit the 32-clock blank.
 	localparam int L4_H_DE    = 1280;
 	localparam int L4_V_ACT   = 720;
 	localparam int L4_H_TOTAL = 1312;
 	localparam int L4_V_TOTAL = 762;
-	localparam int L4_H_SYNC_S = 1280 + 8;
-	localparam int L4_H_SYNC_E = 1280 + 8 + 8;
-	localparam int L4_V_SYNC_S = 720 + 8;
-	localparam int L4_V_SYNC_E = 720 + 8 + 6;
+	localparam int L4_H_FP    = 8;
+	localparam int L4_H_SW    = 8;
+	localparam int L4_V_FP    = 8;
+	localparam int L4_V_SW    = 6;
+	localparam int L4_H_SYNC_S = L4_H_DE + L4_H_FP;
+	localparam int L4_H_SYNC_E = L4_H_DE + L4_H_FP + L4_H_SW;
+	localparam int L4_V_SYNC_S = L4_V_ACT + L4_V_FP;
+	localparam int L4_V_SYNC_E = L4_V_ACT + L4_V_FP + L4_V_SW;
 
 	wire [10:0] hc11, vc11, vtot_act11;
 	wire [10:0] hde_act11, htot_act11, vact_act11;
@@ -262,7 +269,11 @@ module present_core #(
 		.H_SYNC_S(L4_H_SYNC_S),
 		.H_SYNC_E(L4_H_SYNC_E),
 		.V_SYNC_S(L4_V_SYNC_S),
-		.V_SYNC_E(L4_V_SYNC_E)
+		.V_SYNC_E(L4_V_SYNC_E),
+		.H_FP(L4_H_FP),
+		.H_SW(L4_H_SW),
+		.V_FP(L4_V_FP),
+		.V_SW(L4_V_SW)
 	) u_beam_720p24 (
 		.clk(clk),
 		.reset(reset),
@@ -285,6 +296,8 @@ module present_core #(
 		.htot_active(htot_act11),
 		.vact_active(vact_act11)
 	);
+	// hc/vc are 10b for Template/colorbars; L4 store map uses hc11/vc11 (11b).
+	// Do not feed truncated hc into address math — content_window ports are hc11.
 	assign hc = hc11[9:0];
 	assign vc = vc11[9:0];
 	assign br = 8'd0;
@@ -293,7 +306,7 @@ module present_core #(
 	wire _unused_beam_scandouble = scandouble;
 	wire _unused_beam_pal = pal;
 	wire _unused_eff_pattern = |eff_pattern;
-	wire _unused_l4_beam = (|vtot_act11) | (|htot_act11) | (|hde_act11) | (|vact_act11);
+	wire _unused_l4_beam = (|vtot_act11) | (|htot_act11) | (|hde_act11) | (|vact_act11) | (|hc) | (|vc);
 
 `elsif PRESENT_BEAM_960
 	// =====================================================================
@@ -410,8 +423,9 @@ module present_core #(
 	(* noprune *) present_content_window #(
 		.FRAME_W(FRAME_W),
 		.FRAME_H(FRAME_H),
-		.STORE_W(1280),
-		.STORE_H(720),
+		// Derive store domain from FRAME_* so L4 cannot disagree with QSF 1280×720.
+		.STORE_W(FRAME_W),
+		.STORE_H(FRAME_H),
 		.H_DE_DEFAULT(L4_H_DE),
 		.V_DE_DEFAULT(L4_V_ACT)
 	) u_content_window (
@@ -515,22 +529,48 @@ module present_core #(
 
 `include "ddr_frame_layout_params.svh"
 
+	// L4 content 1280×720 must not reuse 480p bank stride (512 KiB) or coded 624×480
+	// crop/pillar — that is silent neighbour-bank corruption (w-nostub/w-mem class).
+`ifdef PLEX_PRESENT_720P_L4
+	localparam int FS_CODED_W = DDR_FRAME_720P_CODED_WIDTH;
+	localparam int FS_CODED_H = DDR_FRAME_720P_CODED_HEIGHT;
+	localparam int FS_DISPLAY_W = DDR_FRAME_720P_DISPLAY_WIDTH;
+	localparam int FS_DISPLAY_H = DDR_FRAME_720P_DISPLAY_HEIGHT;
+	localparam int FS_CROP_LEFT = 0;
+	localparam int FS_CROP_TOP = 0;
+	localparam int FS_PRESENT_X = DDR_FRAME_720P_PILLARBOX_LEFT;
+	localparam int FS_PHYS_BASE = DDR_FRAME_720P_PHYS_BASE;
+	localparam int FS_BANK_STRIDE = DDR_FRAME_720P_YUV420P_BANK_STRIDE;
+	localparam int FS_DOORBELL = DDR_FRAME_720P_YUV420P_DOORBELL_PHYS;
+`else
+	localparam int FS_CODED_W = DDR_FRAME_CODED_WIDTH;
+	localparam int FS_CODED_H = DDR_FRAME_CODED_HEIGHT;
+	localparam int FS_DISPLAY_W = DDR_FRAME_DISPLAY_WIDTH;
+	localparam int FS_DISPLAY_H = DDR_FRAME_DISPLAY_HEIGHT;
+	localparam int FS_CROP_LEFT = DDR_FRAME_CROP_LEFT;
+	localparam int FS_CROP_TOP = DDR_FRAME_CROP_TOP;
+	localparam int FS_PRESENT_X = DDR_FRAME_PILLARBOX_LEFT;
+	localparam int FS_PHYS_BASE = 32'h3000_0000;
+	localparam int FS_BANK_STRIDE = DDR_FRAME_YUV420P_BANK_STRIDE;
+	localparam int FS_DOORBELL = DDR_FRAME_YUV420P_DOORBELL_PHYS;
+`endif
+
 	ddr_frame_store #(
 		.FRAME_W(FRAME_W),
 		.FRAME_H(FRAME_H),
 		.FRAME_STRIDE(FRAME_STRIDE),
-		.CODED_W(DDR_FRAME_CODED_WIDTH),
-		.CODED_H(DDR_FRAME_CODED_HEIGHT),
-		.DISPLAY_W(DDR_FRAME_DISPLAY_WIDTH),
-		.DISPLAY_H(DDR_FRAME_DISPLAY_HEIGHT),
-		.CROP_LEFT(DDR_FRAME_CROP_LEFT),
-		.CROP_TOP(DDR_FRAME_CROP_TOP),
-		.PRESENT_X(DDR_FRAME_PILLARBOX_LEFT),
+		.CODED_W(FS_CODED_W),
+		.CODED_H(FS_CODED_H),
+		.DISPLAY_W(FS_DISPLAY_W),
+		.DISPLAY_H(FS_DISPLAY_H),
+		.CROP_LEFT(FS_CROP_LEFT),
+		.CROP_TOP(FS_CROP_TOP),
+		.PRESENT_X(FS_PRESENT_X),
 		.PRESENT_Y(0),
 		.LINE_COUNT(FRAME_LINE_COUNT),
-		.PHYS_BASE(32'h3000_0000),
-		.HPS_BANK_STRIDE_BYTES(DDR_FRAME_YUV420P_BANK_STRIDE),
-		.DOORBELL_PHYS(DDR_FRAME_YUV420P_DOORBELL_PHYS)
+		.PHYS_BASE(FS_PHYS_BASE),
+		.HPS_BANK_STRIDE_BYTES(FS_BANK_STRIDE),
+		.DOORBELL_PHYS(FS_DOORBELL)
 	) fstore (
 		.clk(clk),
 		.clk_ddr(clk_ddr),

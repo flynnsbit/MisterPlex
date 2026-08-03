@@ -67,8 +67,12 @@ def main() -> int:
         ("plex_present_geom_mux", "u_present_geom_mux" in plex and "plex_present_geom_mux" in plex),
         ("present_content_window", "u_content_window" in core and "present_content_window" in core),
         ("beam_720p24", "u_beam_720p24" in core and "L4_H_TOTAL = 1312" in core and "L4_V_TOTAL = 762" in core),
-        ("PLEX_PRESENT_720P_L4_gate", "`ifdef PLEX_PRESENT_720P_L4" in core and "`ifdef PLEX_PRESENT_720P_L4" in plex),
-        ("colorbars_default", "colorbars bars" in core),
+                # 32-clock H blank cannot host default H_FP=32 — must pass H_FP=8
+                ("beam_hfp_fits_blank", "L4_H_FP" in core and ".H_FP(L4_H_FP)" in core),
+                ("l4_720p_bank_stride", "FS_BANK_STRIDE" in core and "DDR_FRAME_720P_YUV420P_BANK_STRIDE" in core),
+                ("l4_store_from_frame", ".STORE_W(FRAME_W)" in core and ".STORE_H(FRAME_H)" in core),
+                ("PLEX_PRESENT_720P_L4_gate", "`ifdef PLEX_PRESENT_720P_L4" in core and "`ifdef PLEX_PRESENT_720P_L4" in plex),
+                ("colorbars_default", "colorbars bars" in core),
     ]
     for name, ok in checks:
         if ok:

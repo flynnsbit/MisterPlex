@@ -1213,17 +1213,50 @@ def check_present_geometry_stride_contract() -> None:
     if missing:
         fail(f"present geometry/stride contract: {missing[0]}")
 
+    # Default (macro off) still binds 480p layout via FS_* localparam aliases.
+    # L4 ifdef selects DDR_FRAME_720P_* so 1280 content cannot keep 512KiB stride.
     check(
         ".FRAME_W(FRAME_W)" in present_nt
         and ".FRAME_H(FRAME_H)" in present_nt
-        and ".CODED_W(DDR_FRAME_CODED_WIDTH)" in present_nt
-        and ".DISPLAY_W(DDR_FRAME_DISPLAY_WIDTH)" in present_nt
-        and ".PRESENT_X(DDR_FRAME_PILLARBOX_LEFT)" in present_nt
-        and ".HPS_BANK_STRIDE_BYTES(DDR_FRAME_YUV420P_BANK_STRIDE)" in present_nt
-        and ".DOORBELL_PHYS(DDR_FRAME_YUV420P_DOORBELL_PHYS)" in present_nt,
+        and (
+            ".CODED_W(DDR_FRAME_CODED_WIDTH)" in present_nt
+            or (
+                "FS_CODED_W=DDR_FRAME_CODED_WIDTH" in present_nt
+                and ".CODED_W(FS_CODED_W)" in present_nt
+            )
+        )
+        and (
+            ".DISPLAY_W(DDR_FRAME_DISPLAY_WIDTH)" in present_nt
+            or (
+                "FS_DISPLAY_W=DDR_FRAME_DISPLAY_WIDTH" in present_nt
+                and ".DISPLAY_W(FS_DISPLAY_W)" in present_nt
+            )
+        )
+        and (
+            ".PRESENT_X(DDR_FRAME_PILLARBOX_LEFT)" in present_nt
+            or (
+                "FS_PRESENT_X=DDR_FRAME_PILLARBOX_LEFT" in present_nt
+                and ".PRESENT_X(FS_PRESENT_X)" in present_nt
+            )
+        )
+        and (
+            ".HPS_BANK_STRIDE_BYTES(DDR_FRAME_YUV420P_BANK_STRIDE)" in present_nt
+            or (
+                "FS_BANK_STRIDE=DDR_FRAME_YUV420P_BANK_STRIDE" in present_nt
+                and ".HPS_BANK_STRIDE_BYTES(FS_BANK_STRIDE)" in present_nt
+            )
+        )
+        and (
+            ".DOORBELL_PHYS(DDR_FRAME_YUV420P_DOORBELL_PHYS)" in present_nt
+            or (
+                "FS_DOORBELL=DDR_FRAME_YUV420P_DOORBELL_PHYS" in present_nt
+                and ".DOORBELL_PHYS(FS_DOORBELL)" in present_nt
+            )
+        )
+        and "DDR_FRAME_720P_YUV420P_BANK_STRIDE" in present_nt,
         "present_core must instantiate ddr_frame_store from the shared layout params: "
-        "FRAME_W=640 for scanout, CODED_W=624 for DDR stride, DISPLAY_W=618 for crop, "
-        "PRESENT_X=11 for pillarbox.",
+        "default FRAME/CODED/DISPLAY/PRESENT_X/stride 480p aliases, plus L4 ifdef "
+        "selecting DDR_FRAME_720P_YUV420P_BANK_STRIDE (not silent 512KiB overflow).",
     )
     check(
         'set_global_assignment-nameVERILOG_MACRO"DDR_FRAME_STORE=1"' in qsf_nt
