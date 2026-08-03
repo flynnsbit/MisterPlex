@@ -7,8 +7,9 @@
 | **Branch** | `w-path-720p` |
 | **Worktree** | `/home/flynnsbit/Projects/MisterPlex-wt-path` |
 | **Minimum commit** | `8e62f61b` (*p720-path: ship 960x540 source tier…*) |
-| **Recommended tip** | `70fd06e4` (or later on same branch) |
+| **Recommended tip** | branch tip on `w-path-720p` (includes PMS 540 delivery evidence) |
 | **Must contain** | `plexTranscodeProfiles()` entries `540p` / `960x540` |
+| **Delivered geometry doc** | `docs/evidence/p720-path-20260803/PMS_540_DELIVERED_GEOMETRY.md` |
 
 ```bash
 cd /home/flynnsbit/Projects/MisterPlex-wt-path
@@ -95,9 +96,22 @@ If `source=OSD O[4]` during the test → conf DECODE was ignored; set `OSD_CONTR
 | H.264 level requested | **31** | `kPlex540pH264Level` / MaxFS (960×540) |
 | Profile | **baseline** | Always pinned in URL |
 
-At 24 fps, 2000 kbps ≈ **10.4 kB/frame** average budget — same *class* as parent’s true-720 ~13.5 kB/frame content rate, not a geometry gate. Lab has **not** proven PMS always returns coded 960×540 at 2000 (ceiling trap still applies). Trust **measured** delivery (`GEOM` / ffprobe / `measured` tags), not the request alone.
+At 24 fps, 2000 kbps ≈ **10.4 kB/frame** average budget. **Measured on local PMS
+(2026-08-03, daemon URL, HD 16:9 rk2/rk7):** maxBR=1500 → **720×404**; maxBR≥**2000**
+→ **display=coded ffprobe 960×540 SAR 1:1**, CB L31, I420 **777600 B**. SPS MB height
+is 544 with bottom crop 4; ARM publishes **540** after ffmpeg crop — bank = 777600,
+not 783360. 4:3 HD (rk83) → 720×540, never full width. SD sources cannot reach 540p.
 
-`AUTO_LADDER_STEPDOWN=1` can lower bitrate on STARVED without changing WxH — if geometry is lost, raise `WEAK_BITRATE` or disable stepdown for the test; do not assume silent reject.
+`AUTO_LADDER_STEPDOWN=1` can lower bitrate on STARVED and may fall through the 2000
+knee → 720×404. Disable stepdown or floor `WEAK_BITRATE` for the PLAYING test.
+
+**PLAYING hard preconditions (delivery):**
+
+1. Grep request `GEOM requested_pms=960x540` (this card §2).
+2. ffprobe delivered `width=height=coded_*=960x540` (`PMS_540_DELIVERED_GEOMETRY.md` §4).
+3. w-mem Option-C / present geometry accepts **960×540 / 777600** (host
+   `ddrFrameGeometryForFpgaPresent` still returns **480p** until paired flip —
+   do not score glass until present path matches fabric).
 
 ## Pairing checklist (parent)
 

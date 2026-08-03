@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MediaContainer size="1" allowSync="1" directPlayDecisionCode="3000" directPlayDecisionText="App cannot direct play this item. Direct play is disabled." generalDecisionCode="1001" generalDecisionText="Direct play not available; Conversion OK." identifier="com.plexapp.plugins.library" librarySectionID="2" librarySectionTitle="MiSTerPlex Tests" librarySectionUUID="c97f403c-4a89-4620-a388-a7a88c9a6c1c" mediaTagPrefix="/system/bundle/media/flags/" mediaTagVersion="1783932891" resourceSession="w-path-960x540-2500-1785740075" transcodeDecisionCode="1001" transcodeDecisionText="Direct play not available; Conversion OK.">
+<Video addedAt="1785558276" art="/library/metadata/10/art/1785696403" createdAtAccuracy="epoch" createdAtTZOffset="-18000" duration="596497" guid="tv.plex.agents.none://10" key="/library/metadata/10" librarySectionID="2" librarySectionKey="/library/sections/2" librarySectionTitle="MiSTerPlex Tests" ratingKey="10" subtype="clip" thumb="/library/metadata/10/thumb/1785696403" title="Big Buck Bunny - https://archive.org/details/BigBuckBunny_124" type="movie" updatedAt="1785696403">
+<Media id="10" videoProfile="constrained baseline" audioChannels="2" audioCodec="aac" bitrate="1750" container="mpegts" duration="596497" height="480" videoCodec="h264" videoFrameRate="24p" videoResolution="480p" width="852" selected="1">
+<Part deepAnalysisVersion="6" id="10" requiredBandwidths="2615,2615,2615,2615,2615,2615,2615,2615" videoProfile="constrained baseline" bitrate="1750" container="mpegts" duration="596497" height="480" width="852" decision="transcode" selected="1">
+<Stream bitDepth="8" bitrate="1588" codec="h264" default="1" displayTitle="480p" extendedDisplayTitle="480p (H.264 Constrained Baseline)" frameRate="24" height="480" id="19" requiredBandwidths="2454,2454,2454,2454,2454,2454,2454,2454" streamType="1" width="852" decision="transcode" location="direct" />
+<Stream bitrate="162" bitrateMode="cbr" channels="2" codec="aac" default="1" displayTitle="Unknown (AAC Stereo)" extendedDisplayTitle="Unknown (AAC Stereo)" id="20" requiredBandwidths="162,162,162,162,162,162,162,162" samplingRate="48000" selected="1" streamType="2" decision="copy" location="direct" />
+</Part>
+</Media>
+<UltraBlurColors bottomLeft="376a49" bottomRight="274b2f" topLeft="1a351b" topRight="336336" />
+</Video>
+</MediaContainer>

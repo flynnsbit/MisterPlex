@@ -5,6 +5,7 @@
 #include "libmisterplex/osd_menu.hpp"
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 #include <fstream>
 #include <string>
 
@@ -41,14 +42,18 @@ int main(int argc, char** argv) {
     // Match plexTranscodeProfiles()["720p"] product defaults unless overridden.
     weak.videoResolution = vres;
     weak.maxVideoBitrateKbps = maxBr;
-    weak.videoQuality = 70;
+    // 540p ladder uses quality 65; 720p uses 70 (plexTranscodeProfiles).
+    weak.videoQuality = (vres == "960x540" || vres == "540p") ? 65 : 70;
     weak.h264Profile = "baseline";
-    weak.h264Level = misterplex::kPlex720pH264Level;
+    weak.h264Level = misterplex::kPlex720pH264Level; // 31 — 540p MaxFS too
     weak.clientProfileName = "MiSTerPlex";
     weak.videoCodec = "h264";
     weak.audioCodec = "aac";
 
-    const std::string session = "w-path-daemon-720p";
+    // Unique session required — reused sessions poison lab captures.
+    const std::string session =
+        std::string("w-path-") + vres + "-" + std::to_string(maxBr) + "-" +
+        std::to_string(static_cast<long long>(std::time(nullptr)));
     const std::string url =
         misterplex::buildUniversalTranscodeUrl(base, key, token, session, 0, weak);
     const std::string hdrs = misterplex::plexFfmpegHeaders(session, token, weak);
@@ -57,7 +62,7 @@ int main(int argc, char** argv) {
     const std::string tokq = "X-Plex-Token=" + token;
     auto p = url_scrub.find(tokq);
     if (p != std::string::npos)
-        url_scrub.replace(p, tokq.size(), "X-Plex-Token=<redacted>");
+        url_scrub.replace(p, tokq.size(), "X-Plex-Token=REDACTED");
 
     {
         std::ofstream o(outp + "_url_scrubbed.txt");

@@ -30,14 +30,31 @@ static_assert(kPlex720pYuv420pBytes ==
 // Shippable "720p glass" source tier (parent 2026-08-03 proxy ladder, 5/5 HIT):
 // ARM decode+copy of 960x540 fits deadline; fabric upscales to 1280x720 raster.
 // NOT true 720p source — never label as such. I420 = 960*540*3/2 = 777_600.
+//
+// PMS delivery (measured local docker PMS, daemon URL, HD 16:9 rk2/rk7, maxBR≥2000):
+//   ffprobe width=height=coded_width=coded_height=960x540, SAR 1:1, CB L3.1.
+// SPS (trace_headers): pic_width_in_mbs=60 → 960; pic_height_in_map_units=34 → 544;
+//   frame_crop_bottom_offset=2 → 4 luma lines cropped → **display 540**.
+// ARM publishes **display** planes after ffmpeg crop (777600 B), never the 544-line
+// MB buffer (783360 B). Fabric content window + bank payload = 960x540 / 777600.
+// maxBR=1500 on same request → 720x404 (bitrate ceiling trap — not genuine 540p).
 constexpr CodedWidth kPlex540pCodedWidth{960};
 constexpr CodedHeight kPlex540pCodedHeight{540};
 constexpr int kPlex540pYuv420pBytes = 777600;
+// H.264 MB grid before crop (SPS only; not the DDR publish size).
+constexpr int kPlex540pSpsMbHeight = 544;
+constexpr int kPlex540pSpsCropBottomLuma = 4; // frame_crop_bottom_offset=2 × 2
+constexpr int kPlex540pSpsMbYuv420pBytes = 960 * 544 * 3 / 2; // 783360 — do NOT size banks to this
 static_assert(kPlex540pYuv420pBytes ==
                   kPlex540pCodedWidth.get() * kPlex540pCodedHeight.get() * 3 / 2,
               "540p I420 byte count");
+static_assert(kPlex540pSpsMbHeight - kPlex540pSpsCropBottomLuma == kPlex540pCodedHeight.get(),
+              "SPS MB height minus crop must equal display 540");
+static_assert(kPlex540pSpsMbYuv420pBytes == 783360, "SPS MB I420");
 // Fits inside Option-C 720p bank stride (1.5 MiB) with headroom — w-mem owns ABI.
 static_assert(kPlex540pYuv420pBytes < kPlex720pYuv420pBytes, "540p smaller than 720p bank");
+static_assert(kPlex540pYuv420pBytes != kPlex540pSpsMbYuv420pBytes,
+              "display I420 must differ from uncropped MB I420");
 constexpr int kPlex480pCropLeft = 0;
 constexpr int kPlex480pCropRight = 6;
 constexpr int kPlex480pCropTop = 0;

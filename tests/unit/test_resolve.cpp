@@ -546,9 +546,23 @@ int main() {
         CHECK(isGenuine540pDelivery(960, 540));
         CHECK(!isGenuine540pDelivery(960, 536)); // NEG shorter height
         CHECK(!isGenuine540pDelivery(854, 480));
+        CHECK(!isGenuine540pDelivery(720, 404)); // NEG: maxBR starvation (measured)
+        CHECK(!isGenuine540pDelivery(720, 540)); // NEG: 4:3 HD fit (rk83 class)
+        CHECK(!isGenuine540pDelivery(960, 544)); // NEG: SPS MB height is NOT publish size
         CHECK(!isGenuine720pDelivery(960, 540)); // NEG: 540p is not true 720 source
         CHECK(kPlex540pYuv420pBytes == 777600);
         CHECK(kPlex540pYuv420pBytes < kPlex720pYuv420pBytes);
+        // SPS MB 544 with crop 4 → display 540; bank uses display I420 only.
+        CHECK(kPlex540pSpsMbHeight == 544);
+        CHECK(kPlex540pSpsCropBottomLuma == 4);
+        CHECK(kPlex540pSpsMbHeight - kPlex540pSpsCropBottomLuma == 540);
+        CHECK(kPlex540pSpsMbYuv420pBytes == 783360);
+        CHECK(kPlex540pYuv420pBytes != kPlex540pSpsMbYuv420pBytes);
+        CHECK(kPmsTrue540pMinBitrateKbpsMeasured == 2000);
+        CHECK(pmsBitrateLikelyTrue540p(2000));
+        CHECK(pmsBitrateLikelyTrue540p(2500));
+        CHECK(!pmsBitrateLikelyTrue540p(1500)); // NEG: measured → 720x404
+        CHECK(w540.maxVideoBitrateKbps >= kPmsTrue540pMinBitrateKbpsMeasured);
         // Parent corrected budget (decode+sws+copy), not optimistic -f null.
         CHECK(kPlex540pTotalMsPerFrame < kPlex24fpsDeadlineMs);
         CHECK(kPlex540pMarginMs > 7.0 && kPlex540pMarginMs < 7.3);

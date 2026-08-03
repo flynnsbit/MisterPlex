@@ -152,9 +152,22 @@ inline bool isGenuine720pDelivery(int delivered_w, int delivered_h) {
     return isGenuineTierDelivery(delivered_w, delivered_h, 1280, 720);
 }
 
-// Exact 960x540 coded — shippable fabric→720 glass source (not true 720 source).
+// Exact 960x540 **display/ffmpeg** size — shippable fabric→720 glass source
+// (not true 720 source). Match against decoder output after H.264 frame_crop
+// (SPS MB may be 960x544; ARM never publishes the uncropped MB buffer).
+// Negatives: 720x404 (maxBR starvation), 720x540 (4:3 fit), 960x536, 854x480.
 inline bool isGenuine540pDelivery(int delivered_w, int delivered_h) {
     return isGenuineTierDelivery(delivered_w, delivered_h, 960, 540);
+}
+
+// Lab-measured maxVideoBitrate knee for genuine 960x540 on 16:9 HD sources
+// (daemon path + unique session, local PMS 2026-08-03):
+//   rk2/rk7: maxBR=1500 → 720x404; maxBR≥2000 → 960x540 SAR 1:1.
+// Product weak = kPlex540pWeakBitrateKbps (2000) sits on the measured knee.
+inline constexpr int kPmsTrue540pMinBitrateKbpsMeasured = 2000;
+
+inline bool pmsBitrateLikelyTrue540p(int maxVideoBitrateKbps) {
+    return maxVideoBitrateKbps >= kPmsTrue540pMinBitrateKbpsMeasured;
 }
 
 // Lab-measured maxVideoBitrate gate for true 1280x720 on 16:9 HD sources
