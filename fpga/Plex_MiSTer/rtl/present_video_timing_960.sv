@@ -52,9 +52,11 @@ module present_video_timing_960 #(
 	localparam int VS_S = V_ACT_L + 8;
 	localparam int VS_E = VS_S + 6;
 
-	// fps_milli = 1000 * CLK / (HT*VT)
-	localparam int PIX_FRAME = HT * VT;
-	localparam int FPS_MILLI = (CLK_PIX_HZ * 1000) / PIX_FRAME;
+	// fps_milli = 1000 * CLK / (HT*VT) — must be 64-bit (rd-duck B2):
+	// 20e6*1000 = 2e10 overflows 32-bit signed (max 2.1e9) → was -2212 not 30000.
+	localparam longint PIX_FRAME = longint'(HT) * longint'(VT);
+	localparam longint FPS_MILLI_L = (longint'(CLK_PIX_HZ) * 1000) / PIX_FRAME;
+	localparam int FPS_MILLI = int'(FPS_MILLI_L);
 
 	// Active content rate
 	localparam int ACT_MPIX_MILLI = (H_DE_L * V_ACT_L * (FPS_MILLI)) / 1000; // approx
@@ -68,6 +70,14 @@ module present_video_timing_960 #(
 	assign v_sync_s  = 12'(VS_S);
 	assign v_sync_e  = 12'(VS_E);
 	assign fps_eff_milli = 16'(FPS_MILLI);
+	// synthesis translate_off
+	initial begin
+		if (FPS_MILLI_L <= 0 || FPS_MILLI_L > 120000)
+			$error("present_video_timing_960: FPS_MILLI_L=%0d out of range (32-bit overflow class)", FPS_MILLI_L);
+		if (MODE == 0 && (FPS_MILLI < 29900 || FPS_MILLI > 30100))
+			$error("present_video_timing_960 MODE0: FPS_MILLI=%0d expect ~30000", FPS_MILLI);
+	end
+	// synthesis translate_on
 	assign mode_30hz = (MODE != 2) ? 1'b1 : 1'b0;
 	// 1px @20 MHz peak=20 Mpix/s; 15.55 needs B1 only if serialize PPC path ON.
 	assign needs_wide_fifo = 1'b0;

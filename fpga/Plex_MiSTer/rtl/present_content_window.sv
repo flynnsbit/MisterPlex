@@ -204,8 +204,13 @@ module present_content_window #(
 		(store_x_sum > {1'b0, last_x_r}) ? last_x_r : store_x_sum[15:0];
 
 	assign past_last_row = (py >= v_de_r);
-	wire [10:0] v_last = (v_de_r == 11'd0) ? 11'd0 : (v_de_r - 11'd1);
-	wire [10:0] py_clamped = past_last_row ? v_last : py;
+	// During vertical blank (py past DE), drive store_y toward line 0 — NOT the
+	// last content row. ddr_frame_store want_y follows rd_y while visible; if we
+	// clamp to v_last here, want_y sticks on the bottom line through all of
+	// VBlank and line 0 is cold at DE open → left-edge underrun (~Y+U+V beats).
+	// Product comment in ddr_frame_store: leave-VBlank returns want_y to top via
+	// present store_y. Forcing py_clamped=0 on past_last_row is that return.
+	wire [10:0] py_clamped = past_last_row ? 11'd0 : py;
 	wire [31:0] store_y_prod = {21'd0, py_clamped} * {12'd0, sy_r};
 	wire [15:0] store_y_q16  = store_y_prod[31:16];
 	wire [16:0] store_y_sum  = {1'b0, y0_r} + {1'b0, store_y_q16};
