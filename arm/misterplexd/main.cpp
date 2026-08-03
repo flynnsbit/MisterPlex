@@ -1148,18 +1148,25 @@ int main(int argc, char** argv) {
                          resolved.transcoded ? 1 : 0, base.c_str());
         }
 
-        // Source-aware bank: after resolve, adopt fabric-aligned store geometry so
-        // DECODE matches the PMS request (avoids AR-fit unaligned deliveries into
-        // a fixed 640x360/960x540 bank). Ceiling weakForPlay is updated for logs.
+        // Source-aware bank: after resolve, adopt geometry so FFmpeg/raw + PLXG agree.
+        // rd-duck: Direct-Part pad (426→432) must set DECODE=content samples, not
+        // store alone — ddrFrameGeometryForFpgaPresent(432) is identity and loses
+        // display 426 / crop_left=2, so ascal squeezes 426/432 of the padded raster.
         if (resolved.sourceAwareApplied && resolved.storeWidth > 0 &&
             resolved.storeHeight > 0) {
-            player.setDecodeSize(misterplex::CodedWidth{resolved.storeWidth},
-                                 misterplex::CodedHeight{resolved.storeHeight});
-            // DP pad-only vs universal source-aware — both set store_*; distinguish logs.
             const bool directPartNative =
                 resolved.sourceAwarePolicy.find("direct_part") != std::string::npos;
-            player.setDecodeSizeSource(directPartNative ? "direct_part_store"
-                                                        : "source_aware_store");
+            if (directPartNative && resolved.mediaWidth > 0 && resolved.mediaHeight > 0) {
+                // Content samples; coded bank/pad derived in present geometry.
+                player.setDecodeSize(misterplex::CodedWidth{resolved.mediaWidth},
+                                     misterplex::CodedHeight{resolved.mediaHeight});
+                player.setDecodeSizeSource("direct_part_content");
+            } else {
+                player.setDecodeSize(misterplex::CodedWidth{resolved.storeWidth},
+                                     misterplex::CodedHeight{resolved.storeHeight});
+                player.setDecodeSizeSource(directPartNative ? "direct_part_store"
+                                                            : "source_aware_store");
+            }
             if (resolved.requestWidth > 0 && resolved.requestHeight > 0) {
                 weakForPlay.videoResolution = std::to_string(resolved.requestWidth) + "x" +
                                               std::to_string(resolved.requestHeight);
@@ -1236,16 +1243,31 @@ int main(int argc, char** argv) {
         const bool forceScale = wantFpgaDdrCanvas && ddrYuvForceScale;
         const auto scaleMode =
             misterplex::ffmpegScaleModeForDdrYuvPresent(confScaleMode, forceScale);
-        // Bank for GEOM predict = source-aware store when applied, else tier ceiling.
-        const int bankW = (resolved.sourceAwareApplied && resolved.storeWidth > 0)
-                              ? resolved.storeWidth
-                              : contentRes.width.get();
-        const int bankH = (resolved.sourceAwareApplied && resolved.storeHeight > 0)
-                              ? resolved.storeHeight
-                              : contentRes.height.get();
+        // Bank for GEOM predict: Direct-Part uses *content* (media) so pad-up
+        // keeps display/DE = 426 with coded store 432 — not identity-on-store.
+        // Universal source-aware still uses store as decode samples.
+        const bool geomDirectPart =
+            resolved.sourceAwareApplied &&
+            resolved.sourceAwarePolicy.find("direct_part") != std::string::npos &&
+            resolved.mediaWidth > 0 && resolved.mediaHeight > 0;
+        const int bankW =
+            geomDirectPart
+                ? resolved.mediaWidth
+                : ((resolved.sourceAwareApplied && resolved.storeWidth > 0)
+                       ? resolved.storeWidth
+                       : contentRes.width.get());
+        const int bankH =
+            geomDirectPart
+                ? resolved.mediaHeight
+                : ((resolved.sourceAwareApplied && resolved.storeHeight > 0)
+                       ? resolved.storeHeight
+                       : contentRes.height.get());
         const auto codedGeom =
             wantFpgaDdrCanvas
-                ? misterplex::ddrFrameGeometryForFpgaPresent(bankW, bankH)
+                ? (geomDirectPart && resolved.storeWidth > 0
+                       ? misterplex::ddrFrameGeometryForFpgaPresent(
+                             bankW, bankH, resolved.storeWidth, resolved.storeHeight)
+                       : misterplex::ddrFrameGeometryForFpgaPresent(bankW, bankH))
                 : misterplex::makeDdrFrameGeometry(bankW, bankH);
         const int codedW = codedGeom.coded_width.get();
         const int codedH = codedGeom.coded_height.get();

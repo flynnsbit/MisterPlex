@@ -40,9 +40,12 @@ int main() {
     const auto n352 = ddrStorageGeometryForContent(624, 352);
     expect(n352.coded_width.get() == 624 && n352.coded_height.get() == 352, "native 624x352");
     // Unaligned 426 → pad store (align-up), not silent 624 canvas.
+    // display/H_DE stays 426 with crop_left=2 (not identity-on-432).
     const auto n426 = ddrStorageGeometryForContent(426, 240);
     expect(n426.coded_width.get() == 432 && n426.coded_height.get() == 240,
            "unaligned 426 pads to 432x240");
+    expect(n426.display_width.get() == 426 && n426.crop_left == 2 && n426.crop_right == 4,
+           "unaligned 426 display DE + chroma-even crop");
     expect(n320.coded_width.get() != 624, "red: 320 must not become 624 canvas");
 
     // 360p constants greppable and consistent.

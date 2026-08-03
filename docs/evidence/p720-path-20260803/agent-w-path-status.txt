@@ -1,15 +1,18 @@
-w-path status
-tip: 9ca8198c fix(path): Route-B host cap 960x540; 1280 DE RED @1ppc
-unit true rc=0
+w-path p720-path STATUS
+tip: pending commit (DP 426 display DE)
+prior: 9ca8198c Route-B 960 cap
 
-rd-duck BLOCKING 1280 tier CLOSED:
-- HD regime → PMS 960x540 (transcode_hd_route_b_540), not silent 1280 DE
-- routeBContentDeFitsFps: 1280x720@24/30 RED (totals 1312*736 → ~20.7 Hz)
-- 960x540@24/30 PASS under 20 MHz 1ppc + blanking mins
-- mediaIsHdAbove720p now Route-B cap (>960x540); exact 1280 no longer DP default
-- PRESENT_MULTI_PIXEL=1 restores 1280 tier when fitted
-- DECODE/weak 1280 falls back loudly to 540
-- test_resolve NEG 1280 gate + POS HD→540 regime name transcode_hd_540
+DONE this tick:
+- DP 426→432: content-driven geom (display=426, coded=432, crop_left=2 chroma-even)
+- main: direct_part setDecodeSize(media) not store-only
+- GEOM predict uses media+store for DP
+- VF: verified pad-only BEFORE crop_pad (product DE=426 + legacy display==coded)
+- PLXG oracle: q1/q2 DE=426 coded=432 q4 crop_left=2
+- NEG: identity-on-432 alone loses DE
+- make unit true rc=0
 
-Prior: 1b395f68/b3ab7b30 DP plan trust; 4dea61bc q5 seqlock
-bit34 RESERVED. No Quartus/device.
+COORD:
+- w-mem: PLXG display≠coded with crop_left; bank LEG/Option-C unchanged
+- w-scaler: ascal content DE=426 not full 432 pad raster
+
+HELD: bit34 RESERVED; fps_1001 draft only; no Quartus/MiSTer

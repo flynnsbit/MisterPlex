@@ -1,6 +1,7 @@
 // Unit tests for slim plex_resolve (no network required for pure helpers).
 #include "libmisterplex/ddr_frame_layout.hpp"
 #include "libmisterplex/osd_menu.hpp"
+#include "libmisterplex/plxg_record.hpp"
 #include "libmisterplex/pms_delivery_geom.hpp"
 #include "plex_resolve.hpp"
 
@@ -863,11 +864,54 @@ int main() {
         CHECK(d426.request_w != 416); // red: must not reuse universal floor-snap
         CHECK(isFabricStoreAligned(d426.store_w, d426.store_h));
         {
-            const auto g = ddrStorageGeometryForContent(d426.store_w, d426.store_h);
-            CHECK(g.coded_width.get() == 432 && g.coded_height.get() == 240);
-            // And storage geom from raw media also pads the same way.
+            // rd-duck: store-only identity loses display 426 / crop_left=2.
+            // Content-driven geom: coded=432, display/H_DE=426, crop_left=2.
+            const auto gStoreOnly =
+                ddrStorageGeometryForContent(d426.store_w, d426.store_h);
+            CHECK(gStoreOnly.coded_width.get() == 432 &&
+                  gStoreOnly.coded_height.get() == 240);
+            // NEG: identity-on-432 must NOT be the product path for DP content.
+            CHECK(gStoreOnly.display_width.get() == 432); // bare store is identity
+            CHECK(gStoreOnly.crop_left == 0);
+
             const auto gMedia = ddrStorageGeometryForContent(426, 240);
             CHECK(gMedia.coded_width.get() == 432 && gMedia.coded_height.get() == 240);
+            CHECK(gMedia.display_width.get() == 426 && gMedia.display_height.get() == 240);
+            CHECK(gMedia.presented_width.get() == 426 &&
+                  gMedia.presented_height.get() == 240);
+            CHECK(gMedia.crop_left == 2);
+            CHECK(gMedia.crop_right == 4);
+            CHECK(gMedia.crop_top == 0 && gMedia.crop_bottom == 0);
+
+            // Explicit store pair (main/resolver precomputed bank).
+            const auto gPair =
+                ddrStorageGeometryForContent(426, 240, d426.store_w, d426.store_h);
+            CHECK(gPair.coded_width.get() == 432);
+            CHECK(gPair.display_width.get() == 426);
+            CHECK(gPair.crop_left == 2 && gPair.crop_right == 4);
+
+            // Present helper (daemon outW=content) must match.
+            const auto gPresent = ddrFrameGeometryForFpgaPresent(426, 240);
+            CHECK(gPresent.coded_width.get() == 432);
+            CHECK(gPresent.display_width.get() == 426);
+            CHECK(gPresent.crop_left == 2);
+
+            // PLXG: display/H_DE=426, coded=432, crop_left=2 — not all-432.
+            const auto layout = makeDdrFrameLayout(gMedia);
+            CHECK(ddrFrameLayoutValid(layout));
+            const auto rec = makePlxgRecordFromGeometry(gMedia, layout, /*seq*/ 1);
+            CHECK(rec.valid);
+            int q1w = 0, q1h = 0, q2deW = 0, q2deH = 0, q2cw = 0, q2ch = 0;
+            int q4px = 0, q4py = 0, q4cl = 0, q4ct = 0;
+            unpackPlxgQ1(rec.q[1], &q1w, &q1h, nullptr, nullptr);
+            unpackPlxgQ2(rec.q[2], &q2deW, &q2deH, &q2cw, &q2ch);
+            unpackPlxgQ4(rec.q[4], &q4px, &q4py, &q4cl, &q4ct);
+            CHECK(q1w == 426 && q1h == 240);
+            CHECK(q2deW == 426 && q2deH == 240);
+            CHECK(q2cw == 432 && q2ch == 240);
+            CHECK(q4cl == 2 && q4ct == 0);
+            // NEG: all-432 PLXG would squeeze content 426/432 under DAR.
+            CHECK(!(q1w == 432 && q2cw == 432 && q4cl == 0));
         }
 
         const auto d720 = selectDirectPartStoreGeometry(720, 480);

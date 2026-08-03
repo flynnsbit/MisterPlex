@@ -127,6 +127,18 @@ inline void unpackPlxgQ3(uint64_t q3, int* yStride, int* chromaStride, int* disp
         *displayH = static_cast<int>((q3 >> 48) & 0x7FFu);
 }
 
+inline void unpackPlxgQ4(uint64_t q4, int* presentX, int* presentY, int* cropLeft,
+                         int* cropTop) {
+    if (presentX)
+        *presentX = static_cast<int>(q4 & 0x7FFu);
+    if (presentY)
+        *presentY = static_cast<int>((q4 >> 16) & 0x7FFu);
+    if (cropLeft)
+        *cropLeft = static_cast<int>((q4 >> 32) & 0x7FFu);
+    if (cropTop)
+        *cropTop = static_cast<int>((q4 >> 48) & 0x7FFu);
+}
+
 // Product 480p mode-exit (pillarbox 618 in 624 / DE 640×480).
 inline PlxgRecord makePlxgRecordLegacy480(uint16_t seq) {
     PlxgRecord r{};

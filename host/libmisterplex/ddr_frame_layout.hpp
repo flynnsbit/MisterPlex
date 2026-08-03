@@ -333,6 +333,62 @@ inline bool ddrNativeStorageEligible(int coded_w, int coded_h) {
     return yuv420pFrameBytes(coded_w, coded_h) > 0;
 }
 
+// Chroma-even pad inset — MUST match ffmpeg_vf.hpp::padInsetChromaEven /
+// measured FFmpeg pad=W:H:(ow-iw)/2 on yuv420p (426→432 → x=2, not 3).
+inline int ddrPadInsetChromaEven(int ideal_inset) {
+    if (ideal_inset < 0)
+        return 0;
+    return ideal_inset & ~1;
+}
+
+// Direct-Part / host pad-only storage: coded bank = store (aligned), visible
+// content DE = source samples, crops = FFmpeg pad insets (chroma-even).
+//
+// rd-duck 2026-08-03: if PLXG sets coded=display=H_DE=432 while q5 DAR is
+// 426:240, ascal scales the padded raster and squeezes real pixels by 426/432
+// (~1.39%) plus asymmetric 2/4 black. Correct contract:
+//   coded/stride = store (432), display/H_DE = content (426), crop_left = pad_x.
+inline DdrFrameGeometry ddrPadOnlyStorageGeometry(int content_w, int content_h,
+                                                  int store_w, int store_h) {
+    DdrFrameGeometry g{};
+    if (content_w <= 0 || content_h <= 0 || store_w <= 0 || store_h <= 0 ||
+        content_w > store_w || content_h > store_h ||
+        !ddrNativeStorageEligible(store_w, store_h)) {
+        return g;
+    }
+    g = makeDdrFrameGeometry(CodedWidth{store_w}, CodedHeight{store_h},
+                             DisplayWidth{content_w}, DisplayHeight{content_h},
+                             PresentedWidth{content_w}, PresentedHeight{content_h});
+    const int ideal_x = (store_w - content_w) / 2;
+    const int ideal_y = (store_h - content_h) / 2;
+    g.crop_left = ddrPadInsetChromaEven(ideal_x);
+    g.crop_top = ddrPadInsetChromaEven(ideal_y);
+    g.crop_right = store_w - content_w - g.crop_left;
+    g.crop_bottom = store_h - content_h - g.crop_top;
+    if (g.crop_right < 0)
+        g.crop_right = 0;
+    if (g.crop_bottom < 0)
+        g.crop_bottom = 0;
+    // Content DE origin — crop places samples inside the coded bank.
+    g.present_x = 0;
+    g.present_y = 0;
+    g.placement = DdrFramePlacement::None;
+    return g;
+}
+
+// True when store is a pure pad-up of content (same contract as DP align-up).
+inline bool ddrIsPadOnlyStore(int content_w, int content_h, int store_w, int store_h) {
+    if (content_w <= 0 || content_h <= 0 || store_w <= 0 || store_h <= 0)
+        return false;
+    if (content_w > store_w || content_h > store_h)
+        return false;
+    if (!ddrNativeStorageEligible(store_w, store_h))
+        return false;
+    int aw = 0, ah = 0;
+    ddrAlignGeometryForFabricStore(content_w, content_h, aw, ah);
+    return aw == store_w && ah == store_h;
+}
+
 // Storage geometry the daemon FFmpeg/rawvideo path must emit (media_player rawW/H).
 //
 // Rules (PLXG runtime DE + source-aware programme):
@@ -340,11 +396,15 @@ inline bool ddrNativeStorageEligible(int coded_w, int coded_h) {
 //     keeps plex480p crop/pillarbox metadata.
 //   - Any other fabric-aligned WxH → **identity storage** (variable DE; ascal
 //     lifts to glass). Do NOT force 624×480 canvas — that reintroduces ARM scale.
-//   - Unaligned input → pad via ddrAlignGeometryForFabricStore then identity.
+//   - Unaligned content → pad-up store with **display=content** + chroma-even
+//     crop (426→432: display 426, crop_left 2) — never identity-on-store alone.
 //   - Unusable → last-resort product 480p canvas.
 // DE/glass canvas (1280×720 scanout) is fabric/ascal — not this function's job.
+//
+// store_w/h: precomputed pad-up bank (Direct-Part); 0 = derive from content.
 inline DdrFrameGeometry ddrStorageGeometryForContent(CodedWidth contentW,
-                                                     CodedHeight contentH) {
+                                                     CodedHeight contentH, int store_w,
+                                                     int store_h) {
     const int w = contentW.get();
     const int h = contentH.get();
     if (w == kPlex540pCodedWidth.get() && h == kPlex540pCodedHeight.get())
@@ -356,30 +416,64 @@ inline DdrFrameGeometry ddrStorageGeometryForContent(CodedWidth contentW,
     if (w == kPlex480pCodedWidth.get() && h == kPlex480pCodedHeight.get())
         return plex480pDdrFrameGeometry();
 
+    // Explicit pad-only pair (DP 426 content + 432 store).
+    if (store_w > 0 && store_h > 0 && ddrIsPadOnlyStore(w, h, store_w, store_h) &&
+        (store_w != w || store_h != h)) {
+        return ddrPadOnlyStorageGeometry(w, h, store_w, store_h);
+    }
+
     if (ddrNativeStorageEligible(w, h))
         return makeDdrFrameGeometry(CodedWidth{w}, CodedHeight{h});
 
     int aw = 0, ah = 0;
     ddrAlignGeometryForFabricStore(w, h, aw, ah);
-    if (ddrNativeStorageEligible(aw, ah))
+    if (ddrNativeStorageEligible(aw, ah)) {
+        if (aw != w || ah != h)
+            return ddrPadOnlyStorageGeometry(w, h, aw, ah);
         return makeDdrFrameGeometry(CodedWidth{aw}, CodedHeight{ah});
+    }
 
     return productDdrFrameStoreGeometry();
 }
 
-inline DdrFrameGeometry ddrStorageGeometryForContent(int contentW, int contentH) {
-    return ddrStorageGeometryForContent(CodedWidth{contentW}, CodedHeight{contentH});
+// 2-arg form (path symbol / legacy): derive pad-up store from content.
+inline DdrFrameGeometry ddrStorageGeometryForContent(CodedWidth contentW,
+                                                     CodedHeight contentH) {
+    return ddrStorageGeometryForContent(contentW, contentH, 0, 0);
 }
 
-// FPGA-present geometry for the daemon path: STORAGE, not DE canvas.
-// Decode tier selects tight 540/720 identity; everything else stays 480p canvas.
+inline DdrFrameGeometry ddrStorageGeometryForContent(int contentW, int contentH) {
+    return ddrStorageGeometryForContent(CodedWidth{contentW}, CodedHeight{contentH}, 0, 0);
+}
+
+inline DdrFrameGeometry ddrStorageGeometryForContent(int contentW, int contentH, int store_w,
+                                                     int store_h) {
+    return ddrStorageGeometryForContent(CodedWidth{contentW}, CodedHeight{contentH}, store_w,
+                                        store_h);
+}
+
+// FPGA-present geometry: content samples + optional precomputed store bank.
+// 2-arg CodedWidth form MUST stay a one-liner into ddrStorageGeometryForContent
+// (test_rtl_invariants source-native gate).
 inline DdrFrameGeometry ddrFrameGeometryForFpgaPresent(CodedWidth decodeWidth,
                                                       CodedHeight decodeHeight) {
     return ddrStorageGeometryForContent(decodeWidth, decodeHeight);
 }
 
+inline DdrFrameGeometry ddrFrameGeometryForFpgaPresent(CodedWidth decodeWidth,
+                                                      CodedHeight decodeHeight, int store_w,
+                                                      int store_h) {
+    return ddrStorageGeometryForContent(decodeWidth, decodeHeight, store_w, store_h);
+}
+
 inline DdrFrameGeometry ddrFrameGeometryForFpgaPresent(int decodeWidth, int decodeHeight) {
     return ddrFrameGeometryForFpgaPresent(CodedWidth{decodeWidth}, CodedHeight{decodeHeight});
+}
+
+inline DdrFrameGeometry ddrFrameGeometryForFpgaPresent(int decodeWidth, int decodeHeight,
+                                                      int store_w, int store_h) {
+    return ddrStorageGeometryForContent(CodedWidth{decodeWidth}, CodedHeight{decodeHeight},
+                                        store_w, store_h);
 }
 
 // Greppable alias — first integration merge dropped this name when layout conflicted.
@@ -390,6 +484,10 @@ inline DdrFrameGeometry ddrFfmpegGeometryForPresent(CodedWidth decodeWidth,
 }
 inline DdrFrameGeometry ddrFfmpegGeometryForPresent(int decodeWidth, int decodeHeight) {
     return ddrFrameGeometryForFpgaPresent(decodeWidth, decodeHeight);
+}
+inline DdrFrameGeometry ddrFfmpegGeometryForPresent(int decodeWidth, int decodeHeight,
+                                                    int store_w, int store_h) {
+    return ddrFrameGeometryForFpgaPresent(decodeWidth, decodeHeight, store_w, store_h);
 }
 
 // True when I420 payload cannot fit legacy 480p bank usable capacity

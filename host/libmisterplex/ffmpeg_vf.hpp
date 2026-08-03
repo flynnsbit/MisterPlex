@@ -653,15 +653,58 @@ inline FfmpegVfPlan buildFfmpegVideoFilter(const FfmpegVfRequest& req) {
     // Always (non-exact), or SkipIdentity with mismatched/unknown/unverified: scale+pad.
     const std::string flags = swsFlagsTokenOk(req.sws_flags) ? req.sws_flags : std::string();
 
+    // Verified pad-only FIRST (Direct Part 426 content → 432 store).
+    // Must precede hasCrop crop_pad: crop=426:240:2 on a 426-wide source is invalid;
+    // pure pad places content at chroma-even x and PLXG keeps DE=display=426.
+    //
+    // Two equivalent geometry claims that both mean pad-up, no scale:
+    //   A) product: source==display=426, coded=432, crop_left=2
+    //   B) legacy:  display==coded=432, source=426 (pre-DE split)
+    {
+        const bool yuvEvenOk = (req.source_w % 2) == 0 && (req.source_h % 2) == 0 &&
+                               (req.coded_w % 2) == 0 && (req.coded_h % 2) == 0 &&
+                               (dispW % 2) == 0 && (dispH % 2) == 0;
+        const bool srcOk = req.source_w > 0 && req.source_h > 0;
+        // A: content fills visible DE; store may be larger.
+        const bool contentFillsDisplay =
+            srcOk && req.source_w == dispW && req.source_h == dispH &&
+            req.source_w <= req.coded_w && req.source_h <= req.coded_h &&
+            (req.source_w < req.coded_w || req.source_h < req.coded_h);
+        // B: same-height into bank when display was set equal to coded.
+        const bool legacySameHeightPad =
+            srcOk && req.source_h == req.coded_h && req.source_h == dispH &&
+            req.source_w <= req.coded_w && req.source_w <= dispW &&
+            req.source_w < req.coded_w;
+        const bool verifiedPadUp =
+            req.delivery_geometry_verified && yuvEvenOk &&
+            (contentFillsDisplay || legacySameHeightPad);
+        if (verifiedPadUp) {
+            // Explicit chroma-even x/y (426→432 → pad=432:240:2:0, not (ow-iw)/2).
+            // Prefer crop_left when geometry already computed it (must match pad).
+            int px = 0, py = 0;
+            if (req.crop_left > 0 || req.crop_top > 0) {
+                px = req.crop_left;
+                py = req.crop_top;
+            } else {
+                padOnlyInsets(req.source_w, req.source_h, req.coded_w, req.coded_h, &px, &py);
+            }
+            append(buildPadOnlyNoScale(req.coded_w, req.coded_h, px, py));
+            return finish(false, false, "verified_same_height_pad_only");
+        }
+    }
+
     // Height already equals bank/display height and width is wide enough to
     // cover the display window: crop+pad ONLY when the height claim is not an
     // unverified bank-exact guess (those take FOAR above / below). Hfit path
     // (e.g. 640x480 claim) still crop-pads when H matches bank.
     // 240p / shorter sources FOAR into coded bank (need V upscale).
+    // NOT pad-up (source==display < coded) — that is verifiedPadUp above.
     const bool heightAlreadyBank = req.source_h > 0 && req.source_h == req.coded_h &&
                                    req.source_h == dispH;
     const bool wideEnoughForDisplayCrop =
         req.source_w > 0 && req.source_w >= dispW;
+    // Note: verified pad-up (source==display < coded with crop inset) already
+    // returned above. Unverified display_exact (618→624) still uses crop+pad here.
     if (hasCrop && heightAlreadyBank && wideEnoughForDisplayCrop && !exactUnverified) {
         append(buildCropPadNoScale(dispW, dispH, req.coded_w, req.coded_h, req.crop_left,
                                    req.crop_top, req.source_w));
@@ -675,24 +718,6 @@ inline FfmpegVfPlan buildFfmpegVideoFilter(const FfmpegVfRequest& req) {
         return finish(true, false,
                       flags.empty() ? "unverified_claim_scale_pad_coded"
                                     : "unverified_claim_scale_pad_coded_flags");
-    }
-
-    // Verified same-height pad-only (Direct Part 426×240 → store 432×240).
-    // H already matches bank; W source <= coded; even YUV dims. Emit pad= only —
-    // never FOAR scale (would resample every column). hasCrop+wide path above
-    // already handles display-crop; this covers display==coded bank (no crop).
-    const bool yuvEvenOk = (req.source_w % 2) == 0 && (req.source_h % 2) == 0 &&
-                           (req.coded_w % 2) == 0 && (req.coded_h % 2) == 0 &&
-                           (dispW % 2) == 0 && (dispH % 2) == 0;
-    const bool verifiedSameHeightFit =
-        req.delivery_geometry_verified && yuvEvenOk && req.source_w > 0 && req.source_h > 0 &&
-        req.source_h == req.coded_h && req.source_h == dispH && req.source_w <= req.coded_w &&
-        req.source_w <= dispW;
-    if (verifiedSameHeightFit && req.source_w < req.coded_w) {
-        // Explicit chroma-even x/y (426→432 → pad=432:240:2:0, not (ow-iw)/2).
-        append(buildPadOnlyNoScaleForSource(req.source_w, req.source_h, req.coded_w,
-                                            req.coded_h));
-        return finish(false, false, "verified_same_height_pad_only");
     }
 
     // Non-exact / unknown source that needs resample: FOAR into the CODED bank

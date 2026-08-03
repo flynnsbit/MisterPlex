@@ -442,13 +442,34 @@ int main() {
     }
 
     // --- Direct Part 426→432: verified same-height MUST be pad-only (rd-duck) ---
-    // Resolver: source=426x240, coded bank=432x240, verified. display==coded ⇒ no
-    // hasCrop; old path fell through to buildScalePadCentered (scale_applied=1).
+    // Product geom: coded=432 store, display/H_DE=426, crop_left=2 (not identity-432).
+    // Legacy display==coded still pad-only. crop_pad-first would emit invalid
+    // crop=426:240:2 on a 426-wide source — pad-only must win first.
     //
     // Placement oracle (rd-duck + live ffmpeg yuv420p): (ow-iw)/2 = 3 mathematically
     // but FFmpeg chroma-aligns x to even → content at x=2 (2 left / 4 right). Emit
     // explicit pad=432:240:2:0 so PLXG/present crop matches raw output.
     {
+        // Product path: display=content 426 + coded store 432 + crop_left=2.
+        FfmpegVfRequest rProd;
+        rProd.coded_w = 432;
+        rProd.coded_h = 240;
+        rProd.display_w = 426;
+        rProd.display_h = 240;
+        rProd.crop_left = 2;
+        rProd.crop_top = 0;
+        rProd.scale_mode = FfmpegScaleMode::Always;
+        rProd.source_w = 426;
+        rProd.source_h = 240;
+        rProd.delivery_geometry_verified = true;
+        const auto pProd = buildFfmpegVideoFilter(rProd);
+        expect(!pProd.scale_applied, "DP product 426 DE→432: scale_applied=0");
+        expect(pProd.vf.find("scale=") == std::string::npos, "DP product: no scale=");
+        expect(pProd.vf.find("crop=") == std::string::npos,
+               "DP product: no crop= (pad-up not crop-from-source)");
+        expect_eq(pProd.vf, "pad=432:240:2:0:color=black", "DP product pad x=2");
+        expect_eq(pProd.reason, "verified_same_height_pad_only", "DP product reason");
+
         FfmpegVfRequest r;
         r.coded_w = 432;
         r.coded_h = 240;
@@ -523,6 +544,10 @@ int main() {
         const auto p2 = buildFfmpegVideoFilter(r);
         expect(!p2.scale_applied && p2.vf == "pad=432:240:2:0:color=black",
                "SkipIdentity 426→432 also explicit pad x=2");
+        rProd.scale_mode = FfmpegScaleMode::SkipIdentity;
+        const auto pProd2 = buildFfmpegVideoFilter(rProd);
+        expect(!pProd2.scale_applied && pProd2.vf == "pad=432:240:2:0:color=black",
+               "SkipIdentity product DE=426 also pad x=2");
     }
 
     // Live FFmpeg oracle — MANDATORY (rd-duck fit-release gate).
