@@ -695,6 +695,56 @@ int runProduct() {
 	}
 	std::cout << "OK B20 beam lock holds OLD DE until pending_ready swap\n";
 	std::cout << "OK B20 visual hold black until swap ack (live≠applied)\n";
+
+	// ---- rd-duck: live N→N+1 after doorbell, before swap ----
+	// applied_seq must stay doorbell gen (13), not live-at-swap (17).
+	// app pitch from gen-13 snapshot (kNewW), not free-run wider.
+	sim.paintBank(/*bank*/0, kLegacyW, kH, /*y*/50);
+	sim.paintBank(/*bank*/1, kNewW, kH, /*y*/210);
+	sim.driveGeomLive(kNewW, kH, /*seq*/13);
+	for (int i = 0; i < 8; ++i)
+		sim.tick();
+	sim.top.tb_block_pending_ready = 1;
+	sim.ring(/*bank*/1, /*plxg*/13);
+	if (!sim.waitSwapPending(50000)) {
+		std::cerr << "FAIL b20-seq: no swap_pending after doorbell 13\n";
+		return 1;
+	}
+	// Live races ahead before bank swap (independent PLXG promote).
+	sim.driveGeomLive(/*w*/120, kH, /*seq*/17);
+	for (int i = 0; i < 32; ++i)
+		sim.tick();
+	// Unblock ready — swap must apply gen 13, not 17.
+	sim.top.tb_block_pending_ready = 0;
+	for (int i = 0; i < 4000; ++i) {
+		if ((int)sim.top.obs_applied_seq == 13 &&
+		    (int)sim.top.obs_app_coded_w == kNewW)
+			break;
+		if ((i % 32) == 0)
+			sim.vsync();
+		else
+			sim.tick();
+	}
+	std::cout << "MEASURED b20_seq_race applied=" << (int)sim.top.obs_applied_seq
+	          << " live_seq=" << (int)sim.top.rt_geom_seq
+	          << " app_w=" << (int)sim.top.obs_app_coded_w
+	          << " hold=" << (int)sim.top.obs_b20_visual_hold << "\n";
+	if ((int)sim.top.obs_applied_seq != 13) {
+		std::cerr << "FAIL b20-seq: applied_seq must be doorbell gen 13 got "
+		          << (int)sim.top.obs_applied_seq
+		          << " (live-at-swap would be 17)\n";
+		return 1;
+	}
+	if ((int)sim.top.obs_app_coded_w != kNewW) {
+		std::cerr << "FAIL b20-seq: app pitch must stay gen-13 snapshot got "
+		          << (int)sim.top.obs_app_coded_w << "\n";
+		return 1;
+	}
+	if (!sim.top.obs_b20_visual_hold) {
+		std::cerr << "FAIL b20-seq: visual hold must stay until live==applied\n";
+		return 1;
+	}
+	std::cout << "OK B20 applied_seq from doorbell gen not live-at-swap\n";
 	return 0;
 }
 

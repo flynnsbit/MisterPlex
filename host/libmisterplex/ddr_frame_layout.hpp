@@ -1137,8 +1137,13 @@ struct DdrBankGeomAtomicModel {
     int disp_bank = 0;
     int pend_bank = 0;
     uint16_t pend_plxg_seq = 0;
+    bool pend_snap_valid = false; // geom snapshot taken for doorbell gen
     bool fault_free_run_geom = false; // FAULT: app tracks cand immediately
     bool fault_no_visual_hold = false; // FAULT: no black while live≠applied
+    // FAULT: applied_seq <= live at swap (N+1 visual with N bank) — rd-duck.
+    bool fault_applied_seq_live_at_swap = false;
+    // FAULT: swap bank without requiring snap match.
+    bool fault_swap_without_snap = false;
 
     // b20_atomic && applied_seq != geom_seq → hold all visual consumers black
     // (rd-duck: beam lock alone insufficient for window/crop/DAR free-run).
@@ -1156,6 +1161,12 @@ struct DdrBankGeomAtomicModel {
         cand_w = w;
         if (fault_free_run_geom)
             app_w = w; // B20 defect: pitch changes before bank swap
+        // Delayed snapshot: live returned to doorbell generation.
+        if (bank_pending && !pend_snap_valid && !fault_free_run_geom &&
+            geom_live && geom_seq == pend_plxg_seq) {
+            pend_w = cand_w;
+            pend_snap_valid = true;
+        }
     }
 
     // Mode-exit disable while latch remains live+seq (b20_atomic). cand→LEG;
@@ -1168,27 +1179,38 @@ struct DdrBankGeomAtomicModel {
     }
 
     // Returns true if doorbell accepted (coupled). Does NOT apply geometry.
+    // Snapshots cand only while live still equals doorbell gen (rd-duck).
     bool observeDoorbell(int b, uint16_t plxgSeq) {
         if (!ddrDoorbellGeomCoupledOk(plxgSeq, geom_seq, geom_live, false))
             return false;
         bank_pending = true;
         pend_bank = b;
         pend_plxg_seq = plxgSeq;
-        pend_w = cand_w; // snapshot at accept (LEG after modeExitDisable)
+        if (plxgSeq == 0 || (geom_live && geom_seq == plxgSeq)) {
+            pend_w = cand_w; // snapshot at accept (LEG after modeExitDisable)
+            pend_snap_valid = true;
+        } else {
+            pend_snap_valid = false; // wait for live==pend_plxg_seq
+        }
         return true;
     }
 
     // Frame-boundary bank swap — only place product applies geometry under B20.
+    // Product refuses swap until pend_snap_valid under b20_atomic.
     void frameSwap() {
         if (!bank_pending)
             return;
+        if (b20Atomic() && !pend_snap_valid && !fault_swap_without_snap)
+            return; // hold bank until doorbell gen snapshotted
         disp_bank = pend_bank;
         bank_displayed = true;
         bank_pending = false;
         if (!fault_free_run_geom) {
             app_w = pend_w;
-            applied_seq = pend_plxg_seq; // couples visual consumers with bank
+            // PRODUCT: doorbell-matched gen. FAULT: live-at-swap (N+1 class).
+            applied_seq = fault_applied_seq_live_at_swap ? geom_seq : pend_plxg_seq;
         }
+        pend_snap_valid = false;
     }
 
     // True if display path would use new cand pitch on old bank (mixed frame).
@@ -1220,6 +1242,36 @@ inline bool ddrB20FaultNoVisualHoldExposesLiveBeforeSwap() {
     m.fault_no_visual_hold = true;
     m.promoteGeom(960, 5);
     return !m.visualHold() && m.app_w == 624 && m.geom_seq == 5;
+}
+
+// rd-duck: live advances N→N+1 after doorbell accept, before swap.
+// Product applied_seq = doorbell gen N + app pitch from N snapshot.
+// FAULT applied_seq = live N+1 with N bank/pitch (or free-run N+1 pitch).
+inline bool ddrB20ProductAppliedSeqFromDoorbellNotLive() {
+    DdrBankGeomAtomicModel m;
+    m.promoteGeom(960, 5);
+    if (!m.observeDoorbell(1, 5))
+        return false;
+    if (m.pend_w != 960 || !m.pend_snap_valid)
+        return false;
+    m.promoteGeom(1280, 7); // live N+1; pend must stay 960/seq5
+    if (m.pend_w != 960 || m.pend_plxg_seq != 5)
+        return false;
+    m.frameSwap();
+    return m.applied_seq == 5 && m.app_w == 960 && m.disp_bank == 1 &&
+           m.geom_seq == 7 && m.visualHold(); // hold until next gen applied
+}
+
+inline bool ddrB20FaultAppliedSeqLiveAtSwap() {
+    DdrBankGeomAtomicModel m;
+    m.fault_applied_seq_live_at_swap = true;
+    m.promoteGeom(960, 5);
+    if (!m.observeDoorbell(1, 5))
+        return false;
+    m.promoteGeom(1280, 7);
+    m.frameSwap();
+    // Defect: applied tracks live N+1 while app pitch still N snapshot.
+    return m.applied_seq == 7 && m.app_w == 960;
 }
 
 // present_core force_black under DDR_FRAME_STORE (product equation):

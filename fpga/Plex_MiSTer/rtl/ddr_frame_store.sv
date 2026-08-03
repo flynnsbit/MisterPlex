@@ -492,6 +492,11 @@ module ddr_frame_store #(
 	reg [10:0] app_beam_cw_r, app_beam_ch_r, app_beam_hde_r, app_beam_vde_r;
 	reg [10:0] pend_beam_cw, pend_beam_ch, pend_beam_hde, pend_beam_vde;
 	reg [15:0] applied_geom_seq_r;
+	// Doorbell-matched PLXG generation (rd-duck): NOT live at swap.
+	// Live can advance N→N+1 between accept and vsync; applied must stay N.
+	reg [15:0] pend_app_seq;
+	reg [15:0] expect_plxg_seq_r; // latched from CDC'd doorbell match
+	reg        pend_geom_waiting; // wait live==expect before snapshot
 
 	// Atomic when PLXG is live with nonzero seq (doorbell carries matching gen).
 	// FAULT: free-run app from eff even under live seq → new pitch on old bank.
@@ -663,9 +668,11 @@ module ddr_frame_store #(
 	reg disp_bank;
 	reg pending_bank;
 	reg pending_bank_ddr;
+	reg [15:0] pending_plxg_seq_ddr; // d_geom_seq at db_new_seq (0 if ungated)
 	reg disp_buf;
 	reg swap_req_s1, swap_req_s2, swap_req_seen;
 	reg pending_bank_s1, pending_bank_s2;
+	reg [15:0] pending_plxg_s1, pending_plxg_s2;
 	reg pending_ready_s1, pending_ready_s2;
 	reg pending_ready_ddr;
 	reg swap_req_t_ddr;
@@ -752,6 +759,11 @@ module ddr_frame_store #(
 			pend_beam_hde  <= 11'(DISPLAY_W);
 			pend_beam_vde  <= 11'(DISPLAY_H);
 			applied_geom_seq_r <= 16'd0;
+			pend_app_seq <= 16'd0;
+			expect_plxg_seq_r <= 16'd0;
+			pend_geom_waiting <= 1'b0;
+			pending_plxg_s1 <= 16'd0;
+			pending_plxg_s2 <= 16'd0;
 			// B16 epoch
 			geom_epoch_r <= 4'd0;
 			geom_inv_tog <= 1'b0;
@@ -770,6 +782,8 @@ module ddr_frame_store #(
 			swap_req_s2 <= swap_req_s1;
 			pending_bank_s1 <= pending_bank_ddr;
 			pending_bank_s2 <= pending_bank_s1;
+			pending_plxg_s1 <= pending_plxg_seq_ddr;
+			pending_plxg_s2 <= pending_plxg_s1;
 			pending_ready_s1 <= pending_ready_ddr;
 			pending_ready_s2 <= pending_ready_s1;
 
@@ -783,40 +797,90 @@ module ddr_frame_store #(
 				if (!(SWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC
 				      && vsync_pulse && swap_pending && pending_ready_s2))
 					swap_pending <= 1'b1;
-				// B20: snapshot candidate geometry for this bank publish.
-				// Under b20_atomic this is applied only at the swap below.
+				// B20: latch doorbell-matched PLXG generation (CDC from accept).
+				// Snapshot geom only while live still equals that generation —
+				// if live raced to N+1, wait (pend_geom_waiting) rather than
+				// binding N+1 visual tuple to an N bank (rd-duck).
+				expect_plxg_seq_r <= pending_plxg_s2;
 				if (b20_atomic) begin
-					pend_app_valid <= 1'b1;
-					pend_app_geom_en <= geom_en_r;
-					pend_app_coded_w <= eff_coded_w;
-					pend_app_coded_h <= eff_coded_h;
-					pend_app_y_stride <= eff_y_stride;
-					pend_app_c_stride <= eff_c_stride;
-					pend_app_disp_w <= eff_disp_w;
-					pend_app_disp_h <= eff_disp_h;
-					pend_app_pres_x <= eff_pres_x;
-					pend_app_pres_y <= eff_pres_y;
-					pend_app_crop_l <= eff_crop_l;
-					pend_app_crop_t <= eff_crop_t;
-					pend_app_y_fetch_qw <= eff_y_fetch_qw;
-					pend_app_c_fetch_qw <= eff_c_fetch_qw;
-					pend_app_y_pitch_qw <= eff_y_pitch_qw;
-					pend_app_c_pitch_qw <= eff_c_pitch_qw;
-					pend_app_u_base_qw <= eff_u_base_qw;
-					pend_app_v_base_qw <= eff_v_base_qw;
-					pend_app_optc_map <= eff_optc_map;
-					pend_app_base_w0 <= eff_base_w0;
-					pend_app_base_w1 <= eff_base_w1;
-					pend_app_doorbell_w <= eff_doorbell_w;
-					// Beam DE/content ride the same doorbell snapshot as pitch.
-					pend_beam_cw  <= cand_beam_cw;
-					pend_beam_ch  <= cand_beam_ch;
-					pend_beam_hde <= cand_beam_hde;
-					pend_beam_vde <= cand_beam_vde;
+					if (pending_plxg_s2 == 16'd0 ||
+					    (rt_geom_live && (rt_geom_seq == pending_plxg_s2))) begin
+						pend_app_valid <= 1'b1;
+						pend_geom_waiting <= 1'b0;
+						pend_app_seq <= pending_plxg_s2;
+						pend_app_geom_en <= geom_en_r;
+						pend_app_coded_w <= eff_coded_w;
+						pend_app_coded_h <= eff_coded_h;
+						pend_app_y_stride <= eff_y_stride;
+						pend_app_c_stride <= eff_c_stride;
+						pend_app_disp_w <= eff_disp_w;
+						pend_app_disp_h <= eff_disp_h;
+						pend_app_pres_x <= eff_pres_x;
+						pend_app_pres_y <= eff_pres_y;
+						pend_app_crop_l <= eff_crop_l;
+						pend_app_crop_t <= eff_crop_t;
+						pend_app_y_fetch_qw <= eff_y_fetch_qw;
+						pend_app_c_fetch_qw <= eff_c_fetch_qw;
+						pend_app_y_pitch_qw <= eff_y_pitch_qw;
+						pend_app_c_pitch_qw <= eff_c_pitch_qw;
+						pend_app_u_base_qw <= eff_u_base_qw;
+						pend_app_v_base_qw <= eff_v_base_qw;
+						pend_app_optc_map <= eff_optc_map;
+						pend_app_base_w0 <= eff_base_w0;
+						pend_app_base_w1 <= eff_base_w1;
+						pend_app_doorbell_w <= eff_doorbell_w;
+						pend_beam_cw  <= cand_beam_cw;
+						pend_beam_ch  <= cand_beam_ch;
+						pend_beam_hde <= cand_beam_hde;
+						pend_beam_vde <= cand_beam_vde;
+					end else begin
+						// Live ≠ doorbell gen — defer snapshot until match.
+						pend_app_valid <= 1'b0;
+						pend_geom_waiting <= 1'b1;
+						pend_app_seq <= pending_plxg_s2;
+					end
 				end
+			end else if (pend_geom_waiting && b20_atomic &&
+			             rt_geom_live && (rt_geom_seq == expect_plxg_seq_r)) begin
+				// Delayed match: live returned to doorbell generation.
+				pend_app_valid <= 1'b1;
+				pend_geom_waiting <= 1'b0;
+				pend_app_seq <= expect_plxg_seq_r;
+				pend_app_geom_en <= geom_en_r;
+				pend_app_coded_w <= eff_coded_w;
+				pend_app_coded_h <= eff_coded_h;
+				pend_app_y_stride <= eff_y_stride;
+				pend_app_c_stride <= eff_c_stride;
+				pend_app_disp_w <= eff_disp_w;
+				pend_app_disp_h <= eff_disp_h;
+				pend_app_pres_x <= eff_pres_x;
+				pend_app_pres_y <= eff_pres_y;
+				pend_app_crop_l <= eff_crop_l;
+				pend_app_crop_t <= eff_crop_t;
+				pend_app_y_fetch_qw <= eff_y_fetch_qw;
+				pend_app_c_fetch_qw <= eff_c_fetch_qw;
+				pend_app_y_pitch_qw <= eff_y_pitch_qw;
+				pend_app_c_pitch_qw <= eff_c_pitch_qw;
+				pend_app_u_base_qw <= eff_u_base_qw;
+				pend_app_v_base_qw <= eff_v_base_qw;
+				pend_app_optc_map <= eff_optc_map;
+				pend_app_base_w0 <= eff_base_w0;
+				pend_app_base_w1 <= eff_base_w1;
+				pend_app_doorbell_w <= eff_doorbell_w;
+				pend_beam_cw  <= cand_beam_cw;
+				pend_beam_ch  <= cand_beam_ch;
+				pend_beam_hde <= cand_beam_hde;
+				pend_beam_vde <= cand_beam_vde;
 			end
 
-			if (vsync_pulse && swap_pending && pending_ready_s2) begin
+			// B20: under live PLXG, do not bank-swap until doorbell gen is
+			// snapshotted (pend_app_valid). Prevents N bank + free-run N+1.
+			if (vsync_pulse && swap_pending && pending_ready_s2 &&
+			    (!b20_atomic || pend_app_valid
+`ifdef DDR_FRAME_STORE_FAULT_B20_SWAP_WITHOUT_SNAP
+			     || 1'b1
+`endif
+			    )) begin
 `ifndef DDR_FRAME_STORE_FAULT_HOLD_DISP_BANK
 				// Uses pre-NBA pending_bank: the bank that was ready this cycle.
 				// A same-cycle swap_req updates pending_bank for the *next* swap.
@@ -849,10 +913,17 @@ module ddr_frame_store #(
 					app_beam_ch_r  <= pend_beam_ch;
 					app_beam_hde_r <= pend_beam_hde;
 					app_beam_vde_r <= pend_beam_vde;
-					applied_geom_seq_r <= rt_geom_seq;
+					// PRODUCT: doorbell-matched generation — never live-at-swap
+					// (live may already be N+1; bank/app are generation N).
+`ifdef DDR_FRAME_STORE_FAULT_B20_APPLIED_SEQ_LIVE
+					applied_geom_seq_r <= rt_geom_seq; // REPRO N+1 with N bank
+`else
+					applied_geom_seq_r <= pend_app_seq;
+`endif
 					// Consume snapshot so a later free-run path cannot see a
 					// stale pend, and so mode-exit disable is one-shot with bank.
 					pend_app_valid <= 1'b0;
+					pend_geom_waiting <= 1'b0;
 				end
 				disp_buf <= ~disp_buf;
 				has_frame <= 1'b1;
@@ -899,7 +970,9 @@ module ddr_frame_store #(
 					app_beam_hde_r <= 11'(DISPLAY_W);
 					app_beam_vde_r <= 11'(DISPLAY_H);
 					applied_geom_seq_r <= 16'd0;
+					pend_app_seq <= 16'd0;
 					pend_app_valid <= 1'b0;
+					pend_geom_waiting <= 1'b0;
 				end else begin
 					app_geom_en <= geom_en_r;
 					app_coded_w <= eff_coded_w;
@@ -1786,6 +1859,7 @@ module ddr_frame_store #(
 				desired_y_r[ti] <= '0;
 			pending_ready_ddr <= 1'b0;
 			pending_bank_ddr <= 1'b0;
+			pending_plxg_seq_ddr <= 16'd0;
 			swap_req_t_ddr <= 1'b0;
 			poll_div <= 16'd0;
 			poll_pending <= 1'b0;
@@ -2015,6 +2089,10 @@ module ddr_frame_store #(
 				stale_db_polls <= '0;
 			if (db_new_seq) begin
 				pending_bank_ddr <= DDRAM_DOUT[63];
+				// Latch matched PLXG generation at accept (0 = ungated legacy).
+				// Product couples db_plxg_seq==d_geom_seq[12:0] before db_new_seq.
+				pending_plxg_seq_ddr <=
+					(db_plxg_seq == 13'd0) ? 16'd0 : d_geom_seq;
 				swap_req_t_ddr <= ~swap_req_t_ddr;
 				doorbell_ok <= 1'b1;
 				stale_db_polls <= '0;
@@ -2024,6 +2102,8 @@ module ddr_frame_store #(
 				if (spi_swap_ok &&
 				    (!STRICT_YUV_DOORBELL || (have_seq && !format_error))) begin
 					pending_bank_ddr <= bank_sel_d2;
+					// SPI has no PLXG field — ungated seq 0.
+					pending_plxg_seq_ddr <= 16'd0;
 					swap_req_t_ddr <= ~swap_req_t_ddr;
 				end
 			end

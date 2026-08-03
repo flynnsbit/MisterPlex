@@ -1275,6 +1275,9 @@ int main() {
         CHECK(ddrB20FaultModeExitFreeRunsBeforeSwap()); // REPRO
         CHECK(ddrB20ProductVisualHoldUntilSwapAck());
         CHECK(ddrB20FaultNoVisualHoldExposesLiveBeforeSwap()); // REPRO
+        // rd-duck: applied_seq from doorbell gen, not live-at-swap (N+1 class).
+        CHECK(ddrB20ProductAppliedSeqFromDoorbellNotLive());
+        CHECK(ddrB20FaultAppliedSeqLiveAtSwap()); // REPRO
         // rd-duck: reject use_frame_store as ownership — product ties 0.
         CHECK(ddrB20ProductForceBlackWithProductTieOff());
         CHECK(ddrB20FaultForceBlackOffUnderProductTieOff()); // REPRO class
@@ -1308,6 +1311,7 @@ int main() {
         std::fprintf(stderr, "  B20_BANK_GEOM_ATOMIC OK\n");
         std::fprintf(stderr, "  B20_MODE_EXIT_ATOMIC OK\n");
         std::fprintf(stderr, "  B20_VISUAL_HOLD_UNTIL_SWAP_ACK OK\n");
+        std::fprintf(stderr, "  B20_APPLIED_SEQ_FROM_DOORBELL_NOT_LIVE OK\n");
         std::fprintf(stderr, "  B20_PRODUCT_TIEOFF_FORCE_BARS_NOT_OWN OK\n");
         // rd-duck: doorbell must embed writePlxg committed useSeq, not plan.plxg_seq.
         CHECK(ddrPlxgDoorbellFaultSecondPublishMismatches()); // REPRO sticky plan=1
