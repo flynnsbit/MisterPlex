@@ -274,18 +274,23 @@ inline bool pathMayBeFabricNative(const char* delivery_basis, bool delivery_veri
                                   /*identity*/ true) == PathScaleClass::FabricNative;
 }
 
-// --- Two-regime play policy (parent 2026-08-03, miss #13 correction) ---
+// --- Two-regime play policy (parent 2026-08-03, miss #13 + #15) ---
 // Library census N=142: 98.6% constrained baseline; PMS never transcodes *to*
 // baseline, but DP preserves source profile. SD majority → DP native; HD above
-// 720p bank → universal exact 1280×720 (measured). Never hardcode ratingKeys.
+// 720p bank → universal exact 1280×720 (measured delivery). Never hardcode
+// ratingKeys.
+//
+// miss #15: ANY transcode is ARM-fallback for fabric decode (bytes = Main+B=2
+// even when decision XML says CB). HD regime remains the right *pixels* choice
+// but is never fabric-bitstream-eligible. 1080p CB DP cost = w-nostub.
 //
 // Threshold: strictly larger than the 1280×720 bank on either axis (1080p class).
 // Exact 1280×720 source stays DP-eligible (already path tier).
 enum class PlayDeliveryRegime : uint8_t {
     Unknown = 0,
-    DirectPlaySd = 1,   // native SD/≤720 H.264 Part — fabric profile when baseline
-    TranscodeHd720 = 2, // source >720p → PMS xcode 1280×720 (often High → ARM)
-    ForceUniversal = 3, // conf / non-H.264 / missing Part
+    DirectPlaySd = 1,   // native SD/≤720 H.264 Part — fabric iff bitstream CB
+    TranscodeHd720 = 2, // source >720p → PMS xcode 1280×720 — ARM decode class
+    ForceUniversal = 3, // conf / non-H.264 / missing Part — ARM decode class
 };
 
 inline const char* playDeliveryRegimeName(PlayDeliveryRegime r) {

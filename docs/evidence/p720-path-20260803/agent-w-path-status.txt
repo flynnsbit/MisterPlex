@@ -1,15 +1,9 @@
-w-path status — parent miss #13 DP-default + two-regime
-branch: w-path-720p
+w-path — miss #15 hard invariant
+tip: pending commit
 
-DONE
-- Stop baseline-lever hunt (moot): lever = avoid xcode via DP
-- preferDirect default ON (conf unset)
-- two-regime: SD→DP Part; HD>720→xcode 1280x720 from media WxH (no rk hardcode)
-- full identity header completeness + NEG thin→incomplete; live P3 400 token-only
-- gate admits CB/baseline → FabricBitstreamEligible; main/high → ArmFfmpegFallback
-- q5 writePlxgQ5 @ +0x828 (prior); bit34 VACATED
-- live PMS: P1/P2/P3/P4 HIT (see dp_default_two_regime/REPORT.md)
-- note: HD xcode on this PMS delivered constrained baseline 1280x720 (better than High assumption)
-
-TESTS: test_resolve test_osd_menu test_h264_fabric_stream_gate test_ffmpeg_vf PASS
-NO quartus / no MiSTer
+HARD: any transcode → ArmFfmpegFallback (refuse_transcode_delivery)
+      DP + CB/baseline bitstream → fabric eligible
+NEG: advertised CB + is_transcoded → ARM (unit + gateFabricFromPmsDelivery)
+HD regime = delivery 720 pixels, ARM fabric-decode class
+q5 wire + bit34 vacated unchanged
+freeze #4 fps_1001 draft only

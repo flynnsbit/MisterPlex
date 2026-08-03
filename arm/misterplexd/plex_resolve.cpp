@@ -1040,7 +1040,12 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
                               std::string("X-Plex-Token=") + urlEncodeQuery(token);
             r.ok = true;
             r.transcoded = false;
-            r.detail = "direct H.264 Part (regime=direct_play_sd" + profSuffix + ")";
+            {
+                const auto fr = gateFabricFromPmsDelivery(false, profNote);
+                r.detail = "direct H.264 Part (regime=direct_play_sd" + profSuffix +
+                           " fabric_route=" +
+                           std::string(fabricDecodeRouteStr(fabricDecodeRoute(fr))) + ")";
+            }
             applyDirectPartNativeStore();
             return r;
         }
@@ -1049,7 +1054,12 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
             r.playable = urlDecode(file);
             r.ok = true;
             r.transcoded = false;
-            r.detail = "direct H.264 Part file (regime=direct_play_sd" + profSuffix + ")";
+            {
+                const auto fr = gateFabricFromPmsDelivery(false, profNote);
+                r.detail = "direct H.264 Part file (regime=direct_play_sd" + profSuffix +
+                           " fabric_route=" +
+                           std::string(fabricDecodeRouteStr(fabricDecodeRoute(fr))) + ")";
+            }
             applyDirectPartNativeStore();
             return r;
         }
@@ -1114,8 +1124,14 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
                 r.detail = "PMS universal headers incomplete (thin identity → HTTP 400 trap)";
                 return r;
             }
-            r.detail = "PMS universal " + weakEff.profileName + " " + weakEff.videoResolution +
-                       " regime=" + r.playRegime + " " + key;
+            {
+                // miss #15: xcode never fabric-eligible regardless of advertised profile.
+                const auto fr = gateFabricFromPmsDelivery(true, profNote);
+                r.detail = "PMS universal " + weakEff.profileName + " " + weakEff.videoResolution +
+                           " regime=" + r.playRegime + " fabric_route=" +
+                           std::string(fabricDecodeRouteStr(fabricDecodeRoute(fr))) +
+                           " (" + std::string(fr.reason ? fr.reason : "") + ") " + key;
+            }
             // STREAM preferDirect fallthrough: operator can see why recon may hit CABAC.
             if (preferDirectH264) {
                 if (!metaOk)
@@ -1489,6 +1505,11 @@ bool applyContentFpsConf(const std::string& conf, int& num, int& den) {
 
 bool plexDeliveryProfileIsFabricSafe(const std::string& videoProfileAttr) {
     return plexVideoProfileAttrIsFabricSafe(videoProfileAttr);
+}
+
+bool plexDeliveryIsFabricEligible(bool is_transcoded, const std::string& advertisedVideoProfile) {
+    return fabricDecodeRouteForPmsDecision(is_transcoded, advertisedVideoProfile) ==
+           FabricDecodeRoute::FabricBitstreamEligible;
 }
 
 } // namespace misterplex

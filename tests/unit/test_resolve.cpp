@@ -405,6 +405,10 @@ int main() {
               "direct_play_sd");
         CHECK(std::string(playDeliveryRegimeName(PlayDeliveryRegime::TranscodeHd720)) ==
               "transcode_hd_720");
+        // miss #15: HD xcode class is ARM for fabric even if attr says CB
+        CHECK(!plexDeliveryIsFabricEligible(true, "constrained baseline"));
+        CHECK(plexDeliveryIsFabricEligible(false, "constrained baseline"));
+        CHECK(!plexDeliveryIsFabricEligible(false, "main"));
 
         const auto full = plexFfmpegHeaders("sess-full", "tok", WeakLadder{});
         CHECK(plexClientIdentityHeadersComplete(full));

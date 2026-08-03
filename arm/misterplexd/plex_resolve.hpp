@@ -114,9 +114,13 @@ struct PlexTranscodeProfile {
     int h264Level = 0; // Plex capability/profile-extra integer form: 30 == Level 3.0.
 };
 
-// True when a PMS decision/Media videoProfile attribute is fabric-safe Baseline.
-// Rejects high/main/empty. Implemented via h264_fabric_stream_gate.hpp.
+// Advertised Media/decision @videoProfile looks baseline/CB (metadata only).
+// miss #15: NOT sufficient for fabric open — pair with !transcoded via
+// plexDeliveryIsFabricEligible() / gateFabricFromPmsDelivery().
 bool plexDeliveryProfileIsFabricSafe(const std::string& videoProfileAttr);
+// HARD: fabric eligible only when !transcoded AND (empty or safe advertised).
+// Transcode always false even if advertised "constrained baseline".
+bool plexDeliveryIsFabricEligible(bool is_transcoded, const std::string& advertisedVideoProfile);
 
 // Built-in PMS universal transcode profiles. 240p is the legacy shipping profile;
 // 480p requests 624x480 coded to match the proven DDR frame-store geometry;

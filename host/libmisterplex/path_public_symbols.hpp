@@ -75,6 +75,10 @@ inline const char* pathPublicSymbolRollCall() {
     (void)fabricDecodeRouteStr(FabricDecodeRoute::ArmFfmpegFallback);
     (void)armFfmpegDecodeRequired(gr);
     (void)fabricBitstreamPathOpen(gr);
+    // miss #15: xcode never fabric-eligible (lying CB metadata).
+    (void)fabricDecodeRouteForPmsDecision(true, "constrained baseline");
+    (void)gateFabricFromPmsDelivery(true, "constrained baseline");
+    (void)fabricBitstreamPathOpenForPmsDelivery(true, gr);
     return "path_public_symbols_ok";
 }
 

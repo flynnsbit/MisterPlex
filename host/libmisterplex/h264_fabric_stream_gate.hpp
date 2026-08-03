@@ -1,18 +1,22 @@
 // Fabric H.264 bitstream gate — route selector, not a product hard-fail.
 //
-// Parent miss #13 (2026-08-03): library N=142 is 98.6% constrained baseline.
-// PMS will not *transcode to* baseline (pin inert on High/Main force-xcode),
-// but **direct play preserves** source profile. Product path: prefer DP for SD
-// → gate admits baseline/CB (majority traffic) → FabricBitstreamEligible.
-// Main/High (xcode HD→720 or rare library High) → Refuse* → ArmFfmpegFallback.
+// *** HARD INVARIANT (parent miss #15, 2026-08-03) — encode, do not heuristic ***
+//   Direct play  ⇒ source bytes preserved (lab: Constrained Baseline, 0 B-frames)
+//                  ⇒ may be FabricBitstreamEligible after AU/bitstream gate.
+//   Any transcode ⇒ measured Main + has_b_frames=2 on real bytes even when
+//                  decision XML advertises videoProfile="constrained baseline".
+//                  ⇒ ALWAYS ArmFfmpegFallback. No pin, Extra, or metadata
+//                  attribute suppresses this. Never open fabric on xcode.
 //
-// Disposition (product rule):
-//   Ok (baseline/CB + CAVLC + no B) → FabricBitstreamEligible
-//   any Refuse*                     → ArmFfmpegFallback (host FFmpeg; not outage)
+// Parent miss #13: prefer DP so the 98.6% CB library reaches fabric; pin cannot
+// force baseline on xcode. miss #15: decision XML profile is a LIE on xcode —
+// probe bytes (ffprobe profile/has_b_frames), not advertised attributes.
 //
-// Fabric-decode still assumes Baseline+CAVLC+no-B (CABAC is bit-serial — worst
-// H.264 tool in fabric). "Assume High in fabric" is explicitly NOT chosen.
-// 720p@30 win remains fabric owning PRESENT, not fabric decode.
+// Disposition:
+//   DP + Ok (baseline/CB + CAVLC + no B) → FabricBitstreamEligible
+//   Any transcode OR any Refuse*         → ArmFfmpegFallback (not product kill)
+//
+// 720p@30 for SD = DP native + fabric upscale (ascal), never PMS xcode pixels.
 //
 // Use before any fabric bitstream path consumes an AU. Host FFmpeg pixel path
 // must ignore Refuse* as a kill switch.
@@ -37,10 +41,11 @@ enum class FabricStreamVerdict : uint8_t {
     Ok = 0,
     RefuseNoSps,
     RefuseNoPps,
-    RefuseProfile,   // Main/High/Extended/other — not Baseline
-    RefuseCabac,     // PPS entropy_coding_mode_flag=1
-    RefuseBSlice,    // B-slice type in AU (CB has none)
+    RefuseProfile,            // Main/High/Extended/other — not Baseline (bitstream)
+    RefuseCabac,              // PPS entropy_coding_mode_flag=1
+    RefuseBSlice,             // B-slice type in AU (CB has none)
     RefuseUnsupportedPps,
+    RefuseTranscodeDelivery,  // HARD: any PMS universal/xcode — ignore advertised CB
 };
 
 // Product decode route after the bitstream gate. Refuse is fallback, not outage.
@@ -56,12 +61,26 @@ struct FabricStreamGateResult {
     uint8_t profile_idc = 0;
     bool entropy_cabac = false;
     bool constrained_baseline = false;
+    // True when route was closed solely because delivery is a PMS transcode
+    // (miss #15) — advertised profile must not be consulted.
+    bool refused_as_transcode = false;
 };
 
 // Map gate verdict → product route. ok=false never means "stop playback".
+// Bitstream-only helper — callers that know PMS delivery class MUST use
+// fabricDecodeRouteForPmsDelivery() so xcode cannot pass on a lying XML profile.
 inline FabricDecodeRoute fabricDecodeRoute(const FabricStreamGateResult& r) {
     return r.ok ? FabricDecodeRoute::FabricBitstreamEligible
                 : FabricDecodeRoute::ArmFfmpegFallback;
+}
+
+// HARD INVARIANT: is_transcoded=true ⇒ ArmFfmpegFallback, full stop.
+// Bitstream result is ignored on xcode (even if AU looked baseline).
+inline FabricDecodeRoute fabricDecodeRouteForPmsDelivery(bool is_transcoded,
+                                                         const FabricStreamGateResult& bitstream) {
+    if (is_transcoded)
+        return FabricDecodeRoute::ArmFfmpegFallback;
+    return fabricDecodeRoute(bitstream);
 }
 
 inline const char* fabricDecodeRouteStr(FabricDecodeRoute route) {
@@ -83,6 +102,13 @@ inline bool armFfmpegDecodeRequired(const FabricStreamGateResult& r) {
     return fabricDecodeRoute(r) == FabricDecodeRoute::ArmFfmpegFallback;
 }
 
+// Product open check: DP + bitstream ok. Xcode never opens.
+inline bool fabricBitstreamPathOpenForPmsDelivery(bool is_transcoded,
+                                                  const FabricStreamGateResult& bitstream) {
+    return fabricDecodeRouteForPmsDelivery(is_transcoded, bitstream) ==
+           FabricDecodeRoute::FabricBitstreamEligible;
+}
+
 inline const char* fabricStreamVerdictStr(FabricStreamVerdict v) {
     switch (v) {
     case FabricStreamVerdict::Ok:
@@ -99,6 +125,8 @@ inline const char* fabricStreamVerdictStr(FabricStreamVerdict v) {
         return "refuse_b_slice";
     case FabricStreamVerdict::RefuseUnsupportedPps:
         return "refuse_unsupported_pps";
+    case FabricStreamVerdict::RefuseTranscodeDelivery:
+        return "refuse_transcode_delivery";
     }
     return "refuse_unknown";
 }
@@ -108,8 +136,13 @@ inline bool fabricProfileIdcIsBaseline(uint8_t profile_idc) {
     return profile_idc == kH264ProfileBaseline;
 }
 
-// Plex decision/Media @videoProfile / @profile string from XML — not bitstream.
+// Plex decision/Media @videoProfile / @profile string from XML — NOT bitstream.
 // Accepts baseline / "constrained baseline"; rejects high/main/extended/empty-noise.
+//
+// WARNING (miss #15): On PMS *transcode* decisions this attribute is untrusted —
+// lab advertised "constrained baseline" while ffprobe of the TS was Main+B=2.
+// NEVER call this alone to open the fabric path. Use gateFabricFromPmsDelivery /
+// fabricDecodeRouteForPmsDecision with is_transcoded.
 inline bool plexVideoProfileAttrIsFabricSafe(const std::string& attr) {
     std::string s;
     s.reserve(attr.size());
@@ -139,6 +172,45 @@ inline bool plexVideoProfileAttrLooksLikeCabacRisk(const std::string& attr) {
         s.push_back(static_cast<char>(std::tolower(c)));
     return s.find("high") != std::string::npos || s.find("main") != std::string::npos ||
            s.find("cabac") != std::string::npos;
+}
+
+// Decision-time route before any AU: xcode always ARM; DP uses advertised
+// profile only as a weak prefilter (empty = provisional fabric until bitstream).
+// RED: advertised "constrained baseline" + is_transcoded=true → ARM (miss #15).
+inline FabricDecodeRoute fabricDecodeRouteForPmsDecision(
+    bool is_transcoded, const std::string& advertised_video_profile) {
+    if (is_transcoded)
+        return FabricDecodeRoute::ArmFfmpegFallback;
+    if (!advertised_video_profile.empty() &&
+        !plexVideoProfileAttrIsFabricSafe(advertised_video_profile))
+        return FabricDecodeRoute::ArmFfmpegFallback;
+    return FabricDecodeRoute::FabricBitstreamEligible;
+}
+
+// Decision-time gate result (logging / resolve). Never trusts xcode metadata.
+inline FabricStreamGateResult gateFabricFromPmsDelivery(
+    bool is_transcoded, const std::string& advertised_video_profile) {
+    FabricStreamGateResult r;
+    if (is_transcoded) {
+        r.ok = false;
+        r.verdict = FabricStreamVerdict::RefuseTranscodeDelivery;
+        r.reason = fabricStreamVerdictStr(FabricStreamVerdict::RefuseTranscodeDelivery);
+        r.refused_as_transcode = true;
+        return r;
+    }
+    // Direct play: weak advertised filter only when present.
+    if (!advertised_video_profile.empty() &&
+        !plexVideoProfileAttrIsFabricSafe(advertised_video_profile)) {
+        r.ok = false;
+        r.verdict = FabricStreamVerdict::RefuseProfile;
+        r.reason = fabricStreamVerdictStr(FabricStreamVerdict::RefuseProfile);
+        return r;
+    }
+    // Provisional OK until AU bitstream gate runs on the Part path.
+    r.ok = true;
+    r.verdict = FabricStreamVerdict::Ok;
+    r.reason = "ok_direct_play_provisional";
+    return r;
 }
 
 // B-slice types: 1, 6 (and SI/SP not CB product). I=2,7 P=0,5.

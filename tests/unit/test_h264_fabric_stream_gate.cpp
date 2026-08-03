@@ -205,6 +205,48 @@ int main() {
         CHECK(!fabricBitstreamPathOpen(r));
     }
 
+    // --- HARD INVARIANT miss #15: any transcode → ARM, even advertised CB ---
+    // Parent measured: decision XML videoProfile="constrained baseline" on HD
+    // xcode while ffprobe of TS bytes = Main + has_b_frames=2. Metadata lie.
+    {
+        const std::string lie_cb = "constrained baseline";
+        CHECK(plexVideoProfileAttrIsFabricSafe(lie_cb)); // naive attr-only would OPEN
+        // RED: attr-safe + transcode must NOT open fabric
+        CHECK(fabricDecodeRouteForPmsDecision(/*is_transcoded=*/true, lie_cb) ==
+              FabricDecodeRoute::ArmFfmpegFallback);
+        auto g = gateFabricFromPmsDelivery(/*is_transcoded=*/true, lie_cb);
+        CHECK(!g.ok);
+        CHECK(g.refused_as_transcode);
+        CHECK(g.verdict == FabricStreamVerdict::RefuseTranscodeDelivery);
+        CHECK(std::string(g.reason) == "refuse_transcode_delivery");
+        CHECK(fabricDecodeRoute(g) == FabricDecodeRoute::ArmFfmpegFallback);
+        // Even a "perfect" baseline bitstream result cannot open fabric on xcode.
+        NalChainInfo perfect;
+        perfect.sps.valid = true;
+        perfect.sps.profile_idc = kH264ProfileBaseline;
+        perfect.sps.constraint_flags = 0xC0;
+        perfect.pps.valid = true;
+        perfect.pps.entropy_cabac = false;
+        auto br = gateFabricH264FromChain(perfect);
+        CHECK(br.ok); // bitstream alone would pass
+        CHECK(fabricDecodeRouteForPmsDelivery(/*xcode=*/true, br) ==
+              FabricDecodeRoute::ArmFfmpegFallback);
+        CHECK(!fabricBitstreamPathOpenForPmsDelivery(true, br));
+        // DP + same lie_cb (truthful on DP) → provisional fabric
+        CHECK(fabricDecodeRouteForPmsDecision(/*is_transcoded=*/false, lie_cb) ==
+              FabricDecodeRoute::FabricBitstreamEligible);
+        auto gdp = gateFabricFromPmsDelivery(false, lie_cb);
+        CHECK(gdp.ok && !gdp.refused_as_transcode);
+        CHECK(std::string(gdp.reason) == "ok_direct_play_provisional");
+        CHECK(fabricBitstreamPathOpenForPmsDelivery(false, br));
+        // DP of Main source → ARM at decision time
+        CHECK(fabricDecodeRouteForPmsDecision(false, "main") ==
+              FabricDecodeRoute::ArmFfmpegFallback);
+        // HD regime is delivery-only; fabric class follows xcode flag
+        CHECK(fabricDecodeRouteForPmsDecision(true, "baseline") ==
+              FabricDecodeRoute::ArmFfmpegFallback);
+    }
+
     std::printf("test_h264_fabric_stream_gate: OK\n");
     return 0;
 }
