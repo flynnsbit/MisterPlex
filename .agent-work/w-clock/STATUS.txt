@@ -1,7 +1,7 @@
 w-clock STATUS 2026-08-03
-tip: c7325268
-oracle: 44a397c6 exact rtgeom + red twin
-prev: fdbef70f B2b + runtime geom OFF
+branch: w-clock-bump
+oracle_commit: 44a397c6
+head: see git rev-parse HEAD
 
 DONE:
 - Exact whole-frame oracle: pix==W*H*frames, line_acc=W..W
@@ -19,3 +19,4 @@ NO fit. NO device. PLL unapplied (20/90).
 Docs:
   .agent-work/w-clock/STA_V705_AND_OVERCLOCK_CEILING.md
   .agent-work/w-clock/RUNTIME_VARIABLE_RASTER_STA.md
+head: 6ebf8aa1
