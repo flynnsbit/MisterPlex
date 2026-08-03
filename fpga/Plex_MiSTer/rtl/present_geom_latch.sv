@@ -168,6 +168,8 @@ module present_geom_latch (
 
 			if (commit_reserved_fault)
 				q5_reserved_reject <= 1'b1;
+			else if (commit && seq_new)
+				q5_reserved_reject <= 1'b0; // good commit clears sticky
 
 			// Promote helpers (shadow sh* or pending pend_*).
 			// rd-duck: commit && frame_boundary same cycle must NOT lose the new

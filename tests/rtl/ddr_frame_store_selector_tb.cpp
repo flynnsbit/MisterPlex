@@ -41,6 +41,7 @@ struct Sim {
 		top.clk_ddr = 0;
 		top.reset = 0;
 		top.geom_enable = 0;
+		top.q5_reserved_reject = 0;
 		top.rt_coded_w = 0;
 		top.rt_coded_h = 0;
 		top.rt_y_stride = 0;
@@ -312,12 +313,45 @@ int main(int argc, char** argv) {
 	}
 
 	// Loud geom reject (0xE2): PMS 468x360 stays geom_en_r=0 and sticky E2.
-	// Extra ticks for clk→clk_ddr 2FF of geom_reject_r.
+	// Parent puzzle: w-scaler B5 saw accepted=168480 (=468*360). Measure pins.
+	// PREDICTION: pin geom_enable=1, raw_ok=0, reject_now=1, enable_eff=0,
+	//             eff_coded stays legacy (not 468), debug=E2, payload from
+	//             combinational rt_* may still report 468*360 math.
 	sim.driveGeom(true, 468, 360, 468, 234, 468, 360);
 	for (int i = 0; i < 8; ++i)
 		sim.tick();
-	if (sim.top.obs_geom_en_r != 0 || sim.top.obs_raw_ok != 0) {
-		std::cerr << "FAIL loud reject: 468x360 must not enable geom\n";
+	const uint32_t pay468 = 468u * 360u + 2u * (234u * 180u); // 252720 I420
+	const uint32_t luma468 = 468u * 360u; // 168480 — counter trap if request-counted
+	std::cout << "MEASURED_468"
+	          << " geom_enable_pin=" << (int)sim.top.obs_geom_enable_pin
+	          << " rt_raw_ok=" << (int)sim.top.obs_raw_ok
+	          << " geom_reject_now=" << (int)sim.top.obs_geom_reject_now
+	          << " geom_enable_eff=" << (int)sim.top.obs_geom_enable_eff
+	          << " geom_en_r=" << (int)sim.top.obs_geom_en_r
+	          << " geom_reject_r=" << (int)sim.top.obs_geom_reject_r
+	          << " debug=0x" << std::hex << (int)sim.top.obs_debug_state << std::dec
+	          << " eff_cw=" << (int)sim.top.obs_coded_w
+	          << " eff_ch=" << (int)sim.top.obs_coded_h
+	          << " rt_payload=" << sim.top.obs_payload_bytes
+	          << " luma468_trap=" << luma468
+	          << " i420_468=" << pay468
+	          << "\n";
+	if (sim.top.obs_geom_enable_pin != 1) {
+		std::cerr << "FAIL measure: geom_enable pin must be 1 under driveGeom(true)\n";
+		return 1;
+	}
+	if (sim.top.obs_raw_ok != 0 || sim.top.obs_geom_reject_now != 1 ||
+	    sim.top.obs_geom_enable_eff != 0) {
+		std::cerr << "FAIL measure: expect raw_ok=0 reject_now=1 enable_eff=0\n";
+		return 1;
+	}
+	if (sim.top.obs_geom_en_r != 0) {
+		std::cerr << "FAIL loud reject: 468x360 must not latch geom_en_r\n";
+		return 1;
+	}
+	// Accepted path uses legacy dims when reject — not 468.
+	if (sim.top.obs_coded_w == 468 || sim.top.obs_coded_h == 360) {
+		std::cerr << "FAIL measure: eff_coded took rejected 468x360 (store bug)\n";
 		return 1;
 	}
 	if (sim.top.obs_geom_reject_r == 0 || sim.top.obs_debug_state != 0xE2) {
@@ -326,6 +360,14 @@ int main(int argc, char** argv) {
 		          << " reject_r=" << (int)sim.top.obs_geom_reject_r << "\n";
 		return 1;
 	}
+	// rt_payload may equal I420(468) combinationally — that is NOT acceptance.
+	if (sim.top.obs_payload_bytes == luma468) {
+		std::cerr << "NOTE: payload==luma468 would be counter trap; got i420 math\n";
+	}
+	std::cout << "MEASURED_468_VERDICT store_guard_holds"
+	          << " (enable_eff=0 eff_coded!=468 debug=E2);"
+	          << " if a TB prints accepted=168480 it is counting REQUEST not ACCEPTED"
+	          << " or bypasses geom_enable_eff\n";
 	// Mode exit clears sticky.
 	sim.driveGeom(false, 0, 0, 0, 0, 0, 0);
 	for (int i = 0; i < 8; ++i)
@@ -335,11 +377,31 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 
+	// ABI#2 q5 reserved → PLXF 0xE4 (sticky, observable like 0xE2).
+	sim.top.q5_reserved_reject = 1;
+	for (int i = 0; i < 8; ++i)
+		sim.tick();
+	std::cout << "MEASURED_Q5_E4 debug=0x" << std::hex << (int)sim.top.obs_debug_state
+	          << std::dec << "\n";
+	if (sim.top.obs_debug_state != 0xE4) {
+		std::cerr << "FAIL q5 reserved must surface as PLXF debug 0xE4 got 0x"
+		          << std::hex << (int)sim.top.obs_debug_state << std::dec << "\n";
+		return 1;
+	}
+	sim.top.q5_reserved_reject = 0;
+	for (int i = 0; i < 8; ++i)
+		sim.tick();
+	if (sim.top.obs_debug_state == 0xE4) {
+		std::cerr << "FAIL q5 E4 must clear when latch sticky drops\n";
+		return 1;
+	}
+	std::cout << "PASS q5_reserved PLXF 0xE4 observable\n";
+
 	if (g_fails) {
 		std::cerr << "FAIL selector: " << g_fails << " checks\n";
 		return 1;
 	}
 	std::cout << "PASS selector_product: usable edges + 960x540 Option-C "
-	          << "U@518400 + w%16 reject + storage!=canvas + loud_E2\n";
+	          << "U@518400 + w%16 reject + storage!=canvas + loud_E2 + q5_E4\n";
 	return 0;
 }

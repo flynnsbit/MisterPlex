@@ -142,7 +142,9 @@ module ddr_frame_store #(
 	// B16: geometry transition hold (ascal HDMI_BLACKOUT / local RGB black).
 	output reg         geom_hold_black,
 	// B16: hollow/silent-legacy after prior live geom (PLXF 0xE3).
-	output wire        geom_hollow_fault
+	output wire        geom_hollow_fault,
+	// ABI#2: PLXG q5 reserved nonzero (sticky from latch) → PLXF 0xE4.
+	input  wire        q5_reserved_reject = 1'b0
 );
 	// Port/scan domain: cover presentation FRAME and max content.
 	localparam int RD_W_MAX = (FRAME_W > MAX_CODED_W) ? FRAME_W : MAX_CODED_W;
@@ -497,6 +499,8 @@ module ddr_frame_store #(
 	localparam [7:0] DEBUG_GEOM_REJECT = 8'hE2;
 	// PLXF: geom was live then dropped → silent legacy fallback (hollow / missing commit).
 	localparam [7:0] DEBUG_GEOM_HOLLOW = 8'hE3;
+	// PLXF: PLXG q5 reserved[63:34] nonzero — forward-compat trap (must be loud).
+	localparam [7:0] DEBUG_Q5_RESERVED = 8'hE4;
 
 	// Gray-code conversions for safe multi-bit CDC (want_y crossing)
 	function automatic [Y_W-1:0] y_bin2gray(input [Y_W-1:0] b);
@@ -1310,13 +1314,19 @@ module ddr_frame_store #(
 
 	// geom_reject_r (clk) → 2FF → clk_ddr for PLXF debug_state.
 	reg geom_reject_s1, geom_reject_s2;
+	// q5 reserved reject (clk_sys latch domain) → 2FF → clk_ddr.
+	reg q5_reserved_s1, q5_reserved_s2;
 	always @(posedge clk_ddr) begin
 		if (reset_ddr) begin
 			geom_reject_s1 <= 1'b0;
 			geom_reject_s2 <= 1'b0;
+			q5_reserved_s1 <= 1'b0;
+			q5_reserved_s2 <= 1'b0;
 		end else begin
 			geom_reject_s1 <= geom_reject_r;
 			geom_reject_s2 <= geom_reject_s1;
+			q5_reserved_s1 <= q5_reserved_reject;
+			q5_reserved_s2 <= q5_reserved_s1;
 		end
 	end
 	// hollow CDC
@@ -1330,10 +1340,13 @@ module ddr_frame_store #(
 			geom_hollow_s2 <= geom_hollow_s1;
 		end
 	end
+	// Priority: format > geom reject > q5 reserved > hollow > FSM nibble.
+	// q5 must be observable in PLXF the same way 0xE2 is (parent ABI#2).
 	assign debug_state = format_error ? DEBUG_FORMAT_ERROR :
 	                     (geom_reject_s2 ? DEBUG_GEOM_REJECT :
+	                     (q5_reserved_s2 ? DEBUG_Q5_RESERVED :
 	                     (geom_hollow_s2 ? DEBUG_GEOM_HOLLOW :
-	                      {LINE_COUNT[2:0], |y_valid, state_ddr}));
+	                      {LINE_COUNT[2:0], |y_valid, state_ddr})));
 
 	always @(posedge clk_ddr) begin
 		if (reset_ddr) begin

@@ -1039,6 +1039,7 @@ present_core #(
 	.geom_enable(present_geom_enable),
 	.geom_live_seq(plxg_live_seq),
 	.geom_live_valid(plxg_live_valid),
+	.q5_reserved_reject(plxg_q5_reserved_reject),
 	.geom_coded_w(present_geom_coded_w),
 	.geom_coded_h(present_geom_coded_h),
 	.geom_y_stride(present_geom_y_stride),

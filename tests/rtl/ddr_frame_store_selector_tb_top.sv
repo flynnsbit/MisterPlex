@@ -11,6 +11,7 @@ module ddr_frame_store_selector_tb (
 	input  wire        clk_ddr,
 	input  wire        reset,
 	input  wire        geom_enable,
+	input  wire        q5_reserved_reject,
 	input  wire [10:0] rt_coded_w,
 	input  wire [10:0] rt_coded_h,
 	input  wire [11:0] rt_y_stride,
@@ -37,6 +38,9 @@ module ddr_frame_store_selector_tb (
 	output wire [7:0]  obs_c_fetch_qw,
 	output wire [7:0]  obs_debug_state,
 	output wire        obs_geom_reject_r,
+	output wire        obs_geom_reject_now,
+	output wire        obs_geom_enable_eff,
+	output wire        obs_geom_enable_pin,
 	input  wire        DDRAM_BUSY,
 	input  wire [63:0] DDRAM_DOUT,
 	input  wire        DDRAM_DOUT_READY,
@@ -90,6 +94,7 @@ module ddr_frame_store_selector_tb (
 		.rd_g(rd_g),
 		.rd_b(rd_b),
 		.geom_enable(geom_enable),
+		.q5_reserved_reject(q5_reserved_reject),
 		.rt_coded_w(rt_coded_w),
 		.rt_coded_h(rt_coded_h),
 		.rt_y_stride(rt_y_stride),
@@ -144,6 +149,9 @@ module ddr_frame_store_selector_tb (
 	assign obs_c_fetch_qw     = dut.eff_c_fetch_qw;
 	assign obs_debug_state    = debug_state;
 	assign obs_geom_reject_r  = dut.geom_reject_r;
+	assign obs_geom_reject_now = dut.geom_reject_now;
+	assign obs_geom_enable_eff = dut.geom_enable_eff;
+	assign obs_geom_enable_pin = geom_enable;
 endmodule
 
 `default_nettype wire

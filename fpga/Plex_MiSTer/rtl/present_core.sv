@@ -55,6 +55,7 @@ module present_core #(
 	input  wire        geom_enable,
 	input  wire [15:0] geom_live_seq = 16'd0,
 	input  wire        geom_live_valid = 1'b0,
+	input  wire        q5_reserved_reject = 1'b0,
 	input  wire [10:0] geom_coded_w,
 	input  wire [10:0] geom_coded_h,
 	input  wire [11:0] geom_y_stride,
@@ -441,7 +442,8 @@ module present_core #(
 		.doorbell_ok(ddr_doorbell_ok),
 		.debug_state(frame_sdram_state),
 		.geom_hold_black(geom_hold_black),
-		.geom_hollow_fault(geom_hollow_fault)
+		.geom_hollow_fault(geom_hollow_fault),
+		.q5_reserved_reject(q5_reserved_reject)
 	);
 `else
 	frame_store #(
