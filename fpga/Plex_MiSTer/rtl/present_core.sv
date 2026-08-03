@@ -836,9 +836,13 @@ module present_core #(
 	end
 	// Combine store underruns (low) with mp pix underrun count; bit15 = sticky.
 	// MP_UR_STICKY — host PLXF bit15 anti-elision marker (rd-duck 2e).
-	// 16-bit combine saturate (same wrap class as count+=delta).
+	// Store underrun is 16-bit; status [14:0] is a 15-bit field with bit15=sticky.
+	// Truncating frame_underruns[14:0] aliases 0x8000→0 (rd-duck). Saturate store
+	// into 15 bits first, then saturating-add pix count.
+	wire [14:0] mp_store_ur15 =
+		(frame_underruns >= 16'h7fff) ? 15'h7fff : frame_underruns[14:0];
 	wire [15:0] mp_ur_sum16 =
-		{1'b0, frame_underruns[14:0]} + {1'b0, mp_rd_ur_count};
+		{1'b0, mp_store_ur15} + {1'b0, mp_rd_ur_count};
 	wire [14:0] mp_ur_sum =
 		(mp_ur_sum16 >= 16'h7fff) ? 15'h7fff : mp_ur_sum16[14:0];
 	wire [15:0] mp_stat_frame_underruns = {mp_rd_ur_sticky, mp_ur_sum};

@@ -71,6 +71,8 @@ struct FrameStoreStatus {
     uint8_t debug_state = 0;
     // Full PLXF underrun word: bit15 = mp pix-bridge sticky (PRESENT_MULTI_PIXEL),
     // [14:0] = saturating store + pix underrun event count.
+    // RTL saturates the 16-bit store counter into 15 bits *before* adding pix
+    // (0x8000 store must report 0x7fff, never alias to 0 via [14:0] trunc).
     uint16_t underrun_count = 0;
 
     bool nonYuvDoorbellRejected() const {

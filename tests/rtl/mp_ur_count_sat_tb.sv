@@ -83,6 +83,51 @@ module mp_ur_count_sat_tb #(
 			$display("FAIL sum 3+4");
 		end
 
+		// Store 16→15 saturate then + pix (rd-duck second boundary)
+		// model: store_ur15 = (store16 >= 7fff) ? 7fff : store16[14:0]
+		begin : store_sat
+			reg [15:0] store16;
+			reg [14:0] store15, pix15, comb;
+			reg [15:0] s16;
+			// 0x7fff store + 0 pix → 0x7fff
+			store16 = 16'h7fff; pix15 = 15'd0;
+			store15 = (store16 >= 16'h7fff) ? 15'h7fff : store16[14:0];
+			s16 = {1'b0, store15} + {1'b0, pix15};
+			comb = (s16 >= 16'h7fff) ? 15'h7fff : s16[14:0];
+			if (comb !== 15'h7fff) begin fails=fails+1; $display("FAIL store 7fff+0 got %0d", comb); end
+			// 0x8000 store alone → must be 0x7fff NOT 0 (trunc alias)
+			store16 = 16'h8000; pix15 = 15'd0;
+			store15 = (store16 >= 16'h7fff) ? 15'h7fff : store16[14:0];
+			s16 = {1'b0, store15} + {1'b0, pix15};
+			comb = (s16 >= 16'h7fff) ? 15'h7fff : s16[14:0];
+			if (comb !== 15'h7fff) begin fails=fails+1; $display("FAIL store 8000+0 got %0d (trunc would be 0)", comb); end
+			// buggy trunc: 8000[14:0]=0
+			if ((16'h8000 & 16'h7fff) !== 16'd0) begin fails=fails+1; $display("FAIL expect trunc 8000 low=0"); end
+			// 0x8000 store + pix 5 → still 0x7fff
+			store16 = 16'h8000; pix15 = 15'd5;
+			store15 = (store16 >= 16'h7fff) ? 15'h7fff : store16[14:0];
+			s16 = {1'b0, store15} + {1'b0, pix15};
+			comb = (s16 >= 16'h7fff) ? 15'h7fff : s16[14:0];
+			if (comb !== 15'h7fff) begin fails=fails+1; $display("FAIL store 8000+5 got %0d", comb); end
+			// 0x7ffe store + pix 2 → 0x7fff
+			store16 = 16'h7ffe; pix15 = 15'd2;
+			store15 = (store16 >= 16'h7fff) ? 15'h7fff : store16[14:0];
+			s16 = {1'b0, store15} + {1'b0, pix15};
+			comb = (s16 >= 16'h7fff) ? 15'h7fff : s16[14:0];
+			if (comb !== 15'h7fff) begin fails=fails+1; $display("FAIL store 7ffe+2 got %0d", comb); end
+			// 0x100 store + pix 3 → 0x103
+			store16 = 16'h0100; pix15 = 15'd3;
+			store15 = (store16 >= 16'h7fff) ? 15'h7fff : store16[14:0];
+			s16 = {1'b0, store15} + {1'b0, pix15};
+			comb = (s16 >= 16'h7fff) ? 15'h7fff : s16[14:0];
+			if (comb !== 15'h0103) begin fails=fails+1; $display("FAIL store 100+3 got %0d", comb); end
+			// 0xffff store → 0x7fff
+			store16 = 16'hffff; pix15 = 15'd0;
+			store15 = (store16 >= 16'h7fff) ? 15'h7fff : store16[14:0];
+			if (store15 !== 15'h7fff) begin fails=fails+1; $display("FAIL store ffff sat got %0d", store15); end
+			$display("OK store-sat vectors 7fff/8000/7ffe+pix");
+		end
+
 		// Prove buggy expression fails the boundary (used by RED)
 		if (!RED_WRAP_BUG) begin
 			if (sat_add_buggy(15'h7ffe, 8'd2) === 15'h7fff) begin

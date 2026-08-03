@@ -134,6 +134,22 @@ int main() {
         CHECK(decodeFrameStoreStatusWord(frameWord(9, 0, 0x8005), fs_pix));
         CHECK(fs_pix.pixUnderrunSticky());
         CHECK(fs_pix.underrunEventCount() == 5);
+        // Host sees already-packed PLXF word: RTL must sat store 0x8000→0x7fff
+        // before packing. If truncated, event count would read 0.
+        {
+            FrameStoreStatus fs_sat{};
+            fs_sat.underrun_count = 0x7FFFu; // saturated low field, sticky clear
+            CHECK(!fs_sat.pixUnderrunSticky());
+            CHECK(fs_sat.underrunEventCount() == 0x7FFFu);
+            fs_sat.underrun_count = static_cast<uint16_t>(0x8000u | 0x7FFFu); // sticky + sat
+            CHECK(fs_sat.pixUnderrunSticky());
+            CHECK(fs_sat.underrunEventCount() == 0x7FFFu);
+            // Document alias class: raw 0x8000 as full word (sticky set, count 0)
+            // is a *different* packing; product RTL must not emit count=0 for store≥0x7fff.
+            fs_sat.underrun_count = 0x8000u;
+            CHECK(fs_sat.pixUnderrunSticky());
+            CHECK(fs_sat.underrunEventCount() == 0);
+        }
         CHECK(fs_pix.underrun_count == 0x8005);
         CHECK(fs_pix.debug_state == 0);
     }
