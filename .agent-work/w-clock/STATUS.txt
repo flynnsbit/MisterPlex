@@ -1,12 +1,6 @@
 w-clock STATUS
 ==============
-Branch: w-clock-bump
-Macro PRESENT_MULTI_PIXEL default OFF — ready for integration fit
-
-PARENT (cite only):
-  CPU bank move ~14.97 ms/f @ ~88 MiB/s is STRUCTURAL (bank outside System RAM)
-  decode+CPU copy FAIL closed; DMA open (w-path); fabric decode endgame
-  Control arm: CYAN_PX=0 ACTIVE=923x717 on d1b24e0c @ video_mode=0
-
-THIS LANE: 1280 DE beam + multi-pixel path + CDC/fit contract — unaffected
-  STA slack still unknown until parent post-fit-timing
+HEAD: fabric clock headroom present+decode analysis
+PRESENT: no clk_sys bump needed at PPC>=2 (720p24) / PPC=4 (CEA60 work)
+DECODE 720p24: 86400 MB/s → 231 cy/MB @20 MHz; paint class ~4037 → WALL (~349 MHz)
+Macro OFF; CDC contract intact
