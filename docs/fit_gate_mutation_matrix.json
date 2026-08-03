@@ -129,6 +129,46 @@
       "token_hit": "1"
     },
     {
+      "check": "B32_PLXG_BANK_COUPLE_HOST",
+      "inject": "live hollow / missing product TB",
+      "expect": "B32_PLXG_BANK_COUPLE_HOST",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B32_PLXG_BANK_COUPLE_STORE",
+      "inject": "live hollow / missing product TB",
+      "expect": "B32_PLXG_BANK_COUPLE_STORE",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B32_SWAP_SEQ_FROM_LIVE_RT",
+      "inject": "live hollow / missing product TB",
+      "expect": "B32_SWAP_SEQ_FROM_LIVE_RT",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B32_VISUAL_TUPLE_PARTIAL",
+      "inject": "live hollow / missing product TB",
+      "expect": "B32_VISUAL_TUPLE_PARTIAL",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B32_POLLER_SIM_NOT_RTL",
+      "inject": "live hollow / missing product TB",
+      "expect": "B32_POLLER_SIM_NOT_RTL",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
       "check": "B9_SYS_TOP_AR_OUT_HOLD_MISSING",
       "inject": "live defective/hollow tree (no inject)",
       "expect": "B9_SYS_TOP_AR_OUT_HOLD_MISSING",
@@ -257,6 +297,14 @@
       "token_hit": "1"
     },
     {
+      "check": "B32_SWAP_SEQ_FROM_LIVE_RT",
+      "inject": "applied_geom_seq_r <= rt_geom_seq at swap (N+1 class)",
+      "expect": "B32_SWAP_SEQ_FROM_LIVE_RT",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
       "check": "STA_PATH_OWNER_UNRESOLVABLE",
       "inject": "STA present (Fmax summary) but path owner unresolvable",
       "expect": "STA_PATH_OWNER_UNRESOLVABLE",
@@ -274,6 +322,6 @@
     }
   ],
   "failures": [],
-  "n_red": 34,
-  "head": "4f347e76fed7"
+  "n_red": 40,
+  "head": "5b45e9271bf9"
 }

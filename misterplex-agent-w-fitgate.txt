@@ -1,51 +1,26 @@
 lane: w-fitgate
-role: fit-release gate ruler (scripts/fit_release_gate.py OWNER)
+role: fit-release gate ruler
 branch: w-fitgate
-HEAD: 198a8130 (B31 code 64854f01)
 GRANT: NO
 selftest: PASS true_rc=0
-mutation_matrix: rows=34 red=34 fail_holes=0
+mutation_matrix: rows=40 red=40 fail_holes=0
 
-=== PARENT LANDING REPORT (mandatory) ===
-w-fitgate NEW product RTL modules authored: 0
-w-fitgate does NOT own product .sv (parent arb #3: gate scripts only).
+B32 PLXG↔bank atomic couple (rd-duck 2026-08-03):
+  LIVE_OPEN RED: HOST, STORE, SWAP_SEQ_FROM_LIVE_RT, VISUAL_TUPLE_PARTIAL, POLLER_SIM_NOT_RTL
+  w-mem partial: host+store couple OK; still RED on
+    applied_geom_seq_r <= rt_geom_seq (N+1) + no pend fps/DAR
+  Require: doorbell carries committed PLXG seq; store match before DMA;
+    full visual tuple+seq same txn; product plxg_ddr_poller baseline (not PlxgPollerSim)
 
-OWNED artefacts — all ON_MAIN=no (not RTL → IN_FILES_QIP=n/a):
-  scripts/fit_release_gate.py          ON_MAIN=no
-  scripts/fit_release_gate.sh          ON_MAIN=no
-  docs/fit_gate_identity.json          ON_MAIN=no
-  docs/fit_gate_mutation_matrix.json   ON_MAIN=no
-  docs/fit_fmax_requirements.json      ON_MAIN=no
-  docs/fit_candidate.json              ON_MAIN=no
-  tests/unit/B20_HIER_MANIFEST.json    ON_MAIN=no
-  tests/unit/B24..B30 manifests        ON_MAIN=no
-  tests/unit/test_plex_chrome_hit_scan_static.sh ON_MAIN=no
-  tests/fixtures/fit_release_gate/*    ON_MAIN=no
+B31 HIT_SCAN=48/MAX_CMDS=112 shipping≤48 still live
+leg4 STA Fmax≥30.24 + path owner
 
-INHERITED product RTL on branch tip (NOT w-fitgate-owned; do not land via this lane):
-  present_beam_content_de.sv   ON_MAIN=no IN_FILES_QIP=no  owner=w-clock
-  present_video_timing_960.sv  ON_MAIN=no IN_FILES_QIP=no  owner=w-clock
-  present_geom_latch.sv        ON_MAIN=no IN_FILES_QIP=no  owner=w-mem
-  present_content_window.sv    ON_MAIN=no IN_FILES_QIP=no  owner=w-scaler
-  present_bilinear_lerp.sv     ON_MAIN=no IN_FILES_QIP=no  owner=w-scaler?
-  present_scale_2x.sv          ON_MAIN=no IN_FILES_QIP=no  owner=w-scaler?
-  present_scale_4_3.sv         ON_MAIN=no IN_FILES_QIP=no  owner=w-scaler?
-  present_scale_4_3_2ppc.sv    ON_MAIN=no IN_FILES_QIP=no  owner=w-scaler?
-  (+ tests/rtl/*_tb_top.sv TB only, not product)
-
-files.qip extras on w-fitgate vs main (branch hygiene only):
-  present_content_window.sv, present_geom_latch.sv, present_beam_content_de.sv
-
-TO LAND gate (parent sequences; do not unilateral merge):
-  1. cherry-pick / PR scripts+docs+tests/fixtures ONLY from origin/w-fitgate
-  2. exclude all fpga/Plex_MiSTer/rtl/*.sv and files.qip deltas
-  3. after land: make unit GREEN (main already GREEN per parent) +
-     python3 scripts/fit_release_gate.py --self-test  → expect PASS
-  4. w-osd 720p present path lands first — gate can follow as tool-only PR
+OWNED product RTL: 0 modules
+GATE ON_MAIN=no (scripts/docs/tests only)
 
 parent_run:
   git fetch origin w-fitgate
   RULER=/home/flynnsbit/Projects/MisterPlex-wt-fitgate
   "$RULER/scripts/fit_release_gate.sh" --root "$MERGE" --qsf "$MERGE/fpga/Plex_MiSTer/Plex.qsf"
 
-no_quartus / no_device / no_main_merge_by_lane
+no_quartus / no_device / no_unilateral_main_merge

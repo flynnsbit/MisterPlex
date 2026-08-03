@@ -224,6 +224,12 @@ LIVE_OPEN_BLOCKER_TOKENS = (
     # rd-duck: PLXC CDC stopped-rd + full-list conservation
     "B30_PLXC_CDC_STOPPED_RD_FULL",
     "B30_PLXC_CDC_TB_ABSENT",
+    # rd-duck: PLXG generation ↔ bank doorbell must be one atomic transaction
+    "B32_PLXG_BANK_COUPLE_HOST",
+    "B32_PLXG_BANK_COUPLE_STORE",
+    "B32_SWAP_SEQ_FROM_LIVE_RT",
+    "B32_VISUAL_TUPLE_PARTIAL",
+    "B32_POLLER_SIM_NOT_RTL",
 )
 
 # Sibling-lane fixes that exist but are not merged into this gated tree.
@@ -2247,6 +2253,368 @@ int main() {
 
 
 # ---------------------------------------------------------------------------
+# B32 — atomic PLXG generation ↔ bank doorbell coupling (rd-duck 2026-08-03)
+#
+# Observed defect class (not metastasis):
+#   host sendDdrFrame writes PLXG then kicks an independently sequenced frame
+#   doorbell (doorbellSeq_++); PLXG poller ~512 clk vs doorbell ~256; ddram_frame_rd
+#   exports start_req/bank only — no expected PLXG seq. Bank start can snapshot
+#   OLD rt_geom before new PLXG commits, or live advances again before swap
+#   (N+1 visual with N bank). w-clock app_* captures CURRENT live at swap_ack;
+#   w-mem sets applied_geom_seq_r <= CURRENT rt_geom_seq at swap (not doorbell
+#   snapshot) and lock covers only cw/ch/hde/vde — not win/origin/fps.
+#   PlxgPollerSim commits first valid; product plxg_ddr_poller baselines first
+#   valid after reset — sim E2E cannot prove reset behavior.
+#
+# Require (any one path is insufficient alone):
+#   1) doorbell carries expected PLXG {epoch,seq} field AND store wait/match
+#      before DMA/snapshot, OR explicit PLXG-accepted ACK before kick
+#   2) snapshot/publish entire visual tuple + seq from same transaction
+#   3) product poller RTL (not PlxgPollerSim alone) for reset baseline proof
+# ---------------------------------------------------------------------------
+
+
+def check_b32_plxg_bank_atomic_couple(root: Path) -> tuple[list[str], list[str]]:
+    """Fail until PLXG gen and bank doorbell are one matched transaction."""
+    msgs: list[str] = ["LEG0_B32_PLXG_BANK_ATOMIC_EXECUTED begin"]
+    errors: list[str] = []
+
+    spi_cpp = next(
+        (
+            p
+            for p in (
+                root / "arm" / "misterplexd" / "fpga_spi.cpp",
+                root / "host" / "misterplexd" / "fpga_spi.cpp",
+            )
+            if p.is_file()
+        ),
+        root / "arm" / "misterplexd" / "fpga_spi.cpp",
+    )
+    spi_hpp = spi_cpp.with_suffix(".hpp") if spi_cpp.is_file() else (
+        root / "arm" / "misterplexd" / "fpga_spi.hpp"
+    )
+    store = root / "fpga" / "Plex_MiSTer" / "rtl" / "ddr_frame_store.sv"
+    poller = root / "fpga" / "Plex_MiSTer" / "rtl" / "plxg_ddr_poller.sv"
+    layout = root / "host" / "libmisterplex" / "ddr_frame_layout.hpp"
+    core = root / "fpga" / "Plex_MiSTer" / "rtl" / "present_core.sv"
+
+    spi_txt = product_active_sv(_read(spi_cpp) or "") + "\n" + product_active_sv(
+        _read(spi_hpp) or ""
+    )
+    store_txt = product_active_sv(_read(store) or "") if store.is_file() else ""
+    poller_txt = product_active_sv(_read(poller) or "") if poller.is_file() else ""
+    layout_txt = _read(layout) or ""
+    core_txt = product_active_sv(_read(core) or "") if core.is_file() else ""
+
+    # --- Host: kick must accept / embed PLXG seq ---
+    if not spi_cpp.is_file():
+        errors.append(
+            "B32_PLXG_BANK_COUPLE_HOST: missing arm/misterplexd/fpga_spi.cpp — "
+            "cannot prove doorbell carries committed PLXG seq (rd-duck: "
+            "independent doorbellSeq_++ is the hollow path)."
+        )
+    else:
+        kick_sig = re.search(
+            r"kickDdrDoorbell\s*\(\s*int\s+bank\s*(?:,\s*uint16_t\s+\w+\s*=\s*0)?\s*\)",
+            spi_txt,
+        )
+        kick_has_plxg = bool(
+            re.search(
+                r"kickDdrDoorbell\s*\(\s*int\s+bank\s*,\s*uint16_t\s+\w+",
+                spi_txt,
+            )
+        )
+        embeds_committed = bool(
+            re.search(
+                r"ddrDoorbellPlxgSeqForPublish|doorbellPlxgSeq|committedPlxgSeq",
+                spi_txt,
+            )
+        ) or bool(
+            re.search(
+                r"kickDdrDoorbell\s*\(\s*bank\s*,\s*\w*[Pp]lxg",
+                spi_txt,
+            )
+        )
+        # Independent-only: ++doorbellSeq_ without packing PLXG field into hi
+        packs_plxg_field = bool(
+            re.search(
+                r"ddrDoorbellHi\s*\([^)]*plxg|db_plxg|plxgSeq|plxg_seq",
+                spi_txt,
+                re.I,
+            )
+        ) or (
+            embeds_committed
+            and bool(re.search(r"ddrDoorbellHi\s*\(", spi_txt))
+        )
+        # Layout helper is the ABI contract when present
+        layout_has = bool(
+            re.search(r"ddrDoorbellPlxgSeqForPublish|ddrDoorbellGeomCoupledOk", layout_txt)
+        )
+        msgs.append(
+            f"LEG0_B32_HOST kick_plxg_arg={int(kick_has_plxg)} "
+            f"committed_embed={int(embeds_committed)} "
+            f"layout_helpers={int(layout_has)} "
+            f"packs_field={int(packs_plxg_field)}"
+        )
+        if not (kick_has_plxg and embeds_committed and (packs_plxg_field or layout_has)):
+            errors.append(
+                "B32_PLXG_BANK_COUPLE_HOST: sendDdrFrame/kickDdrDoorbell must "
+                "embed *committed* writePlxg useSeq into the doorbell token "
+                "(not independent doorbellSeq_++ alone; not plan.plxg_seq sticky). "
+                "rd-duck: PLXG poller async vs frame doorbell → bank can start on "
+                "OLD rt_geom. Need kickDdrDoorbell(bank, plxgSeq) + "
+                "ddrDoorbellPlxgSeqForPublish(program_plxg, committedSeq)."
+            )
+        else:
+            msgs.append("LEG0_B32_OK host doorbell embeds committed PLXG seq")
+
+        # Must not SPI-fallback under program_plxg (ungated bank swap)
+        spi_fallback_ok = bool(
+            re.search(
+                r"program_plxg[^\n]{0,120}SPI|never fall back to SPI|spi_swap_ok\s*=\s*1'b0|"
+                r"Under program_plxg never fall back",
+                spi_txt,
+                re.I,
+            )
+        )
+        # Soft: if no mention, still fail via store spi_swap_ok check below
+        msgs.append(f"LEG0_B32_HOST_SPI_FALLBACK_GUARD hit={int(spi_fallback_ok)}")
+
+    # --- Store: db_geom_coupled match before accept ---
+    if not store.is_file():
+        errors.append(
+            "B32_PLXG_BANK_COUPLE_STORE: missing ddr_frame_store.sv — cannot prove "
+            "doorbell PLXG field wait/match before DMA/snapshot."
+        )
+    else:
+        has_db_plxg = bool(re.search(r"\bdb_plxg_seq\b", store_txt))
+        has_couple = bool(re.search(r"\bdb_geom_coupled\b", store_txt))
+        # Coupling must be able to reject mismatch (not always-true)
+        couple_always = bool(
+            re.search(
+                r"db_geom_coupled\s*=\s*1'b1",
+                store_txt,
+            )
+        )
+        match_live = bool(
+            re.search(
+                r"db_plxg_seq\s*==\s*d_geom_seq|d_geom_seq\[[^\]]+\]\s*==\s*db_plxg",
+                store_txt,
+            )
+        )
+        msgs.append(
+            f"LEG0_B32_STORE db_plxg={int(has_db_plxg)} couple={int(has_couple)} "
+            f"match_live={int(match_live)} always={int(couple_always)}"
+        )
+        if not (has_db_plxg and has_couple and match_live and not couple_always):
+            errors.append(
+                "B32_PLXG_BANK_COUPLE_STORE: ddr_frame_store must decode doorbell "
+                "PLXG field (db_plxg_seq) and require db_geom_coupled match to live "
+                "geom seq before accepting new bank/DMA snapshot. Field 0 may remain "
+                "legacy-ungated; nonzero must match. rd-duck: without wait/match, "
+                "start snapshots OLD rt_geom."
+            )
+        else:
+            msgs.append("LEG0_B32_OK store db_geom_coupled match path present")
+
+        # SPI must not swap under live PLXG (product)
+        spi_ungated = bool(
+            re.search(r"spi_swap_ok\s*=\s*1'b1", store_txt)
+        ) and not bool(
+            re.search(
+                r"`ifdef\s+DDR_FRAME_STORE_FAULT_SPI_UNGATED[\s\S]*?spi_swap_ok\s*=\s*1'b1",
+                store_txt,
+            )
+        )
+        # product_active_sv already stripped FAULT ifdefs — so spi_swap_ok=1 in
+        # product view is bad; spi_swap_ok=0 is good
+        spi_ok_zero = bool(re.search(r"spi_swap_ok\s*=\s*1'b0", store_txt))
+        if has_couple and not spi_ok_zero:
+            # only flag if coupling exists but SPI still free
+            if re.search(r"\bspi_swap_ok\b", store_txt) and not spi_ok_zero:
+                errors.append(
+                    "B32_SPI_UNGATED_UNDER_PLXG: product spi_swap_ok must be 0 "
+                    "(SPI carries bank_sel only — no PLXG generation)."
+                )
+
+        # --- applied_geom_seq at swap must NOT be bare live rt_geom_seq ---
+        # Defect: applied_geom_seq_r <= rt_geom_seq at swap_ack (N+1 if live advanced)
+        swap_from_live = bool(
+            re.search(
+                r"applied_geom_seq_r\s*<=\s*rt_geom_seq",
+                store_txt,
+            )
+        )
+        # Good patterns: from pend snapshot / doorbell field
+        swap_from_pend = bool(
+            re.search(
+                r"applied_geom_seq_r\s*<=\s*(pend_\w*seq|db_plxg|d_db_plxg|"
+                r"pend_app_geom_seq|snap_geom_seq|doorbell_plxg)",
+                store_txt,
+                re.I,
+            )
+        )
+        msgs.append(
+            f"LEG0_B32_SWAP_SEQ from_live_rt={int(swap_from_live)} "
+            f"from_pend_or_db={int(swap_from_pend)}"
+        )
+        if swap_from_live and not swap_from_pend:
+            errors.append(
+                "B32_SWAP_SEQ_FROM_LIVE_RT: ddr_frame_store assigns "
+                "`applied_geom_seq_r <= rt_geom_seq` at swap — that is CURRENT live "
+                "candidate, not the doorbell/pending transaction seq. rd-duck: live "
+                "can advance again before swap → N+1 visual tuple with N bank. "
+                "Snapshot seq from the same pend/doorbell transaction that armed DMA."
+            )
+        elif not swap_from_pend and not swap_from_live:
+            # no applied path at all under atomic
+            if not re.search(r"applied_geom_seq_r\s*<=", store_txt):
+                errors.append(
+                    "B32_SWAP_SEQ_FROM_LIVE_RT: no applied_geom_seq_r assignment — "
+                    "store does not publish which PLXG seq the bank adopted."
+                )
+            else:
+                # has assignments but not the good pattern — still require pend
+                errors.append(
+                    "B32_SWAP_SEQ_FROM_LIVE_RT: applied_geom_seq_r must load from "
+                    "pend/doorbell snapshot seq (not free-running live)."
+                )
+        else:
+            msgs.append("LEG0_B32_OK applied_geom_seq from pend/doorbell snapshot")
+
+        # --- Full visual tuple in pend (not beam-only) ---
+        beam_only_markers = (
+            bool(re.search(r"pend_beam_cw|pend_app_coded_w", store_txt)),
+            bool(re.search(r"pend_app_pres_x|pend_app_crop_l", store_txt)),
+            bool(
+                re.search(
+                    r"pend_app_.*fps|pend_.*content_fps|pend_app_dar|pend_q5|"
+                    r"pend_app_sar|pend_fps",
+                    store_txt,
+                    re.I,
+                )
+            ),
+            bool(re.search(r"pend_app_geom_en", store_txt)),
+        )
+        msgs.append(
+            f"LEG0_B32_TUPLE beam/coded={int(beam_only_markers[0])} "
+            f"win/crop={int(beam_only_markers[1])} "
+            f"fps/dar={int(beam_only_markers[2])} "
+            f"geom_en={int(beam_only_markers[3])}"
+        )
+        if not (beam_only_markers[0] and beam_only_markers[1] and beam_only_markers[3]):
+            errors.append(
+                "B32_VISUAL_TUPLE_PARTIAL: bank pend snapshot must include geom_en + "
+                "coded/disp + window origin/crop with the bank (rd-duck: lock of only "
+                "cw/ch/hde/vde leaves win enable/origin free-running)."
+            )
+        if not beam_only_markers[2]:
+            errors.append(
+                "B32_VISUAL_TUPLE_PARTIAL: bank pend snapshot must include fps/DAR "
+                "(q5) with the same transaction — beam DE lock alone is not the "
+                "full visual tuple (rd-duck)."
+            )
+        if all(beam_only_markers):
+            msgs.append("LEG0_B32_OK full visual tuple fields in pend snapshot")
+
+    # --- present_core must not capture CURRENT live at swap as sole apply ---
+    if core.is_file():
+        # Anti-pattern: apply live geom on swap_ack without store applied seq match
+        free_live_swap = bool(
+            re.search(
+                r"visual_swap_ack[^\n]{0,80}rt_geom|swap_ack[^\n]{0,80}geom_live",
+                core_txt,
+            )
+        )
+        uses_applied = bool(
+            re.search(
+                r"applied_geom_seq|store_applied|app_geom_seq",
+                core_txt,
+            )
+        )
+        msgs.append(
+            f"LEG0_B32_CORE free_live_swap={int(free_live_swap)} "
+            f"uses_applied_seq={int(uses_applied)}"
+        )
+        if free_live_swap and not uses_applied:
+            errors.append(
+                "B32_SWAP_SEQ_FROM_LIVE_RT: present_core applies CURRENT live "
+                "candidate at swap_ack without store applied_geom_seq — same N+1 "
+                "class (rd-duck w-clock app_* capture)."
+            )
+
+    # --- Poller: product RTL baseline, not PlxgPollerSim alone ---
+    # Search tests + host for PlxgPollerSim vs product module
+    sim_hits = 0
+    rtl_poller = poller.is_file() and bool(
+        re.search(r"module\s+plxg_ddr_poller\b", poller_txt)
+    )
+    baseline_rtl = rtl_poller and bool(
+        re.search(r"baseline|boot_base|first\s+valid", poller_txt, re.I)
+    )
+    for p in root.rglob("*"):
+        if not p.is_file():
+            continue
+        if p.suffix not in {".cpp", ".hpp", ".h", ".sv", ".v"}:
+            continue
+        # skip huge build trees
+        if any(x in p.parts for x in ("build", ".git", ".agent-work")):
+            continue
+        try:
+            t = p.read_text(errors="ignore")
+        except OSError:
+            continue
+        if re.search(r"\bPlxgPollerSim\b", t):
+            sim_hits += 1
+    msgs.append(
+        f"LEG0_B32_POLLER rtl_module={int(rtl_poller)} baseline={int(baseline_rtl)} "
+        f"PlxgPollerSim_files={sim_hits}"
+    )
+    if not rtl_poller:
+        errors.append(
+            "B32_POLLER_SIM_NOT_RTL: missing plxg_ddr_poller.sv product module. "
+            "PlxgPollerSim alone is not actual RTL (rd-duck: sim commits first "
+            "valid; product baselines first valid after reset — E2E cannot prove "
+            "reset behavior without the real poller)."
+        )
+    elif not baseline_rtl:
+        errors.append(
+            "B32_POLLER_SIM_NOT_RTL: plxg_ddr_poller.sv present but no baseline/"
+            "first-valid-after-reset behavior visible — cannot prove reset contract."
+        )
+    else:
+        msgs.append("LEG0_B32_OK product plxg_ddr_poller with baseline path")
+
+    # Optional: executable twin if present (do not soft-skip if absent)
+    man = root / "tests" / "unit" / "B32_PLXG_BANK_ATOMIC_MANIFEST.json"
+    if man.is_file():
+        try:
+            spec = json.loads(man.read_text())
+            script = root / str(spec.get("script", ""))
+            if script.is_file():
+                rc_e, out_e = _run(["bash", str(script)], cwd=root)
+                msgs.append(f"LEG0_B32_EXEC true_rc={rc_e}")
+                case_t = str(spec.get("case", "CASE B32_PLXG_BANK_ATOMIC EXECUTED"))
+                pass_t = str(spec.get("pass", "PASS B32_PLXG_BANK_ATOMIC"))
+                if rc_e != 0 or case_t not in (out_e or "") or pass_t not in (out_e or ""):
+                    errors.append(
+                        f"B32_PLXG_BANK_COUPLE_EXEC_FAIL: {script} true_rc={rc_e} "
+                        f"need {case_t!r}+{pass_t!r} (soft-skip≠PASS)."
+                    )
+                else:
+                    msgs.append("LEG0_B32_OK executable atomic couple twin PASS")
+        except json.JSONDecodeError as e:
+            errors.append(f"B32_MANIFEST_BAD_JSON: {man}: {e}")
+
+    if not errors:
+        msgs.append(
+            "LEG0_B32_PASS PLXG↔bank atomic couple locked "
+            "(doorbell seq + store match + full tuple + product poller)"
+        )
+    return msgs, errors
+
+
+# ---------------------------------------------------------------------------
 # B24 — PLXG q5 bit34 fps_1001 ABI merge-loss (rd-duck 2026-08-03)
 # w-path f31a6eb9: q5[34]=fps_1001, reserved[63:35], pack 24000/1001 → 24+flag
 # w-mem latch: q5_reserved_nz=|sh5[63:34] → E4 / wholesale geom reject
@@ -3994,6 +4362,7 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
         "EXECUTABLE=B20_hier_manifest,B24_q5_fps_1001,B25_plxc_dual_map,"
         "B28_q5_atomic_poller,B29_direct_part_vf,B30_plxc_cdc_stopped_rd,"
         "B31_hit_scan_prefit_cap(shipping_budget_g++),"
+        "B32_plxg_bank_atomic_couple(host+store+tuple+poller_rtl),"
         "leg_unit_make_unit,leg_rtl_lint,leg2_elab,leg3_true_de; "
         "B20_PRODUCT_UFS_TIE=elaborate Plex.sv .use_frame_store(1'b0) + reject "
         "ownership-on-ufs (w-clock free-run) + H require product-ufs0 hold measured_* "
@@ -5407,6 +5776,11 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
     b31_msgs, b31_errs = check_b31_hit_scan_prefit_cap(ROOT)
     msgs.extend(b31_msgs)
     errors.extend(b31_errs)
+
+    # --- B32 PLXG↔bank atomic couple (rd-duck: no independent doorbell) ---
+    b32_msgs, b32_errs = check_b32_plxg_bank_atomic_couple(ROOT)
+    msgs.extend(b32_msgs)
+    errors.extend(b32_errs)
 
     # --- B20 full-hierarchy scenario tests (rd-duck 2026-08-03 hollow audit) ---
     # Prior gate only regex-scanned test *text* and accepted comment bait (mutation
@@ -7245,6 +7619,11 @@ def _run_mutation_matrix() -> tuple[list[str], list[dict[str, str]]]:
         "B30_PLXC_CDC_TB_ABSENT",
         "B20_HIER_H_DELAYED_PENDING_READY",
         "B31_HIT_SCAN_PRODUCT_ABSENT",
+        "B32_PLXG_BANK_COUPLE_HOST",
+        "B32_PLXG_BANK_COUPLE_STORE",
+        "B32_SWAP_SEQ_FROM_LIVE_RT",
+        "B32_VISUAL_TUPLE_PARTIAL",
+        "B32_POLLER_SIM_NOT_RTL",
     ):
         txt = "\n".join(msgs)
         has = tok in txt
@@ -7591,6 +7970,62 @@ def _run_mutation_matrix() -> tuple[list[str], list[dict[str, str]]]:
             try:
                 if "fitgate B31 mutation seed" in sys_m.read_text(errors="replace"):
                     sys_m.unlink()
+            except OSError:
+                pass
+
+    # --- rd-duck B32: PLXG↔bank couple — reinject live-rt applied seq ---
+    store_b32 = ROOT / "fpga" / "Plex_MiSTer" / "rtl" / "ddr_frame_store.sv"
+    store_b32.parent.mkdir(parents=True, exist_ok=True)
+    seeded_store = not store_b32.is_file()
+    # Minimal store that looks "coupled" on host-side greps but still assigns
+    # applied from live rt at swap — must stay RED on B32_SWAP_SEQ_FROM_LIVE_RT.
+    bad_store = (
+        "// fitgate B32 mutation seed — couple wires present, seq from LIVE rt\n"
+        "module ddr_frame_store;\n"
+        "  input wire [15:0] rt_geom_seq;\n"
+        "  reg [15:0] applied_geom_seq_r;\n"
+        "  reg pend_app_geom_en, pend_app_coded_w, pend_app_pres_x, pend_app_crop_l;\n"
+        "  // missing pend fps/dar on purpose\n"
+        "  wire [12:0] db_plxg_seq = 13'd1;\n"
+        "  wire db_geom_coupled = (db_plxg_seq == d_geom_seq[12:0]);\n"
+        "  wire [15:0] d_geom_seq = rt_geom_seq;\n"
+        "  wire spi_swap_ok = 1'b0;\n"
+        "  always @(*) begin\n"
+        "    // DEFECT: applied from CURRENT live, not doorbell/pend snapshot\n"
+        "    applied_geom_seq_r <= rt_geom_seq;\n"
+        "  end\n"
+        "endmodule\n"
+    )
+    if store_b32.is_file():
+        old_st = store_b32.read_text()
+        # Force the live-rt assignment if not already the only path
+        inj = old_st
+        if "applied_geom_seq_r <= rt_geom_seq" not in old_st:
+            inj = old_st + "\n// fitgate B32 inject\nreg [15:0] applied_geom_seq_r; always @(*) applied_geom_seq_r <= rt_geom_seq;\n"
+        # Strip good pend-seq assigns if any
+        inj = re.sub(
+            r"applied_geom_seq_r\s*<=\s*pend_\w+\s*;",
+            "applied_geom_seq_r <= rt_geom_seq;",
+            inj,
+        )
+        rest_st = _with_file_backup(store_b32, inj)
+    else:
+        rest_st = _with_file_backup(store_b32, bad_store)
+    try:
+        rc, msgs = leg0_arch_blockers()
+        _row(
+            "B32_SWAP_SEQ_FROM_LIVE_RT",
+            "applied_geom_seq_r <= rt_geom_seq at swap (N+1 class)",
+            "B32_SWAP_SEQ_FROM_LIVE_RT",
+            rc,
+            msgs,
+        )
+    finally:
+        rest_st()
+        if seeded_store and store_b32.is_file():
+            try:
+                if "fitgate B32 mutation seed" in store_b32.read_text(errors="replace"):
+                    store_b32.unlink()
             except OSError:
                 pass
 
