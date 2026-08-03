@@ -1,6 +1,6 @@
 lane=w-path
 status=PL330_CRITICAL_AWAITING_GATE
-tip=pending
+tip=e7700ce1
 ARCH: CPU bank copy STRUCTURAL 88MiB/s uncached (outside System RAM) — closed FAIL serial
 DecodeIntoBank SUSPECT — no further build until measured
 PL330 = critical path; instrument ready (linux DMAGO + content + ceiling)
