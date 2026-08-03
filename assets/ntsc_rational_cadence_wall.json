@@ -1,7 +1,7 @@
 {
   "title": "NTSC rational cadence wall (rd-duck B15 follow-up)",
   "owner": "w-clock",
-  "status": "OPEN_CADENCE \u2014 integer class only; bit34 RESERVED per parent #4; no source-lock claim",
+  "status": "OPEN_CADENCE \u2014 swap\u2260advance; Bresenham V designed not wired; no B15 source-lock close",
   "parent_arbitration_4": {
     "bit34": "RESERVED stays; w-path #2.1 VACATED",
     "w_mem_reserved_check": "CORRECT stays",
@@ -65,7 +65,10 @@
     "judder controlled for common NTSC rates",
     "B15 framecount proves unique-bank lock under NTSC",
     "fps_1001 / bit34 rational cadence fixed (unilateral w-path #2.1)",
-    "23.976 record accepted end-to-end on current multi-tip tree"
+    "23.976 record accepted end-to-end on current multi-tip tree",
+    "B15 closed via present_cadence / advance_unique alone",
+    "B15 closed via fps_1001 wire flag alone",
+    "source-locked displayed unique frames without Bresenham beam or proven swap queue"
   ],
   "claims_allowed": [
     "integer 24/25/30 class selection and short-window advance math",
@@ -107,5 +110,66 @@
     }
   ],
   "recommendation": "Priority (a) fit (b) 720p present (c) cadence. For (c): D_two_value_vtotal_dither preferred over C when ascal defaults hold; bit34 reserved until future freeze. No NTSC source-lock claim until D or C + bank model ships.",
-  "gate": "tests/unit/test_ntsc_rational_cadence_wall.sh"
+  "gate": "tests/unit/test_ntsc_rational_cadence_wall.sh",
+  "swap_vs_advance": {
+    "ddr_swap": "fstart && swap_pending",
+    "advance_unique": "present_cadence telemetry only \u2014 does NOT drive bank swap",
+    "source": "present_core.sv NOTE DDR bank swap ... NOT advance",
+    "implication": "fps_1001 or cadence counter alone cannot fix displayed unique-frame rate"
+  },
+  "fixed_integer_slip_min": {
+    "exact_24_vs_V705_min": 24.801,
+    "exact_30_vs_V564_min": 19.841,
+    "note": "even integer 24/30 need rare extra lines for zero long-haul slip"
+  },
+  "bresenham_vtotal_h1182": {
+    "implemented": false,
+    "clk_sys_hz": 20000000,
+    "H_TOTAL": 1182,
+    "rates": {
+      "24000/1001": {
+        "mean_V": "1251250/1773",
+        "pair": [
+          705,
+          706
+        ],
+        "duty_hi": 0.7247602933
+      },
+      "30000/1001": {
+        "mean_V": "1001000/1773",
+        "pair": [
+          564,
+          565
+        ],
+        "duty_hi": 0.5798082346
+      },
+      "24": {
+        "mean_V": "1250000/1773",
+        "pair": [
+          705,
+          706
+        ],
+        "duty_hi": 0.0197405527
+      },
+      "30": {
+        "mean_V": "1000000/1773",
+        "pair": [
+          564,
+          565
+        ],
+        "duty_hi": 0.0157924422
+      }
+    },
+    "jitter_us": 59.1,
+    "long_run_hz_exact": true,
+    "ascal_one_line_absorb_default": true,
+    "ascal_evidence": ".agent-work/w-clock/ASCAL_VSYNC_DITHER_ABSORB.md",
+    "doc": ".agent-work/w-clock/BRESENHAM_VTOTAL_SOURCE_LOCK.md"
+  },
+  "b15_close_requires": [
+    "beam mean period matches content rational (Bresenham V or equiv)",
+    "unique-bank count under fstart&&swap_pending policy (not advance-only)",
+    "long-window evidence",
+    "parent ABI if mode select needs new q5 bits (#4 bit34 still RESERVED)"
+  ]
 }

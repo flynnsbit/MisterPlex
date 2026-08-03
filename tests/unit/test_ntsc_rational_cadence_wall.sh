@@ -63,6 +63,12 @@ assert conf.is_file(), "missing Q5_BIT34_ABI_CONFLICT.md"
 assert "arbitration #4" in conf.read_text().lower() or "parent arbitration" in conf.read_text().lower()
 arb4 = root / ".agent-work/w-clock/PARENT_ABI_ARBITRATION_4.md"
 assert arb4.is_file(), "missing PARENT_ABI_ARBITRATION_4.md"
+
+assert c.get("swap_vs_advance",{}).get("ddr_swap","").find("swap_pending")>=0
+assert c.get("bresenham_vtotal_h1182",{}).get("implemented") is False
+assert any("advance_unique" in x or "present_cadence" in x for x in c["claims_forbidden_until_fix"])
+print("OK swap≠advance + Bresenham designed-not-wired fence")
+
 print("OK json wall + parent #4 bit34 RESERVED + D dither arithmetic fence")
 
 # Product path still integer-only fps — no unilateral fps_1001 consumer
