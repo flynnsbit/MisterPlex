@@ -329,6 +329,7 @@ present-720p-fit-contract:
 	$(ROOT)/tests/unit/test_bresenham_vtotal_arith.sh
 	$(ROOT)/tests/unit/test_bresenham_vtotal_impl.sh
 	$(ROOT)/tests/unit/test_b20_beam_de_hold.sh
+	$(ROOT)/tests/unit/test_plxg_display_crop_oracle.sh
 	$(ROOT)/tests/unit/test_present_core_owner_merge.sh
 	$(ROOT)/tests/unit/test_b15_product_fps_wiring.sh
 

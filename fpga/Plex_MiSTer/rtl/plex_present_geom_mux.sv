@@ -10,6 +10,12 @@
 //
 // Priority: PLXG content > owned disable→legacy 624 > idle BEAM_960 fallback
 //           > FABRIC_NATIVE_720P_GEOM > O[4] ladder 640/320.
+//
+// B21 (rd-duck): PLXG q3 display (plxg_dw/dh) + crop must drive store display_* —
+// never force display=coded. Legitimate 624 coded / 618 display / crop_left=3
+// otherwise becomes display=624+crop3 → reads past filled bytes (x=626).
+// Valid only when dw,dh!=0 and crop+display <= coded; else safe coded+crop0.
+// FAULT_MUX_DISPLAY_EQ_CODED: red twin restores dead-q3 bypass.
 
 `timescale 1ns / 1ps
 `default_nettype none
@@ -187,12 +193,34 @@ module plex_present_geom_mux (
 	assign present_content_y0 = plxg_content ? plxg_cy0 : 11'd0;
 `endif
 
+	// ---- B21: display/crop from PLXG q3 (not coded clone) ----------------------------
+	// crop_end uses 12-bit sum so crop+display cannot wrap 11-bit before compare.
+	wire [11:0] plxg_crop_end_x = {1'b0, plxg_cl} + {1'b0, plxg_dw};
+	wire [11:0] plxg_crop_end_y = {1'b0, plxg_ct} + {1'b0, plxg_dh};
+	wire        plxg_disp_in_bounds =
+		plxg_content &&
+		(plxg_dw != 11'd0) && (plxg_dh != 11'd0) &&
+		(plxg_crop_end_x <= {1'b0, plxg_coded_w}) &&
+		(plxg_crop_end_y <= {1'b0, plxg_coded_h});
+
+`ifdef FAULT_MUX_DISPLAY_EQ_CODED
+	// RED: q3 display dead — always display=coded (runtime-pivot constant bypass).
+	// Crop still passes → crop+coded can over-read (island/OOB class).
 	assign present_geom_display_w = present_geom_coded_w;
 	assign present_geom_display_h = present_geom_coded_h;
-	assign present_geom_present_x = plxg_content ? plxg_px : 11'd0;
-	assign present_geom_present_y = plxg_content ? plxg_py : 11'd0;
 	assign present_geom_crop_left = plxg_content ? plxg_cl : 11'd0;
 	assign present_geom_crop_top  = plxg_content ? plxg_ct : 11'd0;
+`else
+	// Product: content-bearing in-bounds → plxg_dw/dh + crop; else coded + crop0.
+	assign present_geom_display_w =
+		plxg_disp_in_bounds ? plxg_dw : present_geom_coded_w;
+	assign present_geom_display_h =
+		plxg_disp_in_bounds ? plxg_dh : present_geom_coded_h;
+	assign present_geom_crop_left = plxg_disp_in_bounds ? plxg_cl : 11'd0;
+	assign present_geom_crop_top  = plxg_disp_in_bounds ? plxg_ct : 11'd0;
+`endif
+	assign present_geom_present_x = plxg_content ? plxg_px : 11'd0;
+	assign present_geom_present_y = plxg_content ? plxg_py : 11'd0;
 endmodule
 
 `default_nettype wire
