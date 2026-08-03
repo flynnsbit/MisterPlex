@@ -1,1 +1,1 @@
-w-path 266701c1 FACT2 content-canvas; mode0=1280; glass≠bank; NOT retired; tests rc=0
+w-path w-path-720p de4fcf52 720p PROFILE LIVE; L30 maxBR3100; probe --profile 720p; test_resolve rc=0
