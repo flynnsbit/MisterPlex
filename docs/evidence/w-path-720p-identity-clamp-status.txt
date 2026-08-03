@@ -1,7 +1,7 @@
 # w-path status — 720p clamp + identity vf
 branch: w-path-720p-identity-clamp
 pin_base: 842e45c90a848ab11739fc2de82cc1a66c0fea4d
-tip: e0e4093eda56b724bdc1bfb2c86bf6bd57770a29
+tip: 40aaed8a316e6579a0825044c99fcb771a3fe33a
 worktree: /home/flynnsbit/Projects/MisterPlex-wt-path-720fix
 
 ## Delivered
