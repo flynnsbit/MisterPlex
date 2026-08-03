@@ -824,8 +824,10 @@ module present_core #(
 			// keeps the bit set without needing edges.
 			if (mp_rd_ur_sticky_sync[2])
 				mp_rd_ur_sticky <= 1'b1;
+			// Saturate with 16-bit sum (rd-duck): 15-bit add wraps before compare
+			// e.g. 15'h7ffe + 2 = 0 in 15 bits → falsely took non-sat path.
 			if (mp_rd_ur_delta != 8'd0) begin
-				if (15'(mp_rd_ur_count) + 15'(mp_rd_ur_delta) < 15'h7fff)
+				if (16'({1'b0, mp_rd_ur_count}) + 16'(mp_rd_ur_delta) < 16'h7fff)
 					mp_rd_ur_count <= mp_rd_ur_count + 15'(mp_rd_ur_delta);
 				else
 					mp_rd_ur_count <= 15'h7fff;
@@ -834,10 +836,11 @@ module present_core #(
 	end
 	// Combine store underruns (low) with mp pix underrun count; bit15 = sticky.
 	// MP_UR_STICKY — host PLXF bit15 anti-elision marker (rd-duck 2e).
+	// 16-bit combine saturate (same wrap class as count+=delta).
+	wire [15:0] mp_ur_sum16 =
+		{1'b0, frame_underruns[14:0]} + {1'b0, mp_rd_ur_count};
 	wire [14:0] mp_ur_sum =
-		(frame_underruns[14:0] > (15'h7fff - mp_rd_ur_count))
-			? 15'h7fff
-			: (frame_underruns[14:0] + mp_rd_ur_count);
+		(mp_ur_sum16 >= 16'h7fff) ? 15'h7fff : mp_ur_sum16[14:0];
 	wire [15:0] mp_stat_frame_underruns = {mp_rd_ur_sticky, mp_ur_sum};
 
 	// FIFO sideband owns H/V/fstart always (same-clock and PLL).
