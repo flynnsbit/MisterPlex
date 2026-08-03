@@ -1,4 +1,5 @@
 // Red-before-green: cached DDR map must not allow doorbell without flush.
+// Sweep-3: host-copy is NOT a bank rate; coherent flush is a penalty.
 #include "libmisterplex/ddr_mem_map_policy.hpp"
 
 #include <cstdio>
@@ -16,11 +17,11 @@ static int fails = 0;
     } while (0)
 
 int main() {
-    // RED cases first — these encode the tearing bug class.
+    // RED cases — tearing class if doorbell before visibility.
     CHECK(!ddrMemMayRingDoorbell(DdrMemMapPolicy::CachedExplicitFlush, /*flush=*/false));
     CHECK(!ddrMemMapConfPublishSafe(/*sync=*/false, /*flush=*/false));
 
-    // GREEN
+    // GREEN ordering
     CHECK(ddrMemMayRingDoorbell(DdrMemMapPolicy::CachedExplicitFlush, true));
     CHECK(ddrMemMayRingDoorbell(DdrMemMapPolicy::StronglyOrderedSync, false));
     CHECK(ddrMemMapConfPublishSafe(true, false));
@@ -35,16 +36,22 @@ int main() {
     CHECK(ddrMemMapPolicyFromConf(true, false) == DdrMemMapPolicy::StronglyOrderedSync);
     CHECK(ddrMemMapPolicyFromConf(false, true) == DdrMemMapPolicy::CachedExplicitFlush);
 
-    // Parent bandwidth arithmetic
-    CHECK(kParentDdrMapped720pFrameMs == 15.210);
-    CHECK(kParentDdrHostCopy720pFrameMs == 2.998);
+    // Sweep-3 bank arithmetic (parent true rc=0)
+    CHECK(kParentDdrBestBank720pFrameMs == 15.283);
+    CHECK(kParentDdrMappedBank720pMibps == 86.262);
+    CHECK(kParentDdrCoherentFlush720pFrameMs == 19.861);
+    CHECK(ddr720p24CoherentFlushPenaltyMs() > 4.5 &&
+          ddr720p24CoherentFlushPenaltyMs() < 4.6);
     CHECK(!ddr720p24MappedPathFitsAt1500k());
-    CHECK(ddr720p24HostCopyCeilingFitsAt1500k());
-    CHECK(ddr720p24MappedToHostCopyMsSaved() > 12.2 &&
-          ddr720p24MappedToHostCopyMsSaved() < 12.3);
+    CHECK(!ddr720p24SerialPathFitsAt3500k());
+    CHECK(!ddr720p24SerialPathFitsAt4000k());
+    CHECK(!ddr720p24HostCopyIsReachableBankRate());
+    CHECK(!ddr720p24HostCopyCeilingFitsAt1500k()); // RETRACTED ship claim
+    CHECK(ddr720p24MappedToHostCopyMsSaved() == 0.0);
+    // Ordinary-RAM figure retained only as non-bank reference.
+    CHECK(kParentDdrHostCopyOrdinaryRam720pFrameMs == 2.998);
 
     // Source-level: product sendDdrFrame must refuse SYNC=0 without FLUSH.
-    // (Static string gate — catches regression removing the hard error.)
     {
         FILE* f = std::fopen("arm/misterplexd/fpga_spi.cpp", "r");
         CHECK(f != nullptr);
@@ -53,9 +60,7 @@ int main() {
             const size_t n = std::fread(buf, 1, sizeof(buf) - 1, f);
             buf[n] = 0;
             std::fclose(f);
-            const char* needle =
-                "DDR_MEM_SYNC=0 requires DDR_MEM_FLUSH=1";
-            CHECK(std::strstr(buf, needle) != nullptr);
+            CHECK(std::strstr(buf, "DDR_MEM_SYNC=0 requires DDR_MEM_FLUSH=1") != nullptr);
         }
     }
 
@@ -63,8 +68,10 @@ int main() {
         std::fprintf(stderr, "test_ddr_mem_map_policy: %d fails\n", fails);
         return 1;
     }
-    std::printf("test_ddr_mem_map_policy: OK mapped=%.3f host_ceil=%.3f ms_saved=%.3f\n",
-                kParentDdrMappedBank720pMibps, kParentDdrHostCopyCeilingMibps,
-                ddr720p24MappedToHostCopyMsSaved());
+    std::printf("test_ddr_mem_map_policy: OK best_bank_ms=%.3f flush_penalty=%.3f "
+                "serial3500=%d hostcopy_reachable=%d\n",
+                kParentDdrBestBank720pFrameMs, ddr720p24CoherentFlushPenaltyMs(),
+                ddr720p24SerialPathFitsAt3500k() ? 1 : 0,
+                ddr720p24HostCopyIsReachableBankRate() ? 1 : 0);
     return 0;
 }

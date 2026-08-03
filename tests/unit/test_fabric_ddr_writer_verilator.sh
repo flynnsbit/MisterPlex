@@ -23,6 +23,7 @@ mkdir -p "$BUILD_DIR"
 echo "RTL SIM: using $VERILATOR_VERSION" >&2
 
 OSS_CAD_SUITE="$OSS_CAD_SUITE" "$RUN_VERILATOR" --cc --exe --build \
+  +incdir+$ROOT/fpga/Plex_MiSTer/rtl \
   --Mdir "$BUILD_DIR" \
   --top-module fabric_ddr_writer_tb_top -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC \
   -CFLAGS "-std=c++17 -O2" \

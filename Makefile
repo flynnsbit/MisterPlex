@@ -207,6 +207,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_level_width_verilator.sh
 	$(ROOT)/tests/unit/test_fabric_ddr_writer_verilator.sh
 	$(ROOT)/tests/unit/test_fabric_ddr_write_path_verilator.sh
+	$(ROOT)/tests/unit/test_ddr_bus_arbiter3_verilator.sh
 	$(ROOT)/tests/unit/test_fabric_luma_linebuf_verilator.sh
 	$(ROOT)/tests/unit/test_stream_path_recon_integration.sh
 	$(ROOT)/tests/unit/test_stream_path_full_frame_compare.sh

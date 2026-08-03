@@ -34,16 +34,20 @@ producer concern (pad or coordinate PLXG native_push v2) — writer does not sca
   - `DIN[63:32] = {bank, format[1:0]=2'b01, seq[28:0]}`
 - Parameters: `PHYS_BASE`, `HPS_BANK_STRIDE_BYTES`, `DOORBELL_PHYS` (base may move).
 
-## Arbiter integration (not in this change)
+## Arbiter integration
 
-Product `ddr_bus_arbiter` is 2-master (frame store + bitstream). Writer needs
-either:
+Product `ddr_bus_arbiter` stays 2-master (untouched). Additive `ddr_bus_arbiter3`
++ `fabric_ddr_attach` provide m2 for the writer:
 
-1. Third master port + grant policy (prefer frame-store idle slots), or
-2. Mux on m0 write path when scanout not issuing RD.
+| Master | Role | Priority when bus free |
+|--------|------|------------------------|
+| m0 | frame-store present RD | highest (cmd wins) |
+| m2 | fabric_ddr_writer WE | next (`m2_want` = writer busy) |
+| m1 | bitstream RD | lowest |
 
-**Do not** steal m1 (bitstream). Outstanding depth = 1 WE command is enough
-for 720p30 (~5.8% of 90 MHz) if grant share ≥ ~6%.
+**Do not** steal m1. Outstanding depth = 1 WE is enough for 720p30 (~5.8% of
+90 MHz) if grant share ≥ ~6%. Sustained fabric→DDR3 BW: unknown until fit +
+parent measure.
 
 ## Rate (evidence from TB print)
 

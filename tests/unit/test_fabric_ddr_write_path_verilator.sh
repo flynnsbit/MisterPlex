@@ -7,7 +7,7 @@ set +e; V="$("$RUN" --version 2>&1)"; RC=$?; set -e
 if [[ $RC -ne 0 ]]; then echo "RTL SIM ERROR" >&2; exit 3; fi
 B="$ROOT/build/verilator/fabric_ddr_write_path_tb"
 rm -rf "$B"; mkdir -p "$B"
-OSS_CAD_SUITE="$OSS_CAD_SUITE" "$RUN" --cc --exe --build --Mdir "$B" \
+OSS_CAD_SUITE="$OSS_CAD_SUITE" "$RUN" --cc --exe --build +incdir+$ROOT/fpga/Plex_MiSTer/rtl --Mdir "$B" \
   --top-module fabric_ddr_write_path_tb_top -Wno-fatal -Wno-WIDTHEXPAND \
   -CFLAGS "-std=c++17 -O2" \
   "$ROOT/fpga/Plex_MiSTer/rtl/fabric_ddr_writer.sv" \

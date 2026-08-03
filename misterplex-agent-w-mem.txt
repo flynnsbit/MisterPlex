@@ -1,0 +1,25 @@
+agent=w-mem
+branch=w-mem-720p-abi
+HEAD=0e031e95
+status=LANDED map policy + rate update (86.676 MiB/s)
+
+## Parent evidence absorbed
+- mapped bank 86.676 MiB/s → 15.210 ms/720p (was 59.521 → 22.15)
+- host-copy ceiling 439.788 → 2.998 ms (UNPROVEN on bank)
+- 1500k+mapped=47.637 FAIL; 1500k+ceiling=35.425 hypothesis PASS
+- map_ms_saved=12.212
+
+## Code
+- host/libmisterplex/ddr_mem_map_policy.hpp
+- sendDdrFrame: SYNC=0 requires FLUSH=1 (hard error)
+- main: forces FLUSH when SYNC=0
+- budgets use kDdrBudgetCopyMibps=86.676
+- ship gate publish_bytes=0 unchanged (SHIP_OK=1 FPGA path)
+
+## true rc
+- test_ddr_mem_map_policy mutant always-ring: 1
+- test_ddr_mem_map_policy restored: 0
+- test_ddr_720p_abi: 0 (mapped_path_fits_1500k=0 hostcopy_ceiling_fits_1500k=1)
+
+## Parent experiment (yours)
+Device: DDR_MEM_SYNC=0 DDR_MEM_FLUSH=1 + ddr_write_bench --no-sync --flush on Option-C/product bank.

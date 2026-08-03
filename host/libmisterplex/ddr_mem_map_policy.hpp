@@ -2,17 +2,22 @@
 
 // DDR frame-bank /dev/mem map policy (w-mem).
 //
-// Parent device 2026-08-03 ddr_write_bench (true rc=0):
-//   mapped bank (product path) 86.676 MiB/s → 15.210 ms / 720p frame
-//   ordinary RAM memcpy        439.788 MiB/s →  2.998 ms / 720p frame (UPPER BOUND)
-//   480p mapped bank           89.363 MiB/s → bandwidth-limited, not fixed-cost
+// Parent Sweep-3 2026-08-03 ddr_write_bench into REAL FPGA-visible bank (true rc=0):
+//   --no-sync (no flush)         86.262 MiB/s  15.283 ms/f  <- BEST on bank
+//   --sync                       83.639 MiB/s  15.762 ms/f
+//   --no-sync --flush (coherent) 66.380 MiB/s  19.861 ms/f  <- WORSE by 4.578 ms
+//   --host-copy (ordinary RAM)  439.788 MiB/s   2.998 ms/f  <- NOT REACHABLE on bank
 //
-// Hypothesis (unproven on bank): the 5.07x gap is mmap cache attribute
-// (O_SYNC → strongly-ordered/device), not DRAM physics. Remap without O_SYNC
-// + explicit dcache clean before doorbell may close the gap. Parent measures.
+// RETRACTED: "mmap cache policy is worth 12.212 ms/f". Coherent mapping costs
+// more than it saves (flush). Host-copy is ordinary RAM, not a bank rate.
+// Best ARM bank copy stays ~15.28 ms/f.
 //
-// Ordering (absolute): every payload byte must be FPGA-visible BEFORE doorbell.
-// Cached/WC maps MUST clean+barrier before kickDdrDoorbell — or tear (88509163 class).
+// Serial decode+copy is DEAD at every measured tier (see helpers below).
+// Ship path = fabric owns pixels (publish_bytes=0). Route A (PL330 overlap)
+// is parent-owned measurement; not assumed here.
+//
+// Ordering hazard (kept): if anyone ever maps cacheable, payload MUST be
+// FPGA-visible BEFORE doorbell (flush+barrier). Do not weaken this gate.
 
 #include <cstddef>
 #include <cstdint>
@@ -21,12 +26,10 @@
 namespace misterplex {
 
 enum class DdrMemMapPolicy : uint8_t {
-    // Product default: open(/dev/mem, O_RDWR|O_CLOEXEC|O_SYNC). Stores ordered;
-    // no dcache clean required before doorbell.
+    // Product default: open(/dev/mem, O_RDWR|O_CLOEXEC|O_SYNC).
     StronglyOrderedSync = 0,
-    // Lab / 720p candidate: open without O_SYNC (cacheable or WC attribute on
-    // this kernel). Requires explicit dcache clean of the written range + DSB
-    // before doorbell. Refusing flush is a hard error.
+    // Lab only: open without O_SYNC. Requires explicit dcache clean + DSB
+    // before doorbell. NOT a performance win on this SoC (Sweep-3).
     CachedExplicitFlush = 1,
 };
 
@@ -49,61 +52,98 @@ inline DdrMemMapOpenSpec ddrMemMapOpenSpec(DdrMemMapPolicy policy) {
     return s;
 }
 
-// Conf knobs DDR_MEM_SYNC / DDR_MEM_FLUSH → policy.
-// SYNC=1 → StronglyOrderedSync (FLUSH ignored for ordering; may still be 0).
-// SYNC=0 → CachedExplicitFlush; FLUSH must be 1 or the publish path must refuse.
 inline DdrMemMapPolicy ddrMemMapPolicyFromConf(bool ddrMemSync, bool /*ddrMemFlush*/) {
     return ddrMemSync ? DdrMemMapPolicy::StronglyOrderedSync
                       : DdrMemMapPolicy::CachedExplicitFlush;
 }
 
-// True when conf pair is safe to publish (no doorbell-before-visibility hole).
 inline bool ddrMemMapConfPublishSafe(bool ddrMemSync, bool ddrMemFlush) {
     if (ddrMemSync)
         return true;
-    return ddrMemFlush; // cached path requires flush
+    return ddrMemFlush;
 }
 
-// May the producer ring the doorbell now?
-// flushCompleted = dcache clean of payload range succeeded this frame (or N/A).
 inline bool ddrMemMayRingDoorbell(DdrMemMapPolicy policy, bool flushCompleted) {
     if (policy == DdrMemMapPolicy::StronglyOrderedSync)
         return true;
     return flushCompleted;
 }
 
-// Parent-measured rates (MiB/s, 1024^2). Use for budget projections.
-constexpr double kParentDdrMappedBank720pMibps = 86.676;
-constexpr double kParentDdrMappedBank480pMibps = 89.363;
-// Ordinary RAM memcpy on device — NOT a proven bank rate. Hypothesis ceiling only.
-constexpr double kParentDdrHostCopyCeilingMibps = 439.788;
-// 720p frame wall ms at those rates (1382400 B).
-constexpr double kParentDdrMapped720pFrameMs = 15.210;
-constexpr double kParentDdrHostCopy720pFrameMs = 2.998;
-// Mapped vs host-copy speedup (86.676 → 439.788).
-constexpr double kParentDdrMappedToHostCopySpeedup = 5.07;
+// Sweep-3 bank rates (MiB/s, 1024^2). Primary budget rate = best bank path.
+constexpr double kParentDdrMappedBank720pMibps = 86.262; // --no-sync no flush
+constexpr double kParentDdrMappedBank720pSyncMibps = 83.639;
+constexpr double kParentDdrMappedBank720pCoherentFlushMibps = 66.380;
+constexpr double kParentDdrMappedBank480pMibps = 89.363; // prior sweep; bandwidth-limited
+// Ordinary RAM only — NEVER use as bank budget (unreachable for FPGA-visible).
+constexpr double kParentDdrHostCopyOrdinaryRamMibps = 439.788;
 
-// Budget: decode_ms + copy_ms <= 41.667?
+constexpr double kParentDdrBestBank720pFrameMs = 15.283;
+constexpr double kParentDdrSyncBank720pFrameMs = 15.762;
+constexpr double kParentDdrCoherentFlush720pFrameMs = 19.861;
+constexpr double kParentDdrHostCopyOrdinaryRam720pFrameMs = 2.998;
+
+// Aliases kept so older call sites compile; mapped == best bank.
+constexpr double kParentDdrMapped720pFrameMs = kParentDdrBestBank720pFrameMs;
+// Deprecated alias: was "host-copy ceiling"; value retained for tests that
+// assert unreachability, not ship acceptance.
+constexpr double kParentDdrHostCopy720pFrameMs = kParentDdrHostCopyOrdinaryRam720pFrameMs;
+constexpr double kParentDdrHostCopyCeilingMibps = kParentDdrHostCopyOrdinaryRamMibps;
+
+constexpr double kFrameBudget24fpsMsLocal = 41.667;
+
 inline bool ddr720p24DecodePlusCopyFitsBudget(double decodeMs, double copyMs,
-                                              double budgetMs = 41.667) {
+                                              double budgetMs = kFrameBudget24fpsMsLocal) {
     return (decodeMs + copyMs) <= budgetMs;
 }
 
-// Product mapped path at candidate 1500k decode — FAILS (parent arithmetic).
+// Serial ARM decode then bank copy — fails every measured real-720p tier.
+inline bool ddr720p24SerialArmDecodePlusBankCopyFits(double decodeMs,
+                                                     double copyMs = kParentDdrBestBank720pFrameMs,
+                                                     double budgetMs = kFrameBudget24fpsMsLocal) {
+    return ddr720p24DecodePlusCopyFitsBudget(decodeMs, copyMs, budgetMs);
+}
+
+// 1500k is NOT a delivery tier for coded 1280x720 (PMS serves 720x404 <=3000k).
+// Kept for decode residual arithmetic only.
 inline bool ddr720p24MappedPathFitsAt1500k(
-    double decodeMs = 32.427, double mappedCopyMs = kParentDdrMapped720pFrameMs) {
-    return ddr720p24DecodePlusCopyFitsBudget(decodeMs, mappedCopyMs);
+    double decodeMs = 32.427, double mappedCopyMs = kParentDdrBestBank720pFrameMs) {
+    return ddr720p24SerialArmDecodePlusBankCopyFits(decodeMs, mappedCopyMs);
 }
 
-// Host-copy ceiling hypothesis at 1500k — PASSES numbers but UNPROVEN on bank.
+// PMS floor for real 1280x720: >=3500 kbit (w-path). Serial still fails.
+inline bool ddr720p24SerialPathFitsAt3500k(
+    double decodeMs = 38.751, double copyMs = kParentDdrBestBank720pFrameMs) {
+    return ddr720p24SerialArmDecodePlusBankCopyFits(decodeMs, copyMs);
+}
+
+inline bool ddr720p24SerialPathFitsAt4000k(
+    double decodeMs = 41.073, double copyMs = kParentDdrBestBank720pFrameMs) {
+    return ddr720p24SerialArmDecodePlusBankCopyFits(decodeMs, copyMs);
+}
+
+// Host-copy ordinary RAM is NOT a bank path — always report does-not-ship.
+inline bool ddr720p24HostCopyIsReachableBankRate() { return false; }
+
+// Was: hypothesis PASS. Now: hard false — unreachable for FPGA-visible bank.
 inline bool ddr720p24HostCopyCeilingFitsAt1500k(
-    double decodeMs = 32.427, double hostCopyMs = kParentDdrHostCopy720pFrameMs) {
-    return ddr720p24DecodePlusCopyFitsBudget(decodeMs, hostCopyMs);
+    double /*decodeMs*/ = 32.427, double /*hostCopyMs*/ = kParentDdrHostCopyOrdinaryRam720pFrameMs) {
+    return false;
 }
 
-// ms saved if bank write reached host-copy ceiling vs mapped (parent).
-inline double ddr720p24MappedToHostCopyMsSaved() {
-    return kParentDdrMapped720pFrameMs - kParentDdrHostCopy720pFrameMs; // 12.212
+// Coherent flush costs ms vs best bank (positive = flush is slower).
+inline double ddr720p24CoherentFlushPenaltyMs() {
+    return kParentDdrCoherentFlush720pFrameMs - kParentDdrBestBank720pFrameMs; // ~4.578
+}
+
+// RETRACTED "map_ms_saved" — was host_copy - mapped; that path is unreachable.
+// Returns 0 so callers cannot claim a cache win.
+inline double ddr720p24MappedToHostCopyMsSaved() { return 0.0; }
+
+// Route A sketch only: max(decode, copy) — NOT proven (DDR contention unknown).
+inline bool ddr720p24OverlapMaxDecodeCopyFits(double decodeMs, double copyMs,
+                                              double budgetMs = kFrameBudget24fpsMsLocal) {
+    const double m = (decodeMs > copyMs) ? decodeMs : copyMs;
+    return m <= budgetMs;
 }
 
 } // namespace misterplex

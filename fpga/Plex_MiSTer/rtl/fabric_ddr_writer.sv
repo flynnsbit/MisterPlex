@@ -34,12 +34,16 @@
 //
 `default_nettype none
 
+// Defaults track Option-C 720p constants in ddr_frame_layout_params.svh
+// (must stay in lockstep with host/libmisterplex/ddr_frame_layout.hpp).
+`include "ddr_frame_layout_params.svh"
+
 module fabric_ddr_writer #(
-	parameter int CODED_W = 1280,
-	parameter int CODED_H = 720,
-	parameter [31:0] PHYS_BASE = 32'h3018_0000,
-	parameter int HPS_BANK_STRIDE_BYTES = 32'h0018_0000,
-	parameter [31:0] DOORBELL_PHYS = 32'h3047_F000,
+	parameter int CODED_W = DDR_FRAME_720P_CODED_WIDTH,
+	parameter int CODED_H = DDR_FRAME_720P_CODED_HEIGHT,
+	parameter [31:0] PHYS_BASE = DDR_FRAME_720P_PHYS_BASE,
+	parameter int HPS_BANK_STRIDE_BYTES = DDR_FRAME_720P_YUV420P_BANK_STRIDE,
+	parameter [31:0] DOORBELL_PHYS = DDR_FRAME_720P_YUV420P_DOORBELL_PHYS,
 	parameter int NUM_BANKS = 2,
 	parameter int WRITE_DRAIN_CYCLES = 16,
 	parameter [31:0] DOORBELL_MAGIC = 32'h504C584B, // PLXK

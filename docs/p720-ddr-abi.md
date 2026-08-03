@@ -229,18 +229,21 @@ Tier saves up to 8.65 ms/f vs 4000k — **jitter margin only**. Full 720p ARM
 memcpy still ~22.15 ms and fails `ddr720p24ArmCopyExceedsCandidateTierMargin`.
 Ship gate remains `publish_bytes=0` / FPGA-written banks via `fabric_ddr_writer`.
 
-## Parent DDR map bandwidth (2026-08-03)
+## Parent DDR map bandwidth (Sweep-3 2026-08-03) — RETRACTED cache win
 
-`ddr_write_bench` true rc=0 on device:
-| path | MiB/s | ms/720p frame |
-|------|------:|-------------:|
-| mapped bank (`/dev/mem`, product O_SYNC class) | **86.676** | **15.210** |
-| host-copy ordinary RAM | 439.788 | 2.998 (ceiling; **unproven on bank**) |
-| 480p mapped bank | 89.363 | — bandwidth-limited |
+`ddr_write_bench` into **real FPGA-visible bank**, true rc=0:
+| path | MiB/s | ms/720p |
+|------|------:|--------:|
+| `--no-sync` (no flush) | **86.262** | **15.283** BEST |
+| `--sync` | 83.639 | 15.762 |
+| `--no-sync --flush` | 66.380 | 19.861 WORSE by 4.578 |
+| `--host-copy` ordinary RAM | 439.788 | 2.998 **NOT a bank rate** |
 
-1500k decode 32.427 + mapped 15.210 = **47.637 ms (FAIL)**.  
-1500k + host-copy ceiling 2.998 = 35.425 (PASS numbers only — hypothesis).
+**RETRACTED:** mmap cache policy as a 12.2 ms win. Coherent mapping costs flush.
+Best ARM bank copy ≈ **15.28 ms/f**. Serial decode+copy FAILS every tier:
+- 1500k: 32.427+15.283=47.710 (not a PMS 1280x720 delivery tier anyway)
+- 3500k: 38.751+15.283=54.034 (PMS real-720p floor)
+- 4000k: 41.073+15.283=56.356
 
-Lab knobs: `DDR_MEM_SYNC=0` `DDR_MEM_FLUSH=1` (flush forced if SYNC=0).  
-Ordering: payload dcache clean + barrier **before** doorbell (`ddr_mem_map_policy.hpp`).
-End state remains fabric writer (`publish_bytes=0`).
+Ship path = fabric `publish_bytes=0`. Flush-before-doorbell kept as correctness
+hazard only. `DDR_MEM_SYNC=0` still forces `FLUSH=1` in daemon.

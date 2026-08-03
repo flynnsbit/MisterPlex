@@ -103,10 +103,10 @@ int main() {
     const double ms720 = ddrPushMsAtRate(1382400u, kMappedMibps);
     const double ms480 = ddrPushMsAtRate(449280u, kMappedMibps);
     const double ms720archive = ddrPushMsAtRate(1382400u, kArchiveMibps);
-    CHECK(ms720 > 15.1 && ms720 < 15.3); // parent 15.210
-    CHECK(ms720archive > 22.0 && ms720archive < 22.3); // old 22.15
-    CHECK(ms480 > 4.7 && ms480 < 5.0);   // ~4.941 @ 86.676 mapped
-    // ms720 already checked ~15.210 above; do not re-assert archive 22 ms
+    CHECK(ms720 > 15.2 && ms720 < 15.4); // Sweep-3 best bank 15.283
+    CHECK(ms720archive > 22.0 && ms720archive < 22.3); // old archive 22.15
+    CHECK(ms480 > 4.7 && ms480 < 5.1);   // ~4.96 @ 86.262
+    CHECK(kParentDdrBestBank720pFrameMs > 15.2 && kParentDdrBestBank720pFrameMs < 15.3);
     // Push payload rate (decimal MB/s) at 24/30 fps.
     const double push24 = 1382400.0 * 24.0 / 1e6;
     const double push30 = 1382400.0 * 30.0 / 1e6;
@@ -219,28 +219,40 @@ int main() {
     CHECK(!ddr720p24ShipAcceptsZeroArmPerPixel(fab720.budget));
     CHECK(ddr720p24ArmCopyExceedsDecodeMargin(1382400u)); // 4000k residual
     CHECK(ddr720p24ArmCopyExceedsCandidateTierMargin(1382400u)); // 1500k residual
-    CHECK(kPlex720pCandidateBitrateKbit == 1500);
+    CHECK(kPlex720pCandidateBitrateKbit == 3500); // PMS real-720p floor (w-path)
     CHECK(kParent720pDecodeMs1500k == 32.427);
+    CHECK(kParent720pDecodeMs3500k == 38.751);
     CHECK(kParent720pDecodeMs4000k == 41.073);
     CHECK(kParent720pDecodeMsDefaultThreads == kParent720pDecodeMs4000k);
+    CHECK(kParent720pDecodeMsCandidateTier == kParent720pDecodeMs3500k);
     CHECK(ddr720p24ResidualMsAfterDecodeOnly() > 0.5 &&
           ddr720p24ResidualMsAfterDecodeOnly() < 0.7); // ~0.594 @4000k
-    const double res1500 =
+    const double res3500 =
         ddr720p24ResidualMsAfterDecodeOnly(kParent720pDecodeMsCandidateTier);
-    CHECK(res1500 > 9.2 && res1500 < 9.3); // ~9.24
-    // Tier saves ~8.65 ms vs 4000k — still less than full-frame copy ~22 ms.
+    CHECK(res3500 > 2.9 && res3500 < 3.0); // ~2.916
+    const double res1500 =
+        ddr720p24ResidualMsAfterDecodeOnly(kParent720pDecodeMs1500k);
+    CHECK(res1500 > 9.2 && res1500 < 9.3); // decode residual only; not a delivery tier
+    // 8.646 ms tier save < 10.411 present bucket (parent correction).
     CHECK((res1500 - ddr720p24ResidualMsAfterDecodeOnly()) > 8.5 &&
           (res1500 - ddr720p24ResidualMsAfterDecodeOnly()) < 8.8);
     CHECK(kFeedArchiveNonDecodeMs > 18.6 && kFeedArchiveNonDecodeMs < 18.7);
 
-    // Parent 2026-08-03 map bandwidth: mapped fails 720p24@1500k; host-copy ceiling hypothetically fits.
-    CHECK(kParentDdrMappedBankMibps == 86.676);
-    CHECK(kParentDdrMapped720pFrameMs == 15.210);
-    CHECK(kParentDdrHostCopy720pFrameMs == 2.998);
+    // Sweep-3: best bank ~15.28 ms; serial FAIL all tiers; host-copy unreachable.
+    CHECK(kParentDdrMappedBankMibps == 86.262);
+    CHECK(kParentDdrBestBank720pFrameMs == 15.283);
+    CHECK(kParentDdrCoherentFlush720pFrameMs == 19.861);
+    CHECK(ddr720p24CoherentFlushPenaltyMs() > 4.5 &&
+          ddr720p24CoherentFlushPenaltyMs() < 4.6);
     CHECK(!ddr720p24MappedPathFitsAt1500k());
-    CHECK(ddr720p24HostCopyCeilingFitsAt1500k()); // hypothesis only
-    CHECK(ddr720p24MappedToHostCopyMsSaved() > 12.2 &&
-          ddr720p24MappedToHostCopyMsSaved() < 12.3);
+    CHECK(!ddr720p24SerialPathFitsAt3500k());
+    CHECK(!ddr720p24SerialPathFitsAt4000k());
+    CHECK(!ddr720p24HostCopyIsReachableBankRate());
+    CHECK(!ddr720p24HostCopyCeilingFitsAt1500k()); // RETRACTED
+    CHECK(ddr720p24MappedToHostCopyMsSaved() == 0.0);
+    // Route A sketch numbers only (unproven contention): max(38.751,15.283)=38.751.
+    CHECK(ddr720p24OverlapMaxDecodeCopyFits(38.751, 15.283));
+    CHECK(!ddr720p24OverlapMaxDecodeCopyFits(38.751, 15.283, 38.0));
     // Map policy: cached path must not ring doorbell without flush (red-green).
     CHECK(ddrMemMapConfPublishSafe(true, false));
     CHECK(ddrMemMapConfPublishSafe(true, true));
@@ -270,7 +282,7 @@ int main() {
     CHECK(fpgaBanks.budget.zero_arm_per_pixel);
     CHECK(ddr720p24ShipAcceptsZeroArmPerPixel(fpgaBanks.budget));
     // Entire canvas copy term counted as removed vs ARM-push baseline.
-    CHECK(fpgaBanks.budget.copy_ms_removed > 15.1 && fpgaBanks.budget.copy_ms_removed < 15.3);
+    CHECK(fpgaBanks.budget.copy_ms_removed > 15.2 && fpgaBanks.budget.copy_ms_removed < 15.4);
     CHECK(fpgaBanks.budget.known_ms_removed_floor >
           fpgaBanks.budget.copy_ms_removed); // + FEED scale
 
@@ -280,8 +292,8 @@ int main() {
         624, 480, plex720pDdrFrameGeometry(), kPlex720pDdrFramePhysBase);
     CHECK(fab480on720.valid);
     CHECK(fab480on720.publish_bytes == 449280u);
-    CHECK(fab480on720.budget.copy_ms_removed > 10.0 &&
-          fab480on720.budget.copy_ms_removed < 10.5); // 15.21-4.94 class
+    CHECK(fab480on720.budget.copy_ms_removed > 10.2 &&
+          fab480on720.budget.copy_ms_removed < 10.5); // 15.28-4.96 class
     CHECK(fab480on720.budget.known_ms_removed_floor >
           fab480on720.budget.copy_ms_removed); // includes scale floor
 
@@ -311,18 +323,22 @@ int main() {
                 fab720.budget.arm_still_pushes_pixels ? 1 : 0,
                 ddr720p24ShipAcceptsZeroArmPerPixel(fab720.budget) ? 1 : 0);
     std::printf("  FPGA_WRITTEN_BANKS publish_bytes=%zu known_ms_removed_floor=%.3f "
-                "SHIP_OK=%d residual_4000k=%.3f residual_1500k=%.3f\n",
+                "SHIP_OK=%d residual_4000k=%.3f residual_candidate_3500k=%.3f\n",
                 fpgaBanks.publish_bytes, fpgaBanks.budget.known_ms_removed_floor,
                 ddr720p24ShipAcceptsZeroArmPerPixel(fpgaBanks.budget) ? 1 : 0,
                 ddr720p24ResidualMsAfterDecodeOnly(),
                 ddr720p24ResidualMsAfterDecodeOnly(kParent720pDecodeMsCandidateTier));
+    std::printf("  residual_1500k_decode_only=%.3f (not a PMS 1280x720 tier)\n",
+                ddr720p24ResidualMsAfterDecodeOnly(kParent720pDecodeMs1500k));
     std::printf("  tier_candidate_kbit=%d copy_ms720_mapped=%.3f copy_ms720_archive=%.3f\n",
                 kPlex720pCandidateBitrateKbit, ms720, ms720archive);
-    std::printf("  mapped_path_fits_1500k=%d hostcopy_ceiling_fits_1500k=%d "
-                "map_ms_saved=%.3f exceeds_1500k=%d\n",
+    std::printf("  serial_fits 1500k=%d 3500k=%d 4000k=%d hostcopy_reachable=%d "
+                "overlap3500_sketch=%d exceeds_candidate=%d\n",
                 ddr720p24MappedPathFitsAt1500k() ? 1 : 0,
-                ddr720p24HostCopyCeilingFitsAt1500k() ? 1 : 0,
-                ddr720p24MappedToHostCopyMsSaved(),
+                ddr720p24SerialPathFitsAt3500k() ? 1 : 0,
+                ddr720p24SerialPathFitsAt4000k() ? 1 : 0,
+                ddr720p24HostCopyIsReachableBankRate() ? 1 : 0,
+                ddr720p24OverlapMaxDecodeCopyFits(38.751, 15.283) ? 1 : 0,
                 ddr720p24ArmCopyExceedsCandidateTierMargin(1382400u) ? 1 : 0);
     return 0;
 }
