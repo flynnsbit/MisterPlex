@@ -1,6 +1,6 @@
 lane=w-path
 status=AWAITING_CLEAN_DMA_GATE
-tip=pending
+tip=c19cac2c
 PARENT_CONTROL720: video_mode=0 beam; core d1b24e0c CYAN_PX=0 ACTIVE=923x717 (ARM path)
 BUDGET_CLEAN: decode 35.94 + copy 14.978 = 50.92 FAIL; margin decode-alone 5.73
 anomaly CLOSED (no address effect)
