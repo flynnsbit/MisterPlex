@@ -207,6 +207,9 @@ end
 wire clk_sys;
 wire clk_sdram;
 wire clk_ddr;
+`ifdef PRESENT_CLK_PIX_PLL
+wire clk_pix_pll;
+`endif
 wire pll_locked;
 pll pll
 (
@@ -215,6 +218,9 @@ pll pll
 	.outclk_0(clk_sys),
 	.outclk_1(clk_sdram),
 	.outclk_2(clk_ddr),
+`ifdef PRESENT_CLK_PIX_PLL
+	.outclk_3(clk_pix_pll),
+`endif
 	.locked(pll_locked)
 );
 
@@ -832,9 +838,13 @@ present_core #(
 	.clk(clk_sys),
 	.clk_sdram(clk_sdram),
 	.clk_audio(CLK_AUDIO),
-	// clk_pix: product default ties to clk_sys. PRESENT_CLK_PIX_PLL fit will
-	// retarget this to outclk_3 when parent grants that fit.
+	// clk_pix: product default ties to clk_sys. PRESENT_CLK_PIX_PLL (default
+	// OFF) drives outclk_3 = 29.70 MHz (or 74.25 with PRESENT_CLK_PIX_74_25).
+`ifdef PRESENT_CLK_PIX_PLL
+	.clk_pix(clk_pix_pll),
+`else
 	.clk_pix(clk_sys),
+`endif
 	.reset(present_reset),
 	.pal(status[2]),
 	.scandouble(forced_scandoubler),
