@@ -1,12 +1,14 @@
-lane=w-osd tip=follow parent SPS settle
+lane=w-osd tip=parent_playing_gate runbook
 beacon=5c498b29 PLEX_FAB_PLAY_BEACON
 hunt=6431aaa3 coded-size refuse
+sps=e218fed6 544→540 display
 
-## Parent SPS settle (ACK)
-Product path: coded 544 crop→540 display, bank 777600 B, 540*4/3=720 exact.
-No 5-line glass crop for w-osd ACTIVE design on ARM path.
-544 remains for bitstream/fabric-decode (w-mem) — not our plane.
+## parent_playing_gate.sh
+EXPECT_RBF_MD5=… scripts/parent_playing_gate.sh full
+rc: 0=A 1=scored-non-A 3=UNKNOWN_GRABBER 4=PRECOND(not fabric) 5=B1
+offline-selftest true rc=0
+docs/fab-playing-parent-runbook.md
+pair cards: docs/evidence/p720-path-20260803/
 
 ## Fit
-w-mem owns Option-C bank predicate. w-osd does not duplicate.
-Merge PLAY_BEACON for PLAYING score when fit resumes.
+w-mem Option-C capacity. Beacon ready. No device/Quartus from this lane.

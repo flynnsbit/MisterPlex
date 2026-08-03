@@ -71,7 +71,19 @@ PLXG / 960×540 / HUD coords / keep-sink active video.
 
 ## 2. Exact commands (copy/paste)
 
-Paths under `docs/agent-evidence/` so artifacts stay in-repo (not `/tmp`).
+**Preferred — one fail-closed runbook** (preconditions + pair + delivery + score):
+
+```bash
+# See docs/fab-playing-parent-runbook.md
+# Pair: deploy_plex_core.sh (RBF) AND deploy_misterplexd.sh (w-path 540p daemon)
+# Conf: DECODE=960x540 OSD_CONTROL=off WEAK_BITRATE>=2000; cast HD 16:9 motion.
+EXPECT_RBF_MD5=<fit-md5-or-prefix> scripts/parent_playing_gate.sh full
+echo "true rc=$?"
+# rc=0 A only; rc=4 PRECOND (not fabric); rc=3 UNKNOWN_GRABBER; rc=1 scored non-A
+```
+
+Manual steps (only if debugging a single phase). Paths under
+`docs/agent-evidence/` so artifacts stay in-repo (not `/tmp`).
 
 ```bash
 EV=docs/agent-evidence
