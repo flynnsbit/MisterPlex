@@ -116,6 +116,12 @@ int main() {
     CHECK(conf720.weakBitrateKbps == kPlex720pWeakBitrateKbps);
     CHECK(conf720.presentPolicy == ContentPresentPolicy::Path720p);
     CHECK(std::string(conf720.userLabel) == "1280x720");
+    // Path720p defaults preferDirect when conf unset (ARM-evac); 480p tracks STREAM.
+    CHECK(preferDirectH264ForContent(false, false, false, ContentPresentPolicy::Path720p));
+    CHECK(!preferDirectH264ForContent(false, false, false, ContentPresentPolicy::NativeCanvas));
+    CHECK(preferDirectH264ForContent(false, false, true, ContentPresentPolicy::NativeCanvas));
+    CHECK(!preferDirectH264ForContent(true, false, true, ContentPresentPolicy::Path720p));
+    CHECK(preferDirectH264ForContent(true, true, false, ContentPresentPolicy::NativeCanvas));
     // OSD reserved tier 11 still must not invent 720p (safe 480p canvas).
     const auto osdRsvd720guard = contentResolutionFromOsdWord(3u << 4);
     CHECK(osdRsvd720guard.width == kPlex480pCodedWidth);

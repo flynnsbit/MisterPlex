@@ -192,6 +192,21 @@ inline ContentResolution contentResolutionFor720p() {
             plex720pCodedResolutionLabel()};
 }
 
+// Prefer library H.264 Part (transcode=0) vs PMS universal.
+// conf_explicit: PREFER_DIRECT_H264 was set (not auto/unset).
+// Path720p defaults ON when conf unset — removes PMS transcoder from the ARM
+// budget and unlocks direct_play_part identity (ARM scale=0 when file==bank).
+// Explicit PREFER_DIRECT_H264=0 still forces universal on Path720p.
+inline bool preferDirectH264ForContent(bool conf_explicit, bool conf_prefer,
+                                       bool stream_enabled,
+                                       ContentPresentPolicy policy) {
+    if (conf_explicit)
+        return conf_prefer;
+    if (policy == ContentPresentPolicy::Path720p)
+        return true;
+    return stream_enabled;
+}
+
 inline ContentResolution contentResolutionFromOsdWord(uint16_t word) {
     switch (osdContentTierFromWord(word)) {
     case 0:

@@ -1,0 +1,30 @@
+lane=w-path todo=p720-path branch=w-path-720p
+status=DELIVERED_ARM_EVAC_FOLLOWUP
+mandate=720p is reward for evacuating ARM; prefer ARM-out designs
+
+## PMS 720p (prior + still valid)
+rk7 native 1280x720 CB; maxBR>=3500 → 1280x720; <=3000 → 720x404; DP → 1280x720
+profile MiSTerPlex.xml must allow 1280/L31 for CB transcode
+
+## ARM-evac follow-up (this commit)
+1. PREFER_DIRECT_H264 conf + Path720p defaults preferDirect when conf unset
+2. delivery_basis=direct_play_part when !transcoded → plan-time verified
+3. Always+exact+DP verified → identity_skip (scale_applied=0) — ARM scale gone
+4. library_media/transcode_request still unverified (480p ceiling trap class)
+
+## ARM ms/f removed
+- scale bucket=0 when DP identity (by construction / unit)
+- archived 480p FOAR scaleΔ class = 2.954 ms/f when scale required
+- host x86 Δ FOAR-same vs id ≈ +0.105 ms/f (240f); up404 Δ ≈ +2.59 ms/f
+- device dual-A9 ms removed: UNKNOWN — parent must profile
+
+## Tests true_rc
+test_ffmpeg_vf=0 test_osd_menu=0 test_resolve=0 test_yuv420p_chroma_480p=0
+
+## Coord
+w-mem: DDR still rejects 1280x720 present
+w-scaler: only after measured genuine 1280x720
+no device SSH by this lane
+
+## Parent next
+install MiSTerPlex.xml; PREFER_DIRECT default path720; arm-profile DP identity vs FOAR

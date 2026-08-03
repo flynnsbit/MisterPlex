@@ -82,21 +82,45 @@ For non-DP titles, request **720p ladder @ maxVideoBitrate=4000** (floor measure
 
 | Area | Change |
 |---|---|
-| `osd_menu.hpp` | `contentResolutionFor720p()`, `kPlex720pWeakBitrateKbps=4000`, `Path720p` policy; `DECODE=1280x720` maps to 720p ladder; OSD tier 11 stays safe 480p |
+| `osd_menu.hpp` | `contentResolutionFor720p()`, `kPlex720pWeakBitrateKbps=4000`, `Path720p` policy; `DECODE=1280x720` maps to 720p ladder; OSD tier 11 stays safe 480p; **`preferDirectH264ForContent`** — Path720p defaults DP when conf unset |
 | `ddr_frame_layout.hpp` | `kPlex720pCodedWidth/Height`, `kPlex720pYuv420pBytes=1382400`; **DDR accept still rejects 720** (w-mem) |
 | `plex_resolve.{hpp,cpp}` | Profile `720p` → 1280x720 / 4000 kbps / q70 / baseline / L31; validate allows exact path-720; bitrate step ladder includes 4000/3500 |
-| `pms_delivery_geom.hpp` | `isGenuine720pDelivery`, `pmsBitrateLikelyTrue720p` (≥3500 measured) |
+| `pms_delivery_geom.hpp` | `isGenuine720pDelivery`, `pmsBitrateLikelyTrue720p` (≥3500); **`deliveryBasisForResolve`** → `direct_play_part` when !transcoded |
+| `yuv420p_chroma_health.hpp` | `deliveryGeometryVerifiedFromBasis` accepts **`measured` + `direct_play_part`** (not library_media) |
+| `main.cpp` | `PREFER_DIRECT_H264` conf; per-play preferDirect via content policy; DP sets verified basis at plan time |
 | `coded_size.hpp` | `parseCodedSizeString("1280x720")` OK for path tier without DDR accept |
 | `assets/plex-profiles/MiSTerPlex.xml` | Caps 1280×720, level 31, encode flags baseline L3.1 — **required** so start.mp4 is CB not Main |
-| vf | Reuses existing `SkipIdentity` / crop+pad — no parallel path |
+| `misterplex.conf.example` | Documents PREFER_DIRECT_H264 + Path720p default |
+| vf | Reuses existing `SkipIdentity` / crop+pad — no parallel path; **Always+exact+DP verified → identity_skip** (ARM scale filter gone) |
 
 480p path unchanged in API; unit tests still green for 480p.
+
+### ARM-evac design choice (parent directive)
+
+Chose **“ARM out of the scale loop entirely”** over “cheaper ARM scale”:
+- Path720p + eligible H.264 → **Direct Play Part** by default (PMS transcoder out).
+- DP Part sample WxH is **`direct_play_part`** (plan-time verified) so FORCE_SCALE product path takes **`force_exact_identity`**, not FOAR.
+- Universal still unverified until measured (cannot rebuild vf mid-session) — bitrate floor + genuine-delivery gates keep the 404 trap from claiming identity.
 
 ---
 
 ## (d) ARM cost vs 41.7 ms @24 fps
 
-### Host `ffmpeg_cpu_probe` (x86 lab, **not** dual-A9) — 120 frames
+### ARM milliseconds this change removes (honest)
+
+| Claim | Evidence | ms/f |
+|---|---|---|
+| identity_skip ⇒ scale filter **absent** | `buildFfmpegVideoFilter` Always+exact+`direct_play_part` → `identity_skip=1`, `scale_applied=0` (unit) | **scale bucket = 0 by construction** |
+| Archived ARM scaleΔ @624×480 FOAR | task brief / p720-scope-arm | **2.954 ms/f** (class of work when FOAR required) |
+| Host FOAR same-size vs identity (240f CB 720p blip) | `probe_id720` / `probe_foar720` child_cpu | id **2.075** ms/f · foar **2.180** ms/f · Δ **+0.105** (x86 only) |
+| Host 404→720 upscale trap vs identity | `probe_up404` | **4.667** ms/f · Δ **+2.59** vs id (x86 only) |
+| **Device dual-A9 ms/f removed by DP identity** | no MiSTer SSH | **unknown** — parent: profile DP identity vs FORCE FOAR same asset |
+
+Parent device note (not this lane): 1080p synthetic CB decode ~32.4 ms/f vs 480p real decode_null 21.6 → decode dominated by content/bitrate, not pixels. **Do not claim 24 fps fit from host or synthetic alone.**
+
+### Host `ffmpeg_cpu_probe` (x86 lab, **not** dual-A9)
+
+Earlier 120f series:
 
 | Label | child_cpu_s | ms/f CPU | notes |
 |---|---:|---:|---|
@@ -105,41 +129,40 @@ For non-DP titles, request **720p ladder @ maxVideoBitrate=4000** (floor measure
 | 720_scale_from_404 | 0.677 | **5.64** | forced short→720 scale |
 | 480_identity | 0.116 | 0.97 | same host baseline |
 
-Host 720/480 identity CPU ratio ≈ **2.38×** (pixels 3.08×).
+ARM-evac addendum 240f / 10s CB 3500k:
 
-### ARM projection from measured 480p buckets (task brief)
+| Label | child_cpu_s | ms/f CPU |
+|---|---:|---:|
+| id720 (null vf) | 0.498 | 2.075 | `probe_id720_summary.txt` |
+| foar720 (FOAR 1280→1280) | 0.523 | 2.180 | `probe_foar720_summary.txt` |
+| up404 (scale 720x404 then FOAR 720) | 1.120 | 4.667 | `probe_up404_summary.txt` |
 
-624×480: decode_null 21.562 + present 10.411 + pipe 5.263 + scaleΔ 2.954 ms/f.
+### Fit verdict
 
-| Scenario | Method | total ms/f | fit 24fps? | max fps ≈ |
-|---|---|---:|---|---:|
-| A Direct+identity | decode×2.38, present/pipe×3.08, scale=0 | **~99.6** | **NO** | ~10 |
-| B +scale from 404 | A + scale inflated | ~122 | **NO** | ~8 |
-| C pixel-linear decode | decode×3.08 + present/pipe×3.08 | ~115 | **NO** | ~9 |
-
-**Plain verdict (this method):** linear/host-ratio lift of the **full** 480p bill does **not** fit 24 fps on one dual-A9 accounting.  
-**Alternate (p720-scope-arm v3 scenario B):** ~70–120% stream **if** scale is the dominant 480p bill and is skipped — **not re-measured on device here**.  
-**Device ARM profile:** **unknown** — parent must run `arm-profile-tools` / FEED on MiSTer (agents forbidden to SSH).
-
-DDR push alone @24 fps: 33.2 MB/s (1 382 400 B × 24); present bucket scales ~3× → already large vs 41.7 ms.
+- **Scale evacuation on true DP 720:** product path now takes identity (ARM scale=0) when Part samples==bank — **required** for 720 budget; not sufficient alone.
+- Full dual-A9 24 fps fit with present/pipe still on ARM: **unknown / previously projected NO** until fabric owns present (w-mem/w-scaler) and parent measures real-720 decode.
+- DDR push @24 fps: 33.2 MB/s (1 382 400 B × 24).
 
 ---
 
 ## (e) Red-before-green tests (true rc)
 
 ```text
-./build/test_resolve        true_rc=0   GREEN_PATH_720p url+genuine_delivery+bitrate_gate
-./build/test_ffmpeg_vf      true_rc=0   GREEN_PATH_720p_VF identity=verified short404=scale
-./build/test_osd_menu       true_rc=0   DECODE=1280x720 → Path720p
-./build/test_coded_size_adopt true_rc=0
+./build/test_resolve              true_rc=0   GREEN_PATH_720p url+genuine_delivery+bitrate_gate
+./build/test_ffmpeg_vf            true_rc=0   GREEN_PATH_720p_VF + DP identity + unverified NEG
+./build/test_osd_menu             true_rc=0   Path720p + preferDirectH264ForContent matrix
+./build/test_yuv420p_chroma_480p  true_rc=0   direct_play_part verified
+./build/test_coded_size_adopt     true_rc=0
 ddrFrameStoreAcceptsResolution(1280,720)=0  (invariant kept for w-mem)
-parse/adopt 1280x720 ok=1
 ```
 
 Negative cases locked:
 - `isGenuine720pDelivery(720,404)==false`
 - `isGenuine720pDelivery(624,350)==false`
-- vf: verified 720×404 into coded 1280×720 **must scale**, not identity_skip
+- vf: 720×404 into coded 1280×720 **must scale**, not identity_skip
+- vf: **unverified** exact 1280×720 claim **must not** identity_skip (FOAR)
+- `library_media` / `transcode_request` still not verified
+- `preferDirectH264ForContent(true,false,…,Path720p)==false` (explicit off)
 - `pmsBitrateLikelyTrue720p(2000)==false`
 
 ---

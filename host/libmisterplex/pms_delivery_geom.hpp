@@ -161,4 +161,18 @@ inline bool pmsBitrateLikelyTrue720p(int maxVideoBitrateKbps) {
     return maxVideoBitrateKbps >= kPmsTrue720pMinBitrateKbpsMeasured;
 }
 
+// Play-time delivery basis string for GEOM / identity_skip.
+// Direct Play Part: file samples = delivery (verified). Universal/transcode:
+// request or library claim only (unverified until measured).
+inline const char* deliveryBasisForResolve(bool ok, bool transcoded, int media_w,
+                                           int media_h, bool has_transcode_request_wh) {
+    if (!ok)
+        return "unknown";
+    if (transcoded)
+        return has_transcode_request_wh ? "transcode_request" : "unknown";
+    if (media_w > 0 && media_h > 0)
+        return "direct_play_part";
+    return "unknown";
+}
+
 } // namespace misterplex

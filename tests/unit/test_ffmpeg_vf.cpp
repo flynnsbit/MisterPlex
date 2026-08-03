@@ -1,5 +1,6 @@
 // Unit tests for host/libmisterplex/ffmpeg_vf.hpp — scale policy + sws_flags.
 #include "libmisterplex/ffmpeg_vf.hpp"
+#include "libmisterplex/pms_delivery_geom.hpp"
 #include "libmisterplex/yuv420p_chroma_health.hpp"
 
 #include <cstdio>
@@ -385,13 +386,71 @@ int main() {
         std::printf("GREEN_OUTPUT_PIN force_scale output_bytes=%zu == reader\n", R);
     }
 
-    // --- B4: only measured qualifies ---
+    // --- B4: measured + direct_play_part qualify; library/transcode claims do not ---
     {
         expect(!deliveryGeometryVerifiedFromBasis("library_media"),
                "library_media is claim not measurement");
         expect(!deliveryGeometryVerifiedFromBasis("transcode_request"),
                "transcode_request not verified");
         expect(deliveryGeometryVerifiedFromBasis("measured"), "measured qualifies");
+        expect(deliveryGeometryVerifiedFromBasis("direct_play_part"),
+               "DP Part sample WxH is delivery (ARM-evac identity)");
+        expect(std::string(deliveryBasisForResolve(true, false, 1280, 720, false)) ==
+                   "direct_play_part",
+               "DP resolve basis");
+        expect(std::string(deliveryBasisForResolve(true, true, 1280, 720, true)) ==
+                   "transcode_request",
+               "universal keeps transcode_request");
+        expect(std::string(deliveryBasisForResolve(true, true, 0, 0, false)) == "unknown",
+               "transcode without request wh");
+    }
+
+    // --- Path720p ARM-evac: DP exact bank → identity_skip (scale_applied=0) ---
+    {
+        FfmpegVfRequest r;
+        r.coded_w = 1280;
+        r.coded_h = 720;
+        r.display_w = 1280;
+        r.display_h = 720;
+        r.scale_mode = FfmpegScaleMode::Always; // product FORCE_SCALE maps here
+        r.source_w = 1280;
+        r.source_h = 720;
+        r.delivery_geometry_verified =
+            deliveryGeometryVerifiedFromBasis("direct_play_part");
+        const auto p = buildFfmpegVideoFilter(r);
+        expect(p.identity_skip && !p.scale_applied,
+               "DP 1280x720 verified → ARM scale evacuated");
+        expect(p.vf.find("scale=") == std::string::npos, "no scale filter on DP identity");
+    }
+    // Negative: shorter coded height must NOT identity into 720 bank
+    {
+        FfmpegVfRequest r;
+        r.coded_w = 1280;
+        r.coded_h = 720;
+        r.display_w = 1280;
+        r.display_h = 720;
+        r.scale_mode = FfmpegScaleMode::Always;
+        r.source_w = 720;
+        r.source_h = 404;
+        r.delivery_geometry_verified = true; // even if "verified" wrong size
+        const auto p = buildFfmpegVideoFilter(r);
+        expect(!p.identity_skip && p.scale_applied,
+               "NEG: 720x404 into 1280x720 must scale (not true 720p)");
+    }
+    // Negative: unverified exact claim still FOAR (universal ceiling trap class)
+    {
+        FfmpegVfRequest r;
+        r.coded_w = 1280;
+        r.coded_h = 720;
+        r.display_w = 1280;
+        r.display_h = 720;
+        r.scale_mode = FfmpegScaleMode::Always;
+        r.source_w = 1280;
+        r.source_h = 720;
+        r.delivery_geometry_verified = false;
+        const auto p = buildFfmpegVideoFilter(r);
+        expect(!p.identity_skip && p.scale_applied,
+               "NEG: unverified 1280x720 claim must not identity_skip");
     }
 
     // --- NO_V_RESAMPLE gate (rd-review / w-geom): src_h == bank_h ⇒ no vertical resample ---

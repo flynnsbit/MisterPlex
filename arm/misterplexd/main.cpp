@@ -216,6 +216,13 @@ int main(int argc, char** argv) {
     bool ddrMemFlush = false;
     bool presentProfile = false;
     bool streamEnabled = false;
+    // Prefer library H.264 Part (transcoded=0) instead of PMS universal.
+    // Default tracks STREAM unless PREFER_DIRECT_H264 overrides, except Path720p
+    // play which defaults DP when conf unset (ARM-evac: no transcoder + identity).
+    // PREFER_DIRECT_H264=0 forces universal even on Path720p / STREAM=1.
+    // PREFER_DIRECT_H264=auto (or unset) → preferDirectH264ForContent(...).
+    bool preferDirectH264ConfSet = false;
+    bool preferDirectH264Conf = false;
     std::string streamSkipRgb = "auto"; // auto | on | off — skip heavy RGB when PRESENT=fpga
     // STREAM=0 -vf scale: skip_identity omits scale+pad when expected delivery
     // WxH is known and equals the coded bank (or ASSUME_MATCH). Unknown delivery
@@ -432,6 +439,14 @@ int main(int argc, char** argv) {
         v = loadConf(confPath, "STREAM");
         if (!v.empty())
             streamEnabled = confTruthy(v);
+        v = loadConf(confPath, "PREFER_DIRECT_H264");
+        if (!v.empty()) {
+            preferDirectH264ConfSet = true;
+            if (v == "auto" || v == "AUTO")
+                preferDirectH264ConfSet = false; // fall through to policy default
+            else
+                preferDirectH264Conf = confTruthy(v);
+        }
         v = loadConf(confPath, "STREAM_SKIP_RGB");
         if (!v.empty())
             streamSkipRgb = v;
@@ -806,10 +821,15 @@ int main(int argc, char** argv) {
     player.setLog([](const std::string& s) { logDaemon(s); });
     if (streamEnabled) {
         std::fprintf(stderr,
-                     "misterplexd: STREAM=1 (annex-B → host I-recon F1 + F3; preferDirectH264; "
+                     "misterplexd: STREAM=1 (annex-B → host I-recon F1 + F3; "
                      "PRESENT=%s STREAM_SKIP_RGB=%s — skip RGB only when PRESENT=fpga)\n",
                      presentMode.c_str(), streamSkipRgb.c_str());
     }
+    std::fprintf(stderr,
+                 "misterplexd: PREFER_DIRECT_H264 conf_set=%d conf_val=%d STREAM=%d — "
+                 "Path720p defaults DP when conf unset; 1=>Part transcode=0; 0=>universal\n",
+                 preferDirectH264ConfSet ? 1 : 0, preferDirectH264Conf ? 1 : 0,
+                 streamEnabled ? 1 : 0);
     std::fprintf(stderr, "misterplexd: DDR_MEM_SYNC=%s DDR_MEM_FLUSH=%s\n",
                  ddrMemSync ? "1" : "0", ddrMemFlush ? "1" : "0");
     std::fprintf(stderr, "misterplexd: DDR_FRAME_FORMAT=yuv420p\n");
@@ -949,7 +969,8 @@ int main(int argc, char** argv) {
 
     auto resolveAgainstServers = [&](const misterplex::PlayRequest& req,
                                      const std::string& preferredBase, int64_t off,
-                                     const misterplex::WeakLadder& weakForPlay)
+                                     const misterplex::WeakLadder& weakForPlay,
+                                     misterplex::ContentPresentPolicy contentPolicy)
         -> std::pair<misterplex::ResolveResult, std::string> {
         std::string token = req.token.empty() ? confToken : req.token;
         // Cast-selected base wins when address present.
@@ -959,11 +980,14 @@ int main(int argc, char** argv) {
             selected = preferredBase.empty() ? defaultPms : preferredBase;
 
         auto tryBase = [&](const std::string& base) -> misterplex::ResolveResult {
-            // STREAM=1: prefer direct H.264 Part for CAVLC host recon; still weakAlways for
-            // non-H.264. STREAM=0: always weak universal (dual-A9 cast path).
+            // preferDirectH264: library H.264 → Part URL, transcoded=false.
+            // Path720p defaults DP when conf unset (ARM-evac). STREAM couples
+            // otherwise. weakAlways covers non-H.264 / missing Part → universal.
+            const bool wantDirect = misterplex::preferDirectH264ForContent(
+                preferDirectH264ConfSet, preferDirectH264Conf, streamEnabled, contentPolicy);
             return misterplex::resolvePlayTarget(req.key, base, token, off, /*weakAlways=*/true,
                                                  weakForPlay,
-                                                 /*preferDirectH264=*/streamEnabled);
+                                                 /*preferDirectH264=*/wantDirect);
         };
 
         auto resolved = tryBase(selected);
@@ -1020,7 +1044,8 @@ int main(int argc, char** argv) {
                              brAdv.c_str(), weakBitrateExplicit ? 1 : 0);
             }
         }
-        auto [resolved, base] = resolveAgainstServers(req, defaultPms, off, weakForPlay);
+        auto [resolved, base] = resolveAgainstServers(req, defaultPms, off, weakForPlay,
+                                                      contentRes.presentPolicy);
 
         if (gen != playGen.load()) {
             std::fprintf(stderr, "misterplexd: PLAY superseded during resolve key=%s\n",
@@ -1053,31 +1078,32 @@ int main(int argc, char** argv) {
         // - universal transcode: we *request* weakForPlay.videoResolution — NOT
         //   verified delivery. PMS client profile only sets upperBound(w/h)
         //   (plex_resolve.cpp plexClientProfileExtra). delivery_verified=0.
-        // - direct play: library Media/Stream WxH is a CLAIM only (basis=
-        //   library_media). deliveryGeometryVerifiedFromBasis accepts ONLY
-        //   "measured" — live silicon saw library_media=624x480 with measured=
-        //   624x350 on the same asset.
+        // - direct play Part: container sample WxH IS delivery (basis=
+        //   direct_play_part) — verified so identity_skip can fire when
+        //   samples==coded bank (ARM scale evacuated). Universal ceiling trap
+        //   (624x480→624x350) does not apply to Part.
         // - unknown: leave 0 so skip_identity still emits scale (safe).
         // Always re-set each play so a prior session cannot leak source dims.
         int expectW = 0, expectH = 0;
-        const char* deliveryBasis = "unknown";
+        bool hasTranscodeReqWh = false;
         if (resolved.transcoded) {
             if (std::sscanf(weakForPlay.videoResolution.c_str(), "%dx%d", &expectW, &expectH) ==
                     2 &&
                 expectW > 0 && expectH > 0) {
-                deliveryBasis = "transcode_request";
+                hasTranscodeReqWh = true;
             } else {
                 expectW = expectH = 0;
             }
         } else if (resolved.mediaWidth > 0 && resolved.mediaHeight > 0) {
             expectW = resolved.mediaWidth;
             expectH = resolved.mediaHeight;
-            deliveryBasis = "library_media"; // claim — never sets delivery_verified
         }
+        const char* deliveryBasis = misterplex::deliveryBasisForResolve(
+            resolved.ok, resolved.transcoded, resolved.mediaWidth, resolved.mediaHeight,
+            hasTranscodeReqWh);
         player.setFfmpegScaleSourceSize(expectW, expectH);
-        // Play-time basis is never "measured" (that arrives later from ffmpeg
-        // stderr). So delivery_verified stays 0 here; identity_skip needs
-        // force-scale OFF + later measured match (or stays scaled).
+        // direct_play_part verifies at plan time; measured arrives later from
+        // ffmpeg stderr for universal paths (cannot rebuild vf mid-session).
         const bool deliveryVerified =
             misterplex::deliveryGeometryVerifiedFromBasis(deliveryBasis);
         player.setDeliveryGeometryVerified(deliveryVerified);

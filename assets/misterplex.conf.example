@@ -67,6 +67,13 @@ PRESENT=fpga
 # STREAM_SKIP_RGB=auto  # skip heavy RGB only when PRESENT=fpga (audio + recon from start)
 # STREAM_SKIP_RGB=0     # always FFmpeg RGB (CABAC fallback / PRESENT=both keeps RGB anyway)
 # PRESENT=both always keeps FFmpeg RGB for continuous fb0 regardless of STREAM_SKIP_RGB.
+#
+# PREFER_DIRECT_H264 — library H.264 Part (transcode=0) vs PMS universal (transcode=1).
+# Default/auto: follows STREAM, except DECODE=1280x720 (Path720p) defaults Part so
+# ARM skips the PMS transcoder and can identity_skip when file samples==bank.
+# PREFER_DIRECT_H264=1    # always try Part when source is H.264
+# PREFER_DIRECT_H264=0    # force universal even on Path720p / STREAM=1
+# PREFER_DIRECT_H264=auto # explicit default (same as unset)
 
 # --- Phase 4 UX ---
 # AUTO_NEXT=1  # on media EOF, play next playQueue item when bound (default on)
