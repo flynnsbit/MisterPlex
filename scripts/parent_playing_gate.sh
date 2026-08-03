@@ -697,6 +697,9 @@ finalize_verdict() {
 
 offline_selftest() {
   # Red-before-green for precondition paths + scorer wiring. No SSH to MiSTer.
+  # Keep residue out of docs/agent-evidence (parent artifacts only).
+  EV_DIR="${EV_DIR:-$ROOT/build/parent_playing_gate_offline}"
+  rm -rf "$EV_DIR"
   ensure_ev
   say "OFFLINE SELFTEST"
   local fails=0
