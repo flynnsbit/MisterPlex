@@ -1,0 +1,50 @@
+w-scaler STATUS — fabric scaler / content window
+branch: w-scaler-window
+sha: b779fa0df6b547c85fbd885603edb28b6793f851
+base: 8fb5afe7 (CAVLC merge on local main)
+
+=== CONTRACT ===
+Pixel format: 8-bit planar (linebuf) / RGB via frame_store (content_window)
+Input:  content_w × content_h (runtime; e.g. 320×240, 640×480, 1280×720)
+Output: h_de × v_de DE raster (e.g. 1280×720)
+
+Two paths:
+1) present_content_window (PRODUCT path under PLEX_PRESENT_720P_L4)
+   - Present-path NN address map into DDR/frame_store
+   - 0 M10K, 0 DSP; pixel path = mul+add+clamp only (div off ce_pix)
+   - 1 store sample / ce_pix
+2) present_nn_linebuf_scaler (DEFAULT OFF — not in present_core)
+   - Stream H/V NN with 1× M10K line buffer
+   - For write-path / harness; NOT product-enabled
+
+=== CYCLE BUDGET @ clk_sys=20 MHz, 1280×720@24 ===
+budget cy/frame = 20e6/24 = 833333
+active pixels = 1280*720 = 921600
+present-path 1 cy/px: 921600 / 833333 = 1.106 → FAIL without faster pixclk or PPC≥2
+linebuf stream (meas ~3–4 cy/out + in load):
+  PREREG 320→720p ~ 3*921600+76800 = 2.84e6 → FAIL 3.41×
+  MEAS 8×8→16×16 cy/frame=1099 (PREREG was 616 — MISS +483; 3-phase BRAM emit)
+  MEAS 40×30→80×60 cy/frame=20433 cy/out_px=4.26
+HONEST: stream upscale into 720p store at 20 MHz 1PPC FAILS TIME.
+Product approach is content_window present-path (native store, NN sample) +
+faster ce_pix / PPC for 720p DE (w-clock lane).
+
+=== BRAM ===
+linebuf: IN_W_MAX=1280 × 8b = 10240 bits = 1 M10K exactly (NN needs 1 line)
+bilinear would be 2 M10K; present_bilinear_lerp is 0 M10K comb (not auto-wired)
+content_window: 0 M10K
+
+=== GATES (direct rc) ===
+make rtl-lint            true rc=0
+test_fabric_content_window_math true rc=0
+test_present_content_window_verilator true rc=0  (RED floor-fault last-col 318≠319; GREEN pass)
+test_present_nn_linebuf_scaler_verilator true rc=0  (neg last-col poison)
+lint baseline UNTOUCHED
+
+=== MODULE MATRIX ===
+present_content_window     ON_MAIN=yes IN_QIP=yes INST=L4 only ENABLED=PLEX_PRESENT_720P_L4
+present_nn_linebuf_scaler  ON_MAIN=pending IN_QIP=yes INST=no ENABLED=no
+present_bilinear_lerp      ON_MAIN=pending IN_QIP=yes INST=no ENABLED=no
+
+=== QUALITY ===
+NN v1 shimmers on non-integer ratios (960→1280). Bilinear optional later.
