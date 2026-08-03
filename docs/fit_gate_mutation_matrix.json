@@ -249,6 +249,30 @@
       "token_hit": "1"
     },
     {
+      "check": "B35_ASCAL_BUF_MODEL_ABSENT",
+      "inject": "live hollow / missing product TB",
+      "expect": "B35_ASCAL_BUF_MODEL_ABSENT",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B35_SIMULTANEOUS_NO_IN_BYPASS",
+      "inject": "live hollow / missing product TB",
+      "expect": "B35_SIMULTANEOUS_NO_IN_BYPASS",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B35_SIMULTANEOUS_TB_ABSENT",
+      "inject": "live hollow / missing product TB",
+      "expect": "B35_SIMULTANEOUS_TB_ABSENT",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
       "check": "B9_SYS_TOP_AR_OUT_HOLD_MISSING",
       "inject": "live defective/hollow tree (no inject)",
       "expect": "B9_SYS_TOP_AR_OUT_HOLD_MISSING",
@@ -425,6 +449,14 @@
       "token_hit": "1"
     },
     {
+      "check": "B35_SIMULTANEOUS_NBA_TAG_SAMPLE",
+      "inject": "simultaneous reads tag_gen[obuf_n] after NBA write (no in_* bypass)",
+      "expect": "B35_SIMULTANEOUS_NBA_TAG_SAMPLE",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
       "check": "B34_IDENTITY_ON_STORE",
       "inject": "align then makeDdrFrameGeometry(store) loses display 426/crop_left=2",
       "expect": "B34_IDENTITY_ON_STORE",
@@ -450,6 +482,6 @@
     }
   ],
   "failures": [],
-  "n_red": 56,
-  "head": "2e58c8146631"
+  "n_red": 60,
+  "head": "d187539ceaf2"
 }

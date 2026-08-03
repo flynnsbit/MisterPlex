@@ -251,6 +251,11 @@ LIVE_OPEN_BLOCKER_TOKENS = (
     "B34_PLXG_FROM_GEOM_ABSENT",
     "B34_HOST_RECORD_ORACLE_MISSING",
     # B34_IDENTITY_ON_STORE / B34_PLXG_Q1Q3_NOT_DISPLAY: closed-class reinject
+    # rd-duck: ascal simultaneous i_end+VS — NBA tag sample hole in buf_model
+    "B35_ASCAL_BUF_MODEL_ABSENT",
+    "B35_SIMULTANEOUS_NO_IN_BYPASS",
+    "B35_SIMULTANEOUS_TB_ABSENT",
+    # B35_SIMULTANEOUS_NBA_TAG_SAMPLE / TB_DX_ONLY: closed-class reinject
 )
 
 # Sibling-lane fixes that exist but are not merged into this gated tree.
@@ -3391,6 +3396,242 @@ int main() {
 
 
 # ---------------------------------------------------------------------------
+# B35 — ascal simultaneous i_end+VS-fall: model must bypass NBA tag sample
+# (rd-duck 2026-08-03)
+#
+# plex_ar_buf_model: tag_gen[ibuf] <= in_gen etc are NBAs; same always block
+# then does obuf_n=ibuf_old and reads tag_gen[obuf_n] into disp/out — that
+# read sees the OLD tag, not the just-completed frame.
+# C++ ref updates tag[ibuf] immediately before reading; phase test
+# B_simultaneous_disp_dx expects 16, NBA path observes old 4 / invalid.
+# ascal.vhd:1954-1964 special-cases simultaneous: o_obuf <= o_ibuf (old).
+#
+# Fix: explicit bypass from in_gen/dar_at_start/bank_gen/valid=1 when
+# simultaneous (obuf_n == old ibuf). Require out_gen/DAR/bank/valid ALL match,
+# not only dx. RED twin PLEX_AR_FAULT_SIM_TAG_NBA must re-expose the hole.
+# ---------------------------------------------------------------------------
+
+
+def check_b35_ascal_simultaneous_tag_bypass(root: Path) -> tuple[list[str], list[str]]:
+    """Fail until simultaneous path bypasses NBA tag_* and TB asserts full tag."""
+    msgs: list[str] = ["LEG0_B35_ASCAL_SIMULTANEOUS_TAG_EXECUTED begin"]
+    errors: list[str] = []
+
+    model = root / "fpga" / "Plex_MiSTer" / "rtl" / "plex_ar_buf_model.sv"
+    ascal = root / "fpga" / "Plex_MiSTer" / "sys" / "ascal.vhd"
+    if not ascal.is_file():
+        ascal = root / "fpga" / "Plex_MiSTer" / "sys" / "ascal.vhd"
+    tb_cpp = root / "tests" / "rtl" / "plex_ar_ascal_buf_phase_tb.cpp"
+    tb_sh = root / "tests" / "unit" / "test_plex_ar_ascal_buf_phase_rtl_sim.sh"
+
+    model_txt = product_active_sv(_read(model) or "") if model.is_file() else ""
+    # Keep FAULT ifdef body visible for twin detection on raw file
+    model_raw = _read(model) or ""
+    tb_cpp_txt = _read(tb_cpp) or ""
+    tb_sh_txt = _read(tb_sh) or ""
+    blob = "\n".join([tb_cpp_txt, tb_sh_txt])
+
+    if not model.is_file():
+        errors.append(
+            "B35_ASCAL_BUF_MODEL_ABSENT: missing plex_ar_buf_model.sv — cannot "
+            "prove simultaneous i_end+VS-fall display tag bypass (rd-duck; "
+            "ascal.vhd:1954-1964)."
+        )
+        errors.append(
+            "B35_SIMULTANEOUS_NO_IN_BYPASS: no model — simultaneous path cannot "
+            "bypass NBA tag_* via in_gen/dar_at_start/bank_gen (rd-duck)."
+        )
+        errors.append(
+            "B35_SIMULTANEOUS_TB_ABSENT: missing plex_ar_ascal_buf_phase TB — "
+            "need B_simultaneous_disp_{gen,dx,dy,bank,valid} vs C++ ref (rd-duck)."
+        )
+        return msgs, errors
+
+    # Simultaneous path present?
+    has_simult = bool(
+        re.search(r"\bsimultaneous\b", model_txt)
+        and re.search(r"in_frame_pulse\s*\)\s*begin|in_frame_pulse\s*&&", model_txt)
+    )
+    # Defect: on simultaneous (or always on swap), sample tag_*[obuf_n] without
+    # in_* bypass — NBA write not visible same cycle.
+    samples_tag_on_swap = bool(
+        re.search(
+            r"tag_gen\s*\[\s*obuf_n\s*\]|tag_dx\s*\[\s*obuf_n\s*\]|"
+            r"tag_gen\s*\[\s*obuf\s*\]",
+            model_txt,
+        )
+    )
+    # Good: simultaneous branch assigns from in_* / dar_at_start / bank_gen
+    bypass_gen = bool(
+        re.search(
+            r"simultaneous[\s\S]{0,400}?sel_gen\s*=\s*in_gen|"
+            r"if\s*\(\s*simultaneous\s*\)[\s\S]{0,300}?in_gen",
+            model_txt,
+        )
+    )
+    bypass_dar = bool(
+        re.search(
+            r"simultaneous[\s\S]{0,400}?sel_dx\s*=\s*dar_at_start|"
+            r"simultaneous[\s\S]{0,400}?dar_at_start_x",
+            model_txt,
+        )
+    )
+    bypass_bank = bool(
+        re.search(
+            r"simultaneous[\s\S]{0,400}?sel_bank\s*=\s*bank_gen|"
+            r"simultaneous[\s\S]{0,400}?bank_gen_at_start",
+            model_txt,
+        )
+    )
+    bypass_valid = bool(
+        re.search(
+            r"simultaneous[\s\S]{0,400}?sel_valid\s*=\s*1'b1|"
+            r"simultaneous[\s\S]{0,400}?sel_valid\s*=\s*1",
+            model_txt,
+        )
+    )
+    # Hollow: body of `if (simultaneous) begin ... end` still samples tag_*
+    # (do not scan past the block — non-simultaneous else may legally use tag_*).
+    simult_reads_tag = False
+    m_sim_blk = re.search(
+        r"if\s*\(\s*simultaneous\s*\)\s*begin([\s\S]*?)\bend\b",
+        model_txt,
+    )
+    if m_sim_blk:
+        blk = m_sim_blk.group(1)
+        simult_reads_tag = bool(re.search(r"tag_gen\s*\[|tag_dx\s*\[|tag_bank\s*\[", blk))
+        # Nested begin/end: if first end is too early, also check 400-char window
+        # only for sel_* = tag without in_gen in same window
+        if not simult_reads_tag and re.search(
+            r"sel_gen\s*=\s*tag_gen\s*\[|sel_dx\s*=\s*tag_dx\s*\[",
+            blk,
+        ):
+            simult_reads_tag = True
+    full_bypass = bypass_gen and bypass_dar and bypass_bank and bypass_valid
+
+    msgs.append(
+        f"LEG0_B35_MODEL simult={int(has_simult)} samples_tag={int(samples_tag_on_swap)} "
+        f"bypass_gen={int(bypass_gen)} dar={int(bypass_dar)} bank={int(bypass_bank)} "
+        f"valid={int(bypass_valid)} simult_reads_tag={int(simult_reads_tag)} "
+        f"full_bypass={int(full_bypass)}"
+    )
+
+    if not has_simult:
+        errors.append(
+            "B35_SIMULTANEOUS_PATH_ABSENT: plex_ar_buf_model must implement "
+            "simultaneous i_end+out_VS-fall (ascal.vhd:1954-1964 o_obuf<=o_ibuf old) "
+            "(rd-duck)."
+        )
+
+    if not full_bypass or simult_reads_tag:
+        errors.append(
+            "B35_SIMULTANEOUS_NO_IN_BYPASS: on simultaneous edge, display tag must "
+            "bypass via in_gen/dar_at_start_*/bank_gen_at_start/valid=1 (obuf_n=="
+            "ibuf_old). Reading tag_gen[obuf_n] after tag_*[ibuf]<= NBA sees OLD "
+            "tag (rd-duck: C++ ref updates immediately; B_simultaneous_disp_dx "
+            "expects 16, NBA path shows 4/invalid)."
+        )
+
+    # Non-simultaneous may still read tag_* (prior cycle stable) — OK.
+    # NBA hole: no full in_* bypass (whether or not tag_* appears elsewhere).
+    if not full_bypass and (samples_tag_on_swap or simult_reads_tag or has_simult):
+        errors.append(
+            "B35_SIMULTANEOUS_NBA_TAG_SAMPLE: model lacks simultaneous in_* bypass "
+            "while tag_*[obuf] path exists — NBA hole on i_end+VS-fall "
+            "(rd-duck pending ascal model bug; ascal.vhd:1954-1964)."
+        )
+
+    # RED twin must exist to prove the hole
+    has_fault_ifdef = bool(
+        re.search(r"PLEX_AR_FAULT_SIM_TAG_NBA|FAULT_SIM_TAG_NBA", model_raw)
+    )
+    if not has_fault_ifdef:
+        errors.append(
+            "B35_SIMULTANEOUS_NO_FAULT_TWIN: model must define "
+            "PLEX_AR_FAULT_SIM_TAG_NBA (or equiv) that forces tag_*[obuf_n] sample "
+            "on simultaneous so RED TB observes stale/wrong completed-frame tag "
+            "(rd-duck)."
+        )
+
+    # TB: full tag match not dx-only
+    tb_present = tb_cpp.is_file() or tb_sh.is_file()
+    has_b_gen = bool(re.search(r"B_simultaneous_disp_gen", blob))
+    has_b_dx = bool(re.search(r"B_simultaneous_disp_dx", blob))
+    has_b_dy = bool(re.search(r"B_simultaneous_disp_dy", blob))
+    has_b_bank = bool(re.search(r"B_simultaneous_disp_bank", blob))
+    has_b_valid = bool(re.search(r"B_simultaneous_disp_valid", blob))
+    # dx-only hollow
+    dx_only = has_b_dx and not (has_b_gen and has_b_bank and has_b_valid)
+    # Expect new frame 16:9 (or explicit 16) in TB seed
+    seeds_new_dar = bool(
+        re.search(r"16\s*,\s*9|disp_dx.*16|sim_gen|bank\s*=\s*7", blob)
+    )
+    # RED path expects mismatch / stale
+    red_tb = bool(
+        re.search(
+            r"PLEX_AR_FAULT_SIM_TAG_NBA|RED_sim_nba|stale.*simultaneous|"
+            r"FAULT.*simultaneous|RED must observe stale",
+            blob,
+            re.I,
+        )
+    )
+    cites_ascal = bool(
+        re.search(r"1954|1955|1956|1964|o_obuf\s*<=\s*o_ibuf|simultaneous", blob)
+    )
+
+    msgs.append(
+        f"LEG0_B35_TB present={int(tb_present)} gen={int(has_b_gen)} "
+        f"dx={int(has_b_dx)} dy={int(has_b_dy)} bank={int(has_b_bank)} "
+        f"valid={int(has_b_valid)} dx_only={int(dx_only)} red={int(red_tb)} "
+        f"seed16={int(seeds_new_dar)} ascal_cite={int(cites_ascal)}"
+    )
+
+    if not tb_present:
+        errors.append(
+            "B35_SIMULTANEOUS_TB_ABSENT: missing tests/rtl/plex_ar_ascal_buf_phase_tb "
+            "(+ shell) — must run C++ ascal ref vs RTL on simultaneous i_end+VS-fall "
+            "and assert out_gen/DAR/bank/valid (rd-duck)."
+        )
+    else:
+        if not (has_b_gen and has_b_dx and has_b_dy and has_b_bank and has_b_valid):
+            errors.append(
+                "B35_SIMULTANEOUS_TB_DX_ONLY: phase TB must assert "
+                "B_simultaneous_disp_gen AND _dx AND _dy AND _bank AND _valid "
+                f"(have gen={int(has_b_gen)} dx={int(has_b_dx)} dy={int(has_b_dy)} "
+                f"bank={int(has_b_bank)} valid={int(has_b_valid)}). dx-alone is "
+                "hollow (rd-duck)."
+            )
+        if dx_only:
+            errors.append(
+                "B35_SIMULTANEOUS_TB_DX_ONLY: B_simultaneous_disp_dx without "
+                "gen/bank/valid match cannot catch partial NBA bypass (rd-duck)."
+            )
+        if not seeds_new_dar:
+            errors.append(
+                "B35_SIMULTANEOUS_TB_NO_NEW_FRAME_SEED: TB must seed a distinct "
+                "new-frame DAR/bank on simultaneous edge (e.g. 16:9 bank=7 vs prior "
+                "4:3) so stale tag is observable (rd-duck B_simultaneous_disp_dx=16)."
+            )
+        if not red_tb:
+            errors.append(
+                "B35_SIMULTANEOUS_TB_NO_RED_TWIN: TB/shell must run FAULT/"
+                "PLEX_AR_FAULT_SIM_TAG_NBA path and require stale/mismatch "
+                "(not full new-frame match) (rd-duck)."
+            )
+        if not cites_ascal:
+            errors.append(
+                "B35_SIMULTANEOUS_TB_NO_ASCAL_CITE: TB must cite ascal simultaneous "
+                "special-case (vhd ~1954-1964 / o_obuf<=old ibuf) (rd-duck)."
+            )
+
+    if not errors:
+        msgs.append(
+            "LEG0_B35_PASS simultaneous in_* bypass + full-tag TB + RED twin locked"
+        )
+    return msgs, errors
+
+
+# ---------------------------------------------------------------------------
 # B24 — PLXG q5 bit34 fps_1001 ABI merge-loss (rd-duck 2026-08-03)
 # w-path f31a6eb9: q5[34]=fps_1001, reserved[63:35], pack 24000/1001 → 24+flag
 # w-mem latch: q5_reserved_nz=|sh5[63:34] → E4 / wholesale geom reject
@@ -5385,6 +5626,7 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
         "B9_dar_bank_gen_match(bank_gen+DAR∧bank+ascal_obuf),"
         "B33_plxc_arb_issued_lower_safe(44981ab0 req/accept+per-req TB),"
         "B34_host_plxg_pad_display(426→432 display+crop+q1/q3 g++),"
+        "B35_ascal_simultaneous_tag_bypass(in_*+full_tag_TB+RED),"
         "leg_unit_make_unit,leg_rtl_lint,leg2_elab,leg3_true_de; "
         "B20_PRODUCT_UFS_TIE=elaborate Plex.sv .use_frame_store(1'b0) + reject "
         "ownership-on-ufs (w-clock free-run) + H require product-ufs0 hold measured_* "
@@ -6813,6 +7055,11 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
     b34_msgs, b34_errs = check_b34_host_plxg_pad_display_geom(ROOT)
     msgs.extend(b34_msgs)
     errors.extend(b34_errs)
+
+    # --- B35 ascal simultaneous NBA tag bypass (rd-duck buf_model bug) ---
+    b35_msgs, b35_errs = check_b35_ascal_simultaneous_tag_bypass(ROOT)
+    msgs.extend(b35_msgs)
+    errors.extend(b35_errs)
 
     # --- B20 full-hierarchy scenario tests (rd-duck 2026-08-03 hollow audit) ---
     # Prior gate only regex-scanned test *text* and accepted comment bait (mutation
@@ -8666,6 +8913,9 @@ def _run_mutation_matrix() -> tuple[list[str], list[dict[str, str]]]:
         "B34_PAD_ONLY_GEOM_ABSENT",
         "B34_PLXG_FROM_GEOM_ABSENT",
         "B34_HOST_RECORD_ORACLE_MISSING",
+        "B35_ASCAL_BUF_MODEL_ABSENT",
+        "B35_SIMULTANEOUS_NO_IN_BYPASS",
+        "B35_SIMULTANEOUS_TB_ABSENT",
     ):
         txt = "\n".join(msgs)
         has = tok in txt
@@ -9132,6 +9382,60 @@ def _run_mutation_matrix() -> tuple[list[str], list[dict[str, str]]]:
         )
     finally:
         rest_arb_db()
+
+    # --- rd-duck B35: simultaneous path samples NBA tag_* (no in_* bypass) ---
+    model_b35 = ROOT / "fpga" / "Plex_MiSTer" / "rtl" / "plex_ar_buf_model.sv"
+    model_b35.parent.mkdir(parents=True, exist_ok=True)
+    bad_model = (
+        "// fitgate B35 mutation — NBA tag sample on simultaneous (rd-duck hole)\n"
+        "module plex_ar_buf_model;\n"
+        "  input wire in_frame_pulse, out_frame_pulse;\n"
+        "  input wire [15:0] in_gen;\n"
+        "  input wire [12:0] dar_at_start_x, dar_at_start_y;\n"
+        "  input wire [15:0] bank_gen_at_start;\n"
+        "  reg [15:0] tag_gen [0:2];\n"
+        "  reg [12:0] tag_dx [0:2];\n"
+        "  reg [1:0] ibuf, obuf, ibuf_n, obuf_n;\n"
+        "  reg simultaneous;\n"
+        "  reg [15:0] sel_gen;\n"
+        "  reg [12:0] sel_dx;\n"
+        "  always @(posedge clk) begin\n"
+        "    simultaneous = 1'b0;\n"
+        "    if (in_frame_pulse) begin\n"
+        "      tag_gen[ibuf] <= in_gen;\n"
+        "      tag_dx[ibuf] <= dar_at_start_x;\n"
+        "      ibuf_n = ibuf + 1;\n"
+        "    end\n"
+        "    if (out_frame_pulse && in_frame_pulse) begin\n"
+        "      simultaneous = 1'b1;\n"
+        "      obuf_n = ibuf; // old ibuf class\n"
+        "    end\n"
+        "    // DEFECT: sample tag_* NBA — simultaneous sees OLD tag\n"
+        "    if (simultaneous) begin\n"
+        "      sel_gen = tag_gen[obuf_n];\n"
+        "      sel_dx = tag_dx[obuf_n];\n"
+        "    end\n"
+        "  end\n"
+        "endmodule\n"
+    )
+    rest_m = _with_file_backup(model_b35, bad_model)
+    try:
+        rc, msgs = leg0_arch_blockers()
+        txt_m = "\n".join(msgs)
+        exp_m = (
+            "B35_SIMULTANEOUS_NBA_TAG_SAMPLE"
+            if "B35_SIMULTANEOUS_NBA_TAG_SAMPLE" in txt_m
+            else "B35_SIMULTANEOUS_NO_IN_BYPASS"
+        )
+        _row(
+            "B35_SIMULTANEOUS_NBA_TAG_SAMPLE",
+            "simultaneous reads tag_gen[obuf_n] after NBA write (no in_* bypass)",
+            exp_m,
+            rc,
+            msgs,
+        )
+    finally:
+        rest_m()
 
     # --- rd-duck B34: identity-on-store 432/432/0 after align ---
     lay_b34 = ROOT / "host" / "libmisterplex" / "ddr_frame_layout.hpp"
