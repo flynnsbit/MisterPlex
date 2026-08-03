@@ -6,6 +6,7 @@ HOST="${MISTER_HOST:-192.168.1.183}"
 USER="${MISTER_USER:-root}"
 PASS="${MISTER_PASS:-1}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+source "$ROOT/tests/hw/hw_gate_common.sh"
 BIN="${ROOT}/build/arm/push_frame"
 FRAME="${FRAME:-${ROOT}/build/plex_test_320x240.yuv420p}"
 REMOTE_FRAME="/tmp/plex_test_320x240.yuv420p"
@@ -24,6 +25,8 @@ if [[ ! -f "$FRAME" ]]; then
   python3 "${ROOT}/scripts/gen_edge_markers.py" --format yuv420p "$FRAME"
 fi
 echo "=== ensure Plex core loaded ==="
+hw_require_expected_rbf_md5 "test_ddr_frame" "$HOST" "$PASS" "$USER" \
+  "${EXPECTED_RBF_MD5:-${HW_EXPECTED_RBF_MD5:-}}"
 ssh_m 'killall misterplexd 2>/dev/null || true; killall -CONT MiSTer 2>/dev/null || true; rm -f /tmp/misterplex_spi.lock'
 sleep 1
 if ! ssh_m 'cat /tmp/CORENAME' 2>/dev/null | grep -qi plex; then

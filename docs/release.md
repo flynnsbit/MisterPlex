@@ -1,5 +1,48 @@
 # MiSTerPlex release notes (Phase 5)
 
+## Clean-checkout lab pair (ddr-c5382bee-509b0c75)
+
+Default ship pair is **tracked** under
+`release_artifacts/ddr-c5382bee-509b0c75/` (force-added past the global `*.rbf`
+ignore). Daemon is **stamped** (`--version` → `git_rev=ba2ec3139133`) and
+includes delivery-geometry telemetry (`measured=` / `desync_risk=`).
+
+Replaces historical pin `e9f79de2`, which parent HW (2026-08-02) showed
+**regresses 480p** on real PMS delivery **624x350** (green field + duplicated
+TREK24). `package_validated_pair.sh` uses `--require-stamped` and refuses that
+historical default.
+
+Measured sizes (do not estimate):
+
+| artifact | md5 | bytes |
+|----------|-----|------:|
+| Plex.rbf | c5382bee73cecdee8220b811e529c297 | 3970492 |
+| misterplexd | 509b0c7592e0e9e38686f9eb8e2cb047 | 13095524 |
+| **total** | | **17066016** |
+
+```bash
+# From a clean clone/worktree — produces dist/misterplex-ddr-c5382bee-509b0c75.tar.gz
+PACKAGE_ALLOW_NO_FFMPEG=1 ./scripts/package_validated_pair.sh
+# true rc must be 0; pair_ship_policy must print PAIR_OK id=ddr-c5382bee-509b0c75
+# stamp must print STAMP_OK git_rev=ba2ec3139133
+```
+
+Optional ffmpeg bundle (machine-local disease otherwise):
+
+```bash
+./scripts/fetch_release_ffmpeg.sh   # md5-gated; expects John Van Sickle 7.0.2 armhf
+# then omit PACKAGE_ALLOW_NO_FFMPEG
+./scripts/package_validated_pair.sh
+```
+
+**Not daily glass:** packaging this pair is not daily-driver promotion. Promote
+requires `rbf_ship_policy.sh daily_promote_ready` and a **stamped** daemon
+(`scripts/daemon_stamp_check.sh --require-stamped`). Live `ea643e99` remains
+untraceable until replaced on-device by a stamped build; parent must still
+HW-validate 509b0c75 480p before calling this a stable daily release.
+
+---
+
 Install, configure, and verify a lab or SD deploy. For packaging from source, see `make package` / [`scripts/package_release.sh`](../scripts/package_release.sh).
 
 ## Package contents
@@ -56,6 +99,42 @@ MISTER_HOST=<mister-ip> ./scripts/deploy_misterplexd.sh
 ./scripts/deploy_plex_core.sh   # copy RBF; DEPLOY_LOAD=none|menu|core (default none)
 ```
 
+### Mandatory live PMS Baseline gate for FPGA-decode promotion
+
+Any RBF promoted for FPGA-decode work must have a current live PMS delivered
+stream check, or an explicit recorded skip reason. `make unit` only proves the
+offline parser/red paths; it cannot prove the live Plex server is still
+delivering the FPGA contract:
+
+```text
+profile_idc=66, entropy_cabac=0, max_num_ref_frames=1, b_slices=0
+coded=624x480, display=618x480
+```
+
+Use the secret-safe wrapper; it prompts for the PMS token with `read -rs`, never
+accepts a token on argv, refuses an already-exported `PLEX_TOKEN`, and removes
+its temporary curl secret config on exit:
+
+```bash
+set +x
+PLEX_BASE=http://YOUR-PLEX-SERVER:32400 \
+MISTERPLEX_BASELINE_KEY=/library/metadata/N \
+make pms-baseline-live
+```
+
+A pass writes `build/pms-baseline-live-gate/PASS.stamp` with non-secret
+provenance. For decode promotion through the normal deploy script, mark the
+purpose explicitly:
+
+```bash
+DEPLOY_DECODE_PROMOTION=1 DEPLOY_LOAD=none ./scripts/deploy_plex_core.sh path/to/Plex.rbf
+```
+
+`DEPLOY_DECODE_PROMOTION=1` refuses without the pass stamp unless the operator
+sets `PMS_BASELINE_LIVE_SKIP_REASON='...'` to consciously record why the live
+PMS Baseline gate was skipped. Credential-less environments should skip cleanly;
+do not make `make unit` depend on live PMS credentials.
+
 Startup hook (idempotent via deploy script):
 
 ```bash
@@ -83,11 +162,31 @@ Display output mode is **not** a `misterplex.conf` key; set `[Plex] video_mode` 
 | `PLEX_BASE` | `http://YOUR-PLEX-SERVER:32400` | Default PMS URL for resolve; set this to your Plex Media Server |
 | `PLEX_HOST` | `YOUR-PLEX-SERVER` | Alternate host; builds `http://HOST:32400` (overrides base host) |
 | `PLEX_TOKEN` | *(optional)* | Static token; cast usually supplies transient `X-Plex-Token` |
+
+### Plex token safety (logs)
+
+`misterplexd` redacts `X-Plex-Token`, `token`, `accessToken`, and `PLEX_TOKEN`
+values before any line reaches `misterplexd.log` (keys stay visible as
+`…=REDACTED` / `…: REDACTED` for debugging). Real playback argv/URLs still carry
+the true token so FFmpeg/PMS keep working.
+
+**If you ever shared a `misterplexd.log` (or a lab capture that included one)
+from a build before this redaction, rotate the Plex token:**
+
+1. Plex Web → account → **Authorized Devices** / app tokens (or sign out the
+   device session that issued the cast token), and revoke the exposed token.
+2. If `PLEX_TOKEN=` is set in `/media/fat/misterplex/misterplex.conf`, generate a
+   fresh token and replace that value; restart `misterplexd`.
+3. Do not paste full log files into public issues/chat — prefer redacted snippets
+   (`X-Plex-Token=REDACTED`).
 | `FFMPEG` | `/media/fat/misterplex/bin/ffmpeg` | FFmpeg binary; defaults to the bundled release copy |
 | `DECODE` | `320x240` | RGB decode size (`WxH`) |
-| `TRANSCODE_PROFILE` | `240p` \| `480p` | PMS universal profile. `240p` = 320x240@1000k; `480p` = 640x480@2500k. Both request H.264 Baseline Level 3.0. |
+| `TRANSCODE_PROFILE` | `240p` \| `480p` | PMS universal profile. `240p` = 320x240@1000k; `480p` = coded 624x480@2000k for 640x480 presented scanout. Both request H.264 Baseline Level 3.0. |
 | `WEAK_RES` | `320x240` | Legacy PMS universal ladder resolution override |
-| `WEAK_BITRATE` | `1000` | Legacy ladder max video kbps override |
+| `WEAK_BITRATE` | ladder default (240p=`1000`, 480p=`2000`) | Explicit PMS `maxVideoBitrate` override. **Wins over** the recommended floor (advisory only). On slow links set ≤ path capacity (e.g. `900`–`1000`) or 480p@2000 starves — see `supply_ratio` / `supply_class` on `media:` lines. |
+| `AUTO_LADDER_STEPDOWN` | `0` | When `1`, sustained `supply_class=STARVED` applies the next lower bitrate step (2000→1500→…→400) and restarts the same title at the current position. **Geometry unchanged.** Default off = log-only `LADDER_STEPDOWN_RECOMMENDED`. |
+| `LINK_CAPACITY_KBIT` | unset/`0` | Optional **measured** path capacity in kbit/s (parent greedy goodput). When set, clamps `maxVideoBitrate` to `capacity × HEADROOM/100` before the PMS URL. **Unset = no clamp** (never invents a link speed). Not a second hardcoded floor. |
+| `LINK_CAPACITY_HEADROOM_PCT` | `85` | Percent of `LINK_CAPACITY_KBIT` used as the clamp ceiling (1–100). |
 | **`PRESENT`** | `fb0` \| `fpga` \| `both` | Where RGB lands |
 | **`STREAM`** | `0` \| `1` | Annex-B → host I-recon F1 + F3 |
 | `STREAM_SKIP_RGB` | `auto` | `auto`: skip heavy RGB when `PRESENT=fpga` (keep audio); `0` always RGB |
@@ -130,6 +229,156 @@ Release packages do not silently select local Quartus outputs. `make package`
 uses the tracked `release_artifacts/v0.3.0/Plex.rbf` by default, or an explicit
 `RBF_PATH`, and refuses to package it unless the MD5 is
 `41adb98c7a630b541091c22ce291be68`.
+
+## Lab stable pair (v0.3.0) — 2am card
+
+Ship **core, daemon AND conf together**. A 320×240 core with a 480p-line daemon
+(or the reverse) is a silent geometry mismatch: **320×240 bank1 is `0x30040000`**;
+**624/640×480 bank1 is `0x30080000`**. Wrong pair → stale/wrong bank reads that
+look like “corruption in the background.”
+
+> **It is a triple, not a pair — learned the hard way 2026-07-29.** The core and
+> daemon were deployed correctly, but `/media/fat/misterplex/misterplex.conf` was
+> left on the 480p experiment line (`DECODE=624x480`, `PRESENT=fpga`, `STREAM=1`).
+> **Idle looked perfect, so the mismatch passed inspection**; the fault would only
+> have appeared on the first play. `arm/misterplexd/main.cpp` defaults to
+> `decodeW=320, decodeH=240` (:89) **but the conf overrides it** (:174-179) and
+> `setDecodeSize()` (:285) is called with the conf value — so the daemon would have
+> decoded 624×480 into a layout the 320×240 core does not read. **A conf key silently
+> overriding a correct default is the same defect class as a check that cannot fail.**
+
+Required conf for this pair (matches `scripts/package_release.sh:98-100`):
+
+```
+DECODE=320x240
+PRESENT=fb0
+STREAM=0
+OSD_CONTROL=1
+```
+
+**`OSD_CONTROL=1` is required for the OSD menu to do anything at all on a v3 core.**
+With `OSD_CONTROL=0`, `MediaPlayer::startOsdPoll()` returns immediately
+(`media_player.cpp:221`: `if (shuttingDown_ || !osdControl_ || osdRun_.exchange(true)) return;`),
+so `applyOsd()` never runs and `idleMode_` stays at its `IdleMode::Logo` default
+(`media_player.hpp:207`). **Symptom: the Idle screen menu item `O[15:14]` appears and can
+be changed, but the background never changes and the logo never animates** — because
+`const bool moving = idleMode() == IdleMode::Screensaver;` (`media_player.cpp:402`) is
+permanently false. The menu looks functional while being entirely inert, which is why
+this survived inspection. Confirm it is live from the daemon's own log:
+
+```
+media: OSD via DDR mailbox (no SPI)
+media: OSD word=0x2000 av_offset_ms=0 clock_ppm=-638 resync=on idle=0
+```
+
+Only set `OSD_CONTROL=1` on a **v3 CONF_STR** core (one whose conf string contains
+`O[15:14],Idle screen,...`). On an older core those same bits mean Pattern/Content FPS
+and decode as a bogus A/V offset — see the warning at `main.cpp:341-342`.
+
+Verify from the daemon's own log rather than the file — the daemon prints what it
+actually adopted:
+
+```
+misterplexd: running name=MiSTerPlex ... decode=320x240 weak=320x240@1000k present=fb0
+```
+
+Durable gate (do not regress to conf-file parsing):
+
+```bash
+make check-core-conf-geometry
+# or: ./scripts/check_core_conf_geometry.sh
+# Map: assets/core_geometry_map.tsv  (md5 → expected WxH; unknown md5 → rc=77)
+# SoT: last "misterplexd: running ... decode=WxH" line in misterplexd.log
+# Wired into deploy_plex_core.sh + deploy_misterplexd.sh (set DEPLOY_SKIP_GEOMETRY_GATE=1 to bypass)
+# Unit mutation: tests/unit/test_core_conf_geometry_gate.sh  (pass=0 / mismatch=1 / unknown=77)
+```
+
+### Conf silent-override audit (`arm/misterplexd/main.cpp`, tip of this gate)
+
+Same shape as DECODE: hardcoded safe default, then `loadConf` can replace it. Classified for
+geometry/format mismatch risk vs benign preference.
+
+| Key | Default | Geometry/format risk? | Notes |
+|-----|---------|----------------------|-------|
+| **DECODE** | 320×240 | **YES — bank layout** | Primary footgun. Adopted on `running ... decode=`. |
+| **WEAK_RES** / **WEAK_BITRATE** | 320×240@1000k | **YES (PMS request)** | Forces ladder; play path re-labels weak from contentRes but stale 480p conf still confuses ops. |
+| **TRANSCODE_PROFILE** / **WEAK_PROFILE** | 240p ladder | **YES (NOT inert)** | **Read at main.cpp ~206–213.** Applies `applyPlexTranscodeProfile`. Live conf `TRANSCODE_PROFILE=480p` is live code, not a no-op. |
+| **PRESENT** | fb0 | **YES (path)** | `fpga`/`both`/`none` change DDR vs fb0; wrong with STREAM can black-screen or skip RGB. |
+| **STREAM** | 0 | **YES (path)** | annex-B / recon path; product 320×240 cast wants 0. |
+| **STREAM_SKIP_RGB** | auto | **YES (path)** | With PRESENT=fpga can drop RGB from session start. |
+| **OSD_CONTROL** | 0 | **YES (ABI)** | On pre-v3 cores reinterprets status bits as bogus A/V offset / content res. |
+| **DDR_MEM_SYNC** / **DDR_MEM_FLUSH** | 1 / 0 | format-adjacent | Wrong flush/sync → stale frames, not bank base. |
+| **PRESENT_PROFILE** | 0 | benign lab | Timing logs only. |
+| **DDR_FRAME_FORMAT** | yuv420p fixed | benign | Non-yuv values **ignored** with stderr warning. |
+| **SUBTITLES** / **SUBTITLE_STREAM** | off | benign UX | |
+| **AUTO_NEXT** | true | benign UX | |
+| **MATCH_SOURCE_HZ** / **SOURCE_FPS** | off / auto | benign (log/hint) | switchres TODO; no modeline swap yet. |
+| **AUDIO** / **AUDIO_DEVICE** / **AUDIO_DELAY_MS** | on / default / 0 | benign A/V | lipsync preference. |
+| **AUDIO_CLOCK_PPM** / **AV_OFFSET_MS** / **AV_PRESENT_LEAD_MS** / **AV_RESYNC_DROP_MS** | servo defaults | benign A/V | pacing knobs. |
+| **IDLE_SCREEN** | logo | benign UX | |
+| **SKIP_MS** / **SKIP_FORWARD_MS** / **SKIP_BACK_MS** | 30s/10s | benign UX | |
+| **FFMPEG** / **PLEX_*** | paths/servers | ops, not geometry | |
+
+Gate today hard-checks **DECODE geometry vs resident core md5**. PRESENT/STREAM remain operator
+triple fields in the release card; extend the map/gate when a second product geometry ships.
+
+| Piece | Identity |
+|-------|----------|
+| RBF | `release_artifacts/v0.3.0/Plex.rbf` · MD5 **`41adb98c7a630b541091c22ce291be68`** · hardware-validated Phase A playback-controls core (G-VID1 edge-wrap fixed in `0139f2c`, eyes-on 2026-07-26) |
+| Daemon tree | git tag **v0.3.0** = `cacd87176cbc2017c6ef2673eef84717dd673009` |
+| Daemon binary | static ARM ELF · MD5 **`06c5735a2f85114688f0ff2ac36e4fd4`** · 320×240 RGB565 · `kDdrFrameBytes=320*240*2` · no 624/640 frame constants |
+| Geometry | content **320×240** RGB565; overlay + joystick/keyboard controls |
+
+### Deploy (lab)
+
+```bash
+# From a clean v0.3.0 tree (or worktree at cacd8717) so make arm-plexd matches:
+git worktree add .worktrees/v3-stable cacd8717   # once
+cd .worktrees/v3-stable
+make arm-plexd
+# md5sum build/arm/misterplexd  →  06c5735a2f85114688f0ff2ac36e4fd4
+
+# Core — prefer menu bounce; if already on MENU and bounce stalls, ONE core load:
+DEPLOY_LOAD=menu ./scripts/deploy_plex_core.sh \
+  /path/to/MisterPlex/release_artifacts/v0.3.0/Plex.rbf
+# deploy_plex_core.sh archives outgoing SD core as Plex.<md5[0:8]>.bak.rbf first
+
+./scripts/deploy_misterplexd.sh   # from the same v0.3.0 tree
+```
+
+### Verify on device (quote hashes; use `pidof`, not `pgrep`)
+
+```bash
+md5sum /media/fat/_Utility/Plex.rbf
+# expect 41adb98c7a630b541091c22ce291be68
+md5sum /media/fat/misterplex/bin/misterplexd
+# expect 06c5735a2f85114688f0ff2ac36e4fd4
+cat /tmp/CORENAME          # expect Plex
+pidof misterplexd          # expect ≥1 PID
+wget -qO- http://127.0.0.1:3005/resources | head -c 200
+```
+
+### On-device backups (lab 2026-07-29 ship)
+
+| Path | What |
+|------|------|
+| `/media/fat/_Utility/Plex.226e6a0f.bak.rbf` | Pre-stable overnight core (integ-fit3 / Phase-3; unattributable to fleet until traced) |
+| `/media/fat/_Utility/Plex.rbf.bak` | Single-generation bak (same content at ship time) |
+| `/media/fat/misterplex/bin/misterplexd.prev-c2` | Daemon displaced by last `deploy_misterplexd.sh` (480p-line at ship) |
+| `/media/fat/misterplex/bin/misterplexd.prev-before-v030` | Extra copy of that 480p-line daemon (`ca0b0e9c…`) |
+
+### Rollback (pair — do not mix)
+
+```bash
+# Daemon only (restores prev-c2, restarts process — disrupts a live session):
+./scripts/restore_misterplexd_prev.sh
+# Then restore matching core, or you reintroduce the bank-address mismatch:
+scp /media/fat/_Utility/Plex.226e6a0f.bak.rbf ...   # only if you intend that core
+DEPLOY_LOAD=menu ./scripts/deploy_plex_core.sh path/to/chosen.rbf
+```
+
+`restore_misterplexd_prev.sh` **does not** touch the RBF. Restoring the old
+daemon while leaving the v0.3.0 core loaded is the mismatch this card forbids.
 
 ## Smoke tests
 

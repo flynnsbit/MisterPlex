@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MediaContainer size="1" allowSync="0" title1="Plex Library">
+<Directory allowSync="1" filters="1" refreshing="0" key="1" type="movie" title="Other Videos" agent="tv.plex.agents.none" scanner="Plex Video Files" language="en-US" metadataAgentProviderGroupId="4" uuid="a1e2dd04-3715-44fc-abc5-448d1fdae50b" updatedAt="1785336625" createdAt="1785336625" scannedAt="1785336625" content="1" directory="1" contentChangedAt="-1" hidden="0">
+<Location id="1" path="/media" />
+</Directory>
+</MediaContainer>

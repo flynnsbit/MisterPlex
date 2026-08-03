@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# B2/B5 source wiring — red-before-green via string presence in product path.
+# Not a device test. true rc direct.
+set -u
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+MP="$ROOT/arm/misterplexd/media_player.cpp"
+YF="$ROOT/host/libmisterplex/yuv420p_chroma_health.hpp"
+fail=0
+pass=0
+
+check() {
+  local name="$1" file="$2" pat="$3"
+  if rg -n --fixed-strings "$pat" "$file" >/dev/null; then
+    echo "PASS $name"
+    pass=$((pass + 1))
+  else
+    echo "FAIL $name missing: $pat" >&2
+    fail=$((fail + 1))
+  fi
+}
+
+# B2 product play path must use info (not only error helpers).
+if rg -n 'args.push_back\("-loglevel"\);' -A1 "$MP" | rg -q 'info'; then
+  echo "PASS B2_loglevel_info_present"
+  pass=$((pass + 1))
+else
+  echo "FAIL B2_loglevel_info_present" >&2
+  fail=$((fail + 1))
+fi
+# Guard comment must remain load-bearing.
+check B2_do_not_error_comment "$MP" 'DO NOT change to error — breaks delivered_geom'
+
+# B5 arm teardown calls
+check B5_byte_align "$MP" 'rawPipeByteAligned(totalBytes, frameBytes)'
+check B5_phase_desync "$MP" 'rawPipeDesynced(prodBytes, frameBytes'
+check B5_pipe_desync_log "$MP" 'PIPE_DESYNC=1'
+check B5_pipe_byte_misalign_log "$MP" 'PIPE_BYTE_MISALIGN'
+check B5_total_mod_frame_ok "$MP" 'total_mod_frame=0'
+check B5_pipe_total_mod_hz "$MP" 'pipe_total_mod='
+check B5_session_collapse_ledger "$MP" 'SESSION_COLLAPSE_LEDGER'
+check B5_delivery_mismatch_log "$MP" 'DELIVERY_MISMATCH'
+check B5_decode_target_match "$MP" 'decode_target_match='
+check B5_coded_bank_field "$MP" 'coded_bank='
+check B5_force_scale_protects "$MP" 'force_scale_protects='
+check B5_vertical_detail_frac "$MP" 'vertical_detail_frac='
+check B5_request_vs_measured "$MP" 'REQUEST_VS_MEASURED'
+check B5_delivery_mismatch_final "$MP" 'DELIVERY_MISMATCH_FINAL'
+check B5_phase_offset_field "$MP" 'phase_offset='
+check B5_rawPipePhaseOffset_call "$MP" 'rawPipePhaseOffset('
+check B5_play_request_freeze "$MP" 'playRequestW_'
+# Filter-chain loss (parent miss: FOAR into 618 is ours, not PMS).
+check B5_filter_chain_loss "$MP" 'FILTER_CHAIN_LOSS'
+check B5_filter_chain_loss_final "$MP" 'FILTER_CHAIN_LOSS_FINAL'
+check B5_filter_vertical_detail "$MP" 'filter_vertical_detail_frac='
+check B5_foar_into_618_defect "$MP" 'foar_into_618='
+check B5_bank_fill "$MP" 'BANK_FILL'
+check B5_post_scale_picture "$MP" 'post_scale_picture='
+check B5_compound_v_frac "$MP" 'compound_vertical_detail_frac='
+check B5_delivered_area_frac "$MP" 'delivered_area_frac='
+check B5_loss2_half_res "$MP" 'loss2_half_res='
+VF="$ROOT/host/libmisterplex/ffmpeg_vf.hpp"
+check VF_scale_pad_center_coded "$VF" 'scale_pad_center_coded'
+check VF_no_product_foar_618 "$VF" 'never into display 618'
+check VF_compound_helper "$VF" 'compoundVerticalDetailFrac'
+check VF_delivered_area "$VF" 'deliveredAreaFrac'
+# Pump compares measured to DDR coded bank args, not DECODE tier alone.
+check B5_pump_takes_coded_wh "$MP" 'int codedW, int codedH'
+# GEOM predicts square-pixel fit from SAR/DAR (ceiling, not exact).
+MAIN_GEOM="$ROOT/arm/misterplexd/main.cpp"
+check GEOM_predicted_square_fit "$MAIN_GEOM" 'predicted_square_fit='
+check GEOM_videoResolution_ceiling_note "$MAIN_GEOM" 'videoResolution_is_ceiling_not_exact'
+check GEOM_pms_delivery_geom_hdr "$MAIN_GEOM" 'pms_delivery_geom.hpp'
+
+# B4 measured only
+check B4_measured_only "$YF" 'return std::string(deliveryBasis) == "measured"'
+check B4_reject_library_media "$YF" 'library_media is PMS *scanner display metadata*'
+
+# FORCE_SCALE product default ON (not opt-in) — parent "should default 1?" = already true
+MAIN="$ROOT/arm/misterplexd/main.cpp"
+check FORCE_SCALE_default_true "$MAIN" 'bool ddrYuvForceScale = true'
+check FORCE_SCALE_lab_escape "$MAIN" 'DDR_YUV_FORCE_SCALE_LAB'
+
+# Zero-frame session must not report natural_eof (parent field 2026-08-02:
+# crop=618 on 624x350 → frames=0 presents=0 reason=natural_eof black screen).
+FL="$ROOT/host/libmisterplex/frame_ledger.hpp"
+check ZF_classify_helper "$FL" 'frameLedgerClassifyEndReason'
+check ZF_token "$FL" 'zero_frame_playback'
+check ZF_error_line_helper "$FL" 'frameLedgerZeroFrameErrorLine'
+check ZF_error_prefix "$FL" 'ERROR media: ZERO_FRAME_PLAYBACK'
+check ZF_arm_uses_classify "$MP" 'frameLedgerClassifyEndReason(stop_.load()'
+check ZF_arm_emits_error "$MP" 'frameLedgerZeroFrameErrorLine('
+check ZF_arm_not_naive_ternary "$MP" 'frameLedgerClassifyEndReason'
+# RED twin: naive ternary must be gone from session-end site.
+if rg -n 'stop_\.load\(\) \? "stop_or_seek" : "natural_eof"' "$MP" >/dev/null; then
+  echo "FAIL ZF_naive_ternary_still_present" >&2
+  fail=$((fail + 1))
+else
+  echo "PASS ZF_naive_ternary_removed"
+  pass=$((pass + 1))
+fi
+
+echo "SUMMARY pass=$pass fail=$fail"
+if [[ "$fail" -ne 0 ]]; then
+  echo "B2_B5_SOURCE_WIRING_FAIL"
+  exit 1
+fi
+echo "B2_B5_SOURCE_WIRING_OK"
+exit 0

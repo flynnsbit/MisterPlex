@@ -64,6 +64,10 @@ module stream_path_full_frame_tb #(
 	output wire [7:0]  native_inter_mb_y,
 	output wire        native_inter_p_skip,
 	output wire [2:0]  native_inter_part_mode,
+	output wire signed [15:0] native_inter_mv_x,
+	output wire signed [15:0] native_inter_mv_y,
+	output wire signed [15:0] native_inter_mvd_x,
+	output wire signed [15:0] native_inter_mvd_y,
 	output wire [7:0]  native_inter_pred_y [0:255],
 	output wire [7:0]  native_inter_pred_u [0:63],
 	output wire [7:0]  native_inter_pred_v [0:63],
@@ -108,6 +112,16 @@ module stream_path_full_frame_tb #(
 	wire [2:0] first_mb_part_count_w;
 	wire first_mb_uses_sub_mb_w;
 	wire first_mb_intra_w;
+
+	wire        hybrid_fpga_owned_w;
+	wire        hybrid_host_required_w;
+	wire        product_recon_ok_w;
+	wire signed [15:0] first_mb_mvd_x_w, first_mb_mvd_y_w;
+	wire signed [15:0] product_fetch_mv_x_w, product_fetch_mv_y_w;
+	wire signed [15:0] product_luma_origin_x_w, product_luma_origin_y_w;
+	wire [2:0]  hybrid_own_code_w;
+	wire [3:0]  hybrid_own_reason_w;
+	wire        entropy_cabac_w;
 
 	stream_path #(
 		.FRAME_W(FRAME_W),
@@ -169,6 +183,12 @@ module stream_path_full_frame_tb #(
 		.first_mb_part_count(first_mb_part_count_w),
 		.first_mb_uses_sub_mb(first_mb_uses_sub_mb_w),
 		.first_mb_intra(first_mb_intra_w),
+		.first_mb_mvd_x(first_mb_mvd_x_w),
+		.first_mb_mvd_y(first_mb_mvd_y_w),
+		.product_fetch_mv_x(product_fetch_mv_x_w),
+		.product_fetch_mv_y(product_fetch_mv_y_w),
+		.product_luma_origin_x(product_luma_origin_x_w),
+		.product_luma_origin_y(product_luma_origin_y_w),
 		.slice_qp(slice_qp),
 		.disable_deblocking_filter_idc(disable_deblocking_filter_idc),
 		.slice_alpha_c0_offset_div2(slice_alpha_c0_offset_div2),
@@ -186,7 +206,13 @@ module stream_path_full_frame_tb #(
 		.recon_dbg(recon_dbg),
 		.recon_dbg_valid(recon_dbg_valid),
 		.recon_valid(recon_valid),
-		.fs_wr_en(fs_wr_en),
+			.hybrid_fpga_owned(hybrid_fpga_owned_w),
+	.hybrid_host_required(hybrid_host_required_w),
+	.product_recon_ok(product_recon_ok_w),
+	.hybrid_own_code(hybrid_own_code_w),
+	.hybrid_own_reason(hybrid_own_reason_w),
+	.entropy_cabac(entropy_cabac_w),
+	.fs_wr_en(fs_wr_en),
 		.fs_wr_pixel(fs_wr_pixel_dut),
 		.fs_wr_reset(fs_wr_reset),
 		.fs_swap(fs_swap)
@@ -198,12 +224,16 @@ module stream_path_full_frame_tb #(
 	assign trace_residual_t1 = dut.sl_place_t1;
 	assign trace_residual_dc = dut.stub.lat_res_dc;
 	assign trace_residual_csum = residual_csum;
-	assign native_inter_valid = dut.stub.dpb_fetch_done && dut.stub.dpb_inter_ok;
+	assign native_inter_valid = dut.stub.inter_capture_valid;
 	assign native_inter_frame_idx = dut.stub.frames_out;
 	assign native_inter_mb_x = dut.stub.lat_p_mb_x;
 	assign native_inter_mb_y = dut.stub.lat_p_mb_y;
 	assign native_inter_p_skip = dut.stub.lat_p_skip;
 	assign native_inter_part_mode = dut.stub.lat_p_part_mode;
+	assign native_inter_mv_x = product_fetch_mv_x_w;
+	assign native_inter_mv_y = product_fetch_mv_y_w;
+	assign native_inter_mvd_x = dut.stub.lat_mvd_x;
+	assign native_inter_mvd_y = dut.stub.lat_mvd_y;
 	genvar trace_i;
 	generate
 		for (trace_i = 0; trace_i < 16; trace_i = trace_i + 1) begin : gen_trace
@@ -215,17 +245,19 @@ module stream_path_full_frame_tb #(
 			assign trace_recon_px[trace_i] = dut.stub.recon_px[trace_i];
 		end
 	endgenerate
+	// Native inter export is Clip1(pred+residual) recon (pre-deblock), not MC
+	// prediction alone. Residual plane is 0 until per-MB residual walk fills it.
 	genvar native_y_i;
 	generate
 		for (native_y_i = 0; native_y_i < 256; native_y_i = native_y_i + 1) begin : gen_native_y
-			assign native_inter_pred_y[native_y_i] = dut.stub.dpb_pred_y[native_y_i];
+			assign native_inter_pred_y[native_y_i] = dut.stub.inter_recon_y[native_y_i];
 		end
 	endgenerate
 	genvar native_c_i;
 	generate
 		for (native_c_i = 0; native_c_i < 64; native_c_i = native_c_i + 1) begin : gen_native_c
-			assign native_inter_pred_u[native_c_i] = dut.stub.dpb_pred_u[native_c_i];
-			assign native_inter_pred_v[native_c_i] = dut.stub.dpb_pred_v[native_c_i];
+			assign native_inter_pred_u[native_c_i] = dut.stub.inter_recon_u[native_c_i];
+			assign native_inter_pred_v[native_c_i] = dut.stub.inter_recon_v[native_c_i];
 		end
 	endgenerate
 

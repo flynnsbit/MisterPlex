@@ -1,0 +1,454 @@
+{
+  "method": {
+    "name": "Method C host isolation",
+    "formula_wall": "dwall = perf_counter around child wait",
+    "formula_cpu": "child_cpu = delta RUSAGE_CHILDREN utime+stime (one window per probe)",
+    "wall_ms_f": "1000 * dwall_s / frames",
+    "child_cpu_ms_f": "1000 * child_cpu_s / frames",
+    "pct_onecpu_at_fps": "100 * (child_cpu_s/frames) * fps  # maps per-frame CPU to sustained one-cpu %",
+    "pct_onecpu_batch": "100 * child_cpu_s / dwall_s  # busy% during unpaced run",
+    "no_fps_scaling_of_ticks": true,
+    "host": "x86_64",
+    "ffmpeg": "ffmpeg version n8.1.2 Copyright (c) 2000-2026 the FFmpeg developers",
+    "frames": 300,
+    "fps_map": 24.0
+  },
+  "geometries": {
+    "sample_624": {
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "codec_name": "h264",
+          "width": 624,
+          "height": 480,
+          "pix_fmt": "yuv420p"
+        }
+      ]
+    },
+    "sample_320": {
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "codec_name": "h264",
+          "width": 320,
+          "height": 240,
+          "pix_fmt": "yuv420p"
+        }
+      ]
+    }
+  },
+  "product_filters": {
+    "240p_centered": "scale=320:240:force_original_aspect_ratio=decrease,pad=320:240:(ow-iw)/2:(oh-ih)/2",
+    "480p_crop_path": "scale=618:480:force_original_aspect_ratio=decrease,pad=624:480:0+(618-iw)/2:0+(480-ih)/2:color=black",
+    "480p_square_identity_canvas": "scale=624:480:force_original_aspect_ratio=decrease,pad=624:480:(ow-iw)/2:(oh-ih)/2",
+    "pix_fmt": "yuv420p via -pix_fmt on rawvideo (NOT inside -vf)",
+    "TRANSCODE_PROFILE": "ladder name only; videoResolution comes from contentResolutionFor* labels",
+    "240p_videoResolution": "320x240",
+    "480p_videoResolution": "624x480"
+  },
+  "published_instrument_A": {
+    "ffmpeg_pct": 69.102,
+    "vf_filter_pct": 49.867,
+    "h264_pct": 5.807,
+    "mux_pct": 7.087,
+    "source": "headroom_play480.json thread class sum"
+  },
+  "published_instrument_B_ARM": {
+    "decode_null_wall_ms_f": 21.5619,
+    "decode_null_cpu_ms_f": 22.8669,
+    "scale_delta_wall_ms_f": 2.9543,
+    "scale_delta_cpu_ms_f": 7.2758,
+    "note": "ARM FEED 1800f @624 native; child CPU from wait4",
+    "decode_pct_at_24": 54.88056,
+    "scale_pct_at_24": 17.461920000000003
+  },
+  "probes": [
+    {
+      "label": "Bclass_decode_null_624",
+      "rc": 0,
+      "dwall_s": 0.06978546100435778,
+      "child_cpu_s": 0.2742430000000001,
+      "frames": 300,
+      "wall_ms_f": 0.2326182033478593,
+      "child_cpu_ms_f": 0.9141433333333336,
+      "pct_onecpu_batch": 392.98013662598703,
+      "pct_onecpu_at_fps": 2.193944000000001,
+      "cmd": [
+        "/usr/bin/ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-nostdin",
+        "-i",
+        "/home/flynnsbit/Projects/MisterPlex/artifacts/local/arm-profile-sample/derived_realcontent_624x480_baseline_ref1_nob_1800f.mp4",
+        "-map",
+        "0:v:0",
+        "-frames:v",
+        "300",
+        "-an",
+        "-sn",
+        "-f",
+        "null",
+        "-"
+      ],
+      "stderr_tail": ""
+    },
+    {
+      "label": "Bclass_decode_scale_id_624",
+      "rc": 0,
+      "dwall_s": 0.08428759701200761,
+      "child_cpu_s": 0.3663859999999997,
+      "frames": 300,
+      "wall_ms_f": 0.280958656706692,
+      "child_cpu_ms_f": 1.2212866666666657,
+      "pct_onecpu_batch": 434.68554447910566,
+      "pct_onecpu_at_fps": 2.9310879999999977,
+      "cmd": [
+        "/usr/bin/ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-nostdin",
+        "-i",
+        "/home/flynnsbit/Projects/MisterPlex/artifacts/local/arm-profile-sample/derived_realcontent_624x480_baseline_ref1_nob_1800f.mp4",
+        "-map",
+        "0:v:0",
+        "-frames:v",
+        "300",
+        "-an",
+        "-sn",
+        "-vf",
+        "scale=624:480:force_original_aspect_ratio=decrease,pad=624:480:(ow-iw)/2:(oh-ih)/2",
+        "-pix_fmt",
+        "yuv420p",
+        "-f",
+        "rawvideo",
+        "-y",
+        "/dev/null"
+      ],
+      "stderr_tail": ""
+    },
+    {
+      "label": "Bclass_decode_pixfmt_only_624",
+      "rc": 0,
+      "dwall_s": 0.08245086399256252,
+      "child_cpu_s": 0.3379930000000003,
+      "frames": 300,
+      "wall_ms_f": 0.27483621330854174,
+      "child_cpu_ms_f": 1.1266433333333346,
+      "pct_onecpu_batch": 409.93263579443993,
+      "pct_onecpu_at_fps": 2.7039440000000026,
+      "cmd": [
+        "/usr/bin/ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-nostdin",
+        "-i",
+        "/home/flynnsbit/Projects/MisterPlex/artifacts/local/arm-profile-sample/derived_realcontent_624x480_baseline_ref1_nob_1800f.mp4",
+        "-map",
+        "0:v:0",
+        "-frames:v",
+        "300",
+        "-an",
+        "-sn",
+        "-pix_fmt",
+        "yuv420p",
+        "-f",
+        "rawvideo",
+        "-y",
+        "/dev/null"
+      ],
+      "stderr_tail": ""
+    },
+    {
+      "label": "Bclass_decode_format_filter_624",
+      "rc": 0,
+      "dwall_s": 0.07520182398729958,
+      "child_cpu_s": 0.29859199999999997,
+      "frames": 300,
+      "wall_ms_f": 0.2506727466243319,
+      "child_cpu_ms_f": 0.9953066666666666,
+      "pct_onecpu_batch": 397.05419917797144,
+      "pct_onecpu_at_fps": 2.3887359999999997,
+      "cmd": [
+        "/usr/bin/ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-nostdin",
+        "-i",
+        "/home/flynnsbit/Projects/MisterPlex/artifacts/local/arm-profile-sample/derived_realcontent_624x480_baseline_ref1_nob_1800f.mp4",
+        "-map",
+        "0:v:0",
+        "-frames:v",
+        "300",
+        "-an",
+        "-sn",
+        "-vf",
+        "format=yuv420p",
+        "-f",
+        "null",
+        "-"
+      ],
+      "stderr_tail": ""
+    },
+    {
+      "label": "Aclass_decode_null_320",
+      "rc": 0,
+      "dwall_s": 0.05632705401512794,
+      "child_cpu_s": 0.12557100000000004,
+      "frames": 300,
+      "wall_ms_f": 0.18775684671709314,
+      "child_cpu_ms_f": 0.4185700000000001,
+      "pct_onecpu_batch": 222.93195018911342,
+      "pct_onecpu_at_fps": 1.0045680000000003,
+      "cmd": [
+        "/usr/bin/ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-nostdin",
+        "-i",
+        "/home/flynnsbit/Projects/MisterPlex/.agent-work/cpu-split/derived_scaled_320x240_300f.mp4",
+        "-map",
+        "0:v:0",
+        "-frames:v",
+        "300",
+        "-an",
+        "-sn",
+        "-f",
+        "null",
+        "-"
+      ],
+      "stderr_tail": ""
+    },
+    {
+      "label": "Aclass_decode_scale_up_320to624",
+      "rc": 0,
+      "dwall_s": 0.10056146502029151,
+      "child_cpu_s": 0.3343329999999999,
+      "frames": 300,
+      "wall_ms_f": 0.3352048834009717,
+      "child_cpu_ms_f": 1.1144433333333328,
+      "pct_onecpu_batch": 332.4663179206244,
+      "pct_onecpu_at_fps": 2.674663999999999,
+      "cmd": [
+        "/usr/bin/ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-nostdin",
+        "-i",
+        "/home/flynnsbit/Projects/MisterPlex/.agent-work/cpu-split/derived_scaled_320x240_300f.mp4",
+        "-map",
+        "0:v:0",
+        "-frames:v",
+        "300",
+        "-an",
+        "-sn",
+        "-vf",
+        "scale=624:480:force_original_aspect_ratio=decrease,pad=624:480:(ow-iw)/2:(oh-ih)/2",
+        "-pix_fmt",
+        "yuv420p",
+        "-f",
+        "rawvideo",
+        "-y",
+        "/dev/null"
+      ],
+      "stderr_tail": ""
+    },
+    {
+      "label": "Aclass_decode_scale_up_fast_bilinear",
+      "rc": 0,
+      "dwall_s": 0.08343598700594157,
+      "child_cpu_s": 0.28596699999999975,
+      "frames": 300,
+      "wall_ms_f": 0.2781199566864719,
+      "child_cpu_ms_f": 0.9532233333333325,
+      "pct_onecpu_batch": 342.7381999803463,
+      "pct_onecpu_at_fps": 2.287735999999998,
+      "cmd": [
+        "/usr/bin/ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-nostdin",
+        "-i",
+        "/home/flynnsbit/Projects/MisterPlex/.agent-work/cpu-split/derived_scaled_320x240_300f.mp4",
+        "-map",
+        "0:v:0",
+        "-frames:v",
+        "300",
+        "-an",
+        "-sn",
+        "-vf",
+        "scale=624:480:flags=fast_bilinear:force_original_aspect_ratio=decrease,pad=624:480:(ow-iw)/2:(oh-ih)/2",
+        "-pix_fmt",
+        "yuv420p",
+        "-f",
+        "rawvideo",
+        "-y",
+        "/dev/null"
+      ],
+      "stderr_tail": ""
+    },
+    {
+      "label": "Aclass_decode_scale_up_neighbor",
+      "rc": 0,
+      "dwall_s": 0.07881569198798388,
+      "child_cpu_s": 0.27157000000000014,
+      "frames": 300,
+      "wall_ms_f": 0.2627189732932796,
+      "child_cpu_ms_f": 0.9052333333333339,
+      "pct_onecpu_batch": 344.5633644140348,
+      "pct_onecpu_at_fps": 2.1725600000000007,
+      "cmd": [
+        "/usr/bin/ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-nostdin",
+        "-i",
+        "/home/flynnsbit/Projects/MisterPlex/.agent-work/cpu-split/derived_scaled_320x240_300f.mp4",
+        "-map",
+        "0:v:0",
+        "-frames:v",
+        "300",
+        "-an",
+        "-sn",
+        "-vf",
+        "scale=624:480:flags=neighbor:force_original_aspect_ratio=decrease,pad=624:480:(ow-iw)/2:(oh-ih)/2",
+        "-pix_fmt",
+        "yuv420p",
+        "-f",
+        "rawvideo",
+        "-y",
+        "/dev/null"
+      ],
+      "stderr_tail": ""
+    },
+    {
+      "label": "product240_decode_scale_id_320",
+      "rc": 0,
+      "dwall_s": 0.05154711997602135,
+      "child_cpu_s": 0.13311000000000012,
+      "frames": 300,
+      "wall_ms_f": 0.1718237332534045,
+      "child_cpu_ms_f": 0.4437000000000004,
+      "pct_onecpu_batch": 258.2297518501909,
+      "pct_onecpu_at_fps": 1.064880000000001,
+      "cmd": [
+        "/usr/bin/ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-nostdin",
+        "-i",
+        "/home/flynnsbit/Projects/MisterPlex/.agent-work/cpu-split/derived_scaled_320x240_300f.mp4",
+        "-map",
+        "0:v:0",
+        "-frames:v",
+        "300",
+        "-an",
+        "-sn",
+        "-vf",
+        "scale=320:240:force_original_aspect_ratio=decrease,pad=320:240:(ow-iw)/2:(oh-ih)/2",
+        "-pix_fmt",
+        "yuv420p",
+        "-f",
+        "rawvideo",
+        "-y",
+        "/dev/null"
+      ],
+      "stderr_tail": ""
+    }
+  ],
+  "deltas": [
+    {
+      "name": "scale_id_on_native624",
+      "from": "Bclass_decode_null_624",
+      "to": "Bclass_decode_scale_id_624",
+      "d_wall_ms_f": 0.04834045335883272,
+      "d_cpu_ms_f": 0.3071433333333321,
+      "d_pct_at_fps": 0.7371439999999967
+    },
+    {
+      "name": "pixfmt_only_on_native624",
+      "from": "Bclass_decode_null_624",
+      "to": "Bclass_decode_pixfmt_only_624",
+      "d_wall_ms_f": 0.04221800996068245,
+      "d_cpu_ms_f": 0.2125000000000009,
+      "d_pct_at_fps": 0.5100000000000016
+    },
+    {
+      "name": "format_filter_on_native624",
+      "from": "Bclass_decode_null_624",
+      "to": "Bclass_decode_format_filter_624",
+      "d_wall_ms_f": 0.01805454327647263,
+      "d_cpu_ms_f": 0.08116333333333292,
+      "d_pct_at_fps": 0.19479199999999874
+    },
+    {
+      "name": "scale_up_320_to_624_default_sws",
+      "from": "Aclass_decode_null_320",
+      "to": "Aclass_decode_scale_up_320to624",
+      "d_wall_ms_f": 0.14744803668387857,
+      "d_cpu_ms_f": 0.6958733333333327,
+      "d_pct_at_fps": 1.6700959999999987
+    },
+    {
+      "name": "scale_up_fast_bilinear",
+      "from": "Aclass_decode_null_320",
+      "to": "Aclass_decode_scale_up_fast_bilinear",
+      "d_wall_ms_f": 0.09036310996937874,
+      "d_cpu_ms_f": 0.5346533333333324,
+      "d_pct_at_fps": 1.2831679999999976
+    },
+    {
+      "name": "scale_up_neighbor",
+      "from": "Aclass_decode_null_320",
+      "to": "Aclass_decode_scale_up_neighbor",
+      "d_wall_ms_f": 0.07496212657618645,
+      "d_cpu_ms_f": 0.4866633333333338,
+      "d_pct_at_fps": 1.1679920000000004
+    },
+    {
+      "name": "scale_id_on_320",
+      "from": "Aclass_decode_null_320",
+      "to": "product240_decode_scale_id_320",
+      "d_wall_ms_f": -0.015933113463688642,
+      "d_cpu_ms_f": 0.02513000000000032,
+      "d_pct_at_fps": 0.06031200000000059
+    }
+  ],
+  "prediction_checks": [
+    {
+      "id": "P1",
+      "hit": true,
+      "detail": "native624 decode_cpu=0.9141 scale_id_delta_cpu=0.3071"
+    },
+    {
+      "id": "P2",
+      "hit": true,
+      "detail": "upscale_delta_cpu=0.6959 vs id_scale_delta=0.3071"
+    },
+    {
+      "id": "P3",
+      "hit": true,
+      "detail": "pixfmt_delta_cpu=0.2125 upscale_delta=0.6959"
+    },
+    {
+      "id": "P4",
+      "hit": true,
+      "detail": "ARM B\u2192%at24 decode=54.9 scale=17.5 vs A vf=49.9 h264=5.8"
+    },
+    {
+      "id": "P5",
+      "hit": true,
+      "detail": "host wall_ms/f=0.2326 ARM=21.5619"
+    }
+  ]
+}

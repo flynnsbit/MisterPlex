@@ -1,0 +1,56 @@
+{
+  "out": "assets/avsync/real_bbb_glass_av_1440x1080_24_90s.mp4",
+  "src": ".agent-work/fixtures-real/bbb_720p_src.mp4",
+  "caller_supplied": {
+    "width": 1440,
+    "height": 1080,
+    "fps": "24/1",
+    "duration_s": 90.0,
+    "period_s": 2.0,
+    "designed_av_offset_ms": 0.0,
+    "flash_frames": 2,
+    "beep_s": 0.05,
+    "id_text_example": "G n=000000 c=0",
+    "id_bottom_y": 198,
+    "vbitrate": "5000k",
+    "profile": "baseline (Constrained Baseline via cabac=0)",
+    "bf": 0,
+    "audio": "aac 48k mix(src+beep)"
+  },
+  "measured_ffprobe": {
+    "programs": [],
+    "stream_groups": [],
+    "streams": [
+      {
+        "index": 0,
+        "codec_name": "h264",
+        "profile": "Constrained Baseline",
+        "codec_type": "video",
+        "width": 1440,
+        "height": 1080,
+        "has_b_frames": 0,
+        "r_frame_rate": "24/1",
+        "avg_frame_rate": "24/1",
+        "duration": "90.000000",
+        "nb_frames": "2160"
+      },
+      {
+        "index": 1,
+        "codec_name": "aac",
+        "profile": "LC",
+        "codec_type": "audio",
+        "sample_rate": "48000",
+        "r_frame_rate": "0/0",
+        "avg_frame_rate": "0/0",
+        "duration": "90.000000",
+        "nb_frames": "4220"
+      }
+    ],
+    "format": {
+      "duration": "90.000000"
+    }
+  },
+  "frames_burned": 2160,
+  "beep_onsets_n": 45,
+  "size_bytes": 56332526
+}

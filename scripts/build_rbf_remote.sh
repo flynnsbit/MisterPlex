@@ -99,6 +99,11 @@ printf 'Remote project: %s\n' "$REMOTE_PROJECT"
 printf 'Remote processors: %s\n' "${PROCESSORS:-preserve-qsf}"
 printf 'Reference RBF: %s\n' "${REFERENCE_RBF:-UNVERIFIED-OVERRIDE}"
 
+printf 'Running fast pre-synthesis gates before taking remote Quartus slot...\n'
+"$ROOT/scripts/check_define_parity.py"
+"$ROOT/scripts/check_quartus_sv_subset.py" $("$ROOT/scripts/rtl_lint.py" --list-files)
+"$ROOT/scripts/check_verilator_elab.py"
+
 ssh "$HOST" bash -s -- "$REMOTE_SLOT" "$REMOTE_PROJECT" "$REMOTE_DEV" <<'REMOTE_PREP'
 set -euo pipefail
 remote_slot="$1"
@@ -242,6 +247,9 @@ if [[ "$COPY_BACK" == "1" ]]; then
     --map-rpt "$LOCAL_OUT/Plex.map.rpt" \
     --log "$LOCAL_OUT/compile.log"
   "$ROOT/scripts/check_quartus_timing.py" --sta-rpt "$LOCAL_OUT/Plex.sta.rpt"
+  # Margin regression vs wtime4 baseline (positive slack that eats budget = fail).
+  # ABSENT/malformed STA exits 77 (SKIP-NOT-PASS), not 0.
+  "$ROOT/scripts/check_timing_margin.py" --sta-rpt "$LOCAL_OUT/Plex.sta.rpt"
   "$ROOT/scripts/check_timing_exclusions.py" --sta-rpt "$LOCAL_OUT/Plex.sta.rpt"
   RBF="$LOCAL_OUT/Plex.rbf"
   STA="$LOCAL_OUT/Plex.sta.rpt"

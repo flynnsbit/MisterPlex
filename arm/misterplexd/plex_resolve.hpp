@@ -27,6 +27,16 @@ struct ResolveResult {
     // Drives A/V pacing; must NOT be bucketed (23.976 vs 24 = ~1 ms/s of lipsync drift).
     int fpsNum = 0;
     int fpsDen = 0;
+    // Library Media/Stream geometry from PMS metadata (0 = unknown). This is the
+    // *source* asset size, not the universal-transcode delivery size. Used for
+    // direct-play identity-scale decisions and GEOM logs only.
+    int mediaWidth = 0;
+    int mediaHeight = 0;
+    // Media@aspectRatio (often display aspect, e.g. "1.78") and
+    // Stream@pixelAspectRatio (e.g. "160:117"). Empty = unknown.
+    // RK6: coded 624x480 + SAR 160:117 ⇒ DAR 16:9 ⇒ universal fit 624x350.
+    std::string mediaAspectRatio;
+    std::string pixelAspectRatio;
 };
 
 struct QueueItem {
@@ -79,7 +89,7 @@ struct PlexTranscodeProfile {
 };
 
 // Built-in PMS universal transcode profiles. 240p is the legacy shipping profile;
-// 480p is the server-negotiation half of the new 640x480 pipeline.
+// 480p requests 624x480 coded (39 MB columns) to match the proven DDR frame-store geometry.
 const std::vector<PlexTranscodeProfile>& plexTranscodeProfiles();
 
 // Match by profile name ("240p"/"480p") or exact WxH resolution.
@@ -105,7 +115,39 @@ struct WeakLadder {
 };
 
 // Guard rails for built-in and configured ladders.
+// Hard fails: resolution parse, codecs, H.264 baseline, level ≤ 3.0, positive
+// quality/bitrate, coded size ≤ DDR max. Does NOT hard-fail below the ladder's
+// *recommended* bitrate defaults (2000/750) — those are quality/link heuristics
+// (osd_menu.hpp); explicit WEAK_BITRATE must be allowed for slow links.
 bool validateWeakLadder(const WeakLadder& weak, std::string* why = nullptr);
+
+// Recommended minimum maxVideoBitrateKbps for the ladder geometry (0 = unknown).
+// 480p → kPlex480pWeakBitrateKbps (2000); sub-480p → 750. Not a decoder contract.
+int recommendedMinVideoBitrateKbps(const WeakLadder& weak);
+
+// True when bitrate is positive but below recommendedMin. detail is greppable.
+bool weakLadderBitrateBelowRecommended(const WeakLadder& weak, std::string* detail = nullptr);
+
+// Next lower maxVideoBitrate on sustained STARVED. Geometry unchanged.
+// Returns 0 if already at absolute floor (400). Steps: 2000→1500→1000→750→500→400.
+// Does NOT encode a link speed — only a discrete ladder.
+int nextLowerLadderBitrateKbps(int currentKbps);
+
+// Sustained under-supply gate for step-down (1 Hz supply_class samples).
+// Default min = kStarveStepdownMinConsecutive (~8 s after WARMUP).
+inline constexpr int kStarveStepdownMinConsecutive = 8;
+bool starveStepdownReady(int consecutiveStarvedSamples,
+                         int minConsecutive = kStarveStepdownMinConsecutive);
+
+// Optional physical cap once a *measured* path capacity exists (conf/probe).
+// capacity_kbps<=0 → no clamp (never invents a link speed).
+// headroom_pct in (0,100]; product default 85 when conf omits.
+// applied = min(requested, capacity*headroom/100), at least 1 if clamping.
+// Does NOT replace decoder contracts or WEAK_BITRATE semantics — only an upper bound.
+inline constexpr int kLinkCapacityHeadroomPctDefault = 85;
+int applyLinkCapacityCapKbps(int requestedKbps, int capacityKbps,
+                             int headroomPct = kLinkCapacityHeadroomPctDefault);
+
 std::string plexClientProfileExtra(const WeakLadder& weak);
 std::string plexClientCapabilities(const WeakLadder& weak);
 std::string buildUniversalTranscodeUrl(const std::string& base,

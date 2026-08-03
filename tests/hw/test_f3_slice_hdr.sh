@@ -5,12 +5,15 @@ HOST="${MISTER_HOST:-192.168.1.183}"
 PASS="${MISTER_PASS:-1}"
 USER="${MISTER_USER:-root}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+source "$ROOT/tests/hw/hw_gate_common.sh"
 
 ssh_m() {
   sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "$USER@$HOST" "$@"
 }
 
 echo "=== reload Plex core (clean state) ==="
+hw_require_expected_rbf_md5 "test_f3_slice_hdr" "$HOST" "$PASS" "$USER" \
+  "${EXPECTED_RBF_MD5:-${HW_EXPECTED_RBF_MD5:-}}"
 ssh_m 'killall misterplexd 2>/dev/null || true; killall -CONT MiSTer 2>/dev/null || true'
 # skip load_core if already Plex — avoids DE10 lockups
 if ! ssh_m 'cat /tmp/CORENAME' 2>/dev/null | grep -qi plex; then

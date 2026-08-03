@@ -33,6 +33,12 @@ module decode_stub_recon_tb #(
 	wire wr_reset_ptr;
 	wire swap_req;
 
+	wire hybrid_fpga_owned;
+	wire hybrid_host_required;
+	wire product_recon_ok;
+	wire [2:0] hybrid_own_code;
+	wire [3:0] hybrid_own_reason;
+
 	decode_stub #(
 		.WIDTH(320),
 		.HEIGHT(240),
@@ -58,6 +64,10 @@ module decode_stub_recon_tb #(
 		.first_mb_part_count(3'd0),
 		.first_mb_uses_sub_mb(1'b0),
 		.first_mb_intra(1'b1),
+		.first_mb_mvd_x(16'sd0),
+		.first_mb_mvd_y(16'sd0),
+		.entropy_cabac(1'b0),
+		.first_mb_type_i(8'd0),
 		.residual_ok(residual_ok),
 		.residual_tc(5'd8),
 		.residual_dc(coeff[0][7:0]),
@@ -68,6 +78,15 @@ module decode_stub_recon_tb #(
 		.recon_dbg(recon_dbg),
 		.recon_dbg_valid(recon_dbg_valid),
 		.recon_valid(recon_valid),
+		.hybrid_fpga_owned(hybrid_fpga_owned),
+		.hybrid_host_required(hybrid_host_required),
+		.product_recon_ok(product_recon_ok),
+		.hybrid_own_code(hybrid_own_code),
+		.hybrid_own_reason(hybrid_own_reason),
+		.product_fetch_mv_x(),
+		.product_fetch_mv_y(),
+		.product_luma_origin_x(),
+		.product_luma_origin_y(),
 		.wr_en(wr_en),
 		.wr_pixel(wr_pixel),
 		.wr_reset_ptr(wr_reset_ptr),

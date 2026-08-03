@@ -1,0 +1,56 @@
+{
+  "out": "assets/avsync/bank480_fullbleed_vres_av_24_1200s.mp4",
+  "size_bytes": 68434328,
+  "caller_supplied": {
+    "width": 624,
+    "height": 480,
+    "sar": "1:1",
+    "dar_pixel_ratio": "624:480",
+    "note_dar": "624/480=13:10 at SAR 1:1; not 16:9; not classic 4:3 (640x480)",
+    "fps": "24/1",
+    "duration_s": 1200.0,
+    "period_s": 2.0,
+    "designed_av_offset_ms": 0.0,
+    "flash_frames": 2,
+    "beep_s": 0.05,
+    "full_bleed": true,
+    "letterbox_in_pixels": false,
+    "v_res_instruments": [
+      "left_third_1row_alternating_bw",
+      "mid_third_linepair_periods_2_4_8_16",
+      "right_third_vertical_chirp_period_2_to_32",
+      "moving_diagonal"
+    ]
+  },
+  "measured_video": {
+    "programs": [],
+    "stream_groups": [],
+    "streams": [
+      {
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "has_b_frames": 0,
+        "sample_aspect_ratio": "1:1",
+        "display_aspect_ratio": "13:10",
+        "r_frame_rate": "24/1",
+        "avg_frame_rate": "24/1",
+        "duration": "1200.000000",
+        "nb_frames": "28800",
+        "tags": {}
+      }
+    ]
+  },
+  "measured_audio": {
+    "programs": [],
+    "stream_groups": [],
+    "streams": [
+      {
+        "codec_name": "aac",
+        "sample_rate": "48000",
+        "channels": 2
+      }
+    ]
+  },
+  "n_beep_onsets": 600
+}

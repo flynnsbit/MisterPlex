@@ -1,0 +1,31 @@
+std::string httpGet(const std::string& url, int timeoutSec = 15,
+                    const std::string& extraHeaders = {}, bool defaultIdentity = true) {
+    // Prefer curl (present on MiSTer); -k for plex.direct certs.
+    std::ostringstream cmd;
+    cmd << "curl -sS -g -k -L --http1.1 --connect-timeout 6 --max-time " << timeoutSec
+        << " -H 'Accept: application/xml'";
+    if (defaultIdentity) {
+        cmd << " -H 'X-Plex-Client-Identifier: misterplex'"
+            << " -H 'X-Plex-Product: Plex Web'"
+            << " -H 'X-Plex-Version: 4.125.0'"
+            << " -H 'X-Plex-Platform: Chrome'"
+            << " -H 'X-Plex-Platform-Version: 120.0'"
+            << " -H 'X-Plex-Device: Linux'"
+            << " -H 'X-Plex-Device-Name: Chrome'"
+            << " -H 'X-Plex-Client-Profile-Name: MiSTerPlex'"
+            << " -H 'X-Plex-Model: bundled'"
+            << " -H 'X-Plex-Provides: player'";
+    }
+    if (!extraHeaders.empty())
+        cmd << extraHeaders;
+    cmd << " " << shellQuote(url) << " 2>/dev/null";
+    FILE* p = popen(cmd.str().c_str(), "r");
+    if (!p)
+        return {};
+    std::string out;
+    char buf[4096];
+    while (fgets(buf, sizeof(buf), p))
+        out += buf;
+    pclose(p);
+    return out;
+}

@@ -1,7 +1,20 @@
 // Push YUV420p video via DDR, or non-video PCM/annex-B via SPI ioctl,
 // or dump core status.
+//
+// Product path (same as MediaPlayer):
+//   push_frame --ddr [--bank N] [--yuv420p 624x480] file.i420
+//   → FpgaSpi::sendYuv420pFrameDdr → publishDdrFrame → sendDdrFrame
+//
+// V_STORE ceiling fixtures (no codec; built-in I420 patterns):
+//   push_frame --ddr --pattern mid_grey|even_black|even_white|odd_black|odd_white
+//   push_frame --ddr --pattern mid_grey --hold-ms 8000
+//
+// Daily-driver: STOP misterplexd before --ddr publish (it overwrites the bank).
+// Restore misterplexd after capture. Do not leave Main stopped.
+//
 // Usage:
-//   push_frame --ddr [--bank N] [--yuv420p WxH] file
+//   push_frame --ddr [--bank N] [--yuv420p WxH] [--hold-ms N] file
+//   push_frame --ddr --pattern NAME [--hold-ms N]
 //   push_frame --index 2|3 file
 //   push_frame --status
 //   push_frame --raw
@@ -16,6 +29,113 @@
 #include <unistd.h>
 #include <vector>
 
+namespace {
+
+// Video-range Y; neutral chroma. Matches kYuv420BlackY/U/V style.
+constexpr uint8_t kYBlack = 16;
+constexpr uint8_t kYWhite = 235;
+constexpr uint8_t kYMid = 128;
+constexpr uint8_t kUvNeutral = 128;
+
+// Built-in patterns for V_STORE even-row ceiling (store_y = py*2).
+// even_black: even store rows black, odd white → current core shows BLACK
+// even_white: even white, odd black → WHITE
+// odd_*: one-row phase shift (inversion under 240-row ceiling)
+// mid_grey: CONTROL — must be uniform mid-grey or entire suite UNSCORED
+enum class BuiltinPattern {
+    None,
+    MidGrey,
+    EvenBlack,
+    EvenWhite,
+    OddBlack,
+    OddWhite,
+};
+
+BuiltinPattern parsePattern(const char* s) {
+    if (!s)
+        return BuiltinPattern::None;
+    if (std::strcmp(s, "mid_grey") == 0 || std::strcmp(s, "control") == 0)
+        return BuiltinPattern::MidGrey;
+    if (std::strcmp(s, "even_black") == 0)
+        return BuiltinPattern::EvenBlack;
+    if (std::strcmp(s, "even_white") == 0)
+        return BuiltinPattern::EvenWhite;
+    if (std::strcmp(s, "odd_black") == 0)
+        return BuiltinPattern::OddBlack;
+    if (std::strcmp(s, "odd_white") == 0)
+        return BuiltinPattern::OddWhite;
+    return BuiltinPattern::None;
+}
+
+const char* patternName(BuiltinPattern p) {
+    switch (p) {
+    case BuiltinPattern::MidGrey:
+        return "mid_grey";
+    case BuiltinPattern::EvenBlack:
+        return "even_black";
+    case BuiltinPattern::EvenWhite:
+        return "even_white";
+    case BuiltinPattern::OddBlack:
+        return "odd_black";
+    case BuiltinPattern::OddWhite:
+        return "odd_white";
+    default:
+        return "none";
+    }
+}
+
+// Fill planar I420: Y full WxH, U/V (W/2)*(H/2).
+// evenY/oddY: per-luma-row values (row index in coded frame).
+bool fillI420Pattern(std::vector<uint8_t>& out, int w, int h, BuiltinPattern pat) {
+    if (w < 2 || h < 2 || (w % 2) || (h % 2))
+        return false;
+    const size_t yBytes = static_cast<size_t>(w) * static_cast<size_t>(h);
+    const size_t cBytes = yBytes / 4;
+    out.assign(yBytes + 2 * cBytes, 0);
+    uint8_t* Y = out.data();
+    uint8_t* U = Y + yBytes;
+    uint8_t* V = U + cBytes;
+
+    uint8_t evenY = kYMid;
+    uint8_t oddY = kYMid;
+    bool flat = false;
+    switch (pat) {
+    case BuiltinPattern::MidGrey:
+        flat = true;
+        evenY = oddY = kYMid;
+        break;
+    case BuiltinPattern::EvenBlack:
+        evenY = kYBlack;
+        oddY = kYWhite;
+        break;
+    case BuiltinPattern::EvenWhite:
+        evenY = kYWhite;
+        oddY = kYBlack;
+        break;
+    case BuiltinPattern::OddBlack:
+        // phase shift of even_black: odd rows black
+        evenY = kYWhite;
+        oddY = kYBlack;
+        break;
+    case BuiltinPattern::OddWhite:
+        evenY = kYBlack;
+        oddY = kYWhite;
+        break;
+    default:
+        return false;
+    }
+
+    for (int y = 0; y < h; ++y) {
+        const uint8_t val = flat ? kYMid : ((y % 2) == 0 ? evenY : oddY);
+        std::memset(Y + static_cast<size_t>(y) * static_cast<size_t>(w), val, static_cast<size_t>(w));
+    }
+    std::memset(U, kUvNeutral, cBytes);
+    std::memset(V, kUvNeutral, cBytes);
+    return true;
+}
+
+}  // namespace
+
 int main(int argc, char** argv) {
     uint8_t index = 1;
     int rgb24w = 0, rgb24h = 0;
@@ -26,6 +146,8 @@ int main(int argc, char** argv) {
     int bank = 0;
     int set_bit = -1, set_val = 0;
     int pulse_bit = -1;
+    int hold_ms = 0;
+    BuiltinPattern pattern = BuiltinPattern::None;
     const char* path = nullptr;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--index") == 0 && i + 1 < argc)
@@ -47,6 +169,17 @@ int main(int argc, char** argv) {
             use_ddr = true;
         } else if (std::strcmp(argv[i], "--bank") == 0 && i + 1 < argc) {
             bank = std::atoi(argv[++i]);
+        } else if (std::strcmp(argv[i], "--hold-ms") == 0 && i + 1 < argc) {
+            hold_ms = std::atoi(argv[++i]);
+        } else if (std::strcmp(argv[i], "--pattern") == 0 && i + 1 < argc) {
+            pattern = parsePattern(argv[++i]);
+            if (pattern == BuiltinPattern::None) {
+                std::fprintf(stderr,
+                             "unknown --pattern (want mid_grey|even_black|even_white|"
+                             "odd_black|odd_white)\n");
+                return 1;
+            }
+            use_ddr = true;  // patterns are DDR I420 only
         } else if (argv[i][0] != '-')
             path = argv[i];
     }
@@ -154,19 +287,44 @@ int main(int argc, char** argv) {
             return 0;
     }
 
-    if (!path) {
+    if (!path && pattern == BuiltinPattern::None) {
         std::fprintf(stderr,
-                     "usage: push_frame --ddr [--bank 0|1] [--yuv420p 624x480] file\n"
+                     "usage: push_frame --ddr [--bank 0|1] [--yuv420p 624x480] "
+                     "[--hold-ms N] file.i420\n"
+                     "       push_frame --ddr --pattern mid_grey|even_black|even_white|"
+                     "odd_black|odd_white [--hold-ms N]\n"
                      "       push_frame --index 2|3 file\n"
-                     "       push_frame --status\n");
+                     "       push_frame --status\n"
+                     "NOTE: stop misterplexd before --ddr; restore after. Same path as "
+                     "publishDdrFrame / playback.\n");
         return 1;
     }
-    std::ifstream in(path, std::ios::binary);
-    if (!in) {
-        std::perror(path);
-        return 1;
+    std::vector<uint8_t> buf;
+    if (pattern != BuiltinPattern::None) {
+        if (path) {
+            std::fprintf(stderr, "pass either --pattern or a file, not both\n");
+            return 1;
+        }
+        // Default product coded geometry when pattern has no --yuv420p
+        if (yuvW <= 0 || yuvH <= 0) {
+            yuvW = misterplex::kPlex480pCodedWidth.get();
+            yuvH = misterplex::kPlex480pCodedHeight.get();
+        }
+        if (!fillI420Pattern(buf, yuvW, yuvH, pattern)) {
+            std::fprintf(stderr, "pattern fill failed for %dx%d\n", yuvW, yuvH);
+            return 1;
+        }
+        use_ddr = true;
+        std::printf("pattern=%s yuv420p=%dx%d bytes=%zu\n", patternName(pattern), yuvW,
+                    yuvH, buf.size());
+    } else {
+        std::ifstream in(path, std::ios::binary);
+        if (!in) {
+            std::perror(path);
+            return 1;
+        }
+        buf.assign(std::istreambuf_iterator<char>(in), {});
     }
-    std::vector<uint8_t> buf((std::istreambuf_iterator<char>(in)), {});
     bool ok = false;
     if (use_ddr) {
         if (rgb24w > 0 || rgb24h > 0) {
@@ -189,10 +347,11 @@ int main(int argc, char** argv) {
         }
         const size_t want = misterplex::yuv420pFrameBytes(g.coded_width, g.coded_height);
         if (buf.size() < want) {
-            std::fprintf(stderr, "file too small for %dx%d YUV420p\n", g.coded_width,
-                         g.coded_height);
+            std::fprintf(stderr, "file too small for %dx%d YUV420p\n", g.coded_width.get(),
+                         g.coded_height.get());
             return 1;
         }
+        // Product path: sendYuv420pFrameDdr → publishDdrFrame → sendDdrFrame
         ok = spi.sendYuv420pFrameDdr(buf.data(), want, g, bank);
     } else if (index == 1 || rgb24w > 0 || rgb24h > 0) {
         std::fprintf(stderr,
@@ -210,7 +369,11 @@ int main(int argc, char** argv) {
     if (!use_ddr)
         spi.setStatusBit(9, 0);
     const char* via = use_ddr ? "DDR" : "SPI";
-    std::printf("pushed %zu bytes %s bank=%d index=%u OK (%.1f ms)\n", buf.size(), via, bank,
-                index, spi.lastPushMs());
+    std::printf("pushed %zu bytes %s bank=%d index=%u pattern=%s OK (%.1f ms)\n", buf.size(),
+                via, bank, index, patternName(pattern), spi.lastPushMs());
+    if (hold_ms > 0) {
+        std::printf("hold %d ms (frame stays until next publish; capture now)\n", hold_ms);
+        usleep(static_cast<useconds_t>(hold_ms) * 1000u);
+    }
     return 0;
 }

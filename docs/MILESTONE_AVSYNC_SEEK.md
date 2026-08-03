@@ -8,6 +8,70 @@
 
 ---
 
+## RETRACTION (2026-08-01) — 117 ms “device bimodality” was INSTRUMENT ARTIFACT
+
+Parent interleaved A/B (`files/prereg/AB-ALIGN.md`): OLD ffmpeg dual-input (no
+`-use_wallclock_as_timestamps`, no `-copyts`) vs NEW (wallclock both + `-copyts`
+`-start_at_zero`).
+
+| argv class | n | between-run median range | note |
+|------------|---|--------------------------|------|
+| OLD | 6 | **135.33 ms** | empty gap / false clusters |
+| NEW | 16 | **25.00 ms** | pooled sixfield+ab/new, same class |
+
+**Do not cite cluster A/B ≈ −314/−197, sep ≈ 117 ms, or SESSION-LATCHED-as-device
+as product defects.** Those sections below are **HISTORICAL / OLD-argv** unless
+re-measured under a NEW capture-config fingerprint.
+
+### Residual under NEW argv (host analysis, measured)
+
+`tools/analyze_avsync_residual.py` on `/tmp/sixfield/av*.json` + `/tmp/ab/new_*.json`:
+
+- `flash_onset_n_interp=0` on essentially all flashes · NEW `capture_frame_period_ms=33.00` · beep hop ~2 ms
+- between-run median range **25.00 ms** (n=16 NEW; series pooling safe by measurement)
+- **Per-pair** quant σ ≈ T/√12 ≈ 9.5 ms does **not** set the run-median floor.
+  With n_pairs≈44–45: SE(median)≈1.2533·σ/√n ≈ **1.8 ms**;
+  E[range of 16 run-medians]≈ **6.4 ms**. Observed 25 ms ≈ **3.9×** that expectation
+  → **H-QUANT REJECTED** under the SE-median model. **~20 ms unattributed residual.**
+- **Do not publish** “instrument cannot resolve below ~33 ms” as a *median* floor
+  (that confuses per-pair quant with averaged medians). Per-pair onset is still
+  frame-quantised; ramped-flash still needed for sub-frame *pair* precision.
+- Integer vs thirds grid: NEW medians land on integer ms (period 33.0); OLD on
+  thirds (period 33⅓). n_pairs parity does **not** explain it (both arms mostly n=45).
+- sixfield daemon fields vs median: **H-FIELD NULL** (no |Spearman|>0.5)
+
+**Compile-time retraction:** `kParentClusterSepMsX100=11710` and the unit pin of
+7×T_disp to 117.10 within 0.09 ms are **deleted**. 7×T_disp remains pure RTL
+arithmetic (≈117.01 ms) with **no** claim it is a device quantum. Hypothesis
+“3 content frames @ 24 fps = 125 ms” is no longer killed solely by distance to
+the retracted sep.
+
+Audit map: `.agent-work/w-avsync/OLD_ARGV_AUDIT.md`. Artifacts:
+`.agent-work/w-avsync/residual_new_pool.txt`, `prereg_residual.txt`.
+
+### ~20 ms residual attribution (host, 2026-08-01)
+
+Full write-up: `.agent-work/w-avsync/RESIDUAL20_ATTRIBUTION.md` (pre-reg
+`prereg_residual20.md`).
+
+Measured on n=16 NEW JSONs + sixfield recs:
+- **Grid SETTLED:** NEW period 33.0 → 100% integer-ms offsets; OLD 33⅓ → 100% thirds.
+  ≤1 ms effect; **cannot** explain 20 ms.
+- **H-FIELD NULL (narrow):** varying sixfield scalars are not rank-linear correlates
+  of median (n=10). Constants uninformative. Does **not** clear capture-side or
+  post-MrAudio path.
+- **P6 MISS:** Spearman(first_pair, median)=0.22 — residual is not first-pair latch.
+- **Excess session σ (variance label, not mechanism):** empirical SE(median) from
+  within σ≈14.7 ms is ≈2.75 ms → E[range 16]≈9.7 ms; obs 25 ms; excess session
+  σ≈**6.3 ms**; bootstrap P(range≥25 \| no session φ)=0. This *relabels* the
+  residual's statistical structure; it does **not** name a physical source.
+- **No named mechanism.** CC-3 stops on ALSA period, present-lag N, and grabber
+  open-delta (not in corpus). Cheapest settler: log/compare v4l2−ALSA open delta
+  (I1) or file-mode null arm; then PLXD N / MrAudio rptr (I3/I4).
+
+
+---
+
 ## Problems
 
 1. **Lips out of sync** on MiSTer cast (Trek dialogue) while local Plex is fine.  
@@ -605,3 +669,808 @@ silently feeding the present loop a bogus latency. The servo is tested there too
 including a convergence simulation. An unparseable line yields `-1`, which
 disengages the servo and falls the clock back to the old submitted-byte
 behaviour.
+
+---
+
+## HDMI grabber A/V offset instrument (`tools/avsync_measure_hdmi.py`)
+
+**Added:** 2026-07-31 — real cross-correlation of flash ↔ beep on the MS2109 grabber.
+
+Daemon `av_drift_ms` is **not** an independent measurement (`av_clock` is driven
+from `frameIndex`). This tool captures **video + audio in one ffmpeg process**
+into a single MKV (shared mux PTS) and reports a measured offset.
+
+### Sign convention
+
+```
+offset_ms = (t_audio_onset - t_video_flash) * 1000
+positive  = audio LATE  (beep after flash; audio lags; video leads)
+negative  = audio EARLY (beep before flash; audio LEADS video)
+```
+
+Matches the earlier `tests/hw/avsync_measure.py` convention.
+
+### Return codes
+
+| rc | Meaning |
+|----|---------|
+| 0  | Measured and within tolerance (abs median ≤ `--tol-ms`, abs slope ≤ `--slope-tol-ms-per-s`) |
+| 2  | Measured FAIL — offset or drift slope out of tolerance |
+| 77 | UNSCORED — capture failed, silence, static video, too few pairs. Never a pass. |
+
+Defaults: `--tol-ms 42` (one 24p frame, G-AV3), `--slope-tol-ms-per-s 0.5` (30 ms/min).
+
+Every printed value is tagged `measured` / `caller_supplied` / `DEFAULT_ASSUMED`.
+If no calibration file is loaded the tool prints `calibration=NONE` and labels
+the median `raw_uncalibrated` — never silently “corrected”.
+
+### Calibration (remove instrument skew)
+
+The MS2109 has its own fixed A/V latency (historically ~215 ms on this rig). Do
+**not** report that as a MiSTer defect.
+
+1. Play the **same** blip fixture through a known-good path **into the grabber**
+   (e.g. workstation HDMI out → MS2109 in via `mpv`/`ffplay`, bypassing MiSTer).
+2. Record baseline:
+   ```bash
+   tools/avsync_measure_hdmi.py --calibrate --duration 15 \
+     --out /tmp/avsync_cal --calibration-out /tmp/avsync_cal.json
+   ```
+3. Device measure with correction:
+   ```bash
+   tools/avsync_measure_hdmi.py --duration 20 \
+     --calibration /tmp/avsync_cal.json --out /tmp/avsync_run
+   ```
+   Report shows both `median_offset_ms_raw` and `tag=calibration_corrected`
+   (`corrected = raw - instrument_offset`).
+
+### Parent live command (MiSTer playing blip fixture)
+
+```bash
+# While 624x480@24 (or any) blip fixture is casting on the MiSTer:
+tools/avsync_measure_hdmi.py --duration 30 --out /tmp/avsync_hdmi \
+  --calibration /tmp/avsync_cal.json   # omit if no cal yet
+# Expect: sticky pairs, slope_ms_per_s near 0 if no drift; inspect median.
+```
+
+Defaults: `/dev/video0` + ALSA `hw:0,0`, 1920x1080 MJPEG, 15 warm-up frames
+discarded (MS2109 junk). Override with `--video-dev` / `--audio-dev` /
+`--warmup-frames`.
+
+### Synthetic recovery (unit)
+
+`tests/unit/test_avsync_measure_hdmi.sh` injects known offsets via `itsoffset` /
+`adelay` and requires recovery within a few ms, plus rc∈{0,2,77} proofs. Soft-skip
+is never treated as pass.
+
+### Caveats
+
+- Warm-up: first ~11–15 grabber frames are uniform garbage — discarded.
+- Flash threshold is adaptive (luma floor_p20 + 0.5×contrast); needs contrast ≥ 40.
+- Beep detector is Goertzel @ 1 kHz; silence → rc=77, not a fabricated 0 ms.
+- Slope (`ms/s`) is the drift metric; a constant offset is mostly fixed latency.
+- Single-container capture is mandatory for a shared timebase; do not split A/V files.
+
+---
+
+## RCA — hardware flash↔beep findings (2026-07-31, instrument first light)
+
+Parent-run on device (rk=8, 624×480@24.000, DECODE=624x480, daemon `b981fd20`,
+core `c5382bee`), ~14 s after cast, `tools/avsync_measure_hdmi.py`:
+
+```
+n_pairs=40  median_offset_ms_raw=-168.3333  tag=raw_uncalibrated
+slope_ms_per_s=-0.270812  r²=0.065  slope_within_tol=True
+AUDIO_DELAY_MS unset → −168.3 ms
+AUDIO_DELAY_MS=150   → −135.0 ms   (Δ = +33.3 ms, not +150)
+daemon av_drift_ms   → −21…−40 both runs (UNCHANGED)
+```
+
+### Finding 1 — `av_drift_ms` is not real lip-sync (PROVEN from source)
+
+`av_drift_ms` is stored here:
+
+```cpp
+// media_player.cpp present loop
+const int64_t raw = misterplex::audibleClockMs(
+    audioBytes_.load(), audioQueuedBytes_.load());
+clockMs = misterplex::coArmedClockMs(raw, audioClockOriginMs);
+const int64_t frameMs =
+    frameContentMs(frameIndex, fpsNum, fpsDen) + avOffsetMs_.load();
+const int64_t drift = misterplex::avDriftMs(clockMs, frameMs);
+avDriftMs_.store(drift);
+```
+
+Definitions (`host/libmisterplex/av_clock.hpp`, `mraudio_status.hpp`):
+
+```cpp
+// drift = audio clock − content time of the frame about to be shown.
+inline int64_t avDriftMs(int64_t audioMs, int64_t frameMs) { return audioMs - frameMs; }
+
+// Audible playback position = bytes written − bytes still in MrAudio ring.
+inline int64_t audibleClockMs(int64_t writtenBytes, int64_t queuedBytes) {
+    int64_t played = writtenBytes;
+    if (queuedBytes >= 0)
+        played -= queuedBytes;
+    ...
+}
+```
+
+`presentCount_` does not appear in this expression. `AUDIO_DELAY_MS` /
+FFmpeg `adelay` only rearranges *content inside* the PCM byte stream; it does
+not change the rate at which `audioBytes_` advances or the `frameIndex` schedule.
+So a real lip-sync shift from `adelay` is invisible to `av_drift_ms` by
+construction. Parent A/B (real offset moved 33 ms, daemon drift band identical)
+is exactly what the code predicts.
+
+**Do not use `av_drift_ms` as evidence of acoustic-vs-photon lip-sync.** It is a
+scheduler residual (sample clock vs frameIndex), useful for drop/hold health,
+not for lips.
+
+### Finding 2 — `AUDIO_DELAY_MS` authority: parent hypothesis KILLED
+
+**Hypothesis (parent):** video is slaved to the audible clock, so delaying audio
+content drags video with it and most of `adelay` cancels.
+
+**Kill reason (quoted):** the audible clock is a **sample-count** clock, not a
+content-timestamp clock.
+
+```cpp
+// mraudio_status.hpp
+inline int64_t audibleClockMs(int64_t writtenBytes, int64_t queuedBytes);
+// = (written − queued) / (48000*4) ms
+```
+
+```cpp
+// media_player.cpp audioPump — counts every PCM byte written post-filter
+audioBytes_.fetch_add(static_cast<size_t>(n));
+```
+
+```cpp
+// media_player.cpp — adelay only on the ffmpeg audio filter graph
+args.push_back("aresample=48000,adelay=" + std::to_string(audioDelayMs_) + ":all=1");
+```
+
+`adelay` inserts silence at the head of the PCM **content**. Sample index `s`
+still maps to wall/audible time the same way; the beep that was at content time
+`C` moves to sample time `C + D`. Video frame at content `C` is still released
+when the sample clock reaches `C` (co-arm origin cancels). Model:
+
+```
+offset_content ≈ D - O_coarm     with adelay D
+offset_content ≈ 0 - O_coarm     without
+Δoffset = D                      full authority
+```
+
+**Local proof (this commit, host ffmpeg, same filter string as the daemon):**
+
+| adelay | measured median_offset_ms | error |
+|-------:|--------------------------:|------:|
+| 0 | 0.0000 | 0 |
+| 60 | 60.0000 | 0 |
+| 150 (`adelay=150:all=1`) | 150.0000 | 0 |
+| 150 (`adelay=150\|150`) | 150.0000 | 0 |
+
+So the filter string is not broken, and sample-clock slaving does **not** cancel
+content delay. **`AUDIO_DELAY_MS` is structurally capable of correcting lip-sync
+on this architecture** (full authority in the model + local recovery).
+
+**What remains unknown — why hardware showed only +33.3 ms for +150 ms:**
+
+Not explained by the killed hypothesis. Candidates that need parent evidence,
+not source claims:
+
+1. **Capture-frame quantisation of the instrument** (pre-hardening): flash onset
+   was integer capture frames. At 30 fps, one frame = 33.333 ms — exactly the
+   observed Δ. True shift could lie in roughly [0, ~67] ms for a 1-frame step in
+   the median of two independent runs, still far below 150 but the point estimate
+   is not trustworthy to better than ~one frame without sub-frame onset.
+2. **Session-to-session residual** (historical RC3 in this doc: 67 ms spread
+   pre-co-arm; post-co-arm claimed ~5–9 ms). Two separate plays are not a paired
+   difference. Unknown without N repeats of each conf.
+3. **Something outside the model** (HDMI/FPGA path interaction). Unknown —
+   check that would settle it: N≥5 repeats each of `AUDIO_DELAY_MS=0` and `=150`
+   with the hardened instrument at `--cap-fps 60`, report distribution of
+   medians and of paired differences.
+
+Until (3) is measured, **do not document `AUDIO_DELAY_MS` as inert**, and do not
+remove it. Prefer the live OSD **Video delay** (`avOffsetMs`) for mid-play trim:
+it adds directly to `frameMs` and has full authority by construction
+(`media_player.hpp` / `osd_menu.hpp`).
+
+### Where could −168 ms come from?
+
+| Term | Source evidence | Attributable? |
+|------|-----------------|---------------|
+| MrAudio ring ~100 ms (`queued≈19260B`) | `kFeedTargetBytes = 48000*4/10`; log `audio latency 100ms` | **Accounted in clock** — `audibleClockMs` subtracts `queuedBytes`. Not an extra 100 ms of "audio ahead of belief". |
+| Co-arm origin (~prefill depth) | `audioClockOriginMs = audibleClockMs(...)` at first frame | Cancels from steady-state content offset (constant). |
+| `av_drift_ms` −21…−40 | scheduler residual only | **Not** lip-sync (Finding 1). |
+| Downstream video path (DDR present, HDMI) vs audio path after ring | not instrumented in daemon | Possible device contribution; **magnitude unknown from source**. |
+| MS2109 grabber A/V skew | same doc, eyes-on in-sync read **−215 ms** on older harness | Dominant candidate for large negative raw; **not device**. |
+| Instrument raw | parent −168.3 tag=`raw_uncalibrated` | Includes grabber + device; split unknown without cal. |
+
+**Honest split:** from source we can attribute that the ~100 ms ring is *not*
+double-counted by the daemon clock. We **cannot** attribute −168 ms to a device
+defect. Historical eyes-on-in-sync ↔ instrument ≈ −215 ms implies a raw reading
+near −168 could still be "device near sync + grabber skew", or "device tens of ms
+off + grabber skew". **Only calibration or eyes-on settles absolute device offset.**
+
+### Calibration without re-cabling the daily driver
+
+**Standing position (parent), ruled on here:**
+
+- **Slope (`slope_ms_per_s`) of flash↔beep offset vs capture time:** a fixed
+  instrument latency (grabber, cable, encoder) is an additive constant on every
+  pair and **cancels exactly in the slope**. Drift-over-time is a real measured
+  quantity without calibration. Parent's slope −0.27 ms/s, r²=0.065 over ~40 s
+  is legitimately "no measurable drift" under that math. This is not a proxy:
+  it is the derivative of the same physical cross-correlation.
+- **Absolute median offset:** remains `raw_uncalibrated` without a known-zero
+  source into the grabber. **No calibration-free method exists** for absolute
+  device lip-sync while the MiSTer owns the only HDMI into the grabber.
+
+What a valid absolute cal would need (parent decides whether to ask the user):
+
+1. A known-aligned flash+beep source into the MS2109 (workstation HDMI out, or a
+   second grabber path), playing the **same** fixture file.
+2. `tools/avsync_measure_hdmi.py --calibrate --duration 15 --calibration-out cal.json`
+3. Device runs then pass `--calibration cal.json` → `tag=calibration_corrected`.
+
+Relative A/B on the device (conf changes, OSD Video delay steps) remains valid
+**as differences** if the grabber path is unchanged between runs — still subject
+to the quantisation/session caveats above.
+
+### Audibility of −168 ms *if* device-attributable
+
+ITU-R BT.1359-1 (*Relative timing of sound and vision for broadcasting*):
+
+| | Audio **lead** (sound before picture) | Audio **lag** (sound after picture) |
+|--|----------------------------------------|-------------------------------------|
+| Detectability | ≈ **+45 ms** | ≈ −125 ms |
+| Acceptability | ≈ **+90 ms** | ≈ −185 ms |
+
+(Sign in the Rec is "sound advanced w.r.t. vision" positive.)
+
+Our sign: negative = audio EARLY = audio lead. So **|−168 ms| as audio lead**
+sits **beyond the +90 ms acceptability threshold** for audio lead —
+*if and only if the raw number is device-attributable*. That premise is
+**unproven** (see above). Label any such claim:
+`audibility_if_device_attributable` — not a measured device defect.
+
+### Instrument hardening (this commit)
+
+1. **Flash onset:** `step_or_linear_luma_interp` — step edges (rise ≥70 % of
+   contrast in one interval) use first-hot-frame PTS (avoids the −½-frame
+   systematic that pure midpoint interp put on grid-aligned fixtures); softer
+   edges still linear-interpolate.
+2. **Default live `--cap-fps` 60** (was 30) — halves residual frame quant when
+   the edge is a step on the capture grid.
+3. **Beep hop 2 ms** (was 5 ms).
+4. Unit ladder `adelay` 0…150 ms: **`effective_resolution_rmse_ms=0.9487`
+   src=measured** (10-point ladder, host encode; `tests/unit/test_avsync_measure_hdmi.sh`).
+5. Slope FAIL gate only when `n_pairs >= 20` (short windows still *report* slope).
+
+Parent live command (prefer 60 fps + long window for slope):
+
+```bash
+tools/avsync_measure_hdmi.py --duration 40 --cap-fps 60 --pair-window-s 0.9 \
+  --out /tmp/avsync_hdmi --label rk8
+```
+
+(Default `--pair-window-s` is now **0.9**; degraded pair counts are could-not-measure.)
+
+---
+
+## HOLE 1 — 117 ms of `AUDIO_DELAY_MS=150` unaccounted (source account)
+
+**Parent A/B (device md5 `b981fd20` = worktree `ca29aa11`, early-play, no hold gate):**
+
+| conf | instrument median (raw) | Δ |
+|------|------------------------:|--:|
+| unset / 0 | −168.3 ms | — |
+| `AUDIO_DELAY_MS=150` | −135.0 ms | **+33.3 ms** |
+
+SE(median)≈2.4 ms → +33.3 is ~14 SE, real. **117 ms missing.**
+
+### Trace (quoted)
+
+1. **Conf parse** (`arm/misterplexd/main.cpp`): `AUDIO_DELAY_MS` → `setAudioDelayMs` → banner log.
+2. **Product filter** (`media_player.cpp`): `-af` from `misterplex::ffmpegAudioDelayFilter(ms)` →
+   `aresample=48000,adelay=N|N` (portable per-channel form; was `:all=1`).
+3. **Units:** FFmpeg `adelay` is **milliseconds** (host-measured: req 150 → silence head 150.042 ms;
+   `adelay=150S` → ~3.2 ms samples — not what we emit).
+4. **Pump:** wall-paced MrAudio; `audioBytes_ += n` on every PCM byte; **no second delay line**.
+5. **Prefill** (`kFeedTargetBytes=19200` ≈ 100 ms): biases first `audioDue` into the past so the
+   ring fills; `audibleClockMs` **subtracts queued bytes**. Model function
+   `adelayCancelledByPrefillMs(conf, prefill) == 0` always — prefill does **not** eat content delay.
+6. **Pacer:** `clockMs = audibleClockMs(written, queued)` (sample clock). adelay moves *content*
+   inside the byte stream; sample index still maps 1:1 to audible time → predicted
+   `adelayContentShiftMs(conf) == conf` (full authority).
+
+### Host proofs (this commit)
+
+| Check | Result |
+|-------|--------|
+| Offline pacer model Δ(offset) for adelay 0→150 | **+150.00 ms** (full) |
+| Host ffmpeg filter silence head 0/60/150 | **0/60/150 ms** |
+| `test_audio_delay` conf→filter→silence_head | PASS |
+| RED twin: strip `pcm_silence_head_ms` measure | green_checks fail |
+| RED twin: mutant prefill-cancel ≠ 0 | unit FAIL |
+
+### What is **not** proven from source
+
+The **117 ms** is **not** explained by prefill cancel, sample-clock video slaving, or a broken
+filter string on the host. Parent daemon `b981fd20` used early-play (no `audioStartGate_`);
+session-to-session lead variance and post-MrAudio/HDMI path remain candidates.
+
+**New log line (deploy this ARM to settle on silicon):**
+
+```
+media: pcm_silence_head_ms=<N> conf_adelay_ms=<C> predicted_shift_ms=<C> (measured on pump input; tag=measured)
+```
+
+| If parent sees… | Meaning |
+|-----------------|--------|
+| `pcm_silence_head_ms≈150` with conf 150, lipsync Δ still ~33 | delay is in PCM; loss is **after** pump (HDMI/core/path) or session factor |
+| `pcm_silence_head_ms≈33` or `≈0` with conf 150 | filter never landed full delay on device FFmpeg/PCM |
+| `pcm_silence_head_ms=UNKNOWN` | could-not-measure (empty/short audio) — not a pass |
+
+Also logged at spawn: `predicted_content_shift_ms` and `prefill_cancel_ms=0`.
+
+**Prefer OSD `Video delay` (`avOffsetMs`)** for mid-play trim — G-OSD4 proved full authority on
+hardware. Do not remove `AUDIO_DELAY_MS` until silence-head A/B is run; do not claim it is inert.
+
+---
+
+## HOLE 2 — absolute offset without re-cabling
+
+### What `--calibrate` measures
+
+The **currently connected** grabber loop: whatever video hits `/dev/video0` and whatever audio
+hits the ALSA capture device, cross-correlated the same way as a normal run. It stores
+`instrument_offset_ms` in a JSON file. It does **not** know whether that source is
+device-aligned or zero-offset.
+
+### Can we bound fixed latency without unplugging the daily driver?
+
+| Method | Needs | Result |
+|--------|-------|--------|
+| Host HDMI → same MS2109 playing known-aligned fixture | Second cable into grabber **or** unplug MiSTer | True absolute cal |
+| Before/after conf A/B on same wiring | Nothing | **Δ median** trustworthy (fixed latency cancels) |
+| `slope_ms_per_s` | Nothing | Fixed latency cancels exactly; drift is measured |
+| Infer absolute from daemon queues | — | **No** — ring is in the clock; grabber skew unknown |
+
+**Ruling:** while MiSTer owns the only HDMI into the grabber, **absolute device lipsync is
+unknowable**. That is acceptable. The tool must (and does) print
+`calibration=NONE` + `tag=raw_uncalibrated` on every absolute median, and never present raw as
+corrected. Slope and A/B deltas remain the publishable quantities.
+
+Parent position on slope canceling fixed latency: **legitimate**, not a proxy — same physical
+pairs, derivative removes the additive constant.
+
+---
+
+## Startup drops vs lipsync offset (H-DROP)
+
+### What the 1 Hz telemetries established
+
+On rk8 360 s 480p repeats (`tele_1/2/3` + `avsync_rep1/2/3`):
+
+| run | startup_drops | transitions after first sample | median_offset_ms (raw) | steady residual/pub_miss |
+|-----|--------------:|-------------------------------:|-----------------------:|--------------------------|
+| rep1 | 15 | 0 (flat from wall_s≈7) | −316.0 | 0 / 0 |
+| rep2 | 12 | 0 | −196.7 | 0 / 0 |
+| rep3 | 18 | 0 | −196.0 | 0 / 0 |
+
+Every drop is a **startup transient**. Ledgers close (`frames − presents − drops = 0`). The old
+“steady-state sawtooth, one drop per 30 s” reading is **falsified** — it was inference from an
+EOF total, not a time series.
+
+### H-DROP (pre-registered)
+
+`offset_ms ≈ a − (1000/24)·startup_drops` with frame quantum **41.667 ms** at measured 24.000 fps.
+
+**What n=3 can and cannot establish**
+
+- A 2-point fit is a **tautology** (zero residual by construction). It cannot validate H-DROP.
+- The 3rd paired run is the first out-of-sample test (one residual degree of freedom).
+- Confidence is the **OOS residual in ms** vs within-run median noise (~few ms), not “119 vs 125
+  both fit in ±42”.
+
+**Measured OOS (fit on rep1+rep2, predict rep3)**
+
+| model | rep3 predicted | rep3 measured | residual |
+|-------|---------------:|--------------:|---------:|
+| free 2-pt slope ≈ −39.78 ms/drop | −435.3 | −196.0 | **+239.3 ms** |
+| forced −41.667 ms/drop | −443.8 | −196.0 | **+247.8 ms** |
+| 3-pt OLS | slope **+0.11** ms/drop, R²≈0.00002, pearson r≈0.005 | — | s_yx≈98 ms |
+
+**Verdict: H-DROP REJECTED.** rep2 (drops=12) and rep3 (drops=18) share the same offset cluster
+(~−196) despite Δdrops=+6 (expected ~250 ms under H-DROP).
+
+Re-run:
+
+```bash
+python3 tools/analyze_drop_offset.py --defaults
+# self-test: rc=0 on consistent synthetic H-DROP, rc=2 on broken OOS, rc=77 on missing
+python3 tools/analyze_drop_offset.py --self-test
+```
+
+### Alternatives evaluated from the data (not speculation)
+
+1. **One prefill quantum (100.0 ms)** — `kFeedTargetBytes=19200` at 48000·4 B/s
+   (`mraudio_status.hpp`). Between-cluster jump |Δ(rep2−rep1)|=**119.33 ms**:
+   - vs 100 ms → err **19.33 ms**
+   - vs 3·frame (125 ms) → err **5.67 ms**
+   - vs prefill+½frame (120.83) → err **1.5 ms** (descriptive only; not a mechanism proof)
+   Steady-state `queued_ms_median` is **~100 ms on all three runs** (range 0.23 ms). Identical
+   depth does **not** kill a one-shot **startup phase** equal to one quantum (depth ≠ content
+   phase). It does kill “different steady prefill depth between runs.”
+
+2. **`AV_PRESENT_LEAD_MS` / `av_drift_ms` deadband** — tele `av_drift_ms` medians sit ~−30 on
+   all three runs. That metric is self-graded and was already proven blind to real lipsync; it
+   does **not** move with the −316 vs −196 cluster split. Not an explanation of the jump.
+
+3. **`AUDIO_DELAY_MS` / 117 ms hole** — none of these long runs were an adelay A/B; conf path
+   cannot be blamed from this dataset. Unknown — would need silence-head + instrument A/B.
+
+4. **Bistable absolute phase** — data favor **two offset modes** (~−316 and ~−196, gap ~120 ms)
+   with startup_drops **not** selecting the mode (12 and 18 → same mode). Mechanism of the mode
+   flip is **unresolved** from these files alone.
+
+**Discrimination that actually works** (42 ms gate cannot separate 100 vs 125):
+
+- **D1 (already live):** vary drops inside a mode — done; kills linear H-DROP.
+- **D2:** change feed-target ms (50 / 100 / 150) across sessions; mode gap tracks feed → prefill
+  phase; gap stays ~3 frames independent of feed → frame-quantum phase.
+- **D3:** log clock-origin / hold-release / `pcm_silence_head` at start vs cluster id.
+
+### Within-run structure (drops out as cause)
+
+With steady drops flat, residual slope remains:
+
+| run | per-pair slope ms/s | ρ₁ | SE_AR1 | t_AR1 | block10 slope | block10 t_AR1 |
+|-----|--------------------:|---:|-------:|------:|--------------:|--------------:|
+| rep1 | −0.108 | 0.34 | 0.014 | −7.9 | −0.106 | −2.81 |
+| rep2 | −0.088 | 0.33 | 0.014 | −6.3 | −0.087 | −2.36 |
+| rep3 | −0.093 | 0.39 | 0.016 | −5.7 | −0.087 | −2.27 |
+| 480_330 | −0.094 | 0.50 | 0.019 | −5.0 | −0.088 | −2.04 |
+| 240_330 | −0.122 | 0.45 | 0.014 | −8.8 | −0.139 | −3.70 |
+
+All slopes negative and clustered. AR1-adjusted block-median t-stats still exceed ~2. Slow
+drift ~0.09–0.12 ms/s × 320 s ≈ 30–40 ms matches early-vs-late fifth median gaps. **Not**
+explained by drops.
+
+### 240p arm
+
+`avsync_240_330.json` median **−304.7** (near the −316 mode). **No telemetry** → startup_drops
+**unresolvable**. Implied drops under a rejected 2-pt H-DROP invert (~14.7) are
+`DEFAULT_ASSUMED` model fiction — do not publish as measurement.
+
+### Two discrete offset clusters (post H-DROP)
+
+Parent series (rk8; absolute = `raw_uncalibrated`). Tool auto-picks `/tmp/avsync_repN.json`.
+
+| run | median_ms | 2-means | notes |
+|-----|----------:|---------|-------|
+| 480_330 | −318.0 | A | core-A |
+| rep1 | −316.0 | A | core-A |
+| rep2 | −196.7 | B | |
+| rep3 | −196.0 | B | |
+| rep4 | −304.7 | A | **shoulder-A** (~12 ms from core) |
+| 240_330 | −304.7 | A | shoulder-like; excluded from sep by default |
+
+- **Primary gap** is still ~120 ms (B vs core-A). Within-B spread **0.7 ms**; core-A spread **2.0 ms**.
+- Shoulder (−304.7) sits on A’s side of the big gap but is **not** the same 2 ms core — full-A spread becomes **13.3 ms** once rep4 is in.
+- Instrument SE(median) within a run ≈ **1.3 ms** → primary A/B split is not noise; shoulder needs more n before calling a third mode.
+
+**Whole-series vs developing (measured on all current reps):**
+
+- Pair-0 already on-cluster: core-A y0~−298…−282, B y0~−185…−172, shoulder y0~−275; |y0−med| ≪ |sep|/2.
+- Cross-run `med_d` early/mid/late thirds **flat** across the ~120 ms pairs (e.g. rep2−rep1 all **113.333**; rep4−rep2 all **−117.333**; slope_d ~0.02 ms/pair).
+- Rolling-median step-10 jumps max **~15–33 ms**, never ~120 → **no mid-run cluster flip**.
+- Verdict: `SHIFT_KIND=WHOLE_SERIES_STARTUP_LEVEL` — level chosen at startup and held; slow −0.09 ms/s slope is separate residual drift.
+
+**A,A,B,B(+A shoulder):** run order alone **cannot** distinguish bistable-random from one-way step. Need more repeats or intervention.
+
+**100 ms prefill vs 125 ms (3×frame) — tight gate, not ±42:**
+
+| sep definition | sep_ms | \|sep−100\| | \|sep−125\| | envelope gate |
+|----------------|-------:|------------:|------------:|---------------|
+| B − coreA (−317) | **120.67** | **20.67 → REJECT 100** | 4.33 (closer; not rejected at 3×2ms gate) | core spread 2 ms |
+| B − fullA (incl shoulder) | 116.56 | 16.56 | 8.44 | full-A spread 13 ms → neither rejected |
+
+`prefill+½frame=120.83` fits core sep to 0.17 ms — **numeric only, not a mechanism**.  
+`tools/analyze_drop_offset.py --clusters-only` prints both.  
+**E2 discriminator:** change feed-target ms (50/100/150) across sessions — sep tracks feed ⇒ prefill phase; sep stays ~3×frame ⇒ frame phase.
+
+### `av_drift_ms` blindness (parent-measured, external)
+
+Same three tele runs: internal `av_drift_ms` mean **−29.8 / −29.4 / −30.2** (range inside lead band) while external HDMI medians span **120 ms**. Confirms code argument (`AV_PRESENT_LEAD_MS` pins the band) with hardware. **Soak PASS on av-lock+av_drift_ms is not a lipsync claim.**
+
+### Audio hold machine (source)
+
+**Hold is NOT the 117 ms cluster discriminator (parent-measured, published miss).**
+Instrumented daemon `5996385a`, opposite clusters:
+
+| run | HDMI offset | cluster | held_ms | release→video | pcm→video | silence_head |
+|-----|------------:|---------|--------:|--------------:|----------:|-------------:|
+| 1 | −190.67 | B | **112** | 81 | 193 | 9 |
+| 2 | −308.00 | A | **107** | 71 | 178 | 9 |
+| Δ | **117.33** | | **5** | 10 | 15 | **0** |
+
+H-DEV required origin/hold delta ≈ 117±30 ms between clusters; measured hold Δ=5 ms.
+Session-start fields (geometry, vf, silence head, adelay, identity_skip, …) also **identical**
+across clusters (parent P5 null). Hold source trace below remains valid plumbing; it is **not**
+a fix justification for bimodality.
+
+#### End-to-end (product RGB+audio path)
+
+| Step | Where | What |
+|------|-------|------|
+| Arm closed | `media_player.cpp:2908-2911` | After ffmpeg spawn: `audioStartGate_=false`, `sessionOriginMonoMs_=-1`, start `audioPump` |
+| Pump live | `:2064` | `audioActive_=true`; `audioBytes_=0` |
+| Hold | `:2236-2356`, `:2315-2355` | While gate closed: `poll`+`read` PCM into `holdBuf`; **no** MrAudio `write`. Cap `kAudioHoldCapBytes` (2 s) with **ring drop HEAD** (`:2318-2325`). |
+| Release trigger A (normal) | `:3475-3500` | On **first complete video frame** (`!avAudioReleased` after `++frameIndex`): latch `t0`, arm `sessionOriginMonoMs_`, `checkAudioReleaseOrigin(audioBytes_,0)`, **`audioStartGate_=true`**. Log `A/V audio_release … held PCM from content t=0`. |
+| Release trigger B (degrade) | `:2250-2257` | If gated wait ≥ `kAudioHoldTimeoutMs` (**1200**, `av_clock.hpp:70`): pump opens gate **without video**. |
+| Release trigger C (audio-only) | `:2583` | `skipRgb` path opens gate immediately (no hold). |
+| Release trigger D (no audio pipe) | `:2914` | Gate forced open if no apipe. |
+| Dump | `:2358-2371` | On first post-open pump iteration: `writePacedChunk` entire `holdBuf` from **begin()** (oldest = stream head unless HEAD was dropped), then live PCM. |
+| Prefill at first write | `:2146-2157` | First MrAudio write past-biases `audioDue` by `kFeedTargetBytes` (~**100 ms**). Comment: **HOLD does NOT remove this prefill quantum.** |
+| Present (later) | `:3526-3592` | `avDecide` may **Hold** video after gate is already open; `first_video_present` logs only when `presentCleanFrame` runs (`:3203`). Parent saw present **~86 ms after** release — consistent with post-gate pacing Hold while audio dumps. |
+
+Constants: `kAudioHoldCapMs=2000`, `kAudioHoldTimeoutMs=1200`, `kFeedTargetMs=100` (`av_clock.hpp:65-70`).
+
+#### What sets hold **duration**?
+
+**Wall hold** ≈ time from first pump PCM (`first_audio_pcm`, `:2297-2311`) until trigger A or B opens the gate.  
+**Buffer `held_ms`** = `holdBuf.size()` → ms via `checkAudioReleaseOrigin` (`av_clock.hpp:84-93`) — content depth in the ring buffer, not the mono wall delta (equal only if fill is real-time and no head drop).
+
+There is **no fixed 120 ms timer** on the success path. Duration is a **race**: ffmpeg audio availability vs first full video frame assembly (or 1200 ms timeout).
+
+#### Can it be bimodal (≈0 vs ≈120)?
+
+| Trigger | When | held outcome |
+|---------|------|----------------|
+| A first complete frame | normal cast | continuous: whatever PCM arrived before frame1 (can be ~0 if video wins race, or 100s of ms if audio leads) |
+| B timeout 1200 ms | no video in 1.2 s | large hold / degrade — **not** the 120 ms cluster scale |
+| C audio-only | skipRgb | ~0 by construction |
+| D no audio | — | N/A |
+
+So product path has **two code triggers** (frame vs timeout), not a 0/120 pair. A **~120 ms mode** is compatible with a typical audio-leads-first-frame race; a **~0 ms mode** is compatible with video winning that race. That is a **timing race on one trigger (A)**, not two discrete release machines at 0 and 120. Whether silicon clusters map 1:1 to held_ms is **unproven** until parent pairs them (n=1 so far).
+
+#### Is held PCM replayed from content t=0? **Yes (if no HEAD drop)**
+
+- While gated, PCM is only appended to `holdBuf` (`:2315-2355`); `audioBytes_` increments only in `writePacedChunk` (`:2144`) after gate open.
+- `checkAudioReleaseOrigin` requires `audioBytesAtRelease==0` (`av_clock.hpp:88-92`); else ERROR “hold bypassed”.
+- Dump writes `holdBuf` from `begin()` (`:2362-2365`) = oldest samples = stream head unless cap dropped HEAD (`:2318-2325`).
+- Log text is literal: “held PCM from content t=0” (`:3515`).
+
+**Sticky origin implication (mechanism, not silicon proof):** at gate open, video is at `frameIndex=1` → `frameContentMs(1)=1000/24≈41.7 ms` (`av_clock.hpp:15-21`). Dump submits the **entire** held content (e.g. 0…held_ms) into MrAudio in a burst (past-bias allows no sleep until prefill caught up). Audible timeline then runs with that content already queued; pacer uses **raw** `audibleClockMs` with **no origin subtract** (`:3534-3537`, `:3243`). Startup drops may repay some lead (`avDecide` Drop when drift large); any **unpaid** remainder is a **permanent content offset** for the session (same class GStreamer calls a permanent offset until flush/seek).
+
+Host model of residual lead after hold dump: `simulateHoldReleaseRace` (`av_clock.hpp:345-370`).
+
+#### Origin latch / rebase
+
+| Event | Behavior |
+|-------|----------|
+| Gate open / first complete frame | `t0` re-latched; `sessionOriginMonoMs_` set once (`:3488-3494`). **Physical start, not co-arm subtract** (`:3487`, header `:386-390`). |
+| Pause | `t0` adjusted by pause duration (`:3288-3290`) — wall clock only when not on audio. |
+| Seek / new play | New session: gate closed again (`:2910-2911`, kill path `:1070-1071`). |
+| Steady state | **No** GStreamer-style discont rebase. `coArmedClockMs` is **DEPRECATED unit-only** (`av_clock.hpp:34-36`). Product: raw audible clock. |
+
+#### Cheapest falsifier (parent hardware — agent must not run)
+
+On each instrumented cast, parse:
+
+```text
+Δ_hold_wall_ms = mono(A/V audio_release) - mono(first_audio_pcm)
+held_ms_buf    = from pump "audio release … held_ms=" OR held_bytes/192
+cluster        = HDMI median vs A≈-314 / B≈-197
+```
+
+| If | Conclude |
+|----|----------|
+| Δ_hold_wall (or held_ms_buf) tracks cluster with slope≈1 and Δ≈117 between A/B | hold (or dump race) is the cluster mechanism |
+| hold stats identical across A and B (within ~5 ms) while HDMI sep stays 117 | **kill** hold-duration suspect; look post-release (prefill burst / present lag) |
+| reason=`hold_timeout` ever on rk8 | separate degrade path — exclude from A/B |
+
+Do **not** use `av_drift_ms` (proven blind). Hold pairing **already ran** — falsified.
+
+**Parent measurement (instrumented daemon `5996385a`, n=2 opposite clusters) — H-HOLD miss published:**
+
+| run | HDMI offset_ms | cluster | held_ms | release→video | pcm→video | pcm_silence_head_ms |
+|-----|----------------|---------|---------|---------------|-----------|---------------------|
+| 1 | −190.67 | B | **112** | 81 | 193 | 9 |
+| 2 | −308.00 | A | **107** | 71 | 178 | 9 |
+| Δ | **117.33** | | **5** | 10 | 15 | **0** |
+
+Pre-registered H-DEV required origin delta ≈ 117±30 ms; measured hold Δ≈5 ms (~7× outside band). **Hold is not the 117 ms discriminator.** Delivery geometry / filter graph / silence head also identical (parent P5 null). Origin record fields do not separate clusters.
+
+### MrAudio → FPGA handoff — where daemon control and observability END
+
+Product audio path (header `media_player.hpp:2-3`, arch diagram `docs/architecture.md`):
+
+```text
+ffmpeg s16le 48k stereo
+    → audioPump writePacedChunk
+    → ::write(/dev/MrAudio)          ← LAST userspace store the daemon performs
+    → MiSTer MrAudio DMA ring (kernel)
+    → SPI toward FPGA / sys audio mix  ← daemon does not schedule this
+    → HDMI / analog out
+```
+
+#### Last thing the daemon **controls**
+
+1. **Whether** to write and **which PCM bytes** (`media_player.cpp` `writePacedChunk`, `::write(out, …)` after gate open).
+2. **Software pacing** of those writes: `audioDue` + `sleep_until`, rate from `feedRateBytesPerSec(nominal, queuedEma)` (`mraudio_status.hpp:133-145`), seed `AUDIO_CLOCK_PPM`.
+3. **Optional F2 fallback** only if MrAudio open fails: `FpgaSpi::sendPcmChunk` → `sendFileTx` index 2 (`fpga_spi.cpp:1823-1832`; pump prefers MrAudio and skips F2 when Mr works — `media_player.cpp:2036-2040`).
+
+#### First things the daemon does **not** control
+
+Quoted from in-tree driver notes (`mraudio_status.hpp:4-14`, expanded `docs/MILESTONE_AVSYNC_SEEK.md` “wrong clock” section):
+
+- `/dev/MrAudio` is a **512 KB DMA ring** (`kMrAudioRingBytes`, `mraudio_status.hpp:33`).
+- **`write()` never blocks and never consults the read pointer** — copy into ring, wrap, return. Lab: 10 s PCM accepted in 116 ms.
+- **FPGA/SPI drain schedule** (when the consumer advances `rptr`) is **not** set by misterplexd.
+- **Sys audio mix / HDMI audio packet phase** relative to video scanout — outside this process (`osd_menu.hpp:12-16`: remaining path difference is “FPGA output, HDMI, and the display… cannot be measured from the ARM”).
+
+So: daemon chooses **byte stream + feed rate into the ring**. Hardware/driver choose **when those bytes become sound** on the wire.
+
+#### Where observability **ends** (precise)
+
+| Observable | How | Cadence / limit |
+|------------|-----|-----------------|
+| Bytes **submitted** | `audioBytes_ += n` on successful write intent (`writePacedChunk`) | every chunk |
+| Ring **depth** `len=(wptr-rptr)` | `readMrAudioQueuedBytes`: open MrAudio **O_RDONLY**, `read` status line, `parseMrAudioQueuedBytes` (`media_player.cpp:2020-2029`, `mraudio_status.hpp:18-22,39-69`) | **every 4th chunk** (~80 ms), not per sample |
+| “Heard” clock used by pacer | `audibleClockMs(written, queued) = (written−queued)/192000` (`mraudio_status.hpp:76-82`) | same sample rate as `len`; assumes **nominal 48 kHz** drain |
+| Overwrite risk | log if `queuedEma > 3/4 ring` | coarse |
+
+**Not observed / not logged by this daemon (from source) before handoff logs:**
+
+- Absolute **wall time of first DAC/HDMI audio sample** (no HW PTS back to userspace beyond `len`).
+- **Phase** of FPGA audio clock vs video pixel clock / vsync.
+- Per-sample SPI completion; `comp:` was format-only until `ring_at_open` / `ring_after_first_write` logs.
+- Anything after SPI leave (core mix, HDMI A/V relative skew in the RBF).
+
+**FPGA consumer (in-tree `fpga/Plex_MiSTer/sys/alsa.sv`) — mechanisms the daemon does not schedule:**
+
+```verilog
+// alsa.sv:116-119 — first time rptr!=wptr after reset, SNAP rptr to wptr
+// (skip whatever was already queued), then set got_first.
+else if(buf_rptr != buf_wptr) begin
+    if(~got_first) begin
+        buf_rptr <= buf_wptr;
+        got_first <= 1;
+```
+
+```verilog
+// alsa.sv:149-153 — sample CE is free-running NCO at 48000 + hurryup
+acc <= acc + 48000 + {hurryup,6'd0};
+if(acc >= CLK_RATE) begin ... ce_sample <= 1;
+```
+
+```verilog
+// alsa.sv:95-103 — hurryup 0..4 from buffer fill bits (rate bend, not daemon-set)
+if(len[18:14] && (hurryup < 1)) hurryup <= 1;
+...
+if(!len[18:10]) hurryup <= 0;
+```
+
+`got_first` clears only on `reset` (`alsa.sv:86-91`). Across sessions without that reset, snap does not re-fire; residual ring state can persist. **These are source-visible mechanisms past the daemon write. They are NOT a measured cause of the 117 ms clusters.**
+
+`audio_out.sv` mixes `alsa_l/r` with core audio into I2S (`sys_top.v:1579-1610`). Filter enable ramps `a_en1`/`a_en2` after **audio_out reset only** (`audio_out.sv:176-196`) — another fixed post-reset path latency class, not session-logged by the daemon.
+
+**Product logs (post this instrumentation):**
+- `media: MrAudio ring_at_open mono_ms=… rptr=… wptr=… len_B=… len_ms=…`
+- `media: MrAudio ring_after_first_write mono_ms=… written_B=… rptr=… wptr=… len_B=…`
+
+**Implication for the 117 ms defect (bounded claim):** parent showed session-start daemon fields and hold stats do not separate clusters. The handoff model says a **fixed or session-random phase** in the **post-write** path (ring start phase, FPGA drain, HDMI) would be **invisible** to every signal built from `written`, steady `len`, `frameIndex`, and `av_drift_ms` **if that phase is constant for the session and similar in steady `len`** — because `audibleClockMs` subtracts depth and `av_drift_ms` only compares that clock to `frameIndex`. That is a **compatibility** statement with blindness, **not** a location of the cause. Locating it needs an observation **outside** this set (grabber already is; on-device would need a new sensor, e.g. core-side marker or external loopback). Pair `ring_at_open` / `ring_after_first_write` across A/B — if identical while HDMI sep stays 117, ring-depth path is weaker as discriminator.
+
+#### Held PCM from content t=0? / origin rebase? (unchanged)
+
+- **Yes** dump from `holdBuf.begin()` after `audio_bytes_at_release==0` (see hold section) — independent of cluster falsification.
+- **No** steady-state origin rebase; latch once at first complete frame; seek/new play resets gate.
+
+#### Cheapest next falsifiers (still parent-owned hardware)
+
+1. Log **first N** `len`/lat samples with `mono_ms` for cluster A vs B (depth **trajectory** at open, not only steady 100 ms) — if identical through first 500 ms, ring depth path is weaker as discriminator.
+2. Keep using **HDMI instrument Δ** as ground truth; do not promote `av_drift_ms` or origin-record equality into “in sync”.
+3. Do **not** treat hold redesign as the 117 ms fix (measurement already killed that).
+
+### w-geom FPGA path source (117 ms clusters) — hardened
+
+Full note: `.agent-work/w-geom/fpga-av-path-117ms.md`.
+
+| Q | Answer |
+|---|--------|
+| Audio two-state @ 117 ms? | **NO (correct negative).** Quanta: sample **0.020833 ms** (`alsa.sv` 24576000/48000); I2S frame same; `a_en2` mute **170.667 ms after audio_out reset only**; `got_first` one-shot variable discard. No fill-threshold start. |
+| Audio mailbox? | **NOT-FOUND.** `0x300FF12C` (“PLXD4”) = **high word of PLXD** = `frames_done` (video), not audio. |
+| Video / 3 content frames? | Content arithmetic: 3×24 fps = **125.0 ms**. Former reject-by-distance-to-117.10 **retracted** with the sep. |
+| Video / 1 vsync? | Exact **T_disp = 638×524/20e6 = 16.715600 ms** (colorbars+20 MHz). One-frame late ≠ 117 ms. |
+| Video / 7×T_disp? | **7×T = 117.009200 ms** pure RTL arithmetic — **not** pinned to lab sep (constant deleted). **no RTL bistable for 0 vs 7**. |
+| Observe | `frames_done=(devmem 0x300FF12C)>>16`; Δ(audio_release→first frames_done++) / 16.715600 → N; A vs B. |
+
+**Audio in-tree RTL eliminated as 117 ms bistable. Video open until lag measured. Kernel MrAudio driver still out of repo.**
+
+## Observability boundary — definitive Q1–Q4 (w-avsync)
+
+Full CITED/NOT-FOUND table: `.agent-work/w-avsync/observability-boundary.md`.
+
+| Q | Answer (one line) |
+|---|-------------------|
+| 1 Path | `::write(/dev/MrAudio)` → 512 KiB kernel ring → SPI → `sys/alsa.sv` (DDR PCM + NCO) → `audio_out` → I2S. F2 `audio_fifo` **off** product path when MrAudio works (`media_player.cpp:2062-2063`). |
+| 1 Readable | **YES:** status `rptr,wptr,len,comp` (`mraudio_status.hpp`). **NO:** `got_first`, NCO phase, HDMI audio phase. Driver `.c` **NOT-FOUND** in repo. |
+| 2 Period | CITED sample period **20.833 µs** (`alsa.sv` CLK_RATE/48000). **NOT-FOUND** ~117 ms audio start quantum. `a_en2` mute ≈170.7 ms **after audio_out reset only**. |
+| 3 Unproven-identical readable | Absolute **rptr/wptr**, **comp**, PLXD **frames_done**, early **len** trajectory. Steady `len≈100 ms` already identical both clusters. |
+| 4 Instrument | `logMrAudioHandoffAt` at `audio_release` + `first_video_present`; `early_traj` chunks 0..15; existing open/first_write snaps. ARM md5 see commit. |
+
+**Falsifier:** A/B `rptr` Δ ≈ 22464 B (117 ms × 192000 B/s) at same handoff tag **supports** ring-phase track; **identical** snaps + HDMI sep 117 **kills** MrAudio-visible state → look past SPI / video `frames_done` lag / out-of-repo driver.
+
+Hold still dumps content t=0; origin not rebased mid-play; hold **not** 117 ms cause (parent).
+
+## SESSION-LATCHED device defect (parent 2026-07-31) — **RETRACTED**
+
+**RETRACTED 2026-08-01:** within-session stability was real; the 116.89 ms
+between-cluster sep was an OLD-argv instrument artifact, not a device two-state.
+Kept below as historical measurement only.
+
+Parent: one 360 s playback, three back-to-back HDMI captures (instrument confound test).
+
+| capture | window | median offset | n_pairs |
+|---------|--------|---------------|---------|
+| 1 | ~12–112 s | −293.33 | 99 |
+| 2 | ~148–248 s | −296.00 | 99 |
+| 3 | ~284–360 s | −292.67 | 74 |
+
+Within-session spread **3.33 ms** vs between-cluster sep **116.89 ms** (ratio 35×).  
+Pre-registered &lt;30 ms = SESSION-LATCHED. **VERDICT at the time: SESSION-LATCHED, DEVICE CONFIRMED — later RETRACTED (instrument artifact).**
+
+First flash/beep pair already fully separates clusters (A −286.00 vs B −171.08, sep 114.92 ms, n=15, zero overlap). State latched by ~1.4 s, stable for the session.
+
+Common-mode: first-10 s median is 20–40 ms less negative than last-60 s in **both** clusters (~25 ms startup transient). Short captures are biased vs long ones; cannot explain 117 ms.
+
+### Host analyzer for post-deploy handoff snaps
+
+```bash
+# After parent deploys instrumented misterplexd and runs paired casts:
+# --sep-ms is REQUIRED (no default; 117.10 default was retracted).
+python3 tools/analyze_mraudio_handoff.py \
+  --log-pair /path/runA_daemon.log /path/runB_daemon.log \
+  --sep-ms 100 --where audio_release --json-out handoff_ab.json
+# true rc: 0 analyzed, 2 P-RPTR/P-FDONE REJECTED, 77 no snaps / missing sep
+```
+
+Pre-registered:
+- **P-RPTR:** |Δrptr| or |Δwptr| ∈ 22483 B ±20% with |Δlen| ≤ 5 ms → ring phase tracks cluster.
+- **P-RPTR kill:** snaps identical (Δptr≤64 B, len match) while HDMI sep stays ~117 → MrAudio-visible state dead.
+- **P-FDONE:** |Δ(frames_done lag release→present)| ∈ {6,7,8} → video multi-frame lag candidate  
+  (7 × T_disp, T_disp = 638×524/20e6 = **16.715600 ms**, 7× = **117.009200 ms** — arithmetic only until measured).
+
+### Video swap path (source — not a cause claim)
+
+```verilog
+// ddr_frame_store.sv:271-284 — swap only on vsync when pending ready
+if (vsync_pulse && swap_pending && pending_ready_s2) begin
+    ...
+    frames_done <= frames_done + 16'd1;
+```
+
+No RTL bistable “0 vs 7 frames.” First picture can still lag gate-open by N display periods if prep/pending_ready is late. **Measure** frames_done on `handoff_at=` lines; do not assume N.
+
+Unit: `tests/unit/test_analyze_mraudio_handoff.sh` (self-test + pair/empty/identical).
+
+### w-geom locked quanta gate (source arithmetic)
+
+```bash
+make "$(pwd)/build/test_av_phase_rtl_quanta"
+./build/test_av_phase_rtl_quanta; echo "true rc=$?"
+# true rc=0 locks: T_disp_ns=16715600; 7*T_disp_ms_x100=11701 (RTL only);
+# kParentClusterSepMsX100 DELETED; a_en2 mute ≠ 125 ms content hyp;
+# PLXD4 hi=frames_done (video). No lab 117.10 pin.
+scripts/parent_plxd_present_lag_protocol.sh recipe
+# H0: N_A==N_B kills video lag; H1: |ΔN|==7 keeps multi-frame present open
+```
+
+Header: `host/libmisterplex/av_phase_rtl_quanta.hpp`.  
+Full RTL Q&A: `.agent-work/w-geom/fpga-av-path-117ms.md`.

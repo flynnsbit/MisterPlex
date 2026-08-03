@@ -1,0 +1,7 @@
+PREDICTIONS p480-S1/S2 (before measure; device blocked by user play):
+S1a: During a 480p cast of soak clip rk=12 (library 320x240), ffprobe of ffmpeg -i URL reports video stream width x height == 320x240 (PMS does not upscale).
+S1b: Alternate MISS: input already 624x480 (PMS delivered tier).
+S1c: Alternate: input larger than 624 (downscale on A9).
+S2 if S1a HIT: omitting scale+pad (or identity) saves most of ~50 %onecpu vf; pfps/drops/drift hold.
+S2 if S1b HIT: scale is near-no-op but still costs; omit when in==out saves similar; fast_bilinear less relevant.
+S2 if S1c: fast_bilinear expected to cut vf ≥2x vs default bicubic-class; quality TBD.

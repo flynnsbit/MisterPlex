@@ -1,0 +1,160 @@
+{
+  "src_levels": "measured|caller_supplied",
+  "bits_roundtrip_fail": [],
+  "raw_pcm": {
+    "label": "raw_pcm",
+    "n_expect": 10,
+    "n_onsets": 10,
+    "n_ok": 10,
+    "n_fail": 0,
+    "missing_n_head": [],
+    "extra_n_head": [],
+    "n_missing": 0,
+    "fail_reasons_head": [],
+    "ok_head": [
+      {
+        "n": 0,
+        "t": 0.0
+      },
+      {
+        "n": 48,
+        "t": 1.9972149058338076
+      },
+      {
+        "n": 96,
+        "t": 3.9972149058338076
+      },
+      {
+        "n": 144,
+        "t": 5.997214905833808
+      },
+      {
+        "n": 192,
+        "t": 7.997214905833808
+      }
+    ],
+    "src": "measured",
+    "pass": true
+  },
+  "aac": [
+    {
+      "label": "aac_128k",
+      "n_expect": 10,
+      "n_onsets": 10,
+      "n_ok": 10,
+      "n_fail": 0,
+      "missing_n_head": [],
+      "extra_n_head": [],
+      "n_missing": 0,
+      "fail_reasons_head": [],
+      "ok_head": [
+        {
+          "n": 0,
+          "t": 0.018592662056773242
+        },
+        {
+          "n": 48,
+          "t": 2.0185939965605417
+        },
+        {
+          "n": 96,
+          "t": 4.019959316438059
+        },
+        {
+          "n": 144,
+          "t": 6.01858243212607
+        },
+        {
+          "n": 192,
+          "t": 8.018582570236601
+        }
+      ],
+      "src": "measured",
+      "pass": true
+    },
+    {
+      "label": "aac_96k",
+      "n_expect": 10,
+      "n_onsets": 10,
+      "n_ok": 10,
+      "n_fail": 0,
+      "missing_n_head": [],
+      "extra_n_head": [],
+      "n_missing": 0,
+      "fail_reasons_head": [],
+      "ok_head": [
+        {
+          "n": 0,
+          "t": 0.018593006725437938
+        },
+        {
+          "n": 48,
+          "t": 2.018583474792237
+        },
+        {
+          "n": 96,
+          "t": 4.019959708632182
+        },
+        {
+          "n": 144,
+          "t": 6.018582673065878
+        },
+        {
+          "n": 192,
+          "t": 8.018582885443086
+        }
+      ],
+      "src": "measured",
+      "pass": true
+    }
+  ],
+  "ffprobe": {
+    "width": 624,
+    "height": 480,
+    "r_frame_rate": "24/1",
+    "nb_frames": "1440",
+    "profile": "Constrained Baseline",
+    "has_b_frames": 0,
+    "duration": "60.000000",
+    "audio_codec": "aac",
+    "sample_rate": "48000",
+    "src": "measured"
+  },
+  "mp4_audio": {
+    "label": "mp4_aac",
+    "n_expect": 30,
+    "n_onsets": 30,
+    "n_ok": 30,
+    "n_fail": 0,
+    "missing_n_head": [],
+    "extra_n_head": [],
+    "n_missing": 0,
+    "fail_reasons_head": [],
+    "ok_head": [
+      {
+        "n": 0,
+        "t": 0.0
+      },
+      {
+        "n": 48,
+        "t": 1.9972182302477703
+      },
+      {
+        "n": 96,
+        "t": 3.9972096217989446
+      },
+      {
+        "n": 144,
+        "t": 5.997217896651475
+      },
+      {
+        "n": 192,
+        "t": 7.99721823024777
+      }
+    ],
+    "src": "measured",
+    "pass": true
+  },
+  "fail": [],
+  "pass": true
+}

@@ -1,0 +1,465 @@
+{
+  "label": "idle_post",
+  "hz": 100,
+  "ncpu": 2,
+  "dwall_s": 10.6194,
+  "formula": "P=100*dticks/(HZ*dwall)",
+  "machine_busy_pct_onecpu": 108.192,
+  "machine_idle_pct_onecpu": 91.808,
+  "proc_stat_dtotal": 2124,
+  "proc_stat_didle": 975,
+  "top_procs": [
+    {
+      "pid": 30036,
+      "comm": "MiSTer",
+      "dticks": 1056,
+      "pct_onecpu": 99.441
+    },
+    {
+      "pid": 3684,
+      "comm": "python3",
+      "dticks": 58,
+      "pct_onecpu": 5.462
+    },
+    {
+      "pid": 3336,
+      "comm": "misterplexd",
+      "dticks": 20,
+      "pct_onecpu": 1.883
+    },
+    {
+      "pid": 27,
+      "comm": "kcompactd0",
+      "dticks": 3,
+      "pct_onecpu": 0.283
+    },
+    {
+      "pid": 11,
+      "comm": "rcu_sched",
+      "dticks": 2,
+      "pct_onecpu": 0.188
+    },
+    {
+      "pid": 10,
+      "comm": "ksoftirqd/0",
+      "dticks": 1,
+      "pct_onecpu": 0.094
+    },
+    {
+      "pid": 3613,
+      "comm": "kworker/0:3-mm_percpu_wq",
+      "dticks": 1,
+      "pct_onecpu": 0.094
+    },
+    {
+      "pid": 1,
+      "comm": "init",
+      "dticks": 0,
+      "pct_onecpu": 0.0
+    },
+    {
+      "pid": 2,
+      "comm": "kthreadd",
+      "dticks": 0,
+      "pct_onecpu": 0.0
+    },
+    {
+      "pid": 3,
+      "comm": "rcu_gp",
+      "dticks": 0,
+      "pct_onecpu": 0.0
+    },
+    {
+      "pid": 4,
+      "comm": "rcu_par_gp",
+      "dticks": 0,
+      "pct_onecpu": 0.0
+    },
+    {
+      "pid": 8,
+      "comm": "mm_percpu_wq",
+      "dticks": 0,
+      "pct_onecpu": 0.0
+    },
+    {
+      "pid": 9,
+      "comm": "rcu_tasks_rude_",
+      "dticks": 0,
+      "pct_onecpu": 0.0
+    },
+    {
+      "pid": 12,
+      "comm": "migration/0",
+      "dticks": 0,
+      "pct_onecpu": 0.0
+    },
+    {
+      "pid": 13,
+      "comm": "cpuhp/0",
+      "dticks": 0,
+      "pct_onecpu": 0.0
+    }
+  ],
+  "top_threads": [
+    {
+      "tid": 30036,
+      "pid": 30036,
+      "comm": "MiSTer",
+      "proc": "MiSTer",
+      "dticks": 1055,
+      "pct_onecpu": 99.347,
+      "nvcsw_d": 25,
+      "nivcsw_d": 275,
+      "flag": "ok"
+    },
+    {
+      "tid": 3684,
+      "pid": 3684,
+      "comm": "python3",
+      "proc": "python3",
+      "dticks": 59,
+      "pct_onecpu": 5.556,
+      "nvcsw_d": 1,
+      "nivcsw_d": 165,
+      "flag": "ok"
+    },
+    {
+      "tid": 3673,
+      "pid": 3336,
+      "comm": "misterplexd",
+      "proc": "misterplexd",
+      "dticks": 10,
+      "pct_onecpu": 0.942,
+      "nvcsw_d": 213,
+      "nivcsw_d": 53,
+      "flag": "ok"
+    },
+    {
+      "tid": 3336,
+      "pid": 3336,
+      "comm": "misterplexd",
+      "proc": "misterplexd",
+      "dticks": 6,
+      "pct_onecpu": 0.565,
+      "nvcsw_d": 53,
+      "nivcsw_d": 19,
+      "flag": "ok"
+    },
+    {
+      "tid": 27,
+      "pid": 27,
+      "comm": "kcompactd0",
+      "proc": "kcompactd0",
+      "dticks": 4,
+      "pct_onecpu": 0.377,
+      "nvcsw_d": 15,
+      "nivcsw_d": 5,
+      "flag": "ok"
+    },
+    {
+      "tid": 3341,
+      "pid": 3336,
+      "comm": "misterplexd",
+      "proc": "misterplexd",
+      "dticks": 3,
+      "pct_onecpu": 0.283,
+      "nvcsw_d": 1057,
+      "nivcsw_d": 0,
+      "flag": "ok"
+    },
+    {
+      "tid": 11,
+      "pid": 11,
+      "comm": "rcu_sched",
+      "proc": "rcu_sched",
+      "dticks": 2,
+      "pct_onecpu": 0.188,
+      "nvcsw_d": 421,
+      "nivcsw_d": 0,
+      "flag": "ok"
+    },
+    {
+      "tid": 10,
+      "pid": 10,
+      "comm": "ksoftirqd/0",
+      "proc": "ksoftirqd/0",
+      "dticks": 1,
+      "pct_onecpu": 0.094,
+      "nvcsw_d": 17,
+      "nivcsw_d": 0,
+      "flag": "ok"
+    },
+    {
+      "tid": 736,
+      "pid": 736,
+      "comm": "ntpd",
+      "proc": "ntpd",
+      "dticks": 1,
+      "pct_onecpu": 0.094,
+      "nvcsw_d": 10,
+      "nivcsw_d": 0,
+      "flag": "ok"
+    },
+    {
+      "tid": 3613,
+      "pid": 3613,
+      "comm": "kworker/0:3-events",
+      "proc": "kworker/0:3-events",
+      "dticks": 1,
+      "pct_onecpu": 0.094,
+      "nvcsw_d": 451,
+      "nivcsw_d": 0,
+      "flag": "ok"
+    },
+    {
+      "tid": 1,
+      "pid": 1,
+      "comm": "init",
+      "proc": "init",
+      "dticks": 0,
+      "pct_onecpu": 0.0,
+      "nvcsw_d": 11,
+      "nivcsw_d": 0,
+      "flag": "ok"
+    },
+    {
+      "tid": 2,
+      "pid": 2,
+      "comm": "kthreadd",
+      "proc": "kthreadd",
+      "dticks": 0,
+      "pct_onecpu": 0.0,
+      "nvcsw_d": 0,
+      "nivcsw_d": 0,
+      "flag": "ok"
+    },
+    {
+      "tid": 3,
+      "pid": 3,
+      "comm": "rcu_gp",
+      "proc": "rcu_gp",
+      "dticks": 0,
+      "pct_onecpu": 0.0,
+      "nvcsw_d": 0,
+      "nivcsw_d": 0,
+      "flag": "ok"
+    },
+    {
+      "tid": 4,
+      "pid": 4,
+      "comm": "rcu_par_gp",
+      "proc": "rcu_par_gp",
+      "dticks": 0,
+      "pct_onecpu": 0.0,
+      "nvcsw_d": 0,
+      "nivcsw_d": 0,
+      "flag": "ok"
+    },
+    {
+      "tid": 8,
+      "pid": 8,
+      "comm": "mm_percpu_wq",
+      "proc": "mm_percpu_wq",
+      "dticks": 0,
+      "pct_onecpu": 0.0,
+      "nvcsw_d": 0,
+      "nivcsw_d": 0,
+      "flag": "ok"
+    },
+    {
+      "tid": 9,
+      "pid": 9,
+      "comm": "rcu_tasks_rude_",
+      "proc": "rcu_tasks_rude_",
+      "dticks": 0,
+      "pct_onecpu": 0.0,
+      "nvcsw_d": 0,
+      "nivcsw_d": 0,
+      "flag": "ok"
+    },
+    {
+      "tid": 12,
+      "pid": 12,
+      "comm": "migration/0",
+      "proc": "migration/0",
+      "dticks": 0,
+      "pct_onecpu": 0.0,
+      "nvcsw_d": 0,
+      "nivcsw_d": 0,
+      "flag": "ok"
+    },
+    {
+      "tid": 13,
+      "pid": 13,
+      "comm": "cpuhp/0",
+      "proc": "cpuhp/0",
+      "dticks": 0,
+      "pct_onecpu": 0.0,
+      "nvcsw_d": 0,
+      "nivcsw_d": 0,
+      "flag": "ok"
+    },
+    {
+      "tid": 14,
+      "pid": 14,
+      "comm": "cpuhp/1",
+      "proc": "cpuhp/1",
+      "dticks": 0,
+      "pct_onecpu": 0.0,
+      "nvcsw_d": 0,
+      "nivcsw_d": 0,
+      "flag": "ok"
+    },
+    {
+      "tid": 15,
+      "pid": 15,
+      "comm": "migration/1",
+      "proc": "migration/1",
+      "dticks": 0,
+      "pct_onecpu": 0.0,
+      "nvcsw_d": 0,
+      "nivcsw_d": 0,
+      "flag": "ok"
+    },
+    {
+      "tid": 16,
+      "pid": 16,
+      "comm": "ksoftirqd/1",
+      "proc": "ksoftirqd/1",
+      "dticks": 0,
+      "pct_onecpu": 0.0,
+      "nvcsw_d": 0,
+      "nivcsw_d": 0,
+      "flag": "ok"
+    },
+    {
+      "tid": 19,
+      "pid": 19,
+      "comm": "kdevtmpfs",
+      "proc": "kdevtmpfs",
+      "dticks": 0,
+      "pct_onecpu": 0.0,
+      "nvcsw_d": 0,
+      "nivcsw_d": 0,
+      "flag": "ok"
+    },
+    {
+      "tid": 20,
+      "pid": 20,
+      "comm": "netns",
+      "proc": "netns",
+      "dticks": 0,
+      "pct_onecpu": 0.0,
+      "nvcsw_d": 0,
+      "nivcsw_d": 0,
+      "flag": "ok"
+    },
+    {
+      "tid": 21,
+      "pid": 21,
+      "comm": "inet_frag_wq",
+      "proc": "inet_frag_wq",
+      "dticks": 0,
+      "pct_onecpu": 0.0,
+      "nvcsw_d": 0,
+      "nivcsw_d": 0,
+      "flag": "ok"
+    },
+    {
+      "tid": 24,
+      "pid": 24,
+      "comm": "khungtaskd",
+      "proc": "khungtaskd",
+      "dticks": 0,
+      "pct_onecpu": 0.0,
+      "nvcsw_d": 0,
+      "nivcsw_d": 0,
+      "flag": "ok"
+    }
+  ],
+  "ffmpeg_thread_sum_pct": 0,
+  "ffmpeg_top_thread_pct": 0,
+  "ffmpeg_threads": [],
+  "misterplexd_thread_sum_pct": 1.79,
+  "misterplexd_top_thread_pct": 0.942,
+  "misterplexd_threads": [
+    {
+      "tid": 3673,
+      "pid": 3336,
+      "comm": "misterplexd",
+      "proc": "misterplexd",
+      "dticks": 10,
+      "pct_onecpu": 0.942,
+      "nvcsw_d": 213,
+      "nivcsw_d": 53,
+      "flag": "ok"
+    },
+    {
+      "tid": 3336,
+      "pid": 3336,
+      "comm": "misterplexd",
+      "proc": "misterplexd",
+      "dticks": 6,
+      "pct_onecpu": 0.565,
+      "nvcsw_d": 53,
+      "nivcsw_d": 19,
+      "flag": "ok"
+    },
+    {
+      "tid": 3341,
+      "pid": 3336,
+      "comm": "misterplexd",
+      "proc": "misterplexd",
+      "dticks": 3,
+      "pct_onecpu": 0.283,
+      "nvcsw_d": 1057,
+      "nivcsw_d": 0,
+      "flag": "ok"
+    },
+    {
+      "tid": 3342,
+      "pid": 3336,
+      "comm": "misterplexd",
+      "proc": "misterplexd",
+      "dticks": 0,
+      "pct_onecpu": 0.0,
+      "nvcsw_d": 0,
+      "nivcsw_d": 0,
+      "flag": "ok"
+    },
+    {
+      "tid": 3343,
+      "pid": 3336,
+      "comm": "misterplexd",
+      "proc": "misterplexd",
+      "dticks": 0,
+      "pct_onecpu": 0.0,
+      "nvcsw_d": 54,
+      "nivcsw_d": 0,
+      "flag": "ok"
+    },
+    {
+      "tid": 3344,
+      "pid": 3336,
+      "comm": "misterplexd",
+      "proc": "misterplexd",
+      "dticks": 0,
+      "pct_onecpu": 0.0,
+      "nvcsw_d": 53,
+      "nivcsw_d": 0,
+      "flag": "ok"
+    },
+    {
+      "tid": 3672,
+      "pid": 3336,
+      "comm": "misterplexd",
+      "proc": "misterplexd",
+      "dticks": 0,
+      "pct_onecpu": 0.0,
+      "nvcsw_d": 211,
+      "nivcsw_d": 0,
+      "flag": "ok"
+    }
+  ],
+  "sum_top15_procs_pct": 107.445
+}

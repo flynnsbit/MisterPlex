@@ -197,14 +197,9 @@ module ddr_bitstream_reader #(
 		end
 	endtask
 
-	always @(*) begin
-		bus_want = 1'b0;
-		case (state)
-			ST_IDLE: bus_want = want_poll || want_read || want_pub;
-			ST_POLL, ST_READ_WAIT: bus_want = 1'b1;
-			default: bus_want = 1'b0;
-		endcase
-	end
+	wire bus_want_comb =
+		(state == ST_IDLE) ? (want_poll || want_read || want_pub) :
+		((state == ST_POLL) || (state == ST_READ_WAIT));
 
 	always @(posedge clk) begin
 		out_valid <= 1'b0;
@@ -221,6 +216,7 @@ module ddr_bitstream_reader #(
 			DDRAM_BURSTCNT <= 8'd1;
 			DDRAM_ADDR <= 29'd0;
 			DDRAM_DIN <= 64'd0;
+			bus_want <= 1'b0;
 			active <= 1'b0;
 			paused <= 1'b0;
 			bytes_out <= 32'd0;
@@ -252,10 +248,12 @@ module ddr_bitstream_reader #(
 			payload_left <= 32'd0;
 		end else if (!enable) begin
 			state <= ST_IDLE;
+			bus_want <= 1'b0;
 			active <= 1'b0;
 			paused <= 1'b0;
 			reset_parser();
 		end else begin
+			bus_want <= !flush && bus_want_comb;
 			poll_div <= poll_div + 1'd1;
 
 			if (flush) begin

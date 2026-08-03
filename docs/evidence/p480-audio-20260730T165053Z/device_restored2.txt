@@ -1,0 +1,15 @@
+stopping_daemon=3148
+FINAL2:
+ 3330 root     /bin/sh /media/fat/misterplex/bin/misterplexd_supervise.sh
+ 3336 root     /media/fat/misterplex/bin/misterplexd --name MiSTerPlex --id misterplex-dev --port 3005 --conf /media/fat/misterplex/misterplex.conf
+n_d=1
+CORENAME=Plex
+<?xml version="1.0" encoding="UTF-8"?><MediaContainer><Player title="MiSTerPlex" product="MiSTerPlex" protocol="plex" protocolVersion="1" protocolCapabilities="timeline,playback,navigation,mirror,play
+fb9f76192a8f7d248411c2ab2b332542  /media/fat/misterplex/bin/misterplexd
+14eaeff3270a6f59a434e0f777ed823d  /media/fat/_Utility/Plex.rbf
+DECODE=320x240
+OSD_CONTROL=1
+PRESENT_PROFILE=0
+raw: 00 40 01 00 00 00 00 00 00 c0 00 00 00 00 00 00
+osd lo=0x4000 tv=NTSC fps_sel=0(24) pat=0(none) audio=Off force_bars=0 T10=0 T11=0 R0=0 AR_bits=0
+status has_frame=1 has_audio=0 has_stream=0 underrun=0 has_idr=0 sps_valid=0 pps_valid=0 nalu=0 last_nal=0x00 sps=0x0 bytes_in=0

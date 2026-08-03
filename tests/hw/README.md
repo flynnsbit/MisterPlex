@@ -37,6 +37,7 @@ opening the hardware grabber.
 | `test_single_process.sh` | one FFmpeg demux for A/V |
 | `test_seek_kill.sh` | seek + kill/restart recovery |
 | `test_soak.sh` | multi-title play/stop soak (Phase 5: auto conf + PMS discover) |
+| `test_p480_ab_harness.sh` | 240p vs lab 480p coded A/B: mandatory one-window CPU, frames, av_drift; `--self-test` host-only |
 
 ```bash
 ./scripts/deploy_misterplexd.sh
@@ -65,7 +66,14 @@ Continuous ARM→FPGA stream (misterplexd) is Phase 3.1.
    - Or: `./tests/hw/test_ddr_frame.sh` (scp + push + status)
 4. Expect wall time **≪ 100 ms** (SPI is ~200 ms) and `has_frame=1`.
 5. misterplexd uses DDR YUV420p for F1 and does not fall back to RGB/SPI.
-   Banks: `0x30000000` / `0x30040000`; kick = status[12], bank = status[13].
+   Banks are geometry-derived: `bank_stride = alignUp(frame_bytes, 0x40000)`,
+   bank0 = `base`, bank1 = `base + bank_stride`, and doorbell =
+   `base + bank_stride*2 - 0x1000`. With base `0x30000000`, 320×240 I420
+   (`frame_bytes=115200`) uses stride `0x40000`, bank1 `0x30040000`, doorbell
+   `0x3007F000`; 624×480 I420 (`frame_bytes=449280`) uses stride `0x80000`,
+   bank1 `0x30080000`, doorbell `0x300FF000`. These addresses move with
+   geometry. Legacy SPI kick uses status[12] and status[13] = bank; the mmap
+   doorbell high word also carries `[31]=bank`.
 
 ## Phase 3.2 audio FIFO
 
@@ -115,7 +123,8 @@ Continuous ARM→FPGA stream (misterplexd) is Phase 3.1.
 ## Phase 3.3d PPS + I-slice header
 
 1. Deploy RBF with `pps_parser` + `slice_hdr_parser`.
-2. `./tests/hw/test_f3_slice_hdr.sh` — `pps_valid=1 slice_type=7` (I/IDR) + `sps=320x240`.
+2. Set `EXPECTED_RBF_MD5`/`HW_EXPECTED_RBF_MD5` to the resident Plex RBF md5, then run
+   `./tests/hw/test_f3_slice_hdr.sh` — `pps_valid=1 slice_type=7` (I/IDR) + `sps=320x240`.
 3. Unit: `test_slice_hdr`. Display: MB grid diagnostic on VCL.
 
 ## Phase 3.3e first MB type + slice QP
@@ -131,7 +140,9 @@ Continuous ARM→FPGA stream (misterplexd) is Phase 3.1.
 2. `./tests/hw/test_f3_residual.sh` — F3-only golden (same Baseline IDR as 3.3e):
    `res_ok=1 res_tc=8 res_t1=3 res_dc=-24` (I_NxN first MB full CAVLC),
    **`mb0=0 qp=25`** `has_frame=1` (stub MB0 gray from residual DC; no F1 so host_owns_fs clear).
-   Soft: `res_csum=20` (XOR sat8 full-16 = **0x14**) — soft-skip EXIT=0 is **not** hard PASS.
+   Hard: `res_csum=20` (XOR sat8 full-16 = **0x14**). A **missing**
+   `res_csum` field is **SKIP-NOT-PASS rc=77**; a **present-but-wrong**
+   value is **FAIL rc=1** (not a soft skip).
 3. Unit: `test_cavlc_dc` (host CAVLC + bit-exact recon maeY=U=V=0); `test_idct_quant` locks csum **0x14**.
 4. STREAM hybrid: host recon F1 owns product present; F3 residual status must not wipe F1.
 
@@ -162,7 +173,8 @@ python3 tests/parse_res_csum_status.py e8 14 3b 53   # raw[12..15]
 Sources: `arm/misterplexd/fpga_spi.cpp` `parseCoreStatus`; `host/libmisterplex/h264_residual_gold.hpp` (`kCsum8==0x14`); `tools/push_frame.cpp` `res_csum=%u`.
 
 ARM on lab: `push_frame --status` prints `res_csum=`; `push_frame --raw` dumps hex.
-Hard gate after F3 push: `res_dc=-24` **and** `res_csum=20` (soft-skip EXIT=0 is **not** hard PASS).
+Hard gate after F3 push: `res_dc=-24` **and** `res_csum=20`. Absent `res_csum`
+→ SKIP-NOT-PASS rc=77 (pre-3.3l-1). Present-but-wrong `res_csum` → FAIL rc=1.
 
 ### Post–R-csum1 sole-deploy + hard-gate (ONE agent)
 
@@ -176,9 +188,11 @@ Historical ONE-agent checklist (already run; re-use after *next* residual-fix BU
 2. **Promote** same bitfile → `fpga/Plex_MiSTer/releases/Plex.rbf` + `releases/Plex.rbf` (all three md5s match).
 3. **Sole menu deploy once:** `DEPLOY_LOAD=menu ./scripts/deploy_plex_core.sh` — never scp+load_core thrash.
 4. Lab confirm: remote md5 match + `CORENAME=Plex`.
-5. **FBAR:** `./tests/hw/test_fbar_fast.sh` EXIT=0 (m1/m2 ≥15).
+5. **Visual/capture card:** use the current provenance-gated visual card. The
+   obsolete v2 `test_fbar_fast.sh` returns SKIP-NOT-PASS unless explicitly
+   enabled for pre-v3 archaeology.
 6. **Hard residual:** `res_dc=-24` (`raw[12]=0xe8`) **and** `res_csum=20` (`raw[13]=0x14`) stable ≥2 re-pushes.
-   Soft-skip EXIT=0 from `test_f3_residual.sh` is **not** hard PASS.
+   A soft skip from `test_f3_residual.sh` is **SKIP-NOT-PASS rc=77**, not hard PASS.
    Decode: `python3 tests/parse_res_csum_status.py` (A-csum-host2); lab print: `push_frame --status`/`--raw` (A-arm-csum).
 7. **Park bars:** `set_status --pattern bars --force-bars 1 --tv ntsc --fps 60`.
 8. **Report:** `/tmp/misterplex-agent-H-rcsum-gate.txt` (or successor).

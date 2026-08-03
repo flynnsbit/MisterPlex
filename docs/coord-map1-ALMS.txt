@@ -1,0 +1,44 @@
+COORD_MAP1 product tree freeze sha=7a9cb598
+quartus_map true rc=0
+log=.agent-work/integ-wiring/quartus_map_coord1.log
+build=/home/flynnsbit/mplex-builds/coord-map1/
+
+; Total block memory bits         ; 2,997,709                                   ;
+; Estimate of Logic utilization (ALMs needed) ; 21645                                                                    ;
+; Total block memory bits                     ; 2997709                                                                  ;
+; Total number of DSP blocks        ; 74          ;
+entity_table_start 14
+
+PER-MODULE (map entity ALMs — inclusive where shown as N (M)):
+            ALMs  module
+               ?  rtl/h264_hybrid_mb_own.sv
+               ?  rtl/h264_mc_chroma_epel.sv
+       4707 (26)  present_core:present
+     4533 (4167)  ddr_frame_store:fstore
+       15310 (9)  stream_path:spath
+    10484 (2044)  decode_stub:stub
+       583 (523)  h264_dequant4x4:u_h264_dequant4x4
+       1736 (44)  h264_dpb_ref_commit:u_product_ref_commit
+     1094 (1094)  h264_deblock_mb:u_deblock
+     1905 (1905)  h264_idct4x4:u_h264_idct4x4
+         911 (3)  h264_mc_block:u_stream_mc
+       582 (582)  h264_mc_luma_qpel:u_luma
+       820 (154)  h264_mv_pred_part:u_product_mv_pred
+       646 (646)  h264_recon4x4:u_h264_recon4x4
+
+NOT IN THIS TREE (area UNKNOWN until integrated):
+  h264_p_mb_traverse (sv-traverse/mvd)
+  h264_i_res_recon_sink (sv-traverse)
+  h264_i16_dc_hadamard (sv-traverse)
+  h264_recon_export (consol/arm lane)
+  h264_recon_frame_store (sv-traverse)
+
+PRE_REGISTER whole-design: expect 20-25k map ALMs
+NOTE: map "Estimate of ALMs" is not identical to post-fit ALMs (wire6 fit=21021).
+
+--- extra keys ---
+yes rtl/h264_mc_chroma_epel.sv
+yes rtl/h264_mc_chroma_epel.sv
+580 (261) |h264_dpb_one_ref:u_dpb|
+yes rtl/h264_hybrid_mb_own.sv
+326 (326) |h264_mc_chroma_epel:u_chroma|

@@ -91,7 +91,8 @@ module frame_store #(
 			    ((li >= MAX_LINES) && (li < (MAX_LINES + LINE_COUNT)))) begin : used
 				line_buf_ram #(
 					.WIDTH(FRAME_W),
-					.AW(LINE_AW)
+					.AW(LINE_AW),
+					.DUAL_RD(1'b0)
 				) ram (
 					.wr_clk(clk_sdram),
 					.wr_en(line_wr[li]),
@@ -99,7 +100,9 @@ module frame_store #(
 					.wr_data(line_wr_data),
 					.rd_clk(clk),
 					.rd_addr(line_rd_addr),
-					.rd_data(line_q[li])
+					.rd_data(line_q[li]),
+					.rd_addr_b({LINE_AW{1'b0}}),
+					.rd_data_b()
 				);
 			end else begin : unused
 				assign line_q[li] = 16'd0;
@@ -307,9 +310,10 @@ module frame_store #(
 	reg [Y_W-1:0]    desired_y_r [0:MAX_LINES-1];
 
 	function automatic [Y_W-1:0] clamp_ahead(input [Y_W-1:0] base, input integer ahead);
+		// integer sum is 32-bit; zero-extend base explicitly (Y_W is $clog2(FRAME_H)).
 		integer sum;
 		begin
-			sum = base;
+			sum = integer'(base);
 			sum = sum + ahead;
 			clamp_ahead = (sum >= FRAME_H) ? LAST_Y : sum[Y_W-1:0];
 		end

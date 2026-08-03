@@ -1,0 +1,14 @@
+}
+
+bool PmsTimelineReporter::send(const Pending& pending) {
+    bool ok = false;
+    try {
+        ok = sink_(pending.request);
+    } catch (...) {
+        ok = false;
+    }
+    if (log_) {
+        // redactSensitive at the sink boundary; request.url stays real for HTTP.
+        log_(redactSensitive(std::string("pms timeline: update ") + (ok ? "ok" : "failed") +
+                             " state=" + pending.state + " url=" + pending.request.url));
+    }

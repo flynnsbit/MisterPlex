@@ -1,0 +1,92 @@
+PID   USER     COMMAND
+    1 root     init
+    2 root     [kthreadd]
+    3 root     [rcu_gp]
+    4 root     [rcu_par_gp]
+    8 root     [mm_percpu_wq]
+    9 root     [rcu_tasks_rude_]
+   10 root     [ksoftirqd/0]
+   11 root     [rcu_sched]
+   12 root     [migration/0]
+   13 root     [cpuhp/0]
+   14 root     [cpuhp/1]
+   15 root     [migration/1]
+   16 root     [ksoftirqd/1]
+   19 root     [kdevtmpfs]
+   20 root     [netns]
+   21 root     [inet_frag_wq]
+   24 root     [khungtaskd]
+   25 root     [oom_reaper]
+   26 root     [writeback]
+   27 root     [kcompactd0]
+   56 root     [kblockd]
+   57 root     [watchdogd]
+   59 root     [rpciod]
+   61 root     [kworker/u5:0-hc]
+   62 root     [xprtiod]
+   84 root     [kswapd0]
+   86 root     [nfsiod]
+   87 root     [cifsiod]
+   88 root     [smb3decryptd]
+   89 root     [cifsfileinfoput]
+   90 root     [cifsoplockd]
+   91 root     [deferredclose]
+  155 root     [spi0]
+  159 root     [spi1]
+  203 root     [stmmac_wq]
+  239 root     [uas]
+  267 root     [usbip_event]
+  435 root     [krfcommd]
+  506 root     [mmc_complete]
+  520 root     [jbd2/loop8-8]
+  521 root     [ext4-rsv-conver]
+  538 root     {resync} /bin/sh /etc/resync
+  550 root     /sbin/syslogd -n
+  555 root     /sbin/klogd -n
+  559 root     /sbin/udevd -d
+  582 root     [scsi_eh_0]
+  583 root     [scsi_tmf_0]
+  584 root     [usb-storage]
+  602 dbus     dbus-daemon --system
+  640 root     [kworker/u5:1-hc]
+  680 root     [cfg80211]
+  705 dhcpcd   dhcpcd: [master] [ip4]
+  706 root     dhcpcd: [privileged actioneer]
+  707 dhcpcd   dhcpcd: [network proxy]
+  708 dhcpcd   dhcpcd: [control proxy]
+  721 root     [jbd2/loop0-8]
+  722 root     [ext4-rsv-conver]
+  727 root     /usr/libexec/bluetooth/bluetoothd -n -E -C
+  736 root     /usr/sbin/ntpd -g -p /var/run/ntpd.pid
+  748 root     proftpd: (accepting connections)
+  758 root     sshd: /usr/sbin/sshd [listener] 0 of 10-100 startups
+  777 root     [RTW_CMD_THREAD]
+  778 root     smbd -D
+  784 root     {smbd-notifyd} smbd -D
+  785 root     {cleanupd} smbd -D
+  794 root     {lpqd} smbd -D
+  806 root     nmbd -D
+  819 root     [kworker/0:0-eve]
+  832 root     /sbin/gpm -m /dev/input/mice -t imps2
+  833 root     /sbin/agetty --nohostname -L console xterm
+  834 root     wpa_supplicant -s -B -P /run/wpa_supplicant.wlan0.pid -i wlan0 -D nl80211,wext -c /media/fat/linux/wpa_supplicant.conf
+  836 root     /sbin/agetty --nohostname -L tty1 linux
+  948 root     [kworker/0:1H-kb]
+ 1015 root     [kworker/u4:1-wr]
+ 1134 root     [kworker/0:2-mm_]
+ 1527 dhcpcd   dhcpcd: [BPF ARP] wlan0 192.168.1.183
+ 1648 root     [kworker/1:1H]
+ 1800 root     [kworker/u4:2-ev]
+ 1825 root     [kworker/1:0-eve]
+ 1893 root     [kworker/0:1-mm_]
+ 1994 root     [kworker/0:3]
+ 2031 root     [kworker/1:2-eve]
+ 2083 root     sleep 5
+ 2084 root     sshd: root@notty
+ 2088 root     ps w
+25988 root     [kworker/1:0H-kb]
+26395 root     [kworker/1:1-eve]
+27140 root     {misterplexd_sup} /bin/sh /media/fat/misterplex/bin/misterplexd_supervise.sh
+28414 root     [kworker/0:2H-kb]
+30026 root     /media/fat/misterplex/bin/misterplexd --name MiSTerPlex --id misterplex-dev --port 3005 --conf /media/fat/misterplex/misterplex.conf
+30036 root     /media/fat/MiSTer /media/fat/_Utility/Plex.rbf

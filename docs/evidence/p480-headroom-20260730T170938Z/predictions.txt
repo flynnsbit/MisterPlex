@@ -1,0 +1,6 @@
+PREDICTIONS p480-headroom (before measure):
+P1: DE10-Nano reports 2 online CPUs (nproc/cpuinfo).
+P2: At 480p steady state, ffmpeg work is multi-threaded (scale/filter pool) — top thread < 100% one-cpu; sum of ffmpeg threads ≈ process ffmpeg%.
+P3: System idle remainder = 200 - (all userspace significant processes) during play; misterplexd+ffmpeg dominate.
+P4: Thermal: if /sys thermal zones exist, 3min 480p delta_T is small (<15C) OR sensors absent → report unknown.
+INSTRUMENT: on-device /proc sampling P=100*dticks/(HZ*dwall) per-thread; same window for all procs.

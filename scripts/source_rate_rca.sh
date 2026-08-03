@@ -9,9 +9,14 @@
 #   MISTER_HOST, MISTER_PASS, SOURCE_RATE_PMS_KEY=/library/metadata/N
 #
 # Optional:
-#   SOURCE_RATE_FPS=24000/1001  SOURCE_RATE_DECODE=320x240
+#   SOURCE_RATE_FPS=24/1  SOURCE_RATE_DECODE=320x240
 #   SOURCE_RATE_SECONDS=20      SOURCE_RATE_OFFSET_MS=0
 #   SOURCE_RATE_CONF=/media/fat/misterplex/misterplex.conf
+#
+# ERROR 17: default FPS must be an explicit library 24.000 token (24/1), never a
+# silent 23.976 / 24000/1001 assumption printed next to measurements.
+# Override SOURCE_RATE_FPS only when the asset is actually NTSC film rate
+# (caller-supplied, not DEFAULT_ASSUMED).
 #
 # Output:
 #   build/source-rate-rca/<timestamp>/report.txt
@@ -26,7 +31,14 @@ USER="${MISTER_USER:-root}"
 HOST="$MISTER_HOST"
 PASS="$MISTER_PASS"
 DECODE="${SOURCE_RATE_DECODE:-320x240}"
-FPS="${SOURCE_RATE_FPS:-24000/1001}"
+# DEFAULT_ASSUMED library 24p = 24/1. Not 24000/1001 (ERROR 17 class).
+if [[ -n "${SOURCE_RATE_FPS+x}" && -n "${SOURCE_RATE_FPS}" ]]; then
+  FPS="$SOURCE_RATE_FPS"
+  FPS_SRC="caller_supplied"
+else
+  FPS="24/1"
+  FPS_SRC="DEFAULT_ASSUMED"
+fi
 DURATION="${SOURCE_RATE_SECONDS:-20}"
 OFFSET_MS="${SOURCE_RATE_OFFSET_MS:-0}"
 CONF="${SOURCE_RATE_CONF:-/media/fat/misterplex/misterplex.conf}"
@@ -38,6 +50,9 @@ OUT="$ROOT/build/source-rate-rca/$STAMP"
 REPORT="$OUT/report.txt"
 
 mkdir -p "$OUT"
+{
+  echo "fps_token=$FPS fps_src=$FPS_SRC"
+} | tee -a "$REPORT" >/dev/null
 
 SSH=(sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=8 "$USER@$HOST")
 

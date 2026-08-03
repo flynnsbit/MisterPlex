@@ -1,0 +1,4 @@
+30026 root     /media/fat/misterplex/bin/misterplexd --name MiSTerPlex --id misterplex-dev --port 3005 --conf /media/fat/misterplex/misterplex.conf
+n_d=1
+DAEMON_UP
+CORENAME=Plex

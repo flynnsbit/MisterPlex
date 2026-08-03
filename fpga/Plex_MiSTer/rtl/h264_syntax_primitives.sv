@@ -127,7 +127,19 @@ module h264_baseline_syntax_parser #(
 	output reg [5:0]         coded_block_pattern,
 	output reg signed [7:0]  mb_qp_delta,
 	output reg signed [7:0]  mb_qp,
-	output reg [15:0]        residual_bit_offset
+	output reg [15:0]        residual_bit_offset,
+
+	// P-slice mvd_l0 pairs (se(v) per H.264 7.3.5.1), raster partition order.
+	// Pair 0 is the primary P_L0_16x16 / first partition MVD used by MVP.
+	output reg [4:0]         mvd_pair_count,
+	output reg signed [15:0] mvd_l0_x0,
+	output reg signed [15:0] mvd_l0_y0,
+	output reg signed [15:0] mvd_l0_x1,
+	output reg signed [15:0] mvd_l0_y1,
+	output reg signed [15:0] mvd_l0_x2,
+	output reg signed [15:0] mvd_l0_y2,
+	output reg signed [15:0] mvd_l0_x3,
+	output reg signed [15:0] mvd_l0_y3
 );
 	localparam int MAX_BITS = MAX_RBSP_BYTES * 8;
 	localparam [1:0] MODE_PPS = 2'd0, MODE_SLICE = 2'd1, MODE_MB = 2'd2;
@@ -156,6 +168,8 @@ module h264_baseline_syntax_parser #(
 	reg [7:0] i_mb_type;
 	reg [4:0] i4_idx;
 	reg [7:0] mvd_pairs_left;
+	reg [4:0] mvd_pair_wr;
+	reg signed [15:0] mvd_x_tmp;
 	reg [2:0] sub_idx;
 	reg [5:0] cbp_mapped;
 
@@ -183,6 +197,35 @@ module h264_baseline_syntax_parser #(
 			se8_from_ue = tmp[7:0];
 		end
 	endfunction
+
+	// se(v) → signed 16-bit (mvd_l0 range for Baseline single-ref P)
+	function automatic signed [15:0] se16_from_ue;
+		input [31:0] code;
+		reg signed [31:0] tmp;
+		begin
+			if (code[0])
+				tmp = $signed({1'b0, code[31:1]}) + 32'sd1;
+			else
+				tmp = -$signed({1'b0, code[31:1]});
+			se16_from_ue = tmp[15:0];
+		end
+	endfunction
+
+	task automatic store_mvd_pair;
+		input signed [15:0] mx;
+		input signed [15:0] my;
+		begin
+			case (mvd_pair_wr[1:0])
+			2'd0: begin mvd_l0_x0 <= mx; mvd_l0_y0 <= my; end
+			2'd1: begin mvd_l0_x1 <= mx; mvd_l0_y1 <= my; end
+			2'd2: begin mvd_l0_x2 <= mx; mvd_l0_y2 <= my; end
+			default: begin mvd_l0_x3 <= mx; mvd_l0_y3 <= my; end
+			endcase
+			if (mvd_pair_wr < 5'd16)
+				mvd_pair_count <= mvd_pair_wr + 5'd1;
+			mvd_pair_wr <= mvd_pair_wr + 5'd1;
+		end
+	endtask
 
 	function automatic [5:0] cbp_intra_map;
 		input [5:0] code;
@@ -392,9 +435,20 @@ module h264_baseline_syntax_parser #(
 			mb_qp_delta <= 8'sd0;
 			mb_qp <= qp_in;
 			residual_bit_offset <= 16'd0;
+			mvd_pair_count <= 5'd0;
+			mvd_l0_x0 <= 16'sd0;
+			mvd_l0_y0 <= 16'sd0;
+			mvd_l0_x1 <= 16'sd0;
+			mvd_l0_y1 <= 16'sd0;
+			mvd_l0_x2 <= 16'sd0;
+			mvd_l0_y2 <= 16'sd0;
+			mvd_l0_x3 <= 16'sd0;
+			mvd_l0_y3 <= 16'sd0;
 			i_mb_type <= 8'd0;
 			i4_idx <= 5'd0;
 			mvd_pairs_left <= 8'd0;
+			mvd_pair_wr <= 5'd0;
+			mvd_x_tmp <= 16'sd0;
 			sub_idx <= 3'd0;
 			cbp_mapped <= 6'd0;
 		end
@@ -574,6 +628,19 @@ module h264_baseline_syntax_parser #(
 				end
 
 				ST_MB_START: begin
+					// Fresh mvd_l0 accumulators for this MB (H.264 7.3.5.1).
+					mvd_pair_count <= 5'd0;
+					mvd_pair_wr <= 5'd0;
+					mvd_pairs_left <= 8'd0;
+					mvd_x_tmp <= 16'sd0;
+					mvd_l0_x0 <= 16'sd0;
+					mvd_l0_y0 <= 16'sd0;
+					mvd_l0_x1 <= 16'sd0;
+					mvd_l0_y1 <= 16'sd0;
+					mvd_l0_x2 <= 16'sd0;
+					mvd_l0_y2 <= 16'sd0;
+					mvd_l0_x3 <= 16'sd0;
+					mvd_l0_y3 <= 16'sd0;
 					if (is_p_slice(active_slice_type))
 						start_ue(ST_MB_P_SKIP);
 					else if (is_i_slice(active_slice_type))
@@ -689,6 +756,8 @@ module h264_baseline_syntax_parser #(
 						end
 					end
 				end
+				// mvd_l0[ ][0]/mvd_l0[ ][1] are se(v). CodeNum is read as ue,
+				// then mapped with se16_from_ue (H.264 9.1 / 7.3.5.1).
 				ST_MB_MVD_X: begin
 					if (mvd_pairs_left == 8'd0)
 						start_ue(ST_MB_CBP_INTER);
@@ -696,9 +765,13 @@ module h264_baseline_syntax_parser #(
 						start_ue(ST_MB_MVD_Y);
 				end
 				ST_MB_MVD_Y: begin
+					// ue_value holds codeNum for mvd_l0_x
+					mvd_x_tmp <= se16_from_ue(ue_value);
 					start_ue(ST_MB_MVD_PAIR_DONE);
 				end
 				ST_MB_MVD_PAIR_DONE: begin
+					// ue_value holds codeNum for mvd_l0_y
+					store_mvd_pair(mvd_x_tmp, se16_from_ue(ue_value));
 					mvd_pairs_left <= mvd_pairs_left - 8'd1;
 					st <= ST_MB_MVD_X;
 				end

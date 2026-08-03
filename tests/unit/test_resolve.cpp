@@ -1,6 +1,9 @@
 // Unit tests for slim plex_resolve (no network required for pure helpers).
+#include "libmisterplex/osd_menu.hpp"
+#include "libmisterplex/pms_delivery_geom.hpp"
 #include "plex_resolve.hpp"
 
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -15,6 +18,21 @@ static int fails = 0;
             ++fails;                                                                             \
         }                                                                                        \
     } while (0)
+
+static void checkProfileMatchesContentResolution(const char* path,
+                                                 const misterplex::WeakLadder& weak,
+                                                 const misterplex::ContentResolution& content) {
+    const bool same = weak.videoResolution == content.label &&
+                      weak.maxVideoBitrateKbps == content.weakBitrateKbps;
+    if (!same) {
+        std::fprintf(stderr,
+                     "FAIL transcode profile path divergence: %s weak=%s bitrate=%d "
+                     "content=%dx%d/%s bitrate=%d\n",
+                     path, weak.videoResolution.c_str(), weak.maxVideoBitrateKbps,
+                     content.width.get(), content.height.get(), content.label, content.weakBitrateKbps);
+        ++fails;
+    }
+}
 
 int main() {
     using namespace misterplex;
@@ -49,11 +67,12 @@ int main() {
     // --- PMS universal transcode profile table / 480p guard ---
     const auto& profiles = plexTranscodeProfiles();
     CHECK(profiles.size() == 2);
+    const auto osd240 = contentResolutionFromOsdWord(0);
+    const auto osd480 = contentResolutionFromOsdWord(1u << 4);
     WeakLadder w240;
     CHECK(applyPlexTranscodeProfile("240p", w240));
     CHECK(w240.profileName == "240p");
-    CHECK(w240.videoResolution == "320x240");
-    CHECK(w240.maxVideoBitrateKbps == 1000);
+    checkProfileMatchesContentResolution("built-in profile 240p", w240, osd240);
     CHECK(w240.h264Profile == "baseline");
     CHECK(w240.h264Level == 30);
     CHECK(validateWeakLadder(w240));
@@ -61,8 +80,7 @@ int main() {
     WeakLadder w480;
     CHECK(applyPlexTranscodeProfile("480p", w480));
     CHECK(w480.profileName == "480p");
-    CHECK(w480.videoResolution == "640x480");
-    CHECK(w480.maxVideoBitrateKbps == 2500);
+    checkProfileMatchesContentResolution("built-in profile 480p", w480, osd480);
     CHECK(w480.videoQuality == 60);
     CHECK(w480.videoCodec == "h264");
     CHECK(w480.audioCodec == "aac");
@@ -72,21 +90,88 @@ int main() {
     CHECK(validateWeakLadder(w480));
     // Resolution alias selects the 480p profile too.
     WeakLadder byRes;
-    CHECK(applyPlexTranscodeProfile("640x480", byRes));
+    CHECK(applyPlexTranscodeProfile(osd480.label, byRes));
     CHECK(byRes.profileName == "480p");
+    checkProfileMatchesContentResolution("resolution alias 480p", byRes, osd480);
+
+    // Content-tier full re-apply (doPlay weakForContentResolution contract): an
+    // explicit 480p conf ladder must not leave quality/name sticky when OSD/DECODE
+    // is 240p — only videoResolution was overwritten before this fix.
+    {
+        WeakLadder sticky480;
+        CHECK(applyPlexTranscodeProfile("480p", sticky480));
+        CHECK(sticky480.videoQuality == 60);
+        WeakLadder play240 = sticky480;
+        CHECK(applyPlexTranscodeProfile(osd240.label, play240));
+        CHECK(play240.profileName == "240p");
+        CHECK(play240.videoQuality == 40);
+        checkProfileMatchesContentResolution("content-tier reapply 240p", play240, osd240);
+        WeakLadder play480 = play240;
+        CHECK(applyPlexTranscodeProfile(osd480.label, play480));
+        CHECK(play480.profileName == "480p");
+        CHECK(play480.videoQuality == 60);
+        checkProfileMatchesContentResolution("content-tier reapply 480p", play480, osd480);
+    }
 
     const auto start480 =
         buildUniversalTranscodeUrl("http://pms.example:32400", "/library/metadata/3", "tok",
                                    "sess480", 1500, w480);
     CHECK(start480.find("/video/:/transcode/universal/start.mp4") != std::string::npos);
-    CHECK(start480.find("videoResolution=640x480") != std::string::npos);
-    CHECK(start480.find("maxVideoBitrate=2500") != std::string::npos);
+    CHECK(start480.find(std::string("videoResolution=") + osd480.label) != std::string::npos);
+    CHECK(start480.find("maxVideoBitrate=" + std::to_string(osd480.weakBitrateKbps)) !=
+          std::string::npos);
     CHECK(start480.find("videoQuality=60") != std::string::npos);
     CHECK(start480.find("videoCodec=h264") != std::string::npos);
     CHECK(start480.find("audioCodec=aac") != std::string::npos);
     CHECK(start480.find("videoProfile=baseline") != std::string::npos);
     CHECK(start480.find("videoLevel=30") != std::string::npos);
     CHECK(start480.find("offset=2") != std::string::npos);
+    // Universal path forces directPlay=0 — geometry comes from transcoder ceiling.
+    CHECK(start480.find("directPlay=0") != std::string::npos);
+    CHECK(start480.find("directStream=0") != std::string::npos);
+    // No exact width=/height= pin in the start URL (ceiling is videoResolution only).
+    CHECK(start480.find("&width=") == std::string::npos);
+    CHECK(start480.find("&height=") == std::string::npos);
+
+    // --- RK6 proven: SAR 160:117 on 624x480 ⇒ DAR 16:9 ⇒ fit 624x350 ---
+    // PRE-REGISTER (lab decision matrix): 624x480→624x350, 640x480→640x360,
+    // 853x480→852x480 (true 480 rows, wider than DDR bank 624).
+    {
+        const double dar =
+            displayAspectFromCodedAndSar(624, 480, 160, 117);
+        CHECK(std::fabs(dar - (16.0 / 9.0)) < 1e-9);
+        const double dar2 = resolveContentDar(624, 480, "160:117", "1.78");
+        CHECK(std::fabs(dar2 - (16.0 / 9.0)) < 1e-9);
+        const auto fit = pmsSquarePixelFitInCeiling(16.0 / 9.0, 624, 480);
+        CHECK(fit.ok);
+        CHECK(fit.w == 624);
+        CHECK(fit.h == 350); // 351 even-floored — matches PMS decision
+        const auto fit640 = pmsSquarePixelFitInCeiling(16.0 / 9.0, 640, 480);
+        CHECK(fit640.ok && fit640.w == 640 && fit640.h == 360);
+        const int w_at_480 = squarePixelWidthForHeight(16.0 / 9.0, 480);
+        CHECK(w_at_480 >= 852 && w_at_480 <= 854); // ~853.33
+        CHECK(w_at_480 > 624); // cannot fit square-pixel 16:9@480h in DDR bank
+        CHECK(std::fabs(verticalDetailFraction(350, 480) - (350.0 / 480.0)) < 1e-12);
+        CHECK(!desyncModelApplicable(false)); // identity_skip=0 kills 1.371 model
+        CHECK(desyncModelApplicable(true));
+        // Asset-class split (lab library): AdvReal 624x480 ar=1.33 → fit stays ~480;
+        // rk6 ar=1.78+SAR → 350; genuine 4:3 square SAR must not be letterboxed.
+        const auto fit43 = pmsSquarePixelFitInCeiling(4.0 / 3.0, 624, 480);
+        CHECK(fit43.ok);
+        CHECK(fit43.h >= 468 && fit43.h <= 480); // full-height class, not 350
+        CHECK(fit43.h != 350);
+        const double dar_rk6 = resolveContentDar(624, 480, "160:117", "1.78");
+        const auto fit_rk6 = pmsSquarePixelFitInCeiling(dar_rk6, 624, 480);
+        CHECK(fit_rk6.h == 350);
+        const double dar_adv = resolveContentDar(624, 480, "", "1.33");
+        const auto fit_adv = pmsSquarePixelFitInCeiling(dar_adv, 624, 480);
+        CHECK(fit_adv.h >= 468); // AdvReal class
+        std::printf("GREEN_PMS_FIT dar=16/9 fit624=%dx%d fit640=%dx%d w_at_480=%d "
+                    "detail=%.3f fit43=%dx%d fit_adv=%dx%d\n",
+                    fit.w, fit.h, fit640.w, fit640.h, w_at_480,
+                    verticalDetailFraction(350, 480), fit43.w, fit43.h, fit_adv.w,
+                    fit_adv.h);
+    }
 
     const auto extra480 = plexClientProfileExtra(w480);
     CHECK(extra480.find("container=mpegts") != std::string::npos);
@@ -95,11 +180,13 @@ int main() {
     CHECK(extra480.find("name=video.profile&list=baseline") != std::string::npos);
     CHECK(extra480.find("name=video.level&value=30") != std::string::npos);
     CHECK(extra480.find("scope=videoTranscodeTarget&scopeName=h264") != std::string::npos);
-    CHECK(extra480.find("name=video.width&value=640") != std::string::npos);
-    CHECK(extra480.find("name=video.height&value=480") != std::string::npos);
-    const auto caps480 = plexClientCapabilities(w480);
-    CHECK(caps480.find("videoDecoders=h264{profile:baseline&resolution:640x480&level:30}") !=
+    CHECK(extra480.find("name=video.width&value=" + std::to_string(osd480.width.get())) !=
           std::string::npos);
+    CHECK(extra480.find("name=video.height&value=" + std::to_string(osd480.height.get())) !=
+          std::string::npos);
+    const auto caps480 = plexClientCapabilities(w480);
+    CHECK(caps480.find(std::string("videoDecoders=h264{profile:baseline&resolution:") +
+                        osd480.label + "&level:30}") != std::string::npos);
     const auto headers480 = plexFfmpegHeaders("sess480", "tok", w480);
     CHECK(headers480.find("X-Plex-Client-Profile-Name: MiSTerPlex") != std::string::npos);
     CHECK(headers480.find("X-Plex-Client-Profile-Name: Generic") == std::string::npos);
@@ -117,11 +204,69 @@ int main() {
     bad480.h264Profile = "high";
     CHECK(!validateWeakLadder(bad480));
     bad480 = w480;
-    bad480.maxVideoBitrateKbps = 1000;
-    CHECK(!validateWeakLadder(bad480));
-    bad480 = w480;
     bad480.h264Level = 31;
     CHECK(!validateWeakLadder(bad480));
+
+    // 480p bitrate floor was a quality/link heuristic hard-fail — retired.
+    // Explicit WEAK_BITRATE=1000 (or 900) on 480p must validate so slow links
+    // can request under 2000 kbps. Decoder contracts (baseline / L3.0) stay hard.
+    {
+        WeakLadder lowBr = w480;
+        lowBr.maxVideoBitrateKbps = 1000;
+        CHECK(validateWeakLadder(lowBr));
+        CHECK(recommendedMinVideoBitrateKbps(lowBr) == kPlex480pWeakBitrateKbps);
+        CHECK(weakLadderBitrateBelowRecommended(lowBr));
+        std::string det;
+        CHECK(weakLadderBitrateBelowRecommended(lowBr, &det));
+        CHECK(det.find("recommended_min=2000") != std::string::npos);
+        CHECK(det.find("maxVideoBitrateKbps=1000") != std::string::npos);
+        // Wire URL must carry the explicit bitrate (not silently 2000).
+        const auto url900 = buildUniversalTranscodeUrl("http://pms:32400", "/library/metadata/1",
+                                                       "tok", "sess", 0, [&] {
+                                                           WeakLadder w = w480;
+                                                           w.maxVideoBitrateKbps = 900;
+                                                           return w;
+                                                       }());
+        CHECK(url900.find("maxVideoBitrate=900") != std::string::npos);
+        CHECK(url900.find("maxVideoBitrate=2000") == std::string::npos);
+        CHECK(validateWeakLadder([&] {
+            WeakLadder w = w480;
+            w.maxVideoBitrateKbps = 900;
+            return w;
+        }()));
+        // Default 480p is at the recommended floor — not below.
+        CHECK(!weakLadderBitrateBelowRecommended(w480));
+        // Zero still hard-fails (positive required).
+        lowBr.maxVideoBitrateKbps = 0;
+        CHECK(!validateWeakLadder(lowBr));
+        // 240p below legacy soft 750 is advisory only, not a hard fail.
+        WeakLadder low240 = w240;
+        low240.maxVideoBitrateKbps = 500;
+        CHECK(validateWeakLadder(low240));
+        CHECK(weakLadderBitrateBelowRecommended(low240));
+        // Ladder step-down (geometry unchanged) — discrete steps, no link speed.
+        CHECK(nextLowerLadderBitrateKbps(2000) == 1500);
+        CHECK(nextLowerLadderBitrateKbps(1500) == 1000);
+        CHECK(nextLowerLadderBitrateKbps(1000) == 750);
+        CHECK(nextLowerLadderBitrateKbps(750) == 500);
+        CHECK(nextLowerLadderBitrateKbps(500) == 400);
+        CHECK(nextLowerLadderBitrateKbps(400) == 0);
+        CHECK(nextLowerLadderBitrateKbps(900) == 750); // between steps → next below
+        CHECK(!starveStepdownReady(7));
+        CHECK(starveStepdownReady(8));
+        CHECK(starveStepdownReady(3, 3));
+        // Optional link capacity clamp — capacity unset must not invent a floor.
+        CHECK(applyLinkCapacityCapKbps(2000, 0, 85) == 2000);
+        CHECK(applyLinkCapacityCapKbps(2000, -1, 85) == 2000);
+        // Parent greedy goodput ~1153 kbit/s → 85% headroom = 980; clamps 2000→980.
+        CHECK(applyLinkCapacityCapKbps(2000, 1153, 85) == 980);
+        CHECK(applyLinkCapacityCapKbps(900, 1153, 85) == 900); // already under cap
+        CHECK(applyLinkCapacityCapKbps(2000, 1153, 100) == 1153);
+        // Bad headroom falls back to default 85.
+        CHECK(applyLinkCapacityCapKbps(2000, 1000, 0) == 850);
+        CHECK(applyLinkCapacityCapKbps(2000, 1000, 200) == 850);
+        std::printf("PASS 480p WEAK_BITRATE below recommended + link capacity clamp\n");
+    }
 
     // --- Phase 4 multi-server conf helpers (no network) ---
     CHECK(normalizePlexBase("http://pms.lan:32400/") == "http://pms.lan:32400");

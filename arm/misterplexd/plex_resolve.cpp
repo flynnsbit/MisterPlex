@@ -1,5 +1,7 @@
 #include "plex_resolve.hpp"
 
+#include "libmisterplex/osd_menu.hpp"
+
 #include <algorithm>
 #include <atomic>
 #include <cctype>
@@ -26,21 +28,23 @@ std::string shellQuote(const std::string& s) {
 }
 
 std::string httpGet(const std::string& url, int timeoutSec = 15,
-                    const std::string& extraHeaders = {}) {
+                    const std::string& extraHeaders = {}, bool defaultIdentity = true) {
     // Prefer curl (present on MiSTer); -k for plex.direct certs.
     std::ostringstream cmd;
     cmd << "curl -sS -g -k -L --http1.1 --connect-timeout 6 --max-time " << timeoutSec
-        << " -H 'Accept: application/xml'"
-        << " -H 'X-Plex-Client-Identifier: misterplex'"
-        << " -H 'X-Plex-Product: Plex Web'"
-        << " -H 'X-Plex-Version: 4.125.0'"
-        << " -H 'X-Plex-Platform: Chrome'"
-        << " -H 'X-Plex-Platform-Version: 120.0'"
-        << " -H 'X-Plex-Device: Linux'"
-        << " -H 'X-Plex-Device-Name: Chrome'"
-        << " -H 'X-Plex-Client-Profile-Name: MiSTerPlex'"
-        << " -H 'X-Plex-Model: bundled'"
-        << " -H 'X-Plex-Provides: player'";
+        << " -H 'Accept: application/xml'";
+    if (defaultIdentity) {
+        cmd << " -H 'X-Plex-Client-Identifier: misterplex'"
+            << " -H 'X-Plex-Product: Plex Web'"
+            << " -H 'X-Plex-Version: 4.125.0'"
+            << " -H 'X-Plex-Platform: Chrome'"
+            << " -H 'X-Plex-Platform-Version: 120.0'"
+            << " -H 'X-Plex-Device: Linux'"
+            << " -H 'X-Plex-Device-Name: Chrome'"
+            << " -H 'X-Plex-Client-Profile-Name: MiSTerPlex'"
+            << " -H 'X-Plex-Model: bundled'"
+            << " -H 'X-Plex-Provides: player'";
+    }
     if (!extraHeaders.empty())
         cmd << extraHeaders;
     cmd << " " << shellQuote(url) << " 2>/dev/null";
@@ -63,6 +67,15 @@ std::string curlHeaderArgs(const std::vector<std::pair<std::string, std::string>
         args << " -H " << shellQuote(h.first + ": " + h.second);
     }
     return args.str();
+}
+
+bool hasHeader(const std::vector<std::pair<std::string, std::string>>& headers,
+               const char* name) {
+    for (const auto& h : headers) {
+        if (h.first == name)
+            return true;
+    }
+    return false;
 }
 
 std::string makeSessionId() {
@@ -146,10 +159,14 @@ bool videoCodecIsH264(const std::string& codecRaw) {
 } // namespace
 
 const std::vector<PlexTranscodeProfile>& plexTranscodeProfiles() {
-    static const std::vector<PlexTranscodeProfile> profiles = {
-        {"240p", "320x240", 1000, 40, "baseline", 30},
-        {"480p", "640x480", 2500, 60, "baseline", 30},
-    };
+    static const std::vector<PlexTranscodeProfile> profiles = [] {
+        const auto p240 = contentResolutionFor240p();
+        const auto p480 = contentResolutionFor480p();
+        return std::vector<PlexTranscodeProfile>{
+            {"240p", p240.label, p240.weakBitrateKbps, 40, "baseline", 30},
+            {"480p", p480.label, p480.weakBitrateKbps, 60, "baseline", 30},
+        };
+    }();
     return profiles;
 }
 
@@ -313,17 +330,80 @@ bool validateWeakLadder(const WeakLadder& weak, std::string* why) {
         return fail("H.264 profile must be baseline for the current decoder");
     if (weak.h264Level > 30)
         return fail("H.264 level must not exceed 3.0 for the current decoder");
-    if (w >= 640 || h >= 480) {
-        if (w > 640 || h > 480)
-            return fail("current built-in profiles stop at 640x480");
-        if (weak.maxVideoBitrateKbps < 2000)
-            return fail("480p profile bitrate is too low");
-    } else if (weak.maxVideoBitrateKbps < 750) {
-        return fail("240p profile bitrate is too low");
+    if (w >= kPlex480pCodedWidth.get() || h >= kPlex480pCodedHeight.get()) {
+        if (w > kDdrFrameStoreMaxWidth.get() || h > kDdrFrameStoreMaxHeight.get())
+            return fail("current built-in profiles stop at " +
+                        std::to_string(kDdrFrameStoreMaxWidth.get()) + "x" +
+                        std::to_string(kDdrFrameStoreMaxHeight.get()));
+        // Bitrate floors are NOT decoder contracts (see recommendedMinVideoBitrateKbps).
+        // A hard 2000 kbps reject forced PMS requests above slow links and silently
+        // fell the ladder back to 240p — parent-proven 480p drop root cause.
+        // Decoder contracts remain: h264 baseline + level ≤ 3.0 above.
     }
     if (weak.videoQuality <= 0 || weak.maxVideoBitrateKbps <= 0)
         return fail("videoQuality and maxVideoBitrate must be positive");
     return true;
+}
+
+int recommendedMinVideoBitrateKbps(const WeakLadder& weak) {
+    int w = 0, h = 0;
+    if (!parseResolution(weak.videoResolution, w, h))
+        return 0;
+    // Defaults from osd_menu.hpp ladder constants — quality/ARM-margin heuristics,
+    // not H.264 level contracts. 480p default = kPlex480pWeakBitrateKbps (2000).
+    if (w >= kPlex480pCodedWidth.get() || h >= kPlex480pCodedHeight.get())
+        return kPlex480pWeakBitrateKbps;
+    // Legacy 240p path used a soft floor of 750 below the 1000 default.
+    return 750;
+}
+
+bool weakLadderBitrateBelowRecommended(const WeakLadder& weak, std::string* detail) {
+    const int floor = recommendedMinVideoBitrateKbps(weak);
+    if (floor <= 0 || weak.maxVideoBitrateKbps <= 0)
+        return false;
+    if (weak.maxVideoBitrateKbps >= floor)
+        return false;
+    if (detail) {
+        *detail = "maxVideoBitrateKbps=" + std::to_string(weak.maxVideoBitrateKbps) +
+                  " < recommended_min=" + std::to_string(floor) +
+                  " for videoResolution=" + weak.videoResolution +
+                  " (quality/link heuristic — explicit WEAK_BITRATE wins; not a decoder fail)";
+    }
+    return true;
+}
+
+int nextLowerLadderBitrateKbps(int currentKbps) {
+    // Fixed descending steps — no link-speed constant. Geometry unchanged.
+    // Absolute floor 400 keeps validateWeakLadder positive without inventing capacity.
+    static constexpr int kSteps[] = {2000, 1500, 1000, 750, 500, 400};
+    if (currentKbps <= kSteps[sizeof(kSteps) / sizeof(kSteps[0]) - 1])
+        return 0; // already at floor — cannot step
+    for (int s : kSteps) {
+        if (s < currentKbps)
+            return s;
+    }
+    return 0;
+}
+
+bool starveStepdownReady(int consecutiveStarvedSamples, int minConsecutive) {
+    if (minConsecutive <= 0)
+        minConsecutive = kStarveStepdownMinConsecutive;
+    return consecutiveStarvedSamples >= minConsecutive;
+}
+
+int applyLinkCapacityCapKbps(int requestedKbps, int capacityKbps, int headroomPct) {
+    if (requestedKbps <= 0)
+        return requestedKbps;
+    if (capacityKbps <= 0)
+        return requestedKbps; // unset — do not invent capacity
+    int pct = headroomPct;
+    if (pct <= 0 || pct > 100)
+        pct = kLinkCapacityHeadroomPctDefault;
+    // Integer kbps; parent measured ~1153 kbit/s goodput — never hardcoded here.
+    int cap = (capacityKbps * pct) / 100;
+    if (cap < 1)
+        cap = 1;
+    return requestedKbps < cap ? requestedKbps : cap;
 }
 
 std::string plexClientProfileExtra(const WeakLadder& weak) {
@@ -375,6 +455,11 @@ std::string buildUniversalTranscodeUrl(const std::string& base,
                                        int64_t offsetMs,
                                        const WeakLadder& weak) {
     std::ostringstream q;
+    // videoResolution=WxH is a CEILING for PMS aspect-preserving square-pixel
+    // fit, not an exact coded size. There is no universal query param that pins
+    // exact delivered height (lab decision matrix, RK6). Anamorphic 16:9 DAR
+    // sources fit to ~624x350 inside 624x480. directPlay is forced off here;
+    // STREAM preferDirectH264 uses the Part path instead (can keep coded 624x480).
     q << base << "/video/:/transcode/universal/start.mp4"
       << "?hasMDE=1"
       << "&path=" << urlEncodeQuery(metadataKey)
@@ -438,7 +523,8 @@ std::string plexFfmpegHeaders(const std::string& sessionId, const std::string& t
 bool plexHttpGetNoBody(const std::string& url,
                        const std::vector<std::pair<std::string, std::string>>& headers,
                        int timeoutSec) {
-    const std::string body = httpGet(url, timeoutSec, curlHeaderArgs(headers));
+    const bool defaultIdentity = !hasHeader(headers, "X-Plex-Client-Identifier");
+    const std::string body = httpGet(url, timeoutSec, curlHeaderArgs(headers), defaultIdentity);
     return !body.empty();
 }
 
@@ -688,6 +774,69 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
         }
         r.sourceFpsHint = contentFpsHint(r.videoFrameRate, r.frameRate);
         parseExactFps(r.videoFrameRate, r.frameRate, r.fpsNum, r.fpsDen);
+        // Source asset geometry (library), for direct-play identity-scale + GEOM logs.
+        // Also capture DAR/SAR — universal videoResolution is a ceiling; PMS
+        // square-pixel aspect-fit uses display aspect (see pms_delivery_geom.hpp).
+        {
+            auto mw = attr(xml, "Media", "width");
+            auto mh = attr(xml, "Media", "height");
+            if (!mw.empty() && !mh.empty()) {
+                r.mediaWidth = std::atoi(mw.c_str());
+                r.mediaHeight = std::atoi(mh.c_str());
+            }
+            r.mediaAspectRatio = attr(xml, "Media", "aspectRatio");
+            if (r.mediaWidth <= 0 || r.mediaHeight <= 0) {
+                size_t sp = 0;
+                while ((sp = xml.find("<Stream", sp)) != std::string::npos) {
+                    auto end = xml.find('>', sp);
+                    if (end == std::string::npos)
+                        break;
+                    const std::string slice = xml.substr(sp, end - sp);
+                    const bool isVideo = slice.find("streamType=\"1\"") != std::string::npos ||
+                                         slice.find("type=\"video\"") != std::string::npos;
+                    if (isVideo) {
+                        auto sw = attrIn(slice, "width");
+                        auto sh = attrIn(slice, "height");
+                        if (!sw.empty() && !sh.empty()) {
+                            r.mediaWidth = std::atoi(sw.c_str());
+                            r.mediaHeight = std::atoi(sh.c_str());
+                        }
+                        auto sar = attrIn(slice, "pixelAspectRatio");
+                        if (!sar.empty())
+                            r.pixelAspectRatio = sar;
+                        if (r.mediaAspectRatio.empty()) {
+                            auto ar = attrIn(slice, "aspectRatio");
+                            if (!ar.empty())
+                                r.mediaAspectRatio = ar;
+                        }
+                        break;
+                    }
+                    sp = end + 1;
+                }
+            } else {
+                // Width/height from Media — still scan video Stream for SAR.
+                size_t sp = 0;
+                while ((sp = xml.find("<Stream", sp)) != std::string::npos) {
+                    auto end = xml.find('>', sp);
+                    if (end == std::string::npos)
+                        break;
+                    const std::string slice = xml.substr(sp, end - sp);
+                    const bool isVideo = slice.find("streamType=\"1\"") != std::string::npos ||
+                                         slice.find("type=\"video\"") != std::string::npos;
+                    if (isVideo) {
+                        auto sar = attrIn(slice, "pixelAspectRatio");
+                        if (!sar.empty())
+                            r.pixelAspectRatio = sar;
+                        break;
+                    }
+                    sp = end + 1;
+                }
+            }
+            if (r.mediaWidth < 0)
+                r.mediaWidth = 0;
+            if (r.mediaHeight < 0)
+                r.mediaHeight = 0;
+        }
     }
 
     // STREAM product path: prefer direct H.264 Part (elementary after demux) so host

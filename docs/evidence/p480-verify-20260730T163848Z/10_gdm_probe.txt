@@ -1,0 +1,31 @@
+port=32412 from=('192.168.1.183', 32412) len=283
+HTTP/1.0 200 OK
+Content-Type: plex/media-player
+Name: MiSTerPlex
+Port: 3005
+Product: MiSTerPlex
+Version: 0.2.0
+Protocol: plex
+Protocol-Version: 1
+Protocol-Capabilities: timeline,playback,navigation,mirror,playqueues
+Device-Class: stb
+Resource-Identifier: misterplex-dev
+
+
+---
+port=32412 from=('192.168.1.183', 32412) len=283
+HTTP/1.0 200 OK
+Content-Type: plex/media-player
+Name: MiSTerPlex
+Port: 3005
+Product: MiSTerPlex
+Version: 0.2.0
+Protocol: plex
+Protocol-Version: 1
+Protocol-Capabilities: timeline,playback,navigation,mirror,playqueues
+Device-Class: stb
+Resource-Identifier: misterplex-dev
+
+
+---
+gdm_done

@@ -40,10 +40,11 @@ module sdram_memtest #(
 	localparam [26:0] WORDS_32_MB  = 27'd16_777_216;
 	localparam [26:0] WORDS_64_MB  = 27'd33_554_432;
 	localparam [26:0] WORDS_128_MB = 27'd67_108_864;
-	localparam [25:0] ADDR_16_MB  = WORDS_16_MB;
-	localparam [25:0] ADDR_32_MB  = WORDS_32_MB;
+	// Word counts 2^23/2^24 fit in 26-bit addr; slice explicitly (was WIDTHTRUNC).
+	localparam [25:0] ADDR_16_MB  = WORDS_16_MB[25:0];
+	localparam [25:0] ADDR_32_MB  = WORDS_32_MB[25:0];
 	localparam [25:0] ADDR_64_MB  = WORDS_64_MB[25:0];
-	localparam [15:0] REFRESH_LIMIT = REFRESH_CYCLES;
+	localparam [15:0] REFRESH_LIMIT = 16'(REFRESH_CYCLES);
 
 	localparam [15:0] PAT0  = 16'h1357;
 	localparam [15:0] PAT16 = 16'h5AA5;

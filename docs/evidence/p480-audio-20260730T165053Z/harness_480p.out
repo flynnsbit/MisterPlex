@@ -1,0 +1,50 @@
+RBF_MD5_OK p480_ab actual=14eaeff3270a6f59a434e0f777ed823d expected=14eaeff3270a6f59a434e0f777ed823d
+[p480-ab] tier=480p coded=624x480 bytes=449280 sha=d91f26e2 rbf=14eaeff3270a6f59a434e0f777ed823d
+conf_patched {'OSD_CONTROL': '0', 'DECODE': '624x480', 'DECODE_ALLOW_LAB_480P': '1', 'PRESENT_PROFILE': '1'}
+[p480-ab] cast key(redacted) offset_ms=0
+[p480-ab] settle 25s
+{"dwall_s": 182.491623, "ffmpeg_pct_onecpu": 69.022, "hz": 100, "misterplexd_pct_onecpu": 20.79}
+=== p480-ab human table ===
+SOURCE_SHA d91f26e2 tier=480p coded=624x480 bytes=449280
+clip offset_ms=0 settle_s=25.0 window_s=180.0
+CPU misterplexd_pct_onecpu=20.79 ffmpeg_pct_onecpu=69.022 HZ=100 dwall_s=182.491623
+CPU threads (tid name pct nvcsw nivcsw):
+  2758 misterplexd pct=17.042 nvcsw_d=53104 nivcsw_d=34738
+  2769 vf#0:0 pct=16.79 nvcsw_d=5828 nivcsw_d=18965
+  2779 vf#0:0 pct=14.74 nvcsw_d=5740 nivcsw_d=8015
+  2780 vf#0:0 pct=14.592 nvcsw_d=5417 nivcsw_d=6953
+  2783 mux0:rawvideo pct=5.935 nvcsw_d=29702 nivcsw_d=323
+  2772 dec0:1:aac pct=2.575 nvcsw_d=8641 nivcsw_d=48
+  2760 misterplexd pct=2.428 nvcsw_d=17320 nivcsw_d=844
+  2782 vf#0:0 pct=2.175 nvcsw_d=2219 nivcsw_d=38
+  2781 vf#0:0 pct=2.115 nvcsw_d=2237 nivcsw_d=13
+  2764 av:h264:df0 pct=1.649 nvcsw_d=1946 nivcsw_d=563
+  2766 av:h264:df2 pct=1.595 nvcsw_d=1930 nivcsw_d=412
+  2765 av:h264:df1 pct=1.54 nvcsw_d=2105 nivcsw_d=427
+frames vfps_mean=23.713875598086123 pfps_mean=23.48421052631579 drops_delta=1 drift_mean=-29.784688995215312 drift_late-early=-1.6001831501831525
+ddr_push_ms={'first': 8, 'last': 8, 'max': 15, 'mean': 8.523809523809524, 'min': 8, 'n': 105} decode=624x480 content_fps=24/1
+present_profile ddr_copy_us_p=5125 ddr_total_us_p=8833 ddr_plxd_used_x100_p=0 frame_bytes=449280
+record=/home/flynnsbit/Projects/MisterPlex/build/p480-audio-soak/p480_ab_480p_20260730T165826Z.json
+P480_AB_RESULT=OK
+SOURCE_SHA=d91f26e289d3cf0f49ba82132581c7d66a811b79
+tier=480p
+coded_wxh=624x480
+frame_bytes_i420=449280
+offset_ms=0
+settle_s=25
+window_s=180
+record=/home/flynnsbit/Projects/MisterPlex/build/p480-audio-soak/p480_ab_480p_20260730T165826Z.json
+misterplexd_pct_onecpu=20.79
+ffmpeg_pct_onecpu=69.022
+dwall_s=182.491623
+vfps_mean=23.713875598086123
+pfps_mean=23.48421052631579
+drops_delta=1
+av_drift_ms_mean=-29.784688995215312
+av_drift_late_minus_early_ms=-1.6001831501831525
+ddr_push_ms_mean=8.523809523809524
+decode=624x480
+ddr_copy_us_p=5125
+ddr_total_us_p=8833
+ddr_plxd_used_x100_p=0
+[p480-ab] done tier=480p record=/home/flynnsbit/Projects/MisterPlex/build/p480-audio-soak/p480_ab_480p_20260730T165826Z.json

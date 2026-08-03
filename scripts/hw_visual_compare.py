@@ -586,14 +586,32 @@ class Geometry:
 
 
 def _parse_cpp_constants(path: Path) -> dict[str, int]:
+    """Parse kPlex480p* geometry constants from ddr_frame_layout.hpp.
+
+    Accepts both legacy ``constexpr int kPlex480pFoo = N;`` and strong-typed
+    ``constexpr CodedWidth kPlex480pFoo{N};`` forms. Derived expressions are
+    ignored — callers only need the primary geometry integers.
+    """
     text = path.read_text(encoding="utf-8")
     out: dict[str, int] = {}
-    for name, value in re.findall(r"constexpr\s+int\s+kPlex480p([A-Za-z0-9_]+)\s*=\s*([^;]+);", text):
+    # Brace-init strong types: constexpr CodedWidth kPlex480pCodedWidth{624};
+    for name, value in re.findall(
+        r"constexpr\s+(?:int|CodedWidth|CodedHeight|DisplayWidth|DisplayHeight|"
+        r"PresentedWidth|PresentedHeight)\s+kPlex480p([A-Za-z0-9_]+)\s*\{\s*([^}]+)\s*\}\s*;",
+        text,
+    ):
         value = value.strip()
-        if value.startswith("0x"):
-            out[name] = int(value, 16)
-        else:
-            out[name] = int(value)
+        if re.fullmatch(r"-?\d+", value) or value.startswith("0x"):
+            out[name] = int(value, 0)
+    # Assignment form: constexpr int kPlex480pYStrideBytes = 624;
+    for name, value in re.findall(
+        r"constexpr\s+int\s+kPlex480p([A-Za-z0-9_]+)\s*=\s*([^;]+);", text
+    ):
+        value = value.strip()
+        if name in out:
+            continue
+        if value.startswith("0x") or re.fullmatch(r"-?\d+", value):
+            out[name] = int(value, 0)
     return out
 
 

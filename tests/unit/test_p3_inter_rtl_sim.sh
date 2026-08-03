@@ -17,7 +17,8 @@ SKIP
     echo "A skipped RTL gate is NOT a pass. Set ALLOW_MISSING_VERILATOR=1 only if you accept that RTL was never verified." >&2
     exit 3
   fi
-  exit 0
+  echo "SKIP-NOT-PASS: Verilator missing; soft-skip≠PASS" >&2
+  exit 77
 elif [[ "$VERILATOR_RC" -ne 0 ]]; then
   echo "RTL SIM ERROR: Verilator probe failed:" >&2
   printf '%s\n' "$VERILATOR_VERSION" >&2
@@ -52,6 +53,9 @@ if ! cmp -s "$FIXTURE" "$REGEN"; then
   exit 2
 fi
 echo "RTL SIM: using $VERILATOR_VERSION" >&2
+# PRE-REGISTER (frame_mv_cases walk inside h264_inter_pred_tb.cpp):
+#   3 frames × 39×30 MBs × up to 4 partitions → expect frame_mv_cases=9090 all match.
+#   Actual is published on the OK line; a published miss is a good outcome.
 
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD" \

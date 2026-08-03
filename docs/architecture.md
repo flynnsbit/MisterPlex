@@ -58,6 +58,13 @@ FFmpeg video → RGB24 320×240    FFmpeg audio → s16le 48k stereo
 - Timeline reports scrubber-friendly play-queue fields when media is bound.
 - **Not yet native present:** ARM still owns decode; FPGA owns scanout + MrAudio consumer.
 - Next (Phase 3): elementary H.264 into FPGA FIFO; present-domain audio FIFO for lip-sync without dual FFmpeg.
+- **Select Player / cast target:** Plex Web polls **`companionServer`**
+  `/clients` + `/neighborhood/devices` (not "the browsed library server").
+  `CompanionServerManager` picks the first owned private PMS in **FriendlyName**
+  A→Z order — **undocumented, only lever; renaming/adding a server can break
+  casting silently.** Runbook:
+  [select-player-runbook.md](select-player-runbook.md). Mechanism citations:
+  [v2-video-baseline.md](v2-video-baseline.md#cast-target-missing-in-select-player-companionserver--friendlyname-2026-07-30).
 
 ## Memory map (evolving)
 

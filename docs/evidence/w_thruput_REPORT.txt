@@ -1,0 +1,171 @@
+w-thruput — FPGA decode cy/MB budget close
+==========================================
+Agent: w-thruput
+Branch/WT: rtl/sink-contract-phase2 @ .worktrees/rtl-real-ref-measure
+SOURCE_SHA: 5b9d93b710ea436ef25ca137a953fd21c3b8bdf9
+Date: 2026-07-30
+NO device touch. NO Quartus fit. Simulation/static only.
+score_i420_candidate.py NOT modified.
+
+------------------------------------------------------------------------
+1. CLOCK + BUDGET (re-derived, quoted)
+------------------------------------------------------------------------
+pll_0002.v:46
+  .output_clock_frequency0("20.000000 MHz"),   // outclk_0
+Plex.sv:215
+  .outclk_0(clk_sys),
+Plex.sv:584+  stream_path #(...)  .clk(clk_sys)  (decode path)
+
+Decode clock = 20.000 MHz (NOT board 50 MHz osc, NOT clk_sdram).
+
+Budget 320×240 @ 25 fps:
+  MB/frame = 20×15 = 300
+  cy/MB = 20_000_000 / (300 × 25) = 2666.666... ≈ 2667 cy/MB
+
+Budget 624×480 @ 25 fps (reference only, NOT required):
+  20e6 / (1170×25) = 683.761 cy/MB
+
+------------------------------------------------------------------------
+2. PRE-REGISTER vs MEASURED (this worker)
+------------------------------------------------------------------------
+PRE (before my remeasure at tip 5b9d93b7):
+  inherit tip claim paint_per_mb_f0 = 2239.647 ± 20
+  expect HIT ≤2667; bitexact 300/300, 1170/1170; RED 0/300
+
+MEASURED (this session, REAL_REF Verilator):
+  clip1 320×240 f0: paint_per_mb = 2239.647
+    STAGE_CYCLES frame=0 parse=289 paint=671894 paint_per_mb=2239.647
+    sim true rc=0
+    LUMA intra_y_mb=300/300 px=76800/76800 mae=0  (luma_score true rc=0)
+    log: docs/evidence/w_thruput_remeasure/clip1/
+
+  clip2 624×480 f0: paint_per_mb = 2102.850
+    STAGE_CYCLES frame=0 parse=287 paint=2460335 paint_per_mb=2102.850
+    sim true rc=0
+    LUMA intra_y_mb=1170/1170 px=299520/299520 mae=0
+    log: docs/evidence/w_thruput_remeasure/clip2/
+
+  RED FAULT_SERIAL_IQ_ZERO:
+    paint_per_mb_f0 = 2009.933 (fault path)
+    LUMA intra_y_mb=0/300 px=5/76800  PASS_RED
+    sim true rc=0
+    log: docs/evidence/w_thruput_remeasure/red_iq/
+
+PRE verdict: HIT (exact match to tip claim 2239.647)
+vs budget 2666.667: 0.840×  pad ≈ 427 cy/MB  **HARD HIT**
+
+Parent inherited baseline 2965.8 was RMW A+B only (f5cafa7).
+Tip already includes RMW C+D + traverse window reuse.
+
+------------------------------------------------------------------------
+3. HISTORICAL LADDER (quoted prior measures on this branch)
+------------------------------------------------------------------------
+  pre-RMW  788aa5f: 4036.907  (OVER 1.51×)
+  RMW A+B  f5cafa7: 2965.787  (OVER 1.11×)  ← parent start point
+  RMW C    a44a466: 2620.387  (HIT thin)
+  RMW D    664e13c: 2474.070  (HIT pad~193)
+  win reuse 5b9d93b: 2239.647 (HIT pad~427)  ← tip, remeasured here
+
+------------------------------------------------------------------------
+4. PER-STAGE BREAKDOWN (clip1 I-frame, SINK_CY_BREAKDOWN @ mb_written→300)
+------------------------------------------------------------------------
+Quoted:
+  SINK_CY_BREAKDOWN total=480177 idle_wb=38674 idle_pend=300 idle_ready=67227
+    init=0 settle=5917 i16nb=10176 i16pred=57239 had=4199 i4nb=41029
+    iq=87664 apply=83872 dump=83659
+
+Per-MB (÷300), share of sink wall:
+  iq            292.21  18.3%   serial dequant (kept serial — DSP hold)
+  apply         279.57  17.5%   I16 pipe APPLY + I4 1cy writes
+  dump          278.86  17.4%   pipelined MB_DUMP (was 3cy RMW)
+  idle_ready    224.09  14.0%   wait for next residual blk (feed gap residual)
+  i16pred       190.80  11.9%   serial I16 pred 1px/cy
+  i4nb          136.76   8.5%   I4 neighbour fetch
+  idle_wb       128.91   8.1%   write_busy / recon_store backpressure
+  i16nb          33.92   2.1%
+  settle         19.72   1.2%
+  had            14.00   0.9%   Hadamard wait only (HAD_PAINT killed)
+  init            0.00   0.0%   MB_INIT skipped (RMW D)
+  TOTAL        1600.59
+
+paint_per_mb composition (frame0):
+  paint = I_RECON + DPB_FILL + diag PH_PAINT
+  diag = 320*240 = 76800 → 256 cy/MB (NOT production)
+  dpb_approx ≈ 300*385 = 115500 → ~385 cy/MB
+  i_recon ≈ 479594 → ~1599 cy/MB ≈ sink total
+
+Dominant production consumers after thruput diet: IQ + APPLY + DUMP + residual
+idle_ready/wb. Deblock is NOT the fourth consumer here (parent note confirmed:
+deblock ALMs small; not in this I-slice sink paint path).
+
+------------------------------------------------------------------------
+5. OPTIMISATIONS (already on branch; verified, not re-authored this turn)
+------------------------------------------------------------------------
+Commits (rtl/sink-contract-phase2):
+  f5cafa7e  RMW A+B — kill HAD_PAINT; pipeline MB_DUMP reads
+  a44a466c  RMW C   — pipeline I16 APPLY plane RMW (48→18 cy/blk)
+  664e13c2  RMW D   — skip MB_INIT under I-slice full-luma export invariant
+  5b9d93b7  traverse window reuse — skip ST_RES_WIN_LOAD when bit_pos in window
+
+Diff vs pre-A (f5cafa7e^..HEAD) sink+traverse:
+  h264_i_res_recon_sink.sv | 229 +++---
+  h264_p_mb_traverse.sv    | 113 ++++-
+  2 files, +235 / −107
+
+Key mechanisms (quoted code):
+  - ST_HAD_PAINT retired; DC folded at DUMP if cbp_l=0 (B)
+  - ST_MB_DUMP: 1 result/cy after 2-cy fill (A)
+  - ST_APPLY_PX I16: issue/capt pipe apply_i 0..17 (C)
+  - IDLE→SETTLE skips ST_MB_INIT; init counter = 0 (D)
+  - traverse: win_reuse when bit_pos in res_win with headroom
+
+No new RTL authored this worker turn — gap already closed on tip.
+Worker duty: independent remeasure + gates + evidence.
+
+------------------------------------------------------------------------
+6. BIT-EXACTNESS
+------------------------------------------------------------------------
+  clip1: 300/300 MB, 76800/76800 px, mae=0     PASS
+  clip2: 1170/1170 MB, 299520/299520 px, mae=0 PASS
+  RED IQ-zero twin: 0/300 MB, 5/76800 px       PASS_RED
+  tools/score_i420_candidate.py: untouched
+
+------------------------------------------------------------------------
+7. GATES (exit codes captured directly)
+------------------------------------------------------------------------
+  make define-parity      true rc=0
+  make quartus-sv-subset  true rc=0
+  make unit               true rc=0
+    (GATE_SKIP live-pms-baseline CRITICAL: missing MISTERPLEX_BASELINE_KEY —
+     pre-existing skip, not introduced by thruput work)
+
+------------------------------------------------------------------------
+8. AREA ESTIMATE (no fit performed)
+------------------------------------------------------------------------
+Thruput opts add:
+  M10K physical blocks: **0 new**
+    plane_y DEPTH=256 and top_row DEPTH=MAX_PIC_W already present from
+    sink phase-2 (788aa5f). RMW A–D + win reuse only change FSM/control.
+  ALM: small FSM/pipe index mux only — PRE ranges historically
+    A+B −30..+80, C +0..+60, D −5..+20, win +20..+80 comb.
+    Combined rough: low hundreds ALM worst case. UNKNOWN until fit
+    (w-fit holds exclusive; this agent must not fit).
+  DSP: **0 new mul** (serial IQ/I16 pred held).
+  RAM pressure vs deployed 465/553: **no additional block pressure**
+    from this change set. Flag: if a future opt adds dual-buffer res_blk
+    or plane double-buffer, that WOULD cost physical blocks — not done here.
+
+------------------------------------------------------------------------
+9. VERDICT
+------------------------------------------------------------------------
+  HARD TARGET ≤2667 cy/MB @ 320×240 / 25 fps / 20 MHz: **HIT**
+  Best measured (IDR worst-case paint_per_mb f0): **2239.647**
+  Pad: **~427 cy/MB** before chroma-merge / continuous-P accounting
+  480p 684 budget: still OVER on IDR paint (~2103 vs 684) — out of scope
+    per parent ("480p already works on ARM path")
+
+Honest note: continuous P-frame cost is parse_per_mb ~1378 (includes MC/DPB),
+not paint 2239. Product continuous budget check is separate; this gate is
+the IDR paint_per_mb headline matching prior RMW series.
+
+END
