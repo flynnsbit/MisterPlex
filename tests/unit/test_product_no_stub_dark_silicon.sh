@@ -152,19 +152,21 @@ print("PRODUCT_NO_STUB scaffolding OK")
 PY
 pass "PRODUCT_NO_STUB stream_path scaffolding"
 
-# --- 4) QSF: macro documented but not enabled by default ---------------------
-grep -q 'PRODUCT_NO_STUB' "$QSF" || fail "Plex.qsf missing PRODUCT_NO_STUB comment"
+# --- 4) QSF: PRODUCT_NO_STUB is the product default (active) -----------------
+# New default = ACTIVE macro (omit dark decode_stub). Old stub-in QSF needs
+# ALLOW_PRODUCT_STUB_IN=1. A gate that passes both ways is worthless.
+grep -q 'PRODUCT_NO_STUB' "$QSF" || fail "Plex.qsf missing PRODUCT_NO_STUB"
 if grep -E '^set_global_assignment -name VERILOG_MACRO "PRODUCT_NO_STUB' "$QSF" >/dev/null; then
-  # Intentional product fit: ALLOW_PRODUCT_NO_STUB_ACTIVE=1 (parent-granted slot).
-  if [[ "${ALLOW_PRODUCT_NO_STUB_ACTIVE:-0}" == "1" ]]; then
-    pass "QSF PRODUCT_NO_STUB ACTIVE (ALLOW_PRODUCT_NO_STUB_ACTIVE=1 fit mode)"
+  pass "QSF PRODUCT_NO_STUB ACTIVE (product default)"
+elif grep -qE '^[[:space:]]*#[[:space:]]*set_global_assignment -name VERILOG_MACRO "PRODUCT_NO_STUB=1"' "$QSF"; then
+  # Intentional stub-in comparison fit only.
+  if [[ "${ALLOW_PRODUCT_STUB_IN:-0}" == "1" ]]; then
+    pass "QSF PRODUCT_NO_STUB commented (ALLOW_PRODUCT_STUB_IN=1 stub-in mode)"
   else
-    fail "PRODUCT_NO_STUB is ACTIVE in QSF — product default must stay commented until fit grant (or set ALLOW_PRODUCT_NO_STUB_ACTIVE=1)"
+    fail "PRODUCT_NO_STUB is commented in QSF — product default must be ACTIVE (or set ALLOW_PRODUCT_STUB_IN=1 for stub-in compare)"
   fi
 else
-  grep -q '# set_global_assignment -name VERILOG_MACRO "PRODUCT_NO_STUB=1"' "$QSF" \
-    || fail "commented PRODUCT_NO_STUB assignment missing from QSF"
-  pass "QSF PRODUCT_NO_STUB commented (not default-on)"
+  fail "Plex.qsf missing PRODUCT_NO_STUB=1 assignment (active or commented form)"
 fi
 
 # --- 5) Doc anchors + banned withdrawn claims --------------------------------
@@ -210,6 +212,29 @@ then
   fail "red-before-green: expected scaffolding check to FAIL after strip"
 fi
 pass "red-before-green: scaffolding absence fails"
+
+# --- 7) Red-before-green: commented product QSF must FAIL without override ---
+# Simulate old stub-in default; gate must reject it unless ALLOW_PRODUCT_STUB_IN=1.
+cp "$QSF" "$TMP/Plex.qsf"
+sed -i 's/^set_global_assignment -name VERILOG_MACRO "PRODUCT_NO_STUB=1"/# set_global_assignment -name VERILOG_MACRO "PRODUCT_NO_STUB=1"/' \
+  "$TMP/Plex.qsf"
+if grep -E '^set_global_assignment -name VERILOG_MACRO "PRODUCT_NO_STUB' "$TMP/Plex.qsf" >/dev/null; then
+  fail "red-before-green: sed failed to comment PRODUCT_NO_STUB in temp QSF"
+fi
+# Force non-override path even if caller exported ALLOW_PRODUCT_STUB_IN.
+if ALLOW_PRODUCT_STUB_IN=0 bash -c '
+  QSF="$1"
+  if grep -E "^set_global_assignment -name VERILOG_MACRO \"PRODUCT_NO_STUB" "$QSF" >/dev/null; then
+    exit 0
+  elif grep -qE "^[[:space:]]*#[[:space:]]*set_global_assignment -name VERILOG_MACRO \"PRODUCT_NO_STUB=1\"" "$QSF"; then
+    exit 1
+  else
+    exit 1
+  fi
+' _ "$TMP/Plex.qsf"; then
+  fail "red-before-green: expected commented QSF to FAIL without ALLOW_PRODUCT_STUB_IN"
+fi
+pass "red-before-green: commented QSF fails (new default enforced)"
 
 echo "PASS test_product_no_stub_dark_silicon"
 exit 0

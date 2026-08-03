@@ -166,9 +166,11 @@ Gate: `tests/unit/test_fabric_decode_inventory.sh` · `make fabric-decode-invent
 
 ---
 
-## PRODUCT_NO_STUB — M10K enabler for OSD hi-res overlay (scoped, unfitted)
+## PRODUCT_NO_STUB — product default (reclaim dark decode_stub)
 
-**Primary value is not throughput ms.** Combined-fit control stays **flat** (any present-ledger movement = bug). **Primary value is M10K for user bug #2** (overlay must match HDMI output res via post-ascal plane / w-osd-hires): shipping free M10K **88** → after stub subtree reclaim **~356** (~4×). Pair PRODUCT_NO_STUB with the OSD plane in **one** exclusive fit — never alone.
+**Status:** product QSF default is **ACTIVE** (`VERILOG_MACRO "PRODUCT_NO_STUB=1"`). Research/STREAM leave the macro undefined. Unit gate: `tests/unit/test_product_no_stub_dark_silicon.sh` — stub-in QSF requires `ALLOW_PRODUCT_STUB_IN=1`.
+
+**Primary value is not throughput ms.** Combined-fit control stays **flat** (any present-ledger movement = bug). **Primary value is M10K for user bug #2** (overlay must match HDMI output res via post-ascal plane / w-osd-hires): shipping free M10K **88** → after stub subtree reclaim **~356** (~4×). Also provides clk_sys Fmax headroom for `w-clock` (nostub proof `c74c6863` Fmax 32.59 vs stub-in `8fdf440f` 23.46).
 
 **Motivation (honest — not 480p24 starvation):** Parent measured product ffmpeg **flat-out** on a 624×480 CB 24 fps asset with product `-vf scale=624:480:flags=fast_bilinear -pix_fmt yuv420p -f null -`: **speed=9.57x** (pipe 2 MiB / ~4.67 frames confirmed). ⇒ Fabric H.264 decode **cannot** improve throughput at this tier. (“Pacer sleeps 16.7 ms ⇒ pacer-limited” is **STRICKEN** — `read_block+pacing_wait` is conserved by Hold-loop construction; void endpoint.) **M10K case is strong:** bug #2 needs post-ascal plane; fabric already has `HDMI_WIDTH`/`HEIGHT`. Honest remaining decode cases: **direct-play** / **higher tiers** (store contract still rejects 1280×720), not 480p24 fps.
 
@@ -185,13 +187,13 @@ Gate: `tests/unit/test_fabric_decode_inventory.sh` · `make fabric-decode-invent
 
 DPB check: 2,097,152 / 256 = **8,192** bits/block. Free now: 553−465=**88** blocks / ~**2.66 Mbit**.
 
-**Source hook (Tier A):** `stream_path.sv` `` `ifndef PRODUCT_NO_STUB `` / else constant-0 (incl. `stub_busy`). QSF macro **commented** until parent grants a fit pairing reclaim with **w-osd-hires** (and any scaler cargo):
+**Source hook (Tier A):** `stream_path.sv` `` `ifndef PRODUCT_NO_STUB `` / else constant-0 (incl. `stub_busy`). Product QSF **ACTIVE**:
 
 ```tcl
-# set_global_assignment -name VERILOG_MACRO "PRODUCT_NO_STUB=1"
+set_global_assignment -name VERILOG_MACRO "PRODUCT_NO_STUB=1"
 ```
 
-**Already on the `8fdf440f` / tip tree (do not burn a slot alone):** `907e5950` NBA hold; comb shift-add dequant (DSP 44). **Next exclusive fit:** `PRODUCT_NO_STUB` + **OSD hi-res post-ascal plane** together — score on viewed 1080p overlay pixels (parent); present ledger flat (control; ARM already 9.57× on decode+scale at this tier).
+Research/STREAM leave undefined. Stub-in compare: comment the line + `ALLOW_PRODUCT_STUB_IN=1`. **Follow-on cargo (not this lane):** OSD hi-res post-ascal plane spends the reclaimed M10K; `w-clock` spends Fmax headroom (do not raise PLL here).
 
 **SDC:** no new `set_false_path`.
 

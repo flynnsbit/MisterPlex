@@ -84,9 +84,12 @@ set_global_assignment -name VERILOG_MACRO "FRAME_W=640"
 set_global_assignment -name VERILOG_MACRO "FRAME_H=480"
 set_global_assignment -name VERILOG_MACRO "FRAME_LINES_8=1"
 # Product reclaim: omit decode_stub from stream_path (dark under DDR_FRAME_STORE).
-# Default OFF (commented). Enable only with parent fit grant + ALLOW_PRODUCT_NO_STUB_ACTIVE=1.
-# Proven nostub RBF: c74c6863 (Fmax sys 32.59; stub 0 hierarchy rows). Research/STREAM leave off.
-# set_global_assignment -name VERILOG_MACRO "PRODUCT_NO_STUB=1"
+# PRODUCT DEFAULT ON — stub write port never reaches ddr_frame_store (present_core DDR branch).
+# Research/STREAM builds leave this macro undefined so decode_stub stays gated in files.qip.
+# To force stub-in product QSF for comparison fits: comment the line and set
+# ALLOW_PRODUCT_STUB_IN=1 for the unit gate.
+# Prior stub-in Fmax baseline: 8fdf440f clk_sys 23.46 MHz; nostub proof c74c6863 32.59 MHz.
+set_global_assignment -name VERILOG_MACRO "PRODUCT_NO_STUB=1"
 
 # sys/sys.tcl carries the upstream MiSTer single-stick SDRAM_* pin assignments.
 # Do not source sys/sys_dual_sdram.tcl for this lab unit: only one stick is installed.
