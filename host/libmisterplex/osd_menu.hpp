@@ -55,13 +55,29 @@ constexpr int kOsdAvOffsetStepMs = 20;
 constexpr int kPlex240pWeakBitrateKbps = 1000;
 constexpr int kPlex360pWeakBitrateKbps = 1500;
 constexpr int kPlex480pWeakBitrateKbps = 2000;
-// Measured lab PMS (rk7, 2026-08-03): maxVideoBitrate<=3000 → coded 720x404;
-// >=3500 → genuine 1280x720. Default 4000 is an honest tier above that step —
-// not a proportional formula fitted to two points.
-constexpr int kPlex720pWeakBitrateKbps = 4000;
+// Dual 720p bitrate contract (lab PMS + parent device decode, 2026-08-03):
+//
+// 1) Decode-optimal CONTENT bitrate for already-1280x720 CB (parent device):
+//      1500 kbit → 32.427 ms/f (77.8% of 41.667) — **8.65 ms/f** vs 4000.
+//    That is the preferred *library / Direct-Play* tier. It is NOT a universal
+//    maxVideoBitrate: lab PMS @ maxBR<=3000 delivers coded **720x404**, not 1280x720
+//    (daemon URL builder, unique session, rk2/rk7 — see LAB_PMS_720_DAEMON_PATH.md).
+//
+// 2) Universal maxVideoBitrate floor for genuine 1280x720 (lab coded-size matrix):
+//      >=3500 → 1280x720 SAR 1:1; <=3000 → 720x404. Product weak default = 3500
+//      (geometry min). Parent decode @3500 = 38.751 ms/f when content is 3500k.
+//
+// Prefer Path720p Direct Play of ~1500k native 720p assets for ARM budget;
+// universal keeps the geometry-safe weak bitrate below.
+constexpr int kPlex720pDecodeOptimalBitrateKbps = 1500;
+constexpr int kPlex720pWeakBitrateKbps = 3500; // universal maxVideoBitrate pin
 // H.264 Level 3.1 is required for general 1280x720 (MaxFS). Lab source is
 // oddly tagged L3.0; product ladder requests L3.1 for the 720p tier.
 constexpr int kPlex720pH264Level = 31;
+static_assert(kPlex720pWeakBitrateKbps >= 3500,
+              "universal 720p weak bitrate must stay at geometry floor (lab ≥3500)");
+static_assert(kPlex720pDecodeOptimalBitrateKbps < kPlex720pWeakBitrateKbps,
+              "decode-optimal content tier is below universal geometry floor");
 
 // Menu index 0 is the power-on default. The present loop waits for the audio
 // clock to reach `frameContentMs + avOffsetMs`, so POSITIVE holds the frame back

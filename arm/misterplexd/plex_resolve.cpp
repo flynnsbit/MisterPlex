@@ -392,9 +392,11 @@ bool weakLadderBitrateBelowRecommended(const WeakLadder& weak, std::string* deta
 
 int nextLowerLadderBitrateKbps(int currentKbps) {
     // Fixed descending steps — no link-speed constant. Geometry unchanged.
-    // 4000/3500 added for path-720p (lab: <3500 drops coded height off 720).
+    // 4000/3500: path-720p universal (lab: <3500 → coded 720x404). 1500 is the
+    // parent decode-optimal content/DP tier for already-1280x720 — stepping to
+    // 1500 on universal loses true 720 geometry.
     // Absolute floor 400 keeps validateWeakLadder positive without inventing capacity.
-    static constexpr int kSteps[] = {4000, 3500, 3000, 2000, 1500, 1000, 750, 500, 400};
+    static constexpr int kSteps[] = {4000, 3500, 3000, 2500, 2000, 1500, 1000, 750, 500, 400};
     if (currentKbps <= kSteps[sizeof(kSteps) / sizeof(kSteps[0]) - 1])
         return 0; // already at floor — cannot step
     for (int s : kSteps) {

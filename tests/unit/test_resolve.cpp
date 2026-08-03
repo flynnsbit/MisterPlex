@@ -273,7 +273,8 @@ int main() {
         // Ladder step-down (geometry unchanged) — discrete steps, no link speed.
         CHECK(nextLowerLadderBitrateKbps(4000) == 3500);
         CHECK(nextLowerLadderBitrateKbps(3500) == 3000);
-        CHECK(nextLowerLadderBitrateKbps(3000) == 2000);
+        CHECK(nextLowerLadderBitrateKbps(3000) == 2500);
+        CHECK(nextLowerLadderBitrateKbps(2500) == 2000);
         CHECK(nextLowerLadderBitrateKbps(2000) == 1500);
         CHECK(nextLowerLadderBitrateKbps(1500) == 1000);
         CHECK(nextLowerLadderBitrateKbps(1000) == 750);
@@ -452,23 +453,27 @@ int main() {
             buildUniversalTranscodeUrl("http://pms.example:32400", "/library/metadata/7", "tok",
                                        "sess720", 0, w720);
         CHECK(start720.find("videoResolution=1280x720") != std::string::npos);
-        CHECK(start720.find("maxVideoBitrate=4000") != std::string::npos);
+        CHECK(start720.find("maxVideoBitrate=3500") != std::string::npos);
         CHECK(start720.find("videoLevel=31") != std::string::npos);
         CHECK(start720.find("videoProfile=baseline") != std::string::npos);
         CHECK(start720.find("directPlay=0") != std::string::npos);
         CHECK(recommendedMinVideoBitrateKbps(w720) == kPlex720pWeakBitrateKbps);
+        CHECK(kPlex720pWeakBitrateKbps == 3500);
+        CHECK(kPlex720pDecodeOptimalBitrateKbps == 1500);
         // Explicit low bitrate still validates (link heuristic) but is below recommended
         // — and is the class that PMS answers with 720x404, not true 720p.
+        // Parent decode-optimal 1500 is content/DP only — universal @1500 is NOT 1280x720.
         WeakLadder low720 = w720;
-        low720.maxVideoBitrateKbps = 2000;
+        low720.maxVideoBitrateKbps = kPlex720pDecodeOptimalBitrateKbps;
         CHECK(validateWeakLadder(low720));
         CHECK(weakLadderBitrateBelowRecommended(low720));
+        CHECK(!pmsBitrateLikelyTrue720p(kPlex720pDecodeOptimalBitrateKbps));
         CHECK(!pmsBitrateLikelyTrue720p(2000));
         CHECK(!pmsBitrateLikelyTrue720p(3000));
         CHECK(pmsBitrateLikelyTrue720p(3500));
         CHECK(pmsBitrateLikelyTrue720p(4000));
         // NEGATIVE: shorter coded height must NOT be treated as true 720p.
-        // Lab: maxBR=2000 → decision/ffprobe 720x404; maxBR=4000 → 1280x720.
+        // Lab: maxBR<=3000 → 720x404; maxBR>=3500 → 1280x720; maxBR=1500 → 720x404.
         CHECK(isGenuine720pDelivery(1280, 720));
         CHECK(!isGenuine720pDelivery(720, 404));
         CHECK(!isGenuine720pDelivery(624, 350));
