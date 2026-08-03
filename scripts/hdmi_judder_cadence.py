@@ -13,7 +13,10 @@ Inputs
 Outputs (stdout key=value + optional JSON):
   RUN_LENGTHS=3,2,3,2,...
   PATTERN=CLEAN_3_2|CLEAN_2_1|PATH_2_2_2_4|FROZEN|STATIC_FIELD|IRREGULAR|...
-  JUDDER=0..        lower = closer to a clean telecine; FROZEN/STATIC → n/a flag
+  JUDDER=0..        conformance to own clean class (0 = clean 3:2 OR clean 2:1)
+  HOLD_MEAN= HOLD_STDEV= HOLD_MAXDEV=
+                    absolute hold irregularity — ranks 2:1 < 3:2 < 2,2,2,4
+                    (JUDDER alone ties clean 3:2 and 2:1 at 0; these do not)
   MOTION_FRAC=...   mean fraction of pixels that change on NEW steps
   N_FRAMES= N_NEW= N_RUNS=
 
@@ -68,6 +71,9 @@ class CadenceResult:
     pattern: str
     judder: float
     judder_note: str
+    hold_mean: float
+    hold_stdev: float
+    hold_maxdev: float
     motion_frac_mean: float
     luma_eps: float
     pix_frac_thr: float
@@ -88,6 +94,11 @@ class CadenceResult:
         print(f"PATTERN={self.pattern}")
         print(f"JUDDER={self.judder:.6f}")
         print(f"JUDDER_NOTE={self.judder_note}")
+        # Absolute irregularity (population stdev of hold lengths; max |r-mean|).
+        # Ranks CLEAN_2_1 < CLEAN_3_2 < PATH_2_2_2_4. JUDDER cannot (ties cleans at 0).
+        print(f"HOLD_MEAN={self.hold_mean:.6f}")
+        print(f"HOLD_STDEV={self.hold_stdev:.6f}")
+        print(f"HOLD_MAXDEV={self.hold_maxdev:.6f}")
         print(f"MOTION_FRAC={self.motion_frac_mean:.6f}")
         print(f"FROZEN={int(self.frozen)}")
         print(f"STATIC_FIELD={int(self.static_field)}")
@@ -97,6 +108,18 @@ class CadenceResult:
         print(f"RESIDUAL_224={self.residual_224:.6f}")
         print(f"LUMA_EPS={self.luma_eps}")
         print(f"PIX_FRAC_THR={self.pix_frac_thr}")
+
+
+def hold_stats(runs: Sequence[int]) -> Tuple[float, float, float]:
+    """Return (mean, population stdev, max |r-mean|) over hold run-lengths."""
+    if not runs:
+        return 0.0, 0.0, 0.0
+    xs = [float(r) for r in runs]
+    mean = float(sum(xs) / len(xs))
+    var = float(sum((x - mean) ** 2 for x in xs) / len(xs))
+    stdev = math.sqrt(var)
+    maxdev = float(max(abs(x - mean) for x in xs))
+    return mean, stdev, maxdev
 
 
 def _luma(rgb: np.ndarray) -> np.ndarray:
@@ -279,6 +302,7 @@ def analyze_frames(
     residual_21 = _residual_constant(runs, 2)
     residual_32 = _residual_32(runs)
     residual_224 = _residual_224(runs)
+    h_mean, h_stdev, h_maxdev = hold_stats(runs)
 
     pattern, judder, note = _classify(
         runs,
@@ -297,6 +321,8 @@ def analyze_frames(
         dropped_hint += sum(1 for r in runs if r == 1)
         dropped_hint += sum(1 for r in runs if r >= 5)
 
+    # Frozen/static: absolute hold stats still report the single long hold, but
+    # JUDDER stays 0 with an explicit flag (do not rank frozen as "smooth").
     return CadenceResult(
         n_frames=n,
         n_new=n_new,
@@ -305,6 +331,9 @@ def analyze_frames(
         pattern=pattern,
         judder=judder,
         judder_note=note,
+        hold_mean=h_mean,
+        hold_stdev=h_stdev,
+        hold_maxdev=h_maxdev,
         motion_frac_mean=float(np.mean(motion_on_new)) if motion_on_new else 0.0,
         luma_eps=luma_eps,
         pix_frac_thr=pix_frac_thr,
@@ -316,7 +345,6 @@ def analyze_frames(
         residual_224=residual_224,
         raw_is_new=is_new_flags,
     )
-
 
 def _residual_constant(runs: Sequence[int], k: int) -> float:
     if not runs:

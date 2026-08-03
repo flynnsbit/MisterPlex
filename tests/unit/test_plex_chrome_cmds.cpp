@@ -62,6 +62,105 @@ static void checkNoPixelBakeWhenLive() {
     CHECK(frame2 != before2);
 }
 
+// Stronger red twin: a deliberate "wrong" path that bakes pixels under a live
+// plane MUST be distinguishable from the correct skip. The product gate is the
+// `if (!live) bake` shape — flipping it dirties the frame and fails the check.
+static void checkRedTwinArmPixelBakeCaught() {
+    misterplex::PlaybackOverlay ov;
+    ov.showAt(misterplex::PlaybackOverlayState::Playing, 30000, 120000, 5000);
+    std::vector<uint8_t> frame(640 * 360 * 3, 0x11);
+    const auto clean = frame;
+    const bool live = misterplex::plex_chrome_cmds::chromePlaneLive(true, true);
+    CHECK(live);
+
+    // Correct product shape
+    if (!live)
+        ov.renderRgb24At(frame.data(), 640, 360, 5000);
+    CHECK(frame == clean);
+
+    // Naive wrong implementation: bake even when live
+    auto wrong = clean;
+    if (live) // deliberately inverted gate
+        CHECK(ov.renderRgb24At(wrong.data(), 640, 360, 5000));
+    CHECK(wrong != clean); // red twin fires: pixels changed under live plane
+
+    // PLXC path is command words only — never a byte of RGB
+    using namespace misterplex::plex_chrome_cmds;
+    BuildArgs a;
+    a.state = misterplex::PlaybackOverlayState::Playing;
+    a.positionMs = 30000;
+    a.durationMs = 120000;
+    a.title = "TITLE";
+    const auto cmds = buildPlaybackHud(a);
+    CHECK(!cmds.empty());
+    for (uint64_t w : cmds) {
+        const unsigned op = static_cast<unsigned>(w & 0xFF);
+        CHECK(op == 1 || op == 2 || op == 3); // RECT / GLYPH / RECT_PAL only
+    }
+}
+
+// Player UI inventory vs MAX_CMDS — do not silently trim requirements.
+static void checkPlayerUiCommandBudget() {
+    using namespace misterplex::plex_chrome_cmds;
+
+    // --- Core HUD (state + title + times + bar): parent glass capture class ---
+    BuildArgs core;
+    core.state = misterplex::PlaybackOverlayState::Stopped;
+    core.positionMs = 125000;
+    core.durationMs = 600000;
+    core.title = "BIG BUCK BUNNY TITLE"; // 19-char cap
+    HudBudget bCore = countHudBudget(core);
+    std::fprintf(stderr,
+                 "UI_BUDGET core total=%d panel=%d state=%d title=%d time=%d track=%d fill=%d "
+                 "fits48=%d\n",
+                 bCore.totalUncapped, bCore.panel, bCore.stateGlyphs, bCore.titleGlyphs,
+                 bCore.timeGlyphs, bCore.track, bCore.fillChunks, bCore.fitsProductList ? 1 : 0);
+    CHECK(bCore.panel == 1);
+    CHECK(bCore.track == 1);
+    CHECK(bCore.stateGlyphs == 7); // STOPPED
+    CHECK(bCore.titleGlyphs >= 10);
+    CHECK(bCore.timeGlyphs >= 6);
+    CHECK(bCore.fitsProductList);
+    CHECK(bCore.totalUncapped <= kMaxCmds);
+    CHECK(buildPlaybackHud(core).size() == static_cast<size_t>(bCore.totalUncapped));
+
+    // --- Full simultaneous (core + skip + notice + buffering) ---
+    BuildArgs full = core;
+    full.skipDeltaMs = 30000;
+    full.notice = "F12 INERT ON THIS BUILD";
+    full.buffering = true;
+    HudBudget bFull = countHudBudget(full);
+    std::fprintf(stderr,
+                 "UI_BUDGET full total=%d skip=%d notice=%d buf=%d fits48=%d max=%d\n",
+                 bFull.totalUncapped, bFull.skip, bFull.notice, bFull.buffering,
+                 bFull.fitsProductList ? 1 : 0, bFull.maxCmds);
+    CHECK(bFull.skip > 0);
+    CHECK(bFull.notice > 0);
+    CHECK(bFull.buffering > 0);
+    // Honest: if full UI exceeds 48, report — do NOT pretend it fits.
+    if (!bFull.fitsProductList) {
+        std::fprintf(stderr,
+                     "UI_BUDGET_NEED max_cmds_ge=%d (product kMaxCmds=%d) — raise list depth; "
+                     "do not trim UI\n",
+                     bFull.totalUncapped, kMaxCmds);
+    }
+    // Core-only product path must still fit today.
+    CHECK(bCore.fitsProductList);
+
+    // PLAYING worst title + full bar fill
+    BuildArgs play;
+    play.state = misterplex::PlaybackOverlayState::Playing;
+    play.positionMs = 3599999;
+    play.durationMs = 3600000;
+    play.title = "0123456789012345678"; // 19
+    HudBudget bPlay = countHudBudget(play);
+    std::fprintf(stderr, "UI_BUDGET playing_worst total=%d fits48=%d\n", bPlay.totalUncapped,
+                 bPlay.fitsProductList ? 1 : 0);
+    CHECK(bPlay.fitsProductList);
+
+    // Volume: not a drawn player-HUD element today (no glyph/rect). Residual: N/A.
+}
+
 static void checkStoppedHudHasBarAndState() {
     using namespace misterplex::plex_chrome_cmds;
     BuildArgs a;
@@ -103,6 +202,9 @@ static void checkZeroPerPixelArmWhenLiveSource() {
     std::fclose(f);
     // presentCleanFrame bake only under !chromePlaneLive
     CHECK(src.find("if (!dirty.empty() && !chromePlaneLive())") != std::string::npos);
+    // Must NOT bake when live (inverted gate is the red-twin shape)
+    CHECK(src.find("if (!dirty.empty() && chromePlaneLive())") == std::string::npos);
+    CHECK(src.find("if (dirty.empty() || chromePlaneLive())") == std::string::npos);
     // idle early-out with no paint
     CHECK(src.find("idle fabric plane=1 skip ALL ARM paint") != std::string::npos);
     // Must not have "skip DDR" only (old half-offload) without ALL ARM paint
@@ -110,8 +212,42 @@ static void checkZeroPerPixelArmWhenLiveSource() {
     // Progress path must NOT republish PLXC every N frames (state-change only).
     CHECK(src.find("publishPlxcHud(PlaybackOverlayState::Playing, tms, durationMs") == std::string::npos);
     CHECK(src.find("PLXC is state-change only") != std::string::npos);
+    // publishPlxcHud is semantic list only
+    CHECK(src.find("Semantic list only — never pixels") != std::string::npos);
+    CHECK(src.find("writeChromeCommandList") != std::string::npos);
+    // Must not write RGB into chrome path
+    CHECK(src.find("writeChromePixels") == std::string::npos);
+    CHECK(src.find("bakeChromeRgb") == std::string::npos);
 }
 
+// writeChromeCommandList must touch mailbox list words, not frame RGB.
+static void checkWriteChromeIsListNotPixels() {
+    FILE* f = std::fopen("arm/misterplexd/fpga_spi.cpp", "r");
+    CHECK(f != nullptr);
+    if (!f)
+        return;
+    std::string src;
+    char buf[4096];
+    while (std::fgets(buf, sizeof(buf), f))
+        src += buf;
+    std::fclose(f);
+    CHECK(src.find("writeChromeCommandList") != std::string::npos);
+    // Locates PLXC ctrl + list region — not a present/RGB blit
+    CHECK(src.find("kPlxcOffset") != std::string::npos ||
+          src.find("PlxcOffset") != std::string::npos ||
+          src.find("0x130") != std::string::npos);
+    // Must not call blit inside writeChromeCommandList body — crude but catches
+    // a naive "just paint the HUD into DDR" rewrite of the function.
+    const auto pos = src.find("bool FpgaSpi::writeChromeCommandList");
+    CHECK(pos != std::string::npos);
+    if (pos != std::string::npos) {
+        const auto end = src.find("\nbool FpgaSpi::", pos + 1);
+        const std::string body = src.substr(pos, end == std::string::npos ? 4000 : end - pos);
+        CHECK(body.find("blitRgb") == std::string::npos);
+        CHECK(body.find("renderRgb") == std::string::npos);
+        CHECK(body.find("writeFrame") == std::string::npos);
+    }
+}
 // 720p-first: default BuildArgs and a full STOPPED HUD must fit the list.
 static void check720pHudBudget() {
     using namespace misterplex::plex_chrome_cmds;
@@ -257,8 +393,11 @@ static void checkCodedSizeRejectedForChrome() {
 int main() {
     checkPackRoundtrip();
     checkNoPixelBakeWhenLive();
+    checkRedTwinArmPixelBakeCaught();
     checkZeroPerPixelArmWhenLiveSource();
+    checkWriteChromeIsListNotPixels();
     checkStoppedHudHasBarAndState();
+    checkPlayerUiCommandBudget();
     check720pHudBudget();
     checkPaintDomains();
     checkHudIsOutputNotCoded();

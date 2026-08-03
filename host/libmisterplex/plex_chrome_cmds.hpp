@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <vector>
 
@@ -194,6 +195,20 @@ inline uint64_t packPlxcCtrl(bool enable, unsigned cmdCount, uint16_t seq) {
     return w;
 }
 
+// appendText: product path caps at kMaxCmds so a runaway string cannot overflow
+// the list. Inventory/budget accounting uses appendTextUncapped so a too-small
+// MAX_CMDS is *visible* rather than silently trimmed UI (scope-shaping ban).
+inline void appendTextUncapped(std::vector<uint64_t>& out, int x, int y, const char* text,
+                               int scale) {
+    if (!text)
+        return;
+    const int adv = kFontAdvance * scale;
+    for (const char* p = text; *p; ++p) {
+        out.push_back(packGlyph(static_cast<uint16_t>(x), static_cast<uint16_t>(y), *p));
+        x += adv;
+    }
+}
+
 inline void appendText(std::vector<uint64_t>& out, int x, int y, const char* text, int scale) {
     if (!text)
         return;
@@ -231,18 +246,43 @@ inline const char* stateLabel(PlaybackOverlayState st) {
 
 // Build the live HUD the parent captured: state + title + two timecodes + bar.
 // Coordinates are OUTPUT pixels; scale from HDMI_H.
+// Optional skip/notice/buffering are first-class UI needs — counted in budget
+// (not silently dropped). Product list still caps at kMaxCmds at the end so RTL
+// is never overfed; inventory API reports the uncapped total.
 struct BuildArgs {
     int outW = kTargetOutW; // 1280 — 720p-first
     int outH = kTargetOutH; // 720
     PlaybackOverlayState state = PlaybackOverlayState::Stopped;
     int64_t positionMs = 0;
     int64_t durationMs = 0;
-    const char* title = nullptr; // optional, truncated
+    const char* title = nullptr; // optional, truncated to 19 chars
+    int64_t skipDeltaMs = 0;     // 0 = no skip flash
+    const char* notice = nullptr; // optional banner (max 31)
+    bool buffering = false;      // "BUFFERING" chip near top
 };
 
-inline std::vector<uint64_t> buildPlaybackHud(const BuildArgs& a) {
+// Per-element command counts (uncapped). totalUncapped is what fabric needs.
+struct HudBudget {
+    int panel = 0;
+    int stateGlyphs = 0;
+    int titleGlyphs = 0;
+    int timeGlyphs = 0;
+    int track = 0;
+    int fillChunks = 0;
+    int skip = 0;       // box + glyphs
+    int notice = 0;     // box + glyphs
+    int buffering = 0;  // box + glyphs
+    int totalUncapped = 0;
+    int maxCmds = kMaxCmds;
+    bool fitsProductList = true;
+};
+
+inline HudBudget countHudBudget(const BuildArgs& a); // defined after builder
+
+// Uncapped builder — used for inventory and for product (then truncated).
+inline std::vector<uint64_t> buildPlaybackHudUncapped(const BuildArgs& a) {
     std::vector<uint64_t> cmds;
-    cmds.reserve(40);
+    cmds.reserve(96);
     const int scale = bodyScale(a.outH);
     const int margin = std::max(8, a.outW / 32);
     const int ph = std::min(72 * scale / 2, std::max(54, a.outH / 4));
@@ -256,16 +296,15 @@ inline std::vector<uint64_t> buildPlaybackHud(const BuildArgs& a) {
 
     const int labelY = py + 10;
     const int textX = px + 16;
-    appendText(cmds, textX, labelY, stateLabel(a.state), scale);
+    appendTextUncapped(cmds, textX, labelY, stateLabel(a.state), scale);
 
     if (a.title && a.title[0]) {
         char tbuf[20];
         std::snprintf(tbuf, sizeof(tbuf), "%s", a.title);
-        // place title to the right of state
         const int titleX = textX + static_cast<int>(std::strlen(stateLabel(a.state))) *
                                        kFontAdvance * scale +
                            16;
-        appendText(cmds, titleX, labelY, tbuf, scale);
+        appendTextUncapped(cmds, titleX, labelY, tbuf, scale);
     }
 
     char elapsed[32];
@@ -273,16 +312,15 @@ inline std::vector<uint64_t> buildPlaybackHud(const BuildArgs& a) {
     formatTime(a.positionMs, elapsed);
     formatTime(a.durationMs, total);
     const int timeY = py + 34;
-    appendText(cmds, px + 16, timeY, elapsed, scale);
+    appendTextUncapped(cmds, px + 16, timeY, elapsed, scale);
     const int totalW = static_cast<int>(std::strlen(total)) * kFontAdvance * scale;
-    appendText(cmds, px + pw - 16 - totalW, timeY, total, scale);
+    appendTextUncapped(cmds, px + pw - 16 - totalW, timeY, total, scale);
 
-    // Progress track + fill (palette rects, w/h <= 255 → clamp segments if needed)
+    // Progress track + fill
     const int barX = px + 16;
     const int barY = py + ph - 18;
     const int barW = pw - 32;
     const int barH = 6;
-    // Track: may be wide — emit as RECT (dark panel is OK) or chunked pal
     cmds.push_back(packRect(static_cast<uint16_t>(barX), static_cast<uint16_t>(barY),
                             static_cast<uint16_t>(barW), static_cast<uint16_t>(barH)));
     int fillW = 0;
@@ -292,10 +330,9 @@ inline std::vector<uint64_t> buildPlaybackHud(const BuildArgs& a) {
                                  a.durationMs);
     fillW = std::max(0, std::min(barW, fillW));
     if (fillW > 0) {
-        // Amber fill via RECT_PAL chunks of <=255
         int x = barX;
         int remain = fillW;
-        while (remain > 0 && cmds.size() < static_cast<size_t>(kMaxCmds)) {
+        while (remain > 0) {
             const int chunk = std::min(255, remain);
             cmds.push_back(packRectPal(static_cast<uint16_t>(x), static_cast<uint16_t>(barY),
                                        static_cast<uint8_t>(chunk),
@@ -305,11 +342,129 @@ inline std::vector<uint64_t> buildPlaybackHud(const BuildArgs& a) {
         }
     }
 
+    // Skip flash (center): box + "NNs >>" / "<< NNs"
+    if (a.skipDeltaMs != 0) {
+        char sbuf[24];
+        const int64_t sec =
+            std::max<int64_t>(1, std::llabs(a.skipDeltaMs) / 1000);
+        if (a.skipDeltaMs >= 0)
+            std::snprintf(sbuf, sizeof(sbuf), "%llds >>", static_cast<long long>(sec));
+        else
+            std::snprintf(sbuf, sizeof(sbuf), "<< %llds", static_cast<long long>(sec));
+        const int tw = static_cast<int>(std::strlen(sbuf)) * kFontAdvance * scale;
+        const int boxW = tw + 24;
+        const int boxH = 12 * scale;
+        const int boxX = (a.outW - boxW) / 2;
+        const int boxY = std::max(8, a.outH / 2 - boxH);
+        cmds.push_back(packRect(static_cast<uint16_t>(boxX), static_cast<uint16_t>(boxY),
+                                static_cast<uint16_t>(boxW), static_cast<uint16_t>(boxH)));
+        appendTextUncapped(cmds, boxX + 12, boxY + 4, sbuf, scale);
+    }
+
+    // Notice banner (upper third)
+    if (a.notice && a.notice[0]) {
+        char nbuf[32];
+        std::snprintf(nbuf, sizeof(nbuf), "%s", a.notice);
+        const int tw = static_cast<int>(std::strlen(nbuf)) * kFontAdvance * scale;
+        const int boxW = std::min(a.outW - 16, tw + 24);
+        const int boxH = 12 * scale;
+        const int boxX = (a.outW - boxW) / 2;
+        const int boxY = std::max(8, a.outH / 5);
+        cmds.push_back(packRect(static_cast<uint16_t>(boxX), static_cast<uint16_t>(boxY),
+                                static_cast<uint16_t>(boxW), static_cast<uint16_t>(boxH)));
+        appendTextUncapped(cmds, boxX + 12, boxY + 4, nbuf, scale);
+    }
+
+    // Buffering chip (top-left)
+    if (a.buffering) {
+        const char* btxt = "BUFFERING";
+        const int tw = static_cast<int>(std::strlen(btxt)) * kFontAdvance * scale;
+        const int boxW = tw + 16;
+        const int boxH = 12 * scale;
+        const int boxX = margin;
+        const int boxY = margin;
+        cmds.push_back(packRect(static_cast<uint16_t>(boxX), static_cast<uint16_t>(boxY),
+                                static_cast<uint16_t>(boxW), static_cast<uint16_t>(boxH)));
+        appendTextUncapped(cmds, boxX + 8, boxY + 4, btxt, scale);
+    }
+
+    return cmds;
+}
+
+inline std::vector<uint64_t> buildPlaybackHud(const BuildArgs& a) {
+    auto cmds = buildPlaybackHudUncapped(a);
+    // Product feed to RTL — never exceed list depth. Truncation is a *visible*
+    // residual when totalUncapped > kMaxCmds (see countHudBudget / docs).
     if (cmds.size() > static_cast<size_t>(kMaxCmds))
         cmds.resize(static_cast<size_t>(kMaxCmds));
     return cmds;
 }
 
+inline HudBudget countHudBudget(const BuildArgs& a) {
+    HudBudget b;
+    b.maxCmds = kMaxCmds;
+    // Element-wise recount so the inventory is legible (not just total).
+    BuildArgs base = a;
+    base.skipDeltaMs = 0;
+    base.notice = nullptr;
+    base.buffering = false;
+    auto core = buildPlaybackHudUncapped(base);
+    int glyphs = 0, rects = 0, pals = 0;
+    for (uint64_t w : core) {
+        switch (w & 0xFF) {
+        case 1: ++rects; break;
+        case 2: ++glyphs; break;
+        case 3: ++pals; break;
+        }
+    }
+    b.panel = 1;
+    b.track = 1;
+    b.fillChunks = pals;
+    // state glyphs from label length
+    b.stateGlyphs = static_cast<int>(std::strlen(stateLabel(a.state)));
+    if (a.title && a.title[0]) {
+        char tbuf[20];
+        std::snprintf(tbuf, sizeof(tbuf), "%s", a.title);
+        b.titleGlyphs = static_cast<int>(std::strlen(tbuf));
+    }
+    char elapsed[32], total[32];
+    formatTime(a.positionMs, elapsed);
+    formatTime(a.durationMs, total);
+    b.timeGlyphs = static_cast<int>(std::strlen(elapsed) + std::strlen(total));
+    // Transient layers: delta vs same core with only that layer enabled.
+    BuildArgs coreOff = a;
+    coreOff.skipDeltaMs = 0;
+    coreOff.notice = nullptr;
+    coreOff.buffering = false;
+    const int coreN = static_cast<int>(buildPlaybackHudUncapped(coreOff).size());
+    if (a.skipDeltaMs != 0) {
+        BuildArgs s = coreOff;
+        s.skipDeltaMs = a.skipDeltaMs;
+        b.skip = static_cast<int>(buildPlaybackHudUncapped(s).size()) - coreN;
+        if (b.skip < 0)
+            b.skip = 0;
+    }
+    if (a.notice && a.notice[0]) {
+        BuildArgs n = coreOff;
+        n.notice = a.notice;
+        b.notice = static_cast<int>(buildPlaybackHudUncapped(n).size()) - coreN;
+        if (b.notice < 0)
+            b.notice = 0;
+    }
+    if (a.buffering) {
+        BuildArgs bf = coreOff;
+        bf.buffering = true;
+        b.buffering = static_cast<int>(buildPlaybackHudUncapped(bf).size()) - coreN;
+        if (b.buffering < 0)
+            b.buffering = 0;
+    }
+    const auto all = buildPlaybackHudUncapped(a);
+    b.totalUncapped = static_cast<int>(all.size());
+    b.fitsProductList = b.totalUncapped <= kMaxCmds;
+    (void)glyphs;
+    (void)rects;
+    return b;
+}
 // Fail-closed live gate.
 inline bool chromePlaneLive(bool confWants, bool hwPresent) {
     return confWants && hwPresent;

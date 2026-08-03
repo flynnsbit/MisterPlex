@@ -22,8 +22,21 @@ pathological `2,2,2,4` is an empirical question, not taste.
 | 24 through 30 Hz core → 60 glass | `2,2,2,4,…` | `PATH_2_2_2_4` |
 | No content change | one long hold | `FROZEN` / `STATIC_FIELD` |
 
-`JUDDER` is residual vs nearest **clean** telecine (lower better). Pathological
-ranks worse than clean. **Static is judder=0 with an explicit flag** — a naive
+`JUDDER` is **conformance to the pattern's own clean class** (lower better).
+Clean 3:2 and clean 2:1 both score ~0 — it catches pathology, it does **not**
+rank 24 vs 30. For ranking use absolute hold irregularity:
+
+| Metric | CLEAN_2_1 | CLEAN_3_2 | PATH_2_2_2_4 |
+|--------|-----------|-----------|--------------|
+| HOLD_MEAN | 2.0 | 2.5 | 2.5 |
+| HOLD_STDEV | 0.0 | 0.5 | ≈0.866 |
+| HOLD_MAXDEV | 0.0 | 0.5 | 1.5 |
+
+Ordering assertion (red-twin): `HOLD_STDEV/MAXDEV`: 2_1 < 3_2 < 2224.
+Both families share mean 2.5 and 10 frames / 4 holds — **ratio metrics tie
+them; only the distribution separates them.**
+
+**Static is judder=0 with an explicit FROZEN flag** — a naive
 “every frame is a repeat ⇒ infinite judder” detector is a FAIL of the harness.
 
 ## Capture discipline

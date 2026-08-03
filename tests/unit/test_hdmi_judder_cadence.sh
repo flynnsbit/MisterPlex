@@ -61,23 +61,49 @@ run_expect_fail "path_not_21" "2_2_2_4" "CLEAN_2_1"
 run_expect_fail "static_not_21" "static" "CLEAN_2_1"
 run_expect_fail "32_not_21" "3_2" "CLEAN_2_1"
 
-# Scalar ranking: PATH judder must be > CLEAN judder (when both scored)
-j32="$(python3 "$PY" --synthetic 3_2 --cycles 16 2>/dev/null | awk -F= '/^JUDDER=/{print $2}')"
-j21="$(python3 "$PY" --synthetic 2_1 --cycles 24 2>/dev/null | awk -F= '/^JUDDER=/{print $2}')"
-jpath="$(python3 "$PY" --synthetic 2_2_2_4 --cycles 12 2>/dev/null | awk -F= '/^JUDDER=/{print $2}')"
-jstat="$(python3 "$PY" --synthetic static --cycles 20 2>/dev/null | awk -F= '/^JUDDER=/{print $2}')"
+# Scalar ranking:
+#   JUDDER = conformance (ties CLEAN_3_2 and CLEAN_2_1 at ~0; path higher)
+#   HOLD_STDEV / HOLD_MAXDEV = absolute irregularity → 2_1 < 3_2 < 2224
+parse_metrics() {
+  local pat="$1"
+  python3 "$PY" --synthetic "$pat" --cycles 16 2>/dev/null
+}
+m21="$(parse_metrics 2_1)"
+m32="$(parse_metrics 3_2)"
+mpath="$(parse_metrics 2_2_2_4)"
+mstat="$(parse_metrics static)"
+echo "$m21" | sed 's/^/  [m21] /'
+echo "$m32" | sed 's/^/  [m32] /'
+echo "$mpath" | sed 's/^/  [mpath] /'
+j32="$(echo "$m32" | awk -F= '/^JUDDER=/{print $2}')"
+j21="$(echo "$m21" | awk -F= '/^JUDDER=/{print $2}')"
+jpath="$(echo "$mpath" | awk -F= '/^JUDDER=/{print $2}')"
+jstat="$(echo "$mstat" | awk -F= '/^JUDDER=/{print $2}')"
+s21="$(echo "$m21" | awk -F= '/^HOLD_STDEV=/{print $2}')"
+s32="$(echo "$m32" | awk -F= '/^HOLD_STDEV=/{print $2}')"
+spath="$(echo "$mpath" | awk -F= '/^HOLD_STDEV=/{print $2}')"
+d21="$(echo "$m21" | awk -F= '/^HOLD_MAXDEV=/{print $2}')"
+d32="$(echo "$m32" | awk -F= '/^HOLD_MAXDEV=/{print $2}')"
+dpath="$(echo "$mpath" | awk -F= '/^HOLD_MAXDEV=/{print $2}')"
 echo "JUDDER_3_2=$j32 JUDDER_2_1=$j21 JUDDER_PATH=$jpath JUDDER_STATIC=$jstat"
-python3 - "$j32" "$j21" "$jpath" "$jstat" <<'PY' || FAILS=$((FAILS + 1))
+echo "HOLD_STDEV_2_1=$s21 HOLD_STDEV_3_2=$s32 HOLD_STDEV_PATH=$spath"
+echo "HOLD_MAXDEV_2_1=$d21 HOLD_MAXDEV_3_2=$d32 HOLD_MAXDEV_PATH=$dpath"
+python3 - "$j32" "$j21" "$jpath" "$jstat" "$s21" "$s32" "$spath" "$d21" "$d32" "$dpath" <<'PY' || FAILS=$((FAILS + 1))
 import sys
-j32, j21, jpath, jstat = map(float, sys.argv[1:])
-# Clean patterns near zero
-assert j32 < 0.05, j32
-assert j21 < 0.05, j21
-# Pathological ranks worse than either clean
+j32, j21, jpath, jstat, s21, s32, spath, d21, d32, dpath = map(float, sys.argv[1:])
+# Conformance: cleans ~0; path worse
+assert j32 < 0.05 and j21 < 0.05, (j32, j21)
 assert jpath > j32 and jpath > j21, (jpath, j32, j21)
-# Static must not explode
 assert jstat == 0.0, jstat
-print("OK judder_scalar_order")
+# Absolute irregularity ordering (the decision metric): 2_1 < 3_2 < 2224
+assert s21 < s32 < spath, (s21, s32, spath)
+assert d21 < d32 < dpath, (d21, d32, dpath)
+# Exact synthetic expectations (population stats)
+assert abs(s21 - 0.0) < 1e-9 and abs(d21 - 0.0) < 1e-9
+assert abs(s32 - 0.5) < 1e-9 and abs(d32 - 0.5) < 1e-9
+assert abs(spath - (0.75 ** 0.5)) < 1e-6  # stdev({2,2,2,4}) = sqrt(0.75)≈0.866
+assert abs(dpath - 1.5) < 1e-9
+print("OK judder_conformance_and_hold_irregularity_order")
 PY
 
 # Degenerate: too few frames via empty dir
