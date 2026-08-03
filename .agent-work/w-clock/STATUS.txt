@@ -1,6 +1,5 @@
 w-clock STATUS
 ==============
-CRITICAL PATH: clk_pix PIX24=29.7 (outclk_3) — PLL NOT applied
-Scaffolded: rate_match, sync sideband, clk_pix port, CLK_VIDEO mux (macro OFF)
-Default OFF: bit-identical path when PRESENT_* unset
-Near-term product: 960x540→720p OUTPUT; clk_pix gates true 24 Hz glass
+PRODUCT: 960x540 ARM (34.50 ms, +7.16) → fabric 1280x720 glass
+GATE: clk_pix PIX24=29.7 outclk_3 — scaffolded, PLL NOT applied
+Macros OFF; rate_match+sync sideband ready under PRESENT_CLK_PIX_PLL

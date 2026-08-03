@@ -8,9 +8,18 @@ Parent direction (2026-08-03): design `clk_pix` (~29.7 MHz 720p24 CEA, 74.25 MHz
 
 ### Output vs source (parent measurement — do not conflate)
 
-Parent 300-frame probes (device clean): ARM **decode+copy** of true 1280×720 source **FAILS** (1500k total 48.62 / 2600k 50.44 vs 41.667). 624×480 product **PASS** with ~20.6 ms headroom. Fabric raster and source resolution are **independent**: near-term is **720p output** (native 1280×720 glass from an ARM-affordable source, w-scaler upscale) — **not** “720p source.” DMA is the remaining path to true 720p source (w-path).
+Parent 300-frame probes (device clean): ARM **decode+copy** of true 1280×720 source **FAILS**. Fabric raster and source resolution are **independent**.
 
-**`clk_pix` is still required for true CEA refresh on glass** either way — pixel clock sizes the **output** raster (1650×750×fps), not the decoded source size.
+**Standing product target (parent, all measured, includes sws/rawvideo):**
+```
+PMS  → Constrained Baseline 960×540 (videoProfile=baseline pinned)
+ARM  → decode+sws+copy = 26.08 + 8.42 = 34.50 ms vs 41.667  margin +7.16 PASS
+FABRIC → upscale 960×540 → native 1280×720 glass (w-scaler 1.333×)
+```
+Prior decode-only 960 margin +10.49 was optimistic by 3.33 ms (parent corrected).  
+ARM downscale from fetched 720p is **FAIL** (51.78–60.20 ms class) — not a fallback.
+
+**`clk_pix` remains the gate for true CEA 24 Hz on glass** — sizes the **output** raster (1650×750×fps), not the source. Without PIX24 @29.7, core max is ~16.16 Hz at CEA totals.
 
 ---
 
