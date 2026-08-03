@@ -70,6 +70,13 @@ swap_applied_pulse   // same edge as bank flip
 Product polarity, fstart-qualify vs mid-active ready, mode-exit hold, app_win map —
 these remain necessary but **insufficient** for generation↔bank atomicity.
 
+## Integrated NBA lag (rd-duck) — FIXED on this branch (not full B20 close)
+`frame_start` NBA at v_wrap meant app/bank promoted at hc=1 while beam had latched OLD DE
+for the whole frame; live-vs-app hold cleared immediately → island. Fix: swap-armed
+beam feed-forward + `beam_disp_seq` hold. Evidence: `test_b20_integrated_app_beam.sh`
+true rc=0 (GREEN FF / GREEN hold-cover / RED island). See `B20_INTEGRATED_NBA_LAG_FIX.md`.
+**Still not B20_CLOSED** — generation↔bank snapshot atomic remains OPEN above.
+
 ## Cross-link: B9 DAR black release (w-scaler)
 rd-duck (B9 still unsafe): `sys_top` ties `bank_gen=0`; `disp_matches_live` is DAR-only;
 release is `disp_match && gen_after_hold` without bank. **Same** `store_applied_seq` must

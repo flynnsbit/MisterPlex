@@ -1,4 +1,20 @@
-w-clock STATUS tip=50cc3e11
-C7 port contract + ascal blanking DONE.
-V705 STA UNKNOWN. B2 re-scope note for fitgate.
-NO fit. NO device.
+lane: w-clock
+todo: p720-clock
+branch: w-clock-bump
+HEAD: (see git rev-parse after commit)
+updated: 2026-08-03
+
+## Latest: B20 integrated NBA lag (rd-duck) FIXED; B20_CLOSED=false
+- MEASURED: frame_start NBA at v_wrap → app/bank @ hc=1, beam OLD DE full frame
+- FIX: b20_swap_armed feed-forward + beam_disp_seq hold
+- TB: tests/rtl/b20_integrated_app_beam_tb.sv (prior hold_tb blind)
+- test_b20_integrated_app_beam.sh true rc=0 (FF / hold-cover / RED island)
+- PLXG atomic still OPEN (live content_*); honesty gate still PASS OPEN
+
+## Fit kit primary unchanged
+- PLL 30 MHz 3:1 (24 MHz BLOCKER CDC 4:15)
+- No PLL applied, no Quartus fit
+
+## Ladder
+- 720p present modules: L0 on main@ad928cb1 (pinned earlier)
+- This branch: present_core / beam comment / tests L0→branch only

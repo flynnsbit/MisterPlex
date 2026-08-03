@@ -34,10 +34,14 @@ fi
 grep -q 'app_win_enable ? app_content_x0' "$CORE" || fail "app_win_x0 not consumed"
 grep -q 'app_win_enable ? app_content_y0' "$CORE" || fail "app_win_y0 not consumed"
 grep -q 'store_x_sum' "$CORE" || fail "no windowed store_x_sum"
-grep -q 'beam_src_w = app_content_w' "$CORE" || fail "beam not on app w"
+# Beam: app shadow steady-state + swap-armed feed-forward (NBA lag fix)
+grep -q 'b20_swap_armed ? content_w : app_content_w' "$CORE" || fail "beam missing armed feed-forward"
+grep -q 'beam_disp_seq' "$CORE" || fail "no beam_disp_seq ACK"
+grep -q 'b20_beam_hold' "$CORE" || fail "no b20_beam_hold"
 grep -q 'content_fps(app_content_fps)' "$CORE" || fail "cadence not on app fps"
 grep -q 'FAULT_B20_VISUAL_FREE_RUN' "$CORE" || fail "no RED twin"
-echo "OK structure product-polarity + fstart-ack + mode-exit + window"
+grep -q 'FAULT_B20_NO_BEAM_FEEDFORWARD' "$CORE" || fail "no NBA-lag red twin"
+echo "OK structure product-polarity + fstart-ack + mode-exit + window + beam NBA"
 
 # Product path models: use_fs=0 (Plex tie)
 awk '

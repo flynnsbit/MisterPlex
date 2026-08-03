@@ -12,14 +12,19 @@
     "1_mid_active_ready": "visual_swap_ack = frame_start && swap_pending && pending_ready",
     "2_mode_exit_idle": "idle only if !geom_live_valid; hold ignores geom_enable",
     "3_window_consumed": "store_x/y += app_content_x0/y0 when app_win_enable",
-    "4_product_polarity": "b20_ext_store_path=!use_frame_store; free/hold/idle arm on ext path"
+    "4_product_polarity": "b20_ext_store_path=!use_frame_store; free/hold/idle arm on ext path",
+    "5_beam_nba_lag": "b20_swap_armed feed-forward beam_src + beam_disp_seq ACK hold (not live-vs-app alone)"
   },
   "present_core_policy": {
     "apply_when": "visual_swap_ack OR force_bars(use_frame_store) OR (ext_path && !swap_pending && !geom_live_valid)",
-    "blackout": "b20_visual_hold on ext_path && geom_live_valid && seq mismatch",
+    "blackout": "b20_visual_hold = (live!=app) | (beam_disp_seq!=app_live_seq)",
     "window_map": "identity + applied origin when app_win_enable",
-    "beam_de_apply": "1 (app_* already two-phase; no fstart pulse on rt_de)"
+    "beam_de_apply": "1; beam_src = armed? content_* : app_*; no fstart pulse on rt_de",
+    "beam_nba_note": "frame_start is NBA at v_wrap; app/bank see it hc=1 — feed-forward makes v_wrap latch NEW"
   },
+  "integrated_tb": "tests/rtl/b20_integrated_app_beam_tb.sv",
+  "integrated_gate": "tests/unit/test_b20_integrated_app_beam.sh",
+  "b20_beam_de_hold_tb_blind_to_app_nba": true,
   "still_open_owners": {
     "present_geom_latch": "w-mem",
     "Plex.sv_DAR": "w-osd",
@@ -31,10 +36,14 @@
   },
   "red_twins": [
     "FAULT_B20_BEAM_FREE_RUN",
-    "FAULT_B20_VISUAL_FREE_RUN"
+    "FAULT_B20_VISUAL_FREE_RUN",
+    "FAULT_B20_NO_BEAM_FEEDFORWARD",
+    "FAULT_B20_NO_BEAM_HOLD"
   ],
   "gate": "tests/unit/test_b20_visual_two_phase.sh",
   "B20_CLOSED": false,
+  "integrated_swap_atomic": true,
+  "integrated_swap_note": "feed-forward+beam_disp closes one-frame DE/bank NBA lag; PLXG generation atomic still OPEN",
   "atomic_plxg_bank_coupling": false,
   "rd_duck_atomic_blocker": {
     "summary": "app_* samples LIVE content_* at visual_swap_ack; doorbellSeq independent of PLXG; no store_applied tuple",

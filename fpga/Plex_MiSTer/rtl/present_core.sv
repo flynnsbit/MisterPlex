@@ -259,6 +259,9 @@ module present_core #(
 	// Exact store swap qualifier (fstart-qualified). Mid-active pending_ready
 	// alone must NOT promote app shadows or clear hold.
 	wire visual_swap_ack = frame_start && swap_pending && store_pending_ready;
+	// Armed level (no fstart): pending bank+geom ready to commit at next fstart.
+	// Used to feed-forward beam DE so v_wrap latches NEW before fstart NBA ack.
+	wire b20_swap_armed  = b20_ext_store_path && swap_pending && store_pending_ready;
 	// Free-run only when force-bars (B20 not in control of external bank).
 	wire beam_de_free_g  = !b20_ext_store_path; // == use_frame_store
 	// True idle only on product path with no owned PLXG generation.
@@ -274,6 +277,7 @@ module present_core #(
 	assign store_pending_ready = 1'b1;
 	wire visual_swap_ack = 1'b0;
 	wire b20_ext_store_path = 1'b0;
+	wire b20_swap_armed = 1'b0;
 `endif
 
 	// B20 OPEN (rd-duck atomic blocker): app_* samples LIVE mux/latch outputs,
@@ -308,22 +312,97 @@ module present_core #(
 		end
 	end
 
+	// ---- B20 beam-applied ACK (rd-duck integrated NBA lag) ----
+	// present_beam_content_de raises frame_start via NBA at v_wrap, so store/app
+	// observers see it next clk (hc already 1). Beam samples rt_* at v_wrap.
+	// If rt_* were only app_*, DE stays OLD for the whole post-swap frame while
+	// app/bank flip at hc=1 and live-vs-app hold clears → island (NEW bank in
+	// OLD DE). beam_src_* (BEAM_960) feed-forwards the armed candidate at v_wrap;
+	// beam_disp_seq captures what DE the beam latched (src delayed into fstart).
+	// Hold black while app epoch != beam-displayed epoch even if live==app.
+`ifdef PRESENT_BEAM_960
+`ifdef FAULT_B20_BEAM_FREE_RUN
+	wire [15:0] beam_src_seq   = geom_live_seq;
+	wire        beam_src_valid = geom_live_valid;
+`else
+`ifdef FAULT_B20_VISUAL_FREE_RUN
+	wire [15:0] beam_src_seq   = geom_live_seq;
+	wire        beam_src_valid = geom_live_valid;
+`else
+`ifdef FAULT_B20_NO_BEAM_FEEDFORWARD
+	// RED: app-only beam src (repro one-frame island without beam hold).
+	wire [15:0] beam_src_seq   = app_live_seq;
+	wire        beam_src_valid = app_live_valid;
+`else
+	wire [15:0] beam_src_seq   = b20_swap_armed ? geom_live_seq : app_live_seq;
+	wire        beam_src_valid = b20_swap_armed ? geom_live_valid : app_live_valid;
+`endif
+`endif
+`endif
+`else
+	// Legacy fixed DE: raster does not carry app geometry; treat beam==app.
+	wire [15:0] beam_src_seq   = app_live_seq;
+	wire        beam_src_valid = app_live_valid;
+`endif
+
+	reg [15:0] beam_src_seq_d;
+	reg        beam_src_valid_d;
+	reg [15:0] beam_disp_seq;
+	reg        beam_disp_valid;
+	always @(posedge clk) begin
+		if (reset) begin
+			beam_src_seq_d   <= 16'd0;
+			beam_src_valid_d <= 1'b0;
+			beam_disp_seq    <= 16'd0;
+			beam_disp_valid  <= 1'b0;
+		end else begin
+			// Delay src into the registered frame_start cycle (= cycle after v_wrap).
+			beam_src_seq_d   <= beam_src_seq;
+			beam_src_valid_d <= beam_src_valid;
+			if (frame_start) begin
+				beam_disp_seq   <= beam_src_seq_d;
+				beam_disp_valid <= beam_src_valid_d;
+			end
+		end
+	end
+
+	wire b20_beam_hold =
+`ifdef DDR_FRAME_STORE
+		b20_ext_store_path && app_live_valid && beam_disp_valid &&
+		(beam_disp_seq != app_live_seq);
+`else
+		1'b0;
+`endif
+
 `ifdef FAULT_B20_VISUAL_FREE_RUN
 	assign b20_visual_hold = 1'b0;
 `else
+`ifdef FAULT_B20_NO_BEAM_HOLD
+	// RED: live-vs-app only (clears at hc=1) — island class with no feed-forward.
+	assign b20_visual_hold =
 `ifdef DDR_FRAME_STORE
-	// Hold on product external path while owned live epoch != applied.
+		b20_ext_store_path && geom_live_valid && (geom_live_seq != app_live_seq);
+`else
+		1'b0;
+`endif
+`else
+`ifdef DDR_FRAME_STORE
+	// Hold while live!=app OR beam DE epoch lags app (post-fstart NBA window).
 	// Includes mode-exit (!geom_enable) with live_valid still asserted.
 	// Must NOT key off use_frame_store==1 (that is force-bars, not playback).
-	assign b20_visual_hold = b20_ext_store_path && geom_live_valid &&
-		(geom_live_seq != app_live_seq);
+	assign b20_visual_hold =
+		(b20_ext_store_path && geom_live_valid && (geom_live_seq != app_live_seq))
+		| b20_beam_hold;
 `else
 	assign b20_visual_hold = 1'b0;
+`endif
 `endif
 `endif
 	// Keep swap-ack visible to anti-DCE / tests.
 	wire _keep_visual_swap_ack = visual_swap_ack;
 	wire _keep_b20_ext_path    = b20_ext_store_path;
+	wire _keep_b20_swap_armed  = b20_swap_armed;
+	wire _keep_beam_disp       = beam_disp_valid | (|beam_disp_seq) | b20_beam_hold;
 
 `ifdef PRESENT_BEAM_960
 	// =====================================================================
@@ -359,7 +438,9 @@ module present_core #(
 
 	// Clamp content into bank max; 0 → max-tier fallback (idle/bars only).
 	// Mux native→legacy disable must emit content 624×480, not 0 (island if 0→960).
-	// Product: DE from applied shadow. FAULT_B20_* free-run uses candidate (RED).
+	// Product: DE from applied shadow, with swap-armed feed-forward so v_wrap
+	// latches NEW the cycle before fstart promotes app_*/bank (rd-duck NBA lag).
+	// FAULT_B20_* free-run uses candidate always; NO_BEAM_FEEDFORWARD uses app only.
 `ifdef FAULT_B20_BEAM_FREE_RUN
 	wire [10:0] beam_src_w = content_w;
 	wire [10:0] beam_src_h = content_h;
@@ -368,8 +449,15 @@ module present_core #(
 	wire [10:0] beam_src_w = content_w;
 	wire [10:0] beam_src_h = content_h;
 `else
+`ifdef FAULT_B20_NO_BEAM_FEEDFORWARD
 	wire [10:0] beam_src_w = app_content_w;
 	wire [10:0] beam_src_h = app_content_h;
+`else
+	// Armed: present the tuple app_* will take on the impending fstart ack.
+	// Still LIVE content_* until w-mem store_applied_* bus lands (B20 OPEN).
+	wire [10:0] beam_src_w = b20_swap_armed ? content_w : app_content_w;
+	wire [10:0] beam_src_h = b20_swap_armed ? content_h : app_content_h;
+`endif
 `endif
 `endif
 	// Route B max-tier clamp (960×540): host/PLXG must not drive a 1280×720
@@ -390,10 +478,9 @@ module present_core #(
 	// Fixed line class @20 MHz: 1182 clocks/line. V_TOTAL selects 30 vs 24 Hz.
 	// beam_film_class from app_content_fps. B20 apply/hold is above (all paths).
 	wire [10:0] beam_htot_req = 11'd1182;
-	// DE source is app_* (two-phase). Values only change on visual_geom_apply;
-	// beam may latch every v_wrap (apply=1). Do NOT pulse-qualify with fstart
-	// here — fstart is 1-cycle and NBA-aligns with v_wrap such that a pulse
-	// apply misses the latch edge (hold forever). Gate lives in app_* update.
+	// DE apply always 1: gating is beam_src_* (app shadow + swap-armed feed-forward).
+	// Do NOT pulse-qualify with fstart — fstart is 1-cycle NBA after v_wrap so a
+	// pulse apply misses the latch edge (hold forever).
 	wire beam_de_apply = 1'b1;
 
 	// Bresenham V_TOTAL: exact long-run NTSC (default) or fixed under FAULT.

@@ -22,8 +22,10 @@ grep -q 'b20_visual_hold' "$CORE" || { echo "FAIL no b20_visual_hold"; exit 1; }
 grep -q 'b20_ext_store_path = !use_frame_store' "$CORE" || { echo "FAIL no product ext path polarity"; exit 1; }
 grep -q 'pending_ready' "$STORE" || { echo "FAIL store no pending_ready export"; exit 1; }
 grep -q 'assign pending_ready = pending_ready_s2' "$STORE" || { echo "FAIL assign"; exit 1; }
-# Product beam DE must come from applied shadow, not free-running content_w
-grep -q 'beam_src_w = app_content_w' "$CORE" || { echo "FAIL beam not on app shadow"; exit 1; }
+# Product beam DE: app shadow steady-state; armed feed-forward at swap (not free-run)
+grep -q 'b20_swap_armed ? content_w : app_content_w' "$CORE" || {
+  echo "FAIL beam missing app shadow + armed feed-forward"; exit 1; }
+grep -q 'beam_disp_seq' "$CORE" || { echo "FAIL no beam_disp_seq"; exit 1; }
 # Candidate free-run only under FAULT
 grep -q 'FAULT_B20_BEAM_FREE_RUN' "$CORE" || { echo "FAIL core no FAULT_B20"; exit 1; }
 echo "OK structure B20 beam/store/visual coupling"

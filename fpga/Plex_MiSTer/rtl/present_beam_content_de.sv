@@ -28,6 +28,12 @@
 //   V_TOTAL (Bresenham cadence) still updates every v_wrap (orthogonal).
 //   FAULT_B20_BEAM_FREE_RUN: force apply every wrap (red twin).
 //
+// B20 integrated NBA lag (rd-duck): frame_start is registered here at v_wrap.
+//   Observers (app_*, store vsync_pulse) see it next clk (hc=1). present_core
+//   must present NEW rt_* at the v_wrap edge (swap-armed feed-forward) or keep
+//   blackout until beam_disp_seq catches app — live-vs-app seq alone is NOT
+//   sufficient (b20_beam_de_hold_tb is blind: drives cand with level apply).
+//
 // STA (honest): exact Fmax with runtime compares is UNKNOWN until Plex.sta.rpt.
 // Structure is 11-bit magnitude compares vs registers (same class as colorbars).
 // Pre-register: expect meet 20 MHz if nostub-class; stub Fmax 23.46 leaves ~17% —
