@@ -1,5 +1,5 @@
 w-clock STATUS
-tip: c945c1f6
+tip: d99c126f
 B13: ON (ac4932ea) parent-verified exact ladder
 Collision#5 E2E: GREEN product mux→beam 624/416/320/960 + idle 960; RED FAULT_B8_FORCE_ALWAYS
 mux: w-mem owned force=~plxg_live; w-clock did NOT edit force policy (copy for compile/E2E)
