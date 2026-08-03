@@ -72,6 +72,7 @@ unit-unlocked: preflight $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $
 	$(ROOT)/tests/unit/test_h264_frame_plane_goldens.sh
 	$(ROOT)/tests/unit/test_i420_candidate_score.sh
 	$(ROOT)/tests/unit/test_h264_multinal_stream_path.sh
+	$(ROOT)/tests/unit/test_residual_csum_acc_equiv.sh
 	$(ROOT)/build/test_p3_idct_reference_model
 	$(ROOT)/build/test_p3_inter_pred_vectors
 	python3 $(ROOT)/tests/unit/test_no_conflict_markers.py

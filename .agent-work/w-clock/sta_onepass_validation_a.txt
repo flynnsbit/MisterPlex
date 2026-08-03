@@ -1,0 +1,99 @@
+STA_ONEPASS_BEGIN
+sta_rpt=fpga/Plex_MiSTer/remote_out/slot11/Plex.sta.rpt
+path_dumps=['.agent-work/w-clock/nostub-path-dump/clk_sys_emu_sameclk.txt']
+CORNER_HINT=Slow 1100mV 100C
+FMAX_TABLE_BEGIN
+| kind | Fmax_MHz | Restricted_MHz | clock |
+|---|---:|---:|---|
+| clk_sys | 25.09 | 25.09 | `emu|pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk` |
+| clk_audio | 39.4 | 39.4 | `pll_audio|pll_audio_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk` |
+| other | 81.92 | 81.92 | `FPGA_CLK1_50` |
+| clk_ddr | 88.31 | 88.31 | `emu|pll|pll_inst|altera_pll_i|general[2].gpll~PLL_OUTPUT_COUNTER|divclk` |
+| other | 135.1 | 135.1 | `sysmem|fpga_interfaces|clocks_resets|h2f_user0_clk` |
+| other | 149.63 | 149.63 | `FPGA_CLK2_50` |
+| clk_hdmi | 157.88 | 157.88 | `pll_hdmi|pll_hdmi_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk` |
+| other | 221.83 | 221.83 | `spi_sck` |
+FMAX_TABLE_END
+CLK_SYS_FMAX_MHZ=25.09
+CLK_DDR_FMAX_MHZ=88.31
+SLACK_TABLE_BEGIN
+| section | kind | slack | TNS | clock |
+|---|---|---:|---:|---|
+| Setup | clk_sys | -2.137 | -407.873 | `emu|pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk` |
+| Setup | clk_ddr | -1.346 | -183.17 | `emu|pll|pll_inst|altera_pll_i|general[2].gpll~PLL_OUTPUT_COUNTER|divclk` |
+| Setup | clk_hdmi | 0.398 | 0 | `pll_hdmi|pll_hdmi_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk` |
+| Setup | other | 2.598 | 0 | `sysmem|fpga_interfaces|clocks_resets|h2f_user0_clk` |
+| Setup | other | 5.492 | 0 | `spi_sck` |
+| Setup | other | 7.793 | 0 | `FPGA_CLK1_50` |
+| Setup | other | 13.317 | 0 | `FPGA_CLK2_50` |
+| Setup | clk_audio | 15.304 | 0 | `pll_audio|pll_audio_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk` |
+| Hold | clk_ddr | 0.216 | 0 | `emu|pll|pll_inst|altera_pll_i|general[2].gpll~PLL_OUTPUT_COUNTER|divclk` |
+| Hold | clk_sys | 0.244 | 0 | `emu|pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk` |
+| Hold | clk_hdmi | 0.259 | 0 | `pll_hdmi|pll_hdmi_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk` |
+| Hold | clk_audio | 0.267 | 0 | `pll_audio|pll_audio_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk` |
+| Hold | other | 0.348 | 0 | `FPGA_CLK1_50` |
+| Hold | other | 0.41 | 0 | `sysmem|fpga_interfaces|clocks_resets|h2f_user0_clk` |
+| Hold | other | 0.418 | 0 | `FPGA_CLK2_50` |
+| Hold | other | 0.426 | 0 | `spi_sck` |
+| Recovery | clk_hdmi | 3.943 | 0 | `pll_hdmi|pll_hdmi_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk` |
+| Recovery | other | 5.23 | 0 | `sysmem|fpga_interfaces|clocks_resets|h2f_user0_clk` |
+| Recovery | other | 16.395 | 0 | `FPGA_CLK1_50` |
+| Recovery | clk_sys | 47.998 | 0 | `emu|pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk` |
+| Removal | clk_hdmi | 0.855 | 0 | `pll_hdmi|pll_hdmi_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk` |
+| Removal | clk_sys | 1.368 | 0 | `emu|pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk` |
+| Removal | other | 1.472 | 0 | `FPGA_CLK1_50` |
+| Removal | other | 1.537 | 0 | `sysmem|fpga_interfaces|clocks_resets|h2f_user0_clk` |
+| Minimum Pulse Width | clk_hdmi | 1.122 | 0 | `pll_hdmi|pll_hdmi_inst|altera_pll_i|cyclonev_pll|fpll_0|fpll|vcoph[0]` |
+| Minimum Pulse Width | clk_audio | 1.196 | 0 | `pll_audio|pll_audio_inst|altera_pll_i|general[0].gpll~FRACTIONAL_PLL|vcoph[0]` |
+| Minimum Pulse Width | clk_sys | 1.388 | 0 | `emu|pll|pll_inst|altera_pll_i|general[0].gpll~FRACTIONAL_PLL|vcoph[0]` |
+| Minimum Pulse Width | clk_hdmi | 1.953 | 0 | `pll_hdmi|pll_hdmi_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk` |
+| Minimum Pulse Width | other | 3.603 | 0 | `sysmem|fpga_interfaces|clocks_resets|h2f_user0_clk` |
+| Minimum Pulse Width | clk_ddr | 4.107 | 0 | `emu|pll|pll_inst|altera_pll_i|general[2].gpll~PLL_OUTPUT_COUNTER|divclk` |
+| Minimum Pulse Width | other | 4.211 | 0 | `spi_sck` |
+| Minimum Pulse Width | other | 9.199 | 0 | `FPGA_CLK1_50` |
+| Minimum Pulse Width | other | 9.205 | 0 | `FPGA_CLK2_50` |
+| Minimum Pulse Width | other | 9.73 | 0 | `FPGA_CLK3_50` |
+| Minimum Pulse Width | clk_audio | 18.934 | 0 | `pll_audio|pll_audio_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk` |
+| Minimum Pulse Width | clk_sys | 23.569 | 0 | `emu|pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk` |
+SLACK_TABLE_END
+WORST_CLK_SYS_SETUP_SLACK_NS=-2.137
+WORST_SETUP_ANY=-2.137 kind=clk_sys clock=`emu|pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk`
+PATH_ROWS_TOTAL=20 SAMECLK_SYS=20
+CRITICAL_PATH_SLACK_NS=19.318
+CRITICAL_PATH_DATA_DELAY_NS=30.062
+CRITICAL_PATH_FROM=`emu:emu|stream_path:spath|slice_hdr_parser:slp|r_tc[1]`
+CRITICAL_PATH_TO=`emu:emu|stream_path:spath|slice_hdr_parser:slp|residual_csum[5]`
+CRITICAL_PATH_MODULE_FROM=slice_hdr_parser
+CRITICAL_PATH_MODULE_TO=residual_csum
+CRITICAL_PATH_OWNER_MODULES=slice_hdr_parser->residual_csum
+CRITICAL_PATH_BANNED=NO
+CRITICAL_PATH_LAUNCH_KIND=clk_sys
+CRITICAL_PATH_LATCH_KIND=clk_sys
+CRITICAL_PATH_SOURCE=.agent-work/w-clock/nostub-path-dump/clk_sys_emu_sameclk.txt
+TOP10_PATHS_BEGIN
+| rank | slack | fail? | owner_modules | from | to | launch_kind | latch_kind |
+|---:|---:|---|---|---|---|---|---|
+| 1 | 19.318 | no | slice_hdr_parser->residual_csum | `emu:emu|stream_path:spath|slice_hdr_parser:slp|r_tc[1]` | `emu:emu|stream_path:spath|slice_hdr_parser:slp|residual_csum[5]` | clk_sys | clk_sys |
+| 2 | 19.343 | no | slice_hdr_parser->residual_csum | `emu:emu|stream_path:spath|slice_hdr_parser:slp|r_tc[3]` | `emu:emu|stream_path:spath|slice_hdr_parser:slp|residual_csum[5]` | clk_sys | clk_sys |
+| 3 | 19.383 | no | slice_hdr_parser->residual_csum | `emu:emu|stream_path:spath|slice_hdr_parser:slp|r_tc[1]` | `emu:emu|stream_path:spath|slice_hdr_parser:slp|residual_csum[0]` | clk_sys | clk_sys |
+| 4 | 19.408 | no | slice_hdr_parser->residual_csum | `emu:emu|stream_path:spath|slice_hdr_parser:slp|r_tc[3]` | `emu:emu|stream_path:spath|slice_hdr_parser:slp|residual_csum[0]` | clk_sys | clk_sys |
+| 5 | 19.417 | no | slice_hdr_parser->residual_csum | `emu:emu|stream_path:spath|slice_hdr_parser:slp|r_tc[0]` | `emu:emu|stream_path:spath|slice_hdr_parser:slp|residual_csum[5]` | clk_sys | clk_sys |
+| 6 | 19.438 | no | slice_hdr_parser->residual_csum | `emu:emu|stream_path:spath|slice_hdr_parser:slp|r_tc[1]` | `emu:emu|stream_path:spath|slice_hdr_parser:slp|residual_csum[5]` | clk_sys | clk_sys |
+| 7 | 19.463 | no | slice_hdr_parser->residual_csum | `emu:emu|stream_path:spath|slice_hdr_parser:slp|r_tc[3]` | `emu:emu|stream_path:spath|slice_hdr_parser:slp|residual_csum[5]` | clk_sys | clk_sys |
+| 8 | 19.47 | no | slice_hdr_parser->residual_csum | `emu:emu|stream_path:spath|slice_hdr_parser:slp|r_tc[1]` | `emu:emu|stream_path:spath|slice_hdr_parser:slp|residual_csum[5]` | clk_sys | clk_sys |
+| 9 | 19.482 | no | slice_hdr_parser->residual_csum | `emu:emu|stream_path:spath|slice_hdr_parser:slp|r_tc[0]` | `emu:emu|stream_path:spath|slice_hdr_parser:slp|residual_csum[0]` | clk_sys | clk_sys |
+| 10 | 19.489 | no | slice_hdr_parser->residual_csum | `emu:emu|stream_path:spath|slice_hdr_parser:slp|r_tc[1]` | `emu:emu|stream_path:spath|slice_hdr_parser:slp|residual_csum[5]` | clk_sys | clk_sys |
+TOP10_PATHS_END
+STA_TEXT_HAS_decode_stub=NO
+STA_TEXT_HAS_residual_csum=NO
+STA_TEXT_HAS_slice_hdr_parser=NO
+STA_TEXT_HAS_present_content_window=NO
+STA_TEXT_HAS_y_line=NO
+STA_TEXT_HAS_ddr_frame_store=NO
+VERDICT_CHECKS_BEGIN
+FAIL: negative_slack count=2
+FAIL:   Setup clk_sys slack=-2.137 tns=-407.873
+FAIL:   Setup clk_ddr slack=-1.346 tns=-183.17
+FAIL: clk_ddr Fmax 88.31 < 90
+VERDICT_CHECKS_END
+STA_ONEPASS_END

@@ -122,7 +122,9 @@ module slice_hdr_parser (
 	reg [4:0]  runcode;
 	reg [3:0]  runbits;
 	reg        tok_ok;
-	// R-csum6 PRODUCT path (DIAG STRIPPED). ST_PLACE: residual_csum <= cs (XOR fold).
+	// R-csum6 PRODUCT path (DIAG STRIPPED). ST_PLACE: residual_csum <= csum_acc.
+	// csum_acc is running XOR sat8(level) during parse; zeros free under XOR ⇒
+	// same as full-16 fold of placed coeffs. Combo 16-fold retired (Fmax owner).
 	// Prior DIAG residual_csum<=8'h14 was pack-proof only; parent R-csum6: product sticky.
 	// Rank3 private place latches + residual_place_pulse freeze ownership of status csum.
 	reg        place_did;
@@ -1176,15 +1178,21 @@ module slice_hdr_parser (
 				//     coeff[cn] = level[i]
 				// residual_dc = sat8(coeff[0])  // keep 3.3k golden -24
 				//
-				// R-csum6 PRODUCT (DIAG STRIPPED): residual_csum <= cs (XOR sat8 fold).
+				// residual_csum PRODUCT: latch running csum_acc (not combo 16-fold).
+				// Equivalence: sat8(0)=0, XOR identity; csum_acc ^= sat8(each level)
+				// during T1/LVL ⇒ same byte as XOR sat8(placed[0:15]).
 				// residual_dc = sat8(dcv) UNCHANGED (must stay -24).
 				// Rank3: place_* private latches + residual_place_pulse (1-cycle) so
 				// Plex freezes st_res_word_sticky at place-time only (not early ok).
+				//
+				// Faults (sim/STA only; never product defines):
+				//   FAULT_RES_CSUM_XOR1 — wrong value at place_pulse (neg golden)
+				//   FAULT_RES_CSUM_ONE_CYCLE_DELAY — latch residual_csum in ST_DONE
+				//     so place_pulse freezes stale (naive pipeline twin)
 				begin : place_body
 					reg signed [5:0] cn;
 					reg signed [15:0] dcv;
 					reg signed [15:0] tmpc [0:15];
-					reg [7:0] cs;
 					integer k, j;
 					// Zero all scan slots (unset runs already 0 after token/tz clear)
 					for (j = 0; j < 16; j = j + 1)
@@ -1202,24 +1210,30 @@ module slice_hdr_parser (
 							end
 						end
 					end
-					cs = 8'd0;
 					for (j = 0; j < 16; j = j + 1) begin
 						residual_coeff[j] <= tmpc[j];
 						residual_place_coeff[j] <= tmpc[j];
-						cs = cs ^ sat8(tmpc[j]);
 					end
 					// Preserve residual_dc regression (do not change sat8 path) — golden -24
 					place_dc_r   <= sat8(dcv);
-					place_csum_r <= cs;
 					residual_dc   <= sat8(dcv);
 					residual_place_ok <= 1'b1;
 					residual_place_tc <= r_tc;
 					residual_place_t1 <= r_t1[1:0];
 					residual_place_dc <= sat8(dcv);
 					residual_place_qp <= slice_qp;
-					// PRODUCT: real XOR fold (DIAG 8'h14 STRIPPED per parent R-csum6)
-					residual_csum <= cs;
-					csum_acc <= cs;
+`ifdef FAULT_RES_CSUM_XOR1
+					// NEGATIVE: off-by-one XOR — fails Baseline 0x14 golden
+					place_csum_r  <= csum_acc ^ 8'h01;
+					residual_csum <= csum_acc ^ 8'h01;
+`elsif FAULT_RES_CSUM_ONE_CYCLE_DELAY
+					// NEGATIVE: value correct next cycle; place_pulse samples stale
+					place_csum_r <= csum_acc;
+`else
+					// PRODUCT default-ON: running acc (equiv full-16 fold)
+					place_csum_r  <= csum_acc;
+					residual_csum <= csum_acc;
+`endif
 				end
 				// Latch residual_ok with csum; place_did sticky=1 (fold complete)
 				// residual_place_pulse → Plex Rank1 freeze of status residual half
@@ -1231,6 +1245,10 @@ module slice_hdr_parser (
 			end
 
 			ST_DONE: begin
+`ifdef FAULT_RES_CSUM_ONE_CYCLE_DELAY
+				// Delayed product latch — too late for residual_place_pulse freeze
+				residual_csum <= csum_acc;
+`endif
 				valid <= 1'b1;
 				busy <= 0;
 				st <= ST_IDLE;

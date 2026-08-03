@@ -7,6 +7,8 @@
     "DDR_FRAME_STORE_FAULT_SWAP_UV_READ": "Injected DDR frame-store expected-red fault.",
     "DEQUANT_FAULT_QP_SWEEP": "Injected dequant QP-sweep fault for overflow boundary verification.",
     "FAULT_NB_CTX_NO_GEOM_REJECT": "Injected nb_ctx expected-red fault: swallow sticky geom_reject to prove silent-corruption path is gated.",
+    "FAULT_RES_CSUM_ONE_CYCLE_DELAY": "Injected residual_csum expected-red fault: latch csum one cycle late so place_pulse freezes stale (naive pipeline twin).",
+    "FAULT_RES_CSUM_XOR1": "Injected residual_csum expected-red fault: XOR 1 at place_pulse so Baseline 0x14 golden fails.",
     "H264_DEBLOCK_FAULT_MB_COMMIT_EARLY": "Injected deblock/DPB seam expected-red fault.",
     "H264_DEBLOCK_FAULT_REF_READY_EARLY": "Injected deblock/DPB seam expected-red fault.",
     "P3_INTRA_FRAME_RARE_NEGATIVE_TEST": "Injected intra-frame expected-red fault.",
