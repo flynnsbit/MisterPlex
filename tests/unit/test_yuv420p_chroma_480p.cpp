@@ -172,7 +172,7 @@ int main() {
                     on.reason.c_str(), off.reason.c_str());
     }
 
-    // --- F1b) delivery basis trust helper (B4: only measured) ---
+    // --- F1b) delivery basis trust helper (B4 + DP Part) ---
     {
         expect(!deliveryGeometryVerifiedFromBasis("transcode_request"),
                "PMS request is NOT verified");
@@ -180,6 +180,8 @@ int main() {
         expect(!deliveryGeometryVerifiedFromBasis("library_media"),
                "library_media is PMS claim NOT verified");
         expect(deliveryGeometryVerifiedFromBasis("measured"), "measured is verified");
+        expect(deliveryGeometryVerifiedFromBasis("direct_play_part"),
+               "direct_play_part sample WxH is verified delivery");
     }
 
     // --- F1c) DESYNC class model (B1: 640 was WRONG as the N=2 silicon story) ---

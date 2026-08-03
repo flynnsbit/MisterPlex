@@ -46,6 +46,10 @@ DECODE=960x540
 # Bitrate: default weak is 2000 if unset
 # WEAK_BITRATE=2000
 
+# Frame-rate cap (540p defaults to 24 via Client-Profile-Extra; conf overrides):
+# WEAK_MAX_FRAME_RATE=24
+# WEAK_MAX_FRAME_RATE=0   # disable Extra cap (29.97 pass-through — serial FAIL budget)
+
 # CRITICAL: if OSD apply is LIVE, O[5:4] overrides DECODE and has NO 540p slot
 # (00=240p, 01=480p, 10=ws480, 11=720 only if OSD_TIER11_720P=1 else 480p).
 # Force conf tier for the paired fit test:
@@ -71,10 +75,24 @@ grep -E 'DECODE adopted|content resolution=|GEOM requested_pms=|resolved ' \
 ```text
 misterplexd: DECODE adopted coded 960x540 from conf ...
 misterplexd: content resolution=960x540 source=conf/--decode ... weak=960x540 bitrate=2000 ...
-misterplexd: GEOM requested_pms=960x540 ... decode_target=960x540 content_tier=960x540 ...
+misterplexd: GEOM requested_pms=960x540 ... decode_target=960x540 content_tier=960x540 ... max_video_frame_rate=24 ...
 ```
 
+**Also require** (post rd-duck #3 fix): decode_target / coded bank is **960x540**, not
+`624x480` (old always-canvas bug) and not `1280x720` (DE canvas leak). FFmpeg/publish
+payload must be **777600** B.
+
 Also expect resolve detail / URL side to carry `videoLevel=31` and `videoProfile=baseline` (ladder pin).
+
+**Frame rate (29.97 library):** default 540p sends frame-rate-only
+`X-Plex-Client-Profile-Extra` upperBound `video.frameRate=24` (measured: PMS delivers
+`r_frame_rate=24/1` on 29.97 sources). Grep `max_video_frame_rate=24`. Without the
+cap, PMS **passes through 30000/1001** and serial budget is FAIL (−1.17 ms). See
+`FPS_RESULTS_20260803.md`.
+
+**Motion alternative (30 fps native, softer glass):** `DECODE=640x360` — exact 2×
+tier, no fps Extra (`max_video_frame_rate=0`), weak 1500 / knee 1000. See
+`T360_RESULTS_20260803.md`. Prefer for NTSC/TV; keep 540@24 for film.
 
 **FAIL / wrong pair:**
 

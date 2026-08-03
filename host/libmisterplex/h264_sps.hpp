@@ -8,9 +8,19 @@ namespace misterplex {
 struct SpsInfo {
     bool valid = false;
     uint8_t profile_idc = 0;
+    // constraint_set0..5_flag packed as in the SPS byte after profile_idc.
+    uint8_t constraint_flags = 0;
     uint8_t level_idc = 0;
     uint16_t width = 0;
     uint16_t height = 0;
+
+    bool constraintSet0() const { return (constraint_flags & 0x80) != 0; }
+    bool constraintSet1() const { return (constraint_flags & 0x40) != 0; }
+    // A.2.1 / A.2.2: Baseline profile_idc=66; Constrained Baseline also set1=1.
+    bool isBaselineProfileIdc() const { return profile_idc == 66; }
+    bool isConstrainedBaseline() const {
+        return isBaselineProfileIdc() && constraintSet1();
+    }
 };
 
 namespace detail {
@@ -88,7 +98,7 @@ inline SpsInfo parseSpsRbsp(const uint8_t* payload, size_t len) {
     detail::BitReader br(rbsp.data(), rbsp.size());
 
     out.profile_idc = static_cast<uint8_t>(br.u(8));
-    br.u(8); // constraint flags
+    out.constraint_flags = static_cast<uint8_t>(br.u(8));
     out.level_idc = static_cast<uint8_t>(br.u(8));
     br.ue(); // seq_parameter_set_id
 

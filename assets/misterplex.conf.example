@@ -67,6 +67,33 @@ PRESENT=fpga
 # STREAM_SKIP_RGB=auto  # skip heavy RGB only when PRESENT=fpga (audio + recon from start)
 # STREAM_SKIP_RGB=0     # always FFmpeg RGB (CABAC fallback / PRESENT=both keeps RGB anyway)
 # PRESENT=both always keeps FFmpeg RGB for continuous fb0 regardless of STREAM_SKIP_RGB.
+#
+# PREFER_DIRECT_H264 — library H.264 Part (transcode=0) vs PMS universal (transcode=1).
+# Default/auto: follows STREAM, except DECODE=1280x720 (Path720p) defaults Part so
+# ARM skips the PMS transcoder and can identity_skip when file samples==bank.
+# PREFER_DIRECT_H264=1    # always try Part when source is H.264
+# PREFER_DIRECT_H264=0    # force universal even on Path720p / STREAM=1
+# PREFER_DIRECT_H264=auto # explicit default (same as unset)
+#
+# OSD_TIER11_720P — map F12 O[5:4]=11 to Path720p (1280x720 ladder). Default 0:
+# tier 11 stays reserved → safe 480p canvas until w-mem/w-scaler are ready.
+# DECODE=1280x720 still selects Path720p without this flag.
+# OSD_TIER11_720P=0
+# OSD_TIER11_720P=1
+#
+# Path720p bitrate (two different numbers — do not conflate):
+#   Universal maxVideoBitrate default 3100 = lab geometry floor for coded 1280x720.
+#   WEAK_BITRATE=1500 on universal → PMS delivers 720x404 (NOT true 720p).
+#   Decode-optimal *content* tier is 1500 kbit already-1280x720 CB via Direct Play
+#   (parent device: 32.4 ms/f vs 41.1 @4000). Prefer PREFER_DIRECT_H264 + library
+#   assets encoded ~1500k 720p CB rather than starving universal maxBR.
+#
+# DDR_INGEST_MODE — how decoded I420 reaches Option-C banks (default cpu_serial).
+#   cpu_serial       — memcpy then doorbell (product today; serial 720p24 FAIL)
+#   decode_into_bank — decoder writes bank virt (still CPU stores; measure)
+#   pl330_overlap    — PL330 mem2mem while CPU decodes next (Route A; unproven)
+# Doorbell only after payload is FPGA-visible. Fabric publish_bytes=0 remains ship.
+# DDR_INGEST_MODE=cpu_serial
 
 # --- Phase 4 UX ---
 # AUTO_NEXT=1  # on media EOF, play next playQueue item when bound (default on)

@@ -101,6 +101,8 @@ static_assert(kPlex720pYuv420pBytes == 1280 * 720 * 3 / 2,
 constexpr uint32_t kPlex720pYuv420pBankStride = 0x00180000u;
 constexpr uint32_t kPlex720pDdrFramePhysBase = 0x30180000u;
 constexpr uint32_t kPlex720pYuv420pDoorbellPhys = 0x3047F000u;
+constexpr int kPlex540pSpsMbYuv420pBytes = 960 * 544 * 3 / 2; // 783360 — do NOT size banks to this
+
 
 // Compressed bitstream ring (fabric-decode ingest) — mirror ddr_bitstream_ring.hpp
 // and ddr_frame_layout_params.svh. Collision fence vs Option-C + PL330.

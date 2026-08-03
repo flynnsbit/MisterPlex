@@ -1,6 +1,8 @@
 #include "plex_resolve.hpp"
 
+#include "libmisterplex/h264_fabric_stream_gate.hpp"
 #include "libmisterplex/osd_menu.hpp"
+#include "libmisterplex/pms_delivery_geom.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -161,10 +163,22 @@ bool videoCodecIsH264(const std::string& codecRaw) {
 const std::vector<PlexTranscodeProfile>& plexTranscodeProfiles() {
     static const std::vector<PlexTranscodeProfile> profiles = [] {
         const auto p240 = contentResolutionFor240p();
+        const auto p360 = contentResolutionFor360pFabric720p();
         const auto p480 = contentResolutionFor480p();
+        const auto p540 = contentResolutionFor540pFabric720p();
+        const auto p720 = contentResolutionFor720p();
         return std::vector<PlexTranscodeProfile>{
             {"240p", p240.label, p240.weakBitrateKbps, 40, "baseline", 30},
+            // 360p: motion 720p glass (exact 2×). maxBR knee 1000; weak 1500.
+            // No fps Extra cap — pass-through 29.97 is the point of this tier.
+            {"360p", p360.label, p360.weakBitrateKbps, 50, "baseline", kPlex360pH264Level},
             {"480p", p480.label, p480.weakBitrateKbps, 60, "baseline", 30},
+            // 540p: shippable 720p *glass* source (parent decode+copy PASS). Match
+            // name "540p" / "960x540". L3.1 required (MaxFS). Bitrate = quality default.
+            {"540p", p540.label, p540.weakBitrateKbps, 65, "baseline", kPlex540pH264Level},
+            // quality 70: lab decision matrix used 60–70; bitrate is the geometry gate.
+            // True 720p *source* — ARM+CPU copy fails; DMA upgrade path.
+            {"720p", p720.label, p720.weakBitrateKbps, 70, "baseline", kPlex720pH264Level},
         };
     }();
     return profiles;
@@ -307,6 +321,11 @@ bool applyPlexTranscodeProfile(const std::string& nameOrResolution, WeakLadder& 
             weak.audioCodec = "aac";
             weak.h264Profile = p.h264Profile;
             weak.h264Level = p.h264Level;
+            // 540p serial budget fails at 29.97; pin PMS to 24 via Extra (measured).
+            // 360p leaves 0 so 29.97 pass-through (motion tier / no judder).
+            // Other tiers leave 0 (MiSTerPlex.xml UpperBound 30 allows pass-through).
+            weak.maxVideoFrameRate =
+                (p.name == "540p") ? kPlex540pMaxVideoFrameRate : 0;
             return true;
         }
     }
@@ -326,20 +345,45 @@ bool validateWeakLadder(const WeakLadder& weak, std::string* why) {
         return fail("videoCodec must be h264");
     if (weak.audioCodec != "aac")
         return fail("audioCodec must be aac");
-    if (weak.h264Profile != "baseline")
-        return fail("H.264 profile must be baseline for the current decoder");
-    if (weak.h264Level > 30)
-        return fail("H.264 level must not exceed 3.0 for the current decoder");
-    if (w >= kPlex480pCodedWidth.get() || h >= kPlex480pCodedHeight.get()) {
-        if (w > kDdrFrameStoreMaxWidth.get() || h > kDdrFrameStoreMaxHeight.get())
-            return fail("current built-in profiles stop at " +
-                        std::to_string(kDdrFrameStoreMaxWidth.get()) + "x" +
-                        std::to_string(kDdrFrameStoreMaxHeight.get()));
-        // Bitrate floors are NOT decoder contracts (see recommendedMinVideoBitrateKbps).
-        // A hard 2000 kbps reject forced PMS requests above slow links and silently
-        // fell the ladder back to 240p — parent-proven 480p drop root cause.
-        // Decoder contracts remain: h264 baseline + level ≤ 3.0 above.
+    if (weak.h264Profile != kPlexH264ProfilePin)
+        return fail("H.264 profile must be baseline (fabric CAVLC pin; no High/CABAC)");
+    const bool isPath720 = (w == kPlex720pCodedWidth.get() && h == kPlex720pCodedHeight.get());
+    const bool isPath540 = (w == kPlex540pCodedWidth.get() && h == kPlex540pCodedHeight.get());
+    const bool isPath360 = (w == kPlex360pCodedWidth.get() && h == kPlex360pCodedHeight.get());
+    // 480p/360p stay ≤L3.0 request; 540p/720p ladders request L3.1 (MaxFS).
+    const int maxLevel = (isPath720 || isPath540) ? kPlex720pH264Level : 30;
+    if (weak.h264Level > maxLevel)
+        return fail((isPath720 || isPath540)
+                        ? "H.264 level must not exceed 3.1 for the 540p/720p path tier"
+                        : "H.264 level must not exceed 3.0 for the current decoder");
+    if (w > kPlex720pCodedWidth.get() || h > kPlex720pCodedHeight.get())
+        return fail("built-in path profiles stop at " +
+                    std::to_string(kPlex720pCodedWidth.get()) + "x" +
+                    std::to_string(kPlex720pCodedHeight.get()));
+    if (w >= kPlex480pCodedWidth.get() || h >= kPlex480pCodedHeight.get() || isPath360) {
+        // Legacy DDR max 640x480. Exact path-720/540/360 (fabric→720 glass)
+        // are the only allowed geometries above / outside the 480 canvas contract.
+        if (w > kDdrFrameStoreMaxWidth.get() || h > kDdrFrameStoreMaxHeight.get()) {
+            if (!isPath720 && !isPath540 && !isPath360)
+                return fail("current DDR-backed profiles stop at " +
+                            std::to_string(kDdrFrameStoreMaxWidth.get()) + "x" +
+                            std::to_string(kDdrFrameStoreMaxHeight.get()) +
+                            " (path 360p=640x360, 540p=960x540 or 720p=1280x720 only)");
+        }
+        // 480p bitrate floors stay soft (recommendedMin only). A hard 2000 reject
+        // once forced PMS above slow links and silently fell the ladder to 240p.
     }
+    // Geometry knees (lab-measured): below these PMS returns the wrong *raster*
+    // (540→720x404, 360→480x270/320x180), not merely a softer picture. Enforce
+    // on the request path so WEAK_BITRATE cannot silently re-open the trap.
+    if (isPath540 && weak.maxVideoBitrateKbps < kPmsTrue540pMinBitrateKbpsMeasured)
+        return fail("540p maxVideoBitrate must be >=" +
+                    std::to_string(kPmsTrue540pMinBitrateKbpsMeasured) +
+                    " (lab knee; lower yields 720x404 not 960x540)");
+    if (isPath360 && weak.maxVideoBitrateKbps < kPmsTrue360pMinBitrateKbpsMeasured)
+        return fail("360p maxVideoBitrate must be >=" +
+                    std::to_string(kPmsTrue360pMinBitrateKbpsMeasured) +
+                    " (lab knee; lower yields sub-360 delivery)");
     if (weak.videoQuality <= 0 || weak.maxVideoBitrateKbps <= 0)
         return fail("videoQuality and maxVideoBitrate must be positive");
     return true;
@@ -350,7 +394,14 @@ int recommendedMinVideoBitrateKbps(const WeakLadder& weak) {
     if (!parseResolution(weak.videoResolution, w, h))
         return 0;
     // Defaults from osd_menu.hpp ladder constants — quality/ARM-margin heuristics,
-    // not H.264 level contracts. 480p default = kPlex480pWeakBitrateKbps (2000).
+    // not H.264 level contracts. 720p floor is measured (true 1280x720 needs ≥3100).
+    if (w == kPlex720pCodedWidth.get() && h == kPlex720pCodedHeight.get())
+        return kPlex720pWeakBitrateKbps;
+    if (w == kPlex540pCodedWidth.get() && h == kPlex540pCodedHeight.get())
+        return kPlex540pWeakBitrateKbps;
+    if (w == kPlex360pCodedWidth.get() && h == kPlex360pCodedHeight.get())
+        return kPlex360pWeakBitrateKbps;
+    // 480p default = kPlex480pWeakBitrateKbps (2000).
     if (w >= kPlex480pCodedWidth.get() || h >= kPlex480pCodedHeight.get())
         return kPlex480pWeakBitrateKbps;
     // Legacy 240p path used a soft floor of 750 below the 1000 default.
@@ -374,8 +425,11 @@ bool weakLadderBitrateBelowRecommended(const WeakLadder& weak, std::string* deta
 
 int nextLowerLadderBitrateKbps(int currentKbps) {
     // Fixed descending steps — no link-speed constant. Geometry unchanged.
+    // 4000/3500/3100: path-720p universal (lab: 3000→720x404; 3100→1280x720).
+    // 1500 is the parent decode-optimal content/DP tier for already-1280x720 —
+    // stepping to 1500 on universal loses true 720 geometry.
     // Absolute floor 400 keeps validateWeakLadder positive without inventing capacity.
-    static constexpr int kSteps[] = {2000, 1500, 1000, 750, 500, 400};
+    static constexpr int kSteps[] = {4000, 3500, 3100, 3000, 2500, 2000, 1500, 1000, 750, 500, 400};
     if (currentKbps <= kSteps[sizeof(kSteps) / sizeof(kSteps[0]) - 1])
         return 0; // already at floor — cannot step
     for (int s : kSteps) {
@@ -406,6 +460,20 @@ int applyLinkCapacityCapKbps(int requestedKbps, int capacityKbps, int headroomPc
     return requestedKbps < cap ? requestedKbps : cap;
 }
 
+std::string plexClientProfileFrameRateExtra(const WeakLadder& weak) {
+    if (weak.maxVideoFrameRate <= 0)
+        return {};
+    // Lab PMS (rk142 29.97 source @ 960x540): this form yields decision
+    // frameRate=24 and ffprobe r_frame_rate=24/1. Query maxFrameRate= is ignored.
+    std::ostringstream o;
+    o << "add-limitation(scope=videoCodec&scopeName=*&type=upperBound&name=video.frameRate"
+      << "&value=" << weak.maxVideoFrameRate << "&isRequired=true)+"
+      << "add-limitation(scope=videoTranscodeTarget&scopeName=h264&scopeType=videoCodec"
+      << "&context=streaming&protocol=http&type=upperBound&name=video.frameRate"
+      << "&value=" << weak.maxVideoFrameRate << "&isRequired=true)";
+    return o.str();
+}
+
 std::string plexClientProfileExtra(const WeakLadder& weak) {
     int w = 0, h = 0;
     parseResolution(weak.videoResolution, w, h);
@@ -419,12 +487,12 @@ std::string plexClientProfileExtra(const WeakLadder& weak) {
       << "add-transcode-target-audio-codec(type=videoProfile&context=streaming&protocol=http"
       << "&audioCodec=" << weak.audioCodec << "&replace=true)+"
       << "add-limitation(scope=videoCodec&scopeName=h264&type=match&name=video.profile"
-      << "&list=" << weak.h264Profile << "&replace=true)+"
+      << "&list=" << kPlexH264ProfilePin << "&replace=true)+"
       << "add-limitation(scope=videoCodec&scopeName=h264&type=upperBound&name=video.level"
       << "&value=" << weak.h264Level << "&replace=true)+"
       << "add-limitation(scope=videoTranscodeTarget&scopeName=h264&scopeType=videoCodec"
       << "&context=streaming&protocol=http&type=match&name=video.profile"
-      << "&list=" << weak.h264Profile << "&isRequired=true)+"
+      << "&list=" << kPlexH264ProfilePin << "&isRequired=true)+"
       << "add-limitation(scope=videoTranscodeTarget&scopeName=h264&scopeType=videoCodec"
       << "&context=streaming&protocol=http&type=upperBound&name=video.level"
       << "&value=" << weak.h264Level << "&isRequired=true)";
@@ -434,6 +502,9 @@ std::string plexClientProfileExtra(const WeakLadder& weak) {
           << "+add-limitation(scope=videoCodec&scopeName=*&type=upperBound&name=video.height"
           << "&value=" << h << "&replace=true)";
     }
+    const std::string fr = plexClientProfileFrameRateExtra(weak);
+    if (!fr.empty())
+        o << "+" << fr;
     return o.str();
 }
 
@@ -442,7 +513,7 @@ std::string plexClientCapabilities(const WeakLadder& weak) {
     parseResolution(weak.videoResolution, w, h);
     std::ostringstream o;
     o << "protocols=http-streaming-video,http-mp2t-video;"
-      << "videoDecoders=h264{profile:" << weak.h264Profile << "&resolution:" << w << "x" << h
+      << "videoDecoders=h264{profile:" << kPlexH264ProfilePin << "&resolution:" << w << "x" << h
       << "&level:" << weak.h264Level << "};"
       << "audioDecoders=" << weak.audioCodec << "{channels:2}";
     return o.str();
@@ -473,7 +544,9 @@ std::string buildUniversalTranscodeUrl(const std::string& base,
       << "&maxVideoBitrate=" << weak.maxVideoBitrateKbps
       << "&videoCodec=" << urlEncodeQuery(weak.videoCodec)
       << "&audioCodec=" << urlEncodeQuery(weak.audioCodec)
-      << "&videoProfile=" << urlEncodeQuery(weak.h264Profile)
+      // Defense-in-depth: always emit the Baseline pin even if WeakLadder was
+      // mutated after validateWeakLadder (never request Main/High from PMS).
+      << "&videoProfile=" << urlEncodeQuery(kPlexH264ProfilePin)
       << "&videoLevel=" << weak.h264Level;
     // Phase 4: PMS-side burn-in (preferred over dual-A9 FFmpeg subtitles filter).
     if (weak.burnSubtitles) {
@@ -507,12 +580,17 @@ std::string plexFfmpegHeaders(const std::string& sessionId, const std::string& t
       << "X-Plex-Client-Profile-Name: " << weak.clientProfileName << "\r\n"
       << "X-Plex-Model: bundled\r\n"
       << "X-Plex-Provides: player\r\n";
-    // With the server-side MiSTerPlex.xml profile installed, Profile-Extra is
-    // counterproductive: it overrides the XML transcode target and drops the
+    // With the server-side MiSTerPlex.xml profile installed, a *full* Profile-Extra
+    // is counterproductive: it overrides the XML transcode target and drops the
     // VideoEncodeFlags that force Baseline/CAVLC/ref=1.
+    // Frame-rate-only Extra is the measured exception: caps 29.97→24 while
+    // retaining Constrained Baseline (rk142 + MiSTerPlex, 2026-08-03).
     if (weak.clientProfileName != "MiSTerPlex") {
         o << "X-Plex-Client-Capabilities: " << plexClientCapabilities(weak) << "\r\n"
           << "X-Plex-Client-Profile-Extra: " << plexClientProfileExtra(weak) << "\r\n";
+    } else if (weak.maxVideoFrameRate > 0) {
+        o << "X-Plex-Client-Profile-Extra: " << plexClientProfileFrameRateExtra(weak)
+          << "\r\n";
     }
     o << "X-Plex-Session-Identifier: " << sessionId << "\r\n";
     if (!token.empty())
@@ -600,9 +678,9 @@ bool ensureUniversalDecision(const std::string& startUrl, const std::string& ses
     std::string acodec = qparam("audioCodec");
     if (acodec.empty())
         acodec = weak.audioCodec;
-    std::string vprofile = qparam("videoProfile");
-    if (vprofile.empty())
-        vprofile = weak.h264Profile;
+    // Always pin Baseline on the decision URL — ignore query overrides that
+    // would request High/Main (fabric has no CABAC).
+    std::string vprofile = kPlexH264ProfilePin;
     std::string vlevel = qparam("videoLevel");
     if (vlevel.empty())
         vlevel = std::to_string(weak.h264Level);
@@ -625,6 +703,9 @@ bool ensureUniversalDecision(const std::string& startUrl, const std::string& ses
     if (weak.clientProfileName != "MiSTerPlex") {
         decisionHeaders.push_back({"X-Plex-Client-Capabilities", plexClientCapabilities(weak)});
         decisionHeaders.push_back({"X-Plex-Client-Profile-Extra", plexClientProfileExtra(weak)});
+    } else if (weak.maxVideoFrameRate > 0) {
+        decisionHeaders.push_back(
+            {"X-Plex-Client-Profile-Extra", plexClientProfileFrameRateExtra(weak)});
     }
     std::ostringstream sessHdr;
     sessHdr << curlHeaderArgs(decisionHeaders);
@@ -902,15 +983,47 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
 
     // Prefer weak universal for dual A9 (STREAM=0 cast path / non-H.264 STREAM)
     if (weakAlways && key.rfind("/library", 0) == 0) {
+        // Source-aware request: PMS never upscales; fixed ladder AR-fit can emit
+        // non-16-aligned widths (624x480@640x360 → 468x360) that w-mem rejects.
+        // After media dims are known, request source clamp+snap16 into the tier
+        // ceiling so delivered W is fabric-store aligned whenever PMS honors it.
+        WeakLadder weakEff = weak;
+        if (r.mediaWidth > 0 && r.mediaHeight > 0) {
+            int maxW = 0, maxH = 0;
+            parseResolution(weak.videoResolution, maxW, maxH);
+            const auto sel = selectSourceAwarePmsRequest(r.mediaWidth, r.mediaHeight, maxW, maxH);
+            if (sel.request_w > 0 && sel.request_h > 0) {
+                weakEff.videoResolution = sel.videoResolution;
+                r.requestWidth = sel.request_w;
+                r.requestHeight = sel.request_h;
+                r.storeWidth = sel.store_w;
+                r.storeHeight = sel.store_h;
+                r.sourceAwareApplied = true;
+                r.sourceAwarePolicy = sel.policy ? sel.policy : "";
+            }
+        } else if (!weak.videoResolution.empty()) {
+            // No media meta — still snap the configured ceiling for store safety.
+            int maxW = 0, maxH = 0;
+            if (parseResolution(weak.videoResolution, maxW, maxH) && maxW > 0 && maxH > 0) {
+                const auto sel = selectSourceAwarePmsRequest(0, 0, maxW, maxH);
+                weakEff.videoResolution = sel.videoResolution;
+                r.requestWidth = sel.request_w;
+                r.requestHeight = sel.request_h;
+                r.storeWidth = sel.store_w;
+                r.storeHeight = sel.store_h;
+                r.sourceAwareApplied = true;
+                r.sourceAwarePolicy = sel.policy ? sel.policy : "";
+            }
+        }
         const std::string session = makeSessionId();
         const std::string start = buildUniversalTranscodeUrl(plexBase, key, token, session,
-                                                             offsetMs > 0 ? offsetMs : 0, weak);
-        if (ensureUniversalDecision(start, session, token, weak)) {
+                                                             offsetMs > 0 ? offsetMs : 0, weakEff);
+        if (ensureUniversalDecision(start, session, token, weakEff)) {
             r.ok = true;
             r.transcoded = true;
             r.playable = start;
-            r.httpHeaders = plexFfmpegHeaders(session, token, weak);
-            r.detail = "PMS universal " + weak.profileName + " " + weak.videoResolution + " " + key;
+            r.httpHeaders = plexFfmpegHeaders(session, token, weakEff);
+            r.detail = "PMS universal " + weakEff.profileName + " " + weakEff.videoResolution + " " + key;
             // STREAM preferDirect fallthrough: operator can see why recon may hit CABAC.
             if (preferDirectH264) {
                 if (!metaOk)
@@ -1278,6 +1391,10 @@ bool applyContentFpsConf(const std::string& conf, int& num, int& den) {
     if (end != s.c_str() && v > 0.0)
         return snapStdFps(v, num, den);
     return false;
+}
+
+bool plexDeliveryProfileIsFabricSafe(const std::string& videoProfileAttr) {
+    return plexVideoProfileAttrIsFabricSafe(videoProfileAttr);
 }
 
 } // namespace misterplex

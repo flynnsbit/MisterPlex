@@ -1,0 +1,35 @@
+{
+    "programs": [
+        {
+            "streams": [
+                {
+                    "profile": "Constrained Baseline",
+                    "width": 720,
+                    "height": 540,
+                    "coded_width": 720,
+                    "coded_height": 540,
+                    "has_b_frames": 0,
+                    "pix_fmt": "yuv420p",
+                    "level": 31,
+                    "r_frame_rate": "24/1"
+                }
+            ]
+        }
+    ],
+    "stream_groups": [
+
+    ],
+    "streams": [
+        {
+            "profile": "Constrained Baseline",
+            "width": 720,
+            "height": 540,
+            "coded_width": 720,
+            "coded_height": 540,
+            "has_b_frames": 0,
+            "pix_fmt": "yuv420p",
+            "level": 31,
+            "r_frame_rate": "24/1"
+        }
+    ]
+}

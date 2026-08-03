@@ -1,0 +1,20 @@
+PRE: decision says 3200→1280x720; verify start.mp4 ffprobe; 3100 unknown; 3000→404
+=== vf_rk2_br3000_q70 ===
+decision_http=200 start_http=200 decision=bitrate="1667" height="404" videoResolution="SD" width="720" bitrate="1667" height="404" width="720" bitrate="1648" 
+ffprobe=profile=Constrained Baseline width=720 height=404 sample_aspect_ratio=404:405 display_aspect_ratio=16:9 level=31 profile=Constrained Baseline width=720 height=404 sample_aspect_ratio=404:405 display_aspect_ratio=16:9 level=31 
+=== vf_rk2_br3100_q70 ===
+decision_http=200 start_http=200 decision=bitrate="2585" height="720" videoResolution="720p" width="1280" bitrate="2585" height="720" width="1280" bitrate="2566" 
+ffprobe=profile=Constrained Baseline width=1280 height=720 sample_aspect_ratio=1:1 display_aspect_ratio=16:9 level=31 profile=Constrained Baseline width=1280 height=720 sample_aspect_ratio=1:1 display_aspect_ratio=16:9 level=31 
+=== vf_rk2_br3150_q70 ===
+decision_http=200 start_http=200 decision=bitrate="2650" height="720" videoResolution="720p" width="1280" bitrate="2650" height="720" width="1280" bitrate="2631" 
+ffprobe=profile=Constrained Baseline width=1280 height=720 sample_aspect_ratio=1:1 display_aspect_ratio=16:9 level=31 profile=Constrained Baseline width=1280 height=720 sample_aspect_ratio=1:1 display_aspect_ratio=16:9 level=31 
+=== vf_rk2_br3200_q70 ===
+decision_http=200 start_http=200 decision=bitrate="2650" height="720" videoResolution="720p" width="1280" bitrate="2650" height="720" width="1280" bitrate="2631" 
+ffprobe=profile=Constrained Baseline width=1280 height=720 sample_aspect_ratio=1:1 display_aspect_ratio=16:9 level=31 profile=Constrained Baseline width=1280 height=720 sample_aspect_ratio=1:1 display_aspect_ratio=16:9 level=31 
+=== vf_rk2_br3200_q100 ===
+decision_http=200 start_http=200 decision=bitrate="2650" height="720" videoResolution="720p" width="1280" bitrate="2650" height="720" width="1280" bitrate="2631" 
+ffprobe=profile=Constrained Baseline width=1280 height=720 sample_aspect_ratio=1:1 display_aspect_ratio=16:9 level=31 profile=Constrained Baseline width=1280 height=720 sample_aspect_ratio=1:1 display_aspect_ratio=16:9 level=31 
+=== vf_rk2_br3500_q70 ===
+decision_http=200 start_http=200 decision=bitrate="2979" height="720" videoResolution="720p" width="1280" bitrate="2979" height="720" width="1280" bitrate="2960" 
+ffprobe=profile=Constrained Baseline width=1280 height=720 sample_aspect_ratio=1:1 display_aspect_ratio=16:9 level=31 profile=Constrained Baseline width=1280 height=720 sample_aspect_ratio=1:1 display_aspect_ratio=16:9 level=31 
+VERIFY DONE

@@ -1,0 +1,38 @@
+{
+ "240": {
+  "rk": "53",
+  "w": 320,
+  "h": 240,
+  "title": "MiSTerPlex Cadence 320x240 24fps control_d0 300s (2026)"
+ },
+ "480": {
+  "rk": "9",
+  "w": 624,
+  "h": 352,
+  "title": "Big Buck Bunny - https://archive.org/details/BigBuckBunny_124"
+ },
+ "720": {
+  "rk": "7",
+  "w": 1280,
+  "h": 720,
+  "title": "MiSTerPlex Test 720p (2026)"
+ },
+ "1080": {
+  "rk": "83",
+  "w": 1440,
+  "h": 1080,
+  "title": "MiSTerPlex PromoScoreable 1440x1080 24fps 600s (2026)"
+ },
+ "404": {
+  "rk": "88",
+  "w": 720,
+  "h": 404,
+  "title": "MiSTerPlex PromoScoreable 720x404 24fps 600s (2026)"
+ },
+ "352": {
+  "rk": "9",
+  "w": 624,
+  "h": 352,
+  "title": "Big Buck Bunny - https://archive.org/details/BigBuckBunny_124"
+ }
+}

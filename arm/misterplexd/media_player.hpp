@@ -68,6 +68,9 @@ public:
     void setDdrMemFlush(bool on) { fpga_.setDdrMemFlush(on); }
     void setDdrFrameFormat(DdrFrameFormat format) { ddrFrameFormat_ = format; }
     void setPresentProfile(bool on) { presentProfile_ = on; }
+    // Per-frame work_us ledger (read+present excl. pacing) → p50/p95/p99/max.
+    // Conf FRAME_COST_LEDGER=1. Hot path is one uint32 store; dump sorts off-path.
+    void setFrameCostLedger(bool on) { frameCostLedger_ = on; }
     // STREAM=1: demux annex-B H.264 → host I-slice recon (I420 → F1) + F3 stub feed
     void setStreamEnabled(bool on) { streamEnabled_ = on; }
     // When STREAM recon owns F1, optionally drop heavy FFmpeg RGB decode (keep audio).
@@ -140,6 +143,20 @@ public:
     void setContentFps(int fps) { setContentFpsRational(fps, 1); }
     int contentFpsNum() const { return fpsNum_; }
     int contentFpsDen() const { return fpsDen_; }
+    // PMS Stream@pixelAspectRatio + Media@aspectRatio for PLXG q5 DAR publish.
+    // Empty = unknown → dar_valid=0 (never invent storage AR).
+    void setContentAspectMeta(std::string pixelAspectRatio, std::string mediaAspectRatio);
+    // Rebuild PLXG q5 from PMS meta + measured/claimed geometry + content fps.
+    // Logs greppable media: PLXG_Q5 … Offsets: doorbell+0x828. Wire write is
+    // owned with w-mem record store (B16); path owns the value source.
+    void refreshPlxgAspectCadence();
+    uint64_t lastPlxgQ5() const { return plxgQ5_.load(std::memory_order_relaxed); }
+    bool lastPlxgDarValid() const {
+        return (plxgQ5Flags_.load(std::memory_order_relaxed) & 1u) != 0;
+    }
+    bool lastPlxgFpsValid() const {
+        return (plxgQ5Flags_.load(std::memory_order_relaxed) & 2u) != 0;
+    }
     // Raw ffmpeg video pipe capacity (bytes). Conf RAW_VIDEO_PIPE_BYTES.
     // 0 = leave kernel default (typically 65536). Default product target is
     // kDefaultRawVideoPipeBytes (2 MiB) — see libmisterplex/raw_video_pipe.hpp.
@@ -201,6 +218,9 @@ public:
     misterplex::OsdCapability osdCapability() const {
         return static_cast<misterplex::OsdCapability>(osdCapability_.load());
     }
+    // Default OFF: O[5:4]=11 stays safe 480p until fabric-ready. Conf OSD_TIER11_720P=1.
+    void setOsdTier11Path720p(bool on) { osdTier11Path720p_ = on; }
+    bool osdTier11Path720p() const { return osdTier11Path720p_; }
     // True when decoded OSD bits may drive idle / A/V / content tier.
     bool osdApplyActive() const;
     void startOsdPoll();
@@ -383,6 +403,7 @@ private:
     static std::string hex16(uint16_t v);
 
     misterplex::OsdControlMode osdMode_ = misterplex::OsdControlMode::Auto;
+    bool osdTier11Path720p_ = false;
     std::atomic<int> osdCapability_{static_cast<int>(misterplex::OsdCapability::Unknown)};
     std::atomic<bool> osdInertNotified_{false};
     std::atomic<bool> osdRun_{false};
@@ -399,6 +420,12 @@ private:
     // Exact rational content rate; 0/0 → treat as 24/1 when pacing with audio.
     int fpsNum_ = 0;
     int fpsDen_ = 0;
+    // Aspect tokens from resolve (PMS). Used only for PLXG q5; empty = unknown.
+    std::string pixelAspectRatio_;
+    std::string mediaAspectRatio_;
+    // Last packed PLXG q5 (doorbell+0x828). Flags: bit0=dar_valid bit1=fps_valid.
+    std::atomic<uint64_t> plxgQ5_{0};
+    std::atomic<uint32_t> plxgQ5Flags_{0};
     int presentLeadMs_ = 40;
     int resyncDropMs_ = 80;
     // F_SETPIPE_SZ target for the STREAM=0 rawvideo pipe. See raw_video_pipe.hpp.
@@ -409,6 +436,7 @@ private:
     FpgaSpi fpga_;
     DdrFrameFormat ddrFrameFormat_ = DdrFrameFormat::Yuv420p;
     bool presentProfile_ = false;
+    bool frameCostLedger_ = false;
     bool useDdrF1_ = true; // F1 product presentation attempts DDR YUV420p only.
     int ddrBank_ = 0;      // ping-pong 0/1; stride comes from ddr_frame_layout.hpp
     // Valid when product intermediate is 960×540 + PRESENT=fpga|both: native

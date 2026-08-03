@@ -1,0 +1,22 @@
+w-path STATUS — WC-first pivot (device down)
+
+PRODUCT: 960x540 → fabric 720 glass @ 34.50 ms (+7.16) — ship path
+
+TRUE 720 SOURCE priority:
+  1. Route W write-combine map  (pass ≥230.2 MiB/s)  ← do first
+  2. Route K dmaengine client   (only if WC fails)
+  3. Raw PL330 / unbind         STOPPED (ownership + hang)
+
+BUGFIXES (rd-duck):
+  AwaitBankCredit sticky (not Failed)
+  __sync_synchronize barrier (not signal_fence)
+  channel KILL default OFF (allow_channel_kill opt-in)
+
+ARTIFACTS:
+  arm/kmod/misterplex_bank/  + misterplex_bank_kabi.hpp
+  tools/misterplex_bank_wc_bench.cpp
+  docs/.../PARENT_COMMANDS_WC_FIRST.md
+  docs/.../KERNEL_DMA_AND_WC_DESIGN.md
+
+Judgement: full dmabuf DMA stack NOT worth multi-week while glass ships;
+thin WC module IS worth it. Kernel DMA thin client only if WC fails bar.

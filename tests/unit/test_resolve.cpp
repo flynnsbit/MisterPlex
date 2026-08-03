@@ -64,11 +64,12 @@ int main() {
     CHECK(h.find("X-Plex-Session-Identifier: sess1") != std::string::npos);
     CHECK(h.find("X-Plex-Token: tok") != std::string::npos);
 
-    // --- PMS universal transcode profile table / 480p guard ---
+    // --- PMS universal transcode profile table / 360p+480p+540p+720p guard ---
     const auto& profiles = plexTranscodeProfiles();
-    CHECK(profiles.size() == 2);
+    CHECK(profiles.size() == 5);
     const auto osd240 = contentResolutionFromOsdWord(0);
     const auto osd480 = contentResolutionFromOsdWord(1u << 4);
+    const auto path720 = contentResolutionFor720p();
     WeakLadder w240;
     CHECK(applyPlexTranscodeProfile("240p", w240));
     CHECK(w240.profileName == "240p");
@@ -93,6 +94,31 @@ int main() {
     CHECK(applyPlexTranscodeProfile(osd480.label, byRes));
     CHECK(byRes.profileName == "480p");
     checkProfileMatchesContentResolution("resolution alias 480p", byRes, osd480);
+
+    // Path-720p aggressive tier (DECODE/TRANSCODE_PROFILE — not OSD reserved bit).
+    WeakLadder w720;
+    CHECK(applyPlexTranscodeProfile("720p", w720));
+    CHECK(w720.profileName == "720p");
+    checkProfileMatchesContentResolution("built-in profile 720p", w720, path720);
+    CHECK(w720.videoResolution == "1280x720");
+    CHECK(w720.maxVideoBitrateKbps == kPlex720pWeakBitrateKbps);
+    CHECK(w720.videoQuality == 70);
+    CHECK(w720.h264Profile == "baseline");
+    CHECK(w720.h264Level == kPlex720pH264Level);
+    CHECK(validateWeakLadder(w720));
+    WeakLadder byRes720;
+    CHECK(applyPlexTranscodeProfile("1280x720", byRes720));
+    CHECK(byRes720.profileName == "720p");
+    checkProfileMatchesContentResolution("resolution alias 720p", byRes720, path720);
+    // 480p must not accept L3.1; 720p must not accept L4.0.
+    {
+        WeakLadder bad480lvl = w480;
+        bad480lvl.h264Level = 31;
+        CHECK(!validateWeakLadder(bad480lvl));
+        WeakLadder bad720lvl = w720;
+        bad720lvl.h264Level = 40;
+        CHECK(!validateWeakLadder(bad720lvl));
+    }
 
     // Content-tier full re-apply (doPlay weakForContentResolution contract): an
     // explicit 480p conf ladder must not leave quality/name sticky when OSD/DECODE
@@ -192,6 +218,8 @@ int main() {
     CHECK(headers480.find("X-Plex-Client-Profile-Name: Generic") == std::string::npos);
     CHECK(headers480.find("X-Plex-Client-Profile-Name: Chrome") == std::string::npos);
     CHECK(headers480.find("X-Plex-Client-Capabilities: ") == std::string::npos);
+    // 480p leaves maxVideoFrameRate=0 → no Extra on MiSTerPlex (encode flags stay in XML).
+    CHECK(w480.maxVideoFrameRate == 0);
     CHECK(headers480.find("X-Plex-Client-Profile-Extra: ") == std::string::npos);
 
     w480.clientProfileName = "Generic";
@@ -245,6 +273,11 @@ int main() {
         CHECK(validateWeakLadder(low240));
         CHECK(weakLadderBitrateBelowRecommended(low240));
         // Ladder step-down (geometry unchanged) — discrete steps, no link speed.
+        CHECK(nextLowerLadderBitrateKbps(4000) == 3500);
+        CHECK(nextLowerLadderBitrateKbps(3500) == 3100);
+        CHECK(nextLowerLadderBitrateKbps(3100) == 3000);
+        CHECK(nextLowerLadderBitrateKbps(3000) == 2500);
+        CHECK(nextLowerLadderBitrateKbps(2500) == 2000);
         CHECK(nextLowerLadderBitrateKbps(2000) == 1500);
         CHECK(nextLowerLadderBitrateKbps(1500) == 1000);
         CHECK(nextLowerLadderBitrateKbps(1000) == 750);
@@ -413,6 +446,286 @@ int main() {
         CHECK(applyContentFpsConf("29.97", n, d) && n == 30000 && d == 1001);
         n = 24; d = 1;
         CHECK(applyContentFpsConf("junk", n, d) == false && n == 24 && d == 1);
+    }
+
+    // --- Path-720p: URL + genuine delivery gate (measured lab PMS rk7) ---
+    {
+        WeakLadder w720;
+        CHECK(applyPlexTranscodeProfile("720p", w720));
+        const auto start720 =
+            buildUniversalTranscodeUrl("http://pms.example:32400", "/library/metadata/7", "tok",
+                                       "sess720", 0, w720);
+        CHECK(start720.find("videoResolution=1280x720") != std::string::npos);
+        CHECK(start720.find("maxVideoBitrate=3100") != std::string::npos);
+        CHECK(start720.find("videoLevel=31") != std::string::npos);
+        CHECK(start720.find("videoProfile=baseline") != std::string::npos);
+        CHECK(start720.find("directPlay=0") != std::string::npos);
+        // Fabric CAVLC pin: kPlexH264ProfilePin must stay baseline on every ladder.
+        CHECK(std::string(kPlexH264ProfilePin) == "baseline");
+        CHECK(w720.h264Profile == kPlexH264ProfilePin);
+        // Defense-in-depth: even if WeakLadder is mutated to high after validate,
+        // the universal URL still emits videoProfile=baseline (never High).
+        {
+            WeakLadder evil = w720;
+            evil.h264Profile = "high";
+            CHECK(!validateWeakLadder(evil));
+            const auto evilUrl =
+                buildUniversalTranscodeUrl("http://pms.example:32400", "/library/metadata/7",
+                                           "tok", "sessEvil", 0, evil);
+            CHECK(evilUrl.find("videoProfile=baseline") != std::string::npos);
+            CHECK(evilUrl.find("videoProfile=high") == std::string::npos);
+        }
+        // Decision/Media @videoProfile attribute gate (honest refuse, not garbage).
+        CHECK(plexDeliveryProfileIsFabricSafe("baseline"));
+        CHECK(plexDeliveryProfileIsFabricSafe("constrained baseline"));
+        CHECK(!plexDeliveryProfileIsFabricSafe("high"));
+        CHECK(!plexDeliveryProfileIsFabricSafe("High"));
+        CHECK(!plexDeliveryProfileIsFabricSafe("main"));
+        CHECK(!plexDeliveryProfileIsFabricSafe(""));
+        CHECK(recommendedMinVideoBitrateKbps(w720) == kPlex720pWeakBitrateKbps);
+        CHECK(kPlex720pWeakBitrateKbps == 3100);
+        CHECK(kPlex720pDecodeOptimalBitrateKbps == 1500);
+        // Explicit low bitrate still validates (link heuristic) but is below recommended
+        // — and is the class that PMS answers with 720x404, not true 720p.
+        // Parent decode-optimal 1500 is content/DP only — universal @1500 is NOT 1280x720.
+        WeakLadder low720 = w720;
+        low720.maxVideoBitrateKbps = kPlex720pDecodeOptimalBitrateKbps;
+        CHECK(validateWeakLadder(low720));
+        CHECK(weakLadderBitrateBelowRecommended(low720));
+        CHECK(!pmsBitrateLikelyTrue720p(kPlex720pDecodeOptimalBitrateKbps));
+        CHECK(!pmsBitrateLikelyTrue720p(2000));
+        CHECK(!pmsBitrateLikelyTrue720p(3000));
+        CHECK(pmsBitrateLikelyTrue720p(3100));
+        CHECK(pmsBitrateLikelyTrue720p(3500));
+        CHECK(pmsBitrateLikelyTrue720p(4000));
+        // NEGATIVE: shorter coded height must NOT be treated as true 720p.
+        // Lab fine matrix: maxBR=3000 → 720x404; maxBR=3100 → 1280x720.
+        CHECK(isGenuine720pDelivery(1280, 720));
+        CHECK(!isGenuine720pDelivery(720, 404));
+        CHECK(!isGenuine720pDelivery(624, 350));
+        CHECK(!isGenuine720pDelivery(1280, 718));
+        CHECK(!isGenuine720pDelivery(1278, 720));
+        CHECK(!isGenuine720pDelivery(0, 720));
+        // 16:9 square-pixel fit into 1280x720 ceiling stays full tier.
+        const auto fit720 = pmsSquarePixelFitInCeiling(16.0 / 9.0, 1280, 720);
+        CHECK(fit720.ok && fit720.w == 1280 && fit720.h == 720);
+        // Content-tier re-apply must not leave 720 sticky when returning to 480p.
+        WeakLadder sticky720 = w720;
+        WeakLadder play480 = sticky720;
+        CHECK(applyPlexTranscodeProfile(osd480.label, play480));
+        CHECK(play480.profileName == "480p");
+        CHECK(play480.h264Level == 30);
+        checkProfileMatchesContentResolution("content-tier reapply 480p from 720", play480,
+                                             osd480);
+        std::printf("GREEN_PATH_720p url+genuine_delivery+bitrate_gate\n");
+    }
+
+    // Shippable 720p *glass* source tier (parent proxy 5/5): 960x540 + fabric upscale.
+    // NEVER claim true 720p source. Negatives: shorter coded height is not genuine 540p.
+    {
+        WeakLadder w540;
+        CHECK(applyPlexTranscodeProfile("540p", w540));
+        CHECK(w540.videoResolution == std::string("960x540"));
+        CHECK(w540.maxVideoBitrateKbps == kPlex540pWeakBitrateKbps);
+        CHECK(w540.h264Level == kPlex540pH264Level);
+        CHECK(w540.h264Profile == kPlexH264ProfilePin);
+        CHECK(w540.maxVideoFrameRate == kPlex540pMaxVideoFrameRate);
+        CHECK(kPlex540pMaxVideoFrameRate == 24);
+        CHECK(validateWeakLadder(w540));
+        // Hard knee: maxBR<2000 → PMS 720x404 class — must not validate.
+        {
+            WeakLadder low540 = w540;
+            low540.maxVideoBitrateKbps = 1500;
+            CHECK(!validateWeakLadder(low540)); // NEG: 720x404 trap
+            std::string why;
+            CHECK(!validateWeakLadder(low540, &why));
+            CHECK(why.find("2000") != std::string::npos);
+        }
+        WeakLadder byRes;
+        CHECK(applyPlexTranscodeProfile("960x540", byRes));
+        CHECK(byRes.videoResolution == std::string("960x540"));
+        CHECK(byRes.maxVideoFrameRate == 24);
+        const auto url540 =
+            buildUniversalTranscodeUrl("http://pms.example:32400", "/library/metadata/9", "tok",
+                                       "sess540", 0, w540);
+        CHECK(url540.find("videoResolution=960x540") != std::string::npos);
+        CHECK(url540.find("videoProfile=baseline") != std::string::npos);
+        CHECK(url540.find("videoLevel=31") != std::string::npos);
+        CHECK(url540.find("maxVideoBitrate=2000") != std::string::npos);
+        // Query fps params are NOT the lever (measured MISS). Cap is Extra only.
+        CHECK(url540.find("maxFrameRate=") == std::string::npos);
+        CHECK(url540.find("frameRate=") == std::string::npos);
+        const auto fr540 = plexClientProfileFrameRateExtra(w540);
+        CHECK(fr540.find("name=video.frameRate&value=24") != std::string::npos);
+        CHECK(fr540.find("scope=videoTranscodeTarget") != std::string::npos);
+        // MiSTerPlex path: frame-rate-only Extra (not full Extra / no Capabilities).
+        const auto hdr540 = plexFfmpegHeaders("sess540", "tok", w540);
+        CHECK(hdr540.find("X-Plex-Client-Profile-Name: MiSTerPlex") != std::string::npos);
+        CHECK(hdr540.find("X-Plex-Client-Capabilities: ") == std::string::npos);
+        CHECK(hdr540.find("X-Plex-Client-Profile-Extra: ") != std::string::npos);
+        CHECK(hdr540.find("name=video.frameRate&value=24") != std::string::npos);
+        // NEG: full Extra encode-target rewrite must not ride on MiSTerPlex 540 path.
+        CHECK(hdr540.find("add-transcode-target(type=videoProfile") == std::string::npos);
+        // NEG: 480p must not inherit a sticky 24 fps Extra after 540 apply.
+        WeakLadder back480 = w540;
+        CHECK(applyPlexTranscodeProfile("480p", back480));
+        CHECK(back480.maxVideoFrameRate == 0);
+        CHECK(plexClientProfileFrameRateExtra(back480).empty());
+        CHECK(plexFfmpegHeaders("s", "t", back480)
+                  .find("X-Plex-Client-Profile-Extra: ") == std::string::npos);
+        const auto c540 = contentResolutionFor540pFabric720p();
+        CHECK(c540.presentPolicy == ContentPresentPolicy::Source540pFabric720p);
+        CHECK(std::string(c540.userLabel).find("720p source") == std::string::npos);
+        CHECK(std::string(c540.userLabel).find("540p") != std::string::npos);
+        CHECK(std::string(c540.userLabel).find("720p glass") != std::string::npos);
+        CHECK(isGenuine540pDelivery(960, 540));
+        CHECK(!isGenuine540pDelivery(960, 536)); // NEG shorter height
+        CHECK(!isGenuine540pDelivery(854, 480));
+        CHECK(!isGenuine540pDelivery(720, 404)); // NEG: maxBR starvation (measured)
+        CHECK(!isGenuine540pDelivery(720, 540)); // NEG: 4:3 HD fit (rk83 class)
+        CHECK(!isGenuine540pDelivery(960, 544)); // NEG: SPS MB height is NOT publish size
+        CHECK(!isGenuine720pDelivery(960, 540)); // NEG: 540p is not true 720 source
+        CHECK(kPlex540pYuv420pBytes == 777600);
+        CHECK(kPlex540pYuv420pBytes < kPlex720pYuv420pBytes);
+        // SPS MB 544 with crop 4 → display 540; bank uses display I420 only.
+        CHECK(kPlex540pSpsMbHeight == 544);
+        CHECK(kPlex540pSpsCropBottomLuma == 4);
+        CHECK(kPlex540pSpsMbHeight - kPlex540pSpsCropBottomLuma == 540);
+        CHECK(kPlex540pSpsMbYuv420pBytes == 783360);
+        CHECK(kPlex540pYuv420pBytes != kPlex540pSpsMbYuv420pBytes);
+        CHECK(kPmsTrue540pMinBitrateKbpsMeasured == 2000);
+        CHECK(pmsBitrateLikelyTrue540p(2000));
+        CHECK(pmsBitrateLikelyTrue540p(2500));
+        CHECK(!pmsBitrateLikelyTrue540p(1500)); // NEG: measured → 720x404
+        CHECK(w540.maxVideoBitrateKbps >= kPmsTrue540pMinBitrateKbpsMeasured);
+        // Parent corrected budget (decode+sws+copy), not optimistic -f null.
+        CHECK(kPlex540pTotalMsPerFrame < kPlex24fpsDeadlineMs);
+        CHECK(kPlex540pMarginMs > 7.0 && kPlex540pMarginMs < 7.3);
+        // Product URL must ask PMS for 960x540 — never ship a 720 request as the
+        // 540p glass path (ARM downscale-from-720 is 1.74× worse, parent-measured FAIL).
+        CHECK(url540.find("videoResolution=1280x720") == std::string::npos);
+        CHECK(c540.width.get() == 960 && c540.height.get() == 540);
+        std::printf("GREEN_PATH_540p_fabric720_glass url+honest_label+genuine_gate\n");
+    }
+
+    // Motion 720p glass: 640x360 exact 2×. No fps Extra; knee maxBR≥1000.
+    {
+        WeakLadder w360;
+        CHECK(applyPlexTranscodeProfile("360p", w360));
+        CHECK(w360.videoResolution == std::string("640x360"));
+        CHECK(w360.maxVideoBitrateKbps == kPlex360pWeakBitrateKbps);
+        CHECK(w360.h264Level == kPlex360pH264Level);
+        CHECK(w360.maxVideoFrameRate == 0); // pass-through 29.97
+        CHECK(validateWeakLadder(w360));
+        {
+            WeakLadder low360 = w360;
+            low360.maxVideoBitrateKbps = 750;
+            CHECK(!validateWeakLadder(low360)); // NEG: sub-360 trap
+        }
+        WeakLadder byRes360;
+        CHECK(applyPlexTranscodeProfile("640x360", byRes360));
+        CHECK(byRes360.videoResolution == std::string("640x360"));
+        const auto url360 =
+            buildUniversalTranscodeUrl("http://pms.example:32400", "/library/metadata/10", "tok",
+                                       "sess360", 0, w360);
+        CHECK(url360.find("videoResolution=640x360") != std::string::npos);
+        CHECK(url360.find("maxVideoBitrate=1500") != std::string::npos);
+        CHECK(url360.find("videoLevel=30") != std::string::npos);
+        const auto hdr360 = plexFfmpegHeaders("sess360", "tok", w360);
+        // MiSTerPlex + no fps cap → no Extra (encode flags stay in XML).
+        CHECK(hdr360.find("X-Plex-Client-Profile-Extra: ") == std::string::npos);
+        const auto c360 = contentResolutionFor360pFabric720p();
+        CHECK(c360.presentPolicy == ContentPresentPolicy::Source360pFabric720p);
+        CHECK(std::string(c360.userLabel).find("360p") != std::string::npos);
+        CHECK(std::string(c360.userLabel).find("720p source") == std::string::npos);
+        CHECK(isGenuine360pDelivery(640, 360));
+        CHECK(!isGenuine360pDelivery(480, 270)); // NEG maxBR=750 class
+        CHECK(!isGenuine360pDelivery(320, 180)); // NEG maxBR=400 class
+        CHECK(!isGenuine360pDelivery(640, 368)); // NEG SPS MB height
+        CHECK(!isGenuine360pDelivery(640, 480)); // NEG presented-ish
+        CHECK(!isGenuine540pDelivery(640, 360));
+        CHECK(kPlex360pYuv420pBytes == 345600);
+        CHECK(kPlex360pSpsMbHeight == 368);
+        CHECK(kPlex360pSpsCropBottomLuma == 8);
+        CHECK(kPmsTrue360pMinBitrateKbpsMeasured == 1000);
+        CHECK(pmsBitrateLikelyTrue360p(1000));
+        CHECK(!pmsBitrateLikelyTrue360p(750));
+        CHECK(w360.maxVideoBitrateKbps >= kPmsTrue360pMinBitrateKbpsMeasured);
+        // Budget estimate constants (device-class, not soak).
+        CHECK(kPlex360pTotalMsPerFrame < kPlex30fpsDeadlineMs);
+        CHECK(kPlex360pMarginMsAt30 > 15.0 && kPlex360pMarginMsAt30 < 15.5);
+        // fps-aware glass helper
+        CHECK(contentResolutionFor720GlassBySourceFps(30).label ==
+              std::string("640x360"));
+        CHECK(contentResolutionFor720GlassBySourceFps(24).label ==
+              std::string("960x540"));
+        CHECK(contentResolutionFor720GlassBySourceFps(23).label ==
+              std::string("960x540"));
+        // DECODE=640x360 must not collapse to 480p canvas (w=640 >= 624 trap).
+        const auto fromDecode = contentResolutionFromCodedSize(CodedWidth{640}, CodedHeight{360});
+        CHECK(fromDecode.label == std::string("640x360"));
+        CHECK(fromDecode.presentPolicy == ContentPresentPolicy::Source360pFabric720p);
+        std::printf("GREEN_PATH_360p_fabric720_2x url+genuine_gate+fps_helper\n");
+    }
+
+    // Source-aware PMS request — fabric store alignment (w-mem rt_raw_ok).
+    // Parent: fixed 640x360 on 624x480 → 468x360 (468%16=4) STORE REJECT.
+    {
+        // Majority library class: identity request stays 16-aligned.
+        const auto s624 = selectSourceAwarePmsRequest(624, 480, 960, 540);
+        CHECK(s624.request_w == 624 && s624.request_h == 480);
+        CHECK(s624.videoResolution == std::string("624x480"));
+        CHECK(isFabricStoreAligned(s624.store_w, s624.store_h));
+        CHECK(i420FitsLegacyBank(s624.store_w, s624.store_h));
+
+        // HD clamped into product 960x540 box.
+        const auto sHd = selectSourceAwarePmsRequest(1920, 1080, 960, 540);
+        CHECK(sHd.request_w == 960 && sHd.request_h == 540);
+        CHECK(isFabricStoreAligned(sHd.store_w, sHd.store_h));
+        CHECK(!i420FitsLegacyBank(sHd.store_w, sHd.store_h)); // needs Option-C
+
+        // 320x240 native — already aligned.
+        const auto s320 = selectSourceAwarePmsRequest(320, 240, 960, 540);
+        CHECK(s320.request_w == 320 && s320.request_h == 240);
+        CHECK(isFabricStoreAligned(s320.store_w, s320.store_h));
+
+        // 426x240: W%16=10 → request floor 416 (measured → deliv 416x234 aligned).
+        // NEG: align-up 432 does NOT work (PMS keeps 426) — never select 432.
+        const auto s426 = selectSourceAwarePmsRequest(426, 240, 960, 540);
+        CHECK(s426.request_w == 416);
+        CHECK(s426.request_h == 240);
+        CHECK(s426.host_may_need_pad);
+        CHECK(s426.store_w == 416);
+        CHECK(s426.store_h == 240);
+        CHECK(isFabricStoreAligned(s426.store_w, s426.store_h));
+        CHECK(s426.store_w != 432);
+
+        // 720x480: identity; bank spare check (parent 1792 B).
+        const auto s720 = selectSourceAwarePmsRequest(720, 480, 960, 540);
+        CHECK(s720.request_w == 720 && s720.request_h == 480);
+        CHECK(isFabricStoreAligned(s720.store_w, s720.store_h));
+        CHECK(i420PayloadBytes(720, 480) == 518400u);
+        CHECK(kLegBankUsableBytes - i420PayloadBytes(720, 480) == 1792u);
+        CHECK(i420FitsLegacyBank(720, 480));
+
+        // NEG: AR-fit class that must NOT be selected as a request target.
+        // 468x360 is what PMS delivers for 624x480@640x360 — store rejects.
+        CHECK(!isFabricStoreAligned(468, 360));
+        CHECK(!isFabricStoreAligned(426, 240));
+        CHECK(!isFabricStoreAligned(638, 358));
+        CHECK(isFabricStoreAligned(640, 360));
+        CHECK(isFabricStoreAligned(624, 350)); // even H, 16-W — anamorphic 480 class OK
+
+        // No upscale of request beyond source when max > source.
+        const auto sNoUp = selectSourceAwarePmsRequest(320, 240, 960, 540);
+        CHECK(sNoUp.request_w <= 320 && sNoUp.request_h <= 240);
+
+        // Max-box fallback when media unknown.
+        const auto sFb = selectSourceAwarePmsRequest(0, 0, 960, 540);
+        CHECK(sFb.request_w == 960 && sFb.request_h == 540);
+        CHECK(std::string(sFb.policy).find("max_box") != std::string::npos);
+
+        std::printf("GREEN_PATH_source_aware_snap16_store_align\n");
     }
 
     if (fails) {

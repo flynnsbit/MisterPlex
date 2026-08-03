@@ -1,0 +1,167 @@
+[
+  {
+    "tag": "id_624x480",
+    "rk": "36",
+    "req": "624x480",
+    "deliv": "624x480",
+    "w": 624,
+    "h": 480,
+    "aligned": true,
+    "ff_rc": 0,
+    "banner": "Stream #0:0[0x100]: Video: h264 (High) ([27][0][0][0] / 0x001B), yuv420p(progressive), 624x480 [SAR 1:1 DAR 13:10], 24 fps, 24 tbr, 90k tbn, start 1.483333"
+  },
+  {
+    "tag": "id_320x240",
+    "rk": "53",
+    "req": "320x240",
+    "deliv": "0x0",
+    "w": 0,
+    "h": 0,
+    "aligned": false,
+    "ff_rc": 0,
+    "banner": "Stream #0:0[0x100]: Video: h264 (High) ([27][0][0][0] / 0x001B), yuv420p(progressive), 320x240, 24 fps, 24 tbr, 90k tbn, start 1.483333"
+  },
+  {
+    "tag": "id_720x480",
+    "rk": "10",
+    "req": "720x480",
+    "deliv": "718x404",
+    "w": 718,
+    "h": 404,
+    "aligned": false,
+    "ff_rc": 0,
+    "banner": "Stream #0:0[0x100]: Video: h264 (High) ([27][0][0][0] / 0x001B), yuv420p(progressive), 718x404 [SAR 3232:3231 DAR 16:9], 24 fps, 24 tbr, 90k tbn, start 1.483333"
+  },
+  {
+    "tag": "id_640x480",
+    "rk": "41",
+    "req": "640x480",
+    "deliv": "0x0",
+    "w": 0,
+    "h": 0,
+    "aligned": false,
+    "ff_rc": 0,
+    "banner": "Stream #0:0[0x100]: Video: h264 (High) ([27][0][0][0] / 0x001B), yuv420p(progressive), 640x480 [SAR 1:1 DAR 4:3], 24 fps, 24 tbr, 90k tbn, start 1.483333"
+  },
+  {
+    "tag": "id_624x352",
+    "rk": "9",
+    "req": "624x352",
+    "deliv": "624x350",
+    "w": 624,
+    "h": 350,
+    "aligned": true,
+    "ff_rc": 0,
+    "banner": "Stream #0:0[0x100]: Video: h264 (High) ([27][0][0][0] / 0x001B), yuv420p(progressive), 624x350 [SAR 350:351 DAR 16:9], 24 fps, 24 tbr, 90k tbn, start 1.483333"
+  },
+  {
+    "tag": "id_704x396",
+    "rk": "42",
+    "req": "704x396",
+    "deliv": "704x396",
+    "w": 704,
+    "h": 396,
+    "aligned": true,
+    "ff_rc": 0,
+    "banner": "Stream #0:0[0x100]: Video: h264 (High) ([27][0][0][0] / 0x001B), yuv420p(progressive), 704x396 [SAR 1:1 DAR 16:9], 24 fps, 24 tbr, 90k tbn, start 1.483333"
+  },
+  {
+    "tag": "id_720x404",
+    "rk": "88",
+    "req": "720x404",
+    "deliv": "0x0",
+    "w": 0,
+    "h": 0,
+    "aligned": false,
+    "ff_rc": 0,
+    "banner": "Stream #0:0[0x100]: Video: h264 (High) ([27][0][0][0] / 0x001B), yuv420p(progressive), 720x404, 24 fps, 24 tbr, 90k tbn, start 1.483333"
+  },
+  {
+    "tag": "id_1280x720",
+    "rk": "7",
+    "req": "1280x720",
+    "deliv": "0x0",
+    "w": 0,
+    "h": 0,
+    "aligned": false,
+    "ff_rc": 0,
+    "banner": "Stream #0:0[0x100]: Video: h264 (Main) ([27][0][0][0] / 0x001B), yuv420p(progressive), 1280x720 [SAR 1:1 DAR 16:9], 24 fps, 24 tbr, 90k tbn, start 1.483333"
+  },
+  {
+    "tag": "id_426x240",
+    "rk": "69",
+    "req": "426x240",
+    "deliv": "426x240",
+    "w": 426,
+    "h": 240,
+    "aligned": false,
+    "ff_rc": 0,
+    "banner": "Stream #0:0[0x100]: Video: h264 (High) ([27][0][0][0] / 0x001B), yuv420p(progressive), 426x240, 24 fps, 24 tbr, 90k tbn, start 1.483333"
+  },
+  {
+    "tag": "id_426_req416",
+    "rk": "69",
+    "req": "416x240",
+    "deliv": "426x240",
+    "w": 426,
+    "h": 240,
+    "aligned": false,
+    "ff_rc": 0,
+    "banner": "Stream #0:0[0x100]: Video: h264 (High) ([27][0][0][0] / 0x001B), yuv420p(progressive), 426x240, 24 fps, 24 tbr, 90k tbn, start 1.483333"
+  },
+  {
+    "tag": "id_426_req432",
+    "rk": "69",
+    "req": "432x240",
+    "deliv": "426x240",
+    "w": 426,
+    "h": 240,
+    "aligned": false,
+    "ff_rc": 0,
+    "banner": "Stream #0:0[0x100]: Video: h264 (High) ([27][0][0][0] / 0x001B), yuv420p(progressive), 426x240, 24 fps, 24 tbr, 90k tbn, start 1.483333"
+  },
+  {
+    "tag": "id_hd_clamp_960x540",
+    "rk": "2",
+    "req": "960x540",
+    "deliv": "0x0",
+    "w": 0,
+    "h": 0,
+    "aligned": false,
+    "ff_rc": 0,
+    "banner": "Stream #0:0[0x100]: Video: h264 (Main) ([27][0][0][0] / 0x001B), yuv420p(progressive), 960x540 [SAR 1:1 DAR 16:9], 24 fps, 24 tbr, 90k tbn, start 1.483333"
+  },
+  {
+    "tag": "id_1440_clamp_960x540",
+    "rk": "83",
+    "req": "960x540",
+    "deliv": "0x0",
+    "w": 0,
+    "h": 0,
+    "aligned": false,
+    "ff_rc": 0,
+    "banner": "Stream #0:0[0x100]: Video: h264 (Main) ([27][0][0][0] / 0x001B), yuv420p(progressive), 720x540, 24 fps, 24 tbr, 90k tbn, start 1.483333"
+  },
+  {
+    "tag": "bad_624_ask360",
+    "rk": "36",
+    "req": "640x360",
+    "deliv": "468x360",
+    "w": 468,
+    "h": 360,
+    "aligned": false,
+    "ff_rc": 0,
+    "banner": "Stream #0:0[0x100]: Video: h264 (High) ([27][0][0][0] / 0x001B), yuv420p(progressive), 468x360 [SAR 1:1 DAR 13:10], 24 fps, 24 tbr, 90k tbn, start 1.483333"
+  },
+  {
+    "tag": "id_624_ask624x480_from_hd",
+    "rk": "2",
+    "req": "624x480",
+    "deliv": "624x350",
+    "w": 624,
+    "h": 350,
+    "aligned": true,
+    "ff_rc": 0,
+    "banner": "Stream #0:0[0x100]: Video: h264 (High) ([27][0][0][0] / 0x001B), yuv420p(progressive), 624x350 [SAR 350:351 DAR 16:9], 24 fps, 24 tbr, 90k tbn, start 1.483333"
+  }
+]

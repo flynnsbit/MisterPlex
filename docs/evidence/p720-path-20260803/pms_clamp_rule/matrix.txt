@@ -1,0 +1,29 @@
+cases=19 content_upscale_true=0 content_upscale_false=19 no_data=0
+s240_ask540: src=320x240 req=960x540 br=2000 deliv=320x240 via=decision_xml up=False mb_tweak=False eq_src=True eq_req=False within_req=True within_src_soft=True
+s240_ask360: src=320x240 req=640x360 br=1000 deliv=320x240 via=decision_xml up=False mb_tweak=False eq_src=True eq_req=False within_req=True within_src_soft=True
+s240_ask240: src=320x240 req=320x240 br=500 deliv=320x240 via=decision_xml up=False mb_tweak=False eq_src=True eq_req=True within_req=True within_src_soft=True
+s352_ask540: src=624x352 req=960x540 br=2000 deliv=626x352 via=ffmpeg_banner up=False mb_tweak=True eq_src=False eq_req=False within_req=True within_src_soft=True
+s352_ask360: src=624x352 req=640x360 br=1000 deliv=626x352 via=ffmpeg_banner up=False mb_tweak=True eq_src=False eq_req=False within_req=True within_src_soft=True
+s352_ask480: src=624x352 req=624x480 br=2000 deliv=624x350 via=ffmpeg_banner up=False mb_tweak=True eq_src=False eq_req=False within_req=True within_src_soft=True
+s480_ask540: src=624x480 req=960x540 br=2000 deliv=624x480 via=ffmpeg_banner up=False mb_tweak=False eq_src=True eq_req=False within_req=True within_src_soft=True
+s480_ask360: src=624x480 req=640x360 br=1000 deliv=468x360 via=ffmpeg_banner up=False mb_tweak=False eq_src=False eq_req=False within_req=True within_src_soft=True
+s480_ask480: src=624x480 req=624x480 br=2000 deliv=624x480 via=ffmpeg_banner up=False mb_tweak=False eq_src=True eq_req=True within_req=True within_src_soft=True
+s404_ask540: src=720x404 req=960x540 br=2000 deliv=720x404 via=decision_xml up=False mb_tweak=False eq_src=True eq_req=False within_req=True within_src_soft=True
+s404_ask360: src=720x404 req=640x360 br=1000 deliv=638x358 via=ffmpeg_banner up=False mb_tweak=False eq_src=False eq_req=False within_req=True within_src_soft=True
+s720_ask540: src=1280x720 req=960x540 br=2000 deliv=960x540 via=decision_xml up=False mb_tweak=False eq_src=False eq_req=True within_req=True within_src_soft=True
+s720_ask360: src=1280x720 req=640x360 br=1000 deliv=640x360 via=decision_xml up=False mb_tweak=False eq_src=False eq_req=True within_req=True within_src_soft=True
+s720_ask720: src=1280x720 req=1280x720 br=4000 deliv=1280x720 via=decision_xml up=False mb_tweak=False eq_src=True eq_req=True within_req=True within_src_soft=True
+s1080_ask540: src=1920x1080 req=960x540 br=2000 deliv=960x540 via=decision_xml up=False mb_tweak=False eq_src=False eq_req=True within_req=True within_src_soft=True
+s1080_ask360: src=1920x1080 req=640x360 br=1000 deliv=640x360 via=decision_xml up=False mb_tweak=False eq_src=False eq_req=True within_req=True within_src_soft=True
+s1080_ask720: src=1920x1080 req=1280x720 br=4000 deliv=1280x720 via=decision_xml up=False mb_tweak=False eq_src=False eq_req=True within_req=True within_src_soft=True
+s640x480_ask540: src=640x480 req=960x540 br=2000 deliv=640x480 via=decision_xml up=False mb_tweak=False eq_src=True eq_req=False within_req=True within_src_soft=True
+s640x480_ask360: src=640x480 req=640x360 br=1000 deliv=480x360 via=decision_xml up=False mb_tweak=False eq_src=False eq_req=False within_req=True within_src_soft=True
+
+PMS_RULE (measured):
+videoResolution=WxH is a CEILING fit box, not an exact pin and never an upscale target.
+Delivered = aspect-preserving scale of source INTO min(source, request_box), with optional
+±2px macroblock/even tweaks (e.g. 624x352 -> 626x352). Content upscale (source 320x240
+asked 960x540) does NOT occur — delivery stays 320x240.
+Not a discrete ladder step: 624x480@640x360 -> 468x360; 640x480@640x360 -> 480x360;
+720x404@640x360 -> 638x358. Only when source is larger than the box AND AR matches does
+exact request land (1080p/720p 16:9 -> 960x540 / 640x360).

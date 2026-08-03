@@ -50,7 +50,7 @@ int main() {
     CHECK(kFrame <= kPlex480pYuv420pBankStride);
     CHECK(kPlex480pYuv420pBankStride - static_cast<uint32_t>(kFrame) == 75008u);
 
-    // --- Geometry always product canvas (decode tier ignored) -------------------
+    // --- Legacy tiers stay product 480p canvas; 540p is identity storage --------
     const auto gFrom240 = ddrFrameGeometryForFpgaPresent(320, 240);
     const auto gFrom480 = ddrFrameGeometryForFpgaPresent(624, 480);
     const auto gProduct = productDdrFrameStoreGeometry();
@@ -60,6 +60,24 @@ int main() {
     CHECK(gFrom480.coded_height.get() == 480);
     CHECK(gFrom240.coded_width == gProduct.coded_width);
     CHECK(gFrom480.coded_height == gProduct.coded_height);
+    // Product 540→720-glass: STORAGE == 960x540 (777600), NEVER 1280x720 canvas.
+    const auto g540 = ddrFrameGeometryForFpgaPresent(960, 540);
+    CHECK(g540.coded_width.get() == 960);
+    CHECK(g540.coded_height.get() == 540);
+    CHECK(yuv420pFrameBytes(g540.coded_width, g540.coded_height) == 777600u);
+    CHECK(g540.coded_width.get() != 1280);
+    CHECK(g540.coded_height.get() != 720);
+    // NEG: canvas DE size must not leak into storage selector.
+    CHECK(!(g540.coded_width.get() == 1280 && g540.coded_height.get() == 720));
+    // Motion 360→720-glass: STORAGE == 640x360 (345600), NEVER 624x480 canvas.
+    const auto g360 = ddrFrameGeometryForFpgaPresent(640, 360);
+    CHECK(g360.coded_width.get() == 640);
+    CHECK(g360.coded_height.get() == 360);
+    CHECK(yuv420pFrameBytes(g360.coded_width, g360.coded_height) == 345600u);
+    CHECK(!(g360.coded_width.get() == 624 && g360.coded_height.get() == 480));
+    // 345600 fits legacy usable; publish plan must not force Option-C for 360 alone.
+    CHECK(!ddrI420PayloadNeedsOptionCBank(345600u));
+    CHECK(ddrI420PayloadNeedsOptionCBank(777600u)); // 540 still needs capacity path
     CHECK(gProduct.display_width.get() == 618);
     CHECK(gProduct.presented_width.get() == 640);
     CHECK(gProduct.present_x == 11);
@@ -166,6 +184,26 @@ int main() {
     CHECK(ddrFrameStoreAcceptsResolution(640, 480));
     CHECK(ddrFrameStoreAcceptsResolution(320, 240));
     CHECK(!ddrFrameStoreAcceptsResolution(1280, 720));
+
+    // --- 540p tight publish: 777600 B into Option-C, not legacy 512 KiB --------
+    CHECK(ddrI420PayloadNeedsOptionCBank(777600u));
+    CHECK(!ddrI420PayloadNeedsOptionCBank(449280u));
+    std::vector<uint8_t> yuv540(777600u, 0x10);
+    DdrPublishFrame f540{yuv540.data(), yuv540.size(), g540, DdrFrameFormat::Yuv420p};
+    DdrPublishPlan plan540{};
+    CHECK(makeDdrPublishPlan(f540, 0, plan540, &err));
+    CHECK(plan540.layout.frame_bytes == 777600u);
+    CHECK(plan540.layout.phys_base == kPlex720pDdrFramePhysBase);
+    CHECK(plan540.layout.bank_stride == kPlex720pYuv420pBankStride);
+    CHECK(plan540.layout.doorbell_phys == kPlex720pYuv420pDoorbellPhys);
+    CHECK(plan540.bank_phys == kPlex720pDdrFramePhysBase);
+    // NEG: must not land on legacy product base/stride.
+    CHECK(plan540.layout.phys_base != kDdrFramePhysBase);
+    CHECK(plan540.layout.bank_stride != kPlex480pYuv420pBankStride);
+    // Wrong length (canvas 720p bytes) against 540 geom must fail.
+    std::vector<uint8_t> yuv720canvas(1382400u, 0x20);
+    DdrPublishFrame bad720{yuv720canvas.data(), yuv720canvas.size(), g540, DdrFrameFormat::Yuv420p};
+    CHECK(!makeDdrPublishPlan(bad720, 0, plan540, &err));
 
     if (fails) {
         std::fprintf(stderr, "test_native_480p_ddr_publish: %d fails\n", fails);

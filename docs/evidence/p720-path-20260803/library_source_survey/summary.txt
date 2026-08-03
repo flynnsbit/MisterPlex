@@ -1,0 +1,21 @@
+library_items=142
+bucket 480p_class=99
+bucket 240p_class=35
+bucket >=1080p=4
+bucket 360p_class=3
+bucket 720p_class=1
+ge_960x540_both=5
+ge_1280x720_both=5
+lt_960x540_either=137
+geom 624x480=72
+geom 320x240=15
+geom 624x352=14
+geom 720x480=14
+geom 640x480=12
+geom 426x240=4
+geom 704x396=3
+geom 624x350=2
+geom 1440x1080=2
+geom 1920x1080=2
+geom 720x404=1
+geom 1280x720=1

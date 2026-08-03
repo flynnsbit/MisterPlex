@@ -1,0 +1,23 @@
+=== null_default ===
+ffmpeg_probe label=null_default exit=0 wall_s=0.084644 child_user_s=0.250417 child_sys_s=0.036089 child_cpu_s=0.286506 child_cpu_pct_1c=338.5 child_cpu_pct_2c=169.2 maxrss_kb=103556 nvcsw=7674 nivcsw=105 frame_bytes=0 frames=0 fps=0.000 bytes=0 pipe_size=-1 read_calls=0 read_ok_calls=0 read_eagain=0 read_zero=0 read_wall_s=0.000000 read_cpu_s=0.000000 syscall_cpu_s=0.000000 sleep_wall_s=0.000000 sleep_cpu_s=0.000000 copy_wall_s=0.000000 copy_cpu_s=0.000000 max_read=0 checksum=0
+=== raw_id_default ===
+ffmpeg_probe label=raw_id_default exit=0 wall_s=9.079606 child_user_s=0.415126 child_sys_s=0.117557 child_cpu_s=0.532683 child_cpu_pct_1c=5.9 child_cpu_pct_2c=2.9 maxrss_kb=133432 nvcsw=6659 nivcsw=51 frame_bytes=777600 frames=360 fps=39.649 bytes=279936000 pipe_size=65536 read_calls=8573 read_ok_calls=4278 read_eagain=4294 read_zero=1 read_wall_s=9.079099 read_cpu_s=0.104281 syscall_cpu_s=0.058961 sleep_wall_s=9.003611 sleep_cpu_s=0.037386 copy_wall_s=0.000000 copy_cpu_s=0.000000 max_read=65536 checksum=0
+=== raw_scale_default ===
+ffmpeg_probe label=raw_scale_default exit=0 wall_s=9.081150 child_user_s=0.424224 child_sys_s=0.117609 child_cpu_s=0.541833 child_cpu_pct_1c=6.0 child_cpu_pct_2c=3.0 maxrss_kb=136780 nvcsw=6626 nivcsw=44 frame_bytes=777600 frames=360 fps=39.643 bytes=279936000 pipe_size=65536 read_calls=8576 read_ok_calls=4276 read_eagain=4299 read_zero=1 read_wall_s=9.080620 read_cpu_s=0.108839 syscall_cpu_s=0.062155 sleep_wall_s=9.001947 sleep_cpu_s=0.038581 copy_wall_s=0.000000 copy_cpu_s=0.000000 max_read=65536 checksum=0
+=== raw_rgb_default ===
+ffmpeg_probe label=raw_rgb_default exit=0 wall_s=18.039670 child_user_s=0.691317 child_sys_s=0.299402 child_cpu_s=0.990719 child_cpu_pct_1c=5.5 child_cpu_pct_2c=2.7 maxrss_kb=159760 nvcsw=16773 nivcsw=420 frame_bytes=1555200 frames=360 fps=19.956 bytes=559872000 pipe_size=65536 read_calls=17123 read_ok_calls=8583 read_eagain=8539 read_zero=1 read_wall_s=18.039051 read_cpu_s=0.217728 syscall_cpu_s=0.124670 sleep_wall_s=17.881928 sleep_cpu_s=0.077083 copy_wall_s=0.000000 copy_cpu_s=0.000000 max_read=65536 checksum=0
+label                  cpu_ms  wall_ms   pct1c  exit
+null_default           0.796    0.235   338.5  0
+raw_id_default         1.480   25.221     5.9  0
+raw_scale_default      1.505   25.225     6.0  0
+raw_rgb_default        2.752   50.110     5.5  0
+
+host null/raw_id fraction decode=0.538 pack=0.462
+device-class map onto 26.08:
+  decode          14.03 ms
+  pack/raw pipe   12.05 ms
+  convert/scale   ~0.45 ms (forced same-size scale tax on path)
+  RGB convert tax ~22.43 ms IF pix_fmt=rgb24 (product does NOT)
+  copy-to-DDR     8.42 ms (parent)
+  TOTAL product  34.50 ms  vs 30fps budget 33.333  margin -1.17
+prediction check: decode in [14,17]? True  pack in [8,12]? False  convert in [0,3]? True

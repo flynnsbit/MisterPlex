@@ -1,0 +1,15 @@
+id_624x480: req=624x480 deliv=624x480 aligned=True w%16=0
+id_320x240: req=320x240 deliv=0x0 aligned=False w%16=NA
+id_720x480: req=720x480 deliv=718x404 aligned=False w%16=14
+id_640x480: req=640x480 deliv=0x0 aligned=False w%16=NA
+id_624x352: req=624x352 deliv=624x350 aligned=True w%16=0
+id_704x396: req=704x396 deliv=704x396 aligned=True w%16=0
+id_720x404: req=720x404 deliv=0x0 aligned=False w%16=NA
+id_1280x720: req=1280x720 deliv=0x0 aligned=False w%16=NA
+id_426x240: req=426x240 deliv=426x240 aligned=False w%16=10
+id_426_req416: req=416x240 deliv=426x240 aligned=False w%16=10
+id_426_req432: req=432x240 deliv=426x240 aligned=False w%16=10
+id_hd_clamp_960x540: req=960x540 deliv=0x0 aligned=False w%16=NA
+id_1440_clamp_960x540: req=960x540 deliv=0x0 aligned=False w%16=NA
+bad_624_ask360: req=640x360 deliv=468x360 aligned=False w%16=4
+id_624_ask624x480_from_hd: req=624x480 deliv=624x350 aligned=True w%16=0

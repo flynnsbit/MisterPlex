@@ -37,6 +37,15 @@ struct ResolveResult {
     // RK6: coded 624x480 + SAR 160:117 ⇒ DAR 16:9 ⇒ universal fit 624x350.
     std::string mediaAspectRatio;
     std::string pixelAspectRatio;
+    // Source-aware universal request (after media dims known). 0 = not applied
+    // (direct path / no meta / weakAlways off). request_* goes in videoResolution=;
+    // store_* is the fabric-aligned bank (may pad when source W%16!=0).
+    int requestWidth = 0;
+    int requestHeight = 0;
+    int storeWidth = 0;
+    int storeHeight = 0;
+    bool sourceAwareApplied = false;
+    std::string sourceAwarePolicy; // e.g. source_clamp_snap16
 };
 
 struct QueueItem {
@@ -76,6 +85,15 @@ std::vector<std::string> mergePlexServers(const std::string& serversCsv,
 std::string buildPlexBase(const std::string& protocol, const std::string& address,
                           const std::string& port, const std::string& lanFallback = {});
 
+// Hard pin for every PMS universal request and ladder default.
+// Parent 2026-08-03: fabric RTL is CAVLC-only (CABAC ABSENT); lab true-720 is
+// Constrained Baseline L3.1. Never advertise Main/High — a High leak renders
+// fabric garbage. Bitstream gate: h264_fabric_stream_gate.hpp.
+inline constexpr const char* kPlexH264ProfilePin = "baseline";
+// Plex integer level form: 31 == Level 3.1 (MaxFS covers 1280x720).
+inline constexpr int kPlexH264LevelPin720 = 31;
+inline constexpr int kPlexH264LevelPin480 = 30;
+
 struct PlexTranscodeProfile {
     std::string name;
     std::string videoResolution;
@@ -83,13 +101,18 @@ struct PlexTranscodeProfile {
     int videoQuality = 0;
     // H.264 constraints advertised to PMS. Keep these aligned with the FPGA/host
     // decoder; do not ask PMS for Main/High/CABAC when only baseline-ish vectors
-    // are proven.
+    // are proven. Must equal kPlexH264ProfilePin ("baseline").
     std::string h264Profile;
     int h264Level = 0; // Plex capability/profile-extra integer form: 30 == Level 3.0.
 };
 
+// True when a PMS decision/Media videoProfile attribute is fabric-safe Baseline.
+// Rejects high/main/empty. Implemented via h264_fabric_stream_gate.hpp.
+bool plexDeliveryProfileIsFabricSafe(const std::string& videoProfileAttr);
+
 // Built-in PMS universal transcode profiles. 240p is the legacy shipping profile;
-// 480p requests 624x480 coded (39 MB columns) to match the proven DDR frame-store geometry.
+// 480p requests 624x480 coded to match the proven DDR frame-store geometry;
+// 720p requests 1280x720 path-tier (bitrate floor measured — see kPlex720pWeakBitrateKbps).
 const std::vector<PlexTranscodeProfile>& plexTranscodeProfiles();
 
 // Match by profile name ("240p"/"480p") or exact WxH resolution.
@@ -104,7 +127,7 @@ struct WeakLadder {
     int videoQuality = 40;
     std::string videoCodec = "h264";
     std::string audioCodec = "aac";
-    std::string h264Profile = "baseline";
+    std::string h264Profile = kPlexH264ProfilePin; // always "baseline" — fabric CAVLC pin
     int h264Level = 30;
     // Server-side PMS profile that forces Baseline/CAVLC/ref=1 transcodes.
     // If the XML is absent, tested PMS versions fall back gracefully to Generic.
@@ -112,7 +135,14 @@ struct WeakLadder {
     // Phase 4: ask PMS to burn subtitles into the universal ladder when set.
     bool burnSubtitles = false;
     int subtitleStreamId = -1; // -1 = PMS default / first
+    // PMS upperBound video.frameRate via Client-Profile-Extra (0 = no Extra cap).
+    // Query params maxFrameRate/frameRate are ignored by lab PMS (measured).
+    // 540p defaults to 24: serial 960x540 budget PASS @24, FAIL @29.97 (34.50 vs 33.33).
+    int maxVideoFrameRate = 0;
 };
+
+// Product 540p glass path: PMS frame-rate ceiling (measured Extra lever).
+inline constexpr int kPlex540pMaxVideoFrameRate = 24;
 
 // Guard rails for built-in and configured ladders.
 // Hard fails: resolution parse, codecs, H.264 baseline, level ≤ 3.0, positive
@@ -122,14 +152,17 @@ struct WeakLadder {
 bool validateWeakLadder(const WeakLadder& weak, std::string* why = nullptr);
 
 // Recommended minimum maxVideoBitrateKbps for the ladder geometry (0 = unknown).
-// 480p → kPlex480pWeakBitrateKbps (2000); sub-480p → 750. Not a decoder contract.
+// 720p → 4000 (measured true-720 gate); 480p → 2000; sub-480p → 750.
+// Not a decoder contract — advisory for WEAK_BITRATE / starve logs.
 int recommendedMinVideoBitrateKbps(const WeakLadder& weak);
 
 // True when bitrate is positive but below recommendedMin. detail is greppable.
 bool weakLadderBitrateBelowRecommended(const WeakLadder& weak, std::string* detail = nullptr);
 
 // Next lower maxVideoBitrate on sustained STARVED. Geometry unchanged.
-// Returns 0 if already at absolute floor (400). Steps: 2000→1500→1000→750→500→400.
+// Returns 0 if already at absolute floor (400).
+// Steps: 4000→3500→3000→2000→1500→1000→750→500→400.
+// Note: stepping 720p below 3500 loses genuine 1280x720 on lab PMS (→720x404).
 // Does NOT encode a link speed — only a discrete ladder.
 int nextLowerLadderBitrateKbps(int currentKbps);
 
@@ -149,6 +182,9 @@ int applyLinkCapacityCapKbps(int requestedKbps, int capacityKbps,
                              int headroomPct = kLinkCapacityHeadroomPctDefault);
 
 std::string plexClientProfileExtra(const WeakLadder& weak);
+// Frame-rate-only Extra (safe with MiSTerPlex server XML; full Extra is not).
+// Empty when maxVideoFrameRate <= 0.
+std::string plexClientProfileFrameRateExtra(const WeakLadder& weak);
 std::string plexClientCapabilities(const WeakLadder& weak);
 std::string buildUniversalTranscodeUrl(const std::string& base,
                                        const std::string& metadataKey,

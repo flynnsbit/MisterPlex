@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MediaContainer size="1" allowSync="1" directPlayDecisionCode="3000" directPlayDecisionText="App cannot direct play this item. Direct play is disabled." generalDecisionCode="1001" generalDecisionText="Direct play not available; Conversion OK." identifier="com.plexapp.plugins.library" librarySectionID="2" librarySectionTitle="MiSTerPlex Tests" librarySectionUUID="c97f403c-4a89-4620-a388-a7a88c9a6c1c" mediaTagPrefix="/system/bundle/media/flags/" mediaTagVersion="1783932891" resourceSession="w-path-960x540-1500-1785740155" transcodeDecisionCode="1001" transcodeDecisionText="Direct play not available; Conversion OK.">
+<Video addedAt="1785651068" art="/library/metadata/83/art/1785731197" createdAtAccuracy="epoch" createdAtTZOffset="-18000" duration="600000" guid="tv.plex.agents.none://83" key="/library/metadata/83" librarySectionID="2" librarySectionKey="/library/sections/2" librarySectionTitle="MiSTerPlex Tests" ratingKey="83" subtype="clip" thumb="/library/metadata/83/thumb/1785731197" title="MiSTerPlex PromoScoreable 1440x1080 24fps 600s (2026)" type="movie" updatedAt="1785731197">
+<Media id="83" videoProfile="constrained baseline" audioChannels="2" audioCodec="aac" bitrate="965" container="mpegts" duration="600000" height="540" videoCodec="h264" videoFrameRate="24p" videoResolution="480p" width="720" selected="1">
+<Part deepAnalysisVersion="6" id="83" requiredBandwidths="5854,5854,5854,5854,5854,5854,5854,5854" videoProfile="constrained baseline" bitrate="965" container="mpegts" duration="600000" height="540" width="720" decision="transcode" selected="1">
+<Stream bitDepth="8" bitrate="861" codec="h264" default="1" displayTitle="1080p" extendedDisplayTitle="1080p (H.264 Constrained Baseline)" frameRate="24" height="540" id="173" requiredBandwidths="5693,5693,5693,5693,5693,5693,5693,5693" streamType="1" width="720" decision="transcode" location="direct" />
+<Stream bitrate="104" bitrateMode="cbr" channels="2" codec="aac" default="1" displayTitle="Unknown (AAC Stereo)" extendedDisplayTitle="Unknown (AAC Stereo)" id="174" requiredBandwidths="163,163,163,163,163,163,163,163" selected="1" streamType="2" decision="transcode" location="direct" />
+</Part>
+</Media>
+<UltraBlurColors bottomLeft="294c2e" bottomRight="3e6a3e" topLeft="16361c" topRight="306d39" />
+</Video>
+</MediaContainer>

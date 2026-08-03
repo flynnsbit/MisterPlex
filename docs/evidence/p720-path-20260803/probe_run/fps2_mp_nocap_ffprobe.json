@@ -1,0 +1,25 @@
+{
+    "programs": [
+        {
+            "streams": [
+                {
+                    "width": 960,
+                    "height": 540,
+                    "r_frame_rate": "30000/1001",
+                    "avg_frame_rate": "30000/1001"
+                }
+            ]
+        }
+    ],
+    "stream_groups": [
+
+    ],
+    "streams": [
+        {
+            "width": 960,
+            "height": 540,
+            "r_frame_rate": "30000/1001",
+            "avg_frame_rate": "30000/1001"
+        }
+    ]
+}

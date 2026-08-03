@@ -1,0 +1,27 @@
+{
+    "programs": [
+        {
+            "streams": [
+                {
+                    "profile": "Constrained Baseline",
+                    "width": 640,
+                    "height": 360,
+                    "r_frame_rate": "30000/1001",
+                    "avg_frame_rate": "30000/1001"
+                }
+            ]
+        }
+    ],
+    "stream_groups": [
+
+    ],
+    "streams": [
+        {
+            "profile": "Constrained Baseline",
+            "width": 640,
+            "height": 360,
+            "r_frame_rate": "30000/1001",
+            "avg_frame_rate": "30000/1001"
+        }
+    ]
+}

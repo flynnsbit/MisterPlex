@@ -1,0 +1,21 @@
+class	rk	mode	src_wh	src_prof	del_profile	del_level	has_b	entropy	del_wh	bytes	fabric_safe
+624x480	62	force-xcode	624x480	constrained_baseline	High	31	2	likely_cabac_unconfirmed	624x480	31432472	0	0
+624x480	62	prefer-direct	624x480	constrained_baseline	NO_DATA	NO_DATA	NO_DATA	unknown	NO_DATA	89	0	0
+624x480	131	force-xcode	624x480	constrained_baseline	High	31	2	likely_cabac_unconfirmed	624x480	15366556	0	0
+624x480	46	force-xcode	624x480	constrained_baseline	High	31	2	likely_cabac_unconfirmed	624x480	68409064	0	0
+720x480	79	force-xcode	720x480	constrained_baseline	High	31	2	likely_cabac_unconfirmed	720x480	2318980	0	0
+720x480	79	prefer-direct	720x480	constrained_baseline	NO_DATA	NO_DATA	NO_DATA	unknown	NO_DATA	89	0	0
+720x480	138	force-xcode	720x480	constrained_baseline	High	31	2	likely_cabac_unconfirmed	720x480	57213852	0	0
+720x480	32	force-xcode	720x480	constrained_baseline	High	31	2	likely_cabac_unconfirmed	720x480	18764468	0	0
+624x352	9	force-xcode	624x352	constrained_baseline	High	31	2	likely_cabac_unconfirmed	624x350	41280664	0	0
+624x352	9	prefer-direct	624x352	constrained_baseline	NO_DATA	NO_DATA	NO_DATA	unknown	NO_DATA	89	0	0
+624x352	15	force-xcode	624x352	constrained_baseline	High	31	2	likely_cabac_unconfirmed	624x352	4606000	0	0
+624x352	74	force-xcode	624x352	constrained_baseline	High	31	2	likely_cabac_unconfirmed	624x352	2565072	0	0
+320x240	54	force-xcode	320x240	constrained_baseline	High	31	2	likely_cabac_unconfirmed	320x240	14801992	0	0
+320x240	54	prefer-direct	320x240	constrained_baseline	NO_DATA	NO_DATA	NO_DATA	unknown	NO_DATA	89	0	0
+320x240	5	force-xcode	320x240	constrained_baseline	High	31	2	likely_cabac_unconfirmed	320x240	718912	0	0
+320x240	58	force-xcode	320x240	constrained_baseline	High	31	2	likely_cabac_unconfirmed	320x240	14689944	0	0
+1280x720	7	force-xcode	1280x720	constrained_baseline	Main	31	2	likely_cabac_unconfirmed	960x540	735644	0	0
+1280x720	7	prefer-direct	1280x720	constrained_baseline	NO_DATA	NO_DATA	NO_DATA	unknown	NO_DATA	89	0	0
+high_src_624x480	118	force-xcode	624x480	high	High	31	2	likely_cabac_unconfirmed	624x480	29003512	0	0
+high_src_624x480	118	prefer-direct	624x480	high	NO_DATA	NO_DATA	NO_DATA	unknown	NO_DATA	89	0	0
