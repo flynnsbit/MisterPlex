@@ -141,8 +141,10 @@ module present_core #(
 	wire [31:0] disp_i, cont_i;
 
 	// Film vs TV class for beam V_TOTAL and BEAM_960 cadence Hz (rd-duck B15).
-	// fps<=24 → film 24.0007 (V=705). fps>=25 → TV 30.0008 (V=564).
+	// fps<=24 → film ~24.0007 (V=705). fps>=25 → TV ~30.0008 (V=564).
 	// 25 must NOT fall into film (host may publish valid 25).
+	// INTEGER content_fps only (q5). NTSC 24000/1001 bucketed to 24 is ~1028 ppm
+	// fast vs true 23.976 — NOT source-locked (ntsc_rational_cadence_wall.json).
 	wire beam_film_class = (content_fps <= 8'd24);
 
 	// Cadence display_hz must match the *tick source* rate (rd-duck B15).

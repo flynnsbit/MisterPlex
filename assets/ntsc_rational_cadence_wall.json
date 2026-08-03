@@ -1,0 +1,76 @@
+{
+  "title": "NTSC rational cadence wall (rd-duck B15 follow-up)",
+  "owner": "w-clock",
+  "status": "OPEN_ABI \u2014 integer q5 cannot source-lock 23.976/29.97",
+  "clk_sys_hz": 20000000,
+  "beam": {
+    "H_TOTAL": 1182,
+    "V_FILM": 705,
+    "V_TV": 564,
+    "film_hz": 24.000672018859,
+    "tv_hz": 30.000840024641
+  },
+  "ntsc": {
+    "film_rational": "24000/1001",
+    "film_hz": 23.976023976024,
+    "tv_rational": "30000/1001",
+    "tv_hz": 29.97002997003
+  },
+  "drift": {
+    "film_delta_hz": 0.024648042835,
+    "film_slip_s": 40.571173,
+    "tv_delta_hz": 0.030810054611,
+    "tv_slip_s": 32.456938,
+    "ppm": 1028.029
+  },
+  "q5_abi_integer": {
+    "field": "content_fps[31:24] uint8",
+    "bucket_helper": "contentFpsIntegerForPlxg (w-path plxg_q5_aspect_cadence.hpp)",
+    "bucket_map": "24000/1001\u219224, 30000/1001\u219230",
+    "effect": "fabric treats NTSC as integer 24/30; 1:1 advance consumes ~1028 ppm fast"
+  },
+  "hard_wall": {
+    "exact_cpf_film_at_20MHz": 834166.6666666667,
+    "integer_H_times_V_exact_ntsc": false,
+    "note": "20e6*1001/24000 is not integer \u2014 no integer line total hits 23.976024 exactly",
+    "nearest_integer_cpf_note": "834166\u219223.976043, 834167\u219223.976014 (ppm residual, not exact H*V with 1182)"
+  },
+  "claims_forbidden_until_fix": [
+    "source-locked for 23.976/29.97",
+    "judder controlled for common NTSC rates",
+    "B15 framecount proves unique-bank lock under NTSC"
+  ],
+  "claims_allowed": [
+    "integer 24/25/30 class selection and short-window advance math",
+    "beam line rate fixed f_h=20e6/1182",
+    "unspecified fps_valid=0 \u2192 film 24 (no invent 30)"
+  ],
+  "options_for_parent_abi": [
+    {
+      "id": "A_milli_hz",
+      "summary": "Replace or extend content_fps with fps_milli uint16/24 (e.g. 23976, 29970)",
+      "pros": "fits cadence floor(n*milli/display_milli); small wire change",
+      "cons": "still approx; needs display_hz milli too for beam rate"
+    },
+    {
+      "id": "B_rational_num_den",
+      "summary": "q6 or reclaim reserved: fps_num u16, fps_den u16 (24000/1001)",
+      "pros": "exact rational matching host av_clock; ARM already has num/den",
+      "cons": "ABI growth; fabric cadence needs 32x32 mul/div"
+    },
+    {
+      "id": "C_arm_paced_only",
+      "summary": "Keep integer class for V_TOTAL only; unique banks solely via ARM swap_pending at rational publish",
+      "pros": "no fabric ABI churn; matches C1 (swap ignores advance)",
+      "cons": "must never hold swap_pending=1 continuously; buffer policy is the lock"
+    },
+    {
+      "id": "D_frac_vtotal",
+      "summary": "Nudge V_TOTAL for closer Hz (still not exact at 20 MHz)",
+      "pros": "no ABI",
+      "cons": "cannot hit 24000/1001 exactly; residual ppm remains \u2014 NOT a full fix"
+    }
+  ],
+  "recommendation": "C short-term (honest) + B parent ABI for true fabric rational cadence. Do not ship NTSC source-lock claims on integer q5.",
+  "gate": "tests/unit/test_ntsc_rational_cadence_wall.sh"
+}

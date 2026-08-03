@@ -323,6 +323,7 @@ multi-pixel-present-contract:
 present-720p-fit-contract:
 	$(ROOT)/scripts/check_present_720p_fit_contract.py --root $(ROOT)
 	$(ROOT)/tests/unit/test_runtime_beam_ascal_guards.sh
+	$(ROOT)/tests/unit/test_ntsc_rational_cadence_wall.sh
 
 # Present no-bump + 720p24 fabric-decode cy/MB wall (arithmetic only).
 fabric-clock-headroom:

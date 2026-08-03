@@ -1,12 +1,14 @@
 `timescale 1ps/1ps
 // B15 + ABI#2 + rd-duck adversarial:
 // - Count beam frame_start (raster completes), NOT "unique content banks".
-// - present_cadence display_hz = CORE 24/30, not HDMI 60.
-// - fps=24/30: content_fps == core Hz → 1:1 advance (source-locked).
-// - fps=25: TV raster V=564 @30; cadence floor(n*25/30) → NOT 1:1.
-//   Short window (5 raster): advances 4. Long window (30 raster): advances 25.
-// - RED IGNORE_FPS_VALID: 30-title stays film 4 frames.
-// - RED CADENCE_HDMI60: advances 3 of 5 (30/60 floor).
+// - present_cadence display_hz = CORE integer 24/30, not HDMI 60.
+// - INTEGER fps only: 24/30 with content_fps==core → 1:1 advance.
+// - fps=25: TV raster V=564 @30; floor(n*25/30) → 4/5 short, 25/30 long.
+// - NOT NTSC: 24000/1001 and 30000/1001 are LOST by integer q5 (bucket→24/30).
+//   Beam 20e6/(1182*705)=24.000672 vs 23.976024 → ~40.57s/frame slip (see
+//   assets/ntsc_rational_cadence_wall.json). Do NOT claim source-lock/judder
+//   control for 23.976/29.97 until rational/milli ABI + pending-bank model.
+// - RED IGNORE_FPS_VALID / RED CADENCE_HDMI60 as before.
 //
 // frame_start pulses once per completed frame (v_wrap).
 `default_nettype none
@@ -232,7 +234,7 @@ module b15_cadence_framecount_tb;
 			$display("FAIL tv30 r/s/a=%0d/%0d/%0d", r, s, a); $fatal(1);
 		end
 		$display("OK B15 raster frame_start=5 swap_opp=5 vtot=%0d (not unique-bank claim)", vt);
-		$display("OK ADV_PROOF source-locked 1:1 raster=5 advances=5 (fps==core only)");
+		$display("OK ADV_PROOF integer 1:1 raster=5 advances=5 (fps==core only; NOT NTSC 29.97)");
 
 		// valid 25 short: TV raster 5; cadence floor → advances at di 0,2,3,4 = 4 NOT 5
 		run_window(1'b1, 25, r, s, a, vt);
@@ -272,7 +274,7 @@ module b15_cadence_framecount_tb;
 		end
 		$display("OK B15 unspecified->24 raster frame_start=4 (no invent 30)");
 
-		$display("NOTE: 1:1 only when content_fps>=core_hz (24/24, 30/30). fps=25 is 25/30 hold.");
+		$display("NOTE: integer 1:1 only when content_fps>=core_hz (24/24, 30/30). fps=25 hold. NTSC 23.976/29.97 NOT locked.");
 		$display("NOTE: advance_unique = cadence; DDR swap = fstart&&swap_pending (C1).");
 		$display("NOTE: swap_opp with pending=1 tracks raster — NOT ARM unique-bank proof.");
 		$display("PASS b15_cadence_framecount GREEN");

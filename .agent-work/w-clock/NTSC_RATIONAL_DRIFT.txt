@@ -1,0 +1,18 @@
+clk_sys_hz=20000000
+H_TOTAL=1182
+V_FILM=705
+V_TV=564
+beam_film_hz=24.000672018817
+beam_tv_hz=30.000840023521
+ntsc_film_hz=23.976023976024
+ntsc_tv_hz=29.970029970030
+delta_film_hz=0.024648042793
+delta_tv_hz=0.030810053491
+slip_film_s=40.571172665
+slip_tv_s=32.456938132
+ppm_film=1028.028785
+ppm_tv=1028.028785
+exact_cpf_film=834166.666666666628
+exact_cpf_integer_possible=no
+nearest_cpf=834166 f=23.976043137697 delta_vs_ntsc=0.000019161673
+nearest_cpf=834167 f=23.976014395199 delta_vs_ntsc=-0.000009580825

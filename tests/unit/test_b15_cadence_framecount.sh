@@ -56,7 +56,7 @@ GRC=$(cat "$OUT/green/sim.rc")
 grep -q "OK fps=25 -> TV class V=564" "$OUT/green/run.log" || { echo "FAIL 25"; exit 1; }
 grep -q "OK B15 raster frame_start=4" "$OUT/green/run.log" || { echo "FAIL r24"; exit 1; }
 grep -q "OK B15 raster frame_start=5" "$OUT/green/run.log" || { echo "FAIL r30"; exit 1; }
-grep -q "OK ADV_PROOF source-locked 1:1 raster=5 advances=5" "$OUT/green/run.log" \
+grep -q "OK ADV_PROOF integer 1:1 raster=5 advances=5" "$OUT/green/run.log" \
   || { echo "FAIL adv30"; exit 1; }
 grep -q "OK B15 fps=25 raster frame_start=5 advances=4" "$OUT/green/run.log" \
   || { echo "FAIL adv25 short"; exit 1; }
