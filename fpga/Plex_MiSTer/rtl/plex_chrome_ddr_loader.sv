@@ -18,7 +18,7 @@
 
 module plex_chrome_ddr_loader #(
     parameter bit        ENABLE         = 1'b0,
-    parameter int        MAX_CMDS       = 48,
+    parameter int        MAX_CMDS       = 112,
     // Product YUV bootstrap page (same as DDR_FRAME_YUV420P_DOORBELL_PHYS).
     // NOT packed-320 0x3007_F000 — that is a historical example map only.
     parameter [31:0]     DOORBELL_PHYS  = 32'h300F_F000,

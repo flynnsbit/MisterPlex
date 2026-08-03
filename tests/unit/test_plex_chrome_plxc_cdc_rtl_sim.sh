@@ -60,6 +60,9 @@ assert_exec "plxc-cdc" "$OUT" \
   "PASS edge_fault_collapse" \
   "EXECUTED single_beat" \
   "PASS single_beat" \
+  "EXECUTED full_list_conservation" \
+  "PASS full_list_conservation" \
+  "prod_beats=113" \
   "plex_chrome_plxc_cdc_tb: PASS"
 
 # Static product path: no rising-edge PLXC we in sys_top
@@ -81,5 +84,22 @@ if [[ "$RC" -ne 0 ]]; then
   echo "test_plex_chrome_plxc_cdc_rtl_sim: FAIL rc=$RC" >&2
   exit "$RC"
 fi
+
+# Product PLXC remains HOLLOW until w-mem arbiter grant (honest gate).
+# Address/bank/CDC fixes must not be scored as live OSD while m_gnt is tied 0.
+if ! grep -q "HOLLOW until w-mem" "$ROOT/fpga/Plex_MiSTer/Plex.sv"; then
+  echo "FAIL Plex.sv missing HOLLOW until w-mem marker on PLXC loader" >&2
+  exit 1
+fi
+if ! grep -A40 "u_plxc_ddr_loader" "$ROOT/fpga/Plex_MiSTer/Plex.sv" | grep -q "m_gnt(1'b0)"; then
+  echo "FAIL expected hollow m_gnt(1'b0) on u_plxc_ddr_loader (retarget after w-mem R1)" >&2
+  exit 1
+fi
+if ! grep -q "DEPTH(128)" "$ROOT/fpga/Plex_MiSTer/sys/sys_top.v"; then
+  echo "FAIL sys_top CDC DEPTH must be 128 for full-list headroom" >&2
+  exit 1
+fi
+echo "OK PLXC product still HOLLOW (m_gnt=0); CDC DEPTH=128"
+
 echo "test_plex_chrome_plxc_cdc_rtl_sim: PASS"
 exit 0

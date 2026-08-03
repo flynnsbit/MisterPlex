@@ -1215,7 +1215,7 @@ cyclonev_hps_interface_peripheral_i2c hdmi_i2c
 	wire [63:0] plxc_ext_wdata;
 	wire        plxc_cdc_full, plxc_cdc_afull, plxc_cdc_empty;
 	plex_chrome_plxc_cdc #(
-		.DEPTH(16)
+		.DEPTH(128)
 	) u_plxc_cdc (
 		.wr_clk(clk_sys),
 		.wr_rst(reset_req),

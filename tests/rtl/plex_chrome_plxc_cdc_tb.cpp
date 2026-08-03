@@ -1,5 +1,6 @@
 // Multi-clock PLXC CDC hierarchy: 20 MHz sys → 74.25 MHz hdmi.
 // Green: consecutive loader-style burst of 2 list + ctrl → all 3 on hdmi + host_if.
+// Green: full MAX_CMDS=112 list + ctrl-last (113 beats) conservation — no drop.
 // Red: edge-detect twin sees only 1 beat (EXECUTED fail path).
 #include "Vplex_chrome_plxc_cdc_tb.h"
 #include "verilated.h"
@@ -220,6 +221,82 @@ int main(int argc, char** argv) {
         fail("single beat");
     if (fails == 0)
         std::fprintf(stderr, "PASS single_beat\n");
+
+    // Full-list conservation: 112 list beats + ctrl LAST (loader MAX_CMDS path).
+    // Observations that fail under drop/reorder:
+    //   prod_beats != 113, any list missing, ctrl not last, host_if count/seq wrong.
+    prod.clear();
+    fault.clear();
+    list_beats.clear();
+    list_we_n = 0;
+    std::fprintf(stderr, "=== FULL list conservation (112 + ctrl-last) ===\n");
+    std::fprintf(stderr, "EXECUTED full_list_conservation\n");
+    {
+        constexpr int N = 112;
+        std::vector<Beat> full;
+        full.reserve(static_cast<size_t>(N) + 1);
+        for (int i = 0; i < N; ++i) {
+            // Unique payload per slot: op=1 box, x=i, y=i&0xff, pal in high
+            const uint64_t d = 1ull | (static_cast<uint64_t>(i & 0xFFFF) << 8) |
+                               (static_cast<uint64_t>(i & 0xFF) << 24) |
+                               (static_cast<uint64_t>(0xA500u + i) << 40);
+            full.push_back({static_cast<uint8_t>(i), d});
+        }
+        const uint64_t ctrl_full =
+            0x504C5843ull | (1ull << 32) | (static_cast<uint64_t>(N) << 34) | (99ull << 48);
+        full.push_back({0xFF, ctrl_full});
+
+        push_burst(t, full, &prod, &fault, &list_we_n, &list_beats);
+        run_for(t, 400, &prod, &fault, &list_we_n, &list_beats);
+
+        std::fprintf(stderr,
+                     "full_list prod_beats=%zu list_we=%d cfg_en=%d cfg_cnt=%d cfg_seq=%d\n",
+                     prod.size(), list_we_n, (int)t->prod_cfg_enable, (int)t->prod_cfg_count,
+                     (int)t->prod_cfg_seq);
+
+        if (prod.size() != static_cast<size_t>(N) + 1)
+            fail("full_list: must deliver exactly 113 beats (112 list + ctrl)");
+        bool order_ok = true;
+        for (int i = 0; i < N; ++i) {
+            if (prod.size() <= static_cast<size_t>(i)) {
+                order_ok = false;
+                break;
+            }
+            if (prod[static_cast<size_t>(i)].addr != static_cast<uint8_t>(i) ||
+                prod[static_cast<size_t>(i)].data != full[static_cast<size_t>(i)].data) {
+                std::fprintf(stderr, "full_list mismatch i=%d addr=%u data=%llx want_addr=%d\n", i,
+                             (unsigned)prod[static_cast<size_t>(i)].addr,
+                             (unsigned long long)prod[static_cast<size_t>(i)].data, i);
+                order_ok = false;
+                break;
+            }
+        }
+        if (!order_ok)
+            fail("full_list: list beat addr/data conservation");
+        if (prod.size() == static_cast<size_t>(N) + 1) {
+            if (prod[static_cast<size_t>(N)].addr != 0xFF)
+                fail("full_list: ctrl must be LAST beat (addr=0xFF)");
+            if (prod[static_cast<size_t>(N)].data != ctrl_full)
+                fail("full_list: ctrl payload");
+        }
+        // Ctrl must not appear before the end
+        for (size_t i = 0; i < prod.size() && i < static_cast<size_t>(N); ++i) {
+            if (prod[i].addr == 0xFF) {
+                fail("full_list: ctrl appeared before all list beats");
+                break;
+            }
+        }
+        if (list_we_n != N)
+            fail("full_list: host_if list_we count want 112");
+        if (!t->prod_cfg_enable)
+            fail("full_list: cfg_enable");
+        if (t->prod_cfg_count != N)
+            fail("full_list: cfg_count want 112");
+        if (t->prod_cfg_seq != 99)
+            fail("full_list: cfg_seq want 99");
+        if (fails == 0)
+            std::fprintf(stderr, "PASS full_list_conservation\n");
+    }
 
     if (fails) {
         std::fprintf(stderr, "plex_chrome_plxc_cdc_tb: %d FAIL(s)\n", fails);

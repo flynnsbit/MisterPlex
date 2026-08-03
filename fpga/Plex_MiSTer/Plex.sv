@@ -1062,7 +1062,9 @@ plex_chrome_ddr_loader #(
 	.m_we(plxc_m_we),
 	.m_addr(plxc_m_addr),
 	.m_wdata(plxc_m_wdata),
-	// No grant until w-mem mailbox arbiter owns a PLXC slot (shared map).
+	// HOLLOW until w-mem: m_gnt/m_rd_valid/m_rdata tied 0 — loader never
+	// completes a DDR read. Address/bank fixes alone are NOT live OSD.
+	// R1 product path needs real plxc_c_gnt from ddr arbiter (integ).
 	.m_gnt(1'b0),
 	.m_rd_valid(1'b0),
 	.m_rdata(64'd0),

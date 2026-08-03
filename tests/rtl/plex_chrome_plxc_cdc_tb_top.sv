@@ -29,7 +29,7 @@ module plex_chrome_plxc_cdc_tb (
 	wire full, afull, empty;
 	wire f_full, f_afull, f_empty;
 
-	plex_chrome_plxc_cdc #(.DEPTH(16)) u_prod (
+	plex_chrome_plxc_cdc #(.DEPTH(128)) u_prod (
 		.wr_clk(clk_sys),
 		.wr_rst(reset),
 		.wr_en(sys_we),

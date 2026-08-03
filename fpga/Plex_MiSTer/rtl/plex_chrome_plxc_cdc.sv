@@ -19,7 +19,8 @@
 `default_nettype none
 
 module plex_chrome_plxc_cdc #(
-	parameter int DEPTH = 16  // power of 2, >= 4
+	// >= MAX_CMDS+1 (112 list + ctrl). hdmi>sys drains, but depth covers gray lag / brief stalls.
+	parameter int DEPTH = 128  // power of 2, >= 4
 ) (
 	input  wire        wr_clk,
 	input  wire        wr_rst,
