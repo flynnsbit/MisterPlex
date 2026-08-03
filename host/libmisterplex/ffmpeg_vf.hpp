@@ -245,16 +245,17 @@ inline std::string buildScalePadCentered(int coded_w, int coded_h,
            ":force_original_aspect_ratio=decrease,pad=" + scale + ":(ow-iw)/2:(oh-ih)/2";
 }
 
-// Pure horizontal/vertical pad into the coded bank — NO scale= (no swscale).
-// Direct Part store align-up (426×240 → 432×240) must use this; FOAR scale would
-// resample every sample even when H already matches (rd-duck 2026-08-03).
-inline std::string buildPadOnlyNoScale(int coded_w, int coded_h) {
-    return "pad=" + std::to_string(coded_w) + ":" + std::to_string(coded_h) +
-           ":(ow-iw)/2:(oh-ih)/2:color=black";
+// Floor to even (FFmpeg yuv420p pad x/y chroma alignment).
+inline int padInsetChromaEven(int ideal_inset) {
+    if (ideal_inset < 0)
+        return 0;
+    return ideal_inset & ~1;
 }
 
-// Integer model of ffmpeg pad=W:H:(ow-iw)/2:(oh-ih)/2 for even dims (YUV420-safe).
-// Returns left/top pad insets; false if dims invalid or source does not fit.
+// Integer model of FFmpeg pad placement for even YUV420 dims.
+// Ideal center = (coded-src)/2, then chroma-floor-even (matches measured
+// pad=W:H:(ow-iw)/2 on yuv420p: 426→432 → pad_x=2, not 3).
+// rd-duck 2026-08-03: naive /2 oracle (x=3) fails real FFmpeg raw output.
 inline bool padOnlyInsets(int src_w, int src_h, int coded_w, int coded_h, int* pad_x,
                           int* pad_y) {
     if (!pad_x || !pad_y)
@@ -265,13 +266,41 @@ inline bool padOnlyInsets(int src_w, int src_h, int coded_w, int coded_h, int* p
         return false;
     if (src_w > coded_w || src_h > coded_h)
         return false;
-    *pad_x = (coded_w - src_w) / 2;
-    *pad_y = (coded_h - src_h) / 2;
+    *pad_x = padInsetChromaEven((coded_w - src_w) / 2);
+    *pad_y = padInsetChromaEven((coded_h - src_h) / 2);
     return true;
 }
 
-// Y-plane pad model: source columns are copied unchanged into the padded frame.
-// Used by unit tests to pin "first/last source columns unchanged" without ffmpeg.
+// Right/bottom residual pad (may be larger than left when chroma-snapped).
+inline bool padOnlyResiduals(int src_w, int src_h, int coded_w, int coded_h, int* right,
+                             int* bottom) {
+    int px = 0, py = 0;
+    if (!padOnlyInsets(src_w, src_h, coded_w, coded_h, &px, &py) || !right || !bottom)
+        return false;
+    *right = coded_w - src_w - px;
+    *bottom = coded_h - src_h - py;
+    return *right >= 0 && *bottom >= 0;
+}
+
+// Pure horizontal/vertical pad into the coded bank — NO scale= (no swscale).
+// Direct Part store align-up (426×240 → 432×240) must use this; FOAR scale would
+// resample every sample even when H already matches (rd-duck 2026-08-03).
+// Emit **explicit even insets** so PLXG/present crop math matches raw output.
+inline std::string buildPadOnlyNoScale(int coded_w, int coded_h, int pad_x, int pad_y) {
+    return "pad=" + std::to_string(coded_w) + ":" + std::to_string(coded_h) + ":" +
+           std::to_string(pad_x) + ":" + std::to_string(pad_y) + ":color=black";
+}
+
+inline std::string buildPadOnlyNoScaleForSource(int src_w, int src_h, int coded_w,
+                                                int coded_h) {
+    int px = 0, py = 0;
+    if (!padOnlyInsets(src_w, src_h, coded_w, coded_h, &px, &py))
+        return buildPadOnlyNoScale(coded_w, coded_h, 0, 0);
+    return buildPadOnlyNoScale(coded_w, coded_h, px, py);
+}
+
+// Y-plane pad model: source columns copied unchanged at chroma-aligned inset.
+// Used by unit tests; must match buildPadOnlyNoScale explicit x/y.
 inline bool padYPlaneCopyUnchanged(const uint8_t* src, int src_w, int src_h, uint8_t* dst,
                                    int coded_w, int coded_h) {
     if (!src || !dst)
@@ -615,7 +644,9 @@ inline FfmpegVfPlan buildFfmpegVideoFilter(const FfmpegVfRequest& req) {
         req.source_h == req.coded_h && req.source_h == dispH && req.source_w <= req.coded_w &&
         req.source_w <= dispW;
     if (verifiedSameHeightFit && req.source_w < req.coded_w) {
-        append(buildPadOnlyNoScale(req.coded_w, req.coded_h));
+        // Explicit chroma-even x/y (426→432 → pad=432:240:2:0, not (ow-iw)/2).
+        append(buildPadOnlyNoScaleForSource(req.source_w, req.source_h, req.coded_w,
+                                            req.coded_h));
         return finish(false, false, "verified_same_height_pad_only");
     }
 

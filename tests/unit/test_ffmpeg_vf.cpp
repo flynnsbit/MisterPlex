@@ -442,6 +442,10 @@ int main() {
     // --- Direct Part 426→432: verified same-height MUST be pad-only (rd-duck) ---
     // Resolver: source=426x240, coded bank=432x240, verified. display==coded ⇒ no
     // hasCrop; old path fell through to buildScalePadCentered (scale_applied=1).
+    //
+    // Placement oracle (rd-duck + live ffmpeg yuv420p): (ow-iw)/2 = 3 mathematically
+    // but FFmpeg chroma-aligns x to even → content at x=2 (2 left / 4 right). Emit
+    // explicit pad=432:240:2:0 so PLXG/present crop matches raw output.
     {
         FfmpegVfRequest r;
         r.coded_w = 432;
@@ -458,17 +462,28 @@ int main() {
         expect(p.vf.find("scale=") == std::string::npos, "DP 426→432: no scale=");
         expect(p.vf.find("force_original_aspect_ratio") == std::string::npos,
                "DP 426→432: no FOAR");
-        expect(p.vf.find("pad=432:240") != std::string::npos, "DP 426→432: pad=432:240");
+        expect(p.vf.find("(ow-iw)/2") == std::string::npos,
+               "DP 426→432: no expr pad (explicit even x)");
+        expect_eq(p.vf, "pad=432:240:2:0:color=black", "DP 426→432 explicit pad x=2");
         expect_eq(p.reason, "verified_same_height_pad_only", "DP 426→432 reason");
         expect(vfPreservesBankHeightSource(p.vf), "DP 426→432 preserves bank-height predicate");
         const size_t out_bytes = yuv420pFrameBytesWH(432, 240);
         expect(out_bytes == 432u * 240u * 3u / 2u, "output bytes 432*240*3/2");
         expect(out_bytes == 155520u, "432x240 I420 == 155520");
 
-        // Column preservation model: first/last of the 426 source cols unchanged.
-        int pad_x = -1, pad_y = -1;
-        expect(padOnlyInsets(426, 240, 432, 240, &pad_x, &pad_y) && pad_x == 3 && pad_y == 0,
-               "426→432 insets pad_x=3 pad_y=0");
+        // Chroma-even model: ideal center 3 → floor-even 2; residual right=4.
+        int pad_x = -1, pad_y = -1, pad_r = -1, pad_b = -1;
+        expect(padOnlyInsets(426, 240, 432, 240, &pad_x, &pad_y) && pad_x == 2 && pad_y == 0,
+               "426→432 insets pad_x=2 (chroma-even) pad_y=0");
+        expect(padOnlyResiduals(426, 240, 432, 240, &pad_r, &pad_b) && pad_r == 4 &&
+                   pad_b == 0,
+               "426→432 residuals right=4 bottom=0");
+        // NEG: naive mathematical center must NOT be claimed.
+        expect(pad_x != 3, "NEG: pad_x must not be math-center 3 on yuv420p");
+        expect(padInsetChromaEven(3) == 2, "padInsetChromaEven(3)==2");
+        expect(padInsetChromaEven(2) == 2, "padInsetChromaEven(2)==2");
+        expect(padInsetChromaEven(1) == 0, "padInsetChromaEven(1)==0");
+
         std::vector<uint8_t> src(static_cast<size_t>(426 * 240));
         for (int y = 0; y < 240; ++y)
             for (int x = 0; x < 426; ++x)
@@ -479,7 +494,7 @@ int main() {
                "Y pad model ok");
         bool cols_ok = true;
         for (int y = 0; y < 240 && cols_ok; ++y) {
-            // First and last source columns (and full row interior) unchanged.
+            // Content lives at x=2..427; first/last source cols unchanged.
             if (dst[static_cast<size_t>(y * 432 + pad_x)] != src[static_cast<size_t>(y * 426)])
                 cols_ok = false;
             if (dst[static_cast<size_t>(y * 432 + pad_x + 425)] !=
@@ -492,18 +507,83 @@ int main() {
                     break;
                 }
             }
-            // Pad columns black (0).
+            // Pad: left 0..1 and right 428..431 black (0).
             if (dst[static_cast<size_t>(y * 432 + 0)] != 0 ||
+                dst[static_cast<size_t>(y * 432 + 1)] != 0 ||
+                dst[static_cast<size_t>(y * 432 + 428)] != 0 ||
                 dst[static_cast<size_t>(y * 432 + 431)] != 0)
                 cols_ok = false;
         }
-        expect(cols_ok, "first/last 426 source columns unchanged after pad");
+        expect(cols_ok, "source cols at x=2..427 unchanged; 2L/4R pad black");
 
         // SkipIdentity mode same contract (daemon conf default).
         r.scale_mode = FfmpegScaleMode::SkipIdentity;
         const auto p2 = buildFfmpegVideoFilter(r);
-        expect(!p2.scale_applied && p2.vf.find("pad=432:240") != std::string::npos,
-               "SkipIdentity 426→432 also pad-only");
+        expect(!p2.scale_applied && p2.vf == "pad=432:240:2:0:color=black",
+               "SkipIdentity 426→432 also explicit pad x=2");
+    }
+
+    // Live FFmpeg oracle (when present): expr (ow-iw)/2 AND explicit :2:0 both place
+    // content at L=2 on yuv420p. Gates the model against real filter output.
+    // Note: pad color=black on yuv420p is studio black Y=16, not 0. Content from
+    // geq lum=X starts Y=0,1,2… so detect content start as the 0,1,2 ramp, not
+    // "first non-zero" (that would hit the pad).
+    {
+        const char* ff = std::getenv("FFMPEG");
+        if (!ff || !*ff)
+            ff = "ffmpeg";
+        const char* outp = "build/pad_oracle_426_432.yuv";
+        auto find_content_x = [](const uint8_t* row, int w) -> int {
+            // Expect pad Y=16 then content ramp 0,1,2… (geq lum=X).
+            for (int x = 0; x + 2 < w; ++x) {
+                if (row[x] == 0 && row[x + 1] == 1 && row[x + 2] == 2)
+                    return x;
+            }
+            return -1;
+        };
+        std::string cmd = std::string(ff) +
+            " -hide_banner -loglevel error -y "
+            "-f lavfi -i color=c=black:s=426x240:d=0.04:r=25,"
+            "format=yuv420p,geq=lum='X':cb=128:cr=128 "
+            "-vf pad=432:240:\\(ow-iw\\)/2:\\(oh-ih\\)/2:color=black "
+            "-frames:v 1 -f rawvideo -pix_fmt yuv420p " +
+            outp + " 2>/dev/null";
+        const int rc_expr = std::system(cmd.c_str());
+        if (rc_expr == 0) {
+            FILE* f = std::fopen(outp, "rb");
+            expect(f != nullptr, "ffmpeg oracle: open yuv");
+            if (f) {
+                uint8_t row[432];
+                const size_t n = std::fread(row, 1, 432, f);
+                std::fclose(f);
+                expect(n == 432u, "ffmpeg oracle: read Y row0");
+                const int L = find_content_x(row, 432);
+                expect(L == 2, "ffmpeg expr (ow-iw)/2 yuv420p → content at x=2");
+                expect(row[0] == 16 && row[1] == 16, "ffmpeg pad left is Y=16 studio black");
+                expect(row[428] == 16 && row[431] == 16, "ffmpeg pad right is Y=16");
+                // Explicit pad must match the same placement.
+                std::string cmd2 = std::string(ff) +
+                    " -hide_banner -loglevel error -y "
+                    "-f lavfi -i color=c=black:s=426x240:d=0.04:r=25,"
+                    "format=yuv420p,geq=lum='X':cb=128:cr=128 "
+                    "-vf pad=432:240:2:0:color=black "
+                    "-frames:v 1 -f rawvideo -pix_fmt yuv420p " +
+                    outp + " 2>/dev/null";
+                const int rc2 = std::system(cmd2.c_str());
+                expect(rc2 == 0, "ffmpeg explicit :2:0 rc=0");
+                f = std::fopen(outp, "rb");
+                if (f) {
+                    std::fread(row, 1, 432, f);
+                    std::fclose(f);
+                    const int L2 = find_content_x(row, 432);
+                    expect(L2 == 2, "ffmpeg explicit pad=432:240:2:0 → content at x=2");
+                    expect(row[2] == 0 && row[3] == 1 && row[4] == 2,
+                           "ffmpeg Y at x=2..4 is source X=0,1,2");
+                }
+            }
+        } else {
+            std::fprintf(stderr, "NOTE: ffmpeg oracle skipped (rc=%d)\n", rc_expr);
+        }
     }
     // NEG: unverified 426 claim must still FOAR-scale (not trust pad-only)
     {
