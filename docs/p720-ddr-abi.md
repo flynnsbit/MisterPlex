@@ -247,3 +247,12 @@ Best ARM bank copy ≈ **15.28 ms/f**. Serial decode+copy FAILS every tier:
 
 Ship path = fabric `publish_bytes=0`. Flush-before-doorbell kept as correctness
 hazard only. `DDR_MEM_SYNC=0` still forces `FLUSH=1` in daemon.
+
+## Parent HW evidence #3 (2026-08-03) — product tier re-anchor
+
+- Geometry floor: **maxBR 3100 kbit** (w-path `d273d6f8`); below → PMS 720x404.
+- Controlled 2600k asset (same session): **36.27 ms/f** decode, margin **5.40 ms** @24fps.
+- Same-session 2500k: **35.87 ms/f** (archive 36.845 was cross-session; do not interpolate).
+- Serial decode+copy still **FAIL** (~51.55 ms). Overlap sketch PASS, contention unproven.
+- Candidate constants: `kPlex720pCandidateBitrateKbit=3100`, decode `36.27`.
+- Fabric zero-ARM pixels remains the only robust ship path.

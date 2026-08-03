@@ -1,51 +1,23 @@
 agent=w-mem
 branch=w-mem-720p-abi
 status=READY_FOR_INTEGRATION_FIT (macro OFF default)
-commit=7365998e (update after pull; git log -1)
 
-## Delivered this commit
-- fabric_bank_credit.sv: free_mask/claim/commit/vsync (PLXD-compatible)
-- fabric_ddr_attach: credit-aware produce; claim abort if !produce_en
-- fabric_i420_pattern_src: moving Y ramp via frame_phase
-- Plex.sv: Option-C 720p default under FABRIC_DDR_WRITER; 480P opt-out
-- host fabric_bank_credit.hpp + unit test
-- arbiter3 TB: credit_vsync + m2_over_m1 green
+## Budget re-anchor (parent HW evidence #3)
+- maxBR floor 3100; content ~2600k decode 36.27 ms/f; residual 5.40 ms
+- serial still FAIL; overlap sketch PASS (contention unproven)
+- constants: kPlex720pCandidateBitrateKbit=3100, decode 36.27
 
-## Stood down
-- mmap cache-policy (parent Sweep-3 retract; coherent flush worse)
+## RTL (prior commit 7365998e)
+- fabric_bank_credit + Option-C writer + moving pattern
+- FABRIC_DDR_WRITER default OFF; 480P opt-out
 
-## Integration fit recipe (parent)
-Uncomment in Plex.qsf:
-  VERILOG_MACRO FABRIC_DDR_WRITER=1
-  SYSTEMVERILOG_FILE rtl/{fabric_ddr_writer,fabric_i420_pattern_src,
-    fabric_ddr_write_path,fabric_ddr_attach,fabric_bank_credit,
-    ddr_bus_arbiter3,fabric_luma_linebuf}.sv
-Optional without w-scaler: FABRIC_DDR_WRITER_480P=1
-Do NOT enable 720p glass expect until w-scaler CODED 1280 read lands
-(Option-C banks invisible to product 624-wide reader).
-
-## true rc (this worktree)
-- test_fabric_ddr_top_wire: 0
-- test_fabric_bank_credit: 0
-- test_ddr_720p_abi: 0
+## true rc
+- test_ddr_720p_abi: 0 (residual_candidate_2600k=5.397)
 - test_ddr_mem_map_policy: 0
-- fabric_ddr_writer_verilator: 0
-- fabric_ddr_write_path_verilator: 0
-- ddr_bus_arbiter3_verilator: 0
+- arbiter3 / writer / path / top_wire / bank_credit: 0 (prior)
 
-## Parent measure after fit
-1. make post-fit-hierarchy — non-zero rows:
-   fabric_ddr_attach, fabric_bank_credit, fabric_ddr_writer, ddr_bus_arbiter3
-2. With 480P macro: HDMI moving pattern, ARM idle
-   scripts/hdmi_capture_idle.sh <out.png>
-3. Sustained fabric→DDR3 BW: unknown until device run
-
-## ARM ms
-- Pattern path: ARM publish_bytes=0 for those frames (fit proof)
-- 720p24 ship still needs real producer (decode→bank); pattern ≠ ship
-- Ship gate remains publish_bytes=0 / FPGA-written banks
-
-## Contract for w-scaler / w-path
-- Option-C base 0x30180000 stride 0x180000 doorbell 0x3047F000
-- free_mask bit must be 1 before fill; commit then vsync frees old disp
-- docs/fabric-ddr-writer-iface.md
+## Parent fit enable
+Uncomment FABRIC_DDR_WRITER=1 + SV stack incl fabric_bank_credit.sv
+Optional FABRIC_DDR_WRITER_480P=1 without scaler
+post-fit-hierarchy non-zero: attach credit writer arbiter3
+hdmi_capture_idle.sh for motion; ARM idle

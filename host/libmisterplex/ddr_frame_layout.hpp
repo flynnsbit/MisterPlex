@@ -688,24 +688,32 @@ constexpr double kFeedArchiveScaleMs = 2.95;
 constexpr double kFeedArchivePresentMs = 10.41;
 // FEED non-decode ARM buckets @480p (present+pipe+scale), quoted parent rollup.
 constexpr double kFeedArchiveNonDecodeMs = 10.411 + 5.263 + 2.954; // 18.628
-// Parent device 2026-08-02 real-content 720p decode-only (both cores), ms/f.
-// Source: parent /tmp/misterplex-parent-720p-decode-verdict.txt (device measure).
-// Bitrate sweep (Constrained Baseline, 300 frames/arm, exit=0):
-//   1500k 32.427 ms/f (headroom 9.24) | 2500k 36.845 (4.82)
-//   3500k 38.751 (2.92)               | 4000k 41.073 (0.59)
-// Tier residual math only. PMS delivers real 1280x720 only at >=3500 kbit
-// (w-path); <=3000k returns 720x404. Candidate pin: 3500 kbit.
-// Headroom is jitter margin ONLY — not permission for ARM memcpy (~22 ms/f).
+// Parent device real-content 720p decode-only (both cores), ms/f.
+// Cross-session archive (2026-08-02, do not interpolate across sessions):
+//   1500k 32.427 | 2500k 36.845 | 3500k 38.751 | 4000k 41.073
+// In-session product-tier re-anchor (parent HW evidence #3, 2026-08-03):
+//   maxBR geometry floor = 3100 kbit (w-path d273d6f8; below → 720x404)
+//   server content ~2585k at maxBR=3100; controlled 2600k asset mean 36.27 ms/f
+//   same-session 2500k re-measure 35.87 ms/f (not archive 36.845)
+//   margin @24fps = 41.667-36.27 = 5.40 ms. Serial+copy still FAIL (~51.55).
+// Candidate pin: maxBR 3100 / content-rate decode 36.27 ms/f.
+// Headroom is jitter/overlap margin ONLY — not permission for ARM memcpy.
 constexpr double kParent720pDecodeMs1500k = 32.427;
-constexpr double kParent720pDecodeMs2500k = 36.845;
-constexpr double kParent720pDecodeMs3500k = 38.751;
+constexpr double kParent720pDecodeMs2500kArchive = 36.845; // cross-session archive
+constexpr double kParent720pDecodeMs2500k = 35.87;         // in-session re-anchor
+constexpr double kParent720pDecodeMs2600k = 36.27;         // product-tier content
+constexpr double kParent720pDecodeMs3500k = 38.751;        // archive
 constexpr double kParent720pDecodeMs4000k = 41.073;
 // Default keeps the 4000k figure for conservative residual.
 constexpr double kParent720pDecodeMsDefaultThreads = kParent720pDecodeMs4000k;
 constexpr double kParent480pDecodeMsDefaultThreads = 15.969;
 constexpr double kFrameBudget24fpsMs = 41.667;
-constexpr int kPlex720pCandidateBitrateKbit = 3500;
-constexpr double kParent720pDecodeMsCandidateTier = kParent720pDecodeMs3500k;
+// PMS maxBR floor for real 1280x720 (w-path). Content bitrate ~2600k class.
+constexpr int kPlex720pCandidateBitrateKbit = 3100;
+constexpr int kPlex720pCandidateContentBitrateKbit = 2600;
+constexpr double kParent720pDecodeMsCandidateTier = kParent720pDecodeMs2600k;
+// Alias kept for older call sites that said "3500 floor".
+constexpr double kParent720pDecodeMsPmsFloorArchive = kParent720pDecodeMs3500k;
 constexpr double kParent720pDecodeBudgetFraction =
     kParent720pDecodeMsDefaultThreads / kFrameBudget24fpsMs;
 constexpr double kParent720pDecodeBudgetFractionCandidate =
@@ -944,9 +952,9 @@ inline DdrFabricOwnedPresentPlan makeDdrFabricOwnedPresentPlan(
 // (or other fabric producer) fills Option-C / product banks; ARM only programs
 // PLXG + rings doorbell / feeds bitstream ring. This is the only present path
 // that can meet ddr720p24ShipAcceptsZeroArmPerPixel. Serial ARM decode+bank
-// copy is DEAD at every tier (parent Sweep-3: best bank 15.283 ms; 3500k
-// decode 38.751 → sum 54.034). Host-copy ordinary RAM is unreachable.
-// Fabric publish_bytes=0 is the only ship path; PL330 overlap is unproven.
+// copy is DEAD at every tier (Sweep-3 best bank 15.283 ms; product 2600k
+// decode 36.27 → serial sum ~51.55). Host-copy ordinary RAM is unreachable.
+// Fabric publish_bytes=0 is the only ship path; PL330 overlap unproven concurrent.
 inline DdrFabricOwnedPresentPlan makeDdrFpgaWrittenBankPlan(
     const DdrFrameGeometry& canvasGeom, uint32_t canvasPhysBase = kPlex720pDdrFramePhysBase,
     bool countFeedScaleRemoval = true) {
@@ -969,8 +977,8 @@ inline DdrFabricOwnedPresentPlan makeDdrFpgaWrittenBankPlan(
 
 // Residual headroom after parent-measured 720p decode if non-decode is fully off ARM.
 // Returns budget - decode_ms. Positive means room for jitter only — not for memcpy.
-// Default decodeMs is 4000k (worst measured). Pass kParent720pDecodeMsCandidateTier
-// (3500k PMS floor) for the delivery-tier residual (~2.92 ms).
+// Default decodeMs is 4000k (worst archive). Pass kParent720pDecodeMsCandidateTier
+// (2600k product content / maxBR 3100) for delivery residual (~5.40 ms).
 inline double ddr720p24ResidualMsAfterDecodeOnly(
     double decodeMs = kParent720pDecodeMsDefaultThreads,
     double budgetMs = kFrameBudget24fpsMs) {
@@ -989,8 +997,8 @@ inline bool ddr720p24ArmCopyExceedsDecodeMargin(size_t armPushBytes) {
                                                  kParent720pDecodeMsDefaultThreads);
 }
 
-// Candidate 3500k tier: full 720p ARM bank copy ~15.28 ms >> residual ~2.92 ms.
-// Ship gate remains publish_bytes=0.
+// Candidate product tier: full 720p ARM bank copy ~15.28 ms >> residual ~5.40 ms.
+// Ship gate remains publish_bytes=0 (serial still fails by ~9.9 ms).
 inline bool ddr720p24ArmCopyExceedsCandidateTierMargin(size_t armPushBytes) {
     return ddr720p24ArmCopyExceedsDecodeMarginAt(armPushBytes,
                                                  kParent720pDecodeMsCandidateTier);

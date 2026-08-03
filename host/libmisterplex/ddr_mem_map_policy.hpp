@@ -110,7 +110,13 @@ inline bool ddr720p24MappedPathFitsAt1500k(
     return ddr720p24SerialArmDecodePlusBankCopyFits(decodeMs, mappedCopyMs);
 }
 
-// PMS floor for real 1280x720: >=3500 kbit (w-path). Serial still fails.
+// Product tier (maxBR 3100 / content ~2600k): decode 36.27 + copy 15.283 = 51.55 FAIL.
+inline bool ddr720p24SerialPathFitsAt2600k(
+    double decodeMs = 36.27, double copyMs = kParentDdrBestBank720pFrameMs) {
+    return ddr720p24SerialArmDecodePlusBankCopyFits(decodeMs, copyMs);
+}
+
+// Archive PMS floor name (>=3500); serial still fails. Prefer At2600k for product.
 inline bool ddr720p24SerialPathFitsAt3500k(
     double decodeMs = 38.751, double copyMs = kParentDdrBestBank720pFrameMs) {
     return ddr720p24SerialArmDecodePlusBankCopyFits(decodeMs, copyMs);
@@ -144,6 +150,13 @@ inline bool ddr720p24OverlapMaxDecodeCopyFits(double decodeMs, double copyMs,
                                               double budgetMs = kFrameBudget24fpsMsLocal) {
     const double m = (decodeMs > copyMs) ? decodeMs : copyMs;
     return m <= budgetMs;
+}
+
+// Product-tier overlap sketch (parent 36.27 decode): PASS on paper; contention unmeasured.
+inline bool ddr720p24OverlapSketchFitsAt2600k(
+    double decodeMs = 36.27, double copyMs = kParentDdrBestBank720pFrameMs,
+    double budgetMs = kFrameBudget24fpsMsLocal) {
+    return ddr720p24OverlapMaxDecodeCopyFits(decodeMs, copyMs, budgetMs);
 }
 
 } // namespace misterplex
