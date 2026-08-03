@@ -233,12 +233,13 @@ int main(int argc, char **argv)
 	    "H_TOT=%d V_TOT=%d clks/frame=%d fps@20M=%.4f "
 	    "de_w_min=%d de_w_max=%d de_lines=%d de_pixels=%d "
 	    "de_uniform=%d store_id_ok=%d store_id_fail=%d/%d "
-	    "store_req=%d store_oracle=%d store_x_range=%d..%d "
+	    "store_req=%d store_full=%d store_oracle=%d store_x_range=%d..%d "
 	    "true_de=%d island=%d beam=%dx%d\n",
 	    mode, H_TOT, V_TOT, H_TOT * V_TOT, 20e6 / double(H_TOT * V_TOT), st.min_de_w,
 	    st.max_de_w, st.de_lines, st.de_pixels, de_w_uniform, st.store_id_ok,
-	    st.store_id_fail, st.store_id_checked, st.store_id_checked, st.store_oracle_ok,
-	    st.store_x_min, st.store_x_max, true_de, island_detected, H_BEAM, V_BEAM);
+	    st.store_id_fail, st.store_id_checked, st.store_id_checked, store_full,
+	    st.store_oracle_ok, st.store_x_min, st.store_x_max, true_de, island_detected,
+	    H_BEAM, V_BEAM);
 
 	int fails = 0;
 #define CHECK(c, m)                                                                 \

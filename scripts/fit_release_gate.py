@@ -58,16 +58,24 @@ REQUIRED_EXACT = {
     "FRAME_H": "540",
     "PRESENT_BEAM_960": "1",
     "DDR_FRAME_STORE": "1",
+    "PRODUCT_NO_STUB": "1",
 }
 # Known-hollow values that must not be the active assignment.
 FORBIDDEN_VALUES = {
     "FRAME_W": {"640"},
     "FRAME_H": {"480"},
 }
-# Fault / non-product macros must stay out of a release QSF.
+# Fault / non-product / competing-path macros must stay out of a release QSF.
+# ascal path: do NOT set MULTI_PIXEL / SCALE_* / FABRIC_DDR_WRITER (fit card + rd-duck).
 FORBIDDEN_PRESENT = {
     "PRESENT_BEAM_FAULT_ISLAND_1280",
     "PRESENT_BEAM_FAULT_VTOT_BAD_DE",
+    "PRESENT_MULTI_PIXEL",
+    "PRESENT_SCALE_4_3",
+    "PRESENT_SCALE_2X",
+    "PRESENT_PX_PER_CLK",
+    "FABRIC_DDR_WRITER",
+    "FABRIC_NATIVE_720P_GEOM",  # forces 1280×720, not 960 (B8)
 }
 
 # Cross-lane note (printed on every run — do not silently resolve):
@@ -97,6 +105,60 @@ def _run(cmd: list[str], *, cwd: Path | None = None, env: dict | None = None) ->
 
 def _read(path: Path) -> str:
     return path.read_text(errors="ignore") if path.is_file() else ""
+
+
+def _repo_root_for(path: Path) -> Path | None:
+    """Walk parents of path until fpga/Plex_MiSTer + scripts/ exist."""
+    p = path.resolve()
+    if p.is_file():
+        p = p.parent
+    for _ in range(12):
+        if (p / "fpga" / "Plex_MiSTer").is_dir() and (p / "scripts").is_dir():
+            return p
+        if p.parent == p:
+            return None
+        p = p.parent
+    return None
+
+
+def _qsf_under_root(qsf: Path, root: Path) -> bool:
+    try:
+        qsf.resolve().relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def check_qsf_tree_match(
+    qsf: Path, *, rtl_legs: bool
+) -> tuple[int, list[str]]:
+    """Refuse macros-from-tree-A + RTL-from-tree-B (rd-duck adc9292 audit #4)."""
+    msgs: list[str] = []
+    qsf = qsf.resolve()
+    qsf_root = _repo_root_for(qsf)
+    msgs.append(f"LEG_TREE gate_root={ROOT} qsf={qsf} qsf_root={qsf_root}")
+    if qsf_root is None:
+        return 1, msgs + [
+            "B11_QSF_NO_REPO_ROOT: cannot locate fpga/Plex_MiSTer above QSF — "
+            "refuse (no foreign macro injection)"
+        ]
+    same = qsf_root.resolve() == ROOT.resolve()
+    if same:
+        msgs.append("LEG_TREE_MATCH EXECUTED QSF and gate RTL share one root")
+        return 0, msgs
+    if not rtl_legs:
+        msgs.append(
+            f"LEG_TREE_FOREIGN_MACRO_ONLY EXECUTED qsf_root={qsf_root} "
+            "(leg1 parse only — not a fit grant, not elab/tde)"
+        )
+        return 0, msgs
+    return 1, msgs + [
+        "B11_FOREIGN_QSF_RTL_MISMATCH: QSF lives under "
+        f"{qsf_root} but gate elaborates/scans RTL under {ROOT}. "
+        "Macros from hash A must not certify RTL from hash B (rd-duck adc9292). "
+        "Point --qsf at a QSF inside this worktree, or run the gate from the "
+        "candidate tree that owns both QSF and RTL."
+    ]
 
 
 def _layout_param(name: str) -> str | None:
@@ -637,6 +699,30 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
     except Exception as exc:  # noqa: BLE001 — surface as gate fail
         errors.append(f"B10_DISCOVER_DESIGN_ERROR: {exc}")
 
+    # --- B12: RGB/store DE_LAG not re-swept for 960 product ---
+    # present_core.sv documents DE_LAG=3 measured at FRAME_W=640; REQUIRES_FIT note
+    # says not re-swept for DDR_FRAME_STORE @ 640 even — 960 path has no latency proof.
+    core_lag = _read(RTL / "present_core.sv")
+    if core_lag:
+        lag_unproven = (
+            "DE_LAG has NOT been re-swept" in core_lag
+            or "REQUIRES_FIT (DDR_FRAME_STORE @ FRAME_W=640)" in core_lag
+        )
+        has_960_lag_note = bool(
+            re.search(r"DE_LAG.*960|960.*DE_LAG|FRAME_W=960.*DE_LAG", core_lag)
+        )
+        msgs.append(
+            f"LEG0_DE_LAG unproven_comment={int(lag_unproven)} "
+            f"has_960_lag_closure={int(has_960_lag_note)}"
+        )
+        if lag_unproven and not has_960_lag_note:
+            errors.append(
+                "B12_DE_LAG_RGB_LATENCY_UNPROVEN: present_core.sv still states "
+                "DE_LAG has NOT been re-swept for DDR path (measured at 640-class). "
+                "No 960 store/RGB latency closure — gate refuses fit until lag is "
+                "re-proven for FRAME 960×540 (rd-duck adc9292 RGB/store latency)."
+            )
+
     # --- Runtime-OFF OSD / colorbars timing cargo when candidate is ascal ---
     if cand and cand.get("architecture") == "ascal_true_de_960":
         # present_core still has colorbars Template path when PRESENT_BEAM_960 undefined.
@@ -711,8 +797,9 @@ def leg1_macros(qsf: Path) -> tuple[int, list[str], dict[str, str]]:
         return 1, msgs, active
 
     msgs.append(
-        "LEG1_PASS EXECUTED required={FRAME_W=960,FRAME_H=540,PRESENT_BEAM_960=1,DDR_FRAME_STORE=1} "
-        "hollow_640_480=absent"
+        "LEG1_PASS EXECUTED required={FRAME_W=960,FRAME_H=540,PRESENT_BEAM_960=1,"
+        "DDR_FRAME_STORE=1,PRODUCT_NO_STUB=1} "
+        "forbidden_mp_scale_fabric_writer=absent hollow_640_480=absent"
     )
     return 0, msgs, active
 
@@ -857,57 +944,75 @@ def leg3_true_de(
         msgs.append("LEG3_FAIL EXECUTED missing CASE true_de_count EXECUTED")
         return 1, msgs
 
-    # Require true_de=1 for the configured content raster.
+    # Require true_de=1 AND store_full (rd-duck adc9292: true_de-only greened x0-loss).
     m = re.search(r"true_de=(\d+)", rout)
     de_w = re.search(r"de_w_max=(\d+)", rout)
     de_h = re.search(r"de_lines=(\d+)", rout)
-    # store_id_fail=N/M or store_req=M — M must equal content area (rd-duck 517860 trap)
+    de_pix = re.search(r"de_pixels=(\d+)", rout)
     store_m = re.search(r"store_id_fail=\d+/(\d+)", rout)
     store_req = re.search(r"store_req=(\d+)", rout)
+    store_full_m = re.search(r"store_full=(\d+)", rout)
     store_oracle = re.search(r"store_oracle=(\d+)", rout)
     store_x_range = re.search(r"store_x_range=(-?\d+)\.\.(-?\d+)", rout)
     if not m or not de_w or not de_h:
         msgs.append("LEG3_FAIL EXECUTED could not parse true_de/de_w/de_lines")
         return 1, msgs
+    if not store_req and not store_m:
+        msgs.append(
+            "LEG3_FAIL EXECUTED missing store_req= in CASE line — old sim without "
+            "store oracle cannot greenwash via true_de alone (rd-duck adc9292)"
+        )
+        return 1, msgs
+    if store_full_m is None:
+        msgs.append(
+            "LEG3_FAIL EXECUTED missing store_full= token — require store_full=1 "
+            "from fixed scaler test (not true_de-only parse)"
+        )
+        return 1, msgs
 
     td, dw, dh = int(m.group(1)), int(de_w.group(1)), int(de_h.group(1))
     area = fw * fh
-    checked = int(store_m.group(1)) if store_m else -1
-    if store_req:
-        checked = int(store_req.group(1))
+    checked = int(store_req.group(1)) if store_req else int(store_m.group(1))
+    sfull = int(store_full_m.group(1))
     oracle = int(store_oracle.group(1)) if store_oracle else -1
     sx0 = int(store_x_range.group(1)) if store_x_range else -1
     sx1 = int(store_x_range.group(2)) if store_x_range else -1
+    dp = int(de_pix.group(1)) if de_pix else -1
     msgs.append(
-        f"LEG3_MEASURE content={fw}x{fh} de={dw}x{dh} true_de={td} "
-        f"store_req={checked} store_oracle={oracle} store_x={sx0}..{sx1} "
-        f"island_inject={int(island)}"
+        f"LEG3_MEASURE content={fw}x{fh} de={dw}x{dh} de_pixels={dp} true_de={td} "
+        f"store_req={checked} store_full={sfull} store_oracle={oracle} "
+        f"store_x={sx0}..{sx1} island_inject={int(island)}"
     )
 
     if island:
-        # Independence twin: must EXECUTE and show true_de=0 (not pass).
-        if td != 0 or rrc == 0:
+        if td != 0 or rrc == 0 or sfull == 1:
             msgs.append(
-                f"LEG3_FAIL EXECUTED island inject expected true_de=0 rc!=0 got true_de={td} rc={rrc}"
+                f"LEG3_FAIL EXECUTED island inject expected true_de=0 store_full!=1 "
+                f"rc!=0; got true_de={td} store_full={sfull} rc={rrc}"
             )
             return 1, msgs
         msgs.append("LEG3_INDEPENDENT_ISLAND_RED EXECUTED true_de=0 (leg3 alone rejects)")
-        # For the normal gate path, island means FAIL the release gate.
         msgs.append("LEG3_FAIL EXECUTED island/true_de=0 — release blocked")
         return 1, msgs
 
-    # Hard fail the 959×H store shortfall even if someone weakens true_de again.
-    if checked != area:
+    # Independent of true_de bit — refuse 517860-class shortfall explicitly.
+    if checked != area or sfull != 1:
         msgs.append(
-            f"LEG3_FAIL EXECUTED B6_STORE_SHORTFALL store_req={checked} want={area} "
-            f"({fw}x{fh}). de_pixels-alone is not enough — rd-duck: 517860=959*540 "
-            "meant x=0 never reached store while true_de greenwashed."
+            f"LEG3_FAIL EXECUTED STORE_NOT_FULL store_req={checked} store_full={sfull} "
+            f"want store_req={area} store_full=1 (x0..{fw-1}). "
+            f"true_de={td} de_pixels={dp} alone is NOT enough — rd-duck: "
+            "DE=518400 with store=517860 was a false green."
         )
         return 1, msgs
     if oracle != 1 or sx0 != 0 or sx1 != fw - 1:
         msgs.append(
-            f"LEG3_FAIL EXECUTED B6_STORE_ORACLE store_oracle={oracle} "
+            f"LEG3_FAIL EXECUTED STORE_ORACLE store_oracle={oracle} "
             f"store_x_range={sx0}..{sx1} want oracle=1 x=0..{fw-1}"
+        )
+        return 1, msgs
+    if dp != area:
+        msgs.append(
+            f"LEG3_FAIL EXECUTED de_pixels={dp} want={area} (content area)"
         )
         return 1, msgs
 
@@ -919,8 +1024,8 @@ def leg3_true_de(
         return 1, msgs
 
     msgs.append(
-        f"LEG3_PASS EXECUTED true_de=1 de={dw}x{dh} content={fw}x{fh} "
-        f"store_req={checked} store_oracle=1 x=0..{fw-1}"
+        f"LEG3_PASS EXECUTED true_de=1 store_full=1 store_req={checked} "
+        f"store_oracle=1 x=0..{fw-1} de={dw}x{dh} content={fw}x{fh}"
     )
     return 0, msgs
 
@@ -936,6 +1041,19 @@ def run_gate(
     print(CROSS_LANE)
     print(f"FIT_RELEASE_GATE qsf={qsf}")
     print("FIT_RELEASE_GATE_EXECUTED begin")
+    print(
+        "FIT_RELEASE_GATE_CLASS=partial_precheck_until_leg0_clear "
+        "(not fit release while B0–B11 open — rd-duck adc9292)"
+    )
+
+    # Tree match before any RTL work (macros A + RTL B is forbidden).
+    rtl_legs = (not skip_arch) or (not skip_elab) or (not skip_true_de)
+    rc_tree, msgs_tree = check_qsf_tree_match(qsf, rtl_legs=rtl_legs)
+    print("\n".join(msgs_tree))
+    print(f"tree_match true rc={rc_tree}")
+    if rc_tree != 0:
+        print("FIT_RELEASE_GATE_FAIL leg=tree (B11 foreign QSF vs RTL root)")
+        return rc_tree
 
     if not skip_arch:
         rc0, msgs0 = leg0_arch_blockers()
@@ -973,13 +1091,13 @@ def run_gate(
     print("\n".join(msgs3))
     print(f"leg3 true rc={rc3}")
     if rc3 != 0:
-        print("FIT_RELEASE_GATE_FAIL leg=3 (true_de)")
+        print("FIT_RELEASE_GATE_FAIL leg=3 (true_de/store_full)")
         return rc3
 
     if skip_arch:
         print("FIT_RELEASE_GATE_PASS EXECUTED legs=1+2+3 (arch skipped — NOT a fit grant)")
     else:
-        print("FIT_RELEASE_GATE_PASS EXECUTED legs=0+1+2+3")
+        print("FIT_RELEASE_GATE_PASS EXECUTED legs=0+1+2+3 READY_TO_FIT_CANDIDATE")
     return 0
 
 
@@ -1039,6 +1157,7 @@ set_global_assignment -name VERILOG_MACRO "PRESENT_BEAM_960=1"
         dup,
         """# last-wins: hollow first, correct second
 set_global_assignment -name VERILOG_MACRO "DDR_FRAME_STORE=1"
+set_global_assignment -name VERILOG_MACRO "PRODUCT_NO_STUB=1"
 set_global_assignment -name VERILOG_MACRO "FRAME_W=640"
 set_global_assignment -name VERILOG_MACRO "FRAME_H=480"
 set_global_assignment -name VERILOG_MACRO "FRAME_W=960"
@@ -1053,6 +1172,7 @@ set_global_assignment -name VERILOG_MACRO "PRESENT_BEAM_960=1"
         island,
         """# Otherwise-green macros + island fault — leg3 must reject true_de
 set_global_assignment -name VERILOG_MACRO "DDR_FRAME_STORE=1"
+set_global_assignment -name VERILOG_MACRO "PRODUCT_NO_STUB=1"
 set_global_assignment -name VERILOG_MACRO "FRAME_W=960"
 set_global_assignment -name VERILOG_MACRO "FRAME_H=540"
 set_global_assignment -name VERILOG_MACRO "PRESENT_BEAM_960=1"
@@ -1166,6 +1286,27 @@ def self_test() -> int:
             "PASS SELFTEST b10_qip_beam_listed EXECUTED "
             "red_fixture_absent=1 live_qip_present=1"
         )
+
+    # B11 RED twin: foreign worktree QSF must not elab against this ROOT RTL.
+    if hollow is not None:
+        print("\n=== SELFTEST b11_foreign_qsf_elab_blocked want_rc=1 ===")
+        rc_f = run_gate(hollow, skip_arch=True)  # would elab+tde on ROOT with foreign macros
+        print(f"b11_foreign_qsf_elab true rc={rc_f}")
+        if rc_f != 1:
+            print(f"FAIL b11_foreign_qsf: rc={rc_f} want=1")
+            failures += 1
+        else:
+            print("PASS SELFTEST b11_foreign_qsf_elab_blocked EXECUTED rc=1")
+
+    # Leg1 still allows foreign macro-only parse (hollow RED twin).
+    if hollow is not None:
+        rc_t, msgs_t = check_qsf_tree_match(hollow, rtl_legs=False)
+        print("\n".join(msgs_t))
+        if rc_t != 0:
+            print(f"FAIL b11_macro_only_foreign: rc={rc_t}")
+            failures += 1
+        else:
+            print("PASS SELFTEST b11_macro_only_foreign_ok EXECUTED")
 
     if failures:
         print(f"FIT_RELEASE_GATE_SELFTEST_FAIL failures={failures}")
