@@ -128,7 +128,13 @@ module h264_dpb_mc_tb #(
 		end
 	endgenerate
 
-	h264_dpb_one_ref #(.FRAME_W(624), .FRAME_H(480)) u_dpb (
+	// Pin BANK1_BASE to fixture geometry. Product RTL defaults are 1280x720;
+	// leaving BANK1 unpinned made cur_base=1382400 and broke promotion checks.
+	h264_dpb_one_ref #(
+		.FRAME_W(624),
+		.FRAME_H(480),
+		.BANK1_BASE(624 * 480 * 3 / 2)
+	) u_dpb (
 		.clk(clk), .reset(reset),
 		.idr_start(idr_start), .frame_done(dpb_frame_done),
 		.ref_ready(ref_ready_good), .current_base(current_base), .reference_base(reference_base),
