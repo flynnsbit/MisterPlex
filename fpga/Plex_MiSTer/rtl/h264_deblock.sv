@@ -391,7 +391,7 @@ module h264_deblock_edge_pipe (
 endmodule
 
 module h264_deblock_writeback_ctrl #(
-	parameter int MB_COUNT = 1170,
+	parameter int MB_COUNT = 3600,  // 80*45 @1280x720
 	parameter int FRAME_SLOT_W = 2,
 	parameter int SAMPLES_PER_MB = 384,
 	parameter int MB_AW = (MB_COUNT <= 1) ? 1 : $clog2(MB_COUNT)
