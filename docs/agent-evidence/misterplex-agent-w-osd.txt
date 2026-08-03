@@ -8,6 +8,13 @@ note: /tmp writes forbidden by runtime — evidence at docs/agent-evidence/miste
 MANDATE: "move as much into the fpga so we can do 720p"
   720p is the reward for evacuating ARM. Prefer ARM=0 work over cheaper ARM work.
 
+PARENT 720p REAL-CONTENT DECODE (2026-08-02, device-measured):
+  1280x720 @4000k both cores: 41.073 ms/f (24.35 fps ceiling)
+  24fps budget 41.667 ms → margin 0.59 ms = 1.4%
+  Archived non-decode 480p 18.628 ms/f ×~3.08 ≈ 57 ms/f at 720p if still on ARM
+  → OSD/idle/scale offload is critical path, not polish.
+  Hard acceptance: ARM does zero per-pixel work at 720p when plane live.
+
 ========================================================================
 (a) OVERLAY PLANE WIRING (quoted)
 ========================================================================

@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <vector>
 
 static int fails = 0;
@@ -87,6 +88,27 @@ static void checkStoppedHudHasBarAndState() {
     CHECK(cmds.size() <= static_cast<size_t>(kHitScan));
 }
 
+// Hard acceptance (parent 720p decode 41.073 ms/f, 1.4% margin): when plane live,
+// media_player must not call render*/blit on the content/idle path.
+// Source-level gate — red if someone reintroduces bake under chromePlaneLive.
+static void checkZeroPerPixelArmWhenLiveSource() {
+    FILE* f = std::fopen("arm/misterplexd/media_player.cpp", "r");
+    CHECK(f != nullptr);
+    if (!f)
+        return;
+    std::string src;
+    char buf[4096];
+    while (std::fgets(buf, sizeof(buf), f))
+        src += buf;
+    std::fclose(f);
+    // presentCleanFrame bake only under !chromePlaneLive
+    CHECK(src.find("if (!dirty.empty() && !chromePlaneLive())") != std::string::npos);
+    // idle early-out with no paint
+    CHECK(src.find("idle fabric plane=1 skip ALL ARM paint") != std::string::npos);
+    // Must not have "skip DDR" only (old half-offload) without ALL ARM paint
+    CHECK(src.find("skip ALL ARM paint") != std::string::npos);
+}
+
 // 720p-first: default BuildArgs and a full STOPPED HUD must fit the list.
 static void check720pHudBudget() {
     using namespace misterplex::plex_chrome_cmds;
@@ -118,6 +140,7 @@ static void check720pHudBudget() {
 int main() {
     checkPackRoundtrip();
     checkNoPixelBakeWhenLive();
+    checkZeroPerPixelArmWhenLiveSource();
     checkStoppedHudHasBarAndState();
     check720pHudBudget();
     if (fails) {
