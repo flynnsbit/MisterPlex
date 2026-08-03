@@ -800,14 +800,18 @@ inline bool packYuv420pCenteredIntoCodedBank(const uint8_t* src, int srcW, int s
 //   [28:16]  plxg_seq (13b) — 0 = ungated legacy (no geom coupling)
 //   [15:0]   frame_seq (16b)
 // Full 29-bit seq mask retained as (plxg_seq<<16)|frame_seq for token identity.
+// plxgNextSeq skips full seqs whose low-13 field is 0 (8192, 16384, …) so a
+// valid coupled publish never collapses to ungated.
 constexpr uint32_t kDdrDoorbellFrameSeqMask = 0xFFFFu;
-constexpr uint32_t kDdrDoorbellPlxgSeqMask = 0x1FFFu;
+constexpr uint32_t kDdrDoorbellPlxgSeqMask = 0x1FFFu; // == kPlxgDoorbellSeqFieldMask
 constexpr unsigned kDdrDoorbellPlxgSeqShift = 16u;
 
 inline uint32_t ddrDoorbellHi(uint32_t seq, int bank, DdrFrameFormat format,
                               uint16_t plxgSeq = 0) {
     const uint32_t frameSeq = seq & kDdrDoorbellFrameSeqMask;
-    const uint32_t ps = static_cast<uint32_t>(plxgSeq) & kDdrDoorbellPlxgSeqMask;
+    // Field is low-13 of full PLXG seq; 0 only for intentional ungated (caller
+    // passes 0) or FAULT allocator that emitted 8192/16384/….
+    const uint32_t ps = static_cast<uint32_t>(plxgSeqDoorbellField(plxgSeq));
     return (static_cast<uint32_t>(bank & 1) << 31) |
            ((ddrFrameFormatCode(format) & 0x3u) << 29) |
            (ps << kDdrDoorbellPlxgSeqShift) | frameSeq;
@@ -836,8 +840,8 @@ inline bool decodeDdrDoorbell(uint32_t lo, uint32_t hi, DdrFrameFormat expectedF
     return true;
 }
 
-// Bank accept under geom coupling: plxg_seq==0 → legacy ungated; else must match
-// live PLXG seq (after promote). Independent observer delay without this → mix.
+// Bank accept under geom coupling: doorbell field 0 → legacy ungated; else must
+// match live PLXG seq low-13 (RTL: db_plxg_seq == d_geom_seq[12:0]).
 inline bool ddrDoorbellGeomCoupledOk(uint16_t doorbellPlxgSeq, uint16_t livePlxgSeq,
                                      bool liveValid, bool faultIgnoreCoupling = false) {
     if (faultIgnoreCoupling)
@@ -846,7 +850,7 @@ inline bool ddrDoorbellGeomCoupledOk(uint16_t doorbellPlxgSeq, uint16_t livePlxg
         return true; // legacy ungated
     if (!liveValid)
         return false;
-    return doorbellPlxgSeq == livePlxgSeq;
+    return doorbellPlxgSeq == plxgSeqDoorbellField(livePlxgSeq);
 }
 
 // rd-duck: independent PLXG vs doorbell observers without generation coupling.

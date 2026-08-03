@@ -1548,7 +1548,9 @@ module ddr_frame_store #(
 	wire db_bad_format = db_magic_ok && !db_format_ok;
 	wire db_valid_token = db_magic_ok && db_format_ok;
 	wire [12:0] db_plxg_seq = db_token[28:16];
-	// Coupling: plxg_seq==0 → ungated; else require CDC live PLXG seq match.
+	// Coupling: field 0 → ungated legacy; else match live PLXG low-13.
+	// Host plxgNextSeq skips full seqs with low-13==0 (8192, 16384, …) so a
+	// valid coupled publish never collapses to ungated (rd-duck ~5m41s@24fps).
 	wire db_geom_coupled =
 		(db_plxg_seq == 13'd0) ||
 		(d_geom_live && (db_plxg_seq == d_geom_seq[12:0]));

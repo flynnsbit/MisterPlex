@@ -182,11 +182,27 @@ inline bool plxgQ0Seq(uint64_t q0, uint16_t* seqOut) {
     return true;
 }
 
+// Doorbell embeds only 13 bits of PLXG seq ([28:16]); field 0 = intentional
+// ungated legacy (rd-duck). Full 16-bit sequences 0, 8192, 16384, … all encode
+// as field 0 and would silently bypass bank+geom coupling every 8192 publishes
+// (~5m41s @24fps) unless the allocator skips them.
+constexpr uint16_t kPlxgDoorbellSeqFieldMask = 0x1FFFu;
+
+inline uint16_t plxgSeqDoorbellField(uint16_t fullSeq) {
+    return static_cast<uint16_t>(fullSeq & kPlxgDoorbellSeqFieldMask);
+}
+
+// True when packing fullSeq into the doorbell would look like ungated (incl. 0).
+inline bool plxgSeqDoorbellFieldIsReservedUngated(uint16_t fullSeq) {
+    return plxgSeqDoorbellField(fullSeq) == 0;
+}
+
 // Restart-safe next seq (rd-duck): software last alone is not enough — after
 // daemon/FpgaSpi reconstruct, plxgLastSeq_=0 while FPGA last_seq and retained
 // DDR q0 may still be N. If N==1 the naive useSeq=1 is rejected as stale and a
 // single mode-disable never commits. Seed from max(softwareLast, retainedSeq)
-// when retained q0 magic is valid, then +1 (skip 0).
+// when retained q0 magic is valid, then +1, skipping any value whose doorbell
+// field is 0 (reserved ungated).
 inline uint16_t plxgNextSeq(uint16_t softwareLast, bool retainedValid,
                             uint16_t retainedSeq) {
     uint32_t seed = softwareLast;
@@ -199,14 +215,33 @@ inline uint16_t plxgNextSeq(uint16_t softwareLast, bool retainedValid,
             seed = retainedSeq;
     }
     uint16_t use = static_cast<uint16_t>(seed + 1u);
-    if (use == 0)
-        use = 1;
-    return use;
+    // Skip field-0 encodings: 0, 8192, 16384, 24576, 32768, 40960, 49152, 57344.
+    // Bounded loop — at most one skip per step except wrap 0xFFFF→0→1.
+    for (int i = 0; i < 16; ++i) {
+        if (use != 0 && !plxgSeqDoorbellFieldIsReservedUngated(use))
+            return use;
+        use = static_cast<uint16_t>(use + 1u);
+    }
+    return 1; // unreachable with 16-bit space + 8 forbidden; keep coupled
 }
 
 // FAULT twin: ignore retained DDR (pre-fix writePlxgRecord).
 inline uint16_t plxgNextSeqFaultIgnoreRetained(uint16_t softwareLast) {
     return plxgNextSeq(softwareLast, /*retainedValid=*/false, 0);
+}
+
+// FAULT twin: old allocator — only skips full seq 0, allows 8192 etc. → doorbell
+// field 0 → silent ungated (rd-duck ~5m41s @24fps coupling loss).
+inline uint16_t plxgNextSeqFaultAllowDoorbellZeroField(uint16_t softwareLast,
+                                                      bool retainedValid,
+                                                      uint16_t retainedSeq) {
+    uint32_t seed = softwareLast;
+    if (retainedValid && static_cast<uint32_t>(retainedSeq) > seed)
+        seed = retainedSeq;
+    uint16_t use = static_cast<uint16_t>(seed + 1u);
+    if (use == 0)
+        use = 1;
+    return use;
 }
 
 // Host-side model of poller tear check: after q0..q4 snap, q0 must still match.

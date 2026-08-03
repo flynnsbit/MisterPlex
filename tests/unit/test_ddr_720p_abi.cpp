@@ -1032,6 +1032,45 @@ int main() {
         CHECK(ddrPlxgDoorbellFaultDaemonRestartMismatches()); // REPRO restart
         CHECK(ddrPlxgDoorbellProductDaemonRestartMatches());
         std::fprintf(stderr, "  PLXG_DOORBELL_COMMITTED_SEQ OK\n");
+        // rd-duck: 13-bit doorbell field 0 = ungated; allocator must skip 8192…
+        {
+            CHECK(plxgSeqDoorbellFieldIsReservedUngated(0));
+            CHECK(plxgSeqDoorbellFieldIsReservedUngated(8192));
+            CHECK(plxgSeqDoorbellFieldIsReservedUngated(16384));
+            CHECK(!plxgSeqDoorbellFieldIsReservedUngated(8191));
+            CHECK(!plxgSeqDoorbellFieldIsReservedUngated(8193));
+            // 8191 → product skips 8192 → 8193
+            CHECK(plxgNextSeq(8191, false, 0) == 8193);
+            CHECK(plxgNextSeqFaultAllowDoorbellZeroField(8191, false, 0) == 8192); // REPRO
+            // Packed field: product 8193 → 1 (coupled); fault 8192 → 0 (ungated)
+            CHECK(plxgSeqDoorbellField(8193) == 1);
+            CHECK(plxgSeqDoorbellField(8192) == 0);
+            const uint32_t hiOk =
+                ddrDoorbellHi(/*frame*/1, /*bank*/0, DdrFrameFormat::Yuv420p, /*plxg*/8193);
+            CHECK(ddrDoorbellPlxgSeq(hiOk) == 1);
+            CHECK(ddrDoorbellGeomCoupledOk(ddrDoorbellPlxgSeq(hiOk), /*live*/8193, true));
+            const uint32_t hiBad =
+                ddrDoorbellHi(1, 0, DdrFrameFormat::Yuv420p, /*plxg*/8192);
+            CHECK(ddrDoorbellPlxgSeq(hiBad) == 0); // silent ungated
+            // Live geom 8192 with doorbell field 0 is ungated even when "matched"
+            CHECK(ddrDoorbellGeomCoupledOk(0, 8192, true)); // ungated path
+            // Wrap 0xFFFF → skip 0 → 1
+            CHECK(plxgNextSeq(0xFFFF, false, 0) == 1);
+            // Retained at 8192 (illegal legacy) → next still skips to 8193
+            CHECK(plxgNextSeq(0, true, 8192) == 8193);
+            // Multi-step: walk across one forbidden boundary stays coupled
+            uint16_t s = 8189;
+            for (int i = 0; i < 6; ++i) {
+                s = plxgNextSeq(s, false, 0);
+                CHECK(!plxgSeqDoorbellFieldIsReservedUngated(s));
+                const uint32_t hi =
+                    ddrDoorbellHi(static_cast<uint32_t>(i + 1), 1, DdrFrameFormat::Yuv420p, s);
+                CHECK(ddrDoorbellPlxgSeq(hi) != 0);
+                CHECK(ddrDoorbellGeomCoupledOk(ddrDoorbellPlxgSeq(hi), s, true));
+            }
+            CHECK(s == 8196); // 8189→90→91→93→94→95→96 (skipped 8192)
+            std::fprintf(stderr, "  PLXG_DOORBELL_SEQ_FIELD_NO_ZERO OK\n");
+        }
     }
 
 if (fails) {
