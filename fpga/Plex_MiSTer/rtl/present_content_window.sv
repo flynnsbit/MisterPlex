@@ -216,8 +216,10 @@ module present_content_window #(
 	wire [STORE_Y_W-1:0] store_y_addr    = store_y_comb[STORE_Y_W-1:0];
 
 	// Bilinear neighbourhood: ceil sample + Q8 frac from Q16 residue.
-	// frac = prod[15:8] (upper 8 of fractional 16). At last column/row, x1=x0
-	// and frac forced 0 so lerp collapses to NN (no OOB read).
+	// frac = prod[15:8] (upper 8 of fractional 16). NOT hc[1:0]/dst-mod-4 —
+	// that bug was 4/3-specialisation only (present_scale_4_3); general path
+	// always takes the multiply residue. At last column/row, x1=x0 and frac
+	// forced 0 so lerp collapses to NN (no OOB read).
 	wire [15:0] x1_sum = store_x_comb + 16'd1;
 	wire [15:0] y1_sum = store_y_comb + 16'd1;
 	wire at_x_last = (store_x_comb >= {1'b0, last_x_r});
