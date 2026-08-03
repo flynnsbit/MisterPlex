@@ -1,0 +1,1127 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MediaContainer size="142" allowSync="1" art="/:/resources/movie-fanart.jpg" identifier="com.plexapp.plugins.library" librarySectionID="2" librarySectionTitle="MiSTerPlex Tests" librarySectionUUID="c97f403c-4a89-4620-a388-a7a88c9a6c1c" mediaTagPrefix="/system/bundle/media/flags/" mediaTagVersion="1783932891" thumb="/:/resources/video.png" title1="MiSTerPlex Tests" title2="All MiSTerPlex Tests" viewGroup="movie" viewMode="65592">
+<Video ratingKey="9" key="/library/metadata/9" guid="tv.plex.agents.none://9" type="movie" title="Big Buck Bunny - https://archive.org/details/BigBuckBunny_124" subtype="clip" summary="" thumb="/library/metadata/9/thumb/1785748869" art="/library/metadata/9/art/1785748869" duration="360000" addedAt="1785558276" updatedAt="1785748869" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="9" duration="360000" bitrate="2154" width="624" height="352" aspectRatio="1.78" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="sd" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="9" key="/library/parts/9/1785558261/file.mp4" duration="360000" file="/data/movies/MiSTerPlex Real BBB 624x352 24fps 360s (2026).mp4" size="96917758" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="Big Buck Bunny - https://archive.org/details/BigBuckBunny_124" type="coverPoster" url="/library/metadata/9/thumb/1785748869" />
+<Image alt="Big Buck Bunny - https://archive.org/details/BigBuckBunny_124" type="background" url="/library/metadata/9/art/1785748869" />
+<UltraBlurColors topLeft="1c3519" topRight="163323" bottomRight="2f4926" bottomLeft="1a4110" />
+</Video>
+<Video ratingKey="10" key="/library/metadata/10" guid="tv.plex.agents.none://10" type="movie" title="Big Buck Bunny - https://archive.org/details/BigBuckBunny_124" subtype="clip" summary="" thumb="/library/metadata/10/thumb/1785748869" art="/library/metadata/10/art/1785748869" duration="596497" addedAt="1785558276" updatedAt="1785748869" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="10" duration="596497" bitrate="2635" width="720" height="480" aspectRatio="1.78" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="10" key="/library/parts/10/1785558261/file.mp4" duration="596497" file="/data/movies/MiSTerPlex Real BBB 720x480 24fps (2026).mp4" size="196495833" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="Big Buck Bunny - https://archive.org/details/BigBuckBunny_124" type="coverPoster" url="/library/metadata/10/thumb/1785748869" />
+<Image alt="Big Buck Bunny - https://archive.org/details/BigBuckBunny_124" type="background" url="/library/metadata/10/art/1785748869" />
+<UltraBlurColors topLeft="1a351b" topRight="336336" bottomRight="274b2f" bottomLeft="376a49" />
+</Video>
+<Video ratingKey="33" key="/library/metadata/33" guid="tv.plex.agents.none://33" type="movie" title="MiSTerPlex AdvReal 624x352 24fps 500kbit ref1 300s (2026)" subtype="clip" summary="" thumb="/library/metadata/33/thumb/1785748869" art="/library/metadata/33/art/1785748869" duration="300000" addedAt="1785651067" updatedAt="1785748869" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="33" duration="300000" bitrate="551" width="624" height="352" aspectRatio="1.78" audioChannels="1" audioCodec="aac" videoCodec="h264" videoResolution="sd" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="33" key="/library/parts/33/1785650954/file.mp4" duration="300000" file="/data/movies/MiSTerPlex AdvReal 624x352 24fps 500kbit ref1 300s (2026).mp4" size="20668427" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex AdvReal 624x352 24fps 500kbit ref1 300s (2026)" type="coverPoster" url="/library/metadata/33/thumb/1785748869" />
+<Image alt="MiSTerPlex AdvReal 624x352 24fps 500kbit ref1 300s (2026)" type="background" url="/library/metadata/33/art/1785748869" />
+<UltraBlurColors topLeft="0a2031" topRight="30618d" bottomRight="315937" bottomLeft="54652f" />
+</Video>
+<Video ratingKey="36" key="/library/metadata/36" guid="tv.plex.agents.none://36" type="movie" title="MiSTerPlex AdvReal 624x480 24fps 400kbit ref1 300s (2026)" subtype="clip" summary="" viewOffset="169918" viewCount="4" lastViewedAt="1785690459" thumb="/library/metadata/36/thumb/1785748869" art="/library/metadata/36/art/1785748869" duration="300000" addedAt="1785651067" updatedAt="1785748869" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="36" duration="300000" bitrate="450" width="624" height="480" aspectRatio="1.33" audioChannels="1" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="36" key="/library/parts/36/1785650994/file.mp4" duration="300000" file="/data/movies/MiSTerPlex AdvReal 624x480 24fps 400kbit ref1 300s (2026).mp4" size="16879419" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex AdvReal 624x480 24fps 400kbit ref1 300s (2026)" type="coverPoster" url="/library/metadata/36/thumb/1785748869" />
+<Image alt="MiSTerPlex AdvReal 624x480 24fps 400kbit ref1 300s (2026)" type="background" url="/library/metadata/36/art/1785748869" />
+<UltraBlurColors topLeft="133048" topRight="30618f" bottomRight="383c36" bottomLeft="4d6732" />
+</Video>
+<Video ratingKey="37" key="/library/metadata/37" guid="tv.plex.agents.none://37" type="movie" title="MiSTerPlex AdvReal 624x480 24fps 500kbit ref1 300s (2026)" subtype="clip" summary="" thumb="/library/metadata/37/thumb/1785748869" art="/library/metadata/37/art/1785748869" duration="300000" addedAt="1785651067" updatedAt="1785748869" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="37" duration="300000" bitrate="550" width="624" height="480" aspectRatio="1.33" audioChannels="1" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="37" key="/library/parts/37/1785650947/file.mp4" duration="300000" file="/data/movies/MiSTerPlex AdvReal 624x480 24fps 500kbit ref1 300s (2026).mp4" size="20615981" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex AdvReal 624x480 24fps 500kbit ref1 300s (2026)" type="coverPoster" url="/library/metadata/37/thumb/1785748869" />
+<Image alt="MiSTerPlex AdvReal 624x480 24fps 500kbit ref1 300s (2026)" type="background" url="/library/metadata/37/art/1785748869" />
+<UltraBlurColors topLeft="133048" topRight="30618f" bottomRight="516630" bottomLeft="4e6732" />
+</Video>
+<Video ratingKey="38" key="/library/metadata/38" guid="tv.plex.agents.none://38" type="movie" title="MiSTerPlex AdvReal 624x480 24fps 500kbit ref1 900s (2026)" subtype="clip" summary="" thumb="/library/metadata/38/thumb/1785748869" art="/library/metadata/38/art/1785748869" duration="900000" addedAt="1785651067" updatedAt="1785748869" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="38" duration="900000" bitrate="549" width="624" height="480" aspectRatio="1.33" audioChannels="1" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="38" key="/library/parts/38/1785650940/file.mp4" duration="900000" file="/data/movies/MiSTerPlex AdvReal 624x480 24fps 500kbit ref1 900s (2026).mp4" size="61718668" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex AdvReal 624x480 24fps 500kbit ref1 900s (2026)" type="coverPoster" url="/library/metadata/38/thumb/1785748869" />
+<Image alt="MiSTerPlex AdvReal 624x480 24fps 500kbit ref1 900s (2026)" type="background" url="/library/metadata/38/art/1785748869" />
+<UltraBlurColors topLeft="441b42" topRight="22462e" bottomRight="1d3e29" bottomLeft="442152" />
+</Video>
+<Video ratingKey="39" key="/library/metadata/39" guid="tv.plex.agents.none://39" type="movie" title="MiSTerPlex AdvReal 624x480 24fps 500kbit ref3 300s (2026)" subtype="clip" summary="" thumb="/library/metadata/39/thumb/1785748869" art="/library/metadata/39/art/1785748869" duration="300000" addedAt="1785651067" updatedAt="1785748869" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="39" duration="300000" bitrate="548" width="624" height="480" aspectRatio="1.33" audioChannels="1" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="39" key="/library/parts/39/1785650987/file.mp4" duration="300000" file="/data/movies/MiSTerPlex AdvReal 624x480 24fps 500kbit ref3 300s (2026).mp4" size="20557853" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex AdvReal 624x480 24fps 500kbit ref3 300s (2026)" type="coverPoster" url="/library/metadata/39/thumb/1785748869" />
+<Image alt="MiSTerPlex AdvReal 624x480 24fps 500kbit ref3 300s (2026)" type="background" url="/library/metadata/39/art/1785748869" />
+<UltraBlurColors topLeft="133048" topRight="316090" bottomRight="516630" bottomLeft="516630" />
+</Video>
+<Video ratingKey="40" key="/library/metadata/40" guid="tv.plex.agents.none://40" type="movie" title="MiSTerPlex AdvReal 624x480 24fps 800kbit ref1 300s (2026)" subtype="clip" summary="" viewOffset="75550" lastViewedAt="1785665043" thumb="/library/metadata/40/thumb/1785748869" art="/library/metadata/40/art/1785748869" duration="300000" addedAt="1785651067" updatedAt="1785748869" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="40" duration="300000" bitrate="848" width="624" height="480" aspectRatio="1.33" audioChannels="1" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="40" key="/library/parts/40/1785651003/file.mp4" duration="300000" file="/data/movies/MiSTerPlex AdvReal 624x480 24fps 800kbit ref1 300s (2026).mp4" size="31813607" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex AdvReal 624x480 24fps 800kbit ref1 300s (2026)" type="coverPoster" url="/library/metadata/40/thumb/1785748869" />
+<Image alt="MiSTerPlex AdvReal 624x480 24fps 800kbit ref1 300s (2026)" type="background" url="/library/metadata/40/art/1785748869" />
+<UltraBlurColors topLeft="133048" topRight="30618f" bottomRight="383c36" bottomLeft="4e6732" />
+</Video>
+<Video ratingKey="34" key="/library/metadata/34" guid="tv.plex.agents.none://34" type="movie" title="MiSTerPlex AdvReal 624x480 24fps 1200kbit ref1 300s (2026)" subtype="clip" summary="" thumb="/library/metadata/34/thumb/1785748869" art="/library/metadata/34/art/1785748869" duration="300000" addedAt="1785651067" updatedAt="1785748869" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="34" duration="300000" bitrate="1247" width="624" height="480" aspectRatio="1.33" audioChannels="1" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="34" key="/library/parts/34/1785651013/file.mp4" duration="300000" file="/data/movies/MiSTerPlex AdvReal 624x480 24fps 1200kbit ref1 300s (2026).mp4" size="46757137" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex AdvReal 624x480 24fps 1200kbit ref1 300s (2026)" type="coverPoster" url="/library/metadata/34/thumb/1785748869" />
+<Image alt="MiSTerPlex AdvReal 624x480 24fps 1200kbit ref1 300s (2026)" type="background" url="/library/metadata/34/art/1785748869" />
+<UltraBlurColors topLeft="133048" topRight="30618f" bottomRight="516630" bottomLeft="516630" />
+</Video>
+<Video ratingKey="35" key="/library/metadata/35" guid="tv.plex.agents.none://35" type="movie" title="MiSTerPlex AdvReal 624x480 24fps 1800kbit ref1 300s (2026)" subtype="clip" summary="" lastViewedAt="1785665896" thumb="/library/metadata/35/thumb/1785748869" art="/library/metadata/35/art/1785748869" duration="300000" addedAt="1785651067" updatedAt="1785748869" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="35" duration="300000" bitrate="1843" width="624" height="480" aspectRatio="1.33" audioChannels="1" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="35" key="/library/parts/35/1785651026/file.mp4" duration="300000" file="/data/movies/MiSTerPlex AdvReal 624x480 24fps 1800kbit ref1 300s (2026).mp4" size="69117598" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex AdvReal 624x480 24fps 1800kbit ref1 300s (2026)" type="coverPoster" url="/library/metadata/35/thumb/1785748869" />
+<Image alt="MiSTerPlex AdvReal 624x480 24fps 1800kbit ref1 300s (2026)" type="background" url="/library/metadata/35/art/1785748869" />
+<UltraBlurColors topLeft="133048" topRight="30618f" bottomRight="516630" bottomLeft="516630" />
+</Video>
+<Video ratingKey="41" key="/library/metadata/41" guid="tv.plex.agents.none://41" type="movie" title="MiSTerPlex AdvReal 640x480 24fps 500kbit ref1 300s (2026)" subtype="clip" summary="" thumb="/library/metadata/41/thumb/1785748870" art="/library/metadata/41/art/1785748870" duration="300000" addedAt="1785651067" updatedAt="1785748870" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="41" duration="300000" bitrate="550" width="640" height="480" aspectRatio="1.33" audioChannels="1" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="41" key="/library/parts/41/1785650962/file.mp4" duration="300000" file="/data/movies/MiSTerPlex AdvReal 640x480 24fps 500kbit ref1 300s (2026).mp4" size="20608913" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex AdvReal 640x480 24fps 500kbit ref1 300s (2026)" type="coverPoster" url="/library/metadata/41/thumb/1785748870" />
+<Image alt="MiSTerPlex AdvReal 640x480 24fps 500kbit ref1 300s (2026)" type="background" url="/library/metadata/41/art/1785748870" />
+<UltraBlurColors topLeft="133047" topRight="316090" bottomRight="56652e" bottomLeft="4d6732" />
+</Video>
+<Video ratingKey="42" key="/library/metadata/42" guid="tv.plex.agents.none://42" type="movie" title="MiSTerPlex AdvReal 704x396 24fps 500kbit ref1 300s (2026)" subtype="clip" summary="" thumb="/library/metadata/42/thumb/1785748870" art="/library/metadata/42/art/1785748870" duration="300000" addedAt="1785651067" updatedAt="1785748870" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="42" duration="300000" bitrate="551" width="704" height="396" aspectRatio="1.78" audioChannels="1" audioCodec="aac" videoCodec="h264" videoResolution="sd" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="42" key="/library/parts/42/1785650978/file.mp4" duration="300000" file="/data/movies/MiSTerPlex AdvReal 704x396 24fps 500kbit ref1 300s (2026).mp4" size="20647077" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex AdvReal 704x396 24fps 500kbit ref1 300s (2026)" type="coverPoster" url="/library/metadata/42/thumb/1785748870" />
+<Image alt="MiSTerPlex AdvReal 704x396 24fps 500kbit ref1 300s (2026)" type="background" url="/library/metadata/42/art/1785748870" />
+<UltraBlurColors topLeft="123430" topRight="2f628c" bottomRight="325935" bottomLeft="4f6731" />
+</Video>
+<Video ratingKey="43" key="/library/metadata/43" guid="tv.plex.agents.none://43" type="movie" title="MiSTerPlex AdvReal 720x480 24fps 500kbit ref1 300s (2026)" subtype="clip" summary="" thumb="/library/metadata/43/thumb/1785748870" art="/library/metadata/43/art/1785748870" duration="300000" addedAt="1785651067" updatedAt="1785748870" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="43" duration="300000" bitrate="550" width="720" height="480" aspectRatio="1.66" audioChannels="1" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="43" key="/library/parts/43/1785650971/file.mp4" duration="300000" file="/data/movies/MiSTerPlex AdvReal 720x480 24fps 500kbit ref1 300s (2026).mp4" size="20606745" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex AdvReal 720x480 24fps 500kbit ref1 300s (2026)" type="coverPoster" url="/library/metadata/43/thumb/1785748870" />
+<Image alt="MiSTerPlex AdvReal 720x480 24fps 500kbit ref1 300s (2026)" type="background" url="/library/metadata/43/art/1785748870" />
+<UltraBlurColors topLeft="133047" topRight="325f93" bottomRight="42693b" bottomLeft="53662f" />
+</Video>
+<Video ratingKey="23" key="/library/metadata/23" guid="tv.plex.agents.none://23" type="movie" title="MiSTerPlex AudioID Glass 480p 24fps 60s (2026)" subtype="clip" summary="" thumb="/library/metadata/23/thumb/1785748870" art="/library/metadata/23/art/1785748870" duration="60000" addedAt="1785588568" updatedAt="1785748870" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="23" duration="60000" bitrate="457" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="23" key="/library/parts/23/1785588568/file.mp4" duration="60000" file="/data/movies/MiSTerPlex AudioID Glass 480p 24fps 60s (2026).mp4" size="3425781" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex AudioID Glass 480p 24fps 60s (2026)" type="coverPoster" url="/library/metadata/23/thumb/1785748870" />
+<Image alt="MiSTerPlex AudioID Glass 480p 24fps 60s (2026)" type="background" url="/library/metadata/23/art/1785748870" />
+<UltraBlurColors topLeft="421455" topRight="4b6831" bottomRight="605c5c" bottomLeft="5d5d5d" />
+</Video>
+<Video ratingKey="24" key="/library/metadata/24" guid="tv.plex.agents.none://24" type="movie" title="MiSTerPlex AudioID Glass 480p 24fps 60s audioPlus100ms (2026)" subtype="clip" summary="" thumb="/library/metadata/24/thumb/1785748870" art="/library/metadata/24/art/1785748870" duration="60000" addedAt="1785588568" updatedAt="1785748870" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="24" duration="60000" bitrate="457" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="24" key="/library/parts/24/1785588568/file.mp4" duration="60000" file="/data/movies/MiSTerPlex AudioID Glass 480p 24fps 60s audioPlus100ms (2026).mp4" size="3424806" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex AudioID Glass 480p 24fps 60s audioPlus100ms (2026)" type="coverPoster" url="/library/metadata/24/thumb/1785748870" />
+<Image alt="MiSTerPlex AudioID Glass 480p 24fps 60s audioPlus100ms (2026)" type="background" url="/library/metadata/24/art/1785748870" />
+<UltraBlurColors topLeft="421455" topRight="4b6831" bottomRight="605c5c" bottomLeft="5d5d5d" />
+</Video>
+<Video ratingKey="22" key="/library/metadata/22" guid="tv.plex.agents.none://22" type="movie" title="MiSTerPlex AudioID Glass 480p 24fps 1800s (2026)" subtype="clip" summary="" thumb="/library/metadata/22/thumb/1785748870" art="/library/metadata/22/art/1785748870" duration="1800000" addedAt="1785588568" updatedAt="1785748870" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="22" duration="1800000" bitrate="458" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="22" key="/library/parts/22/1785588568/file.mp4" duration="1800000" file="/data/movies/MiSTerPlex AudioID Glass 480p 24fps 1800s (2026).mp4" size="103067703" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex AudioID Glass 480p 24fps 1800s (2026)" type="coverPoster" url="/library/metadata/22/thumb/1785748870" />
+<Image alt="MiSTerPlex AudioID Glass 480p 24fps 1800s (2026)" type="background" url="/library/metadata/22/art/1785748870" />
+<UltraBlurColors topLeft="421455" topRight="4b6831" bottomRight="605c5c" bottomLeft="5d5d5d" />
+</Video>
+<Video ratingKey="20" key="/library/metadata/20" guid="tv.plex.agents.none://20" type="movie" title="MiSTerPlex AVSync Glass 480p 24fps 600s (2026)" subtype="clip" summary="" thumb="/library/metadata/20/thumb/1785748870" art="/library/metadata/20/art/1785748870" duration="600000" addedAt="1785588568" updatedAt="1785748870" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="20" duration="600000" bitrate="374" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="20" key="/library/parts/20/1785588568/file.mp4" duration="600000" file="/data/movies/MiSTerPlex AVSync Glass 480p 24fps 600s (2026).mp4" size="28075629" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex AVSync Glass 480p 24fps 600s (2026)" type="coverPoster" url="/library/metadata/20/thumb/1785748870" />
+<Image alt="MiSTerPlex AVSync Glass 480p 24fps 600s (2026)" type="background" url="/library/metadata/20/art/1785748870" />
+<UltraBlurColors topLeft="421455" topRight="4b6831" bottomRight="605c5c" bottomLeft="5d5d5d" />
+</Video>
+<Video ratingKey="21" key="/library/metadata/21" guid="tv.plex.agents.none://21" type="movie" title="MiSTerPlex AVSync Glass 480p 24fps 600s audioPlus100ms (2026)" subtype="clip" summary="" thumb="/library/metadata/21/thumb/1785748870" art="/library/metadata/21/art/1785748870" duration="600000" addedAt="1785588568" updatedAt="1785748870" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="21" duration="600000" bitrate="374" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="21" key="/library/parts/21/1785588568/file.mp4" duration="600000" file="/data/movies/MiSTerPlex AVSync Glass 480p 24fps 600s audioPlus100ms (2026).mp4" size="28067830" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex AVSync Glass 480p 24fps 600s audioPlus100ms (2026)" type="coverPoster" url="/library/metadata/21/thumb/1785748870" />
+<Image alt="MiSTerPlex AVSync Glass 480p 24fps 600s audioPlus100ms (2026)" type="background" url="/library/metadata/21/art/1785748870" />
+<UltraBlurColors topLeft="421455" topRight="4b6831" bottomRight="605c5c" bottomLeft="5d5d5d" />
+</Video>
+<Video ratingKey="133" key="/library/metadata/133" guid="tv.plex.agents.none://133" type="movie" title="MiSTerPlex B6 RealGlass 624x352 24fps 300s (2026)" subtype="clip" summary="" thumb="/library/metadata/133/thumb/1785748870" art="/library/metadata/133/art/1785748870" duration="300000" addedAt="1785685789" updatedAt="1785748870" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="133" duration="300000" bitrate="2151" width="624" height="352" aspectRatio="1.78" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="sd" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="133" key="/library/parts/133/1785685558/file.mp4" duration="300000" file="/data/movies/MiSTerPlex B6 RealGlass 624x352 24fps 300s (2026).mp4" size="80677366" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex B6 RealGlass 624x352 24fps 300s (2026)" type="coverPoster" url="/library/metadata/133/thumb/1785748870" />
+<Image alt="MiSTerPlex B6 RealGlass 624x352 24fps 300s (2026)" type="background" url="/library/metadata/133/art/1785748870" />
+<UltraBlurColors topLeft="040404" topRight="5d631a" bottomRight="654216" bottomLeft="5e3117" />
+</Video>
+<Video ratingKey="132" key="/library/metadata/132" guid="tv.plex.agents.none://132" type="movie" title="MiSTerPlex B6 RealGlass 624x352 23976fps 300s (2026)" subtype="clip" summary="" thumb="/library/metadata/132/thumb/1785748870" art="/library/metadata/132/art/1785748870" duration="300008" addedAt="1785685789" updatedAt="1785748870" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="132" duration="300008" bitrate="2149" width="624" height="352" aspectRatio="1.78" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="sd" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="132" key="/library/parts/132/1785685668/file.mp4" duration="300008" file="/data/movies/MiSTerPlex B6 RealGlass 624x352 23976fps 300s (2026).mp4" size="80580887" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex B6 RealGlass 624x352 23976fps 300s (2026)" type="coverPoster" url="/library/metadata/132/thumb/1785748870" />
+<Image alt="MiSTerPlex B6 RealGlass 624x352 23976fps 300s (2026)" type="background" url="/library/metadata/132/art/1785748870" />
+<UltraBlurColors topLeft="040404" topRight="2a250c" bottomRight="993c1a" bottomLeft="5e3117" />
+</Video>
+<Video ratingKey="135" key="/library/metadata/135" guid="tv.plex.agents.none://135" type="movie" title="MiSTerPlex B6 RealGlass 640x480 24fps 300s (2026)" subtype="clip" summary="" thumb="/library/metadata/135/thumb/1785748870" art="/library/metadata/135/art/1785748870" duration="300000" addedAt="1785685789" updatedAt="1785748870" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="135" duration="300000" bitrate="2142" width="640" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="135" key="/library/parts/135/1785685585/file.mp4" duration="300000" file="/data/movies/MiSTerPlex B6 RealGlass 640x480 24fps 300s (2026).mp4" size="80324161" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex B6 RealGlass 640x480 24fps 300s (2026)" type="coverPoster" url="/library/metadata/135/thumb/1785748870" />
+<Image alt="MiSTerPlex B6 RealGlass 640x480 24fps 300s (2026)" type="background" url="/library/metadata/135/art/1785748870" />
+<UltraBlurColors topLeft="133047" topRight="316090" bottomRight="41693c" bottomLeft="4d6732" />
+</Video>
+<Video ratingKey="134" key="/library/metadata/134" guid="tv.plex.agents.none://134" type="movie" title="MiSTerPlex B6 RealGlass 640x480 23976fps 300s (2026)" subtype="clip" summary="" thumb="/library/metadata/134/thumb/1785748871" art="/library/metadata/134/art/1785748871" duration="300008" addedAt="1785685789" updatedAt="1785748871" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="134" duration="300008" bitrate="2140" width="640" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="134" key="/library/parts/134/1785685698/file.mp4" duration="300008" file="/data/movies/MiSTerPlex B6 RealGlass 640x480 23976fps 300s (2026).mp4" size="80261479" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex B6 RealGlass 640x480 23976fps 300s (2026)" type="coverPoster" url="/library/metadata/134/thumb/1785748871" />
+<Image alt="MiSTerPlex B6 RealGlass 640x480 23976fps 300s (2026)" type="background" url="/library/metadata/134/art/1785748871" />
+<UltraBlurColors topLeft="133047" topRight="30618f" bottomRight="41693c" bottomLeft="4d6732" />
+</Video>
+<Video ratingKey="137" key="/library/metadata/137" guid="tv.plex.agents.none://137" type="movie" title="MiSTerPlex B6 RealGlass 704x396 24fps 300s (2026)" subtype="clip" summary="" thumb="/library/metadata/137/thumb/1785748871" art="/library/metadata/137/art/1785748871" duration="300000" addedAt="1785685789" updatedAt="1785748871" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="137" duration="300000" bitrate="2150" width="704" height="396" aspectRatio="1.78" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="sd" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="137" key="/library/parts/137/1785685641/file.mp4" duration="300000" file="/data/movies/MiSTerPlex B6 RealGlass 704x396 24fps 300s (2026).mp4" size="80620727" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex B6 RealGlass 704x396 24fps 300s (2026)" type="coverPoster" url="/library/metadata/137/thumb/1785748871" />
+<Image alt="MiSTerPlex B6 RealGlass 704x396 24fps 300s (2026)" type="background" url="/library/metadata/137/art/1785748871" />
+<UltraBlurColors topLeft="0c2335" topRight="2f618d" bottomRight="325937" bottomLeft="506631" />
+</Video>
+<Video ratingKey="136" key="/library/metadata/136" guid="tv.plex.agents.none://136" type="movie" title="MiSTerPlex B6 RealGlass 704x396 23976fps 300s (2026)" subtype="clip" summary="" thumb="/library/metadata/136/thumb/1785748871" art="/library/metadata/136/art/1785748871" duration="300008" addedAt="1785685789" updatedAt="1785748871" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="136" duration="300008" bitrate="2148" width="704" height="396" aspectRatio="1.78" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="sd" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="136" key="/library/parts/136/1785685760/file.mp4" duration="300008" file="/data/movies/MiSTerPlex B6 RealGlass 704x396 23976fps 300s (2026).mp4" size="80547488" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex B6 RealGlass 704x396 23976fps 300s (2026)" type="coverPoster" url="/library/metadata/136/thumb/1785748871" />
+<Image alt="MiSTerPlex B6 RealGlass 704x396 23976fps 300s (2026)" type="background" url="/library/metadata/136/art/1785748871" />
+<UltraBlurColors topLeft="0c2337" topRight="2f628c" bottomRight="325937" bottomLeft="506631" />
+</Video>
+<Video ratingKey="139" key="/library/metadata/139" guid="tv.plex.agents.none://139" type="movie" title="MiSTerPlex B6 RealGlass 720x480 24fps 300s (2026)" subtype="clip" summary="" thumb="/library/metadata/139/thumb/1785748871" art="/library/metadata/139/art/1785748871" duration="300000" addedAt="1785685789" updatedAt="1785748871" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="139" duration="300000" bitrate="2144" width="720" height="480" aspectRatio="1.66" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="139" key="/library/parts/139/1785685615/file.mp4" duration="300000" file="/data/movies/MiSTerPlex B6 RealGlass 720x480 24fps 300s (2026).mp4" size="80415113" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex B6 RealGlass 720x480 24fps 300s (2026)" type="coverPoster" url="/library/metadata/139/thumb/1785748871" />
+<Image alt="MiSTerPlex B6 RealGlass 720x480 24fps 300s (2026)" type="background" url="/library/metadata/139/art/1785748871" />
+<UltraBlurColors topLeft="133047" topRight="316090" bottomRight="58642d" bottomLeft="526630" />
+</Video>
+<Video ratingKey="138" key="/library/metadata/138" guid="tv.plex.agents.none://138" type="movie" title="MiSTerPlex B6 RealGlass 720x480 23976fps 300s (2026)" subtype="clip" summary="" thumb="/library/metadata/138/thumb/1785748871" art="/library/metadata/138/art/1785748871" duration="300008" addedAt="1785685789" updatedAt="1785748871" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="138" duration="300008" bitrate="2142" width="720" height="480" aspectRatio="1.66" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="138" key="/library/parts/138/1785685730/file.mp4" duration="300008" file="/data/movies/MiSTerPlex B6 RealGlass 720x480 23976fps 300s (2026).mp4" size="80317677" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex B6 RealGlass 720x480 23976fps 300s (2026)" type="coverPoster" url="/library/metadata/138/thumb/1785748871" />
+<Image alt="MiSTerPlex B6 RealGlass 720x480 23976fps 300s (2026)" type="background" url="/library/metadata/138/art/1785748871" />
+<UltraBlurColors topLeft="133047" topRight="316090" bottomRight="41693d" bottomLeft="526630" />
+</Video>
+<Video ratingKey="27" key="/library/metadata/27" guid="tv.plex.agents.none://27" type="movie" title="MiSTerPlex Bank480 FullBleed VRes AV 624x480 24fps 1200s (2026)" subtype="clip" summary="" thumb="/library/metadata/27/thumb/1785748871" art="/library/metadata/27/art/1785748871" duration="1200000" addedAt="1785600738" updatedAt="1785748871" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="27" duration="1200000" bitrate="456" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="27" key="/library/parts/27/1785597334/file.mp4" duration="1200000" file="/data/movies/MiSTerPlex Bank480 FullBleed VRes AV 624x480 24fps 1200s (2026).mp4" size="68434328" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Bank480 FullBleed VRes AV 624x480 24fps 1200s (2026)" type="coverPoster" url="/library/metadata/27/thumb/1785748871" />
+<Image alt="MiSTerPlex Bank480 FullBleed VRes AV 624x480 24fps 1200s (2026)" type="background" url="/library/metadata/27/art/1785748871" />
+</Video>
+<Video ratingKey="44" key="/library/metadata/44" guid="tv.plex.agents.none://44" type="movie" title="MiSTerPlex BitrateLadder 624x352 24fps 700kbit ref1 600s (2026)" subtype="clip" summary="" thumb="/library/metadata/44/thumb/1785748871" art="/library/metadata/44/art/1785748871" duration="600000" addedAt="1785651067" updatedAt="1785748871" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="44" duration="600000" bitrate="753" width="624" height="352" aspectRatio="1.78" audioChannels="1" audioCodec="aac" videoCodec="h264" videoResolution="sd" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="44" key="/library/parts/44/1785643846/file.mp4" duration="600000" file="/data/movies/MiSTerPlex BitrateLadder 624x352 24fps 700kbit ref1 600s (2026).mp4" size="56465574" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex BitrateLadder 624x352 24fps 700kbit ref1 600s (2026)" type="coverPoster" url="/library/metadata/44/thumb/1785748871" />
+<Image alt="MiSTerPlex BitrateLadder 624x352 24fps 700kbit ref1 600s (2026)" type="background" url="/library/metadata/44/art/1785748871" />
+<UltraBlurColors topLeft="501910" topRight="91413d" bottomRight="6b5e0d" bottomLeft="1b1b1d" />
+</Video>
+<Video ratingKey="50" key="/library/metadata/50" guid="tv.plex.agents.none://50" type="movie" title="MiSTerPlex BitrateLadder 624x480 24fps 400kbit ref1 600s (2026)" subtype="clip" summary="" thumb="/library/metadata/50/thumb/1785748871" art="/library/metadata/50/art/1785748871" duration="600000" addedAt="1785651067" updatedAt="1785748871" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="50" duration="600000" bitrate="452" width="624" height="480" aspectRatio="1.33" audioChannels="1" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="50" key="/library/parts/50/1785643717/file.mp4" duration="600000" file="/data/movies/MiSTerPlex BitrateLadder 624x480 24fps 400kbit ref1 600s (2026).mp4" size="33934564" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex BitrateLadder 624x480 24fps 400kbit ref1 600s (2026)" type="coverPoster" url="/library/metadata/50/thumb/1785748871" />
+<Image alt="MiSTerPlex BitrateLadder 624x480 24fps 400kbit ref1 600s (2026)" type="background" url="/library/metadata/50/art/1785748871" />
+<UltraBlurColors topLeft="4b1d1c" topRight="9e3336" bottomRight="685e2a" bottomLeft="303130" />
+</Video>
+<Video ratingKey="51" key="/library/metadata/51" guid="tv.plex.agents.none://51" type="movie" title="MiSTerPlex BitrateLadder 624x480 24fps 700kbit ref1 600s (2026)" subtype="clip" summary="" thumb="/library/metadata/51/thumb/1785748871" art="/library/metadata/51/art/1785748871" duration="600000" addedAt="1785651067" updatedAt="1785748871" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="51" duration="600000" bitrate="752" width="624" height="480" aspectRatio="1.33" audioChannels="1" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="51" key="/library/parts/51/1785643732/file.mp4" duration="600000" file="/data/movies/MiSTerPlex BitrateLadder 624x480 24fps 700kbit ref1 600s (2026).mp4" size="56407141" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex BitrateLadder 624x480 24fps 700kbit ref1 600s (2026)" type="coverPoster" url="/library/metadata/51/thumb/1785748871" />
+<Image alt="MiSTerPlex BitrateLadder 624x480 24fps 700kbit ref1 600s (2026)" type="background" url="/library/metadata/51/art/1785748871" />
+<UltraBlurColors topLeft="5b0606" topRight="6e2528" bottomRight="665f28" bottomLeft="4f555c" />
+</Video>
+<Video ratingKey="52" key="/library/metadata/52" guid="tv.plex.agents.none://52" type="movie" title="MiSTerPlex BitrateLadder 624x480 24fps 700kbit ref3 600s (2026)" subtype="clip" summary="" thumb="/library/metadata/52/thumb/1785748871" art="/library/metadata/52/art/1785748871" duration="600000" addedAt="1785651067" updatedAt="1785748871" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="52" duration="600000" bitrate="734" width="624" height="480" aspectRatio="1.33" audioChannels="1" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="52" key="/library/parts/52/1785643832/file.mp4" duration="600000" file="/data/movies/MiSTerPlex BitrateLadder 624x480 24fps 700kbit ref3 600s (2026).mp4" size="55077429" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex BitrateLadder 624x480 24fps 700kbit ref3 600s (2026)" type="coverPoster" url="/library/metadata/52/thumb/1785748871" />
+<Image alt="MiSTerPlex BitrateLadder 624x480 24fps 700kbit ref3 600s (2026)" type="background" url="/library/metadata/52/art/1785748871" />
+<UltraBlurColors topLeft="5b0606" topRight="a32a2b" bottomRight="665f29" bottomLeft="2f2f2f" />
+</Video>
+<Video ratingKey="45" key="/library/metadata/45" guid="tv.plex.agents.none://45" type="movie" title="MiSTerPlex BitrateLadder 624x480 24fps 1000kbit ref1 600s (2026)" subtype="clip" summary="" thumb="/library/metadata/45/thumb/1785748871" art="/library/metadata/45/art/1785748871" duration="600000" addedAt="1785651067" updatedAt="1785748871" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="45" duration="600000" bitrate="1052" width="624" height="480" aspectRatio="1.33" audioChannels="1" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="45" key="/library/parts/45/1785643747/file.mp4" duration="600000" file="/data/movies/MiSTerPlex BitrateLadder 624x480 24fps 1000kbit ref1 600s (2026).mp4" size="78889567" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex BitrateLadder 624x480 24fps 1000kbit ref1 600s (2026)" type="coverPoster" url="/library/metadata/45/thumb/1785748871" />
+<Image alt="MiSTerPlex BitrateLadder 624x480 24fps 1000kbit ref1 600s (2026)" type="background" url="/library/metadata/45/art/1785748871" />
+<UltraBlurColors topLeft="5b0505" topRight="9c3539" bottomRight="665f29" bottomLeft="2f2f2f" />
+</Video>
+<Video ratingKey="46" key="/library/metadata/46" guid="tv.plex.agents.none://46" type="movie" title="MiSTerPlex BitrateLadder 624x480 24fps 1400kbit ref1 600s (2026)" subtype="clip" summary="" thumb="/library/metadata/46/thumb/1785748872" art="/library/metadata/46/art/1785748872" duration="600000" addedAt="1785651067" updatedAt="1785748872" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="46" duration="600000" bitrate="1452" width="624" height="480" aspectRatio="1.33" audioChannels="1" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="46" key="/library/parts/46/1785643763/file.mp4" duration="600000" file="/data/movies/MiSTerPlex BitrateLadder 624x480 24fps 1400kbit ref1 600s (2026).mp4" size="108922279" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex BitrateLadder 624x480 24fps 1400kbit ref1 600s (2026)" type="coverPoster" url="/library/metadata/46/thumb/1785748872" />
+<Image alt="MiSTerPlex BitrateLadder 624x480 24fps 1400kbit ref1 600s (2026)" type="background" url="/library/metadata/46/art/1785748872" />
+<UltraBlurColors topLeft="5b0506" topRight="a42b30" bottomRight="665f2a" bottomLeft="525961" />
+</Video>
+<Video ratingKey="47" key="/library/metadata/47" guid="tv.plex.agents.none://47" type="movie" title="MiSTerPlex BitrateLadder 624x480 24fps 1800kbit ref1 600s (2026)" subtype="clip" summary="" thumb="/library/metadata/47/thumb/1785748872" art="/library/metadata/47/art/1785748872" duration="600000" addedAt="1785651067" updatedAt="1785748872" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="47" duration="600000" bitrate="1851" width="624" height="480" aspectRatio="1.33" audioChannels="1" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="47" key="/library/parts/47/1785643779/file.mp4" duration="600000" file="/data/movies/MiSTerPlex BitrateLadder 624x480 24fps 1800kbit ref1 600s (2026).mp4" size="138789137" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex BitrateLadder 624x480 24fps 1800kbit ref1 600s (2026)" type="coverPoster" url="/library/metadata/47/thumb/1785748872" />
+<Image alt="MiSTerPlex BitrateLadder 624x480 24fps 1800kbit ref1 600s (2026)" type="background" url="/library/metadata/47/art/1785748872" />
+<UltraBlurColors topLeft="5b0505" topRight="a12a2b" bottomRight="665f27" bottomLeft="2b2b2b" />
+</Video>
+<Video ratingKey="48" key="/library/metadata/48" guid="tv.plex.agents.none://48" type="movie" title="MiSTerPlex BitrateLadder 624x480 24fps 2200kbit ref1 600s (2026)" subtype="clip" summary="" thumb="/library/metadata/48/thumb/1785748872" art="/library/metadata/48/art/1785748872" duration="600000" addedAt="1785651067" updatedAt="1785748872" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="48" duration="600000" bitrate="2251" width="624" height="480" aspectRatio="1.33" audioChannels="1" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="48" key="/library/parts/48/1785643797/file.mp4" duration="600000" file="/data/movies/MiSTerPlex BitrateLadder 624x480 24fps 2200kbit ref1 600s (2026).mp4" size="168787540" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex BitrateLadder 624x480 24fps 2200kbit ref1 600s (2026)" type="coverPoster" url="/library/metadata/48/thumb/1785748872" />
+<Image alt="MiSTerPlex BitrateLadder 624x480 24fps 2200kbit ref1 600s (2026)" type="background" url="/library/metadata/48/art/1785748872" />
+<UltraBlurColors topLeft="5b0505" topRight="a32c2b" bottomRight="665f28" bottomLeft="2b2b2b" />
+</Video>
+<Video ratingKey="49" key="/library/metadata/49" guid="tv.plex.agents.none://49" type="movie" title="MiSTerPlex BitrateLadder 624x480 24fps 2600kbit ref1 600s (2026)" subtype="clip" summary="" thumb="/library/metadata/49/thumb/1785748872" art="/library/metadata/49/art/1785748872" duration="600000" addedAt="1785651067" updatedAt="1785748872" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="49" duration="600000" bitrate="2651" width="624" height="480" aspectRatio="1.33" audioChannels="1" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="49" key="/library/parts/49/1785643816/file.mp4" duration="600000" file="/data/movies/MiSTerPlex BitrateLadder 624x480 24fps 2600kbit ref1 600s (2026).mp4" size="198857857" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex BitrateLadder 624x480 24fps 2600kbit ref1 600s (2026)" type="coverPoster" url="/library/metadata/49/thumb/1785748872" />
+<Image alt="MiSTerPlex BitrateLadder 624x480 24fps 2600kbit ref1 600s (2026)" type="background" url="/library/metadata/49/art/1785748872" />
+<UltraBlurColors topLeft="5b0505" topRight="a22d31" bottomRight="665f29" bottomLeft="2b2b2b" />
+</Video>
+<Video ratingKey="53" key="/library/metadata/53" guid="tv.plex.agents.none://53" type="movie" title="MiSTerPlex Cadence 320x240 24fps control_d0 300s (2026)" subtype="clip" summary="" thumb="/library/metadata/53/thumb/1785748872" art="/library/metadata/53/art/1785748872" duration="300000" addedAt="1785651068" updatedAt="1785748872" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="53" duration="300000" bitrate="1207" width="320" height="240" aspectRatio="1.33" audioChannels="1" audioCodec="aac" videoCodec="h264" videoResolution="sd" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="53" key="/library/parts/53/1785637666/file.mp4" duration="300000" file="/data/movies/MiSTerPlex Cadence 320x240 24fps control_d0 300s (2026).mp4" size="45248557" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Cadence 320x240 24fps control_d0 300s (2026)" type="coverPoster" url="/library/metadata/53/thumb/1785748872" />
+<Image alt="MiSTerPlex Cadence 320x240 24fps control_d0 300s (2026)" type="background" url="/library/metadata/53/art/1785748872" />
+<UltraBlurColors topLeft="51151c" topRight="ac1a1d" bottomRight="565f66" bottomLeft="333c43" />
+</Video>
+<Video ratingKey="54" key="/library/metadata/54" guid="tv.plex.agents.none://54" type="movie" title="MiSTerPlex Cadence 320x240 24fps drop1 300s (2026)" subtype="clip" summary="" thumb="/library/metadata/54/thumb/1785748872" art="/library/metadata/54/art/1785748872" duration="299958" addedAt="1785651068" updatedAt="1785748872" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="54" duration="299958" bitrate="1208" width="320" height="240" aspectRatio="1.33" audioChannels="1" audioCodec="aac" videoCodec="h264" videoResolution="sd" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="54" key="/library/parts/54/1785637775/file.mp4" duration="299958" file="/data/movies/MiSTerPlex Cadence 320x240 24fps drop1 300s (2026).mp4" size="45277129" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Cadence 320x240 24fps drop1 300s (2026)" type="coverPoster" url="/library/metadata/54/thumb/1785748872" />
+<Image alt="MiSTerPlex Cadence 320x240 24fps drop1 300s (2026)" type="background" url="/library/metadata/54/art/1785748872" />
+<UltraBlurColors topLeft="50171c" topRight="9c3034" bottomRight="555b63" bottomLeft="3a444c" />
+</Video>
+<Video ratingKey="56" key="/library/metadata/56" guid="tv.plex.agents.none://56" type="movie" title="MiSTerPlex Cadence 320x240 24fps drop5 300s (2026)" subtype="clip" summary="" thumb="/library/metadata/56/thumb/1785748872" art="/library/metadata/56/art/1785748872" duration="299792" addedAt="1785651068" updatedAt="1785748872" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="56" duration="299792" bitrate="1207" width="320" height="240" aspectRatio="1.33" audioChannels="1" audioCodec="aac" videoCodec="h264" videoResolution="sd" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="56" key="/library/parts/56/1785637802/file.mp4" duration="299792" file="/data/movies/MiSTerPlex Cadence 320x240 24fps drop5 300s (2026).mp4" size="45234765" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Cadence 320x240 24fps drop5 300s (2026)" type="coverPoster" url="/library/metadata/56/thumb/1785748872" />
+<Image alt="MiSTerPlex Cadence 320x240 24fps drop5 300s (2026)" type="background" url="/library/metadata/56/art/1785748872" />
+<UltraBlurColors topLeft="521619" topRight="933033" bottomRight="4a5159" bottomLeft="363938" />
+</Video>
+<Video ratingKey="55" key="/library/metadata/55" guid="tv.plex.agents.none://55" type="movie" title="MiSTerPlex Cadence 320x240 24fps drop20 299s (2026)" subtype="clip" summary="" thumb="/library/metadata/55/thumb/1785748872" art="/library/metadata/55/art/1785748872" duration="299167" addedAt="1785651068" updatedAt="1785748872" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="55" duration="299167" bitrate="1207" width="320" height="240" aspectRatio="1.33" audioChannels="1" audioCodec="aac" videoCodec="h264" videoResolution="sd" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="55" key="/library/parts/55/1785637829/file.mp4" duration="299167" file="/data/movies/MiSTerPlex Cadence 320x240 24fps drop20 299s (2026).mp4" size="45139702" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Cadence 320x240 24fps drop20 299s (2026)" type="coverPoster" url="/library/metadata/55/thumb/1785748872" />
+<Image alt="MiSTerPlex Cadence 320x240 24fps drop20 299s (2026)" type="background" url="/library/metadata/55/art/1785748872" />
+<UltraBlurColors topLeft="521519" topRight="a02c34" bottomRight="555b63" bottomLeft="3d434b" />
+</Video>
+<Video ratingKey="57" key="/library/metadata/57" guid="tv.plex.agents.none://57" type="movie" title="MiSTerPlex Cadence 320x240 24fps dup1 300s (2026)" subtype="clip" summary="" thumb="/library/metadata/57/thumb/1785748872" art="/library/metadata/57/art/1785748872" duration="300000" addedAt="1785651068" updatedAt="1785748872" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="57" duration="300000" bitrate="1207" width="320" height="240" aspectRatio="1.33" audioChannels="1" audioCodec="aac" videoCodec="h264" videoResolution="sd" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="57" key="/library/parts/57/1785637693/file.mp4" duration="300000" file="/data/movies/MiSTerPlex Cadence 320x240 24fps dup1 300s (2026).mp4" size="45256839" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Cadence 320x240 24fps dup1 300s (2026)" type="coverPoster" url="/library/metadata/57/thumb/1785748872" />
+<Image alt="MiSTerPlex Cadence 320x240 24fps dup1 300s (2026)" type="background" url="/library/metadata/57/art/1785748872" />
+<UltraBlurColors topLeft="4a1a25" topRight="7e2b30" bottomRight="4a5159" bottomLeft="2b333b" />
+</Video>
+<Video ratingKey="59" key="/library/metadata/59" guid="tv.plex.agents.none://59" type="movie" title="MiSTerPlex Cadence 320x240 24fps dup5 300s (2026)" subtype="clip" summary="" thumb="/library/metadata/59/thumb/1785748872" art="/library/metadata/59/art/1785748872" duration="300000" addedAt="1785651068" updatedAt="1785748872" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="59" duration="300000" bitrate="1207" width="320" height="240" aspectRatio="1.33" audioChannels="1" audioCodec="aac" videoCodec="h264" videoResolution="sd" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="59" key="/library/parts/59/1785637721/file.mp4" duration="300000" file="/data/movies/MiSTerPlex Cadence 320x240 24fps dup5 300s (2026).mp4" size="45279808" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Cadence 320x240 24fps dup5 300s (2026)" type="coverPoster" url="/library/metadata/59/thumb/1785748872" />
+<Image alt="MiSTerPlex Cadence 320x240 24fps dup5 300s (2026)" type="background" url="/library/metadata/59/art/1785748872" />
+<UltraBlurColors topLeft="521619" topRight="7f2b2f" bottomRight="545c63" bottomLeft="394149" />
+</Video>
+<Video ratingKey="58" key="/library/metadata/58" guid="tv.plex.agents.none://58" type="movie" title="MiSTerPlex Cadence 320x240 24fps dup20 300s (2026)" subtype="clip" summary="" thumb="/library/metadata/58/thumb/1785748873" art="/library/metadata/58/art/1785748873" duration="300000" addedAt="1785651068" updatedAt="1785748873" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="58" duration="300000" bitrate="1208" width="320" height="240" aspectRatio="1.33" audioChannels="1" audioCodec="aac" videoCodec="h264" videoResolution="sd" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="58" key="/library/parts/58/1785637748/file.mp4" duration="300000" file="/data/movies/MiSTerPlex Cadence 320x240 24fps dup20 300s (2026).mp4" size="45282905" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Cadence 320x240 24fps dup20 300s (2026)" type="coverPoster" url="/library/metadata/58/thumb/1785748873" />
+<Image alt="MiSTerPlex Cadence 320x240 24fps dup20 300s (2026)" type="background" url="/library/metadata/58/art/1785748873" />
+<UltraBlurColors topLeft="5a080a" topRight="793334" bottomRight="606220" bottomLeft="2b6775" />
+</Video>
+<Video ratingKey="60" key="/library/metadata/60" guid="tv.plex.agents.none://60" type="movie" title="MiSTerPlex Cadence 320x240 24fps periodic_hold_every24 300s (2026)" subtype="clip" summary="" thumb="/library/metadata/60/thumb/1785748873" art="/library/metadata/60/art/1785748873" duration="300000" addedAt="1785651068" updatedAt="1785748873" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="60" duration="300000" bitrate="1207" width="320" height="240" aspectRatio="1.33" audioChannels="1" audioCodec="aac" videoCodec="h264" videoResolution="sd" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="60" key="/library/parts/60/1785637856/file.mp4" duration="300000" file="/data/movies/MiSTerPlex Cadence 320x240 24fps periodic_hold_every24 300s (2026).mp4" size="45259496" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Cadence 320x240 24fps periodic_hold_every24 300s (2026)" type="coverPoster" url="/library/metadata/60/thumb/1785748873" />
+<Image alt="MiSTerPlex Cadence 320x240 24fps periodic_hold_every24 300s (2026)" type="background" url="/library/metadata/60/art/1785748873" />
+<UltraBlurColors topLeft="5a080a" topRight="712b2e" bottomRight="61612b" bottomLeft="3d434b" />
+</Video>
+<Video ratingKey="61" key="/library/metadata/61" guid="tv.plex.agents.none://61" type="movie" title="MiSTerPlex Cadence 624x480 24fps control_d0 300s (2026)" subtype="clip" summary="" thumb="/library/metadata/61/thumb/1785748873" art="/library/metadata/61/art/1785748873" duration="300000" addedAt="1785651068" updatedAt="1785748873" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="61" duration="300000" bitrate="2415" width="624" height="480" aspectRatio="1.33" audioChannels="1" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="61" key="/library/parts/61/1785637254/file.mp4" duration="300000" file="/data/movies/MiSTerPlex Cadence 624x480 24fps control_d0 300s (2026).mp4" size="90566262" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Cadence 624x480 24fps control_d0 300s (2026)" type="coverPoster" url="/library/metadata/61/thumb/1785748873" />
+<Image alt="MiSTerPlex Cadence 624x480 24fps control_d0 300s (2026)" type="background" url="/library/metadata/61/art/1785748873" />
+<UltraBlurColors topLeft="4f1917" topRight="843435" bottomRight="63602b" bottomLeft="2b6775" />
+</Video>
+<Video ratingKey="62" key="/library/metadata/62" guid="tv.plex.agents.none://62" type="movie" title="MiSTerPlex Cadence 624x480 24fps drop1 300s (2026)" subtype="clip" summary="" thumb="/library/metadata/62/thumb/1785748873" art="/library/metadata/62/art/1785748873" duration="299958" addedAt="1785651068" updatedAt="1785748873" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="62" duration="299958" bitrate="2417" width="624" height="480" aspectRatio="1.33" audioChannels="1" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="62" key="/library/parts/62/1785637474/file.mp4" duration="299958" file="/data/movies/MiSTerPlex Cadence 624x480 24fps drop1 300s (2026).mp4" size="90621317" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Cadence 624x480 24fps drop1 300s (2026)" type="coverPoster" url="/library/metadata/62/thumb/1785748873" />
+<Image alt="MiSTerPlex Cadence 624x480 24fps drop1 300s (2026)" type="background" url="/library/metadata/62/art/1785748873" />
+<UltraBlurColors topLeft="4f1917" topRight="843435" bottomRight="63602b" bottomLeft="2b6775" />
+</Video>
+<Video ratingKey="64" key="/library/metadata/64" guid="tv.plex.agents.none://64" type="movie" title="MiSTerPlex Cadence 624x480 24fps drop5 300s (2026)" subtype="clip" summary="" thumb="/library/metadata/64/thumb/1785748873" art="/library/metadata/64/art/1785748873" duration="299792" addedAt="1785651068" updatedAt="1785748873" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="64" duration="299792" bitrate="2469" width="624" height="480" aspectRatio="1.33" audioChannels="1" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="64" key="/library/parts/64/1785637529/file.mp4" duration="299792" file="/data/movies/MiSTerPlex Cadence 624x480 24fps drop5 300s (2026).mp4" size="92533167" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Cadence 624x480 24fps drop5 300s (2026)" type="coverPoster" url="/library/metadata/64/thumb/1785748873" />
+<Image alt="MiSTerPlex Cadence 624x480 24fps drop5 300s (2026)" type="background" url="/library/metadata/64/art/1785748873" />
+<UltraBlurColors topLeft="511616" topRight="9f2c32" bottomRight="636027" bottomLeft="3d434b" />
+</Video>
+<Video ratingKey="63" key="/library/metadata/63" guid="tv.plex.agents.none://63" type="movie" title="MiSTerPlex Cadence 624x480 24fps drop20 299s (2026)" subtype="clip" summary="" thumb="/library/metadata/63/thumb/1785748873" art="/library/metadata/63/art/1785748873" duration="299167" addedAt="1785651068" updatedAt="1785748873" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="63" duration="299167" bitrate="2488" width="624" height="480" aspectRatio="1.33" audioChannels="1" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="63" key="/library/parts/63/1785637584/file.mp4" duration="299167" file="/data/movies/MiSTerPlex Cadence 624x480 24fps drop20 299s (2026).mp4" size="93030001" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Cadence 624x480 24fps drop20 299s (2026)" type="coverPoster" url="/library/metadata/63/thumb/1785748873" />
+<Image alt="MiSTerPlex Cadence 624x480 24fps drop20 299s (2026)" type="background" url="/library/metadata/63/art/1785748873" />
+<UltraBlurColors topLeft="4d1929" topRight="9f2b32" bottomRight="4a5159" bottomLeft="534e1a" />
+</Video>
+<Video ratingKey="65" key="/library/metadata/65" guid="tv.plex.agents.none://65" type="movie" title="MiSTerPlex Cadence 624x480 24fps dup1 300s (2026)" subtype="clip" summary="" thumb="/library/metadata/65/thumb/1785748873" art="/library/metadata/65/art/1785748873" duration="300000" addedAt="1785651068" updatedAt="1785748873" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="65" duration="300000" bitrate="2417" width="624" height="480" aspectRatio="1.33" audioChannels="1" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="65" key="/library/parts/65/1785637309/file.mp4" duration="300000" file="/data/movies/MiSTerPlex Cadence 624x480 24fps dup1 300s (2026).mp4" size="90647644" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Cadence 624x480 24fps dup1 300s (2026)" type="coverPoster" url="/library/metadata/65/thumb/1785748873" />
+<Image alt="MiSTerPlex Cadence 624x480 24fps dup1 300s (2026)" type="background" url="/library/metadata/65/art/1785748873" />
+<UltraBlurColors topLeft="4f1917" topRight="843435" bottomRight="63602b" bottomLeft="2b6775" />
+</Video>
+<Video ratingKey="67" key="/library/metadata/67" guid="tv.plex.agents.none://67" type="movie" title="MiSTerPlex Cadence 624x480 24fps dup5 300s (2026)" subtype="clip" summary="" thumb="/library/metadata/67/thumb/1785748873" art="/library/metadata/67/art/1785748873" duration="300000" addedAt="1785651068" updatedAt="1785748873" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="67" duration="300000" bitrate="2465" width="624" height="480" aspectRatio="1.33" audioChannels="1" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="67" key="/library/parts/67/1785637364/file.mp4" duration="300000" file="/data/movies/MiSTerPlex Cadence 624x480 24fps dup5 300s (2026).mp4" size="92436185" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Cadence 624x480 24fps dup5 300s (2026)" type="coverPoster" url="/library/metadata/67/thumb/1785748873" />
+<Image alt="MiSTerPlex Cadence 624x480 24fps dup5 300s (2026)" type="background" url="/library/metadata/67/art/1785748873" />
+<UltraBlurColors topLeft="51171a" topRight="9f2c32" bottomRight="655f29" bottomLeft="3d434b" />
+</Video>
+<Video ratingKey="66" key="/library/metadata/66" guid="tv.plex.agents.none://66" type="movie" title="MiSTerPlex Cadence 624x480 24fps dup20 300s (2026)" subtype="clip" summary="" thumb="/library/metadata/66/thumb/1785748873" art="/library/metadata/66/art/1785748873" duration="300000" addedAt="1785651068" updatedAt="1785748873" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="66" duration="300000" bitrate="2486" width="624" height="480" aspectRatio="1.33" audioChannels="1" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="66" key="/library/parts/66/1785637419/file.mp4" duration="300000" file="/data/movies/MiSTerPlex Cadence 624x480 24fps dup20 300s (2026).mp4" size="93233122" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Cadence 624x480 24fps dup20 300s (2026)" type="coverPoster" url="/library/metadata/66/thumb/1785748873" />
+<Image alt="MiSTerPlex Cadence 624x480 24fps dup20 300s (2026)" type="background" url="/library/metadata/66/art/1785748873" />
+<UltraBlurColors topLeft="511618" topRight="9a2c34" bottomRight="636124" bottomLeft="3d434b" />
+</Video>
+<Video ratingKey="68" key="/library/metadata/68" guid="tv.plex.agents.none://68" type="movie" title="MiSTerPlex Cadence 624x480 24fps periodic_hold_every24 300s (2026)" subtype="clip" summary="" thumb="/library/metadata/68/thumb/1785748873" art="/library/metadata/68/art/1785748873" duration="300000" addedAt="1785651068" updatedAt="1785748873" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="68" duration="300000" bitrate="2486" width="624" height="480" aspectRatio="1.33" audioChannels="1" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="68" key="/library/parts/68/1785637639/file.mp4" duration="300000" file="/data/movies/MiSTerPlex Cadence 624x480 24fps periodic_hold_every24 300s (2026).mp4" size="93234628" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Cadence 624x480 24fps periodic_hold_every24 300s (2026)" type="coverPoster" url="/library/metadata/68/thumb/1785748873" />
+<Image alt="MiSTerPlex Cadence 624x480 24fps periodic_hold_every24 300s (2026)" type="background" url="/library/metadata/68/art/1785748873" />
+<UltraBlurColors topLeft="52151c" topRight="88383b" bottomRight="2b6774" bottomLeft="2b6775" />
+</Video>
+<Video ratingKey="108" key="/library/metadata/108" guid="tv.plex.agents.none://108" type="movie" title="MiSTerPlex CBR-DP 624x480 24fps 400kbit 180s (2026)" subtype="clip" summary="" thumb="/library/metadata/108/thumb/1785748874" art="/library/metadata/108/art/1785748874" duration="180021" addedAt="1785656463" updatedAt="1785748874" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="108" duration="180021" bitrate="528" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="108" key="/library/parts/108/1785662967/file.mp4" duration="180021" file="/data/movies/MiSTerPlex CBR-DP 624x480 24fps 400kbit 180s (2026).mp4" size="11978107" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex CBR-DP 624x480 24fps 400kbit 180s (2026)" type="coverPoster" url="/library/metadata/108/thumb/1785748874" />
+<Image alt="MiSTerPlex CBR-DP 624x480 24fps 400kbit 180s (2026)" type="background" url="/library/metadata/108/art/1785748874" />
+<UltraBlurColors topLeft="4c1b21" topRight="ac1b22" bottomRight="6c5d02" bottomLeft="383f48" />
+</Video>
+<Video ratingKey="109" key="/library/metadata/109" guid="tv.plex.agents.none://109" type="movie" title="MiSTerPlex CBR-DP 624x480 24fps 800kbit 180s (2026)" subtype="clip" summary="" thumb="/library/metadata/109/thumb/1785748874" art="/library/metadata/109/art/1785748874" duration="180021" addedAt="1785656463" updatedAt="1785748874" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="109" duration="180021" bitrate="929" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="109" key="/library/parts/109/1785663005/file.mp4" duration="180021" file="/data/movies/MiSTerPlex CBR-DP 624x480 24fps 800kbit 180s (2026).mp4" size="20985991" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex CBR-DP 624x480 24fps 800kbit 180s (2026)" type="coverPoster" url="/library/metadata/109/thumb/1785748874" />
+<Image alt="MiSTerPlex CBR-DP 624x480 24fps 800kbit 180s (2026)" type="background" url="/library/metadata/109/art/1785748874" />
+<UltraBlurColors topLeft="59090e" topRight="933e47" bottomRight="6c5d01" bottomLeft="313c45" />
+</Video>
+<Video ratingKey="105" key="/library/metadata/105" guid="tv.plex.agents.none://105" type="movie" title="MiSTerPlex CBR-DP 624x480 24fps 1200kbit 180s (2026)" subtype="clip" summary="" thumb="/library/metadata/105/thumb/1785748874" art="/library/metadata/105/art/1785748874" duration="180021" addedAt="1785656463" updatedAt="1785748874" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="105" duration="180021" bitrate="1329" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="105" key="/library/parts/105/1785663043/file.mp4" duration="180021" file="/data/movies/MiSTerPlex CBR-DP 624x480 24fps 1200kbit 180s (2026).mp4" size="29992916" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex CBR-DP 624x480 24fps 1200kbit 180s (2026)" type="coverPoster" url="/library/metadata/105/thumb/1785748874" />
+<Image alt="MiSTerPlex CBR-DP 624x480 24fps 1200kbit 180s (2026)" type="background" url="/library/metadata/105/art/1785748874" />
+<UltraBlurColors topLeft="4c1c1f" topRight="132243" bottomRight="665f2a" bottomLeft="3c404c" />
+</Video>
+<Video ratingKey="106" key="/library/metadata/106" guid="tv.plex.agents.none://106" type="movie" title="MiSTerPlex CBR-DP 624x480 24fps 1600kbit 180s (2026)" subtype="clip" summary="" thumb="/library/metadata/106/thumb/1785748874" art="/library/metadata/106/art/1785748874" duration="180021" addedAt="1785656463" updatedAt="1785748874" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="106" duration="180021" bitrate="1731" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="106" key="/library/parts/106/1785663082/file.mp4" duration="180021" file="/data/movies/MiSTerPlex CBR-DP 624x480 24fps 1600kbit 180s (2026).mp4" size="39040838" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex CBR-DP 624x480 24fps 1600kbit 180s (2026)" type="coverPoster" url="/library/metadata/106/thumb/1785748874" />
+<Image alt="MiSTerPlex CBR-DP 624x480 24fps 1600kbit 180s (2026)" type="background" url="/library/metadata/106/art/1785748874" />
+<UltraBlurColors topLeft="4c1c20" topRight="132243" bottomRight="64602a" bottomLeft="1e2a56" />
+</Video>
+<Video ratingKey="107" key="/library/metadata/107" guid="tv.plex.agents.none://107" type="movie" title="MiSTerPlex CBR-DP 624x480 24fps 2000kbit 180s (2026)" subtype="clip" summary="" thumb="/library/metadata/107/thumb/1785748874" art="/library/metadata/107/art/1785748874" duration="180021" addedAt="1785656463" updatedAt="1785748874" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="107" duration="180021" bitrate="2133" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="107" key="/library/parts/107/1785663122/file.mp4" duration="180021" file="/data/movies/MiSTerPlex CBR-DP 624x480 24fps 2000kbit 180s (2026).mp4" size="48087454" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex CBR-DP 624x480 24fps 2000kbit 180s (2026)" type="coverPoster" url="/library/metadata/107/thumb/1785748874" />
+<Image alt="MiSTerPlex CBR-DP 624x480 24fps 2000kbit 180s (2026)" type="background" url="/library/metadata/107/art/1785748874" />
+<UltraBlurColors topLeft="4c1c20" topRight="132243" bottomRight="6c5d02" bottomLeft="183153" />
+</Video>
+<Video ratingKey="110" key="/library/metadata/110" guid="tv.plex.agents.none://110" type="movie" title="MiSTerPlex CBR-DP 640x480 24fps 1200kbit 180s (2026)" subtype="clip" summary="" thumb="/library/metadata/110/thumb/1785748874" art="/library/metadata/110/art/1785748874" duration="180021" addedAt="1785656463" updatedAt="1785748874" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="110" duration="180021" bitrate="1329" width="640" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="110" key="/library/parts/110/1785663162/file.mp4" duration="180021" file="/data/movies/MiSTerPlex CBR-DP 640x480 24fps 1200kbit 180s (2026).mp4" size="29995905" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex CBR-DP 640x480 24fps 1200kbit 180s (2026)" type="coverPoster" url="/library/metadata/110/thumb/1785748874" />
+<Image alt="MiSTerPlex CBR-DP 640x480 24fps 1200kbit 180s (2026)" type="background" url="/library/metadata/110/art/1785748874" />
+<UltraBlurColors topLeft="4c1c1f" topRight="0f293f" bottomRight="3b4450" bottomLeft="6c5e02" />
+</Video>
+<Video ratingKey="112" key="/library/metadata/112" guid="tv.plex.agents.none://112" type="movie" title="MiSTerPlex DecLoad cb_deblock_off 624x480 24fps 800k 180s (2026)" subtype="clip" summary="" thumb="/library/metadata/112/thumb/1785748874" art="/library/metadata/112/art/1785748874" duration="180000" addedAt="1785670332" updatedAt="1785748874" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="112" duration="180000" bitrate="925" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="112" key="/library/parts/112/1785670083/file.mp4" duration="180000" file="/data/movies/MiSTerPlex DecLoad cb_deblock_off 624x480 24fps 800k 180s (2026).mp4" size="20816362" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex DecLoad cb_deblock_off 624x480 24fps 800k 180s (2026)" type="coverPoster" url="/library/metadata/112/thumb/1785748874" />
+<Image alt="MiSTerPlex DecLoad cb_deblock_off 624x480 24fps 800k 180s (2026)" type="background" url="/library/metadata/112/art/1785748874" />
+<UltraBlurColors topLeft="030403" topRight="0f0c0a" bottomRight="62612b" bottomLeft="5e631b" />
+</Video>
+<Video ratingKey="113" key="/library/metadata/113" guid="tv.plex.agents.none://113" type="movie" title="MiSTerPlex DecLoad cb_deblock_strong 624x480 24fps 800k 180s (2026)" subtype="clip" summary="" thumb="/library/metadata/113/thumb/1785748874" art="/library/metadata/113/art/1785748874" duration="180000" addedAt="1785670332" updatedAt="1785748874" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="113" duration="180000" bitrate="925" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="113" key="/library/parts/113/1785670088/file.mp4" duration="180000" file="/data/movies/MiSTerPlex DecLoad cb_deblock_strong 624x480 24fps 800k 180s (2026).mp4" size="20807250" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex DecLoad cb_deblock_strong 624x480 24fps 800k 180s (2026)" type="coverPoster" url="/library/metadata/113/thumb/1785748874" />
+<Image alt="MiSTerPlex DecLoad cb_deblock_strong 624x480 24fps 800k 180s (2026)" type="background" url="/library/metadata/113/art/1785748874" />
+<UltraBlurColors topLeft="030403" topRight="5e351c" bottomRight="62612b" bottomLeft="5e631b" />
+</Video>
+<Video ratingKey="120" key="/library/metadata/120" guid="tv.plex.agents.none://120" type="movie" title="MiSTerPlex DecLoad cb_gop24 624x480 24fps 800k 180s (2026)" subtype="clip" summary="" thumb="/library/metadata/120/thumb/1785748874" art="/library/metadata/120/art/1785748874" duration="180000" addedAt="1785679406" updatedAt="1785748874" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="120" duration="180000" bitrate="936" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="120" key="/library/parts/120/1785679359/file.mp4" duration="180000" file="/data/movies/MiSTerPlex DecLoad cb_gop24 624x480 24fps 800k 180s (2026).mp4" size="21062190" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex DecLoad cb_gop24 624x480 24fps 800k 180s (2026)" type="coverPoster" url="/library/metadata/120/thumb/1785748874" />
+<Image alt="MiSTerPlex DecLoad cb_gop24 624x480 24fps 800k 180s (2026)" type="background" url="/library/metadata/120/art/1785748874" />
+<UltraBlurColors topLeft="243405" topRight="566521" bottomRight="62602b" bottomLeft="4b5b18" />
+</Video>
+<Video ratingKey="121" key="/library/metadata/121" guid="tv.plex.agents.none://121" type="movie" title="MiSTerPlex DecLoad cb_gop240 624x480 24fps 800k 180s (2026)" subtype="clip" summary="" thumb="/library/metadata/121/thumb/1785748874" art="/library/metadata/121/art/1785748874" duration="180000" addedAt="1785679406" updatedAt="1785748874" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="121" duration="180000" bitrate="921" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="121" key="/library/parts/121/1785679365/file.mp4" duration="180000" file="/data/movies/MiSTerPlex DecLoad cb_gop240 624x480 24fps 800k 180s (2026).mp4" size="20711831" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex DecLoad cb_gop240 624x480 24fps 800k 180s (2026)" type="coverPoster" url="/library/metadata/121/thumb/1785748874" />
+<Image alt="MiSTerPlex DecLoad cb_gop240 624x480 24fps 800k 180s (2026)" type="background" url="/library/metadata/121/art/1785748874" />
+</Video>
+<Video ratingKey="114" key="/library/metadata/114" guid="tv.plex.agents.none://114" type="movie" title="MiSTerPlex DecLoad cb_noise_dense 624x480 24fps 800k 180s (2026)" subtype="clip" summary="" thumb="/library/metadata/114/thumb/1785748875" art="/library/metadata/114/art/1785748875" duration="180000" addedAt="1785670332" updatedAt="1785748875" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="114" duration="180000" bitrate="929" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="114" key="/library/parts/114/1785670098/file.mp4" duration="180000" file="/data/movies/MiSTerPlex DecLoad cb_noise_dense 624x480 24fps 800k 180s (2026).mp4" size="20908278" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex DecLoad cb_noise_dense 624x480 24fps 800k 180s (2026)" type="coverPoster" url="/library/metadata/114/thumb/1785748875" />
+<Image alt="MiSTerPlex DecLoad cb_noise_dense 624x480 24fps 800k 180s (2026)" type="background" url="/library/metadata/114/art/1785748875" />
+<UltraBlurColors topLeft="2b2b2b" topRight="1c1c1c" bottomRight="262525" bottomLeft="1c1c1c" />
+</Video>
+<Video ratingKey="115" key="/library/metadata/115" guid="tv.plex.agents.none://115" type="movie" title="MiSTerPlex DecLoad cb_ref1_cavlc 624x480 24fps 800k 180s (2026)" subtype="clip" summary="" thumb="/library/metadata/115/thumb/1785748875" art="/library/metadata/115/art/1785748875" duration="180000" addedAt="1785670332" updatedAt="1785748875" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="115" duration="180000" bitrate="925" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="115" key="/library/parts/115/1785670049/file.mp4" duration="180000" file="/data/movies/MiSTerPlex DecLoad cb_ref1_cavlc 624x480 24fps 800k 180s (2026).mp4" size="20820350" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex DecLoad cb_ref1_cavlc 624x480 24fps 800k 180s (2026)" type="coverPoster" url="/library/metadata/115/thumb/1785748875" />
+<Image alt="MiSTerPlex DecLoad cb_ref1_cavlc 624x480 24fps 800k 180s (2026)" type="background" url="/library/metadata/115/art/1785748875" />
+<UltraBlurColors topLeft="030403" topRight="5e351c" bottomRight="506216" bottomLeft="5e631a" />
+</Video>
+<Video ratingKey="116" key="/library/metadata/116" guid="tv.plex.agents.none://116" type="movie" title="MiSTerPlex DecLoad cb_ref3_cavlc 624x480 24fps 800k 180s (2026)" subtype="clip" summary="" thumb="/library/metadata/116/thumb/1785748875" art="/library/metadata/116/art/1785748875" duration="180000" addedAt="1785670332" updatedAt="1785748875" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="116" duration="180000" bitrate="919" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="116" key="/library/parts/116/1785670056/file.mp4" duration="180000" file="/data/movies/MiSTerPlex DecLoad cb_ref3_cavlc 624x480 24fps 800k 180s (2026).mp4" size="20669883" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex DecLoad cb_ref3_cavlc 624x480 24fps 800k 180s (2026)" type="coverPoster" url="/library/metadata/116/thumb/1785748875" />
+<Image alt="MiSTerPlex DecLoad cb_ref3_cavlc 624x480 24fps 800k 180s (2026)" type="background" url="/library/metadata/116/art/1785748875" />
+<UltraBlurColors topLeft="030403" topRight="5f351c" bottomRight="62612b" bottomLeft="5e631b" />
+</Video>
+<Video ratingKey="117" key="/library/metadata/117" guid="tv.plex.agents.none://117" type="movie" title="MiSTerPlex DecLoad cb_ref5_cavlc 624x480 24fps 800k 180s (2026)" subtype="clip" summary="" thumb="/library/metadata/117/thumb/1785748875" art="/library/metadata/117/art/1785748875" duration="180000" addedAt="1785670332" updatedAt="1785748875" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="117" duration="180000" bitrate="918" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="117" key="/library/parts/117/1785670065/file.mp4" duration="180000" file="/data/movies/MiSTerPlex DecLoad cb_ref5_cavlc 624x480 24fps 800k 180s (2026).mp4" size="20666031" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex DecLoad cb_ref5_cavlc 624x480 24fps 800k 180s (2026)" type="coverPoster" url="/library/metadata/117/thumb/1785748875" />
+<Image alt="MiSTerPlex DecLoad cb_ref5_cavlc 624x480 24fps 800k 180s (2026)" type="background" url="/library/metadata/117/art/1785748875" />
+<UltraBlurColors topLeft="030403" topRight="5f351c" bottomRight="62612b" bottomLeft="5e631b" />
+</Video>
+<Video ratingKey="122" key="/library/metadata/122" guid="tv.plex.agents.none://122" type="movie" title="MiSTerPlex DecLoad cb_slices4 624x480 24fps 800k 180s (2026)" subtype="clip" summary="" thumb="/library/metadata/122/thumb/1785748875" art="/library/metadata/122/art/1785748875" duration="180000" addedAt="1785679406" updatedAt="1785748875" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="122" duration="180000" bitrate="921" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="122" key="/library/parts/122/1785679349/file.mp4" duration="180000" file="/data/movies/MiSTerPlex DecLoad cb_slices4 624x480 24fps 800k 180s (2026).mp4" size="20712330" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex DecLoad cb_slices4 624x480 24fps 800k 180s (2026)" type="coverPoster" url="/library/metadata/122/thumb/1785748875" />
+<Image alt="MiSTerPlex DecLoad cb_slices4 624x480 24fps 800k 180s (2026)" type="background" url="/library/metadata/122/art/1785748875" />
+</Video>
+<Video ratingKey="123" key="/library/metadata/123" guid="tv.plex.agents.none://123" type="movie" title="MiSTerPlex DecLoad cb_slices8 624x480 24fps 800k 180s (2026)" subtype="clip" summary="" thumb="/library/metadata/123/thumb/1785748875" art="/library/metadata/123/art/1785748875" duration="180000" addedAt="1785679406" updatedAt="1785748875" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="123" duration="180000" bitrate="922" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="123" key="/library/parts/123/1785679354/file.mp4" duration="180000" file="/data/movies/MiSTerPlex DecLoad cb_slices8 624x480 24fps 800k 180s (2026).mp4" size="20740795" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex DecLoad cb_slices8 624x480 24fps 800k 180s (2026)" type="coverPoster" url="/library/metadata/123/thumb/1785748875" />
+<Image alt="MiSTerPlex DecLoad cb_slices8 624x480 24fps 800k 180s (2026)" type="background" url="/library/metadata/123/art/1785748875" />
+</Video>
+<Video ratingKey="118" key="/library/metadata/118" guid="tv.plex.agents.none://118" type="movie" title="MiSTerPlex DecLoad high_cabac_ref1 624x480 24fps 800k 180s (2026)" subtype="clip" summary="" thumb="/library/metadata/118/thumb/1785748875" art="/library/metadata/118/art/1785748875" duration="180000" addedAt="1785670332" updatedAt="1785748875" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="118" duration="180000" bitrate="925" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="high">
+<Part id="118" key="/library/parts/118/1785670078/file.mp4" duration="180000" file="/data/movies/MiSTerPlex DecLoad high_cabac_ref1 624x480 24fps 800k 180s (2026).mp4" size="20821745" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="high" />
+</Media>
+<Image alt="MiSTerPlex DecLoad high_cabac_ref1 624x480 24fps 800k 180s (2026)" type="coverPoster" url="/library/metadata/118/thumb/1785748875" />
+<Image alt="MiSTerPlex DecLoad high_cabac_ref1 624x480 24fps 800k 180s (2026)" type="background" url="/library/metadata/118/art/1785748875" />
+<UltraBlurColors topLeft="030403" topRight="5f341c" bottomRight="506315" bottomLeft="5f621e" />
+</Video>
+<Video ratingKey="119" key="/library/metadata/119" guid="tv.plex.agents.none://119" type="movie" title="MiSTerPlex DecLoad main_bf2_cavlc 624x480 24fps 800k 180s (2026)" subtype="clip" summary="" thumb="/library/metadata/119/thumb/1785748875" art="/library/metadata/119/art/1785748875" duration="180000" addedAt="1785670332" updatedAt="1785748875" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="119" duration="180000" bitrate="898" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="main">
+<Part id="119" key="/library/parts/119/1785670214/file.mp4" duration="180000" file="/data/movies/MiSTerPlex DecLoad main_bf2_cavlc 624x480 24fps 800k 180s (2026).mp4" size="20208436" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="main" />
+</Media>
+<Image alt="MiSTerPlex DecLoad main_bf2_cavlc 624x480 24fps 800k 180s (2026)" type="coverPoster" url="/library/metadata/119/thumb/1785748875" />
+<Image alt="MiSTerPlex DecLoad main_bf2_cavlc 624x480 24fps 800k 180s (2026)" type="background" url="/library/metadata/119/art/1785748875" />
+<UltraBlurColors topLeft="030403" topRight="0f0c0a" bottomRight="506215" bottomLeft="5e631b" />
+</Video>
+<Video ratingKey="69" key="/library/metadata/69" guid="tv.plex.agents.none://69" type="movie" title="MiSTerPlex DeliveryGeom 426x240 24fps 90s (2026)" subtype="clip" summary="" thumb="/library/metadata/69/thumb/1785748875" art="/library/metadata/69/art/1785748875" duration="90000" addedAt="1785651068" updatedAt="1785748875" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="69" duration="90000" bitrate="250" width="426" height="240" aspectRatio="1.78" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="sd" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="69" key="/library/parts/69/1785616202/file.mp4" duration="90000" file="/data/movies/MiSTerPlex DeliveryGeom 426x240 24fps 90s (2026).mp4" size="2817297" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex DeliveryGeom 426x240 24fps 90s (2026)" type="coverPoster" url="/library/metadata/69/thumb/1785748875" />
+<Image alt="MiSTerPlex DeliveryGeom 426x240 24fps 90s (2026)" type="background" url="/library/metadata/69/art/1785748875" />
+<UltraBlurColors topLeft="352e02" topRight="434c03" bottomRight="b20203" bottomLeft="a22e2e" />
+</Video>
+<Video ratingKey="70" key="/library/metadata/70" guid="tv.plex.agents.none://70" type="movie" title="MiSTerPlex DeliveryGeom 426x240 30fps 90s (2026)" subtype="clip" summary="" thumb="/library/metadata/70/thumb/1785748875" art="/library/metadata/70/art/1785748875" duration="90000" addedAt="1785651068" updatedAt="1785748875" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="70" duration="90000" bitrate="296" width="426" height="240" aspectRatio="1.78" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="sd" container="mp4" videoFrameRate="NTSC" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="70" key="/library/parts/70/1785616210/file.mp4" duration="90000" file="/data/movies/MiSTerPlex DeliveryGeom 426x240 30fps 90s (2026).mp4" size="3335586" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex DeliveryGeom 426x240 30fps 90s (2026)" type="coverPoster" url="/library/metadata/70/thumb/1785748875" />
+<Image alt="MiSTerPlex DeliveryGeom 426x240 30fps 90s (2026)" type="background" url="/library/metadata/70/art/1785748875" />
+<UltraBlurColors topLeft="171503" topRight="030310" bottomRight="030403" bottomLeft="0d0202" />
+</Video>
+<Video ratingKey="71" key="/library/metadata/71" guid="tv.plex.agents.none://71" type="movie" title="MiSTerPlex DeliveryGeom 624x350 24fps 90s (2026)" subtype="clip" summary="" thumb="/library/metadata/71/thumb/1785748875" art="/library/metadata/71/art/1785748875" duration="90000" addedAt="1785651068" updatedAt="1785748875" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="71" duration="90000" bitrate="336" width="624" height="350" aspectRatio="1.78" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="sd" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="71" key="/library/parts/71/1785616183/file.mp4" duration="90000" file="/data/movies/MiSTerPlex DeliveryGeom 624x350 24fps 90s (2026).mp4" size="3781537" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex DeliveryGeom 624x350 24fps 90s (2026)" type="coverPoster" url="/library/metadata/71/thumb/1785748875" />
+<Image alt="MiSTerPlex DeliveryGeom 624x350 24fps 90s (2026)" type="background" url="/library/metadata/71/art/1785748875" />
+<UltraBlurColors topLeft="362e03" topRight="444304" bottomRight="b20102" bottomLeft="ac1b21" />
+</Video>
+<Video ratingKey="72" key="/library/metadata/72" guid="tv.plex.agents.none://72" type="movie" title="MiSTerPlex DeliveryGeom 624x350 30fps 90s (2026)" subtype="clip" summary="" thumb="/library/metadata/72/thumb/1785748875" art="/library/metadata/72/art/1785748875" duration="90000" addedAt="1785651068" updatedAt="1785748875" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="72" duration="90000" bitrate="394" width="624" height="350" aspectRatio="1.78" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="sd" container="mp4" videoFrameRate="NTSC" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="72" key="/library/parts/72/1785616194/file.mp4" duration="90000" file="/data/movies/MiSTerPlex DeliveryGeom 624x350 30fps 90s (2026).mp4" size="4437954" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex DeliveryGeom 624x350 30fps 90s (2026)" type="coverPoster" url="/library/metadata/72/thumb/1785748875" />
+<Image alt="MiSTerPlex DeliveryGeom 624x350 30fps 90s (2026)" type="background" url="/library/metadata/72/art/1785748875" />
+<UltraBlurColors topLeft="030311" topRight="0f0203" bottomRight="030403" bottomLeft="0d0202" />
+</Video>
+<Video ratingKey="73" key="/library/metadata/73" guid="tv.plex.agents.none://73" type="movie" title="MiSTerPlex DeliveryGeom 624x352 24fps 90s (2026)" subtype="clip" summary="" thumb="/library/metadata/73/thumb/1785748876" art="/library/metadata/73/art/1785748876" duration="90000" addedAt="1785651068" updatedAt="1785748876" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="73" duration="90000" bitrate="335" width="624" height="352" aspectRatio="1.78" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="sd" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="73" key="/library/parts/73/1785616294/file.mp4" duration="90000" file="/data/movies/MiSTerPlex DeliveryGeom 624x352 24fps 90s (2026).mp4" size="3771678" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex DeliveryGeom 624x352 24fps 90s (2026)" type="coverPoster" url="/library/metadata/73/thumb/1785748876" />
+<Image alt="MiSTerPlex DeliveryGeom 624x352 24fps 90s (2026)" type="background" url="/library/metadata/73/art/1785748876" />
+<UltraBlurColors topLeft="362d06" topRight="030403" bottomRight="b20101" bottomLeft="a92313" />
+</Video>
+<Video ratingKey="74" key="/library/metadata/74" guid="tv.plex.agents.none://74" type="movie" title="MiSTerPlex DeliveryGeom 624x352 30fps 90s (2026)" subtype="clip" summary="" thumb="/library/metadata/74/thumb/1785748876" art="/library/metadata/74/art/1785748876" duration="90000" addedAt="1785651068" updatedAt="1785748876" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="74" duration="90000" bitrate="393" width="624" height="352" aspectRatio="1.78" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="sd" container="mp4" videoFrameRate="NTSC" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="74" key="/library/parts/74/1785616305/file.mp4" duration="90000" file="/data/movies/MiSTerPlex DeliveryGeom 624x352 30fps 90s (2026).mp4" size="4425809" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex DeliveryGeom 624x352 30fps 90s (2026)" type="coverPoster" url="/library/metadata/74/thumb/1785748876" />
+<Image alt="MiSTerPlex DeliveryGeom 624x352 30fps 90s (2026)" type="background" url="/library/metadata/74/art/1785748876" />
+<UltraBlurColors topLeft="142303" topRight="030310" bottomRight="030403" bottomLeft="0d0202" />
+</Video>
+<Video ratingKey="75" key="/library/metadata/75" guid="tv.plex.agents.none://75" type="movie" title="MiSTerPlex DeliveryGeom 624x480 24fps 90s (2026)" subtype="clip" summary="" thumb="/library/metadata/75/thumb/1785748876" art="/library/metadata/75/art/1785748876" duration="90000" addedAt="1785651068" updatedAt="1785748876" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="75" duration="90000" bitrate="332" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="75" key="/library/parts/75/1785616221/file.mp4" duration="90000" file="/data/movies/MiSTerPlex DeliveryGeom 624x480 24fps 90s (2026).mp4" size="3737521" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex DeliveryGeom 624x480 24fps 90s (2026)" type="coverPoster" url="/library/metadata/75/thumb/1785748876" />
+<Image alt="MiSTerPlex DeliveryGeom 624x480 24fps 90s (2026)" type="background" url="/library/metadata/75/art/1785748876" />
+<UltraBlurColors topLeft="421455" topRight="4b6831" bottomRight="b20101" bottomLeft="ac1c20" />
+</Video>
+<Video ratingKey="76" key="/library/metadata/76" guid="tv.plex.agents.none://76" type="movie" title="MiSTerPlex DeliveryGeom 624x480 30fps 90s (2026)" subtype="clip" summary="" thumb="/library/metadata/76/thumb/1785748876" art="/library/metadata/76/art/1785748876" duration="90000" addedAt="1785651068" updatedAt="1785748876" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="76" duration="90000" bitrate="415" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="NTSC" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="76" key="/library/parts/76/1785616234/file.mp4" duration="90000" file="/data/movies/MiSTerPlex DeliveryGeom 624x480 30fps 90s (2026).mp4" size="4667191" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex DeliveryGeom 624x480 30fps 90s (2026)" type="coverPoster" url="/library/metadata/76/thumb/1785748876" />
+<Image alt="MiSTerPlex DeliveryGeom 624x480 30fps 90s (2026)" type="background" url="/library/metadata/76/art/1785748876" />
+<UltraBlurColors topLeft="440403" topRight="400480" bottomRight="030403" bottomLeft="0d0202" />
+</Video>
+<Video ratingKey="77" key="/library/metadata/77" guid="tv.plex.agents.none://77" type="movie" title="MiSTerPlex DeliveryGeom 640x480 24fps 90s (2026)" subtype="clip" summary="" thumb="/library/metadata/77/thumb/1785748876" art="/library/metadata/77/art/1785748876" duration="90000" addedAt="1785651068" updatedAt="1785748876" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="77" duration="90000" bitrate="349" width="640" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="77" key="/library/parts/77/1785616246/file.mp4" duration="90000" file="/data/movies/MiSTerPlex DeliveryGeom 640x480 24fps 90s (2026).mp4" size="3923280" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex DeliveryGeom 640x480 24fps 90s (2026)" type="coverPoster" url="/library/metadata/77/thumb/1785748876" />
+<Image alt="MiSTerPlex DeliveryGeom 640x480 24fps 90s (2026)" type="background" url="/library/metadata/77/art/1785748876" />
+<UltraBlurColors topLeft="153523" topRight="63611c" bottomRight="b20101" bottomLeft="b00e11" />
+</Video>
+<Video ratingKey="78" key="/library/metadata/78" guid="tv.plex.agents.none://78" type="movie" title="MiSTerPlex DeliveryGeom 640x480 30fps 90s (2026)" subtype="clip" summary="" thumb="/library/metadata/78/thumb/1785748876" art="/library/metadata/78/art/1785748876" duration="90000" addedAt="1785651068" updatedAt="1785748876" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="78" duration="90000" bitrate="436" width="640" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="NTSC" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="78" key="/library/parts/78/1785616259/file.mp4" duration="90000" file="/data/movies/MiSTerPlex DeliveryGeom 640x480 30fps 90s (2026).mp4" size="4900795" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex DeliveryGeom 640x480 30fps 90s (2026)" type="coverPoster" url="/library/metadata/78/thumb/1785748876" />
+<Image alt="MiSTerPlex DeliveryGeom 640x480 30fps 90s (2026)" type="background" url="/library/metadata/78/art/1785748876" />
+<UltraBlurColors topLeft="440403" topRight="400480" bottomRight="030403" bottomLeft="0d0202" />
+</Video>
+<Video ratingKey="79" key="/library/metadata/79" guid="tv.plex.agents.none://79" type="movie" title="MiSTerPlex DeliveryGeom 720x480 24fps 90s (2026)" subtype="clip" summary="" thumb="/library/metadata/79/thumb/1785748876" art="/library/metadata/79/art/1785748876" duration="90000" addedAt="1785651068" updatedAt="1785748876" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="79" duration="90000" bitrate="363" width="720" height="480" aspectRatio="1.66" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="79" key="/library/parts/79/1785616271/file.mp4" duration="90000" file="/data/movies/MiSTerPlex DeliveryGeom 720x480 24fps 90s (2026).mp4" size="4079990" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex DeliveryGeom 720x480 24fps 90s (2026)" type="coverPoster" url="/library/metadata/79/thumb/1785748876" />
+<Image alt="MiSTerPlex DeliveryGeom 720x480 24fps 90s (2026)" type="background" url="/library/metadata/79/art/1785748876" />
+<UltraBlurColors topLeft="322f02" topRight="5c530b" bottomRight="b20101" bottomLeft="af1210" />
+</Video>
+<Video ratingKey="80" key="/library/metadata/80" guid="tv.plex.agents.none://80" type="movie" title="MiSTerPlex DeliveryGeom 720x480 30fps 90s (2026)" subtype="clip" summary="" thumb="/library/metadata/80/thumb/1785748876" art="/library/metadata/80/art/1785748876" duration="90000" addedAt="1785651068" updatedAt="1785748876" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="80" duration="90000" bitrate="451" width="720" height="480" aspectRatio="1.66" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="NTSC" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="80" key="/library/parts/80/1785616285/file.mp4" duration="90000" file="/data/movies/MiSTerPlex DeliveryGeom 720x480 30fps 90s (2026).mp4" size="5076048" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex DeliveryGeom 720x480 30fps 90s (2026)" type="coverPoster" url="/library/metadata/80/thumb/1785748876" />
+<Image alt="MiSTerPlex DeliveryGeom 720x480 30fps 90s (2026)" type="background" url="/library/metadata/80/art/1785748876" />
+<UltraBlurColors topLeft="070618" topRight="030412" bottomRight="030403" bottomLeft="0d0202" />
+</Video>
+<Video ratingKey="25" key="/library/metadata/25" guid="tv.plex.agents.none://25" type="movie" title="MiSTerPlex Disc Nyquist 240p 320x240 (2026)" subtype="clip" summary="" thumb="/library/metadata/25/thumb/1785748876" art="/library/metadata/25/art/1785748876" duration="30000" addedAt="1785588568" updatedAt="1785748876" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="25" duration="30000" bitrate="189" width="320" height="240" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="sd" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="25" key="/library/parts/25/1785588568/file.mp4" duration="30000" file="/data/movies/MiSTerPlex Disc Nyquist 240p 320x240 (2026).mp4" size="709928" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Disc Nyquist 240p 320x240 (2026)" type="coverPoster" url="/library/metadata/25/thumb/1785748876" />
+<Image alt="MiSTerPlex Disc Nyquist 240p 320x240 (2026)" type="background" url="/library/metadata/25/art/1785748876" />
+<UltraBlurColors topLeft="160303" topRight="270403" bottomRight="440403" bottomLeft="0d0202" />
+</Video>
+<Video ratingKey="26" key="/library/metadata/26" guid="tv.plex.agents.none://26" type="movie" title="MiSTerPlex Disc Nyquist 480p 624x480 (2026)" subtype="clip" summary="" thumb="/library/metadata/26/thumb/1785748876" art="/library/metadata/26/art/1785748876" duration="30000" addedAt="1785588568" updatedAt="1785748876" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="26" duration="30000" bitrate="376" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="26" key="/library/parts/26/1785588568/file.mp4" duration="30000" file="/data/movies/MiSTerPlex Disc Nyquist 480p 624x480 (2026).mp4" size="1411618" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Disc Nyquist 480p 624x480 (2026)" type="coverPoster" url="/library/metadata/26/thumb/1785748876" />
+<Image alt="MiSTerPlex Disc Nyquist 480p 624x480 (2026)" type="background" url="/library/metadata/26/art/1785748876" />
+<UltraBlurColors topLeft="5b0404" topRight="500403" bottomRight="044304" bottomLeft="232423" />
+</Video>
+<Video ratingKey="111" key="/library/metadata/111" guid="tv.plex.agents.none://111" type="movie" title="MiSTerPlex DP-Control 624x480 24fps 400kbit ref1 300s (2026)" subtype="clip" summary="" thumb="/library/metadata/111/thumb/1785748877" art="/library/metadata/111/art/1785748877" duration="300000" addedAt="1785670332" updatedAt="1785748877" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="111" duration="300000" bitrate="527" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="111" key="/library/parts/111/1785670044/file.mp4" duration="300000" file="/data/movies/MiSTerPlex DP-Control 624x480 24fps 400kbit ref1 300s (2026).mp4" size="19763030" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex DP-Control 624x480 24fps 400kbit ref1 300s (2026)" type="coverPoster" url="/library/metadata/111/thumb/1785748877" />
+<Image alt="MiSTerPlex DP-Control 624x480 24fps 400kbit ref1 300s (2026)" type="background" url="/library/metadata/111/art/1785748877" />
+<UltraBlurColors topLeft="4c1c1e" topRight="6c3823" bottomRight="506630" bottomLeft="496835" />
+</Video>
+<Video ratingKey="12" key="/library/metadata/12" guid="tv.plex.agents.none://12" type="movie" title="MiSTerPlex Glass Ledger 480p 24fps 360s (2026)" subtype="clip" summary="" thumb="/library/metadata/12/thumb/1785748877" art="/library/metadata/12/art/1785748877" duration="360000" addedAt="1785567015" updatedAt="1785748877" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="12" duration="360000" bitrate="361" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="12" key="/library/parts/12/1785566977/file.mp4" duration="360000" file="/data/movies/MiSTerPlex Glass Ledger 480p 24fps 360s (2026).mp4" size="16261571" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Glass Ledger 480p 24fps 360s (2026)" type="coverPoster" url="/library/metadata/12/thumb/1785748877" />
+<Image alt="MiSTerPlex Glass Ledger 480p 24fps 360s (2026)" type="background" url="/library/metadata/12/art/1785748877" />
+<UltraBlurColors topLeft="0d0d0d" topRight="434343" bottomRight="b20101" bottomLeft="ac1c21" />
+</Video>
+<Video ratingKey="14" key="/library/metadata/14" guid="tv.plex.agents.none://14" type="movie" title="MiSTerPlex Glass OCRProof 240p 24fps 600s (2026)" subtype="clip" summary="" thumb="/library/metadata/14/thumb/1785748877" art="/library/metadata/14/art/1785748877" duration="600000" addedAt="1785578342" updatedAt="1785748877" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="14" duration="600000" bitrate="213" width="320" height="240" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="sd" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="14" key="/library/parts/14/1785578342/file.mp4" duration="600000" file="/data/movies/MiSTerPlex Glass OCRProof 240p 24fps 600s (2026).mp4" size="15958494" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Glass OCRProof 240p 24fps 600s (2026)" type="coverPoster" url="/library/metadata/14/thumb/1785748877" />
+<Image alt="MiSTerPlex Glass OCRProof 240p 24fps 600s (2026)" type="background" url="/library/metadata/14/art/1785748877" />
+<UltraBlurColors topLeft="153523" topRight="63611c" bottomRight="b20102" bottomLeft="ae141d" />
+</Video>
+<Video ratingKey="13" key="/library/metadata/13" guid="tv.plex.agents.none://13" type="movie" title="MiSTerPlex Glass OCRProof 480p 24fps 600s (2026)" subtype="clip" summary="" thumb="/library/metadata/13/thumb/1785748877" art="/library/metadata/13/art/1785748877" duration="600000" addedAt="1785574285" updatedAt="1785748877" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="13" duration="600000" bitrate="396" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="13" key="/library/parts/13/1785574285/file.mp4" duration="600000" file="/data/movies/MiSTerPlex Glass OCRProof 480p 24fps 600s (2026).mp4" size="29707317" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Glass OCRProof 480p 24fps 600s (2026)" type="coverPoster" url="/library/metadata/13/thumb/1785748877" />
+<Image alt="MiSTerPlex Glass OCRProof 480p 24fps 600s (2026)" type="background" url="/library/metadata/13/art/1785748877" />
+<UltraBlurColors topLeft="421455" topRight="4b6831" bottomRight="b20101" bottomLeft="ac1c20" />
+</Video>
+<Video ratingKey="15" key="/library/metadata/15" guid="tv.plex.agents.none://15" type="movie" title="MiSTerPlex Glass OCRProof 624x352 24fps 180s (2026)" subtype="clip" summary="" thumb="/library/metadata/15/thumb/1785748877" art="/library/metadata/15/art/1785748877" duration="180000" addedAt="1785578342" updatedAt="1785748877" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="15" duration="180000" bitrate="441" width="624" height="352" aspectRatio="1.78" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="sd" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="15" key="/library/parts/15/1785578342/file.mp4" duration="180000" file="/data/movies/MiSTerPlex Glass OCRProof 624x352 24fps 180s (2026).mp4" size="9914267" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Glass OCRProof 624x352 24fps 180s (2026)" type="coverPoster" url="/library/metadata/15/thumb/1785748877" />
+<Image alt="MiSTerPlex Glass OCRProof 624x352 24fps 180s (2026)" type="background" url="/library/metadata/15/art/1785748877" />
+<UltraBlurColors topLeft="362d04" topRight="151616" bottomRight="b20101" bottomLeft="a82425" />
+</Video>
+<Video ratingKey="81" key="/library/metadata/81" guid="tv.plex.agents.none://81" type="movie" title="MiSTerPlex Glass OCRProof 624x480 30fps 120s (2026)" subtype="clip" summary="" thumb="/library/metadata/81/thumb/1785748877" art="/library/metadata/81/art/1785748877" duration="120000" addedAt="1785651068" updatedAt="1785748877" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="81" duration="120000" bitrate="504" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="NTSC" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="81" key="/library/parts/81/1785614789/file.mp4" duration="120000" file="/data/movies/MiSTerPlex Glass OCRProof 624x480 30fps 120s (2026).mp4" size="7556359" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Glass OCRProof 624x480 30fps 120s (2026)" type="coverPoster" url="/library/metadata/81/thumb/1785748877" />
+<Image alt="MiSTerPlex Glass OCRProof 624x480 30fps 120s (2026)" type="background" url="/library/metadata/81/art/1785748877" />
+<UltraBlurColors topLeft="440403" topRight="400480" bottomRight="030403" bottomLeft="0d0202" />
+</Video>
+<Video ratingKey="82" key="/library/metadata/82" guid="tv.plex.agents.none://82" type="movie" title="MiSTerPlex Glass OCRProof 624x480 60fps 120s (2026)" subtype="clip" summary="" thumb="/library/metadata/82/thumb/1785748877" art="/library/metadata/82/art/1785748877" duration="120000" addedAt="1785651068" updatedAt="1785748877" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="82" duration="120000" bitrate="937" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="60p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="82" key="/library/parts/82/1785614789/file.mp4" duration="120000" file="/data/movies/MiSTerPlex Glass OCRProof 624x480 60fps 120s (2026).mp4" size="14053246" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Glass OCRProof 624x480 60fps 120s (2026)" type="coverPoster" url="/library/metadata/82/thumb/1785748877" />
+<Image alt="MiSTerPlex Glass OCRProof 624x480 60fps 120s (2026)" type="background" url="/library/metadata/82/art/1785748877" />
+<UltraBlurColors topLeft="421455" topRight="4b6831" bottomRight="b20101" bottomLeft="ac1c20" />
+</Video>
+<Video ratingKey="16" key="/library/metadata/16" guid="tv.plex.agents.none://16" type="movie" title="MiSTerPlex Glass OCRProof 640x480 24fps 180s (2026)" subtype="clip" summary="" thumb="/library/metadata/16/thumb/1785748877" art="/library/metadata/16/art/1785748877" duration="180000" addedAt="1785578342" updatedAt="1785748877" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="16" duration="180000" bitrate="398" width="640" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="16" key="/library/parts/16/1785578342/file.mp4" duration="180000" file="/data/movies/MiSTerPlex Glass OCRProof 640x480 24fps 180s (2026).mp4" size="8956133" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Glass OCRProof 640x480 24fps 180s (2026)" type="coverPoster" url="/library/metadata/16/thumb/1785748877" />
+<Image alt="MiSTerPlex Glass OCRProof 640x480 24fps 180s (2026)" type="background" url="/library/metadata/16/art/1785748877" />
+<UltraBlurColors topLeft="153523" topRight="63611c" bottomRight="b20101" bottomLeft="b00e11" />
+</Video>
+<Video ratingKey="17" key="/library/metadata/17" guid="tv.plex.agents.none://17" type="movie" title="MiSTerPlex Glass OCRProof 720x480 24fps 180s (2026)" subtype="clip" summary="" thumb="/library/metadata/17/thumb/1785748877" art="/library/metadata/17/art/1785748877" duration="180000" addedAt="1785578342" updatedAt="1785748877" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="17" duration="180000" bitrate="451" width="720" height="480" aspectRatio="1.66" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="17" key="/library/parts/17/1785578342/file.mp4" duration="180000" file="/data/movies/MiSTerPlex Glass OCRProof 720x480 24fps 180s (2026).mp4" size="10148235" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Glass OCRProof 720x480 24fps 180s (2026)" type="coverPoster" url="/library/metadata/17/thumb/1785748877" />
+<Image alt="MiSTerPlex Glass OCRProof 720x480 24fps 180s (2026)" type="background" url="/library/metadata/17/art/1785748877" />
+<UltraBlurColors topLeft="352e02" topRight="316b48" bottomRight="b20101" bottomLeft="af1210" />
+</Video>
+<Video ratingKey="84" key="/library/metadata/84" guid="tv.plex.agents.none://84" type="movie" title="MiSTerPlex PromoScoreable 624x352 24fps 600s (2026)" subtype="clip" summary="" thumb="/library/metadata/84/thumb/1785748877" art="/library/metadata/84/art/1785748877" duration="600000" addedAt="1785651068" updatedAt="1785748877" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="84" duration="600000" bitrate="2331" width="624" height="352" aspectRatio="1.78" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="sd" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="84" key="/library/parts/84/1785628763/file.mp4" duration="600000" file="/data/movies/MiSTerPlex PromoScoreable 624x352 24fps 600s (2026).mp4" size="174816550" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex PromoScoreable 624x352 24fps 600s (2026)" type="coverPoster" url="/library/metadata/84/thumb/1785748877" />
+<Image alt="MiSTerPlex PromoScoreable 624x352 24fps 600s (2026)" type="background" url="/library/metadata/84/art/1785748877" />
+<UltraBlurColors topLeft="16361c" topRight="2e4e2c" bottomRight="3b6a43" bottomLeft="294d2f" />
+</Video>
+<Video ratingKey="85" key="/library/metadata/85" guid="tv.plex.agents.none://85" type="movie" title="MiSTerPlex PromoScoreable 624x480 24fps 600s (2026)" subtype="clip" summary="" thumb="/library/metadata/85/thumb/1785748878" art="/library/metadata/85/art/1785748878" duration="600000" addedAt="1785651068" updatedAt="1785748878" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="85" duration="600000" bitrate="2621" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="85" key="/library/parts/85/1785629552/file.mp4" duration="600000" file="/data/movies/MiSTerPlex PromoScoreable 624x480 24fps 600s (2026).mp4" size="196560248" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex PromoScoreable 624x480 24fps 600s (2026)" type="coverPoster" url="/library/metadata/85/thumb/1785748878" />
+<Image alt="MiSTerPlex PromoScoreable 624x480 24fps 600s (2026)" type="background" url="/library/metadata/85/art/1785748878" />
+<UltraBlurColors topLeft="17220b" topRight="19301a" bottomRight="3e6a3f" bottomLeft="294c2e" />
+</Video>
+<Video ratingKey="86" key="/library/metadata/86" guid="tv.plex.agents.none://86" type="movie" title="MiSTerPlex PromoScoreable 624x480 24fps 600s audioPlus100ms (2026)" subtype="clip" summary="" thumb="/library/metadata/86/thumb/1785748878" art="/library/metadata/86/art/1785748878" duration="600000" addedAt="1785651068" updatedAt="1785748878" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="86" duration="600000" bitrate="2621" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="86" key="/library/parts/86/1785629690/file.mp4" duration="600000" file="/data/movies/MiSTerPlex PromoScoreable 624x480 24fps 600s audioPlus100ms (2026).mp4" size="196574746" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex PromoScoreable 624x480 24fps 600s audioPlus100ms (2026)" type="coverPoster" url="/library/metadata/86/thumb/1785748878" />
+<Image alt="MiSTerPlex PromoScoreable 624x480 24fps 600s audioPlus100ms (2026)" type="background" url="/library/metadata/86/art/1785748878" />
+<UltraBlurColors topLeft="17361c" topRight="2c4c2a" bottomRight="7a3e98" bottomLeft="294c2e" />
+</Video>
+<Video ratingKey="87" key="/library/metadata/87" guid="tv.plex.agents.none://87" type="movie" title="MiSTerPlex PromoScoreable 640x480 24fps 600s (2026)" subtype="clip" summary="" thumb="/library/metadata/87/thumb/1785748878" art="/library/metadata/87/art/1785748878" duration="600000" addedAt="1785651068" updatedAt="1785748878" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="87" duration="600000" bitrate="2620" width="640" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="87" key="/library/parts/87/1785628873/file.mp4" duration="600000" file="/data/movies/MiSTerPlex PromoScoreable 640x480 24fps 600s (2026).mp4" size="196536442" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex PromoScoreable 640x480 24fps 600s (2026)" type="coverPoster" url="/library/metadata/87/thumb/1785748878" />
+<Image alt="MiSTerPlex PromoScoreable 640x480 24fps 600s (2026)" type="background" url="/library/metadata/87/art/1785748878" />
+<UltraBlurColors topLeft="16361b" topRight="254823" bottomRight="3f6a3e" bottomLeft="294c2e" />
+</Video>
+<Video ratingKey="88" key="/library/metadata/88" guid="tv.plex.agents.none://88" type="movie" title="MiSTerPlex PromoScoreable 720x404 24fps 600s (2026)" subtype="clip" summary="" thumb="/library/metadata/88/thumb/1785748878" art="/library/metadata/88/art/1785748878" duration="600000" addedAt="1785651068" updatedAt="1785748878" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="88" duration="600000" bitrate="2622" width="720" height="404" aspectRatio="1.78" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="sd" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="88" key="/library/parts/88/1785629100/file.mp4" duration="600000" file="/data/movies/MiSTerPlex PromoScoreable 720x404 24fps 600s (2026).mp4" size="196616114" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex PromoScoreable 720x404 24fps 600s (2026)" type="coverPoster" url="/library/metadata/88/thumb/1785748878" />
+<Image alt="MiSTerPlex PromoScoreable 720x404 24fps 600s (2026)" type="background" url="/library/metadata/88/art/1785748878" />
+<UltraBlurColors topLeft="17351c" topRight="316c3a" bottomRight="3c6a42" bottomLeft="2a4e30" />
+</Video>
+<Video ratingKey="89" key="/library/metadata/89" guid="tv.plex.agents.none://89" type="movie" title="MiSTerPlex PromoScoreable 720x480 24fps 600s (2026)" subtype="clip" summary="" thumb="/library/metadata/89/thumb/1785748878" art="/library/metadata/89/art/1785748878" duration="600000" addedAt="1785651068" updatedAt="1785748878" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="89" duration="600000" bitrate="2912" width="720" height="480" aspectRatio="1.66" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="89" key="/library/parts/89/1785628992/file.mp4" duration="600000" file="/data/movies/MiSTerPlex PromoScoreable 720x480 24fps 600s (2026).mp4" size="218435860" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex PromoScoreable 720x480 24fps 600s (2026)" type="coverPoster" url="/library/metadata/89/thumb/1785748878" />
+<Image alt="MiSTerPlex PromoScoreable 720x480 24fps 600s (2026)" type="background" url="/library/metadata/89/art/1785748878" />
+<UltraBlurColors topLeft="17361c" topRight="274524" bottomRight="316090" bottomLeft="284b2d" />
+</Video>
+<Video ratingKey="83" key="/library/metadata/83" guid="tv.plex.agents.none://83" type="movie" title="MiSTerPlex PromoScoreable 1440x1080 24fps 600s (2026)" subtype="clip" summary="" thumb="/library/metadata/83/thumb/1785748878" art="/library/metadata/83/art/1785748878" duration="600000" addedAt="1785651068" updatedAt="1785748878" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="83" duration="600000" bitrate="5860" width="1440" height="1080" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="1080" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="83" key="/library/parts/83/1785629442/file.mp4" duration="600000" file="/data/movies/MiSTerPlex PromoScoreable 1440x1080 24fps 600s (2026).mp4" size="439473085" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex PromoScoreable 1440x1080 24fps 600s (2026)" type="coverPoster" url="/library/metadata/83/thumb/1785748878" />
+<Image alt="MiSTerPlex PromoScoreable 1440x1080 24fps 600s (2026)" type="background" url="/library/metadata/83/art/1785748878" />
+<UltraBlurColors topLeft="16361c" topRight="306d39" bottomRight="3e6a3e" bottomLeft="294c2e" />
+</Video>
+<Video ratingKey="90" key="/library/metadata/90" guid="tv.plex.agents.none://90" type="movie" title="MiSTerPlex Real BBB GlassAV 426x240 24fps 180s (2026)" subtype="clip" summary="" thumb="/library/metadata/90/thumb/1785748878" art="/library/metadata/90/art/1785748878" duration="180000" addedAt="1785651068" updatedAt="1785748878" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="90" duration="180000" bitrate="1357" width="426" height="240" aspectRatio="1.78" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="sd" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="90" key="/library/parts/90/1785623526/file.mp4" duration="180000" file="/data/movies/MiSTerPlex Real BBB GlassAV 426x240 24fps 180s (2026).mp4" size="30526719" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Real BBB GlassAV 426x240 24fps 180s (2026)" type="coverPoster" url="/library/metadata/90/thumb/1785748878" />
+<Image alt="MiSTerPlex Real BBB GlassAV 426x240 24fps 180s (2026)" type="background" url="/library/metadata/90/art/1785748878" />
+<UltraBlurColors topLeft="4b1f14" topRight="3d5a9e" bottomRight="60612b" bottomLeft="516626" />
+</Video>
+<Video ratingKey="91" key="/library/metadata/91" guid="tv.plex.agents.none://91" type="movie" title="MiSTerPlex Real BBB GlassAV 426x240 24fps 180s audioPlus100ms (2026)" subtype="clip" summary="" thumb="/library/metadata/91/thumb/1785748878" art="/library/metadata/91/art/1785748878" duration="180000" addedAt="1785651068" updatedAt="1785748878" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="91" duration="180000" bitrate="1357" width="426" height="240" aspectRatio="1.78" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="sd" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="91" key="/library/parts/91/1785623542/file.mp4" duration="180000" file="/data/movies/MiSTerPlex Real BBB GlassAV 426x240 24fps 180s audioPlus100ms (2026).mp4" size="30525392" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Real BBB GlassAV 426x240 24fps 180s audioPlus100ms (2026)" type="coverPoster" url="/library/metadata/91/thumb/1785748878" />
+<Image alt="MiSTerPlex Real BBB GlassAV 426x240 24fps 180s audioPlus100ms (2026)" type="background" url="/library/metadata/91/art/1785748878" />
+<UltraBlurColors topLeft="4b1f14" topRight="3d5a9e" bottomRight="60612b" bottomLeft="516626" />
+</Video>
+<Video ratingKey="29" key="/library/metadata/29" guid="tv.plex.agents.none://29" type="movie" title="MiSTerPlex Real BBB GlassAV 624x352 24fps 90s (2026)" subtype="clip" summary="" thumb="/library/metadata/29/thumb/1785748878" art="/library/metadata/29/art/1785748878" duration="90000" addedAt="1785600738" updatedAt="1785748878" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="29" duration="90000" bitrate="2630" width="624" height="352" aspectRatio="1.78" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="sd" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="29" key="/library/parts/29/1785596329/file.mp4" duration="90000" file="/data/movies/MiSTerPlex Real BBB GlassAV 624x352 24fps 90s (2026).mp4" size="29587348" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Real BBB GlassAV 624x352 24fps 90s (2026)" type="coverPoster" url="/library/metadata/29/thumb/1785748878" />
+<Image alt="MiSTerPlex Real BBB GlassAV 624x352 24fps 90s (2026)" type="background" url="/library/metadata/29/art/1785748878" />
+<UltraBlurColors topLeft="133049" topRight="1f4c42" bottomRight="2d6385" bottomLeft="1b3c29" />
+</Video>
+<Video ratingKey="92" key="/library/metadata/92" guid="tv.plex.agents.none://92" type="movie" title="MiSTerPlex Real BBB GlassAV 624x352 24fps 180s (2026)" subtype="clip" summary="" thumb="/library/metadata/92/thumb/1785748878" art="/library/metadata/92/art/1785748878" duration="180000" addedAt="1785651068" updatedAt="1785748878" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="92" duration="180000" bitrate="2149" width="624" height="352" aspectRatio="1.78" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="sd" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="92" key="/library/parts/92/1785623561/file.mp4" duration="180000" file="/data/movies/MiSTerPlex Real BBB GlassAV 624x352 24fps 180s (2026).mp4" size="48348728" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Real BBB GlassAV 624x352 24fps 180s (2026)" type="coverPoster" url="/library/metadata/92/thumb/1785748878" />
+<Image alt="MiSTerPlex Real BBB GlassAV 624x352 24fps 180s (2026)" type="background" url="/library/metadata/92/art/1785748878" />
+<UltraBlurColors topLeft="4b1e1a" topRight="3d5a9e" bottomRight="5f622b" bottomLeft="4b5b16" />
+</Video>
+<Video ratingKey="93" key="/library/metadata/93" guid="tv.plex.agents.none://93" type="movie" title="MiSTerPlex Real BBB GlassAV 624x352 24fps 180s audioPlus100ms (2026)" subtype="clip" summary="" thumb="/library/metadata/93/thumb/1785748878" art="/library/metadata/93/art/1785748878" duration="180000" addedAt="1785651068" updatedAt="1785748878" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="93" duration="180000" bitrate="2148" width="624" height="352" aspectRatio="1.78" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="sd" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="93" key="/library/parts/93/1785623580/file.mp4" duration="180000" file="/data/movies/MiSTerPlex Real BBB GlassAV 624x352 24fps 180s audioPlus100ms (2026).mp4" size="48336721" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Real BBB GlassAV 624x352 24fps 180s audioPlus100ms (2026)" type="coverPoster" url="/library/metadata/93/thumb/1785748878" />
+<Image alt="MiSTerPlex Real BBB GlassAV 624x352 24fps 180s audioPlus100ms (2026)" type="background" url="/library/metadata/93/art/1785748878" />
+<UltraBlurColors topLeft="4b1e1a" topRight="3d5a9e" bottomRight="5f622b" bottomLeft="4b5a19" />
+</Video>
+<Video ratingKey="94" key="/library/metadata/94" guid="tv.plex.agents.none://94" type="movie" title="MiSTerPlex Real BBB GlassAV 624x480 24fps 600s (2026)" subtype="clip" summary="" thumb="/library/metadata/94/thumb/1785748878" art="/library/metadata/94/art/1785748878" duration="600000" addedAt="1785651068" updatedAt="1785748878" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="94" duration="600000" bitrate="2623" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="94" key="/library/parts/94/1785623344/file.mp4" duration="600000" file="/data/movies/MiSTerPlex Real BBB GlassAV 624x480 24fps 600s (2026).mp4" size="196707445" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Real BBB GlassAV 624x480 24fps 600s (2026)" type="coverPoster" url="/library/metadata/94/thumb/1785748878" />
+<Image alt="MiSTerPlex Real BBB GlassAV 624x480 24fps 600s (2026)" type="background" url="/library/metadata/94/art/1785748878" />
+<UltraBlurColors topLeft="15361a" topRight="356c37" bottomRight="3f6a3a" bottomLeft="294e30" />
+</Video>
+<Video ratingKey="95" key="/library/metadata/95" guid="tv.plex.agents.none://95" type="movie" title="MiSTerPlex Real BBB GlassAV 624x480 24fps 600s audioPlus100ms (2026)" subtype="clip" summary="" thumb="/library/metadata/95/thumb/1785748879" art="/library/metadata/95/art/1785748879" duration="600000" addedAt="1785651068" updatedAt="1785748879" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="95" duration="600000" bitrate="2623" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="95" key="/library/parts/95/1785623422/file.mp4" duration="600000" file="/data/movies/MiSTerPlex Real BBB GlassAV 624x480 24fps 600s audioPlus100ms (2026).mp4" size="196691829" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Real BBB GlassAV 624x480 24fps 600s audioPlus100ms (2026)" type="coverPoster" url="/library/metadata/95/thumb/1785748879" />
+<Image alt="MiSTerPlex Real BBB GlassAV 624x480 24fps 600s audioPlus100ms (2026)" type="background" url="/library/metadata/95/art/1785748879" />
+<UltraBlurColors topLeft="15361a" topRight="356c37" bottomRight="3f6a3a" bottomLeft="294e30" />
+</Video>
+<Video ratingKey="30" key="/library/metadata/30" guid="tv.plex.agents.none://30" type="movie" title="MiSTerPlex Real BBB GlassAV 624x480 24fps 1200s (2026)" subtype="clip" summary="" thumb="/library/metadata/30/thumb/1785748879" art="/library/metadata/30/art/1785748879" duration="1200000" addedAt="1785600738" updatedAt="1785748879" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="30" duration="1200000" bitrate="2621" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="30" key="/library/parts/30/1785596329/file.mp4" duration="1200000" file="/data/movies/MiSTerPlex Real BBB GlassAV 624x480 24fps 1200s (2026).mp4" size="393168786" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Real BBB GlassAV 624x480 24fps 1200s (2026)" type="coverPoster" url="/library/metadata/30/thumb/1785748879" />
+<Image alt="MiSTerPlex Real BBB GlassAV 624x480 24fps 1200s (2026)" type="background" url="/library/metadata/30/art/1785748879" />
+<UltraBlurColors topLeft="203416" topRight="254f39" bottomRight="556622" bottomLeft="804c26" />
+</Video>
+<Video ratingKey="31" key="/library/metadata/31" guid="tv.plex.agents.none://31" type="movie" title="MiSTerPlex Real BBB GlassAV 640x480 24fps 90s (2026)" subtype="clip" summary="" thumb="/library/metadata/31/thumb/1785748879" art="/library/metadata/31/art/1785748879" duration="90000" addedAt="1785600738" updatedAt="1785748879" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="31" duration="90000" bitrate="2619" width="640" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="31" key="/library/parts/31/1785596329/file.mp4" duration="90000" file="/data/movies/MiSTerPlex Real BBB GlassAV 640x480 24fps 90s (2026).mp4" size="29467121" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Real BBB GlassAV 640x480 24fps 90s (2026)" type="coverPoster" url="/library/metadata/31/thumb/1785748879" />
+<Image alt="MiSTerPlex Real BBB GlassAV 640x480 24fps 90s (2026)" type="background" url="/library/metadata/31/art/1785748879" />
+<UltraBlurColors topLeft="133048" topRight="18413e" bottomRight="6d5c1d" bottomLeft="336b47" />
+</Video>
+<Video ratingKey="96" key="/library/metadata/96" guid="tv.plex.agents.none://96" type="movie" title="MiSTerPlex Real BBB GlassAV 640x480 24fps 180s (2026)" subtype="clip" summary="" thumb="/library/metadata/96/thumb/1785748879" art="/library/metadata/96/art/1785748879" duration="180000" addedAt="1785651068" updatedAt="1785748879" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="96" duration="180000" bitrate="2626" width="640" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="96" key="/library/parts/96/1785623443/file.mp4" duration="180000" file="/data/movies/MiSTerPlex Real BBB GlassAV 640x480 24fps 180s (2026).mp4" size="59087991" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Real BBB GlassAV 640x480 24fps 180s (2026)" type="coverPoster" url="/library/metadata/96/thumb/1785748879" />
+<Image alt="MiSTerPlex Real BBB GlassAV 640x480 24fps 180s (2026)" type="background" url="/library/metadata/96/art/1785748879" />
+<UltraBlurColors topLeft="152e4d" topRight="54661d" bottomRight="62602b" bottomLeft="435c1c" />
+</Video>
+<Video ratingKey="97" key="/library/metadata/97" guid="tv.plex.agents.none://97" type="movie" title="MiSTerPlex Real BBB GlassAV 640x480 24fps 180s audioPlus100ms (2026)" subtype="clip" summary="" thumb="/library/metadata/97/thumb/1785748879" art="/library/metadata/97/art/1785748879" duration="180000" addedAt="1785651068" updatedAt="1785748879" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="97" duration="180000" bitrate="2625" width="640" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="97" key="/library/parts/97/1785623464/file.mp4" duration="180000" file="/data/movies/MiSTerPlex Real BBB GlassAV 640x480 24fps 180s audioPlus100ms (2026).mp4" size="59065005" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Real BBB GlassAV 640x480 24fps 180s audioPlus100ms (2026)" type="coverPoster" url="/library/metadata/97/thumb/1785748879" />
+<Image alt="MiSTerPlex Real BBB GlassAV 640x480 24fps 180s audioPlus100ms (2026)" type="background" url="/library/metadata/97/art/1785748879" />
+<UltraBlurColors topLeft="152e4d" topRight="54661d" bottomRight="62602b" bottomLeft="435c1c" />
+</Video>
+<Video ratingKey="32" key="/library/metadata/32" guid="tv.plex.agents.none://32" type="movie" title="MiSTerPlex Real BBB GlassAV 720x480 24fps 90s (2026)" subtype="clip" summary="" thumb="/library/metadata/32/thumb/1785748879" art="/library/metadata/32/art/1785748879" duration="90000" addedAt="1785600738" updatedAt="1785748879" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="32" duration="90000" bitrate="2625" width="720" height="480" aspectRatio="1.66" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="32" key="/library/parts/32/1785596329/file.mp4" duration="90000" file="/data/movies/MiSTerPlex Real BBB GlassAV 720x480 24fps 90s (2026).mp4" size="29534741" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Real BBB GlassAV 720x480 24fps 90s (2026)" type="coverPoster" url="/library/metadata/32/thumb/1785748879" />
+<Image alt="MiSTerPlex Real BBB GlassAV 720x480 24fps 90s (2026)" type="background" url="/library/metadata/32/art/1785748879" />
+<UltraBlurColors topLeft="0d1903" topRight="275c52" bottomRight="424104" bottomLeft="18392b" />
+</Video>
+<Video ratingKey="98" key="/library/metadata/98" guid="tv.plex.agents.none://98" type="movie" title="MiSTerPlex Real BBB GlassAV 720x480 24fps 180s (2026)" subtype="clip" summary="" thumb="/library/metadata/98/thumb/1785748879" art="/library/metadata/98/art/1785748879" duration="180000" addedAt="1785651068" updatedAt="1785748879" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="98" duration="180000" bitrate="2926" width="720" height="480" aspectRatio="1.66" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="98" key="/library/parts/98/1785623487/file.mp4" duration="180000" file="/data/movies/MiSTerPlex Real BBB GlassAV 720x480 24fps 180s (2026).mp4" size="65843964" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Real BBB GlassAV 720x480 24fps 180s (2026)" type="coverPoster" url="/library/metadata/98/thumb/1785748879" />
+<Image alt="MiSTerPlex Real BBB GlassAV 720x480 24fps 180s (2026)" type="background" url="/library/metadata/98/art/1785748879" />
+<UltraBlurColors topLeft="482115" topRight="576524" bottomRight="61612b" bottomLeft="4c5c1a" />
+</Video>
+<Video ratingKey="99" key="/library/metadata/99" guid="tv.plex.agents.none://99" type="movie" title="MiSTerPlex Real BBB GlassAV 720x480 24fps 180s audioPlus100ms (2026)" subtype="clip" summary="" thumb="/library/metadata/99/thumb/1785748879" art="/library/metadata/99/art/1785748879" duration="180000" addedAt="1785651068" updatedAt="1785748879" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="99" duration="180000" bitrate="2926" width="720" height="480" aspectRatio="1.66" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="99" key="/library/parts/99/1785623510/file.mp4" duration="180000" file="/data/movies/MiSTerPlex Real BBB GlassAV 720x480 24fps 180s audioPlus100ms (2026).mp4" size="65832087" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Real BBB GlassAV 720x480 24fps 180s audioPlus100ms (2026)" type="coverPoster" url="/library/metadata/99/thumb/1785748879" />
+<Image alt="MiSTerPlex Real BBB GlassAV 720x480 24fps 180s audioPlus100ms (2026)" type="background" url="/library/metadata/99/art/1785748879" />
+<UltraBlurColors topLeft="482115" topRight="576524" bottomRight="61612b" bottomLeft="4c5c1a" />
+</Video>
+<Video ratingKey="28" key="/library/metadata/28" guid="tv.plex.agents.none://28" type="movie" title="MiSTerPlex Real BBB GlassAV 1440x1080 24fps 90s (2026)" subtype="clip" summary="" thumb="/library/metadata/28/thumb/1785748879" art="/library/metadata/28/art/1785748879" duration="90000" addedAt="1785600738" updatedAt="1785748879" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="28" duration="90000" bitrate="5007" width="1440" height="1080" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="1080" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="28" key="/library/parts/28/1785596329/file.mp4" duration="90000" file="/data/movies/MiSTerPlex Real BBB GlassAV 1440x1080 24fps 90s (2026).mp4" size="56332526" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Real BBB GlassAV 1440x1080 24fps 90s (2026)" type="coverPoster" url="/library/metadata/28/thumb/1785748879" />
+<Image alt="MiSTerPlex Real BBB GlassAV 1440x1080 24fps 90s (2026)" type="background" url="/library/metadata/28/art/1785748879" />
+<UltraBlurColors topLeft="133049" topRight="2c655a" bottomRight="2e6289" bottomLeft="326b47" />
+</Video>
+<Video ratingKey="18" key="/library/metadata/18" guid="tv.plex.agents.none://18" type="movie" title="MiSTerPlex Real BBB GlassID 624x352 24fps 360s (2026)" subtype="clip" summary="" thumb="/library/metadata/18/thumb/1785748879" art="/library/metadata/18/art/1785748879" duration="360000" addedAt="1785578342" updatedAt="1785748879" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="18" duration="360000" bitrate="2612" width="624" height="352" aspectRatio="1.78" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="sd" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="18" key="/library/parts/18/1785578342/file.mp4" duration="360000" file="/data/movies/MiSTerPlex Real BBB GlassID 624x352 24fps 360s (2026).mp4" size="117540874" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Real BBB GlassID 624x352 24fps 360s (2026)" type="coverPoster" url="/library/metadata/18/thumb/1785748879" />
+<Image alt="MiSTerPlex Real BBB GlassID 624x352 24fps 360s (2026)" type="background" url="/library/metadata/18/art/1785748879" />
+<UltraBlurColors topLeft="0f2213" topRight="395b2f" bottomRight="294221" bottomLeft="193a0e" />
+</Video>
+<Video ratingKey="19" key="/library/metadata/19" guid="tv.plex.agents.none://19" type="movie" title="MiSTerPlex Real BBB GlassID 720x480 24fps (2026)" subtype="clip" summary="" thumb="/library/metadata/19/thumb/1785748879" art="/library/metadata/19/art/1785748879" duration="596458" addedAt="1785578342" updatedAt="1785748879" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="19" duration="596458" bitrate="2599" width="720" height="480" aspectRatio="1.66" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="19" key="/library/parts/19/1785578342/file.mp4" duration="596458" file="/data/movies/MiSTerPlex Real BBB GlassID 720x480 24fps (2026).mp4" size="193795283" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Real BBB GlassID 720x480 24fps (2026)" type="coverPoster" url="/library/metadata/19/thumb/1785748879" />
+<Image alt="MiSTerPlex Real BBB GlassID 720x480 24fps (2026)" type="background" url="/library/metadata/19/art/1785748879" />
+<UltraBlurColors topLeft="16361c" topRight="20361b" bottomRight="3b6a43" bottomLeft="284c30" />
+</Video>
+<Video ratingKey="124" key="/library/metadata/124" guid="tv.plex.agents.none://124" type="movie" title="MiSTerPlex ResKnee 320x240 24fps src400k CB ref1 90s (2026)" subtype="clip" summary="" thumb="/library/metadata/124/thumb/1785748880" art="/library/metadata/124/art/1785748880" duration="90000" addedAt="1785679406" updatedAt="1785748880" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="124" duration="90000" bitrate="531" width="320" height="240" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="sd" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="124" key="/library/parts/124/1785679341/file.mp4" duration="90000" file="/data/movies/MiSTerPlex ResKnee 320x240 24fps src400k CB ref1 90s (2026).mp4" size="5974666" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex ResKnee 320x240 24fps src400k CB ref1 90s (2026)" type="coverPoster" url="/library/metadata/124/thumb/1785748880" />
+<Image alt="MiSTerPlex ResKnee 320x240 24fps src400k CB ref1 90s (2026)" type="background" url="/library/metadata/124/art/1785748880" />
+</Video>
+<Video ratingKey="125" key="/library/metadata/125" guid="tv.plex.agents.none://125" type="movie" title="MiSTerPlex ResKnee 624x352 24fps src800k CB ref1 90s (2026)" subtype="clip" summary="" thumb="/library/metadata/125/thumb/1785748880" art="/library/metadata/125/art/1785748880" duration="90000" addedAt="1785679406" updatedAt="1785748880" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="125" duration="90000" bitrate="924" width="624" height="352" aspectRatio="1.78" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="sd" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="125" key="/library/parts/125/1785679344/file.mp4" duration="90000" file="/data/movies/MiSTerPlex ResKnee 624x352 24fps src800k CB ref1 90s (2026).mp4" size="10397405" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex ResKnee 624x352 24fps src800k CB ref1 90s (2026)" type="coverPoster" url="/library/metadata/125/thumb/1785748880" />
+<Image alt="MiSTerPlex ResKnee 624x352 24fps src800k CB ref1 90s (2026)" type="background" url="/library/metadata/125/art/1785748880" />
+</Video>
+<Video ratingKey="130" key="/library/metadata/130" guid="tv.plex.agents.none://130" type="movie" title="MiSTerPlex ResKnee 624x480 24fps src400k CB ref1 90s (2026)" subtype="clip" summary="" thumb="/library/metadata/130/thumb/1785748880" art="/library/metadata/130/art/1785748880" duration="90000" addedAt="1785679406" updatedAt="1785748880" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="130" duration="90000" bitrate="524" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="130" key="/library/parts/130/1785679322/file.mp4" duration="90000" file="/data/movies/MiSTerPlex ResKnee 624x480 24fps src400k CB ref1 90s (2026).mp4" size="5898556" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex ResKnee 624x480 24fps src400k CB ref1 90s (2026)" type="coverPoster" url="/library/metadata/130/thumb/1785748880" />
+<Image alt="MiSTerPlex ResKnee 624x480 24fps src400k CB ref1 90s (2026)" type="background" url="/library/metadata/130/art/1785748880" />
+</Video>
+<Video ratingKey="131" key="/library/metadata/131" guid="tv.plex.agents.none://131" type="movie" title="MiSTerPlex ResKnee 624x480 24fps src800k CB ref1 90s (2026)" subtype="clip" summary="" thumb="/library/metadata/131/thumb/1785748880" art="/library/metadata/131/art/1785748880" duration="90000" addedAt="1785679406" updatedAt="1785748880" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="131" duration="90000" bitrate="920" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="131" key="/library/parts/131/1785679325/file.mp4" duration="90000" file="/data/movies/MiSTerPlex ResKnee 624x480 24fps src800k CB ref1 90s (2026).mp4" size="10347394" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex ResKnee 624x480 24fps src800k CB ref1 90s (2026)" type="coverPoster" url="/library/metadata/131/thumb/1785748880" />
+<Image alt="MiSTerPlex ResKnee 624x480 24fps src800k CB ref1 90s (2026)" type="background" url="/library/metadata/131/art/1785748880" />
+</Video>
+<Video ratingKey="126" key="/library/metadata/126" guid="tv.plex.agents.none://126" type="movie" title="MiSTerPlex ResKnee 624x480 24fps src1200k CB ref1 90s (2026)" subtype="clip" summary="" thumb="/library/metadata/126/thumb/1785748880" art="/library/metadata/126/art/1785748880" duration="90000" addedAt="1785679406" updatedAt="1785748880" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="126" duration="90000" bitrate="1311" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="126" key="/library/parts/126/1785679328/file.mp4" duration="90000" file="/data/movies/MiSTerPlex ResKnee 624x480 24fps src1200k CB ref1 90s (2026).mp4" size="14750894" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex ResKnee 624x480 24fps src1200k CB ref1 90s (2026)" type="coverPoster" url="/library/metadata/126/thumb/1785748880" />
+<Image alt="MiSTerPlex ResKnee 624x480 24fps src1200k CB ref1 90s (2026)" type="background" url="/library/metadata/126/art/1785748880" />
+</Video>
+<Video ratingKey="127" key="/library/metadata/127" guid="tv.plex.agents.none://127" type="movie" title="MiSTerPlex ResKnee 624x480 24fps src1600k CB ref1 90s (2026)" subtype="clip" summary="" thumb="/library/metadata/127/thumb/1785748880" art="/library/metadata/127/art/1785748880" duration="90000" addedAt="1785679406" updatedAt="1785748880" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="127" duration="90000" bitrate="1704" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="127" key="/library/parts/127/1785679332/file.mp4" duration="90000" file="/data/movies/MiSTerPlex ResKnee 624x480 24fps src1600k CB ref1 90s (2026).mp4" size="19173165" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex ResKnee 624x480 24fps src1600k CB ref1 90s (2026)" type="coverPoster" url="/library/metadata/127/thumb/1785748880" />
+<Image alt="MiSTerPlex ResKnee 624x480 24fps src1600k CB ref1 90s (2026)" type="background" url="/library/metadata/127/art/1785748880" />
+</Video>
+<Video ratingKey="128" key="/library/metadata/128" guid="tv.plex.agents.none://128" type="movie" title="MiSTerPlex ResKnee 624x480 24fps src2000k CB ref1 90s (2026)" subtype="clip" summary="" thumb="/library/metadata/128/thumb/1785748880" art="/library/metadata/128/art/1785748880" duration="90000" addedAt="1785679406" updatedAt="1785748880" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="128" duration="90000" bitrate="2096" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="128" key="/library/parts/128/1785679335/file.mp4" duration="90000" file="/data/movies/MiSTerPlex ResKnee 624x480 24fps src2000k CB ref1 90s (2026).mp4" size="23579402" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex ResKnee 624x480 24fps src2000k CB ref1 90s (2026)" type="coverPoster" url="/library/metadata/128/thumb/1785748880" />
+<Image alt="MiSTerPlex ResKnee 624x480 24fps src2000k CB ref1 90s (2026)" type="background" url="/library/metadata/128/art/1785748880" />
+</Video>
+<Video ratingKey="129" key="/library/metadata/129" guid="tv.plex.agents.none://129" type="movie" title="MiSTerPlex ResKnee 624x480 24fps src2500k CB ref1 90s (2026)" subtype="clip" summary="" thumb="/library/metadata/129/thumb/1785748880" art="/library/metadata/129/art/1785748880" duration="90000" addedAt="1785679406" updatedAt="1785748880" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="129" duration="90000" bitrate="2584" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="129" key="/library/parts/129/1785679339/file.mp4" duration="90000" file="/data/movies/MiSTerPlex ResKnee 624x480 24fps src2500k CB ref1 90s (2026).mp4" size="29065445" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex ResKnee 624x480 24fps src2500k CB ref1 90s (2026)" type="coverPoster" url="/library/metadata/129/thumb/1785748880" />
+<Image alt="MiSTerPlex ResKnee 624x480 24fps src2500k CB ref1 90s (2026)" type="background" url="/library/metadata/129/art/1785748880" />
+</Video>
+<Video ratingKey="100" key="/library/metadata/100" guid="tv.plex.agents.none://100" type="movie" title="MiSTerPlex Rowcount Vernier 624x480 24fps 120s (2026)" subtype="clip" summary="" thumb="/library/metadata/100/thumb/1785748880" art="/library/metadata/100/art/1785748880" duration="120000" addedAt="1785651068" updatedAt="1785748880" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="100" duration="120000" bitrate="410" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="100" key="/library/parts/100/1785605106/file.mp4" duration="120000" file="/data/movies/MiSTerPlex Rowcount Vernier 624x480 24fps 120s (2026).mp4" size="6146502" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Rowcount Vernier 624x480 24fps 120s (2026)" type="coverPoster" url="/library/metadata/100/thumb/1785748880" />
+<Image alt="MiSTerPlex Rowcount Vernier 624x480 24fps 120s (2026)" type="background" url="/library/metadata/100/art/1785748880" />
+<UltraBlurColors topLeft="141314" topRight="4f309f" bottomRight="466a27" bottomLeft="0b0b0b" />
+</Video>
+<Video ratingKey="141" key="/library/metadata/141" guid="tv.plex.agents.none://141" type="movie" title="MiSTerPlex S5 RealGlass 720x480 24fps 1200s (2026)" subtype="clip" summary="" thumb="/library/metadata/141/thumb/1785748880" art="/library/metadata/141/art/1785748880" duration="1200000" addedAt="1785685789" updatedAt="1785748880" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="141" duration="1200000" bitrate="2626" width="720" height="480" aspectRatio="1.66" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="141" key="/library/parts/141/1785685395/file.mp4" duration="1200000" file="/data/movies/MiSTerPlex S5 RealGlass 720x480 24fps 1200s (2026).mp4" size="393912477" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex S5 RealGlass 720x480 24fps 1200s (2026)" type="coverPoster" url="/library/metadata/141/thumb/1785748880" />
+<Image alt="MiSTerPlex S5 RealGlass 720x480 24fps 1200s (2026)" type="background" url="/library/metadata/141/art/1785748880" />
+<UltraBlurColors topLeft="223415" topRight="234d38" bottomRight="556621" bottomLeft="5f621d" />
+</Video>
+<Video ratingKey="140" key="/library/metadata/140" guid="tv.plex.agents.none://140" type="movie" title="MiSTerPlex S5 RealGlass 720x480 23976fps 1200s (2026)" subtype="clip" summary="" thumb="/library/metadata/140/thumb/1785748880" art="/library/metadata/140/art/1785748880" duration="1200000" addedAt="1785685789" updatedAt="1785748880" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="140" duration="1200000" bitrate="2626" width="720" height="480" aspectRatio="1.66" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="140" key="/library/parts/140/1785685535/file.mp4" duration="1200000" file="/data/movies/MiSTerPlex S5 RealGlass 720x480 23976fps 1200s (2026).mp4" size="393930676" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex S5 RealGlass 720x480 23976fps 1200s (2026)" type="coverPoster" url="/library/metadata/140/thumb/1785748880" />
+<Image alt="MiSTerPlex S5 RealGlass 720x480 23976fps 1200s (2026)" type="background" url="/library/metadata/140/art/1785748880" />
+<UltraBlurColors topLeft="223415" topRight="386641" bottomRight="546621" bottomLeft="804b2a" />
+</Video>
+<Video ratingKey="1" key="/library/metadata/1" guid="tv.plex.agents.none://1" type="movie" title="MiSTerPlex Soak 240p 23976fps (2026)" subtype="clip" summary="" viewCount="9" skipCount="5" lastViewedAt="1785782005" thumb="/library/metadata/1/thumb/1785748163" art="/library/metadata/1/art/1785748163" duration="360000" addedAt="1785436059" updatedAt="1785748163" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="1" duration="360000" bitrate="145" width="320" height="240" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="sd" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="1" key="/library/parts/1/1785436059/file.mp4" duration="360000" file="/data/movies/MiSTerPlex Soak 240p 23976fps (2026).mp4" size="6515205" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Soak 240p 23976fps (2026)" type="coverPoster" url="/library/metadata/1/thumb/1785748163" />
+<Image alt="MiSTerPlex Soak 240p 23976fps (2026)" type="background" url="/library/metadata/1/art/1785748163" />
+<UltraBlurColors topLeft="370374" topRight="044304" bottomRight="b20401" bottomLeft="b00a11" />
+</Video>
+<Video ratingKey="8" key="/library/metadata/8" guid="tv.plex.agents.none://8" type="movie" title="MiSTerPlex Soak 480p 24fps (2026)" subtype="clip" summary="" thumb="/library/metadata/8/thumb/1785748881" art="/library/metadata/8/art/1785748881" duration="360000" addedAt="1785543451" updatedAt="1785748881" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="8" duration="360000" bitrate="243" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="8" key="/library/parts/8/1785543436/file.mp4" duration="360000" file="/data/movies/MiSTerPlex Soak 480p 24fps (2026).mp4" size="10953711" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Soak 480p 24fps (2026)" type="coverPoster" url="/library/metadata/8/thumb/1785748881" />
+<Image alt="MiSTerPlex Soak 480p 24fps (2026)" type="background" url="/library/metadata/8/art/1785748881" />
+<UltraBlurColors topLeft="370374" topRight="044304" bottomRight="b20601" bottomLeft="af0f15" />
+</Video>
+<Video ratingKey="11" key="/library/metadata/11" guid="tv.plex.agents.none://11" type="movie" title="MiSTerPlex Soak 480p 24fps RAMP (2026)" subtype="clip" summary="" thumb="/library/metadata/11/thumb/1785748881" art="/library/metadata/11/art/1785748881" duration="360000" addedAt="1785558276" updatedAt="1785748881" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="11" duration="360000" bitrate="365" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="11" key="/library/parts/11/1785559952/file.mp4" duration="360000" file="/data/movies/MiSTerPlex Soak 480p 24fps RAMP (2026).mp4" size="16442312" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Soak 480p 24fps RAMP (2026)" type="coverPoster" url="/library/metadata/11/thumb/1785748881" />
+<Image alt="MiSTerPlex Soak 480p 24fps RAMP (2026)" type="background" url="/library/metadata/11/art/1785748881" />
+<UltraBlurColors topLeft="0d0202" topRight="030403" bottomRight="0d0202" bottomLeft="030403" />
+</Video>
+<Video ratingKey="3" key="/library/metadata/3" guid="tv.plex.agents.none://3" type="movie" title="MiSTerPlex Test 240p (2026)" subtype="clip" summary="" viewCount="75" lastViewedAt="1785720925" thumb="/library/metadata/3/thumb/1785748881" art="/library/metadata/3/art/1785748881" duration="30016" addedAt="1785436057" updatedAt="1785748881" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="3" duration="30016" bitrate="127" width="320" height="240" aspectRatio="1.78" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="sd" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="3" key="/library/parts/3/1785436057/file.mp4" duration="30016" file="/data/movies/MiSTerPlex Test 240p (2026).mp4" size="477560" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Test 240p (2026)" type="coverPoster" url="/library/metadata/3/thumb/1785748881" />
+<Image alt="MiSTerPlex Test 240p (2026)" type="background" url="/library/metadata/3/art/1785748881" />
+<UltraBlurColors topLeft="2d2c2d" topRight="0b0b0b" bottomRight="b20501" bottomLeft="af1015" />
+</Video>
+<Video ratingKey="4" key="/library/metadata/4" guid="tv.plex.agents.none://4" type="movie" title="MiSTerPlex Test 240p 30fps (2026)" subtype="clip" summary="" viewCount="3" lastViewedAt="1785615584" thumb="/library/metadata/4/thumb/1785748881" art="/library/metadata/4/art/1785748881" duration="30000" addedAt="1785436059" updatedAt="1785748881" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="4" duration="30000" bitrate="111" width="320" height="240" aspectRatio="1.33" audioChannels="1" audioCodec="aac" videoCodec="h264" videoResolution="sd" container="mp4" videoFrameRate="NTSC" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="4" key="/library/parts/4/1785436059/file.mp4" duration="30000" file="/data/movies/MiSTerPlex Test 240p 30fps (2026).mp4" size="415568" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Test 240p 30fps (2026)" type="coverPoster" url="/library/metadata/4/thumb/1785748881" />
+<Image alt="MiSTerPlex Test 240p 30fps (2026)" type="background" url="/library/metadata/4/art/1785748881" />
+<UltraBlurColors topLeft="073533" topRight="5d5d5d" bottomRight="68595a" bottomLeft="5d5d5d" />
+</Video>
+<Video ratingKey="5" key="/library/metadata/5" guid="tv.plex.agents.none://5" type="movie" title="MiSTerPlex Test 240p 60fps (2026)" subtype="clip" summary="" thumb="/library/metadata/5/thumb/1785748881" art="/library/metadata/5/art/1785748881" duration="30000" addedAt="1785436059" updatedAt="1785748881" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="5" duration="30000" bitrate="136" width="320" height="240" aspectRatio="1.33" audioChannels="1" audioCodec="aac" videoCodec="h264" videoResolution="sd" container="mp4" videoFrameRate="60p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="5" key="/library/parts/5/1785436059/file.mp4" duration="30000" file="/data/movies/MiSTerPlex Test 240p 60fps (2026).mp4" size="510396" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Test 240p 60fps (2026)" type="coverPoster" url="/library/metadata/5/thumb/1785748881" />
+<Image alt="MiSTerPlex Test 240p 60fps (2026)" type="background" url="/library/metadata/5/art/1785748881" />
+<UltraBlurColors topLeft="173617" topRight="5d5d5d" bottomRight="68595a" bottomLeft="5d5d5d" />
+</Video>
+<Video ratingKey="6" key="/library/metadata/6" guid="tv.plex.agents.none://6" type="movie" title="MiSTerPlex Test 480p (2026)" subtype="clip" summary="" thumb="/library/metadata/6/thumb/1785748881" art="/library/metadata/6/art/1785748881" duration="30016" addedAt="1785436058" updatedAt="1785748881" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="6" duration="30016" bitrate="272" width="624" height="480" aspectRatio="1.78" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="6" key="/library/parts/6/1785436058/file.mp4" duration="30016" file="/data/movies/MiSTerPlex Test 480p (2026).mp4" size="1019184" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Test 480p (2026)" type="coverPoster" url="/library/metadata/6/thumb/1785748881" />
+<Image alt="MiSTerPlex Test 480p (2026)" type="background" url="/library/metadata/6/art/1785748881" />
+<UltraBlurColors topLeft="302f11" topRight="044304" bottomRight="b20501" bottomLeft="af1315" />
+</Video>
+<Video ratingKey="7" key="/library/metadata/7" guid="tv.plex.agents.none://7" type="movie" title="MiSTerPlex Test 720p (2026)" subtype="clip" summary="" thumb="/library/metadata/7/thumb/1785748881" art="/library/metadata/7/art/1785748881" duration="30016" addedAt="1785436059" updatedAt="1785748881" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="7" duration="30016" bitrate="508" width="1280" height="720" aspectRatio="1.78" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="720" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="7" key="/library/parts/7/1785436059/file.mp4" duration="30016" file="/data/movies/MiSTerPlex Test 720p (2026).mp4" size="1905005" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Test 720p (2026)" type="coverPoster" url="/library/metadata/7/thumb/1785748881" />
+<Image alt="MiSTerPlex Test 720p (2026)" type="background" url="/library/metadata/7/art/1785748881" />
+<UltraBlurColors topLeft="342e0f" topRight="400384" bottomRight="b20101" bottomLeft="b00c11" />
+</Video>
+<Video ratingKey="2" key="/library/metadata/2" guid="tv.plex.agents.none://2" type="movie" title="MiSTerPlex Test 1080p (2026)" subtype="clip" summary="" thumb="/library/metadata/2/thumb/1785741763" art="/library/metadata/2/art/1785741763" duration="30000" addedAt="1785436059" updatedAt="1785741763" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="2" duration="30000" bitrate="647" width="1920" height="1080" aspectRatio="1.78" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="1080" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="2" key="/library/parts/2/1785436059/file.mp4" duration="30000" file="/data/movies/MiSTerPlex Test 1080p (2026).mp4" size="2426148" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Test 1080p (2026)" type="coverPoster" url="/library/metadata/2/thumb/1785741763" />
+<Image alt="MiSTerPlex Test 1080p (2026)" type="background" url="/library/metadata/2/art/1785741763" />
+<UltraBlurColors topLeft="332f02" topRight="400384" bottomRight="b20101" bottomLeft="af1214" />
+</Video>
+<Video ratingKey="142" key="/library/metadata/142" guid="tv.plex.agents.none://142" type="movie" title="MiSTerPlex Test 1080p2997 (2026)" subtype="clip" summary="" thumb="/library/metadata/142/thumb/1785741729" art="/library/metadata/142/art/1785741729" duration="12000" addedAt="1785741726" updatedAt="1785741729" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="142" duration="12000" bitrate="3152" width="1920" height="1080" aspectRatio="1.78" audioChannels="1" audioCodec="aac" videoCodec="h264" videoResolution="1080" container="mp4" videoFrameRate="NTSC" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="142" key="/library/parts/142/1785741726/file.mp4" duration="12000" file="/data/movies/MiSTerPlex Test 1080p2997 (2026).mp4" size="4728339" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex Test 1080p2997 (2026)" type="coverPoster" url="/library/metadata/142/thumb/1785741729" />
+<Image alt="MiSTerPlex Test 1080p2997 (2026)" type="background" url="/library/metadata/142/art/1785741729" />
+<UltraBlurColors topLeft="4b0651" topRight="0305f8" bottomRight="0404f8" bottomLeft="a22e2e" />
+</Video>
+<Video ratingKey="101" key="/library/metadata/101" guid="tv.plex.agents.none://101" type="movie" title="MiSTerPlex VBRStair 624x480 24fps cbrLow400k 360s (2026)" subtype="clip" summary="" thumb="/library/metadata/101/thumb/1785748881" art="/library/metadata/101/art/1785748881" duration="360000" addedAt="1785655286" updatedAt="1785748881" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="101" duration="360000" bitrate="500" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="101" key="/library/parts/101/1785655201/file.mp4" duration="360000" file="/data/movies/MiSTerPlex VBRStair 624x480 24fps cbrLow400k 360s (2026).mp4" size="22514015" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex VBRStair 624x480 24fps cbrLow400k 360s (2026)" type="coverPoster" url="/library/metadata/101/thumb/1785748881" />
+<Image alt="MiSTerPlex VBRStair 624x480 24fps cbrLow400k 360s (2026)" type="background" url="/library/metadata/101/art/1785748881" />
+<UltraBlurColors topLeft="5b0406" topRight="ae131b" bottomRight="af1119" bottomLeft="364921" />
+</Video>
+<Video ratingKey="102" key="/library/metadata/102" guid="tv.plex.agents.none://102" type="movie" title="MiSTerPlex VBRStair 624x480 24fps cbrMean1137k 360s (2026)" subtype="clip" summary="" thumb="/library/metadata/102/thumb/1785748881" art="/library/metadata/102/art/1785748881" duration="360000" addedAt="1785655286" updatedAt="1785748881" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="102" duration="360000" bitrate="1238" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="102" key="/library/parts/102/1785655201/file.mp4" duration="360000" file="/data/movies/MiSTerPlex VBRStair 624x480 24fps cbrMean1137k 360s (2026).mp4" size="55689959" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex VBRStair 624x480 24fps cbrMean1137k 360s (2026)" type="coverPoster" url="/library/metadata/102/thumb/1785748881" />
+<Image alt="MiSTerPlex VBRStair 624x480 24fps cbrMean1137k 360s (2026)" type="background" url="/library/metadata/102/art/1785748881" />
+<UltraBlurColors topLeft="5b0406" topRight="ad171d" bottomRight="af1216" bottomLeft="394445" />
+</Video>
+<Video ratingKey="103" key="/library/metadata/103" guid="tv.plex.agents.none://103" type="movie" title="MiSTerPlex VBRStair 624x480 24fps stairVBR_max2000 360s (2026)" subtype="clip" summary="" thumb="/library/metadata/103/thumb/1785748881" art="/library/metadata/103/art/1785748881" duration="360000" addedAt="1785655286" updatedAt="1785748881" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="103" duration="360000" bitrate="1237" width="624" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="103" key="/library/parts/103/1785655061/file.mp4" duration="360000" file="/data/movies/MiSTerPlex VBRStair 624x480 24fps stairVBR_max2000 360s (2026).mp4" size="55643660" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex VBRStair 624x480 24fps stairVBR_max2000 360s (2026)" type="coverPoster" url="/library/metadata/103/thumb/1785748881" />
+<Image alt="MiSTerPlex VBRStair 624x480 24fps stairVBR_max2000 360s (2026)" type="background" url="/library/metadata/103/art/1785748881" />
+<UltraBlurColors topLeft="5b0406" topRight="ad171a" bottomRight="ae1317" bottomLeft="394546" />
+</Video>
+<Video ratingKey="104" key="/library/metadata/104" guid="tv.plex.agents.none://104" type="movie" title="MiSTerPlex VBRStair 640x480 24fps stairVBR_max2000 360s (2026)" subtype="clip" summary="" thumb="/library/metadata/104/thumb/1785748881" art="/library/metadata/104/art/1785748881" duration="360000" addedAt="1785655286" updatedAt="1785748881" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="104" duration="360000" bitrate="1236" width="640" height="480" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="480" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="104" key="/library/parts/104/1785655144/file.mp4" duration="360000" file="/data/movies/MiSTerPlex VBRStair 640x480 24fps stairVBR_max2000 360s (2026).mp4" size="55627016" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="MiSTerPlex VBRStair 640x480 24fps stairVBR_max2000 360s (2026)" type="coverPoster" url="/library/metadata/104/thumb/1785748881" />
+<Image alt="MiSTerPlex VBRStair 640x480 24fps stairVBR_max2000 360s (2026)" type="background" url="/library/metadata/104/art/1785748881" />
+<UltraBlurColors topLeft="5b0405" topRight="8d373c" bottomRight="2a3537" bottomLeft="9d3439" />
+</Video>
+</MediaContainer>

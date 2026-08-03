@@ -3,6 +3,7 @@
 // Harvested from mistercast-linux lessons; full feature set ports later.
 
 #include "libmisterplex/h264_fabric_stream_gate.hpp"
+#include "libmisterplex/stream_target_profile.hpp"
 
 #include <cstdint>
 #include <string>
@@ -142,6 +143,9 @@ const std::vector<PlexTranscodeProfile>& plexTranscodeProfiles();
 // Match by profile name ("240p"/"480p") or exact WxH resolution.
 bool applyPlexTranscodeProfile(const std::string& nameOrResolution,
                                struct WeakLadder& weak);
+
+// Apply a StreamTargetProfile row onto WeakLadder (table is source of truth).
+bool applyStreamTargetProfileToWeak(const StreamTargetProfile& profile, WeakLadder& weak);
 
 // Weak ladder params for PMS universal transcoder (dual-A9 safe defaults).
 struct WeakLadder {

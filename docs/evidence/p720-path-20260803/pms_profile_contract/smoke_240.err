@@ -1,0 +1,36 @@
+misterplexd: DECODE adopted coded 320x240 from conf docs/evidence/p720-path-20260803/pms_profile_contract/smoke_conf/misterplex.conf
+misterplexd: MATCH_SOURCE_HZ=off SOURCE_FPS=auto (cadence/OSD path; switchres TODO)
+misterplexd: GEOMETRY decode_bank=320x240 decode_source=conf:docs/evidence/p720-path-20260803/pms_profile_contract/smoke_conf/misterplex.conf pms_request_geometry=320x240 pms_bitrate_kbps=1000 profile_name=240p TRANSCODE_explicit=0 scale_mode=skip_identity sws_flags=(ffmpeg_default) (play may override via OSD O[4]; profile_name≠delivered WxH)
+misterplexd: STREAM_TARGET where=startup ok=1 err=ok profile=240p-spi decode=320x240 pms_videoResolution=320x240 maxVideoBitrate=1000 videoQuality=40 protocol=http directPlay=0 directStream=0 present_required=spi_f1 present_available=spi_f1 payload_MiB_s=2.637 budget_MiB_s=5.500 fits=1 reason=ok
+misterplexd: FRAME_LEDGER event=process_start path=docs/evidence/p720-path-20260803/pms_profile_contract/smoke_conf/misterplexd.frame_ledger pid=845958
+media: process_epoch=436372327 tag=measured — soak windows must not span a different process_epoch
+misterplexd: SKIP_FORWARD_MS=30000 SKIP_BACK_MS=10000
+misterplexd: AUDIO_DELAY_MS=0 (0=fresh, no hardcoded lag)
+misterplexd: AUDIO_CLOCK_PPM=-638
+misterplexd: AV_PRESENT_LEAD_MS=40(default) AV_RESYNC_DROP_MS=80(default)
+misterplexd: RAW_VIDEO_PIPE_BYTES raw_video_pipe req=1048576 actual=1048576 set_ok=1 frames_cap≈2.33
+misterplexd: OSD_CONTROL=auto (conf=(default auto)) — auto applies only when CONF_STR has O[15:14],Idle screen; on=force; off=F12 inert
+misterplexd: OSD_TIER11_720P=0 — O[5:4]=11 → reserved/480p (default 0 = safe 480p canvas)
+misterplexd: OSD_CONTROL=auto — probing live CONF_STR via UIO_GET_STRING; F12 Idle stays inert until Idle-screen marker (fail closed). HDMI notice if pre-v3/absent.
+misterplexd: IDLE_SCREEN=logo(default) AV_OFFSET_MS=0
+misterplexd: PREFER_DIRECT_H264 conf_set=0 conf_val=0 STREAM=0 — DP default when conf unset (miss#13); HD>Route-B-cap→xcode 960x540 (1280 DE only if PRESENT_MULTI_PIXEL); 0=>SD universal allow=off
+misterplexd: PRESENT_MULTI_PIXEL=0 Route-B host cap 960x540
+misterplexd: DDR_MEM_SYNC=1 DDR_MEM_FLUSH=0
+misterplexd: DDR_FRAME_FORMAT=yuv420p
+misterplexd: PRESENT_PROFILE=0 FRAME_COST_LEDGER=0
+misterplexd: FFMPEG_SCALE=skip_identity FFMPEG_SWS_FLAGS=(ffmpeg_default) FFMPEG_SCALE_ASSUME_MATCH=0 DDR_YUV_FORCE_SCALE=1 DDR_YUV_FORCE_SCALE_LAB=0 conf_off_requested=0
+misterplexd: PRESENT=fpga (fpga required for core HDMI idle/OSD; fb0 alone does not repaint the Plex frame store)
+media: ERROR FPGA SPI unavailable (PRESENT=fpga): open /dev/mem failed — core HDMI idle screen and F12 Idle Screen menu cannot repaint the DDR frame store. Load Plex.rbf, check SPI/uio, or set PRESENT=none for decode-only lab.
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: ERROR present path failed (PRESENT=fpga) — companion may run but core HDMI idle/OSD will not update. Need a loaded Plex.rbf + working FPGA SPI, or set PRESENT=none for decode-only lab.
+companion: GDM + HTTP :3005 name=MiSTerPlex
+GDM: listening UDP 32412
+GDM: listening UDP 32414
+plextv: registration skipped (PLEXTV_ANNOUNCE off)
+misterplexd: no default Plex server configured; set PLEX_BASE in docs/evidence/p720-path-20260803/pms_profile_contract/smoke_conf/misterplex.conf or pass --pms URL. Cast clients that include a server address can still select a server per play.
+misterplexd: running git_rev=640e790ad6a6-dirty name=MiSTerPlex id=misterplex-1 port=3005 pms=(unset) servers=0 decode_bank=320x240 decode_source=conf:docs/evidence/p720-path-20260803/pms_profile_contract/smoke_conf/misterplex.conf pms_request_geometry=320x240 pms_bitrate_kbps=1000 profile_name=240p-spi h264=baseline@L30 present=fpga auto_next=1 subs=off
+HTTP: companion on :3005 ip≈192.168.1.24
+misterplexd: main_loop exit pending — site=main.cpp:main_loop_g_stop sig=15 si_code=0 si_pid=845957 (handled→WIFEXITED 0; not WIFSIGNALED) lifetime_frames=0 lifetime_presents=0 lifetime_drops=0
+media: ERROR idle cannot open FPGA (PRESENT=fpga): open /dev/mem failed — menu Idle Screen changes will not appear on HDMI
+companion: stopped
+misterplexd: EXIT_REASON code=0 why=site=main.cpp:main_loop_g_stop sig=15 si_code=0 si_pid=845957 (handled→WIFEXITED 0; not WIFSIGNALED) state=stopping frames=0 presents=0 pos_ms=0 uptime_s=2 pid=845958 signal=15 si_code=0 si_code_name=SI_USER si_pid=845957 death_path=docs/evidence/p720-path-20260803/pms_profile_contract/smoke_conf/misterplexd.death

@@ -344,6 +344,25 @@ bool applyPlexTranscodeProfile(const std::string& nameOrResolution, WeakLadder& 
     return false;
 }
 
+bool applyStreamTargetProfileToWeak(const StreamTargetProfile& profile, WeakLadder& weak) {
+    if (!profile.id || !*profile.id)
+        return false;
+    // Prefer ladder defaults (fps caps etc.), then overwrite with table SoT fields.
+    if (profile.ladder_name && *profile.ladder_name)
+        (void)applyPlexTranscodeProfile(profile.ladder_name, weak);
+    weak.profileName = profile.id;
+    weak.videoResolution =
+        profile.pms_video_resolution ? profile.pms_video_resolution : weak.videoResolution;
+    weak.maxVideoBitrateKbps = profile.max_video_bitrate_kbps;
+    weak.videoQuality = profile.video_quality;
+    weak.h264Level = profile.h264_level;
+    weak.h264Profile = profile.h264_profile ? profile.h264_profile : kPlexH264ProfilePin;
+    weak.videoCodec = profile.video_codec ? profile.video_codec : "h264";
+    weak.audioCodec = profile.audio_codec ? profile.audio_codec : "aac";
+    return !weak.videoResolution.empty() && weak.maxVideoBitrateKbps > 0 &&
+           weak.videoQuality > 0;
+}
+
 bool validateWeakLadder(const WeakLadder& weak, std::string* why) {
     int w = 0, h = 0;
     auto fail = [&](const std::string& msg) {

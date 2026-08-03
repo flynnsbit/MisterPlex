@@ -1,0 +1,5 @@
+misterplexd: DECODE adopted coded 624x480 from conf docs/evidence/p720-path-20260803/pms_profile_contract/smoke_conf/misterplex_480spi.conf
+misterplexd: MATCH_SOURCE_HZ=off SOURCE_FPS=auto (cadence/OSD path; switchres TODO)
+misterplexd: GEOMETRY decode_bank=624x480 decode_source=conf:docs/evidence/p720-path-20260803/pms_profile_contract/smoke_conf/misterplex_480spi.conf pms_request_geometry=624x480 pms_bitrate_kbps=2000 profile_name=480p TRANSCODE_explicit=0 scale_mode=skip_identity sws_flags=(ffmpeg_default) (play may override via OSD O[4]; profile_name≠delivered WxH)
+misterplexd: STREAM_TARGET where=startup ok=0 err=geometry_present_disagree profile=480p-ddr decode=624x480 pms_videoResolution=624x480 maxVideoBitrate=2000 videoQuality=60 protocol=http directPlay=0 directStream=0 present_required=ddr_bulk present_available=spi_f1 payload_MiB_s=10.283 budget_MiB_s=5.500 fits=0 reason=decode geometry requires ddr_bulk present; active transport is spi_f1
+misterplexd: FATAL stream target refuse err=geometry_present_disagree — fix DECODE / STREAM_TARGET_PROFILE / PRESENT_PATH (spi_f1 budget=5.5 MiB/s). Do not request 480p/720p over SPI.

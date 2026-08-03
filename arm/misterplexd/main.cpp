@@ -11,6 +11,7 @@
 #include "libmisterplex/osd_menu.hpp"
 #include "libmisterplex/pms_delivery_geom.hpp"
 #include "libmisterplex/raw_video_pipe.hpp"
+#include "libmisterplex/stream_target_profile.hpp"
 #include "libmisterplex/yuv420p_chroma_health.hpp"
 #include "log_redact.hpp"
 #include "media_player.hpp"
@@ -233,6 +234,13 @@ int main(int argc, char** argv) {
     // PRESENT=fb0 alone used to skip fpga_.open() and freeze the idle screen
     // (user-reported twice). Conf PRESENT= still overrides.
     std::string presentMode = "fpga";
+    // Present *transport* budget (SPI F1 vs DDR bulk). Independent of PRESENT=
+    // mode string. Default spi_f1 matches parent-measured F1 push ceiling.
+    // Set PRESENT_PATH=ddr_bulk only when bulk present is actually fitted.
+    std::string presentPathConf; // empty → spi_f1
+    // Optional explicit STREAM_TARGET_PROFILE=240p-spi|480p-ddr|720p-ddr.
+    // When set, DECODE + PMS ladder must match the row or startup refuses.
+    std::string streamTargetProfileConf;
     misterplex::DdrFrameFormat ddrFrameFormat = misterplex::DdrFrameFormat::Yuv420p;
     bool ddrMemSync = true;
     bool ddrMemFlush = false;
@@ -455,6 +463,12 @@ int main(int argc, char** argv) {
         v = loadConf(confPath, "PRESENT");
         if (!v.empty())
             presentMode = v; // fb0 | fpga | both | none(test/lab)
+        v = loadConf(confPath, "PRESENT_PATH");
+        if (!v.empty())
+            presentPathConf = v; // spi_f1 | ddr_bulk
+        v = loadConf(confPath, "STREAM_TARGET_PROFILE");
+        if (!v.empty())
+            streamTargetProfileConf = v; // 240p-spi | 480p-ddr | 720p-ddr
         v = loadConf(confPath, "DDR_FRAME_FORMAT");
         if (!v.empty() && v != "yuv420p" && v != "yuv420" && v != "i420") {
             std::fprintf(stderr,
@@ -626,6 +640,52 @@ int main(int argc, char** argv) {
                      (transcodeProfileExplicit || weakResExplicit) ? 1 : 0,
                      ffmpegScaleMode.c_str(),
                      ffmpegSwsFlags.empty() ? "(ffmpeg_default)" : ffmpegSwsFlags.c_str());
+    }
+    // --- STREAM_TARGET: DECODE + PMS request + present transport must agree ---
+    // Parent 2026-08-03: SPI/F1 cannot carry 480p I420 (pfps=0). Refuse mismatch
+    // at startup — never silently keep a geometry the present path cannot sink.
+    {
+        const misterplex::PresentTransport available = misterplex::presentTransportFromConf(
+            presentMode, presentPathConf);
+        misterplex::StreamTargetProfileResult sel;
+        if (!streamTargetProfileConf.empty()) {
+            sel = misterplex::lookupStreamTargetProfile(streamTargetProfileConf.c_str());
+            if (sel.ok) {
+                // Explicit profile forces DECODE bank + weak ladder from the row.
+                const auto& p = sel.profile;
+                if (decodeSize.width.get() != p.decode_w ||
+                    decodeSize.height.get() != p.decode_h) {
+                    std::fprintf(stderr,
+                                 "misterplexd: STREAM_TARGET_PROFILE=%s forces DECODE "
+                                 "%dx%d (was %s from %s)\n",
+                                 p.id, p.decode_w, p.decode_h, decodeSize.wxh().c_str(),
+                                 decodeSizeSource.c_str());
+                    decodeSize = misterplex::CodedSize{misterplex::CodedWidth{p.decode_w},
+                                                       misterplex::CodedHeight{p.decode_h}};
+                    decodeSizeSource = "stream_target_profile";
+                }
+                (void)misterplex::applyStreamTargetProfileToWeak(p, weak);
+                // Re-validate against available transport (480p-ddr on spi_f1 fails).
+                sel = misterplex::selectStreamTargetProfile(p.decode_w, p.decode_h, available);
+            }
+        } else {
+            sel = misterplex::selectStreamTargetProfile(decodeSize.width.get(),
+                                                        decodeSize.height.get(), available);
+            if (sel.ok)
+                (void)misterplex::applyStreamTargetProfileToWeak(sel.profile, weak);
+        }
+        const std::string line =
+            misterplex::formatStreamTargetProfileLogLine(sel, available, "startup");
+        std::fprintf(stderr, "%s\n", line.c_str());
+        if (!sel.ok) {
+            std::fprintf(stderr,
+                         "misterplexd: FATAL stream target refuse err=%s — fix DECODE / "
+                         "STREAM_TARGET_PROFILE / PRESENT_PATH (spi_f1 budget=%.1f MiB/s). "
+                         "Do not request 480p/720p over SPI.\n",
+                         misterplex::streamTargetProfileErrorName(sel.error),
+                         misterplex::kPresentSpiF1BudgetMiBs);
+            return 2;
+        }
     }
     auto applyLinkCapacityToWeak = [&](misterplex::WeakLadder& w, const char* where) {
         if (linkCapacityKbps <= 0)

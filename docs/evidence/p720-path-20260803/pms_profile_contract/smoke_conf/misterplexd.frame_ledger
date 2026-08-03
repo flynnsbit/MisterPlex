@@ -1,0 +1,2 @@
+ts=2026-08-03T19:59:31Z event=process_start pid=845958 lifetime_frames=0 lifetime_presents=0 lifetime_drops=0
+ts=2026-08-03T19:59:33Z event=process_exit pid=845958 code=0 why=site=main.cpp:main_loop_g_stop sig=15 si_code=0 si_pid=845957 (handled→WIFEXITED 0; not WIFSIGNALED) uptime_s=2 lifetime_frames=0 lifetime_presents=0 lifetime_drops=0

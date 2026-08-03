@@ -1,0 +1,9 @@
+HTTP/1.1 200 OK
+X-Plex-Protocol: 1.0
+Content-Type: video/MP2T
+Accept-Ranges: none
+Connection: close
+Transfer-Encoding: chunked
+Cache-Control: no-cache
+Date: Mon, 03 Aug 2026 19:50:01 GMT
+

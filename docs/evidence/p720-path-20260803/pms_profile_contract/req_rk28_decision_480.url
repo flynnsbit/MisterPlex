@@ -1,0 +1,1 @@
+http://127.0.0.1:32400/video/:/transcode/universal/decision?hasMDE=1&path=%2Flibrary%2Fmetadata%2F28&mediaIndex=0&partIndex=0&protocol=http&fastSeek=1&directPlay=0&directStream=0&session=mplex-dec28&videoQuality=60&videoResolution=640x480&maxVideoBitrate=2500&videoCodec=h264&audioCodec=aac&videoProfile=baseline&videoLevel=30&X-Plex-Token=REDACTED

@@ -1,0 +1,10 @@
+profile=Constrained Baseline
+width=640
+height=360
+has_b_frames=0
+level=31
+profile=Constrained Baseline
+width=640
+height=360
+has_b_frames=0
+level=31

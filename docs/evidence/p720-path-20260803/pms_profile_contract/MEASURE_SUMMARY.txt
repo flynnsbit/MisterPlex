@@ -1,0 +1,71 @@
+rk9_240 http=200 bytes=3000000 curl_rc=63
+codec_name=h264
+profile=Constrained Baseline
+width=320
+height=180
+has_b_frames=0
+pix_fmt=yuv420p
+level=31
+r_frame_rate=24/1
+bit_rate=N/A
+codec_name=h264
+profile=Constrained Baseline
+width=320
+height=180
+has_b_frames=0
+pix_fmt=yuv420p
+level=31
+r_frame_rate=24/1
+bit_rate=N/A
+
+---
+rk9_480 http=400 bytes=89 curl_rc=0
+
+---
+rk9_624 http=400 bytes=89 curl_rc=0
+
+---
+rk9_720 http=400 bytes=89 curl_rc=0
+
+---
+rk28_480 http=200 bytes=3000000 curl_rc=63
+codec_name=h264
+profile=Constrained Baseline
+width=640
+height=480
+has_b_frames=0
+pix_fmt=yuv420p
+level=31
+r_frame_rate=24/1
+bit_rate=N/A
+codec_name=h264
+profile=Constrained Baseline
+width=640
+height=480
+has_b_frames=0
+pix_fmt=yuv420p
+level=31
+r_frame_rate=24/1
+bit_rate=N/A
+
+---
+rk23_240 http=200 bytes=1663988 curl_rc=0
+codec_name=h264
+profile=Constrained Baseline
+width=312
+height=240
+has_b_frames=0
+pix_fmt=yuv420p
+level=31
+r_frame_rate=24/1
+bit_rate=N/A
+codec_name=h264
+profile=Constrained Baseline
+width=312
+height=240
+has_b_frames=0
+pix_fmt=yuv420p
+level=31
+r_frame_rate=24/1
+bit_rate=N/A
+

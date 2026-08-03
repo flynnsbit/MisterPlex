@@ -48,7 +48,7 @@ unit:
 unit-rollcall:
 	python3 $(ROOT)/tests/unit/test_unit_rollcall.py
 
-unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/test_cadence_swap_path $(ROOT)/build/test_publish_interval_ledger $(ROOT)/build/test_publish_swap_delta_ledger $(ROOT)/build/test_plxd_liveness $(ROOT)/build/test_present_store_scale_math $(ROOT)/build/test_fabric_content_window_math $(ROOT)/build/test_avclock $(ROOT)/build/test_audio_delay $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_av_phase_rtl_quanta $(ROOT)/build/test_osd_menu $(ROOT)/build/test_osd_control $(ROOT)/build/test_last_frame_latch $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_pixel_format $(ROOT)/build/test_main_guard $(ROOT)/build/test_death_breadcrumb $(ROOT)/build/test_frame_ledger $(ROOT)/build/test_supply_bucket $(ROOT)/build/test_raw_video_pipe $(ROOT)/build/test_status_telemetry $(ROOT)/build/test_resolve $(ROOT)/build/test_log_redact $(ROOT)/build/test_pms_timeline $(ROOT)/build/test_plextv_device $(ROOT)/build/test_companion_eof $(ROOT)/build/test_companion_plant_seek $(ROOT)/build/test_gdm_resources_parity $(ROOT)/build/pms_baseline_probe $(ROOT)/build/test_h264_bitstream_source $(ROOT)/build/test_bitstream_ring_lifecycle $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_coded_size_adopt $(ROOT)/build/test_ffmpeg_vf $(ROOT)/build/test_force_scale_construction $(ROOT)/build/test_yuv420p_chroma_480p $(ROOT)/build/test_geom_frame_cost $(ROOT)/build/test_frame_cost_ledger $(ROOT)/build/test_plxg_q5_aspect_cadence $(ROOT)/build/test_plxg_publish_geometry $(ROOT)/build/test_plxg_q5_publish_e2e $(ROOT)/build/test_fpga_publish_ddr_frame $(ROOT)/build/test_path_public_symbols $(ROOT)/build/test_mister_video_mode $(ROOT)/build/test_glass_loss_death_points $(ROOT)/build/test_frame_store_sdram_sim $(ROOT)/build/test_frame_store_ddr_prefetch_sim $(ROOT)/build/test_ddr_want_y_hblank_thrash $(ROOT)/build/test_ddr_zero_copy_ingest $(ROOT)/build/test_ddr_bank_mailbox_phys $(ROOT)/build/test_ddr_scanout_multiframe $(ROOT)/build/test_sdram_memtest_sim $(ROOT)/build/test_sdram_mailbox $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_h264_fabric_stream_gate $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant $(ROOT)/build/test_p3_host_recon_vectors $(ROOT)/build/test_p3_idct_reference_model $(ROOT)/build/test_p3_inter_pred_vectors $(ROOT)/build/extract_h264_golden $(ROOT)/build/misterplexd
+unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/test_cadence_swap_path $(ROOT)/build/test_publish_interval_ledger $(ROOT)/build/test_publish_swap_delta_ledger $(ROOT)/build/test_plxd_liveness $(ROOT)/build/test_present_store_scale_math $(ROOT)/build/test_fabric_content_window_math $(ROOT)/build/test_avclock $(ROOT)/build/test_audio_delay $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_av_phase_rtl_quanta $(ROOT)/build/test_osd_menu $(ROOT)/build/test_osd_control $(ROOT)/build/test_last_frame_latch $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_pixel_format $(ROOT)/build/test_main_guard $(ROOT)/build/test_death_breadcrumb $(ROOT)/build/test_frame_ledger $(ROOT)/build/test_supply_bucket $(ROOT)/build/test_raw_video_pipe $(ROOT)/build/test_status_telemetry $(ROOT)/build/test_resolve $(ROOT)/build/test_stream_target_profile $(ROOT)/build/test_log_redact $(ROOT)/build/test_pms_timeline $(ROOT)/build/test_plextv_device $(ROOT)/build/test_companion_eof $(ROOT)/build/test_companion_plant_seek $(ROOT)/build/test_gdm_resources_parity $(ROOT)/build/pms_baseline_probe $(ROOT)/build/test_h264_bitstream_source $(ROOT)/build/test_bitstream_ring_lifecycle $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_coded_size_adopt $(ROOT)/build/test_ffmpeg_vf $(ROOT)/build/test_force_scale_construction $(ROOT)/build/test_yuv420p_chroma_480p $(ROOT)/build/test_geom_frame_cost $(ROOT)/build/test_frame_cost_ledger $(ROOT)/build/test_plxg_q5_aspect_cadence $(ROOT)/build/test_plxg_publish_geometry $(ROOT)/build/test_plxg_q5_publish_e2e $(ROOT)/build/test_fpga_publish_ddr_frame $(ROOT)/build/test_path_public_symbols $(ROOT)/build/test_mister_video_mode $(ROOT)/build/test_glass_loss_death_points $(ROOT)/build/test_frame_store_sdram_sim $(ROOT)/build/test_frame_store_ddr_prefetch_sim $(ROOT)/build/test_ddr_want_y_hblank_thrash $(ROOT)/build/test_ddr_zero_copy_ingest $(ROOT)/build/test_ddr_bank_mailbox_phys $(ROOT)/build/test_ddr_scanout_multiframe $(ROOT)/build/test_sdram_memtest_sim $(ROOT)/build/test_sdram_mailbox $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_h264_fabric_stream_gate $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant $(ROOT)/build/test_p3_host_recon_vectors $(ROOT)/build/test_p3_idct_reference_model $(ROOT)/build/test_p3_inter_pred_vectors $(ROOT)/build/extract_h264_golden $(ROOT)/build/misterplexd
 	$(ROOT)/build/test_cadence
 	$(ROOT)/build/test_cadence_swap_path
 	$(ROOT)/tests/unit/test_cadence_swap_path_source.sh
@@ -92,6 +92,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	bash $(ROOT)/tests/unit/test_media_fps_precision.sh
 	$(ROOT)/build/test_status_telemetry
 	$(ROOT)/build/test_resolve
+	$(ROOT)/build/test_stream_target_profile
 	$(ROOT)/build/test_log_redact
 	bash $(ROOT)/tests/unit/test_log_redact_red.sh
 	$(ROOT)/build/test_pms_timeline
@@ -710,10 +711,21 @@ $(ROOT)/build/test_resolve: $(ROOT)/tests/unit/test_resolve.cpp \
 		$(ROOT)/arm/misterplexd/plex_resolve.cpp \
 		$(ROOT)/arm/misterplexd/plex_resolve.hpp \
 		$(ROOT)/host/libmisterplex/osd_menu.hpp \
-		$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp
+		$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp \
+		$(ROOT)/host/libmisterplex/stream_target_profile.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -I$(ROOT)/arm/misterplexd -o $@ \
 		$(ROOT)/tests/unit/test_resolve.cpp $(ROOT)/arm/misterplexd/plex_resolve.cpp
+
+$(ROOT)/build/test_stream_target_profile: $(ROOT)/tests/unit/test_stream_target_profile.cpp \
+		$(ROOT)/arm/misterplexd/plex_resolve.cpp \
+		$(ROOT)/arm/misterplexd/plex_resolve.hpp \
+		$(ROOT)/host/libmisterplex/stream_target_profile.hpp \
+		$(ROOT)/host/libmisterplex/osd_menu.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -I$(ROOT)/arm/misterplexd -o $@ \
+		$(ROOT)/tests/unit/test_stream_target_profile.cpp \
+		$(ROOT)/arm/misterplexd/plex_resolve.cpp
 
 $(ROOT)/build/pms_baseline_probe: $(ROOT)/tools/pms_baseline_probe.cpp \
 		$(ROOT)/arm/misterplexd/plex_resolve.cpp \

@@ -1,0 +1,9 @@
+HTTP/1.1 400 Bad Request
+X-Plex-Protocol: 1.0
+Content-Length: 89
+Content-Type: text/html
+Connection: Keep-Alive
+Keep-Alive: timeout=20
+Cache-Control: no-cache
+Date: Mon, 03 Aug 2026 19:50:00 GMT
+

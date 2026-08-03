@@ -1,0 +1,12 @@
+profile=Constrained Baseline
+width=960
+height=720
+has_b_frames=0
+level=31
+r_frame_rate=24/1
+profile=Constrained Baseline
+width=960
+height=720
+has_b_frames=0
+level=31
+r_frame_rate=24/1
