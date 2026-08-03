@@ -52,15 +52,23 @@ assign BUTTONS = 0;
 //////////////////////////////////////////////////////////////////
 
 wire [1:0] ar = status[122:121];
-// B9: 960×540 true-DE is 16:9 content — force Full Screen under PRESENT_BEAM_960
-// (default Original is 4:3 and pillars the ascal path).
-`ifdef PRESENT_BEAM_960
-assign VIDEO_ARX = 12'd0;
-assign VIDEO_ARY = 12'd0;
-`else
-assign VIDEO_ARX = (!ar) ? 12'd4 : (ar - 1'd1);
-assign VIDEO_ARY = (!ar) ? 12'd3 : 12'd0;
-`endif
+// fabric_dar_* / fabric_content_fps from present_geom_latch q5 (parent ABI #2).
+// w-scaler consumes dar_*; w-clock consumes content_fps (do not hardcode 30).
+wire        fabric_dar_valid;
+wire [11:0] fabric_dar_x;
+wire [11:0] fabric_dar_y;
+wire        fabric_fps_valid;
+wire [7:0]  fabric_content_fps;
+// B9: plex_video_ar — Full Screen under menu; host DAR when latch q5 valid.
+// See rtl/plex_video_ar.sv + docs/b9-display-aspect.md.
+plex_video_ar u_plex_video_ar (
+	.ar_menu(ar),
+	.host_dar_valid(fabric_dar_valid),
+	.host_dar_x(fabric_dar_x),
+	.host_dar_y(fabric_dar_y),
+	.VIDEO_ARX(VIDEO_ARX),
+	.VIDEO_ARY(VIDEO_ARY)
+);
 
 `include "build_id.v"
 localparam CONF_STR = {
