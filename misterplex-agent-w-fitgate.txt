@@ -1,23 +1,38 @@
-lane: w-fitgate
-HEAD: 18958e96
-role: fit-release gate ruler
-branch: w-fitgate
-GRANT: NO
-selftest: PASS true_rc=0
-mutation_matrix: rows=43 red=43 fail_holes=0
+lane=w-fitgate
+role=fit_release_gate_ruler
+GRANT=NO
+HEAD=PENDING_COMMIT
+code_sha=PENDING
+branch=w-fitgate
+worktree=/home/flynnsbit/Projects/MisterPlex-wt-fitgate
+origin=origin/w-fitgate
 
-B9 bank-gen / DAR∧applied-gen (rd-duck unsafe fix):
-  LIVE_OPEN RED: B9_BANK_GEN_TIED_ZERO, B9_DISP_MATCH_DAR_ONLY, B9_ASCAL_SIDEBAND_UNPROVEN
-  reinject RED: B9_RELEASE_NO_BANK_MATCH, B9_BANK_GEN_TIED_ZERO(.bank_gen(16'd0))
-  Require: .bank_gen = store-applied (not 16'd0 / not live seq)
-    disp_matches_live includes bank (not DAR-only)
-    release = DAR ∧ bank_after (ascal_ack o_obuf sideband; shadow ≠ proof)
-  w-scaler uncommitted: still RED on B9_DISP_MATCH_DAR_ONLY (disp_matches_live=dar)
+SELFTEST=PASS
+SELFTEST_MATRIX rows=47 red=47 fail_holes=0
+SELFTEST_CMD=python3 scripts/fit_release_gate.py --self-test
+SELFTEST_TRUE_RC=0
+SELFTEST_MARKER=FIT_RELEASE_GATE_SELFTEST_PASS
 
-B32 PLXG↔bank couple still open
-B31 HIT_SCAN=48/112 shipping≤48
-leg4 STA Fmax≥30.24 + path owner
+B33=LIVE
+B33_cite=rd-duck: m0_ov masks issued m1/m3; bridge S_ISSUE !a_busy race; weak TB m3_beats>=1
+B33_tokens_live=B33_PLXC_ARB_ABSENT,B33_BRIDGE_BUSY_ACCEPT_RACE,B33_LOST_READ_TB_WEAK
+B33_token_reinject=B33_M0_OV_MASKS_ISSUED_LOWER
+B33_wmem_RED=B33_M0_OV_MASKS_ISSUED_LOWER+B33_BRIDGE_BUSY_ACCEPT_RACE+B33_LOST_READ_TB_WEAK
 
-OWNED product RTL: 0 | GATE ON_MAIN=no
-parent: git fetch origin w-fitgate; RULER=…-wt-fitgate; fit_release_gate.sh --root $MERGE
-no_quartus / no_device / no_unilateral_main_merge
+OPEN_PRODUCT_REDS_ON_SIBLINGS=
+  B9 bank_gen/DAR∧applied-gen (w-scaler)
+  B31 HIT_SCAN=48 product (w-osd)
+  B32 PLXG↔bank couple (w-mem/w-path)
+  B33 m0_ov issued-lower safe (w-mem)
+
+PARENT_RUN=
+  git fetch origin w-fitgate
+  RULER=/home/flynnsbit/Projects/MisterPlex-wt-fitgate
+  "$RULER/scripts/fit_release_gate.sh" --root "$MERGE" --qsf "$MERGE/fpga/Plex_MiSTer/Plex.qsf"
+
+LANDING_REPORT=
+  product_rtl_authored_by_w_fitgate=0
+  gate_scripts ON_MAIN=no IN_FILES_QIP=n/a
+  land_path=scripts+docs+tests/unit gate helpers only; parent sequences; no unilateral main merge
+
+CONSTRAINTS=no_quartus no_device no_main_merge capture_true_rc

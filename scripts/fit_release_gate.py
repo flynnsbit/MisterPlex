@@ -237,6 +237,11 @@ LIVE_OPEN_BLOCKER_TOKENS = (
     "B32_SWAP_SEQ_FROM_LIVE_RT",
     "B32_VISUAL_TUPLE_PARTIAL",
     "B32_POLLER_SIM_NOT_RTL",
+    # rd-duck: m0_ov masks issued m1/m3 → lost-read shifts to lower masters
+    "B33_PLXC_ARB_ABSENT",
+    "B33_BRIDGE_BUSY_ACCEPT_RACE",
+    "B33_LOST_READ_TB_WEAK",
+    # B33_M0_OV_MASKS_ISSUED_LOWER: closed-class when arb present with m0_ov
 )
 
 # Sibling-lane fixes that exist but are not merged into this gated tree.
@@ -2622,6 +2627,222 @@ def check_b32_plxg_bank_atomic_couple(root: Path) -> tuple[list[str], list[str]]
 
 
 # ---------------------------------------------------------------------------
+# B33 — PLXC arb: do not preempt/mask an *issued* lower-master command
+# (rd-duck 2026-08-03: ARB fix shifts lost-read to m1/m3)
+#
+# Observed:
+#   ddr_bus_arbiter_plxc m0_ov combinationally masks a granted lower master's
+#   command and drops its grant. ddr_plxc_master_bridge S_ISSUE treats
+#   synchronized !a_busy as acceptance, pulses a_rd/a_we one cycle, asserts
+#   c_gnt, enters WAIT_R. m3_busy_comb under m0_ov cannot prevent this across
+#   registered+2FF CDC latency.
+# Concrete: grant_m3=1, bridge sees stale a_busy=0, pulses m3_rd same DDR edge
+#   as m0_rd; mux sends m0; arb owner m0/drops grant; bridge waits forever.
+# Weak TB: only m3_beats>=1 — can pass after earlier beats; never asserts m3
+#   never hangs after exact m0_cmd&m3_cmd collision.
+#
+# Require: no preempt/mask of issued lower cmd. Accepted handshake, or skid
+# m0 one-shot and replay after current lower grant, or m0 hold request until
+# ack. TB: exact m0+m1 and m0+m3 command edges; both responses/c_gnt complete.
+# ---------------------------------------------------------------------------
+
+
+def check_b33_plxc_arb_issued_lower_safe(root: Path) -> tuple[list[str], list[str]]:
+    """Fail until m0 cannot strand an already-issued m1/m3 command."""
+    msgs: list[str] = ["LEG0_B33_PLXC_ARB_ISSUED_SAFE_EXECUTED begin"]
+    errors: list[str] = []
+
+    arb = root / "fpga" / "Plex_MiSTer" / "rtl" / "ddr_bus_arbiter_plxc.sv"
+    br = root / "fpga" / "Plex_MiSTer" / "rtl" / "ddr_plxc_master_bridge.sv"
+    tb_cpp = root / "tests" / "rtl" / "ddr_plxc_lost_read_tb.cpp"
+    tb_top = root / "tests" / "rtl" / "ddr_plxc_lost_read_tb_top.sv"
+    tb_sh = root / "tests" / "unit" / "test_ddr_plxc_lost_read_verilator.sh"
+
+    if not arb.is_file():
+        errors.append(
+            "B33_PLXC_ARB_ABSENT: missing ddr_bus_arbiter_plxc.sv — cannot prove "
+            "m0 does not strand issued m1/m3 (rd-duck m0_ov lost-read shift)."
+        )
+        # Still score bridge/TB if present
+    arb_txt = product_active_sv(_read(arb) or "") if arb.is_file() else ""
+    br_txt = product_active_sv(_read(br) or "") if br.is_file() else ""
+    tb_cpp_txt = _read(tb_cpp) or ""
+    tb_top_txt = product_active_sv(_read(tb_top) or "") if tb_top.is_file() else ""
+    tb_sh_txt = _read(tb_sh) or ""
+
+    # --- Arb: m0_ov mask of granted lower without skid/handshake ---
+    has_m0_ov = bool(re.search(r"\bm0_ov\b", arb_txt))
+    masks_lower = bool(
+        re.search(
+            r"use_m1\s*=\s*grant_m1\s*&&\s*!m0_ov|use_m3\s*=\s*grant_m3[^;]*!m0_ov",
+            arb_txt,
+        )
+    )
+    # Good mitigations (any one strong)
+    skid_m0 = bool(
+        re.search(
+            r"m0_skid|skid_m0|m0_pend|m0_replay|replay_m0|latch_m0|m0_hold_req",
+            arb_txt,
+            re.I,
+        )
+    )
+    accept_hs = bool(
+        re.search(
+            r"cmd_accept|accepted_hs|a_accept|gnt_ack|issue_ack|beat_accept|"
+            r"m1_accept|m3_accept|lower_issued|issued_hold",
+            arb_txt,
+            re.I,
+        )
+    )
+    # Must not drop grant while lower cmd already seen this cycle without skid
+    no_drop_issued = bool(
+        re.search(
+            r"keep_grant|sticky_grant_until|grant_hold_until_rsp|do_not_preempt_issued",
+            arb_txt,
+            re.I,
+        )
+    )
+    msgs.append(
+        f"LEG0_B33_ARB m0_ov={int(has_m0_ov)} masks_lower={int(masks_lower)} "
+        f"skid={int(skid_m0)} accept_hs={int(accept_hs)} no_drop={int(no_drop_issued)}"
+    )
+    if arb.is_file():
+        if has_m0_ov and masks_lower and not (skid_m0 or accept_hs or no_drop_issued):
+            errors.append(
+                "B33_M0_OV_MASKS_ISSUED_LOWER: ddr_bus_arbiter_plxc m0_ov "
+                "combinationally masks use_m1/use_m3 (grant && !m0_ov) without "
+                "skid/replay of m0, accepted handshake, or hold-grant-until-rsp. "
+                "rd-duck: shifts lost-read to m1/m3 — bridge already pulsed a_rd "
+                "on stale !busy; mux takes m0; lower waits forever. Do not preempt/"
+                "mask an issued lower command."
+            )
+        elif not has_m0_ov and not (skid_m0 or accept_hs):
+            # No m0_ov — still need some launch-edge contract documented
+            if not re.search(r"lost.read|launch.edge|one-shot", arb_txt, re.I):
+                errors.append(
+                    "B33_M0_OV_MASKS_ISSUED_LOWER: arbiter has no m0_ov and no "
+                    "documented skid/accept launch-edge contract for m0 vs m1/m3 "
+                    "(rd-duck lost-read class still unaddressed)."
+                )
+            else:
+                msgs.append("LEG0_B33_OK arb without m0_ov mask (alt contract text)")
+        else:
+            msgs.append("LEG0_B33_OK arb has skid/accept/no-drop for issued lower")
+
+    # --- Bridge: !a_busy one-cycle accept is racy with CDC busy ---
+    if not br.is_file():
+        errors.append(
+            "B33_BRIDGE_BUSY_ACCEPT_RACE: missing ddr_plxc_master_bridge.sv — "
+            "S_ISSUE !a_busy accept race cannot be audited."
+        )
+    else:
+        issue_busy_accept = bool(
+            re.search(
+                r"S_ISSUE[\s\S]{0,400}?if\s*\(\s*!\s*a_busy\s*\)",
+                br_txt,
+            )
+        )
+        # Same-cycle accepted handshake from arb (not just busy level)
+        bridge_hs = bool(
+            re.search(
+                r"a_accept|cmd_accept|issue_ack|gnt_pulse|accept_tog",
+                br_txt,
+                re.I,
+            )
+        )
+        # Holding a_rd until dout without dropping on busy glitch is weaker
+        msgs.append(
+            f"LEG0_B33_BRIDGE issue_busy_accept={int(issue_busy_accept)} "
+            f"hs={int(bridge_hs)}"
+        )
+        if issue_busy_accept and not bridge_hs:
+            errors.append(
+                "B33_BRIDGE_BUSY_ACCEPT_RACE: ddr_plxc_master_bridge S_ISSUE treats "
+                "synchronized !a_busy as acceptance (pulse a_rd/a_we, c_gnt, WAIT_R). "
+                "m*_busy_comb under m0_ov cannot stop this across registered+2FF CDC. "
+                "Need accepted handshake (or skid on arb) so a lower master never "
+                "believes a beat issued when mux took m0 (rd-duck)."
+            )
+        else:
+            msgs.append("LEG0_B33_OK bridge accept path not busy-level-only")
+
+    # --- TB: exact m0+m1 and m0+m3 collision; both complete; no hang after ---
+    tb_present = tb_cpp.is_file() or tb_top.is_file() or tb_sh.is_file()
+    blob = "\n".join([tb_cpp_txt, tb_top_txt, tb_sh_txt])
+    has_m3 = bool(re.search(r"m3_beats|grant_m3|m0.*m3|m3_cmd", blob, re.I))
+    has_m1 = bool(re.search(r"m1_beats|grant_m1|m0.*m1|m1_cmd|collision.*m1", blob, re.I))
+    # Weak: m3_beats >= 1 only
+    weak_m3_ge1 = bool(
+        re.search(r"m3_beats\s*<\s*1|m3_beats\s*>=\s*1|m3_beats\s*<\s*8", blob)
+    ) and not bool(
+        re.search(
+            r"hang.*collision|collision.*hang|never hangs|both.*complete|"
+            r"m3_hang|after.*collision|exact.*m0",
+            blob,
+            re.I,
+        )
+    )
+    # Strong: requires hang==0 AND collision exercised AND both masters complete
+    strong_both = bool(
+        re.search(r"m0\+m1|m0\s*\+\s*m1|m1.*collision|collision.*m1", blob, re.I)
+    ) and bool(
+        re.search(r"m0\+m3|m0\s*\+\s*m3|m3.*collision|collision.*m3", blob, re.I)
+    ) and bool(
+        re.search(
+            r"fill_hang\s*!=\s*0|fill_hang\s*==\s*0|hang.*0",
+            blob,
+        )
+    ) and bool(
+        re.search(
+            r"both.*c_gnt|c_gnt.*complete|m1_beats.*m3_beats|responses.*complete|"
+            r"no hang after|never hang",
+            blob,
+            re.I,
+        )
+    )
+    # collision_edges only WARN is weak
+    coll_warn_only = bool(
+        re.search(r"WARN collision_edges", blob)
+    ) and not bool(re.search(r"collision_edges\s*<\s*1\)\s*fail|fail.*collision", blob, re.I))
+
+    msgs.append(
+        f"LEG0_B33_TB present={int(tb_present)} m1={int(has_m1)} m3={int(has_m3)} "
+        f"weak_ge1={int(weak_m3_ge1)} strong_both={int(strong_both)} "
+        f"coll_warn_only={int(coll_warn_only)}"
+    )
+    if not tb_present:
+        errors.append(
+            "B33_LOST_READ_TB_WEAK: missing ddr_plxc_lost_read TB — must exercise "
+            "exact m0+m1 and m0+m3 command edges and require both responses/c_gnt "
+            "complete with hang=0 (rd-duck)."
+        )
+    else:
+        if not has_m1 or not has_m3:
+            errors.append(
+                "B33_LOST_READ_TB_WEAK: lost-read TB must cover exact m0+m1 AND "
+                f"m0+m3 collisions (has_m1={int(has_m1)} has_m3={int(has_m3)}). "
+                "m3-only is insufficient (rd-duck: fix shifted hang to m1/m3)."
+            )
+        if weak_m3_ge1 or coll_warn_only or not strong_both:
+            errors.append(
+                "B33_LOST_READ_TB_WEAK: current lost-read TB can pass with "
+                "m3_beats>=1 after earlier beats and only WARN on collision_edges=0. "
+                "Require: exact m0_cmd&m1_cmd and m0_cmd&m3_cmd collision edges; "
+                "assert lower master never hangs after collision; both c_gnt/"
+                "responses complete (rd-duck)."
+            )
+        else:
+            msgs.append("LEG0_B33_OK lost-read TB strong collision both-complete")
+
+    if not errors:
+        msgs.append(
+            "LEG0_B33_PASS PLXC arb issued-lower safe "
+            "(no m0_ov mask without skid/hs + strong collision TB)"
+        )
+    return msgs, errors
+
+
+# ---------------------------------------------------------------------------
 # B24 — PLXG q5 bit34 fps_1001 ABI merge-loss (rd-duck 2026-08-03)
 # w-path f31a6eb9: q5[34]=fps_1001, reserved[63:35], pack 24000/1001 → 24+flag
 # w-mem latch: q5_reserved_nz=|sh5[63:34] → E4 / wholesale geom reject
@@ -4614,6 +4835,7 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
         "B31_hit_scan_prefit_cap(shipping_budget_g++),"
         "B32_plxg_bank_atomic_couple(host+store+tuple+poller_rtl),"
         "B9_dar_bank_gen_match(bank_gen+DAR∧bank+ascal_obuf),"
+        "B33_plxc_arb_issued_lower_safe(m0_ov+bridge+TB),"
         "leg_unit_make_unit,leg_rtl_lint,leg2_elab,leg3_true_de; "
         "B20_PRODUCT_UFS_TIE=elaborate Plex.sv .use_frame_store(1'b0) + reject "
         "ownership-on-ufs (w-clock free-run) + H require product-ufs0 hold measured_* "
@@ -6032,6 +6254,11 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
     b32_msgs, b32_errs = check_b32_plxg_bank_atomic_couple(ROOT)
     msgs.extend(b32_msgs)
     errors.extend(b32_errs)
+
+    # --- B33 PLXC arb: m0 must not strand issued m1/m3 (rd-duck lost-read shift) ---
+    b33_msgs, b33_errs = check_b33_plxc_arb_issued_lower_safe(ROOT)
+    msgs.extend(b33_msgs)
+    errors.extend(b33_errs)
 
     # --- B20 full-hierarchy scenario tests (rd-duck 2026-08-03 hollow audit) ---
     # Prior gate only regex-scanned test *text* and accepted comment bait (mutation
@@ -7875,6 +8102,9 @@ def _run_mutation_matrix() -> tuple[list[str], list[dict[str, str]]]:
         "B32_SWAP_SEQ_FROM_LIVE_RT",
         "B32_VISUAL_TUPLE_PARTIAL",
         "B32_POLLER_SIM_NOT_RTL",
+        "B33_PLXC_ARB_ABSENT",
+        "B33_BRIDGE_BUSY_ACCEPT_RACE",
+        "B33_LOST_READ_TB_WEAK",
     ):
         txt = "\n".join(msgs)
         has = tok in txt
@@ -8282,6 +8512,32 @@ def _run_mutation_matrix() -> tuple[list[str], list[dict[str, str]]]:
                     store_b32.unlink()
             except OSError:
                 pass
+
+    # --- rd-duck B33: m0_ov masks issued lower ---
+    arb_b33 = ROOT / "fpga" / "Plex_MiSTer" / "rtl" / "ddr_bus_arbiter_plxc.sv"
+    arb_b33.parent.mkdir(parents=True, exist_ok=True)
+    bad_arb = (
+        "// fitgate B33 mutation seed — m0_ov masks granted m1/m3\n"
+        "module ddr_bus_arbiter_plxc;\n"
+        "  input wire m0_rd, m0_we, grant_m1, grant_m3;\n"
+        "  wire m0_cmd = m0_rd | m0_we;\n"
+        "  wire m0_ov = m0_cmd;\n"
+        "  wire use_m1 = grant_m1 && !m0_ov;\n"
+        "  wire use_m3 = grant_m3 && !grant_m1 && !m0_ov;\n"
+        "endmodule\n"
+    )
+    rest_arb = _with_file_backup(arb_b33, bad_arb)
+    try:
+        rc, msgs = leg0_arch_blockers()
+        _row(
+            "B33_M0_OV_MASKS_ISSUED_LOWER",
+            "m0_ov masks use_m1/use_m3 without skid/hs",
+            "B33_M0_OV_MASKS_ISSUED_LOWER",
+            rc,
+            msgs,
+        )
+    finally:
+        rest_arb()
 
     # --- Parent 2026-08-03: POST-FIT STA path owner + Fmax floor ---
     fix = RULER_ROOT / "tests" / "fixtures" / "fit_release_gate"

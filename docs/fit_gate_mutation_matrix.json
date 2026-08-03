@@ -169,6 +169,30 @@
       "token_hit": "1"
     },
     {
+      "check": "B33_PLXC_ARB_ABSENT",
+      "inject": "live hollow / missing product TB",
+      "expect": "B33_PLXC_ARB_ABSENT",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B33_BRIDGE_BUSY_ACCEPT_RACE",
+      "inject": "live hollow / missing product TB",
+      "expect": "B33_BRIDGE_BUSY_ACCEPT_RACE",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B33_LOST_READ_TB_WEAK",
+      "inject": "live hollow / missing product TB",
+      "expect": "B33_LOST_READ_TB_WEAK",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
       "check": "B9_SYS_TOP_AR_OUT_HOLD_MISSING",
       "inject": "live defective/hollow tree (no inject)",
       "expect": "B9_SYS_TOP_AR_OUT_HOLD_MISSING",
@@ -329,6 +353,14 @@
       "token_hit": "1"
     },
     {
+      "check": "B33_M0_OV_MASKS_ISSUED_LOWER",
+      "inject": "m0_ov masks use_m1/use_m3 without skid/hs",
+      "expect": "B33_M0_OV_MASKS_ISSUED_LOWER",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
       "check": "STA_PATH_OWNER_UNRESOLVABLE",
       "inject": "STA present (Fmax summary) but path owner unresolvable",
       "expect": "STA_PATH_OWNER_UNRESOLVABLE",
@@ -346,6 +378,6 @@
     }
   ],
   "failures": [],
-  "n_red": 43,
-  "head": "e05611a3ffa4"
+  "n_red": 47,
+  "head": "65bfa2503920"
 }
