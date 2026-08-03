@@ -419,6 +419,27 @@ bool FpgaSpi::open() {
     return true;
 }
 
+void FpgaSpi::forceDdrKickReprobe() {
+    ddrKickMode_ = 0;
+    ddrKickFailMs_ = -1.0;
+    plxdLive_ = PlxdLivenessState{};
+    plxdStaleCount_ = 0;
+    plxdLivenessProven_ = false;
+    lastPublishBrsOk_ = false;
+}
+
+bool FpgaSpi::reopenPresentPath() {
+    // close() already zeroes ddrKickMode_ / maps; open() rebuilds manager map.
+    const bool okOpen = open();
+    forceDdrKickReprobe();
+    if (!okOpen)
+        return false;
+    // Re-establish DDR frame window for the (possibly new) core layout.
+    if (!ensureDdrMap())
+        return false;
+    return true;
+}
+
 void FpgaSpi::close() {
     releaseDdrMap();
     releaseBitstreamDdrMap();

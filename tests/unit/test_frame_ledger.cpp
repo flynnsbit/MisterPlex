@@ -6,6 +6,7 @@
 //   - residual = frames - presents - drops rises on publish miss; drops stay clean.
 #include "libmisterplex/av_clock.hpp"
 #include "libmisterplex/frame_ledger.hpp"
+#include "libmisterplex/fpga_scanout_health.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -258,10 +259,142 @@ static void testZeroFrameNotNaturalEof() {
     std::printf("ZERO_FRAME_REASON applied_match=%d want=%d\n", applied, kWantApplied);
 }
 
+// Parent 2026-08-02: presents advanced, HDMI idle, residual fpga_obs=none (static).
+// RED: naive classify ignores scanout proof → natural_eof.
+// GREEN: present_without_scanout + ERROR line + sample machine.
+static void testPresentWithoutScanout() {
+    using namespace misterplex;
+    int applied = 0;
+
+    // RED twin: old 3-arg classify treats healthy presents as natural_eof even
+    // when scanout never proved live.
+    CHECK(std::string(frameLedgerClassifyEndReason(false, 699, 699, /*noScanout=*/false)) ==
+          kFrameLedgerReasonNaturalEof);
+    ++applied;
+
+    // GREEN: flag forces present_without_scanout
+    CHECK(std::string(frameLedgerClassifyEndReason(false, 699, 699, true)) ==
+          kFrameLedgerReasonPresentWithoutScanout);
+    ++applied;
+    CHECK(frameLedgerIsPresentWithoutScanout(kFrameLedgerReasonPresentWithoutScanout));
+    ++applied;
+    CHECK(!frameLedgerIsPresentWithoutScanout(kFrameLedgerReasonNaturalEof));
+    ++applied;
+    // stop still wins
+    CHECK(std::string(frameLedgerClassifyEndReason(true, 699, 699, true)) ==
+          kFrameLedgerReasonStopOrSeek);
+    ++applied;
+    // zero-frame still wins over scanout flag when presents==0
+    CHECK(std::string(frameLedgerClassifyEndReason(false, 0, 0, true)) ==
+          kFrameLedgerReasonZeroFrame);
+    ++applied;
+
+    // Sample machine: absent then presents advance without identity move → fail.
+    FpgaScanoutHealth h{};
+    FpgaScanoutSample a{};
+    a.read_ok = false;
+    a.presents = 0;
+    CHECK(std::string(fpgaScanoutNoteSample(h, a)) == kFpgaObsPlxdAbsent);
+    ++applied;
+    a.presents = 10;
+    CHECK(std::string(fpgaScanoutNoteSample(h, a)) == kFpgaObsPlxdAbsent);
+    ++applied;
+    a.presents = 30;
+    CHECK(std::string(fpgaScanoutNoteSample(h, a)) == kFpgaObsPlxdAbsent);
+    ++applied;
+    CHECK(fpgaScanoutPresentWithoutProof(h));
+    ++applied;
+    CHECK(fpgaScanoutShouldReopen(h));
+    ++applied;
+
+    // Live path: identity moves → never present-without-proof.
+    FpgaScanoutHealth live{};
+    FpgaScanoutSample s{};
+    s.read_ok = true;
+    s.bank_sig = 0x1;
+    s.presents = 0;
+    CHECK(std::string(fpgaScanoutNoteSample(live, s)) == kFpgaObsPlxdBaseline);
+    ++applied;
+    s.bank_sig = 0x5;
+    s.presents = 40;
+    CHECK(std::string(fpgaScanoutNoteSample(live, s)) == kFpgaObsPlxdLive);
+    ++applied;
+    s.presents = 80;
+    s.bank_sig = 0x5; // frozen after live once is OK — already proved
+    (void)fpgaScanoutNoteSample(live, s);
+    CHECK(live.live_samples >= 1);
+    ++applied;
+    CHECK(!fpgaScanoutPresentWithoutProof(live));
+    ++applied;
+
+    // Stale: readable, presents advance, identity frozen after baseline.
+    FpgaScanoutHealth st{};
+    s.read_ok = true;
+    s.bank_sig = 0x2;
+    s.presents = 5;
+    CHECK(std::string(fpgaScanoutNoteSample(st, s)) == kFpgaObsPlxdBaseline);
+    ++applied;
+    s.presents = 40;
+    CHECK(std::string(fpgaScanoutNoteSample(st, s)) == kFpgaObsPlxdStale);
+    ++applied;
+    s.presents = 50;
+    (void)fpgaScanoutNoteSample(st, s);
+    CHECK(fpgaScanoutPresentWithoutProof(st));
+    ++applied;
+
+    // ERROR line shape
+    const std::string err = fpgaScanoutPresentWithoutProofErrorLine(st, 699, 699);
+    CHECK(err.find("ERROR media: PRESENT_WITHOUT_SCANOUT") != std::string::npos);
+    ++applied;
+    CHECK(err.find("reason=present_without_scanout") != std::string::npos);
+    ++applied;
+    CHECK(err.find("presents_src=arm_publish_ok") != std::string::npos);
+    ++applied;
+    CHECK(err.find("fpga_obs=") != std::string::npos);
+    ++applied;
+    CHECK(err.find("tag=measured") != std::string::npos);
+    ++applied;
+
+    // Telemetry fragment must accept real obs (not only hardcoded none).
+    FrameLedgerLive led = frameLedgerLiveOf(100, 100, 0, 0);
+    const std::string frag = frameLedgerTelemetryFragment(led, kFpgaObsPlxdLive);
+    CHECK(frag.find("fpga_obs=plxd_live") != std::string::npos);
+    ++applied;
+    CHECK(frag.find("presents_src=arm_publish_ok") != std::string::npos);
+    ++applied;
+    // Default still none (supply-only residual label).
+    const std::string def = frameLedgerTelemetryFragment(led);
+    CHECK(def.find("fpga_obs=none") != std::string::npos);
+    ++applied;
+
+    // File ledger persists present_without_scanout reason.
+    char dir_template[] = "build/frame_ledger_pws_XXXXXX";
+    const char* dir = ::mkdtemp(dir_template);
+    CHECK(dir != nullptr);
+    ++applied;
+    if (dir) {
+        const std::string path = std::string(dir) + "/misterplexd.frame_ledger";
+        frameLedgerSetPathForTest(path);
+        frameLedgerProcessStart(0, 0, 0);
+        const char* r = frameLedgerClassifyEndReason(false, 699, 699, true);
+        frameLedgerSessionEnd(1, 699, 699, 0, r, 0);
+        const std::string txt = slurp(path);
+        CHECK(txt.find("reason=present_without_scanout") != std::string::npos);
+        ++applied;
+        CHECK(txt.find("reason=natural_eof") == std::string::npos);
+        ++applied;
+    }
+
+    constexpr int kWantApplied = 29;
+    CHECK(applied == kWantApplied);
+    std::printf("PRESENT_WITHOUT_SCANOUT applied_match=%d want=%d\n", applied, kWantApplied);
+}
+
 int main() {
     testPublishMissVsDropsAndDrift();
     testFileLedgerAcrossRestarts();
     testZeroFrameNotNaturalEof();
+    testPresentWithoutScanout();
 
     if (fails) {
         std::fprintf(stderr, "test_frame_ledger: %d FAIL(s)\n", fails);
