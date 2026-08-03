@@ -145,10 +145,11 @@ int main() {
         r.source_h = 480;
         r.delivery_geometry_verified = true;
         const auto p = buildFfmpegVideoFilter(r);
-        expect(!p.scale_applied, "identity skip no scale");
-        expect(p.identity_skip, "identity_skip flag");
-        expect(p.vf.empty(), "vf empty without fps");
-        expect_eq(p.reason, "identity_skip_crop_pad_clear", "crop clear reason");
+        expect(!p.scale_applied, "identity class no product scale");
+        expect(p.fixed_output_barrier && !p.identity_skip, "fixed_out barrier not raw identity");
+        expect(p.vf.find("scale=624:480:flags=neighbor") != std::string::npos,
+               "fixed_out pin present");
+        expect_eq(p.reason, "identity_fixed_out_crop_clear", "crop clear reason");
     }
 
     // --- RED class: numeric match WITHOUT verification must NOT identity-skip ---
@@ -196,8 +197,8 @@ int main() {
         r.scale_mode = FfmpegScaleMode::SkipIdentity;
         r.assume_source_matches_coded = true;
         const auto p = buildFfmpegVideoFilter(r);
-        expect(p.identity_skip && !p.scale_applied, "assume_match skips");
-        expect_eq(p.reason, "identity_skip", "assume reason");
+        expect(p.fixed_output_barrier && !p.identity_skip && !p.scale_applied, "assume_match fixed_out");
+        expect_eq(p.reason, "identity_fixed_out_barrier", "assume reason");
     }
 
     // --- Off never scales ---
@@ -334,14 +335,14 @@ int main() {
                 r.source_h = coded_h;
                 r.delivery_geometry_verified = true;
                 const auto skip = buildFfmpegVideoFilter(r);
-                expect(skip.identity_skip && !skip.scale_applied,
-                       "RED: force=0+verified exact may identity_skip");
+                expect(skip.fixed_output_barrier && !skip.identity_skip && !skip.scale_applied,
+                       "RED: force=0+verified exact uses fixed_out not raw identity");
                 // Always + verified exact → true identity (lab path).
                 r.scale_mode = FfmpegScaleMode::Always;
                 const auto id = buildFfmpegVideoFilter(r);
-                expect(id.identity_skip && !id.scale_applied,
+                expect(id.fixed_output_barrier && !id.identity_skip && !id.scale_applied,
                        "Always+verified exact is true identity");
-                expect_eq(id.reason, "force_exact_identity_crop_clear",
+                expect_eq(id.reason, "force_exact_fixed_out_crop_clear",
                           "Always+verified identity reason");
             }
         }
@@ -419,9 +420,10 @@ int main() {
         r.delivery_geometry_verified =
             deliveryGeometryVerifiedFromBasis("direct_play_part");
         const auto p = buildFfmpegVideoFilter(r);
-        expect(p.identity_skip && !p.scale_applied,
-               "DP 1280x720 verified → ARM scale evacuated");
-        expect(p.vf.find("scale=") == std::string::npos, "no scale filter on DP identity");
+        expect(p.fixed_output_barrier && !p.identity_skip && !p.scale_applied,
+               "DP 1280x720 verified → fixed_out not raw identity");
+        expect(p.vf.find("scale=1280:720:flags=neighbor") != std::string::npos,
+               "DP identity uses fixed_out pin");
     }
     // Negative: shorter coded height must NOT identity into 720 bank
     {
@@ -687,9 +689,10 @@ int main() {
         // 3b) Verified exact under Always: true identity (lab / measured-before-plan).
         r.delivery_geometry_verified = true;
         const auto pv = buildFfmpegVideoFilter(r);
-        expect(pv.identity_skip && !pv.scale_applied, "GREEN verified exact identity");
-        expect_eq(pv.reason, "force_exact_identity_crop_clear", "GREEN verified reason");
-        expect(pv.vf.empty() || pv.vf.rfind("fps=", 0) == 0, "GREEN verified empty/fps");
+        expect(pv.fixed_output_barrier && !pv.identity_skip && !pv.scale_applied, "GREEN verified fixed_out");
+        expect_eq(pv.reason, "force_exact_fixed_out_crop_clear", "GREEN verified reason");
+        expect(pv.vf.find("scale=624:480:flags=neighbor") != std::string::npos,
+               "GREEN verified fixed_out pin");
         r.delivery_geometry_verified = false;
 
         // 4) 240p tier still upscales via decrease into CODED (not display 618).
@@ -842,9 +845,11 @@ int main() {
         r.source_h = 720;
         r.delivery_geometry_verified = true;
         const auto id = buildFfmpegVideoFilter(r);
-        expect(id.identity_skip && !id.scale_applied, "720p verified identity_skip");
-        expect(id.vf.empty(), "720p identity vf empty");
-        expect_eq(id.reason, "identity_skip", "720p identity reason");
+        expect(id.fixed_output_barrier && !id.identity_skip && !id.scale_applied,
+               "720p verified fixed_out");
+        expect(id.vf.find("scale=1280:720:flags=neighbor") != std::string::npos,
+               "720p fixed_out pin");
+        expect_eq(id.reason, "identity_fixed_out_barrier", "720p identity reason");
 
         // NEGATIVE (lab rk7 br=2000): PMS answers 720x404 for a 1280x720 *request*.
         // Must scale into the bank — must NOT identity_skip as if true 720p.
@@ -870,19 +875,19 @@ int main() {
         // Direct-play class: assume_match + exact dims → skip (no ARM scale).
         r.assume_source_matches_coded = true;
         const auto dp = buildFfmpegVideoFilter(r);
-        expect(dp.identity_skip && !dp.scale_applied, "720p DP assume_match skips scale");
+        expect(dp.fixed_output_barrier && !dp.identity_skip && !dp.scale_applied, "720p DP assume_match fixed_out");
         std::printf("GREEN_PATH_720p_VF identity=verified short404=scale unv=scale dp=skip\n");
     }
 
-    // --- Identity mid-stream fail-closed (rd-duck): no post-change publish ---
+    // --- Identity mid-stream: raw identity_skip fail-closed + fixed_out safe ---
     {
         constexpr int kRw = 624, kRh = 480;
-        // Match → continue
+        // Residual RAW identity_skip (lab/off): Match → continue
         const auto ok =
             identitySkipGeomFailClosed(true, kRw, kRh, 624, 480, /*mid*/ false);
         expect(ok.allow_publish && ok.action == IdentityGeomFailClosedAction::Continue,
                "identity match allows publish");
-        // Mutation: 624x480 → 320x240 mid-stream under identity_skip
+        // Mutation under RAW identity_skip: policy aborts (defense in depth)
         const auto mut =
             identitySkipGeomFailClosed(true, kRw, kRh, 320, 240, /*mid*/ true);
         expect(!mut.allow_publish, "RED 624→320 mid-stream blocks publish");
@@ -890,7 +895,6 @@ int main() {
                "RED 624→320 aborts session");
         expect(std::string(mut.reason) == "identity_mid_stream_geom_change",
                "RED mid-stream reason");
-        // Sticky gate: once aborted, zero further publishes
         expect(!identitySkipMayPublish(false, mut), "first post-change denied");
         expect(!identitySkipMayPublish(true, ok), "sticky abort denies even match");
         int published_after = 0;
@@ -911,17 +915,41 @@ int main() {
         expect(sc.allow_publish && sc.action == IdentityGeomFailClosedAction::Continue,
                "force-scale mid-stream still Continue");
         expect(std::string(sc.reason) == "arm_scale_fallback_safe", "scale reason");
-        // First measurement mismatch (not mid) also fail-closed under identity
+        // PRODUCT: fixed_output_barrier makes mid-stream Continue (correctness)
+        const auto bar =
+            identitySkipGeomFailClosed(false, kRw, kRh, 320, 240, /*mid*/ true,
+                                       /*fixed_output_barrier=*/true);
+        expect(bar.allow_publish && std::string(bar.reason) == "fixed_output_barrier_safe",
+               "fixed_out barrier mid-stream safe");
+        // rd-duck race model: stderr abort observed 2 frames late → 3 mixed-risk
+        expect(identityRawRacePublishWindow(/*change_at=*/10, /*abort_at=*/12) == 3,
+               "race window change@10 abort@12 = 3 frames");
+        expect(identityRawRacePublishWindow(5, 5) == 1, "same-frame race window=1");
+        // Product plan for verified exact is barrier, not raw identity_skip
+        FfmpegVfRequest pr;
+        pr.coded_w = kRw;
+        pr.coded_h = kRh;
+        pr.display_w = kRw;
+        pr.display_h = kRh;
+        pr.scale_mode = FfmpegScaleMode::SkipIdentity;
+        pr.source_w = kRw;
+        pr.source_h = kRh;
+        pr.delivery_geometry_verified = true;
+        const auto plan = buildFfmpegVideoFilter(pr);
+        expect(plan.fixed_output_barrier && !plan.identity_skip, "product plan is barrier");
+        expect(plan.vf.find("scale=624:480:flags=neighbor") != std::string::npos,
+               "product vf pins coded size");
         const auto mm =
             identitySkipGeomFailClosed(true, kRw, kRh, 640, 480, /*mid*/ false);
         expect(!mm.allow_publish && std::string(mm.reason) == "identity_measured_ne_reader",
-               "identity mismatch abort");
-        // Bytes helper agrees on desync
+               "raw identity mismatch abort");
         const size_t R = yuv420pFrameBytesWH(624, 480);
         const size_t P = yuv420pFrameBytesWH(320, 240);
         const auto bb = identitySkipGeomFailClosedBytes(true, R, P, true);
         expect(!bb.allow_publish, "bytes helper aborts 320x240 producer");
-        std::printf("GREEN_PATH_identity_geom_fail_closed mutation_624_to_320=0_publish\n");
+        const auto bbBar = identitySkipGeomFailClosedBytes(false, R, P, true, true);
+        expect(bbBar.allow_publish, "bytes helper safe under barrier");
+        std::printf("GREEN_PATH_identity_fixed_out_barrier race_model+policy\n");
     }
 
     if (g_fails) {

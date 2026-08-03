@@ -332,7 +332,7 @@ private:
     pid_t spawnFfmpeg(const std::vector<std::string>& args, int vWriteFd, int aWriteFd,
                       int errWriteFd = -1);
     void ffmpegStderrPump(int errReadFd, size_t codedFrameBytes, bool identitySkip, int codedW,
-                          int codedH);
+                          int codedH, bool fixedOutputBarrier = false);
     pid_t spawnStreamDemux(const std::string& url, const std::string& headers, int64_t startMs,
                            int writeFd);
     pid_t spawnAudioOnly(const std::string& url, const std::string& headers, int64_t startMs,

@@ -158,16 +158,18 @@ int main() {
         expect(off.scale_applied && !off.identity_skip, "escape+unverified still scales");
         expect_eq_str(off.reason, "unverified_claim_scale_pad_coded", "escape guard reason");
 
-        // Escape force=0 + VERIFIED match → may identity-skip (lab/direct-play).
+        // Escape force=0 + VERIFIED match → fixed_out barrier (not raw identity_skip).
         r.delivery_geometry_verified = true;
         const auto ver = buildFfmpegVideoFilter(r);
-        expect(ver.identity_skip && !ver.scale_applied, "escape+verified may skip");
-        expect_eq_str(ver.reason, "identity_skip_crop_pad_clear", "verified skip reason");
-        // Always + verified exact → true identity.
+        expect(ver.fixed_output_barrier && !ver.identity_skip && !ver.scale_applied,
+               "escape+verified fixed_out");
+        expect_eq_str(ver.reason, "identity_fixed_out_crop_clear", "verified barrier reason");
+        // Always + verified exact → fixed_out barrier.
         r.scale_mode = FfmpegScaleMode::Always;
         const auto avid = buildFfmpegVideoFilter(r);
-        expect(avid.identity_skip && !avid.scale_applied, "Always+verified identity");
-        expect_eq_str(avid.reason, "force_exact_identity_crop_clear", "Always verified reason");
+        expect(avid.fixed_output_barrier && !avid.identity_skip && !avid.scale_applied,
+               "Always+verified fixed_out");
+        expect_eq_str(avid.reason, "force_exact_fixed_out_crop_clear", "Always verified reason");
         std::printf("GREEN_POLICY force_default_reason=%s escape_unverified=%s\n",
                     on.reason.c_str(), off.reason.c_str());
     }

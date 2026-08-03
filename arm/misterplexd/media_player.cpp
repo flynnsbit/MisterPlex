@@ -1516,7 +1516,7 @@ pid_t MediaPlayer::spawnFfmpeg(const std::vector<std::string>& args, int vWriteF
 }
 
 void MediaPlayer::ffmpegStderrPump(int errReadFd, size_t codedFrameBytes, bool identitySkip,
-                                   int codedW, int codedH) {
+                                   int codedW, int codedH, bool fixedOutputBarrier) {
     if (errReadFd < 0)
         return;
     std::string acc;
@@ -1662,12 +1662,13 @@ void MediaPlayer::ffmpegStderrPump(int errReadFd, size_t codedFrameBytes, bool i
                     " reader_bytes=" + std::to_string(codedFrameBytes) +
                     " identity_skip=1 tag=measured — raw pipe will phase-walk; force scale");
             }
-            // Fail-closed (rd-duck): identity_skip cannot rebuild vf after a
-            // measured mismatch or mid-stream size change. Abort session and
-            // block further DDR publishes — do not keep chunking fixed frameBytes.
+            // Fail-closed only for residual RAW identity_skip. Product identity-class
+            // plans use fixed_output_barrier so mid-stream input change cannot
+            // shear the raw reader (ffmpeg emits whole frames at coded WxH).
+            // stderr is diagnostic here — not the correctness interlock (rd-duck).
             {
                 const auto fc = identitySkipGeomFailClosed(identitySkip, codedW, codedH, g.w,
-                                                           g.h, changed);
+                                                           g.h, changed, fixedOutputBarrier);
                 if (fc.action == IdentityGeomFailClosedAction::AbortNoPublish) {
                     identityGeomAbort_.store(true, std::memory_order_release);
                     pipeDesyncRisk_.store(true, std::memory_order_relaxed);
@@ -1676,20 +1677,18 @@ void MediaPlayer::ffmpegStderrPump(int errReadFd, size_t codedFrameBytes, bool i
                         " measured=" + std::to_string(g.w) + "x" + std::to_string(g.h) +
                         " reader=" + std::to_string(codedW) + "x" + std::to_string(codedH) +
                         " mid_stream=" + (changed ? "1" : "0") +
-                        " identity_skip=1 action=stop_no_publish_until_restart tag=measured");
+                        " identity_skip=1 fixed_out_barrier=0 "
+                        "action=stop_no_publish_until_restart tag=measured");
                 }
             }
             if (changed) {
-                // Play-time GEOM / vf plan is fixed for the session. Unverified
-                // exact under Always uses crop+pad (not identity_skip) so the
-                // filter still emits coded WxH when input is large enough to crop;
-                // identity_skip cannot rebuild if it was taken. Surface loudly.
                 log("ERROR media: MEASURED_DELIVERY mid-stream change — play-time "
-                    "geometry guard cannot rebuild vf; identity_skip=" +
+                    "geometry guard; identity_skip=" +
                     std::string(identitySkip ? "1" : "0") +
-                    (identitySkip
+                    " fixed_out_barrier=" + (fixedOutputBarrier ? "1" : "0") +
+                    (identitySkip && !fixedOutputBarrier
                          ? " FAIL_CLOSED=IDENTITY_GEOM_ABORT"
-                         : " (crop+pad/scale pin OUTPUT only while those filters stay live)"));
+                         : " (fixed-out/scale pin keeps OUTPUT coded WxH; no mixed raster)"));
             }
         }
     }
@@ -3126,6 +3125,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             codedStr + " arm_rescale=" + (vfPlan.scale_applied ? "1" : "0") +
             " reason=" + vfPlan.reason +
             " identity_skip=" + (vfPlan.identity_skip ? "1" : "0") +
+            " fixed_out_barrier=" + (vfPlan.fixed_output_barrier ? "1" : "0") +
             " mode=" + ffmpegScaleModeName(vfReq.scale_mode) +
             " conf_mode=" + ffmpegScaleModeName(confScaleMode) +
             " yuv_ddr_force_scale=" + (forceScale ? "1" : "0") +
@@ -3601,8 +3601,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         std::thread errThr;
         if (pid >= 0 && epipe[0] >= 0) {
             errThr = std::thread([this, efd = epipe[0], frameBytes, idSkip = vfPlan.identity_skip,
-                                  cw = rawW, ch = rawH] {
-                ffmpegStderrPump(efd, frameBytes, idSkip, cw, ch);
+                                  barrier = vfPlan.fixed_output_barrier, cw = rawW,
+                                  ch = rawH] {
+                ffmpegStderrPump(efd, frameBytes, idSkip, cw, ch, barrier);
             });
         } else if (epipe[0] >= 0) {
             ::close(epipe[0]);
@@ -3841,16 +3842,19 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
 
         bool identityAbortPubLogged = false;
         auto presentCleanFrame = [&](uint8_t* cleanFrame, bool countPresent) {
-            // Fail-closed: never publish after identity geom abort (rd-duck).
-            // Fixed frameBytes read may already be sheared — drop, do not DDR.
+            // Residual raw identity_skip only: fixed_out_barrier paths cannot
+            // shear — suppress is belt-and-suspenders after IDENTITY_GEOM_ABORT.
             if (identityGeomAbort_.load(std::memory_order_acquire) ||
-                (vfPlan.identity_skip && pipeDesyncRisk_.load(std::memory_order_relaxed))) {
+                (vfPlan.identity_skip && !vfPlan.fixed_output_barrier &&
+                 pipeDesyncRisk_.load(std::memory_order_relaxed))) {
                 identityGeomAbort_.store(true, std::memory_order_release);
                 if (!identityAbortPubLogged) {
                     identityAbortPubLogged = true;
                     log("ERROR media: IDENTITY_GEOM_ABORT suppress_publish "
                         "identity_skip=" +
                         std::string(vfPlan.identity_skip ? "1" : "0") +
+                        " fixed_out_barrier=" +
+                        (vfPlan.fixed_output_barrier ? "1" : "0") +
                         " desync_risk=" +
                         (pipeDesyncRisk_.load() ? "1" : "0") +
                         " tag=measured — no post-change frame until FFmpeg restart");
@@ -3895,6 +3899,11 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 // Serialise with the OSD poller / idle painter: FpgaSpi keeps
                 // transaction state, so overlapping ioctls corrupt each other.
                 std::lock_guard<std::mutex> lk(presentMu_);
+                // Re-check abort under the same lock as DDR publish so a concurrent
+                // stderr abort cannot slip a frame through after the entry check
+                // (rd-duck). Does not un-mix bytes — fixed_out_barrier does that.
+                if (identityGeomAbort_.load(std::memory_order_acquire))
+                    return;
                 bool ok = false;
                 std::string ddrErr;
                 if (useDdrF1_) {
@@ -4723,9 +4732,10 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     supplyPrevInit = true;
                 }
             }
-            // Periodic hard check (B5): measured size vs reader under identity_skip.
-            // Fail-closed: mismatch aborts publish path (not log-only).
-            if (vfPlan.identity_skip && (frameIndex % 120) == 0) {
+            // Periodic hard check (B5): only residual RAW identity_skip can desync.
+            // fixed_out_barrier pins OUTPUT bytes — measured input mismatch is OK.
+            if (vfPlan.identity_skip && !vfPlan.fixed_output_barrier &&
+                (frameIndex % 120) == 0) {
                 const int mw = measuredDeliveryW_.load();
                 const int mh = measuredDeliveryH_.load();
                 if (mw > 0 && mh > 0) {

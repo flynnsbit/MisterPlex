@@ -98,8 +98,21 @@ struct FfmpegVfPlan {
     std::string vf;          // full -vf argument (may be empty)
     bool scale_applied = false;
     bool identity_skip = false;
+    // When true, vf pins every output frame to coded WxH (scale=cw:ch). Safe if
+    // the input geometry changes mid-stream: ffmpeg emits whole frames at fixed
+    // size — raw reader cannot assemble a mixed old/new raster. stderr abort is
+    // then diagnostic only, not the correctness interlock (rd-duck 2026-08-03).
+    // identity_skip (empty vf / raw unprotected) must stay false when this is set.
+    bool fixed_output_barrier = false;
     std::string reason;      // short machine token for logs
 };
+
+// Fixed-size pin for "content identity" paths. neighbor keeps cost low when
+// input already matches; if input shrinks/grows, output bytes stay coded WxH.
+inline std::string fixedOutputBarrierFilter(int coded_w, int coded_h) {
+    return "scale=" + std::to_string(coded_w) + ":" + std::to_string(coded_h) +
+           ":flags=neighbor";
+}
 
 // Build scale=WxH with optional :flags= after the geometry token and before
 // force_original_aspect_ratio (ffmpeg accepts both orders; keep flags early).
@@ -381,12 +394,18 @@ inline bool pipeDesyncRisk(size_t producer_frame_bytes, size_t reader_frame_byte
 }
 
 // --- Identity/native mid-stream geometry fail-closed (rd-duck 2026-08-03) ---
-// Play-time vf cannot rebuild after measurement changes. Under identity_skip the
-// reader still chunks fixed frameBytes — a producer size change shears the pipe
-// and can publish mixed frames. Request-policy cannot make that safe.
+// Play-time vf cannot rebuild after measurement changes. Under *raw*
+// identity_skip (empty vf) the reader still chunks fixed frameBytes — a
+// producer size change shears the pipe and can publish mixed frames.
+// stderr observation races the stdout reader and CANNOT be the interlock.
+//
+// Correctness barrier (product default): buildFfmpegVideoFilter emits a
+// fixed-output pin (fixed_output_barrier=1, identity_skip=0) on former
+// identity paths so every raw frame is coded WxH. Fail-closed below only
+// applies to residual raw identity_skip (scale_mode=off / lab).
 // Policy: on measured mismatch OR mid-stream change while identity_skip →
 // abort session and publish NO further frames until FFmpeg restart with a new
-// measured geometry. Force-scale (identity_skip=0) remains Continue (ARM bridges).
+// measured geometry. fixed_output_barrier / force-scale → Continue.
 enum class IdentityGeomFailClosedAction : uint8_t {
     Continue = 0,
     AbortNoPublish = 1,
@@ -398,13 +417,16 @@ struct IdentityGeomFailClosed {
     const char* reason = "ok";
 };
 
+// fixed_output_barrier makes mid-stream size change safe (ffmpeg re-scales each
+// whole frame). Pass barrier=true for product identity-class plans.
 inline IdentityGeomFailClosed identitySkipGeomFailClosed(bool identity_skip, int reader_w,
                                                          int reader_h, int measured_w,
                                                          int measured_h,
-                                                         bool mid_stream_change) {
+                                                         bool mid_stream_change,
+                                                         bool fixed_output_barrier = false) {
     IdentityGeomFailClosed d;
-    if (!identity_skip) {
-        d.reason = "arm_scale_fallback_safe";
+    if (fixed_output_barrier || !identity_skip) {
+        d.reason = fixed_output_barrier ? "fixed_output_barrier_safe" : "arm_scale_fallback_safe";
         return d;
     }
     if (measured_w <= 0 || measured_h <= 0) {
@@ -440,10 +462,11 @@ inline bool identitySkipMayPublish(bool already_aborted, const IdentityGeomFailC
 inline IdentityGeomFailClosed identitySkipGeomFailClosedBytes(bool identity_skip,
                                                               size_t reader_frame_bytes,
                                                               size_t producer_frame_bytes,
-                                                              bool mid_stream_change) {
-    if (!identity_skip) {
+                                                              bool mid_stream_change,
+                                                              bool fixed_output_barrier = false) {
+    if (fixed_output_barrier || !identity_skip) {
         IdentityGeomFailClosed d;
-        d.reason = "arm_scale_fallback_safe";
+        d.reason = fixed_output_barrier ? "fixed_output_barrier_safe" : "arm_scale_fallback_safe";
         return d;
     }
     if (mid_stream_change) {
@@ -468,6 +491,17 @@ inline IdentityGeomFailClosed identitySkipGeomFailClosedBytes(bool identity_skip
     IdentityGeomFailClosed d;
     d.reason = "identity_geom_match";
     return d;
+}
+
+// Model the stdout/stderr race rd-duck named: N frames may already be fully
+// read before stderr sets abort. A pure atomic check at present entry cannot
+// un-mix those bytes. Returns how many frames a barrier-less reader could still
+// publish after the producer size changed at frame `change_at` while abort is
+// only observed at `abort_observed_at` (abort_observed_at >= change_at).
+inline int identityRawRacePublishWindow(int change_at, int abort_observed_at) {
+    if (abort_observed_at < change_at)
+        return 0;
+    return abort_observed_at - change_at + 1; // inclusive frames that may be mixed/wrong
 }
 
 // I420 packed size (same as ddr_frame_layout yuv420pFrameBytes but local for
@@ -549,26 +583,37 @@ inline FfmpegVfPlan buildFfmpegVideoFilter(const FfmpegVfRequest& req) {
         vf += piece;
     };
 
-    auto finish = [&](bool scaled, bool skipped, const char* reason) {
+    auto finish = [&](bool scaled, bool skipped, const char* reason, bool barrier = false) {
         plan.vf = std::move(vf);
         plan.scale_applied = scaled;
         plan.identity_skip = skipped;
+        plan.fixed_output_barrier = barrier;
         plan.reason = reason;
         return plan;
+    };
+
+    // Content-identity class with fixed-output pin (rd-duck): never empty-vf raw
+    // identity_skip — that races stderr geom and can publish mixed frames.
+    auto finishExactFixedOut = [&](const char* reason) {
+        append(fixedOutputBarrierFilter(req.coded_w, req.coded_h));
+        // scale_applied=false: not product ARM resample class; barrier only.
+        // identity_skip=false: raw pipe is protected. FabricNative via !scale.
+        return finish(false, false, reason, /*barrier=*/true);
     };
 
     if (req.coded_w <= 0 || req.coded_h <= 0)
         return finish(false, false, "invalid_coded");
 
-    // Off: no scale/pad regardless of source (lab).
+    // Off: no scale/pad regardless of source (lab). RAW unprotected — only path
+    // that may still set identity_skip semantics via empty vf (caller beware).
     if (req.scale_mode == FfmpegScaleMode::Off)
         return finish(false, false, "scale_off");
 
-    // SkipIdentity: omit scale+pad only when verified delivery equals coded.
-    // Even when display crop is non-zero (624 coded / 618 display), a *verified*
-    // identity skip is intentional — clearYuv420pCropPadding blackens pad cols.
+    // SkipIdentity + verified exact: fixed-out pin (not raw identity_skip).
+    // Display crop still cleared on present (clearYuv420pCropPadding).
     if (req.scale_mode == FfmpegScaleMode::SkipIdentity && sourceMatchesCoded(req))
-        return finish(false, true, hasCrop ? "identity_skip_crop_pad_clear" : "identity_skip");
+        return finishExactFixedOut(hasCrop ? "identity_fixed_out_crop_clear"
+                                           : "identity_fixed_out_barrier");
 
     const bool exactCodedSource = req.source_w > 0 && req.source_h > 0 &&
                                   req.source_w == req.coded_w && req.source_h == req.coded_h;
@@ -590,12 +635,12 @@ inline FfmpegVfPlan buildFfmpegVideoFilter(const FfmpegVfRequest& req) {
     //   - 624x350: upscale/letterbox then pad (bytes safe; detail loss is Loss2)
     // Never identity_skip on unverified claims (MILESTONE 4 pipe desync).
     //
-    // Verified + Always: true identity; clearYuv420pCropPadding on present.
+    // Verified + Always: fixed-out barrier (not raw identity); crop pad clear.
     // FOAR into display 618 remains forbidden (row destroyer) — coded only.
     if (req.scale_mode == FfmpegScaleMode::Always && exactCodedSource) {
         if (!exactUnverified) {
-            return finish(false, true, hasCrop ? "force_exact_identity_crop_clear"
-                                               : "force_exact_identity");
+            return finishExactFixedOut(hasCrop ? "force_exact_fixed_out_crop_clear"
+                                               : "force_exact_fixed_out_barrier");
         }
         const std::string flagsExact =
             swsFlagsTokenOk(req.sws_flags) ? req.sws_flags : std::string();
