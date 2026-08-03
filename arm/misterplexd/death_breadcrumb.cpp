@@ -1,6 +1,7 @@
 #include "death_breadcrumb.hpp"
 
 #include <fcntl.h>
+#include <signal.h>
 #include <unistd.h>
 
 #include <chrono>
@@ -157,12 +158,17 @@ void writeDeathSigInfoSafe(const siginfo_t* info) {
     asAppendInt(buf, sizeof(buf), &o, info->si_signo);
     asAppend(buf, sizeof(buf), &o, " si_code=");
     asAppendInt(buf, sizeof(buf), &o, info->si_code);
-    // Linux: SI_USER=0 (kill/raise), SI_KERNEL=0x80. Highest-value race-free bit.
+    // Linux: SI_USER=0 (kill/raise), SI_KERNEL=0x80.
+    // SEGV_MAPERR=1 / SEGV_ACCERR=2 — needed to attribute rc=139 faults.
     asAppend(buf, sizeof(buf), &o, " si_code_name=");
     if (info->si_code == 0)
         asAppend(buf, sizeof(buf), &o, "SI_USER");
     else if (info->si_code == 0x80)
         asAppend(buf, sizeof(buf), &o, "SI_KERNEL");
+    else if (info->si_signo == SIGSEGV && info->si_code == 1)
+        asAppend(buf, sizeof(buf), &o, "SEGV_MAPERR");
+    else if (info->si_signo == SIGSEGV && info->si_code == 2)
+        asAppend(buf, sizeof(buf), &o, "SEGV_ACCERR");
     else
         asAppend(buf, sizeof(buf), &o, "OTHER");
     asAppend(buf, sizeof(buf), &o, " si_pid=");
@@ -248,6 +254,10 @@ void deathBreadcrumbExit(int code, const char* why) {
             siName = "SI_USER";
         else if (lastCode == 0x80)
             siName = "SI_KERNEL";
+        else if (lastSig == SIGSEGV && lastCode == 1)
+            siName = "SEGV_MAPERR";
+        else if (lastSig == SIGSEGV && lastCode == 2)
+            siName = "SEGV_ACCERR";
         else
             siName = "OTHER";
     }
@@ -267,6 +277,9 @@ void deathBreadcrumbExit(int code, const char* why) {
                  static_cast<long long>(uptimeS), static_cast<int>(::getpid()), lastSig,
                  lastCode, siName, lastPid,
                  g_deathPath.empty() ? "(unset)" : g_deathPath.c_str());
+    // Defect class: silent vanish on SD logs — flush BEFORE return so a kill-9
+    // mid-exit cannot leave the operator with an empty daemon log line.
+    std::fflush(stderr);
     if (g_deathPath.empty()) return;
     char line[640];
     const int n = std::snprintf(
@@ -284,6 +297,7 @@ void deathBreadcrumbExit(int code, const char* why) {
     const int fd = ::open(g_deathPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
     if (fd < 0) return;
     (void)::write(fd, line, static_cast<size_t>(n));
+    (void)::fsync(fd);
     ::close(fd);
     writeLastUnlocked(true);
 }
