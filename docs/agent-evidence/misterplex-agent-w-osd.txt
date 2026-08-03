@@ -220,4 +220,22 @@ NOT product-wired: needs ddr_frame_store arbiter slot (w-mem coord) + sys_top
 Parent DDR mmap evidence #3: noted; does not change this lane (zero per-pixel
   still required). Cached bank is w-mem milestone toward 720p24.
 
+Parent correction (mmap retracted): coherent mapping WORSE; serial ARM decode+copy
+  dead at all bitrates. Route B (fabric owns pixels) is the only close. This lane
+  is route B for overlay/idle/pace.
+
+========================================================================
+(i) E2E sim — DDR PLXC → pixels (route B proof in Verilator)
+========================================================================
+tests/unit/test_plex_chrome_e2e_rtl_sim.sh → true rc=0
+  loader + host_if + plex_chrome
+  PASS pre-load cfg off
+  PASS load-applied (seq=9)
+  PASS glyph-pixels white_px=256
+  PASS plxo chrome_hw
+  PASS idle (has_frame=0 → idle_en, idleish_px=199)
+
+Proves: ARM writeChromeCommandList shape (mem@0x140 then PLXC@0x130) becomes
+  fabric composite with zero ARM pixel bake. Product still needs ddr arbiter wire.
+
 ========================================================================
