@@ -1,0 +1,12 @@
+30A_primary: HT=1182 VT=564 fps=30.0008 Hblank=222 Vblank=24 act_mpix=15.552
+30B_alt: HT=1190 VT=560 fps=30.0120 Hblank=230 Vblank=20 act_mpix=15.558
+24_film_legacy: HT=1389 VT=600 fps=23.9981 Hblank=429 Vblank=60 act_mpix=12.441
+24_film_1182x705: HT=1182 VT=705 fps=24.0007 Hblank=222 Vblank=165 act_mpix=12.442
+true_de=1 ih=960 iv=540 de_pix=518400
+OK true_de=1 for 960x540 DE; island1280 true_de=0
+OK: 15.55 Mpix/s < 20 (1px) — B1 NOT required for ascal-native 1px path
+OK: 15.55 > 13.33 — B1 required only if MULTI_PIXEL serialize ON
+640x360@30 act_mpix=6.912
+SYNC H=992..1056 V=548..554
+PASS test_present_beam_960_arith
+PASS test_present_beam_960_arith (shell)

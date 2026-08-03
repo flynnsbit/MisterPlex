@@ -1,0 +1,45 @@
+e_rd or the C3 DDR frame store; not tied off.
+
+assign VGA_SL = 0;
+assign VGA_F1 = 0;
+assign VGA_SCALER  = 0;
+assign VGA_DISABLE = 0;
+assign HDMI_FREEZE = 0;
+assign HDMI_BLACKOUT = 0;
+assign HDMI_BOB_DEINT = 0;
+
+assign AUDIO_MIX = 0;
+assign LED_DISK = 0;
+assign LED_POWER = 0;
+assign BUTTONS = 0;
+
+//////////////////////////////////////////////////////////////////
+
+// B9 aspect: Original uses host DAR from PLXG when valid; never infer from coded WxH.
+// Full Screen → 0:0; ARC1/2 unchanged. See rtl/plex_video_ar.sv + docs/b9-display-aspect.md.
+wire [1:0] ar = status[122:121];
+// fabric_dar_* / fabric_content_fps from present_geom_latch q5 (parent ABI #2).
+// w-scaler consumes dar_*; w-clock consumes content_fps (do not hardcode 30).
+wire        fabric_dar_valid;
+wire [11:0] fabric_dar_x;
+wire [11:0] fabric_dar_y;
+wire        fabric_fps_valid;
+wire [7:0]  fabric_content_fps;
+plex_video_ar u_plex_video_ar (
+	.ar_menu(ar),
+	.host_dar_valid(fabric_dar_valid),
+	.host_dar_x(fabric_dar_x),
+	.host_dar_y(fabric_dar_y),
+	.VIDEO_ARX(VIDEO_ARX),
+	.VIDEO_ARY(VIDEO_ARY)
+);
+
+`include "build_id.v"
+localparam CONF_STR = {
+	"Plex;;",
+	"-;",
+	"F1,raw,RGB565 frame (320x240);",
+	"F2,raw,s16le stereo PCM @48k;",
+	"F3,264,H.264 annex-B elementary;",
+	"-;",
+	"O[122:121],Aspect ratio,Original,Full Screen,[AR

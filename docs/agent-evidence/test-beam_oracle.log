@@ -1,0 +1,47 @@
+RTL SIM: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+TIMING h_de=960 h_tot=1182 v_act=540 v_tot=564
+FPS fps_milli=30000 fps24_milli=23998 mode30=1
+FIXED_960x540 exact w=960 h=540 frames=2 pix=1036800 exp_pix=1036800 lines=1080 exp_lines=1080 line_acc=960..960
+OK FIXED_960x540 exact pix=1036800 line_acc=960..960 frames=2
+V705_960x540 exact w=960 h=540 frames=2 pix=1036800 exp_pix=1036800 lines=1080 exp_lines=1080 line_acc=960..960
+OK V705_960x540 exact pix=1036800 line_acc=960..960 frames=2
+OK V705 beam no-stall true_de=960x540 vtot=705 exact
+STA_ACK V705: sim exact OK; Fmax UNKNOWN until fit (prereg meet 20 MHz)
+RTGEOM_320x240 exact w=320 h=240 frames=2 pix=153600 exp_pix=153600 lines=480 exp_lines=480 line_acc=320..320
+OK RTGEOM_320x240 exact pix=153600 line_acc=320..320 frames=2
+RTGEOM_416x234 exact w=416 h=234 frames=2 pix=194688 exp_pix=194688 lines=468 exp_lines=468 line_acc=416..416
+OK RTGEOM_416x234 exact pix=194688 line_acc=416..416 frames=2
+RTGEOM_624x480 exact w=624 h=480 frames=2 pix=599040 exp_pix=599040 lines=960 exp_lines=960 line_acc=624..624
+OK RTGEOM_624x480 exact pix=599040 line_acc=624..624 frames=2
+RTGEOM_640x360 exact w=640 h=360 frames=2 pix=460800 exp_pix=460800 lines=720 exp_lines=720 line_acc=640..640
+OK RTGEOM_640x360 exact pix=460800 line_acc=640..640 frames=2
+RTGEOM_960x540 exact w=960 h=540 frames=2 pix=1036800 exp_pix=1036800 lines=1080 exp_lines=1080 line_acc=960..960
+OK RTGEOM_960x540 exact pix=1036800 line_acc=960..960 frames=2
+RED_TWIN fault_drop_one per geometry
+RTGEOM_320x240 exact w=320 h=240 frames=2 pix=153120 exp_pix=153600 lines=480 exp_lines=480 line_acc=319..319
+FAIL RTGEOM_320x240 line_acc=319..319 want 320..320
+FAIL RTGEOM_320x240 pix=153120 exp=153600 (drop/dup class)
+OK RED RTGEOM_320x240 caught drop-one-per-line
+RTGEOM_416x234 exact w=416 h=234 frames=2 pix=194220 exp_pix=194688 lines=468 exp_lines=468 line_acc=415..415
+FAIL RTGEOM_416x234 line_acc=415..415 want 416..416
+FAIL RTGEOM_416x234 pix=194220 exp=194688 (drop/dup class)
+OK RED RTGEOM_416x234 caught drop-one-per-line
+RTGEOM_624x480 exact w=624 h=480 frames=2 pix=598080 exp_pix=599040 lines=960 exp_lines=960 line_acc=623..623
+FAIL RTGEOM_624x480 line_acc=623..623 want 624..624
+FAIL RTGEOM_624x480 pix=598080 exp=599040 (drop/dup class)
+OK RED RTGEOM_624x480 caught drop-one-per-line
+RTGEOM_640x360 exact w=640 h=360 frames=2 pix=460080 exp_pix=460800 lines=720 exp_lines=720 line_acc=639..639
+FAIL RTGEOM_640x360 line_acc=639..639 want 640..640
+FAIL RTGEOM_640x360 pix=460080 exp=460800 (drop/dup class)
+OK RED RTGEOM_640x360 caught drop-one-per-line
+RTGEOM_960x540 exact w=960 h=540 frames=2 pix=1035720 exp_pix=1036800 lines=1080 exp_lines=1080 line_acc=959..959
+FAIL RTGEOM_960x540 line_acc=959..959 want 960..960
+FAIL RTGEOM_960x540 pix=1035720 exp=1036800 (drop/dup class)
+OK RED RTGEOM_960x540 caught drop-one-per-line
+PASS present_beam_960_oracle true_de=1 fps_milli=30000 b13_rtgeom_exact=1 red_per_geom=1
+- /home/flynnsbit/Projects/MisterPlex-wt-integ-product-v2/tests/rtl/present_beam_960_oracle_tb.sv:312: Verilog $finish
+- S i m u l a t i o n   R e p o r t: Verilator 5.051 devel
+- Verilator: $finish at 612ms; walltime 5.871 s; speed 104.332 ms/s
+- Verilator: cpu 5.858 s on 1 threads; allocated 7 MB
+true rc=0
+PASS test_present_beam_960_oracle true rc=0

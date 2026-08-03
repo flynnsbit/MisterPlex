@@ -1,0 +1,25 @@
+=== w-mem store / Option-C / reject path ===
+OK mem.rt_need_optc count=3 path=fpga/Plex_MiSTer/rtl/ddr_frame_store.sv
+OK mem.LEG_BANK_USABLE_BYTES count=2 path=fpga/Plex_MiSTer/rtl/ddr_frame_store.sv
+OK mem.rt_coded_w_16align count=1 path=fpga/Plex_MiSTer/rtl/ddr_frame_store.sv
+OK mem.geom_reject count=19 path=fpga/Plex_MiSTer/rtl/ddr_frame_store.sv
+=== collision #5 geom mux ===
+OK mem.plxg_live count=5 path=fpga/Plex_MiSTer/rtl/plex_present_geom_mux.sv
+OK mem.force_native_idle_only count=1 path=fpga/Plex_MiSTer/rtl/plex_present_geom_mux.sv
+=== ABI freeze PLXG ===
+OK abi.kPlxgOffset_0x800 count=1 path=host/libmisterplex/mailbox_abi_spec.hpp
+OK abi.kDdrFramePlxgOffset count=11 path=host/libmisterplex/ddr_frame_layout.hpp
+OK abi.layout_mentions_0x800 count=9 path=host/libmisterplex/ddr_frame_layout.hpp
+=== w-clock beam port list (owner) ===
+OK clock.use_rt_geom count=11 path=fpga/Plex_MiSTer/rtl/present_beam_content_de.sv
+OK clock.rt_h_total count=2 path=fpga/Plex_MiSTer/rtl/present_beam_content_de.sv
+OK clock.htot_active count=2 path=fpga/Plex_MiSTer/rtl/present_beam_content_de.sv
+=== w-scaler B9 DAR consumer ===
+OK scaler.plex_video_ar count=3 path=fpga/Plex_MiSTer/Plex.sv
+OK scaler.latch_q5_dar count=16 path=fpga/Plex_MiSTer/rtl/present_geom_latch.sv
+=== w-path / mem storage geometry APIs ===
+OK path.storage_geom_api count=5 path=host/libmisterplex/ddr_frame_layout.hpp
+=== PLXG q5 ABI #2 (doorbell+0x828) ===
+OK abi.q5_present
+=== summary pass=16 fail=0 ===
+test_integ_lane_evidence_markers: PASS

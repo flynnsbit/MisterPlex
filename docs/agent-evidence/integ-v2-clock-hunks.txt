@@ -1,0 +1,227 @@
+
+######## fpga/Plex_MiSTer/rtl/present_beam_content_de.sv hunks=6 ########
+
+--- hunk 1 ours_lines=6 theirs_lines=18 ---
+PRE: // present_beam_content_de — progressive content-sized DE beam (ascal-native). | //
+OURS head: ['// Emits true content DE: HBlank low for H_DE cycles, VBlank low for V_ACTIVE lines.', '// Default numbers match w-clock present_video_timing_960 MODE=0 (1182×564 @ 20 MHz → ~30.0008 Hz).', '//', '// Default OFF at present_core: `PRESENT_BEAM_960`. Does not replace Template colorbars', '// unless that macro is set. Island FAULT twin: PRESENT_BEAM_FAULT_ISLAND_1280 forces', '// H_DE=1280 / V_ACTIVE=720 while product content remains 960×540 (counter must RED).']
+THEIRS head: ['// B2b RASTER SOURCE OF TRUTH — the only module that emits hc/vc/DE/HS/VS.', '// present_video_timing_960.sv is math/constant pack only (not a generator).', '//', '// Emits true content DE: HBlank low for H_DE cycles, VBlank low for V_ACTIVE lines.', '// Default: 1182×564 @ 20 MHz → ~30.0008 Hz (fps_milli=30000).', '// Film companion: same H_TOTAL=1182, V_TOTAL=705 via rt_vtotal → ~24.0007 Hz.', '//', '// Runtime geometry (use_rt_geom / use_rt_vtotal):', '//   Host may change requests anytime. Captured every cycle; *applied* only at', '//   frame wrap (v_wrap) or reset. Mid-frame apply is FORBIDDEN (stall / torn DE).']
+only_ours_toks: ['Does', 'FAULT', 'Island', 'MODE', 'OFF', 'PRESENT_BEAM_960', 'PRESENT_BEAM_FAULT_ISLAND_1280', 'RED', 'Template', 'clock', 'counter', 'forces', 'macro', 'match', 'must', 'numbers', 'present_core', 'product', 'remains', 'replace', 'set', 'twin', 'unless', 'w', 'while']
+only_theirs_toks: ['B2b', 'BUILD_OK', 'Captured', 'FORBIDDEN', 'Film', 'Fmax', 'HS', 'H_TOTAL', 'Host', 'Mid', 'Never', 'OF', 'Plex', 'Pre', 'RASTER', 'Runtime', 'SOURCE', 'STA', 'Structure', 'Sync', 'TRUTH', 'UNKNOWN', 'VS', 'V_TOTAL', 'a', 'actives', 'also', 'always', 'anytime', 'applied']
+
+--- hunk 2 ours_lines=7 theirs_lines=20 ---
+PRE: 	parameter int H_TOTAL   = 1182, | 	parameter int V_TOTAL   = 564,
+OURS head: ['\tparameter int H_SYNC_S  = 960 + 32,', '\tparameter int H_SYNC_E  = 960 + 32 + 64,', '\tparameter int V_SYNC_S  = 540 + 8,', '\tparameter int V_SYNC_E  = 540 + 8 + 6', ')(', '\tinput  wire        clk,', '\tinput  wire        reset,']
+THEIRS head: ['\t// Legacy fixed sync (used when use_rt_geom=0). Runtime mode derives sync.', '\tparameter int H_SYNC_S  = 960 + 32,', '\tparameter int H_SYNC_E  = 960 + 32 + 64,', '\tparameter int V_SYNC_S  = 540 + 8,', '\tparameter int V_SYNC_E  = 540 + 8 + 6,', '\tparameter int H_FP      = 32,', '\tparameter int H_SW      = 64,', '\tparameter int V_FP      = 8,', '\tparameter int V_SW      = 6', ')(']
+only_ours_toks: []
+only_theirs_toks: ['Applied', 'Default', 'Full', 'H_DE', 'H_FP', 'H_SW', 'H_TOTAL', 'Legacy', 'OFF', 'Runtime', 'V_ACTIVE', 'V_FP', 'V_SW', 'V_TOTAL', 'at', 'derives', 'existing', 'fixed', 'geometry', 'mode', 'only', 'optional', 'path', 'rt_h_de', 'rt_h_total', 'rt_v_active', 'rt_vtotal', 'runtime', 'sync', 'use_rt_geom']
+
+--- hunk 3 ours_lines=6 theirs_lines=27 ---
+PRE: 	output reg         frame_start, | 	output wire [10:0] hc_out,
+OURS head: ['\toutput wire [10:0] vc_out', ');', '\tlocalparam int H_LAST = H_TOTAL - 1;', '\tlocalparam int V_LAST = V_TOTAL - 1;', '', '\t// Elab pins — must match w-clock primary class for product MODE.']
+THEIRS head: ['\toutput wire [10:0] vc_out,', '\t// Active totals for the frame currently in progress (post-latch).', '\toutput wire [10:0] vtot_active,', '\toutput wire [10:0] hde_active,', '\toutput wire [10:0] htot_active,', '\toutput wire [10:0] vact_active', ');', '\t// --- request mux + clamps (combinational; only sampled into regs at boundary) ---', "\twire [10:0] hde_min  = 11'd16;", "\twire [10:0] vact_min = 11'd16;"]
+only_ours_toks: ['H_LAST', 'MODE', 'V_LAST', 'class', 'clock', 'int', 'localparam', 'match', 'must', 'primary', 'product', 'w']
+only_theirs_toks: ['Active', 'H_DE', 'V_ACTIVE', 'at', 'blanking', 'boundary', 'clamps', 'clocks', 'combinational', 'currently', 'd16', 'd32', 'defaults', 'elab', 'frame', 'hde_active', 'hde_min', 'hde_req', 'hde_req0', 'htot_active', 'htot_floor', 'htot_min_pad', 'htot_req', 'htot_req0', 'in', 'into', 'known', 'latch', 'least', 'mux']
+
+--- hunk 4 ours_lines=2 theirs_lines=2 ---
+PRE: 		if (H_TOTAL <= H_DE) $error("present_beam_content_de: H_TOTAL must exceed H_DE"); | 		if (V_TOTAL <= V_ACTIVE) $error("present_beam_content_de: V_TOTAL must exceed V_ACTIVE");
+OURS head: ['\t\tif (H_SYNC_E > H_LAST) $error("present_beam_content_de: H_SYNC past line");', '\t\tif (V_SYNC_E > V_LAST) $error("present_beam_content_de: V_SYNC past frame");']
+THEIRS head: ['\t\tif (H_SYNC_E >= H_TOTAL) $error("present_beam_content_de: H_SYNC past line");', '\t\tif (V_SYNC_E >= V_TOTAL) $error("present_beam_content_de: V_SYNC past default frame");']
+only_ours_toks: ['H_LAST', 'V_LAST']
+only_theirs_toks: ['H_TOTAL', 'V_TOTAL', 'default']
+
+--- hunk 5 ours_lines=25 theirs_lines=27 ---
+PRE: 	reg [10:0] hc; | 	reg [10:0] vc;
+OURS head: ['\tassign hc_out = hc;', '\tassign vc_out = vc;', '', '\t// Next-counter epoch (combinational). Blank/sync NBA must use these so the', '\t// registered HBlank/VBlank/HSync correspond to the same hc/vc visible after', '\t// the edge. Using pre-update hc made wrap observe hc=0 with HBlank still 1,', '\t// so in_content=(hc<H_DE)&&~hb dropped x=0 every line', '\t// (store_id_checked=959*V_ACTIVE=517860 vs 518400) — rd-duck 34ddf031.', '\treg [10:0] hc_next;', '\treg [10:0] vc_next;']
+THEIRS head: ['\treg [10:0] hde_act;', '\treg [10:0] htot_act;', '\treg [10:0] vact_act;', '\treg [10:0] vtot_act;', '', '\tassign hc_out = hc;', '\tassign vc_out = vc;', '\tassign hde_active  = hde_act;', '\tassign htot_active = htot_act;', '\tassign vact_active = vact_act;']
+only_ours_toks: ['B1', 'Blank', 'DE', 'HBlank', 'HSync', 'H_DE', 'H_LAST', 'MHz', 'NBA', 'Next', 'Using', 'VBlank', 'V_ACTIVE', 'V_LAST', 'after', 'clk_sys', 'clock', 'combinational', 'content', 'correspond', 'counter', 'dropped', 'duck', 'edge', 'else', 'end', 'epoch', 'every', 'hb', 'hc_next']
+only_theirs_toks: ['Derived', 'H_FP', 'H_SW', 'H_SYNC_E', 'H_SYNC_S', 'V_FP', 'V_SW', 'V_SYNC_E', 'V_SYNC_S', 'actives', 'fixed', 'from', 'h_last', 'h_wrap', 'hc_n', 'hde_act', 'hde_active', 'hs_e', 'hs_s', 'htot_act', 'htot_active', 'latched', 'legacy', 'or', 'params', 'runtime', 'use_rt_geom', 'v_last', 'v_wrap', 'vact_act']
+
+--- hunk 6 ours_lines=27 theirs_lines=27 ---
+PRE: 			hc <= 11'd0; | 			vc <= 11'd0;
+OURS head: ["\t\t\tce_pix <= 1'b0;", "\t\t\tHBlank <= 1'b1;", "\t\t\tHSync  <= 1'b0;", "\t\t\tVBlank <= 1'b1;", "\t\t\tVSync  <= 1'b0;", '\t\tend else begin', '\t\t\thc <= hc_next;', '\t\t\tvc <= vc_next;', "\t\t\tif (hc == 11'(H_LAST) && vc == 11'(V_LAST))", "\t\t\t\tframe_start <= 1'b1;"]
+THEIRS head: ['\t\t\thde_act  <= hde_req;', '\t\t\thtot_act <= htot_req;', '\t\t\tvact_act <= vact_req;', '\t\t\tvtot_act <= vtot_req;', "\t\t\tce_pix <= 1'b0;", "\t\t\tHBlank <= 1'b0;", "\t\t\tHSync  <= 1'b0;", "\t\t\tVBlank <= 1'b0;", "\t\t\tVSync  <= 1'b0;", '\t\tend else begin']
+only_ours_toks: ['H_DE', 'H_LAST', 'H_SYNC_E', 'H_SYNC_S', 'Levels', 'Template', 'VS', 'V_ACTIVE', 'V_LAST', 'V_SYNC_E', 'V_SYNC_S', 'as', 'edges', 'epoch', 'hc_next', 'keying', 'on', 'registered', 'same', 'style', 'vc_next']
+only_theirs_toks: ['Apply', 'Blanks', 'NBA', 'a', 'after', 'completing', 'frame', 'geometry', 'hc_n', 'hc_out', 'hde_act', 'hde_req', 'hs_e', 'hs_s', 'htot_act', 'htot_req', 'levels', 'match', 'only', 'pending', 'so', 'sync', 'v_wrap', 'vact_act', 'vact_req', 'vc_n', 'vc_out', 'vs_e', 'vs_s', 'vtot_act']
+
+######## fpga/Plex_MiSTer/rtl/ddr_frame_store.sv hunks=4 ########
+
+--- hunk 1 ours_lines=1 theirs_lines=3 ---
+PRE: 	wire [CODED_Y_W-1:0] pref_y = WANT_Y_LINE_ONLY ? src_y_line : src_y; | 	wire [Y_QW_AW-1:0] y_rd_addr = src_x[CODED_X_W-1:3];
+OURS head: ['\t// Next Y qword for multi-pixel lanes that cross an 8-byte boundary.']
+THEIRS head: ['\t// Next Y qword for multi-pixel lanes that cross an 8-byte boundary (w-scaler', '\t// dual-port + w-clock yuv_bt601_npx.y_qword_hi). Beam x0%PPC==0 on 1280 DE', '\t// avoids active straddle for PPC in {2,4}; hi remains the safety net.']
+only_ours_toks: []
+only_theirs_toks: ['Beam', 'DE', 'PPC', 'active', 'avoids', 'clock', 'dual', 'hi', 'in', 'net', 'on', 'port', 'remains', 'safety', 'scaler', 'straddle', 'the', 'w', 'x0', 'y_qword_hi', 'yuv_bt601_npx']
+
+--- hunk 2 ours_lines=1 theirs_lines=6 ---
+PRE: 	reg [SLOT_W-1:0] y_hit_idx_r, c_hit_idx_r; | 	reg [2:0] y_sel_r, c_sel_r;
+OURS head: ['\treg [10:0] src_x_d;  // aligns with y_sel_r (one beam cycle)']
+THEIRS head: ['\t// N-pixel snapshot of beam qwords (aligned to scalar RGB commit cycle).', '\treg [63:0] npx_y_q_r, npx_y_q_hi_r, npx_u_q_r, npx_v_q_r;', '\treg [CODED_X_W-1:0] npx_src_x_r;', '\treg npx_commit_r;', '\treg npx_y_hi_valid_r;', '\treg [CODED_X_W-1:0] src_x_r;']
+only_ours_toks: ['aligns', 'one', 'src_x_d', 'with', 'y_sel_r']
+only_theirs_toks: ['CODED_X_W', 'N', 'RGB', 'aligned', 'commit', 'npx_commit_r', 'npx_src_x_r', 'npx_u_q_r', 'npx_v_q_r', 'npx_y_hi_valid_r', 'npx_y_q_hi_r', 'npx_y_q_r', 'of', 'pixel', 'qwords', 'scalar', 'snapshot', 'src_x_r', 'to']
+
+--- hunk 3 ours_lines=10 theirs_lines=8 ---
+PRE: 			y_sel_r <= 3'd0; | 			c_sel_r <= 3'd0;
+OURS head: ['`ifdef DDR_FRAME_STORE_EXPORT_QWORDS', "\t\t\trd_y_qword <= 64'd0;", "\t\t\trd_y_qword_hi <= 64'd0;", "\t\t\trd_y_hi_valid <= 1'b0;", "\t\t\trd_u_qword <= 64'd0;", "\t\t\trd_v_qword <= 64'd0;", "\t\t\trd_src_x_q <= 11'd0;", "\t\t\trd_qword_valid <= 1'b0;", '`endif', "\t\t\tsrc_x_d <= 11'd0;"]
+THEIRS head: ["\t\t\tnpx_y_q_r <= 64'd0;", "\t\t\tnpx_y_q_hi_r <= 64'd0;", "\t\t\tnpx_u_q_r <= 64'd0;", "\t\t\tnpx_v_q_r <= 64'd0;", "\t\t\tnpx_src_x_r <= '0;", "\t\t\tnpx_commit_r <= 1'b0;", "\t\t\tnpx_y_hi_valid_r <= 1'b0;", "\t\t\tsrc_x_r <= '0;"]
+only_ours_toks: ['DDR_FRAME_STORE_EXPORT_QWORDS', 'endif', 'ifdef', 'rd_qword_valid', 'rd_src_x_q', 'rd_u_qword', 'rd_v_qword', 'rd_y_hi_valid', 'rd_y_qword', 'rd_y_qword_hi', 'src_x_d']
+only_theirs_toks: ['npx_commit_r', 'npx_src_x_r', 'npx_u_q_r', 'npx_v_q_r', 'npx_y_hi_valid_r', 'npx_y_q_hi_r', 'npx_y_q_r', 'src_x_r']
+
+--- hunk 4 ours_lines=17 theirs_lines=1 ---
+PRE: 			y_sel_r <= src_x[2:0]; | 			c_sel_r <= src_x[3:1];
+OURS head: ['\t\t\t// Delay src_x one cycle to pair with y_sel_r / selected_* (hit_idx_r).', '\t\t\tsrc_x_d <= src_x[10:0];', '`ifdef DDR_FRAME_STORE_EXPORT_QWORDS', '\t\t\t// Export at the YUV-calc stage (matches yuv_bt601_npx inputs).', '\t\t\t// y_qword_hi is the next 8 Y samples when lanes straddle a qword', '\t\t\t// boundary (src_x_d[2:0] near 7, N>1). Single-pixel path ignores hi.', '\t\t\trd_y_qword <= selected_y_q;', '\t\t\trd_y_qword_hi <= selected_y_q_hi;', '\t\t\t// Valid when next qword index is inside the max linebuf (not past end).', '\t\t\trd_y_hi_valid <= rd_active_r && rd_visible_r && has_frame && y_hit_r && c_hit_r']
+THEIRS head: ['\t\t\tsrc_x_r <= src_x;']
+only_ours_toks: ['DDR_FRAME_STORE_EXPORT_QWORDS', 'Delay', 'Export', 'N', 'Single', 'Valid', 'Y', 'YUV', 'Y_LINE_QWORDS_MAX', 'a', 'at', 'b0', 'boundary', 'c_hit_r', 'calc', 'cycle', 'd1', 'end', 'endif', 'hFF', 'has_frame', 'hi', 'hit_idx_r', 'ifdef', 'ignores', 'index', 'inputs', 'inside', 'is', 'lanes']
+only_theirs_toks: ['src_x_r']
+
+######## fpga/Plex_MiSTer/rtl/present_core.sv hunks=7 ########
+
+--- hunk 1 ours_lines=25 theirs_lines=4 ---
+PRE: 	input  wire        use_frame_store, // OSD force bars when 1 | 
+OURS head: ['\t// Fabric content window (runtime). win_enable=0 → legacy full FRAME map.', '\t// When 1, NN-stretch content_w×content_h at (content_x0,content_y0) across DE.', '\t// 11-bit geometry is 720p-native (1280×720); host programs before ARM drops scale.', '\tinput  wire        win_enable,', '\tinput  wire [10:0] content_w,', '\tinput  wire [10:0] content_h,', '\tinput  wire [10:0] content_x0,', '\tinput  wire [10:0] content_y0,', '\t// 0 → defaults (h=529 FBAR, v=480). 720p DE is a reg write, not a redesign.', '\tinput  wire [10:0] win_h_de,']
+THEIRS head: ['\t// Delivered content geometry (PLXG / plex_present_geom_mux). B13 true-DE.', '\t// 0 → fall back to max-tier 960×540. w-mem owns mailbox; we only consume.', '\tinput  wire [10:0] content_w,', '\tinput  wire [10:0] content_h,']
+only_ours_toks: ['ARM', 'CODED', 'DDR', 'FBAR', 'FRAME', 'Fabric', 'NN', 'PLXW', 'Runtime', 'Safe', 'Sized', 'When', 'a', 'across', 'all', 'at', 'bank', 'before', 'bit', 'bytes', 'content_x0', 'content_y0', 'default', 'defaults', 'disable', 'drops', 'for', 'full', 'geom_chroma_stride', 'geom_coded_h']
+only_theirs_toks: ['B13', 'Delivered', 'PLXG', 'back', 'consume', 'fall', 'mailbox', 'max', 'mem', 'only', 'owns', 'plex_present_geom_mux', 'tier', 'to', 'true', 'w', 'we']
+
+--- hunk 2 ours_lines=37 theirs_lines=0 ---
+PRE: 	wire [7:0] br, bg, bb; | 	wire       ce_pix_i, hb, hs, vb, vs, fstart;
+OURS head: ['`ifdef PRESENT_BEAM_960', '\t// ascal-native true content DE (w-clock 1182×564 @20 MHz ≈ 30.0008 Hz).', '\t// Default OFF. FAULT: PRESENT_BEAM_FAULT_ISLAND_1280 → DE 1280×720 (must RED).', '\twire [10:0] hc, vc;', "\tassign br = 8'd0; assign bg = 8'd0; assign bb = 8'd0;", '\t// Pattern unused on beam path (no colorbars paint); keep for port parity.', "\twire [1:0] eff_pattern = use_frame_store ? 2'd1 : pattern;", '\t(* keep = 1 *) wire _beam960_keep_pat = |eff_pattern;', '`ifdef PRESENT_BEAM_FAULT_ISLAND_1280', '\tpresent_beam_content_de #(']
+THEIRS head: []
+only_ours_toks: ['DE', 'Default', 'FAULT', 'HBlank', 'HSync', 'H_DE', 'H_SYNC_E', 'H_SYNC_S', 'H_TOTAL', 'Hz', 'MHz', 'OFF', 'PRESENT_BEAM_960', 'PRESENT_BEAM_FAULT_ISLAND_1280', 'Pattern', 'RED', 'VBlank', 'VSync', 'V_ACTIVE', 'V_SYNC_E', 'V_SYNC_S', 'V_TOTAL', '_beam960_keep_pat', 'as', 'ascal', 'assign', 'bar', 'bb', 'beam', 'beam960']
+only_theirs_toks: []
+
+--- hunk 3 ours_lines=68 theirs_lines=9 ---
+PRE: `endif | 
+OURS head: ['\tlocalparam int FRAME_X_W = $clog2(FRAME_W);', '\tlocalparam int FRAME_Y_W = $clog2(FRAME_H);', '', '\t// Stretch store content across Template DE (colorbars hc/vc).', '\t//', '\t// Product (Plex.qsf FRAME_W=640 FRAME_H=480, forced scandouble):', '\t//   colorbars NTSC scandouble active vc=0..479 (VBlank asserts at vc==480).', '\t//   NATIVE_V_1TO1 maps store_y = vc with SCALE=1.0 so ALL FRAME_H rows are', '\t//   addressed (fixes the pre-T7 even-row-only ceiling: V_STORE=240 + scale 2.0).', '\t//']
+THEIRS head: ['\t// Stretch FRAME_W×FRAME_H across Template DE=529.', "\tlocalparam H_DE    = 10'd529;", '\tlocalparam int V_STORE = FRAME_H;', '\tlocalparam int STORE_X_SCALE = (FRAME_W * 39647) / 320;', '\tlocalparam int STORE_Y_SCALE = (FRAME_H * 65536) / V_STORE;', '', '\twire [9:0] py = vc;', "\twire [9:0] v_store = 10'(V_STORE);", '\tassign in_content = (hc < H_DE) && (py < v_store) && ~hb && ~vb;']
+only_ours_toks: ['ALL', 'ARM', 'ASCAL', 'Beam', 'Blank', 'Contract', 'Core', 'Counted', 'DE_LAG', 'Drive', 'FBAR', 'FIT', 'FRAME_', 'FRAME_X_W', 'FRAME_Y_W', 'Fabric', 'Fit', 'Full', 'HDMI', 'H_DE_I', 'Horizontal', 'Hz', 'Identity', 'Integrator', 'Island', 'Legacy', 'M10K', 'MHz', 'Mapping', 'NATIVE_V_1TO1']
+only_theirs_toks: ['assign', 'v_store']
+
+--- hunk 4 ours_lines=42 theirs_lines=20 ---
+PRE: 	wire                 past_last_row; | 
+OURS head: ['\tpresent_content_window #(', '\t\t.FRAME_W(FRAME_W),', '\t\t.FRAME_H(FRAME_H),', '\t\t.STORE_W(STORE_W_MAX),', '\t\t.STORE_H(STORE_H_MAX),', '\t\t.H_DE_DEFAULT(WIN_H_DE_DEFAULT),', '\t\t.V_DE_DEFAULT(WIN_V_DE_DEFAULT)', '\t) content_win (', '\t\t.clk(clk),', '\t\t.reset(reset),']
+THEIRS head: ['\tassign past_last_row = (py >= v_store);', "\twire [9:0] store_y_clamped = past_last_row ? (v_store - 10'd1) : py;", "\twire [31:0] store_y_scale = 32'(STORE_Y_SCALE);", '\twire [31:0] store_y_prod = store_y_clamped * store_y_scale;', '\twire [15:0] store_y_comb = store_y_prod[31:16];', '\twire [FRAME_Y_W-1:0] store_y_addr =', '\t\t(store_y_comb > FRAME_LAST_Y_16) ? FRAME_LAST_Y : store_y_comb[FRAME_Y_W-1:0];', '', '\talways @(posedge clk) begin', '\t\tif (reset) begin']
+only_ours_toks: ['DDR', 'FRAME', 'FRAME_H', 'FRAME_W', 'FRAME_X_W', 'Full', 'H_DE_DEFAULT', 'Keep', 'PRESENT_BEAM_960', 'SDRAM', 'STORE_H', 'STORE_H_MAX', 'STORE_W', 'STORE_W_MAX', 'STORE_X_SCALE', 'V_DE_DEFAULT', 'WIN_H_DE_DEFAULT', 'WIN_V_DE_DEFAULT', 'WIN_X_W', 'WIN_Y_W', '_keep_legacy_store_scale', 'ce_pix', 'child', 'content', 'content_h', 'content_w', 'content_win', 'content_x0', 'content_y0', 'd0']
+only_theirs_toks: ['FRAME_LAST_Y', 'FRAME_LAST_Y_16', 'always', 'assign', 'begin', 'd1', 'end', 'if', 'posedge', 'store_x_clamped', 'store_y_addr', 'store_y_clamped', 'store_y_comb', 'store_y_prod', 'store_y_scale', 'v_store']
+
+--- hunk 5 ours_lines=3 theirs_lines=174 ---
+PRE: `include "ddr_frame_layout_params.svh" | 
+OURS head: ['\t// B1: under PRESENT_BEAM_960 / OPTION_C the store compile-time LEG map is', '\t// Option-C (see ddr_frame_store `ifdef OPTION_C). PHYS_BASE_720P params are', '\t// always passed so capacity select and OPTION_C re-base share one source.']
+THEIRS head: ['\t// N-wide frame-store ports (PPC=1 ⇒ rd_*_n is scalar passthrough).', '\twire [PRESENT_PPC*8-1:0] fs_r_n, fs_g_n, fs_b_n;', '\twire [PRESENT_PPC-1:0]   fs_lane_v_n;', '\twire                     fs_n_valid;', '', '`ifdef PRESENT_MULTI_PIXEL', '\t// ------------------------------------------------------------------', '\t// Multi-pixel 1280×720 video mode (macro ON only).', '\t// Default build leaves this ifdef off → colorbars H_DE=529 Template', '\t// (FBAR/DE_LAG) is UNTOUCHED. Do not move H_DE=529 without parent grant.']
+only_ours_toks: ['B1', 'C', 'LEG', 'OPTION_C', 'Option', 'PHYS_BASE_720P', 'PRESENT_BEAM_960', 'are', 'base', 'capacity', 'compile', 'ddr_frame_store', 'params', 'passed', 're', 'select', 'share']
+only_theirs_toks: ['ALWAYS', 'Beam', 'Bresenham', 'CEA', 'CLK_PIX_HZ', 'CLK_PIX_PLL_PLAN', 'DE', 'DE_LAG', 'Default', 'Do', 'Equal', 'FBAR', 'FIFO', 'FRAME', 'FRAME_', 'FRAME_H', 'FRAME_LAST', 'FRAME_LAST_X', 'FRAME_LAST_Y', 'FRAME_W', 'FRAME_X_W', 'FRAME_Y_W', 'F_PIX', 'F_PIX_HZ', 'F_SYS_HZ', 'Glass', 'H', 'HBlank', 'HSync', 'H_DE']
+
+--- hunk 6 ours_lines=4 theirs_lines=1 ---
+PRE: 		.HPS_BANK_STRIDE_BYTES(DDR_FRAME_YUV420P_BANK_STRIDE), | 		.DOORBELL_PHYS(DDR_FRAME_YUV420P_DOORBELL_PHYS),
+OURS head: ['\t\t// Option-C banks (capacity select + compile-time OPTION_C LEG re-base)', '\t\t.PHYS_BASE_720P(DDR_FRAME_720P_PHYS_BASE),', '\t\t.HPS_BANK_STRIDE_BYTES_720P(DDR_FRAME_720P_YUV420P_BANK_STRIDE),', '\t\t.DOORBELL_PHYS_720P(DDR_FRAME_720P_YUV420P_DOORBELL_PHYS)']
+THEIRS head: ['\t\t.PX_PER_CLK(PRESENT_PPC)']
+only_ours_toks: ['C', 'DDR_FRAME_720P_PHYS_BASE', 'DDR_FRAME_720P_YUV420P_BANK_STRIDE', 'DDR_FRAME_720P_YUV420P_DOORBELL_PHYS', 'DOORBELL_PHYS_720P', 'HPS_BANK_STRIDE_BYTES_720P', 'LEG', 'OPTION_C', 'Option', 'PHYS_BASE_720P', 'banks', 'base', 'capacity', 'compile', 're', 'select', 'time']
+only_theirs_toks: ['PRESENT_PPC', 'PX_PER_CLK']
+
+--- hunk 7 ours_lines=17 theirs_lines=11 ---
+PRE: 		.clk_ddr(clk_ddr), | 		.reset(reset),
+OURS head: ['\t\t.rd_x(store_x_full),', '\t\t.rd_y(store_y_full),', '\t\t.rd_active(de_r),', '\t\t.rd_r(fr),', '\t\t.rd_g(fg),', '\t\t.rd_b(fb),', '\t\t.geom_enable(geom_enable),', '\t\t.rt_coded_w(geom_coded_w),', '\t\t.rt_coded_h(geom_coded_h),', '\t\t.rt_y_stride(geom_y_stride),']
+THEIRS head: ['\t\t.rd_x(fstore_rd_x),', '\t\t.rd_y(fstore_rd_y),', '\t\t.rd_active(fstore_rd_a),', '\t\t.rd_r(fr),', '\t\t.rd_g(fg),', '\t\t.rd_b(fb),', '\t\t.rd_r_n(fs_r_n),', '\t\t.rd_g_n(fs_g_n),', '\t\t.rd_b_n(fs_b_n),', '\t\t.rd_lane_valid_n(fs_lane_v_n),']
+only_ours_toks: ['de_r', 'geom_chroma_stride', 'geom_coded_h', 'geom_coded_w', 'geom_crop_left', 'geom_crop_top', 'geom_display_h', 'geom_display_w', 'geom_enable', 'geom_present_x', 'geom_present_y', 'geom_y_stride', 'rt_chroma_stride', 'rt_coded_h', 'rt_coded_w', 'rt_crop_left', 'rt_crop_top', 'rt_display_h', 'rt_display_w', 'rt_present_x', 'rt_present_y', 'rt_y_stride', 'store_x_full', 'store_y_full']
+only_theirs_toks: ['fs_b_n', 'fs_g_n', 'fs_lane_v_n', 'fs_n_valid', 'fs_r_n', 'fstore_rd_a', 'fstore_rd_x', 'fstore_rd_y', 'rd_b_n', 'rd_g_n', 'rd_lane_valid_n', 'rd_n_valid', 'rd_r_n']
+
+######## fpga/Plex_MiSTer/rtl/line_buf_ram.sv hunks=2 ########
+
+--- hunk 1 ours_lines=11 theirs_lines=7 ---
+PRE: 
+OURS head: ['// Parameterized WIDTH line buffer RAM (M10K).', '//', '// Dual-clock simple dual-port by default (1 write + 1 read) — one M10K bank.', '//', '// DUAL_RD=1: second independent read port on rd_clk (needed by ddr_frame_store', '// multi-pixel qword-straddle path: y_rd_addr + y_rd_addr_hi). Implemented as a', '// second physical bank written in lockstep — honest M10K cost ≈ 2×. Do NOT claim', '// single-M10K true dual-read under mixed wr_clk/rd_clk without measuring fit.', '//', '// DUAL_RD=0 (default): rd_addr_b ignored, rd_data_b driven 0. frame_store stays']
+THEIRS head: ['// Dual-clock line buffer RAM (M10K).', '// Port A: write (wr_clk) + read (rd_clk) — product simple dual-port path.', '// Port B: optional second read on rd_clk for multi-pixel Y qword+1 (straddle).', '// Callers that do not need B: tie rd_addr_b=0 and leave rd_data_b open.', '// Ownership: w-scaler dual-port for EXPORT_QWORDS; w-clock uses hi when PPC>1', '// groups can cross an 8-byte Y boundary. Beam guarantees x0%PPC==0 on 1280 DE', '// for PPC in {2,4} so active-region straddle does not occur; hi is safety net.']
+only_ours_toks: ['DUAL_RD', 'Do', 'Implemented', 'NOT', 'Parameterized', 'WIDTH', 'a', 'as', 'bank', 'by', 'claim', 'compile', 'connected', 'cost', 'ddr_frame_store', 'default', 'driven', 'exist', 'fit', 'frame_store', 'honest', 'ignored', 'independent', 'instances', 'lockstep', 'measuring', 'mixed', 'needed', 'one', 'physical']
+only_theirs_toks: ['A', 'B', 'Beam', 'Callers', 'DE', 'EXPORT_QWORDS', 'Ownership', 'PPC', 'Port', 'Y', 'active', 'an', 'and', 'boundary', 'byte', 'can', 'cross', 'do', 'does', 'for', 'groups', 'guarantees', 'hi', 'is', 'leave', 'need', 'net', 'not', 'occur', 'open']
+
+--- hunk 2 ours_lines=6 theirs_lines=4 ---
+PRE: 	input  wire [DATA_W-1:0] wr_data, | 
+OURS head: ['\tinput  wire              rd_clk,', '\tinput  wire [AW-1:0]     rd_addr,', '\toutput reg  [DATA_W-1:0] rd_data,', '\t// Optional second read (same rd_clk). Tie rd_addr_b=0, leave rd_data_b open', '\t// when DUAL_RD=0.', '\tinput  wire [AW-1:0]     rd_addr_b,']
+THEIRS head: ['\tinput  wire          rd_clk,', '\tinput  wire [AW-1:0] rd_addr,', '\toutput reg  [DATA_W-1:0] rd_data,', '\tinput  wire [AW-1:0] rd_addr_b,']
+only_ours_toks: ['DUAL_RD', 'Optional', 'Tie', 'leave', 'open', 'rd_data_b', 'read', 'same', 'second', 'when']
+only_theirs_toks: []
+
+######## fpga/Plex_MiSTer/Plex.sv hunks=2 ########
+
+--- hunk 1 ours_lines=0 theirs_lines=6 ---
+PRE: // Final content_width/height mux is after PLXG latch (PRESENT_BEAM_960 force). | wire        content_res_640x480 = status[4];
+OURS head: []
+THEIRS head: ["wire [9:0]  content_width       = content_res_640x480 ? 10'd640 : 10'd320;", "wire [9:0]  content_height      = content_res_640x480 ? 10'd480 : 10'd240;", '// B13: present_core consumes 11-bit delivered geom (PLXG when w-mem mux present).', '// Until PLXG live path is merged, OSD ladder still drives 640/320 here.', "wire [10:0] present_content_w = {1'b0, content_width};", "wire [10:0] present_content_h = {1'b0, content_height};"]
+only_ours_toks: []
+only_theirs_toks: ['B13', 'OSD', 'PLXG', 'Until', 'b0', 'bit', 'consumes', 'content_height', 'content_res_640x480', 'content_width', 'd240', 'd320', 'd480', 'd640', 'delivered', 'drives', 'geom', 'here', 'is', 'ladder', 'live', 'mem', 'merged', 'mux', 'path', 'present', 'present_content_h', 'present_content_w', 'present_core', 'still']
+
+--- hunk 2 ours_lines=7 theirs_lines=2 ---
+PRE: 	.audio_en(1'b0), | 	.use_frame_store(1'b0),
+OURS head: ['\t.win_enable(present_win_enable),', '\t.content_w(content_width),', '\t.content_h(content_height),', '\t.content_x0(present_content_x0),', '\t.content_y0(present_content_y0),', '\t.win_h_de(present_win_h_de),', '\t.win_v_de(present_win_v_de),']
+THEIRS head: ['\t.content_w(present_content_w),', '\t.content_h(present_content_h),']
+only_ours_toks: ['content_height', 'content_width', 'content_x0', 'content_y0', 'present_content_x0', 'present_content_y0', 'present_win_enable', 'present_win_h_de', 'present_win_v_de', 'win_enable', 'win_h_de', 'win_v_de']
+only_theirs_toks: ['present_content_h', 'present_content_w']
+
+######## host/libmisterplex/input_mailbox.hpp hunks=1 ########
+
+--- hunk 1 ours_lines=5 theirs_lines=5 ---
+PRE:         return debug_state == kFrameStoreDebugFormatError; |     }
+OURS head: ['    bool geomRejected() const {', '        return debug_state == kFrameStoreDebugGeomReject;', '    }', '    bool geomHollow() const {', '        return debug_state == kFrameStoreDebugGeomHollow;']
+THEIRS head: ['    // Fabric multi-pixel bridge reported at least one mid-stream empty (clk_pix).', '    bool pixUnderrunSticky() const { return (underrun_count & 0x8000u) != 0; }', '    // Low 15 bits only (store underruns + counted pix underrun events).', '    uint16_t underrunEventCount() const {', '        return static_cast<uint16_t>(underrun_count & 0x7FFFu);']
+only_ours_toks: ['debug_state', 'geomHollow', 'geomRejected', 'kFrameStoreDebugGeomHollow', 'kFrameStoreDebugGeomReject']
+only_theirs_toks: ['Fabric', 'Low', 'at', 'bits', 'bridge', 'clk_pix', 'counted', 'empty', 'events', 'least', 'mid', 'multi', 'one', 'only', 'pix', 'pixUnderrunSticky', 'pixel', 'reported', 'static_cast', 'store', 'stream', 'uint16_t', 'underrun', 'underrunEventCount', 'underrun_count', 'underruns']
+
+######## tests/unit/test_present_store_scale_math.cpp hunks=6 ########
+
+--- hunk 1 ours_lines=13 theirs_lines=7 ---
+PRE: 
+OURS head: ['// Product present_core store sampling math (w-geom T7).', '//', '// Pre-T7 defect (LOCKED AS HISTORY): V_STORE=240 + STORE_Y_SCALE=FRAME_H*65536/240', '// at FRAME_H=480 → only even store rows → half vertical detail discarded.', '//', '// T7 product path (Plex.qsf FRAME_W=640 FRAME_H=480):', '//   NATIVE_V_1TO1 → V_STORE=FRAME_H=480, STORE_Y_SCALE=1.0, py=vc', '//   → all 480 store rows addressed under scandouble active vc=0..479.', '//', '// Horizontal: H_DE=529 still samples 529 of 640 (clk_sys=20 MHz forbids H_DE=640']
+THEIRS head: ['// Product present_core store sampling math — T7b ceiling lock (w-fit).', '//', '// Legacy (c5382bee / 78eff44e PROG arm): V_STORE=240 + STORE_Y_SCALE=2.0 → even rows only.', '// Product fix (T7b): V_STORE=FRAME_H=480 + STORE_Y_SCALE=1.0 always — NO scandouble mux.', '//', '// Locks Plex.qsf FRAME_W=640 FRAME_H=480 (not ifndef 320/240, not CODED_W=624).', '// true rc direct. Soft-skip never. Red twin proves old even-row cull still enumerable.']
+only_ours_toks: ['AS', 'Documented', 'HISTORY', 'H_DE', 'Horizontal', 'Hz', 'LOCKED', 'MHz', 'NATIVE_V_1TO1', 'Pre', 'T7', 'active', 'addressed', 'all', 'at', 'clk_sys', 'defect', 'detail', 'discarded', 'forbids', 'geom', 'half', 'lines', 'of', 'over', 'papered', 'path', 'product', 'py', 'samples']
+only_theirs_toks: ['CODED_W', 'Legacy', 'Locks', 'NO', 'PROG', 'Red', 'T7b', 'always', 'arm', 'c5382bee', 'ceiling', 'cull', 'enumerable', 'fit', 'fix', 'ifndef', 'lock', 'mux', 'old', 'proves', 'row', 'twin']
+
+--- hunk 2 ours_lines=3 theirs_lines=3 ---
+PRE: } | 
+OURS head: ['// Mirror present_core T7 integer math.', 'int store_x_scale(int frame_w) { return (frame_w * 39647) / 320; }', 'int store_y_scale(int frame_h, int v_store) { return (frame_h * 65536) / v_store; }']
+THEIRS head: ['int store_x_scale(int frame_w) { return (frame_w * 39647) / 320; }', 'int store_y_scale_1to1(int frame_h) { return (frame_h * 65536) / frame_h; }', 'int store_y_scale_legacy_prog(int frame_h) { return (frame_h * 65536) / 240; }']
+only_ours_toks: ['Mirror', 'T7', 'integer', 'math', 'present_core', 'store_y_scale', 'v_store']
+only_theirs_toks: ['store_y_scale_1to1', 'store_y_scale_legacy_prog']
+
+--- hunk 3 ours_lines=1 theirs_lines=0 ---
+PRE:  | int main() {
+OURS head: ['    // --- Source locks (product build config + T7 RTL) ---']
+THEIRS head: []
+only_ours_toks: ['RTL', 'Source', 'T7', 'build', 'config', 'locks', 'product']
+only_theirs_toks: []
+
+--- hunk 4 ours_lines=7 theirs_lines=2 ---
+PRE:                          "DDR_FRAME_CODED_WIDTH = 624"), |            "CODED_W=624 separate from FRAME_W");
+OURS head: ['    EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv", "NATIVE_V_1TO1"),', '           "T7 NATIVE_V_1TO1 present");', '    EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",', '                         "localparam int V_STORE_I = NATIVE_V_1TO1 ? FRAME_H : 240"),', '           "V_STORE_I from FRAME_H when native");', '    EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv", "localparam H_DE = 10\'d529"),', '           "H_DE hardcoded 529");']
+THEIRS head: ['    EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv", "localparam H_DE    = 10\'d529"),', '           "H_DE hardcoded 529 (Template; H ceiling deferred)");']
+only_ours_toks: ['FRAME_H', 'NATIVE_V_1TO1', 'T7', 'V_STORE_I', 'from', 'int', 'native', 'present', 'when']
+only_theirs_toks: ['H', 'Template', 'ceiling', 'deferred']
+
+--- hunk 5 ours_lines=2 theirs_lines=2 ---
+PRE:            "no scandouble mux on store_y_scale"); |     EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
+OURS head: ['                         "STORE_Y_SCALE = (FRAME_H * 65536) / V_STORE_I"),', '           "STORE_Y_SCALE uses V_STORE_I");']
+THEIRS head: ['                         "wire [31:0] store_y_scale = 32\'(STORE_Y_SCALE)"),', '           "store_y_scale constant 1.0 (stops doubling)");']
+only_ours_toks: ['FRAME_H', 'V_STORE_I', 'uses']
+only_theirs_toks: ['constant', 'doubling', 'stops', 'store_y_scale', 'wire']
+
+--- hunk 6 ours_lines=86 theirs_lines=50 ---
+PRE:     constexpr int FRAME_H = 480; |     constexpr int H_DE = 529;
+OURS head: ['    constexpr int V_STORE = FRAME_H; // T7 native', "    constexpr int CLK_SYS_HZ = 20'000'000;", '    constexpr int REFRESH_HZ = 60;', '    constexpr int V_TOTAL_SD = 524; // colorbars NTSC scandouble wrap vc==523', '', '    const int sx_scale = store_x_scale(FRAME_W);', '    const int sy_scale = store_y_scale(FRAME_H, V_STORE);', '    std::printf("PRODUCT FRAME_W=%d FRAME_H=%d (from Plex.qsf macros)\\n", FRAME_W, FRAME_H);', '    std::printf("T7 V_STORE=%d STORE_X_SCALE=%d STORE_Y_SCALE=%d ratio_y=%.6f\\n", V_STORE,', '                sx_scale, sy_scale, double(sy_scale) / 65536.0);']
+THEIRS head: ['    constexpr int V_STORE = 480;', '    constexpr int V_STORE_LEGACY_PROG = 240;', '', '    const int sx_scale = store_x_scale(FRAME_W);', '    const int sy_1to1 = store_y_scale_1to1(FRAME_H);', '    const int sy_legacy = store_y_scale_legacy_prog(FRAME_H);', '    std::printf("PRODUCT FRAME_W=%d FRAME_H=%d\\n", FRAME_W, FRAME_H);', '    std::printf("STORE_X_SCALE=%d STORE_Y_SCALE=%d (legacy_prog was %d)\\n", sx_scale, sy_1to1,', '                sy_legacy);', '    EXPECT(sx_scale == 79294, "STORE_X_SCALE product = 640*39647/320 = 79294");']
+only_ours_toks: ['BW', 'Bandwidth', 'CLK', 'CLK_SYS', 'CLK_SYS_HZ', 'CODED', 'CODED_H', 'CODED_W', 'Clock', 'DDR', 'DDRAM', 'DE', 'ESTIMATE', 'FACT', 'FULL', 'H_total', 'Horizontal', 'Hz', 'I420', 'LH', 'Legacy', 'MB', 'MHz', 'Max', 'NOT', 'NTSC', 'O', 'Plex', 'Pre', 'RBF']
+only_theirs_toks: ['EVEN', 'OK', 'PLXD', 'PROG', 'RED', 'RED_TWIN', 'VERDICT_T7b', 'V_STORE_LEGACY_PROG', 'a', 'arm', 'bool', 'ceiling', 'deferred', 'enumerable', 'false', 'frames_done', 'hits', 'legacy_all_even', 'legacy_prog', 'no', 'odd_hit', 'odds', 'old', 'reference', 'regression', 'separate', 'so', 'stay', 'store_y_scale_1to1', 'store_y_scale_legacy_prog']
+
+######## tests/unit/test_rtl_invariants.py hunks=2 ########
+
+--- hunk 1 ours_lines=13 theirs_lines=23 ---
+PRE:  |     nt = norm(text)
+OURS head: ['    # T7: past_last_row is V_STORE-relative (product V_STORE=FRAME_H=480), not hard 240.', '    past_ok = (', '        "past_last_row=(py>=V_STORE)" in nt', '        and (', '            "store_y_clamped=past_last_row?V_STORE_LAST:py" in nt', '            or "store_y_clamped=past_last_row?10\'d239:py" in nt', '        )', '    )', '    check(', '        past_ok,']
+THEIRS head: ['    # Legacy (pre-T7): hard-coded V_STORE=240 even-row window.', '    # T7: scandouble mux V_STORE_SD/PROG (PROG was still 240 — P5=MISS on 78eff44e).', '    # T7b: v_store=FRAME_H always (no scandouble mux); clamp still on v_store.', '    legacy_y_clamp = (', '        "past_last_row=(py>=10\'d240)" in nt', '        and "store_y_clamped=past_last_row?10\'d239:py" in nt', '    )', '    t7_y_clamp = (', '        "past_last_row=(py>=v_store)" in nt', '        and "store_y_clamped=past_last_row?(v_store-10\'d1):py" in nt']
+only_ours_toks: ['V_STORE_LAST', 'not', 'past_ok', 'product', 'relative', 'surplus']
+only_theirs_toks: ['Legacy', 'MISS', 'P5', 'PROG', 'T7b', 'V_STORE_PROG', 'V_STORE_SD', 'active', 'always', 'd1', 'd240', 'even', 'legacy', 'legacy_y_clamp', 'localparamintV_STORE', 'mux', 'no', 'on', 'pre', 'scandouble', 'still', 'store', 't7_y_clamp', 't7b_y_clamp', 'v_store', 'was', 'window']
+
+--- hunk 2 ours_lines=11 theirs_lines=1 ---
+PRE:         "vb_d=vb|past_last_row" in nt, |         "present_core VBlank no longer includes past_last_row. The bottom-edge fix blanks rows "
+OURS head: ['        "past the content window; restore `vb_d = vb | past_last_row` or re-verify G-VID1.",', '    )', '    check(', '        "NATIVE_V_1TO1" in text and "V_STORE_I" in text,', '        "present_core missing NATIVE_V_1TO1 / V_STORE_I — product FRAME_H>240 must 1:1 map "', '        "store_y to vc so all 480 rows are fetched (T7 ceiling fix).",', '    )', '    check(', '        "STORE_Y_SCALE = (FRAME_H * 65536) / V_STORE_I" in text', '        or "STORE_Y_SCALE=(FRAME_H*65536)/V_STORE_I" in nt,']
+THEIRS head: ['        "past the active store window; restore `vb_d = vb | past_last_row` or re-verify G-VID1.",']
+only_ours_toks: ['FRAME_H', 'NATIVE_V_1TO1', 'STORE_Y_SCALE', 'T7', 'V_STORE_I', 'all', 'and', 'are', 'at', 'by', 'ceiling', 'check', 'content', 'divide', 'fetched', 'fix', 'hard', 'in', 'map', 'missing', 'must', 'not', 'nt', 'present_core', 'product', 'rows', 'so', 'store_y', 'text', 'to']
+only_theirs_toks: ['active', 'store']
+done

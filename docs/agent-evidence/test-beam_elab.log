@@ -1,0 +1,57 @@
+OK beam960_elab structural markers
+FAIL beam960_elab GREEN rc=2
+%Warning-NULLPORT: /home/flynnsbit/Projects/MisterPlex-wt-integ-product-v2/fpga/Plex_MiSTer/rtl/present_core.sv:152:1: Null port on module (perhaps extraneous comma)
+  152 | );
+      | ^
+                   ... For warning description see https://verilator.org/warn/NULLPORT?v=5.051
+                   ... Use "/* verilator lint_off NULLPORT */" and lint_on around source to disable this message.
+%Error-PINNOTFOUND: /home/flynnsbit/Projects/MisterPlex-wt-integ-product-v2/fpga/Plex_MiSTer/rtl/present_core.sv:590:4: Pin not found: 'rd_r_n'
+                                                                                                                      : ... Suggested alternative: 'rd_r'
+  590 |   .rd_r_n(fs_r_n),
+      |    ^~~~~~
+                                                                                                                      : ... Location of instance's module declaration
+   20 | module ddr_frame_store #(
+      |        ^~~~~~~~~~~~~~~
+                    ... For error description see https://verilator.org/warn/PINNOTFOUND?v=5.051
+%Error-PINNOTFOUND: /home/flynnsbit/Projects/MisterPlex-wt-integ-product-v2/fpga/Plex_MiSTer/rtl/present_core.sv:591:4: Pin not found: 'rd_g_n'
+                                                                                                                      : ... Suggested alternative: 'rd_g'
+  591 |   .rd_g_n(fs_g_n),
+      |    ^~~~~~
+                                                                                                                      : ... Location of instance's module declaration
+   20 | module ddr_frame_store #(
+      |        ^~~~~~~~~~~~~~~
+%Error-PINNOTFOUND: /home/flynnsbit/Projects/MisterPlex-wt-integ-product-v2/fpga/Plex_MiSTer/rtl/present_core.sv:592:4: Pin not found: 'rd_b_n'
+                                                                                                                      : ... Suggested alternative: 'rd_b'
+  592 |   .rd_b_n(fs_b_n),
+      |    ^~~~~~
+                                                                                                                      : ... Location of instance's module declaration
+   20 | module ddr_frame_store #(
+      |        ^~~~~~~~~~~~~~~
+%Error-PINNOTFOUND: /home/flynnsbit/Projects/MisterPlex-wt-integ-product-v2/fpga/Plex_MiSTer/rtl/present_core.sv:593:4: Pin not found: 'rd_lane_valid_n'
+  593 |   .rd_lane_valid_n(fs_lane_v_n),
+      |    ^~~~~~~~~~~~~~~
+                                                                                                                      : ... Location of instance's module declaration
+   20 | module ddr_frame_store #(
+      |        ^~~~~~~~~~~~~~~
+%Error-PINNOTFOUND: /home/flynnsbit/Projects/MisterPlex-wt-integ-product-v2/fpga/Plex_MiSTer/rtl/present_core.sv:594:4: Pin not found: 'rd_n_valid'
+  594 |   .rd_n_valid(fs_n_valid),
+      |    ^~~~~~~~~~
+                                                                                                                      : ... Location of instance's module declaration
+   20 | module ddr_frame_store #(
+      |        ^~~~~~~~~~~~~~~
+%Error-PINNOTFOUND: /home/flynnsbit/Projects/MisterPlex-wt-integ-product-v2/fpga/Plex_MiSTer/rtl/present_core.sv:579:4: Parameter not found: 'PX_PER_CLK'
+  579 |   .PX_PER_CLK(PRESENT_PPC)
+      |    ^~~~~~~~~~
+                                                                                                                      : ... Location of instance's module declaration
+   20 | module ddr_frame_store #(
+      |        ^~~~~~~~~~~~~~~
+%Error: Exiting due to 6 error(s)
+run_verilator: HARD FAIL — Verilator reported elab/bind/compile error (PINNOTFOUND/%Error). Not a pass, not a skip.
+%Error-PINNOTFOUND: /home/flynnsbit/Projects/MisterPlex-wt-integ-product-v2/fpga/Plex_MiSTer/rtl/present_core.sv:590:4: Pin not found: 'rd_r_n'
+                    ... For error description see https://verilator.org/warn/PINNOTFOUND?v=5.051
+%Error-PINNOTFOUND: /home/flynnsbit/Projects/MisterPlex-wt-integ-product-v2/fpga/Plex_MiSTer/rtl/present_core.sv:591:4: Pin not found: 'rd_g_n'
+%Error-PINNOTFOUND: /home/flynnsbit/Projects/MisterPlex-wt-integ-product-v2/fpga/Plex_MiSTer/rtl/present_core.sv:592:4: Pin not found: 'rd_b_n'
+%Error-PINNOTFOUND: /home/flynnsbit/Projects/MisterPlex-wt-integ-product-v2/fpga/Plex_MiSTer/rtl/present_core.sv:593:4: Pin not found: 'rd_lane_valid_n'
+%Error-PINNOTFOUND: /home/flynnsbit/Projects/MisterPlex-wt-integ-product-v2/fpga/Plex_MiSTer/rtl/present_core.sv:594:4: Pin not found: 'rd_n_valid'
+%Error-PINNOTFOUND: /home/flynnsbit/Projects/MisterPlex-wt-integ-product-v2/fpga/Plex_MiSTer/rtl/present_core.sv:579:4: Parameter not found: 'PX_PER_CLK'
+%Error: Exiting due to 6 error(s)

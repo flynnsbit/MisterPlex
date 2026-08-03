@@ -1,0 +1,5 @@
+OK beam960_elab structural markers
+OK beam960_elab GREEN rc=0
+OK beam960_elab RED_FRAME rc=2 (expect non-zero or %Error)
+OK beam960_elab DEFAULT rc=0
+PASS test_present_beam_960_elab true rc=0
