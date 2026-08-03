@@ -1,0 +1,51 @@
+{
+  "schema": 1,
+  "name": "misterplex-fabric-clock-headroom",
+  "doc": ".agent-work/w-clock/FABRIC_CLOCK_HEADROOM_PRESENT_AND_DECODE.md",
+  "tolerance_mhz": 0.001,
+  "clocks_mhz": {
+    "ship_clk_sys": 20.0,
+    "stub_fmax_8fdf440f": 23.46,
+    "nostub_fmax_parent": 32.04,
+    "nostub_fmax_c74c6863": 32.59,
+    "multi_pixel_fmax": null,
+    "multi_pixel_fmax_note": "unknown until integration STA with PRESENT_MULTI_PIXEL ON"
+  },
+  "present_rates_mhz": {
+    "content_720p24": 22.1184,
+    "cea_720p24": 29.7,
+    "cea_720p60": 74.25,
+    "cea_720p60_ppc2": 37.125,
+    "cea_720p60_ppc4": 18.5625,
+    "content_720p24_ppc2": 11.0592,
+    "content_720p24_ppc4": 5.5296
+  },
+  "present_verdict": {
+    "clk_sys_bump_required_for_fabric_work": false,
+    "same_clock_emits_cea_60hz": false,
+    "note": "PPC>=2 covers 720p24 fabric work under 20 MHz; CEA60 fabric work needs PPC=4. Output Hz needs clk_pix."
+  },
+  "ddr_yuv420_mib_s": {
+    "p720_24": 33.1776,
+    "p720_60": 82.944,
+    "clk_ddr_peak_90x8": 720.0
+  },
+  "decode_720p24": {
+    "mb_per_frame": 3600,
+    "mb_per_sec_24": 86400,
+    "cy_per_mb_budget": {
+      "ship_20": 231.481,
+      "nostub_32_04": 370.833
+    },
+    "measured_paint_cy_per_mb_788aa5f": 4036.9,
+    "analytical_i16_sink_cy_per_mb": 3173,
+    "verdict_paint_class_at_ship_20": "FAIL_WALL",
+    "verdict_pll_only_rescues_720p24_decode": false,
+    "f_need_mhz_at_paint_class": 348.8,
+    "sources": [
+      "docs/evidence/cycles_per_mb_breakdown_788aa5f.txt",
+      "docs/decode-throughput.md",
+      "docs/p3-mc-dpb-bandwidth.md"
+    ]
+  }
+}

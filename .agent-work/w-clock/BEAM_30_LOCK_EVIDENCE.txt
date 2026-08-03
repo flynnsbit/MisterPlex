@@ -1,0 +1,22 @@
+=== true_de contract (w-scaler) ===
+product true_de=1 rc=0; RED island rc=1
+=== true_de RTL PRODUCT_30_V564 ===
+CASE true_de_count EXECUTED mode=PRODUCT_30_V564 H_TOT=1182 V_TOT=564 clks/frame=666648 fps@20M=30.0008 de_w_min=960 de_w_max=960 de_lines=540 de_pixels=518400 de_uniform=1 store_req=518400 store_id_ok=1 store_id_fail=0/518400 store_x_range=0..959 store_x0=1 line_req=960..960 store_full=1 true_de=1 beam_expect=960x540 win_de=960x540 rt_vt=0
+PASS true_de_count mode=PRODUCT_30_V564 true_de=1 store_full=1 de=960x540 fps=30.0008
+CASE true_de_count EXECUTED mode=PRODUCT_24_V705 H_TOT=1182 V_TOT=705 clks/frame=833310 fps@20M=24.0007 de_w_min=960 de_w_max=960 de_lines=540 de_pixels=518400 de_uniform=1 store_req=518400 store_id_ok=1 store_id_fail=0/518400 store_x_range=0..959 store_x0=1 line_req=960..960 store_full=1 true_de=1 beam_expect=960x540 win_de=960x540 rt_vt=705
+PASS true_de_count mode=PRODUCT_24_V705 true_de=1 store_full=1 de=960x540 fps=24.0007
+=== arith ===
+30A_primary: HT=1182 VT=564 fps=30.0008 Hblank=222 Vblank=24 act_mpix=15.552
+30B_alt: HT=1190 VT=560 fps=30.0120 Hblank=230 Vblank=20 act_mpix=15.558
+24_film_legacy: HT=1389 VT=600 fps=23.9981 Hblank=429 Vblank=60 act_mpix=12.441
+24_film_1182x705: HT=1182 VT=705 fps=24.0007 Hblank=222 Vblank=165 act_mpix=12.442
+true_de=1 ih=960 iv=540 de_pix=518400
+OK true_de=1 for 960x540 DE; island1280 true_de=0
+OK: 15.55 Mpix/s < 20 (1px) — B1 NOT required for ascal-native 1px path
+OK: 15.55 > 13.33 — B1 required only if MULTI_PIXEL serialize ON
+640x360@30 act_mpix=6.912
+SYNC H=992..1056 V=548..554
+PASS test_present_beam_960_arith
+PASS test_present_beam_960_arith (shell)
+arith true rc=0
+stale_log_absent=yes

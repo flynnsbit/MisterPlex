@@ -515,19 +515,34 @@ def check_present_core() -> None:
     )
 
     nt = norm(text)
-    # T7: past_last_row is V_STORE-relative (product V_STORE=FRAME_H=480), not hard 240.
-    past_ok = (
+    # Mem T7 form (V_STORE localparam) OR clock legacy/T7/T7b forms.
+    past_ok_mem = (
         "past_last_row=(py>=V_STORE)" in nt
         and (
             "store_y_clamped=past_last_row?V_STORE_LAST:py" in nt
             or "store_y_clamped=past_last_row?10'd239:py" in nt
         )
     )
+    legacy_y_clamp = (
+        "past_last_row=(py>=10'd240)" in nt
+        and "store_y_clamped=past_last_row?10'd239:py" in nt
+    )
+    t7_y_clamp = (
+        "past_last_row=(py>=v_store)" in nt
+        and "store_y_clamped=past_last_row?(v_store-10'd1):py" in nt
+        and "v_store=scandouble?10'(V_STORE_SD):10'(V_STORE_PROG)" in nt
+    )
+    t7b_y_clamp = (
+        "past_last_row=(py>=v_store)" in nt
+        and "store_y_clamped=past_last_row?(v_store-10'd1):py" in nt
+        and "v_store=10'(V_STORE)" in nt
+        and "localparamintV_STORE=FRAME_H" in nt
+    )
     check(
-        past_ok,
-        "present_core past_last_row clamp is missing. It prevents fetching past V_STORE and "
-        "stops the surplus-row/bottom-edge artifact; restore past_last_row and store_y_clamped "
-        "(T7: py>=V_STORE / V_STORE_LAST, not hard-coded 240).",
+        past_ok_mem or legacy_y_clamp or t7_y_clamp or t7b_y_clamp,
+        "present_core past_last_row clamp is missing. It prevents fetching past the active "
+        "store window and stops the bottom-edge artifact; restore past_last_row and "
+        "store_y_clamped (mem V_STORE, legacy 240, T7 mux, or T7b v_store=FRAME_H).",
     )
     check(
         "vb_d=vb|past_last_row" in nt,

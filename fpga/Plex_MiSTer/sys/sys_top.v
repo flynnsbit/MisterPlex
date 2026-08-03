@@ -1177,6 +1177,41 @@ cyclonev_hps_interface_peripheral_i2c hdmi_i2c
 		.de_out(hdmi_de_mask)
 	);
 
+	// plex_chrome: post-ascal / post-shadowmask player chrome (HDMI output res).
+	// BOOT_DEMO paints a single '#' so glass can score body_scale without PLXC ARM.
+	wire [23:0] hdmi_data_chrome;
+	wire        hdmi_de_chrome, hdmi_vs_chrome, hdmi_hs_chrome;
+	wire        plex_chrome_hw;
+	wire [11:0] plex_chrome_mon_w, plex_chrome_mon_h;
+	wire [3:0]  plex_chrome_mon_scale;
+
+	plex_chrome #(
+		.BOOT_DEMO(1)
+	) u_plex_chrome (
+		.clk_hdmi(clk_hdmi),
+		.reset(reset_req),
+		.HDMI_WIDTH(hdmi_width),
+		.HDMI_HEIGHT(hdmi_height),
+		.din(hdmi_data_mask),
+		.hs_in(hdmi_hs_mask),
+		.vs_in(hdmi_vs_mask),
+		.de_in(hdmi_de_mask),
+		.dout(hdmi_data_chrome),
+		.hs_out(hdmi_hs_chrome),
+		.vs_out(hdmi_vs_chrome),
+		.de_out(hdmi_de_chrome),
+		.cfg_enable(1'b1),
+		.cfg_seq(16'd1),
+		.cfg_cmd_count(8'd1),
+		.list_we(1'b0),
+		.list_waddr(8'd0),
+		.list_wdata(64'd0),
+		.chrome_hw(plex_chrome_hw),
+		.mon_width(plex_chrome_mon_w),
+		.mon_height(plex_chrome_mon_h),
+		.mon_body_scale(plex_chrome_mon_scale)
+	);
+
 	wire [23:0] hdmi_data_osd;
 	wire        hdmi_de_osd, hdmi_vs_osd, hdmi_hs_osd;
 
@@ -1189,10 +1224,10 @@ cyclonev_hps_interface_peripheral_i2c hdmi_i2c
 		.io_din(io_din),
 
 		.clk_video(clk_hdmi),
-		.din(hdmi_data_mask),
-		.hs_in(hdmi_hs_mask),
-		.vs_in(hdmi_vs_mask),
-		.de_in(hdmi_de_mask),
+		.din(hdmi_data_chrome),
+		.hs_in(hdmi_hs_chrome),
+		.vs_in(hdmi_vs_chrome),
+		.de_in(hdmi_de_chrome),
 
 		.dout(hdmi_data_osd),
 		.hs_out(hdmi_hs_osd),

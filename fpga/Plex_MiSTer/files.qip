@@ -48,5 +48,13 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_decode_core.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/decode_stub.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/stream_path.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_core.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/yuv_bt601_npx.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_beam_ppc.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_npx_path.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_pix_rate_match.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_video_timing_720p.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_video_timing_960.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_beam_content_de.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/plex_chrome.sv
 set_global_assignment -name SDC_FILE Plex.sdc
 set_global_assignment -name SYSTEMVERILOG_FILE Plex.sv

@@ -5,7 +5,7 @@ CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -I$(ROOT)/host
 FFMPEG_CFLAGS := $(shell pkg-config --cflags libavformat libavcodec libavutil 2>/dev/null)
 FFMPEG_LIBS   := $(shell pkg-config --libs libavformat libavcodec libavutil 2>/dev/null)
 
-.PHONY: all preflight unit unit-unlocked unit-rollcall rtl-sim rtl-sim-unlocked rtl-lint verilator-elab quartus-sv-subset define-parity pre-synth-gates post-fit-hierarchy post-fit-timing post-fit-timing-margin timing-exclusion pms-baseline-check pms-baseline-live pms-nal-stats arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools check-core-conf-geometry
+.PHONY: all preflight unit unit-unlocked unit-rollcall rtl-sim rtl-sim-unlocked rtl-lint verilator-elab quartus-sv-subset define-parity pre-synth-gates post-fit-hierarchy post-fit-chrome-elision post-fit-timing post-fit-timing-margin pll-clock-contract multi-pixel-present-contract present-720p-fit-contract fabric-clock-headroom clk-pix-pll-plan clk-pix-sta-prereg fabric-decode-inventory timing-exclusion pms-baseline-check pms-baseline-live pms-nal-stats arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools check-core-conf-geometry
 
 all: unit
 
@@ -19,8 +19,12 @@ help:
 	@echo "  make define-parity - Quartus↔Verilator macros + host/RTL DDR geometry constants"
 	@echo "  make pre-synth-gates - run define parity + fast pre-Quartus RTL buildability gates"
 	@echo "  make post-fit-hierarchy FIT_RPT=... [MAP_RPT=...] [COMPILE_LOG=...] - critical fitted-module guard"
+	@echo "  make post-fit-chrome-elision FIT_RPT=... [MAP_RPT=...] - plex_chrome list RAM must survive fit (c74c6863 class)"
+	@echo "  make fabric-decode-inventory FIT_RPT=... - H.264 fabric present/absent vs phase3-decode.md"
 	@echo "  make post-fit-timing STA_RPT=... - fail negative Quartus timing slack"
 	@echo "  make post-fit-timing-margin STA_RPT=... - fail STA margin regression vs wtime4 baseline"
+	@echo "  make pll-clock-contract [STA_RPT=...] [ACTIVATE_TARGET=B_30_90] - PLL/720p clock contract"
+	@echo "  make multi-pixel-present-contract - 720p N-px/clk clk_sys arithmetic gate"
 	@echo "  make timing-exclusion [STA_RPT=...] - detect timing closed by exclusion not design"
 	@echo "  make pms-baseline-check - live PMS delivered-SPS guard (requires PLEX_BASE/TOKEN/KEY)"
 	@echo "  make pms-baseline-live - secret-safe live PMS Baseline gate; prompts for token"
@@ -192,11 +196,33 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	python3 $(ROOT)/tests/unit/test_hw_visual_compare.py
 	$(ROOT)/tests/unit/test_decode_throughput_gate.sh
 	$(ROOT)/tests/unit/test_rtl_invariants.sh
+	$(ROOT)/tests/unit/test_fabric_decode_inventory.sh
+	$(ROOT)/tests/unit/test_product_no_stub_dark_silicon.sh
+	python3 $(ROOT)/tests/unit/test_telem_flags_abi.py
+	$(ROOT)/tests/unit/test_plex_chrome_elision_guard.sh
 	$(ROOT)/tests/unit/test_mister_ini_plex_guard.sh
 	$(ROOT)/tests/unit/test_confstr_guard.sh
 	$(ROOT)/tests/unit/test_core_conf_geometry_gate.sh
 	$(ROOT)/tests/unit/test_video_regression_liveness.sh
 	$(ROOT)/tests/unit/test_timing_margin_gate.sh
+	$(ROOT)/tests/unit/test_pll_clock_contract.sh
+	$(ROOT)/tests/unit/test_multi_pixel_present.sh
+	$(ROOT)/tests/unit/test_yuv_bt601_npx_verilator.sh
+	$(ROOT)/tests/unit/test_present_npx_path_verilator.sh
+	$(ROOT)/tests/unit/test_present_npx_cdc_soak.sh
+	$(ROOT)/tests/unit/test_present_beam_720p_verilator.sh
+	$(ROOT)/tests/unit/test_present_720p_fit_contract.sh
+	$(ROOT)/tests/unit/test_fabric_clock_headroom.sh
+	$(ROOT)/tests/unit/test_clk_pix_pll_plan.sh
+	$(ROOT)/tests/unit/test_clk_pix_sta_prereg.sh
+	$(ROOT)/tests/unit/test_present_pix_rate_match.sh
+	$(ROOT)/tests/unit/test_present_npx_sync_sideband.sh
+	$(ROOT)/tests/unit/test_present_npx_first_last_de.sh
+	$(ROOT)/tests/unit/test_mp_ur_count_sat.sh
+	$(ROOT)/tests/unit/test_present_multi_pixel_elab.sh
+	$(ROOT)/tests/unit/test_present_beam_960_arith.sh
+	$(ROOT)/tests/unit/test_present_beam_960_oracle.sh
+	$(ROOT)/tests/unit/test_present_beam_960_elab.sh
 	$(ROOT)/tests/unit/test_release_rbf_hash.sh
 	$(ROOT)/tests/unit/test_release_pair_gate.sh
 	$(ROOT)/tests/unit/test_package_validated_pair.sh
@@ -296,6 +322,23 @@ post-fit-hierarchy:
 		$(if $(MAP_RPT),--map-rpt "$(MAP_RPT)",) \
 		$(if $(COMPILE_LOG),--log "$(COMPILE_LOG)",)
 
+# plex_chrome command-list RAM retention (c74c6863: entity present, M10K/bits=0 ⇒ NO-DATA).
+# HARD FAIL when list RAM elided or map marks list_a/list_b Stuck at GND.
+post-fit-chrome-elision:
+	@if [ -z "$(FIT_RPT)" ]; then echo "FIT_RPT is required" >&2; exit 2; fi
+	$(ROOT)/scripts/check_plex_chrome_elision.py --fit-rpt "$(FIT_RPT)" \
+		$(if $(MAP_RPT),--map-rpt "$(MAP_RPT)",)
+
+# Shipping H.264 fabric inventory: fit.rpt PRESENT/ABSENT + phase3-decode.md table.
+# Default is the checked-in 8fdf440f excerpt (offline unit green). After BUILD_OK:
+#   make fabric-decode-inventory FIT_RPT=path/to/Plex.fit.rpt
+FABRIC_FIT_RPT ?= $(ROOT)/tests/fixtures/fabric_decode_fit_hierarchy_8fdf440f.excerpt.rpt
+fabric-decode-inventory:
+	$(ROOT)/scripts/check_fabric_decode_inventory.py \
+		--fit-rpt "$(if $(FIT_RPT),$(FIT_RPT),$(FABRIC_FIT_RPT))" \
+		--fixture $(ROOT)/tests/fixtures/fabric_decode_inventory.json \
+		--doc $(ROOT)/docs/phase3-decode.md --require-doc
+
 post-fit-timing:
 	@if [ -z "$(STA_RPT)" ]; then echo "STA_RPT is required" >&2; exit 2; fi
 	$(ROOT)/scripts/check_quartus_timing.py --sta-rpt "$(STA_RPT)"
@@ -305,6 +348,34 @@ post-fit-timing:
 post-fit-timing-margin:
 	@if [ -z "$(STA_RPT)" ]; then echo "STA_RPT is required" >&2; exit 2; fi
 	$(ROOT)/scripts/check_timing_margin.py --sta-rpt "$(STA_RPT)"
+
+# Shipping PLL + 720p clk_sys arithmetic contract (assets/pll_clock_contract.json).
+# Optional STA_RPT enforces Fmax ≥ constrained (or ACTIVATE_TARGET proposed rate).
+pll-clock-contract:
+	$(ROOT)/scripts/check_pll_clock_contract.py \
+		$(if $(STA_RPT),--sta-rpt "$(STA_RPT)",) \
+		$(if $(ACTIVATE_TARGET),--activate-target "$(ACTIVATE_TARGET)",) \
+		$(if $(ALLOW_PLL_BUMP),--allow-pll-bump,)
+
+# 720p multi-pixel present clk_sys arithmetic (1/2/4 ppc). Macro PRESENT_MULTI_PIXEL defaults OFF.
+multi-pixel-present-contract:
+	$(ROOT)/scripts/check_multi_pixel_present.py --root $(ROOT) --require-rtl
+
+# Pre-fit survival: SDC async_fifo cut, edge/H ownership arith, 4ppc rates (no STA slack).
+present-720p-fit-contract:
+	$(ROOT)/scripts/check_present_720p_fit_contract.py --root $(ROOT)
+
+# Present no-bump + 720p24 fabric-decode cy/MB wall (arithmetic only).
+fabric-clock-headroom:
+	$(ROOT)/scripts/check_fabric_clock_headroom.py --root $(ROOT)
+
+# Separate clk_pix PLL plan (29.7/74.25) — proposed only; shipping PLL untouched.
+clk-pix-pll-plan:
+	$(ROOT)/scripts/check_clk_pix_pll_plan.py --root $(ROOT)
+
+# Pre-registered STA pass/fail cuts for clk_pix stages (before fit).
+clk-pix-sta-prereg:
+	$(ROOT)/scripts/check_clk_pix_sta_prereg.py --root $(ROOT)
 
 timing-exclusion:
 	$(ROOT)/scripts/check_timing_exclusions.py $(if $(STA_RPT),--sta-rpt "$(STA_RPT)",)
@@ -699,6 +770,10 @@ $(ROOT)/build/test_input_mailbox: $(ROOT)/tests/unit/test_input_mailbox.cpp \
 		$(ROOT)/host/libmisterplex/mailbox_abi_spec.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_input_mailbox.cpp
+# Relative convenience — absolute-only rule makes `make build/test_input_mailbox` a no-op miss.
+build/test_input_mailbox: $(ROOT)/build/test_input_mailbox
+	@true
+
 
 $(ROOT)/build/test_pixel_format: $(ROOT)/tests/unit/test_pixel_format.cpp \
 		$(ROOT)/host/libmisterplex/pixel_format.hpp

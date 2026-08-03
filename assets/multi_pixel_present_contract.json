@@ -1,0 +1,131 @@
+{
+  "schema": 1,
+  "name": "misterplex-multi-pixel-present-contract",
+  "description": "clk_sys need for 720p content/CEA rasters at 1/2/4 px per clk. Design: .agent-work/w-clock/MULTI_PIXEL_PRESENT_DESIGN.md. Product macro PRESENT_MULTI_PIXEL defaults OFF.",
+  "measured_fmax_mhz": {
+    "shipping_pll_clk_sys": 20.0,
+    "stub_in_8fdf440f": 23.46,
+    "nostub_c74c6863": 32.59,
+    "source": "Plex.sta.rpt Fmax Summary via scripts/check_quartus_timing.py / pll_clock_contract"
+  },
+  "px_per_clk_legal": [
+    1,
+    2,
+    4
+  ],
+  "modes": {
+    "content_720p24": {
+      "w": 1280,
+      "h": 720,
+      "fps": 24,
+      "kind": "content"
+    },
+    "content_720p60": {
+      "w": 1280,
+      "h": 720,
+      "fps": 60,
+      "kind": "content"
+    },
+    "cea_720p24": {
+      "h_total": 1650,
+      "v_total": 750,
+      "fps": 24,
+      "kind": "cea"
+    },
+    "cea_720p60": {
+      "h_total": 1650,
+      "v_total": 750,
+      "fps": 60,
+      "kind": "cea"
+    },
+    "template_60": {
+      "h_total": 638,
+      "v_total": 524,
+      "fps": 60,
+      "kind": "template"
+    }
+  },
+  "expected_need_mhz": {
+    "content_720p24": {
+      "1": 22.1184,
+      "2": 11.0592,
+      "4": 5.5296
+    },
+    "content_720p60": {
+      "1": 55.296,
+      "2": 27.648,
+      "4": 13.824
+    },
+    "cea_720p24": {
+      "1": 29.7,
+      "2": 14.85,
+      "4": 7.425
+    },
+    "cea_720p60": {
+      "1": 74.25,
+      "2": 37.125,
+      "4": 18.5625
+    },
+    "template_60": {
+      "1": 20.0592,
+      "2": 10.0296,
+      "4": 5.0148
+    }
+  },
+  "parent_expectation": {
+    "ppc2_720p24_mhz_range": [
+      11.0,
+      15.0
+    ],
+    "ppc2_720p60_mhz_near": 37.0,
+    "note": "2 ppc rescues 720p24 under ship 20 MHz; 2 ppc CEA720p60 still FAILS nostub 32.59 \u2014 need 4 ppc."
+  },
+  "verdicts_vs_fmax": {
+    "content_720p24_ppc1_ship20": "FAIL",
+    "content_720p24_ppc2_ship20": "OK",
+    "cea_720p60_ppc2_nostub": "FAIL",
+    "cea_720p60_ppc4_ship20": "OK"
+  },
+  "rtl": {
+    "macro_default_off": "PRESENT_MULTI_PIXEL",
+    "px_per_clk_define": "PRESENT_PX_PER_CLK",
+    "modules": [
+      "fpga/Plex_MiSTer/rtl/yuv_bt601_npx.sv",
+      "fpga/Plex_MiSTer/rtl/present_beam_ppc.sv",
+      "fpga/Plex_MiSTer/rtl/present_npx_path.sv",
+      "fpga/Plex_MiSTer/rtl/present_video_timing_720p.sv"
+    ],
+    "product_wired": false,
+    "cea_h_total_notes": "1650 is EVEN (1650%2=0). 1650%4=2 so PPC=4 needs short final step of 2.",
+    "structurally_connected": true,
+    "connection_note": "present_core under PRESENT_MULTI_PIXEL: u_mp_timing+beam(H_DE=1280)->ddr PX_PER_CLK->present_npx_path(wide group FIFO)->RGB/CE/H*/V*. Template H_DE=529 untouched when macro OFF. clk_pix=clk until PLL grant.",
+    "npx_producer_peak_mpix_s": "F_sys*PPC (wide group FIFO). NOT F_sys*PPC/(1+PPC) serialize. @20/PPC2 peak=40 >= 29.7. See NPX_WIDE_FIFO_PRODUCER_FIX.md.",
+    "rd_underrun": "real mid-stream empty on clk_pix — never forced 0",
+    "template_h_de_lock": 529,
+    "video_mode_720p": {
+      "h_de": 1280,
+      "h_total": 1650,
+      "v_active": 720,
+      "v_total": 750,
+      "same_clock_20mhz_fps_eff": 16.161,
+      "note": "Genuine 1280x720 DE under PRESENT_MULTI_PIXEL+use_ext. Same-clock clk_pix=clk_sys=20 MHz cannot hit CEA 24/60 fps; output <=20 Mpix/s regardless of PPC."
+    }
+  },
+  "w_scaler_interface": {
+    "doc": ".agent-work/w-clock/MULTI_PIXEL_PRESENT_DESIGN.md section 5",
+    "geom_sweep_doc": ".agent-work/w-clock/SOURCE_VS_OUTPUT_GEOM_SWEEP.md",
+    "stream": "present_px_stream",
+    "first_integration_ppc": 2,
+    "glass_geometry": "1280x720",
+    "source_geometry_product": "960x540",
+    "source_display_h_product": 540,
+    "source_coded_h_bitstream": 544,
+    "source_coded_note": "SPS pic_height_in_map_units→544, bottom crop 4→540 display. libav hands ARM 540/777600B. Fabric/bitstream-ring paths see 544. 540*(4/3)=720 exact.",
+    "content_geometry": "GLASS_NOT_SOURCE",
+    "content_geometry_note": "Do not equate 720p glass with 1280-wide source. Product ARM source is 960x540 display (not 544); identity glass→store only when FRAME==glass.",
+    "identity_store_map_requires_frame_eq_glass": true,
+    "identity_guard_marker": "MP_IDENTITY_FRAME_EQ_GLASS",
+    "h_ownership": "w-clock beam owns glass H (+PPC). w-scaler maps glass->store (required when source!=glass). N-wide yuv assumes consecutive store px — naive x0*scale is not a free upscale."
+  },
+  "tolerance_mhz": 0.001
+}

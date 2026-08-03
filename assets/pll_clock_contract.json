@@ -1,0 +1,169 @@
+{
+  "schema": 1,
+  "name": "misterplex-pll-clock-contract",
+  "description": "Shipping fabric PLL contract (pll_0002.v SoT) plus staged 720p overclock targets. Proposed targets are NOT applied until parent grants a fit.",
+  "pll_source": "fpga/Plex_MiSTer/rtl/pll/pll_0002.v",
+  "sdc_comment_file": "fpga/Plex_MiSTer/Plex.sdc",
+  "shipping": {
+    "reference_mhz": 50.0,
+    "clk_sys_mhz": 20.0,
+    "clk_ddr_mhz": 90.0,
+    "pll_strings": {
+      "reference_clock_frequency": "50.0 MHz",
+      "output_clock_frequency0": "20.000000 MHz",
+      "output_clock_frequency2": "90.000000 MHz"
+    },
+    "related_edge_ns": 5.555556,
+    "notes": "PRODUCT_V_480 forces ce_pix=1; Template H_TOTAL=638, V_TOTAL=524 → ~59.82 Hz at 20 MHz."
+  },
+  "measured_fmax": {
+    "stub_in_8fdf440f": {
+      "rbf_prefix": "8fdf440f",
+      "fit": "fit-t7b-prog480",
+      "clk_sys_mhz": 23.46,
+      "clk_ddr_mhz": 96.83,
+      "source": "Plex.sta.rpt Fmax Summary via scripts/check_quartus_timing.py"
+    },
+    "nostub_c74c6863": {
+      "rbf_prefix": "c74c6863",
+      "fit": "fit-nostub-chrome",
+      "clk_sys_mhz": 32.59,
+      "clk_ddr_mhz": 97.43,
+      "source": "Plex.sta.rpt Fmax Summary via scripts/check_quartus_timing.py"
+    }
+  },
+  "cdc_data_delay_class_ns": {
+    "note": "Measured ddr→sys meta hold paths on 8fdf440f (clk_sys_worst_setup.txt): c_line→c_line_v1 data delay 3.5–3.8 ns class; relationship 5.556 ns; slack +0.793.",
+    "typical_min_ns": 3.5,
+    "typical_max_ns": 3.9,
+    "binding_example_ns": 3.832
+  },
+  "present_timing": {
+    "H_DE": 529,
+    "H_LAST": 637,
+    "H_TOTAL": 638,
+    "V_TOTAL_NTSC_SCANDOUBLE": 524,
+    "V_ACTIVE_PRODUCT": 480,
+    "ce_pix_mode": "scandouble_forced_by_PRODUCT_V_480",
+    "sources": [
+      "fpga/Plex_MiSTer/rtl/colorbars.sv",
+      "fpga/Plex_MiSTer/rtl/present_core.sv"
+    ]
+  },
+  "proposed_targets": {
+    "A_25_90": {
+      "status": "PROPOSED_NOT_APPLIED",
+      "clk_sys_mhz": 25.0,
+      "clk_ddr_mhz": 90.0,
+      "pll_strings": {
+        "output_clock_frequency0": "25.000000 MHz",
+        "output_clock_frequency2": "90.000000 MHz"
+      },
+      "related_edge_ns": 2.222222,
+      "requires_nostub": true,
+      "min_clk_sys_fmax_mhz": 25.0,
+      "cdc_risk": "HIGH — related edge 2.22 ns < measured data-delay class ~3.5–3.8 ns; expect CDC setup HARD_FAIL unless path shortens",
+      "use_case": "Paper cy/MB margin only; NOT preferred for 720p DE or CDC"
+    },
+    "B_30_90": {
+      "status": "PROPOSED_NOT_APPLIED",
+      "clk_sys_mhz": 30.0,
+      "clk_ddr_mhz": 90.0,
+      "pll_strings": {
+        "output_clock_frequency0": "30.000000 MHz",
+        "output_clock_frequency2": "90.000000 MHz"
+      },
+      "related_edge_ns": 11.111111,
+      "requires_nostub": true,
+      "min_clk_sys_fmax_mhz": 30.0,
+      "cdc_risk": "MODERATE — 3:1 exact; setup relationship 11.11 ns (comfortable vs 3.8 ns data) but same-edge hold family; STA hold required",
+      "use_case": "Preferred first overclock for 720-line Template-H @60 Hz (~28.7–30.1 MHz need)"
+    },
+    "C_27_90": {
+      "status": "PROPOSED_NOT_APPLIED",
+      "clk_sys_mhz": 27.0,
+      "clk_ddr_mhz": 90.0,
+      "pll_strings": {
+        "output_clock_frequency0": "27.000000 MHz",
+        "output_clock_frequency2": "90.000000 MHz"
+      },
+      "related_edge_ns": 3.703704,
+      "requires_nostub": true,
+      "min_clk_sys_fmax_mhz": 27.0,
+      "cdc_risk": "HIGH — related edge 3.70 ns ≈ data-delay class; marginal/negative after uncertainty",
+      "use_case": "Intermediate only if 30 MHz intra-sys Fmax fails; still CDC-risky"
+    }
+  },
+  "mandate": {
+    "text": "move as much into the fpga so we can do 720p",
+    "arm_frame_budget_ms_24fps": 41.6667,
+    "parent_decode_null_ms": {
+      "624x480_real_archived": 21.562,
+      "1920x1080_synthetic_blip": 32.4,
+      "1280x720_real": null,
+      "note": "720p real unknown — parent measuring. Do not scale ms by pixel count."
+    },
+    "prefer_arm_out_over_arm_cheaper": true,
+    "geometry_first_class": "1280x720"
+  },
+  "p720_clk_sys_requirements": {
+    "fabric_decode_720p24": {
+      "mb_per_frame": 3600,
+      "reference_cy_per_mb": 259.391,
+      "reference_cy_per_mb_source": "docs/decode-throughput.md 624x480 fixture — 720p cy/MB unknown until measured",
+      "budget_cy_per_mb": {
+        "20": 231.48,
+        "25": 289.35,
+        "30": 347.22
+      },
+      "verdict_20mhz": "MISS vs 259 cy/MB",
+      "verdict_25mhz": "PASS paper ~1.12x if cy/MB holds",
+      "verdict_30mhz": "PASS paper ~1.34x if cy/MB holds; preferred with CDC",
+      "preferred_target": "B_30_90",
+      "arm_ms_removed_when_offload_ships": {
+        "claim": "enables removal of ARM decode class 21.562–32.4 ms/frame; bump alone removes 0 ms",
+        "720p_real_ms": null
+      }
+    },
+    "scale_into_template_529de": {
+      "clk_sys_mhz_required": 20.0,
+      "mandate_rank": 4,
+      "note": "Works without bump but REJECTED as product end-state under ARM-evacuation mandate (keeps 480-class canvas)."
+    },
+    "native_720_line_de_template_h_60hz": {
+      "H_TOTAL": 638,
+      "V_TOTAL_candidates": {
+        "750": 28.71,
+        "764": 29.25,
+        "786": 30.09
+      },
+      "clk_sys_mhz_required_range": [28.71, 30.09],
+      "preferred_target": "B_30_90",
+      "mandate_rank": 3,
+      "arithmetic": "clk_sys = H_TOTAL × V_TOTAL × 60 with ce_pix=1"
+    },
+    "native_1280_wide_de_60hz": {
+      "H_TOTAL_scaled": 1544,
+      "CEA_H_TOTAL": 1650,
+      "clk_sys_mhz_required": {
+        "scaled_porch_60": 69.48,
+        "cea_60": 74.25,
+        "cea_30": 37.125,
+        "cea_24": 29.7
+      },
+      "mandate_rank": 2,
+      "verdict": "60 Hz 1-pix/clk WALL vs nostub Fmax 32.59. Escape: multi-pixel/clock datapath sized for 1280 from day one — not eternal M0."
+    },
+    "ddr_bw_720p24_yuv420": {
+      "frame_bytes": 1382400,
+      "mb_s": 33.1776,
+      "note": "Matches parent 33.2 MB/s; clk_ddr 90 MHz peak 720 MB/s; pessimistic 25% read budget 180 MB/s — BW OK. Coordinate w-mem. Luma line 1280 B = one M10K."
+    }
+  },
+  "rules": {
+    "do_not_raise_clk_ddr_without_new_evidence": true,
+    "do_not_apply_pll_without_parent_fit_grant": true,
+    "no_false_path_to_hide_cdc": true,
+    "shipping_must_match_pll_file": true
+  }
+}

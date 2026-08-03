@@ -42,5 +42,16 @@ inline constexpr int kReconDbgMb0Block0 = kReconDbgCoeffNonzero | kReconDbgDequa
                                           kReconDbgIdctNonzero | kReconDbgReconDiffers |
                                           kReconDbgLatResOk | kReconDbgWaitedForResidual;
 
+// telem_flags byte (Plex.sv MSB-first pack → bit7..bit0). Keep in lockstep with
+// fpga_spi.cpp parseCoreStatus and tests/unit/test_telem_flags_abi.py.
+inline constexpr int kTelemFlagHasFrameBit = 0;
+inline constexpr int kTelemFlagHasAudioBit = 1;
+inline constexpr int kTelemFlagHasStreamBit = 2;
+inline constexpr int kTelemFlagAudioUnderrunBit = 3;
+inline constexpr int kTelemFlagHasIdrBit = 4;
+inline constexpr int kTelemFlagStubBusyBit = 5;  // PRODUCT_NO_STUB: tie 0, never delete
+inline constexpr int kTelemFlagSpsValidBit = 6;
+inline constexpr int kTelemFlagPpsValidBit = 7;
+
 } // namespace status_telemetry
 } // namespace misterplex
