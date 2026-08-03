@@ -5,7 +5,7 @@ CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -I$(ROOT)/host
 FFMPEG_CFLAGS := $(shell pkg-config --cflags libavformat libavcodec libavutil 2>/dev/null)
 FFMPEG_LIBS   := $(shell pkg-config --libs libavformat libavcodec libavutil 2>/dev/null)
 
-.PHONY: all preflight unit unit-unlocked unit-rollcall rtl-sim rtl-sim-unlocked rtl-lint verilator-elab quartus-sv-subset define-parity pre-synth-gates post-fit-hierarchy post-fit-chrome-elision post-fit-timing post-fit-timing-margin pll-clock-contract multi-pixel-present-contract present-720p-fit-contract fabric-clock-headroom clk-pix-pll-plan fabric-decode-inventory timing-exclusion pms-baseline-check pms-baseline-live pms-nal-stats arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools check-core-conf-geometry
+.PHONY: all preflight unit unit-unlocked unit-rollcall rtl-sim rtl-sim-unlocked rtl-lint verilator-elab quartus-sv-subset define-parity pre-synth-gates post-fit-hierarchy post-fit-chrome-elision post-fit-timing post-fit-timing-margin pll-clock-contract multi-pixel-present-contract present-720p-fit-contract fabric-clock-headroom clk-pix-pll-plan clk-pix-sta-prereg fabric-decode-inventory timing-exclusion pms-baseline-check pms-baseline-live pms-nal-stats arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools check-core-conf-geometry
 
 all: unit
 
@@ -191,6 +191,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_present_720p_fit_contract.sh
 	$(ROOT)/tests/unit/test_fabric_clock_headroom.sh
 	$(ROOT)/tests/unit/test_clk_pix_pll_plan.sh
+	$(ROOT)/tests/unit/test_clk_pix_sta_prereg.sh
 	$(ROOT)/tests/unit/test_present_pix_rate_match.sh
 	$(ROOT)/tests/unit/test_present_npx_sync_sideband.sh
 	$(ROOT)/tests/unit/test_present_multi_pixel_elab.sh
@@ -324,6 +325,10 @@ fabric-clock-headroom:
 # Separate clk_pix PLL plan (29.7/74.25) — proposed only; shipping PLL untouched.
 clk-pix-pll-plan:
 	$(ROOT)/scripts/check_clk_pix_pll_plan.py --root $(ROOT)
+
+# Pre-registered STA pass/fail cuts for clk_pix stages (before fit).
+clk-pix-sta-prereg:
+	$(ROOT)/scripts/check_clk_pix_sta_prereg.py --root $(ROOT)
 
 timing-exclusion:
 	$(ROOT)/scripts/check_timing_exclusions.py $(if $(STA_RPT),--sta-rpt "$(STA_RPT)",)

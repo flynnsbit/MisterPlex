@@ -10,7 +10,8 @@
 |-----|--------|------|-----|
 | `clk_sys` | `pll_0002` out0 | **20.000 MHz** | `rtl/pll/pll_0002.v` |
 | `clk_ddr` | `pll_0002` out2 | **90.000 MHz** | same |
-| `clk_pix` (multi-pixel today) | **tied to `clk`** | 20.000 MHz | `present_core.sv` `u_mp_npx_path.clk_pix(clk)` |
+| `clk_pix` (multi-pixel default) | **port = `clk_sys`** until PLL grant | 20.000 MHz | `present_core.clk_pix`; Plex ties to sys |
+| `clk_pix` (PIX24 proposed) | `pll_0002` out3 | **29.700 MHz** | `CLK_PIX_SHIPPING_GATE.md` — NOT applied |
 
 `sys_top.sdc` places all fabric PLL `divclk` outputs in **one**
 `set_clock_groups -exclusive` group. Therefore `clk_sys` and `clk_ddr` are
