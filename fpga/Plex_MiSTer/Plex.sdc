@@ -20,7 +20,11 @@ derive_clock_uncertainty
 # --activate-target <name>, refresh this comment block to the NEW rates, and
 # never retcon 20 MHz / 5.556 ns without quoting the new STA relationship.
 #
-# async_fifo data plane (all instances, dominant: ddr_bus_arbiter.m1_rsp_fifo):
+# async_fifo data plane (ALL instances):
+#   - ddr_bus_arbiter.m1_rsp_fifo (clk_ddr ↔ clk_sys)
+#   - present_npx_path.u_pix_fifo when PRESENT_MULTI_PIXEL (clk_sys ↔ clk_pix;
+#     integration bring-up ties clk_pix=clk_sys — same-clock; dual-clock when
+#     CLK_PIX_PLL_PLAN lands). See .agent-work/w-clock/FIT_SURVIVAL_CDC_720P.md.
 # mem[] is written on wr_clk and sampled into rd_data_r on rd_clk. Gray pointer
 # synchronisers are the real CDC (docs/cdc-crossing-inventory.md crossings
 # #16/#22/#30). general[0] (clk_sys 20 MHz) and general[2] (clk_ddr 90 MHz)

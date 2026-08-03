@@ -141,11 +141,15 @@ module present_beam_720p_tb #(
 				de_px, ACTIVE_PX, PX_PER_CLK);
 			$fatal(1);
 		end
-		// Beam groups per frame ≈ ceil(H_TOTAL/PPC)*V_TOTAL with short steps.
-		// Exact cycle count: H_TOTAL*V_TOTAL / effective — for PPC=2, 1650 even →
-		// (1650/2)*750 = 618_750 beam_ce per frame.
+		// Beam groups per frame. PPC=2: 1650/2 * 750 = 618_750.
+		// PPC=4: 1650%4=2 → per line 412 full steps + 1 short(2) = 413 groups
+		//         * 750 = 309_750.
 		if (PX_PER_CLK == 2 && cycles != (H_TOTAL / 2) * V_TOTAL) begin
 			$display("FAIL beam cycles got %0d want %0d", cycles, (H_TOTAL / 2) * V_TOTAL);
+			$fatal(1);
+		end
+		if (PX_PER_CLK == 4 && cycles != 413 * V_TOTAL) begin
+			$display("FAIL beam cycles ppc4 got %0d want %0d", cycles, 413 * V_TOTAL);
 			$fatal(1);
 		end
 		if (max_x_seen < (H_DE - PX_PER_CLK)) begin
@@ -156,16 +160,27 @@ module present_beam_720p_tb #(
 			$display("FAIL max glass_y %0d want >= %0d", max_y_seen, V_ACTIVE - 1);
 			$fatal(1);
 		end
-		// HSync window 40 px; with PPC=2 → 20 beam cycles per line × V_TOTAL
+		// HSync window 40 px.
 		if (PX_PER_CLK == 2 && hs_cycles != 20 * V_TOTAL) begin
 			$display("FAIL HSync cycles got %0d want %0d", hs_cycles, 20 * V_TOTAL);
 			$fatal(1);
 		end
-		// VSync 5 lines; each line H_TOTAL/2 beam cycles @PPC=2
+		// PPC=4: 40/4 = 10 groups per line in HSync window (1390..1429 aligned).
+		if (PX_PER_CLK == 4 && hs_cycles != 10 * V_TOTAL) begin
+			$display("FAIL HSync cycles ppc4 got %0d want %0d", hs_cycles, 10 * V_TOTAL);
+			$fatal(1);
+		end
+		// VSync 5 lines
 		if (PX_PER_CLK == 2 && vs_cycles != 5 * (H_TOTAL / 2)) begin
 			$display("FAIL VSync cycles got %0d want %0d", vs_cycles, 5 * (H_TOTAL / 2));
 			$fatal(1);
 		end
+		if (PX_PER_CLK == 4 && vs_cycles != 5 * 413) begin
+			$display("FAIL VSync cycles ppc4 got %0d want %0d", vs_cycles, 5 * 413);
+			$fatal(1);
+		end
+		// Right-edge: last DE group must not need Y straddle (single qword).
+		// Checked in check_present_720p_fit_contract.py; beam DE count proves coverage.
 
 		$display("PASS present_beam_720p de_px=%0d cycles=%0d ppc=%0d fps_milli=%0d",
 			de_px, cycles, PX_PER_CLK, t_fps_milli);

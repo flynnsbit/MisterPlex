@@ -1,27 +1,21 @@
-w-clock STATUS — video mode 720p path
-=====================================
+w-clock STATUS — fit survival + 720p60 plan
+==========================================
 Branch: w-clock-bump
-Macro: PRESENT_MULTI_PIXEL default OFF (bit-identical class to d1b24e0c when OFF)
+Macro: PRESENT_MULTI_PIXEL default OFF
 
-LANDED (this slice):
-- present_video_timing_720p.sv — CEA 1280x720 constants + fps_eff @20 MHz (~16.16)
-- present_core: u_mp_timing + beam H_DE=1280 under ifdef; Template H_DE=529 untouched
-- line_buf_ram dual-read port B; ddr_frame_store y_q_hi + yuv_bt601_npx.y_qword_hi
-- present_npx_path CDC soak TB (4096 groups)
-- present_beam_720p TB (DE count 921600 @ PPC=2)
-- files.qip entry; contract + Makefile unit hooks
-- VIDEO_MODE_720P.md
+LANDED:
+- 1280x720 mode path (8003ef89)
+- FIT_SURVIVAL_CDC_720P.md — constrained paths; STA slack UNKNOWN pre-fit
+- H_OWNERSHIP_W_SCALER.md — beam owns glass H; scaler maps store; 1280%8=0 no DE straddle
+- P720P60_4PPC_PLAN.md — cea60 @4ppc = 18.5625 MHz fabric OK; out still needs clk_pix 74.25
+- assets/present_720p_fit_contract.json + check_present_720p_fit_contract.py
+- Beam TB PPC=2 and PPC=4 (1650%4=2 short step)
 
-NOT DONE / PARENT:
-- Quartus fit (w-nostub integration) with macros ON — still the priority
-- clk_pix PLL (CLK_PIX_PLL_PLAN) — not applied
-- DE_LAG/MP_SYNC_LAG HDMI sweep for multi-pixel
-- ARM ms removed by this lane: still 0 until fabric owns decode pixels
+PARENT VERIFY (device after integration fit):
+  Enable PRESENT_MULTI_PIXEL PRESENT_PX_PER_CLK=2 (+ scaler 1280 geom, has_frame)
+  DEPLOY_LOAD=menu ./scripts/deploy_plex_core.sh
+  scripts/hdmi_capture_idle.sh <png>
+  make post-fit-timing STA_RPT=...   # hard fail on neg slack
+  make post-fit-hierarchy FIT_RPT=...  # u_mp_* rows > 0
 
-PARENT CLEAN BUDGET (post-retraction): decode alone 35.94 ms/f (+5.73 ms).
-Contaminated contention/DMA/bank-sweep figures: do not use.
-Lane unaffected — keep multi-pixel 720p mode path ready for integration fit.
-
-HONEST:
-- Same-clock 2ppc does NOT make 22.12 Mpix/s; output <=20 Mpix/s
-- Genuine 1280x720 DE yes; CEA 24/60 fps no until faster clk_pix
+HONEST: no STA slack claimed. Same-clock != 24/60 fps.

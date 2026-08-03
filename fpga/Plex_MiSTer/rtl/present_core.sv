@@ -345,7 +345,10 @@ module present_core #(
 		.frame_start(mp_fstart)
 	);
 
-	// Identity store map (w-scaler replaces when CODED≠glass). Clamp to FRAME_*.
+	// Store map: identity glass→store (native 1280). w-scaler owns non-identity
+	// NN maps via present_content_window — must consume beam glass_x0/y with
+	// h_de=1280, NOT colorbars hc with H_DE=529 (see H_OWNERSHIP_W_SCALER.md).
+	// Clamp to FRAME_*: integration needs FRAME/CODED 1280 or right edge clips.
 	wire [FRAME_X_W-1:0] mp_store_x =
 		(mp_glass_x0 > 12'(FRAME_LAST_X)) ? FRAME_LAST_X
 			: mp_glass_x0[FRAME_X_W-1:0];
