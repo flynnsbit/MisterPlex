@@ -1,0 +1,8 @@
+PARENT ARBITRATION #3 — single-owner file table (binding)
+w-osd role: OWNER of Plex.sv (integration only — lanes submit patches, never whole-file copies)
+Canonical ABI #2 nets: plxg_* only (not fabric_*)
+Never whole-file adopt: ddr_frame_store (w-mem), present_geom_latch (w-mem),
+  mailbox_abi_spec (w-mem), present_core/beam/fps_sel (w-clock),
+  present_content_window/plex_video_ar (w-scaler)
+Merge notes must state what came from where.
+Presence ≠ connectivity (parent miss #11); B20 undriven sweep needed.

@@ -1,23 +1,14 @@
-w-osd integ q5 wire (B9+B15) — integ/fab-720p-product-v2
-date: 2026-08-03
+w-osd status after PARENT ARBITRATION #3
+integ tip: a31c8391 (q5 plxg_* end-to-end)
+osd tip:   e393ba9f (PLXC seqlock)
 
-PARENT finding on 5231397b: latch q5 ports missing; fabric_* undriven.
-On tip fea8c6cf before this commit: DAR latch→fabric_*→video_ar WAS connected
-(post 6d2568ff); B15 still dead (content_fps=8'd24; fps_sel not instanced).
+OWNERSHIP (binding):
+  Plex.sv → w-osd INTEGRATION ONLY (patches in, never whole-file lane copies)
+  Canonical ABI#2 nets: plxg_* (fabric_* banned)
+  Never whole-file adopt mem/clock/scaler owned files
 
-FIX:
-- Canonical nets plxg_* only (no fabric_* aliases)
-- u_plxg_latch .dar_*/.fps_*/.content_fps → plxg_*
-- u_plex_video_ar host_dar_* ← plxg_dar_*
-- u_content_fps_sel ← plxg_fps_valid/plxg_content_fps → content_fps → present_core
-- FAULT_B15_FPS_HARDWIRE_24 red twin keeps permanent 24
-- Non-DDR stub assigns plxg_dar_*/fps_* = 0
-- AR unspecified fallback 4:3 documented deliberate (plex_video_ar Original)
+COMPLIANCE checked:
+  integ Plex.sv: plxg_dar_*/u_content_fps_sel wired; no fabric_dar_*
+  osd: PLXC seqlock host+loader; CDC FIFO prior
 
-PROOF true rc:
-  test_plex_q5_product_wire_rtl_sim.sh  true rc=0
-    green: ARX=16 ARY=9 c_fps_eff=30; unspecified→24; no_dar→4:3
-    drop FAULT_DROP_LATCH_Q5: AR 4:3 fps 24 (not 16:9/30) EXECUTED
-  test_integ_lane_evidence_markers.sh   (q5 connectivity markers added)
-
-No Quartus. No device.
+OPEN: R1 m_gnt=0 (w-mem). No Quartus. No device.
