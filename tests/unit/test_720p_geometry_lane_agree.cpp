@@ -71,13 +71,32 @@ int main() {
 	// Native bank fill: 1280×720. PMS degradation tier (w-path): 720×404.
 	constexpr int kPmsDegW = 720, kPmsDegH = 404;
 	chk(kPmsDegW < kMultiHDe && kPmsDegH < kMultiVDe, "PMS 404 needs fabric upscale");
-	// Parent ship path (measured): 960×540 ARM decode+copy PASS margin 10.49;
+	// Parent ship path (measured): 960×540 ARM decode+sws+copy = 34.50 ms, margin +7.16;
 	// fabric upscales to 1280×720 OUTPUT (not 720p source).
 	constexpr int kProductSrcW = 960, kProductSrcH = 540;
 	chk(kProductSrcW * 4 == kMultiHDe * 3, "product src 4:3 to DE width");
 	chk(kProductSrcH * 4 == kMultiVDe * 3, "product src 4:3 to DE height");
 	chk(kProductSrcW < kMultiHDe, "product needs fabric upscale X");
 	chk(kProductSrcH < kMultiVDe, "product needs fabric upscale Y");
+	// Product bank = source-sized (native publish), NOT full Option-C 1280 frame.
+	// Option-C remains the true-720p-source / upgrade-path bank map.
+	constexpr int kProductYStride = 960;
+	constexpr int kProductBankBytes = 960 * 540 * 3 / 2; // 777600
+	chk(kProductYStride == kProductSrcW, "product y_stride = src_w");
+	chk(kProductBankBytes == 777600, "product I420 bytes");
+	chk(kProductBankBytes < int(kPlex720pYuv420pBytes), "product bank < Option-C frame");
+	// Four-lane freeze table (single source of truth for rd-duck / fit):
+	//   src:     960×540     w-path/PMS + ARM publish
+	//   bank:    stride 960  w-mem WRITE / w-scaler READ (product)
+	//   Option-C:0x30180000/0x180000/0x3047F000  true-720p-source map
+	//   glass:   1280×720    w-clock PRESENT_MULTI_PIXEL
+	//   HUD:     1280×720    w-osd kTargetOut
+	//   scale:   exact 4/3   present_scale_4_3 (macro OFF until enable)
+	chk(kPlex720pDdrFramePhysBase == 0x30180000u, "freeze Option-C base");
+	chk(kPlex720pYuv420pBankStride == 0x00180000u, "freeze Option-C stride");
+	chk(kMultiHDe == 1280 && kMultiVDe == 720, "freeze glass DE");
+	chk(kOsdTargetW == 1280 && kOsdTargetH == 720, "freeze HUD");
+	chk(kProductSrcW == 960 && kProductSrcH == 540, "freeze product src");
 	// H ownership: under multi-pixel, beam glass_x0 drives the window hc input
 	// with h_de=1280 — NOT colorbars hc with H_DE=529 (shear class).
 	chk(kMultiHDe != kProductHDe, "H_OWNERSHIP: multi DE must not equal Template 529");
@@ -116,6 +135,6 @@ int main() {
 	          << "PPC_W%4=0 "
 	          << "DE_product=529x480 DE_multi=1280x720 osd_canvas=1280x720 "
 	          << "H_OWNERSHIP=beam_glass+scaler_map+osd_hdmi "
-	          << "pms_deg=720x404 product_src=960x540\n";
+	          << "pms_deg=720x404 product_src=960x540 product_bytes=777600 freeze=src960/bank960/glass1280/hud1280/optC\n";
 	return 0;
 }
