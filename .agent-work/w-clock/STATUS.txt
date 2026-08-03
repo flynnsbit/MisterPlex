@@ -1,20 +1,18 @@
 lane: w-clock
-todo: p720-clock
 branch: w-clock-bump
-HEAD: (see git rev-parse after commit)
-updated: 2026-08-03
+HEAD: 778fa676
+MEASURE_REF_MAIN: detached 3fa01a9b (MisterPlex-wt-clock-pin-3fa01a9b)
 
-## Latest: B20 integrated NBA lag (rd-duck) FIXED; B20_CLOSED=false
-- MEASURED: frame_start NBA at v_wrap → app/bank @ hc=1, beam OLD DE full frame
-- FIX: b20_swap_armed feed-forward + beam_disp_seq hold
-- TB: tests/rtl/b20_integrated_app_beam_tb.sv (prior hold_tb blind)
-- test_b20_integrated_app_beam.sh true rc=0 (FF / hold-cover / RED island)
-- PLXG atomic still OPEN (live content_*); honesty gate still PASS OPEN
+## VERDICT: native 720p core raster
+(b) NOT NEEDED for glass 720p — ascal+video_mode=0 already 1280x720@60
+(c) ONLY IF wide content DE / >=24Hz 1ppc 1280 scan / Direct Video raw
+PLL kit + CDC 4:15 PARKED
 
-## Fit kit primary unchanged
-- PLL 30 MHz 3:1 (24 MHz BLOCKER CDC 4:15)
-- No PLL applied, no Quartus fit
+## 1280 content @ 20 MHz
+Write: HPS 33.2 MB/s class — not clk_sys pixel
+Read product: H_DE=529 stretch — works, quality loss
+True 1280 DE 1ppc minblank: fps<=20.71 @20MHz — no PLL required for ascal
+BEAM_960 incompatible with FRAME_1280 without retarget
 
-## Ladder
-- 720p present modules: L0 on main@ad928cb1 (pinned earlier)
-- This branch: present_core / beam comment / tests L0→branch only
+## Ladder main@3fa01a9b
+qip=45; present L2 land; BEAM/MULTI off; geom_latch/mux L2 dead
