@@ -31,6 +31,7 @@ module present_geom_latch_tb (
 		.display_w(display_w), .display_h(display_h),
 		.present_x(present_x), .present_y(present_y),
 		.crop_left(crop_left), .crop_top(crop_top),
+		.dar_valid(), .dar_x(), .dar_y(),
 		.live_valid(live_valid), .live_seq(live_seq)
 	);
 endmodule

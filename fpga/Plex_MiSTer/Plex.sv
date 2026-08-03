@@ -41,9 +41,21 @@ assign BUTTONS = 0;
 
 //////////////////////////////////////////////////////////////////
 
+// B9 aspect: Original uses host DAR from PLXG when valid; never infer from coded WxH.
+// Full Screen → 0:0; ARC1/2 unchanged. See rtl/plex_video_ar.sv + docs/b9-display-aspect.md.
 wire [1:0] ar = status[122:121];
-assign VIDEO_ARX = (!ar) ? 12'd4 : (ar - 1'd1);
-assign VIDEO_ARY = (!ar) ? 12'd3 : 12'd0;
+// fabric_dar_* come from present_geom_latch (below); default 0 until PLXG q5 lands.
+wire        fabric_dar_valid;
+wire [11:0] fabric_dar_x;
+wire [11:0] fabric_dar_y;
+plex_video_ar u_plex_video_ar (
+	.ar_menu(ar),
+	.host_dar_valid(fabric_dar_valid),
+	.host_dar_x(fabric_dar_x),
+	.host_dar_y(fabric_dar_y),
+	.VIDEO_ARX(VIDEO_ARX),
+	.VIDEO_ARY(VIDEO_ARY)
+);
 
 `include "build_id.v"
 localparam CONF_STR = {
@@ -285,6 +297,9 @@ present_geom_latch plxg_latch (
 	.present_y(fabric_geom_present_y),
 	.crop_left(fabric_geom_crop_left),
 	.crop_top(fabric_geom_crop_top),
+	.dar_valid(fabric_dar_valid),
+	.dar_x(fabric_dar_x),
+	.dar_y(fabric_dar_y),
 	.live_valid(fabric_plxg_live),
 	.live_seq(fabric_plxg_seq)
 );

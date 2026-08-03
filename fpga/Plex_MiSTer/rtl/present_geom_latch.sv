@@ -10,6 +10,15 @@
 //   Host writes qwords 0..4 then pulses commit. On commit, if q0[31:0]==MAGIC
 //   and seq != last_seq, shadow → live outputs. Bad magic → no change.
 //
+// B9 display aspect (PROPOSED ABI — parent arbitrates; does NOT touch q0 epoch):
+//   Optional qword index 5 (wr_idx==5), promoted on same commit:
+//     q5[11:0]  dar_x   (e.g. 16)
+//     q5[27:16] dar_y   (e.g. 9)
+//     q5[32]    dar_valid
+//   w-mem 5-qword atomic body (q0..q4) unchanged. Daemon/PLXG may publish q5
+//   as a trailing beat after body, or parent may fold into a 6-qword record.
+//   Fabric must NOT infer DAR from coded_w/h (720×480 anamorphic is unsound).
+//
 // Reset / never-committed: every enable and dimension output is 0 so
 // present_content_window + ddr_frame_store stay on synthesis legacy path.
 `default_nettype none
@@ -22,7 +31,7 @@ module present_geom_latch #(
 
 	// Host write port (ARM via DDR image or TB).
 	input  wire        wr_en,
-	input  wire [2:0]  wr_idx,   // 0..4
+	input  wire [2:0]  wr_idx,   // 0..5 (5 = optional DAR qword)
 	input  wire [63:0] wr_data,
 	input  wire        commit,   // pulse: attempt to promote shadow → live
 
@@ -45,11 +54,15 @@ module present_geom_latch #(
 	output reg [10:0]  present_y,
 	output reg [10:0]  crop_left,
 	output reg [10:0]  crop_top,
+	// B9 host DAR (PMS display aspect) — see module header.
+	output reg         dar_valid,
+	output reg [11:0]  dar_x,
+	output reg [11:0]  dar_y,
 	output reg         live_valid,  // 1 after at least one accepted commit
 	output reg [15:0]  live_seq
 );
-	// Shadow bank (host fills, commit promotes).
-	reg [63:0] sh [0:4];
+	// Shadow bank (host fills, commit promotes). q[5] = optional DAR.
+	reg [63:0] sh [0:5];
 	reg [15:0] last_seq;
 
 	wire [31:0] sh_magic = sh[0][31:0];
@@ -62,7 +75,7 @@ module present_geom_latch #(
 	integer i;
 	always @(posedge clk) begin
 		if (reset) begin
-			for (i = 0; i < 5; i = i + 1)
+			for (i = 0; i < 6; i = i + 1)
 				sh[i] <= 64'd0;
 			win_enable    <= 1'b0;
 			geom_enable   <= 1'b0;
@@ -82,11 +95,14 @@ module present_geom_latch #(
 			present_y     <= 11'd0;
 			crop_left     <= 11'd0;
 			crop_top      <= 11'd0;
+			dar_valid     <= 1'b0;
+			dar_x         <= 12'd0;
+			dar_y         <= 12'd0;
 			live_valid    <= 1'b0;
 			live_seq      <= 16'd0;
 			last_seq      <= 16'd0;
 		end else begin
-			if (wr_en && (wr_idx <= 3'd4))
+			if (wr_en && (wr_idx <= 3'd5))
 				sh[wr_idx] <= wr_data;
 
 			if (commit && seq_new) begin
@@ -116,6 +132,10 @@ module present_geom_latch #(
 				present_y <= sh[4][26:16];
 				crop_left <= sh[4][42:32];
 				crop_top  <= sh[4][58:48];
+				// Q5 optional host DAR (B9) — absent/zero → dar_valid=0
+				dar_x     <= sh[5][11:0];
+				dar_y     <= sh[5][27:16];
+				dar_valid <= sh[5][32];
 			end
 		end
 	end
