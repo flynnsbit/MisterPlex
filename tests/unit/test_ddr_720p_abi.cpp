@@ -795,8 +795,42 @@ int main() {
                 CHECK(!plxgPollerTryCommit(page.data(), 0));
             }
         }
+        // ---- Daemon/FpgaSpi restart vs live FPGA last_seq (rd-duck) ----
+        // plxgLastSeq_=0 on new object; retained q0 + FPGA last_seq still N.
+        // Naive useSeq=1 is rejected when N==1 → single mode-disable never commits.
+        {
+            CHECK(plxgNextSeq(/*sw*/ 0, /*ret*/ true, /*rseq*/ 1) == 2);
+            CHECK(plxgNextSeq(0, true, 5) == 6);
+            CHECK(plxgNextSeq(5, true, 5) == 6);
+            CHECK(plxgNextSeq(5, true, 3) == 6); // software ahead
+            CHECK(plxgNextSeqFaultIgnoreRetained(0) == 1); // FAULT
+            // liveSeq=1 is the concrete daemon-restart trap.
+            CHECK(plxgDaemonRestartDisableCommits(/*liveSeq=*/1, /*honor*/ true));
+            CHECK(!plxgDaemonRestartDisableCommits(/*liveSeq=*/1, /*honor*/ false));
+            CHECK(plxgDaemonRestartDisableCommits(/*liveSeq=*/7, true));
+            // Walk: software object seeds from retained, disable commits, geom off.
+            {
+                std::vector<uint8_t> page(0x1000, 0);
+                const auto live = makePlxgRecord960x540Native(1);
+                for (int i = 0; i < 5; ++i)
+                    plxgCtrlStoreQ(page.data(), i, live.q[i]);
+                uint16_t sw = 0;
+                PlxgLatchModel lm{};
+                lm.last_seq = 1; // FPGA still live
+                const uint16_t used = plxgHostWriteRecordRestartSafe(
+                    page.data(), makePlxgRecordDisable(1), &sw, true);
+                CHECK(used == 2);
+                CHECK(sw == 2);
+                for (unsigned i = 0; i < 5; ++i)
+                    plxgLatchWrite(lm, i, plxgCtrlLoadQ(page.data(), static_cast<int>(i)));
+                CHECK(plxgLatchCommit(lm));
+                CHECK(!lm.geom_enable);
+                CHECK(lm.live_seq == 2);
+            }
+        }
         std::fprintf(stderr, "  PLXG_TEAR_SUBARB_DISABLE OK\n");
         std::fprintf(stderr, "  PLXG_SEQLOCK_RETAINED_DDR_RESET OK\n");
+        std::fprintf(stderr, "  PLXG_SEQ_RESTART_SAFE OK\n");
     }
 
     if (fails) {

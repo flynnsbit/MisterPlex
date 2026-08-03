@@ -114,6 +114,42 @@ inline PlxgRecord makePlxgRecordDisable(uint16_t seq) {
     return r;
 }
 
+// Decode seq from a packed q0 qword (bits 63:48). 0 if magic invalid.
+inline bool plxgQ0Seq(uint64_t q0, uint16_t* seqOut) {
+    if (static_cast<uint32_t>(q0) != mailbox_abi::kPlxgMagic)
+        return false;
+    if (seqOut)
+        *seqOut = static_cast<uint16_t>(q0 >> 48);
+    return true;
+}
+
+// Restart-safe next seq (rd-duck): software last alone is not enough — after
+// daemon/FpgaSpi reconstruct, plxgLastSeq_=0 while FPGA last_seq and retained
+// DDR q0 may still be N. If N==1 the naive useSeq=1 is rejected as stale and a
+// single mode-disable never commits. Seed from max(softwareLast, retainedSeq)
+// when retained q0 magic is valid, then +1 (skip 0).
+inline uint16_t plxgNextSeq(uint16_t softwareLast, bool retainedValid,
+                            uint16_t retainedSeq) {
+    uint32_t seed = softwareLast;
+    if (retainedValid) {
+        // Both are 16-bit counters; without a full ACK ring take the larger
+        // numerical seed so a cold software object catches up to live FPGA/DDR.
+        // (Wrap: if retained=0xFFFF and software=0 after many wraps, +1→1 still
+        // differs from 0xFFFF so the poller accepts.)
+        if (static_cast<uint32_t>(retainedSeq) > seed)
+            seed = retainedSeq;
+    }
+    uint16_t use = static_cast<uint16_t>(seed + 1u);
+    if (use == 0)
+        use = 1;
+    return use;
+}
+
+// FAULT twin: ignore retained DDR (pre-fix writePlxgRecord).
+inline uint16_t plxgNextSeqFaultIgnoreRetained(uint16_t softwareLast) {
+    return plxgNextSeq(softwareLast, /*retainedValid=*/false, 0);
+}
+
 // Host-side model of poller tear check: after q0..q4 snap, q0 must still match.
 inline bool plxgPollerAcceptsSnapshot(const uint64_t snap[5], uint64_t q0_reread,
                                       uint16_t lastSeq) {
@@ -167,6 +203,11 @@ inline void plxgHostStoreAtomic(uint8_t* ctrlPage, const PlxgRecord& rec) {
     plxgHostCommitQ0(ctrlPage, rec.q[0]);
 }
 
+// Read retained q0 seq from control page (before invalidate). Magic required.
+inline bool plxgCtrlLoadRetainedSeq(const uint8_t* ctrlPage, uint16_t* seqOut) {
+    return plxgQ0Seq(plxgCtrlLoadQ(ctrlPage, 0), seqOut);
+}
+
 // FAULT twin: body then q0 without invalidate — retained-DDR/reset accepts torn.
 inline void plxgHostStoreFaultNoInvalidate(uint8_t* ctrlPage, const PlxgRecord& rec) {
     plxgHostStoreBody(ctrlPage, rec);
@@ -185,6 +226,42 @@ inline bool plxgPollerTryCommit(const uint8_t* ctrlPage, uint16_t lastSeq,
             snapOut[i] = snap[i];
     }
     return plxgPollerAcceptsSnapshot(snap, q0b, lastSeq);
+}
+
+// Model writePlxgRecord seq selection + seqlock publish (daemon-object restart).
+// softwareLast models plxgLastSeq_ on a (possibly new) FpgaSpi instance.
+// Returns committed seq; updates *softwareLastInOut like plxgLastSeq_.
+inline uint16_t plxgHostWriteRecordRestartSafe(uint8_t* ctrlPage, PlxgRecord rec,
+                                               uint16_t* softwareLastInOut,
+                                               bool honorRetained = true) {
+    uint16_t retained = 0;
+    const bool have = honorRetained && plxgCtrlLoadRetainedSeq(ctrlPage, &retained);
+    const uint16_t sw = softwareLastInOut ? *softwareLastInOut : 0;
+    const uint16_t use =
+        honorRetained ? plxgNextSeq(sw, have, retained) : plxgNextSeqFaultIgnoreRetained(sw);
+    const uint64_t flags = (rec.q[0] >> 32) & 0xFFFFull;
+    rec.q[0] = (static_cast<uint64_t>(use) << 48) | (flags << 32) |
+               static_cast<uint64_t>(mailbox_abi::kPlxgMagic);
+    rec.seq = use;
+    plxgHostStoreAtomic(ctrlPage, rec);
+    if (softwareLastInOut)
+        *softwareLastInOut = use;
+    return use;
+}
+
+// Daemon restart + FPGA still live: retained q0 seq=N, FPGA last_seq=N,
+// new software object last=0, one disable publish must commit (seq != N).
+inline bool plxgDaemonRestartDisableCommits(uint16_t liveSeq, bool honorRetained) {
+    std::uint8_t page[0x1000]{};
+    const PlxgRecord live = makePlxgRecord960x540Native(liveSeq);
+    for (int i = 0; i < 5; ++i)
+        plxgCtrlStoreQ(page, i, live.q[i]);
+    uint16_t swLast = 0; // new FpgaSpi
+    const PlxgRecord dis = makePlxgRecordDisable(1); // advisory seq ignored
+    const uint16_t used =
+        plxgHostWriteRecordRestartSafe(page, dis, &swLast, honorRetained);
+    return plxgPollerTryCommit(page, /*lastSeq=*/liveSeq) && used != liveSeq &&
+           swLast == used;
 }
 
 // Retained-DDR / FPGA-reset interleaving oracle.

@@ -839,9 +839,24 @@ bool FpgaSpi::writePlxgRecord(const uint64_t q[5], uint16_t seq) {
     // Always advance seq (rd-duck: never sticky seq=1 across frames/mode exits).
     // Caller seq is advisory only — latch requires seq != last_seq every program.
     (void)seq;
-    uint16_t useSeq = static_cast<uint16_t>(plxgLastSeq_ + 1u);
-    if (useSeq == 0)
-        useSeq = 1;
+    // Restart-safe seed (rd-duck): plxgLastSeq_ alone is 0 after daemon/FpgaSpi
+    // reconstruct while FPGA last_seq + retained DDR q0 may still be N. If N==1,
+    // naive useSeq=1 is rejected as stale and a single mode-disable never lands.
+    // Read valid retained q0 BEFORE invalidate; seed max(sw, retained)+1.
+    volatile uint32_t* base =
+        reinterpret_cast<volatile uint32_t*>(plxgBootMap_ + off);
+    uint16_t retainedSeq = 0;
+    bool retainedValid = false;
+    {
+        const uint32_t lo = base[0];
+        const uint32_t hi = base[1];
+        if (lo == mailbox_abi::kPlxgMagic) {
+            retainedSeq = static_cast<uint16_t>(hi >> 16); // q0[63:48]
+            retainedValid = true;
+        }
+    }
+    const uint16_t useSeq =
+        misterplex::plxgNextSeq(plxgLastSeq_, retainedValid, retainedSeq);
     uint64_t words[5];
     for (int i = 0; i < 5; ++i)
         words[i] = q[i];
@@ -857,27 +872,25 @@ bool FpgaSpi::writePlxgRecord(const uint64_t q[5], uint16_t seq) {
     //   3) q0 high32, then q0 low32=magic LAST
     // Without (1), post-reset last_seq=0 + retained q0 seq=1 accepts mixed body.
     auto dmb = []() { __sync_synchronize(); };
-    auto storeBodyQ = [&](volatile uint32_t* base, int qi, uint64_t w) {
-        base[qi * 2 + 1] = static_cast<uint32_t>(w >> 32);
+    auto storeBodyQ = [&](volatile uint32_t* basep, int qi, uint64_t w) {
+        basep[qi * 2 + 1] = static_cast<uint32_t>(w >> 32);
         dmb();
-        base[qi * 2 + 0] = static_cast<uint32_t>(w);
+        basep[qi * 2 + 0] = static_cast<uint32_t>(w);
         dmb();
     };
-    auto seqlockPublish = [&](volatile uint32_t* base) {
+    auto seqlockPublish = [&](volatile uint32_t* basep) {
         // 1) Invalidate retained magic so in-progress poller aborts.
-        base[0] = 0u; // q0 low32
+        basep[0] = 0u; // q0 low32
         dmb();
         // 2) Body
         for (int i = 1; i < 5; ++i)
-            storeBodyQ(base, i, words[i]);
+            storeBodyQ(basep, i, words[i]);
         // 3) q0 high then magic-last
-        base[1] = static_cast<uint32_t>(words[0] >> 32);
+        basep[1] = static_cast<uint32_t>(words[0] >> 32);
         dmb();
-        base[0] = static_cast<uint32_t>(words[0]); // magic
+        basep[0] = static_cast<uint32_t>(words[0]); // magic
         dmb();
     };
-    volatile uint32_t* base =
-        reinterpret_cast<volatile uint32_t*>(plxgBootMap_ + off);
     seqlockPublish(base);
     if (ddrMemFlush_ && !cleanDcacheRange(plxgBootMap_ + off, mailbox_abi::kPlxgBytes)) {
         setErr("writePlxgRecord: cache clean failed");
