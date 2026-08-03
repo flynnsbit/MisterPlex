@@ -73,3 +73,11 @@ bridge + w-mem storage/canvas split. Fit remains NN/off.
 
 Registered: `test_present_scale_4_3_*` host + `test_present_scale_4_3_rtl_sim.sh` +
 `test_present_scale_4_3_2ppc_rtl_sim.sh` (const + ramp max_abs=0 + RED PHASE_DST).
+
+## Pipeline / component (rd-duck fit path)
+
+- **Plane = Y (luma)**. Not RGB. U/V half-res later (or NN chroma v1).
+- **Comb `req_*`** drives M10K `rd_addr` same cycle as `hc_g/py`.
+- **`RAM_LAT=1`**: meta (phase/weights/ix/DE) delayed to meet `rd_data` taps.
+- Registered `tap_base_x/store_*` are diagnostics only — never same-cycle RAM addr.
+- Still default-OFF until dual-line Y provider wired through `ddr_frame_store`.

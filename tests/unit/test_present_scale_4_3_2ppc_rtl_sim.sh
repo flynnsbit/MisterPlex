@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# present_scale_4_3_2ppc — integrated tap-gather + dual bilin pixel proof.
-# Green: constant-color + H-ramp oracle + 2/3-tap pair geometry.
-# RED: FAULT_PHASE_DST must fail product (pixel path, not coords-only).
+# present_scale_4_3_2ppc — Y-plane 2-PPC through RAM_LAT=1 tap pipeline.
+# Green: const + H/V ramp + comb req + HV. RED: FAULT_PHASE_DST / INVERT.
 set -euo pipefail
 
 assert_exec() {
@@ -47,10 +46,14 @@ echo "product true rc=$RC"
 assert_exec product "$OUT" \
   "CASE scale43_2ppc_const EXECUTED" \
   "CASE scale43_2ppc_ramp EXECUTED" \
+  "CASE scale43_2ppc_vramp EXECUTED" \
   "CASE scale43_2ppc_hv EXECUTED" \
+  "CASE scale43_2ppc_req EXECUTED" \
   "CASE scale43_2ppc_fault EXECUTED" \
   "PASS scale43_2ppc constant-color" \
   "PASS scale43_2ppc H-ramp oracle" \
+  "PASS scale43_2ppc V-ramp+edge" \
+  "PASS scale43_2ppc comb req" \
   "PASS scale43_2ppc discriminant"
 [[ "$RC" -eq 0 ]] || exit 1
 
@@ -77,5 +80,5 @@ run_fault() {
 run_fault PRESENT_SCALE_4_3_FAULT_PHASE_DST fault_phase_dst
 run_fault PRESENT_SCALE_4_3_FAULT_INVERT fault_invert
 
-echo "OK present_scale_4_3_2ppc_rtl_sim: product pixels + RED phase/invert"
+echo "OK present_scale_4_3_2ppc_rtl_sim: Y RAM_LAT=1 pixels + V-ramp + RED"
 exit 0
