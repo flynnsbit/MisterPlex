@@ -161,6 +161,30 @@
       "token_hit": "1"
     },
     {
+      "check": "B32_NO_SWAP_APPLIED_PULSE",
+      "inject": "live hollow / missing product TB",
+      "expect": "B32_NO_SWAP_APPLIED_PULSE",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B32_CORE_LIVE_MUX_APPLY",
+      "inject": "live hollow / missing product TB",
+      "expect": "B32_CORE_LIVE_MUX_APPLY",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B32_N_PLUS_1_ORACLE_ABSENT",
+      "inject": "live hollow / missing product TB",
+      "expect": "B32_N_PLUS_1_ORACLE_ABSENT",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
       "check": "B32_POLLER_SIM_NOT_RTL",
       "inject": "live hollow / missing product TB",
       "expect": "B32_POLLER_SIM_NOT_RTL",
@@ -457,6 +481,14 @@
       "token_hit": "1"
     },
     {
+      "check": "B32_CORE_LIVE_MUX_APPLY",
+      "inject": "present_core app_* <= live content_*/win_*/geom_live at visual_geom_apply",
+      "expect": "B32_CORE_LIVE_MUX_APPLY",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
       "check": "B33_M0_OV_MASKS_ISSUED_LOWER",
       "inject": "m0_ov masks use_m1/use_m3 without skid/hs",
       "expect": "B33_M0_OV_MASKS_ISSUED_LOWER",
@@ -514,6 +546,6 @@
     }
   ],
   "failures": [],
-  "n_red": 64,
-  "head": "34a07e9e086b"
+  "n_red": 68,
+  "head": "db53835e7d42"
 }
