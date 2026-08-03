@@ -5,8 +5,11 @@
 // C) LEGACY 480p identity PASS
 // D) WINDOW 1280×720 on 529×480 DE (downscale to current glass): full content coverage
 // E) WINDOW 1280×720 on 1280×720 DE (identity 720p): 1:1 unique rows/cols
+// F) PMS 720×404 → 1280×720 DE (w-path ladder degradation tier): scale + midpoint
+// G) Letterbox: 720×404 centred in 1280×720 (x0/y0 offsets)
+// H) NEG wrong-scale midpoint: product must map hc mid → content mid (not identity)
 //
-// MODE=legacy|window|legacy480|720de480|720id|all
+// MODE=legacy|window|legacy480|720de480|720id|pms404|letterbox|neg_scale|all
 // true rc direct.
 
 #include "Vpresent_content_window_tb.h"
@@ -18,6 +21,10 @@
 #include <iostream>
 #include <set>
 #include <string>
+#include <cmath>
+
+// int abs
+using std::abs;
 
 namespace {
 
@@ -243,7 +250,7 @@ int run720on480() {
 }
 
 int run720identity() {
-	// Future 720p DE: content 1280×720, DE 1280×720 → scale 1.0.
+	// w-clock PRESENT_MULTI_PIXEL: content 1280×720, DE 1280×720 → scale 1.0.
 	constexpr int kHDe = 1280, kVDe = 720;
 	Sim s;
 	s.top.win_enable = 1;
@@ -283,6 +290,163 @@ int run720identity() {
 	return 0;
 }
 
+// Endpoint-exact Q16 (mirrors RTL): ceil((c-1)*65536/(d-1))
+int winScale(int content, int de) {
+	if (content <= 1 || de <= 1)
+		return 0;
+	const int64_t num = int64_t(content - 1) * 65536;
+	const int64_t den = de - 1;
+	return int((num + den - 1) / den);
+}
+
+int runPms404() {
+	// w-path: PMS delivers 720×404 below maxBR=3100. Fabric must upscale to
+	// w-clock 1280×720 DE so ARM never swscales.
+	constexpr int kHDe = 1280, kVDe = 720;
+	constexpr int kCw = 720, kCh = 404;
+	Sim s;
+	s.top.win_enable = 1;
+	s.top.content_w = kCw;
+	s.top.content_h = kCh;
+	s.top.content_x0 = 0;
+	s.top.content_y0 = 0;
+	s.top.h_de = kHDe;
+	s.top.v_de = kVDe;
+	s.resetCycles();
+	s.settleWindow();
+
+	std::set<int> xs, ys;
+	for (int hc = 0; hc < kHDe; ++hc) {
+		s.sampleAt(hc, 0, kHDe, kVDe);
+		xs.insert(int(s.top.store_x));
+	}
+	for (int py = 0; py < kVDe; ++py) {
+		s.sampleAt(0, py, kHDe, kVDe);
+		ys.insert(int(s.top.store_y));
+	}
+	s.sampleAt(0, 0, kHDe, kVDe);
+	const int x0 = int(s.top.store_x);
+	s.sampleAt(kHDe - 1, 0, kHDe, kVDe);
+	const int x_last = int(s.top.store_x);
+	s.sampleAt(0, kVDe - 1, kHDe, kVDe);
+	const int y_last = int(s.top.store_y);
+	// Midpoint: hc ≈ (h_de-1)/2 → store_x ≈ (cw-1)/2
+	s.sampleAt((kHDe - 1) / 2, (kVDe - 1) / 2, kHDe, kVDe);
+	const int x_mid = int(s.top.store_x);
+	const int y_mid = int(s.top.store_y);
+	const int sx = winScale(kCw, kHDe);
+	const int sy = winScale(kCh, kVDe);
+	const int x_mid_exp = ((kHDe - 1) / 2 * sx) >> 16;
+	const int y_mid_exp = ((kVDe - 1) / 2 * sy) >> 16;
+
+	std::cout << "CASE pms404 EXECUTED unique_x=" << xs.size()
+	          << " max_x=" << *xs.rbegin() << " unique_y=" << ys.size()
+	          << " max_y=" << *ys.rbegin() << " x0=" << x0 << " x_last=" << x_last
+	          << " y_last=" << y_last << " x_mid=" << x_mid << " exp≈" << x_mid_exp
+	          << " y_mid=" << y_mid << " exp≈" << y_mid_exp << " sx=" << sx
+	          << " sy=" << sy << "\n";
+
+	int fails = 0;
+	auto expect = [&](bool c, const char* m) {
+		if (!c) {
+			std::cerr << "FAIL pms404: " << m << "\n";
+			++fails;
+		}
+	};
+	expect(x0 == 0 && x_last == kCw - 1, "H endpoints 0..719");
+	expect(y_last == kCh - 1, "V endpoint 403");
+	expect(xs.size() == static_cast<size_t>(kCw), "unique x covers all content cols");
+	expect(ys.size() == static_cast<size_t>(kCh), "unique y covers all content rows");
+	// Midpoint must track scale, not glass identity (hc=640 → ~360, not 640).
+	expect(std::abs(x_mid - x_mid_exp) <= 1, "x midpoint scale");
+	expect(std::abs(y_mid - y_mid_exp) <= 1, "y midpoint scale");
+	expect(x_mid < 400 && x_mid > 300, "x_mid in content half (not DE half)");
+	// Identity-scale fault class would put x_mid == (kHDe-1)/2 == 639.
+	expect(x_mid != (kHDe - 1) / 2, "not identity DE map");
+	if (fails)
+		return 1;
+	std::cout << "PASS present_content_window_pms404_to_720p\n";
+	return 0;
+}
+
+int runLetterbox() {
+	// 720×404 content centred in 1280×720: x0=(1280-720)/2=280, y0=(720-404)/2=158.
+	constexpr int kHDe = 1280, kVDe = 720;
+	constexpr int kCw = 720, kCh = 404;
+	constexpr int kX0 = (1280 - 720) / 2; // 280
+	constexpr int kY0 = (720 - 404) / 2;  // 158
+	Sim s;
+	s.top.win_enable = 1;
+	s.top.content_w = kCw;
+	s.top.content_h = kCh;
+	s.top.content_x0 = kX0;
+	s.top.content_y0 = kY0;
+	s.top.h_de = kHDe;
+	s.top.v_de = kVDe;
+	s.resetCycles();
+	s.settleWindow();
+
+	s.sampleAt(0, 0, kHDe, kVDe);
+	const int x0 = int(s.top.store_x);
+	const int y0 = int(s.top.store_y);
+	s.sampleAt(kHDe - 1, kVDe - 1, kHDe, kVDe);
+	const int x1 = int(s.top.store_x);
+	const int y1 = int(s.top.store_y);
+
+	std::cout << "CASE letterbox EXECUTED x0=" << x0 << " y0=" << y0 << " x1=" << x1
+	          << " y1=" << y1 << " expect_x0=" << kX0 << " expect_y0=" << kY0
+	          << " expect_x1=" << (kX0 + kCw - 1) << " expect_y1=" << (kY0 + kCh - 1)
+	          << "\n";
+
+	if (x0 != kX0 || y0 != kY0 || x1 != kX0 + kCw - 1 || y1 != kY0 + kCh - 1) {
+		std::cerr << "FAIL letterbox edges\n";
+		return 1;
+	}
+	std::cout << "PASS present_content_window_letterbox_404\n";
+	return 0;
+}
+
+int runNegScaleMidpoint() {
+	// Product path: 720→1280 must NOT be identity. This is the green half of the
+	// wrong-scale discriminator (FAULT_IDENTITY_SCALE red twin is separate build).
+	constexpr int kHDe = 1280, kVDe = 720;
+	constexpr int kCw = 720, kCh = 404;
+	Sim s;
+	s.top.win_enable = 1;
+	s.top.content_w = kCw;
+	s.top.content_h = kCh;
+	s.top.content_x0 = 0;
+	s.top.content_y0 = 0;
+	s.top.h_de = kHDe;
+	s.top.v_de = kVDe;
+	s.resetCycles();
+	s.settleWindow();
+
+	s.sampleAt((kHDe - 1) / 2, (kVDe - 1) / 2, kHDe, kVDe);
+	const int x_mid = int(s.top.store_x);
+	const int y_mid = int(s.top.store_y);
+	const int sx = winScale(kCw, kHDe);
+	const int sy = winScale(kCh, kVDe);
+	const int x_exp = (((kHDe - 1) / 2) * sx) >> 16;
+	const int y_exp = (((kVDe - 1) / 2) * sy) >> 16;
+
+	std::cout << "CASE neg_scale EXECUTED x_mid=" << x_mid << " y_mid=" << y_mid
+	          << " x_exp=" << x_exp << " y_exp=" << y_exp
+	          << " identity_would_be=" << ((kHDe - 1) / 2) << "\n";
+
+	// If scale were identity (FAULT), x_mid == 639. Product must be ~359.
+	if (x_mid == (kHDe - 1) / 2) {
+		std::cerr << "FAIL neg_scale: identity map (scale broken or FAULT build)\n";
+		return 1;
+	}
+	if (std::abs(x_mid - x_exp) > 1 || std::abs(y_mid - y_exp) > 1) {
+		std::cerr << "FAIL neg_scale: midpoint off exp\n";
+		return 1;
+	}
+	std::cout << "PASS neg_scale midpoint discriminator live (not identity)\n";
+	return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -305,9 +469,13 @@ int main(int argc, char** argv) {
 	run("legacy480", runLegacy480);
 	run("720de480", run720on480);
 	run("720id", run720identity);
+	run("pms404", runPms404);
+	run("letterbox", runLetterbox);
+	run("neg_scale", runNegScaleMidpoint);
 
 	if (mode != "legacy" && mode != "window" && mode != "legacy480" && mode != "720de480" &&
-	    mode != "720id" && mode != "all") {
+	    mode != "720id" && mode != "pms404" && mode != "letterbox" && mode != "neg_scale" &&
+	    mode != "all") {
 		std::cerr << "unknown WINDOW_MODE=" << mode << "\n";
 		return 2;
 	}

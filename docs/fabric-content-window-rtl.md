@@ -206,3 +206,17 @@ tests/unit/test_ddr_720p_pixel_rtl_sim.sh; echo "pixel_true_rc=$?"
 # Glass (parent):
 scripts/hdmi_capture_idle.sh captures/fabric720_move.png
 ```
+
+## Fabric NN scale (arbitrary source → DE)
+
+`present_content_window` with `win_enable=1`:
+- `content_w/h` = bank content (e.g. PMS **720×404**, native 1280×720, 320×240)
+- `h_de/v_de` = glass raster (w-clock **1280×720** under `PRESENT_MULTI_PIXEL`, or 529×480 product)
+- `content_x0/y0` = letterbox/pillar origin
+
+Quality V1 = **nearest-neighbour** (0 extra M10K, mul+>>16 on pixel path). Motion shimmer is real; bilinear V2 ≈2 M10K @1280 is affordable post-nostub but not landed. HDMI ascal does not re-filter when DE already equals the output raster.
+
+Gate: `tests/unit/test_present_content_window_rtl_sim.sh`
+- pms404 midpoint x=359 (not identity 639)
+- letterbox 280,158 → 999,561
+- RED: `PRESENT_WINDOW_FAULT_IDENTITY_SCALE` fails pms404

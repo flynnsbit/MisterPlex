@@ -7,11 +7,20 @@
 //   win_enable=0 → legacy full-bank FRAME_W×FRAME_H (bit-compatible 480p path)
 //   win_enable=1 → stretch content_w×content_h at (content_x0,content_y0) across DE
 //
-// Quality V1: nearest-neighbour only. ascal remains the HDMI polyphase scaler.
-// Do not build a second polyphase here.
+// Quality V1: nearest-neighbour only.
+//   Honest tradeoff: NN is free on the pixel path (one 11×20 mul + >>16) and
+//   needs zero extra M10K. Motion shimmer is real on high-contrast edges; the
+//   HDMI ascal polyphase still runs on the core DE, so when DE==output raster
+//   (w-clock 1280×720 mode) ascal does not re-filter our NN. Bilinear V2 would
+//   cost ~2 M10K (prev+curr Y lines @1280) + 4 DSPs of lerp — affordable after
+//   nostub (356 free M10K) but not this commit. Do not build a second polyphase.
 //
 // Pixel path = mul-shift + add + clamp only. Scale dividers run when window
 // regs change and land in sx_r/sy_r — off the ce_pix critical path.
+//
+// Arbitrary source → arbitrary DE (PLXG): content_w/h are bank/content size
+// (e.g. PMS 720×404); h_de/v_de are the glass raster (e.g. 1280×720). ARM never
+// swscales when win_enable=1.
 //
 // Product 480p: h_de=529 (FBAR/Template lock), v_de=480. Do not change DE
 // timing in this module; h_de/v_de are runtime so 720p DE is a parameter
@@ -100,8 +109,17 @@ module present_content_window #(
 	// ceil(a/b) = (a + b - 1) / b for a>=0,b>0
 	wire [31:0] sx_num_ceil = sx_num_gen + {21'd0, hd_m1} - 32'd1;
 	wire [31:0] sy_num_ceil = sy_num_gen + {21'd0, vd_m1} - 32'd1;
-	wire [19:0] sx_win = sx_num_ceil / {21'd0, hd_m1};
-	wire [19:0] sy_win = sy_num_ceil / {21'd0, vd_m1};
+	wire [19:0] sx_win_true = sx_num_ceil[31:0] / {21'd0, hd_m1};
+	wire [19:0] sy_win_true = sy_num_ceil[31:0] / {21'd0, vd_m1};
+	// FAULT: force identity Q16 scale (sx=65536) — red twin for wrong-scale gate.
+	// A green checker that only tests endpoints can miss this; midpoint fails.
+`ifdef PRESENT_WINDOW_FAULT_IDENTITY_SCALE
+	wire [19:0] sx_win = 20'd65536;
+	wire [19:0] sy_win = 20'd65536;
+`else
+	wire [19:0] sx_win = sx_win_true;
+	wire [19:0] sy_win = sy_win_true;
+`endif
 	wire [19:0] sx_leg = 20'(STORE_X_SCALE);
 	wire [19:0] sy_leg = 20'(STORE_Y_SCALE);
 	wire [19:0] sx_comb = win_enable ? sx_win : sx_leg;

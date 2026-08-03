@@ -113,6 +113,30 @@ set -e
 printf '%s\n' "$W720ID_OUT"
 echo "720id true rc=$W720ID_RC"
 
+echo "=== F) PMS 720x404 → 1280x720 DE ===" >&2
+set +e
+PMS404_OUT="$(WINDOW_MODE=pms404 "$BUILD/Vpresent_content_window_tb" 2>&1)"
+PMS404_RC=$?
+set -e
+printf '%s\n' "$PMS404_OUT"
+echo "pms404 true rc=$PMS404_RC"
+
+echo "=== G) Letterbox 720x404 centred ===" >&2
+set +e
+LB_OUT="$(WINDOW_MODE=letterbox "$BUILD/Vpresent_content_window_tb" 2>&1)"
+LB_RC=$?
+set -e
+printf '%s\n' "$LB_OUT"
+echo "letterbox true rc=$LB_RC"
+
+echo "=== H) NEG scale midpoint (product must not be identity) ===" >&2
+set +e
+NEG_OUT="$(WINDOW_MODE=neg_scale "$BUILD/Vpresent_content_window_tb" 2>&1)"
+NEG_RC=$?
+set -e
+printf '%s\n' "$NEG_OUT"
+echo "neg_scale true rc=$NEG_RC"
+
 assert_sim_executed "legacy" "$LEGACY_OUT" \
   "REPRO_OK legacy_fixed_map" "quarter_class=1" "PASS race model legacy"
 assert_sim_executed "window" "$WINDOW_OUT" \
@@ -123,8 +147,14 @@ assert_sim_executed "720de480" "$W720_OUT" \
   "PASS present_content_window_720_on_480de"
 assert_sim_executed "720id" "$W720ID_OUT" \
   "PASS present_content_window_720_identity"
+assert_sim_executed "pms404" "$PMS404_OUT" \
+  "CASE pms404 EXECUTED" "PASS present_content_window_pms404_to_720p"
+assert_sim_executed "letterbox" "$LB_OUT" \
+  "CASE letterbox EXECUTED" "PASS present_content_window_letterbox_404"
+assert_sim_executed "neg_scale" "$NEG_OUT" \
+  "CASE neg_scale EXECUTED" "PASS neg_scale midpoint discriminator live"
 
-if [[ "$LEGACY_RC" -ne 0 || "$WINDOW_RC" -ne 0 || "$L480_RC" -ne 0 || "$W720_RC" -ne 0 || "$W720ID_RC" -ne 0 ]]; then
+if [[ "$LEGACY_RC" -ne 0 || "$WINDOW_RC" -ne 0 || "$L480_RC" -ne 0 || "$W720_RC" -ne 0 || "$W720ID_RC" -ne 0 || "$PMS404_RC" -ne 0 || "$LB_RC" -ne 0 || "$NEG_RC" -ne 0 ]]; then
   echo "FAIL: one or more WINDOW_MODE cases returned non-zero" >&2
   exit 1
 fi
@@ -133,5 +163,25 @@ if grep -q 'quarter_class=1' <<<"$WINDOW_OUT"; then
   exit 1
 fi
 
-echo "OK present_content_window_rtl_sim: REPRO legacy + PASS 320 + PASS 480id + PASS 720on480 + PASS 720id"
+# RED twin: FAULT_IDENTITY_SCALE must make pms404/neg_scale go red.
+echo "=== RED twin PRESENT_WINDOW_FAULT_IDENTITY_SCALE ===" >&2
+BUILD_RED="$ROOT/build/verilator/present_content_window_fault_idscale"
+mkdir -p "$BUILD_RED"
+"$RUN_VERILATOR" "${vflags[@]}" --Mdir "$BUILD_RED" \
+  +define+PRESENT_WINDOW_FAULT_IDENTITY_SCALE \
+  "${common_sv[@]}"
+set +e
+RED_OUT="$(WINDOW_MODE=pms404 "$BUILD_RED/Vpresent_content_window_tb" 2>&1)"
+RED_RC=$?
+set -e
+printf '%s\n' "$RED_OUT"
+echo "fault_idscale_pms404 true rc=$RED_RC"
+assert_sim_executed "fault_idscale" "$RED_OUT" "CASE pms404 EXECUTED"
+if [[ "$RED_RC" -eq 0 ]]; then
+  echo "FAIL: FAULT_IDENTITY_SCALE pms404 must fail (wrong-scale red twin dead)" >&2
+  exit 1
+fi
+echo "PASS red-check FAULT_IDENTITY_SCALE pms404 true_rc=$RED_RC"
+
+echo "OK present_content_window_rtl_sim: REPRO legacy + PASS 320/480id/720 + pms404/letterbox/neg_scale + RED idscale"
 exit 0

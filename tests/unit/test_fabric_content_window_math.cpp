@@ -274,7 +274,26 @@ int main() {
                     scale_ms, save_lo, save_hi);
     }
 
-    if (g_fails) {
+    
+    // PMS degradation tier: 720×404 → 1280×720 DE (w-path / w-clock agree).
+    {
+        constexpr int CW = 720, CH = 404, HDE = 1280, VDE = 720;
+        const int sx = win_store_x_scale(CW, HDE);
+        const int sy = win_store_y_scale(CH, VDE);
+        EXPECT(store_x_at(0, sx, 0, CW - 1) == 0, "404→720p x0");
+        EXPECT(store_x_at(HDE - 1, sx, 0, CW - 1) == CW - 1, "404→720p x last");
+        EXPECT(store_y_at(VDE - 1, sy, 0, VDE, CH - 1) == CH - 1, "404→720p y last");
+        const int mid = store_x_at((HDE - 1) / 2, sx, 0, CW - 1);
+        EXPECT(mid != (HDE - 1) / 2, "404 mid not identity DE");
+        EXPECT(mid > 300 && mid < 400, "404 mid in content half");
+        // Identity scale would be sx=65536 → mid==639.
+        EXPECT(store_x_at((HDE - 1) / 2, 65536, 0, CW - 1) == (HDE - 1) / 2 ||
+                   store_x_at((HDE - 1) / 2, 65536, 0, CW - 1) == CW - 1,
+               "identity scale model clamps or tracks DE (discriminator power)");
+        std::printf("PASS math pms404→720p sx=%d sy=%d mid=%d\n", sx, sy, mid);
+    }
+
+if (g_fails) {
         std::fprintf(stderr, "test_fabric_content_window_math: %d failure(s)\n", g_fails);
         return 1;
     }
