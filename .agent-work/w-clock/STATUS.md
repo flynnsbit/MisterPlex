@@ -1,30 +1,35 @@
 # w-clock STATUS
 
 ## Branch
-`w-clock-bump` @ worktree MisterPlex-wt-clock  
-**Pin main:** detached `3fa01a9b`
+`w-clock-bump` @ MisterPlex-wt-clock  
+**Pin main:** detached `035fae51` (`MisterPlex/MisterPlex-wt-clock-pin-035fae51`)
 
 ## PARKED
-- PLL native-720p kit + CDC 4:15 (glass already 720p via ascal; target = content 1280)
+- PLL native-720p kit + CDC 4:15
 - No Quartus fit (parent exclusive)
 
-## Fmax / residual_csum (current)
+## L4 fit prep (current)
 
 | Item | Status | Evidence |
 |------|--------|----------|
-| Task1 present L2 Fmax risk | **MEDIUM** default-off / **HIGH** L4 enable | `FMAX_PRESENT_NETLIST_RISK.md` — no shared cone with residual_csum; placement unknown |
-| Prior Fmax 32.59 | MEASURED prior netlist only | `r_tc→residual_csum` data delay 30.062 ns |
-| Task2 residual_csum fix | **APPLIED default-ON** | ST_PLACE `residual_csum<=csum_acc` (zeros free under XOR) |
-| PRE-REGISTER Fmax Δ | **unknown until fit** | named path eliminated; next owner unknown |
-| Equiv gate | PASS | `test_residual_csum_acc_equiv.sh` true rc=0 (math+POS 0x14 + XOR1 RED + ONE_CYCLE_DELAY RED) |
+| Task A L4 timing exposure | DONE | `.agent-work/w-clock/L4_TIMING_EXPOSURE.md` |
+| Task B one-pass STA | DONE runnable | `scripts/l4_sta_onepass.sh` + `l4_sta_onepass.py` + `l4_sta_dump_paths.tcl` |
+| Self-test (stale slot11 + nostub dump) | FAIL as expected | true rc=1 (neg slack + ddr Fmax&lt;90); owner parsed residual_csum |
+| Task C PRE-REGISTER | LOCKED | `.agent-work/w-clock/L4_FIT_PREREG.md` |
 
-## Content 1280 BEAM
-Default-OFF max tier; FRAME_1280 QSF commented; enable **BLOCKED** on w-mem stride.
+### PRE-REGISTER (before parent fit)
+- clk_sys ≥ 20 MHz @ Slow 1100mV 100C: **YES**
+- clk_ddr ≥ 90: **YES**
+- Fmax owner: **slice_hdr_parser r_tc → residual_csum** (main still combo fold)
+- If residual fix `928a600b` in fit tree: owner **not** residual (alternate)
 
-## Still open
-- B20 PLXG atomic (NBA lag fix landed; live content_* OPEN) — B20_CLOSED=false
-- PLXG reset liveness OPEN
-- Product Fmax on main@3fa01a9b + this fix: **unknown — parent fit STA checklist in FMAX doc**
+### L4 high-risk signals (source)
+- NEW: `present_content_window` `hc*sx_r` / `py*sy_r` → store_x/y
+- GROW: ddr `X_W`/`Y_W`, `Y_LINE_QWORDS` 80→160, y_line/c_line CDC tags
+- PRIOR: residual_csum combo (still on 035fae51)
 
-## Do not
-Quartus fit, device, unpark PLL without grant, weaken residual golden.
+## residual_csum fix
+On branch `928a600b` default-ON; **not on main@035fae51**. Gate true rc=0 earlier.
+
+## Open below L4 prep
+- B20_CLOSED=false; PLXG reset liveness OPEN
