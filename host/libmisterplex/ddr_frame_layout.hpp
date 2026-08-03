@@ -1177,6 +1177,90 @@ inline bool ddrModeExitDoorbellLegacyNoPlxgUngatedOk() {
            ddrDoorbellGeomCoupledOk(door, /*live*/ 5, true, false);
 }
 
+// rd-duck: SPI kick is bank_sel-only (no PLXG gen). Under live coupled geom,
+// fabric must refuse SPI swap; host must not fall back to SPI for program_plxg
+// after a short doorbell wait (< one 24Hz frame ≈ 41.7ms).
+inline bool ddrSpiSwapOkUnderGeom(bool geomLive, uint16_t geomSeq,
+                                  bool faultAllowSpiUngated = false) {
+    if (faultAllowSpiUngated)
+        return true;
+    return !(geomLive && geomSeq != 0);
+}
+
+// Host first-kick policy model (sendDdrFrame).
+struct DdrCoupledKickPolicyModel {
+    bool program_plxg = false;
+    bool doorbell_acked = false; // busy/pending/has_frame within wait
+    bool used_spi = false;
+    bool refused = false;
+    int wait_us = 0;
+    bool fault_short_wait_spi = false; // REPRO: 23ms + SPI fallback
+
+    void runFirstKick() {
+        // One content frame @ 24.0007 Hz ≈ 41666 us; product pads to 50ms.
+        constexpr int kCoupledUs = 50000;
+        constexpr int kLegacyUs = 23000;
+        wait_us = fault_short_wait_spi ? kLegacyUs
+                                       : (program_plxg ? kCoupledUs : kLegacyUs);
+        if (!doorbell_acked) {
+            if (program_plxg && !fault_short_wait_spi) {
+                refused = true; // product: no SPI under program_plxg
+                used_spi = false;
+                return;
+            }
+            // FAULT or legacy: SPI
+            used_spi = true;
+            refused = false;
+            return;
+        }
+        used_spi = false;
+        refused = false;
+    }
+};
+
+// FAULT: short wait + SPI under program_plxg while live geom seq=5.
+// SPI accepts bank under old pitch (fabric FAULT_SPI_UNGATED).
+inline bool ddrCoupledKickFaultShortWaitSpiUngates() {
+    DdrCoupledKickPolicyModel m;
+    m.program_plxg = true;
+    m.doorbell_acked = false; // publish just after boundary — ack after ~40ms
+    m.fault_short_wait_spi = true;
+    m.runFirstKick();
+    if (!m.used_spi || m.refused || m.wait_us >= 41666)
+        return false;
+    // Fabric FAULT: SPI swap ok under live geom
+    if (!ddrSpiSwapOkUnderGeom(/*live*/ true, /*seq*/ 5, /*fault*/ true))
+        return false;
+    return true; // REPRO path taken
+}
+
+// PRODUCT: program_plxg + no ack → refuse SPI; wait >= one frame.
+inline bool ddrCoupledKickProductRefusesSpi() {
+    DdrCoupledKickPolicyModel m;
+    m.program_plxg = true;
+    m.doorbell_acked = false;
+    m.runFirstKick();
+    if (!m.refused || m.used_spi)
+        return false;
+    if (m.wait_us < 41666)
+        return false;
+    // Fabric product: SPI blocked under live geom
+    if (ddrSpiSwapOkUnderGeom(true, 5, false))
+        return false;
+    if (!ddrSpiSwapOkUnderGeom(false, 0, false)) // legacy ok
+        return false;
+    return true;
+}
+
+// PRODUCT: program_plxg + ack within window → doorbell path, no SPI.
+inline bool ddrCoupledKickProductDoorbellAck() {
+    DdrCoupledKickPolicyModel m;
+    m.program_plxg = true;
+    m.doorbell_acked = true;
+    m.runFirstKick();
+    return !m.refused && !m.used_spi && m.wait_us >= 41666;
+}
+
 // Maximum coded width the *shipping* RTL frame store can present (FRAME_W=640).
 // Typed as CodedWidth because acceptance checks coded stream size against it.
 // Numerically equal to presented 480p width; the type prevents using the

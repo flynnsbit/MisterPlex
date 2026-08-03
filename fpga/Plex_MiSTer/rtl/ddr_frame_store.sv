@@ -1566,6 +1566,14 @@ module ddr_frame_store #(
 	wire db_new_seq = (db_token_new && (!IGNORE_STALE_DOORBELL_AFTER_RESET || doorbell_primed)) ||
 	                  db_stale_fallback;
 	wire spi_edge_ddr = start_d2 != start_seen;
+	// SPI start carries bank_sel only — no PLXG generation (rd-duck). Under
+	// live coupled geom refuse SPI so short doorbell wait → SPI cannot swap
+	// under old pitch. Legacy (!live or seq==0) keeps SPI. FAULT restores.
+`ifdef DDR_FRAME_STORE_FAULT_SPI_UNGATED
+	wire spi_swap_ok = 1'b1;
+`else
+	wire spi_swap_ok = !(d_geom_live && (d_geom_seq != 16'd0));
+`endif
 
 	// geom_reject_r (clk) → 2FF → clk_ddr for PLXF debug_state.
 	reg geom_reject_s1, geom_reject_s2;
@@ -1880,7 +1888,8 @@ module ddr_frame_store #(
 			end
 			if (spi_edge_ddr) begin
 				start_seen <= start_d2;
-				if (!STRICT_YUV_DOORBELL || (have_seq && !format_error)) begin
+				if (spi_swap_ok &&
+				    (!STRICT_YUV_DOORBELL || (have_seq && !format_error))) begin
 					pending_bank_ddr <= bank_sel_d2;
 					swap_req_t_ddr <= ~swap_req_t_ddr;
 				end

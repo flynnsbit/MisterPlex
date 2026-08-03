@@ -1794,16 +1794,26 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
         return std::string(": ") + frameStoreStatusUnavailableDescription() + ": " + lastError();
     };
 
-    // Prefer mmap doorbell (no SPI on hot path). Fall back to SPI kick.
+    // Prefer mmap doorbell (no SPI on hot path). SPI kick is bank_sel-only —
+    // no PLXG generation (rd-duck). Under program_plxg never fall back to SPI:
+    // a short doorbell wait (~23ms) is < one 24Hz frame (41.7ms), so a publish
+    // just after VSync was falsely declared mmap-fail and SPI-swapped under
+    // old geom. Wait >= one core frame when coupled; refuse ungated SPI.
     bool kicked = false;
     auto tKick0 = std::chrono::steady_clock::now();
+    // 24.0007 Hz content frame ≈ 41666 us; pad to 50 ms for poll/prep skew.
+    constexpr int kCoupledDoorbellWaitUs = 50000;
+    constexpr int kLegacyFirstKickWaitUs = 23000;
     if (ddrKickMode_ == 1 || ddrKickMode_ == 0) {
         if (kickDdrDoorbell(bank, doorbellPlxgSeq)) {
             kicked = true;
             if (first) {
-                // Give poller time to see seq; expect busy / pending / has_frame.
-                usleep(3000);
-                for (int i = 0; i < 40; ++i) {
+                const int waitUs =
+                    plan.program_plxg ? kCoupledDoorbellWaitUs : kLegacyFirstKickWaitUs;
+                const auto deadline =
+                    std::chrono::steady_clock::now() + std::chrono::microseconds(waitUs);
+                usleep(plan.program_plxg ? 2000 : 3000);
+                while (std::chrono::steady_clock::now() < deadline) {
                     uint8_t raw[16]{};
                     {
                         SpiExclusive guard(map_);
@@ -1822,7 +1832,18 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
                     usleep(500);
                 }
                 if (!(saw_busy || saw_frame || saw_kick)) {
-                    kicked = false; // fall through to SPI
+                    if (plan.program_plxg) {
+                        // Doorbell written with generation; SPI cannot carry it.
+                        ddrKickMode_ = -1;
+                        ddrKickFailMs_ = std::chrono::duration<double, std::milli>(
+                                             std::chrono::steady_clock::now().time_since_epoch())
+                                             .count();
+                        setErr("sendDdrFrame: coupled doorbell no ack within one "
+                               "frame; refusing ungated SPI fallback" +
+                               frameStoreStatusSuffix());
+                        return false;
+                    }
+                    kicked = false; // legacy: fall through to SPI
                 } else {
                     ddrKickMode_ = 1;
                 }
@@ -1830,6 +1851,17 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
         }
     }
     if (!kicked && (ddrKickMode_ == 2 || ddrKickMode_ == 0)) {
+        if (plan.program_plxg) {
+            // SPI path has no plxg_seq field — never use for coupled publishes.
+            ddrKickMode_ = -1;
+            ddrKickFailMs_ = std::chrono::duration<double, std::milli>(
+                                 std::chrono::steady_clock::now().time_since_epoch())
+                                 .count();
+            setErr("sendDdrFrame: program_plxg requires doorbell kick; SPI is "
+                   "ungated bank_sel-only" +
+                   frameStoreStatusSuffix());
+            return false;
+        }
         if (!kickDdrSpi(bank, first, saw_busy, saw_kick, saw_frame))
             return false;
         if (first) {

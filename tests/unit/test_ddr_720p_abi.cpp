@@ -1044,6 +1044,14 @@ int main() {
         CHECK(ddrModeExitDoorbellProductCoupledUntilPromote());
         CHECK(ddrModeExitDoorbellLegacyNoPlxgUngatedOk());
         std::fprintf(stderr, "  PLXG_MODE_EXIT_DOORBELL_COUPLE OK\n");
+        // rd-duck: SPI bank_sel-only; program_plxg must not SPI-fallback
+        CHECK(ddrCoupledKickFaultShortWaitSpiUngates()); // REPRO
+        CHECK(ddrCoupledKickProductRefusesSpi());
+        CHECK(ddrCoupledKickProductDoorbellAck());
+        CHECK(!ddrSpiSwapOkUnderGeom(true, 5, false));
+        CHECK(ddrSpiSwapOkUnderGeom(true, 5, true)); // FAULT fabric
+        CHECK(ddrSpiSwapOkUnderGeom(false, 0, false));
+        std::fprintf(stderr, "  PLXG_SPI_FALLBACK_REFUSE OK\n");
         // rd-duck: 13-bit doorbell field 0 = ungated; allocator must skip 8192…
         {
             CHECK(plxgSeqDoorbellFieldIsReservedUngated(0));
