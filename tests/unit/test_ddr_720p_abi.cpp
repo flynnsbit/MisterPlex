@@ -537,6 +537,45 @@ int main() {
                  out540.budget.arm_copy_ms, kParent960x540DecodeSwsOutMs,
                  kFrameBudget24fpsMs - (kParent960x540DecodeSwsOutMs + out540.budget.arm_copy_ms));
 
+    // ---- E2E native publish readback (parent fit gate) ----
+    // Proves one 777600 B frame lands on Option-C with storage strides/U/V —
+    // the detector that would have caught an unwired 1280 canvas path.
+    {
+        std::string err;
+        CHECK(ddrNativeOptionCPublishReadbackOk(&err));
+        if (!err.empty())
+            std::fprintf(stderr, "  native_e2e err=%s\n", err.c_str());
+        // FFmpeg geometry must be STORAGE for 960x540, never DE canvas.
+        const auto ff = ddrFfmpegGeometryForPresent(960, 540, /*wantFpga=*/true);
+        CHECK(ff.coded_width.get() == 960);
+        CHECK(ff.coded_height.get() == 540);
+        CHECK(ff.coded_width.get() != 1280);
+        CHECK(ff.coded_height.get() != 720);
+        // Other tiers still pin product 624 canvas.
+        const auto ff480 = ddrFfmpegGeometryForPresent(320, 240, true);
+        CHECK(ff480.coded_width.get() == kPlex480pCodedWidth.get());
+        CHECK(ff480.coded_height.get() == kPlex480pCodedHeight.get());
+        // Legacy helper still never returns 1280 for 960 (daemon safety).
+        const auto legacy = ddrFrameGeometryForFpgaPresent(960, 540);
+        CHECK(legacy.coded_width.get() == kPlex480pCodedWidth.get());
+        // Fabric-owned publish plan exposes copy_bytes=777600 + PLXG program.
+        DdrFabricOwnedPublishPlan pub{};
+        std::vector<uint8_t> payload(777600u, 0x55);
+        CHECK(makeDdrFabricOwnedPublishPlan(payload.data(), 0, out540, pub, &err));
+        CHECK(pub.publish.copy_bytes == 777600u);
+        CHECK(pub.publish.native_push);
+        CHECK(pub.publish.program_plxg);
+        CHECK(ddrPublishCopyBytes(pub.publish) == 777600u);
+        CHECK(pub.publish.copy_bytes != pub.publish.layout.frame_bytes); // canvas >
+        CHECK(pub.publish.layout.phys_base == kPlex720pDdrFramePhysBase);
+        std::fprintf(stderr,
+                     "  NATIVE_E2E publish_bytes=%zu copy=%zu canvas_fb=%zu "
+                     "y_stride=%d u=%u v=%u map=0x%x OK\n",
+                     out540.publish_bytes, pub.publish.copy_bytes,
+                     pub.publish.layout.frame_bytes, out540.content_layout.y_stride,
+                     out540.content_layout.u_offset, out540.content_layout.v_offset,
+                     static_cast<unsigned>(pub.publish.layout.phys_base));
+    }
 
     if (fails) {
         std::fprintf(stderr, "test_ddr_720p_abi: %d fails\n", fails);

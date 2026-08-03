@@ -97,6 +97,9 @@ public:
                            DdrFrameFormat format = DdrFrameFormat::Yuv420p);
     bool setDdrFrameLayout(int width, int height,
                            DdrFrameFormat format = DdrFrameFormat::Yuv420p);
+    // Activate a fully-resolved layout (Option-C phys/stride/doorbell included).
+    // Used by the native 960×540 fabric-owned publish path.
+    bool setDdrFrameLayout(const DdrFrameLayout& layout);
     DdrFrameLayout ddrFrameLayout() const { return ddrLayout_; }
     bool sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len,
                              const DdrFrameGeometry& geometry, int bank = 0);
@@ -105,6 +108,10 @@ public:
     // bank is a hint; PLXD may select the free bank. lastPublishedBank() is the
     // bank that was actually written + doorbelled on the last successful publish.
     bool publishDdrFrame(const DdrPublishFrame& frame, int bank = 0);
+    // Native tight publish into Option-C (copy_bytes may be < canvas frame_bytes).
+    // Programs PLXG beats before doorbell when plan.program_plxg is set.
+    bool publishDdrFabricOwned(const DdrPublishFrame& frame,
+                               const DdrFabricOwnedPresentPlan& present, int bank = 0);
     int lastPublishedBank() const { return lastPublishedBank_; }
     // DDR frame mmap policy. Default true keeps the proven strongly-ordered/device
     // mapping; false is a lab knob for write-combine/cacheable /dev/mem tests.

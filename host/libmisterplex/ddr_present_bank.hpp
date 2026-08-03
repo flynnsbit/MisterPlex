@@ -4,7 +4,9 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <string>
+#include <vector>
 
 namespace misterplex {
 
@@ -29,7 +31,23 @@ struct DdrPublishPlan {
     int bank = 0;
     size_t bank_offset = 0;
     uint32_t bank_phys = 0;
+    // Bytes to memcpy into the bank. 0 ⇒ layout.frame_bytes (full canvas).
+    // Native 960×540 Option-C path sets this to 777600 while layout still
+    // describes the Option-C map window (stride/doorbell/phys).
+    size_t copy_bytes = 0;
+    bool native_push = false;
+    bool program_plxg = false;
+    uint64_t plxg_geom = 0;
+    uint64_t plxg_window = 0;
+    uint64_t plxg_origin = 0;
 };
+
+// Effective payload length for a plan (native or full canvas).
+inline size_t ddrPublishCopyBytes(const DdrPublishPlan& plan) {
+    if (plan.copy_bytes > 0)
+        return plan.copy_bytes;
+    return plan.layout.frame_bytes;
+}
 
 inline bool makeDdrPublishPlan(const DdrPublishFrame& frame, int bank, DdrPublishPlan& out,
                                std::string* err = nullptr,
@@ -51,9 +69,8 @@ inline bool makeDdrPublishPlan(const DdrPublishFrame& frame, int bank, DdrPublis
             *err = "publishDdrFrame: invalid DDR frame geometry";
         return false;
     }
-    // Payload must match derived geometry frame_bytes (full coded bank).
-    // Tight native-into-larger-canvas is a separate pack step
-    // (packYuv420pCentered / copyYuv420pNativeOrigin) before publish.
+    // Full-canvas path: payload must match derived geometry frame_bytes.
+    // Native path uses makeDdrFabricOwnedPublishPlan (copy_bytes < canvas).
     if (frame.len != layout.frame_bytes) {
         if (err)
             *err = "publishDdrFrame: frame size does not match derived DDR geometry";
@@ -69,6 +86,9 @@ inline bool makeDdrPublishPlan(const DdrPublishFrame& frame, int bank, DdrPublis
     out.bank = bank;
     out.bank_offset = bankOff;
     out.bank_phys = layout.phys_base + static_cast<uint32_t>(bankOff);
+    out.copy_bytes = frame.len;
+    out.native_push = false;
+    out.program_plxg = false;
     return true;
 }
 
@@ -149,7 +169,108 @@ inline bool makeDdrFabricOwnedPublishPlan(const uint8_t* payload, int bank,
     out.publish.bank = bank;
     out.publish.bank_offset = bankOff;
     out.publish.bank_phys = layout.phys_base + static_cast<uint32_t>(bankOff);
-    (void)payload; // caller memcpy's payload_bytes at bank_offset
+    out.publish.copy_bytes = present.publish_bytes;
+    out.publish.native_push = true;
+    out.publish.program_plxg = true;
+    out.publish.plxg_geom = present.plxg_word;
+    out.publish.plxg_window = present.plxg_window_word;
+    out.publish.plxg_origin = present.plxg_origin_word;
+    (void)payload; // caller/sendDdrFrame memcpy's copy_bytes at bank_offset
+    return true;
+}
+
+// Host-only native publish + plane readback (no device). Proves 777600 B lands
+// on Option-C with storage strides 960/480 and U/V @ 518400/648000 — the
+// detector that would have caught an unwired 1280 canvas path.
+inline bool ddrNativeOptionCPublishReadbackOk(std::string* err = nullptr) {
+    const auto present = makePlex720pOutputFrom540pSourcePlan();
+    if (!present.valid) {
+        if (err)
+            *err = "native readback: present plan invalid";
+        return false;
+    }
+    if (present.publish_bytes != 777600u || present.content_w != 960 ||
+        present.content_h != 540) {
+        if (err)
+            *err = "native readback: expected 960x540 / 777600";
+        return false;
+    }
+    if (present.content_layout.y_stride != 960 || present.content_layout.chroma_stride != 480 ||
+        present.content_layout.u_offset != 518400u ||
+        present.content_layout.v_offset != 648000u) {
+        if (err)
+            *err = "native readback: storage plane contract mismatch";
+        return false;
+    }
+    int gw = 0, gh = 0;
+    bool en = false, np = false;
+    if (!decodePlxgGeometryWord(present.plxg_word, gw, gh, en, np) || !en || !np || gw != 960 ||
+        gh != 540) {
+        if (err)
+            *err = "native readback: PLXG geometry must be storage 960x540";
+        return false;
+    }
+    std::vector<uint8_t> src(present.publish_bytes);
+    // Distinct plane tags so wrong U/V base is obvious.
+    std::memset(src.data() + present.content_layout.y_offset, 0x11,
+                static_cast<size_t>(present.content_w) * static_cast<size_t>(present.content_h));
+    std::memset(src.data() + present.content_layout.u_offset, 0x22,
+                static_cast<size_t>(present.content_layout.chroma_stride) *
+                    static_cast<size_t>(present.content_h / 2));
+    std::memset(src.data() + present.content_layout.v_offset, 0x33,
+                static_cast<size_t>(present.content_layout.chroma_stride) *
+                    static_cast<size_t>(present.content_h / 2));
+
+    DdrFabricOwnedPublishPlan pub{};
+    if (!makeDdrFabricOwnedPublishPlan(src.data(), /*bank=*/0, present, pub, err))
+        return false;
+    if (ddrPublishCopyBytes(pub.publish) != 777600u || pub.publish.native_push != true) {
+        if (err)
+            *err = "native readback: publish plan copy_bytes/native_push wrong";
+        return false;
+    }
+    if (pub.publish.layout.phys_base != kPlex720pDdrFramePhysBase ||
+        pub.publish.layout.bank_stride != kPlex720pYuv420pBankStride ||
+        pub.publish.layout.doorbell_phys != kPlex720pYuv420pDoorbellPhys) {
+        if (err)
+            *err = "native readback: Option-C map not selected";
+        return false;
+    }
+    // Simulated DDR window (two banks).
+    std::vector<uint8_t> ddr(pub.publish.layout.map_bytes, 0);
+    if (pub.publish.bank_offset + pub.publish.copy_bytes > ddr.size()) {
+        if (err)
+            *err = "native readback: bank window too small";
+        return false;
+    }
+    std::memcpy(ddr.data() + pub.publish.bank_offset, src.data(), pub.publish.copy_bytes);
+    const uint8_t* bank0 = ddr.data() + pub.publish.bank_offset;
+    if (bank0[present.content_layout.y_offset] != 0x11 ||
+        bank0[present.content_layout.u_offset] != 0x22 ||
+        bank0[present.content_layout.v_offset] != 0x33) {
+        if (err)
+            *err = "native readback: plane tags not at storage offsets";
+        return false;
+    }
+    // NEG: canvas U offset must NOT be where U landed.
+    if (present.content_layout.u_offset == static_cast<uint32_t>(kPlex720pUPlaneOffset)) {
+        if (err)
+            *err = "native readback: storage U collided with canvas U (1280 path)";
+        return false;
+    }
+    if (bank0[kPlex720pUPlaneOffset] == 0x22) {
+        if (err)
+            *err = "native readback: U tag appeared at canvas 921600 — wrong path";
+        return false;
+    }
+    // bank1 end of payload must not reach doorbell page.
+    const uint32_t bank1 = pub.publish.layout.phys_base + pub.publish.layout.bank_stride;
+    const uint32_t bank1End = bank1 + static_cast<uint32_t>(pub.publish.copy_bytes);
+    if (bank1End > pub.publish.layout.doorbell_phys) {
+        if (err)
+            *err = "native readback: payload overlaps doorbell page";
+        return false;
+    }
     return true;
 }
 

@@ -675,8 +675,7 @@ int main(int argc, char** argv) {
     if (!ddrMemSync && !ddrMemFlush) {
         std::fprintf(stderr,
                      "misterplexd: DDR_MEM_SYNC=0 forces DDR_MEM_FLUSH=1 "
-                     "(doorbell ordering)
-");
+                     "(doorbell ordering)\n");
         ddrMemFlush = true;
     }
     player.setDdrMemSync(ddrMemSync);
@@ -1097,10 +1096,10 @@ int main(int argc, char** argv) {
                 ? (std::to_string(expectW) + "x" + std::to_string(expectH))
                 : "unknown";
         // Predict ARM rescale from the same policy media_player will apply.
-        // media_player compares expected_delivery to the *coded bank* (silicon
-        // 624x480 for PRESENT=fpga|both), NOT to contentRes/DECODE (320x240).
-        // Comparing to contentRes here falsely predicted arm_rescale=0 for the
-        // shipping 320 path and hid the required scale+pad into the canvas.
+        // FFmpeg coded bank:
+        //   960x540 product intermediate → storage 960x540 (native_push)
+        //   other tiers + fpga → silicon 624x480 scale+pad canvas
+        // Never predict DE canvas 1280x720 as FFmpeg size.
         // YUV DDR force-scale default ON; identity_skip also needs verified delivery.
         const auto confScaleMode = misterplex::parseFfmpegScaleMode(ffmpegScaleMode);
         const bool wantFpgaDdrCanvas =
@@ -1108,11 +1107,8 @@ int main(int argc, char** argv) {
         const bool forceScale = wantFpgaDdrCanvas && ddrYuvForceScale;
         const auto scaleMode =
             misterplex::ffmpegScaleModeForDdrYuvPresent(confScaleMode, forceScale);
-        const auto codedGeom =
-            wantFpgaDdrCanvas
-                ? misterplex::ddrFrameGeometryForFpgaPresent(contentRes.width,
-                                                              contentRes.height)
-                : misterplex::makeDdrFrameGeometry(contentRes.width, contentRes.height);
+        const auto codedGeom = misterplex::ddrFfmpegGeometryForPresent(
+            contentRes.width.get(), contentRes.height.get(), wantFpgaDdrCanvas);
         const int codedW = codedGeom.coded_width.get();
         const int codedH = codedGeom.coded_height.get();
         // Predict arm_rescale from the same buildFfmpegVideoFilter media_player uses

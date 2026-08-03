@@ -279,23 +279,28 @@ inline bool ringHasWorstAuHeadroom(size_t level, size_t cap = kRingBytes) {
 //   frame_crop_bottom_offset       = 2   (L/R/T = 0)
 //   CropUnitY (4:2:0) = 2 → bottom crop = 4 lines → display_h = 540
 //
-// Two consumers, two numbers:
+// Two consumers, two numbers (for THIS measured proxy only):
 //   * ARM product path (libavcodec): AVFrame is ALREADY cropped → 960×540 /
 //     777600 B native_push. Frame-store Option-C banks use DISPLAY geometry.
 //   * Fabric decoder / this ring (future): bitstream carries CODED 960×544;
 //     recon buffers and DPB size off 544; crop 4 bottom lines before present.
 // Mixing 544 into native_push or 540 into fabric DPB is a wrong-picture class.
+//
+// CAUTION (parent 2026-08-03): these constants DOCUMENT the lab proxy SPS.
+// They are NOT a universal multi-tier ABI field. A future fabric decoder MUST
+// parse each delivered SPS (or receive coded/crop geometry per session). Hard-
+// coding 960×544 for other PMS tiers is unsafe.
 constexpr int kProduct960x540SpsPicWidthInMbsMinus1 = 59;
 constexpr int kProduct960x540SpsPicHeightInMapUnitsMinus1 = 33;
 constexpr int kProduct960x540SpsFrameCropBottomOffset = 2;
-constexpr int kProduct960x540SpsCodedWidth = 960;   // (59+1)*16
-constexpr int kProduct960x540SpsCodedHeight = 544;  // (33+1)*16
+constexpr int kProduct960x540SpsCodedWidth = 960;   // (59+1)*16 — proxy only
+constexpr int kProduct960x540SpsCodedHeight = 544;  // (33+1)*16 — proxy only
 constexpr int kProduct960x540SpsDisplayWidth = 960;
 constexpr int kProduct960x540SpsDisplayHeight = 540; // 544 - 2*CropUnitY*2
 constexpr int kProduct960x540SpsBottomCropLines = 4;
 constexpr size_t kProduct960x540SpsCodedI420Bytes = 783360u;   // 960*544*3/2
 constexpr size_t kProduct960x540SpsDisplayI420Bytes = 777600u; // ARM native_push
-// Fabric-decode recon/DPB plane sizing MUST use coded height 544, not 540.
+// Fabric-decode recon/DPB plane sizing MUST use *session* coded height from SPS.
 inline int fabricDecodeCodedHeightFromSps(int picHeightInMapUnitsMinus1,
                                           bool frameMbsOnly = true) {
     const int map_units = picHeightInMapUnitsMinus1 + 1;

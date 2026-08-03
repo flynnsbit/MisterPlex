@@ -1869,17 +1869,26 @@ def check_present_geometry_stride_contract() -> None:
             (
                 host_norm,
                 "inlineDdrFrameGeometryddrFrameGeometryForFpgaPresent(CodedWidth",
-                "FPGA present path must route every decode tier through ddrFrameGeometryForFpgaPresent",
+                "legacy FpgaPresent helper still exists for scale+pad tiers",
             ),
             (
-                # Daemon FFmpeg path: ALWAYS product 480p canvas. Must NOT return
+                # Legacy helper: ALWAYS product 480p canvas. Must NOT return
                 # Option-C 1280x720 for 960x540 (would force FFmpeg 720p canvas).
-                # Bank map / DE canvas are separate helpers.
+                # Live daemon uses ddrFfmpegGeometryForPresent (960→storage, else 624).
                 # Comment-stripped form drops /*decodeWidth*/ names → CodedWidth,CodedHeight.
                 host_norm,
                 "inlineDdrFrameGeometryddrFrameGeometryForFpgaPresent(CodedWidth,CodedHeight)"
                 "{returnproductDdrFrameStoreGeometry();}",
                 "ddrFrameGeometryForFpgaPresent must ignore DECODE and return productDdrFrameStoreGeometry (624)",
+            ),
+            (
+                host_norm,
+                "inlineDdrFrameGeometryddrFfmpegGeometryForPresent(intoutW,intoutH,boolwantFpgaDdrCanvas)"
+                "{if(wantFpgaDdrCanvas&&ddrIsProduct960x540Content(outW,outH))"
+                "returnddrStorageGeometryForContent(outW,outH);"
+                "if(wantFpgaDdrCanvas)returnddrFrameGeometryForFpgaPresent(outW,outH);"
+                "returnmakeDdrFrameGeometry(outW,outH);}",
+                "FFmpeg geometry: 960x540→storage, other fpga tiers→624 canvas, never 1280",
             ),
             (
                 host_norm,
@@ -1898,13 +1907,24 @@ def check_present_geometry_stride_contract() -> None:
             ),
             (
                 media_norm,
-                "wantFpgaDdrCanvas?ddrFrameGeometryForFpgaPresent(outW_,outH_)",
-                "PRESENT=fpga|both must select silicon canvas geometry, never identity-320 from DECODE",
+                "fabricOwnedPresent_.valid?ddrStorageGeometryForContent(outW_,outH_):"
+                "ddrFfmpegGeometryForPresent(outW_,outH_,wantFpgaDdrCanvas)",
+                "PRESENT path: native 960x540 storage or ddrFfmpegGeometryForPresent (never bare DECODE)",
+            ),
+            (
+                media_norm,
+                "fpga_.publishDdrFabricOwned(frame,fabricOwnedPresent_,ddrBank_)",
+                "native 960x540 must call publishDdrFabricOwned (not full-canvas only)",
+            ),
+            (
+                media_norm,
+                "makePlex720pOutputFrom540pSourcePlan()",
+                "daemon must build the fabric-owned 960x540 present plan at play start",
             ),
             (
                 media_norm,
                 "constintrawW=ddrGeometry.coded_width.get();",
-                "FFmpeg rawvideo width must be the coded stride width (624) for FPGA-presented 480p",
+                "FFmpeg rawvideo width must come from selected ddrGeometry (storage or 624 canvas)",
             ),
             (
                 media_norm,
@@ -2078,11 +2098,17 @@ def check_present_geometry_stride_contract() -> None:
             "deliberately reverted ddrFrameGeometryForFpgaPresent to identity-DECODE "
             "(320-wide writer vs 624 RTL) did not make the geometry gate red"
         )
-    bad_media_identity = media_nt.replace(
-        "wantFpgaDdrCanvas?ddrFrameGeometryForFpgaPresent(outW_,outH_)",
-        "wantFpgaDdrCanvas?makeDdrFrameGeometry(outW_,outH_)",
+    media_geom_pin = (
+        "fabricOwnedPresent_.valid?ddrStorageGeometryForContent(outW_,outH_):"
+        "ddrFfmpegGeometryForPresent(outW_,outH_,wantFpgaDdrCanvas)"
     )
-    if not missing_stride_requirements(host_nt, bad_media_identity, frame_nt, ffmpeg_vf_nt):
+    bad_media_identity = media_nt.replace(
+        media_geom_pin,
+        "makeDdrFrameGeometry(outW_,outH_)",
+    )
+    if media_geom_pin not in media_nt or not missing_stride_requirements(
+        host_nt, bad_media_identity, frame_nt, ffmpeg_vf_nt
+    ):
         fail(
             "deliberately selected identity-DECODE geometry on PRESENT=fpga "
             "did not make the geometry gate red"
@@ -2183,7 +2209,7 @@ def check_ddr_bank_handoff_contract() -> None:
             ),
             (
                 cpp_norm,
-                "std::memcpy(ddrMap_+bankOff,payload,len);__sync_synchronize();",
+                "std::memcpy(ddrMap_+bankOff,payload,copyLen);__sync_synchronize();",
                 "payload writes must be fenced before any doorbell can publish the bank",
             ),
             (
@@ -2419,7 +2445,7 @@ def check_yuv_ddr_writer_contract() -> None:
             ),
             (
                 fpga_norm,
-                "std::memcpy(ddrMap_+bankOff,payload,len)",
+                "std::memcpy(ddrMap_+bankOff,payload,copyLen)",
                 "DDR writer must copy the contiguous Y,U,V payload into the bank without plane remap",
             ),
             (
@@ -2483,8 +2509,8 @@ def check_yuv_ddr_writer_contract() -> None:
         "returnsendDdrFrame(yuv420p,len,bank)",
         "returnsendDdrFrame(remapYuv420pForDdr(yuv420p),len,bank)",
     ).replace(
-        "std::memcpy(ddrMap_+bankOff,payload,len)",
-        "copyYv12PlanesToDdr(ddrMap_+bankOff,payload,len)",
+        "std::memcpy(ddrMap_+bankOff,payload,copyLen)",
+        "copyYv12PlanesToDdr(ddrMap_+bankOff,payload,copyLen)",
     )
     if not missing_arm_yuv_requirements(media_nt, fb_nt, remapped_fpga, recon_nt):
         fail("deliberately remapped rawvideo DDR payload did not make the YUV420 DDR plane gate red")

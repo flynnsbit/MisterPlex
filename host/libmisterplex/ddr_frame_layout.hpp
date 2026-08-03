@@ -433,12 +433,12 @@ inline DdrFrameGeometry ddrStorageGeometryForContent(int contentW, int contentH)
     return productDdrFrameStoreGeometry();
 }
 
-// FPGA-present geometry for the *daemon FFmpeg/rawvideo path* (media_player rawW/H).
-// MUST remain the product 480p silicon canvas for scale+pad tiers.
-// MUST NOT return Option-C 1280x720 for 960x540 — that would force FFmpeg to emit
-// a full 720p canvas and kill the measured +7.16 ms budget (rd-duck blocker #3).
-// Bank map and DE canvas are separate: ddrSelectBankMapForContent /
-// ddrCanvasGeometryForBankMap / makeDdrFabricOwnedPresentPlan.
+// FPGA-present geometry helper retained for scale+pad tiers that still target the
+// product 480p silicon canvas (624x480). MUST NOT return Option-C 1280x720 for
+// 960x540 — that would force FFmpeg to emit a full 720p canvas and kill the
+// measured +7.16 ms budget (rd-duck blocker #3).
+// Prefer ddrFfmpegGeometryForPresent() for the live daemon path: it selects
+// storage 960x540 when the product intermediate tier is active.
 inline DdrFrameGeometry ddrFrameGeometryForFpgaPresent(CodedWidth /*decodeWidth*/,
                                                       CodedHeight /*decodeHeight*/) {
     return productDdrFrameStoreGeometry();
@@ -446,6 +446,24 @@ inline DdrFrameGeometry ddrFrameGeometryForFpgaPresent(CodedWidth /*decodeWidth*
 
 inline DdrFrameGeometry ddrFrameGeometryForFpgaPresent(int decodeWidth, int decodeHeight) {
     return ddrFrameGeometryForFpgaPresent(CodedWidth{decodeWidth}, CodedHeight{decodeHeight});
+}
+
+// Product intermediate tier (PMS Constrained Baseline 960x540 → fabric upscale).
+// Uses early kDdr720pOutputSource* aliases (kPlex* names appear later in file).
+inline bool ddrIsProduct960x540Content(int w, int h) {
+    return w == kDdr720pOutputSourceWidth && h == kDdr720pOutputSourceHeight;
+}
+
+// FFmpeg / rawvideo geometry for PRESENT=fpga|both.
+//   960x540 product intermediate → STORAGE 960x540 (777600 B native_push)
+//   all other decode tiers       → product 624x480 canvas (scale+pad path)
+// Never returns DE canvas 1280x720 for FFmpeg sizing.
+inline DdrFrameGeometry ddrFfmpegGeometryForPresent(int outW, int outH, bool wantFpgaDdrCanvas) {
+    if (wantFpgaDdrCanvas && ddrIsProduct960x540Content(outW, outH))
+        return ddrStorageGeometryForContent(outW, outH);
+    if (wantFpgaDdrCanvas)
+        return ddrFrameGeometryForFpgaPresent(outW, outH);
+    return makeDdrFrameGeometry(outW, outH);
 }
 
 inline DdrFrameLayout makeDdrFrameLayout(const DdrFrameGeometry& geom,

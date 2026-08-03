@@ -755,18 +755,36 @@ void MediaPlayer::applyOsd(uint16_t word, bool applyIdle) {
 
 bool MediaPlayer::publishDdrFrame(const DdrPublishFrame& frame, const char* context,
                                   std::string* err) {
-    DdrPublishPlan plan{};
     std::string localErr;
-    if (!makeDdrPublishPlan(frame, ddrBank_, plan, &localErr)) {
-        if (err)
-            *err = std::string(context ? context : "DDR") + ": " + localErr;
-        return false;
+    // Native 960×540 product path: fabric-owned Option-C + PLXG + 777600 copy.
+    // Full-canvas path remains makeDdrPublishPlan for 624×480 scale+pad tiers.
+    const bool native540 =
+        fabricOwnedPresent_.valid && frame.len == fabricOwnedPresent_.publish_bytes &&
+        frame.geometry.coded_width.get() == fabricOwnedPresent_.content_w &&
+        frame.geometry.coded_height.get() == fabricOwnedPresent_.content_h;
+    if (!native540) {
+        DdrPublishPlan plan{};
+        if (!makeDdrPublishPlan(frame, ddrBank_, plan, &localErr)) {
+            if (err)
+                *err = std::string(context ? context : "DDR") + ": " + localErr;
+            return false;
+        }
+    } else {
+        DdrFabricOwnedPublishPlan fplan{};
+        if (!makeDdrFabricOwnedPublishPlan(frame.payload, ddrBank_, fabricOwnedPresent_, fplan,
+                                           &localErr)) {
+            if (err)
+                *err = std::string(context ? context : "DDR") + ": " + localErr;
+            return false;
+        }
     }
     // Late-arrival vs late-observation: stamp immediately BEFORE the DDR/SPI
     // write and immediately AFTER it returns. Intervals use pre-to-pre (arrival);
     // write_us=post-pre discriminates blocking inside the write (parent 2026-08-01).
     const auto tPre = std::chrono::steady_clock::now();
-    const bool ok = fpga_.publishDdrFrame(frame, ddrBank_);
+    const bool ok =
+        native540 ? fpga_.publishDdrFabricOwned(frame, fabricOwnedPresent_, ddrBank_)
+                  : fpga_.publishDdrFrame(frame, ddrBank_);
     const auto tPost = std::chrono::steady_clock::now();
     // Advance from the bank actually written (PLXD may override the hint).
     if (ok) {
@@ -2867,14 +2885,44 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     if (onProgress_)
         onProgress_("buffering", startMs, durationMs);
 
-    // Product silicon CODED_W/H are compile-time (624x480). DECODE/outW_ only
-    // selects the PMS source ladder; FPGA DDR publish must always use the
-    // silicon canvas or line-stride shears (ARM 320 vs RTL 624).
+    // FFmpeg rawvideo geometry:
+    //   960×540 product intermediate + fpga present → STORAGE 960×540 (777600)
+    //   other tiers + fpga present → product 624×480 canvas (scale+pad)
+    // Never size FFmpeg to DE canvas 1280×720 (kills +7.16 ms budget).
     const bool wantFpgaDdrCanvas =
         (presentMode_ == "fpga" || presentMode_ == "both");
+    fabricOwnedPresent_ = {};
+    if (wantFpgaDdrCanvas && ddrIsProduct960x540Content(outW_, outH_) &&
+        ddrFrameFormat_ == DdrFrameFormat::Yuv420p) {
+        fabricOwnedPresent_ = makePlex720pOutputFrom540pSourcePlan();
+        if (!fabricOwnedPresent_.valid) {
+            log("media: native 960x540 fabric-owned plan invalid — falling back to 624 canvas");
+            fabricOwnedPresent_ = {};
+        } else {
+            log("media: NATIVE_PUBLISH tier=960x540 bytes=" +
+                std::to_string(fabricOwnedPresent_.publish_bytes) +
+                " map=Option-C phys=0x" +
+                [&] {
+                    char b[16];
+                    std::snprintf(b, sizeof(b), "%08x",
+                                  fabricOwnedPresent_.canvas_layout.phys_base);
+                    return std::string(b);
+                }() +
+                " y_stride=" + std::to_string(fabricOwnedPresent_.content_layout.y_stride) +
+                " u=" + std::to_string(fabricOwnedPresent_.content_layout.u_offset) +
+                " v=" + std::to_string(fabricOwnedPresent_.content_layout.v_offset));
+            // Activate Option-C map window before first frame (mmap + doorbell).
+            if (!fpga_.setDdrFrameLayout(fabricOwnedPresent_.canvas_layout)) {
+                log("media: setDdrFrameLayout Option-C failed: " + fpga_.lastError() +
+                    " — falling back to 624 canvas");
+                fabricOwnedPresent_ = {};
+            }
+        }
+    }
     const DdrFrameGeometry ddrGeometry =
-        wantFpgaDdrCanvas ? ddrFrameGeometryForFpgaPresent(outW_, outH_)
-                          : makeDdrFrameGeometry(outW_, outH_);
+        fabricOwnedPresent_.valid
+            ? ddrStorageGeometryForContent(outW_, outH_)
+            : ddrFfmpegGeometryForPresent(outW_, outH_, wantFpgaDdrCanvas);
     const int rawW = ddrGeometry.coded_width.get();
     const int rawH = ddrGeometry.coded_height.get();
     const int rawDisplayW = ddrGeometry.display_width.get();

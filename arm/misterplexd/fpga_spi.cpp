@@ -719,31 +719,41 @@ bool FpgaSpi::ensureDdrMap() {
     return true;
 }
 
-bool FpgaSpi::setDdrFrameLayout(const DdrFrameGeometry& geometry, DdrFrameFormat format) {
-    DdrFrameLayout next =
-        makeDdrFrameLayout(geometry, kDdrFrameBase, kDdrFrameStrideAlign, format);
-    if (!ddrFrameLayoutValid(next)) {
+bool FpgaSpi::setDdrFrameLayout(const DdrFrameLayout& layout) {
+    if (!ddrFrameLayoutValid(layout)) {
         setErr("setDdrFrameLayout: invalid DDR frame layout");
         return false;
     }
-    if (next.coded_width == ddrLayout_.coded_width &&
-        next.coded_height == ddrLayout_.coded_height &&
-        next.display_width == ddrLayout_.display_width &&
-        next.display_height == ddrLayout_.display_height &&
-        next.presented_width == ddrLayout_.presented_width &&
-        next.presented_height == ddrLayout_.presented_height &&
-        next.crop_left == ddrLayout_.crop_left && next.crop_right == ddrLayout_.crop_right &&
-        next.crop_top == ddrLayout_.crop_top && next.crop_bottom == ddrLayout_.crop_bottom &&
-        next.present_x == ddrLayout_.present_x && next.present_y == ddrLayout_.present_y &&
-        next.format == ddrLayout_.format)
+    // Same map window + dims → no remap.
+    if (layout.phys_base == ddrLayout_.phys_base &&
+        layout.bank_stride == ddrLayout_.bank_stride &&
+        layout.doorbell_phys == ddrLayout_.doorbell_phys &&
+        layout.map_bytes == ddrLayout_.map_bytes &&
+        layout.frame_bytes == ddrLayout_.frame_bytes &&
+        layout.coded_width == ddrLayout_.coded_width &&
+        layout.coded_height == ddrLayout_.coded_height &&
+        layout.display_width == ddrLayout_.display_width &&
+        layout.display_height == ddrLayout_.display_height &&
+        layout.presented_width == ddrLayout_.presented_width &&
+        layout.presented_height == ddrLayout_.presented_height &&
+        layout.crop_left == ddrLayout_.crop_left && layout.crop_right == ddrLayout_.crop_right &&
+        layout.crop_top == ddrLayout_.crop_top && layout.crop_bottom == ddrLayout_.crop_bottom &&
+        layout.present_x == ddrLayout_.present_x && layout.present_y == ddrLayout_.present_y &&
+        layout.format == ddrLayout_.format)
         return true;
-    ddrLayout_ = next;
+    ddrLayout_ = layout;
     releaseDdrMap();
     ddrKickMode_ = 0;
     ddrKickFailMs_ = -1.0;
     doorbellSeq_ = 0;
     clearErr();
     return true;
+}
+
+bool FpgaSpi::setDdrFrameLayout(const DdrFrameGeometry& geometry, DdrFrameFormat format) {
+    DdrFrameLayout next =
+        makeDdrFrameLayout(geometry, kDdrFrameBase, kDdrFrameStrideAlign, format);
+    return setDdrFrameLayout(next);
 }
 
 bool FpgaSpi::setDdrFrameLayout(int width, int height, DdrFrameFormat format) {
@@ -1344,12 +1354,21 @@ bool FpgaSpi::sendRgb565Frame(const uint16_t* rgb, int w, int h, uint8_t index) 
 
 bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& plan) {
     const uint8_t* payload = frame.payload;
+    const size_t copyLen = ddrPublishCopyBytes(plan);
     const size_t len = frame.len;
     int bank = plan.bank;
-    if (!payload || len != plan.layout.frame_bytes || plan.layout.bank_stride != ddrLayout_.bank_stride ||
+    // Native path: copyLen may be < layout.frame_bytes (canvas map window).
+    // Map identity is phys/stride/doorbell; payload length is copyLen.
+    if (!payload || len != copyLen || copyLen == 0 ||
+        plan.layout.phys_base != ddrLayout_.phys_base ||
+        plan.layout.bank_stride != ddrLayout_.bank_stride ||
         plan.layout.doorbell_phys != ddrLayout_.doorbell_phys ||
         plan.layout.frame_bytes != ddrLayout_.frame_bytes) {
         setErr("sendDdrFrame: publish plan does not match active DDR layout");
+        return false;
+    }
+    if (copyLen > plan.layout.bank_stride) {
+        setErr("sendDdrFrame: copy_bytes exceeds bank stride");
         return false;
     }
     if (ddrKickMode_ < 0) {
@@ -1541,10 +1560,15 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
     auto tPrep1 = std::chrono::steady_clock::now();
     timing.prep_wait_us = elapsedUs(tPrep0, tPrep1);
 
-    // Copy frame into bank (persistent map).
+    // Copy frame into bank (persistent map). Native path copies only storage
+    // bytes (e.g. 777600); full-canvas path copies layout.frame_bytes.
     const size_t bankOff = static_cast<size_t>(bank) * plan.layout.bank_stride;
+    if (bankOff + copyLen > ddrMapLen_) {
+        setErr("sendDdrFrame: bank payload exceeds mapped window");
+        return false;
+    }
     auto tCopy0 = std::chrono::steady_clock::now();
-    std::memcpy(ddrMap_ + bankOff, payload, len);
+    std::memcpy(ddrMap_ + bankOff, payload, copyLen);
     __sync_synchronize();
     auto tCopy1 = std::chrono::steady_clock::now();
     timing.copy_us = elapsedUs(tCopy0, tCopy1);
@@ -1558,13 +1582,38 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
             return false;
         }
         auto tFlush0 = std::chrono::steady_clock::now();
-        if (!cleanDcacheRange(ddrMap_ + bankOff, len)) {
+        if (!cleanDcacheRange(ddrMap_ + bankOff, copyLen)) {
             setErr("sendDdrFrame: cache clean failed");
             return false;
         }
         __sync_synchronize();
         auto tFlush1 = std::chrono::steady_clock::now();
         timing.flush_us = elapsedUs(tFlush0, tFlush1);
+    }
+
+    // PLXG beats (geometry → window → origin) must be visible before doorbell.
+    // Same control page as doorbell; write last beat with DMB before kick.
+    if (plan.program_plxg) {
+        const uint32_t plxgPhys = plxgMailboxPhys(plan.layout.doorbell_phys);
+        if (plxgPhys < plan.layout.phys_base) {
+            setErr("sendDdrFrame: PLXG phys below map base");
+            return false;
+        }
+        const size_t plxgOff = static_cast<size_t>(plxgPhys - plan.layout.phys_base);
+        if (plxgOff + 8 > ddrMapLen_) {
+            setErr("sendDdrFrame: PLXG mailbox outside mapped window");
+            return false;
+        }
+        volatile uint32_t* pw = reinterpret_cast<volatile uint32_t*>(ddrMap_ + plxgOff);
+        auto writePlxgBeat = [&](uint64_t word) {
+            pw[1] = static_cast<uint32_t>(word >> 32);
+            __sync_synchronize();
+            pw[0] = static_cast<uint32_t>(word);
+            __sync_synchronize();
+        };
+        writePlxgBeat(plan.plxg_geom);
+        writePlxgBeat(plan.plxg_window);
+        writePlxgBeat(plan.plxg_origin);
     }
 
     bool saw_busy = false;
@@ -1867,17 +1916,50 @@ bool FpgaSpi::publishDdrFrame(const DdrPublishFrame& frame, int bank) {
         plan.layout.crop_bottom != ddrLayout_.crop_bottom ||
         plan.layout.present_x != ddrLayout_.present_x ||
         plan.layout.present_y != ddrLayout_.present_y ||
-        plan.layout.format != ddrLayout_.format) {
-        if (!setDdrFrameLayout(frame.geometry, frame.format))
+        plan.layout.format != ddrLayout_.format ||
+        plan.layout.phys_base != ddrLayout_.phys_base ||
+        plan.layout.bank_stride != ddrLayout_.bank_stride ||
+        plan.layout.doorbell_phys != ddrLayout_.doorbell_phys ||
+        plan.layout.frame_bytes != ddrLayout_.frame_bytes) {
+        if (!setDdrFrameLayout(plan.layout))
             return false;
     }
     if (ddrLayout_.bank_stride != plan.layout.bank_stride ||
         ddrLayout_.doorbell_phys != plan.layout.doorbell_phys ||
-        ddrLayout_.frame_bytes != plan.layout.frame_bytes) {
+        ddrLayout_.frame_bytes != plan.layout.frame_bytes ||
+        ddrLayout_.phys_base != plan.layout.phys_base) {
         setErr("publishDdrFrame: active DDR layout disagrees with derived frame geometry");
         return false;
     }
     return sendDdrFrame(frame, plan);
+}
+
+bool FpgaSpi::publishDdrFabricOwned(const DdrPublishFrame& frame,
+                                    const DdrFabricOwnedPresentPlan& present, int bank) {
+    if (!present.valid) {
+        setErr("publishDdrFabricOwned: present plan invalid");
+        return false;
+    }
+    if (!frame.payload || frame.len != present.publish_bytes) {
+        setErr("publishDdrFabricOwned: payload length must equal native publish_bytes");
+        return false;
+    }
+    DdrFabricOwnedPublishPlan fplan{};
+    std::string err;
+    if (!makeDdrFabricOwnedPublishPlan(frame.payload, bank, present, fplan, &err)) {
+        setErr(err);
+        return false;
+    }
+    // Activate Option-C (or map-tier) bank window before mmap/copy.
+    if (!setDdrFrameLayout(fplan.publish.layout))
+        return false;
+    if (ddrLayout_.phys_base != fplan.publish.layout.phys_base ||
+        ddrLayout_.bank_stride != fplan.publish.layout.bank_stride ||
+        ddrLayout_.doorbell_phys != fplan.publish.layout.doorbell_phys) {
+        setErr("publishDdrFabricOwned: layout activation mismatch");
+        return false;
+    }
+    return sendDdrFrame(frame, fplan.publish);
 }
 
 bool FpgaSpi::sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len, int width, int height,

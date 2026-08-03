@@ -394,6 +394,9 @@ private:
     bool presentProfile_ = false;
     bool useDdrF1_ = true; // F1 product presentation attempts DDR YUV420p only.
     int ddrBank_ = 0;      // ping-pong 0/1; stride comes from ddr_frame_layout.hpp
+    // Valid when product intermediate is 960×540 + PRESENT=fpga|both: native
+    // Option-C publish (777600 B). Empty/invalid → legacy 624 canvas path.
+    DdrFabricOwnedPresentPlan fabricOwnedPresent_{};
     // Successful publish timestamps (doorbell/swap_req). See publish_interval_ledger.hpp.
     misterplex::PublishIntervalLedger pubInterval_{};
     // Δframes_done + phase ESTIMATE per successful publish (parent ERROR 21).
