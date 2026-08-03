@@ -68,9 +68,13 @@
   ],
   "h_ownership": {
     "glass_under_multi_pixel": "w-clock present_beam_ppc",
-    "store_map": "w-scaler present_content_window / identity when native 1280",
+    "glass_geometry": "1280x720",
+    "source_geometry_product": "960x540",
+    "store_map": "identity clamp ONLY if FRAME==1280x720; else w-scaler glass→store (product 960x540). present_content_window not in tree yet.",
+    "identity_guard_marker": "MP_IDENTITY_FRAME_EQ_GLASS",
     "template_h_de_when_macro_off": 529,
-    "doc": ".agent-work/w-clock/H_OWNERSHIP_W_SCALER.md"
+    "doc": ".agent-work/w-clock/H_OWNERSHIP_W_SCALER.md",
+    "geom_sweep_doc": ".agent-work/w-clock/SOURCE_VS_OUTPUT_GEOM_SWEEP.md"
   },
   "tolerance_mhz": 0.001
 }

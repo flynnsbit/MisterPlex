@@ -377,10 +377,27 @@ module present_core #(
 		.frame_start(mp_fstart)
 	);
 
-	// Store map: identity glass→store (native 1280). w-scaler owns non-identity
-	// NN maps via present_content_window — must consume beam glass_x0/y with
-	// h_de=1280, NOT colorbars hc with H_DE=529 (see H_OWNERSHIP_W_SCALER.md).
-	// Clamp to FRAME_*: integration needs FRAME/CODED 1280 or right edge clips.
+	// Store map: IDENTITY glass→store clamp.
+	// Glass DE is always 1280×720 under this arm. FRAME_* is the *store/source*
+	// canvas (product path: 960×540, not 1280). Identity is valid ONLY when
+	// FRAME_W==1280 && FRAME_H==720 (native-source banks). Otherwise glass x/y
+	// past FRAME_LAST clamp → right/bottom smear — NOT a 4/3 upscale.
+	// w-scaler owns non-identity maps (present_content_window). Do NOT naive-scale
+	// only glass_x0: ddr N-wide yuv extracts consecutive store px src_x0..+PPC-1.
+	// See .agent-work/w-clock/SOURCE_VS_OUTPUT_GEOM_SWEEP.md
+	// MP_IDENTITY_FRAME_EQ_GLASS (gate string — do not rename lightly)
+	localparam int MP_GLASS_W = 1280;
+	localparam int MP_GLASS_H = 720;
+	localparam bit MP_IDENTITY_FRAME_EQ_GLASS =
+		(FRAME_W == MP_GLASS_W) && (FRAME_H == MP_GLASS_H);
+	// synthesis translate_off
+	initial begin
+		if (!MP_IDENTITY_FRAME_EQ_GLASS)
+			$error("PRESENT_MULTI_PIXEL identity store map requires FRAME %0dx%0d (glass); got %0dx%0d — need w-scaler glass→store (product 960x540 source)",
+				MP_GLASS_W, MP_GLASS_H, FRAME_W, FRAME_H);
+	end
+	// synthesis translate_on
+	(* noprune *) wire mp_identity_geom_ok = MP_IDENTITY_FRAME_EQ_GLASS;
 	wire [FRAME_X_W-1:0] mp_store_x =
 		(mp_glass_x0 > 12'(FRAME_LAST_X)) ? FRAME_LAST_X
 			: mp_glass_x0[FRAME_X_W-1:0];
@@ -620,7 +637,7 @@ module present_core #(
 		&& (mp_h_total == 12'd1650) && (mp_v_total == 12'd750);
 	wire _unused_mp_flags = mp_beam_ce | mp_wr_full | mp_wr_af | mp_rd_ur
 		| mp_rd_empty | (|mp_lane_de_r) | (|fs_lane_v_n) | (MP_SYNC_LAG == 0)
-		| mp_mode_ok | mp_needs_fast_pix | (|mp_fps_milli);
+		| mp_mode_ok | mp_needs_fast_pix | (|mp_fps_milli) | mp_identity_geom_ok;
 `endif
 `endif
 

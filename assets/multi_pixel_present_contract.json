@@ -111,10 +111,16 @@
   },
   "w_scaler_interface": {
     "doc": ".agent-work/w-clock/MULTI_PIXEL_PRESENT_DESIGN.md section 5",
+    "geom_sweep_doc": ".agent-work/w-clock/SOURCE_VS_OUTPUT_GEOM_SWEEP.md",
     "stream": "present_px_stream",
     "first_integration_ppc": 2,
-    "content_geometry": "1280x720",
-    "h_ownership": "w-clock beam owns glass H (+PPC). w-scaler maps glass->store and exports Y qword+1; active 1280 DE with x0%PPC==0 does not straddle for PPC in {2,4}."
+    "glass_geometry": "1280x720",
+    "source_geometry_product": "960x540",
+    "content_geometry": "GLASS_NOT_SOURCE",
+    "content_geometry_note": "Do not equate 720p glass with 1280-wide source. Product source is 960x540; identity glass→store is valid only when FRAME==glass.",
+    "identity_store_map_requires_frame_eq_glass": true,
+    "identity_guard_marker": "MP_IDENTITY_FRAME_EQ_GLASS",
+    "h_ownership": "w-clock beam owns glass H (+PPC). w-scaler maps glass->store (required when source!=glass). N-wide yuv assumes consecutive store px — naive x0*scale is not a free upscale."
   },
   "tolerance_mhz": 0.001
 }

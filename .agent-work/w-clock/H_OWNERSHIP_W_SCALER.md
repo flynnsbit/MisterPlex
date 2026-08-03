@@ -34,8 +34,13 @@ yuv_bt601_npx (PPC lanes) → present_npx_path → 1 px CE
 
 **w-clock today (this branch):** identity clamp `glass → FRAME_*` (no content_window
 instance under the ifdef). That is correct **only** when `FRAME`/`CODED`/`DISPLAY`
-are programmed **1280×720** (scaler Option-C / native geom). If FRAME stays 640,
-clamp **destroys** right-half glass — integration must enable scaler 1280 geom.
+are programmed **1280×720** (native-**source** banks).  
+
+**Product path (parent-measured) is 960×540 source → 1280×720 glass.** Identity is
+**wrong** for that path: glass x≥960 / y≥540 clamp to last store pixel → smear, not
+4/3 upscale. Guard: `MP_IDENTITY_FRAME_EQ_GLASS` + sim `$error` when FRAME≠glass.
+**w-scaler must land glass→store** before MP+use_ext product fit. See
+`SOURCE_VS_OUTPUT_GEOM_SWEEP.md`. If FRAME stays 640/480, clamp is even worse.
 
 ## Right-edge arithmetic (1280 active)
 

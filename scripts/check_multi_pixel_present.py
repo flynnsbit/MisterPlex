@@ -126,6 +126,39 @@ def main() -> int:
             fails.append(f"verdict {key}: got {got} want {want}")
         print(f"VERDICT {key}={got} (contract want={want})")
 
+
+    # Source-vs-output class: identity store map is not 720p-source.
+    wsi = contract.get("w_scaler_interface", {})
+    if wsi.get("content_geometry") == "1280x720":
+        fails.append(
+            "w_scaler_interface.content_geometry must not be bare 1280x720 "
+            "(conflates glass with source); use glass_geometry + source_geometry_product"
+        )
+    if wsi.get("glass_geometry") != "1280x720":
+        fails.append("glass_geometry must be 1280x720 (output raster)")
+    if wsi.get("source_geometry_product") != "960x540":
+        fails.append("source_geometry_product must record parent product 960x540")
+    if not wsi.get("identity_store_map_requires_frame_eq_glass", False):
+        fails.append("identity_store_map_requires_frame_eq_glass must be true")
+    marker = wsi.get("identity_guard_marker", "MP_IDENTITY_FRAME_EQ_GLASS")
+    pc_path = root / "fpga/Plex_MiSTer/rtl/present_core.sv"
+    pct = pc_path.read_text(encoding="utf-8", errors="ignore") if pc_path.is_file() else ""
+    if marker not in pct:
+        fails.append(f"present_core.sv missing identity guard marker {marker}")
+    else:
+        print(f"GEOM_OK identity guard marker {marker}")
+    sweep = root / ".agent-work/w-clock/SOURCE_VS_OUTPUT_GEOM_SWEEP.md"
+    if not sweep.is_file():
+        fails.append("missing SOURCE_VS_OUTPUT_GEOM_SWEEP.md")
+    else:
+        print("GEOM_OK sweep doc present")
+    # Rate-match must stay geometry-free (no FRAME/H_DE ports)
+    rm = (root / "fpga/Plex_MiSTer/rtl/present_pix_rate_match.sv").read_text(encoding="utf-8", errors="ignore")
+    if "FRAME_W" in rm or "H_DE" in rm or "1280" in rm:
+        fails.append("present_pix_rate_match must stay clock-only (no geometry keys)")
+    else:
+        print("GEOM_OK rate_match geometry-free")
+
     if args.require_rtl:
         rtl = contract.get("rtl", {})
         def active_define(src: str, name: str) -> bool:
