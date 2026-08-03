@@ -204,8 +204,21 @@ module plex_present_geom_mux (
 
 	assign present_content_x0 = plxg_content ? plxg_cx0 : 11'd0;
 	assign present_content_y0 = plxg_content ? plxg_cy0 : 11'd0;
+	// PLXG q3 display_w/h (rd-duck): must NOT alias coded. Product silicon
+	// packs coded=624 display=618 crop_left=3; display=coded → src_x through
+	// 626 and unfilled bytes (bounds reject once E2 is live).
+`ifdef FAULT_MUX_DISPLAY_EQ_CODED
+	// RED twin: q3 display dead — always coded (contract drop REPRO).
 	assign present_geom_display_w = present_geom_coded_w;
 	assign present_geom_display_h = present_geom_coded_h;
+`else
+	// Content-bearing: q3 dw/dh (0 → coded fallback). Synthetic idle/force
+	// paths keep display == coded (no separate display field).
+	wire [10:0] plxg_dw_eff = (plxg_dw != 11'd0) ? plxg_dw : plxg_coded_w;
+	wire [10:0] plxg_dh_eff = (plxg_dh != 11'd0) ? plxg_dh : plxg_coded_h;
+	assign present_geom_display_w = plxg_content ? plxg_dw_eff : present_geom_coded_w;
+	assign present_geom_display_h = plxg_content ? plxg_dh_eff : present_geom_coded_h;
+`endif
 	assign present_geom_present_x = plxg_content ? plxg_px : 11'd0;
 	assign present_geom_present_y = plxg_content ? plxg_py : 11'd0;
 	assign present_geom_crop_left = plxg_content ? plxg_cl : 11'd0;
