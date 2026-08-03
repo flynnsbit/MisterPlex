@@ -197,24 +197,15 @@ module altddio_out #(parameter extend_oe_disable = "", parameter intended_device
     return stub
 
 
-def run_verilator(
-    files: list[Path],
+def _verilator_define_args(
     macros: list[str],
     *,
     macro_qsf: Path | None = None,
-) -> tuple[int, str]:
-    """Lint/elaborate files with product macros.
-
-    Prefer explicit macro_qsf (fit gate). Else if macros list is provided as
-    NAME=VALUE strings from discover_design, emit -D from that list (last-wins
-    already applied). Else fall back to project Plex.qsf via verilator_define_args.
-    """
-    stub = write_intel_stubs()
-    ordered_files = sorted(files, key=lambda p: (is_excluded(p), rel(p) if p.exists() else str(p)))
+) -> list[str]:
     if macro_qsf is not None:
-        define_args = verilator_define_args(Path(macro_qsf))
-    elif macros:
-        define_args = []
+        return verilator_define_args(Path(macro_qsf))
+    if macros:
+        define_args: list[str] = []
         for raw in macros:
             raw = raw.strip()
             if not raw:
@@ -223,19 +214,187 @@ def run_verilator(
                 define_args.append(raw)
             else:
                 define_args.append(f"-D{raw}")
-    else:
-        define_args = verilator_define_args()
+        return define_args
+    return verilator_define_args()
+
+
+def run_verilator(
+    files: list[Path],
+    macros: list[str],
+    *,
+    macro_qsf: Path | None = None,
+    suppress_pinmissing: bool = True,
+) -> tuple[int, str]:
+    """Lint/elaborate files with product macros.
+
+    Prefer explicit macro_qsf (fit gate). Else if macros list is provided as
+    NAME=VALUE strings from discover_design, emit -D from that list (last-wins
+    already applied). Else fall back to project Plex.qsf via verilator_define_args.
+
+    suppress_pinmissing=True matches historical lint (ignores open optional pins).
+    Connectivity sweeps set suppress_pinmissing=False so PINMISSING/UNDRIVEN fire.
+    """
+    stub = write_intel_stubs()
+    ordered_files = sorted(files, key=lambda p: (is_excluded(p), rel(p) if p.exists() else str(p)))
+    define_args = _verilator_define_args(macros, macro_qsf=macro_qsf)
     cmd = [
         str(ROOT / "scripts" / "run_verilator.sh"),
         "--lint-only", "-Wall", "-Wno-fatal",
-        "-Wno-DECLFILENAME", "-Wno-PINCONNECTEMPTY", "-Wno-PINMISSING",
+        "-Wno-DECLFILENAME",
         "-Wno-MULTITOP", "-Wno-EOFNEWLINE", "-Wno-GENUNNAMED",
         f"-I{ROOT / 'build' / 'rtl_lint_generated'}",
         f"-I{PROJECT}", f"-I{PROJECT / 'sys'}", f"-I{PROJECT / 'rtl'}",
         str(stub),
-    ] + define_args + [str(p) for p in ordered_files]
+    ]
+    if suppress_pinmissing:
+        # Historical product lint: open optional HPS pins are not fit blockers.
+        cmd[4:4] = ["-Wno-PINCONNECTEMPTY", "-Wno-PINMISSING"]
+    cmd = cmd + define_args + [str(p) for p in ordered_files]
     proc = subprocess.run(cmd, cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     return proc.returncode, proc.stdout
+
+
+def run_connectivity_sweep(
+    files: list[Path],
+    macros: list[str],
+    *,
+    macro_qsf: Path | None = None,
+) -> tuple[int, str, list[dict[str, str]]]:
+    """Verilator PINMISSING + UNDRIVEN sweep over product hierarchy.
+
+    Parent B20_UNCONNECTED_PRODUCER class (2026-08-03): correct producer + correct
+    consumer that were never wired. Content-presence greps and ancestry checks are
+    green; only a mechanical undriven/pinmissing pass catches it.
+
+    Filter (noise control, not a weaken of the class):
+      - PINMISSING kept when the *port declaration* lives under product rtl/
+        (or Plex.sv). Vendor/sys optional pins (hps_io joysticks) are dropped.
+      - UNDRIVEN kept when the undriven signal is declared in product rtl/ or
+        Plex.sv.
+
+    Limitation (false-negative twin — stated plainly): this sweep proves a net
+    *has a driver* or a port *is present*. It does **not** prove the driver is
+    the *intended* producer (e.g. content_fps=8'd24 while fabric_content_fps is
+    driven but unused). Wrong-producer is a separate class.
+    """
+    owned = [p for p in files if p.exists() and not is_excluded(p)]
+    rc, output = run_verilator(
+        owned, macros, macro_qsf=macro_qsf, suppress_pinmissing=False
+    )
+    findings: list[dict[str, str]] = []
+    lines = output.splitlines()
+    i = 0
+    while i < len(lines):
+        ln = lines[i]
+        m = WARN_RE.match(ln)
+        if not m:
+            i += 1
+            continue
+        kind, file_name, line_no, _col = m.groups()
+        if kind not in {"PINMISSING", "UNDRIVEN"}:
+            i += 1
+            continue
+        # PINMISSING secondary line: "... Location of port declaration"
+        port_decl_path = ""
+        pin_name = ""
+        pm = re.search(r"Instance has missing pin: '([^']+)'", ln)
+        if pm:
+            pin_name = pm.group(1)
+        um = re.search(r"Signal is not driven: '([^']+)'", ln)
+        signal_name = um.group(1) if um else ""
+        j = i + 1
+        while j < len(lines) and lines[j].lstrip().startswith("..."):
+            # continuation detail lines from verilator
+            j += 1
+        # Port declaration location is often on the next non-... indented path line
+        k = i + 1
+        while k < len(lines) and k < i + 6:
+            loc = re.match(
+                r"\s+(\S+\.(?:sv|v|svh)):(\d+):\d+:\s+\.\.\.\s+Location of port declaration",
+                lines[k],
+            )
+            if loc:
+                port_decl_path = loc.group(1)
+                break
+            # Sometimes the path is alone then "... Location"
+            loc2 = re.match(r"\s+(\S+\.(?:sv|v|svh)):(\d+):\d+:", lines[k])
+            if loc2 and k + 1 < len(lines) and "Location of port declaration" in lines[k + 1]:
+                port_decl_path = loc2.group(1)
+                break
+            k += 1
+
+        inst_path = file_name
+        try:
+            inst_p = Path(inst_path)
+            if not inst_p.is_absolute():
+                inst_p = (ROOT / inst_p).resolve()
+            inst_rel = rel(inst_p)
+        except Exception:
+            inst_rel = inst_path
+
+        def _is_product_rtl(path_s: str) -> bool:
+            ps = path_s.replace("\\", "/")
+            return (
+                "/rtl/" in ps
+                or ps.endswith("/Plex.sv")
+                or ps.endswith("fpga/Plex_MiSTer/Plex.sv")
+                or "/Plex_MiSTer/rtl/" in ps
+            )
+
+        keep = False
+        if kind == "PINMISSING":
+            decl = port_decl_path or ""
+            decl_is_rtl = bool(decl) and (
+                "/rtl/" in decl.replace("\\", "/")
+                or decl.replace("\\", "/").endswith("/rtl")
+            )
+            # Only product-rtl *module* port decls (present_*/plex_*/ddr_*/…).
+            # Drop sys/hps_io nested opens even when a secondary path line mis-parses.
+            if not decl_is_rtl:
+                keep = False
+            else:
+                # Parent class is unconnected *producer* outputs.
+                direction = ""
+                if pin_name:
+                    try:
+                        dpath = Path(decl)
+                        if not dpath.is_absolute():
+                            dpath = (ROOT / dpath).resolve()
+                        dtxt = dpath.read_text(errors="ignore")
+                        dm = re.search(
+                            rf"\b(output|input|inout)\b[^;\n]{{0,120}}\b{re.escape(pin_name)}\b",
+                            dtxt,
+                        )
+                        if dm:
+                            direction = dm.group(1)
+                    except OSError:
+                        direction = ""
+                # Keep output/inout PINMISSING. Skip input-only opens.
+                keep = direction in {"output", "inout", ""}
+        elif kind == "UNDRIVEN":
+            keep = _is_product_rtl(inst_rel)
+
+        if keep:
+            findings.append(
+                {
+                    "kind": kind,
+                    "inst_file": inst_rel,
+                    "inst_line": line_no,
+                    "pin": pin_name,
+                    "signal": signal_name,
+                    "port_decl": port_decl_path,
+                    "raw": ln[:300],
+                }
+            )
+        i += 1
+
+    log = ROOT / "build" / "vl_connectivity_sweep.log"
+    try:
+        log.parent.mkdir(parents=True, exist_ok=True)
+        log.write_text(output)
+    except OSError:
+        pass
+    return rc, output, findings
 
 
 def collect_warnings(output: str, reportable: set[str]) -> tuple[dict[str, dict[str, int]], dict[str, list[str]]]:

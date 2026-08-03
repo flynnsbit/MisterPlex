@@ -135,7 +135,9 @@ LIVE_OPEN_BLOCKER_TOKENS = (
     "B1_NO_COMPILE_TIME_OPTC",
     "B1_LAYOUT_NOT_960",
     "B2_FPS_INT_OVERFLOW",
-    "B2_NO_RASTER_GENERATOR",
+    # B2_NO_RASTER_GENERATOR retired: w-clock deliberately made timing_960
+    # constants-only; present_beam_content_de is the sole product raster SoT.
+    # Live open becomes B2_NO_PRODUCT_RASTER only when the beam is missing.
     "B1_40MPIX_NOT_PRODUCT",
     "B4_PLXG_SAME_SEQ_ABA",
     "B5_NO_DDR_ON_BEAM_TEST",
@@ -164,6 +166,7 @@ LIVE_OPEN_BLOCKER_TOKENS = (
     "B20_HIER_E_POLL_DOORBELL_ATOMIC",
     "B20_HIER_F_BANK_SWAP_24_30",
     "B20_HIER_G_PLXC_ASYNC_CDC_MULTIBEAT",
+    # B20_UNCONNECTED_PRODUCER: not always live — mutation + integ RED twin prove it.
     # rd-duck: runtime-beam must force ascal blackout + scaler (live open on product)
     "B21_HDMI_BLACKOUT_DISABLED",
     "B21_VGA_SCALER_DISABLED",
@@ -1290,12 +1293,15 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
                     "640×480 nor max-tier 960×540 — re-audit bank map for runtime DE"
                 )
 
-    # --- B2: scalar-ascal timing_960 constants-only + int overflow ---
+    # --- B2: FPS overflow + product raster SoT (w-clock architecture) ---
+    # w-clock deliberately demoted present_video_timing_960.sv to a constants/
+    # math pack ("NOT a raster generator"). Product raster SoT is
+    # present_beam_content_de.sv. Do NOT fail constants-only timing_960 — that
+    # was noise that buried real blockers (parent 2026-08-03).
     t960 = RTL / "present_video_timing_960.sv"
     t960_txt = _read(t960)
     if t960_txt:
         msgs.append(f"LEG0_EVIDENCE present_video_timing_960.sv exists ({t960.stat().st_size} B)")
-        # Overflow: clock's 720p file documents and uses longint; 960 still uses int.
         if "localparam int FPS_MILLI = (CLK_PIX_HZ * 1000)" in t960_txt or re.search(
             r"localparam\s+int\s+FPS_MILLI\s*=\s*\(\s*CLK_PIX_HZ\s*\*\s*1000", t960_txt
         ):
@@ -1305,37 +1311,52 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
                 "20_000_000*1000 overflows 32-bit signed int (rd-duck #2). "
                 "present_video_timing_720p.sv already uses longint for this."
             )
-        # No raster generator: no hc/vc counters; only assign of localparams.
-        has_hc_reg = bool(re.search(r"\breg\s+\[[^\]]+\]\s*hc\b", t960_txt))
-        has_always_raster = "always @(posedge" in t960_txt and has_hc_reg
-        if not has_always_raster:
-            errors.append(
-                "B2_NO_RASTER_GENERATOR: present_video_timing_960.sv is constants-only "
-                "(assign h_de/h_total/… from localparams; no hc/vc beam). Not a product "
-                "raster (rd-duck #2). Product beam is present_beam_content_de with "
-                "hardcoded totals — timing_960 is not wired as SoT."
+        has_hc_reg_t960 = bool(re.search(r"\breg\s+\[[^\]]+\]\s*hc\b", t960_txt))
+        has_always_raster_t960 = "always @(posedge" in t960_txt and has_hc_reg_t960
+        if not has_always_raster_t960:
+            msgs.append(
+                "LEG0_B2_TIMING960_CONSTANTS_ONLY OK (w-clock: pack is math-only; "
+                "beam present_beam_content_de is product raster SoT — not a defect)"
             )
-        # Not instantiated in present_core
         if "present_video_timing_960" not in core:
             msgs.append(
                 "LEG0_EVIDENCE present_core.sv does not instantiate present_video_timing_960"
             )
-        qip = _read(ROOT / "fpga" / "Plex_MiSTer" / "files.qip")
-        if "present_video_timing_960.sv" in qip and not has_always_raster:
+
+    # Product must have a real raster generator: beam with hc/vc always.
+    beam_path = RTL / "present_beam_content_de.sv"
+    beam_txt = _read(beam_path)
+    qip_txt_b2 = _read(ROOT / "fpga" / "Plex_MiSTer" / "files.qip")
+    beam_has_raster = bool(
+        beam_txt
+        and re.search(r"\breg\s+\[[^\]]+\]\s*hc\b", beam_txt)
+        and "always @(posedge" in beam_txt
+    )
+    beam_in_qip = "present_beam_content_de.sv" in qip_txt_b2
+    if not beam_has_raster or not beam_in_qip:
+        errors.append(
+            "B2_NO_PRODUCT_RASTER: present_beam_content_de.sv must be the product "
+            "raster SoT (hc/vc always + listed in files.qip). "
+            f"beam_has_raster={int(beam_has_raster)} beam_in_qip={int(beam_in_qip)}. "
+            "w-clock: timing_960 is constants-only by design — do not treat that as "
+            "the missing raster."
+        )
+    else:
+        msgs.append(
+            "LEG0_B2_PRODUCT_RASTER_OK beam=present_beam_content_de "
+            "(timing_960 constants-only is intentional)"
+        )
+
+    # 40 Mpix claim is not product raster (doc budget line).
+    dec = _read(ROOT / "docs" / "product-4-3-scaler-decision.md")
+    if dec and ("40 Mpix/s" in dec or "40 Mpix" in dec):
+        if cand is None or cand.get("architecture") != "mp_cea_1280":
             errors.append(
-                "B2_TIMING960_IN_QIP_WITHOUT_RASTER: constants module listed in files.qip "
-                "without being a real generator — cargo risk"
+                "B1_40MPIX_NOT_PRODUCT: docs/product-4-3-scaler-decision.md cites "
+                "w-clock 40 Mpix/s bridge; rd-duck: nominal 40 Mpix/s is not product "
+                "unless FIT_CANDIDATE architecture=mp_cea_1280 with real clk_pix path. "
+                "ascal_true_de_960 product rate is ~15.55 Mpix/s content @30."
             )
-        # 40 Mpix claim is not product raster (doc budget line).
-        dec = _read(ROOT / "docs" / "product-4-3-scaler-decision.md")
-        if "40 Mpix/s" in dec or "40 Mpix" in dec:
-            if cand is None or cand.get("architecture") != "mp_cea_1280":
-                errors.append(
-                    "B1_40MPIX_NOT_PRODUCT: docs/product-4-3-scaler-decision.md cites "
-                    "w-clock 40 Mpix/s bridge; rd-duck: nominal 40 Mpix/s is not product "
-                    "unless FIT_CANDIDATE architecture=mp_cea_1280 with real clk_pix path. "
-                    "ascal_true_de_960 product rate is ~15.55 Mpix/s content @30."
-                )
 
     # --- B4: PLXG same-seq ABA remains in FPGA latch ---
     latch = _read(RTL / "present_geom_latch.sv")
@@ -2223,6 +2244,131 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
             "B21_HIER_VGA_SCALER_PORT_NOT_WIRED: sys_top.v vga_scaler does not "
             "OR vga_force_scaler (cfg[2]|vga_force_scaler required)."
         )
+
+    # --- B20_UNCONNECTED_PRODUCER: Verilator PINMISSING/UNDRIVEN sweep ---
+    # Parent 2026-08-03 observed on integ-product: present_geom_latch produces
+    # dar_*/fps_* correctly, plex_video_ar consumes fabric_dar_* correctly, but
+    # the instance port list ended at .promote_pulse — zero drivers on fabric_*.
+    # B19 content-presence greps were GREEN (evidence strings exist). Only a
+    # mechanical undriven/pinmissing pass catches this class.
+    msgs.append("LEG0_B20_CONNECTIVITY_SWEEP_BEGIN")
+    try:
+        import rtl_lint as _rtl_conn
+
+        if hasattr(_rtl_conn, "set_repo_root"):
+            _rtl_conn.set_repo_root(ROOT)
+        qsf_conn = ROOT / "fpga" / "Plex_MiSTer" / "Plex.qsf"
+        try:
+            files_c, macros_c = _rtl_lint_discover_design(qsf_conn if qsf_conn.is_file() else None)
+        except TypeError as exc:
+            errors.append(
+                "B10_DISCOVER_DESIGN_DID_NOT_RUN: connectivity sweep could not "
+                f"discover_design: {exc}"
+            )
+            files_c, macros_c = [], []
+        if files_c:
+            _rc_c, _out_c, findings = _rtl_conn.run_connectivity_sweep(
+                files_c, macros_c, macro_qsf=qsf_conn if qsf_conn.is_file() else None
+            )
+            msgs.append(
+                f"LEG0_B20_CONNECTIVITY_SWEEP_EXECUTED n_findings={len(findings)} "
+                f"verilator_rc={_rc_c} log=build/vl_connectivity_sweep.log"
+            )
+            # Cap report noise but never drop the class: each finding is a blocker.
+            # Aggregate under named token so parent sees the class, not anonymous warns.
+            pin_n = sum(1 for f in findings if f.get("kind") == "PINMISSING")
+            und_n = sum(1 for f in findings if f.get("kind") == "UNDRIVEN")
+            if findings:
+                sample = findings[:12]
+                detail = "; ".join(
+                    (
+                        f"{f['kind']}:{f.get('inst_file','')}:{f.get('inst_line','')}"
+                        f":pin={f.get('pin') or f.get('signal') or '?'}"
+                        + (f":decl={Path(f['port_decl']).name}" if f.get("port_decl") else "")
+                    )
+                    for f in sample
+                )
+                more = f" (+{len(findings)-12} more)" if len(findings) > 12 else ""
+                errors.append(
+                    f"B20_UNCONNECTED_PRODUCER: Verilator connectivity sweep found "
+                    f"{len(findings)} product-rtl issue(s) "
+                    f"(PINMISSING={pin_n} UNDRIVEN={und_n}). "
+                    "Class = correct producer + correct consumer never wired "
+                    "(parent integ miss #11). Sample: "
+                    f"{detail}{more}. "
+                    "LIMITATION: has-a-driver ≠ intended-driver (wrong-producer twin "
+                    "not covered — e.g. content_fps=8'd24 while fabric_content_fps "
+                    "is driven but unused)."
+                )
+            else:
+                msgs.append(
+                    "LEG0_B20_CONNECTIVITY_OK PINMISSING=0 UNDRIVEN=0 "
+                    "(product-rtl filter; wrong-producer twin still out of scope)"
+                )
+        else:
+            msgs.append(
+                "LEG0_B20_CONNECTIVITY_SWEEP_SKIP no files from discover_design"
+            )
+    except FileNotFoundError as exc:
+        errors.append(
+            f"B20_UNCONNECTED_PRODUCER: connectivity sweep could not run ({exc}). "
+            "A check that does not execute is not a pass."
+        )
+    except Exception as exc:  # noqa: BLE001 — surface sweep crashes as blockers
+        errors.append(
+            f"B20_UNCONNECTED_PRODUCER: connectivity sweep raised {type(exc).__name__}: {exc}. "
+            "A check that throws did not run (B10 class)."
+        )
+
+    # Orphan product modules: listed in files.qip, never instantiated (B15 twin:
+    # plex_content_fps_sel compiles but is dead without an instance).
+    qip_orphan = _read(ROOT / "fpga" / "Plex_MiSTer" / "files.qip")
+    plex_all = plex_txt or ""
+    rtl_blob_parts: list[str] = [plex_all]
+    for rp in sorted((ROOT / "fpga" / "Plex_MiSTer" / "rtl").glob("*.sv")):
+        rtl_blob_parts.append(_read(rp) or "")
+    rtl_blob = "\n".join(rtl_blob_parts)
+    orphan_hits: list[str] = []
+    if qip_orphan:
+        for m in re.finditer(
+            r"SYSTEMVERILOG_FILE\s+rtl/([A-Za-z0-9_]+\.sv)", qip_orphan
+        ):
+            fname = m.group(1)
+            fpath = ROOT / "fpga" / "Plex_MiSTer" / "rtl" / fname
+            body = _read(fpath)
+            if not body:
+                continue
+            # Only the primary module (file stem) — submodules in multi-module
+            # files are often local helpers (h264_rbsp_filter inside primitives).
+            stem = Path(fname).stem
+            mm = re.search(
+                rf"^\s*module\s+({re.escape(stem)})\b", body, re.M
+            )
+            if not mm:
+                continue
+            mod = mm.group(1)
+            # skip packages / params / pure include cargo / intentional math packs
+            if (
+                mod.endswith("_pkg")
+                or mod.endswith("_params")
+                or "timing_960" in mod
+                or mod.startswith("present_video_timing")
+            ):
+                continue
+            # Instantiation elsewhere: module name appears outside its own body
+            outside = rtl_blob.replace(body, "\n", 1)
+            if not re.search(rf"\b{re.escape(mod)}\b", outside):
+                orphan_hits.append(f"{fname}:{mod}")
+    if orphan_hits:
+        errors.append(
+            "B20_UNCONNECTED_PRODUCER: product module(s) in files.qip never "
+            f"instantiated anywhere in Plex.sv/rtl: {orphan_hits[:8]}. "
+            "Compiles ≠ connected (parent: plex_content_fps_sel in qip, no instance → "
+            "B15 content_fps stays 8'd24)."
+        )
+        msgs.append(f"LEG0_B20_ORPHAN_MODULES n={len(orphan_hits)} {orphan_hits[:8]}")
+    else:
+        msgs.append("LEG0_B20_ORPHAN_MODULES n=0")
 
     # --- B20 full-hierarchy scenario tests (rd-duck hold/release a–f) ---
     # Require tests under tests/ that are multi-module (hierarchy), not thin unit
@@ -3441,7 +3587,9 @@ def _mutation_per_blocker_clear_restore() -> list[str]:
             [(layout, clear_layout_960), (store, clear_store_optc_ifdef)],
         ),
         ("B2_FPS_INT_OVERFLOW", [(t960, clear_fps_longint)]),
-        ("B2_NO_RASTER_GENERATOR", [(t960, clear_raster_fake)]),
+        # B2_NO_RASTER_GENERATOR retired — timing_960 constants-only is intentional.
+        # B2_NO_PRODUCT_RASTER: only fires when beam lacks hc/vc or qip entry;
+        # mutated in closed-class reinject (beam is present on this tree).
         ("B1_40MPIX_NOT_PRODUCT", [(dec, clear_40mpix)]),
         ("B4_PLXG_SAME_SEQ_ABA", [(latch, clear_aba)]),
         ("B7_OPTC_WIDTH_ONLY", [(store, clear_store_capacity)]),
@@ -3985,6 +4133,99 @@ def _mutation_closed_class_reinject() -> list[str]:
                     print("  MUT_OK B21_HDMI_BLACKOUT_DISABLED reinject_fire=1")
             finally:
                 rest()
+
+    # B2_NO_PRODUCT_RASTER: strip beam raster evidence.
+    beam_p = RTL / "present_beam_content_de.sv"
+    if beam_p.is_file():
+        old_b = beam_p.read_text()
+        if re.search(r"\breg\s+\[[^\]]+\]\s*hc\b", old_b):
+            bad_b = re.sub(r"\breg\s+(\[[^\]]+\])\s*hc\b", r"/*mut*/ wire \1 hc_removed", old_b, count=1)
+            rest = _with_file_backup(beam_p, bad_b)
+            try:
+                _rc, msgs = leg0_arch_blockers()
+                toks = _leg0_error_tokens(msgs)
+                if "B2_NO_PRODUCT_RASTER" not in toks:
+                    fails.append("B2_NO_PRODUCT_RASTER: beam strip reinject did not fire — HOLE")
+                else:
+                    print("  MUT_OK B2_NO_PRODUCT_RASTER reinject_fire=1")
+            finally:
+                rest()
+
+    # B20_UNCONNECTED_PRODUCER: drop a product-rtl instance pin (PINMISSING).
+    # Prefer present_geom_latch .content_w(...) — any net name.
+    if plex_p.is_file():
+        old_px = plex_p.read_text()
+        if re.search(r"\.content_w\s*\([^)]*\)", old_px):
+            bad_px = re.sub(
+                r"\.content_w\s*\([^)]*\)\s*,",
+                "/* mut B20 drop content_w pin */",
+                old_px,
+                count=1,
+            )
+            rest = _with_file_backup(plex_p, bad_px)
+            try:
+                _rc, msgs = leg0_arch_blockers()
+                toks = _leg0_error_tokens(msgs)
+                txt = "\n".join(msgs)
+                fired = (
+                    "B20_UNCONNECTED_PRODUCER" in toks
+                    or "B20_UNCONNECTED_PRODUCER" in txt
+                )
+                pin_seen = "content_w" in txt or "pin=content_w" in txt
+                if not fired:
+                    fails.append(
+                        "B20_UNCONNECTED_PRODUCER: drop content_w pin reinject did not fire — HOLE"
+                    )
+                elif not pin_seen:
+                    fails.append(
+                        "B20_UNCONNECTED_PRODUCER: blocker present but content_w "
+                        "absent from report — ancestry/noise only, pin drop not seen — HOLE"
+                    )
+                else:
+                    print(
+                        "  MUT_OK B20_UNCONNECTED_PRODUCER pin_drop_reinject_fire=1 "
+                        "content_w_in_report=1"
+                    )
+            finally:
+                rest()
+        else:
+            # No latch instance — synthesize orphan module in qip + rtl file never instanced.
+            qip_p = ROOT / "fpga" / "Plex_MiSTer" / "files.qip"
+            rtl_dir = ROOT / "fpga" / "Plex_MiSTer" / "rtl"
+            if qip_p.is_file() and rtl_dir.is_dir():
+                body = (
+                    "// mut orphan producer\n"
+                    "`timescale 1ns/1ps\n"
+                    "module fitgate_mut_orphan_producer(output wire y);\n"
+                    "  assign y = 1'b0;\n"
+                    "endmodule\n"
+                )
+                # filename stem must match module name for primary-module orphan rule
+                synth = rtl_dir / "fitgate_mut_orphan_producer.sv"
+                old_q = qip_p.read_text()
+                new_q = (
+                    old_q
+                    + '\nset_global_assignment -name SYSTEMVERILOG_FILE rtl/fitgate_mut_orphan_producer.sv\n'
+                )
+                r1 = _with_file_backup(synth, body)
+                r2 = _with_file_backup(qip_p, new_q)
+                try:
+                    _rc, msgs = leg0_arch_blockers()
+                    toks = _leg0_error_tokens(msgs)
+                    if "B20_UNCONNECTED_PRODUCER" not in toks and "B20_UNCONNECTED_PRODUCER" not in "\n".join(msgs):
+                        fails.append(
+                            "B20_UNCONNECTED_PRODUCER: orphan module reinject did not fire — HOLE"
+                        )
+                    else:
+                        print("  MUT_OK B20_UNCONNECTED_PRODUCER orphan_reinject_fire=1")
+                finally:
+                    r2()
+                    r1()
+                    if synth.is_file():
+                        try:
+                            synth.unlink()
+                        except OSError:
+                            pass
 
     return fails
 
