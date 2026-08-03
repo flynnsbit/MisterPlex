@@ -1,15 +1,10 @@
-w-path p720-path STATUS
-tip: pending (FpgaSpi publish PLXG wire)
-prior: 69b01b16 DP 426 display DE
-
-DONE this tick (rd-duck hollow publish):
-- sendDdrFrame HARD-requires plan.program_plxg + writePlxgRecord(plan.plxg_q)
-  before doorbell kick (bootstrap 0x300FF800 seqlock)
-- writePlxgQ5 remains pending-only; inject on publishDdrFrame
-- setDdrFrameLayout pins LEG/Option-C (not 0x40000 geom)
-- attachLabPublishMaps + test_fpga_publish_ddr_frame:
-  true FpgaSpi::publishDdrFrame(320) → bank payload + PLXG q0..q5 + q5 + door
-- static gate: writePlxgRecord(plan.plxg_q) must appear in fpga_spi.cpp
-- make unit true rc=0
-
-HELD: bit34 RESERVED; fps_1001 draft; no Quartus/MiSTer
+w-path tip: (see git) pad426 coded≠display publish oracle
+status: IDLE after rd-duck 426 metadata re-assert
+evidence:
+  - ddrPadOnlyStorageGeometry: coded=432 display/H_DE=426 cropL=2 cropR=4 present_x=0
+  - makeDdrPublishPlan PLXG q1=426 q2 DE=426 coded=432 q3 dw=426 ys=432 q4 cl=2
+  - NEG store-only 432 remains identity (crop0) — product must pass CONTENT 426
+  - w-mem mux discarding q3 display is THEIR lane; host half tested
+  - make unit true rc=0
+owed: fps_1001 draft only (freeze #4); bit34 OFF wire
+no Quartus / no MiSTer
