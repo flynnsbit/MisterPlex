@@ -64,9 +64,9 @@ int main() {
     CHECK(h.find("X-Plex-Session-Identifier: sess1") != std::string::npos);
     CHECK(h.find("X-Plex-Token: tok") != std::string::npos);
 
-    // --- PMS universal transcode profile table / 480p+720p guard ---
+    // --- PMS universal transcode profile table / 480p+540p+720p guard ---
     const auto& profiles = plexTranscodeProfiles();
-    CHECK(profiles.size() == 3);
+    CHECK(profiles.size() == 4);
     const auto osd240 = contentResolutionFromOsdWord(0);
     const auto osd480 = contentResolutionFromOsdWord(1u << 4);
     const auto path720 = contentResolutionFor720p();
@@ -516,6 +516,40 @@ int main() {
         checkProfileMatchesContentResolution("content-tier reapply 480p from 720", play480,
                                              osd480);
         std::printf("GREEN_PATH_720p url+genuine_delivery+bitrate_gate\n");
+    }
+
+    // Shippable 720p *glass* source tier (parent proxy 5/5): 960x540 + fabric upscale.
+    // NEVER claim true 720p source. Negatives: shorter coded height is not genuine 540p.
+    {
+        WeakLadder w540;
+        CHECK(applyPlexTranscodeProfile("540p", w540));
+        CHECK(w540.videoResolution == std::string("960x540"));
+        CHECK(w540.maxVideoBitrateKbps == kPlex540pWeakBitrateKbps);
+        CHECK(w540.h264Level == kPlex540pH264Level);
+        CHECK(w540.h264Profile == kPlexH264ProfilePin);
+        CHECK(validateWeakLadder(w540));
+        WeakLadder byRes;
+        CHECK(applyPlexTranscodeProfile("960x540", byRes));
+        CHECK(byRes.videoResolution == std::string("960x540"));
+        const auto url540 =
+            buildUniversalTranscodeUrl("http://pms.example:32400", "/library/metadata/9", "tok",
+                                       "sess540", 0, w540);
+        CHECK(url540.find("videoResolution=960x540") != std::string::npos);
+        CHECK(url540.find("videoProfile=baseline") != std::string::npos);
+        CHECK(url540.find("videoLevel=31") != std::string::npos);
+        CHECK(url540.find("maxVideoBitrate=2000") != std::string::npos);
+        const auto c540 = contentResolutionFor540pFabric720p();
+        CHECK(c540.presentPolicy == ContentPresentPolicy::Source540pFabric720p);
+        CHECK(std::string(c540.userLabel).find("720p source") == std::string::npos);
+        CHECK(std::string(c540.userLabel).find("540p") != std::string::npos);
+        CHECK(std::string(c540.userLabel).find("720p glass") != std::string::npos);
+        CHECK(isGenuine540pDelivery(960, 540));
+        CHECK(!isGenuine540pDelivery(960, 536)); // NEG shorter height
+        CHECK(!isGenuine540pDelivery(854, 480));
+        CHECK(!isGenuine720pDelivery(960, 540)); // NEG: 540p is not true 720 source
+        CHECK(kPlex540pYuv420pBytes == 777600);
+        CHECK(kPlex540pYuv420pBytes < kPlex720pYuv420pBytes);
+        std::printf("GREEN_PATH_540p_fabric720_glass url+honest_label+genuine_gate\n");
     }
 
     if (fails) {

@@ -152,6 +152,11 @@ inline bool isGenuine720pDelivery(int delivered_w, int delivered_h) {
     return isGenuineTierDelivery(delivered_w, delivered_h, 1280, 720);
 }
 
+// Exact 960x540 coded — shippable fabric→720 glass source (not true 720 source).
+inline bool isGenuine540pDelivery(int delivered_w, int delivered_h) {
+    return isGenuineTierDelivery(delivered_w, delivered_h, 960, 540);
+}
+
 // Lab-measured maxVideoBitrate gate for true 1280x720 on 16:9 HD sources
 // (daemon URL builder + unique session, lab PMS 2026-08-03 fine matrix):
 //   rk2: maxBR=3000 → 720x404; maxBR=3100 → 1280x720 SAR 1:1 (start.mp4 ffprobe).

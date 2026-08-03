@@ -27,6 +27,17 @@ constexpr int kPlex720pYuv420pBytes = 1382400;
 static_assert(kPlex720pYuv420pBytes ==
                   kPlex720pCodedWidth.get() * kPlex720pCodedHeight.get() * 3 / 2,
               "720p I420 byte count");
+// Shippable "720p glass" source tier (parent 2026-08-03 proxy ladder, 5/5 HIT):
+// ARM decode+copy of 960x540 fits deadline; fabric upscales to 1280x720 raster.
+// NOT true 720p source — never label as such. I420 = 960*540*3/2 = 777_600.
+constexpr CodedWidth kPlex540pCodedWidth{960};
+constexpr CodedHeight kPlex540pCodedHeight{540};
+constexpr int kPlex540pYuv420pBytes = 777600;
+static_assert(kPlex540pYuv420pBytes ==
+                  kPlex540pCodedWidth.get() * kPlex540pCodedHeight.get() * 3 / 2,
+              "540p I420 byte count");
+// Fits inside Option-C 720p bank stride (1.5 MiB) with headroom — w-mem owns ABI.
+static_assert(kPlex540pYuv420pBytes < kPlex720pYuv420pBytes, "540p smaller than 720p bank");
 constexpr int kPlex480pCropLeft = 0;
 constexpr int kPlex480pCropRight = 6;
 constexpr int kPlex480pCropTop = 0;

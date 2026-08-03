@@ -80,6 +80,12 @@ static_assert(kPlex720pWeakBitrateKbps >= 3100,
 static_assert(kPlex720pDecodeOptimalBitrateKbps < kPlex720pWeakBitrateKbps,
               "decode-optimal content tier is below universal geometry floor");
 
+// 960x540 shippable source for fabric→720p glass (parent proxy budget PASS +10.49 ms).
+// MaxFS 960*540/256=2025 > L3.0 1620 → request L3.1. Bitrate is a quality default
+// only — NOT a PMS geometry floor (no fine matrix yet; prove coded WxH on device).
+constexpr int kPlex540pWeakBitrateKbps = 2000;
+constexpr int kPlex540pH264Level = 31; // same pin as 720 path (MaxFS)
+
 // Menu index 0 is the power-on default. The present loop waits for the audio
 // clock to reach `frameContentMs + avOffsetMs`, so POSITIVE holds the frame back
 // and makes video LATER. Raise it when audio sounds late (video running ahead).
@@ -113,6 +119,9 @@ enum class ContentPresentPolicy : uint8_t {
     // Path-tier 1280x720. PMS URL + vf identity_skip target. DDR publish still
     // refuses until w-mem remaps banks — do not claim glass-ready.
     Path720p = 2,
+    // 960x540 ARM source; fabric upscales to native 1280x720 raster on glass.
+    // HONEST name: 720p *output*, never "720p source". Parent product target.
+    Source540pFabric720p = 3,
 };
 
 struct ContentResolution {
@@ -146,9 +155,22 @@ inline const char* plex720pCodedResolutionLabel() {
     return "1280x720";
 }
 
+inline const char* plex540pCodedResolutionLabel() {
+    static_assert(kPlex540pCodedWidth.get() == 960,
+                  "update plex540pCodedResolutionLabel when coded width changes");
+    static_assert(kPlex540pCodedHeight.get() == 540,
+                  "update plex540pCodedResolutionLabel when coded height changes");
+    return "960x540";
+}
+
 // Honest product name for tier 10 — never "720p".
 inline const char* plexWidescreen480pCanvasUserLabel() {
     return "16:9-framed 480p";
+}
+
+// Honest: glass is 720p; source is 540p. Never "true 720p" / "720p source".
+inline const char* plex540pFabric720pUserLabel() {
+    return "540p source / 720p glass";
 }
 
 struct OsdSettings {
@@ -203,10 +225,18 @@ inline ContentResolution contentResolutionForWidescreen480pCanvas() {
 }
 
 // Aggressive path target: genuine 1280x720 PMS tier (see p720-path evidence).
+// True 720p *source* — ARM decode+CPU copy FAIL; needs DMA or fabric decode.
 inline ContentResolution contentResolutionFor720p() {
     return {kPlex720pCodedWidth, kPlex720pCodedHeight, plex720pCodedResolutionLabel(),
             kPlex720pWeakBitrateKbps, ContentPresentPolicy::Path720p,
             plex720pCodedResolutionLabel()};
+}
+
+// Shippable 720p *glass*: 960x540 ARM source + fabric 1.333× upscale (parent PASS).
+inline ContentResolution contentResolutionFor540pFabric720p() {
+    return {kPlex540pCodedWidth, kPlex540pCodedHeight, plex540pCodedResolutionLabel(),
+            kPlex540pWeakBitrateKbps, ContentPresentPolicy::Source540pFabric720p,
+            plex540pFabric720pUserLabel()};
 }
 
 // Prefer library H.264 Part (transcode=0) vs PMS universal.
@@ -254,6 +284,8 @@ inline ContentResolution contentResolutionFromOsdWord(uint16_t word,
 inline ContentResolution contentResolutionFromCodedSize(CodedWidth w, CodedHeight h) {
     if (w.get() == kPlex720pCodedWidth.get() && h.get() == kPlex720pCodedHeight.get())
         return contentResolutionFor720p();
+    if (w.get() == kPlex540pCodedWidth.get() && h.get() == kPlex540pCodedHeight.get())
+        return contentResolutionFor540pFabric720p();
     if (w.get() >= kPlex480pCodedWidth.get() || h.get() >= kPlex480pCodedHeight.get())
         return contentResolutionFor480p();
     return contentResolutionFor240p();
@@ -266,6 +298,8 @@ inline ContentResolution contentResolutionFromSize(int w, int h) {
 inline int weakBitrateKbpsForCodedSize(CodedWidth w, CodedHeight h) {
     if (w.get() == kPlex720pCodedWidth.get() && h.get() == kPlex720pCodedHeight.get())
         return kPlex720pWeakBitrateKbps;
+    if (w.get() == kPlex540pCodedWidth.get() && h.get() == kPlex540pCodedHeight.get())
+        return kPlex540pWeakBitrateKbps;
     if (w.get() >= kPlex480pCodedWidth.get() || h.get() >= kPlex480pCodedHeight.get()) {
 #ifdef OSD_MENU_FAULT_FALLBACK_624_BITRATE
         return kPlex360pWeakBitrateKbps;

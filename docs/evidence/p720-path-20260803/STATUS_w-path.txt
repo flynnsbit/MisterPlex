@@ -1,17 +1,12 @@
-w-path STATUS (parent correction + budget)
+w-path STATUS — 540p→720 glass product tier landed
 
-STAND DOWN: further profile-pin work. Baseline already in product request;
-gate 7cc590c0 is defense-in-depth only.
+PRODUCT: 960x540 source / 720p glass (Source540pFabric720p)
+  applyPlexTranscodeProfile 540p|960x540, L31, baseline pin
+  honest userLabel; isGenuine540pDelivery; tests green
 
-LEVEL: Path720p requests videoLevel=31 (kPlex720pH264Level). DPB/ring must
-key off delivered SPS level_idc, not request alone → w-mem.
+NOT: true 720p source (DMA still BLOCKED diag; multi-month fabric decode)
 
-BUDGET (parent measured):
-  624x480: total 21.09 PASS margin +20.57
-  1280x720 + CPU copy: FAIL by 7-9 ms even at 1500k
-  True 720 source needs DMA or fabric decode; 720 OUTPUT = fabric scale
+DMA: still diagnose 4KiB burst1 when free — upgrade path only
+Profile pin: stood down (already product)
 
-OPEN critical: PL330 4KiB burst1 FTR diag (36d7594c binary)
-  ddr_pl330_ingest_bench --len 4096 --loops 1 --bank 1 --burst 1
-
-NO device. Branch w-path-720p.
+Parent e2e cast owns glass proof.
