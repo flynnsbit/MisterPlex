@@ -1,7 +1,17 @@
 {
   "title": "NTSC rational cadence wall (rd-duck B15 follow-up)",
   "owner": "w-clock",
-  "status": "OPEN_ABI \u2014 integer q5 cannot source-lock 23.976/29.97",
+  "status": "OPEN_ABI \u2014 integer q5 cannot source-lock 23.976/29.97; bit34 THREE_WAY_CONFLICT",
+  "cross_lane_bit34": {
+    "parent_abi_2": "[63:34] RESERVED must be zero (only parent-signed freeze)",
+    "w_path_f31a6eb9": "[34]=fps_1001 self-named ABI #2.1; reserved moves to [63:35]",
+    "w_mem_latch": "q5_reserved_nz = |sh5[63:34] \u2014 rejects path film q5 wholesale",
+    "w_clock": "plex_content_fps_sel has NO fps_1001 port; will not add until parent freeze",
+    "effect_of_path_film_q5_today": "w-mem rejects record; DAR+fps never promote",
+    "rational_cadence_fixed": false,
+    "note": "rd-duck 2026-08-03: do not claim rational cadence fixed until one parent-arbitrated ABI merges host pack + latch + top + beam/cadence + tests",
+    "doc": ".agent-work/w-clock/Q5_BIT34_ABI_CONFLICT.md"
+  },
   "clk_sys_hz": 20000000,
   "beam": {
     "H_TOTAL": 1182,
@@ -38,7 +48,9 @@
   "claims_forbidden_until_fix": [
     "source-locked for 23.976/29.97",
     "judder controlled for common NTSC rates",
-    "B15 framecount proves unique-bank lock under NTSC"
+    "B15 framecount proves unique-bank lock under NTSC",
+    "fps_1001 / bit34 rational cadence fixed (unilateral w-path #2.1)",
+    "23.976 record accepted end-to-end on current multi-tip tree"
   ],
   "claims_allowed": [
     "integer 24/25/30 class selection and short-window advance math",
