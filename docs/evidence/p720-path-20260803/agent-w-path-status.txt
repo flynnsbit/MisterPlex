@@ -1,10 +1,12 @@
-w-path tip: (see git) pad426 coded≠display publish oracle
-status: IDLE after rd-duck 426 metadata re-assert
+w-path tip: c399fbc6 Route-B HD→960×540; no silent 1280 DE
+status: IDLE
 evidence:
-  - ddrPadOnlyStorageGeometry: coded=432 display/H_DE=426 cropL=2 cropR=4 present_x=0
-  - makeDdrPublishPlan PLXG q1=426 q2 DE=426 coded=432 q3 dw=426 ys=432 q4 cl=2
-  - NEG store-only 432 remains identity (crop0) — product must pass CONTENT 426
-  - w-mem mux discarding q3 display is THEIR lane; host half tested
+  - rd-duck cited 6c7d8999; fix landed 9ca8198c; this tip hardens defaults+oracle
+  - TranscodeHd720 → routeBHdTranscodeTargetSize(multi=0)=540p 960×540
+  - DP decision empty ceiling = 960×540 (not 1280)
+  - resolve→publish→beam cross-contract in test_resolve
+  - NEG: routeBResolvedSizeLegal(1280,720)=false @1ppc
+  - 720p profile lab-only (PRESENT_MULTI_PIXEL)
   - make unit true rc=0
-owed: fps_1001 draft only (freeze #4); bit34 OFF wire
+owed: fps_1001 draft only (freeze #4); bit34 OFF
 no Quartus / no MiSTer
