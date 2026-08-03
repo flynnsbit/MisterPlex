@@ -1319,6 +1319,91 @@ inline bool ddrB20StoreGeomOwned(bool live_valid, uint16_t live_seq,
     return live_valid && live_seq != 0;
 }
 
+// ---------------------------------------------------------------------------
+// B9 bank_gen + DAR hold (rd-duck): ascal AR path + content dar_hold_black.
+//
+// bank_gen SoT = store applied_geom_seq (pend PLXG snapshot promoted WITH bank).
+// Reject:
+//   - bank_gen tied 0 (sys_top defect class)
+//   - bank_gen = live PLXG seq (N+1 before bank)
+//   - bank_gen = frames_done alone without PLXG identity (count ≠ gen)
+//   - DAR-only match releasing black before applied gen catches promote
+// Content latch: arm on DAR tuple change; release when applied==arm_seq.
+// ---------------------------------------------------------------------------
+inline bool ddrB9BankGenIsStoreApplied(uint16_t bank_gen, uint16_t applied_geom_seq) {
+    return bank_gen != 0 && bank_gen == applied_geom_seq;
+}
+
+// Product release: need BOTH DAR match AND bank_gen == applied (not live).
+inline bool ddrB9ProductReleaseOk(bool dar_matches_live, uint16_t disp_bank_tag,
+                                  uint16_t applied_geom_seq, uint16_t /*live_seq*/) {
+    if (!dar_matches_live)
+        return false;
+    if (applied_geom_seq == 0)
+        return false;
+    return disp_bank_tag == applied_geom_seq;
+}
+
+// FAULT: DAR-only release (ignores bank tag) — unblack while OLD bank.
+inline bool ddrB9FaultDarOnlyRelease(bool dar_matches_live, uint16_t /*disp_bank_tag*/,
+                                     uint16_t /*applied_geom_seq*/) {
+    return dar_matches_live;
+}
+
+// FAULT: bank_gen tied 0 never matches applied → or worse, timer path ignores it.
+inline bool ddrB9FaultBankGenTiedZero(uint16_t bank_gen) { return bank_gen == 0; }
+
+// FAULT: tag with live seq while applied still old → false match after DAR promote.
+inline bool ddrB9FaultTagLiveSeq(uint16_t tag, uint16_t live_seq, uint16_t applied) {
+    return tag == live_seq && live_seq != applied && applied != 0;
+}
+
+// Content-path dar_hold model (present_geom_latch product).
+struct DdrB9DarHoldModel {
+    bool hold = false;
+    uint16_t arm_seq = 0;
+    uint16_t applied = 0; // store applied_geom_seq
+    bool fault_timer_only = false;
+
+    void onDarPromote(uint16_t promote_seq) {
+        hold = true;
+        arm_seq = promote_seq;
+    }
+    void setApplied(uint16_t a) { applied = a; }
+    // One frame boundary tick. Product needs applied==arm; timer-only FAULT ignores.
+    void frameBoundary() {
+        if (!hold)
+            return;
+        if (fault_timer_only) {
+            hold = false; // REPRO: unblack without bank/applied catch-up
+            return;
+        }
+        if (applied != 0 && applied == arm_seq)
+            hold = false;
+    }
+};
+
+inline bool ddrB9ProductDarHoldUntilApplied() {
+    DdrB9DarHoldModel m;
+    m.onDarPromote(/*promote*/ 17);
+    m.setApplied(13); // store still on old bank gen
+    m.frameBoundary();
+    if (!m.hold)
+        return false; // must still hold
+    m.setApplied(17);
+    m.frameBoundary();
+    return !m.hold; // release only after applied catches
+}
+
+inline bool ddrB9FaultDarTimerOnlyReleasesEarly() {
+    DdrB9DarHoldModel m;
+    m.fault_timer_only = true;
+    m.onDarPromote(17);
+    m.setApplied(13); // bank not caught up
+    m.frameBoundary();
+    return !m.hold; // REPRO: released while applied lags
+}
+
 inline bool ddrB20FaultStoreOwnedIsForceBars(bool live_valid, uint16_t live_seq,
                                              bool use_frame_store) {
     (void)live_valid;

@@ -1313,6 +1313,42 @@ int main() {
         std::fprintf(stderr, "  B20_VISUAL_HOLD_UNTIL_SWAP_ACK OK\n");
         std::fprintf(stderr, "  B20_APPLIED_SEQ_FROM_DOORBELL_NOT_LIVE OK\n");
         std::fprintf(stderr, "  B20_PRODUCT_TIEOFF_FORCE_BARS_NOT_OWN OK\n");
+        // B9 bank_gen = store applied_geom_seq; DAR hold waits applied (rd-duck).
+        CHECK(ddrB9BankGenIsStoreApplied(13, 13));
+        CHECK(!ddrB9BankGenIsStoreApplied(0, 13));
+        CHECK(!ddrB9BankGenIsStoreApplied(17, 13)); // live ≠ applied
+        CHECK(ddrB9ProductReleaseOk(true, 13, 13, 17));
+        CHECK(!ddrB9ProductReleaseOk(true, 17, 13, 17)); // tag live while applied old
+        CHECK(!ddrB9ProductReleaseOk(true, 0, 13, 17));
+        CHECK(ddrB9FaultDarOnlyRelease(true, 0, 13)); // REPRO DAR-only
+        CHECK(ddrB9FaultBankGenTiedZero(0));          // REPRO sys_top 0
+        CHECK(ddrB9FaultTagLiveSeq(17, 17, 13));      // REPRO
+        CHECK(ddrB9ProductDarHoldUntilApplied());
+        CHECK(ddrB9FaultDarTimerOnlyReleasesEarly()); // REPRO timer-only
+        {
+            const std::string pc = slurpFile("fpga/Plex_MiSTer/rtl/present_core.sv");
+            const std::string top = slurpFile("fpga/Plex_MiSTer/Plex.sv");
+            const std::string latch =
+                slurpFile("fpga/Plex_MiSTer/rtl/present_geom_latch.sv");
+            const std::string emu = slurpFile("fpga/Plex_MiSTer/sys/emu_ports.vh");
+            const std::string sys = slurpFile("fpga/Plex_MiSTer/sys/sys_top.v");
+            CHECK(pc.find("ddr_applied_geom_seq") != std::string::npos);
+            CHECK(top.find("APPLIED_FRAME_GEN") != std::string::npos);
+            CHECK(top.find("ddr_applied_geom_seq") != std::string::npos);
+            CHECK(top.find(".applied_geom_seq(ddr_applied_geom_seq)") !=
+                  std::string::npos);
+            CHECK(latch.find("applied_geom_seq") != std::string::npos);
+            CHECK(latch.find("dar_arm_seq") != std::string::npos);
+            CHECK(latch.find("PRESENT_GEOM_LATCH_FAULT_DAR_TIMER_ONLY") !=
+                  std::string::npos);
+            CHECK(emu.find("APPLIED_FRAME_GEN") != std::string::npos);
+            CHECK(sys.find("APPLIED_FRAME_GEN(applied_frame_gen)") != std::string::npos);
+            CHECK(sys.find("never 16'd0") != std::string::npos);
+            // Reject product bank_gen tied literal zero.
+            CHECK(sys.find(".bank_gen(16'd0)") == std::string::npos);
+        }
+        std::fprintf(stderr, "  B9_BANK_GEN_APPLIED_GEOM_SEQ OK\n");
+        std::fprintf(stderr, "  B9_DAR_HOLD_UNTIL_APPLIED OK\n");
         // rd-duck: doorbell must embed writePlxg committed useSeq, not plan.plxg_seq.
         CHECK(ddrPlxgDoorbellFaultSecondPublishMismatches()); // REPRO sticky plan=1
         CHECK(ddrPlxgDoorbellProductTwoPublishesMatch());

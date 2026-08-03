@@ -323,6 +323,9 @@ reg  [9:0] coef_data;
 reg        coef_wr = 0;
 
 wire[12:0] ARX, ARY;
+// B9: emu APPLIED_FRAME_GEN = store applied_geom_seq (pend PLXG with bank).
+// w-scaler plex_ar_out_hold.bank_gen must use this — never 16'd0 (rd-duck).
+(* keep = 1 *) wire[15:0] applied_frame_gen;
 reg [11:0] VSET = 0, HSET = 0;
 reg        FREESCALE = 0;
 reg  [2:0] scaler_flt;
@@ -1786,6 +1789,9 @@ emu emu
 	.VGA_SL(scanlines),
 	.VIDEO_ARX(ARX),
 	.VIDEO_ARY(ARY),
+	// B9 bank_gen SoT from emu (store applied_geom_seq). Parent/w-scaler
+	// must feed plex_ar_out_hold.bank_gen from this wire — never 16'd0.
+	.APPLIED_FRAME_GEN(applied_frame_gen),
 
 `ifdef MISTER_FB
 	.FB_EN(fb_en),

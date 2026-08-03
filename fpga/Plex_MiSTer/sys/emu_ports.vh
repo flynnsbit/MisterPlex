@@ -20,6 +20,11 @@ output        CE_PIXEL,
 output [12:0] VIDEO_ARX,
 output [12:0] VIDEO_ARY,
 
+// B9 bank_gen SoT (rd-duck): store-applied PLXG generation (pend snapshot at
+// bank swap) — ddr_frame_store.applied_geom_seq. sys_top → plex_ar_out_hold.
+// NEVER tie 16'd0; NEVER use live PLXG seq; frames_done alone is not identity.
+output [15:0] APPLIED_FRAME_GEN,
+
 output  [7:0] VGA_R,
 output  [7:0] VGA_G,
 output  [7:0] VGA_B,

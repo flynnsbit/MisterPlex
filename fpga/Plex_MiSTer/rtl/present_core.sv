@@ -113,6 +113,9 @@ module present_core #(
 	output wire  [7:0] DDRAM_BE,
 	output wire        DDRAM_WE,
 	output wire [15:0] ddr_frames_done,
+	// B9 bank_gen SoT: PLXG generation promoted with bank (pend snapshot).
+	// sys_top plex_ar_out_hold.bank_gen — NEVER tie 0; NEVER use live seq.
+	output wire [15:0] ddr_applied_geom_seq,
 	output wire        ddr_doorbell_ok,
 `endif
 
@@ -507,6 +510,7 @@ module present_core #(
 		.applied_geom_seq_o(applied_geom_seq_o),
 		.b20_visual_hold(b20_visual_hold)
 	);
+	assign ddr_applied_geom_seq = applied_geom_seq_o;
 	// Keep applied exports live for hierarchy debug (no dead-strip).
 	(* keep = 1 *) wire _b20_beam_keep =
 		beam_use_app | (|app_disp_w_o) | (|app_disp_h_o) | app_geom_en_o |

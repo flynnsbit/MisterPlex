@@ -496,6 +496,9 @@ wire        ddr_swap;
 wire        ddr_busy;
 wire [15:0] ddr_frames;
 wire        ddr_doorbell_ok;
+// B9 bank_gen SoT: store applied_geom_seq (pend PLXG snapshot at bank swap).
+// NOT live seq, NOT 0, NOT bare frames_done (rd-duck). sys_top → plex_ar hold.
+wire [15:0] ddr_applied_geom_seq;
 wire        swap_pending;
 
 `ifdef DDR_FRAME_STORE
@@ -855,6 +858,8 @@ present_geom_latch u_plxg_latch (
 	.wr_data(plxg_wr_data),
 	.commit(plxg_commit),
 	.frame_boundary(plxg_frame_boundary),
+	// B9: release dar_hold only when store-applied gen catches promote seq.
+	.applied_geom_seq(ddr_applied_geom_seq),
 	.win_enable(plxg_win_en),
 	.geom_enable(plxg_geom_en),
 	.content_w(plxg_cw),
@@ -1086,6 +1091,7 @@ present_core #(
 	.DDRAM_WE(present_ddr_we),
 	.ddr_frames_done(ddr_frames),
 	.ddr_doorbell_ok(ddr_doorbell_ok),
+	.ddr_applied_geom_seq(ddr_applied_geom_seq),
 `endif
 	.af_wr_en(af_wr_en),
 	.af_wr_data(af_wr_data),
@@ -1442,6 +1448,15 @@ assign VGA_VS = VSync;
 assign VGA_R  = r;
 assign VGA_G  = g;
 assign VGA_B  = b;
+// B9: bank_gen SoT = store applied_geom_seq (pend PLXG gen with bank).
+// Parent/w-scaler: sys_top.plex_ar_out_hold.bank_gen ← APPLIED_FRAME_GEN.
+// Reject bank_gen=0 and frames_done-only (identity is PLXG gen, not count).
+`ifdef DDR_FRAME_STORE
+assign APPLIED_FRAME_GEN = ddr_applied_geom_seq;
+`else
+assign APPLIED_FRAME_GEN = 16'd0;
+assign ddr_applied_geom_seq = 16'd0;
+`endif
 
 // Signed audio samples
 assign AUDIO_S = 1;

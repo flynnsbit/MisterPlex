@@ -10,8 +10,11 @@
 // Parent #4: bit34 fps_1001 (#2.1) VACATED — still inside reserved; E4 rejects.
 // DAR blackout: same WxH/stride DAR change never hits store geom_layout_chg
 // (store compares enable/W/H/stride/map only). Hold dar_hold_black on the
-// aspect path for N frame starts. Compare DAR tuple only — NOT PLXG seq
-// (seq advances every frame). FAULT_NO_DAR_BLACKOUT = red twin.
+// aspect path until store-applied PLXG gen catches the promote seq (B9/rd-duck):
+// a fixed VS timer alone releases while OLD bank still displays if pending_ready
+// missed. Compare DAR tuple at promote (not every seq tick). bank_gen SoT =
+// ddr_frame_store.applied_geom_seq (pend snapshot) — never live seq, never 0.
+// FAULT_NO_DAR_BLACKOUT / FAULT_DAR_TIMER_ONLY = red twins.
 //
 // FAULT_IMMEDIATE_COMMIT: restore pre-B16 promote-on-commit (red twin REPRO).
 // FAULT_LOSE_COINCIDENT: split ifs lose commit+boundary same-cycle (rd-duck).
@@ -33,6 +36,9 @@ module present_geom_latch (
 	input  wire        commit,   // pulse: stage shadow → pending (not live)
 	// B16: pulse at frame start (e.g. VSync rising on clk_sys). Promotes pending→live.
 	input  wire        frame_boundary,
+	// B9: store-applied PLXG generation (pend snapshot at bank swap). Release
+	// dar_hold only when this catches the promote seq — not a fixed timer alone.
+	input  wire [15:0] applied_geom_seq = 16'd0,
 	// Live window + geometry (stable after promote until next promote).
 	output reg         win_enable,
 	output reg         geom_enable,
@@ -92,6 +98,7 @@ module present_geom_latch (
 	reg  [15:0] pend_seq;
 	reg  [13:0] pend_epoch;
 	reg  [1:0]  dar_black_vs_left;
+	reg  [15:0] dar_arm_seq; // promote seq; release when applied_geom_seq matches
 	// Blocking flag inside always_ff: DAR-changing promote this cycle.
 	reg         dar_chg_promote;
 
@@ -186,6 +193,7 @@ module present_geom_latch (
 			pend_seq <= 16'd0; pend_epoch <= 14'd0;
 			dar_hold_black <= 1'b0;
 			dar_black_vs_left <= 2'd0;
+			dar_arm_seq <= 16'd0;
 			dar_chg_promote = 1'b0;
 		end else begin
 			promote_pulse <= 1'b0;
@@ -410,20 +418,43 @@ module present_geom_latch (
 				promote_pulse  <= 1'b1;
 			end
 `endif
-			// Aspect-path blackout arm + countdown (not store geom_layout_chg).
+			// Aspect-path blackout (not store geom_layout_chg).
 `ifdef PRESENT_GEOM_LATCH_FAULT_NO_DAR_BLACKOUT
 			dar_hold_black <= 1'b0;
 			dar_black_vs_left <= 2'd0;
-`else
+			dar_arm_seq <= 16'd0;
+`elsif PRESENT_GEOM_LATCH_FAULT_DAR_TIMER_ONLY
+			// RED twin (rd-duck B9 class): fixed VS timer ignores bank/applied gen
+			// → can unblack while OLD bank still displays new want DAR.
 			if (dar_chg_promote) begin
 				dar_hold_black <= 1'b1;
 				dar_black_vs_left <= 2'd2;
+				dar_arm_seq <= pend_seq;
 			end else if (frame_boundary && dar_hold_black) begin
 				if (dar_black_vs_left <= 2'd1) begin
 					dar_black_vs_left <= 2'd0;
 					dar_hold_black <= 1'b0;
-				end else begin
+				end else
 					dar_black_vs_left <= dar_black_vs_left - 2'd1;
+			end
+`else
+			// PRODUCT: arm on DAR tuple change; release only when store-applied
+			// PLXG gen matches the promote seq (bank-coupled), on a frame
+			// boundary. Never release from timer alone while applied lags.
+			if (dar_chg_promote) begin
+				dar_hold_black <= 1'b1;
+				dar_arm_seq <= pend_seq;
+				dar_black_vs_left <= 2'd1; // min one boundary after match
+			end else if (dar_hold_black) begin
+				if (applied_geom_seq != 16'd0 &&
+				    applied_geom_seq == dar_arm_seq) begin
+					if (frame_boundary) begin
+						if (dar_black_vs_left <= 2'd1) begin
+							dar_black_vs_left <= 2'd0;
+							dar_hold_black <= 1'b0;
+						end else
+							dar_black_vs_left <= dar_black_vs_left - 2'd1;
+					end
 				end
 			end
 `endif
