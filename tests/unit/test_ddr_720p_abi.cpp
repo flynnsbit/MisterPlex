@@ -438,13 +438,21 @@ int main() {
             bad.present_x = bad.present_y = 0;
             CHECK(!ddrFrameLayoutValid(bad)); // bank1 overlaps doorbell
         }
-        // Daemon FFmpeg path: ddrFrameGeometryForFpgaPresent stays 480p silicon
-        // (must NOT return 1280x720 for 960x540 — kills budget).
+        // w-path owns ddrFrameGeometryForFpgaPresent (parent ruling): STORAGE allowlist.
+        // 960×540 → identity (not 624 downscale, not 1280 canvas). 320→624 shear-safe.
         const auto g540 = ddrFrameGeometryForFpgaPresent(960, 540);
-        CHECK(g540.coded_width.get() == 624);
-        CHECK(g540.coded_height.get() == 480);
+        CHECK(g540.coded_width.get() == 960);
+        CHECK(g540.coded_height.get() == 540);
+        CHECK(g540.coded_width.get() != 624);
+        CHECK(g540.coded_width.get() != 1280);
         const auto g240 = ddrFrameGeometryForFpgaPresent(320, 240);
         CHECK(g240.coded_width.get() == 624);
+        CHECK(g240.coded_height.get() == 480);
+        const auto g720 = ddrFrameGeometryForFpgaPresent(1280, 720);
+        CHECK(g720.coded_width.get() == 1280 && g720.coded_height.get() == 720);
+        // Storage helper same contract; never identity-320.
+        CHECK(ddrStorageGeometryForContent(320, 240).coded_width.get() == 624);
+        CHECK(ddrStorageGeometryForContent(960, 540).coded_width.get() == 960);
         // Storage vs canvas split (rd-duck #3).
         const auto stor = ddrStorageGeometryForContent(960, 540);
         CHECK(stor.coded_width.get() == 960 && stor.coded_height.get() == 540);
@@ -590,19 +598,49 @@ int main() {
         CHECK(ddrNativeOptionCPublishReadbackOk(&err));
         if (!err.empty())
             std::fprintf(stderr, "  native_e2e err=%s\n", err.c_str());
-        // FFmpeg geometry must be STORAGE for 960x540, never DE canvas.
+        // FFmpeg geometry must be STORAGE for 960x540, never DE canvas / never 624.
         const auto ff = ddrFfmpegGeometryForPresent(960, 540, /*wantFpga=*/true);
         CHECK(ff.coded_width.get() == 960);
         CHECK(ff.coded_height.get() == 540);
         CHECK(ff.coded_width.get() != 1280);
         CHECK(ff.coded_height.get() != 720);
-        // Other tiers still pin product 624 canvas.
+        CHECK(ff.coded_width.get() != 624);
+        // Other tiers still pin product 624 canvas (shear-safe).
         const auto ff480 = ddrFfmpegGeometryForPresent(320, 240, true);
         CHECK(ff480.coded_width.get() == kPlex480pCodedWidth.get());
         CHECK(ff480.coded_height.get() == kPlex480pCodedHeight.get());
-        // Legacy helper still never returns 1280 for 960 (daemon safety).
-        const auto legacy = ddrFrameGeometryForFpgaPresent(960, 540);
-        CHECK(legacy.coded_width.get() == kPlex480pCodedWidth.get());
+        // FpgaPresent lockstep with FFmpeg for 960 (w-path ownership; no silent 624).
+        const auto fpga540 = ddrFrameGeometryForFpgaPresent(960, 540);
+        CHECK(fpga540.coded_width.get() == ff.coded_width.get());
+        CHECK(fpga540.coded_height.get() == ff.coded_height.get());
+        // B3 red-twin: PLXG coded must yield U@518400, not canvas U@921600.
+        CHECK(ddrI420UPlaneOffset(960, 540) == 518400u);
+        CHECK(ddrI420UPlaneOffset(1280, 720) == 921600u);
+        CHECK(ddrPlxgStorageNotCanvasUBase(960, 540, 518400u));
+        CHECK(!ddrPlxgStorageNotCanvasUBase(960, 540, 921600u)); // canvas U = FAIL
+        CHECK(ddrPlxgCanvasDimsFault(1280, 720));
+        CHECK(!ddrPlxgCanvasDimsFault(960, 540));
+        {
+            PlxgLatchModel lm{};
+            std::vector<uint8_t> page(0x1000, 0);
+            PlxgRecord good = makePlxgRecord960x540Native(1);
+            CHECK(plxgProgramRecord(page.data(), good, lm));
+            const uint32_t uGood = ddrI420UPlaneOffset(lm.coded_w, lm.coded_h);
+            CHECK(uGood == 518400u);
+            CHECK(ddrPlxgStorageNotCanvasUBase(lm.coded_w, lm.coded_h, uGood));
+            // Fault: program canvas dims into coded fields → wrong U base.
+            PlxgRecord bad = good;
+            bad.seq = 2;
+            bad.q[0] = packPlxgQ0(true, true, 2);
+            bad.q[2] = packPlxgQ2(/*h_de*/ 1280, /*v_de*/ 720, /*coded*/ 1280, /*ch*/ 720);
+            bad.q[3] = packPlxgQ3(/*y*/ 1280, /*c*/ 640, /*dw*/ 1280, /*dh*/ 720);
+            PlxgLatchModel lmBad{};
+            CHECK(plxgProgramRecord(page.data(), bad, lmBad));
+            CHECK(ddrPlxgCanvasDimsFault(lmBad.coded_w, lmBad.coded_h));
+            CHECK(ddrI420UPlaneOffset(lmBad.coded_w, lmBad.coded_h) == 921600u);
+            CHECK(!ddrPlxgStorageNotCanvasUBase(960, 540,
+                                                ddrI420UPlaneOffset(lmBad.coded_w, lmBad.coded_h)));
+        }
         // Fabric-owned publish plan exposes copy_bytes=777600 + PLXG program.
         DdrFabricOwnedPublishPlan pub{};
         std::vector<uint8_t> payload(777600u, 0x55);

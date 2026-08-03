@@ -427,47 +427,76 @@ inline DdrFrameGeometry ddrCanvasGeometryForBankMap(DdrBankMap map) {
                                             : productDdrFrameStoreGeometry();
 }
 
-// Storage geometry ARM writes (tight native or product 480p coded bank).
-// 960x540 → identity storage 960x540 (777600). Never 1280x720 canvas, never 544.
+// Storage geometry the daemon FFmpeg/rawvideo path must emit (media_player rawW/H).
+//
+// Ownership: w-path owns this selector's *contract* (68be1bf9). w-mem keeps the
+// body lockstep with that contract so merge order cannot silently re-downscale
+// 960×540 → 624×480 (parent STOP on c03afc46 item 3).
+//
+// Rules (strict allowlist — NOT "any even dims"):
+//   - 960×540 content → identity STORAGE 960×540 (777600 B). Never 1280 canvas.
+//   - 1280×720 content → identity STORAGE 1280×720 (true-720 upgrade path).
+//   - 624×480 → product 480p silicon canvas (plex480p).
+//   - All other tiers (320×240, …) → product 480p canvas (scale+pad).
+//     Identity-320 is the shear defect (line_bytes=320 vs RTL CODED_W=624).
+// DE/glass canvas (1280×720 as *output*) is separate — not this function.
 inline DdrFrameGeometry ddrStorageGeometryForContent(int contentW, int contentH) {
+    if (contentW == kDdr720pOutputSourceWidth && contentH == kDdr720pOutputSourceHeight)
+        return makeDdrFrameGeometry(CodedWidth{contentW}, CodedHeight{contentH});
+    if (contentW == 1280 && contentH == 720)
+        return makeDdrFrameGeometry(CodedWidth{1280}, CodedHeight{720});
     if (contentW == kPlex480pCodedWidth.get() && contentH == kPlex480pCodedHeight.get())
         return plex480pDdrFrameGeometry();
-    if (contentW > 0 && contentH > 0 && (contentW % 2) == 0 && (contentH % 2) == 0)
-        return makeDdrFrameGeometry(CodedWidth{contentW}, CodedHeight{contentH});
     return productDdrFrameStoreGeometry();
 }
 
-// FPGA-present geometry helper retained for scale+pad tiers that still target the
-// product 480p silicon canvas (624x480). MUST NOT return Option-C 1280x720 for
-// 960x540 — that would force FFmpeg to emit a full 720p canvas and kill the
-// measured +7.16 ms budget (rd-duck blocker #3).
-// Prefer ddrFfmpegGeometryForPresent() for the live daemon path: it selects
-// storage 960x540 when the product intermediate tier is active.
-inline DdrFrameGeometry ddrFrameGeometryForFpgaPresent(CodedWidth /*decodeWidth*/,
-                                                      CodedHeight /*decodeHeight*/) {
-    return productDdrFrameStoreGeometry();
+inline DdrFrameGeometry ddrStorageGeometryForContent(CodedWidth contentW, CodedHeight contentH) {
+    return ddrStorageGeometryForContent(contentW.get(), contentH.get());
+}
+
+// FPGA-present geometry for the daemon path: STORAGE, not DE canvas.
+// w-path owns this symbol (parent ruling). Delegates to storage allowlist.
+// 960×540 → 960×540; 1280×720 → 1280×720; else product 624 canvas.
+// MUST NOT ignore decode dims (always-624 was the silent downscale defect).
+inline DdrFrameGeometry ddrFrameGeometryForFpgaPresent(CodedWidth decodeWidth,
+                                                      CodedHeight decodeHeight) {
+    return ddrStorageGeometryForContent(decodeWidth, decodeHeight);
 }
 
 inline DdrFrameGeometry ddrFrameGeometryForFpgaPresent(int decodeWidth, int decodeHeight) {
     return ddrFrameGeometryForFpgaPresent(CodedWidth{decodeWidth}, CodedHeight{decodeHeight});
 }
 
-// Product intermediate tier (PMS Constrained Baseline 960x540 → fabric upscale).
-// Uses early kDdr720pOutputSource* aliases (kPlex* names appear later in file).
+// Product intermediate tier (PMS Constrained Baseline 960×540 → fabric upscale).
 inline bool ddrIsProduct960x540Content(int w, int h) {
     return w == kDdr720pOutputSourceWidth && h == kDdr720pOutputSourceHeight;
 }
 
-// FFmpeg / rawvideo geometry for PRESENT=fpga|both.
-//   960x540 product intermediate → STORAGE 960x540 (777600 B native_push)
-//   all other decode tiers       → product 624x480 canvas (scale+pad path)
-// Never returns DE canvas 1280x720 for FFmpeg sizing.
+// FFmpeg / rawvideo geometry for PRESENT=fpga|both — same storage contract.
+// Never returns DE-only canvas sizing that FFmpeg did not decode.
 inline DdrFrameGeometry ddrFfmpegGeometryForPresent(int outW, int outH, bool wantFpgaDdrCanvas) {
-    if (wantFpgaDdrCanvas && ddrIsProduct960x540Content(outW, outH))
-        return ddrStorageGeometryForContent(outW, outH);
     if (wantFpgaDdrCanvas)
         return ddrFrameGeometryForFpgaPresent(outW, outH);
     return makeDdrFrameGeometry(outW, outH);
+}
+
+// Plane U offset from storage coded dims (I420, stride=width). Red-twin oracle:
+// canvas 1280×720 → U@921600; storage 960×540 → U@518400. Conflating them shears.
+inline uint32_t ddrI420UPlaneOffset(int codedW, int codedH) {
+    if (codedW <= 0 || codedH <= 0 || (codedW & 1) || (codedH & 1))
+        return 0;
+    return static_cast<uint32_t>(codedW) * static_cast<uint32_t>(codedH);
+}
+inline bool ddrPlxgStorageNotCanvasUBase(int plxgCodedW, int plxgCodedH, uint32_t uOff) {
+    // Product native path: PLXG coded must be storage 960×540 → U@518400.
+    if (ddrIsProduct960x540Content(plxgCodedW, plxgCodedH))
+        return uOff == static_cast<uint32_t>(kDdr720pOutputSourceWidth) *
+                           static_cast<uint32_t>(kDdr720pOutputSourceHeight); // 518400
+    return uOff == ddrI420UPlaneOffset(plxgCodedW, plxgCodedH);
+}
+// Fault twin: programming DE canvas dims into PLXG coded fields.
+inline bool ddrPlxgCanvasDimsFault(int plxgCodedW, int plxgCodedH) {
+    return plxgCodedW == 1280 && plxgCodedH == 720;
 }
 
 inline DdrFrameLayout makeDdrFrameLayout(const DdrFrameGeometry& geom,

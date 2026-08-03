@@ -1891,26 +1891,29 @@ def check_present_geometry_stride_contract() -> None:
             (
                 host_norm,
                 "inlineDdrFrameGeometryddrFrameGeometryForFpgaPresent(CodedWidth",
-                "legacy FpgaPresent helper still exists for scale+pad tiers",
+                "FpgaPresent helper exists (w-path owns; storage allowlist)",
             ),
             (
-                # Legacy helper: ALWAYS product 480p canvas. Must NOT return
-                # Option-C 1280x720 for 960x540 (would force FFmpeg 720p canvas).
-                # Live daemon uses ddrFfmpegGeometryForPresent (960→storage, else 624).
-                # Comment-stripped form drops /*decodeWidth*/ names → CodedWidth,CodedHeight.
+                # w-path ownership (parent ruling): FpgaPresent → storage allowlist.
+                # 960×540 identity, 1280×720 identity, else product 624. Always-624
+                # is the silent downscale defect (c03afc46 item 3 STOP).
                 host_norm,
-                "inlineDdrFrameGeometryddrFrameGeometryForFpgaPresent(CodedWidth,CodedHeight)"
-                "{returnproductDdrFrameStoreGeometry();}",
-                "ddrFrameGeometryForFpgaPresent must ignore DECODE and return productDdrFrameStoreGeometry (624)",
+                "inlineDdrFrameGeometryddrFrameGeometryForFpgaPresent(CodedWidthdecodeWidth,"
+                "CodedHeightdecodeHeight){returnddrStorageGeometryForContent(decodeWidth,decodeHeight);}",
+                "ddrFrameGeometryForFpgaPresent must delegate to storage allowlist (not always-624)",
             ),
             (
                 host_norm,
                 "inlineDdrFrameGeometryddrFfmpegGeometryForPresent(intoutW,intoutH,boolwantFpgaDdrCanvas)"
-                "{if(wantFpgaDdrCanvas&&ddrIsProduct960x540Content(outW,outH))"
-                "returnddrStorageGeometryForContent(outW,outH);"
-                "if(wantFpgaDdrCanvas)returnddrFrameGeometryForFpgaPresent(outW,outH);"
+                "{if(wantFpgaDdrCanvas)returnddrFrameGeometryForFpgaPresent(outW,outH);"
                 "returnmakeDdrFrameGeometry(outW,outH);}",
-                "FFmpeg geometry: 960x540→storage, other fpga tiers→624 canvas, never 1280",
+                "FFmpeg geometry delegates to FpgaPresent storage contract when wantFpga",
+            ),
+            (
+                host_norm,
+                "if(contentW==kDdr720pOutputSourceWidth&&contentH==kDdr720pOutputSourceHeight)"
+                "returnmakeDdrFrameGeometry(CodedWidth{contentW},CodedHeight{contentH});",
+                "storage allowlist: 960x540 → identity (not 624, not 1280 canvas)",
             ),
             (
                 host_norm,
@@ -2103,11 +2106,24 @@ def check_present_geometry_stride_contract() -> None:
             "deliberately changed RTL luma stride CODED_W/8→FRAME_W/8 "
             "(640 B/line reader vs 624 B writer = 16 px/line shear) did not make the gate red"
         )
-    # Classic shear: FPGA-present geometry follows DECODE (320) instead of silicon 624.
+    # Storage allowlist pin (w-path). Red twins: always-624 silent downscale, and
+    # unrestricted identity-DECODE (320 shear).
     present_pin = (
-        "inlineDdrFrameGeometryddrFrameGeometryForFpgaPresent(CodedWidth,CodedHeight)"
-        "{returnproductDdrFrameStoreGeometry();}"
+        "inlineDdrFrameGeometryddrFrameGeometryForFpgaPresent(CodedWidthdecodeWidth,"
+        "CodedHeightdecodeHeight){returnddrStorageGeometryForContent(decodeWidth,decodeHeight);}"
     )
+    bad_fpga_present_always624 = host_nt.replace(
+        present_pin,
+        "inlineDdrFrameGeometryddrFrameGeometryForFpgaPresent(CodedWidth,CodedHeight)"
+        "{returnproductDdrFrameStoreGeometry();}",
+    )
+    if present_pin not in host_nt or not missing_stride_requirements(
+        bad_fpga_present_always624, media_nt, frame_nt, ffmpeg_vf_nt
+    ):
+        fail(
+            "deliberately reverted ddrFrameGeometryForFpgaPresent to always-624 "
+            "(silent 960x540 downscale) did not make the geometry gate red"
+        )
     bad_fpga_present_identity = host_nt.replace(
         present_pin,
         "inlineDdrFrameGeometryddrFrameGeometryForFpgaPresent(CodedWidthw,CodedHeighth)"

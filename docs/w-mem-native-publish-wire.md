@@ -21,6 +21,14 @@ rd-duck STOP on 3-beat same-slot PLXG + tied-off latch is addressed in RTL/host 
 | DE canvas | 1280×720 (`h_de`/`v_de` in PLXG Q2) |
 | PLXG bootstrap | fixed `0x300FF2C0` (legacy doorbell+0x2C0) — chicken-egg safe |
 
+### Ownership (parent ruling)
+
+- **w-path owns** `ddrFrameGeometryForFpgaPresent` / FFmpeg storage sizing.
+- **w-mem owns** bank map, Option-C usable predicate, PLXG record, doorbell.
+- Contract: 960×540→identity, 1280×720→identity, else product **624** canvas
+  (never always-624 discarding 540; never identity-320 shear).
+- B3 red-twin: PLXG coded 960×540 → U@**518400**; canvas 1280→U@**921600** is FAIL.
+
 ## Capacity predicate
 
 Exact I420 bytes vs `bank_stride - 0x1000`. Unaligned geom rejected in RTL
