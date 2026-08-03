@@ -1636,6 +1636,23 @@ void MediaPlayer::ffmpegStderrPump(int errReadFd, size_t codedFrameBytes, bool i
                     " reader_bytes=" + std::to_string(codedFrameBytes) +
                     " identity_skip=1 tag=measured — raw pipe will phase-walk; force scale");
             }
+            // Fail-closed (rd-duck): identity_skip cannot rebuild vf after a
+            // measured mismatch or mid-stream size change. Abort session and
+            // block further DDR publishes — do not keep chunking fixed frameBytes.
+            {
+                const auto fc = identitySkipGeomFailClosed(identitySkip, codedW, codedH, g.w,
+                                                           g.h, changed);
+                if (fc.action == IdentityGeomFailClosedAction::AbortNoPublish) {
+                    identityGeomAbort_.store(true, std::memory_order_release);
+                    pipeDesyncRisk_.store(true, std::memory_order_relaxed);
+                    stop_.store(true, std::memory_order_release);
+                    log(std::string("ERROR media: IDENTITY_GEOM_ABORT reason=") + fc.reason +
+                        " measured=" + std::to_string(g.w) + "x" + std::to_string(g.h) +
+                        " reader=" + std::to_string(codedW) + "x" + std::to_string(codedH) +
+                        " mid_stream=" + (changed ? "1" : "0") +
+                        " identity_skip=1 action=stop_no_publish_until_restart tag=measured");
+                }
+            }
             if (changed) {
                 // Play-time GEOM / vf plan is fixed for the session. Unverified
                 // exact under Always uses crop+pad (not identity_skip) so the
@@ -1644,7 +1661,9 @@ void MediaPlayer::ffmpegStderrPump(int errReadFd, size_t codedFrameBytes, bool i
                 log("ERROR media: MEASURED_DELIVERY mid-stream change — play-time "
                     "geometry guard cannot rebuild vf; identity_skip=" +
                     std::string(identitySkip ? "1" : "0") +
-                    " (crop+pad/scale pin OUTPUT only while those filters stay live)");
+                    (identitySkip
+                         ? " FAIL_CLOSED=IDENTITY_GEOM_ABORT"
+                         : " (crop+pad/scale pin OUTPUT only while those filters stay live)"));
             }
         }
     }
@@ -2959,6 +2978,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     measuredDeliveryW_.store(0, std::memory_order_relaxed);
     measuredDeliveryH_.store(0, std::memory_order_relaxed);
     pipeDesyncRisk_.store(false, std::memory_order_relaxed);
+    identityGeomAbort_.store(false, std::memory_order_relaxed);
     LastFrameLatch lastFrameLatch;
 
     // Force CFR at the exact content rate FIRST in the chain: frameIndex ↔ content
@@ -3297,6 +3317,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         // Session measure starts unverified; only MEASURED_DELIVERY sets true (B4).
         deliveryGeometryVerified_.store(false, std::memory_order_relaxed);
         pipeDesyncRisk_.store(false);
+        identityGeomAbort_.store(false, std::memory_order_relaxed);
         std::vector<std::string> args;
         args.push_back(ffmpeg_);
         args.push_back("-hide_banner");
@@ -3729,7 +3750,24 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             }
         };
 
+        bool identityAbortPubLogged = false;
         auto presentCleanFrame = [&](uint8_t* cleanFrame, bool countPresent) {
+            // Fail-closed: never publish after identity geom abort (rd-duck).
+            // Fixed frameBytes read may already be sheared — drop, do not DDR.
+            if (identityGeomAbort_.load(std::memory_order_acquire) ||
+                (vfPlan.identity_skip && pipeDesyncRisk_.load(std::memory_order_relaxed))) {
+                identityGeomAbort_.store(true, std::memory_order_release);
+                if (!identityAbortPubLogged) {
+                    identityAbortPubLogged = true;
+                    log("ERROR media: IDENTITY_GEOM_ABORT suppress_publish "
+                        "identity_skip=" +
+                        std::string(vfPlan.identity_skip ? "1" : "0") +
+                        " desync_risk=" +
+                        (pipeDesyncRisk_.load() ? "1" : "0") +
+                        " tag=measured — no post-change frame until FFmpeg restart");
+                }
+                return;
+            }
             const OverlayRect dirty = overlay_.dirtyBounds(rawW, rawH);
             backupOverlayDirty(cleanFrame, dirty);
             if (!dirty.empty()) {
@@ -4597,6 +4635,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 }
             }
             // Periodic hard check (B5): measured size vs reader under identity_skip.
+            // Fail-closed: mismatch aborts publish path (not log-only).
             if (vfPlan.identity_skip && (frameIndex % 120) == 0) {
                 const int mw = measuredDeliveryW_.load();
                 const int mh = measuredDeliveryH_.load();
@@ -4604,13 +4643,18 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     const size_t pb = yuv420pFrameBytesWH(mw, mh);
                     if (pipeDesyncRisk(pb, frameBytes, true)) {
                         pipeDesyncRisk_.store(true);
+                        identityGeomAbort_.store(true, std::memory_order_release);
+                        stop_.store(true, std::memory_order_release);
                         log("ERROR media: PIPE_DESYNC_RISK periodic measured=" +
                             std::to_string(mw) + "x" + std::to_string(mh) +
                             " producer_bytes=" + std::to_string(pb) +
-                            " reader_bytes=" + std::to_string(frameBytes));
+                            " reader_bytes=" + std::to_string(frameBytes) +
+                            " action=IDENTITY_GEOM_ABORT");
                     }
                 }
             }
+            if (identityGeomAbort_.load(std::memory_order_acquire))
+                break;
 
             {
                 int64_t tms = startMs + wall2;

@@ -11,6 +11,7 @@
 #pragma once
 
 #include <cctype>
+#include <cstdint>
 #include <cstdio>
 #include <string>
 
@@ -301,6 +302,96 @@ inline bool pipeDesyncRisk(size_t producer_frame_bytes, size_t reader_frame_byte
     if (producer_frame_bytes == reader_frame_bytes)
         return false;
     return identity_skip;
+}
+
+// --- Identity/native mid-stream geometry fail-closed (rd-duck 2026-08-03) ---
+// Play-time vf cannot rebuild after measurement changes. Under identity_skip the
+// reader still chunks fixed frameBytes — a producer size change shears the pipe
+// and can publish mixed frames. Request-policy cannot make that safe.
+// Policy: on measured mismatch OR mid-stream change while identity_skip →
+// abort session and publish NO further frames until FFmpeg restart with a new
+// measured geometry. Force-scale (identity_skip=0) remains Continue (ARM bridges).
+enum class IdentityGeomFailClosedAction : uint8_t {
+    Continue = 0,
+    AbortNoPublish = 1,
+};
+
+struct IdentityGeomFailClosed {
+    IdentityGeomFailClosedAction action = IdentityGeomFailClosedAction::Continue;
+    bool allow_publish = true;
+    const char* reason = "ok";
+};
+
+inline IdentityGeomFailClosed identitySkipGeomFailClosed(bool identity_skip, int reader_w,
+                                                         int reader_h, int measured_w,
+                                                         int measured_h,
+                                                         bool mid_stream_change) {
+    IdentityGeomFailClosed d;
+    if (!identity_skip) {
+        d.reason = "arm_scale_fallback_safe";
+        return d;
+    }
+    if (measured_w <= 0 || measured_h <= 0) {
+        d.reason = "awaiting_measurement";
+        return d;
+    }
+    // Mid-stream change is always fatal under identity — even before byte compare
+    // (banner race / SPS change class). Mutation: 624x480 → 320x240.
+    if (mid_stream_change) {
+        d.action = IdentityGeomFailClosedAction::AbortNoPublish;
+        d.allow_publish = false;
+        d.reason = "identity_mid_stream_geom_change";
+        return d;
+    }
+    if (measured_w != reader_w || measured_h != reader_h) {
+        d.action = IdentityGeomFailClosedAction::AbortNoPublish;
+        d.allow_publish = false;
+        d.reason = "identity_measured_ne_reader";
+        return d;
+    }
+    d.reason = "identity_geom_match";
+    return d;
+}
+
+// Sticky publish gate: once aborted, zero post-change publishes until restart.
+inline bool identitySkipMayPublish(bool already_aborted, const IdentityGeomFailClosed& d) {
+    if (already_aborted)
+        return false;
+    return d.allow_publish;
+}
+
+// Convenience: byte-level identity desync ⇒ fail-closed (same as WxH mismatch).
+inline IdentityGeomFailClosed identitySkipGeomFailClosedBytes(bool identity_skip,
+                                                              size_t reader_frame_bytes,
+                                                              size_t producer_frame_bytes,
+                                                              bool mid_stream_change) {
+    if (!identity_skip) {
+        IdentityGeomFailClosed d;
+        d.reason = "arm_scale_fallback_safe";
+        return d;
+    }
+    if (mid_stream_change) {
+        IdentityGeomFailClosed d;
+        d.action = IdentityGeomFailClosedAction::AbortNoPublish;
+        d.allow_publish = false;
+        d.reason = "identity_mid_stream_geom_change";
+        return d;
+    }
+    if (producer_frame_bytes == 0 || reader_frame_bytes == 0) {
+        IdentityGeomFailClosed d;
+        d.reason = "awaiting_measurement";
+        return d;
+    }
+    if (producer_frame_bytes != reader_frame_bytes) {
+        IdentityGeomFailClosed d;
+        d.action = IdentityGeomFailClosedAction::AbortNoPublish;
+        d.allow_publish = false;
+        d.reason = "identity_measured_ne_reader";
+        return d;
+    }
+    IdentityGeomFailClosed d;
+    d.reason = "identity_geom_match";
+    return d;
 }
 
 // I420 packed size (same as ddr_frame_layout yuv420pFrameBytes but local for

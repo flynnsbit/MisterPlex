@@ -355,6 +355,9 @@ private:
     std::atomic<int> measuredDeliveryW_{0};
     std::atomic<int> measuredDeliveryH_{0};
     std::atomic<bool> pipeDesyncRisk_{false};
+    // Fail-closed under identity_skip when measured geom mismatches or changes
+    // mid-stream (rd-duck): sticky until session restart — blocks publish.
+    std::atomic<bool> identityGeomAbort_{false};
     // Conf AUDIO_DELAY_MS — default 0. Applied as FFmpeg adelay on product path.
     int audioDelayMs_ = 0;
     // Starting point for the feed-rate servo, and the open-loop rate if the ring

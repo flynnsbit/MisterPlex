@@ -693,6 +693,56 @@ int main() {
         std::printf("GREEN_PATH_720p_VF identity=verified short404=scale unv=scale dp=skip\n");
     }
 
+    // --- Identity mid-stream fail-closed (rd-duck): no post-change publish ---
+    {
+        constexpr int kRw = 624, kRh = 480;
+        // Match → continue
+        const auto ok =
+            identitySkipGeomFailClosed(true, kRw, kRh, 624, 480, /*mid*/ false);
+        expect(ok.allow_publish && ok.action == IdentityGeomFailClosedAction::Continue,
+               "identity match allows publish");
+        // Mutation: 624x480 → 320x240 mid-stream under identity_skip
+        const auto mut =
+            identitySkipGeomFailClosed(true, kRw, kRh, 320, 240, /*mid*/ true);
+        expect(!mut.allow_publish, "RED 624→320 mid-stream blocks publish");
+        expect(mut.action == IdentityGeomFailClosedAction::AbortNoPublish,
+               "RED 624→320 aborts session");
+        expect(std::string(mut.reason) == "identity_mid_stream_geom_change",
+               "RED mid-stream reason");
+        // Sticky gate: once aborted, zero further publishes
+        expect(!identitySkipMayPublish(false, mut), "first post-change denied");
+        expect(!identitySkipMayPublish(true, ok), "sticky abort denies even match");
+        int published_after = 0;
+        bool aborted = false;
+        for (int i = 0; i < 5; ++i) {
+            const auto d =
+                identitySkipGeomFailClosed(true, kRw, kRh, 320, 240, /*mid*/ true);
+            if (!identitySkipMayPublish(aborted, d)) {
+                aborted = true;
+                continue;
+            }
+            ++published_after;
+        }
+        expect(published_after == 0, "RED mutation publishes 0 frames after 624→320");
+        // Force-scale path remains safe (ARM bridges)
+        const auto sc =
+            identitySkipGeomFailClosed(false, kRw, kRh, 320, 240, /*mid*/ true);
+        expect(sc.allow_publish && sc.action == IdentityGeomFailClosedAction::Continue,
+               "force-scale mid-stream still Continue");
+        expect(std::string(sc.reason) == "arm_scale_fallback_safe", "scale reason");
+        // First measurement mismatch (not mid) also fail-closed under identity
+        const auto mm =
+            identitySkipGeomFailClosed(true, kRw, kRh, 640, 480, /*mid*/ false);
+        expect(!mm.allow_publish && std::string(mm.reason) == "identity_measured_ne_reader",
+               "identity mismatch abort");
+        // Bytes helper agrees on desync
+        const size_t R = yuv420pFrameBytesWH(624, 480);
+        const size_t P = yuv420pFrameBytesWH(320, 240);
+        const auto bb = identitySkipGeomFailClosedBytes(true, R, P, true);
+        expect(!bb.allow_publish, "bytes helper aborts 320x240 producer");
+        std::printf("GREEN_PATH_identity_geom_fail_closed mutation_624_to_320=0_publish\n");
+    }
+
     if (g_fails) {
         std::fprintf(stderr, "test_ffmpeg_vf: %d failure(s)\n", g_fails);
         return 1;
