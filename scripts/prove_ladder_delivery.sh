@@ -16,9 +16,11 @@
 #     scripts/prove_ladder_delivery.sh 540
 #   ... prove_ladder_delivery.sh 360
 #   ... prove_ladder_delivery.sh 540-trap   # red twin maxBR=1500
+#   ... prove_ladder_delivery.sh no-upscale # SD source asked 960x540 must NOT grow
 #   ... prove_ladder_delivery.sh all
 #
 # Optional: OUT_DIR=docs/evidence/.../prove_ladder  FFMPEG=ffmpeg  SECONDS=6
+# no-upscale: NO_UPSCALE_KEY (default /library/metadata/1), SOURCE_W/H (default 320/240)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -31,11 +33,13 @@ RUNG="${1:-}"
 
 usage() {
   cat <<'EOF'
-Usage: scripts/prove_ladder_delivery.sh <540|360|720|540-trap|all>
+Usage: scripts/prove_ladder_delivery.sh <540|360|720|540-trap|no-upscale|all>
 
 Env:
   PLEX_BASE          e.g. http://127.0.0.1:32400
-  PLEX_KEY           e.g. /library/metadata/2  (HD 16:9 source)
+  PLEX_KEY           e.g. /library/metadata/2  (HD 16:9 for 540/360/720 rungs)
+  NO_UPSCALE_KEY     SD source key for no-upscale rung (default /library/metadata/1)
+  SOURCE_W SOURCE_H  known source dims for no-upscale (default 320 240)
   PLEX_TOKEN_FILE    file containing token (preferred)
   PLEX_TOKEN         only if file unset (still never printed)
   OUT_DIR            artifact dir (default build/prove_ladder_delivery)
@@ -190,19 +194,27 @@ probe_rung() {
   echo "ffmpeg true rc=$ff_rc"
 
   # Parse first video Stream banner: "Stream #0:0: Video: h264 ... 960x540 ..."
+  # Avoid matching codec tags like 0x001B (greedy first \d+x\d+ is wrong).
   local banner
   banner="$(grep -E 'Stream #0:.*Video:' "$ff_log" | head -1 || true)"
   echo "ffmpeg_banner=${banner:-NO-DATA}"
-  echo "delivered_src=ffmpeg_banner"
 
   local dw=0 dh=0
   if [[ -n "$banner" ]]; then
-    # Prefer WxH before brackets; tolerate SAR etc.
-    dw="$(printf '%s\n' "$banner" | sed -n 's/.* \([0-9][0-9]*\)x\([0-9][0-9]*\).*/\1/p' | head -1)"
-    dh="$(printf '%s\n' "$banner" | sed -n 's/.* \([0-9][0-9]*\)x\([0-9][0-9]*\).*/\2/p' | head -1)"
+    # Prefer geometry after yuv420p…, WWWWxHHHH
+    local wh
+    wh="$(printf '%s\n' "$banner" | sed -n 's/.*yuv420p[^,]*, \([0-9][0-9]*x[0-9][0-9]*\).*/\1/p' | head -1)"
+    if [[ -z "$wh" ]]; then
+      wh="$(printf '%s\n' "$banner" | sed -n 's/.* \([1-9][0-9]\{1,4\}x[1-9][0-9]\{1,4\}\)[, [].*/\1/p' | head -1)"
+    fi
+    if [[ -n "$wh" ]]; then
+      dw="${wh%%x*}"
+      dh="${wh##*x}"
+    fi
   fi
   dw="${dw:-0}"
   dh="${dh:-0}"
+  local deliv_src="ffmpeg_banner"
 
   # Optional fps from banner tbr/fps
   local fps="NO-DATA"
@@ -214,12 +226,27 @@ probe_rung() {
   # decision video attributes if present (secondary — not sole PASS)
   local dec_w="" dec_h=""
   if [[ -f "$work/decision.xml" ]]; then
-    dec_w="$(grep -oE 'width="[0-9]+"' "$work/decision.xml" | head -1 | tr -dc '0-9' || true)"
-    dec_h="$(grep -oE 'height="[0-9]+"' "$work/decision.xml" | head -1 | tr -dc '0-9' || true)"
+    # Prefer Stream streamType="1" then any width/height
+    dec_w="$(grep -oE 'streamType="1"[^>]*width="[0-9]+"|width="[0-9]+"[^>]*streamType="1"' "$work/decision.xml" \
+      | head -1 | grep -oE 'width="[0-9]+"' | tr -dc '0-9' || true)"
+    dec_h="$(grep -oE 'streamType="1"[^>]*height="[0-9]+"|height="[0-9]+"[^>]*streamType="1"' "$work/decision.xml" \
+      | head -1 | grep -oE 'height="[0-9]+"' | tr -dc '0-9' || true)"
+    if [[ -z "$dec_w" ]]; then
+      dec_w="$(grep -oE 'width="[0-9]+"' "$work/decision.xml" | head -1 | tr -dc '0-9' || true)"
+      dec_h="$(grep -oE 'height="[0-9]+"' "$work/decision.xml" | head -1 | tr -dc '0-9' || true)"
+    fi
   fi
+  # Banner miss but decision hit: still usable for no-upscale (log basis).
+  if [[ "$dw" -eq 0 || "$dh" -eq 0 ]]; then
+    if [[ -n "${dec_w:-}" && -n "${dec_h:-}" && "$dec_w" -gt 0 && "$dec_h" -gt 0 ]]; then
+      dw="$dec_w"; dh="$dec_h"; deliv_src="decision_xml"
+      echo "WARN $tag: banner WxH miss; using decision_xml ${dw}x${dh}"
+    fi
+  fi
+  echo "delivered_src=${deliv_src}"
 
-  printf 'RESULT tag=%s requested=%sx%s maxBR=%s delivered_banner=%sx%s decision_xml=%sx%s fps=%s decoded=%sx%s\n' \
-    "$tag" "$rw" "$rh" "$br" "$dw" "$dh" "${dec_w:-?}" "${dec_h:-?}" "$fps" "$dw" "$dh"
+  printf 'RESULT tag=%s requested=%sx%s maxBR=%s delivered_banner=%sx%s decision_xml=%sx%s fps=%s decoded=%sx%s src=%s\n' \
+    "$tag" "$rw" "$rh" "$br" "$dw" "$dh" "${dec_w:-?}" "${dec_h:-?}" "$fps" "$dw" "$dh" "$deliv_src"
 
   if [[ "$dw" -eq 0 || "$dh" -eq 0 ]]; then
     echo "FAIL $tag: no delivered geometry from ffmpeg_banner"
@@ -229,7 +256,7 @@ probe_rung() {
   case "$mode" in
     match)
       if [[ "$dw" -eq "$ew" && "$dh" -eq "$eh" ]]; then
-        echo "PASS $tag: delivered matches expect ${ew}x${eh} src=ffmpeg_banner"
+        echo "PASS $tag: delivered matches expect ${ew}x${eh} src=${deliv_src}"
         return 0
       fi
       echo "FAIL $tag: delivered ${dw}x${dh} != expect ${ew}x${eh} (requested ${rw}x${rh} br=${br})"
@@ -256,6 +283,26 @@ probe_rung() {
       echo "PASS $tag: trap fired measured=${dw}x${dh} != 960x540 (non-canonical but non-genuine)"
       return 0
       ;;
+    no_upscale)
+      # ew/eh = SOURCE dims. Request rw/rh must be strictly larger on at least one axis.
+      # PASS: delivered within source±2 (MB tweak) AND not equal to the upscale target.
+      # FAIL: any content upscale (delivered > source+2) — contract guard if PMS ever upscales.
+      local tol=2
+      local max_w=$((ew + tol))
+      local max_h=$((eh + tol))
+      if [[ "$dw" -gt "$max_w" || "$dh" -gt "$max_h" ]]; then
+        echo "FAIL $tag: PMS UPSCALE detected source=${ew}x${eh} delivered=${dw}x${dh} requested=${rw}x${rh} (tol=+${tol})"
+        echo "ERROR NO_UPSCALE_CONTRACT_BROKEN measured=${dw}x${dh} source=${ew}x${eh}"
+        return 1
+      fi
+      if [[ "$dw" -eq "$rw" && "$dh" -eq "$rh" && ( "$rw" -gt "$ew" || "$rh" -gt "$eh" ) ]]; then
+        echo "FAIL $tag: delivered exact request ${rw}x${rh} from smaller source ${ew}x${eh} (upscale)"
+        echo "ERROR NO_UPSCALE_CONTRACT_BROKEN measured=${dw}x${dh} source=${ew}x${eh}"
+        return 1
+      fi
+      echo "PASS $tag: no-upscale held source=${ew}x${eh} requested=${rw}x${rh} delivered=${dw}x${dh} src=${deliv_src}"
+      return 0
+      ;;
     *)
       echo "FAIL $tag: unknown mode $mode"
       return 1
@@ -272,7 +319,7 @@ run_one() {
 
 case "$RUNG" in
   540)
-    # Product detail tier: ≥2000 knee, Extra fr=24
+    # Product detail tier: ≥2000 knee, Extra fr=24 — requires HD source (PLEX_KEY)
     run_one "540" 960 540 2000 31 24 960 540 match
     ;;
   360)
@@ -284,10 +331,31 @@ case "$RUNG" in
   540-trap)
     run_one "540-trap" 960 540 1500 31 0 720 404 trap540
     ;;
+  no-upscale)
+    # Contract: PMS must not upscale. Default SD subject metadata/1 = 320x240.
+    # Override with NO_UPSCALE_KEY + SOURCE_W/H. Does not use PLEX_KEY.
+    PLEX_KEY="${NO_UPSCALE_KEY:-/library/metadata/1}"
+    local_sw="${SOURCE_W:-320}"
+    local_sh="${SOURCE_H:-240}"
+    echo "no-upscale subject PLEX_KEY=${PLEX_KEY} SOURCE=${local_sw}x${local_sh}"
+    # Ask 960x540 (larger than source) — must stay ≤ source±2
+    run_one "no-upscale-540" 960 540 2000 31 0 "$local_sw" "$local_sh" no_upscale
+    # Ask 640x360 (also larger) — same contract
+    run_one "no-upscale-360" 640 360 1000 30 0 "$local_sw" "$local_sh" no_upscale
+    ;;
   all)
     run_one "540" 960 540 2000 31 24 960 540 match
     run_one "360" 640 360 1000 30 0 640 360 match
     run_one "540-trap" 960 540 1500 31 0 720 404 trap540
+    # Preserve HD PLEX_KEY for above; no-upscale switches key internally.
+    _saved_key="$PLEX_KEY"
+    PLEX_KEY="${NO_UPSCALE_KEY:-/library/metadata/1}"
+    local_sw="${SOURCE_W:-320}"
+    local_sh="${SOURCE_H:-240}"
+    echo "no-upscale subject PLEX_KEY=${PLEX_KEY} SOURCE=${local_sw}x${local_sh}"
+    run_one "no-upscale-540" 960 540 2000 31 0 "$local_sw" "$local_sh" no_upscale
+    run_one "no-upscale-360" 640 360 1000 30 0 "$local_sw" "$local_sh" no_upscale
+    PLEX_KEY="$_saved_key"
     ;;
   *)
     echo "unknown rung: $RUNG" >&2

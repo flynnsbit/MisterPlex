@@ -1,0 +1,18 @@
+Input #0, mpegts, from '/home/flynnsbit/Projects/MisterPlex-wt-path/docs/evidence/p720-path-20260803/prove_ladder_host/no-upscale-540/sample.bin':
+  Duration: 00:05:00.00, start: 1.483333, bitrate: 665 kb/s
+  Program 1 
+    Metadata:
+      service_name    : Service01
+      service_provider: FFmpeg
+  Stream #0:0[0x100]: Video: h264 (High) ([27][0][0][0] / 0x001B), yuv420p(progressive), 624x480 [SAR 1:1 DAR 13:10], 24 fps, 24 tbr, 90k tbn, start 1.483333
+  Stream #0:1[0x101]: Audio: aac (LC) ([15][0][0][0] / 0x000F), 48000 Hz, mono, fltp, 51 kb/s, start 1.483333
+Stream mapping:
+  Stream #0:0 -> #0:0 (h264 (native) -> wrapped_avframe (native))
+Output #0, null, to '/dev/null':
+  Metadata:
+    encoder         : Lavf62.12.102
+  Stream #0:0: Video: wrapped_avframe, yuv420p(progressive), 624x480 [SAR 1:1 DAR 13:10], q=2-31, 200 kb/s, 24 fps, 24 tbn
+    Metadata:
+      encoder         : Lavc62.28.102 wrapped_avframe
+[out#0/null @ 0x563a50335400] video:20KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: unknown
+frame=   48 fps=0.0 q=-0.0 Lsize=N/A time=00:00:02.00 bitrate=N/A speed= 103x elapsed=0:00:00.01    

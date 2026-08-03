@@ -1,3 +1,5 @@
+# STALE_NOT_REGRESSION subject=/library/metadata/1 (SD) at 04:09 — see STALE_FAIL_README.md
+# Authoritative: run_all.txt metadata/2 FAILS=0. Parent re-ran /1 → 320x240 healthy no-upscale.
 === RUNG 540 requested=960x540 maxBR=2000 maxFR=24 mode=match expect=960x540 ===
 requested_url_nolog=http://127.0.0.1:32400/video/:/transcode/universal/start.mp4?hasMDE=1&path=%2Flibrary%2Fmetadata%2F1&mediaIndex=0&partIndex=0&protocol=http&fastSeek=1&directPlay=0&directStream=0&subtitleSize=100&audioBoost=100&location=lan&copyts=1&session=prove-ladder-29319-540&videoQuality=100&videoResolution=960x540&maxVideoBitrate=2000&videoCodec=h264&audioCodec=aac&videoProfile=baseline&videoLevel=31
 decision_curl true rc=0
