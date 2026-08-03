@@ -505,6 +505,13 @@ int main() {
         // Product 540 height stays accepted (even, not MB-aligned).
         CHECK(plxgGeomDimsOk(960, 540, 960, 480));
         CHECK((540 & 15) == 12);
+        // rd-duck: crop+display window bounds (mirror RTL rt_raw_window).
+        CHECK(ddrRtRawWindowBoundaryEqCodedPass());   // 10+614==624
+        CHECK(ddrRtRawWindowBoundaryPlus1Fail());     // 10+615
+        CHECK(ddrRtRawWindowCropTopPlus1Fail());      // crop_t=1 + h=480
+        CHECK(ddrRtRawWindowOk(624, 480, 618, 480, 0, 0)); // product right-crop leftover
+        CHECK(!ddrRtRawWindowOk(960, 540, 1280, 720, 0, 0)); // display>coded
+        std::fprintf(stderr, "  RT_RAW_WINDOW_BOUNDS OK\n");
         CHECK(ddrSelectBankMapForContent(624, 480) == DdrBankMap::Legacy480p);
         CHECK(ddrSelectBankMapForContent(320, 240) == DdrBankMap::Legacy480p);
         CHECK(ddrSelectBankMapForContent(720, 482) == DdrBankMap::OptionC720p);

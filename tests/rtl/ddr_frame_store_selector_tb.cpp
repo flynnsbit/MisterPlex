@@ -75,7 +75,8 @@ struct Sim {
 			tick();
 	}
 
-	void driveGeom(bool en, int cw, int ch, int ys, int cs, int dw = 0, int dh = 0) {
+	void driveGeom(bool en, int cw, int ch, int ys, int cs, int dw = 0, int dh = 0,
+	               int crop_l = 0, int crop_t = 0, int pres_x = 0, int pres_y = 0) {
 		top.geom_enable = en ? 1 : 0;
 		top.rt_coded_w = cw;
 		top.rt_coded_h = ch;
@@ -83,10 +84,10 @@ struct Sim {
 		top.rt_chroma_stride = cs;
 		top.rt_display_w = dw;
 		top.rt_display_h = dh;
-		top.rt_present_x = 0;
-		top.rt_present_y = 0;
-		top.rt_crop_left = 0;
-		top.rt_crop_top = 0;
+		top.rt_present_x = pres_x;
+		top.rt_present_y = pres_y;
+		top.rt_crop_left = crop_l;
+		top.rt_crop_top = crop_t;
 		// Registered path: settle a few clocks.
 		for (int i = 0; i < 6; ++i)
 			tick();
@@ -274,9 +275,9 @@ int main(int argc, char** argv) {
 	     720u * 482u, true},
 	    {"prod_960x540", true, 960, 540, 960, 480, 960, 540, true, true, 777600u,
 	     518400u, true},
-	    // DE canvas must NOT be coded dims: storage 960, display 1280 → U still 518400
-	    {"storage_960_de_1280", true, 960, 540, 960, 480, 1280, 720, true, true,
-	     777600u, 518400u, true},
+	    // display > coded must REJECT (was silently accepted; OOB src_x risk)
+	    {"reject_display_gt_coded", true, 960, 540, 960, 480, 1280, 720, false,
+	     false, 777600u, 0, false},
 	    // Canvas-as-storage trap: if coded wrongly set to 1280x720 → U@921600 Option-C
 	    {"trap_canvas_as_storage", true, 1280, 720, 1280, 640, 1280, 720, true, true,
 	     1382400u, 921600u, true},
@@ -320,8 +321,8 @@ int main(int argc, char** argv) {
 		return g_fails ? 1 : 0;
 	}
 
-	// Product: 960 must be Option-C with storage U base
-	sim.driveGeom(true, 960, 540, 960, 480, 1280, 720);
+	// Product: 960 must be Option-C with storage U base (display=coded, not DE canvas)
+	sim.driveGeom(true, 960, 540, 960, 480, 960, 540);
 	if (sim.top.obs_optc_map == 0 || sim.top.obs_u_base_qw * 8u != 518400u) {
 		std::cerr << "FAIL product 960x540 Option-C U@518400\n";
 		return 1;
@@ -331,6 +332,45 @@ int main(int argc, char** argv) {
 		std::cerr << "FAIL product need_optc\n";
 		return 1;
 	}
+
+	// rd-duck crop/display window bounds (exact boundary):
+	// crop_left + display_w == coded_w PASS; == coded_w+1 FAIL → loud E2.
+	// 624×480, crop_l=10, display_w=614 → sum 624 PASS (geom_en_r).
+	sim.driveGeom(true, 624, 480, 624, 312, 614, 480, /*crop_l*/10, /*crop_t*/0);
+	if (sim.top.obs_raw_ok == 0 || sim.top.obs_geom_en_r == 0) {
+		std::cerr << "FAIL crop boundary: 10+614==624 must accept raw_ok="
+		          << (int)sim.top.obs_raw_ok << " en_r=" << (int)sim.top.obs_geom_en_r
+		          << "\n";
+		return 1;
+	}
+	std::cout << "MEASURED_CROP_EQ crop_l=10 disp_w=614 coded=624 raw_ok=1\n";
+	// +1 over: crop_l=10, display_w=615 → sum 625 FAIL
+	sim.driveGeom(true, 624, 480, 624, 312, 615, 480, /*crop_l*/10, /*crop_t*/0);
+	if (sim.top.obs_raw_ok != 0 || sim.top.obs_geom_reject_now == 0 ||
+	    sim.top.obs_geom_en_r != 0 || sim.top.obs_debug_state != 0xE2) {
+		std::cerr << "FAIL crop+1: 10+615 must reject E2 raw_ok="
+		          << (int)sim.top.obs_raw_ok
+		          << " reject_now=" << (int)sim.top.obs_geom_reject_now
+		          << " en_r=" << (int)sim.top.obs_geom_en_r
+		          << " debug=0x" << std::hex << (int)sim.top.obs_debug_state
+		          << std::dec << "\n";
+		return 1;
+	}
+	std::cout << "MEASURED_CROP_PLUS1 crop_l=10 disp_w=615 reject E2\n";
+	// Vertical: crop_t=0, dh=480, ch=480 PASS; crop_t=1 FAIL
+	sim.driveGeom(true, 624, 480, 624, 312, 624, 480, 0, 0);
+	if (sim.top.obs_raw_ok == 0) {
+		std::cerr << "FAIL crop_t=0 full height must pass\n";
+		return 1;
+	}
+	sim.driveGeom(true, 624, 480, 624, 312, 624, 480, 0, /*crop_t*/1);
+	if (sim.top.obs_raw_ok != 0 || sim.top.obs_debug_state != 0xE2) {
+		std::cerr << "FAIL crop_t+1: 1+480>480 must E2\n";
+		return 1;
+	}
+	std::cout << "MEASURED_CROP_T_PLUS1 reject E2\n";
+	// Mode exit clear sticky before next vectors
+	sim.driveGeom(false, 0, 0, 0, 0, 0, 0);
 
 	// Loud geom reject (0xE2): PMS 468x360 stays geom_en_r=0 and sticky E2.
 	// Parent puzzle: w-scaler B5 saw accepted=168480 (=468*360). Measure pins.
@@ -438,6 +478,6 @@ int main(int argc, char** argv) {
 	}
 
 	std::cout << "PASS selector_product: usable edges + 960x540 Option-C "
-	          << "U@518400 + w%16 reject + storage!=canvas + loud_E2 + q5_E4\n";
+	          << "U@518400 + w%16 reject + crop_window_E2 + loud_E2 + q5_E4\n";
 	return 0;
 }

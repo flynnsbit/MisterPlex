@@ -119,7 +119,8 @@ echo "optc_qsf rc=$OPTC_RC"
 assert_sim_executed "selector-fault" "$FAULT_OUT" "REPRO_OK" "selector_fault" "960x540"
 assert_sim_executed "selector-silent" "$SILENT_OUT" "REPRO_OK" "silent_geom" "no 0xE2"
 assert_sim_executed "selector-leg-rebase" "$REBASE_OUT" "REPRO_OK leg_rebase" "Option-C"
-assert_sim_executed "selector-good" "$GOOD_OUT" "PASS selector_product" "U@518400" "loud_E2" "MEASURED_GEOM_OFF"
+assert_sim_executed "selector-good" "$GOOD_OUT" "PASS selector_product" "U@518400" "loud_E2" \
+  "MEASURED_GEOM_OFF" "MEASURED_CROP_EQ" "MEASURED_CROP_PLUS1" "MEASURED_CROP_T_PLUS1"
 assert_sim_executed "selector-optc-qsf" "$OPTC_OUT" "PASS selector_product" "MEASURED_GEOM_OFF" "base=0x30000000"
 
 if [[ "$FAULT_RC" -ne 0 ]] || ! grep -q 'REPRO_OK' <<<"$FAULT_OUT"; then

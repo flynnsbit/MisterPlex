@@ -530,6 +530,44 @@ inline bool ddrPlxgCanvasDimsFault(int plxgCodedW, int plxgCodedH) {
     return plxgCodedW == 1280 && plxgCodedH == 720;
 }
 
+// Mirror ddr_frame_store rt_raw_window / rt_raw_ok crop bounds (rd-duck).
+// display_w/h 0 → coded (RTL rt_dw_nz). Widened sums; sum==coded PASS, +1 FAIL.
+// maxRdW/H default product MAX_CODED / FRAME max (1280×720).
+inline bool ddrRtRawWindowOk(int codedW, int codedH, int displayW, int displayH,
+                             int cropLeft, int cropTop, int presentX = 0,
+                             int presentY = 0, int maxRdW = 1280, int maxRdH = 720) {
+    if (codedW <= 0 || codedH <= 0)
+        return false;
+    const int dw = (displayW == 0) ? codedW : displayW;
+    const int dh = (displayH == 0) ? codedH : displayH;
+    if (dw <= 0 || dh <= 0 || dw > codedW || dh > codedH)
+        return false;
+    if (cropLeft < 0 || cropTop < 0 || presentX < 0 || presentY < 0)
+        return false;
+    // 12-bit widened path in RTL — use 32-bit here for host.
+    if (static_cast<int64_t>(cropLeft) + dw > codedW)
+        return false;
+    if (static_cast<int64_t>(cropTop) + dh > codedH)
+        return false;
+    if (static_cast<int64_t>(presentX) + dw > maxRdW)
+        return false;
+    if (static_cast<int64_t>(presentY) + dh > maxRdH)
+        return false;
+    return true;
+}
+
+// Exact boundary oracles for unit tests / twin docs.
+inline bool ddrRtRawWindowBoundaryEqCodedPass() {
+    // crop_l=10, display=614, coded=624 → sum 624
+    return ddrRtRawWindowOk(624, 480, 614, 480, 10, 0);
+}
+inline bool ddrRtRawWindowBoundaryPlus1Fail() {
+    return !ddrRtRawWindowOk(624, 480, 615, 480, 10, 0);
+}
+inline bool ddrRtRawWindowCropTopPlus1Fail() {
+    return !ddrRtRawWindowOk(624, 480, 624, 480, 0, 1);
+}
+
 inline DdrFrameLayout makeDdrFrameLayout(const DdrFrameGeometry& geom,
                                          uint32_t physBase = kDdrFramePhysBase,
                                          uint32_t strideAlign = kDdrFrameStrideAlign,

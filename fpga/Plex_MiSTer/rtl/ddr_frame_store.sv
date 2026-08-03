@@ -264,6 +264,14 @@ module ddr_frame_store #(
 	reg [28:0] eff_base_w1;
 	reg [28:0] eff_doorbell_w;
 
+	// Effective dims (pre-accept). Used by window bounds before rt_raw_ok.
+	wire [10:0] rt_cw_cl = rt_coded_w;
+	wire [10:0] rt_ch_cl = rt_coded_h;
+	wire [11:0] rt_ys_cl = rt_y_stride;
+	wire [10:0] rt_cs_cl = rt_chroma_stride;
+	wire [10:0] rt_dw_nz = (rt_display_w == 11'd0) ? rt_cw_cl : rt_display_w;
+	wire [10:0] rt_dh_nz = (rt_display_h == 11'd0) ? rt_ch_cl : rt_display_h;
+
 	// RAW (pre-clamp) geometry — over-max must REJECT, not clamp-then-accept (rd-duck).
 	wire rt_raw_nonzero = (rt_coded_w != 11'd0) && (rt_coded_h != 11'd0) &&
 	                      (rt_y_stride != 12'd0) && (rt_chroma_stride != 11'd0);
@@ -278,15 +286,23 @@ module ddr_frame_store #(
 	                      (rt_y_stride[2:0] == 3'd0) && (rt_chroma_stride[2:0] == 3'd0) &&
 	                      (rt_y_stride >= {1'b0, rt_coded_w}) &&
 	                      (rt_chroma_stride >= {1'b0, rt_coded_w[10:1]});
-	wire rt_raw_ok = rt_raw_nonzero && rt_raw_in_range && rt_raw_aligned;
-
-	// Effective dims only when raw_ok (else unused; legacy path selected).
-	wire [10:0] rt_cw_cl = rt_coded_w;
-	wire [10:0] rt_ch_cl = rt_coded_h;
-	wire [11:0] rt_ys_cl = rt_y_stride;
-	wire [10:0] rt_cs_cl = rt_chroma_stride;
-	wire [10:0] rt_dw_nz = (rt_display_w == 11'd0) ? rt_cw_cl : rt_display_w;
-	wire [10:0] rt_dh_nz = (rt_display_h == 11'd0) ? rt_ch_cl : rt_display_h;
+	// Crop/display window must fit in coded plane (rd-duck): pixel path does
+	// src_x = display_x + crop_left and indexes line RAM — overflow reads
+	// unfilled qwords while geom stayed "valid". Widened 12-bit sums; exact
+	// boundary sum==coded PASS, sum==coded+1 FAIL.
+	wire [11:0] rt_crop_disp_w_sum = {1'b0, rt_crop_left} + {1'b0, rt_dw_nz};
+	wire [11:0] rt_crop_disp_h_sum = {1'b0, rt_crop_top} + {1'b0, rt_dh_nz};
+	// Present origin + display must stay inside rd coordinate space (FRAME/MAX).
+	wire [11:0] rt_pres_disp_w_sum = {1'b0, rt_present_x} + {1'b0, rt_dw_nz};
+	wire [11:0] rt_pres_disp_h_sum = {1'b0, rt_present_y} + {1'b0, rt_dh_nz};
+	wire rt_raw_window =
+		(rt_crop_disp_w_sum <= {1'b0, rt_cw_cl}) &&
+		(rt_crop_disp_h_sum <= {1'b0, rt_ch_cl}) &&
+		(rt_dw_nz <= rt_cw_cl) && (rt_dh_nz <= rt_ch_cl) &&
+		(rt_pres_disp_w_sum <= 12'(RD_W_MAX)) &&
+		(rt_pres_disp_h_sum <= 12'(RD_H_MAX));
+	wire rt_raw_ok = rt_raw_nonzero && rt_raw_in_range && rt_raw_aligned &&
+	                 rt_raw_window;
 
 	wire [28:0] rt_y_bytes_qw = ({17'd0, rt_ys_cl} * {18'd0, rt_ch_cl}) >> 3;
 	wire [28:0] rt_c_bytes_qw = ({18'd0, rt_cs_cl} * {19'd0, rt_ch_cl[10:1]}) >> 3;
@@ -529,20 +545,11 @@ module ddr_frame_store #(
 	wire [63:0] y_q_hi [0:LINE_SLOTS-1];
 	wire [63:0] u_q [0:LINE_SLOTS-1];
 	wire [63:0] v_q [0:LINE_SLOTS-1];
-	wire rd_x_at_or_after_origin;
-	wire rd_y_at_or_after_origin;
-	generate
-		if (PRESENT_X == 0) begin : gen_present_x_zero
-			assign rd_x_at_or_after_origin = 1'b1;
-		end else begin : gen_present_x_nonzero
-			assign rd_x_at_or_after_origin = (rd_x >= PRESENT_X_L);
-		end
-		if (PRESENT_Y == 0) begin : gen_present_y_zero
-			assign rd_y_at_or_after_origin = 1'b1;
-		end else begin : gen_present_y_nonzero
-			assign rd_y_at_or_after_origin = (rd_y >= PRESENT_Y_L);
-		end
-	endgenerate
+	// Always compare runtime app present origin (PRESENT_X_L/Y_L). Generate-time
+	// `if (PRESENT_Y==0) → 1'b1` ignored nonzero runtime eff_pres_y and treated
+	// every Y as past origin (rd-duck) — pillar/letterbox top offset broken.
+	wire rd_x_at_or_after_origin = (rd_x >= PRESENT_X_L);
+	wire rd_y_at_or_after_origin = (rd_y >= PRESENT_Y_L);
 	wire rd_x_visible = rd_x_at_or_after_origin && (rd_x < PRESENT_END_X);
 	wire rd_y_visible = rd_y_at_or_after_origin && (rd_y < PRESENT_END_Y);
 	wire rd_visible = rd_x_visible && rd_y_visible;
