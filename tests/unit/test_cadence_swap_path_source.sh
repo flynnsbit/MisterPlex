@@ -45,26 +45,33 @@ check "vsync_pulse from fstart" \
 check "advance tied unused at top" \
   "$ROOT/fpga/Plex_MiSTer/Plex.sv" \
   '_unused = \|\{[^}]*advance'
-# B15 overturned hardwired-24 (that froze V_TOTAL=705). Runtime fps required.
+# B15 + ABI#2: q5 fps_valid/content_fps consumer (no hardwired 24/30 freeze)
 check "B15 runtime content_fps banner" \
   "$ROOT/fpga/Plex_MiSTer/Plex.sv" \
-  'B15: content_fps is RUNTIME'
-check "B15 content_fps idle/runtime mux" \
+  'B15 \+ parent ABI arbitration #2|content_fps from PLXG q5'
+check "B15 plex_content_fps_sel" \
   "$ROOT/fpga/Plex_MiSTer/Plex.sv" \
-  'content_fps_idle|plxg_content_fps'
-# Hardwired 24 only allowed under FAULT_B15 red twin
-if grep -nE "content_fps = 8'd24|content_fps = 8.d24" "$ROOT/fpga/Plex_MiSTer/Plex.sv" \
+  'plex_content_fps_sel'
+check "B15 fps_valid consumer" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/plex_content_fps_sel.sv" \
+  'fps_valid'
+if grep -nE "content_fps_idle.*=.*8'd30|content_fps = 8'd30" "$ROOT/fpga/Plex_MiSTer/Plex.sv"; then
+  echo "FAIL C1/B15: invent hardcode 30 in Plex" >&2
+  FAIL=1
+else
+  echo "OK C1/B15: no invented hardcode 30"
+fi
+if grep -nE "wire \[7:0\] content_fps = 8'd24" "$ROOT/fpga/Plex_MiSTer/Plex.sv" \
   | grep -v FAULT_B15 >/dev/null 2>&1; then
-  # lines matching may be FAULT body without FAULT on same line
   if ! grep -B3 -E "content_fps = 8'd24" "$ROOT/fpga/Plex_MiSTer/Plex.sv" \
       | grep -q FAULT_B15_FPS_HARDWIRE_24; then
-    echo "FAIL C1/B15: content_fps hardwired 24 outside FAULT_B15" >&2
+    echo "FAIL C1/B15: content_fps hardwired 24 outside FAULT" >&2
     FAIL=1
   else
-    echo "OK C1/B15: hardwired 24 only under FAULT_B15 red twin"
+    echo "OK C1/B15: hardwired 24 only under FAULT red twin"
   fi
 else
-  echo "OK C1/B15: no hardwired content_fps=24 in product path"
+  echo "OK C1/B15: no product hardwired content_fps=24"
 fi
 
 # cadence.hpp not included from arm/

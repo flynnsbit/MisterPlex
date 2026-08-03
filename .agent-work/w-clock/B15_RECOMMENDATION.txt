@@ -1,4 +1,3 @@
-B15 RECOMMEND: PLXG transport of content_fps (Q1 gap nibbles).
-NOT fixed-30-only without sustained zero-underrun proof (UNKNOWN on device).
-Idle default under BEAM_960 = 30 until PLXG fps live; film sets 24 via PLXG.
-Do not close by hardcoding 30.
+B15: parent ABI#2 q5 — consume fps_valid+content_fps only.
+No idle-30 invent. Unspecified → film 24 until daemon sets q5.
+w-mem implements q5+B16; w-clock consumer plex_content_fps_sel.

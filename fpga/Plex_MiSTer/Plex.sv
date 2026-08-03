@@ -241,24 +241,23 @@ wire [9:0]  content_height      = content_res_640x480 ? 10'd480 : 10'd240;
 wire [10:0] present_content_w = {1'b0, content_width};
 wire [10:0] present_content_h = {1'b0, content_height};
 
-// B15: content_fps is RUNTIME — hardwired 24 forced V_TOTAL=705 forever (rd-duck).
-// Transport: PLXG Q1 gap nibbles (w-mem owns pack/latch; see B15_PLXG_CONTENT_FPS.md).
-// Until PLXG fps is live in the product merge, idle default is 30 under BEAM_960
-// so the ARM 30 fps present prize is reachable; film must program fps=24 via PLXG.
-// Do NOT "fix" B15 by making this a permanent constant 30 (same defect, other way).
+// B15 + parent ABI arbitration #2: content_fps from PLXG q5 only.
+// q5 @ doorbell+0x828: [31:24] content_fps, [33] fps_valid (DAR is w-scaler).
+// w-mem owns latch/poller + B16 frame-boundary atomic promote — do not edit those.
+// Unspecified (fps_valid=0): film-class 24 — do NOT invent 30 (forbidden close).
+// FAULT_B15_IGNORE_FPS_VALID / FAULT_B15_FPS_HARDWIRE_24: red twins (permanent 24).
 `ifdef FAULT_B15_FPS_HARDWIRE_24
-wire [7:0] content_fps = 8'd24; // RED twin: pre-B15 permanent 24 Hz beam
+wire [7:0] content_fps = 8'd24; // RED: pre-B15 permanent hardwire
 `else
-wire        plxg_content_fps_valid = 1'b0; // w-mem: live_valid && fps field present
-wire [7:0]  plxg_content_fps       = 8'd0; // w-mem: latched content_fps from Q1
-`ifdef PRESENT_BEAM_960
-wire [7:0]  content_fps_idle       = 8'd30; // TV tier default (not a freeze)
-`else
-wire [7:0]  content_fps_idle       = 8'd24; // legacy non-beam path
-`endif
-wire [7:0]  content_fps =
-	(plxg_content_fps_valid && (plxg_content_fps != 8'd0))
-		? plxg_content_fps : content_fps_idle;
+// Staged until w-mem q5 latch outputs are merged into this tree:
+wire        plxg_fps_valid   = 1'b0; // w-mem: latched q5[33] after B16 promote
+wire [7:0]  plxg_content_fps = 8'd0; // w-mem: latched q5[31:24]
+wire [7:0]  content_fps;
+plex_content_fps_sel u_content_fps_sel (
+	.fps_valid(plxg_fps_valid),
+	.content_fps_q5(plxg_content_fps),
+	.content_fps_eff(content_fps)
+);
 `endif
 
 // Refresh interval = floor((f_MHz * 64_000us / 8192 rows) - 1). The
