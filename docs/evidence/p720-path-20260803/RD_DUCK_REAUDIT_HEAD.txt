@@ -1,0 +1,144 @@
+w-path re-audit package for rd-duck
+====================================
+worktree: /home/flynnsbit/Projects/MisterPlex-wt-path
+branch:   w-path-720p
+HEAD:     c423052e8b6d36ac0a8edf8078b8564d5c310a4d
+short:    c423052e
+base:     fix/instrument-verdict-line @ 85bef5832a763528ddaaf6f8af8d2319d1017ef8
+
+UNCOMMITTED PRODUCT DIFFS
+-------------------------
+none (git status: only untracked evidence/lab artifacts under docs/evidence/… and avsync_hdmi_out)
+git diff HEAD --stat → empty
+
+INSPECT PRODUCT HIERARCHY (not docs)
+------------------------------------
+arm/misterplexd/fpga_spi.cpp
+arm/misterplexd/fpga_spi.hpp
+arm/misterplexd/media_player.cpp
+arm/misterplexd/media_player.hpp
+arm/misterplexd/main.cpp
+arm/misterplexd/plex_resolve.cpp
+arm/misterplexd/plex_resolve.hpp
+host/libmisterplex/ddr_frame_layout.hpp
+host/libmisterplex/ddr_present_bank.hpp
+host/libmisterplex/plxg_record.hpp
+host/libmisterplex/pms_delivery_geom.hpp
+host/libmisterplex/ffmpeg_vf.hpp
+host/libmisterplex/h264_fabric_stream_gate.hpp
+host/libmisterplex/plxg_q5_aspect_cadence.hpp
+host/libmisterplex/path_public_symbols.hpp
+tests/unit/test_resolve.cpp
+tests/unit/test_plxg_publish_geometry.cpp
+tests/unit/test_fpga_publish_ddr_frame.cpp
+tests/unit/test_plxg_q5_publish_e2e.cpp
+tests/unit/test_ffmpeg_vf.cpp
+tests/unit/test_h264_fabric_stream_gate.cpp
+tests/unit/test_ddr_publish_path_static.py
+tests/unit/test_path_public_symbols.cpp
+
+FINDING → COMMIT MAP (w-path claims only)
+-----------------------------------------
+PLXG runtime / full seqlock / no standalone q5
+  4dea61bc  fix(path): q5 rides full PLXG seqlock, not standalone +0x828
+  3c794d5e  fix(path): wire PLXG full seqlock on publishDdrFrame hot path
+  keys: FpgaSpi::writePlxgRecord; sendDdrFrame hard-requires plan.program_plxg;
+        writePlxgQ5 = pending-only; bootstrap kPlxgBootstrapRecordPhys=0x300FF800;
+        bit34 reserved refuse in writePlxgRecord
+  tests: test_fpga_publish_ddr_frame, test_plxg_q5_publish_e2e, test_ddr_publish_path_static
+
+Fixed bank maps LEG/Option-C (not geom 0x40000)
+  6c7d8999  fix(path): pin publish to fixed LEG/Option-C bank map (not geom stride)
+  1465a7ea  fix(path): capacity-selected PLXG from publish geometry (no 320 shear)
+  keys: ddrPinLayoutToBankMap; makeDdrPublishPlan pins LEG/Option-C;
+        setDdrFrameLayout refuses geometry-derived map
+  tests: test_plxg_publish_geometry (320 NEG trap), test_frame_store_math
+
+1280 first-fit / Route-B host cap ≤960×540
+  9ca8198c  fix(path): Route-B host content cap 960x540; 1280 DE RED @1ppc
+  c399fbc6  fix(path): Route-B HD target 960×540; refuse silent 1280 DE
+  keys: pms_delivery_geom.hpp routeB*; plex_resolve TranscodeHd720→540p;
+        DP empty decision ceiling 960x540; main weakForContentResolution clamp;
+        720p profile lab-only PRESENT_MULTI_PIXEL
+  tests: test_resolve Route-B + resolve→publish→beam cross-contract
+
+426→432 pad / coded≠display PLXG
+  1e30caf6  path: pad 426→432 chroma-even x=2 (match FFmpeg yuv420p)
+  af53860a  path: DP 426→432 verified same-height pad-only (no swscale)
+  aa35ec80  fix(path): make FFmpeg pad oracle mandatory (no soft-skip)
+  69b01b16  fix(path): DP 426→432 keep display DE + crop_left=2 in PLXG
+  573acd64  test(path): publish-plan oracle for 426→432 coded≠display PLXG
+  keys: ddrPadOnlyStorageGeometry; ffmpeg_vf verified pad=432:240:2:0;
+        makePlxgRecordFromGeometry q1/q2/q3/q4 display=426 crop_left=2;
+        present_x=0 (crop in q4; present_x+display must fit presented)
+  tests: test_ffmpeg_vf, test_resolve GREEN_PATH_direct_part_native_pad_bank,
+         test_plxg_publish_geometry pad426_coded_ne_display
+
+DP plan trust / vf delivery_geometry_verified
+  b3ab7b30  fix(path): retain Direct-Part plan trust across measured-session clear
+  keys: media_player planTimeDeliveryGeometryVerified / plan_trusted basis;
+        measured clear does not wipe DP plan trust
+  tests: test_ffmpeg_vf plan-trust oracles
+
+Identity raw-pipe race (partial — barrier, not full in-band gen)
+  d140add5  path: fixed-output barrier ends identity raw-pipe race
+  8e5e0eb7  path: fail-closed identity geom — no publish after mid-stream size change
+  note: stderr-only interlock was rejected; barrier is host mitigation
+
+Fabric eligibility / miss#15 (xcode never fabric)
+  4f7d9812  path: miss#15 — any transcode refuses fabric (ignore lying CB XML)
+  d53a8789  path: DP decision verify + bitstream fabric confirm (miss#15)
+  a6b6ea87  path: DP-default + two-regime (SD Part, HD→720 xcode)  [HD later →540]
+  keys: h264_fabric_stream_gate; plexDeliveryIsFabricEligible(transcoded=true)→false
+  tests: test_h264_fabric_stream_gate, test_resolve
+
+bit34 VACATED
+  9dec62e7  path: revert q5 bit34 fps_1001 — restore ABI #2 reserved[63:34]
+  keys: plxg_q5_aspect_cadence.hpp reserved[63:34]==0
+
+NOT CLAIMED BY w-path (other lanes — do not audit us for close)
+----------------------------------------------------------------
+B20 product gate / applied_seq from doorbell gen
+  → w-mem (e.g. e033bc9f on other branches); we do not own poller applied_seq
+mode-exit / q3 mux latch / arbiter
+  → w-mem RTL mux; host emits q3 display fields (573acd64/69b01b16) but mux is theirs
+DAR tag / ascal ack
+  → w-scaler / ascal path; host packs q5 DAR into plan.plxg_q[5] only
+PLXC reset
+  → w-osd/w-mem (e.g. 5f58f2f9); host writes bootstrap PLXG page only
+
+FULL SHA LIST (recent claim range 6c7d8999..HEAD inclusive)
+-----------------------------------------------------------
+6c7d8999408c4caf476f740247547ccd387c1b90  pin LEG/Option-C bank map
+4dea61bc979fc7c206a42e6c42f0ceedf43e4bb2  q5 full seqlock
+b3ab7b304b8990b577493c27b2cdeead3468d24c  DP plan trust
+9ca8198c681fca356bd37e4b0d1510e6332d5bb4  Route-B 960 host cap
+69b01b164391e2614a485f92ee611bed54f4e6b4  426 display DE PLXG
+3c794d5e543feec95ff048495df13d87a9e42d9c  writePlxgRecord hot path
+573acd64ce0eed494bb07dc709a65fcff2da93c9  426 publish-plan oracle
+c399fbc6b85d86e4cc6014952bb3b6cd74594580  Route-B HD harden + cross-contract
+c423052e8b6d36ac0a8edf8078b8564d5c310a4d  docs status (HEAD)
+
+TEST COMMANDS + true rc (captured 2026-08-03 on HEAD)
+-----------------------------------------------------
+cd /home/flynnsbit/Projects/MisterPlex-wt-path
+./build/test_resolve; echo "true rc=$?"                         → true rc=0
+./build/test_plxg_publish_geometry; echo "true rc=$?"           → true rc=0
+./build/test_fpga_publish_ddr_frame; echo "true rc=$?"          → true rc=0
+./build/test_plxg_q5_publish_e2e; echo "true rc=$?"             → true rc=0
+./build/test_ffmpeg_vf; echo "true rc=$?"                       → true rc=0
+./build/test_h264_fabric_stream_gate; echo "true rc=$?"         → true rc=0
+./build/test_path_public_symbols; echo "true rc=$?"             → true rc=0
+python3 tests/unit/test_ddr_publish_path_static.py; echo "true rc=$?" → true rc=0
+make unit; echo "make unit true rc=$?"                          → true rc=0
+  (GATE_SKIP HIGH: live PMS wrapper SKIP-NOT-PASS rc=77; critical=0)
+
+git show recipes for hierarchy inspection
+-----------------------------------------
+git -C /home/flynnsbit/Projects/MisterPlex-wt-path show c399fbc6 --stat
+git -C /home/flynnsbit/Projects/MisterPlex-wt-path show 3c794d5e -- arm/misterplexd/fpga_spi.cpp
+git -C /home/flynnsbit/Projects/MisterPlex-wt-path show 69b01b16 -- host/libmisterplex/ddr_frame_layout.hpp
+git -C /home/flynnsbit/Projects/MisterPlex-wt-path show 9ca8198c -- host/libmisterplex/pms_delivery_geom.hpp
+git -C /home/flynnsbit/Projects/MisterPlex-wt-path show 4dea61bc -- arm/misterplexd/fpga_spi.cpp
+git -C /home/flynnsbit/Projects/MisterPlex-wt-path show b3ab7b30 -- arm/misterplexd/media_player.cpp
+git -C /home/flynnsbit/Projects/MisterPlex-wt-path show 6c7d8999 -- host/libmisterplex/ddr_present_bank.hpp
