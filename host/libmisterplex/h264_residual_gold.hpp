@@ -3,9 +3,11 @@
 // Source of truth for FPGA ST_PLACE coeff[0:15] + residual_csum (3.3l-1)
 // and inv_quant+IDCT first 4×4 paint / recon_y00·mean (3.3l-2).
 //
-// residual_csum algorithm (matches tree RTL slice_hdr_parser ST_PLACE):
+// residual_csum algorithm (matches RTL product + host residualCsum8):
 //   csum = 0
 //   for i in 0..15: csum ^= sat_s8(coeff[i])   // as uint8
+// RTL ST_PLACE latches running csum_acc (XOR sat8 each level during parse);
+// zeros free under XOR ⇒ identical to full-16 fold of placed scan coeffs.
 // Golden Baseline first residual → 0x14 (20). Keep residual_dc = sat8(coeff[0]) = -24.
 #pragma once
 #include <cstdint>
