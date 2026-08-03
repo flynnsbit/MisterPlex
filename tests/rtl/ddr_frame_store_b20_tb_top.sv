@@ -24,6 +24,12 @@ module ddr_frame_store_b20_tb (
 	input  wire [10:0] live_beam_ch,
 	input  wire [10:0] live_beam_hde,
 	input  wire [10:0] live_beam_vde,
+	input  wire        rt_win_en,
+	input  wire [10:0] rt_cx0,
+	input  wire [10:0] rt_cy0,
+	input  wire [11:0] rt_dar_x,
+	input  wire [11:0] rt_dar_y,
+	input  wire  [7:0] rt_fps,
 	input  wire        vsync_pulse,
 	input  wire        start_req,
 	input  wire        bank_sel,
@@ -64,7 +70,13 @@ module ddr_frame_store_b20_tb (
 	output wire [10:0] obs_locked_beam_hde,
 	output wire        obs_beam_use_app,
 	output wire [15:0] obs_applied_seq,
-	output wire        obs_b20_visual_hold
+	output wire        obs_b20_visual_hold,
+	output wire        obs_app_win_en,
+	output wire [10:0] obs_app_cx0,
+	output wire [11:0] obs_app_dar_x,
+	output wire  [7:0] obs_app_fps,
+	output wire        obs_swap_applied_pulse,
+	output wire [15:0] obs_pend_app_seq
 );
 	wire DDRAM_CLK;
 	wire [7:0] DDRAM_BE;
@@ -128,6 +140,14 @@ module ddr_frame_store_b20_tb (
 		.rt_beam_ch(live_beam_ch),
 		.rt_beam_hde(live_beam_hde),
 		.rt_beam_vde(live_beam_vde),
+		.rt_win_en(rt_win_en),
+		.rt_cx0(rt_cx0),
+		.rt_cy0(rt_cy0),
+		.rt_dar_x(rt_dar_x),
+		.rt_dar_y(rt_dar_y),
+		.rt_fps(rt_fps),
+		.rt_dar_valid(rt_dar_x != 12'd0),
+		.rt_fps_valid(rt_fps != 8'd0),
 		.start_req(start_req),
 		.bank_sel(bank_sel),
 		.status_osd(16'd0),
@@ -165,7 +185,16 @@ module ddr_frame_store_b20_tb (
 		.app_disp_h_o(),
 		.app_geom_en_o(),
 		.applied_geom_seq_o(obs_applied_seq),
-		.b20_visual_hold(obs_b20_visual_hold)
+		.b20_visual_hold(obs_b20_visual_hold),
+		.app_win_en_o(obs_app_win_en),
+		.app_cx0_o(obs_app_cx0),
+		.app_cy0_o(),
+		.app_dar_x_o(obs_app_dar_x),
+		.app_dar_y_o(),
+		.app_fps_o(obs_app_fps),
+		.app_dar_valid_o(),
+		.app_fps_valid_o(),
+		.swap_applied_pulse(obs_swap_applied_pulse)
 	);
 
 	present_beam_geom_lock beam_lock (
@@ -200,6 +229,7 @@ module ddr_frame_store_b20_tb (
 	assign obs_geom_hollow    = geom_hollow_fault;
 	assign obs_geom_reject    = dut.geom_reject_r;
 	assign obs_geom_hold_black = geom_hold_black;
+	assign obs_pend_app_seq = dut.pend_app_seq;
 endmodule
 
 `default_nettype wire

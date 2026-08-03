@@ -90,8 +90,12 @@ assert_sim_executed "b20-product" "$GOOD_OUT" \
   "OK B20 mode-exit pixel oracle" "OK B20 dar_hold content RGB black" \
   "OK B20 beam lock holds OLD DE until pending_ready swap" \
   "OK B20 visual hold black until swap ack" \
+  "OK B20 applied_seq from doorbell gen not live-at-swap" \
+  "OK B20 full visual tuple N with bank N after N+1 promote" \
+  "OK B20 bank N+1 / tuple N+1 after prior N commit" \
   "MEASURED after_promote" "MEASURED after_swap" "MEASURED mode_exit" \
-  "MEASURED mode_exit_scan" "MEASURED dar_hold_rgb" "MEASURED beam_delay"
+  "MEASURED mode_exit_scan" "MEASURED dar_hold_rgb" "MEASURED beam_delay" \
+  "MEASURED b20_seq_race" "MEASURED b20_seq2"
 if [[ "$GOOD_RC" -ne 0 ]]; then
   echo "FAIL b20 product rc=$GOOD_RC" >&2
   exit "$GOOD_RC"

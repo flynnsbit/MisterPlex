@@ -69,6 +69,12 @@ struct Sim {
 		top.live_beam_ch = kH;
 		top.live_beam_hde = kLegacyW;
 		top.live_beam_vde = kH;
+		top.rt_win_en = 0;
+		top.rt_cx0 = 0;
+		top.rt_cy0 = 0;
+		top.rt_dar_x = 0;
+		top.rt_dar_y = 0;
+		top.rt_fps = 0;
 		top.DDRAM_BUSY = 0;
 		top.DDRAM_DOUT = 0;
 		top.DDRAM_DOUT_READY = 0;
@@ -211,7 +217,8 @@ struct Sim {
 			tick();
 	}
 
-	void driveGeomLive(int w, int h, uint16_t seq) {
+	void driveGeomLive(int w, int h, uint16_t seq,
+	                   int win_en = 1, int cx0 = 0, int dar_x = 0, int fps = 24) {
 		top.geom_enable = 1;
 		top.rt_geom_live = 1;
 		top.rt_geom_seq = seq;
@@ -226,6 +233,13 @@ struct Sim {
 		top.live_beam_ch = h;
 		top.live_beam_hde = w;
 		top.live_beam_vde = h;
+		// Full visual tuple (snap/hist) — unique per generation for oracle.
+		top.rt_win_en = win_en ? 1 : 0;
+		top.rt_cx0 = cx0 & 0x7ff;
+		top.rt_cy0 = 0;
+		top.rt_dar_x = dar_x ? dar_x : w;
+		top.rt_dar_y = h;
+		top.rt_fps = fps & 0xff;
 		for (int i = 0; i < 8; ++i)
 			tick();
 	}
@@ -696,29 +710,36 @@ int runProduct() {
 	std::cout << "OK B20 beam lock holds OLD DE until pending_ready swap\n";
 	std::cout << "OK B20 visual hold black until swap ack (live≠applied)\n";
 
-	// ---- rd-duck: live N→N+1 after doorbell, before swap ----
-	// applied_seq must stay doorbell gen (13), not live-at-swap (17).
-	// app pitch from gen-13 snapshot (kNewW), not free-run wider.
+	// ---- rd-duck: N doorbell → promote N+1 before N swap ----
+	// Expect bank N / full tuple N / seq N, then later bank N+1 / tuple N+1.
+	// Visual tuple tags: N: win=1 cx0=4 dar=80 fps=24; N+1: win=1 cx0=8 dar=96 fps=30 (96 16-aligned)
 	sim.paintBank(/*bank*/0, kLegacyW, kH, /*y*/50);
 	sim.paintBank(/*bank*/1, kNewW, kH, /*y*/210);
-	sim.driveGeomLive(kNewW, kH, /*seq*/13);
-	for (int i = 0; i < 8; ++i)
-		sim.tick();
+	sim.driveGeomLive(kNewW, kH, /*seq*/13, /*win*/1, /*cx0*/4, /*dar*/80, /*fps*/24);
+	for (int i = 0; i < 16; ++i)
+		sim.tick(); // settle snap_seq=13
 	sim.top.tb_block_pending_ready = 1;
 	sim.ring(/*bank*/1, /*plxg*/13);
 	if (!sim.waitSwapPending(50000)) {
 		std::cerr << "FAIL b20-seq: no swap_pending after doorbell 13\n";
 		return 1;
 	}
-	// Live races ahead before bank swap (independent PLXG promote).
-	sim.driveGeomLive(/*w*/120, kH, /*seq*/17);
+	// Live races ahead before bank swap (independent PLXG promote) → hist=13.
+	sim.driveGeomLive(/*w*/96, kH, /*seq*/17, /*win*/1, /*cx0*/8, /*dar*/96, /*fps*/30);
 	for (int i = 0; i < 32; ++i)
 		sim.tick();
-	// Unblock ready — swap must apply gen 13, not 17.
+	if ((int)sim.top.obs_pend_app_seq != 13 && (int)sim.top.obs_pend_app_seq != 0) {
+		// pend may already be latched 13
+	}
+	// Unblock ready — swap must apply gen 13 bank1 tuple, not live 17.
 	sim.top.tb_block_pending_ready = 0;
+	int saw_pulse = 0;
 	for (int i = 0; i < 4000; ++i) {
+		if (sim.top.obs_swap_applied_pulse)
+			saw_pulse = 1;
 		if ((int)sim.top.obs_applied_seq == 13 &&
-		    (int)sim.top.obs_app_coded_w == kNewW)
+		    (int)sim.top.obs_app_coded_w == kNewW &&
+		    (int)sim.top.obs_disp_bank == 1)
 			break;
 		if ((i % 32) == 0)
 			sim.vsync();
@@ -728,6 +749,12 @@ int runProduct() {
 	std::cout << "MEASURED b20_seq_race applied=" << (int)sim.top.obs_applied_seq
 	          << " live_seq=" << (int)sim.top.rt_geom_seq
 	          << " app_w=" << (int)sim.top.obs_app_coded_w
+	          << " bank=" << (int)sim.top.obs_disp_bank
+	          << " win=" << (int)sim.top.obs_app_win_en
+	          << " cx0=" << (int)sim.top.obs_app_cx0
+	          << " dar=" << (int)sim.top.obs_app_dar_x
+	          << " fps=" << (int)sim.top.obs_app_fps
+	          << " pulse=" << saw_pulse
 	          << " hold=" << (int)sim.top.obs_b20_visual_hold << "\n";
 	if ((int)sim.top.obs_applied_seq != 13) {
 		std::cerr << "FAIL b20-seq: applied_seq must be doorbell gen 13 got "
@@ -740,11 +767,61 @@ int runProduct() {
 		          << (int)sim.top.obs_app_coded_w << "\n";
 		return 1;
 	}
+	if ((int)sim.top.obs_disp_bank != 1) {
+		std::cerr << "FAIL b20-seq: disp_bank must be N bank 1 got "
+		          << (int)sim.top.obs_disp_bank << "\n";
+		return 1;
+	}
+	if (!(int)sim.top.obs_app_win_en || (int)sim.top.obs_app_cx0 != 4 ||
+	    (int)sim.top.obs_app_dar_x != 80 || (int)sim.top.obs_app_fps != 24) {
+		std::cerr << "FAIL b20-seq: applied visual tuple must be gen-13 "
+		          << "win/cx0/dar/fps got win=" << (int)sim.top.obs_app_win_en
+		          << " cx0=" << (int)sim.top.obs_app_cx0
+		          << " dar=" << (int)sim.top.obs_app_dar_x
+		          << " fps=" << (int)sim.top.obs_app_fps << "\n";
+		return 1;
+	}
 	if (!sim.top.obs_b20_visual_hold) {
 		std::cerr << "FAIL b20-seq: visual hold must stay until live==applied\n";
 		return 1;
 	}
 	std::cout << "OK B20 applied_seq from doorbell gen not live-at-swap\n";
+	std::cout << "OK B20 full visual tuple N with bank N after N+1 promote\n";
+
+	// Second frame: doorbell N+1 (seq 17) bank 0 — must take snap 17 tuple.
+	sim.paintBank(/*bank*/0, /*w*/96, kH, /*y*/180);
+	sim.top.tb_block_pending_ready = 0;
+	sim.ring(/*bank*/0, /*plxg*/17);
+	if (!sim.waitSwapPending(50000)) {
+		std::cerr << "FAIL b20-seq2: no swap_pending after doorbell 17\n";
+		return 1;
+	}
+	for (int i = 0; i < 4000; ++i) {
+		if ((int)sim.top.obs_applied_seq == 17 &&
+		    (int)sim.top.obs_app_coded_w == 96 &&
+		    (int)sim.top.obs_disp_bank == 0)
+			break;
+		if ((i % 32) == 0)
+			sim.vsync();
+		else
+			sim.tick();
+	}
+	std::cout << "MEASURED b20_seq2 applied=" << (int)sim.top.obs_applied_seq
+	          << " app_w=" << (int)sim.top.obs_app_coded_w
+	          << " bank=" << (int)sim.top.obs_disp_bank
+	          << " cx0=" << (int)sim.top.obs_app_cx0
+	          << " dar=" << (int)sim.top.obs_app_dar_x
+	          << " fps=" << (int)sim.top.obs_app_fps << "\n";
+	if ((int)sim.top.obs_applied_seq != 17 ||
+	    (int)sim.top.obs_app_coded_w != 96 ||
+	    (int)sim.top.obs_disp_bank != 0 ||
+	    (int)sim.top.obs_app_cx0 != 8 ||
+	    (int)sim.top.obs_app_dar_x != 96 ||
+	    (int)sim.top.obs_app_fps != 30) {
+		std::cerr << "FAIL b20-seq2: bank N+1 / tuple N+1 mismatch\n";
+		return 1;
+	}
+	std::cout << "OK B20 bank N+1 / tuple N+1 after prior N commit\n";
 	return 0;
 }
 

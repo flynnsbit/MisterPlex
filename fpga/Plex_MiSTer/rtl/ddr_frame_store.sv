@@ -130,6 +130,15 @@ module ddr_frame_store #(
 	input  wire [10:0] rt_beam_ch = 11'd0,
 	input  wire [10:0] rt_beam_hde = 11'd0,
 	input  wire [10:0] rt_beam_vde = 11'd0,
+	// Full visual tuple (window/DAR/fps) — snapshotted with bank, not live-at-swap.
+	input  wire        rt_win_en = 1'b0,
+	input  wire [10:0] rt_cx0 = 11'd0,
+	input  wire [10:0] rt_cy0 = 11'd0,
+	input  wire [11:0] rt_dar_x = 12'd0,
+	input  wire [11:0] rt_dar_y = 12'd0,
+	input  wire  [7:0] rt_fps = 8'd0,
+	input  wire        rt_dar_valid = 1'b0,
+	input  wire        rt_fps_valid = 1'b0,
 
 	input  wire        start_req,
 	input  wire        bank_sel,
@@ -183,7 +192,18 @@ module ddr_frame_store #(
 	// B20 visual hold (rd-duck): PLXG live promoted at VSync before bank/app
 	// swap. Beam lock alone is insufficient — window/crop/DAR/mux can free-run.
 	// Hold content RGB + HDMI black until applied_geom_seq matches live seq.
-	output wire        b20_visual_hold
+	output wire        b20_visual_hold,
+	// Store-applied visual tuple (w-clock must consume these, never live mux).
+	output wire        app_win_en_o,
+	output wire [10:0] app_cx0_o,
+	output wire [10:0] app_cy0_o,
+	output wire [11:0] app_dar_x_o,
+	output wire [11:0] app_dar_y_o,
+	output wire  [7:0] app_fps_o,
+	output wire        app_dar_valid_o,
+	output wire        app_fps_valid_o,
+	// 1-clk pulse when bank+tuple+seq promote together.
+	output reg         swap_applied_pulse
 );
 	// Port/scan domain: cover presentation FRAME and max content.
 	localparam int RD_W_MAX = (FRAME_W > MAX_CODED_W) ? FRAME_W : MAX_CODED_W;
@@ -491,12 +511,40 @@ module ddr_frame_store #(
 	// Beam DE/content snapshotted with bank (B20 hierarchy).
 	reg [10:0] app_beam_cw_r, app_beam_ch_r, app_beam_hde_r, app_beam_vde_r;
 	reg [10:0] pend_beam_cw, pend_beam_ch, pend_beam_hde, pend_beam_vde;
+	reg        app_win_en_r, pend_win_en;
+	reg [10:0] app_cx0_r, app_cy0_r, pend_cx0, pend_cy0;
+	reg [11:0] app_dar_x_r, app_dar_y_r, pend_dar_x, pend_dar_y;
+	reg  [7:0] app_fps_r, pend_fps;
+	reg        app_dar_v_r, app_fps_v_r, pend_dar_v, pend_fps_v;
 	reg [15:0] applied_geom_seq_r;
 	// Doorbell-matched PLXG generation (rd-duck): NOT live at swap.
 	// Live can advance N→N+1 between accept and vsync; applied must stay N.
 	reg [15:0] pend_app_seq;
 	reg [15:0] expect_plxg_seq_r; // latched from CDC'd doorbell match
-	reg        pend_geom_waiting; // wait live==expect before snapshot
+	// 2-deep live visual history: when live promotes N→N+1, hist keeps N so a
+	// still-pending doorbell N can bind bank+tuple N (not free-run N+1).
+	reg [15:0] snap_seq, hist_seq;
+	reg        snap_geom_en, hist_geom_en;
+	reg [10:0] snap_coded_w, snap_coded_h, hist_coded_w, hist_coded_h;
+	reg [11:0] snap_y_stride, hist_y_stride;
+	reg [10:0] snap_c_stride, hist_c_stride;
+	reg [10:0] snap_disp_w, snap_disp_h, hist_disp_w, hist_disp_h;
+	reg [10:0] snap_pres_x, snap_pres_y, hist_pres_x, hist_pres_y;
+	reg [10:0] snap_crop_l, snap_crop_t, hist_crop_l, hist_crop_t;
+	reg [8:0]  snap_y_fetch_qw, snap_y_pitch_qw, hist_y_fetch_qw, hist_y_pitch_qw;
+	reg [7:0]  snap_c_fetch_qw, snap_c_pitch_qw, hist_c_fetch_qw, hist_c_pitch_qw;
+	reg [28:0] snap_u_base_qw, snap_v_base_qw, hist_u_base_qw, hist_v_base_qw;
+	reg        snap_optc_map, hist_optc_map;
+	reg [28:0] snap_base_w0, snap_base_w1, snap_doorbell_w;
+	reg [28:0] hist_base_w0, hist_base_w1, hist_doorbell_w;
+	reg [10:0] snap_beam_cw, snap_beam_ch, snap_beam_hde, snap_beam_vde;
+	reg [10:0] hist_beam_cw, hist_beam_ch, hist_beam_hde, hist_beam_vde;
+	reg        snap_win_en, hist_win_en;
+	reg [10:0] snap_cx0, snap_cy0, hist_cx0, hist_cy0;
+	reg [11:0] snap_dar_x, snap_dar_y, hist_dar_x, hist_dar_y;
+	reg  [7:0] snap_fps, hist_fps;
+	reg        snap_dar_v, snap_fps_v, hist_dar_v, hist_fps_v;
+	reg        snap_valid, hist_valid;
 
 	// Atomic when PLXG is live with nonzero seq (doorbell carries matching gen).
 	// FAULT: free-run app from eff even under live seq → new pitch on old bank.
@@ -522,6 +570,14 @@ module ddr_frame_store #(
 	assign app_disp_h_o      = app_disp_h;
 	assign app_geom_en_o     = app_geom_en;
 	assign applied_geom_seq_o = applied_geom_seq_r;
+	assign app_win_en_o    = app_win_en_r;
+	assign app_cx0_o       = app_cx0_r;
+	assign app_cy0_o       = app_cy0_r;
+	assign app_dar_x_o     = app_dar_x_r;
+	assign app_dar_y_o     = app_dar_y_r;
+	assign app_fps_o       = app_fps_r;
+	assign app_dar_valid_o = app_dar_v_r;
+	assign app_fps_valid_o = app_fps_v_r;
 	// Live PLXG seq advanced (latch VSync promote) but bank/app not yet applied.
 	// Covers mux/window/crop/q5 free-run until swap ack (beam lock is not enough).
 	assign b20_visual_hold = b20_atomic && (applied_geom_seq_r != rt_geom_seq);
@@ -761,7 +817,47 @@ module ddr_frame_store #(
 			applied_geom_seq_r <= 16'd0;
 			pend_app_seq <= 16'd0;
 			expect_plxg_seq_r <= 16'd0;
-			pend_geom_waiting <= 1'b0;
+			app_win_en_r <= 1'b0; pend_win_en <= 1'b0;
+			app_cx0_r <= 11'd0; app_cy0_r <= 11'd0;
+			pend_cx0 <= 11'd0; pend_cy0 <= 11'd0;
+			app_dar_x_r <= 12'd0; app_dar_y_r <= 12'd0;
+			pend_dar_x <= 12'd0; pend_dar_y <= 12'd0;
+			app_fps_r <= 8'd0; pend_fps <= 8'd0;
+			app_dar_v_r <= 1'b0; app_fps_v_r <= 1'b0;
+			pend_dar_v <= 1'b0; pend_fps_v <= 1'b0;
+			swap_applied_pulse <= 1'b0;
+			snap_seq <= 16'd0; hist_seq <= 16'd0;
+			snap_valid <= 1'b0; hist_valid <= 1'b0;
+			snap_geom_en <= 1'b0; hist_geom_en <= 1'b0;
+			snap_coded_w <= 11'(CODED_W); snap_coded_h <= 11'(CODED_H);
+			hist_coded_w <= 11'(CODED_W); hist_coded_h <= 11'(CODED_H);
+			snap_y_stride <= 12'(CODED_W); hist_y_stride <= 12'(CODED_W);
+			snap_c_stride <= 11'(CODED_W/2); hist_c_stride <= 11'(CODED_W/2);
+			snap_disp_w <= 11'(DISPLAY_W); snap_disp_h <= 11'(DISPLAY_H);
+			hist_disp_w <= 11'(DISPLAY_W); hist_disp_h <= 11'(DISPLAY_H);
+			snap_pres_x <= 11'(PRESENT_X); snap_pres_y <= 11'(PRESENT_Y);
+			hist_pres_x <= 11'(PRESENT_X); hist_pres_y <= 11'(PRESENT_Y);
+			snap_crop_l <= 11'(CROP_LEFT); snap_crop_t <= 11'(CROP_TOP);
+			hist_crop_l <= 11'(CROP_LEFT); hist_crop_t <= 11'(CROP_TOP);
+			snap_y_fetch_qw <= 9'(Y_LINE_QWORDS); snap_y_pitch_qw <= 9'(Y_LINE_QWORDS);
+			hist_y_fetch_qw <= 9'(Y_LINE_QWORDS); hist_y_pitch_qw <= 9'(Y_LINE_QWORDS);
+			snap_c_fetch_qw <= 8'(C_LINE_QWORDS); snap_c_pitch_qw <= 8'(C_LINE_QWORDS);
+			hist_c_fetch_qw <= 8'(C_LINE_QWORDS); hist_c_pitch_qw <= 8'(C_LINE_QWORDS);
+			snap_u_base_qw <= LEG_U_PLANE_BASE; snap_v_base_qw <= LEG_V_PLANE_BASE;
+			hist_u_base_qw <= LEG_U_PLANE_BASE; hist_v_base_qw <= LEG_V_PLANE_BASE;
+			snap_optc_map <= 1'b0; hist_optc_map <= 1'b0;
+			snap_base_w0 <= LEG_BASE_W0; snap_base_w1 <= LEG_BASE_W1;
+			hist_base_w0 <= LEG_BASE_W0; hist_base_w1 <= LEG_BASE_W1;
+			snap_doorbell_w <= LEG_DOORBELL_W; hist_doorbell_w <= LEG_DOORBELL_W;
+			snap_beam_cw <= 11'(DISPLAY_W); snap_beam_ch <= 11'(DISPLAY_H);
+			snap_beam_hde <= 11'(DISPLAY_W); snap_beam_vde <= 11'(DISPLAY_H);
+			hist_beam_cw <= 11'(DISPLAY_W); hist_beam_ch <= 11'(DISPLAY_H);
+			hist_beam_hde <= 11'(DISPLAY_W); hist_beam_vde <= 11'(DISPLAY_H);
+			snap_win_en <= 1'b0; hist_win_en <= 1'b0;
+			snap_cx0 <= 11'd0; snap_cy0 <= 11'd0; hist_cx0 <= 11'd0; hist_cy0 <= 11'd0;
+			snap_dar_x <= 12'd0; snap_dar_y <= 12'd0; hist_dar_x <= 12'd0; hist_dar_y <= 12'd0;
+			snap_fps <= 8'd0; hist_fps <= 8'd0;
+			snap_dar_v <= 1'b0; snap_fps_v <= 1'b0; hist_dar_v <= 1'b0; hist_fps_v <= 1'b0;
 			pending_plxg_s1 <= 16'd0;
 			pending_plxg_s2 <= 16'd0;
 			// B16 epoch
@@ -778,6 +874,7 @@ module ddr_frame_store #(
 			app_cs_d <= 11'(CODED_W/2);
 			app_optc_d <= 1'b0;
 		end else begin
+			swap_applied_pulse <= 1'b0;
 			swap_req_s1 <= swap_req_t_ddr;
 			swap_req_s2 <= swap_req_s1;
 			pending_bank_s1 <= pending_bank_ddr;
@@ -786,6 +883,56 @@ module ddr_frame_store #(
 			pending_plxg_s2 <= pending_plxg_s1;
 			pending_ready_s1 <= pending_ready_ddr;
 			pending_ready_s2 <= pending_ready_s1;
+
+
+			// ---- B20 2-deep visual snap/hist (clk_sys) ----
+			// Refresh snap while live seq stable; on seq change archive→hist.
+			if (rt_geom_live && (rt_geom_seq != 16'd0)) begin
+				if (snap_valid && (snap_seq != rt_geom_seq)) begin
+					hist_valid <= 1'b1;
+					hist_seq <= snap_seq;
+					hist_geom_en <= snap_geom_en;
+					hist_coded_w <= snap_coded_w; hist_coded_h <= snap_coded_h;
+					hist_y_stride <= snap_y_stride; hist_c_stride <= snap_c_stride;
+					hist_disp_w <= snap_disp_w; hist_disp_h <= snap_disp_h;
+					hist_pres_x <= snap_pres_x; hist_pres_y <= snap_pres_y;
+					hist_crop_l <= snap_crop_l; hist_crop_t <= snap_crop_t;
+					hist_y_fetch_qw <= snap_y_fetch_qw; hist_y_pitch_qw <= snap_y_pitch_qw;
+					hist_c_fetch_qw <= snap_c_fetch_qw; hist_c_pitch_qw <= snap_c_pitch_qw;
+					hist_u_base_qw <= snap_u_base_qw; hist_v_base_qw <= snap_v_base_qw;
+					hist_optc_map <= snap_optc_map;
+					hist_base_w0 <= snap_base_w0; hist_base_w1 <= snap_base_w1;
+					hist_doorbell_w <= snap_doorbell_w;
+					hist_beam_cw <= snap_beam_cw; hist_beam_ch <= snap_beam_ch;
+					hist_beam_hde <= snap_beam_hde; hist_beam_vde <= snap_beam_vde;
+					hist_win_en <= snap_win_en;
+					hist_cx0 <= snap_cx0; hist_cy0 <= snap_cy0;
+					hist_dar_x <= snap_dar_x; hist_dar_y <= snap_dar_y;
+					hist_fps <= snap_fps;
+					hist_dar_v <= snap_dar_v; hist_fps_v <= snap_fps_v;
+				end
+				snap_valid <= 1'b1;
+				snap_seq <= rt_geom_seq;
+				snap_geom_en <= geom_en_r;
+				snap_coded_w <= eff_coded_w; snap_coded_h <= eff_coded_h;
+				snap_y_stride <= eff_y_stride; snap_c_stride <= eff_c_stride;
+				snap_disp_w <= eff_disp_w; snap_disp_h <= eff_disp_h;
+				snap_pres_x <= eff_pres_x; snap_pres_y <= eff_pres_y;
+				snap_crop_l <= eff_crop_l; snap_crop_t <= eff_crop_t;
+				snap_y_fetch_qw <= eff_y_fetch_qw; snap_y_pitch_qw <= eff_y_pitch_qw;
+				snap_c_fetch_qw <= eff_c_fetch_qw; snap_c_pitch_qw <= eff_c_pitch_qw;
+				snap_u_base_qw <= eff_u_base_qw; snap_v_base_qw <= eff_v_base_qw;
+				snap_optc_map <= eff_optc_map;
+				snap_base_w0 <= eff_base_w0; snap_base_w1 <= eff_base_w1;
+				snap_doorbell_w <= eff_doorbell_w;
+				snap_beam_cw <= cand_beam_cw; snap_beam_ch <= cand_beam_ch;
+				snap_beam_hde <= cand_beam_hde; snap_beam_vde <= cand_beam_vde;
+				snap_win_en <= rt_win_en;
+				snap_cx0 <= rt_cx0; snap_cy0 <= rt_cy0;
+				snap_dar_x <= rt_dar_x; snap_dar_y <= rt_dar_y;
+				snap_fps <= rt_fps;
+				snap_dar_v <= rt_dar_valid; snap_fps_v <= rt_fps_valid;
+			end
 
 			// Capture new doorbell before vsync-swap decision so a same-cycle collision
 			// can retain swap_pending for the newly latched bank (product).
@@ -797,17 +944,14 @@ module ddr_frame_store #(
 				if (!(SWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC
 				      && vsync_pulse && swap_pending && pending_ready_s2))
 					swap_pending <= 1'b1;
-				// B20: latch doorbell-matched PLXG generation (CDC from accept).
-				// Snapshot geom only while live still equals that generation —
-				// if live raced to N+1, wait (pend_geom_waiting) rather than
-				// binding N+1 visual tuple to an N bank (rd-duck).
+				// B20: bind pend tuple from 2-deep snap/hist by doorbell generation.
+				// NEVER re-sample free-running live (N+1 promote while bank N waits).
 				expect_plxg_seq_r <= pending_plxg_s2;
 				if (b20_atomic) begin
-					if (pending_plxg_s2 == 16'd0 ||
-					    (rt_geom_live && (rt_geom_seq == pending_plxg_s2))) begin
+					pend_app_seq <= pending_plxg_s2;
+					if (pending_plxg_s2 == 16'd0) begin
+						// Ungated doorbell: current eff/cand (legacy path).
 						pend_app_valid <= 1'b1;
-						pend_geom_waiting <= 1'b0;
-						pend_app_seq <= pending_plxg_s2;
 						pend_app_geom_en <= geom_en_r;
 						pend_app_coded_w <= eff_coded_w;
 						pend_app_coded_h <= eff_coded_h;
@@ -833,44 +977,80 @@ module ddr_frame_store #(
 						pend_beam_ch  <= cand_beam_ch;
 						pend_beam_hde <= cand_beam_hde;
 						pend_beam_vde <= cand_beam_vde;
+						pend_win_en <= rt_win_en;
+						pend_cx0 <= rt_cx0; pend_cy0 <= rt_cy0;
+						pend_dar_x <= rt_dar_x; pend_dar_y <= rt_dar_y;
+						pend_fps <= rt_fps;
+						pend_dar_v <= rt_dar_valid; pend_fps_v <= rt_fps_valid;
+					end else if (snap_valid && (snap_seq == pending_plxg_s2)) begin
+						pend_app_valid <= 1'b1;
+						pend_app_geom_en <= snap_geom_en;
+						pend_app_coded_w <= snap_coded_w;
+						pend_app_coded_h <= snap_coded_h;
+						pend_app_y_stride <= snap_y_stride;
+						pend_app_c_stride <= snap_c_stride;
+						pend_app_disp_w <= snap_disp_w;
+						pend_app_disp_h <= snap_disp_h;
+						pend_app_pres_x <= snap_pres_x;
+						pend_app_pres_y <= snap_pres_y;
+						pend_app_crop_l <= snap_crop_l;
+						pend_app_crop_t <= snap_crop_t;
+						pend_app_y_fetch_qw <= snap_y_fetch_qw;
+						pend_app_c_fetch_qw <= snap_c_fetch_qw;
+						pend_app_y_pitch_qw <= snap_y_pitch_qw;
+						pend_app_c_pitch_qw <= snap_c_pitch_qw;
+						pend_app_u_base_qw <= snap_u_base_qw;
+						pend_app_v_base_qw <= snap_v_base_qw;
+						pend_app_optc_map <= snap_optc_map;
+						pend_app_base_w0 <= snap_base_w0;
+						pend_app_base_w1 <= snap_base_w1;
+						pend_app_doorbell_w <= snap_doorbell_w;
+						pend_beam_cw  <= snap_beam_cw;
+						pend_beam_ch  <= snap_beam_ch;
+						pend_beam_hde <= snap_beam_hde;
+						pend_beam_vde <= snap_beam_vde;
+						pend_win_en <= snap_win_en;
+						pend_cx0 <= snap_cx0; pend_cy0 <= snap_cy0;
+						pend_dar_x <= snap_dar_x; pend_dar_y <= snap_dar_y;
+						pend_fps <= snap_fps;
+						pend_dar_v <= snap_dar_v; pend_fps_v <= snap_fps_v;
+					end else if (hist_valid && (hist_seq == pending_plxg_s2)) begin
+						pend_app_valid <= 1'b1;
+						pend_app_geom_en <= hist_geom_en;
+						pend_app_coded_w <= hist_coded_w;
+						pend_app_coded_h <= hist_coded_h;
+						pend_app_y_stride <= hist_y_stride;
+						pend_app_c_stride <= hist_c_stride;
+						pend_app_disp_w <= hist_disp_w;
+						pend_app_disp_h <= hist_disp_h;
+						pend_app_pres_x <= hist_pres_x;
+						pend_app_pres_y <= hist_pres_y;
+						pend_app_crop_l <= hist_crop_l;
+						pend_app_crop_t <= hist_crop_t;
+						pend_app_y_fetch_qw <= hist_y_fetch_qw;
+						pend_app_c_fetch_qw <= hist_c_fetch_qw;
+						pend_app_y_pitch_qw <= hist_y_pitch_qw;
+						pend_app_c_pitch_qw <= hist_c_pitch_qw;
+						pend_app_u_base_qw <= hist_u_base_qw;
+						pend_app_v_base_qw <= hist_v_base_qw;
+						pend_app_optc_map <= hist_optc_map;
+						pend_app_base_w0 <= hist_base_w0;
+						pend_app_base_w1 <= hist_base_w1;
+						pend_app_doorbell_w <= hist_doorbell_w;
+						pend_beam_cw  <= hist_beam_cw;
+						pend_beam_ch  <= hist_beam_ch;
+						pend_beam_hde <= hist_beam_hde;
+						pend_beam_vde <= hist_beam_vde;
+						pend_win_en <= hist_win_en;
+						pend_cx0 <= hist_cx0; pend_cy0 <= hist_cy0;
+						pend_dar_x <= hist_dar_x; pend_dar_y <= hist_dar_y;
+						pend_fps <= hist_fps;
+						pend_dar_v <= hist_dar_v; pend_fps_v <= hist_fps_v;
 					end else begin
-						// Live ≠ doorbell gen — defer snapshot until match.
+						// Orphan gen (no snap/hist) — hold swap until history catches.
 						pend_app_valid <= 1'b0;
-						pend_geom_waiting <= 1'b1;
-						pend_app_seq <= pending_plxg_s2;
 					end
 				end
-			end else if (pend_geom_waiting && b20_atomic &&
-			             rt_geom_live && (rt_geom_seq == expect_plxg_seq_r)) begin
-				// Delayed match: live returned to doorbell generation.
-				pend_app_valid <= 1'b1;
-				pend_geom_waiting <= 1'b0;
-				pend_app_seq <= expect_plxg_seq_r;
-				pend_app_geom_en <= geom_en_r;
-				pend_app_coded_w <= eff_coded_w;
-				pend_app_coded_h <= eff_coded_h;
-				pend_app_y_stride <= eff_y_stride;
-				pend_app_c_stride <= eff_c_stride;
-				pend_app_disp_w <= eff_disp_w;
-				pend_app_disp_h <= eff_disp_h;
-				pend_app_pres_x <= eff_pres_x;
-				pend_app_pres_y <= eff_pres_y;
-				pend_app_crop_l <= eff_crop_l;
-				pend_app_crop_t <= eff_crop_t;
-				pend_app_y_fetch_qw <= eff_y_fetch_qw;
-				pend_app_c_fetch_qw <= eff_c_fetch_qw;
-				pend_app_y_pitch_qw <= eff_y_pitch_qw;
-				pend_app_c_pitch_qw <= eff_c_pitch_qw;
-				pend_app_u_base_qw <= eff_u_base_qw;
-				pend_app_v_base_qw <= eff_v_base_qw;
-				pend_app_optc_map <= eff_optc_map;
-				pend_app_base_w0 <= eff_base_w0;
-				pend_app_base_w1 <= eff_base_w1;
-				pend_app_doorbell_w <= eff_doorbell_w;
-				pend_beam_cw  <= cand_beam_cw;
-				pend_beam_ch  <= cand_beam_ch;
-				pend_beam_hde <= cand_beam_hde;
-				pend_beam_vde <= cand_beam_vde;
 			end
 
 			// B20: under live PLXG, do not bank-swap until doorbell gen is
@@ -913,6 +1093,14 @@ module ddr_frame_store #(
 					app_beam_ch_r  <= pend_beam_ch;
 					app_beam_hde_r <= pend_beam_hde;
 					app_beam_vde_r <= pend_beam_vde;
+					app_win_en_r   <= pend_win_en;
+					app_cx0_r      <= pend_cx0;
+					app_cy0_r      <= pend_cy0;
+					app_dar_x_r    <= pend_dar_x;
+					app_dar_y_r    <= pend_dar_y;
+					app_fps_r      <= pend_fps;
+					app_dar_v_r    <= pend_dar_v;
+					app_fps_v_r    <= pend_fps_v;
 					// PRODUCT: doorbell-matched generation — never live-at-swap
 					// (live may already be N+1; bank/app are generation N).
 `ifdef DDR_FRAME_STORE_FAULT_B20_APPLIED_SEQ_LIVE
@@ -920,10 +1108,10 @@ module ddr_frame_store #(
 `else
 					applied_geom_seq_r <= pend_app_seq;
 `endif
+					swap_applied_pulse <= 1'b1;
 					// Consume snapshot so a later free-run path cannot see a
 					// stale pend, and so mode-exit disable is one-shot with bank.
 					pend_app_valid <= 1'b0;
-					pend_geom_waiting <= 1'b0;
 				end
 				disp_buf <= ~disp_buf;
 				has_frame <= 1'b1;
@@ -969,10 +1157,14 @@ module ddr_frame_store #(
 					app_beam_ch_r  <= 11'(DISPLAY_H);
 					app_beam_hde_r <= 11'(DISPLAY_W);
 					app_beam_vde_r <= 11'(DISPLAY_H);
+					app_win_en_r <= 1'b0;
+					app_cx0_r <= 11'd0; app_cy0_r <= 11'd0;
+					app_dar_x_r <= 12'd0; app_dar_y_r <= 12'd0;
+					app_fps_r <= 8'd0;
+					app_dar_v_r <= 1'b0; app_fps_v_r <= 1'b0;
 					applied_geom_seq_r <= 16'd0;
 					pend_app_seq <= 16'd0;
 					pend_app_valid <= 1'b0;
-					pend_geom_waiting <= 1'b0;
 				end else begin
 					app_geom_en <= geom_en_r;
 					app_coded_w <= eff_coded_w;
@@ -999,6 +1191,11 @@ module ddr_frame_store #(
 					app_beam_ch_r  <= cand_beam_ch;
 					app_beam_hde_r <= cand_beam_hde;
 					app_beam_vde_r <= cand_beam_vde;
+					app_win_en_r <= rt_win_en;
+					app_cx0_r <= rt_cx0; app_cy0_r <= rt_cy0;
+					app_dar_x_r <= rt_dar_x; app_dar_y_r <= rt_dar_y;
+					app_fps_r <= rt_fps;
+					app_dar_v_r <= rt_dar_valid; app_fps_v_r <= rt_fps_valid;
 					applied_geom_seq_r <= rt_geom_seq;
 				end
 			end
@@ -1706,16 +1903,23 @@ module ddr_frame_store #(
 		end
 	end
 
-	// B20: pending-bank prep uses candidate pitch/base; display bank uses applied.
-	wire fill_sel_pend = swap_pending_d2 && (fill_bank == pending_bank_d2);
-	wire [8:0]  f_y_fetch_qw = fill_sel_pend ? d_cand_y_fetch_qw : d_y_fetch_qw;
-	wire [8:0]  f_y_pitch_qw = fill_sel_pend ? d_cand_y_pitch_qw : d_y_pitch_qw;
-	wire [7:0]  f_c_fetch_qw = fill_sel_pend ? d_cand_c_fetch_qw : d_c_fetch_qw;
-	wire [7:0]  f_c_pitch_qw = fill_sel_pend ? d_cand_c_pitch_qw : d_c_pitch_qw;
-	wire [28:0] f_u_base_qw  = fill_sel_pend ? d_cand_u_base_qw  : d_u_base_qw;
-	wire [28:0] f_v_base_qw  = fill_sel_pend ? d_cand_v_base_qw  : d_v_base_qw;
-	wire [28:0] f_base_w0    = fill_sel_pend ? d_cand_base_w0    : d_base_w0;
-	wire [28:0] f_base_w1    = fill_sel_pend ? d_cand_base_w1    : d_base_w1;
+	// B20: pending-bank prep uses doorbell-frozen pitch (d_pend_*), not free-run
+	// cand — live N→N+1 must not re-pitch an N bank mid-prep.
+	reg [8:0]  d_pend_y_fetch_qw, d_pend_y_pitch_qw;
+	reg [7:0]  d_pend_c_fetch_qw, d_pend_c_pitch_qw;
+	reg [28:0] d_pend_u_base_qw, d_pend_v_base_qw;
+	reg [10:0] d_pend_coded_h;
+	reg [28:0] d_pend_base_w0, d_pend_base_w1;
+	reg        d_pend_valid;
+	wire fill_sel_pend = swap_pending_d2 && (fill_bank == pending_bank_d2) && d_pend_valid;
+	wire [8:0]  f_y_fetch_qw = fill_sel_pend ? d_pend_y_fetch_qw : d_y_fetch_qw;
+	wire [8:0]  f_y_pitch_qw = fill_sel_pend ? d_pend_y_pitch_qw : d_y_pitch_qw;
+	wire [7:0]  f_c_fetch_qw = fill_sel_pend ? d_pend_c_fetch_qw : d_c_fetch_qw;
+	wire [7:0]  f_c_pitch_qw = fill_sel_pend ? d_pend_c_pitch_qw : d_c_pitch_qw;
+	wire [28:0] f_u_base_qw  = fill_sel_pend ? d_pend_u_base_qw  : d_u_base_qw;
+	wire [28:0] f_v_base_qw  = fill_sel_pend ? d_pend_v_base_qw  : d_v_base_qw;
+	wire [28:0] f_base_w0    = fill_sel_pend ? d_pend_base_w0    : d_base_w0;
+	wire [28:0] f_base_w1    = fill_sel_pend ? d_pend_base_w1    : d_base_w1;
 
 	// Runtime bank map: legacy 0x30000000 or Option-C 0x30180000.
 	wire [28:0] fill_bank_base = fill_bank ? f_base_w1 : f_base_w0;
@@ -1860,6 +2064,16 @@ module ddr_frame_store #(
 			pending_ready_ddr <= 1'b0;
 			pending_bank_ddr <= 1'b0;
 			pending_plxg_seq_ddr <= 16'd0;
+			d_pend_y_fetch_qw <= 9'(Y_LINE_QWORDS);
+			d_pend_y_pitch_qw <= 9'(Y_LINE_QWORDS);
+			d_pend_c_fetch_qw <= 8'(C_LINE_QWORDS);
+			d_pend_c_pitch_qw <= 8'(C_LINE_QWORDS);
+			d_pend_u_base_qw <= LEG_U_PLANE_BASE;
+			d_pend_v_base_qw <= LEG_V_PLANE_BASE;
+			d_pend_coded_h <= 11'(CODED_H);
+			d_pend_base_w0 <= LEG_BASE_W0;
+			d_pend_base_w1 <= LEG_BASE_W1;
+			d_pend_valid <= 1'b0;
 			swap_req_t_ddr <= 1'b0;
 			poll_div <= 16'd0;
 			poll_pending <= 1'b0;
@@ -2091,8 +2305,19 @@ module ddr_frame_store #(
 				pending_bank_ddr <= DDRAM_DOUT[63];
 				// Latch matched PLXG generation at accept (0 = ungated legacy).
 				// Product couples db_plxg_seq==d_geom_seq[12:0] before db_new_seq.
+				// Freeze cand pitch NOW — live may advance N→N+1 before swap.
 				pending_plxg_seq_ddr <=
 					(db_plxg_seq == 13'd0) ? 16'd0 : d_geom_seq;
+				d_pend_y_fetch_qw <= d_cand_y_fetch_qw;
+				d_pend_y_pitch_qw <= d_cand_y_pitch_qw;
+				d_pend_c_fetch_qw <= d_cand_c_fetch_qw;
+				d_pend_c_pitch_qw <= d_cand_c_pitch_qw;
+				d_pend_u_base_qw <= d_cand_u_base_qw;
+				d_pend_v_base_qw <= d_cand_v_base_qw;
+				d_pend_coded_h <= d_cand_coded_h;
+				d_pend_base_w0 <= d_cand_base_w0;
+				d_pend_base_w1 <= d_cand_base_w1;
+				d_pend_valid <= 1'b1;
 				swap_req_t_ddr <= ~swap_req_t_ddr;
 				doorbell_ok <= 1'b1;
 				stale_db_polls <= '0;
@@ -2104,6 +2329,16 @@ module ddr_frame_store #(
 					pending_bank_ddr <= bank_sel_d2;
 					// SPI has no PLXG field — ungated seq 0.
 					pending_plxg_seq_ddr <= 16'd0;
+					d_pend_y_fetch_qw <= d_cand_y_fetch_qw;
+					d_pend_y_pitch_qw <= d_cand_y_pitch_qw;
+					d_pend_c_fetch_qw <= d_cand_c_fetch_qw;
+					d_pend_c_pitch_qw <= d_cand_c_pitch_qw;
+					d_pend_u_base_qw <= d_cand_u_base_qw;
+					d_pend_v_base_qw <= d_cand_v_base_qw;
+					d_pend_coded_h <= d_cand_coded_h;
+					d_pend_base_w0 <= d_cand_base_w0;
+					d_pend_base_w1 <= d_cand_base_w1;
+					d_pend_valid <= 1'b1;
 					swap_req_t_ddr <= ~swap_req_t_ddr;
 				end
 			end

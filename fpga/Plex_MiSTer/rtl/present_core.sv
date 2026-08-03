@@ -322,6 +322,12 @@ module present_core #(
 	wire        app_geom_en_o;
 	wire [15:0] applied_geom_seq_o;
 	wire        b20_visual_hold;
+	wire        app_win_en_w;
+	wire [10:0] app_cx0_w, app_cy0_w;
+	wire [11:0] app_dar_x_w, app_dar_y_w;
+	wire  [7:0] app_fps_w;
+	wire        app_dar_v_w, app_fps_v_w;
+	wire        swap_applied_pulse_w;
 	wire        beam_use_app;
 	wire [10:0] locked_cw, locked_ch, locked_hde, locked_vde;
 	// Real ownership gate (integration must match product top tie-offs).
@@ -371,11 +377,20 @@ module present_core #(
 		.py({1'b0, py}),
 `endif
 		.in_content(in_content),
+`ifdef DDR_FRAME_STORE
+		// B20: store-applied window when owned — never free-running latch (rd-duck).
+		.win_enable(beam_use_app ? app_win_en_w : win_enable),
+		.content_w(locked_cw),
+		.content_h(locked_ch),
+		.content_x0(beam_use_app ? app_cx0_w : content_x0),
+		.content_y0(beam_use_app ? app_cy0_w : content_y0),
+`else
 		.win_enable(win_enable),
 		.content_w(locked_cw),
 		.content_h(locked_ch),
 		.content_x0(content_x0),
 		.content_y0(content_y0),
+`endif
 		.h_de(locked_hde),
 		.v_de(locked_vde),
 		.store_x(store_x_win),
@@ -470,6 +485,15 @@ module present_core #(
 		.rt_beam_ch(content_h),
 		.rt_beam_hde(win_h_de),
 		.rt_beam_vde(win_v_de),
+		.rt_win_en(win_enable),
+		.rt_cx0(content_x0),
+		.rt_cy0(content_y0),
+		// DAR/fps free-run into snap/hist only; ascal bank_gen uses applied seq.
+		.rt_dar_x(12'd0),
+		.rt_dar_y(12'd0),
+		.rt_fps(content_fps),
+		.rt_dar_valid(1'b0),
+		.rt_fps_valid(content_fps != 8'd0),
 		.start_req(ddr_start_req),
 		.bank_sel(ddr_bank_sel),
 		.status_osd(ddr_status_osd),
@@ -508,13 +532,23 @@ module present_core #(
 		.app_disp_h_o(app_disp_h_o),
 		.app_geom_en_o(app_geom_en_o),
 		.applied_geom_seq_o(applied_geom_seq_o),
-		.b20_visual_hold(b20_visual_hold)
+		.b20_visual_hold(b20_visual_hold),
+		.app_win_en_o(app_win_en_w),
+		.app_cx0_o(app_cx0_w),
+		.app_cy0_o(app_cy0_w),
+		.app_dar_x_o(app_dar_x_w),
+		.app_dar_y_o(app_dar_y_w),
+		.app_fps_o(app_fps_w),
+		.app_dar_valid_o(app_dar_v_w),
+		.app_fps_valid_o(app_fps_v_w),
+		.swap_applied_pulse(swap_applied_pulse_w)
 	);
 	assign ddr_applied_geom_seq = applied_geom_seq_o;
 	// Keep applied exports live for hierarchy debug (no dead-strip).
 	(* keep = 1 *) wire _b20_beam_keep =
 		beam_use_app | (|app_disp_w_o) | (|app_disp_h_o) | app_geom_en_o |
-		(|applied_geom_seq_o) | b20_visual_hold;
+		(|applied_geom_seq_o) | b20_visual_hold | app_win_en_w |
+		(|app_cx0_w) | (|app_fps_w) | swap_applied_pulse_w;
 `else
 	frame_store #(
 		.FRAME_W(FRAME_W),
