@@ -13,10 +13,14 @@ LANDED (this slice):
 - VIDEO_MODE_720P.md
 
 NOT DONE / PARENT:
-- Quartus fit (w-nostub integration) with macros ON
+- Quartus fit (w-nostub integration) with macros ON — still the priority
 - clk_pix PLL (CLK_PIX_PLL_PLAN) — not applied
 - DE_LAG/MP_SYNC_LAG HDMI sweep for multi-pixel
 - ARM ms removed by this lane: still 0 until fabric owns decode pixels
+
+PARENT CLEAN BUDGET (post-retraction): decode alone 35.94 ms/f (+5.73 ms).
+Contaminated contention/DMA/bank-sweep figures: do not use.
+Lane unaffected — keep multi-pixel 720p mode path ready for integration fit.
 
 HONEST:
 - Same-clock 2ppc does NOT make 22.12 Mpix/s; output <=20 Mpix/s

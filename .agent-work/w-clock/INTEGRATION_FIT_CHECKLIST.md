@@ -44,6 +44,10 @@ If map.rpt shows u_mp_beam / u_mp_npx_path / u_mp_timing **removed**, the fit is
 - Fmax with PPC=2/4 wider YUV
 - ARM ms removed (expect present/scale bucket ↓ — parent profiles)
 
-## Parent decode evidence (session, not this lane)
-Product tier ~2600k content @ maxBR 3100: **36.27 ms/f** decode, margin **5.40 ms**.
-Serial decode+copy still FAIL. Overlap unproven concurrent. Fabric planes still mandatory.
+## Parent decode evidence (clean re-measure; contaminated session WITHDRAWN)
+Parent killed a rogue on-device CPU burner that polluted prior sweeps.
+**Clean (exit=0):** decode alone **35.94 ms/f** mean (35.82/36.05) vs 41.667 → **+5.73 ms** margin.
+Any concurrent ARM-side peer tested so far still pushes past the deadline.
+Route A (decode under verified full-frame DMA) is **unmeasured** — prior DMA/pl330 and
+"CPU-theft dominated" claims are **retracted**. Fabric planes remain mandatory for 720p.
+Do not cite bank-sweep / serial-copy-anomaly numbers from the contaminated window.

@@ -11,7 +11,9 @@ Honest: **no clk_sys overclock likely needed** for fabric work at ≥2ppc; same-
 Parent confirmed programme facts from scan-out table:
 1. 22.12 Mpix/s content touch > shipping 20 MHz @ 1 ppc → nostub is a hard gate for 1 ppc 720p24.
 2. CEA 720p60 @ 1 ppc = 74.25 MHz vs nostub Fmax 32.59 → wall, not a PLL tune.
-3. Serial ARM decode+copy is dead at every 720p tier (best bank write 15.28 ms/f) → **Route B fabric pixels is mandatory**, not preferred.
+3. Serial ARM decode+copy still fails the budget under clean re-measure (decode alone
+   fits; any concurrent ARM peer tested so far does not). Prior contaminated
+   bank-sweep/DMA figures are **withdrawn**. Route B fabric pixels remains mandatory.
 
 This note answers: **does N px/clk rescue 720p without fantasy Fmax?**
 
