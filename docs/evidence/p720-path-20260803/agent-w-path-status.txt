@@ -1,5 +1,5 @@
 w-path status
-tip: 27e1a243 fix(path): retain Direct-Part plan trust across measured-session clear
+tip: b3ab7b30 (+ status touch) fix(path): retain Direct-Part plan trust across measured-session clear
 unit true rc=0
 
 rd-duck DP verified wipe CLOSED:
@@ -10,5 +10,4 @@ rd-duck DP verified wipe CLOSED:
 - test_ffmpeg_vf GREEN_PATH_dp_plan_trust_survives_measured_clear
   320 barrier + 426 pad-only + NEG xcode scale
 
-Prior tip 4dea61bc q5 seqlock still landed.
-bit34 RESERVED. No Quartus/device.
+Prior: 4dea61bc q5 seqlock. bit34 RESERVED. No Quartus/device.
