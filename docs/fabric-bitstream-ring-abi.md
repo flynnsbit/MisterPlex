@@ -103,3 +103,29 @@ not average BW.
 
 Product path unchanged. Fabric H.264 decode ingest remains behind existing stream
 enable; this lane freezes ABI + unit model only (no Quartus).
+
+
+## Stream profile (parent 2026-08-03)
+
+Measured PMS delivery for our 720p path:
+
+- **Constrained Baseline**, level 3.1, 1280×720, yuv420p, 24 fps
+- `has_b_frames = 0` (I,P,P,P… only)
+- Entropy: **CAVLC** (no CABAC)
+
+Existing fabric RTL inventory matches this subset (CAVLC + intra + inter + MC +
+deblock + DPB). CABAC is absent in tree (`grep` count 0) and **not required**
+for the stream we receive.
+
+### Compatibility gate (this ABI)
+
+`Event::Begin` carries:
+
+| Byte | Field |
+|------|--------|
+| 6 | `profile_idc` (66 = Baseline) |
+| 7 | flags: `b0=constraint_set1`, `b1=cabac` |
+
+`isFabricDecodeCompatible()` accepts Baseline (66) without CABAC only.
+High/Main/CABAC → **Fatal refuse** (no silent garbage). w-path owns pinning the
+PMS request; this gate is the ring-side last line of defence.

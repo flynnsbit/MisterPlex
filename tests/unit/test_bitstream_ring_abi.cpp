@@ -214,6 +214,70 @@ static void testNegOverrunFull() {
     std::fprintf(stderr, "  OK NEG full ring → Full+overrun\n");
 }
 
+
+static void testFabricProfileGate() {
+    std::fprintf(stderr, "--- testFabricProfileGate ---\n");
+    // Parent-measured: Constrained Baseline CAVLC — accepted.
+    CHECK(ring::isFabricDecodeCompatible(ring::kH264ProfileIdcBaseline,
+                                         ring::kCodecFlagConstraintSet1));
+    CHECK(ring::isConstrainedBaselineTag(ring::kH264ProfileIdcBaseline,
+                                         ring::kCodecFlagConstraintSet1));
+    // Plain Baseline CAVLC (no constraint_set1) still accepted — CAVLC path.
+    CHECK(ring::isFabricDecodeCompatible(ring::kH264ProfileIdcBaseline, 0));
+    // NEG: CABAC on Baseline — refuse (RTL has no CABAC).
+    CHECK(!ring::isFabricDecodeCompatible(ring::kH264ProfileIdcBaseline, ring::kCodecFlagCabac));
+    // NEG: High profile — refuse even without CABAC flag.
+    CHECK(!ring::isFabricDecodeCompatible(ring::kH264ProfileIdcHigh, 0));
+    CHECK(!ring::isFabricDecodeCompatible(ring::kH264ProfileIdcMain, 0));
+    CHECK(!ring::isFabricDecodeCompatible(ring::kH264ProfileIdcHigh,
+                                          ring::kCodecFlagCabac | ring::kCodecFlagConstraintSet1));
+
+    // Begin with Constrained Baseline tags the session.
+    ring::BitstreamRingModel okm(4096);
+    CHECK(okm.pushRecord(ring::Event::Begin, 0, 1, 0, nullptr, 0,
+                         ring::kH264ProfileIdcBaseline,
+                         ring::kCodecFlagConstraintSet1) == ring::PushResult::Ok);
+    ring::Event ev{};
+    uint8_t nt;
+    uint64_t sess;
+    uint32_t seq;
+    std::vector<uint8_t> pay;
+    CHECK(okm.pullRecord(ev, nt, sess, seq, pay));
+    CHECK(ev == ring::Event::Begin);
+    CHECK(okm.sessionProfileIdc() == 66);
+    CHECK((okm.sessionCodecFlags() & ring::kCodecFlagConstraintSet1) != 0);
+    CHECK(!okm.profileRejectSticky());
+
+    // NEG: High+CABAC Begin must not enter the ring.
+    ring::BitstreamRingModel bad(4096);
+    auto pr = bad.pushRecord(ring::Event::Begin, 0, 2, 0, nullptr, 0,
+                             ring::kH264ProfileIdcHigh, ring::kCodecFlagCabac);
+    CHECK(pr == ring::PushResult::Fatal);
+    CHECK(bad.profileRejectSticky());
+    CHECK(bad.writeCount() == 0); // nothing enqueued
+
+    // NEG: consumer-side reject if a legacy producer wrote High into the ring.
+    ring::BitstreamRingModel sneak(4096);
+    // Bypass gate by poking a High Begin header directly (simulates buggy producer).
+    uint8_t hdr[32];
+    ring::packPlxnHeader(hdr, ring::Event::Begin, 0, 3, 0, 0, ring::kH264ProfileIdcHigh,
+                         ring::kCodecFlagCabac);
+    sneak.pokeAtWriteOffset(0, hdr, 32);
+    sneak.corruptAdvanceWrite(32);
+    CHECK(!sneak.pullRecord(ev, nt, sess, seq, pay));
+    CHECK(sneak.profileRejectSticky());
+
+    // Round-trip profile bytes in header.
+    uint8_t h2[32];
+    ring::packPlxnHeader(h2, ring::Event::Begin, 0, 9, 0, 0, 66, ring::kCodecFlagConstraintSet1);
+    uint8_t pid = 0, cf = 0;
+    uint32_t plen = 0;
+    CHECK(ring::unpackPlxnHeader(h2, ev, nt, sess, seq, plen, &pid, &cf));
+    CHECK(pid == 66);
+    CHECK(cf == ring::kCodecFlagConstraintSet1);
+    std::fprintf(stderr, "  OK Baseline accept; High+CABAC refuse (push+pull NEG)\n");
+}
+
 static void testFabricDecodeBwBudget() {
     std::fprintf(stderr, "--- testFabricDecodeBwBudget ---\n");
     using namespace misterplex;
@@ -240,6 +304,7 @@ int main() {
     testNegSkippedSeq();
     testNegPartialPublishUnderrun();
     testNegOverrunFull();
+    testFabricProfileGate();
     testFabricDecodeBwBudget();
     if (fails) {
         std::fprintf(stderr, "FAILED %d checks\n", fails);

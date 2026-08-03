@@ -96,3 +96,8 @@ localparam int DDR_BITSTREAM_MEASURED_WORST_AU_BYTES = 60915;
 localparam int DDR_BITSTREAM_MIN_WORST_AU_SLOTS      = 3;
 localparam int DDR_BITSTREAM_WORST_AU_RECORD_BYTES =
     DDR_BITSTREAM_RECORD_HEADER_BYTES + DDR_BITSTREAM_MEASURED_WORST_AU_BYTES; // 60947
+// Fabric-decode stream expectation (parent-measured PMS): Constrained Baseline
+// CAVLC, no B-frames. profile_idc=66. CABAC not present in RTL — refuse in host gate.
+localparam int DDR_BITSTREAM_PROFILE_IDC_BASELINE = 66;
+localparam int DDR_BITSTREAM_CODEC_FLAG_CONSTRAINT_SET1 = 1;
+localparam int DDR_BITSTREAM_CODEC_FLAG_CABAC = 2;

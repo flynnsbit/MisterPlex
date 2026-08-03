@@ -1,23 +1,23 @@
-w-mem STATUS — bitstream ring sized for measured worst AU
+w-mem STATUS — bitstream ring + Baseline/CAVLC gate
 
-HEAD: (pending) worst-AU headroom 60915 B
+HEAD: (pending) Begin codec tag + fabric profile refuse
 
-PARENT PROOF (real720p_2600k.mp4, 1440 frames, prereg 4/4 HIT):
-  mean=13506.6 B -> 0.146 ms @88.045 MiB/s
-  MAX keyframe=60915 B -> 0.660 ms (22.7x smaller than I420)
-  sustained 0.32 MB/s = 0.35% of uncached ceiling
-  Data-movement SOLVED. Remaining problem = fabric decode (w-path/w-clock).
+PARENT CORRECTION ACK
+  h264_decode_top is NOT intra-only — full CAVLC+intra+inter+MC+deblock+DPB
+  inventory on main (~10k LOC). CABAC absent. PMS sends Constrained Baseline
+  L3.1 no-B — exact RTL subset. Data-move FREE; decode PLAUSIBLE not proven.
 
-ABI
-  kMeasuredWorstAuBytes=60915  kWorstAuRecordBytes=60947
-  kMinWorstAuSlots=3  kRingWorstAuCapacity=4 @256KiB
-  Map unchanged: ring@0x30100000 PLXB@0x30140000 Option-C@0x30180000 PL330@0x30600000
-  .svh+.hpp lockstep; NEG skip-seq/partial/full still green
+LANDED
+  Event::Begin bytes[6]=profile_idc [7]=flags(b0=constraint_set1,b1=cabac)
+  isFabricDecodeCompatible: Baseline(66) && !CABAC only
+  NEG: High+CABAC push Fatal (nothing enqueued); pull-side refuse if sneaked
+  Worst AU headroom still 60915 / 0.660 ms (eb7fc70b)
+
+w-path owns PMS profile pin. This gate is ring last-line defence.
 
 PARENT VERIFY
   cd /home/flynnsbit/Projects/MisterPlex-wt-mem
-  make $(pwd)/build/test_bitstream_ring_abi $(pwd)/build/test_ddr_720p_abi
-  ./build/test_bitstream_ring_abi; echo "true rc=$?"
-  # expect: worst_ms=0.660 mean_ms=0.146 vs_i420=22.7x accepted=4
+  make $(pwd)/build/test_bitstream_ring_abi && ./build/test_bitstream_ring_abi; echo "true rc=$?"
+  # expect: Baseline accept; High+CABAC refuse; worst_ms=0.660
 
 No device. No Quartus. Fit plan unchanged.

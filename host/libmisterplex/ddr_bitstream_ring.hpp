@@ -150,11 +150,14 @@ inline bool decodeStat6StatusWord(uint64_t word, Status& status) {
 //   [0..3]   PLXN
 //   [4]      Event
 //   [5]      nal_type (Event::Nal only)
-//   [6..7]   reserved
+//   [6]      profile_idc (Event::Begin; 0 = unspecified/legacy)
+//   [7]      codec_flags (Event::Begin): b0=constraint_set1, b1=cabac
 //   [8..15]  session_id
 //   [16..19] seq (Event::Nal continuity is checked FPGA-side)
 //   [20..23] payload length in bytes
 //   [24..31] reserved, must be zero
+// Fabric-decode path accepts Constrained Baseline / Baseline + CAVLC only
+// (parent-measured PMS stream + existing RTL inventory; CABAC absent in RTL).
 // STAT0..6 expose ring level/capacity-derived status, consumer seq,
 // underrun/overrun/desync counters, last_bad_seq, active/paused/fatal flags,
 // and the FPGA-visible session_id for low-cost host polling.
@@ -261,6 +264,32 @@ inline bool ringHasWorstAuHeadroom(size_t level, size_t cap = kRingBytes) {
     return (cap - level) >= kWorstAuRecordBytes;
 }
 
+// H.264 codec tag on Event::Begin — fabric-decode compatibility gate.
+// Parent 2026-08-03: PMS delivers Constrained Baseline L3.1, no B-frames, CAVLC.
+// RTL inventory: CAVLC+intra+inter+MC+deblock+DPB; CABAC grep count 0.
+// w-path owns PMS request pin; this gate refuses unexpected profiles honestly.
+constexpr uint8_t kH264ProfileIdcBaseline = 66u;
+constexpr uint8_t kH264ProfileIdcMain = 77u;
+constexpr uint8_t kH264ProfileIdcHigh = 100u;
+constexpr uint8_t kCodecFlagConstraintSet1 = 1u << 0; // Constrained Baseline when + profile 66
+constexpr uint8_t kCodecFlagCabac = 1u << 1;          // entropy_coding_mode_flag / CABAC stream
+constexpr uint8_t kFabricPreferredCodecFlags = kCodecFlagConstraintSet1; // no CABAC bit
+
+inline bool isFabricDecodeCompatible(uint8_t profile_idc, uint8_t codec_flags) {
+    if ((codec_flags & kCodecFlagCabac) != 0)
+        return false; // RTL has no CABAC
+    // Baseline family only (66). Main/High even if CAVLC are not the measured path.
+    if (profile_idc != kH264ProfileIdcBaseline)
+        return false;
+    return true;
+}
+
+inline bool isConstrainedBaselineTag(uint8_t profile_idc, uint8_t codec_flags) {
+    return profile_idc == kH264ProfileIdcBaseline &&
+           (codec_flags & kCodecFlagConstraintSet1) != 0 &&
+           (codec_flags & kCodecFlagCabac) == 0;
+}
+
 // PLXN record header pack/unpack (host-visible framing). Little-endian on wire.
 // Why uncached ordering helps: ARM store buffer drains to device memory in
 // program order for strongly-ordered/device mappings; publish producer count
@@ -269,7 +298,8 @@ inline bool ringHasWorstAuHeadroom(size_t level, size_t cap = kRingBytes) {
 // on product O_SYNC path (structural uncached).
 
 inline void packPlxnHeader(uint8_t out[32], Event ev, uint8_t nal_type, uint64_t session,
-                           uint32_t seq, uint32_t payload_len) {
+                           uint32_t seq, uint32_t payload_len, uint8_t profile_idc = 0,
+                           uint8_t codec_flags = 0) {
     std::memset(out, 0, 32);
     out[0] = static_cast<uint8_t>(kRecordMagic);
     out[1] = static_cast<uint8_t>(kRecordMagic >> 8);
@@ -277,6 +307,8 @@ inline void packPlxnHeader(uint8_t out[32], Event ev, uint8_t nal_type, uint64_t
     out[3] = static_cast<uint8_t>(kRecordMagic >> 24);
     out[4] = static_cast<uint8_t>(ev);
     out[5] = nal_type;
+    out[6] = profile_idc;   // meaningful on Begin
+    out[7] = codec_flags;   // meaningful on Begin
     for (int i = 0; i < 8; ++i)
         out[8 + i] = static_cast<uint8_t>(session >> (8 * i));
     for (int i = 0; i < 4; ++i)
@@ -286,13 +318,18 @@ inline void packPlxnHeader(uint8_t out[32], Event ev, uint8_t nal_type, uint64_t
 }
 
 inline bool unpackPlxnHeader(const uint8_t in[32], Event& ev, uint8_t& nal_type,
-                             uint64_t& session, uint32_t& seq, uint32_t& payload_len) {
+                             uint64_t& session, uint32_t& seq, uint32_t& payload_len,
+                             uint8_t* profile_idc = nullptr, uint8_t* codec_flags = nullptr) {
     const uint32_t mag = static_cast<uint32_t>(in[0]) | (static_cast<uint32_t>(in[1]) << 8) |
                          (static_cast<uint32_t>(in[2]) << 16) | (static_cast<uint32_t>(in[3]) << 24);
     if (mag != kRecordMagic)
         return false;
     ev = static_cast<Event>(in[4]);
     nal_type = in[5];
+    if (profile_idc)
+        *profile_idc = in[6];
+    if (codec_flags)
+        *codec_flags = in[7];
     session = 0;
     for (int i = 0; i < 8; ++i)
         session |= static_cast<uint64_t>(in[8 + i]) << (8 * i);
@@ -323,20 +360,30 @@ public:
     bool underrunSticky() const { return underrun_sticky_; }
     bool overrunSticky() const { return overrun_sticky_; }
     bool desyncSticky() const { return desync_sticky_; }
+    bool profileRejectSticky() const { return profile_reject_sticky_; }
+    uint8_t sessionProfileIdc() const { return profile_idc_; }
+    uint8_t sessionCodecFlags() const { return codec_flags_; }
     uint32_t lastBadSeq() const { return last_bad_seq_; }
     uint32_t expectSeq() const { return expect_seq_; }
 
     PushResult pushRecord(Event ev, uint8_t nal_type, uint64_t session, uint32_t seq,
-                          const uint8_t* payload, uint32_t payload_len) {
+                          const uint8_t* payload, uint32_t payload_len,
+                          uint8_t profile_idc = 0, uint8_t codec_flags = 0) {
         if (fatal_)
             return PushResult::Fatal;
+        if (ev == Event::Begin && profile_idc != 0 &&
+            !isFabricDecodeCompatible(profile_idc, codec_flags)) {
+            // Honest refuse — do not enqueue a session the fabric decoder cannot take.
+            profile_reject_sticky_ = true;
+            return PushResult::Fatal;
+        }
         const size_t rec = kRecordHeaderBytes + static_cast<size_t>(payload_len);
         if (level() + rec > cap_) {
             overrun_sticky_ = true;
             return PushResult::Full;
         }
         uint8_t hdr[32];
-        packPlxnHeader(hdr, ev, nal_type, session, seq, payload_len);
+        packPlxnHeader(hdr, ev, nal_type, session, seq, payload_len, profile_idc, codec_flags);
         writeBytesAt(write_count_, hdr, 32);
         if (payload_len && payload)
             writeBytesAt(write_count_ + 32u, payload, payload_len);
@@ -354,7 +401,8 @@ public:
         }
         uint8_t hdr[32];
         peekBytes(0, hdr, 32);
-        if (!unpackPlxnHeader(hdr, ev, nal_type, session, seq, payload_len_tmp_)) {
+        uint8_t prof = 0, cflags = 0;
+        if (!unpackPlxnHeader(hdr, ev, nal_type, session, seq, payload_len_tmp_, &prof, &cflags)) {
             desync_sticky_ = true;
             fatal_ = true;
             return false;
@@ -373,6 +421,13 @@ public:
         if (ev == Event::Begin) {
             expect_seq_ = 0;
             session_ = session;
+            profile_idc_ = prof;
+            codec_flags_ = cflags;
+            if (prof != 0 && !isFabricDecodeCompatible(prof, cflags)) {
+                profile_reject_sticky_ = true;
+                fatal_ = true;
+                return false; // never feed incompatible session to decoder
+            }
         } else if (ev == Event::Nal) {
             if (seq != expect_seq_) {
                 last_bad_seq_ = seq;
@@ -414,7 +469,10 @@ private:
     bool underrun_sticky_ = false;
     bool overrun_sticky_ = false;
     bool desync_sticky_ = false;
+    bool profile_reject_sticky_ = false;
     bool fatal_ = false;
+    uint8_t profile_idc_ = 0;
+    uint8_t codec_flags_ = 0;
 };
 
 

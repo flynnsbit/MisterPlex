@@ -113,6 +113,10 @@ constexpr uint32_t kDdrBitstreamWorstAuRecordBytes =
 static_assert(kDdrBitstreamRingBytes >=
                   kDdrBitstreamMinWorstAuSlots * kDdrBitstreamWorstAuRecordBytes,
               "256 KiB ring must hold >=3 worst-case AUs (60915+32)");
+constexpr uint8_t kDdrBitstreamProfileIdcBaseline = 66u;
+constexpr uint8_t kDdrBitstreamCodecFlagConstraintSet1 = 1u;
+constexpr uint8_t kDdrBitstreamCodecFlagCabac = 2u;
+
 
 
 // Parent-verified 2026-08-02 on device: cmdline mem=511M memmap=513M$511M
