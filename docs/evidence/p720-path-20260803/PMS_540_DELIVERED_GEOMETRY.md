@@ -9,6 +9,13 @@ unique session, local docker PMS `127.0.0.1:32400`. Probe:
 **Rule 0:** every WxH below is from decision XML and/or `ffprobe` / SPS
 `trace_headers` on `start.mp4` samples — not inferred from the request alone.
 
+**Parent broadcast (2026-08-03):** independently confirmed the same SPS on
+`proxy_960x540.mp4` — coded **544**, display **540**, bank **777600** stands;
+ffprobe `coded_height=540` is post-crop and must not be trusted as MB height.
+Bitstream-ring ABI now records 544 for a future fabric decoder
+(`ddr_bitstream_ring.hpp` `kRing540pSps*`). Option-C bank predicate remains
+**w-mem only** — path does not duplicate that fix.
+
 ---
 
 ## 1) Headline — what PMS returns for the product tier
