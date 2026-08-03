@@ -1,4 +1,5 @@
 lane: w-fitgate
+HEAD: 18958e96
 role: fit-release gate ruler
 branch: w-fitgate
 GRANT: NO
