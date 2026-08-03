@@ -237,11 +237,14 @@ LIVE_OPEN_BLOCKER_TOKENS = (
     "B32_SWAP_SEQ_FROM_LIVE_RT",
     "B32_VISUAL_TUPLE_PARTIAL",
     "B32_POLLER_SIM_NOT_RTL",
-    # rd-duck: m0_ov masks issued m1/m3 → lost-read shifts to lower masters
+    # rd-duck 44981ab0: m0_ov + delayed busy shifts hang to m1/m3; weak TB
     "B33_PLXC_ARB_ABSENT",
     "B33_BRIDGE_BUSY_ACCEPT_RACE",
     "B33_LOST_READ_TB_WEAK",
-    # B33_M0_OV_MASKS_ISSUED_LOWER: closed-class when arb present with m0_ov
+    "B33_TB_NO_PER_REQUEST_ID",
+    "B33_TB_NO_PRODUCT_BOTH_COMPLETE",
+    "B33_TB_NO_FAULT_TWIN_LOSE_LOWER",
+    # B33_M0_OV_MASKS / B33_DELAYED_BUSY_NOT_ACCEPT: closed-class when arb present
     # rd-duck: 426→432 host must keep display=426 crop_left=2 (not identity 432/432)
     "B34_STORAGE_GEOM_ABSENT",
     "B34_PAD_ONLY_GEOM_ABSENT",
@@ -2633,28 +2636,29 @@ def check_b32_plxg_bank_atomic_couple(root: Path) -> tuple[list[str], list[str]]
 
 
 # ---------------------------------------------------------------------------
-# B33 — PLXC arb: do not preempt/mask an *issued* lower-master command
-# (rd-duck 2026-08-03: ARB fix shifts lost-read to m1/m3)
+# B33 — PLXC arb: do not strand an *issued* lower-master command
+# (rd-duck 2026-08-03; strengthened 44981ab0 still BLOCKING)
 #
-# Observed:
-#   ddr_bus_arbiter_plxc m0_ov combinationally masks a granted lower master's
-#   command and drops its grant. ddr_plxc_master_bridge S_ISSUE treats
-#   synchronized !a_busy as acceptance, pulses a_rd/a_we one cycle, asserts
-#   c_gnt, enters WAIT_R. m3_busy_comb under m0_ov cannot prevent this across
-#   registered+2FF CDC latency.
-# Concrete: grant_m3=1, bridge sees stale a_busy=0, pulses m3_rd same DDR edge
-#   as m0_rd; mux sends m0; arb owner m0/drops grant; bridge waits forever.
-# Weak TB: only m3_beats>=1 — can pass after earlier beats; never asserts m3
-#   never hangs after exact m0_cmd&m3_cmd collision.
+# Observed (44981ab0 class — delayed busy is NOT a fix):
+#   ddr_plxc_master_bridge S_ISSUE treats sampled !a_busy as acceptance,
+#   pulses a_rd one clk_m3, drops want, enters WAIT_R. Arbiter m3_busy is
+#   m3_busy_comb→m3_busy_r→busy_s1→busy_s2; m0_ov in busy_comb cannot retract
+#   the already-observed !busy in time.
+# Exact cycle: grant_m3 has propagated as busy=0; bridge pulses m3_rd/enters
+#   WAIT; simultaneous m0_cmd makes use_m3=0 and arbiter drops grant_m3/accepts
+#   m0; m3 command was never issued and never retries → WAIT_R hangs.
+# Weak TB: any m3 beat ever + collision_edges WARN — does not ID each lower
+#   request nor assert the command present on the exact m0_ov edge later completes.
 #
-# Require: no preempt/mask of issued lower cmd. Accepted handshake, or skid
-# m0 one-shot and replay after current lower grant, or m0 hold request until
-# ack. TB: exact m0+m1 and m0+m3 command edges; both responses/c_gnt complete.
+# Require:
+#   - actual req/accept handshake, OR skid/replay/held command — NOT delayed busy
+#   - TB: exact m0+m3-read, m0+m3-write, m0+m1 collisions with per-request IDs
+#     / conservation; product completes both; FAULT twin loses collided lower
 # ---------------------------------------------------------------------------
 
 
 def check_b33_plxc_arb_issued_lower_safe(root: Path) -> tuple[list[str], list[str]]:
-    """Fail until m0 cannot strand an already-issued m1/m3 command."""
+    """Fail until m0 cannot strand an already-issued m1/m3 command (44981ab0)."""
     msgs: list[str] = ["LEG0_B33_PLXC_ARB_ISSUED_SAFE_EXECUTED begin"]
     errors: list[str] = []
 
@@ -2663,20 +2667,69 @@ def check_b33_plxc_arb_issued_lower_safe(root: Path) -> tuple[list[str], list[st
     tb_cpp = root / "tests" / "rtl" / "ddr_plxc_lost_read_tb.cpp"
     tb_top = root / "tests" / "rtl" / "ddr_plxc_lost_read_tb_top.sv"
     tb_sh = root / "tests" / "unit" / "test_ddr_plxc_lost_read_verilator.sh"
+    # Alternate / fault twin names
+    tb_paths = [
+        tb_cpp,
+        tb_top,
+        tb_sh,
+        root / "tests" / "rtl" / "ddr_plxc_lost_read_fault_tb.cpp",
+        root / "tests" / "unit" / "test_ddr_plxc_m0_ov_collision.sh",
+    ]
 
     if not arb.is_file():
         errors.append(
             "B33_PLXC_ARB_ABSENT: missing ddr_bus_arbiter_plxc.sv — cannot prove "
-            "m0 does not strand issued m1/m3 (rd-duck m0_ov lost-read shift)."
+            "m0 does not strand issued m1/m3 (rd-duck 44981ab0 m0_ov lost-read shift)."
         )
-        # Still score bridge/TB if present
     arb_txt = product_active_sv(_read(arb) or "") if arb.is_file() else ""
     br_txt = product_active_sv(_read(br) or "") if br.is_file() else ""
-    tb_cpp_txt = _read(tb_cpp) or ""
-    tb_top_txt = product_active_sv(_read(tb_top) or "") if tb_top.is_file() else ""
-    tb_sh_txt = _read(tb_sh) or ""
+    # Include FAULT_* bodies in TB scan (need fault twin) but product_active for RTL
+    tb_blob_parts: list[str] = []
+    for p in tb_paths:
+        if p.is_file():
+            tb_blob_parts.append(_read(p) or "")
+    # Also scan any *lost_read* under tests/
+    tests_root = root / "tests"
+    if tests_root.is_dir():
+        for p in tests_root.rglob("*"):
+            if p.is_file() and "lost_read" in p.name.lower():
+                try:
+                    tb_blob_parts.append(p.read_text(errors="replace"))
+                except OSError:
+                    pass
+    blob = "\n".join(tb_blob_parts)
 
-    # --- Arb: m0_ov mask of granted lower without skid/handshake ---
+    # --- Strong product mitigations (NOT delayed busy) ---
+    skid_m0 = bool(
+        re.search(
+            r"\bm0_skid\b|\bskid_m0\b|\bm0_pend(?:ing)?_cmd\b|\bm0_replay\b|"
+            r"\breplay_m0\b|\blatch_m0_cmd\b|\bm0_hold_req\b|\bheld_m0_cmd\b|"
+            r"\bm0_cmd_hold\b|\bskid_fifo\b",
+            arb_txt,
+            re.I,
+        )
+    )
+    # Real req/accept port or pulse between bridge and arb (not comment "atomic accept")
+    accept_hs_arb = bool(
+        re.search(
+            r"\b(?:m0|m1|m3)_cmd_accept\b|\b(?:m0|m1|m3)_accept\b|\ba_accept\b|"
+            r"\bcmd_accept_(?:m0|m1|m3)\b|\bissue_ack\b|\bgnt_ack\b|"
+            r"\baccept_pulse\b|\bbeat_accept\b",
+            arb_txt,
+            re.I,
+        )
+    )
+    hold_lower_until_rsp = bool(
+        re.search(
+            r"\bkeep_grant_until_rsp\b|\bsticky_grant_until_rsp\b|"
+            r"\bgrant_hold_until_rsp\b|\bdo_not_preempt_issued\b|"
+            r"\bhold_grant_m[13]_until\b|\blower_issued_hold\b",
+            arb_txt,
+            re.I,
+        )
+    )
+    real_fix = skid_m0 or accept_hs_arb or hold_lower_until_rsp
+
     has_m0_ov = bool(re.search(r"\bm0_ov\b", arb_txt))
     masks_lower = bool(
         re.search(
@@ -2684,166 +2737,292 @@ def check_b33_plxc_arb_issued_lower_safe(root: Path) -> tuple[list[str], list[st
             arb_txt,
         )
     )
-    # Good mitigations (any one strong)
-    skid_m0 = bool(
-        re.search(
-            r"m0_skid|skid_m0|m0_pend|m0_replay|replay_m0|latch_m0|m0_hold_req",
-            arb_txt,
-            re.I,
-        )
+    # Delayed-busy "fix" (44981ab0): m0_ov folded into m*_busy_comb + 2FF CDC
+    delayed_busy = bool(
+        re.search(r"m[13]_busy_comb\s*=\s*[^;]*\bm0_ov\b", arb_txt)
+    ) and bool(
+        re.search(r"m[13]_busy_s1|m[13]_busy_s2|busy_s1|busy_s2", arb_txt)
     )
-    accept_hs = bool(
-        re.search(
-            r"cmd_accept|accepted_hs|a_accept|gnt_ack|issue_ack|beat_accept|"
-            r"m1_accept|m3_accept|lower_issued|issued_hold",
-            arb_txt,
-            re.I,
-        )
-    )
-    # Must not drop grant while lower cmd already seen this cycle without skid
-    no_drop_issued = bool(
-        re.search(
-            r"keep_grant|sticky_grant_until|grant_hold_until_rsp|do_not_preempt_issued",
-            arb_txt,
-            re.I,
-        )
-    )
+    # Comment-only "atomic accept" without a real accept net is hollow
+    comment_atomic = bool(
+        re.search(r"atomic\s+(m0\s+)?accept|accepts?\s+m0.*preempt", arb_txt, re.I)
+    ) and not accept_hs_arb
+
     msgs.append(
         f"LEG0_B33_ARB m0_ov={int(has_m0_ov)} masks_lower={int(masks_lower)} "
-        f"skid={int(skid_m0)} accept_hs={int(accept_hs)} no_drop={int(no_drop_issued)}"
+        f"skid={int(skid_m0)} accept_hs={int(accept_hs_arb)} "
+        f"hold_lower={int(hold_lower_until_rsp)} delayed_busy={int(delayed_busy)} "
+        f"comment_atomic={int(comment_atomic)} real_fix={int(real_fix)}"
     )
+
     if arb.is_file():
-        if has_m0_ov and masks_lower and not (skid_m0 or accept_hs or no_drop_issued):
+        if has_m0_ov and masks_lower and not real_fix:
             errors.append(
                 "B33_M0_OV_MASKS_ISSUED_LOWER: ddr_bus_arbiter_plxc m0_ov "
                 "combinationally masks use_m1/use_m3 (grant && !m0_ov) without "
-                "skid/replay of m0, accepted handshake, or hold-grant-until-rsp. "
-                "rd-duck: shifts lost-read to m1/m3 — bridge already pulsed a_rd "
-                "on stale !busy; mux takes m0; lower waits forever. Do not preempt/"
-                "mask an issued lower command."
+                "skid/replay of m0, req/accept handshake, or hold-grant-until-rsp. "
+                "rd-duck 44981ab0: shifts lost-read to m1/m3 — bridge already pulsed "
+                "a_rd on stale !busy; mux takes m0; lower WAIT_R forever."
             )
-        elif not has_m0_ov and not (skid_m0 or accept_hs):
-            # No m0_ov — still need some launch-edge contract documented
-            if not re.search(r"lost.read|launch.edge|one-shot", arb_txt, re.I):
+        if delayed_busy and not real_fix:
+            errors.append(
+                "B33_DELAYED_BUSY_NOT_ACCEPT: m0_ov folded into m*_busy_comb with "
+                "busy_r→s1→s2 CDC is NOT an accept handshake (rd-duck 44981ab0 still "
+                "BLOCKING). Bridge samples !a_busy before the delayed busy rises; "
+                "pulses a_rd, drops want, enters WAIT_R; m0_ov then drops use_m3 — "
+                "command never issued and never retries. Fix: req/accept, skid/"
+                "replay, or held command — not delayed busy."
+            )
+        if comment_atomic and not real_fix:
+            errors.append(
+                "B33_COMMENT_ATOMIC_ACCEPT_HOLLOW: arbiter comments claim atomic "
+                "m0 accept/preempt but no cmd_accept/accept_pulse/skid net exists "
+                "(rd-duck 44981ab0)."
+            )
+        if not has_m0_ov and not real_fix:
+            if not re.search(r"lost.read|launch.edge|req.accept|skid", arb_txt, re.I):
                 errors.append(
                     "B33_M0_OV_MASKS_ISSUED_LOWER: arbiter has no m0_ov and no "
-                    "documented skid/accept launch-edge contract for m0 vs m1/m3 "
-                    "(rd-duck lost-read class still unaddressed)."
+                    "skid/req-accept launch-edge contract for m0 vs m1/m3 "
+                    "(rd-duck 44981ab0 class still unaddressed)."
                 )
             else:
-                msgs.append("LEG0_B33_OK arb without m0_ov mask (alt contract text)")
-        else:
-            msgs.append("LEG0_B33_OK arb has skid/accept/no-drop for issued lower")
+                msgs.append("LEG0_B33_OK arb alt contract text (no m0_ov)")
+        if real_fix and not (delayed_busy and not accept_hs_arb and not skid_m0):
+            msgs.append("LEG0_B33_OK arb real skid/accept/hold (not delayed-busy-only)")
 
     # --- Bridge: !a_busy one-cycle accept is racy with CDC busy ---
     if not br.is_file():
         errors.append(
             "B33_BRIDGE_BUSY_ACCEPT_RACE: missing ddr_plxc_master_bridge.sv — "
-            "S_ISSUE !a_busy accept race cannot be audited."
+            "S_ISSUE !a_busy accept race cannot be audited (rd-duck 44981ab0)."
         )
     else:
         issue_busy_accept = bool(
             re.search(
-                r"S_ISSUE[\s\S]{0,400}?if\s*\(\s*!\s*a_busy\s*\)",
+                r"S_ISSUE[\s\S]{0,500}?if\s*\(\s*!\s*a_busy\s*\)",
                 br_txt,
             )
         )
-        # Same-cycle accepted handshake from arb (not just busy level)
+        # Drops want / enters WAIT on same !busy edge (the hang class)
+        drops_want_on_busy = bool(
+            re.search(
+                r"S_ISSUE[\s\S]{0,500}?if\s*\(\s*!\s*a_busy\s*\)[\s\S]{0,300}?"
+                r"(a_want\s*<=\s*1'b0|st\s*<=\s*S_WAIT_R)",
+                br_txt,
+            )
+        )
         bridge_hs = bool(
             re.search(
-                r"a_accept|cmd_accept|issue_ack|gnt_pulse|accept_tog",
+                r"\ba_accept\b|\bcmd_accept\b|\bissue_ack\b|\baccept_pulse\b|"
+                r"\bgnt_ack\b|\bbeat_accept\b",
                 br_txt,
                 re.I,
             )
         )
-        # Holding a_rd until dout without dropping on busy glitch is weaker
+        # Hold want until response without treating first !busy as final accept
+        holds_want_until_rsp = bool(
+            re.search(
+                r"hold\s+want.*until\s+rsp|want.*until.*dout_ready|"
+                r"a_want\s*<=\s*1'b1[\s\S]{0,200}?S_WAIT",
+                br_txt,
+                re.I,
+            )
+        ) and not drops_want_on_busy
+
         msgs.append(
             f"LEG0_B33_BRIDGE issue_busy_accept={int(issue_busy_accept)} "
-            f"hs={int(bridge_hs)}"
+            f"drops_want={int(drops_want_on_busy)} hs={int(bridge_hs)} "
+            f"hold_want={int(holds_want_until_rsp)}"
         )
-        if issue_busy_accept and not bridge_hs:
+        if issue_busy_accept and drops_want_on_busy and not bridge_hs:
             errors.append(
                 "B33_BRIDGE_BUSY_ACCEPT_RACE: ddr_plxc_master_bridge S_ISSUE treats "
-                "synchronized !a_busy as acceptance (pulse a_rd/a_we, c_gnt, WAIT_R). "
-                "m*_busy_comb under m0_ov cannot stop this across registered+2FF CDC. "
-                "Need accepted handshake (or skid on arb) so a lower master never "
-                "believes a beat issued when mux took m0 (rd-duck)."
+                "sampled !a_busy as acceptance — pulses a_rd/a_we one clk, drops "
+                "want, enters WAIT_R (rd-duck 44981ab0). m*_busy_comb→r→s1→s2 under "
+                "m0_ov cannot retract already-observed !busy. Need req/accept "
+                "handshake (or arb skid/held cmd); delayed busy is insufficient."
+            )
+        elif issue_busy_accept and not bridge_hs and not real_fix:
+            errors.append(
+                "B33_BRIDGE_BUSY_ACCEPT_RACE: S_ISSUE still keys off !a_busy without "
+                "accept handshake and arb has no skid/hold (rd-duck 44981ab0)."
             )
         else:
             msgs.append("LEG0_B33_OK bridge accept path not busy-level-only")
 
-    # --- TB: exact m0+m1 and m0+m3 collision; both complete; no hang after ---
-    tb_present = tb_cpp.is_file() or tb_top.is_file() or tb_sh.is_file()
-    blob = "\n".join([tb_cpp_txt, tb_top_txt, tb_sh_txt])
-    has_m3 = bool(re.search(r"m3_beats|grant_m3|m0.*m3|m3_cmd", blob, re.I))
-    has_m1 = bool(re.search(r"m1_beats|grant_m1|m0.*m1|m1_cmd|collision.*m1", blob, re.I))
-    # Weak: m3_beats >= 1 only
+    # --- TB: per-request collision conservation ---
+    tb_present = bool(tb_blob_parts) or tb_cpp.is_file() or tb_top.is_file()
+    # Scenario coverage
+    has_m0_m1 = bool(
+        re.search(
+            r"m0\s*\+\s*m1|m0_m1|collision.*m1|m1.*collision|m0_cmd\s*&&\s*m1_|"
+            r"exact.*m0.*m1|m1_req_id|coll_m1",
+            blob,
+            re.I,
+        )
+    )
+    has_m0_m3_rd = bool(
+        re.search(
+            r"m0\s*\+\s*m3[-_ ]*read|m0_m3_rd|m3_rd.*collision|collision.*m3_rd|"
+            r"m0.*m3.*read|exact.*m0.*m3.*rd|coll_m3_rd",
+            blob,
+            re.I,
+        )
+    )
+    has_m0_m3_wr = bool(
+        re.search(
+            r"m0\s*\+\s*m3[-_ ]*write|m0_m3_wr|m3_we.*collision|collision.*m3_we|"
+            r"m0.*m3.*write|exact.*m0.*m3.*wr|coll_m3_wr",
+            blob,
+            re.I,
+        )
+    )
+    # Generic m3 without rd/wr split is insufficient alone
+    has_m3_any = bool(re.search(r"m3_beats|grant_m3|m0.*m3|m3_cmd", blob, re.I))
+    # Per-request IDs / conservation
+    per_req_id = bool(
+        re.search(
+            r"req_id|request_id|txn_id|beat_id|tag_id|conservation|"
+            r"inflight_id|cmd_id|per[-_]request",
+            blob,
+            re.I,
+        )
+    )
+    # Product: both sides of collision complete (not merely m3_beats>=1 ever)
+    product_both = bool(
+        re.search(
+            r"both.*complete|complete.*both|conservation.*pass|"
+            r"collided.*(?:lower|m1|m3).*(?:complete|done|rsp)|"
+            r"m0_done.*m3_done|m3_done.*m0_done|all_req.*complete|"
+            r"expect_complete|must_complete",
+            blob,
+            re.I,
+        )
+    ) and bool(
+        re.search(r"fill_hang\s*!=\s*0|fill_hang\s*==\s*0|hang\s*==\s*0", blob)
+    )
+    # FAULT twin: must LOSE the collided lower request (prove the defect)
+    fault_twin = bool(
+        re.search(
+            r"FAULT_LOST_READ|fault.*lost|RED_TWIN.*lost|lost_read_fault|"
+            r"FAULT_B33|inject.*m0_ov",
+            blob,
+            re.I,
+        )
+    ) and bool(
+        re.search(
+            r"fault.*(?:hang|lose|lost|incomplete)|(?:hang|lose|lost).*fault|"
+            r"expect.*fault.*fail|fault.*must.*(?:fail|hang|lose)|"
+            r"collided.*lower.*(?:lost|hang)|lower.*lost.*fault",
+            blob,
+            re.I,
+        )
+    )
+    # Weak oracles
     weak_m3_ge1 = bool(
         re.search(r"m3_beats\s*<\s*1|m3_beats\s*>=\s*1|m3_beats\s*<\s*8", blob)
-    ) and not bool(
+    ) and not (per_req_id and product_both and has_m0_m3_rd and has_m0_m1)
+    # WARN collision_edges without hard fail on zero is weak (do not let other
+    # fail("...collision...") messages launder this)
+    coll_warn_only = bool(re.search(r"WARN collision_edges", blob)) and not bool(
         re.search(
-            r"hang.*collision|collision.*hang|never hangs|both.*complete|"
-            r"m3_hang|after.*collision|exact.*m0",
+            r"if\s*\(\s*(?:t->)?collision_edges\s*<\s*1\s*\)\s*fail|"
+            r"collision_edges\s*<\s*1\s*\)\s*\{[^}]*fail|"
+            r"fail\s*\(\s*\"[^\"]*collision_edges",
             blob,
-            re.I,
         )
     )
-    # Strong: requires hang==0 AND collision exercised AND both masters complete
-    strong_both = bool(
-        re.search(r"m0\+m1|m0\s*\+\s*m1|m1.*collision|collision.*m1", blob, re.I)
-    ) and bool(
-        re.search(r"m0\+m3|m0\s*\+\s*m3|m3.*collision|collision.*m3", blob, re.I)
-    ) and bool(
-        re.search(
-            r"fill_hang\s*!=\s*0|fill_hang\s*==\s*0|hang.*0",
-            blob,
-        )
-    ) and bool(
-        re.search(
-            r"both.*c_gnt|c_gnt.*complete|m1_beats.*m3_beats|responses.*complete|"
-            r"no hang after|never hang",
-            blob,
-            re.I,
-        )
+
+    strong_conservation = (
+        has_m0_m1
+        and has_m0_m3_rd
+        and has_m0_m3_wr
+        and per_req_id
+        and product_both
+        and fault_twin
+        and not coll_warn_only
     )
-    # collision_edges only WARN is weak
-    coll_warn_only = bool(
-        re.search(r"WARN collision_edges", blob)
-    ) and not bool(re.search(r"collision_edges\s*<\s*1\)\s*fail|fail.*collision", blob, re.I))
 
     msgs.append(
-        f"LEG0_B33_TB present={int(tb_present)} m1={int(has_m1)} m3={int(has_m3)} "
-        f"weak_ge1={int(weak_m3_ge1)} strong_both={int(strong_both)} "
-        f"coll_warn_only={int(coll_warn_only)}"
+        f"LEG0_B33_TB present={int(tb_present)} m0_m1={int(has_m0_m1)} "
+        f"m0_m3_rd={int(has_m0_m3_rd)} m0_m3_wr={int(has_m0_m3_wr)} "
+        f"m3_any={int(has_m3_any)} per_req_id={int(per_req_id)} "
+        f"product_both={int(product_both)} fault_twin={int(fault_twin)} "
+        f"weak_ge1={int(weak_m3_ge1)} coll_warn_only={int(coll_warn_only)} "
+        f"strong_conservation={int(strong_conservation)}"
     )
+
     if not tb_present:
         errors.append(
             "B33_LOST_READ_TB_WEAK: missing ddr_plxc_lost_read TB — must exercise "
-            "exact m0+m1 and m0+m3 command edges and require both responses/c_gnt "
-            "complete with hang=0 (rd-duck)."
+            "exact m0+m3-read, m0+m3-write, and m0+m1 collisions with per-request "
+            "IDs/conservation; product both-complete; FAULT twin loses collided "
+            "lower (rd-duck 44981ab0)."
+        )
+        # Live-open tokens (same absences) so hollow matrix rows hit.
+        errors.append(
+            "B33_TB_NO_PER_REQUEST_ID: no lost-read TB — cannot prove per-request "
+            "ID conservation on m0_ov edge (rd-duck 44981ab0)."
+        )
+        errors.append(
+            "B33_TB_NO_PRODUCT_BOTH_COMPLETE: no lost-read TB — cannot prove "
+            "product both-complete after collision (rd-duck 44981ab0)."
+        )
+        errors.append(
+            "B33_TB_NO_FAULT_TWIN_LOSE_LOWER: no lost-read TB — cannot prove "
+            "FAULT twin loses collided lower request (rd-duck 44981ab0)."
         )
     else:
-        if not has_m1 or not has_m3:
+        missing = []
+        if not has_m0_m1:
+            missing.append("m0+m1")
+        if not has_m0_m3_rd:
+            missing.append("m0+m3-read")
+        if not has_m0_m3_wr:
+            missing.append("m0+m3-write")
+        if missing:
             errors.append(
-                "B33_LOST_READ_TB_WEAK: lost-read TB must cover exact m0+m1 AND "
-                f"m0+m3 collisions (has_m1={int(has_m1)} has_m3={int(has_m3)}). "
-                "m3-only is insufficient (rd-duck: fix shifted hang to m1/m3)."
+                "B33_LOST_READ_TB_WEAK: lost-read TB must name exact collisions "
+                f"{missing} (not merely m3_beats>=1 ever). rd-duck 44981ab0: "
+                "identify each lower request on the m0_ov edge."
             )
-        if weak_m3_ge1 or coll_warn_only or not strong_both:
+        if not per_req_id:
             errors.append(
-                "B33_LOST_READ_TB_WEAK: current lost-read TB can pass with "
-                "m3_beats>=1 after earlier beats and only WARN on collision_edges=0. "
-                "Require: exact m0_cmd&m1_cmd and m0_cmd&m3_cmd collision edges; "
-                "assert lower master never hangs after collision; both c_gnt/"
-                "responses complete (rd-duck)."
+                "B33_TB_NO_PER_REQUEST_ID: TB must track per-request IDs/"
+                "conservation so the specific command present on the m0_ov edge "
+                "is asserted complete (rd-duck 44981ab0) — aggregate m3_beats is "
+                "hollow."
             )
-        else:
-            msgs.append("LEG0_B33_OK lost-read TB strong collision both-complete")
+        if not product_both:
+            errors.append(
+                "B33_TB_NO_PRODUCT_BOTH_COMPLETE: product path must assert both "
+                "m0 and collided lower request complete (hang==0 + conservation), "
+                "not any-m3-beat-ever (rd-duck 44981ab0)."
+            )
+        if not fault_twin:
+            errors.append(
+                "B33_TB_NO_FAULT_TWIN_LOSE_LOWER: FAULT/red twin must prove the "
+                "collided lower request is lost/hangs under m0_ov without skid/"
+                "accept — product PASS alone is unanchored (rd-duck 44981ab0)."
+            )
+        if coll_warn_only or weak_m3_ge1:
+            errors.append(
+                "B33_LOST_READ_TB_WEAK: collision_edges WARN-only and/or "
+                "m3_beats>=1 after earlier beats can PASS without the exact "
+                "m0_ov-edge request completing (rd-duck 44981ab0). Hard-fail "
+                "missing collisions; conserve per-request IDs."
+            )
+        if strong_conservation:
+            msgs.append(
+                "LEG0_B33_OK TB per-request conservation "
+                "m0+m1/m0+m3-rd/m0+m3-wr + fault twin"
+            )
 
     if not errors:
         msgs.append(
             "LEG0_B33_PASS PLXC arb issued-lower safe "
-            "(no m0_ov mask without skid/hs + strong collision TB)"
+            "(req/accept or skid — not delayed busy; TB conservation+fault twin)"
         )
     return msgs, errors
 
@@ -5204,7 +5383,7 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
         "B31_hit_scan_prefit_cap(shipping_budget_g++),"
         "B32_plxg_bank_atomic_couple(host+store+tuple+poller_rtl),"
         "B9_dar_bank_gen_match(bank_gen+DAR∧bank+ascal_obuf),"
-        "B33_plxc_arb_issued_lower_safe(m0_ov+bridge+TB),"
+        "B33_plxc_arb_issued_lower_safe(44981ab0 req/accept+per-req TB),"
         "B34_host_plxg_pad_display(426→432 display+crop+q1/q3 g++),"
         "leg_unit_make_unit,leg_rtl_lint,leg2_elab,leg3_true_de; "
         "B20_PRODUCT_UFS_TIE=elaborate Plex.sv .use_frame_store(1'b0) + reject "
@@ -8480,6 +8659,9 @@ def _run_mutation_matrix() -> tuple[list[str], list[dict[str, str]]]:
         "B33_PLXC_ARB_ABSENT",
         "B33_BRIDGE_BUSY_ACCEPT_RACE",
         "B33_LOST_READ_TB_WEAK",
+        "B33_TB_NO_PER_REQUEST_ID",
+        "B33_TB_NO_PRODUCT_BOTH_COMPLETE",
+        "B33_TB_NO_FAULT_TWIN_LOSE_LOWER",
         "B34_STORAGE_GEOM_ABSENT",
         "B34_PAD_ONLY_GEOM_ABSENT",
         "B34_PLXG_FROM_GEOM_ABSENT",
@@ -8917,6 +9099,39 @@ def _run_mutation_matrix() -> tuple[list[str], list[dict[str, str]]]:
         )
     finally:
         rest_arb()
+
+    # --- rd-duck 44981ab0: delayed busy is not accept ---
+    bad_arb_db = (
+        "// fitgate B33 delayed-busy mutation (44981ab0 class)\n"
+        "module ddr_bus_arbiter_plxc;\n"
+        "  input wire m0_rd, m0_we, grant_m1, grant_m3, clk, clk_m3, reset;\n"
+        "  wire m0_cmd = m0_rd | m0_we;\n"
+        "  wire m0_ov = m0_cmd;\n"
+        "  wire use_m1 = grant_m1 && !m0_ov;\n"
+        "  wire use_m3 = grant_m3 && !grant_m1 && !m0_ov;\n"
+        "  // Hollow fix: fold m0_ov into busy_comb + 2FF CDC (cannot retract !busy)\n"
+        "  wire m3_busy_comb = !grant_m3 | m0_ov;\n"
+        "  reg m3_busy_r, m3_busy_s1, m3_busy_s2;\n"
+        "  always @(posedge clk) m3_busy_r <= m3_busy_comb;\n"
+        "  always @(posedge clk_m3) begin\n"
+        "    m3_busy_s1 <= m3_busy_r; m3_busy_s2 <= m3_busy_s1;\n"
+        "  end\n"
+        "  // comment-only atomic accept (no net)\n"
+        "  // Product: atomic m0 accept + drop m3 (launch-edge safe).\n"
+        "endmodule\n"
+    )
+    rest_arb_db = _with_file_backup(arb_b33, bad_arb_db)
+    try:
+        rc, msgs = leg0_arch_blockers()
+        _row(
+            "B33_DELAYED_BUSY_NOT_ACCEPT",
+            "m0_ov in busy_comb + busy_s1/s2 CDC without req/accept",
+            "B33_DELAYED_BUSY_NOT_ACCEPT",
+            rc,
+            msgs,
+        )
+    finally:
+        rest_arb_db()
 
     # --- rd-duck B34: identity-on-store 432/432/0 after align ---
     lay_b34 = ROOT / "host" / "libmisterplex" / "ddr_frame_layout.hpp"

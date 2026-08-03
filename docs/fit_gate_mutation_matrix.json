@@ -193,6 +193,30 @@
       "token_hit": "1"
     },
     {
+      "check": "B33_TB_NO_PER_REQUEST_ID",
+      "inject": "live hollow / missing product TB",
+      "expect": "B33_TB_NO_PER_REQUEST_ID",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B33_TB_NO_PRODUCT_BOTH_COMPLETE",
+      "inject": "live hollow / missing product TB",
+      "expect": "B33_TB_NO_PRODUCT_BOTH_COMPLETE",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B33_TB_NO_FAULT_TWIN_LOSE_LOWER",
+      "inject": "live hollow / missing product TB",
+      "expect": "B33_TB_NO_FAULT_TWIN_LOSE_LOWER",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
       "check": "B34_STORAGE_GEOM_ABSENT",
       "inject": "live hollow / missing product TB",
       "expect": "B34_STORAGE_GEOM_ABSENT",
@@ -393,6 +417,14 @@
       "token_hit": "1"
     },
     {
+      "check": "B33_DELAYED_BUSY_NOT_ACCEPT",
+      "inject": "m0_ov in busy_comb + busy_s1/s2 CDC without req/accept",
+      "expect": "B33_DELAYED_BUSY_NOT_ACCEPT",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
       "check": "B34_IDENTITY_ON_STORE",
       "inject": "align then makeDdrFrameGeometry(store) loses display 426/crop_left=2",
       "expect": "B34_IDENTITY_ON_STORE",
@@ -418,6 +450,6 @@
     }
   ],
   "failures": [],
-  "n_red": 52,
-  "head": "e7f21021342b"
+  "n_red": 56,
+  "head": "2e58c8146631"
 }

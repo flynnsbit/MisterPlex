@@ -1,40 +1,33 @@
 lane=w-fitgate
 role=fit_release_gate_ruler
 GRANT=NO
-HEAD=232d0b0f4c956f2dc421109433cca858365e812a
-code_sha=232d0b0f4c956f2dc421109433cca858365e812a
+HEAD=PENDING
+code_sha=PENDING
 branch=w-fitgate
 worktree=/home/flynnsbit/Projects/MisterPlex-wt-fitgate
 origin=origin/w-fitgate
 
 SELFTEST=PASS
-SELFTEST_MATRIX rows=52 red=52 fail_holes=0
+SELFTEST_MATRIX rows=56 red=56 fail_holes=0
 SELFTEST_CMD=python3 scripts/fit_release_gate.py --self-test
 SELFTEST_TRUE_RC=0
 SELFTEST_MARKER=FIT_RELEASE_GATE_SELFTEST_PASS
 
-B34=LIVE
-B34_cite=rd-duck: ddrStorageGeometryForContent identity-on-432 loses display 426/crop_left=2; FFmpeg pads x=2; PLXG q1/q3=432; 624/618 mux cannot catch
-B34_tokens_live=B34_STORAGE_GEOM_ABSENT,B34_PAD_ONLY_GEOM_ABSENT,B34_PLXG_FROM_GEOM_ABSENT,B34_HOST_RECORD_ORACLE_MISSING
-B34_token_reinject=B34_IDENTITY_ON_STORE
-B34_wpath_measured=GREEN (g++ oracle coded=432 display=426 crop_left=2 q1/q3=426)
-B34_contract=coded/stride=432 display/H_DE/q1/q3=426 crop_left=2 crop_right=4 present_x=placement_not_crop
+B33=STRENGTHENED_44981ab0
+B33_cite=rd-duck: delayed busy_comb→r→s1→s2 cannot retract !busy; S_ISSUE drops want→WAIT_R; m0_ov drops use_m3; never retries
+B33_reject=delayed_busy_only,comment_atomic_accept,m3_beats_ge1,collision_edges_WARN
+B33_require=req/accept_OR_skid/held_cmd; TB m0+m1 + m0+m3-rd + m0+m3-wr; per-request IDs; product both-complete; FAULT loses lower
+B33_tokens_live=B33_PLXC_ARB_ABSENT,B33_BRIDGE_BUSY_ACCEPT_RACE,B33_LOST_READ_TB_WEAK,B33_TB_NO_PER_REQUEST_ID,B33_TB_NO_PRODUCT_BOTH_COMPLETE,B33_TB_NO_FAULT_TWIN_LOSE_LOWER
+B33_token_reinject=B33_M0_OV_MASKS_ISSUED_LOWER,B33_DELAYED_BUSY_NOT_ACCEPT
+B33_wmem_measured_RED=M0_OV+DELAYED_BUSY+BRIDGE_BUSY_ACCEPT+TB_WEAK+NO_PER_REQ+NO_BOTH+COMMENT_ATOMIC (n=8; fault_twin present but weak TB)
 
-OPEN_PRODUCT_REDS=
-  B9 bank_gen/DAR∧applied-gen (w-scaler)
-  B31 HIT_SCAN=48 product (w-osd)
-  B32 PLXG↔bank couple (w-mem/w-path)
-  B33 m0_ov issued-lower safe (w-mem)
-  B34 host pad display (merge w-path geom+plxg; hollow RED)
+B34=LIVE (prior)
+OPEN_PRODUCT_REDS=B9,B31,B32,B33(44981ab0),B34
 
 PARENT_RUN:
   git fetch origin w-fitgate
   RULER=/home/flynnsbit/Projects/MisterPlex-wt-fitgate
   "$RULER/scripts/fit_release_gate.sh" --root "$MERGE" --qsf "$MERGE/fpga/Plex_MiSTer/Plex.qsf"
 
-LANDING_REPORT:
-  product_rtl_authored_by_w_fitgate=0
-  scripts/fit_release_gate.py ON_MAIN=no IN_FILES_QIP=n/a
-  land_path=scripts+docs only; parent sequences; no unilateral main merge
-
-CONSTRAINTS=no_quartus no_device no_main_merge capture_true_rc
+LANDING: product_rtl=0; scripts ON_MAIN=no; no unilateral main merge
+CONSTRAINTS=no_quartus no_device capture_true_rc
