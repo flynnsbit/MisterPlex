@@ -82,6 +82,17 @@ static bool wait_last_seq(Vplex_chrome_ddr_loader_tb* t, uint16_t seq, int max_c
     return t->last_seq_on == seq;
 }
 
+// TB top fixes POLL_DIV=4. Deterministic window: idle, then enough cycles for
+// several full poll → RD_CTRL → (optional push) round-trips. No "maybe missed".
+static void force_poll_window(Vplex_chrome_ddr_loader_tb* t, int n_polls = 4) {
+    wait_idle(t, 400);
+    // ~POLL_DIV + grant/rdata + worst-case list/ctrl2/push + plxo steal.
+    const int per = 48;
+    for (int i = 0; i < n_polls * per; ++i)
+        tick(t);
+    wait_idle(t, 400);
+}
+
 int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
     int fails = 0;
@@ -261,61 +272,99 @@ int main(int argc, char** argv) {
     else
         pass("retained_inv");
 
-    // --- Half-word ctrl order: poll window after each 32-bit store ---
+    // --- Half-word ctrl order (rd-duck hole 1) ---
+    // Observations that MUST fail under wrong order:
+    //   PRODUCT: after HI-only (magic still 0), loads/last_seq must not change.
+    //            Reverse half order (magic first) → seq0 empty commit → FAIL.
+    //   FAULT magic-first: with last_seq!=0, magic-only+hi=0 MUST commit seq0.
+    //            (was tautological when either wrong_accept OR stayed passed)
     std::fprintf(stderr, "=== halfword ctrl publish order ===\n");
     std::fprintf(stderr, "EXECUTED halfword\n");
-    wait_idle(t);
     {
-        const uint64_t g = glyph('H', 8, 8);
-        mem_wr(t, 0x130, 0);
-        mem_wr(t, 0x140, g);
-        const uint64_t ctrl = pack_ctrl(true, 1, 77);
-        const uint32_t loads_b = t->cnt_loads_on;
-        // Product: hi first while magic=0 — must NOT commit during this window.
-        mem_wr32(t, 0x134, static_cast<uint32_t>(ctrl >> 32));
-        for (int i = 0; i < 120; ++i)
-            tick(t);
-        if (t->last_seq_on == 77 || t->cnt_loads_on != loads_b)
-            fail("halfword accepted after hi-only (magic still 0)");
-        mem_wr32(t, 0x130, static_cast<uint32_t>(ctrl)); // magic LAST
-        if (!wait_last_seq(t, 77))
-            fail("halfword product magic-last did not commit seq77");
-        else
-            pass("halfword");
+        // Nonzero baseline so magic+zero-hi is distinguishable (seq0 != baseline).
+        publish_seqlock(t, {glyph('B', 2, 2)}, 50);
+        if (!wait_last_seq(t, 50)) {
+            fail("halfword baseline seq50");
+        } else {
+            wait_idle(t);
+            const uint64_t g = glyph('H', 8, 8);
+            mem_wr(t, 0x130, 0); // invalidate both halves
+            mem_wr(t, 0x140, g);
+            const uint64_t ctrl = pack_ctrl(true, 1, 77);
+            const uint16_t seq_b = t->last_seq_on;
+            const uint32_t loads_b = t->cnt_loads_on;
+#if defined(HALFWORD_PRODUCT_MAGIC_FIRST)
+            // Product mutation twin: reverse half order — gate must go RED.
+            mem_wr32(t, 0x130, static_cast<uint32_t>(ctrl)); // magic FIRST
+            std::fprintf(stderr, "halfword PRODUCT_MUTATION magic_first\n");
+#else
+            // Product: HI first while magic=0.
+            mem_wr32(t, 0x134, static_cast<uint32_t>(ctrl >> 32));
+#endif
+            force_poll_window(t, 6);
+            // Hard observation: incomplete ctrl must not commit.
+            if (t->last_seq_on != seq_b || t->cnt_loads_on != loads_b) {
+                std::fprintf(stderr,
+                             "halfword incomplete-half commit seq=%u loads_delta=%u "
+                             "(must stay seq=%u)\n",
+                             (unsigned)t->last_seq_on,
+                             (unsigned)(t->cnt_loads_on - loads_b), (unsigned)seq_b);
+                fail("halfword accepted after incomplete ctrl half");
+            } else {
+#if defined(HALFWORD_PRODUCT_MAGIC_FIRST)
+                // Mutation path should have failed above; if not, hole closed/missed.
+                fail("halfword mutation: expected incomplete-half commit");
+#else
+                mem_wr32(t, 0x130, static_cast<uint32_t>(ctrl)); // magic LAST
+                if (!wait_last_seq(t, 77))
+                    fail("halfword product magic-last did not commit seq77");
+                else
+                    pass("halfword");
+#endif
+            }
+        }
     }
 
-    // Red twin documentation: magic-first then hi — after magic alone, hi may be
-    // stale zero; with last_seq!=0 a zero-seq empty ctrl can be wrongly accepted.
     std::fprintf(stderr, "EXECUTED halfword_magic_first\n");
-    wait_idle(t);
+#if defined(HALFWORD_PRODUCT_MAGIC_FIRST)
+    // Mutation binary only proves product gate; skip fault arm.
+    std::fprintf(stderr, "SKIP halfword_magic_first under PRODUCT_MUTATION\n");
+#else
     {
-        // Establish last_seq=77 already from product path above.
+        // Require last_seq != 0 so seq0 empty is a real wrong commit.
+        if (t->last_seq_on == 0) {
+            publish_seqlock(t, {glyph('S', 3, 3)}, 66);
+            if (!wait_last_seq(t, 66))
+                fail("halfword_magic_first seed");
+        }
+        wait_idle(t);
+        const uint16_t seed_seq = t->last_seq_on;
         mem_wr(t, 0x130, 0);
         mem_wr(t, 0x140, glyph('Z', 1, 1));
         const uint64_t ctrl = pack_ctrl(true, 1, 88);
-        const uint32_t torn_b = t->cnt_torn_on;
         const uint32_t loads_b = t->cnt_loads_on;
-        mem_wr32(t, 0x130, static_cast<uint32_t>(ctrl)); // magic FIRST, hi=0
-        // Give the loader time to poll the torn window.
-        for (int i = 0; i < 200; ++i)
-            tick(t);
-        // With hi=0: enable=0 count=0 seq=0. Magic valid. seq 0 != 77 → may load empty.
-        // Product host never leaves this window; we only document the defect class.
-        const bool saw_wrong = (t->last_seq_on == 0 && t->cnt_loads_on > loads_b);
-        const bool stayed = (t->last_seq_on == 77 && t->cnt_loads_on == loads_b);
-        // Either wrong accept (hole open) or poll missed the window — both OK for
-        // this marker; require that completing hi still reaches seq 88.
-        mem_wr32(t, 0x134, static_cast<uint32_t>(ctrl >> 32));
-        if (!wait_last_seq(t, 88))
-            fail("halfword_magic_first final seq88");
-        else {
-            std::fprintf(stderr, "halfword_magic_first window wrong_accept=%d stayed=%d torn=%u\n",
-                         saw_wrong ? 1 : 0, stayed ? 1 : 0,
-                         (unsigned)(t->cnt_torn_on - torn_b));
-            pass("halfword_magic_first");
+        // FAULT host order: magic FIRST, hi still 0 → valid magic + seq=0 empty.
+        mem_wr32(t, 0x130, static_cast<uint32_t>(ctrl));
+        force_poll_window(t, 6);
+        // MUST observe wrong seq0 commit (not optional).
+        const bool saw_wrong =
+            (t->last_seq_on == 0 && t->cnt_loads_on > loads_b && seed_seq != 0);
+        std::fprintf(stderr,
+                     "halfword_magic_first seed_seq=%u after_seq=%u loads_delta=%u "
+                     "wrong_accept=%d\n",
+                     (unsigned)seed_seq, (unsigned)t->last_seq_on,
+                     (unsigned)(t->cnt_loads_on - loads_b), saw_wrong ? 1 : 0);
+        if (!saw_wrong) {
+            fail("halfword_magic_first: expected wrong seq0 commit after magic-only");
+        } else {
+            mem_wr32(t, 0x134, static_cast<uint32_t>(ctrl >> 32));
+            if (!wait_last_seq(t, 88))
+                fail("halfword_magic_first final seq88");
+            else
+                pass("halfword_magic_first");
         }
-        (void)stayed;
     }
+#endif
 
     delete t;
     if (fails) {

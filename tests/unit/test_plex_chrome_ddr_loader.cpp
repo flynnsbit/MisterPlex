@@ -167,8 +167,10 @@ static void checkFpgaSpiSeqlockSource() {
 }
 
 // Interleave a loader poll after each 32-bit half of ctrl publish.
-// Product (hi→magic): no accept until magic lands; final poll commits full ctrl.
-// FAULT (magic→hi): poll after magic alone can see magic+stale hi (empty/old).
+// Observations that fail under wrong order:
+//   PRODUCT hi→magic: poll after hi-only must not load; magic last commits full.
+//   FAULT magic→hi with last_seq!=0: poll after magic-only MUST load seq0 empty.
+//   Reverse product halves with last_seq!=0 → incomplete-half check fails.
 static void checkHalfWordPublishOrder() {
     std::vector<uint64_t> mem(512, 0);
     const uint64_t g = misterplex::plex_chrome_cmds::packGlyph(8, 8, 'H');
@@ -176,18 +178,19 @@ static void checkHalfWordPublishOrder() {
     const size_t base = mailbox_abi::kPlxlOffset / 8;
     auto* cw = reinterpret_cast<uint32_t*>(&mem[c]);
 
-    // --- Product order: hi then magic ---
+    // --- Product order: hi then magic (baseline last_seq != 0) ---
     {
         misterplex::plex_chrome_ddr::Model m;
         m.enable = true;
-        m.last_seq = 0;
+        m.last_seq = 50;
         mem[c] = 0;
         mem[base] = g;
         const uint64_t ctrl = misterplex::plex_chrome_cmds::packPlxcCtrl(true, 1, 7);
         cw[1] = static_cast<uint32_t>(ctrl >> 32);
-        // Magic still 0: must not accept.
+        // Magic still 0: must not accept (observation fails if magic-first).
         CHECK(!misterplex::plex_chrome_ddr::stepLoad(m, mem.data(), false, false, 0, 0, 0));
         CHECK(m.cnt_loads == 0);
+        CHECK(m.last_seq == 50);
         cw[0] = static_cast<uint32_t>(ctrl);
         CHECK(misterplex::plex_chrome_ddr::stepLoad(m, mem.data(), false, false, 0, 0, 0));
         CHECK(m.cnt_loads == 1);
@@ -195,31 +198,37 @@ static void checkHalfWordPublishOrder() {
         CHECK(m.beats.size() >= 1 && m.beats[0].data == g);
     }
 
-    // --- After invalidate, magic-first with zero hi: transient empty ctrl ---
+    // --- Product mutation (magic first): incomplete half MUST wrong-commit ---
     {
         misterplex::plex_chrome_ddr::Model m;
         m.enable = true;
-        m.last_seq = 0;
+        m.last_seq = 50;
+        mem[c] = 0;
+        mem[base] = g;
+        const uint64_t ctrl = misterplex::plex_chrome_cmds::packPlxcCtrl(true, 1, 7);
+        cw[0] = static_cast<uint32_t>(ctrl); // magic FIRST, hi=0
+        CHECK(misterplex::plex_chrome_ddr::stepLoad(m, mem.data(), false, false, 0, 0, 0));
+        CHECK(m.cnt_loads == 1);
+        CHECK(m.last_seq == 0); // empty/wrong ctrl — gate goes red vs product stay@50
+        std::fprintf(stderr, "host halfword mutation wrong_accept seq0 PASS\n");
+    }
+
+    // --- FAULT magic-first with nonzero seed: require seq0 wrong accept ---
+    {
+        misterplex::plex_chrome_ddr::Model m;
+        m.enable = true;
+        m.last_seq = 77;
         mem[c] = 0;
         mem[base] = g;
         const uint64_t ctrl = misterplex::plex_chrome_cmds::packPlxcCtrl(true, 1, 9);
         cw[0] = static_cast<uint32_t>(ctrl); // magic first, hi still 0
-        // seq=0 from hi==0 → looks like seq 0 == last_seq 0 → no load, OR
-        // enable/count zeroed. Either way must not commit count=1 body as seq 9.
-        const bool accepted = misterplex::plex_chrome_ddr::stepLoad(m, mem.data(), false, false, 0, 0, 0);
-        if (accepted) {
-            // If accepted, it must not be the full intended ctrl (seq 9, count 1).
-            CHECK(m.last_seq != 9);
-        } else {
-            CHECK(m.cnt_loads == 0);
-        }
+        CHECK(misterplex::plex_chrome_ddr::stepLoad(m, mem.data(), false, false, 0, 0, 0));
+        CHECK(m.cnt_loads == 1);
+        CHECK(m.last_seq == 0);
         cw[1] = static_cast<uint32_t>(ctrl >> 32);
-        // After both halves, product model accepts once.
-        misterplex::plex_chrome_ddr::Model m2;
-        m2.enable = true;
-        m2.last_seq = 0;
-        CHECK(misterplex::plex_chrome_ddr::stepLoad(m2, mem.data(), false, false, 0, 0, 0));
-        CHECK(m2.last_seq == 9);
+        CHECK(misterplex::plex_chrome_ddr::stepLoad(m, mem.data(), false, false, 0, 0, 0));
+        CHECK(m.last_seq == 9);
+        std::fprintf(stderr, "host halfword_magic_first wrong_accept=1 PASS\n");
     }
 }
 
