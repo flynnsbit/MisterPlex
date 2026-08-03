@@ -42,12 +42,31 @@ Host: `MISTER_HOST` (default `192.168.1.183`), `MISTER_PASS` (default `1`).
 
 ## Status files
 
-| Path | Role |
+Keep writing to the `/tmp` paths below — they are unchanged. Each one is now a
+**symlink into a permanent store outside the worktree**, so evidence survives a
+reboot. `/tmp` being cleared has already destroyed a session's history once.
+
+| Path (write here) | Role |
 |------|------|
 | `/tmp/misterplex-loop-status.txt` | Parent tick |
 | `/tmp/misterplex-agent-bucket.json` | Planned workers |
 | `/tmp/misterplex-agent-<ID>.txt` | Worker evidence |
 | `/tmp/plex_quartus_*.log` | Sole build logs |
+
+Permanent store: `$HOME/Projects/MisterPlex-lab/` (`parent/`, `agents/`,
+`status/`, `quartus/`). Read `parent/misterplex-parent-720p-decode-verdict.txt`
+first — it is the authoritative project record.
+
+After a reboot, or any time `/tmp` is cleared, restore the links:
+
+```bash
+scripts/relink_lab_evidence.sh
+```
+
+The store is **outside** the git worktree on purpose. Inside, it would have to be
+git-ignored to pass `tests/unit/test_no_private_data.sh` (it holds the lab PMS
+address), and git-ignored files are exactly what `git clean -xfd` deletes —
+storage a routine build step erases is not permanent storage.
 
 ## Hard rules (lab)
 
