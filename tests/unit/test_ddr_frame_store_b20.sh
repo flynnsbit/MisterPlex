@@ -80,10 +80,31 @@ GOOD_RC=$?
 set -e
 printf '%s\n' "$GOOD_OUT"
 echo "product true rc=$GOOD_RC"
-assert_sim_executed "b20-product" "$GOOD_OUT" "OK B20 product" "MEASURED after_promote" "MEASURED after_swap"
+assert_sim_executed "b20-product" "$GOOD_OUT" \
+  "OK delayed-promotion" "OK B20 product" "MEASURED after_promote" "MEASURED after_swap"
 if [[ "$GOOD_RC" -ne 0 ]]; then
   echo "FAIL b20 product rc=$GOOD_RC" >&2
   exit "$GOOD_RC"
+fi
+
+# --- C) FAULT SPI ungated: SPI swaps before promote (REPRO corruption class) ---
+SPI_BUILD="$ROOT/build/verilator/ddr_b20_spi_fault"
+mkdir -p "$SPI_BUILD"
+echo "=== C) FAULT_SPI_UNGATED delayed-promo SPI (expect swap REPRO) ===" >&2
+"$RUN_VERILATOR" "${vflags[@]}" --Mdir "$SPI_BUILD" \
+  -DDDR_FRAME_STORE_FAULT_SPI_UNGATED \
+  -CFLAGS "-std=c++17 -O2 -DB20_SPI_FAULT_TWIN=1" \
+  "${common_sv[@]}"
+set +e
+SPI_OUT="$(B20_MODE=spi_fault "$SPI_BUILD/Vddr_frame_store_b20_tb" 2>&1)"
+SPI_RC=$?
+set -e
+printf '%s\n' "$SPI_OUT"
+echo "spi_fault true rc=$SPI_RC"
+assert_sim_executed "b20-spi-fault" "$SPI_OUT" "REPRO spi-before-promote"
+if [[ "$SPI_RC" -ne 2 ]]; then
+  echo "FAIL b20 spi fault twin expected rc=2 got $SPI_RC" >&2
+  exit 2
 fi
 
 echo "OK test_ddr_frame_store_b20"

@@ -1,7 +1,10 @@
 // B20 bank+geometry atomicity.
+// 0) Delayed-promotion (rd-duck): before live geom matches, doorbell+SPI
+//    produce ZERO bank swaps (no stale 960 vs native corruption).
 // 1) Promote PLXG live seq=7, 80x32 — app must stay legacy 64 until bank swap.
 // 2) Doorbell with plxg_seq=7, prep, vsync swap — app becomes 80.
 // FAULT_B20_FREE_RUN_GEOM: step1 app==80 (REPRO).
+// FAULT_SPI_UNGATED: SPI swaps before promote (REPRO).
 #include "Vddr_frame_store_b20_tb.h"
 #include "verilated.h"
 
@@ -55,9 +58,24 @@ struct Sim {
 		top.rt_display_w = 0;
 		top.rt_display_h = 0;
 		top.vsync_pulse = 0;
+		top.start_req = 0;
+		top.bank_sel = 0;
 		top.DDRAM_BUSY = 0;
 		top.DDRAM_DOUT = 0;
 		top.DDRAM_DOUT_READY = 0;
+	}
+
+	// Pulse SPI start_req edge (bank_sel-only path).
+	void pulseSpi(int bank) {
+		top.bank_sel = bank & 1;
+		top.start_req = 0;
+		tick();
+		top.start_req = 1;
+		for (int i = 0; i < 8; ++i)
+			tick();
+		top.start_req = 0;
+		for (int i = 0; i < 16; ++i)
+			tick();
 	}
 
 	uint32_t offQ(uint32_t phys) const { return (phys - kBasePhys) / 8; }
@@ -187,6 +205,49 @@ int runProduct() {
 		return 1;
 	}
 
+	// ---- Delayed-promotion (rd-duck): ZERO swaps before matching live geom ----
+	// Host wrote PLXG body + may ring doorbell, but latch has not promoted
+	// (rt_geom_live=0). Product store must not free-run candidate dims until
+	// live (present_core ties geom dims to latch outputs); TB keeps
+	// geom_enable=0 here so !b20_atomic free-run cannot poison app_*. Coupled
+	// doorbell field!=0 with !live must reject; SPI must not swap.
+	const int frames0 = (int)sim.top.frames_done;
+	sim.top.geom_enable = 0;
+	sim.top.rt_geom_live = 0;
+	sim.top.rt_geom_seq = 7;
+	for (int i = 0; i < 32; ++i)
+		sim.tick();
+	if ((int)sim.top.obs_app_coded_w != kLegacyW) {
+		std::cerr << "FAIL delayed-promo: app left legacy before live\n";
+		return 1;
+	}
+	sim.ring(/*bank*/1, /*plxg*/7);
+	for (int i = 0; i < 4000; ++i) {
+		if (sim.top.swap_pending) {
+			std::cerr << "FAIL delayed-promo: doorbell swapped before live geom\n";
+			return 1;
+		}
+		sim.tick();
+	}
+	sim.pulseSpi(/*bank*/1);
+	for (int i = 0; i < 2000; ++i) {
+		if (sim.top.swap_pending) {
+			std::cerr << "FAIL delayed-promo: SPI swapped before live geom\n";
+			return 1;
+		}
+		sim.tick();
+	}
+	if ((int)sim.top.frames_done != frames0) {
+		std::cerr << "FAIL delayed-promo: frames_done advanced before promote\n";
+		return 1;
+	}
+	if ((int)sim.top.obs_disp_bank != 0) {
+		std::cerr << "FAIL delayed-promo: disp_bank moved before promote\n";
+		return 1;
+	}
+	std::cout << "OK delayed-promotion: zero swap before matching live geom "
+	          << "(doorbell+SPI)\n";
+
 	// Promote candidate to 80x32 live seq=7 — must NOT move app yet.
 	sim.driveGeomLive(kNewW, kH, /*seq*/7);
 	std::cout << "MEASURED after_promote eff=" << (int)sim.top.obs_eff_coded_w
@@ -273,6 +334,56 @@ int runFault() {
 	return 0; // REPRO is the expected "success" of the red twin binary
 }
 
+// FAULT_SPI_UNGATED: SPI before promote must swap (REPRO corruption class).
+// Built under -DDDR_FRAME_STORE_FAULT_SPI_UNGATED; exit 2 on REPRO.
+// STRICT_YUV still needs have_seq: prime with one ungated (field-0) doorbell,
+// drain that swap, then SPI under !live — product would refuse; FAULT swaps.
+int runSpiFault() {
+	Sim sim;
+	sim.resetHold();
+	sim.top.geom_enable = 0;
+	sim.top.rt_geom_live = 0;
+	sim.top.rt_geom_seq = 0;
+	for (int i = 0; i < 32; ++i)
+		sim.tick();
+	// Prime have_seq via legacy ungated doorbell; drain swap so SPI can edge.
+	sim.ring(/*bank*/0, /*plxg*/0);
+	if (!sim.waitSwapPending(50000)) {
+		std::cerr << "FAIL spi fault twin: ungated prime did not swap\n";
+		return 1;
+	}
+	// Complete prime swap so swap_pending clears.
+	if (!sim.waitHasFrame(200000)) {
+		std::cerr << "FAIL spi fault twin: prime swap never ready\n";
+		return 1;
+	}
+	for (int i = 0; i < 8; ++i)
+		sim.vsync();
+	for (int i = 0; i < 64; ++i)
+		sim.tick();
+	if (sim.top.swap_pending) {
+		std::cerr << "FAIL spi fault twin: prime swap_pending stuck\n";
+		return 1;
+	}
+	// Pre-promote SPI under FAULT — must accept bank_sel-only.
+	sim.pulseSpi(/*bank*/1);
+	bool saw = false;
+	for (int i = 0; i < 4000; ++i) {
+		if (sim.top.swap_pending) {
+			saw = true;
+			break;
+		}
+		sim.tick();
+	}
+	if (!saw) {
+		std::cerr << "FAIL spi fault twin: SPI did not swap before promote "
+		          << "(cannot see defect)\n";
+		return 1;
+	}
+	std::cout << "REPRO spi-before-promote swap_pending=1 (corruption class)\n";
+	return 2;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -282,5 +393,7 @@ int main(int argc, char** argv) {
 		mode = "product";
 	if (std::string(mode) == "fault")
 		return runFault();
+	if (std::string(mode) == "spi_fault")
+		return runSpiFault();
 	return runProduct();
 }

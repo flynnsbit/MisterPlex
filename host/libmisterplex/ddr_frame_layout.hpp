@@ -1177,14 +1177,14 @@ inline bool ddrModeExitDoorbellLegacyNoPlxgUngatedOk() {
            ddrDoorbellGeomCoupledOk(door, /*live*/ 5, true, false);
 }
 
-// rd-duck: SPI kick is bank_sel-only (no PLXG gen). Under live coupled geom,
-// fabric must refuse SPI swap; host must not fall back to SPI for program_plxg
-// after a short doorbell wait (< one 24Hz frame ≈ 41.7ms).
-inline bool ddrSpiSwapOkUnderGeom(bool geomLive, uint16_t geomSeq,
+// rd-duck: SPI kick is bank_sel-only (no PLXG gen). Product fabric never
+// accepts SPI (pre-promote !live used to swap native under idle 960). Host
+// must not fall back to SPI for program_plxg. FAULT restores always-allow.
+inline bool ddrSpiSwapOkUnderGeom(bool /*geomLive*/, uint16_t /*geomSeq*/,
                                   bool faultAllowSpiUngated = false) {
     if (faultAllowSpiUngated)
         return true;
-    return !(geomLive && geomSeq != 0);
+    return false; // product: spi_swap_ok=0
 }
 
 // Host first-kick policy model (sendDdrFrame).
@@ -1244,10 +1244,24 @@ inline bool ddrCoupledKickProductRefusesSpi() {
         return false;
     if (m.wait_us < 41666)
         return false;
-    // Fabric product: SPI blocked under live geom
+    // Fabric product: SPI never swaps (incl. pre-promote !live)
     if (ddrSpiSwapOkUnderGeom(true, 5, false))
         return false;
-    if (!ddrSpiSwapOkUnderGeom(false, 0, false)) // legacy ok
+    if (ddrSpiSwapOkUnderGeom(false, 0, false))
+        return false;
+    return true;
+}
+
+// Delayed-promotion model: live=0, doorbell field!=0 → no bank accept;
+// SPI → no accept. After live+match → doorbell may accept.
+inline bool ddrDelayedPromotionNoSwapBeforeLive() {
+    // Before live: coupled doorbell rejects (field!=0 && !live)
+    if (ddrDoorbellGeomCoupledOk(/*db*/7, /*liveSeq*/7, /*live*/false, false))
+        return false;
+    if (ddrSpiSwapOkUnderGeom(false, 0, false))
+        return false;
+    // After live match: doorbell couples
+    if (!ddrDoorbellGeomCoupledOk(7, 7, true, false))
         return false;
     return true;
 }

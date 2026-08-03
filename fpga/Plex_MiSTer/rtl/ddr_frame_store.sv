@@ -1568,13 +1568,15 @@ module ddr_frame_store #(
 	wire db_new_seq = (db_token_new && (!IGNORE_STALE_DOORBELL_AFTER_RESET || doorbell_primed)) ||
 	                  db_stale_fallback;
 	wire spi_edge_ddr = start_d2 != start_seen;
-	// SPI start carries bank_sel only — no PLXG generation (rd-duck). Under
-	// live coupled geom refuse SPI so short doorbell wait → SPI cannot swap
-	// under old pitch. Legacy (!live or seq==0) keeps SPI. FAULT restores.
+	// SPI start carries bank_sel only — no PLXG generation (rd-duck).
+	// Product: SPI never swaps. Host program_plxg refuses SPI; true legacy
+	// rings doorbell with field 0 (ungated). Pre-promote (!live) SPI used to
+	// accept the first native payload under idle 960 pitch — corruption, not
+	// just a drop. FAULT restores always-allow for red twin.
 `ifdef DDR_FRAME_STORE_FAULT_SPI_UNGATED
 	wire spi_swap_ok = 1'b1;
 `else
-	wire spi_swap_ok = !(d_geom_live && (d_geom_seq != 16'd0));
+	wire spi_swap_ok = 1'b0;
 `endif
 
 	// geom_reject_r (clk) → 2FF → clk_ddr for PLXF debug_state.
