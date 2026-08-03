@@ -1,7 +1,7 @@
 {
   "architecture": "ascal_true_de_960",
-  "git_tree_hash": "be8838d59b518c330194f9b4530183e71836b441",
-  "git_head_at_lock": "3e59860119fe666c7646a181c7d8c226fc91a360",
+  "git_tree_hash": "e74e179aa0f45437ba1bed2eb11ea3c81b76a0c6",
+  "git_head_at_lock": "f35f267eae0e12cb8745942980ca95a538e1a675",
   "required_macros": {
     "FRAME_W": "960",
     "FRAME_H": "540",
@@ -17,11 +17,18 @@
     "FABRIC_DDR_WRITER",
     "FABRIC_NATIVE_720P_GEOM"
   ],
+  "raster_policy": {
+    "mode": "runtime_variable_true_de",
+    "max_content_w": 960,
+    "max_content_h": 540,
+    "note": "DE tracks PMS-delivered geometry; 960x540 is maximum tier not fixed. PMS does not upscale (parent measured metadata/1 320x240)."
+  },
   "locked_by": "parent",
   "locked_date": "2026-08-03",
-  "rationale": "Core emits true 960x540 DE; ascal (iauto=1) upscales to 1280x720. Content rate ~15.55 Mpix/s @30 Hz / ~12.44 @24 Hz \u2014 inside bridge limits without new PLL. mp_cea_1280 is NOT selected; 40 Mpix/s must not be cited as headroom for this fit. PRESENT_MULTI_PIXEL / PRESENT_SCALE_4_3 / PRESENT_SCALE_2X stay OFF.",
+  "rationale": "Core emits true DE equal to content; ascal (iauto=1) upscales to 1280x720. 960x540 is the maximum content tier, not a fixed raster. Content rate at max tier ~15.55 Mpix/s @30 \u2014 not mp_cea_1280; 40 Mpix/s is not headroom.",
   "notes": [
     "git_tree_hash binds gated artefacts via compute_gated_tree_hash() and excludes this file.",
-    "Updating RTL/scripts without refreshing this hash is a deliberate B0_TREE_HASH_MISMATCH fail."
+    "Updating RTL/scripts without refreshing this hash is a deliberate B0_TREE_HASH_MISMATCH fail.",
+    "fix=unmerged in leg0 output names sibling lane+commit; do not re-implement those."
   ]
 }
