@@ -1,23 +1,30 @@
 lane=w-fitgate
 branch=w-fitgate
-sha=b6c4ad0e
+sha=PENDING
 GRANT=NO
-status=B42_BANK_STRIDE_720P_FIT_HOLD
+status=PREFIT_REACHABILITY_GATE
 
-PARENT FLEET FACTS ACK (measured):
-  main@3fa01a9b (detached meas worktree): files.qip present_* L2 default-off
-  FRAME_W=640 FRAME_H=480 active; use_frame_store=0; L4 not shipped
-  Lab glass already 720p (parent); content 1280x720 is the target
-  B41 NOT retired: product must still force VGA_SCALER (user DV risk)
-  Fit hold = B42 stride 512KiB vs I420 1382400 (2.64x)
+TASK: pre-fit reachability gate for decoder prune class
+  scripts/check_prefit_reachability.py
+  tests/fixtures/critical_prefit_reachability.json
+  make prefit-reachability / prefit-reachability-selftest
+  fit_release_gate leg_prefit_reachability (before leg0)
+  docs/ascal-true-de-fit-card.md paragraph
 
-B42 gate:
-  LIVE RED hollow+main3fa: STRIDE_GUARD_ABSENT LEGACY_ONLY STICKY_REJECT TB_ABSENT
-  PASS w-mem@cbe31c4c LEG0_B42_PASS
-  ARITH i420=1382400 leg=524288 ratio_x100=263 optc_need=0x180000
-  FIX_STATUS w-mem@cbe31c4c unmerged
+TEETH on detached main@842e45c9:
+  RED: h264_decode_{top,core,skeleton}, h264_intra_nb_ctx = NOT_IN_QIP
+  RED: h264_cavlc_residual_block, h264_cavlc_nc_predictor = PRUNED
+       (file in QIP; only parent skeleton not in QIP)
+  GREEN: decode_stub, stream_path, ddr_frame_store, present_core = REACHABLE
+  selftest true rc=0 (teeth=1 pruned_cavlc=1)
+  gate true rc=1 (fit refuse)
 
-SELFTEST true rc=0 rows=123 red=123 holes=0
+Parent-requested on detached HEAD@842e45c9:
+  make rtl-lint; true rc=0
+  make unit; true rc=0
 
-Landing: 0 product RTL by this lane; scripts only ON_MAIN=no
+Proves: QIP + root reachability. Does NOT prove correctness.
+Soft-skip 77 is NOT a pass. Missing inputs rc=2.
+
+Landing: scripts/docs only; ON_MAIN=no product RTL
 NO Quartus. NO device. GRANT=NO.

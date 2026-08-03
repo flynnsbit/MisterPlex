@@ -2,7 +2,8 @@
 
 **Architecture lock:** `ascal_true_de_960` — core emits **true DE == content extent**; ascal (`iauto=1`) upscales DE to 1280×720.  
 **Raster policy (parent 2026-08-03):** **runtime-variable** DE tracking PMS-delivered geometry. **960×540 is the maximum tier, not a fixed raster.** PMS does **not** upscale (lab: `/library/metadata/1` 320×240 source stays 320×240 at rung 540). Gate **B13** fails fixed-only beam/core binds.  
-**Gate:** `make fit-gate` / `scripts/fit_release_gate.sh` — leg0 architecture + macros + elab + counted true_de.  
+**Gate:** `make fit-gate` / `scripts/fit_release_gate.sh` — prefit-reachability + leg0 architecture + macros + elab + counted true_de.  
+**Prefit reachability (named fit capability):** `make prefit-reachability` / `scripts/check_prefit_reachability.py` builds a static instantiation graph from `files.qip` + `sys_top` and requires every **critical** module (decoder hierarchy: `h264_decode_*`, `h264_cavlc_*`) to be both listed in QIP **and** reachable from `sys_top`/`emu`. QIP-only is not enough: `h264_cavlc_residual.sv` can compile while `h264_cavlc_residual_block` is **PRUNED** if its only parent is outside the QIP set. Soft-skip 77 is not a pass; missing inputs fail rc=2. **Proves presence/reachability only — not decode correctness or post-fit area.** Teeth: main@842e45c9 RED on decoder + CAVLC PRUNED; GREEN on `decode_stub`/`ddr_frame_store`.  
 **Ruler identity:** `docs/fit_gate_identity.json` binds gate scripts; divergent lane copies get `LEG0_COUNT_REFUSED` (do not compare counts across rulers).  
 **Integration (w-osd only grant path):** run the **fitgate ruler** against the **merged tree**:
 ```bash

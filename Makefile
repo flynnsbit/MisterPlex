@@ -5,7 +5,7 @@ CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -I$(ROOT)/host
 FFMPEG_CFLAGS := $(shell pkg-config --cflags libavformat libavcodec libavutil 2>/dev/null)
 FFMPEG_LIBS   := $(shell pkg-config --libs libavformat libavcodec libavutil 2>/dev/null)
 
-.PHONY: all preflight unit unit-unlocked unit-rollcall rtl-sim rtl-sim-unlocked rtl-lint verilator-elab quartus-sv-subset define-parity pre-synth-gates fit-gate fit-gate-selftest post-fit-hierarchy post-fit-timing post-fit-timing-margin timing-exclusion pms-baseline-check pms-baseline-live pms-nal-stats arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools check-core-conf-geometry
+.PHONY: all preflight unit unit-unlocked unit-rollcall rtl-sim rtl-sim-unlocked rtl-lint verilator-elab quartus-sv-subset define-parity pre-synth-gates prefit-reachability prefit-reachability-selftest fit-gate fit-gate-selftest post-fit-hierarchy post-fit-timing post-fit-timing-margin timing-exclusion pms-baseline-check pms-baseline-live pms-nal-stats arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools check-core-conf-geometry
 
 all: unit
 
@@ -18,6 +18,8 @@ help:
 	@echo "  make quartus-sv-subset - curated Quartus SV subset guard plus fast Verilator elaboration"
 	@echo "  make define-parity - Quartus↔Verilator macros + host/RTL DDR geometry constants"
 	@echo "  make pre-synth-gates - run define parity + fast pre-Quartus RTL buildability gates"
+	@echo "  make prefit-reachability - critical modules in files.qip AND reachable from sys_top (not pruned)"
+	@echo "  make prefit-reachability-selftest - RED decoder hole + GREEN decode_stub/ddr_frame_store teeth"
 	@echo "  make fit-gate [QSF=path] - fit-release gate: QSF macros + elab(fit macros) + true_de=1"
 	@echo "  make fit-gate-selftest - RED/GREEN twins for fit-release gate (hollow integ QSF must FAIL)"
 	@echo "  make post-fit-hierarchy FIT_RPT=... [MAP_RPT=...] [COMPILE_LOG=...] - critical fitted-module guard"
@@ -290,8 +292,17 @@ define-parity:
 
 pre-synth-gates: define-parity quartus-sv-subset
 
+# Pre-fit reachability: QIP membership + static root reachability (no fitter).
+# Soft-skip rc=77 is NOT a pass. Missing inputs → rc=2 (fail, not pass).
+prefit-reachability:
+	$(ROOT)/scripts/check_prefit_reachability.py --root "$(ROOT)"
+
+prefit-reachability-selftest:
+	$(ROOT)/scripts/check_prefit_reachability.py --root "$(ROOT)" --self-test
+
 # Fit-release gate: parse QSF macros (SoT) → elab with that set → counted true_de=1.
 # QSF= overrides the settings file (default: fpga/Plex_MiSTer/Plex.qsf).
+# Includes prefit-reachability (critical modules must not be pruned).
 fit-gate:
 	$(ROOT)/scripts/fit_release_gate.sh $(if $(QSF),--qsf "$(QSF)",)
 

@@ -10309,6 +10309,69 @@ def analyze_rtl_lint_result(rc: int, out: str) -> tuple[int, list[str]]:
     return 0, msgs
 
 
+def leg_prefit_reachability() -> tuple[int, list[str]]:
+    """Hard pre-fit leg: critical modules in QIP AND reachable from sys_top.
+
+    Catches the historical decoder hole: files.qip lists h264_cavlc_residual.sv
+    but only h264_decode_skeleton (not in QIP) instantiates it → PRUNED to zero
+    logic while decode_stub remains the live path. Soft-skip 77 is NOT a pass;
+    missing script/inputs → rc=2 fail.
+    """
+    msgs: list[str] = ["LEG_PREFIT_REACHABILITY_EXECUTED begin"]
+    script = RULER_ROOT / "scripts" / "check_prefit_reachability.py"
+    cfg = RULER_ROOT / "tests" / "fixtures" / "critical_prefit_reachability.json"
+    if not script.is_file():
+        msgs.append(
+            "LEG_PREFIT_REACHABILITY_FAIL missing "
+            "scripts/check_prefit_reachability.py — cannot determine reachability "
+            "(soft-skip is NOT a pass)"
+        )
+        return 2, msgs
+    if not cfg.is_file():
+        msgs.append(
+            "LEG_PREFIT_REACHABILITY_FAIL missing critical_prefit_reachability.json"
+        )
+        return 2, msgs
+    cmd = [
+        sys.executable,
+        str(script),
+        "--root",
+        str(ROOT),
+        "--config",
+        str(cfg),
+    ]
+    msgs.append("LEG_PREFIT_REACHABILITY_CMD " + " ".join(cmd))
+    rc, out = _run(cmd, cwd=ROOT)
+    # Keep evidence compact but complete
+    for line in (out or "").splitlines():
+        if line.startswith(
+            (
+                "PREFIT_",
+                "MODULE ",
+                "PASS ",
+                "FAIL ",
+                "NOTE ",
+                "true rc=",
+                "SELFTEST_",
+            )
+        ):
+            msgs.append(line)
+    print(f"leg_prefit_reachability observed true rc={rc}")
+    if rc == 77:
+        msgs.append(
+            "LEG_PREFIT_REACHABILITY_FAIL soft-skip rc=77 is NOT a pass"
+        )
+        return 1, msgs
+    if rc != 0:
+        msgs.append(
+            f"LEG_PREFIT_REACHABILITY_FAIL true rc={rc} — exclusive fit "
+            "refused (critical module ABSENT/NOT_IN_QIP/PRUNED)"
+        )
+        return 1 if rc == 1 else rc, msgs
+    msgs.append("LEG_PREFIT_REACHABILITY_PASS EXECUTED true rc=0")
+    return 0, msgs
+
+
 def leg_rtl_lint_precondition() -> tuple[int, list[str]]:
     """Hard precondition: explicit `rtl_lint.py` GREEN (not quartus-sv-subset).
 
@@ -10905,6 +10968,17 @@ def run_gate(
         return 1
 
     if not skip_arch:
+        # Prefit reachability before other arch blockers — named fit capability.
+        rc_pr, msgs_pr = leg_prefit_reachability()
+        print("\n".join(msgs_pr))
+        print(f"leg_prefit_reachability true rc={rc_pr}")
+        if rc_pr != 0:
+            print(
+                "FIT_RELEASE_GATE_FAIL leg=prefit-reachability "
+                "(critical module not in QIP or pruned from sys_top)"
+            )
+            return rc_pr
+
         rc0, msgs0 = leg0_arch_blockers()
         print("\n".join(msgs0))
         print(f"leg0 true rc={rc0}")

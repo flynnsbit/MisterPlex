@@ -1,0 +1,23 @@
+{
+  "description": "Pre-fit reachability: modules that must survive into the RBF hierarchy. QIP membership alone is insufficient (CAVLC pruned class).",
+  "roots": ["sys_top", "emu"],
+  "critical_modules": [
+    "h264_decode_top",
+    "h264_decode_core",
+    "h264_intra_nb_ctx",
+    "h264_decode_skeleton",
+    "h264_cavlc_residual_block",
+    "h264_cavlc_nc_predictor"
+  ],
+  "expect_reachable": [
+    "decode_stub",
+    "stream_path",
+    "ddr_frame_store",
+    "present_core"
+  ],
+  "notes": [
+    "Proves presence/reachability from TOP_LEVEL_ENTITY sys_top only.",
+    "Does NOT prove decode correctness, cycle budget, or post-fit area.",
+    "Historical RED: cavlc in QIP, only parent skeleton not in QIP → PRUNED."
+  ]
+}
