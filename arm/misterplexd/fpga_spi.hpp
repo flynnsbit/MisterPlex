@@ -107,12 +107,20 @@ public:
     bool publishDdrFrame(const DdrPublishFrame& frame, int bank = 0);
     int lastPublishedBank() const { return lastPublishedBank_; }
 
-    // PLXG q5 (doorbell+0x828) — ABI #2 DAR+content_fps. Reserved [63:34] must
-    // be zero (parent arb #4: no fps_1001 on wire). Latched for next publish and
-    // written immediately when DDR map is live. Latch atomicity B16 = w-mem.
-    bool writePlxgQ5(uint64_t q5);
-    void setPlxgQ5Pending(uint64_t q5) { plxgQ5Pending_ = q5; plxgQ5PendingValid_ = true; }
+    // PLXG q5 (ABI #2 DAR+content_fps). Reserved [63:34] must be zero (parent
+    // arb #4). Pending only — wire commit is writePlxgRecord (full 6-qword
+    // seqlock at bootstrap 0x300FF800). Standalone +0x828 product writes are
+    // refused (rd-duck: poller skips body when q0 seq unchanged).
+    bool writePlxgQ5(uint64_t q5); // pending-only; no standalone wire poke
+    void setPlxgQ5Pending(uint64_t q5) {
+        plxgQ5Pending_ = q5;
+        plxgQ5PendingValid_ = true;
+    }
     uint64_t lastWrittenPlxgQ5() const { return plxgQ5LastWritten_; }
+    // Atomic 6-qword PLXG at bootstrap phys 0x300FF800 (w-mem protocol).
+    // seq is advisory; *committedSeqOut is the generation actually written.
+    bool writePlxgRecord(const uint64_t q[6], uint16_t seq,
+                         uint16_t* committedSeqOut = nullptr);
     // DDR frame mmap policy. Default true keeps the proven strongly-ordered/device
     // mapping; false is a lab knob for write-combine/cacheable /dev/mem tests.
     // If a lab proves the no-sync mapping is cacheable, enable flush so the FPGA
@@ -355,10 +363,16 @@ private:
     // leave the doorbell/stride at the packed-320 layout or the first frame shears.
     DdrFrameLayout ddrLayout_ = makeDdrFrameLayout(productDdrFrameStoreGeometry());
     uint32_t doorbellSeq_ = 0;
-    // Pending PLXG q5 for publish path (doorbell+0x828).
+    // Pending PLXG q5 for inject into plan.plxg_q[5] on publish (not wire alone).
     uint64_t plxgQ5Pending_ = 0;
     bool plxgQ5PendingValid_ = false;
     uint64_t plxgQ5LastWritten_ = 0;
+    // Fixed bootstrap control page (legacy doorbell 0x300FF000) for PLXG.
+    // Option-C map starts at 0x30180000 and does NOT cover 0x300FF800.
+    int plxgBootFd_ = -1;
+    uint8_t* plxgBootMap_ = nullptr;
+    size_t plxgBootMapLen_ = 0;
+    uint16_t plxgLastSeq_ = 0;
     double lastDdrBankDoorbellMs_[2] = {-1.0, -1.0};
     int lastPublishedBank_ = 0;
     DdrBankSelectState ddrBankSelect_{};
@@ -376,6 +390,9 @@ private:
     bool plxdLivenessProven_ = false;
     bool ensureDdrMap();
     void releaseDdrMap();
+    bool ensurePlxgBootstrapMap();
+    void releasePlxgBootstrapMap();
+    void seedPlxgLastSeqFromRetainedLocked();
     bool ensureBitstreamDdrMap();
     void releaseBitstreamDdrMap();
     bool readBitstreamFpgaCount(uint32_t& readCount);

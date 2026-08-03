@@ -542,14 +542,17 @@ void MediaPlayer::refreshPlxgAspectCadence() {
     if (c.fps_valid)
         flags |= 2u;
     plxgQ5Flags_.store(flags, std::memory_order_relaxed);
-    // Host half of ABI #2: write doorbell+0x828 when FPGA map is available.
-    // Fabric latch/plxg_* consumers remain w-mem (not claimed live here).
-    int wire_write = 0;
+    // Host half of ABI #2: pending inject into next writePlxgRecord generation
+    // (rd-duck: no standalone +0x828). Fabric latch remains w-mem.
+    int pending_set = 0;
     if (q != 0 && fpga_.ok()) {
-        if (fpga_.writePlxgQ5(q))
-            wire_write = 1;
+        if (fpga_.writePlxgQ5(q)) // pending-only; wire on publish
+            pending_set = 1;
         else
-            log(std::string("media: plxg_q5 wire write failed: ") + fpga_.lastError());
+            log(std::string("media: plxg_q5 pending refuse: ") + fpga_.lastError());
+    } else if (q != 0) {
+        fpga_.setPlxgQ5Pending(q);
+        pending_set = 1;
     }
     log(std::string("media: ") + formatPlxgQ5LogLine(c, q) +
         " coded=" + std::to_string(w) + "x" + std::to_string(h) +
@@ -557,8 +560,8 @@ void MediaPlayer::refreshPlxgAspectCadence() {
         " media_ar=" + (mediaAspectRatio_.empty() ? "-" : mediaAspectRatio_) +
         " dar_prov=" + (plxgDarTranscode_ ? "transcode" : "direct_play") +
         " fps_rational=" + std::to_string(fpsNum_) + "/" + std::to_string(fpsDen_) +
-        " wire_write=" + std::to_string(wire_write) +
-        " wire_off=+0x828");
+        " pending_set=" + std::to_string(pending_set) +
+        " wire_mode=plan_inject_seqlock");
 }
 
 void MediaPlayer::setFfmpegScaleMode(std::string mode) {

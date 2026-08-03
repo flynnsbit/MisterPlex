@@ -43,12 +43,25 @@ int main() {
     CHECK(fromPresented.coded_width == kPlex480pCodedWidth);
     CHECK(fromPresented.presented_width == kPlex480pPresentedWidth);
 
-    // DECODE=320x240 must still select the silicon 624 canvas for FPGA present.
+    // Source-native storage: DECODE=320x240 keeps 320×240 content geometry
+    // (fabric upscales). Bank window is still LEG/Option-C only after pin —
+    // raw makeDdrFrameLayout is geometry-derived and is NOT the publish map.
     const auto from240 = ddrFrameGeometryForFpgaPresent(CodedWidth{320}, CodedHeight{240});
-    CHECK(from240.coded_width == kPlex480pCodedWidth);
-    CHECK(from240.presented_width == kPlex480pPresentedWidth);
+    CHECK(from240.coded_width.get() == 320);
+    CHECK(from240.coded_height.get() == 240);
+    CHECK(from240.presented_width.get() == 320);
     CHECK(productDdrFrameStoreGeometry().coded_width == kPlex480pCodedWidth);
-    CHECK(ddrFrameLayoutMatchesProductSilicon(makeDdrFrameLayout(from240)));
+    CHECK(ddrFrameLayoutMatchesProductSilicon(makeDdrFrameLayout(productDdrFrameStoreGeometry())));
+    {
+        auto lay240 = makeDdrFrameLayout(from240);
+        CHECK(ddrLayoutBankMapIsGeometryDerived(lay240)); // raw 0x40000 trap
+        CHECK(ddrPinLayoutToBankMap(lay240, DdrBankMap::Legacy480p));
+        CHECK(!ddrLayoutBankMapIsGeometryDerived(lay240));
+        CHECK(lay240.bank_stride == kPlex480pYuv420pBankStride);
+        CHECK(lay240.doorbell_phys == kPlex480pYuv420pDoorbellPhys);
+        CHECK(lay240.line_bytes == 320);
+        CHECK(lay240.frame_bytes == 115200u);
+    }
 
     CHECK(weakBitrateKbpsForCodedSize(kPlex480pCodedWidth, kPlex480pCodedHeight) ==
           kPlex480pWeakBitrateKbps);

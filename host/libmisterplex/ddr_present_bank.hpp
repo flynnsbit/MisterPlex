@@ -127,6 +127,16 @@ inline bool makeDdrPublishPlan(const DdrPublishFrame& frame, int bank, DdrPublis
     out.bank_map = map;
     for (int i = 0; i < 6; ++i)
         out.plxg_q[i] = plxg.q[i];
+    // Default q5=0; inject DAR/fps via injectPlxgQ5IntoPublishPlan before
+    // writePlxgRecord (never standalone doorbell+0x828 product write).
+    return true;
+}
+
+// Overlay path DAR/fps q5 onto a publish plan for the same generation as bank kick.
+inline bool injectPlxgQ5IntoPublishPlan(DdrPublishPlan& plan, uint64_t q5) {
+    if (!injectPlxgQ5IntoRecord(plan.plxg_q, q5))
+        return false;
+    plan.program_plxg = true;
     return true;
 }
 

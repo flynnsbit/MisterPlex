@@ -1693,23 +1693,29 @@ def check_present_geometry_stride_contract() -> None:
                 "FPGA present path must route every decode tier through ddrFrameGeometryForFpgaPresent",
             ),
             (
-                # Full body pin: decode WxH is ignored; always silicon 624 canvas.
-                # Reverting this to makeDdrFrameGeometry(decodeW,decodeH) is the
-                # classic ARM line_bytes=320 vs RTL CODED_W=624 shear.
+                # Source-native storage: FpgaPresent routes through
+                # ddrStorageGeometryForContent (identity / 480 pillar / 540 / 720).
+                # Bank window is LEG/Option-C pin in makeDdrPublishPlan — not
+                # geometry-derived 0x40000. Shear was PLXG+bank map, not force-624.
                 host_norm,
-                "inlineDdrFrameGeometryddrFrameGeometryForFpgaPresent(CodedWidth,CodedHeight)"
-                "{returnproductDdrFrameStoreGeometry();}",
-                "ddrFrameGeometryForFpgaPresent must ignore DECODE and return productDdrFrameStoreGeometry (624)",
+                "inlineDdrFrameGeometryddrFrameGeometryForFpgaPresent(CodedWidthdecodeWidth,CodedHeightdecodeHeight)"
+                "{returnddrStorageGeometryForContent(decodeWidth,decodeHeight);}",
+                "ddrFrameGeometryForFpgaPresent must route through ddrStorageGeometryForContent (source-native)",
+            ),
+            (
+                host_norm,
+                "if(ddrNativeStorageEligible(w,h))returnmakeDdrFrameGeometry(CodedWidth{w},CodedHeight{h});",
+                "native-eligible content keeps identity storage geometry (320/416/…)",
             ),
             (
                 media_norm,
                 "wantFpgaDdrCanvas?ddrFrameGeometryForFpgaPresent(outW_,outH_)",
-                "PRESENT=fpga|both must select silicon canvas geometry, never identity-320 from DECODE",
+                "PRESENT=fpga|both must select geometry via ddrFrameGeometryForFpgaPresent(outW_,outH_)",
             ),
             (
                 media_norm,
                 "constintrawW=ddrGeometry.coded_width.get();",
-                "FFmpeg rawvideo width must be the coded stride width (624) for FPGA-presented 480p",
+                "FFmpeg rawvideo width must be the coded stride width from selected geometry",
             ),
             (
                 media_norm,
@@ -1854,25 +1860,35 @@ def check_present_geometry_stride_contract() -> None:
             "deliberately changed RTL luma stride CODED_W/8→FRAME_W/8 "
             "(640 B/line reader vs 624 B writer = 16 px/line shear) did not make the gate red"
         )
-    # Classic shear: FPGA-present geometry follows DECODE (320) instead of silicon 624.
-    bad_fpga_present_identity = host_nt.replace(
-        "inlineDdrFrameGeometryddrFrameGeometryForFpgaPresent(CodedWidth,CodedHeight)"
+    # Red: force always-624 canvas (loses source-native storage routing).
+    bad_fpga_present_force624 = host_nt.replace(
+        "inlineDdrFrameGeometryddrFrameGeometryForFpgaPresent(CodedWidthdecodeWidth,CodedHeightdecodeHeight)"
+        "{returnddrStorageGeometryForContent(decodeWidth,decodeHeight);}",
+        "inlineDdrFrameGeometryddrFrameGeometryForFpgaPresent(CodedWidthdecodeWidth,CodedHeightdecodeHeight)"
         "{returnproductDdrFrameStoreGeometry();}",
-        "inlineDdrFrameGeometryddrFrameGeometryForFpgaPresent(CodedWidthw,CodedHeighth)"
-        "{returnmakeDdrFrameGeometry(w,h);}",
     )
-    if not missing_stride_requirements(bad_fpga_present_identity, media_nt, frame_nt, ffmpeg_vf_nt):
+    if not missing_stride_requirements(bad_fpga_present_force624, media_nt, frame_nt, ffmpeg_vf_nt):
         fail(
-            "deliberately reverted ddrFrameGeometryForFpgaPresent to identity-DECODE "
-            "(320-wide writer vs 624 RTL) did not make the geometry gate red"
+            "deliberately forced ddrFrameGeometryForFpgaPresent to always-product-624 "
+            "(drops source-native storage) did not make the geometry gate red"
         )
-    bad_media_identity = media_nt.replace(
+    # Red: drop native-eligible identity branch inside storage selector.
+    bad_drop_native = host_nt.replace(
+        "if(ddrNativeStorageEligible(w,h))returnmakeDdrFrameGeometry(CodedWidth{w},CodedHeight{h});",
+        "if(false)returnmakeDdrFrameGeometry(CodedWidth{w},CodedHeight{h});",
+    )
+    if not missing_stride_requirements(bad_drop_native, media_nt, frame_nt, ffmpeg_vf_nt):
+        fail(
+            "deliberately disabled ddrNativeStorageEligible identity path "
+            "did not make the geometry gate red"
+        )
+    bad_media_bypass = media_nt.replace(
         "wantFpgaDdrCanvas?ddrFrameGeometryForFpgaPresent(outW_,outH_)",
         "wantFpgaDdrCanvas?makeDdrFrameGeometry(outW_,outH_)",
     )
-    if not missing_stride_requirements(host_nt, bad_media_identity, frame_nt, ffmpeg_vf_nt):
+    if not missing_stride_requirements(host_nt, bad_media_bypass, frame_nt, ffmpeg_vf_nt):
         fail(
-            "deliberately selected identity-DECODE geometry on PRESENT=fpga "
+            "deliberately bypassed ddrFrameGeometryForFpgaPresent on PRESENT=fpga "
             "did not make the geometry gate red"
         )
     # Dropping the explicit CODED_W port leaves parameter default CODED_W=FRAME_W=640

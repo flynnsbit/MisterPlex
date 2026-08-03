@@ -442,6 +442,7 @@ bool FpgaSpi::reopenPresentPath() {
 }
 
 void FpgaSpi::close() {
+    releasePlxgBootstrapMap();
     releaseDdrMap();
     releaseBitstreamDdrMap();
     if (map_) {
@@ -721,10 +722,18 @@ bool FpgaSpi::ensureDdrMap() {
 }
 
 bool FpgaSpi::setDdrFrameLayout(const DdrFrameGeometry& geometry, DdrFrameFormat format) {
+    // Content layout from geometry, then pin LEG/Option-C bank window (rd-duck:
+    // geometry-derived 0x40000/0x3007F000 is not a product map).
     DdrFrameLayout next =
         makeDdrFrameLayout(geometry, kDdrFrameBase, kDdrFrameStrideAlign, format);
-    if (!ddrFrameLayoutValid(next)) {
-        setErr("setDdrFrameLayout: invalid DDR frame layout");
+    const size_t payloadBytes =
+        next.frame_bytes > 0
+            ? next.frame_bytes
+            : yuv420pFrameBytes(geometry.coded_width, geometry.coded_height);
+    const DdrBankMap map = ddrSelectBankMapForPayloadBytes(payloadBytes);
+    if (!ddrPinLayoutToBankMap(next, map) || !ddrFrameLayoutValid(next) ||
+        ddrLayoutBankMapIsGeometryDerived(next)) {
+        setErr("setDdrFrameLayout: invalid DDR frame layout / bank map");
         return false;
     }
     if (next.coded_width == ddrLayout_.coded_width &&
@@ -736,7 +745,9 @@ bool FpgaSpi::setDdrFrameLayout(const DdrFrameGeometry& geometry, DdrFrameFormat
         next.crop_left == ddrLayout_.crop_left && next.crop_right == ddrLayout_.crop_right &&
         next.crop_top == ddrLayout_.crop_top && next.crop_bottom == ddrLayout_.crop_bottom &&
         next.present_x == ddrLayout_.present_x && next.present_y == ddrLayout_.present_y &&
-        next.format == ddrLayout_.format)
+        next.format == ddrLayout_.format && next.bank_stride == ddrLayout_.bank_stride &&
+        next.doorbell_phys == ddrLayout_.doorbell_phys &&
+        next.phys_base == ddrLayout_.phys_base && next.frame_bytes == ddrLayout_.frame_bytes)
         return true;
     ddrLayout_ = next;
     releaseDdrMap();
@@ -773,6 +784,146 @@ void FpgaSpi::releaseDdrMap() {
         ::close(ddrMemFd_);
         ddrMemFd_ = -1;
     }
+    // Bootstrap PLXG page is independent of active bank map; keep it across
+    // layout changes so seq continuity survives Option-C toggles. Only close()
+    // tears it down via releasePlxgBootstrapMap.
+}
+
+void FpgaSpi::seedPlxgLastSeqFromRetainedLocked() {
+    if (!plxgBootMap_ || plxgBootMapLen_ < kPlxgRecordByteOffset + 8u)
+        return;
+    volatile uint32_t* base = reinterpret_cast<volatile uint32_t*>(
+        plxgBootMap_ + static_cast<size_t>(kPlxgRecordByteOffset));
+    const uint32_t lo = base[0];
+    const uint32_t hi = base[1];
+    if (lo != kPlxgMagic)
+        return;
+    const uint16_t retained = static_cast<uint16_t>(hi >> 16);
+    if (static_cast<uint32_t>(retained) > static_cast<uint32_t>(plxgLastSeq_))
+        plxgLastSeq_ = retained;
+}
+
+bool FpgaSpi::ensurePlxgBootstrapMap() {
+    if (plxgBootMap_ && plxgBootFd_ >= 0)
+        return true;
+    releasePlxgBootstrapMap();
+    int flags = O_RDWR | O_CLOEXEC;
+    if (ddrMemSync_)
+        flags |= O_SYNC;
+    plxgBootFd_ = ::open("/dev/mem", flags);
+    if (plxgBootFd_ < 0) {
+        setErr("ensurePlxgBootstrapMap: open /dev/mem failed");
+        return false;
+    }
+    constexpr size_t kPage = 0x1000u;
+    void* p = mmap(nullptr, kPage, PROT_READ | PROT_WRITE, MAP_SHARED, plxgBootFd_,
+                   static_cast<off_t>(kPlxgBootstrapDoorbellPhys));
+    if (p == MAP_FAILED) {
+        setErr("ensurePlxgBootstrapMap: mmap bootstrap page failed");
+        ::close(plxgBootFd_);
+        plxgBootFd_ = -1;
+        return false;
+    }
+    plxgBootMap_ = static_cast<uint8_t*>(p);
+    plxgBootMapLen_ = kPage;
+    seedPlxgLastSeqFromRetainedLocked();
+    return true;
+}
+
+void FpgaSpi::releasePlxgBootstrapMap() {
+    if (plxgBootMap_) {
+        munmap(plxgBootMap_, plxgBootMapLen_);
+        plxgBootMap_ = nullptr;
+        plxgBootMapLen_ = 0;
+    }
+    if (plxgBootFd_ >= 0) {
+        ::close(plxgBootFd_);
+        plxgBootFd_ = -1;
+    }
+}
+
+bool FpgaSpi::writePlxgRecord(const uint64_t q[6], uint16_t seq,
+                              uint16_t* committedSeqOut) {
+    if (!q) {
+        setErr("writePlxgRecord: null q");
+        return false;
+    }
+    (void)seq; // advisory only — generation computed restart-safe below
+    if (!ensurePlxgBootstrapMap())
+        return false;
+    const size_t off = static_cast<size_t>(kPlxgRecordByteOffset);
+    if (off + kPlxgRecordBytes > plxgBootMapLen_) {
+        setErr("writePlxgRecord: PLXG record outside bootstrap page");
+        return false;
+    }
+    volatile uint32_t* base =
+        reinterpret_cast<volatile uint32_t*>(plxgBootMap_ + off);
+    seedPlxgLastSeqFromRetainedLocked();
+    uint16_t retainedSeq = 0;
+    bool retainedValid = false;
+    {
+        const uint32_t lo = base[0];
+        const uint32_t hi = base[1];
+        if (lo == kPlxgMagic) {
+            retainedSeq = static_cast<uint16_t>(hi >> 16);
+            retainedValid = true;
+        }
+    }
+    const uint16_t useSeq = plxgNextSeq(plxgLastSeq_, retainedValid, retainedSeq);
+    uint64_t words[6];
+    for (int i = 0; i < 6; ++i)
+        words[i] = q[i];
+    // Refuse reserved q5 bits (parent #4) before any wire store.
+    if (!plxgQ5ReservedOk(words[5])) {
+        setErr("writePlxgRecord: q5 reserved[63:34] nonzero");
+        return false;
+    }
+    uint64_t flags = (words[0] >> 32) & 0xFFFFull;
+    if (((flags >> 2) & 0x3FFFull) == 0)
+        flags |= (1ull << 2); // epoch=1 default
+    words[0] = (static_cast<uint64_t>(useSeq) << 48) | (flags << 32) |
+               static_cast<uint64_t>(kPlxgMagic);
+
+    auto dmb = []() { __sync_synchronize(); };
+    auto storeBodyQ = [&](volatile uint32_t* basep, int qi, uint64_t w) {
+        basep[qi * 2 + 1] = static_cast<uint32_t>(w >> 32);
+        dmb();
+        basep[qi * 2 + 0] = static_cast<uint32_t>(w);
+        dmb();
+    };
+    auto seqlockPublish = [&](volatile uint32_t* basep) {
+        basep[0] = 0u;
+        dmb();
+        for (int i = 1; i < 6; ++i)
+            storeBodyQ(basep, i, words[i]);
+        basep[1] = static_cast<uint32_t>(words[0] >> 32);
+        dmb();
+        basep[0] = static_cast<uint32_t>(words[0]);
+        dmb();
+    };
+    seqlockPublish(base);
+    if (ddrMemFlush_ && !cleanDcacheRange(plxgBootMap_ + off, kPlxgRecordBytes)) {
+        setErr("writePlxgRecord: cache clean failed");
+        return false;
+    }
+    // Optional mirror onto active doorbell+0x800 when the map covers it.
+    // Poller still only reads bootstrap; mirror is diagnostic only.
+    if (ddrMap_ && ddrLayout_.doorbell_phys != 0) {
+        const uint32_t act = ddrLayout_.doorbell_phys + kPlxgRecordByteOffset;
+        if (act >= ddrLayout_.phys_base) {
+            const size_t aoff = static_cast<size_t>(act - ddrLayout_.phys_base);
+            if (aoff + kPlxgRecordBytes <= ddrMapLen_) {
+                volatile uint32_t* ab =
+                    reinterpret_cast<volatile uint32_t*>(ddrMap_ + aoff);
+                seqlockPublish(ab);
+            }
+        }
+    }
+    plxgLastSeq_ = useSeq;
+    if (committedSeqOut)
+        *committedSeqOut = useSeq;
+    clearErr();
+    return true;
 }
 
 bool FpgaSpi::waitCoreFlag(bool clearBusy, bool clearPending, int maxUs) {
@@ -822,29 +973,17 @@ bool FpgaSpi::kickDdrDoorbell(int bank) {
 }
 
 bool FpgaSpi::writePlxgQ5(uint64_t q5) {
-    // Parent arb #4: refuse reserved [63:34] (no fps_1001 on wire).
-    uint32_t lo = 0, hi = 0;
-    if (!plxgQ5ToMailboxWords(q5, &lo, &hi)) {
+    // rd-duck: standalone +0x828 is product-broken (poller seqlock + bootstrap
+    // page). Pending only — injected into plan.plxg_q[5] on publishDdrFrame /
+    // writePlxgRecord. No wire poke here.
+    if (!plxgQ5ReservedOk(q5)) {
         setErr("writePlxgQ5: reserved[63:34] nonzero or bad q5 (ABI #2)");
         return false;
     }
-    if (!ensureDdrMap())
-        return false;
-    const size_t off =
-        static_cast<size_t>(ddrLayout_.doorbell_phys - ddrLayout_.phys_base) +
-        static_cast<size_t>(kPlxgQ5ByteOffset);
-    if (off + 8 > ddrMapLen_) {
-        setErr("writePlxgQ5: doorbell page too small for +0x828");
-        return false;
-    }
-    volatile uint32_t* qw = reinterpret_cast<volatile uint32_t*>(ddrMap_ + off);
-    // Little-endian qword: lo then hi. Fence before any subsequent doorbell.
-    qw[0] = lo;
-    qw[1] = hi;
-    __sync_synchronize();
     plxgQ5Pending_ = q5;
     plxgQ5PendingValid_ = true;
-    plxgQ5LastWritten_ = q5;
+    // lastWritten advances only when writePlxgRecord commits the inject.
+    clearErr();
     return true;
 }
 
@@ -1608,10 +1747,16 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
     };
 
     // Prefer mmap doorbell (no SPI on hot path). Fall back to SPI kick.
-    // Re-apply pending PLXG q5 before kick so aspect/cadence is visible with
-    // the new bank token (host half of ABI #2; fabric latch = w-mem).
-    if (plxgQ5PendingValid_) {
-        (void)writePlxgQ5(plxgQ5Pending_);
+    // Full PLXG 6-qword seqlock at bootstrap 0x300FF800 BEFORE kick (rd-duck).
+    // q5 already injected into plan.plxg_q[5] by publishDdrFrame; never poke
+    // standalone +0x828 (poller would skip body when q0 seq unchanged).
+    if (plan.program_plxg) {
+        uint16_t committedPlxgSeq = 0;
+        if (!writePlxgRecord(plan.plxg_q, plan.plxg_seq, &committedPlxgSeq))
+            return false;
+        if (plxgQ5PendingValid_ && plxgQ5ReservedOk(plan.plxg_q[5]))
+            plxgQ5LastWritten_ = plan.plxg_q[5];
+        (void)committedPlxgSeq;
     }
     bool kicked = false;
     auto tKick0 = std::chrono::steady_clock::now();
@@ -1880,6 +2025,13 @@ bool FpgaSpi::publishDdrFrame(const DdrPublishFrame& frame, int bank) {
         setErr(err);
         return false;
     }
+    // Inject pending DAR/fps q5 into the same generation as bank kick.
+    if (plxgQ5PendingValid_) {
+        if (!injectPlxgQ5IntoPublishPlan(plan, plxgQ5Pending_)) {
+            setErr("publishDdrFrame: refused reserved q5 inject");
+            return false;
+        }
+    }
     if (plan.layout.coded_width != ddrLayout_.coded_width ||
         plan.layout.coded_height != ddrLayout_.coded_height ||
         plan.layout.display_width != ddrLayout_.display_width ||
@@ -1892,13 +2044,18 @@ bool FpgaSpi::publishDdrFrame(const DdrPublishFrame& frame, int bank) {
         plan.layout.crop_bottom != ddrLayout_.crop_bottom ||
         plan.layout.present_x != ddrLayout_.present_x ||
         plan.layout.present_y != ddrLayout_.present_y ||
-        plan.layout.format != ddrLayout_.format) {
+        plan.layout.format != ddrLayout_.format ||
+        plan.layout.bank_stride != ddrLayout_.bank_stride ||
+        plan.layout.doorbell_phys != ddrLayout_.doorbell_phys ||
+        plan.layout.phys_base != ddrLayout_.phys_base ||
+        plan.layout.frame_bytes != ddrLayout_.frame_bytes) {
         if (!setDdrFrameLayout(frame.geometry, frame.format))
             return false;
     }
     if (ddrLayout_.bank_stride != plan.layout.bank_stride ||
         ddrLayout_.doorbell_phys != plan.layout.doorbell_phys ||
-        ddrLayout_.frame_bytes != plan.layout.frame_bytes) {
+        ddrLayout_.frame_bytes != plan.layout.frame_bytes ||
+        ddrLayout_.phys_base != plan.layout.phys_base) {
         setErr("publishDdrFrame: active DDR layout disagrees with derived frame geometry");
         return false;
     }

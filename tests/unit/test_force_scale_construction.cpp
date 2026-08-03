@@ -84,7 +84,8 @@ int main() {
                     c.h, prod, p.reason.c_str(), (int)p.scale_applied, (int)p.identity_skip);
     }
 
-    // Verified exact may identity_skip — only safe because prod==reader.
+    // Verified exact: fixed-output barrier (rd-duck) — NOT raw identity_skip.
+    // Empty-vf identity races stderr geom vs stdout frames; barrier pins WxH.
     {
         FfmpegVfRequest r;
         r.coded_w = cw;
@@ -96,8 +97,11 @@ int main() {
         r.source_h = 480;
         r.delivery_geometry_verified = true;
         const auto p = buildFfmpegVideoFilter(r);
-        expect(p.identity_skip, "verified exact identity");
-        expect(!pipeDesyncRisk(reader, reader, true), "verified match no risk");
+        expect(!p.identity_skip, "verified exact NOT raw identity_skip");
+        expect(p.fixed_output_barrier, "verified exact fixed_output_barrier");
+        expect(!p.scale_applied, "verified exact barrier not ARM resample class");
+        expect(p.reason.find("fixed_out") != std::string::npos, "verified exact fixed_out reason");
+        expect(!pipeDesyncRisk(reader, reader, p.identity_skip), "verified match no risk");
     }
 
     // RED twin class: force OFF + unverified exact must NOT be silent identity

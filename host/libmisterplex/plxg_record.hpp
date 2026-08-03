@@ -2,10 +2,13 @@
 // PLXG 6-qword geometry record packers (path lane).
 // Wire lockstep: present_geom_latch.sv + mailbox_abi_spec.hpp.
 // q5 reserved[63:34] MUST stay 0 (parent arbitration #4 — no fps_1001 on bit34).
+// q5 MUST ride full-record seqlock (rd-duck): never standalone +0x828 product write.
 
 #include "libmisterplex/ddr_frame_layout.hpp"
+#include "libmisterplex/plxg_q5_aspect_cadence.hpp"
 
 #include <cstdint>
+#include <cstring>
 
 namespace misterplex {
 
@@ -15,6 +18,8 @@ constexpr uint32_t kPlxgRecordQwords = 6u;
 constexpr uint32_t kPlxgRecordBytes = kPlxgRecordQwords * 8u; // 48
 static_assert(kPlxgRecordQwords == 6u, "PLXG is 6 qwords");
 static_assert(kPlxgRecordBytes == 48u, "record bytes");
+static_assert(kPlxgRecordByteOffset == 0x800u, "record at +0x800");
+static_assert(kPlxgQ5ByteOffset == 0x828u, "q5 at +0x828");
 
 struct PlxgRecord {
     uint64_t q[kPlxgRecordQwords]{};
@@ -67,22 +72,25 @@ inline uint64_t packPlxgQ4(int presentX, int presentY, int cropLeft, int cropTop
     return px | (py << 16) | (cl << 32) | (ct << 48);
 }
 
-// q5: DAR+fps; reserved[63:34]==0 (parent #4).
-inline uint64_t packPlxgQ5(unsigned darX, unsigned darY, unsigned contentFps, bool darValid,
-                           bool fpsValid) {
-    uint64_t w = 0;
-    w |= static_cast<uint64_t>(darX & 0xFFFu);
-    w |= static_cast<uint64_t>(darY & 0xFFFu) << 12;
-    w |= static_cast<uint64_t>(contentFps & 0xFFu) << 24;
-    if (darValid)
-        w |= 1ull << 32;
-    if (fpsValid)
-        w |= 1ull << 33;
-    return w;
+// q5: DAR+fps; reserved[63:34]==0 (parent #4). Uses cadence reserved check.
+inline uint64_t packPlxgQ5Fields(unsigned darX, unsigned darY, unsigned contentFps, bool darValid,
+                                 bool fpsValid) {
+    PlxgAspectCadence c{};
+    c.dar_x = static_cast<uint16_t>(darX & kPlxgDarFieldMax);
+    c.dar_y = static_cast<uint16_t>(darY & kPlxgDarFieldMax);
+    c.content_fps = static_cast<uint8_t>(contentFps & 0xFFu);
+    c.dar_valid = darValid;
+    c.fps_valid = fpsValid;
+    uint64_t q = 0;
+    if (!packPlxgQ5(c, &q))
+        return 0;
+    return q;
 }
 
-inline bool plxgQ5ReservedOk(uint64_t q5) {
-    return (q5 >> 34) == 0;
+// Back-compat name used by Legacy480/FromGeometry builders.
+inline uint64_t packPlxgQ5(unsigned darX, unsigned darY, unsigned contentFps, bool darValid,
+                           bool fpsValid) {
+    return packPlxgQ5Fields(darX, darY, contentFps, darValid, fpsValid);
 }
 
 inline void unpackPlxgQ1(uint64_t q1, int* cw, int* ch, int* x0, int* y0) {
@@ -183,6 +191,187 @@ inline bool plxgRecordMatchesStorage(const PlxgRecord& r, int codedW, int codedH
 // NEG oracle: Legacy480 PLXG must NOT be paired with a non-480 payload.
 inline bool plxgLegacy480MismatchesPayload(int payloadCodedW, int payloadCodedH) {
     return payloadCodedW != 624 || payloadCodedH != 480;
+}
+
+// Bootstrap page (poller fixed read) — product LEG doorbell. NOT Option-C active.
+// Route through ddr_frame_layout single-source (rtl_invariants literal ban).
+constexpr uint32_t kPlxgBootstrapDoorbellPhys = kPlex480pYuv420pDoorbellPhys;
+constexpr uint32_t kPlxgQ5ByteOffsetInRecord = 0x28u; // q5 within record (= +0x828 page)
+constexpr uint32_t kPlxgBootstrapRecordPhys =
+    kPlxgBootstrapDoorbellPhys + kPlxgRecordByteOffset; // doorbell+0x800
+static_assert(kPlxgBootstrapDoorbellPhys == kPlex480pYuv420pDoorbellPhys,
+              "bootstrap == product LEG doorbell");
+static_assert(kPlxgQ5ByteOffsetInRecord + kPlxgRecordByteOffset == kPlxgQ5ByteOffset,
+              "q5 in-record offset");
+
+constexpr uint16_t kPlxgDoorbellSeqFieldMask = 0x1FFFu;
+
+inline uint16_t plxgSeqDoorbellField(uint16_t fullSeq) {
+    return static_cast<uint16_t>(fullSeq & kPlxgDoorbellSeqFieldMask);
+}
+
+inline bool plxgSeqDoorbellFieldIsReservedUngated(uint16_t fullSeq) {
+    return plxgSeqDoorbellField(fullSeq) == 0;
+}
+
+inline uint16_t plxgNextSeq(uint16_t softwareLast, bool retainedValid, uint16_t retainedSeq) {
+    uint32_t seed = softwareLast;
+    if (retainedValid && static_cast<uint32_t>(retainedSeq) > seed)
+        seed = retainedSeq;
+    uint16_t use = static_cast<uint16_t>(seed + 1u);
+    for (int i = 0; i < 16; ++i) {
+        if (use != 0 && !plxgSeqDoorbellFieldIsReservedUngated(use))
+            return use;
+        use = static_cast<uint16_t>(use + 1u);
+    }
+    return 1;
+}
+
+// Inject DAR/fps q5 into a publish plan — ONLY legal product path for q5
+// (rd-duck: no standalone doorbell+0x828 write; poller needs new q0 seq).
+inline bool injectPlxgQ5IntoRecord(uint64_t plxg_q[6], uint64_t q5) {
+    if (!plxg_q || !plxgQ5ReservedOk(q5))
+        return false;
+    plxg_q[5] = q5;
+    return true;
+}
+
+// Seqlock publish into a control page (offset 0 = page base, record at +0x800).
+// Returns committed seq. Models writePlxgRecord body path for host E2E tests.
+inline bool plxgSeqlockPublishToPage(uint8_t* ctrlPage, size_t pageBytes, const uint64_t qIn[6],
+                                     uint16_t softwareLast, uint16_t* committedSeqOut) {
+    if (!ctrlPage || !qIn || pageBytes < kPlxgRecordByteOffset + kPlxgRecordBytes)
+        return false;
+    uint32_t* base =
+        reinterpret_cast<uint32_t*>(ctrlPage + kPlxgRecordByteOffset);
+    bool retainedValid = false;
+    uint16_t retainedSeq = 0;
+    if (base[0] == kPlxgMagic) {
+        retainedValid = true;
+        retainedSeq = static_cast<uint16_t>(base[1] >> 16);
+    }
+    const uint16_t useSeq = plxgNextSeq(softwareLast, retainedValid, retainedSeq);
+    uint64_t words[6];
+    for (int i = 0; i < 6; ++i)
+        words[i] = qIn[i];
+    uint64_t flags = (words[0] >> 32) & 0xFFFFull;
+    if (((flags >> 2) & 0x3FFFull) == 0)
+        flags |= (1ull << 2);
+    words[0] = (static_cast<uint64_t>(useSeq) << 48) | (flags << 32) |
+               static_cast<uint64_t>(kPlxgMagic);
+
+    auto dmb = []() { __sync_synchronize(); };
+    // 1) invalidate magic
+    base[0] = 0u;
+    dmb();
+    // 2) body q1..q5
+    for (int qi = 1; qi < 6; ++qi) {
+        base[qi * 2 + 1] = static_cast<uint32_t>(words[qi] >> 32);
+        dmb();
+        base[qi * 2 + 0] = static_cast<uint32_t>(words[qi]);
+        dmb();
+    }
+    // 3) q0 high then magic-last
+    base[1] = static_cast<uint32_t>(words[0] >> 32);
+    dmb();
+    base[0] = static_cast<uint32_t>(words[0]);
+    dmb();
+    if (committedSeqOut)
+        *committedSeqOut = useSeq;
+    return true;
+}
+
+// Minimal poller: promote only when q0 magic+seq stable and seq != last.
+struct PlxgPollerSim {
+    uint16_t last_seq = 0;
+    bool has_last = false;
+    uint64_t latched_q[6]{};
+    bool latched = false;
+
+    bool tryCommit(const uint8_t* ctrlPage, size_t pageBytes) {
+        if (!ctrlPage || pageBytes < kPlxgRecordByteOffset + kPlxgRecordBytes)
+            return false;
+        const uint32_t* base = reinterpret_cast<const uint32_t*>(
+            ctrlPage + kPlxgRecordByteOffset);
+        const uint32_t lo0 = base[0];
+        const uint32_t hi0 = base[1];
+        if (lo0 != kPlxgMagic)
+            return false;
+        const uint16_t seq = static_cast<uint16_t>(hi0 >> 16);
+        if (has_last && seq == last_seq)
+            return false; // skip body — q5-only write never reaches here
+        // re-read q0
+        const uint32_t lo1 = base[0];
+        const uint32_t hi1 = base[1];
+        if (lo1 != lo0 || hi1 != hi0 || lo1 != kPlxgMagic)
+            return false;
+        uint64_t body[6];
+        body[0] = (static_cast<uint64_t>(hi1) << 32) | lo1;
+        for (int i = 1; i < 6; ++i)
+            body[i] = (static_cast<uint64_t>(base[i * 2 + 1]) << 32) |
+                      static_cast<uint64_t>(base[i * 2 + 0]);
+        // re-read q0 again (seqlock)
+        if (base[0] != lo1 || base[1] != hi1)
+            return false;
+        for (int i = 0; i < 6; ++i)
+            latched_q[i] = body[i];
+        last_seq = seq;
+        has_last = true;
+        latched = true;
+        return true;
+    }
+};
+
+// Standalone q5 poke at +0x828 without new q0 — poller must NOT promote (NEG).
+inline void plxgFaultWriteQ5Only(uint8_t* ctrlPage, uint64_t q5) {
+    if (!ctrlPage)
+        return;
+    uint32_t* q5w = reinterpret_cast<uint32_t*>(ctrlPage + kPlxgRecordByteOffset +
+                                                kPlxgQ5ByteOffsetInRecord);
+    q5w[0] = static_cast<uint32_t>(q5);
+    q5w[1] = static_cast<uint32_t>(q5 >> 32);
+}
+
+// E2E: inject q5 into plan, seqlock publish, poller latches nonzero DAR/fps.
+// Bootstrap page is always LEG phys (poller fixed); content plan may be LEG or Opt-C.
+inline bool plxgQ5FullRecordE2E(const uint64_t plan_q_in[6], uint64_t q5, uint16_t softLast,
+                                uint16_t* committedOut, uint64_t* latchedQ5Out) {
+    if (!plan_q_in || !plxgQ5ReservedOk(q5))
+        return false;
+    uint64_t plan_q[6];
+    for (int i = 0; i < 6; ++i)
+        plan_q[i] = plan_q_in[i];
+    if (!injectPlxgQ5IntoRecord(plan_q, q5))
+        return false;
+    if (plan_q[5] != q5)
+        return false;
+    uint8_t page[0x1000]{};
+    uint16_t committed = 0;
+    if (!plxgSeqlockPublishToPage(page, sizeof(page), plan_q, softLast, &committed))
+        return false;
+    if (plxgSeqDoorbellFieldIsReservedUngated(committed))
+        return false;
+    PlxgPollerSim pol{};
+    // First commit after empty may baseline — require promote with new seq
+    if (!pol.tryCommit(page, sizeof(page)))
+        return false;
+    if (pol.latched_q[5] != q5)
+        return false;
+    if (pol.last_seq != committed)
+        return false;
+    // NEG: q5-only poke with same q0 must not re-promote a different q5
+    const uint64_t evil = packPlxgQ5(4, 3, 25, true, true);
+    plxgFaultWriteQ5Only(page, evil);
+    PlxgPollerSim pol2 = pol;
+    if (pol2.tryCommit(page, sizeof(page)))
+        return false; // must skip — same seq
+    if (pol.latched_q[5] != q5)
+        return false;
+    if (committedOut)
+        *committedOut = committed;
+    if (latchedQ5Out)
+        *latchedQ5Out = pol.latched_q[5];
+    return true;
 }
 
 } // namespace misterplex

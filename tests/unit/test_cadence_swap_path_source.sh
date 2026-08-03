@@ -52,10 +52,13 @@ check "content_fps hardwired 24" \
   "$ROOT/fpga/Plex_MiSTer/Plex.sv" \
   'content_fps = 8.d24|content_fps = 8'\''d24'
 
-# cadence.hpp not included from arm/
-if grep -rn --include='*.cpp' --include='*.hpp' 'cadence.hpp' "$ROOT/arm" >/dev/null 2>&1; then
+# present-cadence product header (libmisterplex/cadence.hpp) not included from arm/.
+# Do NOT match plxg_q5_aspect_cadence.hpp (ABI #2 DAR/fps path publisher — allowed).
+if grep -rn --include='*.cpp' --include='*.hpp' -E 'libmisterplex/cadence\.hpp|"cadence\.hpp"|/cadence\.hpp' \
+    "$ROOT/arm" >/dev/null 2>&1; then
   echo "FAIL C1: cadence.hpp referenced from arm/" >&2
-  grep -rn --include='*.cpp' --include='*.hpp' 'cadence.hpp' "$ROOT/arm" >&2 || true
+  grep -rn --include='*.cpp' --include='*.hpp' -E 'libmisterplex/cadence\.hpp|"cadence\.hpp"|/cadence\.hpp' \
+    "$ROOT/arm" >&2 || true
   FAIL=1
 else
   echo "OK C1: cadence.hpp not referenced from arm/"
