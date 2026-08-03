@@ -171,6 +171,9 @@ module h264_dpb_mc_tb #(
 	assign ref_ready = FAULT_EARLY_REF ? 1'b1 : ref_ready_good;
 	assign luma_window_valid = luma_window_valid_good;
 	assign luma_window_idx = luma_window_idx_good;
+	// Red twin: corrupt the first window beat. For the mv=(-5,-7) top-left
+	// case idx0 is fully edge-clamped (origin-2 → sample (0,0)); a wrong
+	// clamp/pipeline that never checks edge samples would miss this.
 	assign luma_window_sample = (FAULT_BAD_CLAMP && luma_window_valid_good && luma_window_idx_good == 9'd0) ?
 	                            (luma_window_sample_good + 8'd1) : luma_window_sample_good;
 	assign chroma_u_window_valid = chroma_u_window_valid_good;

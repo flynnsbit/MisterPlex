@@ -1,0 +1,46 @@
+w-osd STATUS — DPB MC clamp fix (OSD work STOPPED/HOLD)
+branch: w-osd-dpb-mc-clamp (off main)
+date: 2026-08-03
+
+== TASK ==
+main make unit RED: h264_dpb_mc RTL luma window clamp mismatch idx=4 got=20 want=17 src=(0,0)
+
+== REPRO (main pre-fix) ==
+./tests/unit/test_p3_dpb_mc_rtl_sim.sh ; echo "true rc=$?"
+-> FAIL idx=4 got=20 want=17 ; true rc=1
+(parent: identical at 77e1e78d pre-e87b1cb3 — pre-existing)
+
+== DECISION: RTL wrong (pipeline), clamp_coord OK ==
+H.264 8.4.2.1: out-of-picture luma samples clamp to edge (not wrap).
+RTL clamp_coord: v<0 -> 0; v>=limit -> limit-1. CORRECT.
+Window: sx = origin_x + (idx%21) - 2 ; origin includes mv>>>2. CORRECT.
+
+Root cause (measured cycle dump):
+  pending_*_d1 double-delayed metadata vs 1-cycle mem_rvalid
+  (decode_stub: dpb_mem_rvalid <= dpb_mem_rd; TB same).
+  Effect: window[n] = mem[addr_{n+1}]
+  idx=4 want (0,0)=17 (yPattern); got (1,0)=20.
+
+History: 5351257f added pending_*_d1 while also cutting rvalid to 1-stage;
+92329598 kept 1-stage rvalid but left pending_*_d1 — permanent +1 skew.
+
+BEFORE (response path):
+  if (mem_rvalid && pending_valid_d1) luma_window_idx <= pending_idx_d1;
+
+AFTER:
+  if (mem_rvalid && pending_valid) luma_window_idx <= pending_idx;
+  // pending_* registered on issue edge = correct 1-cycle align
+
+TB: origin-aware oracle clamp(origin + win - 2, 0, W-1) (H.264 edge).
+
+== EVIDENCE ==
+product:  OK real RTL sim ... ; product true rc=0
+FAULT_BAD_CLAMP red twin: idx=0 got=18 want=17 src=(0,0) ; clamp_fault true rc=1
+full suite test_p3_dpb_mc_rtl_sim.sh ; true rc=0
+
+== SPEC ==
+Edge clamp unchanged; fix is sample/idx alignment so edge samples are
+checked against the correct coordinates (critical for P-slice MC).
+
+== CONSTRAINTS ==
+No Quartus. No device. OSD B16/B20 remains HOLD.
