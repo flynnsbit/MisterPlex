@@ -1,20 +1,31 @@
-w-mem STATUS — 960x540 ABI airtight + fabric BW + publish barrier
-commit: eb2fd634
+w-mem STATUS — PRE-FIT VERDICT for integration exclusive
 
-DEVICE DOWN (parent) — no hardware. No Quartus.
+VERDICT: YES bandwidth closes. M10K: agree wiring-not-blocks (w/ caveats).
+Barrier: product publish path CLEAN (not signal_fence class).
 
-LANDED
-1) 960x540 tight: Y=960 C=480 U@518400 V@648000 bytes=777600 in Option-C 0x180000
-   PLXG geometry→window→origin; shear NEG canvas payload rejected
-2) Fabric BW@24 theoretical: direct 37.32 (5.2%) writeback 103.68 (14.4%) FIT
-   clk_pix 29.7 required; clk_sys 20 alone FAIL CEA — THEORETICAL only
-3) ddr_publish_barrier + BankProducerOrder barrier before doorbell
-   NEG signal_fence; product __sync_synchronize is real DMB on ARM
+BW @24 frozen 960x540→1280x720 (theoretical peak 720 MB/s):
+  direct  host+rd_native = 37.325 MB/s (5.18% peak)  FIT
+  writeback worst        = 103.680 MB/s (14.40% peak) FIT
+  arbiter m0 priority; FABRIC_DDR_WRITER default OFF this fit
+  clk_pix 29.7 / PPC=2 capacity OK; clk_sys 20 alone not CEA totals
 
-PARENT VERIFY
-  cd /home/flynnsbit/Projects/MisterPlex-wt-mem
-  ./build/test_ddr_720p_abi; echo "true rc=$?"
-  ./build/test_fabric_ddr_bandwidth; echo "true rc=$?"
-  ./build/test_ddr_publish_barrier; echo "true rc=$?"
-  ./build/test_bank_producer_order; echo "true rc=$?"
-  python3 tests/unit/test_rtl_invariants.py; echo "true rc=$?"
+M10K:
+  wire6 free 88 blocks (465/553) — bits-% retired
+  ~356 free = 88 + ~268 stub reclaim (arithmetic, not post-fit rpt)
+  2-tap V linebuf LB ~5–12 blocks ≪ 88 and ≪ 356
+  AGREE gate is wiring if stub reclaim in tree; post-fit is truth
+
+FALLBACK order if HARD_FAIL (do not pre-empt; geometry frozen):
+  1) 2-tap→1-tap V  2) source linebufs 960 not 1280  3) deep/wide pack
+  4) PPC 2→1 if clk_pix timing  5) no clk_sys bump  6) strip accidental decode/writer
+  7) last: 960x540 1:1 no upscale named flag
+
+BARRIER review (quoted fpga_spi.cpp):
+  memcpy → __sync_synchronize → kickDdrDoorbell(hi, DMB, magic, DMB)
+  atomic_signal_fence NOT used on publish path
+  ddr_publish_barrier + BankProducerOrder barrier landed eb2fd634
+
+DOC: docs/p720-prefit-mem-bw-verdict.md
+NO geometry change. NO Quartus from this lane.
+
+PARENT: read verdict doc; exclusive continues.
