@@ -55,9 +55,12 @@ f_pix_60 = 60 × 1_237_500 = 74_250_000 Hz
 
 | Target ID | `clk_pix` | Refresh @ CEA totals | Use |
 |-----------|----------:|---------------------:|-----|
-| **PIX24** | **29.700000 MHz** | **24.000 Hz** | First justified apply |
+| **PIX24** | **29.700000 MHz** | **24.000 Hz** | First justified apply (**this fit**) |
 | **PIX24i** | 30.000000 MHz | 24.242 Hz (~+1%) | Integer-PLL interim if fractional blocked |
+| **PIX30** | **37.125000 MHz** | **30.000 Hz** | TV/30 content glass; PPC≥2; **not this fit** |
 | **PIX60** | **74.250000 MHz** | **60.000 Hz** | Stretch; needs PPC=4 + STA |
+
+Multi-rate ARM budget: `CONTENT_FPS_CADENCE_AND_CLK_PIX.md` (960@30 fails 34.50 vs 33.33).
 
 ---
 
@@ -102,7 +105,16 @@ If fractional on the **product** PLL is rejected by fit/IP policy:
 
 fps_eff = 30e6/1_237_500 ≈ **24.24 Hz** (+1% vs CEA 24). Better than 16.16 Hz same-clock.
 
-### 3.3 PIX60 (second grant — after PIX24 STA green)
+### 3.3 PIX30 (after multi-rate product decision — not this fit)
+
+```verilog
+.output_clock_frequency3("37.125000 MHz"),  // 1650*750*30
+```
+
+Fabric: PPC≥2 → 40 Mpix/s ≥ 37.125 at clk_sys=20. STA: Fmax_pix≥37.125.  
+Prefer fps-aware ladder / PMS fps policy before retargeting glass — see cadence doc.
+
+### 3.4 PIX60 (second grant — after PIX24 STA green)
 
 ```verilog
 .fractional_vco_multiplier("true"),
@@ -114,7 +126,7 @@ fps_eff = 30e6/1_237_500 ≈ **24.24 Hz** (+1% vs CEA 24). Better than 16.16 Hz 
 
 Not simultaneous dual 29.7+74.25 without reconfig; mode is build/define or PLL reconfig (optional later).
 
-### 3.4 Explicit non-goals
+### 3.5 Explicit non-goals
 
 | Change | Allowed? |
 |--------|:--------:|

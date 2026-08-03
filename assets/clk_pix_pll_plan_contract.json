@@ -63,6 +63,13 @@
       "peak_fabric_mpix_at_min_ppc": 80.0,
       "out_mpix": 74.25,
       "balance_ok": true
+    },
+    "PIX30": {
+      "status": "PROPOSED_NOT_APPLIED",
+      "clk_pix_mhz": 37.125,
+      "formula": "1650*750*30",
+      "note": "30 fps CEA totals; fabric PPC>=2 at clk_sys=20 (40>=37.125). Not this fit.",
+      "min_ppc": 2
     }
   },
   "forbidden": {
@@ -73,15 +80,17 @@
   },
   "macros": {
     "PRESENT_MULTI_PIXEL": "OFF default",
-    "PRESENT_CLK_PIX_PLL": "OFF default — gates outclk_3 wiring"
+    "PRESENT_CLK_PIX_PLL": "OFF default \u2014 gates outclk_3 wiring"
   },
   "cdc": {
-    "load_bearing": "async_fifo gray + mem→rd_data_r false_path only",
+    "load_bearing": "async_fifo gray + mem\u2192rd_data_r false_path only",
     "extends": "e0f23e5a"
   },
   "rules": {
     "do_not_apply_pll_without_parent_fit_grant": true,
     "shipping_pll_must_remain_3_clocks_until_grant": true,
     "no_false_path_to_hide_cdc": true
-  }
+  },
+  "content_fps_cadence_doc": ".agent-work/w-clock/CONTENT_FPS_CADENCE_AND_CLK_PIX.md",
+  "fit_scope_unchanged": "960x540/24 + PIX24 29.7 only"
 }
