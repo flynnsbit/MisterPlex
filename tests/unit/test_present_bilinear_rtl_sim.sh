@@ -73,19 +73,20 @@ echo "=== A) nn_equiv edge ===" >&2
 run_mode nn_equiv
 echo "=== B) mid_lerp ===" >&2
 run_mode mid_lerp
-echo "=== C) neg_nn_only ===" >&2
+echo "=== C) product540 960x540 ship path ===" >&2
+run_mode product540
+echo "=== D) neg_nn_only ===" >&2
 run_mode neg_nn_only
 
 assert_sim_executed nn_equiv "$nn_equiv_OUT" "CASE nn_equiv EXECUTED" "PASS bilinear nn_equiv"
 assert_sim_executed mid_lerp "$mid_lerp_OUT" "CASE mid_lerp EXECUTED" "PASS bilinear mid_lerp"
+assert_sim_executed product540 "$product540_OUT" "CASE product540_bil EXECUTED" "PASS bilinear product540"
 assert_sim_executed neg_nn_only "$neg_nn_only_OUT" "CASE neg_nn_only EXECUTED" "PASS neg_nn_only"
 
-if [[ "$nn_equiv_RC" -ne 0 || "$mid_lerp_RC" -ne 0 || "$neg_nn_only_RC" -ne 0 ]]; then
+if [[ "$nn_equiv_RC" -ne 0 || "$mid_lerp_RC" -ne 0 || "$product540_RC" -ne 0 || "$neg_nn_only_RC" -ne 0 ]]; then
   echo "FAIL bilinear modes" >&2
   exit 1
 fi
 
-# RED: build WITHOUT macro must not elaborate bilinear ports on this TB top
-# (TB requires ports). Instead, host math proves NN decision remains default.
-echo "OK present_bilinear_rtl_sim: nn_equiv + mid_lerp + neg_nn_only (macro ON)"
+echo "OK present_bilinear_rtl_sim: nn_equiv + mid_lerp + product540 + neg_nn_only (macro ON)"
 exit 0

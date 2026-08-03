@@ -24,9 +24,10 @@
 // Pixel path = mul-shift + add + clamp only. Scale dividers run when window
 // regs change and land in sx_r/sy_r — off the ce_pix critical path.
 //
-// Arbitrary source → arbitrary DE (PLXG): content_w/h are bank/content size
-// (e.g. PMS 720×404); h_de/v_de are the glass raster (e.g. 1280×720). ARM never
-// swscales when win_enable=1.
+// Arbitrary source → arbitrary DE (PLXG): content_w/h are bank/content size.
+// Ship product source (parent measured): **960×540** → h_de/v_de **1280×720**
+// (~4/3 non-integer — NN shimmers; enable PRESENT_WINDOW_BILINEAR on glass if ugly).
+// Also: PMS 720×404 degradation tier. ARM never swscales when win_enable=1.
 //
 // Product 480p: h_de=529 (FBAR/Template lock), v_de=480. Do not change DE
 // timing in this module; h_de/v_de are runtime so 720p DE is a parameter

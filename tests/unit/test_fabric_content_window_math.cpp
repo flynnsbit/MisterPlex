@@ -325,6 +325,28 @@ int main() {
                     sx_ok, sx_inv, mid_ok, mid_inv);
     }
 
+
+    // Parent ship path: 960×540 → 1280×720 (~4/3 non-integer).
+    {
+        constexpr int CW = 960, CH = 540, HDE = 1280, VDE = 720;
+        EXPECT(CW * 4 == HDE * 3, "4:3 width product target");
+        EXPECT(CH * 4 == VDE * 3, "4:3 height product target");
+        const int sx = win_store_x_scale(CW, HDE);
+        const int sy = win_store_y_scale(CH, VDE);
+        EXPECT(store_x_at(0, sx, 0, CW - 1) == 0, "540 x0");
+        EXPECT(store_x_at(HDE - 1, sx, 0, CW - 1) == CW - 1, "540 x last");
+        EXPECT(store_y_at(VDE - 1, sy, 0, VDE, CH - 1) == CH - 1, "540 y last");
+        const int mid = store_x_at((HDE - 1) / 2, sx, 0, CW - 1);
+        EXPECT(mid != (HDE - 1) / 2, "540 mid not identity");
+        EXPECT(mid > 400 && mid < 560, "540 mid in 4/3 band");
+        // floor undershoot still fails last
+        const int64_t num = int64_t(CW - 1) * 65536;
+        const int sx_floor = int(num / (HDE - 1));
+        EXPECT(store_x_at(HDE - 1, sx_floor, 0, CW - 1) == CW - 2,
+               "540 floor undershoot last (neg)");
+        std::printf("PASS math product540 960x540→720p sx=%d sy=%d mid=%d\n", sx, sy, mid);
+    }
+
 if (g_fails) {
         std::fprintf(stderr, "test_fabric_content_window_math: %d failure(s)\n", g_fails);
         return 1;

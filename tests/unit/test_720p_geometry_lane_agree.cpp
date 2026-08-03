@@ -71,6 +71,13 @@ int main() {
 	// Native bank fill: 1280×720. PMS degradation tier (w-path): 720×404.
 	constexpr int kPmsDegW = 720, kPmsDegH = 404;
 	chk(kPmsDegW < kMultiHDe && kPmsDegH < kMultiVDe, "PMS 404 needs fabric upscale");
+	// Parent ship path (measured): 960×540 ARM decode+copy PASS margin 10.49;
+	// fabric upscales to 1280×720 OUTPUT (not 720p source).
+	constexpr int kProductSrcW = 960, kProductSrcH = 540;
+	chk(kProductSrcW * 4 == kMultiHDe * 3, "product src 4:3 to DE width");
+	chk(kProductSrcH * 4 == kMultiVDe * 3, "product src 4:3 to DE height");
+	chk(kProductSrcW < kMultiHDe, "product needs fabric upscale X");
+	chk(kProductSrcH < kMultiVDe, "product needs fabric upscale Y");
 	// H ownership: under multi-pixel, beam glass_x0 drives the window hc input
 	// with h_de=1280 — NOT colorbars hc with H_DE=529 (shear class).
 	chk(kMultiHDe != kProductHDe, "H_OWNERSHIP: multi DE must not equal Template 529");
@@ -109,6 +116,6 @@ int main() {
 	          << "PPC_W%4=0 "
 	          << "DE_product=529x480 DE_multi=1280x720 osd_canvas=1280x720 "
 	          << "H_OWNERSHIP=beam_glass+scaler_map+osd_hdmi "
-	          << "pms_deg=720x404\n";
+	          << "pms_deg=720x404 product_src=960x540\n";
 	return 0;
 }

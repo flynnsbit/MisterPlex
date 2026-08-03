@@ -121,6 +121,14 @@ set -e
 printf '%s\n' "$PMS404_OUT"
 echo "pms404 true rc=$PMS404_RC"
 
+echo "=== F2) PRODUCT 960x540 → 1280x720 DE (ship path, ~4/3) ===" >&2
+set +e
+P540_OUT="$(WINDOW_MODE=product540 "$BUILD/Vpresent_content_window_tb" 2>&1)"
+P540_RC=$?
+set -e
+printf '%s\n' "$P540_OUT"
+echo "product540 true rc=$P540_RC"
+
 echo "=== G) Letterbox 720x404 centred ===" >&2
 set +e
 LB_OUT="$(WINDOW_MODE=letterbox "$BUILD/Vpresent_content_window_tb" 2>&1)"
@@ -149,12 +157,14 @@ assert_sim_executed "720id" "$W720ID_OUT" \
   "PASS present_content_window_720_identity"
 assert_sim_executed "pms404" "$PMS404_OUT" \
   "CASE pms404 EXECUTED" "PASS present_content_window_pms404_to_720p"
+assert_sim_executed "product540" "$P540_OUT" \
+  "CASE product540 EXECUTED" "PASS present_content_window_product_960x540_to_720p"
 assert_sim_executed "letterbox" "$LB_OUT" \
   "CASE letterbox EXECUTED" "PASS present_content_window_letterbox_404"
 assert_sim_executed "neg_scale" "$NEG_OUT" \
   "CASE neg_scale EXECUTED" "PASS neg_scale midpoint discriminator live"
 
-if [[ "$LEGACY_RC" -ne 0 || "$WINDOW_RC" -ne 0 || "$L480_RC" -ne 0 || "$W720_RC" -ne 0 || "$W720ID_RC" -ne 0 || "$PMS404_RC" -ne 0 || "$LB_RC" -ne 0 || "$NEG_RC" -ne 0 ]]; then
+if [[ "$LEGACY_RC" -ne 0 || "$WINDOW_RC" -ne 0 || "$L480_RC" -ne 0 || "$W720_RC" -ne 0 || "$W720ID_RC" -ne 0 || "$PMS404_RC" -ne 0 || "$P540_RC" -ne 0 || "$LB_RC" -ne 0 || "$NEG_RC" -ne 0 ]]; then
   echo "FAIL: one or more WINDOW_MODE cases returned non-zero" >&2
   exit 1
 fi
@@ -192,5 +202,21 @@ run_fault_red PRESENT_WINDOW_FAULT_IDENTITY_SCALE fault_idscale
 run_fault_red PRESENT_WINDOW_FAULT_FLOOR_SCALE fault_floor
 run_fault_red PRESENT_WINDOW_FAULT_INVERT_RATIO fault_invert
 
-echo "OK present_content_window_rtl_sim: REPRO legacy + PASS 320/480id/720 + pms404/letterbox/neg_scale + RED idscale/floor/invert"
+# RED on product 960×540 path: identity scale must fail product540 too.
+echo "=== RED twin IDENTITY on product540 ===" >&2
+BUILD_RED540="$ROOT/build/verilator/present_content_window_fault_idscale"
+set +e
+RED540_OUT="$(WINDOW_MODE=product540 "$BUILD_RED540/Vpresent_content_window_tb" 2>&1)"
+RED540_RC=$?
+set -e
+printf '%s\n' "$RED540_OUT"
+echo "fault_idscale_product540 true rc=$RED540_RC"
+assert_sim_executed "fault_idscale_540" "$RED540_OUT" "CASE product540 EXECUTED"
+if [[ "$RED540_RC" -eq 0 ]]; then
+  echo "FAIL: IDENTITY_SCALE product540 must fail (ship-path red twin dead)" >&2
+  exit 1
+fi
+echo "PASS red-check FAULT_IDENTITY_SCALE product540 true_rc=$RED540_RC"
+
+echo "OK present_content_window_rtl_sim: + product540 960x540 + RED idscale/floor/invert/540"
 exit 0

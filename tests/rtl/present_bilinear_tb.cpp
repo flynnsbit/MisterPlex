@@ -162,6 +162,67 @@ int runMidLerp() {
 	return 0;
 }
 
+int runProduct540Bilinear() {
+	// Ship path 960×540 → 1280×720 @ ~4/3: bilinear must mix (NN alone shimmers).
+	Sim s;
+	s.top.win_enable = 1;
+	s.top.content_w = 960;
+	s.top.content_h = 540;
+	s.top.content_x0 = 0;
+	s.top.content_y0 = 0;
+	s.top.h_de = 1280;
+	s.top.v_de = 720;
+	s.top.p00 = 0;
+	s.top.p10 = 255;
+	s.top.p01 = 0;
+	s.top.p11 = 255;
+	s.resetCycles();
+	s.settle();
+	int found = 0, out = 0, fx = 0, x = 0, x1 = 0;
+	for (int hc = 1; hc < 1279; ++hc) {
+		s.sample(hc, 270, 1280, 720);
+		fx = int(s.top.frac_x);
+		if (fx >= 40 && fx <= 220) {
+			found = 1;
+			out = int(s.top.out_pix);
+			x = int(s.top.store_x);
+			x1 = int(s.top.store_x1);
+			break;
+		}
+	}
+	std::cout << "CASE product540_bil EXECUTED found=" << found << " fx=" << fx
+	          << " out=" << out << " x=" << x << " x1=" << x1 << "\n";
+	if (!found) {
+		std::cerr << "FAIL product540_bil: no interior frac (4/3 scale dead)\n";
+		return 1;
+	}
+	if (x1 != x + 1 && !(x1 == x && fx == 0)) {
+		std::cerr << "FAIL product540_bil: bad x1\n";
+		return 1;
+	}
+	const int exp = lerpHost(0, 255, 0, 255, fx, int(s.top.frac_y));
+	if (expectNear(out, exp, 1, "product540 bil lerp"))
+		return 1;
+	if (out < 30) {
+		std::cerr << "FAIL product540_bil: no p10 mix (NN shimmer class)\n";
+		return 1;
+	}
+	// Endpoints still cover content
+	s.sample(0, 0, 1280, 720);
+	if (int(s.top.store_x) != 0) {
+		std::cerr << "FAIL product540_bil: x0\n";
+		return 1;
+	}
+	s.sample(1279, 719, 1280, 720);
+	if (int(s.top.store_x) != 959 || int(s.top.store_y) != 539) {
+		std::cerr << "FAIL product540_bil: last 959,539 got " << int(s.top.store_x)
+		          << "," << int(s.top.store_y) << "\n";
+		return 1;
+	}
+	std::cout << "PASS bilinear product540 960x540→720p\n";
+	return 0;
+}
+
 int runNegNnOnly() {
 	// Same setup: if implementation ignored p10 (NN-only bug under bilinear build),
 	// out stays near 0. Product must mix.
@@ -208,9 +269,12 @@ int main(int argc, char** argv) {
 		rc |= runNnEquiv();
 	if (m == "mid_lerp" || m == "all")
 		rc |= runMidLerp();
+	if (m == "product540" || m == "all")
+		rc |= runProduct540Bilinear();
 	if (m == "neg_nn_only" || m == "all")
 		rc |= runNegNnOnly();
-	if (m != "nn_equiv" && m != "mid_lerp" && m != "neg_nn_only" && m != "all") {
+	if (m != "nn_equiv" && m != "mid_lerp" && m != "product540" && m != "neg_nn_only" &&
+	    m != "all") {
 		std::cerr << "unknown BILINEAR_MODE\n";
 		return 2;
 	}

@@ -59,6 +59,8 @@ w-scaler bank width alone does **not** grow ACTIVE. Full-raster ACTIVE needs
 | Multi-pixel DE | **1280×720** | w-clock `8003ef89` |
 | OSD target | **1280×720** | w-osd chrome/idle |
 | PMS deg tier | **720×404** | w-path below maxBR≈3100 — needs fabric scale |
+| **Product source (ship)** | **960×540** | ARM decode+copy margin ~10.5 ms; fabric → 1280×720 **output** |
+| Product scale | **4/3** non-integer | NN shimmer worst; bilinear V2 preferred on glass |
 
 ---
 

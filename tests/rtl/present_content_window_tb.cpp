@@ -406,6 +406,78 @@ int runLetterbox() {
 	return 0;
 }
 
+// Parent product target: 960×540 ARM-affordable source → fabric 1280×720 glass.
+// Scale ≈ 4/3 non-integer — NN shimmer worst case; load-bearing for ship path.
+int runProduct540() {
+	constexpr int kHDe = 1280, kVDe = 720;
+	constexpr int kCw = 960, kCh = 540;
+	Sim s;
+	s.top.win_enable = 1;
+	s.top.content_w = kCw;
+	s.top.content_h = kCh;
+	s.top.content_x0 = 0;
+	s.top.content_y0 = 0;
+	s.top.h_de = kHDe;
+	s.top.v_de = kVDe;
+	s.resetCycles();
+	s.settleWindow();
+
+	std::set<int> xs, ys;
+	for (int hc = 0; hc < kHDe; ++hc) {
+		s.sampleAt(hc, 0, kHDe, kVDe);
+		xs.insert(int(s.top.store_x));
+	}
+	for (int py = 0; py < kVDe; ++py) {
+		s.sampleAt(0, py, kHDe, kVDe);
+		ys.insert(int(s.top.store_y));
+	}
+	s.sampleAt(0, 0, kHDe, kVDe);
+	const int x0 = int(s.top.store_x);
+	s.sampleAt(kHDe - 1, 0, kHDe, kVDe);
+	const int x_last = int(s.top.store_x);
+	s.sampleAt(0, kVDe - 1, kHDe, kVDe);
+	const int y_last = int(s.top.store_y);
+	s.sampleAt((kHDe - 1) / 2, (kVDe - 1) / 2, kHDe, kVDe);
+	const int x_mid = int(s.top.store_x);
+	const int y_mid = int(s.top.store_y);
+	const int sx = winScale(kCw, kHDe);
+	const int sy = winScale(kCh, kVDe);
+	const int x_mid_exp = ((kHDe - 1) / 2 * sx) >> 16;
+	const int y_mid_exp = ((kVDe - 1) / 2 * sy) >> 16;
+
+	// Non-integer 4/3: sx != 65536 and != 49152 (3/4) — must be ceil((959)*65536/1279).
+	std::cout << "CASE product540 EXECUTED unique_x=" << xs.size()
+	          << " max_x=" << *xs.rbegin() << " unique_y=" << ys.size()
+	          << " max_y=" << *ys.rbegin() << " x0=" << x0 << " x_last=" << x_last
+	          << " y_last=" << y_last << " x_mid=" << x_mid << " exp≈" << x_mid_exp
+	          << " y_mid=" << y_mid << " exp≈" << y_mid_exp << " sx=" << sx
+	          << " sy=" << sy << " scale≈4/3\n";
+
+	int fails = 0;
+	auto expect = [&](bool c, const char* m) {
+		if (!c) {
+			std::cerr << "FAIL product540: " << m << "\n";
+			++fails;
+		}
+	};
+	expect(x0 == 0 && x_last == kCw - 1, "H endpoints 0..959");
+	expect(y_last == kCh - 1, "V endpoint 539");
+	expect(xs.size() == static_cast<size_t>(kCw), "unique x covers 960 cols");
+	expect(ys.size() == static_cast<size_t>(kCh), "unique y covers 540 rows");
+	expect(std::abs(x_mid - x_mid_exp) <= 1, "x midpoint scale");
+	expect(std::abs(y_mid - y_mid_exp) <= 1, "y midpoint scale");
+	// Identity would be mid=639; 1:1 content would be mid=479.5→~479.
+	expect(x_mid != (kHDe - 1) / 2, "not identity DE map");
+	expect(x_mid > 400 && x_mid < 560, "x_mid in ~4/3 content band");
+	expect(sx != 65536 && sx != 0, "non-identity sx");
+	// Integer-2× would be sx≈32768 for half width; 960 is not half of 1280.
+	expect(kCw * 4 == kHDe * 3, "document 4:3 width ratio product target");
+	if (fails)
+		return 1;
+	std::cout << "PASS present_content_window_product_960x540_to_720p\n";
+	return 0;
+}
+
 int runNegScaleMidpoint() {
 	// Product path: 720→1280 must NOT be identity. This is the green half of the
 	// wrong-scale discriminator (FAULT_IDENTITY_SCALE red twin is separate build).
@@ -470,12 +542,13 @@ int main(int argc, char** argv) {
 	run("720de480", run720on480);
 	run("720id", run720identity);
 	run("pms404", runPms404);
+	run("product540", runProduct540);
 	run("letterbox", runLetterbox);
 	run("neg_scale", runNegScaleMidpoint);
 
 	if (mode != "legacy" && mode != "window" && mode != "legacy480" && mode != "720de480" &&
-	    mode != "720id" && mode != "pms404" && mode != "letterbox" && mode != "neg_scale" &&
-	    mode != "all") {
+	    mode != "720id" && mode != "pms404" && mode != "product540" && mode != "letterbox" &&
+	    mode != "neg_scale" && mode != "all") {
 		std::cerr << "unknown WINDOW_MODE=" << mode << "\n";
 		return 2;
 	}
