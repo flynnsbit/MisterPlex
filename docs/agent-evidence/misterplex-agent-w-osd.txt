@@ -132,3 +132,22 @@ beam-only rt_de_apply gate INSUFFICIENT.
 Owners: w-mem (+ w-clock beam). w-osd: HOLD B16/B20 product-closed claim.
 This tree: u_plxg_latch frame_boundary tied 0 (idle) — fabric wire only.
 HEAD=439b80fa
+
+=== rd-duck 2026-08-03T09:06:17-05:00 DP deliveryGeometryVerified claim — EVIDENCE ===
+CLAIM: threadMain clears verified at ~3067 BEFORE vf load ~3098; pad-only dead.
+THIS TREE (HEAD pre-commit) quoted order in arm/misterplexd/media_player.cpp:
+  :2851 deliveryGeometryVerified_.load -> vfReq.delivery_geometry_verified
+  :2852 buildFfmpegVideoFilter(vfReq)   FIRST and ONLY plan call
+  :3105 deliveryGeometryVerified_.store(false)  AFTER plan (B4 session measure)
+  main.cpp:976 setDeliveryGeometryVerified(deliveryVerified) from basis
+path tree same shape: load:3098 plan:3099 clear:3407 (not clear-before-plan).
+duck :3067 on path is measuredDeliveryW_/H_ store(0), NOT verified clear.
+CONCLUSION: pre-plan erase NOT present on path/osd HEAD — rule0 correction.
+RESIDUAL (still open, owner w-path):
+  1) no setter→threadMain E2E oracle (planner unit tests inject verified=true)
+  2) post-plan store(false) wipes atomic; telemetry after shows 0 until MEASURED
+  3) split plan_time vs measured-session flag is cleaner (duck fix still good)
+  4) verified_same_height_pad_only (1e30caf6) is path-only; absent on w-osd vf
+GATE: tests/unit/test_dp_verified_vf_plan_order_static.py
+  GREEN true rc=0; DROP TWIN clear-before-plan would FAIL (proved locally)
+w-osd does NOT claim DP identity/pad-only product path closed.
