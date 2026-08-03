@@ -262,3 +262,66 @@ INTEGRATION FIT readiness (honest):
   Nostub d1b24e0c on glass = room is there (356 free M10K).
 
 ========================================================================
+
+========================================================================
+FAB-IDLE NATIVE 1280×720 (this land)
+========================================================================
+date: 2026-08-03
+goal: idle screen entirely in fabric at 1280×720; ARM paints nothing; PPC-safe;
+      vsync phase from fabric; default OFF (PLEX_FAB_IDLE).
+
+(a) Geometry contract — docs/chrome-idle-geometry-contract.md
+  - Chrome composites in HDMI pixel space (hdmi_width/height post-ascal).
+  - PLXG (w-scaler) is bank/content window — different domain.
+  - ABI CONFLICT surfaced: w-scaler proposed PLXG @ +0x130; PLXC already owns
+    +0x130. Propose PLXG @ +0x280 (after list). Parent must arbitrate.
+  - 720p logo: size=240 ox=520 oy=240 stroke=48 scale=3 colours E5A00D/1F2326
+
+(b) Product wire (default OFF)
+  sys_top.v:
+    `ifdef PLEX_FAB_IDLE
+      has_frame_chrome = 0; fab_idle_phase_en = 1;  // ARM-off idle milestone
+    `else
+      has_frame_chrome = 1; fab_idle_phase_en = 0;  // nostub-safe, no idle takeover
+    `endif
+  host_if: vsync_in + fab_phase_en → idle_phase++ on vs rising (fabric owns timing)
+  Chrome remains on HDMI path always (synthesis survival) — macro only controls.
+
+(c) Red-before-green true rc (direct)
+  test_plex_chrome_rtl_sim:           true rc=0
+  test_plex_chrome_idle720_rtl_sim:
+    RED  FAULT_480P_GEOM=1 mon 624x480 scale=2  true rc=0 (fault engaged)
+    GREEN mon 1280x720 scale=3
+      pix (0,0)=1f2326 (520,240)=e5a00d (560,280)=e5a00d video=0
+      phase 5→10 on vsync; subsample amber=1440 bg=113040 video=0
+      true rc=0
+  test_plex_chrome_ppc_rtl_sim:
+    idle x518-519=1f2326|1f2326 x520-521=e5a00d|e5a00d  PASS ppc2-idle720-lanes
+    true rc=0
+  test_plex_chrome_e2e_rtl_sim:       true rc=0
+  test_unit_rollcall:                 true rc=0
+  test_plex_chrome_elision_guard:     true rc=0
+
+(d) ARM ms removed
+  Unknown until parent profiles plane live idle path on device.
+  Measurement: CHROME_PLANE off vs on; paintIdle wall time + DDR publish absent.
+  Class: full idle RGB bake + DDR publish eliminated when plane live (code path
+  already skips; FAB_IDLE makes fabric the source of pixels).
+
+(e) Parent device verify (after integration fit with PLEX_FAB_IDLE=1)
+  1. HDMI mode 1280×720 (video mode 0 typical)
+  2. DEPLOY_LOAD=menu ./scripts/deploy_plex_core.sh
+  3. Daemon log: "idle fabric plane=1 skip ALL ARM paint" (CHROME_PLANE conf)
+  4. scripts/hdmi_capture_idle.sh docs/agent-evidence/idle720-live.png
+     Expect ORANGE_PX>0, dark bg, chevron; not black; not 624×480 pillar only
+  5. Post-fit: make post-fit-hierarchy must show u_plex_chrome rows non-zero;
+     elision guard GREEN on new fit.rpt
+
+(f) Unknowns
+  - Real has_frame CDC not wired; FAB_IDLE forces has_frame=0 (always idle)
+  - HDMI mode still host/MiSTer — chrome does not force 720p video_mode
+  - PLXG offset conflict with w-scaler
+  - STA of idle comb on clk_hdmi unmeasured this lane
+  - ARM ms exact number
+
+Memory: unchanged — idle pure comb (0 M10K); list 1–2 M10K.

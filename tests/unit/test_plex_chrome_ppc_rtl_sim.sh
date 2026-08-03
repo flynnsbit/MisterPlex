@@ -26,7 +26,7 @@ mkdir -p "$BUILD"
 set +e; OUT="$("$BUILD/Vplex_chrome_ppc_tb" 2>&1)"; RC=$?; set -e
 printf '%s\n' "$OUT"
 echo "plex_chrome_ppc_tb rc=$RC"
-assert_sim_executed "ppc" "$OUT" "PASS ppc2-passthrough" "PASS ppc2-lane-split" "PASS ppc2-outside" "plex_chrome_ppc_tb: PASS"
+assert_sim_executed "ppc" "$OUT" "PASS ppc2-passthrough" "PASS ppc2-lane-split" "PASS ppc2-outside" "PASS ppc2-idle720-lanes" "plex_chrome_ppc_tb: PASS"
 [[ "$RC" -eq 0 ]] || exit "$RC"
 echo "test_plex_chrome_ppc_rtl_sim: PASS"
 exit 0

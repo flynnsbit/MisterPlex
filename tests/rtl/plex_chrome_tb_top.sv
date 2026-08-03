@@ -48,6 +48,8 @@ module plex_chrome_tb (
         .has_frame(has_frame),
         .osd_idle_mode(osd_idle_mode),
         .idle_phase_in(idle_phase_in),
+        .vsync_in(vs_in),
+        .fab_phase_en(1'b0),
         .list_we(list_we),
         .list_waddr(list_waddr),
         .list_wdata(list_wdata),

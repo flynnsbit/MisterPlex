@@ -55,12 +55,11 @@ From `MisterPlex-wt-clock/.../MULTI_PIXEL_PRESENT_DESIGN.md` + `present_beam_ppc
 - Multi-pixel (`PRESENT_PX_PER_CLK` ∈ {1,2,4}) widens the **clk_sys present beam**
   (pre-ascal store read). Swap/pace remain **once per frame** on `frame_start` —
   **fab-pace is PPC-invariant.**
-- **`plex_chrome` today** sits **post-ascal on `clk_hdmi`**, 1 pixel per `clk_hdmi`.
-  Interface assumption: **chrome composites at HDMI ppc=1** unless a future change
-  moves multi-pixel past ascal.
-- If chrome is ever fed N lanes: hit-test must OR lanes `x0..x0+N-1` and emit N
-  RGB outs; hx must not assume `+1` per clock. Tracked as follow-up; not required
-  while chrome stays post-ascal 1ppc.
+- **`plex_chrome` today** sits **post-ascal on `clk_hdmi`**. Product default
+  `PX_PER_CLK=1`. Module supports 1|2|4; each lane hits at `hx0+lane` (idle+cmds).
+  Interface assumption: **HDMI path remains 1ppc until w-clock feeds N-wide past
+  ascal** — then instantiate matching `PX_PER_CLK`. See
+  `docs/chrome-idle-geometry-contract.md`.
 - HIT_SCAN/cmd list are geometry in **pixel units** (12-bit) — valid at 1280×720
   regardless of PPC.
 

@@ -4,6 +4,10 @@
 //   addr 0xFF = PLXC control qword
 //   addr 0..MAX-1 = command list words
 // list_we is derived from host_we — never const 0 (c74c6863).
+//
+// Fabric idle phase (PLEX_FAB_IDLE / fab_phase_en):
+//   When fab_phase_en=1, idle_phase advances on vsync rising (fabric owns timing;
+//   ARM does not doorbell phase). When 0, idle_phase tracks idle_phase_in.
 
 `timescale 1ns / 1ps
 
@@ -20,6 +24,9 @@ module plex_chrome_host_if #(
     input  wire        has_frame,
     input  wire [1:0]  osd_idle_mode,
     input  wire [15:0] idle_phase_in,
+    // Fabric phase: vsync level (edge inside). fab_phase_en=0 → host phase only.
+    input  wire        vsync_in,
+    input  wire        fab_phase_en,
 
     output reg         list_we,
     output reg  [7:0]  list_waddr,
@@ -42,6 +49,8 @@ module plex_chrome_host_if #(
     wire [7:0] count_clamped =
         (count_field > MAX_CMDS[7:0]) ? MAX_CMDS[7:0] : count_field;
 
+    reg vsync_d;
+
     always @(posedge clk) begin
         if (reset) begin
             list_we       <= 1'b0;
@@ -55,12 +64,20 @@ module plex_chrome_host_if #(
             idle_phase    <= 16'd0;
             chrome_hw_sticky <= 1'b1;
             plxo_seq      <= 16'd0;
+            vsync_d       <= 1'b0;
         end else begin
             list_we <= 1'b0;
             chrome_hw_sticky <= 1'b1;
             idle_mode  <= osd_idle_mode;
-            idle_phase <= idle_phase_in;
             idle_en <= (!has_frame) && (osd_idle_mode != 2'd3);
+            vsync_d <= vsync_in;
+
+            if (fab_phase_en) begin
+                if (vsync_in && !vsync_d)
+                    idle_phase <= idle_phase + 16'd1;
+            end else begin
+                idle_phase <= idle_phase_in;
+            end
 
             if (host_we) begin
                 if (host_addr == 8'hFF) begin

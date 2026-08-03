@@ -1203,11 +1203,21 @@ cyclonev_hps_interface_peripheral_i2c hdmi_i2c
 	reg  [7:0]  plxc_boot_addr;
 	reg  [63:0] plxc_boot_wdata;
 	reg  [1:0]  plxc_boot_st;
-	// has_frame_chrome: 0 → fabric idle. Product wires present_core has_frame.
-	// Fail-open to 1 (no idle takeover) until threaded — avoids black-screen.
+	// has_frame_chrome: 0 → fabric idle. Default OFF fail-opens to 1 (no idle
+	// takeover) so macros-at-reset match nostub glass. PLEX_FAB_IDLE: fabric
+	// owns idle; until present has_frame is CDC'd into clk_hdmi, force 0 so
+	// ARM-off idle paints (parent 720p idle milestone). Integration replaces
+	// force-0 with CDC(present_core.stat_has_frame / pace.has_frame).
 	wire        has_frame_chrome;
 	wire [1:0]  osd_idle_chrome;
-	assign has_frame_chrome = 1'b1; // product: present has_frame (threaded later)
+	wire        fab_idle_phase_en;
+`ifdef PLEX_FAB_IDLE
+	assign has_frame_chrome  = 1'b0;
+	assign fab_idle_phase_en = 1'b1;
+`else
+	assign has_frame_chrome  = 1'b1;
+	assign fab_idle_phase_en = 1'b0;
+`endif
 	assign osd_idle_chrome  = 2'b00;
 	assign plxc_ext_we    = 1'b0;
 	assign plxc_ext_addr  = 8'd0;
@@ -1269,6 +1279,8 @@ cyclonev_hps_interface_peripheral_i2c hdmi_i2c
 		.has_frame(has_frame_chrome),
 		.osd_idle_mode(osd_idle_chrome),
 		.idle_phase_in(16'd0),
+		.vsync_in(hdmi_vs_mask),
+		.fab_phase_en(fab_idle_phase_en),
 		.list_we(plex_chrome_list_we),
 		.list_waddr(plex_chrome_list_waddr),
 		.list_wdata(plex_chrome_list_wdata),

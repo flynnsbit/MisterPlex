@@ -127,6 +127,71 @@ int main(int argc, char** argv) {
     if (fails == 0)
         std::fprintf(stderr, "PASS ppc2-outside\n");
 
+    // --- 720p idle: chevron edge must not shear across lanes ---
+    // 1280×720: size=240 ox=520 oy=240. PPC=2 beat x0=520 → lanes 520|521 amber.
+    // Beat x0=518 → 518|519 bg (left of ox).
+    std::fprintf(stderr, "=== ppc2 idle720 chevron lanes ===\n");
+    t->de_in = 0;
+    t->has_frame = 0;
+    t->osd_idle_mode = 0;
+    host_wr(t, 0xFF, packPlxc(false, 0, 2));
+    t->vs_in = 0;
+    tick(t);
+    t->vs_in = 1;
+    tick(t);
+    t->vs_in = 0;
+    for (int i = 0; i < 4; ++i)
+        tick(t);
+
+    auto run_line = [&](uint32_t* beats_out, int nbeats) {
+        t->de_in = 0;
+        tick(t);
+        t->de_in = 1;
+        int got = 0;
+        for (int b = 0; b < nbeats; ++b) {
+            t->din = (uint64_t(0x00FF00) << 24) | 0x00FF00;
+            tick(t);
+            if (t->de_out && got < nbeats) {
+                beats_out[got * 2 + 0] = t->dout & 0xFFFFFFu;
+                beats_out[got * 2 + 1] = (t->dout >> 24) & 0xFFFFFFu;
+                ++got;
+            }
+        }
+        t->de_in = 0;
+        tick(t);
+        if (t->de_out && got < nbeats) {
+            beats_out[got * 2 + 0] = t->dout & 0xFFFFFFu;
+            beats_out[got * 2 + 1] = (t->dout >> 24) & 0xFFFFFFu;
+            ++got;
+        }
+        return got;
+    };
+
+    // Skip y=0..239 (full 640 beats each)
+    uint32_t discard[640 * 2];
+    for (int y = 0; y < 240; ++y)
+        (void)run_line(discard, 640);
+
+    uint32_t line[640 * 2];
+    const int got = run_line(line, 640);
+    if (got < 261)
+        fail("idle720 line short");
+    // beat index b has hx0=2*b → b=259 → x0=518; b=260 → x0=520
+    const uint32_t i0 = line[259 * 2 + 0];
+    const uint32_t i1 = line[259 * 2 + 1];
+    const uint32_t a0 = line[260 * 2 + 0];
+    const uint32_t a1 = line[260 * 2 + 1];
+    std::fprintf(stderr, "idle x518-519=%06x|%06x x520-521=%06x|%06x got=%d\n", i0, i1, a0, a1,
+                 got);
+    if (i0 != 0x1F2326 || i1 != 0x1F2326)
+        fail("idle left-of-chevron must be bg both lanes");
+    if (a0 != 0xE5A00D)
+        fail("idle lane0 at ox must be amber");
+    if (a1 != 0xE5A00D)
+        fail("idle lane1 at ox+1 must be amber (no shear)");
+    if (fails == 0)
+        std::fprintf(stderr, "PASS ppc2-idle720-lanes\n");
+
     delete t;
     if (fails) {
         std::fprintf(stderr, "plex_chrome_ppc_tb: %d FAIL(s)\n", fails);
