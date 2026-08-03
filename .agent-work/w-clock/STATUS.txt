@@ -2,21 +2,32 @@
 # Branch: w-clock-bump · No fit · No device · PLL 20/90 · PRESENT_MULTI_PIXEL OFF
 
 ## LANDED
-4a786ae6 multi-pixel design+RTL+arith gate; + verilator red/green for yuv_bt601_npx + present_beam_ppc.
+e8c21f59 present_npx_path P1 serializer (N-wide→async_fifo→1px) + beat TB; macro OFF
+afa55819 verilator red/green yuv_bt601_npx + present_beam_ppc
+4a786ae6 multi-pixel design + arith contract gate
 
-## Evidence #3 (parent device — not this lane)
-ARM mapped-bank write ~86.7 MiB/s (15.21 ms/f @720p); host-copy ceiling 439 MiB/s unproven on bank.
-w-mem owns mmap cache policy. w-clock: fabric clk_ddr 90MHz×8B >> ARM write; not the glass scan-out limit.
-Multi-pixel present still required for 720p60 CEA; 720p24@≥2ppc needs no overclock.
+## Parent corrections absorbed
+- mmap cache policy WORTH NOTHING (rd-duck right); serial ARM decode+copy DEAD all tiers
+- Route B fabric pixels mandatory; Route A overlap unproven
+- 1650 EVEN; 1650%4=2 (not odd)
+- "scanout done" overstated — modules macro-OFF unconnected
 
-## Arithmetic (unchanged)
-720p24 @2ppc: 11.06–14.85 MHz OK@20. CEA720p60 @2ppc 37.13 FAIL nostub; @4ppc 18.56 OK@20.
+## Arithmetic (contract-gated)
+720p24 @2ppc: 11.06–14.85 MHz OK @ ship 20
+CEA720p60 @2ppc 37.13 FAIL nostub; @4ppc 18.56 OK@20
 
 ## ARM ms removed by this lane
-0 until multi-pixel wired to replace ARM present/scale. Mmap win is w-mem.
+0 until multi-pixel wired to replace ARM present/scale. Measure: parent profile.
 
-## Validated
+## Validated (true rc)
+test_present_npx_path_verilator.sh rc=0
 test_multi_pixel_present.sh rc=0
 test_yuv_bt601_npx_verilator.sh rc=0
-make multi-pixel-present-contract rc=0
-rtl_lint rc=0
+test_unit_rollcall.py rc=0
+rtl_lint PASS (clean)
+
+## Remaining (no fit)
+1. ddr_frame_store N-wide read ports (PPC=1 bit-identical default)
+2. Dedicated clk_pix PLL + Plex.sv CE_PIXEL mux (parent grant)
+3. Product wire-up only after parent fit grant
+4. w-scaler §5 interface freeze before merge
