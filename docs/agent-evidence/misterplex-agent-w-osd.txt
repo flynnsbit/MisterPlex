@@ -1,26 +1,28 @@
-lane=w-osd branch=w-osd-fabric-plane
-status=READY — anti-elision + glass gates documented
+lane=w-osd branch=w-osd-fabric-plane tip=d54dd690
+status=READY — idle + PLAYING capture contracts; pair scorer unit green
 
 ## Parent commands (post BUILD_OK)
 make post-fit-fab-idle FIT_RPT=$FITDIR/Plex.fit.rpt MAP_RPT=$FITDIR/Plex.map.rpt
-# asserts: plex_chrome (M10K>=1 bits>=4096 regs>=40 alut>=50),
-#          plex_chrome_host_if, ddr_frame_store, present_core
-# + chrome elision stuck-list scan
 # rc!=0 → VOID FIT
 
-make post-fit-multi-pixel FIT_RPT=...   # only if PRESENT_MULTI_PIXEL=1
-# u_mp_beam / u_mp_npx / u_mp_timing non-zero
+## IDLE glass (FAB_IDLE=1)
+docs/fab-idle-parent-capture-contract.md
+docs/fab-idle-postfit-gate.md
+PASS: CYAN>=2000 ORANGE>=500 ACTIVE>923x717 motion; kill <PID> still moves
+Control: MEAN=14.4 CYAN=0 ACTIVE=923x717 (d1b24e0c mode0)
 
-## RTL anti-elision
-- list_we boot toggle + noprune list RAM
-- mon_* noprune always-clocked
-- sys_top chrome_keep_r: mon+sig enables XOR into RGB when DE=0 only
+## PLAYING glass (product 960x540 → 1280x720 output)
+docs/fab-playing-parent-capture-contract.md
+scripts/hdmi_score_pair.sh
+  scripts/hdmi_capture_idle.sh docs/agent-evidence/play-t0.png
+  sleep 1
+  scripts/hdmi_capture_idle.sh docs/agent-evidence/play-t1.png
+  scripts/hdmi_score_pair.sh docs/agent-evidence/play-t0.png docs/agent-evidence/play-t1.png
+PASS class A: ACTIVE>=1100x680 area>=748k CYAN<=200 ORANGE<=4000
+              MEAN 20..160 DIFF_PX>=8000  (+ P2 freeze not black)
+Taxonomy: A | B1 one-shot-dead | B2 static-full | B3 idle | C1 ARM-letterbox
+          C2 ARM-overlay-bake | D1 cyan-wrong | D2 upscale-geom | D3 pillar
+NEG: control must NOT score A
 
-## ARM-out (PID only)
-kill <pidof misterplexd>; dual capture 3s
-PASS: CYAN>=2000 ORANGE>=500 ACTIVE>923x717 motion
-PARTIAL: cyan+orange no motion = one-shot/phase stuck
-NEG: d1b24e0c control CYAN=0 — scorer must RED
-
-docs/fab-idle-postfit-gate.md is the single parent card.
-Control arm binding: MEAN=14.4 CYAN=0 ACTIVE=923x717
+## Offline
+tests/unit/test_hdmi_score_pair.sh  true rc=0
