@@ -288,6 +288,13 @@ LIVE_OPEN_BLOCKER_TOKENS = (
     "B39_CROP_PAD_OOB_ON_DISPLAY_EQ_SOURCE",
     "B39_PAD_META_ORACLE_MISSING",
     # B39_FFMPEG_VF_ABSENT / B39_FILTER_ORACLE_FAIL: closed-class reinject
+    # rd-duck: PLXG boot baseline race — liveness/ownership, not stale-live
+    "B40_POLLER_ABSENT",
+    "B40_NO_BASELINE_PATH",
+    "B40_PRE_POLL_RACE_UNPROVEN",
+    "B40_NO_ENSURE_LIVE_PROTOCOL",
+    "B40_BOOT_BASELINE_TB_ABSENT",
+    # B40_BASELINE_CLAIMED_AS_LIVENESS / B40_EPOCH_AS_BOOT_NONCE: closed-class
 )
 
 # Sibling-lane fixes that exist but are not merged into this gated tree.
@@ -447,6 +454,47 @@ FIX_STATUS: dict[str, dict[str, str]] = {
         "worktree": "/home/flynnsbit/Projects/MisterPlex-wt-path",
         "artefact": "tests/unit/test_ffmpeg_vf.cpp",
         "evidence": "426/426/432 crop_left=2 → pad=432:240:2:0 no crop=",
+    },
+    # B40 PLXG boot liveness gap (baseline race / EnsureLive)
+    "B40_POLLER_ABSENT": {
+        "status": "unmerged",
+        "lane": "w-mem",
+        "commit": "cbe31c4c",
+        "worktree": "/home/flynnsbit/Projects/MisterPlex-wt-mem",
+        "artefact": "fpga/Plex_MiSTer/rtl/plxg_ddr_poller.sv",
+        "evidence": "S_BASELINE + boot_baseline_done; empty completes baseline",
+    },
+    "B40_NO_BASELINE_PATH": {
+        "status": "unmerged",
+        "lane": "w-mem",
+        "commit": "cbe31c4c",
+        "worktree": "/home/flynnsbit/Projects/MisterPlex-wt-mem",
+        "artefact": "fpga/Plex_MiSTer/rtl/plxg_ddr_poller.sv",
+        "evidence": "first valid coherent snapshot baselines without commit",
+    },
+    "B40_PRE_POLL_RACE_UNPROVEN": {
+        "status": "unmerged",
+        "lane": "w-mem",
+        "commit": "cbe31c4c",
+        "worktree": "/home/flynnsbit/Projects/MisterPlex-wt-mem",
+        "artefact": "tests/rtl/plxg_boot_baseline_tb_top.sv",
+        "evidence": "seed_race write-before-first-poll baselined without commit",
+    },
+    "B40_NO_ENSURE_LIVE_PROTOCOL": {
+        "status": "unmerged",
+        "lane": "w-mem",
+        "commit": "cbe31c4c",
+        "worktree": "/home/flynnsbit/Projects/MisterPlex-wt-mem",
+        "artefact": "host EnsureLive double-publish + TB host_publish_2",
+        "evidence": "plxgRacePrePollClosedByEnsureLiveDoublePublish / second seq",
+    },
+    "B40_BOOT_BASELINE_TB_ABSENT": {
+        "status": "unmerged",
+        "lane": "w-mem",
+        "commit": "cbe31c4c",
+        "worktree": "/home/flynnsbit/Projects/MisterPlex-wt-mem",
+        "artefact": "tests/unit/test_plxg_boot_baseline_verilator.sh",
+        "evidence": "retained+fresh+race+FAULT_PLXG_* REPROs",
     },
     # Everything else: no known sibling implementation — new work.
 }
@@ -7507,6 +7555,337 @@ int main() {
     return msgs, errors
 
 
+def check_b40_plxg_boot_liveness_gap(root: Path) -> tuple[list[str], list[str]]:
+    """B40: PLXG boot baseline race — liveness/ownership, not stale-live (rd-duck).
+
+    Verdict (rd-duck): retained DDR does NOT directly assert plxg_live in current
+    w-mem — latch resets live_valid=0; poller baselines first coherent retained
+    record WITHOUT commit. That is NOT stale-live closure of B4.
+
+    Open gap: fresh host record written before first poll is indistinguishable
+    from retained DDR and is swallowed as baseline (S_WAIT_V→S_BASELINE). A
+    single post-reset publish/disable can never go live; coupled bank waits for
+    another seq. Daemon restart without FPGA reset keeps prior live until new
+    publication (expected ownership). epoch default 1 is NOT a boot/session nonce.
+
+    Closure requires host second-publish / EnsureLive protocol (product) OR a
+    true host↔FPGA boot nonce/ACK. Baseline alone must not be claimed as
+    post-reset liveness proof.
+    """
+    msgs: list[str] = ["LEG0_B40_PLXG_BOOT_LIVENESS_EXECUTED begin"]
+    errors: list[str] = []
+
+    poller_p = root / "fpga" / "Plex_MiSTer" / "rtl" / "plxg_ddr_poller.sv"
+    latch_p = root / "fpga" / "Plex_MiSTer" / "rtl" / "present_geom_latch.sv"
+    tb_sv = root / "tests" / "rtl" / "plxg_boot_baseline_tb_top.sv"
+    tb_cpp = root / "tests" / "rtl" / "plxg_boot_baseline_tb.cpp"
+    tb_sh = root / "tests" / "unit" / "test_plxg_boot_baseline_verilator.sh"
+
+    if not poller_p.is_file():
+        errors.append(
+            "B40_POLLER_ABSENT: missing plxg_ddr_poller.sv — cannot prove boot "
+            "baseline without commit + pre-poll race class (rd-duck liveness gap)."
+        )
+        errors.append(
+            "B40_NO_BASELINE_PATH: no poller — S_BASELINE / boot_baseline_done "
+            "absent (rd-duck)."
+        )
+        errors.append(
+            "B40_PRE_POLL_RACE_UNPROVEN: no poller — write-before-first-poll "
+            "swallow untestable (rd-duck)."
+        )
+        errors.append(
+            "B40_NO_ENSURE_LIVE_PROTOCOL: no poller tree — need EnsureLive "
+            "second-publish or boot nonce/ACK (rd-duck)."
+        )
+        errors.append(
+            "B40_BOOT_BASELINE_TB_ABSENT: missing plxg_boot_baseline TB "
+            "(retained+fresh+race+FAULT REPROs) (rd-duck)."
+        )
+        return msgs, errors
+
+    poll_raw = _read(poller_p) or ""
+    poll = product_active_sv(poll_raw)
+    latch_txt = product_active_sv(_read(latch_p) or "") if latch_p.is_file() else ""
+    tb_blob = "\n".join(
+        [
+            _read(tb_sv) or "",
+            _read(tb_cpp) or "",
+            _read(tb_sh) or "",
+        ]
+    )
+
+    has_s_baseline = bool(re.search(r"\bS_BASELINE\b", poll))
+    has_boot_done = bool(re.search(r"\bboot_baseline_done\b", poll))
+    # Baseline without commit
+    baseline_no_commit = bool(
+        re.search(
+            r"S_BASELINE[\s\S]{0,400}?boot_baseline_done\s*<=\s*1'b1|"
+            r"BASELINES?\s+last_.*WITHOUT\s+commit|without\s+commit",
+            poll_raw,
+            re.I,
+        )
+    ) or (
+        has_s_baseline
+        and bool(re.search(r"boot_baseline_done\s*<=\s*1'b1", poll))
+        and not bool(
+            re.search(
+                r"S_BASELINE[\s\S]{0,200}?commit\s*<=\s*1'b1",
+                poll,
+            )
+        )
+    )
+    # Empty observation completes baseline (liveness half-fix)
+    empty_baselines = bool(
+        re.search(
+            r"empty|bad magic|epoch\s*==\s*0",
+            poll_raw,
+            re.I,
+        )
+        and re.search(r"boot_baseline_done\s*<=\s*1'b1", poll)
+    )
+    # Header admits race
+    admits_race = bool(
+        re.search(
+            r"before first poll|write-before-first-poll|indistinguishable|"
+            r"swallowed as baseline|LIVENESS/OWNERSHIP GAP",
+            poll_raw,
+            re.I,
+        )
+    )
+    # Explicitly rejects baseline-as-liveness claim
+    rejects_baseline_claim = bool(
+        re.search(
+            r"Do not claim baseline alone|not stale-live|"
+            r"baseline alone proves",
+            poll_raw,
+            re.I,
+        )
+    )
+    # FAULT twins
+    fault_no_base = bool(re.search(r"FAULT_PLXG_NO_BASELINE", poll_raw))
+    fault_empty = bool(re.search(r"FAULT_PLXG_EMPTY_NO_BASELINE", poll_raw))
+    # Epoch default 1 is not boot nonce — must not treat epoch alone as nonce
+    epoch_not_nonce = bool(
+        re.search(
+            r"epoch.*NOT a boot|defaults epoch to constant 1|not a boot/session nonce",
+            poll_raw,
+            re.I,
+        )
+    )
+    # Hollow: affirmative claim that baseline alone closes liveness.
+    # Negations ("Do not claim baseline alone proves…", "not BOOT_LIVENESS_CLOSED")
+    # must NOT count as closed claims (w-mem product header is negative).
+    _claim_hit = bool(
+        re.search(
+            r"BOOT_LIVENESS_CLOSED|baseline alone proves|"
+            r"stale-live closed by baseline",
+            poll_raw,
+            re.I,
+        )
+    )
+    _claim_negated = bool(
+        re.search(
+            r"[Dd]o not claim baseline alone|"
+            r"[Mm]ust not claim baseline|"
+            r"baseline alone (is )?[Nn]OT|"
+            r"not\s+BOOT_LIVENESS_CLOSED|"
+            r"baseline alone does not (prove|close)|"
+            r"[Nn]ot claim.*baseline alone",
+            poll_raw,
+            re.I,
+        )
+    )
+    claims_liveness_closed = _claim_hit and not _claim_negated
+
+    # Latch: live_valid reset 0 (stale-live half — not enough alone)
+    latch_clears_live = bool(
+        re.search(
+            r"live_valid\s*<=\s*1'b0|live_valid\s*<=\s*0",
+            latch_txt,
+        )
+    )
+
+    msgs.append(
+        f"LEG0_B40_POLLER s_baseline={int(has_s_baseline)} boot_done={int(has_boot_done)} "
+        f"base_no_commit={int(baseline_no_commit)} empty_base={int(empty_baselines)} "
+        f"admits_race={int(admits_race)} reject_claim={int(rejects_baseline_claim)} "
+        f"fault_no_base={int(fault_no_base)} fault_empty={int(fault_empty)} "
+        f"epoch_not_nonce={int(epoch_not_nonce)} claims_closed={int(claims_liveness_closed)} "
+        f"latch_clear_live={int(latch_clears_live)}"
+    )
+
+    if not (has_s_baseline and has_boot_done and baseline_no_commit):
+        errors.append(
+            "B40_NO_BASELINE_PATH: plxg_ddr_poller must implement S_BASELINE / "
+            "boot_baseline_done and baseline first coherent retained snapshot "
+            "WITHOUT commit (no live_valid). Retained DDR must not directly "
+            "assert plxg_live (rd-duck; not stale-live closure)."
+        )
+
+    if claims_liveness_closed or (
+        has_s_baseline and not admits_race and not rejects_baseline_claim
+    ):
+        errors.append(
+            "B40_BASELINE_CLAIMED_AS_LIVENESS: baseline without commit is NOT "
+            "post-reset liveness proof. Source must admit write-before-first-poll "
+            "race and must not claim baseline alone closes liveness (rd-duck)."
+        )
+
+    # EnsureLive / boot nonce protocol on host or TB
+    host_blob = ""
+    for rel in (
+        "host/libmisterplex/plxg_record.hpp",
+        "host/libmisterplex/ddr_present_bank.hpp",
+        "arm/misterplexd/fpga_spi.cpp",
+        "arm/misterplexd/main.cpp",
+    ):
+        p = root / rel
+        if p.is_file():
+            try:
+                host_blob += "\n" + p.read_text(errors="replace")
+            except OSError:
+                pass
+    # Also scan unit tests for EnsureLive
+    tests_root = root / "tests"
+    if tests_root.is_dir():
+        for path in tests_root.rglob("*"):
+            if not path.is_file() or path.suffix not in {".cpp", ".hpp", ".h", ".sv", ".sh"}:
+                continue
+            name = path.name.lower()
+            if "plxg" not in name and "boot" not in name and "ensure" not in name:
+                # cheap filter: still allow ddr_720p_abi
+                if "ddr_720p" not in name and "plxg_boot" not in name:
+                    continue
+            try:
+                host_blob += "\n" + path.read_text(errors="replace")
+            except OSError:
+                pass
+
+    has_ensure_live = bool(
+        re.search(
+            r"EnsureLive|ensureLive|second.?publish|host_publish_2|"
+            r"plxgRacePrePollClosedByEnsureLive|DoublePublish|double.?publish",
+            host_blob + tb_blob,
+            re.I,
+        )
+    )
+    has_boot_nonce = bool(
+        re.search(
+            r"boot_nonce|session_nonce|boot.?ACK|plxg_boot_ack|FPGA.?boot.?nonce",
+            host_blob + poll_raw,
+            re.I,
+        )
+    )
+    # epoch=1 default is NOT nonce
+    if has_boot_nonce and re.search(r"epoch\s*=\s*1|defaults epoch", host_blob + poll_raw):
+        # only count boot_nonce if not just epoch
+        if not re.search(r"boot_nonce|session_nonce", host_blob + poll_raw, re.I):
+            has_boot_nonce = False
+
+    msgs.append(
+        f"LEG0_B40_PROTOCOL ensure_live={int(has_ensure_live)} "
+        f"boot_nonce={int(has_boot_nonce)}"
+    )
+
+    if not (has_ensure_live or has_boot_nonce):
+        errors.append(
+            "B40_NO_ENSURE_LIVE_PROTOCOL: closure requires host second-publish / "
+            "EnsureLive (distinct seq after baseline) OR host↔FPGA boot nonce/ACK. "
+            "epoch default 1 is NOT a boot/session nonce. Single post-reset "
+            "publish can be swallowed as baseline (rd-duck liveness/ownership gap)."
+        )
+
+    # TB requirements
+    has_tb = tb_sv.is_file() and (tb_cpp.is_file() or tb_sh.is_file())
+    has_seed_race = bool(re.search(r"seed_race", tb_blob))
+    has_publish_2 = bool(re.search(r"host_publish_2|publish_2|second distinct", tb_blob))
+    has_retained = bool(re.search(r"seed_retained|retained", tb_blob))
+    has_fault_twins = bool(
+        re.search(r"FAULT_PLXG_NO_BASELINE", tb_blob)
+        and re.search(r"FAULT_PLXG_EMPTY_NO_BASELINE", tb_blob)
+    )
+    has_race_pass = bool(
+        re.search(
+            r"PASS race|baselined seq|EnsureLive|pre-poll race",
+            tb_blob,
+            re.I,
+        )
+    )
+    not_stale_live = bool(
+        re.search(r"not stale-live|liveness gap|LIVENESS", tb_blob, re.I)
+    )
+
+    msgs.append(
+        f"LEG0_B40_TB present={int(has_tb)} seed_race={int(has_seed_race)} "
+        f"pub2={int(has_publish_2)} retained={int(has_retained)} "
+        f"faults={int(has_fault_twins)} race_pass={int(has_race_pass)} "
+        f"not_stale={int(not_stale_live)}"
+    )
+
+    if not has_tb:
+        errors.append(
+            "B40_BOOT_BASELINE_TB_ABSENT: need tests/rtl/plxg_boot_baseline_tb_top "
+            "+ unit shell covering retained (baseline no commit), fresh empty "
+            "(first publish commits), seed_race (pre-poll swallow), and "
+            "FAULT_PLXG_NO_BASELINE / FAULT_PLXG_EMPTY_NO_BASELINE REPROs (rd-duck)."
+        )
+    else:
+        if not (has_seed_race and has_publish_2 and has_race_pass):
+            errors.append(
+                "B40_PRE_POLL_RACE_UNPROVEN: TB must model write-before-first-poll "
+                "(seed_race): first coherent snapshot BASELINES without commit; "
+                "single publish of same pair must NOT suffice; host_publish_2 / "
+                "EnsureLive second distinct seq must commit (rd-duck)."
+            )
+        if not has_fault_twins or not fault_no_base or not fault_empty:
+            errors.append(
+                "B40_BOOT_BASELINE_TB_ABSENT: product poller+TB must define "
+                "FAULT_PLXG_NO_BASELINE (retained immediate promote REPRO) and "
+                "FAULT_PLXG_EMPTY_NO_BASELINE (first valid swallowed REPRO) "
+                "(rd-duck)."
+            )
+        if not has_retained:
+            errors.append(
+                "B40_PRE_POLL_RACE_UNPROVEN: TB missing retained-DDR seed path "
+                "(baseline without commit for seq=N, then N+1 commits) (rd-duck)."
+            )
+
+    # Soft note: latch clear alone is not enough
+    if latch_clears_live and not errors:
+        msgs.append(
+            "LEG0_B40_NOTE latch live_valid reset=0 helps stale-live; race still "
+            "needs EnsureLive/nonce"
+        )
+
+    # Final PASS only if baseline path + race TB + protocol
+    closed = (
+        has_s_baseline
+        and has_boot_done
+        and baseline_no_commit
+        and admits_race
+        and (has_ensure_live or has_boot_nonce)
+        and has_tb
+        and has_seed_race
+        and has_publish_2
+        and has_fault_twins
+        and fault_no_base
+        and fault_empty
+        and not claims_liveness_closed
+    )
+    if closed and not errors:
+        msgs.append(
+            "LEG0_B40_PASS baseline-without-commit + pre-poll race TB + "
+            "EnsureLive/nonce protocol (liveness gap closed; not stale-live claim)"
+        )
+    elif not errors and not closed:
+        errors.append(
+            "B40_NO_ENSURE_LIVE_PROTOCOL: B40 incomplete — baseline path without "
+            "proven EnsureLive/nonce + race TB is still a liveness gap (rd-duck)."
+        )
+    return msgs, errors
+
+
 def leg0_arch_blockers() -> tuple[int, list[str]]:
     """rd-duck fit blockers — FAIL until a coherent candidate clears each.
 
@@ -7535,6 +7914,7 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
         "B35_ascal_simultaneous_tag_bypass(in_*+full_tag_TB+RED),B36_merged_hierarchy_live(qsf+qip+poller→latch→mux→store+PLXC→3way_arb),B37_integration_ladder(L2_qip/L3_inst/L4_enable;dead_code≠shipped),"
         "B38_integrated_app_beam_atomic(ff+beam_disp_hold+island_TB;live-vs-app≠closure),"
         "B39_ffmpeg_pad_meta_collision(pad-up-first+strict canCrop+filter oracle),"
+        "B40_plxg_boot_liveness(baseline≠liveness;EnsureLive/nonce+race TB),"
         "leg_unit_make_unit,leg_rtl_lint,leg2_elab,leg3_true_de; "
         "B20_PRODUCT_UFS_TIE=elaborate Plex.sv .use_frame_store(1'b0) + reject "
         "ownership-on-ufs (w-clock free-run) + H require product-ufs0 hold measured_* "
@@ -8988,6 +9368,11 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
     b39_msgs, b39_errs = check_b39_ffmpeg_pad_meta_collision(ROOT)
     msgs.extend(b39_msgs)
     errors.extend(b39_errs)
+
+    # --- B40 PLXG boot liveness gap (rd-duck: baseline ≠ liveness) ---
+    b40_msgs, b40_errs = check_b40_plxg_boot_liveness_gap(ROOT)
+    msgs.extend(b40_msgs)
+    errors.extend(b40_errs)
 
     # --- B20 full-hierarchy scenario tests (rd-duck 2026-08-03 hollow audit) ---
     # Prior gate only regex-scanned test *text* and accepted comment bait (mutation
@@ -10865,6 +11250,11 @@ def _run_mutation_matrix() -> tuple[list[str], list[dict[str, str]]]:
         "B39_NO_PRODUCT_PAD_UP_FIRST",
         "B39_CROP_PAD_OOB_ON_DISPLAY_EQ_SOURCE",
         "B39_PAD_META_ORACLE_MISSING",
+        "B40_POLLER_ABSENT",
+        "B40_NO_BASELINE_PATH",
+        "B40_PRE_POLL_RACE_UNPROVEN",
+        "B40_NO_ENSURE_LIVE_PROTOCOL",
+        "B40_BOOT_BASELINE_TB_ABSENT",
     ):
         txt = "\n".join(msgs)
         has = tok in txt
@@ -11817,6 +12207,70 @@ def _run_mutation_matrix() -> tuple[list[str], list[dict[str, str]]]:
                 _row(tok, "B39 crop_pad-first mutation", tok, rc, msgs)
     finally:
         rest_vf()
+
+    # --- rd-duck B40: baseline claimed as liveness (no EnsureLive / no race TB) ---
+    pol_b40 = ROOT / "fpga" / "Plex_MiSTer" / "rtl" / "plxg_ddr_poller.sv"
+    pol_b40.parent.mkdir(parents=True, exist_ok=True)
+    bad_pol = (
+        "// fitgate B40 mutation — baseline only, claims liveness closed\n"
+        "module plxg_ddr_poller;\n"
+        "  localparam [2:0] S_BASELINE = 3'd7;\n"
+        "  reg boot_baseline_done;\n"
+        "  // baseline without commit but NO race admission\n"
+        "  // BOOT_LIVENESS_CLOSED by baseline alone proves post-reset liveness\n"
+        "  always @(posedge clk) if (st==S_BASELINE) boot_baseline_done <= 1'b1;\n"
+        "endmodule\n"
+    )
+    rest_pol = _with_file_backup(pol_b40, bad_pol)
+    # Hide EnsureLive / race TB if present
+    def _hide(path: Path):
+        if not path.is_file():
+            return lambda: None
+        bak = path.read_text(errors="replace")
+        path.unlink()
+
+        def restore() -> None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(bak)
+
+        return restore
+
+    hides = [
+        _hide(ROOT / "tests" / "rtl" / "plxg_boot_baseline_tb_top.sv"),
+        _hide(ROOT / "tests" / "rtl" / "plxg_boot_baseline_tb.cpp"),
+        _hide(ROOT / "tests" / "unit" / "test_plxg_boot_baseline_verilator.sh"),
+    ]
+    try:
+        rc, msgs = leg0_arch_blockers()
+        txt = "\n".join(msgs)
+        exp = (
+            "B40_BASELINE_CLAIMED_AS_LIVENESS"
+            if "B40_BASELINE_CLAIMED_AS_LIVENESS" in txt
+            else (
+                "B40_NO_ENSURE_LIVE_PROTOCOL"
+                if "B40_NO_ENSURE_LIVE_PROTOCOL" in txt
+                else "B40_BOOT_BASELINE_TB_ABSENT"
+            )
+        )
+        _row(
+            "B40_BASELINE_CLAIMED_AS_LIVENESS",
+            "baseline-only poller claims liveness closed; no race TB/EnsureLive",
+            exp,
+            rc,
+            msgs,
+        )
+        for tok in (
+            "B40_NO_ENSURE_LIVE_PROTOCOL",
+            "B40_BOOT_BASELINE_TB_ABSENT",
+            "B40_PRE_POLL_RACE_UNPROVEN",
+            "B40_NO_BASELINE_PATH",
+        ):
+            if tok in txt:
+                _row(tok, "B40 baseline-as-liveness mutation", tok, rc, msgs)
+    finally:
+        rest_pol()
+        for h in hides:
+            h()
 
 # --- rd-duck B34: identity-on-store 432/432/0 after align ---
     lay_b34 = ROOT / "host" / "libmisterplex" / "ddr_frame_layout.hpp"

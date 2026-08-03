@@ -1,26 +1,31 @@
 lane=w-fitgate
 branch=w-fitgate
-worktree=/home/flynnsbit/Projects/MisterPlex-wt-fitgate
-tip=8f88fbc9 full=8f88fbc9e9b36453188893326239332e661efcda
-origin=origin/w-fitgate
+sha=$(git rev-parse --short HEAD pending)
+tip=PENDING_B40
 GRANT=NO
-FIT_SLOT=HELD
+status=B40_PLXG_BOOT_LIVENESS_GAP_WIRED
 
-=== B39 FIX-COLLISION (rd-duck) 426→432 metadata + filter ===
-B34 geom coded432/display426/crop_left2 + crop_pad-first filter emits
-crop=426:240:2:0 on 426-wide source (OOB). Measured on hollow tree oracle:
-  measured_vf=crop=426:240:2:0,pad=... reason=crop_pad_no_v_scale_hfit true_rc=3
+B40 rd-duck: baseline-without-commit ≠ post-reset liveness.
+  - retained DDR does NOT assert plxg_live (latch live_valid=0; S_BASELINE no commit)
+  - pre-poll race: first host publish swallowed as baseline
+  - closure: EnsureLive second-publish OR boot nonce/ACK + race TB
+  - tokens LIVE_OPEN: B40_POLLER_ABSENT B40_NO_BASELINE_PATH B40_PRE_POLL_RACE_UNPROVEN
+    B40_NO_ENSURE_LIVE_PROTOCOL B40_BOOT_BASELINE_TB_ABSENT
+  - closed-class mutation: B40_BASELINE_CLAIMED_AS_LIVENESS
+  - FIX_STATUS lane=w-mem commit=cbe31c4c
 
-Gate requires pad-up FIRST (source==display<coded), canCrop only source_w>dispW,
-filter oracle pad=432:240:2:0 no crop=, unit tests with product 426/426/432.
+PROBES (measured):
+  fitgate hollow: 5× B40 RED (true)
+  wt-mem@cbe31c4c: LEG0_B40_PASS (ensure_live=1 seed_race=1 faults=1 claims_closed=0)
 
-SELFTEST true rc=0 rows=98 red=98 fail_holes=0
-fix=unmerged w-path@640e790a (LEG0_B39_PASS)
-IDENTITY live=7cb3e224d80a55777c353ac7787611b2fa6620f6
+SELFTEST:
+  FIT_RELEASE_GATE_SELFTEST_PASS EXECUTED
+  MUTATION_MATRIX_SUMMARY rows=106 red=106 fail_holes=0
+  true rc=0
 
-Parent:
-  RULER=/home/flynnsbit/Projects/MisterPlex-wt-fitgate
-  "$RULER/scripts/fit_release_gate.sh" --root "$MERGE" --qsf "$MERGE/fpga/Plex_MiSTer/Plex.qsf"
-  echo "true rc=$?"
+LANDING:
+  product RTL modules: 0
+  ON_MAIN=no IN_FILES_QIP=n/a (scripts/docs only)
+  ref: w-fitgate + tip after push
 
-LANDING: 0 product RTL; scripts ON_MAIN=no. No Quartus/device/main-merge.
+NO Quartus. NO device. GRANT=NO.

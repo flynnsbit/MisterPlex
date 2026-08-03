@@ -441,6 +441,46 @@
       "token_hit": "1"
     },
     {
+      "check": "B40_POLLER_ABSENT",
+      "inject": "live hollow / missing product TB",
+      "expect": "B40_POLLER_ABSENT",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B40_NO_BASELINE_PATH",
+      "inject": "live hollow / missing product TB",
+      "expect": "B40_NO_BASELINE_PATH",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B40_PRE_POLL_RACE_UNPROVEN",
+      "inject": "live hollow / missing product TB",
+      "expect": "B40_PRE_POLL_RACE_UNPROVEN",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B40_NO_ENSURE_LIVE_PROTOCOL",
+      "inject": "live hollow / missing product TB",
+      "expect": "B40_NO_ENSURE_LIVE_PROTOCOL",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B40_BOOT_BASELINE_TB_ABSENT",
+      "inject": "live hollow / missing product TB",
+      "expect": "B40_BOOT_BASELINE_TB_ABSENT",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
       "check": "B9_SYS_TOP_AR_OUT_HOLD_MISSING",
       "inject": "live defective/hollow tree (no inject)",
       "expect": "B9_SYS_TOP_AR_OUT_HOLD_MISSING",
@@ -761,6 +801,30 @@
       "token_hit": "1"
     },
     {
+      "check": "B40_BASELINE_CLAIMED_AS_LIVENESS",
+      "inject": "baseline-only poller claims liveness closed; no race TB/EnsureLive",
+      "expect": "B40_BASELINE_CLAIMED_AS_LIVENESS",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B40_NO_ENSURE_LIVE_PROTOCOL",
+      "inject": "B40 baseline-as-liveness mutation",
+      "expect": "B40_NO_ENSURE_LIVE_PROTOCOL",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B40_BOOT_BASELINE_TB_ABSENT",
+      "inject": "B40 baseline-as-liveness mutation",
+      "expect": "B40_BOOT_BASELINE_TB_ABSENT",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
       "check": "B34_IDENTITY_ON_STORE",
       "inject": "align then makeDdrFrameGeometry(store) loses display 426/crop_left=2",
       "expect": "B34_IDENTITY_ON_STORE",
@@ -786,6 +850,6 @@
     }
   ],
   "failures": [],
-  "n_red": 98,
-  "head": "1ea3e0caa5b7"
+  "n_red": 106,
+  "head": "33684e479365"
 }
