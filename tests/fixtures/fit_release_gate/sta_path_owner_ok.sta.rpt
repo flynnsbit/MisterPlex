@@ -1,0 +1,189 @@
+TimeQuest Timing Analyzer report for Plex
+Mon Jul 27 18:20:37 2026
+Quartus Prime Version 17.0.2 Build 602 07/19/2017 SJ Lite Edition
+
+
+---------------------
+; Table of Contents ;
+---------------------
+  1. Legal Notice
+  2. TimeQuest Timing Analyzer Summary
+  3. Parallel Compilation
+  4. SDC File List
+  5. Clocks
+  6. Fmax Summary
+  7. Timing Closure Recommendations
+  8. Setup Summary
+  9. Hold Summary
+ 10. Recovery Summary
+ 11. Removal Summary
+ 12. Minimum Pulse Width Summary
+ 13. Metastability Summary
+ 14. Board Trace Model Assignments
+ 15. Input Transition Times
+ 16. Signal Integrity Metrics (Slow 1100mv 100c Model)
+ 17. Setup Transfers
+ 18. Hold Transfers
+ 19. Recovery Transfers
+ 20. Removal Transfers
+ 21. Report TCCS
+ 22. Report RSKM
+ 23. Unconstrained Paths Summary
+ 24. Clock Status Summary
+ 25. Unconstrained Input Ports
+ 26. Unconstrained Output Ports
+ 27. Unconstrained Input Ports
+ 28. Unconstrained Output Ports
+ 29. TimeQuest Timing Analyzer Messages
+
+
+
+----------------
+; Legal Notice ;
+----------------
+Copyright (C) 2017  Intel Corporation. All rights reserved.
+Your use of Intel Corporation's design tools, logic functions 
+and other software and tools, and its AMPP partner logic 
+functions, and any output files from any of the foregoing 
+(including device programming or simulation files), and any 
+associated documentation or information are expressly subject 
+to the terms and conditions of the Intel Program License 
+Subscription Agreement, the Intel Quartus Prime License Agreement,
+the Intel MegaCore Function License Agreement, or other 
+applicable license agreement, including, without limitation, 
+that your use is for the sole purpose of programming logic 
+devices manufactured by Intel and sold by Intel or its 
+authorized distributors.  Please refer to the applicable 
+agreement for further details.
+
+
+
++-----------------------------------------------------------------------------+
+; TimeQuest Timing Analyzer Summary                                           ;
++-----------------------+-----------------------------------------------------+
+; Quartus Prime Version ; Version 17.0.2 Build 602 07/19/2017 SJ Lite Edition ;
+; Timing Analyzer       ; TimeQuest                                           ;
+; Revision Name         ; Plex                                                ;
+; Device Family         ; Cyclone V                                           ;
+; Device Name           ; 5CSEBA6U23I7                                        ;
+; Timing Models         ; Final                                               ;
+; Delay Model           ; Slow 1100mV 100C Model                              ;
+; Rise/Fall Delays      ; Enabled                                             ;
++-----------------------+-----------------------------------------------------+
+
+
++------------------------------------------+
+; Parallel Compilation                     ;
++----------------------------+-------------+
+; Processors                 ; Number      ;
++----------------------------+-------------+
+; Number detected on machine ; 20          ;
+; Maximum allowed            ; 2           ;
+;                            ;             ;
+; Average used               ; 1.17        ;
+; Maximum used               ; 2           ;
+;                            ;             ;
+; Usage by Processor         ; % Time Used ;
+;     Processor 1            ; 100.0%      ;
+;     Processor 2            ;  17.3%      ;
++----------------------------+-------------+
+
+
++-----------------------------------------------------+
+; SDC File List                                       ;
++-----------------+--------+--------------------------+
+; SDC File Path   ; Status ; Read at                  ;
++-----------------+--------+--------------------------+
+; sys/sys_top.sdc ; OK     ; Mon Jul 27 18:20:36 2026 ;
+; Plex.sdc        ; OK     ; Mon Jul 27 18:20:36 2026 ;
++-----------------+--------+--------------------------+
+
+
++--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+; Clocks                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           ;
++-----------------------------------------------------------------------------------+-----------+---------+------------+-------+--------+------------+-----------+-------------+-------+--------+-----------+------------+----------+-------------------------------------------------------------------------------+--------------------------------------------------------------------------------------+---------------------------------------------------------------------------------------+
+; Clock Name                                                                        ; Type      ; Period  ; Frequency  ; Rise  ; Fall   ; Duty Cycle ; Divide by ; Multiply by ; Phase ; Offset ; Edge List ; Edge Shift ; Inverted ; Master                                                                        ; Source                                                                               ; Targets                                                                               ;
++-----------------------------------------------------------------------------------+-----------+---------+------------+-------+--------+------------+-----------+-------------+-------+--------+-----------+------------+----------+-------------------------------------------------------------------------------+--------------------------------------------------------------------------------------+---------------------------------------------------------------------------------------+
+; emu|pll|pll_inst|altera_pll_i|general[0].gpll~FRACTIONAL_PLL|vcoph[0]             ; Generated ; 2.777   ; 360.0 MHz  ; 0.000 ; 1.388  ; 50.00      ; 5         ; 36          ;       ;        ;           ;            ; false    ; FPGA_CLK2_50                                                                  ; emu|pll|pll_inst|altera_pll_i|general[0].gpll~FRACTIONAL_PLL|refclkin                ; { emu|pll|pll_inst|altera_pll_i|general[0].gpll~FRACTIONAL_PLL|vcoph[0] }             ;
+; emu|pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk           ; Generated ; 50.000  ; 20.0 MHz   ; 0.000 ; 25.000 ; 50.00      ; 18        ; 1           ;       ;        ;           ;            ; false    ; emu|pll|pll_inst|altera_pll_i|general[0].gpll~FRACTIONAL_PLL|vcoph[0]         ; emu|pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|vco0ph[0]           ; { emu|pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk }           ;
+; emu|pll|pll_inst|altera_pll_i|general[2].gpll~PLL_OUTPUT_COUNTER|divclk           ; Generated ; 11.111  ; 90.0 MHz   ; 0.000 ; 5.555  ; 50.00      ; 4         ; 1           ;       ;        ;           ;            ; false    ; emu|pll|pll_inst|altera_pll_i|general[0].gpll~FRACTIONAL_PLL|vcoph[0]         ; emu|pll|pll_inst|altera_pll_i|general[2].gpll~PLL_OUTPUT_COUNTER|vco0ph[0]           ; { emu|pll|pll_inst|altera_pll_i|general[2].gpll~PLL_OUTPUT_COUNTER|divclk }           ;
+; FPGA_CLK1_50                                                                      ; Base      ; 20.000  ; 50.0 MHz   ; 0.000 ; 10.000 ;            ;           ;             ;       ;        ;           ;            ;          ;                                                                               ;                                                                                      ; { FPGA_CLK1_50 }                                                                      ;
+; FPGA_CLK2_50                                                                      ; Base      ; 20.000  ; 50.0 MHz   ; 0.000 ; 10.000 ;            ;           ;             ;       ;        ;           ;            ;          ;                                                                               ;                                                                                      ; { FPGA_CLK2_50 }                                                                      ;
+; FPGA_CLK3_50                                                                      ; Base      ; 20.000  ; 50.0 MHz   ; 0.000 ; 10.000 ;            ;           ;             ;       ;        ;           ;            ;          ;                                                                               ;                                                                                      ; { FPGA_CLK3_50 }                                                                      ;
+; hdmi_sck                                                                          ; Base      ; 100.000 ; 10.0 MHz   ; 0.000 ; 50.000 ;            ;           ;             ;       ;        ;           ;            ;          ;                                                                               ;                                                                                      ; { hdmi_i2c|out_clk }                                                                  ;
+; pll_audio|pll_audio_inst|altera_pll_i|general[0].gpll~FRACTIONAL_PLL|vcoph[0]     ; Generated ; 2.393   ; 417.87 MHz ; 0.000 ; 1.196  ; 50.00      ; 512       ; 4279        ;       ;        ;           ;            ; false    ; FPGA_CLK3_50                                                                  ; pll_audio|pll_audio_inst|altera_pll_i|general[0].gpll~FRACTIONAL_PLL|refclkin        ; { pll_audio|pll_audio_inst|altera_pll_i|general[0].gpll~FRACTIONAL_PLL|vcoph[0] }     ;
+; pll_audio|pll_audio_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk   ; Generated ; 40.682  ; 24.58 MHz  ; 0.000 ; 20.341 ; 50.00      ; 17        ; 1           ;       ;        ;           ;            ; false    ; pll_audio|pll_audio_inst|altera_pll_i|general[0].gpll~FRACTIONAL_PLL|vcoph[0] ; pll_audio|pll_audio_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|vco0ph[0]   ; { pll_audio|pll_audio_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk }   ;
+; pll_hdmi|pll_hdmi_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk ; Generated ; 6.732   ; 148.54 MHz ; 0.000 ; 3.366  ; 50.00      ; 3         ; 1           ;       ;        ;           ;            ; false    ; pll_hdmi|pll_hdmi_inst|altera_pll_i|cyclonev_pll|fpll_0|fpll|vcoph[0]         ; pll_hdmi|pll_hdmi_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|vco0ph[0] ; { pll_hdmi|pll_hdmi_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk } ;
+; pll_hdmi|pll_hdmi_inst|altera_pll_i|cyclonev_pll|fpll_0|fpll|vcoph[0]             ; Generated ; 2.244   ; 445.61 MHz ; 0.000 ; 1.122  ; 50.00      ; 512       ; 4563        ;       ;        ;           ;            ; false    ; FPGA_CLK1_50                                                                  ; pll_hdmi|pll_hdmi_inst|altera_pll_i|cyclonev_pll|fpll_0|fpll|refclkin                ; { pll_hdmi|pll_hdmi_inst|altera_pll_i|cyclonev_pll|fpll_0|fpll|vcoph[0] }             ;
+; spi_sck                                                                           ; Base      ; 10.000  ; 100.0 MHz  ; 0.000 ; 5.000  ;            ;           ;             ;       ;        ;           ;            ;          ;                                                                               ;                                                                                      ; { spi|sclk_out }                                                                      ;
+; sysmem|fpga_interfaces|clocks_resets|h2f_user0_clk                                ; Base      ; 10.000  ; 100.0 MHz  ; 0.000 ; 5.000  ;            ;           ;             ;       ;        ;           ;            ;          ;                                                                               ;                                                                                      ; { sysmem|fpga_interfaces|clocks_resets|h2f_user0_clk }                                ;
++-----------------------------------------------------------------------------------+-----------+---------+------------+-------+--------+------------+-----------+-------------+-------+--------+-----------+------------+----------+-------------------------------------------------------------------------------+--------------------------------------------------------------------------------------+---------------------------------------------------------------------------------------+
+
+
++-------------------------------------------------------------------------------------------------------------------------+
+; Fmax Summary                                                                                                            ;
++------------+-----------------+-----------------------------------------------------------------------------------+------+
+; Fmax       ; Restricted Fmax ; Clock Name                                                                        ; Note ;
++------------+-----------------+-----------------------------------------------------------------------------------+------+
+; 32.59 MHz  ; 32.59 MHz       ; emu|pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk           ;      ;
+; 39.4 MHz   ; 39.4 MHz        ; pll_audio|pll_audio_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk   ;      ;
+; 81.92 MHz  ; 81.92 MHz       ; FPGA_CLK1_50                                                                      ;      ;
+; 88.31 MHz  ; 88.31 MHz       ; emu|pll|pll_inst|altera_pll_i|general[2].gpll~PLL_OUTPUT_COUNTER|divclk           ;      ;
+; 135.1 MHz  ; 135.1 MHz       ; sysmem|fpga_interfaces|clocks_resets|h2f_user0_clk                                ;      ;
+; 149.63 MHz ; 149.63 MHz      ; FPGA_CLK2_50                                                                      ;      ;
+; 157.88 MHz ; 157.88 MHz      ; pll_hdmi|pll_hdmi_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk ;      ;
+; 221.83 MHz ; 221.83 MHz      ; spi_sck                                                                           ;      ;
++------------+-----------------+-----------------------------------------------------------------------------------+------+
+This panel reports FMAX for every clock in the design, regardless of the user-specified clock periods.  FMAX is only computed for paths where the source and destination registers or ports are driven by the same clock.  Paths of different clocks, including generated clocks, are ignored.  For paths between a clock and its inversion, FMAX is computed as if the rising and falling edges are scaled along with FMAX, such that the duty cycle (in terms of a percentage) is maintained. Altera recommends that you always use clock constraints and other slack reports for sign-off analysis.
+
+
+----------------------------------
+; Timing Closure Recommendations ;
+----------------------------------
+HTML report is unavailable in plain text report export.
+
+
++------------------------------------------------------------------------------------------------------------+
+; Setup Summary                                                                                              ;
++-----------------------------------------------------------------------------------+--------+---------------+
+; Clock                                                                             ; Slack  ; End Point TNS ;
++-----------------------------------------------------------------------------------+--------+---------------+
+; emu|pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk           ; -2.137 ; -407.873      ;
+; emu|pll|pll_inst|altera_pll_i|general[2].gpll~PLL_OUTPUT_COUNTER|divclk           ; -1.346 ; -183.170      ;
+; pll_hdmi|pll_hdmi_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk ; 0.398  ; 0.000         ;
+; sysmem|fpga_interfaces|clocks_resets|h2f_user0_clk                                ; 2.598  ; 0.000         ;
+; spi_sck                                                                           ; 5.492  ; 0.000         ;
+; FPGA_CLK1_50                                                                      ; 7.793  ; 0.000         ;
+; FPGA_CLK2_50                                                                      ; 13.317 ; 0.000         ;
+; pll_audio|pll_audio_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk   ; 15.304 ; 0.000         ;
++-----------------------------------------------------------------------------------+--------+---------------+
+
+
++-----------------------------------------------------------------------------------------------------------+
+; Hold Summary                                                                                              ;
++-----------------------------------------------------------------------------------+-------+---------------+
+; Clock                                                                             ; Slack ; End Point TNS ;
++-----------------------------------------------------------------------------------+-------+---------------+
+; emu|pll|pll_inst|altera_pll_i|general[2].gpll~PLL_OUTPUT_COUNTER|divclk           ; 0.216 ; 0.000         ;
+; emu|pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk           ; 0.244 ; 0.000         ;
+; pll_hdmi|pll_hdmi_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk ; 0.259 ; 0.000         ;
+; pll_audio|pll_audio_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk   ; 0.267 ; 0.000         ;
+; FPGA_CLK1_50                                                                      ; 0.348 ; 0.000         ;
+; sysmem|fpga_interfaces|clocks_resets|h2f_user0_clk                                ; 0.410 ; 0.000         ;
+; FPGA_CLK2_50                                                                      ; 0.418 ; 0.000         ;
+; spi_sck                                                                           ; 0.426 ; 0.000         ;
++-----------------------------------------------------------------------------------+-------+---------------+
+
+
++------------------------------------------------------------------------------------------------------------+
+; Recovery Summary                                                                                           ;
+
+; Slow 1200mV 85C Model Failing Paths
+Path #1: Setup slack is 0.500 (MET)
+  Launch Clock : emu|pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk
+  Latch Clock  : emu|pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk
+; From Node    ; To Node
+; emu|decode_stub|lat_p_mb_addr[5] ; emu|decode_stub|mv_col_al_x[3]
+  From Node    : emu|decode_stub|lat_p_mb_addr[5]
+  To Node      : emu|decode_stub|mv_col_al_x[3]
+  Data Arrival Path
