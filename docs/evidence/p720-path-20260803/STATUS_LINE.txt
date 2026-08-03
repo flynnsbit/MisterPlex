@@ -1,1 +1,1 @@
-w-path HEAD=25db669e 426 pad: presented=store canvas H_DE=432 display=426 present_x=cropL=2 mux oracle; make unit true rc=0
+w-path 6c73f3c8 mode-report DONE; DEFAULT_ASSUMED=ini; use_frame_store0=force-bars-off; checks for parent
