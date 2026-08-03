@@ -10,6 +10,11 @@
 //   2) else if m2_want → grant_m2 (fabric bank fill)
 //   3) else if m1_want → grant_m1
 //
+// m2 sticky while m0 idle (full-frame WE stream safe). When m0_cmd, release
+// after the current m2 beat (or immediately if m2 not commanding) so scanout
+// cannot be locked out for sticky_lockout ~1.92 ms. Writer re-acquires via
+// m2_want. Outstanding depth stays 1.
+//
 // Macro FABRIC_DDR_WRITER default OFF — do not instantiate in product fit
 // until w-nostub frees the slot and parent measures sustained fabric BW.
 //
@@ -103,6 +108,8 @@ module ddr_bus_arbiter3 (
 	// grant one-hot among {m1, m2}; m0 is default when both grants low
 	reg grant_m1;
 	reg grant_m2;
+	// When m0 and m2 both want: alternate so neither starves (scanout glitch vs drop).
+	reg fair_pref_m2;
 	reg rsp_owner_m1;
 	reg rsp_owner_m2;
 	reg [8:0] rsp_left;
@@ -206,6 +213,7 @@ module ddr_bus_arbiter3 (
 		if (rst) begin
 			grant_m1 <= 1'b0;
 			grant_m2 <= 1'b0;
+			fair_pref_m2 <= 1'b0; // first tie → prefer m0 (scanout)
 			rsp_owner_m1 <= 1'b0;
 			rsp_owner_m2 <= 1'b0;
 			rsp_left <= 9'd0;
@@ -238,8 +246,8 @@ module ddr_bus_arbiter3 (
 						grant_m1 <= 1'b0;
 					end
 				end else if (grant_m2) begin
-					// Sticky m2 grant for whole fabric frame (payload+drain+doorbell).
-					// Per-beat release dropped WE beats (TB: 11/12 qwords).
+					// Sticky for streaming WE (do not drop mid-beat). Yield only when
+					// m2 is not commanding so scanout can slip into idle slots / gaps.
 					if (m2_rd) begin
 						rsp_owner_m1 <= 1'b0;
 						rsp_owner_m2 <= 1'b1;
@@ -247,10 +255,26 @@ module ddr_bus_arbiter3 (
 						grant_m2 <= 1'b0;
 					end else if (!m2_want_s2 && !m2_cmd) begin
 						grant_m2 <= 1'b0;
+					end else if (m0_cmd && !m2_cmd) begin
+						grant_m2 <= 1'b0; // gap / drain → scanout
 					end
+					// else hold sticky through continuous WE stream
 				end else begin
-					// idle owner = m0 path
-					if (m0_rd) begin
+					// idle owner = m0 path, with m0/m2 fair share when both demand
+					if (m0_cmd && m2_want_s2) begin
+						if (fair_pref_m2) begin
+							grant_m2 <= 1'b1;
+							fair_pref_m2 <= 1'b0;
+						end else if (m0_rd) begin
+							rsp_owner_m1 <= 1'b0;
+							rsp_owner_m2 <= 1'b0;
+							rsp_left <= {1'b0, selected_burst};
+							fair_pref_m2 <= 1'b1;
+						end else begin
+							// m0_we without rd — still count as m0 turn
+							fair_pref_m2 <= 1'b1;
+						end
+					end else if (m0_rd) begin
 						rsp_owner_m1 <= 1'b0;
 						rsp_owner_m2 <= 1'b0;
 						rsp_left <= {1'b0, selected_burst};
@@ -265,7 +289,7 @@ module ddr_bus_arbiter3 (
 			// m1 write: drop grant after accepted non-read cmd (product behaviour)
 			if (grant_m1 && !DDRAM_BUSY && m1_cmd && !m1_rd)
 				grant_m1 <= 1'b0;
-			// m2: do NOT per-beat drop — sticky until m2_want clears
+			// m2 WE release handled above (per-beat / m0 pre-empt)
 		end
 	end
 endmodule

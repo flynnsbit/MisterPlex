@@ -156,3 +156,28 @@ anomaly chase until parent clean re-measure.
 5.73 ms @24fps). Any concurrent ARM peer still blows the deadline in clean runs
 tested so far. Route A under real full-frame DMA: **unmeasured**. Fabric
 zero-ARM path remains the robust ship route and the fit milestone.
+
+## Fabric DDR bandwidth budget (theoretical)
+
+Source: `host/libmisterplex/fabric_ddr_bandwidth.hpp`. **Device fabric BW unknown until parent fit.**
+
+| Client | 24 fps | 60 fps |
+|--------|-------:|-------:|
+| Writer I420 | 33.18 MB/s | 82.94 MB/s |
+| Scan-out I420 read | 33.18 MB/s | 82.94 MB/s |
+| Combined fabric RW | 66.36 MB/s | 165.89 MB/s |
+| Frac of 90 MHz×8 B peak (720 MB/s) | 9.2% | 23.0% |
+
+- Multi-pixel N ppc cuts **clk_sys** demand, not DDR bytes/frame.
+- CEA 720p60 @ 2 ppc → 37.125 MHz clk_sys (>20 product); @ 4 ppc → 18.56 MHz.
+- CEA 720p24 @ 2 ppc → 14.85 MHz (under 20).
+- **arbiter3**: m0 > m2 > m1. m2 sticky while streaming WE; yields on idle gaps when m0_cmd; fair alternate when both demand on idle. Whole-frame sticky with continuous m0 would lock scanout ~1.92 ms min (defect class). TB: m0_fair_beats>0 under pulsed scanout load.
+- ARM clean margin 5.73 ms; any memory peer still fails serially. Fabric RW vs decode inflation: **unmeasured**.
+
+Parent measure after fit:
+```bash
+# hierarchy non-zero + glass motion
+make post-fit-hierarchy FIT_RPT=...
+scripts/hdmi_capture_idle.sh out.png
+# fabric BW: unknown recipe until instrumentation — do not invent
+```

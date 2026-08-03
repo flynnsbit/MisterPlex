@@ -1,20 +1,20 @@
 agent=w-mem
 branch=w-mem-720p-abi
 status=READY_FOR_INTEGRATION_FIT (macro OFF)
-HEAD=bf6567da + retract-note commit
 
-## Parent incident 2026-08-03 — ACK
-- Stand down bank-address anomaly chase (15 vs 21 ms) — contaminated
-- DMA 23.839 / 0.010 ms figures invalid (instrument / burner)
-- Clean: decode alone 35.94 ms/f, margin 5.73 ms
-- Route A real DMA: unmeasured
-- Fit milestone UNCHANGED: moving 1280x720 fabric pattern, ARM zero pixels
+## Bandwidth (theoretical — device fabric BW unknown)
+peak 720 MB/s (90MHz*8)
+writer/scan 24: 33.18 each; combined 66.36 (9.2% peak)
+writer/scan 60: 82.94 each; combined 165.89 (23% peak)
+clk_sys CEA 2ppc: 24→14.85MHz OK; 60→37.125 needs 4ppc→18.56
+sticky full-frame lockout class: 1.92 ms if m2 never yields
+arbiter3: sticky WE stream; yield on m0 gap; fair alt on dual demand
+ARM clean: decode 35.94 margin 5.73; fabric vs decode inflation UNMEASURED
 
-## RTL ready (bf6567da)
-- fabric_bank_credit async + host_bank_ingest_credit keep
-- moving pattern → Option-C writer
-- FABRIC_DDR_WRITER default OFF
+## true rc
+- test_fabric_ddr_bandwidth: 0
+- ddr_bus_arbiter3 (m0_fair_beats): 0
+- async credit / writer / path: prior 0
 
-## Parent fit enable
-FABRIC_DDR_WRITER=1 + SV stack incl fabric_bank_credit, host_bank_ingest_credit
-post-fit-hierarchy non-zero rows; hdmi_capture_idle.sh motion
+## Fit
+FABRIC_DDR_WRITER=1 + SV stack; post-fit-hierarchy; hdmi_capture_idle.sh

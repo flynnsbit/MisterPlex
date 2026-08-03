@@ -99,12 +99,59 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "FAIL frame2 done=%d pay=%d db=%d\n", done, payload, doorbell);
         ++fails;
     }
+    // Retire frame2 so free_mask returns (else claim cannot start phase 3)
+    top->vsync_swap = 1;
+    for (int i = 0; i < 4; ++i) tick(top);
+    top->vsync_swap = 0;
+    for (int i = 0; i < 8; ++i) tick(top);
+
+    // Phase 3: scanout-like pulsed m0 RD during writer fill (line-buffer cadence).
+    // Continuous m0_rd is not a real present client and wedges rsp_pipe in this TB.
+    payload = 0; doorbell = 0; done = false;
+    int m0_beats = 0, m2_beats = 0;
+    top->produce_en = 1;
+    top->m0_addr = 0x100;
+    top->DDRAM_DOUT_READY = 0;
+    for (int cyc = 0; cyc < 16000 && !done; ++cyc) {
+        // Pulse m0 every 4th cycle when not in a write beat observation window
+        top->m0_rd = ((cyc % 4) == 0) ? 1 : 0;
+        // Complete m0 read responses one cycle after RD accepted
+        if (top->DDRAM_RD && !top->DDRAM_WE && !top->DDRAM_BUSY)
+            ++m0_beats;
+        top->DDRAM_DOUT_READY = (top->DDRAM_RD && !top->DDRAM_WE) ? 1 : 0;
+        if (top->DDRAM_WE && !top->DDRAM_BUSY) {
+            uint32_t a = (uint32_t)top->DDRAM_ADDR;
+            if (a == DOORBELL_Q) ++doorbell;
+            else { ++payload; ++m2_beats; }
+        }
+        if (top->frame_done) {
+            done = true;
+            top->produce_en = 0;
+        }
+        tick(top);
+    }
+    top->produce_en = 0;
+    top->m0_rd = 0;
+    top->DDRAM_DOUT_READY = 0;
+    if (!done || payload != FRAME_QWORDS || doorbell != 1) {
+        std::fprintf(stderr, "FAIL fair frame done=%d pay=%d db=%d\n", done, payload, doorbell);
+        ++fails;
+    }
+    if (m0_beats < 1) {
+        std::fprintf(stderr, "FAIL m0 starved during m2 fill m0_beats=%d m2=%d\n", m0_beats, m2_beats);
+        ++fails;
+    }
+    if (m2_beats < FRAME_QWORDS) {
+        std::fprintf(stderr, "FAIL m2 incomplete under m0 load m2=%d\n", m2_beats);
+        ++fails;
+    }
 
     if (fails) {
         std::fprintf(stderr, "ddr_bus_arbiter3_tb: %d fails\n", fails);
         delete top; return 1;
     }
-    std::printf("ddr_bus_arbiter3_tb: OK pay=%d db_order=1 credit_vsync=1 m2_over_m1=1 frames_done=%u\n",
-                FRAME_QWORDS, (unsigned)top->frames_done);
+    std::printf("ddr_bus_arbiter3_tb: OK pay=%d db_order=1 credit_vsync=1 m2_over_m1=1 "
+                "m0_fair_beats=%d frames_done=%u\n",
+                FRAME_QWORDS, m0_beats, (unsigned)top->frames_done);
     delete top; return 0;
 }
