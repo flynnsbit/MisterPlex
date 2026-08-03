@@ -10,10 +10,16 @@
 //   2) else if m2_want → grant_m2 (fabric bank fill)
 //   3) else if m1_want → grant_m1
 //
-// m2 sticky while m0 idle (full-frame WE stream safe). When m0_cmd, release
-// after the current m2 beat (or immediately if m2 not commanding) so scanout
-// cannot be locked out for sticky_lockout ~1.92 ms. Writer re-acquires via
-// m2_want. Outstanding depth stays 1.
+// m2 sticky while m0 idle (full-frame WE stream safe when scanout quiet).
+// When m0_cmd asserts during an m2 stream, product releases after at most
+// M2_QUANTUM_BEATS accepted m2 commands (default 8 ≈ one LINE_COUNT refill
+// slot), not after the whole I420 frame. A continuous 960×540 write is
+// 97,200 qwords ≈ 1.08 ms @90 MHz; 8 line buffers cover ~0.47 ms of present
+// time — whole-frame sticky lockout underruns m0 deterministically (rd-duck).
+// Writer re-acquires via m2_want. Outstanding depth stays 1.
+//
+// FAULT DDR_ARB3_FAULT_M2_STICKY_NO_QUANTUM: hold grant_m2 through continuous
+// WE while m0_cmd (old comment-vs-code defect) for red twin.
 //
 // Macro FABRIC_DDR_WRITER default OFF — do not instantiate in product fit
 // until w-nostub frees the slot and parent measures sustained fabric BW.
@@ -23,7 +29,11 @@
 //
 `default_nettype none
 
-module ddr_bus_arbiter3 (
+module ddr_bus_arbiter3 #(
+	// Max accepted m2 beats while m0 is commanding before yield.
+	// 8 matches ddr_frame_store LINE_COUNT default (line-buffer depth).
+	parameter int M2_QUANTUM_BEATS = 8
+) (
 	input  wire        clk,      // DDR bridge clock (90 MHz)
 	input  wire        clk_m1,   // m1 consumer clock (20 MHz / clk_sys)
 	input  wire        reset,    // synchronous to clk_m1 domain
@@ -110,6 +120,11 @@ module ddr_bus_arbiter3 (
 	reg grant_m2;
 	// When m0 and m2 both want: alternate so neither starves (scanout glitch vs drop).
 	reg fair_pref_m2;
+	// Remaining accepted m2 cmds allowed while m0_cmd before forced yield.
+	reg [7:0] m2_quantum_cnt;
+	localparam [7:0] M2_QMAX = (M2_QUANTUM_BEATS < 1) ? 8'd1 :
+	                           (M2_QUANTUM_BEATS > 255) ? 8'd255 :
+	                           8'(M2_QUANTUM_BEATS);
 	reg rsp_owner_m1;
 	reg rsp_owner_m2;
 	reg [8:0] rsp_left;
@@ -214,6 +229,7 @@ module ddr_bus_arbiter3 (
 			grant_m1 <= 1'b0;
 			grant_m2 <= 1'b0;
 			fair_pref_m2 <= 1'b0; // first tie → prefer m0 (scanout)
+			m2_quantum_cnt <= M2_QMAX;
 			rsp_owner_m1 <= 1'b0;
 			rsp_owner_m2 <= 1'b0;
 			rsp_left <= 9'd0;
@@ -246,8 +262,9 @@ module ddr_bus_arbiter3 (
 						grant_m1 <= 1'b0;
 					end
 				end else if (grant_m2) begin
-					// Sticky for streaming WE (do not drop mid-beat). Yield only when
-					// m2 is not commanding so scanout can slip into idle slots / gaps.
+					// Sticky while m0 idle (full-frame WE OK). With m0_cmd:
+					// product bounds sticky to M2_QUANTUM_BEATS accepted cmds
+					// then yields so scanout refills before LINE_COUNT drains.
 					if (m2_rd) begin
 						rsp_owner_m1 <= 1'b0;
 						rsp_owner_m2 <= 1'b1;
@@ -257,13 +274,26 @@ module ddr_bus_arbiter3 (
 						grant_m2 <= 1'b0;
 					end else if (m0_cmd && !m2_cmd) begin
 						grant_m2 <= 1'b0; // gap / drain → scanout
+`ifndef DDR_ARB3_FAULT_M2_STICKY_NO_QUANTUM
+					end else if (m0_cmd && m2_cmd) begin
+						// Current beat still issues this cycle (grant_m2 held
+						// combinationally); drop grant for next cycle at quantum.
+						if (m2_quantum_cnt <= 8'd1) begin
+							grant_m2 <= 1'b0;
+							m2_quantum_cnt <= M2_QMAX;
+							fair_pref_m2 <= 1'b0; // next tie prefers m0
+						end else begin
+							m2_quantum_cnt <= m2_quantum_cnt - 8'd1;
+						end
+`endif
 					end
-					// else hold sticky through continuous WE stream
+					// FAULT / no m0: hold sticky through continuous WE stream
 				end else begin
 					// idle owner = m0 path, with m0/m2 fair share when both demand
 					if (m0_cmd && m2_want_s2) begin
 						if (fair_pref_m2) begin
 							grant_m2 <= 1'b1;
+							m2_quantum_cnt <= M2_QMAX;
 							fair_pref_m2 <= 1'b0;
 						end else if (m0_rd) begin
 							rsp_owner_m1 <= 1'b0;
@@ -280,6 +310,7 @@ module ddr_bus_arbiter3 (
 						rsp_left <= {1'b0, selected_burst};
 					end else if (!m0_cmd && m2_want_s2) begin
 						grant_m2 <= 1'b1;
+						m2_quantum_cnt <= M2_QMAX;
 					end else if (!m0_cmd && m1_want_s2) begin
 						grant_m1 <= 1'b1;
 					end
@@ -289,7 +320,7 @@ module ddr_bus_arbiter3 (
 			// m1 write: drop grant after accepted non-read cmd (product behaviour)
 			if (grant_m1 && !DDRAM_BUSY && m1_cmd && !m1_rd)
 				grant_m1 <= 1'b0;
-			// m2 WE release handled above (per-beat / m0 pre-empt)
+			// m2 WE release handled above (quantum / m0 pre-empt)
 		end
 	end
 endmodule

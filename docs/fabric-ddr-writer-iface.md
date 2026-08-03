@@ -171,7 +171,7 @@ Source: `host/libmisterplex/fabric_ddr_bandwidth.hpp`. **Device fabric BW unknow
 - Multi-pixel N ppc cuts **clk_sys** demand, not DDR bytes/frame.
 - CEA 720p60 @ 2 ppc → 37.125 MHz clk_sys (>20 product); @ 4 ppc → 18.56 MHz.
 - CEA 720p24 @ 2 ppc → 14.85 MHz (under 20).
-- **arbiter3**: m0 > m2 > m1. m2 sticky while streaming WE; yields on idle gaps when m0_cmd; fair alternate when both demand on idle. Whole-frame sticky with continuous m0 would lock scanout ~1.92 ms min (defect class). TB: m0_fair_beats>0 under pulsed scanout load.
+- **arbiter3**: m0 > m2 > m1. m2 sticky while m0 idle (full-frame WE OK). When `m0_cmd` during continuous WE, product yields after at most `M2_QUANTUM_BEATS` (default 8 = LINE_COUNT) accepted m2 cmds — whole-frame sticky underruns 8-line present cache (~0.47 ms) on a 960×540 write (~1.08 ms). FAULT `DDR_ARB3_FAULT_M2_STICKY_NO_QUANTUM` restores lockout. TB: `test_ddr_bus_arbiter3_quantum.sh` (256-beat concurrent R/W) + legacy fair pulsed TB.
 - ARM clean margin 5.73 ms; any memory peer still fails serially. Fabric RW vs decode inflation: **unmeasured**.
 
 Parent measure after fit:
