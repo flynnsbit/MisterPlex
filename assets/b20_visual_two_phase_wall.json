@@ -23,12 +23,29 @@
   "still_open_owners": {
     "present_geom_latch": "w-mem",
     "Plex.sv_DAR": "w-osd",
-    "swap_applied_pulse_export": "optional w-mem; fstart fire matches store today"
+    "plxg_bank_atomic": "w-path+w-mem+w-clock",
+    "store_applied_bus": "w-mem",
+    "app_from_store_applied": "w-clock (blocked on bus)",
+    "swap_applied_pulse_export": "w-mem"
   },
   "red_twins": [
     "FAULT_B20_BEAM_FREE_RUN",
     "FAULT_B20_VISUAL_FREE_RUN"
   ],
   "gate": "tests/unit/test_b20_visual_two_phase.sh",
-  "B20_CLOSED": false
+  "B20_CLOSED": false,
+  "atomic_plxg_bank_coupling": false,
+  "rd_duck_atomic_blocker": {
+    "summary": "app_* samples LIVE content_* at visual_swap_ack; doorbellSeq independent of PLXG; no store_applied tuple",
+    "present_core": "app_* <= content_* on visual_geom_apply (live)",
+    "doorbell": "fpga_spi kickDdrDoorbell: bank+format+doorbellSeq only",
+    "required": "doorbell expected PLXG seq + store snapshot full tuple + app from store_applied",
+    "contract": ".agent-work/w-clock/B20_PLXG_BANK_ATOMIC_CONTRACT.md",
+    "owners": {
+      "doorbell_plxg": "w-path",
+      "store_snapshot": "w-mem",
+      "app_from_applied": "w-clock",
+      "hierarchy_tb": "joint"
+    }
+  }
 }

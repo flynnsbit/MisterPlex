@@ -276,6 +276,12 @@ module present_core #(
 	wire b20_ext_store_path = 1'b0;
 `endif
 
+	// B20 OPEN (rd-duck atomic blocker): app_* samples LIVE mux/latch outputs,
+	// not a store doorbell snapshot. Independent host doorbellSeq_ + async PLXG
+	// poll can yield app_*=N+1 with bank=N. When w-mem exports store_applied_* +
+	// swap_applied_pulse and w-path tags doorbell with expected PLXG {epoch,seq},
+	// switch app_* <= store_applied_* only.
+	// See .agent-work/w-clock/B20_PLXG_BANK_ATOMIC_CONTRACT.md
 	always @(posedge clk) begin
 		if (reset) begin
 			app_content_fps <= 8'd24;
