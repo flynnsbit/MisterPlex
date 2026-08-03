@@ -513,6 +513,38 @@
       "token_hit": "1"
     },
     {
+      "check": "B42_STRIDE_GUARD_ABSENT",
+      "inject": "live hollow / missing product TB",
+      "expect": "B42_STRIDE_GUARD_ABSENT",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B42_LEGACY_ONLY_STRIDE_WIRED",
+      "inject": "live hollow / missing product TB",
+      "expect": "B42_LEGACY_ONLY_STRIDE_WIRED",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B42_NO_STICKY_GEOM_REJECT_OVERFLOW",
+      "inject": "live hollow / missing product TB",
+      "expect": "B42_NO_STICKY_GEOM_REJECT_OVERFLOW",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B42_STRIDE_GUARD_TB_ABSENT",
+      "inject": "live hollow / missing product TB",
+      "expect": "B42_STRIDE_GUARD_TB_ABSENT",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
       "check": "B9_SYS_TOP_AR_OUT_HOLD_MISSING",
       "inject": "live defective/hollow tree (no inject)",
       "expect": "B9_SYS_TOP_AR_OUT_HOLD_MISSING",
@@ -889,6 +921,46 @@
       "token_hit": "1"
     },
     {
+      "check": "B42_SILENT_720P_ON_LEGACY",
+      "inject": "remove stride guard+TB; leave legacy-only wire",
+      "expect": "B42_STRIDE_GUARD_ABSENT",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B42_STRIDE_GUARD_ABSENT",
+      "inject": "B42 silent-720p-on-legacy mutation",
+      "expect": "B42_STRIDE_GUARD_ABSENT",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B42_LEGACY_ONLY_STRIDE_WIRED",
+      "inject": "B42 silent-720p-on-legacy mutation",
+      "expect": "B42_LEGACY_ONLY_STRIDE_WIRED",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B42_STRIDE_GUARD_TB_ABSENT",
+      "inject": "B42 silent-720p-on-legacy mutation",
+      "expect": "B42_STRIDE_GUARD_TB_ABSENT",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B42_NO_STICKY_GEOM_REJECT_OVERFLOW",
+      "inject": "B42 silent-720p-on-legacy mutation",
+      "expect": "B42_NO_STICKY_GEOM_REJECT_OVERFLOW",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
       "check": "B34_IDENTITY_ON_STORE",
       "inject": "align then makeDdrFrameGeometry(store) loses display 426/crop_left=2",
       "expect": "B34_IDENTITY_ON_STORE",
@@ -914,6 +986,6 @@
     }
   ],
   "failures": [],
-  "n_red": 114,
-  "head": "771f10d510fe"
+  "n_red": 123,
+  "head": "b8c3581d4c96"
 }

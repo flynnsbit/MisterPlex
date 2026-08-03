@@ -1,35 +1,23 @@
 lane=w-fitgate
 branch=w-fitgate
-sha=012f0ef8
-ref_measured=w-fitgate@012f0ef8
+sha=PENDING
 GRANT=NO
-status=B41_DIRECT_VIDEO_ASCAL_BYPASS_PUSHED
+status=B42_BANK_STRIDE_720P_FIT_HOLD
 
-B41 rd-duck CONFIG: Direct Video + VGA_SCALER=0 → Route-B bypasses ascal.
-  sys_top: vga_fb=cfg[12]|vga_force; (~vga_fb & direct_video) muxes core raster
-  not 720p glass. .iauto(1) irrelevant on bypass.
-  Closure Path A: VGA_SCALER=1 + force→vga_fb (w-clock@a3365370)
-  Path B: DV loud+hard off; Path C: effective-route oracle.
+PARENT FLEET FACTS ACK (measured):
+  main@3fa01a9b (detached meas worktree): files.qip present_* L2 default-off
+  FRAME_W=640 FRAME_H=480 active; use_frame_store=0; L4 not shipped
+  Lab glass already 720p (parent); content 1280x720 is the target
+  B41 NOT retired: product must still force VGA_SCALER (user DV risk)
+  Fit hold = B42 stride 512KiB vs I420 1382400 (2.64x)
 
-LIVE_OPEN RED on hollow fitgate:
-  B41_VGA_SCALER_NOT_FORCED
-  B41_ROUTE_B_DIRECT_VIDEO_BYPASS_OPEN
-  B41_IAUTO_IRRELEVANT_ON_BYPASS
-  B41_NO_ASCAL_ROUTE_CLOSURE
-Mutation RED: B41_FORCE_OR_STRIPPED (VGA=1 but vga_fb loses |force)
-FIX_STATUS: w-clock@a3365370 unmerged
-probe clock: LEG0_B41_PASS Path-A
+B42 gate:
+  LIVE RED hollow+main3fa: STRIDE_GUARD_ABSENT LEGACY_ONLY STICKY_REJECT TB_ABSENT
+  PASS w-mem@cbe31c4c LEG0_B42_PASS
+  ARITH i420=1382400 leg=524288 ratio_x100=263 optc_need=0x180000
+  FIX_STATUS w-mem@cbe31c4c unmerged
 
-SELFTEST true rc=0
-  FIT_RELEASE_GATE_SELFTEST_PASS EXECUTED
-  MUTATION_MATRIX_SUMMARY rows=114 red=114 fail_holes=0
+SELFTEST true rc=0 rows=123 red=123 holes=0
 
-Parent:
-  git fetch origin w-fitgate
-  RULER=/home/flynnsbit/Projects/MisterPlex-wt-fitgate
-  "$RULER/scripts/fit_release_gate.sh" --root "$MERGE" --qsf "$MERGE/fpga/Plex_MiSTer/Plex.qsf"
-  echo "true rc=$?"
-
-LANDING: 0 product RTL; scripts/docs only
-  ON_MAIN=no IN_FILES_QIP=n/a INSTANTIATED=n/a ENABLED=n/a
+Landing: 0 product RTL by this lane; scripts only ON_MAIN=no
 NO Quartus. NO device. GRANT=NO.

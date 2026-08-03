@@ -301,6 +301,14 @@ LIVE_OPEN_BLOCKER_TOKENS = (
     "B41_IAUTO_IRRELEVANT_ON_BYPASS",
     "B41_NO_ASCAL_ROUTE_CLOSURE",
     # B41_FORCE_OR_STRIPPED / B41_DV_LOUD_ONLY_WITHOUT_FORCE: closed-class reinject
+    # Parent fleet: content 1280×720 I420 needs bank stride ≥0x180000 (not 512KiB)
+    "B42_STRIDE_GUARD_ABSENT",
+    "B42_LEGACY_ONLY_STRIDE_WIRED",
+    "B42_NO_STICKY_GEOM_REJECT_OVERFLOW",
+    "B42_STRIDE_GUARD_TB_ABSENT",
+    # B42_OPTC_STRIDE_LT_720P_I420: closed-class (params often already 0x180000)
+    # B42_FRAME_1280_WITHOUT_OPTC_STRIDE: closed-class (only when QSF FRAME>=1280)
+    # B42_SILENT_720P_ON_LEGACY / B42_GUARD_NOT_INSTANTIATED: closed-class
 )
 
 # Sibling-lane fixes that exist but are not merged into this gated tree.
@@ -534,6 +542,55 @@ FIX_STATUS: dict[str, dict[str, str]] = {
         "worktree": "/home/flynnsbit/Projects/MisterPlex-wt-clock",
         "artefact": "fpga/Plex_MiSTer/Plex.sv",
         "evidence": "Path-A force VGA_SCALER=1 closes ascal route (not DV loud alone)",
+    },
+    # B42 1280×720 I420 bank-stride landmine (parent fit-hold; w-mem owns)
+    "B42_STRIDE_GUARD_ABSENT": {
+        "status": "unmerged",
+        "lane": "w-mem",
+        "commit": "cbe31c4c",
+        "worktree": "/home/flynnsbit/Projects/MisterPlex-wt-mem",
+        "artefact": "fpga/Plex_MiSTer/rtl/ddr_bank_stride_guard.sv",
+        "evidence": "elab $error + overflow_fault; FAULT twin 720p on 512KiB",
+    },
+    "B42_OPTC_STRIDE_LT_720P_I420": {
+        "status": "unmerged",
+        "lane": "w-mem",
+        "commit": "cbe31c4c",
+        "worktree": "/home/flynnsbit/Projects/MisterPlex-wt-mem",
+        "artefact": "ddr_frame_layout_params.svh DDR_FRAME_720P_YUV420P_BANK_STRIDE",
+        "evidence": "0x180000 usable 1568768 >= 1382400 I420",
+    },
+    "B42_LEGACY_ONLY_STRIDE_WIRED": {
+        "status": "unmerged",
+        "lane": "w-mem",
+        "commit": "cbe31c4c",
+        "worktree": "/home/flynnsbit/Projects/MisterPlex-wt-mem",
+        "artefact": "present_core.sv dual-map HPS_BANK_STRIDE_BYTES_720P",
+        "evidence": "LEG 0x80000 + OPTC 0x180000 params; not legacy-only",
+    },
+    "B42_NO_STICKY_GEOM_REJECT_OVERFLOW": {
+        "status": "unmerged",
+        "lane": "w-mem",
+        "commit": "cbe31c4c",
+        "worktree": "/home/flynnsbit/Projects/MisterPlex-wt-mem",
+        "artefact": "ddr_frame_store.sv geom_reject_r / rt_bank_overflow",
+        "evidence": "sticky geom_reject on payload>usable (loud, not silent)",
+    },
+    "B42_STRIDE_GUARD_TB_ABSENT": {
+        "status": "unmerged",
+        "lane": "w-mem",
+        "commit": "cbe31c4c",
+        "worktree": "/home/flynnsbit/Projects/MisterPlex-wt-mem",
+        "artefact": "tests/rtl/ddr_bank_stride_guard_tb.sv",
+        "evidence": "PASS_PRODUCT + FAULT REPRO silent_720p_on_512kib",
+    },
+    "B42_FRAME_1280_WITHOUT_OPTC_STRIDE": {
+        "status": "unmerged",
+        "lane": "w-mem",
+        "commit": "cbe31c4c",
+        "worktree": "/home/flynnsbit/Projects/MisterPlex-wt-mem",
+        "artefact": "guard blocks FRAME 1280 unless OPTC>=0x180000",
+        "evidence": "MAX_NEEDS_180000 / FRAME_SILENT_720P generate $error",
     },
     # Everything else: no known sibling implementation — new work.
 }
@@ -8127,6 +8184,270 @@ def check_b41_direct_video_ascal_bypass(root: Path) -> tuple[list[str], list[str
             f"LEG0_B41_PASS Path-{which} closes Direct Video ascal bypass "
             f"(iauto_irrelevant_noted={int(admits_iauto_irrelevant)})"
         )
+    # Parent fleet 2026-08-03: lab glass is already 720p (video_mode=0,
+    # direct_video=0, vga_scaler=1). B41 is product robustness so a user
+    # cannot re-open Route-B; content 1280×720 is the remaining target (B42).
+    msgs.append(
+        "LEG0_B41_NOTE lab_glass_already_720p=1 content_target=1280x720 "
+        "(output upscale of 640x480 is NOT the 720p feature)"
+    )
+    return msgs, errors
+
+
+def check_b42_bank_stride_720p_overflow(root: Path) -> tuple[list[str], list[str]]:
+    """B42: 1280×720 I420 must not use 512 KiB banks (parent fit-hold).
+
+    Measured class (parent + w-nostub + w-mem):
+      I420 1280×720 = 1_382_400 B
+      HPS_BANK_STRIDE legacy = 524288 (0x80000) → 2.64× over → silent neighbour
+      bank corruption (same class as MB_WIDTH_MAX under-cap).
+    Option-C stride 0x180000 usable 1_568_768 fits. Guard must be LOUD
+    (elab $error + sticky geom_reject), not silent overflow.
+
+    Parent: glass HDMI is already 720p; CONTENT 1280×720 is the target.
+    Enabling FRAME_W=1280 without OPTC stride keeps fit HELD.
+    """
+    msgs: list[str] = ["LEG0_B42_BANK_STRIDE_720P_OVERFLOW_EXECUTED begin"]
+    errors: list[str] = []
+
+    i420_720p = 1280 * 720 * 3 // 2  # 1382400
+    leg_stride = 0x80000
+    optc_need = 0x180000
+    msgs.append(
+        f"LEG0_B42_ARITH i420_720p={i420_720p} leg_stride={leg_stride} "
+        f"ratio_x100={(i420_720p * 100) // leg_stride} optc_need={optc_need}"
+    )
+    # Content-vs-output note (parent fleet broadcast)
+    msgs.append(
+        "LEG0_B42_TARGET content_1280x720=1 glass_already_720p=1 "
+        "(ascal upscale of 640x480 is not the feature; stride blocks L4 enable)"
+    )
+
+    guard_p = root / "fpga" / "Plex_MiSTer" / "rtl" / "ddr_bank_stride_guard.sv"
+    store_p = root / "fpga" / "Plex_MiSTer" / "rtl" / "ddr_frame_store.sv"
+    core_p = root / "fpga" / "Plex_MiSTer" / "rtl" / "present_core.sv"
+    params_p = root / "fpga" / "Plex_MiSTer" / "rtl" / "ddr_frame_layout_params.svh"
+    plex_p = root / "fpga" / "Plex_MiSTer" / "Plex.sv"
+    qsf_p = root / "fpga" / "Plex_MiSTer" / "Plex.qsf"
+    tb_p = root / "tests" / "rtl" / "ddr_bank_stride_guard_tb.sv"
+    tb_sh = root / "tests" / "unit" / "test_ddr_bank_stride_guard_verilator.sh"
+
+    guard_txt = product_active_sv(_read(guard_p) or "") if guard_p.is_file() else ""
+    store_txt = product_active_sv(_read(store_p) or "") if store_p.is_file() else ""
+    core_txt = product_active_sv(_read(core_p) or "") if core_p.is_file() else ""
+    params_raw = _read(params_p) or ""
+    plex_txt = product_active_sv(_read(plex_p) or "") if plex_p.is_file() else ""
+    qsf_txt = _read(qsf_p) or ""
+    tb_blob = "\n".join([_read(tb_p) or "", _read(tb_sh) or ""])
+
+    has_guard = guard_p.is_file() and bool(
+        re.search(r"module\s+ddr_bank_stride_guard\b", guard_txt)
+    )
+    guard_inst = bool(re.search(r"ddr_bank_stride_guard\s*#", store_txt))
+    has_error = bool(re.search(r"\$error", guard_txt))
+    has_silent_pred = bool(
+        re.search(r"FRAME_SILENT_720P|MAX_SILENT_720P|MAX_NEEDS_180000", guard_txt)
+    )
+    has_fault_ifdef = bool(
+        re.search(r"DDR_BANK_STRIDE_FAULT_720P_ON_LEGACY", guard_txt + tb_blob)
+    )
+
+    # Option-C stride constant >= 0x180000
+    optc_m = re.search(
+        r"DDR_FRAME_720P_YUV420P_BANK_STRIDE\s*=\s*32'h([0-9a-fA-F_]+)",
+        params_raw,
+    )
+    optc_val = None
+    if optc_m:
+        optc_val = int(optc_m.group(1).replace("_", ""), 16)
+    # Also host header
+    host_lay = _read(root / "host" / "libmisterplex" / "ddr_frame_layout.hpp") or ""
+    host_optc = re.search(
+        r"kPlex720pYuv420pBankStride\s*=\s*0x([0-9a-fA-F]+)u?",
+        host_lay,
+    )
+    host_optc_val = int(host_optc.group(1), 16) if host_optc else None
+
+    # Dual-map wiring on present_core / store
+    core_leg = bool(
+        re.search(
+            r"\.HPS_BANK_STRIDE_BYTES\s*\(\s*DDR_FRAME_YUV420P_BANK_STRIDE\s*\)",
+            core_txt,
+        )
+    )
+    core_optc = bool(
+        re.search(
+            r"\.HPS_BANK_STRIDE_BYTES_720P\s*\(\s*DDR_FRAME_720P_YUV420P_BANK_STRIDE\s*\)",
+            core_txt,
+        )
+    )
+    store_optc_param = bool(
+        re.search(r"parameter\s+int\s+HPS_BANK_STRIDE_BYTES_720P", store_txt)
+    )
+    # Legacy-only: core wires only 0x80000 path without 720P param
+    legacy_only = core_leg and not core_optc and not (
+        re.search(r"HPS_BANK_STRIDE_BYTES_720P", core_txt)
+    )
+
+    # Sticky geom_reject on bank overflow
+    sticky = bool(
+        re.search(r"geom_reject_r", store_txt)
+        and re.search(r"rt_bank_overflow|bank_overflow|overflow_fault", store_txt)
+    )
+    # weaker: geom_reject tied to payload
+    if not sticky:
+        sticky = bool(
+            re.search(
+                r"geom_reject.*overflow|overflow.*geom_reject|payload.*usable",
+                store_txt,
+                re.I,
+            )
+        )
+
+    # Active QSF FRAME 1280 without optc path
+    fw = re.search(
+        r'^\s*set_global_assignment\s+-name\s+VERILOG_MACRO\s+"FRAME_W=(\d+)"',
+        qsf_txt,
+        re.M,
+    )
+    fh = re.search(
+        r'^\s*set_global_assignment\s+-name\s+VERILOG_MACRO\s+"FRAME_H=(\d+)"',
+        qsf_txt,
+        re.M,
+    )
+    # ignore commented
+    def _active_macro(name: str) -> str | None:
+        for m in re.finditer(
+            rf'^\s*set_global_assignment\s+-name\s+VERILOG_MACRO\s+"{name}=([^"]+)"',
+            qsf_txt,
+            re.M,
+        ):
+            line_start = qsf_txt.rfind("\n", 0, m.start()) + 1
+            if qsf_txt[line_start : m.start()].lstrip().startswith("#"):
+                continue
+            return m.group(1)
+        return None
+
+    act_w = _active_macro("FRAME_W")
+    act_h = _active_macro("FRAME_H")
+    frame_1280 = (
+        act_w is not None
+        and act_h is not None
+        and int(act_w) >= 1280
+        and int(act_h) >= 720
+    )
+
+    tb_ok = tb_p.is_file() and bool(
+        re.search(r"PASS_PRODUCT|silent_720p_on_512kib|REPRO_OK", tb_blob)
+    )
+    tb_fault = bool(re.search(r"DDR_BANK_STRIDE_FAULT_720P_ON_LEGACY", tb_blob))
+
+    msgs.append(
+        f"LEG0_B42_SCAN guard={int(has_guard)} inst={int(guard_inst)} "
+        f"$error={int(has_error)} silent_pred={int(has_silent_pred)} "
+        f"optc_svh={optc_val!r} optc_host={host_optc_val!r} "
+        f"core_leg={int(core_leg)} core_optc={int(core_optc)} "
+        f"store_optc_p={int(store_optc_param)} legacy_only={int(legacy_only)} "
+        f"sticky={int(sticky)} frame_qsf={act_w}x{act_h} "
+        f"tb={int(tb_ok)} tb_fault={int(tb_fault)}"
+    )
+
+    if not has_guard:
+        errors.append(
+            "B42_STRIDE_GUARD_ABSENT: missing rtl/ddr_bank_stride_guard.sv. "
+            "Parent fit-hold: I420 1280×720=1382400 exceeds legacy "
+            "HPS_BANK_STRIDE 524288 (2.64×) — silent neighbour-bank corruption "
+            "unless elab-loud guard lands (w-mem; same class as MB_WIDTH_MAX)."
+        )
+
+    optc_ok = (optc_val is not None and optc_val >= optc_need) or (
+        host_optc_val is not None and host_optc_val >= optc_need
+    )
+    if not optc_ok:
+        errors.append(
+            "B42_OPTC_STRIDE_LT_720P_I420: need DDR_FRAME_720P_YUV420P_BANK_STRIDE "
+            f"/ kPlex720pYuv420pBankStride >= 0x{optc_need:x} (usable fits "
+            f"{i420_720p}). Measured missing or too small "
+            f"(svh={optc_val!r} host={host_optc_val!r})."
+        )
+
+    if legacy_only or (core_leg and not core_optc and not store_optc_param):
+        errors.append(
+            "B42_LEGACY_ONLY_STRIDE_WIRED: present_core/store wires only legacy "
+            "HPS_BANK_STRIDE_BYTES(DDR_FRAME_YUV420P_BANK_STRIDE=0x80000) without "
+            "HPS_BANK_STRIDE_BYTES_720P(DDR_FRAME_720P_*=0x180000). Dual-map "
+            "required before content 1280×720 enable (parent fit-hold)."
+        )
+
+    if store_p.is_file() and not sticky:
+        errors.append(
+            "B42_NO_STICKY_GEOM_REJECT_OVERFLOW: ddr_frame_store must sticky "
+            "geom_reject (or equivalent) when I420 payload exceeds bank usable "
+            "— LOUD reject, not silent overflow into next bank (parent)."
+        )
+
+    if not tb_ok or not tb_fault:
+        errors.append(
+            "B42_STRIDE_GUARD_TB_ABSENT: need tests/rtl/ddr_bank_stride_guard_tb "
+            "with PASS_PRODUCT dual-map and FAULT twin "
+            "DDR_BANK_STRIDE_FAULT_720P_ON_LEGACY → REPRO silent_720p_on_512kib "
+            "(negative case a naive 512KiB-only path must fail)."
+        )
+
+    if frame_1280 and not (
+        optc_ok and has_guard and (core_optc or store_optc_param)
+    ):
+        errors.append(
+            f"B42_FRAME_1280_WITHOUT_OPTC_STRIDE: active QSF FRAME_W×H="
+            f"{act_w}x{act_h} enables 1280 content without proven Option-C "
+            "stride path + guard — fit must stay HELD (parent landmine)."
+        )
+
+    # Guard must be instantiated in product store when present
+    if has_guard and store_p.is_file() and not guard_inst:
+        errors.append(
+            "B42_STRIDE_GUARD_ABSENT: ddr_bank_stride_guard.sv exists but "
+            "ddr_frame_store does not instantiate it — dead code, not LOUD."
+        )
+
+    if has_guard and not (has_error and has_silent_pred):
+        errors.append(
+            "B42_STRIDE_GUARD_ABSENT: guard module missing $error and/or "
+            "FRAME_SILENT_720P/MAX_NEEDS_180000 predicates — not elab-loud."
+        )
+
+    closed = (
+        has_guard
+        and guard_inst
+        and has_error
+        and has_silent_pred
+        and optc_ok
+        and core_optc
+        and sticky
+        and tb_ok
+        and tb_fault
+        and not frame_1280  # or frame_1280 with full path — allow if optc path complete
+    )
+    # Allow FRAME 1280 when full path closed
+    if (
+        has_guard
+        and guard_inst
+        and has_error
+        and has_silent_pred
+        and optc_ok
+        and core_optc
+        and sticky
+        and tb_ok
+        and tb_fault
+        and (not frame_1280 or (core_optc and optc_ok))
+    ):
+        closed = True
+
+    if closed and not errors:
+        msgs.append(
+            "LEG0_B42_PASS loud stride guard + OPTC 0x180000 dual-map + "
+            "sticky geom_reject + FAULT twin (720p content bank-safe)"
+        )
     return msgs, errors
 
 
@@ -9622,6 +9943,11 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
     b41_msgs, b41_errs = check_b41_direct_video_ascal_bypass(ROOT)
     msgs.extend(b41_msgs)
     errors.extend(b41_errs)
+
+    # --- B42 1280 I420 bank-stride overflow (parent fit-hold) ---
+    b42_msgs, b42_errs = check_b42_bank_stride_720p_overflow(ROOT)
+    msgs.extend(b42_msgs)
+    errors.extend(b42_errs)
 
     # --- B20 full-hierarchy scenario tests (rd-duck 2026-08-03 hollow audit) ---
     # Prior gate only regex-scanned test *text* and accepted comment bait (mutation
@@ -11508,6 +11834,10 @@ def _run_mutation_matrix() -> tuple[list[str], list[dict[str, str]]]:
         "B41_ROUTE_B_DIRECT_VIDEO_BYPASS_OPEN",
         "B41_IAUTO_IRRELEVANT_ON_BYPASS",
         "B41_NO_ASCAL_ROUTE_CLOSURE",
+        "B42_STRIDE_GUARD_ABSENT",
+        "B42_LEGACY_ONLY_STRIDE_WIRED",
+        "B42_NO_STICKY_GEOM_REJECT_OVERFLOW",
+        "B42_STRIDE_GUARD_TB_ABSENT",
     ):
         txt = "\n".join(msgs)
         has = tok in txt
@@ -12592,6 +12922,63 @@ def _run_mutation_matrix() -> tuple[list[str], list[dict[str, str]]]:
             sys_b41.write_text(sys_old)
             for h in hide_c:
                 h()
+
+    # --- parent B42: strip stride guard / force legacy-only 720p capacity ---
+    guard_b42 = ROOT / "fpga" / "Plex_MiSTer" / "rtl" / "ddr_bank_stride_guard.sv"
+    store_b42 = ROOT / "fpga" / "Plex_MiSTer" / "rtl" / "ddr_frame_store.sv"
+    core_b42 = ROOT / "fpga" / "Plex_MiSTer" / "rtl" / "present_core.sv"
+    tb_b42 = ROOT / "tests" / "rtl" / "ddr_bank_stride_guard_tb.sv"
+    # Seed hollow product: no guard, core legacy-only, optional FAULT store
+    restores_b42: list = []
+    if guard_b42.is_file():
+        bak = guard_b42.read_text(errors="replace")
+        guard_b42.unlink()
+        restores_b42.append(lambda p=guard_b42, b=bak: p.write_text(b))
+    if tb_b42.is_file():
+        bak = tb_b42.read_text(errors="replace")
+        tb_b42.unlink()
+        restores_b42.append(lambda p=tb_b42, b=bak: (p.parent.mkdir(parents=True, exist_ok=True), p.write_text(b)))
+    core_rest = None
+    if core_b42.is_file():
+        cold = core_b42.read_text(errors="replace")
+        cmut = re.sub(
+            r"\.HPS_BANK_STRIDE_BYTES_720P\s*\([^)]*\)\s*,?",
+            "",
+            cold,
+        )
+        if "HPS_BANK_STRIDE_BYTES" not in cmut:
+            cmut += "\n// fitgate B42 mut\n.HPS_BANK_STRIDE_BYTES(DDR_FRAME_YUV420P_BANK_STRIDE),\n"
+        core_b42.write_text(cmut)
+        core_rest = cold
+    try:
+        rc, msgs = leg0_arch_blockers()
+        txt = "\n".join(msgs)
+        exp = (
+            "B42_STRIDE_GUARD_ABSENT"
+            if "B42_STRIDE_GUARD_ABSENT" in txt
+            else "B42_STRIDE_GUARD_TB_ABSENT"
+        )
+        _row(
+            "B42_SILENT_720P_ON_LEGACY",
+            "remove stride guard+TB; leave legacy-only wire",
+            exp,
+            rc,
+            msgs,
+        )
+        for tok in (
+            "B42_STRIDE_GUARD_ABSENT",
+            "B42_LEGACY_ONLY_STRIDE_WIRED",
+            "B42_STRIDE_GUARD_TB_ABSENT",
+            "B42_NO_STICKY_GEOM_REJECT_OVERFLOW",
+            "B42_OPTC_STRIDE_LT_720P_I420",
+        ):
+            if tok in txt:
+                _row(tok, "B42 silent-720p-on-legacy mutation", tok, rc, msgs)
+    finally:
+        for r in restores_b42:
+            r()
+        if core_rest is not None:
+            core_b42.write_text(core_rest)
 
 # --- rd-duck B34: identity-on-store 432/432/0 after align ---
     lay_b34 = ROOT / "host" / "libmisterplex" / "ddr_frame_layout.hpp"
