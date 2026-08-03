@@ -162,6 +162,20 @@ if ! grep -q 'LEG_DE_W' "$MUX" || ! grep -q 'disable_legacy' "$MUX"; then
   echo "FAIL mux missing true-legacy DE on disable (rd-duck 624-in-960)" >&2
   exit 1
 fi
+# Source-native: product LEG_DE_W must be 624 (storage), not presented 640.
+if ! grep -A2 "ifndef FAULT_MUX_DISABLE_DE_640" "$MUX" | grep -q "11'd624"; then
+  if ! grep -n "LEG_DE_W = 11'd624" "$MUX" | grep -q .; then
+    echo "FAIL mux LEG_DE_W not 624 (source-native / w-clock LEG_CW)" >&2
+    exit 1
+  fi
+fi
+if grep -n 'LEG_DE_W = 11.d640' "$MUX" | grep -v FAULT_MUX_DISABLE_DE_640 | grep -q .; then
+  # 640 only allowed inside FAULT twin
+  if ! grep -B3 "LEG_DE_W = 11'd640" "$MUX" | grep -q 'FAULT_MUX_DISABLE_DE_640'; then
+    echo "FAIL mux product still uses presented-640 DE on disable" >&2
+    exit 1
+  fi
+fi
 if grep -n 'disable_beam_de' "$MUX" | grep -q '960'; then
   echo "FAIL mux still couples disable to 960 DE" >&2
   exit 1

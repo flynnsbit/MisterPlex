@@ -253,9 +253,10 @@ int main(int argc, char** argv) {
 	std::fprintf(stderr, "Option-C capacity: p960=%u p1280=%u usable=%u\n", payload_960,
 	             payload_1280, usable);
 
-	// --- 3) Explicit disable → true legacy DE 640×480, NOT 960 (rd-duck) ---
-	// geom_enable=0 (LEG store); content/DE presented 640×480. Old product kept
-	// 960 DE → 624 island inside 960 canvas → ascal ~824×640 glass.
+	// --- 3) Explicit disable → storage-native DE 624×480, NOT 960/640 (rd-duck) ---
+	// geom_enable=0 (LEG store CODED_W=624). Source-native: DE tracks storage.
+	// Presented 640 is glass pillar (ascal); 640 DE over 624 store is an island.
+	// Old product kept 960 DE → 624-in-960 → ascal ~824×640 glass.
 	inject_disable(t);
 	std::fprintf(stderr,
 	             "disable: win=%u geom=%u cw=%u ch=%u coded=%ux%u yst=%u de=%ux%u\n",
@@ -266,14 +267,17 @@ int main(int argc, char** argv) {
 		fail("disable: present_geom_enable must be 0 (legacy store path)");
 	if (t->obs_y_stride == 960 && t->obs_geom_en)
 		fail("disable: store still forced to 960 stride");
-	if (t->obs_content_w != 640 || t->obs_content_h != 480)
-		fail("disable: content must be presented legacy 640×480");
-	if (t->obs_win_h_de != 640 || t->obs_win_v_de != 480)
-		fail("disable: beam DE must be true legacy 640×480 (not 960×540)");
+	if (t->obs_content_w != 624 || t->obs_content_h != 480)
+		fail("disable: content must be storage-native 624×480 (not presented 640)");
+	if (t->obs_win_h_de != 624 || t->obs_win_v_de != 480)
+		fail("disable: beam DE must be 624×480 (w-clock LEG_CW; not 640/960)");
 	// Pixel-extent oracle: forbid 960 DE while geom_off (island-in-canvas class).
 	if (!t->obs_geom_en && t->obs_win_h_de == 960 && t->obs_win_v_de == 540)
 		fail("disable: PIXEL_EXTENT geom_off+960DE forbidden (624-in-960 class)");
-	std::fprintf(stderr, "PASS disable legacy DE 640×480 geom_off (no 960 island)\n");
+	// Forbid presented-640 DE over LEG 624 store (cross-lane collision class).
+	if (!t->obs_geom_en && t->obs_win_h_de == 640)
+		fail("disable: PIXEL_EXTENT geom_off+640DE forbidden (624-in-640 class)");
+	std::fprintf(stderr, "PASS disable legacy DE 624×480 geom_off (source-native)\n");
 
 	// --- 3b) Content-bearing legacy 624×480 mode-exit (preferred host path) ---
 	inject_geom(t, 624, 480, 624, 312);

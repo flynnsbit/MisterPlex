@@ -185,18 +185,18 @@ inline PlxgRecord makePlxgRecord960x540Native(uint16_t seq) {
     return r;
 }
 
-// Preferred mode-exit (rd-duck): content-bearing product 480p geometry.
-// geom_enable=1 + 624×480 → capacity selects LEG map (not Option-C); beam DE
-// tracks content so ascal sees a full-frame island, not 624 inside 960.
-// h_de/v_de = presented 640×480; coded/stride = product silicon 624/312.
+// Preferred mode-exit (rd-duck / w-clock source-native): content-bearing
+// product 480p geometry. geom_enable=1 + 624×480 → LEG map; beam DE tracks
+// storage/coded 624 (NOT presented pillar 640 — that is ascal glass work).
+// h_de/v_de = cw/ch = 624×480; coded/stride = 624/312; display 618.
 inline PlxgRecord makePlxgRecordLegacy480(uint16_t seq) {
     PlxgRecord r{};
     r.seq = seq;
     r.q[0] = packPlxgQ0(/*win*/ true, /*geom*/ true, seq);
     r.q[1] = packPlxgQ1(/*cw*/ 624, /*ch*/ 480, /*x0*/ 0, /*y0*/ 0);
-    r.q[2] = packPlxgQ2(/*h_de*/ 640, /*v_de*/ 480, /*coded*/ 624, /*ch*/ 480);
+    r.q[2] = packPlxgQ2(/*h_de*/ 624, /*v_de*/ 480, /*coded*/ 624, /*ch*/ 480);
     r.q[3] = packPlxgQ3(/*y*/ 624, /*c*/ 312, /*dw*/ 618, /*dh*/ 480);
-    r.q[4] = packPlxgQ4(/*px*/ 11, /*py*/ 0, /*cl*/ 0, /*ct*/ 0); // pillarbox
+    r.q[4] = packPlxgQ4(/*px*/ 0, /*py*/ 0, /*cl*/ 0, /*ct*/ 0);
     r.q[5] = packPlxgQ5(0, 0, 0, false, false);
     r.valid = true;
     return r;
@@ -204,7 +204,7 @@ inline PlxgRecord makePlxgRecordLegacy480(uint16_t seq) {
 
 // Zero-record disable (geom=0,cw=ch=0). Safety-net / tests only — product
 // full-canvas mode-exit prefers makePlxgRecordLegacy480. Mux maps this to
-// true legacy DE 640×480 with present_geom_enable=0 (LEG bank).
+// storage-native DE 624×480 with present_geom_enable=0 (LEG bank).
 inline PlxgRecord makePlxgRecordDisable(uint16_t seq) {
     PlxgRecord r{};
     r.seq = seq;

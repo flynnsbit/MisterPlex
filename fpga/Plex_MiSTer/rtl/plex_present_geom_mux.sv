@@ -2,12 +2,13 @@
 //
 // COLLISION #5: force_native_960 is MAX-TIER FALLBACK when PLXG is idle only.
 // rd-duck explicit-disable: live_valid=1,cw=ch=0,geom=0 is mode exit — must NOT
-// re-enable 960 store geometry. Beam DE under disable is TRUE LEGACY (640×480),
-// not max-tier 960 — keeping 960 DE with geom_off paints a 624 island inside a
-// 960 canvas and ascal letterboxes (~824×640 glass). Size changes are ascal's job.
+// re-enable 960 store geometry. Source-native rule: true DE tracks delivered/
+// storage (LEG CODED 624×480), not presented pillar canvas 640. A 640 DE over a
+// 624 store is a width island and collides with w-clock LEG_CW=624. Max-tier
+// 960 DE with geom_off is the 624-in-960 class (ascal ~824×640 glass).
 // Idle (no PLXG) still uses 960×540 storage fallback (U@518400).
 // Prefer host content-bearing legacy PLXG (geom=1, 624×480) on mode-exit;
-// zero-record disable is the safety net.
+// zero-record disable is the safety net (same 624 DE).
 
 `timescale 1ns / 1ps
 `default_nettype none
@@ -60,9 +61,16 @@ module plex_present_geom_mux (
 	wire [10:0] ladder_w = content_res_640x480 ? 11'd640 : 11'd320;
 	wire [10:0] ladder_h = content_res_640x480 ? 11'd480 : 11'd240;
 
-	// Presented scanout contract (ddr_frame_layout.hpp kPlex480pPresented*).
+	// Mode-exit / disable DE = storage-native LEG coded (w-clock LEG_CW=624).
+	// NOT kPlex480pPresented 640 — that is glass pillar after ascal, not core DE.
+`ifdef FAULT_MUX_DISABLE_DE_640
+	// RED twin: old presented-640 DE over 624 store (island / last-writer collide).
 	localparam [10:0] LEG_DE_W = 11'd640;
 	localparam [10:0] LEG_DE_H = 11'd480;
+`else
+	localparam [10:0] LEG_DE_W = 11'd624;
+	localparam [10:0] LEG_DE_H = 11'd480;
+`endif
 
 `ifdef PRESENT_BEAM_960
 `ifdef FAULT_B8_FORCE_ALWAYS

@@ -837,7 +837,7 @@ int main() {
             CHECK(!lm.geom_enable); // mode exit clears sticky Option-C
         }
         // Legacy full-canvas publish: content-bearing 624×480 PLXG (rd-duck DE fix).
-        // geom=1 + 624 → LEG capacity; beam DE 640 so no 624-in-960 island.
+        // geom=1 + 624 → LEG capacity; beam DE 624 source-native (not 640/960).
         // plan.plxg_seq must NOT be 0 (0 = doorbell ungated encoding).
         {
             std::vector<uint8_t> payload(449280u, 0);
@@ -854,8 +854,8 @@ int main() {
             // coded_w/h in q2[42:32]/58:48]
             CHECK(((plan.plxg_q[2] >> 32) & 0x7FFu) == 624u);
             CHECK(((plan.plxg_q[2] >> 48) & 0x7FFu) == 480u);
-            // h_de/v_de presented 640×480
-            CHECK((plan.plxg_q[2] & 0x7FFu) == 640u);
+            // h_de/v_de storage-native 624×480 (w-clock LEG_CW; not presented 640)
+            CHECK((plan.plxg_q[2] & 0x7FFu) == 624u);
             CHECK(((plan.plxg_q[2] >> 16) & 0x7FFu) == 480u);
             // y_stride 624, chroma 312
             CHECK((plan.plxg_q[3] & 0xFFFu) == 624u);

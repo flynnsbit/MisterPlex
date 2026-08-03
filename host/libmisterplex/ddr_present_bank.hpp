@@ -92,10 +92,10 @@ inline bool makeDdrPublishPlan(const DdrPublishFrame& frame, int bank, DdrPublis
     out.bank_phys = layout.phys_base + static_cast<uint32_t>(bankOff);
     out.copy_bytes = frame.len;
     out.native_push = false;
-    // Mode-exit: content-bearing product 480p PLXG (rd-duck display fix).
-    // geom_enable=1 + 624×480 → store capacity selects LEG map; beam DE 640×480
-    // so ascal is not fed a 624 island inside a sticky 960 canvas. Zero-record
-    // disable remains available for tests; product full-canvas uses Legacy480.
+    // Mode-exit: content-bearing product 480p PLXG (rd-duck / source-native).
+    // geom_enable=1 + 624×480 → LEG map; beam DE 624×480 (w-clock LEG_CW),
+    // not presented 640 and not sticky 960. Zero-record disable remains for
+    // tests; product full-canvas uses Legacy480.
     // program_plxg=true ⇒ doorbell carries committed useSeq (never field 0).
     out.program_plxg = true;
     out.plxg_seq = 1; // advisory; writePlxgRecord ignores and bumps
