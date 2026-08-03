@@ -93,3 +93,16 @@ Fix (owners w-path/w-mem): generic publish builds capacity-selected PLXG
   fabric-owned plan; e2e tests 320/416/624/720.
 w-osd: HOLD merge; chrome/q5 do not close host publish PLXG coupling.
 HEAD=d019f94b
+
+=== rd-duck 2026-08-03T08:52:28-05:00 B15 exact cadence IMPOSSIBLE under frozen q5 + DE 640/624 ===
+w-clock 15a371b4: cannot be source-exact under frozen q5 ABI.
+  Host maps exact 24/30 AND NTSC 24000/1001,30000/1001 → same uint8.
+  Product bresenham unconditionally chooses NTSC.
+  Exact source drops/repeats ~1 frame/42s (24) or /33s (30).
+  ABI/spec impossibility until rational family transported OR swaps
+  source-clocked. KEEP B15 OPEN / FENCE claim (unspecified→24 only;
+  never invent 30 still holds; exact-Hz match does NOT).
+Also: w-mem 1ae3c749 disable DE=640 vs w-clock 58eb6fe3 DE=624 —
+  last-writer collision REMAINS (reaffirm prior hold).
+w-osd: fence any product B15 'exact fps' language; q5 wire ≠ exact cadence.
+HEAD=6dc45c87

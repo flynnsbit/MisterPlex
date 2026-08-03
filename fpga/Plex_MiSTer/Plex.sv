@@ -256,6 +256,8 @@ wire [9:0]  content_height      = content_res_640x480 ? 10'd480 : 10'd240;
 
 // B15: content_fps from PLXG q5 via plex_content_fps_sel (w-clock owner).
 // fps_valid && fps!=0 → q5 value; else unspecified → film 24. Never invent 30.
+// FENCE: integer class only — NOT source-exact (q5 uint8 folds NTSC rationals;
+// keep B15 OPEN until rational family or source-clocked swaps). rd-duck 15a371b4.
 // FAULT_B15_FPS_HARDWIRE_24: red twin restores pre-B15 permanent 24.
 `ifdef FAULT_B15_FPS_HARDWIRE_24
 wire [7:0] content_fps = 8'd24;
