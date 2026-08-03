@@ -90,6 +90,20 @@ inline int bodyScale(int hdmiH) {
     return raw;
 }
 
+// Derive PLXC paint canvas from the *active HDMI* raster only.
+// Returns false for coded/bank sizes (960×540, 624×480, …) — those must never
+// drive HUD coordinates. scale = bodyScale(outH) matching RTL layout_h path.
+inline bool chromeLayoutFromActiveHdmi(int hdmiW, int hdmiH, int& outW, int& outH,
+                                       int& scale) {
+    outW = outH = scale = 0;
+    if (!isHdmiChromeRaster(hdmiW, hdmiH))
+        return false;
+    outW = hdmiW;
+    outH = hdmiH;
+    scale = bodyScale(hdmiH);
+    return true;
+}
+
 inline uint64_t packGlyph(uint16_t x, uint16_t y, char code) {
     uint64_t w = 0;
     w |= static_cast<uint64_t>(static_cast<uint8_t>(Op::Glyph));

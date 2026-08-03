@@ -41,7 +41,11 @@ module plex_chrome #(
     parameter int FONT_W   = 8,
     parameter int FONT_H   = 8,
     parameter bit BOOT_DEMO = 1'b0,
-    parameter int PX_PER_CLK = 1  // 1|2|4 — default 1 product-safe
+    parameter int PX_PER_CLK = 1,  // 1|2|4 — default 1 product-safe
+    // Red-twin only (sim): paint idle/HUD/beacon as if the canvas were legacy
+    // 624×480 while the DE beam is still true HDMI (1280×720). mon_* always
+    // reports the real HDMI raster. Default 0 = product bit-identical.
+    parameter bit FAULT_LEGACY_480P_LAYOUT = 1'b0
 ) (
     input  wire        clk_hdmi,
     input  wire        reset,
@@ -103,7 +107,16 @@ module plex_chrome #(
         end
     endfunction
 
-    wire [3:0] body_scale = body_scale_f(HDMI_HEIGHT);
+    // Active *layout* canvas for paint (idle / demo HUD / beacon / glyph scale).
+    // Must track the HDMI DE raster in product builds. FAULT forces 480p-derived
+    // constants so a 720p beam paints the chevron/HUD in the wrong place — the
+    // red-twin that catches "looks basically right" geometry bugs.
+    wire [11:0] layout_w = FAULT_LEGACY_480P_LAYOUT ? 12'd624 : HDMI_WIDTH;
+    wire [11:0] layout_h = FAULT_LEGACY_480P_LAYOUT ? 12'd480 : HDMI_HEIGHT;
+    wire [3:0]  body_scale = body_scale_f(layout_h);
+    // Telemetry always reports the true glass raster (and its scale), never the
+    // fault layout — so mon alone cannot green-wash a 480p paint bug.
+    wire [3:0]  glass_scale = body_scale_f(HDMI_HEIGHT);
 
     // mon_* / chrome_hw always update so a post-fit hierarchy row cannot be
     // "entity present, 0 regs" while still claiming a live plane. sys_top folds
@@ -113,7 +126,7 @@ module plex_chrome #(
         chrome_hw      <= 1'b1;
         mon_width      <= HDMI_WIDTH;
         mon_height     <= HDMI_HEIGHT;
-        mon_body_scale <= body_scale;
+        mon_body_scale <= glass_scale;
     end
 
     function automatic [7:0] inv_sc_q8(input [3:0] sc);
@@ -445,15 +458,16 @@ module plex_chrome #(
         half_ph   = 16'd600;
         tri_w     = 16'd0;
         drift     = 32'd0;
-        idle_size = (HDMI_WIDTH < HDMI_HEIGHT) ? (HDMI_WIDTH / 12'd3) : (HDMI_HEIGHT / 12'd3);
+        // layout_* — not bare HDMI_*: product equal; FAULT uses 624×480 math.
+        idle_size = (layout_w < layout_h) ? (layout_w / 12'd3) : (layout_h / 12'd3);
         if (idle_size < 12'd4) idle_size = 12'd4;
-        idle_ox = (HDMI_WIDTH  - idle_size) >> 1;
-        idle_oy = (HDMI_HEIGHT - idle_size) >> 1;
+        idle_ox = (layout_w  - idle_size) >> 1;
+        idle_oy = (layout_h - idle_size) >> 1;
         if (idle_en && idle_mode == 2'd2) begin
-            span_x = (HDMI_WIDTH > idle_size + 12'd16) ?
-                     (HDMI_WIDTH - idle_size - 12'd16) : 12'd0;
-            span_y = (HDMI_HEIGHT > idle_size + 12'd16) ?
-                     (HDMI_HEIGHT - idle_size - 12'd16) : 12'd0;
+            span_x = (layout_w > idle_size + 12'd16) ?
+                     (layout_w - idle_size - 12'd16) : 12'd0;
+            span_y = (layout_h > idle_size + 12'd16) ?
+                     (layout_h - idle_size - 12'd16) : 12'd0;
             ph = idle_phase % 16'd1200;
             half_ph = 16'd600;
             tri_w = (ph < half_ph) ? ph : (16'd1200 - ph);
@@ -572,15 +586,15 @@ module plex_chrome #(
         end
     end
 
-    // Mid-right, clear of cyan/magenta L-brackets and bottom HUD band.
+    // Mid-right on *layout* canvas (tracks glass; FAULT uses 480p mid-right).
     function automatic play_beacon_mark;
         input [11:0] px, py;
         reg [11:0] x0, y0;
         begin
             play_beacon_mark = 1'b0;
-            if (HDMI_WIDTH > (BEACON_SZ + 12'd16) && HDMI_HEIGHT > (BEACON_SZ + 12'd32)) begin
-                x0 = HDMI_WIDTH - BEACON_SZ - 12'd16;
-                y0 = (HDMI_HEIGHT >> 1) - (BEACON_SZ >> 1);
+            if (layout_w > (BEACON_SZ + 12'd16) && layout_h > (BEACON_SZ + 12'd32)) begin
+                x0 = layout_w - BEACON_SZ - 12'd16;
+                y0 = (layout_h >> 1) - (BEACON_SZ >> 1);
                 play_beacon_mark = (px >= x0) && (px < (x0 + BEACON_SZ)) &&
                                    (py >= y0) && (py < (y0 + BEACON_SZ));
             end
@@ -658,14 +672,15 @@ module plex_chrome #(
             sc    = body_scale;
             gw    = 12'(FONT_W) * {8'd0, sc};
             gh    = 12'(FONT_H) * {8'd0, sc};
-            margin = (HDMI_WIDTH >> 5);
+            // Demo HUD from layout canvas (not coded bank; not bare 480p constants).
+            margin = (layout_w >> 5);
             if (margin < 12'd8) margin = 12'd8;
             ph = 12'(72) * {8'd0, sc} / 12'd2;
             if (ph < 12'd54) ph = 12'd54;
-            if (ph > (HDMI_HEIGHT >> 2)) ph = HDMI_HEIGHT >> 2;
+            if (ph > (layout_h >> 2)) ph = layout_h >> 2;
             px0 = margin;
-            py0 = (HDMI_HEIGHT > (ph + margin)) ? (HDMI_HEIGHT - ph - margin) : 12'd0;
-            pw  = (HDMI_WIDTH > (margin << 1)) ? (HDMI_WIDTH - (margin << 1)) : HDMI_WIDTH;
+            py0 = (layout_h > (ph + margin)) ? (layout_h - ph - margin) : 12'd0;
+            pw  = (layout_w > (margin << 1)) ? (layout_w - (margin << 1)) : layout_w;
             // panel
             if (px >= px0 && py >= py0 && px < (px0 + pw) && py < (py0 + ph)) begin
                 hit_l = 1'b1;

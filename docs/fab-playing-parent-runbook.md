@@ -58,8 +58,38 @@ echo "true rc=$?"
 # Grep: SUMMARY VERDICT=... DELIVERY=960x540
 ```
 
-Subcommands: `preflight` | `neg` | `p1` | `p2` | `score-only T0 T1` |
-`offline-selftest` (no device).
+Subcommands: `preflight` | `neg` | `p1` | `p2` | `baseline-ab` |
+`score-only T0 T1` | `offline-selftest` (no device).
+
+## baseline-ab (known-good then candidate)
+
+Standing rule: always keep `Plex_rel.rbf` (`c5382bee*`) for rollback. **baseline-ab**
+goes further — it **scores** the baseline live core, then the candidate, and prints
+both verdicts with raw metrics so a non-A candidate answer starts with
+“regression vs already-like-that?”
+
+```bash
+# Leg 1 — load known-good as LIVE (copy/menu load Plex_rel → Plex.rbf), then:
+EXPECT_RBF_MD5=<candidate-prefix> \
+  scripts/parent_playing_gate.sh baseline-ab
+# Script scores baseline, then requires live md5 == EXPECT (no auto-deploy).
+# After baseline leg: deploy candidate RBF (DEPLOY_LOAD=menu), optionally:
+#   BASELINE_AB_SWITCH_TIMEOUT_S=300   # poll until live matches EXPECT
+```
+
+Fail-closed:
+
+| Failure | rc | Meaning |
+|---------|----|---------|
+| Baseline not live / missing rel | **4** | `PRECOND_*` — fix load order |
+| Baseline grabber fail | **3** | `UNKNOWN_GRABBER` — not fabric |
+| Baseline `E_NOSIGNAL` | **4** | `PRECOND_AB_BASELINE_NOSIGNAL` — **not** candidate evidence |
+| Candidate pair/delivery | **4** | same as full preflight |
+| Candidate scored non-A | **1** | glass; compare `SUMMARY_AB BASELINE=… CANDIDATE=…` |
+| Candidate A | **0** | product PASS |
+
+Baseline leg **skips** the 540p daemon/delivery preflight (rel is pre-720p-class).
+Candidate leg runs full pair + `MEASURED_DELIVERY 960x540`.
 
 ## Offline check (build host)
 
@@ -74,3 +104,4 @@ tests/unit/test_parent_playing_gate.sh; echo "true rc=$?"
 - `killall` / `pkill` misterplexd
 - Scoring glass when precond rc=4
 - Treating soft-skip 77 as PASS
+- Treating a failed **baseline** leg as evidence about the **candidate**

@@ -51,7 +51,7 @@ vflags=(--cc --exe --build --top-module plex_chrome_fabchrome_tb
   -CFLAGS "-std=c++17 -O2")
 
 echo "=== BUILD fabchrome RED ===" >&2
-"$RUN_VERILATOR" "${vflags[@]}" --Mdir "$BUILD_R" "${sv[@]}"
+"$RUN_VERILATOR" "${vflags[@]}" -GFAULT_LEGACY_480P_LAYOUT=0 --Mdir "$BUILD_R" "${sv[@]}"
 echo "=== RUN fabchrome RED ===" >&2
 set +e
 OUT_R="$(FAULT_NO_FAB_CHROME=1 "$BUILD_R/Vplex_chrome_fabchrome_tb" 2>&1)"
@@ -62,8 +62,23 @@ echo "fabchrome_red true rc=$RC_R"
 assert_sim_executed "fabchrome_red" "$OUT_R" "PASS fabchrome-red-no-paint" "plex_chrome_fabchrome_tb: PASS"
 [[ "$RC_R" -eq 0 ]] || exit "$RC_R"
 
+BUILD_L="$ROOT/build/verilator/plex_chrome_fabchrome_legacy"
+mkdir -p "$BUILD_L"
+echo "=== BUILD fabchrome LEGACY (480p layout on 720p DE) ===" >&2
+"$RUN_VERILATOR" "${vflags[@]}" -GFAULT_LEGACY_480P_LAYOUT=1 --Mdir "$BUILD_L" "${sv[@]}"
+echo "=== RUN fabchrome LEGACY ===" >&2
+set +e
+OUT_L="$(FAULT_LEGACY_480P_LAYOUT=1 "$BUILD_L/Vplex_chrome_fabchrome_tb" 2>&1)"
+RC_L=$?
+set -e
+printf '%s\n' "$OUT_L"
+echo "fabchrome_legacy true rc=$RC_L"
+assert_sim_executed "fabchrome_legacy" "$OUT_L" \
+  "PASS fabchrome-legacy-480p-layout" "plex_chrome_fabchrome_tb: PASS"
+[[ "$RC_L" -eq 0 ]] || exit "$RC_L"
+
 echo "=== BUILD fabchrome GREEN ===" >&2
-"$RUN_VERILATOR" "${vflags[@]}" --Mdir "$BUILD_G" "${sv[@]}"
+"$RUN_VERILATOR" "${vflags[@]}" -GFAULT_LEGACY_480P_LAYOUT=0 --Mdir "$BUILD_G" "${sv[@]}"
 echo "=== RUN fabchrome GREEN ===" >&2
 set +e
 OUT_G="$("$BUILD_G/Vplex_chrome_fabchrome_tb" 2>&1)"

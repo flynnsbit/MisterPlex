@@ -38,11 +38,11 @@ VFLAGS=(--cc --exe --build --top-module plex_chrome_idle720_tb
   -Wno-fatal -Wno-WIDTH -Wno-WIDTHTRUNC -Wno-WIDTHEXPAND -Wno-SELRANGE
   -CFLAGS "-std=c++17 -O2")
 
-# --- RED: 480p-clamped geometry must NOT look like 720p ---
+# --- RED: 480p-clamped mon ports must NOT look like 720p ---
 BUILD_RED="$ROOT/build/verilator/plex_chrome_idle720_red"
 mkdir -p "$BUILD_RED"
 echo "=== BUILD idle720 RED (FAULT_480P_GEOM=1) ===" >&2
-"$RUN" "${VFLAGS[@]}" -GFAULT_480P_GEOM=1 --Mdir "$BUILD_RED" "${SV[@]}"
+"$RUN" "${VFLAGS[@]}" -GFAULT_480P_GEOM=1 -GFAULT_LEGACY_480P_LAYOUT=0 --Mdir "$BUILD_RED" "${SV[@]}"
 
 echo "=== RUN idle720 RED ===" >&2
 set +e
@@ -54,11 +54,29 @@ echo "idle720_red true rc=$RC_RED"
 assert_sim_executed "idle720-red" "$OUT_RED" "PASS idle720-red-mon" "plex_chrome_idle720_tb: PASS (red fault engaged)"
 [[ "$RC_RED" -eq 0 ]] || { echo "FAIL red rc=$RC_RED" >&2; exit "$RC_RED"; }
 
+# --- LEGACY RED: true 720p mon, 480p-derived paint (must miss golden origin) ---
+BUILD_LEG="$ROOT/build/verilator/plex_chrome_idle720_legacy"
+mkdir -p "$BUILD_LEG"
+echo "=== BUILD idle720 LEGACY (FAULT_LEGACY_480P_LAYOUT=1) ===" >&2
+"$RUN" "${VFLAGS[@]}" -GFAULT_480P_GEOM=0 -GFAULT_LEGACY_480P_LAYOUT=1 --Mdir "$BUILD_LEG" "${SV[@]}"
+
+echo "=== RUN idle720 LEGACY ===" >&2
+set +e
+OUT_LEG="$(IDLE720_MODE=legacy "$BUILD_LEG/Vplex_chrome_idle720_tb" 2>&1)"
+RC_LEG=$?
+set -e
+printf '%s\n' "$OUT_LEG"
+echo "idle720_legacy true rc=$RC_LEG"
+assert_sim_executed "idle720-legacy" "$OUT_LEG" \
+  "PASS idle720-legacy-layout-fault" \
+  "plex_chrome_idle720_tb: PASS (legacy 480p layout fault engaged)"
+[[ "$RC_LEG" -eq 0 ]] || { echo "FAIL legacy rc=$RC_LEG" >&2; exit "$RC_LEG"; }
+
 # --- GREEN: full 720p idle ---
 BUILD_G="$ROOT/build/verilator/plex_chrome_idle720"
 mkdir -p "$BUILD_G"
 echo "=== BUILD idle720 GREEN ===" >&2
-"$RUN" "${VFLAGS[@]}" -GFAULT_480P_GEOM=0 --Mdir "$BUILD_G" "${SV[@]}"
+"$RUN" "${VFLAGS[@]}" -GFAULT_480P_GEOM=0 -GFAULT_LEGACY_480P_LAYOUT=0 --Mdir "$BUILD_G" "${SV[@]}"
 
 echo "=== RUN idle720 GREEN ===" >&2
 set +e

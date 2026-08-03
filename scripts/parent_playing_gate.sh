@@ -19,20 +19,22 @@
 #   EXPECT_RBF_MD5=<full-or-prefix> scripts/parent_playing_gate.sh
 #   scripts/parent_playing_gate.sh preflight
 #   scripts/parent_playing_gate.sh neg|p1|p2|full
+#   scripts/parent_playing_gate.sh baseline-ab   # score Plex_rel live, then candidate
 #   scripts/parent_playing_gate.sh score-only T0.png T1.png
 #   scripts/parent_playing_gate.sh offline-selftest   # no device
 #
 # Exit codes:
-#   0  VERDICT=A_FABRIC_PLAY_OK (product PASS)
+#   0  VERDICT=A_FABRIC_PLAY_OK (product PASS) — full/p1/score-only
+#      baseline-ab: exit 0 only if CANDIDATE is A (baseline class is reported, not gated)
 #   1  scored product non-A taxonomy (B/C/D/CONTROL/E …) — glass result
 #   2  usage / bad args
 #   3  UNKNOWN_GRABBER — not a product verdict
-#   4  PRECOND_* — pairing/device/delivery failed; NOT fabric
+#   4  PRECOND_* — pairing/device/delivery/baseline-ab switch failed; NOT fabric
 #   5  P2 black / present-dead after a candidate P1 (present path died)
 #
 # Env (common):
 #   MISTER_HOST (192.168.1.183)  MISTER_PASS (1)  MISTER_USER (root)
-#   EXPECT_RBF_MD5   required for full/preflight live (prefix ok, e.g. first 8)
+#   EXPECT_RBF_MD5   required for full/preflight/candidate live (prefix ok, e.g. first 8)
 #   BASELINE_RBF_MD5 default c5382bee — Plex_rel.rbf must match prefix (rollback)
 #   EXPECT_DAEMON_MD5 optional live /proc/PID/exe md5 prefix
 #   EV_DIR           artifact dir (default docs/agent-evidence/playing-gate-<ts>)
@@ -40,6 +42,9 @@
 #   STREAM_SAMPLE    optional local/device path for ffprobe of delivered body
 #   PLAYING_GATE_SSH / PLAYING_GATE_SCP  inject for unit tests (never real box)
 #   HDMI_DEV  HDMI_SIZE  (passed through to hdmi_capture_idle.sh)
+#   BASELINE_AB_SWITCH_TIMEOUT_S  poll for candidate live RBF after baseline leg (default 0)
+#   BASELINE_AB_POLL_S            poll period while waiting (default 5)
+#   BASELINE_AB_SKIP_CAND_PREFLIGHT=0|1  (tests only)
 #
 # Hard rules:
 #   - scripts/hdmi_capture_idle.sh only (never bare ffmpeg -frames:v 1)
@@ -64,7 +69,7 @@ SCORE_T1=""
 
 TS="$(date +%Y%m%dT%H%M%S)"
 EV_DIR="${EV_DIR:-$ROOT/docs/agent-evidence/playing-gate-$TS}"
-CAPTURE="$ROOT/scripts/hdmi_capture_idle.sh"
+CAPTURE="${PLAYING_GATE_CAPTURE:-$ROOT/scripts/hdmi_capture_idle.sh}"
 SCORE="$ROOT/scripts/hdmi_score_pair.sh"
 LOG_BUNDLE="$EV_DIR/gate.log"
 
@@ -188,7 +193,49 @@ phase_device_reachable() {
   log "OK device reachable uptime_s=${up_s}"
 }
 
+# Fetch live + rel RBF md5s into globals LIVE_RBF_MD5 / REL_RBF_MD5.
+fetch_rbf_md5s() {
+  set +e
+  local rbf_lines
+  rbf_lines="$(ssh_m 'md5sum /media/fat/_Utility/Plex.rbf /media/fat/_Utility/Plex_rel.rbf 2>&1' 2>/dev/null)"
+  local rrc=$?
+  set -e
+  report_rc "rbf_md5sum" "$rrc" || emit_precond "RBF_INVENTORY" "md5sum remote RBFs failed"
+  log "rbf_inventory:"
+  log "$rbf_lines"
+  LIVE_RBF_MD5="$(awk '/Plex\.rbf/{print $1; exit}' <<<"$rbf_lines")"
+  REL_RBF_MD5="$(awk '/Plex_rel\.rbf/{print $1; exit}' <<<"$rbf_lines")"
+  log "LIVE_RBF_MD5=${LIVE_RBF_MD5:-}"
+  log "REL_RBF_MD5=${REL_RBF_MD5:-}"
+}
+
+require_rel_baseline_file() {
+  if [[ -z "${REL_RBF_MD5:-}" ]]; then
+    emit_precond "BASELINE_MISSING" "Plex_rel.rbf absent — no rollback anchor"
+  fi
+  if ! md5_prefix_match "$BASELINE_RBF_MD5" "$REL_RBF_MD5"; then
+    emit_precond "BASELINE_MD5" "Plex_rel md5=${REL_RBF_MD5} does not match BASELINE_RBF_MD5=${BASELINE_RBF_MD5}"
+  fi
+  log "OK baseline Plex_rel matches prefix ${BASELINE_RBF_MD5}"
+  printf '%s\n' "$REL_RBF_MD5" >"$EV_DIR/rel_rbf.md5"
+}
+
+require_live_md5() {
+  # $1=expect prefix  $2=precond id suffix
+  local exp="$1" tag="$2"
+  if [[ -z "${LIVE_RBF_MD5:-}" ]]; then
+    emit_precond "LIVE_RBF_MISSING" "Plex.rbf missing on device (${tag})"
+  fi
+  if ! md5_prefix_match "$exp" "$LIVE_RBF_MD5"; then
+    emit_precond "LIVE_RBF_MD5_${tag}" "live Plex.rbf md5=${LIVE_RBF_MD5} != expect ${exp} (${tag})"
+  fi
+  log "OK live RBF matches ${tag}=${exp} md5=${LIVE_RBF_MD5}"
+  printf '%s\n' "$LIVE_RBF_MD5" >"$EV_DIR/live_rbf.md5"
+  printf '%s\n' "$LIVE_RBF_MD5" >"$EV_DIR/live_rbf_${tag}.md5"
+}
+
 phase_dma_and_baseline() {
+  # Default full/preflight: live must be EXPECT candidate; rel is rollback anchor.
   say "2 DMA + BASELINE RBF ROLLBACK ANCHOR"
   set +e
   local dma
@@ -201,41 +248,30 @@ phase_dma_and_baseline() {
     log "WARN: dma-pl330 link not obvious — parent should confirm post power-cycle"
   fi
 
-  set +e
-  local rbf_lines
-  rbf_lines="$(ssh_m 'md5sum /media/fat/_Utility/Plex.rbf /media/fat/_Utility/Plex_rel.rbf 2>&1' 2>/dev/null)"
-  local rrc=$?
-  set -e
-  report_rc "rbf_md5sum" "$rrc" || emit_precond "RBF_INVENTORY" "md5sum remote RBFs failed"
-  log "rbf_inventory:"
-  log "$rbf_lines"
-
-  local live_md5 rel_md5
-  live_md5="$(awk '/Plex\.rbf/{print $1; exit}' <<<"$rbf_lines")"
-  rel_md5="$(awk '/Plex_rel\.rbf/{print $1; exit}' <<<"$rbf_lines")"
-  log "LIVE_RBF_MD5=${live_md5:-}"
-  log "REL_RBF_MD5=${rel_md5:-}"
-
-  if [[ -z "${rel_md5:-}" ]]; then
-    emit_precond "BASELINE_MISSING" "Plex_rel.rbf absent — no rollback anchor"
-  fi
-  if ! md5_prefix_match "$BASELINE_RBF_MD5" "$rel_md5"; then
-    emit_precond "BASELINE_MD5" "Plex_rel md5=${rel_md5} does not match BASELINE_RBF_MD5=${BASELINE_RBF_MD5}"
-  fi
-  log "OK baseline Plex_rel matches prefix ${BASELINE_RBF_MD5}"
+  fetch_rbf_md5s
+  require_rel_baseline_file
 
   if [[ -z "${EXPECT_RBF_MD5}" ]]; then
     emit_precond "EXPECT_RBF_MD5" "set EXPECT_RBF_MD5 to the integration fit RBF md5 (prefix ok)"
   fi
-  if [[ -z "${live_md5:-}" ]]; then
-    emit_precond "LIVE_RBF_MISSING" "Plex.rbf missing on device"
+  require_live_md5 "$EXPECT_RBF_MD5" "CANDIDATE"
+}
+
+phase_dma_common_no_live_expect() {
+  # baseline-ab: only prove DMA + rel file; live checked per leg.
+  say "2 DMA + BASELINE FILE (live checked per A/B leg)"
+  set +e
+  local dma
+  dma="$(ssh_m 'ls -l /sys/bus/amba/devices/ffe01000.pdma/driver 2>&1; ls /sys/class/dma 2>/dev/null | wc -l' 2>/dev/null)"
+  local drc=$?
+  set -e
+  report_rc "dma_probe" "$drc" || emit_precond "DMA_PROBE" "could not query pdma driver"
+  log "dma_probe_out=${dma}"
+  fetch_rbf_md5s
+  require_rel_baseline_file
+  if [[ -z "${EXPECT_RBF_MD5}" ]]; then
+    emit_precond "EXPECT_RBF_MD5" "baseline-ab needs EXPECT_RBF_MD5 for the candidate leg"
   fi
-  if ! md5_prefix_match "$EXPECT_RBF_MD5" "$live_md5"; then
-    emit_precond "LIVE_RBF_MD5" "live Plex.rbf md5=${live_md5} != EXPECT_RBF_MD5=${EXPECT_RBF_MD5} (deploy fabric RBF first via deploy_plex_core.sh)"
-  fi
-  log "OK live RBF matches EXPECT_RBF_MD5=${EXPECT_RBF_MD5}"
-  printf '%s\n' "$live_md5" >"$EV_DIR/live_rbf.md5"
-  printf '%s\n' "$rel_md5" >"$EV_DIR/rel_rbf.md5"
 }
 
 phase_video_mode() {
@@ -263,6 +299,12 @@ phase_video_mode() {
 phase_grabber_free() {
   say "4 GRABBER /dev/video0 NOT HELD"
   local dev="${HDMI_DEV:-/dev/video0}"
+  # Offline / injected capture path: do not fuser mock nodes (/dev/zero etc.).
+  if [[ -n "${PLAYING_GATE_CAPTURE:-}" || -n "${PLAYING_GATE_SSH:-}" ]]; then
+    log "SKIP fuser (PLAYING_GATE_CAPTURE/SSH inject — offline or unit path)"
+    log "OK grabber inject path dev=$dev"
+    return 0
+  fi
   if [[ ! -e "$dev" ]]; then
     emit_unknown_grabber "no_device dev=$dev"
   fi
@@ -693,6 +735,126 @@ finalize_verdict() {
   esac
 }
 
+# --- baseline-ab: score known-good core, then candidate -----------------------
+#
+# Fail-closed: if the baseline leg cannot be scored, that is a PRECOND of the
+# A/B itself — never evidence about the candidate. No auto-deploy; parent loads
+# baseline live first, then switches candidate (optional poll timeout).
+
+wait_live_md5() {
+  local exp="$1" timeout_s="${2:-0}" tag="$3"
+  local deadline poll
+  poll="${BASELINE_AB_POLL_S:-5}"
+  deadline=$((SECONDS + timeout_s))
+  while true; do
+    fetch_rbf_md5s
+    if [[ -n "${LIVE_RBF_MD5:-}" ]] && md5_prefix_match "$exp" "$LIVE_RBF_MD5"; then
+      require_live_md5 "$exp" "$tag"
+      return 0
+    fi
+    if [[ "$timeout_s" -le 0 || SECONDS -ge deadline ]]; then
+      emit_precond "LIVE_RBF_MD5_${tag}" \
+        "live=${LIVE_RBF_MD5:-none} want ${exp} (${tag}); deploy then re-run or set BASELINE_AB_SWITCH_TIMEOUT_S"
+    fi
+    log "waiting for live RBF ${tag}=${exp} (have ${LIVE_RBF_MD5:-none}) sleep ${poll}s"
+    sleep "$poll"
+  done
+}
+
+score_leg_pair() {
+  # Capture + score one A/B leg. On grabber fail → UNKNOWN (rc=3) not fabric.
+  local leg="$1" # BASELINE | CANDIDATE
+  local t0="$EV_DIR/${leg}-t0.png"
+  local t1="$EV_DIR/${leg}-t1.png"
+  say "A/B LEG ${leg} CAPTURE+SCORE"
+  capture_one "$t0"
+  sleep 1
+  capture_one "$t1"
+  score_pair "$t0" "$t1" "$leg"
+  # score_pair already maps rc=3 to emit_unknown_grabber
+  if [[ -z "${LAST_VERDICT:-}" ]]; then
+    emit_precond "AB_${leg}_NO_VERDICT" "score_pair produced empty verdict on ${leg} leg"
+  fi
+  case "$LAST_VERDICT" in
+    E_NOSIGNAL)
+      # Dead glass on a leg is a precondition of the A/B instrument, not candidate fabric.
+      emit_precond "AB_${leg}_NOSIGNAL" "${leg} leg is E_NOSIGNAL — device/grabber; not candidate evidence"
+      ;;
+    UNKNOWN_GRABBER)
+      emit_unknown_grabber "${leg} leg"
+      ;;
+  esac
+  log "AB_${leg}_VERDICT=${LAST_VERDICT} SCORE_RC=${LAST_SCORE_RC}"
+  # Stash raw metrics line if present
+  if [[ -f "$EV_DIR/score_${leg}.txt" ]]; then
+    grep -E '^(VERDICT|MEAN|STD|ORANGE|CYAN|ACTIVE|DIFF|LIME|TAXONOMY|CLASS)=' \
+      "$EV_DIR/score_${leg}.txt" >"$EV_DIR/metrics_${leg}.txt" 2>/dev/null || true
+  fi
+}
+
+run_baseline_ab() {
+  say "BASELINE-AB MODE"
+  log "NOTE: baseline leg must score first. Baseline unscorable → PRECOND of A/B, not candidate fabric."
+  log "NOTE: no auto-deploy. Load Plex_rel as live, run; then deploy candidate (or set BASELINE_AB_SWITCH_TIMEOUT_S)."
+  ensure_ev
+  phase_local_tools
+  phase_device_reachable
+  phase_dma_common_no_live_expect
+  phase_video_mode
+  if [[ -e "${HDMI_DEV:-/dev/video0}" ]]; then
+    phase_grabber_free
+  else
+    emit_unknown_grabber "no grabber node for baseline-ab"
+  fi
+
+  # --- baseline leg: live must be the known-good core ---
+  say "AB BASELINE LEG — live must match BASELINE_RBF_MD5=${BASELINE_RBF_MD5}"
+  wait_live_md5 "$BASELINE_RBF_MD5" 0 "BASELINE"
+  # Baseline is typically pre-720p fabric: do NOT require 540p delivery pair.
+  # Score whatever glass shows (control idle / playing under baseline).
+  score_leg_pair "BASELINE"
+  BASELINE_VERDICT="$LAST_VERDICT"
+  BASELINE_SCORE_RC="$LAST_SCORE_RC"
+  printf '%s\n' "$BASELINE_VERDICT" >"$EV_DIR/verdict_BASELINE.txt"
+
+  # --- switch to candidate ---
+  say "AB SWITCH — live must become EXPECT_RBF_MD5=${EXPECT_RBF_MD5}"
+  local sw_to="${BASELINE_AB_SWITCH_TIMEOUT_S:-0}"
+  wait_live_md5 "$EXPECT_RBF_MD5" "$sw_to" "CANDIDATE"
+
+  if [[ "${BASELINE_AB_SKIP_CAND_PREFLIGHT:-0}" != "1" ]]; then
+    phase_daemon_540_pair
+    phase_delivered_geometry
+  else
+    log "WARN BASELINE_AB_SKIP_CAND_PREFLIGHT=1 — tests only"
+  fi
+
+  score_leg_pair "CANDIDATE"
+  CANDIDATE_VERDICT="$LAST_VERDICT"
+  CANDIDATE_SCORE_RC="$LAST_SCORE_RC"
+  P1_VERDICT="$CANDIDATE_VERDICT"
+  printf '%s\n' "$CANDIDATE_VERDICT" >"$EV_DIR/verdict_CANDIDATE.txt"
+
+  say "AB SIDE-BY-SIDE"
+  local b_raw c_raw
+  b_raw="$(tr '\n' ' ' <"$EV_DIR/metrics_BASELINE.txt" 2>/dev/null || true)"
+  c_raw="$(tr '\n' ' ' <"$EV_DIR/metrics_CANDIDATE.txt" 2>/dev/null || true)"
+  log "BASELINE_VERDICT=${BASELINE_VERDICT} RC=${BASELINE_SCORE_RC} MD5=$(cat "$EV_DIR/live_rbf_BASELINE.md5" 2>/dev/null || echo na) RAW={${b_raw}}"
+  log "CANDIDATE_VERDICT=${CANDIDATE_VERDICT} RC=${CANDIDATE_SCORE_RC} MD5=$(cat "$EV_DIR/live_rbf_CANDIDATE.md5" 2>/dev/null || echo na) RAW={${c_raw}}"
+  log "SUMMARY_AB BASELINE=${BASELINE_VERDICT} CANDIDATE=${CANDIDATE_VERDICT} BASELINE_MD5=$(cat "$EV_DIR/live_rbf_BASELINE.md5" 2>/dev/null || echo na) CANDIDATE_MD5=$(cat "$EV_DIR/live_rbf_CANDIDATE.md5" 2>/dev/null || echo na) EV=${EV_DIR}"
+  log "VERDICT=${CANDIDATE_VERDICT}"
+  log "NOTE=candidate drives exit code; baseline is comparison only (already scored successfully)"
+
+  case "$CANDIDATE_VERDICT" in
+    A_FABRIC_PLAY_OK)
+      emit_scored "$CANDIDATE_VERDICT" 0
+      ;;
+    *)
+      emit_scored "$CANDIDATE_VERDICT" 1
+      ;;
+  esac
+}
+
 # --- offline self-test (no device) --------------------------------------------
 
 offline_selftest() {
@@ -841,6 +1003,170 @@ MOCK
     fi
   fi
 
+  # --- baseline-ab offline: mock md5 swap + held frames; no device ---
+  # Inject capture via HDMI_CAPTURE_CMD if supported; else stub by wrapping PATH.
+  local ab_ed="$EV_DIR/baseline-ab"
+  mkdir -p "$ab_ed"
+  local ab_mock="$ab_ed/mock_ssh_ab.sh"
+  local ab_state="$ab_ed/live_state"
+  echo "baseline" >"$ab_state"
+  cat >"$ab_mock" <<'MOCKAB'
+#!/usr/bin/env bash
+cmd="$*"
+state_file="${PLAYING_AB_STATE:-}"
+st="baseline"
+[[ -n "$state_file" && -f "$state_file" ]] && st="$(cat "$state_file")"
+live_base="c5382bee000000000000000000000001"
+live_cand="abcdef0102030405060708090a0b0c0d"
+rel="c5382bee000000000000000000000000"
+case "$cmd" in
+  *pidof*) echo "1234"; exit 0 ;;
+  *readlink*) echo "/media/fat/misterplex/misterplexd"; exit 0 ;;
+  *md5sum\ /proc*) echo "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb  /proc/1234/exe"; exit 0 ;;
+  *strings*) echo "540p"; echo "960x540"; exit 0 ;;
+  *misterplex.conf*) echo "DECODE=960x540"; echo "OSD_CONTROL=off"; echo "WEAK_BITRATE=2000"; exit 0 ;;
+  *misterplexd.log*)
+    echo "misterplexd: content resolution=960x540 source=conf/--decode"
+    echo "misterplexd: GEOM requested_pms=960x540"
+    echo "media: MEASURED_DELIVERY 960x540 bytes=777600 delivery_verified=1 delivery_basis=measured"
+    exit 0
+    ;;
+  *Plex.rbf*)
+    if [[ "$st" == "candidate" ]]; then
+      echo "${live_cand}  /media/fat/_Utility/Plex.rbf"
+    else
+      echo "${live_base}  /media/fat/_Utility/Plex.rbf"
+    fi
+    echo "${rel}  /media/fat/_Utility/Plex_rel.rbf"
+    exit 0
+    ;;
+  *video_mode*) echo "video_mode=0"; exit 0 ;;
+  *uptime*|/proc/uptime) echo "12.0 48.0"; exit 0 ;;
+  *pdma*) echo "driver -> dma-pl330"; echo "4"; exit 0 ;;
+  *kill*) exit 0 ;;
+  *) exit 0 ;;
+esac
+MOCKAB
+  chmod +x "$ab_mock"
+
+  # Capture shim: copy held control frame (never scores A) — proves instrument path.
+  local cap_shim="$ab_ed/fake_capture.sh"
+  cat >"$cap_shim" <<'CAP'
+#!/usr/bin/env bash
+out="${1:?}"
+src="${FAKE_CAPTURE_PNG:?}"
+cp -f "$src" "$out"
+echo "FAKE_CAPTURE ok -> $out"
+exit 0
+CAP
+  chmod +x "$cap_shim"
+
+  # Flip after baseline pair (2 captures) so candidate leg sees new live md5.
+  local cap_flip="$ab_ed/flip_capture.sh"
+  cat >"$cap_flip" <<'CAPF'
+#!/usr/bin/env bash
+out="${1:?}"
+src="${FAKE_CAPTURE_PNG:?}"
+cp -f "$src" "$out"
+nfile="${PLAYING_AB_CAP_COUNT}"
+n=0
+[[ -f "$nfile" ]] && n="$(cat "$nfile")"
+n=$((n + 1))
+echo "$n" >"$nfile"
+if [[ "$n" -ge 2 && -n "${PLAYING_AB_STATE:-}" ]]; then
+  echo candidate >"${PLAYING_AB_STATE}"
+fi
+exit 0
+CAPF
+  chmod +x "$cap_flip"
+
+  if [[ -f "$ROOT/docs/agent-evidence/ctrl720_arm.png" ]]; then
+    # Case 1: baseline live wrong (candidate already loaded) → PRECOND before any score
+    echo "candidate" >"$ab_state"
+    mkdir -p "$ab_ed/case-base-not-live"
+    set +e
+    env PLAYING_GATE_SSH="$ab_mock" PLAYING_AB_STATE="$ab_state" \
+      EXPECT_RBF_MD5="abcdef01" BASELINE_RBF_MD5="c5382bee" \
+      EV_DIR="$ab_ed/case-base-not-live" \
+      PLAYING_GATE_CAPTURE="$cap_shim" \
+      FAKE_CAPTURE_PNG="$ROOT/docs/agent-evidence/ctrl720_arm.png" \
+      HDMI_DEV="/dev/zero" \
+      bash "$0" baseline-ab >"$ab_ed/case-base-not-live/out.txt" 2>&1
+    local abrc=$?
+    set -e
+    if [[ "$abrc" -ne 4 ]] || ! grep -qE 'LIVE_RBF_MD5_BASELINE|PRECOND_.*BASELINE' "$ab_ed/case-base-not-live/out.txt"; then
+      echo "FAIL ab base-not-live: want PRECOND BASELINE rc=4 got rc=$abrc" >&2
+      cat "$ab_ed/case-base-not-live/out.txt" >&2 || true
+      fails=$((fails + 1))
+    else
+      echo "OK ab_base_not_live rc=4"
+    fi
+
+    # Case 2: full offline A/B — baseline then auto-flip to candidate mid-run
+    echo "0" >"$ab_ed/cap_count"
+    echo "baseline" >"$ab_state"
+    mkdir -p "$ab_ed/case-ab-ok"
+    set +e
+    env PLAYING_GATE_SSH="$ab_mock" PLAYING_AB_STATE="$ab_state" \
+      PLAYING_AB_CAP_COUNT="$ab_ed/cap_count" \
+      FAKE_CAPTURE_PNG="$ROOT/docs/agent-evidence/ctrl720_arm.png" \
+      PLAYING_GATE_CAPTURE="$cap_flip" \
+      EXPECT_RBF_MD5="abcdef01" BASELINE_RBF_MD5="c5382bee" \
+      BASELINE_AB_SKIP_CAND_PREFLIGHT=1 \
+      EV_DIR="$ab_ed/case-ab-ok" \
+      HDMI_DEV="/dev/zero" \
+      bash "$0" baseline-ab >"$ab_ed/case-ab-ok/out.txt" 2>&1
+    abrc=$?
+    set -e
+    if ! grep -q 'SUMMARY_AB BASELINE=' "$ab_ed/case-ab-ok/out.txt" 2>/dev/null; then
+      echo "FAIL ab_full_offline missing SUMMARY_AB rc=$abrc" >&2
+      tail -50 "$ab_ed/case-ab-ok/out.txt" >&2 || true
+      fails=$((fails + 1))
+    elif grep -q 'VERDICT=A_' "$ab_ed/case-ab-ok/out.txt"; then
+      echo "FAIL ab_full_offline control frames scored A" >&2
+      fails=$((fails + 1))
+    else
+      echo "OK ab_full_offline rc=$abrc"
+    fi
+
+    # Case 3: baseline leg E_NOSIGNAL must be PRECOND, not candidate fabric
+    if [[ -f "$ROOT/docs/agent-evidence/wedge_check.png" ]]; then
+      echo "baseline" >"$ab_state"
+      mkdir -p "$ab_ed/case-ab-wedge"
+      local cap_wedge="$ab_ed/wedge_capture.sh"
+      cat >"$cap_wedge" <<'CAPW'
+#!/usr/bin/env bash
+out="${1:?}"
+cp -f "${FAKE_CAPTURE_PNG}" "$out"
+exit 0
+CAPW
+      chmod +x "$cap_wedge"
+      set +e
+      env PLAYING_GATE_SSH="$ab_mock" PLAYING_AB_STATE="$ab_state" \
+        FAKE_CAPTURE_PNG="$ROOT/docs/agent-evidence/wedge_check.png" \
+        PLAYING_GATE_CAPTURE="$cap_wedge" \
+        EXPECT_RBF_MD5="abcdef01" BASELINE_RBF_MD5="c5382bee" \
+        EV_DIR="$ab_ed/case-ab-wedge" \
+        HDMI_DEV="/dev/zero" \
+        bash "$0" baseline-ab >"$ab_ed/case-ab-wedge/out.txt" 2>&1
+      abrc=$?
+      set -e
+      if [[ "$abrc" -ne 4 ]] || ! grep -qE 'PRECOND_.*NOSIGNAL|AB_BASELINE_NOSIGNAL' "$ab_ed/case-ab-wedge/out.txt"; then
+        echo "FAIL ab_wedge want PRECOND NOSIGNAL rc=4 got rc=$abrc" >&2
+        cat "$ab_ed/case-ab-wedge/out.txt" >&2 || true
+        fails=$((fails + 1))
+      else
+        # Must not attribute to candidate
+        if grep -qE 'SUMMARY_AB BASELINE=' "$ab_ed/case-ab-wedge/out.txt"; then
+          echo "FAIL ab_wedge leaked SUMMARY_AB" >&2
+          fails=$((fails + 1))
+        else
+          echo "OK ab_baseline_nosignal_precond rc=4"
+        fi
+      fi
+    fi
+  fi
+
   if [[ "$fails" -ne 0 ]]; then
     echo "OFFLINE_SELFTEST_FAIL fails=$fails" >&2
     exit 1
@@ -877,7 +1203,7 @@ fi
 
 if [[ $# -ge 1 ]]; then
   case "$1" in
-    preflight|preflight-device|neg|p1|p2|full|score-only|offline-selftest)
+    preflight|preflight-device|neg|p1|p2|full|score-only|offline-selftest|baseline-ab)
       MODE="$1"
       shift
       ;;
@@ -907,6 +1233,9 @@ case "$MODE" in
     score_pair "$SCORE_T0" "$SCORE_T1" "P1"
     P1_VERDICT="$LAST_VERDICT"
     finalize_verdict
+    ;;
+  baseline-ab)
+    run_baseline_ab
     ;;
   preflight|preflight-device)
     preflight_device

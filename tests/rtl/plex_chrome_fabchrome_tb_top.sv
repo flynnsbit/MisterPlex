@@ -1,7 +1,10 @@
 // FAB_CHROME demo: STOPPED HUD + magenta signature, video underneath.
+// FAULT_LEGACY_480P_LAYOUT: DE stays 1280×720; panel paints on 480p layout.
 `timescale 1ns / 1ps
 
-module plex_chrome_fabchrome_tb (
+module plex_chrome_fabchrome_tb #(
+    parameter bit FAULT_LEGACY_480P_LAYOUT = 1'b0
+) (
     input  wire        clk,
     input  wire        reset,
     input  wire [11:0] HDMI_WIDTH,
@@ -19,7 +22,8 @@ module plex_chrome_fabchrome_tb (
     plex_chrome #(
         .BOOT_DEMO(0),
         .MAX_CMDS(48),
-        .HIT_SCAN(48)
+        .HIT_SCAN(48),
+        .FAULT_LEGACY_480P_LAYOUT(FAULT_LEGACY_480P_LAYOUT)
     ) u_chrome (
         .clk_hdmi(clk),
         .reset(reset),

@@ -39,6 +39,7 @@ static void hblank(Vplex_chrome_fabchrome_tb* t) {
 int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
     const bool red = std::getenv("FAULT_NO_FAB_CHROME") != nullptr;
+    const bool legacy = std::getenv("FAULT_LEGACY_480P_LAYOUT") != nullptr;
 
     auto* t = new Vplex_chrome_fabchrome_tb;
     const int W = 1280;
@@ -127,6 +128,49 @@ int main(int argc, char** argv) {
             fail("red-video-missing");
         else
             std::fprintf(stderr, "PASS fabchrome-red-no-paint\n");
+    } else if (legacy) {
+        // 480p layout on 720p beam: panel lives near y~480 band, NOT 720p bottom.
+        // Re-scan for panel density in bottom band y>=600 vs mid y=300..480.
+        int panel_lo = 0, panel_hi = 0, n_lo = 0, n_hi = 0;
+        // Second pass would need reset — use subsample counters already taken
+        // and a targeted line probe instead.
+        t->reset = 1;
+        for (int i = 0; i < 4; ++i)
+            tick(t);
+        t->reset = 0;
+        for (int i = 0; i < 4; ++i)
+            tick(t);
+        (void)drive(t, kVideo);
+        hblank(t);
+        for (int y = 0; y < H; ++y) {
+            for (int x = 0; x < W; ++x) {
+                uint32_t px = drive(t, kVideo);
+                if (y == 0 && x == 0)
+                    continue;
+                if ((x & 7) || (y & 3))
+                    continue;
+                if (px == kPanel) {
+                    if (y >= 600)
+                        ++panel_hi;
+                    if (y >= 300 && y < 480)
+                        ++panel_lo;
+                }
+                if (y >= 600)
+                    ++n_hi;
+                if (y >= 300 && y < 480)
+                    ++n_lo;
+            }
+            hblank(t);
+        }
+        std::fprintf(stderr,
+                     "legacy panel_mid300_480=%d panel_yge600=%d (n_mid=%d n_hi=%d)\n",
+                     panel_lo, panel_hi, n_lo, n_hi);
+        if (panel_hi > panel_lo / 4 && panel_hi > 20)
+            fail("legacy panel still dense in 720p bottom band");
+        if (panel_lo < 20)
+            fail("legacy panel missing in 480p-derived mid band");
+        if (fails == 0)
+            std::fprintf(stderr, "PASS fabchrome-legacy-480p-layout\n");
     } else {
         if (mag < 50)
             fail("green-magenta-low");

@@ -78,7 +78,9 @@ static bool goldenChevron(int x, int y, int ox, int oy, int size) {
 int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
     const char* mode = std::getenv("IDLE720_MODE");
+    // red: FAULT_480P_GEOM port clamp. legacy: FAULT_LEGACY_480P_LAYOUT paint.
     const bool expect_fault = mode && std::strcmp(mode, "red") == 0;
+    const bool expect_legacy = mode && std::strcmp(mode, "legacy") == 0;
 
     auto* t = new Vplex_chrome_idle720_tb;
     t->reset = 1;
@@ -121,24 +123,49 @@ int main(int argc, char** argv) {
 
     // 720p product expectations
     const bool geom720 = (mw == 1280 && mh == 720 && sc == 3);
-    if (!expect_fault) {
-        if (!geom720)
-            fail("expected mon 1280x720 scale=3");
-    } else {
-        // RED build: FAULT clamps to 624×480 → scale 2
+    if (expect_fault) {
+        // RED build: FAULT clamps HDMI ports to 624×480 → scale 2
         if (geom720)
             fail("RED build must NOT report 720p mon");
         if (mw != 624 || mh != 480 || sc != 2)
             fail("RED expected mon 624x480 scale=2");
         std::fprintf(stderr, "PASS idle720-red-mon (fault geom active)\n");
         delete t;
-        // For red mode: also prove a 720p probe point would disagree with golden720
-        // We still exit 1 if fault didn't engage; else exit 0 after proving fault.
         if (fails) {
             std::fprintf(stderr, "plex_chrome_idle720_tb RED: %d FAIL(s)\n", fails);
             return 1;
         }
         std::fprintf(stderr, "plex_chrome_idle720_tb: PASS (red fault engaged)\n");
+        return 0;
+    }
+    if (!geom720)
+        fail("expected mon 1280x720 scale=3");
+
+    if (expect_legacy) {
+        // Stronger red-twin: mon is honest 720p, but paint uses 480p layout.
+        // Golden 720p chevron origin (520,240) must NOT be amber.
+        // Legacy 480p origin: size=160 ox=232 oy=160 → that pixel IS amber.
+        std::fprintf(stderr, "=== idle720 legacy-480p-layout red-twin ===\n");
+        t->idle_sig_en = 0;
+        for (int i = 0; i < 2; ++i)
+            tick(t);
+        constexpr int kOx720 = 520, kOy720 = 240;
+        constexpr int kOx480 = 232, kOy480 = 160;
+        const uint32_t at720 = sampleAt(t, kOx720, kOy720, 0x00FF00);
+        const uint32_t at480 = sampleAt(t, kOx480, kOy480, 0x00FF00);
+        std::fprintf(stderr, "legacy pix (520,240)=%06x (232,160)=%06x\n", at720, at480);
+        if (at720 == 0xE5A00D)
+            fail("legacy fault still paints amber at 720p chevron origin");
+        if (at480 != 0xE5A00D)
+            fail("legacy fault must paint amber at 480p-derived origin");
+        if (fails == 0)
+            std::fprintf(stderr, "PASS idle720-legacy-layout-fault\n");
+        delete t;
+        if (fails) {
+            std::fprintf(stderr, "plex_chrome_idle720_tb LEGACY: %d FAIL(s)\n", fails);
+            return 1;
+        }
+        std::fprintf(stderr, "plex_chrome_idle720_tb: PASS (legacy 480p layout fault engaged)\n");
         return 0;
     }
 

@@ -169,6 +169,32 @@ static void checkHudIsOutputNotCoded() {
     CHECK(minY > 540u - 80u); // still in lower band of 720, not mid-540
 }
 
+// Active-canvas derivation: 720p OK; 480p/coded refused (red twin of layout_w).
+static void checkLayoutFromActiveHdmi() {
+    using namespace misterplex::plex_chrome_cmds;
+    int ow = 0, oh = 0, sc = 0;
+    CHECK(chromeLayoutFromActiveHdmi(1280, 720, ow, oh, sc));
+    CHECK(ow == 1280 && oh == 720 && sc == 3);
+    // 1080p glass also OK (scale 4 or 5)
+    CHECK(chromeLayoutFromActiveHdmi(1920, 1080, ow, oh, sc));
+    CHECK(ow == 1920 && oh == 1080 && sc == bodyScale(1080));
+    // RED: legacy 480p canvas must not become layout
+    CHECK(!chromeLayoutFromActiveHdmi(624, 480, ow, oh, sc));
+    CHECK(!chromeLayoutFromActiveHdmi(640, 480, ow, oh, sc));
+    CHECK(!chromeLayoutFromActiveHdmi(960, 540, ow, oh, sc));
+    // BuildArgs must track active layout, not coded bank defaults for product path
+    BuildArgs a;
+    CHECK(chromeLayoutFromActiveHdmi(kTargetOutW, kTargetOutH, a.outW, a.outH, sc));
+    auto cmds = buildPlaybackHud(a);
+    unsigned minY = 0xffff;
+    for (uint64_t w : cmds) {
+        const unsigned y = static_cast<unsigned>((w >> 24) & 0xFFFF);
+        if (y < minY)
+            minY = y;
+    }
+    CHECK(minY >= 572u); // bottom band of 720p (matches geometry contract)
+}
+
 // Width-keyed defect class: coded sizes must never be accepted as HDMI chrome.
 static void checkCodedSizeRejectedForChrome() {
     using namespace misterplex::plex_chrome_cmds;
@@ -210,6 +236,7 @@ int main() {
     checkStoppedHudHasBarAndState();
     check720pHudBudget();
     checkHudIsOutputNotCoded();
+    checkLayoutFromActiveHdmi();
     checkCodedSizeRejectedForChrome();
     if (fails) {
         std::fprintf(stderr, "test_plex_chrome_cmds: %d FAIL(s)\n", fails);

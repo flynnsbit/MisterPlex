@@ -1,10 +1,12 @@
-// Native 1280×720 fabric idle + vsync phase — PX_PER_CLK=1 and fault hook.
-// FAULT_480P_GEOM=1 clamps HDMI mon/geometry inputs to 624×480-style math so
-// the 720p probe RED-fails (red-before-green).
+// Native 1280×720 fabric idle + vsync phase — PX_PER_CLK=1 and fault hooks.
+// FAULT_480P_GEOM=1 clamps HDMI mon ports to 624×480 (old red path).
+// FAULT_LEGACY_480P_LAYOUT=1 keeps DE at 1280×720 but paints with 480p-derived
+// layout constants — the stronger red-twin (mediocre wrong place, not mon lie).
 `timescale 1ns / 1ps
 
 module plex_chrome_idle720_tb #(
     parameter bit FAULT_480P_GEOM = 1'b0,
+    parameter bit FAULT_LEGACY_480P_LAYOUT = 1'b0,
     parameter int PX_PER_CLK = 1
 ) (
     input  wire        clk,
@@ -72,7 +74,8 @@ module plex_chrome_idle720_tb #(
         .BOOT_DEMO(0),
         .MAX_CMDS(48),
         .HIT_SCAN(48),
-        .PX_PER_CLK(PX_PER_CLK)
+        .PX_PER_CLK(PX_PER_CLK),
+        .FAULT_LEGACY_480P_LAYOUT(FAULT_LEGACY_480P_LAYOUT)
     ) u_chrome (
         .clk_hdmi(clk),
         .reset(reset),
