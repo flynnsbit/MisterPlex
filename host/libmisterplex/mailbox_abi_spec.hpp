@@ -68,15 +68,49 @@ constexpr uint32_t kPlxlOffset = 0x140u; // list payload base (64-bit cmds)
 // History: +0x2C0 @48-cmd, briefly +0x4C0 when list grew with MAX_CMDS.
 constexpr uint32_t kPlxcListMaxCmds = 112u;
 // PLXG — 6-qword atomic geometry record (ARM→FPGA). Matches present_geom_latch.sv.
-// Layout: q0 magic|win|geom|epoch|seq, q1 content, q2 DE+coded, q3 strides+disp,
-//         q4 present+crop, q5 DAR+content_fps (parent ABI arbitration #2).
-// Size 48 bytes (q0..q5) at FIXED +0x800 .. +0x82F. See plxg_record.hpp.
+// Size 48 bytes (q0..q5) at FIXED +0x800 .. +0x82F. Little-endian on the wire.
+// Byte-exact freeze layout (parent #2 + #4) — DO NOT amend without freeze:
+//
+//   q0 @ +0x800  [31:0]  magic = 0x504C5847 ("PLXG")
+//                [32]    win_enable
+//                [33]    geom_enable
+//                [47:34] epoch/session (14b); 0 illegal (B4 ABA)
+//                [63:48] seq (16b)
+//   q1 @ +0x808  [10:0]  content_w   [26:16] content_h
+//                [42:32] content_x0  [58:48] content_y0
+//   q2 @ +0x810  [10:0]  h_de        [26:16] v_de
+//                [42:32] coded_w     [58:48] coded_h
+//   q3 @ +0x818  [11:0]  y_stride    [26:16] chroma_stride
+//                [42:32] display_w   [58:48] display_h
+//   q4 @ +0x820  [10:0]  present_x   [26:16] present_y
+//                [42:32] crop_left   [58:48] crop_top
+//   q5 @ +0x828  [11:0]  dar_x       [23:12] dar_y
+//                [31:24] content_fps (integer family)
+//                [32]    dar_valid   [33] fps_valid
+//                [63:34] RESERVED must be 0 (parent #4: bit34 NOT fps_1001)
+// Exclusive end +0x830. Bootstrap phys = product doorbell 0x300FF000 + 0x800.
+// Latch reject: |q5[63:34] sticky q5_reserved_reject (PLXF E4 class).
+// See also plxg_record.hpp packPlxgQ0..Q5 + present_geom_latch.sv sh0..sh5.
 constexpr uint32_t kPlxgOffset = 0x800u; // FIXED — do not re-derive from MAX_CMDS
 constexpr uint32_t kPlxgMagic = 0x504C5847u; // "PLXG"
 constexpr uint32_t kPlxgQwords = 6u;
 constexpr uint32_t kPlxgBytes = 48u; // 6 qwords (was 40 / 5 before q5)
 // q5 lives at doorbell + 0x828 (offset of 5th body qword after q0).
 constexpr uint32_t kPlxgQ5Offset = kPlxgOffset + 5u * 8u; // 0x828
+// q5 bitfield constants (parent freeze #2/#4) — widths for freeze #4 signing.
+constexpr unsigned kPlxgQ5DarXShift = 0u;
+constexpr unsigned kPlxgQ5DarXBits = 12u;
+constexpr unsigned kPlxgQ5DarYShift = 12u;
+constexpr unsigned kPlxgQ5DarYBits = 12u;
+constexpr unsigned kPlxgQ5ContentFpsShift = 24u;
+constexpr unsigned kPlxgQ5ContentFpsBits = 8u;
+constexpr unsigned kPlxgQ5DarValidBit = 32u;
+constexpr unsigned kPlxgQ5FpsValidBit = 33u;
+constexpr unsigned kPlxgQ5ReservedLoBit = 34u; // inclusive; thru 63
+constexpr unsigned kPlxgQ5ReservedBits = 30u;  // 63:34
+// Parent #4: first free reserved candidate for future fps_1001 is bit 34,
+// but it is NOT awarded until a single-window freeze. On-wire value today: 0.
+constexpr bool kPlxgQ5Fps1001Awarded = false;
 constexpr uint32_t kPlxgBootstrapDoorbellPhys = 0x300FF000u; // product YUV doorbell
 constexpr uint32_t kPlxgBootstrapPhys = 0x300FF800u; // bootstrap doorbell + FIXED 0x800
 static_assert(kPlxgOffset != kPlxcOffset, "PLXG must not collide with PLXC +0x130");
@@ -84,6 +118,11 @@ static_assert(kPlxgOffset == 0x800u, "PLXG wire ABI is FIXED at +0x800");
 static_assert(kPlxgQ5Offset == 0x828u, "PLXG q5 wire ABI FIXED at +0x828");
 static_assert(kPlxgBytes == kPlxgQwords * 8u, "PLXG byte size");
 static_assert(kPlxgOffset + kPlxgBytes == 0x830u, "PLXG exclusive end +0x830");
+static_assert(kPlxgQ5ReservedLoBit == 34u, "parent #4 reserved starts at bit 34");
+static_assert(kPlxgQ5DarValidBit + 1u == kPlxgQ5FpsValidBit, "valid bits contiguous");
+static_assert(kPlxgQ5FpsValidBit + 1u == kPlxgQ5ReservedLoBit, "reserved abuts fps_valid");
+static_assert(kPlxgQ5ReservedLoBit + kPlxgQ5ReservedBits == 64u, "reserved thru bit 63");
+static_assert(!kPlxgQ5Fps1001Awarded, "fps_1001 not on wire until freeze #4 lands");
 static_assert(kPlxlOffset + kPlxcListMaxCmds * 8u <= kPlxgOffset,
               "chrome list must not grow into fixed PLXG +0x800");
 static_assert(kPlxcListMaxCmds == 112u, "list depth must match kMaxCmds/RTL MAX_CMDS");

@@ -867,10 +867,18 @@ int main() {
             CHECK(!plxgQ5ReservedOk(badQ5));
             // Parent #4 / rd-duck: cross-impl packed words (path #2.1 vacated)
             CHECK(kPlxgQ5ReservedShift == 34u);
+            // Freeze constants (mailbox_abi_spec.hpp) — parent #4 signing surface
+            CHECK(mailbox_abi::kPlxgQ5Offset == 0x828u);
+            CHECK(mailbox_abi::kPlxgQ5ReservedLoBit == 34u);
+            CHECK(mailbox_abi::kPlxgQ5ReservedBits == 30u);
+            CHECK(mailbox_abi::kPlxgQ5DarValidBit == 32u);
+            CHECK(mailbox_abi::kPlxgQ5FpsValidBit == 33u);
+            CHECK(!mailbox_abi::kPlxgQ5Fps1001Awarded);
             CHECK(plxgQ5CrossImplFilmPackAbi2Accepted());
             CHECK(plxgQ5CrossImplFaultFps1001Rejected()); // dirty film bit34
             CHECK(plxgQ5CrossImplFaultReservedFrom35AcceptsBit34());
             std::fprintf(stderr, "  PLXG_Q5_CROSS_IMPL_PACKED_WORD OK\n");
+            std::fprintf(stderr, "  PLXG_Q5_FREEZE_LAYOUT OK reserved=[63:34]\n");
             PlxgRecord good = makePlxgRecord960x540Native(1);
             good.q[5] = packPlxgQ5(16, 9, 30, true, true);
             unsigned dx=0,dy=0,fps=0; bool dv=false,fv=false;
