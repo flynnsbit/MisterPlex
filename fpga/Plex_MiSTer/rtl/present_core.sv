@@ -1,5 +1,11 @@
 // Present core: color bars OR external frame_store, cadence, tone + audio FIFO.
 // Display owns VSync; unique content advances only when present_cadence says so.
+//
+// Multi-pixel present (720p path): see .agent-work/w-clock/MULTI_PIXEL_PRESENT_DESIGN.md
+// and assets/multi_pixel_present_contract.json. Product default is 1 px/clk.
+// `define PRESENT_MULTI_PIXEL  — opt-in wire-up of present_beam_ppc / yuv_bt601_npx
+// `define PRESENT_PX_PER_CLK N — 1|2|4 (only meaningful with PRESENT_MULTI_PIXEL)
+// Neither macro is defined in the shipping / nostub fit.
 
 module present_core #(
 	parameter int FRAME_W = 320,
@@ -176,6 +182,8 @@ module present_core #(
 	// THE LINE THAT STOPS DOUBLING: store_y_scale is constant 65536 (1.0), not
 	// the old scandouble ? 1.0 : 2.0 mux. store_y_addr = py (clamped), not py*2.
 	// Horizontal H_DE=529 Template DE unchanged (FBAR/DE_LAG class); 529-of-640 X deferred.
+	// Native 720p multi-pixel beam (H_DE=1280, +N step) lives in present_beam_ppc.sv and
+	// is NOT selected here unless PRESENT_MULTI_PIXEL is defined (defaults OFF).
 	localparam H_DE    = 10'd529;
 	localparam int V_STORE = FRAME_H; // product: full store height (480), both arms
 	localparam int STORE_X_SCALE = (FRAME_W * 39647) / 320;
@@ -405,6 +413,74 @@ module present_core #(
 	assign VBlank = vb_d;
 	assign VSync  = vs_d;
 	assign frame_start = fstart;
+
+	// ------------------------------------------------------------------
+	// Multi-pixel present bring-up (DEFAULT OFF).
+	// Elaboration-only hooks so yuv_bt601_npx / present_beam_ppc stay in the
+	// lint/elab graph when PRESENT_MULTI_PIXEL is set, without touching the
+	// product RGB/sync path. Do not enable in nostub fit without parent grant.
+	// ------------------------------------------------------------------
+`ifdef PRESENT_MULTI_PIXEL
+	`ifndef PRESENT_PX_PER_CLK
+		`define PRESENT_PX_PER_CLK 2
+	`endif
+	localparam int PPC_MP = `PRESENT_PX_PER_CLK;
+	wire                mp_beam_ce;
+	wire [11:0]         mp_glass_x0, mp_glass_y;
+	wire [PPC_MP-1:0]   mp_lane_de;
+	wire                mp_hb, mp_hs, mp_vb, mp_vs, mp_fstart;
+	// Beam generator is free-running under reset/enable for elab only; outputs
+	// are intentionally unused by product assigns above (w-scaler merges later).
+	present_beam_ppc #(
+		.PX_PER_CLK(PPC_MP),
+		.H_DE(1280),
+		.H_TOTAL(1650),
+		.V_ACTIVE(720),
+		.V_TOTAL(750),
+		.H_SYNC_S(1390),
+		.H_SYNC_E(1430),
+		.V_SYNC_S(725),
+		.V_SYNC_E(730)
+	) u_mp_beam (
+		.clk(clk),
+		.reset(reset),
+		.enable(1'b0),
+		.beam_ce(mp_beam_ce),
+		.glass_x0(mp_glass_x0),
+		.glass_y(mp_glass_y),
+		.lane_de(mp_lane_de),
+		.HBlank(mp_hb),
+		.HSync(mp_hs),
+		.VBlank(mp_vb),
+		.VSync(mp_vs),
+		.frame_start(mp_fstart)
+	);
+	wire mp_yuv_valid;
+	wire [PPC_MP*8-1:0] mp_r, mp_g, mp_b;
+	wire [PPC_MP-1:0] mp_lane_v;
+	yuv_bt601_npx #(
+		.PX_PER_CLK(PPC_MP),
+		.X_W(12)
+	) u_mp_yuv (
+		.clk(clk),
+		.reset(reset),
+		.in_valid(1'b0),
+		.src_x0(12'd0),
+		.y_qword(64'd0),
+		.u_qword(64'd0),
+		.v_qword(64'd0),
+		.y_qword_hi(64'd0),
+		.y_hi_valid(1'b0),
+		.out_valid(mp_yuv_valid),
+		.out_r(mp_r),
+		.out_g(mp_g),
+		.out_b(mp_b),
+		.out_lane_valid(mp_lane_v)
+	);
+	wire _unused_mp = mp_beam_ce | (|mp_glass_x0) | (|mp_glass_y) | (|mp_lane_de)
+		| mp_hb | mp_hs | mp_vb | mp_vs | mp_fstart | mp_yuv_valid
+		| (|mp_r) | (|mp_g) | (|mp_b) | (|mp_lane_v);
+`endif
 
 	// --- Audio: FIFO preferred, else OSD tone ---
 	wire [15:0] tone_l, tone_r;

@@ -1,0 +1,53 @@
+{
+  "schema": 1,
+  "name": "misterplex-multi-pixel-present-contract",
+  "description": "clk_sys need for 720p content/CEA rasters at 1/2/4 px per clk. Design: .agent-work/w-clock/MULTI_PIXEL_PRESENT_DESIGN.md. Product macro PRESENT_MULTI_PIXEL defaults OFF.",
+  "measured_fmax_mhz": {
+    "shipping_pll_clk_sys": 20.0,
+    "stub_in_8fdf440f": 23.46,
+    "nostub_c74c6863": 32.59,
+    "source": "Plex.sta.rpt Fmax Summary via scripts/check_quartus_timing.py / pll_clock_contract"
+  },
+  "px_per_clk_legal": [1, 2, 4],
+  "modes": {
+    "content_720p24": {"w": 1280, "h": 720, "fps": 24, "kind": "content"},
+    "content_720p60": {"w": 1280, "h": 720, "fps": 60, "kind": "content"},
+    "cea_720p24": {"h_total": 1650, "v_total": 750, "fps": 24, "kind": "cea"},
+    "cea_720p60": {"h_total": 1650, "v_total": 750, "fps": 60, "kind": "cea"},
+    "template_60": {"h_total": 638, "v_total": 524, "fps": 60, "kind": "template"}
+  },
+  "expected_need_mhz": {
+    "content_720p24": {"1": 22.1184, "2": 11.0592, "4": 5.5296},
+    "content_720p60": {"1": 55.296, "2": 27.648, "4": 13.824},
+    "cea_720p24": {"1": 29.7, "2": 14.85, "4": 7.425},
+    "cea_720p60": {"1": 74.25, "2": 37.125, "4": 18.5625},
+    "template_60": {"1": 20.0592, "2": 10.0296, "4": 5.0148}
+  },
+  "parent_expectation": {
+    "ppc2_720p24_mhz_range": [11.0, 15.0],
+    "ppc2_720p60_mhz_near": 37.0,
+    "note": "2 ppc rescues 720p24 under ship 20 MHz; 2 ppc CEA720p60 still FAILS nostub 32.59 — need 4 ppc."
+  },
+  "verdicts_vs_fmax": {
+    "content_720p24_ppc1_ship20": "FAIL",
+    "content_720p24_ppc2_ship20": "OK",
+    "cea_720p60_ppc2_nostub": "FAIL",
+    "cea_720p60_ppc4_ship20": "OK"
+  },
+  "rtl": {
+    "macro_default_off": "PRESENT_MULTI_PIXEL",
+    "px_per_clk_define": "PRESENT_PX_PER_CLK",
+    "modules": [
+      "fpga/Plex_MiSTer/rtl/yuv_bt601_npx.sv",
+      "fpga/Plex_MiSTer/rtl/present_beam_ppc.sv"
+    ],
+    "product_wired": false
+  },
+  "w_scaler_interface": {
+    "doc": ".agent-work/w-clock/MULTI_PIXEL_PRESENT_DESIGN.md section 5",
+    "stream": "present_px_stream",
+    "first_integration_ppc": 2,
+    "content_geometry": "1280x720"
+  },
+  "tolerance_mhz": 0.001
+}
