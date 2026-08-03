@@ -75,10 +75,24 @@ int main(int argc, char** argv) {
             return 3;
         }
         const auto hth = inspectYuv420pChroma(frame.data(), bw, bh);
+        // Flat neutral chroma (all ~128): studio-black / grey fill is whole-bank
+        // but not a real picture — parent: must reject all-128 as well as all-0.
+        const uint8_t* u = frame.data() + hth.y_bytes;
+        const uint8_t* v = frame.data() + hth.y_bytes + hth.c_bytes;
+        size_t near128_u = 0, near128_v = 0;
+        for (size_t k = 0; k < hth.c_bytes; ++k) {
+            if (u[k] >= 126 && u[k] <= 130)
+                ++near128_u;
+            if (v[k] >= 126 && v[k] <= 130)
+                ++near128_v;
+        }
+        const double n128 = hth.c_bytes > 0 ? static_cast<double>(hth.c_bytes) : 1.0;
+        const double frac128_u = static_cast<double>(near128_u) / n128;
+        const double frac128_v = static_cast<double>(near128_v) / n128;
         std::printf("VF_BANK_FRAME i=%zu valid=%d dead_chroma=%d mean_u=%.2f mean_v=%.2f "
-                    "zero_frac_u=%.4f zero_frac_v=%.4f\n",
+                    "zero_frac_u=%.4f zero_frac_v=%.4f near128_frac_u=%.4f near128_frac_v=%.4f\n",
                     i, (int)hth.valid, (int)hth.dead_chroma, hth.mean_u, hth.mean_v,
-                    hth.zero_frac_u, hth.zero_frac_v);
+                    hth.zero_frac_u, hth.zero_frac_v, frac128_u, frac128_v);
         if (!hth.valid) {
             std::printf("VF_BANK_HEALTH_FAIL reason=inspect_invalid frame=%zu\n", i);
             return 3;
@@ -89,6 +103,13 @@ int main(int argc, char** argv) {
                         "zero_frac_u=%.4f zero_frac_v=%.4f "
                         "(green-field class: U/V effectively zeroed)\n",
                         i, hth.zero_frac_u, hth.zero_frac_v);
+            return 2;
+        }
+        if (frac128_u >= 0.99 && frac128_v >= 0.99) {
+            std::printf("VF_BANK_HEALTH_FAIL reason=flat_neutral_chroma frame=%zu "
+                        "near128_frac_u=%.4f near128_frac_v=%.4f "
+                        "(degenerate grey/studio-black — not a real picture)\n",
+                        i, frac128_u, frac128_v);
             return 2;
         }
     }
