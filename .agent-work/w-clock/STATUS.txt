@@ -1,5 +1,5 @@
 w-clock STATUS 2026-08-03
-tip: c4429260
+tip: e4afde28
 oracle: 44a397c6 exact rtgeom + red twin
 prev: fdbef70f B2b + runtime geom OFF
 
