@@ -1,9 +1,10 @@
 # Asca-native true 960×540 DE — fit card (w-scaler → w-nostub)
 
 **Gate:** counted RTL sim `tests/unit/test_present_true_de_count_rtl_sim.sh`  
-**Measured product 30:** `true_de=1 de_w=960 de_lines=540 de_pixels=518400 de_uniform=1`  
+**Measured product 30:** `true_de=1 de_w=960 de_lines=540 de_pixels=518400 de_uniform=1 store_full=1 store_req=518400 store_x=0..959`  
 `H_TOT=1182 V_TOT=564 clks/frame=666648 fps@20M=30.0008`  
-**Measured product 24:** same DE, `V_TOT=705 clks/frame=833310 fps@20M=24.0007`  
+**Measured product 24:** same DE + store_full, runtime `V_TOT=705 clks/frame=833310 fps@20M=24.0007`  
+**Blank epoch:** beam registers HBlank/VBlank from *next* hc/vc (same epoch as `hc_out`). Old NBA-from-prior-hc dropped store x=0 every line (`517860=959*540`).  
 **RED island:** `PRESENT_BEAM_FAULT_ISLAND_1280` → `de=1280x720 true_de=0` rc≠0 + EXECUTED  
 **RED rate+bad DE:** `PRESENT_BEAM_FAULT_VTOT_BAD_DE` → rt V=705 but `de_w=1280` → `true_de=0` rc≠0 + EXECUTED
 

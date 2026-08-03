@@ -213,10 +213,10 @@ tests/unit/test_true_content_de_contract.sh   # product + RED FAULT_ISLAND_PASSE
 **Counted RTL raster** (elaborated beam + window + DE_LAG — load-bearing for fit):
 ```bash
 tests/unit/test_present_true_de_count_rtl_sim.sh
-# PRODUCT_30_V564: true_de=1 de=960x540 de_uniform=1 fps@20M=30.0008
-# PRODUCT_24_V705: true_de=1 de=960x540 de_uniform=1 fps@20M=24.0007
-# RED ISLAND_1280: de=1280x720 true_de=0 rc≠0 + EXECUTED
-# RED FAULT_VTOT_BAD_DE: rt V=705 + de_w=1280 → true_de=0 rc≠0 + EXECUTED
+# PRODUCT_30_V564: true_de=1 store_full=1 store_req=518400 store_x=0..959
+# PRODUCT_24_V705: same + rt_vt=705 fps@20M=24.0007
+# RED ISLAND_1280 / FAULT_VTOT_BAD_DE: true_de=0 rc≠0 + EXECUTED
+# Beam blanks from *next* hc/vc (same epoch); old NBA dropped x=0 → 517860 checks
 ```
 
 **Fit card (w-nostub drop-in):** `docs/ascal-true-de-fit-card.md`  

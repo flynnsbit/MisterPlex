@@ -11,6 +11,10 @@
 //
 // Optional runtime V_TOTAL (use_rt_vtotal=1): host may switch 564↔705 at frame boundary.
 // Mid-frame writes are undefined — latch only when vc==0 && hc==0 recommended.
+//
+// Same-epoch blanking (rd-duck): blanks/sync are registered from *next* hc/vc so that
+// after the clock edge, HBlank/VBlank correspond to the visible hc_out/vc_out. NBA from
+// *old* hc left HBlank=1 at hc=0 → in_content missed x=0 every line (517860 vs 518400).
 
 `default_nettype none
 
@@ -59,6 +63,12 @@ module present_beam_content_de #(
 	assign hc_out = hc;
 	assign vc_out = vc;
 
+	// Next-cycle counters — blanks/sync register from these so levels match hc/vc after NBA.
+	wire        h_wrap = (hc == h_last);
+	wire        v_wrap = h_wrap && (vc == v_last);
+	wire [10:0] hc_n   = h_wrap ? 11'd0 : (hc + 11'd1);
+	wire [10:0] vc_n   = h_wrap ? (v_wrap ? 11'd0 : (vc + 11'd1)) : vc;
+
 	always @(posedge clk) begin
 		// 1 clk/pix path @ clk_sys (20 MHz) — matches w-clock B1 1px content DE plan.
 		ce_pix <= 1'b1;
@@ -68,40 +78,23 @@ module present_beam_content_de #(
 			hc <= 11'd0;
 			vc <= 11'd0;
 			ce_pix <= 1'b0;
-			HBlank <= 1'b1;
+			// Coming out of reset, first visible sample is hc=0 active.
+			HBlank <= 1'b0;
 			HSync  <= 1'b0;
-			VBlank <= 1'b1;
+			VBlank <= (11'(0) >= 11'(V_ACTIVE));
 			VSync  <= 1'b0;
 		end else begin
-			// Advance on every cycle (ce_pix sticky 1 after reset release).
-			if (hc == h_last) begin
-				hc <= 11'd0;
-				if (vc == v_last) begin
-					vc <= 11'd0;
-					frame_start <= 1'b1;
-				end else begin
-					vc <= vc + 11'd1;
-				end
-			end else begin
-				hc <= hc + 11'd1;
-			end
+			hc <= hc_n;
+			vc <= vc_n;
+			if (v_wrap)
+				frame_start <= 1'b1;
 
-			// Level blanks from *current* counters (same-cycle as colorbars style).
-			HBlank <= (hc >= 11'(H_DE));
-			VBlank <= (vc >= 11'(V_ACTIVE));
-
-			if (hc == 11'(H_SYNC_S))
-				HSync <= 1'b1;
-			if (hc == 11'(H_SYNC_E))
-				HSync <= 1'b0;
-
-			// VS edges on H_SYNC_S (Template-style keying).
-			if (hc == 11'(H_SYNC_S)) begin
-				if (vc == 11'(V_SYNC_S))
-					VSync <= 1'b1;
-				else if (vc == 11'(V_SYNC_E))
-					VSync <= 1'b0;
-			end
+			// Same epoch as registered hc/vc after this edge.
+			HBlank <= (hc_n >= 11'(H_DE));
+			VBlank <= (vc_n >= 11'(V_ACTIVE));
+			HSync  <= (hc_n >= 11'(H_SYNC_S)) && (hc_n < 11'(H_SYNC_E));
+			// VS level for lines [V_SYNC_S, V_SYNC_E).
+			VSync  <= (vc_n >= 11'(V_SYNC_S)) && (vc_n < 11'(V_SYNC_E));
 		end
 	end
 endmodule

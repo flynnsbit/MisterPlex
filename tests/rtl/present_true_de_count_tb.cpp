@@ -1,6 +1,11 @@
 // Count DE-asserted pixels on the present true-DE path (beam + window + DE_LAG).
 // Product 30: 960×540 @ 1182×564. Product 24: same DE @ 1182×705.
 // RED: island 1280; FAULT_VTOT_BAD_DE: V_TOT=705 with DE width 1280.
+//
+// rd-duck gate: store request count must equal DE pixels (518400), and every
+// active line must request store_x = 0..959 (not 1..959). A lagged HBlank that
+// drops x=0 yields store_id_checked=517860 (=959*540) while de_pixels still
+// hits 518400 — that green was misleading.
 // true rc direct. EXECUTED before accept.
 
 #include "Vpresent_true_de_count_tb.h"
@@ -29,9 +34,15 @@ struct FrameStats {
 	int de_pixels = 0;
 	int min_de_w = 100000;
 	int max_de_w = 0;
+	int store_req = 0;
 	int store_id_ok = 1;
 	int store_id_checked = 0;
 	int store_id_fail = 0;
+	int store_x_min = 100000;
+	int store_x_max = -1;
+	int store_x_has0 = 0;
+	int line_req_min = 100000;
+	int line_req_max = 0;
 };
 
 static FrameStats measure_one_frame(Vpresent_true_de_count_tb *top, int expect_ht, int expect_vt)
@@ -44,9 +55,12 @@ static FrameStats measure_one_frame(Vpresent_true_de_count_tb *top, int expect_h
 		std::fprintf(stderr, "FAIL no frame_start\n");
 		std::exit(2);
 	}
-	tick(top);
+	// Do NOT tick again: the cycle with frame_start=1 is already hc=0,vc=0 of
+	// the new frame (same-epoch beam). An extra tick dropped store x=0 on line 0
+	// and yielded store_req=518399 while de_pixels still hit 518400 via DE_LAG.
 
 	int line_de = 0;
+	int line_req = 0;
 	int hc_prev = -1;
 	int lines = 0;
 	int clks = 0;
@@ -57,22 +71,9 @@ static FrameStats measure_one_frame(Vpresent_true_de_count_tb *top, int expect_h
 		const int de = top->de_out ? 1 : 0;
 		const int hc = int(top->hc);
 		const int vc = int(top->vc);
+		const int ic = top->in_content_raw ? 1 : 0;
 
-		if (de) {
-			line_de++;
-			st.de_pixels++;
-		}
-		if (ic_d1) {
-			st.store_id_checked++;
-			if (int(top->store_x) != hc_d1 || int(top->store_y) != vc_d1) {
-				st.store_id_ok = 0;
-				st.store_id_fail++;
-			}
-		}
-		ic_d1 = top->in_content_raw ? 1 : 0;
-		hc_d1 = hc;
-		vc_d1 = vc;
-
+		// Finalize previous line *before* counting hc=0 of the new line.
 		if (hc_prev >= 0 && hc < hc_prev) {
 			if (line_de > 0) {
 				st.de_lines++;
@@ -81,9 +82,44 @@ static FrameStats measure_one_frame(Vpresent_true_de_count_tb *top, int expect_h
 				if (line_de > st.max_de_w)
 					st.max_de_w = line_de;
 			}
+			if (line_req > 0) {
+				if (line_req < st.line_req_min)
+					st.line_req_min = line_req;
+				if (line_req > st.line_req_max)
+					st.line_req_max = line_req;
+			}
 			line_de = 0;
+			line_req = 0;
 			lines++;
 		}
+
+		if (de) {
+			line_de++;
+			st.de_pixels++;
+		}
+		if (ic) {
+			line_req++;
+			st.store_req++;
+		}
+		if (ic_d1) {
+			st.store_id_checked++;
+			const int sx = int(top->store_x);
+			const int sy = int(top->store_y);
+			if (sx != hc_d1 || sy != vc_d1) {
+				st.store_id_ok = 0;
+				st.store_id_fail++;
+			}
+			if (sx < st.store_x_min)
+				st.store_x_min = sx;
+			if (sx > st.store_x_max)
+				st.store_x_max = sx;
+			if (sx == 0)
+				st.store_x_has0 = 1;
+		}
+		ic_d1 = ic;
+		hc_d1 = hc;
+		vc_d1 = vc;
+
 		hc_prev = hc;
 		clks++;
 		tick(top);
@@ -97,8 +133,18 @@ static FrameStats measure_one_frame(Vpresent_true_de_count_tb *top, int expect_h
 		if (line_de > st.max_de_w)
 			st.max_de_w = line_de;
 	}
+	if (line_req > 0) {
+		if (line_req < st.line_req_min)
+			st.line_req_min = line_req;
+		if (line_req > st.line_req_max)
+			st.line_req_max = line_req;
+	}
 	if (st.min_de_w > st.max_de_w)
 		st.min_de_w = 0;
+	if (st.line_req_min > st.line_req_max)
+		st.line_req_min = 0;
+	if (st.store_x_min > st.store_x_max)
+		st.store_x_min = -1;
 	return st;
 }
 
@@ -108,14 +154,13 @@ int main(int argc, char **argv)
 	auto *top = new Vpresent_true_de_count_tb;
 
 	const int CW = 960, CH = 540;
-	const int H_TOT = 1182;
 #if defined(PRESENT_BEAM_FAULT_ISLAND_1280)
 	const char *mode = "ISLAND_1280";
 	const int H_BEAM = 1280, V_BEAM = 720;
 	const int expect_ht = 1650, expect_vt = 750;
 	const int use_rt = 0, rt_vt = 0;
 	const int win_h = 1280, win_v = 720;
-	const int product_assert = 1; // still assert 960×540 → RED
+	const int product_assert = 1;
 #elif defined(PRESENT_BEAM_FAULT_VTOT_BAD_DE)
 	const char *mode = "FAULT_VTOT_BAD_DE";
 	const int H_BEAM = 1280, V_BEAM = 540;
@@ -127,7 +172,6 @@ int main(int argc, char **argv)
 	const char *mode = "PRODUCT_24_V705";
 	const int H_BEAM = 960, V_BEAM = 540;
 	const int expect_ht = 1182, expect_vt = 705;
-	// Runtime path: param V=564 + rt_vtotal=705 (not a second elab-time V_TOTAL).
 	const int use_rt = 1, rt_vt = 705;
 	const int win_h = 960, win_v = 540;
 	const int product_assert = 1;
@@ -170,16 +214,24 @@ int main(int argc, char **argv)
 	    (de_w == CW && de_h == CH && st.de_pixels == CW * CH && de_w_uniform) ? 1 : 0;
 	const int clks_frame = expect_ht * expect_vt;
 	const double fps = 20e6 / double(clks_frame);
+	const int store_full =
+	    (st.store_req == CW * CH && st.store_id_checked == CW * CH && st.store_id_ok &&
+	     st.store_x_has0 && st.store_x_min == 0 && st.store_x_max == CW - 1 &&
+	     st.line_req_min == CW && st.line_req_max == CW)
+	        ? 1
+	        : 0;
 
 	std::printf(
 	    "CASE true_de_count EXECUTED mode=%s "
 	    "H_TOT=%d V_TOT=%d clks/frame=%d fps@20M=%.4f "
 	    "de_w_min=%d de_w_max=%d de_lines=%d de_pixels=%d "
-	    "de_uniform=%d store_id_ok=%d store_id_fail=%d/%d "
+	    "de_uniform=%d store_req=%d store_id_ok=%d store_id_fail=%d/%d "
+	    "store_x_range=%d..%d store_x0=%d line_req=%d..%d store_full=%d "
 	    "true_de=%d beam_expect=%dx%d win_de=%dx%d rt_vt=%d\n",
 	    mode, expect_ht, expect_vt, clks_frame, fps, st.min_de_w, st.max_de_w, st.de_lines,
-	    st.de_pixels, de_w_uniform, st.store_id_ok, st.store_id_fail, st.store_id_checked,
-	    true_de, H_BEAM, V_BEAM, win_h, win_v, rt_vt);
+	    st.de_pixels, de_w_uniform, st.store_req, st.store_id_ok, st.store_id_fail,
+	    st.store_id_checked, st.store_x_min, st.store_x_max, st.store_x_has0, st.line_req_min,
+	    st.line_req_max, store_full, true_de, H_BEAM, V_BEAM, win_h, win_v, rt_vt);
 
 	int fails = 0;
 #define CHECK(c, m)                                                                 \
@@ -191,7 +243,6 @@ int main(int argc, char **argv)
 	} while (0)
 
 	if (product_assert) {
-		// Product contract always: true 960×540 DE (RED modes must fail these).
 		CHECK(de_w == 960, "de_w==960");
 		CHECK(de_h == 540, "de_h==540");
 		CHECK(st.de_pixels == 960 * 540, "de_pixels==518400");
@@ -201,32 +252,43 @@ int main(int argc, char **argv)
 	}
 
 #if defined(PRESENT_BEAM_24_V705)
+	CHECK(st.store_req == 960 * 540, "store_req==518400 @24");
+	CHECK(st.store_id_checked == 960 * 540, "store_id_checked==518400 @24");
 	CHECK(st.store_id_ok == 1, "identity store @24");
 	CHECK(st.store_id_fail == 0, "zero store fails @24");
+	CHECK(st.store_x_has0 == 1, "store_x reaches 0 @24");
+	CHECK(st.store_x_min == 0 && st.store_x_max == 959, "store_x oracle 0..959 @24");
+	CHECK(st.line_req_min == 960 && st.line_req_max == 960, "960 store req/line @24");
+	CHECK(store_full == 1, "store_full==1 @24");
 	CHECK(expect_vt == 705 && expect_ht == 1182, "1182x705 beam");
 	CHECK(clks_frame == 833310, "clks/frame 833310");
 	CHECK(fps > 23.99 && fps < 24.02, "fps≈24.0007");
 	CHECK(std::fabs(fps - 24.000672) < 0.001, "fps within 0.001 of 24.000672");
 #elif !defined(PRESENT_BEAM_FAULT_ISLAND_1280) && !defined(PRESENT_BEAM_FAULT_VTOT_BAD_DE)
+	CHECK(st.store_req == 960 * 540, "store_req==518400 @30");
+	CHECK(st.store_id_checked == 960 * 540, "store_id_checked==518400 @30");
 	CHECK(st.store_id_ok == 1, "identity store @30");
 	CHECK(st.store_id_fail == 0, "zero store fails @30");
+	CHECK(st.store_x_has0 == 1, "store_x reaches 0 @30");
+	CHECK(st.store_x_min == 0 && st.store_x_max == 959, "store_x oracle 0..959 @30");
+	CHECK(st.line_req_min == 960 && st.line_req_max == 960, "960 store req/line @30");
+	CHECK(store_full == 1, "store_full==1 @30");
 	CHECK(expect_vt == 564 && expect_ht == 1182, "1182x564 beam");
 	CHECK(clks_frame == 666648, "clks/frame 666648");
 	CHECK(fps > 29.95 && fps < 30.05, "fps≈30.0008");
 #elif defined(PRESENT_BEAM_FAULT_VTOT_BAD_DE)
-	// Extra pin: rate is film but width is canvas (the new failure mode).
-	CHECK(de_w == 1280, "diag vtot-bad-de width 1280"); // will fail with de_w==960
+	CHECK(de_w == 1280, "diag vtot-bad-de width 1280");
 	CHECK(expect_vt == 705, "diag V_TOT 705");
 #endif
 
 	if (fails) {
-		std::printf("FAIL true_de_count fails=%d mode=%s true_de=%d de=%dx%d\n", fails,
-		            mode, true_de, de_w, de_h);
+		std::printf("FAIL true_de_count fails=%d mode=%s true_de=%d de=%dx%d store_req=%d\n",
+		            fails, mode, true_de, de_w, de_h, st.store_req);
 		delete top;
 		return 1;
 	}
-	std::printf("PASS true_de_count mode=%s true_de=%d de=%dx%d fps=%.4f\n", mode, true_de,
-	            de_w, de_h, fps);
+	std::printf("PASS true_de_count mode=%s true_de=%d store_full=%d de=%dx%d fps=%.4f\n",
+	            mode, true_de, store_full, de_w, de_h, fps);
 	delete top;
 	return 0;
 }
