@@ -111,6 +111,26 @@ and ARM contention are unmeasured** — parent post-fit only. Worst ref_factor�
 @60 → ~332 MB/s (46% peak) still arithmetic-OK; glitch risk is arbiter latency
 not average BW.
 
+## Product 960×540 SPS geometry (parent 2026-08-03 — SETTLED)
+
+Do **not** trust `ffprobe coded_height=540` — that is post-crop. Bitstream SPS:
+
+| SPS field | Value | Meaning |
+|-----------|------:|---------|
+| `pic_width_in_mbs_minus1` | 59 | coded_w = **960** |
+| `pic_height_in_map_units_minus1` | 33 | coded_h = **544** |
+| `frame_mbs_only_flag` | 1 | progressive |
+| `frame_crop_bottom_offset` | 2 | × CropUnitY=2 → **4** lines |
+| display height | | 544 − 4 = **540** |
+
+| Consumer | Geometry | I420 bytes |
+|----------|----------|----------:|
+| ARM product (`libavcodec` crop applied) | **960×540** display | **777600** native_push |
+| Fabric decoder / this ring (endgame) | **960×544** coded | **783360** recon/DPB; crop 4 bottom before present |
+
+Constants: `kProduct960x540Sps*` in `ddr_bitstream_ring.hpp`. Frame-store Option-C
+banks remain display-sized; only a fabric decoder path may size off 544.
+
 ## Files
 
 - `host/libmisterplex/ddr_bitstream_ring.hpp` — map, PLXN pack, `BitstreamRingModel`

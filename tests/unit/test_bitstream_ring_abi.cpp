@@ -295,6 +295,33 @@ static void testFabricDecodeBwBudget() {
                  c60, peak, 100.0 * c60 / peak);
 }
 
+// Parent SPS dump 2026-08-03: coded 544, display 540. Fabric ring path ≠ ARM push.
+static void testProduct960x540SpsGeometry() {
+    std::fprintf(stderr, "--- testProduct960x540SpsGeometry ---\n");
+    namespace ring = misterplex::ddr_bitstream_ring;
+    CHECK(ring::kProduct960x540SpsPicWidthInMbsMinus1 == 59);
+    CHECK(ring::kProduct960x540SpsPicHeightInMapUnitsMinus1 == 33);
+    CHECK(ring::kProduct960x540SpsFrameCropBottomOffset == 2);
+    CHECK(ring::kProduct960x540SpsCodedWidth == 960);
+    CHECK(ring::kProduct960x540SpsCodedHeight == 544);
+    CHECK(ring::kProduct960x540SpsDisplayHeight == 540);
+    CHECK(ring::kProduct960x540SpsBottomCropLines == 4);
+    CHECK(ring::kProduct960x540SpsCodedI420Bytes == 783360u);
+    CHECK(ring::kProduct960x540SpsDisplayI420Bytes == 777600u);
+    // Helpers must reproduce SPS arithmetic (not ffprobe's post-crop 540-as-coded).
+    CHECK(ring::fabricDecodeCodedHeightFromSps(33, true) == 544);
+    CHECK(ring::fabricDecodeDisplayHeightFromSps(544, 2, 2) == 540);
+    // NEG: treating display height as coded must fail the constant pin.
+    CHECK(ring::kProduct960x540SpsCodedHeight != ring::kProduct960x540SpsDisplayHeight);
+    CHECK(ring::kProduct960x540SpsCodedI420Bytes != ring::kProduct960x540SpsDisplayI420Bytes);
+    // Cross-lock with frame ABI: ARM native_push is display bytes; MB-coded is ring/DPB.
+    CHECK(static_cast<size_t>(misterplex::kPlex720pOutputSourceBytes) ==
+          ring::kProduct960x540SpsDisplayI420Bytes);
+    CHECK(static_cast<size_t>(misterplex::kPlex720pOutputSourceCodedBytes) ==
+          ring::kProduct960x540SpsCodedI420Bytes);
+    std::fprintf(stderr, "  OK SPS coded=960x544 display=960x540; ARM push=777600 fabric DPB=783360\n");
+}
+
 int main() {
     testMapCollisionFence();
     testBitrateArithmetic();
@@ -306,6 +333,7 @@ int main() {
     testNegOverrunFull();
     testFabricProfileGate();
     testFabricDecodeBwBudget();
+    testProduct960x540SpsGeometry();
     if (fails) {
         std::fprintf(stderr, "FAILED %d checks\n", fails);
         return 1;

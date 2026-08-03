@@ -267,6 +267,46 @@ inline bool ringHasWorstAuHeadroom(size_t level, size_t cap = kRingBytes) {
     return (cap - level) >= kWorstAuRecordBytes;
 }
 
+// ---------------------------------------------------------------------------
+// Product 960×540 SPS geometry (parent bitstream dump 2026-08-03) — ENDGAME
+// ---------------------------------------------------------------------------
+// ffprobe reports coded_height=540 (post-crop). Do NOT trust that for fabric.
+// Authoritative SPS (ffmpeg -bsf:v trace_headers on proxy_960x540.mp4):
+//   pic_width_in_mbs_minus1        = 59  → coded_w = 960
+//   pic_height_in_map_units_minus1 = 33  → coded_h = 544
+//   frame_mbs_only_flag            = 1
+//   frame_cropping_flag            = 1
+//   frame_crop_bottom_offset       = 2   (L/R/T = 0)
+//   CropUnitY (4:2:0) = 2 → bottom crop = 4 lines → display_h = 540
+//
+// Two consumers, two numbers:
+//   * ARM product path (libavcodec): AVFrame is ALREADY cropped → 960×540 /
+//     777600 B native_push. Frame-store Option-C banks use DISPLAY geometry.
+//   * Fabric decoder / this ring (future): bitstream carries CODED 960×544;
+//     recon buffers and DPB size off 544; crop 4 bottom lines before present.
+// Mixing 544 into native_push or 540 into fabric DPB is a wrong-picture class.
+constexpr int kProduct960x540SpsPicWidthInMbsMinus1 = 59;
+constexpr int kProduct960x540SpsPicHeightInMapUnitsMinus1 = 33;
+constexpr int kProduct960x540SpsFrameCropBottomOffset = 2;
+constexpr int kProduct960x540SpsCodedWidth = 960;   // (59+1)*16
+constexpr int kProduct960x540SpsCodedHeight = 544;  // (33+1)*16
+constexpr int kProduct960x540SpsDisplayWidth = 960;
+constexpr int kProduct960x540SpsDisplayHeight = 540; // 544 - 2*CropUnitY*2
+constexpr int kProduct960x540SpsBottomCropLines = 4;
+constexpr size_t kProduct960x540SpsCodedI420Bytes = 783360u;   // 960*544*3/2
+constexpr size_t kProduct960x540SpsDisplayI420Bytes = 777600u; // ARM native_push
+// Fabric-decode recon/DPB plane sizing MUST use coded height 544, not 540.
+inline int fabricDecodeCodedHeightFromSps(int picHeightInMapUnitsMinus1,
+                                          bool frameMbsOnly = true) {
+    const int map_units = picHeightInMapUnitsMinus1 + 1;
+    return frameMbsOnly ? (map_units * 16) : (map_units * 32);
+}
+inline int fabricDecodeDisplayHeightFromSps(int codedHeight, int cropBottomOffset,
+                                            int cropUnitY = 2) {
+    const int crop = cropBottomOffset * cropUnitY;
+    return (codedHeight > crop) ? (codedHeight - crop) : 0;
+}
+
 // H.264 codec tag on Event::Begin — fabric-decode compatibility gate.
 // Parent 2026-08-03: PMS delivers Constrained Baseline L3.1, no B-frames, CAVLC.
 // Stream: Baseline+CAVLC (product request). Fabric full decode = endgame only.
