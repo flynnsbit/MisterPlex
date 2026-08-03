@@ -682,14 +682,26 @@ constexpr double kFeedArchivePresentMs = 10.41;
 // FEED non-decode ARM buckets @480p (present+pipe+scale), quoted parent rollup.
 constexpr double kFeedArchiveNonDecodeMs = 10.411 + 5.263 + 2.954; // 18.628
 // Parent device 2026-08-02 real-content 720p decode-only (both cores), ms/f.
-// Source: /tmp/misterplex-parent-720p-decode-verdict.txt (parent-owned measure).
-constexpr double kParent720pDecodeMsDefaultThreads = 41.073;
+// Source: parent /tmp/misterplex-parent-720p-decode-verdict.txt (device measure).
+// Bitrate sweep (Constrained Baseline, 300 frames/arm, exit=0):
+//   1500k 32.427 ms/f (headroom 9.24) | 2500k 36.845 (4.82)
+//   3500k 38.751 (2.92)               | 4000k 41.073 (0.59)
+// Tier choice is worth up to 8.65 ms/f. Candidate pin: 1500 kbit (w-path).
+// Headroom is jitter margin ONLY — not permission for ARM memcpy (~22 ms/f).
+constexpr double kParent720pDecodeMs1500k = 32.427;
+constexpr double kParent720pDecodeMs2500k = 36.845;
+constexpr double kParent720pDecodeMs3500k = 38.751;
+constexpr double kParent720pDecodeMs4000k = 41.073;
+// Default keeps the 4000k figure for conservative residual; prefer 1500k tier APIs.
+constexpr double kParent720pDecodeMsDefaultThreads = kParent720pDecodeMs4000k;
 constexpr double kParent480pDecodeMsDefaultThreads = 15.969;
 constexpr double kFrameBudget24fpsMs = 41.667;
-// 720p decode alone / budget = 41.073/41.667 ≈ 98.6%. Margin 0.594 ms.
-// ANY ARM per-pixel work at 720p24 is unshippable against this margin.
+constexpr int kPlex720pCandidateBitrateKbit = 1500;
+constexpr double kParent720pDecodeMsCandidateTier = kParent720pDecodeMs1500k;
 constexpr double kParent720pDecodeBudgetFraction =
     kParent720pDecodeMsDefaultThreads / kFrameBudget24fpsMs;
+constexpr double kParent720pDecodeBudgetFractionCandidate =
+    kParent720pDecodeMsCandidateTier / kFrameBudget24fpsMs;
 
 struct DdrNativePushPlan {
     size_t native_bytes = 0;  // tight content I420
@@ -814,8 +826,8 @@ struct DdrArmPresentBudget {
     // ARM still participates in pixel push (true until FPGA writes banks).
     bool arm_still_pushes_pixels = true;
     // Hard 720p24 ship gate: arm_push_bytes==0 AND no ARM scale/pad/pack.
-    // Parent measure: 720p decode alone is 41.073 ms/f of 41.667 (0.59 ms margin).
-    // A tight 1280x720 memcpy alone projects ~22.15 ms — unshippable.
+    // Parent measure: 4000k decode 41.073 ms/f (0.59 ms); 1500k 32.427 (9.24 ms).
+    // Tight 1280x720 memcpy ~22.15 ms exceeds BOTH residuals — unshippable.
     bool zero_arm_per_pixel = false;
     // Sum of *known* removed walls (copy projection + optional FEED scale).
     // Does NOT claim packYuv/clearYuv/PLXD overhead — those are unknown.
@@ -923,8 +935,9 @@ inline DdrFabricOwnedPresentPlan makeDdrFabricOwnedPresentPlan(
 // FPGA-written banks: ARM publishes **zero** pixel bytes. Fabric decode/MC/IDCT
 // (or other fabric producer) fills Option-C / product banks; ARM only programs
 // PLXG + rings doorbell / feeds bitstream ring. This is the only present path
-// that can meet ddr720p24ShipAcceptsZeroArmPerPixel given parent 41.073 ms/f
-// decode-only margin of 0.59 ms (tight 720p memcpy alone ≈ 22 ms — fatal).
+// that can meet ddr720p24ShipAcceptsZeroArmPerPixel. Even at candidate 1500k
+// (residual ~9.24 ms) a tight 720p memcpy ≈ 22 ms still exceeds — fatal.
+// 4000k residual 0.59 ms is worse; tier choice buys jitter, not ARM pixels.
 inline DdrFabricOwnedPresentPlan makeDdrFpgaWrittenBankPlan(
     const DdrFrameGeometry& canvasGeom, uint32_t canvasPhysBase = kPlex720pDdrFramePhysBase,
     bool countFeedScaleRemoval = true) {
@@ -947,16 +960,31 @@ inline DdrFabricOwnedPresentPlan makeDdrFpgaWrittenBankPlan(
 
 // Residual headroom after parent-measured 720p decode if non-decode is fully off ARM.
 // Returns budget - decode_ms. Positive means room for jitter only — not for memcpy.
+// Default decodeMs is 4000k (worst measured). Pass kParent720pDecodeMsCandidateTier
+// (1500k) for the pinned tier residual (~9.24 ms).
 inline double ddr720p24ResidualMsAfterDecodeOnly(
     double decodeMs = kParent720pDecodeMsDefaultThreads,
     double budgetMs = kFrameBudget24fpsMs) {
     return budgetMs - decodeMs;
 }
 
-// True when a projected ARM copy term alone would blow the residual decode margin.
-inline bool ddr720p24ArmCopyExceedsDecodeMargin(size_t armPushBytes) {
+// True when a projected ARM copy term alone would blow residual at the given tier.
+inline bool ddr720p24ArmCopyExceedsDecodeMarginAt(size_t armPushBytes, double decodeMs) {
     const double copyMs = ddrPushMsAtRate(armPushBytes, kDdrArchiveNoSyncMibps);
-    return copyMs > ddr720p24ResidualMsAfterDecodeOnly();
+    return copyMs > ddr720p24ResidualMsAfterDecodeOnly(decodeMs);
+}
+
+// Conservative: exceeds even the 4000k residual (0.59 ms).
+inline bool ddr720p24ArmCopyExceedsDecodeMargin(size_t armPushBytes) {
+    return ddr720p24ArmCopyExceedsDecodeMarginAt(armPushBytes,
+                                                 kParent720pDecodeMsDefaultThreads);
+}
+
+// Candidate 1500k tier: still true that a full 720p ARM memcpy does not fit
+// (copy ~22.15 ms >> residual ~9.24 ms). Ship gate remains publish_bytes=0.
+inline bool ddr720p24ArmCopyExceedsCandidateTierMargin(size_t armPushBytes) {
+    return ddr720p24ArmCopyExceedsDecodeMarginAt(armPushBytes,
+                                                 kParent720pDecodeMsCandidateTier);
 }
 
 // Second PLXG beat: content window inside the tier bank. Magic still PLXG;

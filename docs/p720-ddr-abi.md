@@ -220,3 +220,11 @@ Iface: `docs/fabric-ddr-writer-iface.md`
 - Macro `FABRIC_DDR_WRITER` default **OFF** (commented in `Plex.qsf`).
 - Burst arithmetic: 720p30 = 5.8% of clk_ddr@90MHz @ 8B/cycle; outstanding=1 closes
   if arbiter grant ≥ ~6%. Shared-bus grant is **unverified on device**.
+
+## Parent 720p decode tier sweep (2026-08-02)
+
+Real content, decode-only, both cores (ms/f): 1500k=32.427 (headroom 9.24),
+2500k=36.845, 3500k=38.751, 4000k=41.073 (0.59). Candidate tier **1500 kbit**.
+Tier saves up to 8.65 ms/f vs 4000k — **jitter margin only**. Full 720p ARM
+memcpy still ~22.15 ms and fails `ddr720p24ArmCopyExceedsCandidateTierMargin`.
+Ship gate remains `publish_bytes=0` / FPGA-written banks via `fabric_ddr_writer`.

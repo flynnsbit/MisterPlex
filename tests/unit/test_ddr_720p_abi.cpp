@@ -200,8 +200,8 @@ int main() {
     CHECK(fpub.payload_bytes < fpub.publish.layout.frame_bytes);
 
     // 720p tier + full 720p content with ARM tight write: pad savings 0.
-    // Parent measure: 720p decode alone 41.073 ms/f → 0.59 ms residual.
-    // Tight 720p memcpy ~22.15 ms EXCEEDS residual → NOT ship-acceptable.
+    // Parent bitrate sweep: 4000k residual ~0.59 ms; candidate 1500k ~9.24 ms.
+    // Tight 720p memcpy ~22.15 ms EXCEEDS BOTH → NOT ship-acceptable either tier.
     const auto fab720 = makeDdrFabricOwnedPresentPlan(
         1280, 720, plex720pDdrFrameGeometry(), kPlex720pDdrFramePhysBase);
     CHECK(fab720.valid);
@@ -212,10 +212,20 @@ int main() {
     CHECK(fab720.canvas_layout.doorbell_phys == 0x3047F000u);
     CHECK(fab720.budget.arm_still_pushes_pixels);
     CHECK(!ddr720p24ShipAcceptsZeroArmPerPixel(fab720.budget));
-    CHECK(ddr720p24ArmCopyExceedsDecodeMargin(1382400u));
+    CHECK(ddr720p24ArmCopyExceedsDecodeMargin(1382400u)); // 4000k residual
+    CHECK(ddr720p24ArmCopyExceedsCandidateTierMargin(1382400u)); // 1500k residual
+    CHECK(kPlex720pCandidateBitrateKbit == 1500);
+    CHECK(kParent720pDecodeMs1500k == 32.427);
+    CHECK(kParent720pDecodeMs4000k == 41.073);
+    CHECK(kParent720pDecodeMsDefaultThreads == kParent720pDecodeMs4000k);
     CHECK(ddr720p24ResidualMsAfterDecodeOnly() > 0.5 &&
-          ddr720p24ResidualMsAfterDecodeOnly() < 0.7); // ~0.594
-    CHECK(kParent720pDecodeMsDefaultThreads == 41.073);
+          ddr720p24ResidualMsAfterDecodeOnly() < 0.7); // ~0.594 @4000k
+    const double res1500 =
+        ddr720p24ResidualMsAfterDecodeOnly(kParent720pDecodeMsCandidateTier);
+    CHECK(res1500 > 9.2 && res1500 < 9.3); // ~9.24
+    // Tier saves ~8.65 ms vs 4000k — still less than full-frame copy ~22 ms.
+    CHECK((res1500 - ddr720p24ResidualMsAfterDecodeOnly()) > 8.5 &&
+          (res1500 - ddr720p24ResidualMsAfterDecodeOnly()) < 8.8);
     CHECK(kFeedArchiveNonDecodeMs > 18.6 && kFeedArchiveNonDecodeMs < 18.7);
 
     // ONLY ship path: FPGA-written banks, ARM push_bytes=0.
@@ -269,9 +279,15 @@ int main() {
                 fab720.budget.arm_still_pushes_pixels ? 1 : 0,
                 ddr720p24ShipAcceptsZeroArmPerPixel(fab720.budget) ? 1 : 0);
     std::printf("  FPGA_WRITTEN_BANKS publish_bytes=%zu known_ms_removed_floor=%.3f "
-                "SHIP_OK=%d residual_after_decode=%.3f\n",
+                "SHIP_OK=%d residual_4000k=%.3f residual_1500k=%.3f\n",
                 fpgaBanks.publish_bytes, fpgaBanks.budget.known_ms_removed_floor,
                 ddr720p24ShipAcceptsZeroArmPerPixel(fpgaBanks.budget) ? 1 : 0,
-                ddr720p24ResidualMsAfterDecodeOnly());
+                ddr720p24ResidualMsAfterDecodeOnly(),
+                ddr720p24ResidualMsAfterDecodeOnly(kParent720pDecodeMsCandidateTier));
+    std::printf("  tier_candidate_kbit=%d copy_ms720=%.3f exceeds_1500k_margin=%d "
+                "exceeds_4000k_margin=%d\n",
+                kPlex720pCandidateBitrateKbit, ms720,
+                ddr720p24ArmCopyExceedsCandidateTierMargin(1382400u) ? 1 : 0,
+                ddr720p24ArmCopyExceedsDecodeMargin(1382400u) ? 1 : 0);
     return 0;
 }
