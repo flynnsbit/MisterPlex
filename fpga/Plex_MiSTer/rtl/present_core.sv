@@ -392,22 +392,59 @@ module present_core #(
 
 `include "ddr_frame_layout_params.svh"
 
+	// FRAME_1280 staged enable (w-nostub): when QSF sets FRAME_W/H=1280/720,
+	// bind the already-landed DDR_FRAME_720P_* layout (coded, stride, doorbell).
+	// 480p defaults remain bit-identical when FRAME is 640x480.
+	// Bank-overflow runtime guard remains w-mem; this only picks the matching
+	// compile-time constants so elaborate geometry is not 624-coded in a 1280 frame.
+	localparam bit FRAME_GEOM_1280 =
+		(FRAME_W == 1280) && (FRAME_H == 720);
+	localparam int FS_CODED_W = FRAME_GEOM_1280 ?
+		DDR_FRAME_720P_CODED_WIDTH : DDR_FRAME_CODED_WIDTH;
+	localparam int FS_CODED_H = FRAME_GEOM_1280 ?
+		DDR_FRAME_720P_CODED_HEIGHT : DDR_FRAME_CODED_HEIGHT;
+	localparam int FS_DISPLAY_W = FRAME_GEOM_1280 ?
+		DDR_FRAME_720P_DISPLAY_WIDTH : DDR_FRAME_DISPLAY_WIDTH;
+	localparam int FS_DISPLAY_H = FRAME_GEOM_1280 ?
+		DDR_FRAME_720P_DISPLAY_HEIGHT : DDR_FRAME_DISPLAY_HEIGHT;
+	localparam int FS_CROP_L = FRAME_GEOM_1280 ? 0 : DDR_FRAME_CROP_LEFT;
+	localparam int FS_CROP_T = FRAME_GEOM_1280 ? 0 : DDR_FRAME_CROP_TOP;
+	localparam int FS_PRESENT_X = FRAME_GEOM_1280 ?
+		DDR_FRAME_720P_PILLARBOX_LEFT : DDR_FRAME_PILLARBOX_LEFT;
+	localparam int FS_BANK_STRIDE = FRAME_GEOM_1280 ?
+		DDR_FRAME_720P_YUV420P_BANK_STRIDE : DDR_FRAME_YUV420P_BANK_STRIDE;
+	localparam [31:0] FS_PHYS_BASE = FRAME_GEOM_1280 ?
+		DDR_FRAME_720P_PHYS_BASE[31:0] : 32'h3000_0000;
+	localparam [31:0] FS_DOORBELL = FRAME_GEOM_1280 ?
+		DDR_FRAME_720P_YUV420P_DOORBELL_PHYS[31:0] :
+		DDR_FRAME_YUV420P_DOORBELL_PHYS[31:0];
+	localparam int FS_I420_BYTES = FRAME_W * FRAME_H * 3 / 2;
+
+	// Loud elaborate-time reject (sim/lint): I420 must fit one bank.
+	// synthesis translate_off
+	initial begin
+		if (FS_I420_BYTES > FS_BANK_STRIDE)
+			$error("present_core: I420 FRAME %0dx%0d = %0d bytes exceeds FS_BANK_STRIDE=%0d — enable 720p layout or w-mem guard",
+				FRAME_W, FRAME_H, FS_I420_BYTES, FS_BANK_STRIDE);
+	end
+	// synthesis translate_on
+
 	ddr_frame_store #(
 		.FRAME_W(FRAME_W),
 		.FRAME_H(FRAME_H),
 		.FRAME_STRIDE(FRAME_STRIDE),
-		.CODED_W(DDR_FRAME_CODED_WIDTH),
-		.CODED_H(DDR_FRAME_CODED_HEIGHT),
-		.DISPLAY_W(DDR_FRAME_DISPLAY_WIDTH),
-		.DISPLAY_H(DDR_FRAME_DISPLAY_HEIGHT),
-		.CROP_LEFT(DDR_FRAME_CROP_LEFT),
-		.CROP_TOP(DDR_FRAME_CROP_TOP),
-		.PRESENT_X(DDR_FRAME_PILLARBOX_LEFT),
+		.CODED_W(FS_CODED_W),
+		.CODED_H(FS_CODED_H),
+		.DISPLAY_W(FS_DISPLAY_W),
+		.DISPLAY_H(FS_DISPLAY_H),
+		.CROP_LEFT(FS_CROP_L),
+		.CROP_TOP(FS_CROP_T),
+		.PRESENT_X(FS_PRESENT_X),
 		.PRESENT_Y(0),
 		.LINE_COUNT(FRAME_LINE_COUNT),
-		.PHYS_BASE(32'h3000_0000),
-		.HPS_BANK_STRIDE_BYTES(DDR_FRAME_YUV420P_BANK_STRIDE),
-		.DOORBELL_PHYS(DDR_FRAME_YUV420P_DOORBELL_PHYS)
+		.PHYS_BASE(FS_PHYS_BASE),
+		.HPS_BANK_STRIDE_BYTES(FS_BANK_STRIDE),
+		.DOORBELL_PHYS(FS_DOORBELL)
 	) fstore (
 		.clk(clk),
 		.clk_ddr(clk_ddr),

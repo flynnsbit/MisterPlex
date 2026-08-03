@@ -80,8 +80,10 @@ set_global_assignment -name VERILOG_MACRO "SDRAM_CL3=1"
 #set_global_assignment -name VERILOG_MACRO "MISTER_DISABLE_ALSA=1"
 
 set_global_assignment -name VERILOG_MACRO "DDR_FRAME_STORE=1"
-set_global_assignment -name VERILOG_MACRO "FRAME_W=640"
-set_global_assignment -name VERILOG_MACRO "FRAME_H=480"
+# STAGED FRAME_1280 (w-nostub): content geometry 1280x720 for ascal 1:1.
+# Bank stride guard is w-mem; do not deploy until stride >= I420 bytes.
+set_global_assignment -name VERILOG_MACRO "FRAME_W=1280"
+set_global_assignment -name VERILOG_MACRO "FRAME_H=720"
 set_global_assignment -name VERILOG_MACRO "FRAME_LINES_8=1"
 # 720p / ascal-native present path — DEFAULT OFF (v0.3.0 baseline must not change).
 # Parent enables one of these in a granted fit QSF only:
