@@ -1,6 +1,7 @@
 lane: w-fitgate
 role: fit-release gate ruler
 branch: w-fitgate
+HEAD: 73522f74
 GRANT: NO
 selftest: PASS true_rc=0
 mutation_matrix: rows=40 red=40 fail_holes=0
