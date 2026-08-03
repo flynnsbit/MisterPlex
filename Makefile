@@ -114,6 +114,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	bash $(ROOT)/tests/unit/test_624x350_force_scale_out.sh
 	bash $(ROOT)/tests/unit/test_delivered_350_capability.sh
 	bash $(ROOT)/tests/unit/test_b2_b5_source_wiring.sh
+	bash $(ROOT)/tests/unit/test_measured_delivery_bead.sh
 	$(ROOT)/build/test_yuv420p_chroma_480p
 	$(ROOT)/build/test_geom_frame_cost
 	$(ROOT)/build/test_glass_loss_death_points

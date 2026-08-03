@@ -4525,8 +4525,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         if (risk)
             pipeDesyncRisk_.store(true);
         if (!byteAligned) {
-            log("ERROR media: PIPE_BYTE_MISALIGN totalBytes=" + std::to_string(totalBytes) +
-                " frameBytes=" + std::to_string(frameBytes) +
+            // reason= is the greppable B5 trip token (parent acceptance: not silent).
+            log("ERROR media: PIPE_BYTE_MISALIGN reason=total_mod_frame_nonzero totalBytes=" +
+                std::to_string(totalBytes) + " frameBytes=" + std::to_string(frameBytes) +
                 " remainder=" + std::to_string(frameBytes ? totalBytes % frameBytes : 0) +
                 " shortRead=" + (shortRead ? "1" : "0") + " tag=measured");
         } else if (totalBytes > 0) {
@@ -4728,8 +4729,16 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 " tag=NO-DATA");
         }
         if (risk) {
-            log("ERROR media: PIPE_DESYNC=1 phase_desync=" +
-                std::string(phaseDesync ? "1" : "0") +
+            // Prefer the most specific reason= token for greppable trip class.
+            const char* desyncReason = "producer_reader_mismatch";
+            if (!byteAligned)
+                desyncReason = "total_mod_frame_nonzero";
+            else if (phaseDesync)
+                desyncReason = "phase_offset";
+            else if (vfPlan.identity_skip && prodBytes > 0 && prodBytes != frameBytes)
+                desyncReason = "identity_skip_size_mismatch";
+            log(std::string("ERROR media: PIPE_DESYNC=1 reason=") + desyncReason +
+                " phase_desync=" + std::string(phaseDesync ? "1" : "0") +
                 " phase_offset=" + std::to_string(phaseOff) +
                 " byte_align=" + std::string(byteAligned ? "1" : "0") +
                 " producer_bytes=" + std::to_string(prodBytes) +
