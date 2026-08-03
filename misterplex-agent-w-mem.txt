@@ -1,19 +1,20 @@
-w-mem STATUS — narrowed 88 MiB/s claim; product path continues
+w-mem STATUS — 960x540 ABI airtight + fabric BW + publish barrier
+commit: eb2fd634
 
-DEVICE DOWN (parent unbind wedge) — no hardware work.
-
-CORRECTION (rd-duck + parent)
-  88 MiB/s = structural for /dev/mem reserved banks ONLY (pfn_valid→noncached).
-  WriteCombineDriver = open third route (~2.615× needed for serial true-720p).
-  dma-pl330 userspace unbind NOT viable; kernel owner only (w-path).
+DEVICE DOWN (parent) — no hardware. No Quartus.
 
 LANDED
-  DdrMemMapPolicy::WriteCombineDriver + barrier-before-doorbell required
-  kSerialTrue720pSourceRequiredMibps=230.2; speedup vs devmem ~2.615
-  docs narrowed; product 960x540 path unchanged (+7.16)
+1) 960x540 tight: Y=960 C=480 U@518400 V@648000 bytes=777600 in Option-C 0x180000
+   PLXG geometry→window→origin; shear NEG canvas payload rejected
+2) Fabric BW@24 theoretical: direct 37.32 (5.2%) writeback 103.68 (14.4%) FIT
+   clk_pix 29.7 required; clk_sys 20 alone FAIL CEA — THEORETICAL only
+3) ddr_publish_barrier + BankProducerOrder barrier before doorbell
+   NEG signal_fence; product __sync_synchronize is real DMB on ARM
 
 PARENT VERIFY
   cd /home/flynnsbit/Projects/MisterPlex-wt-mem
-  make $(pwd)/build/test_ddr_mem_map_policy $(pwd)/build/test_ddr_720p_abi
-  ./build/test_ddr_mem_map_policy; echo "true rc=$?"
   ./build/test_ddr_720p_abi; echo "true rc=$?"
+  ./build/test_fabric_ddr_bandwidth; echo "true rc=$?"
+  ./build/test_ddr_publish_barrier; echo "true rc=$?"
+  ./build/test_bank_producer_order; echo "true rc=$?"
+  python3 tests/unit/test_rtl_invariants.py; echo "true rc=$?"
