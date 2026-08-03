@@ -99,7 +99,9 @@ module frame_store #(
 					.wr_data(line_wr_data),
 					.rd_clk(clk),
 					.rd_addr(line_rd_addr),
-					.rd_data(line_q[li])
+					.rd_data(line_q[li]),
+					.rd_addr_b({LINE_AW{1'b0}}),
+					.rd_data_b()
 				);
 			end else begin : unused
 				assign line_q[li] = 16'd0;

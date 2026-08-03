@@ -72,6 +72,7 @@ COMMON=(
   "$WRAP"
   "$RTL/present_core.sv" "$RTL/present_cadence.sv" "$RTL/colorbars.sv"
   "$RTL/ddr_frame_store.sv" "$RTL/present_beam_ppc.sv" "$RTL/present_npx_path.sv"
+  "$RTL/present_video_timing_720p.sv"
   "$RTL/yuv_bt601_npx.sv" "$RTL/async_fifo.sv" "$RTL/line_buf_ram.sv"
   "$RTL/audio_fifo.sv"
 )
@@ -84,6 +85,19 @@ if ! grep -q "u_mp_npx_path" "$RTL/present_core.sv"; then
 fi
 if ! grep -q "fstore_rd_x" "$RTL/present_core.sv"; then
   echo "FAIL RED setup: present_core missing fstore_rd mux"
+  exit 1
+fi
+if ! grep -q "u_mp_timing" "$RTL/present_core.sv"; then
+  echo "FAIL RED setup: present_core missing u_mp_timing (720p mode)"
+  exit 1
+fi
+if ! grep -q "present_video_timing_720p" "$ROOT/fpga/Plex_MiSTer/files.qip"; then
+  echo "FAIL RED setup: files.qip missing present_video_timing_720p.sv"
+  exit 1
+fi
+# Template H_DE=529 must remain on the default (macro OFF) path.
+if ! grep -q "localparam H_DE    = 10'd529" "$RTL/present_core.sv"; then
+  echo "FAIL RED setup: Template H_DE=529 lock missing in present_core"
   exit 1
 fi
 echo "OK mp_elab structural markers present"

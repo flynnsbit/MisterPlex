@@ -2,9 +2,11 @@
 
 **Lane:** w-clock · **No fit · No device**  
 **Macro default:** `PRESENT_MULTI_PIXEL` **undefined** (OFF) · `PRESENT_PX_PER_CLK` defaults to **1**  
-**Status:** structurally **connected** under `PRESENT_MULTI_PIXEL` (beam→store N-wide→npx_path→RGB).
+**Status:** structurally **connected** under `PRESENT_MULTI_PIXEL` (timing+beam H_DE=1280→store N-wide→npx_path→RGB/H*/V*).
 QSF default still OFF (default-safe). Not on glass until parent integration fit.
-Honest: **no clk_sys overclock likely needed** at ≥2ppc; DE_LAG/MP sync **unmeasured**.
+Honest: **no clk_sys overclock likely needed** for fabric work at ≥2ppc; same-clock
+**output still ≤20 Mpix/s** (1 CE_PIXEL/clk) so CEA 24/60 fps needs faster clk_pix
+(see VIDEO_MODE_720P.md, CLK_PIX_PLL_PLAN.md). DE_LAG/MP sync **unmeasured**.
 
 Parent confirmed programme facts from scan-out table:
 1. 22.12 Mpix/s content touch > shipping 20 MHz @ 1 ppc → nostub is a hard gate for 1 ppc 720p24.

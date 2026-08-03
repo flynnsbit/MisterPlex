@@ -1,4 +1,10 @@
-// True dual-clock parameterized WIDTH×16 line buffer RAM.
+// Dual-clock line buffer RAM (M10K).
+// Port A: write (wr_clk) + read (rd_clk) — product simple dual-port path.
+// Port B: optional second read on rd_clk for multi-pixel Y qword+1 (straddle).
+// Callers that do not need B: tie rd_addr_b=0 and leave rd_data_b open.
+// Ownership: w-scaler dual-port for EXPORT_QWORDS; w-clock uses hi when PPC>1
+// groups can cross an 8-byte Y boundary. Beam guarantees x0%PPC==0 on 1280 DE
+// for PPC in {2,4} so active-region straddle does not occur; hi is safety net.
 module line_buf_ram #(
 	parameter int WIDTH = 320,
 	parameter int AW = 9,
@@ -11,7 +17,9 @@ module line_buf_ram #(
 
 	input  wire          rd_clk,
 	input  wire [AW-1:0] rd_addr,
-	output reg  [DATA_W-1:0] rd_data
+	output reg  [DATA_W-1:0] rd_data,
+	input  wire [AW-1:0] rd_addr_b,
+	output reg  [DATA_W-1:0] rd_data_b
 );
 	(* ramstyle = "M10K" *) reg [DATA_W-1:0] mem [0:WIDTH-1];
 
@@ -21,6 +29,7 @@ module line_buf_ram #(
 	end
 
 	always @(posedge rd_clk) begin
-		rd_data <= mem[rd_addr];
+		rd_data   <= mem[rd_addr];
+		rd_data_b <= mem[rd_addr_b];
 	end
 endmodule

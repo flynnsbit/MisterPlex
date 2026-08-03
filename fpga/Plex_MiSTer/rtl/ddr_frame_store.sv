@@ -164,6 +164,7 @@ module ddr_frame_store #(
 	reg [C_QW_AW-1:0] c_wr_addr;
 	reg [63:0] y_wr_data, u_wr_data, v_wr_data;
 	wire [63:0] y_q [0:LINE_SLOTS-1];
+	wire [63:0] y_q_hi [0:LINE_SLOTS-1];
 	wire [63:0] u_q [0:LINE_SLOTS-1];
 	wire [63:0] v_q [0:LINE_SLOTS-1];
 	wire rd_x_at_or_after_origin;
@@ -200,6 +201,10 @@ module ddr_frame_store #(
 	wire [CODED_Y_W-1:0] src_y_line = rd_y_visible ? (display_y + CROP_TOP_L) : '0;
 	wire [CODED_Y_W-1:0] pref_y = WANT_Y_LINE_ONLY ? src_y_line : src_y;
 	wire [Y_QW_AW-1:0] y_rd_addr = src_x[CODED_X_W-1:3];
+	// Next Y qword for multi-pixel lanes that cross an 8-byte boundary (w-scaler
+	// dual-port + w-clock yuv_bt601_npx.y_qword_hi). Beam x0%PPC==0 on 1280 DE
+	// avoids active straddle for PPC in {2,4}; hi remains the safety net.
+	wire [Y_QW_AW-1:0] y_rd_addr_hi = y_rd_addr + Y_QW_AW'(1'b1);
 	wire [C_QW_AW-1:0] c_rd_addr = src_x[CODED_X_W-1:4];
 
 	genvar li;
@@ -207,15 +212,18 @@ module ddr_frame_store #(
 		for (li = 0; li < LINE_SLOTS; li = li + 1) begin : gen_line
 			line_buf_ram #(.WIDTH(Y_LINE_QWORDS), .AW(Y_QW_AW), .DATA_W(64)) yram (
 				.wr_clk(clk_ddr), .wr_en(y_wr[li]), .wr_addr(y_wr_addr), .wr_data(y_wr_data),
-				.rd_clk(clk), .rd_addr(y_rd_addr), .rd_data(y_q[li])
+				.rd_clk(clk), .rd_addr(y_rd_addr), .rd_data(y_q[li]),
+				.rd_addr_b(y_rd_addr_hi), .rd_data_b(y_q_hi[li])
 			);
 			line_buf_ram #(.WIDTH(C_LINE_QWORDS), .AW(C_QW_AW), .DATA_W(64)) uram (
 				.wr_clk(clk_ddr), .wr_en(u_wr[li]), .wr_addr(c_wr_addr), .wr_data(u_wr_data),
-				.rd_clk(clk), .rd_addr(c_rd_addr), .rd_data(u_q[li])
+				.rd_clk(clk), .rd_addr(c_rd_addr), .rd_data(u_q[li]),
+				.rd_addr_b({C_QW_AW{1'b0}}), .rd_data_b()
 			);
 			line_buf_ram #(.WIDTH(C_LINE_QWORDS), .AW(C_QW_AW), .DATA_W(64)) vram (
 				.wr_clk(clk_ddr), .wr_en(v_wr[li]), .wr_addr(c_wr_addr), .wr_data(v_wr_data),
-				.rd_clk(clk), .rd_addr(c_rd_addr), .rd_data(v_q[li])
+				.rd_clk(clk), .rd_addr(c_rd_addr), .rd_data(v_q[li]),
+				.rd_addr_b({C_QW_AW{1'b0}}), .rd_data_b()
 			);
 		end
 	endgenerate
@@ -343,15 +351,16 @@ module ddr_frame_store #(
 	reg [SLOT_W-1:0] y_hit_idx_r, c_hit_idx_r;
 	reg [2:0] y_sel_r, c_sel_r;
 	// N-pixel snapshot of beam qwords (aligned to scalar RGB commit cycle).
-	reg [63:0] npx_y_q_r, npx_u_q_r, npx_v_q_r;
+	reg [63:0] npx_y_q_r, npx_y_q_hi_r, npx_u_q_r, npx_v_q_r;
 	reg [CODED_X_W-1:0] npx_src_x_r;
 	reg npx_commit_r;
+	reg npx_y_hi_valid_r;
 	reg [CODED_X_W-1:0] src_x_r;
 
 	integer vi;
 	reg y_hit_now, c_hit_now;
 	reg [SLOT_W-1:0] y_hit_idx_now, c_hit_idx_now;
-	reg [63:0] selected_y_q, selected_u_q, selected_v_q;
+	reg [63:0] selected_y_q, selected_y_q_hi, selected_u_q, selected_v_q;
 	reg [SLOT_W-1:0] video_slot;
 `ifdef DDR_FRAME_STORE_FAULT_CHROMA_VERTICAL_FULLRES
 	wire [CODED_Y_W-2:0] rd_cy = src_y_line[CODED_Y_W-2:0];
@@ -364,6 +373,7 @@ module ddr_frame_store #(
 		y_hit_idx_now = '0;
 		c_hit_idx_now = '0;
 		selected_y_q = 64'd0;
+		selected_y_q_hi = 64'd0;
 		selected_u_q = 64'd0;
 		selected_v_q = 64'd0;
 		for (vi = 0; vi < LINE_COUNT; vi = vi + 1) begin
@@ -379,8 +389,10 @@ module ddr_frame_store #(
 				c_hit_now = 1'b1;
 				c_hit_idx_now = video_slot;
 			end
-			if (y_hit_idx_r == video_slot)
+			if (y_hit_idx_r == video_slot) begin
 				selected_y_q = y_q[video_slot];
+				selected_y_q_hi = y_q_hi[video_slot];
+			end
 			if (c_hit_idx_r == video_slot) begin
 				selected_u_q = u_q[video_slot];
 				selected_v_q = v_q[video_slot];
@@ -434,10 +446,12 @@ module ddr_frame_store #(
 			y_sel_r <= 3'd0;
 			c_sel_r <= 3'd0;
 			npx_y_q_r <= 64'd0;
+			npx_y_q_hi_r <= 64'd0;
 			npx_u_q_r <= 64'd0;
 			npx_v_q_r <= 64'd0;
 			npx_src_x_r <= '0;
 			npx_commit_r <= 1'b0;
+			npx_y_hi_valid_r <= 1'b0;
 			src_x_r <= '0;
 		end else begin
 			y_valid_v1 <= y_valid_hold;
@@ -496,6 +510,10 @@ module ddr_frame_store #(
 				rd_b <= sat8(b_calc);
 				// Snapshot qwords + src_x_r (same age as y_sel_r) for N-wide extract.
 				npx_y_q_r <= selected_y_q;
+				npx_y_q_hi_r <= selected_y_q_hi;
+				// hi valid when next qword index is in-range for this coded width.
+				// 32-bit cast avoids WIDTHEXPAND on SHIFTR and Y_QW_AW trunc of (QWORDS-1).
+				npx_y_hi_valid_r <= ((32'(src_x_r) >> 3) + 32'd1) < 32'(Y_LINE_QWORDS);
 				npx_u_q_r <= selected_u_q;
 				npx_v_q_r <= selected_v_q;
 				npx_src_x_r <= src_x_r;
@@ -537,8 +555,8 @@ module ddr_frame_store #(
 				.y_qword(npx_y_q_r),
 				.u_qword(npx_u_q_r),
 				.v_qword(npx_v_q_r),
-				.y_qword_hi(64'd0),
-				.y_hi_valid(1'b0),
+				.y_qword_hi(npx_y_q_hi_r),
+				.y_hi_valid(npx_y_hi_valid_r),
 				.out_valid(npx_out_valid),
 				.out_r(npx_r),
 				.out_g(npx_g),

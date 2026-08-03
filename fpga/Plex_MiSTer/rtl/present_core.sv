@@ -277,12 +277,18 @@ module present_core #(
 
 `ifdef PRESENT_MULTI_PIXEL
 	// ------------------------------------------------------------------
-	// Multi-pixel path (macro ON only). Default build leaves this ifdef off.
+	// Multi-pixel 1280×720 video mode (macro ON only).
+	// Default build leaves this ifdef off → colorbars H_DE=529 Template
+	// (FBAR/DE_LAG) is UNTOUCHED. Do not move H_DE=529 without parent grant.
+	//
 	// Beam (CEA 720p geometry) → store read at glass_x0 → N-wide RGB →
 	// present_npx_path serializer → 1 px/clk. clk_pix tied to clk until a
 	// dedicated PLL out is granted (CLK_PIX_PLL_PLAN.md).
-	// Same-clock: beam is backpressured by present_npx_path.in_ready so
-	// fill rate cannot exceed drain (N px/group needs N drain cycles).
+	// Same-clock: beam backpressured by present_npx_path.in_ready.
+	//
+	// H ownership: beam steps glass_x0 by PPC (w-clock). w-scaler maps
+	// glass→store and supplies Y qword+1 for straddle; active 1280 DE with
+	// x0%PPC==0 does not straddle for PPC in {2,4}.
 	// ------------------------------------------------------------------
 	wire                mp_in_ready;
 	wire                mp_beam_ce;
@@ -292,6 +298,27 @@ module present_core #(
 	wire                mp_out_ce;
 	wire [7:0]          mp_out_r, mp_out_g, mp_out_b;
 	wire                mp_wr_full, mp_wr_af, mp_rd_ur, mp_rd_empty;
+
+	// Timing constants + effective refresh at same-clock 20 MHz (~16.16 fps).
+	// keep/noprune: mode must survive map for post-fit hierarchy checks.
+	(* noprune *) wire [11:0] mp_h_de, mp_h_total, mp_v_act, mp_v_total;
+	(* noprune *) wire [11:0] mp_hs_s, mp_hs_e, mp_vs_s, mp_vs_e;
+	(* noprune *) wire [15:0] mp_fps_milli;
+	(* noprune *) wire        mp_needs_fast_pix;
+	present_video_timing_720p #(
+		.CLK_PIX_HZ(20_000_000)
+	) u_mp_timing (
+		.h_de(mp_h_de),
+		.h_total(mp_h_total),
+		.v_active(mp_v_act),
+		.v_total(mp_v_total),
+		.h_sync_s(mp_hs_s),
+		.h_sync_e(mp_hs_e),
+		.v_sync_s(mp_vs_s),
+		.v_sync_e(mp_vs_e),
+		.fps_eff_milli(mp_fps_milli),
+		.cea_24_needs_faster_pix(mp_needs_fast_pix)
+	);
 
 	present_beam_ppc #(
 		.PX_PER_CLK(PRESENT_PPC),
@@ -492,8 +519,13 @@ module present_core #(
 	wire mp_vb_d = mp_vb;
 	wire mp_vs_d = mp_vs;
 	wire mp_de_out = ~mp_hb_d & ~mp_vb_d;
+	// Sanity: beam DE must match timing package (elab-time constants).
+	// If this ever mismatches, integration fit is wrong — fail closed in sim.
+	wire mp_mode_ok = (mp_h_de == 12'd1280) && (mp_v_act == 12'd720)
+		&& (mp_h_total == 12'd1650) && (mp_v_total == 12'd750);
 	wire _unused_mp_flags = mp_beam_ce | mp_wr_full | mp_wr_af | mp_rd_ur
-		| mp_rd_empty | (|mp_lane_de_r) | (|fs_lane_v_n) | (MP_SYNC_LAG == 0);
+		| mp_rd_empty | (|mp_lane_de_r) | (|fs_lane_v_n) | (MP_SYNC_LAG == 0)
+		| mp_mode_ok | mp_needs_fast_pix | (|mp_fps_milli);
 `endif
 `endif
 

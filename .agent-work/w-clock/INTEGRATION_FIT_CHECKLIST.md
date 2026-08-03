@@ -19,10 +19,18 @@ Coordinate with w-scaler / w-mem:
 
 ## Connected chain (must survive map)
 ```
-present_beam_ppc → ddr_frame_store.PX_PER_CLK
-  → rd_r_n/g/b_n → present_npx_path → r/g/b + H/V sync (when has_frame)
+present_video_timing_720p (u_mp_timing)
+  → present_beam_ppc H_DE=1280 (u_mp_beam)
+  → ddr_frame_store.PX_PER_CLK (+ y_q_hi dual-port)
+  → rd_r_n/g/b_n → present_npx_path (u_mp_npx_path)
+  → r/g/b + H/V sync (when has_frame / use_ext)
 ```
-If map.rpt shows u_mp_beam / u_mp_npx_path **removed**, the fit is worthless — stop.
+If map.rpt shows u_mp_beam / u_mp_npx_path / u_mp_timing **removed**, the fit is worthless — stop.
+
+## Video mode honesty
+- Active geometry under macro+use_ext: **1280×720 DE**, CEA totals 1650×750.
+- Same-clock 20 MHz → fps_eff ≈ **16.16 Hz**, not 24/60. See VIDEO_MODE_720P.md.
+- Template H_DE=529 path must remain when macro OFF.
 
 ## Parent device checks (not agent)
 1. ONE menu deploy of new RBF

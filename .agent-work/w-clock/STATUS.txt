@@ -1,23 +1,23 @@
-# w-clock status
-# Branch: w-clock-bump · PRESENT_MULTI_PIXEL OFF in QSF · No agent fit/device
+w-clock STATUS — video mode 720p path
+=====================================
+Branch: w-clock-bump
+Macro: PRESENT_MULTI_PIXEL default OFF (bit-identical class to d1b24e0c when OFF)
 
-## LANDED
-1de5126e+ connect multi-pixel under macro: beam→store N→npx→RGB/CE
-- Pixel hold during DE (no mid-line black on out_ce gaps)
-- in_ready same-clock backpressure
-- Elab gate rc=0; default lint/colour rc=0
-- INTEGRATION_FIT_CHECKLIST.md for parent enable
+LANDED (this slice):
+- present_video_timing_720p.sv — CEA 1280x720 constants + fps_eff @20 MHz (~16.16)
+- present_core: u_mp_timing + beam H_DE=1280 under ifdef; Template H_DE=529 untouched
+- line_buf_ram dual-read port B; ddr_frame_store y_q_hi + yuv_bt601_npx.y_qword_hi
+- present_npx_path CDC soak TB (4096 groups)
+- present_beam_720p TB (DE count 921600 @ PPC=2)
+- files.qip entry; contract + Makefile unit hooks
+- VIDEO_MODE_720P.md
 
-## Parent evidence absorbed (device, not this lane)
-- nostub d1b24e0c live, Fmax 32.04, glass OK
-- Product-tier decode ~2600k: 36.27 ms/f, margin 5.40 ms (supersedes 2.92)
-- Serial decode+copy still FAIL (~51.55). Overlap unproven.
-- Fabric planes still the robust route.
+NOT DONE / PARENT:
+- Quartus fit (w-nostub integration) with macros ON
+- clk_pix PLL (CLK_PIX_PLL_PLAN) — not applied
+- DE_LAG/MP_SYNC_LAG HDMI sweep for multi-pixel
+- ARM ms removed by this lane: still 0 until fabric owns decode pixels
 
-## ARM ms removed by w-clock
-0 until integration fit + parent profile.
-
-## Ready for integration fit?
-- Default-OFF: SAFE
-- Macro-ON elab: YES
-- Glass: parent only — see INTEGRATION_FIT_CHECKLIST.md
+HONEST:
+- Same-clock 2ppc does NOT make 22.12 Mpix/s; output <=20 Mpix/s
+- Genuine 1280x720 DE yes; CEA 24/60 fps no until faster clk_pix

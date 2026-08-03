@@ -1,22 +1,27 @@
-# w-clock report (latest)
-Branch w-clock-bump · No fit · No device · PRESENT_MULTI_PIXEL OFF · PLL 20/90
+w-clock AGENT_REPORT — 1280x720 video mode
+==========================================
+Branch: w-clock-bump
+Fit: NOT run (parent/w-nostub integration)
+Device: NOT touched
 
-## LANDED this session
-1. present_npx_path.sv — N-wide clk_sys → async_fifo → 1px clk_pix (combo FWFT pop)
-2. ddr_frame_store N-wide ports PX_PER_CLK default 1 (rd_r_n=rd_r); N>1 yuv_bt601_npx
-3. CLK_PIX_PLL_PLAN.md — 29.7 / 74.25 clk_pix proposal, not applied
-4. Doc: 1650 EVEN %4=2; Route B mandatory; honesty scanout not done
+DELIVERED
+- present_video_timing_720p.sv (CEA 1280x720; fps_eff@20MHz=16.161; needs_faster_pix)
+- present_core multi-pixel: u_mp_timing + beam H_DE=1280 drives H*/V*/RGB when use_ext
+- Template H_DE=529 LOCK preserved when PRESENT_MULTI_PIXEL undefined
+- line_buf_ram port B + ddr_frame_store y_q_hi (w-scaler straddle agreement)
+- CDC soak TB 4096 groups dual-clock; beam TB DE=921600 @PPC=2
+- Macro default OFF; files.qip; contract; VIDEO_MODE_720P.md
 
-## Scan-out arithmetic (programme facts)
-content 720p24: 22.12 Mpix/s > ship 20 @1ppc FAIL; @2ppc 11.06 OK
-CEA 720p60: 74.25 @1ppc WALL; @2ppc 37.13 FAIL nostub; @4ppc 18.56 OK@20
+HONEST
+- Same-clock output <=20 Mpix/s regardless of PPC
+- Genuine 1280x720 DE yes; CEA 24/60 fps NO until clk_pix PLL
+- ARM ms removed: 0
 
-## ARM ms removed by this lane
-0 (unconnected). Parent measures when wired.
+PARENT VERIFY
+  Enable PRESENT_MULTI_PIXEL + PRESENT_PX_PER_CLK=2 (+ scaler 1280 geom)
+  ONE menu deploy; scripts/hdmi_capture_idle.sh
+  map.rpt: u_mp_timing u_mp_beam u_mp_npx_path rows > 0
+  Expect ~1280x720 active; ~16 Hz core refresh until faster clk_pix
 
-## Ceiling
-No clk_sys overclock needed for 720p24 if ≥2ppc lands. 720p60 needs 4ppc not PLL fantasy.
-Wider-path Fmax impact: UNKNOWN until fit.
-
-## Unknowns
-Product STA with multi-pixel ON; legal PLL strings for 29.7/74.25; DE_LAG at H_DE=1280.
+TESTS (true rc=0): multi_pixel_present, beam_720p, npx_path, npx_cdc_soak,
+  mp_elab, yuv_npx, rollcall, scanout_colour, warm_reset, rtl_lint

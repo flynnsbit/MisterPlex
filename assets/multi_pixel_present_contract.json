@@ -92,18 +92,29 @@
     "modules": [
       "fpga/Plex_MiSTer/rtl/yuv_bt601_npx.sv",
       "fpga/Plex_MiSTer/rtl/present_beam_ppc.sv",
-      "fpga/Plex_MiSTer/rtl/present_npx_path.sv"
+      "fpga/Plex_MiSTer/rtl/present_npx_path.sv",
+      "fpga/Plex_MiSTer/rtl/present_video_timing_720p.sv"
     ],
     "product_wired": false,
     "cea_h_total_notes": "1650 is EVEN (1650%2=0). 1650%4=2 so PPC=4 needs short final step of 2.",
     "structurally_connected": true,
-    "connection_note": "present_core under PRESENT_MULTI_PIXEL: beam\u2192ddr PX_PER_CLK\u2192present_npx_path\u2192RGB/CE. Default QSF does not define macro. clk_pix=clk until PLL grant."
+    "connection_note": "present_core under PRESENT_MULTI_PIXEL: u_mp_timing+beam(H_DE=1280)->ddr PX_PER_CLK->present_npx_path->RGB/CE/H*/V*. Template H_DE=529 untouched when macro OFF. clk_pix=clk until PLL grant.",
+    "template_h_de_lock": 529,
+    "video_mode_720p": {
+      "h_de": 1280,
+      "h_total": 1650,
+      "v_active": 720,
+      "v_total": 750,
+      "same_clock_20mhz_fps_eff": 16.161,
+      "note": "Genuine 1280x720 DE under PRESENT_MULTI_PIXEL+use_ext. Same-clock clk_pix=clk_sys=20 MHz cannot hit CEA 24/60 fps; output <=20 Mpix/s regardless of PPC."
+    }
   },
   "w_scaler_interface": {
     "doc": ".agent-work/w-clock/MULTI_PIXEL_PRESENT_DESIGN.md section 5",
     "stream": "present_px_stream",
     "first_integration_ppc": 2,
-    "content_geometry": "1280x720"
+    "content_geometry": "1280x720",
+    "h_ownership": "w-clock beam owns glass H (+PPC). w-scaler maps glass->store and exports Y qword+1; active 1280 DE with x0%PPC==0 does not straddle for PPC in {2,4}."
   },
   "tolerance_mhz": 0.001
 }
