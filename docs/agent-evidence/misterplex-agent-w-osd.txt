@@ -36,3 +36,15 @@ PARENT asks: rollcall + make unit verdict + q5 registered + MISSING reconciliati
    chrome WIDTH lint clean
 
 no Quartus, no device
+
+=== rd-duck 2026-08-03T08:46:56-05:00 PLXC arbiter coincident-want BLOCKER ===
+Owner: w-mem (arbiter/bridge). w-osd MUST NOT merge/release as live OSD.
+Defect: lower grant can mask ddr_frame_store RD launched same clk edge:
+  store S_LINE_ISSUE samples old m0_busy=0, pulses RD, enters WAIT;
+  arbiter samples old m0_rd=0, grants m3; mux masks pulse;
+  next edge revoke; store never reissues.
+Existing TB polite m0 holds RD until accept — unlike product.
+Gate: real-store coincident-want test + handshake fix before any R1 claim.
+w-osd status: PLXC path remains non-live until w-mem fix + proof;
+  address/bank/CDC/q5 work ≠ product PLXC grant correctness.
+HEAD=c3f84f9e
