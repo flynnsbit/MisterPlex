@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -1093,6 +1094,180 @@ def _core_wires_runtime_de_to_beam(core_txt: str) -> bool:
             core_txt,
         )
     )
+
+
+# Named executable hierarchy scenarios (rd-duck hollow-audit fix).
+# Path is relative to the *gated* tree ROOT. Gate runs each script; prose ≠ PASS.
+B20_HIER_REGISTRY: tuple[dict[str, str], ...] = (
+    {
+        "token": "B20_HIER_A_PLXG_EXPLICIT_DISABLE",
+        "script": "tests/unit/test_b20_hier_a_plxg_explicit_disable.sh",
+        "case": "CASE B20_HIER_A EXECUTED",
+        "pass": "PASS B20_HIER_A",
+        "why": "explicit PLXG disable under PRESENT_BEAM_960 (mux must not silently re-enable fallback)",
+    },
+    {
+        "token": "B20_HIER_B_COMMIT_FRAME_BOUNDARY",
+        "script": "tests/unit/test_b20_hier_b_commit_frame_boundary.sh",
+        "case": "CASE B20_HIER_B EXECUTED",
+        "pass": "PASS B20_HIER_B",
+        "why": "commit coincident with frame boundary",
+    },
+    {
+        "token": "B20_HIER_C_DDR_FILL_GEOM_INVALIDATE",
+        "script": "tests/unit/test_b20_hier_c_ddr_fill_geom_invalidate.sh",
+        "case": "CASE B20_HIER_C EXECUTED",
+        "pass": "PASS B20_HIER_C",
+        "why": "outstanding DDR fill during geom invalidate",
+    },
+    {
+        "token": "B20_HIER_D_RETAINED_DDR_RESET_RESTART",
+        "script": "tests/unit/test_b20_hier_d_retained_ddr_reset_restart.sh",
+        "case": "CASE B20_HIER_D EXECUTED",
+        "pass": "PASS B20_HIER_D",
+        "why": "retained DDR across FPGA reset + daemon restart",
+    },
+    {
+        "token": "B20_HIER_E_POLL_DOORBELL_ATOMIC",
+        "script": "tests/unit/test_b20_hier_e_poll_doorbell_atomic.sh",
+        "case": "CASE B20_HIER_E EXECUTED",
+        "pass": "PASS B20_HIER_E",
+        "why": "delayed PLXG poll vs early doorbell (and inverse) proving bank+geometry atomic",
+    },
+    {
+        "token": "B20_HIER_F_BANK_SWAP_24_30",
+        "script": "tests/unit/test_b20_hier_f_bank_swap_24_30.sh",
+        "case": "CASE B20_HIER_F EXECUTED",
+        "pass": "PASS B20_HIER_F",
+        "why": "actual distinct bank swaps at 24/30 — not just raster frame_start counts",
+    },
+    {
+        "token": "B20_HIER_G_PLXC_ASYNC_CDC_MULTIBEAT",
+        "script": "tests/unit/test_b20_hier_g_plxc_async_cdc_multibeat.sh",
+        "case": "CASE B20_HIER_G EXECUTED",
+        "pass": "PASS B20_HIER_G",
+        "why": "async CDC PLXC_EXT_WE multi-beat host_we list+ctrl (same-clock TBs blind)",
+    },
+)
+
+
+def run_b20_hierarchy_exec_gate(
+    root: Path,
+    *,
+    timeout_s: float = 120.0,
+) -> tuple[int, list[str], list[str]]:
+    """Run named B20 hierarchy scripts; require CASE EXECUTED + PASS + rc=0.
+
+    Returns (rc, msgs, errors). Does not accept comment-bait or soft-skip 77.
+    """
+    msgs: list[str] = []
+    errors: list[str] = []
+    msgs.append(
+        f"LEG0_B20_HIER_EXEC_BEGIN n_scenarios={len(B20_HIER_REGISTRY)} "
+        "(run scripts — not text scan; rd-duck hollow-audit)"
+    )
+    for spec in B20_HIER_REGISTRY:
+        tok = spec["token"]
+        rel = spec["script"]
+        case_tok = spec["case"]
+        pass_tok = spec["pass"]
+        why = spec["why"]
+        script = root / rel
+        if not script.is_file():
+            errors.append(
+                f"{tok}: missing executable hierarchy script {rel}. "
+                f"Need a real multi-module TB runner that prints '{case_tok}' and "
+                f"'{pass_tok}' with true rc=0 covering: {why}. "
+                "Comment/prose files do not satisfy (rd-duck hollow-audit). "
+                "Soft-skip ≠ PASS."
+            )
+            msgs.append(f"LEG0_B20_HIER_MISS {tok} path={rel}")
+            continue
+        # Refuse non-script bait (e.g. .cpp comments left at the path).
+        if script.suffix not in {".sh", ".py"} and not os.access(script, os.X_OK):
+            errors.append(
+                f"{tok}: {rel} exists but is not an executable .sh/.py runner "
+                f"(suffix={script.suffix!r}). Prose/TB source alone is hollow."
+            )
+            continue
+        cmd = [str(script)] if os.access(script, os.X_OK) else ["bash", str(script)]
+        if script.suffix == ".py":
+            cmd = [sys.executable, str(script)]
+        env = os.environ.copy()
+        env["MISTERPLEX_ROOT"] = str(root)
+        env["ROOT"] = str(root)
+        try:
+            proc = subprocess.run(
+                cmd,
+                cwd=str(root),
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                timeout=timeout_s,
+            )
+            out = proc.stdout or ""
+            rc = int(proc.returncode)
+        except subprocess.TimeoutExpired:
+            errors.append(
+                f"{tok}: hierarchy script {rel} timed out after {timeout_s}s — "
+                "DID_NOT_FINISH (not a pass)."
+            )
+            msgs.append(f"LEG0_B20_HIER_TIMEOUT {tok}")
+            continue
+        except OSError as exc:
+            errors.append(
+                f"{tok}: failed to execute {rel}: {exc}. Check that did not run ≠ pass."
+            )
+            continue
+
+        msgs.append(
+            f"LEG0_B20_HIER_RUN {tok} script={rel} true_rc={rc} out_bytes={len(out)}"
+        )
+        # Soft-skip is never a hierarchy PASS.
+        if rc == 77:
+            errors.append(
+                f"{tok}: script {rel} soft-skipped (true rc=77). Soft-skip ≠ PASS "
+                f"(AGENTS.md). Scenario still open: {why}."
+            )
+            continue
+        missing: list[str] = []
+        if case_tok not in out:
+            missing.append(f"missing '{case_tok}'")
+        if pass_tok not in out:
+            missing.append(f"missing '{pass_tok}'")
+        if rc != 0:
+            missing.append(f"true_rc={rc} (need 0)")
+        # Reject hollow stubs that only echo PASS without claiming a DUT touch.
+        # Real hierarchy runners must emit at least one of these after exercising RTL.
+        dut_touch = bool(
+            re.search(
+                r"(DUT_TOUCHED=1|VERILATOR_RUN=1|SIM_RUN=1|HIER_TB_RUN=1|"
+                r"measured_|true_de=|bank_id=|frame_boundary=|host_we=)",
+                out,
+            )
+        )
+        if not dut_touch:
+            missing.append(
+                "missing DUT evidence token "
+                "(DUT_TOUCHED=1|VERILATOR_RUN=1|SIM_RUN=1|HIER_TB_RUN=1|measured_*)"
+            )
+        if missing:
+            tail = out.strip().splitlines()[-8:] if out.strip() else []
+            errors.append(
+                f"{tok}: hierarchy script {rel} ran but failed gate contract: "
+                f"{', '.join(missing)}. why={why}. "
+                f"tail={tail!r}"
+            )
+        else:
+            msgs.append(
+                f"LEG0_B20_HIER_OK {tok} script={rel} true_rc=0 "
+                f"case_executed=1 pass=1 dut_touch=1"
+            )
+
+    n_err = sum(1 for e in errors if e.startswith("B20_HIER_"))
+    msgs.append(f"LEG0_B20_HIER_EXEC_DONE open={n_err}/{len(B20_HIER_REGISTRY)}")
+    return (1 if n_err else 0), msgs, errors
 
 
 def leg0_arch_blockers() -> tuple[int, list[str]]:
@@ -2370,114 +2545,20 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
     else:
         msgs.append("LEG0_B20_ORPHAN_MODULES n=0")
 
-    # --- B20 full-hierarchy scenario tests (rd-duck hold/release a–f) ---
-    # Require tests under tests/ that are multi-module (hierarchy), not thin unit
-    # sims of a single latch. Each scenario needs distinctive evidence strings.
-    HIER_MARKERS = [
-        r"present_core",
-        r"ddr_frame_store",
-        r"present_beam_content_de|PRESENT_BEAM_960",
-        r"plxg|plex_present_geom_mux|plxg_ddr_poller|present_geom_latch",
-        # OSD/loader ↔ sys_top path (rd-duck PLXC CDC class)
-        r"sys_top|PLXC_EXT_WE|plex_chrome|host_we|S_PUSH_LIST",
-    ]
-    scenarios = [
-        (
-            "B20_HIER_A_PLXG_EXPLICIT_DISABLE",
-            [
-                r"explicit\s+PLXG\s+disable|plxg_disable|disable_plxg|force_plxg_off",
-                r"PRESENT_BEAM_960",
-                r"fallback|force_native_960|re-?enable",
-            ],
-            "explicit PLXG disable under PRESENT_BEAM_960 (mux must not silently re-enable fallback)",
-        ),
-        (
-            "B20_HIER_B_COMMIT_FRAME_BOUNDARY",
-            [
-                r"frame_boundary",
-                r"commit",
-                r"coincident|at_boundary|boundary_commit|commit.*frame_boundary|frame_boundary.*commit",
-            ],
-            "commit coincident with frame boundary",
-        ),
-        (
-            "B20_HIER_C_DDR_FILL_GEOM_INVALIDATE",
-            [
-                r"geom_invalidate|invalidate_geom|geom.*invalid",
-                r"ddr_frame_store|outstanding.*fill|fill.*outstanding|wr_fill|in_flight",
-            ],
-            "outstanding DDR fill during geom invalidate",
-        ),
-        (
-            "B20_HIER_D_RETAINED_DDR_RESET_RESTART",
-            [
-                r"retain|retained|ABA|across\s+reset",
-                r"FPGA\s+reset|warm_reset|fpga_reset",
-                r"daemon\s+restart|restart.*daemon|plxg.*restart|session|epoch",
-            ],
-            "retained DDR across FPGA reset + daemon restart",
-        ),
-        (
-            "B20_HIER_E_POLL_DOORBELL_ATOMIC",
-            [
-                r"plxg_ddr_poller|delayed\s+poll|poll.*delay|early\s+doorbell|doorbell.*early",
-                r"atomic|bank\+geom|geometry\s+atomic|bank.*geom",
-            ],
-            "delayed PLXG poll vs early doorbell (and inverse) proving bank+geometry atomic",
-        ),
-        (
-            "B20_HIER_F_BANK_SWAP_24_30",
-            [
-                r"bank_swap|bank\s+swap|distinct\s+bank|swap_bank|rd_bank",
-                r"\b24\b.*\b30\b|\b30\b.*\b24\b|content_fps|fps_valid",
-                r"not\s+just\s+frame_start|frame_start.*insufficient|bank_id|observed_bank",
-            ],
-            "actual distinct bank swaps at 24/30 — not just raster frame_start counts",
-        ),
-        (
-            "B20_HIER_G_PLXC_ASYNC_CDC_MULTIBEAT",
-            [
-                r"PLXC_EXT_WE|plxc_ext_we",
-                r"host_we",
-                r"S_PUSH_LIST|PUSH_LIST",
-                r"S_PUSH_CTRL|PUSH_CTRL",
-                r"async|CDC|74\.25|clk_hdmi|two.?clock|dual.?clock|20\s*(MHz)?\s*→\s*74|edge.?detect|d2\s*&\s*~d3",
-                r">=\s*2|2\s*cmds?|two\s+cmds?|multi.?beat|N\s*S_PUSH|list.*ctrl|remainder",
-            ],
-            "async CDC: w-osd loader holds host_we over N S_PUSH_LIST + S_PUSH_CTRL while "
-            "sys_top edge-detects PLXC_EXT_WE (d2&~d3); only first beat crosses 20→74.25MHz "
-            "— require full-hierarchy test with >=2 cmds + ctrl (same-clock TBs are blind)",
-        ),
-    ]
-
-    def _is_hierarchy_test(txt: str) -> bool:
-        hits = sum(1 for p in HIER_MARKERS if re.search(p, txt))
-        return hits >= 3
-
-    test_files: list[Path] = []
-    if tests_root.is_dir():
-        for path in tests_root.rglob("*"):
-            if path.is_file() and path.suffix in {".sv", ".sh", ".cpp", ".py", ".md"}:
-                test_files.append(path)
-
-    msgs.append(f"LEG0_B20_HIER_SCAN_EXECUTED n_test_files={len(test_files)}")
-    for tok, pats, why in scenarios:
-        found: list[str] = []
-        for path in test_files:
-            txt = _read(path)
-            if not txt or not _is_hierarchy_test(txt):
-                continue
-            if all(re.search(p, txt, re.I | re.S) for p in pats):
-                found.append(str(path.relative_to(ROOT)))
-        if found:
-            msgs.append(f"LEG0_B20_HIER_OK {tok} -> {found[0]}")
-        else:
-            errors.append(
-                f"{tok}: no full-hierarchy test under tests/ covers: {why}. "
-                f"Need a multi-module TB (present_core + ddr_frame_store + beam/PLXG) "
-                f"with evidence patterns {pats!r}. rd-duck hold/release — isolated "
-                "lane unit tests do not satisfy. Soft-skip ≠ PASS."
-            )
+    # --- B20 full-hierarchy scenario tests (rd-duck 2026-08-03 hollow audit) ---
+    # Prior gate only regex-scanned test *text* and accepted comment bait (mutation
+    # hier_body cleared all six tokens without running anything). That violates the
+    # parent's passing-test rule and could release fit on prose.
+    #
+    # Contract (non-negotiable):
+    #   1. Named executable script path per scenario (registry below).
+    #   2. Gate *runs* the script (not grep-only).
+    #   3. Require CASE <tok> EXECUTED + PASS <tok> in stdout + true rc=0.
+    #   4. Soft-skip rc=77 is NOT a pass. Missing script is NOT a pass.
+    #   5. Comment-only / non-executable bait must not clear the blocker.
+    b20_hier_rc, b20_hier_msgs, b20_hier_errs = run_b20_hierarchy_exec_gate(ROOT)
+    msgs.extend(b20_hier_msgs)
+    errors.extend(b20_hier_errs)
 
     # --- B19 MERGE-LOSS + lane tip under-take (always, even if Bn cleared) ---
     b19_errs = collect_merge_loss_errors()
@@ -3692,8 +3773,7 @@ def _mutation_per_blocker_clear_restore() -> list[str]:
         ]
     )
 
-    # B5 / B9 / B20 hierarchy: create dummy tests then remove.
-    dummy_hier = ROOT / "tests" / "rtl" / "_fitgate_mut_hier_full.cpp"
+    # B5 / B9: create dummy tests then remove.
     file_create_specs = [
         (
             "B5_NO_DDR_ON_BEAM_TEST",
@@ -3706,30 +3786,6 @@ def _mutation_per_blocker_clear_restore() -> list[str]:
             "#!/bin/sh\n# mut VIDEO_ARX VIDEO_ARY top-level\n",
         ),
     ]
-
-    # One full-hierarchy dummy that clears all B20 scenarios when present.
-    hier_body = r"""
-// mut full-hierarchy TB: present_core ddr_frame_store present_beam_content_de
-// PRESENT_BEAM_960 plxg_ddr_poller plex_present_geom_mux present_geom_latch
-// (a) explicit PLXG disable under PRESENT_BEAM_960 fallback force_native_960 re-enable
-// (b) commit coincident with frame_boundary boundary_commit
-// (c) geom_invalidate outstanding fill ddr_frame_store in_flight
-// (d) retained DDR across FPGA reset daemon restart epoch session ABA
-// (e) delayed poll early doorbell plxg_ddr_poller bank+geom atomic geometry atomic
-// (f) bank_swap distinct bank at 24 and 30 content_fps not just frame_start bank_id observed_bank
-// (g) async CDC PLXC_EXT_WE host_we S_PUSH_LIST S_PUSH_CTRL dual-clock 20→74.25 edge-detect d2 & ~d3
-//     multi-beat >=2 cmds list+ctrl remainder must cross; same-clock TB blind
-"""
-    for tok in (
-        "B20_HIER_A_PLXG_EXPLICIT_DISABLE",
-        "B20_HIER_B_COMMIT_FRAME_BOUNDARY",
-        "B20_HIER_C_DDR_FILL_GEOM_INVALIDATE",
-        "B20_HIER_D_RETAINED_DDR_RESET_RESTART",
-        "B20_HIER_E_POLL_DOORBELL_ATOMIC",
-        "B20_HIER_F_BANK_SWAP_24_30",
-        "B20_HIER_G_PLXC_ASYNC_CDC_MULTIBEAT",
-    ):
-        file_create_specs.append((tok, dummy_hier, hier_body))
 
     for token, edits in specs:
         restorers = []
@@ -3797,6 +3853,168 @@ def _mutation_per_blocker_clear_restore() -> list[str]:
                     path.unlink()
                 except OSError:
                     pass
+
+    # B20 hierarchy: executable contract (rd-duck hollow-audit). Comment bait
+    # must NOT clear; only a run script with CASE+PASS+DUT+rc0 may clear.
+    fails.extend(_mutation_b20_hier_exec())
+
+    return fails
+
+
+def _mutation_b20_hier_exec() -> list[str]:
+    """Prove B20_HIER_* requires runnable scripts — not comment bait."""
+    fails: list[str] = []
+    unit = ROOT / "tests" / "unit"
+    unit.mkdir(parents=True, exist_ok=True)
+
+    def _leg0_toks() -> set[str]:
+        _rc, msgs = leg0_arch_blockers()
+        return _leg0_error_tokens(msgs)
+
+    for spec in B20_HIER_REGISTRY:
+        tok = spec["token"]
+        rel = spec["script"]
+        script = ROOT / rel
+        case_tok = spec["case"]
+        pass_tok = spec["pass"]
+
+        # 1) Comment bait at the registry path must NOT clear the blocker.
+        #    Script exits 0 but only comments — no CASE/PASS on stdout.
+        bait_sh = (
+            "#!/usr/bin/env bash\n"
+            f"# comment bait {tok} — must NOT clear gate\n"
+            f"# {case_tok}\n"
+            f"# {pass_tok}\n"
+            "# DUT_TOUCHED=1\n"
+            "exit 0\n"
+        )
+        rest = None
+        try:
+            rest = _with_file_backup(script, bait_sh)
+            os.chmod(script, 0o755)
+            toks = _leg0_toks()
+            if tok not in toks:
+                fails.append(
+                    f"{tok}: comment-bait script cleared blocker — HOLLOW GATE HOLE "
+                    "(rd-duck audit class)"
+                )
+            else:
+                print(f"  MUT_OK {tok} comment_bait_rejected=1")
+        finally:
+            if rest is not None:
+                rest()
+            if script.is_file() and "test_b20_hier" in script.name:
+                # If we created a new file (no prior), ensure cleanup when backup
+                # restored to missing — _with_file_backup should handle.
+                pass
+
+        # 2) Echo-only PASS without DUT_TOUCHED must NOT clear.
+        hollow_run = (
+            "#!/usr/bin/env bash\n"
+            f"echo '{case_tok}'\n"
+            f"echo '{pass_tok}'\n"
+            "exit 0\n"
+        )
+        rest = None
+        try:
+            rest = _with_file_backup(script, hollow_run)
+            os.chmod(script, 0o755)
+            toks = _leg0_toks()
+            if tok not in toks:
+                fails.append(
+                    f"{tok}: echo-only PASS without DUT evidence cleared blocker — HOLE"
+                )
+            else:
+                print(f"  MUT_OK {tok} echo_only_rejected=1")
+        finally:
+            if rest is not None:
+                rest()
+
+        # 3) Full contract runner clears; remove restores fire.
+        good = (
+            "#!/usr/bin/env bash\n"
+            "set -euo pipefail\n"
+            f"echo '{case_tok}'\n"
+            f"echo '{pass_tok}'\n"
+            "echo 'DUT_TOUCHED=1'\n"
+            "echo 'HIER_TB_RUN=1'\n"
+            "echo 'SIM_RUN=1'\n"
+            # Minimal DUT touch: prove we can read product RTL (not prose-only).
+            "ROOT=\"${MISTERPLEX_ROOT:-$(cd \"$(dirname \"$0\")/../..\" && pwd)}\"\n"
+            "test -f \"$ROOT/fpga/Plex_MiSTer/Plex.sv\"\n"
+            "exit 0\n"
+        )
+        rest = None
+        try:
+            rest = _with_file_backup(script, good)
+            os.chmod(script, 0o755)
+            toks_c = _leg0_toks()
+            clear_ok = tok not in toks_c
+            if not clear_ok:
+                fails.append(
+                    f"{tok}: valid runner (CASE+PASS+DUT+rc0) did not clear — HOLE"
+                )
+            rest()
+            rest = None
+            toks_r = _leg0_toks()
+            restore_ok = tok in toks_r
+            if not restore_ok:
+                fails.append(f"{tok}: vanished after removing runner — hole")
+            if clear_ok and restore_ok:
+                print(f"  MUT_OK {tok} exec_clear_drop=1 restore_fire=1")
+        finally:
+            if rest is not None:
+                rest()
+            # Clean if file was created only for mutation
+            if script.is_file():
+                try:
+                    # only remove if it looks like our mutation leftover and wasn't
+                    # a pre-existing product test — product tests won't match good body
+                    txt = script.read_text()
+                    if "DUT_TOUCHED=1" in txt and "fitgate" in txt:
+                        script.unlink()
+                except OSError:
+                    pass
+
+    # 4) DUT behavior once (scenario A): good runner + missing Plex.sv → re-fire.
+    #    Real hierarchy TBs will probe deeper RTL; this proves the gate re-executes
+    #    the script against the live tree (not a cached prose pass).
+    spec_a = B20_HIER_REGISTRY[0]
+    tok_a = spec_a["token"]
+    script_a = ROOT / spec_a["script"]
+    good_a = (
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        f"echo '{spec_a['case']}'\n"
+        f"echo '{spec_a['pass']}'\n"
+        "echo 'DUT_TOUCHED=1'\n"
+        "echo 'HIER_TB_RUN=1'\n"
+        "ROOT=\"${MISTERPLEX_ROOT:-$(cd \"$(dirname \"$0\")/../..\" && pwd)}\"\n"
+        "test -f \"$ROOT/fpga/Plex_MiSTer/Plex.sv\"\n"
+        "exit 0\n"
+    )
+    plex = ROOT / "fpga" / "Plex_MiSTer" / "Plex.sv"
+    plex_bak = ROOT / "fpga" / "Plex_MiSTer" / "Plex.sv.fitgate_mut_bak"
+    rest_s = None
+    try:
+        rest_s = _with_file_backup(script_a, good_a)
+        os.chmod(script_a, 0o755)
+        if plex.is_file():
+            shutil.move(str(plex), str(plex_bak))
+            toks = _leg0_toks()
+            if tok_a not in toks:
+                fails.append(
+                    f"{tok_a}: DUT path break (Plex.sv moved) did not re-fire — HOLE"
+                )
+            else:
+                print(f"  MUT_OK {tok_a} dut_break_refire=1")
+        else:
+            print(f"  MUT_SKIP {tok_a} dut_break (no Plex.sv)")
+    finally:
+        if plex_bak.is_file() and not plex.is_file():
+            shutil.move(str(plex_bak), str(plex))
+        if rest_s is not None:
+            rest_s()
 
     return fails
 
