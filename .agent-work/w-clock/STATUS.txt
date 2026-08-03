@@ -1,12 +1,18 @@
-w-clock STATUS
-branch: w-clock-bump
-fit: HELD (parent) — PIX24 29.7 only when granted
-macros: PRESENT_* default OFF
+w-clock STATUS 2026-08-03
+tip: pending commit (exact rtgeom oracle)
+prev: fdbef70f B2b + runtime geom OFF
 
-DONE this tick:
-- deleted stale npx_full_raster_run.txt (pre-fix HARD FAIL landmine)
-- peak vs sustained analysis (FIFO ≠ DDR refresh cushion)
-- PIX30 developed: 37.125 PLL ifdef PRESENT_CLK_PIX_30, STA stage1b, margin 1.077x
-- doc: NPX_PEAK_VS_SUSTAINED_AND_PIX30.md
+DONE this turn:
+- Exact whole-frame oracle: pix==W*H*frames, line_acc=W..W
+- Ladder 320x240 / 640x360 / 960x540
+- RED FAULT_DROP_ONE_PER_LINE catches 959..959 (true rc=1)
+- STA V705 ack: sim proven, timing NOT proven (needs sta.rpt)
+- Overclock: no headroom above 20 until stub reclaimed; 25 blocked on 23.46
 
-NO glass claim. NO fit.
+TESTS:
+  test_present_beam_960_oracle.sh  true rc=0 (green+red)
+  test_present_beam_960_elab.sh    true rc=0
+  test_present_beam_960_arith.sh   true rc=0
+
+NO fit. NO device. PLL unapplied.
+Report: .agent-work/w-clock/STA_V705_AND_OVERCLOCK_CEILING.md

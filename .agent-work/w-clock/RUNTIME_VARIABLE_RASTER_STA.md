@@ -127,3 +127,10 @@ nostub_margin_pct=62.95
 fps705=24.000672
 mpix705=12.442
 ```
+
+## Exact oracle (parent defect fix)
+
+Prior RTGEOM used `de_pix < W*H*2` lower-bound; measured 154559 vs 153600 allowed mid-line stop and would not catch one-drop-per-line.
+
+**Now:** whole-frame equality + `line_acc=W..W` for 320×240, 640×360, 960×540; red twin `FAULT_DROP_ONE_PER_LINE`.
+See `STA_V705_AND_OVERCLOCK_CEILING.md`.
