@@ -148,6 +148,7 @@ int main(int argc, char** argv) {
     bool bank_sweep = false;
     unsigned force_burst = 0; // 0=auto, 1..16 pin CCR burst
     unsigned force_ns = 0xFFu; // 0xFF=try both, 0/1 pin
+    bool allow_channel_kill = false; // default OFF — kernel owns dma-pl330
     bool restage_each = false; // default OFF for fair DMA wall
     bool verify_each = false;
     uint32_t phys_override = 0;
@@ -194,6 +195,7 @@ int main(int argc, char** argv) {
                 "  --len N --loops N --bank 0|1 --phys 0x...\n"
                 "  --burst N                  force CCR burst 1..16 (0=auto)\n"
                 "  --force-ns 0|1             pin DMAGO NS bit (default try both)\n"
+                "  --allow-channel-kill       LAB ONLY DBGINST KILL (default OFF)\n"
                 "  --restage                   reload staging every DMA iter (default off)\n"
                 "  --verify-each               memcmp bank vs src each DMA iter (slow)\n"
                 "  --overlap-burn-ms MS --no-pl330 --host-copy --legacy-base\n"
