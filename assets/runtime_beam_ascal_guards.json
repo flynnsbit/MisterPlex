@@ -1,15 +1,14 @@
 {
-  "title": "Runtime beam ascal path guards (rd-duck stale geometry)",
+  "title": "Product ascal path guards (rd-duck Direct Video CONFIG BLOCKER)",
   "owner": "w-clock",
-  "define": "PRESENT_BEAM_960",
-  "required_when_beam": {
+  "product_always": {
     "VGA_SCALER": 1,
     "HDMI_BLACKOUT": 1
   },
-  "legacy_when_not_beam": {
-    "VGA_SCALER": 0,
-    "HDMI_BLACKOUT": 0
-  },
+  "direct_video_raw_supported": false,
+  "direct_video_note": "cfg[10] Direct Video is inert for HDMI raw when vga_force_scaler=1 (vga_fb forced); ascal owns glass 720p",
+  "effective_hdmi_mux": "(~vga_fb & direct_video)==0 when VGA_SCALER=1",
+  "beam_define_not_sufficient": "PRESENT_BEAM_960-only SCALER=1 left legacy/product fits at 0 — CONFIG BLOCKER",
   "wiring": {
     "VGA_SCALER": "emu.VGA_SCALER → sys_top.vga_force_scaler → vga_fb|vga_scaler; disables direct_video HDMI raw mux",
     "HDMI_BLACKOUT": "emu.HDMI_BLACKOUT → sys_top.hdmi_blackout → ascal.swblack"
@@ -20,5 +19,6 @@
     "sys_top": "fpga/Plex_MiSTer/sys/sys_top.v",
     "ascal": "fpga/Plex_MiSTer/sys/ascal.vhd"
   },
-  "gate": "tests/unit/test_runtime_beam_ascal_guards.sh"
+  "gate": "tests/unit/test_runtime_beam_ascal_guards.sh",
+  "rd_duck_config_blocker": "VGA_SCALER=0 + Direct Video sends 1182@16.92kHz core raster; 720p glass absent; iauto proof irrelevant on bypass"
 }

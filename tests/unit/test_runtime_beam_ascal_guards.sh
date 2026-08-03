@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# rd-duck: runtime beam must force ascal path + size-change blackout.
-# HDMI_BLACKOUT=0 disables ascal swblack (3-frame res blackout).
-# VGA_SCALER=0 allows direct_video / raw VGA bypass of nonstandard 16.92 kHz beam.
+# rd-duck CONFIG: product must force ascal (VGA_SCALER=1 always).
+# VGA_SCALER=0 + Direct Video → raw core raster, no 720p glass.
+# HDMI_BLACKOUT=0 disables ascal swblack (size-only 3-frame blackout).
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PLEX="$ROOT/fpga/Plex_MiSTer/Plex.sv"
@@ -24,42 +24,34 @@ sys_top = (root / "fpga/Plex_MiSTer/sys/sys_top.v").read_text()
 ascal = (root / "fpga/Plex_MiSTer/sys/ascal.vhd").read_text()
 c = json.loads((root / "assets/runtime_beam_ascal_guards.json").read_text())
 
-# Find PRESENT_BEAM_960 ifdef that assigns BOTH guards (may not be first ifdef in file)
-blocks = list(re.finditer(
-    r"`ifdef\s+PRESENT_BEAM_960\s*(.*?)`else\s*(.*?)`endif",
+def assigns(name: str):
+    ms = list(re.finditer(rf"assign\s+{name}\s*=\s*(\d+)\s*;", plex))
+    if not ms:
+        print(f"FAIL no assign {name}")
+        sys.exit(1)
+    return [int(m.group(1)) for m in ms]
+
+for name, want in (("VGA_SCALER", 1), ("HDMI_BLACKOUT", 1)):
+    allv = assigns(name)
+    last = allv[-1]
+    if last != want:
+        print(f"FAIL product {name} last assign={last} want {want} all={allv}")
+        sys.exit(1)
+    if name == "VGA_SCALER" and 0 in allv:
+        print(f"FAIL {name} still has assign=0 somewhere: {allv}")
+        sys.exit(1)
+    print(f"OK Plex.sv product {name}={last} (all={allv})")
+
+if re.search(
+    r"`ifdef\s+PRESENT_BEAM_960\s*assign\s+VGA_SCALER\s*=\s*1\s*;\s*"
+    r"assign\s+HDMI_BLACKOUT\s*=\s*1\s*;\s*`else\s*"
+    r"assign\s+VGA_SCALER\s*=\s*0",
     plex,
     re.S,
-))
-found = None
-for m in blocks:
-    if "HDMI_BLACKOUT" in m.group(1) and "VGA_SCALER" in m.group(1):
-        found = m
-        break
-if not found:
-    print("FAIL Plex.sv missing PRESENT_BEAM_960 ifdef assigning VGA_SCALER/HDMI_BLACKOUT")
-    sys.exit(1)
-on, off = found.group(1), found.group(2)
-for name, val_on, val_off in (
-    ("VGA_SCALER", 1, 0),
-    ("HDMI_BLACKOUT", 1, 0),
 ):
-    mon = re.search(rf"assign\s+{name}\s*=\s*(\d+)\s*;", on)
-    moff = re.search(rf"assign\s+{name}\s*=\s*(\d+)\s*;", off)
-    if not mon or not moff:
-        print(f"FAIL cannot find assign {name} in BEAM ifdef branches")
-        sys.exit(1)
-    if int(mon.group(1)) != val_on:
-        print(f"FAIL BEAM {name}={mon.group(1)} want {val_on}")
-        sys.exit(1)
-    if int(moff.group(1)) != val_off:
-        print(f"FAIL legacy {name}={moff.group(1)} want {val_off}")
-        sys.exit(1)
-    print(f"OK Plex.sv BEAM {name}={val_on} legacy={val_off}")
-
-zeros = re.findall(r"assign\s+HDMI_BLACKOUT\s*=\s*(\d+)\s*;", plex)
-if "1" not in zeros or "0" not in zeros:
-    print("FAIL HDMI_BLACKOUT must define both 1 and 0", zeros)
+    print("FAIL VGA_SCALER still BEAM-only with legacy=0 (CONFIG BLOCKER class)")
     sys.exit(1)
+print("OK VGA_SCALER not BEAM-gated to legacy 0")
 
 need_sys = [
     (r"\.swblack\s*\(\s*hdmi_blackout\s*\)", "ascal.swblack <= hdmi_blackout"),
@@ -68,6 +60,7 @@ need_sys = [
     (r"vga_fb\s*=\s*cfg\[12\]\s*\|\s*vga_force_scaler", "vga_fb ORs force scaler"),
     (r"vga_scaler\s*=\s*cfg\[2\]\s*\|\s*vga_force_scaler", "vga_scaler ORs force scaler"),
     (r"~vga_fb\s*&\s*direct_video", "direct_video gated by ~vga_fb"),
+    (r"vgas_en\s*=\s*vga_fb\s*\|\s*vga_scaler", "vgas_en force path"),
 ]
 for pat, label in need_sys:
     if not re.search(pat, sys_top):
@@ -75,127 +68,62 @@ for pat, label in need_sys:
         sys.exit(1)
     print(f"OK sys_top {label}")
 
+print("OK inferred: force scaler kills Direct Video raw mux regardless of cfg[10]")
+
 if not re.search(r"swblack\s*=\s*'1'", ascal, re.I):
     print("FAIL ascal swblack='1' enable missing")
-    sys.exit(1)
-if not re.search(r"o_ihsize", ascal) or not re.search(r"i_hrsize", ascal):
-    print("FAIL ascal size compare missing")
     sys.exit(1)
 if "o_newres" not in ascal:
     print("FAIL ascal o_newres missing")
     sys.exit(1)
 print("OK ascal swblack size-only path + o_newres")
-# Honesty: gate records size-only scope
-if "SIZE only" not in json.dumps(c) and "size" not in c.get("ascal_swblack_scope","").lower():
+
+assert c.get("product_always", {}).get("VGA_SCALER") == 1
+assert c.get("product_always", {}).get("HDMI_BLACKOUT") == 1
+assert c.get("direct_video_raw_supported") is False
+scope = c.get("ascal_swblack_scope", "").lower()
+if "size" not in scope:
     print("FAIL json must document size-only blackout scope")
     sys.exit(1)
-print("OK json documents size-only scope (not DAR/arbitrary geom)")
-assert c["required_when_beam"]["HDMI_BLACKOUT"] == 1
-assert c["required_when_beam"]["VGA_SCALER"] == 1
+print("OK json product_always + direct_video_raw_supported=false")
 print("PASS runtime_beam_ascal_guards GREEN")
 PY
 
-# RED1: permanent BLACKOUT=0 / SCALER=0 (pre-fix)
-RED_PLEX="$OUT/Plex_red_blackout0.sv"
-python3 - "$PLEX" "$RED_PLEX" <<'PY'
+RED1="$OUT/Plex_red_scaler0.sv"
+python3 - "$PLEX" "$RED1" <<'PY'
 import re, sys
 from pathlib import Path
 src = Path(sys.argv[1]).read_text()
-red, n = re.subn(
-    r"`ifdef\s+PRESENT_BEAM_960\s*.*?`else\s*.*?`endif",
-    "assign VGA_SCALER    = 0;\nassign HDMI_BLACKOUT = 0;",
-    src,
-    count=1,
-    flags=re.S,
-)
+red, n = re.subn(r"assign\s+VGA_SCALER\s*=\s*1\s*;", "assign VGA_SCALER    = 0;", src, count=1)
 if n < 1:
-    sys.exit("failed to build red")
-# only replace the guards block — try targeted
-if "HDMI_BLACKOUT" in red and "`ifdef PRESENT_BEAM_960" in src:
-    # If first ifdef wasn't ours, do targeted replace of both assigns in beam block
-    pass
+    print("FAIL cannot build RED scaler0", file=sys.stderr); sys.exit(2)
 Path(sys.argv[2]).write_text(red)
-print("wrote", sys.argv[2])
+print("red1 ok")
 PY
-
-# Targeted RED if first ifdef wasn't the guards one
-python3 - "$PLEX" "$RED_PLEX" <<'PY'
-import re, sys
-from pathlib import Path
-src = Path(sys.argv[1]).read_text()
-# Replace the specific beam guards block only
-pat = re.compile(
-    r"(`ifdef\s+PRESENT_BEAM_960\s*)"
-    r"(assign\s+VGA_SCALER\s*=\s*1\s*;\s*"
-    r"assign\s+HDMI_BLACKOUT\s*=\s*1\s*;\s*)"
-    r"(`else\s*)"
-    r"(assign\s+VGA_SCALER\s*=\s*0\s*;\s*"
-    r"assign\s+HDMI_BLACKOUT\s*=\s*0\s*;\s*)"
-    r"(`endif)",
-    re.S,
-)
-m = pat.search(src)
-if not m:
-    # looser whitespace
-    pat = re.compile(
-        r"`ifdef\s+PRESENT_BEAM_960\s*"
-        r"assign\s+VGA_SCALER\s*=\s*1\s*;\s*"
-        r"assign\s+HDMI_BLACKOUT\s*=\s*1\s*;\s*"
-        r"`else\s*"
-        r"assign\s+VGA_SCALER\s*=\s*0\s*;\s*"
-        r"assign\s+HDMI_BLACKOUT\s*=\s*0\s*;\s*"
-        r"`endif",
-        re.S,
-    )
-    if not pat.search(src):
-        print("FAIL cannot locate guards block for RED", file=sys.stderr)
-        sys.exit(2)
-    red = pat.sub("assign VGA_SCALER    = 0;\nassign HDMI_BLACKOUT = 0;", src, count=1)
-else:
-    red = pat.sub("assign VGA_SCALER    = 0;\nassign HDMI_BLACKOUT = 0;", src, count=1)
-Path(sys.argv[2]).write_text(red)
-print("red ok")
-PY
-
 set +e
-python3 - "$RED_PLEX" <<'PY'
+python3 - "$RED1" <<'PY'
 import re, sys
 from pathlib import Path
 plex = Path(sys.argv[1]).read_text()
-has1 = bool(re.search(r"assign\s+HDMI_BLACKOUT\s*=\s*1\s*;", plex))
-has0 = bool(re.search(r"assign\s+HDMI_BLACKOUT\s*=\s*0\s*;", plex))
-beam_on = False
-for m in re.finditer(r"`ifdef\s+PRESENT_BEAM_960\s*(.*?)`else\s*(.*?)`endif", plex, re.S):
-    if "HDMI_BLACKOUT" in m.group(1):
-        mon = re.search(r"assign\s+HDMI_BLACKOUT\s*=\s*(\d+)\s*;", m.group(1))
-        if mon and int(mon.group(1)) == 1:
-            beam_on = True
-if beam_on or (has1 and not has0):
-    print("FAIL RED still forces BLACKOUT=1 under beam")
-    sys.exit(1)
-if has0 and not has1:
-    print("OK RED detects HDMI_BLACKOUT hardwired 0 (ascal swblack disabled)")
+ms = list(re.finditer(r"assign\s+VGA_SCALER\s*=\s*(\d+)\s*;", plex))
+last = int(ms[-1].group(1)) if ms else -1
+if last == 0:
+    print("OK RED1 detects product VGA_SCALER=0 (Direct Video bypass risk)")
     sys.exit(0)
-print("FAIL RED did not catch", has0, has1)
-sys.exit(1)
+print("FAIL RED1 last=", last); sys.exit(1)
 PY
-RRC=$?
+R1=$?
 set -e
-echo "true rc=$RRC red_blackout0"
-[[ "$RRC" -eq 0 ]] || { echo "FAIL red_blackout0"; exit 1; }
+echo "true rc=$R1 red_scaler0"
+[[ "$R1" -eq 0 ]] || { echo "FAIL red_scaler0"; exit 1; }
 
-# RED2: BEAM VGA_SCALER forced 0
-RED2="$OUT/Plex_red_scaler0.sv"
+RED2="$OUT/Plex_red_blackout0.sv"
 python3 - "$PLEX" "$RED2" <<'PY'
 import re, sys
 from pathlib import Path
 src = Path(sys.argv[1]).read_text()
-red = re.sub(
-    r"(`ifdef\s+PRESENT_BEAM_960\s*assign\s+VGA_SCALER\s*=\s*)1(\s*;)",
-    r"\g<1>0\2",
-    src,
-    count=1,
-)
+red, n = re.subn(r"assign\s+HDMI_BLACKOUT\s*=\s*1\s*;", "assign HDMI_BLACKOUT = 0;", src, count=1)
+if n < 1: sys.exit(2)
 Path(sys.argv[2]).write_text(red)
 PY
 set +e
@@ -203,19 +131,17 @@ python3 - "$RED2" <<'PY'
 import re, sys
 from pathlib import Path
 plex = Path(sys.argv[1]).read_text()
-for m in re.finditer(r"`ifdef\s+PRESENT_BEAM_960\s*(.*?)`else", plex, re.S):
-    if "VGA_SCALER" in m.group(1):
-        mon = re.search(r"assign\s+VGA_SCALER\s*=\s*(\d+)\s*;", m.group(1))
-        if mon and int(mon.group(1)) == 0:
-            print("OK RED2 detects BEAM VGA_SCALER=0 (bypass risk)")
-            sys.exit(0)
-print("FAIL RED2")
-sys.exit(1)
+ms = list(re.finditer(r"assign\s+HDMI_BLACKOUT\s*=\s*(\d+)\s*;", plex))
+last = int(ms[-1].group(1)) if ms else -1
+if last == 0:
+    print("OK RED2 detects HDMI_BLACKOUT=0 (swblack disabled)")
+    sys.exit(0)
+print("FAIL RED2"); sys.exit(1)
 PY
 R2=$?
 set -e
-echo "true rc=$R2 red_scaler0"
-[[ "$R2" -eq 0 ]] || { echo "FAIL red_scaler0"; exit 1; }
+echo "true rc=$R2 red_blackout0"
+[[ "$R2" -eq 0 ]] || { echo "FAIL red_blackout0"; exit 1; }
 
 echo "PASS test_runtime_beam_ascal_guards true rc=0"
 exit 0

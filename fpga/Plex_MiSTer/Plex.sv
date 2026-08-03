@@ -28,20 +28,18 @@ assign {SD_SCK, SD_MOSI, SD_CS} = 'Z;
 
 assign VGA_SL = 0;
 assign VGA_F1 = 0;
-// Runtime beam (PRESENT_BEAM_960): nonstandard ~16.92 kHz core raster must NOT
-// bypass ascal. VGA_SCALER=1 → vga_force_scaler → vga_fb|vga_scaler, which
-// disables sys_top direct_video raw path (~vga_fb & direct_video) and forces
-// VGA through the scaler (vgas_en). Legacy fixed path keeps 0.
-// HDMI_BLACKOUT=1 → ascal.swblack: 3 black frames on *input size* change
-// (ih/iv). Size-only — same-size DAR change is NOT covered (parent ABI#2 note).
-// Do not claim blackout protects arbitrary geometry/DAR without size delta.
-`ifdef PRESENT_BEAM_960
+// PRODUCT (rd-duck CONFIG BLOCKER): always force the ascal path.
+// VGA_SCALER → sys_top.vga_force_scaler → vga_fb|vga_scaler. That makes
+//   (~vga_fb & direct_video) == 0
+// so MiSTer "Direct Video" cannot raw-out the core raster (BEAM ~16.92 kHz
+// 1182 clocks/line @24/30, or native 720p24 content beam). Glass 720p is
+// ascal's job; source-level iauto is irrelevant on the bypass mux.
+// Do NOT gate this on PRESENT_BEAM_960 alone — product fits without that
+// define still must not ship Direct Video raw (w-mem/main inheritance risk).
+// HDMI_BLACKOUT → ascal.swblack: 3 black frames on *input size* change only.
+// Same-size DAR is NOT covered (parent ABI#2). Not a substitute for B20 hold.
 assign VGA_SCALER    = 1;
 assign HDMI_BLACKOUT = 1;
-`else
-assign VGA_SCALER    = 0;
-assign HDMI_BLACKOUT = 0;
-`endif
 assign VGA_DISABLE = 0;
 assign HDMI_FREEZE = 0;
 assign HDMI_BOB_DEINT = 0;
