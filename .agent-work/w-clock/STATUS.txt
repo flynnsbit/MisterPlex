@@ -1,7 +1,7 @@
 w-clock STATUS
 ==============
-PRESENT fabric: no clk_sys bump @ PPC>=2/4
-clk_pix PLAN: PIX24=29.7 PIX60=74.25 separate outclk_3 — NOT applied
-PLL shipping still 3 clocks 20/90
-DECODE wall unchanged: 231 cy/MB @20 vs ~4037 paint class
+clk_pix PLAN: PIX24=29.7 / PIX60=74.25 outclk_3 — NOT applied (sys stays 20)
+Near-term: 720p OUTPUT (glass), not 720p SOURCE (ARM decode+copy FAILs true 720)
+clk_pix still required for CEA refresh either way
+PRESENT fabric work: no clk_sys bump @ PPC>=2/4
 Macro OFF; CDC intact

@@ -6,6 +6,12 @@
 
 Parent direction (2026-08-03): design `clk_pix` (~29.7 MHz 720p24 CEA, 74.25 MHz 720p60) as a **separate PLL output**, not a `clk_sys` overclock. Full fabric H.264 is multi-month; present/scale/idle + DMA remains the near-term path.
 
+### Output vs source (parent measurement — do not conflate)
+
+Parent 300-frame probes (device clean): ARM **decode+copy** of true 1280×720 source **FAILS** (1500k total 48.62 / 2600k 50.44 vs 41.667). 624×480 product **PASS** with ~20.6 ms headroom. Fabric raster and source resolution are **independent**: near-term is **720p output** (native 1280×720 glass from an ARM-affordable source, w-scaler upscale) — **not** “720p source.” DMA is the remaining path to true 720p source (w-path).
+
+**`clk_pix` is still required for true CEA refresh on glass** either way — pixel clock sizes the **output** raster (1650×750×fps), not the decoded source size.
+
 ---
 
 ## 1) Why this bump (and why not clk_sys)
