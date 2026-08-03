@@ -7,9 +7,12 @@
 #include <string>
 #include <vector>
 
+#include "libmisterplex/ddr_bank_release_select.hpp"
 #include "libmisterplex/ddr_frame_layout.hpp"
 #include "libmisterplex/ddr_bitstream_ring.hpp"
+#include "libmisterplex/ddr_present_bank.hpp"
 #include "libmisterplex/input_mailbox.hpp"
+#include "libmisterplex/plxd_liveness.hpp"
 
 namespace misterplex {
 
@@ -94,11 +97,22 @@ public:
                            DdrFrameFormat format = DdrFrameFormat::Yuv420p);
     bool setDdrFrameLayout(int width, int height,
                            DdrFrameFormat format = DdrFrameFormat::Yuv420p);
+    // Activate a fully-resolved layout (Option-C phys/stride/doorbell included).
+    // Used by the native 960×540 fabric-owned publish path.
+    bool setDdrFrameLayout(const DdrFrameLayout& layout);
     DdrFrameLayout ddrFrameLayout() const { return ddrLayout_; }
     bool sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len,
                              const DdrFrameGeometry& geometry, int bank = 0);
     bool sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len, int width, int height,
                              int bank = 0);
+    // bank is a hint; PLXD may select the free bank. lastPublishedBank() is the
+    // bank that was actually written + doorbelled on the last successful publish.
+    bool publishDdrFrame(const DdrPublishFrame& frame, int bank = 0);
+    // Native tight publish into Option-C (copy_bytes may be < canvas frame_bytes).
+    // Programs PLXG beats before doorbell when plan.program_plxg is set.
+    bool publishDdrFabricOwned(const DdrPublishFrame& frame,
+                               const DdrFabricOwnedPresentPlan& present, int bank = 0);
+    int lastPublishedBank() const { return lastPublishedBank_; }
     // DDR frame mmap policy. Default true keeps the proven strongly-ordered/device
     // mapping; false is a lab knob for write-combine/cacheable /dev/mem tests.
     // If a lab proves the no-sync mapping is cacheable, enable flush so the FPGA
@@ -118,6 +132,28 @@ public:
         bool plxa_used = false;       // true if PLXA drove bank selection
     };
     DdrTiming lastDdrTiming() const { return lastDdrTiming_; }
+    // PLXD snapshot at last successful sendDdrFrame bank-select (swap-delta ledger).
+    bool lastPublishBankRelease(BankReleaseStatus& out) const {
+        if (!lastPublishBrsOk_)
+            return false;
+        out = lastPublishBrs_;
+        return true;
+    }
+    // Sticky PLXD liveness: bank-identity (free/disp/swap) moved at least once.
+    // frames_done alone is NOT proof — on c5382bee it is bank_vsync_count.
+    // No per-session reset — parent cluster instrument field 1.
+    bool plxdLivenessProven() const { return plxdLive_.proven; }
+
+    // After an external load_core the HPS /dev/mem maps stay open but the FPGA
+    // fabric is new. Steady-state sendDdrFrame with ddrKickMode_==1 skips the
+    // first-kick busy/has_frame verify (fpga_spi.cpp), so presents can advance
+    // while scanout stays on the idle latch. Force the next publish to re-probe
+    // kick + clear PLXD liveness state. Does not munmap (use reopenPresentPath).
+    void forceDdrKickReprobe();
+
+    // close()+open() FPGA manager map and DDR maps; force kick reprobe.
+    // Returns open() result. Used when presents advance without PLXD proof.
+    bool reopenPresentPath();
     struct DdrDoorbellStatus {
         uint32_t seq = 0;
         int bank = 0;
@@ -126,12 +162,32 @@ public:
     bool readDdrDoorbellStatus(DdrDoorbellStatus& status);
     bool readFrameStoreStatus(FrameStoreStatus& status);
     bool readBankRelease(BankReleaseStatus& status);
+
+    // PLXD provenance diagnostic — classifies whether the FPGA actually wrote
+    // the bank-release mailbox, without requiring valid magic.
+    enum class PlxdProvenance {
+        Absent,      // magic does not match — cold DDR, pre-PLXD RBF, or corruption
+        Residue,     // magic matches but reserved bits non-zero (coincidence/corruption)
+        InitOnly,    // magic valid, clean fields, frames_done==0
+        Alive,       // magic valid, frames_done>0 (tip: swap; c5382bee: may be vsync only)
+        LiveAdvance, // bank-identity moved between two reads (free/disp/swap) — swap path live
+    };
+    struct PlxdDiag {
+        PlxdProvenance provenance = PlxdProvenance::Absent;
+        uint32_t raw_lo = 0;        // raw [31:0]
+        uint32_t raw_hi = 0;        // raw [63:32]
+        uint16_t frames_done = 0;
+        uint8_t free_bank_mask = 0;
+        uint8_t disp_bank = 0;
+        bool swap_pending = false;
+        uint16_t reserved_bits = 0; // [47:36] should be zero if written by RTL
+    };
+    PlxdDiag diagnosePlxdProvenance();
+
     // Physical base used by core ddram_frame_rd (must match RTL PHYS_BASE).
     static constexpr uint32_t kDdrFrameBase = 0x30000000u;
-    static constexpr uint32_t kDdrFrameStride = 0x40000u; // 256 KiB
     static constexpr uint32_t kDdrDoorbellPhys = mailbox_abi::kPlxkAddr;
     static constexpr uint32_t kDdrDoorbellMagic = mailbox_abi::kPlxkMagic;
-    static constexpr size_t kDdrFrameBytes = 320 * 240 * 2;
 
     // --- OSD status mailbox (core -> HPS, zero SPI) ----------------------------
     // ddram_frame_rd publishes the live OSD word here whenever it changes, plus a
@@ -175,6 +231,12 @@ public:
     bool pauseBitstreamSession(uint64_t session_id, int timeout_ms = 250);
     bool resumeBitstreamSession(uint64_t session_id, int timeout_ms = 250);
     bool readBitstreamStatus(BitstreamStatus& status);
+    // Write PLXD (dormant) magic to CTRL so a DDR probe can distinguish
+    // "producer disabled by config" from "never written / boot residue".
+    // Safe to call even when STREAM=0 — it maps the control page, writes one
+    // 64-bit word, and unmaps. The FPGA reader ignores PLXD (not PLXB), so
+    // this has no side-effects on the decode path.
+    bool publishBitstreamDormant();
     // Legacy byte-chunk entry point: wraps each chunk in a default-session NAL
     // record so older call sites keep working while source-demux moves to the
     // explicit record API above.
@@ -272,7 +334,7 @@ private:
     // Caller holds SpiExclusive + user mode.
     void writeStatusWordRaw(const uint8_t word[16]);
     bool readStatusRaw(uint8_t out[16]);
-    bool sendDdrFrame(const uint8_t* payload, size_t len, int bank);
+    bool sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& plan);
 
     int fd_ = -1;
     volatile uint32_t* map_ = nullptr;
@@ -287,9 +349,15 @@ private:
     bool ddrMemSync_ = true;
     bool ddrMemFlush_ = false;
     DdrTiming lastDdrTiming_{};
-    DdrFrameLayout ddrLayout_ = makeDdrFrameLayout(320, 240);
+    BankReleaseStatus lastPublishBrs_{};
+    bool lastPublishBrsOk_ = false;
+    // Default to the product silicon canvas (624 coded). DECODE=320x240 must not
+    // leave the doorbell/stride at the packed-320 layout or the first frame shears.
+    DdrFrameLayout ddrLayout_ = makeDdrFrameLayout(productDdrFrameStoreGeometry());
     uint32_t doorbellSeq_ = 0;
     double lastDdrBankDoorbellMs_[2] = {-1.0, -1.0};
+    int lastPublishedBank_ = 0;
+    DdrBankSelectState ddrBankSelect_{};
     bool mboxInit_ = false;
     bool mboxAlive_ = false;
     uint16_t mboxSeq_ = 0;
@@ -297,8 +365,17 @@ private:
     InputMailboxEdgeDetector inputMboxEdge_;
     int ddrKickMode_ = 0; // 0=unknown, 1=doorbell, 2=SPI kick, -1=fail
     double ddrKickFailMs_ = -1.0; // steady_clock timestamp of last ddrKickMode_ = -1
+    // PLXD liveness: bank-identity progress (see plxd_liveness.hpp). Not frames_done-only.
+    PlxdLivenessState plxdLive_{};
+    // Names kept for rtl_invariants / diagnostics (mirrors plxdLive_).
+    int plxdStaleCount_ = 0;
+    bool plxdLivenessProven_ = false;
     bool ensureDdrMap();
     void releaseDdrMap();
+    bool ensurePlxgBootstrapMap();
+    void releasePlxgBootstrapMap();
+    // Write atomic 5-qword PLXG at bootstrap phys 0x300FF800 (fence each qword).
+    bool writePlxgRecord(const uint64_t q[5], uint16_t seq);
     bool ensureBitstreamDdrMap();
     void releaseBitstreamDdrMap();
     bool readBitstreamFpgaCount(uint32_t& readCount);
@@ -327,6 +404,16 @@ private:
     static constexpr uint32_t SSPI_IO_EN = (1u << 20);
     static constexpr uint32_t SSPI_STROBE = (1u << 17);
 
+    // Fixed bootstrap control page (legacy doorbell 0x300FF000) for PLXG.
+    // Option-C map starts at 0x30180000 and does NOT cover 0x300FF800.
+    int plxgBootFd_ = -1;
+    uint8_t* plxgBootMap_ = nullptr;
+    size_t plxgBootMapLen_ = 0;
+    // Process-local only. Cold-start 0 is OK: ensurePlxgBootstrapMap + every
+    // writePlxgRecord seed from retained DDR q0 (rd-duck restart/ABA). Never
+    // emit useSeq from plxgLastSeq_+1 alone while FPGA last_seq may still be N.
+    uint16_t plxgLastSeq_ = 0;
+    void seedPlxgLastSeqFromRetainedLocked();
     int bitstreamMemFd_ = -1;
     uint8_t* bitstreamMap_ = nullptr;
     size_t bitstreamMapLen_ = 0;

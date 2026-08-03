@@ -64,6 +64,175 @@
         "FAIL stream_path inter RTL: missing green inter diagnostic band 2",
         "FAIL stream_path inter RTL: missing green inter diagnostic band 3"
       ]
+    },
+    {
+      "id": "h264_decode_core_p16z_drop_pred",
+      "owner": "tests/unit/test_h264_decode_core_p16z_rtl_sim.sh",
+      "why": "Dropping prediction must fail the exact P16x16 real-P pred+residual reconstruction scoreboard.",
+      "required_substrings": [
+        "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) sample 0 plane=Y got=19 want=92 pred=73 residual=19"
+      ]
+    },
+    {
+      "id": "h264_decode_core_p16z_drop_residual",
+      "owner": "tests/unit/test_h264_decode_core_p16z_rtl_sim.sh",
+      "why": "Dropping residual must fail differently from dropping prediction in the exact P16x16 real-P scoreboard.",
+      "required_substrings": [
+        "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) sample 0 plane=Y got=73 want=92 pred=73 residual=19"
+      ]
+    },
+    {
+      "id": "h264_decode_core_p16z_perturb_mv",
+      "owner": "tests/unit/test_h264_decode_core_p16z_rtl_sim.sh",
+      "why": "Perturbing the P16x16 motion vector by one half-pel must fail the independent read-address/sample scoreboard.",
+      "required_substrings": [
+        "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) read_ordinal 0 got_addr=0x400d want_addr=0x400c"
+      ]
+    },
+    {
+      "id": "h264_decode_core_p16z_bad_rbsp_req",
+      "owner": "tests/unit/test_h264_decode_core_p16z_rtl_sim.sh",
+      "why": "Perturbing the P16x16 syntax-walker RBSP request must fail the independent syntax scoreboard before sample scoring.",
+      "required_substrings": [
+        "FAIL h264_decode_core p16x16 syntax scoreboard: mb=(1,0) rbsp_request_offset got=38 want=37 residual_bit_offset=296"
+      ]
+    },
+    {
+      "id": "h264_decode_core_p16z_drop_mv_neighbor",
+      "owner": "tests/unit/test_h264_decode_core_p16z_rtl_sim.sh",
+      "why": "Dropping MV neighbour state must fail the second P16x16 macroblock address/sample scoreboard without changing earlier mutation diagnostics.",
+      "required_substrings": [
+        "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(2,0) read_ordinal 21248 got_addr=0x401c want_addr=0x401d"
+      ]
+    },
+    {
+      "id": "h264_decode_core_p16z_drop_scheduled_residual",
+      "owner": "tests/unit/test_h264_decode_core_p16z_rtl_sim.sh",
+      "why": "Dropping the scheduled CAVLC/IDCT residual must fail the exact P16x16 syntax-path sample scoreboard, proving the fixture is not zero-residual-vacuous.",
+      "required_substrings": [
+        "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) sample 0 plane=Y got=73 want=92 pred=73 residual=19"
+      ]
+    },
+    {
+      "id": "h264_decode_core_p16z_drop_last_luma_residual",
+      "owner": "tests/unit/test_h264_decode_core_p16z_rtl_sim.sh",
+      "why": "Dropping the last scheduled luma CAVLC/IDCT block must fail a late-block sample, proving full-macroblock traversal is not zero-residual-vacuous.",
+      "required_substrings": [
+        "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) sample 204 plane=Y got=51 want=58 pred=51 residual=7"
+      ]
+    },
+    {
+      "id": "h264_decode_core_p16z_drop_last_chroma_residual",
+      "owner": "tests/unit/test_h264_decode_core_p16z_rtl_sim.sh",
+      "why": "Dropping the last scheduled chroma CAVLC/IDCT block must fail a V-plane sample, proving chroma traversal is not zero-residual-vacuous.",
+      "required_substrings": [
+        "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) sample 356 plane=V got=23 want=42 pred=23 residual=19"
+      ]
+    },
+    {
+      "id": "h264_decode_core_p16z_swap_scheduled_coeff",
+      "owner": "tests/unit/test_h264_decode_core_p16z_rtl_sim.sh",
+      "why": "Swapping scheduled CAVLC coefficient scan positions must fail independently from residual magnitude drops, proving the fixture catches scan-order bugs.",
+      "required_substrings": [
+        "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) sample 0 plane=Y got=90 want=92 pred=73 residual=19"
+      ]
+    },
+    {
+      "id": "h264_decode_core_p16z_swap_chroma_scheduled_coeff",
+      "owner": "tests/unit/test_h264_decode_core_p16z_rtl_sim.sh",
+      "why": "Swapping scheduled chroma CAVLC coefficient scan positions must fail a chroma sample, proving chroma traversal catches scan-order bugs instead of only total energy.",
+      "required_substrings": [
+        "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) sample 320 plane=V got=207 want=209 pred=190 residual=19"
+      ]
+    },
+    {
+      "id": "h264_decode_core_p16z_swap_chroma_read",
+      "owner": "tests/unit/test_h264_decode_core_p16z_rtl_sim.sh",
+      "why": "Swapping U/V chroma reference reads must fail the independent read-address scoreboard, proving chroma-plane aliasing is not hidden by the fixture.",
+      "required_substrings": [
+        "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) read_ordinal 20736 got_addr=0x4a08 want_addr=0x4808"
+      ]
+    },
+    {
+      "id": "h264_decode_core_p16z_swap_chroma_residual",
+      "owner": "tests/unit/test_h264_decode_core_p16z_rtl_sim.sh",
+      "why": "Swapping scheduled U/V chroma residual planes must fail the exact chroma sample scoreboard, proving residual-plane aliasing is not hidden by similar fixtures.",
+      "required_substrings": [
+        "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) sample 256 plane=U got=176 want=164 pred=157 residual=7"
+      ]
+    },
+    {
+      "id": "h264_decode_core_p16z_drop_clip",
+      "owner": "tests/unit/test_h264_decode_core_p16z_rtl_sim.sh",
+      "why": "Dropping Clip1 after pred+residual must wrap high samples (255+1→0) and fail the scoreboard, proving clip is not vacuous.",
+      "required_substrings": [
+        "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) sample 126 plane=Y got=0 want=255 pred=255 residual=1"
+      ]
+    },
+    {
+      "id": "h264_decode_core_p16z_wrong_cbp_bit",
+      "owner": "tests/unit/test_h264_decode_core_p16z_rtl_sim.sh",
+      "why": "Inverting CBP 8x8-group bits must drop residual blocks and fail the pred+residual scoreboard, proving CBP gating is live.",
+      "required_substrings": [
+        "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) sample 0 plane=Y got=73 want=92 pred=73 residual=19"
+      ]
+    },
+    {
+      "id": "h264_decode_core_p16z_skip_chroma_residual",
+      "owner": "tests/unit/test_h264_decode_core_p16z_rtl_sim.sh",
+      "why": "Skipping chroma residual under CBP must fail a U-plane sample, proving chroma residual add is not vacuous.",
+      "required_substrings": [
+        "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) sample 256 plane=U got=157 want=164 pred=157 residual=7"
+      ]
+    },
+    {
+      "id": "h264_decode_core_real_slice_swap_chroma_read",
+      "owner": "tests/unit/test_h264_decode_core_real_slice_rtl_sim.sh",
+      "why": "Swapping U/V chroma reference reads must fail against the always-on real-content I420 slice, proving the decode-core chroma path is not only green on authored synthetic fixtures.",
+      "required_substrings": [
+        "FAIL h264_decode_core real-slice scoreboard: varied-real-content slice=0->1 mb=(5,0) read_ordinal 20736 got_addr=0x5f6a8 want_addr=0x4d228"
+      ]
+    },
+    {
+      "id": "h264_decode_core_real_slice_swap_chroma_residual",
+      "owner": "tests/unit/test_h264_decode_core_real_slice_rtl_sim.sh",
+      "why": "Swapping U/V chroma residual planes on the zero-MV real-slice recon path must fail a chroma sample against the always-on derived I420 slice, proving residual-plane aliasing is detected outside authored synthetic fixtures.",
+      "required_substrings": [
+        "FAIL h264_decode_core real-slice scoreboard: varied-real-content slice=0->1 mb=(5,0) sample 256 plane=U got_addr=0x4a228 want_addr=0x4a228 got=151 want=132 pred=142 residual=-10"
+      ]
+    },
+    {
+      "id": "log_redact_identity_fault",
+      "owner": "tests/unit/test_log_redact_red.sh",
+      "why": "If redactSensitive is a no-op, FAKE-TOKEN-0000 remains and X-Plex-Token=REDACTED is missing \u2014 green checks must FAIL so token log redaction cannot silently vacuous-pass.",
+      "required_substrings": [
+        "FAIL",
+        "out.find(kFake) == std::string::npos"
+      ]
+    },
+    {
+      "id": "h264_baseline_syntax_sign_flip_mvd",
+      "owner": "tests/unit/test_h264_baseline_syntax_rtl_sim.sh",
+      "why": "Sign-flipping decoded mvd_l0 se(v) must fail the synthetic P16x16 non-zero MVD golden.",
+      "required_substrings": [
+        "P16x16 mvd_l0 se(v) decode mismatch"
+      ]
+    },
+    {
+      "id": "h264_inter_nb_ctx_swap_ab",
+      "owner": "tests/unit/test_h264_inter_nb_mvd_rtl_sim.sh",
+      "why": "Swapping A/B neighbours must fail median MVP against reference-decoder frame MVs.",
+      "required_substrings": [
+        "FAIL h264_inter_nb_mvd: top-row single-A avail got a=0 b=1"
+      ]
+    },
+    {
+      "id": "h264_inter_nb_ctx_drop_c_fallback",
+      "owner": "tests/unit/test_h264_inter_nb_mvd_rtl_sim.sh",
+      "why": "Dropping C\u2192D fallback must fail cases where C is unavailable and D carries the third median candidate.",
+      "required_substrings": [
+        "FAIL h264_inter_nb_mvd: c_fallback"
+      ]
     }
   ]
 }

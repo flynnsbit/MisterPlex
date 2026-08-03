@@ -1,7 +1,10 @@
 #include "companion.hpp"
+#include "log_redact.hpp"
+#include "player_identity.hpp"
 
 #include <arpa/inet.h>
 #include <cctype>
+#include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
@@ -12,6 +15,7 @@
 #include <chrono>
 #include <cstdio>
 #include <sstream>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -68,6 +72,19 @@ std::string headerValue(const std::string& req, const char* name) {
         ++pos;
     auto end = req.find("\r\n", pos);
     return req.substr(pos, end == std::string::npos ? std::string::npos : end - pos);
+}
+
+std::string requestLine(const std::string& req) {
+    auto end = req.find("\r\n");
+    return req.substr(0, end == std::string::npos ? std::string::npos : end);
+}
+
+std::string timelineBrief(const std::string& xml) {
+    auto p = xml.find("<Timeline ");
+    if (p == std::string::npos)
+        return xml.substr(0, 160);
+    auto e = xml.find("/>", p);
+    return xml.substr(p, e == std::string::npos ? 240 : std::min<size_t>(e + 2 - p, 240));
 }
 
 void sendHttp(int fd, int code, const char* ctype, const std::string& body) {
@@ -156,11 +173,52 @@ PlayRequest parsePlayRequest(const std::string& req) {
 
 } // namespace
 
+// Bind one GDM UDP listen socket (SO_REUSEADDR + SO_BROADCAST + CLOEXEC).
+// Returns fd on success, -1 on failure (err filled when non-null).
+int Companion::openGdmListenFd(uint16_t port, std::string* err) {
+    int fd = ::socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0) {
+        if (err)
+            *err = "socket failed errno=" + std::to_string(errno);
+        return -1;
+    }
+    int on = 1;
+    if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on)) != 0) {
+        if (err)
+            *err = "SO_REUSEADDR failed errno=" + std::to_string(errno);
+        close(fd);
+        return -1;
+    }
+    int fl = fcntl(fd, F_GETFD);
+    if (fl >= 0)
+        fcntl(fd, F_SETFD, fl | FD_CLOEXEC);
+    if (setsockopt(fd, SOL_SOCKET, SO_BROADCAST, &on, sizeof(on)) != 0) {
+        if (err)
+            *err = "SO_BROADCAST failed errno=" + std::to_string(errno);
+        close(fd);
+        return -1;
+    }
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons(port);
+    if (bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
+        if (err)
+            *err = "bind failed errno=" + std::to_string(errno);
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
+
 void Companion::log(const std::string& s) const {
+    // Central sink redaction: every companion log line is scrubbed even if a
+    // caller forgets to pre-redact a URL or request line.
+    const std::string safe = redactSensitive(s);
     if (log_)
-        log_(s);
+        log_(safe);
     else
-        std::fprintf(stderr, "%s\n", s.c_str());
+        std::fprintf(stderr, "%s\n", safe.c_str());
 }
 
 std::string Companion::xmlEsc(const std::string& s) {
@@ -209,33 +267,19 @@ std::string Companion::lanIp() const {
 }
 
 std::string Companion::gdmPayload() const {
-    std::ostringstream o;
-    o << "HTTP/1.0 200 OK\r\n"
-      << "Content-Type: plex/media-player\r\n"
-      << "Name: " << name_ << "\r\n"
-      << "Port: " << port_ << "\r\n"
-      << "Product: MiSTerPlex\r\n"
-      << "Version: 0.2.0\r\n"
-      << "Protocol: plex\r\n"
-      << "Protocol-Version: 1\r\n"
-      << "Protocol-Capabilities: timeline,playback,navigation,mirror,playqueues\r\n"
-      << "Device-Class: stb\r\n"
-      << "Resource-Identifier: " << machineId_ << "\r\n"
-      << "\r\n";
-    return o.str();
+    PlayerAdvertisement a;
+    a.name = name_;
+    a.machineId = machineId_;
+    a.port = port_;
+    return buildGdmPayload(a);
 }
 
 std::string Companion::resourcesXml() const {
-    std::ostringstream o;
-    o << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
-      << "<MediaContainer>"
-      << "<Player title=\"" << xmlEsc(name_) << "\" product=\"MiSTerPlex\" "
-      << "protocol=\"plex\" protocolVersion=\"1\" "
-      << "protocolCapabilities=\"timeline,playback,navigation,mirror,playqueues\" "
-      << "deviceClass=\"stb\" machineIdentifier=\"" << xmlEsc(machineId_) << "\" "
-      << "version=\"0.2.0\"/>"
-      << "</MediaContainer>";
-    return o.str();
+    PlayerAdvertisement a;
+    a.name = name_;
+    a.machineId = machineId_;
+    a.port = port_;
+    return buildResourcesXml(a);
 }
 
 std::string Companion::timelineXml(const std::string& commandId) const {
@@ -320,16 +364,36 @@ std::string Companion::timelineXml(const std::string& commandId) const {
 
 void Companion::setState(const std::string& state, int64_t timeMs, int64_t durationMs) {
     std::lock_guard<std::mutex> lock(mu_);
+    setStateLocked(state, timeMs, durationMs, false);
+}
+
+void Companion::endMediaSession(int64_t timeMs, int64_t durationMs) {
+    std::lock_guard<std::mutex> lock(mu_);
+    setStateLocked("stopped", timeMs, durationMs, true);
+}
+
+void Companion::setStateLocked(const std::string& state, int64_t timeMs, int64_t durationMs,
+                               bool terminalSession) {
     // After stop clearMedia(), prePlayHold_ is set while wantPlay_ is false. Ignore
     // late media-thread progress so async teardown cannot re-arm fullScreenVideo.
     if (!wantPlay_ && prePlayHold_ &&
         (state == "playing" || state == "paused" || state == "buffering" || state == "ended")) {
         return;
     }
-    // Empty/failed session end (no frames): player reports stopped@0. Keep scrubber
-    // time so a plant seek + step is not clobbered by demux short-read teardown.
-    // Natural EOF with content uses "ended" and may update time to duration.
+    // Stopped has two distinct meanings:
+    //  1. endMediaSession(): main already observed a real terminal transition
+    //     ("ended" after content) and flushed PMS. Clear the local bind.
+    //  2. setState("stopped"): explicit-stop teardown after clearMedia(), or an
+    //     empty/failed demux stopped@0 while a seek plant may still be visible.
+    // Do not infer terminal state from timeMs; planted seek safety depends on
+    // stopped@0 preserving media identity until a real terminal transition exists.
     if (state == "stopped" && wantPlay_) {
+        if (terminalSession) {
+            clearMediaLocked();
+            return;
+        }
+        // Empty/failed session end (no frames): player reports stopped@0. Keep scrubber
+        // time so a plant seek + step is not clobbered by demux short-read teardown.
         state_ = state;
         if (durationMs > 0)
             durationMs_ = durationMs;
@@ -479,8 +543,7 @@ void Companion::stagePlay(const PlayRequest& req) {
         serverMachineId_ = req.serverMachineId;
 }
 
-void Companion::clearMedia() {
-    std::lock_guard<std::mutex> lock(mu_);
+void Companion::clearMediaLocked() {
     // Drop media binding so polls are a clean idle (no key/container).
     // Web: video state=stopped WITH key still idles the cast player and freezes scrubber.
     pendingKey_.clear();
@@ -498,6 +561,11 @@ void Companion::clearMedia() {
     // fresh mirror. Pure stopped polls idle the dialog — keep buffering@navigation.
     if (castBound_)
         prePlayHold_ = true;
+}
+
+void Companion::clearMedia() {
+    std::lock_guard<std::mutex> lock(mu_);
+    clearMediaLocked();
 }
 
 bool Companion::start() {
@@ -529,58 +597,75 @@ void Companion::stop() {
 }
 
 void Companion::gdmLoop() {
-    int fd = ::socket(AF_INET, SOCK_DGRAM, 0);
-    if (fd < 0) {
-        log("GDM: socket failed");
+    std::vector<int> fds;
+    fds.reserve(sizeof(kGdmListenPorts) / sizeof(kGdmListenPorts[0]));
+    int advFd = -1;
+    for (uint16_t port : kGdmListenPorts) {
+        std::string err;
+        int fd = openGdmListenFd(port, &err);
+        if (fd < 0) {
+            log("GDM: port " + std::to_string(port) + " " + err);
+            continue;
+        }
+        log("GDM: listening UDP " + std::to_string(port));
+        if (port == 32412)
+            advFd = fd;
+        fds.push_back(fd);
+    }
+    if (fds.empty()) {
+        log("GDM: no listen sockets — discovery disabled");
         return;
     }
-    setReuse(fd);
-    setCloexec(fd);
-    sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = INADDR_ANY;
-    addr.sin_port = htons(32412);
-    if (bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0)
-        log("GDM: bind 32412 failed — broadcast-only advertise");
-    else
-        log("GDM: listening UDP 32412");
+    if (advFd < 0)
+        advFd = fds.front();
 
     auto lastAdv = std::chrono::steady_clock::now();
     while (running_.load()) {
         fd_set rfds;
         FD_ZERO(&rfds);
-        FD_SET(fd, &rfds);
+        int maxfd = -1;
+        for (int fd : fds) {
+            FD_SET(fd, &rfds);
+            if (fd > maxfd)
+                maxfd = fd;
+        }
         timeval tv{0, 200000};
-        int r = select(fd + 1, &rfds, nullptr, nullptr, &tv);
-        if (r > 0 && FD_ISSET(fd, &rfds)) {
-            char buf[2048];
-            sockaddr_in peer{};
-            socklen_t plen = sizeof(peer);
-            ssize_t n = recvfrom(fd, buf, sizeof(buf) - 1, 0, reinterpret_cast<sockaddr*>(&peer), &plen);
-            if (n > 0) {
+        int r = select(maxfd + 1, &rfds, nullptr, nullptr, &tv);
+        if (r > 0) {
+            for (int fd : fds) {
+                if (!FD_ISSET(fd, &rfds))
+                    continue;
+                char buf[2048];
+                sockaddr_in peer{};
+                socklen_t plen = sizeof(peer);
+                ssize_t n =
+                    recvfrom(fd, buf, sizeof(buf) - 1, 0, reinterpret_cast<sockaddr*>(&peer), &plen);
+                if (n <= 0)
+                    continue;
                 buf[n] = 0;
-                if (std::strstr(buf, "M-SEARCH") || std::strstr(buf, "plex")) {
-                    auto payload = gdmPayload();
-                    sendto(fd, payload.data(), payload.size(), 0, reinterpret_cast<sockaddr*>(&peer),
-                           plen);
-                }
+                if (!gdmIsDiscoveryProbe(buf))
+                    continue;
+                auto payload = gdmPayload();
+                const ssize_t sn = sendto(fd, payload.data(), payload.size(), 0,
+                                          reinterpret_cast<sockaddr*>(&peer), plen);
+                if (sn < 0)
+                    log("GDM: reply sendto failed errno=" + std::to_string(errno));
             }
         }
         auto now = std::chrono::steady_clock::now();
         if (now - lastAdv > std::chrono::seconds(5)) {
             lastAdv = now;
-            int on = 1;
-            setsockopt(fd, SOL_SOCKET, SO_BROADCAST, &on, sizeof(on));
             sockaddr_in bcast{};
             bcast.sin_family = AF_INET;
             bcast.sin_port = htons(32412);
             bcast.sin_addr.s_addr = INADDR_BROADCAST;
             auto payload = gdmPayload();
-            sendto(fd, payload.data(), payload.size(), 0, reinterpret_cast<sockaddr*>(&bcast),
+            sendto(advFd, payload.data(), payload.size(), 0, reinterpret_cast<sockaddr*>(&bcast),
                    sizeof(bcast));
         }
     }
-    close(fd);
+    for (int fd : fds)
+        close(fd);
 }
 
 void Companion::httpLoop() {
@@ -621,6 +706,9 @@ void Companion::httpLoop() {
         }
         buf[n] = 0;
         std::string req(buf, static_cast<size_t>(n));
+        if (req.find("/player/") != std::string::npos || req.find("/resources") != std::string::npos)
+            // Request line may carry ?X-Plex-Token=...; Companion::log redacts at sink.
+            log("HTTP IN " + requestLine(req));
 
         {
             std::lock_guard<std::mutex> lock(mu_);
@@ -675,7 +763,9 @@ void Companion::httpLoop() {
                 cid = "0";
             if (queryParam(req, "wait") == "1")
                 std::this_thread::sleep_for(std::chrono::milliseconds(400));
-            sendHttp(c, 200, "application/xml", timelineXml(cid));
+            auto body = timelineXml(cid);
+            sendHttp(c, 200, "application/xml", body);
+            log("HTTP OUT 200 timeline " + timelineBrief(body));
             close(c);
             continue;
         }
@@ -801,8 +891,10 @@ void Companion::httpLoop() {
                     std::lock_guard<std::mutex> lock(mu_);
                     ackOff = timeMs_;
                 }
-                sendHttp(c, 200, "application/xml", timelineXml(cid));
+                auto body = timelineXml(cid);
+                sendHttp(c, 200, "application/xml", body);
                 close(c);
+                log("HTTP OUT 200 playMedia " + timelineBrief(body));
                 log("playMedia ACK key=" + pr.key + " offMs=" + std::to_string(ackOff));
                 // Invalidate in-flight resolve *before* spawning onPlay_ so a
                 // concurrent doPlay cannot bind/setState over this plant while

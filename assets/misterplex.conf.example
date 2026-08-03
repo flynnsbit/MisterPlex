@@ -11,21 +11,56 @@
 # PLEX_HOST=YOUR-PLEX-SERVER
 # Optional static token (cast often supplies transient X-Plex-Token)
 # PLEX_TOKEN=
+#
+# plex.tv presence check (optional). Off by default.
+# When enabled, misterplexd GETs https://plex.tv/api/v2/resources?includeHttps=1
+# with X-Plex-* identity headers and logs whether clientIdentifier appears in
+# the body. GET is a list (not an upsert); self_in_body=0 logs "registration
+# no-op". Legacy POST devices.xml is 404. LAN Select Player is driven mainly by
+# PMS /clients (GDM), not this check. Identifier MUST be unique and start with
+# "misterplex-" (deploy default: misterplex-dev); bare "misterplex-1" is refused.
+# Fail-soft. Requires PLEX_TOKEN. Restart misterplexd after changing.
+# PLEXTV_ANNOUNCE=0
+# PLEXTV_ANNOUNCE=1
 
 # --- Decode / present (Phase 2 transitional ARM path) ---
 # Static ARM ffmpeg. Default probes bin/ffmpeg here, then mistercast-linux.
 # FFMPEG=/media/fat/misterplex/bin/ffmpeg
 DECODE=320x240
-# PMS universal transcode profile. 240p is the current RTL/ARM product path.
-# 480p requests 640x480 H.264 Baseline Level 3.0 at 2500 kbps for the 480p
-# streaming build; enable only with the matching 640x480 frame-store/present path.
+# DECODE is the coded decode bank (product default 320x240). Lab 624x480 needs
+# DECODE_ALLOW_LAB_480P=1 (order of the two keys does not matter). 640x480 is
+# presented scanout only and is always rejected.
+# DECODE_ALLOW_LAB_480P=0
+#
+# TRANSCODE_PROFILE names a PMS ladder entry (bitrate/quality/H.264 caps + a
+# default videoResolution). It is NOT "delivered geometry by itself". Each play
+# sets videoResolution= from the content tier (OSD O[4] when OSD_CONTROL=1, else
+# DECODE). Startup banner prints pms_request_geometry= and decode_bank= separately
+# so profile_name=480p never looks like a second geometry next to decode=320x240.
+# 240p → 320x240 @ ~1000 kbps. 480p → coded 624x480 @ 2000 kbps (not 640x480).
+# Leave unset to follow DECODE / OSD.
 # TRANSCODE_PROFILE=240p
 # TRANSCODE_PROFILE=480p
 # Legacy per-field overrides (kept for lab experiments):
 # WEAK_RES=320x240
 # WEAK_BITRATE=1000
-# PRESENT=fb0|fpga|both
-PRESENT=fb0
+# STREAM=0 -vf scale policy (default skip_identity):
+#   always         — unconditional scale+pad
+#   skip_identity  — omit scale+pad when expected delivery WxH == coded bank
+#                    (transcode path: expected = requested PMS geometry;
+#                     direct path: library Media WxH when known; unknown → scale)
+#   off            — never scale (lab only)
+# FFMPEG_SCALE=skip_identity
+# Residual scale algo only when scale still runs (no product default — shipping
+# path with matching PMS videoResolution omits the filter). Opt-in example:
+# FFMPEG_SWS_FLAGS=fast_bilinear
+# Lab only: with skip_identity, trust PMS delivered coded WxH without dims.
+# FFMPEG_SCALE_ASSUME_MATCH=0
+# PRESENT=fb0|fpga|both|none
+# Product default is fpga: core HDMI idle/OSD need the DDR frame store.
+# PRESENT=fb0 alone freezes the idle screen on the last latched core frame
+# (daemon still opens FPGA for idle when conf says fb0, but prefer fpga).
+PRESENT=fpga
 # STREAM=1  # annex-B → host I-recon F1 + F3 (Phase 3.3i product path)
 # Prefer direct H.264 Part when STREAM=1 (avoids High/CABAC universal for recon).
 # High/CABAC: sticky skip from PPS entropy flag (no residual walk per IDR).
@@ -70,6 +105,13 @@ SOURCE_FPS=auto
 # dropping (video then only ever lags on a decode stall). Default 80.
 # AV_RESYNC_DROP_MS=80
 #
+# RAW_VIDEO_PIPE_BYTES: F_SETPIPE_SZ on the STREAM=0 ffmpeg rawvideo pipe.
+# Default 2097152 (2 MiB ≈ 4.7 frames of 624x480 I420). Kernel default is 65536
+# (~0.15 frames), so a DDR publish spike backpressures the decoder. This is a
+# latency/jitter buffer, NOT a throughput fix. 0/off = leave kernel default.
+# Banner prints F_GETPIPE_SZ actual (read-back), never the request alone.
+# RAW_VIDEO_PIPE_BYTES=2097152
+#
 # AV_CONTENT_FPS: override the detected content rate. "auto" (default) uses PMS.
 # Accepts "24000/1001", "23.976", "25". Only for debugging bad metadata.
 # AV_CONTENT_FPS=auto
@@ -106,19 +148,17 @@ AUDIO_CLOCK_PPM=-638
 
 # --- OSD menu controls (Plex core CONF_STR v3) --------------------------------
 #
-# OSD_CONTROL: let the core's OSD menu (F12) drive playback settings live. The
-# daemon polls status[15:0] ~4x/s and applies A/V offset, auto-resync, audio
-# clock trim and the idle screen without a restart or a conf edit.
-#
-# The daemon NEVER writes these bits. Main_MiSTer owns the OSD word and persists
-# it to /media/fat/config/Plex_v3.CFG; a daemon-side write fights Main's shadow
-# copy and makes the value flap. Read-only polling is the whole contract.
-#
-# REQUIRES a v3 or newer Plex.rbf (check with `set_status --confstr`). On an
-# older core those same bits mean Pattern / Audio tone / Force bars, so enabling
-# this would decode a stale "Force bars=Yes" as a bogus A/V offset. Set to 0 if
-# you are running a pre-v3 core.
-OSD_CONTROL=1
+# OSD_CONTROL: how the daemon treats F12 menu bits (status[15:0]).
+#   auto  (default) — read live CONF_STR via UIO_GET_STRING. Apply F12 Idle / A/V /
+#                     content tier ONLY when confstr contains "O[15:14],Idle screen"
+#                     (Plex.sv product marker). Pre-v3 cores (Pattern/Content FPS on
+#                     those bits) fail closed. PLXS mailbox is transport only — not
+#                     a generation proof. Does NOT use CORENAME/RBF filenames.
+#   on / 1          — always apply (mailbox preferred, SPI fallback). Unsafe on
+#                     pre-v3 CONF_STR where the same bits mean Pattern/Content FPS.
+#   off / 0         — never apply; F12 Idle Screen is inert; IDLE_SCREEN conf only.
+# When F12 is inert the daemon flashes "F12 Idle: use conf" on the idle HDMI frame.
+OSD_CONTROL=auto
 #
 # AV_OFFSET_MS: constant audio-vs-video trim applied inside the pacing loop (NOT
 # an ffmpeg adelay), so the OSD can change it mid-playback. Positive = present
@@ -126,11 +166,11 @@ OSD_CONTROL=1
 # steps; this conf value is the power-on default and is not limited to that grid.
 # AV_OFFSET_MS=0
 #
-# IDLE_SCREEN: what to show when nothing is playing. The FPGA frame store and
-# /dev/fb0 both latch the LAST frame written, so without this the final frame of
-# the previous video stays on screen forever (a CRT burn-in risk).
-#   logo        centred Plex-style chevron on a near-black field (default)
-#   black       flat black
-#   screensaver chevron drifting slowly to avoid burn-in
-#   lastframe   legacy behaviour — leave the last video frame up
-# IDLE_SCREEN=logo
+# IDLE_SCREEN: what to show when nothing is playing (and the only control when
+# F12 OSD is inert). Accepted values (main.cpp):
+#   logo         centred Plex-style chevron on a near-black field (default)
+#   black        flat black
+#   screensaver  chevron drifting slowly to avoid burn-in
+#   last | off   leave the last video frame up (legacy; CRT burn-in risk)
+# Unknown tokens (including "lastframe") fall through to logo.
+IDLE_SCREEN=logo

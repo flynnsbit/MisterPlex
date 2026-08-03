@@ -15,7 +15,16 @@ CONF_EX="$ROOT/assets/misterplex.conf.example"
 # Static armhf ffmpeg to bundle so the package is self-contained. Override with
 # FFMPEG_ARMHF=/path/to/ffmpeg. It is GPLv3, so its licence and provenance ship
 # alongside it (see the licenses/ffmpeg staging below).
-FFMPEG_ARMHF="${FFMPEG_ARMHF:-$HOME/Projects/mistercast-linux/third_party/ffmpeg-armhf/ffmpeg}"
+# Prefer a repo-local staged binary (see scripts/fetch_release_ffmpeg.sh) over the
+# machine-local mistercast-linux path so clean checkouts fail closed with a clear
+# remedy instead of silently missing a sibling-tree dependency.
+if [[ -z "${FFMPEG_ARMHF:-}" ]]; then
+  if [[ -f "$ROOT/release_artifacts/ffmpeg-armhf/ffmpeg" ]]; then
+    FFMPEG_ARMHF="$ROOT/release_artifacts/ffmpeg-armhf/ffmpeg"
+  else
+    FFMPEG_ARMHF="$HOME/Projects/mistercast-linux/third_party/ffmpeg-armhf/ffmpeg"
+  fi
+fi
 
 echo "=== package_release $VERSION ==="
 
@@ -27,7 +36,21 @@ echo "=== package_release $VERSION ==="
 # packaging an unrelated build.
 echo "Building arm misterplexd…"
 export PATH="${PATH}:${ARM_TOOLCHAIN_BIN:-$HOME/Projects/mistercast-linux/third_party/arm-gnu-toolchain/bin}"
-make -C "$ROOT" arm-plexd
+# DAEMON_PATH ships a specific, already-validated daemon binary instead of a
+# fresh build. Without it this script could never produce a shippable release:
+# it rebuilds the daemon on every run, so its md5 changes with any source edit
+# and can therefore never match a hardware-validated row in the pair matrix,
+# while the core stayed pinned to a fixed md5. The two could not both be
+# satisfied, so `make package` refused unconditionally. A gate that can only
+# ever say no is not a shipping path.
+DAEMON_SRC="${DAEMON_PATH:-}"
+if [[ -n "$DAEMON_SRC" ]]; then
+  [[ -f "$DAEMON_SRC" ]] || { echo "ERROR: DAEMON_PATH not found: $DAEMON_SRC" >&2; exit 1; }
+  echo "Using pre-validated daemon: $DAEMON_SRC (md5=$(md5sum "$DAEMON_SRC" | awk '{print $1}'))"
+  ARM_BIN="$DAEMON_SRC"
+else
+  make -C "$ROOT" arm-plexd
+fi
 [[ -f "$ARM_BIN" ]] || { echo "missing $ARM_BIN"; exit 1; }
 
 rm -rf "$STAGE"
@@ -96,8 +119,10 @@ else
 # Set this to your Plex Media Server, for example:
 # PLEX_BASE=http://YOUR-PLEX-SERVER:32400
 DECODE=320x240
-PRESENT=fb0
+PRESENT=fpga
 STREAM=0
+OSD_CONTROL=auto
+IDLE_SCREEN=logo
 MATCH_SOURCE_HZ=off
 EOF
 fi
@@ -117,11 +142,26 @@ if [[ ! -f "$RBF_SRC" ]]; then
 fi
 RBF_MD5_ACTUAL="$(md5sum "$RBF_SRC" | awk '{print $1}')"
 if [[ "$RBF_MD5_ACTUAL" != "$RBF_MD5_EXPECTED" ]]; then
-  echo "ERROR: refusing to package unverified Plex.rbf: $RBF_SRC" >&2
-  echo "       expected md5: $RBF_MD5_EXPECTED" >&2
-  echo "       actual md5:   $RBF_MD5_ACTUAL" >&2
-  echo "       v0.3.0 ships only the Phase A playback-controls core validated on hardware." >&2
-  exit 1
+  # Not the historical v0.3.0 pin. Authorised ONLY if this exact (core, daemon)
+  # combination is a hardware-validated row in the pair matrix -- which is a
+  # stronger statement than the single-core pin, because it is the PAIRING that
+  # black-screened the device, not either artifact alone. Fail-closed: anything
+  # the matrix does not know about is still refused, and the authoritative pair
+  # gate below re-checks the staged bytes.
+  _cand_daemon_md5="$(md5sum "$ARM_BIN" | awk '{print $1}')"
+  if _pair_ok="$("$ROOT/scripts/pair_ship_policy.sh" check "$RBF_MD5_ACTUAL" "$_cand_daemon_md5" 2>&1)"; then
+    echo "Core $RBF_MD5_ACTUAL is not the v0.3.0 pin but the pair is validated — $_pair_ok"
+  else
+    echo "ERROR: refusing to package unverified Plex.rbf: $RBF_SRC" >&2
+    echo "       expected md5: $RBF_MD5_EXPECTED (v0.3.0 pin)" >&2
+    echo "       actual md5:   $RBF_MD5_ACTUAL" >&2
+    echo "       daemon md5:   $_cand_daemon_md5" >&2
+    echo "       and the pair policy does not validate this combination:" >&2
+    echo "       $_pair_ok" >&2
+    echo "       Ship a hardware-validated pair: set RBF_PATH and DAEMON_PATH to a" >&2
+    echo "       row in scripts/pair_ship_policy.sh (PAIR_MATRIX_ROWS)." >&2
+    exit 1
+  fi
 fi
 cp -a "$RBF_SRC" "$STAGE/cores/Plex.rbf"
 echo "Included verified cores/Plex.rbf from $RBF_SRC ($(wc -c <"$STAGE/cores/Plex.rbf") bytes, md5=$RBF_MD5_ACTUAL)"
@@ -221,7 +261,7 @@ Plex.rbf locations (release / device)
 
 PRESENT / STREAM (conf)
 -----------------------
-  PRESENT=fb0|fpga|both     default fb0 (Phase 2 cast path)
+  PRESENT=fb0|fpga|both|none  default fpga (core HDMI idle/OSD; fb0 alone freezes idle)
   STREAM=0|1                annex-B → host I-recon F1 + F3 (STREAM hybrid 3.3k)
   Host recon owns present until FPGA 3.3l mae-competitive. See docs/release.md.
   Lab: bin/set_status --pattern grid --force-bars 1 --raw
@@ -259,9 +299,69 @@ cp -a "$STAGE/README.txt" "$STAGE/docs/INSTALL.txt"
   sha256sum -c SHA256SUMS
 )
 
+# Ship-safety gate. The packaged (core, daemon) pair must be one the project's
+# own ship policy accepts, and this runs BEFORE the tarball exists so a refused
+# pair never becomes a downloadable artifact.
+#
+# Measured on hardware 2026-08-02 (parent, viewed pixels): packaging silently
+# produced core 41adb98c + daemon 88e292fd, a combination pair_policy_check
+# REFUSES. Installed on the device that tarball renders a BLACK SCREEN — the
+# v0.3.0 core never frees a DDR bank for the DDR-era daemon, so every publish is
+# dropped ("PLXD bank-select swap_pending, free_mask=0", frames_done frozen) and
+# the idle paint fails. 90/90 captured frames had mean luma 0.00; rolling back to
+# the stable pair on the same capture chain immediately restored the chevron.
+#
+# There is deliberately NO environment bypass. The supported way to ship a new
+# pair is to hardware-validate it and add a row to scripts/pair_ship_policy.sh.
+if [[ -f "$STAGE/cores/Plex.rbf" ]]; then
+  pair_core_md5="$(md5sum "$STAGE/cores/Plex.rbf" | awk '{print $1}')"
+  pair_daemon_md5="$(md5sum "$STAGE/bin/misterplexd" | awk '{print $1}')"
+  if pair_verdict="$("$ROOT/scripts/pair_ship_policy.sh" check "$pair_core_md5" "$pair_daemon_md5" 2>&1)"; then
+    echo "package_release: pair policy OK — $pair_verdict"
+  else
+    {
+      echo "ERROR: refusing to package a (core, daemon) pair the ship policy rejects."
+      echo "       $pair_verdict"
+      echo "       core   = $pair_core_md5 ($STAGE/cores/Plex.rbf)"
+      echo "       daemon = $pair_daemon_md5 ($STAGE/bin/misterplexd)"
+      echo "       A mixed core/daemon pair black-screens the device; this was"
+      echo "       reproduced on hardware, so it is not a theoretical risk."
+      echo "       Fix the pairing instead of bypassing: point RBF_PATH at the core"
+      echo "       that matches this daemon, or hardware-validate the pair and add a"
+      echo "       row to scripts/pair_ship_policy.sh (PAIR_MATRIX_ROWS)."
+    } >&2
+    exit 6
+  fi
+fi
+
+# Behavioural vf delivery gate (parent hardware 2026-08-02, adversarial redesign):
+# packaged daemon's vf policy must pin OUTPUT I420 to coded-bank bytes for real
+# PMS deliveries including non-bank-exact 624x350, with non-dead chroma.
+# Artifact-only (not device state). No content-md5 allow/deny. Exit 7 refuse.
+# Scope: ARM producer only — not DDR/scanout (gate output states this).
+if [[ -f "$STAGE/bin/misterplexd" ]]; then
+  if ! vf_verdict="$("$ROOT/scripts/vf_delivery_behaviour_check.sh" "$STAGE/bin/misterplexd" 2>&1)"; then
+    {
+      echo "ERROR: refusing to package a daemon whose vf policy fails delivery behaviour."
+      echo "$vf_verdict"
+      echo "       Real PMS 624x350 into identity/unverified skip desyncs the raw pipe"
+      echo "       (green field / zero frames). Rebuild misterplexd with product FOAR"
+      echo "       into coded 624x480 and re-pin; do not ship a legacy identity policy."
+    } >&2
+    exit 7
+  fi
+  echo "package_release: vf delivery behaviour OK — $(printf '%s\n' "$vf_verdict" | grep 'VF_DELIVERY_OK' | tail -1)"
+fi
+
 mkdir -p "$OUT_DIR"
 # Extract as misterplex-<version>/ rather than leaking the staging directory name.
+# Force uid/gid 0 in the archive. /media/fat is exfat (no UNIX ownership);
+# a tarball built as lab uid 1000 makes plain `tar xzf` fail with
+# "Cannot change ownership to uid 1000" (true rc=2) on the only supported
+# target even when every payload byte is correct. Parent-measured on device
+# 2026-08-02: --owner=0 --group=0 --numeric-owner → plain tar xzf true rc=0.
 tar -C "$STAGE/.." --transform="s|^$(basename "$STAGE")|misterplex-${VERSION}|" \
+  --owner=0 --group=0 --numeric-owner \
   -czf "$TAR" "$(basename "$STAGE")"
 ls -la "$TAR"
 echo "Packaged → $TAR"

@@ -1,5 +1,6 @@
 #include "pms_timeline.hpp"
 
+#include "log_redact.hpp"
 #include "plex_resolve.hpp"
 
 #include <algorithm>
@@ -176,8 +177,11 @@ bool PmsTimelineReporter::send(const Pending& pending) {
     } catch (...) {
         ok = false;
     }
-    if (!ok && log_)
-        log_("pms timeline: update failed state=" + pending.state);
+    if (log_) {
+        // redactSensitive at the sink boundary; request.url stays real for HTTP.
+        log_(redactSensitive(std::string("pms timeline: update ") + (ok ? "ok" : "failed") +
+                             " state=" + pending.state + " url=" + pending.request.url));
+    }
     return ok;
 }
 

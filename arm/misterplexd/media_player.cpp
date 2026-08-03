@@ -1,14 +1,28 @@
 #include "media_player.hpp"
+#include "log_redact.hpp"
+#include "plex_resolve.hpp"
 
+#include "libmisterplex/audio_delay.hpp"
 #include "libmisterplex/av_clock.hpp"
+#include "libmisterplex/ffmpeg_vf.hpp"
+#include "libmisterplex/frame_ledger.hpp"
+#include "libmisterplex/fpga_scanout_health.hpp"
+#include "libmisterplex/supply_bucket.hpp"
 #include "libmisterplex/idle_screen.hpp"
+#include "libmisterplex/last_frame_latch.hpp"
 #include "libmisterplex/osd_menu.hpp"
 #include "libmisterplex/h264_nal_dispatch.hpp"
 #include "libmisterplex/h264_recon.hpp"
+#include "libmisterplex/raw_video_pipe.hpp"
+#include "libmisterplex/yuv420p_chroma_health.hpp"
+#include "libmisterplex/publish_interval_ledger.hpp"
+#include "libmisterplex/publish_swap_delta_ledger.hpp"
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cerrno>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <chrono>
 #include <exception>
@@ -17,6 +31,7 @@
 #include <vector>
 
 #include <fcntl.h>
+#include <poll.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -24,6 +39,31 @@
 
 namespace misterplex {
 namespace {
+
+// Telemetry rates must be evidence-grade. NEVER truncate with string.substr(0,4):
+// std::to_string(23.9694) and std::to_string(23.9111) both become "23.9", which over
+// a 360 s soak is a ±36 frame ambiguity (parent DEFECT 1). Prefer exact counters
+// (frames=/presents=/wall_ms=) and print rates with enough decimals to resolve
+// single-frame deficits (1/360 s ≈ 0.0028 fps → %.4f).
+inline std::string fmtFpsRate(double v) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%.4f", v);
+    return std::string(buf);
+}
+inline std::string fmtSec3(double v) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%.3f", v);
+    return std::string(buf);
+}
+
+// Steady-clock ms since epoch — shared axis for startup cluster instrumentation.
+// wall_s is session-relative (only after sessionOriginMonoMs_ is armed). mono_ms
+// is always available so first_audio_pcm (pre-origin) and first_video share one axis.
+inline int64_t steadyMonoMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
 
 // PMS universal already bakes offset= (seconds). Applying FFmpeg -ss again double-seeks
 // and breaks resume / mid-play scrub on STREAM=0 cast. Timeline still uses startMs.
@@ -158,8 +198,8 @@ inline size_t rawVideoPackedBytesPerPixel(RawVideoFormat f) {
 inline void clearYuv420pCropPadding(uint8_t* yuv, const DdrFrameGeometry& g) {
     if (!yuv || (g.crop_left == 0 && g.crop_right == 0 && g.crop_top == 0 && g.crop_bottom == 0))
         return;
-    const int w = g.coded_width;
-    const int h = g.coded_height;
+    const int w = g.coded_width.get();
+    const int h = g.coded_height.get();
     if (w <= 0 || h <= 0 || (w & 1) || (h & 1))
         return;
 
@@ -417,10 +457,13 @@ private:
 } // namespace
 
 void MediaPlayer::log(const std::string& s) const {
+    // Central sink redaction: spawn argv is logged here; real argv passed to
+    // spawnFfmpeg must remain unredacted (playback needs the true token).
+    const std::string safe = redactSensitive(s);
     if (log_)
-        log_(s);
+        log_(safe);
     else
-        std::fprintf(stderr, "%s\n", s.c_str());
+        std::fprintf(stderr, "%s\n", safe.c_str());
 }
 
 PlaybackSummary MediaPlayer::lastPlaybackSummary() const {
@@ -445,6 +488,22 @@ void MediaPlayer::setContentFpsRational(int num, int den) {
     fpsDen_ = den;
 }
 
+void MediaPlayer::setFfmpegScaleMode(std::string mode) {
+    // Unknown tokens collapse to "always" inside parseFfmpegScaleMode — keep raw for logs.
+    if (mode.empty())
+        mode = "always";
+    ffmpegScaleMode_ = std::move(mode);
+}
+
+void MediaPlayer::setFfmpegSwsFlags(std::string flags) {
+    if (!flags.empty() && !swsFlagsTokenOk(flags)) {
+        log("media: FFMPEG_SWS_FLAGS rejected (charset); keeping empty/default");
+        ffmpegSwsFlags_.clear();
+        return;
+    }
+    ffmpegSwsFlags_ = std::move(flags);
+}
+
 std::string MediaPlayer::hex16(uint16_t v) {
     static const char* d = "0123456789abcdef";
     std::string out(4, '0');
@@ -455,29 +514,90 @@ std::string MediaPlayer::hex16(uint16_t v) {
     return out;
 }
 
+void MediaPlayer::setOsdControlMode(OsdControlMode mode) { osdMode_ = mode; }
+
+bool MediaPlayer::osdApplyActive() const {
+    return osdApplyWanted(osdMode_,
+                          static_cast<OsdCapability>(osdCapability_.load()));
+}
+
 void MediaPlayer::startOsdPoll() {
     std::lock_guard<std::mutex> lk(osdMu_);
-    if (shuttingDown_.load() || !osdControl_ || osdRun_.exchange(true))
+    if (shuttingDown_.load())
+        return;
+    // ForcedOff: never probe, but still surface the inert state on HDMI once.
+    if (!osdPollWanted(osdMode_)) {
+        osdCapability_.store(static_cast<int>(OsdCapability::Absent));
+        if (!osdInertNotified_.exchange(true)) {
+            log("media: OSD F12 inert mode=off capability=absent — Idle Screen menu "
+                "does nothing; use IDLE_SCREEN conf");
+            overlay_.flashNotice(osdInertUserNotice());
+            if (!playing_.load())
+                paintIdle();
+        }
+        return;
+    }
+    // Auto/On: probe live CONF_STR (generation) then poll status word.
+    if (osdRun_.exchange(true))
         return;
     if (osdThr_.joinable())
         osdThr_.join();
+    osdCapability_.store(static_cast<int>(OsdCapability::Unknown));
+    osdInertNotified_.store(false);
     osdThr_ = std::thread([this] {
-        bool mailboxLogged = false;
+        bool confstrLogged = false;
+        bool transportLogged = false;
+        bool applyLogged = false;
+        const auto t0 = std::chrono::steady_clock::now();
+        const double startMs =
+            std::chrono::duration<double, std::milli>(t0.time_since_epoch()).count();
         while (osdRun_.load()) {
+            // 1) Generation proof: UIO_GET_STRING CONF_STR (once classified, stick).
+            //    Auto apply is gated on V3Idle only — never on PLXS alone.
+            {
+                const auto cur = static_cast<OsdCapability>(osdCapability_.load());
+                if (cur == OsdCapability::Unknown) {
+                    std::string confstr;
+                    bool gotStr = false;
+                    {
+                        std::lock_guard<std::mutex> lk(presentMu_);
+                        if (fpga_.ok())
+                            gotStr = fpga_.getConfigString(confstr);
+                    }
+                    if (gotStr) {
+                        const auto gen = classifyOsdConfStr(confstr);
+                        osdCapability_.store(static_cast<int>(gen));
+                        if (!confstrLogged) {
+                            confstrLogged = true;
+                            std::string detail;
+                            if (gen == OsdCapability::V3Idle) {
+                                detail = std::string("marker=") + kOsdIdleScreenConfMarker;
+                            } else if (confStrHasPreV3Markers(confstr)) {
+                                detail = "pre_v3_markers=Pattern|ContentFPS";
+                            } else {
+                                detail = "no_idle_screen_marker";
+                            }
+                            log(std::string("media: OSD confstr gen=") + osdCapabilityName(gen) +
+                                " " + detail);
+                        }
+                    }
+                }
+            }
+
+            const auto cap = static_cast<OsdCapability>(osdCapability_.load());
+
+            // 2) Status word transport: mailbox preferred; SPI only when allowed.
             uint16_t word = 0;
             bool got = false;
             bool viaMailbox = false;
             {
                 std::lock_guard<std::mutex> lk(presentMu_);
-                // Preferred path: the core publishes the OSD word into HPS DDR,
-                // so reading it is a plain memory load that Main never sees.
                 if (fpga_.readOsdMailbox(word)) {
                     got = true;
                     viaMailbox = true;
-                } else if (fpga_.ok()) {
-                    // Pre-mailbox RBF: fall back to UIO_GET_STATUS over SPI.
-                    // status[15:0] is the only slice the core echoes back;
-                    // everything above it is telemetry that Main overwrites.
+                } else if (osdSpiStatusWanted(osdMode_, cap) && fpga_.ok()) {
+                    // SPI status is safe once CONF_STR proved V3Idle, or ForcedOn.
+                    // Auto+PreV3 must never read/apply these bits via SPI.
                     uint8_t raw[16]{};
                     if (fpga_.getCoreStatus(raw)) {
                         word = static_cast<uint16_t>(raw[0] | (raw[1] << 8));
@@ -485,19 +605,66 @@ void MediaPlayer::startOsdPoll() {
                     }
                 }
             }
-            if (got && viaMailbox && !mailboxLogged) {
-                mailboxLogged = true;
-                log("media: OSD via DDR mailbox (no SPI)");
-            }
-            if (got) {
-                const uint16_t prev = lastOsd_.load();
-                if (!osdSeen_.exchange(true) || osdChanged(prev, word)) {
-                    lastOsd_.store(word);
-                    applyOsd(word);
+
+            // Auto: fail closed when probe window elapses without confstr class.
+            if (osdMode_ == OsdControlMode::Auto) {
+                const double nowMs = std::chrono::duration<double, std::milli>(
+                                         std::chrono::steady_clock::now().time_since_epoch())
+                                         .count();
+                const auto cur = static_cast<OsdCapability>(osdCapability_.load());
+                const auto settled = osdAutoSettle(cur, startMs, nowMs);
+                if (settled != cur) {
+                    osdCapability_.store(static_cast<int>(settled));
+                    if (settled == OsdCapability::Absent && !confstrLogged) {
+                        confstrLogged = true;
+                        log("media: OSD confstr gen=absent — UIO_GET_STRING not readable "
+                            "within probe window; F12 Idle stays disabled (fail closed)");
+                    }
                 }
             }
-            // The mailbox is free to poll. The SPI fallback is not: it has to
-            // park Main for the critical section, so keep that path slow.
+
+            if (got && !transportLogged) {
+                transportLogged = true;
+                log(std::string("media: OSD status via=") + (viaMailbox ? "mailbox" : "spi") +
+                    " capability=" +
+                    osdCapabilityName(static_cast<OsdCapability>(osdCapability_.load())));
+            }
+
+            // One-shot user-visible notice when F12 cannot drive the daemon.
+            {
+                const auto c = static_cast<OsdCapability>(osdCapability_.load());
+                const bool settledInert =
+                    !osdApplyActive() &&
+                    (osdMode_ == OsdControlMode::ForcedOff || c == OsdCapability::Absent ||
+                     c == OsdCapability::PreV3);
+                if (settledInert && !osdInertNotified_.exchange(true)) {
+                    log(std::string("media: OSD F12 inert mode=") + osdControlModeName(osdMode_) +
+                        " capability=" + osdCapabilityName(c) +
+                        " — Idle Screen menu does nothing; use IDLE_SCREEN conf");
+                    overlay_.flashNotice(osdInertUserNotice());
+                    if (!playing_.load())
+                        paintIdle();
+                }
+            }
+
+            if (got && osdApplyActive()) {
+                if (!applyLogged) {
+                    applyLogged = true;
+                    log(std::string("media: OSD apply enabled mode=") +
+                        osdControlModeName(osdMode_) + " capability=" +
+                        osdCapabilityName(static_cast<OsdCapability>(osdCapability_.load())) +
+                        " via=" + (viaMailbox ? "mailbox" : "spi"));
+                }
+                const uint16_t prev = lastOsd_.load();
+                const bool seenBefore = osdSeen_.exchange(true);
+                if (!seenBefore || osdChanged(prev, word)) {
+                    lastOsd_.store(word);
+                    // First word: apply persisted F12 Idle Screen (Main CFG).
+                    // Later: idle only when [15:14] change. See shouldApplyOsdIdle.
+                    applyOsd(word, shouldApplyOsdIdle(seenBefore, prev, word));
+                }
+            }
+            // Mailbox is free to poll. SPI parks Main — keep that path slow.
             const int quietMs = viaMailbox ? 100 : (playing_.load() ? 250 : 1000);
             for (int slept = 0; slept < quietMs && osdRun_.load(); slept += 50)
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -563,7 +730,7 @@ void MediaPlayer::dispatchPlaybackInput(PlaybackCommand command) {
                                   ignoreInputUntilMs_.load(), *this);
 }
 
-void MediaPlayer::applyOsd(uint16_t word) {
+void MediaPlayer::applyOsd(uint16_t word, bool applyIdle) {
     ignoreInputUntilMs_.store(steadyMs() + 300);
     const OsdSettings s = decodeOsdWord(word);
     setAvOffsetMs(s.avOffsetMs);
@@ -571,17 +738,89 @@ void MediaPlayer::applyOsd(uint16_t word) {
     // opens MrAudio, and re-timing it mid-stream would step the audio clock.
     setAudioClockTrimEnabled(s.audioClockTrimEnabled);
     setResyncDropMs(s.resyncEnabled ? kDefaultResyncDropMs : 0);
-    const IdleMode im = idleModeFromBits(static_cast<unsigned>(s.idleMode));
-    const bool idleChanged = im != idleMode();
-    setIdleMode(im);
-    if (idleChanged)
-        idleLogged_.store(false);
-    if (idleChanged && !playing_.load())
-        paintIdle();
+    if (applyIdle) {
+        const IdleMode im = idleModeFromBits(static_cast<unsigned>(s.idleMode));
+        const bool idleChanged = im != idleMode();
+        setIdleMode(im);
+        if (idleChanged)
+            idleLogged_.store(false);
+        if (idleChanged && !playing_.load())
+            paintIdle();
+    }
     log("media: OSD word=0x" + hex16(word) + " av_offset_ms=" + std::to_string(s.avOffsetMs) +
         " clock_ppm=" + std::to_string(audioClockPpm_) +
         " resync=" + (s.resyncEnabled ? "on" : "off") +
-        " idle=" + std::to_string(s.idleMode));
+        " idle=" + std::to_string(s.idleMode) + (applyIdle ? "" : " (idle unchanged)"));
+}
+
+bool MediaPlayer::publishDdrFrame(const DdrPublishFrame& frame, const char* context,
+                                  std::string* err) {
+    std::string localErr;
+    // Native 960×540 product path: fabric-owned Option-C + PLXG + 777600 copy.
+    // Full-canvas path remains makeDdrPublishPlan for 624×480 scale+pad tiers.
+    const bool native540 =
+        fabricOwnedPresent_.valid && frame.len == fabricOwnedPresent_.publish_bytes &&
+        frame.geometry.coded_width.get() == fabricOwnedPresent_.content_w &&
+        frame.geometry.coded_height.get() == fabricOwnedPresent_.content_h;
+    if (!native540) {
+        DdrPublishPlan plan{};
+        if (!makeDdrPublishPlan(frame, ddrBank_, plan, &localErr)) {
+            if (err)
+                *err = std::string(context ? context : "DDR") + ": " + localErr;
+            return false;
+        }
+    } else {
+        DdrFabricOwnedPublishPlan fplan{};
+        if (!makeDdrFabricOwnedPublishPlan(frame.payload, ddrBank_, fabricOwnedPresent_, fplan,
+                                           &localErr)) {
+            if (err)
+                *err = std::string(context ? context : "DDR") + ": " + localErr;
+            return false;
+        }
+    }
+    // Late-arrival vs late-observation: stamp immediately BEFORE the DDR/SPI
+    // write and immediately AFTER it returns. Intervals use pre-to-pre (arrival);
+    // write_us=post-pre discriminates blocking inside the write (parent 2026-08-01).
+    const auto tPre = std::chrono::steady_clock::now();
+    const bool ok =
+        native540 ? fpga_.publishDdrFabricOwned(frame, fabricOwnedPresent_, ddrBank_)
+                  : fpga_.publishDdrFrame(frame, ddrBank_);
+    const auto tPost = std::chrono::steady_clock::now();
+    // Advance from the bank actually written (PLXD may override the hint).
+    if (ok) {
+        ddrBank_ = nextDdrPresentBank(fpga_.lastPublishedBank(), true);
+        const int64_t preUs = std::chrono::duration_cast<std::chrono::microseconds>(
+                                  tPre.time_since_epoch())
+                                  .count();
+        const int64_t postUs = std::chrono::duration_cast<std::chrono::microseconds>(
+                                   tPost.time_since_epoch())
+                                   .count();
+        pubInterval_.note(preUs, postUs);
+        // PLXD frames_done from bank-select read already done inside sendDdrFrame.
+        BankReleaseStatus brs{};
+        if (fpga_.lastPublishBankRelease(brs)) {
+            pubSwapDelta_.note(preUs, brs.frames_done,
+                               static_cast<uint8_t>(brs.swap_pending ? 1 : 0),
+                               brs.free_bank_mask, brs.disp_bank);
+        }
+        // Optional mid-session sample (env): every 240 successful pubs (~10s @24).
+        static const bool kLogMid = [] {
+            const char* e = std::getenv("MISTERPLEX_PUBLISH_INTERVAL_LOG");
+            return e && e[0] && e[0] != '0';
+        }();
+        if (kLogMid && (pubInterval_.count % 240) == 0) {
+            log(std::string("media: ") + pubInterval_.formatSummaryLine("measured") +
+                " phase=mid");
+            log(std::string("media: ") + pubInterval_.formatDiscLine() + " phase=mid");
+            log(std::string("media: ") + pubSwapDelta_.formatSummaryLine("measured") +
+                " phase=mid");
+            log(std::string("media: ") + pubSwapDelta_.formatCompatAliasLine() +
+                " phase=mid");
+        }
+    }
+    if (!ok && err)
+        *err = fpga_.lastError();
+    return ok;
 }
 
 void MediaPlayer::paintIdle() {
@@ -592,6 +831,8 @@ void MediaPlayer::paintIdle() {
     const int h = 240;
     std::vector<uint8_t> buf(static_cast<size_t>(w) * h * 3);
     renderIdleRgb24(buf.data(), w, h, m, idlePhase_.load());
+    // Composite F12-inert / transport notice onto idle RGB (HDMI-visible without logs).
+    overlay_.renderRgb24(buf.data(), w, h);
 
     std::lock_guard<std::mutex> lk(presentMu_);
     if (fb_.ok() && !fb_.blitRgb24(buf.data(), w, h))
@@ -599,25 +840,79 @@ void MediaPlayer::paintIdle() {
     // F1 latches the last frame written, so the frame store must be repainted too.
     // C3 frame-store DDR is YUV-only, so encode the same idle renderer as I420
     // instead of ringing the doorbell with an RGB payload.
+    if (!fpga_.ok() && presentMode_ != "none") {
+        if (fpga_.open()) {
+            useDdrF1_ = true;
+            ddrBank_ = 0;
+            log("media: idle FPGA frame path OK (painting core frame store)");
+        } else if (!idleWarned_.exchange(true)) {
+            log("media: ERROR idle cannot open FPGA (PRESENT=" + presentMode_ + "): " +
+                fpga_.lastError() +
+                " — menu Idle Screen changes will not appear on HDMI");
+        }
+    }
     if (fpga_.ok()) {
         bool ok = false;
+        std::string ddrErr;
         if (useDdrF1_) {
             const DdrFrameGeometry g = plex480pDdrFrameGeometry();
+            const int cw = g.coded_width.get();
+            const int ch = g.coded_height.get();
             const DdrFrameLayout layout =
                 makeDdrFrameLayout(g, kDdrFramePhysBase, kDdrFrameStrideAlign,
                                    DdrFrameFormat::Yuv420p);
             std::vector<uint8_t> yuv(layout.frame_bytes);
-            if (renderIdleYuv420p(yuv.data(), g.coded_width, g.coded_height, m,
-                                  idlePhase_.load())) {
-                ok = fpga_.sendYuv420pFrameDdr(yuv.data(), yuv.size(), g, ddrBank_);
+            bool haveYuv = false;
+            // When a notice banner is up, render idle+overlay at coded size in RGB
+            // then convert so HDMI (DDR path) shows the same banner as fb0.
+            if (overlay_.visible()) {
+                std::vector<uint8_t> rgb(static_cast<size_t>(cw) * ch * 3);
+                renderIdleRgb24(rgb.data(), cw, ch, m, idlePhase_.load());
+                overlay_.renderRgb24(rgb.data(), cw, ch);
+                // RGB24 → planar YUV420 using the same coeffs as idle_screen.
+                uint8_t* yPlane = yuv.data();
+                uint8_t* uPlane = yPlane + static_cast<size_t>(cw) * ch;
+                uint8_t* vPlane = uPlane + static_cast<size_t>(cw / 2) * (ch / 2);
+                for (int y = 0; y < ch; ++y) {
+                    for (int x = 0; x < cw; ++x) {
+                        const size_t i = (static_cast<size_t>(y) * cw + x) * 3;
+                        yPlane[static_cast<size_t>(y) * cw + x] =
+                            idleRgbToY(rgb[i], rgb[i + 1], rgb[i + 2]);
+                    }
+                }
+                for (int cy = 0; cy < ch / 2; ++cy) {
+                    for (int cx = 0; cx < cw / 2; ++cx) {
+                        int rSum = 0, gSum = 0, bSum = 0;
+                        for (int dy = 0; dy < 2; ++dy) {
+                            for (int dx = 0; dx < 2; ++dx) {
+                                const size_t i =
+                                    (static_cast<size_t>(cy * 2 + dy) * cw + (cx * 2 + dx)) * 3;
+                                rSum += rgb[i];
+                                gSum += rgb[i + 1];
+                                bSum += rgb[i + 2];
+                            }
+                        }
+                        const int r = (rSum + 2) / 4;
+                        const int g = (gSum + 2) / 4;
+                        const int b = (bSum + 2) / 4;
+                        const size_t ci = static_cast<size_t>(cy) * (cw / 2) + cx;
+                        uPlane[ci] = idleRgbToU(r, g, b);
+                        vPlane[ci] = idleRgbToV(r, g, b);
+                    }
+                }
+                haveYuv = true;
+            } else {
+                haveYuv = renderIdleYuv420p(yuv.data(), cw, ch, m, idlePhase_.load());
             }
-            if (ok)
-                ddrBank_ ^= 1;
+            if (haveYuv) {
+                DdrPublishFrame frame{yuv.data(), yuv.size(), g, DdrFrameFormat::Yuv420p};
+                ok = publishDdrFrame(frame, "idle DDR", &ddrErr);
+            }
         }
         if (!ok) {
             if (!idleWarned_.exchange(true))
                 log("media: idle paint DDR failed (will retry on re-probe): " +
-                    fpga_.lastError());
+                    (ddrErr.empty() ? fpga_.lastError() : ddrErr));
         } else {
             // Arm the warning again so a later failure is not swallowed — the core
             // is briefly out of user mode right after a heal/reload and the first
@@ -669,7 +964,9 @@ void MediaPlayer::stopIdle() {
         idleThr_.join();
 }
 
-void MediaPlayer::setDecodeSize(int w, int h) {
+void MediaPlayer::setDecodeSize(CodedWidth cw, CodedHeight ch) {
+    int w = cw.get();
+    int h = ch.get();
     if (w < 160)
         w = 160;
     if (h < 120)
@@ -683,6 +980,17 @@ void MediaPlayer::setDecodeSize(int w, int h) {
         h = 720;
     outW_ = w;
     outH_ = h;
+}
+
+void MediaPlayer::setDecodeSizeSource(const std::string& src) {
+    if (src.empty())
+        decodeSizeSource_ = "default";
+    else if (src.rfind("cli:", 0) == 0 || src == "cli:--decode" || src == "argv")
+        decodeSizeSource_ = "caller_supplied";
+    else if (src.rfind("conf:", 0) == 0)
+        decodeSizeSource_ = src; // keep conf path for audit
+    else
+        decodeSizeSource_ = src;
 }
 
 std::string MediaPlayer::lastError() const {
@@ -714,11 +1022,22 @@ bool MediaPlayer::initPresent() {
         log("media: PRESENT=none decode-only path (test/lab; no fb0 or FPGA writes)");
         return true;
     }
+    if (presentMode_.empty())
+        presentMode_ = "fpga";
 
-    bool wantFb = (presentMode_ == "fb0" || presentMode_ == "both" || presentMode_.empty());
-    bool wantFpga = (presentMode_ == "fpga" || presentMode_ == "both");
+    // fb0/both still open Linux fb0. The Plex *core* HDMI path always needs the
+    // FPGA DDR frame store for idle/OSD paint — PRESENT=fb0 used to skip
+    // fpga_.open() and left the last latched image forever (user-reported twice).
+    const bool wantFb = (presentMode_ == "fb0" || presentMode_ == "both");
+    const bool wantFpga = true; // every non-none PRESENT must open FPGA for core scanout
+
+    if (presentMode_ == "fb0") {
+        log("media: PRESENT=fb0 — also opening FPGA frame path (core HDMI idle/OSD need "
+            "DDR; fb0 blit alone does not update Plex core scanout)");
+    }
 
     bool any = false;
+    bool fpgaOk = false;
     if (wantFb) {
         if (fb_.open("/dev/fb0")) {
             fb_.clear();
@@ -733,12 +1052,23 @@ bool MediaPlayer::initPresent() {
         if (fpga_.open()) {
             useDdrF1_ = true;
             ddrBank_ = 0;
-            log("media: FPGA frame path OK (PRESENT=fpga → DDR YUV420p only)");
+            fpgaOk = true;
+            log("media: FPGA frame path OK (PRESENT=" + presentMode_ + " → DDR YUV420p)");
+            // Write PLXD (dormant) to the bitstream ring CTRL so that a DDR probe
+            // can distinguish "producer disabled by config" from uninitialised DDR
+            // residue. The FPGA reader ignores PLXD; this is diagnostic only.
+            if (!streamEnabled_) {
+                if (fpga_.publishBitstreamDormant())
+                    log("media: DDR bitstream CTRL=PLXD (STREAM=0, producer dormant)");
+                else
+                    log("media: DDR bitstream dormant publish failed: " + fpga_.lastError());
+            }
             // Legacy (pre-v3) core only: park the debug bits so a stale saved OSD
             // cannot steal cast frames. On a v3 core those same bits ARE the A/V
             // offset menu item, so zeroing them would silently reset the user's
-            // setting on every startup.
-            if (!osdControl_) {
+            // setting on every startup. Only park when OSD apply is forced off —
+            // Auto still probing must not touch A/V offset bits on a live v3 core.
+            if (osdMode_ == OsdControlMode::ForcedOff) {
                 const int park[] = {6, 0, 7, 0, 8, 0, 9, 0};
                 if (!fpga_.setStatusBits(park, 4))
                     log("media: park OSD (None/tone-off): " + fpga_.lastError());
@@ -747,7 +1077,11 @@ bool MediaPlayer::initPresent() {
             }
             any = true;
         } else {
-            log("media: FPGA SPI unavailable: " + fpga_.lastError());
+            log("media: ERROR FPGA SPI unavailable (PRESENT=" + presentMode_ + "): " +
+                fpga_.lastError() +
+                " — core HDMI idle screen and F12 Idle Screen menu cannot repaint "
+                "the DDR frame store. Load Plex.rbf, check SPI/uio, or set "
+                "PRESENT=none for decode-only lab.");
         }
     }
     if (audioEnabled_) {
@@ -759,10 +1093,22 @@ bool MediaPlayer::initPresent() {
             log("media: audio device " + audioDev_ + " unavailable (video-only)");
         }
     }
+    // Product PRESENT=fpga|both: FPGA is mandatory (HDMI is the core, not fb0).
+    if (!fpgaOk && (presentMode_ == "fpga" || presentMode_ == "both")) {
+        std::lock_guard<std::mutex> lock(mu_);
+        lastError_ = "FPGA present path required for PRESENT=" + presentMode_;
+        return false;
+    }
     if (!any) {
         std::lock_guard<std::mutex> lock(mu_);
         lastError_ = "no present path (fb0/fpga)";
         return false;
+    }
+    if (!fpgaOk) {
+        // PRESENT=fb0 with no FPGA: companion/fb0 may work; core idle stays frozen.
+        log("media: ERROR PRESENT=" + presentMode_ +
+            " without FPGA — idle-mode rotation on the Plex core will stay stuck on "
+            "the last latched frame. Fix PRESENT/SPI or expect a frozen logo.");
     }
     return true;
 }
@@ -806,6 +1152,13 @@ void MediaPlayer::killChildren() {
         waitpid(sp, &st, 0);
     }
     audioActive_.store(false);
+    audioStartGate_.store(false);
+    sessionOriginMonoMs_.store(-1, std::memory_order_release);
+    firstAudioPcmMonoMs_.store(-1, std::memory_order_release);
+    avAudioReleaseMonoMs_.store(-1, std::memory_order_release);
+    pumpAudioReleaseMonoMs_.store(-1, std::memory_order_release);
+    holdBytesAtRelease_.store(-1, std::memory_order_release);
+    firstAudioQueuedGe0MonoMs_.store(-1, std::memory_order_release);
     streamActive_.store(false);
 }
 
@@ -863,9 +1216,11 @@ void MediaPlayer::stop() {
     seekReqMs_.store(-1);
     positionMs_.store(0);
     showPlaybackOverlay(PlaybackOverlayState::Stopped, 0, 0);
-    // Retire the background FPGA users BEFORE tearing the SPI/mmap state down.
-    // stop() closes FpgaSpi and reloads the core; an OSD poll or idle paint in
-    // flight would then ioctl through an unmapped handle and take the daemon down.
+    // Retire background FPGA users before any path that might repaint.
+    // NOTE (source, 2026-08-02): stop() does NOT call fpga_.close() and does NOT
+    // reload the core. The /dev/mem mmap from initPresent stays open across stop
+    // and across an external load_core — see reopenPresentPath() for recovery
+    // when presents advance without PLXD bank-identity proof.
     stopOsdPoll();
     stopIdle();
     if (fb_.ok())
@@ -936,6 +1291,16 @@ void MediaPlayer::seekMs(int64_t ms) {
     play(withUniversalOffset(url, ms), ms, headers, dur);
 }
 
+void MediaPlayer::armProcessEpoch(uint64_t epochMonoMs) {
+    // Once per process. 0 is reserved as "unarmed".
+    uint64_t expected = 0;
+    if (processEpoch_.compare_exchange_strong(expected, epochMonoMs == 0 ? 1 : epochMonoMs,
+                                              std::memory_order_acq_rel)) {
+        log("media: process_epoch=" + std::to_string(processEpoch_.load()) +
+            " tag=measured — soak windows must not span a different process_epoch");
+    }
+}
+
 bool MediaPlayer::play(const std::string& urlOrPath, int64_t startOffsetMs,
                        const std::string& httpHeaders, int64_t durationMs) {
     // Idle painter owns fb0/F1 between sessions — retire it before we present.
@@ -963,6 +1328,54 @@ bool MediaPlayer::play(const std::string& urlOrPath, int64_t startOffsetMs,
         reconFrames_.store(0);
         reconPresentOk_.store(false);
         cabacSkip_.store(false);
+        // Stream generation: bump at START so telemetry session_epoch is stable
+        // for the whole stream and changes on every play/seek restart.
+        const uint64_t sseq = streamSeq_.fetch_add(1, std::memory_order_acq_rel) + 1;
+        const uint64_t pep = processEpoch_.load(std::memory_order_acquire);
+        log("media: stream_start stream_seq=" + std::to_string(sseq) +
+            " process_epoch=" + std::to_string(pep) +
+            " session_epoch=" + sessionEpochString(pep, sseq) +
+            " tag=measured");
+        // Cadence instrument (w-instr DEFECT 2/3): T_vsync / src_fps provenance.
+        // Prefer host tools/measure_refresh_hz.py → MISTERPLEX_VSYNC_HZ=...
+        // Without env: DEFAULT_ASSUMED 60 Hz — every hold_d is CONDITIONAL.
+        pubSwapDelta_.reset();
+        pubInterval_.reset();
+        if (const char* vh = std::getenv("MISTERPLEX_VSYNC_HZ")) {
+            char* endp = nullptr;
+            const double hz = std::strtod(vh, &endp);
+            if (endp != vh && hz > 1.0 && hz < 240.0) {
+                pubSwapDelta_.setVsyncHzMeasured(hz);
+                log("media: cadence_vsync_hz=" + std::to_string(hz) +
+                    " vsync_hz_tag=measured vsync_hz_der=env_MISTERPLEX_VSYNC_HZ "
+                    "hold_d_conditional=0");
+            } else {
+                pubSwapDelta_.setVsyncHzDefaultAssumed(60.0);
+                log("media: cadence_vsync_hz=60 vsync_hz_tag=DEFAULT_ASSUMED "
+                    "vsync_hz_der=fallback_bad_env hold_d_conditional=1");
+            }
+        } else {
+            pubSwapDelta_.setVsyncHzDefaultAssumed(60.0);
+            log("media: cadence_vsync_hz=60 vsync_hz_tag=DEFAULT_ASSUMED "
+                "vsync_hz_der=no_MISTERPLEX_VSYNC_HZ hold_d_conditional=1");
+        }
+        if (const char* sf = std::getenv("MISTERPLEX_SRC_FPS")) {
+            char* endp = nullptr;
+            const double fps = std::strtod(sf, &endp);
+            if (endp != sf && fps > 1.0 && fps < 120.0) {
+                pubSwapDelta_.setSrcFpsMeasured(fps);
+                log("media: cadence_src_fps=" + std::to_string(fps) +
+                    " src_fps_tag=measured src_fps_der=env_MISTERPLEX_SRC_FPS");
+            } else {
+                pubSwapDelta_.setSrcFpsDefaultAssumed(24.0);
+                log("media: cadence_src_fps=24 src_fps_tag=DEFAULT_ASSUMED "
+                    "src_fps_der=fallback_bad_env_NOT_asset_probe");
+            }
+        } else {
+            pubSwapDelta_.setSrcFpsDefaultAssumed(24.0);
+            log("media: cadence_src_fps=24 src_fps_tag=DEFAULT_ASSUMED "
+                "src_fps_der=no_MISTERPLEX_SRC_FPS_NOT_asset_probe");
+        }
         {
             std::lock_guard<std::mutex> lock(summaryMu_);
             lastSummary_ = PlaybackSummary{};
@@ -987,7 +1400,8 @@ bool MediaPlayer::play(const std::string& urlOrPath, int64_t startOffsetMs,
     return true;
 }
 
-pid_t MediaPlayer::spawnFfmpeg(const std::vector<std::string>& args, int vWriteFd, int aWriteFd) {
+pid_t MediaPlayer::spawnFfmpeg(const std::vector<std::string>& args, int vWriteFd, int aWriteFd,
+                               int errWriteFd) {
     pid_t pid = fork();
     if (pid < 0)
         return -1;
@@ -1009,13 +1423,17 @@ pid_t MediaPlayer::spawnFfmpeg(const std::vector<std::string>& args, int vWriteF
         if (vWriteFd >= 0 && vWriteFd != STDOUT_FILENO && vWriteFd != 3)
             ::close(vWriteFd);
 
-        // Lab: capture FFmpeg errors on USB (tmpfs /tmp is tiny). Product: /dev/null.
-        int errfd = ::open("/media/usb0/misterplex-lab/logs/ffmpeg.err",
+        // Prefer caller stderr pipe (geometry banners). Else lab USB file /dev/null.
+        int errfd = errWriteFd;
+        if (errfd < 0) {
+            errfd = ::open("/media/usb0/misterplex-lab/logs/ffmpeg.err",
                            O_WRONLY | O_CREAT | O_TRUNC, 0644);
-        if (errfd < 0)
-            errfd = ::open("/dev/null", O_WRONLY);
+            if (errfd < 0)
+                errfd = ::open("/dev/null", O_WRONLY);
+        }
         if (errfd >= 0) {
-            dup2(errfd, STDERR_FILENO);
+            if (errfd != STDERR_FILENO)
+                dup2(errfd, STDERR_FILENO);
             if (errfd != STDERR_FILENO && errfd != 3 && errfd != STDOUT_FILENO)
                 ::close(errfd);
         }
@@ -1033,6 +1451,157 @@ pid_t MediaPlayer::spawnFfmpeg(const std::vector<std::string>& args, int vWriteF
     }
     setpgid(pid, pid);
     return pid;
+}
+
+void MediaPlayer::ffmpegStderrPump(int errReadFd, size_t codedFrameBytes, bool identitySkip,
+                                   int codedW, int codedH) {
+    if (errReadFd < 0)
+        return;
+    std::string acc;
+    char buf[512];
+    int lastInW = 0, lastInH = 0;
+    int lastOutW = 0, lastOutH = 0;
+    for (;;) {
+        const ssize_t n = ::read(errReadFd, buf, sizeof(buf));
+        if (n < 0) {
+            if (errno == EINTR)
+                continue;
+            break;
+        }
+        if (n == 0)
+            break;
+        acc.append(buf, static_cast<size_t>(n));
+        for (;;) {
+            // Must split on '\r' too: ffmpeg -stats uses CR progress updates.
+            // Splitting only on '\n' leaves ffmpeg_out_frames=NO-DATA all soak.
+            std::string line;
+            if (!misterplex::takeFfmpegStderrLine(acc, &line))
+                break;
+            if (line.empty())
+                continue;
+            // Capture ffmpeg frame= into atomic; do not log every stats line (spam).
+            // Parent glass-loss split needs ffmpeg_out_frames vs frameIndex.
+            {
+                int64_t ff = 0;
+                if (misterplex::parseFfmpegFrameCountLine(line, &ff)) {
+                    ffmpegOutFrames_.store(ff, std::memory_order_relaxed);
+                    continue;
+                }
+            }
+            if (line.find("fps=") != std::string::npos && line.find("Stream") == std::string::npos)
+                continue;
+            const auto g = parseFfmpegGeometryLine(line);
+            if (!g.ok)
+                continue;
+            // Classify: lines under Output # are post-filter; Input/Stream Video
+            // without Output are pre-filter delivery.
+            const bool outish =
+                g.is_output || line.find("Output") != std::string::npos ||
+                line.find("rawvideo") != std::string::npos;
+            if (outish) {
+                if (g.w == lastOutW && g.h == lastOutH)
+                    continue;
+                lastOutW = g.w;
+                lastOutH = g.h;
+                log("media: MEASURED_OUTPUT " + std::to_string(g.w) + "x" +
+                    std::to_string(g.h) + " (post-vf rawvideo)");
+                continue;
+            }
+            // Input / decoded delivery geometry — the B2 permanent observable.
+            if (g.w == lastInW && g.h == lastInH)
+                continue;
+            const bool changed = (lastInW > 0 || lastInH > 0);
+            lastInW = g.w;
+            lastInH = g.h;
+            measuredDeliveryW_.store(g.w);
+            measuredDeliveryH_.store(g.h);
+            // Do NOT overwrite ffmpegScaleSourceW_/H_ (play-time claim / request).
+            // Measured lives in measuredDeliveryW_/H_ only — FINAL compares them.
+            const size_t prodBytes = yuv420pFrameBytesWH(g.w, g.h);
+            // desync_risk is real: identity_skip && measured_input_bytes != reader.
+            // Product FORCE_SCALE (Always) at play-time plan uses crop+pad for an
+            // *unverified* exact claim (identity_skip=0) so OUTPUT stays coded-
+            // shaped without FOAR; risk stays 0 unless a verified-identity path
+            // was taken and measurement later disagrees. identity_skip=1 is only
+            // for verified/assume exact (or SkipIdentity+verified). Not unwired.
+            const bool risk = pipeDesyncRisk(prodBytes, codedFrameBytes, identitySkip);
+            if (risk)
+                pipeDesyncRisk_.store(true);
+            // delivered_geom: ACTUAL input WxH from ffmpeg Stream banner (stderr).
+            // Derivation: parseFfmpegGeometryLine on -loglevel info "Stream #… Video: … WxH".
+            // Not library metadata, not PMS /status/sessions, not the requested
+            // videoResolution= query. src=ffmpeg_banner is permanent observability (B2).
+            // Compare measured vs DDR *coded bank* (rawW×rawH passed in), never DECODE
+            // tier alone — 320×240 DECODE still publishes into a 624×480 bank.
+            const bool geomMatch =
+                (codedW > 0 && codedH > 0 && g.w == codedW && g.h == codedH);
+            // B4: delivery_verified is a FACT that we measured (basis=="measured"),
+            // not "measured equals bank". Match is decode_target_match / DELIVERY_MISMATCH.
+            // Play-time GEOM stays delivery_verified=0 until this banner (claim basis).
+            const bool verified = deliveryGeometryVerifiedFromBasis("measured");
+            if (verified)
+                deliveryGeometryVerified_.store(true, std::memory_order_relaxed);
+            log(std::string("media: MEASURED_DELIVERY delivered_geom=") +
+                std::to_string(g.w) + "x" + std::to_string(g.h) +
+                " src=ffmpeg_banner" +
+                " producer_bytes=" + std::to_string(prodBytes) +
+                " reader_bytes=" + std::to_string(codedFrameBytes) +
+                " coded_bank=" + std::to_string(codedW) + "x" + std::to_string(codedH) +
+                " decode_tier=" + std::to_string(outW_) + "x" + std::to_string(outH_) +
+                " decode_target_match=" + (geomMatch ? "1" : "0") +
+                " identity_skip=" + (identitySkip ? "1" : "0") +
+                " desync_risk=" + (risk ? "1" : "0") +
+                " delivery_verified=" + (verified ? "1" : "0") +
+                " delivery_basis=measured" +
+                (changed ? " MID_STREAM_CHANGE=1" : " MID_STREAM_CHANGE=0") +
+                " tag=measured" +
+                (changed ? " — size changed after play start" : ""));
+            // Mismatch vs coded bank must be LOUD even when FORCE_SCALE keeps the
+            // pipe safe (desync_risk may stay 0 with identity_skip=0).
+            // Parent user symptom: "480p didn't look like 480p" when measured_h
+            // is ~350 and we upscale to 480 (vertical detail fraction < 1).
+            if (!geomMatch && codedW > 0 && codedH > 0) {
+                const double vfrac =
+                    (g.h > 0 && codedH > 0)
+                        ? (static_cast<double>(g.h) / static_cast<double>(codedH))
+                        : 0.0;
+                log("ERROR media: DELIVERY_MISMATCH measured=" + std::to_string(g.w) + "x" +
+                    std::to_string(g.h) + " coded_bank=" + std::to_string(codedW) + "x" +
+                    std::to_string(codedH) +
+                    " decode_tier=" + std::to_string(outW_) + "x" +
+                    std::to_string(outH_) +
+                    " producer_bytes=" + std::to_string(prodBytes) +
+                    " reader_bytes=" + std::to_string(codedFrameBytes) +
+                    " identity_skip=" + (identitySkip ? "1" : "0") +
+                    " force_scale_protects=" + (identitySkip ? "0" : "1") +
+                    " vertical_detail_frac=" + std::to_string(vfrac) +
+                    " note=measured_ne_coded_bank_videoResolution_is_ceiling tag=measured");
+            }
+            if (risk) {
+                log("ERROR media: PIPE_DESYNC_RISK measured=" + std::to_string(g.w) + "x" +
+                    std::to_string(g.h) + " producer_bytes=" + std::to_string(prodBytes) +
+                    " reader_bytes=" + std::to_string(codedFrameBytes) +
+                    " identity_skip=1 tag=measured — raw pipe will phase-walk; force scale");
+            }
+            if (changed) {
+                // Play-time GEOM / vf plan is fixed for the session. Unverified
+                // exact under Always uses crop+pad (not identity_skip) so the
+                // filter still emits coded WxH when input is large enough to crop;
+                // identity_skip cannot rebuild if it was taken. Surface loudly.
+                log("ERROR media: MEASURED_DELIVERY mid-stream change — play-time "
+                    "geometry guard cannot rebuild vf; identity_skip=" +
+                    std::string(identitySkip ? "1" : "0") +
+                    " (crop+pad/scale pin OUTPUT only while those filters stay live)");
+            }
+        }
+    }
+    // EOF: final stats line may lack a trailing separator.
+    if (!acc.empty()) {
+        int64_t ff = 0;
+        if (misterplex::parseFfmpegFrameCountLine(acc, &ff))
+            ffmpegOutFrames_.store(ff, std::memory_order_relaxed);
+    }
+    ::close(errReadFd);
 }
 
 pid_t MediaPlayer::spawnStreamDemux(const std::string& url, const std::string& headers,
@@ -1120,10 +1689,12 @@ pid_t MediaPlayer::spawnAudioOnly(const std::string& url, const std::string& hea
     args.push_back("-map");
     args.push_back("0:a:0?");
     args.push_back("-af");
+    // Portable adelay=N|N (see libmisterplex/audio_delay.hpp). Conf intent is
+    // logged here; audioPump measures pcm_silence_head_ms on the wire.
+    args.push_back(misterplex::ffmpegAudioDelayFilter(audioDelayMs_));
     if (audioDelayMs_ > 0)
-        args.push_back("aresample=48000,adelay=" + std::to_string(audioDelayMs_) + ":all=1");
-    else
-        args.push_back("aresample=48000");
+        log("media: ffmpeg adelay_ms=" + std::to_string(audioDelayMs_) +
+            " filter=" + misterplex::ffmpegAudioDelayFilter(audioDelayMs_));
     args.push_back("-f");
     args.push_back("s16le");
     args.push_back("-ac");
@@ -1146,6 +1717,8 @@ void MediaPlayer::streamPump(int sfd) {
         fb_.ok() && (presentMode_ == "fb0" || presentMode_.empty());
 
     auto formatDdrBitstreamStatus = [](const FpgaSpi::BitstreamStatus& st) {
+        if (st.dormant)
+            return std::string("ddr_status=DORMANT (STREAM=0, PLXD)");
         return std::string("ddr_status session=") + std::to_string(st.session_id) +
                " active=" + (st.active ? "1" : "0") +
                " paused=" + (st.paused ? "1" : "0") +
@@ -1304,23 +1877,50 @@ void MediaPlayer::streamPump(int sfd) {
             // C3 frame-store RTL is YUV-only. Never send RGB565 to the DDR doorbell.
             bool ok = false;
             if (useDdrF1_) {
-                const DdrFrameGeometry g = plex480pDdrFrameGeometry();
-                if (rec.width == g.coded_width && rec.height == g.coded_height) {
+                // Silicon canvas is always productDdrFrameStoreGeometry() (624 coded).
+                // Accept any MB-aligned recon size that fits, then center-pack into
+                // the compile-time bank so line stride matches RTL CODED_W.
+                if (ddrFrameStoreAcceptsResolution(rec.width, rec.height)) {
+                    const DdrFrameGeometry g = ddrFrameGeometryForFpgaPresent(
+                        CodedWidth{rec.width}, CodedHeight{rec.height});
+                    const DdrFrameLayout layout = makeDdrFrameLayout(
+                        g, kDdrFramePhysBase, kDdrFrameStrideAlign, DdrFrameFormat::Yuv420p);
                     ensureYuv420p();
-                    clearYuv420pCropPadding(yuv420p.data(), g);
-                    ok = fpga_.sendYuv420pFrameDdr(yuv420p.data(), yuv420p.size(), g, ddrBank_);
-                    if (ok)
-                        ddrBank_ ^= 1;
-                    if (!ok) {
-                        log("media: recon YUV420 DDR F1 unavailable: " + fpga_.lastError());
-                    } else if ((reconOk % 30) == 0) {
-                        log("media: recon F1 via YUV420 DDR " +
-                            std::to_string(static_cast<int>(fpga_.lastPushMs())) + "ms");
+                    std::vector<uint8_t> bank(layout.frame_bytes);
+                    if (!packYuv420pCenteredIntoCodedBank(yuv420p.data(), rec.width, rec.height,
+                                                          bank.data(), g)) {
+                        log("media: recon YUV420 pack into silicon canvas failed " +
+                            std::to_string(rec.width) + "x" + std::to_string(rec.height));
+                    } else {
+                        clearYuv420pCropPadding(bank.data(), g);
+                        DdrPublishFrame frame{bank.data(), bank.size(), g,
+                                              DdrFrameFormat::Yuv420p};
+                        std::string ddrErr;
+                        std::lock_guard<std::mutex> lk(presentMu_);
+                        ok = publishDdrFrame(frame, "recon DDR", &ddrErr);
+                        if (!ok) {
+                            log("media: recon YUV420 DDR F1 unavailable: " +
+                                (ddrErr.empty() ? fpga_.lastError() : ddrErr));
+                        } else if ((reconOk % 30) == 0) {
+                            log("media: recon F1 via YUV420 DDR " +
+                                std::to_string(rec.width) + "x" + std::to_string(rec.height) +
+                                "→" + std::to_string(g.coded_width.get()) + "x" +
+                                std::to_string(g.coded_height.get()) + " " +
+                                std::to_string(static_cast<int>(fpga_.lastPushMs())) + "ms");
+                        }
                     }
                 } else if (!reconDdrMismatchLogged) {
                     reconDdrMismatchLogged = true;
-                    log("media: recon F1 skipped: YUV DDR frame-store requires coded 624x480, got " +
-                        std::to_string(rec.width) + "x" + std::to_string(rec.height));
+                    log("ERROR media: recon F1 REFUSED: frame-store requires MB-aligned "
+                        "resolution <= " + std::to_string(kDdrFrameStoreMaxWidth.get()) + "x" +
+                        std::to_string(kDdrFrameStoreMaxHeight.get()) +
+                        ", got " + std::to_string(rec.width) + "x" + std::to_string(rec.height) +
+                        " — ALL subsequent recon frames will be SKIPPED. "
+                        "This produces no video on the FPGA output.");
+                } else if ((reconFrames_.load() % 300) == 0) {
+                    log("media: recon F1 still skipping: " +
+                        std::to_string(rec.width) + "x" + std::to_string(rec.height) +
+                        " exceeds frame-store capacity");
                 }
             }
             if (ok)
@@ -1646,6 +2246,57 @@ int64_t MediaPlayer::readMrAudioQueuedBytes() {
     return misterplex::parseMrAudioQueuedBytes(buf, n);
 }
 
+// One status-line sample for handoff boundary logs. Does not claim playback phase.
+misterplex::MrAudioStatusSnap MediaPlayer::readMrAudioStatusSnap(std::string* rawOut) {
+    misterplex::MrAudioStatusSnap snap{};
+    const int fd = ::open(audioDev_.c_str(), O_RDONLY);
+    if (fd < 0)
+        return snap;
+    char buf[160];
+    const ssize_t n = ::read(fd, buf, sizeof(buf) - 1);
+    ::close(fd);
+    if (n <= 0)
+        return snap;
+    buf[n] = '\0';
+    // Trim trailing newline for log cleanliness.
+    ssize_t end = n;
+    while (end > 0 && (buf[end - 1] == '\n' || buf[end - 1] == '\r')) {
+        buf[end - 1] = '\0';
+        --end;
+    }
+    if (rawOut)
+        *rawOut = std::string(buf, static_cast<size_t>(end > 0 ? end : 0));
+    return misterplex::parseMrAudioStatusSnap(buf, end);
+}
+
+void MediaPlayer::logMrAudioHandoffAt(const char* where) {
+    // Parent A/B across clusters: pair rptr/wptr/len/comp at the same `where`.
+    // If identical while HDMI sep≈117 ms, ring snapshot at this point is NOT the
+    // discriminator. Does not claim lipsync; tag=measured on every field we got.
+    std::string raw;
+    const auto snap = readMrAudioStatusSnap(&raw);
+    const int64_t mono = steadyMonoMs();
+    const int64_t qms =
+        (snap.len >= 0) ? (snap.len * 1000LL) / misterplex::kMrAudioBytesPerSec : -1;
+    std::string plxd = " frames_done=NO-DATA";
+    if (fpga_.ok()) {
+        BankReleaseStatus brs;
+        if (fpga_.readBankRelease(brs))
+            plxd = " frames_done=" + std::to_string(static_cast<unsigned>(brs.frames_done));
+        else
+            plxd = " frames_done=UNREADABLE";
+    }
+    log(std::string("media: MrAudio handoff_at=") + (where ? where : "?") +
+        " mono_ms=" + std::to_string(mono) +
+        " rptr=" + std::to_string(snap.rptr) + " wptr=" + std::to_string(snap.wptr) +
+        " len_B=" + std::to_string(snap.len) + " len_ms=" + std::to_string(qms) +
+        " comp=" + std::to_string(snap.comp) + plxd +
+        " written_B=" + std::to_string(audioBytes_.load()) +
+        " raw=\"" + (raw.empty() ? std::string("NO-DATA") : raw) + "\""
+        " tag=measured"
+        " (post-write FPGA drain phase not in this sample)");
+}
+
 void MediaPlayer::audioPump(int afd) {
     // Drain PCM to MrAudio. Lab evidence: MrAudio write() does NOT pace realtime
     // (audio_s grew ~3× wall → jumpy audio). Pace ourselves to exact 48 kHz wall
@@ -1661,10 +2312,27 @@ void MediaPlayer::audioPump(int afd) {
         out = ::open(audioDev_.c_str(), O_WRONLY);
         if (out < 0)
             log("media: open " + audioDev_ + " failed errno=" + std::to_string(errno));
-        else
+        else {
             log("media: MrAudio open — software-paced 48kHz delay_ms=" +
                 std::to_string(audioDelayMs_) +
                 " clock_ppm=" + std::to_string(audioClockPpm_) + " (adelay in ffmpeg if >0)");
+            // Handoff boundary: last daemon-controlled store is ::write into the
+            // ring. Sample status BEFORE any write so leftover depth/rptr is
+            // visible. Does NOT locate the 117 ms cluster (hold falsified);
+            // makes post-write-unobserved phase partially greppable.
+            std::string raw;
+            const auto snap = readMrAudioStatusSnap(&raw);
+            const int64_t mono = steadyMonoMs();
+            const int64_t qms =
+                (snap.len >= 0) ? (snap.len * 1000LL) / misterplex::kMrAudioBytesPerSec : -1;
+            log("media: MrAudio ring_at_open mono_ms=" + std::to_string(mono) +
+                " rptr=" + std::to_string(snap.rptr) + " wptr=" + std::to_string(snap.wptr) +
+                " len_B=" + std::to_string(snap.len) + " len_ms=" + std::to_string(qms) +
+                " comp=" + std::to_string(snap.comp) +
+                " raw=\"" + (raw.empty() ? std::string("NO-DATA") : raw) + "\""
+                " tag=measured"
+                " (observability ends at write+len; FPGA drain phase not logged)");
+        }
     }
     if (out < 0 && !wantF2) {
         char buf[4096];
@@ -1689,6 +2357,50 @@ void MediaPlayer::audioPump(int afd) {
     char buf[3840];
     std::vector<uint8_t> f2acc;
     f2acc.reserve(32768);
+    // Measure leading PCM silence (adelay proof on the wire). conf intent alone
+    // is not enough — parent A/B saw only +33 ms of a 150 ms request.
+    misterplex::SilenceHeadScan silenceScan;
+    silenceScan.reset(/*threshold=*/500, /*sr=*/48000, /*maxMs=*/2000);
+    bool silenceLogged = false;
+    auto noteSilence = [&](const void* data, size_t nbytes) {
+        if (silenceLogged)
+            return;
+        if (silenceScan.feed(data, nbytes)) {
+            silenceLogged = true;
+            log("media: pcm_silence_head_ms=" + std::to_string(silenceScan.headMs) +
+                " conf_adelay_ms=" + std::to_string(audioDelayMs_) +
+                " predicted_shift_ms=" +
+                std::to_string(misterplex::adelayContentShiftMs(audioDelayMs_)) +
+                " (measured on pump input; tag=measured)");
+        }
+    };
+    // Hold buffer while audioStartGate_ is closed. Cap kAudioHoldCapMs (2 s).
+    //
+    // Peer shape (CITED): arm when BOTH ready / preroll then latch base-time
+    // (mpv, GStreamer). NOT-FOUND: peer keep-HEAD hold FIFO from stream t=0.
+    //
+    // Overflow: DropHeadKeepTail (NOT-FOUND peer consensus). keep-HEAD was a
+    // measured audible jump; drop-head is still a content discontinuity at the
+    // discarded head — honest, not peer-blessed.
+    //
+    // Timeout kAudioHoldTimeoutMs: ENGINEERING COMPROMISE (NOT "what mpv does")
+    // between infinite silence and ExoPlayer-scale ~2.5 s start buffers. Logs
+    // loudly; lastHoldWaitedMs_ makes it telemetry-visible.
+    constexpr size_t kAudioHoldCapBytes =
+        static_cast<size_t>(misterplex::kAudioHoldCapBytes);
+    std::vector<uint8_t> holdBuf;
+    holdBuf.reserve(static_cast<size_t>(misterplex::kMrAudioBytesPerSec)); // 1 s typical
+    bool holdLogged = false;
+    bool holdOverflowLogged = false;
+    bool holdTimeoutLogged = false;
+    bool releaseLogged = false;
+    bool firstAudioPcmLogged = false;
+    // Peer-aligned: no past-bias when draining a non-empty hold (see av_clock.hpp).
+    bool pastBiasOnNextOrigin = true;
+    auto holdSince = std::chrono::steady_clock::time_point{};
+    int64_t lastHoldWaitLogMs = -1;
+    lastHeldMs_.store(-1, std::memory_order_release);
+    lastHoldWaitedMs_.store(-1, std::memory_order_release);
     size_t total = 0;
     size_t f2total = 0;
     int f2Fail = 0;
@@ -1702,13 +2414,10 @@ void MediaPlayer::audioPump(int afd) {
     // value is only a starting point — and the fallback if the depth is
     // unreadable.
     const double kBytesPerSec = 48000.0 * 4.0 * (1.0 + audioClockPpm_ / 1000000.0);
-    // Deadline for the next chunk. Started on the FIRST chunk actually read, not
-    // here: FFmpeg needs a variable, sometimes multi-hundred-ms warm-up before it
-    // emits anything, and anchoring the clock before that made the pump write
-    // flat out to "catch up", dumping the entire warm-up into the ring where it
-    // stayed for the session (feed and drain are both ~48 kHz, so nothing ever
-    // drained it). That is what made ring depth — and therefore lipsync —
-    // session-dependent.
+    // Deadline for the next chunk. Started on the FIRST chunk actually written
+    // to MrAudio (after audioStartGate_), not on the first ffmpeg read: holding
+    // the device closed until first video is what absorbs the ~206 ms startup
+    // lead (measured audio_origin_ms) without re-basing the pacer clock.
     std::chrono::steady_clock::time_point audioDue{};
     bool audioClockStarted = false;
     int64_t chunkIndex = 0;
@@ -1717,24 +2426,13 @@ void MediaPlayer::audioPump(int afd) {
     bool latencyLogged = false;
     bool overrunLogged = false;
 
-    while (!stop_.load()) {
-        if (paused_.load()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(20));
-            continue;
-        }
-        ssize_t n = ::read(afd, buf, sizeof(buf));
-        if (n < 0) {
-            if (errno == EINTR)
-                continue;
-            break;
-        }
-        if (n == 0)
-            break;
-
-        if (out >= 0) {
+    // Write one PCM chunk to MrAudio (and/or accumulate F2) with the normal
+    // 48 kHz pace + ring servo. Called only after audioStartGate_ opens.
+    auto writePacedChunk = [&](const uint8_t* data, size_t n) {
+        if (out >= 0 && n > 0) {
             size_t off = 0;
-            while (off < static_cast<size_t>(n) && !stop_.load()) {
-                ssize_t w = ::write(out, buf + off, static_cast<size_t>(n) - off);
+            while (off < n && !stop_.load()) {
+                ssize_t w = ::write(out, data + off, n - off);
                 if (w < 0) {
                     if (errno == EINTR)
                         continue;
@@ -1743,75 +2441,177 @@ void MediaPlayer::audioPump(int afd) {
                 }
                 off += static_cast<size_t>(w);
             }
-            audioBytes_.fetch_add(static_cast<size_t>(n));
+            audioBytes_.fetch_add(static_cast<int64_t>(n));
 
-            // Anchor on the first chunk, biased one target-depth into the past so
-            // the pump runs flat out just long enough to prefill the ring to the
-            // servo's set point, then falls into paced mode. This is the ordinary
-            // audio prefill, and it is bounded — unlike the old warm-up burst.
+            // Anchor on the first chunk actually written.
+            // Peer-aligned hold drain: when pastBiasOnNextOrigin is false (non-
+            // empty hold), start audioDue at `now` so held PCM does not burst
+            // kFeedTargetMs ahead of the video origin latched at the same wall
+            // instant (cluster-sep suspect). Cold/live open (empty hold) still
+            // past-biases to the ring servo set-point.
             if (!audioClockStarted) {
                 audioClockStarted = true;
-                audioDue = std::chrono::steady_clock::now() -
-                           std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-                               std::chrono::duration<double>(
-                                   static_cast<double>(misterplex::kFeedTargetBytes) /
-                                   kBytesPerSec));
+                const auto now0 = std::chrono::steady_clock::now();
+                if (pastBiasOnNextOrigin) {
+                    audioDue = now0 - std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                                          std::chrono::duration<double>(
+                                              static_cast<double>(misterplex::kFeedTargetBytes) /
+                                              kBytesPerSec));
+                    log("media: audio pace origin=past_bias prefill_ms=" +
+                        std::to_string(misterplex::kFeedTargetMs) +
+                        " (empty-hold / live open)");
+                } else {
+                    audioDue = now0;
+                    log("media: audio pace origin=now hold_drain_no_past_bias=1 "
+                        "burst_lead_ms=0 (peer-aligned; held PCM realtime with video)");
+                }
+                // First MrAudio write landed — sample ring immediately (not every-4th).
+                // Parent can pair ring_at_open vs ring_after_first_write across clusters.
+                std::string raw;
+                const auto snap = readMrAudioStatusSnap(&raw);
+                const int64_t mono = steadyMonoMs();
+                const int64_t qms =
+                    (snap.len >= 0) ? (snap.len * 1000LL) / misterplex::kMrAudioBytesPerSec : -1;
+                log("media: MrAudio ring_after_first_write mono_ms=" + std::to_string(mono) +
+                    " written_B=" + std::to_string(audioBytes_.load()) +
+                    " rptr=" + std::to_string(snap.rptr) + " wptr=" + std::to_string(snap.wptr) +
+                    " len_B=" + std::to_string(snap.len) + " len_ms=" + std::to_string(qms) +
+                    " comp=" + std::to_string(snap.comp) +
+                    " raw=\"" + (raw.empty() ? std::string("NO-DATA") : raw) + "\""
+                    " tag=measured"
+                    " (post-write drain still FPGA-scheduled; not a lipsync claim)");
             }
 
-            // Advance the deadline by this chunk's duration at the servo-corrected
-            // rate. Accumulating the deadline (rather than recomputing it from a
-            // fixed origin) is what lets the rate change mid-stream without the
-            // schedule jumping.
+            // Early ring trajectory (first ~320 ms @ 20 ms chunks). Parent: if
+            // A vs B len/rptr tracks stay parallel with only a constant offset
+            // that does NOT match HDMI sep (117 ms ≈ 22464 B), kill ring-phase.
+            if (chunkIndex < 16) {
+                std::string raw;
+                const auto snap = readMrAudioStatusSnap(&raw);
+                const int64_t mono = steadyMonoMs();
+                const int64_t qms =
+                    (snap.len >= 0) ? (snap.len * 1000LL) / misterplex::kMrAudioBytesPerSec
+                                    : -1;
+                log("media: MrAudio early_traj chunk=" + std::to_string(chunkIndex) +
+                    " mono_ms=" + std::to_string(mono) +
+                    " rptr=" + std::to_string(snap.rptr) +
+                    " wptr=" + std::to_string(snap.wptr) +
+                    " len_B=" + std::to_string(snap.len) +
+                    " len_ms=" + std::to_string(qms) +
+                    " written_B=" + std::to_string(audioBytes_.load()) +
+                    " tag=measured");
+            }
+
             const double rate = misterplex::feedRateBytesPerSec(
                 kBytesPerSec, audioQueuedBytes_.load(std::memory_order_relaxed));
             audioDue += std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-                std::chrono::duration<double>(n / rate));
+                std::chrono::duration<double>(static_cast<double>(n) / rate));
             const auto now = std::chrono::steady_clock::now();
             if (audioDue > now)
                 std::this_thread::sleep_until(audioDue);
             else if (now - audioDue > std::chrono::seconds(1)) {
-                // We fell more than a second behind (decoder stall, CPU spike).
-                // Do not try to make it up in one burst — that is precisely the
-                // ring-stuffing behaviour we just removed. Re-anchor and let the
-                // servo refill the target depth at its own pace.
                 audioDue = now;
             }
 
-            // Turn the submitted-byte counter into a real playback position by
-            // subtracting what is still sitting in the driver's DMA ring. This
-            // reading is also the servo's error signal, so it feeds both the
-            // video clock and the feed rate.
-            // Sampled every 4th chunk (~80 ms), which is far faster than the
-            // servo's 8 s time constant; polling harder buys nothing but
-            // syscalls.
             if ((chunkIndex++ % 4) == 0) {
                 const int64_t q = readMrAudioQueuedBytes();
                 if (q < 0) {
                     audioQueuedBytes_.store(-1);
                 } else {
-                    // Low-pass the depth. The servo holds the true depth
-                    // constant, so sample-to-sample movement is mostly noise;
-                    // feeding it raw into the video clock would jitter every
-                    // frame's release time, and into the servo would make it
-                    // chase that jitter. Seed on the first sample so startup is
-                    // not slewed in from zero.
                     queuedEma = (queuedEma < 0) ? q : (queuedEma * 3 + q) / 4;
                     audioQueuedBytes_.store(queuedEma);
+                    // Field 6: first transition audioQueuedBytes_ -1 → >=0.
+                    // Ends submitted-byte-clock fallback window (H-RING length).
+                    {
+                        int64_t expected = -1;
+                        const int64_t monoQ = steadyMonoMs();
+                        if (firstAudioQueuedGe0MonoMs_.compare_exchange_strong(
+                                expected, monoQ, std::memory_order_acq_rel)) {
+                            const int64_t origin =
+                                sessionOriginMonoMs_.load(std::memory_order_acquire);
+                            const int64_t fa =
+                                firstAudioPcmMonoMs_.load(std::memory_order_acquire);
+                            std::string wallField = " wall_s=NO-DATA";
+                            std::string sinceOrigin = " since_origin_ms=NO-DATA";
+                            if (origin >= 0) {
+                                const int64_t so = monoQ - origin;
+                                wallField =
+                                    " wall_s=" +
+                                    std::to_string(static_cast<double>(so) / 1000.0)
+                                        .substr(0, 8);
+                                sinceOrigin =
+                                    " since_origin_ms=" + std::to_string(so);
+                            }
+                            std::string sinceFa = " since_first_audio_pcm_ms=NO-DATA";
+                            if (fa >= 0)
+                                sinceFa = " since_first_audio_pcm_ms=" +
+                                          std::to_string(monoQ - fa);
+                            log("media: audio_queued_first_ge0 mono_ms=" +
+                                std::to_string(monoQ) + wallField + sinceOrigin +
+                                sinceFa + " queued_B=" + std::to_string(queuedEma) +
+                                " raw_q_B=" + std::to_string(q) +
+                                " tag=measured");
+                        }
+                    }
                     const int64_t latMs =
                         (queuedEma * 1000LL) / misterplex::kMrAudioBytesPerSec;
                     if (!latencyLogged) {
                         latencyLogged = true;
-                        log("media: MrAudio playback position available — video now paces "
-                            "off what is HEARD, not what is sent");
+                        // One-shot: marks end of submitted-byte-clock fallback window.
+                        // mono_ms required — without it the pre-availability length is
+                        // unmeasurable (parent H-RING rejection still needs the window).
+                        const int64_t mono = steadyMonoMs();
+                        const int64_t origin =
+                            sessionOriginMonoMs_.load(std::memory_order_acquire);
+                        const int64_t fa =
+                            firstAudioPcmMonoMs_.load(std::memory_order_acquire);
+                        const int64_t ar =
+                            avAudioReleaseMonoMs_.load(std::memory_order_acquire);
+                        std::string wallField = " wall_s=NO-DATA";
+                        std::string sinceOrigin = " since_origin_ms=NO-DATA";
+                        if (origin >= 0) {
+                            const int64_t so = mono - origin;
+                            wallField = " wall_s=" +
+                                        std::to_string(static_cast<double>(so) / 1000.0)
+                                            .substr(0, 8);
+                            sinceOrigin = " since_origin_ms=" + std::to_string(so);
+                        }
+                        std::string sinceFa = " since_first_audio_pcm_ms=NO-DATA";
+                        if (fa >= 0)
+                            sinceFa = " since_first_audio_pcm_ms=" + std::to_string(mono - fa);
+                        std::string sinceAr = " since_audio_release_ms=NO-DATA";
+                        if (ar >= 0)
+                            sinceAr = " since_audio_release_ms=" + std::to_string(mono - ar);
+                        log("media: MrAudio playback position available mono_ms=" +
+                            std::to_string(mono) + wallField + sinceOrigin + sinceFa +
+                            sinceAr + " queued_B=" + std::to_string(queuedEma) +
+                            " lat_ms=" + std::to_string(latMs) +
+                            " tag=measured"
+                            " — video now paces off what is HEARD, not what is sent");
                     }
                     const int64_t nowMs = audioClockMs(audioBytes_.load());
                     if (lastLatLog < 0 || nowMs - lastLatLog >= 5000) {
                         lastLatLog = nowMs;
-                        log("media: audio latency " + std::to_string(latMs) + "ms queued=" +
-                            std::to_string(queuedEma) + "B");
+                        // Every latency sample carries mono_ms + since_origin so a
+                        // "first" value cannot be misread as session-start (parent
+                        // sampling-phase trap: index-9 76ms vs steady ~100ms).
+                        const int64_t mono = steadyMonoMs();
+                        const int64_t origin =
+                            sessionOriginMonoMs_.load(std::memory_order_acquire);
+                        std::string sinceOrigin = " since_origin_ms=NO-DATA";
+                        std::string wallField = " wall_s=NO-DATA";
+                        if (origin >= 0) {
+                            const int64_t so = mono - origin;
+                            sinceOrigin = " since_origin_ms=" + std::to_string(so);
+                            wallField = " wall_s=" +
+                                        std::to_string(static_cast<double>(so) / 1000.0)
+                                            .substr(0, 8);
+                        }
+                        log("media: audio latency ms=" + std::to_string(latMs) +
+                            " queued_B=" + std::to_string(queuedEma) +
+                            " mono_ms=" + std::to_string(mono) + wallField + sinceOrigin +
+                            " tag=measured");
                     }
-                    // The ring has no backpressure: writing past the read pointer
-                    // silently destroys unplayed audio. Nothing else reports this.
                     if (!overrunLogged && queuedEma > (misterplex::kMrAudioRingBytes * 3) / 4) {
                         overrunLogged = true;
                         log("media: WARNING MrAudio ring " + std::to_string(latMs) +
@@ -1820,37 +2620,237 @@ void MediaPlayer::audioPump(int afd) {
                 }
             }
         }
+    };
 
+    auto flushF2 = [&]() {
+        while (wantF2 && f2acc.size() >= kF2Chunk && !stop_.load()) {
+            if (fpga_.sendPcmChunk(f2acc.data(), kF2Chunk, /*F2*/ 2)) {
+                f2total += kF2Chunk;
+                f2Fail = 0;
+            } else {
+                ++f2Fail;
+                if (f2Fail == 1 || f2Fail == 8 || (f2Fail % 64) == 0)
+                    log("media: F2 pcm: " + fpga_.lastError() + " (fail#" +
+                        std::to_string(f2Fail) + ")");
+                if (fpga_.lastError().find("user mode") != std::string::npos && f2Fail >= 4) {
+                    log("media: F2 disabled for session (FPGA left user mode)");
+                    wantF2 = false;
+                    f2acc.clear();
+                    break;
+                }
+                if (f2Fail >= 32) {
+                    log("media: F2 disabled for session (too many SPI errors)");
+                    wantF2 = false;
+                    f2acc.clear();
+                    break;
+                }
+            }
+            if (wantF2)
+                f2acc.erase(f2acc.begin(),
+                            f2acc.begin() + static_cast<std::ptrdiff_t>(kF2Chunk));
+        }
+    };
+
+    while (!stop_.load()) {
+        if (paused_.load()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            continue;
+        }
+
+        const bool gated = !audioStartGate_.load(std::memory_order_acquire);
+        if (gated) {
+            if (!holdLogged) {
+                holdLogged = true;
+                holdSince = std::chrono::steady_clock::now();
+                log("media: audio hold — buffering PCM until first video frame "
+                    "(no MrAudio write yet; cap_ms=" +
+                    std::to_string(misterplex::kAudioHoldCapMs) +
+                    " ring_drop_head; timeout_ms=" +
+                    std::to_string(misterplex::kAudioHoldTimeoutMs) + ")");
+            }
+            const int64_t waited = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                       std::chrono::steady_clock::now() - holdSince)
+                                       .count();
+            if (waited >= misterplex::kAudioHoldTimeoutMs) {
+                if (!holdTimeoutLogged) {
+                    holdTimeoutLogged = true;
+                    // ENGINEERING COMPROMISE — NOT peer-copied (not mpv/VLC).
+                    log("media: audio hold TIMEOUT waited_ms=" + std::to_string(waited) +
+                        " held_ms=" +
+                        std::to_string(misterplex::heldMsFromBytes(
+                            static_cast<int64_t>(holdBuf.size()))) +
+                        " held_bytes=" + std::to_string(holdBuf.size()) +
+                        " timeout_ms=" + std::to_string(misterplex::kAudioHoldTimeoutMs) +
+                        " — escape open without video "
+                        "(engineering compromise, not peer-copied; degrade to pre-hold audio)");
+                    lastHoldWaitedMs_.store(waited, std::memory_order_release);
+                }
+                audioStartGate_.store(true, std::memory_order_release);
+            } else {
+                pollfd pfd{};
+                pfd.fd = afd;
+                pfd.events = POLLIN;
+                const int pr = ::poll(&pfd, 1, 50);
+                if (pr < 0) {
+                    if (errno == EINTR)
+                        continue;
+                    break;
+                }
+                if (pr == 0) {
+                    if (lastHoldWaitLogMs < 0 || waited - lastHoldWaitLogMs >= 1000) {
+                        lastHoldWaitLogMs = waited;
+                        log("media: audio hold waiting_ms=" + std::to_string(waited) +
+                            " held_bytes=" + std::to_string(holdBuf.size()) +
+                            " audio_bytes_written=" + std::to_string(audioBytes_.load()) +
+                            " (gate closed)");
+                    }
+                    continue;
+                }
+            }
+        }
+
+        ssize_t n = ::read(afd, buf, sizeof(buf));
+        if (n < 0) {
+            if (errno == EINTR)
+                continue;
+            if (errno == EAGAIN || errno == EWOULDBLOCK)
+                continue;
+            break;
+        }
+        if (n == 0)
+            break;
+
+        // Always scan pump-input PCM (hold path and live path share this read).
+        noteSilence(buf, static_cast<size_t>(n));
+
+        // First ffmpeg PCM byte on the pump — BEFORE gate open / MrAudio write.
+        // Cluster instrument: mono_ms always; wall_s only if session origin armed
+        // (usually NO-DATA here because origin latches at first video).
+        if (!firstAudioPcmLogged) {
+            firstAudioPcmLogged = true;
+            const int64_t mono = steadyMonoMs();
+            firstAudioPcmMonoMs_.store(mono, std::memory_order_release);
+            const int64_t origin = sessionOriginMonoMs_.load(std::memory_order_acquire);
+            std::string wallField = " wall_s=NO-DATA";
+            if (origin >= 0) {
+                const double ws = static_cast<double>(mono - origin) / 1000.0;
+                wallField = " wall_s=" + std::to_string(ws).substr(0, 8);
+            }
+            log("media: first_audio_pcm mono_ms=" + std::to_string(mono) + wallField +
+                " nbytes=" + std::to_string(n) +
+                " gate=" +
+                std::string(audioStartGate_.load(std::memory_order_acquire) ? "open"
+                                                                           : "closed") +
+                " tag=measured"
+                " (cluster axis; pre-MrAudio)");
+        }
+
+        if (!audioStartGate_.load(std::memory_order_acquire)) {
+            const size_t nn = static_cast<size_t>(n);
+            holdBuf.insert(holdBuf.end(), buf, buf + nn);
+            if (holdBuf.size() > kAudioHoldCapBytes) {
+                const size_t over = holdBuf.size() - kAudioHoldCapBytes;
+                holdBuf.erase(holdBuf.begin(),
+                              holdBuf.begin() + static_cast<std::ptrdiff_t>(over));
+                if (!holdOverflowLogged) {
+                    holdOverflowLogged = true;
+                    // DropHeadKeepTail: NOT-FOUND peer consensus; measured fix vs keep-HEAD.
+                    log("media: audio hold cap reached bytes=" +
+                        std::to_string(holdBuf.size()) +
+                        " held_ms=" +
+                        std::to_string(misterplex::heldMsFromBytes(
+                            static_cast<int64_t>(holdBuf.size()))) +
+                        " — ring drop HEAD keep live tail "
+                        "(NOT-FOUND peer FIFO policy; keep-HEAD was audible jump)");
+                }
+            }
+            total += static_cast<size_t>(n);
+            continue;
+        }
+
+        if (!releaseLogged) {
+            releaseLogged = true;
+            const int64_t writtenBefore = audioBytes_.load();
+            const int64_t heldBytes = static_cast<int64_t>(holdBuf.size());
+            const auto rel = misterplex::checkAudioReleaseOrigin(writtenBefore, heldBytes);
+            const char* why = holdTimeoutLogged ? "hold_timeout" : "first_video_or_path";
+            const int64_t mono = steadyMonoMs();
+            pumpAudioReleaseMonoMs_.store(mono, std::memory_order_release);
+            holdBytesAtRelease_.store(heldBytes, std::memory_order_release);
+            const int64_t origin = sessionOriginMonoMs_.load(std::memory_order_acquire);
+            const int64_t fa = firstAudioPcmMonoMs_.load(std::memory_order_acquire);
+            const int64_t avr = avAudioReleaseMonoMs_.load(std::memory_order_acquire);
+            std::string wallField = " wall_s=NO-DATA";
+            if (origin >= 0) {
+                const double ws = static_cast<double>(mono - origin) / 1000.0;
+                wallField = " wall_s=" + std::to_string(ws).substr(0, 8);
+            }
+            // held_ms = content duration of hold buffer (bytes→ms @ 48k stereo s16).
+            // hold_wall_ms = wall duration first_audio_pcm→this release (explicit;
+            // parent must not hand-subtract mono_ms). Both tagged measured.
+            int64_t holdWallMs = -1;
+            std::string holdWall = " hold_wall_ms=NO-DATA";
+            if (fa >= 0) {
+                holdWallMs = mono - fa;
+                holdWall = " hold_wall_ms=" + std::to_string(holdWallMs);
+            } else if (holdLogged) {
+                holdWallMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::steady_clock::now() - holdSince)
+                                 .count();
+                holdWall = " hold_wall_ms=" + std::to_string(holdWallMs);
+            }
+            std::string sinceAv = " since_av_release_ms=NO-DATA";
+            if (avr >= 0)
+                sinceAv = " since_av_release_ms=" + std::to_string(mono - avr);
+            // Peer-aligned drain: non-empty hold → no past-bias burst (av_clock.hpp).
+            pastBiasOnNextOrigin = misterplex::holdDrainShouldPastBias(heldBytes > 0);
+            const bool pastBias = pastBiasOnNextOrigin;
+            const auto rep = misterplex::makeHoldSessionReport(
+                writtenBefore, heldBytes, holdWallMs < 0 ? 0 : holdWallMs, pastBias,
+                holdTimeoutLogged);
+            lastHeldMs_.store(rep.heldMs, std::memory_order_release);
+            lastHoldWaitedMs_.store(rep.holdWaitedMs, std::memory_order_release);
+            const std::string axis = " mono_ms=" + std::to_string(mono) + wallField +
+                                     " held_ms=" + std::to_string(rep.heldMs) + holdWall +
+                                     " hold_waited_ms=" + std::to_string(rep.holdWaitedMs) +
+                                     " drain_burst_lead_ms=" +
+                                     std::to_string(rep.drainBurstLeadMs) +
+                                     " past_bias=" + std::to_string(pastBias ? 1 : 0) + sinceAv +
+                                     " tag=measured";
+            if (!rel.ok || !rep.ok) {
+                log("ERROR media: audio release content_origin_ms=" +
+                    std::to_string(rep.contentOriginMs) +
+                    " audio_bytes_at_release=" + std::to_string(rel.audioBytesAtRelease) +
+                    " held_bytes=" + std::to_string(holdBuf.size()) +
+                    " reason=" + why + axis +
+                    " — hold report not ok (co-arm-class lead risk)");
+            } else {
+                log("media: audio release content_origin_ms=0"
+                    " audio_bytes_at_release=0 held_bytes=" +
+                    std::to_string(holdBuf.size()) + " reason=" + why + axis +
+                    " (held PCM continuous with live; peer-aligned drain)");
+            }
+            constexpr size_t kChunk = 3840;
+            size_t off = 0;
+            while (off < holdBuf.size() && !stop_.load()) {
+                const size_t chunk =
+                    (holdBuf.size() - off) < kChunk ? (holdBuf.size() - off) : kChunk;
+                writePacedChunk(holdBuf.data() + off, chunk);
+                if (wantF2)
+                    f2acc.insert(f2acc.end(), holdBuf.data() + off, holdBuf.data() + off + chunk);
+                flushF2();
+                off += chunk;
+            }
+            holdBuf.clear();
+            holdBuf.shrink_to_fit();
+            // Origin already started during drain; live path must not re-bias.
+            pastBiasOnNextOrigin = true;
+        }
+
+        writePacedChunk(reinterpret_cast<const uint8_t*>(buf), static_cast<size_t>(n));
         if (wantF2) {
             f2acc.insert(f2acc.end(), buf, buf + n);
-            while (f2acc.size() >= kF2Chunk && !stop_.load()) {
-                if (fpga_.sendPcmChunk(f2acc.data(), kF2Chunk, /*F2*/ 2)) {
-                    f2total += kF2Chunk;
-                    f2Fail = 0;
-                } else {
-                    ++f2Fail;
-                    // Rate-limit: was logging every chunk when f2total==0 (0 % N == 0).
-                    if (f2Fail == 1 || f2Fail == 8 || (f2Fail % 64) == 0)
-                        log("media: F2 pcm: " + fpga_.lastError() +
-                            " (fail#" + std::to_string(f2Fail) + ")");
-                    // Core reconfig / menu: stop hammering SPI; MrAudio still plays.
-                    if (fpga_.lastError().find("user mode") != std::string::npos && f2Fail >= 4) {
-                        log("media: F2 disabled for session (FPGA left user mode)");
-                        wantF2 = false;
-                        f2acc.clear();
-                        break;
-                    }
-                    if (f2Fail >= 32) {
-                        log("media: F2 disabled for session (too many SPI errors)");
-                        wantF2 = false;
-                        f2acc.clear();
-                        break;
-                    }
-                }
-                if (wantF2)
-                    f2acc.erase(f2acc.begin(),
-                                f2acc.begin() + static_cast<std::ptrdiff_t>(kF2Chunk));
-            }
+            flushF2();
         }
         total += static_cast<size_t>(n);
     }
@@ -1866,6 +2866,11 @@ void MediaPlayer::audioPump(int afd) {
         ::close(out);
     ::close(afd);
     audioActive_.store(false);
+    if (!silenceLogged) {
+        log("media: pcm_silence_head_ms=UNKNOWN conf_adelay_ms=" +
+            std::to_string(audioDelayMs_) +
+            " (could-not-measure; too little PCM or empty stream) tag=UNSCORED");
+    }
     log("media: audio pump end bytes=" + std::to_string(total) +
         " f2=" + std::to_string(f2total));
 }
@@ -1874,37 +2879,156 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                              int64_t durationMs) {
     playing_.store(true);
     positionMs_.store(startMs);
+    starveStreak_ = 0;
+    ladderStepdownLogged_ = false;
+    // Do not clear ladderStepdownKbps_ here — main may take it after stop.
     if (onProgress_)
         onProgress_("buffering", startMs, durationMs);
 
-    const bool fpgaOnlyPresent = (presentMode_ == "fpga");
+    // FFmpeg rawvideo geometry:
+    //   960×540 product intermediate + fpga present → STORAGE 960×540 (777600)
+    //   other tiers + fpga present → product 624×480 canvas (scale+pad)
+    // Never size FFmpeg to DE canvas 1280×720 (kills +7.16 ms budget).
+    const bool wantFpgaDdrCanvas =
+        (presentMode_ == "fpga" || presentMode_ == "both");
+    fabricOwnedPresent_ = {};
+    if (wantFpgaDdrCanvas && ddrIsProduct960x540Content(outW_, outH_) &&
+        ddrFrameFormat_ == DdrFrameFormat::Yuv420p) {
+        fabricOwnedPresent_ = makePlex720pOutputFrom540pSourcePlan();
+        if (!fabricOwnedPresent_.valid) {
+            log("media: native 960x540 fabric-owned plan invalid — falling back to 624 canvas");
+            fabricOwnedPresent_ = {};
+        } else {
+            log("media: NATIVE_PUBLISH tier=960x540 bytes=" +
+                std::to_string(fabricOwnedPresent_.publish_bytes) +
+                " map=Option-C phys=0x" +
+                [&] {
+                    char b[16];
+                    std::snprintf(b, sizeof(b), "%08x",
+                                  fabricOwnedPresent_.canvas_layout.phys_base);
+                    return std::string(b);
+                }() +
+                " y_stride=" + std::to_string(fabricOwnedPresent_.content_layout.y_stride) +
+                " u=" + std::to_string(fabricOwnedPresent_.content_layout.u_offset) +
+                " v=" + std::to_string(fabricOwnedPresent_.content_layout.v_offset));
+            // Activate Option-C map window before first frame (mmap + doorbell).
+            if (!fpga_.setDdrFrameLayout(fabricOwnedPresent_.canvas_layout)) {
+                log("media: setDdrFrameLayout Option-C failed: " + fpga_.lastError() +
+                    " — falling back to 624 canvas");
+                fabricOwnedPresent_ = {};
+            }
+        }
+    }
     const DdrFrameGeometry ddrGeometry =
-        fpgaOnlyPresent ? ddrFrameGeometryForPresentedSize(outW_, outH_)
-                        : makeDdrFrameGeometry(outW_, outH_);
-    const int rawW = ddrGeometry.coded_width;
-    const int rawH = ddrGeometry.coded_height;
-    const int rawDisplayW = ddrGeometry.display_width;
-    const int rawDisplayH = ddrGeometry.display_height;
+        fabricOwnedPresent_.valid
+            ? ddrStorageGeometryForContent(outW_, outH_)
+            : ddrFfmpegGeometryForPresent(outW_, outH_, wantFpgaDdrCanvas);
+    const int rawW = ddrGeometry.coded_width.get();
+    const int rawH = ddrGeometry.coded_height.get();
+    const int rawDisplayW = ddrGeometry.display_width.get();
+    const int rawDisplayH = ddrGeometry.display_height.get();
+    // Freeze request claim + coded bank for teardown REQUEST_VS_MEASURED (B4 durable).
+    playRequestW_ = ffmpegScaleSourceW_;
+    playRequestH_ = ffmpegScaleSourceH_;
+    codedBankW_ = rawW;
+    codedBankH_ = rawH;
+    measuredDeliveryW_.store(0, std::memory_order_relaxed);
+    measuredDeliveryH_.store(0, std::memory_order_relaxed);
+    pipeDesyncRisk_.store(false, std::memory_order_relaxed);
+    LastFrameLatch lastFrameLatch;
 
-    char scale[64];
-    std::snprintf(scale, sizeof(scale), "%d:%d", rawW, rawH);
-    std::string vf;
     // Force CFR at the exact content rate FIRST in the chain: frameIndex ↔ content
     // time then holds by construction (even if PMS emits a different rate than its
     // metadata claims), and frames dropped by the fps filter are never scaled.
-    if (fpsNum_ > 0 && fpsDen_ > 0) {
-        vf = "fps=" + std::to_string(fpsNum_) + "/" + std::to_string(fpsDen_) + ",";
+    FfmpegVfRequest vfReq;
+    vfReq.coded_w = rawW;
+    vfReq.coded_h = rawH;
+    vfReq.display_w = rawDisplayW;
+    vfReq.display_h = rawDisplayH;
+    vfReq.crop_left = ddrGeometry.crop_left;
+    vfReq.crop_top = ddrGeometry.crop_top;
+    if (fpsNum_ > 0 && fpsDen_ > 0)
+        vfReq.fps_filter = "fps=" + std::to_string(fpsNum_) + "/" + std::to_string(fpsDen_);
+    // Defect A/B silicon: YUV DDR force-scale DEFAULT ON (pins output to coded
+    // store). Escape DDR_YUV_FORCE_SCALE=0 still cannot identity-skip on an
+    // unverified PMS request (delivery_geometry_verified guard).
+    // Hygiene: studio-black init + dead-chroma repair always on.
+    const FfmpegScaleMode confScaleMode = parseFfmpegScaleMode(ffmpegScaleMode_);
+    const bool yuvDdrPresent =
+        wantFpgaDdrCanvas && ddrFrameFormat_ == DdrFrameFormat::Yuv420p;
+    const bool forceScale = yuvDdrPresent && ddrYuvForceScale_;
+    vfReq.scale_mode = ffmpegScaleModeForDdrYuvPresent(confScaleMode, forceScale);
+    vfReq.sws_flags = ffmpegSwsFlags_;
+    vfReq.source_w = ffmpegScaleSourceW_;
+    vfReq.source_h = ffmpegScaleSourceH_;
+    vfReq.assume_source_matches_coded = ffmpegScaleAssumeMatch_;
+    vfReq.delivery_geometry_verified =
+        deliveryGeometryVerified_.load(std::memory_order_relaxed);
+    const FfmpegVfPlan vfPlan = buildFfmpegVideoFilter(vfReq);
+    std::string vf = vfPlan.vf;
+    // Actual scale decision (parent greps arm_rescale= here and on misterplexd: GEOM).
+    const std::string srcStr =
+        (ffmpegScaleSourceW_ > 0 && ffmpegScaleSourceH_ > 0)
+            ? (std::to_string(ffmpegScaleSourceW_) + "x" + std::to_string(ffmpegScaleSourceH_))
+            : "unknown";
+    const std::string codedStr = std::to_string(rawW) + "x" + std::to_string(rawH);
+    // GEOM_GUARD observability: planner refuses identity_skip on unverified claims.
+    // Reasons evolved: live ea643e99 used *unverified_delivery*; product now uses
+    // force_unverified_claim_scale_pad_coded / unverified_claim_scale_pad_coded.
+    // Match any "unverified" token so the log cannot go silently dead on rename.
+    if (!vfPlan.identity_skip &&
+        vfPlan.reason.find("unverified") != std::string::npos) {
+        log(std::string("media: GEOM_GUARD refused identity_skip — delivery not verified "
+                        "(PMS request ≠ measured size); forcing scale. reason=") +
+            vfPlan.reason + " claimed=" + srcStr + " coded=" + codedStr);
     }
-    if (rawDisplayW != rawW || rawDisplayH != rawH) {
-        char displayScale[64];
-        std::snprintf(displayScale, sizeof(displayScale), "%d:%d", rawDisplayW, rawDisplayH);
-        vf += std::string("scale=") + displayScale +
-              ":force_original_aspect_ratio=decrease,pad=" + scale + ":" +
-              std::to_string(ddrGeometry.crop_left) + ":" +
-              std::to_string(ddrGeometry.crop_top) + ":color=black";
-    } else {
-        vf += std::string("scale=") + scale +
-              ":force_original_aspect_ratio=decrease,pad=" + scale + ":(ow-iw)/2:(oh-ih)/2";
+    log(std::string("media: GEOM expected_delivery=") + srcStr + " decode_target=" + codedStr +
+        " arm_rescale=" + (vfPlan.scale_applied ? "1" : "0") + " reason=" + vfPlan.reason +
+        " identity_skip=" + (vfPlan.identity_skip ? "1" : "0") +
+        " mode=" + ffmpegScaleModeName(vfReq.scale_mode) +
+        " conf_mode=" + ffmpegScaleModeName(confScaleMode) +
+        " yuv_ddr_force_scale=" + (forceScale ? "1" : "0") +
+        " delivery_verified=" +
+        (deliveryGeometryVerified_.load(std::memory_order_relaxed) ? "1" : "0") +
+        " sws_flags=" + (ffmpegSwsFlags_.empty() ? "(default)" : ffmpegSwsFlags_) +
+        " assume_match=" + (ffmpegScaleAssumeMatch_ ? "1" : "0") +
+        " display=" + std::to_string(rawDisplayW) + "x" + std::to_string(rawDisplayH) +
+        " vf=" + (vf.empty() ? "(none)" : vf));
+    // FILTER_CHAIN_LOSS: row destruction from OUR -vf FOAR, not PMS (parent miss
+    // 2026-08-02: PMS scale=w=624:h=480 for rk6/rk36; daemon FOAR into 618 made
+    // ~350 real rows). Crop/pad paths keep bank height → frac=1.0.
+    {
+        const bool foar =
+            vf.find("force_original_aspect_ratio=decrease") != std::string::npos;
+        const bool foarInto618 = vf.find("scale=618:480") != std::string::npos;
+        double filterFrac = 1.0;
+        int predH = rawH;
+        if (foar && ffmpegScaleSourceW_ > 0 && ffmpegScaleSourceH_ > 0 && rawH > 0) {
+            // Product FOAR targets coded bank; legacy 618 is a hard defect class.
+            const int boxW = foarInto618 ? rawDisplayW : rawW;
+            const int boxH = foarInto618 ? rawDisplayH : rawH;
+            predH = predictFoarDecreaseHeight(ffmpegScaleSourceW_, ffmpegScaleSourceH_, boxW,
+                                              boxH);
+            filterFrac = foarVerticalDetailFrac(ffmpegScaleSourceW_, ffmpegScaleSourceH_, boxW,
+                                               boxH, rawH);
+        } else if (!foar &&
+                   (vfPlan.reason.find("crop_pad") != std::string::npos ||
+                    vfPlan.reason.find("force_exact_crop_pad") != std::string::npos ||
+                    vfPlan.reason.find("force_exact_pad") != std::string::npos ||
+                    vfPlan.identity_skip)) {
+            filterFrac = 1.0;
+            predH = rawH;
+        }
+        log(std::string("media: FILTER_CHAIN_LOSS reason=") + vfPlan.reason +
+            " foar=" + (foar ? "1" : "0") + " foar_into_618=" + (foarInto618 ? "1" : "0") +
+            " source=" + srcStr + " coded=" + codedStr +
+            " predicted_picture_h=" + std::to_string(predH) +
+            " filter_vertical_detail_frac=" + std::to_string(filterFrac) +
+            " note=FOAR_letterbox_is_filter_not_PMS tag=predicted");
+        if (foarInto618) {
+            log("ERROR media: FILTER_CHAIN_DEFECT foar_into_618=1 — product must FOAR "
+                "into coded 624 not display 618 (kPlex480pDisplayWidth is present crop)");
+        }
     }
 
     const bool testPattern = (url == "testsrc" || url.rfind("lavfi", 0) == 0);
@@ -1920,7 +3044,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 esc.push_back('\\');
             esc.push_back(c);
         }
-        vf += ",subtitles=" + esc + ":si=" + std::to_string(std::max(0, subtitleStreamIndex_));
+        if (!vf.empty())
+            vf.push_back(',');
+        vf += "subtitles=" + esc + ":si=" + std::to_string(std::max(0, subtitleStreamIndex_));
         log("media: FFmpeg subtitles burn-in si=" + std::to_string(subtitleStreamIndex_));
     }
     const bool wantMr = audioEnabled_ && (::access(audioDev_.c_str(), W_OK) == 0);
@@ -1980,6 +3106,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     auto t0 = std::chrono::steady_clock::now();
     auto lastLog = t0;
     size_t totalBytes = 0;
+    // Per-second supply bucket baseline (glass-loss 1/2.71s resolvable).
+    misterplex::SupplyCounters supplyPrev{};
+    bool supplyPrevInit = false;
 
     bool usedRawVideo = false;
     bool videoEof = false;
@@ -1994,8 +3123,15 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     const int64_t leadMs = presentLeadMs_;
     const int64_t dropMs = resyncDropMs_;
     int dropRun = 0;
+    // Field 5: plain A/V Hold counters (NOT presentProfile_). Each Hold sleeps
+    // ~2 ms; chrono + two integer adds are << sleep cost.
+    int64_t avHoldCount = 0;
+    int64_t avHoldWaitUs = 0;
+    bool hold10sLogged = false;
     avDriftMs_.store(0);
     droppedFrames_.store(0);
+    publishMisses_.store(0);
+    ffmpegOutFrames_.store(-1, std::memory_order_relaxed);
     if (fpsNum_ <= 0)
         log("media: content fps UNKNOWN — pacing at " + std::to_string(kDefaultFpsNum) + "/" +
             std::to_string(kDefaultFpsDen) + " and relying on drift correction");
@@ -2011,6 +3147,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             ::close(apipe[1]);
             if (pid > 0) {
                 childPid_.store(pid);
+                // No RGB frame cadence on this path — open the gate immediately.
+                audioStartGate_.store(true, std::memory_order_release);
                 audioThr_ = std::thread([this, afd = apipe[0]] { audioPump(afd); });
             } else {
                 ::close(apipe[0]);
@@ -2029,7 +3167,12 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             int64_t seekTo = seekReqMs_.exchange(-1);
             if (seekTo >= 0) {
                 log("media: seek requested " + std::to_string(seekTo));
-                break;
+                if (misterplex::rawVideoTerminalSignal(/*explicitStopOrSeek=*/true,
+                                                       /*readZero=*/false,
+                                                       /*readError=*/false,
+                                                       /*shortRead=*/false,
+                                                       /*knownDurationStall=*/false))
+                    break;
             }
             if (paused_.load()) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(20));
@@ -2111,12 +3254,23 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 "same frame");
         usedRawVideo = true;
         presentCount_ = 0;
+        scanoutHealth_ = FpgaScanoutHealth{};
         audioBytes_.store(0);
+        measuredDeliveryW_.store(0);
+        measuredDeliveryH_.store(0);
+        // Session measure starts unverified; only MEASURED_DELIVERY sets true (B4).
+        deliveryGeometryVerified_.store(false, std::memory_order_relaxed);
+        pipeDesyncRisk_.store(false);
         std::vector<std::string> args;
         args.push_back(ffmpeg_);
         args.push_back("-hide_banner");
+        // info + stats: Stream # WxH (B2) AND frame= for supply ledger (glass-loss).
+        // -loglevel error SUPPRESSES the Stream banner → delivery_verified stays 0.
+        // info is required. Stderr pump parses geometry + frame=; non-matching
+        // info lines are discarded (not logged) so soak logs are not flooded.
+        args.push_back("-stats");
         args.push_back("-loglevel");
-        args.push_back("error");
+        args.push_back("info"); // DO NOT change to error — breaks delivered_geom
         args.push_back("-nostdin");
 
         if (testPattern) {
@@ -2215,13 +3369,23 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 args.push_back("0:a:0?");
                 args.push_back("-vn");
                 args.push_back("-af");
-                if (audioDelayMs_ > 0) {
-                    // adelay unit is ms per channel; all=1 applies to every channel.
-                    args.push_back("aresample=48000,adelay=" + std::to_string(audioDelayMs_) +
-                                   ":all=1");
-                    log("media: ffmpeg adelay_ms=" + std::to_string(audioDelayMs_));
-                } else {
-                    args.push_back("aresample=48000");
+                // AUDIO_DELAY_MS>0: content-aligned silence via adelay=N|N (ms per
+                // channel). Portable form — not :all=1 — so device FFmpeg matches
+                // host unit ladders. Sample-clock pacer does NOT cancel this
+                // (adelayContentShiftMs == conf). Pump logs measured silence head.
+                {
+                    const std::string af = misterplex::ffmpegAudioDelayFilter(audioDelayMs_);
+                    args.push_back(af);
+                    if (audioDelayMs_ > 0)
+                        log("media: ffmpeg adelay_ms=" + std::to_string(audioDelayMs_) +
+                            " filter=" + af +
+                            " predicted_content_shift_ms=" +
+                            std::to_string(misterplex::adelayContentShiftMs(audioDelayMs_)) +
+                            " prefill_cancel_ms=" +
+                            std::to_string(misterplex::adelayCancelledByPrefillMs(
+                                audioDelayMs_,
+                                static_cast<int>(misterplex::kFeedTargetBytes * 1000 /
+                                                 misterplex::kMrAudioBytesPerSec))));
                 }
                 args.push_back("-f");
                 args.push_back("s16le");
@@ -2235,6 +3399,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
 
         int vpipe[2] = {-1, -1};
         int apipe[2] = {-1, -1};
+        int epipe[2] = {-1, -1};
         if (pipe(vpipe) != 0) {
             log("media: video pipe failed");
             playing_.store(false);
@@ -2243,12 +3408,27 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 streamThr_.join();
             return;
         }
+        // Decouple ffmpeg producer from DDR publish latency: enlarge the raw
+        // video pipe beyond the kernel default (65536 ≈ 0.15 frames @ 624x480
+        // I420). Read back F_GETPIPE_SZ and log THAT value — never the request
+        // alone. Failure → keep default; never abort playback.
+        {
+            const auto pipeSz = applyRawVideoPipeSize(vpipe[0], rawVideoPipeBytes_);
+            lastRawVideoPipeActual_ = pipeSz.actual;
+            log(std::string("media: ") + formatRawVideoPipeLog(pipeSz));
+        }
         if (wantAudio && pipe(apipe) != 0) {
             log("media: audio pipe failed — video only");
             apipe[0] = apipe[1] = -1;
         }
+        if (pipe(epipe) != 0) {
+            log("media: ffmpeg stderr pipe failed — measured geometry unavailable");
+            epipe[0] = epipe[1] = -1;
+        }
 
         {
+            // Log-only join. `args` itself keeps the real token for execv.
+            // MediaPlayer::log applies redactSensitive at the sink.
             std::string joined = "media: spawn single-process";
             for (const auto& a : args) {
                 joined += ' ';
@@ -2260,14 +3440,33 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             log(joined);
         }
 
-        pid_t pid = spawnFfmpeg(args, vpipe[1], apipe[1] >= 0 ? apipe[1] : -1);
+        // frameBytes MUST track coded bank (rawW/rawH), never display 618 or
+        // DECODE tier alone — under-read would leave chroma at init value and
+        // desync the pipe (parent defect A/B hypothesis). Product: 624*480*3/2.
+        const size_t frameBytes = rawVideoFrameBytes(videoFmt, rawW, rawH);
+
+        pid_t pid =
+            spawnFfmpeg(args, vpipe[1], apipe[1] >= 0 ? apipe[1] : -1, epipe[1]);
         ::close(vpipe[1]);
         if (apipe[1] >= 0)
             ::close(apipe[1]);
+        if (epipe[1] >= 0)
+            ::close(epipe[1]);
+        std::thread errThr;
+        if (pid >= 0 && epipe[0] >= 0) {
+            errThr = std::thread([this, efd = epipe[0], frameBytes, idSkip = vfPlan.identity_skip,
+                                  cw = rawW, ch = rawH] {
+                ffmpegStderrPump(efd, frameBytes, idSkip, cw, ch);
+            });
+        } else if (epipe[0] >= 0) {
+            ::close(epipe[0]);
+        }
         if (pid < 0) {
             ::close(vpipe[0]);
             if (apipe[0] >= 0)
                 ::close(apipe[0]);
+            if (errThr.joinable())
+                errThr.join();
             log("media: fork failed");
             playing_.store(false);
             killChildren();
@@ -2282,11 +3481,29 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             fcntl(rfd, F_SETFL, rflags | O_NONBLOCK);
 
         if (apipe[0] >= 0) {
+            // Closed until first complete video frame — see audioPump hold path.
+            audioStartGate_.store(false, std::memory_order_release);
+            sessionOriginMonoMs_.store(-1, std::memory_order_release);
+            firstAudioPcmMonoMs_.store(-1, std::memory_order_release);
+            avAudioReleaseMonoMs_.store(-1, std::memory_order_release);
+            pumpAudioReleaseMonoMs_.store(-1, std::memory_order_release);
+            holdBytesAtRelease_.store(-1, std::memory_order_release);
+            firstAudioQueuedGe0MonoMs_.store(-1, std::memory_order_release);
             audioThr_ = std::thread([this, afd = apipe[0]] { audioPump(afd); });
+        } else {
+            audioStartGate_.store(true, std::memory_order_release);
+            sessionOriginMonoMs_.store(-1, std::memory_order_release);
+            firstAudioPcmMonoMs_.store(-1, std::memory_order_release);
+            avAudioReleaseMonoMs_.store(-1, std::memory_order_release);
+            pumpAudioReleaseMonoMs_.store(-1, std::memory_order_release);
+            holdBytesAtRelease_.store(-1, std::memory_order_release);
+            firstAudioQueuedGe0MonoMs_.store(-1, std::memory_order_release);
         }
-
-        const size_t frameBytes = rawVideoFrameBytes(videoFmt, rawW, rawH);
         std::vector<uint8_t> frame(frameBytes);
+        // Zero-init → green-cast under any underfill (U=V=0). Studio black
+        // (Y=16,U=V=128) is greyscale-safe if a short frame is ever presented.
+        if (videoFmt == RawVideoFormat::Yuv420p)
+            fillYuv420pStudioBlack(frame.data(), rawW, rawH);
         std::vector<uint8_t> fbOverlayBackup;
 
         struct PresentProfileAccum {
@@ -2317,6 +3534,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             int64_t ddrDoorbellUs = 0;
             int64_t ddrPostWaitUs = 0;
             int64_t ddrBankReuseWaitUs = 0;
+            int64_t ddrPlxdPollUs = 0;
+            int64_t ddrPlxdPollIters = 0;
+            int64_t ddrPlxdUsed = 0;
             int64_t ddrTotalUs = 0;
             int64_t ddrCpuUs = 0;
             int64_t ddrUnaccountedUs = 0;
@@ -2372,6 +3592,11 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 " ddr_post_wait_us_p=" + std::to_string(avgPresented(prof.ddrPostWaitUs)) +
                 " ddr_bank_reuse_wait_us_p=" +
                     std::to_string(avgPresented(prof.ddrBankReuseWaitUs)) +
+                " ddr_plxd_poll_us_p=" + std::to_string(avgPresented(prof.ddrPlxdPollUs)) +
+                " ddr_plxd_poll_iters_x100_p=" +
+                    std::to_string((prof.ddrPlxdPollIters * 100) / presented) +
+                " ddr_plxd_used_x100_p=" +
+                    std::to_string((prof.ddrPlxdUsed * 100) / presented) +
                 " ddr_accounted_us_p=" + std::to_string(avgPresented(ddrAccountedUs)) +
                 " ddr_unaccounted_us_p=" +
                     std::to_string(avgPresented(prof.ddrUnaccountedUs)) +
@@ -2495,10 +3720,13 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 // transaction state, so overlapping ioctls corrupt each other.
                 std::lock_guard<std::mutex> lk(presentMu_);
                 bool ok = false;
+                std::string ddrErr;
                 if (useDdrF1_) {
                     const int64_t ddrCpu0 = profilePresent ? threadCpuMicros() : 0;
                     if (videoFmt == RawVideoFormat::Yuv420p) {
-                        ok = fpga_.sendYuv420pFrameDdr(txFrame, txBytes, ddrGeometry, ddrBank_);
+                        DdrPublishFrame frame{txFrame, txBytes, ddrGeometry,
+                                              DdrFrameFormat::Yuv420p};
+                        ok = publishDdrFrame(frame, "playback DDR", &ddrErr);
                     } else {
                         ok = false;
                     }
@@ -2513,27 +3741,183 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                         prof.ddrDoorbellUs += dt.doorbell_us;
                         prof.ddrPostWaitUs += dt.post_wait_us;
                         prof.ddrBankReuseWaitUs += dt.bank_reuse_wait_us;
+                        prof.ddrPlxdPollUs += dt.plxa_poll_us;
+                        prof.ddrPlxdPollIters += dt.plxa_poll_iters;
+                        prof.ddrPlxdUsed += dt.plxa_used ? 1 : 0;
                         prof.ddrTotalUs += dt.total_us;
                         prof.ddrCpuUs += ddrCpu1 - ddrCpu0;
                         if (dt.total_us > accounted)
                             prof.ddrUnaccountedUs += dt.total_us - accounted;
                     }
-                    if (ok)
-                        ddrBank_ ^= 1;
                     if (!ok)
-                        log("media: DDR YUV420p F1 unavailable: " + fpga_.lastError());
+                        log("media: DDR YUV420p F1 unavailable: " +
+                            (ddrErr.empty() ? fpga_.lastError() : ddrErr));
+                    else if (idleMode() == IdleMode::LastFrame)
+                        lastFrameLatch.remember(txFrame, txBytes, ddrGeometry);
                 }
                 if (!ok && videoFmt != RawVideoFormat::Yuv420p) {
                     log("media: non-YUV F1 frame refused before send; frame store requires DDR "
                         "YUV420p");
                 }
                 if (!ok) {
-                    if (countPresent && (frameIndex % 30) == 0)
-                        log("media: fpga frame_tx: " + fpga_.lastError());
+                    if (countPresent) {
+                        const int64_t missNow =
+                            publishMisses_.fetch_add(1, std::memory_order_relaxed) + 1;
+                        // Exact form required by rtl_invariants present-path degradation
+                        // contract (whitespace-stripped needle includes frame_status).
+                        if ((frameIndex % 30) == 0)
+                            log("media: fpga frame_tx: " +
+                                (ddrErr.empty() ? fpga_.lastError() : ddrErr));
+                        // Every miss (glass-loss instrument): drops stays flat while
+                        // residual/unaccounted rises. Parent pairs wall_s with HDMI
+                        // missing indices. err= carries bank-select / STALL reason.
+                        {
+                            const auto missTp = std::chrono::steady_clock::now();
+                            const double missWall =
+                                std::chrono::duration<double>(missTp - t0).count();
+                            const int64_t residual = frameLedgerResidual(
+                                frameIndex, presentCount_, droppedFrames_.load());
+                            log("media: publish_miss wall_s=" +
+                                std::to_string(missWall).substr(0, 6) +
+                                " mono_ms=" + std::to_string(steadyMonoMs()) +
+                                " publish_misses=" + std::to_string(missNow) +
+                                " publish_misses_src=arm_publish_fail" +
+                                " frames=" + std::to_string(frameIndex) +
+                                " frames_src=pipe_assemble" +
+                                " presents=" + std::to_string(presentCount_) +
+                                " presents_src=arm_publish_ok" +
+                                " drops=" + std::to_string(droppedFrames_.load()) +
+                                " drops_src=av_pacer" +
+                                " residual=" + std::to_string(residual) +
+                                " residual_eq=frames-presents-drops" +
+                                " residual_scope=supply_arm_only" +
+                                " fpga_obs=none" +
+                                " err=" +
+                                (ddrErr.empty() ? fpga_.lastError() : ddrErr) +
+                                " tag=measured");
+                        }
+                    }
                 } else if (countPresent) {
                     ++presentCount_;
                     if (profilePresent)
                         ++prof.presented;
+                    if (presentCount_ == 1) {
+                        // Extract BEFORE any log clear — parent ERROR class.
+                        // Explicit deltas — never require hand-subtraction of mono_ms.
+                        const auto fv = std::chrono::steady_clock::now();
+                        const double fvWall =
+                            std::chrono::duration<double>(fv - t0).count();
+                        const int64_t mono = steadyMonoMs();
+                        const int64_t fa =
+                            firstAudioPcmMonoMs_.load(std::memory_order_acquire);
+                        const int64_t avr =
+                            avAudioReleaseMonoMs_.load(std::memory_order_acquire);
+                        const int64_t pr =
+                            pumpAudioReleaseMonoMs_.load(std::memory_order_acquire);
+                        std::string sinceFa = " since_first_audio_pcm_ms=NO-DATA";
+                        if (fa >= 0)
+                            sinceFa =
+                                " since_first_audio_pcm_ms=" + std::to_string(mono - fa);
+                        std::string sinceAv = " since_audio_release_ms=NO-DATA";
+                        if (avr >= 0)
+                            sinceAv =
+                                " since_audio_release_ms=" + std::to_string(mono - avr);
+                        std::string sincePump = " since_pump_release_ms=NO-DATA";
+                        if (pr >= 0)
+                            sincePump =
+                                " since_pump_release_ms=" + std::to_string(mono - pr);
+                        log("media: first_video_present wall_s=" +
+                            std::to_string(fvWall).substr(0, 6) +
+                            " mono_ms=" + std::to_string(mono) + sinceFa + sinceAv +
+                            sincePump +
+                            " av_drift_ms=" + std::to_string(avDriftMs_.load()) +
+                            " frames=" + std::to_string(frameIndex) +
+                            " presents=1"
+                            " audio=" +
+                            std::string(audioActive_.load() ? "on" : "off") +
+                            " audio_s=" +
+                            std::to_string(static_cast<double>(audioBytes_.load()) /
+                                          (48000.0 * 4.0))
+                                .substr(0, 5) +
+                            " tag=measured");
+                        // SIX-FIELD cluster instrument at first present.
+                        // Prefer FPGA state over daemon software state.
+                        // Cost: 1× readBankRelease (SPI mailbox) + struct copy of
+                        // lastDdrTiming already filled by the publish just done;
+                        // no presentProfile_ path; no extra DDR frame copy.
+                        {
+                            const auto dt = fpga_.lastDdrTiming();
+                            BankReleaseStatus brs{};
+                            // frames_done MUST be paired with the ARM time of THIS read.
+                            const int64_t fdMono = steadyMonoMs();
+                            const auto fdTp = std::chrono::steady_clock::now();
+                            const bool brOk = fpga_.readBankRelease(brs);
+                            const double fdWallS =
+                                std::chrono::duration<double>(fdTp - t0).count();
+                            const int pubBank = fpga_.lastPublishedBank();
+                            const int64_t q0 =
+                                firstAudioQueuedGe0MonoMs_.load(std::memory_order_acquire);
+                            std::string q0f = " audio_queued_first_ge0_mono_ms=NO-DATA"
+                                              " audio_queued_first_ge0_since_origin_ms=NO-DATA"
+                                              " audio_queued_first_ge0_tag=NO-DATA";
+                            if (q0 >= 0) {
+                                const int64_t origin =
+                                    sessionOriginMonoMs_.load(std::memory_order_acquire);
+                                std::string so = "NO-DATA";
+                                if (origin >= 0)
+                                    so = std::to_string(q0 - origin);
+                                q0f = " audio_queued_first_ge0_mono_ms=" +
+                                      std::to_string(q0) +
+                                      " audio_queued_first_ge0_since_origin_ms=" + so +
+                                      " audio_queued_first_ge0_tag=measured";
+                            }
+                            std::string brf =
+                                " br_ok=0 free_bank_mask=NO-DATA disp_bank=NO-DATA"
+                                " swap_pending=NO-DATA frames_done=NO-DATA"
+                                " frames_done_mono_ms=" +
+                                std::to_string(fdMono) + " frames_done_wall_s=" +
+                                std::to_string(fdWallS).substr(0, 8) +
+                                " frames_done_tag=measured";
+                            if (brOk) {
+                                brf = " br_ok=1 free_bank_mask=" +
+                                      std::to_string(static_cast<unsigned>(brs.free_bank_mask)) +
+                                      " disp_bank=" +
+                                      std::to_string(static_cast<unsigned>(brs.disp_bank)) +
+                                      " swap_pending=" +
+                                      std::to_string(brs.swap_pending ? 1 : 0) +
+                                      " frames_done=" + std::to_string(brs.frames_done) +
+                                      " frames_done_mono_ms=" + std::to_string(fdMono) +
+                                      " frames_done_wall_s=" +
+                                      std::to_string(fdWallS).substr(0, 8) +
+                                      " frames_done_tag=measured";
+                            }
+                            log("media: first_video_fpga_state mono_ms=" +
+                                std::to_string(mono) + " wall_s=" +
+                                std::to_string(fvWall).substr(0, 8) +
+                                " plxa_used=" + std::to_string(dt.plxa_used ? 1 : 0) +
+                                " plxd_liveness_proven=" +
+                                std::to_string(fpga_.plxdLivenessProven() ? 1 : 0) +
+                                " published_bank=" + std::to_string(pubBank) + brf +
+                                " ddr_prep_wait_us=" + std::to_string(dt.prep_wait_us) +
+                                " ddr_copy_us=" + std::to_string(dt.copy_us) +
+                                " ddr_flush_us=" + std::to_string(dt.flush_us) +
+                                " ddr_doorbell_us=" + std::to_string(dt.doorbell_us) +
+                                " ddr_post_wait_us=" + std::to_string(dt.post_wait_us) +
+                                " ddr_total_us=" + std::to_string(dt.total_us) +
+                                " ddr_bank_reuse_wait_us=" +
+                                std::to_string(dt.bank_reuse_wait_us) +
+                                " ddr_plxa_poll_us=" + std::to_string(dt.plxa_poll_us) +
+                                " ddr_plxa_poll_iters=" +
+                                std::to_string(dt.plxa_poll_iters) +
+                                " av_hold_count=" + std::to_string(avHoldCount) +
+                                " av_hold_wait_us=" + std::to_string(avHoldWaitUs) +
+                                q0f + " tag=measured");
+                        }
+                        // VIDEO present vs ring phase. frames_done is swap count
+                        // (not audio). Pair handoff_at=first_video_present A vs B.
+                        if (audioActive_.load())
+                            logMrAudioHandoffAt("first_video_present");
+                    }
                     if ((presentCount_ % 48) == 0) {
                         log(std::string("media: fpga frame_tx ok via ") +
                             "DDR" +
@@ -2550,10 +3934,18 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         if (onProgress_)
             onProgress_("playing", startMs, durationMs);
 
-        // Deterministic A/V origin: never start the schedule on the wall clock and then
-        // switch to the audio clock mid-stream — that step discontinuity randomises the
-        // lipsync offset by tens of ms on every play (measured spread ~67 ms across
-        // identical runs). Wait for the audio master clock to exist first.
+        // Deterministic A/V origin:
+        // 1) Wait for the audio pump thread so we never start on wall and then
+        //    switch to audio mid-stream (that step discontinuity randomised lipsync
+        //    by tens of ms — measured spread ~67 ms across identical runs).
+        // 2) MrAudio stays GATED (audioStartGate_=false) until the first complete
+        //    video frame. Early play created ~206 ms of already-heard audio before
+        //    frame 1 (measured audio_origin_ms); the pacer then either dropped ~13
+        //    frames to repay it (odd-only counters) or — under co-arm — re-based
+        //    the clock and left the lead as permanent lip-sync error (grabber
+        //    −168 → −456 ms). Holding the device closed removes the lead.
+        // 3) On first frame we open the gate; pump writes held PCM from content
+        //    t=0. Pacer uses raw audibleClockMs (no origin subtract). Startup only.
         if (wantAudio && apipe[0] >= 0) {
             const auto waitStart = std::chrono::steady_clock::now();
             while (!stop_.load() && !audioActive_.load() &&
@@ -2563,14 +3955,20 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             const int64_t waited = std::chrono::duration_cast<std::chrono::milliseconds>(
                                        std::chrono::steady_clock::now() - waitStart)
                                        .count();
-            log("media: A/V origin armed audio_active=" +
+            log("media: A/V audio_active=" +
                 std::string(audioActive_.load() ? "1" : "0") +
-                " waited_ms=" + std::to_string(waited));
+                " waited_ms=" + std::to_string(waited) +
+                " — MrAudio gated until first video frame");
         }
-        t0 = std::chrono::steady_clock::now();
+        t0 = std::chrono::steady_clock::now(); // provisional; re-latched at audio release
+        bool avAudioReleased = false;
         bool pauseClockHeld = false;
         bool pausedOverlayWasVisible = false;
         std::chrono::steady_clock::time_point pauseStarted{};
+        std::chrono::steady_clock::time_point lastCompleteVideoFrame = t0;
+        std::chrono::steady_clock::time_point lastAudioByte = t0;
+        int64_t lastAudioBytesForEof = audioBytes_.load();
+        bool eofStallLogged = false;
         size_t got = 0;
         while (!stop_.load()) {
             int64_t seekTo = seekReqMs_.exchange(-1);
@@ -2631,6 +4029,45 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     }
                     if (errno == EAGAIN || errno == EWOULDBLOCK) {
                         ++frameReadEagain;
+                        const auto now = std::chrono::steady_clock::now();
+                        const int64_t elapsedMs =
+                            std::chrono::duration_cast<std::chrono::milliseconds>(now - t0)
+                                .count();
+                        const int64_t noVideoMs =
+                            std::chrono::duration_cast<std::chrono::milliseconds>(
+                                now - lastCompleteVideoFrame)
+                                .count();
+                        const int64_t audioNow = audioBytes_.load();
+                        if (audioNow > lastAudioBytesForEof) {
+                            lastAudioBytesForEof = audioNow;
+                            lastAudioByte = now;
+                        }
+                        const bool audioSeen = lastAudioBytesForEof > 0;
+                        const int64_t noAudioSinceProgressMs =
+                            std::chrono::duration_cast<std::chrono::milliseconds>(
+                                now - lastAudioByte)
+                                .count();
+                        const int64_t noAudioMs = misterplex::eofStallAudioSilenceMs(
+                            wantAudio, audioSeen, noVideoMs, noAudioSinceProgressMs);
+                        const bool knownDurationStall = misterplex::knownDurationEofStall(
+                            startMs, durationMs, elapsedMs, static_cast<int64_t>(got), noVideoMs,
+                            noAudioMs);
+                        if (misterplex::rawVideoTerminalSignal(
+                                /*explicitStopOrSeek=*/false, /*readZero=*/false,
+                                /*readError=*/false, /*shortRead=*/false,
+                                knownDurationStall)) {
+                            videoEof = true;
+                            if (!eofStallLogged) {
+                                eofStallLogged = true;
+                                log("media: known-duration EOF after rawvideo stall elapsed_ms=" +
+                                    std::to_string(elapsedMs) +
+                                    " duration_ms=" + std::to_string(durationMs) +
+                                    " partial_bytes=" + std::to_string(got) +
+                                    " no_video_ms=" + std::to_string(noVideoMs) +
+                                    " no_audio_ms=" + std::to_string(noAudioMs));
+                            }
+                            break;
+                        }
                         if (profilePresent) {
                             const auto sleep0 = std::chrono::steady_clock::now();
                             std::this_thread::sleep_for(std::chrono::milliseconds(2));
@@ -2641,13 +4078,25 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                         }
                         continue;
                     }
-                    log("media: read err errno=" + std::to_string(errno));
-                    break;
+                    if (misterplex::rawVideoTerminalSignal(/*explicitStopOrSeek=*/false,
+                                                           /*readZero=*/false,
+                                                           /*readError=*/true,
+                                                           /*shortRead=*/false,
+                                                           /*knownDurationStall=*/false)) {
+                        log("media: read err errno=" + std::to_string(errno));
+                        break;
+                    }
                 }
                 if (n == 0) {
                     ++frameReadZero;
-                    videoEof = true;
-                    break;
+                    if (misterplex::rawVideoTerminalSignal(/*explicitStopOrSeek=*/false,
+                                                           /*readZero=*/true,
+                                                           /*readError=*/false,
+                                                           /*shortRead=*/false,
+                                                           /*knownDurationStall=*/false)) {
+                        videoEof = true;
+                        break;
+                    }
                 }
                 got += static_cast<size_t>(n);
                 ++frameReadOkCalls;
@@ -2663,14 +4112,21 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             if (paused_.load())
                 continue;
             if (got < frameBytes) {
-                shortRead = true;
-                shortReadGot = got;
-                shortReadWant = frameBytes;
-                log("media: short read got=" + std::to_string(got) + "/" +
-                    std::to_string(frameBytes) + " totalBytes=" + std::to_string(totalBytes) +
-                    (videoEof ? " eof=1" : ""));
-                break;
+                if (misterplex::rawVideoTerminalSignal(/*explicitStopOrSeek=*/false,
+                                                       /*readZero=*/false,
+                                                       /*readError=*/false,
+                                                       /*shortRead=*/true,
+                                                       /*knownDurationStall=*/false)) {
+                    shortRead = true;
+                    shortReadGot = got;
+                    shortReadWant = frameBytes;
+                    log("media: short read got=" + std::to_string(got) + "/" +
+                        std::to_string(frameBytes) + " totalBytes=" + std::to_string(totalBytes) +
+                        (videoEof ? " eof=1" : ""));
+                    break;
+                }
             }
+            lastCompleteVideoFrame = std::chrono::steady_clock::now();
             got = 0;
 
             if (videoFmt == RawVideoFormat::Yuv420p) {
@@ -2678,12 +4134,31 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     const auto pix0 = std::chrono::steady_clock::now();
                     const int64_t pixCpu0 = threadCpuMicros();
                     clearYuv420pCropPadding(frame.data(), ddrGeometry);
+                    // Safety net for defect A: if U/V stayed near 0 (green-cast
+                    // class), force studio-neutral chroma so scanout is greyscale
+                    // rather than full green. Y untouched. Logs once per session.
+                    if (repairDeadYuv420pChroma(frame.data(), rawW, rawH)) {
+                        static std::atomic<bool> chromaRepairLogged{false};
+                        if (!chromaRepairLogged.exchange(true))
+                            log("media: WARN repaired dead YUV420p chroma (U/V~0 → 128) "
+                                "at " +
+                                std::to_string(rawW) + "x" + std::to_string(rawH) +
+                                " — green-cast class; check identity_skip / PMS delivery");
+                    }
                     const int64_t pixCpu1 = threadCpuMicros();
                     const auto pix1 = std::chrono::steady_clock::now();
                     prof.pixelUs += microsBetween(pix0, pix1);
                     prof.pixelCpuUs += pixCpu1 - pixCpu0;
                 } else {
                     clearYuv420pCropPadding(frame.data(), ddrGeometry);
+                    if (repairDeadYuv420pChroma(frame.data(), rawW, rawH)) {
+                        static std::atomic<bool> chromaRepairLogged{false};
+                        if (!chromaRepairLogged.exchange(true))
+                            log("media: WARN repaired dead YUV420p chroma (U/V~0 → 128) "
+                                "at " +
+                                std::to_string(rawW) + "x" + std::to_string(rawH) +
+                                " — green-cast class; check identity_skip / PMS delivery");
+                    }
                 }
             }
 
@@ -2712,6 +4187,59 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             int64_t framePacingWaitUs = 0;
             int64_t framePacingWaitCpuUs = 0;
             {
+                // Release audio once: open MrAudio gate at the first complete video
+                // frame. Startup-window only (avAudioReleased). Physical start —
+                // not a clock re-base (co-arm failed that distinction on silicon).
+                if (!avAudioReleased) {
+                    avAudioReleased = true;
+                    t0 = std::chrono::steady_clock::now();
+                    lastCompleteVideoFrame = t0;
+                    // Arm shared origin for cluster axis (audio thread reads this).
+                    const int64_t originMono = steadyMonoMs();
+                    sessionOriginMonoMs_.store(originMono, std::memory_order_release);
+                    avAudioReleaseMonoMs_.store(originMono, std::memory_order_release);
+                    // Gate open is the physical start. content_origin must be 0:
+                    // audioBytes_ is only incremented on MrAudio write, which the
+                    // hold path forbids while the gate is closed.
+                    const int64_t writtenBefore = audioBytes_.load();
+                    const auto rel = misterplex::checkAudioReleaseOrigin(writtenBefore, /*held*/ 0);
+                    audioStartGate_.store(true, std::memory_order_release);
+                    // hold_wall_ms = first_audio_pcm → gate open (explicit; do not
+                    // hand-subtract mono_ms). held_ms here is content_origin check
+                    // (0 when hold worked); pump "audio release" has buffer held_ms.
+                    const int64_t fa =
+                        firstAudioPcmMonoMs_.load(std::memory_order_acquire);
+                    std::string holdWall = " hold_wall_ms=NO-DATA";
+                    if (fa >= 0)
+                        holdWall = " hold_wall_ms=" + std::to_string(originMono - fa);
+                    const std::string axis =
+                        " mono_ms=" + std::to_string(originMono) + " wall_s=0.000" +
+                        " held_ms=" + std::to_string(rel.heldMs) + holdWall +
+                        " tag=measured";
+                    if (wantAudio && audioActive_.load()) {
+                        if (!rel.ok) {
+                            log("ERROR media: A/V audio_release first_frame=" +
+                                std::to_string(frameIndex) +
+                                " content_origin_ms=" + std::to_string(rel.contentOriginMs) +
+                                " audio_bytes_at_release=" +
+                                std::to_string(rel.audioBytesAtRelease) + axis +
+                                " — hold bypassed before gate open");
+                        } else {
+                            log("media: A/V audio_release first_frame=" +
+                                std::to_string(frameIndex) +
+                                " content_origin_ms=0 audio_bytes_at_release=0" + axis +
+                                " (MrAudio starts; held PCM from content t=0)");
+                        }
+                        // Handoff sample at gate-open (before first write races).
+                        // Parent: pair handoff_at=audio_release rptr/wptr across clusters.
+                        logMrAudioHandoffAt("audio_release");
+                    } else {
+                        log("media: A/V audio_release first_frame=" +
+                            std::to_string(frameIndex) +
+                            " content_origin_ms=0" + axis +
+                            " (wall clock; audio inactive)");
+                    }
+                }
                 // Live OSD trim is read every frame so the menu takes effect at once.
                 const int64_t frameMs =
                     frameContentMs(frameIndex, fpsNum, fpsDen) + avOffsetMs_.load();
@@ -2722,9 +4250,10 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     if (wantAudio && audioActive_.load()) {
                         // What has actually been HEARD, not what has been handed
                         // to the driver. Falls back to the submitted-byte clock
-                        // when the ring depth is unavailable.
-                        clockMs = misterplex::audibleClockMs(audioBytes_.load(),
-                                                             audioQueuedBytes_.load());
+                        // when the ring depth is unavailable. No origin subtract:
+                        // gate ensures audible clock starts near 0 with frame 1.
+                        clockMs = misterplex::audibleClockMs(
+                            audioBytes_.load(), audioQueuedBytes_.load());
                     } else {
                         clockMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                                       std::chrono::steady_clock::now() - t0)
@@ -2734,16 +4263,23 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     avDriftMs_.store(drift);
                     const AvAction act = avDecide(drift, leadMs, dropMs, dropRun);
                     if (act == AvAction::Hold) {
+                        // Always count holds (field 5). Profile path adds CPU accounting.
+                        const auto hold0 = std::chrono::steady_clock::now();
                         if (profilePresent) {
-                            const auto hold0 = std::chrono::steady_clock::now();
                             const int64_t holdCpu0 = threadCpuMicros();
                             std::this_thread::sleep_for(std::chrono::milliseconds(2));
                             const int64_t holdCpu1 = threadCpuMicros();
                             const auto hold1 = std::chrono::steady_clock::now();
-                            framePacingWaitUs += microsBetween(hold0, hold1);
+                            const int64_t hus = microsBetween(hold0, hold1);
+                            framePacingWaitUs += hus;
                             framePacingWaitCpuUs += holdCpu1 - holdCpu0;
+                            ++avHoldCount;
+                            avHoldWaitUs += hus;
                         } else {
                             std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                            const auto hold1 = std::chrono::steady_clock::now();
+                            ++avHoldCount;
+                            avHoldWaitUs += microsBetween(hold0, hold1);
                         }
                         continue;
                     }
@@ -2758,12 +4294,24 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
 
             if (!present) {
                 ++dropRun;
-                droppedFrames_.fetch_add(1);
+                const int64_t dropsNow = droppedFrames_.fetch_add(1) + 1;
                 if (profilePresent)
                     ++prof.drops;
-                if ((droppedFrames_.load() % 24) == 1)
-                    log("media: A/V resync drop drift_ms=" + std::to_string(avDriftMs_.load()) +
-                        " drops=" + std::to_string(droppedFrames_.load()));
+                // Every drop (not every 24th): startup-window instrument needs
+                // wall_s of EACH drop. Steady state is zero drops so volume is
+                // ~12–17 lines per session open only. mono_ms joins cluster axis.
+                {
+                    const auto dropNow = std::chrono::steady_clock::now();
+                    const double dropWallS =
+                        std::chrono::duration<double>(dropNow - t0).count();
+                    log("media: A/V resync drop wall_s=" +
+                        std::to_string(dropWallS).substr(0, 6) +
+                        " mono_ms=" + std::to_string(steadyMonoMs()) +
+                        " drift_ms=" + std::to_string(avDriftMs_.load()) +
+                        " drops=" + std::to_string(dropsNow) +
+                        " frames=" + std::to_string(frameIndex) +
+                        " presents=" + std::to_string(presentCount_));
+                }
             } else {
                 dropRun = 0;
                 presentCleanFrame(frame.data(), /*countPresent*/ true);
@@ -2773,6 +4321,18 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             const int64_t wall2 = std::chrono::duration_cast<std::chrono::milliseconds>(
                                       now - t0)
                                       .count();
+            // Field 5 cumulative: first 10 s of session wall after t0/origin.
+            if (!hold10sLogged && wall2 >= 10000) {
+                hold10sLogged = true;
+                log("media: av_hold_first_10s mono_ms=" +
+                    std::to_string(steadyMonoMs()) +
+                    " wall_s=" +
+                    std::to_string(static_cast<double>(wall2) / 1000.0).substr(0, 6) +
+                    " av_hold_count=" + std::to_string(avHoldCount) +
+                    " av_hold_wait_us=" + std::to_string(avHoldWaitUs) +
+                    " av_hold_wait_ms=" + std::to_string(avHoldWaitUs / 1000) +
+                    " tag=measured");
+            }
             if (now - lastLog > std::chrono::seconds(1)) {
                 lastLog = now;
                 const double vfps =
@@ -2785,17 +4345,196 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                               : 0.0;
                 const int64_t abytes = audioBytes_.load();
                 const double a_sec = static_cast<double>(abytes) / (48000.0 * 4.0);
-                log("media: frames=" + std::to_string(frameIndex) +
-                    " vfps=" + std::to_string(vfps).substr(0, 4) +
-                    " pfps=" + std::to_string(pfps).substr(0, 4) +
-                    " audio_s=" + std::to_string(a_sec).substr(0, 5) +
-                    " wall_s=" + std::to_string(wall2 / 1000.0).substr(0, 5) +
+                const double wall_s_now = static_cast<double>(wall2) / 1000.0;
+                // Link/arrival observable: audio_s/wall_s (parent 480p RCA).
+                // STARVED ≈ 0.47 collapse; OK ≈ 0.99 healthy — single signal, not a 2nd meter.
+                const auto supplyRt = misterplex::classifySupplyRealtime(a_sec, wall_s_now);
+                const std::string supplyRtFields =
+                    misterplex::formatSupplyRealtimeFields(supplyRt);
+                if (supplyRt.ratio_known && std::strcmp(supplyRt.class_name, "STARVED") == 0)
+                    ++starveStreak_;
+                else
+                    starveStreak_ = 0;
+                if (!ladderStepdownLogged_ &&
+                    misterplex::starveStepdownReady(starveStreak_)) {
+                    const int curBr = ladderBitrateKbps_.load(std::memory_order_relaxed);
+                    const int nextBr = misterplex::nextLowerLadderBitrateKbps(curBr > 0 ? curBr : 0);
+                    ladderStepdownLogged_ = true;
+                    if (nextBr > 0)
+                        ladderStepdownKbps_.store(nextBr, std::memory_order_relaxed);
+                    log(std::string("ERROR media: LADDER_STEPDOWN_RECOMMENDED ") +
+                        "supply_class=STARVED supply_ratio=" +
+                        (supplyRt.ratio_known ? fmtSec3(supplyRt.ratio) : "NO-DATA") +
+                        " consecutive_starved=" + std::to_string(starveStreak_) +
+                        " current_bitrate_kbps=" + std::to_string(curBr) +
+                        " next_bitrate_kbps=" + std::to_string(nextBr) +
+                        " geometry_unchanged=1 " +
+                        "note=not_a_link_speed_guess;operator_or_AUTO_LADDER_STEPDOWN " +
+                        "tag=measured");
+                }
+                const int mw = measuredDeliveryW_.load();
+                const int mh = measuredDeliveryH_.load();
+                const auto led = frameLedgerLiveOf(frameIndex, presentCount_,
+                                                   droppedFrames_.load(),
+                                                   publishMisses_.load());
+                const int64_t ltF = lifetimeFrames_.load() + frameIndex;
+                const int64_t ltP = lifetimePresents_.load() + presentCount_;
+                const int64_t ltD = lifetimeDrops_.load() + droppedFrames_.load();
+                const int64_t ltM = lifetimePublishMisses_.load() + publishMisses_.load();
+                const int64_t ltU = frameLedgerResidual(ltF, ltP, ltD);
+                const uint64_t pep = processEpoch_.load(std::memory_order_acquire);
+                const uint64_t sseq = streamSeq_.load(std::memory_order_acquire);
+                // Real FPGA observation for this 1 Hz line (not residual static "none").
+                // Parent 2026-08-02: presents advanced while HDMI idle after load_core.
+                const char* fpgaObsTok = kFpgaObsNotSampled;
+                if (presentMode_ != "none" && fpga_.ok()) {
+                    BankReleaseStatus brsHz{};
+                    FpgaScanoutSample samp{};
+                    samp.presents = presentCount_;
+                    samp.read_ok = fpga_.readBankRelease(brsHz);
+                    if (samp.read_ok) {
+                        samp.bank_sig = fpgaScanoutBankSig(brsHz.free_bank_mask, brsHz.disp_bank,
+                                                           brsHz.swap_pending);
+                    }
+                    fpgaObsTok = fpgaScanoutNoteSample(scanoutHealth_, samp);
+                    if (fpgaScanoutShouldReopen(scanoutHealth_)) {
+                        scanoutHealth_.reopen_attempted = true;
+                        log(fpgaScanoutPresentWithoutProofErrorLine(
+                            scanoutHealth_, presentCount_, frameIndex) +
+                            " action=reopen_present_path");
+                        const bool re = fpga_.reopenPresentPath();
+                        log(std::string("media: scanout_reopen ok=") + (re ? "1" : "0") +
+                            " err=" + (re ? "none" : fpga_.lastError()) +
+                            " note=force_ddr_kick_reprobe_after_load_core_class" +
+                            " tag=measured");
+                        if (re)
+                            useDdrF1_ = true;
+                    } else if (fpgaScanoutPresentWithoutProof(scanoutHealth_) &&
+                               !scanoutHealth_.failure_logged) {
+                        scanoutHealth_.failure_logged = true;
+                        log(fpgaScanoutPresentWithoutProofErrorLine(
+                            scanoutHealth_, presentCount_, frameIndex));
+                    }
+                }
+                // A5: av_drift_ms is servo error (pinned near -lead). Also emit
+                // display-path offset (presentCount) which drops do not auto-heal.
+                char avServoBuf[384];
+                const int64_t driftNow = avDriftMs_.load();
+                const int64_t dispOff = misterplex::avDisplayOffsetMs(
+                    wantAudio && audioActive_.load()
+                        ? misterplex::audibleClockMs(audioBytes_.load(), audioQueuedBytes_.load())
+                        : wall2,
+                    presentCount_, fpsNum, fpsDen);
+                const int64_t pipeAhead =
+                    misterplex::avPipeAheadMs(frameIndex, presentCount_, fpsNum, fpsDen);
+                misterplex::formatAvServoTelemetry(avServoBuf, sizeof(avServoBuf), driftNow,
+                                                   leadMs, dispOff, pipeAhead);
+                // Exact integers are SoT for soak math; vfps/pfps are derived display
+                // only (%.4f). Decode-side deficit = expected_frames - frames (content
+                // vs wall). Presentation-side loss is a SEPARATE ledger (presents /
+                // glass) — never conflate the two (parent DEFECT 2).
+                // pub_iv_* = rolling publish arrival intervals (pre-to-pre). Required for
+                // mid-session M2 WANDER pairing — session_end alone cannot score 60s windows.
+                // clock=av-lock is a HARDCODED label (not a health bit); lipsync GT is HDMI.
+                // Collapse/intermittency discriminator ledger (parent paired casts).
+                // identity_skip/arm_rescale freeze at play-time vfPlan; measured may
+                // arrive later. producer_bytes from banner; reader_bytes = coded bank.
+                // pipe_total_mod: live B5 remainder (0 while read loop fills full frames).
+                const size_t prodHz =
+                    (mw > 0 && mh > 0) ? yuv420pFrameBytesWH(mw, mh) : 0;
+                const size_t pipeMod =
+                    frameBytes ? (totalBytes % frameBytes) : 0;
+                log("media: " + frameLedgerTelemetryFragment(led, fpgaObsTok) +
+                    " vfps=" + fmtFpsRate(vfps) +
+                    " pfps=" + fmtFpsRate(pfps) +
+                    " audio_s=" + fmtSec3(a_sec) +
+                    " wall_s=" + fmtSec3(wall_s_now) +
+                    " " + supplyRtFields +
+                    " wall_ms=" + std::to_string(wall2) +
+                    " mono_ms=" + std::to_string(steadyMonoMs()) +
                     " audio=" + (audioActive_.load() ? "on" : "off") +
                     " clock=av-lock" +
-                    " av_drift_ms=" + std::to_string(avDriftMs_.load()) +
-                    " drops=" + std::to_string(droppedFrames_.load()) +
+                    " " + pubInterval_.formatHzFragment() +
+                    " " + std::string(avServoBuf) +
                     " fps=" + std::to_string(fpsNum) + "/" + std::to_string(fpsDen) +
-                    " decode=" + std::to_string(outW_) + "x" + std::to_string(outH_));
+                    " fps_src=" +
+                    (fpsNum_ > 0 ? std::string("caller_supplied") : "DEFAULT_ASSUMED") +
+                    " decode=" + std::to_string(outW_) + "x" + std::to_string(outH_) +
+                    " decode_src=" + decodeSizeSource_ +
+                    " decode_src_der=setDecodeSizeSource_not_hardcoded" +
+                    " measured_delivery=" +
+                    (mw > 0 ? (std::to_string(mw) + "x" + std::to_string(mh)) : "pending") +
+                    " measured_delivery_src=" + (mw > 0 ? "measured" : "NO-DATA") +
+                    // Live flag: flips to 1 only after MEASURED_DELIVERY (not play-time GEOM).
+                    " delivery_verified=" +
+                    (deliveryGeometryVerified_.load(std::memory_order_relaxed) ? "1" : "0") +
+                    " identity_skip=" + (vfPlan.identity_skip ? "1" : "0") +
+                    " arm_rescale=" + (vfPlan.scale_applied ? "1" : "0") +
+                    " vf_reason=" + vfPlan.reason +
+                    " producer_bytes=" + std::to_string(prodHz) +
+                    " reader_bytes=" + std::to_string(frameBytes) +
+                    " pipe_total_mod=" + std::to_string(pipeMod) +
+                    " desync_risk=" + (pipeDesyncRisk_.load() ? "1" : "0") +
+                    " plxd_live_samples=" + std::to_string(scanoutHealth_.live_samples) +
+                    " lifetime_frames=" + std::to_string(ltF) +
+                    " lifetime_presents=" + std::to_string(ltP) +
+                    " lifetime_drops=" + std::to_string(ltD) +
+                    " lifetime_publish_misses=" + std::to_string(ltM) +
+                    " lifetime_residual=" + std::to_string(ltU) +
+                    " lifetime_residual_eq=frames-presents-drops" +
+                    " lifetime_residual_scope=supply_arm_only" +
+                    // Soak continuity markers (P4): process_epoch is stamped once at
+                    // daemon start (steady mono_ms). pid changes on every respawn.
+                    // A soak that sees either field change mid-window is interrupted.
+                    " process_epoch=" + std::to_string(pep) +
+                    " pid=" + std::to_string(static_cast<long>(::getpid())) +
+                    " stream_seq=" + std::to_string(sseq) +
+                    " session_epoch=" + sessionEpochString(pep, sseq) +
+                    " session_completed=" + std::to_string(sessionSeq_.load()) +
+                    " ffmpeg_out_frames=" +
+                    (ffmpegOutFrames_.load(std::memory_order_relaxed) >= 0
+                         ? std::to_string(ffmpegOutFrames_.load(std::memory_order_relaxed))
+                         : "NO-DATA") +
+                    " tag=measured");
+                // Per-second supply bucket — resolvable at ~1 skip / 2.71 s.
+                {
+                    misterplex::SupplyCounters cur;
+                    cur.frames = frameIndex;
+                    cur.presents = presentCount_;
+                    cur.drops = droppedFrames_.load();
+                    cur.publish_misses = publishMisses_.load();
+                    cur.pipe_bytes = static_cast<int64_t>(totalBytes);
+                    cur.ffmpeg_out_frames =
+                        ffmpegOutFrames_.load(std::memory_order_relaxed);
+                    cur.wall_s = static_cast<double>(wall2) / 1000.0;
+                    if (supplyPrevInit) {
+                        const auto d =
+                            misterplex::supplyBucketDelta(supplyPrev, cur, fpsNum, fpsDen);
+                        const std::string se = sessionEpochString(pep, sseq);
+                        log("media: " +
+                            misterplex::formatSupplyBucketLine(
+                                d, cur.wall_s, cur.frames, cur.presents, cur.drops,
+                                cur.publish_misses, led.residual, cur.ffmpeg_out_frames,
+                                fpsNum, fpsDen, se.c_str()));
+                    }
+                    supplyPrev = cur;
+                    supplyPrevInit = true;
+                }
+            }
+            // Periodic hard check (B5): measured size vs reader under identity_skip.
+            if (vfPlan.identity_skip && (frameIndex % 120) == 0) {
+                const int mw = measuredDeliveryW_.load();
+                const int mh = measuredDeliveryH_.load();
+                if (mw > 0 && mh > 0) {
+                    const size_t pb = yuv420pFrameBytesWH(mw, mh);
+                    if (pipeDesyncRisk(pb, frameBytes, true)) {
+                        pipeDesyncRisk_.store(true);
+                        log("ERROR media: PIPE_DESYNC_RISK periodic measured=" +
+                            std::to_string(mw) + "x" + std::to_string(mh) +
+                            " producer_bytes=" + std::to_string(pb) +
+                            " reader_bytes=" + std::to_string(frameBytes));
+                    }
+                }
             }
 
             {
@@ -2813,6 +4552,278 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             logProfile();
         if (rfd >= 0)
             ::close(rfd);
+        // Close video first so ffmpeg can exit and EOF stderr for the pump join.
+        killChildren();
+        if (errThr.joinable())
+            errThr.join();
+
+        // B5: byte-align + measured desync risk (remainder alone cannot see
+        // producer≠reader while the read loop still fills frameBytes each time).
+        // Assert total_bytes % runtime frameBytes == 0 (never a literal size).
+        const bool byteAligned = rawPipeByteAligned(totalBytes, frameBytes);
+        const int mw = measuredDeliveryW_.load();
+        const int mh = measuredDeliveryH_.load();
+        const size_t prodBytes = (mw > 0 && mh > 0) ? yuv420pFrameBytesWH(mw, mh) : 0;
+        const bool phaseDesync =
+            (prodBytes > 0) &&
+            rawPipeDesynced(prodBytes, frameBytes, static_cast<size_t>(frameIndex));
+        const bool risk = pipeDesyncRisk_.load() ||
+                          pipeDesyncRisk(prodBytes, frameBytes, vfPlan.identity_skip) ||
+                          phaseDesync || !byteAligned;
+        if (risk)
+            pipeDesyncRisk_.store(true);
+        if (!byteAligned) {
+            log("ERROR media: PIPE_BYTE_MISALIGN totalBytes=" + std::to_string(totalBytes) +
+                " frameBytes=" + std::to_string(frameBytes) +
+                " remainder=" + std::to_string(frameBytes ? totalBytes % frameBytes : 0) +
+                " shortRead=" + (shortRead ? "1" : "0") + " tag=measured");
+        } else if (totalBytes > 0) {
+            log("media: pipe_align ok totalBytes=" + std::to_string(totalBytes) +
+                " frameBytes=" + std::to_string(frameBytes) +
+                " frames=" + std::to_string(frameIndex) +
+                " total_mod_frame=0 tag=measured");
+        }
+        {
+            const auto id =
+                misterplex::supplyPipeIdentity(totalBytes, frameBytes, frameIndex);
+            misterplex::SupplyBucketDelta win{};
+            if (supplyPrevInit) {
+                misterplex::SupplyCounters endc;
+                endc.frames = frameIndex;
+                endc.presents = presentCount_;
+                endc.drops = droppedFrames_.load();
+                endc.publish_misses = publishMisses_.load();
+                endc.pipe_bytes = static_cast<int64_t>(totalBytes);
+                endc.ffmpeg_out_frames =
+                    ffmpegOutFrames_.load(std::memory_order_relaxed);
+                endc.wall_s = supplyPrev.wall_s; // not used for stage at teardown
+                // Whole-session style: compare end counters to zeros baseline.
+                misterplex::SupplyCounters zero{};
+                zero.ffmpeg_out_frames = -1;
+                win = misterplex::supplyBucketDelta(zero, endc, fpsNum, fpsDen);
+                // Prefer first-bucket→end if we have prev from last 1Hz (approx).
+                win.d_frames = frameIndex;
+                win.d_presents = presentCount_;
+                win.d_drops = droppedFrames_.load();
+                win.d_publish_misses = publishMisses_.load();
+                win.d_residual =
+                    misterplex::supplyResidual(frameIndex, presentCount_,
+                                               droppedFrames_.load());
+                win.supply_gap = 0; // filled below from wall if known
+            }
+            const int64_t ff = ffmpegOutFrames_.load(std::memory_order_relaxed);
+            if (ff >= 0)
+                win.d_ffmpeg_out = ff;
+            win.ffmpeg_out_known = ff >= 0;
+            const char* hint = misterplex::supplyStageHint(win, /*glass*/ 0, risk);
+            log("media: " + misterplex::formatSupplyTeardownLine(id, totalBytes, frameBytes,
+                                                                   ff, hint));
+            if (!id.ok && totalBytes > 0) {
+                log("ERROR media: SUPPLY_PIPE_IDENTITY_FAIL frames_from_bytes=" +
+                    std::to_string(id.frames_from_bytes) +
+                    " frame_index=" + std::to_string(frameIndex) +
+                    " delta=" + std::to_string(id.delta_frames_vs_bytes) + " tag=measured");
+            }
+        }
+        // B5 phase offset (explicit greppable) — arm product path, not unit-only.
+        const size_t phaseOff =
+            (prodBytes > 0)
+                ? rawPipePhaseOffset(prodBytes, frameBytes, static_cast<size_t>(frameIndex))
+                : 0;
+        if (mw > 0 && mh > 0) {
+            const bool matchRequest =
+                (playRequestW_ > 0 && playRequestH_ > 0 && mw == playRequestW_ &&
+                 mh == playRequestH_);
+            const bool matchBank =
+                (codedBankW_ > 0 && codedBankH_ > 0 && mw == codedBankW_ && mh == codedBankH_);
+            const double vfrac =
+                (mh > 0 && codedBankH_ > 0)
+                    ? (static_cast<double>(mh) / static_cast<double>(codedBankH_))
+                    : 0.0;
+            const bool foarFinal =
+                vfPlan.vf.find("force_original_aspect_ratio=decrease") != std::string::npos;
+            const bool foar618 = vfPlan.vf.find("scale=618:480") != std::string::npos;
+            const bool cropPadPath =
+                vfPlan.reason.find("crop_pad") != std::string::npos ||
+                vfPlan.reason.find("force_exact_crop_pad") != std::string::npos ||
+                vfPlan.reason.find("force_exact_pad") != std::string::npos;
+            // Post-scale *picture* area inside the bank (before black pad).
+            // FOAR: fitted WxH inside coded (or legacy 618) box.
+            // crop_pad: display window (618x480 product) — keeps all delivered rows.
+            // identity: full bank.
+            int filterPredW = codedBankW_;
+            int filterPredH = codedBankH_;
+            double filterVfrac = 1.0;
+            if (foarFinal && mw > 0 && mh > 0 && codedBankW_ > 0 && codedBankH_ > 0) {
+                const int boxW = foar618 ? 618 : codedBankW_;
+                const int boxH = foar618 ? 480 : codedBankH_;
+                filterPredW = scaleDecreaseOutWidth(mw, mh, boxW, boxH);
+                filterPredH = scaleDecreaseOutHeight(mw, mh, boxW, boxH);
+                filterVfrac = foarVerticalDetailFrac(mw, mh, boxW, boxH, codedBankH_);
+            } else if (cropPadPath && codedBankW_ > 0) {
+                // Product crop_right=6 → picture cols = display width (618).
+                filterPredW = (codedBankW_ >= 6) ? (codedBankW_ - 6) : codedBankW_;
+                filterPredH = codedBankH_;
+                filterVfrac = 1.0;
+            } else if (vfPlan.identity_skip) {
+                filterPredW = codedBankW_;
+                filterPredH = codedBankH_;
+                filterVfrac = 1.0;
+            }
+            const double dArea =
+                deliveredAreaFrac(mw, mh, codedBankW_, codedBankH_);
+            const double fArea =
+                deliveredAreaFrac(filterPredW, filterPredH, codedBankW_, codedBankH_);
+            const double compoundV = compoundVerticalDetailFrac(vfrac, filterVfrac);
+            const std::string bankStr =
+                (codedBankW_ > 0
+                     ? (std::to_string(codedBankW_) + "x" + std::to_string(codedBankH_))
+                     : "unknown");
+            const std::string picStr =
+                std::to_string(filterPredW) + "x" + std::to_string(filterPredH);
+            const std::string delivStr = std::to_string(mw) + "x" + std::to_string(mh);
+            // Always-on ledger: distinguishes Loss2 half-res (312x240) from full
+            // bank delivery (624x480) even when both pad into the same bank.
+            log("media: BANK_FILL delivered_geom=" + delivStr +
+                " post_scale_picture=" + picStr + " coded_bank=" + bankStr +
+                " delivered_v_frac=" + std::to_string(vfrac) +
+                " delivered_area_frac=" + std::to_string(dArea) +
+                " filter_picture_area_frac=" + std::to_string(fArea) +
+                " filter_vertical_detail_frac=" + std::to_string(filterVfrac) +
+                " compound_vertical_detail_frac=" + std::to_string(compoundV) +
+                " filter_reason=" + vfPlan.reason +
+                " filter_foar=" + (foarFinal ? "1" : "0") +
+                " foar_into_618=" + (foar618 ? "1" : "0") +
+                " tag=measured");
+            log("media: MEASURED_DELIVERY_FINAL delivered_geom=" + delivStr +
+                " src=ffmpeg_banner" +
+                " producer_bytes=" + std::to_string(prodBytes) +
+                " reader_bytes=" + std::to_string(frameBytes) +
+                " request_geom=" +
+                (playRequestW_ > 0
+                     ? (std::to_string(playRequestW_) + "x" + std::to_string(playRequestH_))
+                     : "unknown") +
+                " coded_bank=" + bankStr +
+                " post_scale_picture=" + picStr +
+                " request_match=" + (matchRequest ? "1" : "0") +
+                " bank_match=" + (matchBank ? "1" : "0") +
+                " vertical_detail_frac=" + std::to_string(vfrac) +
+                " delivered_area_frac=" + std::to_string(dArea) +
+                " filter_reason=" + vfPlan.reason +
+                " filter_foar=" + (foarFinal ? "1" : "0") +
+                " filter_predicted_picture=" + picStr +
+                " filter_vertical_detail_frac=" + std::to_string(filterVfrac) +
+                " filter_picture_area_frac=" + std::to_string(fArea) +
+                " compound_vertical_detail_frac=" + std::to_string(compoundV) +
+                " identity_skip=" + (vfPlan.identity_skip ? "1" : "0") +
+                " phase_offset=" + std::to_string(phaseOff) +
+                " phase_desync=" + (phaseDesync ? "1" : "0") +
+                " desync_risk=" + (risk ? "1" : "0") +
+                " delivery_verified=1 delivery_basis=measured tag=measured");
+            // Durable loud path: requested/claimed vs measured — never silent.
+            if (!matchRequest && playRequestW_ > 0 && playRequestH_ > 0) {
+                log("ERROR media: REQUEST_VS_MEASURED request=" +
+                    std::to_string(playRequestW_) + "x" + std::to_string(playRequestH_) +
+                    " measured=" + delivStr + " coded_bank=" + bankStr +
+                    " post_scale_picture=" + picStr +
+                    " vertical_detail_frac=" + std::to_string(vfrac) +
+                    " delivered_area_frac=" + std::to_string(dArea) +
+                    " filter_vertical_detail_frac=" + std::to_string(filterVfrac) +
+                    " compound_vertical_detail_frac=" + std::to_string(compoundV) +
+                    " identity_skip=" + (vfPlan.identity_skip ? "1" : "0") +
+                    " note=videoResolution_ceiling_or_bitrate_tier tag=measured");
+            }
+            // DELIVERY_MISMATCH_FINAL: any bank underfill — PMS half-res (Loss 2),
+            // FOAR letterbox (Loss 1), or both. Always carries picture ledger.
+            const bool filterLetterbox =
+                foarFinal && filterPredH > 0 && codedBankH_ > 0 && filterPredH < codedBankH_;
+            if (codedBankW_ > 0 && (!matchBank || filterLetterbox || vfrac < 0.999)) {
+                log("ERROR media: DELIVERY_MISMATCH_FINAL measured=" + delivStr +
+                    " coded_bank=" + bankStr +
+                    " post_scale_picture=" + picStr +
+                    " delivered_v_frac=" + std::to_string(vfrac) +
+                    " delivered_area_frac=" + std::to_string(dArea) +
+                    " filter_vertical_detail_frac=" + std::to_string(filterVfrac) +
+                    " filter_picture_area_frac=" + std::to_string(fArea) +
+                    " compound_vertical_detail_frac=" + std::to_string(compoundV) +
+                    " filter_reason=" + vfPlan.reason +
+                    " filter_foar=" + (foarFinal ? "1" : "0") +
+                    " foar_into_618=" + (foar618 ? "1" : "0") +
+                    " force_scale_protects=" + (vfPlan.identity_skip ? "0" : "1") +
+                    " loss2_half_res=" + ((mw * 2 == codedBankW_ && mh * 2 == codedBankH_) ? "1"
+                                                                                          : "0") +
+                    " tag=measured");
+            }
+            if (filterLetterbox) {
+                log("ERROR media: FILTER_CHAIN_LOSS_FINAL reason=" + vfPlan.reason +
+                    " measured_in=" + delivStr +
+                    " post_scale_picture=" + picStr +
+                    " bank=" + bankStr +
+                    " filter_vertical_detail_frac=" + std::to_string(filterVfrac) +
+                    " compound_vertical_detail_frac=" + std::to_string(compoundV) +
+                    " foar_into_618=" + (foar618 ? "1" : "0") +
+                    " note=letterbox_is_daemon_vf_not_PMS tag=measured");
+            }
+        } else if (usedRawVideo) {
+            log("media: MEASURED_DELIVERY_FINAL delivered_geom=NO-DATA src=ffmpeg_banner "
+                "— banner not parsed (need -loglevel info + stderr pipe) delivery_verified=" +
+                std::string(deliveryGeometryVerified_.load(std::memory_order_relaxed) ? "1"
+                                                                                        : "0") +
+                " request_geom=" +
+                (playRequestW_ > 0
+                     ? (std::to_string(playRequestW_) + "x" + std::to_string(playRequestH_))
+                     : "unknown") +
+                " tag=NO-DATA");
+        }
+        if (risk) {
+            log("ERROR media: PIPE_DESYNC=1 phase_desync=" +
+                std::string(phaseDesync ? "1" : "0") +
+                " phase_offset=" + std::to_string(phaseOff) +
+                " byte_align=" + std::string(byteAligned ? "1" : "0") +
+                " producer_bytes=" + std::to_string(prodBytes) +
+                " reader_bytes=" + std::to_string(frameBytes) +
+                " frames=" + std::to_string(frameIndex) +
+                " tag=measured — hard telemetry trip (B5)");
+        }
+        // One-line intermittency discriminator for collapsed vs healthy casts.
+        // Parent greps SESSION_COLLAPSE_LEDGER across N runs — do not invent mechanism.
+        {
+            const double wallEnd = supplyPrevInit ? supplyPrev.wall_s : 0.0;
+            const int64_t abytesEnd = audioBytes_.load();
+            const double aSecEnd = static_cast<double>(abytesEnd) / (48000.0 * 4.0);
+            const auto rtEnd = misterplex::classifySupplyRealtime(aSecEnd, wallEnd);
+            log(std::string("media: SESSION_COLLAPSE_LEDGER ") +
+                "measured_delivery=" +
+                (mw > 0 ? (std::to_string(mw) + "x" + std::to_string(mh)) : "NO-DATA") +
+                " identity_skip=" + (vfPlan.identity_skip ? "1" : "0") +
+                " arm_rescale=" + (vfPlan.scale_applied ? "1" : "0") +
+                " vf_reason=" + vfPlan.reason +
+                " producer_bytes=" + std::to_string(prodBytes) +
+                " reader_bytes=" + std::to_string(frameBytes) +
+                " pipe_total_mod=" +
+                std::to_string(frameBytes ? (totalBytes % frameBytes) : 0) +
+                " byte_align=" + (byteAligned ? "1" : "0") +
+                " phase_desync=" + (phaseDesync ? "1" : "0") +
+                " desync_risk=" + (risk ? "1" : "0") +
+                " frames=" + std::to_string(frameIndex) +
+                " presents=" + std::to_string(presentCount_) +
+                " drops=" + std::to_string(droppedFrames_.load()) +
+                " publish_misses=" + std::to_string(publishMisses_.load()) +
+                " total_bytes=" + std::to_string(totalBytes) +
+                " supply_ratio=" +
+                (rtEnd.ratio_known ? fmtSec3(rtEnd.ratio) : "NO-DATA") +
+                " supply_class=" +
+                (rtEnd.class_name ? rtEnd.class_name : "NO-DATA") +
+                " wall_s=" + fmtSec3(wallEnd) +
+                " tag=measured");
+        }
+        {
+            std::lock_guard<std::mutex> lock(summaryMu_);
+            lastSummary_.pipeDesync = risk;
+            lastSummary_.pipeByteMisaligned = !byteAligned;
+            lastSummary_.measuredW = mw;
+            lastSummary_.measuredH = mh;
+        }
     }
 
     killChildren();
@@ -2861,6 +4872,14 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         lastSummary_.videoEof = videoEof;
         lastSummary_.shortReadGot = shortReadGot;
         lastSummary_.shortReadWant = shortReadWant;
+        // pipeDesync / measured* may already be set from the rawvideo epilogue;
+        // only fill measured from atomics if still zero.
+        if (lastSummary_.measuredW == 0) {
+            lastSummary_.measuredW = measuredDeliveryW_.load();
+            lastSummary_.measuredH = measuredDeliveryH_.load();
+        }
+        if (!lastSummary_.pipeDesync)
+            lastSummary_.pipeDesync = pipeDesyncRisk_.load();
     }
     // Natural EOF (not user stop / seek restart) → "ended" so main can auto-next.
     if (!stop_.load() && onProgress_) {
@@ -2871,18 +4890,136 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         else
             onProgress_("stopped", 0, durationMs);
     }
-    // The frame store latches the last frame written; without this the final frame
-    // of the video stays on screen until something else paints over it.
-    paintIdle();
+    if (idleMode() == IdleMode::LastFrame) {
+        bool latched = false;
+        if (lastFrameLatch.haveFrame()) {
+            std::lock_guard<std::mutex> lk(presentMu_);
+            if (!fpga_.ok() && presentMode_ != "none" && fpga_.open())
+                useDdrF1_ = true;
+            if (fpga_.ok() && useDdrF1_) {
+                latched = lastFrameLatch.publishToBothBanks(
+                    [this](const LastFrameLatch::Publication& pub) {
+                        return fpga_.sendYuv420pFrameDdr(
+                            pub.frame.data(), pub.frame.size(), pub.frame.geometry(), pub.bank);
+                    },
+                    ddrBank_);
+            }
+        }
+        if (latched) {
+            const DdrFrameGeometry& g = lastFrameLatch.frame().geometry();
+            log("media: LastFrame idle latched complete DDR frame geometry=" +
+                std::to_string(g.coded_width.get()) + "x" + std::to_string(g.coded_height.get()));
+        } else {
+            log("media: LastFrame idle requested but no complete DDR frame was available to latch");
+        }
+    } else {
+        // The frame store latches the last frame written; without this the final frame
+        // of the video stays on screen until something else paints over it.
+        paintIdle();
+    }
     startIdle();
 
-    log("media: session end frames=" + std::to_string(frameIndex) +
+    // Lifetime + append-only ledger BEFORE session counters are discarded.
+    // presentCount_/droppedFrames_/publishMisses_ reset on the next play; ledger does not.
+    const int64_t sessFrames = usedRawVideo ? frameIndex : reconFrames_.load();
+    const int64_t sessPresents = presentCount_;
+    const int64_t sessDrops = droppedFrames_.load();
+    const int64_t sessPubMiss = publishMisses_.load();
+    lifetimeFrames_.fetch_add(sessFrames, std::memory_order_relaxed);
+    lifetimePresents_.fetch_add(sessPresents, std::memory_order_relaxed);
+    lifetimeDrops_.fetch_add(sessDrops, std::memory_order_relaxed);
+    lifetimePublishMisses_.fetch_add(sessPubMiss, std::memory_order_relaxed);
+    const uint64_t sid = sessionSeq_.fetch_add(1, std::memory_order_relaxed) + 1;
+    // Field defect (parent 2026-08-02): crop=618 on 624x350 → 0 frames, log said
+    // natural_eof. Zero-frame total failure must be a distinct ERROR reason.
+    // Field defect (parent 2026-08-02): presents>0 with frozen HDMI after load_core
+    // while residual lines said fpga_obs=none (static). present_without_scanout.
+    const bool noScanout = fpgaScanoutPresentWithoutProof(scanoutHealth_);
+    const char* endReason =
+        frameLedgerClassifyEndReason(stop_.load(), sessFrames, sessPresents, noScanout);
+    if (frameLedgerIsZeroFrameFailure(endReason)) {
+        const int mw = measuredDeliveryW_.load();
+        const int mh = measuredDeliveryH_.load();
+        const size_t prodBytes =
+            (mw > 0 && mh > 0) ? yuv420pFrameBytesWH(mw, mh) : 0;
+        // Reader is coded-bank contract; prefer lastSummary when raw path ran.
+        size_t readerBytes = 0;
+        {
+            std::lock_guard<std::mutex> lock(summaryMu_);
+            if (lastSummary_.usedRawVideo && lastSummary_.shortReadWant > 0)
+                readerBytes = static_cast<size_t>(lastSummary_.shortReadWant);
+        }
+        if (readerBytes == 0) {
+            const auto g = ddrFrameGeometryForFpgaPresent(0, 0);
+            readerBytes = yuv420pCodedFrameBytes(g);
+        }
+        log(frameLedgerZeroFrameErrorLine(mw, mh, prodBytes, readerBytes, vfPlan.reason));
+    }
+    if (frameLedgerIsPresentWithoutScanout(endReason) && !scanoutHealth_.failure_logged) {
+        scanoutHealth_.failure_logged = true;
+        log(fpgaScanoutPresentWithoutProofErrorLine(scanoutHealth_, sessPresents, sessFrames));
+    }
+    frameLedgerSessionEnd(sid, sessFrames, sessPresents, sessDrops, endReason, sessPubMiss);
+
+    const auto ledEnd = frameLedgerLiveOf(sessFrames, sessPresents, sessDrops, sessPubMiss);
+    const int64_t ltF = lifetimeFrames_.load();
+    const int64_t ltP = lifetimePresents_.load();
+    const int64_t ltD = lifetimeDrops_.load();
+    const int64_t ltM = lifetimePublishMisses_.load();
+    const uint64_t pep = processEpoch_.load(std::memory_order_acquire);
+    const uint64_t sseq = streamSeq_.load(std::memory_order_acquire);
+    const char* endObs =
+        (scanoutHealth_.samples > 0) ? scanoutHealth_.last_obs : kFpgaObsNotSampled;
+    log("media: session end " + frameLedgerTelemetryFragment(ledEnd, endObs) +
+        " session=" + std::to_string(sid) +
+        " process_epoch=" + std::to_string(pep) +
+        " stream_seq=" + std::to_string(sseq) +
+        " session_epoch=" + sessionEpochString(pep, sseq) +
+        " lifetime_frames=" + std::to_string(ltF) +
+        " lifetime_presents=" + std::to_string(ltP) +
+        " lifetime_drops=" + std::to_string(ltD) +
+        " lifetime_publish_misses=" + std::to_string(ltM) +
+        " lifetime_residual=" +
+            std::to_string(frameLedgerResidual(ltF, ltP, ltD)) +
+        " lifetime_residual_eq=frames-presents-drops" +
+        " lifetime_residual_scope=supply_arm_only" +
+        " plxd_live_samples=" + std::to_string(scanoutHealth_.live_samples) +
+        " plxd_absent_samples=" + std::to_string(scanoutHealth_.absent_samples) +
+        " plxd_stale_samples=" + std::to_string(scanoutHealth_.stale_samples) +
         " recon=" + std::to_string(reconFrames_.load()) +
         " cabac=" + (cabacSkip_.load() ? "1" : "0") +
         " stream=" + (streamEnabled_ ? "on" : "off") +
         " rawvideo=" + (usedRawVideo ? "on" : "off") +
         " present=" + presentMode_ +
-        " skip_rgb=" + (skipRgb ? "1" : "0"));
+        " skip_rgb=" + (skipRgb ? "1" : "0") +
+        " reason=" + endReason +
+        " tag=measured");
+    // Session-end: interval + swap-delta (Δframes_done / phase ESTIMATE).
+    // Parent greps publish_interval / publish_swap_delta.
+    if (pubInterval_.iv_n > 0) {
+        log(std::string("media: ") + pubInterval_.formatSummaryLine("measured") +
+            " phase=session_end");
+        log(std::string("media: ") + pubInterval_.formatDiscLine() + " phase=session_end");
+        log(std::string("media: ") + pubInterval_.formatHistLine());
+        log(std::string("media: ") + pubInterval_.formatAutocorrLine());
+        log(std::string("media: ") + pubInterval_.formatCorrLine());
+        if (const char* dump = std::getenv("MISTERPLEX_PUBLISH_INTERVAL_DUMP")) {
+            if (dump[0] && pubInterval_.dumpMonoUs(dump))
+                log(std::string("media: publish_interval_dump path=") + dump +
+                    " cols=pre_us,write_us tag=measured");
+            else if (dump[0])
+                log(std::string("media: publish_interval_dump FAIL path=") + dump);
+        }
+    }
+    if (pubSwapDelta_.pair_n > 0 || pubSwapDelta_.count > 0) {
+        log(std::string("media: ") + pubSwapDelta_.formatSummaryLine("measured") +
+            " phase=session_end");
+        log(std::string("media: ") + pubSwapDelta_.formatCompatAliasLine() +
+            " phase=session_end");
+        log(std::string("media: ") + pubSwapDelta_.formatPhaseLine());
+    }
+    pubInterval_.reset();
+    pubSwapDelta_.reset();
 }
 
 } // namespace misterplex

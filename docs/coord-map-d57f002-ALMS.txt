@@ -1,0 +1,82 @@
+COORD-MAP d57f002 — RESULTS (exact-source area + correctness same freeze)
+=========================================================================
+Freeze SHA: d57f002070cc17acea6ef0b96d3c668137fa7de6  (rtl/i-slice-luma)
+  "fix(rtl): isolate RBSP single-port RAM — access restructure, not attributes"
+Correctness (traverse, same source — gap CLOSED):
+  clip1 300/300 y_px exact; clip2 1170/1170 y_px exact; STORE 300/1170; true rc=0
+  RED FAULT_SKIP_WIN_LOAD discriminating (per freeze commit message)
+
+Build: /home/flynnsbit/mplex-builds/coord-map-d57f002/Plex_MiSTer
+Method: product wire6 + map_decode_area_probe (keep_hash→residual_csum); same as map2d
+Overlay byte-exact d57f002: h264_byte_ram_sp.sv + h264_p_mb_traverse.sv (sha256 match)
+Map-tree-only patch (NOT in d57f002): Quartus Error 10232
+  win_k[RBSP_AW-1:0] illegal when win_k is [7:0] and RBSP_AW=13
+  patched to win_base + {{(RBSP_AW-8){1'b0}}, win_k}
+  → sv-traverse must land this upstream or next map fails elab
+
+quartus_map true rc=0
+log: .agent-work/integ-wiring/quartus_map_d57f002.log
+rpt: .agent-work/integ-wiring/coord-map-d57f002.Plex.map.rpt
+prereg: .agent-work/integ-wiring/coord-map-d57f002-preregister.txt
+
+PRE-REGISTER (integrate) vs MEASURED
+------------------------------------
+1) h264_byte_ram_sp M10K YES, bits 65536
+   MEASURED: YES
+   Info (276029): Inferred altsyncram ... u_rbsp_ram|mem_rtl_0
+   RAM Summary: M10K block · Simple Dual Port · 8192 × 8 · 65536 bits
+   Entity: comb=0 mem=65536
+   Score: HIT (do not confuse with low ALMs — RAM summary quoted)
+
+2) traverse area — pre-reg comb 2k-8k / ALMs 1.2k-4.5k; gate ≤3000 ALMs; point ~2500 ALMs
+   MEASURED entity table (Combinational ALUTs — map does not emit per-entity ALMs):
+     h264_p_mb_traverse:  comb ALUTs 9,167 total (self 7,079)
+                          regs 6,573 (self 5,860)
+                          mem bits 65,536 (child byte_ram)
+                          DSP 1
+     h264_cavlc child:    comb 1,924
+     h264_byte_ram_sp:    comb 0, mem 65536, M10K
+   vs map2d bomb: comb 1,180,271 (self 1,177,415) → ~129× reduction on comb ALUTs
+   Gate ≤3000 ALMs: entity ALMs NOT in map rpt.
+     comb self 7,079 already > 3000 → cannot claim ALM gate PASS.
+     Optimistic ALM packing (~2 ALUT/ALM) still ≈3.5k+ self → likely MISS ≤3000 ALMs
+     but PASS on "bomb is dead" and within traverse pre-reg upper band on comb.
+   Score: MISS strict ≤3000 ALMs (units discipline); HIT on killing 1.18M bomb.
+
+3) Whole-design ALMs needed
+   PRE-REG 45k-70k; MEASURED 63,199  HIT band
+   vs map2d 1,241,952 → ~19.6× smaller whole chip estimate
+   vs device 41,910 → 63,199/41910 ≈ 1.51× still OVER (sink still ~38.7k comb)
+
+4) DSP MEASURED 149 (pre-reg 140-160 HIT) — sink parallel IQ still binding
+5) Block memory bits 3,063,245 (product ~2.997M + RBSP 65k)
+
+PROBE CHILDREN (comb ALUTs / DSP) — for fit arithmetic
+  map_decode_area_probe total: 56,077 comb / DSP 97 / mem 65536
+  h264_p_mb_traverse:           9,167 comb / DSP 1 / mem 65536   ← was 1,180,271
+  h264_i_res_recon_sink:       38,687 comb / DSP 64
+  h264_i16_dc_hadamard (probe): 1,556 comb / DSP 32
+  h264_recon_frame_store:       6,413 comb / mem 0 (async uninfer 276007 remains)
+  h264_recon_export:              216 comb
+
+FIT ARITHMETIC (honest)
+  device                         41,910 ALMs
+  whole map ALMs needed          63,199  (1.51×)  — still does not fit
+  prior whole with bomb       1,241,952  (29.6×)
+  traverse is no longer the 28× problem
+  sink ~38.7k comb + 64 DSP remains the next wall (serial IQ)
+  DSP whole 149 > 112 even with traverse fixed
+
+EXACT-SOURCE GAP: CLOSED
+  Area number and correctness number both refer to freeze d57f002
+  (+ one-line Quartus width patch that does not change access architecture).
+
+UNINFERRED (non-RBSP, residual debt)
+  RFS async read 276007; small Ram0-3 inappropriate size in traverse neighbors;
+  RBSP path is NOT among uninferred.
+
+HONEST ONE-LINER
+  Restructured RBSP at d57f002 infers M10K (65536 bits); traverse falls from
+  1,180,271 → 9,167 comb ALUTs (~129×); whole chip 29.6× → 1.51× device;
+  ≤3000 ALM gate not proven PASS on ALM units (7k self comb); sink+DSP still
+  block fit; exact-source gap closed.

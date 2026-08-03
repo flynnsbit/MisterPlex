@@ -56,6 +56,67 @@ module h264_dequant4x4 (
 		end
 	endfunction
 
+// QP/6 without vendor divide IP (wire6 burned ~60 ALMs on Div0+Mod0).
+	function automatic [2:0] qp_mod6;
+		input [5:0] q;
+		begin
+			case (q)
+			6'd0, 6'd6, 6'd12, 6'd18, 6'd24, 6'd30, 6'd36, 6'd42, 6'd48: qp_mod6 = 3'd0;
+			6'd1, 6'd7, 6'd13, 6'd19, 6'd25, 6'd31, 6'd37, 6'd43, 6'd49: qp_mod6 = 3'd1;
+			6'd2, 6'd8, 6'd14, 6'd20, 6'd26, 6'd32, 6'd38, 6'd44, 6'd50: qp_mod6 = 3'd2;
+			6'd3, 6'd9, 6'd15, 6'd21, 6'd27, 6'd33, 6'd39, 6'd45, 6'd51: qp_mod6 = 3'd3;
+			6'd4, 6'd10, 6'd16, 6'd22, 6'd28, 6'd34, 6'd40, 6'd46:       qp_mod6 = 3'd4;
+			default:                                                     qp_mod6 = 3'd5; // 5,11,...,47
+			endcase
+		end
+	endfunction
+
+	function automatic [3:0] qp_div6;
+		input [5:0] q;
+		begin
+			case (q)
+			6'd0,  6'd1,  6'd2,  6'd3,  6'd4,  6'd5:  qp_div6 = 4'd0;
+			6'd6,  6'd7,  6'd8,  6'd9,  6'd10, 6'd11: qp_div6 = 4'd1;
+			6'd12, 6'd13, 6'd14, 6'd15, 6'd16, 6'd17: qp_div6 = 4'd2;
+			6'd18, 6'd19, 6'd20, 6'd21, 6'd22, 6'd23: qp_div6 = 4'd3;
+			6'd24, 6'd25, 6'd26, 6'd27, 6'd28, 6'd29: qp_div6 = 4'd4;
+			6'd30, 6'd31, 6'd32, 6'd33, 6'd34, 6'd35: qp_div6 = 4'd5;
+			6'd36, 6'd37, 6'd38, 6'd39, 6'd40, 6'd41: qp_div6 = 4'd6;
+			6'd42, 6'd43, 6'd44, 6'd45, 6'd46, 6'd47: qp_div6 = 4'd7;
+			default:                                   qp_div6 = 4'd8; // 48..51
+			endcase
+		end
+	endfunction
+
+	// c * norm_adjust via shift-add. norm_adjust ∈ {10,11,13,14,16,18,20,23,25,29}.
+	// Replaces two DSP mults per coeff (norm*16 and c*qmul) — wire6: 32 DSP on this module.
+	function automatic signed [31:0] mul_norm_adjust;
+		input signed [15:0] c;
+		input [4:0] n;
+		reg signed [31:0] x;
+		begin
+			// Explicit sext avoids WIDTHEXPAND on 16→32 assign (lint baseline).
+			x = {{16{c[15]}}, c};
+			case (n)
+			5'd10: mul_norm_adjust = (x <<< 3) + (x <<< 1);                         // 8+2
+			5'd11: mul_norm_adjust = (x <<< 3) + (x <<< 1) + x;                     // 8+2+1
+			5'd13: mul_norm_adjust = (x <<< 3) + (x <<< 2) + x;                     // 8+4+1
+			5'd14: mul_norm_adjust = (x <<< 3) + (x <<< 2) + (x <<< 1);             // 8+4+2
+			5'd16: mul_norm_adjust = (x <<< 4);                                     // 16
+			5'd18: mul_norm_adjust = (x <<< 4) + (x <<< 1);                         // 16+2
+			5'd20: mul_norm_adjust = (x <<< 4) + (x <<< 2);                         // 16+4
+			5'd23: mul_norm_adjust = (x <<< 4) + (x <<< 2) + (x <<< 1) + x;         // 16+4+2+1
+			5'd25: mul_norm_adjust = (x <<< 4) + (x <<< 3) + x;                     // 16+8+1
+			default: mul_norm_adjust = (x <<< 4) + (x <<< 3) + (x <<< 2) + x;       // 29 = 16+8+4+1
+			endcase
+		end
+	endfunction
+
+	// Bit-exact with host h264_recon.hpp / prior RTL (32-bit int path):
+	//   qmul = (norm_adjust * 16) << (qdiv+2) = norm_adjust << (qdiv+6)
+	//   v    = (c * qmul + 32) >> 6
+	// Equiv: ((c * na) << (qdiv+6) + 32) >> 6 with 32-bit wrap.
+	// w-area: comb shift-add; keeps 0-cycle latency. TIP assign wiring preserved.
 	function automatic signed [28:0] dequant_one;
 		input signed [15:0] c;
 		input [5:0] q;
@@ -65,7 +126,8 @@ module h264_dequant4x4 (
 		reg [1:0] mi;
 		reg [2:0] qmod;
 		reg [3:0] qdiv;
-		reg signed [31:0] qmul;
+		reg [4:0] na;
+		reg signed [31:0] prod;
 		reg signed [31:0] v;
 		begin
 			if (skip_dc)
@@ -78,14 +140,15 @@ module h264_dequant4x4 (
 				mi = 2'd1;
 			else
 				mi = 2'd2;
-			qmod = q % 6;
-			qdiv = q / 6;
-			qmul = $signed({1'b0, norm_adjust(qmod, mi)}) * 32'sd16;
-			qmul = qmul <<< (qdiv + 4'd2);
-			v = ($signed(c) * qmul + 32'sd32) >>> 6;
+			qmod = qp_mod6(q);
+			qdiv = qp_div6(q);
+			na = norm_adjust(qmod, mi);
+			prod = mul_norm_adjust(c, na);
+			v = ((prod <<< (qdiv + 4'd6)) + 32'sd32) >>> 6;
 			dequant_one = v[28:0];
 		end
 	endfunction
+
 
 	// row-major output: dequant[zigzag(scan)] receives coeff[scan]
 	assign dequant[0]  = (max_coeff > 5'd0)  ? dequant_one(coeff[0],  qp, 5'd0,  1'b0) : 29'sd0;
@@ -119,22 +182,23 @@ module h264_idct4x4 (
 		end
 	endfunction
 
-	wire signed [31:0] b0  = dequant[0] + 29'sd32;
-	wire signed [31:0] b1  = dequant[1];
-	wire signed [31:0] b2  = dequant[2];
-	wire signed [31:0] b3  = dequant[3];
-	wire signed [31:0] b4  = dequant[4];
-	wire signed [31:0] b5  = dequant[5];
-	wire signed [31:0] b6  = dequant[6];
-	wire signed [31:0] b7  = dequant[7];
-	wire signed [31:0] b8  = dequant[8];
-	wire signed [31:0] b9  = dequant[9];
-	wire signed [31:0] b10 = dequant[10];
-	wire signed [31:0] b11 = dequant[11];
-	wire signed [31:0] b12 = dequant[12];
-	wire signed [31:0] b13 = dequant[13];
-	wire signed [31:0] b14 = dequant[14];
-	wire signed [31:0] b15 = dequant[15];
+	// Widen signed 29→32 for butterfly headroom (same values, explicit cast).
+	wire signed [31:0] b0  = 32'(dequant[0]) + 32'sd32;
+	wire signed [31:0] b1  = 32'(dequant[1]);
+	wire signed [31:0] b2  = 32'(dequant[2]);
+	wire signed [31:0] b3  = 32'(dequant[3]);
+	wire signed [31:0] b4  = 32'(dequant[4]);
+	wire signed [31:0] b5  = 32'(dequant[5]);
+	wire signed [31:0] b6  = 32'(dequant[6]);
+	wire signed [31:0] b7  = 32'(dequant[7]);
+	wire signed [31:0] b8  = 32'(dequant[8]);
+	wire signed [31:0] b9  = 32'(dequant[9]);
+	wire signed [31:0] b10 = 32'(dequant[10]);
+	wire signed [31:0] b11 = 32'(dequant[11]);
+	wire signed [31:0] b12 = 32'(dequant[12]);
+	wire signed [31:0] b13 = 32'(dequant[13]);
+	wire signed [31:0] b14 = 32'(dequant[14]);
+	wire signed [31:0] b15 = 32'(dequant[15]);
 
 	wire signed [31:0] r0_z0 = b0 + b2,    r0_z1 = b0 - b2,    r0_z2 = (b1 >>> 1) - b3,    r0_z3 = b1 + (b3 >>> 1);
 	wire signed [31:0] r1_z0 = b4 + b6,    r1_z1 = b4 - b6,    r1_z2 = (b5 >>> 1) - b7,    r1_z3 = b5 + (b7 >>> 1);
@@ -183,20 +247,31 @@ module h264_recon4x4 (
 		end
 	endfunction
 
-	assign recon[0]  = clip8($signed({1'b0, pred[0]})  + residual[0]);
-	assign recon[1]  = clip8($signed({1'b0, pred[1]})  + residual[1]);
-	assign recon[2]  = clip8($signed({1'b0, pred[2]})  + residual[2]);
-	assign recon[3]  = clip8($signed({1'b0, pred[3]})  + residual[3]);
-	assign recon[4]  = clip8($signed({1'b0, pred[4]})  + residual[4]);
-	assign recon[5]  = clip8($signed({1'b0, pred[5]})  + residual[5]);
-	assign recon[6]  = clip8($signed({1'b0, pred[6]})  + residual[6]);
-	assign recon[7]  = clip8($signed({1'b0, pred[7]})  + residual[7]);
-	assign recon[8]  = clip8($signed({1'b0, pred[8]})  + residual[8]);
-	assign recon[9]  = clip8($signed({1'b0, pred[9]})  + residual[9]);
-	assign recon[10] = clip8($signed({1'b0, pred[10]}) + residual[10]);
-	assign recon[11] = clip8($signed({1'b0, pred[11]}) + residual[11]);
-	assign recon[12] = clip8($signed({1'b0, pred[12]}) + residual[12]);
-	assign recon[13] = clip8($signed({1'b0, pred[13]}) + residual[13]);
-	assign recon[14] = clip8($signed({1'b0, pred[14]}) + residual[14]);
-	assign recon[15] = clip8($signed({1'b0, pred[15]}) + residual[15]);
+	// pred 0..255 zero-ext to 30; residual sign-ext 29→30; sum then clip.
+	function automatic [7:0] add_clip;
+		input [7:0] p;
+		input signed [28:0] r;
+		reg signed [29:0] s;
+		begin
+			s = $signed({22'd0, p}) + {r[28], r};
+			add_clip = clip8(s);
+		end
+	endfunction
+
+	assign recon[0]  = add_clip(pred[0],  residual[0]);
+	assign recon[1]  = add_clip(pred[1],  residual[1]);
+	assign recon[2]  = add_clip(pred[2],  residual[2]);
+	assign recon[3]  = add_clip(pred[3],  residual[3]);
+	assign recon[4]  = add_clip(pred[4],  residual[4]);
+	assign recon[5]  = add_clip(pred[5],  residual[5]);
+	assign recon[6]  = add_clip(pred[6],  residual[6]);
+	assign recon[7]  = add_clip(pred[7],  residual[7]);
+	assign recon[8]  = add_clip(pred[8],  residual[8]);
+	assign recon[9]  = add_clip(pred[9],  residual[9]);
+	assign recon[10] = add_clip(pred[10], residual[10]);
+	assign recon[11] = add_clip(pred[11], residual[11]);
+	assign recon[12] = add_clip(pred[12], residual[12]);
+	assign recon[13] = add_clip(pred[13], residual[13]);
+	assign recon[14] = add_clip(pred[14], residual[14]);
+	assign recon[15] = add_clip(pred[15], residual[15]);
 endmodule

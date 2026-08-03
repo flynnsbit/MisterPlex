@@ -337,6 +337,10 @@ Phase 3.3m (inter-prediction scope/model — W-REL 2026-07-26 host-only):
   produced data while final mp4 returned an empty body. Therefore Baseline-only FPGA inter decode
   is architecturally tractable but **not yet product-safe for PMS 480p**; product must fail closed /
   fall back on High/CABAC/B until PMS delivery is constrained or a broader decoder exists.
+  **Scope correction (W-FEED 2026-07-28):** this number was taken from HEVC `/metadata/3`
+  source via PMS transcode/delivered-stream probing. It is evidence about the PMS transcode path,
+  not evidence about original-Part H.264 ≤480p direct play, and the current library census found
+  zero real original-Part H.264 ≤480p items.
   **Goldens:** `tests/fixtures/p3_inter_pred/` adds the checked-in vector, `pframe1_mb_v1.json`
   (`format=misterplex.p3.inter_mb.v1`) and `frame_mae_v1.csv`
   (`format=misterplex.p3.inter_frame_mae.v1`, 12×300 MB rows, host-model maeY=0).
@@ -365,6 +369,9 @@ Phase 3.3n (real PMS High/CABAC/B sizing — W-REL 2026-07-26 host-only):
   20 MHz `clk_sys`/DDRAM clock, an optimistic 1-bin/cycle CABAC engine barely covers stress
   (1.14×), a 2-cycle engine fails stress, and a 3-cycle engine fails planning. 4 refs + current
   YUV420 is 2.25 MB; +present/reorder is 2.70 MB, so DDR3 is required and SDRAM/BRAM are not viable.
+  **Scope correction (W-FEED 2026-07-28):** this sizing uses HEVC `/metadata/3` source via PMS
+  transcode/delivered-stream probing. It remains valid High/CABAC/B transcode-path sizing, but it
+  is not evidence about the original-Part H.264 ≤480p path the fabric is being built for.
   Existing 4×4 IQ/IDCT/recon survives below the entropy layer, but the CAVLC walker does not; High
   also requires detection/support for 8×8 transform and B-slice DPB/list machinery. Verdict:
   decoding PMS as delivered is a full High-profile decoder project and not a sane near-term path
@@ -377,6 +384,10 @@ Phase 3.3p (P-slice inter prediction RTL — W-REL 2026-07-26 host-only):
   so unsupported-stream guards stay mandatory. Local x264 proxy with the exact `VideoEncodeFlags`
   plus `partitions=none` measured P frames as intra 4.8%, **P16×16 17.6%**, sub-MB partitions 0%,
   **skip 77.7%**; first RTL rung implements only P_Skip + P_L0_16x16.
+  **Scope correction (W-FEED 2026-07-28):** the PMS Baseline/L3.0 number used HEVC
+  `/metadata/3` source via the server-side PMS transcode/derived path. It proves the constrained
+  delivered stream can match the FPGA contract; it does not prove original-Part H.264 ≤480p
+  direct-play behaviour for the user's library.
   RTL: `h264_inter_pred.sv` adds MV median predictor/MVD add/P_Skip zero rule, partition-aware
   predictors for P_L0_16x8/P_L0_8x16/P_8x8/sub-MB modes, luma qpel six-tap interpolation, chroma
   eighth-pel bilinear interpolation, and 9×9 reference fetch address clamping. `h264_p_slice_modes.sv`
@@ -399,6 +410,93 @@ Phase 3.3p (P-slice inter prediction RTL — W-REL 2026-07-26 host-only):
   YUV traffic is ~40 MB/s before overhead (~50–70 MB/s planning), comfortable for the validated
   80 MHz DDR/YUV path; SDRAM remains out of scope.
 
+Phase 3.3q (derived real-statistic H.264 ARM boundary profile — W-FEED 2026-07-28):
+  **Scope:** measured on the tracked-provenance derived asset in
+  `docs/derived-validation-assets.md`: HEVC `/metadata/3` source re-encoded to H.264 Constrained
+  Baseline/CAVLC/ref=1/no-B, 624×480, 1800 frames. This is the first real-image-statistics
+  H.264 workload at the target geometry, but it remains **derived**, not original library content
+  and not original-Part direct-play evidence. The W-A4 / 3.3n / 3.3p numbers above remain
+  HEVC-source PMS-transcode evidence, not original-Part H.264 evidence.
+
+  **Pre-registered before summarising the retained ARM run:** (P1) real-statistic content should
+  be harder than the synthetic P16 fixtures by compressed bytes/frame and bytes/macroblock; (P2)
+  the ARM boundary should be near the live ~31 ms decode+pipe decomposition plus present, barely
+  fitting 24 fps and missing 25 fps; (P3) any existing correctness score that goes green on this
+  asset without a derived golden/reference is insensitive rather than reassuring.
+
+  **Raw ARM profile buckets** (`PROFILE_FRAMES=1800`, sample
+  `/media/fat/misterplex/profile/derived_realcontent_624x480_baseline_ref1_nob_1800f.mp4`,
+  raw evidence retained in `build/misterplex-agent-W-FEED-arm-profile.txt`):
+  **Reproducibility status:** these numbers are **EXPIRED** on any checkout where
+  `scripts/check_arm_profile_asset.sh` does not print `ASSET_OK`. The full local
+  source asset lives under ignored `artifacts/local/arm-profile-sample/`, not
+  `build/`, specifically so routine `make clean` cannot silently destroy the
+  input while leaving this headline number standing.
+  - ffmpeg decode/null: `wall_s=38.811395`, `child_cpu_s=41.160496` →
+    **21.5619 ms/f wall**, **22.8669 ms/f child CPU**.
+  - decode+scale/pad+yuv420p/null: `wall_s=44.129199`, `child_cpu_s=54.256972` →
+    scale/format delta **2.9543 ms/f wall**, **7.2758 ms/f child CPU**.
+  - decode+scale/pad+yuv420p pipe drain/copy: `wall_s=53.603296`,
+    `child_cpu_s=60.109691`, `read_wall_s=53.592391`, `copy_wall_s=4.156984` →
+    pipe delta **5.2634 ms/f wall**, parent copy **2.3094 ms/f wall**,
+    total decode+scale+pipe **29.7796 ms/f wall**.
+  - present/DDR: product-present bucket from the timing-closed 624×480 path is
+    **10.4106 ms/f wall**, **4.9162 ms/f CPU**. The raw DDR microbench in the same ARM profile
+    measured no-sync `/dev/mem` at **7.199 ms/f wall**, **4.707 ms/f CPU** (`sync=1`:
+    7.378/4.755; `flush=1`: 13.246/9.147), so the product-present bucket is the conservative
+    end-to-end number to budget.
+  - bucket sum with product present: **40.1902 ms/f**. That leaves **+1.476 ms/f** against
+    24 fps (41.667 ms) and misses 25 fps (40.000 ms) by **0.190 ms/f**. This is a measured
+    component sum, not a hardware A/V playback PASS.
+  - Unattributed residual inside the ffmpeg sub-buckets is **0 by construction** because the
+    scale and pipe numbers are deltas from nested probes
+    (`29.7796 − 21.5619 − 2.9543 − 5.2634`). That is not an independent zero measurement;
+    product integration overhead beyond these probes remains unmeasured.
+
+  **Synthetic comparison:** the derived Annex-B is 12,713,118 B / 1800 frames /
+  1170 MB/frame = **7062.8 B/f**, **6.037 B/MB**. The synthetic 624×480 P16 fixture is
+  70,348 B / 12 frames / 1170 MB/frame = **5862.3 B/f**, **5.011 B/MB**; P-frame packet mean
+  is **6924.8 B** derived vs **5344.9 B** synthetic. P1 is therefore confirmed: the derived
+  sustained workload is ~20.5% larger per MB overall and ~29.6% larger per P frame than the
+  624×480 synthetic P16 blip. The 320×240 synthetic fixtures remain useful stress/unit vectors
+  (`7.681 B/MB` P16, `15.100 B/MB` two-frame residual14), but their geometry and sample length
+  make them poor sustained 624×480 throughput proxies. P2 is confirmed by the 40.1902 ms/f sum.
+  P3 is not scored as a green correctness result: no derived golden/reference is wired, so this
+  profile is performance/boundary evidence only.
+
+Phase 3.3r (derived real-statistic H.264 correctness reference — W-FEED 2026-07-28):
+  `tests/fixtures/derived_validation/` now tracks a per-frame, per-plane SHA-256 manifest for
+  the same 1800-frame derived asset profiled in 3.3q:
+  `derived_realcontent_624x480_baseline_ref1_nob_1800f_i420_hashes_disabled_v1.json`.
+  The reference is regenerated by `tools/derived_h264_plane_hashes.py` from the untracked
+  Annex-B asset in `artifacts/local/arm-profile-sample/`, records the asset SHA-256
+  `41f2769189bdceb3c30315bf557e44e01d016d48c3eca8507ceb6eed51919e04`, FFmpeg version
+  `n8.1.2`, the exact decode command, 624×480 I420 geometry, and 1800 frames of Y/U/V hashes.
+  The loop-filter contract is explicit: FFmpeg decode with `-skip_loop_filter all`, matching the
+  current pre-deblock RTL/output contract rather than final post-deblock presentation.
+
+  Coverage sanity from the manifest: 1790 unique Y-plane hashes; U/V hashes differ on 1774/1800
+  frames, so U/V swaps are scoreable on most of the clip but weak on the first grey/low-chroma
+  frames. The convenience check `tests/unit/test_derived_validation_hashes.sh` verifies the
+  full manifest when the untracked asset exists.
+
+  **Always-on slice:** `derived_realcontent_624x480_baseline_ref1_nob_8f_i420_disabled.yuv`
+  commits eight native-I420 frames selected from source frames
+  `149,392,474,710,937,1183,1349,1675`. It is small enough for the repo (3.43 MiB) and
+  makes the gate run on clean checkouts. Its manifest records `uv_distinct_frames=8/8`,
+  `unique_y_hashes=8/8`, `y_min=0`, and `y_max=243`; the unit test red-checks both a
+  corrupted Y-plane hash and a U/V-swapped raw slice, so the selected frames actually express
+  the mutations being claimed. Candidate decoder outputs can be scored by running
+  `tools/derived_h264_plane_hashes.py verify --candidate-planes ... --candidate-colorspace I420_NATIVE`.
+
+  This closes the P3 measurement gap only for native-I420 exactness at the declared loop-filter
+  stage. It can catch wrong final bytes from residual add, scan, dequant/IDCT, MC/reference,
+  chroma placement, and U/V order **when this clip expresses the affected samples**. It cannot
+  prove original library coverage, enabled deblock correctness, RGB/RGB565 presentation, pillar
+  masking, timing/drop/repeat behaviour, parser coverage for unsupported streams, or mutations
+  that alias on equal/zero coefficients or equivalent dequant classes. A green comparison is
+  therefore a real-content frame-output score, not a total decoder proof.
+
 
 Phase 3.1b (DDR bulk path — implemented this fire):
   **Measured F1 (lab 2026-07-24, 192.168.1.183, 320×240 RGB565 = 153600 B):**
@@ -419,10 +517,19 @@ Phase 3.1b (DDR bulk path — implemented this fire):
     CS sessions; not a streaming DMA.
 
   **DDR path:**
-    HPS `mmap(/dev/mem)` → bank @ **0x30000000** / **0x30040000** (256 KiB stride)
-    → pulse **status[12]** start (status[13]=bank) → `ddram_frame_rd` Avalon
+    HPS `mmap(/dev/mem)` → bank layout is geometry-derived:
+    `bank_stride = alignUp(frame_bytes, 0x40000)`, bank0 = `base`, bank1 =
+    `base + bank_stride`, and doorbell = `base + bank_stride*2 - 0x1000`.
+    With base `0x30000000`: 320×240 I420 (`frame_bytes=115200`) uses stride
+    **0x40000**, bank1 **0x30040000**, doorbell **0x3007F000**; 624×480 I420
+    (`frame_bytes=449280`) uses stride **0x80000**, bank1 **0x30080000**,
+    doorbell **0x300FF000**. The addresses move with geometry; do not treat
+    either worked example as a constant for all frame sizes.
+    → pulse **status[12]** start (status[13]=bank, legacy SPI kick) or write the
+    mmap doorbell high word (`[31]=bank`) → `ddram_frame_rd`/`ddr_frame_store` Avalon
     burst-reads f2sdram → dual-bank BRAM `frame_store` → present (same as F1).
-    - RTL: `rtl/ddram_frame_rd.sv`; Plex.sv no longer ties DDRAM_* to 0
+    - RTL: `rtl/ddr_frame_store.sv` (`rtl/ddram_frame_rd.sv` is the legacy
+      SPI-kick reader); Plex.sv no longer ties DDRAM_* to 0
     - ARM: `FpgaSpi::sendYuv420pFrameDdr` (I420 planar DDR payload + doorbell)
     - Tool: `push_frame --ddr [--bank 0|1] --yuv420p WxH file.yuv420p`
     - Verify: `ddr_busy` **or** (status[12] echo in status_in + `has_frame`); busy-only

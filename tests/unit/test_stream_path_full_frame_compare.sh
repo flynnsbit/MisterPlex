@@ -17,7 +17,8 @@ SKIP
     echo "A skipped RTL gate is NOT a pass. Set ALLOW_MISSING_VERILATOR=1 only if you accept that RTL was never verified." >&2
     exit 3
   fi
-  exit 0
+  echo "SKIP-NOT-PASS: Verilator missing; soft-skip≠PASS" >&2
+  exit 77
 elif [[ "$VERILATOR_RC" -ne 0 ]]; then
   echo "RTL SIM ERROR: Verilator probe failed:" >&2
   printf '%s\n' "$VERILATOR_VERSION" >&2
@@ -63,7 +64,13 @@ PRODUCT_RTL=(
   h264_iq_idct_4x4.sv
   h264_inter_pred.sv
   h264_deblock.sv
+  h264_deblock_mb.sv
   h264_dpb.sv
+  h264_mc_luma_qpel.sv
+  h264_mc_chroma_epel.sv
+  h264_mc_block.sv
+  h264_dpb_ref_commit.sv
+  h264_hybrid_mb_own.sv
   decode_stub.sv
 )
 
@@ -284,10 +291,14 @@ if meta.get("format") != "misterplex.p3.inter_mb_metadata.v1":
 candidate = meta.get("candidate", {})
 expected = {
     "colorspace": "I420_NATIVE",
-    "h264_loop_filter": "disabled",
-    "reconstruction_stage": "mc_prediction_only_pre_deblock_no_residual_add",
-    "reference_picture_state": "diagnostic_filtered_reference_via_deblock_writeback_ctrl",
-    "reference_picture_source": "generated_i420_pattern_not_decoded_prior_frame",
+    # Product path runs h264_deblock_mb (disable_deblocking=0). Golden planes are
+    # still skip_loop_filter=all; score_i420_candidate is invoked with both sides
+    # labeled disabled so the LF-match contract can score expect-red against that
+    # golden. This metadata field records the true product filter path.
+    "h264_loop_filter": "in_loop_via_h264_deblock_mb",
+    "reconstruction_stage": "product_clip1_pred_plus_residual_then_h264_dpb_ref_commit_deblock",
+    "reference_picture_state": "decoded_deblocked_via_h264_dpb_ref_commit",
+    "reference_picture_source": "product_h264_dpb_ref_commit_promoted_reference_bank",
 }
 for key, want in expected.items():
     got = candidate.get(key)

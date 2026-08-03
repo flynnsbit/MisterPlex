@@ -1,0 +1,72 @@
+{
+  "models": {
+    "cap_maps_480_to_1080": {
+      "px_per_src_row_480": 2.25,
+      "px_per_src_row_475": 2.2265625,
+      "delta_slope_cap_per_src": 0.023437499999999917,
+      "SE_slope_cap_per_src": 0.0019457794562353905,
+      "z_score_approx": 12.045301395742852,
+      "separable_3sigma": true,
+      "span_delta_px": 7.051499999999905,
+      "span_se_px": 1.1136931803688124,
+      "span_z": 6.331636149253171
+    },
+    "cap_maps_480_to_720": {
+      "px_per_src_row_480": 1.5,
+      "px_per_src_row_475": 1.484375,
+      "delta_slope_cap_per_src": 0.015624999999999944,
+      "SE_slope_cap_per_src": 0.001297186304156927,
+      "z_score_approx": 12.045301395742852,
+      "separable_3sigma": true,
+      "span_delta_px": 4.700999999999937,
+      "span_se_px": 0.742462120245875,
+      "span_z": 6.331636149253171
+    },
+    "cap_maps_480_to_958": {
+      "px_per_src_row_480": 1.9958333333333333,
+      "px_per_src_row_475": 1.975043402777778,
+      "delta_slope_cap_per_src": 0.02078993055555548,
+      "SE_slope_cap_per_src": 0.0017259784435865778,
+      "z_score_approx": 12.045301395742852,
+      "separable_3sigma": true,
+      "span_delta_px": 6.254941666666582,
+      "span_se_px": 0.9878870988827059,
+      "span_z": 6.33163614925317
+    }
+  },
+  "pad": {
+    "metric": "pad_total black rows at coded edges",
+    "H480": 0,
+    "H475": 5,
+    "separation_integers": 5,
+    "power": "HIGH if coded edges reach glass; ZERO if overscan/ascal crops edges",
+    "grabber_need": "see top/bottom of coded raster, not only active video island"
+  },
+  "vernier_phase": {
+    "beat_count_under_uniform_scale": "INVARIANT \u2014 number of beats in active region unchanged to first order",
+    "phase_slip_one_cycle_over_frame_deg": 3.7499999999999867,
+    "cycles_needed_for_180deg_slip": 48.00000000000017,
+    "conclusion": "Classical beat-count vernier has ~zero power against pure scale. Need either (a) pad/crop absolute edges, (b) absolute fiducial slope vs known source Y, or (c) many-cycle phase ramp (~48 cyc) whose template correlation flips \u2014 heavy H.264 risk."
+  },
+  "chirp_null": {
+    "nyquist_src_period_under_arm": 2.0210526315789474,
+    "nyquist_src_period_identity": 2.0,
+    "delta": 0.021052631578947434,
+    "conclusion": "Chirp null shift from 475 vs 480 is 1% at the fine end only; not a sharp row-localized feature separable from H.264."
+  },
+  "verdict": {
+    "can_separate_on_grabber": true,
+    "how": "NOT pitch/FFT. USE pad_total 0 vs 5 (primary) and multi-fiducial slope/span (secondary).",
+    "cannot": "FFT pitch, beat-count vernier, chirp-null row (all weak or invariant under 1% scale)",
+    "limiting_arithmetic_if_edges_cropped": "body span delta 3.13 src rows \u00d7 (958/480) \u2248 6.3 cap px; 13-fiducial slope z\u224812.0 at sigma_centroid_src=0.35 (if z>3, slope works even without edges)",
+    "rowcount_asset": "assets/avsync/rowcount_vernier_624x480_24_120s.mp4 \u2014 already encodes pad probes + fiducials",
+    "missed_prediction_on_record": "solid-field std\u22480.4 under 240-ceiling FAILED on glass (moir\u00e9/std~67); correct call was which zone discriminates (period-2), not the signature shape. P=4/8/16 invariant under store_y=py*2 \u2014 zero power."
+  },
+  "fft_pitch": {
+    "parent_measured_pitch": 4.06,
+    "pred_480": 3.99,
+    "pred_475": 4.03,
+    "bin_locked": true,
+    "power": "NONE for 475 vs 480 (parent already showed)"
+  }
+}

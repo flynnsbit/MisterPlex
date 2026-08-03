@@ -1,0 +1,34 @@
+{
+  "format": "misterplex.derived_h264_i420_iframe_deblock_gap.v1",
+  "scope": {
+    "purpose": "I-frame-only (bitstream frame 0) disabled vs enabled loop-filter gap control",
+    "not_always_on_uv_discrimination_slice": true,
+    "notes": [
+      "Frame 0 has U==V (128) and a narrow Y range; it is intentionally NOT the 8f chroma scoreboard slice.",
+      "It isolates pure in-loop filter delta before temporal reference cascade dominates P-frames.",
+      "Product decode_core P16 writeback is still pre-deblock; this fixture measures gold-vs-gold gap shape only."
+    ]
+  },
+  "geometry": {"width": 624, "height": 480, "pixel_format": "yuv420p", "frames": 1, "source_frame_index": 0},
+  "disabled": {
+    "path": "tests/fixtures/derived_validation/derived_realcontent_624x480_baseline_ref1_nob_1f_i420_disabled.yuv",
+    "bytes": 449280,
+    "sha256": "d0f3af5494ee2578e9db7eaa42cd8cb36dd3c26d23661a79cf9d6361f272fdc3",
+    "ffmpeg": "ffmpeg -skip_loop_filter all -i <annexb> -vframes 1 -pix_fmt yuv420p"
+  },
+  "enabled": {
+    "path": "tests/fixtures/derived_validation/derived_realcontent_624x480_baseline_ref1_nob_1f_i420_enabled.yuv",
+    "bytes": 449280,
+    "sha256": "2a69efb0cc99b8ad43fef39cd0a91c08dea0d578858e693a7fdde951dfcc53ca",
+    "ffmpeg": "ffmpeg -i <annexb> -vframes 1 -pix_fmt yuv420p"
+  },
+  "expected_gap": {
+    "y_mismatch_samples": 80,
+    "u_mismatch_samples": 0,
+    "v_mismatch_samples": 0,
+    "y_max_abs": 1,
+    "mb_exact": 1167,
+    "mb_total": 1170,
+    "mismatch_mb_xy": [[0, 20], [0, 21], [38, 20]]
+  }
+}

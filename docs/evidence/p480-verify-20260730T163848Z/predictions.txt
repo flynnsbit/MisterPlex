@@ -1,0 +1,7 @@
+PREDICTIONS before measure (p480-verify):
+P1: Real cast of /library/metadata/12 (long blip) via playMedia to misterplex-dev SUCCEEDS: timeline state=playing, frames advance, decode=320x240 when O[4]=0.
+P2: content resolution log line appears with source=OSD O[4] and status_word changing when O[4] toggled.
+P3: With DECODE_ALLOW_LAB_480P absent from conf, OSD O[4]=1 still yields content resolution=624x480 (label) at play time — independent of conf lab flag.
+P4: 240p play CPU PLAY_P_ONECPU around 10-20% (prior v10 playback ~13.5%).
+P5: RBF strings contain "Content resolution" / "v,7;" — if strings miss, CFG v7 presence is secondary evidence only for Main versioning, not full CONF_STR text.
+P6: User "doesn't stick" may still reproduce on some client paths even though direct playMedia works; GDM responds (already measured).

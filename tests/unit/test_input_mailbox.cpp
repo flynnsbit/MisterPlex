@@ -92,6 +92,18 @@ static bool pollWord(misterplex::InputMailboxEdgeDetector& edge, FakeTransport& 
 int main() {
     using namespace misterplex;
 
+    CHECK(kDdrStatusMailboxPhys == 0x3007F100u);
+    CHECK(kDdrStatusMailboxMagic == 0x504C5853u);
+    CHECK(kInputMailboxPhys == 0x3007F108u);
+    CHECK(kInputMailboxMagic == 0x504C5849u);
+    CHECK(kMemtestMailboxPhys == 0x3007F110u);
+    CHECK(kMemtestMailboxMagic == 0x504C584Du);
+    CHECK(kUnderrunMailboxPhys == 0x3007F118u);
+    CHECK(kUnderrunMailboxMagic == 0x504C5846u);
+    CHECK(kBankReleaseMailboxPhys == 0x3007F128u);
+    CHECK(kBankReleaseMailboxMagic == 0x504C5844u);
+    CHECK(kFrameStoreDebugFormatError == 0xE1u);
+
     InputMailboxSample s;
     CHECK(decodeInputMailboxWord(word(1, 1, PlaybackCommand::None), s));
     CHECK(s.command == PlaybackCommand::None);
@@ -336,12 +348,109 @@ int main() {
 
         // Torn read
         CHECK(!decodeStableBankRelease(lo(w1), hi(w1), lo(w2), hi(w2), br));
+
+        // --- Independent RTL cross-check ---
+        // This word is constructed from the RTL packing expression in
+        // ddr_frame_store.sv (b187df5), NOT from the spec constants.
+        // It proves the C++ decoder matches what the FPGA actually writes,
+        // not just that the codec is self-consistent.
+        //
+        // RTL packing (from ddr_frame_store.sv line 829-837):
+        //   DDRAM_DIN <= {bank_vsync_count,           // [63:48]
+        //                 12'd0,                       // [47:36]
+        //                 swap_pending_d2,             // [35]
+        //                 disp_bank_d2,                // [34]
+        //                 swap_pending_d2 ? 2'b00 :    // [33:32]
+        //                   (disp_bank_d2 ? 2'b01 : 2'b10),
+        //                 MAGIC_D};                    // [31:0]
+        //
+        // Test case: disp_bank=1, swap_pending=0, bank_vsync_count=7
+        //   free_bank_mask = disp_bank ? 0b01 : 0b10 = 0b01
+        //   bits: [63:48]=7, [35]=0, [34]=1, [33:32]=01, [31:0]=0x504C5844
+        //   upper word = (7 << 16) | (0 << 3) | (1 << 2) | 0x01 = 0x00070005
+        //   full word  = 0x0007000500000000 | 0x504C5844
+        constexpr uint64_t rtl_word_a = 0x0007000500000000ull | 0x504C5844ull;
+        CHECK(decodeBankReleaseWord(rtl_word_a, br));
+        CHECK(br.free_bank_mask == 0x01);
+        CHECK(br.bank0Free());
+        CHECK(!br.bank1Free());
+        CHECK(br.disp_bank == 1);
+        CHECK(!br.swap_pending);
+        CHECK(br.frames_done == 7);
+
+        // Test case: disp_bank=0, swap_pending=1, bank_vsync_count=0x1234
+        //   free_bank_mask = swap_pending ? 0b00 : ... = 0b00
+        //   bits: [63:48]=0x1234, [35]=1, [34]=0, [33:32]=00, [31:0]=0x504C5844
+        //   upper word = (0x1234 << 16) | (1 << 3) | (0 << 2) | 0x00 = 0x12340008
+        //   full word  = 0x1234000800000000 | 0x504C5844
+        constexpr uint64_t rtl_word_b = 0x1234000800000000ull | 0x504C5844ull;
+        CHECK(decodeBankReleaseWord(rtl_word_b, br));
+        CHECK(br.free_bank_mask == 0x00);
+        CHECK(!br.anyFree());
+        CHECK(br.freeBank() == -1);
+        CHECK(br.disp_bank == 0);
+        CHECK(br.swap_pending);
+        CHECK(br.frames_done == 0x1234);
+
+        // Test case: disp_bank=0, swap_pending=0, bank_vsync_count=0xFFFF
+        //   free_bank_mask = 0 ? 0b01 : 0b10 = 0b10
+        //   bits: [63:48]=0xFFFF, [35]=0, [34]=0, [33:32]=10, [31:0]=0x504C5844
+        //   upper word = (0xFFFF << 16) | (0 << 3) | (0 << 2) | 0x02 = 0xFFFF0002
+        //   full word  = 0xFFFF000200000000 | 0x504C5844
+        constexpr uint64_t rtl_word_c = 0xFFFF000200000000ull | 0x504C5844ull;
+        CHECK(decodeBankReleaseWord(rtl_word_c, br));
+        CHECK(br.free_bank_mask == 0x02);
+        CHECK(!br.bank0Free());
+        CHECK(br.bank1Free());
+        CHECK(br.freeBank() == 1);
+        CHECK(br.disp_bank == 0);
+        CHECK(!br.swap_pending);
+        CHECK(br.frames_done == 0xFFFF);
     }
 
     if (fails) {
         std::fprintf(stderr, "test_input_mailbox: %d failure(s)\n", fails);
         return 1;
     }
+
+    // --- Degeneracy assertions (instrument-integrity #18) ---
+    // Verify that different PLXD inputs produce observably different outputs.
+    // If a broken decoder returned the same thing for all inputs, the earlier
+    // tests would still pass if both expected and actual were identical garbage.
+    {
+        // Three distinct raw words with different free_bank_mask, disp_bank, frames_done
+        constexpr uint64_t w1 = 0x0001000100000000ull | 0x504C5844ull; // frames_done=1, mask=01
+        constexpr uint64_t w2 = 0x0002000600000000ull | 0x504C5844ull; // frames_done=2, mask=10, disp_bank=1
+        constexpr uint64_t w3 = 0x000A000B00000000ull | 0x504C5844ull; // frames_done=10, mask=11, swap_pend=1
+
+        BankReleaseStatus r1{}, r2{}, r3{};
+        CHECK(decodeBankReleaseWord(w1, r1));
+        CHECK(decodeBankReleaseWord(w2, r2));
+        CHECK(decodeBankReleaseWord(w3, r3));
+
+        // Assert outputs are NOT all equal — i.e. decoder actually differentiates
+        bool all_same = (r1.frames_done == r2.frames_done) &&
+                        (r2.frames_done == r3.frames_done) &&
+                        (r1.free_bank_mask == r2.free_bank_mask) &&
+                        (r2.free_bank_mask == r3.free_bank_mask) &&
+                        (r1.disp_bank == r2.disp_bank) &&
+                        (r2.disp_bank == r3.disp_bank);
+        if (all_same) {
+            std::fprintf(stderr,
+                         "DEGENERACY: three distinct PLXD words produced identical outputs\n");
+            ++fails;
+        }
+        // Assert a wrong-magic word FAILS decode — not everything passes
+        constexpr uint64_t bad_magic = 0x0001000100000000ull | 0xDEADBEEFull;
+        BankReleaseStatus rbad{};
+        CHECK(!decodeBankReleaseWord(bad_magic, rbad));
+    }
+
+    if (fails) {
+        std::fprintf(stderr, "test_input_mailbox: %d DEGENERACY failure(s)\n", fails);
+        return 1;
+    }
+
     std::printf("test_input_mailbox: OK\n");
     return 0;
 }

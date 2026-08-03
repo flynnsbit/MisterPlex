@@ -6,9 +6,14 @@
 #include "fb_present.hpp"
 #include "fpga_spi.hpp"
 #include "libmisterplex/idle_screen.hpp"
+#include "libmisterplex/coded_size.hpp"
+#include "libmisterplex/fpga_scanout_health.hpp"
 #include "libmisterplex/mraudio_status.hpp"
+#include "libmisterplex/osd_control.hpp"
 #include "libmisterplex/osd_menu.hpp"
 #include "libmisterplex/playback_overlay.hpp"
+#include "libmisterplex/publish_interval_ledger.hpp"
+#include "libmisterplex/publish_swap_delta_ledger.hpp"
 
 #include <atomic>
 #include <cstdint>
@@ -32,8 +37,12 @@ struct PlaybackSummary {
     bool skipRgb = false;
     bool shortRead = false;
     bool videoEof = false;
+    bool pipeDesync = false;
+    bool pipeByteMisaligned = false;
     size_t shortReadGot = 0;
     size_t shortReadWant = 0;
+    int measuredW = 0;
+    int measuredH = 0;
 
     int64_t deliveredFrames() const {
         return rawFrames > 0 ? rawFrames : (reconFrames > 0 ? reconFrames : presentedFrames);
@@ -70,6 +79,34 @@ public:
     // "off" | "ffmpeg" — PMS burn-in is handled in resolve (WeakLadder::burnSubtitles).
     void setSubtitleMode(std::string mode) { subtitleMode_ = std::move(mode); }
     void setSubtitleStreamIndex(int idx) { subtitleStreamIndex_ = idx; }
+    // STREAM=0 -vf scale policy (product default "skip_identity": omit scale+pad
+    // only when expected delivery WxH is known and equals coded; unknown still scales).
+    // Conf FFMPEG_SCALE=always|skip_identity|off. See libmisterplex/ffmpeg_vf.hpp.
+    void setFfmpegScaleMode(std::string mode);
+    // Optional scale flags= token. Empty = ffmpeg default algo when residual
+    // scale runs. Conf FFMPEG_SWS_FLAGS (no product default — shipping path
+    // usually skip_identity-omits the filter entirely).
+    void setFfmpegSwsFlags(std::string flags);
+    // When scale mode is skip_identity and source dims are unknown, assume PMS already
+    // delivered coded WxH (lab only). Conf FFMPEG_SCALE_ASSUME_MATCH=1.
+    void setFfmpegScaleAssumeMatch(bool on) { ffmpegScaleAssumeMatch_ = on; }
+    // YUV DDR: force Always over SkipIdentity. DEFAULT ON (silicon: only this
+    // fixed native 480p colour+throughput). Escape: conf DDR_YUV_FORCE_SCALE=0.
+    void setDdrYuvForceScale(bool on) { ddrYuvForceScale_ = on; }
+    // Optional known decoded source geometry for skip_identity (0 = unknown).
+    void setFfmpegScaleSourceSize(int w, int h) {
+        ffmpegScaleSourceW_ = w > 0 ? w : 0;
+        ffmpegScaleSourceH_ = h > 0 ? h : 0;
+    }
+    // True only after runtime measurement (basis=measured). library_media and
+    // transcode_request must leave this false (B4). Gates identity_skip only
+    // when force-scale is escaped.
+    void setDeliveryGeometryVerified(bool v) {
+        deliveryGeometryVerified_.store(v, std::memory_order_relaxed);
+    }
+    bool deliveryGeometryVerified() const {
+        return deliveryGeometryVerified_.load(std::memory_order_relaxed);
+    }
     // Intentional A/V lead compensation via FFmpeg adelay (ms). Default 0.
     // Prefer contentFps wall/audio pacing first; use adelay only for small residual.
     void setAudioDelayMs(int ms) { audioDelayMs_ = ms < 0 ? 0 : ms; }
@@ -102,6 +139,14 @@ public:
     void setContentFps(int fps) { setContentFpsRational(fps, 1); }
     int contentFpsNum() const { return fpsNum_; }
     int contentFpsDen() const { return fpsDen_; }
+    // Raw ffmpeg video pipe capacity (bytes). Conf RAW_VIDEO_PIPE_BYTES.
+    // 0 = leave kernel default (typically 65536). Default product target is
+    // kDefaultRawVideoPipeBytes (2 MiB) — see libmisterplex/raw_video_pipe.hpp.
+    void setRawVideoPipeBytes(int bytes) { rawVideoPipeBytes_ = bytes < 0 ? 0 : bytes; }
+    int rawVideoPipeBytes() const { return rawVideoPipeBytes_; }
+    // Last F_GETPIPE_SZ read-back from the live video pipe (-1 = never applied).
+    int lastRawVideoPipeActual() const { return lastRawVideoPipeActual_; }
+
     // Present lead (ms) so the vsync path is not starved. Conf AV_PRESENT_LEAD_MS.
     void setPresentLeadMs(int ms) { presentLeadMs_ = ms < 0 ? 0 : ms; }
     // Drift (ms) past which a late frame is dropped to re-converge. Conf AV_RESYNC_DROP_MS.
@@ -127,10 +172,20 @@ public:
     void startIdle();
     void stopIdle();
 
-    // Live OSD menu control. Only enable against a core whose CONF_STR uses the
-    // v7 bit layout (see libmisterplex/osd_menu.hpp) — older layouts put Pattern
-    // and Content FPS on the same bits, which would be read as an A/V offset.
-    void setOsdControl(bool on) { osdControl_ = on; }
+    // Live OSD menu control. Default Auto: apply only when live CONF_STR proves
+    // O[15:14],Idle screen (see libmisterplex/osd_control.hpp). ForcedOn risks pre-v3.
+    void setOsdControlMode(misterplex::OsdControlMode mode);
+    // Legacy bool: true→ForcedOn, false→ForcedOff (no Auto).
+    void setOsdControl(bool on) {
+        setOsdControlMode(on ? misterplex::OsdControlMode::ForcedOn
+                             : misterplex::OsdControlMode::ForcedOff);
+    }
+    misterplex::OsdControlMode osdControlMode() const { return osdMode_; }
+    misterplex::OsdCapability osdCapability() const {
+        return static_cast<misterplex::OsdCapability>(osdCapability_.load());
+    }
+    // True when decoded OSD bits may drive idle / A/V / content tier.
+    bool osdApplyActive() const;
     void startOsdPoll();
     void stopOsdPoll();
     void setSkipDeltasMs(int64_t forwardMs, int64_t backMs);
@@ -143,7 +198,28 @@ public:
     // Negative = video ahead of audio (audio sounds late).
     int64_t avDriftMs() const { return avDriftMs_.load(); }
     int64_t droppedFrames() const { return droppedFrames_.load(); }
-    void setDecodeSize(int w, int h);
+    // Failed DDR/FPGA publishes this stream (not A/V-pacer drops).
+    int64_t publishMisses() const { return publishMisses_.load(); }
+    // Successful FPGA presents this stream (resets every demux with drops).
+    int64_t presentCount() const { return presentCount_; }
+    // Coded payload only. Bare ints / PresentedWidth do not bind (conf seal).
+    // Proofs: geometry_type_mismatch_set_decode_*.cpp + MediaPlayer mutant in
+    // test_geometry_type_safety.sh. Conf/argv must use adoptExternalCodedSize.
+    void setDecodeSize(CodedWidth w, CodedHeight h);
+    void setDecodeSize(CodedSize size) { setDecodeSize(size.width, size.height); }
+    // Provenance for decode= WxH (fleet partition key). Values like
+    // caller_supplied | conf:/path | cli:--decode | default | content_tier.
+    void setDecodeSizeSource(const std::string& src);
+    const std::string& decodeSizeSource() const { return decodeSizeSource_; }
+    // PMS maxVideoBitrate for this play — used only for LADDER_STEPDOWN_RECOMMENDED.
+    void setLadderBitrateKbps(int kbps) {
+        ladderBitrateKbps_.store(kbps > 0 ? kbps : 0, std::memory_order_relaxed);
+    }
+    // Non-zero once sustained STARVED recommends a lower bitrate (geometry unchanged).
+    // Cleared on take. Main may apply with AUTO_LADDER_STEPDOWN or leave as log-only.
+    int takeLadderStepdownKbps() {
+        return ladderStepdownKbps_.exchange(0, std::memory_order_relaxed);
+    }
     // Host recon frames presented this session (I/IDR only)
     int64_t reconFrames() const { return reconFrames_.load(); }
     bool reconPresentOk() const { return reconPresentOk_.load(); }
@@ -171,6 +247,20 @@ public:
     void seekMs(int64_t ms);
 
     bool playing() const { return playing_.load(); }
+    bool paused() const { return paused_.load(); }
+    // Cross-session (in-process) totals — never reset by demux restart.
+    // Pair with confDir/misterplexd.frame_ledger for cross-restart soak audits.
+    int64_t lifetimeFrames() const { return lifetimeFrames_.load(); }
+    int64_t lifetimePresents() const { return lifetimePresents_.load(); }
+    int64_t lifetimeDrops() const { return lifetimeDrops_.load(); }
+    int64_t lifetimePublishMisses() const { return lifetimePublishMisses_.load(); }
+    uint64_t sessionSeq() const { return sessionSeq_.load(); }
+    // Monotonic process identity (steady mono_ms at arm). Unchanged for process life.
+    uint64_t processEpoch() const { return processEpoch_.load(); }
+    // Stream generation within this process (bumped at each play/stream start).
+    uint64_t streamSeq() const { return streamSeq_.load(); }
+    // Call once from main after construct — stamps process_epoch for soak P4.
+    void armProcessEpoch(uint64_t epochMonoMs);
     bool audioActive() const { return audioActive_.load(); }
     int64_t positionMs() const { return positionMs_.load(); }
     int64_t durationMs() const {
@@ -191,7 +281,13 @@ private:
     void dispatchPlaybackInput(PlaybackCommand command);
     // true when STREAM product path may omit heavy RGB video decode (audio + demux only)
     bool wantSkipRgbVideo() const;
-    pid_t spawnFfmpeg(const std::vector<std::string>& args, int vWriteFd, int aWriteFd);
+    bool publishDdrFrame(const DdrPublishFrame& frame, const char* context,
+                         std::string* err = nullptr);
+    // errWriteFd: optional pipe for ffmpeg stderr (geometry banners). -1 → lab file//null.
+    pid_t spawnFfmpeg(const std::vector<std::string>& args, int vWriteFd, int aWriteFd,
+                      int errWriteFd = -1);
+    void ffmpegStderrPump(int errReadFd, size_t codedFrameBytes, bool identitySkip, int codedW,
+                          int codedH);
     pid_t spawnStreamDemux(const std::string& url, const std::string& headers, int64_t startMs,
                            int writeFd);
     pid_t spawnAudioOnly(const std::string& url, const std::string& headers, int64_t startMs,
@@ -202,12 +298,34 @@ private:
     ProgressFn onProgress_;
     std::string ffmpeg_ = "/media/fat/mistercast/bin/ffmpeg";
     std::string audioDev_ = "/dev/MrAudio";
-    std::string presentMode_ = "fb0"; // "fb0", "fpga", "both"
+    std::string presentMode_ = "fpga"; // "fb0", "fpga", "both", "none"
     bool audioEnabled_ = true;
     bool streamEnabled_ = false; // annex-B → host recon F1 + F3 stub
     std::string streamSkipRgb_ = "auto"; // auto | on | off
     std::string subtitleMode_ = "off"; // off | ffmpeg
     int subtitleStreamIndex_ = 0;
+    // FFmpeg -vf scale policy (product default skip_identity — see setFfmpegScaleMode).
+    std::string ffmpegScaleMode_ = "skip_identity";
+    // Empty = no :flags= (ffmpeg default algo) when residual scale runs.
+    std::string ffmpegSwsFlags_;
+    bool ffmpegScaleAssumeMatch_ = false;
+    bool ddrYuvForceScale_ = true; // conf DDR_YUV_FORCE_SCALE; default ON
+    // Flips true only after ffmpeg stderr MEASURED_DELIVERY (basis=measured).
+    // Play-time library_media/transcode_request must leave this false (B4).
+    std::atomic<bool> deliveryGeometryVerified_{false};
+    int ffmpegScaleSourceW_ = 0;
+    int ffmpegScaleSourceH_ = 0;
+    // Frozen at play-time: PMS request / expected_delivery claim (not overwritten
+    // by MEASURED banner). Used for REQUEST_VS_MEASURED at teardown.
+    int playRequestW_ = 0;
+    int playRequestH_ = 0;
+    // Silicon coded bank for this session (rawW/rawH), set in threadMain.
+    int codedBankW_ = 0;
+    int codedBankH_ = 0;
+    // Runtime-measured input geometry from ffmpeg stderr (B2). 0 = not seen yet.
+    std::atomic<int> measuredDeliveryW_{0};
+    std::atomic<int> measuredDeliveryH_{0};
+    std::atomic<bool> pipeDesyncRisk_{false};
     // Conf AUDIO_DELAY_MS — default 0. Applied as FFmpeg adelay on product path.
     int audioDelayMs_ = 0;
     // Starting point for the feed-rate servo, and the open-loop rate if the ring
@@ -236,14 +354,20 @@ private:
     std::mutex idleMu_;
     std::mutex osdMu_; // same for osdThr_ // serialises idleThr_ create/join (play thread vs companion)
     std::mutex presentMu_;
-    void applyOsd(uint16_t word);
+    void applyOsd(uint16_t word, bool applyIdle);
     // Snapshot the MrAudio ring occupancy. Returns bytes queued, or -1 if the
     // driver does not expose it. Cheap: one open/read/close, no allocation.
     int64_t readMrAudioQueuedBytes();
+    misterplex::MrAudioStatusSnap readMrAudioStatusSnap(std::string* rawOut = nullptr);
+    // Log full ring snap + optional PLXD frames_done at a named handoff point.
+    // Observability ends at MrAudio status; frames_done is VIDEO swap count only.
+    void logMrAudioHandoffAt(const char* where);
 
     static std::string hex16(uint16_t v);
 
-    bool osdControl_ = false;
+    misterplex::OsdControlMode osdMode_ = misterplex::OsdControlMode::Auto;
+    std::atomic<int> osdCapability_{static_cast<int>(misterplex::OsdCapability::Unknown)};
+    std::atomic<bool> osdInertNotified_{false};
     std::atomic<bool> osdRun_{false};
     std::atomic<uint16_t> lastOsd_{0};
     std::atomic<bool> osdSeen_{false};
@@ -260,6 +384,9 @@ private:
     int fpsDen_ = 0;
     int presentLeadMs_ = 40;
     int resyncDropMs_ = 80;
+    // F_SETPIPE_SZ target for the STREAM=0 rawvideo pipe. See raw_video_pipe.hpp.
+    int rawVideoPipeBytes_ = 2 * 1024 * 1024;
+    int lastRawVideoPipeActual_ = -1;
 
     FbPresent fb_;
     FpgaSpi fpga_;
@@ -267,6 +394,13 @@ private:
     bool presentProfile_ = false;
     bool useDdrF1_ = true; // F1 product presentation attempts DDR YUV420p only.
     int ddrBank_ = 0;      // ping-pong 0/1; stride comes from ddr_frame_layout.hpp
+    // Valid when product intermediate is 960×540 + PRESENT=fpga|both: native
+    // Option-C publish (777600 B). Empty/invalid → legacy 624 canvas path.
+    DdrFabricOwnedPresentPlan fabricOwnedPresent_{};
+    // Successful publish timestamps (doorbell/swap_req). See publish_interval_ledger.hpp.
+    misterplex::PublishIntervalLedger pubInterval_{};
+    // Δframes_done + phase ESTIMATE per successful publish (parent ERROR 21).
+    misterplex::PublishSwapDeltaLedger pubSwapDelta_{};
     // Bytes written to MrAudio this session (A/V clock diagnostics)
     std::atomic<int64_t> audioBytes_{0};
     // Bytes sitting in the MrAudio DMA ring, i.e. handed to the driver but not
@@ -276,8 +410,28 @@ private:
     // Live A/V drift + resync counters (per play/seek session)
     std::atomic<int64_t> avDriftMs_{0};
     std::atomic<int64_t> droppedFrames_{0};
+    // Present attempted but DDR/FPGA publish failed (per stream). NOT in drops.
+    std::atomic<int64_t> publishMisses_{0};
+    // Ladder bitrate for STARVED step-down recommendation (not a link-speed guess).
+    std::atomic<int> ladderBitrateKbps_{0};
+    std::atomic<int> ladderStepdownKbps_{0};
+    int starveStreak_ = 0;
+    bool ladderStepdownLogged_ = false;
+    // Last ffmpeg -stats/-progress frame= count (-1 = never seen). Supply split.
+    std::atomic<int64_t> ffmpegOutFrames_{-1};
+    // Lifetime (process) totals — soak-auditable across stream resets / restarts
+    // via confDir/misterplexd.frame_ledger (see frame_ledger.hpp).
+    std::atomic<int64_t> lifetimeFrames_{0};
+    std::atomic<int64_t> lifetimePresents_{0};
+    std::atomic<int64_t> lifetimeDrops_{0};
+    std::atomic<int64_t> lifetimePublishMisses_{0};
+    std::atomic<uint64_t> sessionSeq_{0}; // completed streams (end)
+    std::atomic<uint64_t> processEpoch_{0}; // set once: daemon start identity
+    std::atomic<uint64_t> streamSeq_{0};    // bumped at each stream START
     // FPGA presents this session (wall-clock capped)
     int64_t presentCount_ = 0;
+    // PLXD bank-identity samples vs presents (parent: first cast after load_core).
+    FpgaScanoutHealth scanoutHealth_{};
     mutable std::mutex mu_;
     mutable std::mutex summaryMu_;
     PlaybackSummary lastSummary_;
@@ -289,6 +443,33 @@ private:
     std::atomic<bool> playing_{false};
     std::atomic<bool> paused_{false};
     std::atomic<bool> audioActive_{false};
+    // False until the first complete video frame is ready. While false the audio
+    // pump reads+buffers PCM but does NOT write MrAudio — so audible playback
+    // cannot race ahead of picture (silicon: co-arm hid a ~206 ms lead and made
+    // real lip-sync ~288 ms worse). Release is a real start, not a clock re-base.
+    std::atomic<bool> audioStartGate_{false};
+    // Session A/V origin as steady_clock ms since epoch. Set when t0 is latched
+    // at first complete video frame (gate open). -1 = not yet armed.
+    // Cluster instrument places first_audio_pcm / audio_release / first_video on
+    // mono_ms (always) and wall_s (only after origin is armed). Never invent 0.
+    std::atomic<int64_t> sessionOriginMonoMs_{-1};
+    // First-class hold metrics (audio-thread authoritative). -1 = no release yet.
+    // held_ms = content duration of PCM buffered while gate closed.
+    // hold_waited_ms = wall time gate stayed closed (may exceed held_ms if sparse).
+    std::atomic<int64_t> lastHeldMs_{-1};
+    std::atomic<int64_t> lastHoldWaitedMs_{-1};
+    // first_audio_pcm mono_ms (pump input). -1 until first PCM byte.
+    // Enables hold_wall_ms = release_mono - first_audio without hand subtraction.
+    std::atomic<int64_t> firstAudioPcmMonoMs_{-1};
+    // Gate-open / physical start mono_ms (A/V audio_release). -1 until armed.
+    std::atomic<int64_t> avAudioReleaseMonoMs_{-1};
+    // Pump "audio release" mono_ms (held PCM flush starts). -1 until logged.
+    std::atomic<int64_t> pumpAudioReleaseMonoMs_{-1};
+    // held_bytes at pump release (content duration of hold buffer). -1 unknown.
+    std::atomic<int64_t> holdBytesAtRelease_{-1};
+    // mono_ms when audioQueuedBytes_ first becomes >= 0 (end of submitted-byte
+    // fallback window). -1 until observed. Field 6 of cluster FPGA instrument.
+    std::atomic<int64_t> firstAudioQueuedGe0MonoMs_{-1};
     std::atomic<bool> streamActive_{false};
     std::atomic<int64_t> reconFrames_{0};
     std::atomic<bool> reconPresentOk_{false}; // at least one recon → F1/fb0 this session
@@ -305,6 +486,7 @@ private:
     std::string currentHeaders_;
     int64_t durationMs_ = 0;
     int outW_ = 320;
+    std::string decodeSizeSource_{"default"};
     int outH_ = 240;
 };
 

@@ -7,6 +7,11 @@
 # Run on the *build host* (needs sshpass + /dev/video4 MacroSilicon).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+source "$ROOT/tests/hw/hw_gate_common.sh"
+if [[ "${MENU_OSD_ALLOW_OBSOLETE:-0}" != "1" ]]; then
+  hw_skip_not_pass "test_menu_osd" \
+    "obsolete v2 debug-menu card that only captures baseline; use run_menu_matrix.sh for current OSD work"
+fi
 HOST="${MISTER_HOST:-192.168.1.183}"
 PASS="${MISTER_PASS:-1}"
 SSH=(sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=8 "root@$HOST")
@@ -19,17 +24,43 @@ PUSH=/media/fat/misterplex/bin/push_frame
 
 ssh_q() { "${SSH[@]}" "$@" 2>/dev/null | grep -v 'WARNING\|post-quantum\|vulnerable' || true; }
 
+capture_preflight() {
+  if ! command -v ffmpeg >/dev/null 2>&1; then
+    echo "NO_CAPTURE_DEVICE dev=$DEVICE reason=missing_ffmpeg" >&2
+    exit 20
+  fi
+  if [[ ! -e "$DEVICE" ]]; then
+    echo "NO_CAPTURE_DEVICE dev=$DEVICE reason=absent" >&2
+    exit 20
+  fi
+  if [[ ! -c "$DEVICE" ]]; then
+    echo "NO_CAPTURE_DEVICE dev=$DEVICE reason=not_char_device" >&2
+    exit 20
+  fi
+}
+
 capture() {
   local name="$1"
   local dest="$OUT/${name}.jpg"
+  rm -f "$dest"
   sleep 0.6
+  set +e
   ffmpeg -y -hide_banner -loglevel error \
     -f v4l2 -input_format mjpeg -video_size 800x600 -framerate 30 \
-    -i "$DEVICE" -frames:v 1 -update 1 -q:v 2 "$dest" 2>/dev/null || \
-  ffmpeg -y -hide_banner -loglevel error \
-    -f v4l2 -video_size 800x600 -i "$DEVICE" -frames:v 1 -update 1 -q:v 2 "$dest"
+    -i "$DEVICE" -frames:v 1 -update 1 -q:v 2 "$dest" 2>/dev/null
+  local rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    ffmpeg -y -hide_banner -loglevel error \
+      -f v4l2 -video_size 800x600 -i "$DEVICE" -frames:v 1 -update 1 -q:v 2 "$dest" 2>/dev/null
+    rc=$?
+  fi
+  set -e
   local sz=0
   sz=$(wc -c <"$dest" 2>/dev/null || echo 0)
+  if [[ "$rc" -ne 0 || "$sz" -le 0 ]]; then
+    echo "CAPTURE_FAILED name=$name dev=$DEVICE reason=no_frame rc=$rc" >&2
+    exit 20
+  fi
   echo "  capture $name -> $dest ($sz bytes)"
   # mean luma for smoke (black ~7, bars >> 20)
   python3 - "$dest" <<'PY' 2>/dev/null || true
@@ -81,6 +112,7 @@ echo "# Menu OSD test report" >"$REPORT"
 echo "Started: $(date -Iseconds)" >>"$REPORT"
 echo >>"$REPORT"
 
+capture_preflight
 ensure_core
 capture "00_baseline_default"
 
@@ -92,3 +124,6 @@ fi
 echo "Baseline captured. Full matrix needs set_status SPI helper (agent should build)."
 echo "OUT=$OUT"
 ls -la "$OUT"
+# Capture-only without a scored assertion is unscoreable — never exit 0 green.
+hw_skip_not_pass "test_menu_osd" \
+  "baseline capture only; no OSD option matrix scored (use run_menu_matrix.sh)"

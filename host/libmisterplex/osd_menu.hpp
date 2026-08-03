@@ -15,8 +15,15 @@
 //   [1]      A/V resync       0=On 1=Off
 //   [2]      TV Mode          (core)
 //   [3]      Audio clock trim 0=On (685 ppm) 1=Off
-//   [4]      Content res      0=320x240 (proven default), 1=640x480 (480p path)
-//   [5]      reserved         do not reuse without a config-version bump
+//   [5:4]    Content tier     2-bit (v8 ABI; v7 cores only drive bit4, bit5=0):
+//                             00 = 240p coded 320x240 (power-on default)
+//                             01 = 480p coded 624x480 (menu label may say 640x480
+//                                  presented scanout; PMS/decode use 624x480)
+//                             10 = 16:9-framed 480p canvas — SAME DDR geometry and
+//                                  PMS ladder as 01. Host letterboxes 16:9 into the
+//                                  existing 624x480 contract. NOT native 720p and
+//                                  MUST NOT be described as 720p to users.
+//                             11 = reserved — host falls back to 480p canvas
 //   [9:6]    A/V offset       4-bit SIGNED, 20 ms per step -> -160..+140 ms.
 //                             Signed (not biased) so the power-on value 0 means
 //                             0 ms without needing a non-zero CONF_STR default,
@@ -26,13 +33,18 @@
 //   [12:13]  reserved for HPS DDR kick/bank — never reuse
 //   [15:14]  Idle screen      0=Logo 1=Black 2=Screensaver 3=Last frame
 //
+// Config version: shipping cores use v7 (O[4] only). Staged RTL CONF_STR uses v8
+// so Main clears status[5:4] on upgrade (same hazard class as v7 clearing bit4).
+// Host decodes both: v7 words have bit5=0 so 00/01 match the old 1-bit map.
+//
 // Pure decode so it can be unit-tested without an FPGA.
 //
 // CONF_STR file slots (`F1,raw,...`) and controller labels (`J1,...`) are menu
-// metadata only. They do not allocate OSD status bits, so fixing F labels or
-// adding J1 names does not change this v7 bit layout.
+// metadata only. They do not allocate OSD status bits.
 
 #include <cstdint>
+
+#include "libmisterplex/ddr_frame_layout.hpp"
 
 namespace misterplex {
 
@@ -40,6 +52,9 @@ namespace misterplex {
 // daemon and the tests cannot disagree about what a menu index means.
 constexpr int kOsdAvOffsetSteps = 16;
 constexpr int kOsdAvOffsetStepMs = 20;
+constexpr int kPlex240pWeakBitrateKbps = 1000;
+constexpr int kPlex360pWeakBitrateKbps = 1500;
+constexpr int kPlex480pWeakBitrateKbps = 2000;
 
 // Menu index 0 is the power-on default. The present loop waits for the audio
 // clock to reach `frameContentMs + avOffsetMs`, so POSITIVE holds the frame back
@@ -58,13 +73,49 @@ constexpr int kOsdAvOffsetStepMs = 20;
 // THIS clock; a value tuned against the old submitted-byte clock is not
 // comparable, because it silently absorbed that session's ring depth.
 constexpr int kOsdAvOffsetDefaultMs = 0;
+constexpr uint16_t kOsdIdleMask = 0xC000;
+// O[5:4] content tier field.
+constexpr unsigned kOsdContentTierShift = 4;
+constexpr uint16_t kOsdContentTierMask = 0x0030;
+
+// How the host presents into the current RBF DDR canvas.
+// Native720pPresent is intentionally absent: native 720p needs an RBF rebuild
+// and is CPU-blocked on ARM at content rate (see p720 ARM/FPGA scopes).
+enum class ContentPresentPolicy : uint8_t {
+    // Coded size == PMS ladder == decode target == canvas (240p or 480p).
+    NativeCanvas = 0,
+    // Same 624x480 DDR canvas as 480p; 16:9 sources letterbox via host scale/pad.
+    // User-facing name must say "16:9-framed 480p", never "720p".
+    Widescreen480pCanvas = 1,
+};
 
 struct ContentResolution {
-    int width = 320;
-    int height = 240;
+    // width/height are *coded* payload size advertised to PMS / decoder, never
+    // the presented scanout size (640). Strong types make that substitution fail.
+    CodedWidth width{320};
+    CodedHeight height{240};
+    // PMS videoResolution= query value — MUST stay "WxH" digits only.
     const char* label = "320x240";
     int weakBitrateKbps = 1000;
+    ContentPresentPolicy presentPolicy = ContentPresentPolicy::NativeCanvas;
+    // Human/log name; may differ from label (e.g. widescreen canvas).
+    const char* userLabel = "320x240";
 };
+
+// Label for the 480p coded ladder tier. Digits are static_assert-locked to the
+// coded constants so a presented-width (640) typo cannot silently ship.
+inline const char* plex480pCodedResolutionLabel() {
+    static_assert(kPlex480pCodedWidth.get() == 624,
+                  "update plex480pCodedResolutionLabel when coded width changes");
+    static_assert(kPlex480pCodedHeight.get() == 480,
+                  "update plex480pCodedResolutionLabel when coded height changes");
+    return "624x480";
+}
+
+// Honest product name for tier 10 — never "720p".
+inline const char* plexWidescreen480pCanvasUserLabel() {
+    return "16:9-framed 480p";
+}
 
 struct OsdSettings {
     int avOffsetMs = 0;
@@ -88,16 +139,80 @@ inline int osdAvOffsetMsFromIndex(unsigned idx) {
     return i * kOsdAvOffsetStepMs + kOsdAvOffsetDefaultMs;
 }
 
+inline unsigned osdContentTierFromWord(uint16_t word) {
+    return (static_cast<unsigned>(word) >> kOsdContentTierShift) & 3u;
+}
+
+inline ContentResolution contentResolutionFor480p() {
+    // 624x480 is still the 480p ladder. Default request bitrate is 2000 kbps
+    // (kPlex480pWeakBitrateKbps) as a quality/ARM-margin *heuristic* — historically
+    // described as a "PMS/validator floor" and incorrectly hard-failed in
+    // validateWeakLadder. That hard fail is retired: links below ~2 Mbit/s
+    // starve any request near the default. Operator WEAK_BITRATE must win;
+    // recommendedMin is advisory only. Raising above 2000 is a separate FEED/
+    // ARM-margin question (not gated here).
+    return {kPlex480pCodedWidth, kPlex480pCodedHeight, plex480pCodedResolutionLabel(),
+            kPlex480pWeakBitrateKbps, ContentPresentPolicy::NativeCanvas,
+            plex480pCodedResolutionLabel()};
+}
+
+inline ContentResolution contentResolutionFor240p() {
+    return {CodedWidth{320}, CodedHeight{240}, "320x240", kPlex240pWeakBitrateKbps,
+            ContentPresentPolicy::NativeCanvas, "320x240"};
+}
+
+// Same DDR/PMS geometry as 480p. Policy flag only — does not raise coded size.
+inline ContentResolution contentResolutionForWidescreen480pCanvas() {
+    return {kPlex480pCodedWidth, kPlex480pCodedHeight, plex480pCodedResolutionLabel(),
+            kPlex480pWeakBitrateKbps, ContentPresentPolicy::Widescreen480pCanvas,
+            plexWidescreen480pCanvasUserLabel()};
+}
+
 inline ContentResolution contentResolutionFromOsdWord(uint16_t word) {
-    if ((word >> 4) & 1u)
-        return {640, 480, "640x480", 2000};
-    return {320, 240, "320x240", 1000};
+    switch (osdContentTierFromWord(word)) {
+    case 0:
+        return contentResolutionFor240p();
+    case 1:
+        return contentResolutionFor480p();
+    case 2:
+        return contentResolutionForWidescreen480pCanvas();
+    default:
+        // 11 = reserved. Safe canvas, never invent native 720p.
+        return contentResolutionFor480p();
+    }
+}
+
+// Tier selection from a *coded* size. Presented scanout width must not be
+// passed here without an explicit CodedWidth{presented.get()} claim at the
+// call site — that claim is the bug we want reviewers to see.
+// Sizes at/above 480p coded map to the 480p canvas (including 1280x720 conf
+// mistakes) — native 720p is not a conf decode target on this host path.
+inline ContentResolution contentResolutionFromCodedSize(CodedWidth w, CodedHeight h) {
+    if (w.get() >= kPlex480pCodedWidth.get() || h.get() >= kPlex480pCodedHeight.get())
+        return contentResolutionFor480p();
+    return contentResolutionFor240p();
 }
 
 inline ContentResolution contentResolutionFromSize(int w, int h) {
-    if (w >= 640 || h >= 480)
-        return {640, 480, "640x480", 2000};
-    return {320, 240, "320x240", 1000};
+    return contentResolutionFromCodedSize(CodedWidth{w}, CodedHeight{h});
+}
+
+inline int weakBitrateKbpsForCodedSize(CodedWidth w, CodedHeight h) {
+    if (w.get() >= kPlex480pCodedWidth.get() || h.get() >= kPlex480pCodedHeight.get()) {
+#ifdef OSD_MENU_FAULT_FALLBACK_624_BITRATE
+        return kPlex360pWeakBitrateKbps;
+#else
+        return contentResolutionFor480p().weakBitrateKbps;
+#endif
+    }
+    if (w.get() >= 480 || h.get() >= 360)
+        return kPlex360pWeakBitrateKbps;
+    return contentResolutionFor240p().weakBitrateKbps;
+}
+
+// Decoder/conf boundary: bare ints are claimed coded at the call edge.
+inline int weakBitrateKbpsForCodedSize(int w, int h) {
+    return weakBitrateKbpsForCodedSize(CodedWidth{w}, CodedHeight{h});
 }
 
 inline OsdSettings decodeOsdWord(uint16_t word) {
@@ -110,17 +225,40 @@ inline OsdSettings decodeOsdWord(uint16_t word) {
     return s;
 }
 
-// Bits the daemon reacts to. [0] reset, [2] TV mode, [5] reserved,
+// Bits the daemon reacts to. [0] reset, [2] TV mode,
 // [10]/[11] flush triggers and [13:12] DDR kick/bank are not user settings and
-// toggle constantly during playback.
+// toggle constantly during playback. [5:4] content tier is owned (v8; bit5 was
+// reserved under v7 and is now part of the tier field).
 //
 // The daemon NEVER writes these bits. Main_MiSTer owns the OSD word (and saves it
-// to config/Plex_v7.CFG); a daemon-side write only fights Main's shadow and makes
+// to config/Plex_vN.CFG); a daemon-side write only fights Main's shadow and makes
 // the value flap between the two.
-constexpr uint16_t kOsdOwnedMask = 0xC3DA;
+// Was 0xC3DA (v7, bit5 free). v8 adds bit5 → 0xC3FA.
+constexpr uint16_t kOsdOwnedMask = 0xC3FA;
 
 inline bool osdChanged(uint16_t a, uint16_t b) {
     return ((a ^ b) & kOsdOwnedMask) != 0;
+}
+
+inline bool osdIdleChanged(uint16_t a, uint16_t b) {
+    return ((a ^ b) & kOsdIdleMask) != 0;
+}
+
+// Idle apply policy (OSD_CONTROL=1):
+//   * First successful OSD word = Main's persisted menu (config/Plex_v*.CFG).
+//     Apply idle bits so F12 "Idle Screen" survives daemon restart.
+//   * Later words: apply idle only when [15:14] change.
+// IDLE_SCREEN conf is the pre-OSD fallback (and the only source when
+// OSD_CONTROL=0). Once the core OSD word is readable, persisted OSD wins.
+inline bool shouldApplyOsdIdle(bool osdSeenBefore, uint16_t previousWord, uint16_t word) {
+#ifdef OSD_MENU_FAULT_SKIP_INITIAL_IDLE
+    // Fault mutant: old baseline-only behaviour (ignores persisted F12 idle).
+    return osdSeenBefore && osdIdleChanged(previousWord, word);
+#else
+    if (!osdSeenBefore)
+        return true;
+    return osdIdleChanged(previousWord, word);
+#endif
 }
 
 } // namespace misterplex

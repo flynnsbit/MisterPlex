@@ -71,9 +71,15 @@ ssh_m() {
 
 verify_loaded_rbf() {
   echo "=== verify loaded Plex.rbf md5 (expected $EXPECTED_RBF_MD5) ==="
-  ssh_m "md5sum /media/fat/_Utility/Plex.rbf" | tee "$OUT/rbf_md5.txt"
+  # Capture full ssh stream (banners included); parse first 32-hex token only.
+  ssh_m "md5sum /media/fat/_Utility/Plex.rbf" >"$OUT/rbf_md5.txt" 2>&1 || true
+  cat "$OUT/rbf_md5.txt"
   local actual
-  actual="$(sed -n 's/^\([0-9a-fA-F]\{32\}\).*/\1/p' "$OUT/rbf_md5.txt" | tr 'A-F' 'a-f' | head -1)"
+  actual="$(printf '%s\n' "$(cat "$OUT/rbf_md5.txt")" | tr 'A-F' 'a-f' | grep -oE '\b[0-9a-f]{32}\b' | head -1)"
+  if [[ -z "$actual" ]]; then
+    echo "FAIL: could not parse loaded RBF md5 (read fault, not a core result)" >&2
+    exit 8
+  fi
   if [[ "$actual" != "$EXPECTED_RBF_MD5" ]]; then
     echo "FAIL: loaded core md5 $actual != expected $EXPECTED_RBF_MD5; refusing to grade" >&2
     exit 8

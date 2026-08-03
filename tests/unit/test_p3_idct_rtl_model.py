@@ -20,6 +20,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "tests/fixtures/p3_host_recon/mb0_luma_v1.json"
 RESIDUAL_GOLD = ROOT / "host/libmisterplex/h264_residual_gold.hpp"
+HYBRID_OWN = ROOT / "fpga/Plex_MiSTer/rtl/h264_hybrid_mb_own.sv"
 DECODE_STUB = ROOT / "fpga/Plex_MiSTer/rtl/decode_stub.sv"
 IQ_IDCT_RTL = ROOT / "fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv"
 FILES_QIP = ROOT / "fpga/Plex_MiSTer/files.qip"

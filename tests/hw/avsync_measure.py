@@ -28,7 +28,7 @@ from pathlib import Path
 
 import numpy as np
 
-VIDEO_DEV = "/dev/video4"
+VIDEO_DEV = os.environ.get("HDMI_DEV", "/dev/video4")
 # PipeWire/Pulse source (matches the harness the -60 ms RK10 baseline was measured
 # with). Capturing ALSA hw: directly adds a large, silent A/V mux skew.
 PULSE_SRC = "alsa_input.usb-MACROSILICON_2109-02.analog-stereo"
@@ -38,9 +38,28 @@ PMS_HOST = os.environ.get("PMS_HOST", "YOUR-PLEX-SERVER")
 PMS_MACHINE_ID = os.environ.get("PMS_MACHINE_ID", "server-mid")
 
 
+class CaptureFailure(RuntimeError):
+    """HDMI capture did not produce data; not a product measurement."""
+
+
+class UnscoredMeasurement(RuntimeError):
+    """The hardware/card ran, but the result is not scoreable evidence."""
+
+
 def sh(cmd: list[str], timeout: int = 60) -> str:
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     return r.stdout
+
+
+def capture_preflight() -> None:
+    if not Path(VIDEO_DEV).exists():
+        raise CaptureFailure(f"NO_CAPTURE_DEVICE dev={VIDEO_DEV} reason=absent")
+    if not Path(VIDEO_DEV).is_char_device():
+        raise CaptureFailure(f"NO_CAPTURE_DEVICE dev={VIDEO_DEV} reason=not_char_device")
+    try:
+        subprocess.run(["ffmpeg", "-version"], capture_output=True, text=True, timeout=5)
+    except FileNotFoundError as e:
+        raise CaptureFailure(f"NO_CAPTURE_DEVICE dev={VIDEO_DEV} reason=missing_ffmpeg") from e
 
 
 def timeline() -> dict:
@@ -80,7 +99,10 @@ CAP_FPS = "60"
 
 
 def capture(dest: Path, seconds: float) -> None:
+    capture_preflight()
     dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.exists():
+        dest.unlink()
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
         "-thread_queue_size", "1024",
@@ -92,7 +114,14 @@ def capture(dest: Path, seconds: float) -> None:
         "-c:v", "mjpeg", "-q:v", "5", "-c:a", "pcm_s16le",
         str(dest),
     ]
-    subprocess.run(cmd, capture_output=True, text=True, timeout=int(seconds) + 60)
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=int(seconds) + 60)
+    if r.returncode != 0 or not dest.exists() or dest.stat().st_size == 0:
+        log = (r.stderr or r.stdout or "").strip().splitlines()
+        tail = log[-1] if log else "no ffmpeg output"
+        raise CaptureFailure(
+            f"CAPTURE_FAILED dev={VIDEO_DEV} out={dest} reason=no_frame "
+            f"rc={r.returncode} log={tail}"
+        )
 
 
 def video_luma(cap: Path) -> tuple[np.ndarray, np.ndarray]:
@@ -106,6 +135,8 @@ def video_luma(cap: Path) -> tuple[np.ndarray, np.ndarray]:
     ).stdout
     frames = np.frombuffer(raw, dtype=np.uint8)
     n = frames.size // (w * h)
+    if n == 0:
+        raise CaptureFailure(f"CAPTURE_FAILED file={cap} reason=no_video_frames")
     luma = frames[: n * w * h].reshape(n, w * h).mean(axis=1)
 
     times = subprocess.run(
@@ -126,6 +157,8 @@ def audio_env(cap: Path) -> tuple[np.ndarray, int]:
         capture_output=True, timeout=300,
     ).stdout
     a = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
+    if a.size == 0:
+        raise CaptureFailure(f"CAPTURE_FAILED file={cap} reason=no_audio_samples")
     return np.abs(a), 48000
 
 
@@ -215,8 +248,10 @@ def main() -> int:
     args = ap.parse_args()
 
     args.out.mkdir(parents=True, exist_ok=True)
+    capture_preflight()
     result: dict = {"label": args.label, "rating_key": args.rating_key}
 
+    saw_playing = args.no_cast
     if not args.no_cast:
         stop()
         time.sleep(2)
@@ -229,10 +264,11 @@ def main() -> int:
         tl = timeline()
         if tl.get("state") == "playing" and int(tl.get("time", "0") or 0) > 0:
             t_start = time.time() - int(tl["time"]) / 1000.0
+            saw_playing = True
             break
         time.sleep(1)
     else:
-        print("WARN: never saw state=playing", flush=True)
+        raise UnscoredMeasurement("UNSCORED avsync_measure reason=timeline-never-playing")
     result["timeline_at_start"] = timeline()
 
     points = [("early", args.early_at)]
@@ -251,6 +287,11 @@ def main() -> int:
         print(f"capture {name} at playback {pos_ms/1000:.1f}s -> {cap.name}", flush=True)
         capture(cap, args.window)
         w = measure_window(cap)
+        if w["matches"] < 4 or "median_offset_ms" not in w:
+            raise UnscoredMeasurement(
+                f"UNSCORED avsync_measure reason=insufficient-av-events "
+                f"window={name} flashes={w['flashes']} beeps={w['beeps']} matches={w['matches']}"
+            )
         w["playback_pos_s"] = round(pos_ms / 1000.0, 2)
         w["state"] = tl.get("state")
         result[name] = w
@@ -285,4 +326,11 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except CaptureFailure as e:
+        print(e, file=sys.stderr)
+        sys.exit(20)
+    except UnscoredMeasurement as e:
+        print(e, file=sys.stderr)
+        sys.exit(77)

@@ -38,6 +38,32 @@ module present_core #(
 	input  wire        audio_en,        // OSD tone enable (when no FIFO audio)
 	input  wire        use_frame_store, // OSD force bars when 1
 
+	// Fabric content window (runtime). win_enable=0 → legacy full FRAME map.
+	// When 1, NN-stretch content_w×content_h at (content_x0,content_y0) across DE.
+	// 11-bit geometry is 720p-native (1280×720); host programs before ARM drops scale.
+	input  wire        win_enable,
+	input  wire [10:0] content_w,
+	input  wire [10:0] content_h,
+	input  wire [10:0] content_x0,
+	input  wire [10:0] content_y0,
+	// 0 → defaults (h=529 FBAR, v=480). 720p DE is a reg write, not a redesign.
+	input  wire [10:0] win_h_de,
+	input  wire [10:0] win_v_de,
+
+	// Runtime DDR bank geometry (PLXW). geom_enable=0 → legacy CODED 624 path.
+	// Sized for 1280×720 (y_stride bytes). Safe default = all zero / disable.
+	input  wire        geom_enable,
+	input  wire [10:0] geom_coded_w,
+	input  wire [10:0] geom_coded_h,
+	input  wire [11:0] geom_y_stride,
+	input  wire [10:0] geom_chroma_stride,
+	input  wire [10:0] geom_display_w,
+	input  wire [10:0] geom_display_h,
+	input  wire [10:0] geom_present_x,
+	input  wire [10:0] geom_present_y,
+	input  wire [10:0] geom_crop_left,
+	input  wire [10:0] geom_crop_top,
+
 	// frame_store write (from ingest)
 	input  wire        fs_wr_en,
 	input  wire [15:0] fs_wr_pixel,
@@ -106,7 +132,10 @@ module present_core #(
 	output wire        stat_audio_underrun,
 	output wire        stat_swap_pending,
 	output wire [15:0] stat_frame_underruns,
-	output wire  [7:0] stat_frame_sdram_state
+	output wire  [7:0] stat_frame_sdram_state,
+	// B16: geometry transition blackout (raise HDMI_BLACKOUT)
+	output wire        stat_geom_hold_black,
+	output wire        stat_geom_hollow
 );
 
 	wire frame_start;
@@ -126,6 +155,41 @@ module present_core #(
 
 	wire [7:0] br, bg, bb;
 	wire       ce_pix_i, hb, hs, vb, vs, fstart;
+`ifdef PRESENT_BEAM_960
+	// ascal-native true content DE (w-clock 1182×564 @20 MHz ≈ 30.0008 Hz).
+	// Default OFF. FAULT: PRESENT_BEAM_FAULT_ISLAND_1280 → DE 1280×720 (must RED).
+	wire [10:0] hc, vc;
+	assign br = 8'd0; assign bg = 8'd0; assign bb = 8'd0;
+	// Pattern unused on beam path (no colorbars paint); keep for port parity.
+	wire [1:0] eff_pattern = use_frame_store ? 2'd1 : pattern;
+	(* keep = 1 *) wire _beam960_keep_pat = |eff_pattern;
+`ifdef PRESENT_BEAM_FAULT_ISLAND_1280
+	present_beam_content_de #(
+		.H_DE(1280), .V_ACTIVE(720),
+		.H_TOTAL(1650), .V_TOTAL(750),
+		.H_SYNC_S(1280 + 32), .H_SYNC_E(1280 + 32 + 64),
+		.V_SYNC_S(720 + 8), .V_SYNC_E(720 + 8 + 6)
+	) beam960 (
+`else
+	present_beam_content_de #(
+		.H_DE(960), .V_ACTIVE(540),
+		.H_TOTAL(1182), .V_TOTAL(564),
+		.H_SYNC_S(960 + 32), .H_SYNC_E(960 + 32 + 64),
+		.V_SYNC_S(540 + 8), .V_SYNC_E(540 + 8 + 6)
+	) beam960 (
+`endif
+		.clk(clk),
+		.reset(reset),
+		.ce_pix(ce_pix_i),
+		.HBlank(hb),
+		.HSync(hs),
+		.VBlank(vb),
+		.VSync(vs),
+		.frame_start(fstart),
+		.hc_out(hc),
+		.vc_out(vc)
+	);
+`else
 	wire [9:0] hc, vc; // from colorbars — same counters as full-DE bar paint
 
 	// Pattern encoding (status[7:6]): 0=None, 1=Bars, 2=Bars+Block, 3=Grid.
@@ -151,71 +215,138 @@ module present_core #(
 		.g(bg),
 		.b(bb)
 	);
+`endif
 
 	localparam int FRAME_X_W = $clog2(FRAME_W);
 	localparam int FRAME_Y_W = $clog2(FRAME_H);
 
-	// Stretch FRAME_W×FRAME_H frame_store across full Template DE — match colorbars in_content.
-	// Prior attempts (combo ÷529, reconstructed hc Bresenham) still UVC-pillar 0.604 on
-	// solid-red F1 while bars on same RBF span 0.998. Use colorbars hc + mul-shift.
-	localparam H_DE    = 10'd529;
-	localparam V_STORE = 10'd240;
+	// Stretch store content across Template DE (colorbars hc/vc).
+	//
+	// Product (Plex.qsf FRAME_W=640 FRAME_H=480, forced scandouble):
+	//   colorbars NTSC scandouble active vc=0..479 (VBlank asserts at vc==480).
+	//   NATIVE_V_1TO1 maps store_y = vc with SCALE=1.0 so ALL FRAME_H rows are
+	//   addressed (fixes the pre-T7 even-row-only ceiling: V_STORE=240 + scale 2.0).
+	//
+	// Legacy FRAME_H<=240 builds keep half-height py=(scandouble?vc>>1:vc) + scale
+	// from a 240-line content window.
+	//
+	// Horizontal: H_DE stays 529 (FBAR Template class). Full 640 unique columns
+	// require H_DE>=640, which is impossible at clk_sys=20 MHz / 60 Hz / 524 lines
+	// (20e6/60/524 ≈ 636 clocks/line max; see test_present_store_scale_math).
+	// STORE_X still samples 529 of FRAME_W via the 39647 mul-shift.
+	//
+	// ASCAL NEAR-TERM FIT (true content DE — NOT this Template path):
+	// Core must emit DE extent == content (960×540 or 640×360), identity store
+	// map, no pad inside DE. Island-in-529/1280 is the quarter-glass dead end.
+	// Integrator gate: tests/unit/test_true_content_de_contract.sh
+	// Counted RTL gate: tests/unit/test_present_true_de_count_rtl_sim.sh
+	// Contract doc: docs/product-4-3-scaler-decision.md § True 960×540 DE.
+	// Fit macro: PRESENT_BEAM_960 + runtime win_* below (default OFF).
+	//
+	// Fabric content window (win_enable): when 1, SX/SY come from runtime
+	// content_w/h instead of FRAME_* so ARM publishes native WxH (320…1280) and
+	// fabric NN-stretches across DE — ARM scale path goes to zero, not "cheaper".
+	// win_enable=0 is bit-compatible legacy. STORE_W=1280 sized for 720p (1 M10K/line).
+	// Mapping lives in present_content_window (NN V1; ascal remains HDMI scaler).
+`ifdef PRESENT_BEAM_960
+`ifdef PRESENT_BEAM_FAULT_ISLAND_1280
+	localparam int H_DE_I = 1280;
+	localparam int V_STORE_I = 720;
+`else
+	localparam int H_DE_I = 960;
+	localparam int V_STORE_I = 540;
+`endif
+	localparam bit NATIVE_V_1TO1 = 1'b1;
+	localparam [10:0] H_DE = 11'(H_DE_I);
+	localparam [10:0] V_STORE = 11'(V_STORE_I);
+	localparam int STORE_X_SCALE = 65536; // identity placeholder (window owns map)
+	localparam int STORE_Y_SCALE = 65536;
+	wire [10:0] py = vc;
+	wire in_content = (hc < H_DE) && (py < V_STORE) && ~hb && ~vb;
+	wire [10:0] read_hc = hc;
+	localparam int WIN_H_DE_DEFAULT = H_DE_I;
+	localparam int WIN_V_DE_DEFAULT = V_STORE_I;
+`else
+	localparam H_DE = 10'd529;
+	localparam bit NATIVE_V_1TO1 = (FRAME_H > 240);
+	localparam int V_STORE_I = NATIVE_V_1TO1 ? FRAME_H : 240;
+	localparam [9:0] V_STORE = 10'(V_STORE_I);
+	// Legacy scale constants retained for source-lock tests + documentation.
+	// Runtime path uses present_content_window registered scales.
+	// store_x ≈ floor(hc * FRAME_W / 529); 39647/65536 ≈ 320/529.
 	localparam int STORE_X_SCALE = (FRAME_W * 39647) / 320;
-	localparam int STORE_Y_SCALE = (FRAME_H * 65536) / 240;
-	localparam [FRAME_X_W-1:0] FRAME_LAST_X = FRAME_X_W'(FRAME_W - 1);
-	localparam [FRAME_Y_W-1:0] FRAME_LAST_Y = FRAME_Y_W'(FRAME_H - 1);
-	localparam [15:0] FRAME_LAST_X_16 = 16'(FRAME_W - 1);
-	localparam [15:0] FRAME_LAST_Y_16 = 16'(FRAME_H - 1);
-	// Exact clone of colorbars in_content (full DE paint region).
-	wire [9:0] py = scandouble ? (vc >> 1) : vc;
+	localparam int STORE_Y_SCALE = (FRAME_H * 65536) / V_STORE_I;
+	// Beam Y for content + store. Native 480: use full vc (scandouble active 0..479).
+	// Legacy 240: half when scandoubled so two display lines share one store row.
+	wire [9:0] py = NATIVE_V_1TO1 ? vc : (scandouble ? (vc >> 1) : vc);
 	wire in_content = (hc < H_DE) && (py < V_STORE) && ~hb && ~vb;
 
-	// store_x = floor(hc * 320 / 529) ≈ (hc * 39647) >> 16  (39647/65536 ≈ 0.6049)
-	// Drive the address straight from the clamped counter, with no blank-time special
-	// case. Forcing store_x to 0 during blank used to hand column 0 to any display
-	// pixel whose address was issued outside `in_content` — with the sync delayed by
-	// DE_LAG that includes the last pixels of every line, which is what wrapped the
-	// first column onto the RIGHT edge. Free-running, hc keeps counting past H_DE so
-	// the clamp naturally holds column 319 through the right overhang, and hc wraps to
-	// 0 early in the left blank so column 0 is ready before DE opens.
+	// Drive store_x from free-running hc (no blank-time force-to-0). Blank-time
+	// reset handed column 0 to DE_LAG-delayed right-edge pixels (1 px wrap).
+	// Identity hc→read_hc kept at this layer for source-lock + DE_LAG docs;
+	// present_content_window also treats hc as free-running (no blank force-0).
 	wire [9:0] read_hc = hc;
-	wire [31:0] store_x_prod = read_hc * STORE_X_SCALE;
-	wire [15:0] store_x_comb = store_x_prod[31:16];
-	wire [FRAME_X_W-1:0] store_x_clamped =
-		(store_x_comb > FRAME_LAST_X_16) ? FRAME_LAST_X : store_x_comb[FRAME_X_W-1:0];
+	localparam int WIN_H_DE_DEFAULT = 529;
+	localparam int WIN_V_DE_DEFAULT = V_STORE_I;
+`endif
+	// Window emits full store coords (STORE 1280×720). ddr_frame_store rd_x/y
+	// accept max(FRAME, MAX_CODED); legacy SDRAM frame_store still gets FRAME slice.
+	localparam int STORE_W_MAX = 1280;
+	localparam int STORE_H_MAX = 720;
+	localparam int WIN_X_W = $clog2(STORE_W_MAX);
+	localparam int WIN_Y_W = $clog2(STORE_H_MAX);
+	wire [WIN_X_W-1:0] store_x_win;
+	wire [WIN_Y_W-1:0] store_y_win;
+	wire                 de_r; // registered in_content for frame_store read align
+	wire                 past_last_row;
 
-	// colorbars moves the V blank edges at hc == H_SYNC_S, i.e. AFTER each line's
-	// active region, so VBlank releases a line early with respect to the content
-	// window and line 240 is still displayed -- 241 active rows instead of 240.
-	// Measured on hardware with scripts/gen_edge_markers.py's stripe pattern: the
-	// bottom stripes land on a 1080/241 = 4.4813 row pitch, not 1080/240 = 4.5.
-	// That surplus row is the "bottom line": nothing gates it on py, so it reads
-	// store_y = 240, one row past the end of the 240-row store.
-	// Blank it, and clamp the address so an out-of-range row can never be fetched.
-	wire       past_last_row = (py >= 10'd240);
-	wire [9:0] store_y_clamped = past_last_row ? 10'd239 : py;
-	wire [31:0] store_y_prod = store_y_clamped * STORE_Y_SCALE;
-	wire [15:0] store_y_comb = store_y_prod[31:16];
-	wire [FRAME_Y_W-1:0] store_y_addr =
-		(store_y_comb > FRAME_LAST_Y_16) ? FRAME_LAST_Y : store_y_comb[FRAME_Y_W-1:0];
+	present_content_window #(
+		.FRAME_W(FRAME_W),
+		.FRAME_H(FRAME_H),
+		.STORE_W(STORE_W_MAX),
+		.STORE_H(STORE_H_MAX),
+		.H_DE_DEFAULT(WIN_H_DE_DEFAULT),
+		.V_DE_DEFAULT(WIN_V_DE_DEFAULT)
+	) content_win (
+		.clk(clk),
+		.reset(reset),
+		.ce_pix(ce_pix_i),
+`ifdef PRESENT_BEAM_960
+		.hc(read_hc),
+		.py(py),
+`else
+		.hc({1'b0, read_hc}),
+		.py({1'b0, py}),
+`endif
+		.in_content(in_content),
+		.win_enable(win_enable),
+		.content_w(content_w),
+		.content_h(content_h),
+		.content_x0(content_x0),
+		.content_y0(content_y0),
+		.h_de(win_h_de),
+		.v_de(win_v_de),
+		.store_x(store_x_win),
+		.store_y(store_y_win),
+		.de_r(de_r),
+		.past_last_row(past_last_row)
+	);
 
-	reg [FRAME_X_W-1:0] store_x;
-	reg [FRAME_Y_W-1:0] store_y;
-	reg       de_r; // registered in_content for frame_store read align
-	always @(posedge clk) begin
-		if (reset) begin
-			store_x <= 0;
-			store_y <= '0;
-			de_r    <= 1'b0;
-		end else if (ce_pix_i) begin
-			de_r    <= in_content;
-			store_y <= store_y_addr;
-			store_x <= store_x_clamped;
-		end
-	end
+	// Full-width for DDR path (runtime geom / content window up to 1280×720).
+	wire [WIN_X_W-1:0] store_x_full = store_x_win;
+	wire [WIN_Y_W-1:0] store_y_full = store_y_win;
+	// FRAME-sliced for legacy SDRAM frame_store ports.
+	wire [FRAME_X_W-1:0] store_x = store_x_win[FRAME_X_W-1:0];
+	wire [FRAME_Y_W-1:0] store_y = store_y_win[FRAME_Y_W-1:0];
+
+	// Keep legacy scale localparams live for elab/source-lock (child has its own).
+	(* keep = 1 *) wire [31:0] _keep_legacy_store_scale =
+		32'(STORE_X_SCALE) ^ {16'd0, 16'(STORE_Y_SCALE)};
 
 	wire [7:0] fr, fg, fb;
 	wire       has_frame;
+	wire       geom_hold_black;
+	wire       geom_hollow_fault;
 	wire       swap_pending;
 	wire [31:0] wr_count;
 	wire        wr_done;
@@ -236,6 +367,9 @@ module present_core #(
 
 `include "ddr_frame_layout_params.svh"
 
+	// B1: under PRESENT_BEAM_960 / OPTION_C the store compile-time LEG map is
+	// Option-C (see ddr_frame_store `ifdef OPTION_C). PHYS_BASE_720P params are
+	// always passed so capacity select and OPTION_C re-base share one source.
 	ddr_frame_store #(
 		.FRAME_W(FRAME_W),
 		.FRAME_H(FRAME_H),
@@ -251,17 +385,32 @@ module present_core #(
 		.LINE_COUNT(FRAME_LINE_COUNT),
 		.PHYS_BASE(32'h3000_0000),
 		.HPS_BANK_STRIDE_BYTES(DDR_FRAME_YUV420P_BANK_STRIDE),
-		.DOORBELL_PHYS(DDR_FRAME_YUV420P_DOORBELL_PHYS)
+		.DOORBELL_PHYS(DDR_FRAME_YUV420P_DOORBELL_PHYS),
+		// Option-C banks (capacity select + compile-time OPTION_C LEG re-base)
+		.PHYS_BASE_720P(DDR_FRAME_720P_PHYS_BASE),
+		.HPS_BANK_STRIDE_BYTES_720P(DDR_FRAME_720P_YUV420P_BANK_STRIDE),
+		.DOORBELL_PHYS_720P(DDR_FRAME_720P_YUV420P_DOORBELL_PHYS)
 	) fstore (
 		.clk(clk),
 		.clk_ddr(clk_ddr),
 		.reset(reset),
-		.rd_x(store_x),
-		.rd_y(store_y),
+		.rd_x(store_x_full),
+		.rd_y(store_y_full),
 		.rd_active(de_r),
 		.rd_r(fr),
 		.rd_g(fg),
 		.rd_b(fb),
+		.geom_enable(geom_enable),
+		.rt_coded_w(geom_coded_w),
+		.rt_coded_h(geom_coded_h),
+		.rt_y_stride(geom_y_stride),
+		.rt_chroma_stride(geom_chroma_stride),
+		.rt_display_w(geom_display_w),
+		.rt_display_h(geom_display_h),
+		.rt_present_x(geom_present_x),
+		.rt_present_y(geom_present_y),
+		.rt_crop_left(geom_crop_left),
+		.rt_crop_top(geom_crop_top),
 		.start_req(ddr_start_req),
 		.bank_sel(ddr_bank_sel),
 		.status_osd(ddr_status_osd),
@@ -286,7 +435,9 @@ module present_core #(
 		.underrun_count(frame_underruns),
 		.frames_done(ddr_frames_done),
 		.doorbell_ok(ddr_doorbell_ok),
-		.debug_state(frame_sdram_state)
+		.debug_state(frame_sdram_state),
+		.geom_hold_black(geom_hold_black),
+		.geom_hollow_fault(geom_hollow_fault)
 	);
 `else
 	frame_store #(
@@ -330,6 +481,10 @@ module present_core #(
 		.underrun_count(frame_underruns),
 		.debug_state(frame_sdram_state)
 	);
+`ifndef PRESENT_BEAM_960
+	assign geom_hold_black = 1'b0;
+	assign geom_hollow_fault = 1'b0;
+`endif
 `endif
 
 	// Product: once a frame is ingested, always show frame_store unless O[9] Force bars.
@@ -352,13 +507,23 @@ module present_core #(
 	// the bottom edge out and expose a row past the frame (the bottom bar).
 	// DE_LAG=3 was measured, not guessed: scripts/gen_edge_markers.py paints the first
 	// source column white and the last mid-grey, and scripts/check_edges.py captures
-	// HDMI and reports where each landed. Sweeping 3..6 on hardware:
+	// HDMI and reports where each landed. Sweeping 3..6 on hardware (RGB565
+	// frame_store @ FRAME_W=320):
 	//   3 -> col0 w=6px, col319 w=4px   (correct)
 	//   4 -> col0 w=4px, col319 w=7px
 	//   5 -> col0 MISSING, col319 w=11px
 	//   6 -> col0 MISSING, col319 w=14px
 	// Each extra clk of lag eats ~0.6 of a source column off the left and repeats it
 	// on the right, which is precisely the right-edge "bar".
+	//
+	// B12 DE_LAG @ DDR_FRAME_STORE + 960 max tier (build-host Verilator measure):
+	//   tests/unit/test_ddr_store_rgb_lag.sh → store rd_active→RGB lag_cycles=1
+	//   at both coded_w=960 (Option-C) and coded_w=624 (legacy). Geometry does
+	//   NOT change store RGB pipeline depth (B12_COMPARE lag960=lag624).
+	//   DE_LAG=3 keeps HBlank/HSync delayed past store RGB + content_window de_r
+	//   on PRESENT_BEAM_960 / FRAME_W=960 the same way as 640-class.
+	//   Evidence: DE_LAG 960 store lag_cycles=1 (script true rc=0).
+	// Parent HDMI edge paint remains the glass-level confirmation after fit.
 	localparam DE_LAG = 3'd3;
 	reg [DE_LAG-1:0] hb_sr, hs_sr;
 	always @(posedge clk) begin
@@ -433,5 +598,7 @@ module present_core #(
 	assign stat_swap_pending  = swap_pending;
 	assign stat_frame_underruns = frame_underruns;
 	assign stat_frame_sdram_state = frame_sdram_state;
+	assign stat_geom_hold_black = geom_hold_black;
+	assign stat_geom_hollow     = geom_hollow_fault;
 
 endmodule

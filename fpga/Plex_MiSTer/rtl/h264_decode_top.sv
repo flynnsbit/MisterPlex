@@ -56,7 +56,14 @@ module h264_decode_top (
     // ── Outputs ──
     output reg         mb_recon_valid,     // Pulse: full MB reconstruction complete
     output reg  [7:0]  recon_y [0:255],    // Reconstructed luma (16×16, raster order)
-    output reg  [4:0]  blocks_done        // Running count of blocks completed
+    output reg  [4:0]  blocks_done,        // Running count of blocks completed
+
+    // P3-3l5 hybrid ownership for this MB (detectable unsupported → host)
+    output wire        hybrid_fpga_owned,
+    output wire        hybrid_host_required,
+    output wire        hybrid_product_mb_ok,
+    output wire [2:0]  hybrid_own_code,
+    output wire [3:0]  hybrid_own_reason
 );
 
     // ════════════════════════════════════════════════════════════════════
@@ -65,6 +72,28 @@ module h264_decode_top (
     wire is_i_nxn  = (mb_type == 8'd0);
     wire is_i16x16 = (mb_type >= 8'd1) && (mb_type <= 8'd24);
     // wire is_ipcm   = (mb_type == 8'd25); // TODO: w-plane delivers I_PCM
+
+    // P3-3l5: classify this MB for hybrid product ownership. I_PCM and unknown
+    // types force host_required so they cannot silently score as FPGA product.
+    h264_hybrid_mb_own u_hybrid_own (
+        .slice_is_i(1'b1),
+        .entropy_cabac(1'b0),
+        .fail_mb(1'b0),
+        .mb_valid(1'b1),
+        .mb_type(mb_type),
+        .is_p_slice_mb(1'b0),
+        .p_skipped(1'b0),
+        .p_is_intra(1'b0),
+        .p_is_inter(1'b0),
+        .p_uses_sub_mb(1'b0),
+        .p_part_mode(3'd0),
+        .p_unsupported(1'b0),
+        .fpga_owned(hybrid_fpga_owned),
+        .host_required(hybrid_host_required),
+        .product_mb_ok(hybrid_product_mb_ok),
+        .own_code(hybrid_own_code),
+        .own_reason(hybrid_own_reason)
+    );
 
     // ════════════════════════════════════════════════════════════════════
     // BLOCK SCAN ORDER — H.264 spec Table 6-10 (4x4 luma block indices)

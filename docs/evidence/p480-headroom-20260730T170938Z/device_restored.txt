@@ -1,0 +1,11 @@
+CORENAME=Plex
+14eaeff3270a6f59a434e0f777ed823d  /media/fat/_Utility/Plex.rbf
+fb9f76192a8f7d248411c2ab2b332542
+n_d=1 n_s=1
+raw: 00 60 01 00 00 00 00 00 00 c0 00 00 00 00 00 00
+osd lo=0x6000 tv=NTSC fps_sel=0(24) pat=0(none) audio=Off force_bars=0 T10=0 T11=0 R0=0 AR_bits=0
+PRESENT=fpga
+DECODE=320x240
+TRANSCODE_PROFILE=480p
+OSD_CONTROL=1
+PRESENT_PROFILE=0

@@ -103,8 +103,19 @@ module h264_deblock_thresholds (
 
 	assign index_a = clip_index($signed({2'b00, qp_avg}) + {{3{slice_alpha_c0_offset[4]}}, slice_alpha_c0_offset});
 	assign index_b = clip_index($signed({2'b00, qp_avg}) + {{3{slice_beta_offset[4]}}, slice_beta_offset});
+	// Normative Tables 8-16. Fault macros exist only so unit red-checks can
+	// prove the TB actually observes alpha/beta (mutation twins).
+`ifdef H264_DEBLOCK_FAULT_ALPHA_BIAS
+	wire [8:0] alpha_sum = {1'b0, alpha_lut(index_a)} + 9'd16;
+	assign alpha = alpha_sum[8] ? 8'd255 : alpha_sum[7:0];
+`else
 	assign alpha = alpha_lut(index_a);
+`endif
+`ifdef H264_DEBLOCK_FAULT_BETA_ZERO
+	assign beta = 8'd0;
+`else
 	assign beta = beta_lut(index_b);
+`endif
 
 	always @* begin
 		case ({index_a, bs})
@@ -174,11 +185,17 @@ module h264_deblock_edge (
 	output wire [5:0]        tc0_dbg
 );
 	wire [5:0] index_a_unused, index_b_unused;
+	// Effective bS shared by threshold tC0 lookup and the filter body.
+`ifdef H264_DEBLOCK_FAULT_FORCE_BS2
+	wire [2:0] bs_eff = 3'd2;
+`else
+	wire [2:0] bs_eff = bs;
+`endif
 	h264_deblock_thresholds u_thr (
 		.qp_avg(qp_avg),
 		.slice_alpha_c0_offset(slice_alpha_c0_offset),
 		.slice_beta_offset(slice_beta_offset),
-		.bs(bs),
+		.bs(bs_eff),
 		.alpha(alpha_dbg),
 		.beta(beta_dbg),
 		.index_a(index_a_unused),
@@ -241,14 +258,16 @@ module h264_deblock_edge (
 			tc = 14'sd0;
 			delta = 14'sd0;
 			adj = 14'sd0;
-			filter_ok = (bs != 3'd0) && (absdiff8(p0_in[i], q0_in[i]) < {1'b0, alpha_dbg}) &&
+			// Clause 8.7.2.1: filter sample if bS!=0 and |p0-q0|<α and |p1-p0|<β and |q1-q0|<β.
+			filter_ok = (bs_eff != 3'd0) && (absdiff8(p0_in[i], q0_in[i]) < {1'b0, alpha_dbg}) &&
 			            (absdiff8(p1_in[i], p0_in[i]) < {1'b0, beta_dbg}) &&
 			            (absdiff8(q1_in[i], q0_in[i]) < {1'b0, beta_dbg});
 			ap = absdiff8(p2_in[i], p0_in[i]) < {1'b0, beta_dbg};
 			aq = absdiff8(q2_in[i], q0_in[i]) < {1'b0, beta_dbg};
 			strong_extra = absdiff8(p0_in[i], q0_in[i]) < {1'b0, (alpha_dbg >> 2) + 8'd2};
 
-			if (filter_ok && bs == 3'd4) begin
+			// Clause 8.7.2.3: bS==4 strong filter (luma may touch p2..q2; chroma only p0/q0).
+			if (filter_ok && bs_eff == 3'd4) begin
 				if (is_chroma) begin
 					p0_out[i] = clip8((p1s <<< 1) + p0s + q1s + 14'sd2 >>> 2);
 					q0_out[i] = clip8((q1s <<< 1) + q0s + p1s + 14'sd2 >>> 2);

@@ -8,6 +8,7 @@ PASS="${MISTER_PASS:-1}"
 USER="${MISTER_USER:-root}"
 HOLD_S="${HOLD_S:-8}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+source "$ROOT/tests/hw/hw_gate_common.sh"
 
 ssh_m() {
   sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=8 "$USER@$HOST" "$@"
@@ -18,8 +19,10 @@ curl -fsS --connect-timeout 5 "$BASE/resources" | grep -q MiSTerPlex
 
 echo "=== conf STREAM/PRESENT ==="
 ssh_m 'grep -E "^(STREAM|PRESENT|STREAM_SKIP)" /media/fat/misterplex/misterplex.conf || true'
-# Ensure STREAM=1 for this smoke (restore not needed — lab conf already STREAM=1)
-ssh_m 'grep -q "^STREAM=1" /media/fat/misterplex/misterplex.conf || echo "WARN: STREAM!=1"'
+# STREAM!=1 cannot score host I-slice recon — warn-and-continue was vacuous green risk.
+if ! ssh_m 'grep -q "^STREAM=1" /media/fat/misterplex/misterplex.conf'; then
+  hw_skip_not_pass "test_stream_recon" "STREAM!=1 in misterplex.conf; recon path unscoreable"
+fi
 
 # Prefer real Baseline annex-B already on device; else generate + scp
 LOCAL_AB="$ROOT/build/plex_real_baseline.264"

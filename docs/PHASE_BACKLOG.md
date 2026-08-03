@@ -46,6 +46,16 @@ captures, compare the stable decoded ROI (default `VISUAL_COMPARE_BOX=11,0,160,1
 `golden | captured | amplified-diff` PNG plus JSON metrics. The comparator can still use the shared host/RTL DDR
 layout active region for future 624×480 gates.
 
+**Promotion gate:** before any RBF is promoted for FPGA-decode evidence, run the
+secret-safe live PMS Baseline gate:
+`PLEX_BASE=... MISTERPLEX_BASELINE_KEY=/library/metadata/N make pms-baseline-live`.
+The token is entered only at the hidden prompt. The gate must prove the live PMS
+still delivers Baseline/CAVLC/ref=1/no-B (`profile_idc=66`, `entropy_cabac=0`,
+`max_num_ref_frames=1`, `b_slices=0`, coded `624x480`, display `618x480`) or the
+worker must record an explicit skip reason. Decode-promotion deploys should set
+`DEPLOY_DECODE_PROMOTION=1`, which requires the live pass stamp or
+`PMS_BASELINE_LIVE_SKIP_REASON`.
+
 **Dry-run evidence:** `make unit` exit 0. Synthetic/checked-in noise floor is zero
 (`max_pair_mae_rgb=[0,0,0]`, `max_abs_noise=0`, thresholds `[1,1,1]` / `2`), and the comparator's red-path unit
 corrupts one active pixel and fails with exact worst coordinate + diff artifact.
@@ -198,6 +208,21 @@ Any future green decode claim must name the exact evidence file, fixture, and in
 
 ## ACTIVE — OSD menu v3 + idle screen (**DONE** 2026-07-26)
 
+### Live v0.3.0 idle rescore (**2026-07-29** — supersedes inflated % for the user box)
+
+Device now runs release core **`41adb98c`** + daemon **`06c5735a`** (320×240 RGB565). Full write-up:
+[`docs/idle-screensaver-audit-v030.md`](idle-screensaver-audit-v030.md).
+
+- **Do not read G-IDLE2c’s “93.1% pixel-identical” as a completion score** — that number is the
+  *LastFrame torn-composite bug fingerprint* on the later 480p line.
+- **Honest live goal score: ~55%** (host renderer + bit-exact DDR Logo both banks). Not 93%, not 65%
+  transferred from 480p captures.
+- **Proven without HDMI:** DDR bank0=bank1=host Logo RGB565 md5 `ed806ec51e6f191a02efa71c4697eb65`;
+  CONF_STR idle menu present; unit green + black/LastFrame mutants red.
+- **Unscoreable this boot:** HDMI picture, Black/SS/LastFrame on device, SS animation on glass,
+  stop/EOF→idle (conf still `DECODE=624x480`/`STREAM=1`/`OSD_CONTROL=0` while core is 320×240).
+- **480p G-IDLE2a/2b DONE marks are historical** — they do not grade `41adb98c`.
+
 User ask: *"add the different audio delay settings and any other controls in the config directly to the RBF
 menu items so the user can change them there without having to edit a config"* and *"the last frame of the
 last video is staying on screen and should go back to a default state, black screen or even better a Plex
@@ -240,6 +265,53 @@ This is why `pushContentFpsBits()` / `restoreOsd()` / `osd_state.txt` were rever
 - [x] G-OSD3 all four controls decode and apply live — `0x00c0`→+60 ms, `0x40c0`→idle=1, `0x40ca`→trim+resync off, `0x020a`→−160 ms; verified **mid-playback**
 - [x] G-OSD4 A/V offset measurably moves lipsync — OSD +140 ms → median **−62.15 ms** vs baseline **+94.0 ms** = **−156 ms** delta
 - [x] G-IDLE idle screen replaces the stuck last frame — `/tmp/idle3.png`, `/tmp/idle_afterstop.png`; amber chevron on near-black after stop
+- [x] G-IDLE2a **`Black` idle mode PROVEN (2026-07-28)** — `black_poststop_bank0_Y.pgm` has **exactly one unique Y value (16)** across all
+  299,520 pixels: uniform video-black, entered only after setting `lo=0x4000`. Distinguished from the original black-screen
+  **bug** by the fact that the other modes render correctly on the same build.
+- [x] G-IDLE2b **`Screensaver` idle mode PROVEN (2026-07-28)** — two time-separated captures differ by **7,656 / 299,520 pixels**;
+  rendering shows the chevron **centred** in the logo baseline and **shifted hard left** in the screensaver captures. It is a
+  bouncing-logo screensaver and genuinely animates (position change, not noise).
+- [ ] G-EOF1 **Natural end-of-file leaves the local timeline wedged (2026-07-28)** — W-CAST soak, 21.5 min / **32171 frames** of real media (ThunderCats) played to natural EOF. The media session ends and PMS correctly receives `stopped`, **but the local timeline stays `fullScreenVideo`/`buffering` until an explicit stop arrives.** User-visible: watching an episode to the end leaves the device in a fake playing state reporting a stale timeline to anything that polls it. The explicit-stop path works correctly, so the divergence between "explicit stop" and "natural EOF" *is* the bug. Fix should **converge** the two paths, not add a parallel one. Must not depend on `LastFrame` idle mode, which is independently broken (G-IDLE2c). **Survived because every existing test issues an explicit stop; nothing tests natural EOF.** Regression test must be proven to go red against current code first.
+
+- [x] G-SOAK1 **Long-run playback stability PROVEN (2026-07-28)** — same 21.5 min / 32171 frame soak, sampled throughout rather than only at the end:
+  - `vfps/pfps` = **24.9 / 24.9** held for the whole run
+  - `av_drift_ms` bounded **-23..-35**, **non-monotonic** -> **disproves the clock-domain / timebase-leak hypothesis**
+  - drops crept **5 -> 9** = ~0.012% of 32171 frames
+  - RSS **4300 -> 4308 KiB**, PID stable (32159) -> no leak, no respawn
+  This replaces the previous 91-second basis for scoring cast playback. **Note the frame rate here is 24.9 fps vs 24.75 fps in the 91 s run** -- a real difference, relevant to the `kDdrBankReuseMinUs` question, since a rate pinned this tightly for 21.5 minutes is consistent with a hard-coded sleep (not proof; a well-behaved source looks similar).
+
+- [ ] G-IDLE2c **`Last frame` idle mode is BROKEN — holds a TORN COMPOSITE, not a decoded frame (2026-07-28)**
+  `lastframe_poststop == lastframe_paused_reference` (md5 `26cc25a728f1…`, diff `0`) — but that only proves **stability**, not
+  **correctness**: both sides share the same defect, so the equality can never expose it. Per-band luma analysis of
+  `lastframe_poststop_bank0_Y.pgm`:
+
+  | Rows | Unique Y values | Range | Reading |
+  |---|---|---|---|
+  | 0–185 (top) | **189** | 15–203 | real decoded video |
+  | 190–380 (**middle**) | **2** (45, 157) | — | **synthetic logo graphics, not video** |
+  | 390–480 (bottom) | **134** | 15–203 | real decoded video |
+
+  The middle band is **93.1%** pixel-identical to `screensaver_poststop` and **92.2%** identical to the logo baseline, i.e. the
+  middle third of the frame buffer was **never overwritten** and retains stale content from the preceding mode. A user selecting
+  "Last frame" sees a torn image.
+  **Not a goal-completion percentage.** See live rescore in
+  [`docs/idle-screensaver-audit-v030.md`](idle-screensaver-audit-v030.md) (~55% on `41adb98c`, not 93%).
+  **Open questions:** compare bank0 vs bank1 — if only one bank tears this is a **bank-swap/`swap_pending` defect in the present
+  path**, not an idle-mode bug, and is considerably more serious. Also re-run from a clean state to confirm the stale content
+  really originates from the previous test rather than a fresh-boot tear.
+  **Method note worth keeping:** comparing two artifacts that share a defect always reports agreement. Validating "does X hold the
+  right content" requires comparison against **known-good** content, not against another instance of X.
+- [ ] G-IDLE2 **the other three idle modes were UNPROVEN on hardware (2026-07-28)** — `Plex.sv:73` declares four modes
+  (`"O[15:14],Idle screen,Plex logo,Black,Screensaver,Last frame;"`) but every eyes-on capture to date exercises only
+  **`Plex logo`** (`[15:14]=00`): idle = Plex chevron, playback counter advanced 46→154, post-stop byte-identical to idle.
+  **`Black`, `Screensaver` and `Last frame` have never been exercised on device**, and the merged idle fix (`0fd39d9`)
+  changed *dispatch* for all four, so three of the four paths it touches are untested. Specific risks: `Black` is
+  visually indistinguishable from the original black-screen **bug** unless you know it was requested; `Last frame` is
+  the most likely to be silently broken; a `Screensaver` that does not animate is a bug and needs two time-separated
+  frames diffed to detect. **This goal was scored 100% on the strength of one mode and has been corrected to 65%.**
+  **Further cut for the live v0.3.0 box (2026-07-29):** 480p 2a/2b captures do not transfer; with only Logo
+  DDR-proven on `41adb98c` and no capture card, multi-mode standing is **≤40% device / ~55% overall**
+  per [`docs/idle-screensaver-audit-v030.md`](idle-screensaver-audit-v030.md).
 - [x] G-OSD-UNIT bit layout pinned — `tests/unit/test_osd_menu.cpp` in `make unit` (12 suites green)
 - [ ] G-OSD5 arrow-key menu navigation eyes-on — **PENDING user**: `/dev/uinput` F12 works, **arrows do not register**, so lab automation cannot drive the menu end-to-end
 - [x] G-OSD6 **F12/OSD invisible (2026-07-26)** — **RESOLVED. Root cause: a wedged MiSTer `Main`.**
@@ -462,15 +534,98 @@ Evidence sources (2026-07-24; **J-backlog66** evidence-only stamp; **exclusive F
 git **docs HEAD `3c43a66`**; **FPGA committed `7bee0a6`**; R-csum6 claim freeze **MATCH** **`c7a847f7`/`ca62d02b`/`904e9b2e`** DIAG=ABSENT Rank1+2+3 LOCK_OK; NEW_RBF **`94bbfe43`** full `94bbfe433feb562fabe0798e16b378c5`; Fix-2 colorbars **`f1d9666a`**. Host/lab RBF **`94bbfe43`**. Lab **LOADED `94bbfe43`** after ONE menu; exclusive **FREE**. **H-gate-rcsum6 IN_PROGRESS / PENDING** — **do not invent hard residual PASS**. **WIDE still FAIL open Fix-2** historical **`ec21e133`** span=**0.605**. **A-csum-host28 HOST_GOLDEN_OK** + **C-unit28/C-unit27 PASS** host ≠ lab residual PASS; **3l2 BLOCKED**. Soft-skip ≠ PASS. **BUILD_OK + DEPLOY ≠ residual PASS ≠ WIDE PASS.** **Do not invent hard-csum PASS / WIDE PASS / Fix-3 PASS / 3l2 UNBLOCK.** **J-backlog66**. Lab `192.168.1.183`.
 
 
+### CURRENT LAB STATE — 2026-07-27 (supersedes the `94bbfe43` stamps above)
+
+Everything above this line is the **2026-07-24 R-csum6 campaign record** and is retained as history. It is **no longer the live lab state**. Current truth:
+
+- Lab **LOADED `8eb01b79`** full `8eb01b7965e25154eb4093bea16f1fc7` at `/media/fat/_Utility/Plex.rbf`, `CORENAME=Plex`, md5 verified local↔device. Supersedes **`94bbfe43`**. Banned-set hit: **NO**.
+- Companion `misterplexd` **`215b01fb13d349d6f67f4665bc0a0041`** deployed and running (1 pid, HTTP :3005, GDM UDP 32412). `deploy_plex_core.sh` **stops plexd and does not restart it** — restart manually after any RBF deploy.
+- Build fixes in **`6b5878e`** on `feat/disp-fix`. **HEAD was previously unsynthesizable**: `decode_stub.sv` used `dpb_mem_rd_q` without declaring it (Quartus `Error (10161)`, A&S dead in 8 s). `make rtl-lint` was **already RED on HEAD** — the merge landed without it. Fixed to the one-cycle contract `dpb_mem_rvalid <= dpb_mem_rd;` proven by the authoritative C++ model in `tests/rtl/h264_dpb_mc_tb.cpp`.
+- New guard **`scripts/check_verilator_elab.py`** (merged `572e483`) now runs in `make quartus-sv-subset`, `make pre-synth-gates`, and `build_rbf_remote.sh` **before** the Quartus slot is taken. Parent-reproduced red/green: planted fault → exit 1 `VERILATOR_ELAB_REJECTED` at `decode_stub.sv:542`; clean tree → exit 0 `VERILATOR_ELAB_PASS`; ~2 s.
+
+**Corrections to gate rows below — do not read them as green:**
+- ~~`make unit` is **RED**~~ — **NOW GREEN as of 2026-07-28 00:30**, `FINAL_UNIT_RC=0`, 80 OK checks on the fully merged tree, including `OK real RTL sim: h264_dpb_mc product RTL nals=15 luma_window=441 chroma_windows=81/81 mc_pixels=256/64/64`. The failure was **the testbench, not the DPB**: the C++ model in `tests/rtl/h264_dpb_mc_tb.cpp` presented `mem_rvalid`/`mem_rdata` **one** edge after `mem_rd`, but the real memory (`decode_stub`) takes **two** — the DPB registers `mem_rd`/`mem_raddr`, `decode_stub` then registers `rvalid`/`raddr_q`, and `rdata` is combinational off `raddr_q`. Deleting the `_d1` stage would have turned the test green **while breaking real hardware**. The model now delays two edges and `_d1` is retained. Product RTL unchanged by this fix.
+- **`make post-fit-timing` still FAILS**, but the dominant violation is **closed by design, not by exclusion** (`make timing-exclusion` PASS, no SDC exclusions added). `async_fifo` exposed a combinational `rd_data = mem[rd_bin]`, fanning 90 MHz FIFO RAM straight into 20 MHz `clk_sys` logic (dominant instance `ddr_bus_arbiter.m1_rsp_fifo`, ~187 failing endpoints). Converted to a registered FWFT read port. Fit `wtime1`, Quartus exit 0, wall 680 s, RBF `6ae8abb7adaf41b309f38e0ae9dbe6ae`:
+  - `clk_sys` setup **−2.483 / TNS −462.216 → +0.320 / 0.000** — **CLOSED**
+  - `clk_ddr` setup −1.197 / −1.278 → **−1.094 / −2.258** — still FAIL
+  - `clk_ddr` hold → **−0.130 / −0.130** — new FAIL
+  RBF `6ae8abb7` is **deliberately NOT deployed**; the lab still runs `8eb01b79`. Owner: W-TIME.
+- Passing gates: `rtl-lint`, `quartus-sv-subset`, `define-parity`, `verilator-elab`, `post-fit-hierarchy`, `timing-exclusion`, `make unit`.
+
+**Product bugs fixed and verified on hardware this session:**
+- **Cast playback works.** Was: advertised as a cast target but never played, controller stuck at 0:00. Cause: PMS timeline/status sent a hard-coded Plex Web/Chrome identity, so PMS associated playback with the wrong player. Device evidence: `frames=134 vfps=21.9 audio=on clock=av-lock drops=0`, `fpga frame_tx ok via DDR presents=96`, timeline `0→2378→5528`. Pixel-verified as **real changing video**: bank0 frames differ by 2610/449280 bytes, Y unique 253/254, range 0–255. Scope: this is **ARM decode + PMS transcode at 320×240 presenting via FPGA** — it does **not** advance FPGA decode.
+- **Black idle screen explained and fixed.** Cause: `OSD_CONTROL` let the saved OSD word `0x4000` (bits `[15:14]=01`) override `IDLE_SCREEN=logo` and select `IdleMode::Black`. Renderer histograms: `Black → Y 0x10 ×299520, U/V 0x80` (exactly matching the device capture); `Logo → Y 0x2d ×294400, 0x9d ×5120`. **The user's reported "dark grey 0x2D2D2D2D" was the logo's dark field** (`Y=0x2d`), not a bug. With `OSD_CONTROL=0` the active DDR bank shows the visible logo. Device conf set to `OSD_CONTROL=0` (backup `misterplex.conf.bak-orch`). **Still open:** the daemon should not let a default OSD word silently override `IDLE_SCREEN` — `OSD_CONTROL=1` still forces black.
+
+**FINAL EYES-ON CONFIRMATION — 2026-07-28 00:26, daemon `215b01fb13d349d6f67f4665bc0a0041`, RBF `8eb01b79` unchanged, `OSD_CONTROL=0`.**
+Captured from the live DDR frame store and **visually inspected** (PNGs preserved outside the repo; `captures/` is gitignored):
+1. **Idle = logo, confirmed by eye.** Plex chevron (amber `>`) on the dark field. Both banks identical, md5 `f454b8f8…`; `count(0x2d)=294400` (98.29%), `count(0x9d)=5120` (1.71%), **`count(0x10)=0`, `count(0x00)=0`**. The black frame is gone.
+2. **Playback = real moving video, confirmed by eye.** Played `/library/metadata/6` (30.0 s clip). The on-screen frame counter advanced **46 → 154** between the two captures while the timeline moved `2655 → 7040 ms` — consistent with 24 fps. Frames differ by 259619/449280 bytes. Counters alone could not have proven this; the incrementing on-screen number does.
+3. **Post-stop returns to the logo — the latched-last-frame bug is gone.** After-stop banks are byte-identical to the initial idle logo.
+**Honest scope limit:** the clip used is a **24 fps sync test pattern** from the library, not feature-length media, and the path is **ARM decode + PMS transcode presenting via FPGA** — it does **not** advance FPGA decode.
+
+**REAL-MEDIA CONFIRMATION — 2026-07-28 00:39, same daemon/RBF.** The earlier confirmation used a 24 fps *sync test pattern*; this one uses genuine library content, ThunderCats S1E9 `/library/metadata/3`, 640×480, PMS `transcode=1`, ~91 s.
+
+- **Sustains full frame rate on real content:** `2249 frames / 90.87 s = 24.75 fps` (**40.40 ms/frame**), `vfps=24.7`, `pfps=24.6`, `av_drift_ms` steady at **−21**.
+- **`drops` are startup-only:** reach **6** by `wall_s=2.162` and stay **flat at 6** through `wall_s=90.87`. Not accumulating.
+- **Real content, not a pattern:** frame at ~45 s has **203 unique luma values** (`Y 6..214`, mean 122.2); adjacent samples differ by **98–99%** of luma pixels. Visually confirmed as full-colour animation.
+- **Transport controls work:** pause holds position (`time=5897` across two polls 3 s apart), resume advances, and absolute seek to `120000` lands at `125086` showing a completely different scene.
+- Idle logo returns after the long run.
+
+**Correction to an earlier figure in this file:** a `vfps=21.3` reading was quoted as a 480p shortfall. That came from a **7-second** run dominated by startup and was **not representative**; sustained rate is **24.75 fps**. `Direct-play` re-scored 60→68 on the strength of the present path being proven at 480p24. **Scope limit unchanged:** this is PMS transcode + ARM rawvideo presenting via FPGA — it validates the **present/DDR path**, *not* direct-play, and it does **not** advance FPGA decode.
+
+**RETRACTION — 2026-07-28, the "20.6 ms doorbell" figure.** A `20.6 ms/frame` doorbell cost was quoted repeatedly as "~49% of the 41.67 ms budget" and used to argue direct-play was borderline. **It no longer describes the shipping path and must not be reused.** Source evidence (`arm/misterplexd/fpga_spi.cpp`): the steady present path is *not* a hard per-frame hardware handshake — it is `usleep(1500)` prep, `memcpy`, mmap doorbell stores, `usleep(500)` post = **2.0 ms** of explicit sleep. First-kick status polling is **one-time/amortised**. The old PLXD `50 × 1 ms` timeout poll that most plausibly produced the 20.6 ms figure was **removed in `6b5878e`**, i.e. the number was measured on a pre-`6b5878e` build.
+
+**Bank-floor theory: SETTLED AND DEAD — measured on hardware (2026-07-28).** `PRESENT_PROFILE=1` on the device, `8eb01b79`, real media. **`ddr_bank_reuse_wait_us_p` = `32, 32, 0, 0, 0, 0` us per present.** Not 40,000. The `kDdrBankReuseMinUs = 40000` floor **does not fire** and is **not** setting the frame rate. The orchestrator raised this theory three times -- on arithmetic coincidence, then revived it on W-OSD's bank pixels, then again after eliminating the wrong-address explanation. **All three were wrong.** W-FEED's original source-based disproof reached the right conclusion first. Recorded as a standing caution: an arithmetic near-coincidence (40.00 vs 40.40) is not evidence, and it cost two lanes several hours of attention.
+
+**BANK1 "DEFECT" RESOLVED -- IT DID NOT EXIST. Banks alternate correctly (2026-07-28, W-OSD address-agnostic scan).** The 64 KiB block-hash scan of `0x30000000-0x30100000` at 5 Hz shows changed blocks **`[0,1,4,5,7]`** on every one of 49 samples -- i.e. **two disjoint ranges alternating** (`0x30000000` and `0x30040000`), plus block 7 = mailbox/doorbell. A supplemental 640p run showed the doorbell seq advancing `61581 -> 62223` with **`hi[31]` toggling**. **Presents alternate banks; the selector reaches the consumer. There is no bank defect and no 25 fps cap.**
+
+**Mechanism of the false finding:** the idle-mode capture run was at **320x240** (`content resolution=320x240 source=OSD`), not 480p. Bank stride is `alignUp(frame_bytes, 0x40000)`, so at 320p the frame is 115200 bytes and **bank1 sits at `0x30040000`** -- while the capture read `0x30080000`, which is 480p's bank1. Playback never wrote there because playback was not at 480p; the stale-looking logo/black at `0x30080000` was residue from *idle* painting, which had run at the larger geometry. Both observations were real; they were of two different geometries.
+
+**ORCHESTRATOR ERROR -- recorded deliberately, because it is the most instructive mistake of the session.** I declared the wrong-address explanation "DEAD" on the strength of two "independent" confirmations: (a) arithmetic, `alignUpU32(449280, 0x40000) = 0x80000`, cross-checked against the `0x300FF000` doorbell; and (b) empirical, idle writes provably landing at `0x30080000`. **Both were correct. Neither was independent.** They shared the assumption that the run was 480p. **Two methods that share an assumption do not corroborate each other -- they repeat each other.** This is precisely the defect I had diagnosed in W-OSD's `post-stop == paused` check three hours earlier (comparing two artifacts that share a defect always reports agreement), and I committed the same error while citing my own detection of it as authority. Cross-checks must vary the assumption under test, not just the method.
+
+**Corollary: the "stale docs" were not stale.** `docs/phase3-decode.md:422` and `tests/hw/README.md:68` document bank1 at `0x30040000` with a 256 KiB stride, which is **correct for 320x240**. My argument that a 0x40000 stride is "physically impossible" was correct *only* for 480p. Any doc correction must state the stride as **geometry-derived** (`alignUp(frame_bytes, 0x40000)`) and must **not** hard-code 480p addresses, or it will be wrong for the 320p path that the OSD/idle renderer actually uses.
+
+_Superseded, retained for audit:_ **CRITICAL SUBTLETY -- this does NOT clear the bank1 question, and the counter cannot.** If presents never alternate, the same-bank reuse interval equals the frame interval = **~41 ms**, which is *just above* the 40 ms floor -- so the wait would read ~0 **either way**. The measurement is therefore silent on whether banks alternate. **It only proves the floor is not limiting us at 24 fps.** We clear it by ~1 ms, by luck of the source frame rate.
+
+**Consequence, and this is the part that matters going forward:** at any higher frame rate a non-alternating bank **would** hit the floor hard -- 30 fps = 33.3 ms and 60 fps = 16.7 ms are both *below* the 40 ms floor. So if bank1 genuinely never receives video, **the present path is hard-capped just under 25 fps** and every higher-rate ambition (direct-play at source rate, 60 fps) is blocked by it. The bank1 investigation is therefore **more** important after this measurement, not less. W-OSD's address-agnostic block-hash scan remains the deciding evidence.
+
+**What the profile DID establish (all measured, `8eb01b79`, real media):**
+- `ddr_total_us_p` = **9858-10805 us** -> the whole DDR present costs **~10.5 ms wall**, not the ~2.0 ms the sleep-arithmetic implied and not the 40 ms of a frame interval
+- `ddr_cpu_us_p` = **4862-5057 us** -> **~5 ms CPU**, i.e. roughly half the present is real work (consistent with a 449280-byte memcpy) and half is waiting
+- `ddr_unaccounted_us_p` = **17-40 us** -> negligible; **the existing buckets fully explain the frame**, so the instrumentation can be trusted
+- Frame tail `~24.3 pfps`, drops 6, drift -25/-26 ms
+
+**Revised direct-play budget (measured, replaces all earlier estimates):** 41.67 ms/frame total - **10.5 ms** measured present = **~31.2 ms/frame available for decode**. Against W-FEED's ARM decode predictions of 20/25/30 ms/f this is a fit, with margin ranging from comfortable to ~1 ms. **Still requires the actual `scripts/run_arm_decode_profile.sh` measurement to resolve** -- the predictions remain unmeasured.
+
+_Superseded, retained for audit:_ **Bank-floor theory: DISPROOF ITSELF INVALIDATED — REOPENED, verdict pending a counter read (2026-07-28).** The source disproof recorded below was correct reasoning from a false premise. W-OSD's dual-bank captures show **`bank1` never contains video in any mode, including mid-playback**: every `*_bank1_Y.pgm` has <=2 unique luma values (synthetic/flat) while the paired `*_bank0_Y.pgm` has 182-216. If presents never alternate, same-bank reuse collapses from ~80 ms to the **frame interval**, the 40 ms floor becomes reachable, and measured **40.40 ms/frame vs a 40.00 ms floor** stops being a coincidence.
+
+**Cheap explanation eliminated (orchestrator-verified, not worker-reported).** The hypothesis that the capture simply read the wrong address is **DEAD**. Stale docs do list bank1 at `0x30040000` (`docs/phase3-decode.md:422`, `tests/hw/README.md:68`) -- a real defect, since a 0x40000 stride is *physically impossible* for a 449280-byte 480p frame -- **but the capture tool did not use them**: `captures/wosd-idle-modes/remote_probe.sh:59` sets `STRIDE=0x80000`. Confirmed correct against the runtime: `fpga_spi.cpp:682` uses `alignUp(frameLen, kDdrFrameStrideAlign)`, and `alignUpU32(449280, 0x40000) = 0x80000`, so bank1 = **`0x30080000`**; cross-checked via `doorbell = base + stride*2 - 0x1000 = 0x300FF000`, which matches the shipping doorbell contract. **The captures read the correct bank1 and found no video there.**
+
+Remaining candidates: (2) hardware/core ignores the bank selector (see `bank = status[13]`, `tests/hw/README.md:68`); (3) selector dropped between `fpga_spi.cpp:1365` (`bankOff = bank * ddrLayout_.bank_stride`) and the doorbell. Software alternation is confirmed **intact** -- both `ddrBank_ = 0` sites (`media_player.cpp:625`, `:761`) are guarded by `fpga_.open()`, i.e. one-time init, not per-frame.
+
+**DECIDING EVIDENCE, not yet gathered:** `prof.ddrBankReuseWaitUs` (`media_player.cpp:2530-2545`) is a dedicated counter for time blocked on the floor, already instrumented and **never once read**. `~0` -> floor never fires, theory dead for good. `~40,000 us/frame` -> the floor is *setting* the frame rate and the present path's real capability is unknown. Requires only `PRESENT_PROFILE=1`. Also unread: `ddrCpuUs` (separates *waiting* from *working*) and `ddrUnaccountedUs`. **No verdict will be recorded in this document until that counter is read.**
+
+**Method note:** this theory has now been raised, disproved on source, revived on pixels, and had its revival's cheapest counter-explanation eliminated -- each move on new evidence. It is the clearest example in this log of why source review cannot substitute for on-device counters.
+
+_Superseded original entry, retained for audit:_ **Bank-floor theory raised and DISPROVED (same date).** `kDdrBankReuseMinUs = 40000` (40 ms) is suspiciously close to the measured 40.40 ms/frame, raising the possibility that a hard-coded sleep was *setting* the frame rate rather than measuring capability. **Excluded by source:** `arm/misterplexd/media_player.cpp` toggles `ddrBank_ ^= 1` after every successful present, so same-bank reuse interval is **~80–83 ms**, comfortably above the 40 ms floor; drops only widen it. The floor cannot fire at 24 fps. Conclusion: **40.40 ms/frame is source cadence and A/V pacing idle, not work time.** Transport is *not* the direct-play blocker.
+
+**Direct-play 480p — UNRESOLVED, and the blocker is ARM decode, not transport.** Transport budget: `41.67 − 2.0 sleeps − ~5.0 copy ≈ **34.7 ms/f** available for read+decode. The only decode data point is **`13.245 ms/f`, measured on the x86-64 host**, *not* on the DE10-Nano's dual-core **ARM Cortex-A9 @ 800 MHz**. H.264 decode is SIMD- and memory-bandwidth-bound, where the A9 (NEON, small cache, low bandwidth) is plausibly **5–10× slower** than a modern x86 core — at 5× the figure becomes **~66 ms/f, which blows the 34.7 ms budget outright**. **Do not quote a "~21 ms/f margin" without this qualification**; it may be wrong by more than the entire budget. A single *measured ARM* number would settle this and is worth more than any scaling argument. If direct-play proves unachievable on the ARM, that is clean supporting evidence for moving decode into the FPGA.
+
+**Library limitation:** the PMS library contains only sync/blip test clips plus this one animated series — no live-action/film-grain title, so the hardest luma case is still untested.
+
+**Verification gap to keep visible:** `test_pms_baseline_profile`'s **live** PMS check is `SKIP-NOT-PASS` in `make unit` (needs `PLEX_BASE`/`PLEX_TOKEN`/`MISTERPLEX_BASELINE_KEY`); only the synthetic green+red proofs run. Since FPGA decode requires **Baseline/CAVLC/ref=1/no-B**, the real delivered profile is **unverified here**. Do not read `make unit` exit 0 as proof PMS is delivering a Baseline stream.
+
+**Lab note:** the `docker` "remote build farm" SSH alias resolves to **localhost** (`~/.ssh/config` → `HostName localhost`; `ssh docker hostname` = `node-worker1` = local host). The farm is this machine. Consequence: `test_resource_preflight.sh` sees the fit's own `quartus_fit` processes and refuses `make unit`. **Fits and unit tests must be serialized** — do not defeat the preflight; Verilator under memory pressure returns *wrong answers* that impersonate real decode bugs.
+
 ## Gate: all green before “complete”
 - [x] **Product present / tear-free HDMI+VGA** — **DONE** git **`588e528`** RBF **`1441d409`**; vsync page-flip + DMA hold-off; holdoff2 half/mid/multi **0.00/s**; user eyes-on OK 2026-07-25. Docs: `MILESTONE_VSYNC_PRESENT.md`. **≠ residual hard PASS ≠ WIDE PASS.**
 - [x] **Product A/V cast (Plex Web → MiSTerPlex)** — **DONE** `PRESENT=fpga` `STREAM=0` wall-48k; blip24 median **~−13 ms**; pfps≈vfps. Evidence `captures/e2e/REPORT*.md` + blip24.
 - [x] `make unit` — **GREEN** (**C-unit28 PASS** + **C-unit27 PASS** + **C-unit-sf2 PASS** + **C-unit26 PASS** reconfirm + **C-unit25/24/23/22/21/20/19/18/17** + **C-unit16/15/14**): EXIT=0; host golden res_csum=**0x14**; res_dc=-24; y00=73 mean=62; companion OK; parse self-test OK. **HOST GREEN ≠ lab hard residual PASS.** Soft-skip ≠ PASS. Reports `/tmp/misterplex-agent-C-unit28.txt`, `/tmp/misterplex-agent-C-unit27.txt`, `/tmp/misterplex-agent-C-unit-sf2.txt`, `/tmp/misterplex-agent-C-unit26.txt` … `/tmp/misterplex-agent-C-unit14.txt`
 - [~] HW residual hard gate — **IN_PROGRESS / PENDING H-gate-rcsum6** on lab LOADED **`94bbfe43`** (BUILD_OK+DEPLOY done; **do not invent hard PASS**). Historical FAIL **`ec21e133`** + **`8832824e`**. Soft-skip ≠ hard PASS. **3l2 BLOCKED** until product sticky 0x14. **BUILD_OK + DEPLOY ≠ product hard residual PASS.** (Product present path uses **`1441d409`** separately.)
-- [x] FBAR visual PASS — **DONE** on lab **`ec21e133`** (**H-fbar-ec21b** / **W-wide-gate-sf2** / **H-gate-sf2** / **H-gate-ec21** 7.0/82.9/94.4) and prior residual **`8832824e`** / **`75da8bb1`** / **`4d6ee356`**. **FBAR soft ≠ hard residual PASS ≠ WIDE product PASS.**
+- [~] FBAR visual PASS — **HISTORICAL soft PASS** on lab **`ec21e133`** (**H-fbar-ec21b** / **W-wide-gate-sf2** / **H-gate-sf2** / **H-gate-ec21** 7.0/82.9/94.4) and prior residual **`8832824e`** / **`75da8bb1`** / **`4d6ee356`**. **Now UNSCOREABLE/NO_CAPTURE** (Hour-21: no `/dev/video*`, no uvcvideo) — do **not** count as live green. **≠ live user `41adb98c`.** **FBAR soft ≠ hard residual PASS ≠ WIDE product PASS.** See Hour-28 score audit.
 - [ ] Full-width VGA verified (HBlank@320) — **FAIL open** historical **`ec21e133`** (**W-wide-gate-sf2b** span=**0.605** **PILLAR_320_of_529**; **W-wide-gate-sf2** / **H-gate-sf2** same). Fix-2 BUILD_OK+DEPLOY+FBAR but **WIDTH FAIL** — **WIDE still FAIL open Fix-2**. **do not invent WIDE PASS / Fix-3 PASS**. **W-fix3-hold2 FIT_GO=NO**; exclusive FREE.
 - [~] DDR F1 ≥30 fps — **HISTORICAL PASS / CURRENT SILICON UNSUBSTANTIATED**: B-ddr7 on LOADED **`ec21e133`** measured mean **16.5 ms** (~60.6 fps) (`/tmp/misterplex-agent-B-ddr7.txt`); prior B-ddr6 dabdaeb0 same class. Current live evidence on `eeff4eee` shows valid YUV420P `PLXK` but all-zero `PLXF` and `has_frame=0`; do not cite historical DDR PASS as proof that the current DDR frame-store/present path runs on-device.
-- [x] `make package` — **PACKAGE_OK** embeds **`94bbfe43`** (**F-prep-rcsum6** `/tmp/misterplex-agent-F-prep-rcsum6.txt`). Prior **ec21e133** / **8832824e** packages historical. Product tear RBF also in `releases/Plex_vsync_tear_1441d409.rbf`. Package ≠ WIDE PASS.
+- [~] `make package` — **CAMPAIGN PACKAGE_OK** embeds **`94bbfe43`** (**F-prep-rcsum6**). **User ship pin is separate:** `release_artifacts/v0.3.0/Plex.rbf` md5 **`41adb98c…`**. Prior **ec21e133** / **8832824e** historical. Product tear RBF also in `releases/Plex_vsync_tear_1441d409.rbf`. Package ≠ WIDE PASS ≠ live user grade. See Hour-28.
 - [x] misterplexd soak — **D-soak3/4/5 PASS** ok=6 (re-soak optional after next RBF)
 - [x] Safe deploy only — **H-deploy-rcsum6 PROMOTE_OK|DEPLOY_OK** lab **LOADED `94bbfe43`** ONE menu (`/tmp/misterplex-agent-H-deploy-rcsum6.txt`). Prior **H-deploy-qsf2** **`ec21e133`** / **H-deploy-rcsum5** **`8832824e`**. Product present deploy **`1441d409`**. **Do not thrash-redeploy `8832824e`/`75da8bb1`/`4d6ee356` or second-menu `94bbfe43`.** Residual hard **PASS** via **H-gate-rcsum6** (separate).
 
@@ -487,7 +642,7 @@ git **docs HEAD `3c43a66`**; **FPGA committed `7bee0a6`**; R-csum6 claim freeze 
 | P3-3l2 | Inv quant + IDCT first 4×4 | **EVIDENCE-BACKED MB0 + NATIVE INTRA GREEN** | W-REL: `h264_iq_idct_4x4.sv` + `test_p3_idct_reference_model`; MB0/block0 handoff is evidence-backed (`y00=73`, mean=62, coeff_csum=0x14; native-I420 scoreboard confirms `got=73 ref=73 abs=0`). W-CABAC native scorer now proves no-deblock intra frame exactness with loop-filter provenance: 624×480 `1170/1170`, 320×240 `300/300`, wcap fixture `300/300`, all MAE 0. |
 | P3-3l3 | First full MB recon | **EVIDENCE-BACKED HOST FIXTURE / FPGA BLOCKED** | W-REL: checked-in `tests/fixtures/p3_host_recon/mb0_luma_v1.json` gives MB0 luma pred/dequant/post-IDCT/recon for RTL; source vector is fixed 6739 B. This supports MB0/first-MB handoff only; it is not a frame-wide product pass. |
 | P3-3l4 | All MBs / frame mae | **NATIVE-I420 INTRA GREEN / INTER RED** | Retired claim 1: `tests/fixtures/p3_host_recon/frame_mae_v1.csv` / `test_p3_host_recon_vectors` reported `vector_bytes=6739 mb=300/300 frame=320x240 maeY=0.000000`, but that path was RGB565/presentation-contaminated. Retired claim 2: native-I420 ratchets reporting 624×480 `510/1170`, 320×240 `155/300`, and wcap `207/300` used a deblocked reference while RTL output was no-deblock. Current no-deblock native-I420 scorer is green for intra (`1170/1170`, `300/300`, `300/300`, MAE 0) and still expected-red for P frames until full inter reconstruction is wired. |
-| P3-3l5 | Hybrid gate product | TODO | |
+| P3-3l5 | Hybrid gate product | **SIM GATE LANDED / PRODUCT SKIP-HOST STILL HOST-OWNED** | RTL `h264_hybrid_mb_own.sv` + `decode_stub`/`stream_path`/`h264_decode_top` publish `product_recon_ok` / `hybrid_host_required` (doc §3.3l-5: skip host F1 only on recon_ok; host on CABAC/fail). Default caps: FPGA owns supported intra; inter/CABAC/IPCM → host (detectable). Gate `tests/unit/test_p3_hybrid_gate.sh`: compose+`score_i420_candidate` refusal preserved; pre-register 320×240 12f fpga_fraction=300/3600; mutation twins RED for claimed-inter, dropped plane, unmarked-as-FPGA, colorspace/loop-filter bypass. Grows via CAP_INTER_* as sv-mvd/resadd/ref/traverse land. |
 | P3-3m | Inter prediction scope + host goldens | **BASELINE MODEL DONE / PMS BASELINE FAILS** | W-REL: `docs/phase3-inter-prediction.md`; checked-in P16×16-only Baseline vector `plex_inter_p16_baseline_320x240_12f.264` (27653 B, md5 `fe5ba815…`), `pframe1_mb_v1.json`, `frame_mae_v1.csv`, and `test_p3_inter_pred_vectors` in `make unit`. Baseline Level 3.0 would make scope tractable: P/CAVLC only, no B/CABAC/weighted/interlace; Level 3.0 DPB max at 640x480 is 6 refs = 2.76 MB YUV420. **But W-A4 delivered-stream probe says PMS ignored Baseline request:** branch `feat/a4-sps-baseline` @ `b28e863` requested Baseline/L3.0 (`640x480`, 2500 kbps) but delivered High `profile_idc=100`, CABAC PPS, B-slices (`i=22 p=165 b=115` in 12s), 618×480, ~1344.3 kbps; mpegts target works, final mp4 target returned empty. Product must fail closed/fallback on B/CABAC/non-Baseline; unit now includes a generated High/CABAC/B unsupported probe. DDR3/YUV420 reference store required for any FPGA inter path; BRAM/SDRAM not viable. |
 | P3-3n | Real PMS High/CABAC/B decoder sizing | **SCOPE DONE / A NOT SANE NEAR-TERM** | W-REL: `docs/phase3-high-cabac-scope.md` and `test_p3_high_cabac_scope.py` in `make unit`. Final W-A4 sweep says client-only Baseline forcing is impossible: delivered coded 624×480/display 618×480, 1170 macroblocks, 25 fps, High/CABAC/B, 4 refs. CABAC planning demand **8.775 Mbin/s** (300 bins/macroblock), stress **17.550 Mbin/s**. Current `clk_sys`/DDRAM path is 20 MHz, so 1 bin/cycle barely covers stress, 2 cycles/bin fails stress, 3 cycles/bin fails planning. 4 refs + current YUV420 = 2.25 MB; +present/reorder = 2.70 MB; DDR3 required, SDRAM/BRAM not viable. Existing 4×4 IQ/IDCT/recon survives below entropy, but CAVLC walker does not; High may require 8×8 transform detection/support. Verdict: decoding PMS as sent is a full High-profile decoder project; server-side Baseline XML or ARM/FFmpeg fallback is a hard requirement for a sane FPGA-offload path. |
 | P3-3p | P-slice inter prediction / motion compensation | **PRODUCT DPB/MC + DEBLOCK SEAM LIVENESS GREEN / NATIVE INTER QUALITY RED** | W-REL: `docs/phase3-inter-rtl.md`; product RTL `h264_inter_pred.sv`, `h264_p_slice_modes.sv`, `h264_dpb.sv`, and `h264_deblock_writeback_ctrl` are in the stream-path liveness build. DPB budget closes at 987 B/MB = 1,154,790 B/frame = 28.87 MB/s at 25fps; DDR first, SDRAM escape hatch. `test_p3_dpb_mc_rtl_sim.sh` proves filtered I420 writeback, frame-boundary promotion, IDR invalidation, clamped 21x21/9x9 fetch, 16x16 MC, and partition masks for 16x8/8x16/8x8/8x4/4x8/4x4; red-checks clamp, MC arithmetic, early ref publication, and partition mask. `test_p3_inter_rtl_sim.sh` compares real RTL against `inter_mc_v1.json` (`mv_cases=6`, `partition_cases=10`, `frame_mv_cases=9090`) and red-checks bad interpolation rounding plus bad partition MV. `test_h264_p_slice_modes_rtl_sim.sh` covers P_Skip, P_L0_16x16, P_L0_16x8, P_L0_8x16, P_8x8/P_8x8ref0, sub-MB 8x8/8x4/4x4, intra-in-P and unsupported mode classification; red-check swaps 16x8 and fails. `slice_hdr_parser.sv` handles non-IDR ref-marking/ref-idx bits before QP and parses P `mb_skip_run` + first P MB type; shared multi-NAL raw `nalu=15 slice=11 idle_between_vcl=1 recon_sig_3b_cycles=39780 p_first_mb_seen=11 p_first_modes=8/2/1 p_first_bad=0`, with forced-`recon_sig=0` red-check. `decode_stub` routes IDR invalidation and reference promotion through product `h264_deblock_writeback_ctrl` (`filtered_sample_valid` before `filtered_mb_valid`, terminal commit then `frame_boundary`, `ref_ready_pulse` → DPB `frame_done`). `test_stream_path_full_frame_compare.sh` now emits both the old refused RGB565 diagnostic candidate and a native-I420 DPB/MC candidate with inter MB metadata; current 320×240 score is `intra=0/300 inter=0/3300`, first_bad_inter frame 1 MB0 Y `got=32 ref=80 abs=48`, `mb_type=P_L0_16x16`, `mv_l0=(0,0)`; 624×480 scorer self-check is `intra=0/1170 inter=0/12870`, first_bad_inter `got=32 ref=77 abs=45`; both use a declared diagnostic filtered reference state. Full native-I420 inter reconstruction, real decoded/deblocked reference pictures, parsed MV deltas, residual add, and all-P-MB traversal remain open. |
@@ -657,3 +812,454 @@ git **docs HEAD `3c43a66`**; **FPGA committed `7bee0a6`**; R-csum6 claim freeze 
 - soft-skip ≠ PASS; **3l2 BLOCKED** until hard product sticky **0x14**; **BUILD_OK / DEPLOY_OK / FBAR / PACKAGE ≠ hard residual PASS ≠ WIDE product PASS**; **DIAG ≠ product PASS**
 - thrash **`8832824e`/`75da8bb1`/`4d6ee356` FORBIDDEN**; exclusive **FREE**; **H-deploy-rcsum6 DONE** lab **LOADED `94bbfe43`**; **H-gate-rcsum6 IN_PROGRESS/PENDING** — do not invent hard PASS; **WIDE still FAIL open Fix-2**; **W-sf3-hold2 FIT_GO=NO**
 - git docs **`3c43a66`**; FPGA committed **`7bee0a6`**; R-csum6 claim **MATCH** **`c7a847f7`/`ca62d02b`/`904e9b2e`** NEW host **`94bbfe43`**; prior thrash residual **`6a5dcaaa`/`7d4a1d8b`**; colorbars Fix-2 **`f1d9666a`**; lab LOADED **`94bbfe43`**; residual CLOSED FAIL historical **`8832824e`**; **WIDE FAIL 0.605** open; **C-unit28 PASS** host; G-fpga **WAIT**; stamp **J-backlog66**; **do not invent hard-csum PASS / WIDE PASS / Fix-3 PASS / 3l2 UNBLOCK**
+
+## Hour-21 — wtime4 LIVE, product sticky 0x14, FBAR blocked on missing capture hardware
+
+- (done **W-TIME wtime4 DEPLOY_OK**) lab **LOADED `00eebd5e`** full `00eebd5e685e6cc821b13bfdcff41d0b`; device read-back by parent over own SSH: `CORENAME=Plex`, uptime 0:03. Prior lab `8eb01b79` superseded. **DEPLOY ≠ hard product PASS.**
+- (done **W-TIME drift proof, parent-verified**) **DRIFT_CRITICAL=NO / LOCK_OK=YES**. Parent independently hashed both trees: `find rtl -name '*.sv' | sort | xargs md5sum | md5sum` → **39/39 `.sv`, manifest `3bc467e1d1e9f712651c59b8e811ab5f` identical** in fit tree and integration tip; `files.qip` **33/33 QIP_MANIFEST_MATCH**. `00eebd5e` **not** in banned set.
+- (done **W-TIME wtime4 STA**) all five sections positive, **every TNS 0.000**: Setup `clk_ddr` **+0.284**, Hold `clk_sys` **+0.244** (`clk_ddr` hold **−0.179 → +0.347**), Recovery **+0.595**, Removal **+0.923**, MPW **+1.122**. Setup cost **−0.079** = the pre-registered +1 `clk_ddr` response-stage cycle. First fully timing-closed fit of the session.
+- (**FINDING — deploy wedge**) ONE menu bounce did **not** take: `DEPLOY_FAIL: Main never switched to MENU — it is WEDGED`. Recovered by the deploy script's own `DEPLOY_RECOVER=reboot` path (not agent thrash), then `RECOVER_OK: Plex live after reboot`. One occurrence — record so a second becomes a pattern.
+- (done **H-residual on `00eebd5e`**) **HARD PASS, product path, non-DIAG**, rc 0. Sticky **`e8 14 3b f9`**, stable across two pushes and repeated raw reads, **no `+0x53`**; `res_dc=-24 res_csum=20 recon_sig=59`. **First non-DIAG product sticky `0x14` of the session.**
+- (**BLOCKER — FBAR NO_CAPTURE, hardware**) FBAR did **not** execute. Harness returned literal `no capture` into a Python expression → `SyntaxError`, reported as `FBAR_EXIT=1`. Root cause is **absent capture hardware on the HOST**, parent-verified: `/dev/video*` **No such file or directory**, `lsusb` shows **no video-class USB device**, **`uvcvideo` not loaded**. `captures/` contains only DDR dumps — no HDMI capture exists this session. FBAR = **UNSCOREABLE/NO_CAPTURE**, not FAIL. **Requires the user to physically attach an HDMI capture device.**
+- (done **W-TIME `2ccd827` FBAR harness fix**) up-front missing-grabber preflight + distinct capture-failure diagnostic with dedicated exit **20**: `NO_CAPTURE_DEVICE ... reason=absent`; runtime no-frame remains `CAPTURE_FAILED ... reason=no_frame` / `FBAR_CAPTURE_FAILED ... exit=20`; forced-failure proof `FBAR_FORCED_PREFLIGHT_EXIT=20`. An instrument that could not distinguish "failed to measure" from "measured wrong" now can.
+- **DDR dump ≠ picture PASS.** `wcap_dump_ddr` proves what the ARM wrote into the frame store; FBAR proves what the FPGA scans out to HDMI. A scanout-side defect (pillar/stride/`PRESENT_END_X`) is invisible to a DDR dump. **Do not substitute one for the other while FBAR is unavailable.**
+- (done **W-MCFIX mutation audit, 10 rows**) **Row 10 pre-registered VACUOUS and confirmed**: with `uPattern == vPattern`, mutating U to carry V's formula left `chroma_windows=81/81` **GREEN**. Rows 1,3,4,5,6,7,8 LOAD-BEARING with distinguishable diagnostics; **Row 2 PARTIAL** (caught only via `decode_stub did not consume multiple VCL pulses` — no local DPB-latency diagnostic, i.e. diagnostic misattribution); **Row 9 over-tight** (encodes `luma→U→V` order as contract).
+- (done **W-TIME `0f8e32e` filelist guard, parent mutation-verified**) replaced guard-evasion `50c045c` (which split `ddr_bus_arbiter.sv` into `"${stem}.sv"` to hide the literal from a text scan). Parent tested three ways: baseline green (83 benches / 67 modules); dropping a genuinely-compiled file → **RED**; dropping it **and** adding it to the `$QIP` grep loop (the evasion vector) → **RED anyway**. **No blind spot introduced.**
+- (**REJECTED — W-GATE DDR publish centralisation**) `make unit` **rc=2** at integration; isolated by merging in two batches (infra batch rc=0, centralisation batch rc=2). Cause: `tests/unit/test_rtl_invariants.py:1205` text-matches the literal `ok=fpga_.sendYuv420pFrameDdr(txFrame,txBytes,ddrGeometry,ddrBank_)`, which the refactor removed. Integration reset to last green tip. **Fix must teach the invariant, not restore the literal or delete the check.**
+- (**W-GATE geometry mutation — keep**) `DDR publish geometry failed: 320x240 and 624x480 bank1 both resolved to 0x30080000` — under a hardcoded stride two geometries collapse to the same bank1 address. This is the bug class behind the parent's retracted wrong-address conclusion.
+- **17. P3-3l2 — remains BLOCKED.** The non-DIAG product sticky `0x14` precondition is now **MET** (`e8 14 3b f9`). 3l2 is now blocked solely on **picture verification**, which is unavailable until HDMI capture hardware is attached. **Do not unblock on the sticky alone; BUILD_OK + DEPLOY_OK + residual PASS ≠ product picture PASS.**
+
+## Hour-22 — six worker chains merged; false-PASS instrument class found and fixed
+
+- (done **W-INTER `c6e3900` real-P recon scoreboard**) rebased to a single commit, merged, parent-verified `make unit` **rc=0**, OK **83 → 87**. Scoreboard is an **independent C++ seeded DPB/reference**, not RTL-derived. Three mutations remain **distinguishable** (localising, not merely detecting): drop pred → `got=19 want=92 pred=73 residual=19`; drop residual → `got=73 want=92`; perturb MV → `read_ordinal 0 got_addr=0x400d want_addr=0x400c`. Green: `384 exact clipped pred+residual reads=21248 cycles=42884`. Worker pre-registered 4 genuinely-absent stages and predicted narrow-scoreboard pass / integrated-product fail — **matched**.
+- (done **W-OSD `301d975`+`cb42eae`+`51bbe28` LastFrame latch**) merged; caches frame+geometry+layout **inseparably** and republishes both banks. Red-checks fire on the **relationship**, not a constant: `RED OK: LastFrame latch uses playback geometry`, `RED OK: LastFrame latch computes bank base from captured geometry stride` — geometry fault trips stride *and* doorbell, bank-base fault trips `bank_phys` alone. `remote_probe.sh` no longer hardcodes `STRIDE=0x80000`; derives `alignUp(frame_bytes,0x40000)` and reports `geom=UNKNOWN` rather than guessing.
+- (**W-OSD root cause NOT yet confirmed — discriminator registered**) geometry mismatch is *not* declared the whole cause of the torn composite. Discriminator: if post-stop banks hash-match the paused last frame at captured geometry → geometry was the whole cause; if layout is correct but pixels remain torn → an **additional stop/lifetime race** exists. To be settled on hardware, not asserted.
+- (done **W-MCFIX `050196f` audit closures**) **Row 10 no longer vacuous**: `FAIL h264_dpb_mc RTL: chroma fixture degeneracy: U and V patterns alias across 8x8 probe`; row 5 stays RED (`plane=1 idx=0 got=191 want=83`). **Row 2 given a local diagnostic**: `FAIL decode_stub DPB read latency contract: dpb_mem_rvalid did not follow dpb_mem_rd` — the defect now names itself instead of surfacing three layers away as a stream-path error. Row 9 reframed as implementation-order snapshot, behaviour unchanged.
+- (done **W-GATE `2477118`+`11fe930`+`451de4e` DDR publish centralisation — now GREEN**) previously rejected at rc=2; worker took the **teach-the-invariant** route (not restoring the literal, not deleting the check). Parent-verified `make unit` **rc=0**, OK **88**, `present geometry/stride contract` failures **0**. Invariant proven non-vacuous by mutation: `wrong_geometry_mutation_rc=1` → `FAIL: ... must carry the same declared geometry that selected FFmpeg's coded stride into centralized publishDdrFrame`. Inverse bank-base and bank-alternation guards added.
+- (**parent conflict resolutions, disclosed**) two conflicts resolved by the parent, both **unions of independent changes**, both verified by compiler + both authors' own tests: (a) `Makefile` — W-CAST `test_companion_plant_seek` ∪ W-OSD `test_last_frame_latch`; (b) `media_player.cpp:2572` — W-GATE's `ddrErr` message ∪ W-OSD's `else if (idleMode()==IdleMode::LastFrame) lastFrameLatch.remember(...)`. W-INTER's semantic RTL conflict was **not** parent-resolved; it was handed back and the worker rebased it.
+- (**DEFECT CLASS — instruments that manufacture PASS from absence of evidence**) W-TIME audit of `tests/hw/`: `run_menu_matrix.sh:49-72,105-115,205-210`, `avsync_measure.py:82-119,248-258`, `avsync_rate.py:83-89,108-128` could all turn a **missing capture into `0.0` and report PASS**; `test_menu_osd.sh:26-47,84-92` weak. **Strictly worse than FBAR**, which at least crashed loudly. Clean: `test_f3_visual_golden.sh` via `hw_visual_compare.py`.
+- (done **W-TIME `3822b91` capture-failure fixes**) all four sites now speak one vocabulary with dedicated exit **20**, each proven by forcing the condition: `run_menu_matrix / test_menu_osd / avsync_measure / avsync_rate: NO_CAPTURE_DEVICE ... reason=absent; EXIT=20`.
+- (**G-AV2 / G-AV6 / G-AV7 / G-AV11 / G-OSD4 — reclassified UNVERIFIABLE-IN-REPO, not fabricated**) worker flagged these SUSPECT; **parent narrowed the claim after checking**. The cited artifacts (`captures/e2e/avsync_trekmatch/`) are absent **and were never committed** — `git log --diff-filter=D -- 'captures/e2e/*'` is empty, so they were local-only from an earlier session, not deleted. **Crucially, the recorded values are specific and non-zero** — `-215 ms` (G-AV11), `+0.79/−0.67/+1.79/−2.21 ms/min` (G-AV6), `−62.15 vs +94.0 ms` (G-OSD4) — which is **affirmative evidence against the `0.0` fabrication mode**, since that bug substitutes zero. These greens are therefore **not shown false**; they are **not re-derivable from the repo**. Action: **re-validate when capture hardware is attached**; do not cite as reproducible evidence until then; do **not** strike them as false passes.
+- (done **W-CAST EOF reconfirm on `wtime4` — DDR path PASS, explicitly NOT a picture PASS**) `rbf_md5=00eebd5e...`, rebuilt `daemon_md5=98ee258d...`, `IDLE_SCREEN=black`. `EOF_NAVIGATION_AT_REALDUMP_POLL=5`, `location="navigation"`. Both banks: `md5=fa9d8b16..., Y unique=1, count_0x10=299520`, `bank0==bank1, bytes_differ=0` — uniform true black in both banks. Worker stated the limit itself: *"the daemon wrote black idle to both DDR banks after EOF. No HDMI/product-picture PASS."*
+- (**FINDING — synthetic clip `/metadata/6` never returns to navigation**) reached duration and did not return within 240s; W-CAST fell back to real media `/metadata/3`. **This is the EOF failure mode surfacing on the very run that certified EOF.** Under investigation: degenerate fixture vs real EOF race. If it is a product bug, the "EOF works on `wtime4`" record **must be narrowed** to name the conditions under which it does not.
+- **17. P3-3l2 — still BLOCKED.** Unchanged from Hour-21: sticky precondition met, blocked solely on picture verification, which remains impossible with **no HDMI capture device attached to the host**. No software change can lift this.
+
+### Hour-22 addendum — roll-call guard, row-10 genuinely closed, and a codec/content blocker
+
+- (done **W-TIME `00c5f81` unit roll-call guard, parent mutation-verified**) `make unit` now runs `unit-rollcall` before `unit-unlocked`. Steady state `UNIT_ROLLCALL_OK prereqs=30 commands=82`. **Parent independently reproduced the mutation** (not merely accepted the worker's proof) by dropping `test_last_frame_latch` from `unit-unlocked` in the integration tree: `UNIT_ROLLCALL_FAIL / MISSING_PREREQ $(ROOT)/build/test_last_frame_latch`, exit **2**; Makefile restored clean. **The silent-drop hole is closed**: previously removing a test left `rc=0` and was invisible.
+- (done **W-OSD `986a1a3` announce + coverage census**) `test_last_frame_latch: OK checks=29`. Silent direct `build/*` invocations: **1 / 29** (`test_pixel_format` only, now assigned). Confirms the per-test OK series is a real coverage signal with one named blind spot.
+- (**PARENT ERROR — self-caught, metric mislabelled**) the "OK count" quoted in hourly reports since Hour-1 was `grep -c '^OK'`, which counts **assertion lines beginning with `OK `**, not per-test passes (those are `: OK`). Discovered when a merge that added a passing test failed to move the number. Both series are real and both are now tracked: assertions **83 → 88**, per-test passes **63 → 65** across this hour. No prior conclusion is invalidated, but the label was wrong.
+- (done **W-MCFIX product-side audit — row 10 GENUINELY CLOSED**) the earlier fixture-degeneracy detector was not sufficient proof; parent required a **product-side** mutation with healthy fixtures. Result: `i420_addr` V-reads-U (`2'd2` → `2'd1`) → **RED**, `chroma window clamp mismatch plane=2 idx=0 got=83 want=191` — **names the plane**. Extended to this hour's other merges: W-INTER scoreboard U/V seed mutation → RED `read_ordinal 20992 got_addr=0x4808 want_addr=0x4a08`; pred/residual drops still localise; LastFrame latch red-checks fire on both named relationships. **No new vacuous checks found among Hour-22 merges.**
+- (**BLOCKER — no real H.264 content at target geometry**) W-FEED refused to run the ARM decode profile after verifying the reference clip is the wrong codec: `/library/metadata/3` is **MP4 HEVC Main, 696x540** (PMS metadata and device `ffmpeg` agree: `Video: hevc (Main), 696x540, 25 fps`). Not Baseline/CAVLC, not H.264, and **above the ≤480p budget**. Library scan: the **only** H.264 ≤480p candidates are 320×240 synthetic blips (`metadata 6,7,8,10,11,12`) — **and `/metadata/6` is the clip W-CAST found hangs at EOF**. So the FPGA H.264 decode programme currently has **no real H.264 content at target geometry to validate against**, and its only in-budget corpus is synthetic with at least one defective member. Open questions raised to W-FEED: (a) which prior decode/present numbers were taken on HEVC or >480p and therefore measure a different workload; (b) whether the ≤480p H.264 scope is still the right target if the library is predominantly HEVC; (c) whether to generate a well-formed Baseline/CAVLC ≤480p sample ourselves. **Profile deliberately held rather than run against the wrong workload.**
+- (**PROVISIONAL — not a claim**) `ddr_bank_reuse_wait_us_p` **6.4 → 0.8 µs** steady-state on `wtime4` (buckets 2–6, warm-up bucket correctly excluded by the worker). This is the one metric that moved >1% and it is the one a `clk_ddr` hold fix should touch — but it is **~6 µs of ~10 400 µs (0.05% of present time)** and may be a single noisy bucket. **Held out of the hour report as anything more than provisional pending the old raw per-bucket series.** Present itself is unchanged: `ddr_total_us_p` 10333 → 10411, `ddr_cpu_us_p` 4973 → 4916 (both <1%, opposite directions). Worker's "no material move" prediction **CONFIRMED**.
+
+### Hour-22 close-out — syntax handoff wired, coverage signal complete, bank-reuse claim RETRACTED
+
+- (done **W-INTER `e30ed3a` P syntax handoff wired**) `h264_decode_core` now launches P16 recon from parsed `mb_type_valid`, tracks slice MB address, and asserts `rbsp_request_offset`. **This closes the `rbsp_request_valid=0` gap** — previously nothing downstream could ever be exercised by an actual bitstream. Scoreboard now drives the **syntax path**, not the private `p16_zero_mv_valid` hook. Parent-verified `make unit` **rc=0**, assertions **88 → 89**; new localising red-check `got=38 want=37 residual_bit_offset=296`; the three prior mutations (pred / residual / MV) **unchanged**, as pre-registered. Both predictions matched. No fit.
+- (done **W-OSD `a0337e9` + `986a1a3` coverage signal complete**) `test_pixel_format: OK checks=17`, `test_last_frame_latch: OK checks=29`. **Silent direct `build/*` binaries: 1/29 → 0/29.** Every test in the suite now announces its own success, so a dropped or truncated test is visible in the log as well as fatal via roll-call.
+- (**RETRACTED — `ddr_bank_reuse_wait` "8× improvement"**) W-FEED re-examined the raw per-bucket series on request and retracted: *"old and new are single-micro-outlier noise. It only proves floor not firing."* The provisional 6.4 → 0.8 µs figure is **withdrawn as a `wtime4` attribution**; the surviving claim is only that the bank-reuse floor is not firing. **Deliberately never published as a result** — it was held as provisional in the Hour-22 report pending exactly this check.
+- (**Library codec census — programme-level finding**) `8` items total: **7 synthetic H.264**, **1 real HEVC** (`/metadata/3`, 696×540). **Real H.264 ≤480p content: 0.** Consequence stated by W-FEED and adopted: *"PMS-transcoded H.264 claims remain transcode-delivery claims, not original-Part claims."* Any doc asserting original-Part H.264 direct-play behaviour on real content is **unproven** — no such content exists in the library. Pre-registered census prediction **confirmed**.
+- (**AUTHORISED — derived validation asset**) generate a **624×480 Baseline/CAVLC/ref=1/no-B** clip re-encoded from real HEVC source, verified with `pms_baseline_probe`. Condition: label unambiguously as a **derived re-encoded validation asset, not direct-play original content**, and record source/encoder/exact flags alongside it. Real-world image statistics beat synthetic blips for a decode profile; provenance must not be overstated.
+- (**scope question raised to the user, not resolved by the fleet**) if the real library is predominantly HEVC at ~700×540 and above, an **H.264-only FPGA decode path decodes almost nothing the user owns**. Surfaced now rather than after fabric work lands.
+- (**Hour-22 tally**) 17 commits merged, every one independently re-gated by the parent before keeping. Assertion lines **83 → 89**; per-test passes **63 → 66**; silent binaries **1 → 0**; `UNIT_ROLLCALL_OK prereqs=30 commands=82`. Final integration tip green: `make unit rc=0`.
+
+### Hour-22 late — real EOF product bug found and fixed; EOF PASS narrowed
+
+- (**PRODUCT BUG — known-duration rawvideo EOF stall**) W-CAST was told to go back for the `/metadata/6` stall it had worked around, pre-registered **"real EOF/lifecycle bug, not a degenerate fixture"**, and **scored correct**. Characterisation is unambiguous — the clip reached exactly its duration and stayed *playing*:
+  ```
+  poll 06..48: location="fullScreenVideo" state="playing" time="30021" duration="30021"
+  LOG media: frames=714 vfps=23.2 pfps=23.1 audio_s=29.82 wall_s=30.67 drops=3
+  ERROR no navigation after extended bounded wait
+  ```
+  **Root cause:** rawvideo stopped producing complete frames after the known duration, **but the pipe stayed open**, so the media loop sat in an `EAGAIN` sleep and never emitted `ended`. This is a genuine hang in the product path — not a fixture defect and not synthetic-media-specific in principle.
+- (done **W-CAST `912ea76` fix**) adds bounded `knownDurationEofStall()`; the media loop now treats post-duration no-video/no-partial-frame as EOF. **Two-sided mutation proof** (the correct shape — guards against both under- and over-triggering): `return false` → **RED, 2 EOF-stall failures**; `return true` → **RED, 2 over-broad failures**. Parent-verified `make unit` **rc=0**, assertions **89**, per-test **66**, roll-call OK.
+- (**EOF PASS NARROWED, on the worker's own recommendation**) the Hour-22 record "EOF works on `wtime4`" is **qualified**: EOF is verified on **real media `/metadata/3`** only. `/metadata/6` (known-duration synthetic) **required a code fix** and still needs a **fixed-daemon device reconfirm** before any unconditional EOF claim. W-CAST proposed this narrowing itself rather than letting its own PASS stand unqualified.
+- **Note the sequence:** the certifying run produced the PASS *and* the counter-example in the same window, and the counter-example was initially a footnote. **Working around an anomaly to complete a measurement is how product bugs get buried** — this one was recovered only because the aside was chased rather than accepted.
+
+### Hour-22 rejected — DDR layout derivation sweep (W-GATE `f806990`)
+
+- (**REJECTED — `make unit` rc=2**) W-GATE's codebase-wide "derive, never hardcode, DDR frame layout" guard. Prediction scored: **5 additional sites predicted, 5 found** (second exact count from this worker). Class-level guards are the right design and both mutation proofs bite: `literal_sweep_mutation_rc=1` → `FAIL: runtime DDR frame layout literals must route through ddr_frame_layout derivation`; `mailbox_derivation_mutation_rc=1` → `FAIL: ddr_frame_store PLXS mailbox must derive from DOORBELL_PHYS + 0x100`.
+- **Cause: it breaks W-OSD's LastFrame latch on the *green* path, not a red-check.** `test_last_frame_latch: FAILED checks=29 failures=6` with `s.data == latch.frame().data()`, `s.frame_layout.bank_stride == capturedLayout.bank_stride`, `s.frame_layout.doorbell_phys == capturedLayout.doorbell_phys` all failing. Assertion line numbers moved 69/71/72 → 71/73/74, so the commit edited that test's fixture or the layout type it depends on.
+- **Isolation, single-variable:** integration `157c38e` → `rc=0`, assertions **89**, per-test **66**; integration `6b2041c` (same tree + `f806990`) → `rc=2`, assertions **33**. Nothing else differed. Integration reset to `157c38e`; the commit is intact in the worker's worktree.
+- **Not parent-resolved, deliberately.** Two conflicts *were* parent-resolved this hour (`Makefile` test-list union; `media_player.cpp:2572` union) because both were provably independent changes the compiler could settle. **This one is a semantic disagreement about what the canonical DDR layout derivation yields** — W-GATE's helper versus W-OSD's captured-layout invariant. One side is wrong about the contract, and editing an assertion until it passes is the same failure mode rejected in Hour-21's centralisation. Returned to W-GATE to determine which side is correct, with an explicit instruction **not** to edit W-OSD's test (it owns that contract) and to confirm both latch red-checks still fire afterwards.
+
+### Hour-23 — W-GATE sweep exonerated; the rejection above was wrong twice (parent error)
+
+- (**RETRACTED — the stated cause of the Hour-22 rejection**) The section immediately above attributes W-GATE's `rc=2` to *"it breaks W-OSD's LastFrame latch on the green path"*. **That is false and is withdrawn.** `git show --stat` proves neither `f806990` nor the rebased `9a0f7d7` touches `test_last_frame_latch.cpp`; the assertion-line shift 69/71/72 → 71/73/74 that I cited as evidence came from **W-OSD's own announce commit `986a1a3`**, which landed in between. The worker was sent to fix a defect that did not exist.
+- (**RETRACTED — the second parent inference**) I then attributed the failure to product tests (`pms_baseline_profile`, `h264_dpb_mc`). Also false. The assertion collapse **89 → 33** was **log truncation, not failures** — the run aborted early at the invariants stage (3424 lines vs 6600), so most tests never executed. **An assertion-count drop is not by itself evidence of failing tests.**
+- (**W-GATE's commit is correct — proven four ways**) (1) pristine worktree at `9a0f7d7`: `make unit rc=0`, assertions **89**; (2) the worker's own worktree, re-run by the parent: `rc=0`, assertions **89**; (3) tree-hash comparison of `9a0f7d7` against the parent's cherry-pick: **only `docs/PHASE_BACKLOG.md` differs** — source identical; (4) controlled A/B below.
+- (**REAL DEFECT — a gate whose verdict depends on untracked working-directory debris**) The new invariant scans the **filesystem**, so it tripped over W-OSD's *gitignored* throwaway device-probe scripts:
+  ```
+  FAIL: runtime DDR frame layout literals must route through ddr_frame_layout derivation;
+  found captures/wosd-idle-modes/remote_probe2.sh:45: BASE=0x30000000; STRIDE=0x80000; FRAME=449280; ...
+         captures/wosd-idle-modes/remote_scan_window.sh:47,60,61,86,99: ...
+  ```
+  Single-variable A/B on the **same commit and same tree**:
+  ```
+  debris present      -> tests/unit/test_rtl_invariants.sh rc=1, 1 FAIL
+  debris moved aside  -> tests/unit/test_rtl_invariants.sh rc=0, 0 FAIL
+  ```
+- **Why this is worth more than the spurious red.** A gate that is **not a function of the committed source** cannot gate anything: it passes on a clean checkout and fails on a developer's machine, or the reverse. It is the same defect family tracked all session — instruments reporting something other than the property under test — **inverted**: instead of manufacturing PASS from *absence* of evidence, it manufactures FAIL from *presence of irrelevant* evidence. Returned to W-GATE to scope the scan via `git ls-files`, with a mutation proof that real violations in tracked files still fire and a regression check that untracked debris cannot change the verdict.
+- **Process lesson recorded against the parent, not the worker.** Both wrong diagnoses shared one root: **inferring a cause from a diff of symptoms (line numbers, counts) instead of isolating the variable.** The A/B that settled it took two minutes and should have been the first step, not the fourth. A worker lost a full cycle to this.
+
+### Hour-23 — measurement correction #2: `grep -c ': OK'` is not a valid metric
+
+- (**CORRECTED — per-test "passes" count is build-state dependent**) `grep -c ': OK'` counts *occurrences*, and `extract_h264_golden` emits **one line per golden it regenerates** — 6 on a clean build, 5 on a warm one. The same source therefore reports **66 or 67 per-test passes with no code change**, which is exactly the unexplained drift seen while gating this hour.
+  ```
+  extract_h264_frame_planes: OK  x14      test_h264_multinal_stream_path: OK  x5
+  extract_h264_golden:       OK  x6 / x5  test_status_telemetry:          OK  x2
+  ```
+- **Replacement metric:** assertions `grep -c '^OK'` **plus unique test count** `grep -o '^[a-zA-Z0-9_]*: OK' | sort -u | wc -l`. Verified stable at **44 unique tests** across all runs this hour, including the 66 vs 67 pair — **no test was ever lost**, which is what the raw count appeared to imply. All workers instructed to stop quoting `: OK`.
+- **This is the second parent measurement error published this session** (the first: calling `^OK` assertion lines "tests" for 22 hours). Neither changed an accept/reject decision. Both were found by chasing a number that moved without a cause.
+
+### Hour-23 — merges
+
+- (done **W-INTER `cca1957`** — P16 MV neighbour / `ref_idx` state) parent-verified `make unit rc=0`, assertions **89 → 90**, unique tests **44** (none lost). Five red-checks all localise, including the new `drop neighbour: mb=(2,0) got_addr=0x401c want_addr=0x401d`. `make rtl-lint` `PASS no warning regressions`. Worker **three-for-three** on pre-registered predictions.
+- (done **W-CAST `f15e0f8`** — bounded EOF stall guard + explicit terminal cleanup) parent-verified `make unit rc=0`, assertions **90**, unique tests **44**. The commit **added test cases without moving the assertion count** (its checks live inside `test_avclock`'s single summary line), which is precisely the shape a decorative test takes — so the parent **independently reproduced the mutation** rather than accepting the worker's evidence:
+  ```
+  knownDurationEofStall -> return true  =>  test_avclock: 7 failures
+     FAIL !knownDurationEofStall(0, 60000, 59000, 0, 5000)   # elapsed < duration
+     FAIL !knownDurationEofStall(0, 60000, 61000, 0, 999)    # inside grace
+  restored                              =>  test_avclock: OK
+  ```
+  The guard is genuinely exercised and the over-broad cases are genuinely defended.
+- (**pre-registered prediction scored WRONG, reported plainly by the worker**) W-CAST predicted a **duration-independent** stall path would exist; it traced the source and concluded it does **not** — an `EAGAIN`-only detector cannot be distinguished from a slow/stuttering source absent `read()==0`, a read error/short read, or an explicit stop/seek. **A traced negative is a real result**; it is now the load-bearing justification for shipping a duration-keyed guard and nothing broader, and has been sent back to be defended by tests rather than by a trace in a report.
+
+### Hour-23 late — the scoped sweep pays for itself within the hour; a hole found in the roll-call guard
+
+- (done **W-GATE `15ae470`** — DDR layout sweep, now scoped to tracked files) **Merged after the parent wrongly rejected it twice.** Both halves of the property were verified by the parent, not accepted from the worker:
+  - **Insensitivity to untracked debris** — decisive because the integration tree **still contains the exact debris that produced the original `rc=1`** (`captures/wosd-idle-modes/remote_probe2.sh`). Green in the precise environment that previously failed.
+  - **Detection not blinded** — a literal injected into a *tracked* file still fires and localises:
+    ```
+    tests/hw/test_fbar_fast.sh += BASE=0x30000000; STRIDE=0x80000; FRAME=449280; ...
+    => rc=1  FAIL: ... found tests/hw/test_fbar_fast.sh:116
+    restored => rc=0, tree clean
+    ```
+  - Parent error recorded: the first mutation attempt was a **C++ comment** and did not fire — wrong violation shape chosen by the parent, not a hole in the gate.
+- (**THE GATE CAUGHT A REAL VIOLATION FROM ANOTHER WORKER WITHIN THE HOUR**) W-OSD's new human-visual-verification card was rejected by it:
+  ```
+  FAIL: runtime DDR frame layout literals must route through ddr_frame_layout derivation;
+  found tests/hw/test_bank_release_visual.sh:120: BANK1_W0=$($SSH 'devmem 0x30080000')
+  ```
+  `0x30080000` is the 624×480 bank1 address hardcoded. **Correct today, wrong the moment geometry changes** — and W-OSD's own `e44c3c4` changed the transcode profile in the same chain. A verification card reading the wrong bank would give a human observer confident wrong answers, which is worse than no card. **Held back; three of four commits merged as `2cfdf81`.**
+- (**DEFECT — `test_unit_rollcall.py` protects only a hardcoded list, and reports a constant as if it were a measurement**) Found because the guard's output **did not move** when W-FEED added a test to `unit-unlocked`:
+  ```
+  before merge: UNIT_ROLLCALL_OK prereqs=30 commands=82
+  after  merge: UNIT_ROLLCALL_OK prereqs=30 commands=82
+  EXPECTED_PREREQS = 30   actual unit-unlocked prereqs = 33
+  test_bitstream_ring_lifecycle in EXPECTED_PREREQS: NO
+  ```
+  It reports `len(EXPECTED_PREREQS)` and checks one direction only (`missing = [p for p in EXPECTED if p not in actual]`). **Three tests in the gate are unprotected**, and the protection does not extend to new work — the work most likely to be churned. `prereqs=30` reads as "watching 30" when it means "knows about 30 of 33". **A constant that looks like a measurement is worse than no number** — it invited exactly the inference the parent made. Returned to W-TIME (its author) to report the actual count, decide deliberately what happens when `actual ⊃ expected`, and mutation-prove the *addition* direction that was never tested.
+- (done **merges this hour**, each independently re-gated; integration `2cfdf81`, `make unit rc=0`, assertions **91**, unique tests **44**): W-INTER `cca1957` MV-neighbour + `a942ece` P16 CAVLC residual scheduling · W-CAST `f15e0f8` bounded EOF guard + `66580ab` terminal policy defence · W-TIME `67287bb` RTL invariant hardening · W-MCFIX `968e564` mutation taxonomy · W-OSD `6eda7f7` RTL cross-check + loud geometry mismatch, `2cfdf81` PLXD degeneracy/provenance + 624×480 profile · W-GATE `15ae470` scoped sweep · W-FEED `2ad3688` rebased ring-lifecycle chain.
+- (**stale-base near-miss, recorded as the most dangerous diff of the session**) W-FEED was **nine commits behind** on a base diverging at `2726d35f`. Its `Makefile` side of `unit-unlocked` predated the roll-call guard and three merged tests, so a mechanical union would have **deleted the guard and the tests it protects in one commit, with `make unit` still green afterwards**. Its `ddr_bitstream_ring.hpp` side also reintroduced `0x504C5842u` as a literal after that constant had been centralised into `mailbox_abi`. Returned for a real rebase; the rebased chain merged cleanly and `test_bitstream_ring_lifecycle: ALL PASS`. **Parent process change: workers must now quote their merge-base against the integration tip when handing over SHAs**, so drift is visible immediately rather than at merge time.
+- (**parent-resolved conflict, provable superset**) `tests/hw/README.md` — W-FEED's text asserts everything HEAD asserted (`bank1`, `0x30040000`, `0x30080000`, `status[12]`/`[13]`) **plus** doorbell derivation and the mmap doorbell bank bit, with no contradiction. Taken as a superset. Semantic conflicts continue to go back to their authors (W-OSD's PLXD-vs-timed bank-selection strategy did, and was resolved correctly by its author).
+
+### Hour-24 — parent-run mutation verification, derived validation asset, scope correction on three decode claims
+
+- (**parent mutation-verified W-CAST's audio-silence EOF term rather than accepting worker evidence**) `0725224` narrows `knownDurationEofStall()` to require **both** video and audio silence, and raises default grace 1000 → 5000 ms. Removing the audio term:
+  ```
+  MUTATED (noAudioMs >= graceMs removed) rc=1
+  FAIL /home/flynnsbit/Projects/MisterPlex/tests/unit/test_avclock.cpp:127: !knownDurationEofStall(0, ...
+  test_avclock: 1 failures
+  RESTORED rc=0 ; tree clean
+  ```
+  **The term is load-bearing, not decorative.** Design note worth reusing: requiring audio silence is what makes the *short-lying-duration* case safe — if a container understates duration, audio still flows, `noAudioMs` stays 0, and the guard cannot fire. The detector is now keyed on **the stream actually being dead** rather than on the clock passing a number the container supplied. W-CAST found that case after **scoring its own earlier prediction wrong**.
+  - **Open inverse risk, handed back to W-CAST:** a stream with **no audio track** may never advance `noAudioMs`, which would make the guard **vacuous for that entire class of content** — stricter-looking but unfirable. Same defect family as every instrument problem this session. Prediction to be pre-registered before testing.
+- (**parent mutation-verified W-TIME's roll-call fix in the previously-untested direction**) `b19ceaa`:
+  ```
+  steady: actual_prereqs=33 expected_prereqs=33 actual_commands=86 protected_commands=83 ignored_commands=3
+  mutated (unregistered prereq added): UNIT_ROLLCALL_FAIL actual=34 expected=33
+                                       UNREGISTERED_PREREQ ... register this unit-unlocked prerequisite
+  ```
+  Closes the hole where the guard printed `len(EXPECTED_PREREQS)`=30 against 33 real prerequisites and checked one direction only.
+- (**AUTHORISED DERIVED VALIDATION ASSET GENERATED — W-FEED — and independently re-probed by the parent**) `build/arm-profile-sample/derived_realcontent_624x480_baseline_ref1_nob_1800f.mp4`, 12,720,086 bytes. Parent's own `ffprobe`, not the worker's:
+  ```
+  codec_name=h264  profile=Constrained Baseline  width=624  height=480
+  has_b_frames=0   level=30   nb_frames=1800
+  ```
+  Matches W-FEED's reported `profile_idc=66 entropy_cabac=0 max_num_ref_frames=1 coded=624x480`, slices `i=36 p=1764 b=0`. Re-encoded from the **real HEVC source** so it carries real-world image statistics — **low-entropy synthetic content is exactly what lets a broken residual path score green.**
+  - **Outstanding risk at time of writing:** the asset is **untracked under `build/`** with **no committed provenance record**. `build/` is disposable; a probe screenshot quoted in a later report is not. **An unlabelled derived asset is how "validated on real content" silently becomes a false claim about the user's library, which contains zero real H.264 at ≤480p.** Provenance + regeneration command returned to W-FEED as a tracked commit.
+- (**SCOPE CORRECTION — three `docs/phase3-decode.md` claims were measured on HEVC / >480p, not on the H.264 path the fabric targets**) W-FEED's enumeration, open for two cycles, now answered: **W-A4 PMS probe** (~line 332), **Phase 3.3n High/CABAC/B sizing** (~line 360), **Phase 3.3p PMS Baseline XML** (~line 374). All derive from HEVC `/metadata/3` via PMS transcode. **They remain valid evidence about the transcode path; what was wrong was the unstated scope.** To be annotated in place, not deleted — a reader who finds a deleted number learns nothing; one who finds a scoped number learns the boundary.
+- (**merge**) W-INTER `84a198f` — P16 residual traversal extended from one CAVLC/IDCT block to two sequential blocks, carrying `cavlc_bit_offset_end` into the next start. **assertions 91 → 92, unique tests 44, `make unit` rc=0.**
+  - **Handoff hazard recorded:** the commit was based on `aef6232`, which does **not** contain W-INTER's own previously-merged one-block commit `a942ece` — same feature family, adjacent regions of `h264_decode_core.sv`, different patch-ids, externally indistinguishable from a duplicate or amended rework. **Resolved empirically (cherry-pick onto tip, observe clean apply, then gate) rather than by reasoning about it** — consistent with the lesson that inferring cause from a diff of symptoms is what produced two retracted diagnoses in Hour-23.
+- (**device queue advanced**) W-FEED released the device and removed its remote profile scratch. W-OSD took it (first in queue), W-CAST second. **Neither FBAR nor 3l2 is affected: still UNSCOREABLE / BLOCKED pending physically attached HDMI capture hardware.**
+
+### Hour-24 late — vacuity audits land in three lanes, ARM boundary quantified on real content
+
+- (**ARM DECODE BOUNDARY MEASURED ON REAL-STATISTIC H.264 AT TARGET GEOMETRY — W-FEED `a799452`**) Phase 3.3q. Bucket sum **40.1902 ms/f**: fits 24 fps (41.667 ms) with **+1.476 ms/f**, **misses 25 fps (40.000 ms) by 0.190 ms/f**. Buckets: ffmpeg decode/null **21.5619 ms/f**, scale/pad/yuv420p delta **2.9543**, pipe delta **5.2634**, parent copy **2.3094**, product present/DDR **10.4106**.
+  - **P1 confirmed with numbers, not assertion:** derived real content is **~20.5% larger per macroblock** and **~29.6% larger per P frame** than the synthetic 624×480 P16 fixture (`6.037` vs `5.011` B/MB; P-frame packet mean `6924.8` vs `5344.9` B). **The synthetic fixtures were flattering the workload.**
+  - **P3 explicitly NOT scored green:** no derived golden/reference is wired, so this is **performance/boundary evidence only, not a correctness result**. Worker also declared the unattributed residual **"0 by construction … not an independent zero measurement"**, refusing to let an artefact of nested deltas read as a clean number. **Declining to claim the third prediction is worth more than confirming the first two.**
+  - **Programme consequence:** on real 624×480 content the ARM path is a **24 fps device**. This is the quantified case for FPGA decode.
+- (**VACUITY FOUND AND CLOSED IN THE RTL INVARIANTS — W-GATE `19aa5cd`**) Pre-registered **sound=21, vacuous=0, over-tight=0**; actual **sound=19, vacuous=1, over-tight=1**. **Predicted wrong and published.**
+  - VACUOUS: `check_phase_a_surface` accepted menu strings from **any** active `Plex.sv` literal rather than the `CONF_STR` bound into `hps_io`. **Parent mutation-verified the fix rather than accepting the audit:**
+    ```
+    (replaced "F1,raw,RGB565 frame (320x240);" with a decoy entry)
+    MUTATED rc=1
+    FAIL: Plex.sv Phase A feature surface: Plex.sv CONF_STR missing `F1,raw`.
+          That drops a Phase A shipping file slot; restore F1 raw ...
+    RESTORED rc=0 ; tree clean
+    ```
+  - OVER-TIGHT: `check_yuv_ddr_writer_contract` forbidden-DDR-RGB sweep walked the filesystem and raw text; now `git ls-files`-scoped. **Same defect family as the scope bug already fixed — a verdict depending on working-directory junk rather than committed source.**
+  - **Process failure recorded:** on first delivery these fixes existed **only in an untracked worktree-root report**; the branch had rebased to `0725224` with nothing on top. **A convincing narrative with evidence quoted and no code behind it is externally indistinguishable from fabrication.** Returned; recommitted as `62624e8`, `42cbce0`, `ef84ca4`.
+- (**FIXTURE VACUITY FOUND AND CLOSED — W-MCFIX `97a974c`, `docs/decode-numeric-fixture-audit.md`**) Audit table of property / mutation / quoted failure.
+  - **Live vacuity:** `clamp_coord` upper boundary returning `limit - 2` instead of `limit - 1` was **green before edge sentinels were added** — the fixture never drove coordinates near the upper edge, so the boundary was untested while appearing covered.
+  - Also closed: U distinguished from V, luma distinguished from chroma, coefficient scan placement (dequant positions 1 and 4 swapped → `FAIL real RTL sim: block=1 dequant[1]…`).
+  - **Honest non-firing mutation recorded:** `scan 1 ↔ 2` did **not** fire because those positions **share the same H.264 dequant matrix class** — **blunt mutation, not a gate hole.** Distinguishing the two is what separates an audit from a rubber stamp.
+- (**SURVIVING 640 ASSUMPTION FOUND — W-OSD `3a8fe46`**) `contentResolutionFor480p()` returned hardcoded `{640, 480, "640x480"}` while the DDR contract codes **624×480**, so the OSD would advertise to PMS a geometry the daemon does not decode. Now derived from `kPlex480pCodedWidth`. Commit also distinguishes **presented scanout size (640, what `CONF_STR` labels)** from **coded frame size (624, what the DDR contract and PMS payload use)** — conflating those two is what created the bug.
+  - (**PARENT-FOUND, STILL OPEN**) Sweeping `640` after the merge: `arm/misterplexd/main.cpp:330` tiers bitrate `decodeW >= 640 → 2500`, `>= 480 → 1500`. **At 624 this falls to 1500 while the OSD path assigns 2500 for identical geometry — two bitrates for the same coded frame size depending on `OSD_CONTROL`, and no test notices.** Policy half returned to W-OSD (including its unexplained 2000 → 2500 bump, bundled into a geometry commit without justification); structural half to W-TIME, to derive tiering from geometry constants and add a cross-path equality invariant.
+- (**merges**) W-INTER `fb1c94c` four P16 luma residual blocks (assertions 92 → 93) · W-CAST `66e1e5d` EOF guard kept live for audio-less streams · W-TIME `a0a024e` measured test-infra counts · W-FEED `46bdb39`/`d795d74` derived-asset provenance + three-claim scope correction.
+- (**PARENT ERROR #3, published**) Mutation-verifying W-CAST's `eofStallAudioSilenceMs`, I substituted an identifier not in scope. **The compile failed, the stale binary passed, and I was one step from recording a false "vacuous test" verdict against sound code** — a false accusation produced entirely by my own tooling. Re-run with the correct identifier: **4 failures at `test_avclock.cpp:133/134`**, restored rc=0, tree clean. **Standing rule: before believing any green mutant, `rm -f` the binary, check the build rc, and check the binary timestamp.** Third published measurement error this session; none has changed a decision.
+
+### Hour-24 — device state audit (parent, no deploy)
+
+- (**LIVE DEVICE VERIFIED HEALTHY, provenance traced to an evidence-backed build**) `192.168.1.183`, up 3:06.
+  - Live core: `/media/fat/_Utility/Plex.rbf` md5 **`00eebd5e685e6cc821b13bfdcff41d0b`** = the **`wtime4`** fit (base `e18495b`, fitted HEAD `e1dffa3`) — **the first fully timing-closed core of the session**: `post-fit-timing` PASS, `post-fit-hierarchy` PASS, `timing-exclusion` PASS, worst setup `clk_ddr +0.284`, worst hold `clk_sys +0.244`, `clk_ddr` hold `+0.347`, TNS 0 on every section of the raw `Plex.sta.rpt`.
+  - Daemon **running**: PID 9298, `/media/fat/misterplex/bin/misterplexd`, md5 `45d530a87faf24647e00a0ab030a6afb`.
+  - Known-bad red specimen correctly quarantined as `Plex.failed-fe7673bc.rbf`, not live. Backup `Plex.e9b71d95.bak.rbf` retained.
+- (**EXPECTED DRIFT, stated explicitly so it is not mistaken for a defect**) The live core predates every RTL change merged since — notably W-INTER's P16 residual traversal (one → two → four blocks). **The merged RTL is not on the device and cannot be, without a new fit.** No RBF is authorised; the Quartus lane is idle by design while non-fit work proceeds. **Host, daemon, test and docs merges are not on the device either unless separately deployed.**
+- (**PARENT ERROR #4, published — a false negative manufactured by a missing tool**) My first device probe used `pgrep -f misterplexd`. **`pgrep` does not exist on the MiSTer**, so the command failed and my `||` fallback printed **"misterplexd NOT RUNNING"**. That was not a measurement; it was the absence of a tool being reported as the absence of a process. Re-probed with `ps w`: the daemon **is running**, PID 9298. **This is the exact defect family the fleet has spent the session hunting — an instrument that manufactures a verdict from absence of evidence — committed by the parent, in a one-line shell check, an hour after writing three worker briefs warning about it.** Fourth published parent error; none has changed a decision, but this one would have, had I reported it.
+
+### Hour-25 — the golden gets plugged in, mailbox ABI vacuities closed, full P16 luma
+
+- (**THE DERIVED GOLDEN NOW RUNS UNCONDITIONALLY — W-FEED `01a8aa6` + `fdbcc97`**) unique tests **44 → 45**.
+  - `01a8aa6` landed per-frame Y/U/V plane hashes for the derived 624×480 Constrained Baseline clip, generated with **`-skip_loop_filter all`** so the reference matches the decoder stage the fabric implements. **A golden no correct implementation could satisfy is worse than none.** Coverage published as measured numbers, not caveats: **1790 unique Y hashes / 1800 frames; U and V differ on 1774/1800 — so 26 frames cannot detect a U/V swap at all.**
+  - **But in the integration tree it emitted `SKIP-NOT-PASS rc=77`**, because the media lives in untracked `build/`. Honest skip, zero protection: **a gate that skips everywhere except its author's machine is an instrument built and left unplugged.** Soft skip ≠ pass.
+  - `fdbcc97` fixes it with an **always-on committed 8-frame I420 slice**, full run demoted to explicit `INFO … optional`. Slice chosen for coverage, not position: source frames `149,392,474,710,937,1183,1349,1675`, **`uv_distinct=8/8`** (all drawn from the 1774 distinguishable frames, none from the 26 alias frames), **`unique_y=8/8`**, **`y_min=0`, `y_max=243`** — driving the lower clamp boundary exactly where W-MCFIX proved the synthetic fixture was blind. Registered in `unit-unlocked`, so W-TIME's roll-call guard protects it.
+  - **Parent mutation-verified** (one byte flipped in the `.yuv`): fails at three levels and localises —
+    ```
+    DERIVED_SLICE_FAIL slice_sha256 got=61006f2f… want=ecfe1c79…
+    DERIVED_SLICE_FAIL frame_hash   slice=0 source=149 …
+    DERIVED_SLICE_FAIL plane_hash   slice=0 source=149 plane=Y …
+    true rc=1 ; restored rc=0 ; tree clean
+    ```
+- (**MAILBOX ABI VACUITIES — W-GATE `a902e1e` + `c92cc39`, `docs/test-host-unit-vacuity-audit.md`**) Pre-registered `sound=14, vacuous=1, over-tight=1`; actual **`13/2/1`**. **Second audit, second wrong prediction, published both times.**
+  - **`test_input_mailbox` and `test_sdram_mailbox` were merely self-consistent with the decoder rather than pinned to the hardware contract.** The worst possible location for this defect: the ABI could drift **coherently** — every constant moving together — and every test would stay green while the FPGA and daemon stopped speaking the same language. Now pinned to fixed contract values.
+- (**FULL P16 LUMA RESIDUAL TRAVERSAL — W-INTER `b47dcfa`**) one block → two → four → complete luma set, each increment independently gated, no regressions. assertions 93 → 94.
+- (**BITRATE DEFECT CLOSED CONSERVATIVELY — W-OSD `aa093c5` + `e6140a7`**) `kPlex480pWeakBitrateKbps` set to **2000, not 2500**. The 2500 tier was inherited from the `decodeW >= 640` threshold that **was itself the bug**, so adopting it would have carried a defect's side effect forward as a decision. Against W-FEED's measured **+1.476 ms/f** headroom at 24 fps, raising the fallback path 1500 → 2500 would have been a **67% bitrate increase inside a commit described as a refactor**. Parent mutation-verified the structural half: reintroducing a `w < 640` threshold → `FAIL tests/unit/test_osd_menu.cpp:81`, build rc=0 confirming a fresh binary.
+- (**PARENT ORCHESTRATION DEFECT — five-file semantic conflict caused by my task split**) I assigned W-OSD "the policy half" and W-TIME "the structural half" of the same bitrate bug **without making the boundary exclusive**. Both correctly did the structural work, incompatibly: `UU` on `main.cpp`, `plex_resolve.cpp`, `osd_menu.hpp`, `test_osd_menu.cpp`, `test_resolve.cpp`. W-OSD's landed first and is verified, so it stands; W-TIME asked to rebase and contribute only what is additive (likely the `plex_resolve` path W-OSD never touched), **with an explicit invitation to argue its design is better rather than defer to arrival order.** **Cherry-picking one lane over another by fiat would have silently discarded real work; a mechanical union across five files where two designs disagree is exactly the merge that produces green tests and broken products.**
+- (**PARENT ERROR #5, published**) Reading the slice-mutation result I piped through `tail` and captured **`tail`'s exit status, not the test's** — printing `rc=0` for a run that had just failed. Re-ran capturing the true rc: **`1` mutated, `0` restored.** **A number that arrives through a pipeline is not the number you think you measured.** Fifth published parent measurement error; none has changed a decision, but this one asserted the opposite of the truth.
+
+### Hour-26 — geometry confirmed worst category, visual card made honest end-to-end, chroma scheduling
+
+- (**GEOMETRY IS THE HIGHEST-RISK CATEGORY, CONFIRMED EMPIRICALLY — W-GATE `0330487`**) Pre-registered `sound=8, vacuous=3, over-tight=1`; actual **`sound=8, vacuous=4, over-tight=0`**. **Third audit, third wrong prediction, published every time.** Missed vacuity was the fixed 480p profile. Vacuous set included the OSD 480p label, the PMS 480p profile, and **`kPlex480pYuv420pBankStride`** (`0x80000 → 0x40000` mutation did not fire pre-fix). **Two live geometry bugs this cycle were caught by a human grepping for the string `640`, not by any test** — that is the exposure this audit quantifies.
+- (**BUILD-SYSTEM TWIN OF THE STALE-BINARY TRAP — W-GATE `b60436b`**) Mailbox unit tests now rebuild when the ABI header changes. **A test that does not rebuild against a changed contract header keeps passing on a stale object file** — structurally the same defect that bit the parent twice by hand today, made impossible rather than remembered.
+- (**VISUAL CARD NOW HONEST AT EVERY LAYER — W-OSD `cbb2ab7` + `c0b400d`; parent ran it on hardware after asking four times**) First run, raw:
+  ```
+  Resident RBF md5: 00eebd5e685e6cc821b13bfdcff41d0b
+  Expected RBF md5: <unset>
+  ⚠ RBF identity recorded but not asserted; valid human answers will be UNSCORED rather than PASS/FAIL
+  ✓ Daemon running (PID 10131)
+  PLXS 0x504C5853 / PLXF 0x504C5846 / PLXD 0x504C5844   (all as expected)
+  UNSCORED: missing PLEX_TOKEN/MISTERPLEX_TOKEN; not starting playback
+  ```
+  **Two of six UNSCORED paths tripped; nothing was faked into a PASS.**
+  - **Parent verified the provenance gate in BOTH directions** — the one-directional mistake that produced the roll-call hole: correct hash → UNSCORED count 2 → 1; wrong hash → `HUMAN_RESULT=UNSCORED reason=rbf-md5-mismatch`.
+  - (**PARENT-FOUND DEFECT, fixed same hour**) **Every run exited `rc=0`, including the deliberate mismatch.** An UNSCORED verdict exiting zero is indistinguishable from success to any caller, wrapper, CI step or `&&` chain — **the card's entire value is refusing to score, and its exit code said "fine".** Now `rc=77`; parent re-verified on hardware: `rbf-md5-mismatch → true rc=77`, `missing-token → true rc=77`.
+  - **Unique evidence the card produced:** all three mailbox magics read correct **off actual silicon**. W-GATE had just found `test_input_mailbox` and `test_sdram_mailbox` were checking those constants only against another copy of themselves. **This card is the only instrument in the tree checking them against hardware.**
+- (**CHROMA RESIDUAL SCHEDULING — W-INTER `72e2d2c`**) assertions **94 → 97**, on top of full P16 luma traversal. One luma block → two → four → complete luma → chroma scheduling, every increment independently gated, no regressions.
+- (**EOF GUARD WIDENED CORRECTLY — W-CAST `34a32e8`**) Stale partial frames no longer permanently disable the guard (`partialFrameBytes != 0` → `< 0`), plus a video-silence override at `3 × graceMs`. **Parent mutation-verified both new terms, confirming each mutant compiled first:**
+  ```
+  M1 build rc=0 ; override removed        → rc=1  FAIL test_avclock.cpp:129
+  M2 build rc=0 ; stale-partial regressed → rc=1  FAIL test_avclock.cpp:132
+  RESTORED rc=0 ; tree clean
+  ```
+- (**ORCHESTRATION ERROR RESOLVED AT MINIMUM COST — W-TIME `a60ed71`**) After the parent's non-exclusive task split caused a five-file semantic conflict, W-TIME rebased and contributed **only the additive part** — deriving resolve profiles from OSD geometry, the `plex_resolve` path W-OSD's chain never touched — rather than relitigating the overlap. **Insisting on either version of the shared files would have cost a cycle and discarded real work in whichever direction the parent ruled.**
+- (**PEER COORDINATION WORKING WITHOUT THE PARENT**) W-MCFIX → W-FEED and W-INTER → W-FEED both obtained fixture paths, formats, frame indices and blind-spot lists directly. W-FEED's handoff explicitly enumerated its instrument's limits: *"only 8 frames; no timing/drop/repeat; no RGB/pillar/deblock; catches mutations only if expressed by selected samples."*
+- (**ENVIRONMENTAL BLOCKER CONFIRMED BY MEASUREMENT, not assumption**) `PLEX_TOKEN` absent from `/media/fat/misterplex/misterplex.conf` — **zero matches**. Playback-dependent verification cannot proceed until the user supplies a token. **Combined with absent HDMI capture hardware, picture verification now requires two distinct things from the user.**
+
+### Programme verdict — the ARM path is a demo, not a product (W-FEED, asked four times)
+
+**Position, in W-FEED's words: "24 fps is demo-acceptable only; FPGA decode is now a product requirement."**
+
+This is the answer the parent had been asking for since Hour-23 and is recorded verbatim because **it is the first statement in this programme that converts a measurement into a product decision.** The measurements were never in doubt; what was missing was the judgement of the agent that took them, and the parent explicitly refused to substitute its own.
+
+- **25 fps is not impossible — it is unreliable.** The 0.190 ms/f miss is *"probably within run noise"*, so 25 fps cannot be called a hard failure. **But "coin-flip 25" is not product headroom**, and that distinction is the whole finding. A less careful answer would have reported either "25 fps fails" (false) or "25 fps works" (reckless).
+- **The 24 fps margin of 1.476 ms/f is too thin to survive reality** — daemon work, PMS/network variance, a hotter ARM, scene complexity, and A/V scheduling all draw on it. **A margin measured on an idle device is not headroom in a product.**
+- **The measured clip may be optimistic, not pessimistic.** It is one derived HEVC source at **~1412 kbps**; real PMS output at the 2000/2500 kbps tiers would be harder. **The parent had assumed the derived clip was an unusually hard case; W-FEED's read is the opposite, and W-FEED holds the data.**
+- **ARM-only stopgap, if wanted:** attack present/DDR first — **10.41 ms/f measured against a raw `/dev/mem` microbench of 7.199 ms/f, so ~3 ms/f is recoverable without any FPGA work.** That would clear 25 fps with genuine margin. It does not change the verdict.
+- **Why FPGA decode is the product path:** it is the only route that reclaims the dominant **~21.56 ms/f** decode bucket. Every ARM-side optimisation is competing for the remaining ~18 ms.
+- **Named confidence gaps, unprompted:** repeat runs, a 2000/2500 kbps A/B, a thermal/load run, and end-to-end A/V. **The parent had offered "I cannot tell without measuring X" as an acceptable answer; W-FEED gave a position *and* named its X's, which is strictly better.**
+
+**Programme consequence:** Phase 3 FPGA decode is now justified by measurement rather than by assumption. Until it lands, **the honest description of this device to a user is a 24 fps cast target with thin margin, and the parent will describe it that way.**
+
+### v3 stable release request — two independent RCAs converged, no fix needed
+
+**User request:** *"can you build me an rbf without the corruption in the background that is like v3 that is just 320x240 arm based but with the video overlay and controls? I want a stable copy to use today, I dont need all the enhanced versions, this would be before we added 640x480"*
+
+**Base: tag `v0.3.0` = `cacd87176cbc2017c6ef2673eef84717dd673009`.** Parent verified at tag: `Plex.sv:52` `"F1,raw,RGB565 frame (320x240);"`, `.WIDTH(320)/.HEIGHT(240)`, 10 OSD/overlay refs, `joystick_0` + `ps2_key` controls. Matches the description exactly.
+
+**Two RCA lanes ran independently on different models (Grok and Claude) and were not permitted to coordinate. Both pre-registered the same prediction and both held it: the corruption is post-v3 geometry work, and v0.3.0 needs no code change.** Independent replication was deliberate.
+
+- **The 320x240-era defect (G-VID1) was real but is FIXED INSIDE THE TAG.** Symptom, quoted: *"the column falling off the right edge reappeared as a vertical bar on the far LEFT ('like word wrap'), plus a duplicated bottom line."* Three root causes in `present_core.sv`: pixel data lagging DE (fixed by `DE_LAG=3`), a blank-time `store_x<=0` wrapping column 0 onto the right tail, and VBlank releasing one line early duplicating row 240. Fixed in `0139f2c`, **closed by the user's own eyes-on VGA check on 2026-07-26**, before the tag.
+- **The later defects are absent from the tag:** left-edge jagged black on the idle logo (`3b4653a`/`43f864a`, RBFs `fb4bad84`/`00eebd5e`) and `PILLAR_320_of_529` are **624/480p** scanout regressions. `480p-selector-in-v030 rc=1`, `624-transcode-in-v030 rc=1` — i.e. **not present**. Tear-free vsync (`e03988d`) and the edge fix **are** present: `edge-fix-in-v030 rc=0`, `tearfree-ddr-in-v030 rc=0`.
+- (**THE MECHANISM, and it explains the user's symptom directly**) **320x240 bank1 is `0x30040000`; 624/640x480 bank1 is `0x30080000`.** Stale logo/black content was **residue from reading the wrong geometry's address**. **Consequence: deploying a v3 core WITHOUT its matching v3 daemon would reproduce the exact fault the user asked us to remove**, because a 480p-line daemon writes one bank address while a 320x240 core reads another. **Core and daemon must be deployed as a pair.**
+- (**NO FIT WAS NEEDED — a hardware-validated artifact already existed**) `release_artifacts/v0.3.0/Plex.rbf`, 3486684 B, **md5 `41adb98c7a630b541091c22ce291be68`**, parent-verified by direct `md5sum` against the pinned value in `README.txt`: *"the bitstream validated on hardware for v0.3.0 playback controls. The package script refuses to ship any core whose MD5 does not match this value."* **Hash-pinned plus eyes-on hardware validation is stronger provenance than a fresh fit could produce today.**
+- **v0.3.0 ARM daemon rebuilt fresh** (heeding that tag's own commit message, "rebuild the ARM daemon instead of reusing build/arm"): static ARM EABI5 ELF, **md5 `06c5735a2f85114688f0ff2ac36e4fd4`**, `kDdrFrameBytes = 320*240*2`, string `need 320x240 RGB565 (153600 B)`, **480p constants absent**, built in an isolated worktree with `build/arm` wiped first.
+
+(**DRIFT FOUND BY THE TICK LOOP, unauthorised**) The device's resident `Plex.rbf` changed overnight to **md5 `226e6a0f...`, dated Jul 29 01:59** — not the `00eebd5e` core previously verified live, and **not attributable to any recorded build**. Preserved as a `.bak` rather than overwritten, since it may be the very artifact exhibiting the reported fault.
+
+(**PARENT TOOLING BUG, found and fixed**) The tick loop detected the Quartus exclusive slot with a **local** `pgrep`, but fits run on the **remote farm** — so it would have reported `RBF_SLOT: FREE` throughout every fit. **Another instance of an inability to measure being reported as a measured result.** Now queries the remote host and distinguishes `FREE` from `UNKNOWN (remote unreachable)`.
+
+### present/DDR gap attributed — it is not bandwidth, it is two hardcoded sleeps
+
+The **~3.2 ms/f** gap between the product present/DDR path (**10.41 ms/f**) and the raw `/dev/mem` microbench (**7.199 ms/f**) has been attributed, and **the intuitive explanation was wrong.**
+
+- **The product copy is FASTER than the microbench, by `1.254 ms`.** Product `ddr_total=10.4653`, of which `copy=5.9450`, `prep=1.8130`, `post=2.6552`, `doorbell=0.0223`, `unaccounted=0.0275`. **So the DDR copy was never the problem, and any effort spent optimising the copy would have been spent against the one component already beating its own benchmark.**
+- **The gap is `prep + post` waits.** The microbench *"does not touch SPI or kick"*; the real path contains **`usleep(1500)` and `usleep(500)`** — i.e. **2.0 ms/f of unconditional, hardcoded sleep**, irrespective of whether the hardware is actually ready.
+- **Why this matters at programme level:** the ARM path misses 25 fps by **0.190 ms/f**. **Two blind sleeps account for roughly ten times that shortfall.** If they can be replaced by waiting on an actual completion signal, 25 fps stops being a coin flip and gains real margin — **without any FPGA work at all.**
+- **The comparison was not apples-to-apples and the worker said so rather than banking the win.** The pre-registered prediction ("gap is mostly real-path overhead") was recorded as only **partly held**, because the microbench is not an equivalent workload. **A less careful lane would have reported a clean 3.2 ms/f saving.**
+
+(**HEADLINE NUMBER IS CURRENTLY NOT RE-MEASURABLE — recorded plainly**) `build/arm-profile-sample/` was destroyed by a `make clean` from an unrelated lane, taking the 12.7 MB derived clip that underpins **40.19 ms/f**. Evidence: `asset_dir=missing`; exact search for the MP4/Annex-B/original returned no hits (`exact-asset-search true rc=0`); only unrelated small `.264`/`.yuv` survivors (`build-survivors true rc=0`). Regeneration needs PMS `/library/metadata/3`, and **`PLEX_TOKEN` is absent from the device config**, so **restoring re-measurability is blocked on the user.** The derived figures remain the best evidence available, but **a number that cannot be re-measured has an expiry date, and this one is now on it.**
+
+(**PARENT FAILURE, acknowledged**) The provenance doc for that asset was merged without anyone asking **what protected the file it described**. Proposed durable fix: keep only the manifest in git, regenerate via a checked-in script into an ignored `artifacts/local/` path outside `build/`, and **make the profile docs mark their numbers EXPIRED when the asset SHA is absent** — so a destroyed input degrades the claim automatically instead of silently leaving a confident number in place.
+
+(**DURABLE ASSET HYGIENE IMPLEMENTED — W-arm-present-gap**) Added `scripts/regenerate_arm_profile_asset.sh` and `scripts/check_arm_profile_asset.sh`; `.gitignore` now ignores `artifacts/local/`. The checker prints **`ASSET_EXPIRED`** and exits **77** when the MP4/Annex-B are absent or hash-mismatched, and **`ASSET_OK`** only when the expected SHA/MD5 values are present. `docs/derived-validation-assets.md`, `docs/phase3-decode.md`, and derived-validation fixture docs now point at `artifacts/local/arm-profile-sample/` and explicitly mark the 40.1902 ms/f headline as **EXPIRED** unless the checker is green. Validation evidence: current checkout prints `ASSET_EXPIRED missing ...` with `check-asset true rc=77`; the always-on 8-frame fixture still passes with the full 1800-frame check reported as optional `ASSET_EXPIRED`.
+
+## Hour-27 — parent retractions and the conf triple (2026-07-29)
+
+Four standing claims were wrong. All four were **parent-propagated**, and three of
+them were blockers I had escalated to the user.
+
+**R1 — `PLEX_TOKEN` is NOT absent.** I reported for several hours that the device had
+no token and that playback was therefore blocked *on the user*. A direct read of
+`/media/fat/misterplex/misterplex.conf` shows a populated `PLEX_TOKEN=` line (value
+deliberately not recorded here). **Playback was never blocked on the user.** The
+original probe reported absence and I never re-ran it against the real file.
+
+**R2 — the ARM profile asset was NOT destroyed.** Reported lost to an unrelated
+`make clean`, putting the headline **40.19 ms/f** on an "expiry clock". It survived
+intact in a sibling worktree (`mp-wt-feed/build/arm-profile-sample/`), which had
+never been cleaned. Restored to `artifacts/local/arm-profile-sample/` with all three
+hashes matching: `annexb_sha=41f2769…`, `annexb_md5=779f0d3a…`, `mp4_md5=3fad246c…`.
+`scripts/check_arm_profile_asset.sh` now reports `ASSET_OK` rc=0 (was `ASSET_EXPIRED`
+rc=77). **The number is re-measurable.** Searching only the repo and its worktrees'
+tracked paths — not sibling checkouts — is what hid it.
+
+(**W-arm-sleep, 2026-07-29 — asset green; ARM remeasure NOT run; rule-0 audit**)
+- `ASSET_OK` rc=0 confirmed; original FEED evidence under `build/arm-sleep-evidence/`.
+  Host x86 decode of the same asset measured `decode_null≈0.24 ms/f` (FRAMES=300)
+  and is **not** an ARM 40.19 reproduce.
+- ARM 40.19 remeasure this lane: **NOT DONE** (no new device profile artifact).
+  Check that settles it: scheduled device window running
+  `scripts/run_arm_decode_profile.sh` with the restored sample on ARM.
+- FEED product present_profile (6 lines, `misterplex-agent-W-FEED.txt`): mean
+  `ddr_prep_wait_us_p=1813`, `ddr_post_wait_us_p=2655`, `ddr_total_us_p=10465`.
+  That file contains **zero** `ddr_plxd_*` fields — so PLXD path take-rate on
+  those frames is **UNKNOWN** (not proven absent). Check: re-log with current
+  daemon and read `ddr_plxd_used_x100_p` (`media_player.cpp` present_profile).
+- Code facts only (`fpga_spi.cpp` `sendDdrFrame`): `usleep(1500)` is under
+  `plxd_absent_fallback`; post `usleep(500)` is under `if (!first && !plxdUsed)`
+  after `86050b4`. Whether either sleep is safe to remove = **UNKNOWN** without
+  a multi-thousand-frame soak (not run; not deployed).
+- **Retractions (rule 0):** prior lane text that "prep=1.813 ⇒ PLXD-absent",
+  "post=2.655 is oversleep", and "first unit RED was contention" are **withdrawn**
+  as diagnoses. Detail: `build/arm-sleep-evidence/RULE0_RETRACTIONS.txt`.
+
+**R3 — "screensaver/idle 93%" was never a completion score.** It is `G-IDLE2c`:
+the middle band measuring **93.1% identical to the screensaver**, i.e. the
+*fingerprint of the LastFrame torn-composite bug* on the 480p line. I had been
+quoting a defect metric as progress. Honest rescore against the live v0.3.0 core:
+**~55% overall, ≤40% multi-mode** (1 of 4 modes DDR-proven). A high number that
+was actually a bug measurement is the exact failure this fleet exists to catch.
+
+**R4 — the deploy rule is a TRIPLE, not a pair.** See `docs/release.md`. Core and
+daemon were correct; the conf was still `DECODE=624x480 / PRESENT=fpga / STREAM=1`.
+**Idle rendered perfectly, which is why it passed my verification** — the fault was
+scoped to playback only. Corrected live and confirmed from the daemon's own adopted
+values: `decode=320x240 weak=320x240@1000k present=fb0`, 0 errors, pid 31928.
+
+**Process note (own goal).** While editing the conf I used `#` as both `sed`
+delimiter and literal, prepending junk to *every* line of the live config. The
+pre-edit backup made it a non-event. **Taking the backup before the edit is the only
+reason this is a footnote instead of an outage.**
+
+---
+
+## Hour-28 — programme score audit (2026-07-29)
+
+Full write-up: [`docs/backlog-score-audit-20260729.md`](backlog-score-audit-20260729.md).
+
+**Retraction candidate for the hourly headline `78.4%`.** That figure was a gate-shaped
+blend of frozen capture-backed `[x]` marks, campaign packages (`94bbfe43`), half-open
+residual/DDR rows, and pre-R3 idle inflation — **not** a measurement of the live user
+triple (`41adb98c` + `06c5735a` + `DECODE=320x240/PRESENT=fb0/STREAM=0`).
+
+| Denominator | Honest % | Band |
+|-------------|----------:|------|
+| **Live user product** (v0.3.0 box today) | **~67%** | 63–70 |
+| **Full Phase-3 + lab programme** (FPGA residual/WIDE/capture) | **~44%** | 40–48 |
+
+**Do not report a single blended 78.4% to the user.** Prefer the dual headline.
+
+### Category counts (scored goals)
+
+Pre-registered a=3 b=8 c=10 d=5 clean=12 → actual **a=4 b=11 c=14 d=7 clean=13**.
+Miss published (under-predicted contamination).
+
+| Cat | N | Headliners |
+|-----|--:|------------|
+| (a) defect-as-progress | 4 | G-IDLE2c **93.1%** fingerprint; G-IDLE2 100→65→55; WIDE span **0.605**; FBAR 7/82/94 soft triple |
+| (b) frozen unrunnable | 11 | FBAR/HW visual/G-OSD2/idle glass/G-AV HDMI/**no capture**; residual/WIDE need non-user RBF |
+| (c) ≠ live `41adb98c` | 14 | G-IDLE2a/2b DONE; package embeds `94bbfe43`; FBAR on `ec21e133`…; soak; B-ddr7; present cite `1441d409`; FPGA 3l* |
+| (d) self-agree | 7 | LastFrame==LastFrame; mailbox self-check class; UNSCORED rc=0; rollcall constant; geometry vacuity class |
+| clean | 13 | pin live; conf triple; G-VID1; Logo DDR (fpga boot); G-MAIN/STAB1 code; host units; intra I420 (FPGA denom only) |
+
+### Gate checklist honest reread (same 10 rows)
+
+Naive fill ~7–8/10 ≈ **70–80%** (plausible origin of 78.4). Against **live user artifact**:
+FBAR → **UNSCOREABLE/NO_CAPTURE**; package → **campaign ≠ ship pin**; residual/DDR → **0 on user denom**;
+cast/soak → partial/(c). **~35–45% if gate≡live; keep dual programme table above instead.**
+
+### Goal moves (largest)
+
+| Goal | Old | New | Why |
+|------|-----|-----|-----|
+| Idle/screensaver | 93% / 65% | **~55%** (≤40% multi-mode device) | R3 + live audit |
+| Gate FBAR [x] | DONE | **UNSCOREABLE** | Hour-21 no `/dev/video*` |
+| Gate package [x] | DONE `94bbfe43` | split ship **`41adb98c`** vs campaign | (c) |
+| A/V cast DONE | 100% | **~65%** live | `PRESENT=fb0` not re-proven |
+| P3-WIDE 0.605 | open FAIL | keep FAIL; never “60% done” | (a) |
+| Capture visual weight | smuggled green | **0** | (b) |
+
+### Live device (read-only reconfirm this audit)
+
+`CORE=Plex` RBF `41adb98c…` daemon `06c5735a…` pid one;
+conf `DECODE=320x240 PRESENT=fb0 STREAM=0 OSD_CONTROL=0`; adopted
+`decode=320x240 weak=320x240@1000k present=fb0`. **No deploy/reload.**
+
+### `make unit` gate (this audit)
+
+Exclusive flock runs under concurrent local Quartus. Final attempt:
+`.copilot-session/make-unit-score-audit4.log` — **TRUE_RC=2**,
+`grep -c ': OK'` **=68**, unique `: OK` names **46**, `^OK` **44**.
+Terminal fail: `test_no_private_data` → hardcoded `192.168.1.41` in
+`tests/unit/test_core_conf_geometry_gate.sh:24` (concurrent-tree RED, not
+introduced by this audit). Earlier attempts: override env polluted
+`test_resource_preflight` (clean re-run rc=0); `--eval preflight` leaked into
+Verilator recursive makes (`0 modules`) — use skip-preflight.mk not MAKEFLAGS.
+**Not a green gate; not a product-silicon verdict.** Parent baseline 70/`rc=0`
+not re-established this hour.
+
+## Hour-29 — F12/OSD lab measurements (2026-07-29) — rule 0
+
+**User report:** F12 doesn’t work. **Full note:** [`docs/f12-osd-investigation-20260729.md`](f12-osd-investigation-20260729.md).
+
+### Pre-reg miss
+Primary “PRESENT=fb0 paint blocks F12” (~55%) — **missed** for instruments under **measured** conf `PRESENT=fpga`.
+
+### Measured (not causes)
+- CONF_STR live OK (`set_status --confstr` rc=0, full v6).
+- uinput F12 sent; Main holds `event*`.
+- Held-F12 screenshot still **3-color logo** (no OSD chrome in PNG).
+- `/tmp/OSD_VISIBLE` absent **and** vacuous without `log_file_entry`.
+- `volume 1..7` left `Plex_volume.cfg=00`; `screenshot` cmd still creates PNGs.
+- plexd SIGSTOP: PNG outcome unchanged; Main jiffies ~flat vs running plexd.
+- Live conf keys: `PRESENT=fpga` (not fb0). Daemon log has `idle screen painted` under that conf.
+
+### UNKNOWN (settling checks)
+- Glass F12 → **user eyes**.
+- Root cause → reboot A/B, `strace`/log_file_entry, ini A/B (clearance).
+- Do **not** treat G-OSD6 reboot story as proven for this boot (retracted as diagnosis).
+
+### Idle vs F12
+`PRESENT=fb0` ⇒ `wantFpga` false ⇒ no `fpga_.open()` ⇒ `paintIdle` skips DDR (code-backed). That is the **idle-mode** hole parent found; **not** automatically the F12 framework-OSD failure mode. Live log now shows idle paint under `present=fpga`.

@@ -202,6 +202,30 @@ int main(int argc, char** argv) {
         }
 
         Vh264_iq_idct_4x4 dut;
+        auto runScanPlacementProbe = [&]() {
+            dut.max_coeff = 5;
+            dut.qp = static_cast<uint8_t>(qp);
+            for (int i = 0; i < 16; ++i) {
+                dut.coeff[i] = 0;
+                dut.pred[i] = 128;
+            }
+            dut.coeff[1] = 7;  // scan 1 -> row-major position 1, dequant matrix class 1
+            dut.coeff[4] = 3;  // scan 4 -> row-major position 5, dequant matrix class 2
+            dut.eval();
+            std::array<int, 16> want{};
+            want[1] = dequantValue(7, qp, 1);
+            want[5] = dequantValue(3, qp, 5);
+            for (int i = 0; i < 16; ++i) {
+                const int got = signExtend(static_cast<int>(dut.dequant[i]), 18);
+                if (got != want[static_cast<std::size_t>(i)]) {
+                    std::ostringstream oss;
+                    oss << "scan placement dequant[" << i << "] got " << got
+                        << " want " << want[static_cast<std::size_t>(i)];
+                    throw std::runtime_error(oss.str());
+                }
+            }
+        };
+        runScanPlacementProbe();
         int compared = 0;
         for (const auto& block : blocks) {
             const auto coeff = deriveCoeffScan(block.dequant, qp);
@@ -225,6 +249,25 @@ int main(int argc, char** argv) {
                 compared += 3;
             }
         }
+        auto runClipProbe = [&](const char* name, int16_t coeff0, uint8_t pred, uint8_t want) {
+            dut.max_coeff = 1;
+            dut.qp = static_cast<uint8_t>(qp);
+            for (int i = 0; i < 16; ++i) {
+                dut.coeff[i] = 0;
+                dut.pred[i] = pred;
+            }
+            dut.coeff[0] = coeff0;
+            dut.eval();
+            const int got = static_cast<uint8_t>(dut.recon[0]);
+            if (got != want) {
+                std::ostringstream oss;
+                oss << "recon clip boundary " << name
+                    << " got " << got << " want " << static_cast<int>(want);
+                throw std::runtime_error(oss.str());
+            }
+        };
+        runClipProbe("upper", 4095, 250, 255);
+        runClipProbe("lower", -4096, 5, 0);
         std::cout << "OK real RTL sim: h264_iq_idct_4x4 elaborated with Verilator; blocks="
                   << blocks.size() << " compared_values=" << compared << " qp=" << qp
                   << " fixture=" << argv[1] << '\n';

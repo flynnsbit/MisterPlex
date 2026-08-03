@@ -225,6 +225,10 @@ struct InterMbCapture {
     int mbY = 0;
     bool pSkip = false;
     int partMode = 0;
+    int mvX = 0;
+    int mvY = 0;
+    int mvdX = 0;
+    int mvdY = 0;
     std::array<uint8_t, 256> predY{};
     std::array<uint8_t, 64> predU{};
     std::array<uint8_t, 64> predV{};
@@ -348,6 +352,10 @@ public:
             cap.mbY = static_cast<int>(top.native_inter_mb_y);
             cap.pSkip = static_cast<bool>(top.native_inter_p_skip);
             cap.partMode = static_cast<int>(top.native_inter_part_mode);
+            cap.mvX = static_cast<int>(top.native_inter_mv_x);
+            cap.mvY = static_cast<int>(top.native_inter_mv_y);
+            cap.mvdX = static_cast<int>(top.native_inter_mvd_x);
+            cap.mvdY = static_cast<int>(top.native_inter_mvd_y);
             for (int i = 0; i < 256; ++i)
                 cap.predY[static_cast<std::size_t>(i)] = static_cast<uint8_t>(top.native_inter_pred_y[i]);
             for (int i = 0; i < 64; ++i) {
@@ -402,29 +410,30 @@ public:
         resetCycles = cycles;
     }
 
-    // Pre-fill the DPB reference bank with real IDR frame data.
-    // The h264_dpb_one_ref starts with current_base=BANK0, reference_base=BANK1.
-    // After IDR fill + frame_done, banks swap: current=BANK1, reference=BANK0.
-    // So for the FIRST P-slice, the reference is in BANK0.
-    // We pre-fill BANK0 (addr 0..frameBytes-1) with the IDR frame.
-    void prefillDpbReference(const std::vector<uint8_t>& goldenPlanes) {
+    // Pre-fill BANK0 with a proven no-deblock decoded reference frame.
+    // The current product stub still cannot reconstruct a full reference
+    // picture, so native inter scoring uses this explicit testbench reference
+    // state to isolate parser → DPB → MC prediction plumbing.
+    uint64_t prefillDpbReference(const std::vector<uint8_t>& goldenPlanes, std::size_t frameIndex) {
         const std::size_t frameBytes = static_cast<std::size_t>(width) * height * 3 / 2;
-        if (goldenPlanes.size() < frameBytes) {
+        const std::size_t base = frameIndex * frameBytes;
+        if (goldenPlanes.size() < base + frameBytes) {
             std::cerr << "WARNING: golden planes too small for DPB prefill ("
-                      << goldenPlanes.size() << " < " << frameBytes << ")\n";
-            return;
+                      << goldenPlanes.size() << " < " << (base + frameBytes) << ")\n";
+            return 0;
         }
-        // Write frame 0 (IDR) into BANK0 of DPB SRAM
+        const uint64_t startCycles = cycles;
         for (std::size_t i = 0; i < frameBytes; ++i) {
             top.dpb_prefill_en = 1;
             top.dpb_prefill_addr = static_cast<uint32_t>(i);
-            top.dpb_prefill_data = goldenPlanes[i];
+            top.dpb_prefill_data = goldenPlanes[base + i];
             tick();
         }
         top.dpb_prefill_en = 0;
         dpbPrefilled = true;
         std::cout << "DPB_PREFILL wrote " << frameBytes
-                  << " bytes of IDR reference into BANK0\n";
+                  << " bytes of reference frame " << frameIndex << " into BANK0\n";
+        return cycles - startCycles;
     }
 
     bool dpbPrefilled = false;
@@ -578,11 +587,11 @@ void writeInterMetadataJson(const std::string& path, const std::vector<InterMbCa
     out << "  \"producer\": \"stream_path_full_frame_tb.native_inter_candidate\",\n";
     out << "  \"candidate\": {\n";
     out << "    \"colorspace\": \"I420_NATIVE\",\n";
-    out << "    \"h264_loop_filter\": \"disabled\",\n";
-    out << "    \"reconstruction_stage\": \"mc_prediction_only_pre_deblock_no_residual_add\",\n";
-    out << "    \"reference_picture_state\": \"diagnostic_filtered_reference_via_deblock_writeback_ctrl\",\n";
-    out << "    \"reference_picture_source\": \"generated_i420_pattern_not_decoded_prior_frame\",\n";
-    out << "    \"conformance_scope\": \"MC arithmetic and parser-to-DPB plumbing only; not end-to-end H.264 P reconstruction\"\n";
+    out << "    \"h264_loop_filter\": \"in_loop_via_h264_deblock_mb\",\n";
+    out << "    \"reconstruction_stage\": \"product_clip1_pred_plus_residual_then_h264_dpb_ref_commit_deblock\",\n";
+    out << "    \"reference_picture_state\": \"decoded_deblocked_via_h264_dpb_ref_commit\",\n";
+    out << "    \"reference_picture_source\": \"product_h264_dpb_ref_commit_promoted_reference_bank\",\n";
+    out << "    \"conformance_scope\": \"Product path: MVP+mvd fetch MV, Clip1(pred+residual), h264_dpb_ref_commit deblock+promote. IDR recon still sparse (residual MB0 block0 + 128 plane) until full I walk; P residual plane sparse after first MB.\"\n";
     out << "  },\n";
     out << "  \"geometry\": {\"width\": " << width << ", \"height\": " << height << "},\n";
     out << "  \"macroblocks\": [\n";
@@ -596,7 +605,8 @@ void writeInterMetadataJson(const std::string& path, const std::vector<InterMbCa
             << ", \"mb_type\": \"" << partModeName(c.pSkip, c.partMode) << "\""
             << ", \"part_mode\": " << c.partMode
             << ", \"ref_idx_l0\": 0"
-            << ", \"mv_l0\": {\"x\": 0, \"y\": 0}"
+            << ", \"mv_l0\": {\"x\": " << c.mvX << ", \"y\": " << c.mvY << "}"
+            << ", \"mvd_l0\": {\"x\": " << c.mvdX << ", \"y\": " << c.mvdY << "}"
             << ", \"pred_y\": ";
         writeByteArray(out, c.predY);
         out << ", \"pred_u\": ";
@@ -971,10 +981,9 @@ int main(int argc, char** argv) {
         sim.initNativeCandidate(refFrames);
         sim.reset();
 
-        // Pre-fill DPB reference bank with real IDR frame data.
-        // This gives MC an honest reference for P-slice prediction.
-        sim.prefillDpbReference(golden);
-        // Prefill ticks are setup cost, not decode; reset cycle counter.
+        // DECISIVE MEASURE: no golden DPB prefill. Reference bank content must
+        // come only from product h264_dpb_ref_commit (decoded+deblocked) after
+        // IDR frame_boundary promotion. Prefill helpers remain for fault twins.
         sim.cycles = 0;
 
         uint32_t fed = 0;
@@ -990,7 +999,9 @@ int main(int argc, char** argv) {
                 throw std::runtime_error("scanner did not drain bytes after NAL type " + std::to_string(n.type));
             if (n.type == 5 || n.type == 1) {
                 ++expectedFrames;
-                const int frameWaitCycles = std::max(200000, args.width * args.height * 3);
+                // Product ref-commit deblock is multi-cycle per MB (recv/filt/emit/store).
+                // 320x240 = 300 MB; budget ~4k cycles/MB + paint margin.
+                const int frameWaitCycles = std::max(2000000, args.width * args.height * 40);
                 if (!sim.waitForFrames(expectedFrames, frameWaitCycles))
                     throw std::runtime_error("stream_path did not emit frame " + std::to_string(expectedFrames));
             } else {

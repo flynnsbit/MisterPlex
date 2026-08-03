@@ -1,0 +1,214 @@
+throughput budget defense — rtl/sink-contract-phase2 @ 33904df (worktree tip)
+mapped sink phase-2 base: 788aa5f   traverse phase-2: 4f281e6
+source_sha for STAGE_CYCLES quotes: 788aa5f (plane_m10k_clip1_788aa5f.log)
+HARD RULE 0: every number below is quoted from RTL, TB, docs, or a log line.
+
+========================================================================
+1. DERIVATION OF ~4037 paint_per_mb (frame 0 / IDR)
+========================================================================
+
+TB definition (tests/rtl/stream_path_full_frame_tb.cpp):
+  paint_start = first fs_wr_reset after stub_busy rise
+  paint_end   = first fs_swap
+  paint_cycles = paint_end - paint_start
+  paint_per_mb = paint_cycles / (mb_w * mb_h)
+
+Measured (docs/evidence/plane_m10k_clip1_788aa5f.log):
+  STAGE_CYCLES frame=0 parse_cycles=289 paint_cycles=1211072
+               parse_per_mb=0.963 paint_per_mb=4036.907
+  STAGE_CYCLES frame=1..11 paint_cycles=76800 paint_per_mb=256.000
+               parse_per_mb≈1449..1497
+
+Why frame0 ≠ pure present-paint
+-------------------------------
+decode_stub.sv PH_WAIT wait_done for IDR + ENABLE_DPB_REF_SEAM + use_real_ref:
+  1) sets wr_reset_ptr <= 1'b1   (ALWAYS for non-P at wait_done)
+  2) then overrides phase <= PH_I_RECON
+
+So the FIRST fs_wr_reset is at the START of PH_I_RECON, not at PH_PAINT.
+paint_end is still the end of diagnostic PH_PAINT (WxH @ 1 px/cy).
+
+Therefore frame0 paint_cycles INCLUDES:
+  A. PH_I_RECON   (full residual walk + sink FSM for all MBs)
+  B. PH_DPB_FILL  (384 sample beats + mb_valid beat per MB, then deblock_ref_ready wait)
+  C. PH_PAINT     (320*240 = 76800 exactly — matches frames 1..11 paint_cycles)
+
+Arithmetic split (DPB rate from decode_stub PH_DPB_FILL: idx 0..383 then 384 mb_valid):
+  diag_paint     = 76800
+  dpb_approx     = 300 * 385 = 115500   (deblock_ref_ready wait NOT included — UNKNOWN extra)
+  i_recon_est    = 1211072 - 76800 - 115500 = 1018772
+  i_recon/MB     ≈ 3396 cy/MB
+  paint_per_mb   = 4037 = (i_recon + dpb + diag) / 300
+
+Dominant sink FSM phases for a full I16 MB (all 16 AC coded)
+— counted from h264_i_res_recon_sink.sv state machine (strict, no overlap):
+
+  phase              cy/MB     notes
+  ------------------ ------    ------------------------------------------
+  ST_MB_INIT           256     plane_y clear 1 we/cy (cnt 0..255)
+  ST_I16_NB             48     top_row 16 samples × 3-cy issue/wait/capt (y>0)
+  ST_I16_PRED          256     1 px/cy serial pred (shift-add plane)
+  ST_HAD_WAIT          ~5      UNCERTAIN — Hadamard latency; small
+  ST_HAD_PAINT         768     RMW pred+DC 3 cy/px × 256   *** large ***
+  ST_IQ_WAIT ×16       272     serial DQ ~17 cy × 16 AC
+  ST_APPLY_PX I16×16   768     RMW 3 cy/px × 16 × 16       *** large ***
+  ST_MB_DUMP           788     256×3 read + TL save + 16 top_row we  *** large ***
+  misc settle/start      ~5
+  ------------------ ------
+  sink model total    ~3163    (all-AC I16)
+  vs i_recon/MB        3396    delta ~233 → traverse/RBSP/handshake (order-of-magnitude)
+
+SINGLE MOST EXPENSIVE CLASS: 3-cycle RMW over plane_y M10K
+  HAD_PAINT + APPLY_I16 + MB_DUMP ≈ 768+768+788 = 2324 cy/MB (~68% of sink model)
+
+I4 path (when used): ST_I4_NB ~3 cy/sample neighbours + IQ 17 + APPLY 16 (1 cy/px, no RMW).
+
+RBSP window load (traverse, not inside paint_per_mb for IDR after wr_reset):
+  ~64–66 cy per window fill when walker needs bytes — charged to I_RECON wall time
+  via res_blk backpressure, not a separate TB field.
+
+========================================================================
+2. OVERLAP vs STRICT SERIAL — measured from design
+========================================================================
+
+h264_i_res_recon_sink.sv:
+  assign res_blk_ready = (st == ST_IDLE) && !write_busy && !pend_mb_end;
+
+Traverse may only present the next residual block while the sink is ST_IDLE.
+There is no dual-buffer of res_blk and no parse∥apply pipeline.
+
+Consequence: naive sum of sink phase cycles ≈ wall-clock for the residual path.
+P-frame STAGE_CYCLES "parse" is NOT pure CAVLC — see §1/§3 P notes.
+
+========================================================================
+3. REAL BUDGET — independent derivation from repo SoT
+========================================================================
+
+Authoritative doc: docs/decode-throughput.md (traced 2026-07-27)
+
+Clock chain (quoted):
+  FPGA_CLK2_50 (50 MHz board osc)
+    → pll_0002.v output_clock_frequency0("20.000000 MHz") → clk_sys
+    → Plex.sv .outclk_0(clk_sys) → stream_path.clk(clk_sys)
+
+Decode clock = 20.000 MHz. NOT 50 MHz. NOT 100 MHz.
+(50 MHz is the PLL *input*. 100 MHz figure was a prior doc error on clk_sdram.)
+
+Product assumptions in same doc:
+  25 fps PMS target
+  624×480 = 1170 MB/frame
+  320×240 = 300 MB/frame (fixture / 240p profile)
+
+Budgets at 20 MHz / 25 fps:
+  320×240: 20e6 / (300 × 25)  = 2666.667 cy/MB
+  624×480: 20e6 / (1170 × 25) =  683.761 cy/MB
+
+docs/p3-mc-dpb-bandwidth.md concurs: "real budget is 20 MHz / (1170×25) ≈ 684".
+
+What is NOT product-traced
+--------------------------
+  "~2,000 cy/MB @ 50 MHz / 23 fps":
+    UNKNOWN — no derivation found in docs/decode-throughput.md,
+    docs/p3-mc-dpb-bandwidth.md, or docs/cycle-iterative-traverse-area.md
+    that yields ~2000 from PLL + geometry + fps. Prior lane report
+    docs/evidence/cycles_per_mb_breakdown_788aa5f.txt treated "~2000" as
+    the budget; that comparison is WITHDRAWN as unfounded.
+
+  Parent probe "50 MHz / (300×30) ≈ 5555 cy/MB":
+    Uses board oscillator rate and 30 fps, not clk_sys and not the 25 fps
+    SoT. 4037 would "pass" 5555 — but 5555 is not the product decode budget.
+
+  Historical "100 MHz / 3418":
+    Explicitly retracted in decode-throughput.md (wrong clock domain).
+
+Stale aggregate in decode-throughput.md (259 cy/MB @624):
+  Pre-full-recon architecture; 98.7% was diagnostic paint. Do NOT use as
+  current cost. Current REAL_REF path is the 4037 / 1484 family above.
+
+========================================================================
+4. VERDICT vs BUDGETS (no de-serialisation recommended on oral ~2000)
+========================================================================
+
+                    |  cy/MB   | vs 320@20M/25 (2667) | vs 624@20M/25 (684)
+--------------------+----------+----------------------+---------------------
+frame0 paint_per_mb |   4037   | OVER ~1.51×          | OVER ~5.90×
+  (I+DPB+diag)      |          |                      |
+I_RECON only (est.) |   3397   | OVER ~1.27×          | OVER ~4.97×
+P parse_per_mb      |   1484   | PASS ~1.80× margin   | OVER ~2.17×
+  (P walk+MC+DPB)   |          |                      |
+P diag paint        |    256   | (present scan only)  | (present scan only)
+
+LOUD CLEAR STATEMENT:
+  - Oral "~2000" does NOT clear or condemn 4037 — it has no traced source.
+  - Parent 50 MHz / 30 fps arithmetic would falsely PASS 4037; product clk is 20 MHz.
+  - Against SoT 20 MHz / 25 fps budgets, throughput IS a real problem:
+      * 480p product target: P continuous ~2.2× over; IDR ~5× over.
+      * 240p: P passes with margin; IDR still ~1.3× over (GOP spike).
+  - Do NOT de-serialise the area wins (244 ALM headroom @788aa5f map) to
+    chase an oral budget. Any cycle work must target the RMW-dominated phases
+    with a pre-registered ALM cost, not blanket parallel IQ/I16.
+
+========================================================================
+5. CHEAPEST CYCLE RECOVERY (proposal only — not implemented)
+========================================================================
+
+Aim at the 3-cy RMW tax first (no new DSP; DSP hold 111/112).
+
+Ranked by cy saved / expected ALM risk:
+
+  A. Pipeline ST_MB_DUMP read (3-cy → 1 result/cy after fill)
+     Save ~512 cy/MB (768→256). ALM: near-zero FSM tweak.
+     Same pattern can apply to HAD_PAINT/APPLY issue/wait/capt.
+
+  B. Eliminate ST_HAD_PAINT RMW: keep DC in regs; add ((dc+32)>>6) at
+     ST_APPLY_PX and/or ST_MB_DUMP read path instead of rewriting plane_y.
+     Save ~768 cy/MB. ALM: small (adder on dump/apply path already has tsum).
+
+  C. Dual-buffer res_blk (accept next blk while APPLY runs)
+     Does NOT reduce sink wall time for a single blk; hides traverse/CAVLC
+     under APPLY when parse is the long pole. Helps P more than I16-all-AC.
+     ALM: one blk coeff file + handshake (~low hundreds comb — PRE-REG before map).
+
+  D. Do NOT re-parallelise serial IQ or serial I16 pred — undoes DSP/ALM wins.
+
+Combined A+B on I16-all-AC sink model: 3163 − 512 − 768 ≈ 1883 cy/MB sink
+  + ~233 traverse ≈ ~2116 still under 2667 (320 PASS) but still OVER 684 (480p).
+  480p needs deeper cuts (fewer RMW on AC path, DPB coalescing per
+  docs/p3-mc-dpb-bandwidth.md, or higher decode clock — clock change is
+  integrate/SoC, not this lane).
+
+========================================================================
+6. P-FRAME NOTE (continuous playback)
+========================================================================
+
+For P + use_real_ref, wr_reset fires only when leaving PH_DPB_FILL toward
+PH_PAINT (deblock_ref_ready_pulse path). So:
+  parse_cycles ≈ full P MB walk + MC/store + DPB_FILL
+  paint_cycles = diagnostic WxH only (256/MB)
+
+Product-relevant continuous cost ≈ parse_per_mb ≈ 1484 (includes ~385 DPB/MB).
+P-only compute rough: 1484 − 385 ≈ 1099 cy/MB if DPB stays in-window.
+
+========================================================================
+7. INTERACTION / SEQUENCING
+========================================================================
+
+- cf6842a freeze untouched.
+- Traverse phase-2 (tc_top/i4_mode_top M10K) already at 4f281e6; map when free.
+- Chroma: share serial IQ per docs/serial-iq-sink-contract.md; no second DQ farm.
+- Cycle recovery is optional follow-on; parent decides priority vs chroma merge map.
+
+========================================================================
+8. UNKNOWNS (named checks)
+========================================================================
+
+U1. Exact deblock_ref_ready wait cycles inside paint_cycles after last DPB MB
+    CHECK: log deblock_ref_ready_pulse latency or cnt in PH_DPB_FILL.
+U2. Exact ST_HAD_WAIT latency (model used ~5)
+    CHECK: wave/count had_start→had_done in sink TB.
+U3. Per-MB mix I16 vs I4 on clip1 frame0 (blk_applied=5020 → ~16.7/MB)
+    CHECK: histogram res_blk_is_i16 in traverse/sink.
+U4. Whether product present path needs PH_PAINT diagnostic 256 cy/MB
+    CHECK: product scanout source (DDR DPB vs stub paint).
+
+END

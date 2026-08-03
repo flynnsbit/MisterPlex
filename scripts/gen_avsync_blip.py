@@ -3,9 +3,16 @@
 
 product-class: 320x240 @ 24/30/60 (MiSTer DECODE path)
 trekmatch:     1080p24 ~8 Mbps (TNG Blu-ray-class source) + 320x240@24 weak twin
+soak480-ramp:  624x480 @ 24.000, 360 s, CENTERED linear luma ramp (sub-frame onset)
 
-Visual: white full-frame flash (~2 frames), frame counter, FLASH label, mouth bar.
-Audio: 1 kHz beep 50 ms at each integer second.
+Visual (step, default): white full-frame flash (~2 frames), frame counter, FLASH
+label, mouth bar. Counter is drawn on EVERY frame with no enable= guard.
+Visual (ramp): multi-frame linear luma ramp centered on each integer second so
+instrument thr (~50% contrast) coincides with the beep; TREK24 counter every frame.
+Audio: 1 kHz beep 50 ms at each integer second (ramp mode: 1 ms linear attack).
+
+Ramp design for 30 fps MJPEG capture (grabber max): 4 content frames @ 24 fps =
+166.667 ms = 5.000 capture samples; rise_frac/sample=0.20 < STEP_RISE_FRAC 0.70.
 """
 from __future__ import annotations
 
@@ -144,8 +151,14 @@ def main() -> int:
     ap.add_argument("--duration", type=float, default=30.0)
     ap.add_argument(
         "--only",
-        choices=("all", "product", "trekmatch", "24", "30", "60", "2397"),
+        choices=("all", "product", "trekmatch", "24", "30", "60", "2397", "soak480-ramp"),
         default="all",
+    )
+    ap.add_argument(
+        "--flash-style",
+        choices=("step", "ramp"),
+        default="step",
+        help="step=hard white flash (legacy); ramp=centered linear luma ramp",
     )
     args = ap.parse_args()
     d = args.duration
@@ -231,6 +244,39 @@ def main() -> int:
                 label="NTSC2397",
             )
         )
+    # Ramped 480p soak: DDR bank geometry 624x480 @ 24.000, sub-frame onset.
+    # Delegates to gen_avsync_ramp_soak (PIL pipe; same CB/no-B/AAC48k contract).
+    if args.only in ("soak480-ramp",):
+        import importlib.util
+
+        ramp_path = Path(__file__).resolve().parent / "gen_avsync_ramp_soak.py"
+        spec = importlib.util.spec_from_file_location("gen_avsync_ramp_soak", ramp_path)
+        assert spec and spec.loader
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        out = od / "sync_soak_480p24_ramp.mp4"
+        # soak480-ramp defaults to 360 s even if --duration is the product default 30
+        dur = d if d != 30.0 else 360.0
+        if args.duration != 30.0:
+            dur = args.duration
+        mod.gen_ramp_soak(
+            out,
+            duration_s=dur,
+            ramp_frames=4,
+            peak_frames=1,
+            vbitrate="1500k",
+            audio_bitrate="128k",
+            label="TREK24",
+        )
+        return 0
+
+    if args.flash_style == "ramp" and jobs:
+        raise SystemExit(
+            "flash-style=ramp for arbitrary geometries: use --only soak480-ramp "
+            "(624x480@24 centered ramp) or scripts/gen_avsync_ramp_soak.py"
+        )
+
     for j in jobs:
         gen_one(**j)
     return 0

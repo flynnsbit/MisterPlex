@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MediaContainer size="1" allowSync="1" directPlayDecisionCode="3000" directPlayDecisionText="App cannot direct play this item. Direct play is disabled." generalDecisionCode="1001" generalDecisionText="Direct play not available; Conversion OK." identifier="com.plexapp.plugins.library" librarySectionID="2" librarySectionTitle="MiSTerPlex Tests" librarySectionUUID="c97f403c-4a89-4620-a388-a7a88c9a6c1c" mediaTagPrefix="/system/bundle/media/flags/" mediaTagVersion="1783932891" resourceSession="w-geom-cmp-rk6" transcodeDecisionCode="1001" transcodeDecisionText="Direct play not available; Conversion OK.">
+<Video addedAt="1785436058" art="/library/metadata/6/art/1785656572" createdAtAccuracy="epoch" createdAtTZOffset="-18000" duration="30016" guid="tv.plex.agents.none://6" key="/library/metadata/6" librarySectionID="2" librarySectionKey="/library/sections/2" librarySectionTitle="MiSTerPlex Tests" ratingKey="6" subtype="clip" thumb="/library/metadata/6/thumb/1785656572" title="MiSTerPlex Test 480p (2026)" type="movie" updatedAt="1785656572">
+<Media id="6" videoProfile="constrained baseline" audioChannels="2" audioCodec="aac" bitrate="549" container="mkv" duration="30016" height="350" videoCodec="h264" videoFrameRate="24p" videoResolution="SD" width="624" selected="1">
+<Part deepAnalysisVersion="6" id="6" requiredBandwidths="232,232,232,232,232,232,232,232" videoProfile="constrained baseline" bitrate="549" container="mkv" duration="30016" height="350" width="624" decision="transcode" selected="1">
+<Stream bitDepth="8" bitrate="533" codec="h264" default="1" displayTitle="480p" extendedDisplayTitle="480p (H.264 Constrained Baseline)" frameRate="24" height="350" id="13" requiredBandwidths="218,218,218,218,218,218,218,218" streamType="1" width="624" decision="transcode" location="direct" />
+<Stream bitrate="16" bitrateMode="cbr" channels="2" codec="aac" default="1" displayTitle="Unknown (AAC Stereo)" extendedDisplayTitle="Unknown (AAC Stereo)" id="14" requiredBandwidths="15,15,15,15,15,15,15,15" samplingRate="48000" selected="1" streamType="2" decision="copy" location="direct" />
+</Part>
+</Media>
+<UltraBlurColors bottomLeft="af1315" bottomRight="b20501" topLeft="302f11" topRight="044304" />
+</Video>
+</MediaContainer>

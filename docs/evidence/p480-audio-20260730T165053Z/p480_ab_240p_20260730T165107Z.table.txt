@@ -1,0 +1,21 @@
+=== p480-ab human table ===
+SOURCE_SHA d91f26e2 tier=240p coded=320x240 bytes=115200
+clip offset_ms=0 settle_s=25.0 window_s=180.0
+CPU misterplexd_pct_onecpu=8.461 ffmpeg_pct_onecpu=13.764 HZ=100 dwall_s=181.191407
+CPU threads (tid name pct nvcsw nivcsw):
+  2185 misterplexd pct=5.651 nvcsw_d=90115 nivcsw_d=10612
+  2199 dec0:1:aac pct=2.103 nvcsw_d=8495 nivcsw_d=66
+  2187 misterplexd pct=1.816 nvcsw_d=17615 nivcsw_d=338
+  2208 mux0:rawvideo pct=1.518 nvcsw_d=8603 nivcsw_d=21
+  2191 av:h264:df0 pct=1.396 nvcsw_d=1849 nivcsw_d=446
+  2193 av:h264:df2 pct=1.341 nvcsw_d=2281 nivcsw_d=435
+  2192 av:h264:df1 pct=1.336 nvcsw_d=1693 nivcsw_d=1173
+  2196 vf#0:0 pct=1.291 nvcsw_d=4349 nivcsw_d=20
+  2198 dec0:0:h264 pct=0.734 nvcsw_d=5214 nivcsw_d=39
+  2197 af#1:0 pct=0.723 nvcsw_d=8497 nivcsw_d=7
+  2195 enc1:0:pcm_s16l pct=0.679 nvcsw_d=8506 nivcsw_d=10
+  2200 dmx0:mpegts pct=0.673 nvcsw_d=8829 nivcsw_d=5
+frames vfps_mean=23.72512077294686 pfps_mean=23.6975845410628 drops_delta=0 drift_mean=-30.381642512077295 drift_late-early=1.6172516803584784
+ddr_push_ms={'first': 4, 'last': 5, 'max': 6, 'mean': 4.0576923076923075, 'min': 4, 'n': 104} decode=320x240 content_fps=24/1
+present_profile ddr_copy_us_p=1285 ddr_total_us_p=4611 ddr_plxd_used_x100_p=0 frame_bytes=115200
+record=/home/flynnsbit/Projects/MisterPlex/build/p480-audio-soak/p480_ab_240p_20260730T165107Z.json

@@ -3,6 +3,8 @@
 // Lessons from mistercast-linux: prePlayHold, castBound, play-queue bind,
 // async playMedia ACK, viewOffset ms, resume-dialog hold after stop.
 
+#include "player_identity.hpp"
+
 #include <atomic>
 #include <cstdint>
 #include <functional>
@@ -57,8 +59,17 @@ public:
     void stop();
     bool running() const { return running_.load(); }
 
+    // Bind one GDM UDP listen socket (SO_REUSEADDR + SO_BROADCAST + CLOEXEC).
+    // Used by gdmLoop for every entry in kGdmListenPorts; unit tests call it
+    // to prove 32412 and 32414 both bind. Returns fd or -1 (err filled).
+    static int openGdmListenFd(uint16_t port, std::string* err = nullptr);
+
     // Update playback clock (ms) + state for timeline polls.
     void setState(const std::string& state, int64_t timeMs, int64_t durationMs);
+
+    // Converge a real terminal media-session transition (natural EOF / terminal
+    // source end after content) onto the same local idle state as explicit stop.
+    void endMediaSession(int64_t timeMs, int64_t durationMs);
 
     // Bind media identity for scrubber (call after resolve / on playMedia).
     // Returns false if session already stopped (late async playMedia after stop)
@@ -93,11 +104,14 @@ private:
     std::string timelineXml(const std::string& commandId) const;
     std::string lanIp() const;
     void log(const std::string& s) const;
+    void clearMediaLocked();
+    void setStateLocked(const std::string& state, int64_t timeMs, int64_t durationMs,
+                        bool terminalSession);
     static std::string xmlEsc(const std::string& s);
 
-    std::string name_ = "MiSTerPlex";
-    std::string machineId_ = "misterplex-1";
-    uint16_t port_ = 3005;
+    std::string name_ = kPlayerDefaultName;
+    std::string machineId_ = kPlayerDefaultMachineId;
+    uint16_t port_ = kPlayerDefaultPort;
     LogFn log_;
     PlayFn onPlay_;
     CtrlFn onPlayQueued_;

@@ -14,6 +14,10 @@
 #                 none (default) — copy only; leave running core alone (safest)
 #                 menu           — load Menu, wait, then load Plex (safer switch)
 #                 core           — load Plex only (use when already on Menu)
+#   DEPLOY_SKIP_COPY 0 | 1
+#                 1 — bounce/load only; never scp or replace the on-device RBF.
+#                 Used by scripts/mister_soft_bounce.sh so a claim signal cannot
+#                 flash a different bitstream. Requires DEPLOY_LOAD=menu|core.
 #   DEPLOY_WAIT_S settle after load_core (default 5)
 #   DEPLOY_RECOVER reboot | none  (default reboot)
 #                 What to do when Main is WEDGED (accepts /dev/MiSTer_cmd writes and
@@ -21,47 +25,94 @@
 #                 recovery is a soft reboot. MiSTer.ini is left untouched; after the
 #                 reboot the core is loaded normally and re-verified.
 #   DEPLOY_REBOOT_WAIT_S seconds to wait for the device to come back (default 150)
+#   DEPLOY_DECODE_PROMOTION 1 to mark this deploy as an FPGA-decode promotion.
+#                 Requires a recent PMS Baseline live-pass stamp from
+#                 scripts/run_pms_baseline_live_gate.sh, or an explicit
+#                 PMS_BASELINE_LIVE_SKIP_REASON documenting why the live gate
+#                 was consciously skipped.
 set -euo pipefail
 
 HOST="${MISTER_HOST:-192.168.1.183}"
 USER="${MISTER_USER:-root}"
 PASS="${MISTER_PASS:-1}"
 DEPLOY_LOAD="${DEPLOY_LOAD:-none}"
+DEPLOY_SKIP_COPY="${DEPLOY_SKIP_COPY:-0}"
 DEPLOY_WAIT_S="${DEPLOY_WAIT_S:-5}"
 DEPLOY_RECOVER="${DEPLOY_RECOVER:-reboot}"
 DEPLOY_REBOOT_WAIT_S="${DEPLOY_REBOOT_WAIT_S:-150}"
+DEPLOY_DECODE_PROMOTION="${DEPLOY_DECODE_PROMOTION:-0}"
+PMS_BASELINE_LIVE_STAMP="${PMS_BASELINE_LIVE_STAMP:-}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
-RBF="${1:-}"
-if [[ -z "$RBF" ]]; then
-  for c in \
-    "$ROOT/fpga/Plex_MiSTer/output_files/Plex.rbf" \
-    "$ROOT/fpga/Plex_MiSTer/releases/Plex.rbf" \
-    "${MISTER_DEV:-$HOME/Projects/misterfpga-dev}/out/Plex_MiSTer/Plex.rbf"
-  do
-    [[ -f "$c" ]] && RBF=$c && break
-  done
-fi
-if [[ -z "${RBF:-}" || ! -f "$RBF" ]]; then
-  echo "No Plex.rbf found. Build first: ./scripts/build_rbf.sh" >&2
-  exit 1
+if [[ "$DEPLOY_DECODE_PROMOTION" == "1" ]]; then
+  PMS_BASELINE_LIVE_STAMP="${PMS_BASELINE_LIVE_STAMP:-$ROOT/build/pms-baseline-live-gate/PASS.stamp}"
+  if [[ -s "$PMS_BASELINE_LIVE_STAMP" ]]; then
+    echo "Decode promotion PMS Baseline gate: PASS stamp=$PMS_BASELINE_LIVE_STAMP"
+    sed -n '1,4p' "$PMS_BASELINE_LIVE_STAMP"
+  elif [[ -n "${PMS_BASELINE_LIVE_SKIP_REASON:-}" ]]; then
+    echo "Decode promotion PMS Baseline gate: SKIPPED consciously: $PMS_BASELINE_LIVE_SKIP_REASON" >&2
+  else
+    cat >&2 <<EOF
+REFUSED: DEPLOY_DECODE_PROMOTION=1 requires live PMS Baseline evidence.
+
+Run:
+  PLEX_BASE=http://plex:32400 MISTERPLEX_BASELINE_KEY=/library/metadata/N make pms-baseline-live
+
+or set PMS_BASELINE_LIVE_SKIP_REASON with the explicit reason this decode
+promotion is proceeding without live PMS Baseline/CAVLC/ref=1/no-B evidence.
+EOF
+    exit 4
+  fi
 fi
 
 SSH=(sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=12 -o ServerAliveInterval=3 "$USER@$HOST")
 SCP=(sshpass -p "$PASS" scp -o StrictHostKeyChecking=no -o ConnectTimeout=12)
 
-LOCAL_MD5=$(md5sum "$RBF" | awk '{print $1}')
-echo "Deploy $RBF (md5=$LOCAL_MD5)"
-echo "  host=$USER@$HOST  load=$DEPLOY_LOAD"
+LOCAL_MD5=""
+RBF="${1:-}"
+if [[ "$DEPLOY_SKIP_COPY" == "1" ]]; then
+  case "$DEPLOY_LOAD" in
+    menu|bounce|core|plex|1) ;;
+    *)
+      echo "DEPLOY_SKIP_COPY=1 requires DEPLOY_LOAD=menu|core (got '$DEPLOY_LOAD')" >&2
+      exit 2
+      ;;
+  esac
+  # Bounce/load only: never resolve or scp a local RBF (claim soft-bounce path).
+  REMOTE_MD5=$("${SSH[@]}" 'md5sum /media/fat/_Utility/Plex.rbf 2>/dev/null' | awk '{print $1}' || true)
+  echo "Deploy SKIP_COPY=1 (on-device md5=${REMOTE_MD5:-unknown}) — will not flash RBF"
+  echo "  host=$USER@$HOST  load=$DEPLOY_LOAD"
+else
+  if [[ -z "$RBF" ]]; then
+    for c in \
+      "$ROOT/fpga/Plex_MiSTer/output_files/Plex.rbf" \
+      "$ROOT/fpga/Plex_MiSTer/releases/Plex.rbf" \
+      "${MISTER_DEV:-$HOME/Projects/misterfpga-dev}/out/Plex_MiSTer/Plex.rbf"
+    do
+      [[ -f "$c" ]] && RBF=$c && break
+    done
+  fi
+  if [[ -z "${RBF:-}" || ! -f "$RBF" ]]; then
+    echo "No Plex.rbf found. Build first: ./scripts/build_rbf.sh" >&2
+    exit 1
+  fi
+  LOCAL_MD5=$(md5sum "$RBF" | awk '{print $1}')
+  echo "Deploy $RBF (md5=$LOCAL_MD5)"
+  echo "  host=$USER@$HOST  load=$DEPLOY_LOAD"
+fi
 
 # --- remote prep: release SPI, soft-stop companion (never -9 first) ---
-"${SSH[@]}" 'bash -s' <<'REMOTE'
+# Claim soft-bounce (DEPLOY_SKIP_COPY=1) never escalates to kill -9.
+ALLOW_KILL9=1
+[[ "$DEPLOY_SKIP_COPY" == "1" ]] && ALLOW_KILL9=0
+"${SSH[@]}" "bash -s" <<REMOTE
 set +e
+ALLOW_KILL9=$ALLOW_KILL9
 # Drop any SPI flock holders gently
 if [ -f /tmp/misterplex_spi.lock ]; then
   # processes blocking on flock — TERM only
-  for p in $(ps | grep -E '[s]et_status|[p]ush_frame' | awk '{print $1}'); do
-    kill "$p" 2>/dev/null
+  for p in \$(ps | grep -E '[s]et_status|[p]ush_frame' | awk '{print \$1}'); do
+    kill "\$p" 2>/dev/null
   done
   sleep 0.3
   rm -f /tmp/misterplex_spi.lock
@@ -73,8 +124,8 @@ if ps | grep -v grep | grep -q '[m]isterplexd'; then
     ps | grep -v grep | grep -q '[m]isterplexd' || break
     sleep 0.25
   done
-  # only if still up
-  if ps | grep -v grep | grep -q '[m]isterplexd'; then
+  # only if still up — never -9 on claim soft-bounce path
+  if [ "\$ALLOW_KILL9" = "1" ] && ps | grep -v grep | grep -q '[m]isterplexd'; then
     killall -9 misterplexd 2>/dev/null
   fi
 fi
@@ -84,20 +135,37 @@ killall -CONT MiSTer_groovy 2>/dev/null
 sync
 REMOTE
 
-REMOTE_MD5=$("${SSH[@]}" 'md5sum /media/fat/_Utility/Plex.rbf 2>/dev/null' | awk '{print $1}' || true)
-if [[ -n "${REMOTE_MD5:-}" && "$REMOTE_MD5" == "$LOCAL_MD5" ]]; then
-  echo "Remote already has md5=$REMOTE_MD5 — skip scp"
+if [[ "$DEPLOY_SKIP_COPY" == "1" ]]; then
+  echo "DEPLOY_SKIP_COPY=1 — leaving on-device /media/fat/_Utility/Plex.rbf untouched"
 else
-  # Stage then atomic replace (never scp onto the open/running name mid-read)
-  STAGED="/media/fat/_Utility/Plex.new.$$.rbf"
-  FINAL="/media/fat/_Utility/Plex.rbf"
-  echo "SCP → $STAGED"
-  "${SCP[@]}" "$RBF" "$USER@$HOST:$STAGED"
-  "${SSH[@]}" "bash -s" <<REMOTE
+  REMOTE_MD5=$("${SSH[@]}" 'md5sum /media/fat/_Utility/Plex.rbf 2>/dev/null' | awk '{print $1}' || true)
+  if [[ -n "${REMOTE_MD5:-}" && -n "${LOCAL_MD5:-}" && "$REMOTE_MD5" == "$LOCAL_MD5" ]]; then
+    echo "Remote already has md5=$REMOTE_MD5 — skip scp"
+  else
+    # Stage then atomic replace (never scp onto the open/running name mid-read)
+    STAGED="/media/fat/_Utility/Plex.new.$$.rbf"
+    FINAL="/media/fat/_Utility/Plex.rbf"
+    echo "SCP → $STAGED"
+    "${SCP[@]}" "$RBF" "$USER@$HOST:$STAGED"
+    "${SSH[@]}" "bash -s" <<REMOTE
 set -e
 sync
-# Prefer rename over in-place overwrite of a core that may still be mapped
+# Prefer rename over in-place overwrite of a core that may still be mapped.
+# ".bak" is single-generation and is clobbered by the NEXT deploy, so archive the
+# outgoing core content-addressed as well. Two deploys used to destroy the original
+# (see 3304c50 / destroyed 00eebd5e). Ported forward after HEAD lost the ancestry.
 if [ -f "$FINAL" ]; then
+  OUT_MD5=\$(md5sum "$FINAL" 2>/dev/null | awk '{print \$1}')
+  if [ -n "\$OUT_MD5" ]; then
+    ARCHIVE="/media/fat/_Utility/Plex.\${OUT_MD5:0:8}.bak.rbf"
+    if [ ! -f "\$ARCHIVE" ]; then
+      cp -f "$FINAL" "\$ARCHIVE" 2>/dev/null && echo "ARCHIVED \$ARCHIVE" || echo "ARCHIVE_WARN could not archive \$OUT_MD5" >&2
+    else
+      echo "ARCHIVE_SKIP \$ARCHIVE already present"
+    fi
+  else
+    echo "ARCHIVE_WARN could not md5 outgoing $FINAL" >&2
+  fi
   mv -f "$FINAL" "${FINAL}.bak" 2>/dev/null || true
 fi
 mv -f "$STAGED" "$FINAL"
@@ -105,6 +173,7 @@ chmod 755 "$FINAL"
 sync
 md5sum "$FINAL"
 REMOTE
+  fi
 fi
 
 # A wedged Main accepts /dev/MiSTer_cmd writes and drops them, so no core can be loaded
@@ -202,12 +271,15 @@ exit 4
 REMOTE
     rc=$?
     set -e
-    if [ "$rc" = "3" ]; then
+    # rc=3: MENU never appeared (Main wedged). rc=4: MENU ok but Plex never —
+    # both leave the FPGA off Plex; soft-reboot recovery is the supported path.
+    if [ "$rc" = "3" ] || [ "$rc" = "4" ]; then
       if [ "$DEPLOY_RECOVER" = "reboot" ]; then
+        echo "DEPLOY_RECOVER=reboot after menu-bounce rc=$rc" >&2
         recover_by_reboot
       else
-        echo "DEPLOY_FAIL: Main wedged; DEPLOY_RECOVER=$DEPLOY_RECOVER so no recovery attempted." >&2
-        exit 3
+        echo "DEPLOY_FAIL: menu-bounce rc=$rc; DEPLOY_RECOVER=$DEPLOY_RECOVER so no recovery attempted." >&2
+        exit "$rc"
       fi
     elif [ "$rc" != "0" ]; then
       exit "$rc"
@@ -234,3 +306,21 @@ REMOTE
 esac
 
 echo "Done."
+
+# Triple check: resident core geometry vs daemon-adopted decode=WxH.
+# Read-only. Soft-skip (77) when daemon log/core map unavailable — never treat as PASS.
+# Mismatch (1) fails the deploy so a 480p conf cannot ride out with a 320x240 core.
+if [[ "${DEPLOY_SKIP_GEOMETRY_GATE:-0}" != "1" ]]; then
+  set +e
+  "$ROOT/scripts/check_core_conf_geometry.sh"
+  geo_rc=$?
+  set -e
+  case "$geo_rc" in
+    0) echo "core_conf_geometry: PASS" ;;
+    77) echo "core_conf_geometry: SKIP-NOT-PASS (rc=77) — not scored as deploy success evidence" >&2 ;;
+    *)
+      echo "core_conf_geometry: FAIL rc=$geo_rc — core/conf geometry inconsistent" >&2
+      exit "$geo_rc"
+      ;;
+  esac
+fi

@@ -16,7 +16,8 @@ SKIP
     echo "A skipped RTL gate is NOT a pass. Set ALLOW_MISSING_VERILATOR=1 only if you accept that RTL was never verified." >&2
     exit 3
   fi
-  exit 0
+  echo "SKIP-NOT-PASS: Verilator missing; soft-skip≠PASS" >&2
+  exit 77
 elif [[ "$VERILATOR_RC" -ne 0 ]]; then
   echo "RTL SIM ERROR: Verilator probe failed:" >&2
   printf '%s\n' "$VERILATOR_VERSION" >&2
@@ -43,12 +44,21 @@ fi
 
 mkdir -p "$BUILD" "$BUILD_FAULT"
 echo "RTL SIM: using $VERILATOR_VERSION" >&2
+# shellcheck source=tests/unit/lib_rtl_sim_gate.sh
+source "$ROOT/tests/unit/lib_rtl_sim_gate.sh"
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD" \
   --top-module h264_p_slice_modes_tb_top -Wno-fatal \
   -CFLAGS "-std=c++17 -O2" \
   "$TOP" "$RTL" "$TB"
-"$BUILD/Vh264_p_slice_modes_tb_top"
+set +e
+PSLICE_OUT="$("$BUILD/Vh264_p_slice_modes_tb_top" 2>&1)"
+PSLICE_RC=$?
+set -e
+printf '%s\n' "$PSLICE_OUT"
+echo "p_slice_modes_sim true rc=$PSLICE_RC"
+[[ "$PSLICE_RC" -eq 0 ]] || exit "$PSLICE_RC"
+assert_sim_executed "h264_p_slice_modes" "$PSLICE_OUT" "PASS"
 
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD_FAULT" \

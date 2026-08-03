@@ -57,3 +57,14 @@ cp assets/avsync/sync_trekmatch_*.mp4 /path/to/movies/misterplex-avsync/
 # MiSTer local
 scp assets/avsync/*.mp4 root@192.168.1.183:/media/fat/misterplex/avsync/
 ```
+
+## HDMI measure tool
+
+`tools/avsync_measure_hdmi.py` — parent runs this on the capture host while the
+MiSTer plays a blip fixture. See `docs/MILESTONE_AVSYNC_SEEK.md` § "HDMI grabber
+A/V offset instrument" for sign convention, calibration, and return codes.
+
+```bash
+tools/avsync_measure_hdmi.py --duration 30 --out /tmp/avsync_hdmi
+tests/unit/test_avsync_measure_hdmi.sh   # synthetic RED/GREEN, no device
+```

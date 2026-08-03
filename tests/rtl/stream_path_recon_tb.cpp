@@ -102,7 +102,9 @@ int main(int argc, char** argv) {
         };
 
         auto waitForFrame = [&](int pass, uint16_t previous_frames) -> bool {
-            for (int i = 0; i < 300000; ++i) {
+            // Product path walks full-frame recon→deblock→DPB before paint.
+            // Measured IDR on 320x240 is ~416k cycles; keep 2x headroom.
+            for (int i = 0; i < 900000; ++i) {
                 tick(dut, cyc);
                 observe();
                 if (dut.stub_frames != previous_frames) {

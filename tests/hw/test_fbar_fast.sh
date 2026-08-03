@@ -19,12 +19,40 @@ HOST="${MISTER_HOST:-192.168.1.183}"
 PASS="${MISTER_PASS:-1}"
 OUT="${MENU_CAPTURE_DIR:-$(cd "$(dirname "$0")/../.." && pwd)/captures/menu}"
 DEV="${HDMI_DEV:-/dev/video4}"
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+source "$ROOT/tests/hw/hw_gate_common.sh"
+if [[ "${FBAR_ALLOW_OBSOLETE:-0}" != "1" ]]; then
+  hw_skip_not_pass "test_fbar_fast" \
+    "obsolete v2 debug-menu card; set FBAR_ALLOW_OBSOLETE=1 only for pre-v3 RBF archaeology"
+fi
 mkdir -p "$OUT"
 SSH=(sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=6 "root@$HOST")
 ssh_q() { "${SSH[@]}" "$@" 2>/dev/null | grep -v 'WARNING\|post-quantum\|vulnerable\|store now' || true; }
+CLEANUP_ARMED=0
+cleanup() {
+  [[ "$CLEANUP_ARMED" == "1" ]] || return 0
+  ssh_q '/media/fat/misterplex/bin/set_status --pattern bars --force-bars 1 --tv ntsc --fps 60' >/dev/null || true
+}
+trap cleanup EXIT
+
+capture_preflight() {
+  if ! command -v ffmpeg >/dev/null 2>&1; then
+    echo "NO_CAPTURE_DEVICE dev=$DEV reason=missing_ffmpeg" >&2
+    exit 20
+  fi
+  if [[ ! -e "$DEV" ]]; then
+    echo "NO_CAPTURE_DEVICE dev=$DEV reason=absent" >&2
+    exit 20
+  fi
+  if [[ ! -c "$DEV" ]]; then
+    echo "NO_CAPTURE_DEVICE dev=$DEV reason=not_char_device" >&2
+    exit 20
+  fi
+}
 
 snap() {
   local name=$1
+  rm -f "$OUT/${name}_"*.jpg "$OUT/${name}.jpg" 2>/dev/null || true
   fuser -k "$DEV" 2>/dev/null || true
   sleep 0.15
   ffmpeg -y -hide_banner -loglevel error \
@@ -33,7 +61,10 @@ snap() {
   # pick last frame
   local f
   f=$(ls -1 "$OUT/${name}_"*.jpg 2>/dev/null | tail -1)
-  [[ -n "$f" ]] || { echo "no capture $name"; return 1; }
+  if [[ -z "$f" ]]; then
+    echo "CAPTURE_FAILED name=$name dev=$DEV reason=no_frame" >&2
+    return 20
+  fi
   cp -f "$f" "$OUT/${name}.jpg"
   python3 - "$f" <<'PY'
 import sys
@@ -45,29 +76,58 @@ print(f"{m:.1f}")
 PY
 }
 
+capture_mean() {
+  local name=$1
+  local mean
+  set +e
+  mean=$(snap "$name")
+  local rc=$?
+  set -e
+  if [[ "$rc" -ne 0 ]]; then
+    echo "FBAR_CAPTURE_FAILED step=$name exit=$rc" >&2
+    exit 20
+  fi
+  printf '%s\n' "$mean"
+}
+
 echo "=== fast FBAR $(date -Iseconds) ==="
+capture_preflight
+CLEANUP_ARMED=1
 ssh_q '/media/fat/misterplex/bin/set_status --tv ntsc --fps 60 --audio on --pattern grid --force-bars 0'
 sleep 0.2
-m0=$(snap fbar_fast_grid_off || echo 0)
+m0=$(capture_mean fbar_fast_grid_off)
 ssh_q '/media/fat/misterplex/bin/set_status --raw' | head -2
 
 ssh_q '/media/fat/misterplex/bin/set_status --pattern grid --force-bars 1'
 sleep 0.2
-m1=$(snap fbar_fast_grid_on || echo 0)
+m1=$(capture_mean fbar_fast_grid_on)
 ssh_q '/media/fat/misterplex/bin/set_status --raw' | head -2
 
 # Leave stable bars (don't leave test pattern up)
 ssh_q '/media/fat/misterplex/bin/set_status --pattern bars --force-bars 1 --tv ntsc --fps 60'
 sleep 0.15
-m2=$(snap fbar_fast_bars || echo 0)
+m2=$(capture_mean fbar_fast_bars)
 
 echo "grid_off mean=$m0  grid_on(force) mean=$m1  bars mean=$m2"
-# After eff_pattern fix, force-on with grid should look like bars (closer to m2 than m0)
+# Force-on with grid must be non-black, distinguishable from grid_off, and
+# closer to bars than to grid_off. Non-black alone is vacuous.
 python3 - <<PY
 m0,m1,m2=float("$m0" or 0),float("$m1" or 0),float("$m2" or 0)
-print(f"delta force_vs_bars={abs(m1-m2):.1f} force_vs_grid_off={abs(m1-m0):.1f}")
-# Soft pass: all non-black; hard visual needs RBF with eff_pattern
-ok = m1 >= 15 and m2 >= 15
-raise SystemExit(0 if ok else 1)
+d_bars=abs(m1-m2)
+d_off=abs(m1-m0)
+print(f"delta force_vs_bars={d_bars:.1f} force_vs_grid_off={d_off:.1f}")
+if m1 < 15 or m2 < 15:
+    print("FAIL: force/bars mean too dark (black capture)")
+    raise SystemExit(1)
+if d_off < 3.0 and d_bars < 3.0:
+    print("FAIL: grid_off/force/bars indistinguishable — cannot score force-bars")
+    raise SystemExit(1)
+if d_off < 3.0:
+    print("FAIL: force-bars did not change frame vs grid_off")
+    raise SystemExit(1)
+if d_bars > d_off:
+    print("FAIL: force closer to grid_off than to bars")
+    raise SystemExit(1)
+raise SystemExit(0)
 PY
 echo "FBAR_FAST done (left on bars)"

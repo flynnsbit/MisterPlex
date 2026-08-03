@@ -15,6 +15,9 @@ void require(bool ok, const char* msg) {
 } // namespace
 
 int main() {
+    require(kSummaryMagic == 0x504C584Du, "PLXM summary magic drifted");
+    require(kDiagVersion == 1, "PLXM diag version drifted");
+
     const std::uint64_t summary_raw =
         (std::uint64_t{0xffff} << 48) |
         (std::uint64_t{5} << 44) |

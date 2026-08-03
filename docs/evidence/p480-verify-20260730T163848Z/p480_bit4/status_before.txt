@@ -1,0 +1,1 @@
+status has_frame=1 has_audio=0 has_stream=0 underrun=0 has_idr=0 sps_valid=0 pps_valid=0 nalu=0 last_nal=0x00 sps=0x0 bytes_in=0

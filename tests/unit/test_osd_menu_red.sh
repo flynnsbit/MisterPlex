@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+BUILD="$ROOT/build/osd-menu-red"
+mkdir -p "$BUILD"
+
+CXX_BIN="${CXX:-g++}"
+if [[ -n "${CXXFLAGS:-}" ]]; then
+  # shellcheck disable=SC2206 # Match the Makefile convention: CXXFLAGS is a word list.
+  CXX_FLAGS=(${CXXFLAGS})
+else
+  CXX_FLAGS=(-std=c++17 -O2 -Wall -Wextra -I"$ROOT/host")
+fi
+"$CXX_BIN" "${CXX_FLAGS[@]}" -I"$ROOT/host" -DOSD_MENU_FAULT_SKIP_INITIAL_IDLE \
+  -o "$BUILD/test_osd_menu_fault" "$ROOT/tests/unit/test_osd_menu.cpp"
+
+set +e
+OUT="$("$BUILD/test_osd_menu_fault" 2>&1)"
+RC=$?
+set -e
+printf '%s\n' "$OUT"
+if [[ "$RC" -eq 0 ]]; then
+  echo "FAIL: OSD idle skip-initial fault unexpectedly passed" >&2
+  exit 1
+fi
+grep -q "shouldApplyOsdIdle(false, 0x0000, 0x4000)" <<<"$OUT" || {
+  echo "FAIL: OSD idle red-check did not hit first-word apply guard" >&2
+  exit 1
+}
+echo "RED OK: skip-initial-idle mutant fails first-word persisted apply"
+
+rm -f "$BUILD/test_osd_menu_fallback_bitrate_fault"
+"$CXX_BIN" "${CXX_FLAGS[@]}" -I"$ROOT/host" -DOSD_MENU_FAULT_FALLBACK_624_BITRATE \
+  -o "$BUILD/test_osd_menu_fallback_bitrate_fault" "$ROOT/tests/unit/test_osd_menu.cpp"
+test -x "$BUILD/test_osd_menu_fallback_bitrate_fault" || {
+  echo "FAIL: OSD 480p fallback bitrate mutant did not compile" >&2
+  exit 1
+}
+echo "MUTANT_COMPILED: OSD 480p fallback bitrate"
+
+set +e
+OUT="$("$BUILD/test_osd_menu_fallback_bitrate_fault" 2>&1)"
+RC=$?
+set -e
+printf '%s\n' "$OUT"
+if [[ "$RC" -eq 0 ]]; then
+  echo "FAIL: OSD 480p fallback bitrate fault unexpectedly passed" >&2
+  exit 1
+fi
+grep -q "weakBitrateKbpsForCodedSize(kPlex480pCodedWidth, kPlex480pCodedHeight)" <<<"$OUT" || {
+  echo "FAIL: OSD 480p fallback bitrate red-check did not hit bitrate equality guard" >&2
+  exit 1
+}
+echo "RED OK: OSD and fallback 480p coded geometry share one bitrate"

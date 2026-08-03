@@ -6,7 +6,8 @@
 //           The measured 480p contract is coded 624x480/display 618x480/
 //           presented 640x480; see ddr_frame_layout_params.svh and the host
 //           ddr_frame_layout.hpp guard for its RGB/YUV strides and doorbells.
-//   Doorbell: 0x3007F000  (one 64-bit word — product hot path, no SPI kick)
+//   Doorbell: phys_base + alignUp(frame_bytes, 0x40000)*2 - 0x1000
+//             (one 64-bit word — product hot path, no SPI kick)
 //     [31:0]  magic 0x504C584B ("PLXK")
 //     [62:32] seq   (monotonic)
 //     [63]    bank  (0/1)
@@ -53,7 +54,7 @@
 //
 // Start paths:
 //   A) SPI: rising status[12] + status[13] bank
-//   B) Doorbell: idle poll of 0x3007F000; new seq → start
+//   B) Doorbell: idle poll of DOORBELL_PHYS; new seq → start
 //
 // swap_req is a request only; frame_store flips display bank on vsync.
 //
@@ -65,12 +66,13 @@ module ddram_frame_rd #(
 	parameter int WIDTH      = 320,
 	parameter int HEIGHT     = 240,
 	parameter [31:0] PHYS_BASE = 32'h3000_0000,
-	parameter [31:0] DOORBELL_PHYS = 32'h3007_F000,
-	parameter [31:0] MAILBOX_PHYS  = 32'h3007_F100,
-	parameter [31:0] INPUT_MAILBOX_PHYS = 32'h3007_F108,
-	parameter [31:0] MEMTEST_MAILBOX_PHYS = 32'h3007_F110,
-	parameter [31:0] UNDERRUN_MAILBOX_PHYS = 32'h3007_F118,
-	parameter [31:0] MEMTEST_DIAG_MAILBOX_PHYS = 32'h3007_F120,
+	parameter int HPS_BANK_STRIDE_BYTES = 262144,
+	parameter [31:0] DOORBELL_PHYS = PHYS_BASE + (2 * HPS_BANK_STRIDE_BYTES) - 32'h1000,
+	parameter [31:0] MAILBOX_PHYS  = DOORBELL_PHYS + 32'h100,
+	parameter [31:0] INPUT_MAILBOX_PHYS = DOORBELL_PHYS + 32'h108,
+	parameter [31:0] MEMTEST_MAILBOX_PHYS = DOORBELL_PHYS + 32'h110,
+	parameter [31:0] UNDERRUN_MAILBOX_PHYS = DOORBELL_PHYS + 32'h118,
+	parameter [31:0] MEMTEST_DIAG_MAILBOX_PHYS = DOORBELL_PHYS + 32'h120,
 	parameter int BURST      = 16
 )(
 	input  wire        clk,
@@ -123,7 +125,8 @@ module ddram_frame_rd #(
 	localparam int PIXELS = WIDTH * HEIGHT;
 	localparam int QWORDS = PIXELS / 4;
 	localparam [28:0] BASE_W0 = PHYS_BASE[31:3];
-	localparam [28:0] BASE_W1 = PHYS_BASE[31:3] + 29'h8000;
+	localparam [28:0] HPS_BANK_STRIDE_QWORDS = 29'(HPS_BANK_STRIDE_BYTES / 8);
+	localparam [28:0] BASE_W1 = PHYS_BASE[31:3] + HPS_BANK_STRIDE_QWORDS;
 	localparam [28:0] DOORBELL_W = DOORBELL_PHYS[31:3];
 	localparam [28:0] MAILBOX_W  = MAILBOX_PHYS[31:3];
 	localparam [28:0] INPUT_MAILBOX_W = INPUT_MAILBOX_PHYS[31:3];

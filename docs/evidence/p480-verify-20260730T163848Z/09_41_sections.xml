@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MediaContainer size="2" allowSync="0" title1="Plex Library">
+<Directory allowSync="1" filters="1" refreshing="0" key="1" type="movie" title="Movies" agent="tv.plex.agents.movie" scanner="Plex Movie" language="en-US" metadataAgentProviderGroupId="1" uuid="7c4bef9b-1712-41a4-a8df-0776c4bfc0ef" updatedAt="1784674351" createdAt="1784674351" scannedAt="1785024570" content="1" directory="1" contentChangedAt="40687" hidden="0">
+<Location id="1" path="/movies" />
+</Directory>
+<Directory allowSync="1" filters="1" refreshing="0" key="2" type="show" title="TV Shows" agent="tv.plex.agents.series" scanner="Plex TV Series" language="en-US" metadataAgentProviderGroupId="2" uuid="633e2afa-5746-40c4-9de5-50b26a059ef3" updatedAt="1784674633" createdAt="1784674633" scannedAt="1784674634" content="1" directory="1" contentChangedAt="2289" hidden="0">
+<Location id="2" path="/movies" />
+</Directory>
+</MediaContainer>

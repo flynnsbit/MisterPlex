@@ -77,11 +77,27 @@ public:
         shownAtMs_ = nowMs;
     }
 
+    // Short centered banner (idle / F12-inert notice). ASCII, max 31 chars.
+    // Visible longer than skip flash so a user glancing at HDMI can read it.
+    static constexpr int64_t kNoticeVisibleMs = 8000;
+
+    void flashNotice(const char* text) { flashNoticeAt(text, monotonicMs()); }
+
+    void flashNoticeAt(const char* text, int64_t nowMs) {
+        std::lock_guard<std::mutex> lock(mu_);
+        noticeText_[0] = '\0';
+        if (text && text[0]) {
+            std::snprintf(noticeText_, sizeof(noticeText_), "%s", text);
+            noticeText_[sizeof(noticeText_) - 1] = '\0';
+        }
+        noticeAtMs_ = nowMs;
+    }
+
     bool visible() const { return visibleAt(monotonicMs()); }
 
     bool visibleAt(int64_t nowMs) const {
         Snapshot s = snapshot();
-        return alphaFor(s, nowMs) > 0 || skipAlphaFor(s, nowMs) > 0;
+        return alphaFor(s, nowMs) > 0 || skipAlphaFor(s, nowMs) > 0 || noticeAlphaFor(s, nowMs) > 0;
     }
 
     OverlayRect dirtyBounds(int w, int h) const { return dirtyBoundsAt(w, h, monotonicMs()); }
@@ -153,6 +169,8 @@ private:
         int64_t shownAtMs = -kVisibleMs;
         int64_t skipAtMs = -kSkipVisibleMs;
         int64_t skipDeltaMs = 0;
+        int64_t noticeAtMs = -kNoticeVisibleMs;
+        char noticeText[32]{};
     };
 
     struct Rgb24Target {
@@ -226,7 +244,10 @@ private:
 
     Snapshot snapshot() const {
         std::lock_guard<std::mutex> lock(mu_);
-        return Snapshot{state_, positionMs_, durationMs_, shownAtMs_, skipAtMs_, skipDeltaMs_};
+        Snapshot s{state_, positionMs_, durationMs_, shownAtMs_, skipAtMs_, skipDeltaMs_,
+                   noticeAtMs_, {}};
+        std::memcpy(s.noticeText, noticeText_, sizeof(s.noticeText));
+        return s;
     }
 
     static int alphaFor(const Snapshot& s, int64_t nowMs) {
@@ -247,6 +268,17 @@ private:
         return std::max<int>(1, static_cast<int>(((kSkipVisibleMs - age) * 255) / 300));
     }
 
+    static int noticeAlphaFor(const Snapshot& s, int64_t nowMs) {
+        if (s.noticeText[0] == '\0')
+            return 0;
+        const int64_t age = nowMs - s.noticeAtMs;
+        if (age < 0 || age >= kNoticeVisibleMs)
+            return 0;
+        if (age <= kNoticeVisibleMs - kFadeMs)
+            return 255;
+        return std::max<int>(1, static_cast<int>(((kNoticeVisibleMs - age) * 255) / kFadeMs));
+    }
+
     static OverlayRect panelBounds(int w, int h) {
         const int margin = std::max(8, w / 32);
         const int ph = std::min(72, std::max(54, h / 4));
@@ -264,6 +296,13 @@ private:
             const int sh = 28;
             OverlayRect skip{(w - sw) / 2, std::max(8, h / 2 - 30), sw, sh};
             out = unionRect(out, skip);
+        }
+        if (noticeAlphaFor(s, nowMs) > 0) {
+            const int tw = textWidth(s.noticeText, 2);
+            const int boxW = std::min(w - 16, std::max(76, tw + 24));
+            const int sh = 28;
+            OverlayRect notice{(w - boxW) / 2, std::max(8, h / 5), boxW, sh};
+            out = unionRect(out, notice);
         }
         return out;
     }
@@ -494,6 +533,17 @@ private:
             strokeRect(t, boxX, boxY, boxW, 28, amber, skipAlpha);
             drawText(t, boxX + (boxW - tw) / 2, boxY + 7, text, 2, white, skipAlpha);
         }
+
+        const int noticeAlpha = noticeAlphaFor(s, nowMs);
+        if (noticeAlpha > 0 && s.noticeText[0] != '\0') {
+            const int tw = textWidth(s.noticeText, 2);
+            const int boxW = std::min(w - 16, std::max(76, tw + 24));
+            const int boxX = (w - boxW) / 2;
+            const int boxY = std::max(8, h / 5);
+            fillRect(t, boxX, boxY, boxW, 28, black, (200 * noticeAlpha) / 255);
+            strokeRect(t, boxX, boxY, boxW, 28, amber, noticeAlpha);
+            drawText(t, boxX + (boxW - tw) / 2, boxY + 7, s.noticeText, 2, white, noticeAlpha);
+        }
     }
 
     mutable std::mutex mu_;
@@ -503,6 +553,8 @@ private:
     int64_t shownAtMs_ = -kVisibleMs;
     int64_t skipAtMs_ = -kSkipVisibleMs;
     int64_t skipDeltaMs_ = 0;
+    int64_t noticeAtMs_ = -kNoticeVisibleMs;
+    char noticeText_[32]{};
 };
 
 } // namespace misterplex

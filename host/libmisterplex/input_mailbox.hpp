@@ -13,7 +13,8 @@
 
 namespace misterplex {
 
-// Re-export from the single-source-of-truth spec.
+// Re-export magics + *legacy example* absolute addrs from the spec.
+// Runtime consumers: prefer k*Offset + frameStoreMailboxPhys(doorbell).
 constexpr uint32_t kDdrStatusMailboxPhys   = mailbox_abi::kPlxsAddr;
 constexpr uint32_t kDdrStatusMailboxMagic  = mailbox_abi::kPlxsMagic;
 constexpr uint32_t kInputMailboxPhys       = mailbox_abi::kPlxiAddr;
@@ -22,9 +23,38 @@ constexpr uint32_t kMemtestMailboxPhys     = mailbox_abi::kPlxmAddr;
 constexpr uint32_t kMemtestMailboxMagic    = mailbox_abi::kPlxmMagic;
 constexpr uint32_t kUnderrunMailboxPhys    = mailbox_abi::kPlxfAddr;
 constexpr uint32_t kUnderrunMailboxMagic   = mailbox_abi::kPlxfMagic;
+// Legacy absolute PLXD (0x3007F128). Do NOT use for product doorbell 0x300FF000.
 constexpr uint32_t kBankReleaseMailboxPhys  = mailbox_abi::kPlxdAddr;
 constexpr uint32_t kBankReleaseMailboxMagic = mailbox_abi::kPlxdMagic;
 constexpr uint8_t kFrameStoreDebugFormatError = 0xE1;
+// geom_enable=1 but rt_raw_ok=0 (unaligned/over-max). Loud reject — not silent legacy.
+constexpr uint8_t kFrameStoreDebugGeomReject = 0xE2;
+// B16: geom was live then dropped while has_frame (hollow/missing PLXG commit).
+constexpr uint8_t kFrameStoreDebugGeomHollow = 0xE3;
+
+// Offsets from live DOORBELL_PHYS (RTL: DOORBELL_PHYS + offset).
+constexpr uint32_t kDdrStatusMailboxOffset = mailbox_abi::kPlxsOffset;
+constexpr uint32_t kInputMailboxOffset = mailbox_abi::kPlxiOffset;
+constexpr uint32_t kMemtestMailboxOffset = mailbox_abi::kPlxmOffset;
+constexpr uint32_t kUnderrunMailboxOffset = mailbox_abi::kPlxfOffset;
+constexpr uint32_t kBankReleaseMailboxOffset = mailbox_abi::kPlxdOffset;
+
+// Resolve a frame-store control mailbox against the active doorbell.
+inline constexpr uint32_t frameStoreMailboxPhys(uint32_t doorbell_phys, uint32_t offset) {
+    return mailbox_abi::frameStoreMailboxPhys(doorbell_phys, offset);
+}
+inline constexpr uint32_t bankReleaseMailboxPhys(uint32_t doorbell_phys) {
+    return frameStoreMailboxPhys(doorbell_phys, kBankReleaseMailboxOffset);
+}
+inline constexpr uint32_t underrunMailboxPhys(uint32_t doorbell_phys) {
+    return frameStoreMailboxPhys(doorbell_phys, kUnderrunMailboxOffset);
+}
+inline constexpr uint32_t statusMailboxPhys(uint32_t doorbell_phys) {
+    return frameStoreMailboxPhys(doorbell_phys, kDdrStatusMailboxOffset);
+}
+inline constexpr uint32_t inputMailboxPhys(uint32_t doorbell_phys) {
+    return frameStoreMailboxPhys(doorbell_phys, kInputMailboxOffset);
+}
 
 enum class PlaybackCommand : uint8_t {
     None = 0,
@@ -48,11 +78,21 @@ struct FrameStoreStatus {
     bool nonYuvDoorbellRejected() const {
         return debug_state == kFrameStoreDebugFormatError;
     }
+    bool geomRejected() const {
+        return debug_state == kFrameStoreDebugGeomReject;
+    }
+    bool geomHollow() const {
+        return debug_state == kFrameStoreDebugGeomHollow;
+    }
 };
 
 inline const char* frameStoreDebugDescription(uint8_t debug) {
     if (debug == kFrameStoreDebugFormatError)
         return "frame store refused non-YUV doorbell (0xE1)";
+    if (debug == kFrameStoreDebugGeomReject)
+        return "frame store rejected runtime geom (0xE2 unaligned/over-max/zero)";
+    if (debug == kFrameStoreDebugGeomHollow)
+        return "frame store hollow geom (0xE3 prior live geom lost → silent legacy)";
     return "frame store debug state";
 }
 
