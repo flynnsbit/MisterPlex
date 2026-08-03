@@ -12,7 +12,7 @@
 | Macro | **`PRESENT_BEAM_960`** (default OFF today — must be **on** for this fit) |
 | Do **not** set | `PRESENT_MULTI_PIXEL`, `PRESENT_SCALE_4_3`, `PRESENT_SCALE_2X`, `PRESENT_BEAM_FAULT_ISLAND_1280` |
 | `FRAME_W` / `FRAME_H` | **960 / 540** (storage = content) |
-| RTL files | `present_beam_content_de.sv`, `present_video_timing_960.sv` (w-clock constants), existing `present_content_window.sv` |
+| RTL files | `present_beam_content_de.sv` **must be in `files.qip`** (not only Verilator TB hand-list), existing `present_content_window.sv`. `present_video_timing_960.sv` is constants cargo — product beam is `present_beam_content_de`. Gate B10 + leg2 elaborate the **Quartus qip file list** under fit macros. |
 | Beam class | w-clock **MODE=0**: H_DE=960 V_ACT=540 **H_TOTAL=1182 V_TOTAL=564** (Hblank=222, Vblank=24) |
 | clk | `clk_sys` **20 MHz**, `ce_pix=1` (1 px/clk) |
 | DE_LAG | keep **3** (present_core) |

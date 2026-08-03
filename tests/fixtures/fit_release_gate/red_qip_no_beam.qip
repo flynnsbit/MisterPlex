@@ -1,0 +1,2 @@
+# RED twin: content_window only — beam omitted (rd-duck 34ddf class)
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_content_window.sv

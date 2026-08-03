@@ -580,6 +580,63 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
         else:
             msgs.append("LEG0_AR_TESTS " + " ".join(ar_tests[:8]))
 
+    # --- B10: beam RTL must be on Quartus files.qip (not only Verilator hand-list) ---
+    # rd-duck 34ddf: files.qip had present_content_window but not present_beam_content_de;
+    # Verilator TB listed beam explicitly, hiding project-file omission → Quartus cannot
+    # elaborate under PRESENT_BEAM_960. Gate SoT is files.qip + disk file + discover_design.
+    qip_path = ROOT / "fpga" / "Plex_MiSTer" / "files.qip"
+    qip_txt = _read(qip_path)
+    beam_rel = "rtl/present_beam_content_de.sv"
+    beam_abs = RTL / "present_beam_content_de.sv"
+    beam_in_qip = bool(
+        re.search(
+            r"SYSTEMVERILOG_FILE\s+rtl/present_beam_content_de\.sv\b",
+            qip_txt,
+        )
+    )
+    beam_on_disk = beam_abs.is_file()
+    msgs.append(
+        f"LEG0_QIP beam_in_qip={int(beam_in_qip)} beam_on_disk={int(beam_on_disk)} "
+        f"qip={qip_path}"
+    )
+    if not beam_in_qip:
+        errors.append(
+            "B10_BEAM_NOT_IN_FILES_QIP: fpga/Plex_MiSTer/files.qip must list "
+            f"`SYSTEMVERILOG_FILE {beam_rel}` whenever PRESENT_BEAM_960 is the fit "
+            "path. Verilator scripts that hand-list the beam hide Quartus omission "
+            "(rd-duck 34ddf)."
+        )
+    if not beam_on_disk:
+        errors.append(
+            f"B10_BEAM_RTL_MISSING: {beam_abs} not on disk — cannot elaborate"
+        )
+    # discover_design must surface beam from qip (not a parallel hand list).
+    try:
+        import rtl_lint  # noqa: WPS433 — scripts/ already on path
+
+        disc_files, _disc_macros = rtl_lint.discover_design(
+            macro_qsf=FIX / "green_ascal_960x540.qsf"
+            if (FIX / "green_ascal_960x540.qsf").is_file()
+            else None
+        )
+        disc_rels = {rtl_lint.rel(p) for p in disc_files}
+        beam_disc = "fpga/Plex_MiSTer/rtl/present_beam_content_de.sv" in disc_rels
+        msgs.append(f"LEG0_DISCOVER_DESIGN beam_in_quartus_file_list={int(beam_disc)}")
+        if beam_in_qip and not beam_disc:
+            errors.append(
+                "B10_BEAM_NOT_IN_DISCOVER_DESIGN: files.qip lists beam but "
+                "rtl_lint.discover_design (QSF+qip SoT) did not return it — "
+                "elab cannot see the module"
+            )
+        if not beam_disc:
+            errors.append(
+                "B10_BEAM_ABSENT_FROM_QUARTUS_FILE_LIST: discover_design under fit "
+                "macros must include fpga/Plex_MiSTer/rtl/present_beam_content_de.sv "
+                "(project file list, not TB hand-list)"
+            )
+    except Exception as exc:  # noqa: BLE001 — surface as gate fail
+        errors.append(f"B10_DISCOVER_DESIGN_ERROR: {exc}")
+
     # --- Runtime-OFF OSD / colorbars timing cargo when candidate is ascal ---
     if cand and cand.get("architecture") == "ascal_true_de_960":
         # present_core still has colorbars Template path when PRESENT_BEAM_960 undefined.
@@ -661,7 +718,43 @@ def leg1_macros(qsf: Path) -> tuple[int, list[str], dict[str, str]]:
 
 
 def leg2_elab(qsf: Path) -> tuple[int, list[str]]:
+    """Elaborate the *Quartus* file list (qsf+qip) under the QSF macro set.
+
+    This is the pre-fit stand-in for Quartus analysis/elaboration: file list comes
+    from files.qip via rtl_lint.discover_design — not from TB hand-lists. Soft-skip
+    ≠ PASS. True quartus_map is not run here (sole exclusive slot).
+    """
     msgs: list[str] = []
+    # Pre-flight: beam must be on the Quartus file list before claiming elab.
+    try:
+        import rtl_lint  # noqa: WPS433
+
+        files, macros = rtl_lint.discover_design(macro_qsf=qsf)
+        rels = [rtl_lint.rel(p) for p in files]
+        beam_rel = "fpga/Plex_MiSTer/rtl/present_beam_content_de.sv"
+        has_beam = beam_rel in rels
+        has_beam_macro = any(
+            m.startswith("PRESENT_BEAM_960=") and not m.endswith("=0") for m in macros
+        )
+        msgs.append(
+            f"LEG2_QUARTUS_FILE_LIST n={len(files)} beam={int(has_beam)} "
+            f"PRESENT_BEAM_960={int(has_beam_macro)}"
+        )
+        msgs.append("LEG2_MACROS " + " ".join(macros))
+        if has_beam_macro and not has_beam:
+            msgs.append(
+                "LEG2_FAIL EXECUTED B10: PRESENT_BEAM_960 active but "
+                f"{beam_rel} absent from Quartus discover_design file list "
+                "(files.qip omission — TB hand-list does not count)"
+            )
+            return 1, msgs
+        if has_beam_macro and "PRESENT_BEAM_960=1" not in " ".join(macros):
+            msgs.append("LEG2_FAIL EXECUTED PRESENT_BEAM_960 not exactly =1 in macro set")
+            return 1, msgs
+    except Exception as exc:  # noqa: BLE001
+        msgs.append(f"LEG2_FAIL EXECUTED discover_design: {exc}")
+        return 1, msgs
+
     elab = ROOT / "scripts" / "check_verilator_elab.py"
     rc, out = _run([sys.executable, str(elab), "--qsf", str(qsf)])
     msgs.append(out.rstrip())
@@ -679,7 +772,13 @@ def leg2_elab(qsf: Path) -> tuple[int, list[str]]:
     if "propagated QSF macros" not in out:
         msgs.append("LEG2_FAIL EXECUTED no macro propagation line")
         return 1, msgs
-    msgs.append("LEG2_PASS EXECUTED verilator-elab with QSF macro set")
+    if "PRESENT_BEAM_960=1" not in out and has_beam_macro:
+        msgs.append("LEG2_FAIL EXECUTED elab output missing PRESENT_BEAM_960=1 propagation")
+        return 1, msgs
+    msgs.append(
+        "LEG2_PASS EXECUTED verilator-elab of Quartus qip file list under fit macros "
+        f"(beam_in_list={int(has_beam)}) — not a quartus_map PASS"
+    )
     return 0, msgs
 
 
@@ -1045,6 +1144,28 @@ def self_test() -> int:
 
     # Full gate on green fixture must still FAIL while arch blockers open (rd-duck).
     expect("full_gate_blocked_by_arch", fx["green"], 1, legs="all")
+
+    # B10 RED twin: qip missing beam must not look like a listed module (34ddf class).
+    red_qip = FIX / "red_qip_no_beam.qip"
+    _write_fixture(
+        red_qip,
+        "# RED twin: content_window only — beam omitted (rd-duck 34ddf class)\n"
+        "set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_content_window.sv\n",
+    )
+    red_txt = red_qip.read_text()
+    green_qip_txt = _read(ROOT / "fpga" / "Plex_MiSTer" / "files.qip")
+    beam_re = re.compile(r"SYSTEMVERILOG_FILE\s+rtl/present_beam_content_de\.sv\b")
+    if beam_re.search(red_txt):
+        print("FAIL SELFTEST b10_red_qip: fixture unexpectedly lists beam")
+        failures += 1
+    elif not beam_re.search(green_qip_txt):
+        print("FAIL SELFTEST b10_green_qip: live files.qip missing beam")
+        failures += 1
+    else:
+        print(
+            "PASS SELFTEST b10_qip_beam_listed EXECUTED "
+            "red_fixture_absent=1 live_qip_present=1"
+        )
 
     if failures:
         print(f"FIT_RELEASE_GATE_SELFTEST_FAIL failures={failures}")
