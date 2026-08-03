@@ -1,26 +1,34 @@
 {
   "id": "b20_visual_two_phase",
   "b20_scope": "visual_two_phase",
-  "title": "B20: promote visual consumers only on store swap edge (fstart-qualified)",
+  "title": "B20: promote visual consumers only on store swap edge (product ext path)",
   "beam_only_rt_de_apply_sufficient": false,
   "latch_still_promotes_at_vsync": true,
   "audit_75e16d9b_fixed": true,
+  "product_use_frame_store_tie": 0,
+  "b20_arms_on": "ext_store_path_not_force_bars",
+  "rd_duck_polarity_kill": "use_frame_store is OSD force bars; Plex hardwires 0; prior free=!use_fs free-ran product",
   "audit_fixes": {
     "1_mid_active_ready": "visual_swap_ack = frame_start && swap_pending && pending_ready",
     "2_mode_exit_idle": "idle only if !geom_live_valid; hold ignores geom_enable",
-    "3_window_consumed": "store_x/y += app_content_x0/y0 when app_win_enable"
+    "3_window_consumed": "store_x/y += app_content_x0/y0 when app_win_enable",
+    "4_product_polarity": "b20_ext_store_path=!use_frame_store; free/hold/idle arm on ext path"
   },
   "present_core_policy": {
-    "apply_when": "visual_swap_ack=frame_start&&swap_pending&&pending_ready OR !use_frame_store OR (!swap_pending && !geom_live_valid)",
-    "blackout": "b20_visual_hold when geom_live_valid && seq mismatch (mode-exit included)",
-    "window_map": "identity + applied origin when app_win_enable"
+    "apply_when": "visual_swap_ack OR force_bars(use_frame_store) OR (ext_path && !swap_pending && !geom_live_valid)",
+    "blackout": "b20_visual_hold on ext_path && geom_live_valid && seq mismatch",
+    "window_map": "identity + applied origin when app_win_enable",
+    "beam_de_apply": "1 (app_* already two-phase; no fstart pulse on rt_de)"
   },
   "still_open_owners": {
     "present_geom_latch": "w-mem",
     "Plex.sv_DAR": "w-osd",
     "swap_applied_pulse_export": "optional w-mem; fstart fire matches store today"
   },
-  "red_twins": ["FAULT_B20_BEAM_FREE_RUN", "FAULT_B20_VISUAL_FREE_RUN"],
+  "red_twins": [
+    "FAULT_B20_BEAM_FREE_RUN",
+    "FAULT_B20_VISUAL_FREE_RUN"
+  ],
   "gate": "tests/unit/test_b20_visual_two_phase.sh",
   "B20_CLOSED": false
 }

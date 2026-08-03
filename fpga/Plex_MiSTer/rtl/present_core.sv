@@ -247,15 +247,23 @@ module present_core #(
 	// vsync_pulse && swap_pending && pending_ready (store). Visual app_* must
 	// share that SAME edge — not "ready mid-active" (rd-duck audit of 75e16d9b).
 	// frame_start == vsync_pulse into ddr_frame_store (fstart / mp_out_fs).
+	//
+	// POLARITY (rd-duck product-path kill): use_frame_store is OSD **force bars**
+	// when 1 (present_core port comment). Plex.sv hardwires .use_frame_store(1'b0)
+	// for normal external DDR playback. B20 must arm on the external-store path
+	// (!use_frame_store under DDR_FRAME_STORE), NOT on force-bars. The prior gate
+	// beam_de_free_g=!use_frame_store free-ran app_* for the entire product path.
 `ifdef DDR_FRAME_STORE
+	// Product external-store path (compile-time DDR + not force-bars).
+	wire b20_ext_store_path = !use_frame_store;
 	// Exact store swap qualifier (fstart-qualified). Mid-active pending_ready
 	// alone must NOT promote app shadows or clear hold.
 	wire visual_swap_ack = frame_start && swap_pending && store_pending_ready;
-	wire beam_de_free_g  = !use_frame_store;
-	// True idle only: no owned PLXG generation. Mode-exit (!geom_enable) with
-	// geom_live_valid still set is OWNED — must wait swap ack (w-mem bank hold).
-	// FAULT was: !geom_enable treated as idle → free-run LEG DE unblackened.
-	wire beam_de_idle_g  = use_frame_store && !swap_pending && !geom_live_valid;
+	// Free-run only when force-bars (B20 not in control of external bank).
+	wire beam_de_free_g  = !b20_ext_store_path; // == use_frame_store
+	// True idle only on product path with no owned PLXG generation.
+	// Mode-exit (!geom_enable) with geom_live_valid still set is OWNED.
+	wire beam_de_idle_g  = b20_ext_store_path && !swap_pending && !geom_live_valid;
 `ifdef FAULT_B20_VISUAL_FREE_RUN
 	assign visual_geom_apply = 1'b1;
 `else
@@ -265,6 +273,7 @@ module present_core #(
 	assign visual_geom_apply = 1'b1;
 	assign store_pending_ready = 1'b1;
 	wire visual_swap_ack = 1'b0;
+	wire b20_ext_store_path = 1'b0;
 `endif
 
 	always @(posedge clk) begin
@@ -297,9 +306,10 @@ module present_core #(
 	assign b20_visual_hold = 1'b0;
 `else
 `ifdef DDR_FRAME_STORE
-	// Hold while owned live epoch != applied — includes mode-exit (!geom_enable)
-	// with live_valid still asserted. Do NOT require geom_enable (rd-duck #2).
-	assign b20_visual_hold = use_frame_store && geom_live_valid &&
+	// Hold on product external path while owned live epoch != applied.
+	// Includes mode-exit (!geom_enable) with live_valid still asserted.
+	// Must NOT key off use_frame_store==1 (that is force-bars, not playback).
+	assign b20_visual_hold = b20_ext_store_path && geom_live_valid &&
 		(geom_live_seq != app_live_seq);
 `else
 	assign b20_visual_hold = 1'b0;
@@ -307,6 +317,7 @@ module present_core #(
 `endif
 	// Keep swap-ack visible to anti-DCE / tests.
 	wire _keep_visual_swap_ack = visual_swap_ack;
+	wire _keep_b20_ext_path    = b20_ext_store_path;
 
 `ifdef PRESENT_BEAM_960
 	// =====================================================================
@@ -373,6 +384,10 @@ module present_core #(
 	// Fixed line class @20 MHz: 1182 clocks/line. V_TOTAL selects 30 vs 24 Hz.
 	// beam_film_class from app_content_fps. B20 apply/hold is above (all paths).
 	wire [10:0] beam_htot_req = 11'd1182;
+	// DE source is app_* (two-phase). Values only change on visual_geom_apply;
+	// beam may latch every v_wrap (apply=1). Do NOT pulse-qualify with fstart
+	// here — fstart is 1-cycle and NBA-aligns with v_wrap such that a pulse
+	// apply misses the latch edge (hold forever). Gate lives in app_* update.
 	wire beam_de_apply = 1'b1;
 
 	// Bresenham V_TOTAL: exact long-run NTSC (default) or fixed under FAULT.

@@ -61,3 +61,7 @@ exists. This commit closes the **present_core visual free-run** half.
 
 - `tests/unit/test_b20_visual_two_phase.sh` (mid-active, mode-exit, window models)
 - `tests/unit/test_b20_beam_de_hold.sh`
+
+## Product polarity fix (rd-duck)
+
+`use_frame_store` = OSD force bars. Plex ties **0**. B20 arms on `b20_ext_store_path=!use_frame_store`. Prior `free=!use_fs` free-ran product. Gates true rc=0 with product-tie models.

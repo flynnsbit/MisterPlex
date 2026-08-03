@@ -22,14 +22,18 @@ module b20_beam_de_hold_tb;
 	reg [10:0] cand_h = OLD_H;
 	reg        swap_pending = 0;
 	reg        pending_ready = 0;
-	// Product apply formula (present_core)
-	wire use_frame_store = 1'b1;
-	wire geom_enable = 1'b1;
-	wire beam_swap_fire = swap_pending && pending_ready;
-	wire beam_de_free   = !use_frame_store;
-	wire beam_de_idle   = use_frame_store && !swap_pending &&
-	                      ((cand_w == 11'd0) || !geom_enable);
-	wire beam_de_apply  = beam_de_free || beam_swap_fire || beam_de_idle;
+	// Product path: Plex.sv ties use_frame_store=0 (force-bars OFF).
+	// B20 arms on external-store path (!use_frame_store), not force-bars.
+	// This TB drives candidates directly into rt_* (no app_* shadow), so apply
+	// is level-qualified on pending&&ready (store-ready). present_core gates
+	// via app_* + fstart ack; both must refuse DE/app change while !ready.
+	wire use_frame_store = 1'b0;
+	wire geom_live_valid = 1'b1;
+	wire b20_ext_store_path = !use_frame_store;
+	wire beam_swap_ready = swap_pending && pending_ready;
+	wire beam_de_free   = !b20_ext_store_path; // force-bars only
+	wire beam_de_idle   = b20_ext_store_path && !swap_pending && !geom_live_valid;
+	wire beam_de_apply  = beam_de_free || beam_swap_ready || beam_de_idle;
 
 	wire ce, hb, hs, vb, vs, fstart;
 	wire [10:0] hc, vc, hde_a, htot_a, vact_a, vtot_a;
