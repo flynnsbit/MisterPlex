@@ -37,9 +37,9 @@ struct DdrPublishPlan {
     size_t copy_bytes = 0;
     bool native_push = false;
     bool program_plxg = false;
-    uint64_t plxg_geom = 0;
-    uint64_t plxg_window = 0;
-    uint64_t plxg_origin = 0;
+    // Atomic 5-qword PLXG at bootstrap phys (0x300FF2C0). Not 3 temporal beats.
+    uint64_t plxg_q[5]{};
+    uint16_t plxg_seq = 0;
 };
 
 // Effective payload length for a plan (native or full canvas).
@@ -172,9 +172,9 @@ inline bool makeDdrFabricOwnedPublishPlan(const uint8_t* payload, int bank,
     out.publish.copy_bytes = present.publish_bytes;
     out.publish.native_push = true;
     out.publish.program_plxg = true;
-    out.publish.plxg_geom = present.plxg_word;
-    out.publish.plxg_window = present.plxg_window_word;
-    out.publish.plxg_origin = present.plxg_origin_word;
+    out.publish.plxg_seq = present.plxg_seq;
+    for (int i = 0; i < 5; ++i)
+        out.publish.plxg_q[i] = present.plxg_q[i];
     (void)payload; // caller/sendDdrFrame memcpy's copy_bytes at bank_offset
     return true;
 }
@@ -202,12 +202,32 @@ inline bool ddrNativeOptionCPublishReadbackOk(std::string* err = nullptr) {
             *err = "native readback: storage plane contract mismatch";
         return false;
     }
-    int gw = 0, gh = 0;
-    bool en = false, np = false;
-    if (!decodePlxgGeometryWord(present.plxg_word, gw, gh, en, np) || !en || !np || gw != 960 ||
-        gh != 540) {
+    // Atomic PLXG → latch model must yield geom_enable + storage 960×540.
+    PlxgLatchModel latch{};
+    std::vector<uint8_t> ctrl(0x1000, 0);
+    PlxgRecord rec{};
+    rec.valid = true;
+    rec.seq = present.plxg_seq ? present.plxg_seq : 1;
+    for (int i = 0; i < 5; ++i)
+        rec.q[i] = present.plxg_q[i];
+    if (!plxgProgramRecord(ctrl.data(), rec, latch) || !latch.geom_enable ||
+        latch.coded_w != 960 || latch.coded_h != 540 || latch.y_stride != 960 ||
+        latch.chroma_stride != 480) {
         if (err)
-            *err = "native readback: PLXG geometry must be storage 960x540";
+            *err = "native readback: PLXG latch did not accept storage 960x540";
+        return false;
+    }
+    // NEG: three temporal writes to one slot must NOT be our path (q1..q4 distinct).
+    if (present.plxg_q[1] == present.plxg_q[0] || present.plxg_q[2] == present.plxg_q[0]) {
+        if (err)
+            *err = "native readback: PLXG qwords collapsed (temporal overwrite class)";
+        return false;
+    }
+    const size_t payloadExact =
+        plxgI420PayloadBytes(latch.y_stride, latch.chroma_stride, latch.coded_h);
+    if (payloadExact != 777600u || !plxgPayloadNeedsOptionC(payloadExact)) {
+        if (err)
+            *err = "native readback: payload/Option-C oracle mismatch";
         return false;
     }
     std::vector<uint8_t> src(present.publish_bytes);

@@ -2,6 +2,7 @@
 
 #include "libmisterplex/geometry_units.hpp"
 #include "libmisterplex/ddr_mem_map_policy.hpp"
+#include "libmisterplex/plxg_record.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -154,9 +155,12 @@ constexpr uint32_t kPlex720pMapBytes2Bank = 0x00300000u; // 2 * 0x180000
 constexpr uint32_t kPlex720pMapBytes3Bank = 0x00480000u; // 3 * 0x180000
 // Candidate only: base + 3*stride - 0x1000. Not product until bank field >1 bit.
 constexpr uint32_t kPlex720pTripleDoorbellPhys = 0x305FF000u;
-// PLXG — geometry program mailbox, doorbell-relative (see mailbox_abi_spec).
-constexpr uint32_t kDdrFramePlxgOffset = 0x130u;
+// PLXG — 5-qword atomic record @ doorbell+0x2C0 (PLXC owns +0x130).
+// Bootstrap always at product doorbell 0x300FF2C0 — see plxg_record.hpp.
+constexpr uint32_t kDdrFramePlxgOffset = 0x2C0u;
 constexpr uint32_t kDdrFramePlxgMagic = 0x504C5847u; // "PLXG"
+constexpr uint32_t kDdrFramePlxgBytes = 40u;
+constexpr uint32_t kDdrFramePlxgBootstrapPhys = 0x300FF2C0u;
 
 enum class DdrFramePlacement {
     None,
@@ -1266,10 +1270,15 @@ struct DdrFabricOwnedPresentPlan {
     int content_y0 = 0;
     // Bytes ARM may memcpy — NEVER canvas frame_bytes on this path.
     size_t publish_bytes = 0;
-    // PLXG beats to program before doorbell (order: geometry → window → origin).
-    uint64_t plxg_word = 0;          // canvas tier + native_push
-    uint64_t plxg_window_word = 0;   // content w/h
-    uint64_t plxg_origin_word = 0;   // x0/y0
+    // Atomic 5-qword PLXG record (present_geom_latch). NOT three temporal beats.
+    // q[0..4] written contiguously at bootstrap phys 0x300FF2C0 before doorbell.
+    uint64_t plxg_q[5]{};
+    uint16_t plxg_seq = 1;
+    // Legacy single-word fields retained for tests that decode Q0/window-shaped
+    // views — populated as aliases of the atomic record, not separate wire beats.
+    uint64_t plxg_word = 0;
+    uint64_t plxg_window_word = 0;
+    uint64_t plxg_origin_word = 0;
     bool valid = false;
 };
 
@@ -1373,12 +1382,25 @@ inline DdrFabricOwnedPresentPlan makeDdrFabricOwnedPresentPlan(
         return p;
     p.budget = makeDdrArmPresentBudget(p.native, p.offload, countFeedScaleRemoval,
                                        /*armPushesPixels=*/true);
-    // PLXG geometry = STORAGE (content), not DE canvas.
-    p.plxg_word = encodePlxgGeometryWord(contentW, contentH,
-                                         /*enable=*/true, /*nativePush=*/true);
-    p.plxg_window_word = encodePlxgContentWindow(contentW, contentH, p.content_x0, p.content_y0);
-    p.plxg_origin_word = encodePlxgContentOrigin(p.content_x0, p.content_y0);
-    p.valid = p.budget.valid && p.plxg_window_word != 0 && p.plxg_origin_word != 0;
+    // Atomic 5-qword PLXG (present_geom_latch). STORAGE coded/stride; DE in h_de/v_de.
+    const int deW = canvasGeom.presented_width.get() > 0 ? canvasGeom.presented_width.get()
+                                                         : canvasGeom.coded_width.get();
+    const int deH = canvasGeom.presented_height.get() > 0 ? canvasGeom.presented_height.get()
+                                                          : canvasGeom.coded_height.get();
+    p.plxg_seq = 1;
+    p.plxg_q[0] = packPlxgQ0(/*win*/ true, /*geom*/ true, p.plxg_seq);
+    p.plxg_q[1] = packPlxgQ1(contentW, contentH, p.content_x0, p.content_y0);
+    p.plxg_q[2] = packPlxgQ2(deW, deH, contentW, contentH);
+    p.plxg_q[3] = packPlxgQ3(p.content_layout.y_stride, p.content_layout.chroma_stride,
+                             contentW, contentH);
+    p.plxg_q[4] = packPlxgQ4(0, 0, 0, 0);
+    // Aliases for older tests (not separate wire beats).
+    p.plxg_word = p.plxg_q[0];
+    p.plxg_window_word = p.plxg_q[1];
+    p.plxg_origin_word = packPlxgQ1(0, 0, p.content_x0, p.content_y0); // x0/y0 view
+    p.valid = p.budget.valid && p.plxg_q[0] != 0 &&
+              plxgGeomDimsOk(contentW, contentH, p.content_layout.y_stride,
+                             p.content_layout.chroma_stride);
     return p;
 }
 

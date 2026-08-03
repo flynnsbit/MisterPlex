@@ -725,6 +725,112 @@ wire        present_ddr_rd;
 wire [63:0] present_ddr_din;
 wire  [7:0] present_ddr_be;
 wire        present_ddr_we;
+
+// PLXG latch + bootstrap DDR poller (w-mem). geom_enable=0 until host programs
+// 5-qword record at 0x300FF2C0 and poller commits. Stream m1 has priority;
+// poller borrows m1 only when stream_ddr_bus_want=0.
+wire        plxg_wr_en, plxg_commit;
+wire  [2:0] plxg_wr_idx;
+wire [63:0] plxg_wr_data;
+wire        plxg_win_en, plxg_geom_en, plxg_live_valid;
+wire [10:0] plxg_cw, plxg_ch, plxg_cx0, plxg_cy0;
+wire [10:0] plxg_hde, plxg_vde, plxg_coded_w, plxg_coded_h;
+wire [11:0] plxg_y_stride;
+wire [10:0] plxg_c_stride, plxg_dw, plxg_dh;
+wire [10:0] plxg_px, plxg_py, plxg_cl, plxg_ct;
+wire [15:0] plxg_live_seq;
+wire        plxg_want, plxg_rd;
+wire  [7:0] plxg_burstcnt;
+wire [28:0] plxg_addr;
+wire [63:0] plxg_din;
+wire  [7:0] plxg_be;
+wire        plxg_we;
+wire [15:0] plxg_last_seq;
+wire        plxg_busy_poll;
+wire [31:0] plxg_cnt_commit, plxg_cnt_bad;
+// Combined m1 (stream priority over PLXG poller)
+wire        m1c_want = stream_ddr_bus_want | plxg_want;
+wire        m1c_rd   = stream_ddr_bus_want ? stream_ddr_rd : plxg_rd;
+wire  [7:0] m1c_burstcnt = stream_ddr_bus_want ? stream_ddr_burstcnt : plxg_burstcnt;
+wire [28:0] m1c_addr = stream_ddr_bus_want ? stream_ddr_addr : plxg_addr;
+wire [63:0] m1c_din  = stream_ddr_bus_want ? stream_ddr_din  : plxg_din;
+wire  [7:0] m1c_be   = stream_ddr_bus_want ? stream_ddr_be   : plxg_be;
+wire        m1c_we   = stream_ddr_bus_want ? stream_ddr_we   : plxg_we;
+wire        m1c_busy;
+wire [63:0] m1c_dout;
+wire        m1c_dout_ready;
+// Gate stream/poller busy: loser sees busy when the other owns the slot.
+assign stream_ddr_busy = m1c_busy | (plxg_want & ~stream_ddr_bus_want);
+wire plxg_m_busy = m1c_busy | stream_ddr_bus_want;
+assign stream_ddr_dout = m1c_dout;
+assign stream_ddr_dout_ready = m1c_dout_ready & stream_ddr_bus_want;
+wire plxg_dout_ready = m1c_dout_ready & ~stream_ddr_bus_want;
+
+present_geom_latch u_plxg_latch (
+	.clk(clk_sys),
+	.reset(reset),
+	.wr_en(plxg_wr_en),
+	.wr_idx(plxg_wr_idx),
+	.wr_data(plxg_wr_data),
+	.commit(plxg_commit),
+	.win_enable(plxg_win_en),
+	.geom_enable(plxg_geom_en),
+	.content_w(plxg_cw),
+	.content_h(plxg_ch),
+	.content_x0(plxg_cx0),
+	.content_y0(plxg_cy0),
+	.h_de(plxg_hde),
+	.v_de(plxg_vde),
+	.coded_w(plxg_coded_w),
+	.coded_h(plxg_coded_h),
+	.y_stride(plxg_y_stride),
+	.chroma_stride(plxg_c_stride),
+	.display_w(plxg_dw),
+	.display_h(plxg_dh),
+	.present_x(plxg_px),
+	.present_y(plxg_py),
+	.crop_left(plxg_cl),
+	.crop_top(plxg_ct),
+	.live_valid(plxg_live_valid),
+	.live_seq(plxg_live_seq)
+);
+
+plxg_ddr_poller #(
+`ifdef PLXG_DDR_POLL
+	.ENABLE(1'b1),
+`else
+	// Product DDR_FRAME_STORE path: poll bootstrap PLXG (chicken-egg safe).
+	.ENABLE(1'b1),
+`endif
+	.BOOT_DOORBELL(32'h300F_F000),
+	.PLXG_OFF(32'h2C0),
+	.POLL_DIV(16'd512)
+) u_plxg_poll (
+	.clk(clk_sys),
+	.reset(reset),
+	.want(plxg_want),
+	.busy(plxg_m_busy),
+	.burstcnt(plxg_burstcnt),
+	.addr(plxg_addr),
+	.dout(m1c_dout),
+	.dout_ready(plxg_dout_ready),
+	.rd(plxg_rd),
+	.din(plxg_din),
+	.be(plxg_be),
+	.we(plxg_we),
+	.wr_en(plxg_wr_en),
+	.wr_idx(plxg_wr_idx),
+	.wr_data(plxg_wr_data),
+	.commit(plxg_commit),
+	.last_seq(plxg_last_seq),
+	.busy_poll(plxg_busy_poll),
+	.cnt_commit(plxg_cnt_commit),
+	.cnt_bad_magic(plxg_cnt_bad)
+);
+(* keep = 1 *) wire _keep_plxg =
+	plxg_geom_en | plxg_live_valid | |plxg_live_seq | plxg_want |
+	|plxg_cnt_commit | |plxg_cnt_bad | plxg_busy_poll | |plxg_last_seq |
+	plxg_win_en | |plxg_cw | |plxg_ch | |plxg_hde | |plxg_vde;
 `endif
 
 present_core #(
@@ -762,6 +868,17 @@ present_core #(
 	.sdram_bs(frame_sdram_bs),
 	.sdram_refresh(frame_sdram_refresh),
 `ifdef DDR_FRAME_STORE
+	.geom_enable(plxg_geom_en),
+	.geom_coded_w(plxg_coded_w),
+	.geom_coded_h(plxg_coded_h),
+	.geom_y_stride(plxg_y_stride),
+	.geom_chroma_stride(plxg_c_stride),
+	.geom_display_w(plxg_dw),
+	.geom_display_h(plxg_dh),
+	.geom_present_x(plxg_px),
+	.geom_present_y(plxg_py),
+	.geom_crop_left(plxg_cl),
+	.geom_crop_top(plxg_ct),
 	.ddr_start_req(status[12]),
 	.ddr_bank_sel(status[13]),
 	.ddr_status_osd(status[15:0]),
@@ -918,7 +1035,8 @@ ddr_bus_arbiter3 ddr_arb (
 	.clk(clk_ddr),
 	.clk_m1(clk_sys),
 	.reset(reset),
-	.m1_want(stream_ddr_bus_want),
+	// m1 = stream | PLXG poller mux (stream priority); see m1c_* above present_core
+	.m1_want(m1c_want),
 	.m2_want(fabric_m2_want),
 	.m0_busy(present_ddr_busy),
 	.m0_burstcnt(present_ddr_burstcnt),
@@ -929,15 +1047,15 @@ ddr_bus_arbiter3 ddr_arb (
 	.m0_din(present_ddr_din),
 	.m0_be(present_ddr_be),
 	.m0_we(present_ddr_we),
-	.m1_busy(stream_ddr_busy),
-	.m1_burstcnt(stream_ddr_burstcnt),
-	.m1_addr(stream_ddr_addr),
-	.m1_dout(stream_ddr_dout),
-	.m1_dout_ready(stream_ddr_dout_ready),
-	.m1_rd(stream_ddr_rd),
-	.m1_din(stream_ddr_din),
-	.m1_be(stream_ddr_be),
-	.m1_we(stream_ddr_we),
+	.m1_busy(m1c_busy),
+	.m1_burstcnt(m1c_burstcnt),
+	.m1_addr(m1c_addr),
+	.m1_dout(m1c_dout),
+	.m1_dout_ready(m1c_dout_ready),
+	.m1_rd(m1c_rd),
+	.m1_din(m1c_din),
+	.m1_be(m1c_be),
+	.m1_we(m1c_we),
 	.m2_busy(fabric_m2_busy),
 	.m2_burstcnt(fabric_m2_burstcnt),
 	.m2_addr(fabric_m2_addr),
@@ -987,7 +1105,7 @@ ddr_bus_arbiter ddr_arb (
 	.clk(clk_ddr),
 	.clk_m1(clk_sys),
 	.reset(reset),
-	.m1_want(stream_ddr_bus_want),
+	.m1_want(m1c_want),
 	.m0_busy(present_ddr_busy),
 	.m0_burstcnt(present_ddr_burstcnt),
 	.m0_addr(present_ddr_addr),
@@ -997,15 +1115,15 @@ ddr_bus_arbiter ddr_arb (
 	.m0_din(present_ddr_din),
 	.m0_be(present_ddr_be),
 	.m0_we(present_ddr_we),
-	.m1_busy(stream_ddr_busy),
-	.m1_burstcnt(stream_ddr_burstcnt),
-	.m1_addr(stream_ddr_addr),
-	.m1_dout(stream_ddr_dout),
-	.m1_dout_ready(stream_ddr_dout_ready),
-	.m1_rd(stream_ddr_rd),
-	.m1_din(stream_ddr_din),
-	.m1_be(stream_ddr_be),
-	.m1_we(stream_ddr_we),
+	.m1_busy(m1c_busy),
+	.m1_burstcnt(m1c_burstcnt),
+	.m1_addr(m1c_addr),
+	.m1_dout(m1c_dout),
+	.m1_dout_ready(m1c_dout_ready),
+	.m1_rd(m1c_rd),
+	.m1_din(m1c_din),
+	.m1_be(m1c_be),
+	.m1_we(m1c_we),
 	.DDRAM_BUSY(DDRAM_BUSY),
 	.DDRAM_BURSTCNT(DDRAM_BURSTCNT),
 	.DDRAM_ADDR(DDRAM_ADDR),

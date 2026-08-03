@@ -156,11 +156,15 @@ int main() {
     CHECK(dst320[115199] == 0x41);
     CHECK(!copyYuv420pNativeOrigin(src320.data(), 320, 240, dst320.data(), 100)); // cap fail
 
-    // --- PLXG mailbox contract ---
+    // --- PLXG mailbox contract (5-qword @ +0x2C0; PLXC owns +0x130) ---
     CHECK(kDdrFramePlxgOffset == mailbox_abi::kPlxgOffset);
     CHECK(kDdrFramePlxgMagic == mailbox_abi::kPlxgMagic);
-    CHECK(plxgMailboxPhys(kPlex480pYuv420pDoorbellPhys) == 0x300FF000u + 0x130u);
-    CHECK(plxgMailboxPhys(kPlex720pYuv420pDoorbellPhys) == 0x3047F000u + 0x130u);
+    CHECK(kDdrFramePlxgOffset == 0x2C0u);
+    CHECK(mailbox_abi::kPlxgBootstrapPhys == 0x300FF2C0u);
+    CHECK(plxgMailboxPhys(kPlex480pYuv420pDoorbellPhys) == 0x300FF000u + 0x2C0u);
+    CHECK(plxgMailboxPhys(kPlex720pYuv420pDoorbellPhys) == 0x3047F000u + 0x2C0u);
+    // NEG: +0x130 is PLXC chrome ctrl — must not be PLXG.
+    CHECK(kDdrFramePlxgOffset != 0x130u);
 
     // Parent-verified reserved window (2026-08-02 device evidence).
     CHECK(kPlexDdrReservedWindowStart == 0x1FF00000u);
@@ -384,12 +388,23 @@ int main() {
         CHECK(kEdge > kPlex480pYuv420pBankUsableBytes);
         CHECK(kEdge < kPlex480pYuv420pBankStride);
         CHECK(!ddrI420PayloadNeedsOptionCBank(449280u)); // 624x480 — fits usable
+        CHECK(!ddrI420PayloadNeedsOptionCBank(520191u)); // usable-1 → legacy OK
         CHECK(!ddrI420PayloadNeedsOptionCBank(520192u)); // exact usable → legacy OK
         CHECK(ddrI420PayloadNeedsOptionCBank(520193u));  // usable+1 → Option-C
         CHECK(ddrI420PayloadNeedsOptionCBank(kEdge));    // 720x482
         CHECK(ddrI420PayloadNeedsOptionCBank(777600u));  // 960x540 display
         CHECK(ddrI420PayloadNeedsOptionCBank(783360u));  // 960x544 MB-coded (future DPB)
         CHECK(ddrI420PayloadNeedsOptionCBank(1382400u)); // 1280x720
+        // Host/RTL oracle parity (exact bytes, not qword floor).
+        CHECK(!plxgPayloadNeedsOptionC(520191u));
+        CHECK(!plxgPayloadNeedsOptionC(520192u));
+        CHECK(plxgPayloadNeedsOptionC(520193u));
+        CHECK(plxgPayloadNeedsOptionC(520560u));
+        CHECK(plxgI420PayloadBytes(960, 480, 540) == 777600u);
+        CHECK(plxgI420PayloadBytes(720, 360, 482) == 520560u);
+        CHECK(plxgGeomDimsOk(960, 540, 960, 480));
+        CHECK(!plxgGeomDimsOk(961, 540, 961, 480)); // odd width
+        CHECK(!plxgGeomDimsOk(960, 541, 960, 480)); // odd height
         CHECK(ddrSelectBankMapForContent(624, 480) == DdrBankMap::Legacy480p);
         CHECK(ddrSelectBankMapForContent(320, 240) == DdrBankMap::Legacy480p);
         CHECK(ddrSelectBankMapForContent(720, 482) == DdrBankMap::OptionC720p);
@@ -460,12 +475,24 @@ int main() {
         CHECK(out.content_layout.frame_bytes == 777600u);
         CHECK(out.content_layout.u_offset == 518400u);
         CHECK(out.content_layout.v_offset == 648000u);
-        // PLXG geometry beat = STORAGE 960x540, not canvas 1280x720.
-        int pw = 0, ph = 0;
-        bool en = false, np = false;
-        CHECK(decodePlxgGeometryWord(out.plxg_word, pw, ph, en, np));
-        CHECK(en && np);
-        CHECK(pw == 960 && ph == 540);
+        // Atomic 5-qword PLXG → latch: STORAGE 960x540, DE 1280x720, Option-C.
+        PlxgLatchModel latch{};
+        std::vector<uint8_t> ctrl(0x1000, 0);
+        PlxgRecord rec{};
+        rec.valid = true;
+        rec.seq = out.plxg_seq;
+        for (int i = 0; i < 5; ++i)
+            rec.q[i] = out.plxg_q[i];
+        CHECK(plxgProgramRecord(ctrl.data(), rec, latch));
+        CHECK(latch.geom_enable);
+        CHECK(latch.coded_w == 960 && latch.coded_h == 540);
+        CHECK(latch.y_stride == 960 && latch.chroma_stride == 480);
+        CHECK(latch.h_de == 1280 && latch.v_de == 720);
+        CHECK(plxgPayloadNeedsOptionC(plxgI420PayloadBytes(latch.y_stride, latch.chroma_stride,
+                                                           latch.coded_h)));
+        // NEG: three temporal same-slot beats are not our wire format.
+        CHECK(out.plxg_q[0] != out.plxg_q[1]);
+        CHECK(out.plxg_q[1] != out.plxg_q[2]);
         CHECK(out.canvas_layout.phys_base == kPlex720pDdrFramePhysBase);
         CHECK(out.canvas_layout.bank_stride == kPlex720pYuv420pBankStride);
         CHECK(out.canvas_layout.doorbell_phys == kPlex720pYuv420pDoorbellPhys);
@@ -509,22 +536,40 @@ int main() {
         DdrFabricOwnedPresentPlan bad = out540;
         bad.publish_bytes = out540.canvas_layout.frame_bytes; // 1382400 shear/pad path
         CHECK(!makeDdrFabricOwnedPublishPlan(tight.data(), 0, bad, pub, &err));
-        // PLXG chain: geometry=STORAGE 960x540 (not DE canvas 1280x720) → window → origin
-        int cw = 0, ch = 0, x0 = 0, y0 = 0;
-        bool en = false, np = false;
-        CHECK(decodePlxgGeometryWord(out540.plxg_word, cw, ch, en, np));
-        CHECK(cw == 960 && ch == 540 && en && np);
-        CHECK(decodePlxgContentWindow(out540.plxg_window_word, cw, ch));
-        CHECK(cw == 960 && ch == 540);
-        CHECK(decodePlxgContentOrigin(out540.plxg_origin_word, x0, y0));
-        CHECK(x0 == 0 && y0 == 0);
-        // Non-zero origin plan still emits matching PLXG origin beat.
+        // PLXG atomic record: storage 960x540 + origin via Q1 (not 3 temporal beats).
+        {
+            PlxgLatchModel lm{};
+            std::vector<uint8_t> page(0x1000, 0);
+            PlxgRecord r{};
+            r.valid = true;
+            r.seq = out540.plxg_seq ? out540.plxg_seq : 1;
+            for (int i = 0; i < 5; ++i)
+                r.q[i] = out540.plxg_q[i];
+            CHECK(plxgProgramRecord(page.data(), r, lm));
+            CHECK(lm.geom_enable && lm.coded_w == 960 && lm.coded_h == 540);
+            CHECK(lm.content_x0 == 0 && lm.content_y0 == 0);
+            CHECK(lm.y_stride == 960 && lm.chroma_stride == 480);
+            CHECK(lm.h_de == 1280 && lm.v_de == 720);
+            // Record lives at +0x2C0 on control page image.
+            uint64_t q0le = 0;
+            std::memcpy(&q0le, page.data() + mailbox_abi::kPlxgOffset, 8);
+            CHECK(static_cast<uint32_t>(q0le) == mailbox_abi::kPlxgMagic);
+        }
         auto inset = makeDdrFabricOwnedPresentPlan(960, 540, plex720pDdrFrameGeometry(),
                                                    kPlex720pDdrFramePhysBase, 32, 16, false);
         CHECK(inset.valid);
         CHECK(inset.content_x0 == 32 && inset.content_y0 == 16);
-        CHECK(decodePlxgContentOrigin(inset.plxg_origin_word, x0, y0));
-        CHECK(x0 == 32 && y0 == 16);
+        {
+            PlxgLatchModel lm{};
+            std::vector<uint8_t> page(0x1000, 0);
+            PlxgRecord r{};
+            r.valid = true;
+            r.seq = inset.plxg_seq ? inset.plxg_seq : 1;
+            for (int i = 0; i < 5; ++i)
+                r.q[i] = inset.plxg_q[i];
+            CHECK(plxgProgramRecord(page.data(), r, lm));
+            CHECK(lm.content_x0 == 32 && lm.content_y0 == 16);
+        }
         // Odd dims rejected (4:2:0).
         CHECK(!makeDdrNativeContentLayout(961, 540).valid);
         CHECK(!makeDdrNativeContentLayout(960, 541).valid);

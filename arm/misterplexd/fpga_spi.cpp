@@ -442,6 +442,7 @@ bool FpgaSpi::reopenPresentPath() {
 
 void FpgaSpi::close() {
     releaseDdrMap();
+    releasePlxgBootstrapMap();
     releaseBitstreamDdrMap();
     if (map_) {
         munmap((void*)map_, kMapSize);
@@ -782,6 +783,107 @@ void FpgaSpi::releaseDdrMap() {
         ::close(ddrMemFd_);
         ddrMemFd_ = -1;
     }
+}
+
+bool FpgaSpi::ensurePlxgBootstrapMap() {
+    if (plxgBootMap_ && plxgBootFd_ >= 0)
+        return true;
+    releasePlxgBootstrapMap();
+    int flags = O_RDWR | O_CLOEXEC;
+    if (ddrMemSync_)
+        flags |= O_SYNC;
+    plxgBootFd_ = ::open("/dev/mem", flags);
+    if (plxgBootFd_ < 0) {
+        setErr("ensurePlxgBootstrapMap: open /dev/mem failed");
+        return false;
+    }
+    // Map the full 4 KiB legacy doorbell/control page at 0x300FF000.
+    constexpr size_t kPage = 0x1000u;
+    void* p = mmap(nullptr, kPage, PROT_READ | PROT_WRITE, MAP_SHARED, plxgBootFd_,
+                   static_cast<off_t>(mailbox_abi::kPlxgBootstrapDoorbellPhys));
+    if (p == MAP_FAILED) {
+        setErr("ensurePlxgBootstrapMap: mmap bootstrap page failed");
+        ::close(plxgBootFd_);
+        plxgBootFd_ = -1;
+        return false;
+    }
+    plxgBootMap_ = static_cast<uint8_t*>(p);
+    plxgBootMapLen_ = kPage;
+    return true;
+}
+
+void FpgaSpi::releasePlxgBootstrapMap() {
+    if (plxgBootMap_) {
+        munmap(plxgBootMap_, plxgBootMapLen_);
+        plxgBootMap_ = nullptr;
+        plxgBootMapLen_ = 0;
+    }
+    if (plxgBootFd_ >= 0) {
+        ::close(plxgBootFd_);
+        plxgBootFd_ = -1;
+    }
+}
+
+bool FpgaSpi::writePlxgRecord(const uint64_t q[5], uint16_t seq) {
+    if (!q) {
+        setErr("writePlxgRecord: null q");
+        return false;
+    }
+    if (!ensurePlxgBootstrapMap())
+        return false;
+    const size_t off = static_cast<size_t>(mailbox_abi::kPlxgOffset);
+    if (off + mailbox_abi::kPlxgBytes > plxgBootMapLen_) {
+        setErr("writePlxgRecord: PLXG record outside bootstrap page");
+        return false;
+    }
+    // Bump seq if caller left it stale so latch accepts (seq != last).
+    uint16_t useSeq = seq;
+    if (useSeq == 0 || useSeq == plxgLastSeq_)
+        useSeq = static_cast<uint16_t>(plxgLastSeq_ + 1u);
+    if (useSeq == 0)
+        useSeq = 1;
+    uint64_t words[5];
+    for (int i = 0; i < 5; ++i)
+        words[i] = q[i];
+    // Force Q0 magic + seq (geom/win flags preserved from packed plan).
+    const uint64_t flags = (words[0] >> 32) & 0xFFFFull; // low 16 of hi
+    words[0] = (static_cast<uint64_t>(useSeq) << 48) |
+               (flags << 32) |
+               static_cast<uint64_t>(mailbox_abi::kPlxgMagic);
+
+    // Write q0..q4 contiguously; DMB after each store so fabric poller never
+    // samples a torn multi-qword record (rd-duck: compiler fence is not enough).
+    volatile uint32_t* base =
+        reinterpret_cast<volatile uint32_t*>(plxgBootMap_ + off);
+    for (int i = 0; i < 5; ++i) {
+        base[i * 2 + 1] = static_cast<uint32_t>(words[i] >> 32);
+        __sync_synchronize();
+        base[i * 2 + 0] = static_cast<uint32_t>(words[i]);
+        __sync_synchronize();
+    }
+    if (ddrMemFlush_ && !cleanDcacheRange(plxgBootMap_ + off, mailbox_abi::kPlxgBytes)) {
+        setErr("writePlxgRecord: cache clean failed");
+        return false;
+    }
+    // Optional mirror onto active doorbell+0x2C0 when Option-C map covers it.
+    if (ddrMap_ && ddrLayout_.doorbell_phys != 0) {
+        const uint32_t act = plxgMailboxPhys(ddrLayout_.doorbell_phys);
+        if (act >= ddrLayout_.phys_base) {
+            const size_t aoff = static_cast<size_t>(act - ddrLayout_.phys_base);
+            if (aoff + mailbox_abi::kPlxgBytes <= ddrMapLen_) {
+                volatile uint32_t* ab =
+                    reinterpret_cast<volatile uint32_t*>(ddrMap_ + aoff);
+                for (int i = 0; i < 5; ++i) {
+                    ab[i * 2 + 1] = static_cast<uint32_t>(words[i] >> 32);
+                    __sync_synchronize();
+                    ab[i * 2 + 0] = static_cast<uint32_t>(words[i]);
+                    __sync_synchronize();
+                }
+            }
+        }
+    }
+    plxgLastSeq_ = useSeq;
+    return true;
 }
 
 bool FpgaSpi::waitCoreFlag(bool clearBusy, bool clearPending, int maxUs) {
@@ -1591,29 +1693,12 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
         timing.flush_us = elapsedUs(tFlush0, tFlush1);
     }
 
-    // PLXG beats (geometry → window → origin) must be visible before doorbell.
-    // Same control page as doorbell; write last beat with DMB before kick.
+    // PLXG atomic 5-qword record at bootstrap phys 0x300FF2C0 (legacy doorbell
+    // +0x2C0). Fabric poller always reads this fixed page — chicken-egg safe when
+    // Option-C moves the active doorbell. Never three temporal writes to one slot.
     if (plan.program_plxg) {
-        const uint32_t plxgPhys = plxgMailboxPhys(plan.layout.doorbell_phys);
-        if (plxgPhys < plan.layout.phys_base) {
-            setErr("sendDdrFrame: PLXG phys below map base");
+        if (!writePlxgRecord(plan.plxg_q, plan.plxg_seq))
             return false;
-        }
-        const size_t plxgOff = static_cast<size_t>(plxgPhys - plan.layout.phys_base);
-        if (plxgOff + 8 > ddrMapLen_) {
-            setErr("sendDdrFrame: PLXG mailbox outside mapped window");
-            return false;
-        }
-        volatile uint32_t* pw = reinterpret_cast<volatile uint32_t*>(ddrMap_ + plxgOff);
-        auto writePlxgBeat = [&](uint64_t word) {
-            pw[1] = static_cast<uint32_t>(word >> 32);
-            __sync_synchronize();
-            pw[0] = static_cast<uint32_t>(word);
-            __sync_synchronize();
-        };
-        writePlxgBeat(plan.plxg_geom);
-        writePlxgBeat(plan.plxg_window);
-        writePlxgBeat(plan.plxg_origin);
     }
 
     bool saw_busy = false;

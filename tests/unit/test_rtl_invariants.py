@@ -1390,14 +1390,29 @@ def check_ddr_frame_layout_contract() -> None:
         "ddr_frame_store must not select Option-C via coded_w>=1280 "
         "(960x540 product overruns legacy bank; use capacity predicate)",
     )
+    # Exact-byte usable compare (rd-duck): reject qword-floor / silent clamp.
     check(
-        "LEG_BANK_USABLE_QWORDS" in store
+        ("rt_need_optc" in store or "rt_payload_bytes" in store)
+        and ("LEG_BANK_USABLE_BYTES" in store or "LEG_BANK_USABLE_QWORDS" in store)
+        and ("rt_geom_aligned" in store)
         and (
-            "rt_y_bytes_qw + (rt_c_bytes_qw << 1)) > LEG_BANK_USABLE_QWORDS" in store
-            or "rt_y_bytes_qw+(rt_c_bytes_qw<<1)>LEG_BANK_USABLE_QWORDS" in store_ns
+            "rt_need_optc" in store_ns
+            or "rt_payload_bytes>LEG_BANK_USABLE_BYTES" in store_ns
         ),
-        "ddr_frame_store Option-C select must compare I420 frame qwords to "
-        "LEG_BANK_USABLE_QWORDS (stride-4KiB), not full stride",
+        "ddr_frame_store Option-C select must use exact-byte payload vs usable "
+        "(LEG_BANK_USABLE_BYTES) with aligned-geom reject — not qword floor alone",
+    )
+    plex_sv = (ROOT / "fpga/Plex_MiSTer/Plex.sv").read_text(encoding="utf-8", errors="replace")
+    plex_ns = plex_sv.replace(" ", "")
+    check(
+        "present_geom_latch" in plex_sv
+        and "plxg_ddr_poller" in plex_sv
+        and "geom_enable(plxg_geom_en)" in plex_ns,
+        "Plex.sv must wire present_geom_latch + plxg_ddr_poller → present_core.geom_*",
+    )
+    check(
+        cpp_const(host, "kDdrFramePlxgOffset") == 0x2C0,
+        "host PLXG offset must be 0x2C0 (not PLXC 0x130)",
     )
     check(
         cpp_const(host, "kPlex480pYuv420pBankUsableBytes") == 520192,
@@ -1419,11 +1434,18 @@ def check_ddr_frame_layout_contract() -> None:
         sv_const(layout_svh, "DDR_FRAME_LEGACY_BANK_USABLE_BYTES") == 520192,
         "RTL DDR_FRAME_LEGACY_BANK_USABLE_BYTES must be 520192",
     )
+    check(
+        sv_const(layout_svh, "DDR_FRAME_PLXG_OFFSET") == 0x2C0
+        and cpp_const(host, "kDdrFramePlxgOffset")
+        == sv_const(layout_svh, "DDR_FRAME_PLXG_OFFSET"),
+        "host/RTL PLXG offset lockstep at 0x2C0 (PLXC owns 0x130)",
+    )
     print("PASS DDR frame layout ARM/RTL contract")
     print(
         "PASS DDR stride parity red-check: RTL CODED_WIDTH/Y_STRIDE 624→320 diverges from host"
     )
     print("PASS DDR Option-C bank map usable-capacity select (not width>=1280, not full stride)")
+    print("PASS PLXG latch+poller wired; offset 0x2C0 host/RTL lockstep")
 
 
 def check_runtime_ddr_layout_literal_sweep() -> None:

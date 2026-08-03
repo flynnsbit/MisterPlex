@@ -52,11 +52,17 @@ constexpr uint32_t kPlxmOffset = 0x110u;
 constexpr uint32_t kPlxfOffset = 0x118u;
 constexpr uint32_t kSdramDiagOffset = 0x120u;
 constexpr uint32_t kPlxdOffset = 0x128u;
-// PLXG — geometry program (ARM→FPGA). Opt-in variable canvas / native-push.
-// Not consumed by shipping RBF; reserved so 720p tier + w-scaler content window
-// share one doorbell-relative slot. Layout: see encodePlxgGeometryWord().
-constexpr uint32_t kPlxgOffset = 0x130u;
+// PLXG — 5-qword atomic geometry record (ARM→FPGA). Matches present_geom_latch.sv.
+// Offset +0x2C0 (NOT +0x130): PLXC chrome list ctrl owns +0x130 when present.
+// Bootstrap phys = product doorbell 0x300FF000 + 0x2C0 = 0x300FF2C0 (fixed);
+// fabric poller always reads bootstrap so Option-C bank remap cannot hide PLXG.
+// Layout: q0 magic|win|geom|seq, q1 content, q2 DE+coded, q3 strides+disp, q4 present+crop.
+// Size 40 bytes (q0..q4). See host/libmisterplex/plxg_record.hpp.
+constexpr uint32_t kPlxgOffset = 0x2C0u;
 constexpr uint32_t kPlxgMagic = 0x504C5847u; // "PLXG"
+constexpr uint32_t kPlxgBytes = 40u; // 5 qwords
+constexpr uint32_t kPlxgBootstrapDoorbellPhys = 0x300FF000u; // product YUV doorbell
+constexpr uint32_t kPlxgBootstrapPhys = 0x300FF2C0u; // bootstrap + kPlxgOffset
 
 // Legacy example doorbell base (historical 0x3007F000 control page).
 constexpr uint32_t kLegacyFrameStoreDoorbellPhys = 0x3007F000u;
@@ -133,7 +139,7 @@ struct MagicEntry {
     uint32_t magic;
 };
 
-constexpr std::array<MagicEntry, 7> kAllMagics = {{
+constexpr std::array<MagicEntry, 8> kAllMagics = {{
     {"PLXK", kPlxkMagic},
     {"PLXS", kPlxsMagic},
     {"PLXI", kPlxiMagic},
@@ -141,11 +147,15 @@ constexpr std::array<MagicEntry, 7> kAllMagics = {{
     {"PLXF", kPlxfMagic},
     {"PLXD", kPlxdMagic},
     {"PLXB", kPlxbMagic},
+    {"PLXG", kPlxgMagic},
 }};
+
+// Absolute PLXG on legacy example base (collision gate only).
+constexpr uint32_t kPlxgAddr = 0x3007F2C0u; // kLegacyFrameStoreDoorbellPhys + 0x2C0
 
 // ---- All addressed mailboxes (for address-collision detection) ----
 // Every occupied DDR mailbox slot. Gate rejects overlapping addresses.
-constexpr std::array<MailboxEntry, 8> kAllMailboxes = {{
+constexpr std::array<MailboxEntry, 9> kAllMailboxes = {{
     {"PLXK", kPlxkAddr,     kPlxkMagic,     8, "arm_to_fpga",  true},
     {"PLXS", kPlxsAddr,     kPlxsMagic,     8, "fpga_to_arm",  true},
     {"PLXI", kPlxiAddr,     kPlxiMagic,     8, "fpga_to_arm",  true},
@@ -154,6 +164,7 @@ constexpr std::array<MailboxEntry, 8> kAllMailboxes = {{
     {"DIAG", kSdramDiagAddr, 0,             8, "fpga_to_arm",  false},
     {"PLXD", kPlxdAddr,     kPlxdMagic,     8, "fpga_to_arm",  true},
     {"PLXB", kPlxbAddr,     kPlxbMagic,     8, "arm_to_fpga",  true},
+    {"PLXG", kPlxgAddr,     kPlxgMagic,     kPlxgBytes, "arm_to_fpga", true},
 }};
 
 // ---- Bitstream ring additional magics (not address-mapped; in-band) ----

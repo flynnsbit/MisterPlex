@@ -240,12 +240,26 @@ module ddr_frame_store #(
 
 	wire [28:0] rt_y_bytes_qw = ({17'd0, rt_ys_cl} * {18'd0, rt_ch_cl}) >> 3; // (ys*ch)/8
 	wire [28:0] rt_c_bytes_qw = ({18'd0, rt_cs_cl} * {19'd0, rt_ch_cl[10:1]}) >> 3; // (cs*ch/2)/8
+	// Exact-byte I420 payload (no qword floor). Aligned geom only: w%8==0, h even,
+	// strides %8==0. Unaligned → reject runtime geom (legacy banks) — no silent clamp.
+	wire rt_geom_aligned = (rt_cw_cl[2:0] == 3'd0) && !rt_ch_cl[0] &&
+	                       (rt_ys_cl[2:0] == 3'd0) && (rt_cs_cl[2:0] == 3'd0) &&
+	                       (rt_ys_cl >= {1'b0, rt_cw_cl}) &&
+	                       (rt_cs_cl >= {1'b0, rt_cw_cl[10:1]});
+	// payload = Y + U + V = ys*h + 2*(cs*(h/2)) = ys*h + cs*h
+	wire [31:0] rt_payload_bytes =
+		({20'd0, rt_ys_cl} * {20'd0, rt_ch_cl}) +
+		({21'd0, rt_cs_cl} * {21'd0, rt_ch_cl});
+	localparam [31:0] LEG_BANK_USABLE_BYTES =
+		(HPS_BANK_STRIDE_BYTES > 32'h1000) ? (HPS_BANK_STRIDE_BYTES - 32'h1000) : 32'd0;
+	wire rt_need_optc = rt_geom_aligned && (rt_payload_bytes > LEG_BANK_USABLE_BYTES);
 
 	// FAULT: ignore geom_enable (always legacy pitch) — red twin for runtime-stride gate.
 `ifdef DDR_FRAME_STORE_FAULT_IGNORE_GEOM
 	wire geom_enable_eff = 1'b0;
 `else
-	wire geom_enable_eff = geom_enable;
+	// Reject malformed geometry rather than floor/clamp into wrong plane bases.
+	wire geom_enable_eff = geom_enable & rt_geom_aligned;
 `endif
 
 	always @(posedge clk) begin
@@ -311,17 +325,16 @@ module ddr_frame_store #(
 			eff_c_pitch_qw <= rt_cs_cl[10:3];
 			eff_u_base_qw  <= rt_y_bytes_qw;
 			eff_v_base_qw  <= rt_y_bytes_qw + rt_c_bytes_qw;
-			// Option-C when I420 payload cannot fit legacy *usable* capacity
-			// (stride − 4 KiB doorbell page). NOT full stride, NOT coded_w>=1280.
-			// 720x482 = 520560 > 520192 usable → Option-C (even though < 524288).
-			// 960x540 = 777600 → Option-C; 624x480 stays legacy.
+			// Option-C when exact I420 payload > legacy usable (stride−4KiB).
+			// NOT full stride, NOT coded_w>=1280. 720x482=520560→Option-C;
+			// 960x540=777600→Option-C; 624x480 stays legacy. Unaligned rejected above.
 `ifdef DDR_FRAME_STORE_FAULT_FORCE_LEGACY_BANK_MAP
 			eff_optc_map   <= 1'b0;
 			eff_base_w0    <= LEG_BASE_W0;
 			eff_base_w1    <= LEG_BASE_W1;
 			eff_doorbell_w <= LEG_DOORBELL_W;
 `else
-			if ((rt_y_bytes_qw + (rt_c_bytes_qw << 1)) > LEG_BANK_USABLE_QWORDS) begin
+			if (rt_need_optc) begin
 				eff_optc_map   <= 1'b1;
 				eff_base_w0    <= OPTC_BASE_W0;
 				eff_base_w1    <= OPTC_BASE_W1;
