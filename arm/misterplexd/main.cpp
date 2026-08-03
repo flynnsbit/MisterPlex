@@ -671,6 +671,14 @@ int main(int argc, char** argv) {
     player.setDecodeSizeSource(decodeSizeSource);
     player.setPresentMode(presentMode);
     player.setDdrFrameFormat(ddrFrameFormat);
+    // Cached map path (DDR_MEM_SYNC=0) requires explicit flush before doorbell.
+    if (!ddrMemSync && !ddrMemFlush) {
+        std::fprintf(stderr,
+                     "misterplexd: DDR_MEM_SYNC=0 forces DDR_MEM_FLUSH=1 "
+                     "(doorbell ordering)
+");
+        ddrMemFlush = true;
+    }
     player.setDdrMemSync(ddrMemSync);
     player.setDdrMemFlush(ddrMemFlush);
     player.setPresentProfile(presentProfile);

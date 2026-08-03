@@ -1,6 +1,7 @@
 #pragma once
 
 #include "libmisterplex/geometry_units.hpp"
+#include "libmisterplex/ddr_mem_map_policy.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -674,7 +675,13 @@ inline bool ddrFrameStoreAccepts720pTier(int codedWidth, int codedHeight) {
 //   Product present wall mean ~10.41 ms/f includes prep/PLXD/doorbell, not only copy.
 
 // Archive no-sync bank-fill rate used for *copy-term* projections only.
+// Archive pure-fill (p480-bandwidth.md) — superseded for 720p budget by parent
+// 2026-08-03 ddr_write_bench mapped-bank measure (kept for comparison only).
 constexpr double kDdrArchiveNoSyncMibps = 59.521;
+// Parent mapped-bank / host-copy rates: ddr_mem_map_policy.hpp
+// Default budget projection uses mapped-bank rate (proven on device).
+constexpr double kParentDdrMappedBankMibps = kParentDdrMappedBank720pMibps;
+constexpr double kDdrBudgetCopyMibps = kParentDdrMappedBank720pMibps;
 // FEED archive scale-stage wall bucket (ms/f) — recovered only when ARM stops vf scale.
 constexpr double kFeedArchiveScaleMs = 2.95;
 // FEED archive product present wall mean (ms/f) — not equal to pure copy.
@@ -873,8 +880,8 @@ inline DdrArmPresentBudget makeDdrArmPresentBudget(const DdrNativePushPlan& nati
         return b;
     b.arm_push_bytes = armPushesPixels ? native.native_bytes : 0;
     b.arm_copy_ms =
-        armPushesPixels ? ddrPushMsAtRate(native.native_bytes, kDdrArchiveNoSyncMibps) : 0.0;
-    b.canvas_copy_ms = ddrPushMsAtRate(native.canvas_bytes, kDdrArchiveNoSyncMibps);
+        armPushesPixels ? ddrPushMsAtRate(native.native_bytes, kDdrBudgetCopyMibps) : 0.0;
+    b.canvas_copy_ms = ddrPushMsAtRate(native.canvas_bytes, kDdrBudgetCopyMibps);
     // When ARM pushes nothing, the entire canvas copy term is evacuated.
     b.copy_ms_removed =
         armPushesPixels ? (b.canvas_copy_ms - b.arm_copy_ms) : b.canvas_copy_ms;
@@ -970,7 +977,7 @@ inline double ddr720p24ResidualMsAfterDecodeOnly(
 
 // True when a projected ARM copy term alone would blow residual at the given tier.
 inline bool ddr720p24ArmCopyExceedsDecodeMarginAt(size_t armPushBytes, double decodeMs) {
-    const double copyMs = ddrPushMsAtRate(armPushBytes, kDdrArchiveNoSyncMibps);
+    const double copyMs = ddrPushMsAtRate(armPushBytes, kDdrBudgetCopyMibps);
     return copyMs > ddr720p24ResidualMsAfterDecodeOnly(decodeMs);
 }
 

@@ -228,3 +228,19 @@ Real content, decode-only, both cores (ms/f): 1500k=32.427 (headroom 9.24),
 Tier saves up to 8.65 ms/f vs 4000k — **jitter margin only**. Full 720p ARM
 memcpy still ~22.15 ms and fails `ddr720p24ArmCopyExceedsCandidateTierMargin`.
 Ship gate remains `publish_bytes=0` / FPGA-written banks via `fabric_ddr_writer`.
+
+## Parent DDR map bandwidth (2026-08-03)
+
+`ddr_write_bench` true rc=0 on device:
+| path | MiB/s | ms/720p frame |
+|------|------:|-------------:|
+| mapped bank (`/dev/mem`, product O_SYNC class) | **86.676** | **15.210** |
+| host-copy ordinary RAM | 439.788 | 2.998 (ceiling; **unproven on bank**) |
+| 480p mapped bank | 89.363 | — bandwidth-limited |
+
+1500k decode 32.427 + mapped 15.210 = **47.637 ms (FAIL)**.  
+1500k + host-copy ceiling 2.998 = 35.425 (PASS numbers only — hypothesis).
+
+Lab knobs: `DDR_MEM_SYNC=0` `DDR_MEM_FLUSH=1` (flush forced if SYNC=0).  
+Ordering: payload dcache clean + barrier **before** doorbell (`ddr_mem_map_policy.hpp`).
+End state remains fabric writer (`publish_bytes=0`).

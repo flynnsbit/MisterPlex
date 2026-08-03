@@ -1548,7 +1548,15 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
     __sync_synchronize();
     auto tCopy1 = std::chrono::steady_clock::now();
     timing.copy_us = elapsedUs(tCopy0, tCopy1);
-    if (!ddrMemSync_ && ddrMemFlush_) {
+    // Map policy (ddr_mem_map_policy.hpp): O_SYNC path is strongly ordered.
+    // Non-sync (cached/WC candidate) MUST dcache-clean the payload range before
+    // doorbell — otherwise FPGA may sample stale lines (tearing class).
+    if (!ddrMemSync_) {
+        if (!ddrMemFlush_) {
+            setErr("sendDdrFrame: DDR_MEM_SYNC=0 requires DDR_MEM_FLUSH=1 "
+                   "(payload must be FPGA-visible before doorbell)");
+            return false;
+        }
         auto tFlush0 = std::chrono::steady_clock::now();
         if (!cleanDcacheRange(ddrMap_ + bankOff, len)) {
             setErr("sendDdrFrame: cache clean failed");
