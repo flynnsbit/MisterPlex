@@ -3001,18 +3001,30 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                         "(PMS request ≠ measured size); forcing scale. reason=") +
             vfPlan.reason + " claimed=" + srcStr + " coded=" + codedStr);
     }
-    log(std::string("media: GEOM expected_delivery=") + srcStr + " decode_target=" + codedStr +
-        " arm_rescale=" + (vfPlan.scale_applied ? "1" : "0") + " reason=" + vfPlan.reason +
-        " identity_skip=" + (vfPlan.identity_skip ? "1" : "0") +
-        " mode=" + ffmpegScaleModeName(vfReq.scale_mode) +
-        " conf_mode=" + ffmpegScaleModeName(confScaleMode) +
-        " yuv_ddr_force_scale=" + (forceScale ? "1" : "0") +
-        " delivery_verified=" +
-        (deliveryGeometryVerified_.load(std::memory_order_relaxed) ? "1" : "0") +
-        " sws_flags=" + (ffmpegSwsFlags_.empty() ? "(default)" : ffmpegSwsFlags_) +
-        " assume_match=" + (ffmpegScaleAssumeMatch_ ? "1" : "0") +
-        " display=" + std::to_string(rawDisplayW) + "x" + std::to_string(rawDisplayH) +
-        " vf=" + (vf.empty() ? "(none)" : vf));
+    {
+        const bool delivVer =
+            deliveryGeometryVerified_.load(std::memory_order_relaxed);
+        const char* basis =
+            deliveryBasis_.empty() ? "unknown" : deliveryBasis_.c_str();
+        const auto pathClass = classifyPathScaleClass(
+            basis, delivVer, vfPlan.scale_applied, vfPlan.identity_skip);
+        log(std::string("media: GEOM expected_delivery=") + srcStr + " decode_target=" +
+            codedStr + " arm_rescale=" + (vfPlan.scale_applied ? "1" : "0") +
+            " reason=" + vfPlan.reason +
+            " identity_skip=" + (vfPlan.identity_skip ? "1" : "0") +
+            " mode=" + ffmpegScaleModeName(vfReq.scale_mode) +
+            " conf_mode=" + ffmpegScaleModeName(confScaleMode) +
+            " yuv_ddr_force_scale=" + (forceScale ? "1" : "0") +
+            " delivery_basis=" + basis +
+            " delivery_verified=" + (delivVer ? "1" : "0") +
+            " path_scale_class=" + std::string(pathScaleClassName(pathClass)) +
+            " fabric_native=" +
+            (pathClass == PathScaleClass::FabricNative ? "1" : "0") +
+            " sws_flags=" + (ffmpegSwsFlags_.empty() ? "(default)" : ffmpegSwsFlags_) +
+            " assume_match=" + (ffmpegScaleAssumeMatch_ ? "1" : "0") +
+            " display=" + std::to_string(rawDisplayW) + "x" + std::to_string(rawDisplayH) +
+            " vf=" + (vf.empty() ? "(none)" : vf));
+    }
     // FILTER_CHAIN_LOSS: row destruction from OUR -vf FOAR, not PMS (parent miss
     // 2026-08-02: PMS scale=w=624:h=480 for rk6/rk36; daemon FOAR into 618 made
     // ~350 real rows). Crop/pad paths keep bank height → frac=1.0.

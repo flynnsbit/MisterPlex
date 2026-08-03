@@ -60,6 +60,8 @@ inline const char* pathPublicSymbolRollCall() {
     (void)selectPlxgAspectCadence(0, 0, "", "", 0, 0);
     (void)selectSourceAwarePmsRequest(624, 480, 960, 540);
     (void)selectDirectPartStoreGeometry(320, 240);
+    (void)classifyPathScaleClass("transcode_request", false, true, false);
+    (void)pathScaleClassName(PathScaleClass::ArmScaleFallback);
     return "path_public_symbols_ok";
 }
 

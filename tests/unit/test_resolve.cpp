@@ -773,6 +773,39 @@ int main() {
         std::printf("GREEN_PATH_direct_part_native_pad_bank\n");
     }
 
+    // rd-duck: universal is ARM-scale fallback — never fabric_native at plan time.
+    // source_snap only picks the bank; force-scale + unverified claim keep ARM scale.
+    {
+        CHECK(classifyPathScaleClass("transcode_request", false, true, false) ==
+              PathScaleClass::ArmScaleFallback);
+        CHECK(classifyPathScaleClass("transcode_request", false, false, false) ==
+              PathScaleClass::ArmScaleFallback);
+        // RED: even if someone wrongly sets verified on a request claim, basis wins.
+        CHECK(classifyPathScaleClass("transcode_request", true, false, true) ==
+              PathScaleClass::ArmScaleFallback);
+        CHECK(std::string(pathScaleClassName(PathScaleClass::ArmScaleFallback)) ==
+              "arm_scale_fallback");
+        CHECK(!pathMayBeFabricNative("transcode_request", false));
+        CHECK(!pathMayBeFabricNative("transcode_request", true));
+        CHECK(pmsMayTweakAlignedRequestDelivery()); // 624x352→626x352 class
+
+        // DP verified + no scale → fabric_native.
+        CHECK(classifyPathScaleClass("direct_play_part", true, false, true) ==
+              PathScaleClass::FabricNative);
+        CHECK(pathMayBeFabricNative("direct_play_part", true));
+        // DP with pad/scale still ARM fallback until pad-only is modeled separately.
+        CHECK(classifyPathScaleClass("direct_play_part", true, true, false) ==
+              PathScaleClass::ArmScaleFallback);
+
+        // Source-aware bank selection must not imply fabric_native for universal.
+        const auto sa = selectSourceAwarePmsRequest(624, 352, 960, 540);
+        CHECK(isFabricStoreAligned(sa.store_w, sa.store_h));
+        CHECK(classifyPathScaleClass("transcode_request", false, true, false) ==
+              PathScaleClass::ArmScaleFallback);
+
+        std::printf("GREEN_PATH_universal_arm_scale_fallback_not_fabric_native\n");
+    }
+
     if (fails) {
         std::fprintf(stderr, "test_resolve: %d failures\n", fails);
         return 1;

@@ -20,6 +20,7 @@ need=(
   "packPlxgQ5"
   "selectSourceAwarePmsRequest"
   "selectDirectPartStoreGeometry"
+  "classifyPathScaleClass"
   "selectPlxgAspectCadence"
 )
 for s in "${need[@]}"; do

@@ -213,6 +213,72 @@ inline const char* deliveryBasisForResolve(bool ok, bool transcoded, int media_w
     return "unknown";
 }
 
+// ---- Path scale class (rd-duck 2026-08-03) ---------------------------------
+//
+// Universal/transcode is **ARM-scale fallback**, not fabric-native:
+//   - main sets delivery_verified=0 for basis=transcode_request
+//   - media_player keeps DDR YUV force-scale ON → Always scale mode
+//   - ffmpeg_vf emits scale+pad for unverified exact claims (cannot identity_skip)
+//   - vf is frozen before the ffmpeg banner; measured delivery cannot rebuild it
+//   - parent ±2 macroblock tweak: request 624x352 can deliver 626x352 (unaligned)
+//     even when the request was fabric-aligned — source_snap only picks the bank
+//
+// fabric_native requires verified delivery (DP Part or measured) AND no ARM
+// resample into the bank. Until preflight/manifest verification or a dynamic
+// post-banner pad-only rebuild exists, NEVER count universal as fabric_native.
+
+enum class PathScaleClass {
+    Unknown = 0,
+    ArmScaleFallback = 1, // universal / unverified / force-scale path
+    FabricNative = 2,     // verified delivery, identity or pad-only into bank
+};
+
+inline const char* pathScaleClassName(PathScaleClass c) {
+    switch (c) {
+    case PathScaleClass::FabricNative:
+        return "fabric_native";
+    case PathScaleClass::ArmScaleFallback:
+        return "arm_scale_fallback";
+    default:
+        return "unknown";
+    }
+}
+
+// Plan-time classification from resolve basis + vf plan outcome.
+// scale_applied=true ⇒ always ARM fallback (resample ran).
+// identity_skip/pad-only without scale only counts fabric_native when verified.
+inline PathScaleClass classifyPathScaleClass(const char* delivery_basis,
+                                             bool delivery_verified, bool scale_applied,
+                                             bool identity_skip) {
+    // Universal request claim — never fabric-native at plan time (rd-duck).
+    if (delivery_basis) {
+        const std::string b(delivery_basis);
+        if (b == "transcode_request" || b == "library_media" || b == "unknown")
+            return PathScaleClass::ArmScaleFallback;
+    } else {
+        return PathScaleClass::ArmScaleFallback;
+    }
+    if (!delivery_verified)
+        return PathScaleClass::ArmScaleFallback;
+    if (scale_applied)
+        return PathScaleClass::ArmScaleFallback;
+    // Verified DP/measured and no scale: identity_skip or crop/pad-only.
+    if (identity_skip || !scale_applied)
+        return PathScaleClass::FabricNative;
+    return PathScaleClass::ArmScaleFallback;
+}
+
+// True when this path may still claim fabric-native (DP only at plan time).
+inline bool pathMayBeFabricNative(const char* delivery_basis, bool delivery_verified) {
+    return classifyPathScaleClass(delivery_basis, delivery_verified, /*scale*/ false,
+                                  /*identity*/ true) == PathScaleClass::FabricNative;
+}
+
+// PMS may tweak an already 16-aligned request by ±2 (MB) — measured class:
+// 624x352 request → 626x352 delivery. Aligned request ≠ aligned delivery guarantee.
+// Universal path must keep ARM scale/pad until measured geometry is known.
+inline bool pmsMayTweakAlignedRequestDelivery() { return true; }
+
 // ---- Source-aware PMS request (w-mem rt_raw_ok contract) --------------------
 //
 // Parent 2026-08-04 (cross-lane): fixed ladder rungs AR-fit the majority library
@@ -225,6 +291,12 @@ inline const char* deliveryBasisForResolve(bool ok, bool transcoded, int media_w
 //
 // 426x240 class (4 items): native W not 16-aligned. Floor-snap → 416x240. Host
 // must still verify delivery; if PMS keeps 426, store needs align-up pad (host).
+//
+// IMPORTANT (rd-duck): this helper only selects the **target bank / request**.
+// Universal remains path_scale_class=arm_scale_fallback — delivery_verified=0,
+// force-scale ON, vf frozen pre-banner. Parent ±2 tweak (624x352→626x352) means
+// an aligned request can still yield unaligned delivery. Do NOT count source_snap
+// as "ARM scaling removed" / fabric_native.
 
 inline int alignWidthDown16(int w) {
     if (w < 16)

@@ -1179,6 +1179,7 @@ int main(int argc, char** argv) {
         const bool deliveryVerified =
             misterplex::deliveryGeometryVerifiedFromBasis(deliveryBasis);
         player.setDeliveryGeometryVerified(deliveryVerified);
+        player.setDeliveryBasis(deliveryBasis ? deliveryBasis : "unknown");
 
         const std::string decodeTarget = std::string(contentRes.label);
         const std::string requestedPms = weakForPlay.videoResolution;
@@ -1263,17 +1264,27 @@ int main(int argc, char** argv) {
                                     : "unknown";
         const int sq480w =
             (contentDar > 0.0) ? misterplex::squarePixelWidthForHeight(contentDar, codedH) : 0;
+        const auto pathClass = misterplex::classifyPathScaleClass(
+            deliveryBasis, deliveryVerified, armRescale != 0,
+            /*identity_skip*/ armRescale == 0 && deliveryVerified);
+        // Universal = arm_scale_fallback always (rd-duck). fabric_native=1 only DP/measured.
         std::fprintf(stderr,
                      "misterplexd: GEOM requested_pms=%s expected_delivery=%s "
                      "delivery_basis=%s delivery_verified=%d decode_target=%s "
                      "content_tier=%s arm_rescale=%d yuv_ddr_force_scale=%d "
+                     "path_scale_class=%s fabric_native=%d "
                      "transcoded=%d sws=%s scale_mode=%s library_media=%s "
                      "media_ar=%s sar=%s content_dar=%.4f predicted_square_fit=%s "
                      "square_px_w_at_coded_h=%d max_video_frame_rate=%d "
-                     "note=videoResolution_is_ceiling_not_exact\n",
+                     "note=videoResolution_is_ceiling_not_exact;"
+                     "universal_is_arm_scale_fallback;"
+                     "pms_may_tweak_aligned_pm2\n",
                      requestedPms.c_str(), expectStr.c_str(), deliveryBasis,
                      deliveryVerified ? 1 : 0, codedTarget.c_str(), decodeTarget.c_str(),
-                     armRescale, forceScale ? 1 : 0, resolved.transcoded ? 1 : 0,
+                     armRescale, forceScale ? 1 : 0,
+                     misterplex::pathScaleClassName(pathClass),
+                     pathClass == misterplex::PathScaleClass::FabricNative ? 1 : 0,
+                     resolved.transcoded ? 1 : 0,
                      ffmpegSwsFlags.empty() ? "(ffmpeg_default)" : ffmpegSwsFlags.c_str(),
                      misterplex::ffmpegScaleModeName(scaleMode), libraryStr.c_str(),
                      resolved.mediaAspectRatio.empty() ? "-" : resolved.mediaAspectRatio.c_str(),

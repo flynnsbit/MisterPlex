@@ -110,6 +110,10 @@ public:
     bool deliveryGeometryVerified() const {
         return deliveryGeometryVerified_.load(std::memory_order_relaxed);
     }
+    // Resolve-time delivery basis token (transcode_request / direct_play_part / …).
+    // Used for path_scale_class logs — universal stays arm_scale_fallback.
+    void setDeliveryBasis(std::string basis) { deliveryBasis_ = std::move(basis); }
+    const std::string& deliveryBasis() const { return deliveryBasis_; }
     // Intentional A/V lead compensation via FFmpeg adelay (ms). Default 0.
     // Prefer contentFps wall/audio pacing first; use adelay only for small residual.
     void setAudioDelayMs(int ms) { audioDelayMs_ = ms < 0 ? 0 : ms; }
@@ -337,6 +341,7 @@ private:
     // Flips true only after ffmpeg stderr MEASURED_DELIVERY (basis=measured).
     // Play-time library_media/transcode_request must leave this false (B4).
     std::atomic<bool> deliveryGeometryVerified_{false};
+    std::string deliveryBasis_; // resolve token; empty → treat as unknown
     int ffmpegScaleSourceW_ = 0;
     int ffmpegScaleSourceH_ = 0;
     // Frozen at play-time: PMS request / expected_delivery claim (not overwritten

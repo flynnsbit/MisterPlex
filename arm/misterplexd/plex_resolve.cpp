@@ -1003,10 +1003,10 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
 
     // Prefer weak universal for dual A9 (STREAM=0 cast path / non-H.264 STREAM)
     if (weakAlways && key.rfind("/library", 0) == 0) {
-        // Source-aware request: PMS never upscales; fixed ladder AR-fit can emit
-        // non-16-aligned widths (624x480@640x360 → 468x360) that w-mem rejects.
-        // After media dims are known, request source clamp+snap16 into the tier
-        // ceiling so delivered W is fabric-store aligned whenever PMS honors it.
+        // Source-aware request: selects target bank/request only.
+        // rd-duck: universal remains arm_scale_fallback (delivery_verified=0,
+        // force-scale, vf frozen pre-banner; PMS ±2 tweak can unalign delivery).
+        // Do NOT treat this as fabric-native / ARM-scale-removed.
         WeakLadder weakEff = weak;
         if (r.mediaWidth > 0 && r.mediaHeight > 0) {
             int maxW = 0, maxH = 0;
