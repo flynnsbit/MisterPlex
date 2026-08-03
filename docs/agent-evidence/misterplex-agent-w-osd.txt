@@ -1,28 +1,17 @@
-lane=w-osd branch=w-osd-fabric-plane tip=d54dd690
-status=READY — idle + PLAYING capture contracts; pair scorer unit green
+lane=w-osd branch=w-osd-fabric-plane
+status=READY — scorer instrument-validated on real ctrl720 + wedge frames
 
-## Parent commands (post BUILD_OK)
-make post-fit-fab-idle FIT_RPT=$FITDIR/Plex.fit.rpt MAP_RPT=$FITDIR/Plex.map.rpt
-# rc!=0 → VOID FIT
+## Instrument validation (true rc=0 unit)
+ctrl720_arm.png self -> VERDICT=CONTROL_ARM_IDLE  (NOT A)
+wedge_check.png self -> VERDICT=E_NOSIGNAL       (was UNSCORED hole; fixed)
+ctrl->wedge          -> VERDICT=B1_ONE_SHOT_THEN_DEAD
+--grabber-not-ready  -> VERDICT=UNKNOWN_GRABBER exit 3
 
-## IDLE glass (FAB_IDLE=1)
-docs/fab-idle-parent-capture-contract.md
-docs/fab-idle-postfit-gate.md
-PASS: CYAN>=2000 ORANGE>=500 ACTIVE>923x717 motion; kill <PID> still moves
-Control: MEAN=14.4 CYAN=0 ACTIVE=923x717 (d1b24e0c mode0)
-
-## PLAYING glass (product 960x540 → 1280x720 output)
+## PLAYING score
 docs/fab-playing-parent-capture-contract.md
-scripts/hdmi_score_pair.sh
-  scripts/hdmi_capture_idle.sh docs/agent-evidence/play-t0.png
-  sleep 1
-  scripts/hdmi_capture_idle.sh docs/agent-evidence/play-t1.png
-  scripts/hdmi_score_pair.sh docs/agent-evidence/play-t0.png docs/agent-evidence/play-t1.png
-PASS class A: ACTIVE>=1100x680 area>=748k CYAN<=200 ORANGE<=4000
-              MEAN 20..160 DIFF_PX>=8000  (+ P2 freeze not black)
-Taxonomy: A | B1 one-shot-dead | B2 static-full | B3 idle | C1 ARM-letterbox
-          C2 ARM-overlay-bake | D1 cyan-wrong | D2 upscale-geom | D3 pillar
-NEG: control must NOT score A
+scripts/hdmi_score_pair.sh t0.png t1.png
+# if capture rc=1: scripts/hdmi_score_pair.sh --grabber-not-ready
 
-## Offline
-tests/unit/test_hdmi_score_pair.sh  true rc=0
+## IDLE
+docs/fab-idle-postfit-gate.md
+make post-fit-fab-idle FIT_RPT=$FITDIR/Plex.fit.rpt MAP_RPT=$FITDIR/Plex.map.rpt
