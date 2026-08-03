@@ -33,3 +33,6 @@ remote_out/
 # reproducible from a fresh clone and cannot pick up stale local bitstreams.
 !release_artifacts/
 !release_artifacts/**
+
+# Permanent lab memory / rescued /tmp evidence (never shipped, may contain lab data)
+Memory/

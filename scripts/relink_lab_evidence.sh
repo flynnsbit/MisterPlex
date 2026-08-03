@@ -2,20 +2,21 @@
 # Recreate the /tmp -> permanent-store symlinks for lab evidence.
 #
 # Orchestration logs and per-agent evidence are written to /tmp/misterplex-*
-# paths by long-standing convention. /tmp is cleared on reboot, which has
-# already destroyed a session's history once. The real files therefore live in
-# a permanent directory outside the git worktree, and the /tmp paths are
-# symlinks into it, so existing agents and scripts need no changes.
+# paths by long-standing convention. /tmp is tmpfs and is cleared on reboot,
+# which has already destroyed a session's history once. The real files
+# therefore live under ~/Projects/MisterPlex/Memory/lab, and the /tmp paths
+# are symlinks into it, so existing agents and scripts need no changes.
 #
 # Run this after a reboot, or any time /tmp has been cleared.
 #
-# The store is kept outside the worktree on purpose: it must survive
-# `git clean -xfd`, and it holds the lab PMS address, which
-# tests/unit/test_no_private_data.sh forbids in tracked files.
+# Memory/ is git-ignored because it holds the lab PMS address, which
+# tests/unit/test_no_private_data.sh forbids in tracked files. It sits in the
+# primary clone rather than a build worktree so that `git clean -xfd` during a
+# build cannot reach it; do not run `git clean -xfd` in the primary clone.
 
 set -uo pipefail
 
-LAB_EVIDENCE_DIR="${LAB_EVIDENCE_DIR:-$HOME/Projects/MisterPlex-lab}"
+LAB_EVIDENCE_DIR="${LAB_EVIDENCE_DIR:-$HOME/Projects/MisterPlex/Memory/lab}"
 
 if [[ ! -d "$LAB_EVIDENCE_DIR" ]]; then
   echo "relink_lab_evidence: store not found: $LAB_EVIDENCE_DIR" >&2

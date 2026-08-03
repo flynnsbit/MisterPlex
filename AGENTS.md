@@ -53,9 +53,11 @@ reboot. `/tmp` being cleared has already destroyed a session's history once.
 | `/tmp/misterplex-agent-<ID>.txt` | Worker evidence |
 | `/tmp/plex_quartus_*.log` | Sole build logs |
 
-Permanent store: `$HOME/Projects/MisterPlex-lab/` (`parent/`, `agents/`,
-`status/`, `quartus/`). Read `parent/misterplex-parent-720p-decode-verdict.txt`
-first — it is the authoritative project record.
+Permanent store: `$HOME/Projects/MisterPlex/Memory/` — `lab/` holds the live
+orchestration evidence (`parent/`, `agents/`, `status/`, `quartus/`), and
+`tmp-rescue-*/` holds artifacts recovered from `/tmp`. Read
+`lab/parent/misterplex-parent-720p-decode-verdict.txt` first — it is the
+authoritative project record. `Memory/README.md` indexes the whole store.
 
 After a reboot, or any time `/tmp` is cleared, restore the links:
 
@@ -63,10 +65,21 @@ After a reboot, or any time `/tmp` is cleared, restore the links:
 scripts/relink_lab_evidence.sh
 ```
 
-The store is **outside** the git worktree on purpose. Inside, it would have to be
-git-ignored to pass `tests/unit/test_no_private_data.sh` (it holds the lab PMS
-address), and git-ignored files are exactly what `git clean -xfd` deletes —
-storage a routine build step erases is not permanent storage.
+`/tmp` is **tmpfs**: it is guaranteed to be erased on reboot, so nothing of value
+may live there. `Memory/` is git-ignored (`.gitignore` + `.git/info/exclude`)
+because it holds the lab PMS address and device captures.
+
+**Known hazard:** git-ignored files inside a repo are exactly what `git clean -xfd`
+deletes. Two things contain that risk, and neither removes it — do not run
+`git clean -xfd` in the primary clone:
+
+1. `Memory/` lives in the **primary clone** (`~/Projects/MisterPlex`), while all
+   build/test work happens in separate worktrees (`MisterPlex-wt-*`), so a clean
+   during a build does not reach it.
+2. No script in this repo runs `git clean`; the risk is manual only.
+
+Live Plex tokens (`/tmp/.tok*`) are **never** copied into the store, and token
+values are redacted from every text file that is.
 
 ## Hard rules (lab)
 
