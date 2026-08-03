@@ -66,7 +66,20 @@ def main() -> int:
         ("present_geom_latch", "u_plxg_latch" in plex and "present_geom_latch" in plex),
         ("plex_present_geom_mux", "u_present_geom_mux" in plex and "plex_present_geom_mux" in plex),
         ("present_content_window", "u_content_window" in core and "present_content_window" in core),
-        ("beam_720p24", "u_beam_720p24" in core and "L4_H_TOTAL = 1312" in core and "L4_V_TOTAL = 762" in core),
+        (
+            "beam_720p24",
+            "u_beam_720p24" in core
+            and (
+                # Legacy localparams or parameterized defaults (same 1312×762)
+                ("L4_H_TOTAL = 1312" in core and "L4_V_TOTAL = 762" in core)
+                or (
+                    "L4_H_TOTAL_P = 1312" in core
+                    and "L4_V_TOTAL_P = 762" in core
+                    and "L4_H_TOTAL = L4_H_TOTAL_P" in core
+                    and "L4_V_TOTAL = L4_V_TOTAL_P" in core
+                )
+            ),
+        ),
         ("PLEX_PRESENT_720P_L4_gate", "`ifdef PLEX_PRESENT_720P_L4" in core and "`ifdef PLEX_PRESENT_720P_L4" in plex),
         ("colorbars_default", "colorbars bars" in core),
     ]

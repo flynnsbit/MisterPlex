@@ -27,6 +27,25 @@ module present_core #(
 	parameter int FRAME_H = 240,
 	parameter int FRAME_STRIDE = FRAME_W,
 	parameter int SDRAM_REFRESH_CYCLES = 780,
+	// Template/FBAR paint window (colorbars DE). Defaults reproduce v0.3.0 /
+	// G-VID1 exactly: H_DE=529, V_STORE=240, scale ref 320×240, mul 39647.
+	// These are NOT FRAME_W/FRAME_H — colorbars DE is fixed by the Template
+	// path. Override only in simulation; product must keep defaults.
+	parameter int TPL_H_DE = 529,
+	parameter int TPL_V_STORE = 240,
+	parameter int TPL_SCALE_REF_W = 320,
+	parameter int TPL_SCALE_REF_H = 240,
+	parameter int TPL_STORE_X_MUL = 39647,
+	// L4 720p24 beam (used only under PLEX_PRESENT_720P_L4). Defaults match
+	// w-clock NATIVE_720P kit. Product enable is QSF-gated default-off.
+	parameter int L4_H_DE_P = 1280,
+	parameter int L4_V_ACT_P = 720,
+	parameter int L4_H_TOTAL_P = 1312,
+	parameter int L4_V_TOTAL_P = 762,
+	parameter int L4_H_FP_P = 8,
+	parameter int L4_H_SW_P = 8,
+	parameter int L4_V_FP_P = 8,
+	parameter int L4_V_SW_P = 6,
 `ifdef FRAME_CMD_FIFO_AW4
 	parameter int FRAME_CMD_FIFO_AW = 4,
 `elsif FRAME_CMD_FIFO_AW6
@@ -233,15 +252,15 @@ module present_core #(
 	end
 	// synthesis translate_on
 
-	// w-clock NATIVE_720P_GO_NOGO / Plex_native720p24.sdc
-	localparam int L4_H_DE    = 1280;
-	localparam int L4_V_ACT   = 720;
-	localparam int L4_H_TOTAL = 1312;
-	localparam int L4_V_TOTAL = 762;
-	localparam int L4_H_SYNC_S = 1280 + 8;
-	localparam int L4_H_SYNC_E = 1280 + 8 + 8;
-	localparam int L4_V_SYNC_S = 720 + 8;
-	localparam int L4_V_SYNC_E = 720 + 8 + 6;
+	// w-clock NATIVE_720P_GO_NOGO / Plex_native720p24.sdc — from module params
+	localparam int L4_H_DE    = L4_H_DE_P;
+	localparam int L4_V_ACT   = L4_V_ACT_P;
+	localparam int L4_H_TOTAL = L4_H_TOTAL_P;
+	localparam int L4_V_TOTAL = L4_V_TOTAL_P;
+	localparam int L4_H_SYNC_S = L4_H_DE_P + L4_H_FP_P;
+	localparam int L4_H_SYNC_E = L4_H_DE_P + L4_H_FP_P + L4_H_SW_P;
+	localparam int L4_V_SYNC_S = L4_V_ACT_P + L4_V_FP_P;
+	localparam int L4_V_SYNC_E = L4_V_ACT_P + L4_V_FP_P + L4_V_SW_P;
 
 	wire [10:0] hc11, vc11, vtot_act11;
 	wire [10:0] hde_act11, htot_act11, vact_act11;
@@ -394,14 +413,16 @@ module present_core #(
 	// solid-red F1 while bars on same RBF span 0.998. Use colorbars hc + mul-shift.
 	// PRESENT_BEAM_960: identity map uses hc/vc (still feeds store_x_clamped name so
 	// G-VID1 scanout invariants remain a single assign pair).
-	localparam H_DE    = 10'd529;
-	localparam V_STORE = 10'd240;
-	localparam int STORE_X_SCALE = (FRAME_W * 39647) / 320;
-	localparam int STORE_Y_SCALE = (FRAME_H * 65536) / 240;
+	// Defaults: TPL_H_DE=529 TPL_V_STORE=240 — bit-identical to prior localparams.
+	localparam H_DE    = 10'(TPL_H_DE);
+	localparam V_STORE = 10'(TPL_V_STORE);
+	localparam int STORE_X_SCALE = (FRAME_W * TPL_STORE_X_MUL) / TPL_SCALE_REF_W;
+	localparam int STORE_Y_SCALE = (FRAME_H * 65536) / TPL_SCALE_REF_H;
 	// Exact clone of colorbars in_content (full DE paint region).
 	wire [9:0] py = scandouble ? (vc >> 1) : vc;
 `ifdef PLEX_PRESENT_720P_L4
 	// L4: present_content_window owns store map (identity when content==DE).
+	// STORE domain tracks FRAME_* so QSF 1280×720 cannot disagree with 480p-era 1280/720 literals.
 	wire in_content_l4 = ~hb & ~vb & (hc11 < hde_act11) & (vc11 < vact_act11);
 	wire past_last_row; // driven by content_window
 	wire [FRAME_X_W-1:0] store_x_clamped;
@@ -410,8 +431,8 @@ module present_core #(
 	(* noprune *) present_content_window #(
 		.FRAME_W(FRAME_W),
 		.FRAME_H(FRAME_H),
-		.STORE_W(1280),
-		.STORE_H(720),
+		.STORE_W(FRAME_W),
+		.STORE_H(FRAME_H),
 		.H_DE_DEFAULT(L4_H_DE),
 		.V_DE_DEFAULT(L4_V_ACT)
 	) u_content_window (
@@ -434,12 +455,15 @@ module present_core #(
 		.past_last_row(past_last_row)
 	);
 	wire in_content = in_content_l4;
-	wire [9:0] store_y_clamped = past_last_row ? 10'd239 : py; // G-VID1 text anchor
+	// Clamp from FRAME_H (not 239) so 720p does not inherit 480p last-row.
+	wire [9:0] store_y_clamped =
+		past_last_row ? 10'(FRAME_H > 0 ? FRAME_H - 1 : 0) : py;
 	wire _unused_l4_win = de_r_win | |store_y_clamped;
 `elsif PRESENT_BEAM_960
 	wire in_content = ~hb & ~vb & (hc11 < hde_act11) & (vc11 < vact_act11);
-	wire       past_last_row = (py >= 10'd240); // kept for vb_d invariant text; beam blanks via DE
-	wire [9:0] store_y_clamped = past_last_row ? 10'd239 : py;
+	wire       past_last_row = (py >= 10'(FRAME_H));
+	wire [9:0] store_y_clamped =
+		past_last_row ? 10'(FRAME_H > 0 ? FRAME_H - 1 : 0) : py;
 	wire [FRAME_X_W-1:0] store_x_clamped =
 		(hc11 >= 11'(FRAME_W)) ? FRAME_LAST_X : FRAME_X_W'(hc11);
 	wire [FRAME_Y_W-1:0] store_y_addr =
@@ -448,7 +472,8 @@ module present_core #(
 `else
 	wire in_content = (hc < H_DE) && (py < V_STORE) && ~hb && ~vb;
 
-	// store_x = floor(hc * 320 / 529) ≈ (hc * 39647) >> 16  (39647/65536 ≈ 0.6049)
+	// store_x = floor(hc * TPL_SCALE_REF_W / TPL_H_DE)
+	//   ≈ (hc * TPL_STORE_X_MUL) >> 16  (default 39647/65536 ≈ 320/529)
 	// Drive the address straight from the clamped counter, with no blank-time special
 	// case. Forcing store_x to 0 during blank used to hand column 0 to any display
 	// pixel whose address was issued outside `in_content` — with the sync delayed by
@@ -470,8 +495,10 @@ module present_core #(
 	// That surplus row is the "bottom line": nothing gates it on py, so it reads
 	// store_y = 240, one row past the end of the 240-row store.
 	// Blank it, and clamp the address so an out-of-range row can never be fetched.
-	wire       past_last_row = (py >= 10'd240);
-	wire [9:0] store_y_clamped = past_last_row ? 10'd239 : py;
+	// Default TPL_V_STORE=240 → past_last_row=(py>=10'd240), clamp 239 (G-VID1).
+	wire       past_last_row = (py >= 10'(TPL_V_STORE));
+	wire [9:0] store_y_clamped =
+		past_last_row ? 10'(TPL_V_STORE > 0 ? TPL_V_STORE - 1 : 0) : py;
 	wire [31:0] store_y_prod = store_y_clamped * STORE_Y_SCALE;
 	wire [15:0] store_y_comb = store_y_prod[31:16];
 	wire [FRAME_Y_W-1:0] store_y_addr =
