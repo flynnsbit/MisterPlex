@@ -1,43 +1,26 @@
 {
   "id": "b20_visual_two_phase",
   "b20_scope": "visual_two_phase",
-  "title": "B20: promote all visual consumers on one swap ack (or black until ack)",
+  "title": "B20: promote visual consumers only on store swap edge (fstart-qualified)",
   "beam_only_rt_de_apply_sufficient": false,
   "latch_still_promotes_at_vsync": true,
-  "defect": {
-    "summary": "PLXG/live geom promotes on raw VSync before doorbell/cache readiness; beam DE was gated but window/crop/DAR/fps/mux free-ran while store app_*/bank stayed OLD.",
-    "sequence": [
-      "host writes q0+seq+doorbell",
-      "present_geom_latch promotes at plxg_frame_boundary (VSync rise)",
-      "mux/window/q5/fps/content_w go NEW",
-      "store app_* and bank stay OLD until swap_pending && pending_ready",
-      "without hold: NEW DE/fps over OLD pitch (island) or wrong film class"
-    ]
+  "audit_75e16d9b_fixed": true,
+  "audit_fixes": {
+    "1_mid_active_ready": "visual_swap_ack = frame_start && swap_pending && pending_ready",
+    "2_mode_exit_idle": "idle only if !geom_live_valid; hold ignores geom_enable",
+    "3_window_consumed": "store_x/y += app_content_x0/y0 when app_win_enable"
   },
-  "implemented_here": [
-    "present_core"
-  ],
   "present_core_policy": {
-    "applied_shadows": [
-      "content_w/h",
-      "content_fps (cadence + Bresenham film class)",
-      "win_enable/content_x0/y0/win_h_de/v_de",
-      "geom_live_seq/valid (epoch)"
-    ],
-    "apply_when": "visual_geom_apply = !use_frame_store || (swap_pending && pending_ready) || idle/legacy",
-    "blackout": "b20_visual_hold when geom_live_seq != app_live_seq; OR into stat_geom_hold_black; force RGB black",
-    "store_rt_star": "still free-running candidate geom_* so w-mem prep sees pending pitch"
+    "apply_when": "visual_swap_ack=frame_start&&swap_pending&&pending_ready OR !use_frame_store OR (!swap_pending && !geom_live_valid)",
+    "blackout": "b20_visual_hold when geom_live_valid && seq mismatch (mode-exit included)",
+    "window_map": "identity + applied origin when app_win_enable"
   },
   "still_open_owners": {
-    "present_geom_latch": "w-mem — true pending/live split at latch (optional if consumers all hold)",
-    "Plex.sv": "w-osd — frame_boundary still raw VSync; DAR/ascal VIDEO_ARX/ARY may free-run outside present_core",
-    "ddr_frame_store": "w-mem — app_* atomicity with bank (their B20 half)"
+    "present_geom_latch": "w-mem",
+    "Plex.sv_DAR": "w-osd",
+    "swap_applied_pulse_export": "optional w-mem; fstart fire matches store today"
   },
-  "red_twins": [
-    "FAULT_B20_BEAM_FREE_RUN",
-    "FAULT_B20_VISUAL_FREE_RUN"
-  ],
+  "red_twins": ["FAULT_B20_BEAM_FREE_RUN", "FAULT_B20_VISUAL_FREE_RUN"],
   "gate": "tests/unit/test_b20_visual_two_phase.sh",
-  "B20_CLOSED": false,
-  "note": "Do not close B20 on beam-only rt_de_apply. Full cross-hierarchy still needs parent/w-mem/w-osd coordination for DAR outside present_core."
+  "B20_CLOSED": false
 }

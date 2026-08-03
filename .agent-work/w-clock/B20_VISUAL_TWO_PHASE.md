@@ -49,7 +49,15 @@ cache prep still sees the pending pitch (do not starve B20 store half).
 **B20_CLOSED=false** until DAR path is coordinated and a merged hierarchy test
 exists. This commit closes the **present_core visual free-run** half.
 
+## Audit of 75e16d9b (rd-duck) — fixed
+
+| # | Hole | Fix |
+|---|------|-----|
+| 1 | `swap_pending&&ready` applied mid-active | `visual_swap_ack = frame_start && swap_pending && pending_ready` |
+| 2 | `!geom_enable` idle free-run + hold required enable | idle = `!geom_live_valid`; hold ignores `geom_enable` |
+| 3 | `app_win_*` capture-only | `store_x/y = hc/vc + app_x0/y0` when `app_win_enable` |
+
 ## Gates
 
-- `tests/unit/test_b20_visual_two_phase.sh`
-- `tests/unit/test_b20_beam_de_hold.sh` (updated structure; beam TB unchanged)
+- `tests/unit/test_b20_visual_two_phase.sh` (mid-active, mode-exit, window models)
+- `tests/unit/test_b20_beam_de_hold.sh`

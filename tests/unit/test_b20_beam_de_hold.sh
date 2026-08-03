@@ -17,7 +17,7 @@ grep -q 'rt_de_apply' "$BEAM" || { echo "FAIL beam missing rt_de_apply"; exit 1;
 grep -q 'FAULT_B20_BEAM_FREE_RUN' "$BEAM" || { echo "FAIL no red twin"; exit 1; }
 grep -q 'visual_geom_apply' "$CORE" || { echo "FAIL core missing visual_geom_apply"; exit 1; }
 grep -q 'app_content_w' "$CORE" || { echo "FAIL core missing app_content_w shadow"; exit 1; }
-grep -q 'swap_pending && store_pending_ready' "$CORE" || { echo "FAIL no swap_fire"; exit 1; }
+grep -q 'frame_start && swap_pending && store_pending_ready' "$CORE" || { echo "FAIL no swap_fire"; exit 1; }
 grep -q 'b20_visual_hold' "$CORE" || { echo "FAIL no b20_visual_hold"; exit 1; }
 grep -q 'pending_ready' "$STORE" || { echo "FAIL store no pending_ready export"; exit 1; }
 grep -q 'assign pending_ready = pending_ready_s2' "$STORE" || { echo "FAIL assign"; exit 1; }

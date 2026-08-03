@@ -244,20 +244,27 @@ module present_core #(
 
 	// ---- B20 visual two-phase (all paths; not BEAM-only) ----
 	// Latch may promote PLXG at VSync while store bank stays OLD until
-	// swap_pending&&pending_ready. Hold applied DE/fps/window/seq until that fire.
+	// vsync_pulse && swap_pending && pending_ready (store). Visual app_* must
+	// share that SAME edge — not "ready mid-active" (rd-duck audit of 75e16d9b).
+	// frame_start == vsync_pulse into ddr_frame_store (fstart / mp_out_fs).
 `ifdef DDR_FRAME_STORE
-	wire beam_swap_fire_g = swap_pending && store_pending_ready;
-	wire beam_de_free_g   = !use_frame_store;
-	wire beam_de_idle_g   = use_frame_store && !swap_pending &&
-	                       ((content_w == 11'd0) || !geom_enable);
+	// Exact store swap qualifier (fstart-qualified). Mid-active pending_ready
+	// alone must NOT promote app shadows or clear hold.
+	wire visual_swap_ack = frame_start && swap_pending && store_pending_ready;
+	wire beam_de_free_g  = !use_frame_store;
+	// True idle only: no owned PLXG generation. Mode-exit (!geom_enable) with
+	// geom_live_valid still set is OWNED — must wait swap ack (w-mem bank hold).
+	// FAULT was: !geom_enable treated as idle → free-run LEG DE unblackened.
+	wire beam_de_idle_g  = use_frame_store && !swap_pending && !geom_live_valid;
 `ifdef FAULT_B20_VISUAL_FREE_RUN
 	assign visual_geom_apply = 1'b1;
 `else
-	assign visual_geom_apply = beam_de_free_g || beam_swap_fire_g || beam_de_idle_g;
+	assign visual_geom_apply = beam_de_free_g || visual_swap_ack || beam_de_idle_g;
 `endif
 `else
 	assign visual_geom_apply = 1'b1;
 	assign store_pending_ready = 1'b1;
+	wire visual_swap_ack = 1'b0;
 `endif
 
 	always @(posedge clk) begin
@@ -290,12 +297,16 @@ module present_core #(
 	assign b20_visual_hold = 1'b0;
 `else
 `ifdef DDR_FRAME_STORE
-	assign b20_visual_hold = use_frame_store && geom_live_valid && geom_enable &&
+	// Hold while owned live epoch != applied — includes mode-exit (!geom_enable)
+	// with live_valid still asserted. Do NOT require geom_enable (rd-duck #2).
+	assign b20_visual_hold = use_frame_store && geom_live_valid &&
 		(geom_live_seq != app_live_seq);
 `else
 	assign b20_visual_hold = 1'b0;
 `endif
 `endif
+	// Keep swap-ack visible to anti-DCE / tests.
+	wire _keep_visual_swap_ack = visual_swap_ack;
 
 `ifdef PRESENT_BEAM_960
 	// =====================================================================
@@ -416,14 +427,20 @@ module present_core #(
 		.vact_active(vact_act11)
 	);
 
-	// Identity map: DE extent == latched content (true_de). No /529 stretch.
-	// hde_act/vact_act track content_w/h via use_rt_geom (B13).
+	// Content DE + applied window origin (B20 app_*). win_enable=0 → identity
+	// hc/vc. win_enable=1 → store read at (hc+x0, vc+y0) so window shadow is
+	// load-bearing (rd-duck #3: app_win was capture-only).
+	// hde_act/vact_act track applied content_w/h via use_rt_geom (B13).
 	assign in_content = (hc11 < hde_act11) && (vc11 < vact_act11) && ~hb && ~vb;
 	assign past_last_row = (vc11 >= vact_act11);
+	wire [10:0] map_x0 = app_win_enable ? app_content_x0 : 11'd0;
+	wire [10:0] map_y0 = app_win_enable ? app_content_y0 : 11'd0;
+	wire [11:0] store_x_sum = {1'b0, hc11} + {1'b0, map_x0};
+	wire [11:0] store_y_sum = {1'b0, vc11} + {1'b0, map_y0};
 	wire [FRAME_X_W-1:0] store_x_id =
-		(hc11 >= 11'(FRAME_W)) ? FRAME_LAST_X : FRAME_X_W'(hc11);
+		(store_x_sum >= 12'(FRAME_W)) ? FRAME_LAST_X : FRAME_X_W'(store_x_sum[10:0]);
 	wire [FRAME_Y_W-1:0] store_y_id =
-		(vc11 >= 11'(FRAME_H)) ? FRAME_LAST_Y : FRAME_Y_W'(vc11);
+		(store_y_sum >= 12'(FRAME_H)) ? FRAME_LAST_Y : FRAME_Y_W'(store_y_sum[10:0]);
 
 	always @(posedge clk) begin
 		if (reset) begin
