@@ -1,28 +1,27 @@
 #!/usr/bin/env bash
 # T1: Prove deployed RBF c5382bee packs bank_vsync_count into PLXD[63:48].
-# Fitted freeze: .agent-work/w-fit/leftedge3-proj/rtl/ddr_frame_store.sv
-# md5 must match evidence-leftedge3-build-ok.txt fitted ddr_frame_store.md5.
-# Soft-skip never. true rc direct.
+# Fitted freeze is CHECKED IN under tests/fixtures/c5382bee_freeze/ (not .agent-work).
+# md5 must match the silicon-fitted leftedge3 freeze (c139274e...).
+# Soft-skip never. true rc direct. Clean checkout must pass.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-FIT="$ROOT/.agent-work/w-fit/leftedge3-proj/rtl/ddr_frame_store.sv"
+FIT="$ROOT/tests/fixtures/c5382bee_freeze/ddr_frame_store.sv"
 TIP="$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv"
-EV="$ROOT/.agent-work/w-fit/evidence-leftedge3-build-ok.txt"
+EXPECT_MD5="c139274e814a4696c485c0bba3781ad8"
 
 FAIL=0
 if [[ ! -f "$FIT" ]]; then
-  echo "FAIL: missing fitted freeze $FIT" >&2
+  echo "FAIL: missing checked-in fitted freeze $FIT" >&2
+  echo "REASON=FIXTURE_MISSING c5382bee_freeze (must be git-tracked; never .agent-work)" >&2
   exit 1
 fi
 md=$(md5sum "$FIT" | awk '{print $1}')
 echo "fitted_ddr_frame_store_md5=$md"
-if [[ -f "$EV" ]] && grep -q 'ddr_frame_store.md5 fitted: c139274e814a4696c485c0bba3781ad8' "$EV"; then
-  if [[ "$md" != "c139274e814a4696c485c0bba3781ad8" ]]; then
-    echo "FAIL: fitted RTL md5 != evidence claim c139274e..." >&2
-    FAIL=1
-  else
-    echo "OK fitted md5 matches leftedge3 evidence (c5382bee freeze)"
-  fi
+if [[ "$md" != "$EXPECT_MD5" ]]; then
+  echo "FAIL: fitted freeze md5 != leftedge3/c5382bee claim $EXPECT_MD5" >&2
+  FAIL=1
+else
+  echo "OK fitted md5 matches leftedge3 evidence (c5382bee freeze)"
 fi
 
 echo "=== c5382bee freeze PLXD pack (must be bank_vsync_count) ==="

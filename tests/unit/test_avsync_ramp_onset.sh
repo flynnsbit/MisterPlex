@@ -165,19 +165,23 @@ else
   fi
 fi
 
-echo "=== HOST PROOF: ramp interp beats step quant on real capture PTS ==="
+echo "=== HOST PROOF: ramp interp beats step quant on PTS grid ==="
 PROOF="$ROOT/tools/avsync_ramp_onset_proof.py"
-CAP="$ROOT/avsync_hdmi_out/480p_repeat1_capture.mkv"
+# Checked-in 30 fps PTS grid (synthetic container timestamps). Replaces the
+# gitignored 340MB HDMI grab under avsync_hdmi_out/ so clean checkouts pass.
+# Luma is still synthetic inside the proof; only the timebase comes from CAP.
+CAP="$ROOT/tests/fixtures/avsync/pts_grid_30fps_20s.mkv"
 PROOF_OUT="$OUT/onset_proof.json"
 if [[ ! -f "$PROOF" ]]; then
   echo "FAIL missing $PROOF"
   fail=$((fail + 1))
 elif [[ ! -f "$CAP" ]]; then
-  echo "FAIL missing capture $CAP (need checked-in or local HDMI capture for PTS grid)"
+  echo "FAIL missing checked-in PTS fixture $CAP"
+  echo "REASON=FIXTURE_MISSING avsync pts_grid (must be git-tracked; never avsync_hdmi_out/)"
   fail=$((fail + 1))
 else
   set +e
-  python3 "$PROOF" --capture "$CAP" --duration 60 --json-out "$PROOF_OUT" \
+  python3 "$PROOF" --capture "$CAP" --duration 18 --json-out "$PROOF_OUT" \
     >"$OUT/onset_proof.log" 2>&1
   prc=$?
   set -e

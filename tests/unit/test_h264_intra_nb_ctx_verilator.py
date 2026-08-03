@@ -14,7 +14,11 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts"))
+from verilator_mdir_guard import prepare_mdir  # noqa: E402
+
 VERILATOR = Path.home() / ".local/oss-cad-suite-20260726/bin/verilator"
+RUN_VERILATOR = ROOT / "scripts" / "run_verilator.sh"
 RTL = ROOT / "fpga/Plex_MiSTer/rtl"
 TB = ROOT / "tests/unit/rtl/h264_intra_nb_ctx_tb.sv"
 
@@ -125,18 +129,22 @@ int main(int argc, char** argv) {
 
 
 def main():
-    if not VERILATOR.exists():
+    vl = VERILATOR if VERILATOR.exists() else None
+    if vl is None and RUN_VERILATOR.is_file():
+        vl = RUN_VERILATOR
+    if vl is None or (isinstance(vl, Path) and not vl.exists()):
         print(f"ERROR: Verilator not found at {VERILATOR}", file=sys.stderr)
         sys.exit(1)
 
     build_dir = ROOT / "build/obj_h264_intra_nb_ctx"
-    build_dir.mkdir(parents=True, exist_ok=True)
+    # Purge foreign-root caches before --build (prevents No-rule-to-make-target).
+    prepare_mdir(build_dir, ROOT)
     cpp = ROOT / "build/h264_intra_nb_ctx_main.cpp"
     cpp.parent.mkdir(parents=True, exist_ok=True)
     generate_harness(cpp)
 
     cmd = [
-        str(VERILATOR), "--cc", "--exe", "--build",
+        str(vl), "--cc", "--exe", "--build",
         "--top-module", "h264_intra_nb_ctx_tb",
         "--Mdir", str(build_dir),
         "-Wno-fatal", "-Wno-WIDTHEXPAND", "-Wno-WIDTHTRUNC",

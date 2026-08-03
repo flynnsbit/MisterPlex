@@ -217,6 +217,7 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/tests/unit/test_release_pair_gate.sh",
     "$(ROOT)/tests/unit/test_package_validated_pair.sh",
     "$(ROOT)/tests/unit/test_vf_delivery_behaviour.sh",
+    "$(ROOT)/tests/unit/test_unit_clean_fixtures.sh",
     "$(ROOT)/tests/unit/test_release_tar_owner.sh",
     "$(ROOT)/tests/unit/test_promotion_gate_present.sh",
     "$(ROOT)/tests/unit/test_critical_skip_nonzero.sh",

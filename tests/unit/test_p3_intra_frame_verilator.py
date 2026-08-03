@@ -11,7 +11,9 @@ RTL = ROOT / "fpga/Plex_MiSTer/rtl"
 TB = ROOT / "tests/unit/rtl/p3_intra_frame_tb.sv"
 CPP = ROOT / "tests/unit/test_p3_intra_frame_verilator.cpp"
 sys.path.insert(0, str(ROOT / "tests/unit"))
+sys.path.insert(0, str(ROOT / "scripts"))
 from expected_red import ExpectedRedError, require_expected_red  # noqa: E402
+from verilator_mdir_guard import prepare_mdir  # noqa: E402
 
 
 def run(cmd, *, expect_success=True):
@@ -37,7 +39,7 @@ def source_fingerprint(negative: bool) -> str:
 
 def build_and_run(name: str, negative: bool, expected_red_id: str | None = None) -> int:
     build_dir = ROOT / f"build/obj_{name}_{source_fingerprint(negative)}"
-    build_dir.mkdir(parents=True, exist_ok=True)
+    prepare_mdir(build_dir, ROOT)
     cmd = [
         str(VERILATOR), "--cc", "--exe", "--build",
         "--top-module", "p3_intra_frame_tb",

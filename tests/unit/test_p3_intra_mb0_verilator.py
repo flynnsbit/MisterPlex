@@ -12,7 +12,9 @@ FIXTURE = ROOT / "tests/fixtures/p3_host_recon/mb0_luma_v1.json"
 RTL = ROOT / "fpga/Plex_MiSTer/rtl"
 TB = ROOT / "tests/unit/rtl/p3_intra_mb0_tb.sv"
 sys.path.insert(0, str(ROOT / "tests/unit"))
+sys.path.insert(0, str(ROOT / "scripts"))
 from expected_red import ExpectedRedError, require_expected_red  # noqa: E402
+from verilator_mdir_guard import prepare_mdir  # noqa: E402
 
 
 def c_array(values):
@@ -145,7 +147,7 @@ def source_fingerprint(name: str, negative: bool) -> str:
 def build_and_run(name: str, negative: bool, expected_red_id: str | None = None) -> int:
     build_dir = ROOT / f"build/obj_{name}_{source_fingerprint(name, negative)}"
     cpp = ROOT / f"build/{name}_main.cpp"
-    build_dir.mkdir(parents=True, exist_ok=True)
+    prepare_mdir(build_dir, ROOT)
     cpp.parent.mkdir(parents=True, exist_ok=True)
     write_harness(cpp)
     cmd = [
@@ -275,7 +277,7 @@ int main(int argc, char** argv) {
 def build_and_run_guard() -> int:
     build_dir = ROOT / f"build/obj_p3_intra_guard_{source_fingerprint('guard', False)}"
     cpp = ROOT / "build/p3_intra_guard_main.cpp"
-    build_dir.mkdir(parents=True, exist_ok=True)
+    prepare_mdir(build_dir, ROOT)
     cpp.parent.mkdir(parents=True, exist_ok=True)
     write_guard_harness(cpp)
     cmd = [

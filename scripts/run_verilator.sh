@@ -37,11 +37,30 @@ fi
 # Prefer project-local scratch (repo forbids /tmp writes in agent context).
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-LOGDIR="$ROOT/.agent-work/verilator-run-logs"
+# Scratch under build/ so clean checkouts never need .agent-work/.
+LOGDIR="$ROOT/build/verilator-run-logs"
 mkdir -p "$LOGDIR"
 LOG="$LOGDIR/run-$$.log"
 cleanup() { rm -f "$LOG"; }
 trap cleanup EXIT
+
+# Stale Mdir guard: Verilator embeds absolute source paths. A cache built under
+# another worktree/root must never yield "No rule to make target" — purge LOUDLY.
+extract_mdir() {
+  local prev=""
+  local a
+  for a in "$@"; do
+    if [[ "$prev" == "--Mdir" || "$prev" == "-Mdir" ]]; then
+      printf '%s\n' "$a"
+      return 0
+    fi
+    prev="$a"
+  done
+  return 1
+}
+if MDIR_ARG="$(extract_mdir "$@")"; then
+  python3 "$ROOT/scripts/verilator_mdir_guard.py" --mdir "$MDIR_ARG" --source-root "$ROOT"
+fi
 
 set +e
 "$VL" "$@" >"$LOG" 2>&1

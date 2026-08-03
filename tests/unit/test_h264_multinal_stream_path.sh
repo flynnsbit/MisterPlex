@@ -25,8 +25,10 @@ fi
 cd "$ROOT"
 WCAP_FIXTURE="tests/fixtures/p3_multinal/wcap_residual14_idr_plus_p.264"
 INTER_FIXTURE="tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_320x240_12f.264"
-BUILD="build/verilator/h264_multinal_stream_path"
-BUILD_FAULT="build/verilator/h264_multinal_stream_path_recon_zero"
+# Always absolute under this tree — relative Mdir follows cwd and can poison a
+# sibling worktree's build/ if the test is invoked with a foreign cwd.
+BUILD="$ROOT/build/verilator/h264_multinal_stream_path"
+BUILD_FAULT="$ROOT/build/verilator/h264_multinal_stream_path_recon_zero"
 mkdir -p "$BUILD"
 echo "RTL SIM: using $VERILATOR_VERSION" >&2
 "$RUN_VERILATOR" --cc --exe --build \

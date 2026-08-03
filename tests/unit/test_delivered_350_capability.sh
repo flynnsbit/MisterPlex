@@ -83,15 +83,11 @@ else
 fi
 
 REL="${DELIVERED_350_RELEASE_DAEMON:-$ROOT/release_artifacts/ddr-c5382bee-e9f79de2/misterplexd}"
+# Optional historical pin only — never required for clean checkout. Green path is
+# CUR (build/misterplexd from this tree). Do not search .worktrees/ (machine-local).
 LIVE="${DELIVERED_350_LIVE_DAEMON:-}"
-if [[ -z "$LIVE" ]]; then
-  for cand in \
-    "$ROOT/../MisterPlex/.worktrees/w-cpu-fps-measure/artifacts/daemon-pins/misterplexd.ea643e99" \
-    "/home/flynnsbit/Projects/MisterPlex/.worktrees/w-cpu-fps-measure/artifacts/daemon-pins/misterplexd.ea643e99" \
-    "$ROOT/artifacts/daemon-pins/misterplexd.ea643e99"
-  do
-    if [[ -x "$cand" ]]; then LIVE="$cand"; break; fi
-  done
+if [[ -z "$LIVE" && -x "$ROOT/artifacts/daemon-pins/misterplexd.ea643e99" ]]; then
+  LIVE="$ROOT/artifacts/daemon-pins/misterplexd.ea643e99"
 fi
 CUR="${DELIVERED_350_CURRENT_DAEMON:-$ROOT/build/misterplexd}"
 
@@ -138,8 +134,7 @@ if [[ -n "${LIVE:-}" && -x "$LIVE" ]]; then
     fail=$((fail + 1))
   fi
 else
-  echo "FAIL_GREEN_LIVE live daemon not found (set DELIVERED_350_LIVE_DAEMON)" >&2
-  fail=$((fail + 1))
+  echo "NOTE_GREEN_LIVE optional live pin absent — CUR (build/misterplexd) is the clean-checkout green path"
 fi
 
 if [[ -x "$CUR" ]]; then

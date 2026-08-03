@@ -7,7 +7,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 GATE="$ROOT/scripts/check_timing_margin.py"
 BASE="$ROOT/assets/timing_margin_baseline.json"
 WORK="$ROOT/build/timing-margin-gate"
-REAL_STA="${TIMING_MARGIN_REAL_STA:-$ROOT/.worktrees/integ-tip-fit/fpga/Plex_MiSTer/remote_out/slot1/Plex.sta.rpt}"
+# Optional real STA only via env — never default into .worktrees (clean-checkout poison).
+REAL_STA="${TIMING_MARGIN_REAL_STA:-}"
 
 rm -rf "$WORK"
 mkdir -p "$WORK"

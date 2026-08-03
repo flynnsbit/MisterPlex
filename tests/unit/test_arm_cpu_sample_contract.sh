@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Contract: arm_cpu_sample stamps artifact pair fields, NO-DATA not 0, derivations.
+# Scratch under build/ (not .agent-work) so clean checkouts need no agent dirs.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-OUT="$ROOT/.agent-work/w-cpu-1/cpu_contract.json"
-mkdir -p "$(dirname "$OUT")"
+WORKDIR="$ROOT/build/arm_cpu_sample_contract"
+mkdir -p "$WORKDIR"
+OUT="$WORKDIR/cpu_contract.json"
 # Fake RBF + log for host self-test
-FAKE_RBF="$ROOT/.agent-work/w-cpu-1/fake_plex.rbf"
-FAKE_LOG="$ROOT/.agent-work/w-cpu-1/fake_daemon.log"
+FAKE_RBF="$WORKDIR/fake_plex.rbf"
+FAKE_LOG="$WORKDIR/fake_daemon.log"
 printf 'fake-rbf-bytes-for-md5\n' >"$FAKE_RBF"
 printf 'media: decode=624x480 decode_src=caller_supplied measured_delivery=624x480 delivery_verified=1\n' >"$FAKE_LOG"
 EXPECT_RBF_MD5=$(md5sum "$FAKE_RBF" | awk '{print $1}')
@@ -46,16 +48,16 @@ echo "contract_py_true_rc=$?"
 sh -n "$ROOT/tools/arm_cpu_soak.sh"
 echo "soak_syntax_true_rc=$?"
 RBF_PATH="$FAKE_RBF" DECODE_SRC=caller_supplied LOG="$FAKE_LOG" \
-  sh "$ROOT/tools/arm_cpu_soak.sh" 1 | tee "$ROOT/.agent-work/w-cpu-1/soak_contract.out"
+  sh "$ROOT/tools/arm_cpu_soak.sh" 1 | tee "$WORKDIR/soak_contract.out"
 echo "soak_run_true_rc=$?"
-grep -q "rbf_md5=$EXPECT_RBF_MD5" "$ROOT/.agent-work/w-cpu-1/soak_contract.out"
-grep -q "decode_src=caller_supplied" "$ROOT/.agent-work/w-cpu-1/soak_contract.out"
-grep -q "sampler_self=" "$ROOT/.agent-work/w-cpu-1/soak_contract.out"
-grep -q "method=exe+dticks" "$ROOT/.agent-work/w-cpu-1/soak_contract.out"
+grep -q "rbf_md5=$EXPECT_RBF_MD5" "$WORKDIR/soak_contract.out"
+grep -q "decode_src=caller_supplied" "$WORKDIR/soak_contract.out"
+grep -q "sampler_self=" "$WORKDIR/soak_contract.out"
+grep -q "method=exe+dticks" "$WORKDIR/soak_contract.out"
 # must not invent MiSTer=0.0 on host
-if grep -qE 'MiSTer=0(\.0)?' "$ROOT/.agent-work/w-cpu-1/soak_contract.out"; then
+if grep -qE 'MiSTer=0(\.0)?' "$WORKDIR/soak_contract.out"; then
   echo "FAIL MiSTer printed as 0" >&2; exit 1
 fi
-grep -q 'MiSTer=NO-DATA' "$ROOT/.agent-work/w-cpu-1/soak_contract.out"
+grep -q 'MiSTer=NO-DATA' "$WORKDIR/soak_contract.out"
 echo "OK test_arm_cpu_sample_contract"
 exit 0
