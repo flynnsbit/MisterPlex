@@ -53,3 +53,8 @@ the gate before consume**. Rendering High/CABAC on CAVLC fabric is forbidden.
 
 Fitted fabric decode on glass. Pin + gate only keep the stream inside the
 subset the RTL was built for.
+
+## Parent stand-down (same session)
+
+Further pin work cancelled — product already requested baseline; PMS honoured it.
+Gate + hard URL pin remain as refuse-High safety, not a new feature chase.

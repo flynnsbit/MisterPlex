@@ -1,11 +1,17 @@
-w-path STATUS — PL330 fault diag (parent BLOCKED, not FAILED)
+w-path STATUS (parent correction + budget)
 
-Parent HW: burst16 full-frame → NO_REAL_DMA, csr=0x00200002 (cache_miss),
-saw_exec=0, honest no rate. Instrument trusted.
+STAND DOWN: further profile-pin work. Baseline already in product request;
+gate 7cc590c0 is defense-in-depth only.
 
-LANDED: FTR/FSRC/FSRD/CPC/CRD dump, ftr_tag decode, --burst/--force-ns,
-MFIFO-capped auto burst, cache_miss ≠ saw_executing.
-Binary: build/arm/ddr_pl330_ingest_bench
-Commands: PARENT_COMMANDS_PL330_FAULT_DIAG.md
+LEVEL: Path720p requests videoLevel=31 (kPlex720pH264Level). DPB/ring must
+key off delivered SPS level_idc, not request alone → w-mem.
 
-NEXT parent: 4 KiB --burst 1 first (split path vs encode).
+BUDGET (parent measured):
+  624x480: total 21.09 PASS margin +20.57
+  1280x720 + CPU copy: FAIL by 7-9 ms even at 1500k
+  True 720 source needs DMA or fabric decode; 720 OUTPUT = fabric scale
+
+OPEN critical: PL330 4KiB burst1 FTR diag (36d7594c binary)
+  ddr_pl330_ingest_bench --len 4096 --loops 1 --bank 1 --burst 1
+
+NO device. Branch w-path-720p.
