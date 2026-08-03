@@ -493,6 +493,7 @@ int main() {
             CHECK(524160u > kPlex480pYuv420pBankUsableBytes);
         }
         // 426×240 native fails w%16; pad coded_w=432, display=426, crop_right=6
+        // B14 policy: PAD (not crop-to-416, not accept-reject). Library 4/142.
         {
             CHECK((426 % 16) == 10);
             CHECK(!plxgGeomDimsOk(426, 240, 426, 213));
@@ -506,6 +507,32 @@ int main() {
             CHECK(pad.payload_bytes == 432u * 240u + 216u * 240u); // 155520
             CHECK(pad.payload_bytes == 155520u);
             CHECK(!ddrI420PayloadNeedsOptionCBank(pad.payload_bytes));
+            // Fabric-owned plan must auto-pad — raw 426 must not reach RTL.
+            const auto fab426 =
+                makeDdrFabricOwnedPresentPlan(426, 240, plex480pDdrFrameGeometry(),
+                                              kDdrFramePhysBase);
+            CHECK(fab426.valid);
+            CHECK(fab426.content_w == 432);
+            CHECK(fab426.content_h == 240);
+            CHECK(fab426.display_w == 426);
+            CHECK(fab426.display_h == 240);
+            CHECK(fab426.crop_right == 6);
+            CHECK(fab426.publish_bytes == 155520u);
+            CHECK(fab426.content_layout.y_stride == 432);
+            CHECK(fab426.content_layout.chroma_stride == 216);
+            // PLXG: coded=432, display=426, content window=426, strides storage.
+            CHECK(((fab426.plxg_q[2] >> 32) & 0x7FFu) == 432u); // coded_w
+            CHECK(((fab426.plxg_q[2] >> 48) & 0x7FFu) == 240u); // coded_h
+            CHECK(((fab426.plxg_q[3] >> 32) & 0x7FFu) == 426u); // display_w
+            CHECK((fab426.plxg_q[1] & 0x7FFu) == 426u);         // content_w window
+            CHECK((fab426.plxg_q[3] & 0xFFFu) == 432u);         // y_stride
+            CHECK(plxgGeomDimsOk(fab426.content_w, fab426.content_h,
+                                 fab426.content_layout.y_stride,
+                                 fab426.content_layout.chroma_stride));
+            CHECK(ddrRtRawWindowOk(432, 240, 426, 240, 0, 0));
+            // NEG: unaligned storage still rejected by geom oracle (guard stays).
+            CHECK(!plxgGeomDimsOk(426, 240, 426, 213));
+            std::fprintf(stderr, "  B14_PAD_426_POLICY OK coded=432 display=426\n");
         }
         // PMS AR-fit 468×360: raw fails; pad coded=480 → accepted storage
         {

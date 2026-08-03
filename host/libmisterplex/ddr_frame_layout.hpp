@@ -1834,6 +1834,11 @@ inline bool decodePlxgContentOrigin(uint64_t raw, int& x0, int& y0) {
 
 // Build the fabric-owned present contract for a content rectangle inside a tier
 // canvas. publish_bytes == native I420 only; PLXG must carry the window.
+//
+// B14 policy (w-mem, library N=142): coded_w MUST be %16==0 (RTL rt_raw_aligned).
+// Live PMS has 4 titles at 426×240 (426%16=10). Host PADS storage coded_w up
+// (426→432), keeps display_w=source, crop_right=pad. Guard stays loud reject
+// if unaligned storage ever reaches fabric — never weaken B14.
 struct DdrFabricOwnedPresentPlan {
     DdrNativePushPlan native{};
     DdrArmPresentBudget budget{};
@@ -1842,10 +1847,15 @@ struct DdrFabricOwnedPresentPlan {
     DdrFrameGeometry canvas{};
     DdrFrameLayout canvas_layout{};
     // Tight content plane layout (strides/offsets) — NOT canvas line_bytes.
+    // Uses *storage* coded dims after B14 pad (y_stride == content_w).
     DdrNativeContentLayout content_layout{};
-    // Content rectangle ARM actually writes (tight, origin in bank via PLXG).
+    // Storage rectangle ARM writes (16-aligned coded; may exceed display).
     int content_w = 0;
     int content_h = 0;
+    // Visible source before B14 right-pad (display_*); crop_right = content_w - display_w.
+    int display_w = 0;
+    int display_h = 0;
+    int crop_right = 0;
     int content_x0 = 0; // even-aligned; fabric placement
     int content_y0 = 0;
     // Bytes ARM may memcpy — NEVER canvas frame_bytes on this path.
@@ -1892,34 +1902,47 @@ inline DdrArmPresentBudget makeDdrArmPresentBudget(const DdrNativePushPlan& nati
 }
 
 // Fabric-owned present plan.
-//   contentW/H  = STORAGE (what ARM writes; plane bases/strides) — e.g. 960x540
+//   contentW/H  = requested visible source (may be unaligned, e.g. 426×240).
+//                 B14 pad promotes STORAGE coded_w = align16(contentW); display
+//                 stays contentW; crop_right absorbs the pad columns.
 //   canvasGeom  = DE/glass canvas (scaler output) — e.g. 1280x720; NOT storage
-//   bank map    = capacity-selected from content payload (usable, not full stride)
-// PLXG geometry beat programs STORAGE dims so ddr_frame_store U/V bases match
-// native_push (U@518400 for 960x540). Programming canvas 1280x720 here would set
-// U@921600 and fetch 1280-wide rows against a 960-wide payload (rd-duck #3).
+//   bank map    = capacity-selected from *padded* content payload
+// PLXG: q1 content window = display; q2 coded = storage; q3 display+storage strides.
+// Plane bases follow STORAGE so U/V match native_push (rd-duck #3).
 inline DdrFabricOwnedPresentPlan makeDdrFabricOwnedPresentPlan(
     int contentW, int contentH, const DdrFrameGeometry& canvasGeom,
     uint32_t canvasPhysBase = kDdrFramePhysBase, int contentX0 = 0, int contentY0 = 0,
     bool countFeedScaleRemoval = true) {
     DdrFabricOwnedPresentPlan p{};
     p.canvas = canvasGeom;
-    p.content_w = contentW;
-    p.content_h = contentH;
+    // B14: never program unaligned coded_w. Pad storage; keep display = source.
+    const DdrNativePaddedLayout pad = makeDdrNativePaddedLayout(contentW, contentH);
+    if (!pad.valid)
+        return p;
+    const int storW = pad.coded_w;
+    const int storH = pad.coded_h;
+    const int dispW = pad.display_w;
+    const int dispH = pad.display_h;
+    p.content_w = storW;
+    p.content_h = storH;
+    p.display_w = dispW;
+    p.display_h = dispH;
+    p.crop_right = pad.crop_right;
     p.content_x0 = contentX0 & ~1;
     p.content_y0 = contentY0 & ~1;
     p.offload = kDdrPresentOffloadFabricOwned;
-    p.native = makeDdrNativePushPlan(contentW, contentH, canvasGeom);
+    // native_bytes / plane layout use STORAGE (padded) dims.
+    p.native = makeDdrNativePushPlan(storW, storH, canvasGeom);
     if (!p.native.valid)
         return p;
     if (p.content_x0 < 0 || p.content_y0 < 0)
         return p;
-    // Content must fit inside the DE canvas (scaler input window), not redefine it.
-    if (p.content_x0 + contentW > canvasGeom.coded_width.get() ||
-        p.content_y0 + contentH > canvasGeom.coded_height.get())
+    // Storage rectangle must fit inside the DE canvas, not redefine it.
+    if (p.content_x0 + storW > canvasGeom.coded_width.get() ||
+        p.content_y0 + storH > canvasGeom.coded_height.get())
         return p;
-    // Map tier from *content* usable capacity; phys base must match the map.
-    const DdrBankMap map = ddrSelectBankMapForContent(contentW, contentH);
+    // Map tier from padded storage usable capacity; phys base must match the map.
+    const DdrBankMap map = ddrSelectBankMapForContent(storW, storH);
     const uint32_t mapBase = (map == DdrBankMap::OptionC720p) ? kPlex720pDdrFramePhysBase
                                                               : kDdrFramePhysBase;
     // If caller passed a canvas phys base, prefer it only when it matches the map
@@ -1946,8 +1969,8 @@ inline DdrFabricOwnedPresentPlan makeDdrFabricOwnedPresentPlan(
     }
     if (!ddrFrameLayoutValid(p.canvas_layout))
         return p;
-    p.publish_bytes = p.native.native_bytes;
-    p.content_layout = makeDdrNativeContentLayout(contentW, contentH);
+    p.publish_bytes = pad.payload_bytes;
+    p.content_layout = makeDdrNativeContentLayout(storW, storH);
     if (!p.content_layout.valid || p.content_layout.frame_bytes != p.publish_bytes)
         return p;
     if (!ddrNativeContentFitsBank(p.content_layout, p.canvas_layout.bank_stride))
@@ -1957,12 +1980,13 @@ inline DdrFabricOwnedPresentPlan makeDdrFabricOwnedPresentPlan(
         p.content_layout.y_stride == p.canvas_layout.line_bytes)
         return p;
     // native_push publish length must be display storage, never MB-coded 544 path.
+    // Compare against *requested* source (pre-pad) identity for the 960×540 product.
     if (contentW == kPlex720pOutputSourceWidth && contentH == kPlex720pOutputSourceHeight &&
         p.publish_bytes != static_cast<size_t>(kPlex720pOutputSourceDisplayBytes))
         return p;
     p.budget = makeDdrArmPresentBudget(p.native, p.offload, countFeedScaleRemoval,
                                        /*armPushesPixels=*/true);
-    // Atomic 5-qword PLXG (present_geom_latch). STORAGE coded/stride; DE in h_de/v_de.
+    // Atomic 6-qword PLXG. STORAGE coded/stride; DISPLAY in content+display fields.
     const int deW = canvasGeom.presented_width.get() > 0 ? canvasGeom.presented_width.get()
                                                          : canvasGeom.coded_width.get();
     const int deH = canvasGeom.presented_height.get() > 0 ? canvasGeom.presented_height.get()
@@ -1970,11 +1994,13 @@ inline DdrFabricOwnedPresentPlan makeDdrFabricOwnedPresentPlan(
     // Non-zero seed for host latch models; writePlxgRecord always advances past last.
     p.plxg_seq = 1;
     p.plxg_q[0] = packPlxgQ0(/*win*/ true, /*geom*/ true, /*seq*/ 1);
-    p.plxg_q[1] = packPlxgQ1(contentW, contentH, p.content_x0, p.content_y0);
-    p.plxg_q[2] = packPlxgQ2(deW, deH, contentW, contentH);
+    // q1 content window = visible display (scaler input), not padded storage.
+    p.plxg_q[1] = packPlxgQ1(dispW, dispH, p.content_x0, p.content_y0);
+    p.plxg_q[2] = packPlxgQ2(deW, deH, storW, storH);
     p.plxg_q[3] = packPlxgQ3(p.content_layout.y_stride, p.content_layout.chroma_stride,
-                             contentW, contentH);
-    p.plxg_q[4] = packPlxgQ4(0, 0, 0, 0);
+                             dispW, dispH);
+    // crop_left=0; crop_right implied as coded_w - display_w (pad columns).
+    p.plxg_q[4] = packPlxgQ4(0, 0, /*crop_left*/ 0, /*crop_top*/ 0);
     p.plxg_q[5] = packPlxgQ5(/*dar_x*/0, /*dar_y*/0, /*fps*/0,
                            /*dar_valid*/false, /*fps_valid*/false);
     // Aliases for older tests (not separate wire beats).
@@ -1982,8 +2008,10 @@ inline DdrFabricOwnedPresentPlan makeDdrFabricOwnedPresentPlan(
     p.plxg_window_word = p.plxg_q[1];
     p.plxg_origin_word = packPlxgQ1(0, 0, p.content_x0, p.content_y0); // x0/y0 view
     p.valid = p.budget.valid && p.plxg_q[0] != 0 &&
-              plxgGeomDimsOk(contentW, contentH, p.content_layout.y_stride,
-                             p.content_layout.chroma_stride);
+              plxgGeomDimsOk(storW, storH, p.content_layout.y_stride,
+                             p.content_layout.chroma_stride) &&
+              (storW == dispW + p.crop_right) &&
+              ddrRtRawWindowOk(storW, storH, dispW, dispH, /*crop_l*/ 0, /*crop_t*/ 0);
     return p;
 }
 

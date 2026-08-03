@@ -2,7 +2,9 @@
 
 **Owner:** w-mem · **Sources quoted:** `host/libmisterplex/mailbox_abi_spec.hpp`,
 `host/libmisterplex/plxg_record.hpp`, `fpga/Plex_MiSTer/rtl/present_geom_latch.sv`  
-**Tip at publish:** see `git log -1 --oneline` on `w-mem-720p-abi`.  
+**Tip at publish:** `w-mem-720p-abi` (refresh with `git log -1 --oneline` after
+merge). This is the **signing surface for freeze #4** — field table below is
+byte-exact from source constants, not a paraphrase.  
 **Purpose:** parent will not award `fps_1001` without this layout. Do not amend
 bits without a signed freeze. Parent #4: **bit 34 stays RESERVED** today.
 
@@ -75,7 +77,26 @@ Latch: `sh_magic=sh0[31:0]`, `sh_win=sh0[32]`, `sh_geom=sh0[33]`,
 
 ### q5 @ +0x828 — DAR + content_fps (**freeze surface**)
 
-From `packPlxgQ5` / latch `sh5` / `kPlxgQ5*` constants:
+**Quoted from `mailbox_abi_spec.hpp` (not paraphrased):**
+
+```
+//   q5 @ +0x828  [11:0]  dar_x       [23:12] dar_y
+//                [31:24] content_fps (integer family)
+//                [32]    dar_valid   [33] fps_valid
+//                [63:34] RESERVED must be 0 (parent #4: bit34 NOT fps_1001)
+constexpr uint32_t kPlxgQ5Offset = kPlxgOffset + 5u * 8u; // 0x828
+constexpr unsigned kPlxgQ5DarXShift = 0u;
+constexpr unsigned kPlxgQ5DarXBits = 12u;
+constexpr unsigned kPlxgQ5DarYShift = 12u;
+constexpr unsigned kPlxgQ5DarYBits = 12u;
+constexpr unsigned kPlxgQ5ContentFpsShift = 24u;
+constexpr unsigned kPlxgQ5ContentFpsBits = 8u;
+constexpr unsigned kPlxgQ5DarValidBit = 32u;
+constexpr unsigned kPlxgQ5FpsValidBit = 33u;
+constexpr unsigned kPlxgQ5ReservedLoBit = 34u; // inclusive; thru 63
+constexpr unsigned kPlxgQ5ReservedBits = 30u;  // 63:34
+constexpr bool kPlxgQ5Fps1001Awarded = false;
+```
 
 | Bits | Field | Width | Constant |
 |-----:|-------|------:|----------|
@@ -86,20 +107,21 @@ From `packPlxgQ5` / latch `sh5` / `kPlxgQ5*` constants:
 | 33 | fps_valid | 1 | `kPlxgQ5FpsValidBit` |
 | **63:34** | **RESERVED** | **30** | `kPlxgQ5ReservedLoBit=34` |
 
-**Receiver rule (unchanged, load-bearing):**
+**Receiver rule (quoted `present_geom_latch.sv`, load-bearing):**
 
 ```
-// present_geom_latch.sv
-wire q5_reserved_nz = |sh5[63:34];
-wire q5_ok = !q5_reserved_nz;   // product
+// q5 reserved [63:34] must be zero (forward-compat trap).
+wire        q5_reserved_nz = |sh5[63:34];
+wire        q5_ok = !q5_reserved_nz;   // product (!FAULT_IGNORE_Q5_RESERVED)
 // sticky observable: q5_reserved_reject (cleared only on good commit)
 ```
 
-Host mirror: `plxgQ5ReservedOk(q5) == ((q5 >> 34) == 0)`.
+Host mirror (`plxg_record.hpp`): `plxgQ5ReservedOk(q5) == ((q5 >> 34) == 0)`.
 
 Nonzero reserved → **entire commit rejected** (no live promote). Sticky
 `q5_reserved_reject` is the diagnostic (PLXF E4 class). Cross-impl twin:
-`PLXG_Q5_CROSS_IMPL_PACKED_WORD` in `test_ddr_720p_abi`.
+`PLXG_Q5_CROSS_IMPL_PACKED_WORD` in `test_ddr_720p_abi`. Gate
+`PLXG_Q5_FREEZE_LAYOUT` asserts reserved=[63:34] from the same constants.
 
 ## Parent #4 status
 
