@@ -1,0 +1,98 @@
+=== RUNG align-624x480 requested=624x480 maxBR=2000 maxFR=0 mode=source_identity expect=624x480 ===
+requested_url_nolog=http://127.0.0.1:32400/video/:/transcode/universal/start.mp4?hasMDE=1&path=%2Flibrary%2Fmetadata%2F36&mediaIndex=0&partIndex=0&protocol=http&fastSeek=1&directPlay=0&directStream=0&subtitleSize=100&audioBoost=100&location=lan&copyts=1&session=prove-ladder-283985-align-624x480&videoQuality=100&videoResolution=624x480&maxVideoBitrate=2000&videoCodec=h264&audioCodec=aac&videoProfile=baseline&videoLevel=30
+requested_pms=624x480 maxVideoBitrate=2000
+decision_curl true rc=0
+sample_curl true rc=0 bytes=24970724
+ffmpeg true rc=0
+ffmpeg_banner=  Stream #0:0[0x100]: Video: h264 (High) ([27][0][0][0] / 0x001B), yuv420p(progressive), 624x480 [SAR 1:1 DAR 13:10], 24 fps, 24 tbr, 90k tbn, start 1.483333
+delivered_src=ffmpeg_banner
+RESULT tag=align-624x480 requested=624x480 maxBR=2000 delivered_banner=624x480 decision_xml=624x480 fps=24 decoded=624x480 src=ffmpeg_banner
+fabric_align delivered=624x480 w%16=0 h%2=0
+PASS_ALIGN align-624x480: delivered 624x480 fabric-store aligned
+PASS align-624x480: source-identity delivered 624x480 == expect 624x480
+=== RUNG align-320x240 requested=320x240 maxBR=500 maxFR=0 mode=source_identity expect=320x240 ===
+requested_url_nolog=http://127.0.0.1:32400/video/:/transcode/universal/start.mp4?hasMDE=1&path=%2Flibrary%2Fmetadata%2F53&mediaIndex=0&partIndex=0&protocol=http&fastSeek=1&directPlay=0&directStream=0&subtitleSize=100&audioBoost=100&location=lan&copyts=1&session=prove-ladder-283985-align-320x240&videoQuality=100&videoResolution=320x240&maxVideoBitrate=500&videoCodec=h264&audioCodec=aac&videoProfile=baseline&videoLevel=30
+requested_pms=320x240 maxVideoBitrate=500
+decision_curl true rc=0
+sample_curl true rc=0 bytes=11033908
+ffmpeg true rc=0
+ffmpeg_banner=  Stream #0:0[0x100]: Video: h264 (High) ([27][0][0][0] / 0x001B), yuv420p(progressive), 320x240, 24 fps, 24 tbr, 90k tbn, start 1.483333
+delivered_src=ffmpeg_banner
+RESULT tag=align-320x240 requested=320x240 maxBR=500 delivered_banner=320x240 decision_xml=320x240 fps=24 decoded=320x240 src=ffmpeg_banner
+fabric_align delivered=320x240 w%16=0 h%2=0
+PASS_ALIGN align-320x240: delivered 320x240 fabric-store aligned
+PASS align-320x240: source-identity delivered 320x240 == expect 320x240
+=== RUNG align-640x480 requested=640x480 maxBR=2000 maxFR=0 mode=source_identity expect=640x480 ===
+requested_url_nolog=http://127.0.0.1:32400/video/:/transcode/universal/start.mp4?hasMDE=1&path=%2Flibrary%2Fmetadata%2F41&mediaIndex=0&partIndex=0&protocol=http&fastSeek=1&directPlay=0&directStream=0&subtitleSize=100&audioBoost=100&location=lan&copyts=1&session=prove-ladder-283985-align-640x480&videoQuality=100&videoResolution=640x480&maxVideoBitrate=2000&videoCodec=h264&audioCodec=aac&videoProfile=baseline&videoLevel=30
+requested_pms=640x480 maxVideoBitrate=2000
+decision_curl true rc=0
+sample_curl true rc=0 bytes=25999084
+ffmpeg true rc=0
+ffmpeg_banner=  Stream #0:0[0x100]: Video: h264 (High) ([27][0][0][0] / 0x001B), yuv420p(progressive), 640x480 [SAR 1:1 DAR 4:3], 24 fps, 24 tbr, 90k tbn, start 1.483333
+delivered_src=ffmpeg_banner
+RESULT tag=align-640x480 requested=640x480 maxBR=2000 delivered_banner=640x480 decision_xml=640x480 fps=24 decoded=640x480 src=ffmpeg_banner
+fabric_align delivered=640x480 w%16=0 h%2=0
+PASS_ALIGN align-640x480: delivered 640x480 fabric-store aligned
+PASS align-640x480: source-identity delivered 640x480 == expect 640x480
+=== RUNG align-704x396 requested=704x396 maxBR=2000 maxFR=0 mode=source_identity expect=704x396 ===
+requested_url_nolog=http://127.0.0.1:32400/video/:/transcode/universal/start.mp4?hasMDE=1&path=%2Flibrary%2Fmetadata%2F42&mediaIndex=0&partIndex=0&protocol=http&fastSeek=1&directPlay=0&directStream=0&subtitleSize=100&audioBoost=100&location=lan&copyts=1&session=prove-ladder-283985-align-704x396&videoQuality=100&videoResolution=704x396&maxVideoBitrate=2000&videoCodec=h264&audioCodec=aac&videoProfile=baseline&videoLevel=30
+requested_pms=704x396 maxVideoBitrate=2000
+decision_curl true rc=0
+sample_curl true rc=0 bytes=27626788
+ffmpeg true rc=0
+ffmpeg_banner=  Stream #0:0[0x100]: Video: h264 (High) ([27][0][0][0] / 0x001B), yuv420p(progressive), 704x396 [SAR 1:1 DAR 16:9], 24 fps, 24 tbr, 90k tbn, start 1.483333
+delivered_src=ffmpeg_banner
+RESULT tag=align-704x396 requested=704x396 maxBR=2000 delivered_banner=704x396 decision_xml=704x396 fps=24 decoded=704x396 src=ffmpeg_banner
+fabric_align delivered=704x396 w%16=0 h%2=0
+PASS_ALIGN align-704x396: delivered 704x396 fabric-store aligned
+PASS align-704x396: source-identity delivered 704x396 == expect 704x396
+=== RUNG align-426-native requested=426x240 maxBR=1000 maxFR=0 mode=expect_unaligned expect=426x240 ===
+requested_url_nolog=http://127.0.0.1:32400/video/:/transcode/universal/start.mp4?hasMDE=1&path=%2Flibrary%2Fmetadata%2F69&mediaIndex=0&partIndex=0&protocol=http&fastSeek=1&directPlay=0&directStream=0&subtitleSize=100&audioBoost=100&location=lan&copyts=1&session=prove-ladder-283985-align-426-native&videoQuality=100&videoResolution=426x240&maxVideoBitrate=1000&videoCodec=h264&audioCodec=aac&videoProfile=baseline&videoLevel=30
+requested_pms=426x240 maxVideoBitrate=1000
+decision_curl true rc=0
+sample_curl true rc=0 bytes=1735052
+ffmpeg true rc=0
+ffmpeg_banner=  Stream #0:0[0x100]: Video: h264 (High) ([27][0][0][0] / 0x001B), yuv420p(progressive), 426x240, 24 fps, 24 tbr, 90k tbn, start 1.483333
+delivered_src=ffmpeg_banner
+RESULT tag=align-426-native requested=426x240 maxBR=1000 delivered_banner=426x240 decision_xml=426x240 fps=24 decoded=426x240 src=ffmpeg_banner
+fabric_align delivered=426x240 w%16=10 h%2=0
+PASS align-426-native: expect_unaligned measured=426x240 (red twin for host pad path)
+=== RUNG align-426-req416 requested=416x240 maxBR=1000 maxFR=0 mode=source_identity expect=416x240 ===
+requested_url_nolog=http://127.0.0.1:32400/video/:/transcode/universal/start.mp4?hasMDE=1&path=%2Flibrary%2Fmetadata%2F69&mediaIndex=0&partIndex=0&protocol=http&fastSeek=1&directPlay=0&directStream=0&subtitleSize=100&audioBoost=100&location=lan&copyts=1&session=prove-ladder-283985-align-426-req416&videoQuality=100&videoResolution=416x240&maxVideoBitrate=1000&videoCodec=h264&audioCodec=aac&videoProfile=baseline&videoLevel=30
+requested_pms=416x240 maxVideoBitrate=1000
+decision_curl true rc=0
+sample_curl true rc=0 bytes=1975128
+ffmpeg true rc=0
+ffmpeg_banner=  Stream #0:0[0x100]: Video: h264 (High) ([27][0][0][0] / 0x001B), yuv420p(progressive), 416x234, 24 fps, 24 tbr, 90k tbn, start 1.483333
+delivered_src=ffmpeg_banner
+RESULT tag=align-426-req416 requested=416x240 maxBR=1000 delivered_banner=416x234 decision_xml=416x234 fps=24 decoded=416x234 src=ffmpeg_banner
+fabric_align delivered=416x234 w%16=0 h%2=0
+PASS_ALIGN align-426-req416: delivered 416x234 fabric-store aligned
+FAIL align-426-req416: source-identity delivered 416x234 != expect 416x240 (req 416x240)
+=== RUNG align-426-req432 requested=432x240 maxBR=1000 maxFR=0 mode=source_identity expect=432x240 ===
+requested_url_nolog=http://127.0.0.1:32400/video/:/transcode/universal/start.mp4?hasMDE=1&path=%2Flibrary%2Fmetadata%2F69&mediaIndex=0&partIndex=0&protocol=http&fastSeek=1&directPlay=0&directStream=0&subtitleSize=100&audioBoost=100&location=lan&copyts=1&session=prove-ladder-283985-align-426-req432&videoQuality=100&videoResolution=432x240&maxVideoBitrate=1000&videoCodec=h264&audioCodec=aac&videoProfile=baseline&videoLevel=30
+requested_pms=432x240 maxVideoBitrate=1000
+decision_curl true rc=0
+sample_curl true rc=0 bytes=1735052
+ffmpeg true rc=0
+ffmpeg_banner=  Stream #0:0[0x100]: Video: h264 (High) ([27][0][0][0] / 0x001B), yuv420p(progressive), 426x240, 24 fps, 24 tbr, 90k tbn, start 1.483333
+delivered_src=ffmpeg_banner
+RESULT tag=align-426-req432 requested=432x240 maxBR=1000 delivered_banner=426x240 decision_xml=426x240 fps=24 decoded=426x240 src=ffmpeg_banner
+fabric_align delivered=426x240 w%16=10 h%2=0
+FAIL align-426-req432: FABRIC_ALIGN delivered 426x240 (w%16=10 h%2=0) — store rejects
+ERROR STORE_ALIGN_FAIL measured=426x240
+=== RUNG align-bad-360-arfit requested=640x360 maxBR=1000 maxFR=0 mode=match expect=468x360 ===
+requested_url_nolog=http://127.0.0.1:32400/video/:/transcode/universal/start.mp4?hasMDE=1&path=%2Flibrary%2Fmetadata%2F36&mediaIndex=0&partIndex=0&protocol=http&fastSeek=1&directPlay=0&directStream=0&subtitleSize=100&audioBoost=100&location=lan&copyts=1&session=prove-ladder-283985-align-bad-360-arfit&videoQuality=100&videoResolution=640x360&maxVideoBitrate=1000&videoCodec=h264&audioCodec=aac&videoProfile=baseline&videoLevel=30
+requested_pms=640x360 maxVideoBitrate=1000
+decision_curl true rc=0
+sample_curl true rc=0 bytes=29565068
+ffmpeg true rc=0
+ffmpeg_banner=  Stream #0:0[0x100]: Video: h264 (High) ([27][0][0][0] / 0x001B), yuv420p(progressive), 468x360 [SAR 1:1 DAR 13:10], 24 fps, 24 tbr, 90k tbn, start 1.483333
+delivered_src=ffmpeg_banner
+RESULT tag=align-bad-360-arfit requested=640x360 maxBR=1000 delivered_banner=468x360 decision_xml=468x360 fps=24 decoded=468x360 src=ffmpeg_banner
+fabric_align delivered=468x360 w%16=4 h%2=0
+FAIL align-bad-360-arfit: FABRIC_ALIGN delivered 468x360 (w%16=4 h%2=0) — store rejects
+ERROR STORE_ALIGN_FAIL measured=468x360
+PASS align-bad-360-arfit: non-aligned AR-fit rejected (expected)
+SUMMARY prove_ladder_delivery FAILS=2
+true rc=1

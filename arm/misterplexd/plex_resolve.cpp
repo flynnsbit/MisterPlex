@@ -983,15 +983,47 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
 
     // Prefer weak universal for dual A9 (STREAM=0 cast path / non-H.264 STREAM)
     if (weakAlways && key.rfind("/library", 0) == 0) {
+        // Source-aware request: PMS never upscales; fixed ladder AR-fit can emit
+        // non-16-aligned widths (624x480@640x360 → 468x360) that w-mem rejects.
+        // After media dims are known, request source clamp+snap16 into the tier
+        // ceiling so delivered W is fabric-store aligned whenever PMS honors it.
+        WeakLadder weakEff = weak;
+        if (r.mediaWidth > 0 && r.mediaHeight > 0) {
+            int maxW = 0, maxH = 0;
+            parseResolution(weak.videoResolution, maxW, maxH);
+            const auto sel = selectSourceAwarePmsRequest(r.mediaWidth, r.mediaHeight, maxW, maxH);
+            if (sel.request_w > 0 && sel.request_h > 0) {
+                weakEff.videoResolution = sel.videoResolution;
+                r.requestWidth = sel.request_w;
+                r.requestHeight = sel.request_h;
+                r.storeWidth = sel.store_w;
+                r.storeHeight = sel.store_h;
+                r.sourceAwareApplied = true;
+                r.sourceAwarePolicy = sel.policy ? sel.policy : "";
+            }
+        } else if (!weak.videoResolution.empty()) {
+            // No media meta — still snap the configured ceiling for store safety.
+            int maxW = 0, maxH = 0;
+            if (parseResolution(weak.videoResolution, maxW, maxH) && maxW > 0 && maxH > 0) {
+                const auto sel = selectSourceAwarePmsRequest(0, 0, maxW, maxH);
+                weakEff.videoResolution = sel.videoResolution;
+                r.requestWidth = sel.request_w;
+                r.requestHeight = sel.request_h;
+                r.storeWidth = sel.store_w;
+                r.storeHeight = sel.store_h;
+                r.sourceAwareApplied = true;
+                r.sourceAwarePolicy = sel.policy ? sel.policy : "";
+            }
+        }
         const std::string session = makeSessionId();
         const std::string start = buildUniversalTranscodeUrl(plexBase, key, token, session,
-                                                             offsetMs > 0 ? offsetMs : 0, weak);
-        if (ensureUniversalDecision(start, session, token, weak)) {
+                                                             offsetMs > 0 ? offsetMs : 0, weakEff);
+        if (ensureUniversalDecision(start, session, token, weakEff)) {
             r.ok = true;
             r.transcoded = true;
             r.playable = start;
-            r.httpHeaders = plexFfmpegHeaders(session, token, weak);
-            r.detail = "PMS universal " + weak.profileName + " " + weak.videoResolution + " " + key;
+            r.httpHeaders = plexFfmpegHeaders(session, token, weakEff);
+            r.detail = "PMS universal " + weakEff.profileName + " " + weakEff.videoResolution + " " + key;
             // STREAM preferDirect fallthrough: operator can see why recon may hit CABAC.
             if (preferDirectH264) {
                 if (!metaOk)

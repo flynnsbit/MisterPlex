@@ -1046,6 +1046,7 @@ int main(int argc, char** argv) {
         const uint64_t gen = ++playGen;
         int64_t off = req.offsetMs;
         const auto contentRes = contentResolutionForNextPlay();
+        // Initial bank = product ceiling; may shrink to source-aware store after resolve.
         player.setDecodeSize(contentRes.width, contentRes.height);
         // Partition key for instruments: lab argv vs conf vs OSD (parent fleet rule).
         if (player.osdApplyActive())
@@ -1059,7 +1060,7 @@ int main(int argc, char** argv) {
         applyLinkCapacityToWeak(weakForPlay, "play");
         std::fprintf(stderr,
                      "misterplexd: content resolution=%s source=%s status_word=0x%04x "
-                     "weak=%s bitrate=%d recommended_min_bitrate=%d "
+                     "weak_ceiling=%s bitrate=%d recommended_min_bitrate=%d "
                      "WEAK_BITRATE_explicit=%d link_capacity_kbps=%d "
                      "decode_src=%s\n",
                      contentRes.label, player.osdApplyActive() ? "OSD O[4]" : "conf/--decode",
@@ -1100,11 +1101,39 @@ int main(int argc, char** argv) {
             resolved.mediaAspectRatio.clear();
             resolved.pixelAspectRatio.clear();
             resolved.transcoded = false;
+            resolved.sourceAwareApplied = false;
+            resolved.requestWidth = resolved.requestHeight = 0;
+            resolved.storeWidth = resolved.storeHeight = 0;
         } else {
             std::fprintf(stderr, "misterplexd: resolved %s title=%s dur=%lld transcode=%d base=%s\n",
                          resolved.detail.c_str(), resolved.title.c_str(),
                          static_cast<long long>(resolved.durationMs),
                          resolved.transcoded ? 1 : 0, base.c_str());
+        }
+
+        // Source-aware bank: after resolve, adopt fabric-aligned store geometry so
+        // DECODE matches the PMS request (avoids AR-fit unaligned deliveries into
+        // a fixed 640x360/960x540 bank). Ceiling weakForPlay is updated for logs.
+        if (resolved.sourceAwareApplied && resolved.storeWidth > 0 &&
+            resolved.storeHeight > 0) {
+            player.setDecodeSize(resolved.storeWidth, resolved.storeHeight);
+            player.setDecodeSizeSource("source_aware_store");
+            if (resolved.requestWidth > 0 && resolved.requestHeight > 0) {
+                weakForPlay.videoResolution = std::to_string(resolved.requestWidth) + "x" +
+                                              std::to_string(resolved.requestHeight);
+            }
+            std::fprintf(stderr,
+                         "misterplexd: SOURCE_AWARE policy=%s media=%dx%d "
+                         "request=%dx%d store=%dx%d host_pad_class=%d "
+                         "legacy_bank_fit=%d\n",
+                         resolved.sourceAwarePolicy.c_str(), resolved.mediaWidth,
+                         resolved.mediaHeight, resolved.requestWidth, resolved.requestHeight,
+                         resolved.storeWidth, resolved.storeHeight,
+                         (resolved.mediaWidth > 0 && (resolved.mediaWidth % 16) != 0) ? 1 : 0,
+                         misterplex::i420FitsLegacyBank(resolved.storeWidth,
+                                                        resolved.storeHeight)
+                             ? 1
+                             : 0);
         }
 
         // Expected delivery geometry for identity-scale decisions:
@@ -1120,9 +1149,13 @@ int main(int argc, char** argv) {
         int expectW = 0, expectH = 0;
         bool hasTranscodeReqWh = false;
         if (resolved.transcoded) {
-            if (std::sscanf(weakForPlay.videoResolution.c_str(), "%dx%d", &expectW, &expectH) ==
-                    2 &&
-                expectW > 0 && expectH > 0) {
+            if (resolved.requestWidth > 0 && resolved.requestHeight > 0) {
+                expectW = resolved.requestWidth;
+                expectH = resolved.requestHeight;
+                hasTranscodeReqWh = true;
+            } else if (std::sscanf(weakForPlay.videoResolution.c_str(), "%dx%d", &expectW,
+                                   &expectH) == 2 &&
+                       expectW > 0 && expectH > 0) {
                 hasTranscodeReqWh = true;
             } else {
                 expectW = expectH = 0;
@@ -1159,11 +1192,17 @@ int main(int argc, char** argv) {
         const bool forceScale = wantFpgaDdrCanvas && ddrYuvForceScale;
         const auto scaleMode =
             misterplex::ffmpegScaleModeForDdrYuvPresent(confScaleMode, forceScale);
+        // Bank for GEOM predict = source-aware store when applied, else tier ceiling.
+        const int bankW = (resolved.sourceAwareApplied && resolved.storeWidth > 0)
+                              ? resolved.storeWidth
+                              : contentRes.width;
+        const int bankH = (resolved.sourceAwareApplied && resolved.storeHeight > 0)
+                              ? resolved.storeHeight
+                              : contentRes.height;
         const auto codedGeom =
             wantFpgaDdrCanvas
-                ? misterplex::ddrFrameGeometryForFpgaPresent(contentRes.width,
-                                                              contentRes.height)
-                : misterplex::makeDdrFrameGeometry(contentRes.width, contentRes.height);
+                ? misterplex::ddrFrameGeometryForFpgaPresent(bankW, bankH)
+                : misterplex::makeDdrFrameGeometry(bankW, bankH);
         const int codedW = codedGeom.coded_width.get();
         const int codedH = codedGeom.coded_height.get();
         // Predict arm_rescale from the same buildFfmpegVideoFilter media_player uses

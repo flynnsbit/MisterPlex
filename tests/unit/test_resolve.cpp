@@ -668,6 +668,66 @@ int main() {
         std::printf("GREEN_PATH_360p_fabric720_2x url+genuine_gate+fps_helper\n");
     }
 
+    // Source-aware PMS request — fabric store alignment (w-mem rt_raw_ok).
+    // Parent: fixed 640x360 on 624x480 → 468x360 (468%16=4) STORE REJECT.
+    {
+        // Majority library class: identity request stays 16-aligned.
+        const auto s624 = selectSourceAwarePmsRequest(624, 480, 960, 540);
+        CHECK(s624.request_w == 624 && s624.request_h == 480);
+        CHECK(s624.videoResolution == std::string("624x480"));
+        CHECK(isFabricStoreAligned(s624.store_w, s624.store_h));
+        CHECK(i420FitsLegacyBank(s624.store_w, s624.store_h));
+
+        // HD clamped into product 960x540 box.
+        const auto sHd = selectSourceAwarePmsRequest(1920, 1080, 960, 540);
+        CHECK(sHd.request_w == 960 && sHd.request_h == 540);
+        CHECK(isFabricStoreAligned(sHd.store_w, sHd.store_h));
+        CHECK(!i420FitsLegacyBank(sHd.store_w, sHd.store_h)); // needs Option-C
+
+        // 320x240 native — already aligned.
+        const auto s320 = selectSourceAwarePmsRequest(320, 240, 960, 540);
+        CHECK(s320.request_w == 320 && s320.request_h == 240);
+        CHECK(isFabricStoreAligned(s320.store_w, s320.store_h));
+
+        // 426x240: W%16=10 → request floor 416 (measured → deliv 416x234 aligned).
+        // NEG: align-up 432 does NOT work (PMS keeps 426) — never select 432.
+        const auto s426 = selectSourceAwarePmsRequest(426, 240, 960, 540);
+        CHECK(s426.request_w == 416);
+        CHECK(s426.request_h == 240);
+        CHECK(s426.host_may_need_pad);
+        CHECK(s426.store_w == 416);
+        CHECK(s426.store_h == 240);
+        CHECK(isFabricStoreAligned(s426.store_w, s426.store_h));
+        CHECK(s426.store_w != 432);
+
+        // 720x480: identity; bank spare check (parent 1792 B).
+        const auto s720 = selectSourceAwarePmsRequest(720, 480, 960, 540);
+        CHECK(s720.request_w == 720 && s720.request_h == 480);
+        CHECK(isFabricStoreAligned(s720.store_w, s720.store_h));
+        CHECK(i420PayloadBytes(720, 480) == 518400u);
+        CHECK(kLegBankUsableBytes - i420PayloadBytes(720, 480) == 1792u);
+        CHECK(i420FitsLegacyBank(720, 480));
+
+        // NEG: AR-fit class that must NOT be selected as a request target.
+        // 468x360 is what PMS delivers for 624x480@640x360 — store rejects.
+        CHECK(!isFabricStoreAligned(468, 360));
+        CHECK(!isFabricStoreAligned(426, 240));
+        CHECK(!isFabricStoreAligned(638, 358));
+        CHECK(isFabricStoreAligned(640, 360));
+        CHECK(isFabricStoreAligned(624, 350)); // even H, 16-W — anamorphic 480 class OK
+
+        // No upscale of request beyond source when max > source.
+        const auto sNoUp = selectSourceAwarePmsRequest(320, 240, 960, 540);
+        CHECK(sNoUp.request_w <= 320 && sNoUp.request_h <= 240);
+
+        // Max-box fallback when media unknown.
+        const auto sFb = selectSourceAwarePmsRequest(0, 0, 960, 540);
+        CHECK(sFb.request_w == 960 && sFb.request_h == 540);
+        CHECK(std::string(sFb.policy).find("max_box") != std::string::npos);
+
+        std::printf("GREEN_PATH_source_aware_snap16_store_align\n");
+    }
+
     if (fails) {
         std::fprintf(stderr, "test_resolve: %d failures\n", fails);
         return 1;
