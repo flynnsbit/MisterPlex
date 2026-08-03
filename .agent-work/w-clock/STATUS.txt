@@ -1,8 +1,4 @@
-w-clock STATUS
-B15: content_fps RUNTIME (removed hardwired 24)
-  recommend PLXG transport Q1[15:12]|[31:28]; idle 30 under BEAM_960
-  framecount exact 4@24 / 5@30; RED ignore-fps
-  plxg_content_fps_* staged 0 — w-mem owns pack/latch
-V705 STA: UNKNOWN until fit (prereg medium @20)
-Overclock: 20 ship / 25 blocked stub 23.46
-NO fit. NO device.
+w-clock STATUS tip=30bd46cd
+B15 DONE: runtime content_fps; framecount 4@24/5@30; PLXG field spec for w-mem
+Recommend PLXG not fixed-30. Idle default 30 under BEAM_960 until PLXG live.
+V705 STA UNKNOWN. Overclock 20 ship. NO fit. NO device.
