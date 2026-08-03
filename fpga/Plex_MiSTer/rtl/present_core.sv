@@ -550,12 +550,33 @@ module present_core #(
 `ifdef PRESENT_MULTI_PIXEL
 `ifdef DDR_FRAME_STORE
 	// Multi-pixel takeover for frame path. Pattern/bars still use colorbars.
-	// ce_pix stays 1 (product scandouble class) so CLK_VIDEO pacing is stable;
-	// RGB is black when serializer has no pixel (blank / underrun).
-	wire mp_rgb_de = use_ext && mp_out_ce && mp_de_out;
-	assign r = use_ext ? (mp_rgb_de ? mp_out_r : 8'd0) : (show_pattern ? br : 8'd0);
-	assign g = use_ext ? (mp_rgb_de ? mp_out_g : 8'd0) : (show_pattern ? bg : 8'd0);
-	assign b = use_ext ? (mp_rgb_de ? mp_out_b : 8'd0) : (show_pattern ? bb : 8'd0);
+	// ce_pix stays 1 (product scandouble class) so CLK_VIDEO pacing is stable.
+	// During active DE: hold last serializer pixel across out_ce gaps (same-clock
+	// backpressure). Black only in blank — never flash black mid-line on CE holes.
+	// Outputs r/g/b/H*/V* are driven from this path whenever use_ext (runtime
+	// has_frame) so Quartus cannot DCE the beam→store→npx chain as dead.
+	reg [7:0] mp_r_hold, mp_g_hold, mp_b_hold;
+	always @(posedge clk) begin
+		if (reset) begin
+			mp_r_hold <= 8'd0;
+			mp_g_hold <= 8'd0;
+			mp_b_hold <= 8'd0;
+		end else if (mp_out_ce) begin
+			mp_r_hold <= mp_out_r;
+			mp_g_hold <= mp_out_g;
+			mp_b_hold <= mp_out_b;
+		end else if (!mp_de_out) begin
+			mp_r_hold <= 8'd0;
+			mp_g_hold <= 8'd0;
+			mp_b_hold <= 8'd0;
+		end
+	end
+	wire [7:0] mp_r_px = mp_out_ce ? mp_out_r : mp_r_hold;
+	wire [7:0] mp_g_px = mp_out_ce ? mp_out_g : mp_g_hold;
+	wire [7:0] mp_b_px = mp_out_ce ? mp_out_b : mp_b_hold;
+	assign r = use_ext ? (mp_de_out ? mp_r_px : 8'd0) : (show_pattern ? br : 8'd0);
+	assign g = use_ext ? (mp_de_out ? mp_g_px : 8'd0) : (show_pattern ? bg : 8'd0);
+	assign b = use_ext ? (mp_de_out ? mp_b_px : 8'd0) : (show_pattern ? bb : 8'd0);
 	assign ce_pix = 1'b1;
 	assign HBlank = use_ext ? mp_hb_d : hb_d;
 	assign HSync  = use_ext ? mp_hs_d : hs_d;

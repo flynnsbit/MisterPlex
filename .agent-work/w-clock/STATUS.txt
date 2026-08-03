@@ -1,39 +1,23 @@
 # w-clock status
-# Branch: w-clock-bump · No fit · No device · PLL 20/90 · PRESENT_MULTI_PIXEL OFF in QSF
+# Branch: w-clock-bump · PRESENT_MULTI_PIXEL OFF in QSF · No agent fit/device
 
-## LANDED (connect path)
-- present_core: REAL multi-pixel chain under `PRESENT_MULTI_PIXEL`
-  beam_ppc → ddr_frame_store PX_PER_CLK → present_npx_path → RGB/CE mux
-- present_npx_path.in_ready backpressure (same-clock safe)
-- ddr_frame_store rd_*_n ports (PPC=1 passthrough default)
-- Default QSF does NOT define macro → default-safe / nostub-class unchanged
-- Elab gate: test_present_multi_pixel_elab.sh rc=0
+## LANDED
+1de5126e+ connect multi-pixel under macro: beam→store N→npx→RGB/CE
+- Pixel hold during DE (no mid-line black on out_ce gaps)
+- in_ready same-clock backpressure
+- Elab gate rc=0; default lint/colour rc=0
+- INTEGRATION_FIT_CHECKLIST.md for parent enable
 
-## Parent hardware
-nostub d1b24e0c DEPLOYED on glass (parent). Fmax 32.04. Fit slot free.
-Integration fit next: parent enables PRESENT_MULTI_PIXEL + PRESENT_PX_PER_CLK=2.
+## Parent evidence absorbed (device, not this lane)
+- nostub d1b24e0c live, Fmax 32.04, glass OK
+- Product-tier decode ~2600k: 36.27 ms/f, margin 5.40 ms (supersedes 2.92)
+- Serial decode+copy still FAIL (~51.55). Overlap unproven.
+- Fabric planes still the robust route.
 
-## Arithmetic
-720p24 @2ppc 11–15 MHz OK@20. CEA720p60 needs 4ppc @18.56.
-
-## ARM ms removed
-0 until integration fit + device measure. Honest.
-
-## Validated (true rc)
-test_present_multi_pixel_elab.sh rc=0
-test_present_npx_path_verilator.sh rc=0
-test_multi_pixel_present.sh rc=0
-test_ddr_frame_store_scanout_colour.sh rc=0
-rtl_lint PASS (default macros)
-
-## Still needs parent fit grant to prove on glass
-1. QSF: `PRESENT_MULTI_PIXEL` + `PRESENT_PX_PER_CLK=2` (or 4)
-2. Prefer FRAME_W/H 1280x720 with w-scaler CODED 1280 (else clamp to 640)
-3. DE_LAG / MP_SYNC_LAG HDMI resweep
-4. Optional clk_pix PLL (CLK_PIX_PLL_PLAN.md) — same-clock works for bring-up
-5. w-osd N-ppc composite coordination
+## ARM ms removed by w-clock
+0 until integration fit + parent profile.
 
 ## Ready for integration fit?
-DEFAULT-SAFE: yes (macro OFF).
-MACRO-ON elab: yes (rc=0).
-Product glass proof: NOT YET — needs parent fit + capture.
+- Default-OFF: SAFE
+- Macro-ON elab: YES
+- Glass: parent only — see INTEGRATION_FIT_CHECKLIST.md
