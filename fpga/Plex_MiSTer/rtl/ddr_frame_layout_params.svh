@@ -89,3 +89,10 @@ localparam int DDR_BITSTREAM_RING_ERR_PHYS  = 32'h3014_0010; // PLXE
 localparam int DDR_BITSTREAM_RECORD_HEADER_BYTES = 32;
 // PL330 after Option-C triple end (w-path) — collision fence only
 localparam int DDR_PL330_SCRATCH_PHYS = 32'h3060_0000;
+// Parent-measured AU sizes (real720p_2600k.mp4). Ring headroom uses WORST keyframe.
+localparam int DDR_BITSTREAM_MEASURED_MEAN_AU_BYTES  = 13507;
+localparam int DDR_BITSTREAM_MEASURED_MIN_AU_BYTES   = 413;
+localparam int DDR_BITSTREAM_MEASURED_WORST_AU_BYTES = 60915;
+localparam int DDR_BITSTREAM_MIN_WORST_AU_SLOTS      = 3;
+localparam int DDR_BITSTREAM_WORST_AU_RECORD_BYTES =
+    DDR_BITSTREAM_RECORD_HEADER_BYTES + DDR_BITSTREAM_MEASURED_WORST_AU_BYTES; // 60947

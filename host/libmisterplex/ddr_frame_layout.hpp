@@ -103,6 +103,18 @@ constexpr uint32_t kDdrBitstreamRingErrPhys = 0x30140010u;
 constexpr uint32_t kDdrPl330ScratchPhys = 0x30600000u;
 constexpr int kDdrBitstreamRecordHeaderBytes = 32;
 
+// Parent-measured AU sizes (real720p_2600k.mp4, 1440 frames) — ring headroom SoT.
+constexpr uint32_t kDdrBitstreamMeasuredMeanAuBytes = 13507u;
+constexpr uint32_t kDdrBitstreamMeasuredMinAuBytes = 413u;
+constexpr uint32_t kDdrBitstreamMeasuredWorstAuBytes = 60915u;
+constexpr uint32_t kDdrBitstreamMinWorstAuSlots = 3u;
+constexpr uint32_t kDdrBitstreamWorstAuRecordBytes =
+    static_cast<uint32_t>(kDdrBitstreamRecordHeaderBytes) + kDdrBitstreamMeasuredWorstAuBytes;
+static_assert(kDdrBitstreamRingBytes >=
+                  kDdrBitstreamMinWorstAuSlots * kDdrBitstreamWorstAuRecordBytes,
+              "256 KiB ring must hold >=3 worst-case AUs (60915+32)");
+
+
 // Parent-verified 2026-08-02 on device: cmdline mem=511M memmap=513M$511M
 // reserves 0x1FF00000..0x40000000; /proc/iomem claims nothing in 0x3xxxxxxx.
 // Option-C base/doorbell/end all inside reserved → treat as confirmed free.

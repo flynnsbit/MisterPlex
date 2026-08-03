@@ -48,11 +48,67 @@ static void testBitrateArithmetic() {
     const double bpf = ring::bitstreamBytesPerFrame(2585.0, 24.0);
     // 2585e3/8/24 = 13463.5416...
     CHECK(bpf > 13400.0 && bpf < 13600.0);
-    const double ms = ring::bitstreamCpuPushMsAtBankRate(2585.0, 24.0, 88.045);
+    const double ms = ring::bitstreamCpuPushMsAtBankRateKbit(2585.0, 24.0, 88.045);
     CHECK(ms > 0.10 && ms < 0.25); // ~0.15 ms — uncached ceiling irrelevant
     const double i420 = static_cast<double>(kPlex720pYuv420pBytes);
     CHECK(bpf * 100.0 < i420); // ~100x reduction claim directionally true
     std::fprintf(stderr, "  OK bpf=%.1f ms@88MiBps=%.3f ratio=%.0fx\n", bpf, ms, i420 / bpf);
+}
+
+static void testMeasuredWorstAuHeadroom() {
+    std::fprintf(stderr, "--- testMeasuredWorstAuHeadroom ---\n");
+    // Parent real720p_2600k.mp4: MAX AU = 60915 B (prereg 4/4 HIT).
+    CHECK(ring::kMeasuredWorstAuBytes == 60915u);
+    CHECK(ring::kMeasuredMeanAuBytes == 13507u);
+    CHECK(ring::kMeasuredMinAuBytes == 413u);
+    CHECK(kDdrBitstreamMeasuredWorstAuBytes == 60915u);
+    CHECK(ring::kWorstAuRecordBytes == 32u + 60915u);
+    CHECK(ring::kMinWorstAuSlots == 3u);
+    CHECK(ring::kRingBytes >= ring::kMinWorstAuSlots * ring::kWorstAuRecordBytes);
+    CHECK(ring::kRingWorstAuCapacity >= ring::kMinWorstAuSlots);
+    CHECK(ring::kRingWorstAuCapacity == 4u); // floor(262144/60947)
+
+    const double worst_ms = ring::bitstreamWorstAuPushMs(88.045);
+    const double mean_ms = ring::bitstreamMeanAuPushMs(88.045);
+    // Parent scored 0.660 ms worst / 0.146 ms mean — allow tight band.
+    CHECK(worst_ms > 0.64 && worst_ms < 0.68);
+    CHECK(mean_ms > 0.14 && mean_ms < 0.16);
+    CHECK(worst_ms < 41.667); // trivial vs deadline
+    // vs one decoded I420 frame at same ceiling
+    const double i420_ms =
+        ring::bitstreamCpuPushMsAtBankRate(static_cast<double>(kPlex720pYuv420pBytes), 88.045);
+    CHECK(i420_ms / worst_ms > 20.0); // parent: 22.7x
+
+    // Empty ring has worst-AU headroom; nearly full does not.
+    CHECK(ring::ringHasWorstAuHeadroom(0));
+    CHECK(ring::ringHasWorstAuHeadroom(ring::kRingBytes - ring::kWorstAuRecordBytes));
+    CHECK(!ring::ringHasWorstAuHeadroom(ring::kRingBytes - ring::kWorstAuRecordBytes + 1));
+
+    // Model: push one worst-case payload, then fill until Full refuses another.
+    ring::BitstreamRingModel m(ring::kRingBytes);
+    CHECK(m.pushRecord(ring::Event::Begin, 0, 1, 0, nullptr, 0) == ring::PushResult::Ok);
+    std::vector<uint8_t> worst(ring::kMeasuredWorstAuBytes, 0x5A);
+    uint32_t accepted = 0;
+    for (uint32_t s = 0; s < 8; ++s) {
+        auto pr = m.pushRecord(ring::Event::Nal, 5, 1, s, worst.data(),
+                               ring::kMeasuredWorstAuBytes);
+        if (pr == ring::PushResult::Full)
+            break;
+        CHECK(pr == ring::PushResult::Ok);
+        ++accepted;
+    }
+    CHECK(accepted >= ring::kMinWorstAuSlots);
+    CHECK(accepted == ring::kRingWorstAuCapacity ||
+          accepted == ring::kRingWorstAuCapacity - 0); // Begin took 32 B
+    // After Begin(32), capacity may be 3 full worst AUs only if remainder tight:
+    // (262144-32)/60947 = 4.29 → still 4 Nals. Require >= 3.
+    CHECK(accepted >= 3);
+    std::fprintf(stderr,
+                 "  OK worst_au=%u record=%zu slots_min=%u capacity=%u accepted=%u "
+                 "worst_ms=%.3f mean_ms=%.3f vs_i420=%.1fx\n",
+                 ring::kMeasuredWorstAuBytes, ring::kWorstAuRecordBytes,
+                 ring::kMinWorstAuSlots, ring::kRingWorstAuCapacity, accepted, worst_ms,
+                 mean_ms, i420_ms / worst_ms);
 }
 
 static void testPlxnRoundTrip() {
@@ -178,6 +234,7 @@ static void testFabricDecodeBwBudget() {
 int main() {
     testMapCollisionFence();
     testBitrateArithmetic();
+    testMeasuredWorstAuHeadroom();
     testPlxnRoundTrip();
     testHappyPathWrap();
     testNegSkippedSeq();

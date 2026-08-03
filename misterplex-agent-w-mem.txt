@@ -1,31 +1,23 @@
-w-mem STATUS — bitstream ingest ring ABI (fabric-decode path)
+w-mem STATUS — bitstream ring sized for measured worst AU
 
-HEAD: (pending commit) bitstream ring map + PLXN model + NEG tests
+HEAD: (pending) worst-AU headroom 60915 B
 
-LANDED THIS TICK
-- Formalized compressed-bitstream ring map vs Option-C / doorbell / PL330
-  ring data 0x30100000 size 256KiB | PLXB 0x30140000 | Option-C 0x30180000
-  doorbell 0x3047F000 | PL330 0x30600000
-- .svh + .hpp lockstep: DDR_BITSTREAM_RING_* / kDdrBitstreamRing*
-- BitstreamRingModel: PLXN pack, wrap, head/tail; NEG skip-seq, partial publish, full
-- BW: fabricDecodePresentCombinedMBps — @60 mid-ref ~290.6 MB/s (40% of 720 peak)
-- Bitrate: 2585k@24 → 13463.5 B/f → 0.146 ms @88.045 MiB/s (~103× vs I420)
-- docs/fabric-bitstream-ring-abi.md
+PARENT PROOF (real720p_2600k.mp4, 1440 frames, prereg 4/4 HIT):
+  mean=13506.6 B -> 0.146 ms @88.045 MiB/s
+  MAX keyframe=60915 B -> 0.660 ms (22.7x smaller than I420)
+  sustained 0.32 MB/s = 0.35% of uncached ceiling
+  Data-movement SOLVED. Remaining problem = fabric decode (w-path/w-clock).
 
-PARENT VERIFY (no device for this lane)
+ABI
+  kMeasuredWorstAuBytes=60915  kWorstAuRecordBytes=60947
+  kMinWorstAuSlots=3  kRingWorstAuCapacity=4 @256KiB
+  Map unchanged: ring@0x30100000 PLXB@0x30140000 Option-C@0x30180000 PL330@0x30600000
+  .svh+.hpp lockstep; NEG skip-seq/partial/full still green
+
+PARENT VERIFY
   cd /home/flynnsbit/Projects/MisterPlex-wt-mem
-  make $(pwd)/build/test_bitstream_ring_abi $(pwd)/build/test_ddr_720p_abi \
-       $(pwd)/build/test_fabric_ddr_bandwidth
+  make $(pwd)/build/test_bitstream_ring_abi $(pwd)/build/test_ddr_720p_abi
   ./build/test_bitstream_ring_abi; echo "true rc=$?"
-  ./build/test_ddr_720p_abi; echo "true rc=$?"
-  ./build/test_fabric_ddr_bandwidth; echo "true rc=$?"
+  # expect: worst_ms=0.660 mean_ms=0.146 vs_i420=22.7x accepted=4
 
-EXPECT
-  test_bitstream_ring_abi true rc=0 (NEG skip-seq + partial underrun)
-  bpf≈13463.5 ms@88≈0.146 decode_present60≈290.6
-
-STRUCTURAL (unchanged)
-  CPU I420 bank store DEAD (88 MiB/s). Fabric decode endgame. PL330=w-path.
-  Device fabric BW still unknown until parent fit.
-
-DEFAULT OFF — no Quartus from this lane.
+No device. No Quartus. Fit plan unchanged.

@@ -211,20 +211,55 @@ inline bool bitstreamRingInsideReserved() {
 }
 
 // Bitrate arithmetic @ product tier (~2585 kbit content, 24 fps).
-constexpr double kFabricIngestBitrateKbit = 2585.0;
+// Parent-measured real PMS stream real720p_2600k.mp4 (maxBR=3100, 1280x720 SAR 1:1),
+// 1440 video packets — prereg /tmp/prereg_bitstream.txt 4/4 HIT (2026-08-03):
+//   mean=13506.6 B  min=413 B  MAX=60915 B  total=18.55 MB
+// Real-time is governed by the WORST frame, not the mean.
+constexpr uint32_t kMeasuredMeanAuBytes = 13507u;   // rounded mean
+constexpr uint32_t kMeasuredMinAuBytes = 413u;
+constexpr uint32_t kMeasuredWorstAuBytes = 60915u;  // largest keyframe observed
+constexpr double kFabricIngestBitrateKbit = 2585.0; // content ~2600k tier
 constexpr double kFabricIngestFps = 24.0;
-// Bytes/frame compressed ≈ bitrate/8/fps
+// Structural uncached bank store ceiling (parent sweep-11).
+constexpr double kStructuralBankStoreMibps = 88.045;
+
+// One PLXN record for the worst AU (header + payload).
+constexpr size_t kWorstAuRecordBytes =
+    kRecordHeaderBytes + static_cast<size_t>(kMeasuredWorstAuBytes); // 60947
+// Headroom policy: ring must absorb >= N worst-case AUs without overwrite.
+// 3 slots ≈ 125 ms @24fps of worst-case backlog while fabric drains.
+constexpr uint32_t kMinWorstAuSlots = 3u;
+static_assert(kRingBytes >= kMinWorstAuSlots * kWorstAuRecordBytes,
+              "ring too small for measured worst-case AU headroom");
+// Capacity in whole worst-case records (floor).
+constexpr uint32_t kRingWorstAuCapacity =
+    static_cast<uint32_t>(kRingBytes / kWorstAuRecordBytes); // 4 at 256 KiB
+
+// Bytes/frame compressed ≈ bitrate/8/fps (nominal; prefer measured AU sizes).
 inline double bitstreamBytesPerFrame(double kbit, double fps) {
     return (kbit * 1000.0 / 8.0) / fps;
 }
-inline double bitstreamCpuPushMsAtBankRate(double kbit = kFabricIngestBitrateKbit,
-                                          double fps = kFabricIngestFps,
-                                          double mibps = 88.045) {
-    const double bytes = bitstreamBytesPerFrame(kbit, fps);
+inline double bitstreamCpuPushMsAtBankRate(double bytes,
+                                          double mibps = kStructuralBankStoreMibps) {
     const double mib = bytes / (1024.0 * 1024.0);
     return (mib / mibps) * 1000.0;
 }
-// ~0.15 ms/f at 2585k/24 @ 88 MiB/s — uncached ceiling stops mattering.
+inline double bitstreamCpuPushMsAtBankRateKbit(double kbit = kFabricIngestBitrateKbit,
+                                               double fps = kFabricIngestFps,
+                                               double mibps = kStructuralBankStoreMibps) {
+    return bitstreamCpuPushMsAtBankRate(bitstreamBytesPerFrame(kbit, fps), mibps);
+}
+// Measured: mean ~0.146 ms, worst keyframe ~0.660 ms @ 88.045 MiB/s.
+inline double bitstreamWorstAuPushMs(double mibps = kStructuralBankStoreMibps) {
+    return bitstreamCpuPushMsAtBankRate(static_cast<double>(kMeasuredWorstAuBytes), mibps);
+}
+inline double bitstreamMeanAuPushMs(double mibps = kStructuralBankStoreMibps) {
+    return bitstreamCpuPushMsAtBankRate(static_cast<double>(kMeasuredMeanAuBytes), mibps);
+}
+// Free bytes must fit one worst AU record before producer declares Full.
+inline bool ringHasWorstAuHeadroom(size_t level, size_t cap = kRingBytes) {
+    return (cap - level) >= kWorstAuRecordBytes;
+}
 
 // PLXN record header pack/unpack (host-visible framing). Little-endian on wire.
 // Why uncached ordering helps: ARM store buffer drains to device memory in

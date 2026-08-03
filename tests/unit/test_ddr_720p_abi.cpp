@@ -66,6 +66,8 @@ int main() {
     CHECK(t720.line_qwords == 160);
     CHECK(t720.chroma_line_qwords == 80);
     // Banks clear of bitstream ring [0x30100000, 0x30140000) and PLXB.
+    CHECK(kDdrBitstreamMeasuredWorstAuBytes == 60915u);
+    CHECK(kDdrBitstreamRingBytes >= kDdrBitstreamMinWorstAuSlots * kDdrBitstreamWorstAuRecordBytes);
     CHECK(kDdrBitstreamRingDataPhys == 0x30100000u);
     CHECK(kDdrBitstreamRingBytes == 262144u);
     CHECK(kDdrBitstreamRingCtrlPhys == 0x30140000u);

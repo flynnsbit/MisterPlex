@@ -6,14 +6,25 @@ Parent measured ARM→bank CPU stores at **88.045 MiB/s structural** (bank outsi
 kernel System RAM → `/dev/mem` uncached always). Full-frame I420 push at 720p
 (~1.38 MB) costs ~15 ms and kills the 41.667 ms decode budget.
 
-Pushing the **H.264 bitstream** instead (~2585 kbit content → ~13.5 KB/frame @24)
-costs ~**0.15 ms** at 88 MiB/s. ARM does HTTP+demux only; fabric owns decode+pixels.
+Pushing the **H.264 bitstream** instead is effectively free. Parent scored **real
+PMS output** `real720p_2600k.mp4` (maxBR=3100, 1440 frames, prereg 4/4 HIT):
+
+| AU size | Bytes | Push @88.045 MiB/s |
+|---------|------:|-------------------:|
+| mean | 13,506.6 | **0.146 ms** |
+| min | 413 | negligible |
+| **MAX keyframe** | **60,915** | **0.660 ms** |
+| decoded I420 | 1,382,400 | 14.97 ms |
+
+Even the worst keyframe is **22.7× smaller** than one decoded frame and **0.66 ms
+vs a 41.667 ms deadline**. Sustained ingest ~0.32 MB/s = 0.35% of the ceiling.
+ARM job collapses to HTTP + demux — no decode.
 
 ## Published map (low → high)
 
 | Region | Phys | Notes |
 |--------|------|--------|
-| Ring data | `0x30100000` .. `0x30140000` | 256 KiB power-of-two |
+| Ring data | `0x30100000` .. `0x30140000` | 256 KiB power-of-two; ≥3× worst AU (60915+32) |
 | PLXB CTRL | `0x30140000` | ARM producer count + epoch |
 | PLXR READ | `0x30140008` | FPGA consumer count |
 | PLXE ERR  | `0x30140010` | underrun/overrun sticky |
@@ -26,6 +37,15 @@ costs ~**0.15 ms** at 88 MiB/s. ARM does HTTP+demux only; fabric owns decode+pix
 
 Compile-time fences: `ddr_frame_layout.hpp` + `ddr_bitstream_ring.hpp` +
 `ddr_frame_layout_params.svh`.
+
+## Worst-AU headroom (measured)
+
+- `kMeasuredWorstAuBytes = 60915` (parent, real stream — not nominal bitrate)
+- `kWorstAuRecordBytes = 60947` (PLXN header + payload)
+- `kMinWorstAuSlots = 3` → ring must hold ≥3 worst-case records (**182841 B**)
+- 256 KiB floor capacity = **4** worst-case records (`kRingWorstAuCapacity`)
+- Producer backpressure: `ringHasWorstAuHeadroom(level)` before starting an AU
+- **Do not shrink the ring below 3× worst AU** without a new parent measurement
 
 ## Framing (PLXN)
 
