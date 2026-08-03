@@ -185,10 +185,12 @@ inline PlxgRecord makePlxgRecord960x540Native(uint16_t seq) {
     return r;
 }
 
-// Content-bearing PLXG from storage dims (generic publish / mode-exit).
-// Source-native DE = coded W×H (w-clock LEG_CW rule) — NOT presented pillar
-// and NOT glass canvas. Strides = coded tight I420. present_x/y = 0 (ascal
-// owns glass placement). crop_left/top program the visible window.
+// Content-bearing PLXG from storage dims (generic publish / B14 pad).
+// Strides = coded tight I420. present_x/y = 0 (ascal owns glass placement).
+// crop_left/top index into padded storage (FFmpeg pad inset).
+// Content/H_DE tracks *display* (delivered), not padded coded — otherwise
+// ascal scales pad columns as picture (rd-duck 426/432 squeeze).
+// Product mode-exit 624×480 overrides DE→624 via makePlxgRecordLegacy480.
 // FAULT twin: hardwiring Legacy480 for a non-624 payload shears (rd-duck 320).
 inline PlxgRecord makePlxgRecordFromStorage(int codedW, int codedH, int displayW,
                                             int displayH, int cropLeft, int cropTop,
@@ -211,7 +213,19 @@ inline PlxgRecord makePlxgRecordFromStorage(int codedW, int codedH, int displayW
     r.q[0] = packPlxgQ0(/*win*/ true, /*geom*/ true, seq);
     // q1 content window = visible display at origin (no glass pillar in DE).
     r.q[1] = packPlxgQ1(dw, dh, /*x0*/ 0, /*y0*/ 0);
-    r.q[2] = packPlxgQ2(/*h_de*/ codedW, /*v_de*/ codedH, codedW, codedH);
+    // Content DE policy (Route B + B14 + mode-exit):
+    //   - Product 624×480 (LEG_CW): DE = 624 storage-native even if display=618
+    //   - B14 pad (display < coded, not product-480): DE = display (426 not 432)
+    //   - Identity: DE = coded
+    // Never emit glass canvas DE here (ascal owns 1280 upscale).
+    int hDe = codedW;
+    int vDe = codedH;
+    const bool product480 = (codedW == 624 && codedH == 480);
+    if (!product480 && dw < codedW)
+        hDe = dw;
+    if (!product480 && dh < codedH)
+        vDe = dh;
+    r.q[2] = packPlxgQ2(hDe, vDe, codedW, codedH);
     r.q[3] = packPlxgQ3(yStride, cStride, dw, dh);
     r.q[4] = packPlxgQ4(/*px*/ 0, /*py*/ 0, cl, ct);
     r.q[5] = packPlxgQ5(0, 0, 0, false, false);
@@ -998,8 +1012,13 @@ inline size_t ddrI420PayloadBytes(int yStride, int chromaStride, int height) {
 }
 
 // Native-push layout: pad coded_w to 16, keep display_w, even height.
-// crop_right = coded_w - display_w. y_stride = coded_w (no extra row pad).
-// Store does NOT invent row padding beyond y_stride — payload is exact.
+// FFmpeg-style center pad with even left inset (chroma-safe):
+//   pad = coded_w - display_w
+//   crop_left  = (pad/2) & ~1   // 426→432: left=2
+//   crop_right = pad - crop_left //              right=4
+// y_stride = coded_w (no extra row pad). Payload is exact padded I420.
+// PLXG must keep display/content DE = display_w (NOT coded) or ascal squeezes
+// the whole padded raster by display/coded (~1.39% for 426/432) (rd-duck).
 struct DdrNativePaddedLayout {
     int display_w = 0;
     int display_h = 0;
@@ -1007,6 +1026,7 @@ struct DdrNativePaddedLayout {
     int coded_h = 0;
     int y_stride = 0;
     int chroma_stride = 0;
+    int crop_left = 0;
     int crop_right = 0;
     size_t payload_bytes = 0;
     bool valid = false;
@@ -1022,10 +1042,22 @@ inline DdrNativePaddedLayout makeDdrNativePaddedLayout(int displayW, int display
     o.coded_h = displayH; // even already
     o.y_stride = o.coded_w;           // no extra pad past coded_w
     o.chroma_stride = o.coded_w / 2;  // 8-aligned when coded_w%16==0
-    o.crop_right = o.coded_w - o.display_w;
+    const int pad = o.coded_w - o.display_w;
+    // Center inset, even-aligned left (matches FFmpeg pad x≈(ow-iw)/2 floored even).
+    o.crop_left = (pad / 2) & ~1;
+    o.crop_right = pad - o.crop_left;
     o.payload_bytes = ddrI420PayloadBytes(o.y_stride, o.chroma_stride, o.coded_h);
-    o.valid = plxgGeomDimsOk(o.coded_w, o.coded_h, o.y_stride, o.chroma_stride);
+    o.valid = plxgGeomDimsOk(o.coded_w, o.coded_h, o.y_stride, o.chroma_stride) &&
+              (o.crop_left + o.display_w + o.crop_right == o.coded_w);
     return o;
+}
+
+// Horizontal squeeze if ascal treats full padded coded width as content DE while
+// DAR/source is still display_w (rd-duck 426→432: 426/432 ≈ 1.39%).
+inline double ddrB14PadHorizontalSqueezeIfDeEqualsCoded(int displayW, int codedW) {
+    if (displayW <= 0 || codedW <= 0)
+        return 0.0;
+    return 1.0 - (static_cast<double>(displayW) / static_cast<double>(codedW));
 }
 
 // Geom dims accepted by RTL.

@@ -20,12 +20,20 @@ Guard is **correct**. Without a host policy these four titles hard-reject
 
 | Field | 426×240 example |
 |-------|----------------:|
-| `display_w` / content window | **426** (true source) |
+| `display_w` / content window / H_DE | **426** (true source) |
 | `coded_w` / y_stride | **432** = `align16(426)` |
 | `chroma_stride` | **216** |
-| `crop_right` | **6** (implied: coded − display) |
-| `crop_left` / `crop_top` | 0 |
+| `crop_left` | **2** (FFmpeg center even inset) |
+| `crop_right` | **4** (remainder; left+disp+right=coded) |
+| `crop_top` | 0 |
 | payload I420 | **155,520 B** (still legacy map) |
+
+**Contract edge (rd-duck):** after pad, `store_w/h=432`. Calling
+`ddrFrameGeometryForFpgaPresent(432,240)` alone is identity and **loses**
+display 426 + inset. If PLXG then emits coded=display=H_DE=432 while DAR stays
+426:240, ascal scales the padded raster → ~1.39% horizontal squeeze. Always
+pass delivered dims: `ddrFrameGeometryForFpgaPresent(432,240,426,240)` or
+`makeDdrFrameGeometryFromDelivered(426,240)`.
 
 ### Rejected alternatives
 

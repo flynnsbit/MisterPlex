@@ -497,12 +497,35 @@ inline DdrFrameGeometry ddrCanvasGeometryForBankMap(DdrBankMap map) {
 // body lockstep with that contract so merge order cannot silently re-downscale
 // 960×540 → 624×480 (parent STOP on c03afc46 item 3).
 //
+// B14 delivered source → storage geometry: pad coded_w to %16, keep display,
+// center even crop_left (FFmpeg pad inset). 426×240 → coded 432 display 426
+// crop_left 2 crop_right 4. NEVER identity coded=display=432 (loses 426 and
+// squeezes ~1.39% under ascal if DAR stays source) (rd-duck).
+inline DdrFrameGeometry makeDdrFrameGeometryFromDelivered(int deliveredW, int deliveredH) {
+    DdrFrameGeometry g{};
+    const DdrNativePaddedLayout pad = makeDdrNativePaddedLayout(deliveredW, deliveredH);
+    if (!pad.valid)
+        return g;
+    g = makeDdrFrameGeometry(CodedWidth{pad.coded_w}, CodedHeight{pad.coded_h},
+                             DisplayWidth{pad.display_w}, DisplayHeight{pad.display_h},
+                             PresentedWidth{pad.display_w}, PresentedHeight{pad.display_h},
+                             DdrFramePlacement::None);
+    g.crop_left = pad.crop_left;
+    g.crop_right = pad.crop_right;
+    g.crop_top = 0;
+    g.crop_bottom = 0;
+    g.present_x = 0; // crop_left indexes storage; glass pillar is ascal
+    g.present_y = 0;
+    return g;
+}
+
 // Rules (strict allowlist — NOT "any even dims"):
 //   - 960×540 content → identity STORAGE 960×540 (777600 B). Never 1280 canvas.
 //   - 1280×720 content → identity STORAGE 1280×720 (true-720 upgrade path).
 //   - 624×480 → product 480p silicon canvas (plex480p).
-//   - All other tiers (320×240, …) → product 480p canvas (scale+pad).
-//     Identity-320 is the shear defect (line_bytes=320 vs RTL CODED_W=624).
+//   - Unaligned widths (426, …) → B14 pad storage, display retained (not 624 scale).
+//   - All other aligned tiers (320×240, …) → product 480p canvas (scale+pad)
+//     unless Direct/native path builds FromDelivered explicitly.
 // DE/glass canvas (1280×720 as *output*) is separate — not this function.
 inline DdrFrameGeometry ddrStorageGeometryForContent(int contentW, int contentH) {
     if (contentW == kDdr720pOutputSourceWidth && contentH == kDdr720pOutputSourceHeight)
@@ -511,6 +534,9 @@ inline DdrFrameGeometry ddrStorageGeometryForContent(int contentW, int contentH)
         return makeDdrFrameGeometry(CodedWidth{1280}, CodedHeight{720});
     if (contentW == kPlex480pCodedWidth.get() && contentH == kPlex480pCodedHeight.get())
         return plex480pDdrFrameGeometry();
+    // B14: unaligned delivered width → pad storage, keep display (Direct-Part).
+    if (contentW > 0 && (contentW & 15) != 0)
+        return makeDdrFrameGeometryFromDelivered(contentW, contentH);
     return productDdrFrameStoreGeometry();
 }
 
@@ -520,8 +546,12 @@ inline DdrFrameGeometry ddrStorageGeometryForContent(CodedWidth contentW, CodedH
 
 // FPGA-present geometry for the daemon path: STORAGE, not DE canvas.
 // w-path owns this symbol (parent ruling). Delegates to storage allowlist.
-// 960×540 → 960×540; 1280×720 → 1280×720; else product 624 canvas.
+// 960×540 → 960×540; 1280×720 → 1280×720; unaligned → B14 pad; else 624 canvas.
 // MUST NOT ignore decode dims (always-624 was the silent downscale defect).
+//
+// Overload with deliveredW/H: when main replaces decode size with store_w/h
+// (padded 432) but source was 426, pass delivered so display/crop survive.
+// store dims must equal align16(delivered) when both given.
 inline DdrFrameGeometry ddrFrameGeometryForFpgaPresent(CodedWidth decodeWidth,
                                                       CodedHeight decodeHeight) {
     return ddrStorageGeometryForContent(decodeWidth, decodeHeight);
@@ -529,6 +559,30 @@ inline DdrFrameGeometry ddrFrameGeometryForFpgaPresent(CodedWidth decodeWidth,
 
 inline DdrFrameGeometry ddrFrameGeometryForFpgaPresent(int decodeWidth, int decodeHeight) {
     return ddrFrameGeometryForFpgaPresent(CodedWidth{decodeWidth}, CodedHeight{decodeHeight});
+}
+
+// storeW/H = padded bank dims; deliveredW/H = true source (pre-pad).
+// FAULT: ddrFrameGeometryForFpgaPresent(432,240) alone → identity/allowlist miss
+// loses display 426 (rd-duck Direct-Part contract edge).
+inline DdrFrameGeometry ddrFrameGeometryForFpgaPresent(int storeW, int storeH, int deliveredW,
+                                                      int deliveredH) {
+    if (deliveredW > 0 && deliveredH > 0) {
+        DdrFrameGeometry g = makeDdrFrameGeometryFromDelivered(deliveredW, deliveredH);
+        if (g.coded_width.get() <= 0)
+            return g;
+        // If caller also gave store dims, they must match padded coded.
+        if (storeW > 0 && storeW != g.coded_width.get())
+            return DdrFrameGeometry{};
+        if (storeH > 0 && storeH != g.coded_height.get())
+            return DdrFrameGeometry{};
+        return g;
+    }
+    return ddrFrameGeometryForFpgaPresent(storeW, storeH);
+}
+
+// FAULT twin: treat padded store as identity coded=display (loses delivered).
+inline DdrFrameGeometry ddrFrameGeometryForFpgaPresentFaultIdentityStore(int storeW, int storeH) {
+    return makeDdrFrameGeometry(storeW, storeH); // crop_right=0, display=store
 }
 
 // Product intermediate tier (PMS Constrained Baseline 960×540 → fabric upscale).
@@ -1981,8 +2035,8 @@ inline bool decodePlxgContentOrigin(uint64_t raw, int& x0, int& y0) {
 //
 // B14 policy (w-mem, library N=142): coded_w MUST be %16==0 (RTL rt_raw_aligned).
 // Live PMS has 4 titles at 426×240 (426%16=10). Host PADS storage coded_w up
-// (426→432), keeps display_w=source, crop_right=pad. Guard stays loud reject
-// if unaligned storage ever reaches fabric — never weaken B14.
+// (426→432), keeps display_w=source, center even crop_left + crop_right.
+// Guard stays loud reject if unaligned storage ever reaches fabric — never weaken B14.
 struct DdrFabricOwnedPresentPlan {
     DdrNativePushPlan native{};
     DdrArmPresentBudget budget{};
@@ -1996,10 +2050,11 @@ struct DdrFabricOwnedPresentPlan {
     // Storage rectangle ARM writes (16-aligned coded; may exceed display).
     int content_w = 0;
     int content_h = 0;
-    // Visible source before B14 right-pad (display_*); crop_right = content_w - display_w.
+    // Visible source before B14 pad; crop_left+display+crop_right == content_w.
     int display_w = 0;
     int display_h = 0;
-    int crop_right = 0;
+    int crop_left = 0;  // FFmpeg center pad inset (426→432: 2)
+    int crop_right = 0; // remainder (426→432: 4)
     int content_x0 = 0; // even-aligned; fabric placement
     int content_y0 = 0;
     // Bytes ARM may memcpy — NEVER canvas frame_bytes on this path.
@@ -2071,6 +2126,7 @@ inline DdrFabricOwnedPresentPlan makeDdrFabricOwnedPresentPlan(
     p.content_h = storH;
     p.display_w = dispW;
     p.display_h = dispH;
+    p.crop_left = pad.crop_left;
     p.crop_right = pad.crop_right;
     p.content_x0 = contentX0 & ~1;
     p.content_y0 = contentY0 & ~1;
@@ -2130,21 +2186,18 @@ inline DdrFabricOwnedPresentPlan makeDdrFabricOwnedPresentPlan(
         return p;
     p.budget = makeDdrArmPresentBudget(p.native, p.offload, countFeedScaleRemoval,
                                        /*armPushesPixels=*/true);
-    // Atomic 6-qword PLXG. STORAGE coded/stride; DISPLAY in content+display fields.
-    const int deW = canvasGeom.presented_width.get() > 0 ? canvasGeom.presented_width.get()
-                                                         : canvasGeom.coded_width.get();
-    const int deH = canvasGeom.presented_height.get() > 0 ? canvasGeom.presented_height.get()
-                                                          : canvasGeom.coded_height.get();
+    // Atomic 6-qword PLXG. STORAGE coded/stride; content DE = display (delivered),
+    // never padded coded and never glass canvas (rd-duck 426/432 squeeze).
     // Non-zero seed for host latch models; writePlxgRecord always advances past last.
     p.plxg_seq = 1;
     p.plxg_q[0] = packPlxgQ0(/*win*/ true, /*geom*/ true, /*seq*/ 1);
     // q1 content window = visible display (scaler input), not padded storage.
     p.plxg_q[1] = packPlxgQ1(dispW, dispH, p.content_x0, p.content_y0);
-    p.plxg_q[2] = packPlxgQ2(deW, deH, storW, storH);
+    p.plxg_q[2] = packPlxgQ2(/*h_de*/ dispW, /*v_de*/ dispH, storW, storH);
     p.plxg_q[3] = packPlxgQ3(p.content_layout.y_stride, p.content_layout.chroma_stride,
                              dispW, dispH);
-    // crop_left=0; crop_right implied as coded_w - display_w (pad columns).
-    p.plxg_q[4] = packPlxgQ4(0, 0, /*crop_left*/ 0, /*crop_top*/ 0);
+    // FFmpeg center pad inset → crop_left (426→432: 2); right = coded-display-left.
+    p.plxg_q[4] = packPlxgQ4(0, 0, /*crop_left*/ pad.crop_left, /*crop_top*/ 0);
     p.plxg_q[5] = packPlxgQ5(/*dar_x*/0, /*dar_y*/0, /*fps*/0,
                            /*dar_valid*/false, /*fps_valid*/false);
     // Aliases for older tests (not separate wire beats).
@@ -2154,8 +2207,9 @@ inline DdrFabricOwnedPresentPlan makeDdrFabricOwnedPresentPlan(
     p.valid = p.budget.valid && p.plxg_q[0] != 0 &&
               plxgGeomDimsOk(storW, storH, p.content_layout.y_stride,
                              p.content_layout.chroma_stride) &&
-              (storW == dispW + p.crop_right) &&
-              ddrRtRawWindowOk(storW, storH, dispW, dispH, /*crop_l*/ 0, /*crop_t*/ 0);
+              (storW == dispW + pad.crop_left + pad.crop_right) &&
+              (p.crop_right == pad.crop_right) &&
+              ddrRtRawWindowOk(storW, storH, dispW, dispH, pad.crop_left, /*crop_t*/ 0);
     return p;
 }
 

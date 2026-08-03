@@ -498,8 +498,9 @@ int main() {
             CHECK(ddrI420PayloadNeedsOptionCBank(524160u));
             CHECK(524160u > kPlex480pYuv420pBankUsableBytes);
         }
-        // 426×240 native fails w%16; pad coded_w=432, display=426, crop_right=6
+        // 426×240 native fails w%16; pad coded_w=432, display=426, crop L2/R4
         // B14 policy: PAD (not crop-to-416, not accept-reject). Library 4/142.
+        // Oracle is full geometry (not Y-byte-only) — DE/display/crop/squeeze.
         {
             CHECK((426 % 16) == 10);
             CHECK(!plxgGeomDimsOk(426, 240, 426, 213));
@@ -507,45 +508,77 @@ int main() {
             CHECK(pad.valid);
             CHECK(pad.coded_w == 432);
             CHECK(pad.display_w == 426);
-            CHECK(pad.crop_right == 6);
+            CHECK(pad.crop_left == 2); // FFmpeg center even inset
+            CHECK(pad.crop_right == 4);
+            CHECK(pad.crop_left + pad.display_w + pad.crop_right == 432);
             CHECK(pad.y_stride == 432);
             CHECK(pad.chroma_stride == 216);
             CHECK(pad.payload_bytes == 432u * 240u + 216u * 240u); // 155520
             CHECK(pad.payload_bytes == 155520u);
             CHECK(!ddrI420PayloadNeedsOptionCBank(pad.payload_bytes));
-            // Fabric-owned plan must auto-pad — raw 426 must not reach RTL.
+            const auto gDel = makeDdrFrameGeometryFromDelivered(426, 240);
+            CHECK(gDel.coded_width.get() == 432);
+            CHECK(gDel.display_width.get() == 426);
+            CHECK(gDel.crop_left == 2 && gDel.crop_right == 4);
+            // Direct-Part edge: store_w=432 after pad — MUST pass delivered 426.
+            const auto gStoreDel = ddrFrameGeometryForFpgaPresent(432, 240, 426, 240);
+            CHECK(gStoreDel.display_width.get() == 426);
+            CHECK(gStoreDel.crop_left == 2);
+            // FAULT: store-only identity loses display → ascal squeeze ~1.39%.
+            const auto gFault = ddrFrameGeometryForFpgaPresentFaultIdentityStore(432, 240);
+            CHECK(gFault.display_width.get() == 432);
+            CHECK(gFault.crop_left == 0 && gFault.crop_right == 0);
+            const double squeeze =
+                ddrB14PadHorizontalSqueezeIfDeEqualsCoded(/*disp*/ 426, /*coded*/ 432);
+            CHECK(squeeze > 0.013 && squeeze < 0.015);
+            // Delivered 426 alone → pad path (not 624 canvas).
+            const auto gFpga = ddrFrameGeometryForFpgaPresent(426, 240);
+            CHECK(gFpga.coded_width.get() == 432 && gFpga.display_width.get() == 426);
             const auto fab426 =
                 makeDdrFabricOwnedPresentPlan(426, 240, plex480pDdrFrameGeometry(),
                                               kDdrFramePhysBase);
             CHECK(fab426.valid);
-            CHECK(fab426.content_w == 432);
-            CHECK(fab426.content_h == 240);
-            CHECK(fab426.display_w == 426);
-            CHECK(fab426.display_h == 240);
-            CHECK(fab426.crop_right == 6);
+            CHECK(fab426.content_w == 432 && fab426.display_w == 426);
+            CHECK(fab426.crop_left == 2 && fab426.crop_right == 4);
             CHECK(fab426.publish_bytes == 155520u);
             CHECK(fab426.content_layout.y_stride == 432);
             CHECK(fab426.content_layout.chroma_stride == 216);
-            // PLXG: coded=432, display=426, content window=426, strides storage.
+            // PLXG: coded=432, display/DE=426 (NOT 432), crop_l=2, strides storage.
             CHECK(((fab426.plxg_q[2] >> 32) & 0x7FFu) == 432u); // coded_w
             CHECK(((fab426.plxg_q[2] >> 48) & 0x7FFu) == 240u); // coded_h
+            CHECK((fab426.plxg_q[2] & 0x7FFu) == 426u);         // h_de = display
+            CHECK(((fab426.plxg_q[2] >> 16) & 0x7FFu) == 240u); // v_de
             CHECK(((fab426.plxg_q[3] >> 32) & 0x7FFu) == 426u); // display_w
-            CHECK((fab426.plxg_q[1] & 0x7FFu) == 426u);         // content_w window
+            CHECK((fab426.plxg_q[1] & 0x7FFu) == 426u);         // content window
             CHECK((fab426.plxg_q[3] & 0xFFFu) == 432u);         // y_stride
-            CHECK(plxgGeomDimsOk(fab426.content_w, fab426.content_h,
-                                 fab426.content_layout.y_stride,
-                                 fab426.content_layout.chroma_stride));
-            CHECK(ddrRtRawWindowOk(432, 240, 426, 240, 0, 0));
-            // NEG: unaligned storage still rejected by geom oracle (guard stays).
+            CHECK(((fab426.plxg_q[4] >> 32) & 0x7FFu) == 2u);   // crop_left
+            std::vector<uint8_t> px426(155520u, 0);
+            DdrPublishFrame fr426{px426.data(), px426.size(), gDel};
+            DdrPublishPlan plan426{};
+            std::string err426;
+            CHECK(makeDdrPublishPlan(fr426, 0, plan426, &err426));
+            CHECK((plan426.plxg_q[2] & 0x7FFu) == 426u);
+            CHECK(((plan426.plxg_q[2] >> 32) & 0x7FFu) == 432u);
+            CHECK(((plan426.plxg_q[4] >> 32) & 0x7FFu) == 2u);
+            CHECK(ddrRtRawWindowOk(432, 240, 426, 240, /*cl*/ 2, 0));
+            CHECK(!ddrRtRawWindowOk(432, 240, 426, 240, /*cl*/ 7, 0));
             CHECK(!plxgGeomDimsOk(426, 240, 426, 213));
-            std::fprintf(stderr, "  B14_PAD_426_POLICY OK coded=432 display=426\n");
+            const auto leg = makePlxgRecordLegacy480(1);
+            CHECK(leg.valid && (leg.q[2] & 0x7FFu) == 624u);
+            CHECK(((leg.q[3] >> 32) & 0x7FFu) == 618u);
+            std::fprintf(stderr,
+                         "  B14_PAD_426_POLICY OK coded=432 display=426 crop=2+4 "
+                         "de=426 squeeze_fault~%.4f\n",
+                         squeeze);
         }
         // PMS AR-fit 468×360: raw fails; pad coded=480 → accepted storage
         {
             CHECK((468 % 16) == 4);
             CHECK(!plxgGeomDimsOk(468, 360, 468, 234));
             const auto pad = makeDdrNativePaddedLayout(468, 360);
-            CHECK(pad.valid && pad.coded_w == 480 && pad.crop_right == 12);
+            // Center even: pad=12 → left=6 right=6 (not all-right 12).
+            CHECK(pad.valid && pad.coded_w == 480 && pad.crop_left == 6 &&
+                  pad.crop_right == 6);
             CHECK(pad.payload_bytes == 480u * 360u + 240u * 360u); // 259200
             CHECK(!ddrI420PayloadNeedsOptionCBank(pad.payload_bytes));
         }
@@ -642,7 +675,8 @@ int main() {
         CHECK(out.content_layout.frame_bytes == 777600u);
         CHECK(out.content_layout.u_offset == 518400u);
         CHECK(out.content_layout.v_offset == 648000u);
-        // Atomic 6-qword PLXG → latch: STORAGE 960x540, DE 1280x720, Option-C.
+        // Atomic 6-qword PLXG → latch: STORAGE+content DE 960x540 (Route B;
+        // ascal owns glass 1280 — never program canvas DE into PLXG).
         PlxgLatchModel latch{};
         std::vector<uint8_t> ctrl(0x1000, 0);
         PlxgRecord rec{};
@@ -654,7 +688,7 @@ int main() {
         CHECK(latch.geom_enable);
         CHECK(latch.coded_w == 960 && latch.coded_h == 540);
         CHECK(latch.y_stride == 960 && latch.chroma_stride == 480);
-        CHECK(latch.h_de == 1280 && latch.v_de == 720);
+        CHECK(latch.h_de == 960 && latch.v_de == 540);
         CHECK(plxgPayloadNeedsOptionC(plxgI420PayloadBytes(latch.y_stride, latch.chroma_stride,
                                                            latch.coded_h)));
         // NEG: three temporal same-slot beats are not our wire format.
@@ -716,7 +750,7 @@ int main() {
             CHECK(lm.geom_enable && lm.coded_w == 960 && lm.coded_h == 540);
             CHECK(lm.content_x0 == 0 && lm.content_y0 == 0);
             CHECK(lm.y_stride == 960 && lm.chroma_stride == 480);
-            CHECK(lm.h_de == 1280 && lm.v_de == 720);
+            CHECK(lm.h_de == 960 && lm.v_de == 540); // Route B content DE
             // Record lives at FIXED +0x800 on control page image.
             uint64_t q0le = 0;
             std::memcpy(&q0le, page.data() + mailbox_abi::kPlxgOffset, 8);
