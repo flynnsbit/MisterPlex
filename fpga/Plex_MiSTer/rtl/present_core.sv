@@ -477,9 +477,37 @@ module present_core #(
 		.out_b(mp_b),
 		.out_lane_valid(mp_lane_v)
 	);
+	// P1 bridge: N-wide sys → async_fifo → 1 px/clk. clk_pix tied to clk here
+	// for elab only; real wiring needs a dedicated pix PLL out (parent grant).
+	wire mp_out_ce, mp_wr_full, mp_wr_af, mp_rd_ur, mp_rd_empty;
+	wire [7:0] mp_out_r, mp_out_g, mp_out_b;
+	present_npx_path #(
+		.PX_PER_CLK(PPC_MP),
+		.FIFO_AW(4)
+	) u_mp_npx_path (
+		.clk_sys(clk),
+		.reset_sys(reset),
+		.clk_pix(clk),
+		.reset_pix(reset),
+		.in_valid(1'b0),
+		.in_r({(PPC_MP*8){1'b0}}),
+		.in_g({(PPC_MP*8){1'b0}}),
+		.in_b({(PPC_MP*8){1'b0}}),
+		.in_lane_valid({PPC_MP{1'b0}}),
+		.out_ce(mp_out_ce),
+		.out_r(mp_out_r),
+		.out_g(mp_out_g),
+		.out_b(mp_out_b),
+		.wr_full(mp_wr_full),
+		.wr_almost_full(mp_wr_af),
+		.rd_underrun(mp_rd_ur),
+		.rd_empty(mp_rd_empty)
+	);
 	wire _unused_mp = mp_beam_ce | (|mp_glass_x0) | (|mp_glass_y) | (|mp_lane_de)
 		| mp_hb | mp_hs | mp_vb | mp_vs | mp_fstart | mp_yuv_valid
-		| (|mp_r) | (|mp_g) | (|mp_b) | (|mp_lane_v);
+		| (|mp_r) | (|mp_g) | (|mp_b) | (|mp_lane_v)
+		| mp_out_ce | (|mp_out_r) | (|mp_out_g) | (|mp_out_b)
+		| mp_wr_full | mp_wr_af | mp_rd_ur | mp_rd_empty;
 `endif
 
 	// --- Audio: FIFO preferred, else OSD tone ---

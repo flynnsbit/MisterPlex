@@ -2,11 +2,14 @@
 
 **Lane:** w-clock · **No fit · No device**  
 **Macro default:** `PRESENT_MULTI_PIXEL` **undefined** (OFF) · `PRESENT_PX_PER_CLK` defaults to **1**  
-**Status:** design + gated RTL landed; product path unchanged until parent enables macro + nostub fit.
+**Status:** design + gated RTL landed; **NOT product-wired**. Parent correction: claiming
+"scanout done" is overstated — modules are macro-OFF and MiSTer still takes 1 RGB/CE_PIXEL.
+Honest claim: **no clk_sys overclock is likely needed** once N-wide path is connected.
 
 Parent confirmed programme facts from scan-out table:
 1. 22.12 Mpix/s content touch > shipping 20 MHz @ 1 ppc → nostub is a hard gate for 1 ppc 720p24.
 2. CEA 720p60 @ 1 ppc = 74.25 MHz vs nostub Fmax 32.59 → wall, not a PLL tune.
+3. Serial ARM decode+copy is dead at every 720p tier (best bank write 15.28 ms/f) → **Route B fabric pixels is mandatory**, not preferred.
 
 This note answers: **does N px/clk rescue 720p without fantasy Fmax?**
 
@@ -95,7 +98,7 @@ Legal PPC ∈ {1,2,4}. 1280 is divisible by 2 and 4 — preferred content width.
 | Block | Change | Notes |
 |-------|--------|-------|
 | **H counter** | `hc <= hc + PX_PER_CLK` (not +1); compare still vs `H_DE` / `H_LAST` in **pixel** units | Blanking edges must be pixel-aligned; with N\|H_DE and N\|H_TOTAL preferred |
-| **H_DE / H_TOTAL** | Native 720: `H_DE=1280`, CEA `H_TOTAL=1650`; Template lock `529` **breaks** (see §4) | 1280%4=0; 1650%2=1 **odd** — CEA total not divisible by 2! |
+| **H_DE / H_TOTAL** | Native 720: `H_DE=1280`, CEA `H_TOTAL=1650`; Template lock `529` **breaks** (see §4) | 1280%4=0; **1650 is EVEN** (1650%2=0); **1650%4=2** → PPC=4 needs short final step of 2 |
 | **ce_pix** | Stays 1 under product scandouble; meaning becomes “beam step valid”, **not** “one pixel” | Rename in docs: `beam_ce` |
 | **store_x** | Base `x0 = f(hc)`; lanes `x0+i` for i∈[0,N) with clamp at `FRAME_W-1` | Odd DE tail: `pix_valid[i]` |
 | **ddr_frame_store read** | `rd_x` → `rd_x_base` + lane; or one qword + multi `pick_byte` | Prefer multi-pick from same/adjacent qword |
@@ -110,7 +113,7 @@ Legal PPC ∈ {1,2,4}. 1280 is divisible by 2 and 4 — preferred content width.
 |------:|:---:|:---:|------|
 | 1280 content | exact | exact | no tail |
 | 529 Template DE | tail 1 | tail 1 | `pix_valid` mask; last clk may have 1 live lane |
-| 1650 CEA H_TOTAL | **odd** | odd | **Cannot step hc by 2 across full line without phase** — use pixel-unit hc with `hc_next = min(hc+N, H_LAST_PLUS)` or keep H_TOTAL even (e.g. 1652 lab) — **flag for w-scaler/parent** |
+| 1650 CEA H_TOTAL | exact (even) | **tail 2** (1650%4=2) | PPC=2 exact; PPC=4 uses variable final step (implemented in `present_beam_ppc`) |
 | 624 coded | exact | exact | OK |
 | 618 display | exact | tail 2 | mask |
 
@@ -122,8 +125,9 @@ Implementation: always compute N lane coordinates; `pix_valid[i] = in_de && (x0+
 |------|------|----------------|
 | `rtl/yuv_bt601_npx.sv` | N-lane BT.601 extract from Y/U/V qwords | **Not instantiated** unless `PRESENT_MULTI_PIXEL` |
 | `rtl/present_beam_ppc.sv` | Beam counters with +N step, pix-unit blanking | **Not instantiated** unless `PRESENT_MULTI_PIXEL` |
+| `rtl/present_npx_path.sv` | N-wide → async_fifo → 1 px/clk (P1 serializer) | **Not instantiated** unless `PRESENT_MULTI_PIXEL` |
 | `rtl/present_core.sv` | Comment + optional generate stub under macro | Default OFF — **no behaviour change** |
-| `files.qip` | Lists new modules for lint/elab | Compile-only; no top instance |
+| `files.qip` | Lists new modules for lint/elab | Compile-only when macro OFF |
 
 ---
 
@@ -158,7 +162,7 @@ Honest ARM ms: multi-pixel RTL alone removes **0 ms** until wired to replace ARM
 | 6 | **10-bit `hc`/`vc`** | 1650 needs 11 bits | Widen to 12 bits in `present_beam_ppc` |
 | 7 | **Single `rd_r/g/b` port** on `ddr_frame_store` | API is 1 px | Add `rd_r_nx[N]` under macro; keep scalar ports as lane0 |
 | 8 | **ascal / `CE_PIXEL` 1-px contract** | Cannot feed N RGB without sys change or FIFO | P1 serializer (§3) |
-| 9 | **CEA 1650 not divisible by 2** | Pure +2 step desyncs line end | Even H_TOTAL lab variant or variable final step |
+| 9 | **CEA 1650 % 4 = 2** | Pure +4 step leaves 2 px tail | Variable final step in `present_beam_ppc` (done); do not claim 1650 is odd |
 | 10 | **w-scaler merge** | Same file `present_core.sv` | Frozen interface §5 |
 
 ---
@@ -279,5 +283,6 @@ PLL Target B_30_90 becomes **optional** for 720p24 if S3@N=2 meets timing at 20 
 | ALM/DSP exact | same map.rpt |
 | DE_LAG for N-wide ddr path | HDMI edge sweep |
 | ARM ms removed | parent profile fabric present ON vs ARM scale |
-| CEA 1650 odd H_TOTAL policy | parent + w-scaler choose even total vs variable step |
+| Dedicated clk_pix PLL + top CE_PIXEL mux | parent fit grant; wire `present_npx_path` out to Plex.sv |
+| ddr_frame_store N-wide ports | next SV slice; default PPC=1 bit-identical |
 | Real 720p cy/MB fabric decode | decode bench (not this lane) |

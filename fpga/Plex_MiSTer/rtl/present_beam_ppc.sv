@@ -8,7 +8,8 @@
 // Constraints (see MULTI_PIXEL_PRESENT_DESIGN.md):
 //   - PX_PER_CLK in {1,2,4}
 //   - Prefer H_DE % PX_PER_CLK == 0 and (H_LAST+1) % PX_PER_CLK == 0
-//   - CEA 1650 is odd: caller must pick even H_TOTAL or accept a short final step
+//   - CEA H_TOTAL=1650 is EVEN (1650%2=0). 1650%4=2 → PPC=4 needs short final
+//     step of 2 (handled below). Not "odd total".
 
 module present_beam_ppc #(
 	parameter int PX_PER_CLK = 1,
@@ -98,7 +99,7 @@ module present_beam_ppc #(
 			else
 				VSync <= 1'b0;
 
-			// Advance beam in pixel units by `step` (handles odd H_TOTAL tail).
+			// Advance beam in pixel units by `step` (handles 1650%4=2 tail).
 			if (hc + step > X_W'(H_LAST)) begin
 				hc <= '0;
 				if (vc >= Y_W'(V_LAST)) begin

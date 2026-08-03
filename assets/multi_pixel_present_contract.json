@@ -39,9 +39,11 @@
     "px_per_clk_define": "PRESENT_PX_PER_CLK",
     "modules": [
       "fpga/Plex_MiSTer/rtl/yuv_bt601_npx.sv",
-      "fpga/Plex_MiSTer/rtl/present_beam_ppc.sv"
+      "fpga/Plex_MiSTer/rtl/present_beam_ppc.sv",
+      "fpga/Plex_MiSTer/rtl/present_npx_path.sv"
     ],
-    "product_wired": false
+    "product_wired": false,
+    "cea_h_total_notes": "1650 is EVEN (1650%2=0). 1650%4=2 so PPC=4 needs short final step of 2."
   },
   "w_scaler_interface": {
     "doc": ".agent-work/w-clock/MULTI_PIXEL_PRESENT_DESIGN.md section 5",
