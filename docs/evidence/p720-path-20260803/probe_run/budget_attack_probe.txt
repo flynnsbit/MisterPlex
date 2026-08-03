@@ -1,0 +1,208 @@
+ffmpeg_probe label=null_t0 exit=0 wall_s=0.080565 child_user_s=0.245383 child_sys_s=0.033821 child_cpu_s=0.279204 child_cpu_pct_1c=346.6 child_cpu_pct_2c=173.3 maxrss_kb=106288 nvcsw=7786 nivcsw=170 frame_bytes=0 frames=0 fps=0.000 bytes=0 pipe_size=-1 read_calls=0 read_ok_calls=0 read_eagain=0 read_zero=0 read_wall_s=0.000000 read_cpu_s=0.000000 syscall_cpu_s=0.000000 sleep_wall_s=0.000000 sleep_cpu_s=0.000000 copy_wall_s=0.000000 copy_cpu_s=0.000000 max_read=0 checksum=0
+ffmpeg_probe label=null_t1 exit=0 wall_s=0.171075 child_user_s=0.175017 child_sys_s=0.026354 child_cpu_s=0.201371 child_cpu_pct_1c=117.7 child_cpu_pct_2c=58.9 maxrss_kb=77204 nvcsw=1453 nivcsw=8 frame_bytes=0 frames=0 fps=0.000 bytes=0 pipe_size=-1 read_calls=0 read_ok_calls=0 read_eagain=0 read_zero=0 read_wall_s=0.000000 read_cpu_s=0.000000 syscall_cpu_s=0.000000 sleep_wall_s=0.000000 sleep_cpu_s=0.000000 copy_wall_s=0.000000 copy_cpu_s=0.000000 max_read=0 checksum=0
+ffmpeg_probe label=null_t2 exit=0 wall_s=0.134385 child_user_s=0.214778 child_sys_s=0.019977 child_cpu_s=0.234755 child_cpu_pct_1c=174.7 child_cpu_pct_2c=87.3 maxrss_kb=76728 nvcsw=3502 nivcsw=10 frame_bytes=0 frames=0 fps=0.000 bytes=0 pipe_size=-1 read_calls=0 read_ok_calls=0 read_eagain=0 read_zero=0 read_wall_s=0.000000 read_cpu_s=0.000000 syscall_cpu_s=0.000000 sleep_wall_s=0.000000 sleep_cpu_s=0.000000 copy_wall_s=0.000000 copy_cpu_s=0.000000 max_read=0 checksum=0
+ffmpeg_probe label=raw_id_t0 exit=0 wall_s=4.757033 child_user_s=0.348832 child_sys_s=0.132933 child_cpu_s=0.481765 child_cpu_pct_1c=10.1 child_cpu_pct_2c=5.1 maxrss_kb=135696 nvcsw=4702 nivcsw=65 frame_bytes=777600 frames=360 fps=75.677 bytes=279936000 pipe_size=65536 read_calls=8623 read_ok_calls=6391 read_eagain=2231 read_zero=1 read_wall_s=4.756375 read_cpu_s=0.106972 syscall_cpu_s=0.064754 sleep_wall_s=4.662178 sleep_cpu_s=0.017597 copy_wall_s=0.017479 copy_cpu_s=0.017550 max_read=65536 checksum=44733
+ffmpeg_probe label=raw_id_t1 exit=0 wall_s=6.594591 child_user_s=0.342820 child_sys_s=0.082882 child_cpu_s=0.425702 child_cpu_pct_1c=6.5 child_cpu_pct_2c=3.2 maxrss_kb=84584 nvcsw=4521 nivcsw=39 frame_bytes=777600 frames=360 fps=54.590 bytes=279936000 pipe_size=65536 read_calls=8610 read_ok_calls=5506 read_eagain=3103 read_zero=1 read_wall_s=6.593803 read_cpu_s=0.110189 syscall_cpu_s=0.054741 sleep_wall_s=6.504391 sleep_cpu_s=0.027391 copy_wall_s=0.020030 copy_cpu_s=0.020037 max_read=65536 checksum=44733
+ffmpeg_probe label=raw_id_t2 exit=0 wall_s=6.924219 child_user_s=0.405934 child_sys_s=0.072408 child_cpu_s=0.478342 child_cpu_pct_1c=6.9 child_cpu_pct_2c=3.5 maxrss_kb=88184 nvcsw=5463 nivcsw=37 frame_bytes=777600 frames=360 fps=51.991 bytes=279936000 pipe_size=65536 read_calls=8608 read_ok_calls=5354 read_eagain=3253 read_zero=1 read_wall_s=6.923419 read_cpu_s=0.118422 syscall_cpu_s=0.056880 sleep_wall_s=6.826878 sleep_cpu_s=0.029671 copy_wall_s=0.023524 copy_cpu_s=0.023129 max_read=65536 checksum=44733
+ffmpeg_probe label=raw_scale_t0 exit=0 wall_s=6.832998 child_user_s=0.393050 child_sys_s=0.120016 child_cpu_s=0.513066 child_cpu_pct_1c=7.5 child_cpu_pct_2c=3.8 maxrss_kb=132052 nvcsw=5569 nivcsw=53 frame_bytes=777600 frames=360 fps=52.686 bytes=279936000 pipe_size=65536 read_calls=8628 read_ok_calls=5417 read_eagain=3210 read_zero=1 read_wall_s=6.832136 read_cpu_s=0.123847 syscall_cpu_s=0.059486 sleep_wall_s=6.731060 sleep_cpu_s=0.030194 copy_wall_s=0.025498 copy_cpu_s=0.025243 max_read=65536 checksum=44733
+ffmpeg_probe label=raw_scale_t1 exit=0 wall_s=5.592411 child_user_s=0.370430 child_sys_s=0.103445 child_cpu_s=0.473875 child_cpu_pct_1c=8.5 child_cpu_pct_2c=4.2 maxrss_kb=86680 nvcsw=4031 nivcsw=33 frame_bytes=777600 frames=360 fps=64.373 bytes=279936000 pipe_size=65536 read_calls=8585 read_ok_calls=5955 read_eagain=2629 read_zero=1 read_wall_s=5.591484 read_cpu_s=0.117293 syscall_cpu_s=0.062656 sleep_wall_s=5.490915 sleep_cpu_s=0.022322 copy_wall_s=0.024085 copy_cpu_s=0.024000 max_read=65536 checksum=44733
+ffmpeg_probe label=raw_scale_t2 exit=0 wall_s=6.274699 child_user_s=0.423033 child_sys_s=0.092075 child_cpu_s=0.515108 child_cpu_pct_1c=8.2 child_cpu_pct_2c=4.1 maxrss_kb=89992 nvcsw=5172 nivcsw=60 frame_bytes=777600 frames=360 fps=57.373 bytes=279936000 pipe_size=65536 read_calls=8588 read_ok_calls=5637 read_eagain=2950 read_zero=1 read_wall_s=6.273795 read_cpu_s=0.119826 syscall_cpu_s=0.061280 sleep_wall_s=6.172541 sleep_cpu_s=0.025377 copy_wall_s=0.025069 copy_cpu_s=0.024906 max_read=65536 checksum=44733
+ffmpeg_probe label=raw_rgb_t0 exit=0 wall_s=8.083017 child_user_s=0.585503 child_sys_s=0.287242 child_cpu_s=0.872745 child_cpu_pct_1c=10.8 child_cpu_pct_2c=5.4 maxrss_kb=162944 nvcsw=12317 nivcsw=1083 frame_bytes=1555200 frames=360 fps=44.538 bytes=559872000 pipe_size=65536 read_calls=17121 read_ok_calls=13369 read_eagain=3751 read_zero=1 read_wall_s=8.081871 read_cpu_s=0.214290 syscall_cpu_s=0.116416 sleep_wall_s=7.887560 sleep_cpu_s=0.033825 copy_wall_s=0.049319 copy_cpu_s=0.049939 max_read=65536 checksum=30547
+ffmpeg_probe label=null_tt_frame exit=0 wall_s=0.134928 child_user_s=0.215264 child_sys_s=0.021621 child_cpu_s=0.236885 child_cpu_pct_1c=175.6 child_cpu_pct_2c=87.8 maxrss_kb=77492 nvcsw=2974 nivcsw=48 frame_bytes=0 frames=0 fps=0.000 bytes=0 pipe_size=-1 read_calls=0 read_ok_calls=0 read_eagain=0 read_zero=0 read_wall_s=0.000000 read_cpu_s=0.000000 syscall_cpu_s=0.000000 sleep_wall_s=0.000000 sleep_cpu_s=0.000000 copy_wall_s=0.000000 copy_cpu_s=0.000000 max_read=0 checksum=0
+ffmpeg_probe label=null_tt_slice exit=0 wall_s=0.199317 child_user_s=0.203003 child_sys_s=0.025493 child_cpu_s=0.228496 child_cpu_pct_1c=114.6 child_cpu_pct_2c=57.3 maxrss_kb=77592 nvcsw=1491 nivcsw=10 frame_bytes=0 frames=0 fps=0.000 bytes=0 pipe_size=-1 read_calls=0 read_ok_calls=0 read_eagain=0 read_zero=0 read_wall_s=0.000000 read_cpu_s=0.000000 syscall_cpu_s=0.000000 sleep_wall_s=0.000000 sleep_cpu_s=0.000000 copy_wall_s=0.000000 copy_cpu_s=0.000000 max_read=0 checksum=0
+ffmpeg_probe label=null_tt_frame+slice exit=0 wall_s=0.121799 child_user_s=0.192833 child_sys_s=0.027835 child_cpu_s=0.220668 child_cpu_pct_1c=181.2 child_cpu_pct_2c=90.6 maxrss_kb=77612 nvcsw=2567 nivcsw=14 frame_bytes=0 frames=0 fps=0.000 bytes=0 pipe_size=-1 read_calls=0 read_ok_calls=0 read_eagain=0 read_zero=0 read_wall_s=0.000000 read_cpu_s=0.000000 syscall_cpu_s=0.000000 sleep_wall_s=0.000000 sleep_cpu_s=0.000000 copy_wall_s=0.000000 copy_cpu_s=0.000000 max_read=0 checksum=0
+ffmpeg_probe label=null_filter_t2 exit=0 wall_s=0.139124 child_user_s=0.219099 child_sys_s=0.020710 child_cpu_s=0.239809 child_cpu_pct_1c=172.4 child_cpu_pct_2c=86.2 maxrss_kb=79112 nvcsw=3155 nivcsw=22 frame_bytes=0 frames=0 fps=0.000 bytes=0 pipe_size=-1 read_calls=0 read_ok_calls=0 read_eagain=0 read_zero=0 read_wall_s=0.000000 read_cpu_s=0.000000 syscall_cpu_s=0.000000 sleep_wall_s=0.000000 sleep_cpu_s=0.000000 copy_wall_s=0.000000 copy_cpu_s=0.000000 max_read=0 checksum=0
+=== null_default ===
+/bin/bash: line 7: build/host-profile/ffmpeg_cpu_probe: No such file or directory
+=== raw_id_default ===
+/bin/bash: line 9: build/host-profile/ffmpeg_cpu_probe: No such file or directory
+=== null_default ===
+ffmpeg_probe label=null_default exit=0 wall_s=0.083772 child_user_s=0.240818 child_sys_s=0.039176 child_cpu_s=0.279994 child_cpu_pct_1c=334.2 child_cpu_pct_2c=167.1 maxrss_kb=104868 nvcsw=7606 nivcsw=240 frame_bytes=0 frames=0 fps=0.000 bytes=0 pipe_size=-1 read_calls=0 read_ok_calls=0 read_eagain=0 read_zero=0 read_wall_s=0.000000 read_cpu_s=0.000000 syscall_cpu_s=0.000000 sleep_wall_s=0.000000 sleep_cpu_s=0.000000 copy_wall_s=0.000000 copy_cpu_s=0.000000 max_read=0 checksum=0
+=== raw_id_default ===
+ffmpeg_probe label=raw_id_default exit=0 wall_s=4.354883 child_user_s=0.379825 child_sys_s=0.115838 child_cpu_s=0.495663 child_cpu_pct_1c=11.4 child_cpu_pct_2c=5.7 maxrss_kb=139844 nvcsw=7370 nivcsw=748 frame_bytes=777600 frames=360 fps=82.666 bytes=279936000 pipe_size=65536 read_calls=6295 read_ok_calls=4282 read_eagain=2012 read_zero=1 read_wall_s=4.354474 read_cpu_s=0.062363 syscall_cpu_s=0.042325 sleep_wall_s=4.212646 sleep_cpu_s=0.015939 copy_wall_s=0.000000 copy_cpu_s=0.000000 max_read=65536 checksum=0
+=== bench_default ===
+Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'docs/evidence/p720-path-20260803/probe_run/proxy_960x540_30.mp4':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    encoder         : Lavf62.12.102
+  Duration: 00:00:12.00, start: 0.000000, bitrate: 2139 kb/s
+  Stream #0:0[0x1](und): Video: h264 (Constrained Baseline) (avc1 / 0x31637661), yuv420p(progressive), 960x540 [SAR 1:1 DAR 16:9], 2003 kb/s, 30 fps, 30 tbr, 15360 tbn (default)
+    Metadata:
+      handler_name    : VideoHandler
+      encoder         : Lavc62.28.102 libx264
+  Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 44100 Hz, stereo, fltp, 128 kb/s (default)
+    Metadata:
+      handler_name    : SoundHandler
+Stream mapping:
+  Stream #0:0 -> #0:0 (h264 (native) -> wrapped_avframe (native))
+Output #0, null, to 'pipe:':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    encoder         : Lavf62.12.102
+  Stream #0:0(und): Video: wrapped_avframe, yuv420p(progressive), 960x540 [SAR 1:1 DAR 16:9], q=2-31, 200 kb/s, 30 fps, 30 tbn (default)
+    Metadata:
+      encoder         : Lavc62.28.102 wrapped_avframe
+      handler_name    : VideoHandler
+[out#0/null @ 0x558eaf50c200] video:149KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: unknown
+frame=  360 fps=0.0 q=-0.0 Lsize=N/A time=00:00:12.00 bitrate=N/A speed= 212x elapsed=0:00:00.05    
+bench: utime=0.254s stime=0.033s rtime=0.057s
+bench: maxrss=106516KiB
+=== bench_t1 ===
+Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'docs/evidence/p720-path-20260803/probe_run/proxy_960x540_30.mp4':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    encoder         : Lavf62.12.102
+  Duration: 00:00:12.00, start: 0.000000, bitrate: 2139 kb/s
+  Stream #0:0[0x1](und): Video: h264 (Constrained Baseline) (avc1 / 0x31637661), yuv420p(progressive), 960x540 [SAR 1:1 DAR 16:9], 2003 kb/s, 30 fps, 30 tbr, 15360 tbn (default)
+    Metadata:
+      handler_name    : VideoHandler
+      encoder         : Lavc62.28.102 libx264
+  Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 44100 Hz, stereo, fltp, 128 kb/s (default)
+    Metadata:
+      handler_name    : SoundHandler
+Stream mapping:
+  Stream #0:0 -> #0:0 (h264 (native) -> wrapped_avframe (native))
+Output #0, null, to 'pipe:':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    encoder         : Lavf62.12.102
+  Stream #0:0(und): Video: wrapped_avframe, yuv420p(progressive), 960x540 [SAR 1:1 DAR 16:9], q=2-31, 200 kb/s, 30 fps, 30 tbn (default)
+    Metadata:
+      encoder         : Lavc62.28.102 wrapped_avframe
+      handler_name    : VideoHandler
+[out#0/null @ 0x5632b38a5340] video:149KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: unknown
+frame=  360 fps=0.0 q=-0.0 Lsize=N/A time=00:00:12.00 bitrate=N/A speed=63.3x elapsed=0:00:00.18    
+bench: utime=0.200s stime=0.013s rtime=0.190s
+bench: maxrss=75336KiB
+=== bench_t0 ===
+Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'docs/evidence/p720-path-20260803/probe_run/proxy_960x540_30.mp4':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    encoder         : Lavf62.12.102
+  Duration: 00:00:12.00, start: 0.000000, bitrate: 2139 kb/s
+  Stream #0:0[0x1](und): Video: h264 (Constrained Baseline) (avc1 / 0x31637661), yuv420p(progressive), 960x540 [SAR 1:1 DAR 16:9], 2003 kb/s, 30 fps, 30 tbr, 15360 tbn (default)
+    Metadata:
+      handler_name    : VideoHandler
+      encoder         : Lavc62.28.102 libx264
+  Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 44100 Hz, stereo, fltp, 128 kb/s (default)
+    Metadata:
+      handler_name    : SoundHandler
+Stream mapping:
+  Stream #0:0 -> #0:0 (h264 (native) -> wrapped_avframe (native))
+Output #0, null, to 'pipe:':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    encoder         : Lavf62.12.102
+  Stream #0:0(und): Video: wrapped_avframe, yuv420p(progressive), 960x540 [SAR 1:1 DAR 16:9], q=2-31, 200 kb/s, 30 fps, 30 tbn (default)
+    Metadata:
+      encoder         : Lavc62.28.102 wrapped_avframe
+      handler_name    : VideoHandler
+[out#0/null @ 0x558e0b663340] video:149KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: unknown
+frame=  360 fps=0.0 q=-0.0 Lsize=N/A time=00:00:12.00 bitrate=N/A speed=88.2x elapsed=0:00:00.13    
+bench: utime=0.306s stime=0.037s rtime=0.136s
+bench: maxrss=106260KiB
+=== bench_t2 ===
+Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'docs/evidence/p720-path-20260803/probe_run/proxy_960x540_30.mp4':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    encoder         : Lavf62.12.102
+  Duration: 00:00:12.00, start: 0.000000, bitrate: 2139 kb/s
+  Stream #0:0[0x1](und): Video: h264 (Constrained Baseline) (avc1 / 0x31637661), yuv420p(progressive), 960x540 [SAR 1:1 DAR 16:9], 2003 kb/s, 30 fps, 30 tbr, 15360 tbn (default)
+    Metadata:
+      handler_name    : VideoHandler
+      encoder         : Lavc62.28.102 libx264
+  Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 44100 Hz, stereo, fltp, 128 kb/s (default)
+    Metadata:
+      handler_name    : SoundHandler
+Stream mapping:
+  Stream #0:0 -> #0:0 (h264 (native) -> wrapped_avframe (native))
+Output #0, null, to 'pipe:':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    encoder         : Lavf62.12.102
+  Stream #0:0(und): Video: wrapped_avframe, yuv420p(progressive), 960x540 [SAR 1:1 DAR 16:9], q=2-31, 200 kb/s, 30 fps, 30 tbn (default)
+    Metadata:
+      encoder         : Lavc62.28.102 wrapped_avframe
+      handler_name    : VideoHandler
+[out#0/null @ 0x560090872340] video:149KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: unknown
+frame=  360 fps=0.0 q=-0.0 Lsize=N/A time=00:00:12.00 bitrate=N/A speed=67.6x elapsed=0:00:00.17    
+bench: utime=0.224s stime=0.017s rtime=0.178s
+bench: maxrss=78080KiB
+=== bench_yuv420 ===
+Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'docs/evidence/p720-path-20260803/probe_run/proxy_960x540_30.mp4':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    encoder         : Lavf62.12.102
+  Duration: 00:00:12.00, start: 0.000000, bitrate: 2139 kb/s
+  Stream #0:0[0x1](und): Video: h264 (Constrained Baseline) (avc1 / 0x31637661), yuv420p(progressive), 960x540 [SAR 1:1 DAR 16:9], 2003 kb/s, 30 fps, 30 tbr, 15360 tbn (default)
+    Metadata:
+      handler_name    : VideoHandler
+      encoder         : Lavc62.28.102 libx264
+  Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 44100 Hz, stereo, fltp, 128 kb/s (default)
+    Metadata:
+      handler_name    : SoundHandler
+Stream mapping:
+  Stream #0:0 -> #0:0 (h264 (native) -> wrapped_avframe (native))
+Output #0, null, to 'pipe:':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    encoder         : Lavf62.12.102
+  Stream #0:0(und): Video: wrapped_avframe, yuv420p(progressive), 960x540 [SAR 1:1 DAR 16:9], q=2-31, 200 kb/s, 30 fps, 30 tbn (default)
+    Metadata:
+      encoder         : Lavc62.28.102 wrapped_avframe
+      handler_name    : VideoHandler
+[out#0/null @ 0x5649df02b380] video:149KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: unknown
+frame=  360 fps=0.0 q=-0.0 Lsize=N/A time=00:00:12.00 bitrate=N/A speed= 211x elapsed=0:00:00.05    
+bench: utime=0.258s stime=0.029s rtime=0.057s
+bench: maxrss=106032KiB
+=== bench_rgb24 ===
+Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'docs/evidence/p720-path-20260803/probe_run/proxy_960x540_30.mp4':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    encoder         : Lavf62.12.102
+  Duration: 00:00:12.00, start: 0.000000, bitrate: 2139 kb/s
+  Stream #0:0[0x1](und): Video: h264 (Constrained Baseline) (avc1 / 0x31637661), yuv420p(progressive), 960x540 [SAR 1:1 DAR 16:9], 2003 kb/s, 30 fps, 30 tbr, 15360 tbn (default)
+    Metadata:
+      handler_name    : VideoHandler
+      encoder         : Lavc62.28.102 libx264
+  Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 44100 Hz, stereo, fltp, 128 kb/s (default)
+    Metadata:
+      handler_name    : SoundHandler
+Stream mapping:
+  Stream #0:0 -> #0:0 (h264 (native) -> wrapped_avframe (native))
+Output #0, null, to 'pipe:':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    encoder         : Lavf62.12.102
+  Stream #0:0(und): Video: wrapped_avframe, rgb24(pc, gbr/unknown/unknown, progressive), 960x540 [SAR 1:1 DAR 16:9], q=2-31, 200 kb/s, 30 fps, 30 tbn (default)
+    Metadata:
+      encoder         : Lavc62.28.102 wrapped_avframe
+      handler_name    : VideoHandler
+[out#0/null @ 0x55c424d96380] video:149KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: unknown
+frame=  360 fps=0.0 q=-0.0 Lsize=N/A time=00:00:12.00 bitrate=N/A speed= 170x elapsed=0:00:00.07    
+bench: utime=0.366s stime=0.065s rtime=0.071s
+bench: maxrss=113088KiB

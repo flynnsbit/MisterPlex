@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MediaContainer size="1" allowSync="1" directPlayDecisionCode="3000" directPlayDecisionText="App cannot direct play this item. Direct play is disabled." generalDecisionCode="1001" generalDecisionText="Direct play not available; Conversion OK." identifier="com.plexapp.plugins.library" librarySectionID="2" librarySectionTitle="MiSTerPlex Tests" librarySectionUUID="c97f403c-4a89-4620-a388-a7a88c9a6c1c" mediaTagPrefix="/system/bundle/media/flags/" mediaTagVersion="1783932891" resourceSession="ba-rk142_540_nocap-1785745554399282800" transcodeDecisionCode="1001" transcodeDecisionText="Direct play not available; Conversion OK.">
+<Video addedAt="1785741726" art="/library/metadata/142/art/1785741729" createdAtAccuracy="epoch" createdAtTZOffset="-18000" duration="12000" guid="tv.plex.agents.none://142" key="/library/metadata/142" librarySectionID="2" librarySectionKey="/library/sections/2" librarySectionTitle="MiSTerPlex Tests" ratingKey="142" subtype="clip" thumb="/library/metadata/142/thumb/1785741729" title="MiSTerPlex Test 1080p2997 (2026)" type="movie" updatedAt="1785741729">
+<Media audioProfile="lc" id="142" videoProfile="constrained baseline" audioChannels="1" audioCodec="aac" bitrate="1902" container="mpegts" duration="12000" height="540" videoCodec="h264" videoFrameRate="NTSC" videoResolution="480p" width="960" selected="1">
+<Part audioProfile="lc" id="142" videoProfile="constrained baseline" bitrate="1902" container="mpegts" duration="12000" height="540" width="960" decision="transcode" selected="1">
+<Stream bitDepth="8" bitrate="1848" codec="h264" default="1" displayTitle="1080p" extendedDisplayTitle="1080p (H.264 Constrained Baseline)" frameRate="29.969999313354492" height="540" id="283" streamType="1" width="960" decision="transcode" location="direct" />
+<Stream bitrate="54" bitrateMode="cbr" channels="1" codec="aac" default="1" displayTitle="Unknown (AAC Mono)" extendedDisplayTitle="Unknown (AAC Mono)" id="284" selected="1" streamType="2" decision="transcode" location="direct" />
+</Part>
+</Media>
+<UltraBlurColors bottomLeft="a22e2e" bottomRight="0404f8" topLeft="4b0651" topRight="0305f8" />
+</Video>
+</MediaContainer>
