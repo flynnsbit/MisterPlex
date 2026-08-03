@@ -42,13 +42,34 @@ echo "$out" | tail -15
 [[ "$prc" -eq 11 ]] && pass stage-refuse || fail stage-refuse "rc=$prc"
 echo "$out" | grep -q REFUSE_DAILY_PROMOTE && pass stage-msg || fail stage-msg missing
 
-# override opens gate path past ready (may fail later on missing artifacts — not rc=11)
+# override opens path past ready-blocker. rc=127 (missing gate) is NOT success
+# (parent 2026-08-02: absence was accepted as pass). Prefer positive gate token
+# or a real later refuse (stamp/policy) — never bare command-not-found.
 set +e
 out=$(PROMOTE_ALLOW_KNOWN_DEFECTS=1 PROMOTE_EXECUTE=0 "$ROOT/scripts/promote_ddr_daily.sh" stage 2>&1); orc=$?
 set -e
 echo "promote stage override true rc=$orc"
-echo "$out" | tail -10
+echo "$out" | tail -15
 [[ "$orc" -ne 11 ]] && pass override-not-11 || fail override-not-11 "rc=$orc"
+# Discriminators: gate must be present (not GATE_MISSING / not naked 127-as-OK).
+if echo "$out" | grep -q 'GATE_MISSING'; then
+  fail override-gate-missing "promotion_gate_check absent (rc=$orc)"
+elif echo "$out" | grep -q 'No such file or directory' \
+  && echo "$out" | grep -q 'promotion_gate_check'; then
+  fail override-cmd-not-found "rc=$orc still command-not-found"
+elif [[ "$orc" -eq 127 ]]; then
+  fail override-rc127 "rc=127 is not override success"
+else
+  pass override-not-gate-missing
+fi
+# Positive: either policy-local OK token, or an explicit REFUSE after the gate ran.
+if echo "$out" | grep -q 'PROMOTE_POLICY_LOCAL_OK'; then
+  pass override-gate-token
+elif echo "$out" | grep -qE 'REFUSE stage:|daemon_stamp_check|PROMOTE_ALLOW_KNOWN_DEFECTS'; then
+  pass override-reached-post-ready
+else
+  fail override-no-gate-evidence "no PROMOTE_POLICY_LOCAL_OK / REFUSE after override"
+fi
 echo "$out" | grep -q 'PROMOTE_ALLOW_KNOWN_DEFECTS' && pass override-warn || fail override-warn missing
 
 # pair accepts 7c991e47 prefix with c5382bee

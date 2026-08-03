@@ -61,7 +61,14 @@ def live_pms_missing_reason() -> str:
         missing.append("PLEX_BASE")
     if not (os.environ.get("PLEX_TOKEN") or conf_val("PLEX_TOKEN", conf)):
         missing.append("PLEX_TOKEN")
-    if not (os.environ.get("MISTERPLEX_BASELINE_KEY") or os.environ.get("PLEX_KEY")):
+    # Resolve key from env OR conf (parity with PLEX_BASE/TOKEN). Conf alone does
+    # not run the live gate — registry still notes coverage only when missing.
+    if not (
+        os.environ.get("MISTERPLEX_BASELINE_KEY")
+        or os.environ.get("PLEX_KEY")
+        or conf_val("MISTERPLEX_BASELINE_KEY", conf)
+        or conf_val("PLEX_KEY", conf)
+    ):
         missing.append("MISTERPLEX_BASELINE_KEY")
     if shutil.which("ffmpeg") is None:
         missing.append("ffmpeg")
@@ -177,6 +184,23 @@ def run_wrapped(label: str, cmd: list[str]) -> int:
         summary = summarize(records) + "\n"
         sys.stdout.write(summary)
         log.write(summary)
+    # CRITICAL soft-skip is never success (parent 2026-08-02): a gate labelled
+    # CRITICAL that did not run must not leave the wrapper at rc=0. Observed
+    # hole: make unit printed GATE_SKIP CRITICAL live-pms-baseline-profile and
+    # still exited 0. Preserve a real failure from the wrapped command; only
+    # escalate soft success.
+    critical = [r for r in records if r.severity == "CRITICAL"]
+    if rc == 0 and critical:
+        names = ",".join(sorted({r.name for r in critical}))
+        msg = (
+            f"GATE_SKIP_CRITICAL_NONZERO count={len(critical)} names={names} "
+            "rc=78 — CRITICAL skip is not success; set credentials/key or run "
+            "the live gate (do not delete the check).\n"
+        )
+        sys.stdout.write(msg)
+        with log_path.open("a", encoding="utf-8", errors="replace") as log:
+            log.write(msg)
+        return 78
     return rc
 
 
@@ -196,10 +220,49 @@ def self_test() -> int:
     if "total=0 critical=0 high=0 advisory=0" not in green or "GATE_SKIP_NONE" not in green:
         print(green)
         return 1
+    # CRITICAL inventory skip must escalate a green wrapped command.
+    import tempfile
+    from pathlib import Path as _P
+
+    # run_wrapped path: label=make-unit with missing key → rc 78 even if cmd is true
+    env_clean = {k: v for k, v in os.environ.items() if k not in (
+        "PLEX_BASE", "PLEX_TOKEN", "MISTERPLEX_BASELINE_KEY", "PLEX_KEY", "MISTERPLEX_CONF", "MISTER_CONF"
+    )}
+    # Force no conf file discovery for this subprocess by pointing home empty.
+    with tempfile.TemporaryDirectory() as td:
+        env_clean = dict(env_clean)
+        env_clean["HOME"] = td
+        env_clean.pop("MISTERPLEX_CONF", None)
+        env_clean.pop("MISTER_CONF", None)
+        proc = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()), "--label", "make-unit", "--", "true"],
+            cwd=ROOT,
+            env=env_clean,
+            capture_output=True,
+            text=True,
+        )
+        if proc.returncode != 78 or "GATE_SKIP_CRITICAL_NONZERO" not in proc.stdout:
+            print("SELFTEST_CRITICAL_ESCALATE_FAIL")
+            print(proc.stdout)
+            print(proc.stderr)
+            return 1
+        # Wrapped real failure must stay the real rc (not overwritten by 78).
+        proc2 = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()), "--label", "make-unit", "--", "false"],
+            cwd=ROOT,
+            env=env_clean,
+            capture_output=True,
+            text=True,
+        )
+        if proc2.returncode == 0 or proc2.returncode == 78:
+            print("SELFTEST_PRESERVE_FAIL_RC_FAIL got", proc2.returncode)
+            return 1
     print("SELFTEST_RED_SUMMARY")
     print(red)
     print("SELFTEST_GREEN_SUMMARY")
     print(green)
+    print("SELFTEST_CRITICAL_ESCALATE_OK rc=78")
+    print("SELFTEST_PRESERVE_FAIL_RC_OK")
     return 0
 
 
