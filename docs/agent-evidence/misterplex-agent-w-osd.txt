@@ -48,3 +48,12 @@ Gate: real-store coincident-want test + handshake fix before any R1 claim.
 w-osd status: PLXC path remains non-live until w-mem fix + proof;
   address/bank/CDC/q5 work ≠ product PLXC grant correctness.
 HEAD=c3f84f9e
+
+=== rd-duck 2026-08-03T08:47:57-05:00 PLXG disable → geom_hollow BLOCKER ===
+Do NOT treat w-mem 44ee841 mode-exit as merge-ready.
+Defect: valid PLXG disable free-runs store app_* to legacy + clears
+  pending snapshot; then had_geom && !geom_en && has_frame → permanent
+  geom_hollow RGB black. Host generation coupling ≠ store atomicity.
+Owner: w-mem. Integration gate: native→disable→legacy eventual visible frame.
+w-osd: no merge/release; q5/chrome work does not close this path.
+HEAD=fbb321d2
