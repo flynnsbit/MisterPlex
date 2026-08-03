@@ -1,6 +1,7 @@
 w-clock STATUS
 ==============
-HEAD: fabric clock headroom present+decode analysis
-PRESENT: no clk_sys bump needed at PPC>=2 (720p24) / PPC=4 (CEA60 work)
-DECODE 720p24: 86400 MB/s → 231 cy/MB @20 MHz; paint class ~4037 → WALL (~349 MHz)
-Macro OFF; CDC contract intact
+PRESENT fabric: no clk_sys bump @ PPC>=2/4
+clk_pix PLAN: PIX24=29.7 PIX60=74.25 separate outclk_3 — NOT applied
+PLL shipping still 3 clocks 20/90
+DECODE wall unchanged: 231 cy/MB @20 vs ~4037 paint class
+Macro OFF; CDC intact

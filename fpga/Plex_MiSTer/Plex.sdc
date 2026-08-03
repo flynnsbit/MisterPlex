@@ -16,6 +16,15 @@ derive_clock_uncertainty
 #   A 25/90 → related-edge 2.222 ns (CDC HIGH risk vs ~3.5–3.8 ns data delay)
 #   B 30/90 → related-edge 11.111 ns (3:1 preferred; hold STA required)
 #   C 27/90 → related-edge 3.704 ns (marginal vs data-delay class)
+#
+# clk_pix SEPARATE out (PREFERRED scan-out plan — NOT a clk_sys bump):
+#   See .agent-work/w-clock/CLK_PIX_PLL_PLAN.md + assets/clk_pix_pll_plan_contract.json
+#   PIX24: outclk_3 = 29.700000 MHz (CEA 720p24); clk_sys STAYS 20; PPC>=2
+#   PIX60: outclk_3 = 74.250000 MHz (CEA 720p60); clk_sys STAYS 20; PPC>=4
+#   PIX24i interim integer: 30.000000 MHz (~24.24 Hz)
+#   number_of_clocks 3→4 only under parent fit grant + PRESENT_CLK_PIX_PLL.
+#   CDC: existing async_fifo mem→rd_data_r false_path below; do NOT add a
+#   whole-domain false_path between clk_sys and clk_pix.
 # After any real PLL bump fit: re-run check_pll_clock_contract.py --sta-rpt
 # --activate-target <name>, refresh this comment block to the NEW rates, and
 # never retcon 20 MHz / 5.556 ns without quoting the new STA relationship.
