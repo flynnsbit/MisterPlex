@@ -48,7 +48,20 @@ int main() {
     CHECK(!ddr720p24SerialPathFitsAt4000k());
     CHECK(!ddr720p24HostCopyIsReachableBankRate());
     CHECK(ddrBankCpuStoreIsStructuralUncachedCeiling());
+    CHECK(ddrBankCpuStoreIsStructuralUncachedCeilingFor(DdrMemMapPolicy::StronglyOrderedSync));
+    CHECK(ddrBankCpuStoreIsStructuralUncachedCeilingFor(DdrMemMapPolicy::CachedExplicitFlush));
+    // WC driver path is NOT under the /dev/mem ceiling claim.
+    CHECK(!ddrBankCpuStoreIsStructuralUncachedCeilingFor(DdrMemMapPolicy::WriteCombineDriver));
     CHECK(ddr720p24CpuFullFrameMovePathIsDead());
+    // Serial true-720p needs ~2.615× /dev/mem; WC unmeasured (not a pass).
+    CHECK(kWriteCombineSpeedupNeededVsDevMem > 2.6 && kWriteCombineSpeedupNeededVsDevMem < 2.63);
+    CHECK(kSerialTrue720pSourceRequiredMibps == 230.2);
+    CHECK(!ddrWriteCombineMeetsSerialTrue720pTarget(kDevMemReservedBankCeilingMibps));
+    CHECK(ddrWriteCombineMeetsSerialTrue720pTarget(230.2));
+    const auto wc = ddrMemMapOpenSpec(DdrMemMapPolicy::WriteCombineDriver);
+    CHECK(wc.requires_dcache_flush_before_doorbell);
+    CHECK(!ddrMemMayRingDoorbell(DdrMemMapPolicy::WriteCombineDriver, /*flush=*/false));
+    CHECK(ddrMemMayRingDoorbell(DdrMemMapPolicy::WriteCombineDriver, true));
     CHECK(!ddr720p24HostCopyCeilingFitsAt1500k()); // RETRACTED ship claim
     CHECK(ddr720p24MappedToHostCopyMsSaved() == 0.0);
     // Ordinary-RAM figure retained only as non-bank reference.

@@ -155,7 +155,7 @@ PMS request; this gate is the ring-side last line of defence.
 
 | Path | Status | Owner |
 |------|--------|--------|
-| CPU I420 → bank | DEAD (88 MiB/s structural) | — |
+| CPU I420 → bank via `/dev/mem` | DEAD at true 720p (88 MiB/s) | WC driver OPEN |
 | PL330 DMA → Option-C bank | **critical path / OPEN** | w-path |
 | Fabric present/scale @720p | in flight; needs clk_pix | w-scaler/osd/clock/nostub |
 | Bitstream ring → fabric decode | **endgame, 8–16 weeks** | future; ABI frozen here |

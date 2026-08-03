@@ -182,11 +182,11 @@ scripts/hdmi_capture_idle.sh out.png
 # fabric BW: unknown recipe until instrumentation — do not invent
 ```
 
-## CPU bank store — structural ceiling (parent 2026-08-03)
+## CPU bank store — `/dev/mem` ceiling (parent 2026-08-03; narrowed)
 
 Map flags **inert** (prereg 0/5): `--sync` 88.045 MiB/s / 14.974 ms; `--no-sync`
 15.389 ms (slower). Bank phys outside kernel System RAM (`iomem` ends `0x1fefffff`)
-→ uncached `/dev/mem` always. **88 MiB/s is not tunable.**
+→ uncached `/dev/mem` always. **88 MiB/s is structural for `/dev/mem` reserved banks only** (rd-duck: `pfn_valid` → noncached). Write-combine via a dedicated driver is an open falsifiable route (~2.615× needed for serial true-720p). Userspace `dma-pl330` unbind wedged the SoC — kernel-side owner only.
 
 `decode + CPU full-frame move` ≥ 50.9 ms **FAIL** vs 41.667 — closed.
 Faster-copy family dead. Fabric writer / fabric decode remain the ship path.

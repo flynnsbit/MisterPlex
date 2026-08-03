@@ -1,26 +1,32 @@
 #pragma once
 // DDR bank map policy (w-mem).
 //
-// Parent 2026-08-03 STRUCTURAL ceiling (clean device, prereg 0/5 HIT):
+// Parent 2026-08-03 /dev/mem ceiling (clean device, prereg 0/5 HIT):
 //   --sync ............ 88.045 MiB/s  14.974 ms/f
 //   --no-sync ......... 85.670 MiB/s  15.389 ms/f  (SLOWER; flag inert)
 //   --no-sync --flush . 66.595 MiB/s  19.797 ms/f
-// Mechanism (quoted parent evidence, not inference):
+// Mechanism (quoted parent + rd-duck kernel-source correction):
 //   /proc/cmdline mem=511M memmap=513M$511M
 //   /proc/iomem   "00000000-1fefffff : System RAM"  only
 //   Bank @0x30000000 / Option-C @0x30180000 sit OUTSIDE kernel System RAM →
-//   /dev/mem yields uncached/device mapping regardless of O_SYNC.
-//   **88 MiB/s is a real structural ceiling on CPU stores into the bank.**
-//   Not tunable by map flags, memcpy, or alignment.
+//   pfn_valid() false → /dev/mem uses pgprot_noncached regardless of O_SYNC
+//   (both benchmark arms got the same strongly-ordered map — flag inert).
 //
-// Earlier Sweep-3 rates kept as archive anchors (~86 MiB/s class).
-// RETRACTED forever: "make the copy faster" / cache-map win family.
-// decode(35.94)+CPU move(>=14.97) >= 50.9 > 41.667 → CPU full-frame path DEAD.
-// Route A decode-into-bank: SUSPECT (same uncached boundary) — w-path measure.
-// PL330 DMA: open question (w-path). Fabric decode: endgame ship path.
+// NARROWED CLAIM (parent 2026-08-03, after rd-duck audit — do not overstate):
+//   **88 MiB/s is structural for /dev/mem mappings of the reserved region.**
+//   It is NOT proven for a dedicated driver mapping pgprot_writecombine.
+//   Serial true-720p feasibility needs ~230.2 MiB/s (2.615×) — open, falsifiable
+//   via kernel WC map (w-path). Userspace unbind of dma-pl330 WEDGED the SoC;
+//   product DMA owner must be kernel-side (dmaengine client), not raw DMAGO.
 //
-// Ordering hazard (kept): if anyone ever maps cacheable, payload MUST be
-// visible before doorbell (bank_producer_order / fabric_bank_credit).
+// RETRACTED: "88 MiB/s is structural and not tunable" (overbroad).
+// RETRACTED: "make the copy faster" via /dev/mem flag/memcpy/align tricks.
+// STILL DEAD via /dev/mem: decode+full-frame CPU move at true 720p (>=50.9).
+// Product path: 960x540 native push @~8.42 ms + fabric upscale (margin +7.16).
+//
+// Ordering hazard (kept): if anyone ever maps write-combine/cacheable, payload
+// MUST be visible before doorbell — real DMB/DSB, not atomic_signal_fence
+// (rd-duck: compiler fence alone is insufficient). See bank_producer_order.
 //
 #include <cstddef>
 #include <cstdint>
@@ -30,10 +36,15 @@ namespace misterplex {
 
 enum class DdrMemMapPolicy : uint8_t {
     // Product default: open(/dev/mem, O_RDWR|O_CLOEXEC|O_SYNC).
+    // Reserved-region PFN invalid → kernel forces noncached (rd-duck).
     StronglyOrderedSync = 0,
-    // Lab only: open without O_SYNC. Requires explicit dcache clean + DSB
-    // before doorbell. NOT a performance win on this SoC (Sweep-3).
+    // Lab only: open without O_SYNC. On reserved banks still noncached via
+    // pfn_valid path — flag inert (parent 0/5). Kept for ordinary-RAM experiments.
     CachedExplicitFlush = 1,
+    // OPEN route (w-path): dedicated kernel driver maps bank pgprot_writecombine.
+    // Not reachable via /dev/mem. Requires real outer-shareable store barrier
+    // before doorbell. Default OFF until measured >= 230.2 MiB/s serial target.
+    WriteCombineDriver = 2,
 };
 
 struct DdrMemMapOpenSpec {
@@ -48,12 +59,25 @@ inline DdrMemMapOpenSpec ddrMemMapOpenSpec(DdrMemMapPolicy policy) {
     s.open_flags = O_RDWR | O_CLOEXEC;
     if (policy == DdrMemMapPolicy::StronglyOrderedSync) {
         s.open_flags |= O_SYNC;
+        // Device/strongly-ordered stores drain in order; still need producer
+        // credit→fill→visible→doorbell (not a substitute for DMB on WC maps).
         s.requires_dcache_flush_before_doorbell = false;
+    } else if (policy == DdrMemMapPolicy::WriteCombineDriver) {
+        // No /dev/mem open — driver mmap. Always barrier before doorbell.
+        s.open_flags = 0;
+        s.requires_dcache_flush_before_doorbell = true;
     } else {
         s.requires_dcache_flush_before_doorbell = true;
     }
     return s;
 }
+
+// True only for the /dev/mem reserved-bank path parent measured.
+inline bool ddrMemMapIsDevMemReservedBankCeiling(DdrMemMapPolicy policy) {
+    return policy == DdrMemMapPolicy::StronglyOrderedSync ||
+           policy == DdrMemMapPolicy::CachedExplicitFlush;
+}
+
 
 inline DdrMemMapPolicy ddrMemMapPolicyFromConf(bool ddrMemSync, bool /*ddrMemFlush*/) {
     return ddrMemSync ? DdrMemMapPolicy::StronglyOrderedSync
@@ -75,6 +99,12 @@ inline bool ddrMemMayRingDoorbell(DdrMemMapPolicy policy, bool flushCompleted) {
 // Sweep-3 bank rates (MiB/s, 1024^2). Primary budget rate = best bank path.
 constexpr double kParentDdrMappedBank720pMibpsArchiveSweep3 = 86.262; // Sweep-3 --no-sync
 constexpr double kParentDdrMappedBank720pMibps = 88.045; // parent --sync control 2026-08-03
+// Serial true-720p source needs this rate if ARM still CPU-stores full I420.
+// 1382400 B / (41.667 - 35.94) ms residual ≈ 230.2 MB/s (parent arithmetic).
+constexpr double kSerialTrue720pSourceRequiredMibps = 230.2;
+constexpr double kDevMemReservedBankCeilingMibps = kParentDdrMappedBank720pMibps;
+constexpr double kWriteCombineSpeedupNeededVsDevMem =
+    kSerialTrue720pSourceRequiredMibps / kDevMemReservedBankCeilingMibps; // ~2.615
 constexpr double kParentDdrMappedBank720pSyncMibps = 83.639;
 constexpr double kParentDdrMappedBank720pCoherentFlushMibps = 66.380;
 constexpr double kParentDdrMappedBank480pMibps = 89.363; // prior sweep; bandwidth-limited
@@ -150,14 +180,25 @@ inline double ddr720p24CoherentFlushPenaltyMs() {
 // Returns 0 so callers cannot claim a cache win.
 inline double ddr720p24MappedToHostCopyMsSaved() { return 0.0; }
 
-// Map flags cannot raise bank store rate (parent prereg 0/5; iomem outside System RAM).
+// Map flags cannot raise /dev/mem reserved-bank rate (parent prereg 0/5; pfn invalid).
 inline bool ddrBankCpuStoreMapFlagIsInert() { return true; }
-inline bool ddrBankCpuStoreIsStructuralUncachedCeiling() { return true; }
-// Full-frame CPU move cannot close 720p24 with clean decode 35.94.
+// Narrowed: structural uncached ceiling applies to /dev/mem reserved banks only.
+// WriteCombineDriver is an open falsifiable route (not yet measured).
+inline bool ddrBankCpuStoreIsStructuralUncachedCeiling() {
+    return ddrMemMapIsDevMemReservedBankCeiling(DdrMemMapPolicy::StronglyOrderedSync);
+}
+inline bool ddrBankCpuStoreIsStructuralUncachedCeilingFor(DdrMemMapPolicy policy) {
+    return ddrMemMapIsDevMemReservedBankCeiling(policy);
+}
+// Full-frame CPU move via /dev/mem cannot close true 720p24 with clean decode 35.94.
 inline bool ddr720p24CpuFullFrameMovePathIsDead(
     double decodeMs = 35.94, double copyMs = kParentDdrBestBank720pFrameMs,
     double budgetMs = kFrameBudget24fpsMsLocal) {
     return (decodeMs + copyMs) > budgetMs;
+}
+// WC route would need this speedup vs measured /dev/mem to revive serial true-720p.
+inline bool ddrWriteCombineMeetsSerialTrue720pTarget(double measuredWcMibps) {
+    return measuredWcMibps >= kSerialTrue720pSourceRequiredMibps;
 }
 
 // Route A sketch only: max(decode, copy) — NOT proven (DDR contention unknown).

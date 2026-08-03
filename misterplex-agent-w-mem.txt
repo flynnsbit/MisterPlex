@@ -1,18 +1,19 @@
-w-mem STATUS — product margin corrected to +7.16 (decode+sws)
+w-mem STATUS — narrowed 88 MiB/s claim; product path continues
 
-HEAD: (pending) retract +10.49 ship figure
+DEVICE DOWN (parent unbind wedge) — no hardware work.
 
-PARENT CORRECTION
-  decode-only 22.51; decode+sws+out 26.08 (+3.57); +copy 8.42 = 34.50 margin +7.16
-  ARM downscale-from-720p 51.78/44.95 FAIL trap
-  Ask PMS for 960x540 is 1.74x cheaper than fetch-720p+shrink
+CORRECTION (rd-duck + parent)
+  88 MiB/s = structural for /dev/mem reserved banks ONLY (pfn_valid→noncached).
+  WriteCombineDriver = open third route (~2.615× needed for serial true-720p).
+  dma-pl330 userspace unbind NOT viable; kernel owner only (w-path).
 
 LANDED
-  kParent960x540DecodeSwsOutMs=26.08 Total=34.50 Margin=7.16
-  decode-only +10.49 marked retracted as ship figure
-  ddr720pArmDownscalePathRejected; accept defaults to sws figure
-  test: margin~7.16 ACCEPT
+  DdrMemMapPolicy::WriteCombineDriver + barrier-before-doorbell required
+  kSerialTrue720pSourceRequiredMibps=230.2; speedup vs devmem ~2.615
+  docs narrowed; product 960x540 path unchanged (+7.16)
 
 PARENT VERIFY
   cd /home/flynnsbit/Projects/MisterPlex-wt-mem
-  make $(pwd)/build/test_ddr_720p_abi && ./build/test_ddr_720p_abi; echo "true rc=$?"
+  make $(pwd)/build/test_ddr_mem_map_policy $(pwd)/build/test_ddr_720p_abi
+  ./build/test_ddr_mem_map_policy; echo "true rc=$?"
+  ./build/test_ddr_720p_abi; echo "true rc=$?"
