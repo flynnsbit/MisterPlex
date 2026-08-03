@@ -138,6 +138,10 @@ def main() -> int:
         fails.append("glass_geometry must be 1280x720 (output raster)")
     if wsi.get("source_geometry_product") != "960x540":
         fails.append("source_geometry_product must record parent product 960x540")
+    if int(wsi.get("source_display_h_product", -1)) != 540:
+        fails.append("source_display_h_product must be 540 (libav/SPS crop; ARM bank)")
+    if int(wsi.get("source_coded_h_bitstream", -1)) != 544:
+        fails.append("source_coded_h_bitstream must be 544 (SPS; fabric/ring only)")
     if not wsi.get("identity_store_map_requires_frame_eq_glass", False):
         fails.append("identity_store_map_requires_frame_eq_glass must be true")
     marker = wsi.get("identity_guard_marker", "MP_IDENTITY_FRAME_EQ_GLASS")

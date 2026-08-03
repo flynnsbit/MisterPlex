@@ -21,7 +21,7 @@
 | 7 | **`mp_store_x/y` identity clamp** | Glass→**store** as 1:1 | **NO** | **HIT — product-blocking** |
 | 8 | Contracts/`H_OWNERSHIP` “identity when native 1280” / `content_geometry:1280×720` | Docs | Conflates glass & source | **HIT — class in paper** |
 | 9 | `ddr_frame_store` N-wide `src_x0..+PPC-1` consecutive | Store/coded | Assumes **adjacent store px** | **Constraint on scaler** (not a 1280 predicate) |
-| 10 | Coded **544** vs display **540** | (not in beam) | Beam never walks coded H | **Not consumed as 544** — crop is store’s job |
+| 10 | Coded **544** vs display **540** | Settled by SPS (parent) | ARM path = **540** after libav crop; beam scales **540→720** | **OK product**; 544 only fabric/bitstream ring |
 
 **No `width >= 1280` runtime bank-style predicate** in present_* / rate_match / npx / Plex clock mux.  
 The class appears as **identity glass→store + docs that freeze content=1280**, not as an `if (w>=1280)`.
@@ -94,27 +94,31 @@ store 0,1. Scaling only `glass_x0` then issuing consecutive N **lies** for upsca
 
 ---
 
-## 3) Coded 544 vs display 540 (parent Q2)
+## 3) Coded 544 vs display 540 — **SETTLED by parent SPS measurement**
 
-| Layer | What walks it? | 540 or 544? |
-|-------|----------------|-------------|
-| H.264 coded height | ARM / bank layout (`CODED_H`) | **544** if MB-aligned (540&15=12 → ceil 544) |
-| Display crop | `ddr_frame_store` `DISPLAY_*` + `CROP_*` | **540** after crop |
-| Multi-pixel **beam** | `V_ACTIVE=720` glass lines | **720 output** — never 540/544 |
-| Identity `mp_store_y` | min(glass_y, FRAME_H-1) | If FRAME_H=**540**: y≥540 **clamp** (smear), does **not** read 544 |
-| Rate-match | clocks | N/A |
+Do **not** trust `ffprobe coded_height=540` (post-crop). Authoritative bitstream
+(`ffmpeg -bsf:v trace_headers` on validated `proxy_960x540.mp4`):
 
-**Beam/rate-match do not consume 544 source lines.**  
-They emit **720 glass lines**. Coded pad is a **store crop** problem (w-mem/layout), not a
-rolling 5-line present accounting bug **unless** someone sets `FRAME_H=544` and
-identity-maps glass 720→544 (then bottom glass still clamps; no “725.33” in beam math).
+```
+pic_width_in_mbs_minus1        = 59   → width  = 960
+pic_height_in_map_units_minus1 = 33   → height = 544   ← CODED
+frame_mbs_only_flag            = 1
+frame_cropping_flag            = 1
+frame_crop_bottom_offset       = 2    → CropUnitY=2 → bottom crop 4 lines
+544 - 4 = 540 display
+```
 
-`ddr_frame_layout_params.svh` today is still **624×480 / 618 / 640** — **no 960/540/544
-constants in RTL yet**. 544 crop policy is **open for w-mem**, not implemented in present.
+| Path | Height / bytes | w-clock action |
+|------|----------------|----------------|
+| **ARM product (libav applies SPS crop)** | **540** / **777,600 B** bank payload | Glass→store map + FRAME account **540** source lines |
+| Scale | **540 × 4/3 = 720 exactly** | No vertical crop in scaler; no 725.33 worry |
+| Beam / rate-match | Emit **720** glass; rate-match clocks only | **Never 544** on this path |
+| Future **fabric decoder** / bitstream-ring coeffs | **544** / 783,360 B pre-crop | Not present’s job; ring ABI must record 544 (w-mem) |
 
-**4/3 note:** 544×4/3 = 725.33 → if anyone scaled **coded** height to glass without
-crop-to-540 first, vertical is wrong by ~5 lines. Correct order: **crop coded→display
-540**, then scale **540→720**. Present identity skips both steps.
+**Withdrawn:** “present must reason about 544 or 5-line drift on ARM path.”  
+**Still true:** identity clamp with FRAME_H=540 smears glass y≥540 — that is missing
+**scale**, not missing 544. `ddr_frame_layout_params.svh` still 624×480 until w-mem
+lands 960×540 product constants.
 
 ---
 
