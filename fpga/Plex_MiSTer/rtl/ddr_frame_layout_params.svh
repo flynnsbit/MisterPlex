@@ -31,3 +31,24 @@ localparam int DDR_FRAME_YUV420P_DOORBELL_PHYS = 32'h300F_F000;
 localparam int DDR_FRAME_YUV_BLACK_Y = 16;
 localparam int DDR_FRAME_YUV_BLACK_U = 128;
 localparam int DDR_FRAME_YUV_BLACK_V = 128;
+
+// ---- Aggressive 720p tier (opt-in present path; geom/PLXG handshake) ----
+// Landed for product QIP/hierarchy. Default present path still uses 480p constants
+// above. Do not retarget PRESENTED_* here — dual-header maps those to kPlex480p*.
+localparam int DDR_FRAME_720P_CODED_WIDTH = 1280;
+localparam int DDR_FRAME_720P_CODED_HEIGHT = 720;
+localparam int DDR_FRAME_720P_DISPLAY_WIDTH = 1280;
+localparam int DDR_FRAME_720P_DISPLAY_HEIGHT = 720;
+localparam int DDR_FRAME_720P_PRESENTED_WIDTH = 1280;
+localparam int DDR_FRAME_720P_PRESENTED_HEIGHT = 720;
+localparam int DDR_FRAME_720P_PILLARBOX_LEFT = 0;
+localparam int DDR_FRAME_720P_PILLARBOX_RIGHT = 0;
+localparam int DDR_FRAME_720P_YUV420P_BYTES = 1382400;
+localparam int DDR_FRAME_720P_Y_STRIDE_BYTES = 1280;
+localparam int DDR_FRAME_720P_CHROMA_STRIDE_BYTES = 640;
+localparam int DDR_FRAME_720P_YUV420P_BANK_STRIDE = 32'h0018_0000;
+localparam int DDR_FRAME_720P_PHYS_BASE = 32'h3018_0000;
+localparam int DDR_FRAME_720P_YUV420P_DOORBELL_PHYS = 32'h3047_F000;
+// Product ascal-native max tier (PRESENT_BEAM_960) — not default raster.
+localparam int DDR_FRAME_960_PRESENTED_WIDTH = 960;
+localparam int DDR_FRAME_960_PRESENTED_HEIGHT = 540;
