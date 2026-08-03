@@ -1,7 +1,8 @@
 # clk_pix — shipping product gate (w-clock)
 
-**Status:** design + RTL scaffold **landed**; PLL **not applied**; macros **default OFF**.  
-**Why load-bearing:** parent product path is PMS 960×540 → ARM 34.50 ms (+7.16) → fabric 1280×720 glass. Without `clk_pix` @ **29.7 MHz**, CEA 1650×750 scan-out is capped at **20 Mpix/s ≈ 16.16 Hz**. The measured ARM path is academic until this lands.
+**Status:** PLL PIX24 strings **landed under `PRESENT_CLK_PIX_PLL`** (default OFF = 3-clock shipping).  
+**ascal:** core `CLK_VIDEO` → ascal **input**; HDMI = HPS `video_mode` (see `ASCAL_VS_CORE_RASTER.md`). 29.7 is correct for core content rate.  
+**Why load-bearing:** parent product path is PMS 960×540 → ARM 34.50 ms (+7.16) → fabric 1280×720 glass. Without `clk_pix` @ **29.7 MHz**, content scan-out is capped at **20 Mpix/s ≈ 16.16 Hz**.
 
 No device. No fit by this lane. Negative STA slack = hard fail (parent).
 

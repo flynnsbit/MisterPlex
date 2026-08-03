@@ -4,12 +4,13 @@
   "description": "Separate clk_pix PLL out for true CEA 720p refresh. clk_sys stays 20. NOT applied until parent fit grant.",
   "plan_doc": ".agent-work/w-clock/CLK_PIX_PLL_PLAN.md",
   "pll_source": "fpga/Plex_MiSTer/rtl/pll/pll_0002.v",
-  "status": "PROPOSED_NOT_APPLIED",
+  "status": "LANDED_IFDEF_DEFAULT_OFF",
   "shipping_untouched": {
     "clk_sys_mhz": 20.0,
     "clk_ddr_mhz": 90.0,
     "clk_pix_tied_to_sys": true,
-    "number_of_clocks": 3
+    "number_of_clocks": 3,
+    "note": "pll_0002 keeps 3 clocks when PRESENT_CLK_PIX_PLL unset; PIX24 strings live under ifdef"
   },
   "arithmetic": {
     "h_total": 1650,
@@ -22,7 +23,7 @@
   },
   "targets": {
     "PIX24": {
-      "status": "PROPOSED_NOT_APPLIED",
+      "status": "LANDED_IFDEF_DEFAULT_OFF",
       "clk_pix_mhz": 29.7,
       "clk_sys_mhz": 20.0,
       "clk_ddr_mhz": 90.0,

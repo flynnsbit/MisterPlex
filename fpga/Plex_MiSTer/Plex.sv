@@ -207,6 +207,9 @@ end
 wire clk_sys;
 wire clk_sdram;
 wire clk_ddr;
+`ifdef PRESENT_CLK_PIX_PLL
+wire clk_pix; // pll outclk_3 @ 29.700000 MHz (see pll_0002.v)
+`endif
 wire pll_locked;
 pll pll
 (
@@ -215,8 +218,15 @@ pll pll
 	.outclk_0(clk_sys),
 	.outclk_1(clk_sdram),
 	.outclk_2(clk_ddr),
+`ifdef PRESENT_CLK_PIX_PLL
+	.outclk_3(clk_pix),
+`endif
 	.locked(pll_locked)
 );
+`ifndef PRESENT_CLK_PIX_PLL
+// Default OFF: pixel domain == sys (bit-identical shipping clocking).
+wire clk_pix = clk_sys;
+`endif
 
 wire reset = RESET | status[0] | buttons[1];
 
@@ -727,17 +737,8 @@ wire  [7:0] present_ddr_be;
 wire        present_ddr_we;
 `endif
 
-// clk_pix: shipping ties to clk_sys. PRESENT_CLK_PIX_PLL (parent grant) uses
-// pll outclk_3 @ 29.7/74.25 — see .agent-work/w-clock/CLK_PIX_PLL_PLAN.md.
-// PLL outclk_3 is NOT in shipping pll_0002.v (still 3 clocks).
-`ifdef PRESENT_CLK_PIX_PLL
-	wire clk_pix;
-	// Apply-time: wire .outclk_3(clk_pix) on pll once number_of_clocks=4.
-	// Until then this ifdef must not be set in product QSF (gate will fail).
-	assign clk_pix = clk_sys; // placeholder — real outclk_3 replaces this on grant
-`else
-	wire clk_pix = clk_sys;
-`endif
+// clk_pix: default = clk_sys. PRESENT_CLK_PIX_PLL wires pll outclk_3 @ 29.7
+// (declared with the pll instance above). See CLK_PIX_SHIPPING_GATE.md.
 
 present_core #(
 	.FRAME_W(FRAME_W),

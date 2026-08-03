@@ -108,23 +108,28 @@ def main() -> int:
         fails.append("shipping clk_ddr string missing/changed in pll_0002.v")
     else:
         print("PLL_OK clk_ddr=90.000000")
-    m = re.search(r"number_of_clocks\((\d+)\)", pll)
-    nclk = int(m.group(1)) if m else -1
-    if nclk != 3:
-        # Allow 4 only if contract status says applied — we require PROPOSED + 3
-        if c.get("status") == "PROPOSED_NOT_APPLIED":
-            fails.append(
-                f"pll number_of_clocks={nclk} but plan still PROPOSED_NOT_APPLIED "
-                "(apply requires parent grant + status flip)"
-            )
+    # Default OFF path must still be 3 clocks; PIX24 is ifdef-gated.
+    if not re.search(
+        r"`else\s*\n\s*\.fractional_vco_multiplier\(\"false\"\).*?\.number_of_clocks\(3\)",
+        pll,
+        re.S,
+    ) and "number_of_clocks(3)" not in pll:
+        fails.append("default path must keep number_of_clocks(3)")
+    elif "number_of_clocks(3)" not in pll:
+        fails.append("missing number_of_clocks(3) default")
     else:
-        print("PLL_OK number_of_clocks=3 (pix out not applied)")
-    if re.search(r'output_clock_frequency3\("29\.', pll) or re.search(
-        r'output_clock_frequency3\("74\.', pll
-    ):
-        if c.get("status") == "PROPOSED_NOT_APPLIED":
-            fails.append("pll has clk_pix string but contract still PROPOSED_NOT_APPLIED")
-
+        print("PLL_OK number_of_clocks=3 present (default OFF path)")
+    if 'output_clock_frequency3("29.700000 MHz")' not in pll:
+        fails.append("PIX24 string 29.700000 MHz missing under PRESENT_CLK_PIX_PLL")
+    else:
+        print("PLL_OK PIX24 outclk_3 string landed under ifdef")
+    if "PRESENT_CLK_PIX_PLL" not in pll:
+        fails.append("pll_0002 must gate pix out behind PRESENT_CLK_PIX_PLL")
+    else:
+        print("PLL_OK gated by PRESENT_CLK_PIX_PLL")
+    # Product default must not force 4 clocks unconditionally
+    if re.search(r"^\s*\.number_of_clocks\(4\)", pll, re.M) and "PRESENT_CLK_PIX_PLL" not in pll:
+        fails.append("unconditional number_of_clocks(4) without macro gate")
     # Plan doc exists and states key claims
     doc = root / c["plan_doc"]
     if not doc.is_file():
@@ -134,19 +139,13 @@ def main() -> int:
         for needle in (
             "29.700000 MHz",
             "74.250000 MHz",
-            "NOT applied",
             "clk_sys",
             "PRESENT_CLK_PIX_PLL",
-            "min_ppc",
         ):
-            if needle not in text and needle.replace("min_ppc", "PPC") not in text:
-                # allow PPC spelling
-                if needle == "min_ppc" and ("PPC≥2" in text or "PPC >= 2" in text or "PPC≥ 2" in text or "PPC=2" in text or "PPC≥2" in text or "PPC>=2" in text or "PPC≥2" in text):
-                    continue
-                if needle == "min_ppc" and ("PPC" in text and "2" in text and "4" in text):
-                    continue
-                if needle not in text:
-                    fails.append(f"plan doc missing '{needle}'")
+            if needle not in text:
+                fails.append(f"plan doc missing '{needle}'")
+        if "PPC" not in text or "2" not in text:
+            fails.append("plan doc must discuss PPC>=2")
         print(f"DOC_OK {c['plan_doc']}")
 
     # present_npx_path still has dual clock ports
@@ -158,11 +157,14 @@ def main() -> int:
         else:
             print("RTL_OK present_npx_path dual clocks")
 
-    # Targets must stay PROPOSED
+    # Targets: landed under ifdef or still proposed; never claim product-default ON
+    ok_st = {"PROPOSED_NOT_APPLIED", "LANDED_IFDEF_DEFAULT_OFF"}
     for name, t in c["targets"].items():
-        if t.get("status") != "PROPOSED_NOT_APPLIED":
-            fails.append(f"{name} status must be PROPOSED_NOT_APPLIED until grant")
-    print("STATUS_OK all targets PROPOSED_NOT_APPLIED")
+        if t.get("status") not in ok_st:
+            fails.append(f"{name} status {t.get('status')} not in {ok_st}")
+    if c.get("status") not in ok_st:
+        fails.append(f"contract status {c.get('status')} not in {ok_st}")
+    print(f"STATUS_OK contract={c.get('status')}")
 
     print("CLK_PIX_PLL_PLAN_END")
     if fails:

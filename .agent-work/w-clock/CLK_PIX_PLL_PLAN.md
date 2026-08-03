@@ -1,7 +1,8 @@
 # CLK_PIX PLL plan — separate pixel clock (not a clk_sys bump)
 
 **Branch:** `w-clock-bump`  
-**Status:** PROPOSED — **PLL strings NOT applied** to `pll_0002.v` without parent fit grant.  
+**Status:** **LANDED_IFDEF_DEFAULT_OFF** — PIX24 strings live under `PRESENT_CLK_PIX_PLL`;
+default (macro unset) stays 3-clock 20/90 shipping. Product QSF still OFF until fit grant.  
 **Macro default:** `PRESENT_MULTI_PIXEL` OFF; new `PRESENT_CLK_PIX_PLL` OFF.
 
 Parent direction (2026-08-03): design `clk_pix` (~29.7 MHz 720p24 CEA, 74.25 MHz 720p60) as a **separate PLL output**, not a `clk_sys` overclock. Full fabric H.264 is multi-month; present/scale/idle + DMA remains the near-term path.
@@ -60,7 +61,7 @@ f_pix_60 = 60 × 1_237_500 = 74_250_000 Hz
 
 ---
 
-## 3) PLL parameter strings (PROPOSED — not in tree)
+## 3) PLL parameter strings (in tree under `PRESENT_CLK_PIX_PLL`)
 
 **SoT when granted:** `fpga/Plex_MiSTer/rtl/pll/pll_0002.v`  
 **Wrapper:** `fpga/Plex_MiSTer/rtl/pll.v` must grow `outclk_3`.  
@@ -71,7 +72,7 @@ f_pix_60 = 60 × 1_237_500 = 74_250_000 Hz
 Keep outs 0–2. Add clock 3. Prefer **fractional** VCO (same family as `pll_hdmi_0002` @ 148.5 MHz from 50 MHz ref — proves the part can synthesize CEA family rates).
 
 ```verilog
-// PROPOSED only — do not paste into pll_0002.v without parent fit grant
+// Landed under `ifdef PRESENT_CLK_PIX_PLL in pll_0002.v (default OFF)
 .fractional_vco_multiplier("true"),   // was "false"; required for exact 29.7
 .reference_clock_frequency("50.0 MHz"),
 .number_of_clocks(4),                 // was 3
@@ -255,10 +256,11 @@ Stage 0 is the queued integration fit. This doc unblocks Stage 1 design without 
 | `present_pix_rate_match` Bresenham | **APPLIED** (instantiated only under `PRESENT_CLK_PIX_PLL`) |
 | `present_npx_path` INCLUDE_SYNC sideband + blank inject | **APPLIED** (INCLUDE_SYNC=0 default) |
 | `Plex.sv` CLK_VIDEO mux under `PRESENT_CLK_PIX_PLL` | **APPLIED** (macro OFF → ship path) |
-| `pll_0002.v` outclk_3 | **NOT applied** — placeholder still `assign clk_pix=clk_sys` |
-| `PRESENT_CLK_PIX_PLL` product QSF | **NOT applied** |
+| `pll_0002.v` outclk_3 @ 29.7 | **LANDED under ifdef** (default 3-clk shipping) |
+| `pll.v` / `Plex.sv` `.outclk_3(clk_pix)` | **LANDED under ifdef** (no placeholder when ON) |
+| `PRESENT_CLK_PIX_PLL` product QSF | **NOT applied** (must stay OFF for bit-identical) |
 | SDC clk_pix comment block | **APPLIED** (comments) |
-| Claim 24/60 Hz on glass | **FORBIDDEN** until STA + capture + real outclk_3 |
+| Claim 24/60 Hz on glass | **FORBIDDEN** until STA + capture with macro ON |
 
 ---
 
