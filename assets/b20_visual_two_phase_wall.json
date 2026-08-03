@@ -44,6 +44,17 @@
   "B20_CLOSED": false,
   "integrated_swap_atomic": true,
   "integrated_swap_note": "feed-forward+beam_disp closes one-frame DE/bank NBA lag; PLXG generation atomic still OPEN",
+  "plxg_reset_baseline_liveness_closed": false,
+  "plxg_reset_baseline_class": "liveness_ownership_not_stale_live_closure",
+  "plxg_reset_required_closure": "boot_nonce_or_ack",
+  "plxg_reset_note": "First coherent post-reset baselines without commit; fresh host write before first poll can be swallowed; epoch default 1; daemon restart without FPGA keeps prior live",
+  "plxg_reset_fence": ".agent-work/w-clock/PLXG_RESET_BASELINE_LIVENESS_FENCE.md",
+  "plxg_reset_gate": "tests/unit/test_plxg_reset_baseline_open.sh",
+  "plxg_reset_owners": {
+    "poller_baseline": "w-mem",
+    "host_nonce_ack": "w-path",
+    "consume_live_honestly": "w-clock"
+  },
   "atomic_plxg_bank_coupling": false,
   "rd_duck_atomic_blocker": {
     "summary": "app_* samples LIVE content_* at visual_swap_ack; doorbellSeq independent of PLXG; no store_applied tuple",
