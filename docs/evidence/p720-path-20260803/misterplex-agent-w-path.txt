@@ -1,6 +1,6 @@
 lane=w-path
 status=ZERO_COPY_INGEST_LANDED (default cpu_serial)
-tip=pending
+tip=e580f41c
 HOST_720_PATH: dual pin 3100/1500 + Path720p + identity_skip (prior)
 NEW_ROUTE_A:
   ddr_zero_copy_ingest.hpp — SM payload-before-doorbell
