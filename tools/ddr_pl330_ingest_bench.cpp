@@ -308,11 +308,30 @@ int main(int argc, char** argv) {
             uint8_t prog[64];
             const unsigned mfifo_cap = pr.mfifo_words == 0 ? 1u
                 : (pr.mfifo_words < 16u ? pr.mfifo_words : 16u);
+            uint32_t ccr_preview = 0;
+            const bool ns_ccr_preview = (force_ns != 0u);
             const size_t pn = misterplex::pl330BuildMem2MemProgramAuto(
                 prog, sizeof(prog), dma.stagingPhys(), bank_phys, len, &burst, mfifo_cap,
-                force_burst);
+                force_burst, ns_ccr_preview, &ccr_preview);
+            std::printf("pl330_ccr=0x%08x ns_ccr=%u (AxPROT NS bits set when ns_ccr=1)\n",
+                        ccr_preview, ns_ccr_preview ? 1u : 0u);
             std::printf("pl330_encode_auto ok=%d prog_bytes=%zu burst=%u\n", pn ? 1 : 0, pn,
                         burst);
+            if (pn) {
+                std::printf("pl330_prog_disasm (cpc stop at +6 was 2nd insn):\n");
+                for (size_t off = 0; off < pn; ) {
+                    char line[128];
+                    const size_t step =
+                        misterplex::pl330DisasmProgramLine(prog, pn, off, line, sizeof(line));
+                    if (step == 0)
+                        break;
+                    std::printf("  %s\n", line);
+                    off += step;
+                }
+                // Highlight byte at +6
+                if (pn > 6)
+                    std::printf("pl330_prog_byte_at_plus6=0x%02x (expect DMAMOV=0xbc)\n", prog[6]);
+            }
 
             // Unique payload so a no-op transfer cannot match by accident.
             for (size_t i = 0; i < len; ++i)
@@ -353,11 +372,17 @@ int main(int argc, char** argv) {
                             tr0.saw_executing ? 1 : 0, tr0.channel_used, tr0.ns_used,
                             tr0.burst_used, tr0.dbginst0, tr0.csr_final, tr0.cpc_final,
                             tr0.detail.c_str());
+                char ftr_bits[160];
+                misterplex::pl330FtrChannelBitsStr(tr0.ftr_ch, ftr_bits, sizeof(ftr_bits));
                 std::printf("pl330_fault_regs fsrd=0x%08x fsrc=0x%08x ftrd=0x%08x "
-                            "ftr_ch=0x%08x ftr_tag=%s csr_state=%s\n",
+                            "FTR0=0x%08x ftr_tag=%s ftr_bits=%s csr_state=%s cns=%u\n",
                             tr0.fsrd, tr0.fsrc, tr0.ftrd, tr0.ftr_ch,
-                            misterplex::pl330FtrChannelTag(tr0.ftr_ch),
-                            misterplex::pl330CsrStateTag(tr0.csr_final));
+                            misterplex::pl330FtrChannelTag(tr0.ftr_ch), ftr_bits,
+                            misterplex::pl330CsrStateTag(tr0.csr_final),
+                            (tr0.csr_final >> 21) & 1u);
+                std::printf("pl330_cpc=0x%08x scratch=0x%08x cpc_off=%d\n", tr0.cpc_final,
+                            dma.progScratchPhys(),
+                            tr0.cpc_final ? (int)(tr0.cpc_final - dma.progScratchPhys()) : -1);
                 std::printf("pl330_prog_pc=0x%08x mfifo_words=%u force_burst=%u force_ns=%u\n",
                             dma.progScratchPhys(), tr0.mfifo_words, force_burst,
                             force_ns == 0xFFu ? 99u : force_ns);

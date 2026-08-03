@@ -7,4 +7,8 @@ PRODUCT budget (parent, decode+sws+copy):
 TRAP: ARM downscale from 720 = FAIL 1.74× worse — never product fallback.
 
 Host: 540p ladder + Source540pFabric720p + genuine gate (8e62f61b+)
-DMA: upgrade only; 4KiB FTR diag when free
+DMA: upgrade only. Burst ladder ruled out burst-width (all fault at cpc+6).
+  Fix in flight: NS CCR AxPROT + raw FTR0 + prog disasm.
+  Parent cmd: docs/evidence/p720-path-20260803/PARENT_COMMANDS_PL330_FTR0.md
+  Deploy: build/arm/ddr_pl330_ingest_bench
+  Run: --len 4096 --loops 1 --bank 1 --burst 1

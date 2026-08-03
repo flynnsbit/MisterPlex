@@ -94,27 +94,65 @@ inline unsigned pl330MfifoWordsFromCrd(uint32_t crd) {
     return ((crd >> 20) & 0x1Fu) + 1u;
 }
 
-// Decode channel FTR bits (DDI0424 Table 3-21) into a short greppable tag.
+// Decode channel FTR bits (DDI0424 / parent ladder). Prefer first hit for tag;
+// always print raw ftr_ch hex — ftr_other previously hid the real bit.
 inline const char* pl330FtrChannelTag(uint32_t ftr) {
+    if (ftr == 0)
+        return "ftr_zero";
     if (ftr & (1u << 0))
         return "undef_instr";
     if (ftr & (1u << 1))
         return "operand_invalid";
     if (ftr & (1u << 5))
-        return "ch_periph_err";
-    if (ftr & (1u << 16))
-        return "ch_rd_err";
-    if (ftr & (1u << 17))
-        return "ch_wr_err";
-    if (ftr & (1u << 18))
+        return "ch_rdwr_err";
+    if (ftr & (1u << 12))
         return "mfifo_err";
+    if (ftr & (1u << 13))
+        return "st_data_unavailable";
+    if (ftr & (1u << 16))
+        return "instr_fetch_err";
+    if (ftr & (1u << 17))
+        return "data_write_err";
+    if (ftr & (1u << 18))
+        return "data_read_err";
     if (ftr & (1u << 30))
-        return "lockup_err";
-    if (ftr & (1u << 31))
         return "dbg_instr";
-    if (ftr == 0)
-        return "ftr_zero";
+    if (ftr & (1u << 31))
+        return "lockup_err";
     return "ftr_other";
+}
+
+// Append all set FTR bit names into buf (comma-separated). Returns buf.
+inline char* pl330FtrChannelBitsStr(uint32_t ftr, char* buf, size_t cap) {
+    if (!buf || cap < 4) {
+        if (buf && cap)
+            buf[0] = 0;
+        return buf;
+    }
+    buf[0] = 0;
+    if (ftr == 0) {
+        std::snprintf(buf, cap, "none");
+        return buf;
+    }
+    struct {
+        uint32_t bit;
+        const char* name;
+    } map[] = {{0, "UNDEF_INSTR"},        {1, "OPERAND_INVALID"}, {5, "CH_RDWR_ERR"},
+               {12, "MFIFO_ERR"},         {13, "ST_DATA_UNAVAIL"}, {16, "INSTR_FETCH_ERR"},
+               {17, "DATA_WRITE_ERR"},    {18, "DATA_READ_ERR"},   {30, "DBG_INSTR"},
+               {31, "LOCKUP_ERR"}};
+    size_t used = 0;
+    for (const auto& m : map) {
+        if (!(ftr & (1u << m.bit)))
+            continue;
+        const int n = std::snprintf(buf + used, cap - used, "%s%s", used ? "," : "", m.name);
+        if (n < 0 || static_cast<size_t>(n) >= cap - used)
+            break;
+        used += static_cast<size_t>(n);
+    }
+    if (used == 0)
+        std::snprintf(buf, cap, "UNKNOWN_0x%x", ftr);
+    return buf;
 }
 
 inline const char* pl330CsrStateTag(uint32_t csr) {
@@ -210,8 +248,11 @@ inline bool pl330BufferFullMatch(const uint8_t* dst, const uint8_t* src, size_t 
 }
 
 // CCR: SA/DA inc, SS32/DS32, symmetric burst_len in 1..16 (encoded as len-1).
-// Returns 0 on bad args. See ARM DDI0424 CCR.
-inline uint32_t pl330BuildCcrBurst(unsigned burst_len) {
+// nonsecure=true sets src/dst AxPROT NonSecure (value 2 in prot fields) — required
+// when channel CNS=1 (parent: csr bit21). Secure prot on NS channel → operand/rdwr fault
+// on first DMAMOV CCR / load (CPC often stops at prog+6 = second DMAMOV).
+// Returns 0 on bad args. See ARM DDI0424 CCR; Linux pl330 sets NS the same way.
+inline uint32_t pl330BuildCcrBurst(unsigned burst_len, bool nonsecure = true) {
     if (burst_len < 1 || burst_len > 16)
         return 0;
     const uint32_t SRC_INC = 1u << 0;
@@ -221,15 +262,72 @@ inline uint32_t pl330BuildCcrBurst(unsigned burst_len) {
     const uint32_t bl = burst_len - 1u;
     const uint32_t SRC_BURST_LEN = bl << 4;
     const uint32_t DST_BURST_LEN = bl << 18;
-    return SRC_INC | DST_INC | SRC_BURST_SIZE_32 | DST_BURST_SIZE_32 | SRC_BURST_LEN |
-           DST_BURST_LEN;
+    // AxPROT: [1]=NonSecure → field value 2 at src_prot[10:8] and dst_prot[24:22]
+    const uint32_t SRC_PROT_NS = 2u << 8;
+    const uint32_t DST_PROT_NS = 2u << 22;
+    uint32_t ccr = SRC_INC | DST_INC | SRC_BURST_SIZE_32 | DST_BURST_SIZE_32 | SRC_BURST_LEN |
+                   DST_BURST_LEN;
+    if (nonsecure)
+        ccr |= SRC_PROT_NS | DST_PROT_NS;
+    return ccr;
 }
 
 // Back-compat: burst-1 CCR when len is 4-byte aligned (len only validates).
-inline uint32_t pl330BuildCcr(size_t len) {
+inline uint32_t pl330BuildCcr(size_t len, bool nonsecure = true) {
     if (len == 0 || (len % 4) != 0)
         return 0;
-    return pl330BuildCcrBurst(1);
+    return pl330BuildCcrBurst(1, nonsecure);
+}
+
+// Human-readable program listing (offsets + bytes + opcode guess). out lines via callback-ish
+// snprintf into caller buffer is awkward; bench prints via this helper into stdout-style string.
+inline size_t pl330DisasmProgramLine(const uint8_t* prog, size_t plen, size_t off, char* line,
+                                     size_t line_cap) {
+    if (!prog || !line || line_cap < 8 || off >= plen) {
+        if (line && line_cap)
+            line[0] = 0;
+        return 0;
+    }
+    const uint8_t op = prog[off];
+    const char* name = "data";
+    size_t nbytes = 1;
+    if (op == 0xBC && off + 5 < plen) {
+        name = (prog[off + 1] == 0) ? "DMAMOV_SAR" : (prog[off + 1] == 1) ? "DMAMOV_CCR"
+                                                    : (prog[off + 1] == 2)   ? "DMAMOV_DAR"
+                                                                            : "DMAMOV";
+        nbytes = 6;
+    } else if (op == 0x20 || op == 0x22) {
+        name = (op == 0x20) ? "DMALP_LC0" : "DMALP_LC1";
+        nbytes = 2;
+    } else if (op == 0x04) {
+        name = "DMALD";
+        nbytes = 1;
+    } else if (op == 0x08) {
+        name = "DMAST";
+        nbytes = 1;
+    } else if (op == 0x38 || op == 0x3C) {
+        name = (op == 0x38) ? "DMALPEND_LC0" : "DMALPEND_LC1";
+        nbytes = 2;
+    } else if (op == 0x34) {
+        name = "DMASEV";
+        nbytes = 2;
+    } else if (op == 0x00) {
+        name = "DMAEND";
+        nbytes = 1;
+    }
+    if (off + nbytes > plen)
+        nbytes = plen - off;
+    size_t used = 0;
+    int n = std::snprintf(line + used, line_cap - used, "+%02zu ", off);
+    if (n > 0)
+        used += static_cast<size_t>(n);
+    for (size_t i = 0; i < nbytes && used + 3 < line_cap; ++i) {
+        n = std::snprintf(line + used, line_cap - used, "%02x ", prog[off + i]);
+        if (n > 0)
+            used += static_cast<size_t>(n);
+    }
+    std::snprintf(line + used, line_cap - used, "; %s", name);
+    return nbytes;
 }
 
 // Factor n_iters into inner*outer with both in 1..256. Prefer larger outer.
@@ -358,19 +456,22 @@ inline size_t pl330BuildMem2MemProgram(uint8_t* out, size_t out_cap, uint32_t sr
 
 // Full-frame encode: auto burst + nested loops. out_burst receives chosen burst.
 // max_burst_cap from CRD MFIFO; force_burst for surgical diag (e.g. 4 KiB / burst1).
+// nonsecure CCR prot must match channel CNS (default true for HPS NS DMAC).
 inline size_t pl330BuildMem2MemProgramAuto(uint8_t* out, size_t out_cap, uint32_t src, uint32_t dst,
                                            size_t len, unsigned* out_burst = nullptr,
-                                           unsigned max_burst_cap = 16,
-                                           unsigned force_burst = 0) {
+                                           unsigned max_burst_cap = 16, unsigned force_burst = 0,
+                                           bool nonsecure_ccr = true, uint32_t* out_ccr = nullptr) {
     unsigned burst = 1;
     uint32_t inner = 0, outer = 0;
     if (!pl330PickBurstAndLoops(len, &burst, &inner, &outer, max_burst_cap, force_burst))
         return 0;
-    const uint32_t ccr = pl330BuildCcrBurst(burst);
+    const uint32_t ccr = pl330BuildCcrBurst(burst, nonsecure_ccr);
     if (!ccr)
         return 0;
     if (out_burst)
         *out_burst = burst;
+    if (out_ccr)
+        *out_ccr = ccr;
     return pl330BuildMem2MemProgramLoops(out, out_cap, src, dst, ccr, inner, outer);
 }
 
@@ -741,7 +842,9 @@ private:
 
     Pl330Mem2MemResult transferOneBlock(const Pl330Mem2MemRequest& req, int timeout_ms) {
         uint8_t prog[64];
-        const uint32_t ccr = pl330BuildCcr(req.len);
+        // force_ns==0 → secure CCR; else NS (matches HPS NS channel CNS=1).
+        const bool ns_ccr = (req.force_ns != 0u);
+        const uint32_t ccr = pl330BuildCcr(req.len, ns_ccr);
         const uint32_t n_words = static_cast<uint32_t>(req.len / 4);
         const size_t plen =
             pl330BuildMem2MemProgram(prog, sizeof(prog), req.src_phys, req.dst_phys, ccr, n_words);
@@ -752,13 +855,15 @@ private:
     Pl330Mem2MemResult transferOneBlockAuto(const Pl330Mem2MemRequest& req, int timeout_ms) {
         uint8_t prog[64];
         unsigned burst = 0;
+        uint32_t ccr_used = 0;
         const uint32_t crd = read32(kPl330_CRD);
         const unsigned mfifo = pl330MfifoWordsFromCrd(crd);
         // One DMALD of burst B @ 32-bit needs B MFIFO words free.
         const unsigned cap = mfifo == 0 ? 1u : (mfifo < 16u ? mfifo : 16u);
-        const size_t plen =
-            pl330BuildMem2MemProgramAuto(prog, sizeof(prog), req.src_phys, req.dst_phys, req.len,
-                                         &burst, cap, req.force_burst);
+        const bool ns_ccr = (req.force_ns != 0u);
+        const size_t plen = pl330BuildMem2MemProgramAuto(
+            prog, sizeof(prog), req.src_phys, req.dst_phys, req.len, &burst, cap, req.force_burst,
+            ns_ccr, &ccr_used);
         if (plen == 0) {
             Pl330Mem2MemResult r;
             r.hardware_present = true;
@@ -767,8 +872,9 @@ private:
             r.detail = "program encode failed";
             return r;
         }
-        char tag[48];
-        std::snprintf(tag, sizeof(tag), "burst%u mfifo%u", burst, mfifo);
+        char tag[64];
+        std::snprintf(tag, sizeof(tag), "burst%u mfifo%u ccr=0x%08x ns_ccr=%u", burst, mfifo,
+                      ccr_used, ns_ccr ? 1u : 0u);
         return goProgram(prog, plen, req.channel, timeout_ms, tag, req.force_ns, burst);
     }
 

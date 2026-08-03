@@ -140,12 +140,32 @@ int main() {
         CHECK(!pl330FactorLoops(257, &inner, &outer), "NEG 257 words no factor");
     }
 
-    // CCR builder
+    // CCR builder — default non-secure AxPROT (channel CNS=1).
     CHECK(pl330BuildCcr(0) == 0, "ccr zero");
     CHECK(pl330BuildCcr(4) != 0, "ccr 4");
     CHECK(pl330BuildCcrBurst(16) != 0, "ccr burst16");
     CHECK(pl330BuildCcrBurst(0) == 0, "NEG burst0");
     CHECK(pl330BuildCcrBurst(17) == 0, "NEG burst17");
+    {
+        const uint32_t ccr_ns = pl330BuildCcrBurst(1, true);
+        const uint32_t ccr_s = pl330BuildCcrBurst(1, false);
+        CHECK(((ccr_ns >> 8) & 7u) == 2u, "src_prot NS");
+        CHECK(((ccr_ns >> 22) & 7u) == 2u, "dst_prot NS");
+        CHECK(((ccr_s >> 8) & 7u) == 0u, "src_prot secure");
+        CHECK(((ccr_s >> 22) & 7u) == 0u, "dst_prot secure");
+        uint8_t prog[64];
+        unsigned b = 0;
+        uint32_t ccr_out = 0;
+        const size_t pn = pl330BuildMem2MemProgramAuto(prog, sizeof(prog), 0x30601000u,
+                                                       0x30300000u, 4096, &b, 16, 1, true, &ccr_out);
+        CHECK(pn >= 12, "prog min");
+        CHECK(prog[0] == 0xbc && prog[1] == 0x00, "SAR at +0");
+        CHECK(prog[6] == 0xbc && prog[7] == 0x01, "CCR at +6 parent cpc");
+        CHECK(ccr_out == ccr_ns, "ccr_out NS");
+        char dline[96];
+        CHECK(pl330DisasmProgramLine(prog, pn, 6, dline, sizeof(dline)) == 6, "disasm len");
+        CHECK(std::string(dline).find("DMAMOV_CCR") != std::string::npos, "disasm CCR");
+    }
 
     // Linux DMAGO DBGINST0 encode (incident fix) — NOT low-byte opcode form.
     {
@@ -169,8 +189,16 @@ int main() {
         CHECK(burst == 1 && inner * outer == 1024, "4k = 1024 words");
         CHECK(!pl330PickBurstAndLoops(4096, &burst, &inner, &outer, /*cap*/1, /*force*/16),
               "NEG force16 over mfifo1");
-        CHECK(std::string(pl330FtrChannelTag(1u << 16)) == "ch_rd_err", "ftr rd");
-        CHECK(std::string(pl330FtrChannelTag(1u << 18)) == "mfifo_err", "ftr mfifo");
+        CHECK(std::string(pl330FtrChannelTag(1u << 0)) == "undef_instr", "ftr undef");
+        CHECK(std::string(pl330FtrChannelTag(1u << 1)) == "operand_invalid", "ftr opinv");
+        CHECK(std::string(pl330FtrChannelTag(1u << 5)) == "ch_rdwr_err", "ftr rdwr");
+        CHECK(std::string(pl330FtrChannelTag(1u << 16)) == "instr_fetch_err", "ftr ifetch");
+        CHECK(std::string(pl330FtrChannelTag(1u << 17)) == "data_write_err", "ftr dwr");
+        CHECK(std::string(pl330FtrChannelTag(1u << 18)) == "data_read_err", "ftr drd");
+        char bits[128];
+        pl330FtrChannelBitsStr((1u << 1) | (1u << 5), bits, sizeof(bits));
+        CHECK(std::string(bits).find("OPERAND_INVALID") != std::string::npos, "bits opinv");
+        CHECK(std::string(bits).find("CH_RDWR_ERR") != std::string::npos, "bits rdwr");
         CHECK(std::string(pl330CsrStateTag(0x2)) == "cache_miss", "csr cache_miss");
         CHECK(pl330MfifoWordsFromCrd(0) == 1, "mfifo dep0 -> 1 word");
     }
