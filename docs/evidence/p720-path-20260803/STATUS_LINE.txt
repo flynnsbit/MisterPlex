@@ -1,1 +1,1 @@
-w-path content-720 FACT2: glass already 720; mode0 table fixed; overlay canvas L0; NOT retired
+w-path 266701c1 FACT2 content-canvas; mode0=1280; glass≠bank; NOT retired; tests rc=0
