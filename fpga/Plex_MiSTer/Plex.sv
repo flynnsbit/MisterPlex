@@ -289,12 +289,44 @@ present_geom_latch plxg_latch (
 	.live_seq(fabric_plxg_seq)
 );
 // O[4] coarse ladder when latch idle; PLXG content_* wins once live+nonzero.
-wire [10:0] content_width  = (fabric_plxg_live && (fabric_content_w_lat != 11'd0))
+wire [10:0] content_width_base  = (fabric_plxg_live && (fabric_content_w_lat != 11'd0))
 	? fabric_content_w_lat
 	: (content_res_640x480 ? 11'd640 : 11'd320);
-wire [10:0] content_height = (fabric_plxg_live && (fabric_content_h_lat != 11'd0))
+wire [10:0] content_height_base = (fabric_plxg_live && (fabric_content_h_lat != 11'd0))
 	? fabric_content_h_lat
 	: (content_res_640x480 ? 11'd480 : 11'd240);
+
+// Integration force (default OFF): native 1280×720 READ + Option-C bank map without
+// host PLXG writes. Required so the fabric-pattern→HDMI fit keeps a live path to
+// video out — PLXG wr is tied 0, and constant geom_enable=0 lets Quartus delete the
+// 720p reader mux. QSF must NOT set this for product/legacy bitstreams.
+//   set_global_assignment -name VERILOG_MACRO "FABRIC_NATIVE_720P_GEOM=1"
+// Does not change DE timing (H_DE still 529 unless w-clock raises FRAME/Template).
+`ifdef FABRIC_NATIVE_720P_GEOM
+wire        force_native_720p = 1'b1;
+`else
+wire        force_native_720p = 1'b0;
+`endif
+wire        present_win_enable  = force_native_720p | fabric_win_enable;
+wire        present_geom_enable = force_native_720p | fabric_geom_enable;
+wire [10:0] content_width  = force_native_720p ? 11'd1280 : content_width_base;
+wire [10:0] content_height = force_native_720p ? 11'd720  : content_height_base;
+wire [10:0] present_content_x0 = force_native_720p ? 11'd0 : fabric_content_x0;
+wire [10:0] present_content_y0 = force_native_720p ? 11'd0 : fabric_content_y0;
+// Keep product H_DE=529 when force is on and FRAME is still 480p Template; only
+// override DE when PLXG programmed a non-zero value (future 720p Template).
+wire [10:0] present_win_h_de = fabric_h_de;
+wire [10:0] present_win_v_de = fabric_v_de;
+wire [10:0] present_geom_coded_w = force_native_720p ? 11'd1280 : fabric_geom_coded_w;
+wire [10:0] present_geom_coded_h = force_native_720p ? 11'd720  : fabric_geom_coded_h;
+wire [11:0] present_geom_y_stride = force_native_720p ? 12'd1280 : fabric_geom_y_stride;
+wire [10:0] present_geom_chroma_stride = force_native_720p ? 11'd640 : fabric_geom_chroma_stride;
+wire [10:0] present_geom_display_w = force_native_720p ? 11'd1280 : fabric_geom_display_w;
+wire [10:0] present_geom_display_h = force_native_720p ? 11'd720  : fabric_geom_display_h;
+wire [10:0] present_geom_present_x = force_native_720p ? 11'd0 : fabric_geom_present_x;
+wire [10:0] present_geom_present_y = force_native_720p ? 11'd0 : fabric_geom_present_y;
+wire [10:0] present_geom_crop_left = force_native_720p ? 11'd0 : fabric_geom_crop_left;
+wire [10:0] present_geom_crop_top  = force_native_720p ? 11'd0 : fabric_geom_crop_top;
 
 // Legacy cadence input is now fixed; the daemon handles exact content pacing.
 wire [7:0] content_fps = 8'd24;
@@ -816,24 +848,24 @@ present_core #(
 	.pattern(2'd0),
 	.audio_en(1'b0),
 	.use_frame_store(1'b0),
-	.win_enable(fabric_win_enable),
+	.win_enable(present_win_enable),
 	.content_w(content_width),
 	.content_h(content_height),
-	.content_x0(fabric_content_x0),
-	.content_y0(fabric_content_y0),
-	.win_h_de(fabric_h_de),
-	.win_v_de(fabric_v_de),
-	.geom_enable(fabric_geom_enable),
-	.geom_coded_w(fabric_geom_coded_w),
-	.geom_coded_h(fabric_geom_coded_h),
-	.geom_y_stride(fabric_geom_y_stride),
-	.geom_chroma_stride(fabric_geom_chroma_stride),
-	.geom_display_w(fabric_geom_display_w),
-	.geom_display_h(fabric_geom_display_h),
-	.geom_present_x(fabric_geom_present_x),
-	.geom_present_y(fabric_geom_present_y),
-	.geom_crop_left(fabric_geom_crop_left),
-	.geom_crop_top(fabric_geom_crop_top),
+	.content_x0(present_content_x0),
+	.content_y0(present_content_y0),
+	.win_h_de(present_win_h_de),
+	.win_v_de(present_win_v_de),
+	.geom_enable(present_geom_enable),
+	.geom_coded_w(present_geom_coded_w),
+	.geom_coded_h(present_geom_coded_h),
+	.geom_y_stride(present_geom_y_stride),
+	.geom_chroma_stride(present_geom_chroma_stride),
+	.geom_display_w(present_geom_display_w),
+	.geom_display_h(present_geom_display_h),
+	.geom_present_x(present_geom_present_x),
+	.geom_present_y(present_geom_present_y),
+	.geom_crop_left(present_geom_crop_left),
+	.geom_crop_top(present_geom_crop_top),
 	.fs_wr_en(fs_wr_en),
 	.fs_wr_pixel(fs_wr_pixel),
 	.fs_wr_reset(fs_wr_reset),

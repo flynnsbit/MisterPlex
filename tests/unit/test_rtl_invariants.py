@@ -1891,6 +1891,24 @@ def check_present_geometry_stride_contract() -> None:
         "Quartus build must declare DDR_FRAME_STORE with 640x480 presented scanout. "
         "A missing/changed FRAME_W silently changes the frame-store scanout geometry.",
     )
+    # Product bitstream must leave FABRIC_NATIVE_720P_GEOM unset (default-OFF).
+    # Integration fit turns it on explicitly; a sticky QSF would break legacy 480p glass.
+    check(
+        'VERILOG_MACRO"FABRIC_NATIVE_720P_GEOM' not in qsf_nt
+        and 'VERILOG_MACRO"FABRIC_NATIVE_720P_GEOM=1"' not in qsf_nt,
+        "Plex.qsf must NOT set FABRIC_NATIVE_720P_GEOM (default-OFF). "
+        "Integration builds add it only for the fabric-pattern milestone fit.",
+    )
+    # Macro name lives inside `ifdef (stripped when unset). Pin the force mux body.
+    plex_raw = read(ROOT / "fpga/Plex_MiSTer/Plex.sv")
+    plex = strip_comments(plex_raw)
+    check(
+        "FABRIC_NATIVE_720P_GEOM" in plex_raw
+        and "force_native_720p" in plex
+        and "present_geom_enable=force_native_720p|fabric_geom_enable" in norm(plex),
+        "Plex.sv must expose FABRIC_NATIVE_720P_GEOM force mux so integration can "
+        "keep a live 1280 READ path without host PLXG (wr tied 0).",
+    )
     check(
         "uPlane=yPlane+static_cast<size_t>(w)*static_cast<size_t>(h)" in fb_nt
         and "vPlane=uPlane+static_cast<size_t>(w/2)*static_cast<size_t>(h/2)" in fb_nt,
