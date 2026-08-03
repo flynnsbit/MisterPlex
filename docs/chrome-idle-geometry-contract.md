@@ -30,9 +30,9 @@ w-scaler `present_geom_latch` content window is STORAGE/present, not chrome.
 | **PLXC** `0x504C5843` | **+0x130** | w-osd chrome list ctrl | **Landed** (`mailbox_abi_spec.hpp`) |
 | **PLXO** `0x504C584F` | **+0x138** | w-osd chrome telemetry | Landed |
 | list payload | **+0x140** .. **+0x2BF** | w-osd cmds (48×8B) | Landed |
-| **PLXG** `0x504C5847` | **+0x4C0** | w-scaler / w-mem present geom | **FORCED MAP** |
+| **PLXG** `0x504C5847` | **+0x800 FIXED** | w-scaler / w-mem present geom | **FORCED MAP** |
 
-**FORCED MAP (rd-duck audit):** PLXC owns **+0x130**. PLXG is **+0x4C0 only** (after 112-cmd list; was +0x2C0 @48)
+**FORCED MAP (rd-duck audit):** PLXC owns **+0x130**. PLXG is **FIXED +0x800** (independent of MAX_CMDS; was +0x2C0/@48 then briefly +0x4C0)
 (= list_base + 48×8). `static_assert` in `mailbox_abi_spec.hpp`. Any scaler/mem
 RTL still decoding geom at +0x130 is a hard integration blocker.
 
@@ -146,6 +146,6 @@ needs DMA (w-path) to drop the 14.97 ms copy.
 - [ ] `PLEX_FAB_IDLE` / `PLEX_FAB_CHROME` **undefined** in shipping QSF (default OFF)
 - [ ] `u_plex_chrome` on path: ascal → shadowmask → chrome → osd
 - [ ] `make post-fit-fab-idle` rc=0 (M10K/regs/ALUTs + stuck list)
-- [x] PLXG **not** at +0x130 (PLXC owns it); PLXG = +0x4C0 in ABI
+- [x] PLXG **not** at +0x130 (PLXC owns it); PLXG = FIXED +0x800 in ABI
 - [ ] Glass: vs control `CYAN=0 ACTIVE=923×717` → fabric `CYAN≥2000` + ACTIVE growth + motion
 - [ ] ARM-out: `kill <PID>` still cyan+motion (partial: cyan no motion = phase stuck)

@@ -104,7 +104,7 @@ def main() -> int:
     else:
         fail("no plxc_ext product path nets found")
 
-    # --- 4) PLXC owns +0x130; PLXG at +0x4C0 in ABI ---
+    # --- 4) PLXC owns +0x130; PLXG at +0x800 in ABI (FIXED) ---
     if not ABI.is_file():
         fail(f"missing {ABI}")
     else:
@@ -113,16 +113,22 @@ def main() -> int:
             fail("kPlxcOffset is not 0x130")
         else:
             ok("PLXC owns +0x130")
-        if not re.search(r"kPlxgOffset\s*=\s*0x4C0u", abi):
-            fail("kPlxgOffset missing or not 0x4C0 (after 112×8 list)")
+        if not re.search(r"kPlxgOffset\s*=\s*0x800u", abi):
+            fail("kPlxgOffset missing or not FIXED 0x800")
         else:
-            ok("PLXG reserved at +0x4C0")
+            ok("PLXG reserved at FIXED +0x800")
         if re.search(r"kPlxgOffset\s*=\s*0x130u", abi):
             fail("PLXG illegally at +0x130")
         if "static_assert(kPlxgOffset != kPlxcOffset" not in abi:
             fail("missing static_assert PLXG != PLXC")
         else:
             ok("static_assert PLXG != PLXC present")
+        if "kPlxlOffset + kPlxcListMaxCmds" not in abi or "<=" not in abi:
+            fail("missing list-vs-PLXG bound static_assert (not equality-to-list-end)")
+        else:
+            ok("list bound vs FIXED PLXG present")
+        if "0x800" not in abi and "0x800u" not in abi:
+            fail("PLXG freeze 0x800 not in ABI")
 
     # --- 5) Comment contract in chrome RTL ---
     if CHROME.is_file():

@@ -39,7 +39,7 @@ ARM never blends HUD pixels into the content bank when `chromePlaneLive()`.
 **+119%** (see `docs/fab-chrome-max-cmds-cost.md`). Fmax on `clk_hdmi` is
 **unknown without Quartus**.
 
-Mailbox: list +0x140..+0x4BF, **PLXG +0x4C0** (moved from +0x2C0).
+Mailbox: list +0x140..+0x4BF, **PLXG FIXED +0x800** (not derived from MAX_CMDS).
 
 ## ARM writes commands, not pixels (evidence)
 
@@ -99,7 +99,7 @@ tests/unit/test_plex_chrome_counted_rtl_sim.sh
 
 4. **CLOSED (depth) / OPEN (Fmax)** — `MAX_CMDS=HIT_SCAN=112` absorbs true worst
    102. Yosys +119% cells vs 48. **Quartus Fmax on clk_hdmi still unknown.**
-   PLXG moved to **+0x4C0** — w-mem must follow.
+   PLXG **FIXED +0x800** — w-mem/w-scaler must match; list bound-checked only.
 
 ## Tests
 

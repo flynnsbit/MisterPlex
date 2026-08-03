@@ -24,16 +24,17 @@ Growth that does **not** (today): content/core geometry — chrome is HDMI_OUT o
 `kMaxCmds` is the hard gate: `buildPlaybackHud` truncates; uncapped inventory
 must stay ≤112 or we raise again (and move PLXG again).
 
-## Mailbox map (forced with list depth)
+## Mailbox map (parent ABI freeze)
 
 ```
 PLXC  +0x130
-list  +0x140 .. +0x4BF   (112 × 8B = 0x380)
-PLXG  +0x4C0             (was +0x2C0 after 48-cmd list)
+list  +0x140 .. +0x4BF   (112 × 8B = 0x380; may grow)
+PLXG  +0x800 FIXED       (NOT kPlxl + MAX_CMDS*8)
 ```
 
-**w-mem / w-scaler must consume PLXG @ +0x4C0.** A tree still writing PLXG at
-+0x2C0 collides with list payload.
+Bound only: `kPlxlOffset + kPlxcListMaxCmds*8 <= kPlxgOffset`.
+UI budget changes must **not** relocate PLXG. w-mem/w-scaler must use **+0x800**.
+Gate: `./build/test_ddr_720p_abi` (builds in this lane).
 
 ## Yosys generic cell counts (not Quartus ALM / not Fmax)
 
