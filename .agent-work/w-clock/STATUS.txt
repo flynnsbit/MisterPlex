@@ -11,10 +11,11 @@ device: NO
 720p = reward for evacuating ARM. Prefer ARM-out designs. Geometry first-class 1280x720.
 
 ## Headline
-- Fabric-decode 720p24 @~259 cy/MB: **20 MHz MISS (231)**; **30 MHz PASS paper (347)**.
-- Present: M1 720-line@60 needs ~29–30 MHz; M2 1280-wide@60 = WALL 69–74 MHz → multi-pixel not M0 forever.
-- Preferred PLL target: **B 30/90** (CDC 11.11 ns). A 25/90 CDC-hostile (2.22 ns).
-- M0 scale-into-480-canvas rejected as end-state under mandate.
+- **SCAN-OUT GATE:** 1280×720×24 = **22.118 Mpix/s > 20 MHz ship** → cannot touch every 720p24 pixel @1ppc. Detail: `.agent-work/w-clock/SCANOUT_FEASIBILITY_720P24.md`
+- CEA 720p60 1ppc = **74.25 MHz WALL** vs Fmax 32.59; need **≥3–4 px/clk**.
+- CEA 720p24 1ppc = 29.7 MHz: OK only on **nostub** Fmax; stub 23.46 FAIL.
+- Fabric-decode 720p24: 20 MHz MISS cy/MB; 30 MHz PASS paper.
+- Preferred PLL: **B 30/90**.
 
 ## ARM ms/frame (honest)
 | Effect | ms/frame | Evidence |
