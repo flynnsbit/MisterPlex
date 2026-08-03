@@ -76,8 +76,7 @@ module ddr_frame_store_selector_tb (
 		.FRAME_MAILBOX_PHYS(32'h300F_F118),
 		.DDR_BURST_MAX(8),
 		.PIPELINE_REFILL_SCHEDULER(1'b1),
-		.STRICT_YUV_DOORBELL(1'b1),
-		.LINE_CACHE_FRAME_GEN(1'b1)
+		.STRICT_YUV_DOORBELL(1'b1)
 	) dut (
 		.clk(clk),
 		.clk_ddr(clk_ddr),

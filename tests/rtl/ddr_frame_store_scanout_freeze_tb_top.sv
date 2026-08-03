@@ -1,9 +1,7 @@
 // Product-like scanout freeze red-check for ddr_frame_store.
 // Cases (shell builds twice):
-//   BROKEN: sticky=0 recycle=0 + LINE_CACHE_FRAME_GEN=0 (9eb1431a class alone)
-//   GOOD:   sticky=1 recycle=1 + LINE_CACHE_FRAME_GEN=1 (product)
-// Gen-invalidate alone punches holes in a full prep set (doorbell/fill_gen),
-// which can mask the sticky/recycle freeze — broken twin must disable it.
+//   BROKEN: WANT_Y_LINE_ONLY=1 + PENDING_READY_STICKY_PREP=0  (9eb1431a)
+//   GOOD:   WANT_Y_LINE_ONLY=1 + PENDING_READY_STICKY_PREP=1  (product fix)
 // No WANT_Y_FORCE_TOP.
 `default_nettype none
 
@@ -11,7 +9,6 @@ module ddr_frame_store_scanout_freeze_tb #(
 	parameter bit WANT_Y_LINE_ONLY = 1'b1,
 	parameter bit PENDING_READY_STICKY_PREP = 1'b1,
 	parameter bit PREP_SLOT_RECYCLE = 1'b1,
-	parameter bit LINE_CACHE_FRAME_GEN = 1'b1,
 	parameter int LINE_COUNT = 4
 )(
 	input  wire        clk,
@@ -88,8 +85,7 @@ module ddr_frame_store_scanout_freeze_tb #(
 		.STRICT_YUV_DOORBELL(1'b1),
 		.WANT_Y_LINE_ONLY(WANT_Y_LINE_ONLY),
 		.PENDING_READY_STICKY_PREP(PENDING_READY_STICKY_PREP),
-		.PREP_SLOT_RECYCLE(PREP_SLOT_RECYCLE),
-		.LINE_CACHE_FRAME_GEN(LINE_CACHE_FRAME_GEN)
+		.PREP_SLOT_RECYCLE(PREP_SLOT_RECYCLE)
 	) dut (
 		.clk(clk),
 		.clk_ddr(clk_ddr),
