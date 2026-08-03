@@ -65,5 +65,7 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_beam_content_de.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/plex_content_fps_sel.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/plex_present_geom_mux.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/plex_chrome.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/plex_chrome_host_if.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/plex_chrome_ddr_loader.sv
 set_global_assignment -name SDC_FILE Plex.sdc
 set_global_assignment -name SYSTEMVERILOG_FILE Plex.sv

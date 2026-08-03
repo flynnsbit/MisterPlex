@@ -1,4 +1,5 @@
 #include "media_player.hpp"
+#include "libmisterplex/plex_chrome_cmds.hpp"
 #include "log_redact.hpp"
 #include "plex_resolve.hpp"
 
@@ -827,6 +828,14 @@ void MediaPlayer::paintIdle() {
     const IdleMode m = idleMode();
     if (m == IdleMode::LastFrame)
         return;
+    // Fabric idle owns Logo/Black/Screensaver when chrome HW is live.
+    // ARM paints zero pixels (no DDR, no fb0) — 720p budget stays with decode.
+    // Eliminates "idle paint DDR failed" (bank never freed).
+    if (chromePlaneLive() && m != IdleMode::LastFrame) {
+        log("media: idle fabric plane=1 skip ALL ARM paint mode=" +
+            std::to_string(static_cast<int>(m)));
+        return;
+    }
     const int w = 320;
     const int h = 240;
     std::vector<uint8_t> buf(static_cast<size_t>(w) * h * 3);
@@ -1250,13 +1259,55 @@ void MediaPlayer::resume() {
         onProgress_("playing", positionMs_.load(), durationMs_);
 }
 
+void MediaPlayer::publishPlxcHud(PlaybackOverlayState state, int64_t positionMs,
+                                 int64_t durationMs, const char* title, int64_t skipDeltaMs) {
+    // Semantic list only — never pixels. Cheap vs full-frame bake; still ARM
+    // until a single progress-fraction register lands (see agent evidence).
+    // PLXC coords are HDMI/output only. If chromeOut was ever poisoned with a
+    // coded bank size (960×540 class), force product glass defaults — never
+    // emit a HUD that sits in source space on a 1280×720 beam.
+    int cow = chromeOutW_;
+    int coh = chromeOutH_;
+    if (plex_chrome_cmds::isCodedBankSizeNotHdmi(cow, coh) ||
+        !plex_chrome_cmds::isHdmiChromeRaster(cow, coh)) {
+        cow = plex_chrome_cmds::kTargetOutW;
+        coh = plex_chrome_cmds::kTargetOutH;
+        chromeOutW_ = cow;
+        chromeOutH_ = coh;
+    }
+    plex_chrome_cmds::BuildArgs a;
+    a.outW = cow;
+    a.outH = coh;
+    a.state = state;
+    a.positionMs = positionMs;
+    a.durationMs = durationMs;
+    a.title = title;
+    a.skipDeltaMs = skipDeltaMs; // R2: skip flash is PLXC, not pixel bake
+    const auto cmds = plex_chrome_cmds::buildPlaybackHud(a);
+    ++chromePlxcSeq_;
+    if (!(fpga_.ok() || fpga_.open()))
+        return;
+    if (!fpga_.writeChromeCommandList(cmds.data(), cmds.size(), /*enable*/ true, chromePlxcSeq_))
+        log("media: PLXC publish failed: " + fpga_.lastError());
+    else
+        log("media: PLXC publish cmds=" + std::to_string(cmds.size()) +
+            " seq=" + std::to_string(chromePlxcSeq_) + " out=" + std::to_string(chromeOutW_) +
+            "x" + std::to_string(chromeOutH_) + " plane=1");
+}
+
 void MediaPlayer::showPlaybackOverlay(PlaybackOverlayState state, int64_t positionMs,
                                       int64_t durationMs) {
     overlay_.show(state, positionMs, durationMs);
+    if (chromePlaneLive())
+        publishPlxcHud(state, positionMs, durationMs, nullptr);
 }
 
 void MediaPlayer::flashPlaybackSkip(int64_t deltaMs) {
     overlay_.flashSkip(deltaMs, positionMs_.load(), durationMs());
+    // R2 closed: plane-live skip is a PLXC list update, not an ARM pixel bake.
+    if (chromePlaneLive()) {
+        publishPlxcHud(overlay_.state(), positionMs_.load(), durationMs(), nullptr, deltaMs);
+    }
 }
 
 void MediaPlayer::seekMs(int64_t ms) {
@@ -3683,7 +3734,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         auto presentCleanFrame = [&](uint8_t* cleanFrame, bool countPresent) {
             const OverlayRect dirty = overlay_.dirtyBounds(rawW, rawH);
             backupOverlayDirty(cleanFrame, dirty);
-            if (!dirty.empty()) {
+            // plane=1: fabric plex_chrome composites PLXC list — do not bake pixels.
+            if (!dirty.empty() && !chromePlaneLive()) {
                 if (profilePresent) {
                     const auto overlay0 = std::chrono::steady_clock::now();
                     const int64_t overlayCpu0 = threadCpuMicros();
@@ -4541,6 +4593,11 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 int64_t tms = startMs + wall2;
                 positionMs_.store(tms);
                 overlay_.setProgress(tms, durationMs);
+                // plane=1: PLXC is state-change only (showPlaybackOverlay).
+                // Do NOT republish the command list every N frames — that is still
+                // concurrent ARM work beside decode. Progress bar freezes until the
+                // next transport event; a future single progress-fraction register
+                // can refresh the bar without a full list rewrite.
                 if ((frameIndex % 15) == 0 && onProgress_)
                     onProgress_("playing", tms, durationMs);
             }

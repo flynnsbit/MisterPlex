@@ -1,7 +1,7 @@
 #include "fpga_spi.hpp"
 
 #include "libmisterplex/ddr_bank_release_select.hpp"
-#include "libmisterplex/plxd_liveness.hpp"
+#include "libmisterplex/plex_chrome_cmds.hpp"
 #include "libmisterplex/status_telemetry.hpp"
 #include "libmisterplex/pixel_format.hpp"
 
@@ -419,30 +419,8 @@ bool FpgaSpi::open() {
     return true;
 }
 
-void FpgaSpi::forceDdrKickReprobe() {
-    ddrKickMode_ = 0;
-    ddrKickFailMs_ = -1.0;
-    plxdLive_ = PlxdLivenessState{};
-    plxdStaleCount_ = 0;
-    plxdLivenessProven_ = false;
-    lastPublishBrsOk_ = false;
-}
-
-bool FpgaSpi::reopenPresentPath() {
-    // close() already zeroes ddrKickMode_ / maps; open() rebuilds manager map.
-    const bool okOpen = open();
-    forceDdrKickReprobe();
-    if (!okOpen)
-        return false;
-    // Re-establish DDR frame window for the (possibly new) core layout.
-    if (!ensureDdrMap())
-        return false;
-    return true;
-}
-
 void FpgaSpi::close() {
     releaseDdrMap();
-    releasePlxgBootstrapMap();
     releaseBitstreamDdrMap();
     if (map_) {
         munmap((void*)map_, kMapSize);
@@ -720,41 +698,31 @@ bool FpgaSpi::ensureDdrMap() {
     return true;
 }
 
-bool FpgaSpi::setDdrFrameLayout(const DdrFrameLayout& layout) {
-    if (!ddrFrameLayoutValid(layout)) {
+bool FpgaSpi::setDdrFrameLayout(const DdrFrameGeometry& geometry, DdrFrameFormat format) {
+    DdrFrameLayout next =
+        makeDdrFrameLayout(geometry, kDdrFrameBase, kDdrFrameStrideAlign, format);
+    if (!ddrFrameLayoutValid(next)) {
         setErr("setDdrFrameLayout: invalid DDR frame layout");
         return false;
     }
-    // Same map window + dims → no remap.
-    if (layout.phys_base == ddrLayout_.phys_base &&
-        layout.bank_stride == ddrLayout_.bank_stride &&
-        layout.doorbell_phys == ddrLayout_.doorbell_phys &&
-        layout.map_bytes == ddrLayout_.map_bytes &&
-        layout.frame_bytes == ddrLayout_.frame_bytes &&
-        layout.coded_width == ddrLayout_.coded_width &&
-        layout.coded_height == ddrLayout_.coded_height &&
-        layout.display_width == ddrLayout_.display_width &&
-        layout.display_height == ddrLayout_.display_height &&
-        layout.presented_width == ddrLayout_.presented_width &&
-        layout.presented_height == ddrLayout_.presented_height &&
-        layout.crop_left == ddrLayout_.crop_left && layout.crop_right == ddrLayout_.crop_right &&
-        layout.crop_top == ddrLayout_.crop_top && layout.crop_bottom == ddrLayout_.crop_bottom &&
-        layout.present_x == ddrLayout_.present_x && layout.present_y == ddrLayout_.present_y &&
-        layout.format == ddrLayout_.format)
+    if (next.coded_width == ddrLayout_.coded_width &&
+        next.coded_height == ddrLayout_.coded_height &&
+        next.display_width == ddrLayout_.display_width &&
+        next.display_height == ddrLayout_.display_height &&
+        next.presented_width == ddrLayout_.presented_width &&
+        next.presented_height == ddrLayout_.presented_height &&
+        next.crop_left == ddrLayout_.crop_left && next.crop_right == ddrLayout_.crop_right &&
+        next.crop_top == ddrLayout_.crop_top && next.crop_bottom == ddrLayout_.crop_bottom &&
+        next.present_x == ddrLayout_.present_x && next.present_y == ddrLayout_.present_y &&
+        next.format == ddrLayout_.format)
         return true;
-    ddrLayout_ = layout;
+    ddrLayout_ = next;
     releaseDdrMap();
     ddrKickMode_ = 0;
     ddrKickFailMs_ = -1.0;
     doorbellSeq_ = 0;
     clearErr();
     return true;
-}
-
-bool FpgaSpi::setDdrFrameLayout(const DdrFrameGeometry& geometry, DdrFrameFormat format) {
-    DdrFrameLayout next =
-        makeDdrFrameLayout(geometry, kDdrFrameBase, kDdrFrameStrideAlign, format);
-    return setDdrFrameLayout(next);
 }
 
 bool FpgaSpi::setDdrFrameLayout(int width, int height, DdrFrameFormat format) {
@@ -783,155 +751,6 @@ void FpgaSpi::releaseDdrMap() {
         ::close(ddrMemFd_);
         ddrMemFd_ = -1;
     }
-}
-
-void FpgaSpi::seedPlxgLastSeqFromRetainedLocked() {
-    // DDR retained q0 is source of truth across daemon/FpgaSpi lifetimes.
-    // Process-local plxgLastSeq_ may be 0 after restart; catch up before +1.
-    if (!plxgBootMap_ || plxgBootMapLen_ < mailbox_abi::kPlxgOffset + 8u)
-        return;
-    const size_t off = static_cast<size_t>(mailbox_abi::kPlxgOffset);
-    volatile uint32_t* base =
-        reinterpret_cast<volatile uint32_t*>(plxgBootMap_ + off);
-    const uint32_t lo = base[0];
-    const uint32_t hi = base[1];
-    if (lo != mailbox_abi::kPlxgMagic)
-        return;
-    const uint16_t retained = static_cast<uint16_t>(hi >> 16); // q0[63:48]
-    if (static_cast<uint32_t>(retained) > static_cast<uint32_t>(plxgLastSeq_))
-        plxgLastSeq_ = retained;
-}
-
-bool FpgaSpi::ensurePlxgBootstrapMap() {
-    if (plxgBootMap_ && plxgBootFd_ >= 0)
-        return true;
-    releasePlxgBootstrapMap();
-    int flags = O_RDWR | O_CLOEXEC;
-    if (ddrMemSync_)
-        flags |= O_SYNC;
-    plxgBootFd_ = ::open("/dev/mem", flags);
-    if (plxgBootFd_ < 0) {
-        setErr("ensurePlxgBootstrapMap: open /dev/mem failed");
-        return false;
-    }
-    // Map the full 4 KiB legacy doorbell/control page at 0x300FF000.
-    constexpr size_t kPage = 0x1000u;
-    void* p = mmap(nullptr, kPage, PROT_READ | PROT_WRITE, MAP_SHARED, plxgBootFd_,
-                   static_cast<off_t>(mailbox_abi::kPlxgBootstrapDoorbellPhys));
-    if (p == MAP_FAILED) {
-        setErr("ensurePlxgBootstrapMap: mmap bootstrap page failed");
-        ::close(plxgBootFd_);
-        plxgBootFd_ = -1;
-        return false;
-    }
-    plxgBootMap_ = static_cast<uint8_t*>(p);
-    plxgBootMapLen_ = kPage;
-    seedPlxgLastSeqFromRetainedLocked();
-    return true;
-}
-
-void FpgaSpi::releasePlxgBootstrapMap() {
-    if (plxgBootMap_) {
-        munmap(plxgBootMap_, plxgBootMapLen_);
-        plxgBootMap_ = nullptr;
-        plxgBootMapLen_ = 0;
-    }
-    if (plxgBootFd_ >= 0) {
-        ::close(plxgBootFd_);
-        plxgBootFd_ = -1;
-    }
-}
-
-bool FpgaSpi::writePlxgRecord(const uint64_t q[5], uint16_t seq) {
-    if (!q) {
-        setErr("writePlxgRecord: null q");
-        return false;
-    }
-    if (!ensurePlxgBootstrapMap())
-        return false;
-    const size_t off = static_cast<size_t>(mailbox_abi::kPlxgOffset);
-    if (off + mailbox_abi::kPlxgBytes > plxgBootMapLen_) {
-        setErr("writePlxgRecord: PLXG record outside bootstrap page");
-        return false;
-    }
-    // Always advance seq (rd-duck: never sticky seq=1 across frames/mode exits).
-    // Caller seq is advisory only — latch requires seq != last_seq every program.
-    (void)seq;
-    // Restart-safe seed (rd-duck restart + ABA): never use process-local
-    // plxgLastSeq_+1 alone. Re-read retained q0 BEFORE invalidate every write
-    // (map-open seed is not enough if another agent published meanwhile).
-    // useSeq must differ from retained valid q0 or poller can ABA-accept torn body.
-    volatile uint32_t* base =
-        reinterpret_cast<volatile uint32_t*>(plxgBootMap_ + off);
-    seedPlxgLastSeqFromRetainedLocked();
-    uint16_t retainedSeq = 0;
-    bool retainedValid = false;
-    {
-        const uint32_t lo = base[0];
-        const uint32_t hi = base[1];
-        if (lo == mailbox_abi::kPlxgMagic) {
-            retainedSeq = static_cast<uint16_t>(hi >> 16); // q0[63:48]
-            retainedValid = true;
-        }
-    }
-    const uint16_t useSeq =
-        misterplex::plxgNextSeq(plxgLastSeq_, retainedValid, retainedSeq);
-    uint64_t words[5];
-    for (int i = 0; i < 5; ++i)
-        words[i] = q[i];
-    // Force Q0 magic + seq (geom/win/epoch flags preserved from packed plan).
-    // B4: epoch in q0[47:34] must be nonzero — default to 1 if caller left 0.
-    uint64_t flags = (words[0] >> 32) & 0xFFFFull; // low 16 of hi: win/geom/epoch
-    if (((flags >> 2) & 0x3FFFull) == 0)
-        flags |= (1ull << 2); // epoch=1
-    words[0] = (static_cast<uint64_t>(useSeq) << 48) |
-               (flags << 32) |
-               static_cast<uint64_t>(mailbox_abi::kPlxgMagic);
-
-    // Seqlock publish (rd-duck retained-DDR/reset):
-    //   1) invalidate q0 low32=0 (clear magic) + DMB
-    //   2) body q1..q4
-    //   3) q0 high32, then q0 low32=magic LAST
-    // Without (1), post-reset last_seq=0 + retained q0 seq=1 accepts mixed body.
-    auto dmb = []() { __sync_synchronize(); };
-    auto storeBodyQ = [&](volatile uint32_t* basep, int qi, uint64_t w) {
-        basep[qi * 2 + 1] = static_cast<uint32_t>(w >> 32);
-        dmb();
-        basep[qi * 2 + 0] = static_cast<uint32_t>(w);
-        dmb();
-    };
-    auto seqlockPublish = [&](volatile uint32_t* basep) {
-        // 1) Invalidate retained magic so in-progress poller aborts.
-        basep[0] = 0u; // q0 low32
-        dmb();
-        // 2) Body
-        for (int i = 1; i < 5; ++i)
-            storeBodyQ(basep, i, words[i]);
-        // 3) q0 high then magic-last
-        basep[1] = static_cast<uint32_t>(words[0] >> 32);
-        dmb();
-        basep[0] = static_cast<uint32_t>(words[0]); // magic
-        dmb();
-    };
-    seqlockPublish(base);
-    if (ddrMemFlush_ && !cleanDcacheRange(plxgBootMap_ + off, mailbox_abi::kPlxgBytes)) {
-        setErr("writePlxgRecord: cache clean failed");
-        return false;
-    }
-    // Optional mirror onto active doorbell+0x800 when Option-C map covers it.
-    if (ddrMap_ && ddrLayout_.doorbell_phys != 0) {
-        const uint32_t act = plxgMailboxPhys(ddrLayout_.doorbell_phys);
-        if (act >= ddrLayout_.phys_base) {
-            const size_t aoff = static_cast<size_t>(act - ddrLayout_.phys_base);
-            if (aoff + mailbox_abi::kPlxgBytes <= ddrMapLen_) {
-                volatile uint32_t* ab =
-                    reinterpret_cast<volatile uint32_t*>(ddrMap_ + aoff);
-                seqlockPublish(ab);
-            }
-        }
-    }
-    plxgLastSeq_ = useSeq;
-    return true;
 }
 
 bool FpgaSpi::waitCoreFlag(bool clearBusy, bool clearPending, int maxUs) {
@@ -1080,6 +899,74 @@ bool FpgaSpi::readInputMailbox(PlaybackCommand& command) {
         if (inputMboxEdge_.accept(sample, command))
             return true;
         return false;
+    }
+    return false;
+}
+
+bool FpgaSpi::writeChromeCommandList(const uint64_t* cmds, size_t count, bool enable,
+                                     uint16_t seq) {
+    if (!cmds && count > 0)
+        return false;
+    if (!ok() && !open())
+        return false;
+    if (!ensureDdrMap())
+        return false;
+    const uint32_t door = ddrLayout_.doorbell_phys;
+    const uint32_t listPhys = mailbox_abi::frameStoreMailboxPhys(door, mailbox_abi::kPlxlOffset);
+    const uint32_t ctrlPhys = mailbox_abi::frameStoreMailboxPhys(door, mailbox_abi::kPlxcOffset);
+    if (listPhys < ddrLayout_.phys_base || ctrlPhys < ddrLayout_.phys_base) {
+        setErr("writeChromeCommandList: PLXC outside frame window");
+        return false;
+    }
+    const size_t listOff = static_cast<size_t>(listPhys - ddrLayout_.phys_base);
+    const size_t ctrlOff = static_cast<size_t>(ctrlPhys - ddrLayout_.phys_base);
+    const size_t n = std::min(count, static_cast<size_t>(plex_chrome_cmds::kMaxCmds));
+    if (listOff + n * sizeof(uint64_t) > ddrMapLen_ || ctrlOff + 8 > ddrMapLen_) {
+        setErr("writeChromeCommandList: PLXC/list outside mapped window");
+        return false;
+    }
+    // Payload first, then PLXC ctrl (seq edge) so fabric never latches empty list.
+    auto* list = reinterpret_cast<volatile uint64_t*>(ddrMap_ + listOff);
+    for (size_t i = 0; i < n; ++i)
+        list[i] = cmds[i];
+    __sync_synchronize();
+    const uint64_t ctrl = plex_chrome_cmds::packPlxcCtrl(enable, static_cast<unsigned>(n), seq);
+    auto* cw = reinterpret_cast<volatile uint32_t*>(ddrMap_ + ctrlOff);
+    cw[0] = static_cast<uint32_t>(ctrl);
+    cw[1] = static_cast<uint32_t>(ctrl >> 32);
+    __sync_synchronize();
+    clearErr();
+    return true;
+}
+
+bool FpgaSpi::readChromeHwPresent(bool& present) {
+    present = false;
+    if (!ok() && !open())
+        return false;
+    if (!ensureDdrMap())
+        return false;
+    const uint32_t door = ddrLayout_.doorbell_phys;
+    const uint32_t plxoPhys = mailbox_abi::frameStoreMailboxPhys(door, mailbox_abi::kPlxoOffset);
+    if (plxoPhys < ddrLayout_.phys_base)
+        return false;
+    const size_t off = static_cast<size_t>(plxoPhys - ddrLayout_.phys_base);
+    if (off + 8 > ddrMapLen_)
+        return false;
+    volatile uint32_t* mw = reinterpret_cast<volatile uint32_t*>(ddrMap_ + off);
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        const uint32_t lo0 = mw[0];
+        const uint32_t hi0 = mw[1];
+        __sync_synchronize();
+        const uint32_t lo1 = mw[0];
+        const uint32_t hi1 = mw[1];
+        if (lo0 != lo1 || hi0 != hi1)
+            continue;
+        if (lo0 != mailbox_abi::kPlxoMagic)
+            return false;
+        // PLXO: [32] chrome_hw (bit0 of hi)
+        present = (hi0 & 0x1u) != 0;
+        clearErr();
+        return true;
     }
     return false;
 }
@@ -1504,21 +1391,12 @@ bool FpgaSpi::sendRgb565Frame(const uint16_t* rgb, int w, int h, uint8_t index) 
 
 bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& plan) {
     const uint8_t* payload = frame.payload;
-    const size_t copyLen = ddrPublishCopyBytes(plan);
     const size_t len = frame.len;
     int bank = plan.bank;
-    // Native path: copyLen may be < layout.frame_bytes (canvas map window).
-    // Map identity is phys/stride/doorbell; payload length is copyLen.
-    if (!payload || len != copyLen || copyLen == 0 ||
-        plan.layout.phys_base != ddrLayout_.phys_base ||
-        plan.layout.bank_stride != ddrLayout_.bank_stride ||
+    if (!payload || len != plan.layout.frame_bytes || plan.layout.bank_stride != ddrLayout_.bank_stride ||
         plan.layout.doorbell_phys != ddrLayout_.doorbell_phys ||
         plan.layout.frame_bytes != ddrLayout_.frame_bytes) {
         setErr("sendDdrFrame: publish plan does not match active DDR layout");
-        return false;
-    }
-    if (copyLen > plan.layout.bank_stride) {
-        setErr("sendDdrFrame: copy_bytes exceeds bank stride");
         return false;
     }
     if (ddrKickMode_ < 0) {
@@ -1557,25 +1435,20 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
         int plxdIters = 0;
         if (readBankRelease(brs)) {
             // One-shot provenance diagnostic on first PLXD contact.
-            if (!plxdLive_.have_sample) {
+            if (!plxdLivenessProven_ && plxdStaleCount_ == 0 &&
+                plxdLastFramesDone_ == 0) {
                 auto diag = diagnosePlxdProvenance();
                 const char* label = "?";
                 switch (diag.provenance) {
                 case PlxdProvenance::Absent:    label = "ABSENT"; break;
                 case PlxdProvenance::Residue:   label = "RESIDUE(reserved!=0)"; break;
                 case PlxdProvenance::InitOnly:  label = "INIT_ONLY(frames_done=0)"; break;
-                case PlxdProvenance::Alive:
-                    label = "ALIVE(fd>0_static;fd_may_be_vsync_on_c5382bee)";
-                    break;
-                case PlxdProvenance::LiveAdvance:
-                    label = "LIVE_ADVANCE(bank_identity_moved)";
-                    break;
+                case PlxdProvenance::Alive:     label = "ALIVE(frames_done>0,static)"; break;
+                case PlxdProvenance::LiveAdvance: label = "LIVE_ADVANCE"; break;
                 }
                 fprintf(stderr,
                         "[PLXD-PROVENANCE] %s raw=0x%08x_%08x "
-                        "frames_done=%u frames_done_src=plxd[63:48]_rbf_dependent "
-                        "free_mask=%u disp=%u swap=%d reserved=0x%03x "
-                        "liveness=bank_identity_not_fd_alone\n",
+                        "frames_done=%u free_mask=%u disp=%u swap=%d reserved=0x%03x\n",
                         label, diag.raw_hi, diag.raw_lo,
                         diag.frames_done, diag.free_bank_mask,
                         diag.disp_bank, diag.swap_pending, diag.reserved_bits);
@@ -1584,45 +1457,31 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
             // --- Degeneracy defence (instrument-integrity #18) ---
             // A DDR word that happens to contain PLXD magic by coincidence
             // (boot residue) would pass the magic check and return valid-
-            // looking fields.
-            //
-            // Liveness derivation (name + derivation):
-            //   Progress := change in bank-identity signature
-            //     free_bank_mask | disp_bank | swap_pending
-            //   NOT frames_done alone — on deployed RBF c5382bee PLXD[63:48]
-            //   packs bank_vsync_count (advances every vsync). frames_done-only
-            //   liveness kept PLXD "live" while swaps stuck so [STALE] never
-            //   fired (playback-freeze class). See plxd_liveness.hpp +
-            //   ddr_frame_store.sv pack comment. tip packs frames_done_d2
-            //   (swap counter) but identity gate is correct on both.
-            {
-                PlxdLivenessSample sample;
-                sample.frames_done = brs.frames_done;
-                sample.free_bank_mask = brs.free_bank_mask;
-                sample.disp_bank = brs.disp_bank;
-                sample.swap_pending = brs.swap_pending;
-                plxdLivenessTick(plxdLive_, sample);
-                plxdStaleCount_ = plxdLive_.stale_count;
-                plxdLivenessProven_ = plxdLive_.proven;
+            // looking fields. Defence: check frames_done advances between
+            // successive frames. If it never advances, the mailbox is stale
+            // (never written by the FPGA) and we must not trust it.
+            if (brs.frames_done != plxdLastFramesDone_) {
+                plxdLivenessProven_ = true;
+                plxdStaleCount_ = 0;
+            } else {
+                ++plxdStaleCount_;
             }
+            plxdLastFramesDone_ = brs.frames_done;
+            // Residue at a wrong absolute address can prove live once (noise /
+            // one-shot change) then stick forever. Re-arm fallback even after
+            // proven if frames_done stops advancing.
             constexpr int kPlxdStaleLimitFrames = 10;
             constexpr int kPlxdStaleLimitAfterProven = 60; // ~1–2s at 30–60fps
-            if (plxdLivenessShouldFallback(plxdLive_, kPlxdStaleLimitFrames,
-                                           kPlxdStaleLimitAfterProven)) {
+            const int staleLimit =
+                plxdLivenessProven_ ? kPlxdStaleLimitAfterProven : kPlxdStaleLimitFrames;
+            if (plxdStaleCount_ >= staleLimit) {
                 fprintf(stderr,
-                        "[STALE] sendDdrFrame: PLXD bank-identity stuck "
-                        "(free=%u disp=%u swap=%d frames_done=%u fd_only_adv=%d) "
-                        "for %d frames (proven=%d) — residue/freeze fallback "
-                        "(frames_done alone is vsync on c5382bee)\n",
-                        static_cast<unsigned>(brs.free_bank_mask),
-                        static_cast<unsigned>(brs.disp_bank),
-                        brs.swap_pending ? 1 : 0,
-                        static_cast<unsigned>(brs.frames_done),
-                        plxdLive_.last_tick_fd_advanced ? 1 : 0, plxdLive_.stale_count,
-                        plxdLive_.proven ? 1 : 0);
-                plxdLive_ = PlxdLivenessState{};
-                plxdStaleCount_ = 0;
+                        "[STALE] sendDdrFrame: PLXD mailbox frames_done stuck at %u for "
+                        "%d frames (proven=%d) — treating as residue, timed-delay fallback\n",
+                        static_cast<unsigned>(brs.frames_done), plxdStaleCount_,
+                        plxdLivenessProven_ ? 1 : 0);
                 plxdLivenessProven_ = false;
+                plxdStaleCount_ = 0;
                 goto plxd_absent_fallback;
             }
 
@@ -1639,14 +1498,11 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
                     ++plxdIters;
                     if (!readBankRelease(brs))
                         break;
-                    PlxdLivenessSample wsample;
-                    wsample.frames_done = brs.frames_done;
-                    wsample.free_bank_mask = brs.free_bank_mask;
-                    wsample.disp_bank = brs.disp_bank;
-                    wsample.swap_pending = brs.swap_pending;
-                    plxdLivenessObserveWait(plxdLive_, wsample);
-                    plxdStaleCount_ = plxdLive_.stale_count;
-                    plxdLivenessProven_ = plxdLive_.proven;
+                    if (brs.frames_done != plxdLastFramesDone_) {
+                        plxdLivenessProven_ = true;
+                        plxdStaleCount_ = 0;
+                        plxdLastFramesDone_ = brs.frames_done;
+                    }
                     sel = selectDdrWriteBank(brs, ddrBankSelect_, kPlxdPollMaxIters);
                 }
                 if (sel.action == DdrBankSelectAction::Write) {
@@ -1710,43 +1566,22 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
     auto tPrep1 = std::chrono::steady_clock::now();
     timing.prep_wait_us = elapsedUs(tPrep0, tPrep1);
 
-    // Copy frame into bank (persistent map). Native path copies only storage
-    // bytes (e.g. 777600); full-canvas path copies layout.frame_bytes.
+    // Copy frame into bank (persistent map).
     const size_t bankOff = static_cast<size_t>(bank) * plan.layout.bank_stride;
-    if (bankOff + copyLen > ddrMapLen_) {
-        setErr("sendDdrFrame: bank payload exceeds mapped window");
-        return false;
-    }
     auto tCopy0 = std::chrono::steady_clock::now();
-    std::memcpy(ddrMap_ + bankOff, payload, copyLen);
+    std::memcpy(ddrMap_ + bankOff, payload, len);
     __sync_synchronize();
     auto tCopy1 = std::chrono::steady_clock::now();
     timing.copy_us = elapsedUs(tCopy0, tCopy1);
-    // Map policy (ddr_mem_map_policy.hpp): O_SYNC path is strongly ordered.
-    // Non-sync (cached/WC candidate) MUST dcache-clean the payload range before
-    // doorbell — otherwise FPGA may sample stale lines (tearing class).
-    if (!ddrMemSync_) {
-        if (!ddrMemFlush_) {
-            setErr("sendDdrFrame: DDR_MEM_SYNC=0 requires DDR_MEM_FLUSH=1 "
-                   "(payload must be FPGA-visible before doorbell)");
-            return false;
-        }
+    if (!ddrMemSync_ && ddrMemFlush_) {
         auto tFlush0 = std::chrono::steady_clock::now();
-        if (!cleanDcacheRange(ddrMap_ + bankOff, copyLen)) {
+        if (!cleanDcacheRange(ddrMap_ + bankOff, len)) {
             setErr("sendDdrFrame: cache clean failed");
             return false;
         }
         __sync_synchronize();
         auto tFlush1 = std::chrono::steady_clock::now();
         timing.flush_us = elapsedUs(tFlush0, tFlush1);
-    }
-
-    // PLXG atomic 5-qword record at bootstrap phys 0x300FF800 (legacy doorbell
-    // +0x800). Fabric poller always reads this fixed page — chicken-egg safe when
-    // Option-C moves the active doorbell. Never three temporal writes to one slot.
-    if (plan.program_plxg) {
-        if (!writePlxgRecord(plan.plxg_q, plan.plxg_seq))
-            return false;
     }
 
     bool saw_busy = false;
@@ -1999,25 +1834,16 @@ FpgaSpi::PlxdDiag FpgaSpi::diagnosePlxdProvenance() {
         return d;
     }
 
-    // frames_done > 0: on tip = ≥1 swap; on c5382bee = ≥1 vsync. Not swap proof.
-    // Re-read after ~5 ms for motion diagnostic only (not the stale decision).
+    // frames_done > 0 — at least one bank swap occurred. Now check liveness
+    // by reading again after a short delay to see if it advances.
     usleep(5000); // 5 ms — one vsync at 60 Hz is ~16.7 ms
     __sync_synchronize();
     const uint32_t hi2 = mw[1];
     __sync_synchronize();
     const uint16_t frames_done2 = static_cast<uint16_t>(hi2 >> 16);
-    const uint8_t free2 = static_cast<uint8_t>(hi2 & 0x03);
-    const uint8_t disp2 = static_cast<uint8_t>((hi2 >> 2) & 0x01);
-    const bool swap2 = ((hi2 >> 3) & 0x01) != 0;
-    const bool fd_moved = frames_done2 != d.frames_done;
-    const bool id_moved =
-        free2 != d.free_bank_mask || disp2 != d.disp_bank || swap2 != d.swap_pending;
 
-    if (id_moved) {
-        d.provenance = PlxdProvenance::LiveAdvance; // bank identity moved
-    } else if (fd_moved) {
-        // c5382bee signature: fd ticks, banks static — still "Alive" class
-        d.provenance = PlxdProvenance::Alive;
+    if (frames_done2 != d.frames_done) {
+        d.provenance = PlxdProvenance::LiveAdvance;
     } else {
         d.provenance = PlxdProvenance::Alive;
     }
@@ -2049,50 +1875,17 @@ bool FpgaSpi::publishDdrFrame(const DdrPublishFrame& frame, int bank) {
         plan.layout.crop_bottom != ddrLayout_.crop_bottom ||
         plan.layout.present_x != ddrLayout_.present_x ||
         plan.layout.present_y != ddrLayout_.present_y ||
-        plan.layout.format != ddrLayout_.format ||
-        plan.layout.phys_base != ddrLayout_.phys_base ||
-        plan.layout.bank_stride != ddrLayout_.bank_stride ||
-        plan.layout.doorbell_phys != ddrLayout_.doorbell_phys ||
-        plan.layout.frame_bytes != ddrLayout_.frame_bytes) {
-        if (!setDdrFrameLayout(plan.layout))
+        plan.layout.format != ddrLayout_.format) {
+        if (!setDdrFrameLayout(frame.geometry, frame.format))
             return false;
     }
     if (ddrLayout_.bank_stride != plan.layout.bank_stride ||
         ddrLayout_.doorbell_phys != plan.layout.doorbell_phys ||
-        ddrLayout_.frame_bytes != plan.layout.frame_bytes ||
-        ddrLayout_.phys_base != plan.layout.phys_base) {
+        ddrLayout_.frame_bytes != plan.layout.frame_bytes) {
         setErr("publishDdrFrame: active DDR layout disagrees with derived frame geometry");
         return false;
     }
     return sendDdrFrame(frame, plan);
-}
-
-bool FpgaSpi::publishDdrFabricOwned(const DdrPublishFrame& frame,
-                                    const DdrFabricOwnedPresentPlan& present, int bank) {
-    if (!present.valid) {
-        setErr("publishDdrFabricOwned: present plan invalid");
-        return false;
-    }
-    if (!frame.payload || frame.len != present.publish_bytes) {
-        setErr("publishDdrFabricOwned: payload length must equal native publish_bytes");
-        return false;
-    }
-    DdrFabricOwnedPublishPlan fplan{};
-    std::string err;
-    if (!makeDdrFabricOwnedPublishPlan(frame.payload, bank, present, fplan, &err)) {
-        setErr(err);
-        return false;
-    }
-    // Activate Option-C (or map-tier) bank window before mmap/copy.
-    if (!setDdrFrameLayout(fplan.publish.layout))
-        return false;
-    if (ddrLayout_.phys_base != fplan.publish.layout.phys_base ||
-        ddrLayout_.bank_stride != fplan.publish.layout.bank_stride ||
-        ddrLayout_.doorbell_phys != fplan.publish.layout.doorbell_phys) {
-        setErr("publishDdrFabricOwned: layout activation mismatch");
-        return false;
-    }
-    return sendDdrFrame(frame, fplan.publish);
 }
 
 bool FpgaSpi::sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len, int width, int height,

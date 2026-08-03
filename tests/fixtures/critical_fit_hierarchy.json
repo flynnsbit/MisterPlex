@@ -31,6 +31,16 @@
       "hierarchy_contains": "ddr_bitstream_reader:ddr_stream",
       "min_comb_aluts": 100,
       "min_registers": 100
+    },
+    {
+      "name": "plex_chrome",
+      "entity": "plex_chrome",
+      "hierarchy_contains": "plex_chrome",
+      "log_contains": "plex_chrome|u_plex_chrome",
+      "min_comb_aluts": 50,
+      "min_registers": 40,
+      "min_block_memory_bits": 4096,
+      "min_m10ks": 1
     }
   ]
 }

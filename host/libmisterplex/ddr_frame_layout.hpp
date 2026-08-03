@@ -7,6 +7,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include "libmisterplex/mailbox_abi_spec.hpp"
 #include <cstring>
 
 namespace misterplex {
@@ -219,6 +220,22 @@ enum class DdrFramePlacement {
 enum class DdrFrameFormat {
     Yuv420p,
 };
+
+// PLXG present-geometry mailbox — MUST match mailbox_abi::kPlxgOffset (FIXED 0x800).
+// Parent freeze: not a function of MAX_CMDS. Compile-time reachable cross-header guard.
+constexpr uint32_t kDdrFramePlxgOffset = mailbox_abi::kPlxgOffset;
+constexpr uint32_t kDdrFramePlxgMagic = mailbox_abi::kPlxgMagic;
+constexpr uint32_t kDdrFramePlxgBytes = 40u;
+// Product doorbell 0x300FF000 + FIXED PLXG (not legacy 0x3007F example base).
+constexpr uint32_t kDdrFramePlxgBootstrapPhys = 0x300FF000u + mailbox_abi::kPlxgOffset;
+static_assert(kDdrFramePlxgOffset == mailbox_abi::kPlxgOffset,
+              "ddr_frame_layout PLXG must equal mailbox_abi PLXG");
+static_assert(kDdrFramePlxgOffset == 0x800u, "PLXG wire ABI FIXED at +0x800");
+static_assert(kDdrFramePlxgOffset != mailbox_abi::kPlxcOffset,
+              "PLXG must not collide with PLXC +0x130");
+static_assert(mailbox_abi::kPlxlOffset + mailbox_abi::kPlxcListMaxCmds * 8u <= kDdrFramePlxgOffset,
+              "chrome list must not grow into PLXG");
+
 
 inline uint32_t ddrFrameFormatCode(DdrFrameFormat) {
     return 1;

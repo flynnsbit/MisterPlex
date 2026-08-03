@@ -1,0 +1,41 @@
+{
+  "schema": "misterplex.critical_fit_hierarchy.v1",
+  "description": "FAB_IDLE / chrome plane hard gate. Void fit if any row missing or below mins. See docs/fab-idle-postfit-gate.md",
+  "modules": [
+    {
+      "name": "plex_chrome",
+      "entity": "plex_chrome",
+      "hierarchy_contains": "plex_chrome",
+      "log_contains": "plex_chrome|u_plex_chrome",
+      "min_comb_aluts": 50,
+      "min_registers": 40,
+      "min_block_memory_bits": 4096,
+      "min_m10ks": 1
+    },
+    {
+      "name": "plex_chrome_host_if",
+      "entity": "plex_chrome_host_if",
+      "hierarchy_contains": "plex_chrome_host_if",
+      "log_contains": "plxc|u_plxc",
+      "min_comb_aluts": 5,
+      "min_registers": 10
+    },
+    {
+      "name": "ddr_frame_store",
+      "entity": "ddr_frame_store",
+      "hierarchy_contains": "ddr_frame_store",
+      "log_contains": "fstore|ddr_frame",
+      "min_comb_aluts": 100,
+      "min_registers": 50,
+      "min_block_memory_bits": 1000,
+      "min_m10ks": 1
+    },
+    {
+      "name": "present_core",
+      "entity": "present_core",
+      "hierarchy_contains": "present_core",
+      "min_comb_aluts": 10,
+      "min_registers": 10
+    }
+  ]
+}
