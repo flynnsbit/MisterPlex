@@ -1,0 +1,27 @@
+{
+  "architecture": "ascal_true_de_960",
+  "git_tree_hash": "be8838d59b518c330194f9b4530183e71836b441",
+  "git_head_at_lock": "3e59860119fe666c7646a181c7d8c226fc91a360",
+  "required_macros": {
+    "FRAME_W": "960",
+    "FRAME_H": "540",
+    "PRESENT_BEAM_960": "1",
+    "DDR_FRAME_STORE": "1",
+    "PRODUCT_NO_STUB": "1"
+  },
+  "forbidden_macros": [
+    "PRESENT_MULTI_PIXEL",
+    "PRESENT_SCALE_4_3",
+    "PRESENT_SCALE_2X",
+    "PRESENT_PX_PER_CLK",
+    "FABRIC_DDR_WRITER",
+    "FABRIC_NATIVE_720P_GEOM"
+  ],
+  "locked_by": "parent",
+  "locked_date": "2026-08-03",
+  "rationale": "Core emits true 960x540 DE; ascal (iauto=1) upscales to 1280x720. Content rate ~15.55 Mpix/s @30 Hz / ~12.44 @24 Hz \u2014 inside bridge limits without new PLL. mp_cea_1280 is NOT selected; 40 Mpix/s must not be cited as headroom for this fit. PRESENT_MULTI_PIXEL / PRESENT_SCALE_4_3 / PRESENT_SCALE_2X stay OFF.",
+  "notes": [
+    "git_tree_hash binds gated artefacts via compute_gated_tree_hash() and excludes this file.",
+    "Updating RTL/scripts without refreshing this hash is a deliberate B0_TREE_HASH_MISMATCH fail."
+  ]
+}

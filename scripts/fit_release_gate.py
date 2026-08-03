@@ -26,6 +26,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import shutil
@@ -44,6 +45,44 @@ CANDIDATE_PATHS = (
     ROOT / "docs" / "fit_candidate.json",
     ROOT / "assets" / "fit_candidate.json",
     FIX / "fit_candidate.json",
+)
+# Parent lock (2026-08-03): ascal_true_de_960 only for this fit campaign.
+PARENT_LOCKED_ARCH = "ascal_true_de_960"
+# Paths whose blob inventory is the candidate tree hash (excludes fit_candidate.json
+# so the candidate file cannot hash-bypass itself).
+GATED_PATHSPECS = (
+    "fpga",
+    "scripts/fit_release_gate.py",
+    "scripts/fit_release_gate.sh",
+    "scripts/check_verilator_elab.py",
+    "scripts/rtl_lint.py",
+    "scripts/check_define_parity.py",
+    "tests/rtl",
+    "tests/unit/test_present_true_de_count_rtl_sim.sh",
+    "tests/fixtures/fit_release_gate",
+    "docs/ascal-true-de-fit-card.md",
+    "docs/product-4-3-scaler-decision.md",
+    "Makefile",
+)
+# Open blockers that must remain visible on a stale product tree (mutation inventory).
+# Not every token forever — only defects still present in artefacts. Updated when
+# real fixes land (then mutation expects absence + a paired RED twin).
+LIVE_OPEN_BLOCKER_TOKENS = (
+    "B1_NO_COMPILE_TIME_OPTC",
+    "B1_LAYOUT_NOT_960",
+    "B2_FPS_INT_OVERFLOW",
+    "B2_NO_RASTER_GENERATOR",
+    "B1_40MPIX_NOT_PRODUCT",
+    "B4_PLXG_SAME_SEQ_ABA",
+    "B5_NO_DDR_ON_BEAM_TEST",
+    "B7_OPTC_WIDTH_ONLY",
+    "B7_PRESENT_CORE_NO_OPTC_PHYS",
+    "B8_PLXG_WR_COMMIT_TIED_ZERO",
+    "B8_CONTENT_BASE_NOT_960",
+    "B8_FORCE_GEOM_1280_NOT_960",
+    "B9_ASPECT_ORIGINAL_4_3",
+    "B9_NO_AR_TOPLEVEL_TEST",
+    "B12_DE_LAG_RGB_LATENCY_UNPROVEN",
 )
 # Real hollow integration QSF (sibling worktree) — RED twin target.
 HOLLOW_INTEG_QSF = Path(
@@ -105,6 +144,48 @@ def _run(cmd: list[str], *, cwd: Path | None = None, env: dict | None = None) ->
 
 def _read(path: Path) -> str:
     return path.read_text(errors="ignore") if path.is_file() else ""
+
+
+def compute_gated_tree_hash(root: Path = ROOT) -> str:
+    """SHA1 over working-tree blobs of gated paths (not index-only).
+
+    Uses `git ls-files` for the path set, then `git hash-object` on each
+    working-tree file so dirty edits count. Excludes fit_candidate.json so a
+    lane cannot clear B0 by editing only the candidate file.
+    """
+    list_cmd = ["git", "-C", str(root), "ls-files", "--", *GATED_PATHSPECS]
+    proc = subprocess.run(list_cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if proc.returncode != 0:
+        return ""
+    rows: list[str] = []
+    for rel in proc.stdout.splitlines():
+        if not rel or "fit_candidate.json" in rel:
+            continue
+        full = root / rel
+        if not full.is_file():
+            rows.append(f"MISSING {rel}")
+            continue
+        ho = subprocess.run(
+            ["git", "-C", str(root), "hash-object", str(full)],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        blob = ho.stdout.strip() if ho.returncode == 0 else "ERR"
+        rows.append(f"{blob}  {rel}")
+    rows.sort()
+    payload = "\n".join(rows) + ("\n" if rows else "")
+    return hashlib.sha1(payload.encode()).hexdigest()
+
+
+def _git_head(root: Path = ROOT) -> str:
+    proc = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    return proc.stdout.strip() if proc.returncode == 0 else ""
 
 
 def _repo_root_for(path: Path) -> Path | None:
@@ -176,15 +257,20 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
     msgs: list[str] = ["LEG0_ARCH_BLOCKERS_EXECUTED begin"]
     errors: list[str] = []
 
-    # --- B0: one coherent FIT_CANDIDATE lock ---
+    # --- B0: one coherent FIT_CANDIDATE lock (bound to gated tree hash) ---
+    # Candidate file is NOT a bypass: git_tree_hash must match compute_gated_tree_hash()
+    # over artefacts (excludes fit_candidate.json itself). Parent locked arch.
+    live_hash = compute_gated_tree_hash(ROOT)
+    live_head = _git_head(ROOT)
+    msgs.append(f"LEG0_GATED_TREE_HASH live={live_hash} HEAD={live_head[:12]}")
     cand_path = next((p for p in CANDIDATE_PATHS if p.is_file()), None)
     cand: dict | None = None
     if cand_path is None:
         errors.append(
             "B0_NO_CANDIDATE: missing docs/fit_candidate.json (or assets/ / "
             "tests/fixtures/fit_release_gate/). Gate refuses fit until one "
-            "architecture is locked with a tree hash. Allowed architecture: "
-            + ",".join(sorted(ALLOWED_ARCH))
+            "architecture is locked with a gated tree hash. Parent lock: "
+            f"{PARENT_LOCKED_ARCH}. Allowed: " + ",".join(sorted(ALLOWED_ARCH))
         )
     else:
         try:
@@ -194,22 +280,49 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
             cand = None
         if cand is not None:
             arch = str(cand.get("architecture", ""))
-            th = str(cand.get("git_tree_hash", cand.get("tree_hash", "")))
-            msgs.append(f"LEG0_CANDIDATE path={cand_path} architecture={arch!r} hash={th!r}")
+            th = str(cand.get("git_tree_hash", cand.get("tree_hash", ""))).lower()
+            msgs.append(
+                f"LEG0_CANDIDATE path={cand_path} architecture={arch!r} hash={th!r}"
+            )
             if arch not in ALLOWED_ARCH:
                 errors.append(
                     f"B0_BAD_ARCH: architecture={arch!r} not in {sorted(ALLOWED_ARCH)}"
                 )
-            if not re.fullmatch(r"[0-9a-f]{7,40}", th):
+            # Parent ruling: this campaign is ascal_true_de_960 only.
+            if arch != PARENT_LOCKED_ARCH:
                 errors.append(
-                    "B0_BAD_HASH: git_tree_hash must be 7–40 hex chars naming the "
-                    "coherent candidate tree (not empty)"
+                    f"B0_ARCH_NOT_PARENT_LOCK: architecture={arch!r} but parent "
+                    f"locked {PARENT_LOCKED_ARCH} (mp_cea_1280 not selected; "
+                    "40 Mpix/s is not headroom for this fit)"
                 )
+            if not re.fullmatch(r"[0-9a-f]{40}", th):
+                errors.append(
+                    "B0_BAD_HASH: git_tree_hash must be full 40-char sha1 from "
+                    "compute_gated_tree_hash() (not a short prefix, not empty)"
+                )
+            elif not live_hash:
+                errors.append(
+                    "B0_LIVE_HASH_UNAVAILABLE: git ls-files failed — cannot bind candidate"
+                )
+            elif th != live_hash:
+                errors.append(
+                    f"B0_TREE_HASH_MISMATCH: candidate git_tree_hash={th} "
+                    f"live_gated={live_hash}. Candidate is not a bypass — update "
+                    "hash only after intentional gated-artefact change, or restore "
+                    "artefacts to the locked tree."
+                )
+            else:
+                msgs.append("LEG0_EVIDENCE candidate git_tree_hash matches live gated tree")
             # Refuse dual-path cargo: candidate must not require both beams.
             req = cand.get("required_macros") or cand.get("qsf_macros") or {}
             if isinstance(req, dict):
                 has_beam = str(req.get("PRESENT_BEAM_960", "")).lower() in {"1", "true"}
                 has_mp = str(req.get("PRESENT_MULTI_PIXEL", "")).lower() in {"1", "true"}
+                if not has_beam and arch == "ascal_true_de_960":
+                    errors.append(
+                        "B0_BEAM_RUNTIME_OFF_CARGO: ascal_true_de_960 candidate must list "
+                        "PRESENT_BEAM_960=1 as required (no runtime-OFF beam cargo)"
+                    )
                 if has_beam and has_mp:
                     errors.append(
                         "B0_DUAL_PATH: candidate requires both PRESENT_BEAM_960 and "
@@ -218,13 +331,35 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
                 if arch == "ascal_true_de_960" and has_mp:
                     errors.append(
                         "B0_ASCAL_VS_MP: ascal_true_de_960 candidate must not enable "
-                        "PRESENT_MULTI_PIXEL (rd-duck: complex/mp path separate)"
+                        "PRESENT_MULTI_PIXEL (parent lock + w-scaler fit card)"
                     )
                 if arch == "mp_cea_1280" and has_beam:
                     errors.append(
                         "B0_MP_VS_ASCAL: mp_cea_1280 candidate must not enable "
                         "PRESENT_BEAM_960"
                     )
+                # Required macro set must match gate REQUIRED_EXACT for ascal.
+                if arch == "ascal_true_de_960":
+                    for k, v in REQUIRED_EXACT.items():
+                        got = str(req.get(k, ""))
+                        if got != v:
+                            errors.append(
+                                f"B0_CANDIDATE_MACRO_DRIFT: required_macros[{k}]="
+                                f"{got!r} want {v!r} (must match gate REQUIRED_EXACT)"
+                            )
+            forbid = cand.get("forbidden_macros") or []
+            if arch == "ascal_true_de_960" and isinstance(forbid, list):
+                for m in (
+                    "PRESENT_MULTI_PIXEL",
+                    "PRESENT_SCALE_4_3",
+                    "PRESENT_SCALE_2X",
+                    "FABRIC_DDR_WRITER",
+                ):
+                    if m not in forbid:
+                        errors.append(
+                            f"B0_CANDIDATE_FORBID_INCOMPLETE: must list {m} in "
+                            "forbidden_macros for ascal_true_de_960"
+                        )
 
     # --- B1: layout / compile-time Option-C vs FRAME 960 claim ---
     # Evidence: ddr_frame_layout_params.svh hardwires 480p presented; present_core
@@ -723,22 +858,23 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
                 "re-proven for FRAME 960×540 (rd-duck adc9292 RGB/store latency)."
             )
 
-    # --- Runtime-OFF OSD / colorbars timing cargo when candidate is ascal ---
+    # --- Runtime-OFF OSD / colorbars note when candidate is ascal ---
     if cand and cand.get("architecture") == "ascal_true_de_960":
-        # present_core still has colorbars Template path when PRESENT_BEAM_960 undefined.
         if "`else" in core and "colorbars bars" in core and "PRESENT_BEAM_960" in core:
             msgs.append(
                 "LEG0_NOTE: colorbars Template path remains under `ifndef PRESENT_BEAM_960` "
-                "— acceptable only if QSF forces PRESENT_BEAM_960=1 (leg1) and candidate "
-                "forbids shipping without it"
+                "— acceptable only if QSF forces PRESENT_BEAM_960=1 (leg1)"
             )
-        # Reject candidate that leaves beam default-OFF as ship.
-        req = cand.get("required_macros") or cand.get("qsf_macros") or {}
-        if isinstance(req, dict) and str(req.get("PRESENT_BEAM_960", "")) not in {"1", "true"}:
-            errors.append(
-                "B0_BEAM_RUNTIME_OFF_CARGO: ascal_true_de_960 candidate must list "
-                "PRESENT_BEAM_960=1 as required (no runtime-OFF beam / Template DE cargo)"
-            )
+
+    # Anti-theatre: gate source must not define self-pass switches (not mere mentions).
+    gate_src = _read(Path(__file__))
+    if re.search(r"^\s*LEG0_FORCE_PASS\s*=\s*True", gate_src, re.M) or re.search(
+        r"^\s*SKIP_ALL_ARCH_BLOCKERS\s*=\s*True", gate_src, re.M
+    ):
+        errors.append(
+            "B0_GATE_SELF_WEAKEN: fit_release_gate.py defines FORCE_PASS/SKIP_ALL "
+            "switch — refuse (AGENTS.md gate self-weakening forbidden)"
+        )
 
     if errors:
         msgs.append("LEG0_FAIL EXECUTED reasons:")
@@ -1307,6 +1443,105 @@ def self_test() -> int:
             failures += 1
         else:
             print("PASS SELFTEST b11_macro_only_foreign_ok EXECUTED")
+
+    # --- Mutation / hard-to-fool inventory (rd-duck + parent) ---
+    print("\n=== SELFTEST mutation_blockers_still_live ===")
+    rc_m, msgs_m = leg0_arch_blockers()
+    live_txt = "\n".join(msgs_m)
+    print(f"mutation_live leg0 true rc={rc_m}")
+    missing_live = [t for t in LIVE_OPEN_BLOCKER_TOKENS if t not in live_txt]
+    if missing_live:
+        print(f"FAIL mutation_live: tokens vanished without artefact fix: {missing_live}")
+        failures += 1
+    else:
+        print(
+            f"PASS SELFTEST mutation_live_open_blockers EXECUTED "
+            f"n={len(LIVE_OPEN_BLOCKER_TOKENS)}"
+        )
+
+    # Candidate hash mismatch must FAIL (candidate is not a bypass).
+    print("\n=== SELFTEST mutation_b0_bad_hash ===")
+    cand_path = ROOT / "docs" / "fit_candidate.json"
+    backup = cand_path.read_text() if cand_path.is_file() else None
+    bad = {
+        "architecture": PARENT_LOCKED_ARCH,
+        "git_tree_hash": "0" * 40,
+        "required_macros": dict(REQUIRED_EXACT),
+        "forbidden_macros": [
+            "PRESENT_MULTI_PIXEL",
+            "PRESENT_SCALE_4_3",
+            "PRESENT_SCALE_2X",
+            "FABRIC_DDR_WRITER",
+        ],
+        "locked_by": "mutation",
+    }
+    cand_path.parent.mkdir(parents=True, exist_ok=True)
+    cand_path.write_text(json.dumps(bad, indent=2) + "\n")
+    rc_bad, msgs_bad = leg0_arch_blockers()
+    bad_txt = "\n".join(msgs_bad)
+    print(f"mutation_bad_hash leg0 true rc={rc_bad}")
+    if "B0_TREE_HASH_MISMATCH" not in bad_txt or rc_bad == 0:
+        print("FAIL mutation_bad_hash: expected B0_TREE_HASH_MISMATCH and rc!=0")
+        failures += 1
+    else:
+        print("PASS SELFTEST mutation_b0_bad_hash EXECUTED")
+    # Candidate with MP under ascal must FAIL.
+    bad_mp = dict(bad)
+    bad_mp["git_tree_hash"] = compute_gated_tree_hash(ROOT)
+    bad_mp["required_macros"] = dict(REQUIRED_EXACT)
+    bad_mp["required_macros"]["PRESENT_MULTI_PIXEL"] = "1"
+    cand_path.write_text(json.dumps(bad_mp, indent=2) + "\n")
+    rc_mp, msgs_mp = leg0_arch_blockers()
+    mp_txt = "\n".join(msgs_mp)
+    print(f"mutation_ascal_mp leg0 true rc={rc_mp}")
+    if "B0_ASCAL_VS_MP" not in mp_txt and "B0_DUAL_PATH" not in mp_txt:
+        print("FAIL mutation_ascal_mp: expected B0_ASCAL_VS_MP or B0_DUAL_PATH")
+        failures += 1
+    else:
+        print("PASS SELFTEST mutation_b0_ascal_vs_mp EXECUTED")
+    # Restore real candidate if we had one; else rewrite correct lock file.
+    if backup is not None:
+        cand_path.write_text(backup)
+    else:
+        # leave a correct candidate for the tree (parent lock)
+        good_hash = compute_gated_tree_hash(ROOT)
+        good = {
+            "architecture": PARENT_LOCKED_ARCH,
+            "git_tree_hash": good_hash,
+            "git_head_at_lock": _git_head(ROOT),
+            "required_macros": dict(REQUIRED_EXACT),
+            "forbidden_macros": [
+                "PRESENT_MULTI_PIXEL",
+                "PRESENT_SCALE_4_3",
+                "PRESENT_SCALE_2X",
+                "PRESENT_PX_PER_CLK",
+                "FABRIC_DDR_WRITER",
+                "FABRIC_NATIVE_720P_GEOM",
+            ],
+            "locked_by": "parent",
+            "rationale": (
+                "Core emits true 960x540 DE; ascal upscales to 1280x720. "
+                "Content ~15.55 Mpix/s @30 — not mp_cea_1280; 40 Mpix/s is not headroom."
+            ),
+        }
+        cand_path.write_text(json.dumps(good, indent=2) + "\n")
+    # Re-hash after restore (candidate excluded from hash) and ensure match path works.
+    rc_ok, msgs_ok = leg0_arch_blockers()
+    ok_txt = "\n".join(msgs_ok)
+    if "B0_TREE_HASH_MISMATCH" in ok_txt:
+        print("FAIL mutation_restore: good candidate still hash-mismatches")
+        failures += 1
+    elif "B0_NO_CANDIDATE" in ok_txt:
+        print("FAIL mutation_restore: candidate missing after restore")
+        failures += 1
+    else:
+        print("PASS SELFTEST mutation_b0_good_hash_bind EXECUTED")
+    # B0 cleared does not imply grant — live open tokens must remain.
+    if rc_ok == 0:
+        print("FAIL mutation_restore: leg0 unexpectedly fully clear")
+        failures += 1
+    else:
+        print(f"PASS SELFTEST mutation_leg0_still_blocks_grant EXECUTED rc={rc_ok}")
 
     if failures:
         print(f"FIT_RELEASE_GATE_SELFTEST_FAIL failures={failures}")
