@@ -1,4 +1,7 @@
 // Prove product 4/3 path is specialised (not general Q16) and matches endpoints.
+// NOTE: max_diff vs general Q16 is AGREEMENT only — not phase correctness.
+// Phase correctness lives in test_present_scale_4_3_phase_oracle.cpp (independent
+// arithmetic) and the RTL sim oracle (must RED on FAULT_PHASE_DST).
 // Pre-registered (parent product budget, measured):
 //   PMS 960x540 baseline → ARM decode+sws+copy = 34.50 ms, margin +7.16
 //   fabric 960x540 → 1280x720 OUTPUT (not 720p source)

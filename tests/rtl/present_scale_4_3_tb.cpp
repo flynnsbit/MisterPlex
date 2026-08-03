@@ -1,8 +1,8 @@
 // Red-before-green for present_scale_4_3 (product 960×540 → 1280×720).
-// A) endpoints + phase ROM + src=dst*3/4
-// B) phase sequence 0,1,2,3 and weights
+// A) endpoints + src=floor(dst*3/4)
+// B) phase = (3*dst) mod 4 → sequence **0,3,2,1** (NOT dst mod 4 = 0,1,2,3)
 // C) NEG: mid must not be identity (639)
-// FAULT builds: INVERT and PHASE_OBO must fail product checks.
+// FAULT PHASE_DST / PHASE_OBO: phase=dst[1:0] must FAIL oracle phase checks.
 // true rc direct.
 
 #include "Vpresent_scale_4_3_tb.h"
@@ -46,6 +46,20 @@ struct Sim {
 };
 
 int src4_3(int dst) { return (dst * 3) / 4; }
+// Independent oracle: frac phase of floor(3·dst/4) is (3·dst) mod 4.
+int phase4_3(int dst) { return (dst * 3) & 3; }
+// Buggy phase (what FAULT_PHASE_DST implements).
+int phaseDstMod4(int dst) { return dst & 3; }
+
+// ROM weights for phase index (frac = phase/4).
+void weightsForPhase(int ph, int& w0, int& w1) {
+	switch (ph & 3) {
+	case 0: w0 = 255; w1 = 0; break;
+	case 1: w0 = 192; w1 = 64; break;
+	case 2: w0 = 128; w1 = 128; break;
+	default: w0 = 64; w1 = 192; break;
+	}
+}
 
 int runProduct() {
 	Sim s;
@@ -71,8 +85,12 @@ int runProduct() {
 	const int w11 = int(s.top.wx1);
 	s.sample(2, 0);
 	const int ph2 = int(s.top.phase_x);
+	const int w20 = int(s.top.wx0);
+	const int w21 = int(s.top.wx1);
 	s.sample(3, 0);
 	const int ph3 = int(s.top.phase_x);
+	const int w30 = int(s.top.wx0);
+	const int w31 = int(s.top.wx1);
 	s.sample(1279, 719);
 	const int x_last = int(s.top.store_x);
 	const int y_last = int(s.top.store_y);
@@ -93,28 +111,50 @@ int runProduct() {
 			++f;
 		}
 	};
+	// Structural: correct oracle ≠ dst-mod-4 (else test cannot catch the bug).
+	exp(phase4_3(0) == 0 && phase4_3(1) == 3 && phase4_3(2) == 2 && phase4_3(3) == 1,
+	    "oracle phase seq 0,3,2,1");
+	exp(phaseDstMod4(1) == 1 && phaseDstMod4(1) != phase4_3(1),
+	    "oracle disagrees dst-mod4 at dst=1 (test can fail buggy RTL)");
+
 	exp(x0 == 0 && x_last == 959, "H endpoints 0..959");
 	exp(y_last == 539, "V endpoint 539");
 	exp(xs.size() == 960u && ys.size() == 540u, "unique covers source");
-	exp(ph0 == 0 && ph1 == 1 && ph2 == 2 && ph3 == 3, "phase sequence 0..3");
-	exp(w00 == 255 && w01 == 0, "phase0 pure NN weights");
-	exp(w10 == 192 && w11 == 64, "phase1 3:1 weights");
+	// Correct phase walk: 0,3,2,1 — NOT 0,1,2,3
+	exp(ph0 == 0 && ph1 == 3 && ph2 == 2 && ph3 == 1, "phase sequence 0,3,2,1");
+	exp(w00 == 255 && w01 == 0, "dst0 phase0 pure NN");
+	// dst=1 → phase 3 → weights 64/192 (frac 3/4), NOT 192/64
+	exp(w10 == 64 && w11 == 192, "dst1 phase3 weights 1:3");
+	exp(w20 == 128 && w21 == 128, "dst2 phase2 weights 1:1");
+	exp(w30 == 192 && w31 == 64, "dst3 phase1 weights 3:1");
 	exp(x1s == src4_3(1), "src(1)=0");
 	exp(x_last == src4_3(1279), "src(1279)=959");
 	exp(x_mid == src4_3(639), "mid x = 639*3/4");
 	exp(y_mid == src4_3(359), "mid y = 359*3/4");
-	// Identity would keep x_mid=639; inverted *4/4 keeps near glass.
 	exp(x_mid != 639, "not identity glass map");
 	exp(x_mid == 479, "4/3 mid x=479");
-	// Spot-check more phases
-	for (int hc = 0; hc < 16; ++hc) {
+	// Full oracle: src + phase + weights H and V
+	for (int hc = 0; hc < 64; ++hc) {
 		s.sample(hc, 0);
-		exp(int(s.top.store_x) == src4_3(hc), "src=hc*3/4 row");
-		exp(int(s.top.phase_x) == (hc & 3), "phase=hc[1:0]");
+		const int ph = phase4_3(hc);
+		int ew0 = 0, ew1 = 0;
+		weightsForPhase(ph, ew0, ew1);
+		exp(int(s.top.store_x) == src4_3(hc), "src=floor(hc*3/4)");
+		exp(int(s.top.phase_x) == ph, "phase_x=(3*hc)mod4");
+		exp(int(s.top.wx0) == ew0 && int(s.top.wx1) == ew1, "wx ROM vs oracle");
+	}
+	for (int py = 0; py < 64; ++py) {
+		s.sample(0, py);
+		const int ph = phase4_3(py);
+		int ew0 = 0, ew1 = 0;
+		weightsForPhase(ph, ew0, ew1);
+		exp(int(s.top.store_y) == src4_3(py), "src_y=floor(py*3/4)");
+		exp(int(s.top.phase_y) == ph, "phase_y=(3*py)mod4");
+		exp(int(s.top.wy0) == ew0 && int(s.top.wy1) == ew1, "wy ROM vs oracle");
 	}
 	if (f)
 		return 1;
-	std::cout << "PASS present_scale_4_3 product 960x540→1280x720\n";
+	std::cout << "PASS present_scale_4_3 product 960x540→1280x720 oracle_phase=0,3,2,1\n";
 	return 0;
 }
 

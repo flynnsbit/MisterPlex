@@ -72,7 +72,7 @@ w-scaler bank width alone does **not** grow ACTIVE. Full-raster ACTIVE needs
 | **Destination** `h_de×v_de` | Matches **glass DE owner** | 529×480 product; **1280×720** multi-pixel |
 | **STORAGE** (bank payload / `rt_coded_*` / plane bases) | ARM publish + w-scaler READ | Product **960×540**, strides **960/480**, **777600 B**, U=**518400**. Never canvas dims here. |
 | **CANVAS** (glass DE / OSD / scale dest) | w-clock / w-osd | **1280×720**. Independent of storage. |
-| **MAP TIER** | w-mem WRITE / w-scaler READ | Option-C when storage I420 **> usable legacy** = `stride-0x1000` (**520192**), not full 524288, not `coded_w≥1280`. |
+| **MAP TIER** | **w-mem owns** Option-C select | Spec: storage I420 **> usable** `stride-0x1000` (520192). w-scaler READ consumes `eff_*` only — no duplicate predicate. |
 | **SPS coded H** | bitstream-ring / fabric-decoder | **544** + crop 4 → 540. FFmpeg owns crop on ARM path. Product bank planes stay **540**. |
 
 Under `PRESENT_MULTI_PIXEL` + `use_ext`: window **must** take beam `glass_x0` and

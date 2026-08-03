@@ -10,8 +10,12 @@
 //   for bitstream-ring / fabric-decoder consumers, not this scaler on ARM path.
 //   Never set SRC_H=544 (would yield ~725.3 glass lines — "quality" false RCA).
 //
-//   src = dst * 3 / 4     (integer; dst=1279 → src=959 exact)
-//   phase = dst[1:0]      // 0,1,2,3 → frac 0, 1/4, 1/2, 3/4 repeating
+//   src   = floor(dst * 3 / 4)     // x_num[13:2]; dst=1279 → src=959 exact
+//   phase = (dst * 3) mod 4        // x_num[1:0] — NOT dst[1:0]
+//
+// Phase sequence as dst advances 0,1,2,3: **0,3,2,1** (frac 0, 3/4, 1/2, 1/4).
+// Using dst[1:0] walks 0,1,2,3 and mis-weights 3 of every 4 pixels (rd-duck).
+// Same rule on Y: phase_y = y_num[1:0].
 //
 // No runtime division on the pixel path: *3 is shift-add, /4 is >>2.
 // Bilinear weights live in a 4-entry ROM (phase → wx0/wx1). Vertical same.
@@ -32,7 +36,8 @@
 // hc/py = beam glass_x0/y. store_* = bank coords (w-scaler). Not Template 529.
 //
 // Default OFF: instantiate only under `PRESENT_SCALE_4_3`.
-// FAULT: PRESENT_SCALE_4_3_FAULT_INVERT, PRESENT_SCALE_4_3_FAULT_PHASE_OBO.
+// FAULT: PRESENT_SCALE_4_3_FAULT_INVERT
+//        PRESENT_SCALE_4_3_FAULT_PHASE_DST  — old bug: phase=dst[1:0] (must RED)
 
 `default_nettype none
 
@@ -90,12 +95,18 @@ module present_scale_4_3 #(
 	wire [10:0] src_x_c = (src_x_c_u > SRC_X_LAST) ? SRC_X_LAST : src_x_c_u;
 	wire [10:0] src_y_c = (src_y_c_u > SRC_Y_LAST) ? SRC_Y_LAST : src_y_c_u;
 
-`ifdef PRESENT_SCALE_4_3_FAULT_PHASE_OBO
-	wire [1:0] ph_x = hc[1:0] + 2'd1;
-	wire [1:0] ph_y = py[1:0] + 2'd1;
-`else
+	// Fractional phase of floor(3·dst/4) is (3·dst) mod 4 = x_num[1:0].
+`ifdef PRESENT_SCALE_4_3_FAULT_PHASE_DST
+	// FAULT: dst mod 4 — wrong weights on 3/4 of pixels (pre-fix bug).
 	wire [1:0] ph_x = hc[1:0];
 	wire [1:0] ph_y = py[1:0];
+`elsif PRESENT_SCALE_4_3_FAULT_PHASE_OBO
+	// Legacy alias of PHASE_DST (kept so old +define still REDs).
+	wire [1:0] ph_x = hc[1:0];
+	wire [1:0] ph_y = py[1:0];
+`else
+	wire [1:0] ph_x = x_num[1:0];
+	wire [1:0] ph_y = y_num[1:0];
 `endif
 
 	wire [7:0] wx0_w = (ph_x == 2'd0) ? 8'd255 :

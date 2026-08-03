@@ -41,7 +41,8 @@ Free M10K post-nostub: **356**. Area is not the constraint — **wiring complexi
 | Product bank stride | **960** | w-mem WRITE / w-scaler READ |
 | Product bank bytes | **777600** | I420 |
 | STORAGE vs CANVAS | Storage **960×540/777600** drives plane bases; canvas **1280×720** is DE only. Conflating → U=921600 vs 518400. | rd-duck; `DdrNativeContentLayout` |
-| Option-C bank map | Select when I420 **> usable** `stride-0x1000` (legacy **520192**). Full-stride 524288 is wrong (720×482 trap). | w-mem WRITE / w-scaler READ |
+| Option-C bank map | **w-mem owns** usable-capacity select (`stride-0x1000`). w-scaler READ uses `eff_*` only. | w-mem |
+| Phase index | `phase=(3·dst) mod 4` → **0,3,2,1** via `x_num[1:0]`. NOT `dst[1:0]`. | rd-duck; oracle test |
 | SPS coded H | 544 ring/decoder only; product bank = 540 after FFmpeg crop. | parent SPS + rawvideo wc |
 | Glass DE | **1280×720** | w-clock `PRESENT_MULTI_PIXEL` |
 | HUD canvas | **1280×720** | w-osd `kTargetOut` |

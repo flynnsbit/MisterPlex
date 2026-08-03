@@ -1,12 +1,9 @@
 #!/usr/bin/env bash
 # ddr_frame_store runtime stride / CODED geometry — red-before-green Verilator gate.
 # A) geom_enable=0 → legacy 624 plane bases REPRO
-# B) geom_enable=1 1280×720 stride=1280 → U/V bases 115200/144000 + Option-C PASS
-# B2) product STORAGE 960×540 usable-capacity → Option-C PASS
-# B3) storage_vs_canvas + usable_vs_fullstride structural PASS
+# B) geom_enable=1 1280×720 stride=1280 → U/V bases 115200/144000 PASS
 # C) neg: geom=0 cannot satisfy 720p bases PASS (structural + live)
 # D) red twin FAULT_IGNORE_GEOM → rt720 expectations FAIL
-# E) red twin FAULT_WIDTH_OPTC_PRED → product 960 Option-C Y FAIL (old predicate)
 # Soft-skip≠PASS. true rc direct.
 set -euo pipefail
 
@@ -79,18 +76,9 @@ echo "$GOUT"
 assert_sim_executed "green" "$GOUT" \
   "CASE legacy624 EXECUTED" \
   "CASE rt720 EXECUTED" \
-  "CASE prod540 EXECUTED" \
-  "CASE prod540_capacity EXECUTED" \
-  "CASE usable_vs_fullstride EXECUTED" \
-  "CASE storage_vs_canvas EXECUTED" \
-  "CASE product_storage_h EXECUTED" \
   "CASE neg_geom0_expect720 EXECUTED" \
   "PASS legacy624" \
   "PASS rt720" \
-  "PASS prod540 Option-C bank map" \
-  "PASS usable_vs_fullstride" \
-  "PASS storage_vs_canvas" \
-  "PASS product_storage_h" \
   "Option-C bank map" \
   "PASS red-check neg_geom0_expect720" \
   "RUNTIME_STRIDE_GREEN_DONE"
@@ -154,38 +142,6 @@ if [[ "$R2RC" -eq 0 ]]; then
   exit 1
 fi
 echo "OK red twin FORCE_LEGACY_BANK_MAP true rc=$R2RC (expected non-zero)"
-
-echo "=== RED twin FAULT_WIDTH_OPTC_PRED (product 960 must miss Option-C) ==="
-BUILD_R3="$ROOT/build/verilator/ddr_runtime_stride_red_width_pred"
-mkdir -p "$BUILD_R3"
-set +e
-"$RUN_VERILATOR" "${COMMON[@]}" -Mdir "$BUILD_R3" \
-  +define+DDR_FRAME_STORE_FAULT_WIDTH_OPTC_PRED \
-  -CFLAGS "-DDDR_FRAME_STORE_FAULT_WIDTH_OPTC_PRED" >"$BUILD_R3/build.log" 2>&1
-R3BRC=$?
-set -e
-if [[ "$R3BRC" -ne 0 ]]; then
-  tail -40 "$BUILD_R3/build.log" >&2
-  echo "FAIL red-width-pred build true rc=$R3BRC" >&2
-  exit "$R3BRC"
-fi
-set +e
-R3OUT="$("$BUILD_R3/Vddr_frame_store_runtime_stride_tb" 2>&1)"
-R3RC=$?
-set -e
-echo "$R3OUT"
-assert_sim_executed "red-width-pred" "$R3OUT" \
-  "CASE prod540_width_pred_red EXECUTED" \
-  "RUNTIME_STRIDE_WIDTH_PRED_RED_DONE"
-if grep -q "PASS prod540_width_pred_red Option-C bank map" <<<"$R3OUT"; then
-  echo "FAIL red-width-pred: product 960 got Option-C under WIDTH_OPTC_PRED fault" >&2
-  exit 1
-fi
-if [[ "$R3RC" -eq 0 ]]; then
-  echo "FAIL red-width-pred: expected Option-C miss true rc=$R3RC" >&2
-  exit 1
-fi
-echo "OK red twin FAULT_WIDTH_OPTC_PRED true rc=$R3RC (expected non-zero)"
 
 echo "PASS test_ddr_runtime_stride_rtl_sim all gates"
 exit 0

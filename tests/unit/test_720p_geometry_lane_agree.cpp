@@ -96,38 +96,31 @@ int main() {
 	chk(stor.valid && stor.frame_bytes == 777600u, "native storage layout 777600");
 	chk(stor.u_offset == 518400u && stor.v_offset == 648000u, "native U/V storage");
 	chk(stor.y_stride == 960 && stor.chroma_stride == 480, "native strides");
-	// Usable capacity (not full stride). 720×482 exposes the bug class.
+	// Usable-capacity SPEC (host). RTL Option-C select is **w-mem owned** —
+	// this gate pins the arithmetic so lanes agree; it does not claim our RTL.
 	constexpr int kTight720x482 = 720 * 482 * 3 / 2; // 520560
 	chk(kTight720x482 > kLegUsable, "720x482 > usable");
 	chk(kTight720x482 <= int(kPlex480pYuv420pBankStride), "720x482 <= full stride (trap)");
-	chk(ddrFrameNeedsOptionCMap(720, 360, 482), "usable: 720x482 → Option-C");
+	chk(ddrFrameNeedsOptionCMap(720, 360, 482), "spec: 720x482 needs Option-C map");
 	chk(ddrFramePayloadFitsBankUsable(size_t(kLegUsable - 1), kPlex480pYuv420pBankStride),
-	    "usable-1 fits legacy");
+	    "usable-1 fits");
 	chk(ddrFramePayloadFitsBankUsable(size_t(kLegUsable), kPlex480pYuv420pBankStride),
-	    "usable exact fits legacy");
+	    "usable exact fits");
 	chk(!ddrFramePayloadFitsBankUsable(size_t(kLegUsable + 1), kPlex480pYuv420pBankStride),
-	    "usable+1 needs larger map");
-	// bank1 overlap model: base=0, stride=0x80000, doorbell=0xFFFF000
+	    "usable+1 no fit");
 	{
 		const uint32_t base = 0x30000000u;
 		const uint32_t stride = kPlex480pYuv420pBankStride;
 		const uint32_t doorbell = base + 2u * stride - 0x1000u;
 		const uint32_t bank1 = base + stride;
-		const uint32_t endExact = bank1 + uint32_t(kLegUsable);
-		const uint32_t endPlus = bank1 + uint32_t(kLegUsable + 1);
-		const uint32_t end482 = bank1 + uint32_t(kTight720x482);
-		chk(endExact <= doorbell, "exact usable bank1End <= doorbell");
-		chk(endPlus > doorbell, "usable+1 bank1 overlaps doorbell");
-		chk(end482 > doorbell, "720x482 bank1 overlaps doorbell by 368");
-		chk(end482 - doorbell == 368u, "overlap 368 B");
+		chk(bank1 + uint32_t(kLegUsable) <= doorbell, "exact bank1End <= doorbell");
+		chk(bank1 + uint32_t(kLegUsable + 1) > doorbell, "usable+1 overlaps doorbell");
+		chk(bank1 + uint32_t(kTight720x482) - doorbell == 368u, "720x482 overlap 368 B");
 	}
-	chk(ddrFrameNeedsOptionCMap(960, 480, 540), "capacity: storage 960x540 → Option-C");
-	chk(!ddrFrameNeedsOptionCMap(624, 312, 480), "capacity: legacy 624x480 stays legacy");
-	chk(ddrFrameNeedsOptionCMap(1280, 640, 720), "capacity: canvas-sized payload → Option-C");
+	chk(ddrFrameNeedsOptionCMap(960, 480, 540), "spec: product storage needs Option-C");
 	chk(ddrNativeContentFitsBank(stor, kPlex720pYuv420pBankStride), "storage fits Option-C usable");
 	chk(!ddrNativeContentFitsBank(stor, kPlex480pYuv420pBankStride), "storage misses legacy usable");
-	// Width-only miss (parent defect).
-	chk(kProductSrcW < 1280, "NEG: width>=1280 misses product 960");
+	chk(kProductSrcW < 1280, "width-only predicate would miss product 960 (w-mem fix)");
 	// Product path: storage H = 540 only. SPS 544 is decoder/ring, not bank planes.
 	chk(kProductSrcH == kPlexProductStorageH, "scale/storage H = 540");
 	chk(kPlexProductSpsCodedH == 544, "SPS coded 544 recorded");

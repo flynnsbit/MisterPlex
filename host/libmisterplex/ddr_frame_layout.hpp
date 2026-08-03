@@ -116,10 +116,11 @@ constexpr uint32_t kDdrFramePlxgMagic = 0x504C5847u; // "PLXG"
 // SPS (bitstream, fabric-decoder/ring only): coded 544, crop_bottom 4 → 540.
 // Product bank planes use **540**, never 544. See ddr_bitstream_ring.hpp.
 //
-// Bank usable payload (matches ddrFrameLayoutValid bank1End <= doorbell):
+// Bank usable payload (rd-duck; **w-mem owns** RTL Option-C predicate):
 //   doorbell = phys + 2*stride - 0x1000
 //   usable   = stride - 0x1000   (legacy: 524288-4096 = 520192)
 // Full-stride compare is WRONG: 720×482 = 520560 < 524288 but overlaps doorbell.
+// w-scaler does NOT land the ddr_frame_store map select — coordinate with w-mem.
 constexpr uint32_t kDdrFrameControlPageBytes = 0x1000u;
 constexpr uint32_t kPlex480pYuv420pUsablePayloadBytes =
     kPlex480pYuv420pBankStride - kDdrFrameControlPageBytes; // 520192
@@ -227,8 +228,8 @@ inline size_t ddrI420BytesFromStrides(int yStrideBytes, int chromaStrideBytes, i
            size_t(storageH / 2) * size_t(chromaStrideBytes) * 2u;
 }
 
-// Option-C when storage payload does not fit legacy *usable* capacity.
-// NOT coded_w>=1280. NOT full bank_stride.
+// Host-side usable-capacity helper (spec). RTL map select is **w-mem owned** —
+// do not treat this as proof that ddr_frame_store implements it yet.
 inline bool ddrFrameNeedsOptionCMap(int yStrideBytes, int chromaStrideBytes, int storageH,
                                     uint32_t legacyBankStride = kPlex480pYuv420pBankStride) {
     const size_t bytes = ddrI420BytesFromStrides(yStrideBytes, chromaStrideBytes, storageH);

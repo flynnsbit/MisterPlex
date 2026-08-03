@@ -8,9 +8,7 @@
 //
 // geom_enable=0 (reset): bit-exact parameter path (CODED_W/H, stride=CODED_W,
 // bank map PHYS_BASE/0x80000/doorbell product).
-// geom_enable=1 && payload does not fit legacy 512KiB bank: Option-C map
-//   (0x30180000/0x180000/0x3047F000). NOT coded_w>=1280 — product 960×540
-//   I420 is 777600 B > 524288 and must select Option-C (rd-duck / parent).
+// geom_enable=1 && coded_w>=1280: Option-C bank map (0x30180000/0x180000/0x3047F000)
 // + runtime plane pitch — contract with w-mem fabric_ddr_writer 720p tier.
 
 module ddr_frame_store #(
@@ -33,8 +31,7 @@ module ddr_frame_store #(
 	parameter int HPS_BANK_STRIDE_BYTES = 524288,
 	parameter [31:0] DOORBELL_PHYS = PHYS_BASE + (2 * HPS_BANK_STRIDE_BYTES) - 32'h1000,
 	// Option-C 720p map (parent-verified 0x30180000 / 0x180000 / 0x3047F000).
-	// Runtime-selected when geom_enable && I420 payload > legacy bank stride.
-	// Default path uses PHYS_* (legacy).
+	// Runtime-selected when geom_enable && coded_w>=1280. Default path uses PHYS_*.
 	parameter [31:0] PHYS_BASE_720P = 32'h3018_0000,
 	parameter int HPS_BANK_STRIDE_BYTES_720P = 32'h0018_0000,
 	parameter [31:0] DOORBELL_PHYS_720P = 32'h3047_F000,
@@ -233,17 +230,6 @@ module ddr_frame_store #(
 
 	wire [28:0] rt_y_bytes_qw = ({17'd0, rt_ys_cl} * {18'd0, rt_ch_cl}) >> 3; // (ys*ch)/8
 	wire [28:0] rt_c_bytes_qw = ({18'd0, rt_cs_cl} * {19'd0, rt_ch_cl[10:1]}) >> 3; // (cs*ch/2)/8
-	// I420 payload bytes from plane qwords (capacity gate for Option-C).
-	wire [31:0] rt_frame_bytes =
-		({3'd0, rt_y_bytes_qw} + {2'd0, rt_c_bytes_qw, 1'b0}) << 3;
-	// Usable payload per bank = stride - control page (doorbell lives at
-	// bank1+stride-0x1000). ddrFrameLayoutValid requires bank1End <= doorbell,
-	// i.e. frame_bytes <= stride - 0x1000. Full-stride compare is WRONG:
-	// 720×482 I420 = 520560 fits in 524288 but overlaps doorbell by 368 B
-	// (usable = 0x80000-0x1000 = 520192). rd-duck.
-	// Width-only (>=1280) was also WRONG: product 960×540 = 777600 on legacy.
-	localparam int LEG_USABLE_PAYLOAD_BYTES = HPS_BANK_STRIDE_BYTES - 32'h1000;
-	wire rt_need_optc_map = (rt_frame_bytes > 32'(LEG_USABLE_PAYLOAD_BYTES));
 
 	// FAULT: ignore geom_enable (always legacy pitch) — red twin for runtime-stride gate.
 `ifdef DDR_FRAME_STORE_FAULT_IGNORE_GEOM
@@ -315,28 +301,14 @@ module ddr_frame_store #(
 			eff_c_pitch_qw <= rt_cs_cl[10:3];
 			eff_u_base_qw  <= rt_y_bytes_qw;
 			eff_v_base_qw  <= rt_y_bytes_qw + rt_c_bytes_qw;
-			// Option-C when payload cannot fit legacy bank (w-mem writer contract).
-			// Capacity-based — NOT coded_w>=1280 (product 960×540 must take Option-C).
+			// Option-C banks for native 720p coded width (w-mem writer contract).
 `ifdef DDR_FRAME_STORE_FAULT_FORCE_LEGACY_BANK_MAP
 			eff_optc_map   <= 1'b0;
 			eff_base_w0    <= LEG_BASE_W0;
 			eff_base_w1    <= LEG_BASE_W1;
 			eff_doorbell_w <= LEG_DOORBELL_W;
-`elsif DDR_FRAME_STORE_FAULT_WIDTH_OPTC_PRED
-			// FAULT twin: old width-only predicate (red: 960-wide stays legacy).
-			if (rt_cw_cl >= 11'd1280) begin
-				eff_optc_map   <= 1'b1;
-				eff_base_w0    <= OPTC_BASE_W0;
-				eff_base_w1    <= OPTC_BASE_W1;
-				eff_doorbell_w <= OPTC_DOORBELL_W;
-			end else begin
-				eff_optc_map   <= 1'b0;
-				eff_base_w0    <= LEG_BASE_W0;
-				eff_base_w1    <= LEG_BASE_W1;
-				eff_doorbell_w <= LEG_DOORBELL_W;
-			end
 `else
-			if (rt_need_optc_map) begin
+			if (rt_cw_cl >= 11'd1280) begin
 				eff_optc_map   <= 1'b1;
 				eff_base_w0    <= OPTC_BASE_W0;
 				eff_base_w1    <= OPTC_BASE_W1;

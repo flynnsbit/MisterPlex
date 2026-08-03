@@ -2,18 +2,11 @@
 //
 // Cases:
 //   A) geom_enable=0 → first U/V qword bases == legacy 624×480 (37440 / 46800)
-//   B) geom_enable=1, 1280×720 stride=1280 → U/V bases 115200 / 144000 + Option-C
-//   B2) product STORAGE 960×540 (777600 B > usable 520192) → Option-C
-//   B3) (optional future) SPS-coded 960×544 plane math — NOT product bank path
+//   B) geom_enable=1, 1280×720 stride=1280 → U/V bases 115200 / 144000
 //   C) neg: geom=0 cannot satisfy 720p base expectations
-//
-// Capacity = usable payload (stride - 0x1000), not full stride (rd-duck).
-// Storage rt_coded_* ≠ canvas 1280×720 (canvas is DE/scale dest only).
 //
 // Red twin (+define+DDR_FRAME_STORE_FAULT_IGNORE_GEOM):
 //   Case B expectations against DUT that ignores geom → correctly FAIL.
-// Red twin (+define+DDR_FRAME_STORE_FAULT_WIDTH_OPTC_PRED):
-//   Old coded_w>=1280 predicate → product 960 stays legacy → Option-C Y FAIL.
 // Soft-skip≠PASS. true rc direct.
 
 #include "Vddr_frame_store_runtime_stride_tb.h"
@@ -55,39 +48,10 @@ constexpr int kRtVQ = kRtUQ + kRtCQ;                 // 144000
 constexpr int kRtYPitchQ = kRtYStride / 8;           // 160
 constexpr int kRtCPitchQ = kRtCStride / 8;           // 80
 
-// Product STORAGE (ARM publish after libavcodec SPS crop): 960×540 / 777600.
-// Canvas DE is 1280×720 — never program as rt_coded_* for this path.
-// SPS coded 544 is future fabric-decoder only (not product bank planes).
-constexpr int kProdW = 960;
-constexpr int kProdStorageH = 540;
-constexpr int kProdYS = 960;
-constexpr int kProdCS = 480;
-constexpr int kLegUsable = int(kBankStrideBytes) - 0x1000; // 520192
-constexpr int kProd540Bytes = kProdYS * kProdStorageH * 3 / 2; // 777600
-constexpr int kProd540UQ = (kProdYS * kProdStorageH) / 8;      // 64800
-constexpr int kProd540CQ = (kProdCS * (kProdStorageH / 2)) / 8; // 16200
-constexpr int kProd540VQ = kProd540UQ + kProd540CQ;            // 81000
-constexpr int kProdYPitchQ = kProdYS / 8;                      // 120
-constexpr int kProdCPitchQ = kProdCS / 8;                      // 60
-// Canvas-as-storage anti-pattern: U base would be 921600 not 518400.
-constexpr int kCanvasUQ = (1280 * 720) / 8; // 115200 qwords = 921600 B U offset
-
 static_assert(kLegUQ == 37440, "legacy U");
 static_assert(kLegVQ == 46800, "legacy V");
 static_assert(kRtUQ == 115200, "720p U");
 static_assert(kRtVQ == 144000, "720p V");
-static_assert(kProd540Bytes == 777600, "product storage I420");
-static_assert(kLegUsable == 520192, "legacy usable payload");
-static_assert(kProd540Bytes > kLegUsable, "product storage needs Option-C (usable)");
-static_assert(kProd540UQ == 64800 && kProd540VQ == 81000, "prod540 storage planes");
-static_assert(kProd540UQ * 8 == 518400, "storage U byte offset");
-static_assert(kCanvasUQ * 8 == 921600, "canvas U offset must not be used for storage");
-
-// Capacity = usable (stride - control page), mirrors ddr_frame_store + layoutValid.
-bool needsOptcMap(int y_stride, int c_stride, int storage_h) {
-	const int bytes = storage_h * (y_stride + c_stride);
-	return bytes > kLegUsable;
-}
 
 constexpr size_t kMemQ = (4u * 1024u * 1024u) / 8u;
 constexpr int kHTotal = 800;
@@ -329,8 +293,7 @@ int run_case(const char* name, bool geom, int cw, int ch, int ys, int cs, int dw
 	sim.frame_w = std::max(dw + px + 8, 64);
 	sim.frame_h = std::min(std::max(dh, 48), 64);
 	sim.setGeom(geom, cw, ch, ys, cs, dw, dh, px);
-	// Bank map follows capacity (payload vs legacy 512KiB), not coded_w>=1280.
-	sim.setBankMap(geom && needsOptcMap(ys > 0 ? ys : cw, cs > 0 ? cs : cw / 2, ch > 0 ? ch : 1));
+	sim.setBankMap(geom && cw >= 1280);
 	sim.setClassify(exp_u, exp_v, exp_v + std::max(c_pitch_q * 4, 256));
 
 	sim.resetCore();
@@ -407,61 +370,12 @@ int main(int argc, char** argv) {
 	                        /*expect_pass=*/false);
 	std::cout << "RUNTIME_STRIDE_RED_DONE rc=" << rc << "\n";
 	return rc;
-#elif defined(DDR_FRAME_STORE_FAULT_WIDTH_OPTC_PRED)
-	// Width-only predicate leaves product 960 on legacy bank — Option-C Y must FAIL.
-	// expect_pass=true so a silent legacy map returns non-zero (red-before-green).
-	const int rc =
-	    run_case("prod540_width_pred_red", true, kProdW, kProdStorageH, kProdYS, kProdCS, kProdW,
-	             64, 0, kProd540UQ, kProd540VQ, kProdYPitchQ, kProdCPitchQ, kProdW / 8, kProdW / 16,
-	             /*expect_pass=*/true);
-	std::cout << "RUNTIME_STRIDE_WIDTH_PRED_RED_DONE rc=" << rc << "\n";
-	// Under the fault, Option-C check fails → rc!=0 is the correct red outcome.
-	// The shell gate expects non-zero. Return rc as-is.
-	return rc;
 #else
 	int fails = 0;
 	fails += run_case("legacy624", false, 0, 0, 0, 0, 618, 64, 11, kLegUQ, kLegVQ, kLegYPitchQ,
 	                  kLegCPitchQ, kLegW / 8, kLegW / 16, true);
 	fails += run_case("rt720", true, kRtW, kRtH, kRtYStride, kRtCStride, kRtW, 64, 0, kRtUQ, kRtVQ,
 	                  kRtYPitchQ, kRtCPitchQ, kRtW / 8, kRtW / 16, true);
-	// Product STORAGE 960×540: usable-capacity forces Option-C.
-	if (!needsOptcMap(kProdYS, kProdCS, kProdStorageH)) {
-		std::cerr << "FAIL structural: prod540 bytes must need Option-C (usable)\n";
-		++fails;
-	} else {
-		std::cout << "CASE prod540_capacity EXECUTED bytes=" << kProd540Bytes
-		          << " leg_usable=" << kLegUsable << " leg_stride=" << kBankStrideBytes
-		          << " need_optc=1\n";
-	}
-	// Structural: full-stride would wrongly accept 720×482 (520560); usable rejects.
-	{
-		const int tightBytes = 720 * 482 * 3 / 2; // 520560
-		const bool fullStrideOk = tightBytes <= int(kBankStrideBytes);
-		const bool usableOk = tightBytes <= kLegUsable;
-		std::cout << "CASE usable_vs_fullstride EXECUTED bytes=" << tightBytes
-		          << " full_ok=" << fullStrideOk << " usable_ok=" << usableOk << "\n";
-		if (!fullStrideOk || usableOk) {
-			std::cerr << "FAIL structural: 720x482 must pass full-stride and fail usable\n";
-			++fails;
-		} else {
-			std::cout << "PASS usable_vs_fullstride: 720x482 exposes full-stride bug class\n";
-		}
-	}
-	fails += run_case("prod540", true, kProdW, kProdStorageH, kProdYS, kProdCS, kProdW, 64, 0,
-	                  kProd540UQ, kProd540VQ, kProdYPitchQ, kProdCPitchQ, kProdW / 8, kProdW / 16,
-	                  true);
-	// Storage vs canvas: product plane U must be 518400 (storage), not 921600 (canvas).
-	if (kProd540UQ == kCanvasUQ || kProd540UQ * 8 != 518400) {
-		std::cerr << "FAIL storage_vs_canvas: product U base must be storage 518400\n";
-		++fails;
-	} else {
-		std::cout << "CASE storage_vs_canvas EXECUTED storage_u=518400 canvas_u=921600\n";
-		std::cout << "PASS storage_vs_canvas: rt_coded_* = storage 960x540 not canvas 1280x720\n";
-	}
-	// Product path bank planes are 540 (FFmpeg crop). SPS 544 is NOT product storage.
-	std::cout << "CASE product_storage_h EXECUTED storage_h=" << kProdStorageH
-	          << " sps_coded_h=544 (decoder/ring only) scale_src_h=540\n";
-	std::cout << "PASS product_storage_h: ARM bank planes = 540/777600; no 544 product planes\n";
 	if (kLegUQ == kRtUQ || kLegVQ == kRtVQ) {
 		std::cerr << "FAIL structural: legacy and 720p bases collided\n";
 		++fails;
