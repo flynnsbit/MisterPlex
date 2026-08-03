@@ -195,6 +195,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_daemon_build_identity.sh
 	$(ROOT)/tests/unit/test_hdmi_capture_usage_guard.sh
 	$(ROOT)/tests/unit/test_hdmi_motion_display_verdict.sh
+	$(ROOT)/tests/unit/test_hdmi_motion_realcontent.sh
 	$(ROOT)/tests/unit/test_sdram_startup_verilator.sh
 	$(ROOT)/tests/unit/test_sdram_dq_turnaround_verilator.sh
 	$(ROOT)/tests/unit/test_h264_cavlc_residual_verilator.sh

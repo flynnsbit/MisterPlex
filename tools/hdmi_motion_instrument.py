@@ -921,11 +921,18 @@ GREEN_MEAN_LO, GREEN_MEAN_HI = 55.0, 95.0  # measured fingerprint band
 GREEN_FRAC_HARD = 0.85  # measured fingerprint band
 # Minimum positively-flagged frames before colour alone hard-fails the burst.
 GREEN_CAST_MIN_FRAMES = 3  # design
-# Global channel-mean spread (max-min of per-channel means). Correct frames are
-# near-neutral (~0–6). Parent broken 480p desync measured ~200 (magenta) and
-# ~90 (green). Threshold sits far above good and far below broken.
-# Catches magenta / blue / any sustained single-axis cast — not green-only.
-CHROMA_SPREAD_FAIL = 25.0  # design bound from parent measurements
+# Global channel-mean spread (max-min of per-channel means). Correct *neutral*
+# fixtures are ~0–6. Parent broken 480p desync measured ~200 (magenta) and
+# ~90–165 (green field). Real colourful titles (BBB grass/sky) also reach
+# spread≈28 — so spread ALONE is not a fault (parent false COLOR_FAIL on BBB).
+# chroma_cast requires spread AND spatial cast COHERENCE (uniform whole-frame
+# cast). Do NOT "fix" by only raising CHROMA_SPREAD_FAIL (gate self-weakening).
+CHROMA_SPREAD_FAIL = 25.0  # necessary but not sufficient
+# Block cast-direction coherence (mean cosine sim of per-block (R−G,B−G) to
+# global). Measured: desync/magenta/green fields ≈1.00; BBB content ≤0.78.
+CAST_COHERENCE_MIN = 0.90  # measured gap content≤0.78 vs desync=1.0
+CAST_COHERENCE_BLOCK = 8  # on stride-subsampled frame
+CAST_COHERENCE_MIN_BLOCKS = 6  # need enough non-neutral blocks
 # Near-zero chroma on a lit active region (U=V=128 greyscale / chroma killed).
 GREYSCALE_CHROMA_MAX = 3.0  # design: mean per-pixel channel-range on active
 GREYSCALE_ACTIVE_FRAC_MIN = 0.08  # design: enough lit picture to judge
@@ -937,6 +944,12 @@ UV_SWAP_BLUE_MIN = 0.35  # design
 UV_SWAP_SAT_FRAC_MIN = 0.02  # design: need enough saturated samples
 # Minimum frames with a structural flag before structure alone hard-fails.
 STRUCT_MIN_FRAMES = 3  # design
+# Fixture-free content motion (real titles have no TREK24 counter).
+CONTENT_FP_GRID_H = 12  # design
+CONTENT_FP_GRID_W = 20  # design
+CONTENT_MOTION_MIN_FRAMES = 8  # design: need a short burst
+CONTENT_MOTION_UNIQUE_MIN = 2  # ≥2 distinct content fingerprints → motion
+CONTENT_FP_LUMA_Q = 4  # quantize block mean by this (noise tolerance)
 
 
 # ---------------------------------------------------------------------------
@@ -986,12 +999,158 @@ def _rgb_to_ycbcr_planes(rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.nd
     return y, cb, cr
 
 
+def _active_letterbox_slice(rgb: np.ndarray) -> np.ndarray:
+    """Crop letterbox bars; keep active picture rows (and mild side trim)."""
+    if rgb.size == 0:
+        return rgb
+    row = rgb.mean(axis=(1, 2)) if rgb.ndim == 3 else rgb.mean(axis=1)
+    act = np.where(row > 12.0)[0]
+    if act.size < 8:
+        return rgb
+    y0, y1 = int(act[0]), int(act[-1]) + 1
+    x0 = int(rgb.shape[1] * 0.04)
+    x1 = int(rgb.shape[1] * 0.96)
+    if x1 <= x0 + 8:
+        return rgb[y0:y1]
+    return rgb[y0:y1, x0:x1]
+
+
+def cast_coherence_score(rgb: np.ndarray) -> tuple[float, int]:
+    """Spatial uniformity of the global colour cast (desync vs scene colour).
+
+    Desync / U=V≈0 fields: whole-frame cast direction is the same in every
+    block (coherence ≈ 1.0). Real saturated content (BBB grass+sky): cast
+    direction varies with scene structure (coherence ≤ ~0.78 measured).
+
+    Returns (mean_cosine_similarity, n_blocks_used).
+    """
+    if rgb.size == 0 or rgb.ndim != 3:
+        return 0.0, 0
+    # Expect caller may already stride-subsample; keep cheap either way.
+    img = rgb
+    if img.shape[0] > 320 and img.shape[1] > 480:
+        img = img[::4, ::4]
+    img = _active_letterbox_slice(img)
+    if img.shape[0] < CAST_COHERENCE_BLOCK or img.shape[1] < CAST_COHERENCE_BLOCK:
+        return 0.0, 0
+    pix = img.astype(np.float32)
+    means = pix.reshape(-1, 3).mean(axis=0)
+    gvec = np.array([means[0] - means[1], means[2] - means[1]], dtype=np.float64)
+    gn = float(np.linalg.norm(gvec)) + 1e-9
+    # Near-neutral global mean → no cast to be coherent about.
+    if gn < 4.0:
+        return 0.0, 0
+    bs = CAST_COHERENCE_BLOCK
+    sims: list[float] = []
+    ah, aw = pix.shape[0], pix.shape[1]
+    for y in range(0, ah - bs + 1, bs):
+        for x in range(0, aw - bs + 1, bs):
+            blk = pix[y : y + bs, x : x + bs].reshape(-1, 3).mean(axis=0)
+            bv = np.array([blk[0] - blk[1], blk[2] - blk[1]], dtype=np.float64)
+            bn = float(np.linalg.norm(bv)) + 1e-9
+            if bn < 3.0:
+                continue  # skip near-neutral blocks
+            sims.append(float(np.dot(gvec, bv) / (gn * bn)))
+    if len(sims) < CAST_COHERENCE_MIN_BLOCKS:
+        return 0.0, len(sims)
+    return float(np.mean(sims)), len(sims)
+
+
+def content_region_fingerprint(rgb: np.ndarray) -> str | None:
+    """Quantized block-mean fingerprint of active picture (letterbox excluded).
+
+    Fixture-free motion signal for real titles (no TREK24 overlay). Returns
+    None on uniform/empty frames.
+    """
+    if rgb.size == 0 or _is_uniform(rgb):
+        return None
+    crop = _active_letterbox_slice(rgb)
+    if crop.size == 0 or crop.mean() < 8.0:
+        return None
+    # Downsample before grid for speed.
+    if crop.shape[0] > 180:
+        crop = crop[::4, ::4]
+    h, w = crop.shape[:2]
+    gh, gw = CONTENT_FP_GRID_H, CONTENT_FP_GRID_W
+    ys = np.linspace(0, h, gh + 1, dtype=int)
+    xs = np.linspace(0, w, gw + 1, dtype=int)
+    vec: list[int] = []
+    q = CONTENT_FP_LUMA_Q
+    for i in range(gh):
+        for j in range(gw):
+            blk = crop[ys[i] : ys[i + 1], xs[j] : xs[j + 1]]
+            if blk.size == 0:
+                vec.append(0)
+            else:
+                vec.append(int(blk.mean()) // q)
+    # Compact stable token
+    try:
+        dig = hashlib.md5(
+            np.asarray(vec, dtype=np.int16).tobytes(), usedforsecurity=False
+        )
+    except TypeError:
+        dig = hashlib.md5(np.asarray(vec, dtype=np.int16).tobytes())
+    return dig.hexdigest()[:16]
+
+
+def analyze_content_motion(
+    rows: list[dict[str, Any]],
+    *,
+    min_frames: int = CONTENT_MOTION_MIN_FRAMES,
+) -> dict[str, Any]:
+    """Fixture-free motion from content_fp sequence (letterbox-excluded).
+
+    MOTION_OK: ≥CONTENT_MOTION_UNIQUE_MIN distinct fingerprints over enough
+    non-warmup frames (survives slow pans / low animation; fails only true pin).
+    FREEZE: enough frames but only one fingerprint (duplicated still).
+    UNSCORED: too few frames or no fingerprints (not a pass).
+    """
+    fps = [
+        r.get("content_fp")
+        for r in rows
+        if r.get("status") != "warmup" and r.get("content_fp")
+    ]
+    n = len(fps)
+    uniq = sorted(set(fps))
+    out: dict[str, Any] = {
+        "content_motion": "UNSCORED",
+        "content_fp_frames": n,
+        "content_unique_fp": len(uniq),
+        "content_motion_src": "measured" if n else "NO_DATA",
+        "content_motion_reason": "",
+    }
+    if n < min_frames:
+        out["content_motion_reason"] = (
+            f"content_fp_frames={n}<{min_frames} (need burst; single still is not FREEZE)"
+        )
+        return out
+    if len(uniq) >= CONTENT_MOTION_UNIQUE_MIN:
+        out["content_motion"] = "MOTION_OK"
+        out["content_motion_reason"] = (
+            f"content_region_changes unique_fp={len(uniq)} frames={n} "
+            f"(letterbox-excluded block fingerprint; no TREK24 required)"
+        )
+        return out
+    if len(uniq) == 1:
+        out["content_motion"] = "FREEZE"
+        out["content_motion_reason"] = (
+            f"content_region_pinned fp={uniq[0]} frames={n} "
+            f"(identical active-picture fingerprint — genuine freeze or still hold)"
+        )
+        return out
+    out["content_motion_reason"] = f"content_fp_frames={n} unique_fp={len(uniq)}"
+    return out
+
+
 def green_cast_metrics(rgb: np.ndarray) -> dict[str, Any]:
     """Colour integrity — not green-only.
 
     Fail classes (any one → color_fail):
       1. green_cast     — classic green-dominance fingerprint (U,V~0 / old daemon)
-      2. chroma_cast    — global channel-mean spread (magenta/blue/any axis cast)
+      2. chroma_cast    — high channel-mean spread AND spatially UNIFORM cast
+                          (desync/magenta field). Saturated scene colour alone
+                          is NOT a fault (BBB grass/sky measured spread≈28 with
+                          cast_coherence≤0.78; desync fields coherence≈1.0).
       3. greyscale_flat — lit active region with near-zero chroma variance
       4. uv_swap        — saturated-pixel primary inversion (cyan/blue vs red)
 
@@ -1007,6 +1166,8 @@ def green_cast_metrics(rgb: np.ndarray) -> dict[str, Any]:
         "channel_spread": 0.0,
         "channel_means": [float(rgb.mean())] * 3 if rgb.size else [0.0, 0.0, 0.0],
         "chroma_cast": False,
+        "cast_coherence": 0.0,
+        "cast_coherence_blocks": 0,
         "greyscale_flat": False,
         "uv_swap": False,
         "active_frac": 0.0,
@@ -1030,6 +1191,7 @@ def green_cast_metrics(rgb: np.ndarray) -> dict[str, Any]:
         return empty
 
     # Stride subsample — cast metrics are global; full-res is pure cost.
+    rgb_full = rgb
     if rgb.shape[0] > 240 and rgb.shape[1] > 320:
         rgb = rgb[::8, ::8]
     pix = rgb.reshape(-1, 3).astype(np.float32)
@@ -1045,7 +1207,14 @@ def green_cast_metrics(rgb: np.ndarray) -> dict[str, Any]:
     green_cast = (
         GREEN_MEAN_LO <= mean_rgb <= GREEN_MEAN_HI and green_frac >= GREEN_FRAC_HARD
     ) or (green_frac >= 0.90 and mean_rgb >= 40.0)
-    chroma_cast = channel_spread >= CHROMA_SPREAD_FAIL
+    # Physical desync discriminator (NOT a raised spread threshold):
+    # whole-frame uniform cast vs scene-correlated colour.
+    cast_coherence, cast_blocks = cast_coherence_score(rgb)
+    chroma_cast = (
+        channel_spread >= CHROMA_SPREAD_FAIL
+        and cast_coherence >= CAST_COHERENCE_MIN
+        and cast_blocks >= CAST_COHERENCE_MIN_BLOCKS
+    )
 
     luma = pix.mean(axis=1)
     per_chroma = pix.max(axis=1) - pix.min(axis=1)
@@ -1082,6 +1251,7 @@ def green_cast_metrics(rgb: np.ndarray) -> dict[str, Any]:
         )
 
     color_fail = bool(green_cast or chroma_cast or greyscale_flat or uv_swap)
+    # content_fp from fuller res for motion (cheap block means)
     return {
         "mean_rgb": round(mean_rgb, 3),
         "green_frac": round(green_frac, 4),
@@ -1089,6 +1259,8 @@ def green_cast_metrics(rgb: np.ndarray) -> dict[str, Any]:
         "channel_spread": round(channel_spread, 2),
         "channel_means": [round(x, 1) for x in means],
         "chroma_cast": bool(chroma_cast),
+        "cast_coherence": round(float(cast_coherence), 4),
+        "cast_coherence_blocks": int(cast_blocks),
         "greyscale_flat": bool(greyscale_flat),
         "uv_swap": bool(uv_swap),
         "active_frac": round(active_frac, 4),
@@ -1100,6 +1272,7 @@ def green_cast_metrics(rgb: np.ndarray) -> dict[str, Any]:
         "mean_cb": round(mean_cb, 2),
         "mean_cr": round(mean_cr, 2),
         "color_fail": color_fail,
+        "content_fp": content_region_fingerprint(rgb_full),
     }
 
 
@@ -1288,14 +1461,20 @@ def idle_screen_metrics(rgb: np.ndarray) -> dict[str, Any]:
 
     Parent incident (2026-08-02): capture raced end-of-clip; instrument returned
     UNSCORED without naming IDLE_SCREEN, wasting a release cycle.
-    Measured on real idle frame: orange_px≈30k, centroid mid-frame.
-    Correct TREK24 playback: orange_px≈0–few (yellow overlay is not orange).
+    Measured on real idle frame: orange_px≈30k, centroid mid-frame, compact
+    chevron fill≈0.28 on near-black slate (dark_out≈0.998).
+
+    Real content trap (BBB f_044+): warm flowers/sky hit the orange mask with
+    orange_frac≈0.0075 but are spatially DIFFUSE (fill≈0.013, sat_out high).
+    Require compact orange blob + dark low-chroma slate — not just orange_frac.
     """
     out: dict[str, Any] = {
         "idle_screen": False,
         "orange_frac": 0.0,
         "orange_px": 0,
         "orange_centroid_yx": None,
+        "orange_fill": 0.0,
+        "slate_dark_frac": 0.0,
     }
     if rgb.size == 0 or _is_uniform(rgb):
         return out
@@ -1325,10 +1504,31 @@ def idle_screen_metrics(rgb: np.ndarray) -> dict[str, Any]:
         cx = float(xs.mean()) * (rgb.shape[1] / s.shape[1])
         out["orange_centroid_yx"] = (round(cy, 1), round(cx, 1))
         h, w = rgb.shape[:2]
-        central = (0.25 * h < cy < 0.80 * h) and (0.20 * w < cx < 0.80 * w)
+        central = (0.25 * h < cy < 0.80 * h) and (0.25 * w < cx < 0.75 * w)
         mean_l = float(rgb.mean())
+        # Compactness of orange mass (chevron) vs scattered scene colour.
+        y0, y1 = int(ys.min()), int(ys.max())
+        x0, x1 = int(xs.min()), int(xs.max())
+        bbox = max(1, (y1 - y0 + 1) * (x1 - x0 + 1))
+        fill = float(orange_px) / float(bbox)
+        out["orange_fill"] = round(fill, 4)
+        # Slate: non-orange pixels are dark and low-chroma.
+        non = ~orange
+        luma = s.mean(axis=2)
+        sat = (s.max(axis=2) - s.min(axis=2)).astype(np.float32)
+        dark_out = float((luma[non] < 40.0).mean()) if non.any() else 0.0
+        sat_out = float(sat[non].mean()) if non.any() else 0.0
+        out["slate_dark_frac"] = round(dark_out, 4)
+        # Measured: IDLE fill≈0.28 dark_out≈0.998 sat_out≈7; BBB fill≈0.013
+        # dark_out≈0.54 sat_out≈36. Physical chevron-on-slate, not threshold
+        # only on orange_frac (that false-idled real titles).
         out["idle_screen"] = bool(
-            central and orange_frac >= 0.004 and 12.0 <= mean_l <= 90.0
+            central
+            and orange_frac >= 0.004
+            and 12.0 <= mean_l <= 90.0
+            and fill >= 0.10
+            and dark_out >= 0.90
+            and sat_out <= 20.0
         )
     return out
 
@@ -2258,9 +2458,11 @@ def read_frame(
         "green_cast": False,
         "channel_spread": None,
         "chroma_cast": False,
+        "cast_coherence": None,
         "color_fail": False,
         "greyscale_flat": False,
         "uv_swap": False,
+        "content_fp": None,
     }
     try:
         im = Image.open(path).convert("RGB")
@@ -2281,6 +2483,8 @@ def read_frame(
     if ocr_only:
         gc = dict(_color_empty)
         gc["mean_rgb"] = round(mean_luma, 3)
+        # Still fingerprint content for fixture-free motion on real titles.
+        gc["content_fp"] = content_region_fingerprint(rgb)
         sm = dict(_struct_empty)
     else:
         gc = green_cast_metrics(rgb)
@@ -3888,6 +4092,32 @@ def score_burst(
                 f"med={first_med}->{last_med} mode_frac={mode_frac:.2f}"
             )
 
+    # Fixture-free content motion (real titles: no TREK24). Measured on the
+    # letterbox-excluded active picture. Refusal to score real content is not
+    # delivery — fill UNSCORED / weak-OCR holes from content fingerprints.
+    content_info = analyze_content_motion(usable)
+    c_motion = str(content_info.get("content_motion") or "UNSCORED")
+    if motion == "UNSCORED" and c_motion in ("MOTION_OK", "FREEZE"):
+        motion = c_motion
+        reason = str(content_info.get("content_motion_reason") or c_motion)
+    elif (
+        motion == "FREEZE"
+        and c_motion == "MOTION_OK"
+        and len(ns) < RATE_MIN_SAMPLES
+    ):
+        # Weak/short OCR pin on moving real picture — content wins.
+        motion = "MOTION_OK"
+        reason = (
+            f"{content_info.get('content_motion_reason')} "
+            f"(overrides weak_ocr_freeze reads={len(ns)}<{RATE_MIN_SAMPLES})"
+        )
+    elif motion == "UNSCORED" and content_info.get("content_motion_reason"):
+        reason = (
+            f"{reason}; {content_info.get('content_motion_reason')}"
+            if reason
+            else str(content_info.get("content_motion_reason"))
+        )
+
     # Rate/revisit only hard-fails when we actually have a counter sequence.
     # FREEZE is already a measured motion fail (rate=0) — do not double-count
     # as RATE_FAIL. Bitmap-only MOTION_OK cannot claim RATE_OK.
@@ -3909,7 +4139,13 @@ def score_burst(
     # STRUCTURE > COLOR > RATE > FREEZE > IDLE > MOTION_OK > UNSCORED.
     # Measured failures never collapse to rc=77, even when motion is UNSCORED.
     idle_need = max(1, min(3, n_scored)) if n_scored else 3
-    idle_fail = len(idle_hits) >= idle_need and not structure_fail and not color_fail
+    # Idle never overrides positive content/fixture motion (BBB flowers ≠ chevron).
+    idle_fail = (
+        len(idle_hits) >= idle_need
+        and not structure_fail
+        and not color_fail
+        and motion != "MOTION_OK"
+    )
     # applied_matches: how many positive classifiers fired (mutation→NO-DATA if 0)
     applied_matches = 0
     if structure_fail:
@@ -4021,6 +4257,11 @@ def score_burst(
         "vertical_dup_frames": len(vdup_hits),
         "horiz_wrap_frames": len(wrap_hits),
         "structure_fail_frames": len(struct_hits),
+        "content_motion": content_info.get("content_motion"),
+        "content_fp_frames": content_info.get("content_fp_frames"),
+        "content_unique_fp": content_info.get("content_unique_fp"),
+        "content_motion_src": content_info.get("content_motion_src"),
+        "content_motion_reason": content_info.get("content_motion_reason"),
         "motion": motion,
         "color": color,
         "structure": structure,
@@ -4184,7 +4425,9 @@ def _print_human(report: dict[str, Any], src: str) -> None:
         f"greyscale_frames={report.get('greyscale_frames', 0)} "
         f"uv_swap_frames={report.get('uv_swap_frames', 0)} "
         f"vdup_frames={report.get('vertical_dup_frames', 0)} "
-        f"wrap_frames={report.get('horiz_wrap_frames', 0)}"
+        f"wrap_frames={report.get('horiz_wrap_frames', 0)} "
+        f"content_unique_fp={report.get('content_unique_fp')} "
+        f"content_fp_frames={report.get('content_fp_frames')}"
     )
     if report["n_min"] is not None:
         print(
@@ -4201,7 +4444,9 @@ def _print_human(report: dict[str, Any], src: str) -> None:
     print(
         f"motion={report['motion']} color={report['color']} "
         f"structure={report.get('structure', 'STRUCTURE_OK')} "
-        f"rate={report.get('rate', 'RATE_UNSCORED')}"
+        f"rate={report.get('rate', 'RATE_UNSCORED')} "
+        f"content_motion={report.get('content_motion', 'UNSCORED')}"
+        f"({report.get('content_motion_src', 'NO_DATA')})"
     )
     if report.get("unique_ratio") is not None or report.get("source_fps") is not None:
         # Print comparable pairs together; never mix incomparable quantities.
@@ -4374,18 +4619,36 @@ def _self_test() -> int:
     assert gc["green_cast"] is True, gc
     assert gc["color_fail"] is True, gc
 
-    # Magenta cast (luma parked in chroma planes) — channel-spread, not green.
+    # Magenta cast (luma parked in chroma planes) — uniform cast, not green.
     magenta = np.zeros((100, 100, 3), dtype=np.uint8)
     magenta[:, :] = (210, 40, 240)
     gc_m = green_cast_metrics(magenta)
     assert gc_m["chroma_cast"] is True and gc_m["channel_spread"] >= CHROMA_SPREAD_FAIL, gc_m
+    assert gc_m["cast_coherence"] >= CAST_COHERENCE_MIN, gc_m
     assert gc_m["color_fail"] is True, gc_m
 
-    # Blue cast — channel-spread any direction.
+    # Blue cast — uniform whole-frame cast any direction.
     blue = np.zeros((100, 100, 3), dtype=np.uint8)
     blue[:, :] = (20, 30, 180)
     gc_b = green_cast_metrics(blue)
     assert gc_b["chroma_cast"] is True and gc_b["color_fail"] is True, gc_b
+    assert gc_b["cast_coherence"] >= CAST_COHERENCE_MIN, gc_b
+
+    # Saturated scene colour (sky+grass split) must NOT chroma_cast — parent BBB
+    # false positive class. Spread may exceed CHROMA_SPREAD_FAIL; coherence low.
+    scene = np.zeros((240, 320, 3), dtype=np.uint8)
+    scene[:120, :] = (40, 90, 200)  # blue sky
+    scene[120:, :] = (30, 160, 40)  # green grass
+    rng = np.random.default_rng(1)
+    for _ in range(80):
+        yy, xx = int(rng.integers(120, 240)), int(rng.integers(0, 320))
+        scene[yy : yy + 2, xx : xx + 2] = (220, 50, 200)  # flowers
+    gc_scene = green_cast_metrics(scene)
+    assert gc_scene["channel_spread"] >= CHROMA_SPREAD_FAIL, gc_scene  # colourful
+    assert gc_scene["cast_coherence"] < CAST_COHERENCE_MIN, gc_scene
+    assert gc_scene["chroma_cast"] is False, gc_scene
+    assert gc_scene["green_cast"] is False, gc_scene
+    assert gc_scene["color_fail"] is False, gc_scene
 
     # Mid greyscale field (dead chroma on lit picture).
     grey = np.full((120, 160, 3), 80, dtype=np.uint8)
@@ -4448,11 +4711,47 @@ def _self_test() -> int:
         rep = score_burst(frames, warmup_skip=0, min_reads=3)
         assert "GREEN" in rep["color"], rep
         assert rep["green_cast_frames"] >= GREEN_CAST_MIN_FRAMES, rep
-        assert rep["motion"] == "UNSCORED", rep
+        # Identical green stills: content path may say FREEZE; colour still wins.
+        assert rep["motion"] in ("UNSCORED", "FREEZE"), rep
         # Pure green field may also trip structure on some paths; colour or
         # structure hard-fail both beat UNSCORED — never rc=77.
         assert rep["rc"] in (RC_COLOR_FAIL, RC_STRUCTURE_FAIL), rep
         assert rep["verdict"] in ("COLOR_FAIL", "STRUCTURE_FAIL"), rep
+
+        # Fixture-free content motion: changing active picture → MOTION_OK.
+        mdir_c = tdp / "content_motion"
+        mdir_c.mkdir()
+        for i in range(12):
+            fr = np.zeros((180, 320, 3), dtype=np.uint8)
+            fr[20:160, 20:300] = (40, 50, 60)
+            fr[40:100, 30 + i * 8 : 80 + i * 8] = (200, 180, 40)  # moving block
+            Image.fromarray(fr).save(mdir_c / f"f_{i:03d}.png")
+        rep_cm = score_burst(
+            sorted(str(p) for p in mdir_c.glob("f_*.png")),
+            warmup_skip=0,
+            min_reads=3,
+        )
+        assert rep_cm["content_motion"] == "MOTION_OK", rep_cm
+        assert rep_cm["motion"] == "MOTION_OK", rep_cm
+        assert rep_cm["rc"] == RC_MOTION_OK, rep_cm
+        assert int(rep_cm.get("content_unique_fp") or 0) >= 2, rep_cm
+
+        # Content freeze: same frame N times → FREEZE (not OK).
+        fdir = tdp / "content_freeze"
+        fdir.mkdir()
+        still = np.zeros((180, 320, 3), dtype=np.uint8)
+        still[30:150, 40:280] = (90, 100, 110)
+        still[60:90, 100:160] = (20, 180, 40)
+        for i in range(12):
+            Image.fromarray(still).save(fdir / f"f_{i:03d}.png")
+        rep_cf = score_burst(
+            sorted(str(p) for p in fdir.glob("f_*.png")),
+            warmup_skip=0,
+            min_reads=3,
+        )
+        assert rep_cf["content_motion"] == "FREEZE", rep_cf
+        assert rep_cf["motion"] == "FREEZE", rep_cf
+        assert rep_cf["rc"] == RC_FREEZE, rep_cf
 
         # FREEZE + green-cast → hard colour/structure fail wins over freeze/unscored.
         gdir = tdp / "freeze_green"
