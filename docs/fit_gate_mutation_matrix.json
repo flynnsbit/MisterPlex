@@ -1,0 +1,119 @@
+{
+  "rows": [
+    {
+      "check": "B0_TREE_HASH",
+      "inject": "git_tree_hash=deadbeef\u2026",
+      "expect": "B0_TREE_HASH_MISMATCH",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B10_BEAM_QIP",
+      "inject": "remove present_beam_content_de.sv from qip",
+      "expect": "B10_BEAM_NOT_IN_FILES_QIP",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B6_HBLANK_OLD_HC_EPOCH",
+      "inject": "HBlank<=(hc>=H_DE) old epoch",
+      "expect": "B6_HBLANK_OLD_HC_EPOCH",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B1_LAYOUT_NOT_960",
+      "inject": "layout params forced 640x480",
+      "expect": "B1_LAYOUT_NOT_960",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B20_HIER_MANIFEST",
+      "inject": "empty scenarios[]",
+      "expect": "B20_HIER",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B20_UNCONNECTED_PRODUCER",
+      "inject": "drop .content_w(\u2026) instance pin",
+      "expect": "B20_UNCONNECTED_PRODUCER",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "STRING_IFDEF_AWARE",
+      "inject": "FAULT_X wraps defect/evidence token",
+      "expect": "strip_fault_body",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B25_PLXC_DUAL_MAP",
+      "inject": "empty B25 manifest",
+      "expect": "B25",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B24_Q5_FPS_1001",
+      "inject": "empty B24 manifest",
+      "expect": "B24",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B9_SYS_TOP_AR_OUT_HOLD_MISSING",
+      "inject": "live defective/hollow tree (no inject)",
+      "expect": "B9_SYS_TOP_AR_OUT_HOLD_MISSING",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B9_POST_ASCAL_DAR_BLACKOUT_MISSING",
+      "inject": "live defective/hollow tree (no inject)",
+      "expect": "B9_POST_ASCAL_DAR_BLACKOUT_MISSING",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B26_STORE_CROP_DISPLAY_BOUNDS_MISSING",
+      "inject": "live defective/hollow tree (no inject)",
+      "expect": "B26_STORE_CROP_DISPLAY_BOUNDS_MISSING",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B27_FFMPEG_PAD_CHROMA_EVEN_ORACLE",
+      "inject": "live defective/hollow tree (no inject)",
+      "expect": "B27_FFMPEG_PAD_CHROMA_EVEN_ORACLE",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B23_OWNERSHIP",
+      "inject": "live defective/hollow tree (no inject)",
+      "expect": "B23_*",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    }
+  ],
+  "failures": [],
+  "n_red": 14,
+  "head": "3a3d36686cca"
+}

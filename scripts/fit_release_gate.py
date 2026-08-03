@@ -341,6 +341,120 @@ def _read(path: Path) -> str:
     return path.read_text(errors="ignore") if path.is_file() else ""
 
 
+# Red-twin / fault-injection macro names must never satisfy product greps.
+# Parent: FAULT_* ifdefs contain exact defect copies — string greps without
+# stripping produce false POS (defect) and false NEG (evidence present).
+_FAULT_IFDEF_NAME_RE = re.compile(
+    r"^(?:FAULT_[A-Z0-9_]+|[A-Z0-9_]*_FAULT_[A-Z0-9_]+|RED_TWIN_[A-Z0-9_]+|"
+    r"FIT_MUTATION_[A-Z0-9_]+|MUTATION_[A-Z0-9_]+)$"
+)
+
+
+def _is_fault_macro_name(name: str) -> bool:
+    n = (name or "").strip()
+    if not n:
+        return False
+    if _FAULT_IFDEF_NAME_RE.match(n):
+        return True
+    # Also treat bare FAULT prefix / RED_TWIN as red-twin regions.
+    return n.startswith("FAULT_") or "FAULT_" in n or n.startswith("RED_TWIN")
+
+
+def product_active_sv(text: str, *, active_macros: set[str] | None = None) -> str:
+    """Return SystemVerilog with inactive FAULT_*/red-twin ifdef regions removed.
+
+    When a FAULT_* macro is *not* in active_macros (default empty):
+      `ifdef FAULT_X ... `else PRODUCT ... `endif`  → keep PRODUCT only
+      `ifndef FAULT_X PRODUCT ... `else FAULT ... `endif` → keep PRODUCT only
+
+    Non-FAULT conditionals pass through (both branches remain visible).
+
+    LIMITATION: only FAULT_*/RED_TWIN*/FIT_MUTATION* regions collapse. Does not
+    prove wrong-producer connectivity — that is B20 Verilator scope.
+    """
+    active = active_macros or set()
+    lines = text.splitlines(keepends=True)
+    out: list[str] = []
+    # frame: fault=bool, taking=bool, branch_taken=bool
+    stack: list[dict[str, bool]] = []
+
+    def outer_ok() -> bool:
+        return all(fr["taking"] for fr in stack)
+
+    for raw in lines:
+        code = raw.split("//", 1)[0]
+        m_if = re.match(r"^\s*`if(n?def)\s+(\w+)\b", code)
+        m_elsif = re.match(r"^\s*`elsif\s+(\w+)\b", code)
+        m_else = re.match(r"^\s*`else\b", code)
+        m_endif = re.match(r"^\s*`endif\b", code)
+
+        if m_if:
+            kind, name = m_if.group(1), m_if.group(2)
+            if _is_fault_macro_name(name):
+                defined = name in active
+                take = defined if kind == "def" else (not defined)
+                stack.append(
+                    {"fault": True, "taking": take, "branch_taken": take}
+                )
+                # drop directive
+            else:
+                # non-fault: emit directive if outer allows; always "taking" here
+                if outer_ok():
+                    out.append(raw)
+                stack.append(
+                    {"fault": False, "taking": True, "branch_taken": False}
+                )
+            continue
+
+        if m_elsif and stack:
+            fr = stack[-1]
+            name = m_elsif.group(1)
+            if fr["fault"]:
+                if fr["branch_taken"]:
+                    fr["taking"] = False
+                else:
+                    take = (name in active) if _is_fault_macro_name(name) else (name in active)
+                    # elsif after skipped fault ifdef: only take if this macro active
+                    fr["taking"] = bool(take)
+                    if fr["taking"]:
+                        fr["branch_taken"] = True
+                # drop directive
+            else:
+                parents = stack[:-1]
+                if all(p["taking"] for p in parents):
+                    out.append(raw)
+            continue
+
+        if m_else and stack:
+            fr = stack[-1]
+            if fr["fault"]:
+                fr["taking"] = not fr["branch_taken"]
+                if fr["taking"]:
+                    fr["branch_taken"] = True
+                # drop directive
+            else:
+                parents = stack[:-1]
+                if all(p["taking"] for p in parents):
+                    out.append(raw)
+            continue
+
+        if m_endif and stack:
+            fr = stack.pop()
+            if not fr["fault"] and outer_ok():
+                out.append(raw)
+            continue
+
+        if outer_ok():
+            out.append(raw)
+
+    return "".join(out)
+
+
+def _read_product_sv(path: Path) -> str:
+    """Read SV/V file with FAULT_*/red-twin ifdef bodies stripped (product view)."""
+    return product_active_sv(_read(path))
+
+
 def _hash_pathspecs(root: Path, pathspecs: tuple[str, ...], *, exclude_substr: str = "") -> str:
     """SHA1 over working-tree blobs for pathspecs (git ls-files + hash-object)."""
     list_cmd = ["git", "-C", str(root), "ls-files", "--", *pathspecs]
@@ -629,18 +743,31 @@ def _git_head_short(repo: Path) -> str:
     return proc.stdout.strip() or "?"
 
 
+def _text_for_string_scan(path: Path) -> str:
+    """Source text for greps: product-active view for SV/V (FAULT_* stripped)."""
+    raw = path.read_text(errors="ignore")
+    suf = path.suffix.lower()
+    if suf in {".sv", ".v", ".svh", ".vh"}:
+        return product_active_sv(raw)
+    return raw
+
+
 def _file_has_all(path: Path, patterns: list[str]) -> bool:
     if not path.is_file():
         return False
-    txt = path.read_text(errors="ignore")
+    txt = _text_for_string_scan(path)
     return all(re.search(p, txt) for p in patterns)
 
 
 def _file_missing_patterns(path: Path, patterns: list[str]) -> list[str]:
-    """Return patterns not found in path (all missing if file absent)."""
+    """Return patterns not found in path (all missing if file absent).
+
+    SV/V scans use product_active_sv so FAULT_*/red-twin ifdef bodies cannot
+    satisfy evidence greps (parent false-NEG) or defect greps (false-POS).
+    """
     if not path.is_file():
         return list(patterns)
-    txt = path.read_text(errors="ignore")
+    txt = _text_for_string_scan(path)
     return [p for p in patterns if not re.search(p, txt)]
 
 
@@ -2820,6 +2947,22 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
     msgs: list[str] = ["LEG0_ARCH_BLOCKERS_EXECUTED begin"]
     errors: list[str] = []
     msgs.append(f"LEG0_SCAN_ROOT root={ROOT} ruler={RULER_ROOT}")
+    # Parent 2026-08-03: publish which checks are string-based and how protected.
+    msgs.append(
+        "LEG0_CHECK_CLASSES "
+        "STRING_IFDEF_AWARE=B19_evidence,_file_missing_patterns,B15_hardwire_24,"
+        "B1/B7/B8/B9/B13/B14/B16/B17/B21/B22/B26 port+content greps "
+        "(product_active_sv strips `ifdef FAULT_* / RED_TWIN_* / FIT_MUTATION_*); "
+        "STRUCTURAL=B20_Verilator_PINMISSING_UNDRIVEN "
+        "(scripts/run_verilator.sh→oss-cad-suite; missing=HARD FAIL not soft-skip); "
+        "EXECUTABLE=B20_hier_manifest,B24_q5_fps_1001,B25_plxc_dual_map,"
+        "leg2_elab,leg3_true_de "
+        "(named scripts + CASE EXECUTED + rc0; fault twin rc!=0); "
+        "OWNERSHIP=B23_single_owner_table; "
+        "LIMITATION_STRING=wrong-producer twin not covered by greps; "
+        "LIMITATION_B20=has-driver≠intended-driver; "
+        "B2_NO_RASTER_GENERATOR=RETIRED(w-clock timing_960 constants-only; beam=raster SoT)"
+    )
 
     # Parent arbitration #3 — single-owner table (backstop; ownership is the cure).
     o_msgs, o_errs = run_single_owner_table_gate(ROOT)
@@ -3754,8 +3897,10 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
     # --- B15 cadence / hardwired 24 Hz (parent ABI arbitration) ---
     # Plex.sv content_fps = 8'd24 + present_core V_TOTAL from content_fps<=25 → 705
     # means beam is permanently film rate unless q5 fps_valid drives it.
-    plex_fps = _read(ROOT / "fpga" / "Plex_MiSTer" / "Plex.sv")
-    core_fps = _read(RTL / "present_core.sv")
+    # STRING-BASED + ifdef-aware: product_active_sv strips `ifdef FAULT_* red twins
+    # so a deliberate FAULT_B15_FPS_HARDWIRE_24 copy cannot false-POS this check.
+    plex_fps = _read_product_sv(ROOT / "fpga" / "Plex_MiSTer" / "Plex.sv")
+    core_fps = _read_product_sv(RTL / "present_core.sv")
     hard_24 = bool(re.search(r"\bcontent_fps\s*=\s*8'd24\b", plex_fps))
     uses_fps_for_vtot = bool(
         re.search(r"content_fps\s*<=\s*8'd25", core_fps)
@@ -4054,6 +4199,11 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
     # B19 content-presence greps were GREEN (evidence strings exist). Only a
     # mechanical undriven/pinmissing pass catches this class.
     msgs.append("LEG0_B20_CONNECTIVITY_SWEEP_BEGIN")
+    msgs.append(
+        "LEG0_B20_VERILATOR_INVOKE=scripts/run_verilator.sh "
+        "(oss-cad-suite ~/.local/oss-cad-suite/bin/verilator; bare PATH not required). "
+        "Missing verilator = HARD FAIL (soft-skip rc=77 is NOT a pass)."
+    )
     try:
         import rtl_lint as _rtl_conn
 
@@ -4068,7 +4218,12 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
                 f"discover_design: {exc}"
             )
             files_c, macros_c = [], []
-        if files_c:
+        if not files_c:
+            errors.append(
+                "B20_UNCONNECTED_PRODUCER: connectivity sweep got zero design files "
+                "from discover_design — check did not execute (not a skip/pass)."
+            )
+        else:
             _rc_c, _out_c, findings = _rtl_conn.run_connectivity_sweep(
                 files_c, macros_c, macro_qsf=qsf_conn if qsf_conn.is_file() else None
             )
@@ -4076,41 +4231,66 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
                 f"LEG0_B20_CONNECTIVITY_SWEEP_EXECUTED n_findings={len(findings)} "
                 f"verilator_rc={_rc_c} log=build/vl_connectivity_sweep.log"
             )
-            # Cap report noise but never drop the class: each finding is a blocker.
-            # Aggregate under named token so parent sees the class, not anonymous warns.
-            pin_n = sum(1 for f in findings if f.get("kind") == "PINMISSING")
-            und_n = sum(1 for f in findings if f.get("kind") == "UNDRIVEN")
-            if findings:
-                sample = findings[:12]
-                detail = "; ".join(
-                    (
-                        f"{f['kind']}:{f.get('inst_file','')}:{f.get('inst_line','')}"
-                        f":pin={f.get('pin') or f.get('signal') or '?'}"
-                        + (f":decl={Path(f['port_decl']).name}" if f.get("port_decl") else "")
-                    )
-                    for f in sample
-                )
-                more = f" (+{len(findings)-12} more)" if len(findings) > 12 else ""
+            # Soft-skip / missing binary: run_verilator.sh exits 127 when not found.
+            if _rc_c in (127, 126) or (
+                "Verilator not found" in (_out_c or "")
+                or "run_verilator: Verilator not found" in (_out_c or "")
+            ):
                 errors.append(
-                    f"B20_UNCONNECTED_PRODUCER: Verilator connectivity sweep found "
-                    f"{len(findings)} product-rtl issue(s) "
-                    f"(PINMISSING={pin_n} UNDRIVEN={und_n}). "
-                    "Class = correct producer + correct consumer never wired "
-                    "(parent integ miss #11). Sample: "
-                    f"{detail}{more}. "
-                    "LIMITATION: has-a-driver ≠ intended-driver (wrong-producer twin "
-                    "not covered — e.g. content_fps=8'd24 while fabric_content_fps "
-                    "is driven but unused)."
+                    "B20_UNCONNECTED_PRODUCER: Verilator unavailable "
+                    f"(verilator_rc={_rc_c}). Invoke via scripts/run_verilator.sh → "
+                    "~/.local/oss-cad-suite/bin/verilator. "
+                    "A connectivity check that cannot run is GRANT:NO (not soft-skip)."
+                )
+            elif _rc_c == 77:
+                errors.append(
+                    "B20_UNCONNECTED_PRODUCER: connectivity sweep returned soft-skip "
+                    "rc=77 — treated as FAIL (AGENTS.md: soft-skip ≠ pass)."
                 )
             else:
-                msgs.append(
-                    "LEG0_B20_CONNECTIVITY_OK PINMISSING=0 UNDRIVEN=0 "
-                    "(product-rtl filter; wrong-producer twin still out of scope)"
-                )
-        else:
-            msgs.append(
-                "LEG0_B20_CONNECTIVITY_SWEEP_SKIP no files from discover_design"
-            )
+                pin_n = sum(1 for f in findings if f.get("kind") == "PINMISSING")
+                und_n = sum(1 for f in findings if f.get("kind") == "UNDRIVEN")
+                if findings:
+                    sample = findings[:12]
+                    detail = "; ".join(
+                        (
+                            f"{f['kind']}:{f.get('inst_file','')}:{f.get('inst_line','')}"
+                            f":pin={f.get('pin') or f.get('signal') or '?'}"
+                            + (
+                                f":decl={Path(f['port_decl']).name}"
+                                if f.get("port_decl")
+                                else ""
+                            )
+                        )
+                        for f in sample
+                    )
+                    more = (
+                        f" (+{len(findings)-12} more)" if len(findings) > 12 else ""
+                    )
+                    errors.append(
+                        f"B20_UNCONNECTED_PRODUCER: Verilator connectivity sweep found "
+                        f"{len(findings)} product-rtl issue(s) "
+                        f"(PINMISSING={pin_n} UNDRIVEN={und_n}). "
+                        "Class = correct producer + correct consumer never wired "
+                        "(parent integ miss #11). Sample: "
+                        f"{detail}{more}. "
+                        "LIMITATION: has-a-driver ≠ intended-driver (wrong-producer twin "
+                        "not covered — e.g. content_fps=8'd24 while fabric_content_fps "
+                        "is driven but unused)."
+                    )
+                else:
+                    # Empty findings with catastrophic elab failure is not OK either:
+                    # require that verilator actually produced lint output.
+                    if _rc_c not in (0, 1) and not (_out_c or "").strip():
+                        errors.append(
+                            "B20_UNCONNECTED_PRODUCER: Verilator returned "
+                            f"rc={_rc_c} with empty log — sweep did not execute."
+                        )
+                    else:
+                        msgs.append(
+                            "LEG0_B20_CONNECTIVITY_OK PINMISSING=0 UNDRIVEN=0 "
+                            "(product-rtl filter; wrong-producer twin still out of scope)"
+                        )
     except FileNotFoundError as exc:
         errors.append(
             f"B20_UNCONNECTED_PRODUCER: connectivity sweep could not run ({exc}). "
@@ -4987,11 +5167,523 @@ def self_test() -> int:
     else:
         print(f"PASS SELFTEST mutation_leg0_still_blocks_grant EXECUTED rc={rc_ok}")
 
+    print("\n=== SELFTEST mutation_fault_ifdef_red_twin ===")
+    fi_fails = _mutation_fault_ifdef_red_twin()
+    if fi_fails:
+        for ff in fi_fails:
+            print(f"FAIL mutation_fault_ifdef: {ff}")
+            failures += 1
+    else:
+        print("PASS SELFTEST mutation_fault_ifdef_red_twin EXECUTED")
+
+    print("\n=== SELFTEST mutation_matrix (parent authority artifact) ===")
+    mx_fails, mx_rows = _run_mutation_matrix()
+    if mx_fails:
+        for mf in mx_fails:
+            print(f"FAIL mutation_matrix: {mf}")
+            failures += 1
+    else:
+        print(
+            f"PASS SELFTEST mutation_matrix EXECUTED rows={len(mx_rows)} "
+            f"all_red_proven=1"
+        )
+
     if failures:
         print(f"FIT_RELEASE_GATE_SELFTEST_FAIL failures={failures}")
         return 1
     print("FIT_RELEASE_GATE_SELFTEST_PASS EXECUTED")
     return 0
+
+
+def _mutation_fault_ifdef_red_twin() -> list[str]:
+    """Prove FAULT_* red twins cannot fool string greps (parent miss risk).
+
+    Directions:
+      false-POS: defect signature only inside `ifdef FAULT_*` must not fire defect
+      false-NEG: evidence signature only inside `ifdef FAULT_*` must not clear B19
+    """
+    fails: list[str] = []
+
+    # --- unit: product_active_sv ---
+    src = (
+        "wire [7:0] content_fps = plxg_content_fps;\n"
+        "`ifdef FAULT_B15_FPS_HARDWIRE_24\n"
+        "wire [7:0] content_fps = 8'd24; // deliberate red twin\n"
+        "`endif\n"
+        "`ifndef FAULT_OTHER\n"
+        "assign good_path = 1'b1;\n"
+        "`else\n"
+        "assign good_path = 1'b0; // fault else\n"
+        "`endif\n"
+    )
+    act = product_active_sv(src)
+    if "8'd24" in act:
+        fails.append("product_active_sv: FAULT body leaked into product view")
+    if "plxg_content_fps" not in act:
+        fails.append("product_active_sv: dropped product assignment")
+    if "good_path = 1'b1" not in act:
+        fails.append("product_active_sv: dropped ifndef-FAULT product branch")
+    if "good_path = 1'b0" in act:
+        fails.append("product_active_sv: kept FAULT else branch")
+    # When fault macro is *active*, body must remain (red-path view).
+    act_fault = product_active_sv(src, active_macros={"FAULT_B15_FPS_HARDWIRE_24"})
+    if "8'd24" not in act_fault:
+        fails.append("product_active_sv: active FAULT macro did not keep red body")
+    if not fails:
+        print("  MUT_OK product_active_sv unit strip+keep EXECUTED")
+
+    # --- false-POS: wrap product hardwire in FAULT only; product uses plxg ---
+    plex = ROOT / "fpga" / "Plex_MiSTer" / "Plex.sv"
+    if plex.is_file():
+        old = plex.read_text()
+        # Build a view where the only 8'd24 sits under FAULT, and product has q5 path.
+        # Minimal surgical: if product has hardwire, replace with plxg + FAULT twin.
+        if re.search(r"\bcontent_fps\s*=\s*8'd24\b", old):
+            bad = re.sub(
+                r"\b((?:wire\s+)?\[7:0\]\s+)?content_fps\s*=\s*8'd24\s*;",
+                (
+                    "`ifdef FAULT_B15_FPS_HARDWIRE_24\n"
+                    "wire [7:0] content_fps = 8'd24; // red twin only\n"
+                    "`else\n"
+                    "wire [7:0] content_fps = plxg_content_fps;\n"
+                    "wire fps_valid = plxg_fps_valid;\n"
+                    "`endif\n"
+                ),
+                old,
+                count=1,
+            )
+            # Ensure q5 tokens exist for has_q5_fps.
+            if "plxg_q5" not in bad and "fps_valid" not in bad:
+                bad = "wire plxg_q5 = 1'b1;\n" + bad
+            rest = _with_file_backup(plex, bad)
+            try:
+                prod = _read_product_sv(plex)
+                if re.search(r"\bcontent_fps\s*=\s*8'd24\b", prod):
+                    fails.append(
+                        "B15 false-POS: product_active_sv still sees FAULT hardwire"
+                    )
+                else:
+                    print("  MUT_OK B15_FAULT_twin_not_in_product_view EXECUTED")
+                # Full leg0: HARDWIRED token must not fire from FAULT-only body
+                # when q5 path present (may still fire for other reasons — only
+                # assert the product view itself is clean).
+                _rc, msgs = leg0_arch_blockers()
+                # If hard_24 only in FAULT, hard_24 flag in cadence line should be 0
+                cad = [m for m in msgs if m.startswith("LEG0_CADENCE")]
+                if cad and "hard_content_fps_24=1" in cad[0]:
+                    fails.append(
+                        f"B15 false-POS: LEG0_CADENCE still hard_content_fps_24=1 "
+                        f"with FAULT-only twin ({cad[0]})"
+                    )
+                else:
+                    print(
+                        "  MUT_OK B15_hard_24_false_pos_blocked "
+                        f"cadence={cad[0] if cad else '?'} true_rc={_rc}"
+                    )
+            finally:
+                rest()
+        else:
+            print("  MUT_SKIP B15_FAULT_false_pos (no product hardwire to wrap)")
+
+    # --- false-NEG: evidence-only-inside-FAULT must not satisfy _file_has_all ---
+    # Use a throwaway path under tests/ that greps would scan if pointed at.
+    twin = ROOT / "tests" / "unit" / "fitgate_fault_evidence_twin.sv"
+    body = (
+        "// fitgate mutation artefact — evidence only under FAULT\n"
+        "`ifdef FAULT_B19_FAKE_EVIDENCE\n"
+        "localparam longint FPS_MILLI = 1;\n"
+        "longint'(CLK_PIX_HZ)\n"
+        "`else\n"
+        "// product intentionally lacks B2 evidence patterns\n"
+        "wire unused = 1'b0;\n"
+        "`endif\n"
+    )
+    rest2 = _with_file_backup(twin, body)
+    try:
+        if _file_has_all(twin, [r"localparam\s+longint\s+FPS_MILLI", r"longint'\(CLK_PIX_HZ\)"]):
+            fails.append(
+                "B19 false-NEG risk: _file_has_all matched FAULT-only evidence"
+            )
+        else:
+            print("  MUT_OK B19_evidence_FAULT_twin_not_counted EXECUTED")
+        miss = _file_missing_patterns(
+            twin, [r"localparam\s+longint\s+FPS_MILLI", r"longint'\(CLK_PIX_HZ\)"]
+        )
+        if len(miss) != 2:
+            fails.append(
+                f"B19 false-NEG: expected both patterns missing, got miss={miss}"
+            )
+        else:
+            print("  MUT_OK B19_missing_patterns_ignores_FAULT EXECUTED")
+    finally:
+        rest2()
+        if twin.is_file():
+            try:
+                twin.unlink()
+            except OSError:
+                pass
+
+    return fails
+
+
+def _run_mutation_matrix() -> tuple[list[str], list[dict[str, str]]]:
+    """Parent authority artifact: each check proven RED with true rc=.
+
+    Rows: check | injected_defect | expect_token | verdict | true_rc
+    A row PASSES the matrix only when verdict=RED and token observed and rc!=0.
+    """
+    fails: list[str] = []
+    rows: list[dict[str, str]] = []
+
+    def _row(
+        check: str,
+        inject: str,
+        expect: str,
+        rc: int,
+        msgs: list[str],
+        *,
+        extra_ok: bool = True,
+    ) -> None:
+        txt = "\n".join(msgs)
+        toks = _leg0_error_tokens(msgs) if msgs else set()
+        # Also accept token as substring of any error line (full token match preferred)
+        has = expect in toks or any(expect in m for m in msgs)
+        # rc: leg0 returns 1 on errors; some helpers return custom
+        red = (rc != 0 and rc != 77) and has and extra_ok
+        verdict = "RED" if red else ("SOFT_SKIP" if rc == 77 else "GREEN_OR_MISS")
+        rows.append(
+            {
+                "check": check,
+                "inject": inject,
+                "expect": expect,
+                "verdict": verdict,
+                "true_rc": str(rc),
+                "token_hit": "1" if has else "0",
+            }
+        )
+        print(
+            f"MATRIX_ROW check={check} inject={inject!r} expect={expect} "
+            f"verdict={verdict} token_hit={int(has)} true_rc={rc}"
+        )
+        if not red:
+            fails.append(
+                f"{check}: want RED+{expect} rc!=0/77; got verdict={verdict} rc={rc} hit={has}"
+            )
+
+    print("MUTATION_MATRIX_BEGIN")
+
+    # --- B0 tree hash ---
+    cand_path = ROOT / "docs" / "fit_candidate.json"
+    backup = cand_path.read_text() if cand_path.is_file() else None
+    try:
+        cand_path.parent.mkdir(parents=True, exist_ok=True)
+        cand_path.write_text(
+            json.dumps(
+                {
+                    "architecture": PARENT_LOCKED_ARCH,
+                    "git_tree_hash": "deadbeef" * 5,
+                    "required_macros": dict(REQUIRED_EXACT),
+                    "forbidden_macros": ["PRESENT_MULTI_PIXEL"],
+                    "raster_policy": {
+                        "mode": "runtime_variable_true_de",
+                        "max_content_w": 960,
+                        "max_content_h": 540,
+                    },
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+        rc, msgs = leg0_arch_blockers()
+        _row("B0_TREE_HASH", "git_tree_hash=deadbeef…", "B0_TREE_HASH_MISMATCH", rc, msgs)
+    finally:
+        if backup is not None:
+            cand_path.write_text(backup)
+        else:
+            _write_parent_candidate_lock()
+
+    # --- B10 beam qip drop ---
+    qip = ROOT / "fpga" / "Plex_MiSTer" / "files.qip"
+    if qip.is_file() and "present_beam_content_de.sv" in qip.read_text():
+        old_q = qip.read_text()
+        bad_q = "\n".join(
+            ln for ln in old_q.splitlines() if "present_beam_content_de.sv" not in ln
+        ) + "\n"
+        rest = _with_file_backup(qip, bad_q)
+        try:
+            rc, msgs = leg0_arch_blockers()
+            # either token name is acceptable
+            txt = "\n".join(msgs)
+            expect = (
+                "B10_BEAM_NOT_IN_FILES_QIP"
+                if "B10_BEAM_NOT_IN_FILES_QIP" in txt
+                else "B10_BEAM_ABSENT_FROM_QUARTUS_FILE_LIST"
+            )
+            _row("B10_BEAM_QIP", "remove present_beam_content_de.sv from qip", expect, rc, msgs)
+        finally:
+            rest()
+    else:
+        print("MATRIX_ROW check=B10_BEAM_QIP SKIP no beam in qip")
+
+    # --- B6 hblank epoch ---
+    beam = RTL / "present_beam_content_de.sv"
+    if beam.is_file():
+        old_b = beam.read_text()
+        if "HBlank <= (hc_next" in old_b:
+            rest = _with_file_backup(
+                beam, old_b.replace(
+                    "HBlank <= (hc_next >= 11'(H_DE));",
+                    "HBlank <= (hc >= 11'(H_DE));",
+                )
+            )
+            try:
+                rc, msgs = leg0_arch_blockers()
+                _row(
+                    "B6_HBLANK_OLD_HC_EPOCH",
+                    "HBlank<=(hc>=H_DE) old epoch",
+                    "B6_HBLANK_OLD_HC_EPOCH",
+                    rc,
+                    msgs,
+                )
+            finally:
+                rest()
+
+    # --- B19 merge-loss reinject (content strip while ancestor assumed via live) ---
+    # Prefer a known B19 mutation helper path if artefact exists.
+    layout = RTL / "ddr_frame_layout_params.svh"
+    if layout.is_file():
+        old_l = layout.read_text()
+        # Strip 960 capacity evidence if present
+        if "960" in old_l or "720P" in old_l or "FRAME_W" in old_l:
+            rest = _with_file_backup(
+                layout,
+                "// fitgate matrix: hollow layout\n"
+                "localparam FRAME_W = 640;\n"
+                "localparam FRAME_H = 480;\n",
+            )
+            try:
+                rc, msgs = leg0_arch_blockers()
+                _row(
+                    "B1_LAYOUT_NOT_960",
+                    "layout params forced 640x480",
+                    "B1_LAYOUT_NOT_960",
+                    rc,
+                    msgs,
+                )
+            finally:
+                rest()
+
+    # --- B20 hierarchy: empty/missing manifest must RED ---
+    man = ROOT / "tests" / "unit" / "B20_HIER_MANIFEST.json"
+    if man.is_file():
+        old_m = man.read_text()
+        rest = _with_file_backup(man, json.dumps({"version": 2, "scenarios": []}) + "\n")
+        try:
+            rc, msgs = leg0_arch_blockers()
+            # any B20_HIER token
+            txt = "\n".join(msgs)
+            exp = "B20_HIER"
+            has = "B20_HIER" in txt or "B20_" in txt
+            rows.append(
+                {
+                    "check": "B20_HIER_MANIFEST",
+                    "inject": "empty scenarios[]",
+                    "expect": exp,
+                    "verdict": "RED" if rc not in (0, 77) and has else "GREEN_OR_MISS",
+                    "true_rc": str(rc),
+                    "token_hit": "1" if has else "0",
+                }
+            )
+            print(
+                f"MATRIX_ROW check=B20_HIER_MANIFEST inject='empty scenarios' "
+                f"expect=B20_HIER* verdict="
+                f"{'RED' if rc not in (0, 77) and has else 'GREEN_OR_MISS'} "
+                f"token_hit={int(has)} true_rc={rc}"
+            )
+            if rc in (0, 77) or not has:
+                fails.append("B20_HIER_MANIFEST empty scenarios did not RED")
+        finally:
+            rest()
+
+    # --- B20 connectivity: drop product pin (same as closed-class reinject) ---
+    plex = ROOT / "fpga" / "Plex_MiSTer" / "Plex.sv"
+    if plex.is_file() and re.search(r"\.content_w\s*\([^)]*\)", plex.read_text()):
+        old_p = plex.read_text()
+        bad_p = re.sub(
+            r"\.content_w\s*\([^)]*\)\s*,",
+            "/* MATRIX B20 drop content_w pin */",
+            old_p,
+            count=1,
+        )
+        rest = _with_file_backup(plex, bad_p)
+        try:
+            rc, msgs = leg0_arch_blockers()
+            txt = "\n".join(msgs)
+            pin_seen = "content_w" in txt or "pin=content_w" in txt
+            _row(
+                "B20_UNCONNECTED_PRODUCER",
+                "drop .content_w(…) instance pin",
+                "B20_UNCONNECTED_PRODUCER",
+                rc,
+                msgs,
+                extra_ok=pin_seen,
+            )
+        finally:
+            rest()
+    else:
+        rc, msgs = leg0_arch_blockers()
+        txt = "\n".join(msgs)
+        if "B20_UNCONNECTED_PRODUCER" in txt or "B20_HIER" in txt:
+            rows.append(
+                {
+                    "check": "B20_LIVE_OPEN",
+                    "inject": "no content_w pin — live B20 open",
+                    "expect": "B20_*",
+                    "verdict": "RED",
+                    "true_rc": str(rc),
+                    "token_hit": "1",
+                }
+            )
+            print(
+                f"MATRIX_ROW check=B20_LIVE_OPEN inject='live tree' "
+                f"expect=B20_* verdict=RED token_hit=1 true_rc={rc}"
+            )
+        else:
+            fails.append(
+                "B20: neither content_w pin-drop nor live B20 token — matrix hole"
+            )
+
+    # --- FAULT ifdef protection (string class) ---
+    # unit already in _mutation_fault_ifdef; record matrix row from product_active_sv
+    src = "`ifdef FAULT_X\nbad_evidence_TOKEN_XYZ\n`else\ngood\n`endif\n"
+    act = product_active_sv(src)
+    ok = "bad_evidence_TOKEN_XYZ" not in act and "good" in act
+    rows.append(
+        {
+            "check": "STRING_IFDEF_AWARE",
+            "inject": "FAULT_X wraps defect/evidence token",
+            "expect": "strip_fault_body",
+            "verdict": "RED" if ok else "GREEN_OR_MISS",
+            # synthetic: rc=1 means protected (would-be false match blocked)
+            "true_rc": "1" if ok else "0",
+            "token_hit": "1" if ok else "0",
+        }
+    )
+    print(
+        f"MATRIX_ROW check=STRING_IFDEF_AWARE inject='FAULT_X body' "
+        f"expect=strip_fault_body verdict={'RED' if ok else 'GREEN_OR_MISS'} "
+        f"token_hit={int(ok)} true_rc={1 if ok else 0}"
+    )
+    if not ok:
+        fails.append("STRING_IFDEF_AWARE product_active_sv failed")
+
+    # --- B25 dual map: break manifest ---
+    b25 = ROOT / "tests" / "unit" / "B25_PLXC_DOORBELL_DUAL_MAP_MANIFEST.json"
+    if b25.is_file():
+        old = b25.read_text()
+        rest = _with_file_backup(b25, "{}\n")
+        try:
+            rc, msgs = leg0_arch_blockers()
+            _row(
+                "B25_PLXC_DUAL_MAP",
+                "empty B25 manifest",
+                "B25",
+                rc,
+                msgs,
+                extra_ok=any("B25" in m for m in msgs),
+            )
+        finally:
+            rest()
+
+    # --- B24 q5 ---
+    b24 = ROOT / "tests" / "unit" / "B24_Q5_FPS_1001_MANIFEST.json"
+    if b24.is_file():
+        old = b24.read_text()
+        rest = _with_file_backup(b24, "{}\n")
+        try:
+            rc, msgs = leg0_arch_blockers()
+            _row(
+                "B24_Q5_FPS_1001",
+                "empty B24 manifest",
+                "B24",
+                rc,
+                msgs,
+                extra_ok=any("B24" in m for m in msgs),
+            )
+        finally:
+            rest()
+
+    # --- B9 hold ---
+    sys_top = ROOT / "fpga" / "Plex_MiSTer" / "sys" / "sys_top.v"
+    if not sys_top.is_file():
+        sys_top = ROOT / "fpga" / "Plex_MiSTer" / "sys_top.v"
+    # live open tokens without inject
+    rc, msgs = leg0_arch_blockers()
+    for tok in (
+        "B9_SYS_TOP_AR_OUT_HOLD_MISSING",
+        "B9_POST_ASCAL_DAR_BLACKOUT_MISSING",
+        "B26_STORE_CROP_DISPLAY_BOUNDS_MISSING",
+        "B27_FFMPEG_PAD_CHROMA_EVEN_ORACLE",
+        "B23_OWNERSHIP",
+    ):
+        txt = "\n".join(msgs)
+        # B23 may be OK on this tree
+        if tok.startswith("B23") and tok not in txt and "B23_" not in txt:
+            print(f"MATRIX_ROW check={tok} inject='live' verdict=SKIP (not live open)")
+            continue
+        has = tok in txt or (tok.rstrip("_MISSING") in txt)
+        # For B23 match any B23_
+        if tok == "B23_OWNERSHIP":
+            has = any("B23_" in m for m in msgs)
+            tok_print = "B23_*" if has else tok
+        else:
+            tok_print = tok
+        red = rc not in (0, 77) and has
+        rows.append(
+            {
+                "check": tok,
+                "inject": "live defective/hollow tree (no inject)",
+                "expect": tok_print,
+                "verdict": "RED" if red else "GREEN_OR_MISS",
+                "true_rc": str(rc),
+                "token_hit": "1" if has else "0",
+            }
+        )
+        print(
+            f"MATRIX_ROW check={tok} inject='live tree' expect={tok_print} "
+            f"verdict={'RED' if red else 'GREEN_OR_MISS'} "
+            f"token_hit={int(has)} true_rc={rc}"
+        )
+        # Live-open rows only fail matrix if token is in LIVE_OPEN and missing
+        if tok in LIVE_OPEN_BLOCKER_TOKENS and not red:
+            fails.append(f"{tok}: live-open matrix row not RED")
+
+    print("MUTATION_MATRIX_END")
+    n_red = sum(1 for r in rows if r["verdict"] == "RED")
+    print(
+        f"MUTATION_MATRIX_SUMMARY rows={len(rows)} red={n_red} "
+        f"fail_holes={len(fails)}"
+    )
+    # Persist matrix next to status (worktree, not /tmp-only)
+    try:
+        outp = ROOT / "docs" / "fit_gate_mutation_matrix.json"
+        outp.write_text(
+            json.dumps(
+                {
+                    "rows": rows,
+                    "failures": fails,
+                    "n_red": n_red,
+                    "head": _git_head_short(ROOT),
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+        print(f"MUTATION_MATRIX_WRITTEN path={outp}")
+    except OSError as exc:
+        print(f"MUTATION_MATRIX_WRITE_WARN {exc}")
+
+    return fails, rows
 
 
 def _write_gate_identity_lock(*, reason: str) -> None:

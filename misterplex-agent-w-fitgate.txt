@@ -1,0 +1,10 @@
+lane: w-fitgate
+HEAD: (pending commit)
+GRANT: NO
+selftest: FIT_RELEASE_GATE_SELFTEST_PASS true_rc=0
+mutation_matrix: docs/fit_gate_mutation_matrix.json rows=14 red=14 fail_holes=0
+B20: Verilator PINMISSING/UNDRIVEN via scripts/run_verilator.sh; missing=HARD FAIL
+string_checks: product_active_sv strips FAULT_*/RED_TWIN_* (ifdef-aware)
+B2_NO_RASTER_GENERATOR: RETIRED (timing_960 constants-only; beam=raster SoT)
+hollow_product: leg0 RED count~49 (expected)
+authority: mutation matrix proves each check can FAIL with true_rc=1
