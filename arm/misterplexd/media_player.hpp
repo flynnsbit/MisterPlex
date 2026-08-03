@@ -101,18 +101,28 @@ public:
         ffmpegScaleSourceW_ = w > 0 ? w : 0;
         ffmpegScaleSourceH_ = h > 0 ? h : 0;
     }
-    // True only after runtime measurement (basis=measured). library_media and
-    // transcode_request must leave this false (B4). Gates identity_skip only
-    // when force-scale is escaped.
+    // Plan-time geometry trust latch (Direct-Part / explicit main freeze).
+    // Survives the measured-session clear inside threadMain. Not the B4
+    // measured banner flag — see measuredDeliveryGeometryVerified().
     void setDeliveryGeometryVerified(bool v) {
-        deliveryGeometryVerified_.store(v, std::memory_order_relaxed);
+        planDeliveryGeometryTrusted_.store(v, std::memory_order_relaxed);
     }
+    // Effective trust for callers: plan latch OR measured banner fact.
     bool deliveryGeometryVerified() const {
-        return deliveryGeometryVerified_.load(std::memory_order_relaxed);
+        return planDeliveryGeometryTrusted_.load(std::memory_order_relaxed) ||
+               measuredDeliveryGeometryVerified_.load(std::memory_order_relaxed);
+    }
+    bool planDeliveryGeometryTrusted() const {
+        return planDeliveryGeometryTrusted_.load(std::memory_order_relaxed);
+    }
+    bool measuredDeliveryGeometryVerified() const {
+        return measuredDeliveryGeometryVerified_.load(std::memory_order_relaxed);
     }
     // Resolve-time delivery basis token (transcode_request / direct_play_part / …).
     // Used for path_scale_class logs — universal stays arm_scale_fallback.
-    void setDeliveryBasis(std::string basis) { deliveryBasis_ = std::move(basis); }
+    // Also refreshes plan trust from basis so seek/restart without main still
+    // retains Direct-Part pad-only/identity (rd-duck verified wipe).
+    void setDeliveryBasis(std::string basis);
     const std::string& deliveryBasis() const { return deliveryBasis_; }
     // Intentional A/V lead compensation via FFmpeg adelay (ms). Default 0.
     // Prefer contentFps wall/audio pacing first; use adelay only for small residual.
@@ -355,9 +365,12 @@ private:
     std::string ffmpegSwsFlags_;
     bool ffmpegScaleAssumeMatch_ = false;
     bool ddrYuvForceScale_ = true; // conf DDR_YUV_FORCE_SCALE; default ON
-    // Flips true only after ffmpeg stderr MEASURED_DELIVERY (basis=measured).
-    // Play-time library_media/transcode_request must leave this false (B4).
-    std::atomic<bool> deliveryGeometryVerified_{false};
+    // Plan-time Direct-Part / explicit trust. Survives measured-session clear.
+    // Set by setDeliveryGeometryVerified / setDeliveryBasis; NOT by banner.
+    std::atomic<bool> planDeliveryGeometryTrusted_{false};
+    // B4 measured fact only — ffmpeg stderr MEASURED_DELIVERY. Cleared at each
+    // rawvideo session measure start (before vf plan). Never gates plan alone.
+    std::atomic<bool> measuredDeliveryGeometryVerified_{false};
     std::string deliveryBasis_; // resolve token; empty → treat as unknown
     int ffmpegScaleSourceW_ = 0;
     int ffmpegScaleSourceH_ = 0;

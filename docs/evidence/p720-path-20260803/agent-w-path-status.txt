@@ -1,7 +1,14 @@
-worker=w-path todo=p720-path
-tip=pending_q5_seqlock
-status=IDLE_READY
-blocker=none
-summary=q5 inject into plan.plxg_q[5] + writePlxgRecord bootstrap 0x300FF800 seqlock; refuse standalone +0x828; LEG+OptC E2E; make unit true rc=0
-evidence=test_plxg_q5_publish_e2e PASS; make unit true rc=0
-note=bit34 RESERVED; no Quartus/MiSTer; fps_1001 draft only
+w-path status
+tip: 27e1a243 fix(path): retain Direct-Part plan trust across measured-session clear
+unit true rc=0
+
+rd-duck DP verified wipe CLOSED:
+- planDeliveryGeometryTrusted_ vs measuredDeliveryGeometryVerified_
+- measured cleared BEFORE vf plan; plan trust/basis never wiped
+- vfReq = planTimeDeliveryGeometryVerified(basis, plan, measured)
+- seek without main retains DP via basis refresh on setDeliveryBasis
+- test_ffmpeg_vf GREEN_PATH_dp_plan_trust_survives_measured_clear
+  320 barrier + 426 pad-only + NEG xcode scale
+
+Prior tip 4dea61bc q5 seqlock still landed.
+bit34 RESERVED. No Quartus/device.

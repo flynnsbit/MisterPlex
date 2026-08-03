@@ -580,6 +580,15 @@ void MediaPlayer::setFfmpegSwsFlags(std::string flags) {
     ffmpegSwsFlags_ = std::move(flags);
 }
 
+void MediaPlayer::setDeliveryBasis(std::string basis) {
+    deliveryBasis_ = std::move(basis);
+    // Resolver Direct-Part trust rides the basis token so seek/restart (play()
+    // without main.cpp) still plans pad-only/identity. Universal bases stay false.
+    planDeliveryGeometryTrusted_.store(
+        deliveryGeometryVerifiedFromBasis(deliveryBasis_.c_str()),
+        std::memory_order_relaxed);
+}
+
 std::string MediaPlayer::hex16(uint16_t v) {
     static const char* d = "0123456789abcdef";
     std::string out(4, '0');
@@ -1600,12 +1609,13 @@ void MediaPlayer::ffmpegStderrPump(int errReadFd, size_t codedFrameBytes, bool i
             // tier alone — 320×240 DECODE still publishes into a 624×480 bank.
             const bool geomMatch =
                 (codedW > 0 && codedH > 0 && g.w == codedW && g.h == codedH);
-            // B4: delivery_verified is a FACT that we measured (basis=="measured"),
+            // B4: measured_delivery_verified is a FACT that we measured (basis=="measured"),
             // not "measured equals bank". Match is decode_target_match / DELIVERY_MISMATCH.
-            // Play-time GEOM stays delivery_verified=0 until this banner (claim basis).
+            // Play-time vf already froze via plan_trusted/basis; this flag is live
+            // telemetry + post-banner observability only (cannot rebuild vf).
             const bool verified = deliveryGeometryVerifiedFromBasis("measured");
             if (verified)
-                deliveryGeometryVerified_.store(true, std::memory_order_relaxed);
+                measuredDeliveryGeometryVerified_.store(true, std::memory_order_relaxed);
             log(std::string("media: MEASURED_DELIVERY delivered_geom=") +
                 std::to_string(g.w) + "x" + std::to_string(g.h) +
                 " src=ffmpeg_banner" +
@@ -3068,6 +3078,11 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     codedBankH_ = rawH;
     measuredDeliveryW_.store(0, std::memory_order_relaxed);
     measuredDeliveryH_.store(0, std::memory_order_relaxed);
+    // B4 measured-session starts unverified BEFORE vf plan so a prior title's
+    // banner cannot leak into this plan (universal would wrongly identity).
+    // planDeliveryGeometryTrusted_ / deliveryBasis_ are NOT cleared — Direct-Part
+    // pad-only/identity must survive seek→play without main re-set (rd-duck).
+    measuredDeliveryGeometryVerified_.store(false, std::memory_order_relaxed);
     pipeDesyncRisk_.store(false, std::memory_order_relaxed);
     identityGeomAbort_.store(false, std::memory_order_relaxed);
     LastFrameLatch lastFrameLatch;
@@ -3097,8 +3112,16 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     vfReq.source_w = ffmpegScaleSourceW_;
     vfReq.source_h = ffmpegScaleSourceH_;
     vfReq.assume_source_matches_coded = ffmpegScaleAssumeMatch_;
-    vfReq.delivery_geometry_verified =
-        deliveryGeometryVerified_.load(std::memory_order_relaxed);
+    {
+        const char* basisTok =
+            deliveryBasis_.empty() ? nullptr : deliveryBasis_.c_str();
+        const bool planTrusted =
+            planDeliveryGeometryTrusted_.load(std::memory_order_relaxed);
+        const bool measuredVer =
+            measuredDeliveryGeometryVerified_.load(std::memory_order_relaxed);
+        vfReq.delivery_geometry_verified =
+            planTimeDeliveryGeometryVerified(basisTok, planTrusted, measuredVer);
+    }
     const FfmpegVfPlan vfPlan = buildFfmpegVideoFilter(vfReq);
     std::string vf = vfPlan.vf;
     // Actual scale decision (parent greps arm_rescale= here and on misterplexd: GEOM).
@@ -3118,8 +3141,11 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             vfPlan.reason + " claimed=" + srcStr + " coded=" + codedStr);
     }
     {
-        const bool delivVer =
-            deliveryGeometryVerified_.load(std::memory_order_relaxed);
+        const bool planTrusted =
+            planDeliveryGeometryTrusted_.load(std::memory_order_relaxed);
+        const bool measuredVer =
+            measuredDeliveryGeometryVerified_.load(std::memory_order_relaxed);
+        const bool delivVer = vfReq.delivery_geometry_verified;
         const char* basis =
             deliveryBasis_.empty() ? "unknown" : deliveryBasis_.c_str();
         const auto pathClass = classifyPathScaleClass(
@@ -3134,6 +3160,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             " yuv_ddr_force_scale=" + (forceScale ? "1" : "0") +
             " delivery_basis=" + basis +
             " delivery_verified=" + (delivVer ? "1" : "0") +
+            " plan_geometry_trusted=" + (planTrusted ? "1" : "0") +
+            " measured_delivery_verified=" + (measuredVer ? "1" : "0") +
             " path_scale_class=" + std::string(pathScaleClassName(pathClass)) +
             " fabric_native=" +
             (pathClass == PathScaleClass::FabricNative ? "1" : "0") +
@@ -3406,8 +3434,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         audioBytes_.store(0);
         measuredDeliveryW_.store(0);
         measuredDeliveryH_.store(0);
-        // Session measure starts unverified; only MEASURED_DELIVERY sets true (B4).
-        deliveryGeometryVerified_.store(false, std::memory_order_relaxed);
+        // Measured banner fact only — plan_trusted/basis already froze vf above.
+        // Do not touch planDeliveryGeometryTrusted_ (Direct-Part seek survival).
+        measuredDeliveryGeometryVerified_.store(false, std::memory_order_relaxed);
         pipeDesyncRisk_.store(false);
         identityGeomAbort_.store(false, std::memory_order_relaxed);
         std::vector<std::string> args;
@@ -4679,9 +4708,12 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     " measured_delivery=" +
                     (mw > 0 ? (std::to_string(mw) + "x" + std::to_string(mh)) : "pending") +
                     " measured_delivery_src=" + (mw > 0 ? "measured" : "NO-DATA") +
-                    // Live flag: flips to 1 only after MEASURED_DELIVERY (not play-time GEOM).
+                    // Live B4 flag: flips to 1 only after MEASURED_DELIVERY (not plan-time DP).
                     " delivery_verified=" +
-                    (deliveryGeometryVerified_.load(std::memory_order_relaxed) ? "1" : "0") +
+                    (measuredDeliveryGeometryVerified_.load(std::memory_order_relaxed) ? "1"
+                                                                                        : "0") +
+                    " plan_geometry_trusted=" +
+                    (planDeliveryGeometryTrusted_.load(std::memory_order_relaxed) ? "1" : "0") +
                     " identity_skip=" + (vfPlan.identity_skip ? "1" : "0") +
                     " arm_rescale=" + (vfPlan.scale_applied ? "1" : "0") +
                     " vf_reason=" + vfPlan.reason +
@@ -4993,8 +5025,12 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         } else if (usedRawVideo) {
             log("media: MEASURED_DELIVERY_FINAL delivered_geom=NO-DATA src=ffmpeg_banner "
                 "— banner not parsed (need -loglevel info + stderr pipe) delivery_verified=" +
-                std::string(deliveryGeometryVerified_.load(std::memory_order_relaxed) ? "1"
-                                                                                        : "0") +
+                std::string(measuredDeliveryGeometryVerified_.load(std::memory_order_relaxed)
+                                ? "1"
+                                : "0") +
+                " plan_geometry_trusted=" +
+                std::string(planDeliveryGeometryTrusted_.load(std::memory_order_relaxed) ? "1"
+                                                                                          : "0") +
                 " request_geom=" +
                 (playRequestW_ > 0
                      ? (std::to_string(playRequestW_) + "x" + std::to_string(playRequestH_))

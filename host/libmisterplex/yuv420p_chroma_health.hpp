@@ -144,4 +144,49 @@ inline bool deliveryGeometryVerifiedFromBasis(const char* deliveryBasis) {
     return b == "measured" || b == "direct_play_part";
 }
 
+// Effective verified bit for buildFfmpegVideoFilter at play-time plan freeze.
+//
+// rd-duck: MediaPlayer must NOT feed vf solely from the measured-session atomic.
+// That atomic is cleared when a rawvideo session starts (B4: measure begins
+// unverified) and is only raised by the ffmpeg banner — which arrives AFTER the
+// vf string is frozen. Direct-Part trust comes from the resolver basis (and/or an
+// explicit plan-trusted latch set beside setDeliveryBasis). Seek/restart re-enters
+// threadMain without main.cpp re-calling setters; basis + plan latch must survive.
+//
+//   plan_trusted — resolver Direct-Part (or explicit main latch); never cleared
+//                  by the measured-session start wipe
+//   measured     — banner fact only; cleared at each session measure start
+//   basis        — deliveryBasisForResolve token; direct_play_part qualifies
+//
+// Universal/transcode_request: basis does not qualify, plan_trusted false,
+// measured false at plan → scale. NEG: xcode claim still scales at plan time.
+inline bool planTimeDeliveryGeometryVerified(const char* delivery_basis,
+                                             bool plan_trusted,
+                                             bool measured_verified) {
+    return plan_trusted || measured_verified ||
+           deliveryGeometryVerifiedFromBasis(delivery_basis);
+}
+
+// Mirror MediaPlayer setter → threadMain vf inputs after the measured-session
+// clear (integration oracle; production must call the same composition).
+inline FfmpegVfRequest mediaPlayerVfRequestFromPlanInputs(
+    int source_w, int source_h, int coded_w, int coded_h, int display_w, int display_h,
+    FfmpegScaleMode scale_mode, const char* delivery_basis, bool plan_trusted,
+    bool measured_verified_after_session_clear,
+    bool assume_source_matches_coded = false, const std::string& sws_flags = {}) {
+    FfmpegVfRequest r;
+    r.source_w = source_w;
+    r.source_h = source_h;
+    r.coded_w = coded_w;
+    r.coded_h = coded_h;
+    r.display_w = display_w;
+    r.display_h = display_h;
+    r.scale_mode = scale_mode;
+    r.sws_flags = sws_flags;
+    r.assume_source_matches_coded = assume_source_matches_coded;
+    r.delivery_geometry_verified = planTimeDeliveryGeometryVerified(
+        delivery_basis, plan_trusted, measured_verified_after_session_clear);
+    return r;
+}
+
 } // namespace misterplex

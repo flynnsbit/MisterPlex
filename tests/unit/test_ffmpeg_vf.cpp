@@ -981,6 +981,97 @@ int main() {
         std::printf("GREEN_PATH_identity_fixed_out_barrier race_model+policy\n");
     }
 
+    // --- rd-duck: DP plan trust survives measured-session clear (setter→vf) ---
+    // Production order: main setDeliveryBasis/Verified → threadMain clears
+    // measured → compose planTimeDeliveryGeometryVerified → buildFfmpegVideoFilter.
+    // A sole measured atomic wipe before vf would force scale on every DP path.
+    {
+        // Helper: session clear leaves measured=false; plan uses basis/plan latch.
+        const bool measured_after_clear = false;
+
+        // POS: DP 320×240 identity / fixed-out barrier (no scale= resample class)
+        {
+            const bool plan_trusted =
+                deliveryGeometryVerifiedFromBasis("direct_play_part");
+            expect(plan_trusted, "DP basis qualifies plan trust");
+            auto r = mediaPlayerVfRequestFromPlanInputs(
+                320, 240, 320, 240, 320, 240, FfmpegScaleMode::Always,
+                "direct_play_part", plan_trusted, measured_after_clear);
+            expect(r.delivery_geometry_verified,
+                   "DP 320 plan verified after measured clear");
+            const auto p = buildFfmpegVideoFilter(r);
+            expect(!p.scale_applied, "DP 320 no ARM scale");
+            expect(p.fixed_output_barrier, "DP 320 fixed-out barrier");
+            expect(p.vf.find("scale=") == std::string::npos ||
+                       p.vf.find("flags=neighbor") != std::string::npos,
+                   "DP 320 barrier neighbor pin only");
+            expect(std::string(p.reason).find("force_exact_fixed_out") != std::string::npos ||
+                       std::string(p.reason).find("identity_fixed_out") != std::string::npos,
+                   "DP 320 reason fixed_out");
+        }
+
+        // POS: DP 426×240 → store 432×240 pad-only (no FOAR scale)
+        {
+            const bool plan_trusted =
+                deliveryGeometryVerifiedFromBasis("direct_play_part");
+            auto r = mediaPlayerVfRequestFromPlanInputs(
+                426, 240, 432, 240, 432, 240, FfmpegScaleMode::Always,
+                "direct_play_part", plan_trusted, measured_after_clear);
+            expect(r.delivery_geometry_verified, "DP 426 plan verified after clear");
+            const auto p = buildFfmpegVideoFilter(r);
+            expect(!p.scale_applied, "DP 426 pad-only scale_applied=0");
+            expect(std::string(p.reason) == "verified_same_height_pad_only",
+                   "DP 426 verified_same_height_pad_only");
+            expect(p.vf.find("pad=") != std::string::npos, "DP 426 emits pad=");
+            expect(p.vf.find("scale=") == std::string::npos, "DP 426 no scale=");
+        }
+
+        // NEG: universal/transcode after measured clear stays unverified → scales
+        {
+            const bool plan_trusted =
+                deliveryGeometryVerifiedFromBasis("transcode_request");
+            expect(!plan_trusted, "xcode basis not plan-trusted");
+            auto r = mediaPlayerVfRequestFromPlanInputs(
+                320, 240, 320, 240, 320, 240, FfmpegScaleMode::Always,
+                "transcode_request", plan_trusted, measured_after_clear);
+            expect(!r.delivery_geometry_verified,
+                   "NEG xcode unverified after measured clear");
+            const auto p = buildFfmpegVideoFilter(r);
+            expect(p.scale_applied, "NEG xcode still scales");
+            expect(std::string(p.reason).find("unverified") != std::string::npos,
+                   "NEG xcode reason unverified");
+        }
+
+        // NEG: sole measured atomic false without basis/plan → scale (the wipe bug)
+        {
+            expect(!planTimeDeliveryGeometryVerified(nullptr, false, false),
+                   "NEG no basis/plan/measured → false");
+            expect(planTimeDeliveryGeometryVerified("direct_play_part", false, false),
+                   "DP basis alone recovers after atomic wipe");
+            // measured alone CAN raise the helper (post-banner telemetry class),
+            // but threadMain clears measured BEFORE plan so xcode cannot leak.
+            expect(planTimeDeliveryGeometryVerified("transcode_request", false, true),
+                   "measured-only raises helper (banner class)");
+            expect(!planTimeDeliveryGeometryVerified("transcode_request", false, false),
+                   "NEG prior-banner cleared: xcode plan still false");
+        }
+
+        // Seek survival: basis retained, measured cleared again → still DP pad
+        {
+            auto r = mediaPlayerVfRequestFromPlanInputs(
+                426, 240, 432, 240, 432, 240, FfmpegScaleMode::Always,
+                "direct_play_part",
+                /*plan_trusted from basis refresh*/ true,
+                /*second session clear*/ false);
+            const auto p = buildFfmpegVideoFilter(r);
+            expect(!p.scale_applied && p.vf.find("scale=") == std::string::npos,
+                   "seek re-plan DP 426 still pad-only");
+        }
+
+        std::printf("GREEN_PATH_dp_plan_trust_survives_measured_clear "
+                    "320_barrier+426_pad+NEG_xcode\n");
+    }
+
     if (g_fails) {
         std::fprintf(stderr, "test_ffmpeg_vf: %d failure(s)\n", g_fails);
         return 1;
