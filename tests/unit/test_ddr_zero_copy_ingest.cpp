@@ -128,6 +128,17 @@ int main() {
     CHECK(kPlex720pYuv420pBytes == 1382400u || kPlex720pYuv420pBytes == 1280 * 720 * 3 / 2,
           "720p bytes");
 
+    // PL330 ABI sits after Option-C triple banks; no overlap
+    CHECK(kPl330ProgScratchPhys == 0x30600000u, "scratch phys");
+    CHECK(kPl330StagingPhys == 0x30601000u, "staging phys");
+    CHECK(kPl330AbiRegionPhys == kPlex720pDdrFramePhysBase + 3u * kPlex720pYuv420pBankStride,
+          "after triple end");
+    CHECK(!pl330AbiOverlapsOptionCBanks(kPl330AbiRegionPhys, kPl330AbiRegionBytes),
+          "NEG no Option-C overlap");
+    CHECK(pl330PhysInProgScratch(kPl330ProgScratchPhys, 27), "prog in scratch");
+    CHECK(pl330PhysInStaging(kPl330StagingPhys, kPlex720pYuv420pBytes), "frame in staging");
+    CHECK(Pl330Mem2Mem::abiProgScratchPhys() == kPl330ProgScratchPhys, "abi helper");
+
     if (g_fails) {
         std::cerr << "test_ddr_zero_copy_ingest: " << g_fails << " fails\n";
         return 1;

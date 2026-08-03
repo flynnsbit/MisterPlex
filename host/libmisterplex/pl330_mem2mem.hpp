@@ -5,16 +5,19 @@
 // Programs the non-secure DMAC via /dev/mem debug instruction interface.
 // Default OFF — parent measures concurrency; Linux may already own channels.
 //
-// Pre-register (device):
-//   P1: PL330 mem2mem 1382400 B bank write wall < 15.283 ms (CPU memcpy baseline)
-//   P2: During DMA, a concurrent busy-loop on the other core still runs (overlap)
-//   P3: If kernel holds DMAC, open/map still works but channel start FAILS cleanly
+// Program scratch + staging live in the memmap reserved window at fixed phys
+// (kPl330ProgScratchPhys / kPl330StagingPhys in ddr_frame_layout.hpp) so the
+// PL330 can fetch microcode by PA without CMA/hugepages/pagemap.
 //
-// Phys addresses required for src and dst. User RAM src needs pagemap pin
-// (see pl330ResolveUserPhys) or a reserved CMA/coherent buffer.
+// Pre-register (device, after scratch wired):
+//   P1: pl330_transfer started=1 (no longer needs_prog_scratch_phys)
+//   P2: DMA wall for 1382400 B into bank ≤ serial CPU copy (~15.9 ms)
+//   P3: copy_under_burn inflate_ms small ⇒ max(decode,dma) credible
 //
 // Do NOT ring the frame doorbell from this header — caller owns ordering
 // (DdrIngestSession::mayRingDoorbell).
+
+#include "libmisterplex/ddr_frame_layout.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -171,10 +174,35 @@ public:
                 *err = "pl330: mmap DMAC failed";
             return false;
         }
+        // Fixed ABI scratch in reserved window (PA known by construction).
+        scratch_map_ = ::mmap(nullptr, kPl330AbiRegionBytes, PROT_READ | PROT_WRITE, MAP_SHARED,
+                              fd_, static_cast<off_t>(kPl330AbiRegionPhys));
+        if (scratch_map_ == MAP_FAILED) {
+            scratch_map_ = nullptr;
+            ::munmap(map_, kPl330MapLen);
+            map_ = nullptr;
+            ::close(fd_);
+            fd_ = -1;
+            if (err)
+                *err = "pl330: mmap ABI scratch/staging failed";
+            return false;
+        }
+        prog_scratch_phys_ = kPl330ProgScratchPhys;
+        prog_scratch_virt_ = scratch_map_;
+        staging_phys_ = kPl330StagingPhys;
+        staging_virt_ = static_cast<uint8_t*>(scratch_map_) + kPl330ProgScratchBytes;
         return true;
     }
 
     void close() {
+        if (scratch_map_ && scratch_map_ != MAP_FAILED) {
+            ::munmap(scratch_map_, kPl330AbiRegionBytes);
+            scratch_map_ = nullptr;
+        }
+        prog_scratch_virt_ = nullptr;
+        staging_virt_ = nullptr;
+        prog_scratch_phys_ = 0;
+        staging_phys_ = 0;
         if (map_ && map_ != MAP_FAILED) {
             ::munmap(map_, kPl330MapLen);
             map_ = nullptr;
@@ -185,7 +213,24 @@ public:
         }
     }
 
-    bool isOpen() const { return map_ != nullptr; }
+    bool isOpen() const { return map_ != nullptr && scratch_map_ != nullptr; }
+
+    uint32_t progScratchPhys() const { return prog_scratch_phys_; }
+    void* progScratchVirt() const { return prog_scratch_virt_; }
+    uint32_t stagingPhys() const { return staging_phys_; }
+    void* stagingVirt() const { return staging_virt_; }
+
+    // Copy host bytes into contiguous staging (PA = kPl330StagingPhys).
+    bool loadStaging(const void* src, size_t len, std::string* err = nullptr) {
+        if (!staging_virt_ || !src || len == 0 || len > kPl330StagingBytes) {
+            if (err)
+                *err = "pl330: staging load rejected";
+            return false;
+        }
+        std::memcpy(staging_virt_, src, len);
+        __sync_synchronize();
+        return true;
+    }
 
     uint32_t read32(uint32_t off) const {
         if (!map_)
@@ -293,34 +338,35 @@ private:
             return r;
         }
 
-        // Without a secure SRAM stash for channel PC, full DMAGO needs a
-        // physically contiguous program buffer. Callers may pass src_phys with
-        // a reserved prefix — for product we require kPl330ProgScratchPhys.
-        // If scratch is 0, report needs_scratch (bench documents the gap).
-        if (prog_scratch_phys_ == 0) {
+        if (prog_scratch_phys_ == 0 || !prog_scratch_virt_) {
             r.ok = false;
             r.detail = "needs_prog_scratch_phys";
             r.channel_started = false;
             return r;
         }
-
-        // Copy program bytes into scratch via caller-provided virt if set.
-        if (!prog_scratch_virt_) {
-            r.detail = "needs_prog_scratch_virt";
+        if (plen > kPl330ProgScratchBytes) {
+            r.detail = "program exceeds scratch";
             return r;
         }
         std::memcpy(prog_scratch_virt_, prog, plen);
+        // Clear rest of page so stale bytes never execute if PC walks
+        if (plen < 64)
+            std::memset(static_cast<uint8_t*>(prog_scratch_virt_) + plen, 0, 64 - plen);
         __sync_synchronize();
 
         const int ch = (req.channel >= 0 && req.channel < 8) ? req.channel : 0;
         // Wait debug busy clear
-        for (int i = 0; i < 1000; ++i) {
+        for (int i = 0; i < 10000; ++i) {
             if ((read32(kPl330_DBGSTATUS) & 1u) == 0)
                 break;
+            if (i == 9999) {
+                r.detail = "dbgstatus sticky busy";
+                return r;
+            }
         }
-        // DMAGO ns=0 channel=ch — opcode 0xA0 | (ns<<1), ch in byte1
-        // DBGINST0: [16:0] = first instruction bytes, etc. (see TRM)
-        const uint32_t inst0 = (0xA0u) | (static_cast<uint32_t>(ch) << 8) | (0u << 24);
+        // Linux pl330: DBGINST0 = (0<<16)|(ch<<8)|(CMD_DMAGO|ns), DBGINST1 = PC LE
+        const uint32_t ns = 0; // non-secure manager on NS base
+        const uint32_t inst0 = (0u << 16) | (static_cast<uint32_t>(ch) << 8) | (0xA0u | (ns << 1));
         write32(kPl330_DBGINST0, inst0);
         write32(kPl330_DBGINST1, prog_scratch_phys_);
         write32(kPl330_DBGCMD, 0); // execute
@@ -372,11 +418,18 @@ public:
         return true;
     }
 
+    // ABI constants visible to tests without /dev/mem.
+    static uint32_t abiProgScratchPhys() { return kPl330ProgScratchPhys; }
+    static uint32_t abiStagingPhys() { return kPl330StagingPhys; }
+
 private:
     int fd_ = -1;
     void* map_ = nullptr;
+    void* scratch_map_ = nullptr;
     uint32_t prog_scratch_phys_ = 0;
     void* prog_scratch_virt_ = nullptr;
+    uint32_t staging_phys_ = 0;
+    void* staging_virt_ = nullptr;
 };
 
 // Resolve first page phys for a user pointer via /proc/self/pagemap.

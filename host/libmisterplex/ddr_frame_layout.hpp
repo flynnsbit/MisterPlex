@@ -537,4 +537,69 @@ inline bool ddrFrameStoreAcceptsResolution(int codedWidth, int codedHeight) {
     return ddrFrameStoreAcceptsResolution(CodedWidth{codedWidth}, CodedHeight{codedHeight});
 }
 
+// ---------------------------------------------------------------------------
+// Option-C 720p bank window (w-mem ABI) + PL330 scratch (w-path Route A)
+// Parent-verified reserved window: memmap=513M$511M → 0x1FF00000..0x40000000.
+// Option-C: base 0x30180000, stride 0x180000, doorbell 0x3047F000.
+// Triple-buffer map end = base + 3*stride = 0x30600000.
+// PL330 ABI starts at that boundary so it never overlaps 2- or 3-bank Option-C.
+// ---------------------------------------------------------------------------
+constexpr uint32_t kPlexDdrReservedWindowStart = 0x1FF00000u;
+constexpr uint32_t kPlexDdrReservedWindowEnd = 0x40000000u;
+constexpr uint32_t kPlex720pDdrFramePhysBase = 0x30180000u;
+constexpr uint32_t kPlex720pYuv420pBankStride = 0x00180000u;
+constexpr uint32_t kPlex720pYuv420pDoorbellPhys = 0x3047F000u;
+constexpr uint32_t kPlex720pMapBytes2Bank = 0x00300000u; // 2 * stride
+constexpr uint32_t kPlex720pMapBytes3Bank = 0x00480000u; // 3 * stride
+// First byte after triple-bank Option-C window (base + 3*stride).
+constexpr uint32_t kPlex720pOptionCTripleEndPhys =
+    kPlex720pDdrFramePhysBase + kPlex720pMapBytes3Bank; // 0x30600000
+
+// PL330 program scratch + optional contiguous staging (HPS DMA src).
+// Mirrored in ddr_frame_layout_params.svh — keep lockstep with w-mem/w-scaler.
+constexpr uint32_t kPl330AbiRegionPhys = kPlex720pOptionCTripleEndPhys; // 0x30600000
+constexpr uint32_t kPl330ProgScratchPhys = kPl330AbiRegionPhys;
+constexpr uint32_t kPl330ProgScratchBytes = 0x1000u; // 4 KiB (program is ~27 B)
+constexpr uint32_t kPl330StagingPhys = kPl330ProgScratchPhys + kPl330ProgScratchBytes;
+// One 720p I420 frame, stride-aligned — decode/DMA source without pagemap.
+constexpr uint32_t kPl330StagingBytes = kPlex720pYuv420pBankStride; // 0x180000
+constexpr uint32_t kPl330AbiRegionBytes = kPl330ProgScratchBytes + kPl330StagingBytes;
+constexpr uint32_t kPl330AbiRegionEndPhys = kPl330AbiRegionPhys + kPl330AbiRegionBytes;
+
+static_assert(kPl330AbiRegionPhys == 0x30600000u, "PL330 ABI base");
+static_assert(kPl330AbiRegionPhys == kPlex720pDdrFramePhysBase + 3u * kPlex720pYuv420pBankStride,
+              "PL330 sits exactly after Option-C triple banks");
+static_assert(kPl330AbiRegionPhys >= kPlexDdrReservedWindowStart &&
+                  kPl330AbiRegionEndPhys <= kPlexDdrReservedWindowEnd,
+              "PL330 ABI inside memmap reserved window");
+static_assert(kPlex720pYuv420pDoorbellPhys + 0x1000u <= kPl330AbiRegionPhys,
+              "PL330 must not overlap Option-C doorbell page");
+// 480p product window ends at base+2*yuv_stride = 0x30100000; gap before Option-C.
+static_assert(kDdrFramePhysBase + 2u * kPlex480pYuv420pBankStride <= kPlex720pDdrFramePhysBase,
+              "480p map must not overlap Option-C base");
+
+inline bool pl330PhysInProgScratch(uint32_t phys, uint32_t len = 1) {
+    if (len == 0)
+        return false;
+    if (phys < kPl330ProgScratchPhys)
+        return false;
+    return phys + len <= kPl330ProgScratchPhys + kPl330ProgScratchBytes;
+}
+
+inline bool pl330PhysInStaging(uint32_t phys, uint32_t len = 1) {
+    if (len == 0)
+        return false;
+    if (phys < kPl330StagingPhys)
+        return false;
+    return phys + len <= kPl330StagingPhys + kPl330StagingBytes;
+}
+
+inline bool pl330AbiOverlapsOptionCBanks(uint32_t phys, uint32_t len) {
+    const uint32_t a0 = phys;
+    const uint32_t a1 = phys + len;
+    const uint32_t b0 = kPlex720pDdrFramePhysBase;
+    const uint32_t b1 = kPlex720pOptionCTripleEndPhys;
+    return a0 < b1 && b0 < a1;
+}
+
 } // namespace misterplex

@@ -31,3 +31,21 @@ localparam int DDR_FRAME_YUV420P_DOORBELL_PHYS = 32'h300F_F000;
 localparam int DDR_FRAME_YUV_BLACK_Y = 16;
 localparam int DDR_FRAME_YUV_BLACK_U = 128;
 localparam int DDR_FRAME_YUV_BLACK_V = 128;
+
+// Option-C 720p + PL330 ABI (lockstep with host/libmisterplex/ddr_frame_layout.hpp).
+// Reserved window 0x1FF0_0000..0x4000_0000 (parent-verified memmap). PL330 region
+// starts at triple-bank end so fabric banks never share pages with DMA microcode.
+localparam int DDR_FRAME_720P_CODED_WIDTH = 1280;
+localparam int DDR_FRAME_720P_CODED_HEIGHT = 720;
+localparam int DDR_FRAME_720P_YUV420P_BYTES = 1382400;
+localparam int DDR_FRAME_720P_PHYS_BASE = 32'h3018_0000;
+localparam int DDR_FRAME_720P_YUV420P_BANK_STRIDE = 32'h0018_0000;
+localparam int DDR_FRAME_720P_YUV420P_DOORBELL_PHYS = 32'h3047_F000;
+localparam int DDR_FRAME_720P_MAP_BYTES_3BANK = 32'h0048_0000;
+localparam int DDR_FRAME_720P_OPTION_C_TRIPLE_END = 32'h3060_0000; // base+3*stride
+localparam int DDR_PL330_ABI_REGION_PHYS = 32'h3060_0000;
+localparam int DDR_PL330_PROG_SCRATCH_PHYS = 32'h3060_0000;
+localparam int DDR_PL330_PROG_SCRATCH_BYTES = 32'h0000_1000;
+localparam int DDR_PL330_STAGING_PHYS = 32'h3060_1000;
+localparam int DDR_PL330_STAGING_BYTES = 32'h0018_0000;
+localparam int DDR_PL330_ABI_REGION_BYTES = 32'h0018_1000;

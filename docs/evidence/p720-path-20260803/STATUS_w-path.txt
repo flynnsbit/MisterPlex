@@ -1,10 +1,9 @@
 lane=w-path
-status=ROUTE_A_READY + parent 2600k decode folded
-tip=e580f41c (+budget const update pending)
-PARENT_IN_SESSION:
-  2600k product decode 36.27 ms/f margin 5.40 ms
-  2500k same session 35.87 (archive 36.845 was cross-session high)
-  serial+copy 51.55 FAIL; overlap max 36.27 PASS sketch
-LANDED: Path720p floor 3100; zero-copy ingest contract; PL330 bench
-PARENT_NEXT: run arm ddr_pl330_ingest_bench --len 1382400 --overlap-burn-ms 37
-tests: zero_copy true_rc=0
+status=PL330_SCRATCH_ABI_LANDED
+tip=pending
+ABI: kPl330ProgScratchPhys=0x30600000 staging=0x30601000 (after Option-C triple end)
+open() maps scratch via /dev/mem — no pagemap/CMA
+bench uses Option-C banks + staging→bank DMA
+PRE: started=1; dma_ms; burn inflate
+PARENT: re-run arm ddr_pl330_ingest_bench --len 1382400 --loops 50 --bank 1
+tests: zero_copy true_rc=0 frame_store_math true_rc=0

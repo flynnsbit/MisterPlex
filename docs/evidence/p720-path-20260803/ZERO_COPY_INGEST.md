@@ -45,3 +45,7 @@ Capture true rc directly. Does **not** ring doorbell.
 - Linux may own DMAC channels — fail must be clean (no thrash).
 - Contended DDR can erase Route A margin — measure, do not assume.
 - Ship gate remains fabric `publish_bytes=0` (w-mem), not PL330.
+
+
+## Scratch ABI
+See `PL330_SCRATCH_ABI.md` — prog @ `0x30600000`, staging @ `0x30601000`.
