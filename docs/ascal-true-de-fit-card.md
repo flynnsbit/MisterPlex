@@ -17,7 +17,11 @@ MERGE=/path/to/merged-tree
 
 **B16 product file list (rd-duck hold):** merged `files.qip` must list beam + `plex_present_geom_mux` + `plxg_ddr_poller` + `present_geom_latch` + q5 aspect/fps module; product QSF must active-`PRESENT_BEAM_960=1`.  
 
-**B20 full-hierarchy tests (rd-duck hold a–g):** named executables under `tests/unit/test_b20_hier_*.sh` — gate **runs** each script (not a text scan). Contract: `CASE B20_HIER_X EXECUTED` + `PASS B20_HIER_X` + DUT evidence (`DUT_TOUCHED=1`/`VERILATOR_RUN=1`/…) + **true rc=0**. Soft-skip 77 ≠ PASS. Comment bait / echo-only PASS are rejected (rd-duck hollow-audit of 1e8b1395). Scenarios: (a) explicit PLXG disable under BEAM, (b) commit@frame_boundary, (c) DDR fill during geom invalidate, (d) retained DDR across FPGA reset+daemon restart, (e) delayed poll vs early doorbell atomic bank+geom, (f) distinct bank swaps @24/30 not frame_start counts, **(g) async CDC PLXC_EXT_WE** multi-beat.  
+**B20 full-hierarchy tests (rd-duck hold a–g):** **explicit manifest** `tests/unit/B20_HIER_MANIFEST.json` — gate **loads + runs** each named script (not keyword regex).  
+Contract: `CASE` + `PASS` + **`VERILATOR_RUN=1|SIM_RUN=1` line** + **`measured_*=` evidence** + scenario `require_stdout` + **true rc=0**.  
+Script **body** (non-echo) must invoke `verilator|make|python-TB|rg|grep` — echo-only / comment prose with `PLXC_EXT_WE host_we S_PUSH_LIST…` does **not** clear (kills 846b7f1b regex theatre).  
+`DUT_TOUCHED=1` alone ≠ PASS. Soft-skip 77 ≠ PASS.  
+G requires: `measured_cdc_async=1`, `measured_host_we_beats=2`, `measured_ctrl_beats=1`, `measured_plxc_ext_we_rising>=2`, `clk_host_ne_clk_plxc=1`.  
 
 **B20_UNCONNECTED_PRODUCER (parent 2026-08-03, integ miss #11):** correct producer + correct consumer never wired (e.g. latch `dar_*` ports omitted while `plex_video_ar` reads undriven nets). B19 content-presence greps stay green. Gate runs Verilator **PINMISSING** (product-rtl **output** ports) + **UNDRIVEN** (product nets) over the Quartus file list — log `build/vl_connectivity_sweep.log`. Also flags primary `files.qip` modules never instantiated (`plex_content_fps_sel` class). **LIMITATION (wrong-producer twin):** has-a-driver ≠ intended-driver (e.g. `content_fps=8'd24` while `fabric_content_fps` is driven but unused) — not covered by this sweep; say so rather than imply coverage.  
 

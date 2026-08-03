@@ -1,5 +1,5 @@
 {
-  "gate_identity_hash": "437497ad033d32e1c9da43730f0832bca180d878",
+  "gate_identity_hash": "f988b1063c84a2988030ffa0b973aedc8065b2a9",
   "paths": [
     "scripts/fit_release_gate.py",
     "scripts/fit_release_gate.sh",
@@ -9,11 +9,10 @@
   ],
   "locked_by": "w-fitgate",
   "locked_date": "2026-08-03",
-  "reason": "INTENTIONAL REBASE after B22 present_core merge-semantics (rd-duck c5bd6009): ports+instance nets+Plex hierarchy for geom_live/blackout/cadence \u2014 not a bypass",
+  "reason": "INTENTIONAL REBASE: B20 hierarchy = manifest+run only; kill 846b7f1b keyword theatre \u2014 not a bypass",
   "notes": [
     "INTENTIONAL REBASE of ruler identity after gate script change \u2014 not a bypass.",
-    "B22: same-symbol opposite-direction green-in-isolation; assert connections not ancestry.",
-    "B1: Option-C via rt_need_optc only; no LEG_* compile rebase.",
-    "Lanes must run this same identity; divergent rulers get LEG0_COUNT_REFUSED."
+    "B20: tests/unit/B20_HIER_MANIFEST.json + run/rc/CASE/PASS/SIM_RUN/measured_* + real script body.",
+    "Prose PLXC_EXT_WE keywords never clear G. DUT_TOUCHED alone never clears."
   ]
 }

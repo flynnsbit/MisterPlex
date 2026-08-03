@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "title": "B20 full-hierarchy executable scenarios (fit-release gate)",
+  "contract": [
+    "Gate RUNS each script; prose/comment/keyword regex never clears.",
+    "Stdout must include case + pass + VERILATOR_RUN=1|SIM_RUN=1 + scenario measured_* tokens.",
+    "Script body (non-echo lines) must invoke verilator|make|python TB|rg/grep DUT probe.",
+    "true rc=0 required; rc=77 soft-skip is NOT a pass.",
+    "DUT_TOUCHED=1 alone is NOT enough (rd-duck hollow-audit / 846b7f1b class)."
+  ],
+  "scenarios": [
+    {
+      "token": "B20_HIER_A_PLXG_EXPLICIT_DISABLE",
+      "script": "tests/unit/test_b20_hier_a_plxg_explicit_disable.sh",
+      "case": "CASE B20_HIER_A EXECUTED",
+      "pass": "PASS B20_HIER_A",
+      "why": "explicit PLXG disable under PRESENT_BEAM_960; geom_enable=0 polls LEGACY map/doorbell 0x300FF000",
+      "require_stdout": [
+        "geom_enable=0",
+        "map=LEGACY",
+        "doorbell_phys=0x300FF000",
+        "measured_plxg_disable=1"
+      ]
+    },
+    {
+      "token": "B20_HIER_B_COMMIT_FRAME_BOUNDARY",
+      "script": "tests/unit/test_b20_hier_b_commit_frame_boundary.sh",
+      "case": "CASE B20_HIER_B EXECUTED",
+      "pass": "PASS B20_HIER_B",
+      "why": "commit coincident with frame boundary",
+      "require_stdout": [
+        "measured_commit_at_frame_boundary=1",
+        "frame_boundary=1"
+      ]
+    },
+    {
+      "token": "B20_HIER_C_DDR_FILL_GEOM_INVALIDATE",
+      "script": "tests/unit/test_b20_hier_c_ddr_fill_geom_invalidate.sh",
+      "case": "CASE B20_HIER_C EXECUTED",
+      "pass": "PASS B20_HIER_C",
+      "why": "outstanding DDR fill during geom invalidate",
+      "require_stdout": [
+        "measured_ddr_fill_during_invalidate=1"
+      ]
+    },
+    {
+      "token": "B20_HIER_D_RETAINED_DDR_RESET_RESTART",
+      "script": "tests/unit/test_b20_hier_d_retained_ddr_reset_restart.sh",
+      "case": "CASE B20_HIER_D EXECUTED",
+      "pass": "PASS B20_HIER_D",
+      "why": "retained DDR across FPGA reset + daemon restart",
+      "require_stdout": [
+        "measured_ddr_retained_across_reset=1"
+      ]
+    },
+    {
+      "token": "B20_HIER_E_POLL_DOORBELL_ATOMIC",
+      "script": "tests/unit/test_b20_hier_e_poll_doorbell_atomic.sh",
+      "case": "CASE B20_HIER_E EXECUTED",
+      "pass": "PASS B20_HIER_E",
+      "why": "delayed PLXG poll vs early doorbell (and inverse) bank+geometry atomic",
+      "require_stdout": [
+        "measured_bank_geom_atomic=1"
+      ]
+    },
+    {
+      "token": "B20_HIER_F_BANK_SWAP_24_30",
+      "script": "tests/unit/test_b20_hier_f_bank_swap_24_30.sh",
+      "case": "CASE B20_HIER_F EXECUTED",
+      "pass": "PASS B20_HIER_F",
+      "why": "actual distinct bank swaps at 24/30 — not frame_start counts",
+      "require_stdout": [
+        "measured_bank_swap_24=1",
+        "measured_bank_swap_30=1",
+        "bank_id_24_ne_30=1"
+      ]
+    },
+    {
+      "token": "B20_HIER_G_PLXC_ASYNC_CDC_MULTIBEAT",
+      "script": "tests/unit/test_b20_hier_g_plxc_async_cdc_multibeat.sh",
+      "case": "CASE B20_HIER_G EXECUTED",
+      "pass": "PASS B20_HIER_G",
+      "why": "async CDC PLXC_EXT_WE multi-beat host_we list+ctrl; same-clock TBs blind; sys_top edge-detect d2&~d3 drops beats",
+      "require_stdout": [
+        "measured_cdc_async=1",
+        "measured_host_we_beats=2",
+        "measured_ctrl_beats=1",
+        "measured_plxc_ext_we_rising>=2",
+        "clk_host_ne_clk_plxc=1"
+      ]
+    }
+  ]
+}
