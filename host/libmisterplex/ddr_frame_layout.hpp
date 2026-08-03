@@ -1416,8 +1416,9 @@ inline DdrFabricOwnedPresentPlan makeDdrFabricOwnedPresentPlan(
                                                          : canvasGeom.coded_width.get();
     const int deH = canvasGeom.presented_height.get() > 0 ? canvasGeom.presented_height.get()
                                                           : canvasGeom.coded_height.get();
+    // Non-zero seed for host latch models; writePlxgRecord always advances past last.
     p.plxg_seq = 1;
-    p.plxg_q[0] = packPlxgQ0(/*win*/ true, /*geom*/ true, p.plxg_seq);
+    p.plxg_q[0] = packPlxgQ0(/*win*/ true, /*geom*/ true, /*seq*/ 1);
     p.plxg_q[1] = packPlxgQ1(contentW, contentH, p.content_x0, p.content_y0);
     p.plxg_q[2] = packPlxgQ2(deW, deH, contentW, contentH);
     p.plxg_q[3] = packPlxgQ3(p.content_layout.y_stride, p.content_layout.chroma_stride,

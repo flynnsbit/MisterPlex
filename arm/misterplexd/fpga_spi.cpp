@@ -836,10 +836,10 @@ bool FpgaSpi::writePlxgRecord(const uint64_t q[5], uint16_t seq) {
         setErr("writePlxgRecord: PLXG record outside bootstrap page");
         return false;
     }
-    // Bump seq if caller left it stale so latch accepts (seq != last).
-    uint16_t useSeq = seq;
-    if (useSeq == 0 || useSeq == plxgLastSeq_)
-        useSeq = static_cast<uint16_t>(plxgLastSeq_ + 1u);
+    // Always advance seq (rd-duck: never sticky seq=1 across frames/mode exits).
+    // Caller seq is advisory only — latch requires seq != last_seq every program.
+    (void)seq;
+    uint16_t useSeq = static_cast<uint16_t>(plxgLastSeq_ + 1u);
     if (useSeq == 0)
         useSeq = 1;
     uint64_t words[5];
@@ -851,16 +851,20 @@ bool FpgaSpi::writePlxgRecord(const uint64_t q[5], uint16_t seq) {
                (flags << 32) |
                static_cast<uint64_t>(mailbox_abi::kPlxgMagic);
 
-    // Write q0..q4 contiguously; DMB after each store so fabric poller never
-    // samples a torn multi-qword record (rd-duck: compiler fence is not enough).
+    // Atomic publish order (rd-duck): write q1..q4 FIRST, then q0 LAST.
+    // Poller snapshots q0..q4 then re-reads q0; q0-last makes torn snapshots
+    // fail the verify compare instead of latching a half-written record.
+    auto storeQword = [](volatile uint32_t* base, int qi, uint64_t w) {
+        base[qi * 2 + 1] = static_cast<uint32_t>(w >> 32);
+        __sync_synchronize(); // DMB — hardware barrier, not compiler fence
+        base[qi * 2 + 0] = static_cast<uint32_t>(w);
+        __sync_synchronize();
+    };
     volatile uint32_t* base =
         reinterpret_cast<volatile uint32_t*>(plxgBootMap_ + off);
-    for (int i = 0; i < 5; ++i) {
-        base[i * 2 + 1] = static_cast<uint32_t>(words[i] >> 32);
-        __sync_synchronize();
-        base[i * 2 + 0] = static_cast<uint32_t>(words[i]);
-        __sync_synchronize();
-    }
+    for (int i = 1; i < 5; ++i)
+        storeQword(base, i, words[i]);
+    storeQword(base, 0, words[0]);
     if (ddrMemFlush_ && !cleanDcacheRange(plxgBootMap_ + off, mailbox_abi::kPlxgBytes)) {
         setErr("writePlxgRecord: cache clean failed");
         return false;
@@ -873,12 +877,9 @@ bool FpgaSpi::writePlxgRecord(const uint64_t q[5], uint16_t seq) {
             if (aoff + mailbox_abi::kPlxgBytes <= ddrMapLen_) {
                 volatile uint32_t* ab =
                     reinterpret_cast<volatile uint32_t*>(ddrMap_ + aoff);
-                for (int i = 0; i < 5; ++i) {
-                    ab[i * 2 + 1] = static_cast<uint32_t>(words[i] >> 32);
-                    __sync_synchronize();
-                    ab[i * 2 + 0] = static_cast<uint32_t>(words[i]);
-                    __sync_synchronize();
-                }
+                for (int i = 1; i < 5; ++i)
+                    storeQword(ab, i, words[i]);
+                storeQword(ab, 0, words[0]);
             }
         }
     }

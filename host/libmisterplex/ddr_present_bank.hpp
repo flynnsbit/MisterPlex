@@ -88,7 +88,16 @@ inline bool makeDdrPublishPlan(const DdrPublishFrame& frame, int bank, DdrPublis
     out.bank_phys = layout.phys_base + static_cast<uint32_t>(bankOff);
     out.copy_bytes = frame.len;
     out.native_push = false;
-    out.program_plxg = false;
+    // Always program a seq-bumped PLXG *disable* on the full-canvas path so a
+    // prior native Option-C geom_enable cannot stick after mode exit (rd-duck).
+    // writePlxgRecord bumps seq if caller leaves 0 / stale.
+    out.program_plxg = true;
+    out.plxg_seq = 0;
+    {
+        const PlxgRecord dis = makePlxgRecordDisable(/*seq=*/0);
+        for (int i = 0; i < 5; ++i)
+            out.plxg_q[i] = dis.q[i];
+    }
     return true;
 }
 

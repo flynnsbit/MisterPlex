@@ -5,9 +5,12 @@
 // Bootstrap phys: product legacy doorbell 0x300FF000 + 0x2C0 = 0x300FF2C0.
 // Fabric poller always reads the bootstrap page (chicken-egg with Option-C).
 //
-// Write model: host stores q[0..4] contiguously, then fabric reads all five and
-// pulses commit. q[0] seq must change for the latch to accept. Never overwrite
-// a single 8-byte slot with three temporal "beats".
+// Write model (rd-duck atomic snapshot):
+//   host stores q[1], q[2], q[3], q[4], THEN q[0] last (seq+magic commit).
+//   poller reads q0..q4 then RE-READS q0; commit only if q0 matches.
+// q[0] seq must change every mode/frame transition. Never overwrite a single
+// 8-byte slot with three temporal "beats". Legacy path must publish
+// geom_enable=0 (makePlxgRecordDisable) so Option-C does not stick.
 
 #include "libmisterplex/mailbox_abi_spec.hpp"
 
@@ -25,6 +28,9 @@ struct PlxgRecord {
     uint16_t seq = 0;
     bool valid = false;
 };
+
+// Publish order indices: body first, q0 last.
+inline constexpr int kPlxgPublishOrder[5] = {1, 2, 3, 4, 0};
 
 inline uint64_t packPlxgQ0(bool winEnable, bool geomEnable, uint16_t seq) {
     uint64_t hi = 0;
@@ -84,6 +90,73 @@ inline PlxgRecord makePlxgRecord960x540Native(uint16_t seq) {
     return r;
 }
 
+// Mode-exit / legacy publish: geom_enable=0 so ddr_frame_store leaves Option-C.
+// Seq MUST change vs last committed (caller / writePlxgRecord bumps).
+inline PlxgRecord makePlxgRecordDisable(uint16_t seq) {
+    PlxgRecord r{};
+    r.seq = seq;
+    r.q[0] = packPlxgQ0(/*win*/ false, /*geom*/ false, seq);
+    r.q[1] = 0;
+    r.q[2] = 0;
+    r.q[3] = 0;
+    r.q[4] = 0;
+    r.valid = true;
+    return r;
+}
+
+// Host-side model of poller tear check: after q0..q4 snap, q0 must still match.
+inline bool plxgPollerAcceptsSnapshot(const uint64_t snap[5], uint64_t q0_reread,
+                                      uint16_t lastSeq) {
+    if (static_cast<uint32_t>(snap[0]) != mailbox_abi::kPlxgMagic)
+        return false;
+    const uint16_t seq = static_cast<uint16_t>(snap[0] >> 48);
+    if (seq == lastSeq)
+        return false;
+    return q0_reread == snap[0];
+}
+
+// Simulate q1..q4 then q0 host write into a control page (matches writePlxgRecord).
+inline void plxgHostStoreAtomic(uint8_t* ctrlPage, const PlxgRecord& rec) {
+    const size_t off = mailbox_abi::kPlxgOffset;
+    for (int k = 0; k < 5; ++k) {
+        const int qi = kPlxgPublishOrder[k];
+        std::memcpy(ctrlPage + off + static_cast<size_t>(qi) * 8u, &rec.q[qi], 8);
+    }
+}
+
+// Transaction-safe m1 sub-owner model (ddr_m1_subarb.sv): owner latched through
+// response; combinational mid-beat flip is forbidden.
+enum class DdrM1Owner : uint8_t { None = 0, Stream = 1, Plxg = 2 };
+struct DdrM1SubarbModel {
+    DdrM1Owner grant = DdrM1Owner::None;
+    bool outstanding = false;
+    void tick(bool s_want, bool p_want, bool issue, bool dout_ready) {
+        if (issue && !outstanding && grant != DdrM1Owner::None)
+            outstanding = true;
+        if (dout_ready)
+            outstanding = false;
+        const bool can_pick =
+            !outstanding &&
+            (grant == DdrM1Owner::None ||
+             (grant == DdrM1Owner::Stream && !s_want) ||
+             (grant == DdrM1Owner::Plxg && !p_want));
+        if (can_pick) {
+            if (s_want)
+                grant = DdrM1Owner::Stream;
+            else if (p_want)
+                grant = DdrM1Owner::Plxg;
+            else
+                grant = DdrM1Owner::None;
+        }
+    }
+    bool doutToStream(bool dout_ready) const {
+        return dout_ready && grant == DdrM1Owner::Stream;
+    }
+    bool doutToPlxg(bool dout_ready) const {
+        return dout_ready && grant == DdrM1Owner::Plxg;
+    }
+};
+
 // Behavioral latch (host/TB) — same promotion rules as present_geom_latch.sv.
 struct PlxgLatchModel {
     bool win_enable = false;
@@ -133,16 +206,14 @@ inline bool plxgLatchCommit(PlxgLatchModel& m) {
     return true;
 }
 
-// Simulate host multi-slot write into a control-page image then latch commit.
+// Simulate host multi-slot write (q1..q4 then q0) into control page + latch.
 inline bool plxgProgramRecord(uint8_t* ctrlPage /* at least 0x2C0+40 */,
                               const PlxgRecord& rec, PlxgLatchModel& latch) {
     if (!rec.valid || !ctrlPage)
         return false;
-    const size_t off = mailbox_abi::kPlxgOffset;
-    for (unsigned i = 0; i < kPlxgRecordQwords; ++i) {
-        std::memcpy(ctrlPage + off + i * 8u, &rec.q[i], 8);
+    plxgHostStoreAtomic(ctrlPage, rec);
+    for (unsigned i = 0; i < kPlxgRecordQwords; ++i)
         plxgLatchWrite(latch, i, rec.q[i]);
-    }
     return plxgLatchCommit(latch);
 }
 
@@ -170,6 +241,16 @@ inline bool plxgGeomDimsOk(int codedW, int codedH, int yStride, int chromaStride
     if ((yStride & 7) != 0 || (chromaStride & 7) != 0)
         return false;
     if (yStride < codedW || chromaStride < (codedW / 2))
+        return false;
+    return true;
+}
+
+// Raw geometry accepted by ddr_frame_store (nonzero, ≤MAX, aligned) — no clamp.
+inline bool plxgRawGeomOk(int codedW, int codedH, int yStride, int chromaStride,
+                          int maxW = 1280, int maxH = 720) {
+    if (!plxgGeomDimsOk(codedW, codedH, yStride, chromaStride))
+        return false;
+    if (codedW > maxW || codedH > maxH || yStride > maxW || chromaStride > (maxW / 2))
         return false;
     return true;
 }

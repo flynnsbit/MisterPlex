@@ -225,41 +225,43 @@ module ddr_frame_store #(
 	reg [28:0] eff_base_w1;
 	reg [28:0] eff_doorbell_w;
 
-	wire [10:0] rt_cw_nz = (rt_coded_w == 11'd0) ? 11'(CODED_W) : rt_coded_w;
-	wire [10:0] rt_ch_nz = (rt_coded_h == 11'd0) ? 11'(CODED_H) : rt_coded_h;
-	wire [11:0] rt_ys_nz = (rt_y_stride == 12'd0) ? 12'(CODED_W) : rt_y_stride;
-	wire [10:0] rt_cs_nz = (rt_chroma_stride == 11'd0) ? 11'(CODED_W/2) : rt_chroma_stride;
-	wire [10:0] rt_dw_nz = (rt_display_w == 11'd0) ? rt_cw_nz : rt_display_w;
-	wire [10:0] rt_dh_nz = (rt_display_h == 11'd0) ? rt_ch_nz : rt_display_h;
+	// RAW (pre-clamp) geometry — over-max must REJECT, not clamp-then-accept (rd-duck).
+	wire rt_raw_nonzero = (rt_coded_w != 11'd0) && (rt_coded_h != 11'd0) &&
+	                      (rt_y_stride != 12'd0) && (rt_chroma_stride != 11'd0);
+	wire rt_raw_in_range = (rt_coded_w <= 11'(MAX_CODED_W)) &&
+	                       (rt_coded_h <= 11'(MAX_CODED_H)) &&
+	                       (rt_y_stride <= 12'(MAX_CODED_W)) &&
+	                       (rt_chroma_stride <= 11'(MAX_CODED_W/2));
+	wire rt_raw_aligned = (rt_coded_w[2:0] == 3'd0) && !rt_coded_h[0] &&
+	                      (rt_y_stride[2:0] == 3'd0) && (rt_chroma_stride[2:0] == 3'd0) &&
+	                      (rt_y_stride >= {1'b0, rt_coded_w}) &&
+	                      (rt_chroma_stride >= {1'b0, rt_coded_w[10:1]});
+	wire rt_raw_ok = rt_raw_nonzero && rt_raw_in_range && rt_raw_aligned;
 
-	// Clamp coded to MAX so line RAM addr never overflows.
-	wire [10:0] rt_cw_cl = (rt_cw_nz > 11'(MAX_CODED_W)) ? 11'(MAX_CODED_W) : rt_cw_nz;
-	wire [10:0] rt_ch_cl = (rt_ch_nz > 11'(MAX_CODED_H)) ? 11'(MAX_CODED_H) : rt_ch_nz;
-	wire [11:0] rt_ys_cl = (rt_ys_nz > 12'(MAX_CODED_W)) ? 12'(MAX_CODED_W) : rt_ys_nz;
-	wire [10:0] rt_cs_cl = (rt_cs_nz > 11'(MAX_CODED_W/2)) ? 11'(MAX_CODED_W/2) : rt_cs_nz;
+	// Effective dims only when raw_ok (else unused; legacy path selected).
+	wire [10:0] rt_cw_cl = rt_coded_w;
+	wire [10:0] rt_ch_cl = rt_coded_h;
+	wire [11:0] rt_ys_cl = rt_y_stride;
+	wire [10:0] rt_cs_cl = rt_chroma_stride;
+	wire [10:0] rt_dw_nz = (rt_display_w == 11'd0) ? rt_cw_cl : rt_display_w;
+	wire [10:0] rt_dh_nz = (rt_display_h == 11'd0) ? rt_ch_cl : rt_display_h;
 
-	wire [28:0] rt_y_bytes_qw = ({17'd0, rt_ys_cl} * {18'd0, rt_ch_cl}) >> 3; // (ys*ch)/8
-	wire [28:0] rt_c_bytes_qw = ({18'd0, rt_cs_cl} * {19'd0, rt_ch_cl[10:1]}) >> 3; // (cs*ch/2)/8
-	// Exact-byte I420 payload (no qword floor). Aligned geom only: w%8==0, h even,
-	// strides %8==0. Unaligned → reject runtime geom (legacy banks) — no silent clamp.
-	wire rt_geom_aligned = (rt_cw_cl[2:0] == 3'd0) && !rt_ch_cl[0] &&
-	                       (rt_ys_cl[2:0] == 3'd0) && (rt_cs_cl[2:0] == 3'd0) &&
-	                       (rt_ys_cl >= {1'b0, rt_cw_cl}) &&
-	                       (rt_cs_cl >= {1'b0, rt_cw_cl[10:1]});
-	// payload = Y + U + V = ys*h + 2*(cs*(h/2)) = ys*h + cs*h
+	wire [28:0] rt_y_bytes_qw = ({17'd0, rt_ys_cl} * {18'd0, rt_ch_cl}) >> 3;
+	wire [28:0] rt_c_bytes_qw = ({18'd0, rt_cs_cl} * {19'd0, rt_ch_cl[10:1]}) >> 3;
+	// Exact-byte I420 payload from RAW dims (no silent clamp into plane math).
 	wire [31:0] rt_payload_bytes =
 		({20'd0, rt_ys_cl} * {20'd0, rt_ch_cl}) +
 		({21'd0, rt_cs_cl} * {21'd0, rt_ch_cl});
 	localparam [31:0] LEG_BANK_USABLE_BYTES =
 		(HPS_BANK_STRIDE_BYTES > 32'h1000) ? (HPS_BANK_STRIDE_BYTES - 32'h1000) : 32'd0;
-	wire rt_need_optc = rt_geom_aligned && (rt_payload_bytes > LEG_BANK_USABLE_BYTES);
+	wire rt_need_optc = rt_raw_ok && (rt_payload_bytes > LEG_BANK_USABLE_BYTES);
 
 	// FAULT: ignore geom_enable (always legacy pitch) — red twin for runtime-stride gate.
 `ifdef DDR_FRAME_STORE_FAULT_IGNORE_GEOM
 	wire geom_enable_eff = 1'b0;
 `else
-	// Reject malformed geometry rather than floor/clamp into wrong plane bases.
-	wire geom_enable_eff = geom_enable & rt_geom_aligned;
+	// Reject malformed / over-max raw geometry — no clamp-then-accept.
+	wire geom_enable_eff = geom_enable & rt_raw_ok;
 `endif
 
 	always @(posedge clk) begin

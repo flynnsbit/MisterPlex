@@ -727,8 +727,9 @@ wire  [7:0] present_ddr_be;
 wire        present_ddr_we;
 
 // PLXG latch + bootstrap DDR poller (w-mem). geom_enable=0 until host programs
-// 5-qword record at 0x300FF2C0 and poller commits. Stream m1 has priority;
-// poller borrows m1 only when stream_ddr_bus_want=0.
+// 5-qword record at 0x300FF2C0 and poller commits.
+// m1 shared with bitstream via ddr_m1_subarb (latched owner through response) —
+// NOT a combinational stream|plxg mux (rd-duck: mid-beat flip drops PLXG data).
 wire        plxg_wr_en, plxg_commit;
 wire  [2:0] plxg_wr_idx;
 wire [63:0] plxg_wr_data;
@@ -745,26 +746,56 @@ wire [28:0] plxg_addr;
 wire [63:0] plxg_din;
 wire  [7:0] plxg_be;
 wire        plxg_we;
+wire        plxg_busy;
+wire [63:0] plxg_dout;
+wire        plxg_dout_ready;
 wire [15:0] plxg_last_seq;
 wire        plxg_busy_poll;
-wire [31:0] plxg_cnt_commit, plxg_cnt_bad;
-// Combined m1 (stream priority over PLXG poller)
-wire        m1c_want = stream_ddr_bus_want | plxg_want;
-wire        m1c_rd   = stream_ddr_bus_want ? stream_ddr_rd : plxg_rd;
-wire  [7:0] m1c_burstcnt = stream_ddr_bus_want ? stream_ddr_burstcnt : plxg_burstcnt;
-wire [28:0] m1c_addr = stream_ddr_bus_want ? stream_ddr_addr : plxg_addr;
-wire [63:0] m1c_din  = stream_ddr_bus_want ? stream_ddr_din  : plxg_din;
-wire  [7:0] m1c_be   = stream_ddr_bus_want ? stream_ddr_be   : plxg_be;
-wire        m1c_we   = stream_ddr_bus_want ? stream_ddr_we   : plxg_we;
-wire        m1c_busy;
-wire [63:0] m1c_dout;
+wire [31:0] plxg_cnt_commit, plxg_cnt_bad, plxg_cnt_torn;
+wire  [1:0] m1_sub_grant;
+wire        m1c_want, m1c_busy, m1c_rd, m1c_we;
+wire  [7:0] m1c_burstcnt, m1c_be;
+wire [28:0] m1c_addr;
+wire [63:0] m1c_din, m1c_dout;
 wire        m1c_dout_ready;
-// Gate stream/poller busy: loser sees busy when the other owns the slot.
-assign stream_ddr_busy = m1c_busy | (plxg_want & ~stream_ddr_bus_want);
-wire plxg_m_busy = m1c_busy | stream_ddr_bus_want;
-assign stream_ddr_dout = m1c_dout;
-assign stream_ddr_dout_ready = m1c_dout_ready & stream_ddr_bus_want;
-wire plxg_dout_ready = m1c_dout_ready & ~stream_ddr_bus_want;
+
+// stream_ddr_busy/dout/dout_ready are driven by subarb (not continuous assigns
+// that race the arbiter). Subarb sinks stream_* and plxg_*.
+ddr_m1_subarb u_m1_sub (
+	.clk(clk_sys),
+	.reset(reset),
+	.s_want(stream_ddr_bus_want),
+	.s_busy(stream_ddr_busy),
+	.s_burstcnt(stream_ddr_burstcnt),
+	.s_addr(stream_ddr_addr),
+	.s_dout(stream_ddr_dout),
+	.s_dout_ready(stream_ddr_dout_ready),
+	.s_rd(stream_ddr_rd),
+	.s_din(stream_ddr_din),
+	.s_be(stream_ddr_be),
+	.s_we(stream_ddr_we),
+	.p_want(plxg_want),
+	.p_busy(plxg_busy),
+	.p_burstcnt(plxg_burstcnt),
+	.p_addr(plxg_addr),
+	.p_dout(plxg_dout),
+	.p_dout_ready(plxg_dout_ready),
+	.p_rd(plxg_rd),
+	.p_din(plxg_din),
+	.p_be(plxg_be),
+	.p_we(plxg_we),
+	.m_want(m1c_want),
+	.m_busy(m1c_busy),
+	.m_burstcnt(m1c_burstcnt),
+	.m_addr(m1c_addr),
+	.m_dout(m1c_dout),
+	.m_dout_ready(m1c_dout_ready),
+	.m_rd(m1c_rd),
+	.m_din(m1c_din),
+	.m_be(m1c_be),
+	.m_we(m1c_we),
+	.grant(m1_sub_grant)
+);
 
 present_geom_latch u_plxg_latch (
 	.clk(clk_sys),
@@ -796,12 +827,7 @@ present_geom_latch u_plxg_latch (
 );
 
 plxg_ddr_poller #(
-`ifdef PLXG_DDR_POLL
 	.ENABLE(1'b1),
-`else
-	// Product DDR_FRAME_STORE path: poll bootstrap PLXG (chicken-egg safe).
-	.ENABLE(1'b1),
-`endif
 	.BOOT_DOORBELL(32'h300F_F000),
 	.PLXG_OFF(32'h2C0),
 	.POLL_DIV(16'd512)
@@ -809,10 +835,10 @@ plxg_ddr_poller #(
 	.clk(clk_sys),
 	.reset(reset),
 	.want(plxg_want),
-	.busy(plxg_m_busy),
+	.busy(plxg_busy),
 	.burstcnt(plxg_burstcnt),
 	.addr(plxg_addr),
-	.dout(m1c_dout),
+	.dout(plxg_dout),
 	.dout_ready(plxg_dout_ready),
 	.rd(plxg_rd),
 	.din(plxg_din),
@@ -825,12 +851,13 @@ plxg_ddr_poller #(
 	.last_seq(plxg_last_seq),
 	.busy_poll(plxg_busy_poll),
 	.cnt_commit(plxg_cnt_commit),
-	.cnt_bad_magic(plxg_cnt_bad)
+	.cnt_bad_magic(plxg_cnt_bad),
+	.cnt_torn(plxg_cnt_torn)
 );
 (* keep = 1 *) wire _keep_plxg =
 	plxg_geom_en | plxg_live_valid | |plxg_live_seq | plxg_want |
-	|plxg_cnt_commit | |plxg_cnt_bad | plxg_busy_poll | |plxg_last_seq |
-	plxg_win_en | |plxg_cw | |plxg_ch | |plxg_hde | |plxg_vde;
+	|plxg_cnt_commit | |plxg_cnt_bad | |plxg_cnt_torn | plxg_busy_poll |
+	|plxg_last_seq | plxg_win_en | |plxg_cw | |plxg_ch | |m1_sub_grant;
 `endif
 
 present_core #(

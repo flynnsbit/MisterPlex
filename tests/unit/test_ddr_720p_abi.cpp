@@ -660,6 +660,70 @@ int main() {
                      static_cast<unsigned>(pub.publish.layout.phys_base));
     }
 
+    // ---- rd-duck: q1..q4 then q0, tear reject, native→legacy disable, subarb ----
+    {
+        CHECK(kPlxgPublishOrder[0] == 1 && kPlxgPublishOrder[4] == 0);
+        PlxgRecord en = makePlxgRecord960x540Native(1);
+        PlxgRecord dis = makePlxgRecordDisable(2);
+        CHECK(((en.q[0] >> 33) & 1ull) == 1ull);  // geom_enable
+        CHECK(((dis.q[0] >> 33) & 1ull) == 0ull); // disabled
+        // Tear: first q0 snap vs mismatched re-read → reject.
+        uint64_t snap[5] = {en.q[0], en.q[1], en.q[2], en.q[3], en.q[4]};
+        CHECK(plxgPollerAcceptsSnapshot(snap, en.q[0], /*lastSeq=*/0));
+        CHECK(!plxgPollerAcceptsSnapshot(snap, en.q[0] ^ 0x10000ull, 0)); // torn
+        CHECK(!plxgPollerAcceptsSnapshot(snap, en.q[0], /*lastSeq=*/1));  // stale
+        // Atomic store order into page then latch: enable then disable.
+        {
+            PlxgLatchModel lm{};
+            std::vector<uint8_t> page(0x1000, 0);
+            CHECK(plxgProgramRecord(page.data(), en, lm));
+            CHECK(lm.geom_enable && lm.coded_w == 960);
+            PlxgRecord dis2 = makePlxgRecordDisable(2);
+            CHECK(plxgProgramRecord(page.data(), dis2, lm));
+            CHECK(!lm.geom_enable); // mode exit clears sticky Option-C
+        }
+        // Legacy full-canvas publish MUST program PLXG disable (not leave sticky).
+        {
+            std::vector<uint8_t> payload(449280u, 0);
+            DdrPublishFrame fr{payload.data(), payload.size(), plex480pDdrFrameGeometry(),
+                               DdrFrameFormat::Yuv420p};
+            DdrPublishPlan plan{};
+            std::string err;
+            CHECK(makeDdrPublishPlan(fr, 0, plan, &err));
+            CHECK(plan.program_plxg);
+            CHECK(!plan.native_push);
+            CHECK(((plan.plxg_q[0] >> 33) & 1ull) == 0ull);
+        }
+        // Raw geom: over-max rejected (no silent clamp-accept).
+        CHECK(plxgRawGeomOk(960, 540, 960, 480));
+        CHECK(!plxgRawGeomOk(1920, 1080, 1920, 960)); // > MAX 1280x720
+        CHECK(!plxgRawGeomOk(0, 540, 960, 480));
+        // Subarb: PLXG owner held through response even if stream wants mid-beat.
+        {
+            DdrM1SubarbModel m{};
+            m.tick(/*s*/ false, /*p*/ true, /*issue*/ false, /*dr*/ false);
+            CHECK(m.grant == DdrM1Owner::Plxg);
+            m.tick(false, true, /*issue*/ true, false);
+            CHECK(m.outstanding);
+            // Stream rises while outstanding — grant must stay PLXG.
+            m.tick(/*s*/ true, true, false, false);
+            CHECK(m.grant == DdrM1Owner::Plxg);
+            CHECK(!m.doutToStream(true));
+            CHECK(m.doutToPlxg(true));
+            m.tick(true, true, false, /*dout_ready*/ true);
+            CHECK(!m.outstanding);
+            // While PLXG still wants, owner holds (no mid-session steal).
+            m.tick(true, true, false, false);
+            CHECK(m.grant == DdrM1Owner::Plxg);
+            // After PLXG drops want, stream preferred on next pick.
+            m.tick(true, /*p*/ false, false, false);
+            CHECK(m.grant == DdrM1Owner::Stream);
+        }
+        // Publish order constant is body-then-q0 (not q0-first).
+        CHECK(kPlxgPublishOrder[0] != 0);
+        std::fprintf(stderr, "  PLXG_TEAR_SUBARB_DISABLE OK\n");
+    }
+
     if (fails) {
         std::fprintf(stderr, "test_ddr_720p_abi: %d fails\n", fails);
         return 1;

@@ -1406,16 +1406,18 @@ def check_ddr_frame_layout_contract() -> None:
         "(960x540 product overruns legacy bank; use capacity predicate)",
     )
     # Exact-byte usable compare (rd-duck): reject qword-floor / silent clamp.
+    # Raw (pre-clamp) geom must reject over-max — no clamp-then-accept.
     check(
         ("rt_need_optc" in store or "rt_payload_bytes" in store)
         and ("LEG_BANK_USABLE_BYTES" in store or "LEG_BANK_USABLE_QWORDS" in store)
-        and ("rt_geom_aligned" in store)
+        and ("rt_raw_ok" in store or "rt_geom_aligned" in store)
+        and ("rt_raw_in_range" in store or "rt_raw_ok" in store)
         and (
             "rt_need_optc" in store_ns
             or "rt_payload_bytes>LEG_BANK_USABLE_BYTES" in store_ns
         ),
         "ddr_frame_store Option-C select must use exact-byte payload vs usable "
-        "(LEG_BANK_USABLE_BYTES) with aligned-geom reject — not qword floor alone",
+        "(LEG_BANK_USABLE_BYTES) with raw geom reject — not qword floor alone",
     )
     plex_sv = (ROOT / "fpga/Plex_MiSTer/Plex.sv").read_text(encoding="utf-8", errors="replace")
     plex_ns = plex_sv.replace(" ", "")
@@ -1424,6 +1426,31 @@ def check_ddr_frame_layout_contract() -> None:
         and "plxg_ddr_poller" in plex_sv
         and "geom_enable(plxg_geom_en)" in plex_ns,
         "Plex.sv must wire present_geom_latch + plxg_ddr_poller → present_core.geom_*",
+    )
+    # Transaction-safe m1 share (rd-duck): latched subarb, not comb stream|plxg mux.
+    check(
+        "ddr_m1_subarb" in plex_sv
+        and "u_m1_sub" in plex_sv
+        and "cnt_torn" in plex_sv
+        and "m1c_want = stream_ddr_bus_want | plxg_want" not in plex_ns
+        and "stream_ddr_bus_want?stream_ddr_rd:plxg_rd" not in plex_ns,
+        "Plex.sv must use ddr_m1_subarb (latched owner) — not combinational stream|PLXG mux",
+    )
+    poller = strip_comments(
+        (ROOT / "fpga/Plex_MiSTer/rtl/plxg_ddr_poller.sv").read_text(
+            encoding="utf-8", errors="replace"
+        )
+    )
+    check(
+        "S_VRF_Q0" in poller or "verify_phase" in poller or "cnt_torn" in poller,
+        "plxg_ddr_poller must re-read q0 after q4 and count torn snapshots",
+    )
+    check(
+        (ROOT / "fpga/Plex_MiSTer/rtl/ddr_m1_subarb.sv").is_file()
+        and "outstanding" in (ROOT / "fpga/Plex_MiSTer/rtl/ddr_m1_subarb.sv").read_text(
+            encoding="utf-8", errors="replace"
+        ),
+        "ddr_m1_subarb.sv must latch grant through response (outstanding)",
     )
     check(
         cpp_const(host, "kDdrFramePlxgOffset") == 0x2C0,
