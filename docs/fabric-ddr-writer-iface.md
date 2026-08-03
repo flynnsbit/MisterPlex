@@ -65,3 +65,14 @@ is the path that makes that true.
 Option-C `0x30180000` / `0x3047F000` **parent-verified** inside `memmap=513M$511M` reserved window.
 Headroom ≈251.5 MB. Prefer deeper banks/prefetch over cramped layouts. Triple-buffer map constants
 exist (`kPlex720pMapBytes3Bank`); doorbell still 1-bit bank until frame-store widens.
+
+## Plex.sv top wire (default OFF)
+
+When `FABRIC_DDR_WRITER=1` (QSF commented by default):
+- Product `ddr_bus_arbiter` is replaced by `ddr_bus_arbiter3` + `fabric_ddr_attach`
+- Idle FSM on `clk_ddr` paints bank0 then bank1 with internal I420 pattern after reset
+- **Stops while `has_frame` (CDC 2FF)** so ARM playback banks are not stomped
+- Default bank ABI = **product 480p** (`0x30000000` / stride `0x80000` / doorbell `0x300FF000`) so glass works without w-scaler
+- `FABRIC_DDR_WRITER_720P=1` switches attach to Option-C 720p (needs scaler read path)
+
+Integration fit recipe: uncomment the `FABRIC_DDR_WRITER` macro + the five SV files in `Plex.qsf`. Do not enable 720P until w-scaler lands CODED 1280 read.

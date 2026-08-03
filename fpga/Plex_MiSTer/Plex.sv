@@ -811,6 +811,185 @@ present_core #(
 );
 
 `ifdef DDR_FRAME_STORE
+// FABRIC_DDR_WRITER (default OFF): replace 2-master arbiter with arbiter3 +
+// fabric_ddr_attach pattern producer. Product 480p bank params so an
+// integration enable paints banks present_core already reads. 720p Option-C
+// params selected with FABRIC_DDR_WRITER_720P (needs w-scaler read path).
+`ifdef FABRIC_DDR_WRITER
+`include "rtl/ddr_frame_layout_params.svh"
+
+wire        fabric_m2_want, fabric_m2_busy;
+wire  [7:0] fabric_m2_burstcnt;
+wire [28:0] fabric_m2_addr;
+wire [63:0] fabric_m2_dout;
+wire        fabric_m2_dout_ready;
+wire        fabric_m2_rd;
+wire [63:0] fabric_m2_din;
+wire  [7:0] fabric_m2_be;
+wire        fabric_m2_we;
+wire        fabric_busy, fabric_frame_done;
+wire [28:0] fabric_dbg_seq;
+wire [1:0]  fabric_dbg_bank;
+
+// Idle producer: after reset, paint bank0 then bank1 once each when ARM has
+// not published a frame yet (has_frame=0). Re-arms on falling has_frame so
+// fabric can reclaim idle without stomping live playback banks.
+reg        fabric_start;
+reg  [1:0] fabric_bank;
+reg  [1:0] fabric_phase; // 0=wait, 1=start b0, 2=wait done, 3=start b1, done
+reg [15:0] fabric_delay;
+// has_frame is clk_sys — 2FF into clk_ddr before FSM use
+reg        has_frame_s1, has_frame_s2, has_frame_d;
+
+always @(posedge clk_ddr) begin
+	if (reset) begin
+		fabric_start <= 1'b0;
+		fabric_bank  <= 2'd0;
+		fabric_phase <= 2'd0;
+		fabric_delay <= 16'd0;
+		has_frame_s1 <= 1'b0;
+		has_frame_s2 <= 1'b0;
+		has_frame_d  <= 1'b0;
+	end else begin
+		fabric_start <= 1'b0;
+		has_frame_s1 <= has_frame;
+		has_frame_s2 <= has_frame_s1;
+		has_frame_d  <= has_frame_s2;
+		// Re-arm when host drops frame ownership (idle return).
+		if (has_frame_d && !has_frame_s2)
+			fabric_phase <= 2'd0;
+
+		if (has_frame_s2) begin
+			// ARM/host owns banks — do not paint over playback.
+			fabric_phase <= 2'd0;
+			fabric_delay <= 16'd0;
+		end else begin
+			case (fabric_phase)
+			2'd0: begin
+				if (fabric_delay != 16'hFFFF)
+					fabric_delay <= fabric_delay + 16'd1;
+				// ~0.7 ms @90 MHz settle after reset/idle before first paint
+				if (fabric_delay == 16'd65535) begin
+					fabric_bank  <= 2'd0;
+					fabric_start <= 1'b1;
+					fabric_phase <= 2'd1;
+				end
+			end
+			2'd1: begin
+				if (fabric_frame_done) begin
+					fabric_bank  <= 2'd1;
+					fabric_start <= 1'b1;
+					fabric_phase <= 2'd2;
+				end
+			end
+			2'd2: begin
+				if (fabric_frame_done)
+					fabric_phase <= 2'd3; // both banks painted; hold
+			end
+			default: ;
+			endcase
+		end
+	end
+end
+
+`ifdef FABRIC_DDR_WRITER_720P
+localparam int FAB_W = DDR_FRAME_720P_CODED_WIDTH;
+localparam int FAB_H = DDR_FRAME_720P_CODED_HEIGHT;
+localparam [31:0] FAB_BASE = DDR_FRAME_720P_PHYS_BASE;
+localparam int FAB_STRIDE = DDR_FRAME_720P_YUV420P_BANK_STRIDE;
+localparam [31:0] FAB_DB = DDR_FRAME_720P_YUV420P_DOORBELL_PHYS;
+`else
+// Product silicon banks (visible to present_core today)
+localparam int FAB_W = DDR_FRAME_CODED_WIDTH;
+localparam int FAB_H = DDR_FRAME_CODED_HEIGHT;
+localparam [31:0] FAB_BASE = 32'h3000_0000;
+localparam int FAB_STRIDE = DDR_FRAME_YUV420P_BANK_STRIDE;
+localparam [31:0] FAB_DB = DDR_FRAME_YUV420P_DOORBELL_PHYS;
+`endif
+
+fabric_ddr_attach #(
+	.CODED_W(FAB_W),
+	.CODED_H(FAB_H),
+	.PHYS_BASE(FAB_BASE),
+	.HPS_BANK_STRIDE_BYTES(FAB_STRIDE),
+	.DOORBELL_PHYS(FAB_DB),
+	.WRITE_DRAIN_CYCLES(16),
+	.USE_INTERNAL_PATTERN(1'b1)
+) fabric_attach (
+	.clk(clk_ddr),
+	.reset(reset),
+	.start(fabric_start),
+	.bank_id(fabric_bank),
+	.ext_valid(1'b0),
+	.ext_ready(),
+	.ext_data(64'd0),
+	.ext_frame_start(1'b0),
+	.ext_bank_id(2'd0),
+	.m2_want(fabric_m2_want),
+	.m2_busy(fabric_m2_busy),
+	.m2_burstcnt(fabric_m2_burstcnt),
+	.m2_addr(fabric_m2_addr),
+	.m2_dout(fabric_m2_dout),
+	.m2_dout_ready(fabric_m2_dout_ready),
+	.m2_rd(fabric_m2_rd),
+	.m2_din(fabric_m2_din),
+	.m2_be(fabric_m2_be),
+	.m2_we(fabric_m2_we),
+	.busy(fabric_busy),
+	.frame_done(fabric_frame_done),
+	.dbg_seq(fabric_dbg_seq),
+	.dbg_last_bank(fabric_dbg_bank)
+);
+
+ddr_bus_arbiter3 ddr_arb (
+	.clk(clk_ddr),
+	.clk_m1(clk_sys),
+	.reset(reset),
+	.m1_want(stream_ddr_bus_want),
+	.m2_want(fabric_m2_want),
+	.m0_busy(present_ddr_busy),
+	.m0_burstcnt(present_ddr_burstcnt),
+	.m0_addr(present_ddr_addr),
+	.m0_dout(present_ddr_dout),
+	.m0_dout_ready(present_ddr_dout_ready),
+	.m0_rd(present_ddr_rd),
+	.m0_din(present_ddr_din),
+	.m0_be(present_ddr_be),
+	.m0_we(present_ddr_we),
+	.m1_busy(stream_ddr_busy),
+	.m1_burstcnt(stream_ddr_burstcnt),
+	.m1_addr(stream_ddr_addr),
+	.m1_dout(stream_ddr_dout),
+	.m1_dout_ready(stream_ddr_dout_ready),
+	.m1_rd(stream_ddr_rd),
+	.m1_din(stream_ddr_din),
+	.m1_be(stream_ddr_be),
+	.m1_we(stream_ddr_we),
+	.m2_busy(fabric_m2_busy),
+	.m2_burstcnt(fabric_m2_burstcnt),
+	.m2_addr(fabric_m2_addr),
+	.m2_dout(fabric_m2_dout),
+	.m2_dout_ready(fabric_m2_dout_ready),
+	.m2_rd(fabric_m2_rd),
+	.m2_din(fabric_m2_din),
+	.m2_be(fabric_m2_be),
+	.m2_we(fabric_m2_we),
+	.DDRAM_BUSY(DDRAM_BUSY),
+	.DDRAM_BURSTCNT(DDRAM_BURSTCNT),
+	.DDRAM_ADDR(DDRAM_ADDR),
+	.DDRAM_DOUT(DDRAM_DOUT),
+	.DDRAM_DOUT_READY(DDRAM_DOUT_READY),
+	.DDRAM_RD(DDRAM_RD),
+	.DDRAM_DIN(DDRAM_DIN),
+	.DDRAM_BE(DDRAM_BE),
+	.DDRAM_WE(DDRAM_WE)
+);
+
+// Keep fabric debug visible to fit (prevents pruning under keep-ish tools)
+(* keep = 1 *) wire _keep_fabric_ddr =
+	fabric_busy | fabric_frame_done | |fabric_dbg_seq | |fabric_dbg_bank |
+	fabric_m2_want;
+`else
 ddr_bus_arbiter ddr_arb (
 	.clk(clk_ddr),
 	.clk_m1(clk_sys),
@@ -844,6 +1023,7 @@ ddr_bus_arbiter ddr_arb (
 	.DDRAM_BE(DDRAM_BE),
 	.DDRAM_WE(DDRAM_WE)
 );
+`endif
 `endif
 
 assign CLK_VIDEO = clk_sys;
