@@ -152,6 +152,41 @@ module present_core #(
 
 	wire [7:0] br, bg, bb;
 	wire       ce_pix_i, hb, hs, vb, vs, fstart;
+`ifdef PRESENT_BEAM_960
+	// ascal-native true content DE (w-clock 1182×564 @20 MHz ≈ 30.0008 Hz).
+	// Default OFF. FAULT: PRESENT_BEAM_FAULT_ISLAND_1280 → DE 1280×720 (must RED).
+	wire [10:0] hc, vc;
+	assign br = 8'd0; assign bg = 8'd0; assign bb = 8'd0;
+	// Pattern unused on beam path (no colorbars paint); keep for port parity.
+	wire [1:0] eff_pattern = use_frame_store ? 2'd1 : pattern;
+	(* keep = 1 *) wire _beam960_keep_pat = |eff_pattern;
+`ifdef PRESENT_BEAM_FAULT_ISLAND_1280
+	present_beam_content_de #(
+		.H_DE(1280), .V_ACTIVE(720),
+		.H_TOTAL(1650), .V_TOTAL(750),
+		.H_SYNC_S(1280 + 32), .H_SYNC_E(1280 + 32 + 64),
+		.V_SYNC_S(720 + 8), .V_SYNC_E(720 + 8 + 6)
+	) beam960 (
+`else
+	present_beam_content_de #(
+		.H_DE(960), .V_ACTIVE(540),
+		.H_TOTAL(1182), .V_TOTAL(564),
+		.H_SYNC_S(960 + 32), .H_SYNC_E(960 + 32 + 64),
+		.V_SYNC_S(540 + 8), .V_SYNC_E(540 + 8 + 6)
+	) beam960 (
+`endif
+		.clk(clk),
+		.reset(reset),
+		.ce_pix(ce_pix_i),
+		.HBlank(hb),
+		.HSync(hs),
+		.VBlank(vb),
+		.VSync(vs),
+		.frame_start(fstart),
+		.hc_out(hc),
+		.vc_out(vc)
+	);
+`else
 	wire [9:0] hc, vc; // from colorbars — same counters as full-DE bar paint
 
 	// Pattern encoding (status[7:6]): 0=None, 1=Bars, 2=Bars+Block, 3=Grid.
@@ -177,6 +212,7 @@ module present_core #(
 		.g(bg),
 		.b(bb)
 	);
+`endif
 
 	localparam int FRAME_X_W = $clog2(FRAME_W);
 	localparam int FRAME_Y_W = $clog2(FRAME_H);
@@ -200,13 +236,34 @@ module present_core #(
 	// Core must emit DE extent == content (960×540 or 640×360), identity store
 	// map, no pad inside DE. Island-in-529/1280 is the quarter-glass dead end.
 	// Integrator gate: tests/unit/test_true_content_de_contract.sh
+	// Counted RTL gate: tests/unit/test_present_true_de_count_rtl_sim.sh
 	// Contract doc: docs/product-4-3-scaler-decision.md § True 960×540 DE.
+	// Fit macro: PRESENT_BEAM_960 + runtime win_* below (default OFF).
 	//
 	// Fabric content window (win_enable): when 1, SX/SY come from runtime
 	// content_w/h instead of FRAME_* so ARM publishes native WxH (320…1280) and
 	// fabric NN-stretches across DE — ARM scale path goes to zero, not "cheaper".
 	// win_enable=0 is bit-compatible legacy. STORE_W=1280 sized for 720p (1 M10K/line).
 	// Mapping lives in present_content_window (NN V1; ascal remains HDMI scaler).
+`ifdef PRESENT_BEAM_960
+`ifdef PRESENT_BEAM_FAULT_ISLAND_1280
+	localparam int H_DE_I = 1280;
+	localparam int V_STORE_I = 720;
+`else
+	localparam int H_DE_I = 960;
+	localparam int V_STORE_I = 540;
+`endif
+	localparam bit NATIVE_V_1TO1 = 1'b1;
+	localparam [10:0] H_DE = 11'(H_DE_I);
+	localparam [10:0] V_STORE = 11'(V_STORE_I);
+	localparam int STORE_X_SCALE = 65536; // identity placeholder (window owns map)
+	localparam int STORE_Y_SCALE = 65536;
+	wire [10:0] py = vc;
+	wire in_content = (hc < H_DE) && (py < V_STORE) && ~hb && ~vb;
+	wire [10:0] read_hc = hc;
+	localparam int WIN_H_DE_DEFAULT = H_DE_I;
+	localparam int WIN_V_DE_DEFAULT = V_STORE_I;
+`else
 	localparam H_DE = 10'd529;
 	localparam bit NATIVE_V_1TO1 = (FRAME_H > 240);
 	localparam int V_STORE_I = NATIVE_V_1TO1 ? FRAME_H : 240;
@@ -226,6 +283,9 @@ module present_core #(
 	// Identity hc→read_hc kept at this layer for source-lock + DE_LAG docs;
 	// present_content_window also treats hc as free-running (no blank force-0).
 	wire [9:0] read_hc = hc;
+	localparam int WIN_H_DE_DEFAULT = 529;
+	localparam int WIN_V_DE_DEFAULT = V_STORE_I;
+`endif
 	// Window emits full store coords (STORE 1280×720). ddr_frame_store rd_x/y
 	// accept max(FRAME, MAX_CODED); legacy SDRAM frame_store still gets FRAME slice.
 	localparam int STORE_W_MAX = 1280;
@@ -242,14 +302,19 @@ module present_core #(
 		.FRAME_H(FRAME_H),
 		.STORE_W(STORE_W_MAX),
 		.STORE_H(STORE_H_MAX),
-		.H_DE_DEFAULT(529),
-		.V_DE_DEFAULT(V_STORE_I)
+		.H_DE_DEFAULT(WIN_H_DE_DEFAULT),
+		.V_DE_DEFAULT(WIN_V_DE_DEFAULT)
 	) content_win (
 		.clk(clk),
 		.reset(reset),
 		.ce_pix(ce_pix_i),
+`ifdef PRESENT_BEAM_960
+		.hc(read_hc),
+		.py(py),
+`else
 		.hc({1'b0, read_hc}),
 		.py({1'b0, py}),
+`endif
 		.in_content(in_content),
 		.win_enable(win_enable),
 		.content_w(content_w),

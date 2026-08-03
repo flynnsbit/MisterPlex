@@ -203,17 +203,23 @@ If DE is larger than content, ascal upscales the **whole DE** (pad included).
 - **960×540** paint inside **1280×720** core DE (canvas/storage conflation)
 - Claiming 960-wide content while `H_DE` left at **529**
 
-### Automated gate (no device)
+### Automated gates (no device)
 
+**Config-space contract** (parameter legality):
 ```bash
 tests/unit/test_true_content_de_contract.sh   # product + RED FAULT_ISLAND_PASSES
-./build/test_true_content_de_contract
 ```
 
-Product prints `CONTRACT true_960x540 ... true_de=1` and
-`CONTRACT island_960in1280x720 ... true_de=0`.  
-RED: `-DFAULT_ISLAND_PASSES` must yield `true rc≠0` with `EXECUTED`.
+**Counted RTL raster** (elaborated beam + window + DE_LAG — load-bearing for fit):
+```bash
+tests/unit/test_present_true_de_count_rtl_sim.sh
+# PRODUCT: true_de=1 de_w=960 de_lines=540 de_pixels=518400
+#          H_TOT=1182 V_TOT=564 fps@20M=30.0008 store_id_ok=1
+# RED PRESENT_BEAM_FAULT_ISLAND_1280: de=1280x720 true_de=0 rc≠0 + EXECUTED
+```
 
+**Fit card (w-nostub drop-in):** `docs/ascal-true-de-fit-card.md`  
+Macros: `PRESENT_BEAM_960`; runtime `win_enable=1`, `content_w/h=960/540`, `win_h_de/v_de=960/540`.
 ### Cadence note (24 vs 30 → HDMI 60) — source-backed, limited claim
 
 ascal has a **DDR framebuffer** (`vbuf_*` on `ascal` in `sys_top.v`); `i_clk`/`i_ce`

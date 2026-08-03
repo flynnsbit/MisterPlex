@@ -67,6 +67,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_present_scale_2x_rtl_sim.sh
 	$(ROOT)/build/test_true_content_de_contract
 	$(ROOT)/tests/unit/test_true_content_de_contract.sh
+	$(ROOT)/tests/unit/test_present_true_de_count_rtl_sim.sh
 	$(ROOT)/tests/unit/test_present_scale_4_3_rtl_sim.sh
 	$(ROOT)/tests/unit/test_present_scale_4_3_2ppc_rtl_sim.sh
 	$(ROOT)/build/test_avclock

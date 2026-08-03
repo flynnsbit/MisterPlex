@@ -105,6 +105,7 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/tests/unit/test_present_scale_2x_rtl_sim.sh",
     "$(ROOT)/build/test_true_content_de_contract",
     "$(ROOT)/tests/unit/test_true_content_de_contract.sh",
+    "$(ROOT)/tests/unit/test_present_true_de_count_rtl_sim.sh",
     "$(ROOT)/build/test_force_scale_construction",
     "bash $(ROOT)/tests/unit/test_b2_b5_source_wiring.sh",
     "$(ROOT)/build/test_avclock",
