@@ -4,9 +4,15 @@
 // rises after PLXG issues RD but before dout_ready; generic arbiter has no
 // sub-owner tag → PLXG beat dropped/misdelivered to stream.
 //
-// Fix: latch grant for the full single-beat command+response. Stream preferred
-// only when idle (no outstanding). Owner held until dout_ready after an issued
-// rd/we, then released if that master no longer wants.
+// Fix: latch grant through the full transaction. Stream preferred only when
+// idle (no outstanding RD).
+//
+// WE vs RD (rd-duck deadlock): DDR writes have NO dout_ready response.
+// Tracking outstanding on accepted WE leaves grant=stream forever after the
+// bitstream reader's post-reset 9-word telemetry WE sequence. Outstanding is
+// therefore RD-only. Accepted WE completes immediately (grant still held while
+// s_want/p_want stays high across multi-beat publish). Multi-beat RD counts
+// all response beats (rsp_left) — do not clear on the first dout_ready.
 
 `timescale 1ns / 1ps
 `default_nettype none
@@ -58,27 +64,48 @@ module ddr_m1_subarb (
 	localparam [1:0] G_STR  = 2'd1;
 	localparam [1:0] G_PLX  = 2'd2;
 
-	reg outstanding; // issued cmd, waiting response beat(s)
+	reg        outstanding; // RD only: waiting for response beat(s)
+	reg  [7:0] rsp_left;    // remaining dout_ready beats for current RD burst
 
 	wire g_str = (grant == G_STR);
 	wire g_plx = (grant == G_PLX);
 
-	// New grant only when idle (no grant or granted master done + no outstanding).
+	// New grant only when idle (no outstanding RD; granted master dropped want).
 	wire can_pick = !outstanding && (grant == G_NONE ||
 	                 (g_str && !s_want) ||
 	                 (g_plx && !p_want));
 
+	wire s_issue_rd = g_str && s_rd && !m_busy;
+	wire p_issue_rd = g_plx && p_rd && !m_busy;
+	// WE accepted intentionally does NOT set outstanding (no DDR read response).
+
+	function automatic [7:0] beats_of(input [7:0] bc);
+		begin
+			beats_of = (bc == 8'd0) ? 8'd1 : bc;
+		end
+	endfunction
+
 	always @(posedge clk) begin
 		if (reset) begin
-			grant <= G_NONE;
+			grant       <= G_NONE;
 			outstanding <= 1'b0;
+			rsp_left    <= 8'd0;
 		end else begin
-			// Issue tracking: any accepted rd/we while not busy starts outstanding.
-			if ((g_str && (s_rd | s_we) && !m_busy) ||
-			    (g_plx && (p_rd | p_we) && !m_busy))
+			// RD issue → hold until all response beats return.
+			if (s_issue_rd) begin
 				outstanding <= 1'b1;
-			if (m_dout_ready)
-				outstanding <= 1'b0;
+				rsp_left    <= beats_of(s_burstcnt);
+			end else if (p_issue_rd) begin
+				outstanding <= 1'b1;
+				rsp_left    <= beats_of(p_burstcnt);
+			end else if (m_dout_ready && outstanding) begin
+				if (rsp_left <= 8'd1) begin
+					outstanding <= 1'b0;
+					rsp_left    <= 8'd0;
+				end else begin
+					rsp_left <= rsp_left - 8'd1;
+				end
+			end
 
 			if (can_pick) begin
 				if (s_want)

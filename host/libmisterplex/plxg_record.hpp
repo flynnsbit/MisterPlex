@@ -125,16 +125,27 @@ inline void plxgHostStoreAtomic(uint8_t* ctrlPage, const PlxgRecord& rec) {
 }
 
 // Transaction-safe m1 sub-owner model (ddr_m1_subarb.sv): owner latched through
-// response; combinational mid-beat flip is forbidden.
+// RD response; WE does NOT set outstanding (DDR writes have no dout_ready).
 enum class DdrM1Owner : uint8_t { None = 0, Stream = 1, Plxg = 2 };
 struct DdrM1SubarbModel {
     DdrM1Owner grant = DdrM1Owner::None;
-    bool outstanding = false;
-    void tick(bool s_want, bool p_want, bool issue, bool dout_ready) {
-        if (issue && !outstanding && grant != DdrM1Owner::None)
+    bool outstanding = false; // RD only
+    int rsp_left = 0;
+    // issue_rd: accepted RD this cycle. issue_we: accepted WE (must NOT stick).
+    // rd_beats: burst length for multi-beat RD (default 1).
+    void tick(bool s_want, bool p_want, bool issue_rd, bool dout_ready,
+              bool /*issue_we*/ = false, int rd_beats = 1) {
+        if (issue_rd && grant != DdrM1Owner::None) {
             outstanding = true;
-        if (dout_ready)
-            outstanding = false;
+            rsp_left = rd_beats > 0 ? rd_beats : 1;
+        } else if (dout_ready && outstanding) {
+            if (rsp_left <= 1) {
+                outstanding = false;
+                rsp_left = 0;
+            } else {
+                --rsp_left;
+            }
+        }
         const bool can_pick =
             !outstanding &&
             (grant == DdrM1Owner::None ||

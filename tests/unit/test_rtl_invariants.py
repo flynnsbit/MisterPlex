@@ -1445,12 +1445,17 @@ def check_ddr_frame_layout_contract() -> None:
         "S_VRF_Q0" in poller or "verify_phase" in poller or "cnt_torn" in poller,
         "plxg_ddr_poller must re-read q0 after q4 and count torn snapshots",
     )
+    subarb_src = (ROOT / "fpga/Plex_MiSTer/rtl/ddr_m1_subarb.sv").read_text(
+        encoding="utf-8", errors="replace"
+    )
     check(
         (ROOT / "fpga/Plex_MiSTer/rtl/ddr_m1_subarb.sv").is_file()
-        and "outstanding" in (ROOT / "fpga/Plex_MiSTer/rtl/ddr_m1_subarb.sv").read_text(
-            encoding="utf-8", errors="replace"
-        ),
-        "ddr_m1_subarb.sv must latch grant through response (outstanding)",
+        and "outstanding" in subarb_src
+        and "rsp_left" in subarb_src
+        and "s_issue_rd" in subarb_src
+        and "s_rd | s_we" not in subarb_src.replace(" ", "")
+        and "s_rd|s_we" not in subarb_src.replace(" ", ""),
+        "ddr_m1_subarb must track outstanding on RD only (not WE) and count rsp beats",
     )
     check(
         cpp_const(host, "kDdrFramePlxgOffset") == 0x2C0,

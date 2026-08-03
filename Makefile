@@ -218,6 +218,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_fabric_ddr_write_path_verilator.sh
 	$(ROOT)/tests/unit/test_fabric_bank_credit_async_verilator.sh
 	$(ROOT)/tests/unit/test_ddr_bus_arbiter3_verilator.sh
+	$(ROOT)/tests/unit/test_ddr_m1_subarb_verilator.sh
 	$(ROOT)/tests/unit/test_fabric_luma_linebuf_verilator.sh
 	$(ROOT)/tests/unit/test_stream_path_recon_integration.sh
 	$(ROOT)/tests/unit/test_stream_path_full_frame_compare.sh
@@ -261,6 +262,7 @@ rtl-sim-unlocked:
 	$(ROOT)/tests/unit/test_stream_path_recon_integration.sh
 	$(ROOT)/tests/unit/test_stream_path_full_frame_compare.sh
 	$(ROOT)/tests/unit/test_ddram_frame_rd_bank_select.sh
+	$(ROOT)/tests/unit/test_ddr_m1_subarb_verilator.sh
 	$(ROOT)/tests/unit/test_h264_syntax_primitives_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_sps_geometry_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_baseline_syntax_rtl_sim.sh

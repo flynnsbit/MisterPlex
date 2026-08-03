@@ -698,12 +698,12 @@ int main() {
         CHECK(plxgRawGeomOk(960, 540, 960, 480));
         CHECK(!plxgRawGeomOk(1920, 1080, 1920, 960)); // > MAX 1280x720
         CHECK(!plxgRawGeomOk(0, 540, 960, 480));
-        // Subarb: PLXG owner held through response even if stream wants mid-beat.
+        // Subarb: PLXG owner held through RD response even if stream wants mid-beat.
         {
             DdrM1SubarbModel m{};
-            m.tick(/*s*/ false, /*p*/ true, /*issue*/ false, /*dr*/ false);
+            m.tick(/*s*/ false, /*p*/ true, /*issue_rd*/ false, /*dr*/ false);
             CHECK(m.grant == DdrM1Owner::Plxg);
-            m.tick(false, true, /*issue*/ true, false);
+            m.tick(false, true, /*issue_rd*/ true, false);
             CHECK(m.outstanding);
             // Stream rises while outstanding — grant must stay PLXG.
             m.tick(/*s*/ true, true, false, false);
@@ -718,6 +718,35 @@ int main() {
             // After PLXG drops want, stream preferred on next pick.
             m.tick(true, /*p*/ false, false, false);
             CHECK(m.grant == DdrM1Owner::Stream);
+        }
+        // WE must NOT stick outstanding (bitstream reset telemetry class).
+        {
+            DdrM1SubarbModel m{};
+            m.tick(/*s*/ true, /*p*/ true, false, false);
+            CHECK(m.grant == DdrM1Owner::Stream);
+            // 9 accepted WEs (no dout_ready) — outstanding stays clear.
+            for (int i = 0; i < 9; ++i)
+                m.tick(true, true, /*issue_rd*/ false, false, /*issue_we*/ true);
+            CHECK(!m.outstanding);
+            m.tick(/*s*/ false, true, false, false); // stream done
+            CHECK(m.grant == DdrM1Owner::Plxg);
+            m.tick(false, true, /*issue_rd*/ true, false);
+            CHECK(m.outstanding);
+            m.tick(false, true, false, /*dout_ready*/ true);
+            CHECK(!m.outstanding);
+        }
+        // Multi-beat RD: first dout_ready does not clear outstanding.
+        {
+            DdrM1SubarbModel m{};
+            m.tick(true, false, false, false);
+            m.tick(true, false, /*issue_rd*/ true, false, false, /*rd_beats*/ 3);
+            CHECK(m.outstanding && m.rsp_left == 3);
+            m.tick(true, false, false, true);
+            CHECK(m.outstanding && m.rsp_left == 2);
+            m.tick(true, false, false, true);
+            CHECK(m.outstanding && m.rsp_left == 1);
+            m.tick(true, false, false, true);
+            CHECK(!m.outstanding);
         }
         // Publish order constant is body-then-q0 (not q0-first).
         CHECK(kPlxgPublishOrder[0] != 0);
