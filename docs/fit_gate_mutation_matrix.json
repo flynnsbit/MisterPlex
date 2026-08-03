@@ -313,6 +313,30 @@
       "token_hit": "1"
     },
     {
+      "check": "B9_SHADOW_DELAYED_HDMI_VS",
+      "inject": "live defective/hollow tree (no inject)",
+      "expect": "B9_SHADOW_DELAYED_HDMI_VS",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B9_NO_INTERNAL_SWAP_SIDEBAND",
+      "inject": "live defective/hollow tree (no inject)",
+      "expect": "B9_NO_INTERNAL_SWAP_SIDEBAND",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B9_PHASE_TB_NO_VS_PIPELINE_OFFSET",
+      "inject": "live defective/hollow tree (no inject)",
+      "expect": "B9_PHASE_TB_NO_VS_PIPELINE_OFFSET",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
       "check": "B26_STORE_CROP_DISPLAY_BOUNDS_MISSING",
       "inject": "live defective/hollow tree (no inject)",
       "expect": "B26_STORE_CROP_DISPLAY_BOUNDS_MISSING",
@@ -457,6 +481,14 @@
       "token_hit": "1"
     },
     {
+      "check": "B9_SHADOW_DELAYED_HDMI_VS",
+      "inject": "hold release on delayed out_vs/hdmi_vs; ascal no o_vsv(1) port sideband",
+      "expect": "B9_SHADOW_DELAYED_HDMI_VS",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
       "check": "B34_IDENTITY_ON_STORE",
       "inject": "align then makeDdrFrameGeometry(store) loses display 426/crop_left=2",
       "expect": "B34_IDENTITY_ON_STORE",
@@ -482,6 +514,6 @@
     }
   ],
   "failures": [],
-  "n_red": 60,
-  "head": "d187539ceaf2"
+  "n_red": 64,
+  "head": "34a07e9e086b"
 }

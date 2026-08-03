@@ -174,7 +174,11 @@ LIVE_OPEN_BLOCKER_TOKENS = (
     "B9_BANK_GEN_TIED_ZERO",
     "B9_DISP_MATCH_DAR_ONLY",
     "B9_ASCAL_SIDEBAND_UNPROVEN",
-    # B9_BANK_GEN_NOT_STORE_APPLIED / B9_RELEASE_NO_BANK_MATCH: closed-class reinject
+    # rd-duck: shadow on delayed external HDMI VS not conservative (o_vsv(1) vs o_vsv(11))
+    "B9_SHADOW_DELAYED_HDMI_VS",
+    "B9_NO_INTERNAL_SWAP_SIDEBAND",
+    "B9_PHASE_TB_NO_VS_PIPELINE_OFFSET",
+    # B9_BANK_GEN_NOT_STORE_APPLIED / B9_RELEASE_NO_BANK_MATCH / B9_SIDEBAND_ON_DELAYED_VS: closed-class reinject
     # (need hold/ack present; hollow fires TIED_ZERO + DISP_MATCH + SIDEBAND instead)
 
     # rd-duck: runtime crop+display window bounds in store (not port presence alone)
@@ -5212,6 +5216,11 @@ def run_b9_ar_hold_post_ascal(root: Path) -> tuple[list[str], list[str]]:
     msgs.extend(b9b_msgs)
     errors.extend(b9b_errs)
 
+    # --- rd-duck B9: delayed external HDMI VS shadow not conservative ---
+    b9v_msgs, b9v_errs = check_b9_shadow_vs_pipeline(root)
+    msgs.extend(b9v_msgs)
+    errors.extend(b9v_errs)
+
     return msgs, errors
 
 
@@ -5420,9 +5429,23 @@ def check_b9_dar_bank_gen_match(root: Path) -> tuple[list[str], list[str]]:
         re.search(r"USE_ASCAL_SIDEBAND\s*\(\s*1\s*\)", sys_txt)
         or re.search(r"parameter\s+bit\s+USE_ASCAL_SIDEBAND\s*=\s*1", hold_txt)
     )
-    # ascal exports o_tb_obuf / o_obuf
+    # ascal PORT export only — internal SIGNAL o_obuf0/1 is NOT a sideband
+    ascal_port = ""
+    m_ent = re.search(
+        r"ENTITY\s+ascal\s+IS([\s\S]*?)END\s+ENTITY",
+        ascal_txt,
+        re.I,
+    )
+    if m_ent:
+        m_port = re.search(r"PORT\s*\(([\s\S]*?)\)\s*;", m_ent.group(1), re.I)
+        ascal_port = m_port.group(1) if m_port else ""
     ascal_export = bool(
-        re.search(r"o_tb_obuf|o_obuf|tb_obuf", ascal_txt, re.I)
+        re.search(
+            r"\bo_tb_obuf\b|\bo_obuf_export\b|\bo_swap_(?:id|gen|pulse)\b|"
+            r"\bo_bufup_export\b|\bascal_obuf\b",
+            ascal_port,
+            re.I,
+        )
     )
     sys_obuf_wire = bool(
         re.search(r"tb_obuf|o_tb_obuf|ascal_obuf|o_bufup", sys_txt, re.I)
@@ -5450,6 +5473,295 @@ def check_b9_dar_bank_gen_match(root: Path) -> tuple[list[str], list[str]]:
 
     if not errors:
         msgs.append("LEG0_B9_BANK_GEN_MATCH_PASS DAR∧store-applied-bank locked")
+    return msgs, errors
+
+
+def check_b9_shadow_vs_pipeline(root: Path) -> tuple[list[str], list[str]]:
+    """B9: release must track ascal INTERNAL o_vsv(1) swap — not delayed HDMI VS.
+
+    rd-duck (observed, more serious than NBA alone):
+      ascal swaps o_obuf on o_vsv(1) fall (ascal.vhd:1933-39).
+      Exported HDMI VS is o_vs <= o_vsv(11) (2971-73), ~10 o_clk later.
+      sys_top then re-synchronizes hdmi_vs into clk_vid, adding more delay.
+      A shadow FSM clocked from that delayed external fall can observe/tag-push
+      a frame that ended after the actual swap and promote it at the delayed fall,
+      placing metadata one frame AHEAD of pixels — release black on new DAR while
+      ascal still displays old pixels. Comment 'release cannot run ahead' is false.
+      Phase TB with a single abstract out_fall cannot test the 10+ cycle offset.
+    Require: sideband from ascal at the internal swap (export o_obuf / field /
+    bufup / swap+buffer ID updated on o_vsv(1)), consumed by hold/ack. Do NOT
+    release fit on a parallel FSM clocked from delayed hdmi_vs alone.
+    """
+    msgs: list[str] = ["LEG0_B9_SHADOW_VS_PIPELINE_EXECUTED begin"]
+    errors: list[str] = []
+    ascal = root / "fpga" / "Plex_MiSTer" / "sys" / "ascal.vhd"
+    if not ascal.is_file():
+        ascal = root / "fpga" / "Plex_MiSTer" / "sys_top" / "ascal.vhd"
+    sys_top = root / "fpga" / "Plex_MiSTer" / "sys" / "sys_top.v"
+    hold_sv = root / "fpga" / "Plex_MiSTer" / "rtl" / "plex_ar_out_hold.sv"
+    ack_sv = root / "fpga" / "Plex_MiSTer" / "rtl" / "plex_ar_ascal_ack.sv"
+    model_sv = root / "fpga" / "Plex_MiSTer" / "rtl" / "plex_ar_buf_model.sv"
+    tb_cpp = root / "tests" / "rtl" / "plex_ar_ascal_buf_phase_tb.cpp"
+    tb_sh = root / "tests" / "unit" / "test_plex_ar_ascal_buf_phase_rtl_sim.sh"
+    # alternate TB names
+    tb_alt = list((root / "tests").rglob("*ascal*phase*") ) if (root / "tests").is_dir() else []
+
+    ascal_txt = _read(ascal) or ""
+    sys_txt = product_active_sv(_read(sys_top) or "") if sys_top.is_file() else ""
+    hold_txt = product_active_sv(_read(hold_sv) or "") if hold_sv.is_file() else ""
+    ack_txt = product_active_sv(_read(ack_sv) or "") if ack_sv.is_file() else ""
+    model_txt = product_active_sv(_read(model_sv) or "") if model_sv.is_file() else ""
+    tb_blob = ""
+    for tp in (tb_cpp, tb_sh, *tb_alt[:8]):
+        if tp.is_file():
+            tb_blob += "\n" + (_read(tp) or "")
+
+    # --- Cite ascal SoT: internal swap vs delayed export ---
+    has_vsv1_swap = bool(
+        re.search(
+            r"o_vsv\s*\(\s*1\s*\)\s*=\s*'1'.*?o_vsv\s*\(\s*0\s*\)\s*=\s*'0'.*?"
+            r"o_obuf",
+            ascal_txt,
+            re.I | re.S,
+        )
+    ) or bool(
+        re.search(r"IF\s+o_vsv\(1\)='1'\s+AND\s+o_vsv\(0\)='0'", ascal_txt, re.I)
+    )
+    has_vsv_pipe = bool(
+        re.search(r"o_vsv\s*\(\s*1\s+TO\s+11\s*\)\s*<=\s*o_vsv\s*\(\s*0\s+TO\s+10\s*\)", ascal_txt, re.I)
+        or re.search(r"o_vsv\(1\s+TO\s+11\)\s*<=\s*o_vsv\(0\s+TO\s+10\)", ascal_txt, re.I)
+    )
+    has_ovs_vsv11 = bool(
+        re.search(r"o_vs\s*<=\s*o_vsv\s*\(\s*11\s*\)", ascal_txt, re.I)
+        or re.search(r"o_vs\s*<=\s*o_vsv\(11\)", ascal_txt, re.I)
+    )
+    msgs.append(
+        f"LEG0_B9_VS_SOT vsv1_swap={int(has_vsv1_swap)} vsv_pipe={int(has_vsv_pipe)} "
+        f"o_vs_vsv11={int(has_ovs_vsv11)}"
+    )
+    if ascal.is_file() and not (has_vsv1_swap and has_vsv_pipe and has_ovs_vsv11):
+        # Stock ascal should always have these; missing file handled below
+        errors.append(
+            "B9_NO_INTERNAL_SWAP_SIDEBAND: ascal.vhd does not show measured "
+            "o_vsv(1)-fall swap + o_vsv(1 TO 11) pipe + o_vs<=o_vsv(11) — cannot "
+            "ground delayed-VS defect class (rd-duck cites 1933-39 / 2971-73)."
+        )
+
+    # --- PORT export of internal swap sideband (not internal SIGNAL o_obuf*) ---
+    ascal_port = ""
+    m_ent = re.search(
+        r"ENTITY\s+ascal\s+IS([\s\S]*?)END\s+ENTITY",
+        ascal_txt,
+        re.I,
+    )
+    if m_ent:
+        m_port = re.search(r"PORT\s*\(([\s\S]*?)\)\s*;", m_ent.group(1), re.I)
+        ascal_port = m_port.group(1) if m_port else ""
+    port_export = bool(
+        re.search(
+            r"\bo_tb_obuf\b|\bo_obuf_export\b|\bo_swap_(?:id|gen|pulse|ack)\b|"
+            r"\bo_bufup_export\b|\bo_ibuf_export\b|\bascal_swap_",
+            ascal_port,
+            re.I,
+        )
+    )
+    # Drive export on internal vsv(1) edge — not only o_vs/o_vsv(11) domain
+    export_on_vsv1 = bool(
+        re.search(
+            r"(o_tb_obuf|o_obuf_export|o_swap_\w+|o_bufup_export).{0,200}"
+            r"o_vsv\s*\(\s*1\s*\)|"
+            r"o_vsv\s*\(\s*1\s*\).{0,200}"
+            r"(o_tb_obuf|o_obuf_export|o_swap_\w+|o_bufup_export)",
+            ascal_txt,
+            re.I | re.S,
+        )
+    ) or bool(
+        # assignment block near the known swap IF
+        re.search(
+            r"IF\s+o_vsv\(1\)='1'\s+AND\s+o_vsv\(0\)='0'[\s\S]{0,400}?"
+            r"(o_tb_obuf|o_obuf_export|o_swap_|o_bufup_export)\s*<=",
+            ascal_txt,
+            re.I,
+        )
+    )
+    # Reject export only updated from o_vs / o_vsv(11)
+    export_only_delayed = bool(
+        re.search(
+            r"(o_tb_obuf|o_obuf_export|o_swap_\w+)\s*<=[^;]*o_vsv\s*\(\s*11\s*\)",
+            ascal_txt,
+            re.I,
+        )
+    ) and not export_on_vsv1
+
+    msgs.append(
+        f"LEG0_B9_VS_EXPORT port={int(port_export)} on_vsv1={int(export_on_vsv1)} "
+        f"only_delayed={int(export_only_delayed)}"
+    )
+    if not ascal.is_file():
+        errors.append(
+            "B9_NO_INTERNAL_SWAP_SIDEBAND: missing ascal.vhd — cannot prove internal "
+            "o_vsv(1) swap sideband export (rd-duck)."
+        )
+    elif not port_export or not export_on_vsv1 or export_only_delayed:
+        errors.append(
+            "B9_NO_INTERNAL_SWAP_SIDEBAND: ascal must PORT-export o_obuf/bufup/swap ID "
+            "updated on internal o_vsv(1) fall (swap event), not merely expose delayed "
+            "o_vs=o_vsv(11). Internal SIGNAL o_obuf0 is not a sideband. "
+            f"port={int(port_export)} vsv1={int(export_on_vsv1)} "
+            f"delayed_only={int(export_only_delayed)} (rd-duck: ~10 o_clk lag)."
+        )
+    else:
+        msgs.append("LEG0_B9_OK ascal internal o_vsv(1) swap sideband exported")
+
+    # --- Product must consume internal sideband; reject delayed-hdmi_vs-only shadow ---
+    sys_wires_sideband = bool(
+        re.search(
+            r"o_tb_obuf|ascal_obuf|o_obuf_export|ascal_swap_|o_swap_(?:id|gen|pulse|ack)|"
+            r"o_bufup_export",
+            sys_txt,
+            re.I,
+        )
+    )
+    hold_ports = ""
+    m_inst = re.search(
+        r"plex_ar_out_hold\s*(?:#\s*\([^;]*?\))?\s*\w+\s*\(([\s\S]{0,2000}?)\)\s*;",
+        sys_txt,
+    )
+    if m_inst:
+        hold_ports = m_inst.group(1)
+    else:
+        hold_ports = _extract_sv_instance_ports(sys_txt, "plex_ar_out_hold") or ""
+    hold_takes_sideband = bool(
+        re.search(
+            r"\.(?:ascal_obuf|o_tb_obuf|obuf|swap_id|swap_gen|bufup|ascal_swap)",
+            hold_ports,
+            re.I,
+        )
+    ) or bool(
+        re.search(
+            r"\.(?:ascal_obuf|o_tb_obuf|obuf|swap_id|swap_gen|bufup)",
+            hold_txt,
+            re.I,
+        )
+    )
+    use_sideband = bool(
+        re.search(r"USE_ASCAL_SIDEBAND\s*\(\s*1\s*\)", sys_txt)
+        or re.search(r"parameter\s+bit\s+USE_ASCAL_SIDEBAND\s*=\s*1", hold_txt)
+        or re.search(r"USE_ASCAL_SIDEBAND\s*=\s*1'b1", hold_txt)
+    )
+    # Shadow / release path clocked from delayed external VS without internal event
+    delayed_vs_clocked = bool(
+        re.search(r"out_vs|hdmi_vs|o_vs_fall|vs_fall_d", hold_txt, re.I)
+        or re.search(r"\.out_vs\s*\(", hold_ports)
+    )
+    # Comment-bait is not proof of conservatism
+    comment_bait = bool(
+        re.search(
+            r"release cannot run ahead|cannot run ahead of pixels|shadow is conservative",
+            hold_txt + model_txt + ack_txt,
+            re.I,
+        )
+    )
+    # Product path proven only if sideband port + wire + hold consume + USE=1
+    product_internal = bool(
+        port_export and export_on_vsv1 and sys_wires_sideband and hold_takes_sideband and use_sideband
+    )
+    # Shadow-only (or delayed-VS FSM without internal sideband) is the defect
+    shadow_delayed = (not product_internal) and (
+        delayed_vs_clocked
+        or (not hold_sv.is_file())
+        or (hold_sv.is_file() and not hold_takes_sideband)
+        or comment_bait
+    )
+    msgs.append(
+        f"LEG0_B9_VS_CONSUME sys_wire={int(sys_wires_sideband)} hold_sb={int(hold_takes_sideband)} "
+        f"use_sb={int(use_sideband)} delayed_vs={int(delayed_vs_clocked)} "
+        f"comment_bait={int(comment_bait)} product_internal={int(product_internal)}"
+    )
+    if shadow_delayed or not product_internal:
+        errors.append(
+            "B9_SHADOW_DELAYED_HDMI_VS: product B9 must NOT release on a parallel FSM "
+            "clocked from delayed external hdmi_vs/o_vs (o_vsv(11)+CDC). Actual swap is "
+            "o_vsv(1) fall (~10 o_clk earlier). Shadow can place metadata one frame "
+            "AHEAD of pixels and unblack new DAR while ascal still shows old bank. "
+            "Require hold/ack consume ascal internal-swap sideband (o_obuf/bufup/swap ID). "
+            "Comment 'release cannot run ahead' is not evidence (rd-duck). "
+            f"product_internal={int(product_internal)} delayed_vs={int(delayed_vs_clocked)} "
+            f"comment_bait={int(comment_bait)}."
+        )
+    else:
+        msgs.append("LEG0_B9_OK release consumes internal o_vsv(1) sideband")
+
+    # Sideband sampled only on delayed VS is still the defect (reinject class)
+    if hold_sv.is_file() or ack_sv.is_file():
+        sideband_on_delayed = bool(
+            re.search(
+                r"(ascal_obuf|o_tb_obuf|swap_id|obuf_r)\s*<=[^;]*(out_vs|hdmi_vs|vs_fall_d|o_vs\b)",
+                hold_txt + ack_txt,
+                re.I,
+            )
+        ) and not bool(
+            re.search(
+                r"o_vsv\s*\(\s*1\s*\)|internal_swap|swap_pulse|bufup_rise",
+                hold_txt + ack_txt,
+                re.I,
+            )
+        )
+        if sideband_on_delayed:
+            errors.append(
+                "B9_SIDEBAND_ON_DELAYED_VS: hold/ack samples ascal sideband on delayed "
+                "external VS edge — must latch on internal swap event (o_vsv(1)/bufup) "
+                "or the lag hole remains (rd-duck)."
+            )
+
+    # --- Phase TB must model ≥10-cycle o_vsv(1)→o_vsv(11) offset ---
+    tb_present = bool(tb_blob.strip())
+    tb_offset = bool(
+        re.search(
+            r"o_vsv\s*\(\s*1\s*\)|vsv\s*1|internal_swap|VSV1",
+            tb_blob,
+            re.I,
+        )
+    ) and bool(
+        re.search(
+            r"o_vsv\s*\(\s*11\s*\)|vsv\s*11|delayed.?vs|VS_PIPE|pipeline.?offset|"
+            r"10\s*(\+|cycle|clk|stage)|>=\s*10|at least 10|~10|\b11\b.*\b1\b",
+            tb_blob,
+            re.I,
+        )
+    )
+    tb_single_abstract = bool(
+        re.search(r"out_fall|out_frame_pulse", tb_blob, re.I)
+    ) and not tb_offset
+    # Ahead-of-pixels counterexample must be asserted
+    tb_ahead_case = bool(
+        re.search(
+            r"ahead|metadata one frame|run.?ahead|delayed.?fall|T\+5|T\+12|"
+            r"B_delayed_vs|DELAYED_VS|vs_pipeline",
+            tb_blob,
+            re.I,
+        )
+    )
+    msgs.append(
+        f"LEG0_B9_VS_TB present={int(tb_present)} offset={int(tb_offset)} "
+        f"abstract_only={int(tb_single_abstract)} ahead_case={int(tb_ahead_case)}"
+    )
+    if not tb_present or not tb_offset or not tb_ahead_case:
+        errors.append(
+            "B9_PHASE_TB_NO_VS_PIPELINE_OFFSET: phase TB must model ascal "
+            "o_vsv(1) internal swap vs delayed o_vs=o_vsv(11) (~10 o_clk) plus "
+            "sys_top hdmi_vs CDC — single abstract out_fall cannot catch "
+            "metadata-ahead-of-pixels. Require counterexample case (frame end "
+            "after actual swap, before delayed VS fall) and fail if shadow promotes "
+            "early (rd-duck). "
+            f"present={int(tb_present)} offset={int(tb_offset)} "
+            f"ahead={int(tb_ahead_case)}."
+        )
+    else:
+        msgs.append("LEG0_B9_OK phase TB covers VS pipeline offset + ahead case")
+
+    if not errors:
+        msgs.append("LEG0_B9_SHADOW_VS_PIPELINE_PASS internal-swap sideband locked")
     return msgs, errors
 
 
@@ -5623,7 +5935,7 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
         "B28_q5_atomic_poller,B29_direct_part_vf,B30_plxc_cdc_stopped_rd,"
         "B31_hit_scan_prefit_cap(shipping_budget_g++),"
         "B32_plxg_bank_atomic_couple(host+store+tuple+poller_rtl),"
-        "B9_dar_bank_gen_match(bank_gen+DAR∧bank+ascal_obuf),"
+        "B9_dar_bank_gen_match(bank_gen+DAR∧bank+ascal_obuf),B9_shadow_vs_pipeline(o_vsv1_sideband_not_delayed_hdmi_vs),"
         "B33_plxc_arb_issued_lower_safe(44981ab0 req/accept+per-req TB),"
         "B34_host_plxg_pad_display(426→432 display+crop+q1/q3 g++),"
         "B35_ascal_simultaneous_tag_bypass(in_*+full_tag_TB+RED),"
@@ -8950,6 +9262,9 @@ def _run_mutation_matrix() -> tuple[list[str], list[dict[str, str]]]:
         "B9_BANK_GEN_TIED_ZERO",
         "B9_DISP_MATCH_DAR_ONLY",
         "B9_ASCAL_SIDEBAND_UNPROVEN",
+        "B9_SHADOW_DELAYED_HDMI_VS",
+        "B9_NO_INTERNAL_SWAP_SIDEBAND",
+        "B9_PHASE_TB_NO_VS_PIPELINE_OFFSET",
         "B26_STORE_CROP_DISPLAY_BOUNDS_MISSING",
         "B27_FFMPEG_PAD_CHROMA_EVEN_ORACLE",
         "B23_OWNERSHIP",
@@ -9436,6 +9751,96 @@ def _run_mutation_matrix() -> tuple[list[str], list[dict[str, str]]]:
         )
     finally:
         rest_m()
+
+    # --- rd-duck B9: delayed external HDMI VS shadow (o_vsv1 vs o_vsv11) ---
+    hold_b9v = ROOT / "fpga" / "Plex_MiSTer" / "rtl" / "plex_ar_out_hold.sv"
+    ascal_b9v = ROOT / "fpga" / "Plex_MiSTer" / "sys" / "ascal.vhd"
+    sys_b9v = ROOT / "fpga" / "Plex_MiSTer" / "sys" / "sys_top.v"
+    hold_b9v.parent.mkdir(parents=True, exist_ok=True)
+    ascal_b9v.parent.mkdir(parents=True, exist_ok=True)
+    sys_b9v.parent.mkdir(parents=True, exist_ok=True)
+    bad_hold = (
+        "// fitgate B9 VS-pipeline mutation — delayed hdmi_vs shadow (rd-duck)\n"
+        "module plex_ar_out_hold #(\n"
+        "  parameter bit USE_ASCAL_SIDEBAND = 0\n"
+        ") (\n"
+        "  input wire out_vs,\n"
+        "  input wire [1:0] ascal_obuf,\n"
+        "  output reg ar_hold_black\n"
+        ");\n"
+        "  // DEFECT: release cannot run ahead — FALSE; clocked from delayed out_vs only\n"
+        "  // shadow is conservative (bait)\n"
+        "  reg vs_fall_d;\n"
+        "  always @(*) begin\n"
+        "    vs_fall_d = out_vs;\n"
+        "    ar_hold_black = vs_fall_d;\n"
+        "  end\n"
+        "endmodule\n"
+    )
+    bad_ascal = (
+        "-- fitgate B9 VS mutation ascal (stock pipeline, no internal sideband port)\n"
+        "ENTITY ascal IS\n"
+        "  PORT (\n"
+        "    o_vs  : OUT std_logic;\n"
+        "    o_hs  : OUT std_logic\n"
+        "  );\n"
+        "END ENTITY ascal;\n"
+        "ARCHITECTURE rtl OF ascal IS\n"
+        "  SIGNAL o_obuf0,o_obuf1 : natural RANGE 0 TO 2;\n"
+        "  SIGNAL o_vsv : unsigned(0 TO 11);\n"
+        "  SIGNAL o_bufup0 : std_logic;\n"
+        "BEGIN\n"
+        "  PROCESS(o_clk)\n"
+        "  BEGIN\n"
+        "    IF rising_edge(o_clk) THEN\n"
+        "      IF o_vsv(1)='1' AND o_vsv(0)='0' AND o_bufup0='1' THEN\n"
+        "        o_obuf0<=buf_next(o_obuf0,o_ibuf0,o_freeze);\n"
+        "      END IF;\n"
+        "      o_vsv(1 TO 11)<=o_vsv(0 TO 10);\n"
+        "      o_vs<=o_vsv(11);\n"
+        "    END IF;\n"
+        "  END PROCESS;\n"
+        "END ARCHITECTURE;\n"
+    )
+    bad_sys = (
+        "// fitgate B9 VS mutation sys_top — hold on hdmi_vs only\n"
+        "module sys_top;\n"
+        "  wire hdmi_vs;\n"
+        "  plex_ar_out_hold #(\n"
+        "    .USE_ASCAL_SIDEBAND(0)\n"
+        "  ) u_plex_ar_out_hold (\n"
+        "    .out_vs(hdmi_vs),\n"
+        "    .bank_gen(16'd0),\n"
+        "    .ar_hold_black()\n"
+        "  );\n"
+        "endmodule\n"
+    )
+    rest_h = _with_file_backup(hold_b9v, bad_hold)
+    rest_a = _with_file_backup(ascal_b9v, bad_ascal)
+    rest_s = _with_file_backup(sys_b9v, bad_sys)
+    try:
+        rc, msgs = leg0_arch_blockers()
+        txt = "\n".join(msgs)
+        exp = (
+            "B9_SHADOW_DELAYED_HDMI_VS"
+            if "B9_SHADOW_DELAYED_HDMI_VS" in txt
+            else (
+                "B9_NO_INTERNAL_SWAP_SIDEBAND"
+                if "B9_NO_INTERNAL_SWAP_SIDEBAND" in txt
+                else "B9_PHASE_TB_NO_VS_PIPELINE_OFFSET"
+            )
+        )
+        _row(
+            "B9_SHADOW_DELAYED_HDMI_VS",
+            "hold release on delayed out_vs/hdmi_vs; ascal no o_vsv(1) port sideband",
+            exp,
+            rc,
+            msgs,
+        )
+    finally:
+        rest_h()
+        rest_a()
+        rest_s()
 
     # --- rd-duck B34: identity-on-store 432/432/0 after align ---
     lay_b34 = ROOT / "host" / "libmisterplex" / "ddr_frame_layout.hpp"
