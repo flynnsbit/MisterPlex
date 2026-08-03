@@ -161,6 +161,20 @@ int main() {
         CHECK(buggy != g0, "NEG old encode != linux");
     }
 
+    // Surgical diag: force burst-1 4 KiB factors; MFIFO cap 1 rejects burst16.
+    {
+        unsigned burst = 0;
+        uint32_t inner = 0, outer = 0;
+        CHECK(pl330PickBurstAndLoops(4096, &burst, &inner, &outer, 16, 1), "4k burst1 force");
+        CHECK(burst == 1 && inner * outer == 1024, "4k = 1024 words");
+        CHECK(!pl330PickBurstAndLoops(4096, &burst, &inner, &outer, /*cap*/1, /*force*/16),
+              "NEG force16 over mfifo1");
+        CHECK(std::string(pl330FtrChannelTag(1u << 16)) == "ch_rd_err", "ftr rd");
+        CHECK(std::string(pl330FtrChannelTag(1u << 18)) == "mfifo_err", "ftr mfifo");
+        CHECK(std::string(pl330CsrStateTag(0x2)) == "cache_miss", "csr cache_miss");
+        CHECK(pl330MfifoWordsFromCrd(0) == 1, "mfifo dep0 -> 1 word");
+    }
+
     // Throughput ceiling: 0.010 ms @ 1382400 B is impossible
     CHECK(pl330ThroughputImpossible(1382400, 0.010), "NEG 0.01ms impossible");
     CHECK(pl330ThroughputImpossible(1382400, 0.0), "NEG zero ms");

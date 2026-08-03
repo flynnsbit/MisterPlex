@@ -146,6 +146,8 @@ int main(int argc, char** argv) {
     bool use_option_c = true;
     bool dma_only = false;
     bool bank_sweep = false;
+    unsigned force_burst = 0; // 0=auto, 1..16 pin CCR burst
+    unsigned force_ns = 0xFFu; // 0xFF=try both, 0/1 pin
     bool restage_each = false; // default OFF for fair DMA wall
     bool verify_each = false;
     uint32_t phys_override = 0;
@@ -162,6 +164,10 @@ int main(int argc, char** argv) {
             burn_ms = std::atof(argv[++i]);
         else if (a == "--duration-s" && i + 1 < argc)
             duration_s = std::atof(argv[++i]);
+        else if (a == "--burst" && i + 1 < argc)
+            force_burst = static_cast<unsigned>(std::atoi(argv[++i]));
+        else if (a == "--force-ns" && i + 1 < argc)
+            force_ns = static_cast<unsigned>(std::atoi(argv[++i]));
         else if (a == "--dma-only")
             dma_only = true;
         else if (a == "--bank-sweep")
@@ -184,6 +190,8 @@ int main(int argc, char** argv) {
                 "  --dma-only --duration-s N   sustained DMA only (parent decode gate)\n"
                 "  --bank-sweep                serial copy table across phys targets\n"
                 "  --len N --loops N --bank 0|1 --phys 0x...\n"
+                "  --burst N                  force CCR burst 1..16 (0=auto)\n"
+                "  --force-ns 0|1             pin DMAGO NS bit (default try both)\n"
                 "  --restage                   reload staging every DMA iter (default off)\n"
                 "  --verify-each               memcmp bank vs src each DMA iter (slow)\n"
                 "  --overlap-burn-ms MS --no-pl330 --host-copy --legacy-base\n"
@@ -291,13 +299,18 @@ int main(int argc, char** argv) {
             std::printf("pl330_probe ok=%d hw=%d cr0=0x%08x dsr=0x%08x detail=%s\n",
                         pr.ok ? 1 : 0, pr.hardware_present ? 1 : 0, pr.cr0, pr.dsr,
                         pr.detail.c_str());
+            std::printf("pl330_crd=0x%08x mfifo_words=%u fsrd=0x%08x fsrc=0x%08x ftrd=0x%08x\n",
+                        pr.crd, pr.mfifo_words, pr.fsrd, pr.fsrc, pr.ftrd);
             std::printf("pl330_scratch_mapped phys=0x%08x virt=%p staging_phys=0x%08x\n",
                         dma.progScratchPhys(), dma.progScratchVirt(), dma.stagingPhys());
 
             unsigned burst = 0;
             uint8_t prog[64];
+            const unsigned mfifo_cap = pr.mfifo_words == 0 ? 1u
+                : (pr.mfifo_words < 16u ? pr.mfifo_words : 16u);
             const size_t pn = misterplex::pl330BuildMem2MemProgramAuto(
-                prog, sizeof(prog), dma.stagingPhys(), bank_phys, len, &burst);
+                prog, sizeof(prog), dma.stagingPhys(), bank_phys, len, &burst, mfifo_cap,
+                force_burst);
             std::printf("pl330_encode_auto ok=%d prog_bytes=%zu burst=%u\n", pn ? 1 : 0, pn,
                         burst);
 
@@ -318,6 +331,8 @@ int main(int argc, char** argv) {
                 req.dst_phys = bank_phys;
                 req.len = len;
                 req.channel = 0;
+                req.force_burst = force_burst;
+                req.force_ns = force_ns;
                 std::printf("pl330_src_phys=0x%08x dst_phys=0x%08x len=%zu\n", req.src_phys,
                             req.dst_phys, req.len);
                 std::printf("pl330_dbginst0_go_ns1=0x%08x (linux manager encode)\n",
@@ -333,10 +348,19 @@ int main(int argc, char** argv) {
 
                 auto tr0 = dma.transferBlocking(req, 2000);
                 std::printf("pl330_transfer ok=%d started=%d saw_exec=%d ch=%d ns=%u "
-                            "dbginst0=0x%08x csr=0x%08x detail=%s\n",
+                            "burst=%u dbginst0=0x%08x csr=0x%08x cpc=0x%08x detail=%s\n",
                             tr0.ok ? 1 : 0, tr0.channel_started ? 1 : 0,
                             tr0.saw_executing ? 1 : 0, tr0.channel_used, tr0.ns_used,
-                            tr0.dbginst0, tr0.csr_final, tr0.detail.c_str());
+                            tr0.burst_used, tr0.dbginst0, tr0.csr_final, tr0.cpc_final,
+                            tr0.detail.c_str());
+                std::printf("pl330_fault_regs fsrd=0x%08x fsrc=0x%08x ftrd=0x%08x "
+                            "ftr_ch=0x%08x ftr_tag=%s csr_state=%s\n",
+                            tr0.fsrd, tr0.fsrc, tr0.ftrd, tr0.ftr_ch,
+                            misterplex::pl330FtrChannelTag(tr0.ftr_ch),
+                            misterplex::pl330CsrStateTag(tr0.csr_final));
+                std::printf("pl330_prog_pc=0x%08x mfifo_words=%u force_burst=%u force_ns=%u\n",
+                            dma.progScratchPhys(), tr0.mfifo_words, force_burst,
+                            force_ns == 0xFFu ? 99u : force_ns);
 
                 const bool sample0 = misterplex::pl330BufferSamplesMatch(dst, src.data(), len);
                 const bool full0 = misterplex::pl330BufferFullMatch(dst, src.data(), len);

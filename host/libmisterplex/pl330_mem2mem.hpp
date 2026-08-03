@@ -45,8 +45,10 @@ constexpr size_t kPl330MapLen = 0x1000u;
 constexpr uint32_t kPl330_DSR = 0x000;
 constexpr uint32_t kPl330_FSRD = 0x030;
 constexpr uint32_t kPl330_FSRC = 0x034;
+constexpr uint32_t kPl330_FTRD = 0x038; // manager fault type
+constexpr uint32_t kPl330_FTR0 = 0x040; // + n*4 channel fault type
 constexpr uint32_t kPl330_CSR0 = 0x100; // + n*0x08
-constexpr uint32_t kPl330_CPC0 = 0x104;
+constexpr uint32_t kPl330_CPC0 = 0x104; // + n*0x08
 constexpr uint32_t kPl330_DBGSTATUS = 0xD00;
 constexpr uint32_t kPl330_DBGCMD = 0xD04;
 constexpr uint32_t kPl330_DBGINST0 = 0xD08;
@@ -59,6 +61,10 @@ struct Pl330Mem2MemRequest {
     uint32_t dst_phys = 0;
     size_t len = 0;
     int channel = 0; // 0..7 prefer
+    // 0 = auto (largest legal). 1..16 forces CCR burst beats (diag).
+    unsigned force_burst = 0;
+    // 0xFF = try ns=1 then 0. Else pin single NS bit for DMAGO.
+    unsigned force_ns = 0xFFu;
 };
 
 struct Pl330Mem2MemResult {
@@ -70,10 +76,77 @@ struct Pl330Mem2MemResult {
     std::string detail;
     uint32_t dsr = 0;
     uint32_t cr0 = 0;
+    uint32_t crd = 0;
     uint32_t csr_final = 0;
+    uint32_t cpc_final = 0;
     uint32_t dbginst0 = 0;
+    uint32_t fsrd = 0;
+    uint32_t fsrc = 0;
+    uint32_t ftrd = 0;
+    uint32_t ftr_ch = 0;
     unsigned ns_used = 0;
+    unsigned burst_used = 0;
+    unsigned mfifo_words = 0;
 };
+
+// DDI0424 CRD[24:20] = data_buffer_dep; MFIFO depth words = dep+1.
+inline unsigned pl330MfifoWordsFromCrd(uint32_t crd) {
+    return ((crd >> 20) & 0x1Fu) + 1u;
+}
+
+// Decode channel FTR bits (DDI0424 Table 3-21) into a short greppable tag.
+inline const char* pl330FtrChannelTag(uint32_t ftr) {
+    if (ftr & (1u << 0))
+        return "undef_instr";
+    if (ftr & (1u << 1))
+        return "operand_invalid";
+    if (ftr & (1u << 5))
+        return "ch_periph_err";
+    if (ftr & (1u << 16))
+        return "ch_rd_err";
+    if (ftr & (1u << 17))
+        return "ch_wr_err";
+    if (ftr & (1u << 18))
+        return "mfifo_err";
+    if (ftr & (1u << 30))
+        return "lockup_err";
+    if (ftr & (1u << 31))
+        return "dbg_instr";
+    if (ftr == 0)
+        return "ftr_zero";
+    return "ftr_other";
+}
+
+inline const char* pl330CsrStateTag(uint32_t csr) {
+    switch (csr & 0xFu) {
+    case 0x0:
+        return "stopped";
+    case 0x1:
+        return "executing";
+    case 0x2:
+        return "cache_miss";
+    case 0x3:
+        return "updating_pc";
+    case 0x4:
+        return "wait_event";
+    case 0x5:
+        return "at_barrier";
+    case 0x6:
+        return "queue_busy";
+    case 0x7:
+        return "wait_periph";
+    case 0x8:
+        return "killing";
+    case 0x9:
+        return "completing";
+    case 0xe:
+        return "fault_completing";
+    case 0xf:
+        return "faulting";
+    default:
+        return "state_other";
+    }
+}
 
 // Channel status low nibble (DS/CS) — DDI0424 / linux pl330.c
 constexpr uint32_t kPl330StStopped = 0x0;
@@ -183,13 +256,33 @@ inline bool pl330FactorLoops(uint32_t n_iters, uint32_t* inner, uint32_t* outer)
     return false;
 }
 
-// Pick largest burst in {16,8,4,2,1} that divides len and factors loop count.
+// Pick largest burst in {16,8,4,2,1} that divides len, factors loop count, and
+// does not exceed MFIFO depth (one DMALD pushes `burst` 32-bit words).
+// max_burst_cap 0 → treat as 16. force_burst 1..16 pins exactly that size.
 inline bool pl330PickBurstAndLoops(size_t len, unsigned* burst_len, uint32_t* inner,
-                                   uint32_t* outer) {
+                                   uint32_t* outer, unsigned max_burst_cap = 16,
+                                   unsigned force_burst = 0) {
     if (!burst_len || !inner || !outer || len == 0 || (len % 4) != 0)
         return false;
+    unsigned cap = max_burst_cap == 0 ? 16u : max_burst_cap;
+    if (cap > 16)
+        cap = 16;
+    if (force_burst != 0) {
+        if (force_burst < 1 || force_burst > 16 || force_burst > cap)
+            return false;
+        const uint32_t bpb = 4u * force_burst;
+        if ((len % bpb) != 0)
+            return false;
+        const uint32_t n_iters = static_cast<uint32_t>(len / bpb);
+        if (!pl330FactorLoops(n_iters, inner, outer))
+            return false;
+        *burst_len = force_burst;
+        return true;
+    }
     const unsigned cands[] = {16, 8, 4, 2, 1};
     for (unsigned b : cands) {
+        if (b > cap)
+            continue;
         const uint32_t bpb = 4u * b;
         if ((len % bpb) != 0)
             continue;
@@ -264,11 +357,14 @@ inline size_t pl330BuildMem2MemProgram(uint8_t* out, size_t out_cap, uint32_t sr
 }
 
 // Full-frame encode: auto burst + nested loops. out_burst receives chosen burst.
+// max_burst_cap from CRD MFIFO; force_burst for surgical diag (e.g. 4 KiB / burst1).
 inline size_t pl330BuildMem2MemProgramAuto(uint8_t* out, size_t out_cap, uint32_t src, uint32_t dst,
-                                           size_t len, unsigned* out_burst = nullptr) {
+                                           size_t len, unsigned* out_burst = nullptr,
+                                           unsigned max_burst_cap = 16,
+                                           unsigned force_burst = 0) {
     unsigned burst = 1;
     uint32_t inner = 0, outer = 0;
-    if (!pl330PickBurstAndLoops(len, &burst, &inner, &outer))
+    if (!pl330PickBurstAndLoops(len, &burst, &inner, &outer, max_burst_cap, force_burst))
         return 0;
     const uint32_t ccr = pl330BuildCcrBurst(burst);
     if (!ccr)
@@ -379,6 +475,11 @@ public:
         }
         r.dsr = read32(kPl330_DSR);
         r.cr0 = read32(kPl330_CR0);
+        r.crd = read32(kPl330_CRD);
+        r.mfifo_words = pl330MfifoWordsFromCrd(r.crd);
+        r.fsrd = read32(kPl330_FSRD);
+        r.fsrc = read32(kPl330_FSRC);
+        r.ftrd = read32(kPl330_FTRD);
         // CR0 should report channel count; zero often means wrong map / powered down.
         r.hardware_present = (r.cr0 != 0 && r.cr0 != 0xFFFFFFFFu);
         r.detail = r.hardware_present ? "pl330 cr0 ok" : "pl330 cr0 empty";
@@ -386,9 +487,23 @@ public:
         return r;
     }
 
+    // Snapshot fault/status regs for channel ch into result (parent surgical diag).
+    void captureFaultRegs(Pl330Mem2MemResult& r, int ch) {
+        r.fsrd = read32(kPl330_FSRD);
+        r.fsrc = read32(kPl330_FSRC);
+        r.ftrd = read32(kPl330_FTRD);
+        const unsigned c = static_cast<unsigned>(ch & 7);
+        r.ftr_ch = read32(kPl330_FTR0 + c * 4u);
+        r.csr_final = read32(kPl330_CSR0 + c * 8u);
+        r.cpc_final = read32(kPl330_CPC0 + c * 8u);
+        r.crd = read32(kPl330_CRD);
+        r.mfifo_words = pl330MfifoWordsFromCrd(r.crd);
+    }
+
     // Execute blocking mem2mem. len must be multiple of 4.
     // Prefers one microcode program (burst 8/16 + nested LC1/LC0). Falls back to
     // burst-1 1 KiB chunks only if auto encode fails.
+    // force_burst/force_ns on req skip silent chunked fallback (diag must stay pure).
     Pl330Mem2MemResult transferBlocking(const Pl330Mem2MemRequest& req, int timeout_ms = 50) {
         Pl330Mem2MemResult r = probe();
         if (!r.hardware_present)
@@ -407,6 +522,10 @@ public:
                 return one;
             }
             // Fall through to chunked if encode/start failed before DMA.
+            if (req.force_burst != 0 || req.force_ns != 0xFFu) {
+                // Surgical diag: never silently change the program shape.
+                return one;
+            }
             if (one.detail.find("program") == std::string::npos &&
                 one.detail != "needs_prog_scratch_phys") {
                 // Fault/timeout on auto — do not silently chunk (could double-write).
@@ -506,11 +625,15 @@ private:
     }
 
     Pl330Mem2MemResult goProgram(const uint8_t* prog, size_t plen, int channel, int timeout_ms,
-                                 const char* tag) {
+                                 const char* tag, unsigned force_ns = 0xFFu,
+                                 unsigned burst_used = 0) {
         Pl330Mem2MemResult r;
         r.hardware_present = true;
         r.cr0 = read32(kPl330_CR0);
+        r.crd = read32(kPl330_CRD);
+        r.mfifo_words = pl330MfifoWordsFromCrd(r.crd);
         r.dsr = read32(kPl330_DSR);
+        r.burst_used = burst_used;
         if (!prog || plen == 0) {
             r.detail = "program encode failed";
             return r;
@@ -533,10 +656,16 @@ private:
         const int ch = (channel >= 0 && channel < 8) ? channel : 0;
         r.channel_used = ch;
         killChannel(ch);
+        // Clear sticky fault status by killing; re-snapshot baseline.
+        captureFaultRegs(r, ch);
 
-        // NS DMAC: try ns=1 first (HPS non-secure), then ns=0 if never executes.
-        // CR0 BOOT_MAN_NS (bit2) is a hint only — parent device read 0 with NS base.
-        const unsigned ns_try[2] = {1u, 0u};
+        // NS DMAC: default try ns=1 then 0. force_ns pins one value (diag).
+        unsigned ns_try[2] = {1u, 0u};
+        unsigned n_ns = 2;
+        if (force_ns == 0u || force_ns == 1u) {
+            ns_try[0] = force_ns;
+            n_ns = 1;
+        }
         const uint32_t csr_off = kPl330_CSR0 + static_cast<uint32_t>(ch) * 8u;
         // Completion wait: usleep-backed only. Tight spin steals the decode core and
         // makes Route A look like a CPU burner (parent incident: 98k fake fps).
@@ -544,7 +673,7 @@ private:
         const int max_polls = (timeout_ms > 0 ? timeout_ms : 50) * 1000 / poll_us;
         const char* base_tag = tag ? tag : "dma";
 
-        for (unsigned nsi = 0; nsi < 2; ++nsi) {
+        for (unsigned nsi = 0; nsi < n_ns; ++nsi) {
             const unsigned ns = ns_try[nsi];
             r.ns_used = ns;
             r.dbginst0 = fireGo(ch, ns);
@@ -556,17 +685,25 @@ private:
                 const uint32_t csr = read32(csr_off);
                 const uint32_t st = csr & 0xFu;
                 r.csr_final = csr;
+                r.cpc_final = read32(kPl330_CPC0 + static_cast<uint32_t>(ch) * 8u);
                 if (read32(kPl330_FSRC) & (1u << ch)) {
                     fault = true;
-                    r.detail = std::string(base_tag) + " channel fault";
+                    captureFaultRegs(r, ch);
+                    r.detail = std::string(base_tag) + " channel_fault ftr=" +
+                               pl330FtrChannelTag(r.ftr_ch) + " csr=" +
+                               pl330CsrStateTag(r.csr_final);
                     r.ok = false;
                     break;
                 }
-                if (st == kPl330StExecuting || st == 0x2 || st == 0x3 || st == 0x9) {
+                // Executing / updating_pc / completing only. Cache-miss alone is NOT
+                // progress — stuck i-cache fill (e.g. unreadable prog PA) must not
+                // count as saw_executing (parent: csr=0x2 + fault).
+                if (st == kPl330StExecuting || st == 0x3 || st == 0x9) {
                     r.saw_executing = true;
                 }
                 // Done only if we observed work, then STOPPED.
                 if (r.saw_executing && st == kPl330StStopped) {
+                    captureFaultRegs(r, ch);
                     r.ok = true;
                     r.detail = std::string(base_tag) + " saw_exec+stopped ok";
                     return r;
@@ -576,18 +713,26 @@ private:
                     r.detail = std::string(base_tag) + " go_ignored_still_stopped";
                     break;
                 }
+                // Stuck in cache_miss with no FSRC yet — keep polling; may promote to fault.
                 usleep(static_cast<useconds_t>(poll_us));
             }
-            if (fault)
+            if (fault) {
+                killChannel(ch);
+                captureFaultRegs(r, ch);
                 return r;
+            }
             if (r.saw_executing) {
+                captureFaultRegs(r, ch);
                 r.ok = false;
-                r.detail = std::string(base_tag) + " timeout after exec";
+                r.detail = std::string(base_tag) + " timeout after exec csr=" +
+                           pl330CsrStateTag(r.csr_final);
+                killChannel(ch);
                 return r;
             }
             killChannel(ch);
             // retry other ns
         }
+        captureFaultRegs(r, ch);
         r.ok = false;
         if (r.detail.empty())
             r.detail = std::string(base_tag) + " never_executed (false-complete guard)";
@@ -600,23 +745,31 @@ private:
         const uint32_t n_words = static_cast<uint32_t>(req.len / 4);
         const size_t plen =
             pl330BuildMem2MemProgram(prog, sizeof(prog), req.src_phys, req.dst_phys, ccr, n_words);
-        return goProgram(prog, plen, req.channel, timeout_ms, "burst1 stopped ok");
+        return goProgram(prog, plen, req.channel, timeout_ms, "burst1 stopped ok", req.force_ns,
+                         1);
     }
 
     Pl330Mem2MemResult transferOneBlockAuto(const Pl330Mem2MemRequest& req, int timeout_ms) {
         uint8_t prog[64];
         unsigned burst = 0;
-        const size_t plen = pl330BuildMem2MemProgramAuto(prog, sizeof(prog), req.src_phys,
-                                                         req.dst_phys, req.len, &burst);
+        const uint32_t crd = read32(kPl330_CRD);
+        const unsigned mfifo = pl330MfifoWordsFromCrd(crd);
+        // One DMALD of burst B @ 32-bit needs B MFIFO words free.
+        const unsigned cap = mfifo == 0 ? 1u : (mfifo < 16u ? mfifo : 16u);
+        const size_t plen =
+            pl330BuildMem2MemProgramAuto(prog, sizeof(prog), req.src_phys, req.dst_phys, req.len,
+                                         &burst, cap, req.force_burst);
         if (plen == 0) {
             Pl330Mem2MemResult r;
             r.hardware_present = true;
+            r.crd = crd;
+            r.mfifo_words = mfifo;
             r.detail = "program encode failed";
             return r;
         }
-        char tag[40];
-        std::snprintf(tag, sizeof(tag), "burst%u stopped ok", burst);
-        return goProgram(prog, plen, req.channel, timeout_ms, tag);
+        char tag[48];
+        std::snprintf(tag, sizeof(tag), "burst%u mfifo%u", burst, mfifo);
+        return goProgram(prog, plen, req.channel, timeout_ms, tag, req.force_ns, burst);
     }
 
 public:

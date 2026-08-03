@@ -1,21 +1,11 @@
-w-path STATUS 2026-08-03 (profile pin + fabric gate)
+w-path STATUS — PL330 fault diag (parent BLOCKED, not FAILED)
 
-DONE this tick:
-- kPlexH264ProfilePin="baseline" — universal + decision URL always emit it
-- h264_fabric_stream_gate.hpp — refuse High/Main/CABAC/B-slice (honest, no noise)
-- test_h264_fabric_stream_gate green (negatives included)
-- test_resolve pin clamp + delivery attr gate green
-- H264_GAP_ANALYSIS corrected: RTL inventory has inter/MC/DPB/deblock; gap=integration
-- PROFILE_PIN_FABRIC_GATE.md
+Parent HW: burst16 full-frame → NO_REAL_DMA, csr=0x00200002 (cache_miss),
+saw_exec=0, honest no rate. Instrument trusted.
 
-PARENT ALIGNMENT:
-- CB L3.1 no-B stream matches CAVLC RTL subset
-- CABAC off critical path while pin holds
-- Still unproven: fitted fabric decode on glass
+LANDED: FTR/FSRC/FSRD/CPC/CRD dump, ftr_tag decode, --burst/--force-ns,
+MFIFO-capped auto burst, cache_miss ≠ saw_executing.
+Binary: build/arm/ddr_pl330_ingest_bench
+Commands: PARENT_COMMANDS_PL330_FAULT_DIAG.md
 
-OPEN (parent HW):
-- VERIFIED_REAL_DMA gate (fixed bench)
-- route_a_bank_probe falsify
-- present/scale/idle fit (other lanes)
-
-NO device SSH. Branch w-path-720p only.
+NEXT parent: 4 KiB --burst 1 first (split path vs encode).
