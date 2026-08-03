@@ -1,0 +1,23 @@
+w-clock STATUS — L4 HSync fix + clock reconcile
+branch=w-clock-hsync-fix
+sha=4c957734c42387b4ba5604ba3480e6317361dd44
+base_main=8609fd786fc23ae81ea07ab5c1247c15d3183dc9
+worktree=/home/flynnsbit/Projects/MisterPlex-wt-clock-hsync
+
+FINDING #1 HSync: CONFIRMED
+  present_beam_content_de.sv use_rt_geom: hs_s=hde+H_FP(32)=1312 >= htot 1312
+  → asserted_cycles=0. present_core passed H_SYNC 1288/1296 but rt ignored them.
+  FIX: H_FP_RT from H_SYNC_S-H_DE when H_SYNC_REL_OK; same V. + wire H_FP/H_SW in present_core.
+  RED→GREEN: unfixed true rc=1 (l4_hs_width fail); fixed true rc=0 width=8 start=1288
+
+VSync V_TOTAL=762: ASSERTED pre-fix (6 lines 728..733). Post-fix exact same via V_FP_RT.
+
+RASTERS (two different)
+  L4 PLEX_PRESENT_720P_L4: H=1312 V=762 → f_pix@24fps=23_993_856 Hz; @24.0MHz → 24.006 Hz
+  CEA MULTI_PIXEL pack: H=1650 V=750 → 29.70 MHz @24 / 74.25 @60
+  PLL PRESENT_CLK_PIX_PLL default NOW 24.000000 MHz (L4). CEA 29.70 behind PRESENT_CLK_PIX_CEA_29_70.
+  L4 beam still on clk_sys@20 today → ~20.005 fps until pix-domain same-clock land.
+
+PPC=2: present_npx_path Peak F_sys*PPC REAL (group FIFO write). present_core FORCES PPC==1 until store N-wide — product aspirational.
+
+GATES: rtl-lint true rc=0; unit true rc=0; SKIP-NOT-PASS=2

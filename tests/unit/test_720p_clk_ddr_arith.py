@@ -40,12 +40,25 @@ def main() -> int:
     pix24_vic = h24v * v24v * fps24
     check(pix24_vic == 59_400_000, f"CEA VIC60 720p24 f_pix={pix24_vic} (==59400000)")
 
-    # Same totals as VIC4 @ 24 fps (PRESENT_CLK_PIX_PLL default target)
+    # CEA pack totals VIC4 @ 24 fps (MULTI_PIXEL / PRESENT_CLK_PIX_CEA_29_70)
     h_pack, v_pack = 1650, 750
     pix24_pack = h_pack * v_pack * 24
     check(pix24_pack == 29_700_000, f"pack 1650*750*24 f_pix={pix24_pack} (==29700000)")
     ppf = h_pack * v_pack
     check(ppf == 1_237_500, f"PIX_PER_FRAME pack={ppf}")
+
+    # L4 content raster (PLEX_PRESENT_720P_L4) — NOT CEA 1650×750
+    l4_h, l4_v = 1312, 762
+    l4_ppf = l4_h * l4_v
+    check(l4_ppf == 999_744, f"L4 PIX_PER_FRAME 1312*762={l4_ppf}")
+    l4_pix_exact_24 = l4_ppf * 24
+    check(l4_pix_exact_24 == 23_993_856, f"L4 exact-24fps f_pix={l4_pix_exact_24}")
+    # PLL uses clean 24.000 MHz → fps = 24e6/999744 ≈ 24.006146 Hz
+    l4_fps_at_24mhz = 24_000_000 / l4_ppf
+    check(abs(l4_fps_at_24mhz - 24.006145) < 1e-5, f"L4 fps @24MHz={l4_fps_at_24mhz:.6f}")
+    # NEGATIVE: conflating L4 with CEA pack
+    check(l4_pix_exact_24 != 29_700_000, "NEG: L4 1312x762*24 != CEA pack 29.70 MHz")
+    check(l4_ppf != ppf, "NEG: L4 ppf != CEA ppf")
 
     # NEGATIVE: active-only blanking is NOT a legal CEA pixel clock
     active_only_24 = 1280 * 720 * 24
@@ -58,7 +71,10 @@ def main() -> int:
     check('output_clock_frequency2("90.000000 MHz")' in pll, "PLL out2 clk_ddr=90.000000 MHz")
     check('reference_clock_frequency("50.0 MHz")' in pll, "PLL ref=50.0 MHz")
     check("PRESENT_CLK_PIX_PLL" in pll, "PLL has PRESENT_CLK_PIX_PLL branch")
-    check('"29.700000 MHz"' in pll, "PLL default clk_pix string 29.700000 MHz")
+    # Default under PRESENT_CLK_PIX_PLL is L4 24.000 MHz (not CEA 29.70)
+    check('"24.000000 MHz"' in pll, "PLL default clk_pix string 24.000000 MHz (L4)")
+    check("PRESENT_CLK_PIX_CEA_29_70" in pll, "PLL optional CEA 29.70 branch")
+    check('"29.700000 MHz"' in pll, "PLL CEA 29.700000 MHz string retained")
     check('"74.250000 MHz"' in pll, "PLL optional 74.250000 MHz string")
     # Product default must still be 3 clocks in the else branch
     check(
@@ -126,9 +142,17 @@ def main() -> int:
     check(old_budget_20 == 40.0, "old confused 20MHz*8*25% budget=40")
     check(rd60 > old_budget_20, "NEG: 720p60 YUV would FAIL if DDR were 20 MHz")
 
-    # Throughput: PPC=1 @20 MHz cannot feed 29.7 Mpix/s
-    check(20.0 < 29.7, "NEG: clk_sys 20 MHz < 29.7 Mpix/s need (PPC=1)")
-    check(20.0 * 2 >= 29.7, "PPC=2 @20 MHz fabric groups can feed 29.7")
+    # Throughput walls
+    check(20.0 < 29.7, "NEG: clk_sys 20 MHz < CEA 29.7 Mpix/s need (PPC=1)")
+    check(20.0 * 2 >= 29.7, "PPC=2 @20 MHz fabric groups can feed CEA 29.7")
+    # L4 at 24 MHz needs 24 Mpix/s; PPC=1 @20 is short of 24fps L4
+    check(20.0 < 24.0, "NEG: clk_sys 20 < L4 24 Mpix/s @24fps")
+    check(20.0 * 2 >= 24.0, "PPC=2 @20 can feed L4 24 Mpix/s groups")
+    # present_core forces PRESENT_PPC==1 until store N-wide — unlock aspirational
+    core = read(ROOT / "fpga/Plex_MiSTer/rtl/present_core.sv")
+    check("PRESENT_PPC != 1" in core, "present_core still forces PPC==1 land gate")
+    check("L4_H_TOTAL_P = 1312" in core, "L4 H_TOTAL=1312 in present_core")
+    check("L4_V_TOTAL_P = 762" in core, "L4 V_TOTAL=762 in present_core")
 
     # SDC file exists and does not false_path residual
     sdc = read(ROOT / "fpga/Plex_MiSTer/Plex_clk_pix.sdc")

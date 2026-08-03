@@ -235,8 +235,11 @@ module present_core #(
 
 `ifdef PLEX_PRESENT_720P_L4
 	// =====================================================================
-	// L4 720p24 true-DE beam (DEFAULT OFF). w-clock: H=1312 V=762 @ 24 MHz
-	// → 24.006 Hz (1:1 with measured PMS 24/1 asset; no pulldown).
+	// L4 720p24 true-DE beam (DEFAULT OFF). Raster H=1312 V=762 (NOT CEA
+	// 1650×750). f_pix for 24.000 fps = 1312*762*24 = 23_993_856 Hz;
+	// @24.000 MHz beam → fps = 24e6/999744 ≈ 24.006 Hz. Product clocks this
+	// beam from clk_sys (20 MHz) today → ~20.005 fps until PRESENT_CLK_PIX_PLL
+	// @24.0 is wired through a same-domain present path (or clk_sys bump).
 	// =====================================================================
 	// synthesis translate_off
 	initial begin
@@ -273,6 +276,9 @@ module present_core #(
 	wire [10:0] beam_htot_req = 11'(L4_H_TOTAL);
 	wire [10:0] beam_vtot_req = 11'(L4_V_TOTAL);
 
+	// H_FP/H_SW/V_FP/V_SW must match L4_*_P. Beam rt-mode derives porches from
+	// H_SYNC_*−H_DE when valid; passing both keeps the two sources consistent
+	// (rd-duck HSync=0 was H_FP default 32 with H_TOTAL blanking only 32).
 	(* noprune *) present_beam_content_de #(
 		.H_DE(L4_H_DE),
 		.V_ACTIVE(L4_V_ACT),
@@ -281,7 +287,11 @@ module present_core #(
 		.H_SYNC_S(L4_H_SYNC_S),
 		.H_SYNC_E(L4_H_SYNC_E),
 		.V_SYNC_S(L4_V_SYNC_S),
-		.V_SYNC_E(L4_V_SYNC_E)
+		.V_SYNC_E(L4_V_SYNC_E),
+		.H_FP(L4_H_FP_P),
+		.H_SW(L4_H_SW_P),
+		.V_FP(L4_V_FP_P),
+		.V_SW(L4_V_SW_P)
 	) u_beam_720p24 (
 		.clk(clk),
 		.reset(reset),

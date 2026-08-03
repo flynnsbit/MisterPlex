@@ -11,7 +11,7 @@
 # Frequencies (from pll_0002.v SoT):
 #   clk_sys  = general[0] = 20.000 MHz
 #   clk_ddr  = general[2] = 90.000 MHz
-#   clk_pix  = general[3] = 29.700 MHz  (or 74.250 with PRESENT_CLK_PIX_74_25)
+#   clk_pix  = general[3] = 24.000 MHz L4 (or CEA 29.700 / 74.250)
 #
 # Do NOT add false_path on residual_csum / decode sameclk paths.
 # Do NOT weaken setup to hide real violations.
@@ -41,6 +41,6 @@ set_clock_groups -asynchronous \
 # Parent STA one-pass after fit:
 #   scripts/sta_onepass_interrogation.sh OUT/Plex.sta.rpt OUT/clk_sys_sameclk_setup.txt
 # Interrogate ALSO:
-#   - Fmax of general[3] (clk_pix) >= 29.7 (or 74.25)
+#   - Fmax of general[3] (clk_pix) >= 24.0 (L4) or 29.7/74.25 (CEA)
 #   - No setup fail inside present_npx_path on clk_pix
 #   - No decode_stub as Fmax owner (parent miss #18)

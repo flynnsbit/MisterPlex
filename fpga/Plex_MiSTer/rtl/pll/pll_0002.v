@@ -1,9 +1,11 @@
 `timescale 1ns/10ps
 // Source of truth for Plex fabric PLL (not the stale megawizard strings in pll.v).
 // Product default: 3 clocks — clk_sys 20 / clk_sdram (macro) / clk_ddr 90.
-// PRESENT_CLK_PIX_PLL (default OFF): 4th output clk_pix for CEA 720p present.
-//   - default pix: 29.700000 MHz  (= 1650*750*24  — CEA-861 720p H/V totals @ 24 Hz)
-//   - PRESENT_CLK_PIX_74_25: 74.250000 MHz (= 1650*750*60 — CEA-861 VIC 4 720p60)
+// PRESENT_CLK_PIX_PLL (default OFF): 4th output clk_pix for 720p present.
+//   - default pix: 24.000000 MHz — L4 content raster 1312×762 @ ~24.006 Hz
+//     (1312*762=999744; 24e6/999744≈24.006; exact 24.000 fps needs 23.993856 MHz)
+//   - PRESENT_CLK_PIX_CEA_29_70: 29.700000 MHz (= 1650*750*24 CEA pack)
+//   - PRESENT_CLK_PIX_74_25: 74.250000 MHz (= 1650*750*60 — CEA-861 VIC 4)
 // Never enable in product QSF without a parent-granted fit.
 module  pll_0002(
 
@@ -52,10 +54,12 @@ module  pll_0002(
 // clk_pix frequency string (only consumed when PRESENT_CLK_PIX_PLL).
 `ifdef PRESENT_CLK_PIX_74_25
 `define MISTERPLEX_CLK_PIX_PLL_FREQ "74.250000 MHz"
-`else
-// 29.70 MHz: CEA-861 720p blanking totals (H=1650,V=750) * 24 fps.
-// True CEA VIC 60 (720p24) uses H=3300 → 59.40 MHz; see arith docs.
+`elsif PRESENT_CLK_PIX_CEA_29_70
+// CEA-861 720p blanking totals (H=1650,V=750) * 24 fps — MULTI_PIXEL pack path.
 `define MISTERPLEX_CLK_PIX_PLL_FREQ "29.700000 MHz"
+`else
+// L4 content raster (H=1312,V=762) @ 24.000 MHz → ~24.006 Hz.
+`define MISTERPLEX_CLK_PIX_PLL_FREQ "24.000000 MHz"
 `endif
 
 `ifdef PRESENT_CLK_PIX_PLL

@@ -11,8 +11,18 @@
 //   Host may change requests anytime. Captured every cycle; *applied* only at
 //   frame wrap (v_wrap) or reset. Mid-frame apply is FORBIDDEN (stall / torn DE).
 //   H_DE/H_TOTAL/V_ACTIVE latch together; V_TOTAL may also move via rt_vtotal.
-//   Sync windows are derived from latched actives (+fixed porch/width) so a single
-//   true_de extent always matches content without separate sync programming.
+//   Sync windows are derived from latched actives + porch/width so a single
+//   true_de extent always matches content without separate absolute programming.
+//
+// Porch/width source (w-clock HSync fix — rd-duck finding #1):
+//   use_rt_geom=1 previously used only parameter H_FP/H_SW defaults (32/64) and
+//   IGNORED H_SYNC_S/H_SYNC_E. L4 present_core passes H_SYNC_S=1288/E=1296
+//   (FP=8,SW=8) with H_TOTAL=1312, but defaults gave hs_s=1280+32=1312 >=
+//   htot → asserted_cycles=0 for every line (invalid raster / ascal unlock).
+//   Fix: when H_SYNC_* form a valid window relative to parameter H_DE
+//   (H_DE <= H_SYNC_S < H_SYNC_E), use those relative offsets as rt porches.
+//   Else fall back to H_FP/H_SW. Same rule on V. Absolute H_SYNC_* still used
+//   when use_rt_geom=0 (legacy).
 //
 // STA (honest): exact Fmax with runtime compares is UNKNOWN until Plex.sta.rpt.
 // Structure is 11-bit magnitude compares vs registers (same class as colorbars).
@@ -79,6 +89,18 @@ module present_beam_content_de #(
 	wire [10:0] vtot_floor = vact_req + vtot_min_pad;
 	wire [10:0] vtot_req = (vtot_src < vtot_floor) ? vtot_floor : vtot_src;
 
+	// Relative porches from absolute H_SYNC_* vs parameter H_DE when valid.
+	// L4: H_DE=1280, H_SYNC_S=1288, H_SYNC_E=1296 → FP_RT=8, SW_RT=8.
+	// Invalid/legacy absolute windows fall back to H_FP/H_SW parameters.
+	localparam bit H_SYNC_REL_OK =
+		(H_SYNC_S >= H_DE) && (H_SYNC_E > H_SYNC_S);
+	localparam bit V_SYNC_REL_OK =
+		(V_SYNC_S >= V_ACTIVE) && (V_SYNC_E > V_SYNC_S);
+	localparam int H_FP_RT = H_SYNC_REL_OK ? (H_SYNC_S - H_DE) : H_FP;
+	localparam int H_SW_RT = H_SYNC_REL_OK ? (H_SYNC_E - H_SYNC_S) : H_SW;
+	localparam int V_FP_RT = V_SYNC_REL_OK ? (V_SYNC_S - V_ACTIVE) : V_FP;
+	localparam int V_SW_RT = V_SYNC_REL_OK ? (V_SYNC_E - V_SYNC_S) : V_SW;
+
 	// Elab pins — parameter defaults only (runtime not known at elab).
 	// synthesis translate_off
 	initial begin
@@ -86,6 +108,13 @@ module present_beam_content_de #(
 		if (V_TOTAL <= V_ACTIVE) $error("present_beam_content_de: V_TOTAL must exceed V_ACTIVE");
 		if (H_SYNC_E >= H_TOTAL) $error("present_beam_content_de: H_SYNC past line");
 		if (V_SYNC_E >= V_TOTAL) $error("present_beam_content_de: V_SYNC past default frame");
+		// rt-mode derived window must fit default blanking (catches L4-class footgun)
+		if ((H_DE + H_FP_RT + H_SW_RT) > H_TOTAL)
+			$error("present_beam_content_de: rt HSync window H_DE+FP+SW=%0d > H_TOTAL=%0d",
+				H_DE + H_FP_RT + H_SW_RT, H_TOTAL);
+		if ((V_ACTIVE + V_FP_RT + V_SW_RT) > V_TOTAL)
+			$error("present_beam_content_de: rt VSync window V_ACT+FP+SW=%0d > V_TOTAL=%0d",
+				V_ACTIVE + V_FP_RT + V_SW_RT, V_TOTAL);
 	end
 	// synthesis translate_on
 
@@ -107,10 +136,12 @@ module present_beam_content_de #(
 	wire [10:0] v_last = vtot_act - 11'd1;
 
 	// Derived sync from latched actives (runtime) or fixed params (legacy).
-	wire [10:0] hs_s = use_rt_geom ? (hde_act + 11'(H_FP)) : 11'(H_SYNC_S);
-	wire [10:0] hs_e = use_rt_geom ? (hde_act + 11'(H_FP) + 11'(H_SW)) : 11'(H_SYNC_E);
-	wire [10:0] vs_s = use_rt_geom ? (vact_act + 11'(V_FP)) : 11'(V_SYNC_S);
-	wire [10:0] vs_e = use_rt_geom ? (vact_act + 11'(V_FP) + 11'(V_SW)) : 11'(V_SYNC_E);
+	// Runtime uses H_*_RT / V_*_RT so present_core's H_SYNC_S/E are honoured
+	// as relative porches (not silently dropped for H_FP/H_SW defaults).
+	wire [10:0] hs_s = use_rt_geom ? (hde_act + 11'(H_FP_RT)) : 11'(H_SYNC_S);
+	wire [10:0] hs_e = use_rt_geom ? (hde_act + 11'(H_FP_RT) + 11'(H_SW_RT)) : 11'(H_SYNC_E);
+	wire [10:0] vs_s = use_rt_geom ? (vact_act + 11'(V_FP_RT)) : 11'(V_SYNC_S);
+	wire [10:0] vs_e = use_rt_geom ? (vact_act + 11'(V_FP_RT) + 11'(V_SW_RT)) : 11'(V_SYNC_E);
 
 	wire        h_wrap = (hc == h_last);
 	wire        v_wrap = h_wrap && (vc == v_last);

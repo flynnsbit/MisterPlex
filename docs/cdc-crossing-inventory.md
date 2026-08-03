@@ -186,7 +186,7 @@ require approximately:
 
 ## PRESENT_CLK_PIX_PLL (default OFF — w-clock)
 
-When `PRESENT_CLK_PIX_PLL=1`, `pll_0002` adds `outclk_3` = clk_pix (29.70 MHz default, or 74.25 with `PRESENT_CLK_PIX_74_25`). Product build does not enable this.
+When `PRESENT_CLK_PIX_PLL=1`, `pll_0002` adds `outclk_3` = clk_pix (24.0 MHz (L4; CEA 29.70 optional) default, or 74.25 with `PRESENT_CLK_PIX_74_25`). Product build does not enable this.
 
 | # | Crossing | Dir | Protection |
 |---|---|---|---|
