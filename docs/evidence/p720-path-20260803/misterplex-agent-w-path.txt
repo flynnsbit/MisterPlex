@@ -1,16 +1,17 @@
 lane=w-path
-status=HOST_PATH_LANDED — not fit-gated
-tip=7cfa1894 (code d273d6f8)
-CORRECTION_FOR_PROGRAMME_BOARD:
-  Delivery is NOT "only >=3500". Fine matrix + start.mp4 ffprobe:
-    maxBR=3000 → 720x404
-    maxBR=3100 → 1280x720 SAR 1:1 CB L31, decision content BR ≈ 2585
-  Product pin: kPlex720pWeakBitrateKbps=3100 (was 3500 coarse overstatement)
-  DP/content optimal 1500 remains non-universal
-LANDED: Path720p ladder, genuine-delivery gates, identity_skip, preferDirect,
-  OSD_TIER11_720P default 0, MiSTerPlex.xml 1280/L31, dual bitrate contract
-tests: resolve/osd/vf true_rc=0
-ARM_ms: path removes scale on true 720; device dual-A9 scale ms UNKNOWN
-SV: none — host/C++ lane; no exclusive fit request
-ASK_PARENT: decode ms/f already-1280x720 CB @ ~2600k (what maxBR=3100 delivers)
-blocker: none path-code; 720p24 needs fabric pixels (w-mem/scaler/clock)
+status=ZERO_COPY_INGEST_LANDED (default cpu_serial)
+tip=pending
+HOST_720_PATH: dual pin 3100/1500 + Path720p + identity_skip (prior)
+NEW_ROUTE_A:
+  ddr_zero_copy_ingest.hpp — SM payload-before-doorbell
+  pl330_mem2mem.hpp — probe/encode/transfer attempt
+  host_bank_ingest_credit.sv — fabric scoreboard NOT in QSF
+  ddr_pl330_ingest_bench + arm static build
+  test_ddr_zero_copy_ingest true_rc=0
+PARENT_CMD:
+  make arm-pl330-ingest-bench
+  device: ddr_pl330_ingest_bench --len 1382400 --loops 50 --bank 1
+  device: ... --overlap-burn-ms 37
+PRE: serial~15.28; pl330 needs_scratch|ok; burn inflate shows contention
+SHIP: still fabric publish_bytes=0; Route A is bridge candidate only
+w-mem coord: bank ABI + doorbell ownership unchanged; credit SV optional attach

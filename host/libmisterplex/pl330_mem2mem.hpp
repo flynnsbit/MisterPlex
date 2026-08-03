@@ -1,0 +1,421 @@
+#pragma once
+
+// Cyclone V HPS PL330 mem2mem helper (w-path Route A).
+//
+// Programs the non-secure DMAC via /dev/mem debug instruction interface.
+// Default OFF — parent measures concurrency; Linux may already own channels.
+//
+// Pre-register (device):
+//   P1: PL330 mem2mem 1382400 B bank write wall < 15.283 ms (CPU memcpy baseline)
+//   P2: During DMA, a concurrent busy-loop on the other core still runs (overlap)
+//   P3: If kernel holds DMAC, open/map still works but channel start FAILS cleanly
+//
+// Phys addresses required for src and dst. User RAM src needs pagemap pin
+// (see pl330ResolveUserPhys) or a reserved CMA/coherent buffer.
+//
+// Do NOT ring the frame doorbell from this header — caller owns ordering
+// (DdrIngestSession::mayRingDoorbell).
+
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <fcntl.h>
+#include <string>
+#include <sys/mman.h>
+#include <unistd.h>
+
+namespace misterplex {
+
+// Cyclone V HPS non-secure PL330 (Intel CV HPS TRM).
+constexpr uint32_t kPl330NsBasePhys = 0xFFE01000u;
+constexpr size_t kPl330MapLen = 0x1000u;
+
+// Register offsets (ARM DDI0424)
+constexpr uint32_t kPl330_DSR = 0x000;
+constexpr uint32_t kPl330_FSRD = 0x030;
+constexpr uint32_t kPl330_FSRC = 0x034;
+constexpr uint32_t kPl330_CSR0 = 0x100; // + n*0x08
+constexpr uint32_t kPl330_CPC0 = 0x104;
+constexpr uint32_t kPl330_DBGSTATUS = 0xD00;
+constexpr uint32_t kPl330_DBGCMD = 0xD04;
+constexpr uint32_t kPl330_DBGINST0 = 0xD08;
+constexpr uint32_t kPl330_DBGINST1 = 0xD0C;
+constexpr uint32_t kPl330_CR0 = 0xE00;
+constexpr uint32_t kPl330_CRD = 0xE14;
+
+struct Pl330Mem2MemRequest {
+    uint32_t src_phys = 0;
+    uint32_t dst_phys = 0;
+    size_t len = 0;
+    int channel = 0; // 0..7 prefer
+};
+
+struct Pl330Mem2MemResult {
+    bool ok = false;
+    bool hardware_present = false;
+    bool channel_started = false;
+    int channel_used = -1;
+    std::string detail;
+    uint32_t dsr = 0;
+    uint32_t cr0 = 0;
+};
+
+// Build MFIFO-friendly CCR for 32-bit src/dst incrementing, burst 1..16.
+// Returns 0 on bad len.
+inline uint32_t pl330BuildCcr(size_t len) {
+    if (len == 0 || (len % 4) != 0)
+        return 0;
+    // CCR fields (simplified): src/dst burst size 32-bit, inc, burst len 1
+    // See DDI0424 CCR format. 0x0 = safest single 32-bit transfers.
+    // SA/DA increment, SS32/DS32, burst_len=1 → many loops.
+    const uint32_t SRC_INC = 1u << 0;
+    const uint32_t DST_INC = 1u << 14;
+    const uint32_t SRC_BURST_SIZE_32 = 2u << 1; // size = 2^2 = 4 bytes
+    const uint32_t DST_BURST_SIZE_32 = 2u << 15;
+    const uint32_t SRC_BURST_LEN_1 = 0u << 4;
+    const uint32_t DST_BURST_LEN_1 = 0u << 18;
+    return SRC_INC | DST_INC | SRC_BURST_SIZE_32 | DST_BURST_SIZE_32 | SRC_BURST_LEN_1 |
+           DST_BURST_LEN_1;
+}
+
+// Encode a tiny channel program into out[32] (bytes). Returns byte length.
+// DMAMOV SAR / DAR / CCR; DMALP loops of DMALD+DMAST; DMASEV 0; DMAEND.
+inline size_t pl330BuildMem2MemProgram(uint8_t* out, size_t out_cap, uint32_t src, uint32_t dst,
+                                       uint32_t ccr, uint32_t n_words) {
+    if (!out || out_cap < 32 || n_words == 0 || n_words > 256u * 256u)
+        return 0;
+    size_t o = 0;
+    auto emit = [&](uint8_t b) {
+        if (o < out_cap)
+            out[o++] = b;
+    };
+    auto emit32 = [&](uint32_t v) {
+        emit(static_cast<uint8_t>(v));
+        emit(static_cast<uint8_t>(v >> 8));
+        emit(static_cast<uint8_t>(v >> 16));
+        emit(static_cast<uint8_t>(v >> 24));
+    };
+    // DMAMOV SAR, imm32  — 0xBC, rd=0
+    emit(0xBC);
+    emit(0x00);
+    emit32(src);
+    // DMAMOV CCR, imm32 — rd=1
+    emit(0xBC);
+    emit(0x01);
+    emit32(ccr);
+    // DMAMOV DAR, imm32 — rd=2
+    emit(0xBC);
+    emit(0x02);
+    emit32(dst);
+
+    // Split n_words into LC1*LC0 nested loops (each 1..256 encoded as 0..255).
+    uint32_t outer = 1;
+    uint32_t inner = n_words;
+    if (n_words > 256) {
+        outer = (n_words + 255) / 256;
+        inner = 256;
+        if (outer > 256)
+            return 0;
+        // Only exact fit for first cut — require divisible.
+        if (outer * inner != n_words)
+            return 0;
+    }
+    // DMALP LC0, inner-1
+    emit(0x20);
+    emit(static_cast<uint8_t>(inner - 1));
+    if (outer > 1) {
+        emit(0x22); // DMALP LC1
+        emit(static_cast<uint8_t>(outer - 1));
+    }
+    // DMALD
+    emit(0x04);
+    // DMAST
+    emit(0x08);
+    // DMALPEND for LC0 (backward 2 bytes to DMALD) — encoding 0x38 | (1<<1) with bjump
+    // Simplified: DMALPEND infinite-safe short form 0x28, bjump=2 (size of DMALD+DMAST)
+    emit(0x38);
+    emit(0x02); // backward jump over DMALD+DMAST
+    if (outer > 1) {
+        // Additional LPEND LC1 — treat as single-level if outer==1 only for v1.
+        // For outer>1 we used nested; emit LC1 pend (same jump spans inner body).
+        emit(0x3C);
+        emit(0x06);
+    }
+    // DMASEV 0
+    emit(0x34);
+    emit(0x00);
+    // DMAEND
+    emit(0x00);
+    return o;
+}
+
+class Pl330Mem2Mem {
+public:
+    ~Pl330Mem2Mem() { close(); }
+
+    bool open(std::string* err = nullptr) {
+        close();
+        fd_ = ::open("/dev/mem", O_RDWR | O_SYNC | O_CLOEXEC);
+        if (fd_ < 0) {
+            if (err)
+                *err = "pl330: open /dev/mem failed";
+            return false;
+        }
+        map_ = ::mmap(nullptr, kPl330MapLen, PROT_READ | PROT_WRITE, MAP_SHARED, fd_,
+                      static_cast<off_t>(kPl330NsBasePhys));
+        if (map_ == MAP_FAILED) {
+            map_ = nullptr;
+            ::close(fd_);
+            fd_ = -1;
+            if (err)
+                *err = "pl330: mmap DMAC failed";
+            return false;
+        }
+        return true;
+    }
+
+    void close() {
+        if (map_ && map_ != MAP_FAILED) {
+            ::munmap(map_, kPl330MapLen);
+            map_ = nullptr;
+        }
+        if (fd_ >= 0) {
+            ::close(fd_);
+            fd_ = -1;
+        }
+    }
+
+    bool isOpen() const { return map_ != nullptr; }
+
+    uint32_t read32(uint32_t off) const {
+        if (!map_)
+            return 0;
+        return *reinterpret_cast<volatile uint32_t*>(static_cast<uint8_t*>(map_) + off);
+    }
+
+    void write32(uint32_t off, uint32_t v) {
+        if (!map_)
+            return;
+        *reinterpret_cast<volatile uint32_t*>(static_cast<uint8_t*>(map_) + off) = v;
+    }
+
+    // Probe only — does not start a channel.
+    Pl330Mem2MemResult probe() {
+        Pl330Mem2MemResult r;
+        if (!map_) {
+            r.detail = "not open";
+            return r;
+        }
+        r.dsr = read32(kPl330_DSR);
+        r.cr0 = read32(kPl330_CR0);
+        // CR0 should report channel count; zero often means wrong map / powered down.
+        r.hardware_present = (r.cr0 != 0 && r.cr0 != 0xFFFFFFFFu);
+        r.detail = r.hardware_present ? "pl330 cr0 ok" : "pl330 cr0 empty";
+        r.ok = r.hardware_present;
+        return r;
+    }
+
+    // Execute blocking mem2mem. len must be multiple of 4.
+    // On failure, leaves DMA idle if possible.
+    Pl330Mem2MemResult transferBlocking(const Pl330Mem2MemRequest& req, int timeout_ms = 50) {
+        Pl330Mem2MemResult r = probe();
+        if (!r.hardware_present)
+            return r;
+        if (req.src_phys == 0 || req.dst_phys == 0 || req.len == 0 || (req.len % 4) != 0) {
+            r.ok = false;
+            r.detail = "bad src/dst/len";
+            return r;
+        }
+        const uint32_t ccr = pl330BuildCcr(req.len);
+        if (!ccr) {
+            r.ok = false;
+            r.detail = "ccr";
+            return r;
+        }
+        const uint32_t n_words = static_cast<uint32_t>(req.len / 4);
+        // v1: only support n_words <= 256 (single LC0) for predictable microcode.
+        if (n_words > 256) {
+            // Chunk into 256-word pieces sequentially (still off-CPU per chunk).
+            size_t done = 0;
+            int ch = req.channel;
+            while (done < req.len) {
+                size_t chunk = req.len - done;
+                if (chunk > 256u * 4u)
+                    chunk = 256u * 4u;
+                Pl330Mem2MemRequest sub = req;
+                sub.src_phys = req.src_phys + static_cast<uint32_t>(done);
+                sub.dst_phys = req.dst_phys + static_cast<uint32_t>(done);
+                sub.len = chunk;
+                sub.channel = ch;
+                auto one = transferOneBlock(sub, timeout_ms);
+                if (!one.ok) {
+                    r = one;
+                    return r;
+                }
+                done += chunk;
+                r = one;
+            }
+            r.ok = true;
+            r.detail = "chunked ok";
+            return r;
+        }
+        return transferOneBlock(req, timeout_ms);
+    }
+
+private:
+    // Debug-instruction go: DMAGO for channel with PC in DBGINST1.
+    // We place program in a small bounce buffer in *destination bank prefix* —
+    // NOT used. Instead: use DMAMOV via debug for SAR/DAR/CCR then loop DMALD/DMAST
+    // via repeated DBGINST — too slow.
+    //
+    // Practical v1: use first 64 bytes of a dedicated program buffer at
+    // dst_phys is frame data — cannot overwrite. Require caller to supply
+    // program buffer via transferOneBlock embedding in DMAC insn FIFO using
+    // DMAGO with instructions fed through DBGINST0 as non-secure manager.
+    //
+    // Simpler reliable path used here: **CPU does not claim full microcode load**.
+    // We expose descriptor build + probe; transferOneBlock attempts DMAGO with
+    // inline DMAMOV sequence via debug for very small transfers only, else
+    // returns not-implemented for full frame so bench reports honestly.
+    Pl330Mem2MemResult transferOneBlock(const Pl330Mem2MemRequest& req, int timeout_ms) {
+        Pl330Mem2MemResult r;
+        r.hardware_present = true;
+        r.cr0 = read32(kPl330_CR0);
+        r.dsr = read32(kPl330_DSR);
+
+        uint8_t prog[64];
+        const uint32_t ccr = pl330BuildCcr(req.len);
+        const uint32_t n_words = static_cast<uint32_t>(req.len / 4);
+        const size_t plen =
+            pl330BuildMem2MemProgram(prog, sizeof(prog), req.src_phys, req.dst_phys, ccr, n_words);
+        if (plen == 0) {
+            r.detail = "program encode failed";
+            return r;
+        }
+
+        // Without a secure SRAM stash for channel PC, full DMAGO needs a
+        // physically contiguous program buffer. Callers may pass src_phys with
+        // a reserved prefix — for product we require kPl330ProgScratchPhys.
+        // If scratch is 0, report needs_scratch (bench documents the gap).
+        if (prog_scratch_phys_ == 0) {
+            r.ok = false;
+            r.detail = "needs_prog_scratch_phys";
+            r.channel_started = false;
+            return r;
+        }
+
+        // Copy program bytes into scratch via caller-provided virt if set.
+        if (!prog_scratch_virt_) {
+            r.detail = "needs_prog_scratch_virt";
+            return r;
+        }
+        std::memcpy(prog_scratch_virt_, prog, plen);
+        __sync_synchronize();
+
+        const int ch = (req.channel >= 0 && req.channel < 8) ? req.channel : 0;
+        // Wait debug busy clear
+        for (int i = 0; i < 1000; ++i) {
+            if ((read32(kPl330_DBGSTATUS) & 1u) == 0)
+                break;
+        }
+        // DMAGO ns=0 channel=ch — opcode 0xA0 | (ns<<1), ch in byte1
+        // DBGINST0: [16:0] = first instruction bytes, etc. (see TRM)
+        const uint32_t inst0 = (0xA0u) | (static_cast<uint32_t>(ch) << 8) | (0u << 24);
+        write32(kPl330_DBGINST0, inst0);
+        write32(kPl330_DBGINST1, prog_scratch_phys_);
+        write32(kPl330_DBGCMD, 0); // execute
+        r.channel_started = true;
+        r.channel_used = ch;
+
+        // Poll CSR for stopped
+        const uint32_t csr_off = kPl330_CSR0 + static_cast<uint32_t>(ch) * 8u;
+        const int spins = timeout_ms * 100; // ~10us units rough
+        for (int i = 0; i < spins; ++i) {
+            const uint32_t csr = read32(csr_off);
+            // channel status encoding: 0 = stopped
+            if ((csr & 0xFu) == 0) {
+                r.ok = true;
+                r.detail = "dma stopped ok";
+                return r;
+            }
+            // fault?
+            if (read32(kPl330_FSRC) & (1u << ch)) {
+                r.detail = "channel fault";
+                r.ok = false;
+                return r;
+            }
+            usleep(10);
+        }
+        r.detail = "timeout";
+        r.ok = false;
+        return r;
+    }
+
+public:
+    void setProgramScratch(uint32_t phys, void* virt) {
+        prog_scratch_phys_ = phys;
+        prog_scratch_virt_ = virt;
+    }
+
+    // Descriptor-only path for unit tests (no /dev/mem).
+    static bool encodeProgramForTest(uint8_t* out, size_t cap, size_t* out_len, uint32_t src,
+                                     uint32_t dst, size_t len) {
+        const uint32_t ccr = pl330BuildCcr(len);
+        if (!ccr)
+            return false;
+        const size_t n = pl330BuildMem2MemProgram(out, cap, src, dst, ccr,
+                                                  static_cast<uint32_t>(len / 4));
+        if (!n)
+            return false;
+        if (out_len)
+            *out_len = n;
+        return true;
+    }
+
+private:
+    int fd_ = -1;
+    void* map_ = nullptr;
+    uint32_t prog_scratch_phys_ = 0;
+    void* prog_scratch_virt_ = nullptr;
+};
+
+// Resolve first page phys for a user pointer via /proc/self/pagemap.
+// Returns 0 on failure. Requires CAP_SYS_ADMIN on many kernels.
+inline uint32_t pl330ResolveUserPhys(const void* virt) {
+    if (!virt)
+        return 0;
+    const uintptr_t v = reinterpret_cast<uintptr_t>(virt);
+    const uintptr_t page = v & ~static_cast<uintptr_t>(4095);
+    const uintptr_t off = v - page;
+    const long idx = static_cast<long>(page / 4096u);
+    const int fd = ::open("/proc/self/pagemap", O_RDONLY | O_CLOEXEC);
+    if (fd < 0)
+        return 0;
+    uint64_t entry = 0;
+    if (::lseek(fd, idx * static_cast<off_t>(sizeof(entry)), SEEK_SET) < 0) {
+        ::close(fd);
+        return 0;
+    }
+    if (::read(fd, &entry, sizeof(entry)) != static_cast<ssize_t>(sizeof(entry))) {
+        ::close(fd);
+        return 0;
+    }
+    ::close(fd);
+    if ((entry & (1ull << 63)) == 0)
+        return 0; // not present
+    const uint64_t pfn = entry & ((1ull << 55) - 1);
+    if (pfn == 0)
+        return 0;
+    return static_cast<uint32_t>((pfn << 12) | off);
+}
+
+// True if len spans a single page-aligned physically contiguous region
+// (simple check: all pages present and sequential PFNs) — v1: single page only.
+inline bool pl330UserRangeSinglePage(const void* virt, size_t len) {
+    if (!virt || len == 0)
+        return false;
+    const uintptr_t v = reinterpret_cast<uintptr_t>(virt);
+    return ((v & 4095u) + len) <= 4096u;
+}
+
+} // namespace misterplex

@@ -87,6 +87,13 @@ PRESENT=fpga
 #   Decode-optimal *content* tier is 1500 kbit already-1280x720 CB via Direct Play
 #   (parent device: 32.4 ms/f vs 41.1 @4000). Prefer PREFER_DIRECT_H264 + library
 #   assets encoded ~1500k 720p CB rather than starving universal maxBR.
+#
+# DDR_INGEST_MODE — how decoded I420 reaches Option-C banks (default cpu_serial).
+#   cpu_serial       — memcpy then doorbell (product today; serial 720p24 FAIL)
+#   decode_into_bank — decoder writes bank virt (still CPU stores; measure)
+#   pl330_overlap    — PL330 mem2mem while CPU decodes next (Route A; unproven)
+# Doorbell only after payload is FPGA-visible. Fabric publish_bytes=0 remains ship.
+# DDR_INGEST_MODE=cpu_serial
 
 # --- Phase 4 UX ---
 # AUTO_NEXT=1  # on media EOF, play next playQueue item when bound (default on)
