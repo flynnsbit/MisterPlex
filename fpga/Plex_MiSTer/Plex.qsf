@@ -94,6 +94,10 @@ set_global_assignment -name VERILOG_MACRO "FRAME_LINES_8=1"
 #set_global_assignment -name VERILOG_MACRO "FABRIC_NATIVE_720P_GEOM=1"
 #set_global_assignment -name VERILOG_MACRO "FRAME_W=1280"
 #set_global_assignment -name VERILOG_MACRO "FRAME_H=720"
+# rd-duck: 8 lines cover ~437us @24MHz H=1312; modelled DDR blackout 500us.
+# FRAME_LINES_16 gives ~875us of line-buffer margin. Enable with L4 (and
+# comment out FRAME_LINES_8=1 above). Proven by test_ddr_frame_store_l4_rtl_sim.
+#set_global_assignment -name VERILOG_MACRO "FRAME_LINES_16=1"
 # (comment out the FRAME_W=640 / FRAME_H=480 lines above when enabling L4)
 #
 # --- Alternate tiers (mutually exclusive with L4) ---
