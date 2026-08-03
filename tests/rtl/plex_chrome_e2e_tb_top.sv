@@ -170,6 +170,8 @@ module plex_chrome_e2e_tb (
         .idle_mode(idle_mode),
         .idle_phase(idle_phase),
         .idle_sig_en(1'b0),
+        .chrome_sig_en(1'b0),
+        .chrome_demo_en(1'b0),
         .chrome_hw(chrome_hw),
         .mon_width(mon_w),
         .mon_height(mon_h),

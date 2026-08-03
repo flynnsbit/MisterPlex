@@ -1212,6 +1212,10 @@ cyclonev_hps_interface_peripheral_i2c hdmi_i2c
 	wire [1:0]  osd_idle_chrome;
 	wire        fab_idle_phase_en;
 	wire        fab_idle_sig_en;
+	wire        fab_chrome_sig_en;
+	wire        fab_chrome_demo_en;
+	// PLEX_FAB_IDLE and PLEX_FAB_CHROME are mutually exclusive integration demos.
+	// If both defined, IDLE wins (parent should enable one fit at a time).
 `ifdef PLEX_FAB_IDLE
 	// ARM-off milestone: fabric idle always (until has_frame CDC). Mode 2 =
 	// screensaver — chevron drifts with vsync phase (moving pattern). Cyan
@@ -1220,11 +1224,24 @@ cyclonev_hps_interface_peripheral_i2c hdmi_i2c
 	assign fab_idle_phase_en = 1'b1;
 	assign osd_idle_chrome   = 2'b10; // screensaver
 	assign fab_idle_sig_en   = 1'b1;
+	assign fab_chrome_sig_en = 1'b0;
+	assign fab_chrome_demo_en= 1'b0;
+`elsif PLEX_FAB_CHROME
+	// Playback chrome off ARM: built-in STOPPED HUD + magenta TR/BL signature.
+	// has_frame=1 so idle plane stays off; video/din shows under the bar.
+	assign has_frame_chrome  = 1'b1;
+	assign fab_idle_phase_en = 1'b0;
+	assign osd_idle_chrome   = 2'b00;
+	assign fab_idle_sig_en   = 1'b0;
+	assign fab_chrome_sig_en = 1'b1;
+	assign fab_chrome_demo_en= 1'b1;
 `else
 	assign has_frame_chrome  = 1'b1;
 	assign fab_idle_phase_en = 1'b0;
 	assign osd_idle_chrome   = 2'b00; // logo (unused while has_frame=1)
 	assign fab_idle_sig_en   = 1'b0;
+	assign fab_chrome_sig_en = 1'b0;
+	assign fab_chrome_demo_en= 1'b0;
 `endif
 	assign plxc_ext_we    = 1'b0;
 	assign plxc_ext_addr  = 8'd0;
@@ -1333,6 +1350,8 @@ cyclonev_hps_interface_peripheral_i2c hdmi_i2c
 		.idle_mode(plxc_idle_mode),
 		.idle_phase(plxc_idle_phase),
 		.idle_sig_en(fab_idle_sig_en),
+		.chrome_sig_en(fab_chrome_sig_en),
+		.chrome_demo_en(fab_chrome_demo_en),
 		.chrome_hw(plex_chrome_hw),
 		.mon_width(plex_chrome_mon_w),
 		.mon_height(plex_chrome_mon_h),

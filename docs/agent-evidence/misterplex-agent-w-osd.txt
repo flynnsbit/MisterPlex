@@ -1,43 +1,39 @@
 lane=w-osd
 branch=w-osd-fabric-plane
-todo=fab-osd,fab-idle
-status=READY_FOR_INTEGRATION_FIT (default OFF)
+status=READY_FOR_INTEGRATION (default OFF macros)
 
-## Latest: fabric-only cyan signature + parent capture contract
-- plex_chrome.sv: idle_sig_en + cyan #00C8FF L-brackets TL/BR (64x12)
-- sys_top: fab_idle_sig_en=1 under `PLEX_FAB_IDLE`, else 0
-- docs/fab-idle-parent-capture-contract.md — enable path, PASS numbers, ARM-out
-- scripts/hdmi_capture_idle.sh — CYAN_PX scoring (from main base)
+## Delivered this turn
+1. w-clock video_mode sequence AGREED in writing:
+   docs/fab-idle-video-mode-sequence.md
+   - Step0 control no ini
+   - Step1 PLEX_FAB_IDLE only (no ini) → CYAN
+   - Step2 same RBF + video_mode=0 → 720p HDMI canvas
+   - Step3 optional PRESENT_MULTI_PIXEL fit (core DE; not HDMI mode)
+   Chrome canvas = hdmi_width/height (post-ascal). Core DE ≠ OSD size.
 
-## Sim true rc (oss-cad Verilator 5.051)
-idle720: true rc=0 (RED mon≠720 + GREEN TL/BR=00c8ff + phase + ss-motion + cyan subsample)
-chrome:  true rc=0
-ppc:     true rc=0
-e2e:     true rc=0
+2. FAB_CHROME playback plane off ARM:
+   - plex_chrome: chrome_demo_en STOPPED HUD + chrome_sig_en magenta TR+BL #FF2D95
+   - PLEX_FAB_CHROME macro (default OFF; IDLE wins if both)
+   - ARM: PLXC publish state-change only (removed per-15-frame list rewrite)
+   - docs/fab-chrome-parent-capture-contract.md
+   - hdmi_capture_idle.sh MAGENTA_PX
 
-## Parent enable (integration only)
-Plex.qsf: set_global_assignment -name VERILOG_MACRO "PLEX_FAB_IDLE=1"
-MiSTer.ini: video_mode=0 (1280x720@60) — w-clock owns mode
-Default OFF: bit-identical idle-off vs d1b24e0c macros-at-reset
+## Sim true rc
+fabchrome RED+GREEN: true rc=0
+chrome/idle720/ppc/e2e: true rc=0
+test_plex_chrome_cmds: true rc=0
 
-## Pre-reg PASS capture
-scripts/hdmi_capture_idle.sh docs/agent-evidence/fab-idle-t0.png
-sleep 3
-scripts/hdmi_capture_idle.sh docs/agent-evidence/fab-idle-t1.png
-PASS: CYAN_PX>=2000 ORANGE_PX>=500 MEAN 12..80 STD>5 + motion
-ARM control: CYAN_PX~0 (prior MEAN=23 ORANGE=20161 no cyan = daemon)
-Strong ARM-out: killall misterplexd; still cyan+orange+motion
+## Parent capture — idle (FAB_IDLE)
+docs/fab-idle-parent-capture-contract.md
+PASS: CYAN>=2000 ORANGE>=500 motion; kill PID still moves
 
-## Commits prior
-a6864e58 FAB_IDLE screensaver motion
-a3761b0e native 1280x720 fabric idle + vsync phase
-0832773e PX_PER_CLK multi-lane
-94e5663e e2e DDR PLXC
-a0bcbdaa PLXC DDR loader
-5be68d97 fab-pace
+## Parent capture — chrome (FAB_CHROME)
+docs/fab-chrome-parent-capture-contract.md
+PASS: MAGENTA>=1500 ORANGE>=200 CYAN~0; kill PID still STOPPED+magenta
 
-## Open (not blocking glass idle demo)
-- loader not in ddr_frame_store arbiter
-- PLXO fail-closed without loader → chromePlaneLive may stay 0
-- pace ENABLE=0 product
-NO Quartus fit by this lane. NO device access.
+## Enable
+# idle glass:  VERILOG_MACRO "PLEX_FAB_IDLE=1"
+# chrome demo: VERILOG_MACRO "PLEX_FAB_CHROME=1"   # not both
+# HDMI 720p:   video_mode=0 (after Step1, separate from RBF)
+
+NO Quartus. NO device.

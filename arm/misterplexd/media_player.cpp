@@ -4277,10 +4277,11 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 int64_t tms = startMs + wall2;
                 positionMs_.store(tms);
                 overlay_.setProgress(tms, durationMs);
-                // plane=1: refresh PLXC bar/timecode without pixel bake.
-                // Throttle: every 15 frames (~0.5s @30fps) — not per-present.
-                if (chromePlaneLive() && (frameIndex % 15) == 0)
-                    publishPlxcHud(PlaybackOverlayState::Playing, tms, durationMs, nullptr);
+                // plane=1: PLXC is state-change only (showPlaybackOverlay).
+                // Do NOT republish the command list every N frames — that is still
+                // concurrent ARM work beside decode. Progress bar freezes until the
+                // next transport event; a future single progress-fraction register
+                // can refresh the bar without a full list rewrite.
                 if ((frameIndex % 15) == 0 && onProgress_)
                     onProgress_("playing", tms, durationMs);
             }

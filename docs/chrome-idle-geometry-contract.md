@@ -102,3 +102,9 @@ scripts/hdmi_capture_idle.sh docs/agent-evidence/idle720-live.png
 
 **Unknown until device:** exact ORANGE_PX at capture scale; ARM ms removed
 (profile plane=0 vs plane=1 idle path).
+
+
+## 8. Capture sequence with w-clock
+
+See **`docs/fab-idle-video-mode-sequence.md`** (single sequence, ACTIVE per step).
+Playback chrome: **`docs/fab-chrome-parent-capture-contract.md`** (`PLEX_FAB_CHROME`).

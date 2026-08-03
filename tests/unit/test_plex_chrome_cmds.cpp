@@ -107,6 +107,9 @@ static void checkZeroPerPixelArmWhenLiveSource() {
     CHECK(src.find("idle fabric plane=1 skip ALL ARM paint") != std::string::npos);
     // Must not have "skip DDR" only (old half-offload) without ALL ARM paint
     CHECK(src.find("skip ALL ARM paint") != std::string::npos);
+    // Progress path must NOT republish PLXC every N frames (state-change only).
+    CHECK(src.find("publishPlxcHud(PlaybackOverlayState::Playing, tms, durationMs") == std::string::npos);
+    CHECK(src.find("PLXC is state-change only") != std::string::npos);
 }
 
 // 720p-first: default BuildArgs and a full STOPPED HUD must fit the list.

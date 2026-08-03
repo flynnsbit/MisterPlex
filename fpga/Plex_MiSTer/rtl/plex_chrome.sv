@@ -71,6 +71,11 @@ module plex_chrome #(
     // Fabric-only signature (cyan corner brackets). ARM idle never paints this.
     // Parent scores CYAN_PX to distinguish fabric from daemon idle.
     input  wire        idle_sig_en,
+    // Playback chrome fabric signature (magenta TR+BL). ARM overlay never emits
+    // FF_2D_95. Parent scores MAGENTA_PX. Active when list/demo paints.
+    input  wire        chrome_sig_en,
+    // Built-in STOPPED HUD without ARM PLXC (PLEX_FAB_CHROME demo). Off by default.
+    input  wire        chrome_demo_en,
 
     output reg         chrome_hw,
     output reg  [11:0] mon_width,
@@ -291,6 +296,7 @@ module plex_chrome #(
             8'd4: pal_rgb = 24'h46_4A_52;
             8'd5: pal_rgb = 24'h1F_23_26;
             8'd6: pal_rgb = 24'hE5_A0_0D;
+            8'd7: pal_rgb = 24'hFF_2D_95; // fabric playback signature (not ARM)
             default: pal_rgb = 24'h14_14_28;
         endcase
     endfunction
@@ -521,11 +527,13 @@ module plex_chrome #(
         end
     endfunction
 
-    // Fabric signature: cyan L-brackets at TL + BR. ARM idle_screen.hpp never
-    // emits 00_C8_FF. MARK=64 BAR=12 → ~2.8k cyan px @ any canvas ≥128×128.
+    // Fabric signatures (ARM never emits these pure primaries in idle/overlay):
+    //   idle:     cyan 00_C8_FF at TL+BR
+    //   playback: magenta FF_2D_95 at TR+BL  (orthogonal corners)
     localparam [11:0] SIG_MARK = 12'd64;
     localparam [11:0] SIG_BAR  = 12'd12;
-    localparam [23:0] SIG_CYAN = 24'h00_C8_FF;
+    localparam [23:0] SIG_CYAN    = 24'h00_C8_FF;
+    localparam [23:0] SIG_MAGENTA = 24'hFF_2D_95;
 
     function automatic idle_fab_mark;
         input [11:0] px, py;
@@ -540,6 +548,22 @@ module plex_chrome #(
                 br_v = (px >= HDMI_WIDTH - SIG_BAR) &&
                        (py >= HDMI_HEIGHT - SIG_MARK);
                 idle_fab_mark = tl_h | tl_v | br_h | br_v;
+            end
+        end
+    endfunction
+
+    // Playback chrome signature: top-right + bottom-left (not idle TL/BR).
+    function automatic chrome_fab_mark;
+        input [11:0] px, py;
+        reg tr_h, tr_v, bl_h, bl_v;
+        begin
+            chrome_fab_mark = 1'b0;
+            if (HDMI_WIDTH >= SIG_MARK && HDMI_HEIGHT >= SIG_MARK) begin
+                tr_h = (py < SIG_BAR) && (px >= HDMI_WIDTH - SIG_MARK);
+                tr_v = (px >= HDMI_WIDTH - SIG_BAR) && (py < SIG_MARK);
+                bl_h = (py >= HDMI_HEIGHT - SIG_BAR) && (px < SIG_MARK);
+                bl_v = (px < SIG_BAR) && (py >= HDMI_HEIGHT - SIG_MARK);
+                chrome_fab_mark = tr_h | tr_v | bl_h | bl_v;
             end
         end
     endfunction
@@ -561,6 +585,88 @@ module plex_chrome #(
         end
     endfunction
 
+    // Built-in STOPPED HUD (no ARM). Geometry mirrors plex_chrome_cmds::buildPlaybackHud
+    // at scale from HDMI_H. "STOPPED" + panel + 50% amber bar — enough for glass.
+    function automatic [24:0] chrome_demo_at;
+        input [11:0] px, py;
+        reg [11:0] margin, ph, px0, py0, pw;
+        reg [11:0] bar_x, bar_y, bar_w, bar_h, fill_w;
+        reg [3:0]  sc;
+        reg [11:0] gw, gh, tx, ty, gx, gy, bitx, bity;
+        reg [7:0]  fbits;
+        reg [7:0]  code;
+        reg [3:0]  gi;
+        reg        hit_l;
+        reg [23:0] rgb_l;
+        // "STOPPED" codes
+        reg [7:0]  s0, s1, s2, s3, s4, s5, s6;
+        begin
+            hit_l = 1'b0;
+            rgb_l = 24'h00_00_00;
+            sc    = body_scale;
+            gw    = 12'(FONT_W) * {8'd0, sc};
+            gh    = 12'(FONT_H) * {8'd0, sc};
+            margin = (HDMI_WIDTH >> 5);
+            if (margin < 12'd8) margin = 12'd8;
+            ph = 12'(72) * {8'd0, sc} / 12'd2;
+            if (ph < 12'd54) ph = 12'd54;
+            if (ph > (HDMI_HEIGHT >> 2)) ph = HDMI_HEIGHT >> 2;
+            px0 = margin;
+            py0 = (HDMI_HEIGHT > (ph + margin)) ? (HDMI_HEIGHT - ph - margin) : 12'd0;
+            pw  = (HDMI_WIDTH > (margin << 1)) ? (HDMI_WIDTH - (margin << 1)) : HDMI_WIDTH;
+            // panel
+            if (px >= px0 && py >= py0 && px < (px0 + pw) && py < (py0 + ph)) begin
+                hit_l = 1'b1;
+                rgb_l = 24'h14_14_28;
+            end
+            // STOPPED glyphs (ASCII)
+            s0 = 8'h53; s1 = 8'h54; s2 = 8'h4F; s3 = 8'h50;
+            s4 = 8'h50; s5 = 8'h45; s6 = 8'h44;
+            tx = px0 + 12'd16;
+            ty = py0 + 12'd10;
+            for (gi = 0; gi < 4'd7; gi = gi + 4'd1) begin
+                case (gi)
+                    4'd0: code = s0;
+                    4'd1: code = s1;
+                    4'd2: code = s2;
+                    4'd3: code = s3;
+                    4'd4: code = s4;
+                    4'd5: code = s5;
+                    default: code = s6;
+                endcase
+                if (px >= tx && py >= ty) begin
+                    gx = px - tx;
+                    gy = py - ty;
+                    if (gx < gw && gy < gh) begin
+                        bitx  = div_by_scale(gx, sc);
+                        bity  = div_by_scale(gy, sc);
+                        fbits = font_row(code, bity[2:0]);
+                        if (bitx < 12'(FONT_W) && fbits[7 - bitx[2:0]]) begin
+                            hit_l = 1'b1;
+                            rgb_l = 24'hFF_FF_FF;
+                        end
+                    end
+                end
+                tx = tx + (12'(9) * {8'd0, sc}); // FONT_ADVANCE=9
+            end
+            // track + 50% fill
+            bar_x = px0 + 12'd16;
+            bar_y = py0 + ph - 12'd18;
+            bar_w = (pw > 12'd32) ? (pw - 12'd32) : 12'd8;
+            bar_h = 12'd6;
+            fill_w = bar_w >> 1;
+            if (px >= bar_x && py >= bar_y && px < (bar_x + bar_w) && py < (bar_y + bar_h)) begin
+                hit_l = 1'b1;
+                rgb_l = 24'h3A_3F_48;
+            end
+            if (px >= bar_x && py >= bar_y && px < (bar_x + fill_w) && py < (bar_y + bar_h)) begin
+                hit_l = 1'b1;
+                rgb_l = 24'hFF_B2_20;
+            end
+            chrome_demo_at = {hit_l, rgb_l};
+        end
+    endfunction
+
     // Comb per-lane composite colors for this beat.
     reg [PX_PER_CLK*24-1:0] lane_rgb;
     reg [PX_PER_CLK-1:0]    lane_hit;
@@ -568,7 +674,10 @@ module plex_chrome #(
     integer lane_i;
     reg [11:0] lx;
     reg [24:0] ch;
+    reg [24:0] demo;
     reg [23:0] ir;
+    reg        chrome_on;
+    reg        want_sig;
 
     always @(*) begin
         lane_rgb  = {PX_PER_CLK*24{1'b0}};
@@ -576,12 +685,21 @@ module plex_chrome #(
         lane_idle = {PX_PER_CLK{1'b0}};
         for (lane_i = 0; lane_i < PX_PER_CLK; lane_i = lane_i + 1) begin
             lx = hx0 + lane_i[11:0];
-            ch = chrome_at(lx, hy);
-            ir = idle_rgb_at(lx, hy);
-            lane_hit[lane_i]  = ch[24];
+            ch   = chrome_at(lx, hy);
+            demo = (chrome_demo_en && !idle_en) ? chrome_demo_at(lx, hy) : 25'd0;
+            ir   = idle_rgb_at(lx, hy);
+            chrome_on = ch[24] | demo[24];
+            want_sig  = chrome_sig_en && !idle_en && (latched_en | chrome_demo_en) &&
+                        chrome_fab_mark(lx, hy);
+            lane_hit[lane_i]  = chrome_on | want_sig;
             lane_idle[lane_i] = idle_en && (idle_mode != 2'd3);
-            if (ch[24])
+            // Priority: magenta sig > list hit > demo HUD > idle > video
+            if (want_sig)
+                lane_rgb[lane_i*24 +: 24] = SIG_MAGENTA;
+            else if (ch[24])
                 lane_rgb[lane_i*24 +: 24] = ch[23:0];
+            else if (demo[24])
+                lane_rgb[lane_i*24 +: 24] = demo[23:0];
             else if (idle_en && (idle_mode != 2'd3))
                 lane_rgb[lane_i*24 +: 24] = ir;
             else
