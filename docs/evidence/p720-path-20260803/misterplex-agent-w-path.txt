@@ -1,11 +1,12 @@
 lane=w-path
-status=PL330_CRITICAL_AWAITING_GATE
-tip=e7700ce1
-ARCH: CPU bank copy STRUCTURAL 88MiB/s uncached (outside System RAM) — closed FAIL serial
-DecodeIntoBank SUSPECT — no further build until measured
-PL330 = critical path; instrument ready (linux DMAGO + content + ceiling)
-PARENT_GATE:
-  ddr_pl330_ingest_bench --dma-only --duration-s 25 --bank 1
-  binary build/arm/ddr_pl330_ingest_bench
-budget: decode 35.94 copy 14.978 serial 50.9 FAIL
-tests: zero_copy true_rc=0
+status=CRITICAL_PATH_PACK_READY
+tip=pending
+(1) DMA gate cmds: docs/evidence/.../PARENT_COMMANDS_DMA_AND_ROUTE_A.md
+    ddr_pl330_ingest_bench --dma-only --duration-s 25 --bank 1
+(2) Route A falsify: route_a_bank_probe --sink ram|bank (proxy output store)
+(3) Bitstream assessment: BITSTREAM_FABRIC_ASSESSMENT.md
+    traffic 13.5KB/f ~0.15ms @88MiB/s — math wins
+    gap: integration+inter+720p DPB ~8-16 cal weeks; CB pin deletes CABAC
+    modules≠product; decode_top is coeff-in not annexB-in
+DecodeIntoBank SUSPECT — no product build
+binaries: build/arm/ddr_pl330_ingest_bench build/arm/route_a_bank_probe

@@ -838,6 +838,20 @@ arm-pl330-ingest-bench:
 		-static
 	@file $(ROOT)/build/arm/ddr_pl330_ingest_bench
 
+$(ROOT)/build/route_a_bank_probe: $(ROOT)/tools/route_a_bank_probe.cpp \
+		$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -I$(ROOT)/host -o $@ $(ROOT)/tools/route_a_bank_probe.cpp
+
+arm-route-a-bank-probe:
+	@if [ -z "$(ARM_CXX)" ]; then echo "No armhf g++ found"; exit 1; fi
+	@mkdir -p $(ROOT)/build/arm
+	$(ARM_CXX) -std=c++17 -O2 -Wall -I$(ROOT)/host \
+		-o $(ROOT)/build/arm/route_a_bank_probe \
+		$(ROOT)/tools/route_a_bank_probe.cpp \
+		-static
+	@file $(ROOT)/build/arm/route_a_bank_probe
+
 $(ROOT)/build/present_loop_harness: $(ROOT)/tools/present_loop_harness.cpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -pthread -o $@ $(ROOT)/tools/present_loop_harness.cpp
