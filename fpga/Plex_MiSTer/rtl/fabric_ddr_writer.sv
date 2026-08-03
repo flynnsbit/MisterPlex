@@ -1,39 +1,36 @@
-// fabric_ddr_writer — fabric-side I420 bank fill + doorbell (zero ARM pixels).
+// fabric_ddr_writer — fabric I420 bank fill + doorbell (zero ARM per-pixel).
 //
-// Macro: FABRIC_DDR_WRITER (default OFF). Product Plex.sv must not instantiate
-// this unless the macro is defined — keeps w-nostub fits stable.
+// Macro FABRIC_DDR_WRITER default OFF (Plex.qsf commented) — w-nostub fit safe.
 //
-// Geometry is parameter-only (ddr_frame_layout_params.svh constants). 624x480
-// and 1280x720 are parameter sets, never a code fork. PHYS_BASE / DOORBELL_PHYS
-// are parameters so Option-C base can move after parent /proc/iomem.
+// Parent-verified 2026-08-02 (device cmdline + /proc/iomem):
+//   mem=511M; memmap=513M$511M → reserved 0x1FF00000..0x40000000
+//   Option-C base 0x30180000, doorbell 0x3047F000, end 0x30480000 all inside
+//   reserved and unclaimed. Headroom ≈ 251.5 MB — DDR bytes not scarce.
+//   Triple-buffer map (3*0x180000) still fits easily; doorbell bank field remains
+//   1 bit until ddr_frame_store consumer widens (bank_id[0] published today).
 //
-// Pixel-source contract (pluggable: test pattern / idle / future decode):
-//   src_valid/src_ready, 64-bit qword beats of planar I420 bank order
-//   (Y plane then U then V, packed little-endian bytes in each qword).
-//   src_frame_start must be high with the first beat of a frame.
-//   src_bank is sampled on that first accepted beat.
+// Geometry is parameter-only (624x480 / 1280x720 sets from layout .svh).
 //
-// Doorbell ordering (tearing class):
+// Pixel source (pluggable — see fabric_i420_pattern_src.sv):
+//   src_valid/src_ready, 64-bit planar I420 qwords (Y then U then V),
+//   src_frame_start with first beat, src_bank_id[1:0] sampled then.
+//
+// Doorbell ordering (tearing class — do not relax):
 //   1) Accept and issue every payload qword write into the active bank.
 //   2) WRITE_DRAIN_CYCLES fence after last payload command accepted
 //      (f2sdram has no write response — drain is the visibility fence).
-//   3) Exactly one doorbell write: DIN={hi, PLXK} at DOORBELL_PHYS.
+//   3) Exactly one doorbell write DIN={hi, PLXK} at DOORBELL_PHYS.
 //   4) frame_done pulses after doorbell command is accepted.
 //
-// Burst / rate arithmetic (clk_ddr = 90 MHz, 8 B/qword, BURSTCNT=1):
-//   720p24: 1_382_400 B * 24 = 33.18 MB/s → 4.15 Mqword/s → 4.6% of 90 MHz
-//   720p30: 1_382_400 B * 30 = 41.47 MB/s → 5.18 Mqword/s → 5.8% of 90 MHz
-//   Scanout read upper @60 Hz full I420: ~82.9 MB/s
-//   Combined ~124 MB/s → ~15.5 Mqword/s → ~17% of 90 MHz peak
-//   ⇒ Rate closes with outstanding depth = 1 write command.
-//   If arbiter grant falls below ~6% writer share @30fps, rate does NOT close
-//   — surface that; do not silently assume grant.
+// Burst / rate (clk_ddr=90 MHz, 8 B/qword, BURSTCNT=1, outstanding=1):
+//   720p24: 33.18 MB/s → 4.15 Mqword/s → 4.6% of 90 MHz peak
+//   720p30: 41.47 MB/s → 5.18 Mqword/s → 5.8% of 90 MHz peak
+//   + scanout read upper ~82.9 MB/s → combined ~17% peak
+//   ⇒ Rate closes. If arbiter grant < ~6% writer share @30fps, does NOT close.
+//   Device sustained fabric write BW: unknown until fit + parent measure.
 //
-// Coordination (paper — w-clock / w-scaler):
-//   Writer: clk_ddr master, fills coded banks, rings doorbell.
-//   w-scaler: content-window READ path only; does not share this write port.
-//   w-clock: multi-pixel present is read-side; no shared regs with writer.
-//   Integration: third arbiter master or idle-slot mux — separate fit item.
+// Coordination: w-scaler = content-window READ; w-clock = multi-pixel present
+// READ; this module = WRITE master on clk_ddr. Arbiter 3rd port = later fit.
 //
 `default_nettype none
 
@@ -43,6 +40,7 @@ module fabric_ddr_writer #(
 	parameter [31:0] PHYS_BASE = 32'h3018_0000,
 	parameter int HPS_BANK_STRIDE_BYTES = 32'h0018_0000,
 	parameter [31:0] DOORBELL_PHYS = 32'h3047_F000,
+	parameter int NUM_BANKS = 2,
 	parameter int WRITE_DRAIN_CYCLES = 16,
 	parameter [31:0] DOORBELL_MAGIC = 32'h504C584B, // PLXK
 	parameter [1:0] DOORBELL_FORMAT_YUV420P = 2'd1
@@ -50,14 +48,12 @@ module fabric_ddr_writer #(
 	input  wire        clk,
 	input  wire        reset,
 
-	// Pixel source — 64-bit planar I420 qword stream
 	input  wire        src_valid,
 	output wire        src_ready,
 	input  wire [63:0] src_data,
 	input  wire        src_frame_start,
-	input  wire        src_bank,
+	input  wire [1:0]  src_bank_id,
 
-	// DDRAM master (write-only)
 	output wire        DDRAM_CLK,
 	input  wire        DDRAM_BUSY,
 	output reg   [7:0] DDRAM_BURSTCNT,
@@ -72,7 +68,7 @@ module fabric_ddr_writer #(
 	output wire        busy,
 	output reg         frame_done,
 	output reg  [28:0] dbg_seq,
-	output reg         dbg_last_bank,
+	output reg  [1:0]  dbg_last_bank,
 	output reg  [2:0]  dbg_state
 );
 
@@ -89,13 +85,12 @@ module fabric_ddr_writer #(
 	localparam [2:0] ST_DOORBELL = 3'd3;
 
 	reg [2:0]  state;
-	reg        bank_r;
+	reg [1:0]  bank_r;
 	reg [28:0] seq_r;
-	reg [31:0] q_left;     // payload qwords still to accept from source
+	reg [31:0] q_left;
 	reg [28:0] wr_addr_q;
 	reg [15:0] drain_cnt;
 
-	// Skid holds one accepted source beat until DDR takes the write.
 	reg        skid_valid;
 	reg [63:0] skid_data;
 
@@ -105,22 +100,20 @@ module fabric_ddr_writer #(
 	assign dbg_state = state;
 
 	wire issue_ok = !DDRAM_BUSY;
-
-	// In IDLE: ready for a frame_start beat.
-	// In RUN: ready when we still need beats and skid can take one this cycle.
 	wire skid_fire = (state == ST_RUN) && skid_valid && issue_ok;
 	assign src_ready =
 		(state == ST_IDLE) ||
 		((state == ST_RUN) && (q_left != 32'd0) && (!skid_valid || skid_fire));
 
-	wire _unused = &{1'b0, DDRAM_DOUT, DDRAM_DOUT_READY};
+	wire _unused = &{1'b0, DDRAM_DOUT, DDRAM_DOUT_READY, NUM_BANKS[31:0]};
 
-	wire [31:0] db_hi = {bank_r, DOORBELL_FORMAT_YUV420P, seq_r};
+	// Product doorbell bank field is 1 bit — publish bank_id[0].
+	wire [31:0] db_hi = {bank_r[0], DOORBELL_FORMAT_YUV420P, seq_r};
 
 	always @(posedge clk) begin
 		if (reset) begin
 			state          <= ST_IDLE;
-			bank_r         <= 1'b0;
+			bank_r         <= 2'd0;
 			seq_r          <= 29'd0;
 			q_left         <= 32'd0;
 			wr_addr_q      <= 29'd0;
@@ -134,7 +127,7 @@ module fabric_ddr_writer #(
 			DDRAM_WE       <= 1'b0;
 			frame_done     <= 1'b0;
 			dbg_seq        <= 29'd0;
-			dbg_last_bank  <= 1'b0;
+			dbg_last_bank  <= 2'd0;
 		end else begin
 			frame_done <= 1'b0;
 			DDRAM_RD   <= 1'b0;
@@ -144,11 +137,10 @@ module fabric_ddr_writer #(
 			ST_IDLE: begin
 				skid_valid <= 1'b0;
 				if (src_valid && src_frame_start && src_ready) begin
-					bank_r     <= src_bank;
+					bank_r     <= src_bank_id;
 					seq_r      <= seq_r + 29'd1;
-					// First beat consumed into skid; remaining = total-1.
 					q_left     <= 32'(FRAME_QWORDS - 1);
-					wr_addr_q  <= BASE_Q + (src_bank ? STRIDE_Q : 29'd0);
+					wr_addr_q  <= BASE_Q + (29'(src_bank_id) * STRIDE_Q);
 					skid_valid <= 1'b1;
 					skid_data  <= src_data;
 					state      <= ST_RUN;
@@ -156,9 +148,6 @@ module fabric_ddr_writer #(
 			end
 
 			ST_RUN: begin
-				// Combinational intent for this cycle:
-				// 1) If skid_fire: issue write from skid.
-				// 2) Source may refill skid if q_left>0 and ready.
 				if (skid_fire) begin
 					DDRAM_ADDR     <= wr_addr_q;
 					DDRAM_BURSTCNT <= 8'd1;
@@ -172,7 +161,6 @@ module fabric_ddr_writer #(
 						q_left     <= q_left - 32'd1;
 					end else begin
 						skid_valid <= 1'b0;
-						// If no more source expected and skid empties → drain.
 						if (q_left == 32'd0) begin
 							drain_cnt <= (WRITE_DRAIN_CYCLES > 0) ?
 							             16'(WRITE_DRAIN_CYCLES) : 16'd0;
@@ -198,7 +186,6 @@ module fabric_ddr_writer #(
 				if (issue_ok) begin
 					DDRAM_ADDR     <= DOORBELL_Q;
 					DDRAM_BURSTCNT <= 8'd1;
-					// DIN[31:0]=magic, DIN[63:32]=hi — matches ddram_frame_rd.
 					DDRAM_DIN      <= {db_hi, DOORBELL_MAGIC};
 					DDRAM_WE       <= 1'b1;
 					frame_done     <= 1'b1;

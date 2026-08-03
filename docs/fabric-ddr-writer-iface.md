@@ -55,3 +55,9 @@ for 720p30 (~5.8% of 90 MHz) if grant share ≥ ~6%.
 
 `ddr720p24ShipAcceptsZeroArmPerPixel` requires `publish_bytes=0` — fabric writer
 is the path that makes that true.
+
+## Parent iomem (2026-08-02)
+
+Option-C `0x30180000` / `0x3047F000` **parent-verified** inside `memmap=513M$511M` reserved window.
+Headroom ≈251.5 MB. Prefer deeper banks/prefetch over cramped layouts. Triple-buffer map constants
+exist (`kPlex720pMapBytes3Bank`); doorbell still 1-bit bank until frame-store widens.

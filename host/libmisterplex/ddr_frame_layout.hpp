@@ -91,6 +91,16 @@ static_assert(kPlex720pYuv420pBytes == 1280 * 720 * 3 / 2,
 constexpr uint32_t kPlex720pYuv420pBankStride = 0x00180000u;
 constexpr uint32_t kPlex720pDdrFramePhysBase = 0x30180000u;
 constexpr uint32_t kPlex720pYuv420pDoorbellPhys = 0x3047F000u;
+// Parent-verified 2026-08-02 on device: cmdline mem=511M memmap=513M$511M
+// reserves 0x1FF00000..0x40000000; /proc/iomem claims nothing in 0x3xxxxxxx.
+// Option-C base/doorbell/end all inside reserved → treat as confirmed free.
+// Headroom doorbell→0x40000000 ≈ 251.5 MB — take triple-buffer/prefetch freely.
+constexpr uint32_t kPlexDdrReservedWindowStart = 0x1FF00000u;
+constexpr uint32_t kPlexDdrReservedWindowEnd = 0x40000000u;
+constexpr uint32_t kPlex720pMapBytes2Bank = 0x00300000u; // 2 * 0x180000
+constexpr uint32_t kPlex720pMapBytes3Bank = 0x00480000u; // 3 * 0x180000
+// Candidate only: base + 3*stride - 0x1000. Not product until bank field >1 bit.
+constexpr uint32_t kPlex720pTripleDoorbellPhys = 0x305FF000u;
 // PLXG — geometry program mailbox, doorbell-relative (see mailbox_abi_spec).
 constexpr uint32_t kDdrFramePlxgOffset = 0x130u;
 constexpr uint32_t kDdrFramePlxgMagic = 0x504C5847u; // "PLXG"

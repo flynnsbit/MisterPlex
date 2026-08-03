@@ -148,6 +148,17 @@ int main() {
     CHECK(kDdrFramePlxgMagic == mailbox_abi::kPlxgMagic);
     CHECK(plxgMailboxPhys(kPlex480pYuv420pDoorbellPhys) == 0x300FF000u + 0x130u);
     CHECK(plxgMailboxPhys(kPlex720pYuv420pDoorbellPhys) == 0x3047F000u + 0x130u);
+
+    // Parent-verified reserved window (2026-08-02 device evidence).
+    CHECK(kPlexDdrReservedWindowStart == 0x1FF00000u);
+    CHECK(kPlexDdrReservedWindowEnd == 0x40000000u);
+    CHECK(kPlex720pDdrFramePhysBase >= kPlexDdrReservedWindowStart);
+    CHECK(kPlex720pYuv420pDoorbellPhys + 0x1000u <= kPlexDdrReservedWindowEnd);
+    CHECK(kPlex720pMapBytes2Bank == 2u * kPlex720pYuv420pBankStride);
+    CHECK(kPlex720pMapBytes3Bank == 3u * kPlex720pYuv420pBankStride);
+    CHECK(kPlex720pDdrFramePhysBase + kPlex720pMapBytes3Bank <= kPlexDdrReservedWindowEnd);
+    CHECK(kPlex720pTripleDoorbellPhys ==
+          kPlex720pDdrFramePhysBase + 3u * kPlex720pYuv420pBankStride - 0x1000u);
     const uint64_t word = encodePlxgGeometryWord(1280, 720, true, true);
     int dw = 0, dh = 0;
     bool en = false, nat = false;

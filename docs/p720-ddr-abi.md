@@ -204,7 +204,7 @@ device wire.
 
 | Unknown | Check that settles it |
 |---------|----------------------|
-| `/dev/mem` 3 MiB map at `0x30180000` legal on live image | Parent: parse `/proc/iomem` + trial map |
+| `/dev/mem` Option-C map at `0x30180000` | **PARENT-VERIFIED 2026-08-02**: `memmap=513M$511M` reserves `0x1FF00000..0x40000000`; Option-C base/doorbell/end inside; `/proc/iomem` unclaimed. Headroom ≈251.5 MB. Triple-buffer map fits. |
 | Copy rate at 1382400 B (not scaled from 449280) | Parent: `ddr_write_bench --len 1382400` |
 | Fabric full-frame read BW vs line-timed DE | Sim or ILA on `ddram_frame_rd` issue rate @720p |
 | CPU headroom with PMS-delivered 720p (no ARM upscale) | Parent soak + `ffprobe` real stream WxH |

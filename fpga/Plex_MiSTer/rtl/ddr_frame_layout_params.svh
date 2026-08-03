@@ -65,5 +65,15 @@ localparam int DDR_FRAME_720P_CHROMA_STRIDE_BYTES = 640;
 localparam int DDR_FRAME_720P_YUV420P_BANK_STRIDE = 32'h0018_0000;
 localparam int DDR_FRAME_720P_PHYS_BASE = 32'h3018_0000;
 localparam int DDR_FRAME_720P_YUV420P_DOORBELL_PHYS = 32'h3047_F000;
+// Parent-verified 2026-08-02: memmap=513M$511M reserves 0x1FF00000..0x40000000;
+// Option-C window unclaimed in /proc/iomem. DDR headroom is abundant.
+localparam int DDR_FRAME_RESERVED_WINDOW_START = 32'h1FF0_0000;
+localparam int DDR_FRAME_RESERVED_WINDOW_END   = 32'h4000_0000;
+// 2-bank product map end (doorbell page + 4KiB) and optional 3-bank map size.
+localparam int DDR_FRAME_720P_MAP_BYTES_2BANK = 32'h0030_0000; // 2*0x180000
+localparam int DDR_FRAME_720P_MAP_BYTES_3BANK = 32'h0048_0000; // 3*0x180000 triple
+// Triple-buffer doorbell candidate (base+3*stride-0x1000) — not product until
+// ddr_frame_store bank field widens beyond 1 bit.
+localparam int DDR_FRAME_720P_TRIPLE_DOORBELL_PHYS = 32'h305F_F000;
 // PLXG geometry mailbox offset from active doorbell (ARM→FPGA program word).
 localparam int DDR_FRAME_PLXG_OFFSET = 32'h130;

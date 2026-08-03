@@ -1291,6 +1291,11 @@ def check_ddr_frame_layout_contract() -> None:
         ("kPlex720pChromaStrideBytes", "DDR_FRAME_720P_CHROMA_STRIDE_BYTES"),
         ("kPlex720pYuv420pBankStride", "DDR_FRAME_720P_YUV420P_BANK_STRIDE"),
         ("kPlex720pDdrFramePhysBase", "DDR_FRAME_720P_PHYS_BASE"),
+        ("kPlexDdrReservedWindowStart", "DDR_FRAME_RESERVED_WINDOW_START"),
+        ("kPlexDdrReservedWindowEnd", "DDR_FRAME_RESERVED_WINDOW_END"),
+        ("kPlex720pMapBytes2Bank", "DDR_FRAME_720P_MAP_BYTES_2BANK"),
+        ("kPlex720pMapBytes3Bank", "DDR_FRAME_720P_MAP_BYTES_3BANK"),
+        ("kPlex720pTripleDoorbellPhys", "DDR_FRAME_720P_TRIPLE_DOORBELL_PHYS"),
         ("kPlex720pYuv420pDoorbellPhys", "DDR_FRAME_720P_YUV420P_DOORBELL_PHYS"),
         ("kDdrFramePlxgOffset", "DDR_FRAME_PLXG_OFFSET"),
     ]

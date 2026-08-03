@@ -1,0 +1,44 @@
+agent=w-mem
+branch=w-mem-720p-abi
+HEAD=cc157a10
+status=LANDED fabric_ddr_writer RTL + Verilator TB
+
+## LANDED (this commit)
+- fpga/Plex_MiSTer/rtl/fabric_ddr_writer.sv
+- tests/rtl/fabric_ddr_writer_tb{,_top}.*
+- tests/unit/test_fabric_ddr_writer_verilator.sh (Makefile wired)
+- docs/fabric-ddr-writer-iface.md (w-clock/w-scaler contract)
+- Plex.qsf: FABRIC_DDR_WRITER commented OFF (no fit impact)
+- docs/p720-ddr-abi.md writer section
+
+## Prior commits (still on branch)
+- a9e377d1 Option-C ABI 0x30180000 / doorbell 0x3047F000
+- 53099243 fabric-owned present plans
+- a7fa4def publish_bytes=0 ship gate
+
+## Evidence (true rc)
+- mutant skip-drain doorbell: true rc=1 (FAIL doorbell before drain fence)
+- restored writer TB: true rc=0
+  OK ... rate_720p24_MBps=33.1776 rate_720p30_MBps=41.472 bus_frac_30=0.0576 outstanding_depth=1 rate_closes=1
+- test_ddr_720p_abi true rc=0
+- test_frame_store_math true rc=0
+- test_rtl_invariants.py true rc=0
+
+## Rate arithmetic (quoted from TB)
+- 720p24: 33.18 MB/s = 4.6% of 90 MHz * 8B
+- 720p30: 41.47 MB/s = 5.8% of 90 MHz * 8B
+- Combined with scanout read upper ~17% — closes IF arbiter grant ≥ ~6%
+- Shared-bus grant on device: UNKNOWN — parent must measure
+
+## ARM ms removed by this path
+- When producer is fabric and publish_bytes=0: known_ms_removed_floor=25.099
+  (from test_ddr_720p_abi FPGA_WRITTEN_BANKS) vs residual_after_decode=0.594
+- Actual fabric decode assist: NOT THIS MODULE — writer only stores banks
+
+## Not done
+- Arbiter 3rd master / Plex.sv instantiate (macro still OFF)
+- Device /proc/iomem confirm Option-C base free
+- Real drain-cycle calibration on f2sdram (WRITE_DRAIN_CYCLES=16 default)
+
+## Blocker for parent
+- Confirm 0x30180000 free in /proc/iomem; wire arbiter when ready for fit
