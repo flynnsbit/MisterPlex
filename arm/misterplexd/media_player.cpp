@@ -11,7 +11,10 @@
 #include "libmisterplex/idle_screen.hpp"
 #include "libmisterplex/last_frame_latch.hpp"
 #include "libmisterplex/osd_menu.hpp"
+#include "libmisterplex/overlay_canvas.hpp"
+#include "libmisterplex/mister_video_mode.hpp"
 #include "libmisterplex/pms_delivery_geom.hpp"
+#include "libmisterplex/plxg_record.hpp"
 #include "libmisterplex/plxg_q5_aspect_cadence.hpp"
 #include "libmisterplex/h264_fabric_stream_gate.hpp"
 #include "libmisterplex/h264_nal_dispatch.hpp"
@@ -894,15 +897,24 @@ void MediaPlayer::paintIdle() {
     const IdleMode m = idleMode();
     if (m == IdleMode::LastFrame)
         return;
-    const int w = 320;
-    const int h = 240;
-    std::vector<uint8_t> buf(static_cast<size_t>(w) * h * 3);
-    renderIdleRgb24(buf.data(), w, h, m, idlePhase_.load());
+
+    // SIZE A = content/bank canvas. SIZE B = HDMI glass (ini). Parent FACT:
+    // glass is already video_mode=0 1280x720@60; authoring must track bank DE,
+    // not glass alone (glass-only would paint 1280 chrome into a 624 bank today).
+    int couple_w = 0, couple_h = 0;
+    // applied_* awaits status telem from w-mem B20 freeze — 0 until that lands.
+    const int applied_w = 0, applied_h = 0;
+
+    // fb0 path stays 320x240 (legacy RGB console); DDR bank uses resolved canvas.
+    const int fbW = 320;
+    const int fbH = 240;
+    std::vector<uint8_t> buf(static_cast<size_t>(fbW) * fbH * 3);
+    renderIdleRgb24(buf.data(), fbW, fbH, m, idlePhase_.load());
     // Composite F12-inert / transport notice onto idle RGB (HDMI-visible without logs).
-    overlay_.renderRgb24(buf.data(), w, h);
+    overlay_.renderRgb24(buf.data(), fbW, fbH);
 
     std::lock_guard<std::mutex> lk(presentMu_);
-    if (fb_.ok() && !fb_.blitRgb24(buf.data(), w, h))
+    if (fb_.ok() && !fb_.blitRgb24(buf.data(), fbW, fbH))
         log("media: idle fb0 blit failed");
     // F1 latches the last frame written, so the frame store must be repainted too.
     // C3 frame-store DDR is YUV-only, so encode the same idle renderer as I420
@@ -919,10 +931,29 @@ void MediaPlayer::paintIdle() {
         }
     }
     if (fpga_.ok()) {
+        const auto couple = fpga_.lastPublishCouple();
+        if (couple.valid) {
+            unpackPlxgQ2(couple.plxg_q[2], &couple_w, &couple_h, nullptr, nullptr);
+        }
+        const OverlayCanvas canvas =
+            resolveOverlayCanvas(applied_w, applied_h, couple_w, couple_h);
+        static const MisterVideoMode kGlass = [] {
+            if (const char* p = std::getenv("MISTERPLEX_MISTER_INI")) {
+                if (p[0] != '\0')
+                    return loadMisterVideoModeFromIni(p);
+            }
+            return loadMisterVideoMode();
+        }();
+
         bool ok = false;
         std::string ddrErr;
         if (useDdrF1_) {
-            const DdrFrameGeometry g = plex480pDdrFrameGeometry();
+            // Prefer couple/applied DE; floor480 while FRAME_W/H product is 640/480.
+            const DdrFrameGeometry g =
+                (canvas.width == plex480pDdrFrameGeometry().coded_width.get() &&
+                 canvas.height == plex480pDdrFrameGeometry().coded_height.get())
+                    ? plex480pDdrFrameGeometry()
+                    : makeDdrFrameGeometry(canvas.width, canvas.height);
             const int cw = g.coded_width.get();
             const int ch = g.coded_height.get();
             const DdrFrameLayout layout =
@@ -985,8 +1016,13 @@ void MediaPlayer::paintIdle() {
             // is briefly out of user mode right after a heal/reload and the first
             // paint legitimately fails.
             idleWarned_.store(false);
-            if (!idleLogged_.exchange(true))
-                log("media: idle screen painted (mode=" + std::to_string(static_cast<int>(m)) + ")");
+            if (!idleLogged_.exchange(true)) {
+                const int bodyScale = overlayBodyScaleForCanvas(canvas.height);
+                log("media: idle overlay" + overlayCanvasLogTag(canvas, kGlass) +
+                    " font=12x16 scale=" + std::to_string(bodyScale) +
+                    " chrome=0 plane=0 idle_mode=" +
+                    std::to_string(static_cast<int>(m)));
+            }
         }
     }
 }

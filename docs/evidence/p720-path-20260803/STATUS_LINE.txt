@@ -1,1 +1,1 @@
-w-path 6412f604 mode-report DONE; DEFAULT_ASSUMED=ini; use_frame_store0=force-bars-off; checks for parent
+w-path content-720 FACT2: glass already 720; mode0 table fixed; overlay canvas L0; NOT retired
