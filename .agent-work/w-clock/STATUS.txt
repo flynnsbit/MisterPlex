@@ -1,4 +1,4 @@
-w-clock STATUS tip=30bd46cd
-B15 DONE: runtime content_fps; framecount 4@24/5@30; PLXG field spec for w-mem
-Recommend PLXG not fixed-30. Idle default 30 under BEAM_960 until PLXG live.
-V705 STA UNKNOWN. Overclock 20 ship. NO fit. NO device.
+w-clock STATUS tip=eb226565
+ABI#2 q5 fps consumer DONE. No invent 30. Framecount green+red.
+Await w-mem q5 latch + B16 atomic promote wire-up.
+V705 STA UNKNOWN. NO fit. NO device.
