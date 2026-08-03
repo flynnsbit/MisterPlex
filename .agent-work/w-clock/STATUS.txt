@@ -1,4 +1,4 @@
-w-clock STATUS tip=eb226565
-ABI#2 q5 fps consumer DONE. No invent 30. Framecount green+red.
-Await w-mem q5 latch + B16 atomic promote wire-up.
-V705 STA UNKNOWN. NO fit. NO device.
+w-clock STATUS tip=50cc3e11
+C7 port contract + ascal blanking DONE.
+V705 STA UNKNOWN. B2 re-scope note for fitgate.
+NO fit. NO device.
