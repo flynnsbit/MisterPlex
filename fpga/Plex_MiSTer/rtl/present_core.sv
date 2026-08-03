@@ -50,6 +50,20 @@ module present_core #(
 	input  wire [10:0] win_h_de,
 	input  wire [10:0] win_v_de,
 
+	// Runtime DDR bank geometry (PLXW). geom_enable=0 → legacy CODED 624 path.
+	// Sized for 1280×720 (y_stride bytes). Safe default = all zero / disable.
+	input  wire        geom_enable,
+	input  wire [10:0] geom_coded_w,
+	input  wire [10:0] geom_coded_h,
+	input  wire [11:0] geom_y_stride,
+	input  wire [10:0] geom_chroma_stride,
+	input  wire [10:0] geom_display_w,
+	input  wire [10:0] geom_display_h,
+	input  wire [10:0] geom_present_x,
+	input  wire [10:0] geom_present_y,
+	input  wire [10:0] geom_crop_left,
+	input  wire [10:0] geom_crop_top,
+
 	// frame_store write (from ingest)
 	input  wire        fs_wr_en,
 	input  wire [15:0] fs_wr_pixel,
@@ -206,9 +220,8 @@ module present_core #(
 	// Identity hc→read_hc kept at this layer for source-lock + DE_LAG docs;
 	// present_content_window also treats hc as free-running (no blank force-0).
 	wire [9:0] read_hc = hc;
-	// Window emits 11b store coords (STORE 1280×720). Current ddr_frame_store
-	// ports are clog2(FRAME_*) — slice LSBs for product 480p FRAME 640×480.
-	// w-mem 720p fit raises FRAME_/CODED_ and drops the slice.
+	// Window emits full store coords (STORE 1280×720). ddr_frame_store rd_x/y
+	// accept max(FRAME, MAX_CODED); legacy SDRAM frame_store still gets FRAME slice.
 	localparam int STORE_W_MAX = 1280;
 	localparam int STORE_H_MAX = 720;
 	localparam int WIN_X_W = $clog2(STORE_W_MAX);
@@ -245,6 +258,10 @@ module present_core #(
 		.past_last_row(past_last_row)
 	);
 
+	// Full-width for DDR path (runtime geom / content window up to 1280×720).
+	wire [WIN_X_W-1:0] store_x_full = store_x_win;
+	wire [WIN_Y_W-1:0] store_y_full = store_y_win;
+	// FRAME-sliced for legacy SDRAM frame_store ports.
 	wire [FRAME_X_W-1:0] store_x = store_x_win[FRAME_X_W-1:0];
 	wire [FRAME_Y_W-1:0] store_y = store_y_win[FRAME_Y_W-1:0];
 
@@ -294,12 +311,23 @@ module present_core #(
 		.clk(clk),
 		.clk_ddr(clk_ddr),
 		.reset(reset),
-		.rd_x(store_x),
-		.rd_y(store_y),
+		.rd_x(store_x_full),
+		.rd_y(store_y_full),
 		.rd_active(de_r),
 		.rd_r(fr),
 		.rd_g(fg),
 		.rd_b(fb),
+		.geom_enable(geom_enable),
+		.rt_coded_w(geom_coded_w),
+		.rt_coded_h(geom_coded_h),
+		.rt_y_stride(geom_y_stride),
+		.rt_chroma_stride(geom_chroma_stride),
+		.rt_display_w(geom_display_w),
+		.rt_display_h(geom_display_h),
+		.rt_present_x(geom_present_x),
+		.rt_present_y(geom_present_y),
+		.rt_crop_left(geom_crop_left),
+		.rt_crop_top(geom_crop_top),
 		.start_req(ddr_start_req),
 		.bank_sel(ddr_bank_sel),
 		.status_osd(ddr_status_osd),

@@ -1,8 +1,14 @@
 // HPS-DDR-backed YUV420p frame store.
 //
-// The ARM writes planar YUV420 frames into two HPS DDR banks using the layout
-// from host/libmisterplex/ddr_frame_layout.hpp. The FPGA reads Y, U, and V
-// source lines directly from HPS DDR into bank-tagged M10K line buffers.
+// Reads planar YUV420 from HPS DDR banks into bank-tagged M10K line buffers.
+// Legacy defaults match host/libmisterplex/ddr_frame_layout.hpp (624×480).
+// Runtime geometry (PLXW / geom_enable) sizes the *fetch* for native content
+// up to MAX_CODED 1280×720 (one M10K per luma line). Line RAMs are synthesis-
+// sized to the max; active line qwords/pitch come from registers.
+//
+// geom_enable=0 (reset): bit-exact parameter path (CODED_W/H, stride=CODED_W).
+// Bank phys base/stride remain parameters — Option-C (w-mem) is a param set,
+// not a unilateral redefine of the bank contract here.
 
 module ddr_frame_store #(
 	parameter int FRAME_W = 640,
@@ -10,6 +16,9 @@ module ddr_frame_store #(
 	parameter int FRAME_STRIDE = FRAME_W,
 	parameter int CODED_W = FRAME_W,
 	parameter int CODED_H = FRAME_H,
+	// Max content the linebufs/datapath can address (720p-native).
+	parameter int MAX_CODED_W = 1280,
+	parameter int MAX_CODED_H = 720,
 	parameter int DISPLAY_W = FRAME_W,
 	parameter int DISPLAY_H = FRAME_H,
 	parameter int CROP_LEFT = 0,
@@ -52,12 +61,28 @@ module ddr_frame_store #(
 	input  wire        clk_ddr,
 	input  wire        reset,
 
-	input  wire [$clog2(FRAME_W)-1:0] rd_x,
-	input  wire [$clog2(FRAME_H)-1:0] rd_y,
+	// rd_x/y: presentation or content coords (up to max(FRAME, MAX_CODED)).
+	input  wire [$clog2((FRAME_W > MAX_CODED_W) ? FRAME_W : MAX_CODED_W)-1:0] rd_x,
+	input  wire [$clog2((FRAME_H > MAX_CODED_H) ? FRAME_H : MAX_CODED_H)-1:0] rd_y,
 	input  wire        rd_active,
 	output reg  [7:0]  rd_r,
 	output reg  [7:0]  rd_g,
 	output reg  [7:0]  rd_b,
+
+	// Runtime bank geometry (PLXW). geom_enable=0 → parameter legacy path.
+	// Callers must tie these (product: Plex/present_core; TBs: 0).
+	// No port defaults — Verilator was ignoring C++ drivers when defaults existed.
+	input  wire        geom_enable,
+	input  wire [10:0] rt_coded_w,
+	input  wire [10:0] rt_coded_h,
+	input  wire [11:0] rt_y_stride,
+	input  wire [10:0] rt_chroma_stride,
+	input  wire [10:0] rt_display_w,
+	input  wire [10:0] rt_display_h,
+	input  wire [10:0] rt_present_x,
+	input  wire [10:0] rt_present_y,
+	input  wire [10:0] rt_crop_left,
+	input  wire [10:0] rt_crop_top,
 
 	input  wire        start_req,
 	input  wire        bank_sel,
@@ -87,25 +112,32 @@ module ddr_frame_store #(
 	output reg         doorbell_ok,
 	output wire  [7:0] debug_state
 );
-	localparam int X_W = $clog2(FRAME_W);
-	localparam int Y_W = $clog2(FRAME_H);
-	localparam int CODED_X_W = $clog2(CODED_W);
-	localparam int CODED_Y_W = $clog2(CODED_H);
-	localparam int Y_LINE_QWORDS = CODED_W / 8;
+	// Port/scan domain: cover presentation FRAME and max content.
+	localparam int RD_W_MAX = (FRAME_W > MAX_CODED_W) ? FRAME_W : MAX_CODED_W;
+	localparam int RD_H_MAX = (FRAME_H > MAX_CODED_H) ? FRAME_H : MAX_CODED_H;
+	localparam int X_W = $clog2(RD_W_MAX);
+	localparam int Y_W = $clog2(RD_H_MAX);
+	// Line RAM physical size = max coded line (1280 → 160 qwords = 1 M10K @64b).
+	localparam int Y_LINE_QWORDS_MAX = MAX_CODED_W / 8;   // 160
+	localparam int C_LINE_QWORDS_MAX = MAX_CODED_W / 16;  // 80
+	localparam int Y_QW_AW = $clog2(Y_LINE_QWORDS_MAX);
+	localparam int C_QW_AW = $clog2(C_LINE_QWORDS_MAX);
+	// Legacy parameter path (geom_enable=0) — keep names used below.
+	localparam int CODED_X_W = $clog2(MAX_CODED_W);
+	localparam int CODED_Y_W = $clog2(MAX_CODED_H);
+	localparam int Y_LINE_QWORDS = CODED_W / 8;           // legacy default fetch
 	localparam int C_LINE_QWORDS = CODED_W / 16;
-	localparam int Y_QW_AW = $clog2(Y_LINE_QWORDS);
-	localparam int C_QW_AW = $clog2(C_LINE_QWORDS);
 	localparam int LINE_SLOTS = LINE_COUNT * 2;
 	localparam int SLOT_W = $clog2(LINE_SLOTS);
 	localparam [SLOT_W-1:0] SECOND_SET_BASE = SLOT_W'(LINE_COUNT);
 	localparam [X_W-1:0] LAST_X = X_W'(FRAME_W - 1);
 	localparam [Y_W-1:0] LAST_Y = Y_W'(FRAME_H - 1);
-	localparam [X_W-1:0] PRESENT_X_L = X_W'(PRESENT_X);
-	localparam [Y_W-1:0] PRESENT_Y_L = Y_W'(PRESENT_Y);
-	localparam [X_W-1:0] PRESENT_END_X = X_W'(PRESENT_X + DISPLAY_W);
-	localparam [Y_W-1:0] PRESENT_END_Y = Y_W'(PRESENT_Y + DISPLAY_H);
-	localparam [CODED_X_W-1:0] CROP_LEFT_L = CODED_X_W'(CROP_LEFT);
-	localparam [CODED_Y_W-1:0] CROP_TOP_L = CODED_Y_W'(CROP_TOP);
+	localparam [X_W-1:0] LEG_PRESENT_X = X_W'(PRESENT_X);
+	localparam [Y_W-1:0] LEG_PRESENT_Y = Y_W'(PRESENT_Y);
+	localparam [X_W-1:0] LEG_PRESENT_END_X = X_W'(PRESENT_X + DISPLAY_W);
+	localparam [Y_W-1:0] LEG_PRESENT_END_Y = Y_W'(PRESENT_Y + DISPLAY_H);
+	localparam [CODED_X_W-1:0] LEG_CROP_LEFT = CODED_X_W'(CROP_LEFT);
+	localparam [CODED_Y_W-1:0] LEG_CROP_TOP = CODED_Y_W'(CROP_TOP);
 	localparam [28:0] BASE_W0 = PHYS_BASE[31:3];
 	localparam [28:0] HPS_BANK_STRIDE_QWORDS = 29'(HPS_BANK_STRIDE_BYTES / 8);
 	localparam [28:0] BASE_W1 = PHYS_BASE[31:3] + HPS_BANK_STRIDE_QWORDS;
@@ -115,13 +147,129 @@ module ddr_frame_store #(
 	localparam [28:0] SDRAM_MAILBOX_W = SDRAM_MAILBOX_PHYS[31:3];
 	localparam [28:0] FRAME_MAILBOX_W = FRAME_MAILBOX_PHYS[31:3];
 	localparam [28:0] BANK_MAILBOX_W  = BANK_MAILBOX_PHYS[31:3];
-	localparam [28:0] Y_PLANE_QWORDS = 29'((CODED_W * CODED_H) / 8);
-	localparam [28:0] C_PLANE_QWORDS = 29'((CODED_W * CODED_H) / 32);
-	localparam [28:0] U_PLANE_BASE = Y_PLANE_QWORDS;
-	localparam [28:0] V_PLANE_BASE = Y_PLANE_QWORDS + C_PLANE_QWORDS;
-	localparam [28:0] Y_LINE_QWORDS_W = 29'(Y_LINE_QWORDS);
-	localparam [28:0] C_LINE_QWORDS_W = 29'(C_LINE_QWORDS);
+	// Legacy plane layout (stride == CODED_W).
+	localparam [28:0] LEG_Y_PLANE_QWORDS = 29'((CODED_W * CODED_H) / 8);
+	localparam [28:0] LEG_C_PLANE_QWORDS = 29'((CODED_W * CODED_H) / 32);
+	localparam [28:0] LEG_U_PLANE_BASE = LEG_Y_PLANE_QWORDS;
+	localparam [28:0] LEG_V_PLANE_BASE = LEG_Y_PLANE_QWORDS + LEG_C_PLANE_QWORDS;
+	localparam [28:0] LEG_Y_LINE_QWORDS_W = 29'(Y_LINE_QWORDS);
+	localparam [28:0] LEG_C_LINE_QWORDS_W = 29'(C_LINE_QWORDS);
+	// Back-compat aliases (fault defines / older refs).
+	localparam [28:0] Y_PLANE_QWORDS = LEG_Y_PLANE_QWORDS;
+	localparam [28:0] C_PLANE_QWORDS = LEG_C_PLANE_QWORDS;
+	localparam [28:0] U_PLANE_BASE = LEG_U_PLANE_BASE;
+	localparam [28:0] V_PLANE_BASE = LEG_V_PLANE_BASE;
+	localparam [28:0] Y_LINE_QWORDS_W = LEG_Y_LINE_QWORDS_W;
+	localparam [28:0] C_LINE_QWORDS_W = LEG_C_LINE_QWORDS_W;
 	localparam [Y_QW_AW:0] DDR_BURST_MAX_QWORDS = (Y_QW_AW+1)'(DDR_BURST_MAX);
+
+	// ---- Runtime effective geometry (registered on clk; safe default = legacy) ----
+	reg        geom_en_r;
+	reg [10:0] eff_coded_w;
+	reg [10:0] eff_coded_h;
+	reg [11:0] eff_y_stride;
+	reg [10:0] eff_c_stride;
+	reg [10:0] eff_disp_w;
+	reg [10:0] eff_disp_h;
+	reg [10:0] eff_pres_x;
+	reg [10:0] eff_pres_y;
+	reg [10:0] eff_crop_l;
+	reg [10:0] eff_crop_t;
+	// Derived (qwords / plane bases) — recomputed with regs.
+	reg [8:0]  eff_y_fetch_qw;   // ceil active luma line fetch (coded_w/8)
+	reg [7:0]  eff_c_fetch_qw;   // coded_w/16
+	reg [8:0]  eff_y_pitch_qw;   // y_stride/8
+	reg [7:0]  eff_c_pitch_qw;   // chroma_stride/8
+	reg [28:0] eff_u_base_qw;
+	reg [28:0] eff_v_base_qw;
+
+	wire [10:0] rt_cw_nz = (rt_coded_w == 11'd0) ? 11'(CODED_W) : rt_coded_w;
+	wire [10:0] rt_ch_nz = (rt_coded_h == 11'd0) ? 11'(CODED_H) : rt_coded_h;
+	wire [11:0] rt_ys_nz = (rt_y_stride == 12'd0) ? 12'(CODED_W) : rt_y_stride;
+	wire [10:0] rt_cs_nz = (rt_chroma_stride == 11'd0) ? 11'(CODED_W/2) : rt_chroma_stride;
+	wire [10:0] rt_dw_nz = (rt_display_w == 11'd0) ? rt_cw_nz : rt_display_w;
+	wire [10:0] rt_dh_nz = (rt_display_h == 11'd0) ? rt_ch_nz : rt_display_h;
+
+	// Clamp coded to MAX so line RAM addr never overflows.
+	wire [10:0] rt_cw_cl = (rt_cw_nz > 11'(MAX_CODED_W)) ? 11'(MAX_CODED_W) : rt_cw_nz;
+	wire [10:0] rt_ch_cl = (rt_ch_nz > 11'(MAX_CODED_H)) ? 11'(MAX_CODED_H) : rt_ch_nz;
+	wire [11:0] rt_ys_cl = (rt_ys_nz > 12'(MAX_CODED_W)) ? 12'(MAX_CODED_W) : rt_ys_nz;
+	wire [10:0] rt_cs_cl = (rt_cs_nz > 11'(MAX_CODED_W/2)) ? 11'(MAX_CODED_W/2) : rt_cs_nz;
+
+	wire [28:0] rt_y_bytes_qw = ({17'd0, rt_ys_cl} * {18'd0, rt_ch_cl}) >> 3; // (ys*ch)/8
+	wire [28:0] rt_c_bytes_qw = ({18'd0, rt_cs_cl} * {19'd0, rt_ch_cl[10:1]}) >> 3; // (cs*ch/2)/8
+
+	// FAULT: ignore geom_enable (always legacy pitch) — red twin for runtime-stride gate.
+`ifdef DDR_FRAME_STORE_FAULT_IGNORE_GEOM
+	wire geom_enable_eff = 1'b0;
+`else
+	wire geom_enable_eff = geom_enable;
+`endif
+
+	always @(posedge clk) begin
+		if (reset) begin
+			geom_en_r      <= 1'b0;
+			eff_coded_w    <= 11'(CODED_W);
+			eff_coded_h    <= 11'(CODED_H);
+			eff_y_stride   <= 12'(CODED_W);
+			eff_c_stride   <= 11'(CODED_W/2);
+			eff_disp_w     <= 11'(DISPLAY_W);
+			eff_disp_h     <= 11'(DISPLAY_H);
+			eff_pres_x     <= 11'(PRESENT_X);
+			eff_pres_y     <= 11'(PRESENT_Y);
+			eff_crop_l     <= 11'(CROP_LEFT);
+			eff_crop_t     <= 11'(CROP_TOP);
+			eff_y_fetch_qw <= 9'(Y_LINE_QWORDS);
+			eff_c_fetch_qw <= 8'(C_LINE_QWORDS);
+			eff_y_pitch_qw <= 9'(Y_LINE_QWORDS);
+			eff_c_pitch_qw <= 8'(C_LINE_QWORDS);
+			eff_u_base_qw  <= LEG_U_PLANE_BASE;
+			eff_v_base_qw  <= LEG_V_PLANE_BASE;
+		end else if (!geom_enable_eff) begin
+			geom_en_r      <= 1'b0;
+			eff_coded_w    <= 11'(CODED_W);
+			eff_coded_h    <= 11'(CODED_H);
+			eff_y_stride   <= 12'(CODED_W);
+			eff_c_stride   <= 11'(CODED_W/2);
+			eff_disp_w     <= 11'(DISPLAY_W);
+			eff_disp_h     <= 11'(DISPLAY_H);
+			eff_pres_x     <= 11'(PRESENT_X);
+			eff_pres_y     <= 11'(PRESENT_Y);
+			eff_crop_l     <= 11'(CROP_LEFT);
+			eff_crop_t     <= 11'(CROP_TOP);
+			eff_y_fetch_qw <= 9'(Y_LINE_QWORDS);
+			eff_c_fetch_qw <= 8'(C_LINE_QWORDS);
+			eff_y_pitch_qw <= 9'(Y_LINE_QWORDS);
+			eff_c_pitch_qw <= 8'(C_LINE_QWORDS);
+			eff_u_base_qw  <= LEG_U_PLANE_BASE;
+			eff_v_base_qw  <= LEG_V_PLANE_BASE;
+		end else begin
+			geom_en_r      <= 1'b1;
+			eff_coded_w    <= rt_cw_cl;
+			eff_coded_h    <= rt_ch_cl;
+			eff_y_stride   <= rt_ys_cl;
+			eff_c_stride   <= rt_cs_cl;
+			eff_disp_w     <= rt_dw_nz;
+			eff_disp_h     <= rt_dh_nz;
+			eff_pres_x     <= rt_present_x;
+			eff_pres_y     <= rt_present_y;
+			eff_crop_l     <= rt_crop_left;
+			eff_crop_t     <= rt_crop_top;
+			eff_y_fetch_qw <= rt_cw_cl[10:3]; // coded_w/8 (require multiple of 8)
+			eff_c_fetch_qw <= rt_cw_cl[10:4]; // coded_w/16
+			eff_y_pitch_qw <= rt_ys_cl[11:3]; // stride/8
+			eff_c_pitch_qw <= rt_cs_cl[10:3];
+			eff_u_base_qw  <= rt_y_bytes_qw;
+			eff_v_base_qw  <= rt_y_bytes_qw + rt_c_bytes_qw;
+		end
+	end
+
+	wire [X_W-1:0] PRESENT_X_L = X_W'(eff_pres_x);
+	wire [Y_W-1:0] PRESENT_Y_L = Y_W'(eff_pres_y);
+	wire [X_W-1:0] PRESENT_END_X = X_W'(eff_pres_x + eff_disp_w);
+	wire [Y_W-1:0] PRESENT_END_Y = Y_W'(eff_pres_y + eff_disp_h);
+	wire [CODED_X_W-1:0] CROP_LEFT_L = CODED_X_W'(eff_crop_l);
+	wire [CODED_Y_W-1:0] CROP_TOP_L = CODED_Y_W'(eff_crop_t);
 	localparam [31:0] MAGIC = 32'h504C_584B;
 	localparam [31:0] MAGIC_S = 32'h504C_5853;
 	localparam [31:0] MAGIC_I = 32'h504C_5849;
@@ -194,15 +342,16 @@ module ddr_frame_store #(
 	genvar li;
 	generate
 		for (li = 0; li < LINE_SLOTS; li = li + 1) begin : gen_line
-			line_buf_ram #(.WIDTH(Y_LINE_QWORDS), .AW(Y_QW_AW), .DATA_W(64)) yram (
+			// Physical WIDTH = max line; active fetch length is eff_*_fetch_qw.
+			line_buf_ram #(.WIDTH(Y_LINE_QWORDS_MAX), .AW(Y_QW_AW), .DATA_W(64)) yram (
 				.wr_clk(clk_ddr), .wr_en(y_wr[li]), .wr_addr(y_wr_addr), .wr_data(y_wr_data),
 				.rd_clk(clk), .rd_addr(y_rd_addr), .rd_data(y_q[li])
 			);
-			line_buf_ram #(.WIDTH(C_LINE_QWORDS), .AW(C_QW_AW), .DATA_W(64)) uram (
+			line_buf_ram #(.WIDTH(C_LINE_QWORDS_MAX), .AW(C_QW_AW), .DATA_W(64)) uram (
 				.wr_clk(clk_ddr), .wr_en(u_wr[li]), .wr_addr(c_wr_addr), .wr_data(u_wr_data),
 				.rd_clk(clk), .rd_addr(c_rd_addr), .rd_data(u_q[li])
 			);
-			line_buf_ram #(.WIDTH(C_LINE_QWORDS), .AW(C_QW_AW), .DATA_W(64)) vram (
+			line_buf_ram #(.WIDTH(C_LINE_QWORDS_MAX), .AW(C_QW_AW), .DATA_W(64)) vram (
 				.wr_clk(clk_ddr), .wr_en(v_wr[li]), .wr_addr(c_wr_addr), .wr_data(v_wr_data),
 				.rd_clk(clk), .rd_addr(c_rd_addr), .rd_data(v_q[li])
 			);
@@ -563,12 +712,15 @@ module ddr_frame_store #(
 		.rd_clk(clk_ddr), .rd_reset(reset_ddr), .rd_en(cmd_pop), .rd_data(cmd_rdata), .rd_empty(cmd_empty)
 	);
 
-	function automatic [Y_W-1:0] clamp_ahead(input [Y_W-1:0] base, input integer ahead);
+	// max_h = effective coded height (legacy FRAME_H/CODED_H when geom off).
+	function automatic [Y_W-1:0] clamp_ahead(input [Y_W-1:0] base, input integer ahead, input integer max_h);
 		integer sum;
+		integer last;
 		begin
 			sum = {{(32-Y_W){1'b0}}, base};
 			sum = sum + ahead;
-			clamp_ahead = (sum >= FRAME_H) ? LAST_Y : sum[Y_W-1:0];
+			last = (max_h > 0) ? (max_h - 1) : 0;
+			clamp_ahead = (sum >= max_h) ? Y_W'(last) : sum[Y_W-1:0];
 		end
 	endfunction
 
@@ -734,18 +886,65 @@ module ddr_frame_store #(
 	reg [Y_QW_AW:0] qwords_remaining;
 	reg [7:0] imbox_cmd_seq;
 	reg [15:0] imbox_seq;
+	// Geometry is session-static (programmed before play). Two-flop into clk_ddr
+	// for fill address math; pixel path stays on clk with eff_*.
+	reg [8:0]  d_y_fetch_qw, d_y_pitch_qw;
+	reg [7:0]  d_c_fetch_qw, d_c_pitch_qw;
+	reg [28:0] d_u_base_qw, d_v_base_qw;
+	reg [10:0] d_coded_h;
+	reg [8:0]  d_y_fetch_qw_m, d_y_pitch_qw_m;
+	reg [7:0]  d_c_fetch_qw_m, d_c_pitch_qw_m;
+	reg [28:0] d_u_base_qw_m, d_v_base_qw_m;
+	reg [10:0] d_coded_h_m;
+	always @(posedge clk_ddr) begin
+		if (reset_ddr) begin
+			d_y_fetch_qw_m <= 9'(Y_LINE_QWORDS);
+			d_c_fetch_qw_m <= 8'(C_LINE_QWORDS);
+			d_y_pitch_qw_m <= 9'(Y_LINE_QWORDS);
+			d_c_pitch_qw_m <= 8'(C_LINE_QWORDS);
+			d_u_base_qw_m  <= LEG_U_PLANE_BASE;
+			d_v_base_qw_m  <= LEG_V_PLANE_BASE;
+			d_coded_h_m    <= 11'(CODED_H);
+			d_y_fetch_qw   <= 9'(Y_LINE_QWORDS);
+			d_c_fetch_qw   <= 8'(C_LINE_QWORDS);
+			d_y_pitch_qw   <= 9'(Y_LINE_QWORDS);
+			d_c_pitch_qw   <= 8'(C_LINE_QWORDS);
+			d_u_base_qw    <= LEG_U_PLANE_BASE;
+			d_v_base_qw    <= LEG_V_PLANE_BASE;
+			d_coded_h      <= 11'(CODED_H);
+		end else begin
+			d_y_fetch_qw_m <= eff_y_fetch_qw;
+			d_c_fetch_qw_m <= eff_c_fetch_qw;
+			d_y_pitch_qw_m <= eff_y_pitch_qw;
+			d_c_pitch_qw_m <= eff_c_pitch_qw;
+			d_u_base_qw_m  <= eff_u_base_qw;
+			d_v_base_qw_m  <= eff_v_base_qw;
+			d_coded_h_m    <= eff_coded_h;
+			d_y_fetch_qw   <= d_y_fetch_qw_m;
+			d_c_fetch_qw   <= d_c_fetch_qw_m;
+			d_y_pitch_qw   <= d_y_pitch_qw_m;
+			d_c_pitch_qw   <= d_c_pitch_qw_m;
+			d_u_base_qw    <= d_u_base_qw_m;
+			d_v_base_qw    <= d_v_base_qw_m;
+			d_coded_h      <= d_coded_h_m;
+		end
+	end
+
 	wire [28:0] fill_bank_base = fill_bank ? BASE_W1 : BASE_W0;
-	wire [28:0] fill_y_qword = {{(29-Y_W){1'b0}}, fill_y} * Y_LINE_QWORDS_W;
+	// Pitch from runtime y_stride/chroma_stride (legacy: pitch == fetch == CODED_W/8).
+	wire [28:0] y_pitch_qw_w = {20'd0, d_y_pitch_qw};
+	wire [28:0] c_pitch_qw_w = {21'd0, d_c_pitch_qw};
+	wire [28:0] fill_y_qword = {{(29-Y_W){1'b0}}, fill_y} * y_pitch_qw_w;
 `ifdef DDR_FRAME_STORE_FAULT_CHROMA_LUMA_STRIDE
-	wire [28:0] fill_cy_qword = {{(30-Y_W){1'b0}}, fill_cy} * Y_LINE_QWORDS_W;
+	wire [28:0] fill_cy_qword = {{(30-Y_W){1'b0}}, fill_cy} * y_pitch_qw_w;
 `else
-	wire [28:0] fill_cy_qword = {{(30-Y_W){1'b0}}, fill_cy} * C_LINE_QWORDS_W;
+	wire [28:0] fill_cy_qword = {{(30-Y_W){1'b0}}, fill_cy} * c_pitch_qw_w;
 `endif
 	wire [28:0] fill_qword_y = {{(29-Y_QW_AW){1'b0}}, fill_qword[Y_QW_AW-1:0]};
 	wire [28:0] fill_qword_c = {{(29-C_QW_AW){1'b0}}, fill_qword[C_QW_AW-1:0]};
 	wire [28:0] y_addr = fill_bank_base + fill_y_qword + fill_qword_y;
-	wire [28:0] u_addr = fill_bank_base + U_PLANE_BASE + fill_cy_qword + fill_qword_c;
-	wire [28:0] v_addr = fill_bank_base + V_PLANE_BASE + fill_cy_qword + fill_qword_c;
+	wire [28:0] u_addr = fill_bank_base + d_u_base_qw + fill_cy_qword + fill_qword_c;
+	wire [28:0] v_addr = fill_bank_base + d_v_base_qw + fill_cy_qword + fill_qword_c;
 `ifdef DDR_FRAME_STORE_FAULT_SWAP_UV_READ
 	wire [28:0] chroma_addr = fill_plane_v ? u_addr : v_addr;
 `else
@@ -908,7 +1107,7 @@ module ddr_frame_store #(
 			want_y_gray_s1 <= want_y_gray;
 			want_y_gray_s2 <= want_y_gray_s1;
 			for (ti = 0; ti < LINE_COUNT; ti = ti + 1)
-				desired_y_r[ti] <= clamp_ahead(y_gray2bin(want_y_gray_s2), ti);
+				desired_y_r[ti] <= clamp_ahead(y_gray2bin(want_y_gray_s2), ti, integer'(d_coded_h));
 
 			start_d1 <= start_req;
 			start_d2 <= start_d1;
@@ -1063,13 +1262,13 @@ module ddr_frame_store #(
 							fill_y <= sched_y;
 							y_valid[sched_idx] <= 1'b0;
 							y_bank[sched_idx] <= sched_bank;
-							qwords_remaining <= Y_LINE_QWORDS[Y_QW_AW:0];
+							qwords_remaining <= d_y_fetch_qw[Y_QW_AW:0]; // ddr-domain y fetch
 							fill_is_chroma <= 1'b0;
 						end else begin
 							fill_cy <= sched_cy;
 							c_valid[sched_idx] <= 1'b0;
 							c_bank[sched_idx] <= sched_bank;
-							qwords_remaining <= C_LINE_QWORDS[Y_QW_AW:0];
+							qwords_remaining <= {{(Y_QW_AW+1-8){1'b0}}, d_c_fetch_qw}; // ddr-domain c fetch
 							fill_is_chroma <= 1'b1;
 						end
 						state_ddr <= S_LINE_ISSUE;
@@ -1091,7 +1290,7 @@ module ddr_frame_store #(
 							fill_is_chroma <= 1'b0;
 							fill_plane_v <= 1'b0;
 							fill_qword <= '0;
-							qwords_remaining <= Y_LINE_QWORDS[Y_QW_AW:0];
+							qwords_remaining <= d_y_fetch_qw[Y_QW_AW:0]; // ddr-domain y fetch
 							state_ddr <= S_LINE_ISSUE;
 						end
 					end else if ((swap_pending_d2 && need_c_prep_c) || (has_frame_d2 && need_c_cur_c)) begin
@@ -1112,7 +1311,7 @@ module ddr_frame_store #(
 							fill_is_chroma <= 1'b1;
 							fill_plane_v <= 1'b0;
 							fill_qword <= '0;
-							qwords_remaining <= C_LINE_QWORDS[Y_QW_AW:0];
+							qwords_remaining <= {{(Y_QW_AW+1-8){1'b0}}, d_c_fetch_qw}; // ddr-domain c fetch
 							state_ddr <= S_LINE_ISSUE;
 						end
 					end else if (!poll_pending && poll_div[7:0] == 8'd0 && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
@@ -1186,7 +1385,7 @@ module ddr_frame_store #(
 							if (fill_is_chroma && !fill_plane_v) begin
 								fill_plane_v <= 1'b1;
 								fill_qword <= '0;
-								qwords_remaining <= C_LINE_QWORDS[Y_QW_AW:0];
+								qwords_remaining <= {{(Y_QW_AW+1-8){1'b0}}, d_c_fetch_qw}; // ddr-domain c fetch
 								state_ddr <= S_LINE_ISSUE;
 							end else begin
 								if (fill_is_chroma) begin

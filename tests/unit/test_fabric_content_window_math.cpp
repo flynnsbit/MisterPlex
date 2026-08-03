@@ -80,6 +80,16 @@ size_t yuv420_bytes(int w, int h) {
     return size_t(w) * size_t(h) * 3u / 2u;
 }
 
+// Runtime I420 plane bases (qwords) — mirrors ddr_frame_store eff_u/v_base_qw.
+// u_base_q = (y_stride_bytes * coded_h) / 8
+// c_plane_q = (chroma_stride_bytes * (coded_h/2)) / 8
+// v_base_q = u_base_q + c_plane_q
+int plane_u_base_q(int y_stride, int coded_h) { return (y_stride * coded_h) / 8; }
+int plane_c_q(int c_stride, int coded_h) { return (c_stride * (coded_h / 2)) / 8; }
+int plane_v_base_q(int y_stride, int c_stride, int coded_h) {
+    return plane_u_base_q(y_stride, coded_h) + plane_c_q(c_stride, coded_h);
+}
+
 } // namespace
 
 int main() {
@@ -179,6 +189,38 @@ int main() {
         EXPECT(xs.size() == 1280u && ys.size() == 720u, "720id unique full");
         std::printf("V1_720id unique_x=%zu unique_y=%zu\n", xs.size(), ys.size());
     }
+
+    // --- Runtime stride plane bases (ddr_frame_store geom_enable=1) ---
+    {
+        EXPECT(file_contains("fpga/Plex_MiSTer/rtl/ddr_frame_store.sv", "geom_enable"),
+               "ddr_frame_store exposes geom_enable");
+        EXPECT(file_contains("fpga/Plex_MiSTer/rtl/ddr_frame_store.sv", "MAX_CODED_W = 1280"),
+               "MAX_CODED_W=1280");
+        EXPECT(file_contains("fpga/Plex_MiSTer/rtl/ddr_frame_store.sv", "eff_y_pitch_qw"),
+               "runtime y pitch");
+        EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv", "geom_enable"),
+               "present_core geom ports");
+        EXPECT(file_contains("fpga/Plex_MiSTer/Plex.sv", "fabric_geom_enable        = 1'b0"),
+               "geom_enable defaults 0");
+
+        // Legacy 624×480 tight pack (geom off defaults).
+        EXPECT(plane_u_base_q(624, 480) == 37440, "legacy U base q");
+        EXPECT(plane_v_base_q(624, 312, 480) == 46800, "legacy V base q");
+        // Note: legacy uses c_stride = coded_w/2 = 312 for plane size via CODED_W*H/32.
+        EXPECT((624 * 480) / 32 == 9360, "legacy C plane q via W*H/32");
+        EXPECT(37440 + 9360 == 46800, "legacy V = U + C");
+
+        // 720p tight: y_stride=1280, c_stride=640, h=720.
+        EXPECT(plane_u_base_q(1280, 720) == 115200, "720p U base q");
+        EXPECT(plane_c_q(640, 720) == 28800, "720p C plane q");
+        EXPECT(plane_v_base_q(1280, 640, 720) == 144000, "720p V base q");
+        EXPECT(plane_u_base_q(1280, 720) != plane_u_base_q(624, 480),
+               "negative: 720p U ≠ legacy U (fixed-624 would fail)");
+        EXPECT(yuv420_bytes(1280, 720) == 1280u * 720u * 3u / 2u, "720p I420 bytes");
+        std::printf("RT_STRIDE leg_u=%d rt_u=%d rt_v=%d\n", plane_u_base_q(624, 480),
+                    plane_u_base_q(1280, 720), plane_v_base_q(1280, 640, 720));
+    }
+
 
     // --- Pad-only negative ---
     {

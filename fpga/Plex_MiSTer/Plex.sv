@@ -241,6 +241,20 @@ wire [10:0] fabric_content_x0   = 11'd0;
 wire [10:0] fabric_content_y0   = 11'd0;
 wire [10:0] fabric_h_de         = 11'd0; // 0 → 529 FBAR default inside window
 wire [10:0] fabric_v_de         = 11'd0; // 0 → 480 default
+// Runtime DDR bank geometry (PLXW). geom_enable=0 → synthesis CODED 624 path.
+// Host programs coded/stride for native delivery (incl. 1280×720, y_stride=1280).
+// Defaults keep reset-value device bit-exact with pre-runtime-stride RBFs.
+wire        fabric_geom_enable        = 1'b0;
+wire [10:0] fabric_geom_coded_w       = 11'd0;
+wire [10:0] fabric_geom_coded_h       = 11'd0;
+wire [11:0] fabric_geom_y_stride      = 12'd0;
+wire [10:0] fabric_geom_chroma_stride = 11'd0;
+wire [10:0] fabric_geom_display_w     = 11'd0;
+wire [10:0] fabric_geom_display_h     = 11'd0;
+wire [10:0] fabric_geom_present_x     = 11'd0;
+wire [10:0] fabric_geom_present_y     = 11'd0;
+wire [10:0] fabric_geom_crop_left     = 11'd0;
+wire [10:0] fabric_geom_crop_top      = 11'd0;
 
 // Legacy cadence input is now fixed; the daemon handles exact content pacing.
 wire [7:0] content_fps = 8'd24;
@@ -769,6 +783,17 @@ present_core #(
 	.content_y0(fabric_content_y0),
 	.win_h_de(fabric_h_de),
 	.win_v_de(fabric_v_de),
+	.geom_enable(fabric_geom_enable),
+	.geom_coded_w(fabric_geom_coded_w),
+	.geom_coded_h(fabric_geom_coded_h),
+	.geom_y_stride(fabric_geom_y_stride),
+	.geom_chroma_stride(fabric_geom_chroma_stride),
+	.geom_display_w(fabric_geom_display_w),
+	.geom_display_h(fabric_geom_display_h),
+	.geom_present_x(fabric_geom_present_x),
+	.geom_present_y(fabric_geom_present_y),
+	.geom_crop_left(fabric_geom_crop_left),
+	.geom_crop_top(fabric_geom_crop_top),
 	.fs_wr_en(fs_wr_en),
 	.fs_wr_pixel(fs_wr_pixel),
 	.fs_wr_reset(fs_wr_reset),

@@ -1,25 +1,31 @@
-// Product-geometry colour / stripe red-check for ddr_frame_store (c5382bee class).
-// Uses silicon coded canvas 624-wide (Y 78 qwords / C 39 qwords), presented 640
-// with PRESENT_X=11 / DISPLAY_W=618 — same params as the leftedge3 fit map.rpt.
-//
-// Shell builds two packs against the SAME product RTL defaults:
-//   A) chroma_zero  — Y content, U=V=0  → must REPRO green_cast (silicon mean~72 class)
-//   B) product_uv   — Y content, U=V=128 + blue probe → must PASS neutral/blue
-// Optional -D fault twin (chroma luma stride) is built as case C when requested.
+// Runtime bank geometry gate for ddr_frame_store (w-scaler).
+// geom_enable=0 → legacy CODED 624 plane bases (bit-exact product).
+// geom_enable=1 → host-programmed coded/stride (720p: 1280×720, y_stride=1280).
 `default_nettype none
 
-module ddr_frame_store_scanout_colour_tb #(
+module ddr_frame_store_runtime_stride_tb #(
 	parameter int LINE_COUNT = 8
 )(
 	input  wire        clk,
 	input  wire        clk_ddr,
 	input  wire        reset,
-	input  wire [9:0]  rd_x,
-	input  wire [5:0]  rd_y,
+	input  wire [10:0] rd_x,
+	input  wire [9:0]  rd_y,
 	input  wire        rd_active,
 	input  wire        start_req,
 	input  wire        bank_sel,
 	input  wire        vsync_pulse,
+	input  wire        geom_enable,
+	input  wire [10:0] rt_coded_w,
+	input  wire [10:0] rt_coded_h,
+	input  wire [11:0] rt_y_stride,
+	input  wire [10:0] rt_chroma_stride,
+	input  wire [10:0] rt_display_w,
+	input  wire [10:0] rt_display_h,
+	input  wire [10:0] rt_present_x,
+	input  wire [10:0] rt_present_y,
+	input  wire [10:0] rt_crop_left,
+	input  wire [10:0] rt_crop_top,
 	output wire [7:0]  rd_r,
 	output wire [7:0]  rd_g,
 	output wire [7:0]  rd_b,
@@ -41,20 +47,20 @@ module ddr_frame_store_scanout_colour_tb #(
 	wire DDRAM_CLK;
 	wire [7:0] DDRAM_BE;
 
-	// Product geometry (map.rpt leftedge3 / c5382bee): CODED 624, DISPLAY 618,
-	// PRESENT 11, FRAME 640. Height kept short for sim speed; strides match silicon.
 	ddr_frame_store #(
 		.FRAME_W(640),
-		.FRAME_H(48),
+		.FRAME_H(480),
 		.FRAME_STRIDE(640),
 		.CODED_W(624),
-		.CODED_H(48),
+		.CODED_H(480),
 		.DISPLAY_W(618),
-		.DISPLAY_H(40),
+		.DISPLAY_H(480),
 		.CROP_LEFT(0),
 		.CROP_TOP(0),
 		.PRESENT_X(11),
 		.PRESENT_Y(0),
+		.MAX_CODED_W(1280),
+		.MAX_CODED_H(720),
 		.LINE_COUNT(LINE_COUNT),
 		.PHYS_BASE(32'h3000_0000),
 		.HPS_BANK_STRIDE_BYTES(524288),
@@ -73,23 +79,23 @@ module ddr_frame_store_scanout_colour_tb #(
 		.clk(clk),
 		.clk_ddr(clk_ddr),
 		.reset(reset),
-		.geom_enable(1'b0),
-		.rt_coded_w(11'd0),
-		.rt_coded_h(11'd0),
-		.rt_y_stride(12'd0),
-		.rt_chroma_stride(11'd0),
-		.rt_display_w(11'd0),
-		.rt_display_h(11'd0),
-		.rt_present_x(11'd0),
-		.rt_present_y(11'd0),
-		.rt_crop_left(11'd0),
-		.rt_crop_top(11'd0),
 		.rd_x(rd_x),
 		.rd_y(rd_y),
 		.rd_active(rd_active),
 		.rd_r(rd_r),
 		.rd_g(rd_g),
 		.rd_b(rd_b),
+		.geom_enable(geom_enable),
+		.rt_coded_w(rt_coded_w),
+		.rt_coded_h(rt_coded_h),
+		.rt_y_stride(rt_y_stride),
+		.rt_chroma_stride(rt_chroma_stride),
+		.rt_display_w(rt_display_w),
+		.rt_display_h(rt_display_h),
+		.rt_present_x(rt_present_x),
+		.rt_present_y(rt_present_y),
+		.rt_crop_left(rt_crop_left),
+		.rt_crop_top(rt_crop_top),
 		.start_req(start_req),
 		.bank_sel(bank_sel),
 		.status_osd(16'd0),
@@ -117,4 +123,5 @@ module ddr_frame_store_scanout_colour_tb #(
 		.debug_state(debug_state)
 	);
 endmodule
+
 `default_nettype wire
