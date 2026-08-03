@@ -1021,6 +1021,11 @@ int main() {
         CHECK(!ddrDoorbellGeomCoupledOk(7, 0, false));
         CHECK(ddrDoorbellGeomCoupledOk(0, 0, false)); // ungated legacy
         std::fprintf(stderr, "  PLXG_DOORBELL_COUPLING OK\n");
+        // B20: bank+geom atomic — free-run pitch before swap is the defect.
+        CHECK(ddrB20FaultFreeRunExposesNewPitchBeforeSwap()); // REPRO
+        CHECK(ddrB20ProductHoldsPitchUntilBankSwap());
+        CHECK(ddrB20IndependentObserversNoMix());
+        std::fprintf(stderr, "  B20_BANK_GEOM_ATOMIC OK\n");
     }
 
 if (fails) {

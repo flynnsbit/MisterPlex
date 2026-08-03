@@ -901,6 +901,97 @@ inline bool ddrCouplingProductHoldsBankUntilGeom() {
     return m.bank_displayed && m.geom_seq == 7;
 }
 
+// B20: bank+geometry atomic apply. Coupling alone is not enough — free-running
+// store pitch after PLXG promote still reads the old bank with the new stride.
+// Applied geometry must promote with the bank swap, not with PLXG live.
+struct DdrBankGeomAtomicModel {
+    bool geom_live = false;
+    uint16_t geom_seq = 0;
+    int cand_w = 624;   // free-running candidate after PLXG promote
+    int app_w = 624;    // applied display pitch width
+    int pend_w = 624;
+    bool bank_pending = false;
+    bool bank_displayed = false;
+    int disp_bank = 0;
+    int pend_bank = 0;
+    uint16_t pend_plxg_seq = 0;
+    bool fault_free_run_geom = false; // FAULT: app tracks cand immediately
+
+    void promoteGeom(int w, uint16_t seq) {
+        geom_live = true;
+        geom_seq = seq;
+        cand_w = w;
+        if (fault_free_run_geom)
+            app_w = w; // B20 defect: pitch changes before bank swap
+    }
+
+    // Returns true if doorbell accepted (coupled). Does NOT apply geometry.
+    bool observeDoorbell(int b, uint16_t plxgSeq) {
+        if (!ddrDoorbellGeomCoupledOk(plxgSeq, geom_seq, geom_live, false))
+            return false;
+        bank_pending = true;
+        pend_bank = b;
+        pend_plxg_seq = plxgSeq;
+        pend_w = cand_w; // snapshot at accept
+        return true;
+    }
+
+    // Frame-boundary bank swap — only place product applies geometry under B20.
+    void frameSwap() {
+        if (!bank_pending)
+            return;
+        disp_bank = pend_bank;
+        bank_displayed = true;
+        bank_pending = false;
+        if (!fault_free_run_geom)
+            app_w = pend_w;
+    }
+
+    // True if display path would use new cand pitch on old bank (mixed frame).
+    bool mixedPitchOnOldBank() const {
+        return geom_live && bank_displayed && app_w != cand_w && disp_bank != pend_bank;
+    }
+    bool displayUsesCandBeforeSwap() const {
+        return geom_live && bank_pending && (app_w == cand_w) && (app_w != 624);
+    }
+};
+
+inline bool ddrB20FaultFreeRunExposesNewPitchBeforeSwap() {
+    DdrBankGeomAtomicModel m;
+    m.fault_free_run_geom = true;
+    m.promoteGeom(/*w*/320, /*seq*/7);
+    // No doorbell yet — defect already moved app
+    return m.app_w == 320 && !m.bank_displayed;
+}
+
+inline bool ddrB20ProductHoldsPitchUntilBankSwap() {
+    DdrBankGeomAtomicModel m;
+    m.promoteGeom(320, 7);
+    if (m.app_w != 624)
+        return false; // must hold legacy until swap
+    if (!m.observeDoorbell(/*bank*/1, /*plxg*/7))
+        return false;
+    if (m.app_w != 624 || !m.bank_pending)
+        return false; // still hold through accept
+    m.frameSwap();
+    return m.app_w == 320 && m.disp_bank == 1 && m.bank_displayed;
+}
+
+// Independent observers: PLXG promote then delayed doorbell then swap.
+inline bool ddrB20IndependentObserversNoMix() {
+    DdrBankGeomAtomicModel m;
+    m.promoteGeom(960, 3);
+    // Simulate slow doorbell (many "cycles" with cand live, app held)
+    if (m.app_w != 624)
+        return false;
+    if (!m.observeDoorbell(1, 3))
+        return false;
+    if (m.app_w != 624)
+        return false;
+    m.frameSwap();
+    return m.app_w == 960 && m.disp_bank == 1;
+}
+
 // Maximum coded width the *shipping* RTL frame store can present (FRAME_W=640).
 // Typed as CodedWidth because acceptance checks coded stream size against it.
 // Numerically equal to presented 480p width; the type prevents using the

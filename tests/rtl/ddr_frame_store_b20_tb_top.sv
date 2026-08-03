@@ -1,0 +1,135 @@
+// B20 bank+geometry atomicity oracle.
+// Product: PLXG live+seq ⇒ app_* holds until bank-swap vsync; FAULT free-run
+// moves app with candidate immediately (REPRO new pitch before swap).
+`default_nettype none
+
+module ddr_frame_store_b20_tb (
+	input  wire        clk,
+	input  wire        clk_ddr,
+	input  wire        reset,
+	input  wire        geom_enable,
+	input  wire [15:0] rt_geom_seq,
+	input  wire        rt_geom_live,
+	input  wire [10:0] rt_coded_w,
+	input  wire [10:0] rt_coded_h,
+	input  wire [11:0] rt_y_stride,
+	input  wire [10:0] rt_chroma_stride,
+	input  wire [10:0] rt_display_w,
+	input  wire [10:0] rt_display_h,
+	input  wire        vsync_pulse,
+	input  wire        DDRAM_BUSY,
+	input  wire [63:0] DDRAM_DOUT,
+	input  wire        DDRAM_DOUT_READY,
+	output wire [7:0]  DDRAM_BURSTCNT,
+	output wire [28:0] DDRAM_ADDR,
+	output wire        DDRAM_RD,
+	output wire [63:0] DDRAM_DIN,
+	output wire        DDRAM_WE,
+	output wire        has_frame,
+	output wire        swap_pending,
+	output wire        doorbell_ok,
+	output wire [15:0] frames_done,
+	output wire [10:0] obs_eff_coded_w,
+	output wire [10:0] obs_app_coded_w,
+	output wire        obs_app_geom_en,
+	output wire        obs_b20_atomic,
+	output wire        obs_pend_app_valid,
+	output wire        obs_disp_bank,
+	output wire        obs_pending_bank
+);
+	wire DDRAM_CLK;
+	wire [7:0] DDRAM_BE;
+	wire [7:0] rd_r, rd_g, rd_b, debug_state;
+	wire [15:0] underrun_count;
+	wire geom_hold_black, geom_hollow_fault;
+
+	ddr_frame_store #(
+		.FRAME_W(64),
+		.FRAME_H(32),
+		.FRAME_STRIDE(64),
+		.CODED_W(64),
+		.CODED_H(32),
+		.MAX_CODED_W(1280),
+		.MAX_CODED_H(720),
+		.DISPLAY_W(64),
+		.DISPLAY_H(32),
+		.PRESENT_X(0),
+		.PRESENT_Y(0),
+		.LINE_COUNT(4),
+		.PHYS_BASE(32'h3000_0000),
+		.HPS_BANK_STRIDE_BYTES(65536),
+		.DOORBELL_PHYS(32'h3001_F000),
+		.PHYS_BASE_720P(32'h3018_0000),
+		.HPS_BANK_STRIDE_BYTES_720P(32'h0018_0000),
+		.DOORBELL_PHYS_720P(32'h3047_F000),
+		.MAILBOX_PHYS(32'h3001_F100),
+		.INPUT_MAILBOX_PHYS(32'h3001_F108),
+		.SDRAM_MAILBOX_PHYS(32'h3001_F110),
+		.FRAME_MAILBOX_PHYS(32'h3001_F118),
+		.BANK_MAILBOX_PHYS(32'h3001_F128),
+		.DDR_BURST_MAX(4),
+		.IGNORE_STALE_DOORBELL_AFTER_RESET(1'b0),
+		.PIPELINE_REFILL_SCHEDULER(1'b0),
+		.STRICT_YUV_DOORBELL(1'b1)
+	) dut (
+		.clk(clk),
+		.clk_ddr(clk_ddr),
+		.reset(reset),
+		.rd_x(7'd0),
+		.rd_y(6'd0),
+		.rd_active(1'b0),
+		.rd_r(rd_r),
+		.rd_g(rd_g),
+		.rd_b(rd_b),
+		.geom_enable(geom_enable),
+		.rt_geom_seq(rt_geom_seq),
+		.rt_geom_live(rt_geom_live),
+		.rt_coded_w(rt_coded_w),
+		.rt_coded_h(rt_coded_h),
+		.rt_y_stride(rt_y_stride),
+		.rt_chroma_stride(rt_chroma_stride),
+		.rt_display_w(rt_display_w),
+		.rt_display_h(rt_display_h),
+		.rt_present_x(11'd0),
+		.rt_present_y(11'd0),
+		.rt_crop_left(11'd0),
+		.rt_crop_top(11'd0),
+		.start_req(1'b0),
+		.bank_sel(1'b0),
+		.status_osd(16'd0),
+		.input_cmd_valid(1'b0),
+		.input_cmd(8'd0),
+		.sdram_test_state(4'd0),
+		.sdram_size_code(4'd0),
+		.sdram_error_count(16'd0),
+		.DDRAM_CLK(DDRAM_CLK),
+		.DDRAM_BUSY(DDRAM_BUSY),
+		.DDRAM_BURSTCNT(DDRAM_BURSTCNT),
+		.DDRAM_ADDR(DDRAM_ADDR),
+		.DDRAM_DOUT(DDRAM_DOUT),
+		.DDRAM_DOUT_READY(DDRAM_DOUT_READY),
+		.DDRAM_RD(DDRAM_RD),
+		.DDRAM_DIN(DDRAM_DIN),
+		.DDRAM_BE(DDRAM_BE),
+		.DDRAM_WE(DDRAM_WE),
+		.vsync_pulse(vsync_pulse),
+		.has_frame(has_frame),
+		.swap_pending(swap_pending),
+		.underrun_count(underrun_count),
+		.frames_done(frames_done),
+		.doorbell_ok(doorbell_ok),
+		.debug_state(debug_state),
+		.geom_hold_black(geom_hold_black),
+		.geom_hollow_fault(geom_hollow_fault)
+	);
+
+	assign obs_eff_coded_w   = dut.eff_coded_w;
+	assign obs_app_coded_w   = dut.app_coded_w;
+	assign obs_app_geom_en   = dut.app_geom_en;
+	assign obs_b20_atomic    = dut.b20_atomic;
+	assign obs_pend_app_valid = dut.pend_app_valid;
+	assign obs_disp_bank     = dut.disp_bank;
+	assign obs_pending_bank  = dut.pending_bank;
+endmodule
+
+`default_nettype wire

@@ -16,6 +16,13 @@
 //   else → legacy product banks.
 // Width alone must NOT select the map: product 960x540 is <1280 wide but
 // 777600 B > 520192 B usable and MUST use Option-C (w-mem / parent 2026-08-03).
+//
+// B20 bank+geometry atomicity (rd-duck): PLXG promote and doorbell/bank swap are
+// independent observers. Free-running store pitch from live PLXG exposes the new
+// stride on the still-displayed old bank. When rt_geom_live && rt_geom_seq!=0,
+// applied pitch/base (app_*) update only at the bank-swap vsync from a snapshot
+// taken at doorbell accept (pend_app). plxg_seq==0 / !live keeps free-run for
+// legacy TBs. FAULT_B20_FREE_RUN_GEOM restores free-run under live seq (REPRO).
 
 module ddr_frame_store #(
 	parameter int FRAME_W = 640,
@@ -403,9 +410,48 @@ module ddr_frame_store #(
 		end
 	end
 
+	// ---- B20: bank-coupled applied geometry (app_*) --------------------------------
+	// eff_* = free-running candidate from live PLXG (capacity/selector still use it).
+	// app_* = pitch/base the pixel path and fill CDC use. Under live PLXG seq!=0,
+	// app updates only at bank-swap vsync from pend_app snapped at doorbell accept.
+	reg        app_geom_en;
+	reg [10:0] app_coded_w, app_coded_h;
+	reg [11:0] app_y_stride;
+	reg [10:0] app_c_stride;
+	reg [10:0] app_disp_w, app_disp_h;
+	reg [10:0] app_pres_x, app_pres_y;
+	reg [10:0] app_crop_l, app_crop_t;
+	reg [8:0]  app_y_fetch_qw, app_y_pitch_qw;
+	reg [7:0]  app_c_fetch_qw, app_c_pitch_qw;
+	reg [28:0] app_u_base_qw, app_v_base_qw;
+	reg        app_optc_map;
+	reg [28:0] app_base_w0, app_base_w1, app_doorbell_w;
+
+	reg        pend_app_geom_en;
+	reg [10:0] pend_app_coded_w, pend_app_coded_h;
+	reg [11:0] pend_app_y_stride;
+	reg [10:0] pend_app_c_stride;
+	reg [10:0] pend_app_disp_w, pend_app_disp_h;
+	reg [10:0] pend_app_pres_x, pend_app_pres_y;
+	reg [10:0] pend_app_crop_l, pend_app_crop_t;
+	reg [8:0]  pend_app_y_fetch_qw, pend_app_y_pitch_qw;
+	reg [7:0]  pend_app_c_fetch_qw, pend_app_c_pitch_qw;
+	reg [28:0] pend_app_u_base_qw, pend_app_v_base_qw;
+	reg        pend_app_optc_map;
+	reg [28:0] pend_app_base_w0, pend_app_base_w1, pend_app_doorbell_w;
+	reg        pend_app_valid;
+
+	// Atomic when PLXG is live with nonzero seq (doorbell carries matching gen).
+	// FAULT: free-run app from eff even under live seq → new pitch on old bank.
+`ifdef DDR_FRAME_STORE_FAULT_B20_FREE_RUN_GEOM
+	wire b20_atomic = 1'b0;
+`else
+	wire b20_atomic = rt_geom_live && (rt_geom_seq != 16'd0);
+`endif
+
 	// ---- B16: atomic geom epoch, hold-black, hollow loud-reject --------------------
-	// Layout change (eff_* / geom_en_r) bumps geom_epoch_r, asserts geom_hold_black,
-	// and pulses geom_inv_tog for clk_ddr line-cache invalidate + fill abort.
+	// Layout change tracks *applied* app_* (not free-running eff_*) so B20 delay
+	// does not invalidate/refill under a pitch the display has not adopted yet.
 	// Epoch is also tagged on each line fill; video hits require epoch match so a
 	// stale valid bit under a new pitch cannot resolve (counting oracles stay green
 	// on mixed frames otherwise).
@@ -414,83 +460,29 @@ module ddr_frame_store #(
 	reg        geom_hollow_r;
 	reg        had_geom_r;
 	reg  [1:0] black_vs_left;
-	reg        geom_en_r_d;
-	reg [10:0] eff_cw_d, eff_ch_d;
-	reg [11:0] eff_ys_d;
-	reg [10:0] eff_cs_d;
-	reg        eff_optc_d;
+	reg        app_geom_en_d;
+	reg [10:0] app_cw_d, app_ch_d;
+	reg [11:0] app_ys_d;
+	reg [10:0] app_cs_d;
+	reg        app_optc_d;
 
 	wire geom_layout_chg =
-		(geom_en_r != geom_en_r_d) ||
-		(eff_coded_w != eff_cw_d) ||
-		(eff_coded_h != eff_ch_d) ||
-		(eff_y_stride != eff_ys_d) ||
-		(eff_c_stride != eff_cs_d) ||
-		(eff_optc_map != eff_optc_d);
+		(app_geom_en != app_geom_en_d) ||
+		(app_coded_w != app_cw_d) ||
+		(app_coded_h != app_ch_d) ||
+		(app_y_stride != app_ys_d) ||
+		(app_c_stride != app_cs_d) ||
+		(app_optc_map != app_optc_d);
 
 	assign geom_hollow_fault = geom_hollow_r;
 
-	always @(posedge clk) begin
-		if (reset) begin
-			geom_epoch_r    <= 4'd0;
-			geom_inv_tog    <= 1'b0;
-			geom_hold_black <= 1'b0;
-			geom_hollow_r   <= 1'b0;
-			had_geom_r      <= 1'b0;
-			black_vs_left   <= 2'd0;
-			geom_en_r_d     <= 1'b0;
-			eff_cw_d        <= 11'(CODED_W);
-			eff_ch_d        <= 11'(CODED_H);
-			eff_ys_d        <= 12'(CODED_W);
-			eff_cs_d        <= 11'(CODED_W/2);
-			eff_optc_d      <= 1'b0;
-		end else begin
-			if (geom_en_r)
-				had_geom_r <= 1'b1;
-`ifdef DDR_FRAME_STORE_FAULT_SILENT_HOLLOW
-			// red twin: never raise hollow
-			geom_hollow_r <= 1'b0;
-`else
-			// Loud when prior live geom is lost while a frame is on-screen and
-			// not already in geom_reject — silent legacy is the defect class.
-			if (had_geom_r && !geom_en_r && !geom_reject_r && has_frame)
-				geom_hollow_r <= 1'b1;
-			else if (geom_en_r)
-				geom_hollow_r <= 1'b0;
-`endif
-			if (geom_layout_chg) begin
-				geom_epoch_r    <= geom_epoch_r + 4'd1;
-				geom_inv_tog    <= ~geom_inv_tog;
-				geom_hold_black <= 1'b1;
-				// Hold black across the transition frame and the first full new
-				// frame start (vsync edges). Same-size SAR still needs this —
-				// ascal swblack is size-only.
-				black_vs_left   <= 2'd2;
-			end
-			geom_en_r_d <= geom_en_r;
-			eff_cw_d    <= eff_coded_w;
-			eff_ch_d    <= eff_coded_h;
-			eff_ys_d    <= eff_y_stride;
-			eff_cs_d    <= eff_c_stride;
-			eff_optc_d  <= eff_optc_map;
-
-			if (vsync_pulse && geom_hold_black) begin
-				if (black_vs_left <= 2'd1) begin
-					black_vs_left   <= 2'd0;
-					geom_hold_black <= 1'b0;
-				end else begin
-					black_vs_left <= black_vs_left - 2'd1;
-				end
-			end
-		end
-	end
-
-	wire [X_W-1:0] PRESENT_X_L = X_W'(eff_pres_x);
-	wire [Y_W-1:0] PRESENT_Y_L = Y_W'(eff_pres_y);
-	wire [X_W-1:0] PRESENT_END_X = X_W'(eff_pres_x + eff_disp_w);
-	wire [Y_W-1:0] PRESENT_END_Y = Y_W'(eff_pres_y + eff_disp_h);
-	wire [CODED_X_W-1:0] CROP_LEFT_L = CODED_X_W'(eff_crop_l);
-	wire [CODED_Y_W-1:0] CROP_TOP_L = CODED_Y_W'(eff_crop_t);
+	// Pixel window from *applied* geometry (B20), not free-running candidate.
+	wire [X_W-1:0] PRESENT_X_L = X_W'(app_pres_x);
+	wire [Y_W-1:0] PRESENT_Y_L = Y_W'(app_pres_y);
+	wire [X_W-1:0] PRESENT_END_X = X_W'(app_pres_x + app_disp_w);
+	wire [Y_W-1:0] PRESENT_END_Y = Y_W'(app_pres_y + app_disp_h);
+	wire [CODED_X_W-1:0] CROP_LEFT_L = CODED_X_W'(app_crop_l);
+	wire [CODED_Y_W-1:0] CROP_TOP_L = CODED_Y_W'(app_crop_t);
 	localparam [31:0] MAGIC = 32'h504C_584B;
 	localparam [31:0] MAGIC_S = 32'h504C_5853;
 	localparam [31:0] MAGIC_I = 32'h504C_5849;
@@ -639,6 +631,63 @@ module ddr_frame_store #(
 			pending_bank_s2 <= 1'b0;
 			pending_ready_s1 <= 1'b0;
 			pending_ready_s2 <= 1'b0;
+			// B20 app_* / pend_app_* → legacy
+			app_geom_en <= 1'b0;
+			app_coded_w <= 11'(CODED_W);
+			app_coded_h <= 11'(CODED_H);
+			app_y_stride <= 12'(CODED_W);
+			app_c_stride <= 11'(CODED_W/2);
+			app_disp_w <= 11'(DISPLAY_W);
+			app_disp_h <= 11'(DISPLAY_H);
+			app_pres_x <= 11'(PRESENT_X);
+			app_pres_y <= 11'(PRESENT_Y);
+			app_crop_l <= 11'(CROP_LEFT);
+			app_crop_t <= 11'(CROP_TOP);
+			app_y_fetch_qw <= 9'(Y_LINE_QWORDS);
+			app_c_fetch_qw <= 8'(C_LINE_QWORDS);
+			app_y_pitch_qw <= 9'(Y_LINE_QWORDS);
+			app_c_pitch_qw <= 8'(C_LINE_QWORDS);
+			app_u_base_qw <= LEG_U_PLANE_BASE;
+			app_v_base_qw <= LEG_V_PLANE_BASE;
+			app_optc_map <= 1'b0;
+			app_base_w0 <= LEG_BASE_W0;
+			app_base_w1 <= LEG_BASE_W1;
+			app_doorbell_w <= LEG_DOORBELL_W;
+			pend_app_valid <= 1'b0;
+			pend_app_geom_en <= 1'b0;
+			pend_app_coded_w <= 11'(CODED_W);
+			pend_app_coded_h <= 11'(CODED_H);
+			pend_app_y_stride <= 12'(CODED_W);
+			pend_app_c_stride <= 11'(CODED_W/2);
+			pend_app_disp_w <= 11'(DISPLAY_W);
+			pend_app_disp_h <= 11'(DISPLAY_H);
+			pend_app_pres_x <= 11'(PRESENT_X);
+			pend_app_pres_y <= 11'(PRESENT_Y);
+			pend_app_crop_l <= 11'(CROP_LEFT);
+			pend_app_crop_t <= 11'(CROP_TOP);
+			pend_app_y_fetch_qw <= 9'(Y_LINE_QWORDS);
+			pend_app_c_fetch_qw <= 8'(C_LINE_QWORDS);
+			pend_app_y_pitch_qw <= 9'(Y_LINE_QWORDS);
+			pend_app_c_pitch_qw <= 8'(C_LINE_QWORDS);
+			pend_app_u_base_qw <= LEG_U_PLANE_BASE;
+			pend_app_v_base_qw <= LEG_V_PLANE_BASE;
+			pend_app_optc_map <= 1'b0;
+			pend_app_base_w0 <= LEG_BASE_W0;
+			pend_app_base_w1 <= LEG_BASE_W1;
+			pend_app_doorbell_w <= LEG_DOORBELL_W;
+			// B16 epoch
+			geom_epoch_r <= 4'd0;
+			geom_inv_tog <= 1'b0;
+			geom_hold_black <= 1'b0;
+			geom_hollow_r <= 1'b0;
+			had_geom_r <= 1'b0;
+			black_vs_left <= 2'd0;
+			app_geom_en_d <= 1'b0;
+			app_cw_d <= 11'(CODED_W);
+			app_ch_d <= 11'(CODED_H);
+			app_ys_d <= 12'(CODED_W);
+			app_cs_d <= 11'(CODED_W/2);
+			app_optc_d <= 1'b0;
 		end else begin
 			swap_req_s1 <= swap_req_t_ddr;
 			swap_req_s2 <= swap_req_s1;
@@ -657,6 +706,32 @@ module ddr_frame_store #(
 				if (!(SWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC
 				      && vsync_pulse && swap_pending && pending_ready_s2))
 					swap_pending <= 1'b1;
+				// B20: snapshot candidate geometry for this bank publish.
+				// Under b20_atomic this is applied only at the swap below.
+				if (b20_atomic) begin
+					pend_app_valid <= 1'b1;
+					pend_app_geom_en <= geom_en_r;
+					pend_app_coded_w <= eff_coded_w;
+					pend_app_coded_h <= eff_coded_h;
+					pend_app_y_stride <= eff_y_stride;
+					pend_app_c_stride <= eff_c_stride;
+					pend_app_disp_w <= eff_disp_w;
+					pend_app_disp_h <= eff_disp_h;
+					pend_app_pres_x <= eff_pres_x;
+					pend_app_pres_y <= eff_pres_y;
+					pend_app_crop_l <= eff_crop_l;
+					pend_app_crop_t <= eff_crop_t;
+					pend_app_y_fetch_qw <= eff_y_fetch_qw;
+					pend_app_c_fetch_qw <= eff_c_fetch_qw;
+					pend_app_y_pitch_qw <= eff_y_pitch_qw;
+					pend_app_c_pitch_qw <= eff_c_pitch_qw;
+					pend_app_u_base_qw <= eff_u_base_qw;
+					pend_app_v_base_qw <= eff_v_base_qw;
+					pend_app_optc_map <= eff_optc_map;
+					pend_app_base_w0 <= eff_base_w0;
+					pend_app_base_w1 <= eff_base_w1;
+					pend_app_doorbell_w <= eff_doorbell_w;
+				end
 			end
 
 			if (vsync_pulse && swap_pending && pending_ready_s2) begin
@@ -665,6 +740,30 @@ module ddr_frame_store #(
 				// A same-cycle swap_req updates pending_bank for the *next* swap.
 				disp_bank <= pending_bank;
 `endif
+				// B20: promote pend geometry with the bank (NBA reads pre-swap pend).
+				if (b20_atomic && pend_app_valid) begin
+					app_geom_en <= pend_app_geom_en;
+					app_coded_w <= pend_app_coded_w;
+					app_coded_h <= pend_app_coded_h;
+					app_y_stride <= pend_app_y_stride;
+					app_c_stride <= pend_app_c_stride;
+					app_disp_w <= pend_app_disp_w;
+					app_disp_h <= pend_app_disp_h;
+					app_pres_x <= pend_app_pres_x;
+					app_pres_y <= pend_app_pres_y;
+					app_crop_l <= pend_app_crop_l;
+					app_crop_t <= pend_app_crop_t;
+					app_y_fetch_qw <= pend_app_y_fetch_qw;
+					app_c_fetch_qw <= pend_app_c_fetch_qw;
+					app_y_pitch_qw <= pend_app_y_pitch_qw;
+					app_c_pitch_qw <= pend_app_c_pitch_qw;
+					app_u_base_qw <= pend_app_u_base_qw;
+					app_v_base_qw <= pend_app_v_base_qw;
+					app_optc_map <= pend_app_optc_map;
+					app_base_w0 <= pend_app_base_w0;
+					app_base_w1 <= pend_app_base_w1;
+					app_doorbell_w <= pend_app_doorbell_w;
+				end
 				disp_buf <= ~disp_buf;
 				has_frame <= 1'b1;
 				if (SWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC
@@ -676,6 +775,87 @@ module ddr_frame_store #(
 				vsync_toggle <= ~vsync_toggle;
 			end else if (vsync_pulse) begin
 				vsync_toggle <= ~vsync_toggle;
+			end
+
+			// B20 free-run / mode-exit (not bank-gated).
+			if (!geom_enable_eff) begin
+				app_geom_en <= 1'b0;
+				app_coded_w <= 11'(CODED_W);
+				app_coded_h <= 11'(CODED_H);
+				app_y_stride <= 12'(CODED_W);
+				app_c_stride <= 11'(CODED_W/2);
+				app_disp_w <= 11'(DISPLAY_W);
+				app_disp_h <= 11'(DISPLAY_H);
+				app_pres_x <= 11'(PRESENT_X);
+				app_pres_y <= 11'(PRESENT_Y);
+				app_crop_l <= 11'(CROP_LEFT);
+				app_crop_t <= 11'(CROP_TOP);
+				app_y_fetch_qw <= 9'(Y_LINE_QWORDS);
+				app_c_fetch_qw <= 8'(C_LINE_QWORDS);
+				app_y_pitch_qw <= 9'(Y_LINE_QWORDS);
+				app_c_pitch_qw <= 8'(C_LINE_QWORDS);
+				app_u_base_qw <= LEG_U_PLANE_BASE;
+				app_v_base_qw <= LEG_V_PLANE_BASE;
+				app_optc_map <= 1'b0;
+				app_base_w0 <= LEG_BASE_W0;
+				app_base_w1 <= LEG_BASE_W1;
+				app_doorbell_w <= LEG_DOORBELL_W;
+				pend_app_valid <= 1'b0;
+			end else if (!b20_atomic) begin
+				app_geom_en <= geom_en_r;
+				app_coded_w <= eff_coded_w;
+				app_coded_h <= eff_coded_h;
+				app_y_stride <= eff_y_stride;
+				app_c_stride <= eff_c_stride;
+				app_disp_w <= eff_disp_w;
+				app_disp_h <= eff_disp_h;
+				app_pres_x <= eff_pres_x;
+				app_pres_y <= eff_pres_y;
+				app_crop_l <= eff_crop_l;
+				app_crop_t <= eff_crop_t;
+				app_y_fetch_qw <= eff_y_fetch_qw;
+				app_c_fetch_qw <= eff_c_fetch_qw;
+				app_y_pitch_qw <= eff_y_pitch_qw;
+				app_c_pitch_qw <= eff_c_pitch_qw;
+				app_u_base_qw <= eff_u_base_qw;
+				app_v_base_qw <= eff_v_base_qw;
+				app_optc_map <= eff_optc_map;
+				app_base_w0 <= eff_base_w0;
+				app_base_w1 <= eff_base_w1;
+				app_doorbell_w <= eff_doorbell_w;
+			end
+
+			// B16 epoch / hold-black / hollow — on applied app_* change.
+			if (geom_en_r)
+				had_geom_r <= 1'b1;
+`ifdef DDR_FRAME_STORE_FAULT_SILENT_HOLLOW
+			geom_hollow_r <= 1'b0;
+`else
+			if (had_geom_r && !geom_en_r && !geom_reject_r && has_frame)
+				geom_hollow_r <= 1'b1;
+			else if (geom_en_r)
+				geom_hollow_r <= 1'b0;
+`endif
+			if (geom_layout_chg) begin
+				geom_epoch_r    <= geom_epoch_r + 4'd1;
+				geom_inv_tog    <= ~geom_inv_tog;
+				geom_hold_black <= 1'b1;
+				black_vs_left   <= 2'd2;
+			end
+			app_geom_en_d <= app_geom_en;
+			app_cw_d      <= app_coded_w;
+			app_ch_d      <= app_coded_h;
+			app_ys_d      <= app_y_stride;
+			app_cs_d      <= app_c_stride;
+			app_optc_d    <= app_optc_map;
+
+			if (vsync_pulse && geom_hold_black) begin
+				if (black_vs_left <= 2'd1) begin
+					black_vs_left   <= 2'd0;
+					geom_hold_black <= 1'b0;
+				end else begin
+					black_vs_left <= black_vs_left - 2'd1;
+				end
 			end
 		end
 	end
@@ -1194,8 +1374,8 @@ module ddr_frame_store #(
 	reg [Y_QW_AW:0] qwords_remaining;
 	reg [7:0] imbox_cmd_seq;
 	reg [15:0] imbox_seq;
-	// Geometry is session-static (programmed before play). Two-flop into clk_ddr
-	// for fill address math; pixel path stays on clk with eff_*.
+	// B20 CDC: candidate (eff_*) for doorbell poll + pending-bank prep;
+	// applied (app_*) for display-bank fill. Free-run ⇒ app tracks eff.
 	reg [8:0]  d_y_fetch_qw, d_y_pitch_qw;
 	reg [7:0]  d_c_fetch_qw, d_c_pitch_qw;
 	reg [28:0] d_u_base_qw, d_v_base_qw;
@@ -1206,6 +1386,17 @@ module ddr_frame_store #(
 	reg [28:0] d_u_base_qw_m, d_v_base_qw_m;
 	reg [10:0] d_coded_h_m;
 	reg [28:0] d_base_w0_m, d_base_w1_m, d_doorbell_w_m;
+	// Candidate (eff) CDC — doorbell poll + pending prep under B20 atomic.
+	reg [8:0]  d_cand_y_fetch_qw, d_cand_y_pitch_qw;
+	reg [7:0]  d_cand_c_fetch_qw, d_cand_c_pitch_qw;
+	reg [28:0] d_cand_u_base_qw, d_cand_v_base_qw;
+	reg [10:0] d_cand_coded_h;
+	reg [28:0] d_cand_base_w0, d_cand_base_w1;
+	reg [8:0]  d_cand_y_fetch_qw_m, d_cand_y_pitch_qw_m;
+	reg [7:0]  d_cand_c_fetch_qw_m, d_cand_c_pitch_qw_m;
+	reg [28:0] d_cand_u_base_qw_m, d_cand_v_base_qw_m;
+	reg [10:0] d_cand_coded_h_m;
+	reg [28:0] d_cand_base_w0_m, d_cand_base_w1_m;
 	always @(posedge clk_ddr) begin
 		if (reset_ddr) begin
 			d_y_fetch_qw_m <= 9'(Y_LINE_QWORDS);
@@ -1228,6 +1419,24 @@ module ddr_frame_store #(
 			d_base_w0      <= LEG_BASE_W0;
 			d_base_w1      <= LEG_BASE_W1;
 			d_doorbell_w   <= LEG_DOORBELL_W;
+			d_cand_y_fetch_qw_m <= 9'(Y_LINE_QWORDS);
+			d_cand_c_fetch_qw_m <= 8'(C_LINE_QWORDS);
+			d_cand_y_pitch_qw_m <= 9'(Y_LINE_QWORDS);
+			d_cand_c_pitch_qw_m <= 8'(C_LINE_QWORDS);
+			d_cand_u_base_qw_m  <= LEG_U_PLANE_BASE;
+			d_cand_v_base_qw_m  <= LEG_V_PLANE_BASE;
+			d_cand_coded_h_m    <= 11'(CODED_H);
+			d_cand_base_w0_m    <= LEG_BASE_W0;
+			d_cand_base_w1_m    <= LEG_BASE_W1;
+			d_cand_y_fetch_qw   <= 9'(Y_LINE_QWORDS);
+			d_cand_c_fetch_qw   <= 8'(C_LINE_QWORDS);
+			d_cand_y_pitch_qw   <= 9'(Y_LINE_QWORDS);
+			d_cand_c_pitch_qw   <= 8'(C_LINE_QWORDS);
+			d_cand_u_base_qw    <= LEG_U_PLANE_BASE;
+			d_cand_v_base_qw    <= LEG_V_PLANE_BASE;
+			d_cand_coded_h      <= 11'(CODED_H);
+			d_cand_base_w0      <= LEG_BASE_W0;
+			d_cand_base_w1      <= LEG_BASE_W1;
 			d_geom_epoch_m <= 4'd0;
 			d_geom_epoch   <= 4'd0;
 			d_geom_seq_m   <= 16'd0;
@@ -1237,15 +1446,18 @@ module ddr_frame_store #(
 			d_inv_s1       <= 1'b0;
 			d_inv_s2       <= 1'b0;
 		end else begin
-			d_y_fetch_qw_m <= eff_y_fetch_qw;
-			d_c_fetch_qw_m <= eff_c_fetch_qw;
-			d_y_pitch_qw_m <= eff_y_pitch_qw;
-			d_c_pitch_qw_m <= eff_c_pitch_qw;
-			d_u_base_qw_m  <= eff_u_base_qw;
-			d_v_base_qw_m  <= eff_v_base_qw;
-			d_coded_h_m    <= eff_coded_h;
-			d_base_w0_m    <= eff_base_w0;
-			d_base_w1_m    <= eff_base_w1;
+			// Applied (app_*) → display fill
+			d_y_fetch_qw_m <= app_y_fetch_qw;
+			d_c_fetch_qw_m <= app_c_fetch_qw;
+			d_y_pitch_qw_m <= app_y_pitch_qw;
+			d_c_pitch_qw_m <= app_c_pitch_qw;
+			d_u_base_qw_m  <= app_u_base_qw;
+			d_v_base_qw_m  <= app_v_base_qw;
+			d_coded_h_m    <= app_coded_h;
+			d_base_w0_m    <= app_base_w0;
+			d_base_w1_m    <= app_base_w1;
+			// Doorbell poll follows candidate so Option-C host rings are visible
+			// after PLXG promote, before bank+app swap (B20).
 			d_doorbell_w_m <= eff_doorbell_w;
 			d_y_fetch_qw   <= d_y_fetch_qw_m;
 			d_c_fetch_qw   <= d_c_fetch_qw_m;
@@ -1257,6 +1469,25 @@ module ddr_frame_store #(
 			d_base_w0      <= d_base_w0_m;
 			d_base_w1      <= d_base_w1_m;
 			d_doorbell_w   <= d_doorbell_w_m;
+			// Candidate (eff_*) → pending-bank prep under atomic B20
+			d_cand_y_fetch_qw_m <= eff_y_fetch_qw;
+			d_cand_c_fetch_qw_m <= eff_c_fetch_qw;
+			d_cand_y_pitch_qw_m <= eff_y_pitch_qw;
+			d_cand_c_pitch_qw_m <= eff_c_pitch_qw;
+			d_cand_u_base_qw_m  <= eff_u_base_qw;
+			d_cand_v_base_qw_m  <= eff_v_base_qw;
+			d_cand_coded_h_m    <= eff_coded_h;
+			d_cand_base_w0_m    <= eff_base_w0;
+			d_cand_base_w1_m    <= eff_base_w1;
+			d_cand_y_fetch_qw   <= d_cand_y_fetch_qw_m;
+			d_cand_c_fetch_qw   <= d_cand_c_fetch_qw_m;
+			d_cand_y_pitch_qw   <= d_cand_y_pitch_qw_m;
+			d_cand_c_pitch_qw   <= d_cand_c_pitch_qw_m;
+			d_cand_u_base_qw    <= d_cand_u_base_qw_m;
+			d_cand_v_base_qw    <= d_cand_v_base_qw_m;
+			d_cand_coded_h      <= d_cand_coded_h_m;
+			d_cand_base_w0      <= d_cand_base_w0_m;
+			d_cand_base_w1      <= d_cand_base_w1_m;
 			d_geom_epoch_m <= geom_epoch_r;
 			d_geom_epoch   <= d_geom_epoch_m;
 			d_geom_seq_m   <= rt_geom_seq;
@@ -1268,8 +1499,19 @@ module ddr_frame_store #(
 		end
 	end
 
+	// B20: pending-bank prep uses candidate pitch/base; display bank uses applied.
+	wire fill_sel_pend = swap_pending_d2 && (fill_bank == pending_bank_d2);
+	wire [8:0]  f_y_fetch_qw = fill_sel_pend ? d_cand_y_fetch_qw : d_y_fetch_qw;
+	wire [8:0]  f_y_pitch_qw = fill_sel_pend ? d_cand_y_pitch_qw : d_y_pitch_qw;
+	wire [7:0]  f_c_fetch_qw = fill_sel_pend ? d_cand_c_fetch_qw : d_c_fetch_qw;
+	wire [7:0]  f_c_pitch_qw = fill_sel_pend ? d_cand_c_pitch_qw : d_c_pitch_qw;
+	wire [28:0] f_u_base_qw  = fill_sel_pend ? d_cand_u_base_qw  : d_u_base_qw;
+	wire [28:0] f_v_base_qw  = fill_sel_pend ? d_cand_v_base_qw  : d_v_base_qw;
+	wire [28:0] f_base_w0    = fill_sel_pend ? d_cand_base_w0    : d_base_w0;
+	wire [28:0] f_base_w1    = fill_sel_pend ? d_cand_base_w1    : d_base_w1;
+
 	// Runtime bank map: legacy 0x30000000 or Option-C 0x30180000.
-	wire [28:0] fill_bank_base = fill_bank ? d_base_w1 : d_base_w0;
+	wire [28:0] fill_bank_base = fill_bank ? f_base_w1 : f_base_w0;
 	// Control page is doorbell-relative (0x100..0x128 bytes → +0x20..+0x25 qwords).
 	wire [28:0] poll_doorbell_w = d_doorbell_w;
 	wire [28:0] poll_mailbox_w  = d_doorbell_w + 29'h20; // +0x100
@@ -1278,8 +1520,8 @@ module ddr_frame_store #(
 	wire [28:0] poll_frame_w    = d_doorbell_w + 29'h23; // +0x118
 	wire [28:0] poll_bank_w     = d_doorbell_w + 29'h25; // +0x128 PLXD
 	// Pitch from runtime y_stride/chroma_stride (legacy: pitch == fetch == CODED_W/8).
-	wire [28:0] y_pitch_qw_w = {20'd0, d_y_pitch_qw};
-	wire [28:0] c_pitch_qw_w = {21'd0, d_c_pitch_qw};
+	wire [28:0] y_pitch_qw_w = {20'd0, f_y_pitch_qw};
+	wire [28:0] c_pitch_qw_w = {21'd0, f_c_pitch_qw};
 	wire [28:0] fill_y_qword = {{(29-Y_W){1'b0}}, fill_y} * y_pitch_qw_w;
 `ifdef DDR_FRAME_STORE_FAULT_CHROMA_LUMA_STRIDE
 	wire [28:0] fill_cy_qword = {{(30-Y_W){1'b0}}, fill_cy} * y_pitch_qw_w;
@@ -1289,8 +1531,8 @@ module ddr_frame_store #(
 	wire [28:0] fill_qword_y = {{(29-Y_QW_AW){1'b0}}, fill_qword[Y_QW_AW-1:0]};
 	wire [28:0] fill_qword_c = {{(29-C_QW_AW){1'b0}}, fill_qword[C_QW_AW-1:0]};
 	wire [28:0] y_addr = fill_bank_base + fill_y_qword + fill_qword_y;
-	wire [28:0] u_addr = fill_bank_base + d_u_base_qw + fill_cy_qword + fill_qword_c;
-	wire [28:0] v_addr = fill_bank_base + d_v_base_qw + fill_cy_qword + fill_qword_c;
+	wire [28:0] u_addr = fill_bank_base + f_u_base_qw + fill_cy_qword + fill_qword_c;
+	wire [28:0] v_addr = fill_bank_base + f_v_base_qw + fill_cy_qword + fill_qword_c;
 `ifdef DDR_FRAME_STORE_FAULT_SWAP_UV_READ
 	wire [28:0] chroma_addr = fill_plane_v ? u_addr : v_addr;
 `else
@@ -1707,13 +1949,18 @@ module ddr_frame_store #(
 							fill_y <= sched_y;
 							y_valid[sched_idx] <= 1'b0;
 							y_bank[sched_idx] <= sched_bank;
-							qwords_remaining <= d_y_fetch_qw[Y_QW_AW:0]; // ddr-domain y fetch
+							// B20: pending prep uses cand fetch length
+							qwords_remaining <= sched_for_pending
+								? d_cand_y_fetch_qw[Y_QW_AW:0]
+								: d_y_fetch_qw[Y_QW_AW:0];
 							fill_is_chroma <= 1'b0;
 						end else begin
 							fill_cy <= sched_cy;
 							c_valid[sched_idx] <= 1'b0;
 							c_bank[sched_idx] <= sched_bank;
-							qwords_remaining <= {{(Y_QW_AW+1-8){1'b0}}, d_c_fetch_qw}; // ddr-domain c fetch
+							qwords_remaining <= sched_for_pending
+								? {{(Y_QW_AW+1-8){1'b0}}, d_cand_c_fetch_qw}
+								: {{(Y_QW_AW+1-8){1'b0}}, d_c_fetch_qw};
 							fill_is_chroma <= 1'b1;
 						end
 						state_ddr <= S_LINE_ISSUE;
@@ -1735,7 +1982,9 @@ module ddr_frame_store #(
 							fill_is_chroma <= 1'b0;
 							fill_plane_v <= 1'b0;
 							fill_qword <= '0;
-							qwords_remaining <= d_y_fetch_qw[Y_QW_AW:0]; // ddr-domain y fetch
+							qwords_remaining <= (swap_pending_d2 && need_y_prep_c)
+								? d_cand_y_fetch_qw[Y_QW_AW:0]
+								: d_y_fetch_qw[Y_QW_AW:0];
 							state_ddr <= S_LINE_ISSUE;
 						end
 					end else if ((swap_pending_d2 && need_c_prep_c) || (has_frame_d2 && need_c_cur_c)) begin
@@ -1756,7 +2005,9 @@ module ddr_frame_store #(
 							fill_is_chroma <= 1'b1;
 							fill_plane_v <= 1'b0;
 							fill_qword <= '0;
-							qwords_remaining <= {{(Y_QW_AW+1-8){1'b0}}, d_c_fetch_qw}; // ddr-domain c fetch
+							qwords_remaining <= (swap_pending_d2 && need_c_prep_c)
+								? {{(Y_QW_AW+1-8){1'b0}}, d_cand_c_fetch_qw}
+								: {{(Y_QW_AW+1-8){1'b0}}, d_c_fetch_qw};
 							state_ddr <= S_LINE_ISSUE;
 						end
 					end else if (!poll_pending && poll_div[7:0] == 8'd0 && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
@@ -1863,7 +2114,7 @@ module ddr_frame_store #(
 							if (fill_is_chroma && !fill_plane_v) begin
 								fill_plane_v <= 1'b1;
 								fill_qword <= '0;
-								qwords_remaining <= {{(Y_QW_AW+1-8){1'b0}}, d_c_fetch_qw}; // ddr-domain c fetch
+								qwords_remaining <= {{(Y_QW_AW+1-8){1'b0}}, f_c_fetch_qw};
 								state_ddr <= S_LINE_ISSUE;
 							end else begin
 `ifdef DDR_FRAME_STORE_FAULT_NO_FILL_DRAIN
