@@ -58,3 +58,18 @@ tests/unit/test_present_scale_4_3_rtl_sim.sh; echo s43=$?
 ./build/test_scale_4_3_vs_general; echo cmp=$?
 ./build/test_720p_geometry_lane_agree; echo geom=$?
 ```
+
+## 2-PPC pixel engine (rd-duck load-bearing)
+
+`present_scale_4_3.sv` is the single-pixel **mapper** (coords + sum-256 weights).
+`present_scale_4_3_2ppc.sv` is the **pixel path**: dual-dst group, up to 3 H taps × 2 V
+lines, bilin with `(·+128)>>8`.
+
+Weights sum **256** (phase0 was 255+0 — constant color lost LSBs). ROM:
+`(256,0),(192,64),(128,128),(64,192)`.
+
+Default OFF. Not wired into `present_core` / `ddr_frame_store` until w-clock 2-PPC
+bridge + w-mem storage/canvas split. Fit remains NN/off.
+
+Registered: `test_present_scale_4_3_*` host + `test_present_scale_4_3_rtl_sim.sh` +
+`test_present_scale_4_3_2ppc_rtl_sim.sh` (const + ramp max_abs=0 + RED PHASE_DST).

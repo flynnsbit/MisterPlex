@@ -21,10 +21,10 @@ int main() {
 	       "phase seq 0,3,2,1");
 	EXPECT((1 & 3) != ((1 * 3) & 3), "dst mod4 ≠ oracle at dst=1");
 	// phase weights indexed by oracle phase
-	const int w0[4] = {255, 192, 128, 64};
+	const int w0[4] = {256, 192, 128, 64};
 	const int w1[4] = {0, 64, 128, 192};
 	for (int p = 0; p < 4; ++p)
-		EXPECT(w0[p] + w1[p] == 255 || w0[p] + w1[p] == 256, "weights sum");
+		EXPECT(w0[p] + w1[p] == 256, "weights sum 256");
 	// dst=1 → phase 3 → 64/192
 	EXPECT(w0[3] == 64 && w1[3] == 192, "dst1 uses phase3 weights");
 	// inverted *4>>2 is identity-ish on low coords

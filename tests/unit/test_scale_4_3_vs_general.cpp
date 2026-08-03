@@ -24,14 +24,14 @@ static int phase43(int d) { return (d * 3) & 3; }
 static int phaseDstBug(int d) { return d & 3; }
 
 static void rom_w(int ph, int& w0, int& w1) {
-	static const int W0[4] = {255, 192, 128, 64};
+	static const int W0[4] = {256, 192, 128, 64};
 	static const int W1[4] = {0, 64, 128, 192};
 	w0 = W0[ph & 3];
 	w1 = W1[ph & 3];
 }
 
 static int bilin(int s0, int s1, int w0, int w1) {
-	return (s0 * w0 + s1 * w1 + 127) / 255;
+	return (s0 * w0 + s1 * w1 + 128) >> 8;
 }
 
 // Endpoint-exact ceil Q16 (present_content_window)

@@ -3,7 +3,7 @@
 // Definition (not derived from RTL or general Q16 path):
 //   src   = floor(dst * 3 / 4)
 //   phase = (dst * 3) mod 4     // frac of src position in [0,1) as k/4
-//   weights[phase] = {(255,0),(192,64),(128,128),(64,192)} for k=0..3
+//   weights[phase] = {(256,0),(192,64),(128,128),(64,192)} for k=0..3 (sum 256)
 //
 // Buggy alternative (pre-fix present_scale_4_3): phase = dst mod 4
 //   sequence 0,1,2,3 instead of 0,3,2,1 — wrong weights on 3/4 of pixels.
@@ -29,21 +29,21 @@ static int phase43(int dst) { return (dst * 3) & 3; }
 static int phaseDstBug(int dst) { return dst & 3; }
 
 static void weights(int ph, int& w0, int& w1) {
-	static const int W0[4] = {255, 192, 128, 64};
+	static const int W0[4] = {256, 192, 128, 64};
 	static const int W1[4] = {0, 64, 128, 192};
 	w0 = W0[ph & 3];
 	w1 = W1[ph & 3];
 }
 
 // Independent bilinear sample of a linear ramp s(x)=x (integer math).
-// out = round((s0*w0 + s1*w1) / 255) with s1=s0+1 when not at edge.
+// out = (s0*w0 + s1*w1 + 128) >> 8  (sum-256) with s1=s0+1 when not at edge.
 static int bilinRamp(int dst, int srcLast) {
 	const int s0 = src43(dst);
 	const int s1 = (s0 >= srcLast) ? s0 : (s0 + 1);
 	int w0 = 0, w1 = 0;
 	weights(phase43(dst), w0, w1);
 	const int acc = s0 * w0 + s1 * w1;
-	return (acc + 127) / 255;
+	return (acc + 128) >> 8;
 }
 
 static int bilinRampDstPhaseBug(int dst, int srcLast) {
@@ -52,7 +52,7 @@ static int bilinRampDstPhaseBug(int dst, int srcLast) {
 	int w0 = 0, w1 = 0;
 	weights(phaseDstBug(dst), w0, w1);
 	const int acc = s0 * w0 + s1 * w1;
-	return (acc + 127) / 255;
+	return (acc + 128) >> 8;
 }
 
 int main() {

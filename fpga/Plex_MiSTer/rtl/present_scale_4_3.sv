@@ -59,10 +59,12 @@ module present_scale_4_3 #(
 	output reg  [10:0] store_y1,
 	output reg  [1:0]  phase_x,
 	output reg  [1:0]  phase_y,
-	output reg  [7:0]  wx0,
-	output reg  [7:0]  wx1,
-	output reg  [7:0]  wy0,
-	output reg  [7:0]  wy1,
+	// Sum-256 weights (9-bit). phase0 = 256/0 so >>8 constant-color is exact.
+	// Phases 1..3: 192/64, 128/128, 64/192. Consumer: (s0*w0+s1*w1+128)>>8.
+	output reg  [8:0]  wx0,
+	output reg  [8:0]  wx1,
+	output reg  [8:0]  wy0,
+	output reg  [8:0]  wy1,
 `ifdef PRESENT_SCALE_4_3_VTAPS4
 	output reg  signed [7:0] vt0,
 	output reg  signed [7:0] vt1,
@@ -109,18 +111,19 @@ module present_scale_4_3 #(
 	wire [1:0] ph_y = y_num[1:0];
 `endif
 
-	wire [7:0] wx0_w = (ph_x == 2'd0) ? 8'd255 :
-	                   (ph_x == 2'd1) ? 8'd192 :
-	                   (ph_x == 2'd2) ? 8'd128 : 8'd64;
-	wire [7:0] wx1_w = (ph_x == 2'd0) ? 8'd0 :
-	                   (ph_x == 2'd1) ? 8'd64 :
-	                   (ph_x == 2'd2) ? 8'd128 : 8'd192;
-	wire [7:0] wy0_w = (ph_y == 2'd0) ? 8'd255 :
-	                   (ph_y == 2'd1) ? 8'd192 :
-	                   (ph_y == 2'd2) ? 8'd128 : 8'd64;
-	wire [7:0] wy1_w = (ph_y == 2'd0) ? 8'd0 :
-	                   (ph_y == 2'd1) ? 8'd64 :
-	                   (ph_y == 2'd2) ? 8'd128 : 8'd192;
+	// Sum always 256 (rd-duck): phase0 was 255+0 — constant color lost ~2 LSB.
+	wire [8:0] wx0_w = (ph_x == 2'd0) ? 9'd256 :
+	                   (ph_x == 2'd1) ? 9'd192 :
+	                   (ph_x == 2'd2) ? 9'd128 : 9'd64;
+	wire [8:0] wx1_w = (ph_x == 2'd0) ? 9'd0 :
+	                   (ph_x == 2'd1) ? 9'd64 :
+	                   (ph_x == 2'd2) ? 9'd128 : 9'd192;
+	wire [8:0] wy0_w = (ph_y == 2'd0) ? 9'd256 :
+	                   (ph_y == 2'd1) ? 9'd192 :
+	                   (ph_y == 2'd2) ? 9'd128 : 9'd64;
+	wire [8:0] wy1_w = (ph_y == 2'd0) ? 9'd0 :
+	                   (ph_y == 2'd1) ? 9'd64 :
+	                   (ph_y == 2'd2) ? 9'd128 : 9'd192;
 
 `ifdef PRESENT_SCALE_4_3_VTAPS4
 	reg signed [7:0] v_t0, v_t1, v_t2, v_t3;
@@ -141,7 +144,7 @@ module present_scale_4_3 #(
 		if (reset) begin
 			store_x <= 0; store_y <= 0; store_x1 <= 0; store_y1 <= 0;
 			phase_x <= 0; phase_y <= 0;
-			wx0 <= 255; wx1 <= 0; wy0 <= 255; wy1 <= 0;
+			wx0 <= 9'd256; wx1 <= 9'd0; wy0 <= 9'd256; wy1 <= 9'd0;
 			de_r <= 0;
 `ifdef PRESENT_SCALE_4_3_VTAPS4
 			vt0 <= 0; vt1 <= 127; vt2 <= 0; vt3 <= 0;

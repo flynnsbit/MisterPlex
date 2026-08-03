@@ -13,10 +13,10 @@ module present_scale_4_3_tb (
 	output wire [10:0] store_y1,
 	output wire [1:0]  phase_x,
 	output wire [1:0]  phase_y,
-	output wire [7:0]  wx0,
-	output wire [7:0]  wx1,
-	output wire [7:0]  wy0,
-	output wire [7:0]  wy1,
+	output wire [8:0]  wx0,
+	output wire [8:0]  wx1,
+	output wire [8:0]  wy0,
+	output wire [8:0]  wy1,
 	output wire        de_r
 );
 	present_scale_4_3 dut (

@@ -54,7 +54,7 @@ int phaseDstMod4(int dst) { return dst & 3; }
 // ROM weights for phase index (frac = phase/4).
 void weightsForPhase(int ph, int& w0, int& w1) {
 	switch (ph & 3) {
-	case 0: w0 = 255; w1 = 0; break;
+	case 0: w0 = 256; w1 = 0; break;
 	case 1: w0 = 192; w1 = 64; break;
 	case 2: w0 = 128; w1 = 128; break;
 	default: w0 = 64; w1 = 192; break;
@@ -122,7 +122,8 @@ int runProduct() {
 	exp(xs.size() == 960u && ys.size() == 540u, "unique covers source");
 	// Correct phase walk: 0,3,2,1 — NOT 0,1,2,3
 	exp(ph0 == 0 && ph1 == 3 && ph2 == 2 && ph3 == 1, "phase sequence 0,3,2,1");
-	exp(w00 == 255 && w01 == 0, "dst0 phase0 pure NN");
+	exp(w00 == 256 && w01 == 0, "dst0 phase0 pure NN 256/0");
+	exp(w00 + w01 == 256 && w10 + w11 == 256 && w20 + w21 == 256 && w30 + w31 == 256, "all phase weights sum 256");
 	// dst=1 → phase 3 → weights 64/192 (frac 3/4), NOT 192/64
 	exp(w10 == 64 && w11 == 192, "dst1 phase3 weights 1:3");
 	exp(w20 == 128 && w21 == 128, "dst2 phase2 weights 1:1");
