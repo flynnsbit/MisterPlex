@@ -56,10 +56,14 @@ If map.rpt shows u_mp_beam / u_mp_npx_path / u_mp_timing **removed**, the fit is
 ```
   720p24 deadline .............. 41.667 ms/f
   ARM decode alone ............. 35.94 ms/f   PASS, margin 5.73
-  ARM CPU copy into bank ....... 14.978 ms/f
-  serial decode + copy ......... 50.92 ms/f   FAIL by 9.25
-  decode + ANY concurrent peer . 45-48 ms/f   FAIL
-  decode + verified sust. DMA .. UNMEASURED (instrument bug)
+  CPU move into bank ........... 14.97 ms/f   STRUCTURAL (~88 MiB/s)
+  decode + CPU move ............ 50.9+ ms/f   FAIL — closed question
+  decode + verified DMA ........ THE open ARM question (w-path)
+  fabric decode ................ endgame
 ```
-Anomaly chase closed: clean `frame_ms=14.978` matches original ~15.0–15.3.  
-Fabric planes remain mandatory. Contaminated session figures stay withdrawn.
+**Why 88 MiB/s is a ceiling, not a knob:** bank @ `0x30000000` is outside kernel
+System RAM (`mem=511M` / iomem ends `0x1fefffff`). `/dev/mem` is uncached/device
+regardless of `O_SYNC`/`--no-sync` (parent: 0/5 pre-reg HIT; no-sync equal/slower).
+"Make the copy faster" family is **dead**. Route A zero-copy into bank is **suspect**
+until measured (same uncached boundary on ref reads).  
+w-clock lane: fabric present/scanout only — does not depend on CPU move rate.

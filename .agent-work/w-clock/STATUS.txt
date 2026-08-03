@@ -1,14 +1,12 @@
 w-clock STATUS
 ==============
-Branch: w-clock-bump · HEAD includes e0f23e5a fit-survival package
-Macro PRESENT_MULTI_PIXEL default OFF
+Branch: w-clock-bump
+Macro PRESENT_MULTI_PIXEL default OFF — ready for integration fit
 
-PARENT CONTROL ARM (device, not this lane):
-  core d1b24e0c · video_mode=0 (1280x720@60 HDMI)
-  CYAN_PX=0 ACTIVE=923x717 orange ARM idle — fabric PASS needs cyan+geometry move
+PARENT (cite only):
+  CPU bank move ~14.97 ms/f @ ~88 MiB/s is STRUCTURAL (bank outside System RAM)
+  decode+CPU copy FAIL closed; DMA open (w-path); fabric decode endgame
+  Control arm: CYAN_PX=0 ACTIVE=923x717 on d1b24e0c @ video_mode=0
 
-LANE READY FOR INTEGRATION:
-  1280 DE beam + npx path + CDC/SDC contract + H ownership + 4ppc 60 plan
-  STA slack: unknown until parent post-fit-timing
-
-Clean budget: decode 35.94 / copy 14.978 / serial FAIL — fabric mandatory
+THIS LANE: 1280 DE beam + multi-pixel path + CDC/fit contract — unaffected
+  STA slack still unknown until parent post-fit-timing
