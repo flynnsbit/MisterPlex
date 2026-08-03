@@ -45,8 +45,11 @@ another page owned by w-mem. w-osd will not move PLXC; it is already in ARM + RT
 | Origin | `((W-size)/2, (H-size)/2)` → **(520, 240)** |
 | Stroke | `max(1, size/5)` → **48** |
 | Colours | bg `24'h1F_23_26`, chevron `24'hE5_A0_0D` |
+| **Fabric signature** | cyan `24'h00_C8_FF` L-brackets TL+BR (64×12) when `idle_sig_en` — **ARM never paints** |
 | ARM | zero idle pixels when plane live (`chromePlaneLive`) |
 | Memory | list 1–2 M10K; font/idle **0** M10K (comb) |
+
+Parent capture PASS/FAIL: **`docs/fab-idle-parent-capture-contract.md`**.
 
 ## 4. Multi-pixel (w-clock)
 

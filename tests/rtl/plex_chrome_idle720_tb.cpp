@@ -91,6 +91,7 @@ int main(int argc, char** argv) {
     t->osd_idle_mode = 0;
     t->fab_phase_en = 0;
     t->idle_phase_in = 0;
+    t->idle_sig_en = 0;
     for (int i = 0; i < 4; ++i)
         tick(t);
     t->reset = 0;
@@ -141,25 +142,33 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    // ---- exact pixels (720p logo) ----
+    // ---- exact pixels (720p logo) + fabric cyan signature ----
     std::fprintf(stderr, "=== idle720 sample points ===\n");
     constexpr int kOx = 520, kOy = 240, kSize = 240;
-    // Corner: background
+    t->idle_sig_en = 1; // fabric-only cyan corners
+    for (int i = 0; i < 2; ++i)
+        tick(t);
+    // TL signature cyan (ARM never paints 00C8FF)
     const uint32_t c00 = sampleAt(t, 0, 0, 0x00FF00);
+    const uint32_t c_br = sampleAt(t, 1279, 719, 0x00FF00);
     // Chevron top-left of box (lx=0,ly=0) → amber
     const uint32_t c_tl = sampleAt(t, kOx, kOy, 0x00FF00);
-    // Inside stroke upper arm (lx=ly+10 within stroke)
+    // Inside stroke upper arm
     const uint32_t c_arm = sampleAt(t, kOx + 40, kOy + 40, 0x00FF00);
-    // Outside box right: bg
+    // Outside box right: bg (not cyan — away from corners)
     const uint32_t c_out = sampleAt(t, 1000, 600, 0x00FF00);
     // Far from chevron on same row as center: bg
     const uint32_t c_left = sampleAt(t, 100, 360, 0x00FF00);
 
-    std::fprintf(stderr, "pix (0,0)=%06x (520,240)=%06x (560,280)=%06x (1000,600)=%06x (100,360)=%06x\n",
-                 c00, c_tl, c_arm, c_out, c_left);
+    std::fprintf(stderr,
+                 "pix (0,0)=%06x (1279,719)=%06x (520,240)=%06x (560,280)=%06x "
+                 "(1000,600)=%06x (100,360)=%06x\n",
+                 c00, c_br, c_tl, c_arm, c_out, c_left);
 
-    if (c00 != 0x1F2326)
-        fail("bg at (0,0)");
+    if (c00 != 0x00C8FF)
+        fail("fabric cyan signature at TL");
+    if (c_br != 0x00C8FF)
+        fail("fabric cyan signature at BR");
     if (c_tl != 0xE5A00D)
         fail("amber at chevron origin");
     if (c_arm != 0xE5A00D)
@@ -168,9 +177,21 @@ int main(int argc, char** argv) {
         fail("bg outside box");
     if (c_left != 0x1F2326)
         fail("bg left of chevron");
-    // Video green must never appear
     if (c00 == 0x00FF00 || c_tl == 0x00FF00 || c_arm == 0x00FF00)
         fail("video leak");
+
+    // RED-distinguish: with sig OFF, corner must NOT be cyan (ARM-lookalike path)
+    t->idle_sig_en = 0;
+    for (int i = 0; i < 2; ++i)
+        tick(t);
+    const uint32_t nosig = sampleAt(t, 0, 0, 0x00FF00);
+    if (nosig == 0x00C8FF)
+        fail("sig off must not paint cyan");
+    if (nosig != 0x1F2326)
+        fail("sig off corner should be ARM-matching bg");
+    t->idle_sig_en = 1;
+    for (int i = 0; i < 2; ++i)
+        tick(t);
 
     // Golden cross-check at a few points
     if (!goldenChevron(kOx, kOy, kOx, kOy, kSize))
@@ -248,18 +269,8 @@ int main(int argc, char** argv) {
     tick(t);
     t->vs_in = 1;
     tick(t);
-    int amber = 0, bg = 0, video = 0, other = 0;
-    // Sample every 8th pixel on every 8th line (fast, still covers full canvas)
-    for (int y = 0; y < 720; y += 8) {
-        t->de_in = 0;
-        tick(t);
-        // burn skipped lines' y advances: we only emit one DE line per y step,
-        // so walk y consecutive DE lines but only score y%8==0 — simpler: full
-        // lines at stride 8 by emitting blank lines between.
-        // Actually chrome y_cnt increments each DE falling edge. Emit (y - prev)
-        // empty line ends... Easier: restart vs and walk all lines, score stride.
-    }
-    // Full-height walk with x-stride 8 (921600/8 = 115200 ticks — acceptable)
+    int amber = 0, bg = 0, cyan = 0, video = 0, other = 0;
+    t->idle_sig_en = 1;
     t->vs_in = 0;
     tick(t);
     t->vs_in = 1;
@@ -271,12 +282,13 @@ int main(int argc, char** argv) {
         t->de_in = 1;
         for (int x = 0; x < 1280; x += 8) {
             t->din = 0x00FF00;
-            // advance 8 pixels: 1 active sample + 7 burn
             tick(t);
             if (t->de_out) {
                 const uint32_t d = static_cast<uint32_t>(t->dout) & 0xFFFFFFu;
                 if (d == 0xE5A00D)
                     ++amber;
+                else if (d == 0x00C8FF)
+                    ++cyan;
                 else if (d == 0x1F2326)
                     ++bg;
                 else if (d == 0x00FF00)
@@ -289,15 +301,17 @@ int main(int argc, char** argv) {
                 tick(t);
             }
         }
-        // finish line to 1280 if needed
         t->de_in = 0;
         tick(t);
     }
-    std::fprintf(stderr, "subsample amber=%d bg=%d video=%d other=%d\n", amber, bg, video, other);
+    std::fprintf(stderr, "subsample amber=%d cyan=%d bg=%d video=%d other=%d\n", amber, cyan, bg,
+                 video, other);
     if (video > 0)
         fail("subsample video leak");
     if (amber < 50)
         fail("subsample amber too low for 720p chevron");
+    if (cyan < 20)
+        fail("subsample cyan signature too low");
     if (bg < 1000)
         fail("subsample bg too low");
     if (fails == 0)

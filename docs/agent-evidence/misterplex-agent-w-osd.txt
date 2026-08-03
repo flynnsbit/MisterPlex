@@ -1,337 +1,43 @@
-worker: w-osd
-branch: w-osd-fabric-plane (base w-fit-ceiling-fd-min)
-todos: fab-osd, fab-idle
-date: 2026-08-03
-commit: follow-up 720p-first ARM-evacuation tighten (see git log)
-note: /tmp writes forbidden by runtime — evidence at docs/agent-evidence/misterplex-agent-w-osd.txt
+lane=w-osd
+branch=w-osd-fabric-plane
+todo=fab-osd,fab-idle
+status=READY_FOR_INTEGRATION_FIT (default OFF)
 
-MANDATE: "move as much into the fpga so we can do 720p"
-  720p is the reward for evacuating ARM. Prefer ARM=0 work over cheaper ARM work.
+## Latest: fabric-only cyan signature + parent capture contract
+- plex_chrome.sv: idle_sig_en + cyan #00C8FF L-brackets TL/BR (64x12)
+- sys_top: fab_idle_sig_en=1 under `PLEX_FAB_IDLE`, else 0
+- docs/fab-idle-parent-capture-contract.md — enable path, PASS numbers, ARM-out
+- scripts/hdmi_capture_idle.sh — CYAN_PX scoring (from main base)
 
-PARENT 720p REAL-CONTENT DECODE (2026-08-02, device-measured):
-  1280x720 @4000k both cores: 41.073 ms/f (24.35 fps ceiling)
-  24fps budget 41.667 ms → margin 0.59 ms = 1.4%
-  Archived non-decode 480p 18.628 ms/f ×~3.08 ≈ 57 ms/f at 720p if still on ARM
-  → OSD/idle/scale offload is critical path, not polish.
-  Hard acceptance: ARM does zero per-pixel work at 720p when plane live.
+## Sim true rc (oss-cad Verilator 5.051)
+idle720: true rc=0 (RED mon≠720 + GREEN TL/BR=00c8ff + phase + ss-motion + cyan subsample)
+chrome:  true rc=0
+ppc:     true rc=0
+e2e:     true rc=0
 
-========================================================================
-(a) OVERLAY PLANE WIRING (quoted)
-========================================================================
-Path (sys_top.v):
-  // Composite: ascal → shadowmask → plex_chrome → osd → pins
-  plex_chrome.din  = hdmi_data_mask (post-shadowmask)
-  plex_chrome.dout = hdmi_data_chrome
-  osd.din          = hdmi_data_chrome
+## Parent enable (integration only)
+Plex.qsf: set_global_assignment -name VERILOG_MACRO "PLEX_FAB_IDLE=1"
+MiSTer.ini: video_mode=0 (1280x720@60) — w-clock owns mode
+Default OFF: bit-identical idle-off vs d1b24e0c macros-at-reset
 
-list_we is a real net (not 1'b0):
-  .list_we(plex_chrome_list_we)  // from plex_chrome_host_if
+## Pre-reg PASS capture
+scripts/hdmi_capture_idle.sh docs/agent-evidence/fab-idle-t0.png
+sleep 3
+scripts/hdmi_capture_idle.sh docs/agent-evidence/fab-idle-t1.png
+PASS: CYAN_PX>=2000 ORANGE_PX>=500 MEAN 12..80 STD>5 + motion
+ARM control: CYAN_PX~0 (prior MEAN=23 ORANGE=20161 no cyan = daemon)
+Strong ARM-out: killall misterplexd; still cyan+orange+motion
 
-Passthrough when overlay off (plex_chrome.sv output mux):
-  if (de_d2 && hit_d)
-      dout <= hit_rgb_d;
-  else if (de_d2 && idle_en_d)
-      dout <= idle_rgb_d;
-  else
-      dout <= din_d;   // unmodified video, 1-cycle delay
+## Commits prior
+a6864e58 FAB_IDLE screensaver motion
+a3761b0e native 1280x720 fabric idle + vsync phase
+0832773e PX_PER_CLK multi-lane
+94e5663e e2e DDR PLXC
+a0bcbdaa PLXC DDR loader
+5be68d97 fab-pace
 
-RTL sim red-before-green:
-  PASS passthrough  (dout[n]==din[n-1], no chrome when cfg_enable=0, idle_en=0)
-  PASS glyph        (white=256 @ scale=2)
-  PASS idle         (amber=48 bg=3024 video_leaked=0)
-
-========================================================================
-(b) HOST COMMAND CONTRACT + ARM STOPS PIXELS
-========================================================================
-ABI (mailbox_abi_spec.hpp):
-  PLXC +0x130  magic 0x504C5843, [32]en [47:34]count [63:48]seq
-  PLXO +0x138  chrome_hw + applied W/H telemetry
-  list +0x140  64-bit cmds
-
-Cmd ISA (plex_chrome.sv / plex_chrome_cmds.hpp):
-  op0 END, op1 RECT(w12/h12 fill 14_14_28), op2 GLYPH(code), op3 RECT_PAL(w8/h8/pal)
-  MAX_CMDS=48, HIT_SCAN=32
-  body_scale = clamp(2..8, half-even H/240); pixel path Q8 reciprocal (no /sc)
-
-ARM changes:
-  media_player.cpp presentCleanFrame:
-    if (!dirty.empty() && !chromePlaneLive()) renderOverlay(...)  // skip bake when live
-  media_player.cpp paintIdle:
-    if (chromePlaneLive() && m != LastFrame) skip DDR paint  // kills idle paint DDR failed
-  media_player.cpp showPlaybackOverlay:
-    when live: buildPlaybackHud → fpga_.writeChromeCommandList (PLXC)
-  main.cpp: CHROME_PLANE conf; chromePlaneHw fail-closed until PLXO
-  fpga_spi: writeChromeCommandList / readChromeHwPresent
-
-========================================================================
-(c) FABRIC IDLE + MEMORY COST
-========================================================================
-idle_en = (!has_frame) && (osd_idle_mode != 3)  // host_if
-Logo mode: full-frame bg 1F_23_26 + chevron E5_A0_0D (combinational geometry)
-Screensaver: phase-drifted chevron; Black: solid black
-
-Memory cost (honest):
-  list 2×48×64b ≈ 6 kbit → 1–2 M10K (ramstyle M10K, preserve)
-  font ROM: combinational case → 0 M10K
-  idle chevron/bg: pure math → 0 M10K
-  NO new line buffers
-
-sys_top interim: has_frame_chrome=1'b1 (idle off until present has_frame threaded)
-  — fabric idle path proven in Verilator; product idle takeover gated on thread.
-
-========================================================================
-(d) RED-BEFORE-GREEN EVIDENCE (true rc, not piped)
-========================================================================
-test_plex_chrome_sim:              true rc=0
-test_plex_chrome_cmds:             true rc=0
-test_plex_chrome_write_path_static: true rc=0
-  BAD fixture:  true rc BAD=1  (list_we 1'b0 elision)
-  GOOD fixture: true rc GOOD=0
-test_plex_chrome_rtl_sim:          true rc=0
-  markers: PASS passthrough / PASS glyph / PASS idle / plex_chrome_tb: PASS
-test_plex_chrome_elision_guard:    true rc=0
-test_unit_rollcall:                true rc=0
-test_playback_overlay:             true rc=0
-test_input_mailbox:                true rc=0
-test_rtl_invariants.sh:            true rc=0 (mailbox collisions OK w/ PLXC/PLXO)
-
-========================================================================
-(e) AREA / TIMING COST
-========================================================================
-Prereg (no Quartus this lane — w-nostub owns exclusive fit):
-  ALM: hit-scan HIT_SCAN=48 + idle ~1.5–3k (estimate; +HIT_SCAN may add comb)
-  M10K: +1–2 for dual list; font/idle 0 — deliberately NO 720p line buffer
-        (1280 B = 1 M10K/line would be the wrong trade for chrome)
-  clk_hdmi path: 1-cycle registered composite; scale via Q8 mul>>8 not divider
-  CRITICAL PATH: STA unmeasured this lane — flag for post-fit parent
-  Prior base (8fdf440f): ALM 23585/41910, M10K 465/553 (88 free)
-
-720p sizing (parameter, not redesign):
-  coords 12-bit; HDMI_W/H ports; body_scale(720)=3 (unit-proven)
-  HIT_SCAN=MAX_CMDS=48; 720p STOPPED+long title = 38 cmds (unit rc=0)
-
-========================================================================
-(e2) ARM ms/frame REMOVED — honest quantification
-========================================================================
-What ARM no longer does when chromePlaneLive() (quoted code paths):
-  1) presentCleanFrame: skips renderOverlay pixel bake into content buffer
-  2) paintIdle: returns with ZERO ARM paint (no DDR, no fb0) — was full idle
-     RGB + optional DDR publish ("idle paint DDR failed" class)
-  3) Progress path: no per-frame pixel composite; PLXC list refresh ≤ every 15 frames
-
-What ARM still does when live (not zero yet):
-  - buildPlaybackHud + writeChromeCommandList (~30–48 qwords) on show + every 15 frames
-  - overlay_.show/setProgress state bookkeeping (no pixels)
-
-ARM milliseconds removed per frame:
-  UNKNOWN — no host-side overlay_us_p capture under plane=1 was taken this lane.
-  Measurement that would settle it (parent owns device):
-    A) Run PRESENT_PROFILE=1 playback plane=0; read log overlay_us_p / overlay_cpu_us_p
-    B) Same title with CHROME_PLANE=1 + PLXO hw once threaded; compare overlay_* 
-    C) Idle: time paintIdle DDR path plane=0 vs plane=1 skip (should be ~0 ARM)
-  Code already accumulates prof.overlayUs around renderOverlay — gate is plane live.
-
-Why we chose "ARM out" over "cheaper ARM":
-  Fabric composite + fabric idle + skip all pixel paths when live. Remaining ARM
-  is semantic list only (not a reduced-resolution bake). Next evacuation step is
-  a fabric progress-fraction register so even list rebuild goes away mid-play.
-
-========================================================================
-(f) EXPLICIT UNKNOWNS
-========================================================================
-1. DDR PLXC loader not threaded: sys_top plxc_ext_* = 0; boot one-shot list only.
-   ARM writeChromeCommandList writes doorbell+0x130/0x140 but fabric does not yet
-   poll DDR → host_if. Product live HUD needs that thread OR SPI path.
-2. has_frame_chrome hardwired 1'b1 — fabric idle will not take over product until
-   present_core has_frame is wired.
-3. chromePlaneHw fail-closed; PLXO not yet driven from plex_chrome_hw in sys_top
-   to DDR — conf alone cannot enable plane=1 on device until PLXO write lands.
-4. No Quartus fit/STA this lane — area/timing numbers are design prereg only.
-5. No device/HDMI proof (parent owns capture). BOOT_DEMO boot glyph is interim
-   retention stimulus, not product chrome.
-6. ARM overlay_us delta plane0→plane1: unknown until parent profiles (see e2).
-7. Mid-play list rebuild every 15 frames still uses ARM; progress-fraction reg TBD.
-
-READY_FOR_PARENT: design+sim complete; fit/deploy/HDMI/profile = parent after nostub.
-
-========================================================================
-(g) fab-pace — present_pace_seq (LANDED this commit)
-========================================================================
-Module: fpga/Plex_MiSTer/rtl/present_pace_seq.sv
-  parameter ENABLE default 0 (nostub-safe; not wired into ddr_frame_store yet)
-Contract: docs/present-pace-doorbell-contract.md
-  Writer (w-mem): bank payload → pending_bank + pending_ready + swap_req_toggle edge
-  Consumer (pace): do_swap only on vsync_pulse; never mid-scan
-  Late: repeat prior bank (cnt_late/cnt_repeats) — never black
-  Early: hold pending (cnt_early_hold) until cadence advance_unique
-  Drop: new doorbell while pending (cnt_drops)
-Judder default: floor(n*cf/dh) 24-in-60 → 2:3 via cadence.hpp lockstep
-  Match-source 24/48 Hz is a separate w-clock product switch — not silent.
-
-Host model: host/libmisterplex/present_pace.hpp
-Unit: tests/unit/test_present_pace.cpp → true rc=0
-  24in60 presented=24 repeats=36 early=0 late=0
-RTL: tests/unit/test_present_pace_rtl_sim.sh → true rc=0
-  PASS legacy / PASS late / PASS early / PASS film / PASS tear-guard
-  film presented=24 vsync=60 late=0 snaps=24
-rollcall: true rc=0 (prereqs=58 commands=158)
-
-Multi-pixel (w-clock):
-  pace = frame-level → PPC-invariant
-  chrome post-ascal clk_hdmi 1 px/clk today — header note in plex_chrome.sv
-  if N-lane HDMI reaches chrome: hit OR x0..x0+N-1 (not done; not required yet)
-
-ARM ms removed by fab-pace:
-  UNKNOWN — sequencer default OFF and not product-wired.
-  Measurement: PRESENT_PROFILE plane paths with ENABLE=0 vs ENABLE=1 RBF;
-  sum ARM present-deadline sleeps / hold waits; diff ms/f.
-  Class expected: remove wall-clock present pacing; DDR write remains other lanes.
-
-NOT done (explicit):
-  - No wire into ddr_frame_store product path (needs macro + nostub coord)
-  - No Quartus / no device
-  - No SPI/status export of counters yet (ports exist on module)
-
-========================================================================
-(h) plex_chrome_ddr_loader — PLXC poll + PLXO publish (LANDED)
-========================================================================
-Module: fpga/Plex_MiSTer/rtl/plex_chrome_ddr_loader.sv  ENABLE default 0
-Host:   host/libmisterplex/plex_chrome_ddr_loader.hpp
-Purpose: consume ARM writeChromeCommandList (list@+0x140 then PLXC@+0x130)
-         and publish PLXO@+0x138 with chrome_hw so chromePlaneHw can unfail-close.
-
-Protocol (2-phase mem master):
-  req → gnt → rd_valid (reads) / complete on gnt (writes)
-  New PLXC seq → RD list[0..count) → host_we list → host_we ctrl@0xFF
-  ENABLE=0: m_req=0 host_we=0 forever (nostub-safe)
-
-PLXO pack (matches ARM readChromeHwPresent hi bit0):
-  [31:0] magic PLXO, [32] chrome_hw, [44:33] mon_w, [56:45] mon_h, [60:57] scale
-
-Evidence (true rc):
-  test_plex_chrome_ddr_loader:           true rc=0
-  test_plex_chrome_ddr_loader_rtl_sim:   true rc=0
-    PASS quiet / PASS load / PASS same-seq / PASS plxo / PASS bad-magic
-  rollcall: true rc=0
-
-NOT product-wired: needs ddr_frame_store arbiter slot (w-mem coord) + sys_top
-  plxc_ext_* OR + PLXO path. has_frame still stub 1'b1 (fail-open, no black).
-
-Parent DDR mmap evidence #3: noted; does not change this lane (zero per-pixel
-  still required). Cached bank is w-mem milestone toward 720p24.
-
-Parent correction (mmap retracted): coherent mapping WORSE; serial ARM decode+copy
-  dead at all bitrates. Route B (fabric owns pixels) is the only close. This lane
-  is route B for overlay/idle/pace.
-
-========================================================================
-(i) E2E sim — DDR PLXC → pixels (route B proof in Verilator)
-========================================================================
-tests/unit/test_plex_chrome_e2e_rtl_sim.sh → true rc=0
-  loader + host_if + plex_chrome
-  PASS pre-load cfg off
-  PASS load-applied (seq=9)
-  PASS glyph-pixels white_px=256
-  PASS plxo chrome_hw
-  PASS idle (has_frame=0 → idle_en, idleish_px=199)
-
-Proves: ARM writeChromeCommandList shape (mem@0x140 then PLXC@0x130) becomes
-  fabric composite with zero ARM pixel bake. Product still needs ddr arbiter wire.
-
-========================================================================
-(j) PX_PER_CLK multi-lane chrome (w-clock integration ready)
-========================================================================
-plex_chrome.sv parameter PX_PER_CLK ∈ {1,2,4}, default 1 (sys_top unchanged).
-  din/dout = PX_PER_CLK×24 packed LE; each lane hit-tests hx0+lane.
-Evidence:
-  test_plex_chrome_rtl_sim (PPC=1): true rc=0  passthrough/glyph/idle
-  test_plex_chrome_e2e_rtl_sim:      true rc=0
-  test_plex_chrome_ppc_rtl_sim (PPC=2): true rc=0
-    PASS ppc2-passthrough
-    PASS ppc2-lane-split  rect w=1 → lane0=141428 lane1=video only
-    PASS ppc2-outside
-
-INTEGRATION FIT readiness (honest):
-  SAFE default-on today: plex_chrome @ PPC=1 already in sys_top (passthrough when
-    cfg off). Boot one-shot list only until loader arbitrated.
-  DEFAULT-OFF modules (do not enable without arbiter wire + parent gate):
-    present_pace_seq ENABLE=0
-    plex_chrome_ddr_loader ENABLE=0
-  BLOCKED for product plane=1 on glass:
-    ddr_frame_store must grant loader beats; has_frame CDC; PLXO path live.
-  Nostub d1b24e0c on glass = room is there (356 free M10K).
-
-========================================================================
-
-========================================================================
-FAB-IDLE NATIVE 1280×720 (this land)
-========================================================================
-date: 2026-08-03
-goal: idle screen entirely in fabric at 1280×720; ARM paints nothing; PPC-safe;
-      vsync phase from fabric; default OFF (PLEX_FAB_IDLE).
-
-(a) Geometry contract — docs/chrome-idle-geometry-contract.md
-  - Chrome composites in HDMI pixel space (hdmi_width/height post-ascal).
-  - PLXG (w-scaler) is bank/content window — different domain.
-  - ABI CONFLICT surfaced: w-scaler proposed PLXG @ +0x130; PLXC already owns
-    +0x130. Propose PLXG @ +0x280 (after list). Parent must arbitrate.
-  - 720p logo: size=240 ox=520 oy=240 stroke=48 scale=3 colours E5A00D/1F2326
-
-(b) Product wire (default OFF)
-  sys_top.v:
-    `ifdef PLEX_FAB_IDLE
-      has_frame_chrome = 0; fab_idle_phase_en = 1;  // ARM-off idle milestone
-    `else
-      has_frame_chrome = 1; fab_idle_phase_en = 0;  // nostub-safe, no idle takeover
-    `endif
-  host_if: vsync_in + fab_phase_en → idle_phase++ on vs rising (fabric owns timing)
-  Chrome remains on HDMI path always (synthesis survival) — macro only controls.
-
-(c) Red-before-green true rc (direct)
-  test_plex_chrome_rtl_sim:           true rc=0
-  test_plex_chrome_idle720_rtl_sim:
-    RED  FAULT_480P_GEOM=1 mon 624x480 scale=2  true rc=0 (fault engaged)
-    GREEN mon 1280x720 scale=3
-      pix (0,0)=1f2326 (520,240)=e5a00d (560,280)=e5a00d video=0
-      phase 5→10 on vsync; subsample amber=1440 bg=113040 video=0
-      true rc=0
-  test_plex_chrome_ppc_rtl_sim:
-    idle x518-519=1f2326|1f2326 x520-521=e5a00d|e5a00d  PASS ppc2-idle720-lanes
-    true rc=0
-  test_plex_chrome_e2e_rtl_sim:       true rc=0
-  test_unit_rollcall:                 true rc=0
-  test_plex_chrome_elision_guard:     true rc=0
-
-(d) ARM ms removed
-  Unknown until parent profiles plane live idle path on device.
-  Measurement: CHROME_PLANE off vs on; paintIdle wall time + DDR publish absent.
-  Class: full idle RGB bake + DDR publish eliminated when plane live (code path
-  already skips; FAB_IDLE makes fabric the source of pixels).
-
-(e) Parent device verify (after integration fit with PLEX_FAB_IDLE=1)
-  1. HDMI mode 1280×720 (video mode 0 typical)
-  2. DEPLOY_LOAD=menu ./scripts/deploy_plex_core.sh
-  3. Daemon log: "idle fabric plane=1 skip ALL ARM paint" (CHROME_PLANE conf)
-  4. scripts/hdmi_capture_idle.sh docs/agent-evidence/idle720-live.png
-     Expect ORANGE_PX>0, dark bg, chevron; not black; not 624×480 pillar only
-  5. Post-fit: make post-fit-hierarchy must show u_plex_chrome rows non-zero;
-     elision guard GREEN on new fit.rpt
-
-(f) Unknowns
-  - Real has_frame CDC not wired; FAB_IDLE forces has_frame=0 (always idle)
-  - HDMI mode still host/MiSTer — chrome does not force 720p video_mode
-  - PLXG offset conflict with w-scaler
-  - STA of idle comb on clk_hdmi unmeasured this lane
-  - ARM ms exact number
-
-Memory: unchanged — idle pure comb (0 M10K); list 1–2 M10K.
-
-========================================================================
-PARENT #3 decode correction absorbed + moving idle
-========================================================================
-product-tier decode 36.27 ms/f (margin 5.40 ms) — serial+copy still FAIL.
-FAB_IDLE ON now uses screensaver mode=2 + vsync phase → moving chevron
-(integration visual: fabric motion, ARM 0 pixels). Default still OFF.
-
-Sim: PASS idle720-screensaver-motion
-  ph0 (8,240)=e5a00d (1032,240)=bg | ph600 swapped  true rc=0
+## Open (not blocking glass idle demo)
+- loader not in ddr_frame_store arbiter
+- PLXO fail-closed without loader → chromePlaneLive may stay 0
+- pace ENABLE=0 product
+NO Quartus fit by this lane. NO device access.

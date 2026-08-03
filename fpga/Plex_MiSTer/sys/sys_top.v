@@ -1211,23 +1211,28 @@ cyclonev_hps_interface_peripheral_i2c hdmi_i2c
 	wire        has_frame_chrome;
 	wire [1:0]  osd_idle_chrome;
 	wire        fab_idle_phase_en;
+	wire        fab_idle_sig_en;
 `ifdef PLEX_FAB_IDLE
 	// ARM-off milestone: fabric idle always (until has_frame CDC). Mode 2 =
-	// screensaver — chevron drifts with vsync phase so glass shows *motion*
-	// with zero ARM pixels (integration fit visual: moving 1280×720 pattern).
+	// screensaver — chevron drifts with vsync phase (moving pattern). Cyan
+	// corner signature distinguishes from ARM idle. No boot PLXC glyph.
 	assign has_frame_chrome  = 1'b0;
 	assign fab_idle_phase_en = 1'b1;
 	assign osd_idle_chrome   = 2'b10; // screensaver
+	assign fab_idle_sig_en   = 1'b1;
 `else
 	assign has_frame_chrome  = 1'b1;
 	assign fab_idle_phase_en = 1'b0;
 	assign osd_idle_chrome   = 2'b00; // logo (unused while has_frame=1)
+	assign fab_idle_sig_en   = 1'b0;
 `endif
 	assign plxc_ext_we    = 1'b0;
 	assign plxc_ext_addr  = 8'd0;
 	assign plxc_ext_wdata = 64'd0;
 
-	// One-shot boot list push so list_we toggles after reset (RAM retention).
+	// One-shot boot list push so list_we toggles after reset (RAM retention /
+	// anti-elision). Under PLEX_FAB_IDLE still touch list RAM but PLXC enable=0
+	// so no glyph sits on the fabric idle plane.
 	always @(posedge clk_hdmi) begin
 		if (reset_req) begin
 			plxc_boot_st    <= 2'd0;
@@ -1238,17 +1243,20 @@ cyclonev_hps_interface_peripheral_i2c hdmi_i2c
 			plxc_boot_we <= 1'b0;
 			case (plxc_boot_st)
 				2'd0: begin
-					// Write solid '#' glyph cmd
 					plxc_boot_we    <= 1'b1;
 					plxc_boot_addr  <= 8'd0;
 					plxc_boot_wdata <= {8'h00, 8'h00, 8'h23, 16'd64, 16'd64, 8'd2};
 					plxc_boot_st    <= 2'd1;
 				end
 				2'd1: begin
-					// PLXC ctrl: enable, count=1, seq=1
 					plxc_boot_we    <= 1'b1;
 					plxc_boot_addr  <= 8'hFF;
+`ifdef PLEX_FAB_IDLE
+					// enable=0 — list retained, overlay off (idle owns glass)
+					plxc_boot_wdata <= {16'd1, 14'd0, 1'b0, 1'b0, 32'h504C_5843};
+`else
 					plxc_boot_wdata <= {16'd1, 14'd1, 1'b0, 1'b1, 32'h504C_5843};
+`endif
 					plxc_boot_st    <= 2'd2;
 				end
 				default: begin
@@ -1324,6 +1332,7 @@ cyclonev_hps_interface_peripheral_i2c hdmi_i2c
 		.idle_en(plxc_idle_en),
 		.idle_mode(plxc_idle_mode),
 		.idle_phase(plxc_idle_phase),
+		.idle_sig_en(fab_idle_sig_en),
 		.chrome_hw(plex_chrome_hw),
 		.mon_width(plex_chrome_mon_w),
 		.mon_height(plex_chrome_mon_h),

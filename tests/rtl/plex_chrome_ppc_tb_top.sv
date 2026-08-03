@@ -80,6 +80,7 @@ module plex_chrome_ppc_tb (
         .idle_en(idle_en),
         .idle_mode(idle_mode),
         .idle_phase(idle_phase),
+        .idle_sig_en(1'b0),
         .chrome_hw(),
         .mon_width(),
         .mon_height(),

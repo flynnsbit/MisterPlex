@@ -68,6 +68,9 @@ module plex_chrome #(
     input  wire        idle_en,
     input  wire [1:0]  idle_mode,
     input  wire [15:0] idle_phase,
+    // Fabric-only signature (cyan corner brackets). ARM idle never paints this.
+    // Parent scores CYAN_PX to distinguish fabric from daemon idle.
+    input  wire        idle_sig_en,
 
     output reg         chrome_hw,
     output reg  [11:0] mon_width,
@@ -518,6 +521,29 @@ module plex_chrome #(
         end
     endfunction
 
+    // Fabric signature: cyan L-brackets at TL + BR. ARM idle_screen.hpp never
+    // emits 00_C8_FF. MARK=64 BAR=12 → ~2.8k cyan px @ any canvas ≥128×128.
+    localparam [11:0] SIG_MARK = 12'd64;
+    localparam [11:0] SIG_BAR  = 12'd12;
+    localparam [23:0] SIG_CYAN = 24'h00_C8_FF;
+
+    function automatic idle_fab_mark;
+        input [11:0] px, py;
+        reg tl_h, tl_v, br_h, br_v;
+        begin
+            idle_fab_mark = 1'b0;
+            if (HDMI_WIDTH >= SIG_MARK && HDMI_HEIGHT >= SIG_MARK) begin
+                tl_h = (py < SIG_BAR)  && (px < SIG_MARK);
+                tl_v = (px < SIG_BAR)  && (py < SIG_MARK);
+                br_h = (py >= HDMI_HEIGHT - SIG_BAR) &&
+                       (px >= HDMI_WIDTH - SIG_MARK);
+                br_v = (px >= HDMI_WIDTH - SIG_BAR) &&
+                       (py >= HDMI_HEIGHT - SIG_MARK);
+                idle_fab_mark = tl_h | tl_v | br_h | br_v;
+            end
+        end
+    endfunction
+
     function automatic [23:0] idle_rgb_at;
         input [11:0] px, py;
         begin
@@ -525,6 +551,8 @@ module plex_chrome #(
             if (idle_en && idle_mode != 2'd3) begin
                 if (idle_mode == 2'd1)
                     idle_rgb_at = 24'h00_00_00;
+                else if (idle_sig_en && idle_fab_mark(px, py))
+                    idle_rgb_at = SIG_CYAN; // fabric-only — above chevron/bg
                 else if (idle_chevron(px, py, idle_ox, idle_oy, idle_size))
                     idle_rgb_at = 24'hE5_A0_0D;
                 else
