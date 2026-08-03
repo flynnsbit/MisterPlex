@@ -185,6 +185,30 @@
       "token_hit": "1"
     },
     {
+      "check": "B9_BANK_GEN_TIED_ZERO",
+      "inject": "live defective/hollow tree (no inject)",
+      "expect": "B9_BANK_GEN_TIED_ZERO",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B9_DISP_MATCH_DAR_ONLY",
+      "inject": "live defective/hollow tree (no inject)",
+      "expect": "B9_DISP_MATCH_DAR_ONLY",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B9_ASCAL_SIDEBAND_UNPROVEN",
+      "inject": "live defective/hollow tree (no inject)",
+      "expect": "B9_ASCAL_SIDEBAND_UNPROVEN",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
       "check": "B26_STORE_CROP_DISPLAY_BOUNDS_MISSING",
       "inject": "live defective/hollow tree (no inject)",
       "expect": "B26_STORE_CROP_DISPLAY_BOUNDS_MISSING",
@@ -322,6 +346,6 @@
     }
   ],
   "failures": [],
-  "n_red": 40,
-  "head": "5b45e9271bf9"
+  "n_red": 43,
+  "head": "e05611a3ffa4"
 }

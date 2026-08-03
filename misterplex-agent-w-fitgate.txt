@@ -1,27 +1,22 @@
 lane: w-fitgate
 role: fit-release gate ruler
 branch: w-fitgate
-HEAD: 73522f74
 GRANT: NO
 selftest: PASS true_rc=0
-mutation_matrix: rows=40 red=40 fail_holes=0
+mutation_matrix: rows=43 red=43 fail_holes=0
 
-B32 PLXG↔bank atomic couple (rd-duck 2026-08-03):
-  LIVE_OPEN RED: HOST, STORE, SWAP_SEQ_FROM_LIVE_RT, VISUAL_TUPLE_PARTIAL, POLLER_SIM_NOT_RTL
-  w-mem partial: host+store couple OK; still RED on
-    applied_geom_seq_r <= rt_geom_seq (N+1) + no pend fps/DAR
-  Require: doorbell carries committed PLXG seq; store match before DMA;
-    full visual tuple+seq same txn; product plxg_ddr_poller baseline (not PlxgPollerSim)
+B9 bank-gen / DAR∧applied-gen (rd-duck unsafe fix):
+  LIVE_OPEN RED: B9_BANK_GEN_TIED_ZERO, B9_DISP_MATCH_DAR_ONLY, B9_ASCAL_SIDEBAND_UNPROVEN
+  reinject RED: B9_RELEASE_NO_BANK_MATCH, B9_BANK_GEN_TIED_ZERO(.bank_gen(16'd0))
+  Require: .bank_gen = store-applied (not 16'd0 / not live seq)
+    disp_matches_live includes bank (not DAR-only)
+    release = DAR ∧ bank_after (ascal_ack o_obuf sideband; shadow ≠ proof)
+  w-scaler uncommitted: still RED on B9_DISP_MATCH_DAR_ONLY (disp_matches_live=dar)
 
-B31 HIT_SCAN=48/MAX_CMDS=112 shipping≤48 still live
+B32 PLXG↔bank couple still open
+B31 HIT_SCAN=48/112 shipping≤48
 leg4 STA Fmax≥30.24 + path owner
 
-OWNED product RTL: 0 modules
-GATE ON_MAIN=no (scripts/docs/tests only)
-
-parent_run:
-  git fetch origin w-fitgate
-  RULER=/home/flynnsbit/Projects/MisterPlex-wt-fitgate
-  "$RULER/scripts/fit_release_gate.sh" --root "$MERGE" --qsf "$MERGE/fpga/Plex_MiSTer/Plex.qsf"
-
+OWNED product RTL: 0 | GATE ON_MAIN=no
+parent: git fetch origin w-fitgate; RULER=…-wt-fitgate; fit_release_gate.sh --root $MERGE
 no_quartus / no_device / no_unilateral_main_merge

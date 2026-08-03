@@ -170,6 +170,13 @@ LIVE_OPEN_BLOCKER_TOKENS = (
     "B9_SYS_TOP_AR_OUT_HOLD_MISSING",
     "B9_POST_ASCAL_DAR_BLACKOUT_MISSING",
     "B9_HDMI_BO_OR_NOT_SAME_SIZE_DAR",
+    # rd-duck: B9 release must key store-applied bank gen (not .bank_gen(16'd0) / DAR-only)
+    "B9_BANK_GEN_TIED_ZERO",
+    "B9_DISP_MATCH_DAR_ONLY",
+    "B9_ASCAL_SIDEBAND_UNPROVEN",
+    # B9_BANK_GEN_NOT_STORE_APPLIED / B9_RELEASE_NO_BANK_MATCH: closed-class reinject
+    # (need hold/ack present; hollow fires TIED_ZERO + DISP_MATCH + SIDEBAND instead)
+
     # rd-duck: runtime crop+display window bounds in store (not port presence alone)
     "B26_STORE_CROP_DISPLAY_BOUNDS_MISSING",
     # rd-duck: FFmpeg 426→432 pad x=2 chroma-even (naive x=3 fails real yuv420p)
@@ -4190,6 +4197,249 @@ def run_b9_ar_hold_post_ascal(root: Path) -> tuple[list[str], list[str]]:
     else:
         msgs.append("LEG0_B9_OK same-size DAR path = hold+post-ascal (not HDMI_BO alone)")
 
+    # --- rd-duck B9 bank-gen + DAR∧applied-gen match (2026-08-03 unsafe fix) ---
+    b9b_msgs, b9b_errs = check_b9_dar_bank_gen_match(root)
+    msgs.extend(b9b_msgs)
+    errors.extend(b9b_errs)
+
+    return msgs, errors
+
+
+def check_b9_dar_bank_gen_match(root: Path) -> tuple[list[str], list[str]]:
+    """B9: release requires store-applied bank gen ∧ DAR — not bank_gen=0 / DAR-only.
+
+    rd-duck (observed unsafe fix):
+      sys_top ties .bank_gen(16'd0) → hold ignores the bank it claims to ack.
+      plex_ar_buf_model: disp_matches_live = disp_matches_dar only.
+      hold releases on DAR∧gen_after without comparing disp_bank to applied gen.
+      Failure: PLXG DAR promotes at source VS while store misses pending_ready;
+      completed old frame tags old DAR, next OLD-bank frame snapshots new want DAR;
+      shadow later matches DAR and unblacks before bank swap.
+    Require: wire store-applied generation (pend snapshot seq promoted with bank),
+    tag physical ascal slot, release only when BOTH DAR and applied gen match.
+    Do not use current live seq. Shadow alone ≠ proof at i_end/o_VS same edge —
+    need real ascal o_obuf/o_bufup sideband or slot-swap ack.
+    """
+    msgs: list[str] = ["LEG0_B9_BANK_GEN_MATCH_EXECUTED begin"]
+    errors: list[str] = []
+    sys_top = root / "fpga" / "Plex_MiSTer" / "sys" / "sys_top.v"
+    hold_sv = root / "fpga" / "Plex_MiSTer" / "rtl" / "plex_ar_out_hold.sv"
+    model_sv = root / "fpga" / "Plex_MiSTer" / "rtl" / "plex_ar_buf_model.sv"
+    ack_sv = root / "fpga" / "Plex_MiSTer" / "rtl" / "plex_ar_ascal_ack.sv"
+    ascal = root / "fpga" / "Plex_MiSTer" / "sys" / "ascal.vhd"
+    if not ascal.is_file():
+        ascal = root / "fpga" / "Plex_MiSTer" / "sys_top" / "ascal.vhd"
+    plex = root / "fpga" / "Plex_MiSTer" / "Plex.sv"
+    store = root / "fpga" / "Plex_MiSTer" / "rtl" / "ddr_frame_store.sv"
+
+    sys_txt = product_active_sv(_read(sys_top) or "") if sys_top.is_file() else ""
+    hold_txt = product_active_sv(_read(hold_sv) or "") if hold_sv.is_file() else ""
+    model_txt = product_active_sv(_read(model_sv) or "") if model_sv.is_file() else ""
+    ack_txt = product_active_sv(_read(ack_sv) or "") if ack_sv.is_file() else ""
+    ascal_txt = _read(ascal) or ""
+    plex_txt = product_active_sv(_read(plex) or "") if plex.is_file() else ""
+    store_txt = product_active_sv(_read(store) or "") if store.is_file() else ""
+
+    # --- sys_top .bank_gen wiring ---
+    hold_ports = ""
+    m_inst = re.search(
+        r"plex_ar_out_hold\s*(?:#\s*\([^;]*?\))?\s*\w+\s*\(([\s\S]{0,2000}?)\)\s*;",
+        sys_txt,
+    )
+    if m_inst:
+        hold_ports = m_inst.group(1)
+    else:
+        hold_ports = _extract_sv_instance_ports(sys_txt, "plex_ar_out_hold") or ""
+
+    m_bg = re.search(r"\.bank_gen\s*\(\s*([^)]+)\s*\)", hold_ports)
+    bg_expr = (m_bg.group(1).strip() if m_bg else "")
+    msgs.append(f"LEG0_B9_BANK_GEN expr={bg_expr!r}")
+
+    tied_zero = bool(
+        re.match(r"^(16'?d0|1'b0|0)$", bg_expr.replace(" ", ""))
+        or re.search(r"bank_gen\s*\(\s*16'd0\s*\)", hold_ports)
+        or (not bg_expr and re.search(r"plex_ar_out_hold", sys_txt))
+    )
+    # Missing hold instance → already B9_SYS_TOP_*; still fire tied-zero class if hollow
+    if not hold_sv.is_file() and not re.search(r"plex_ar_out_hold", sys_txt):
+        errors.append(
+            "B9_BANK_GEN_TIED_ZERO: no plex_ar_out_hold — cannot prove bank_gen "
+            "wired to store-applied generation (rd-duck: .bank_gen(16'd0) class)."
+        )
+    elif tied_zero or (m_bg is None and re.search(r"plex_ar_out_hold", sys_txt)):
+        errors.append(
+            "B9_BANK_GEN_TIED_ZERO: sys_top .bank_gen must not be 16'd0 / untied. "
+            f"expr={bg_expr!r}. rd-duck: hold then ignores the bank it claims to "
+            "acknowledge — old-bank frame can tag new want DAR and unblack early."
+        )
+    else:
+        # Must be store-applied gen, NOT current live PLXG/rt seq
+        live_bad = bool(
+            re.search(
+                r"rt_geom_seq|plxg_live_seq|geom_live_seq|live_seq|content_fps",
+                bg_expr,
+            )
+        )
+        store_ok = bool(
+            re.search(
+                r"applied_frame_gen|applied_geom_seq|APPLIED_FRAME_GEN|"
+                r"frames_done|ddr_frames|app_geom_seq|store_applied",
+                bg_expr,
+            )
+        )
+        # Stronger: if store exports applied_geom_seq_o, product should use it
+        # (frames_done alone is weaker — still accept as non-live promote counter)
+        has_applied_geom = bool(
+            re.search(r"applied_geom_seq_o|output\s+wire\s+\[15:0\]\s+applied_geom_seq", store_txt)
+        )
+        msgs.append(
+            f"LEG0_B9_BANK_GEN live_src={int(live_bad)} store_src={int(store_ok)} "
+            f"store_has_applied_geom={int(has_applied_geom)}"
+        )
+        if live_bad or not store_ok:
+            errors.append(
+                "B9_BANK_GEN_NOT_STORE_APPLIED: .bank_gen must be the store-applied "
+                "generation promoted with the bank (pend snapshot seq / frames_done "
+                "on pending_ready promote) — not current live PLXG/rt_geom_seq and "
+                f"not constant. expr={bg_expr!r} (rd-duck)."
+            )
+        elif has_applied_geom and not re.search(
+            r"applied_geom_seq", bg_expr
+        ):
+            # Prefer exact pend seq when available (B32 couples it); frames_done ok
+            # only if applied_geom_seq not exported — here it is exported but unused.
+            errors.append(
+                "B9_BANK_GEN_NOT_STORE_APPLIED: ddr_frame_store exports "
+                "applied_geom_seq_o (pend snapshot seq with bank) but sys_top "
+                f".bank_gen={bg_expr!r} does not use it — wire the exact applied "
+                "seq, not a parallel counter that can drift (rd-duck + B32)."
+            )
+        else:
+            msgs.append("LEG0_B9_OK bank_gen from store-applied generation")
+
+    # --- buf_model: disp_matches_live must include bank, not DAR alone ---
+    if not model_sv.is_file():
+        errors.append(
+            "B9_DISP_MATCH_DAR_ONLY: missing plex_ar_buf_model.sv — cannot prove "
+            "disp_matches_live requires bank tag (rd-duck: DAR-only match releases "
+            "black before bank swap)."
+        )
+    else:
+        dar_only = bool(
+            re.search(
+                r"assign\s+disp_matches_live\s*=\s*disp_matches_dar\s*;",
+                model_txt,
+            )
+        )
+        bank_in_live = bool(
+            re.search(
+                r"disp_matches_live\s*=\s*[^;]*disp_bank|disp_matches_live\s*=\s*[^;]*"
+                r"bank_match|disp_matches_live\s*=\s*disp_matches_dar\s*&&",
+                model_txt,
+            )
+        )
+        msgs.append(
+            f"LEG0_B9_MODEL dar_only_live={int(dar_only)} bank_in_live={int(bank_in_live)}"
+        )
+        if dar_only or not bank_in_live:
+            errors.append(
+                "B9_DISP_MATCH_DAR_ONLY: plex_ar_buf_model assigns "
+                "disp_matches_live from DAR only (disp_matches_dar). Must require "
+                "displayed bank_gen tag match/after hold_bank (AND with DAR). "
+                "rd-duck: old-bank frame snapshots new want DAR → false match → "
+                "release before swap."
+            )
+        else:
+            msgs.append("LEG0_B9_OK disp_matches_live includes bank")
+
+    # --- hold / ascal_ack release must require bank match ---
+    release_has_bank = False
+    if hold_sv.is_file():
+        # Product path: USE_ASCAL_SIDEBAND ? ext : shadow with bank_after
+        shadow_with_bank = bool(
+            re.search(
+                r"shadow_ack_release\s*=\s*[^;]*bank_after_hold",
+                hold_txt,
+            )
+        )
+        # FAULT twin may strip bank — product_active_sv removes FAULT bodies
+        shadow_dar_only = bool(
+            re.search(
+                r"shadow_ack_release\s*=\s*disp_dar_match_w\s*&&\s*gen_after_hold\s*;",
+                hold_txt,
+            )
+        )
+        msgs.append(
+            f"LEG0_B9_HOLD shadow_bank={int(shadow_with_bank)} "
+            f"shadow_dar_gen_only={int(shadow_dar_only)}"
+        )
+        if shadow_dar_only and not shadow_with_bank:
+            errors.append(
+                "B9_RELEASE_NO_BANK_MATCH: plex_ar_out_hold shadow_ack_release is "
+                "DAR∧gen_after only — never compares disp_bank_w to hold_bank. "
+                "Require bank_after_hold (rd-duck)."
+            )
+        release_has_bank = shadow_with_bank
+
+    if ack_sv.is_file():
+        ack_bank = bool(
+            re.search(
+                r"ack_release\s*=\s*[^;]*bank_ok|ack_release\s*=\s*[^;]*&&\s*bank",
+                ack_txt,
+            )
+        ) and bool(re.search(r"bank_ok\s*=\s*gen_after\s*\(\s*d_bank", ack_txt))
+        ack_dar = bool(re.search(r"dar_match", ack_txt))
+        msgs.append(f"LEG0_B9_ASCAL_ACK bank_ok={int(ack_bank)} dar={int(ack_dar)}")
+        if not (ack_bank and ack_dar):
+            errors.append(
+                "B9_RELEASE_NO_BANK_MATCH: plex_ar_ascal_ack.ack_release must require "
+                "DAR match AND bank_ok (disp bank tag after hold_bank_at_commit) — "
+                "not DAR alone (rd-duck)."
+            )
+        else:
+            release_has_bank = True
+            msgs.append("LEG0_B9_OK ascal_ack release = DAR∧bank∧gen")
+    elif hold_sv.is_file() and not release_has_bank:
+        errors.append(
+            "B9_RELEASE_NO_BANK_MATCH: no plex_ar_ascal_ack.sv and hold release "
+            "does not prove bank match — cannot clear black safely (rd-duck)."
+        )
+
+    # --- Product must use real ascal o_obuf sideband, not shadow-only proof ---
+    use_sideband = bool(
+        re.search(r"USE_ASCAL_SIDEBAND\s*\(\s*1\s*\)", sys_txt)
+        or re.search(r"parameter\s+bit\s+USE_ASCAL_SIDEBAND\s*=\s*1", hold_txt)
+    )
+    # ascal exports o_tb_obuf / o_obuf
+    ascal_export = bool(
+        re.search(r"o_tb_obuf|o_obuf|tb_obuf", ascal_txt, re.I)
+    )
+    sys_obuf_wire = bool(
+        re.search(r"tb_obuf|o_tb_obuf|ascal_obuf|o_bufup", sys_txt, re.I)
+    )
+    ack_inst = bool(
+        re.search(r"plex_ar_ascal_ack", sys_txt)
+        or re.search(r"u_plex_ar_ascal_ack", sys_txt)
+    )
+    msgs.append(
+        f"LEG0_B9_SIDEBAND use={int(use_sideband)} ascal_export={int(ascal_export)} "
+        f"sys_wire={int(sys_obuf_wire)} ack_inst={int(ack_inst)}"
+    )
+    if not (use_sideband and ascal_export and sys_obuf_wire and ack_inst and ack_sv.is_file()):
+        errors.append(
+            "B9_ASCAL_SIDEBAND_UNPROVEN: product B9 release must consume real ascal "
+            "o_obuf/o_tb_obuf (or o_bufup) sideband via plex_ar_ascal_ack — shadow "
+            "plex_ar_buf_model alone diverges at simultaneous input-end/output-VS "
+            "(ascal.vhd overrides o_obuf<=old o_ibuf same edge; model discovers ready "
+            "before push). Not a proof for 24/30→60 (rd-duck). "
+            f"USE_ASCAL_SIDEBAND={int(use_sideband)} export={int(ascal_export)} "
+            f"wire={int(sys_obuf_wire)} ack={int(ack_inst)}."
+        )
+    else:
+        msgs.append("LEG0_B9_OK product release via ascal o_obuf sideband")
+
+    if not errors:
+        msgs.append("LEG0_B9_BANK_GEN_MATCH_PASS DAR∧store-applied-bank locked")
     return msgs, errors
 
 
@@ -4363,6 +4613,7 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
         "B28_q5_atomic_poller,B29_direct_part_vf,B30_plxc_cdc_stopped_rd,"
         "B31_hit_scan_prefit_cap(shipping_budget_g++),"
         "B32_plxg_bank_atomic_couple(host+store+tuple+poller_rtl),"
+        "B9_dar_bank_gen_match(bank_gen+DAR∧bank+ascal_obuf),"
         "leg_unit_make_unit,leg_rtl_lint,leg2_elab,leg3_true_de; "
         "B20_PRODUCT_UFS_TIE=elaborate Plex.sv .use_frame_store(1'b0) + reject "
         "ownership-on-ufs (w-clock free-run) + H require product-ufs0 hold measured_* "
@@ -7655,6 +7906,9 @@ def _run_mutation_matrix() -> tuple[list[str], list[dict[str, str]]]:
     for tok in (
         "B9_SYS_TOP_AR_OUT_HOLD_MISSING",
         "B9_POST_ASCAL_DAR_BLACKOUT_MISSING",
+        "B9_BANK_GEN_TIED_ZERO",
+        "B9_DISP_MATCH_DAR_ONLY",
+        "B9_ASCAL_SIDEBAND_UNPROVEN",
         "B26_STORE_CROP_DISPLAY_BOUNDS_MISSING",
         "B27_FFMPEG_PAD_CHROMA_EVEN_ORACLE",
         "B23_OWNERSHIP",
@@ -9948,6 +10202,113 @@ plex_ar_post_ascal u_plex_ar_post_ascal (
             fails.append(f"{tok}: vanished after restore — HOLE")
         else:
             print(f"  MUT_OK {tok} restore_fire=1")
+
+    # --- rd-duck B9 bank_gen / DAR-only / sideband reinject ---
+    model_sv = rtl / "plex_ar_buf_model.sv"
+    ack_sv = rtl / "plex_ar_ascal_ack.sv"
+    # 1) bank_gen(16'd0) must fire TIED_ZERO even if hold otherwise present
+    if sys_top.is_file():
+        old_sys = sys_top.read_text()
+        if "plex_ar_out_hold" in old_sys and ".bank_gen(" in old_sys:
+            bad_sys = re.sub(
+                r"\.bank_gen\s*\(\s*[^)]+\s*\)",
+                ".bank_gen(16'd0)",
+                old_sys,
+                count=1,
+            )
+        else:
+            bad_sys = old_sys + (
+                "\n// fitgate B9 bank_gen zero inject\n"
+                "plex_ar_out_hold u_plex_ar_out_hold (\n"
+                "  .bank_gen(16'd0), .want_arx(13'd4), .want_ary(13'd3),\n"
+                "  .live_arx(), .live_ary(), .out_vs(1'b0), .ar_hold_black()\n"
+                ");\n"
+            )
+        # minimal hold file so TIED_ZERO path isn't "missing hold"
+        hold_min = (
+            "module plex_ar_out_hold (input [15:0] bank_gen, "
+            "input [12:0] want_arx, want_ary, output [12:0] live_arx, live_ary, "
+            "input out_vs, output ar_hold_black);\nendmodule\n"
+        )
+        rsys = _with_file_backup(sys_top, bad_sys)
+        rhold = _with_file_backup(hold_sv, hold_min)
+        try:
+            if "B9_BANK_GEN_TIED_ZERO" not in _toks():
+                fails.append("B9_BANK_GEN_TIED_ZERO reinject did not fire — HOLE")
+            else:
+                print("  MUT_OK B9_BANK_GEN_TIED_ZERO reinject_fire=1")
+        finally:
+            rhold()
+            rsys()
+    # 2) DAR-only disp_matches_live
+    model_bad = (
+        "// fitgate B9 DAR-only match reinject\n"
+        "module plex_ar_buf_model;\n"
+        "  input [12:0] live_dar_x, live_dar_y;\n"
+        "  reg [12:0] disp_dx_r, disp_dy_r;\n"
+        "  reg disp_valid_r;\n"
+        "  wire disp_matches_dar = disp_valid_r && "
+        "(disp_dx_r == live_dar_x) && (disp_dy_r == live_dar_y);\n"
+        "  assign disp_matches_live = disp_matches_dar;\n"
+        "endmodule\n"
+    )
+    rm = _with_file_backup(model_sv, model_bad)
+    try:
+        if "B9_DISP_MATCH_DAR_ONLY" not in _toks():
+            fails.append("B9_DISP_MATCH_DAR_ONLY reinject did not fire — HOLE")
+        else:
+            print("  MUT_OK B9_DISP_MATCH_DAR_ONLY reinject_fire=1")
+    finally:
+        rm()
+        if model_sv.is_file() and "fitgate B9 DAR-only" in model_sv.read_text(
+            errors="replace"
+        ):
+            try:
+                model_sv.unlink()
+            except OSError:
+                pass
+    # 3) release without bank (ack DAR-only)
+    ack_bad = (
+        "// fitgate B9 ack DAR-only release\n"
+        "module plex_ar_ascal_ack;\n"
+        "  wire dar_match = 1'b1;\n"
+        "  assign ack_release = dar_match;\n"
+        "endmodule\n"
+    )
+    ra = _with_file_backup(ack_sv, ack_bad)
+    # need hold with shadow dar+gen only for RELEASE_NO_BANK when ack present
+    hold_nobank = (
+        "module plex_ar_out_hold;\n"
+        "  wire disp_dar_match_w = 1'b1;\n"
+        "  wire gen_after_hold = 1'b1;\n"
+        "  wire shadow_ack_release = disp_dar_match_w && gen_after_hold;\n"
+        "  wire ack_release = shadow_ack_release;\n"
+        "endmodule\n"
+    )
+    rh2 = _with_file_backup(hold_sv, hold_nobank)
+    try:
+        toks_r = _toks()
+        if "B9_RELEASE_NO_BANK_MATCH" not in toks_r:
+            fails.append("B9_RELEASE_NO_BANK_MATCH reinject did not fire — HOLE")
+        else:
+            print("  MUT_OK B9_RELEASE_NO_BANK_MATCH reinject_fire=1")
+    finally:
+        rh2()
+        ra()
+        if ack_sv.is_file() and "fitgate B9 ack DAR-only" in ack_sv.read_text(
+            errors="replace"
+        ):
+            try:
+                ack_sv.unlink()
+            except OSError:
+                pass
+        if hold_sv.is_file() and "shadow_ack_release = disp_dar_match_w && gen_after_hold" in hold_sv.read_text(
+            errors="replace"
+        ) and hold_sv.stat().st_size < 500:
+            try:
+                hold_sv.unlink()
+            except OSError:
+                pass
 
     # --- B26: inject rt_raw_window bounds into store ---
     if store.is_file():
