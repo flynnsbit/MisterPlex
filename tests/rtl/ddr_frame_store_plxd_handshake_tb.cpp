@@ -374,6 +374,15 @@ int run_rtl(const char* label, bool expect_pass, bool sticky, bool recycle) {
 	const uint16_t fd_start = sim.top.frames_done;
 	const int plxd_at_start = sim.plxd_writes;
 	int rings_while_pending = 0;
+	// One-frame-freeze detectors (parent HDMI: logo then identical frames forever).
+	int has_frame_low_after_first = 0;
+	int saw_disp0 = 0, saw_disp1 = 0;
+	if (sim.top.has_frame)
+		/* first latch done */;
+	else {
+		std::cerr << "FAIL " << label << ": has_frame not set after first swap\n";
+		return 1;
+	}
 
 	for (int f = 0; f < kDisplayFrames; ++f) {
 		if (!sim.top.swap_pending) {
@@ -396,6 +405,13 @@ int run_rtl(const char* label, bool expect_pass, bool sticky, bool recycle) {
 		for (int i = 0; i < total; ++i)
 			(void)sim.videoTick();
 
+		if (!sim.top.has_frame)
+			++has_frame_low_after_first;
+		if (sim.top.debug_disp_bank)
+			++saw_disp1;
+		else
+			++saw_disp0;
+
 		if (f >= 40)
 			sim.plxd_writes_late = sim.plxd_writes - plxd_at_start;
 		if ((f % 40) == 0) {
@@ -404,6 +420,8 @@ int run_rtl(const char* label, bool expect_pass, bool sticky, bool recycle) {
 			          << " presents=" << sim.presents
 			          << " plxd_wr=" << sim.plxd_writes
 			          << " sp=" << int(sim.top.swap_pending)
+			          << " hf=" << int(sim.top.has_frame)
+			          << " disp=" << int(sim.top.debug_disp_bank)
 			          << " last_free=" << int(sim.last_plxd.free_mask)
 			          << " last_fd=" << sim.last_plxd.frames_done
 			          << " last_sp=" << int(sim.last_plxd.swap_pending)
@@ -488,9 +506,33 @@ int run_rtl(const char* label, bool expect_pass, bool sticky, bool recycle) {
 			std::cerr << "FAIL " << label << ": PLXD write starved late window\n";
 			return 1;
 		}
+		// Parent hardware: one latch then freeze. Product must keep has_frame
+		// armed and actually re-latch disp_bank across publishes.
+		if (has_frame_low_after_first != 0) {
+			std::cerr << "FAIL " << label
+			          << ": has_frame dropped after first swap (one-shot class) count="
+			          << has_frame_low_after_first << "\n";
+			return 1;
+		}
+		if (saw_disp0 < 3 || saw_disp1 < 3) {
+			std::cerr << "FAIL " << label
+			          << ": disp_bank never re-latched both banks (freeze-on-bank0 class) "
+			          << "saw0=" << saw_disp0 << " saw1=" << saw_disp1 << "\n";
+			return 1;
+		}
+		if (fd_delta < 20) {
+			std::cerr << "FAIL " << label
+			          << ": frames_done did not advance enough for multi-frame consume "
+			          << "fd_delta=" << fd_delta << "\n";
+			return 1;
+		}
+		// PLXD must be written at doorbell-relative product slot (TB watches
+		// kPlxdPhys=DOORBELL+0x128). Zero writes already failed plxd_live above.
 		std::cout << "PASS " << label
 		          << ": PLXD live+advancing free honest fd_delta=" << fd_delta
-		          << " plxd_writes=" << sim.plxd_writes << "\n";
+		          << " plxd_writes=" << sim.plxd_writes
+		          << " disp_toggles saw0/1=" << saw_disp0 << "/" << saw_disp1
+		          << "\n";
 		return 0;
 	}
 

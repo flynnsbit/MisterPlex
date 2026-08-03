@@ -46,6 +46,10 @@ module ddr_frame_store_plxd_handshake_tb #(
 	wire DDRAM_CLK;
 	wire [7:0] DDRAM_BE;
 
+	// Only override geometry + doorbell base. Mailbox params MUST stay at
+	// module defaults (DOORBELL_PHYS+offset). Hardcoding BANK to a legacy
+	// absolute while DOORBELL is product-relative is the silicon freeze class:
+	// ARM reads doorbell+0x128 residue while the core writes 0x3007F128.
 	ddr_frame_store #(
 		.FRAME_W(80),
 		.FRAME_H(48),
@@ -60,11 +64,6 @@ module ddr_frame_store_plxd_handshake_tb #(
 		.PHYS_BASE(32'h3000_0000),
 		.HPS_BANK_STRIDE_BYTES(65536),
 		.DOORBELL_PHYS(32'h3001_F000),
-		.MAILBOX_PHYS(32'h3001_F100),
-		.INPUT_MAILBOX_PHYS(32'h3001_F108),
-		.SDRAM_MAILBOX_PHYS(32'h3001_F110),
-		.FRAME_MAILBOX_PHYS(32'h3001_F118),
-		.BANK_MAILBOX_PHYS(32'h3001_F128),
 		.DDR_BURST_MAX(8),
 		.PIPELINE_REFILL_SCHEDULER(1'b1),
 		.STRICT_YUV_DOORBELL(1'b1),
