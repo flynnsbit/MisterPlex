@@ -1,4 +1,6 @@
 // Present geometry latch — DDR PLXG 6×u64 (MAGIC_G) at FIXED +0x800..+0x82F.
+// OWNER: w-mem (parent arbitration #3). PLXG/ABI#2 producer + B16 promote.
+// Non-owners: patch contract only — never whole-file adopt. Nets: plxg_*.
 //
 // B4: epoch/session in q0[47:34]; zero epoch rejected (restart ABA).
 // B16: commit STAGES only. Live outputs update on frame_boundary (atomic
