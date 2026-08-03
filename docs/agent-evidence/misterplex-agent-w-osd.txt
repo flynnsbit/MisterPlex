@@ -160,3 +160,14 @@ DROP twin ignore-full: sh_out=3 < 13 PASS
 loader TB: host_ready_stall PASS (no last_seq/we while blocked; seq91 resume)
 cdc true rc=0; loader product true rc=0 (mutate twin FAIL expected)
 Still HOLLOW product OSD: m_gnt=0 until w-mem.
+
+=== rd-duck 2026-08-03T09:18:42-05:00 BLOCKING 1280 tier vs Route-B ===
+path plex_resolve:1151-1163 TranscodeHd720 → request/store 1280x720 (CONFIRMED on wt-path)
+w-clock PRESENT_BEAM_960 forbids FRAME>960x540 w/o MULTI_PIXEL (present_core:308-316)
+beam min blank H+32 V+16 → 1312*736 → fmax=20.712 Hz BOTH 24/30 classes
+active 1280*720*24=22.118e6 > 20e6
+Route B PRODUCT: content DE <=960x540 @20M 1ppc; ascal glass 1280
+Owners: w-path (cap host first-fit <=960x540 or loud reject); w-clock (beam)
+w-osd gate: test_route_b_content_de_budget_static true rc=0
+  1280 RED under Route B; 960@30 GREEN; path pin ABSENT this tree (would FAIL if merged)
+Does NOT claim path fixed.

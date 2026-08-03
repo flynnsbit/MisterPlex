@@ -219,6 +219,7 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/tests/unit/test_plex_q5_product_wire_rtl_sim.sh",
     "python3 $(ROOT)/tests/unit/test_plxg_q5_host_seqlock_static.py",
     "python3 $(ROOT)/tests/unit/test_dp_verified_vf_plan_order_static.py",
+    "python3 $(ROOT)/tests/unit/test_route_b_content_de_budget_static.py",
     "$(ROOT)/tests/unit/test_plex_chrome_fabchrome_rtl_sim.sh",
     "$(ROOT)/tests/unit/test_mister_ini_plex_guard.sh",
     "$(ROOT)/tests/unit/test_confstr_guard.sh",
