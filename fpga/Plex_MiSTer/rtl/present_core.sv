@@ -248,7 +248,8 @@ module present_core #(
 	wire [10:0] hc11, vc11, vtot_act11;
 	wire [10:0] hde_act11, htot_act11, vact_act11;
 
-	// Clamp delivered geom into bank max; 0 → max-tier fallback (idle/bars).
+	// Clamp delivered geom into bank max; 0 → max-tier fallback (idle/bars only).
+	// Mux native→legacy disable must emit content 624×480, not 0 (island if 0→960).
 	wire [10:0] beam_hde_req =
 		(content_w == 11'd0) ? 11'd960 :
 		(content_w > 11'(FRAME_W)) ? 11'(FRAME_W) : content_w;

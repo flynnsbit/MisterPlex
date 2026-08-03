@@ -1,8 +1,8 @@
 `timescale 1ps/1ps
 // B13 E2E: PRODUCT plex_present_geom_mux → beam (does not bypass mux).
-// GREEN: PLXG live 624×480 / 416×234 → beam DE exact (w-mem force is fallback-only).
-// RED (-DFAULT_B8_FORCE_ALWAYS): unconditional force pins 960 — regression detector
-//   for collision #5 (would have made B13 dead on merge).
+// GREEN: PLXG live DE exact; idle → 960; native→legacy disable → 624 DE + geom_en=0
+// RED FAULT_B8_FORCE_ALWAYS: pins 960 over live PLXG (collision #5)
+// RED FAULT_B13_DISABLE_ISLAND: disable keeps 960 beam DE while geom_en=0 (island)
 `default_nettype none
 module present_b13_mux_e2e_tb;
 	localparam int CLK_PS = 25000;
@@ -11,6 +11,8 @@ module present_b13_mux_e2e_tb;
 	reg reset = 1;
 
 	reg        plxg_live_valid = 1'b0;
+	reg        plxg_win_en = 1'b1;
+	reg        plxg_geom_en = 1'b1;
 	reg [10:0] plxg_cw = 11'd0, plxg_ch = 11'd0;
 
 	wire [10:0] content_width, content_height;
@@ -20,8 +22,8 @@ module present_b13_mux_e2e_tb;
 	plex_present_geom_mux u_mux (
 		.content_res_640x480(1'b0),
 		.plxg_live_valid(plxg_live_valid),
-		.plxg_win_en(1'b1),
-		.plxg_geom_en(1'b1),
+		.plxg_win_en(plxg_win_en),
+		.plxg_geom_en(plxg_geom_en),
 		.plxg_cw(plxg_cw), .plxg_ch(plxg_ch),
 		.plxg_cx0(11'd0), .plxg_cy0(11'd0),
 		.plxg_hde(plxg_cw), .plxg_vde(plxg_ch),
@@ -42,6 +44,7 @@ module present_b13_mux_e2e_tb;
 
 	wire ce, hb, hs, vb, vs, fstart;
 	wire [10:0] hc, vc, vtot_act, hde_act, htot_act, vact_act;
+	// Mirror present_core clamp (0→960 idle) — product mux should not emit 0 on disable.
 	wire [10:0] beam_hde = (content_width == 11'd0) ? 11'd960 :
 		(content_width > 11'd960) ? 11'd960 : content_width;
 	wire [10:0] beam_vact = (content_height == 11'd0) ? 11'd540 :
@@ -95,6 +98,8 @@ module present_b13_mux_e2e_tb;
 			want_frames = 2;
 			plxg_cw = 11'(w); plxg_ch = 11'(h);
 			plxg_live_valid = 1'b1;
+			plxg_win_en = 1'b1;
+			plxg_geom_en = 1'b1;
 			reset = 1;
 			repeat (12) @(posedge clk);
 			reset = 0;
@@ -103,8 +108,8 @@ module present_b13_mux_e2e_tb;
 				@(posedge clk); guard = guard + 1;
 			end
 			#1;
-			$display("E2E mux_out=%0dx%0d beam=%0dx%0d frames=%0d pix=%0d line_acc=%0d..%0d",
-				content_width, content_height, hde_act, vact_act,
+			$display("E2E mux_out=%0dx%0d beam=%0dx%0d geom_en=%0d frames=%0d pix=%0d line_acc=%0d..%0d",
+				content_width, content_height, hde_act, vact_act, geom_en,
 				done, pix, line_min, line_max);
 			if (expect_plxg_de) begin
 				exp_pix = w * h * 2;
@@ -120,7 +125,6 @@ module present_b13_mux_e2e_tb;
 				$display("OK E2E mux→beam DE=%0dx%0d exact pix=%0d line_acc=%0d..%0d",
 					w, h, pix, line_min, line_max);
 			end else begin
-				// FAULT force: mux+beam must show 960×540 despite PLXG w×h
 				if (content_width !== 11'd960 || content_height !== 11'd540 ||
 					hde_act !== 11'd960 || vact_act !== 11'd540) begin
 					$display("FAIL FAULT_B8_FORCE_ALWAYS did not pin 960 (mux=%0dx%0d beam=%0dx%0d)",
@@ -136,19 +140,97 @@ module present_b13_mux_e2e_tb;
 		end
 	endtask
 
+	// Native 960 content → explicit disable (cw=ch=0, geom=0) → legacy 624 DE extent.
+	task automatic run_native_to_legacy_exit;
+		input bit expect_island; // 1 = RED island (960 DE + geom off)
+		integer guard, exp_pix;
+		begin
+			// Phase A: native content-bearing 960
+			want_frames = 1;
+			plxg_live_valid = 1'b1;
+			plxg_win_en = 1'b1;
+			plxg_geom_en = 1'b1;
+			plxg_cw = 11'd960; plxg_ch = 11'd540;
+			reset = 1; repeat (12) @(posedge clk); reset = 0;
+			guard = 0;
+			while (done < 1 && guard < 1182*564*4) begin @(posedge clk); guard = guard + 1; end
+			#1;
+			if (content_width !== 11'd960 || !geom_en) begin
+				$display("FAIL native phase not 960+geom (cw=%0d geom=%0d)", content_width, geom_en);
+				$fatal(1);
+			end
+			$display("OK native phase mux DE=960 geom_en=1");
+
+			// Phase B: mode exit — owned disable
+			want_frames = 2;
+			// reset counters via reset for clean DE measure
+			plxg_cw = 11'd0; plxg_ch = 11'd0;
+			plxg_win_en = 1'b0;
+			plxg_geom_en = 1'b0;
+			plxg_live_valid = 1'b1; // still owned
+			reset = 1; repeat (12) @(posedge clk); reset = 0;
+			guard = 0;
+			while (done < 2 && guard < 1182*564*4) begin @(posedge clk); guard = guard + 1; end
+			#1;
+			$display("EXIT mux=%0dx%0d beam=%0dx%0d geom_en=%0d win_en=%0d pix=%0d line=%0d..%0d",
+				content_width, content_height, hde_act, vact_act, geom_en, win_en,
+				pix, line_min, line_max);
+
+			// Store side: geom must be off (legacy bank)
+			if (geom_en !== 1'b0) begin
+				$display("FAIL exit re-armed store geom_en"); $fatal(1);
+			end
+
+			if (expect_island) begin
+				// RED: 960 beam DE over legacy store
+				if (content_width !== 11'd960 || hde_act !== 11'd960 ||
+					line_min != 960 || line_max != 960 || pix != 960*540*2) begin
+					$display("FAIL RED island twin did not keep 960 DE"); $fatal(1);
+				end
+				$display("OK RED FAULT_B13_DISABLE_ISLAND: 960 DE + geom_en=0 (island class)");
+			end else begin
+				// Product: beam DE extent = legacy 624×480 (matches store live columns)
+				exp_pix = 624 * 480 * 2;
+				if (content_width !== 11'd624 || content_height !== 11'd480) begin
+					$display("FAIL exit content not legacy 624x480 (got %0dx%0d)",
+						content_width, content_height);
+					$fatal(1);
+				end
+				if (hde_act !== 11'd624 || vact_act !== 11'd480 ||
+					line_min != 624 || line_max != 624 || pix != exp_pix) begin
+					$display("FAIL exit beam DE extent not 624x480 (beam=%0dx%0d line=%0d..%0d pix=%0d)",
+						hde_act, vact_act, line_min, line_max, pix);
+					$fatal(1);
+				end
+				// Non-black / input DE extent: every counted DE pixel is inside 624×480
+				// (no 960-wide lines that would be hollow beyond 624 store columns).
+				if (line_max > 624) begin
+					$display("FAIL DE wider than legacy store columns"); $fatal(1);
+				end
+				$display("OK E2E native→legacy exit DE=624x480 exact geom_en=0 pix=%0d (no island)",
+					pix);
+			end
+		end
+	endtask
+
 	initial begin
 `ifdef FAULT_B8_FORCE_ALWAYS
 		$display("RED FAULT_B8_FORCE_ALWAYS collision #5 regression");
 		run_live(624, 480, 1'b0);
 		$display("PASS present_b13_mux_e2e RED fault_force=1");
+`elsif FAULT_B13_DISABLE_ISLAND
+		$display("RED FAULT_B13_DISABLE_ISLAND native→legacy island");
+		run_native_to_legacy_exit(1'b1);
+		$display("PASS present_b13_mux_e2e RED island");
 `else
 		$display("GREEN product mux→beam E2E");
 		run_live(624, 480, 1'b1);
 		run_live(416, 234, 1'b1);
 		run_live(320, 240, 1'b1);
 		run_live(960, 540, 1'b1);
-		// idle fallback: !live → 960 max tier
+		// idle fallback: !owned → 960 max tier
 		plxg_live_valid = 1'b0; plxg_cw = 0; plxg_ch = 0;
+		plxg_geom_en = 1'b0; plxg_win_en = 1'b0;
 		want_frames = 2;
 		reset = 1; repeat (12) @(posedge clk); reset = 0;
 		begin : idle
@@ -161,6 +243,10 @@ module present_b13_mux_e2e_tb;
 			$fatal(1);
 		end
 		$display("OK E2E idle fallback DE=960x540");
+
+		// Critical: native→legacy exit measures DE extent (rd-duck island class)
+		run_native_to_legacy_exit(1'b0);
+
 		$display("PASS present_b13_mux_e2e GREEN product_mux exact");
 `endif
 		$finish;

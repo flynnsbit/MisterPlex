@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# B13 E2E product mux→beam. GREEN=live PLXG DE; RED=FAULT_B8_FORCE_ALWAYS pins 960.
+# B13 E2E product mux→beam + native→legacy exit DE extent (rd-duck island).
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 RV="$ROOT/scripts/run_verilator.sh"
@@ -12,16 +12,22 @@ mkdir -p "$OUT"
 echo "RTL SIM: $($RV --version 2>&1 | head -1)"
 
 [[ -f "$MUX" ]] || { echo "FAIL mux missing"; exit 1; }
-# Product mux must encode fallback-only force (w-mem COLLISION #5 fix)
-grep -q 'force_native_960 = ~plxg_live' "$MUX" \
-  || { echo "FAIL mux missing fallback force (~plxg_live)"; exit 1; }
-grep -q 'FAULT_B8_FORCE_ALWAYS' "$MUX" \
-  || { echo "FAIL mux missing FAULT_B8_FORCE_ALWAYS red hook"; exit 1; }
-# Must NOT be unconditional force under BEAM only
-if grep -n "force_native_960 = 1'b1" "$MUX" | grep -v FAULT; then
-  # allowed only under FAULT ifdef — check structure
-  :
-fi
+grep -q 'plxg_owned' "$MUX" || { echo "FAIL mux missing plxg_owned"; exit 1; }
+grep -q 'disable_legacy' "$MUX" || { echo "FAIL mux missing disable_legacy"; exit 1; }
+grep -q 'FAULT_B13_DISABLE_ISLAND' "$MUX" || { echo "FAIL mux missing island RED hook"; exit 1; }
+grep -q 'FAULT_B8_FORCE_ALWAYS' "$MUX" || { echo "FAIL mux missing FORCE red hook"; exit 1; }
+grep -q "LEG_CW = 11'd624" "$MUX" || { echo "FAIL LEG_CW not 624"; exit 1; }
+
+python3 - "$MUX" <<'PY'
+import re, sys
+m = open(sys.argv[1]).read()
+s = re.sub(r"`ifdef FAULT_B13_DISABLE_ISLAND.*?`else(.*?)`endif", r"\1", m, flags=re.S)
+if re.search(r"beam_de_960\s*=\s*beam_fallback_960\s*\|\s*disable", s):
+    print("FAIL product ORs disable into 960 beam DE (island)"); sys.exit(1)
+if not re.search(r"beam_de_leg\s*=\s*disable_legacy", s):
+    print("FAIL missing beam_de_leg = disable_legacy"); sys.exit(1)
+print("OK product beam_de idle-only; disable→leg")
+PY
 
 run_one() {
   local tag="$1"; shift
@@ -53,15 +59,24 @@ grep -q "OK E2E mux→beam DE=624x480 exact" "$OUT/green/run.log" || { echo "FAI
 grep -q "OK E2E mux→beam DE=416x234 exact" "$OUT/green/run.log" || { echo "FAIL 416"; exit 1; }
 grep -q "line_acc=416..416" "$OUT/green/run.log" || { echo "FAIL line416"; exit 1; }
 grep -q "OK E2E idle fallback DE=960x540" "$OUT/green/run.log" || { echo "FAIL idle"; exit 1; }
+grep -q "OK E2E native→legacy exit DE=624x480 exact geom_en=0" "$OUT/green/run.log" \
+  || { echo "FAIL native→legacy exit"; exit 1; }
 grep -q "PASS present_b13_mux_e2e GREEN" "$OUT/green/run.log" || { echo "FAIL pass"; exit 1; }
-echo "OK GREEN product mux→beam"
+echo "OK GREEN product mux→beam + exit"
 
 run_one red_fault -DFAULT_B8_FORCE_ALWAYS
 RRC=$(cat "$OUT/red_fault/sim.rc")
 [[ "$RRC" -eq 0 ]] || { echo "FAIL RED fault rc=$RRC"; exit 1; }
 grep -q "OK RED FAULT force pins 960x540 over PLXG 624x480" "$OUT/red_fault/run.log" \
-  || { echo "FAIL red marker"; exit 1; }
-echo "OK RED FAULT_B8_FORCE_ALWAYS (collision #5 class)"
+  || { echo "FAIL red force marker"; exit 1; }
+echo "OK RED FAULT_B8_FORCE_ALWAYS"
+
+run_one red_island -DFAULT_B13_DISABLE_ISLAND
+IRC=$(cat "$OUT/red_island/sim.rc")
+[[ "$IRC" -eq 0 ]] || { echo "FAIL RED island rc=$IRC"; exit 1; }
+grep -q "OK RED FAULT_B13_DISABLE_ISLAND: 960 DE + geom_en=0" "$OUT/red_island/run.log" \
+  || { echo "FAIL red island marker"; exit 1; }
+echo "OK RED FAULT_B13_DISABLE_ISLAND (w-mem disable_beam_de class)"
 
 echo "PASS test_present_b13_mux_e2e true rc=0"
 exit 0
