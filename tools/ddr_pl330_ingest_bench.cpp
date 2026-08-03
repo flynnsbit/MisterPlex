@@ -168,6 +168,8 @@ int main(int argc, char** argv) {
             force_burst = static_cast<unsigned>(std::atoi(argv[++i]));
         else if (a == "--force-ns" && i + 1 < argc)
             force_ns = static_cast<unsigned>(std::atoi(argv[++i]));
+        else if (a == "--allow-channel-kill")
+            allow_channel_kill = true;
         else if (a == "--dma-only")
             dma_only = true;
         else if (a == "--bank-sweep")
@@ -352,6 +354,7 @@ int main(int argc, char** argv) {
                 req.channel = 0;
                 req.force_burst = force_burst;
                 req.force_ns = force_ns;
+                req.allow_channel_kill = allow_channel_kill;
                 std::printf("pl330_src_phys=0x%08x dst_phys=0x%08x len=%zu\n", req.src_phys,
                             req.dst_phys, req.len);
                 std::printf("pl330_dbginst0_go_ns1=0x%08x (linux manager encode)\n",

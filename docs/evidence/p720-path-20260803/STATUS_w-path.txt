@@ -1,19 +1,22 @@
-w-path STATUS — 540p→720 glass + kernel/WC pivot
+w-path STATUS — WC-first pivot (device down)
 
-PRODUCT budget (parent, decode+sws+copy):
-  26.08 + 8.42 = 34.50 ms/f   margin +7.16 PASS
-  (prior +10.49 was -f null only — retracted)
+PRODUCT: 960x540 → fabric 720 glass @ 34.50 ms (+7.16) — ship path
 
-TRAP: ARM downscale from 720 = FAIL 1.74× worse — never product fallback.
+TRUE 720 SOURCE priority:
+  1. Route W write-combine map  (pass ≥230.2 MiB/s)  ← do first
+  2. Route K dmaengine client   (only if WC fails)
+  3. Raw PL330 / unbind         STOPPED (ownership + hang)
 
-Host: 540p ladder + Source540pFabric720p + genuine gate (8e62f61b+)
+BUGFIXES (rd-duck):
+  AwaitBankCredit sticky (not Failed)
+  __sync_synchronize barrier (not signal_fence)
+  channel KILL default OFF (allow_channel_kill opt-in)
 
-DMA pivot (parent unbind incident — device needs power cycle):
-  STOP product investment in raw userspace PL330 / unbind.
-  Route K: arm/kmod/misterplex_bank (dmaengine client)
-  Route W: WC mmap via same module; pass ≥230.2 MiB/s
-  Design: docs/evidence/p720-path-20260803/KERNEL_DMA_AND_WC_DESIGN.md
-  ABI: host/libmisterplex/misterplex_bank_kabi.hpp
-  Fixed: AwaitBankCredit no longer → Failed; real __sync_synchronize barrier
-  88 MiB/s claim narrowed to /dev/mem noncached only (rd-duck)
-  Lab PL330 FTR0 bench kept as diagnostic only (b211afce)
+ARTIFACTS:
+  arm/kmod/misterplex_bank/  + misterplex_bank_kabi.hpp
+  tools/misterplex_bank_wc_bench.cpp
+  docs/.../PARENT_COMMANDS_WC_FIRST.md
+  docs/.../KERNEL_DMA_AND_WC_DESIGN.md
+
+Judgement: full dmabuf DMA stack NOT worth multi-week while glass ships;
+thin WC module IS worth it. Kernel DMA thin client only if WC fails bar.

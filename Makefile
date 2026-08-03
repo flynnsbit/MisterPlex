@@ -847,6 +847,21 @@ arm-pl330-ingest-bench:
 		-static
 	@file $(ROOT)/build/arm/ddr_pl330_ingest_bench
 
+$(ROOT)/build/misterplex_bank_wc_bench: $(ROOT)/tools/misterplex_bank_wc_bench.cpp \
+		$(ROOT)/host/libmisterplex/misterplex_bank_kabi.hpp \
+		$(ROOT)/host/libmisterplex/ddr_zero_copy_ingest.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -I$(ROOT)/host -o $@ $(ROOT)/tools/misterplex_bank_wc_bench.cpp
+
+arm-misterplex-bank-wc-bench:
+	@if [ -z "$(ARM_CXX)" ]; then echo "No armhf g++ found"; exit 1; fi
+	@mkdir -p $(ROOT)/build/arm
+	$(ARM_CXX) -std=c++17 -O2 -Wall -I$(ROOT)/host \
+		-o $(ROOT)/build/arm/misterplex_bank_wc_bench \
+		$(ROOT)/tools/misterplex_bank_wc_bench.cpp \
+		-static
+	@file $(ROOT)/build/arm/misterplex_bank_wc_bench
+
 $(ROOT)/build/route_a_bank_probe: $(ROOT)/tools/route_a_bank_probe.cpp \
 		$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp
 	@mkdir -p $(ROOT)/build

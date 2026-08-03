@@ -12,8 +12,14 @@ PMS 960×540 baseline → ARM decode+sws+copy 34.50 ms (+7.16) → fabric → 72
 
 True **720p source** still wants either:
 
-- kill the ~15 ms CPU copy via **KernelDma**, or  
-- speed the copy via **CpuWriteCombine** to ≥ **230.2 MiB/s**.
+- speed the copy via **CpuWriteCombine** to ≥ **230.2 MiB/s** (**priority 1**), or  
+- kill the ~15 ms CPU copy via **KernelDma** (**priority 2**, only if WC fails).
+
+### Priority order (w-path judgement)
+
+1. **Route W (WC)** — better prize; cheaper; may eliminate DMA entirely.
+2. **Route K (dmaengine client)** — thin module only if WC < 230.2 MiB/s. Full dmabuf stack: **not worth it** while 540→720 glass ships.
+3. Raw PL330 — **stopped**.
 
 ## What we stop doing
 

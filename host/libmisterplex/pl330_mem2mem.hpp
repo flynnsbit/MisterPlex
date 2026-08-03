@@ -65,6 +65,9 @@ struct Pl330Mem2MemRequest {
     unsigned force_burst = 0;
     // 0xFF = try ns=1 then 0. Else pin single NS bit for DMAGO.
     unsigned force_ns = 0xFFu;
+    // Default false: never DBGINST-KILL a channel while kernel dma-pl330 owns the
+    // controller (rd-duck; parent unbind hang). Lab-only opt-in for bare-metal diag.
+    bool allow_channel_kill = false;
 };
 
 struct Pl330Mem2MemResult {
@@ -694,6 +697,8 @@ private:
         write32(kPl330_DBGCMD, 0);
     }
 
+    // LAB ONLY. DBGINST KILL is unsafe while kernel dma-pl330 owns the controller.
+    // goProgram calls this only when allow_channel_kill=true (default false).
     void killChannel(int ch) {
         // DMAKILL via debug as channel thread (not manager): linux uses as_manager=false
         // for KILL on channel. DBGINST0 low bits mark channel target.
@@ -708,6 +713,11 @@ private:
                 return;
             usleep(10);
         }
+    }
+
+    void maybeKillChannel(int ch, bool allow) {
+        if (allow)
+            killChannel(ch);
     }
 
     // Fire DMAGO as manager with Linux encoding. Returns DBGINST0 written.
@@ -727,7 +737,7 @@ private:
 
     Pl330Mem2MemResult goProgram(const uint8_t* prog, size_t plen, int channel, int timeout_ms,
                                  const char* tag, unsigned force_ns = 0xFFu,
-                                 unsigned burst_used = 0) {
+                                 unsigned burst_used = 0, bool allow_channel_kill = false) {
         Pl330Mem2MemResult r;
         r.hardware_present = true;
         r.cr0 = read32(kPl330_CR0);
@@ -756,8 +766,8 @@ private:
 
         const int ch = (channel >= 0 && channel < 8) ? channel : 0;
         r.channel_used = ch;
-        killChannel(ch);
-        // Clear sticky fault status by killing; re-snapshot baseline.
+        // Default: do NOT kill — kernel owns dma-pl330 (rd-duck / parent incident).
+        maybeKillChannel(ch, allow_channel_kill);
         captureFaultRegs(r, ch);
 
         // NS DMAC: default try ns=1 then 0. force_ns pins one value (diag).
@@ -818,7 +828,7 @@ private:
                 usleep(static_cast<useconds_t>(poll_us));
             }
             if (fault) {
-                killChannel(ch);
+                maybeKillChannel(ch, allow_channel_kill);
                 captureFaultRegs(r, ch);
                 return r;
             }
@@ -827,10 +837,10 @@ private:
                 r.ok = false;
                 r.detail = std::string(base_tag) + " timeout after exec csr=" +
                            pl330CsrStateTag(r.csr_final);
-                killChannel(ch);
+                maybeKillChannel(ch, allow_channel_kill);
                 return r;
             }
-            killChannel(ch);
+            maybeKillChannel(ch, allow_channel_kill);
             // retry other ns
         }
         captureFaultRegs(r, ch);
@@ -848,8 +858,8 @@ private:
         const uint32_t n_words = static_cast<uint32_t>(req.len / 4);
         const size_t plen =
             pl330BuildMem2MemProgram(prog, sizeof(prog), req.src_phys, req.dst_phys, ccr, n_words);
-        return goProgram(prog, plen, req.channel, timeout_ms, "burst1 stopped ok", req.force_ns,
-                         1);
+        return goProgram(prog, plen, req.channel, timeout_ms, "burst1 stopped ok", req.force_ns, 1,
+                         req.allow_channel_kill);
     }
 
     Pl330Mem2MemResult transferOneBlockAuto(const Pl330Mem2MemRequest& req, int timeout_ms) {
@@ -872,10 +882,11 @@ private:
             r.detail = "program encode failed";
             return r;
         }
-        char tag[64];
-        std::snprintf(tag, sizeof(tag), "burst%u mfifo%u ccr=0x%08x ns_ccr=%u", burst, mfifo,
-                      ccr_used, ns_ccr ? 1u : 0u);
-        return goProgram(prog, plen, req.channel, timeout_ms, tag, req.force_ns, burst);
+        char tag[80];
+        std::snprintf(tag, sizeof(tag), "burst%u mfifo%u ccr=0x%08x ns_ccr=%u kill=%u", burst, mfifo,
+                      ccr_used, ns_ccr ? 1u : 0u, req.allow_channel_kill ? 1u : 0u);
+        return goProgram(prog, plen, req.channel, timeout_ms, tag, req.force_ns, burst,
+                         req.allow_channel_kill);
     }
 
 public:

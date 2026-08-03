@@ -253,6 +253,10 @@ int main() {
     CHECK(pl330PhysInProgScratch(kPl330ProgScratchPhys, 27), "prog in scratch");
     CHECK(pl330PhysInStaging(kPl330StagingPhys, kPlex720pYuv420pBytes), "frame in staging");
     CHECK(Pl330Mem2Mem::abiProgScratchPhys() == kPl330ProgScratchPhys, "abi helper");
+    {
+        Pl330Mem2MemRequest rq;
+        CHECK(rq.allow_channel_kill == false, "kill default OFF (kernel owns pdma)");
+    }
 
     // Kernel bank ABI (product DMA/WC — no raw unbind)
     {
