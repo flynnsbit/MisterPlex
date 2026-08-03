@@ -5,8 +5,10 @@
 //       hybrid product present is host F1 (see Plex.sv host_owns_fs).
 
 module decode_stub #(
-	parameter int WIDTH  = 320,
-	parameter int HEIGHT = 240,
+	// Defaults track 720p content max (80x45 MB). Product instances may
+	// override smaller; on-chip dpb_mem is sim/research — DDR DPB is product.
+	parameter int WIDTH  = 1280,
+	parameter int HEIGHT = 720,
 	parameter bit ENABLE_DPB_REF_SEAM = 1'b1
 )(
 	input  wire        clk,

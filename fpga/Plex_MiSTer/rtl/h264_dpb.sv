@@ -3,8 +3,8 @@
 `default_nettype none
 
 module h264_dpb_i420_addr #(
-	parameter int FRAME_W = 624,
-	parameter int FRAME_H = 480
+	parameter int FRAME_W = 1280,
+	parameter int FRAME_H = 720
 )(
 	input  wire [31:0] base,
 	input  wire [1:0]  plane,
@@ -27,8 +27,8 @@ module h264_dpb_i420_addr #(
 endmodule
 
 module h264_dpb_mb_write_addr #(
-	parameter int FRAME_W = 624,
-	parameter int FRAME_H = 480
+	parameter int FRAME_W = 1280,
+	parameter int FRAME_H = 720
 )(
 	input  wire [31:0] bank_base,
 	input  wire [7:0]  mb_x,
@@ -50,10 +50,11 @@ module h264_dpb_mb_write_addr #(
 endmodule
 
 module h264_dpb_one_ref #(
-	parameter int FRAME_W = 624,
-	parameter int FRAME_H = 480,
+	parameter int FRAME_W = 1280,
+	parameter int FRAME_H = 720,
 	parameter int BANK0_BASE = 0,
-	parameter int BANK1_BASE = 898560 / 2
+	// One I420 frame at default geometry (1280*720*3/2); instances may override.
+	parameter int BANK1_BASE = 1280 * 720 * 3 / 2
 )(
 	input  wire               clk,
 	input  wire               reset,

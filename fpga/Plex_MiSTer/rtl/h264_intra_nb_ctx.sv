@@ -12,10 +12,13 @@
 // The line buffer holds PRE-DEBLOCK reconstructed samples.
 // Post-deblock samples for DPB are stored separately by the deblock path.
 //
-// Resource estimate: 1 M10K (640 bytes above row) + ~260 registers.
+// Resource estimate @ MB_WIDTH_MAX=80: 1 M10K (1280 B above row) + ~260 registers.
+// Cap is a hard geometry gate for 1280-wide (80 MB/row). Exceeding it used to
+// silently wrap above_row_buf addresses (mb_x=64 → alias mb 0). geom_reject
+// makes that LOUD and sticky.
 
 module h264_intra_nb_ctx #(
-    parameter int MB_WIDTH_MAX = 40   // max MBs per row (640/16)
+    parameter int MB_WIDTH_MAX = 80   // max MBs per row (1280/16)
 )(
     input  wire        clk,
     input  wire        reset,
@@ -38,7 +41,11 @@ module h264_intra_nb_ctx #(
     output wire [7:0]  left [0:3],
     output wire [7:0]  top_left,
     output wire        has_above,
-    output wire        has_left
+    output wire        has_left,
+
+    // Sticky geometry reject: mb_x >= MB_WIDTH_MAX or mb_width > MB_WIDTH_MAX.
+    // Does not clear until reset. FAULT_NB_CTX_NO_GEOM_REJECT silences it (red twin).
+    output reg         geom_reject
 );
 
     // =========================================================================
@@ -46,6 +53,29 @@ module h264_intra_nb_ctx #(
     // =========================================================================
     wire [3:0] blk_x = {block_idx[1], block_idx[0], 2'b00};  // pixel x: (idx%4)*4
     wire [3:0] blk_y = {block_idx[3], block_idx[2], 2'b00};  // pixel y: (idx/4)*4
+
+    // =========================================================================
+    // Geometry cap — loud sticky reject (silent wrap was the defect)
+    // =========================================================================
+    // mb_x is 0..mb_width-1; legal max index is MB_WIDTH_MAX-1.
+    wire geom_over_x     = (mb_x >= MB_WIDTH_MAX[7:0]);
+    wire geom_over_width = (mb_width > MB_WIDTH_MAX[7:0]);
+    wire geom_fire       = geom_over_x | geom_over_width;
+
+    always @(posedge clk) begin
+        if (reset)
+            geom_reject <= 1'b0;
+`ifdef FAULT_NB_CTX_NO_GEOM_REJECT
+        else
+            geom_reject <= 1'b0; // red twin: swallow the reject
+`else
+        else if (geom_fire && (mb_start || block_valid))
+            geom_reject <= 1'b1;
+`endif
+    end
+
+    // Suppress line-buffer writes when over cap (still raise reject).
+    wire nb_geom_ok = !geom_over_x && !geom_over_width && !geom_reject;
 
     // =========================================================================
     // Availability flags (geometric, Baseline single-slice IDR)
@@ -97,7 +127,7 @@ module h264_intra_nb_ctx #(
     // Stores 16 samples per MB column: the bottom row (row 15) of reconstructed
     // luma for each MB in the previous row.
     // Address: mb_x * 16 + pixel_x_within_mb (0..15)
-    // Total: MB_WIDTH_MAX * 16 = 640 bytes max
+    // Total: MB_WIDTH_MAX * 16 (80 → 1280 B = 1 M10K)
     localparam int ABOVE_BUF_DEPTH = MB_WIDTH_MAX * 16;
     localparam int ABOVE_AW = $clog2(ABOVE_BUF_DEPTH);
 
@@ -127,7 +157,7 @@ module h264_intra_nb_ctx #(
             above_wr_en <= 1'b0;
         end else begin
             above_wr_en <= 1'b0;
-            if (block_valid && block_idx == 4'd15) begin
+            if (block_valid && block_idx == 4'd15 && nb_geom_ok) begin
                 // Last block of MB done — start writing bottom row to line buf
                 above_wr_active <= 1'b1;
                 above_wr_cnt <= 5'd0;
