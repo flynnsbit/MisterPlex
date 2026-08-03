@@ -19,6 +19,8 @@
 
 ## Runtime mailbox / PLXG (before first present)
 
+**REQUIRED values for product** (fit-card table ≠ live `Plex.sv` until B8 clears):
+
 | Port / field | Value | Notes |
 |--------------|------:|-------|
 | `win_enable` / fabric_win_enable | **1** | window owns map |
@@ -31,7 +33,17 @@
 | `geom_coded_w/h` | **960 / 540** | I420 payload **777600 B** > legacy usable **520192** (0x80000−0x1000) → **must Option-C**. Stale trees that pick OPTC only when `coded_w>=1280` **overrun LEG banks** — not fit-ready (rd-duck). Require w-mem `rt_need_optc` capacity select + `present_core` `.PHYS_BASE_720P`/stride720/doorbell720 wiring. **Do not treat this row as present until gate B7 is clear.** |
 | `geom_display_*` | canvas/HDMI only | do **not** feed into coded/store |
 
-Identity: with content_w==win_h_de and content_h==win_v_de, Q16 SX=SY=65536 → `store_x==hc`, `store_y==py` (1-cycle window register lag).
+### Product hierarchy reality check (gate B8 — inspect `Plex.sv`, not thin TB)
+
+As of scaler/fitgate tip, **live `fpga/Plex_MiSTer/Plex.sv`**:
+
+- `plxg_wr_en = 1'b0`, `plxg_commit = 1'b0` → latch stays reset-zero → `fabric_geom_enable=0`, `fabric_win_enable=0`
+- Idle `content_width_base` = O[4] **640/320** (not 960)
+- Only force macro `FABRIC_NATIVE_720P_GEOM` sets content+geom to **1280×720**, not 960
+- Thin `present_true_de_count` TB drives 960 ports directly — **that is not product wiring**
+- `PRESENT_BEAM_960` alone → 960 DE around legacy content/storage — **not fit-ready**
+
+Identity (when ports actually get 960): content_w==win_h_de and content_h==win_v_de → Q16 SX=SY=65536 → `store_x==hc`, `store_y==py` (1-cycle window register lag).
 
 ## What “true DE” means at the pin
 

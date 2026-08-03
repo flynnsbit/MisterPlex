@@ -400,6 +400,114 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
                 "do not treat the card claim as present code (rd-duck)."
             )
 
+    # --- B8: product Plex.sv hierarchy must wire 960 — not thin TB / fit-card ---
+    # rd-duck: PRESENT_BEAM_960 alone yields 960 DE around legacy 320/640 content +
+    # 624 storage when PLXG wr/commit are tied 0 and fabric_geom_enable stays 0.
+    # Only force macro FABRIC_NATIVE_720P_GEOM sets 1280×720, not 960.
+    plex_sv = ROOT / "fpga" / "Plex_MiSTer" / "Plex.sv"
+    plex_txt = _read(plex_sv)
+    if not plex_txt:
+        errors.append(f"B8_NO_PLEX_SV: missing product hierarchy file {plex_sv}")
+    else:
+        msgs.append(f"LEG0_PLEX_SV path={plex_sv} bytes={len(plex_txt)}")
+        plxg_wr_tied0 = bool(
+            re.search(r"\bplxg_wr_en\s*=\s*1'b0\b", plex_txt)
+        )
+        plxg_commit_tied0 = bool(
+            re.search(r"\bplxg_commit\s*=\s*1'b0\b", plex_txt)
+        )
+        msgs.append(
+            f"LEG0_PLXG_TIES wr_en_tied0={int(plxg_wr_tied0)} "
+            f"commit_tied0={int(plxg_commit_tied0)}"
+        )
+        if plxg_wr_tied0 and plxg_commit_tied0:
+            errors.append(
+                "B8_PLXG_WR_COMMIT_TIED_ZERO: Plex.sv has plxg_wr_en=1'b0 and "
+                "plxg_commit=1'b0 (lines ~239–242 class). fabric_geom_enable stays 0; "
+                "geom/window latch never leaves reset-zero. PRESENT_BEAM_960 alone "
+                "does not program content/geom (rd-duck product hierarchy)."
+            )
+
+        # Idle content ladder is 640/320 — not 960.
+        content_base_legacy = bool(
+            re.search(
+                r"content_res_640x480\s*\?\s*11'd640\s*:\s*11'd320",
+                plex_txt,
+            )
+        ) or (
+            "11'd640" in plex_txt
+            and "11'd320" in plex_txt
+            and "content_width_base" in plex_txt
+            and not re.search(
+                r"content_width_base[^;]*11'd960",
+                plex_txt,
+                re.DOTALL,
+            )
+        )
+        has_960_content_force = bool(
+            re.search(
+                r"(PRESENT_BEAM_960|FABRIC_NATIVE_960|force_native_960)[^;]*11'd960",
+                plex_txt,
+            )
+        ) or bool(
+            re.search(
+                r"content_width\s*=\s*[^;]*11'd960",
+                plex_txt,
+            )
+        )
+        # FABRIC_NATIVE_720P_GEOM forces 1280×720 — wrong product for ascal 960 path.
+        force_720p_1280 = bool(
+            re.search(
+                r"force_native_720p\s*\?\s*11'd1280",
+                plex_txt,
+            )
+        ) and bool(
+            re.search(
+                r"force_native_720p\s*\?\s*11'd720",
+                plex_txt,
+            )
+        )
+        force_macro_720p_only = (
+            "FABRIC_NATIVE_720P_GEOM" in plex_txt
+            and force_720p_1280
+            and "FABRIC_NATIVE_960" not in plex_txt
+            and not has_960_content_force
+        )
+        msgs.append(
+            f"LEG0_CONTENT_HIER content_base_legacy={int(content_base_legacy)} "
+            f"has_960_content_force={int(has_960_content_force)} "
+            f"force_720p_1280={int(force_720p_1280)}"
+        )
+        if content_base_legacy and not has_960_content_force:
+            errors.append(
+                "B8_CONTENT_BASE_NOT_960: Plex.sv content_width_base falls back to "
+                "O[4] 640×480 / 320×240 when PLXG idle — no product force to 960×540. "
+                "Thin true_de TB drives 960 ports directly; product hierarchy does not "
+                "(rd-duck). Gate inspects Plex.sv, not the harness."
+            )
+        if force_macro_720p_only:
+            errors.append(
+                "B8_FORCE_GEOM_1280_NOT_960: only FABRIC_NATIVE_720P_GEOM force path "
+                "exists and it sets content+geom to 1280×720, not 960×540. Cannot "
+                "substitute for ascal true-DE 960 product wiring (rd-duck)."
+            )
+        # geom coded path under force is 1280 — confirm no 960 coded force
+        geom_force_1280 = bool(
+            re.search(
+                r"present_geom_coded_w\s*=\s*force_native_720p\s*\?\s*11'd1280",
+                plex_txt,
+            )
+        )
+        if geom_force_1280 and not re.search(
+            r"present_geom_coded_w\s*=\s*[^;]*11'd960", plex_txt
+        ):
+            if "B8_FORCE_GEOM_1280_NOT_960" not in " ".join(errors):
+                errors.append(
+                    "B8_GEOM_CODED_FORCE_1280: present_geom_coded_w force path is "
+                    "1280 under FABRIC_NATIVE_720P_GEOM; no 960 coded_w product force "
+                    "in Plex.sv (legacy 624 storage remains when force off)."
+                )
+
     # --- Runtime-OFF OSD / colorbars timing cargo when candidate is ascal ---
     if cand and cand.get("architecture") == "ascal_true_de_960":
         # present_core still has colorbars Template path when PRESENT_BEAM_960 undefined.
