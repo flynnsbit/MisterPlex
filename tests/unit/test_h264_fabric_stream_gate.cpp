@@ -286,6 +286,141 @@ int main() {
               FabricDecodeRoute::ArmFfmpegFallback);
     }
 
+    // --- Metadata fabric Direct Play predicate (parent TASK1 2026-08-03) ---
+    // POS: rk=7-class meta (not hardcoded ratingKey) — CB / L30 / 1280x720 / ~488kbps.
+    {
+        FabricDirectPlayMeta ok;
+        ok.codec_is_h264 = true;
+        ok.video_profile = "constrained baseline";
+        ok.level = 30;
+        ok.width = 1280;
+        ok.height = 720;
+        ok.bitrate_kbps = 508;
+        ok.has_b_frames = -1; // CB ⇒ B unknown allowed
+        ok.chroma = "";       // PMS Media often omits chroma
+        auto v = evaluateFabricDirectPlayMeta(ok);
+        CHECK(v.ok);
+        CHECK(std::string(v.reason) == "ok_fabric_direct_play_meta");
+    }
+    // POS: baseline + explicit has_b_frames=0 + yuv420p
+    {
+        FabricDirectPlayMeta ok;
+        ok.codec_is_h264 = true;
+        ok.video_profile = "baseline";
+        ok.level = 30;
+        ok.width = 640;
+        ok.height = 360;
+        ok.bitrate_kbps = 1200;
+        ok.has_b_frames = 0;
+        ok.chroma = "yuv420p";
+        CHECK(evaluateFabricDirectPlayMeta(ok).ok);
+    }
+    // NEG: High profile
+    {
+        FabricDirectPlayMeta bad;
+        bad.codec_is_h264 = true;
+        bad.video_profile = "high";
+        bad.level = 30;
+        bad.width = 1280;
+        bad.height = 720;
+        bad.bitrate_kbps = 500;
+        bad.has_b_frames = 0;
+        bad.chroma = "yuv420p";
+        auto v = evaluateFabricDirectPlayMeta(bad);
+        CHECK(!v.ok);
+        CHECK(std::string(v.reason) == "refuse_profile");
+    }
+    // NEG: level > 3.0
+    {
+        FabricDirectPlayMeta bad;
+        bad.codec_is_h264 = true;
+        bad.video_profile = "constrained baseline";
+        bad.level = 31;
+        bad.width = 1280;
+        bad.height = 720;
+        bad.bitrate_kbps = 500;
+        auto v = evaluateFabricDirectPlayMeta(bad);
+        CHECK(!v.ok);
+        CHECK(std::string(v.reason) == "refuse_level");
+    }
+    // NEG: B-frames present
+    {
+        FabricDirectPlayMeta bad;
+        bad.codec_is_h264 = true;
+        bad.video_profile = "constrained baseline";
+        bad.level = 30;
+        bad.width = 1280;
+        bad.height = 720;
+        bad.bitrate_kbps = 500;
+        bad.has_b_frames = 2;
+        auto v = evaluateFabricDirectPlayMeta(bad);
+        CHECK(!v.ok);
+        CHECK(std::string(v.reason) == "refuse_b_frames");
+    }
+    // NEG: plain baseline without B-frame info (must not guess)
+    {
+        FabricDirectPlayMeta bad;
+        bad.codec_is_h264 = true;
+        bad.video_profile = "baseline";
+        bad.level = 30;
+        bad.width = 720;
+        bad.height = 480;
+        bad.bitrate_kbps = 1500;
+        bad.has_b_frames = -1;
+        auto v = evaluateFabricDirectPlayMeta(bad);
+        CHECK(!v.ok);
+        CHECK(std::string(v.reason) == "refuse_b_frames_unknown");
+    }
+    // NEG: 1080p above fabric content ceiling
+    {
+        FabricDirectPlayMeta bad;
+        bad.codec_is_h264 = true;
+        bad.video_profile = "constrained baseline";
+        bad.level = 30;
+        bad.width = 1920;
+        bad.height = 1080;
+        bad.bitrate_kbps = 500;
+        auto v = evaluateFabricDirectPlayMeta(bad);
+        CHECK(!v.ok);
+        CHECK(std::string(v.reason) == "refuse_geometry");
+    }
+    // NEG: bitrate above sink ceiling
+    {
+        FabricDirectPlayMeta bad;
+        bad.codec_is_h264 = true;
+        bad.video_profile = "constrained baseline";
+        bad.level = 30;
+        bad.width = 1280;
+        bad.height = 720;
+        bad.bitrate_kbps = kFabricDirectPlayMaxBitrateKbps + 1;
+        auto v = evaluateFabricDirectPlayMeta(bad);
+        CHECK(!v.ok);
+        CHECK(std::string(v.reason) == "refuse_bitrate");
+    }
+    // NEG: non-420 chroma when advertised
+    {
+        FabricDirectPlayMeta bad;
+        bad.codec_is_h264 = true;
+        bad.video_profile = "constrained baseline";
+        bad.level = 30;
+        bad.width = 1280;
+        bad.height = 720;
+        bad.bitrate_kbps = 500;
+        bad.chroma = "4:4:4";
+        auto v = evaluateFabricDirectPlayMeta(bad);
+        CHECK(!v.ok);
+        CHECK(std::string(v.reason) == "refuse_chroma");
+    }
+    // Level token parser
+    {
+        CHECK(parsePlexH264LevelToken("30") == 30);
+        CHECK(parsePlexH264LevelToken("3.0") == 30);
+        CHECK(parsePlexH264LevelToken("3.1") == 31);
+        CHECK(parsePlexH264LevelToken("40") == 40);
+        CHECK(parsePlexH264LevelToken("") == -1);
+        CHECK(parsePlexH264LevelToken("nope") == -1);
+    }
+
     std::printf("test_h264_fabric_stream_gate: OK\n");
     return 0;
 }

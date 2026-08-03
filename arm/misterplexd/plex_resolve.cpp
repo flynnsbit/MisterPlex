@@ -110,11 +110,23 @@ bool isUnreachableHost(const std::string& hostOrUrl) {
 }
 
 std::string attr(const std::string& xml, const char* tag, const char* name) {
-    // First occurrence of <tag ... name="..."
+    // First occurrence of <tag ... name="...". Tag name must be bounded so
+    // "<Media" does not match "<MediaContainer" (metadata fabric DP parse).
     const std::string open = std::string("<") + tag;
-    auto tpos = xml.find(open);
-    if (tpos == std::string::npos)
-        return {};
+    size_t tpos = 0;
+    for (;;) {
+        tpos = xml.find(open, tpos);
+        if (tpos == std::string::npos)
+            return {};
+        const size_t after = tpos + open.size();
+        if (after >= xml.size())
+            return {};
+        const char b = xml[after];
+        // Valid tag boundary: space, '>', '/', tab, CR/LF.
+        if (b == ' ' || b == '>' || b == '/' || b == '\t' || b == '\r' || b == '\n')
+            break;
+        tpos = after;
+    }
     auto end = xml.find('>', tpos);
     if (end == std::string::npos)
         return {};
@@ -825,6 +837,115 @@ bool mediaVideoIsH264(const std::string& plexMetadataXml) {
     return videoCodecIsH264(attr(plexMetadataXml, "Media", "videoCodec"));
 }
 
+FabricDirectPlayMeta parseFabricDirectPlayMetaFromPlexXml(const std::string& plexMetadataXml) {
+    FabricDirectPlayMeta m;
+    if (plexMetadataXml.empty())
+        return m;
+
+    // Media-level defaults (parent rk=7 shape).
+    const std::string mediaCodec = attr(plexMetadataXml, "Media", "videoCodec");
+    m.codec_is_h264 = videoCodecIsH264(mediaCodec);
+    m.video_profile = attr(plexMetadataXml, "Media", "videoProfile");
+    {
+        const auto mw = attr(plexMetadataXml, "Media", "width");
+        const auto mh = attr(plexMetadataXml, "Media", "height");
+        if (!mw.empty())
+            m.width = std::atoi(mw.c_str());
+        if (!mh.empty())
+            m.height = std::atoi(mh.c_str());
+    }
+    {
+        const auto br = attr(plexMetadataXml, "Media", "bitrate");
+        if (!br.empty())
+            m.bitrate_kbps = std::atoi(br.c_str());
+    }
+    // Optional Media-level level (rare).
+    {
+        const auto lv = attr(plexMetadataXml, "Media", "videoLevel");
+        if (lv.empty()) {
+            const auto lv2 = attr(plexMetadataXml, "Media", "level");
+            if (!lv2.empty())
+                m.level = parsePlexH264LevelToken(lv2);
+        } else {
+            m.level = parsePlexH264LevelToken(lv);
+        }
+    }
+
+    // Prefer video Stream for profile/level/chroma/B/refFrames (and dims if Media empty).
+    size_t pos = 0;
+    while ((pos = plexMetadataXml.find("<Stream", pos)) != std::string::npos) {
+        auto end = plexMetadataXml.find('>', pos);
+        if (end == std::string::npos)
+            break;
+        const std::string tag = plexMetadataXml.substr(pos, end - pos);
+        const bool isVideo = tag.find("streamType=\"1\"") != std::string::npos ||
+                             tag.find("type=\"video\"") != std::string::npos;
+        if (!isVideo) {
+            pos = end + 1;
+            continue;
+        }
+        auto c = attrIn(tag, "codec");
+        if (c.empty())
+            c = attrIn(tag, "codecID");
+        if (videoCodecIsH264(c))
+            m.codec_is_h264 = true;
+
+        auto p = attrIn(tag, "profile");
+        if (p.empty())
+            p = attrIn(tag, "videoProfile");
+        if (!p.empty())
+            m.video_profile = p;
+
+        auto lv = attrIn(tag, "level");
+        if (lv.empty())
+            lv = attrIn(tag, "videoLevel");
+        if (!lv.empty())
+            m.level = parsePlexH264LevelToken(lv);
+
+        auto sw = attrIn(tag, "width");
+        auto sh = attrIn(tag, "height");
+        if (m.width <= 0 && !sw.empty())
+            m.width = std::atoi(sw.c_str());
+        if (m.height <= 0 && !sh.empty())
+            m.height = std::atoi(sh.c_str());
+
+        auto br = attrIn(tag, "bitrate");
+        if (m.bitrate_kbps <= 0 && !br.empty())
+            m.bitrate_kbps = std::atoi(br.c_str());
+
+        // Chroma: chromaSubsampling="4:2:0" or pixelFormat="yuv420p"
+        auto ch = attrIn(tag, "chromaSubsampling");
+        if (ch.empty())
+            ch = attrIn(tag, "pixelFormat");
+        if (!ch.empty())
+            m.chroma = ch;
+
+        // B-frames: rare on PMS; accept several spellings.
+        auto hb = attrIn(tag, "hasBFrames");
+        if (hb.empty())
+            hb = attrIn(tag, "has_b_frames");
+        if (hb.empty())
+            hb = attrIn(tag, "bFrames");
+        if (!hb.empty()) {
+            if (hb == "true" || hb == "True" || hb == "1")
+                m.has_b_frames = 1;
+            else if (hb == "false" || hb == "False" || hb == "0")
+                m.has_b_frames = 0;
+            else
+                m.has_b_frames = std::atoi(hb.c_str());
+        }
+
+        auto rf = attrIn(tag, "refFrames");
+        if (rf.empty())
+            rf = attrIn(tag, "ref_frames");
+        if (!rf.empty())
+            m.ref_frames = std::atoi(rf.c_str());
+
+        break; // first video Stream wins
+    }
+    return m;
+}
+
 ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::string& plexBase,
                                 const std::string& token, int64_t offsetMs, bool weakAlways,
                                 const WeakLadder& weak, bool preferDirectH264) {
@@ -1063,9 +1184,58 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
 
     if (directH264) {
         const std::string profSuffix = profNote.empty() ? "" : (" profile=" + profNote);
-        // Parent recipe: call /universal/decision with directPlay=1 + full identity
-        // and require decision="directplay" before opening Part. Thin headers → 400
-        // must not silently fall into xcode CABAC.
+
+        // TASK1 (parent 2026-08-03): fabric-ready library Part → open Part URL
+        // WITHOUT /universal/decision or start.mp4. Lab: decision/start HTTP 400
+        // at every resolution; Part GET for CB/L30/no-B/720p is 200 + perfect.
+        // Predicate is pure metadata (evaluateFabricDirectPlayMeta) — never rk=7.
+        {
+            const FabricDirectPlayMeta fmeta = parseFabricDirectPlayMetaFromPlexXml(xml);
+            const FabricDirectPlayVerdict fver = evaluateFabricDirectPlayMeta(fmeta);
+            if (fver.ok) {
+                auto openMetaPart = [&]() -> bool {
+                    auto partKey = attr(xml, "Part", "key");
+                    if (!partKey.empty()) {
+                        if (partKey[0] != '/')
+                            partKey = "/" + partKey;
+                        r.playable = plexBase + partKey;
+                        if (!token.empty())
+                            r.playable +=
+                                (r.playable.find('?') == std::string::npos ? "?" : "&") +
+                                std::string("X-Plex-Token=") + urlEncodeQuery(token);
+                        return true;
+                    }
+                    auto file = attr(xml, "Part", "file");
+                    if (!file.empty()) {
+                        r.playable = urlDecode(file);
+                        return true;
+                    }
+                    return false;
+                };
+                if (openMetaPart()) {
+                    r.ok = true;
+                    r.transcoded = false;
+                    r.metadataFabricDirectPlay = true;
+                    r.decisionVerifiedDirectPlay = false;
+                    r.decisionAttr = "metadata_fabric_direct";
+                    const auto fr = gateFabricFromPmsDelivery(false, profNote);
+                    r.fabricRoute = fabricDecodeRouteStr(fabricDecodeRoute(fr));
+                    r.detail = "direct H.264 Part (regime=direct_play_sd" + profSuffix +
+                               " metadata_fabric_dp reason=" + std::string(fver.reason) +
+                               " fabric_route=" + r.fabricRoute +
+                               " bitstream=pending_sps no_decision)";
+                    applyDirectPartNativeStore();
+                    return r;
+                }
+                // Meta said fabric-ready but Part missing — fall through.
+                r.detail = "metadata_fabric_dp ok but Part missing; trying decision";
+            } else if (r.detail.empty()) {
+                r.detail = std::string("metadata_fabric_dp ") + fver.reason;
+            }
+        }
+
+        // Fallback: /universal/decision with directPlay=1 (often HTTP 400 in lab).
+        // Thin headers → 400 must not silently fall into xcode CABAC.
         bool dpGranted = false;
         std::string dpDecisionDetail;
         {
@@ -1153,8 +1323,11 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
         }
         // Fall through to universal if DP not granted or Part missing
         r.playRegime = playDeliveryRegimeName(PlayDeliveryRegime::ForceUniversal);
-        if (!dpDecisionDetail.empty())
-            r.detail = dpDecisionDetail;
+        if (!dpDecisionDetail.empty()) {
+            if (!r.detail.empty())
+                r.detail += "; ";
+            r.detail += dpDecisionDetail;
+        }
     }
 
     // Prefer weak universal for dual A9 (STREAM=0 cast path / non-H.264 STREAM)

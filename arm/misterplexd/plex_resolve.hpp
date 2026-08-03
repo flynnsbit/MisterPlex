@@ -2,6 +2,8 @@
 // Slim Plex resolve for MiSTerPlex Phase 2/4 (transitional ARM decode).
 // Harvested from mistercast-linux lessons; full feature set ports later.
 
+#include "libmisterplex/h264_fabric_stream_gate.hpp"
+
 #include <cstdint>
 #include <string>
 #include <utility>
@@ -53,9 +55,13 @@ struct ResolveResult {
     std::string playRegime;      // playDeliveryRegimeName(...)
     std::string videoProfile;    // Stream/Media profile attribute when known
     // PMS /universal/decision @decision (directplay|transcode|…). Empty if not probed.
+    // metadata_fabric_direct = Part opened from library meta without decision.
     std::string decisionAttr;
     // True only when decision endpoint granted directplay (not Part-URL assumption).
     bool decisionVerifiedDirectPlay = false;
+    // True when library Media/Stream meta passed evaluateFabricDirectPlayMeta and
+    // Part was opened without calling /universal/decision (parent TASK1 2026-08-03).
+    bool metadataFabricDirectPlay = false;
     // fabricDecodeRouteStr at resolve time (provisional until STREAM SPS confirm).
     std::string fabricRoute;
 };
@@ -303,5 +309,9 @@ bool parseExactFps(const std::string& videoFrameRate, const std::string& frameRa
 // "auto"/empty keeps the resolved rate; "off" forces unknown (0/0).
 // Returns true when num/den were set from the conf (including the "off" case).
 bool applyContentFpsConf(const std::string& conf, int& num, int& den);
+
+// Build FabricDirectPlayMeta from PMS library metadata XML (Media/Stream).
+// Pure parse — does not network. Feed to evaluateFabricDirectPlayMeta.
+FabricDirectPlayMeta parseFabricDirectPlayMetaFromPlexXml(const std::string& plexMetadataXml);
 
 } // namespace misterplex

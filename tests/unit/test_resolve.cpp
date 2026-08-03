@@ -1044,6 +1044,91 @@ int main() {
         std::printf("GREEN_PATH_universal_arm_scale_fallback_not_fabric_native\n");
     }
 
+    // --- Metadata fabric DP XML parse (not ratingKey-hardcoded; multi-subject) ---
+    {
+        using namespace misterplex;
+        // Subject A: 720p CB library Part (rk=7 *shape*, not key-bound).
+        const char* xml720 =
+            "<MediaContainer><Video ratingKey=\"99\" title=\"A\">"
+            "<Media id=\"1\" bitrate=\"508\" width=\"1280\" height=\"720\" "
+            "videoCodec=\"h264\" videoResolution=\"720\" container=\"mp4\" "
+            "videoProfile=\"constrained baseline\">"
+            "<Part id=\"1\" key=\"/library/parts/99/1/file.mp4\" container=\"mp4\"/>"
+            "<Stream streamType=\"1\" codec=\"h264\" profile=\"constrained baseline\" "
+            "level=\"30\" width=\"1280\" height=\"720\" refFrames=\"1\" "
+            "chromaSubsampling=\"4:2:0\"/>"
+            "</Media></Video></MediaContainer>";
+        const auto m720 = parseFabricDirectPlayMetaFromPlexXml(xml720);
+        CHECK(m720.codec_is_h264);
+        CHECK(m720.width == 1280 && m720.height == 720);
+        CHECK(m720.level == 30);
+        CHECK(m720.bitrate_kbps == 508);
+        CHECK(m720.video_profile.find("constrained") != std::string::npos);
+        CHECK(evaluateFabricDirectPlayMeta(m720).ok);
+
+        // Subject B: High@1080 must refuse (not the pilot).
+        const char* xmlHi =
+            "<MediaContainer><Video ratingKey=\"42\">"
+            "<Media bitrate=\"8000\" width=\"1920\" height=\"1080\" "
+            "videoCodec=\"h264\" videoProfile=\"high\">"
+            "<Part key=\"/library/parts/42/x/file.mkv\"/>"
+            "<Stream type=\"video\" codec=\"h264\" profile=\"high\" level=\"40\" "
+            "width=\"1920\" height=\"1080\" hasBFrames=\"1\" "
+            "chromaSubsampling=\"4:2:0\"/>"
+            "</Media></Video></MediaContainer>";
+        const auto mHi = parseFabricDirectPlayMetaFromPlexXml(xmlHi);
+        CHECK(mHi.codec_is_h264);
+        CHECK(mHi.level == 40);
+        CHECK(mHi.has_b_frames == 1);
+        CHECK(mHi.width == 1920);
+        const auto vHi = evaluateFabricDirectPlayMeta(mHi);
+        CHECK(!vHi.ok);
+        // First failing guard is profile (order in evaluate).
+        CHECK(std::string(vHi.reason) == "refuse_profile");
+
+        // Subject C: Main + B-frames at 720 — refuse B after profile fails;
+        // use baseline + B to hit refuse_b_frames.
+        const char* xmlB =
+            "<MediaContainer><Video>"
+            "<Media bitrate=\"2000\" width=\"1280\" height=\"720\" "
+            "videoCodec=\"h264\" videoProfile=\"baseline\">"
+            "<Stream type=\"video\" codec=\"h264\" profile=\"baseline\" level=\"30\" "
+            "has_b_frames=\"2\" width=\"1280\" height=\"720\"/>"
+            "</Media></Video></MediaContainer>";
+        const auto mB = parseFabricDirectPlayMetaFromPlexXml(xmlB);
+        CHECK(mB.has_b_frames == 2);
+        CHECK(mB.level == 30);
+        const auto vB = evaluateFabricDirectPlayMeta(mB);
+        CHECK(!vB.ok);
+        CHECK(std::string(vB.reason) == "refuse_b_frames");
+
+        // Subject D: level 4.0 CB 720 — refuse_level
+        const char* xmlL4 =
+            "<MediaContainer><Video>"
+            "<Media bitrate=\"900\" width=\"1280\" height=\"720\" "
+            "videoCodec=\"h264\" videoProfile=\"constrained baseline\">"
+            "<Stream type=\"video\" codec=\"h264\" profile=\"constrained baseline\" "
+            "level=\"40\" width=\"1280\" height=\"720\"/>"
+            "</Media></Video></MediaContainer>";
+        const auto mL4 = parseFabricDirectPlayMetaFromPlexXml(xmlL4);
+        CHECK(mL4.level == 40);
+        CHECK(std::string(evaluateFabricDirectPlayMeta(mL4).reason) == "refuse_level");
+
+        // Subject E: bitrate above sink
+        const char* xmlBr =
+            "<MediaContainer><Video>"
+            "<Media bitrate=\"9000\" width=\"1280\" height=\"720\" "
+            "videoCodec=\"h264\" videoProfile=\"constrained baseline\">"
+            "<Stream type=\"video\" codec=\"h264\" profile=\"constrained baseline\" "
+            "level=\"30\" width=\"1280\" height=\"720\"/>"
+            "</Media></Video></MediaContainer>";
+        const auto mBr = parseFabricDirectPlayMetaFromPlexXml(xmlBr);
+        CHECK(mBr.bitrate_kbps == 9000);
+        CHECK(std::string(evaluateFabricDirectPlayMeta(mBr).reason) == "refuse_bitrate");
+
+        std::printf("GREEN_PATH_metadata_fabric_direct_play_predicate\n");
+    }
+
     if (fails) {
         std::fprintf(stderr, "test_resolve: %d failures\n", fails);
         return 1;

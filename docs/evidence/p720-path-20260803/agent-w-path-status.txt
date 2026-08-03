@@ -1,12 +1,16 @@
-w-path tip: c399fbc6 Route-B HD→960×540; no silent 1280 DE
-status: IDLE
-evidence:
-  - rd-duck cited 6c7d8999; fix landed 9ca8198c; this tip hardens defaults+oracle
-  - TranscodeHd720 → routeBHdTranscodeTargetSize(multi=0)=540p 960×540
-  - DP decision empty ceiling = 960×540 (not 1280)
-  - resolve→publish→beam cross-contract in test_resolve
-  - NEG: routeBResolvedSizeLegal(1280,720)=false @1ppc
-  - 720p profile lab-only (PRESENT_MULTI_PIXEL)
-  - make unit true rc=0
-owed: fps_1001 draft only (freeze #4); bit34 OFF
-no Quartus / no MiSTer
+w-path STATUS
+branch=w-path-720p sha_pre_commit=5df76ae8
+TASK1 DONE: metadata fabric Direct Play (Part without /universal/decision)
+- evaluateFabricDirectPlayMeta + parseFabricDirectPlayMetaFromPlexXml
+- resolve short-circuit: metadataFabricDirectPlay=true, decisionAttr=metadata_fabric_direct
+- attr() Media vs MediaContainer boundary fix
+- NEGs: high, L>30, B-frames, 1080p, bitrate, chroma 4:4:4, baseline B-unknown
+- tests: test_h264_fabric_stream_gate true rc=0; test_resolve true rc=0
+- parent live: docs/evidence/p720-path-20260803/PARENT_LIVE_METADATA_FABRIC_DP.md
+TASK3 (HTTP 400 universal): deferred — DP routes around for fabric-ready Parts
+TASK4 (720 profile/ceiling): already on branch from prior commit
+TASK5 (mode=?): prior glass/canvas work; authoring tracks content bank still open
+main baseline quote: parent 035fae51 (do not measure shared tree)
+ON_MAIN: NO (branch only) | RTL N/A this change
+HOLD: no Quartus, no device
+

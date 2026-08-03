@@ -26,6 +26,7 @@
 
 #include <cctype>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 
@@ -217,6 +218,150 @@ inline FabricStreamGateResult gateFabricFromPmsDelivery(
 inline bool h264SliceTypeIsB(uint8_t slice_type) {
     const uint8_t t = static_cast<uint8_t>(slice_type % 5);
     return t == 1;
+}
+
+// ---- Resolve-time fabric Direct Play predicate (parent 2026-08-03) ----------
+// When PMS already stores a fabric-decodable Part (rk=7 class), open the Part
+// URL without /universal/decision or start.mp4. Lab: those endpoints HTTP 400
+// today; Part GET is 200 with perfect CB/L30/no-B/yuv420p/1280x720/24.
+//
+// Every field is checked against *provided* metadata — never assume rk=7.
+// Missing required fields ⇒ refuse (fall back to xcode path). Exception:
+// has_b_frames may be absent on Plex XML; Constrained Baseline implies no B
+// (H.264); plain "baseline" without B info is refused (must not guess).
+
+// Product content ceiling for fabric DP (matches path 720 programme).
+inline constexpr int kFabricDirectPlayMaxW = 1280;
+inline constexpr int kFabricDirectPlayMaxH = 720;
+// Compressed ES ceiling — not DDR push. Above this refuse DP (ARM/xcode).
+// Lab rk=7 ≈ 488 kbps; dense CAVLC budgets were cy/MB not Mbps. 6000 leaves
+// headroom without admitting Blu-ray High rips.
+inline constexpr int kFabricDirectPlayMaxBitrateKbps = 6000;
+// H.264 level pin (Plex integer 30 == Level 3.0).
+inline constexpr int kFabricDirectPlayMaxLevel = 30;
+
+struct FabricDirectPlayMeta {
+    bool codec_is_h264 = false;
+    std::string video_profile; // Media/Stream profile attribute
+    int level = -1;            // 30 = L3.0; -1 = unknown/missing
+    int width = 0;
+    int height = 0;
+    int bitrate_kbps = 0;      // 0 = unknown/missing
+    int has_b_frames = -1;     // -1 unknown, 0 none, >0 has B
+    std::string chroma;        // "yuv420p", "4:2:0", empty unknown
+    int ref_frames = -1;       // optional; not a sole B-frame oracle
+};
+
+struct FabricDirectPlayVerdict {
+    bool ok = false;
+    const char* reason = "refuse_unset";
+};
+
+// Parse Plex level tokens: "30", "31", "3.0", "3.1", "40".
+inline int parsePlexH264LevelToken(const std::string& raw) {
+    if (raw.empty())
+        return -1;
+    std::string s;
+    for (unsigned char c : raw) {
+        if (!std::isspace(c))
+            s.push_back(static_cast<char>(c));
+    }
+    if (s.empty())
+        return -1;
+    // "3.0" / "3.1"
+    if (s.size() >= 3 && s[1] == '.') {
+        const int major = s[0] - '0';
+        const int minor = s[2] - '0';
+        if (major >= 1 && major <= 5 && minor >= 0 && minor <= 9)
+            return major * 10 + minor;
+    }
+    // Integer form 30/31/40
+    char* end = nullptr;
+    const long v = std::strtol(s.c_str(), &end, 10);
+    if (end == s.c_str() || (end && *end != '\0'))
+        return -1;
+    if (v < 10 || v > 60)
+        return -1;
+    return static_cast<int>(v);
+}
+
+inline bool fabricChromaIsYuv420(const std::string& chroma) {
+    if (chroma.empty())
+        return false;
+    std::string s;
+    for (unsigned char c : chroma) {
+        if (std::isspace(c))
+            continue;
+        s.push_back(static_cast<char>(std::tolower(c)));
+    }
+    return s == "yuv420p" || s == "yuv420" || s == "4:2:0" || s == "420";
+}
+
+inline bool fabricProfileIsConstrainedBaseline(const std::string& profile) {
+    std::string s;
+    for (unsigned char c : profile) {
+        if (std::isspace(c))
+            continue;
+        s.push_back(static_cast<char>(std::tolower(c)));
+    }
+    return s.find("constrainedbaseline") != std::string::npos ||
+           s.find("constrained-baseline") != std::string::npos || s == "cb";
+}
+
+// Core predicate — pure, no network. NEG cases must cover high/L>30/B/1080/bitrate.
+inline FabricDirectPlayVerdict evaluateFabricDirectPlayMeta(const FabricDirectPlayMeta& m) {
+    FabricDirectPlayVerdict v;
+    if (!m.codec_is_h264) {
+        v.reason = "refuse_not_h264";
+        return v;
+    }
+    if (!plexVideoProfileAttrIsFabricSafe(m.video_profile)) {
+        v.reason = "refuse_profile";
+        return v;
+    }
+    if (m.level < 0) {
+        v.reason = "refuse_level_unknown";
+        return v;
+    }
+    if (m.level > kFabricDirectPlayMaxLevel) {
+        v.reason = "refuse_level";
+        return v;
+    }
+    if (m.width <= 0 || m.height <= 0) {
+        v.reason = "refuse_geometry_unknown";
+        return v;
+    }
+    if (m.width > kFabricDirectPlayMaxW || m.height > kFabricDirectPlayMaxH) {
+        v.reason = "refuse_geometry";
+        return v;
+    }
+    if (m.bitrate_kbps <= 0) {
+        v.reason = "refuse_bitrate_unknown";
+        return v;
+    }
+    if (m.bitrate_kbps > kFabricDirectPlayMaxBitrateKbps) {
+        v.reason = "refuse_bitrate";
+        return v;
+    }
+    // B-frames: explicit >0 always refuse. Unknown only OK for Constrained
+    // Baseline (spec forbids B). Plain baseline without B info → refuse.
+    if (m.has_b_frames > 0) {
+        v.reason = "refuse_b_frames";
+        return v;
+    }
+    if (m.has_b_frames < 0 && !fabricProfileIsConstrainedBaseline(m.video_profile)) {
+        v.reason = "refuse_b_frames_unknown";
+        return v;
+    }
+    // Chroma: when present must be 4:2:0. PMS Media often omits it (rk=7 Media
+    // tag has no pix_fmt) — empty is allowed; non-420 is refused.
+    if (!m.chroma.empty() && !fabricChromaIsYuv420(m.chroma)) {
+        v.reason = "refuse_chroma";
+        return v;
+    }
+    v.ok = true;
+    v.reason = "ok_fabric_direct_play_meta";
+    return v;
 }
 
 inline FabricStreamGateResult gateFabricH264FromChain(const NalChainInfo& chain) {
