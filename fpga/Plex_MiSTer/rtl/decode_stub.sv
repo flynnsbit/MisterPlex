@@ -350,6 +350,7 @@ module decode_stub #(
 	wire signed [15:0] dpb_chroma_origin_x, dpb_chroma_origin_y;
 	wire              dpb_mem_rd;
 	wire [31:0]       dpb_mem_raddr;
+	reg               dpb_mem_rd_q;
 	reg [31:0]        dpb_mem_raddr_q;
 	reg               dpb_mem_rvalid;
 	wire [7:0]        dpb_mem_rdata;
@@ -596,6 +597,7 @@ module decode_stub #(
 			dpb_fill_mb_addr <= '0;
 			dpb_fill_sample_idx <= 9'd0;
 			dpb_mem_raddr_q <= 0;
+			dpb_mem_rd_q <= 0;
 			dpb_mem_rvalid <= 0;
 			wr_pixel      <= 0;
 		end else begin
