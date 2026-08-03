@@ -101,14 +101,19 @@ if not re.search(r"NOT NTSC|NTSC.*NOT locked|integer fps only", tb, re.I):
     sys.exit(1)
 print("OK B15 TB disclaims NTSC source-lock (integer-only)")
 
-# Fence w-clock docs that overclaim
+# Fence w-clock docs that overclaim (allow explicit NOT/forbidden/do-not-claim lines)
 docs = list((root / ".agent-work/w-clock").glob("*.md"))
 docs += list((root / ".agent-work/w-clock").glob("*.txt"))
 over = []
+pat = re.compile(
+    r"source-locked.*23\.976|23\.976.*source-lock|judder controlled for.*NTSC",
+    re.I,
+)
+allow = re.compile(r"NOT|forbidden|lost|wall|cannot|do not|don't|never claim|unilateral|BLOCKED", re.I)
 for p in docs:
-    t = p.read_text(errors="replace")
-    if re.search(r"source-locked.*23\.976|23\.976.*source-lock|judder controlled for.*NTSC", t, re.I):
-        over.append(str(p))
+    for line in p.read_text(errors="replace").splitlines():
+        if pat.search(line) and not allow.search(line):
+            over.append(f"{p}:{line.strip()}")
 if over:
     print("FAIL overclaim docs:", over)
     sys.exit(1)
