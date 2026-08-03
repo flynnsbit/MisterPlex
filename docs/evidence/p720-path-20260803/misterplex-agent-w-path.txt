@@ -1,12 +1,16 @@
 lane=w-path
-status=GEOMETRY_FLOOR_3100_LANDED
-tip=d273d6f8
-FINDING: lab maxBR=3100 → true 1280x720 (ffprobe); 3000 → 720x404
-  decision content BR @3100 ≈ 2585 (PMS under-runs cap)
-  prior floor 3500 was coarse-matrix overstatement
-PRODUCT: kPlex720pWeakBitrateKbps=3100; DecodeOptimal=1500 (DP only)
-PARENT#3+#correction: serial decode+copy DEAD; mmap retract absorbed
-  path does not own fabric/DMA; asks parent measure decode @~2600k content
+status=HOST_PATH_LANDED — not fit-gated
+tip=7cfa1894 (code d273d6f8)
+CORRECTION_FOR_PROGRAMME_BOARD:
+  Delivery is NOT "only >=3500". Fine matrix + start.mp4 ffprobe:
+    maxBR=3000 → 720x404
+    maxBR=3100 → 1280x720 SAR 1:1 CB L31, decision content BR ≈ 2585
+  Product pin: kPlex720pWeakBitrateKbps=3100 (was 3500 coarse overstatement)
+  DP/content optimal 1500 remains non-universal
+LANDED: Path720p ladder, genuine-delivery gates, identity_skip, preferDirect,
+  OSD_TIER11_720P default 0, MiSTerPlex.xml 1280/L31, dual bitrate contract
 tests: resolve/osd/vf true_rc=0
-blocker: none path-code
-ASK_PARENT: device decode ms/f for 1280x720 CB @ ~2600k (what maxBR=3100 delivers)
+ARM_ms: path removes scale on true 720; device dual-A9 scale ms UNKNOWN
+SV: none — host/C++ lane; no exclusive fit request
+ASK_PARENT: decode ms/f already-1280x720 CB @ ~2600k (what maxBR=3100 delivers)
+blocker: none path-code; 720p24 needs fabric pixels (w-mem/scaler/clock)
