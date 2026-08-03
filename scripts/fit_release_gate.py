@@ -152,6 +152,17 @@ LIVE_OPEN_BLOCKER_TOKENS = (
     "B13_FIXED_RASTER_NO_RUNTIME_DE",
     "B14_CODED_W_16_ALIGN_UNENFORCED",
     "B17_PLXG_Q5_DAR_FPS_ABI_MISSING",
+    # rd-duck hold/release: product qip + full-hierarchy scenario tests
+    "B16_QIP_GEOM_MUX",
+    "B16_QIP_POLLER",
+    "B16_QIP_Q5_ASPECT_FPS",
+    "B16_QSF_BEAM_NOT_ACTIVE",
+    "B20_HIER_A_PLXG_EXPLICIT_DISABLE",
+    "B20_HIER_B_COMMIT_FRAME_BOUNDARY",
+    "B20_HIER_C_DDR_FILL_GEOM_INVALIDATE",
+    "B20_HIER_D_RETAINED_DDR_RESET_RESTART",
+    "B20_HIER_E_POLL_DOORBELL_ATOMIC",
+    "B20_HIER_F_BANK_SWAP_24_30",
 )
 
 # Sibling-lane fixes that exist but are not merged into this gated tree.
@@ -1994,6 +2005,187 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
                 "(parent merge drop class, same family as B19). w-nostub lane owns fix."
             )
 
+    # --- B16 product files.qip must list hierarchy RTL (rd-duck hold/release) ---
+    # Isolated lanes currently omit mux/poller/q5; merged product must not.
+    # B13 beam+mux, B16 poller/latch, q5 aspect/fps.
+    qip_txt = _read(ROOT / "fpga" / "Plex_MiSTer" / "files.qip")
+    qsf_txt = _read(ROOT / "fpga" / "Plex_MiSTer" / "Plex.qsf")
+    required_qip = [
+        (
+            "B16_QIP_BEAM",
+            r"present_beam_content_de\.sv",
+            "B13 beam generator",
+        ),
+        (
+            "B16_QIP_GEOM_MUX",
+            r"plex_present_geom_mux\.sv",
+            "B13 geom mux (PLXG vs fallback)",
+        ),
+        (
+            "B16_QIP_POLLER",
+            r"plxg_ddr_poller\.sv",
+            "B16 PLXG DDR poller",
+        ),
+        (
+            "B16_QIP_LATCH",
+            r"present_geom_latch\.sv",
+            "B16 geom latch",
+        ),
+        (
+            "B16_QIP_Q5_ASPECT_FPS",
+            r"plex_video_ar\.sv|plex_content_fps|plxg_q5",
+            "q5 aspect/fps fabric module",
+        ),
+    ]
+    msgs.append("LEG0_B16_QIP_SCAN_EXECUTED")
+    for tok, pat, why in required_qip:
+        on_disk = False
+        # q5 module may be named variously — also accept Plex.sv packing markers in qip? No — qip file list.
+        if tok == "B16_QIP_Q5_ASPECT_FPS":
+            # Pass if any matching RTL file exists AND is listed, OR listed pattern hits.
+            rtl_candidates = list((ROOT / "fpga" / "Plex_MiSTer" / "rtl").glob("plex_video_ar*.sv"))
+            rtl_candidates += list((ROOT / "fpga" / "Plex_MiSTer" / "rtl").glob("*content_fps*.sv"))
+            rtl_candidates += list((ROOT / "fpga" / "Plex_MiSTer" / "rtl").glob("*plxg_q5*.sv"))
+            listed = bool(re.search(pat, qip_txt, re.I))
+            if rtl_candidates and not listed:
+                errors.append(
+                    f"{tok}: RTL exists ({rtl_candidates[0].name}) but files.qip does not "
+                    f"list q5 aspect/fps module ({why}). rd-duck: merged QIP must include it."
+                )
+            elif not listed and not rtl_candidates:
+                # No module yet — still required for product release (ABI arbitrated).
+                errors.append(
+                    f"{tok}: files.qip has no q5 aspect/fps entry and no "
+                    f"plex_video_ar/content_fps/plxg_q5 RTL on disk ({why}). "
+                    "rd-duck hold: merged product must ship q5 DAR/FPS path in Quartus file list."
+                )
+            elif listed:
+                msgs.append(f"LEG0_B16_QIP_OK {tok}")
+            continue
+        if re.search(pat, qip_txt):
+            msgs.append(f"LEG0_B16_QIP_OK {tok}")
+        else:
+            # Beam already covered by B10 — still report B16 for release matrix clarity
+            # but avoid double-counting identical beam miss as two failures when B10 fires.
+            if tok == "B16_QIP_BEAM" and any("B10_BEAM_NOT_IN_FILES_QIP" in e for e in errors):
+                msgs.append(f"LEG0_B16_QIP_DEFER {tok} (covered by B10)")
+            else:
+                errors.append(
+                    f"{tok}: fpga/Plex_MiSTer/files.qip missing {pat} ({why}). "
+                    "rd-duck: isolated lanes omit these; merged product QIP must list "
+                    "B13 beam+mux, B16 poller/latch, q5 aspect/fps."
+                )
+    # QSF must not be hollow 480p when candidate is ascal — leg1 enforces macros;
+    # here require PRESENT_BEAM_960 appears as active assignment in product QSF text.
+    if cand and cand.get("architecture") == "ascal_true_de_960":
+        active_beam = bool(
+            re.search(
+                r"^\s*set_global_assignment\s+-name\s+VERILOG_MACRO\s+"
+                r'"PRESENT_BEAM_960=1"',
+                qsf_txt,
+                re.M,
+            )
+        )
+        if not active_beam:
+            errors.append(
+                "B16_QSF_BEAM_NOT_ACTIVE: product Plex.qsf has no active "
+                'VERILOG_MACRO "PRESENT_BEAM_960=1" (commented or absent). '
+                "rd-duck: merged QSF must enable B13 beam path — hollow 480p QSF is not product."
+            )
+
+    # --- B20 full-hierarchy scenario tests (rd-duck hold/release a–f) ---
+    # Require tests under tests/ that are multi-module (hierarchy), not thin unit
+    # sims of a single latch. Each scenario needs distinctive evidence strings.
+    HIER_MARKERS = [
+        r"present_core",
+        r"ddr_frame_store",
+        r"present_beam_content_de|PRESENT_BEAM_960",
+        r"plxg|plex_present_geom_mux|plxg_ddr_poller|present_geom_latch",
+    ]
+    scenarios = [
+        (
+            "B20_HIER_A_PLXG_EXPLICIT_DISABLE",
+            [
+                r"explicit\s+PLXG\s+disable|plxg_disable|disable_plxg|force_plxg_off",
+                r"PRESENT_BEAM_960",
+                r"fallback|force_native_960|re-?enable",
+            ],
+            "explicit PLXG disable under PRESENT_BEAM_960 (mux must not silently re-enable fallback)",
+        ),
+        (
+            "B20_HIER_B_COMMIT_FRAME_BOUNDARY",
+            [
+                r"frame_boundary",
+                r"commit",
+                r"coincident|at_boundary|boundary_commit|commit.*frame_boundary|frame_boundary.*commit",
+            ],
+            "commit coincident with frame boundary",
+        ),
+        (
+            "B20_HIER_C_DDR_FILL_GEOM_INVALIDATE",
+            [
+                r"geom_invalidate|invalidate_geom|geom.*invalid",
+                r"ddr_frame_store|outstanding.*fill|fill.*outstanding|wr_fill|in_flight",
+            ],
+            "outstanding DDR fill during geom invalidate",
+        ),
+        (
+            "B20_HIER_D_RETAINED_DDR_RESET_RESTART",
+            [
+                r"retain|retained|ABA|across\s+reset",
+                r"FPGA\s+reset|warm_reset|fpga_reset",
+                r"daemon\s+restart|restart.*daemon|plxg.*restart|session|epoch",
+            ],
+            "retained DDR across FPGA reset + daemon restart",
+        ),
+        (
+            "B20_HIER_E_POLL_DOORBELL_ATOMIC",
+            [
+                r"plxg_ddr_poller|delayed\s+poll|poll.*delay|early\s+doorbell|doorbell.*early",
+                r"atomic|bank\+geom|geometry\s+atomic|bank.*geom",
+            ],
+            "delayed PLXG poll vs early doorbell (and inverse) proving bank+geometry atomic",
+        ),
+        (
+            "B20_HIER_F_BANK_SWAP_24_30",
+            [
+                r"bank_swap|bank\s+swap|distinct\s+bank|swap_bank|rd_bank",
+                r"\b24\b.*\b30\b|\b30\b.*\b24\b|content_fps|fps_valid",
+                r"not\s+just\s+frame_start|frame_start.*insufficient|bank_id|observed_bank",
+            ],
+            "actual distinct bank swaps at 24/30 — not just raster frame_start counts",
+        ),
+    ]
+
+    def _is_hierarchy_test(txt: str) -> bool:
+        hits = sum(1 for p in HIER_MARKERS if re.search(p, txt))
+        return hits >= 3
+
+    test_files: list[Path] = []
+    if tests_root.is_dir():
+        for path in tests_root.rglob("*"):
+            if path.is_file() and path.suffix in {".sv", ".sh", ".cpp", ".py", ".md"}:
+                test_files.append(path)
+
+    msgs.append(f"LEG0_B20_HIER_SCAN_EXECUTED n_test_files={len(test_files)}")
+    for tok, pats, why in scenarios:
+        found: list[str] = []
+        for path in test_files:
+            txt = _read(path)
+            if not txt or not _is_hierarchy_test(txt):
+                continue
+            if all(re.search(p, txt, re.I | re.S) for p in pats):
+                found.append(str(path.relative_to(ROOT)))
+        if found:
+            msgs.append(f"LEG0_B20_HIER_OK {tok} -> {found[0]}")
+        else:
+            errors.append(
+                f"{tok}: no full-hierarchy test under tests/ covers: {why}. "
+                f"Need a multi-module TB (present_core + ddr_frame_store + beam/PLXG) "
+                f"with evidence patterns {pats!r}. rd-duck hold/release — isolated "
+                "lane unit tests do not satisfy. Soft-skip ≠ PASS."
+            )
+
     # --- B19 MERGE-LOSS + lane tip under-take (always, even if Bn cleared) ---
     b19_errs = collect_merge_loss_errors()
     if b19_errs:
@@ -3144,7 +3336,41 @@ def _mutation_per_blocker_clear_restore() -> list[str]:
         ),
     ]
 
-    # B5 / B9_NO_AR_TOPLEVEL_TEST: create dummy tests then remove.
+    qip = ROOT / "fpga" / "Plex_MiSTer" / "files.qip"
+    qsf = ROOT / "fpga" / "Plex_MiSTer" / "Plex.qsf"
+
+    def _qip_add(name: str):
+        def _xf(t: str) -> str:
+            if name in t:
+                return t + f"\n// mut ensure {name}\n"
+            return t + f'\nset_global_assignment -name SYSTEMVERILOG_FILE rtl/{name}\n'
+
+        return _xf
+
+    # B16 qip / qsf clears
+    specs.extend(
+        [
+            ("B16_QIP_GEOM_MUX", [(qip, _qip_add("plex_present_geom_mux.sv"))]),
+            ("B16_QIP_POLLER", [(qip, _qip_add("plxg_ddr_poller.sv"))]),
+            (
+                "B16_QIP_Q5_ASPECT_FPS",
+                [(qip, _qip_add("plex_video_ar.sv"))],
+            ),
+            (
+                "B16_QSF_BEAM_NOT_ACTIVE",
+                [
+                    (
+                        qsf,
+                        lambda t: t
+                        + '\nset_global_assignment -name VERILOG_MACRO "PRESENT_BEAM_960=1"\n',
+                    )
+                ],
+            ),
+        ]
+    )
+
+    # B5 / B9 / B20 hierarchy: create dummy tests then remove.
+    dummy_hier = ROOT / "tests" / "rtl" / "_fitgate_mut_hier_full.cpp"
     file_create_specs = [
         (
             "B5_NO_DDR_ON_BEAM_TEST",
@@ -3157,6 +3383,27 @@ def _mutation_per_blocker_clear_restore() -> list[str]:
             "#!/bin/sh\n# mut VIDEO_ARX VIDEO_ARY top-level\n",
         ),
     ]
+
+    # One full-hierarchy dummy that clears all B20 scenarios when present.
+    hier_body = r"""
+// mut full-hierarchy TB: present_core ddr_frame_store present_beam_content_de
+// PRESENT_BEAM_960 plxg_ddr_poller plex_present_geom_mux present_geom_latch
+// (a) explicit PLXG disable under PRESENT_BEAM_960 fallback force_native_960 re-enable
+// (b) commit coincident with frame_boundary boundary_commit
+// (c) geom_invalidate outstanding fill ddr_frame_store in_flight
+// (d) retained DDR across FPGA reset daemon restart epoch session ABA
+// (e) delayed poll early doorbell plxg_ddr_poller bank+geom atomic geometry atomic
+// (f) bank_swap distinct bank at 24 and 30 content_fps not just frame_start bank_id observed_bank
+"""
+    for tok in (
+        "B20_HIER_A_PLXG_EXPLICIT_DISABLE",
+        "B20_HIER_B_COMMIT_FRAME_BOUNDARY",
+        "B20_HIER_C_DDR_FILL_GEOM_INVALIDATE",
+        "B20_HIER_D_RETAINED_DDR_RESET_RESTART",
+        "B20_HIER_E_POLL_DOORBELL_ATOMIC",
+        "B20_HIER_F_BANK_SWAP_24_30",
+    ):
+        file_create_specs.append((tok, dummy_hier, hier_body))
 
     for token, edits in specs:
         restorers = []
