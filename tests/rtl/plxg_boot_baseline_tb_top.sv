@@ -1,6 +1,10 @@
-// plxg_boot_baseline_tb_top — rd-duck retained-DDR / fresh-zero after FPGA reset.
+// plxg_boot_baseline_tb_top — rd-duck retained-DDR / fresh-zero / pre-poll race.
 // seed_retained=1: preseed epoch=1,seq=N; baseline without commit; publish N+1 commits.
 // seed_retained=0: zero DDR; empty observation completes baseline; ONE publish commits.
+// seed_race=1 (with seed_retained=0): valid host record present at reset release
+//   (write-before-first-poll). First poll BASELINES without commit — liveness gap.
+//   Single host_publish must NOT suffice if it only re-hits same pair; second
+//   distinct seq (host_publish_2) commits. Not stale-live closure.
 // FAULT_PLXG_NO_BASELINE: commit on retained immediately.
 // FAULT_PLXG_EMPTY_NO_BASELINE: empty does not complete; first valid swallowed.
 `timescale 1ns / 1ps
@@ -10,7 +14,9 @@ module plxg_boot_baseline_tb_top (
 	input  wire        clk,
 	input  wire        reset,
 	input  wire        host_publish,
-	input  wire        seed_retained, // 1=retained seq=7, 0=fresh zero DDR
+	input  wire        host_publish_2, // second distinct seq (EnsureLive half)
+	input  wire        seed_retained, // 1=retained seq=7, 0=fresh/race
+	input  wire        seed_race,     // 1=valid pre-poll host seq=3 at release
 	output wire [15:0] last_seq,
 	output wire [13:0] last_epoch,
 	output wire        boot_baseline_done,
@@ -69,8 +75,10 @@ module plxg_boot_baseline_tb_top (
 
 	localparam [28:0] Q0_W = 29'((32'h300F_F000 + 32'h800) >> 3);
 	localparam [15:0] RET_SEQ = 16'd7;
+	localparam [15:0] RACE_SEQ = 16'd3;
 	reg [15:0] seq_mem;
 	reg        valid_mem; // 0 = fresh zero DDR (no magic)
+	reg        host_publish_d1, host_publish_2_d1;
 	// epoch=1 in hi[15:2] → bits of q0[47:34]; pack as 16'h0007 with seq in [63:48].
 	wire [63:0] q0 = valid_mem ? {seq_mem, 16'h0007, 32'h504C5847} : 64'd0;
 	wire [63:0] q1 = 64'(624) | (64'(480) << 16);
@@ -110,19 +118,37 @@ module plxg_boot_baseline_tb_top (
 			rd_addr_r <= 29'd0;
 			dout_r <= 64'd0;
 			// Sample seed while reset held (C++ drives before release).
+			host_publish_d1 <= 1'b0;
+			host_publish_2_d1 <= 1'b0;
 			if (seed_retained) begin
 				seq_mem   <= RET_SEQ;
+				valid_mem <= 1'b1;
+			end else if (seed_race) begin
+				// Pre-poll host write already in DDR (liveness race).
+				seq_mem   <= RACE_SEQ;
 				valid_mem <= 1'b1;
 			end else begin
 				seq_mem   <= 16'd0;
 				valid_mem <= 1'b0;
 			end
 		end else begin
-			// Retained path: bump 7→8. Fresh path: first publish installs seq=1.
-			if (host_publish) begin
+			host_publish_d1 <= host_publish;
+			host_publish_2_d1 <= host_publish_2;
+			// Rising-edge only — multi-cycle hold must not multi-bump seq.
+			// Retained: 7→8. Fresh: first publish seq=1.
+			// Race: host_publish alone does not change pair; publish_2 does +1.
+			if (host_publish && !host_publish_d1) begin
 				if (seed_retained && seq_mem == RET_SEQ)
 					seq_mem <= RET_SEQ + 16'd1;
-				else if (!seed_retained && !valid_mem) begin
+				else if (!seed_retained && !seed_race && !valid_mem) begin
+					valid_mem <= 1'b1;
+					seq_mem   <= 16'd1;
+				end
+			end
+			if (host_publish_2 && !host_publish_2_d1) begin
+				if (valid_mem)
+					seq_mem <= seq_mem + 16'd1;
+				else begin
 					valid_mem <= 1'b1;
 					seq_mem   <= 16'd1;
 				end

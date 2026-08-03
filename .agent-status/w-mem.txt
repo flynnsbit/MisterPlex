@@ -1,0 +1,96 @@
+w-mem STATUS — parent CORRECTION absorbed (false main L2 claim RETRACTED)
+ts=20260803T184811Z
+worktree=/home/flynnsbit/Projects/MisterPlex-wt-mem
+branch_HEAD=w-mem-720p-abi branch_sha=c15f1146 full=c15f1146785cec6ffd63ac759dfe21342f359603
+origin_main_sha=85bef583 full=85bef5832a763528ddaaf6f8af8d2319d1017ef8
+parent_cited_main=ad928cb1 short=ad928cb1
+NO Quartus · NO device · parent sequences main merges
+
+=== TREE IDENTITY RULE ===
+Every repo-state claim below names ref + sha. Measurement without tree id is not evidence.
+
+=== RETRACT / PLAN ===
+Parent retracted: files.qip 34→45 and 720p present modules compiled/dead on main@ad928cb1.
+TRUE (re-measured): those modules are NOT on main at all (L0/L1 on w-osd-land-720p-present).
+w-mem had NO plan item "instantiate dead main QIP modules" — land recipe was always L0→merge.
+No plan revert required. Will not chase main dead-code for present_* / plex_present_geom_mux.
+
+=== PINNED MEASUREMENTS ===
+
+--- git show ad928cb1 (parent-cited) ---
+files.qip SV/V/VHDL line count: 33 (parent reported 34; ±1 count method)
+present_video_timing_720p  ON_MAIN=no IN_FILES_QIP=no INSTANTIATED=0 ENABLED=n/a
+present_content_window     ON_MAIN=no IN_FILES_QIP=no INSTANTIATED=0 ENABLED=n/a
+present_geom_latch         ON_MAIN=no IN_FILES_QIP=no INSTANTIATED=0 ENABLED=n/a
+present_beam_content_de    ON_MAIN=no IN_FILES_QIP=no INSTANTIATED=0 ENABLED=n/a
+plex_present_geom_mux      ON_MAIN=no IN_FILES_QIP=no INSTANTIATED=0 ENABLED=n/a
+Method: git cat-file -e ad928cb1:fpga/Plex_MiSTer/rtl/<mod>.sv → fail for all five;
+        git show ad928cb1:files.qip has no those names.
+
+--- git show origin/main (85bef583=85bef5832a763528ddaaf6f8af8d2319d1017ef8) ---
+files.qip SV/V/VHDL count: 42
+qip w-mem-relevant: rtl/ddr_frame_store.sv + rtl/present_core.sv only (+ present_cadence)
+Plex.sv name refs (rg -c on blob): all PLXG/PLXC orphans = 0; present_core=2;
+  ddr_frame_store name in Plex.sv=0 (instance lives in present_core ~L245)
+ON_MAIN=yes files: ddr_frame_store.sv present_core.sv h264_intra_nb_ctx.sv
+ON_MAIN=no  files: present_video_timing_720p present_content_window present_geom_latch
+  present_beam_content_de plex_present_geom_mux present_beam_geom_lock plxg_ddr_poller
+  ddr_bus_arbiter_plxc ddr_plxc_master_bridge ddr_m1_subarb plex_chrome_ddr_loader
+qsf: DDR_FRAME_STORE=1 FRAME_W=640 FRAME_H=480; PRESENT_BEAM_960 unset; PLEX_CHROME_DDR unset
+B20 ports on main ddr_frame_store (swap_applied_pulse|app_win_en|pend_app_seq|snap_seq_r): ABSENT
+Level summary main@85bef583:
+  ddr_frame_store shell L4 (QIP+inst in present_core+DDR_FRAME_STORE=1); B20 deltas not present
+  present_core L4 shell; no B20 applied-tuple wiring
+  all w-mem PLXG/PLXC new modules: not on main (below L0 on main)
+
+--- worktree HEAD w-mem-720p-abi@c15f1146=c15f1146785cec6ffd63ac759dfe21342f359603 ---
+files.qip SV/V/VHDL count: 52
+IN_QIP=yes: ddr_frame_store present_geom_latch plex_present_geom_mux present_content_window
+  present_beam_content_de present_beam_geom_lock plxg_ddr_poller ddr_m1_subarb
+  ddr_bus_arbiter_plxc ddr_plxc_master_bridge plex_chrome_ddr_loader present_core
+INST@branch (Plex.sv / present_core.sv):
+  present_geom_latch Plex=1  plxg_ddr_poller Plex=2  ddr_m1_subarb Plex=2
+  plex_present_geom_mux Plex=2  ddr_bus_arbiter_plxc Plex=1  ddr_plxc_master_bridge Plex=1
+  plex_chrome_ddr_loader Plex=1  present_content_window core=4  present_beam_geom_lock core=3
+  present_beam_content_de core=2  present_video_timing_720p=0 (w-osd lane, not w-mem)
+qsf: DDR_FRAME_STORE=1 FRAME_W=640 FRAME_H=480; PRESENT_BEAM_960 unset; PLEX_CHROME_DDR unset
+use_frame_store(1'b0)=OSD force-bars only; store ownership=PLXG live+seq under DDR_FRAME_STORE
+
+=== L0-L4 PER MODULE (highest true level; only L4 ships) ===
+
+| module | ref measured | ON_MAIN | IN_QIP | INST | EN | Level |
+| ddr_frame_store | main@85bef583 | yes | yes | yes(present_core) | DDR_FRAME_STORE=1 | L4 shell |
+| ddr_frame_store B20 c15f1146 | main@85bef583 | no | — | — | — | L0 branch-only |
+| present_core | main@85bef583 | yes | yes | yes(Plex) | always | L4 shell |
+| present_core B20 wiring | main@85bef583 | no | — | — | — | L0 branch-only |
+| present_geom_latch | main@85bef583 | no | no | 0 | n/a | not on main |
+| present_geom_latch | branch@c15f1146 | no | yes | yes | DDR_FRAME_STORE | L3 |
+| plxg_ddr_poller | branch@c15f1146 | no | yes | yes | ENABLE=1 | L3 |
+| ddr_m1_subarb | branch@c15f1146 | no | yes | yes | yes | L3 |
+| plex_present_geom_mux | branch@c15f1146 | no | yes | yes | yes | L3 |
+| present_content_window | branch@c15f1146 | no | yes | yes(core) | yes | L3 |
+| present_beam_geom_lock | branch@c15f1146 | no | yes | yes(core) | yes | L3 |
+| present_beam_content_de | branch@c15f1146 | no | yes | yes(core) | PRESENT_BEAM_960=OFF | L3 file; 960 path not L4 |
+| ddr_bus_arbiter_plxc | branch@c15f1146 | no | yes | yes | STARVE_VIDEO=0 | L3 |
+| ddr_plxc_master_bridge | branch@c15f1146 | no | yes | yes | yes | L3 |
+| plex_chrome_ddr_loader | branch@c15f1146 | no | yes | yes | PLEX_CHROME_DDR unset EN=0 | L3-not-L4 |
+| present_video_timing_720p | main@ad928cb1 & @85bef583 | no | no | 0 | n/a | L0 on w-osd (not w-mem) |
+
+=== LANDING RECIPE (parent only; no unilateral main merge) ===
+720p present (w-osd) is L0/L1 in flight — coordinate via parent.
+w-mem orphans are L0 on main, L3 on branch — NOT "dead L2 on main":
+  A PLXG cluster (latch poller m1_sub mux window beam_lock) + qip + Plex ifdef block
+  B B20 store freeze (c15f1146) after A
+  C PLXC arb+bridge (6fc40d80); chrome L4 needs PLEX_CHROME_DDR=1
+
+=== EVIDENCE COMMITS branch@c15f1146 ===
+6fc40d80 PLXC grant-hold — lost_read+grant verilator true rc=0 (prior)
+c15f1146 B20 visual-tuple freeze — test_ddr_frame_store_b20.sh true rc=0 (prior)
+prior: c19209da B14; 59bbf59b B9 APPLIED_FRAME_GEN
+
+=== OPEN ===
+host doorbell carries PLXG seq (w-path); w-scaler bank_gen←APPLIED_FRAME_GEN;
+present_core rt_dar_*=0 placeholder; DPB→DDR parent-P1 not started this window
+
+=== ONE-LINE TICK ===
+tip=c15f1146 main@85bef583: parent retract confirmed (720p present ON_MAIN=no); w-mem PLXG/PLXC L3-branch/L0-main; store L4-shell main / B20 L0-branch; no dead-code chase

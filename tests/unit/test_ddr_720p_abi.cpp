@@ -1256,8 +1256,15 @@ int main() {
         CHECK(plxgBootBaselineHoldsRetainedUntilPostResetPublish(1));
         CHECK(plxgBootBaselineFreshZeroOnePublishCommits());
         CHECK(plxgBootBaselineFaultEmptySwallowsFirstPublish()); // REPRO
+        // rd-duck liveness gap (not stale-live closure): pre-poll single publish
+        // baselined forever; EnsureLive double-publish closes; daemon restart
+        // without FPGA reset keeps prior live until NEW publication.
+        CHECK(plxgRacePrePollSinglePublishNeverLive(3));
+        CHECK(plxgRacePrePollClosedByEnsureLiveDoublePublish());
+        CHECK(plxgDaemonRestartKeepsPriorLiveUntilNewPublish(9));
         std::fprintf(stderr, "  PLXG_BOOT_BASELINE_RETAINED OK\n");
         std::fprintf(stderr, "  PLXG_BOOT_BASELINE_FRESH_ZERO OK\n");
+        std::fprintf(stderr, "  PLXG_RACE_PRE_POLL_LIVENESS OK\n");
         std::fprintf(stderr, "  PLXG_SEQLOCK_RETAINED_DDR_RESET OK\n");
         std::fprintf(stderr, "  PLXG_SEQ_RESTART_SAFE OK\n");
         std::fprintf(stderr, "  PLXG_ABA_SEQ_TEAR OK\n");

@@ -17,9 +17,15 @@
 //       baseline with last staying (0,0) so the first valid post-reset host
 //       record COMMITS (rd-duck liveness: previously empty kept baseline=0 and
 //       the first valid was swallowed as baseline — coupled doorbell forever).
-//   LIMITATION: passive baseline cannot distinguish a fresh host record written
-//   just before the first poll from retained DDR (reset/publication race). A
-//   true host↔FPGA boot nonce/ACK would close that; not claimed here.
+//   LIVENESS/OWNERSHIP GAP (rd-duck — not stale-live closure):
+//   Passive baseline cannot distinguish a fresh host record written just before
+//   the first poll from retained DDR. That first coherent snapshot is baselined
+//   WITHOUT commit; a single post-reset publish/disable can therefore never go
+//   live until another NEW (epoch,seq). Daemon restart without FPGA reset keeps
+//   prior latch live until a new publication (expected ownership); epoch default
+//   1 is NOT a boot/session nonce. Closure requires host second-publish /
+//   EnsureLive protocol (product) or a true host↔FPGA boot nonce/ACK (future).
+//   Do not claim baseline alone proves post-reset liveness.
 //
 // FAULT_PLXG_NO_BASELINE: skip baseline (pre-fix immediate promote of retained).
 // FAULT_PLXG_EMPTY_NO_BASELINE: empty q0 does not complete baseline (liveness REPRO).

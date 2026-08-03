@@ -15,10 +15,15 @@
 //   3) Store q0 high32, then q0 low32 = magic LAST (commit)
 //   Poller reads q0..q5 then RE-READS q0; commit only if magic+seq match.
 // Without step 1, a mid-write body can be accepted under old q0.
-// Separately (rd-duck boot baseline): FPGA reset alone does NOT make retained
-// (epoch=1,seq=N) safe — host default epoch=1 is NOT a boot nonce. Fabric
-// poller baselines first verified snapshot without promote; only a later NEW
-// (epoch,seq) pair (post-reset publication) may commit. See PlxgPollerModel.
+// Separately (rd-duck boot baseline / liveness gap — NOT stale-live closure):
+// FPGA reset alone does NOT make retained (epoch=1,seq=N) safe — host default
+// epoch=1 is NOT a boot/session nonce. Fabric poller baselines the first
+// verified snapshot without promote; only a later NEW (epoch,seq) may commit.
+// Race: a fresh host record written before the first poll is indistinguishable
+// from retained and is swallowed as baseline — one publish never goes live.
+// Daemon restart without FPGA reset keeps prior live geometry until a new
+// publication (ownership holds); prove liveness only via second-publish
+// (plxgHostEnsureLiveDoublePublish) or future boot nonce/ACK. See PlxgPollerModel.
 // Without step 1, post-reset last_seq=0 + retained q0 seq=1 lets a NO-BASELINE
 // poller
 // accept a mixed body while reread still sees the old q0. Never three temporal
@@ -501,8 +506,9 @@ struct PlxgPollerModel {
 
 // Empty/invalid q0 observation (bad magic or epoch==0). Product completes
 // baseline with last staying (0,0) so the first valid host write commits.
-// LIMITATION (rd-duck): passive baseline cannot distinguish a fresh record
-// written just before first poll from retained DDR.
+// Liveness gap (rd-duck): passive baseline cannot distinguish a fresh record
+// written just before first poll from retained DDR — use EnsureLive double
+// publish; do not treat single pre-poll publish as proof of live.
 inline void plxgPollerObserveEmpty(PlxgPollerModel& p) {
     if (p.fault_no_baseline || p.fault_empty_no_baseline)
         return;
@@ -725,6 +731,113 @@ inline bool plxgBootBaselineFaultPromotesRetained(uint16_t retainedSeq = 7) {
     if (!plxgPollerObserveVerified(p, snap, snap[0]))
         return false;
     return p.cnt_commit == 1 && p.cnt_baseline == 0 && p.last_seq == retainedSeq;
+}
+
+// ---- Session open / pre-poll race (rd-duck liveness gap) ----
+// Product host protocol: two distinct seqlock publishes after session open.
+// First may be baselined (retained DDR or write-before-first-poll); second
+// carries a NEW (epoch,seq) and is the first that may commit. Not a boot
+// nonce/ACK — only proves liveness under the double-publish contract.
+inline uint16_t plxgHostEnsureLiveDoublePublish(uint8_t* ctrlPage, PlxgRecord rec,
+                                                uint16_t* softwareLastInOut,
+                                                bool honorRetained = true) {
+    const uint16_t s1 =
+        plxgHostWriteRecordRestartSafe(ctrlPage, rec, softwareLastInOut, honorRetained);
+    const uint16_t s2 =
+        plxgHostWriteRecordRestartSafe(ctrlPage, rec, softwareLastInOut, honorRetained);
+    (void)s1;
+    return s2;
+}
+
+// REPRO gap: host writes one valid record before any poll; first observe
+// baselines without commit; without a second publish, commit stays 0 forever.
+inline bool plxgRacePrePollSinglePublishNeverLive(uint16_t hostSeq = 3) {
+    std::uint8_t page[0x1000]{};
+    uint16_t sw = 0;
+    const uint16_t used =
+        plxgHostWriteRecordRestartSafe(page, makePlxgRecord960x540Native(hostSeq), &sw,
+                                       /*honor*/ false);
+    PlxgPollerModel p; // FPGA reset, baseline open; DDR already has host record
+    uint64_t snap[6];
+    for (int i = 0; i < 6; ++i)
+        snap[i] = plxgCtrlLoadQ(page, static_cast<unsigned>(i));
+    if (plxgPollerObserveVerified(p, snap, snap[0]))
+        return false; // must NOT commit first
+    if (!(p.boot_baseline_done && p.cnt_baseline == 1 && p.cnt_commit == 0 &&
+          p.last_seq == used))
+        return false;
+    // Same record re-observed: still no commit (stale pair)
+    if (plxgPollerObserveVerified(p, snap, snap[0]))
+        return false;
+    return p.cnt_commit == 0 && p.cnt_baseline == 1;
+}
+
+// Closure under EnsureLive: double publish before/around poll → commit of 2nd seq.
+inline bool plxgRacePrePollClosedByEnsureLiveDoublePublish() {
+    std::uint8_t page[0x1000]{};
+    uint16_t sw = 0;
+    const PlxgRecord rec = makePlxgRecord960x540Native(1);
+    const uint16_t liveSeq =
+        plxgHostEnsureLiveDoublePublish(page, rec, &sw, /*honor*/ true);
+    // Simulate poller that first saw the intermediate single write as baseline:
+    // rebuild race: write once → baseline observe → EnsureLive's second half.
+    // Full double-publish on empty page: first observe may commit if empty
+    // baseline completed first. Prove the hard race path explicitly:
+    std::uint8_t page2[0x1000]{};
+    uint16_t sw2 = 0;
+    const uint16_t first =
+        plxgHostWriteRecordRestartSafe(page2, rec, &sw2, false);
+    PlxgPollerModel p;
+    uint64_t snap[6];
+    for (int i = 0; i < 6; ++i)
+        snap[i] = plxgCtrlLoadQ(page2, static_cast<unsigned>(i));
+    if (plxgPollerObserveVerified(p, snap, snap[0]))
+        return false; // baselined
+    const uint16_t second =
+        plxgHostWriteRecordRestartSafe(page2, rec, &sw2, true);
+    if (second == first)
+        return false;
+    for (int i = 0; i < 6; ++i)
+        snap[i] = plxgCtrlLoadQ(page2, static_cast<unsigned>(i));
+    if (!plxgPollerObserveVerified(p, snap, snap[0]))
+        return false;
+    (void)liveSeq;
+    return p.cnt_commit == 1 && p.cnt_baseline == 1 && p.last_seq == second;
+}
+
+// Daemon restart, FPGA still live (no fabric reset): prior live stays until
+// NEW publication — not a stale-live bug; ownership holds. Next ensure-live
+// must use a distinct seq (honor retained).
+inline bool plxgDaemonRestartKeepsPriorLiveUntilNewPublish(uint16_t liveSeq = 9) {
+    // Model: poller already live at liveSeq (boot_baseline_done, last=liveSeq).
+    PlxgPollerModel p;
+    p.boot_baseline_done = true;
+    p.last_seq = liveSeq;
+    p.last_epoch = 1;
+    p.cnt_commit = 1;
+    std::uint8_t page[0x1000]{};
+    const PlxgRecord live = makePlxgRecord960x540Native(liveSeq);
+    for (int i = 0; i < 6; ++i)
+        plxgCtrlStoreQ(page, static_cast<unsigned>(i), live.q[i]);
+    // Observe retained identical pair: no new commit
+    uint64_t snap[6];
+    for (int i = 0; i < 6; ++i)
+        snap[i] = plxgCtrlLoadQ(page, static_cast<unsigned>(i));
+    if (plxgPollerObserveVerified(p, snap, snap[0]))
+        return false;
+    if (p.cnt_commit != 1)
+        return false;
+    // New daemon object: EnsureLive double publish → commit advances
+    uint16_t sw = 0;
+    const uint16_t used =
+        plxgHostEnsureLiveDoublePublish(page, makePlxgRecordDisable(1), &sw, true);
+    if (used == liveSeq)
+        return false;
+    for (int i = 0; i < 6; ++i)
+        snap[i] = plxgCtrlLoadQ(page, static_cast<unsigned>(i));
+    if (!plxgPollerObserveVerified(p, snap, snap[0]))
+        return false;
+    return p.cnt_commit == 2 && p.last_seq == used;
 }
 
 

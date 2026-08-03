@@ -15,13 +15,70 @@ static void tick(Vplxg_boot_baseline_tb_top* t) {
 static void reset_hold(Vplxg_boot_baseline_tb_top* t, int n = 8) {
 	t->reset = 1;
 	t->host_publish = 0;
+	t->host_publish_2 = 0;
 	for (int i = 0; i < n; ++i) tick(t);
 	t->reset = 0;
+}
+
+// Pre-poll race (rd-duck liveness gap): valid host record at first poll is
+// baselined without commit; single same-pair publish never lives; publish_2 commits.
+static int run_race_pre_poll(Vplxg_boot_baseline_tb_top* t) {
+	t->seed_retained = 0;
+	t->seed_race = 1;
+	reset_hold(t);
+
+	bool saw_base = false;
+	for (int i = 0; i < 5000; ++i) {
+		tick(t);
+		if (t->cnt_commit > 0) {
+			std::fprintf(stderr, "FAIL race: commit before EnsureLive second publish\n");
+			return 1;
+		}
+		if (t->boot_baseline_done && t->cnt_baseline > 0) {
+			saw_base = true;
+			break;
+		}
+	}
+	std::fprintf(stderr, "=== PRODUCT pre-poll race liveness gap ===\n");
+	if (!saw_base || t->last_seq != 3 || t->cnt_commit != 0) {
+		std::fprintf(stderr, "FAIL race baseline seq=%u base=%u commit=%u\n",
+		             t->last_seq, t->cnt_baseline, t->cnt_commit);
+		return 1;
+	}
+	// Single host_publish does not bump seq on race path → still no commit.
+	t->host_publish = 1;
+	for (int i = 0; i < 4; ++i) tick(t);
+	t->host_publish = 0;
+	for (int i = 0; i < 4000; ++i) tick(t);
+	if (t->cnt_commit != 0) {
+		std::fprintf(stderr, "FAIL race: same-pair publish committed commit=%u\n",
+		             t->cnt_commit);
+		return 1;
+	}
+	std::fprintf(stderr, "REPRO gap: pre-poll single publish never live commit=0\n");
+
+	// EnsureLive second distinct seq.
+	t->host_publish_2 = 1;
+	for (int i = 0; i < 4; ++i) tick(t);
+	t->host_publish_2 = 0;
+	bool saw_commit = false;
+	for (int i = 0; i < 8000; ++i) {
+		tick(t);
+		if (t->cnt_commit > 0) { saw_commit = true; break; }
+	}
+	if (!saw_commit || t->last_seq != 4) {
+		std::fprintf(stderr, "FAIL race EnsureLive commit=%u last=%u\n",
+		             t->cnt_commit, t->last_seq);
+		return 1;
+	}
+	std::fprintf(stderr, "PASS race: baselined seq=3; EnsureLive seq=4 committed\n");
+	return 0;
 }
 
 // Retained DDR path (existing).
 static int run_retained(Vplxg_boot_baseline_tb_top* t) {
 	t->seed_retained = 1;
+	t->seed_race = 0;
 	reset_hold(t);
 
 	bool saw_base = false;
@@ -88,6 +145,7 @@ static int run_retained(Vplxg_boot_baseline_tb_top* t) {
 // Fresh zero DDR + exactly one post-reset publication.
 static int run_fresh_zero(Vplxg_boot_baseline_tb_top* t) {
 	t->seed_retained = 0;
+	t->seed_race = 0;
 	reset_hold(t);
 
 	bool saw_empty_base = false;
@@ -164,9 +222,13 @@ int main(int argc, char** argv) {
 	if (!mode) mode = "retained";
 
 	auto* t = new Vplxg_boot_baseline_tb_top;
+	t->seed_race = 0;
+	t->host_publish_2 = 0;
 	int rc = 1;
 	if (std::strcmp(mode, "fresh") == 0)
 		rc = run_fresh_zero(t);
+	else if (std::strcmp(mode, "race") == 0)
+		rc = run_race_pre_poll(t);
 	else
 		rc = run_retained(t);
 
@@ -177,7 +239,13 @@ int main(int argc, char** argv) {
 			delete t;
 			return rc2;
 		}
-		std::fprintf(stderr, "PASS boot baseline: retained + fresh-zero one-publish\n");
+		int rc3 = run_race_pre_poll(t);
+		if (rc3 != 0) {
+			delete t;
+			return rc3;
+		}
+		std::fprintf(stderr,
+		             "PASS boot baseline: retained + fresh-zero + pre-poll race\n");
 #endif
 	}
 	delete t;

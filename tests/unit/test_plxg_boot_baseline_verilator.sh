@@ -45,6 +45,14 @@ if ! printf '%s\n' "$OUTP" | grep -q 'PASS fresh zero'; then
   echo "FAIL product fresh-zero one-publish" >&2
   exit 1
 fi
+if ! printf '%s\n' "$OUTP" | grep -q 'PASS race:'; then
+  echo "FAIL product pre-poll race EnsureLive" >&2
+  exit 1
+fi
+if ! printf '%s\n' "$OUTP" | grep -q 'REPRO gap:'; then
+  echo "FAIL missing REPRO gap line for pre-poll single publish" >&2
+  exit 1
+fi
 
 EXF="$(build_one fault +define+FAULT_PLXG_NO_BASELINE -CFLAGS "-std=c++17 -O2 -DFAULT_PLXG_NO_BASELINE")"
 set +e
@@ -67,5 +75,5 @@ if [[ "$FERC" -ne 2 ]] || ! printf '%s\n' "$OUTFE" | grep -q 'REPRO empty-no-bas
   echo "FAIL empty-no-baseline red twin did not REPRO" >&2
   exit 1
 fi
-echo "PASS test_plxg_boot_baseline product+REPROs (retained+fresh+empty)"
+echo "PASS test_plxg_boot_baseline product+REPROs (retained+fresh+race+empty)"
 exit 0
