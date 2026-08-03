@@ -1,31 +1,32 @@
 lane=w-fitgate
 branch=w-fitgate
-sha=$(git rev-parse --short HEAD pending)
-tip=PENDING_B40
+sha=1bf0839a
+ref_measured=w-fitgate@1bf0839a
 GRANT=NO
-status=B40_PLXG_BOOT_LIVENESS_GAP_WIRED
+status=B40_COMPLETE_PUSHED
 
-B40 rd-duck: baseline-without-commit ≠ post-reset liveness.
-  - retained DDR does NOT assert plxg_live (latch live_valid=0; S_BASELINE no commit)
-  - pre-poll race: first host publish swallowed as baseline
-  - closure: EnsureLive second-publish OR boot nonce/ACK + race TB
-  - tokens LIVE_OPEN: B40_POLLER_ABSENT B40_NO_BASELINE_PATH B40_PRE_POLL_RACE_UNPROVEN
+B40 PLXG boot liveness gap (rd-duck) CLOSED in gate:
+  check_b40_plxg_boot_liveness_gap wired after B39
+  LIVE_OPEN tokens RED on hollow fitgate:
+    B40_POLLER_ABSENT B40_NO_BASELINE_PATH B40_PRE_POLL_RACE_UNPROVEN
     B40_NO_ENSURE_LIVE_PROTOCOL B40_BOOT_BASELINE_TB_ABSENT
-  - closed-class mutation: B40_BASELINE_CLAIMED_AS_LIVENESS
-  - FIX_STATUS lane=w-mem commit=cbe31c4c
+  closed-class mutation RED: B40_BASELINE_CLAIMED_AS_LIVENESS
+  FIX_STATUS: w-mem@cbe31c4c unmerged
+  probe wt-mem: LEG0_B40_PASS (ensure_live=1 seed_race=1 claims_closed=0)
 
-PROBES (measured):
-  fitgate hollow: 5× B40 RED (true)
-  wt-mem@cbe31c4c: LEG0_B40_PASS (ensure_live=1 seed_race=1 faults=1 claims_closed=0)
-
-SELFTEST:
+SELFTEST true rc=0
   FIT_RELEASE_GATE_SELFTEST_PASS EXECUTED
   MUTATION_MATRIX_SUMMARY rows=106 red=106 fail_holes=0
-  true rc=0
 
-LANDING:
-  product RTL modules: 0
-  ON_MAIN=no IN_FILES_QIP=n/a (scripts/docs only)
-  ref: w-fitgate + tip after push
+Parent:
+  git fetch origin w-fitgate
+  RULER=/home/flynnsbit/Projects/MisterPlex-wt-fitgate
+  "$RULER/scripts/fit_release_gate.sh" --root "$MERGE" --qsf "$MERGE/fpga/Plex_MiSTer/Plex.qsf"
+  echo "true rc=$?"
 
-NO Quartus. NO device. GRANT=NO.
+LANDING inventory (scripts/docs only):
+  product RTL modules authored by this lane: 0
+  ON_MAIN=no IN_FILES_QIP=n/a INSTANTIATED=n/a ENABLED=n/a
+  measured_ref=w-fitgate@1bf0839a
+
+NO Quartus. NO device. GRANT=NO. No unilateral main merge.
