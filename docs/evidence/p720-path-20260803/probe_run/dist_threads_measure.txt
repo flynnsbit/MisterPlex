@@ -1,0 +1,125 @@
+=== keyframes ===
+0 I
+50 I
+100 I
+150 I
+200 I
+250 I
+300 I
+350 I
+=== raw_scale_r1 ===
+frame_timer label=raw_scale_r1 mode=raw n=359 mean_ms=0.2091 p50=0.1792 p95=0.3689 p99=0.4776 max=0.6820 min=0.1362 sd=0.0715 p99_minus_mean=0.2686 spikes_gt_mean+2sd=26 wall_ms=130.234 child_st=0
+frame_timer_slowest label=raw_scale_r1 idx=1:0.682 idx=258:0.500 idx=34:0.493 idx=117:0.485 idx=262:0.472 idx=10:0.445 idx=25:0.430 idx=65:0.423 idx=83:0.423 idx=260:0.418
+=== raw_scale_r2 ===
+frame_timer label=raw_scale_r2 mode=raw n=359 mean_ms=0.2066 p50=0.1892 p95=0.3256 p99=0.4486 max=0.5386 min=0.1389 sd=0.0578 p99_minus_mean=0.2420 spikes_gt_mean+2sd=21 wall_ms=124.608 child_st=0
+frame_timer_slowest label=raw_scale_r2 idx=300:0.539 idx=142:0.466 idx=17:0.455 idx=222:0.449 idx=62:0.449 idx=4:0.434 idx=18:0.387 idx=244:0.386 idx=201:0.381 idx=6:0.377
+=== raw_scale_r3 ===
+frame_timer label=raw_scale_r3 mode=raw n=359 mean_ms=0.2076 p50=0.1783 p95=0.3136 p99=0.4359 max=1.1634 min=0.1426 sd=0.0774 p99_minus_mean=0.2282 spikes_gt_mean+2sd=8 wall_ms=126.369 child_st=0
+frame_timer_slowest label=raw_scale_r3 idx=1:1.163 idx=315:0.506 idx=6:0.452 idx=133:0.452 idx=8:0.424 idx=226:0.417 idx=101:0.411 idx=81:0.403 idx=9:0.359 idx=7:0.357
+=== raw_scale_r4 ===
+frame_timer label=raw_scale_r4 mode=raw n=359 mean_ms=0.2131 p50=0.1995 p95=0.3346 p99=0.4597 max=0.5398 min=0.1316 sd=0.0632 p99_minus_mean=0.2466 spikes_gt_mean+2sd=17 wall_ms=124.184 child_st=0
+frame_timer_slowest label=raw_scale_r4 idx=10:0.540 idx=157:0.524 idx=2:0.513 idx=36:0.495 idx=162:0.434 idx=15:0.404 idx=120:0.401 idx=100:0.397 idx=179:0.387 idx=66:0.384
+=== raw_scale_r5 ===
+frame_timer label=raw_scale_r5 mode=raw n=359 mean_ms=0.2280 p50=0.2317 p95=0.2849 p99=0.4099 max=0.6820 min=0.1293 sd=0.0527 p99_minus_mean=0.1819 spikes_gt_mean+2sd=6 wall_ms=130.002 child_st=0
+frame_timer_slowest label=raw_scale_r5 idx=270:0.682 idx=186:0.489 idx=1:0.483 idx=172:0.436 idx=61:0.391 idx=11:0.374 idx=200:0.323 idx=72:0.317 idx=5:0.315 idx=4:0.313
+=== raw_scale_r6 ===
+frame_timer label=raw_scale_r6 mode=raw n=359 mean_ms=0.1996 p50=0.1755 p95=0.3145 p99=0.6905 max=1.1614 min=0.1270 sd=0.0989 p99_minus_mean=0.4909 spikes_gt_mean+2sd=9 wall_ms=125.917 child_st=0
+frame_timer_slowest label=raw_scale_r6 idx=1:1.161 idx=16:0.974 idx=132:0.773 idx=292:0.768 idx=286:0.635 idx=10:0.582 idx=6:0.552 idx=191:0.471 idx=12:0.451 idx=222:0.359
+=== raw_scale_r7 ===
+frame_timer label=raw_scale_r7 mode=raw n=359 mean_ms=0.1872 p50=0.1722 p95=0.2873 p99=0.3711 max=0.8736 min=0.1308 sd=0.0618 p99_minus_mean=0.1839 spikes_gt_mean+2sd=15 wall_ms=117.513 child_st=0
+frame_timer_slowest label=raw_scale_r7 idx=1:0.874 idx=9:0.509 idx=3:0.475 idx=86:0.376 idx=5:0.367 idx=92:0.353 idx=185:0.344 idx=291:0.342 idx=128:0.340 idx=349:0.338
+=== raw_scale_r8 ===
+frame_timer label=raw_scale_r8 mode=raw n=359 mean_ms=0.2345 p50=0.2336 p95=0.3434 p99=0.3927 max=0.5560 min=0.1321 sd=0.0521 p99_minus_mean=0.1582 spikes_gt_mean+2sd=22 wall_ms=140.322 child_st=0
+frame_timer_slowest label=raw_scale_r8 idx=1:0.556 idx=55:0.414 idx=6:0.407 idx=122:0.393 idx=280:0.393 idx=11:0.382 idx=310:0.377 idx=2:0.370 idx=3:0.365 idx=80:0.364
+=== raw_scale_t0_r1 ===
+frame_timer label=raw_scale_t0_r1 mode=raw n=359 mean_ms=0.2189 p50=0.1971 p95=0.3263 p99=0.4656 max=0.9039 min=0.1338 sd=0.0766 p99_minus_mean=0.2467 spikes_gt_mean+2sd=12 wall_ms=126.323 child_st=0
+frame_timer_slowest label=raw_scale_t0_r1 idx=260:0.904 idx=133:0.633 idx=1:0.522 idx=11:0.491 idx=315:0.447 idx=347:0.408 idx=267:0.405 idx=331:0.405 idx=220:0.387 idx=295:0.385
+=== raw_scale_t1_r1 ===
+frame_timer label=raw_scale_t1_r1 mode=raw n=359 mean_ms=0.4394 p50=0.4405 p95=0.6776 p99=0.8231 max=1.0147 min=0.1402 sd=0.1341 p99_minus_mean=0.3837 spikes_gt_mean+2sd=13 wall_ms=195.840 child_st=0
+frame_timer_slowest label=raw_scale_t1_r1 idx=196:1.015 idx=99:0.944 idx=349:0.856 idx=249:0.830 idx=199:0.818 idx=64:0.801 idx=203:0.792 idx=299:0.771 idx=280:0.755 idx=206:0.735
+=== raw_scale_t2_r1 ===
+frame_timer label=raw_scale_t2_r1 mode=raw n=359 mean_ms=0.3001 p50=0.2321 p95=0.6152 p99=0.8264 max=1.1484 min=0.1230 sd=0.1544 p99_minus_mean=0.5263 spikes_gt_mean+2sd=20 wall_ms=149.728 child_st=0
+frame_timer_slowest label=raw_scale_t2_r1 idx=1:1.148 idx=198:0.912 idx=202:0.835 idx=326:0.828 idx=317:0.825 idx=157:0.803 idx=48:0.793 idx=6:0.728 idx=324:0.726 idx=56:0.684
+=== raw_scale_t0_r2 ===
+frame_timer label=raw_scale_t0_r2 mode=raw n=359 mean_ms=0.2109 p50=0.1901 p95=0.3339 p99=0.4066 max=0.8482 min=0.1378 sd=0.0696 p99_minus_mean=0.1958 spikes_gt_mean+2sd=13 wall_ms=127.805 child_st=0
+frame_timer_slowest label=raw_scale_t0_r2 idx=15:0.848 idx=62:0.504 idx=14:0.499 idx=259:0.408 idx=95:0.406 idx=35:0.398 idx=17:0.387 idx=322:0.370 idx=315:0.369 idx=359:0.363
+=== raw_scale_t1_r2 ===
+frame_timer label=raw_scale_t1_r2 mode=raw n=359 mean_ms=0.4329 p50=0.4293 p95=0.6517 p99=0.7568 max=0.8365 min=0.1281 sd=0.1205 p99_minus_mean=0.3238 spikes_gt_mean+2sd=14 wall_ms=192.371 child_st=0
+frame_timer_slowest label=raw_scale_t1_r2 idx=48:0.836 idx=98:0.768 idx=348:0.763 idx=153:0.757 idx=248:0.756 idx=148:0.751 idx=315:0.739 idx=88:0.728 idx=196:0.686 idx=319:0.686
+=== raw_scale_t2_r2 ===
+frame_timer label=raw_scale_t2_r2 mode=raw n=359 mean_ms=0.2939 p50=0.2428 p95=0.6214 p99=0.7253 max=0.8438 min=0.1408 sd=0.1365 p99_minus_mean=0.4314 spikes_gt_mean+2sd=27 wall_ms=142.488 child_st=0
+frame_timer_slowest label=raw_scale_t2_r2 idx=349:0.844 idx=343:0.803 idx=57:0.779 idx=51:0.729 idx=1:0.722 idx=311:0.720 idx=303:0.691 idx=31:0.678 idx=25:0.676 idx=315:0.668
+=== raw_scale_t0_r3 ===
+frame_timer label=raw_scale_t0_r3 mode=raw n=359 mean_ms=0.1765 p50=0.1582 p95=0.2580 p99=0.4352 max=0.8437 min=0.1247 sd=0.0615 p99_minus_mean=0.2588 spikes_gt_mean+2sd=11 wall_ms=113.519 child_st=0
+frame_timer_slowest label=raw_scale_t0_r3 idx=1:0.844 idx=2:0.498 idx=305:0.483 idx=4:0.466 idx=111:0.413 idx=358:0.397 idx=207:0.391 idx=343:0.390 idx=16:0.367 idx=17:0.318
+=== raw_scale_t1_r3 ===
+frame_timer label=raw_scale_t1_r3 mode=raw n=359 mean_ms=0.4873 p50=0.4558 p95=0.7431 p99=0.8730 max=0.9769 min=0.1591 sd=0.1397 p99_minus_mean=0.3857 spikes_gt_mean+2sd=12 wall_ms=212.352 child_st=0
+frame_timer_slowest label=raw_scale_t1_r3 idx=98:0.977 idx=84:0.889 idx=100:0.886 idx=111:0.879 idx=48:0.869 idx=103:0.829 idx=105:0.803 idx=97:0.791 idx=107:0.785 idx=130:0.778
+=== raw_scale_t2_r3 ===
+frame_timer label=raw_scale_t2_r3 mode=raw n=359 mean_ms=0.3297 p50=0.2584 p95=0.6251 p99=0.7811 max=0.9273 min=0.1200 sd=0.1581 p99_minus_mean=0.4515 spikes_gt_mean+2sd=17 wall_ms=153.353 child_st=0
+frame_timer_slowest label=raw_scale_t2_r3 idx=1:0.927 idx=156:0.920 idx=2:0.911 idx=24:0.795 idx=73:0.771 idx=238:0.771 idx=198:0.758 idx=8:0.714 idx=125:0.706 idx=196:0.693
+=== raw_id_r1 ===
+frame_timer label=raw_id_r1 mode=raw n=359 mean_ms=0.1767 p50=0.1596 p95=0.2879 p99=0.3815 max=0.9440 min=0.1181 sd=0.0619 p99_minus_mean=0.2047 spikes_gt_mean+2sd=13 wall_ms=109.741 child_st=0
+frame_timer_slowest label=raw_id_r1 idx=2:0.944 idx=1:0.464 idx=4:0.413 idx=302:0.394 idx=6:0.372 idx=295:0.359 idx=68:0.330 idx=352:0.325 idx=252:0.320 idx=76:0.311
+=== raw_id_r2 ===
+frame_timer label=raw_id_r2 mode=raw n=359 mean_ms=0.2190 p50=0.1996 p95=0.3345 p99=0.5465 max=0.7721 min=0.1284 sd=0.0739 p99_minus_mean=0.3275 spikes_gt_mean+2sd=10 wall_ms=133.319 child_st=0
+frame_timer_slowest label=raw_id_r2 idx=284:0.772 idx=11:0.744 idx=10:0.626 idx=2:0.547 idx=4:0.546 idx=317:0.459 idx=77:0.412 idx=105:0.400 idx=87:0.397 idx=223:0.396
+=== raw_id_r3 ===
+frame_timer label=raw_id_r3 mode=raw n=359 mean_ms=0.2581 p50=0.2453 p95=0.3691 p99=0.4777 max=1.3408 min=0.1351 sd=0.0839 p99_minus_mean=0.2196 spikes_gt_mean+2sd=8 wall_ms=140.228 child_st=0
+frame_timer_slowest label=raw_id_r3 idx=2:1.341 idx=11:0.549 idx=324:0.507 idx=12:0.483 idx=350:0.474 idx=1:0.474 idx=223:0.428 idx=358:0.427 idx=285:0.410 idx=3:0.399
+=== cpu_occupancy_default ===
+ffmpeg_probe label=occ_def exit=0 wall_s=0.086876 child_user_s=0.259208 child_sys_s=0.034751 child_cpu_s=0.293959 child_cpu_pct_1c=338.4 child_cpu_pct_2c=169.2 maxrss_kb=104048 nvcsw=7754 nivcsw=130 frame_bytes=0 frames=0 fps=0.000 bytes=0 pipe_size=-1 read_calls=0 read_ok_calls=0 read_eagain=0 read_zero=0 read_wall_s=0.000000 read_cpu_s=0.000000 syscall_cpu_s=0.000000 sleep_wall_s=0.000000 sleep_cpu_s=0.000000 copy_wall_s=0.000000 copy_cpu_s=0.000000 max_read=0 checksum=0
+ffmpeg_probe label=occ_t1 exit=0 wall_s=0.184804 child_user_s=0.193139 child_sys_s=0.025458 child_cpu_s=0.218597 child_cpu_pct_1c=118.3 child_cpu_pct_2c=59.1 maxrss_kb=75128 nvcsw=1493 nivcsw=28 frame_bytes=0 frames=0 fps=0.000 bytes=0 pipe_size=-1 read_calls=0 read_ok_calls=0 read_eagain=0 read_zero=0 read_wall_s=0.000000 read_cpu_s=0.000000 syscall_cpu_s=0.000000 sleep_wall_s=0.000000 sleep_cpu_s=0.000000 copy_wall_s=0.000000 copy_cpu_s=0.000000 max_read=0 checksum=0
+label                      mean      p50      p95      p99      max      sd  p99-mean
+raw_scale_r1             0.2091   0.1792   0.3689   0.4776   0.6820  0.0715    0.2686
+raw_scale_r2             0.2066   0.1892   0.3256   0.4486   0.5386  0.0578    0.2420
+raw_scale_r3             0.2076   0.1783   0.3136   0.4359   1.1634  0.0774    0.2282
+raw_scale_r4             0.2131   0.1995   0.3346   0.4597   0.5398  0.0632    0.2466
+raw_scale_r5             0.2280   0.2317   0.2849   0.4099   0.6820  0.0527    0.1819
+raw_scale_r6             0.1996   0.1755   0.3145   0.6905   1.1614  0.0989    0.4909
+raw_scale_r7             0.1872   0.1722   0.2873   0.3711   0.8736  0.0618    0.1839
+raw_scale_r8             0.2345   0.2336   0.3434   0.3927   0.5560  0.0521    0.1582
+raw_scale_t0_r1          0.2189   0.1971   0.3263   0.4656   0.9039  0.0766    0.2467
+raw_scale_t1_r1          0.4394   0.4405   0.6776   0.8231   1.0147  0.1341    0.3837
+raw_scale_t2_r1          0.3001   0.2321   0.6152   0.8264   1.1484  0.1544    0.5263
+raw_scale_t0_r2          0.2109   0.1901   0.3339   0.4066   0.8482  0.0696    0.1958
+raw_scale_t1_r2          0.4329   0.4293   0.6517   0.7568   0.8365  0.1205    0.3238
+raw_scale_t2_r2          0.2939   0.2428   0.6214   0.7253   0.8438  0.1365    0.4314
+raw_scale_t0_r3          0.1765   0.1582   0.2580   0.4352   0.8437  0.0615    0.2588
+raw_scale_t1_r3          0.4873   0.4558   0.7431   0.8730   0.9769  0.1397    0.3857
+raw_scale_t2_r3          0.3297   0.2584   0.6251   0.7811   0.9273  0.1581    0.4515
+raw_id_r1                0.1767   0.1596   0.2879   0.3815   0.9440  0.0619    0.2047
+raw_id_r2                0.2190   0.1996   0.3345   0.5465   0.7721  0.0739    0.3275
+raw_id_r3                0.2581   0.2453   0.3691   0.4777   1.3408  0.0839    0.2196
+
+--- run-to-run variance (host inter-arrival ms; NOT device 34.50) ---
+raw_scale default n=8 mean: mean=0.2107 sd=0.0140 ci95_half=0.0097 min=0.1872 max=0.2345 range=0.0473
+raw_scale default n=8 p99: mean=0.4607 sd=0.0929 ci95_half=0.0644 min=0.3711 max=0.6905 range=0.3194
+raw_scale default n=8 p99m: mean=0.2500 sd=0.0977 ci95_half=0.0677 min=0.1582 max=0.4909 range=0.3327
+threads0 n=3 mean: mean=0.2021 sd=0.0184 ci95_half=0.0208 min=0.1765 max=0.2189 range=0.0424
+threads1 n=3 mean: mean=0.4532 sd=0.0243 ci95_half=0.0275 min=0.4329 max=0.4873 range=0.0544
+threads2 n=3 mean: mean=0.3079 sd=0.0156 ci95_half=0.0177 min=0.2939 max=0.3297 range=0.0358
+threads0 n=3 p99: mean=0.4358 sd=0.0241 ci95_half=0.0273 min=0.4066 max=0.4656 range=0.0590
+threads1 n=3 p99: mean=0.8176 sd=0.0476 ci95_half=0.0539 min=0.7568 max=0.8730 range=0.1162
+threads2 n=3 p99: mean=0.7776 sd=0.0413 ci95_half=0.0468 min=0.7253 max=0.8264 range=0.1011
+raw_id n=3 mean: mean=0.2179 sd=0.0332 ci95_half=0.0376 min=0.1767 max=0.2581 range=0.0814
+raw_id n=3 p99: mean=0.4686 sd=0.0677 ci95_half=0.0766 min=0.3815 max=0.5465 range=0.1650
+
+host raw_scale: mean_of_means=0.2107 mean_p50=0.1949 mean_p99=0.4607 mean(p99-mean)=0.2500
+run-to-run sd of mean=0.0140 ms host
+P-p99: p99-mean > 0.25? True (value 0.2500)
+host p99/mean ratio=2.1866 → if device mean 34.50, rough p99≈75.44 ms
+if device mean after scale-delete 33.58, rough p99≈73.43 ms
+P-var: run sd of mean 0.0140 vs 0.25 dispute: tight
+thr def: mean=0.2107 p99=0.4607
+thr t0: mean=0.2021 p99=0.4358
+thr t1: mean=0.4532 p99=0.8176
+thr t2: mean=0.3079 p99=0.7776
+thr id: mean=0.2179 p99=0.4686
+occupancy occ_def pct1c=338.4
+occupancy occ_t1 pct1c=118.3
+
+--- slowest frame idx vs I-frame positions ---
+I frames at [0, 50, 100, 150, 200, 250, 300, 350]
+raw_scale_r1 [('1', '0.682'), ('258', '0.500'), ('34', '0.493'), ('117', '0.485'), ('262', '0.472'), ('10', '0.445'), ('25', '0.430'), ('65', '0.423')]
+raw_scale_r2 [('300', '0.539'), ('142', '0.466'), ('17', '0.455'), ('222', '0.449'), ('62', '0.449'), ('4', '0.434'), ('18', '0.387'), ('244', '0.386')]

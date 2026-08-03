@@ -532,6 +532,15 @@ int main() {
         CHECK(w540.maxVideoFrameRate == kPlex540pMaxVideoFrameRate);
         CHECK(kPlex540pMaxVideoFrameRate == 24);
         CHECK(validateWeakLadder(w540));
+        // Hard knee: maxBR<2000 → PMS 720x404 class — must not validate.
+        {
+            WeakLadder low540 = w540;
+            low540.maxVideoBitrateKbps = 1500;
+            CHECK(!validateWeakLadder(low540)); // NEG: 720x404 trap
+            std::string why;
+            CHECK(!validateWeakLadder(low540, &why));
+            CHECK(why.find("2000") != std::string::npos);
+        }
         WeakLadder byRes;
         CHECK(applyPlexTranscodeProfile("960x540", byRes));
         CHECK(byRes.videoResolution == std::string("960x540"));
@@ -608,6 +617,11 @@ int main() {
         CHECK(w360.h264Level == kPlex360pH264Level);
         CHECK(w360.maxVideoFrameRate == 0); // pass-through 29.97
         CHECK(validateWeakLadder(w360));
+        {
+            WeakLadder low360 = w360;
+            low360.maxVideoBitrateKbps = 750;
+            CHECK(!validateWeakLadder(low360)); // NEG: sub-360 trap
+        }
         WeakLadder byRes360;
         CHECK(applyPlexTranscodeProfile("640x360", byRes360));
         CHECK(byRes360.videoResolution == std::string("640x360"));

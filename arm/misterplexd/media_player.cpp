@@ -11,6 +11,7 @@
 #include "libmisterplex/idle_screen.hpp"
 #include "libmisterplex/last_frame_latch.hpp"
 #include "libmisterplex/osd_menu.hpp"
+#include "libmisterplex/pms_delivery_geom.hpp"
 #include "libmisterplex/h264_nal_dispatch.hpp"
 #include "libmisterplex/h264_recon.hpp"
 #include "libmisterplex/raw_video_pipe.hpp"
@@ -1558,6 +1559,20 @@ void MediaPlayer::ffmpegStderrPump(int errReadFd, size_t codedFrameBytes, bool i
                     " force_scale_protects=" + (identitySkip ? "0" : "1") +
                     " vertical_detail_frac=" + std::to_string(vfrac) +
                     " note=measured_ne_coded_bank_videoResolution_is_ceiling tag=measured");
+                // Named traps: PMS bitrate starvation / wrong raster (silent soft picture).
+                if (outW_ == kPlex540pCodedWidth.get() && outH_ == kPlex540pCodedHeight.get() &&
+                    !isGenuine540pDelivery(g.w, g.h)) {
+                    log("ERROR media: GENUINE_540_FAIL measured=" + std::to_string(g.w) + "x" +
+                        std::to_string(g.h) +
+                        " expected=960x540 note=bitrate_knee_or_non_hd_source_"
+                        "class_includes_720x404 tag=measured");
+                }
+                if (outW_ == kPlex360pCodedWidth.get() && outH_ == kPlex360pCodedHeight.get() &&
+                    !isGenuine360pDelivery(g.w, g.h)) {
+                    log("ERROR media: GENUINE_360_FAIL measured=" + std::to_string(g.w) + "x" +
+                        std::to_string(g.h) +
+                        " expected=640x360 note=bitrate_knee_or_ceiling_trap tag=measured");
+                }
             }
             if (risk) {
                 log("ERROR media: PIPE_DESYNC_RISK measured=" + std::to_string(g.w) + "x" +

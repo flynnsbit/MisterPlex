@@ -2,6 +2,7 @@
 
 #include "libmisterplex/h264_fabric_stream_gate.hpp"
 #include "libmisterplex/osd_menu.hpp"
+#include "libmisterplex/pms_delivery_geom.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -369,10 +370,20 @@ bool validateWeakLadder(const WeakLadder& weak, std::string* why) {
                             std::to_string(kDdrFrameStoreMaxHeight.get()) +
                             " (path 360p=640x360, 540p=960x540 or 720p=1280x720 only)");
         }
-        // Bitrate floors are NOT decoder contracts (see recommendedMinVideoBitrateKbps).
-        // A hard 2000 kbps reject forced PMS requests above slow links and silently
-        // fell the ladder back to 240p — parent-proven 480p drop root cause.
+        // 480p bitrate floors stay soft (recommendedMin only). A hard 2000 reject
+        // once forced PMS above slow links and silently fell the ladder to 240p.
     }
+    // Geometry knees (lab-measured): below these PMS returns the wrong *raster*
+    // (540→720x404, 360→480x270/320x180), not merely a softer picture. Enforce
+    // on the request path so WEAK_BITRATE cannot silently re-open the trap.
+    if (isPath540 && weak.maxVideoBitrateKbps < kPmsTrue540pMinBitrateKbpsMeasured)
+        return fail("540p maxVideoBitrate must be >=" +
+                    std::to_string(kPmsTrue540pMinBitrateKbpsMeasured) +
+                    " (lab knee; lower yields 720x404 not 960x540)");
+    if (isPath360 && weak.maxVideoBitrateKbps < kPmsTrue360pMinBitrateKbpsMeasured)
+        return fail("360p maxVideoBitrate must be >=" +
+                    std::to_string(kPmsTrue360pMinBitrateKbpsMeasured) +
+                    " (lab knee; lower yields sub-360 delivery)");
     if (weak.videoQuality <= 0 || weak.maxVideoBitrateKbps <= 0)
         return fail("videoQuality and maxVideoBitrate must be positive");
     return true;
