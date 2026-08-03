@@ -2,6 +2,8 @@
 // Product: PLXG live+seq ⇒ app_* holds until bank-swap vsync; FAULT free-run
 // moves app with candidate immediately (REPRO new pitch before swap).
 // Mode-exit: intentional geom_enable=0 must not sticky-hollow (permanent black).
+// Beam hierarchy: present_beam_geom_lock tracks app_beam_* (not free-running
+// live) so delayed pending_ready cannot paint NEW DE on OLD store.
 `default_nettype none
 
 module ddr_frame_store_b20_tb (
@@ -17,6 +19,11 @@ module ddr_frame_store_b20_tb (
 	input  wire [10:0] rt_chroma_stride,
 	input  wire [10:0] rt_display_w,
 	input  wire [10:0] rt_display_h,
+	// Free-running beam dims (latch promote) — lock must ignore under B20.
+	input  wire [10:0] live_beam_cw,
+	input  wire [10:0] live_beam_ch,
+	input  wire [10:0] live_beam_hde,
+	input  wire [10:0] live_beam_vde,
 	input  wire        vsync_pulse,
 	input  wire        start_req,
 	input  wire        bank_sel,
@@ -24,6 +31,7 @@ module ddr_frame_store_b20_tb (
 	input  wire  [5:0] rd_y,
 	input  wire        rd_active,
 	input  wire        dar_hold_black,
+	input  wire        tb_block_pending_ready,
 	input  wire        DDRAM_BUSY,
 	input  wire [63:0] DDRAM_DOUT,
 	input  wire        DDRAM_DOUT_READY,
@@ -49,13 +57,19 @@ module ddr_frame_store_b20_tb (
 	output wire        obs_disp_bank,
 	output wire        obs_pending_bank,
 	output wire        obs_geom_hollow,
-	output wire        obs_geom_hold_black
+	output wire        obs_geom_hold_black,
+	output wire [10:0] obs_app_beam_cw,
+	output wire [10:0] obs_locked_beam_cw,
+	output wire [10:0] obs_locked_beam_hde,
+	output wire        obs_beam_use_app,
+	output wire [15:0] obs_applied_seq
 );
 	wire DDRAM_CLK;
 	wire [7:0] DDRAM_BE;
 	wire [7:0] debug_state;
 	wire [15:0] underrun_count;
 	wire geom_hold_black, geom_hollow_fault;
+	wire [10:0] app_beam_cw_w, app_beam_ch_w, app_beam_hde_w, app_beam_vde_w;
 
 	ddr_frame_store #(
 		.FRAME_W(64),
@@ -108,6 +122,10 @@ module ddr_frame_store_b20_tb (
 		.rt_present_y(11'd0),
 		.rt_crop_left(11'd0),
 		.rt_crop_top(11'd0),
+		.rt_beam_cw(live_beam_cw),
+		.rt_beam_ch(live_beam_ch),
+		.rt_beam_hde(live_beam_hde),
+		.rt_beam_vde(live_beam_vde),
 		.start_req(start_req),
 		.bank_sel(bank_sel),
 		.status_osd(16'd0),
@@ -135,8 +153,37 @@ module ddr_frame_store_b20_tb (
 		.debug_state(debug_state),
 		.geom_hold_black(geom_hold_black),
 		.geom_hollow_fault(geom_hollow_fault),
-		.dar_hold_black(dar_hold_black)
+		.dar_hold_black(dar_hold_black),
+		.tb_block_pending_ready(tb_block_pending_ready),
+		.app_beam_cw(app_beam_cw_w),
+		.app_beam_ch(app_beam_ch_w),
+		.app_beam_hde(app_beam_hde_w),
+		.app_beam_vde(app_beam_vde_w),
+		.app_disp_w_o(),
+		.app_disp_h_o(),
+		.app_geom_en_o(),
+		.applied_geom_seq_o(obs_applied_seq)
 	);
+
+	present_beam_geom_lock beam_lock (
+		.live_valid(rt_geom_live),
+		.live_seq(rt_geom_seq),
+		.live_cw(live_beam_cw),
+		.live_ch(live_beam_ch),
+		.live_hde(live_beam_hde),
+		.live_vde(live_beam_vde),
+		.app_cw(app_beam_cw_w),
+		.app_ch(app_beam_ch_w),
+		.app_hde(app_beam_hde_w),
+		.app_vde(app_beam_vde_w),
+		.use_app(obs_beam_use_app),
+		.out_cw(obs_locked_beam_cw),
+		.out_ch(),
+		.out_hde(obs_locked_beam_hde),
+		.out_vde()
+	);
+
+	assign obs_app_beam_cw = app_beam_cw_w;
 
 	assign obs_eff_coded_w    = dut.eff_coded_w;
 	assign obs_app_coded_w    = dut.app_coded_w;

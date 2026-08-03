@@ -123,6 +123,13 @@ module ddr_frame_store #(
 	input  wire [10:0] rt_present_y = 11'd0,
 	input  wire [10:0] rt_crop_left = 11'd0,
 	input  wire [10:0] rt_crop_top = 11'd0,
+	// Beam-facing dims (content + DE). Snapshotted with pend_app at doorbell and
+	// applied with bank so present_beam_geom_lock stays OLD until swap (B20).
+	// 0 → fall back to display/coded effective values.
+	input  wire [10:0] rt_beam_cw = 11'd0,
+	input  wire [10:0] rt_beam_ch = 11'd0,
+	input  wire [10:0] rt_beam_hde = 11'd0,
+	input  wire [10:0] rt_beam_vde = 11'd0,
 
 	input  wire        start_req,
 	input  wire        bank_sel,
@@ -161,7 +168,18 @@ module ddr_frame_store #(
 	// ascal.swblack only arms o_newres when *input size* changes (ascal.vhd
 	// ~1951) — HDMI_BLACKOUT alone is a no-op for 720×480 4:3→16:9.
 	// Product blacks content RGB here. FAULT_DAR_BLACK_ASCAL_ONLY = red twin.
-	input  wire        dar_hold_black = 1'b0
+	input  wire        dar_hold_black = 1'b0,
+	// TB/sim: hold pending_ready low to miss one+ fstart (B20 beam race).
+	input  wire        tb_block_pending_ready = 1'b0,
+	// Applied beam geometry (for present_beam_geom_lock / hierarchy oracle).
+	output wire [10:0] app_beam_cw,
+	output wire [10:0] app_beam_ch,
+	output wire [10:0] app_beam_hde,
+	output wire [10:0] app_beam_vde,
+	output wire [10:0] app_disp_w_o,
+	output wire [10:0] app_disp_h_o,
+	output wire        app_geom_en_o,
+	output wire [15:0] applied_geom_seq_o
 );
 	// Port/scan domain: cover presentation FRAME and max content.
 	localparam int RD_W_MAX = (FRAME_W > MAX_CODED_W) ? FRAME_W : MAX_CODED_W;
@@ -466,6 +484,10 @@ module ddr_frame_store #(
 	reg        pend_app_optc_map;
 	reg [28:0] pend_app_base_w0, pend_app_base_w1, pend_app_doorbell_w;
 	reg        pend_app_valid;
+	// Beam DE/content snapshotted with bank (B20 hierarchy).
+	reg [10:0] app_beam_cw_r, app_beam_ch_r, app_beam_hde_r, app_beam_vde_r;
+	reg [10:0] pend_beam_cw, pend_beam_ch, pend_beam_hde, pend_beam_vde;
+	reg [15:0] applied_geom_seq_r;
 
 	// Atomic when PLXG is live with nonzero seq (doorbell carries matching gen).
 	// FAULT: free-run app from eff even under live seq → new pitch on old bank.
@@ -474,6 +496,23 @@ module ddr_frame_store #(
 `else
 	wire b20_atomic = rt_geom_live && (rt_geom_seq != 16'd0);
 `endif
+
+	// Beam-facing candidate (0 ports → display/coded effective).
+	wire [10:0] cand_beam_cw  = (rt_beam_cw  != 11'd0) ? rt_beam_cw  :
+	                            (eff_disp_w  != 11'd0) ? eff_disp_w  : eff_coded_w;
+	wire [10:0] cand_beam_ch  = (rt_beam_ch  != 11'd0) ? rt_beam_ch  :
+	                            (eff_disp_h  != 11'd0) ? eff_disp_h  : eff_coded_h;
+	wire [10:0] cand_beam_hde = (rt_beam_hde != 11'd0) ? rt_beam_hde : cand_beam_cw;
+	wire [10:0] cand_beam_vde = (rt_beam_vde != 11'd0) ? rt_beam_vde : cand_beam_ch;
+
+	assign app_beam_cw       = app_beam_cw_r;
+	assign app_beam_ch       = app_beam_ch_r;
+	assign app_beam_hde      = app_beam_hde_r;
+	assign app_beam_vde      = app_beam_vde_r;
+	assign app_disp_w_o      = app_disp_w;
+	assign app_disp_h_o      = app_disp_h;
+	assign app_geom_en_o     = app_geom_en;
+	assign applied_geom_seq_o = applied_geom_seq_r;
 
 	// ---- B16: atomic geom epoch, hold-black, hollow loud-reject --------------------
 	// Layout change tracks *applied* app_* (not free-running eff_*) so B20 delay
@@ -697,6 +736,15 @@ module ddr_frame_store #(
 			pend_app_base_w0 <= LEG_BASE_W0;
 			pend_app_base_w1 <= LEG_BASE_W1;
 			pend_app_doorbell_w <= LEG_DOORBELL_W;
+			app_beam_cw_r  <= 11'(DISPLAY_W);
+			app_beam_ch_r  <= 11'(DISPLAY_H);
+			app_beam_hde_r <= 11'(DISPLAY_W);
+			app_beam_vde_r <= 11'(DISPLAY_H);
+			pend_beam_cw   <= 11'(DISPLAY_W);
+			pend_beam_ch   <= 11'(DISPLAY_H);
+			pend_beam_hde  <= 11'(DISPLAY_W);
+			pend_beam_vde  <= 11'(DISPLAY_H);
+			applied_geom_seq_r <= 16'd0;
 			// B16 epoch
 			geom_epoch_r <= 4'd0;
 			geom_inv_tog <= 1'b0;
@@ -753,6 +801,11 @@ module ddr_frame_store #(
 					pend_app_base_w0 <= eff_base_w0;
 					pend_app_base_w1 <= eff_base_w1;
 					pend_app_doorbell_w <= eff_doorbell_w;
+					// Beam DE/content ride the same doorbell snapshot as pitch.
+					pend_beam_cw  <= cand_beam_cw;
+					pend_beam_ch  <= cand_beam_ch;
+					pend_beam_hde <= cand_beam_hde;
+					pend_beam_vde <= cand_beam_vde;
 				end
 			end
 
@@ -785,6 +838,11 @@ module ddr_frame_store #(
 					app_base_w0 <= pend_app_base_w0;
 					app_base_w1 <= pend_app_base_w1;
 					app_doorbell_w <= pend_app_doorbell_w;
+					app_beam_cw_r  <= pend_beam_cw;
+					app_beam_ch_r  <= pend_beam_ch;
+					app_beam_hde_r <= pend_beam_hde;
+					app_beam_vde_r <= pend_beam_vde;
+					applied_geom_seq_r <= rt_geom_seq;
 					// Consume snapshot so a later free-run path cannot see a
 					// stale pend, and so mode-exit disable is one-shot with bank.
 					pend_app_valid <= 1'b0;
@@ -829,6 +887,11 @@ module ddr_frame_store #(
 					app_base_w0 <= LEG_BASE_W0;
 					app_base_w1 <= LEG_BASE_W1;
 					app_doorbell_w <= LEG_DOORBELL_W;
+					app_beam_cw_r  <= 11'(DISPLAY_W);
+					app_beam_ch_r  <= 11'(DISPLAY_H);
+					app_beam_hde_r <= 11'(DISPLAY_W);
+					app_beam_vde_r <= 11'(DISPLAY_H);
+					applied_geom_seq_r <= 16'd0;
 					pend_app_valid <= 1'b0;
 				end else begin
 					app_geom_en <= geom_en_r;
@@ -852,6 +915,11 @@ module ddr_frame_store #(
 					app_base_w0 <= eff_base_w0;
 					app_base_w1 <= eff_base_w1;
 					app_doorbell_w <= eff_doorbell_w;
+					app_beam_cw_r  <= cand_beam_cw;
+					app_beam_ch_r  <= cand_beam_ch;
+					app_beam_hde_r <= cand_beam_hde;
+					app_beam_vde_r <= cand_beam_vde;
+					applied_geom_seq_r <= rt_geom_seq;
 				end
 			end
 
@@ -1959,10 +2027,12 @@ module ddr_frame_store #(
 					// freezes bank0 (silicon 9eb1431a). Do not revive FORCE_TOP.
 					if (PENDING_READY_STICKY_PREP) begin
 						pending_ready_ddr <= swap_pending_d2 &&
+						                     !tb_block_pending_ready &&
 						                     (pending_ready_c ||
 						                      (sched_valid && sched_for_pending && sched_pending_ready));
 					end else begin
 						pending_ready_ddr <= swap_pending_d2 &&
+						                     !tb_block_pending_ready &&
 						                     (sched_valid ? (sched_for_pending && sched_pending_ready)
 						                                  : pending_ready_c);
 					end

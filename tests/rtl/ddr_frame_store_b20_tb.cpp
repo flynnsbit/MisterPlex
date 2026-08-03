@@ -64,6 +64,11 @@ struct Sim {
 		top.rd_y = 0;
 		top.rd_active = 0;
 		top.dar_hold_black = 0;
+		top.tb_block_pending_ready = 0;
+		top.live_beam_cw = kLegacyW;
+		top.live_beam_ch = kH;
+		top.live_beam_hde = kLegacyW;
+		top.live_beam_vde = kH;
 		top.DDRAM_BUSY = 0;
 		top.DDRAM_DOUT = 0;
 		top.DDRAM_DOUT_READY = 0;
@@ -216,6 +221,11 @@ struct Sim {
 		top.rt_chroma_stride = w / 2;
 		top.rt_display_w = w;
 		top.rt_display_h = h;
+		// Free-running beam (latch promote) — product lock must ignore until swap.
+		top.live_beam_cw = w;
+		top.live_beam_ch = h;
+		top.live_beam_hde = w;
+		top.live_beam_vde = h;
 		for (int i = 0; i < 8; ++i)
 			tick();
 	}
@@ -232,6 +242,11 @@ struct Sim {
 		top.rt_chroma_stride = 0;
 		top.rt_display_w = 0;
 		top.rt_display_h = 0;
+		// Mode-exit mux publishes legacy DE; beam free-run would jump early.
+		top.live_beam_cw = kLegacyW;
+		top.live_beam_ch = kH;
+		top.live_beam_hde = kLegacyW;
+		top.live_beam_vde = kH;
 		for (int i = 0; i < 8; ++i)
 			tick();
 	}
@@ -544,6 +559,92 @@ int runProduct() {
 		return 1;
 	}
 	std::cout << "OK B20 dar_hold content RGB black (not ascal-only)\n";
+
+	// ---- Beam hierarchy: delay pending_ready past one fstart (rd-duck) ----
+	// Live beam free-runs to NEW at promote; app_beam stays OLD until swap.
+	// Product lock must emit OLD through the missed boundary; FAULT free-run
+	// emits NEW while store app is still OLD.
+	sim.top.tb_block_pending_ready = 0;
+	sim.paintBank(/*bank*/0, kLegacyW, kH, /*y*/40);
+	sim.paintBank(/*bank*/1, kNewW, kH, /*y*/200);
+	sim.driveGeomLive(kNewW, kH, /*seq*/11);
+	if ((int)sim.top.obs_app_beam_cw != kLegacyW &&
+	    (int)sim.top.obs_app_coded_w != kLegacyW) {
+		// After prior mode-exit swap app may already be legacy; require legacy.
+	}
+	// Ensure we start from a known swapped legacy frame if needed.
+	if ((int)sim.top.obs_app_coded_w != kLegacyW) {
+		// Should not happen after mode-exit path above.
+		std::cerr << "FAIL beam-hier setup app_w=" << (int)sim.top.obs_app_coded_w
+		          << "\n";
+		return 1;
+	}
+	sim.top.tb_block_pending_ready = 1;
+	sim.ring(/*bank*/1, /*plxg*/11);
+	if (!sim.waitSwapPending(50000)) {
+		std::cerr << "FAIL beam-hier: no swap_pending\n";
+		return 1;
+	}
+	const int framesBefore = (int)sim.top.frames_done;
+	// One fstart with ready blocked — swap must NOT complete.
+	sim.vsync();
+	for (int i = 0; i < 64; ++i)
+		sim.tick();
+	std::cout << "MEASURED beam_delay live_cw=" << (int)sim.top.live_beam_cw
+	          << " app_beam=" << (int)sim.top.obs_app_beam_cw
+	          << " locked=" << (int)sim.top.obs_locked_beam_cw
+	          << " use_app=" << (int)sim.top.obs_beam_use_app
+	          << " app_w=" << (int)sim.top.obs_app_coded_w
+	          << " frames=" << (int)sim.top.frames_done
+	          << " pend=" << (int)sim.top.swap_pending << "\n";
+	if ((int)sim.top.live_beam_cw != kNewW) {
+		std::cerr << "FAIL beam-hier: live beam must free-run to NEW\n";
+		return 1;
+	}
+	if ((int)sim.top.obs_app_coded_w != kLegacyW ||
+	    (int)sim.top.obs_app_beam_cw != kLegacyW) {
+		std::cerr << "FAIL beam-hier: app moved before ready app_w="
+		          << (int)sim.top.obs_app_coded_w
+		          << " beam=" << (int)sim.top.obs_app_beam_cw << "\n";
+		return 1;
+	}
+	if ((int)sim.top.frames_done != framesBefore) {
+		std::cerr << "FAIL beam-hier: swap completed while ready blocked\n";
+		return 1;
+	}
+	// Product: locked==OLD (use_app). FAULT_B20_BEAM_FREE_RUN: locked==NEW.
+	if ((int)sim.top.obs_locked_beam_cw != kLegacyW) {
+		std::cerr << "FAIL beam-hier: locked beam NEW while store OLD got "
+		          << (int)sim.top.obs_locked_beam_cw
+		          << " use_app=" << (int)sim.top.obs_beam_use_app
+		          << " (invariant broken)\n";
+		return 1;
+	}
+	if (!sim.top.obs_beam_use_app) {
+		std::cerr << "FAIL beam-hier: product lock must use_app under live seq\n";
+		return 1;
+	}
+	// Unblock ready — next fstart couples bank+app+beam.
+	sim.top.tb_block_pending_ready = 0;
+	for (int i = 0; i < 4000; ++i) {
+		if ((int)sim.top.obs_app_coded_w == kNewW &&
+		    (int)sim.top.obs_app_beam_cw == kNewW)
+			break;
+		if ((i % 32) == 0)
+			sim.vsync();
+		else
+			sim.tick();
+	}
+	std::cout << "MEASURED beam_after_ready app=" << (int)sim.top.obs_app_coded_w
+	          << " app_beam=" << (int)sim.top.obs_app_beam_cw
+	          << " locked=" << (int)sim.top.obs_locked_beam_cw << "\n";
+	if ((int)sim.top.obs_app_coded_w != kNewW ||
+	    (int)sim.top.obs_app_beam_cw != kNewW ||
+	    (int)sim.top.obs_locked_beam_cw != kNewW) {
+		std::cerr << "FAIL beam-hier: after ready app/beam/lock must be NEW\n";
+		return 1;
+	}
+	std::cout << "OK B20 beam lock holds OLD DE until pending_ready swap\n";
 	return 0;
 }
 

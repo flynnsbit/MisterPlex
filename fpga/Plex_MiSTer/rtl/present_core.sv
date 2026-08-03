@@ -306,6 +306,39 @@ module present_core #(
 	wire                 de_r; // registered in_content for frame_store read align
 	wire                 past_last_row;
 
+	// B20 beam lock: under live PLXG seq, content window uses store-applied
+	// beam dims (bank-coupled), not free-running latch promote (rd-duck).
+`ifdef DDR_FRAME_STORE
+	wire [10:0] app_beam_cw, app_beam_ch, app_beam_hde, app_beam_vde;
+	wire [10:0] app_disp_w_o, app_disp_h_o;
+	wire        app_geom_en_o;
+	wire [15:0] applied_geom_seq_o;
+	wire        beam_use_app;
+	wire [10:0] locked_cw, locked_ch, locked_hde, locked_vde;
+	present_beam_geom_lock beam_lock (
+		.live_valid(geom_live_valid),
+		.live_seq(geom_live_seq),
+		.live_cw(content_w),
+		.live_ch(content_h),
+		.live_hde(win_h_de),
+		.live_vde(win_v_de),
+		.app_cw(app_beam_cw),
+		.app_ch(app_beam_ch),
+		.app_hde(app_beam_hde),
+		.app_vde(app_beam_vde),
+		.use_app(beam_use_app),
+		.out_cw(locked_cw),
+		.out_ch(locked_ch),
+		.out_hde(locked_hde),
+		.out_vde(locked_vde)
+	);
+`else
+	wire [10:0] locked_cw  = content_w;
+	wire [10:0] locked_ch  = content_h;
+	wire [10:0] locked_hde = win_h_de;
+	wire [10:0] locked_vde = win_v_de;
+`endif
+
 	present_content_window #(
 		.FRAME_W(FRAME_W),
 		.FRAME_H(FRAME_H),
@@ -326,12 +359,12 @@ module present_core #(
 `endif
 		.in_content(in_content),
 		.win_enable(win_enable),
-		.content_w(content_w),
-		.content_h(content_h),
+		.content_w(locked_cw),
+		.content_h(locked_ch),
 		.content_x0(content_x0),
 		.content_y0(content_y0),
-		.h_de(win_h_de),
-		.v_de(win_v_de),
+		.h_de(locked_hde),
+		.v_de(locked_vde),
 		.store_x(store_x_win),
 		.store_y(store_y_win),
 		.de_r(de_r),
@@ -418,6 +451,12 @@ module present_core #(
 		.rt_present_y(geom_present_y),
 		.rt_crop_left(geom_crop_left),
 		.rt_crop_top(geom_crop_top),
+		// Beam dims free-run into store for doorbell snapshot only; window
+		// consumes app_beam_* via present_beam_geom_lock (B20 hierarchy).
+		.rt_beam_cw(content_w),
+		.rt_beam_ch(content_h),
+		.rt_beam_hde(win_h_de),
+		.rt_beam_vde(win_v_de),
 		.start_req(ddr_start_req),
 		.bank_sel(ddr_bank_sel),
 		.status_osd(ddr_status_osd),
@@ -446,8 +485,21 @@ module present_core #(
 		.geom_hold_black(geom_hold_black),
 		.geom_hollow_fault(geom_hollow_fault),
 		.q5_reserved_reject(q5_reserved_reject),
-		.dar_hold_black(dar_hold_black)
+		.dar_hold_black(dar_hold_black),
+		.tb_block_pending_ready(1'b0),
+		.app_beam_cw(app_beam_cw),
+		.app_beam_ch(app_beam_ch),
+		.app_beam_hde(app_beam_hde),
+		.app_beam_vde(app_beam_vde),
+		.app_disp_w_o(app_disp_w_o),
+		.app_disp_h_o(app_disp_h_o),
+		.app_geom_en_o(app_geom_en_o),
+		.applied_geom_seq_o(applied_geom_seq_o)
 	);
+	// Keep applied exports live for hierarchy debug (no dead-strip).
+	(* keep = 1 *) wire _b20_beam_keep =
+		beam_use_app | (|app_disp_w_o) | (|app_disp_h_o) | app_geom_en_o |
+		(|applied_geom_seq_o);
 `else
 	frame_store #(
 		.FRAME_W(FRAME_W),

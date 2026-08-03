@@ -49,6 +49,7 @@ echo "RTL SIM: using $VERILATOR_VERSION" >&2
 common_sv=(
   "$ROOT/tests/rtl/ddr_frame_store_b20_tb_top.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/present_beam_geom_lock.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_ram.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/async_fifo.sv"
   "$ROOT/tests/rtl/ddr_frame_store_b20_tb.cpp"
@@ -85,8 +86,9 @@ echo "product true rc=$GOOD_RC"
 assert_sim_executed "b20-product" "$GOOD_OUT" \
   "OK delayed-promotion" "OK B20 product" "OK B20 mode-exit" \
   "OK B20 mode-exit pixel oracle" "OK B20 dar_hold content RGB black" \
+  "OK B20 beam lock holds OLD DE until pending_ready swap" \
   "MEASURED after_promote" "MEASURED after_swap" "MEASURED mode_exit" \
-  "MEASURED mode_exit_scan" "MEASURED dar_hold_rgb"
+  "MEASURED mode_exit_scan" "MEASURED dar_hold_rgb" "MEASURED beam_delay"
 if [[ "$GOOD_RC" -ne 0 ]]; then
   echo "FAIL b20 product rc=$GOOD_RC" >&2
   exit "$GOOD_RC"
@@ -137,6 +139,31 @@ if ! grep -q "FAIL product: dar_hold_black must force content RGB=0" <<<"$DAR_OU
   exit 1
 fi
 echo "REPRO_OK FAULT_DAR_BLACK_ASCAL_ONLY held RGB non-zero"
+
+# --- E) FAULT_B20_BEAM_FREE_RUN: locked follows live NEW while app OLD ---
+BEAM_BUILD="$ROOT/build/verilator/ddr_b20_beam_fault"
+rm -rf "$BEAM_BUILD"
+mkdir -p "$BEAM_BUILD"
+echo "=== E) FAULT_B20_BEAM_FREE_RUN (expect locked=NEW while app OLD) ===" >&2
+"$RUN_VERILATOR" "${vflags[@]}" --Mdir "$BEAM_BUILD" \
+  -DFAULT_B20_BEAM_FREE_RUN \
+  "${common_sv[@]}"
+set +e
+BEAM_OUT="$(B20_MODE=product "$BEAM_BUILD/Vddr_frame_store_b20_tb" 2>&1)"
+BEAM_RC=$?
+set -e
+printf '%s\n' "$BEAM_OUT" | tail -30
+echo "beam_fault true rc=$BEAM_RC"
+if [[ "$BEAM_RC" -eq 0 ]]; then
+  echo "FAIL FAULT beam free-run twin should fail product beam lock" >&2
+  exit 1
+fi
+if ! grep -q "FAIL beam-hier: locked beam NEW while store OLD" <<<"$BEAM_OUT"; then
+  echo "FAIL expected beam free-run REPRO marker" >&2
+  printf '%s\n' "$BEAM_OUT" >&2
+  exit 1
+fi
+echo "REPRO_OK FAULT_B20_BEAM_FREE_RUN locked NEW / app OLD"
 
 echo "OK test_ddr_frame_store_b20"
 exit 0
