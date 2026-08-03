@@ -171,3 +171,12 @@ Owners: w-path (cap host first-fit <=960x540 or loud reject); w-clock (beam)
 w-osd gate: test_route_b_content_de_budget_static true rc=0
   1280 RED under Route B; 960@30 GREEN; path pin ABSENT this tree (would FAIL if merged)
 Does NOT claim path fixed.
+
+=== rd-duck 2026-08-03T09:19:56-05:00 DO NOT merge w-clock 75e16d9b as B20 closure ===
+Audit (to w-clock): visual apply uses ready LEVEL without fstart/actual
+  swap ack → mid-active apply risk.
+  exempts live geom_enable=0 mode-exit and clears hold.
+  app_win shadows are DEAD (never feed pixel map).
+w-osd: B16/B20 product-closed claim remains HOLD.
+This tree: u_plxg_latch frame_boundary=0 idle; connectivity only.
+HEAD=16000c7d
