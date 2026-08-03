@@ -430,12 +430,14 @@ int runProduct() {
 		          << " before bank swap (expected hold " << kNewW << ")\n";
 		return 1;
 	}
-	// Intentional disable must NOT sticky-hollow (rd-duck permanent black).
+	// rd-duck: hollow==0 BEFORE swap on intentional disable (candidate geom_en
+	// drops immediately; applied-side hollow must not arm).
 	if (sim.top.obs_geom_hollow) {
-		std::cerr << "FAIL mode-exit: geom_hollow sticky on intentional disable "
-		          << "(would force permanent RGB black)\n";
+		std::cerr << "FAIL mode-exit: geom_hollow sticky BEFORE swap on intentional "
+		          << "disable (would force permanent RGB black)\n";
 		return 1;
 	}
+	std::cout << "OK B20 mode-exit hollow==0 before swap\n";
 	// Doorbell accept snapshots LEG into pend; app still holds 80.
 	// has_frame is already 1 — wait on frames_done advance, not has_frame.
 	const int framesAtDisable = (int)sim.top.frames_done;
@@ -487,9 +489,10 @@ int runProduct() {
 		return 1;
 	}
 	if (sim.top.obs_geom_hollow) {
-		std::cerr << "FAIL mode-exit: hollow after disable bank swap\n";
+		std::cerr << "FAIL mode-exit: hollow AFTER disable bank swap\n";
 		return 1;
 	}
+	std::cout << "OK B20 mode-exit hollow==0 after swap\n";
 	// Drain B16 hold-black (2 vsyncs on layout change) then demand non-black
 	// legacy 64-wide frame (pixel-extent oracle, not just geom_enable/map).
 	for (int i = 0; i < 16; ++i)
@@ -684,6 +687,126 @@ int runFault() {
 	return 0; // REPRO is the expected "success" of the red twin binary
 }
 
+// FAULT_HOLLOW_ON_DISABLE: intentional mode-exit sticky-hollows (rd-duck).
+// Expect hollow=1 before swap while app still holds native pitch.
+int runHollowOnDisableFault() {
+	Sim sim;
+	sim.resetHold();
+	sim.driveGeomLive(kNewW, kH, 7);
+	sim.paintBank(/*bank*/0, kLegacyW, kH, /*Y*/220);
+	sim.paintBank(/*bank*/1, kNewW, kH, /*Y*/220);
+	sim.ring(/*bank*/1, /*plxg*/7);
+	if (!sim.waitHasFrame(200000)) {
+		std::cerr << "FAIL hollow-disable fault: no has_frame\n";
+		return 1;
+	}
+	for (int i = 0; i < 8; ++i)
+		sim.vsync();
+	for (int i = 0; i < 16; ++i)
+		sim.tick();
+	if ((int)sim.top.obs_app_coded_w != kNewW) {
+		std::cerr << "FAIL hollow-disable fault: need app==NEW before disable\n";
+		return 1;
+	}
+	sim.driveGeomDisableLive(/*seq*/7);
+	std::cout << "MEASURED hollow_disable_fault app=" << (int)sim.top.obs_app_coded_w
+	          << " hollow=" << (int)sim.top.obs_geom_hollow
+	          << " atomic=" << (int)sim.top.obs_b20_atomic << "\n";
+	if (!sim.top.obs_geom_hollow) {
+		std::cerr << "FAIL hollow-disable fault: expected sticky hollow on "
+		          << "intentional disable (cannot see defect)\n";
+		return 1;
+	}
+	// App must still hold NEW under b20_atomic — hollow fires without free-run.
+	if ((int)sim.top.obs_app_coded_w != kNewW) {
+		std::cerr << "FAIL hollow-disable fault: app free-ran (wrong twin)\n";
+		return 1;
+	}
+	std::cout << "REPRO_OK FAULT_HOLLOW_ON_DISABLE hollow sticky before swap\n";
+	return 2;
+}
+
+// Genuine hollow (product classify): enable stays 1, silent reject free-run
+// drops applied geom → hollow=1. Requires FAULT_SILENT_GEOM_REJECT so E2 does
+// not swallow the missing-ownership class. has_frame must be 1 (hollow gated).
+int runHollowGenuine() {
+	Sim sim;
+	sim.resetHold();
+	// Non-atomic free-run: live=0 so app tracks enable_eff immediately.
+	sim.top.rt_geom_live = 0;
+	sim.top.rt_geom_seq = 0;
+	sim.top.geom_enable = 1;
+	sim.top.rt_coded_w = kNewW;
+	sim.top.rt_coded_h = kH;
+	sim.top.rt_y_stride = kNewW;
+	sim.top.rt_chroma_stride = kNewW / 2;
+	sim.top.rt_display_w = kNewW;
+	sim.top.rt_display_h = kH;
+	sim.top.live_beam_cw = kNewW;
+	sim.top.live_beam_ch = kH;
+	sim.top.live_beam_hde = kNewW;
+	sim.top.live_beam_vde = kH;
+	for (int i = 0; i < 16; ++i)
+		sim.tick();
+	if ((int)sim.top.obs_app_coded_w != kNewW || !sim.top.obs_app_geom_en) {
+		std::cerr << "FAIL hollow-genuine: need applied NEW geom first got app="
+		          << (int)sim.top.obs_app_coded_w
+		          << " en=" << (int)sim.top.obs_app_geom_en << "\n";
+		return 1;
+	}
+	// Establish has_frame (hollow predicate requires it).
+	sim.paintBank(/*bank*/0, kNewW, kH, /*Y*/220);
+	sim.ring(/*bank*/0, /*plxg*/0); // field-0 ungated under !live
+	if (!sim.waitHasFrame(200000)) {
+		std::cerr << "FAIL hollow-genuine: no has_frame after doorbell\n";
+		return 1;
+	}
+	for (int i = 0; i < 4; ++i)
+		sim.vsync();
+	// Keep geom_enable=1; zero dims → !rt_raw_ok. Silent-reject twin: no E2.
+	// Free-run applies LEG app_geom_en=0 while host still asserts enable.
+	sim.top.rt_coded_w = 0;
+	sim.top.rt_coded_h = 0;
+	sim.top.rt_y_stride = 0;
+	sim.top.rt_chroma_stride = 0;
+	sim.top.rt_display_w = 0;
+	sim.top.rt_display_h = 0;
+	for (int i = 0; i < 16; ++i)
+		sim.tick();
+	std::cout << "MEASURED hollow_genuine app_en=" << (int)sim.top.obs_app_geom_en
+	          << " hollow=" << (int)sim.top.obs_geom_hollow
+	          << " reject=" << (int)sim.top.obs_geom_reject
+	          << " has_frame=" << (int)sim.top.has_frame
+	          << " enable=" << (int)sim.top.geom_enable << "\n";
+	if (sim.top.obs_geom_reject) {
+		std::cerr << "FAIL hollow-genuine: reject must stay 0 under silent twin\n";
+		return 1;
+	}
+	if (sim.top.obs_app_geom_en) {
+		std::cerr << "FAIL hollow-genuine: applied geom_en must drop\n";
+		return 1;
+	}
+	if (!sim.top.has_frame) {
+		std::cerr << "FAIL hollow-genuine: has_frame must stay 1\n";
+		return 1;
+	}
+	if (!sim.top.obs_geom_hollow) {
+		std::cerr << "FAIL hollow-genuine: expected hollow on missing ownership "
+		          << "(enable=1, applied geom lost, no reject)\n";
+		return 1;
+	}
+	// Mode-exit must clear genuine hollow (not sticky forever).
+	sim.top.geom_enable = 0;
+	for (int i = 0; i < 8; ++i)
+		sim.tick();
+	if (sim.top.obs_geom_hollow) {
+		std::cerr << "FAIL hollow-genuine: intentional enable=0 must clear hollow\n";
+		return 1;
+	}
+	std::cout << "OK B20 genuine hollow (missing ownership) then clear on disable\n";
+	return 0;
+}
+
 // FAULT_SPI_UNGATED: SPI before promote must swap (REPRO corruption class).
 // Built under -DDDR_FRAME_STORE_FAULT_SPI_UNGATED; exit 2 on REPRO.
 // STRICT_YUV still needs have_seq: prime with one ungated (field-0) doorbell,
@@ -745,5 +868,9 @@ int main(int argc, char** argv) {
 		return runFault();
 	if (std::string(mode) == "spi_fault")
 		return runSpiFault();
+	if (std::string(mode) == "hollow_disable_fault")
+		return runHollowOnDisableFault();
+	if (std::string(mode) == "hollow_genuine")
+		return runHollowGenuine();
 	return runProduct();
 }

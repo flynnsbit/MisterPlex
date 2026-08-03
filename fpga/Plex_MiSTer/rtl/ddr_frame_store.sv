@@ -931,29 +931,35 @@ module ddr_frame_store #(
 			end
 
 			// B16 epoch / hold-black / hollow — on applied app_* change.
-			// had_geom tracks *applied* live geom so free-running eff drop during
-			// B20 hold does not arm hollow before the bank adopts the change.
+			// had_geom tracks *applied* live geom so free-running candidate drop
+			// during B20 hold does not arm hollow before the bank adopts change.
 			if (app_geom_en)
 				had_geom_r <= 1'b1;
 `ifdef DDR_FRAME_STORE_FAULT_SILENT_HOLLOW
 			geom_hollow_r <= 1'b0;
 `elsif DDR_FRAME_STORE_FAULT_HOLLOW_ON_DISABLE
-			// RED TWIN: old hollow treated intentional disable as fault →
-			// permanent black (rd-duck mode-exit). Product excludes !enable.
+			// RED TWIN (rd-duck 22359 class): candidate !geom_en_r while
+			// had_geom — fires on intentional mode-exit before swap and
+			// sticks until geom_en_r=1 → permanent RGB black.
 			if (had_geom_r && !geom_en_r && !geom_reject_r && has_frame)
 				geom_hollow_r <= 1'b1;
 			else if (geom_en_r)
 				geom_hollow_r <= 1'b0;
 `else
-			// Hollow = prior applied geom lost while host still asserts
-			// geom_enable (missing commit → silent legacy). Intentional
-			// mode-exit (geom_enable=0, optionally bank-atomic disable) is
-			// NOT hollow — old predicate fired on every disable and forced
-			// permanent RGB black via geom_hollow_r (rd-duck mode-exit).
-			if (had_geom_r && !geom_en_r && !geom_reject_r && has_frame &&
+			// Hollow = missing ownership / silent LEG free-run while host still
+			// asserts geom_enable (invalid commit, not a deliberate exit).
+			// Key off APPLIED !app_geom_en — never free-running !geom_en_r:
+			// on valid owned mode-exit, candidate geom_en_r drops immediately
+			// while app/bank stay held until swap (rd-duck). Old candidate
+			// predicate sticky-hollowed before swap and only cleared on
+			// geom_en_r=1 → permanent black despite pitch atomicity.
+			// Intentional disable: mux drops geom_enable (owned disable) →
+			// clear hollow; after swap app_geom_en=0 with enable=0 is fine.
+			// Reject (E2) owns malformed raw; hollow does not double-cover it.
+			if (had_geom_r && !app_geom_en && !geom_reject_r && has_frame &&
 			    geom_enable)
 				geom_hollow_r <= 1'b1;
-			else if (geom_en_r || !geom_enable)
+			else if (app_geom_en || !geom_enable)
 				geom_hollow_r <= 1'b0;
 `endif
 			if (geom_layout_chg) begin

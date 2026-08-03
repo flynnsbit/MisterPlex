@@ -57,6 +57,7 @@ module ddr_frame_store_b20_tb (
 	output wire        obs_disp_bank,
 	output wire        obs_pending_bank,
 	output wire        obs_geom_hollow,
+	output wire        obs_geom_reject,
 	output wire        obs_geom_hold_black,
 	output wire [10:0] obs_app_beam_cw,
 	output wire [10:0] obs_locked_beam_cw,
@@ -197,6 +198,7 @@ module ddr_frame_store_b20_tb (
 	assign obs_disp_bank      = dut.disp_bank;
 	assign obs_pending_bank   = dut.pending_bank;
 	assign obs_geom_hollow    = geom_hollow_fault;
+	assign obs_geom_reject    = dut.geom_reject_r;
 	assign obs_geom_hold_black = geom_hold_black;
 endmodule
 

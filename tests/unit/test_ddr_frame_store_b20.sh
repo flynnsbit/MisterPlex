@@ -85,6 +85,8 @@ printf '%s\n' "$GOOD_OUT"
 echo "product true rc=$GOOD_RC"
 assert_sim_executed "b20-product" "$GOOD_OUT" \
   "OK delayed-promotion" "OK B20 product" "OK B20 mode-exit" \
+  "OK B20 mode-exit hollow==0 before swap" \
+  "OK B20 mode-exit hollow==0 after swap" \
   "OK B20 mode-exit pixel oracle" "OK B20 dar_hold content RGB black" \
   "OK B20 beam lock holds OLD DE until pending_ready swap" \
   "OK B20 visual hold black until swap ack" \
@@ -93,6 +95,48 @@ assert_sim_executed "b20-product" "$GOOD_OUT" \
 if [[ "$GOOD_RC" -ne 0 ]]; then
   echo "FAIL b20 product rc=$GOOD_RC" >&2
   exit "$GOOD_RC"
+fi
+
+# --- B2) FAULT_HOLLOW_ON_DISABLE: intentional disable sticky hollow REPRO ---
+HOLLOW_DIS_BUILD="$ROOT/build/verilator/ddr_b20_hollow_disable_fault"
+rm -rf "$HOLLOW_DIS_BUILD"
+mkdir -p "$HOLLOW_DIS_BUILD"
+echo "=== B2) FAULT_HOLLOW_ON_DISABLE (expect sticky hollow REPRO) ===" >&2
+"$RUN_VERILATOR" "${vflags[@]}" --Mdir "$HOLLOW_DIS_BUILD" \
+  -DDDR_FRAME_STORE_FAULT_HOLLOW_ON_DISABLE \
+  "${common_sv[@]}"
+set +e
+HOLLOW_DIS_OUT="$(B20_MODE=hollow_disable_fault "$HOLLOW_DIS_BUILD/Vddr_frame_store_b20_tb" 2>&1)"
+HOLLOW_DIS_RC=$?
+set -e
+printf '%s\n' "$HOLLOW_DIS_OUT" | tail -20
+echo "hollow_disable_fault true rc=$HOLLOW_DIS_RC"
+assert_sim_executed "b20-hollow-disable-fault" "$HOLLOW_DIS_OUT" \
+  "REPRO_OK FAULT_HOLLOW_ON_DISABLE"
+if [[ "$HOLLOW_DIS_RC" -ne 2 ]]; then
+  echo "FAIL hollow-disable fault expected rc=2 got $HOLLOW_DIS_RC" >&2
+  exit 2
+fi
+
+# --- B3) Genuine hollow under silent reject (missing ownership class) ---
+HOLLOW_GEN_BUILD="$ROOT/build/verilator/ddr_b20_hollow_genuine"
+rm -rf "$HOLLOW_GEN_BUILD"
+mkdir -p "$HOLLOW_GEN_BUILD"
+echo "=== B3) genuine hollow + SILENT_GEOM_REJECT (expect hollow then clear) ===" >&2
+"$RUN_VERILATOR" "${vflags[@]}" --Mdir "$HOLLOW_GEN_BUILD" \
+  -DDDR_FRAME_STORE_FAULT_SILENT_GEOM_REJECT \
+  "${common_sv[@]}"
+set +e
+HOLLOW_GEN_OUT="$(B20_MODE=hollow_genuine "$HOLLOW_GEN_BUILD/Vddr_frame_store_b20_tb" 2>&1)"
+HOLLOW_GEN_RC=$?
+set -e
+printf '%s\n' "$HOLLOW_GEN_OUT" | tail -20
+echo "hollow_genuine true rc=$HOLLOW_GEN_RC"
+assert_sim_executed "b20-hollow-genuine" "$HOLLOW_GEN_OUT" \
+  "OK B20 genuine hollow"
+if [[ "$HOLLOW_GEN_RC" -ne 0 ]]; then
+  echo "FAIL hollow-genuine rc=$HOLLOW_GEN_RC" >&2
+  exit "$HOLLOW_GEN_RC"
 fi
 
 # --- C) FAULT SPI ungated: SPI swaps before promote (REPRO corruption class) ---
