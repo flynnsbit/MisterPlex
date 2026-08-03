@@ -1,12 +1,17 @@
 lane=w-path
-status=LANDED_DUAL_BITRATE
-tip=eb4a832e (+REPORT refresh pending)
-LANDED:
-- PMS 200 + coded proof: universal>=3500 → 1280x720; <=3000/1500 → 720x404
-- Path720p ladder + genuine delivery + identity_skip; DP preferDirect default
-- OSD_TIER11_720P default 0
-- Dual pin: DecodeOptimal=1500 (DP/content); Weak=3500 (universal geometry)
-tests: resolve/osd/vf true_rc=0; no_private_data OK
-ARM_ms_removed_by_path: scale identity_skip on true 720 — host x86 Δ~2.6ms 404-trap; device dual-A9 scale-evac ms UNKNOWN (parent measure)
-blocker: none code-side; parent device measure DP~1500k identity present path once w-mem accepts 720 banks
-INVALIDATED_by_parent: universal maxBR=1500 as true-720; "skip scale alone ships 24fps"
+status=LANDED_DUAL_BITRATE + parent#3 budget folded
+tip=a133cdad (docs refresh this turn)
+LANDED_CODE:
+- PMS 200 + coded: universal>=3500→1280x720; <=3000/1500→720x404
+- Path720p + genuine delivery + identity_skip; preferDirect default
+- OSD_TIER11_720P=0 default; dual pin DecodeOptimal=1500 / Weak=3500
+tests: resolve/osd/vf true_rc=0
+PARENT#3 fit (path arithmetic only):
+  decode@1500 32.427 + mapped DDR 15.210 = 47.637 FAIL (-5.97)
+  decode@1500 + host-copy ceiling 2.998 = 35.425 PASS-class (unproven bank)
+  mmap policy ~12.2 ms/f is w-mem; path does not touch mapping
+ARM_ms_removed_by_path: scale identity on true 720 (404 trap avoided);
+  device dual-A9 scale ms UNKNOWN — parent measure
+blocker: none path-code; 720p24 on glass gated on w-mem bank accept + mmap/policy
+INVALIDATED: universal maxBR=1500 as true-720; skip-scale-alone ships 24fps;
+  prior ~22ms 720p DDR copy (use 15.21)

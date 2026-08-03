@@ -159,12 +159,27 @@ ARM-evac addendum 240f / 10s CB 3500k:
 | foar720 (FOAR 1280→1280) | 0.523 | 2.180 | `probe_foar720_summary.txt` |
 | up404 (scale 720x404 then FOAR 720) | 1.120 | 4.667 | `probe_up404_summary.txt` |
 
-### Fit verdict (post parent 41.073 ms/f)
+### Fit verdict (parent evidence #2 + #3)
 
-- **Decode alone ≈ full 24 fps budget.** Path must deliver genuine 1280×720 + identity_skip so ARM spends ~0 on scale; fabric must own present/pipe/overlay.
-- **Scale evacuation on true DP 720:** product path identity when Part samples==bank — **necessary**, not sufficient.
-- Non-decode ARM residual with zero fabric offload: parent ~57 ms/f projection + 41 ms decode → **~10 fps** — matches prior bucket-lift class; **does not ship**.
-- DDR push @24 fps: 33.2 MB/s (1 382 400 B × 24) — w-mem.
+Path tier: genuine 1280×720 + identity_skip (no ARM scale). Decode@**1500** content = **32.427 ms/f**.
+
+Parent `ddr_write_bench` (device, true rc=0):
+
+| arm | MiB/s | ms / 720p frame (1 382 400 B) |
+|---|---:|---:|
+| mapped bank `/dev/mem` | 86.676 | **15.210** |
+| `--host-copy` ordinary RAM | 439.788 | 2.998 (upper bound — not bank) |
+| 480p mapped bank | 89.363 | 4.795 |
+
+| stack | ms/f | budget% | |
+|---|---:|---:|---|
+| decode1500 + mapped bank write | 32.427+15.210=**47.637** | 114.3% | **FAIL** (−5.97) |
+| decode1500 + host-copy ceiling | 32.427+2.998=**35.425** | 85.0% | PASS-class if bank maps cached (+6.24) |
+
+- **mmap cache policy ≈ 12.2 ms/f** — w-mem owns; unproven until cached/WC bank remap + flush-before-doorbell.
+- Product present/DDR @480p archived **10.411** vs raw bank **4.795** → **2.17×** packing/stride overhead still on top of raw write.
+- Prior ~22 ms / 59 MiB/s 720p copy figure was pessimistic; **15.21 ms @ 86.7 MiB/s** is the measured mapped rate. Conclusion “naive ARM copy does not fit” still holds at 1500k decode.
+- Scale evacuation on true DP 720 remains **necessary**; path does not touch mmap.
 
 ---
 
@@ -196,6 +211,7 @@ Negative cases locked:
 - Path requests **1280×720 / 1 382 400 B/frame**; current `kDdrFrameStoreMax=640×480`, bank stride 512 KiB — **reject**.
 - Contract: path may adopt DECODE=1280×720 for PMS/vf; **present must stay refused** until remap.
 - Doorbell/bank layout for 720p is w-mem exclusive.
+- Parent #3: mapped-bank write **15.210 ms/f** @720p; host-copy ceiling 2.998 ms/f is hypothesis until WC/cached remap + **flush before doorbell**. Path pins content 1500 so decode leaves **9.24 ms** — not enough for today's 15.2 ms bank write.
 
 ### w-scaler (fabric content window)
 - True 720p content window is 1280×720 square SAR when delivery genuine.
