@@ -40,6 +40,10 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/decode_stub.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/stream_path.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_content_window.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_geom_latch.sv
+# ascal-native true-DE beam (PRESENT_BEAM_960). Must be in QIP — Verilator TB lists
+# these explicitly and can hide a project-file omission (rd-duck).
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_beam_content_de.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_video_timing_960.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_core.sv
 set_global_assignment -name SDC_FILE Plex.sdc
 set_global_assignment -name SYSTEMVERILOG_FILE Plex.sv

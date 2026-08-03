@@ -220,6 +220,10 @@ tests/unit/test_present_true_de_count_rtl_sim.sh
 ```
 
 **Fit card (w-nostub drop-in):** `docs/ascal-true-de-fit-card.md`  
+**QIP/elab gate:** `tests/unit/test_present_beam_fit_elab.sh` — `files.qip` must list
+`present_beam_content_de.sv` + `present_video_timing_960.sv`; Verilator elaborates the
+**QIP product list** under `PRESENT_BEAM_960 FRAME_W=960 FRAME_H=540` (TB file lists alone
+are not enough — rd-duck).  
 Macros: `PRESENT_BEAM_960`; runtime `win_enable=1`, `content_w/h=960/540`, `win_h_de/v_de=960/540`;
 optional `beam_use_rt_vtotal` + `beam_rt_vtotal` ∈ {564,705}.
 `rt_vtotal` is **latched at frame wrap** (not comb into `v_last`); mid-frame write test:

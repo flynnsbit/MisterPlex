@@ -15,7 +15,8 @@
 | Macro | **`PRESENT_BEAM_960`** (default OFF today — must be **on** for this fit) |
 | Do **not** set | `PRESENT_MULTI_PIXEL`, `PRESENT_SCALE_4_3`, `PRESENT_SCALE_2X`, `PRESENT_BEAM_FAULT_*` |
 | `FRAME_W` / `FRAME_H` | **960 / 540** (storage = content) |
-| RTL files | `present_beam_content_de.sv`, `present_video_timing_960.sv` (w-clock constants), existing `present_content_window.sv` |
+| RTL files | `present_beam_content_de.sv`, `present_video_timing_960.sv`, `present_content_window.sv` — **must be in `files.qip`** (not only Verilator TB lists) |
+| Elab gate | `tests/unit/test_present_beam_fit_elab.sh` → QIP list + Verilator under `PRESENT_BEAM_960 FRAME_W=960 FRAME_H=540` |
 | Beam class | fixed **H_TOTAL=1182**, default **V_TOTAL=564** (30.0008 Hz); runtime **V=705** (24.0007 Hz) |
 | clk | `clk_sys` **20 MHz**, `ce_pix=1` (1 px/clk) |
 | DE_LAG | keep **3** (present_core) |
