@@ -94,53 +94,145 @@ constexpr uint32_t kPlex720pMapBytes2Bank = 0x00300000u;
 constexpr uint32_t kDdrFramePlxgOffset = 0x130u;
 constexpr uint32_t kDdrFramePlxgMagic = 0x504C5847u; // "PLXG"
 
-// ---- Product ship path (960×540 source → fabric 1280×720 OUTPUT) ----
-// Parent SPS measurement (proxy_960x540.mp4, ffmpeg -bsf:v trace_headers):
-//   pic_width_in_mbs_minus1=59  → coded W = 960
-//   pic_height_in_map_units_minus1=33, frame_mbs_only=1 → coded H = 544
-//   frame_crop_bottom_offset=2, CropUnitY=2 → bottom crop 4 → display H = 540
-// ffprobe coded_height=540 is post-crop — do not trust it as bitstream coded size.
+// ---- Product ship path: STORAGE vs CANVAS (must not conflate) ----
 //
-// ARM product path: libavcodec applies SPS crop before AVFrame, so publish is
-// already 960×540 / 777600 B. Fabric 4/3 uses SRC_H=540; **no vertical crop**
-// in present/scaler. Frozen bank payload 777600 B stands (w-mem ABI).
+// Three independent fields (rd-duck):
+//   1) STORAGE  — bank payload / plane bases / rt_coded_* / y_stride
+//                 Product ARM path: **960×540**, strides 960/480, **777600 B**
+//                 (libavcodec already applied SPS crop; FFmpeg owns 544→540)
+//   2) CANVAS   — glass DE / OSD / present scale destination: **1280×720**
+//   3) MAP TIER — phys/stride/doorbell: Option-C when storage does not fit
+//                 *usable* legacy bank payload (see below)
 //
-// 544 / 783360 B matter only for paths that consume *coded* frames: future
-// fabric decoder and bitstream-ring feed (see ddr_bitstream_ring.hpp pins).
+// ddr_frame_store derives U/V bases from rt_coded_w/h + strides (= STORAGE).
+// Passing canvas 1280×720 as rt_coded_* yields U base 921600 and 1280-wide
+// fetches against a 960-wide tight payload → shear. PLXG may still describe
+// canvas tier separately from content window; do not overload coded_* with DE.
 //
-// Option-C bank map: CAPACITY (I420 > legacy 512 KiB), NOT coded_w>=1280.
-// Product 777600 B overflows legacy 0x80000 → must select Option-C.
-constexpr int kPlexProductSrcW = 960;
-constexpr int kPlexProductDisplayH = 540;
-constexpr int kPlexProductCodedHMbAligned = 544; // SPS coded; not ARM AVFrame h
-constexpr int kPlexProductSpsCropBottomLines = 4; // frame_crop_bottom_offset*CropUnitY
+// ddrFrameGeometryForFpgaPresent() remains the **product 480p silicon canvas**
+// for daemon rawW/H today — do NOT repoint it at 960×540 (would force FFmpeg
+// output/copy to the wrong size and kill the measured budget).
+//
+// SPS (bitstream, fabric-decoder/ring only): coded 544, crop_bottom 4 → 540.
+// Product bank planes use **540**, never 544. See ddr_bitstream_ring.hpp.
+//
+// Bank usable payload (matches ddrFrameLayoutValid bank1End <= doorbell):
+//   doorbell = phys + 2*stride - 0x1000
+//   usable   = stride - 0x1000   (legacy: 524288-4096 = 520192)
+// Full-stride compare is WRONG: 720×482 = 520560 < 524288 but overlaps doorbell.
+constexpr uint32_t kDdrFrameControlPageBytes = 0x1000u;
+constexpr uint32_t kPlex480pYuv420pUsablePayloadBytes =
+    kPlex480pYuv420pBankStride - kDdrFrameControlPageBytes; // 520192
+constexpr uint32_t kPlex720pYuv420pUsablePayloadBytes =
+    kPlex720pYuv420pBankStride - kDdrFrameControlPageBytes; // 1572864
+
+constexpr int kPlexProductStorageW = 960;
+constexpr int kPlexProductStorageH = 540;
+constexpr int kPlexProductCanvasW = 1280;
+constexpr int kPlexProductCanvasH = 720;
+constexpr int kPlexProductSrcW = kPlexProductStorageW; // alias: scale source
+constexpr int kPlexProductDisplayH = kPlexProductStorageH;
+constexpr int kPlexProductSpsCodedH = 544; // bitstream only — not bank planes
+constexpr int kPlexProductSpsCropBottomLines = 4;
 constexpr int kPlexProductYStrideBytes = 960;
 constexpr int kPlexProductChromaStrideBytes = 480;
-constexpr int kPlexProductDisplayI420Bytes = 960 * 540 * 3 / 2; // 777600 ARM publish
-constexpr int kPlexProductCodedMbI420Bytes = 960 * 544 * 3 / 2; // 783360 coded path
-static_assert(kPlexProductDisplayI420Bytes == 777600, "product display I420");
-static_assert(kPlexProductCodedMbI420Bytes == 783360, "product coded-MB I420");
-static_assert(kPlexProductCodedHMbAligned - kPlexProductSpsCropBottomLines ==
-                  kPlexProductDisplayH,
-              "SPS crop: 544-4=540");
-static_assert(kPlexProductDisplayI420Bytes > int(kPlex480pYuv420pBankStride),
-              "product display must not fit legacy bank → Option-C");
-static_assert(kPlexProductCodedMbI420Bytes > int(kPlex480pYuv420pBankStride),
-              "product coded-MB must not fit legacy bank → Option-C");
-static_assert(kPlexProductSrcW * 4 == 1280 * 3, "product W exact 4/3 to glass");
-static_assert(kPlexProductDisplayH * 4 == 720 * 3, "product H exact 4/3 to glass");
-// 540 is NOT MB-aligned — never treat SPS coded 544 as 4/3 SRC_H on product path.
-static_assert((kPlexProductDisplayH & 15) == 12, "540 & 15 == 12 (not MB-aligned)");
-static_assert((kPlexProductCodedHMbAligned & 15) == 0, "544 is MB-aligned");
+constexpr int kPlexProductStorageI420Bytes = 960 * 540 * 3 / 2; // 777600
+constexpr int kPlexProductDisplayI420Bytes = kPlexProductStorageI420Bytes;
+constexpr int kPlexProductSpsCodedI420Bytes = 960 * 544 * 3 / 2; // 783360 future
+// Plane offsets for tight 960×540 storage (NOT canvas 1280×720 offsets).
+constexpr uint32_t kPlexProductStorageUPlaneOffset = 518400u; // 960*540
+constexpr uint32_t kPlexProductStorageVPlaneOffset = 648000u; // 518400+129600
+// Deprecated name kept for one cycle of callers; means SPS coded bytes only.
+constexpr int kPlexProductCodedHMbAligned = kPlexProductSpsCodedH;
+constexpr int kPlexProductCodedMbI420Bytes = kPlexProductSpsCodedI420Bytes;
 
-// Mirror ddr_frame_store rt_need_optc_map: I420 bytes = h*(y_stride + c_stride).
-inline bool ddrFrameNeedsOptionCMap(int yStrideBytes, int chromaStrideBytes, int codedH,
+static_assert(kPlex480pYuv420pUsablePayloadBytes == 520192u, "legacy usable");
+static_assert(kPlexProductStorageI420Bytes == 777600, "product storage I420");
+static_assert(kPlexProductSpsCodedI420Bytes == 783360, "SPS coded I420");
+static_assert(kPlexProductSpsCodedH - kPlexProductSpsCropBottomLines ==
+                  kPlexProductStorageH,
+              "SPS crop: 544-4=540");
+static_assert(kPlexProductStorageI420Bytes > int(kPlex480pYuv420pUsablePayloadBytes),
+              "product storage must not fit legacy usable → Option-C");
+static_assert(kPlexProductStorageI420Bytes <= int(kPlex720pYuv420pUsablePayloadBytes),
+              "product storage fits Option-C usable");
+static_assert(kPlexProductStorageUPlaneOffset == 518400u, "storage U");
+static_assert(kPlexProductStorageVPlaneOffset == 648000u, "storage V");
+static_assert(kPlexProductStorageW * 4 == kPlexProductCanvasW * 3, "W exact 4/3");
+static_assert(kPlexProductStorageH * 4 == kPlexProductCanvasH * 3, "H exact 4/3");
+static_assert((kPlexProductStorageH & 15) == 12, "540 not MB-aligned");
+static_assert((kPlexProductSpsCodedH & 15) == 0, "544 is MB-aligned");
+
+// Usable payload bytes inside one bank (control page reserved at end of bank1).
+inline uint32_t ddrBankUsablePayloadBytes(uint32_t bankStride) {
+    if (bankStride <= kDdrFrameControlPageBytes)
+        return 0;
+    return bankStride - kDdrFrameControlPageBytes;
+}
+
+// True when frame_bytes fit without overlapping the doorbell control page.
+// Mirrors ddrFrameLayoutValid: bank1 + frame_bytes <= doorbell.
+inline bool ddrFramePayloadFitsBankUsable(size_t frameBytes, uint32_t bankStride) {
+    return frameBytes > 0 && frameBytes <= ddrBankUsablePayloadBytes(bankStride);
+}
+
+// Tight native I420 storage layout (native_push). Planes use content strides —
+// NOT canvas line_bytes. Fabric READ must use these when storage ≠ canvas.
+struct DdrNativeContentLayout {
+    int width = 0;
+    int height = 0;
+    int y_stride = 0;
+    int chroma_stride = 0;
+    uint32_t y_offset = 0;
+    uint32_t u_offset = 0;
+    uint32_t v_offset = 0;
+    size_t frame_bytes = 0;
+    bool valid = false;
+};
+
+inline DdrNativeContentLayout makeDdrNativeContentLayout(int w, int h) {
+    DdrNativeContentLayout c{};
+    if (w <= 0 || h <= 0 || (w & 1) || (h & 1))
+        return c;
+    c.width = w;
+    c.height = h;
+    c.y_stride = w;
+    c.chroma_stride = w / 2;
+    const uint32_t yBytes = static_cast<uint32_t>(w) * static_cast<uint32_t>(h);
+    const uint32_t cBytes =
+        static_cast<uint32_t>(c.chroma_stride) * static_cast<uint32_t>(h / 2);
+    c.y_offset = 0;
+    c.u_offset = yBytes;
+    c.v_offset = yBytes + cBytes;
+    c.frame_bytes = static_cast<size_t>(yBytes + 2u * cBytes);
+    c.valid = (c.frame_bytes == size_t(w) * size_t(h) * 3u / 2u);
+    return c;
+}
+
+inline DdrNativeContentLayout plexProduct960x540StorageLayout() {
+    return makeDdrNativeContentLayout(kPlexProductStorageW, kPlexProductStorageH);
+}
+
+// Fits bank *usable* payload (not full stride). rd-duck: disagreeing with
+// ddrFrameLayoutValid here is a contract bug.
+inline bool ddrNativeContentFitsBank(const DdrNativeContentLayout& c, uint32_t bankStride) {
+    return c.valid && ddrFramePayloadFitsBankUsable(c.frame_bytes, bankStride);
+}
+
+// I420 bytes from storage strides/height. Mirror ddr_frame_store plane math.
+inline size_t ddrI420BytesFromStrides(int yStrideBytes, int chromaStrideBytes, int storageH) {
+    if (yStrideBytes <= 0 || chromaStrideBytes <= 0 || storageH <= 0)
+        return 0;
+    return size_t(storageH) * size_t(yStrideBytes) +
+           size_t(storageH / 2) * size_t(chromaStrideBytes) * 2u;
+}
+
+// Option-C when storage payload does not fit legacy *usable* capacity.
+// NOT coded_w>=1280. NOT full bank_stride.
+inline bool ddrFrameNeedsOptionCMap(int yStrideBytes, int chromaStrideBytes, int storageH,
                                     uint32_t legacyBankStride = kPlex480pYuv420pBankStride) {
-    if (yStrideBytes <= 0 || chromaStrideBytes <= 0 || codedH <= 0)
-        return false;
-    const int64_t bytes =
-        int64_t(codedH) * (int64_t(yStrideBytes) + int64_t(chromaStrideBytes));
-    return bytes > int64_t(legacyBankStride);
+    const size_t bytes = ddrI420BytesFromStrides(yStrideBytes, chromaStrideBytes, storageH);
+    return bytes > 0 && !ddrFramePayloadFitsBankUsable(bytes, legacyBankStride);
 }
 
 enum class DdrFramePlacement {

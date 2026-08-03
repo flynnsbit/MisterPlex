@@ -2,8 +2,8 @@
 # ddr_frame_store runtime stride / CODED geometry — red-before-green Verilator gate.
 # A) geom_enable=0 → legacy 624 plane bases REPRO
 # B) geom_enable=1 1280×720 stride=1280 → U/V bases 115200/144000 + Option-C PASS
-# B2) product 960×540 capacity → Option-C (not coded_w>=1280) PASS
-# B3) product coded 960×544 display 540 → Option-C plane bases coded_h PASS
+# B2) product STORAGE 960×540 usable-capacity → Option-C PASS
+# B3) storage_vs_canvas + usable_vs_fullstride structural PASS
 # C) neg: geom=0 cannot satisfy 720p bases PASS (structural + live)
 # D) red twin FAULT_IGNORE_GEOM → rt720 expectations FAIL
 # E) red twin FAULT_WIDTH_OPTC_PRED → product 960 Option-C Y FAIL (old predicate)
@@ -80,15 +80,17 @@ assert_sim_executed "green" "$GOUT" \
   "CASE legacy624 EXECUTED" \
   "CASE rt720 EXECUTED" \
   "CASE prod540 EXECUTED" \
-  "CASE prod544_disp540 EXECUTED" \
   "CASE prod540_capacity EXECUTED" \
-  "CASE coded_vs_display EXECUTED" \
+  "CASE usable_vs_fullstride EXECUTED" \
+  "CASE storage_vs_canvas EXECUTED" \
+  "CASE product_storage_h EXECUTED" \
   "CASE neg_geom0_expect720 EXECUTED" \
   "PASS legacy624" \
   "PASS rt720" \
   "PASS prod540 Option-C bank map" \
-  "PASS prod544_disp540 Option-C bank map" \
-  "PASS coded_vs_display" \
+  "PASS usable_vs_fullstride" \
+  "PASS storage_vs_canvas" \
+  "PASS product_storage_h" \
   "Option-C bank map" \
   "PASS red-check neg_geom0_expect720" \
   "RUNTIME_STRIDE_GREEN_DONE"

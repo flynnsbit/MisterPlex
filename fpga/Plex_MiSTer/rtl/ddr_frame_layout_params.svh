@@ -33,12 +33,12 @@ localparam int DDR_FRAME_YUV_BLACK_U = 128;
 localparam int DDR_FRAME_YUV_BLACK_V = 128;
 
 // ---- Opt-in 720p / Option-C tier (mirror kPlex720p* in ddr_frame_layout.hpp) ----
-// Product synthesis still uses DDR_FRAME_* 480p above. 720p / product banks live
-// at Option-C phys (after bitstream ring). Reader selects this map when
-// runtime geom_enable AND I420 payload does not fit legacy 512 KiB bank
-// (capacity predicate — NOT coded_w>=1280). Product 960×540 = 777600 B and
-// 960×544 coded = 783360 B both require Option-C. FABRIC_NATIVE_720P_GEOM still
-// forces 1280×720 geometry for integration demos.
+// Product synthesis still uses DDR_FRAME_* 480p above. Option-C phys after ring.
+// Reader selects Option-C when geom_enable AND storage I420 does not fit legacy
+// *usable* payload = bank_stride - 0x1000 (520192), NOT full 524288 and NOT
+// coded_w>=1280. Product STORAGE is 960×540 / 777600 B (ARM/libavcodec crop).
+// Canvas DE is 1280×720 — separate from rt_coded_* storage. SPS coded 544 is
+// bitstream/fabric-decoder only. FABRIC_NATIVE_720P_GEOM forces 1280 canvas demo.
 localparam int DDR_FRAME_720P_CODED_WIDTH = 1280;
 localparam int DDR_FRAME_720P_CODED_HEIGHT = 720;
 localparam int DDR_FRAME_720P_DISPLAY_WIDTH = 1280;

@@ -70,8 +70,10 @@ w-scaler bank width alone does **not** grow ACTIVE. Full-raster ACTIVE needs
 |------|----------|----------|
 | **Source** `content_w×content_h` (+ x0/y0) | Host PLXG / integration force | 1280×720 native, **720×404** PMS, 320×240 legacy |
 | **Destination** `h_de×v_de` | Matches **glass DE owner** | 529×480 product; **1280×720** multi-pixel |
-| **Bank coded/stride** | PLXG geom or `FABRIC_NATIVE_720P_GEOM` | Option-C when I420 payload **> legacy 512 KiB** (capacity; product 960×540=777600 B). NOT `coded_w≥1280`. |
-| **Coded vs display H** | **SETTLED (parent SPS)** | Bitstream coded **544**, SPS bottom crop 4 → display **540**. ARM/libavcodec hands **540 / 777600 B** already cropped — 4/3 needs **no** fabric V-crop. **544/783360** = bitstream-ring / fabric-decoder only (`ddr_bitstream_ring.hpp`). ffprobe `coded_height=540` is post-crop — ignore. |
+| **STORAGE** (bank payload / `rt_coded_*` / plane bases) | ARM publish + w-scaler READ | Product **960×540**, strides **960/480**, **777600 B**, U=**518400**. Never canvas dims here. |
+| **CANVAS** (glass DE / OSD / scale dest) | w-clock / w-osd | **1280×720**. Independent of storage. |
+| **MAP TIER** | w-mem WRITE / w-scaler READ | Option-C when storage I420 **> usable legacy** = `stride-0x1000` (**520192**), not full 524288, not `coded_w≥1280`. |
+| **SPS coded H** | bitstream-ring / fabric-decoder | **544** + crop 4 → 540. FFmpeg owns crop on ARM path. Product bank planes stay **540**. |
 
 Under `PRESENT_MULTI_PIXEL` + `use_ext`: window **must** take beam `glass_x0` and
 `h_de=1280`. Mapping from colorbars `hc` with H_DE=529 while beam is 1280 is a

@@ -236,10 +236,14 @@ module ddr_frame_store #(
 	// I420 payload bytes from plane qwords (capacity gate for Option-C).
 	wire [31:0] rt_frame_bytes =
 		({3'd0, rt_y_bytes_qw} + {2'd0, rt_c_bytes_qw, 1'b0}) << 3;
-	// Legacy bank is HPS_BANK_STRIDE_BYTES (524288). Product 960×540 = 777600
-	// and 960×544 coded = 783360 both overflow → must use Option-C.
-	// Width-only (>=1280) was WRONG: left 960-wide product on legacy and overrun.
-	wire rt_need_optc_map = (rt_frame_bytes > 32'(HPS_BANK_STRIDE_BYTES));
+	// Usable payload per bank = stride - control page (doorbell lives at
+	// bank1+stride-0x1000). ddrFrameLayoutValid requires bank1End <= doorbell,
+	// i.e. frame_bytes <= stride - 0x1000. Full-stride compare is WRONG:
+	// 720×482 I420 = 520560 fits in 524288 but overlaps doorbell by 368 B
+	// (usable = 0x80000-0x1000 = 520192). rd-duck.
+	// Width-only (>=1280) was also WRONG: product 960×540 = 777600 on legacy.
+	localparam int LEG_USABLE_PAYLOAD_BYTES = HPS_BANK_STRIDE_BYTES - 32'h1000;
+	wire rt_need_optc_map = (rt_frame_bytes > 32'(LEG_USABLE_PAYLOAD_BYTES));
 
 	// FAULT: ignore geom_enable (always legacy pitch) — red twin for runtime-stride gate.
 `ifdef DDR_FRAME_STORE_FAULT_IGNORE_GEOM

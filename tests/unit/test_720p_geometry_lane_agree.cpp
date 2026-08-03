@@ -78,48 +78,72 @@ int main() {
 	chk(kProductSrcH * 4 == kMultiVDe * 3, "product src 4:3 to DE height");
 	chk(kProductSrcW < kMultiHDe, "product needs fabric upscale X");
 	chk(kProductSrcH < kMultiVDe, "product needs fabric upscale Y");
-	// Product bank = source-sized (native publish), NOT full Option-C 1280 frame.
-	// Option-C phys map is still required: capacity (payload > legacy 512 KiB).
+	// STORAGE vs CANVAS vs MAP (rd-duck): three fields, never conflate.
 	constexpr int kProductYStride = 960;
-	constexpr int kProductBankBytes = 960 * 540 * 3 / 2; // 777600
-	constexpr int kProductCodedHMb = 544;
-	constexpr int kProductCodedBytes = 960 * 544 * 3 / 2; // 783360
-	chk(kProductYStride == kProductSrcW, "product y_stride = src_w");
-	chk(kProductBankBytes == 777600, "product I420 bytes");
-	chk(kProductBankBytes == kPlexProductDisplayI420Bytes, "header product display bytes");
-	chk(kProductCodedBytes == kPlexProductCodedMbI420Bytes, "header product coded-MB bytes");
-	chk(kProductBankBytes < int(kPlex720pYuv420pBytes), "product bank < Option-C full frame");
-	chk(kProductBankBytes > int(kPlex480pYuv420pBankStride), "product display overflows legacy bank");
-	chk(kProductCodedBytes > int(kPlex480pYuv420pBankStride), "product coded-MB overflows legacy bank");
-	// Runtime predicate (host mirror of ddr_frame_store rt_need_optc_map).
-	// Geometry-agree alone is NOT enough — parent over-inferred from constants.
-	chk(ddrFrameNeedsOptionCMap(960, 480, 540), "capacity: 960x540 → Option-C");
-	chk(ddrFrameNeedsOptionCMap(960, 480, 544), "capacity: 960x544 → Option-C");
+	constexpr int kProductStorageBytes = 960 * 540 * 3 / 2; // 777600 ARM publish
+	constexpr int kLegUsable = int(kPlex480pYuv420pUsablePayloadBytes); // 520192
+	chk(kProductYStride == kPlexProductStorageW, "storage y_stride");
+	chk(kProductStorageBytes == 777600, "product storage I420");
+	chk(kProductStorageBytes == kPlexProductStorageI420Bytes, "header storage bytes");
+	chk(kLegUsable == 520192, "legacy usable = stride-4KiB");
+	chk(kPlexProductStorageUPlaneOffset == 518400u, "storage U offset");
+	chk(kPlexProductStorageVPlaneOffset == 648000u, "storage V offset");
+	// Canvas plane offsets must NOT be used for storage READ.
+	chk(kPlex720pUPlaneOffset == 921600, "canvas U is 921600");
+	chk(kPlexProductStorageUPlaneOffset != uint32_t(kPlex720pUPlaneOffset),
+	    "storage U ≠ canvas U");
+	const auto stor = plexProduct960x540StorageLayout();
+	chk(stor.valid && stor.frame_bytes == 777600u, "native storage layout 777600");
+	chk(stor.u_offset == 518400u && stor.v_offset == 648000u, "native U/V storage");
+	chk(stor.y_stride == 960 && stor.chroma_stride == 480, "native strides");
+	// Usable capacity (not full stride). 720×482 exposes the bug class.
+	constexpr int kTight720x482 = 720 * 482 * 3 / 2; // 520560
+	chk(kTight720x482 > kLegUsable, "720x482 > usable");
+	chk(kTight720x482 <= int(kPlex480pYuv420pBankStride), "720x482 <= full stride (trap)");
+	chk(ddrFrameNeedsOptionCMap(720, 360, 482), "usable: 720x482 → Option-C");
+	chk(ddrFramePayloadFitsBankUsable(size_t(kLegUsable - 1), kPlex480pYuv420pBankStride),
+	    "usable-1 fits legacy");
+	chk(ddrFramePayloadFitsBankUsable(size_t(kLegUsable), kPlex480pYuv420pBankStride),
+	    "usable exact fits legacy");
+	chk(!ddrFramePayloadFitsBankUsable(size_t(kLegUsable + 1), kPlex480pYuv420pBankStride),
+	    "usable+1 needs larger map");
+	// bank1 overlap model: base=0, stride=0x80000, doorbell=0xFFFF000
+	{
+		const uint32_t base = 0x30000000u;
+		const uint32_t stride = kPlex480pYuv420pBankStride;
+		const uint32_t doorbell = base + 2u * stride - 0x1000u;
+		const uint32_t bank1 = base + stride;
+		const uint32_t endExact = bank1 + uint32_t(kLegUsable);
+		const uint32_t endPlus = bank1 + uint32_t(kLegUsable + 1);
+		const uint32_t end482 = bank1 + uint32_t(kTight720x482);
+		chk(endExact <= doorbell, "exact usable bank1End <= doorbell");
+		chk(endPlus > doorbell, "usable+1 bank1 overlaps doorbell");
+		chk(end482 > doorbell, "720x482 bank1 overlaps doorbell by 368");
+		chk(end482 - doorbell == 368u, "overlap 368 B");
+	}
+	chk(ddrFrameNeedsOptionCMap(960, 480, 540), "capacity: storage 960x540 → Option-C");
 	chk(!ddrFrameNeedsOptionCMap(624, 312, 480), "capacity: legacy 624x480 stays legacy");
-	chk(ddrFrameNeedsOptionCMap(1280, 640, 720), "capacity: 1280x720 → Option-C");
-	// Negative: width-only predicate would miss product 960 (the defect).
-	const bool widthOnlyWouldOptc = (kProductSrcW >= 1280);
-	chk(!widthOnlyWouldOptc, "NEG: width>=1280 misses product 960 (defect class)");
-	chk(ddrFrameNeedsOptionCMap(960, 480, 540) != widthOnlyWouldOptc,
-	    "capacity ≠ width-only for product 960");
-	// Coded vs display: 4/3 SRC_H is display 540, not coded 544.
-	chk(kProductSrcH == kPlexProductDisplayH, "scale SRC_H = display 540");
-	chk(kProductCodedHMb == kPlexProductCodedHMbAligned, "coded MB height 544");
-	chk((kProductSrcH & 15) == 12, "540 not MB-aligned");
-	chk((kProductCodedHMb & 15) == 0, "544 is MB-aligned");
-	chk(kProductSrcH * 4 == 720 * 3, "display 540 exact 4/3 → 720");
-	// Four-lane freeze table (single source of truth for rd-duck / fit):
-	//   src:     960×540 display (coded may be 544)  w-path/PMS + ARM publish
-	//   bank:    stride 960, Option-C map by capacity  w-mem WRITE / w-scaler READ
-	//   Option-C:0x30180000/0x180000/0x3047F000
-	//   glass:   1280×720    w-clock PRESENT_MULTI_PIXEL
-	//   HUD:     1280×720    w-osd kTargetOut
-	//   scale:   exact 4/3 on DISPLAY 540  present_scale_4_3 (macro OFF until enable)
+	chk(ddrFrameNeedsOptionCMap(1280, 640, 720), "capacity: canvas-sized payload → Option-C");
+	chk(ddrNativeContentFitsBank(stor, kPlex720pYuv420pBankStride), "storage fits Option-C usable");
+	chk(!ddrNativeContentFitsBank(stor, kPlex480pYuv420pBankStride), "storage misses legacy usable");
+	// Width-only miss (parent defect).
+	chk(kProductSrcW < 1280, "NEG: width>=1280 misses product 960");
+	// Product path: storage H = 540 only. SPS 544 is decoder/ring, not bank planes.
+	chk(kProductSrcH == kPlexProductStorageH, "scale/storage H = 540");
+	chk(kPlexProductSpsCodedH == 544, "SPS coded 544 recorded");
+	chk(kProductSrcH != kPlexProductSpsCodedH, "product bank H is not SPS 544");
+	chk(kProductSrcH * 4 == 720 * 3, "storage 540 exact 4/3 → canvas 720");
+	// Freeze table:
+	//   storage: 960×540 / 777600 / U=518400   ARM publish + fabric READ pitch
+	//   canvas:  1280×720 DE/HUD               w-clock / w-osd
+	//   map:     Option-C by usable capacity   w-mem WRITE / w-scaler READ
+	//   scale:   4/3 storage→canvas            present_scale_4_3
 	chk(kPlex720pDdrFramePhysBase == 0x30180000u, "freeze Option-C base");
 	chk(kPlex720pYuv420pBankStride == 0x00180000u, "freeze Option-C stride");
-	chk(kMultiHDe == 1280 && kMultiVDe == 720, "freeze glass DE");
-	chk(kOsdTargetW == 1280 && kOsdTargetH == 720, "freeze HUD");
-	chk(kProductSrcW == 960 && kProductSrcH == 540, "freeze product src display");
+	chk(kMultiHDe == 1280 && kMultiVDe == 720, "freeze glass DE canvas");
+	chk(kOsdTargetW == 1280 && kOsdTargetH == 720, "freeze HUD canvas");
+	chk(kPlexProductStorageW == 960 && kPlexProductStorageH == 540, "freeze storage");
+	chk(kPlexProductCanvasW == 1280 && kPlexProductCanvasH == 720, "freeze canvas");
 	// H ownership: under multi-pixel, beam glass_x0 drives the window hc input
 	// with h_de=1280 — NOT colorbars hc with H_DE=529 (shear class).
 	chk(kMultiHDe != kProductHDe, "H_OWNERSHIP: multi DE must not equal Template 529");
@@ -158,8 +182,8 @@ int main() {
 	          << "PPC_W%4=0 "
 	          << "DE_product=529x480 DE_multi=1280x720 osd_canvas=1280x720 "
 	          << "H_OWNERSHIP=beam_glass+scaler_map+osd_hdmi "
-	          << "pms_deg=720x404 product_src=960x540 product_bytes=777600 "
-	          << "coded_h_mb=544 coded_bytes=783360 optc=capacity "
-	          << "scale_src_h=display540 freeze=src960/bank960+optCcap/glass1280/hud1280\n";
+	          << "pms_deg=720x404 storage=960x540 bytes=777600 u=518400 "
+	          << "canvas=1280x720 usable_leg=520192 optc=usable_capacity "
+	          << "sps_h=544_ring_only freeze=stor960/canv1280/optCusable\n";
 	return 0;
 }

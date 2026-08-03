@@ -40,8 +40,9 @@ Free M10K post-nostub: **356**. Area is not the constraint — **wiring complexi
 | Source content | **960×540** | PMS / ARM publish |
 | Product bank stride | **960** | w-mem WRITE / w-scaler READ |
 | Product bank bytes | **777600** | I420 |
-| Option-C bank map | base `0x30180000` stride `0x180000` doorbell `0x3047F000`; select when I420 **> legacy 512 KiB** (product 960×540=777600 B). Not `coded_w≥1280`. | w-mem WRITE / w-scaler READ |
-| Coded vs display H | **SETTLED:** SPS coded 544 + crop 4 → display 540. ARM path already 540/777600; 4/3 SRC_H=540, no fabric V-crop. 544 only for ring/fabric-decoder. | parent SPS dump; pins in `ddr_frame_layout.hpp` + `ddr_bitstream_ring.hpp` |
+| STORAGE vs CANVAS | Storage **960×540/777600** drives plane bases; canvas **1280×720** is DE only. Conflating → U=921600 vs 518400. | rd-duck; `DdrNativeContentLayout` |
+| Option-C bank map | Select when I420 **> usable** `stride-0x1000` (legacy **520192**). Full-stride 524288 is wrong (720×482 trap). | w-mem WRITE / w-scaler READ |
+| SPS coded H | 544 ring/decoder only; product bank = 540 after FFmpeg crop. | parent SPS + rawvideo wc |
 | Glass DE | **1280×720** | w-clock `PRESENT_MULTI_PIXEL` |
 | HUD canvas | **1280×720** | w-osd `kTargetOut` |
 | Scale | exact **4/3** | w-scaler `present_scale_4_3` |
