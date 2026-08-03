@@ -59,7 +59,15 @@ set -e
 printf '%s\n' "$OUT"
 echo "plex_chrome_ddr_loader_tb rc=$RC"
 assert_sim_executed "chrome_ddr" "$OUT" \
-  "PASS quiet" "PASS load" "PASS same-seq" "PASS plxo" "PASS bad-magic" \
+  "EXECUTED quiet" "PASS quiet" \
+  "EXECUTED load" "PASS load" \
+  "EXECUTED same_seq" "PASS same-seq" \
+  "EXECUTED plxo" "PASS plxo" \
+  "EXECUTED bad_magic" "PASS bad-magic" \
+  "EXECUTED concurrent" "PASS concurrent" \
+  "EXECUTED torn_mid" "PASS torn_mid" \
+  "EXECUTED retained" "PASS retained" \
+  "EXECUTED retained_inv" "PASS retained_inv" \
   "plex_chrome_ddr_loader_tb: PASS"
 if [[ "$RC" -ne 0 ]]; then
   echo "FAIL rc=$RC" >&2

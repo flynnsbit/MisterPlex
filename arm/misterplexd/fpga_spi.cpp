@@ -925,13 +925,20 @@ bool FpgaSpi::writeChromeCommandList(const uint64_t* cmds, size_t count, bool en
         setErr("writeChromeCommandList: PLXC/list outside mapped window");
         return false;
     }
-    // Payload first, then PLXC ctrl (seq edge) so fabric never latches empty list.
+    // PLXC seqlock (rd-duck / PLXG-style):
+    //   1) Invalidate magic so fabric cannot pair OLD ctrl with NEW body.
+    //   2) Write list body.
+    //   3) Publish new PLXC magic+seq last (single commit edge).
+    // Fabric re-reads ctrl after body; mismatch/invalid → torn abort, no push.
+    auto* cw = reinterpret_cast<volatile uint32_t*>(ddrMap_ + ctrlOff);
+    cw[0] = 0;
+    cw[1] = 0;
+    __sync_synchronize();
     auto* list = reinterpret_cast<volatile uint64_t*>(ddrMap_ + listOff);
     for (size_t i = 0; i < n; ++i)
         list[i] = cmds[i];
     __sync_synchronize();
     const uint64_t ctrl = plex_chrome_cmds::packPlxcCtrl(enable, static_cast<unsigned>(n), seq);
-    auto* cw = reinterpret_cast<volatile uint32_t*>(ddrMap_ + ctrlOff);
     cw[0] = static_cast<uint32_t>(ctrl);
     cw[1] = static_cast<uint32_t>(ctrl >> 32);
     __sync_synchronize();

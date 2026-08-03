@@ -122,6 +122,8 @@ constexpr uint32_t kPlxdMagic = 0x504C5844u; // "PLXD"
 // PLXC — Chrome list control (ARM→FPGA). Semantic cmds only; fabric owns scale.
 // Layout (64-bit LE): [31:0] magic "PLXC", [32] enable, [33] reserved,
 // [47:34] cmd_count, [63:48] seq. List payload at doorbell+0x140.
+// Seqlock publish (required): clear magic → write list body → write magic+seq last.
+// Fabric re-reads PLXC after body; mismatch or missing magic aborts (no mixed HUD).
 constexpr uint32_t kPlxcAddr  = 0x3007F130u;
 constexpr uint32_t kPlxcMagic = 0x504C5843u; // "PLXC"
 

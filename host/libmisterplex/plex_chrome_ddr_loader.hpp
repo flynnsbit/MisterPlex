@@ -1,11 +1,12 @@
 #pragma once
 // Behavioral model of plex_chrome_ddr_loader.sv — lockstep with RTL.
+// PLXC seqlock: invalidate magic → body → ctrl; loader re-reads ctrl after body.
 
 #include "libmisterplex/mailbox_abi_spec.hpp"
 #include "libmisterplex/plex_chrome_cmds.hpp"
 
 #include <cstdint>
-#include <cstring>
+#include <functional>
 #include <vector>
 
 namespace misterplex {
@@ -24,6 +25,7 @@ struct Model {
     uint32_t cnt_loads = 0;
     uint32_t cnt_plxo = 0;
     uint32_t cnt_bad = 0;
+    uint32_t cnt_torn = 0;
     std::vector<HostBeat> beats;
     uint64_t last_plxo = 0;
 };
@@ -39,13 +41,38 @@ inline uint64_t packPlxo(bool hw, uint16_t w, uint16_t h, uint8_t scale) {
     return q;
 }
 
-// One-shot: if mem[PLXC] has new seq+magic, emit host beats (list then ctrl).
-// Also writes PLXO into mem when requested.
-inline void stepLoad(Model& m, uint64_t* mem /* sparse qword array indexed by offset/8 */,
-                     bool write_plxo, bool chrome_hw, uint16_t mon_w, uint16_t mon_h,
-                     uint8_t mon_scale) {
+// Host-side seqlock publish into a qword-indexed mailbox image (tests).
+inline void hostPublishSeqlock(uint64_t* mem, const uint64_t* cmds, unsigned n, bool enable,
+                               uint16_t seq) {
+    const size_t c = mailbox_abi::kPlxcOffset / 8;
+    const size_t base = mailbox_abi::kPlxlOffset / 8;
+    if (n > static_cast<unsigned>(plex_chrome_cmds::kMaxCmds))
+        n = static_cast<unsigned>(plex_chrome_cmds::kMaxCmds);
+    mem[c] = 0; // invalidate magic first
+    for (unsigned i = 0; i < n; ++i)
+        mem[base + i] = cmds[i];
+    mem[c] = plex_chrome_cmds::packPlxcCtrl(enable, n, seq);
+}
+
+// Legacy broken host: body while old ctrl still valid, then new ctrl.
+inline void hostPublishUnsafeBodyFirst(uint64_t* mem, const uint64_t* cmds, unsigned n,
+                                       bool enable, uint16_t seq) {
+    const size_t c = mailbox_abi::kPlxcOffset / 8;
+    const size_t base = mailbox_abi::kPlxlOffset / 8;
+    if (n > static_cast<unsigned>(plex_chrome_cmds::kMaxCmds))
+        n = static_cast<unsigned>(plex_chrome_cmds::kMaxCmds);
+    for (unsigned i = 0; i < n; ++i)
+        mem[base + i] = cmds[i];
+    mem[c] = plex_chrome_cmds::packPlxcCtrl(enable, n, seq);
+}
+
+// One-shot load with ctrl re-read (product). Returns true if committed.
+// mid_body: optional mutator after body snapshot, before ctrl re-read.
+inline bool stepLoad(Model& m, uint64_t* mem, bool write_plxo, bool chrome_hw, uint16_t mon_w,
+                     uint16_t mon_h, uint8_t mon_scale,
+                     const std::function<void(uint64_t*)>& mid_body = {}) {
     if (!m.enable)
-        return;
+        return false;
     if (write_plxo) {
         const size_t o = mailbox_abi::kPlxoOffset / 8;
         m.last_plxo = packPlxo(chrome_hw, mon_w, mon_h, mon_scale);
@@ -53,28 +80,46 @@ inline void stepLoad(Model& m, uint64_t* mem /* sparse qword array indexed by of
         m.cnt_plxo++;
     }
     const size_t c = mailbox_abi::kPlxcOffset / 8;
-    const uint64_t ctrl = mem[c];
-    if (static_cast<uint32_t>(ctrl) != mailbox_abi::kPlxcMagic) {
+    const uint64_t ctrl0 = mem[c];
+    if (static_cast<uint32_t>(ctrl0) != mailbox_abi::kPlxcMagic) {
         m.cnt_bad++;
-        return;
+        return false;
     }
-    const uint16_t seq = static_cast<uint16_t>(ctrl >> 48);
+    const uint16_t seq = static_cast<uint16_t>(ctrl0 >> 48);
     if (seq == m.last_seq)
-        return;
-    unsigned count = static_cast<unsigned>((ctrl >> 34) & 0x3FFFu);
+        return false;
+    unsigned count = static_cast<unsigned>((ctrl0 >> 34) & 0x3FFFu);
     if (count > static_cast<unsigned>(plex_chrome_cmds::kMaxCmds))
         count = static_cast<unsigned>(plex_chrome_cmds::kMaxCmds);
     const size_t base = mailbox_abi::kPlxlOffset / 8;
-    m.beats.clear();
+    std::vector<HostBeat> body;
+    body.reserve(count + 1);
     for (unsigned i = 0; i < count; ++i)
-        m.beats.push_back(HostBeat{static_cast<uint8_t>(i), mem[base + i]});
-    m.beats.push_back(HostBeat{0xFF, ctrl});
+        body.push_back(HostBeat{static_cast<uint8_t>(i), mem[base + i]});
+
+    if (mid_body)
+        mid_body(mem);
+
+#if defined(PLEX_CHROME_LOADER_FAULT_NO_REREAD)
+    // Red twin: commit without re-read (accepts torn body).
+#else
+    const uint64_t ctrl1 = mem[c];
+    if (static_cast<uint32_t>(ctrl1) != mailbox_abi::kPlxcMagic || ctrl1 != ctrl0) {
+        m.cnt_torn++;
+        return false; // do not update last_seq
+    }
+#endif
+
+    m.beats = std::move(body);
+    m.beats.push_back(HostBeat{0xFF, ctrl0});
     m.last_seq = seq;
     m.cnt_loads++;
+    return true;
 }
 
-// Red case: ENABLE=0 must never emit beats even if PLXC changes.
-inline bool enableOffIsQuiet(const Model& m) { return !m.enable && m.beats.empty() && m.cnt_loads == 0; }
+inline bool enableOffIsQuiet(const Model& m) {
+    return !m.enable && m.beats.empty() && m.cnt_loads == 0;
+}
 
 } // namespace plex_chrome_ddr
 } // namespace misterplex

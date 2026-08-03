@@ -2,15 +2,17 @@
 //
 // Default OFF (ENABLE=0): zero DDR traffic, host_we stuck 0 — nostub-safe.
 // When ENABLE=1 (or `PLEX_CHROME_DDR`):
-//   1) RD doorbell+0x130 (PLXC). On magic+new seq, RD list[0..count) then
-//      push list words + PLXC ctrl to host_if (payload before ctrl — matches ARM).
-//   2) Periodically WR doorbell+0x138 (PLXO) so chromePlaneHw can leave fail-closed.
+//   1) RD doorbell+0x130 (PLXC). On magic+new seq, RD list[0..count).
+//   2) RE-READ PLXC (seqlock). Abort if magic gone or ctrl != snapshot
+//      (rd-duck: host may overwrite body while old ctrl still valid).
+//   3) Push list words + PLXC ctrl to host_if (payload before ctrl).
+//   4) Periodically WR doorbell+0x138 (PLXO) so chromePlaneHw can leave fail-closed.
 //
-// Bus: single-beat 64-bit master. Integrator (ddr_frame_store / TB) owns
-// arbitration. Never rings frame doorbell; PLXC only.
+// Host contract (ARM writeChromeCommandList):
+//   invalidate PLXC magic → write body → write new PLXC magic+seq last.
+// Fabric never commits a mixed HUD. See mailbox_abi_spec / plex_chrome_cmds.
 //
-// Ordering: ARM writes list then PLXC (seq edge). We snapshot PLXC, stream list,
-// then commit ctrl — same order as SPI path expectation.
+// FAULT_NO_CTRL_REREAD: skip step 2 (red twin — accepts torn body+old ctrl).
 
 `timescale 1ns / 1ps
 
@@ -51,7 +53,8 @@ module plex_chrome_ddr_loader #(
     output reg         busy,
     output reg  [31:0] cnt_loads,
     output reg  [31:0] cnt_plxo_wr,
-    output reg  [31:0] cnt_bad_magic
+    output reg  [31:0] cnt_bad_magic,
+    output reg  [31:0] cnt_torn       // seqlock abort (ctrl changed mid-body)
 );
 
     localparam [31:0] MAGIC_C = 32'h504C_5843; // PLXC
@@ -61,15 +64,17 @@ module plex_chrome_ddr_loader #(
     localparam [28:0] PLXO_W = (DOORBELL_PHYS + PLXO_OFF) >> 3;
     localparam [28:0] PLXL_W = (DOORBELL_PHYS + PLXL_OFF) >> 3;
 
-    localparam [3:0] S_IDLE      = 4'd0;
-    localparam [3:0] S_RD_CTRL   = 4'd1;
-    localparam [3:0] S_WAIT_CTRL = 4'd2;
-    localparam [3:0] S_RD_LIST   = 4'd3;
-    localparam [3:0] S_WAIT_LIST = 4'd4;
-    localparam [3:0] S_PUSH_LIST = 4'd5;
-    localparam [3:0] S_PUSH_CTRL = 4'd6;
-    localparam [3:0] S_WR_PLXO   = 4'd7;
-    localparam [3:0] S_WAIT_PLXO = 4'd8;
+    localparam [3:0] S_IDLE        = 4'd0;
+    localparam [3:0] S_RD_CTRL     = 4'd1;
+    localparam [3:0] S_WAIT_CTRL   = 4'd2;
+    localparam [3:0] S_RD_LIST     = 4'd3;
+    localparam [3:0] S_WAIT_LIST   = 4'd4;
+    localparam [3:0] S_PUSH_LIST   = 4'd5;
+    localparam [3:0] S_PUSH_CTRL   = 4'd6;
+    localparam [3:0] S_WR_PLXO     = 4'd7;
+    localparam [3:0] S_WAIT_PLXO   = 4'd8;
+    localparam [3:0] S_RD_CTRL2    = 4'd9;  // seqlock re-read
+    localparam [3:0] S_WAIT_CTRL2  = 4'd10;
 
     reg [3:0]  st;
     reg [15:0] poll_ctr;
@@ -110,6 +115,7 @@ module plex_chrome_ddr_loader #(
             cnt_loads   <= 32'd0;
             cnt_plxo_wr <= 32'd0;
             cnt_bad_magic <= 32'd0;
+            cnt_torn    <= 32'd0;
             snap_seq    <= 16'd0;
             snap_en     <= 1'b0;
             snap_count  <= 8'd0;
@@ -181,9 +187,13 @@ module plex_chrome_ddr_loader #(
                                           MAX_CMDS[7:0] : m_rdata[41:34];
                             li <= 8'd0;
                             if (((m_rdata[41:34] > MAX_CMDS[7:0]) ? MAX_CMDS[7:0]
-                                                                  : m_rdata[41:34]) == 8'd0)
+                                                                  : m_rdata[41:34]) == 8'd0) begin
+`ifdef FAULT_NO_CTRL_REREAD
                                 st <= S_PUSH_CTRL;
-                            else
+`else
+                                st <= S_RD_CTRL2;
+`endif
+                            end else
                                 st <= S_RD_LIST;
                         end
                     end
@@ -204,10 +214,45 @@ module plex_chrome_ddr_loader #(
                         list_q[li] <= m_rdata;
                         if (li + 8'd1 >= snap_count) begin
                             li <= 8'd0;
+`ifdef FAULT_NO_CTRL_REREAD
+                            // RED: commit without proving ctrl still matches body.
                             st <= S_PUSH_LIST;
+`else
+                            st <= S_RD_CTRL2;
+`endif
                         end else begin
                             li <= li + 8'd1;
                             st <= S_RD_LIST;
+                        end
+                    end
+                end
+
+                // Seqlock: re-sample PLXC after body. Host must keep magic invalid
+                // while rewriting body; any ctrl change vs snapshot aborts.
+                S_RD_CTRL2: begin
+                    if (m_gnt)
+                        st <= S_WAIT_CTRL2;
+                    else if (!m_req) begin
+                        m_req  <= 1'b1;
+                        m_we   <= 1'b0;
+                        m_addr <= PLXC_W;
+                    end
+                end
+
+                S_WAIT_CTRL2: begin
+                    if (m_rd_valid) begin
+                        if (m_rdata[31:0] != MAGIC_C) begin
+                            // Invalidate window or torn — do not commit, do not bump last_seq.
+                            cnt_torn <= cnt_torn + 32'd1;
+                            st <= S_IDLE;
+                        end else if (m_rdata != ctrl_q) begin
+                            cnt_torn <= cnt_torn + 32'd1;
+                            st <= S_IDLE;
+                        end else if (snap_count == 8'd0) begin
+                            st <= S_PUSH_CTRL;
+                        end else begin
+                            li <= 8'd0;
+                            st <= S_PUSH_LIST;
                         end
                     end
                 end

@@ -1040,7 +1040,7 @@ wire [28:0] plxc_m_addr;
 wire [63:0] plxc_m_wdata;
 wire        plxc_ld_busy;
 wire [15:0] plxc_ld_seq;
-wire [31:0] plxc_ld_loads, plxc_ld_plxo, plxc_ld_bad;
+wire [31:0] plxc_ld_loads, plxc_ld_plxo, plxc_ld_bad, plxc_ld_torn;
 
 `ifdef PLEX_CHROME_DDR
 localparam bit PLXC_DDR_EN = 1'b1;
@@ -1073,7 +1073,8 @@ plex_chrome_ddr_loader #(
 	.busy(plxc_ld_busy),
 	.cnt_loads(plxc_ld_loads),
 	.cnt_plxo_wr(plxc_ld_plxo),
-	.cnt_bad_magic(plxc_ld_bad)
+	.cnt_bad_magic(plxc_ld_bad),
+	.cnt_torn(plxc_ld_torn)
 );
 
 // Silence unused

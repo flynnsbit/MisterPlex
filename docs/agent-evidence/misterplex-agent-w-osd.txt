@@ -1,24 +1,21 @@
-w-osd PLXC CDC fix (rd-duck combined-path)
+w-osd PLXC seqlock (rd-duck mixed-HUD)
 branch: w-osd-fabric-plane
 date: 2026-08-03
 
-FINDING (rd-duck): plex_chrome_ddr_loader S_PUSH_LIST/CTRL asserts host_we=1
-every consecutive clk_sys cycle. sys_top used rising-edge d2&~d3 → ONE hdmi
-pulse; later list+ctrl dropped. Same-clock TBs blind.
+FINDING: loader snapshotted PLXC once then read body; host left old valid
+PLXC while rewriting list → mixed HUD. Re-read of unchanged ctrl insufficient
+without host invalidate-before-body.
 
 FIX:
-- fpga/Plex_MiSTer/rtl/plex_chrome_plxc_cdc.sv — async FIFO DEPTH=16 gray ptrs
-  + plex_chrome_plxc_cdc_edge_fault red twin (old edge path)
-- sys_top.v: u_plxc_cdc replaces d2&~d3
-- files.qip + Makefile rtl-sim entry
-- tests/unit/test_plex_chrome_plxc_cdc_rtl_sim.sh hierarchy 20→74.25 MHz
+- Host writeChromeCommandList: clear magic → body → packPlxcCtrl last
+- Loader: S_RD_CTRL2 re-read after body; magic miss or ctrl!=snap → cnt_torn,
+  no push, last_seq unchanged. FAULT_NO_CTRL_REREAD red twin.
+- C++ model hostPublishSeqlock + mid_body torn path
+- RTL: concurrent mid-list invalidate, retained coherent/invalid after reset
 
-EVIDENCE (true rc):
-  test_plex_chrome_plxc_cdc_rtl_sim.sh  true rc=0
-    prod_beats=3 fault_beats=1 list_we=2 cfg_en=1 cfg_cnt=2 cfg_seq=7
-    EXECUTED product_burst / edge_fault_burst / single_beat all PASS
-  test_plex_chrome_ddr_loader_rtl_sim.sh true rc=0
-  test_plex_chrome_counted_rtl_sim.sh    true rc=0
+EVIDENCE true rc:
+  test_plex_chrome_ddr_loader_rtl_sim.sh  true rc=0
+  test_plex_chrome_ddr_loader (unit)      true rc=0
+  test_plex_chrome_e2e_rtl_sim.sh         true rc=0
 
-RESIDUAL R1: Plex.sv loader m_gnt/m_rd_valid tied 0 — armed≠product-live (w-mem).
-No Quartus. No device.
+R1 m_gnt=0 still open (w-mem). No Quartus/device.

@@ -103,7 +103,8 @@ module plex_chrome_e2e_tb (
         .busy(),
         .cnt_loads(cnt_loads),
         .cnt_plxo_wr(),
-        .cnt_bad_magic()
+        .cnt_bad_magic(),
+        .cnt_torn()
     );
 
     wire        list_we;

@@ -16,6 +16,10 @@ module plex_chrome_ddr_loader_tb (
     output wire [31:0] cnt_loads_on,
     output wire [31:0] cnt_plxo_on,
     output wire [31:0] cnt_bad_on,
+    output wire [31:0] cnt_torn_on,
+    output wire        busy_on,
+    output wire        m_req_on_obs,
+    output wire [28:0] m_addr_on_obs,
     output wire [63:0] mem_plxo_q,
     // observe ENABLE=0 quiet
     output wire        host_we_off,
@@ -106,10 +110,11 @@ module plex_chrome_ddr_loader_tb (
         .mon_h(12'd720),
         .mon_scale(4'd3),
         .last_seq(last_seq_on),
-        .busy(),
+        .busy(busy_on),
         .cnt_loads(cnt_loads_on),
         .cnt_plxo_wr(cnt_plxo_on),
-        .cnt_bad_magic(cnt_bad_on)
+        .cnt_bad_magic(cnt_bad_on),
+        .cnt_torn(cnt_torn_on)
     );
 
     plex_chrome_ddr_loader #(
@@ -137,7 +142,8 @@ module plex_chrome_ddr_loader_tb (
         .busy(),
         .cnt_loads(),
         .cnt_plxo_wr(),
-        .cnt_bad_magic()
+        .cnt_bad_magic(),
+        .cnt_torn()
     );
 
     assign m_req_off = m_req_off_w;
