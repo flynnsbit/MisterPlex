@@ -1,0 +1,308 @@
+{
+  "library_n": 142,
+  "source_baseline_n": 140,
+  "force_xcode_n": 14,
+  "force_xcode_safe": 0,
+  "part_direct_n": 14,
+  "part_direct_safe": 13,
+  "sps_profile_idc_rk62_xcode": 100,
+  "verdict": "PIN_IGNORED_FORCE_XCODE_EMITS_HIGH",
+  "part_rows": [
+    {
+      "class_": "624x480",
+      "rk": "62",
+      "mode": "part-direct",
+      "src_wh": "624x480",
+      "src_prof": "constrained baseline",
+      "del_profile": "Constrained Baseline",
+      "del_level": 30,
+      "has_b": 0,
+      "del_wh": "624x480",
+      "bytes": 2500001,
+      "fabric_safe": 1
+    },
+    {
+      "class_": "624x480",
+      "rk": "131",
+      "mode": "part-direct",
+      "src_wh": "624x480",
+      "src_prof": "constrained baseline",
+      "del_profile": "Constrained Baseline",
+      "del_level": 30,
+      "has_b": 0,
+      "del_wh": "624x480",
+      "bytes": 2500001,
+      "fabric_safe": 1
+    },
+    {
+      "class_": "624x480",
+      "rk": "46",
+      "mode": "part-direct",
+      "src_wh": "624x480",
+      "src_prof": "constrained baseline",
+      "del_profile": "Constrained Baseline",
+      "del_level": 30,
+      "has_b": 0,
+      "del_wh": "624x480",
+      "bytes": 2500001,
+      "fabric_safe": 1
+    },
+    {
+      "class_": "720x480",
+      "rk": "79",
+      "mode": "part-direct",
+      "src_wh": "720x480",
+      "src_prof": "constrained baseline",
+      "del_profile": "Constrained Baseline",
+      "del_level": 30,
+      "has_b": 0,
+      "del_wh": "720x480",
+      "bytes": 2500001,
+      "fabric_safe": 1
+    },
+    {
+      "class_": "720x480",
+      "rk": "138",
+      "mode": "part-direct",
+      "src_wh": "720x480",
+      "src_prof": "constrained baseline",
+      "del_profile": "Constrained Baseline",
+      "del_level": 30,
+      "has_b": 0,
+      "del_wh": "720x480",
+      "bytes": 2500001,
+      "fabric_safe": 1
+    },
+    {
+      "class_": "720x480",
+      "rk": "32",
+      "mode": "part-direct",
+      "src_wh": "720x480",
+      "src_prof": "constrained baseline",
+      "del_profile": "Constrained Baseline",
+      "del_level": 30,
+      "has_b": 0,
+      "del_wh": "720x480",
+      "bytes": 2500001,
+      "fabric_safe": 1
+    },
+    {
+      "class_": "624x352",
+      "rk": "9",
+      "mode": "part-direct",
+      "src_wh": "624x352",
+      "src_prof": "constrained baseline",
+      "del_profile": "Constrained Baseline",
+      "del_level": 30,
+      "has_b": 0,
+      "del_wh": "624x352",
+      "bytes": 2500001,
+      "fabric_safe": 1
+    },
+    {
+      "class_": "624x352",
+      "rk": "15",
+      "mode": "part-direct",
+      "src_wh": "624x352",
+      "src_prof": "constrained baseline",
+      "del_profile": "Constrained Baseline",
+      "del_level": 30,
+      "has_b": 0,
+      "del_wh": "624x352",
+      "bytes": 2500001,
+      "fabric_safe": 1
+    },
+    {
+      "class_": "624x352",
+      "rk": "74",
+      "mode": "part-direct",
+      "src_wh": "624x352",
+      "src_prof": "constrained baseline",
+      "del_profile": "Constrained Baseline",
+      "del_level": 30,
+      "has_b": 0,
+      "del_wh": "624x352",
+      "bytes": 2500001,
+      "fabric_safe": 1
+    },
+    {
+      "class_": "320x240",
+      "rk": "54",
+      "mode": "part-direct",
+      "src_wh": "320x240",
+      "src_prof": "constrained baseline",
+      "del_profile": "Constrained Baseline",
+      "del_level": 21,
+      "has_b": 0,
+      "del_wh": "320x240",
+      "bytes": 2500001,
+      "fabric_safe": 1
+    },
+    {
+      "class_": "320x240",
+      "rk": "5",
+      "mode": "part-direct",
+      "src_wh": "320x240",
+      "src_prof": "constrained baseline",
+      "del_profile": "Constrained Baseline",
+      "del_level": 21,
+      "has_b": 0,
+      "del_wh": "320x240",
+      "bytes": 510396,
+      "fabric_safe": 1
+    },
+    {
+      "class_": "320x240",
+      "rk": "58",
+      "mode": "part-direct",
+      "src_wh": "320x240",
+      "src_prof": "constrained baseline",
+      "del_profile": "Constrained Baseline",
+      "del_level": 21,
+      "has_b": 0,
+      "del_wh": "320x240",
+      "bytes": 2500001,
+      "fabric_safe": 1
+    },
+    {
+      "class_": "1280x720",
+      "rk": "7",
+      "mode": "part-direct",
+      "src_wh": "1280x720",
+      "src_prof": "constrained baseline",
+      "del_profile": "Constrained Baseline",
+      "del_level": 30,
+      "has_b": 0,
+      "del_wh": "1280x720",
+      "bytes": 1905005,
+      "fabric_safe": 1
+    },
+    {
+      "class_": "high_src_624x480",
+      "rk": "118",
+      "mode": "part-direct",
+      "src_wh": "624x480",
+      "src_prof": "high",
+      "del_profile": "High",
+      "del_level": 30,
+      "has_b": 0,
+      "del_wh": "624x480",
+      "bytes": 2500001,
+      "fabric_safe": 0
+    }
+  ],
+  "force_xcode_rows": [
+    {
+      "class_": "624x480",
+      "rk": "62",
+      "del_profile": "High",
+      "has_b": "2",
+      "fabric_safe": 0,
+      "bytes": 31432472
+    },
+    {
+      "class_": "624x480",
+      "rk": "131",
+      "del_profile": "High",
+      "has_b": "2",
+      "fabric_safe": 0,
+      "bytes": 15366556
+    },
+    {
+      "class_": "624x480",
+      "rk": "46",
+      "del_profile": "High",
+      "has_b": "2",
+      "fabric_safe": 0,
+      "bytes": 68409064
+    },
+    {
+      "class_": "720x480",
+      "rk": "79",
+      "del_profile": "High",
+      "has_b": "2",
+      "fabric_safe": 0,
+      "bytes": 2318980
+    },
+    {
+      "class_": "720x480",
+      "rk": "138",
+      "del_profile": "High",
+      "has_b": "2",
+      "fabric_safe": 0,
+      "bytes": 57213852
+    },
+    {
+      "class_": "720x480",
+      "rk": "32",
+      "del_profile": "High",
+      "has_b": "2",
+      "fabric_safe": 0,
+      "bytes": 18764468
+    },
+    {
+      "class_": "624x352",
+      "rk": "9",
+      "del_profile": "High",
+      "has_b": "2",
+      "fabric_safe": 0,
+      "bytes": 41280664
+    },
+    {
+      "class_": "624x352",
+      "rk": "15",
+      "del_profile": "High",
+      "has_b": "2",
+      "fabric_safe": 0,
+      "bytes": 4606000
+    },
+    {
+      "class_": "624x352",
+      "rk": "74",
+      "del_profile": "High",
+      "has_b": "2",
+      "fabric_safe": 0,
+      "bytes": 2565072
+    },
+    {
+      "class_": "320x240",
+      "rk": "54",
+      "del_profile": "High",
+      "has_b": "2",
+      "fabric_safe": 0,
+      "bytes": 14801992
+    },
+    {
+      "class_": "320x240",
+      "rk": "5",
+      "del_profile": "High",
+      "has_b": "2",
+      "fabric_safe": 0,
+      "bytes": 718912
+    },
+    {
+      "class_": "320x240",
+      "rk": "58",
+      "del_profile": "High",
+      "has_b": "2",
+      "fabric_safe": 0,
+      "bytes": 14689944
+    },
+    {
+      "class_": "1280x720",
+      "rk": "7",
+      "del_profile": "Main",
+      "has_b": "2",
+      "fabric_safe": 0,
+      "bytes": 735644
+    },
+    {
+      "class_": "high_src_624x480",
+      "rk": "118",
+      "del_profile": "High",
+      "has_b": "2",
+      "fabric_safe": 0,
+      "bytes": 29003512
+    }
+  ]
+}

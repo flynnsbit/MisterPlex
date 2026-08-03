@@ -347,6 +347,16 @@ inline DdrFrameGeometry ddrFrameGeometryForFpgaPresent(int decodeWidth, int deco
     return ddrFrameGeometryForFpgaPresent(CodedWidth{decodeWidth}, CodedHeight{decodeHeight});
 }
 
+// Greppable alias — first integration merge dropped this name when layout conflicted.
+// Keep both spellings so a silent merge that removes one fails the path symbol gate.
+inline DdrFrameGeometry ddrFfmpegGeometryForPresent(CodedWidth decodeWidth,
+                                                    CodedHeight decodeHeight) {
+    return ddrFrameGeometryForFpgaPresent(decodeWidth, decodeHeight);
+}
+inline DdrFrameGeometry ddrFfmpegGeometryForPresent(int decodeWidth, int decodeHeight) {
+    return ddrFrameGeometryForFpgaPresent(decodeWidth, decodeHeight);
+}
+
 // True when I420 payload cannot fit legacy 480p bank usable capacity
 // (stride 0x80000 minus doorbell page 0x1000 = 520192). Mirrors w-mem/capacity
 // Option-C select — NOT coded_w>=1280.
