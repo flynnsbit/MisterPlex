@@ -549,6 +549,13 @@ int main() {
         CHECK(!isGenuine720pDelivery(960, 540)); // NEG: 540p is not true 720 source
         CHECK(kPlex540pYuv420pBytes == 777600);
         CHECK(kPlex540pYuv420pBytes < kPlex720pYuv420pBytes);
+        // Parent corrected budget (decode+sws+copy), not optimistic -f null.
+        CHECK(kPlex540pTotalMsPerFrame < kPlex24fpsDeadlineMs);
+        CHECK(kPlex540pMarginMs > 7.0 && kPlex540pMarginMs < 7.3);
+        // Product URL must ask PMS for 960x540 — never ship a 720 request as the
+        // 540p glass path (ARM downscale-from-720 is 1.74× worse, parent-measured FAIL).
+        CHECK(url540.find("videoResolution=1280x720") == std::string::npos);
+        CHECK(c540.width.get() == 960 && c540.height.get() == 540);
         std::printf("GREEN_PATH_540p_fabric720_glass url+honest_label+genuine_gate\n");
     }
 

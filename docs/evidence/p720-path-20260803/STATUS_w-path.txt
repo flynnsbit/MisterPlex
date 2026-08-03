@@ -1,12 +1,10 @@
-w-path STATUS — 540p→720 glass product tier landed
+w-path STATUS — 540p→720 glass (corrected budget)
 
-PRODUCT: 960x540 source / 720p glass (Source540pFabric720p)
-  applyPlexTranscodeProfile 540p|960x540, L31, baseline pin
-  honest userLabel; isGenuine540pDelivery; tests green
+PRODUCT budget (parent, decode+sws+copy):
+  26.08 + 8.42 = 34.50 ms/f   margin +7.16 PASS
+  (prior +10.49 was -f null only — retracted)
 
-NOT: true 720p source (DMA still BLOCKED diag; multi-month fabric decode)
+TRAP: ARM downscale from 720 = FAIL 1.74× worse — never product fallback.
 
-DMA: still diagnose 4KiB burst1 when free — upgrade path only
-Profile pin: stood down (already product)
-
-Parent e2e cast owns glass proof.
+Host: 540p ladder + Source540pFabric720p + genuine gate (8e62f61b+)
+DMA: upgrade only; 4KiB FTR diag when free

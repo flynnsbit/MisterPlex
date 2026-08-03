@@ -80,11 +80,22 @@ static_assert(kPlex720pWeakBitrateKbps >= 3100,
 static_assert(kPlex720pDecodeOptimalBitrateKbps < kPlex720pWeakBitrateKbps,
               "decode-optimal content tier is below universal geometry floor");
 
-// 960x540 shippable source for fabric→720p glass (parent proxy budget PASS +10.49 ms).
+// 960x540 shippable source for fabric→720p glass.
+// Parent device (2026-08-03), includes sws+rawvideo (not -f null alone):
+//   decode+sws 26.08 + copy 8.42 = 34.50 ms/f vs 41.667 → margin +7.16 PASS.
+//   (-f null only was +10.49 — optimistic by 3.33; do not cite that.)
+// Trap: fetch 1280x720 and ARM-downscale → 51.78+copy FAIL (1.74× worse). Always
+// ask PMS for 960x540; never "get 720 and shrink locally" under pressure.
 // MaxFS 960*540/256=2025 > L3.0 1620 → request L3.1. Bitrate is a quality default
 // only — NOT a PMS geometry floor (no fine matrix yet; prove coded WxH on device).
 constexpr int kPlex540pWeakBitrateKbps = 2000;
 constexpr int kPlex540pH264Level = 31; // same pin as 720 path (MaxFS)
+// Measured host path budgets (ms/f @24) — citation constants, not tunables.
+constexpr double kPlex540pDecodeSwsMsPerFrame = 26.08;
+constexpr double kPlex540pCopyMsPerFrame = 8.42; // 777600 B @ 88.045 MiB/s structural
+constexpr double kPlex540pTotalMsPerFrame = 34.50;
+constexpr double kPlex24fpsDeadlineMs = 41.667;
+constexpr double kPlex540pMarginMs = 7.16;
 
 // Menu index 0 is the power-on default. The present loop waits for the audio
 // clock to reach `frameContentMs + avOffsetMs`, so POSITIVE holds the frame back
