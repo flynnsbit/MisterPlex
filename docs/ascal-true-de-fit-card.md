@@ -48,6 +48,13 @@ Three whole-file-adoption incidents (ddr_frame_store / Plex.sv q5 nets / present
 w-path `f31a6eb9` packs **q5[34]=fps_1001**, reserved **[63:35]**, host `24000/1001` → `content_fps=24` + flag.  
 w-mem latch: `q5_reserved_nz = |sh5[63:34]` → **E4 / wholesale geom reject** when film flag set.  
 w-clock: **no fps_1001 consumer** (integer bucket alone outruns 23.976 → bank miss ~40s).  
+
+**B25 PLXC dual doorbell maps (rd-duck 2026-08-03):**  
+w-osd `plex_chrome_ddr_loader` historically default/inst **0x3007F000** (packed-320 example); isolated OSD TB often `DOORBELL_PHYS=0` and still **PASSes**.  
+w-mem product: **legacy 0x300FF000**, **Option-C 0x3047F000**. ARM PLXC writes relative to **runtime active doorbell**.  
+**B20_HIER_G CDC multi-beat alone does not clear** — gate requires executable host-write→loader-read on **both** maps (`tests/unit/B25_PLXC_DOORBELL_DUAL_MAP_MANIFEST.json`):  
+`measured_host_write_{legacy,optc}=1` + `measured_loader_read_{legacy,optc}=1` + `measured_stale_3007F000_used=0` + green/fault simulator twins.  
+Static: `B25_PLXC_STALE_DEFAULT_3007F000` / `B25_PLXC_INST_STALE_3007F000` when default/inst is packed-320.  
 **Static q5@0x828 / B17 presence is insufficient.** Gate requires executable  
 `tests/unit/test_b24_q5_fps_1001_merged_path.sh` (manifest `B24_Q5_FPS_1001_MANIFEST.json`):  
 host-pack canonical 24000/1001 → merged **poller+latch+consumer** → prove  

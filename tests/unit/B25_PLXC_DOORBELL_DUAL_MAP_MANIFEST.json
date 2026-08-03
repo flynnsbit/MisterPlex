@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "title": "B25 PLXC host-write→loader-read at both merged doorbell maps",
+  "defect": {
+    "id": "rd-duck-2026-08-03-plxc-doorbell-map",
+    "w_osd": "plex_chrome_ddr_loader default+instantiation historically 0x3007F000 (packed-320 example); isolated OSD TB often DOORBELL_PHYS=0 and still PASSes",
+    "w_mem": "product legacy doorbell 0x300FF000; Option-C 0x3047F000",
+    "arm": "PLXC writes relative to runtime active doorbell (makeDdrPublishPlan / bank map)",
+    "note": "B20_HIER_G CDC multi-beat alone is insufficient — must prove host-write→loader-read on BOTH maps"
+  },
+  "contract": [
+    "Gate RUNS the script; CDC prose / B20_G tokens never clear B25.",
+    "GREEN must exercise host write of PLXC at legacy 0x300FF000 AND Option-C 0x3047F000,",
+    "and prove loader read/accept of those writes (not merely edge-detect beat counts).",
+    "Stdout: CASE + PASS + sim evidence + all measured_* + true rc=0.",
+    "FAULT twin (B25_PLXC_FAULT=1): CASE EXECUTED + rc!=0 (!=77).",
+    "Script body must invoke real simulator; test -f / echo theatre rejected.",
+    "Soft-skip rc=77 is NOT a pass."
+  ],
+  "scenarios": [
+    {
+      "token": "B25_PLXC_HOST_LOADER_BOTH_MAPS",
+      "script": "tests/unit/test_b25_plxc_host_loader_both_maps.sh",
+      "case": "CASE B25_PLXC_BOTH_MAPS EXECUTED",
+      "pass": "PASS B25_PLXC_BOTH_MAPS",
+      "why": "host-write→loader-read at product legacy 0x300FF000 AND Option-C 0x3047F000; ARM PLXC is runtime-doorbell-relative; fixed loader default/isolated TB with stale 0x3007F000 or DOORBELL=0 is green-in-isolation merge-loss (rd-duck). Not CDC beats alone (B20_G).",
+      "fault_env": {"B25_PLXC_FAULT": "1"},
+      "require_stdout": [
+        "measured_legacy_doorbell=0x300FF000",
+        "measured_optc_doorbell=0x3047F000",
+        "measured_host_write_legacy=1",
+        "measured_loader_read_legacy=1",
+        "measured_host_write_optc=1",
+        "measured_loader_read_optc=1",
+        "measured_stale_3007F000_used=0"
+      ]
+    }
+  ]
+}

@@ -117,6 +117,7 @@ GATED_PATHSPECS = (
     "docs/rtl_single_owner_table.json",
     "tests/unit/B20_HIER_MANIFEST.json",
     "tests/unit/B24_Q5_FPS_1001_MANIFEST.json",
+    "tests/unit/B25_PLXC_DOORBELL_DUAL_MAP_MANIFEST.json",
     "Makefile",
 )
 # Ruler identity: gate + companions that must stay in lockstep across lanes.
@@ -188,6 +189,9 @@ LIVE_OPEN_BLOCKER_TOKENS = (
     "B24_Q5_FPS_1001_MERGED_PATH",
     "B24_Q5_BIT34_LATCH_REJECTS_1001",
     "B24_Q5_FPS_1001_NO_CONSUMER",
+    # rd-duck: PLXC host→loader must hit legacy 0x300FF000 AND Option-C 0x3047F000
+    # (stale 0x3007F000 default/inst are closed-class reinject when loader present)
+    "B25_PLXC_HOST_LOADER_BOTH_MAPS",
 )
 
 # Sibling-lane fixes that exist but are not merged into this gated tree.
@@ -1848,6 +1852,323 @@ def run_b24_q5_fps_1001_exec_gate(
         "accept+fps_1001 proven (simulator path)"
     )
     msgs.append("LEG0_B24_Q5_EXEC_DONE open=0/1")
+    return 0, msgs, errors
+
+
+
+# ---------------------------------------------------------------------------
+# B25 — PLXC host-write→loader-read at BOTH merged doorbell maps (rd-duck)
+# w-osd plex_chrome_ddr_loader historically default/inst 0x3007F000 (packed-320);
+# isolated OSD TB often DOORBELL_PHYS=0 and still PASSes.
+# w-mem product: legacy 0x300FF000, Option-C 0x3047F000.
+# ARM PLXC writes relative to *runtime* active doorbell.
+# B20_HIER_G CDC multi-beat alone is insufficient — must prove host→loader on
+# both map modes (not merely edge-detect beat counts).
+# ---------------------------------------------------------------------------
+B25_PLXC_MANIFEST_REL = "tests/unit/B25_PLXC_DOORBELL_DUAL_MAP_MANIFEST.json"
+B25_PLXC_TOKEN = "B25_PLXC_HOST_LOADER_BOTH_MAPS"
+B25_LEGACY_DOORBELL = 0x300FF000
+B25_OPTC_DOORBELL = 0x3047F000
+B25_STALE_DOORBELL = 0x3007F000
+B25_PLXC_DEFAULT_SPEC: dict[str, object] = {
+    "token": B25_PLXC_TOKEN,
+    "script": "tests/unit/test_b25_plxc_host_loader_both_maps.sh",
+    "case": "CASE B25_PLXC_BOTH_MAPS EXECUTED",
+    "pass": "PASS B25_PLXC_BOTH_MAPS",
+    "why": (
+        "host-write→loader-read at product legacy 0x300FF000 AND Option-C "
+        "0x3047F000; ARM PLXC is runtime-doorbell-relative; fixed loader "
+        "default/isolated TB with stale 0x3007F000 or DOORBELL=0 is "
+        "green-in-isolation merge-loss (rd-duck). Not CDC beats alone (B20_G)."
+    ),
+    "fault_env": {"B25_PLXC_FAULT": "1"},
+    "require_stdout": [
+        "measured_legacy_doorbell=0x300FF000",
+        "measured_optc_doorbell=0x3047F000",
+        "measured_host_write_legacy=1",
+        "measured_loader_read_legacy=1",
+        "measured_host_write_optc=1",
+        "measured_loader_read_optc=1",
+        "measured_stale_3007F000_used=0",
+    ],
+}
+
+
+def load_b25_plxc_manifest(root: Path) -> tuple[dict[str, object], list[str]]:
+    """Load B25 dual-map scenario; fall back to embedded default."""
+    msgs: list[str] = []
+    candidates = [
+        root / B25_PLXC_MANIFEST_REL,
+        RULER_ROOT / B25_PLXC_MANIFEST_REL,
+    ]
+    path = next((p for p in candidates if p.is_file()), None)
+    if path is None:
+        msgs.append(f"LEG0_B25_MANIFEST_MISSING tried={[str(p) for p in candidates]}")
+        return dict(B25_PLXC_DEFAULT_SPEC), msgs
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        msgs.append(f"LEG0_B25_MANIFEST_BAD path={path} err={exc}")
+        return dict(B25_PLXC_DEFAULT_SPEC), msgs
+    scenarios = list(data.get("scenarios") or [])
+    msgs.append(
+        f"LEG0_B25_MANIFEST_LOADED path={path} n={len(scenarios)} "
+        f"version={data.get('version', '?')}"
+    )
+    if not scenarios:
+        return dict(B25_PLXC_DEFAULT_SPEC), msgs
+    for sc in scenarios:
+        if str(sc.get("token")) == B25_PLXC_TOKEN:
+            return dict(sc), msgs
+    return dict(scenarios[0]), msgs
+
+
+def _b25_norm_hex_lit(s: str) -> str | None:
+    """Normalize SV/C hex literal to lowercase 0x........ or None."""
+    s = s.strip().replace("_", "")
+    m = re.search(r"(?:32'h|0x)?([0-9A-Fa-f]{7,8})\b", s)
+    if not m:
+        return None
+    return f"0x{int(m.group(1), 16):08X}"
+
+
+def run_b25_plxc_doorbell_static(root: Path) -> tuple[list[str], list[str]]:
+    """Static: stale 0x3007F000 default/inst on loader; dual-map exec still required."""
+    msgs: list[str] = []
+    errors: list[str] = []
+    loader = root / "fpga" / "Plex_MiSTer" / "rtl" / "plex_chrome_ddr_loader.sv"
+    plex = root / "fpga" / "Plex_MiSTer" / "Plex.sv"
+    layout = root / "fpga" / "Plex_MiSTer" / "rtl" / "ddr_frame_layout_params.svh"
+
+    loader_txt = loader.read_text(errors="replace") if loader.is_file() else ""
+    plex_txt = plex.read_text(errors="replace") if plex.is_file() else ""
+    layout_txt = layout.read_text(errors="replace") if layout.is_file() else ""
+
+    # Default parameter on loader module.
+    def_m = re.search(
+        r"parameter\s+(?:\[[^\]]+\]\s+)?DOORBELL_PHYS\s*=\s*([^,\n]+)",
+        loader_txt,
+    )
+    def_hex = _b25_norm_hex_lit(def_m.group(1)) if def_m else None
+    stale_def = def_hex == f"0x{B25_STALE_DOORBELL:08X}" if def_hex else False
+    good_def = def_hex == f"0x{B25_LEGACY_DOORBELL:08X}" if def_hex else False
+
+    # Instantiation override in Plex.sv (first chrome loader instance).
+    inst_ports = _extract_sv_instance_ports(plex_txt, "plex_chrome_ddr_loader")
+    inst_m = re.search(r"\.DOORBELL_PHYS\s*\(\s*([^)]+)\)", inst_ports or "")
+    inst_hex = _b25_norm_hex_lit(inst_m.group(1)) if inst_m else None
+    stale_inst = inst_hex == f"0x{B25_STALE_DOORBELL:08X}" if inst_hex else False
+
+    # Product map constants (diagnostic).
+    leg_in_layout = bool(
+        re.search(r"300[Ff]_?[Ff]000|0x300[Ff]{2}000", layout_txt)
+        or re.search(r"DDR_FRAME_YUV420P_DOORBELL_PHYS\s*=\s*32'h300[Ff]_?[Ff]000", layout_txt)
+    )
+    optc_in_layout = bool(
+        re.search(r"3047_?[Ff]000|0x3047[Ff]000", layout_txt)
+        or re.search(r"DDR_FRAME_720P_YUV420P_DOORBELL_PHYS\s*=\s*32'h3047_?[Ff]000", layout_txt)
+    )
+
+    # Fixed-only doorbell (parameter → localparam PLXC_W) with no runtime port.
+    has_runtime_db_port = bool(
+        re.search(r"input\s+.*\b(doorbell_phys|active_doorbell|rt_doorbell)\b", loader_txt, re.I)
+    )
+    fixed_only = bool(loader_txt) and not has_runtime_db_port
+
+    msgs.append(
+        f"LEG0_B25_LOADER path={loader.relative_to(root) if loader.is_file() else 'ABSENT'} "
+        f"default={def_hex or 'none'} stale_def={int(stale_def)} good_legacy_def={int(good_def)} "
+        f"inst={inst_hex or 'none'} stale_inst={int(stale_inst)} "
+        f"fixed_only={int(fixed_only)} runtime_db_port={int(has_runtime_db_port)} "
+        f"layout_leg={int(leg_in_layout)} layout_optc={int(optc_in_layout)}"
+    )
+    msgs.append(
+        "LEG0_B25_POLICY product legacy=0x300FF000 Option-C=0x3047F000; "
+        "stale packed-320=0x3007F000 banned; ARM PLXC is runtime-doorbell-relative; "
+        "B20_G CDC beats ≠ dual-map host→loader proof"
+    )
+
+    if not loader.is_file():
+        # Hollow trees without chrome still need the dual-map exec when chrome lands;
+        # do not invent a soft-skip — static absence is informational; exec MISS is hard.
+        msgs.append("LEG0_B25_LOADER_ABSENT (exec path still required when chrome present)")
+    elif stale_def:
+        errors.append(
+            "B25_PLXC_STALE_DEFAULT_3007F000: plex_chrome_ddr_loader DOORBELL_PHYS "
+            f"default={def_hex} is packed-320 example map, not product legacy "
+            f"0x{B25_LEGACY_DOORBELL:08X}. Isolated OSD TB sharing this stale default "
+            "PASSes while ARM writes PLXC at runtime active doorbell "
+            f"(legacy 0x{B25_LEGACY_DOORBELL:08X} / Option-C 0x{B25_OPTC_DOORBELL:08X}) "
+            "— merge-loss class (rd-duck)."
+        )
+    if plex.is_file() and stale_inst:
+        errors.append(
+            "B25_PLXC_INST_STALE_3007F000: Plex.sv plex_chrome_ddr_loader "
+            f".DOORBELL_PHYS({inst_hex}) is stale packed-320; product instantiation "
+            f"must be legacy 0x{B25_LEGACY_DOORBELL:08X} or a runtime-active doorbell "
+            f"that tracks Option-C 0x{B25_OPTC_DOORBELL:08X} (rd-duck)."
+        )
+    if loader.is_file() and fixed_only:
+        msgs.append(
+            "LEG0_B25_FIXED_DOORBELL_NOTE parameter-only DOORBELL_PHYS (no runtime "
+            "doorbell port) — dual-map exec must still prove host→loader on BOTH "
+            "legacy and Option-C maps (or product must wire runtime doorbell)."
+        )
+    return msgs, errors
+
+
+def run_b25_plxc_doorbell_exec_gate(
+    root: Path,
+    *,
+    timeout_s: float = 180.0,
+) -> tuple[int, list[str], list[str]]:
+    """Run host-write→loader-read dual-map path: green rc0 + fault twin + sim evidence."""
+    msgs: list[str] = []
+    errors: list[str] = []
+    spec, m_msgs = load_b25_plxc_manifest(root)
+    msgs.extend(m_msgs)
+
+    tok = str(spec.get("token") or B25_PLXC_TOKEN)
+    rel = str(spec.get("script") or B25_PLXC_DEFAULT_SPEC["script"])
+    case_tok = str(spec.get("case") or B25_PLXC_DEFAULT_SPEC["case"])
+    pass_tok = str(spec.get("pass") or B25_PLXC_DEFAULT_SPEC["pass"])
+    why = str(spec.get("why") or B25_PLXC_DEFAULT_SPEC["why"])
+    require_stdout = [str(x) for x in (spec.get("require_stdout") or [])]
+    if not require_stdout:
+        require_stdout = list(B25_PLXC_DEFAULT_SPEC["require_stdout"])  # type: ignore[arg-type]
+    fault_env_raw = spec.get("fault_env") or {"B25_PLXC_FAULT": "1"}
+    fault_env = (
+        {str(k): str(v) for k, v in fault_env_raw.items()}
+        if isinstance(fault_env_raw, dict)
+        else {"B25_PLXC_FAULT": "1"}
+    )
+    fault_case = str(spec.get("fault_case") or case_tok)
+
+    msgs.append(
+        f"LEG0_B25_PLXC_EXEC_BEGIN token={tok} script={rel} "
+        "(green+fault simulator; host→loader BOTH maps; NOT CDC-beats-only / B20_G)"
+    )
+
+    script = root / rel
+    if not script.is_file():
+        errors.append(
+            f"{tok}: missing executable dual-map script {rel}. "
+            f"Need simulator TB: GREEN '{case_tok}'+'{pass_tok}'+{require_stdout!r} "
+            f"rc=0 + sim evidence; FAULT env {fault_env} '{fault_case}' rc!=0. "
+            f"why={why}. Soft-skip ≠ PASS. B20_HIER_G CDC multi-beat alone does not clear."
+        )
+        msgs.append(f"LEG0_B25_PLXC_MISS path={rel}")
+        msgs.append("LEG0_B25_PLXC_EXEC_DONE open=1/1")
+        return 1, msgs, errors
+
+    if script.suffix not in {".sh", ".py"}:
+        errors.append(
+            f"{tok}: {rel} suffix={script.suffix!r} is not an executable .sh/.py "
+            "runner. Prose/CDC comment presence alone is hollow."
+        )
+        msgs.append("LEG0_B25_PLXC_EXEC_DONE open=1/1")
+        return 1, msgs, errors
+
+    try:
+        script_txt = script.read_text(errors="replace")
+    except OSError as exc:
+        errors.append(f"{tok}: cannot read {rel}: {exc}")
+        return 1, msgs, errors
+
+    if not _b20_script_invokes_simulator(script_txt):
+        errors.append(
+            f"{tok}: script {rel} does not invoke a simulator "
+            f"(verilator|run_verilator.sh|make…sim|python TB). "
+            f"test -f/rg/echo / CDC-prose theatre rejected. why={why}"
+        )
+        msgs.append("LEG0_B25_PLXC_HOLLOW_BODY")
+        msgs.append("LEG0_B25_PLXC_EXEC_DONE open=1/1")
+        return 1, msgs, errors
+
+    # Reject bodies that only mention B20_G CDC tokens without dual-map measures.
+    body = "\n".join(_b20_script_body_lines(script_txt))
+    cdc_only_bait = (
+        re.search(r"PLXC_EXT_WE|measured_cdc_async|host_we_beats", body)
+        and not re.search(r"0x300FF000|300FF000|legacy_doorbell", body, re.I)
+        and not re.search(r"0x3047F000|3047F000|optc_doorbell", body, re.I)
+    )
+    if cdc_only_bait:
+        errors.append(
+            f"{tok}: script {rel} looks like B20_G CDC multi-beat only "
+            "(no legacy/Option-C doorbell map measures). Dual-map host→loader required."
+        )
+        msgs.append("LEG0_B25_PLXC_CDC_ONLY_BODY")
+        msgs.append("LEG0_B25_PLXC_EXEC_DONE open=1/1")
+        return 1, msgs, errors
+
+    try:
+        rc_g, out_g = _b20_run_script(script, root, {}, timeout_s)
+        rc_f, out_f = _b20_run_script(script, root, fault_env, timeout_s)
+    except subprocess.TimeoutExpired:
+        errors.append(f"{tok}: script {rel} timed out — DID_NOT_FINISH.")
+        msgs.append("LEG0_B25_PLXC_TIMEOUT")
+        return 1, msgs, errors
+    except OSError as exc:
+        errors.append(f"{tok}: failed to execute {rel}: {exc}")
+        return 1, msgs, errors
+
+    msgs.append(
+        f"LEG0_B25_PLXC_RUN_GREEN script={rel} true_rc={rc_g} out_bytes={len(out_g)}"
+    )
+    msgs.append(
+        f"LEG0_B25_PLXC_RUN_FAULT script={rel} true_rc={rc_f} env={fault_env} "
+        f"out_bytes={len(out_f)}"
+    )
+
+    missing: list[str] = []
+    if rc_g == 77:
+        missing.append("GREEN soft-skip rc=77")
+    if case_tok not in out_g:
+        missing.append(f"GREEN missing '{case_tok}'")
+    if pass_tok not in out_g:
+        missing.append(f"GREEN missing '{pass_tok}'")
+    if rc_g != 0:
+        missing.append(f"GREEN true_rc={rc_g} (need 0)")
+    if not _b20_sim_evidence(out_g, root):
+        missing.append("GREEN missing sim evidence (not SIM_RUN self-report)")
+    if not re.search(r"(?m)^\s*measured_[\w]+=", out_g):
+        missing.append("GREEN missing measured_*=")
+    missing.extend([f"GREEN {m}" for m in _b20_require_stdout_missing(out_g, require_stdout)])
+    # Explicit dual-map semantics: both host_write and loader_read for each map.
+    for key in (
+        "measured_host_write_legacy=1",
+        "measured_loader_read_legacy=1",
+        "measured_host_write_optc=1",
+        "measured_loader_read_optc=1",
+    ):
+        if key not in out_g:
+            missing.append(f"GREEN dual-map missing '{key}'")
+    # CDC-only PASS must not satisfy even if someone echoes our tokens without maps.
+    if "measured_cdc_async=1" in out_g and "measured_host_write_legacy=1" not in out_g:
+        missing.append("GREEN CDC-only output without host_write_legacy")
+    if fault_case not in out_f:
+        missing.append(f"FAULT missing '{fault_case}'")
+    if rc_f == 0:
+        missing.append("FAULT true_rc=0 (need nonzero behavioral fail)")
+    if rc_f == 77:
+        missing.append("FAULT soft-skip rc=77")
+
+    if missing:
+        tail = (out_g.strip().splitlines()[-6:] if out_g.strip() else []) + (
+            out_f.strip().splitlines()[-6:] if out_f.strip() else []
+        )
+        errors.append(
+            f"{tok}: green+fault dual-map contract failed: {', '.join(missing)}. "
+            f"why={why}. tail={tail!r}"
+        )
+        msgs.append("LEG0_B25_PLXC_EXEC_DONE open=1/1")
+        return 1, msgs, errors
+
+    msgs.append(
+        f"LEG0_B25_PLXC_OK script={rel} green_rc=0 fault_rc={rc_f} "
+        "host→loader proven on legacy+Option-C maps (simulator path)"
+    )
+    msgs.append("LEG0_B25_PLXC_EXEC_DONE open=0/1")
     return 0, msgs, errors
 
 
@@ -3585,6 +3906,14 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
     msgs.extend(b24_e_msgs)
     errors.extend(b24_e_errs)
 
+    # --- B25 PLXC host→loader dual doorbell maps (rd-duck — not CDC beats alone) ---
+    b25_s_msgs, b25_s_errs = run_b25_plxc_doorbell_static(ROOT)
+    msgs.extend(b25_s_msgs)
+    errors.extend(b25_s_errs)
+    b25_e_rc, b25_e_msgs, b25_e_errs = run_b25_plxc_doorbell_exec_gate(ROOT)
+    msgs.extend(b25_e_msgs)
+    errors.extend(b25_e_errs)
+
     # --- B19 MERGE-LOSS + lane tip under-take (always, even if Bn cleared) ---
     b19_errs = collect_merge_loss_errors()
     if b19_errs:
@@ -5084,6 +5413,8 @@ present_core u_mut_b22_core (
     fails.extend(_mutation_b20_hier_exec())
     # B24 q5 fps_1001 merged path (static presence ≠ accept+1001).
     fails.extend(_mutation_b24_q5_fps_1001())
+    # B25 PLXC dual-map host→loader (CDC-only must not clear).
+    fails.extend(_mutation_b25_plxc_dual_map())
 
     return fails
 
@@ -5592,6 +5923,242 @@ exit "$rc"
         print(
             f"  MUT_OK {tok} restore_fire=1 script_exists={int(script.is_file())}"
         )
+
+    return fails
+
+
+
+def _mutation_b25_plxc_dual_map() -> list[str]:
+    """B25: CDC-only / file theatre must not clear; need dual-map host→loader sim."""
+    fails: list[str] = []
+    unit = ROOT / "tests" / "unit"
+    unit.mkdir(parents=True, exist_ok=True)
+    rtl_mut = ROOT / "tests" / "rtl"
+    rtl_mut.mkdir(parents=True, exist_ok=True)
+    spec, _ = load_b25_plxc_manifest(ROOT)
+    tok = str(spec.get("token") or B25_PLXC_TOKEN)
+    rel = str(spec.get("script") or B25_PLXC_DEFAULT_SPEC["script"])
+    script = ROOT / rel
+    case_tok = str(spec.get("case") or B25_PLXC_DEFAULT_SPEC["case"])
+    pass_tok = str(spec.get("pass") or B25_PLXC_DEFAULT_SPEC["pass"])
+    req = [
+        str(x)
+        for x in (
+            spec.get("require_stdout") or B25_PLXC_DEFAULT_SPEC["require_stdout"]
+        )
+    ]
+
+    def _toks() -> set[str]:
+        _rc, msgs = leg0_arch_blockers()
+        return _leg0_error_tokens(msgs)
+
+    # 1) B20_G CDC multi-beat prose must NOT clear dual-map token.
+    cdc_prose = (
+        "#!/usr/bin/env bash\n"
+        "# B20_HIER_G PLXC_EXT_WE host_we S_PUSH_LIST S_PUSH_CTRL measured_cdc_async=1\n"
+        "# measured_host_we_beats=2 measured_ctrl_beats=1 edge-detect d2&~d3\n"
+        f"# {case_tok}\n"
+        f"# {pass_tok}\n"
+        "exit 0\n"
+    )
+    rest = None
+    try:
+        rest = _with_file_backup(script, cdc_prose)
+        os.chmod(script, 0o755)
+        if tok not in _toks():
+            fails.append(
+                f"{tok}: B20_G CDC multi-beat prose cleared B25 dual-map — HOLE "
+                "(rd-duck: not merely CDC beats)"
+            )
+        else:
+            print(f"  MUT_OK {tok} cdc_prose_rejected=1")
+    finally:
+        if rest is not None:
+            rest()
+
+    # 2) File-existence + echo theatre (incl. dual-map tokens) must NOT clear
+    # without a simulator — same positive-oracle ban as B20/B24.
+    theatre = (
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "ROOT=\"${MISTERPLEX_ROOT:-$(cd \"$(dirname \"$0\")/../..\" && pwd)}\"\n"
+        "test -f \"$ROOT/fpga/Plex_MiSTer/Plex.sv\"\n"
+        f"echo '{case_tok}'\n"
+        f"echo '{pass_tok}'\n"
+        "echo 'SIM_RUN=1'\n"
+        "echo 'DUT_TOUCHED=1'\n"
+        "echo 'measured_cdc_async=1'\n"
+        + "".join(f"echo '{r}'\n" for r in req)
+        + "exit 0\n"
+    )
+    rest = None
+    try:
+        rest = _with_file_backup(script, theatre)
+        os.chmod(script, 0o755)
+        if tok not in _toks():
+            fails.append(
+                f"{tok}: file-existence/echo theatre cleared B25 — HOLE"
+            )
+        else:
+            print(f"  MUT_OK {tok} file_existence_theatre_rejected=1")
+    finally:
+        if rest is not None:
+            rest()
+
+    # 3) Simulator that only proves CDC beats (no dual-map host/loader) must NOT clear.
+    sv_cdc = rtl_mut / "_fitgate_b25_mut_cdc_only.sv"
+    sv_cdc_body = f"""`timescale 1ns/1ps
+module fitgate_b25_mut_cdc_only;
+  initial begin
+    $display("{case_tok}");
+    $display("{pass_tok}");
+    $display("measured_cdc_async=1");
+    $display("measured_host_we_beats=2");
+    $display("measured_ctrl_beats=1");
+    $display("measured_plxc_ext_we_rising=2");
+    $display("clk_host_ne_clk_plxc=1");
+    $finish;
+  end
+endmodule
+"""
+    sh_cdc = f"""#!/usr/bin/env bash
+set -euo pipefail
+ROOT="${{MISTERPLEX_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}}"
+VL="$ROOT/scripts/run_verilator.sh"
+MD="$ROOT/.agent-work/b25_mut_cdc"
+SV="$ROOT/tests/rtl/_fitgate_b25_mut_cdc_only.sv"
+mkdir -p "$MD"
+"$VL" --binary -j 2 -o b25cdc --Mdir "$MD" --top-module fitgate_b25_mut_cdc_only "$SV"
+SIM="$MD/b25cdc"
+echo "SIM_ARTIFACT=$SIM"
+"$SIM"
+exit 0
+"""
+    r_sv = _with_file_backup(sv_cdc, sv_cdc_body)
+    r_sh = _with_file_backup(script, sh_cdc)
+    os.chmod(script, 0o755)
+    try:
+        if tok not in _toks():
+            fails.append(
+                f"{tok}: real sim CDC-only (no dual-map measures) cleared B25 — HOLE"
+            )
+        else:
+            print(f"  MUT_OK {tok} cdc_only_sim_rejected=1")
+    finally:
+        r_sh()
+        r_sv()
+        import shutil as _sh
+
+        md = ROOT / ".agent-work/b25_mut_cdc"
+        if md.is_dir():
+            try:
+                _sh.rmtree(md)
+            except OSError:
+                pass
+
+    # 4) Real dual-map green+fault clears exec token.
+    sv = rtl_mut / "_fitgate_b25_mut_dual.sv"
+    displays = "\n".join(f'      $display("{r}");' for r in req)
+    sv_body = f"""`timescale 1ns/1ps
+module fitgate_b25_mut_dual;
+  localparam int DUT_MARKER = 1;
+  initial begin
+    $display("{case_tok}");
+    if ($test$plusargs("B25_PLXC_FAULT")) begin
+      $fatal(1, "B25_PLXC_FAULT twin");
+    end
+    if (DUT_MARKER != 1) $fatal(1, "DUT");
+    $display("{pass_tok}");
+    $display("measured_mut_sim=1");
+{displays}
+    $finish;
+  end
+endmodule
+"""
+    sh_body = f"""#!/usr/bin/env bash
+set -euo pipefail
+ROOT="${{MISTERPLEX_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}}"
+VL="$ROOT/scripts/run_verilator.sh"
+MD="$ROOT/.agent-work/b25_mut_dual"
+SV="$ROOT/tests/rtl/_fitgate_b25_mut_dual.sv"
+mkdir -p "$MD"
+"$VL" --binary -j 2 -o b25dual --Mdir "$MD" --top-module fitgate_b25_mut_dual "$SV"
+SIM="$MD/b25dual"
+echo "SIM_ARTIFACT=$SIM"
+if [[ "${{B25_PLXC_FAULT:-0}}" == "1" ]]; then
+  echo "{case_tok}"
+  set +e
+  "$SIM" +B25_PLXC_FAULT
+  rc=$?
+  set -e
+  exit "$rc"
+fi
+set +e
+"$SIM"
+rc=$?
+set -e
+exit "$rc"
+"""
+    r_sv = _with_file_backup(sv, sv_body)
+    r_sh = _with_file_backup(script, sh_body)
+    os.chmod(script, 0o755)
+    try:
+        t = _toks()
+        if tok in t:
+            fails.append(f"{tok}: real dual-map sim green+fault did not clear — HOLE")
+        else:
+            print(f"  MUT_OK {tok} real_sim_green_fault_clear=1")
+    finally:
+        r_sh()
+        r_sv()
+        import shutil as _sh
+
+        md = ROOT / ".agent-work/b25_mut_dual"
+        if md.is_dir():
+            try:
+                _sh.rmtree(md)
+            except OSError:
+                pass
+
+    # 5) Restore: missing script re-fires.
+    t2 = _toks()
+    if tok not in t2:
+        fails.append(
+            f"{tok}: vanished after restore (script_exists={script.is_file()}) — HOLE"
+        )
+    else:
+        print(
+            f"  MUT_OK {tok} restore_fire=1 script_exists={int(script.is_file())}"
+        )
+
+    # 6) Stale default reinject — independent static (when loader exists).
+    loader = ROOT / "fpga" / "Plex_MiSTer" / "rtl" / "plex_chrome_ddr_loader.sv"
+    if loader.is_file():
+        old = loader.read_text(errors="replace")
+        stale = old
+        if "DOORBELL_PHYS" in old:
+            stale = re.sub(
+                r"(parameter\s+(?:\[[^\]]+\]\s+)?DOORBELL_PHYS\s*=\s*)[^,\n]+",
+                r"\g<1>32'h3007_F000",
+                old,
+                count=1,
+            )
+        if stale == old:
+            # append a fake parameter block if transform failed
+            stale = old + "\n// mut\nparameter DOORBELL_PHYS = 32'h3007_F000;\n"
+        r = _with_file_backup(loader, stale)
+        try:
+            if "B25_PLXC_STALE_DEFAULT_3007F000" not in _toks():
+                fails.append(
+                    "B25_PLXC_STALE_DEFAULT_3007F000: stale 0x3007F000 default "
+                    "did not fire — HOLE"
+                )
+            else:
+                print("  MUT_OK B25_PLXC_STALE_DEFAULT_3007F000 reinject_fire=1")
+        finally:
+            r()
+    else:
+        print("  MUT_OK B25_PLXC_STALE_DEFAULT_3007F000 skip_no_loader=1")
 
     return fails
 
