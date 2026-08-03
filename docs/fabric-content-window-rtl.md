@@ -167,3 +167,42 @@ define off so pinout and ALM stay identical for w-nostub.
 RBG: `tests/unit/test_ddr_qword_export_rtl_sim.sh`
 - GREEN: lanes 0..3 from one export match single-pixel `rd_r/g/b`
 - RED: `FAULT_QWORD_LANE0` (always Y byte0) must mismatch lanes 1..3
+
+## Full-pixel READ proof (sim)
+
+Gate: `tests/unit/test_ddr_720p_pixel_rtl_sim.sh`
+
+| Case | Expect |
+|------|--------|
+| full_grey | every active RGB == Y (U=V=128), rate ≥0.995 over 1280×720×2 |
+| full_chroma | BT.601 unique U/V exact matrix match |
+| bank_swap | bank1 poisoned mid-scan; glass stays bank0 until doorbell+vsync |
+| wrong_stride | pack y_stride=1296 vs geom 1280 → dirty (negative) |
+| half_chroma | U plane +1 line → dirty (negative) |
+
+Measured (true rc=0): full_grey rate≈0.9989, last qword x∈[1272,1279] 11520/11520,
+odd-line chroma ok, first Y @ `0x30180000`, U_qw=115200, V_qw=144000.
+
+## Bank credit (agree with w-mem `7365998e`)
+
+- Reader hits linebufs only when `y_bank==disp_bank` (never mid-write bank).
+- Writer: `free_mask[i]=0` while bank is disp or swap_pending; claim→fill→doorbell→commit.
+- PLXD @ doorbell+0x128 = Option-C `0x3047F128`: `free[1:0]|disp<<2|swap<<3|frames<<16`.
+- This lane does not issue doorbells; w-mem writer owns produce.
+
+## Integration macros (parent)
+
+```
+FABRIC_NATIVE_720P_GEOM=1   # force 1280 READ + Option-C (PLXG wr still 0)
+FABRIC_DDR_WRITER=1         # w-mem pattern producer
+```
+Default QSF leaves both unset → bit-identical to `d1b24e0c` at reset.
+
+## Parent verify command (device — parent only)
+
+```bash
+# After integration fit with macros above + menu deploy:
+tests/unit/test_ddr_720p_pixel_rtl_sim.sh; echo "pixel_true_rc=$?"
+# Glass (parent):
+scripts/hdmi_capture_idle.sh captures/fabric720_move.png
+```

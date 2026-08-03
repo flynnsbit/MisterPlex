@@ -379,11 +379,22 @@ inline DdrFrameGeometry plex720pDdrFrameGeometry() {
     return g;
 }
 
-// 720p tier layout at Option-C phys base (not product 0x30000000).
+// 720p tier layout at Option-C phys map (not product 0x30000000).
+// Bank stride and doorbell are parent-verified fixed ABI — do NOT derive them
+// from align(frame_bytes); that yields a different doorbell than 0x3047F000 and
+// desyncs w-mem fabric_ddr_writer / fabric READ.
 inline DdrFrameLayout makePlex720pDdrFrameLayout(
     DdrFrameFormat format = DdrFrameFormat::Yuv420p) {
-    return makeDdrFrameLayout(plex720pDdrFrameGeometry(), kPlex720pDdrFramePhysBase,
-                              kDdrFrameStrideAlign, format);
+    DdrFrameLayout out =
+        makeDdrFrameLayout(plex720pDdrFrameGeometry(), kPlex720pDdrFramePhysBase,
+                           kDdrFrameStrideAlign, format);
+    out.phys_base = kPlex720pDdrFramePhysBase;
+    out.bank_stride = kPlex720pYuv420pBankStride;
+    out.doorbell_phys = kPlex720pYuv420pDoorbellPhys;
+    out.map_bytes = kPlex720pMapBytes2Bank;
+    out.format = format;
+    out.doorbell_format = ddrFrameFormatCode(format);
+    return out;
 }
 
 
