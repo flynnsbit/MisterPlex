@@ -1,30 +1,17 @@
 lane=w-path todo=p720-path branch=w-path-720p
-status=DELIVERED_ARM_EVAC_FOLLOWUP commit=ee1124bc
-mandate=720p is reward for evacuating ARM; prefer ARM-out designs
+status=LANDED commits=98a7f0fd,ee1124bc,4629178c
+parent_decode=41.073ms/f@720p4000k (98.6% of 41.667 budget) — path critical path
 
-## PMS 720p (prior + still valid)
-rk7 native 1280x720 CB; maxBR>=3500 → 1280x720; <=3000 → 720x404; DP → 1280x720
-profile MiSTerPlex.xml must allow 1280/L31 for CB transcode
+LANDED (not plans):
+- PMS genuine 720: maxBR>=3500 → coded 1280x720; <=3000 → 720x404; DP → 1280x720; rk6+720ceil → 852x480 (quoted XML in REPORT)
+- Ladder 720p@4000/L31 + MiSTerPlex.xml 1280/L31 + isGenuine720pDelivery + bitrate gate
+- Path720p default preferDirect; direct_play_part verified → identity_skip (ARM scale=0)
+- Units true_rc=0: resolve/vf/osd/chroma
 
-## ARM-evac follow-up (this commit)
-1. PREFER_DIRECT_H264 conf + Path720p defaults preferDirect when conf unset
-2. delivery_basis=direct_play_part when !transcoded → plan-time verified
-3. Always+exact+DP verified → identity_skip (scale_applied=0) — ARM scale gone
-4. library_media/transcode_request still unverified (480p ceiling trap class)
+INVALIDATED by parent 41.073:
+- Host bucket-lift / "scale skip alone ships 24fps" — decode alone eats budget; fabric offload mandatory
+- Synthetic 1080p 32.4 ms/f as 720 cost proxy — discarded
 
-## ARM ms/f removed
-- scale bucket=0 when DP identity (by construction / unit)
-- archived 480p FOAR scaleΔ class = 2.954 ms/f when scale required
-- host x86 Δ FOAR-same vs id ≈ +0.105 ms/f (240f); up404 Δ ≈ +2.59 ms/f
-- device dual-A9 ms removed: UNKNOWN — parent must profile
+BLOCKER for parent: install assets/plex-profiles/MiSTerPlex.xml on lab PMS + confirm device DP path720 logs delivery_basis=direct_play_part identity_skip=1 (no agent SSH)
 
-## Tests true_rc
-test_ffmpeg_vf=0 test_osd_menu=0 test_resolve=0 test_yuv420p_chroma_480p=0
-
-## Coord
-w-mem: DDR still rejects 1280x720 present
-w-scaler: only after measured genuine 1280x720
-no device SSH by this lane
-
-## Parent next
-install MiSTerPlex.xml; PREFER_DIRECT default path720; arm-profile DP identity vs FOAR
+Coord: w-mem DDR reject 720 until remap; w-scaler after measured 1280x720 only

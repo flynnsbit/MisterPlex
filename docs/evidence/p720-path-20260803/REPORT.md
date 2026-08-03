@@ -116,7 +116,22 @@ Chose **“ARM out of the scale loop entirely”** over “cheaper ARM scale”:
 | Host 404→720 upscale trap vs identity | `probe_up404` | **4.667** ms/f · Δ **+2.59** vs id (x86 only) |
 | **Device dual-A9 ms/f removed by DP identity** | no MiSTer SSH | **unknown** — parent: profile DP identity vs FORCE FOAR same asset |
 
-Parent device note (not this lane): 1080p synthetic CB decode ~32.4 ms/f vs 480p real decode_null 21.6 → decode dominated by content/bitrate, not pixels. **Do not claim 24 fps fit from host or synthetic alone.**
+### Parent device decode — REAL content (2026-08-03)
+
+Source: parent `/tmp/misterplex-parent-720p-decode-verdict.txt` (device `ffmpeg_cpu_probe`, 300f/arm, CB ref=1 bframes=0 cabac=0 @24fps; re-encode of true-HD PromoScoreable — **not** synthetic blip).
+
+| Arm | wall ms/f | fps ceiling |
+|---|---:|---:|
+| 1280×720 @4000k default threads | **41.073** | 24.35 |
+| 1280×720 @4000k threads=1 | 52.158 | 19.17 |
+| 624×480 @1800k default threads | 15.969 | 62.62 |
+
+- Budget 41.667 ms @24 fps → decode alone **98.6%** (margin **0.59 ms / 1.4%**).
+- Discard synthetic 1080p blip 32.4 ms/f — not representative.
+- 480p CPU-time 22.02 vs archived 21.562 (2.1%) — harness OK.
+- Decode wall scales **0.836× linear-in-pixels** → bitrate/tier is a first-class lever (path 4000 / floor 3500 geometry gate stands).
+
+**Invalidated by this measurement:** any plan that leaves present/pipe/scale on ARM at 720p; host “~70–120% if scale skipped” as a ship path without fabric offload.
 
 ### Host `ffmpeg_cpu_probe` (x86 lab, **not** dual-A9)
 
@@ -137,11 +152,12 @@ ARM-evac addendum 240f / 10s CB 3500k:
 | foar720 (FOAR 1280→1280) | 0.523 | 2.180 | `probe_foar720_summary.txt` |
 | up404 (scale 720x404 then FOAR 720) | 1.120 | 4.667 | `probe_up404_summary.txt` |
 
-### Fit verdict
+### Fit verdict (post parent 41.073 ms/f)
 
-- **Scale evacuation on true DP 720:** product path now takes identity (ARM scale=0) when Part samples==bank — **required** for 720 budget; not sufficient alone.
-- Full dual-A9 24 fps fit with present/pipe still on ARM: **unknown / previously projected NO** until fabric owns present (w-mem/w-scaler) and parent measures real-720 decode.
-- DDR push @24 fps: 33.2 MB/s (1 382 400 B × 24).
+- **Decode alone ≈ full 24 fps budget.** Path must deliver genuine 1280×720 + identity_skip so ARM spends ~0 on scale; fabric must own present/pipe/overlay.
+- **Scale evacuation on true DP 720:** product path identity when Part samples==bank — **necessary**, not sufficient.
+- Non-decode ARM residual with zero fabric offload: parent ~57 ms/f projection + 41 ms decode → **~10 fps** — matches prior bucket-lift class; **does not ship**.
+- DDR push @24 fps: 33.2 MB/s (1 382 400 B × 24) — w-mem.
 
 ---
 
