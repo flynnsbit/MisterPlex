@@ -22,6 +22,8 @@ need=(
   "selectDirectPartStoreGeometry"
   "classifyPathScaleClass"
   "selectPlxgAspectCadence"
+  "contentFpsForPlxg"
+  "kPlxgQ5Fps1001Bit"
 )
 for s in "${need[@]}"; do
   if ! rg -q --fixed-strings "$s" "$ROOT/host/libmisterplex" "$ROOT/arm/misterplexd" 2>/dev/null; then
