@@ -48,8 +48,8 @@ struct ResolveResult {
     int storeHeight = 0;
     bool sourceAwareApplied = false;
     std::string sourceAwarePolicy; // e.g. source_clamp_snap16 / direct_part_native
-    // Two-regime play policy (parent miss #13): SD→DP, HD>720→xcode 1280×720.
-    // Set from library Media WxH after metadata — never from hardcoded ratingKey.
+    // Two-regime play policy: SD→DP; above Route-B host cap→xcode ≤960×540
+    // (rd-duck: not automatic 1280 DE under 1ppc). Never hardcoded ratingKey.
     std::string playRegime;      // playDeliveryRegimeName(...)
     std::string videoProfile;    // Stream/Media profile attribute when known
     // PMS /universal/decision @decision (directplay|transcode|…). Empty if not probed.
@@ -157,6 +157,9 @@ struct WeakLadder {
     // Query params maxFrameRate/frameRate are ignored by lab PMS (measured).
     // 540p defaults to 24: serial 960x540 budget PASS @24, FAIL @29.97 (34.50 vs 33.33).
     int maxVideoFrameRate = 0;
+    // PRESENT_MULTI_PIXEL fitted path only. Default false = Route-B 1ppc host
+    // content ceiling 960×540 (rd-duck: 1280 DE @20 MHz is ~20.7 Hz).
+    bool presentMultiPixel = false;
 };
 
 // Product 540p glass path: PMS frame-rate ceiling (measured Extra lever).

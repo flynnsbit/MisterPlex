@@ -158,6 +158,8 @@ void logDaemon(const std::string& s) {
 // Content tier (OSD O[4] / DECODE) is the product source of truth for the PMS
 // ladder on each play. Re-apply the full named profile so profileName, quality,
 // bitrate and H.264 caps track the tier — not only videoResolution.
+// Route-B (rd-duck): 1280 DE is forbidden @1ppc unless PRESENT_MULTI_PIXEL —
+// Path720p conf falls back to 960×540 loudly inside this helper when multi off.
 misterplex::WeakLadder weakForContentResolution(const misterplex::WeakLadder& base,
                                                 const misterplex::ContentResolution& res,
                                                 bool bitrateExplicit,
@@ -165,11 +167,23 @@ misterplex::WeakLadder weakForContentResolution(const misterplex::WeakLadder& ba
     misterplex::WeakLadder weak = base;
     const int keepBitrate = base.maxVideoBitrateKbps;
     const int keepMaxFrameRate = base.maxVideoFrameRate;
-    if (!misterplex::applyPlexTranscodeProfile(res.label, weak)) {
+    misterplex::ContentResolution effective = res;
+    if (!base.presentMultiPixel) {
+        int cw = res.width.get();
+        int ch = res.height.get();
+        if (misterplex::clampCodedSizeToRouteBHostCap(cw, ch, /*multi*/ false)) {
+            effective = misterplex::contentResolutionFor540pFabric720p();
+            std::fprintf(stderr,
+                         "misterplexd: ROUTE_B_HOST_CAP DECODE/tier %dx%d → %s "
+                         "(1280 DE forbidden @1ppc/20MHz; set PRESENT_MULTI_PIXEL=1 when fitted)\n",
+                         res.width.get(), res.height.get(), effective.label);
+        }
+    }
+    if (!misterplex::applyPlexTranscodeProfile(effective.label, weak)) {
         weak.profileName = "custom";
-        weak.videoResolution = res.label;
+        weak.videoResolution = effective.label;
         if (!bitrateExplicit)
-            weak.maxVideoBitrateKbps = res.weakBitrateKbps;
+            weak.maxVideoBitrateKbps = effective.weakBitrateKbps;
         // custom geometry: keep base fps cap (0 unless conf set WEAK_MAX_FRAME_RATE)
         weak.maxVideoFrameRate = keepMaxFrameRate;
     } else {
@@ -420,6 +434,11 @@ int main(int argc, char** argv) {
             weakMaxFrameRateExplicit = true;
             weak.maxVideoFrameRate = std::max(0, std::atoi(v.c_str()));
         }
+        // Route-B 1ppc default: host content ≤960×540. Only set when multi-pixel
+        // present path is actually fitted (w-clock PRESENT_MULTI_PIXEL).
+        v = loadConf(confPath, "PRESENT_MULTI_PIXEL");
+        if (!v.empty())
+            weak.presentMultiPixel = confTruthy(v);
         v = loadConf(confPath, "AUTO_LADDER_STEPDOWN");
         if (!v.empty())
             autoLadderStepdown = confTruthy(v);
@@ -857,10 +876,27 @@ int main(int argc, char** argv) {
     }
     std::fprintf(stderr,
                  "misterplexd: PREFER_DIRECT_H264 conf_set=%d conf_val=%d STREAM=%d — "
-                 "DP default when conf unset (miss#13); HD>720→xcode 1280x720; "
-                 "0=>SD universal allow=off\n",
+                 "DP default when conf unset (miss#13); HD>Route-B-cap→xcode 960x540 "
+                 "(1280 DE only if PRESENT_MULTI_PIXEL); 0=>SD universal allow=off\n",
                  preferDirectH264ConfSet ? 1 : 0, preferDirectH264Conf ? 1 : 0,
                  streamEnabled ? 1 : 0);
+    std::fprintf(stderr, "misterplexd: PRESENT_MULTI_PIXEL=%d Route-B host cap %s\n",
+                 weak.presentMultiPixel ? 1 : 0,
+                 weak.presentMultiPixel ? "OFF(multi fitted)" : "960x540");
+    if (!weak.presentMultiPixel) {
+        int dw = decodeSize.width.get();
+        int dh = decodeSize.height.get();
+        if (misterplex::clampCodedSizeToRouteBHostCap(dw, dh, false)) {
+            std::fprintf(stderr,
+                         "misterplexd: ROUTE_B_HOST_CAP decodeSize %s → 960x540 "
+                         "(1280 DE @1ppc ≈20.7 Hz — RED under Route B)\n",
+                         decodeSize.wxh().c_str());
+            decodeSize = misterplex::CodedSize{misterplex::kPlex540pCodedWidth,
+                                               misterplex::kPlex540pCodedHeight};
+            if (decodeSizeSource.find("route_b_cap") == std::string::npos)
+                decodeSizeSource += "+route_b_cap";
+        }
+    }
     std::fprintf(stderr, "misterplexd: DDR_MEM_SYNC=%s DDR_MEM_FLUSH=%s\n",
                  ddrMemSync ? "1" : "0", ddrMemFlush ? "1" : "0");
     std::fprintf(stderr, "misterplexd: DDR_FRAME_FORMAT=yuv420p\n");

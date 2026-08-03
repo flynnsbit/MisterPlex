@@ -994,12 +994,14 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
         }
     }
 
-    // Two-regime (parent miss #13): SD H.264 → DP Part (profile preserved; 98.6%
-    // constrained baseline). HD >720p → universal exact 1280×720 (not full HD DP).
+    // Two-regime (miss #13 + rd-duck Route-B): SD H.264 → DP Part (profile preserved).
+    // Above Route-B host cap (960×540 @1ppc) → universal 540 — NOT auto 1280 DE
+    // (beam totals only ~20.7 Hz). presentMultiPixel restores 1280 tier when fitted.
     // preferDirectH264 is the conf allow flag (default true); geometry overrides.
     const bool metaOk = metaFound;
     const bool isH264 = metaOk && mediaVideoIsH264(xml);
     const bool wantDirect = preferDirectH264 && key.rfind("/library", 0) == 0;
+    const bool multiPixel = weak.presentMultiPixel;
     // Optional profile tag for operator logs (High often implies CABAC sticky skip).
     auto videoProfileNote = [&]() -> std::string {
         if (!metaOk)
@@ -1030,8 +1032,8 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
     };
     const std::string profNote = videoProfileNote();
     r.videoProfile = profNote;
-    const PlayDeliveryRegime regime =
-        selectPlayDeliveryRegime(r.mediaWidth, r.mediaHeight, wantDirect, isH264);
+    const PlayDeliveryRegime regime = selectPlayDeliveryRegime(
+        r.mediaWidth, r.mediaHeight, wantDirect, isH264, multiPixel);
     r.playRegime = playDeliveryRegimeName(regime);
     const bool directH264 = (regime == PlayDeliveryRegime::DirectPlaySd);
     // Direct Part bank geometry: pad-only align-up of media samples (rd-duck).
@@ -1151,20 +1153,37 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
         // rd-duck: universal remains arm_scale_fallback (delivery_verified=0,
         // force-scale, vf frozen pre-banner; PMS ±2 tweak can unalign delivery).
         // Do NOT treat this as fabric-native / ARM-scale-removed.
-        // HD>720p regime: pin exact 1280×720 ceiling (measured true-720 delivery).
+        // HD above Route-B host cap: pin 960×540 unless multi-pixel fitted (then 1280).
         WeakLadder weakEff = weak;
         if (regime == PlayDeliveryRegime::TranscodeHd720) {
-            applyPlexTranscodeProfile("720p", weakEff);
             r.playRegime = playDeliveryRegimeName(PlayDeliveryRegime::TranscodeHd720);
-            r.requestWidth = kPlex720pCodedWidth.get();
-            r.requestHeight = kPlex720pCodedHeight.get();
+            if (multiPixel) {
+                applyPlexTranscodeProfile("720p", weakEff);
+                r.requestWidth = kPlex720pCodedWidth.get();
+                r.requestHeight = kPlex720pCodedHeight.get();
+                r.sourceAwarePolicy = "transcode_hd_720_multi_pixel";
+            } else {
+                // LOUD fallback: never silently emit 1280 DE on Route-B 1ppc.
+                applyPlexTranscodeProfile("540p", weakEff);
+                r.requestWidth = kPlex540pCodedWidth.get();
+                r.requestHeight = kPlex540pCodedHeight.get();
+                r.sourceAwarePolicy = "transcode_hd_route_b_540";
+                if (!r.detail.empty())
+                    r.detail += "; ";
+                r.detail += "ROUTE_B_HOST_CAP media=" + std::to_string(r.mediaWidth) + "x" +
+                            std::to_string(r.mediaHeight) +
+                            " → request 960x540 (1280 DE forbidden @1ppc/20MHz; "
+                            "PRESENT_MULTI_PIXEL=0)";
+            }
             r.storeWidth = r.requestWidth;
             r.storeHeight = r.requestHeight;
             r.sourceAwareApplied = true;
-            r.sourceAwarePolicy = "transcode_hd_720";
         } else if (r.mediaWidth > 0 && r.mediaHeight > 0) {
             int maxW = 0, maxH = 0;
             parseResolution(weak.videoResolution, maxW, maxH);
+            // Ceiling itself must not exceed Route-B host cap when multi-pixel off.
+            if (!multiPixel)
+                clampCodedSizeToRouteBHostCap(maxW, maxH, /*multi*/ false);
             const auto sel = selectSourceAwarePmsRequest(r.mediaWidth, r.mediaHeight, maxW, maxH);
             if (sel.request_w > 0 && sel.request_h > 0) {
                 weakEff.videoResolution = sel.videoResolution;
@@ -1179,6 +1198,12 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
             // No media meta — still snap the configured ceiling for store safety.
             int maxW = 0, maxH = 0;
             if (parseResolution(weak.videoResolution, maxW, maxH) && maxW > 0 && maxH > 0) {
+                if (!multiPixel && clampCodedSizeToRouteBHostCap(maxW, maxH, false)) {
+                    applyPlexTranscodeProfile("540p", weakEff);
+                    if (!r.detail.empty())
+                        r.detail += "; ";
+                    r.detail += "ROUTE_B_HOST_CAP conf ladder → 960x540 (was 1280-class)";
+                }
                 const auto sel = selectSourceAwarePmsRequest(0, 0, maxW, maxH);
                 weakEff.videoResolution = sel.videoResolution;
                 r.requestWidth = sel.request_w;

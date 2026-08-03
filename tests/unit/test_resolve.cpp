@@ -376,24 +376,39 @@ int main() {
     CHECK(applySourceFpsConf("auto", 0) == 0);
 
     // --- Two-regime + DP default + full identity headers (parent miss #13) ---
+    // rd-duck Route-B: host cap 960×540 @1ppc; 1280 DE is RED (≈20.7 Hz).
     {
         using misterplex::PlayDeliveryRegime;
+        using misterplex::clampCodedSizeToRouteBHostCap;
+        using misterplex::mediaExceedsRouteBHostContentCap;
         using misterplex::mediaIsHdAbove720p;
         using misterplex::playDeliveryRegimeName;
+        using misterplex::routeBContentDeFitsFps;
+        using misterplex::routeBTotalPixelsPerSec;
         using misterplex::selectPlayDeliveryRegime;
         CHECK(!mediaIsHdAbove720p(624, 480));
-        CHECK(!mediaIsHdAbove720p(1280, 720)); // exact path tier stays DP-eligible
+        CHECK(!mediaIsHdAbove720p(960, 540));
+        CHECK(mediaIsHdAbove720p(1280, 720)); // Route-B: exact 1280 exceeds host cap
         CHECK(mediaIsHdAbove720p(1920, 1080));
         CHECK(mediaIsHdAbove720p(1440, 1080));
         CHECK(!mediaIsHdAbove720p(0, 0));
+        // multi-pixel fitted restores legacy >720-only threshold
+        CHECK(!mediaExceedsRouteBHostContentCap(1280, 720, /*multi*/ true));
+        CHECK(mediaExceedsRouteBHostContentCap(1920, 1080, /*multi*/ true));
         CHECK(selectPlayDeliveryRegime(624, 480, true, true) ==
               PlayDeliveryRegime::DirectPlaySd);
         CHECK(selectPlayDeliveryRegime(320, 240, true, true) ==
               PlayDeliveryRegime::DirectPlaySd);
-        CHECK(selectPlayDeliveryRegime(1280, 720, true, true) ==
+        CHECK(selectPlayDeliveryRegime(960, 540, true, true) ==
               PlayDeliveryRegime::DirectPlaySd);
+        // POS: HD → xcode regime (target 540 under Route-B, not silent 1280 DE)
+        CHECK(selectPlayDeliveryRegime(1280, 720, true, true) ==
+              PlayDeliveryRegime::TranscodeHd720);
         CHECK(selectPlayDeliveryRegime(1920, 1080, true, true) ==
               PlayDeliveryRegime::TranscodeHd720);
+        // multi-pixel: exact 1280 stays DP-eligible
+        CHECK(selectPlayDeliveryRegime(1280, 720, true, true, /*multi*/ true) ==
+              PlayDeliveryRegime::DirectPlaySd);
         // NEG: never hardcode rk — geometry alone selects HD xcode.
         CHECK(selectPlayDeliveryRegime(1920, 1080, true, true) !=
               PlayDeliveryRegime::DirectPlaySd);
@@ -404,7 +419,28 @@ int main() {
         CHECK(std::string(playDeliveryRegimeName(PlayDeliveryRegime::DirectPlaySd)) ==
               "direct_play_sd");
         CHECK(std::string(playDeliveryRegimeName(PlayDeliveryRegime::TranscodeHd720)) ==
-              "transcode_hd_720");
+              "transcode_hd_540");
+        // Cross-gate: every host-emittable DE must fit clk with blanking mins.
+        CHECK(routeBContentDeFitsFps(960, 540, 24));
+        CHECK(routeBContentDeFitsFps(960, 540, 30));
+        CHECK(routeBContentDeFitsFps(624, 480, 24));
+        // NEG RED: 1280×720 under Route-B 1ppc (active 22.118M + totals ~20.7 Hz)
+        CHECK(!routeBContentDeFitsFps(1280, 720, 24));
+        CHECK(!routeBContentDeFitsFps(1280, 720, 30));
+        CHECK(!routeBContentDeFitsFps(1280, 720, 24, /*multi*/ false));
+        // Pre-registered: totals 1312*736*24 > 20e6
+        CHECK(routeBTotalPixelsPerSec(1280, 720, 24) > 20000000LL);
+        CHECK(routeBTotalPixelsPerSec(960, 540, 24) <= 20000000LL);
+        // multi_pixel lifts size ceiling check only when caller models multi rate;
+        // still fails pure 1ppc pixel budget for 1280@24 (honest).
+        CHECK(!routeBContentDeFitsFps(1280, 720, 24, /*multi*/ true));
+        int cw = 1280, ch = 720;
+        CHECK(clampCodedSizeToRouteBHostCap(cw, ch, false));
+        CHECK(cw == 960 && ch == 540);
+        cw = 1280;
+        ch = 720;
+        CHECK(!clampCodedSizeToRouteBHostCap(cw, ch, /*multi*/ true));
+        CHECK(cw == 1280 && ch == 720);
         // miss #15: HD xcode class is ARM for fabric even if attr says CB
         CHECK(!plexDeliveryIsFabricEligible(true, "constrained baseline"));
         CHECK(plexDeliveryIsFabricEligible(false, "constrained baseline"));

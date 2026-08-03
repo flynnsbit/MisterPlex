@@ -276,29 +276,91 @@ inline bool pathMayBeFabricNative(const char* delivery_basis, bool delivery_veri
 
 // --- Two-regime play policy (parent 2026-08-03, miss #13 + #15) ---
 // Library census N=142: 98.6% constrained baseline; PMS never transcodes *to*
-// baseline, but DP preserves source profile. SD majority → DP native; HD above
-// 720p bank → universal exact 1280×720 (measured delivery). Never hardcode
-// ratingKeys.
+// baseline, but DP preserves source profile. SD majority → DP native.
 //
-// miss #15: ANY transcode is ARM-fallback for fabric decode (bytes = Main+B=2
-// even when decision XML says CB). HD regime remains the right *pixels* choice
-// but is never fabric-bitstream-eligible. 1080p CB DP cost = w-nostub.
+// rd-duck 2026-08-03 BLOCKING (Route-B / w-clock first-fit):
+//   1ppc @ 20 MHz, H_TOTAL≥h_de+32, V_TOTAL≥v_de+16.
+//   1280×720 active alone @24 = 22.118 Mpix/s > 20e6.
+//   Clamped totals 1312×736 → 20e6/(1312*736) = 20.712 Hz for BOTH 24 and 30.
+//   PRESENT_BEAM_960 forbids multi-pixel with this path. So automatic HD→1280
+//   silently plays at ~20.7 unique fps / drops. Host first-fit cap is **960×540**
+//   unless PRESENT_MULTI_PIXEL is actually enabled/fitted.
 //
-// Threshold: strictly larger than the 1280×720 bank on either axis (1080p class).
-// Exact 1280×720 source stays DP-eligible (already path tier).
+// miss #15: ANY transcode is ARM-fallback for fabric decode (bytes = Main+B=2).
+// HD regime is ARM pixel class (xcode to Route-B cap), never fabric-bitstream.
+//
+// Enum tag TranscodeHd720 is historical; product name/target is Route-B 540.
 enum class PlayDeliveryRegime : uint8_t {
     Unknown = 0,
-    DirectPlaySd = 1,   // native SD/≤720 H.264 Part — fabric iff bitstream CB
-    TranscodeHd720 = 2, // source >720p → PMS xcode 1280×720 — ARM decode class
+    DirectPlaySd = 1,   // native ≤Route-B host cap H.264 Part — fabric iff CB
+    TranscodeHd720 = 2, // source above host cap → PMS xcode ≤960×540 (Route-B)
     ForceUniversal = 3, // conf / non-H.264 / missing Part — ARM decode class
 };
+
+// Route-B product beam budget (1ppc). Matches w-clock clamp mins.
+inline constexpr int kRouteBPixelClockHz = 20000000;
+inline constexpr int kRouteBMinHBlank = 32;
+inline constexpr int kRouteBMinVBlank = 16;
+// Host-emittable content DE ceiling without PRESENT_MULTI_PIXEL.
+inline constexpr int kRouteBHostContentMaxW = 960;
+inline constexpr int kRouteBHostContentMaxH = 540;
+
+inline long long routeBActivePixelsPerSec(int h_de, int v_de, int fps) {
+    if (h_de <= 0 || v_de <= 0 || fps <= 0)
+        return 0;
+    return 1LL * h_de * v_de * fps;
+}
+
+inline long long routeBTotalPixelsPerSec(int h_de, int v_de, int fps) {
+    if (h_de <= 0 || v_de <= 0 || fps <= 0)
+        return 0;
+    const int h_total = h_de + kRouteBMinHBlank;
+    const int v_total = v_de + kRouteBMinVBlank;
+    return 1LL * h_total * v_total * fps;
+}
+
+// True when content DE×fps fits Route-B 1ppc beam (active AND blanked totals).
+// multi_pixel=true skips the 960×540 host ceiling (fitted multi-pixel path only).
+inline bool routeBContentDeFitsFps(int h_de, int v_de, int fps,
+                                   bool present_multi_pixel = false) {
+    if (h_de <= 0 || v_de <= 0 || fps <= 0)
+        return false;
+    if (!present_multi_pixel &&
+        (h_de > kRouteBHostContentMaxW || v_de > kRouteBHostContentMaxH))
+        return false;
+    if (routeBActivePixelsPerSec(h_de, v_de, fps) > kRouteBPixelClockHz)
+        return false;
+    if (routeBTotalPixelsPerSec(h_de, v_de, fps) > kRouteBPixelClockHz)
+        return false;
+    return true;
+}
+
+// Host may emit this coded/store size under Route-B defaults (fps=24 class).
+inline bool routeBHostMayEmitContentSize(int w, int h, int fps = 24,
+                                         bool present_multi_pixel = false) {
+    return routeBContentDeFitsFps(w, h, fps, present_multi_pixel);
+}
+
+// Clamp coded WxH down to Route-B host cap. Returns true when clamped.
+// multi_pixel: no clamp (caller owns 1280 DE).
+inline bool clampCodedSizeToRouteBHostCap(int& w, int& h,
+                                          bool present_multi_pixel = false) {
+    if (present_multi_pixel || w <= 0 || h <= 0)
+        return false;
+    if (w <= kRouteBHostContentMaxW && h <= kRouteBHostContentMaxH)
+        return false;
+    w = kRouteBHostContentMaxW;
+    h = kRouteBHostContentMaxH;
+    return true;
+}
 
 inline const char* playDeliveryRegimeName(PlayDeliveryRegime r) {
     switch (r) {
     case PlayDeliveryRegime::DirectPlaySd:
         return "direct_play_sd";
     case PlayDeliveryRegime::TranscodeHd720:
-        return "transcode_hd_720";
+        // Honest product name: Route-B 540 host cap (not true 1280 DE).
+        return "transcode_hd_540";
     case PlayDeliveryRegime::ForceUniversal:
         return "force_universal";
     default:
@@ -306,21 +368,32 @@ inline const char* playDeliveryRegimeName(PlayDeliveryRegime r) {
     }
 }
 
-// True when library media is above the 720p path bank (DP would pull full HD DPB).
-inline bool mediaIsHdAbove720p(int media_w, int media_h) {
+// True when library media exceeds Route-B host content DE (needs xcode tier).
+// Default (multi_pixel=false): >960×540 — includes exact 1280×720 (beam RED).
+// multi_pixel fitted: legacy >1280×720 full-HD DP still allowed at 1280 tier.
+inline bool mediaExceedsRouteBHostContentCap(int media_w, int media_h,
+                                             bool present_multi_pixel = false) {
     if (media_w <= 0 || media_h <= 0)
         return false;
-    return media_w > 1280 || media_h > 720;
+    if (present_multi_pixel)
+        return media_w > 1280 || media_h > 720;
+    return media_w > kRouteBHostContentMaxW || media_h > kRouteBHostContentMaxH;
+}
+
+// Backward-compatible name: Route-B host-cap test (not "strictly above 720p").
+inline bool mediaIsHdAbove720p(int media_w, int media_h) {
+    return mediaExceedsRouteBHostContentCap(media_w, media_h, /*multi*/ false);
 }
 
 // Select regime from *item* geometry (and optional allow_direct). Profile main/high
 // does not force xcode here — DP preserves bits; fabric gate → ARM fallback.
 inline PlayDeliveryRegime selectPlayDeliveryRegime(int media_w, int media_h,
                                                    bool allow_direct_h264,
-                                                   bool source_is_h264) {
+                                                   bool source_is_h264,
+                                                   bool present_multi_pixel = false) {
     if (!source_is_h264)
         return PlayDeliveryRegime::ForceUniversal;
-    if (mediaIsHdAbove720p(media_w, media_h))
+    if (mediaExceedsRouteBHostContentCap(media_w, media_h, present_multi_pixel))
         return PlayDeliveryRegime::TranscodeHd720;
     if (allow_direct_h264)
         return PlayDeliveryRegime::DirectPlaySd;

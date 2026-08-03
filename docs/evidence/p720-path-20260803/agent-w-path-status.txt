@@ -1,13 +1,15 @@
 w-path status
-tip: b3ab7b30 (+ status touch) fix(path): retain Direct-Part plan trust across measured-session clear
+tip: (pending) fix(path): Route-B host cap 960x540; 1280 DE RED @1ppc
 unit true rc=0
 
-rd-duck DP verified wipe CLOSED:
-- planDeliveryGeometryTrusted_ vs measuredDeliveryGeometryVerified_
-- measured cleared BEFORE vf plan; plan trust/basis never wiped
-- vfReq = planTimeDeliveryGeometryVerified(basis, plan, measured)
-- seek without main retains DP via basis refresh on setDeliveryBasis
-- test_ffmpeg_vf GREEN_PATH_dp_plan_trust_survives_measured_clear
-  320 barrier + 426 pad-only + NEG xcode scale
+rd-duck BLOCKING 1280 tier CLOSED:
+- HD regime → PMS 960x540 (transcode_hd_route_b_540), not silent 1280 DE
+- routeBContentDeFitsFps: 1280x720@24/30 RED (totals 1312*736 → ~20.7 Hz)
+- 960x540@24/30 PASS under 20 MHz 1ppc + blanking mins
+- mediaIsHdAbove720p now Route-B cap (>960x540); exact 1280 no longer DP default
+- PRESENT_MULTI_PIXEL=1 restores 1280 tier when fitted
+- DECODE/weak 1280 falls back loudly to 540
+- test_resolve NEG 1280 gate + POS HD→540 regime name transcode_hd_540
 
-Prior: 4dea61bc q5 seqlock. bit34 RESERVED. No Quartus/device.
+Prior: 1b395f68/b3ab7b30 DP plan trust; 4dea61bc q5 seqlock
+bit34 RESERVED. No Quartus/device.

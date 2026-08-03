@@ -61,6 +61,11 @@ inline const char* pathPublicSymbolRollCall() {
     (void)selectPlxgAspectCadence(0, 0, "", "", 0, 0);
     (void)selectSourceAwarePmsRequest(624, 480, 960, 540);
     (void)selectDirectPartStoreGeometry(320, 240);
+    // Route-B host content budget (rd-duck: 1280 DE RED @1ppc).
+    (void)routeBContentDeFitsFps(960, 540, 24);
+    (void)routeBContentDeFitsFps(1280, 720, 24); // must remain callable; returns false
+    (void)selectPlayDeliveryRegime(1920, 1080, true, true, false);
+    (void)playDeliveryRegimeName(PlayDeliveryRegime::TranscodeHd720);
     (void)classifyPathScaleClass("transcode_request", false, true, false);
     (void)pathScaleClassName(PathScaleClass::ArmScaleFallback);
     uint8_t fps = 0;
