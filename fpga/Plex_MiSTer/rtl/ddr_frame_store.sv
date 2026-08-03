@@ -164,6 +164,10 @@ module ddr_frame_store #(
 	localparam [CODED_Y_W-1:0] LEG_CROP_TOP = CODED_Y_W'(CROP_TOP);
 	localparam [28:0] LEG_BASE_W0 = PHYS_BASE[31:3];
 	localparam [28:0] LEG_BANK_STRIDE_QWORDS = 29'(HPS_BANK_STRIDE_BYTES / 8);
+	// Usable payload per bank = stride − doorbell page (0x1000). bank1End must
+	// be <= doorbell = base + 2*stride − 0x1000 ⇒ frame_bytes <= stride − 0x1000.
+	localparam [28:0] LEG_BANK_USABLE_QWORDS =
+		29'((HPS_BANK_STRIDE_BYTES > 32'h1000 ? (HPS_BANK_STRIDE_BYTES - 32'h1000) : 32'd0) / 8);
 	localparam [28:0] LEG_BASE_W1 = PHYS_BASE[31:3] + LEG_BANK_STRIDE_QWORDS;
 	localparam [28:0] LEG_DOORBELL_W = DOORBELL_PHYS[31:3];
 	localparam [28:0] OPTC_BASE_W0 = PHYS_BASE_720P[31:3];
@@ -307,16 +311,17 @@ module ddr_frame_store #(
 			eff_c_pitch_qw <= rt_cs_cl[10:3];
 			eff_u_base_qw  <= rt_y_bytes_qw;
 			eff_v_base_qw  <= rt_y_bytes_qw + rt_c_bytes_qw;
-			// Option-C when I420 payload cannot fit legacy 512 KiB bank stride.
-			// Compare frame qwords to LEG_BANK_STRIDE_QWORDS (not coded_w>=1280):
-			// 960x540 tight = 777600 B > 524288 → Option-C; 624x480 stays legacy.
+			// Option-C when I420 payload cannot fit legacy *usable* capacity
+			// (stride − 4 KiB doorbell page). NOT full stride, NOT coded_w>=1280.
+			// 720x482 = 520560 > 520192 usable → Option-C (even though < 524288).
+			// 960x540 = 777600 → Option-C; 624x480 stays legacy.
 `ifdef DDR_FRAME_STORE_FAULT_FORCE_LEGACY_BANK_MAP
 			eff_optc_map   <= 1'b0;
 			eff_base_w0    <= LEG_BASE_W0;
 			eff_base_w1    <= LEG_BASE_W1;
 			eff_doorbell_w <= LEG_DOORBELL_W;
 `else
-			if ((rt_y_bytes_qw + (rt_c_bytes_qw << 1)) > LEG_BANK_STRIDE_QWORDS) begin
+			if ((rt_y_bytes_qw + (rt_c_bytes_qw << 1)) > LEG_BANK_USABLE_QWORDS) begin
 				eff_optc_map   <= 1'b1;
 				eff_base_w0    <= OPTC_BASE_W0;
 				eff_base_w1    <= OPTC_BASE_W1;

@@ -1382,36 +1382,48 @@ def check_ddr_frame_layout_contract() -> None:
             "deliberate RTL CODED_WIDTH/Y_STRIDE 624→320 fault did not diverge from host "
             f"(fault_coded={fault_coded} fault_stride={fault_stride} host_stride={host_stride})"
         )
-    # Option-C bank map: capacity (frame qwords > legacy stride qwords), NOT width>=1280.
-    # Product 960x540 is <1280 wide but 777600 B > 524288 B and must select Option-C.
+    # Option-C bank map: capacity vs *usable* (stride-4KiB), NOT full stride, NOT w>=1280.
     store = strip_comments(DDR_FRAME_STORE.read_text(encoding="utf-8", errors="replace"))
+    store_ns = store.replace(" ", "")
     check(
-        "rt_cw_cl >= 11'd1280" not in store and "rt_cw_cl>=11'd1280" not in store.replace(" ", ""),
+        "rt_cw_cl >= 11'd1280" not in store and "rt_cw_cl>=11'd1280" not in store_ns,
         "ddr_frame_store must not select Option-C via coded_w>=1280 "
         "(960x540 product overruns legacy bank; use capacity predicate)",
     )
     check(
-        "LEG_BANK_STRIDE_QWORDS" in store
-        and ("rt_y_bytes_qw + (rt_c_bytes_qw << 1))" in store
-             or "rt_y_bytes_qw+(rt_c_bytes_qw<<1)" in store.replace(" ", "")),
+        "LEG_BANK_USABLE_QWORDS" in store
+        and (
+            "rt_y_bytes_qw + (rt_c_bytes_qw << 1)) > LEG_BANK_USABLE_QWORDS" in store
+            or "rt_y_bytes_qw+(rt_c_bytes_qw<<1)>LEG_BANK_USABLE_QWORDS" in store_ns
+        ),
         "ddr_frame_store Option-C select must compare I420 frame qwords to "
-        "LEG_BANK_STRIDE_QWORDS (capacity)",
+        "LEG_BANK_USABLE_QWORDS (stride-4KiB), not full stride",
+    )
+    check(
+        cpp_const(host, "kPlex480pYuv420pBankUsableBytes") == 520192,
+        "host legacy usable must be 0x80000-0x1000 = 520192",
     )
     check(
         cpp_const(host, "kPlex720pOutputSourceBytes")
-        > cpp_const(host, "kPlex480pYuv420pBankStride"),
-        "960x540 display I420 must exceed legacy bank stride (forces Option-C)",
+        > cpp_const(host, "kPlex480pYuv420pBankUsableBytes"),
+        "960x540 display I420 must exceed legacy usable capacity (forces Option-C)",
     )
     check(
         cpp_const(host, "kPlex720pOutputSourceDisplayBytes")
         != cpp_const(host, "kPlex720pOutputSourceCodedBytes"),
         "display 777600 and MB-coded 783360 must stay distinct",
     )
+    # Host/RTL usable constants lockstep.
+    layout_svh = strip_comments(DDR_FRAME_LAYOUT_SVH.read_text(encoding="utf-8", errors="replace"))
+    check(
+        sv_const(layout_svh, "DDR_FRAME_LEGACY_BANK_USABLE_BYTES") == 520192,
+        "RTL DDR_FRAME_LEGACY_BANK_USABLE_BYTES must be 520192",
+    )
     print("PASS DDR frame layout ARM/RTL contract")
     print(
         "PASS DDR stride parity red-check: RTL CODED_WIDTH/Y_STRIDE 624→320 diverges from host"
     )
-    print("PASS DDR Option-C bank map capacity select (not width>=1280)")
+    print("PASS DDR Option-C bank map usable-capacity select (not width>=1280, not full stride)")
 
 
 def check_runtime_ddr_layout_literal_sweep() -> None:
@@ -1860,17 +1872,29 @@ def check_present_geometry_stride_contract() -> None:
                 "FPGA present path must route every decode tier through ddrFrameGeometryForFpgaPresent",
             ),
             (
-                # Capacity-based canvas: legacy 480p product when I420 fits 512 KiB bank;
-                # Option-C 720p canvas when payload overruns (960x540, 1280x720). Must NOT
-                # be identity-DECODE (320 shear) and must NOT key only on width>=1280.
+                # Daemon FFmpeg path: ALWAYS product 480p canvas. Must NOT return
+                # Option-C 1280x720 for 960x540 (would force FFmpeg 720p canvas).
+                # Bank map / DE canvas are separate helpers.
+                # Comment-stripped form drops /*decodeWidth*/ names → CodedWidth,CodedHeight.
                 host_norm,
-                "ddrSelectBankMapForContent(w,h)==DdrBankMap::OptionC720p)returnplex720pDdrFrameGeometry();returnproductDdrFrameStoreGeometry();",
-                "ddrFrameGeometryForFpgaPresent must capacity-select Option-C canvas else product 480p",
+                "inlineDdrFrameGeometryddrFrameGeometryForFpgaPresent(CodedWidth,CodedHeight)"
+                "{returnproductDdrFrameStoreGeometry();}",
+                "ddrFrameGeometryForFpgaPresent must ignore DECODE and return productDdrFrameStoreGeometry (624)",
             ),
             (
                 host_norm,
-                "inlineboolddrI420PayloadNeedsOptionCBank(size_tframeBytes){returnframeBytes>static_cast<size_t>(kPlex480pYuv420pBankStride);}",
-                "Option-C bank predicate must be payload>legacy 512KiB stride (capacity, not width)",
+                "inlineboolddrI420PayloadNeedsOptionCBank(size_tframeBytes){returnframeBytes>static_cast<size_t>(kPlex480pYuv420pBankUsableBytes);}",
+                "Option-C bank predicate must be payload>legacy usable (stride-4KiB), not full stride",
+            ),
+            (
+                host_norm,
+                "constexpruint32_tkPlex480pYuv420pBankUsableBytes=520192u;",
+                "legacy usable capacity must be 520192 (0x80000-0x1000)",
+            ),
+            (
+                host_norm,
+                "constexpruint32_tkPlex720pYuv420pBankUsableBytes=1568768u;",
+                "Option-C usable capacity must be 1568768 (0x180000-0x1000)",
             ),
             (
                 media_norm,
@@ -2037,17 +2061,17 @@ def check_present_geometry_stride_contract() -> None:
             "deliberately changed RTL luma stride CODED_W/8→FRAME_W/8 "
             "(640 B/line reader vs 624 B writer = 16 px/line shear) did not make the gate red"
         )
-    # Classic shear: FPGA-present geometry follows DECODE (320) instead of canvas select.
-    capacity_pin = (
-        "ddrSelectBankMapForContent(w,h)==DdrBankMap::OptionC720p)"
-        "returnplex720pDdrFrameGeometry();returnproductDdrFrameStoreGeometry();"
+    # Classic shear: FPGA-present geometry follows DECODE (320) instead of silicon 624.
+    present_pin = (
+        "inlineDdrFrameGeometryddrFrameGeometryForFpgaPresent(CodedWidth,CodedHeight)"
+        "{returnproductDdrFrameStoreGeometry();}"
     )
     bad_fpga_present_identity = host_nt.replace(
-        capacity_pin,
-        "returnmakeDdrFrameGeometry(CodedWidth{w},CodedHeight{h});"
-        "returnmakeDdrFrameGeometry(CodedWidth{w},CodedHeight{h});",
+        present_pin,
+        "inlineDdrFrameGeometryddrFrameGeometryForFpgaPresent(CodedWidthw,CodedHeighth)"
+        "{returnmakeDdrFrameGeometry(w,h);}",
     )
-    if capacity_pin not in host_nt or not missing_stride_requirements(
+    if present_pin not in host_nt or not missing_stride_requirements(
         bad_fpga_present_identity, media_nt, frame_nt, ffmpeg_vf_nt
     ):
         fail(

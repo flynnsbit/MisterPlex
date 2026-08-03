@@ -130,5 +130,10 @@ localparam int DDR_FRAME_720P_OUTPUT_U_PLANE_OFFSET = 518400; // 960*540
 localparam int DDR_FRAME_720P_OUTPUT_V_PLANE_OFFSET = 648000; // 518400+480*270
 localparam int DDR_FRAME_720P_OUTPUT_Y_LINE_QWORDS = 120;     // 960/8
 localparam int DDR_FRAME_720P_OUTPUT_CHROMA_LINE_QWORDS = 60; // 480/8
-// Legacy bank capacity threshold (bytes). Payload larger → Option-C map.
+// Legacy bank stride and *usable* capacity. Doorbell page steals the last 4 KiB
+// of the two-bank window (doorbell = base + 2*stride - 0x1000), so bank1 payload
+// must fit in stride - 0x1000. Selector must use usable, not full stride.
 localparam int DDR_FRAME_LEGACY_BANK_STRIDE_BYTES = 32'h0008_0000; // 524288
+localparam int DDR_FRAME_BANK_DOORBELL_PAGE_BYTES = 32'h1000;      // 4096
+localparam int DDR_FRAME_LEGACY_BANK_USABLE_BYTES = 32'h0007_F000; // 520192 = 0x80000-0x1000
+localparam int DDR_FRAME_720P_BANK_USABLE_BYTES = 32'h0017_F000;   // 1568768 = 0x180000-0x1000

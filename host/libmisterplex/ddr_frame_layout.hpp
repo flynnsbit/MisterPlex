@@ -356,11 +356,36 @@ inline DdrFrameGeometry plex720pDdrFrameGeometry() {
     return g;
 }
 
-// True when an I420 payload cannot fit the legacy 512 KiB bank stride.
-// Mirrors ddr_frame_store.sv Option-C select: capacity, NOT coded_w>=1280.
-// 624x480 (449280) → false; 960x540 (777600) → true; 1280x720 → true.
+// Doorbell/control page occupies the final 4 KiB of the two-bank map:
+//   doorbell = phys + 2*bank_stride - kDdrBankDoorbellPageBytes
+// Bank1 payload must end at or before doorbell, so usable payload per bank is:
+//   usable = bank_stride - kDdrBankDoorbellPageBytes
+// (rd-duck: full-stride capacity is WRONG — bank1 would overlap the doorbell page.)
+constexpr uint32_t kDdrBankDoorbellPageBytes = 0x1000u;
+// Literals so rtl_invariants parity parser and static locks match .svh.
+constexpr uint32_t kPlex480pYuv420pBankUsableBytes = 520192u;  // 0x80000 - 0x1000
+constexpr uint32_t kPlex720pYuv420pBankUsableBytes = 1568768u; // 0x180000 - 0x1000
+static_assert(kPlex480pYuv420pBankUsableBytes ==
+                  kPlex480pYuv420pBankStride - kDdrBankDoorbellPageBytes,
+              "legacy usable = 0x80000-0x1000");
+static_assert(kPlex720pYuv420pBankUsableBytes ==
+                  kPlex720pYuv420pBankStride - kDdrBankDoorbellPageBytes,
+              "Option-C usable = 0x180000-0x1000");
+// Edge example (rd-duck): tight 720x482 = 520560 > 520192 → must select Option-C
+// even though 520560 < full stride 524288.
+constexpr size_t kDdrLegacyUsableEdgeBytes = 520560u; // 720*482*3/2
+
+inline uint32_t ddrBankUsablePayloadBytes(uint32_t bankStride) {
+    return (bankStride > kDdrBankDoorbellPageBytes) ? (bankStride - kDdrBankDoorbellPageBytes)
+                                                    : 0u;
+}
+
+// True when an I420 payload cannot fit the legacy bank's *usable* capacity
+// (stride minus doorbell page). Mirrors ddr_frame_store.sv Option-C select.
+// Capacity, NOT coded_w>=1280. 624x480 (449280) → false; 720x482 (520560) → true;
+// 960x540 (777600) → true; 1280x720 → true.
 inline bool ddrI420PayloadNeedsOptionCBank(size_t frameBytes) {
-    return frameBytes > static_cast<size_t>(kPlex480pYuv420pBankStride);
+    return frameBytes > static_cast<size_t>(kPlex480pYuv420pBankUsableBytes);
 }
 
 // Same predicate from plane geometry (tight or strided). frame_bytes =
@@ -392,18 +417,30 @@ inline DdrBankMap ddrSelectBankMapForContent(int contentW, int contentH) {
     return ddrSelectBankMapForI420(contentW, contentW / 2, contentH);
 }
 
-// FPGA-present *canvas* geometry for a content/decode tier.
-// - Content whose tight I420 fits the legacy 512 KiB bank → product 480p canvas
-//   (624-stride). 320x240 still maps here (scale+pad); identity-320 is the shear defect.
-// - Content that overruns legacy capacity (e.g. 960x540 = 777600) → Option-C
-//   1280x720 canvas. Width alone must not decide (960 < 1280 but needs Option-C).
-inline DdrFrameGeometry ddrFrameGeometryForFpgaPresent(CodedWidth decodeWidth,
-                                                      CodedHeight decodeHeight) {
-    const int w = decodeWidth.get();
-    const int h = decodeHeight.get();
-    if (w > 0 && h > 0 && (w % 2) == 0 && (h % 2) == 0 &&
-        ddrSelectBankMapForContent(w, h) == DdrBankMap::OptionC720p)
-        return plex720pDdrFrameGeometry();
+// DE / glass canvas for a bank map tier (scaler output). NOT storage / FFmpeg size.
+inline DdrFrameGeometry ddrCanvasGeometryForBankMap(DdrBankMap map) {
+    return (map == DdrBankMap::OptionC720p) ? plex720pDdrFrameGeometry()
+                                            : productDdrFrameStoreGeometry();
+}
+
+// Storage geometry ARM writes (tight native or product 480p coded bank).
+// 960x540 → identity storage 960x540 (777600). Never 1280x720 canvas, never 544.
+inline DdrFrameGeometry ddrStorageGeometryForContent(int contentW, int contentH) {
+    if (contentW == kPlex480pCodedWidth.get() && contentH == kPlex480pCodedHeight.get())
+        return plex480pDdrFrameGeometry();
+    if (contentW > 0 && contentH > 0 && (contentW % 2) == 0 && (contentH % 2) == 0)
+        return makeDdrFrameGeometry(CodedWidth{contentW}, CodedHeight{contentH});
+    return productDdrFrameStoreGeometry();
+}
+
+// FPGA-present geometry for the *daemon FFmpeg/rawvideo path* (media_player rawW/H).
+// MUST remain the product 480p silicon canvas for scale+pad tiers.
+// MUST NOT return Option-C 1280x720 for 960x540 — that would force FFmpeg to emit
+// a full 720p canvas and kill the measured +7.16 ms budget (rd-duck blocker #3).
+// Bank map and DE canvas are separate: ddrSelectBankMapForContent /
+// ddrCanvasGeometryForBankMap / makeDdrFabricOwnedPresentPlan.
+inline DdrFrameGeometry ddrFrameGeometryForFpgaPresent(CodedWidth /*decodeWidth*/,
+                                                      CodedHeight /*decodeHeight*/) {
     return productDdrFrameStoreGeometry();
 }
 
@@ -763,7 +800,7 @@ inline bool ddrFrameStoreAcceptsOptionCContent(int contentW, int contentH) {
     const size_t frameBytes = yuv420pFrameBytes(contentW, contentH);
     if (frameBytes == 0)
         return false;
-    if (frameBytes > static_cast<size_t>(kPlex720pYuv420pBankStride))
+    if (frameBytes > static_cast<size_t>(kPlex720pYuv420pBankUsableBytes))
         return false;
     // Must actually need Option-C OR be placed on Option-C canvas deliberately.
     // Oversize-for-legacy is the product 960x540 case.
@@ -906,10 +943,13 @@ static_assert(kPlex720pOutputUPlaneOffset == 518400, "960x540 U plane");
 static_assert(kPlex720pOutputVPlaneOffset == 648000, "960x540 V plane");
 static_assert(kPlex720pOutputYStrideBytes != kPlex720pYStrideBytes,
               "native content stride must differ from canvas 1280");
-static_assert(kPlex720pOutputSourceBytes < kPlex720pYuv420pBankStride,
-              "960x540 must fit Option-C bank stride");
-static_assert(kPlex720pOutputSourceBytes > kPlex480pYuv420pBankStride,
-              "960x540 must NOT fit legacy 512KiB bank — forces Option-C");
+static_assert(kPlex720pOutputSourceBytes < kPlex720pYuv420pBankUsableBytes,
+              "960x540 must fit Option-C usable capacity (stride-4KiB)");
+static_assert(kPlex720pOutputSourceBytes > kPlex480pYuv420pBankUsableBytes,
+              "960x540 must NOT fit legacy usable capacity — forces Option-C");
+static_assert(kDdrLegacyUsableEdgeBytes > kPlex480pYuv420pBankUsableBytes &&
+                  kDdrLegacyUsableEdgeBytes < kPlex480pYuv420pBankStride,
+              "rd-duck edge: 720x482 fits full stride but not usable");
 
 // Tight native I420 layout for a content rectangle (native_push=1).
 // Planes are contiguous with content strides — NOT canvas line_bytes.
@@ -954,9 +994,11 @@ inline DdrNativeContentLayout plex960x540NativeContentLayout() {
     return makeDdrNativeContentLayout(kPlex720pOutputSourceWidth, kPlex720pOutputSourceHeight);
 }
 
-// 960x540 tight must fit Option-C bank stride with room for doorbell page rules.
+// Tight content must fit bank *usable* payload (stride − doorbell page), matching
+// ddrFrameLayoutValid's bank1End <= doorbell rule. Full-stride compare is wrong.
 inline bool ddrNativeContentFitsBank(const DdrNativeContentLayout& c, uint32_t bank_stride) {
-    return c.valid && c.frame_bytes > 0 && c.frame_bytes <= bank_stride;
+    const uint32_t usable = ddrBankUsablePayloadBytes(bank_stride);
+    return c.valid && c.frame_bytes > 0 && c.frame_bytes <= static_cast<size_t>(usable);
 }
 
 // PMS maxBR floor for real 1280x720 (w-path). Content bitrate ~2600k class.
@@ -1242,9 +1284,13 @@ inline DdrArmPresentBudget makeDdrArmPresentBudget(const DdrNativePushPlan& nati
     return b;
 }
 
-// Fabric-owned present plan. canvasGeom is the *tier* bank (480p product or 720p
-// Option-C). content is what ARM writes. x0/y0 default to origin; non-zero when
-// fabric placement should inset (even-aligned for 4:2:0).
+// Fabric-owned present plan.
+//   contentW/H  = STORAGE (what ARM writes; plane bases/strides) — e.g. 960x540
+//   canvasGeom  = DE/glass canvas (scaler output) — e.g. 1280x720; NOT storage
+//   bank map    = capacity-selected from content payload (usable, not full stride)
+// PLXG geometry beat programs STORAGE dims so ddr_frame_store U/V bases match
+// native_push (U@518400 for 960x540). Programming canvas 1280x720 here would set
+// U@921600 and fetch 1280-wide rows against a 960-wide payload (rd-duck #3).
 inline DdrFabricOwnedPresentPlan makeDdrFabricOwnedPresentPlan(
     int contentW, int contentH, const DdrFrameGeometry& canvasGeom,
     uint32_t canvasPhysBase = kDdrFramePhysBase, int contentX0 = 0, int contentY0 = 0,
@@ -1261,11 +1307,36 @@ inline DdrFabricOwnedPresentPlan makeDdrFabricOwnedPresentPlan(
         return p;
     if (p.content_x0 < 0 || p.content_y0 < 0)
         return p;
+    // Content must fit inside the DE canvas (scaler input window), not redefine it.
     if (p.content_x0 + contentW > canvasGeom.coded_width.get() ||
         p.content_y0 + contentH > canvasGeom.coded_height.get())
         return p;
-    p.canvas_layout =
-        makeDdrFrameLayout(canvasGeom, canvasPhysBase, kDdrFrameStrideAlign);
+    // Map tier from *content* usable capacity; phys base must match the map.
+    const DdrBankMap map = ddrSelectBankMapForContent(contentW, contentH);
+    const uint32_t mapBase = (map == DdrBankMap::OptionC720p) ? kPlex720pDdrFramePhysBase
+                                                              : kDdrFramePhysBase;
+    // If caller passed a canvas phys base, prefer it only when it matches the map
+    // (Option-C callers pass kPlex720pDdrFramePhysBase). Mismatch → reject.
+    if (canvasPhysBase != mapBase && canvasPhysBase != kDdrFramePhysBase &&
+        canvasPhysBase != kPlex720pDdrFramePhysBase)
+        return p;
+    const uint32_t phys = (map == DdrBankMap::OptionC720p)
+                              ? ((canvasPhysBase == kPlex720pDdrFramePhysBase ||
+                                  canvasPhysBase == kDdrFramePhysBase)
+                                     ? kPlex720pDdrFramePhysBase
+                                     : canvasPhysBase)
+                              : kDdrFramePhysBase;
+    // canvas_layout describes the *bank window* (stride/doorbell/map) for the tier.
+    // Use fixed product/Option-C layout geometry for the map, not content dims.
+    const DdrFrameGeometry mapGeom = ddrCanvasGeometryForBankMap(map);
+    p.canvas_layout = makeDdrFrameLayout(mapGeom, phys, kDdrFrameStrideAlign);
+    // For Option-C product, pin fixed stride/doorbell even if alignUp would differ.
+    if (map == DdrBankMap::OptionC720p) {
+        p.canvas_layout.phys_base = kPlex720pDdrFramePhysBase;
+        p.canvas_layout.bank_stride = kPlex720pYuv420pBankStride;
+        p.canvas_layout.doorbell_phys = kPlex720pYuv420pDoorbellPhys;
+        p.canvas_layout.map_bytes = kPlex720pYuv420pBankStride * 2u;
+    }
     if (!ddrFrameLayoutValid(p.canvas_layout))
         return p;
     p.publish_bytes = p.native.native_bytes;
@@ -1274,16 +1345,18 @@ inline DdrFabricOwnedPresentPlan makeDdrFabricOwnedPresentPlan(
         return p;
     if (!ddrNativeContentFitsBank(p.content_layout, p.canvas_layout.bank_stride))
         return p;
-    // Content strides must not silently equal canvas when geometry differs
-    // (would mean we built the wrong layout object).
-    if (p.content_w != p.canvas_layout.coded_width &&
+    // Content strides must not silently equal canvas when geometry differs.
+    if (p.content_w != mapGeom.coded_width.get() &&
         p.content_layout.y_stride == p.canvas_layout.line_bytes)
+        return p;
+    // native_push publish length must be display storage, never MB-coded 544 path.
+    if (contentW == kPlex720pOutputSourceWidth && contentH == kPlex720pOutputSourceHeight &&
+        p.publish_bytes != static_cast<size_t>(kPlex720pOutputSourceDisplayBytes))
         return p;
     p.budget = makeDdrArmPresentBudget(p.native, p.offload, countFeedScaleRemoval,
                                        /*armPushesPixels=*/true);
-    // PLXG: geometry (canvas + native_push) → window (cw/ch) → origin (x0/y0).
-    p.plxg_word = encodePlxgGeometryWord(canvasGeom.coded_width.get(),
-                                         canvasGeom.coded_height.get(),
+    // PLXG geometry = STORAGE (content), not DE canvas.
+    p.plxg_word = encodePlxgGeometryWord(contentW, contentH,
                                          /*enable=*/true, /*nativePush=*/true);
     p.plxg_window_word = encodePlxgContentWindow(contentW, contentH, p.content_x0, p.content_y0);
     p.plxg_origin_word = encodePlxgContentOrigin(p.content_x0, p.content_y0);
