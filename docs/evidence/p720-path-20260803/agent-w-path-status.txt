@@ -1,5 +1,5 @@
 w-path status
-tip: (pending) fix(path): Route-B host cap 960x540; 1280 DE RED @1ppc
+tip: 9ca8198c fix(path): Route-B host cap 960x540; 1280 DE RED @1ppc
 unit true rc=0
 
 rd-duck BLOCKING 1280 tier CLOSED:
