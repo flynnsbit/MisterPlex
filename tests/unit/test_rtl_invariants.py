@@ -907,6 +907,16 @@ def check_ddr_frame_layout_contract() -> None:
         ("kYuv420BlackY", "DDR_FRAME_YUV_BLACK_Y"),
         ("kYuv420BlackU", "DDR_FRAME_YUV_BLACK_U"),
         ("kYuv420BlackV", "DDR_FRAME_YUV_BLACK_V"),
+        # 720p tier (present path land; opt-in)
+        ("kPlex720pCodedWidth", "DDR_FRAME_720P_CODED_WIDTH"),
+        ("kPlex720pCodedHeight", "DDR_FRAME_720P_CODED_HEIGHT"),
+        ("kPlex720pPresentedWidth", "DDR_FRAME_720P_PRESENTED_WIDTH"),
+        ("kPlex720pPresentedHeight", "DDR_FRAME_720P_PRESENTED_HEIGHT"),
+        ("kPlex720pYuv420pBankStride", "DDR_FRAME_720P_YUV420P_BANK_STRIDE"),
+        ("kPlex720pPhysBase", "DDR_FRAME_720P_PHYS_BASE"),
+        ("kPlex720pYuv420pDoorbellPhys", "DDR_FRAME_720P_YUV420P_DOORBELL_PHYS"),
+        ("kPlex960PresentedWidth", "DDR_FRAME_960_PRESENTED_WIDTH"),
+        ("kPlex960PresentedHeight", "DDR_FRAME_960_PRESENTED_HEIGHT"),
     ]
     for host_name, rtl_name in pairs:
         hv = cpp_const(host, host_name)
@@ -1658,11 +1668,30 @@ def check_yuv_ddr_writer_contract() -> None:
         re.compile(r"DdrFrameFormat::Rgb565"),
     ]
     allowed_paths = {Path("tests/unit/test_rtl_invariants.py")}
+    # Nested git worktrees, local agent session dirs, and pinned lab binaries are
+    # not product sources; scanning them false-fails the YUV-only DDR migration gate.
+    skip_parts = {
+        ".git",
+        "build",
+        "__pycache__",
+        ".worktrees",
+        "artifacts",
+        ".copilot-session",
+        ".agent-work",
+        ".scratch-archive",
+        ".scratch-w-gate2",
+        "avsync_hdmi_out",
+        "captures",
+        "dist",
+        "output_files",
+        "db",
+        "incremental_db",
+    }
     for path in ROOT.rglob("*"):
         if not path.is_file():
             continue
         rel = path.relative_to(ROOT)
-        if rel in allowed_paths or any(part in {".git", "build", "__pycache__"} for part in rel.parts):
+        if rel in allowed_paths or any(part in skip_parts for part in rel.parts):
             continue
         try:
             text = path.read_text(encoding="utf-8", errors="ignore")

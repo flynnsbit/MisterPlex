@@ -83,6 +83,13 @@ set_global_assignment -name VERILOG_MACRO "DDR_FRAME_STORE=1"
 set_global_assignment -name VERILOG_MACRO "FRAME_W=640"
 set_global_assignment -name VERILOG_MACRO "FRAME_H=480"
 set_global_assignment -name VERILOG_MACRO "FRAME_LINES_8=1"
+# 720p / ascal-native present path — DEFAULT OFF (v0.3.0 baseline must not change).
+# Parent enables one of these in a granted fit QSF only:
+#set_global_assignment -name VERILOG_MACRO "PRESENT_BEAM_960=1"
+#set_global_assignment -name VERILOG_MACRO "PRESENT_MULTI_PIXEL=1"
+#set_global_assignment -name VERILOG_MACRO "PRESENT_PX_PER_CLK=1"
+#set_global_assignment -name VERILOG_MACRO "PRESENT_CLK_PIX_PLL=1"
+
 
 # sys/sys.tcl carries the upstream MiSTer single-stick SDRAM_* pin assignments.
 # Do not source sys/sys_dual_sdram.tcl for this lab unit: only one stick is installed.

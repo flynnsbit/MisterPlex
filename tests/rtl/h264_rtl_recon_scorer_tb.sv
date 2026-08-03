@@ -16,14 +16,15 @@ module h264_rtl_recon_scorer_tb #(
 	input  wire        clk,
 	input  wire        reset,
 
-	// Testbench injection: coefficients + QP + prediction for one 4x4 block
-	input  wire signed [8:0]  inject_coeff [0:15],
+	// Testbench injection: coefficients + QP + prediction for one 4x4 block.
+	// Widths track product h264_iq_idct_4x4.sv (coeff 16b, dequant/residual 29b).
+	input  wire signed [15:0] inject_coeff [0:15],
 	input  wire [5:0]         inject_qp,
 	input  wire [7:0]         inject_pred [0:15],
 	input  wire               inject_valid,
 
 	// Direct dequant injection (bypass dequant module for I_16x16 DC path)
-	input  wire signed [17:0] inject_dequant [0:15],
+	input  wire signed [28:0] inject_dequant [0:15],
 	input  wire               inject_bypass_dequant,
 
 	// RTL reconstruction output
@@ -31,12 +32,12 @@ module h264_rtl_recon_scorer_tb #(
 	output wire               recon_ready,
 
 	// Pipeline visibility for degeneracy checks
-	output wire signed [17:0] dequant_out [0:15],
-	output wire signed [17:0] idct_out [0:15]
+	output wire signed [28:0] dequant_out [0:15],
+	output wire signed [28:0] idct_out [0:15]
 );
 
 	// Dequant stage
-	wire signed [17:0] dq [0:15];
+	wire signed [28:0] dq [0:15];
 	h264_dequant4x4 u_dequant (
 		.coeff(inject_coeff),
 		.qp(inject_qp),
@@ -45,7 +46,7 @@ module h264_rtl_recon_scorer_tb #(
 	);
 
 	// Mux: use RTL dequant output or direct injection
-	wire signed [17:0] idct_in [0:15];
+	wire signed [28:0] idct_in [0:15];
 	genvar gi;
 	generate
 		for (gi = 0; gi < 16; gi = gi + 1) begin : gen_dq_mux
@@ -54,7 +55,7 @@ module h264_rtl_recon_scorer_tb #(
 	endgenerate
 
 	// IDCT stage
-	wire signed [17:0] res [0:15];
+	wire signed [28:0] res [0:15];
 	h264_idct4x4 u_idct (
 		.dequant(idct_in),
 		.residual(res)

@@ -705,6 +705,9 @@ present_core #(
 	.clk(clk_sys),
 	.clk_sdram(clk_sdram),
 	.clk_audio(CLK_AUDIO),
+	// clk_pix: product default ties to clk_sys. PRESENT_CLK_PIX_PLL fit will
+	// retarget this to outclk_3 when parent grants that fit.
+	.clk_pix(clk_sys),
 	.reset(present_reset),
 	.pal(status[2]),
 	.scandouble(forced_scandoubler),
@@ -716,6 +719,10 @@ present_core #(
 	.pattern(2'd0),
 	.audio_en(1'b0),
 	.use_frame_store(1'b0),
+	// PLXG-delivered geometry (PRESENT_BEAM_960). 0 → beam max-tier fallback.
+	// Default Template path ignores these.
+	.content_w(11'd0),
+	.content_h(11'd0),
 	.fs_wr_en(fs_wr_en),
 	.fs_wr_pixel(fs_wr_pixel),
 	.fs_wr_reset(fs_wr_reset),

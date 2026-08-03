@@ -39,6 +39,24 @@ constexpr uint8_t kYuv420BlackY = 16;
 constexpr uint8_t kYuv420BlackU = 128;
 constexpr uint8_t kYuv420BlackV = 128;
 
+// ---- 720p tier (present path land; opt-in RBF macros) ----
+constexpr int kPlex720pCodedWidth = 1280;
+constexpr int kPlex720pCodedHeight = 720;
+constexpr int kPlex720pDisplayWidth = 1280;
+constexpr int kPlex720pDisplayHeight = 720;
+constexpr int kPlex720pPresentedWidth = 1280;
+constexpr int kPlex720pPresentedHeight = 720;
+constexpr int kPlex720pPillarboxLeft = 0;
+constexpr int kPlex720pPillarboxRight = 0;
+constexpr int kPlex720pYuv420pBytes = 1382400;
+constexpr int kPlex720pYStrideBytes = 1280;
+constexpr int kPlex720pChromaStrideBytes = 640;
+constexpr uint32_t kPlex720pYuv420pBankStride = 0x00180000u;
+constexpr uint32_t kPlex720pPhysBase = 0x30180000u;
+constexpr uint32_t kPlex720pYuv420pDoorbellPhys = 0x3047F000u;
+constexpr int kPlex960PresentedWidth = 960;
+constexpr int kPlex960PresentedHeight = 540;
+
 enum class DdrFramePlacement {
     None,
     Pillarbox,
