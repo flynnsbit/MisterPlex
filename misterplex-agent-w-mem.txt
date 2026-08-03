@@ -1,7 +1,7 @@
 agent=w-mem
 branch=w-mem-720p-abi
-HEAD=ac278edf
 status=READY_FOR_INTEGRATION_FIT (macro OFF default)
+commit=7365998e (update after pull; git log -1)
 
 ## Delivered this commit
 - fabric_bank_credit.sv: free_mask/claim/commit/vsync (PLXD-compatible)
