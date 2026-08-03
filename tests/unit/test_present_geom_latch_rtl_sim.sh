@@ -29,9 +29,14 @@ RC=$?
 set -e
 echo "$OUT"
 for m in "CASE reset_safe EXECUTED" "PASS reset_safe" "CASE plxg_720 EXECUTED" "PASS plxg_720" \
-         "CASE neg_plxw_magic EXECUTED" "PASS neg_plxw_magic" "PASS plxg_seq3" "PLXG_LATCH_DONE"; do
+         "CASE neg_plxw_magic EXECUTED" "PASS neg_plxw_magic" "PASS plxg_seq3" \
+         "CASE q5_official EXECUTED" "PASS q5_official_dar_16_9" "PASS q5_official_fps_30" \
+         "CASE q5_old_pack_misdecode EXECUTED" "PASS q5_old_pack_NOT_16_9" \
+         "PASS q5_old_pack_official_decode_16_144" \
+         "CASE q5_rsvd_reject EXECUTED" "PASS q5_rsvd_reject held_prev_live" \
+         "PASS q5_rsvd_clear_then_accept" "PLXG_LATCH_DONE"; do
   grep -q -- "$m" <<<"$OUT" || { echo "FAIL missing marker: $m" >&2; exit 2; }
 done
 if [[ "$RC" -ne 0 ]]; then echo "FAIL true rc=$RC" >&2; exit "$RC"; fi
-echo "OK present_geom_latch_rtl_sim true rc=0"
+echo "OK present_geom_latch_rtl_sim true rc=0 (q5 ABI#2 + RED old-pack/rsvd)"
 exit 0

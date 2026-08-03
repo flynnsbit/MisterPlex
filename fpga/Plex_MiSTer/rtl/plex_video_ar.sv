@@ -6,10 +6,10 @@
 //   2 ARC1         → ARX=1 ARY=0 (framework ARC slot)
 //   3 ARC2         → ARX=2 ARY=0
 //
-// Runtime-DE rule (B9):
+// Runtime-DE rule (B9 + parent ABI arbitration #2):
 //   Display aspect is NOT inferred from coded WxH. PMS anamorphic titles
-//   (e.g. 720×480) prove storage AR ≠ display AR. The daemon resolves DAR from
-//   PMS metadata and publishes it via PLXG (host_dar_*). Fabric only muxes.
+//   (e.g. 720×480) prove storage AR ≠ display AR. Daemon publishes DAR on
+//   PLXG q5 (dar_x[11:0], dar_y[23:12], dar_valid[32]). Fabric only muxes.
 //
 // Ports VIDEO_ARX/VIDEO_ARY match emu_ports.vh (12-bit ratio; bit12 scaled-size
 // mode is not used here).

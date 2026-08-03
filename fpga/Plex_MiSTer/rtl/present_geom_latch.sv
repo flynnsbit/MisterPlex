@@ -10,14 +10,17 @@
 //   Host writes qwords 0..4 then pulses commit. On commit, if q0[31:0]==MAGIC
 //   and seq != last_seq, shadow → live outputs. Bad magic → no change.
 //
-// B9 display aspect (PROPOSED ABI — parent arbitrates; does NOT touch q0 epoch):
-//   Optional qword index 5 (wr_idx==5), promoted on same commit:
-//     q5[11:0]  dar_x   (e.g. 16)
-//     q5[27:16] dar_y   (e.g. 9)
-//     q5[32]    dar_valid
-//   w-mem 5-qword atomic body (q0..q4) unchanged. Daemon/PLXG may publish q5
-//   as a trailing beat after body, or parent may fold into a 6-qword record.
+// Parent ABI arbitration #2 — PLXG record q0..q5 @ doorbell+0x800..0x82F:
+//   q5 @ +0x828 (wr_idx==5), little-endian, same commit as q0..q4:
+//     [11:0]  dar_x        display aspect numerator  (0 = unspecified)
+//     [23:12] dar_y        display aspect denominator (0 = unspecified)
+//     [31:24] content_fps  integer fps               (0 = unspecified)
+//     [32]    dar_valid
+//     [33]    fps_valid
+//     [63:34] RESERVED — must be zero; non-zero → reject whole promotion
 //   Fabric must NOT infer DAR from coded_w/h (720×480 anamorphic is unsound).
+//   Frame-boundary atomicity (B16) is w-mem; this latch still promotes on commit
+//   pulse (poller/TB). Reserved reject is the forward-compat loud fail.
 //
 // Reset / never-committed: every enable and dimension output is 0 so
 // present_content_window + ddr_frame_store stay on synthesis legacy path.
@@ -54,14 +57,16 @@ module present_geom_latch #(
 	output reg [10:0]  present_y,
 	output reg [10:0]  crop_left,
 	output reg [10:0]  crop_top,
-	// B9 host DAR (PMS display aspect) — see module header.
+	// q5 host DAR + cadence (PMS) — see module header / parent arbitration #2.
 	output reg         dar_valid,
 	output reg [11:0]  dar_x,
 	output reg [11:0]  dar_y,
+	output reg         fps_valid,
+	output reg [7:0]   content_fps,
 	output reg         live_valid,  // 1 after at least one accepted commit
 	output reg [15:0]  live_seq
 );
-	// Shadow bank (host fills, commit promotes). q[5] = optional DAR.
+	// Shadow bank (host fills, commit promotes). q[5] = DAR+fps qword.
 	reg [63:0] sh [0:5];
 	reg [15:0] last_seq;
 
@@ -71,6 +76,9 @@ module present_geom_latch #(
 	wire [15:0] sh_seq   = sh[0][63:48];
 	wire        magic_ok = (sh_magic == MAGIC);
 	wire        seq_new  = magic_ok && (sh_seq != last_seq);
+	// [63:34] reserved — 30 bits must be zero or promotion is rejected.
+	wire        q5_rsvd_ok = (sh[5][63:34] == 30'd0);
+	wire        promote_ok = seq_new && q5_rsvd_ok;
 
 	integer i;
 	always @(posedge clk) begin
@@ -98,6 +106,8 @@ module present_geom_latch #(
 			dar_valid     <= 1'b0;
 			dar_x         <= 12'd0;
 			dar_y         <= 12'd0;
+			fps_valid     <= 1'b0;
+			content_fps   <= 8'd0;
 			live_valid    <= 1'b0;
 			live_seq      <= 16'd0;
 			last_seq      <= 16'd0;
@@ -105,7 +115,8 @@ module present_geom_latch #(
 			if (wr_en && (wr_idx <= 3'd5))
 				sh[wr_idx] <= wr_data;
 
-			if (commit && seq_new) begin
+			// Reject non-zero q5 reserved: no live update, seq not advanced (retryable).
+			if (commit && promote_ok) begin
 				// Q0 flags
 				win_enable  <= sh_win;
 				geom_enable <= sh_geom;
@@ -132,10 +143,12 @@ module present_geom_latch #(
 				present_y <= sh[4][26:16];
 				crop_left <= sh[4][42:32];
 				crop_top  <= sh[4][58:48];
-				// Q5 optional host DAR (B9) — absent/zero → dar_valid=0
-				dar_x     <= sh[5][11:0];
-				dar_y     <= sh[5][27:16];
-				dar_valid <= sh[5][32];
+				// Q5 DAR + fps (parent arbitration #2 bit layout)
+				dar_x       <= sh[5][11:0];
+				dar_y       <= sh[5][23:12];
+				content_fps <= sh[5][31:24];
+				dar_valid   <= sh[5][32];
+				fps_valid   <= sh[5][33];
 			end
 		end
 	end

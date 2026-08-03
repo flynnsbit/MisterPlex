@@ -2,7 +2,7 @@
 
 ## Rule (ship)
 
-**Display aspect ratio (DAR) is published by the daemon from PMS metadata via PLXG.
+**Display aspect ratio (DAR) is published by the daemon from PMS metadata via PLXG q5.
 The fabric does not infer DAR from coded width/height.**
 
 Reason (parent library survey + PMS measurements):
@@ -16,50 +16,50 @@ Reason (parent library survey + PMS measurements):
 | 320×240 | 1.33 | 4:3 | accidental OK |
 
 `720×480` is the existence proof that storage AR ≠ display AR.
+Cadence is the same defect class: fabric cannot infer fps from DE either.
 
 ## Menu → pins (`plex_video_ar`)
 
 | `status[122:121]` | Name | `VIDEO_ARX:ARY` |
 |------------------:|------|-----------------|
 | 0 | Original | **host DAR** if `dar_valid`, else legacy **4:3** |
-| 1 | Full Screen | **0:0** (framework fill) |
+| 1 | Full Screen | **0:0** (framework fill — stretches under runtime DE) |
 | 2 | ARC1 | 1:0 |
 | 3 | ARC2 | 2:0 |
 
 Legacy Original without host DAR is the **user-visible defect** for 16:9 true-DE
 content (960×540 presents as 4:3). RED twin `RED_16_9_AS_4_3` locks that.
 
-## PLXG field proposal (parent arbitrates — w-mem owns headers)
+## PLXG q5 — parent ABI arbitration #2 (frozen)
 
-Do **not** reuse `q0[47:34]` — w-mem B4 **epoch** owns those bits.
-
-**Proposed trailing qword `q5` (optional beat after atomic q0..q4):**
+Record grows **q0–q4 → q0–q5**: doorbell **`0x800..0x82F`**, q5 at **`+0x828`**.
 
 | bits | field |
 |------|--------|
-| `[11:0]` | `dar_x` (e.g. 16) |
-| `[27:16]` | `dar_y` (e.g. 9) |
+| `[11:0]` | `dar_x` (0 = unspecified) |
+| `[23:12]` | `dar_y` (0 = unspecified) |
+| `[31:24]` | `content_fps` integer (0 = unspecified) |
 | `[32]` | `dar_valid` |
+| `[33]` | `fps_valid` |
+| `[63:34]` | **RESERVED = 0** — receiver rejects non-zero (whole promote) |
 
-- 5-qword body (geom) stays lockstep with w-mem.
-- Daemon (w-path) resolves DAR via `pms_delivery_geom.hpp` / Stream@pixelAspectRatio
-  / Media@aspectRatio and writes q5 after body commit (or parent folds into 6-qword).
-- Fabric `present_geom_latch` already latches q5 → `dar_*` → `plex_video_ar`.
+Do **not** reuse `q0[47:34]` — w-mem B4 **epoch** owns those bits.
 
-## Ownership
+### Ownership
 
 | Piece | Owner |
 |-------|--------|
-| `plex_video_ar.sv`, Plex pin mux, pin TB | **w-scaler** (this lane) |
-| PLXG header / poller / epoch | **w-mem** |
-| PMS DAR → daemon publish | **w-path** |
-| Arbitration of q5 vs 6-qword | **parent** |
+| Headers, poller, B16 frame-boundary atomicity, `test_ddr_720p_abi` @0x828 | **w-mem** |
+| PMS DAR + measured fps → daemon publish (`dar_valid`/`fps_valid`=0 if unknown) | **w-path** |
+| `plex_video_ar`, pin TB, latch **DAR consume** bit layout | **w-scaler** |
+| `content_fps` → `V_TOTAL` (B15); never hardcode 30 | **w-clock** |
 
 ## Evidence
 
 ```bash
 tests/unit/test_plex_ar_pins_rtl_sim.sh; echo "true rc=$?"
+tests/unit/test_present_geom_latch_rtl_sim.sh; echo "true rc=$?"
 ```
 
-Expect greens: ORIG+DAR→16:9, FULL→0:0, ARC1→1:0, modes differ.
-Expect RED: `RED_16_9_AS_4_3` rc=1 with pins 4:3.
+Expect greens: ORIG+DAR→16:9, FULL→0:0, ARC1→1:0; q5 official pack → dar 16:9 + fps 30.
+Expect RED: `RED_16_9_AS_4_3` rc=1 pins 4:3; q5 reserved nonzero rejected; old dar_y@[27:16] mis-decode.

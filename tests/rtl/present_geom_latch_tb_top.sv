@@ -14,6 +14,11 @@ module present_geom_latch_tb (
 	output wire [10:0] coded_h,
 	output wire [11:0] y_stride,
 	output wire [10:0] chroma_stride,
+	output wire        dar_valid,
+	output wire [11:0] dar_x,
+	output wire [11:0] dar_y,
+	output wire        fps_valid,
+	output wire [7:0]  content_fps,
 	output wire        live_valid,
 	output wire [15:0] live_seq
 );
@@ -31,7 +36,8 @@ module present_geom_latch_tb (
 		.display_w(display_w), .display_h(display_h),
 		.present_x(present_x), .present_y(present_y),
 		.crop_left(crop_left), .crop_top(crop_top),
-		.dar_valid(), .dar_x(), .dar_y(),
+		.dar_valid(dar_valid), .dar_x(dar_x), .dar_y(dar_y),
+		.fps_valid(fps_valid), .content_fps(content_fps),
 		.live_valid(live_valid), .live_seq(live_seq)
 	);
 endmodule

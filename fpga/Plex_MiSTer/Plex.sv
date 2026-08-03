@@ -44,10 +44,13 @@ assign BUTTONS = 0;
 // B9 aspect: Original uses host DAR from PLXG when valid; never infer from coded WxH.
 // Full Screen → 0:0; ARC1/2 unchanged. See rtl/plex_video_ar.sv + docs/b9-display-aspect.md.
 wire [1:0] ar = status[122:121];
-// fabric_dar_* come from present_geom_latch (below); default 0 until PLXG q5 lands.
+// fabric_dar_* / fabric_content_fps from present_geom_latch q5 (parent ABI #2).
+// w-scaler consumes dar_*; w-clock consumes content_fps (do not hardcode 30).
 wire        fabric_dar_valid;
 wire [11:0] fabric_dar_x;
 wire [11:0] fabric_dar_y;
+wire        fabric_fps_valid;
+wire [7:0]  fabric_content_fps;
 plex_video_ar u_plex_video_ar (
 	.ar_menu(ar),
 	.host_dar_valid(fabric_dar_valid),
@@ -300,9 +303,12 @@ present_geom_latch plxg_latch (
 	.dar_valid(fabric_dar_valid),
 	.dar_x(fabric_dar_x),
 	.dar_y(fabric_dar_y),
+	.fps_valid(fabric_fps_valid),
+	.content_fps(fabric_content_fps),
 	.live_valid(fabric_plxg_live),
 	.live_seq(fabric_plxg_seq)
 );
+// fabric_fps_valid / fabric_content_fps: w-clock B15 consumes for V_TOTAL.
 // O[4] coarse ladder when latch idle; PLXG content_* wins once live+nonzero.
 wire [10:0] content_width_base  = (fabric_plxg_live && (fabric_content_w_lat != 11'd0))
 	? fabric_content_w_lat
