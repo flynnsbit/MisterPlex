@@ -171,6 +171,9 @@ static_assert(kDdrFramePlxgOffset != mailbox_abi::kPlxcOffset,
 static_assert(kDdrFramePlxgOffset == 0x800u, "PLXG offset is ABI-frozen at 0x800");
 static_assert(kDdrFramePlxgBootstrapPhys == mailbox_abi::kPlxgBootstrapPhys,
               "PLXG bootstrap phys must match mailbox_abi_spec");
+static_assert(mailbox_abi::kPlxlOffset + mailbox_abi::kPlxcListMaxCmds * 8u <=
+                  kDdrFramePlxgOffset,
+              "chrome list must not grow into fixed PLXG +0x800");
 inline constexpr uint32_t plxgMailboxPhys(uint32_t doorbell_phys) {
     return doorbell_phys + kDdrFramePlxgOffset;
 }
