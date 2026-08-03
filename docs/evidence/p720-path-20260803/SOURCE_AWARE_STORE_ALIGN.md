@@ -32,7 +32,7 @@ wire geom_reject_now = geom_enable & ~rt_raw_ok;
 **Today when store rejects:**
 
 1. `geom_enable_eff=0` → effective dims reload **parameter legacy** `CODED_W/H` (still a picture path).
-2. **w-mem tip is no longer silent:** sticky `geom_reject_r` + black scanout + **PLXF `0xE2`** (`DEBUG_GEOM_REJECT`). Coordinate: path must not emit unaligned coded_w; mem owns the loud fault.
+2. **Loud reject (`geom_reject_r` + black + PLXF `0xE2`) is in the w-mem worktree only — unmerged.** Product tree may still silent-legacy until that merge lands. Coordinate: path must not emit unaligned coded_w; do not claim loud-reject is live product.
 
 `LEG_BANK_USABLE_BYTES = 0x7F000 = 520192`.
 
@@ -91,7 +91,11 @@ scripts/prove_ladder_delivery.sh source-aware → FAILS=0
 
 ## Decode budget re-derive (deliverable geometries)
 
-Prior host profile at **624×480** (ms/f, mean): decode_null 21.562, present/DDR 10.411, pipe 5.263, scale Δ 2.954.
+**Machine class:** the 21.562 / 10.411 / 5.263 stack is **DE10-Nano dual-A9** (W-FEED ARM profile archive), **not** the x86 build machine. Always publish the decomposition with the total.
+
+Device @624×480 (ms/f): decode_null **21.562** + scale **2.954** + pipe **5.263** + parent_copy **2.309** + present/DDR **10.411** = **40.190**.
+- decode+pipe+present = **37.236**
+- fabric owns present → decode+pipe = **26.825** → @30 margin **6.51 ms**
 
 | geometry | pixels | scale vs 624×480 | est. work ms/f (identity, no scale) | @24 (41.7) | @30 (33.3) |
 |----------|--------|------------------|--------------------------------------|------------|------------|

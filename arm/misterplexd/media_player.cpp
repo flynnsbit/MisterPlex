@@ -3513,8 +3513,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             int64_t drops = 0;
         } prof;
         const bool profilePresent = presentProfile_;
-        // FRAME_COST_LEDGER: p50/p95/p99 of work_us = read_wall + pixel + ddr
-        // (excludes A/V Hold pacing). Light wall stamps only when profile is off.
+        // FRAME_COST_LEDGER: pipe_us + pixel_us + present_us (and work=sum);
+        // excludes A/V Hold pacing. Light wall stamps only when profile is off.
         const bool frameCostOn = frameCostLedger_ || profilePresent;
         misterplex::FrameCostLedger frameCost{};
         int64_t frameCostReadUs = 0;
@@ -3736,14 +3736,18 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                         // Deadline cost: pipe-fill + chroma pad + DDR present.
                         // EXCLUDES A/V Hold sleep (pacing). Cap to uint32.
                         if (frameCostLedger_ && countPresent) {
-                            const int64_t work = frameCostReadUs + frameCostPixelUs +
-                                                 static_cast<int64_t>(dt.total_us);
-                            const uint32_t wu =
-                                work < 0 ? 0u
-                                         : (work > static_cast<int64_t>(UINT32_MAX)
-                                                ? UINT32_MAX
-                                                : static_cast<uint32_t>(work));
-                            frameCost.note(wu);
+                            auto clamp_u32 = [](int64_t v) -> uint32_t {
+                                if (v < 0)
+                                    return 0u;
+                                if (v > static_cast<int64_t>(UINT32_MAX))
+                                    return UINT32_MAX;
+                                return static_cast<uint32_t>(v);
+                            };
+                            // Split stages permanently (parent 2026-08-04):
+                            // pipe=read wall, pixel=chroma pad, present=DDR total.
+                            frameCost.note(clamp_u32(frameCostReadUs),
+                                           clamp_u32(frameCostPixelUs),
+                                           clamp_u32(static_cast<int64_t>(dt.total_us)));
                         }
                     }
                     if (!ok)

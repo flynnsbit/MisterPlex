@@ -353,8 +353,30 @@ inline DdrFrameGeometry ddrFrameGeometryForFpgaPresent(int decodeWidth, int deco
 constexpr uint32_t kDdrBankDoorbellPageBytes = 0x1000u;
 constexpr uint32_t kPlex480pYuv420pBankUsableBytes =
     kPlex480pYuv420pBankStride - kDdrBankDoorbellPageBytes; // 520192
+// 720×480 I420 knife-edge (parent 2026-08-04): 518400 vs usable 520192 → 1792 spare.
+// Library widths are 8-aligned so product stride==width (no pad). Any future
+// stride rounding that eats the 1792 B spare must fail compile, not corrupt DDR.
+constexpr uint32_t kPlex720x480Yuv420pBytes = 720u * 480u * 3u / 2u; // 518400
+constexpr uint32_t kPlex720x480LegacyBankSpareBytes =
+    kPlex480pYuv420pBankUsableBytes - kPlex720x480Yuv420pBytes; // 1792
+static_assert(kPlex720x480Yuv420pBytes == 518400u, "720x480 I420 payload bytes");
+static_assert(kPlex480pYuv420pBankUsableBytes == 520192u, "legacy bank usable");
+static_assert(kPlex720x480LegacyBankSpareBytes == 1792u, "720x480 legacy spare");
+static_assert(kPlex720x480Yuv420pBytes <= kPlex480pYuv420pBankUsableBytes,
+              "720x480 must fit legacy bank when stride==width");
+// Stride==width for 8-aligned widths (720%8==0): I420 with y_stride=w fits spare.
+static_assert((720u % 8u) == 0u, "720 width 8-aligned → stride may equal width");
+static_assert((720u % 16u) == 0u, "720 width 16-aligned for rt_raw_ok");
 inline bool ddrI420PayloadNeedsOptionCBank(size_t frameBytes) {
     return frameBytes > static_cast<size_t>(kPlex480pYuv420pBankUsableBytes);
+}
+// True when y_stride==coded_w (no pad). 720×480 only fits legacy under this contract.
+inline bool ddrI420StrideEqualsWidthFitsLegacy720x480(int coded_w, int coded_h, int y_stride) {
+    if (coded_w != 720 || coded_h != 480)
+        return true; // not the knife-edge class
+    return y_stride == coded_w &&
+           (static_cast<uint32_t>(coded_w) * static_cast<uint32_t>(coded_h) * 3u / 2u) <=
+               kPlex480pYuv420pBankUsableBytes;
 }
 
 inline DdrFrameLayout makeDdrFrameLayout(const DdrFrameGeometry& geom,
