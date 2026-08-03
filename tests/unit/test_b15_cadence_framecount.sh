@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# B15 ABI#2: q5 fps_valid/content_fps → exact unique frame counts + RED ignore valid.
+# B15 ABI#2: q5 fps → raster rate + source-locked cadence; honest claims (rd-duck).
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 RV="$ROOT/scripts/run_verilator.sh"
@@ -7,34 +7,26 @@ command -v "$RV" >/dev/null || RV=$(command -v verilator)
 OUT="$ROOT/build/verilator/b15_cadence_framecount"
 BEAM="$ROOT/fpga/Plex_MiSTer/rtl/present_beam_content_de.sv"
 SEL="$ROOT/fpga/Plex_MiSTer/rtl/plex_content_fps_sel.sv"
+CAD="$ROOT/fpga/Plex_MiSTer/rtl/present_cadence.sv"
 TB="$ROOT/tests/rtl/b15_cadence_framecount_tb.sv"
 mkdir -p "$OUT"
 echo "RTL SIM: $($RV --version 2>&1 | head -1)"
 
+# Product threshold: film <=24 only (not <=25)
+grep -q "content_fps <= 8'd24" "$ROOT/fpga/Plex_MiSTer/rtl/present_core.sv" \
+  || { echo "FAIL present_core missing fps<=24 film threshold"; exit 1; }
+if grep -n "content_fps <= 8'd25" "$ROOT/fpga/Plex_MiSTer/rtl/present_core.sv"; then
+  echo "FAIL present_core still uses <=25 film threshold"; exit 1
+fi
+# BEAM_960 cadence uses core Hz not bare display_hz
+grep -q "cadence_display_hz" "$ROOT/fpga/Plex_MiSTer/rtl/present_core.sv" \
+  || { echo "FAIL missing cadence_display_hz"; exit 1; }
+echo "OK present_core film<=24 + cadence_display_hz"
+
 awk 'BEGIN{
   H=1182; V24=705; V30=564; W=4*H*V24;
-  printf("PREREG window_clks=%d frames24=%.0f frames30=%.0f\n", W, W/(H*V24), W/(H*V30));
-  if (W/(H*V24)!=4 || W/(H*V30)!=5) { print "FAIL prereg"; exit 1 }
+  printf("PREREG window_clks=%d raster24=%.0f raster30=%.0f\n", W, W/(H*V24), W/(H*V30));
 }'
-
-# Source shape: consumer module + no idle-30 invent
-grep -q "plex_content_fps_sel" "$ROOT/fpga/Plex_MiSTer/Plex.sv" \
-  || { echo "FAIL Plex missing fps_sel"; exit 1; }
-grep -q "fps_valid" "$ROOT/fpga/Plex_MiSTer/rtl/plex_content_fps_sel.sv" \
-  || { echo "FAIL sel missing fps_valid"; exit 1; }
-if grep -n "content_fps_idle.*=.*8'd30" "$ROOT/fpga/Plex_MiSTer/Plex.sv"; then
-  echo "FAIL invent idle-30 still present"; exit 1
-fi
-grep -q "doorbell+0x828\|q5" "$ROOT/fpga/Plex_MiSTer/Plex.sv" \
-  || grep -q "0x828\|q5" "$ROOT/fpga/Plex_MiSTer/rtl/plex_content_fps_sel.sv" \
-  || { echo "FAIL missing q5 ABI cite"; exit 1; }
-# Hardwire 24 only under FAULT
-if grep -n "wire \[7:0\] content_fps = 8'd24" "$ROOT/fpga/Plex_MiSTer/Plex.sv"; then
-  grep -B3 "wire \[7:0\] content_fps = 8'd24" "$ROOT/fpga/Plex_MiSTer/Plex.sv" \
-    | grep -q "FAULT_B15_FPS_HARDWIRE_24" \
-    || { echo "FAIL hardwire 24 outside FAULT"; exit 1; }
-fi
-echo "OK Plex/sel ABI#2 source shape"
 
 run_one() {
   local tag="$1"; shift
@@ -42,7 +34,7 @@ run_one() {
   rm -rf "$mdir"; mkdir -p "$mdir"
   set +e
   "$RV" -Wno-fatal --binary --timing --top-module b15_cadence_framecount_tb \
-    -Mdir "$mdir" "$@" "$TB" "$BEAM" "$SEL" >"$mdir/build.log" 2>&1
+    -Mdir "$mdir" "$@" "$TB" "$BEAM" "$SEL" "$CAD" >"$mdir/build.log" 2>&1
   local brc=$?
   set -e
   if [[ "$brc" -ne 0 ]]; then
@@ -61,18 +53,27 @@ run_one() {
 run_one green
 GRC=$(cat "$OUT/green/sim.rc")
 [[ "$GRC" -eq 0 ]] || { echo "FAIL GREEN rc=$GRC"; exit 1; }
-grep -q "OK B15 fps_valid=1 fps=24 frames=4 exact" "$OUT/green/run.log" || { echo "FAIL 24"; exit 1; }
-grep -q "OK B15 fps_valid=1 fps=30 frames=5 exact" "$OUT/green/run.log" || { echo "FAIL 30"; exit 1; }
-grep -q "OK B15 fps_valid=0 does not invent 30" "$OUT/green/run.log" || { echo "FAIL valid0"; exit 1; }
-grep -q "PASS b15_cadence_framecount GREEN" "$OUT/green/run.log" || { echo "FAIL pass"; exit 1; }
-echo "OK GREEN q5 framecounts"
+grep -q "OK fps=25 -> TV class V=564" "$OUT/green/run.log" || { echo "FAIL 25"; exit 1; }
+grep -q "OK B15 raster frame_start=4" "$OUT/green/run.log" || { echo "FAIL r24"; exit 1; }
+grep -q "OK B15 raster frame_start=5" "$OUT/green/run.log" || { echo "FAIL r30"; exit 1; }
+grep -q "OK ADV_PROOF source-locked 1:1 raster=5 advances=5" "$OUT/green/run.log" \
+  || { echo "FAIL adv30"; exit 1; }
+grep -q "OK B15 fps=25 raster frame_start=5 advances=4" "$OUT/green/run.log" \
+  || { echo "FAIL adv25"; exit 1; }
+grep -q "not unique-bank claim" "$OUT/green/run.log" || { echo "FAIL honesty"; exit 1; }
+echo "OK GREEN"
 
 run_one red_ignore -DFAULT_B15_IGNORE_FPS_VALID
 RRC=$(cat "$OUT/red_ignore/sim.rc")
-[[ "$RRC" -eq 0 ]] || { echo "FAIL RED rc=$RRC"; exit 1; }
-grep -q "OK RED fps_valid ignored/broken frames=4" "$OUT/red_ignore/run.log" \
-  || { echo "FAIL red marker"; exit 1; }
-echo "OK RED FAULT_B15_IGNORE_FPS_VALID (30 title → 24 unique frames)"
+[[ "$RRC" -eq 0 ]] || { echo "FAIL RED ignore rc=$RRC"; exit 1; }
+grep -q "OK RED raster broken" "$OUT/red_ignore/run.log" || { echo "FAIL red ign"; exit 1; }
+echo "OK RED IGNORE_FPS_VALID"
+
+run_one red_hdmi60 -DFAULT_B15_CADENCE_HDMI60
+R60=$(cat "$OUT/red_hdmi60/sim.rc")
+[[ "$R60" -eq 0 ]] || { echo "FAIL RED hdmi60 rc=$R60"; exit 1; }
+grep -q "OK RED CADENCE_HDMI60" "$OUT/red_hdmi60/run.log" || { echo "FAIL red60"; exit 1; }
+echo "OK RED CADENCE_HDMI60"
 
 echo "PASS test_b15_cadence_framecount true rc=0"
 exit 0

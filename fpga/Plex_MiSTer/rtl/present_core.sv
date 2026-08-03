@@ -140,12 +140,29 @@ module present_core #(
 	wire advance;
 	wire [31:0] disp_i, cont_i;
 
+	// Film vs TV class for beam V_TOTAL and BEAM_960 cadence Hz (rd-duck B15).
+	// fps<=24 → film 24.0007 (V=705). fps>=25 → TV 30.0008 (V=564).
+	// 25 must NOT fall into film (host may publish valid 25).
+	wire beam_film_class = (content_fps <= 8'd24);
+
+	// Cadence display_hz must match the *tick source* rate (rd-duck B15).
+	// BEAM_960: frame_start is core raster @24/30, NOT HDMI 50/60. Passing 60
+	// with content_fps=30 yields advance_unique ~15/s (wrong). Ascal owns glass
+	// 2:1/5:2 repeat. Source-locked core → pass core Hz so fps>=hz ⇒ 1:1 advance.
+	// Legacy non-beam: keep top-level display_hz (50/60).
+	// NOTE: DDR bank swap uses vsync_pulse=fstart && swap_pending — NOT advance.
+	// advance still feeds colorbars content_index + stat_advance only (C1).
+`ifdef PRESENT_BEAM_960
+	wire [7:0] cadence_display_hz = beam_film_class ? 8'd24 : 8'd30;
+`else
+	wire [7:0] cadence_display_hz = display_hz;
+`endif
 	present_cadence cadence (
 		.clk(clk),
 		.reset(reset),
 		.display_tick(frame_start),
 		.content_fps(content_fps),
-		.display_hz(display_hz),
+		.display_hz(cadence_display_hz),
 		.advance_unique(advance),
 		.display_index(disp_i),
 		.content_index(cont_i)
@@ -209,10 +226,9 @@ module present_core #(
 		(content_h == 11'd0) ? 11'd540 :
 		(content_h > 11'(FRAME_H)) ? 11'(FRAME_H) : content_h;
 	// Fixed line class @20 MHz: 1182 clocks/line. V_TOTAL selects 30 vs 24 Hz.
-	// B15/ABI#2: content_fps from PLXG q5 (fps_valid+fps). <=25 → V=705 (~24.0007);
-	// else V=564 (~30.0008). Unspecified fps_valid=0 → film 24 via plex_content_fps_sel.
+	// beam_film_class defined above (shared with cadence_display_hz).
 	wire [10:0] beam_htot_req = 11'd1182;
-	wire [10:0] beam_vtot_req = (content_fps <= 8'd25) ? 11'd705 : 11'd564;
+	wire [10:0] beam_vtot_req = beam_film_class ? 11'd705 : 11'd564;
 
 	(* noprune *) present_beam_content_de #(
 		.H_DE(960),
