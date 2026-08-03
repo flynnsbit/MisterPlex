@@ -436,6 +436,12 @@ $(ROOT)/build/test_vf_bank_output_health: $(ROOT)/tests/unit/test_vf_bank_output
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -I$(ROOT)/host -o $@ $(ROOT)/tests/unit/test_vf_bank_output_health.cpp
 
+$(ROOT)/build/test_vf_plan_emit: $(ROOT)/tests/unit/test_vf_plan_emit.cpp \
+		$(ROOT)/host/libmisterplex/ffmpeg_vf.hpp \
+		$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -I$(ROOT)/host -o $@ $(ROOT)/tests/unit/test_vf_plan_emit.cpp
+
 $(ROOT)/build/test_geom_frame_cost: $(ROOT)/tests/unit/test_geom_frame_cost.cpp \
 		$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp \
 		$(ROOT)/host/libmisterplex/ffmpeg_vf.hpp \

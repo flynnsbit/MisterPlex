@@ -68,24 +68,48 @@ leg_out=$("$GATE" --policy legacy_identity /dev/null 2>&1)
 leg_rc=$?
 set -e
 echo "legacy_policy true rc=$leg_rc"
-if [ "$leg_rc" -eq 2 ] && printf '%s\n' "$leg_out" | grep -q 'VF_DELIVERY_FAIL'; then
-  pass "legacy_identity policy FAILS (rc=2) applied-match"
+if [ "$leg_rc" -eq 2 ] && printf '%s\n' "$leg_out" | grep -q 'VF_DELIVERY_FAIL' \
+  && printf '%s\n' "$leg_out" | grep -q 'failed_cases=5'; then
+  pass "legacy_identity policy FAILS (rc=2 failed_cases=5/6) applied-match"
 else
-  fail "legacy_identity must FAIL rc=2; rc=$leg_rc"
+  fail "legacy_identity must FAIL rc=2 with 5 non-bank fails; rc=$leg_rc"
   printf '%s\n' "$leg_out" | tail -n 15
 fi
 
-# --- product policy must pass ----------------------------------------------
+# --- product policy must pass FULL matrix (not bank-exact only) ------------
 set +e
 prod_out=$("$GATE" --policy product_foar_coded /dev/null 2>&1)
 prod_rc=$?
 set -e
 echo "product_policy true rc=$prod_rc"
-if [ "$prod_rc" -eq 0 ] && printf '%s\n' "$prod_out" | grep -q 'VF_DELIVERY_OK'; then
-  pass "product_foar_coded policy PASSES (rc=0) applied-match"
+printf '%s\n' "$prod_out" | grep -E 'VF_DELIVERY_(OK|FAIL|GEOMS|APPLIED|CASE_)' | tail -n 20
+if [ "$prod_rc" -eq 0 ] && printf '%s\n' "$prod_out" | grep -q 'VF_DELIVERY_OK' \
+  && printf '%s\n' "$prod_out" | grep -q 'cases=6'; then
+  pass "product_foar_coded policy PASSES full matrix cases=6 (rc=0)"
 else
-  fail "product_foar_coded must PASS rc=0; rc=$prod_rc"
-  printf '%s\n' "$prod_out" | tail -n 20
+  fail "product_foar_coded must PASS rc=0 cases=6; rc=$prod_rc"
+  printf '%s\n' "$prod_out" | tail -n 30
+fi
+# Every named real-world geometry must be CASE_OK under product.
+for g in 624x350 624x352 640x480 720x480 1280x720 624x480; do
+  if printf '%s\n' "$prod_out" | grep -q "VF_DELIVERY_CASE_OK label=g_${g}"; then
+    pass "product CASE_OK $g"
+  else
+    fail "product missing CASE_OK $g"
+  fi
+done
+# Legacy must FAIL non-bank cases (bank-exact alone is the B6 trap).
+set +e
+leg_full=$("$GATE" --policy legacy_identity /dev/null 2>&1)
+leg_full_rc=$?
+set -e
+echo "legacy_full_matrix true rc=$leg_full_rc"
+if [ "$leg_full_rc" -eq 2 ] \
+  && printf '%s\n' "$leg_full" | grep -q 'VF_DELIVERY_CASE_FAIL label=g_624x350' \
+  && printf '%s\n' "$leg_full" | grep -q 'VF_DELIVERY_CASE_OK label=g_624x480'; then
+  pass "legacy fails 350 but passes bank-exact 480 (B6 trap demonstrated)"
+else
+  fail "legacy must fail-open on 350 and still pass bank-exact; rc=$leg_full_rc"
 fi
 
 # --- current host build (same headers as packaged source) must pass --------
@@ -139,6 +163,30 @@ PY
     tail -n 10 "$dead_log" 2>/dev/null || true
   fi
   rm -f "$dead"
+  # Flat neutral (all-128) must also FAIL — whole-bank grey is not a picture.
+  grey="$ROOT/build/vf_delivery_flat_neutral.yuv"
+  python3 - <<'PY' "$grey"
+import sys, pathlib
+p = pathlib.Path(sys.argv[1])
+w, h = 624, 480
+yb = w * h
+cb = yb // 4
+buf = bytes([16]) * yb + bytes([128]) * cb + bytes([128]) * cb
+p.write_bytes(buf * 2)
+PY
+  grey_log="$ROOT/build/vf_delivery_flat_neutral.log"
+  set +e
+  "$HEALTH" "$grey" 624 480 >"$grey_log" 2>&1
+  grey_rc=$?
+  set -e
+  echo "flat_neutral true rc=$grey_rc"
+  if [ "$grey_rc" -eq 2 ] && grep -q 'flat_neutral_chroma' "$grey_log"; then
+    pass "flat neutral chroma FAIL health (rc=2) applied-match"
+  else
+    fail "flat neutral must FAIL health rc=2; rc=$grey_rc"
+    tail -n 10 "$grey_log" 2>/dev/null || true
+  fi
+  rm -f "$grey"
 else
   fail "NO-DATA: test_vf_bank_output_health missing"
 fi
