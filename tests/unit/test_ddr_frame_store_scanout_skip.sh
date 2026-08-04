@@ -50,6 +50,7 @@ echo "RTL SIM: using $VERILATOR_VERSION" >&2
 common_sv=(
   "$ROOT/tests/rtl/ddr_frame_store_scanout_skip_tb_top.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_base_mux.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_ram.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/async_fifo.sv"
   "$ROOT/tests/rtl/ddr_frame_store_scanout_skip_tb.cpp"
@@ -60,6 +61,7 @@ vflags=(--cc --exe --build --top-module ddr_frame_store_scanout_skip_tb
 
 echo "=== A) PRODUCT holds=1 sticky=1: free-gated PASS + overwrite REPRO ===" >&2
 "$RUN_VERILATOR" "${vflags[@]}" --Mdir "$PRODUCT_BUILD" \
++incdir+"$ROOT/fpga/Plex_MiSTer/rtl" \
   -GWANT_Y_LINE_ONLY=1 -GPENDING_READY_STICKY_PREP=1 -GPREP_SLOT_RECYCLE=1 \
   -GSWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC=1 \
   "${common_sv[@]}"
@@ -72,6 +74,7 @@ echo "product rc=$PRODUCT_RC"
 
 echo "=== B) HOLDS0: collide must REPRO skip/freeze class ===" >&2
 "$RUN_VERILATOR" "${vflags[@]}" --Mdir "$HOLDS0_BUILD" \
++incdir+"$ROOT/fpga/Plex_MiSTer/rtl" \
   -GWANT_Y_LINE_ONLY=1 -GPENDING_READY_STICKY_PREP=1 -GPREP_SLOT_RECYCLE=1 \
   -GSWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC=0 \
   "${common_sv[@]}"

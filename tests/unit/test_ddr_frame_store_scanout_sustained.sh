@@ -49,6 +49,7 @@ echo "RTL SIM: using $VERILATOR_VERSION" >&2
 common_sv=(
   "$ROOT/tests/rtl/ddr_frame_store_scanout_sustained_tb_top.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_base_mux.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_ram.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/async_fifo.sv"
   "$ROOT/tests/rtl/ddr_frame_store_scanout_sustained_tb.cpp"
@@ -59,6 +60,7 @@ vflags=(--cc --exe --build --top-module ddr_frame_store_scanout_sustained_tb
 
 echo "=== A) BROKEN: sticky=0 recycle=0 holds=0 under sustained high-rate (expect REPRO freeze) ===" >&2
 "$RUN_VERILATOR" "${vflags[@]}" --Mdir "$BROKEN_BUILD" \
++incdir+"$ROOT/fpga/Plex_MiSTer/rtl" \
   -GWANT_Y_LINE_ONLY=1 -GPENDING_READY_STICKY_PREP=0 -GPREP_SLOT_RECYCLE=0 \
   -GSWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC=0 \
   "${common_sv[@]}"
@@ -71,6 +73,7 @@ echo "broken rc=$BROKEN_RC"
 
 echo "=== B) GOOD: sticky=1 recycle=1 holds=1 sustained playback rate (expect PASS) ===" >&2
 "$RUN_VERILATOR" "${vflags[@]}" --Mdir "$GOOD_BUILD" \
++incdir+"$ROOT/fpga/Plex_MiSTer/rtl" \
   -GWANT_Y_LINE_ONLY=1 -GPENDING_READY_STICKY_PREP=1 -GPREP_SLOT_RECYCLE=1 \
   -GSWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC=1 \
   "${common_sv[@]}"
