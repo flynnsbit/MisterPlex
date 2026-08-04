@@ -266,17 +266,32 @@
     "formula_deficit": "T_copy_arm_ms - decode_headroom_ms",
     "meaning": "720p24 does NOT close e2e if decode and sendDdrFrame /dev/mem copy are serial",
     "closure_paths": {
-      "a_overlap": "copy concurrent with decode on second core \u2014 plausible, unproven (parent+rd-duck experiment). Do NOT claim 'free core' from the 49% figure: 49% was measured before decode load.",
+      "a_overlap": "copy concurrent with decode \u2014 REQUIRES a free second core. Parent 2026-08-04 /proc/stat 10s: cpu1 busy=100% MiSTer pid permanent; cpu0 idle=97.6% at idle; EFFECTIVE product capacity = ONE core. Path (a) is NOT a free second-core plan; contended-core only; UNPROVEN / likely INFEASIBLE as sole closure.",
       "b_fabric_dma": "fabric DMA can retire the publication memcpy path only after a pinned/coherent source is established. Do NOT claim 'ARM never touches payload' \u2014 decode/reference and other ARM traffic remain."
     },
-    "w_scaler_scope": "content_window retires ARM *scale* (swscale), not T_copy_arm. Fabric present already reads DDR; DMA write path is w-mem/w-path joint territory.",
+    "w_scaler_scope": "content_window retires ARM *scale* (swscale) on the ONE effective product core, not T_copy_arm. Fabric present already reads DDR; DMA write path is w-mem/w-path. Scale savings matter MORE under one-core capacity (not less).",
     "solves_for": "CPU_TIME_ms_per_frame_copy",
     "T_copy_arm_ms_full_float": 14.98135653409091,
     "rounding_note": "Parent published 14.978; full float ~14.981356. Gate allows 0.01 ms.",
     "FORBIDDEN_slogans": [
       "free core (from 49% idle \u2014 measured before decode)",
-      "ARM never touches payload"
-    ]
+      "ARM never touches payload",
+      "free second core for decode||copy overlap",
+      "two-core ARM capacity for product",
+      "CAP=200% available headroom"
+    ],
+    "effective_arm_capacity": {
+      "status": "ONE_CORE",
+      "source": "parent 2026-08-04 live device /proc/stat 10s window",
+      "control": "per-core idle deltas USER_HZ=100; cpu0 idle=97.6% busy=2.4%; cpu1 idle=0.0% busy=100.0%; MiSTer pid 19729 = 1004 ticks/10s = 100.4% onecpu; mpx-main pid 9525 = 8 ticks/10s = 0.8% onecpu (daemon comm is mpx-main, not misterplexd)",
+      "long_run": "MiSTer 46403 CPU-s / 67465 s uptime = 68.8% of one core lifetime avg; daemon 206 CPU-s = 0.31%",
+      "FORBIDDEN": [
+        "assume two free ARM cores for product frame budget",
+        "claim path (a) second-core overlap without contended-core proof",
+        "treat CAP=200% as available product headroom (MiSTer owns ~100% permanently)"
+      ],
+      "implication_for_serial_deficit": "serial_deficit_ms = T_copy - decode_headroom remains the honest serial model; overlap is not default-feasible. Path A content_window still retires scale on the ONE product core."
+    }
   },
   "reference_numbers_one_set": {
     "R_req_720p24_MBps_per_dir": 33.1776,
@@ -528,5 +543,14 @@
       "formula_problem": "no elapsed sys_cyc normalization; window not pure steady frame-to-frame",
       "do_not_cite_as": "established fabric read MB/s"
     }
+  },
+  "parent_one_core_capacity_2026_08_04": {
+    "status": "BINDING",
+    "effective_product_cores": 1,
+    "MiSTer_framework_idle_burn": "~100% of one core permanently",
+    "daemon_comm": "mpx-main",
+    "daemon_idle_pct_onecpu": 0.8,
+    "control": "parent /proc/stat 10s per-core + pid ticks; USER_HZ=100",
+    "Sweep127": "renice MiSTer \u2192 +13.0% decode; MiSTer ticks in decode window -40.0% (parent)"
   }
 }

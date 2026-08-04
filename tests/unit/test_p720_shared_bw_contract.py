@@ -542,6 +542,31 @@ def main() -> int:
     print(f"OK THREE-LANE LOCK agreed_by={agreed} pending_ack=[]")
     print(f"OK rtl {svh.relative_to(ROOT)} + quote locked")
 
+
+    # Parent 2026-08-04: ONE effective ARM core (MiSTer owns the other permanently)
+    arm = c.get("arm_cpu_time_NOT_a_rate") or {}
+    eac = arm.get("effective_arm_capacity") or {}
+    if eac.get("status") != "ONE_CORE":
+        return fail("effective_arm_capacity.status must be ONE_CORE (parent /proc/stat)")
+    if "second core" in (arm.get("closure_paths") or {}).get("a_overlap", "").lower() and "NOT" not in (arm.get("closure_paths") or {}).get("a_overlap", ""):
+        # must NACK free second-core plan
+        aov = (arm.get("closure_paths") or {}).get("a_overlap", "")
+        if "INFEASIBLE" not in aov.upper() and "NOT a free second-core" not in aov:
+            return fail("path (a) must NACK free second-core overlap under ONE_CORE capacity")
+    aov = (arm.get("closure_paths") or {}).get("a_overlap", "")
+    if "ONE core" not in aov and "one core" not in aov.lower() and "ONE_CORE" not in aov:
+        if "EFFECTIVE product capacity = ONE core" not in aov:
+            return fail("path (a) text must state EFFECTIVE product capacity = ONE core")
+    forb = " ".join(arm.get("FORBIDDEN_slogans") or []).lower()
+    if "second core" not in forb and "two-core" not in forb:
+        return fail("FORBIDDEN_slogans must ban two-core/second-core capacity assumption")
+    poc = c.get("parent_one_core_capacity_2026_08_04") or {}
+    if poc.get("effective_product_cores") != 1:
+        return fail("parent_one_core_capacity must lock effective_product_cores=1")
+    if poc.get("daemon_comm") != "mpx-main":
+        return fail("daemon_comm must be mpx-main (not misterplexd process name)")
+    print("OK ONE_CORE capacity: MiSTer owns cpu1; path(a) second-core overlap NACK; daemon=mpx-main")
+
     print(
         "PASS p720_shared_bw_contract: HEADLINE=33.1776 MB/s/dir "
         "(1.65888 avg ONLY); peaks RGB=6/I420=3; ACCEPTED_REQUEST_CLOSED "
