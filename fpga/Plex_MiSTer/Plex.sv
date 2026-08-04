@@ -112,13 +112,15 @@ reg          status_set;
 wire         has_frame, has_audio, has_stream, audio_underrun;
 // HDMI chrome idle gate (sys_top CDC). Product path: idle only when !has_frame.
 assign HAS_FRAME = has_frame;
-// PLXC list path default-off (no DDR loader armed on this land). ARM semantic
-// list arrives later via plex_chrome_ddr_loader; until then WE=0 → pass-through
-// chrome (cfg_enable=0) + optional PLEX_FAB_* demo macros in sys_top.
-assign PLXC_EXT_WE    = 1'b0;
-assign PLXC_EXT_ADDR  = 8'd0;
-assign PLXC_EXT_WDATA = 64'd0;
-wire _unused_plxc_ready = PLXC_EXT_READY;
+// PLXC host beats toward sys_top chrome (emu_ports). Real nets from loader —
+// never tie 0 in sys_top (rd-duck dead-path audit). ENABLE=0 / m_gnt=0 → we=0
+// until PLEX_CHROME_DDR + w-mem arbiter grant (honest hollow, not fake-live).
+wire        plxc_core_we;
+wire  [7:0] plxc_core_addr;
+wire [63:0] plxc_core_wdata;
+assign PLXC_EXT_WE    = plxc_core_we;
+assign PLXC_EXT_ADDR  = plxc_core_addr;
+assign PLXC_EXT_WDATA = plxc_core_wdata;
 
 wire         has_idr, stub_busy, sps_valid, pps_valid, slice_valid, slice_is_i, has_mb_type;
 wire         residual_ok;
@@ -1321,6 +1323,55 @@ always @(posedge clk_sys) begin
 			{31'd0, rbf_stamp_alive} ^ {31'd0, rbf_build_id_valid};
 end
 
+// ---------------------------------------------------------------------------
+// PLXC DDR loader → sys_top plex_chrome (compose path). Default ENABLE=0.
+// m_gnt tied 0 until w-mem arbiter slot — host beats stay 0 (honest hollow).
+// PLEX_CHROME_DDR raises ENABLE; still needs real m_gnt for live list loads.
+// ---------------------------------------------------------------------------
+wire        plxc_m_req, plxc_m_we;
+wire [28:0] plxc_m_addr;
+wire [63:0] plxc_m_wdata;
+wire        plxc_ld_busy;
+wire [15:0] plxc_ld_seq;
+wire [31:0] plxc_ld_loads, plxc_ld_plxo, plxc_ld_bad, plxc_ld_torn;
+
+`ifdef PLEX_CHROME_DDR
+localparam bit PLXC_DDR_EN = 1'b1;
+`else
+localparam bit PLXC_DDR_EN = 1'b0;
+`endif
+
+plex_chrome_ddr_loader #(
+	.ENABLE(PLXC_DDR_EN),
+	.MAX_CMDS(112),
+	.DOORBELL_PHYS(32'h300F_F000)
+) u_plxc_ddr_loader (
+	.clk(clk_sys),
+	.reset(reset),
+	.m_req(plxc_m_req),
+	.m_we(plxc_m_we),
+	.m_addr(plxc_m_addr),
+	.m_wdata(plxc_m_wdata),
+	.m_gnt(1'b0),
+	.m_rd_valid(1'b0),
+	.m_rdata(64'd0),
+	.host_ready(PLXC_EXT_READY),
+	.host_we(plxc_core_we),
+	.host_addr(plxc_core_addr),
+	.host_wdata(plxc_core_wdata),
+	// mon_* live on clk_hdmi; PLXO uses glass defaults until CDC mon lands.
+	.chrome_hw(1'b1),
+	.mon_w(12'd1280),
+	.mon_h(12'd720),
+	.mon_scale(4'd3),
+	.last_seq(plxc_ld_seq),
+	.busy(plxc_ld_busy),
+	.cnt_loads(plxc_ld_loads),
+	.cnt_plxo_wr(plxc_ld_plxo),
+	.cnt_bad_magic(plxc_ld_bad),
+	.cnt_torn(plxc_ld_torn)
+);
+
 // Silence unused
 wire _unused = |{disp_i, cont_i, advance, ingest_pixels, ingest_dl, af_active, ioctl_addr,
 	sps_count, pps_count, slice_count, wr_count, stream_bytes_seen, sps_profile, sps_level,
@@ -1336,6 +1387,8 @@ wire _unused = |{disp_i, cont_i, advance, ingest_pixels, ingest_dl, af_active, i
 	stream_ddr_rd, stream_ddr_din, stream_ddr_be, stream_ddr_we, _host_wr_unused,
 	rbf_stamp_alive, rbf_build_id_valid, rbf_build_id_observe_r,
 	product_cfg_no_stub, product_cfg_ddr_fs, product_cfg_fabric_dma,
-	_unused_clkstat, _unused_bwstat, _unused_fdma};
+	_unused_clkstat, _unused_bwstat, _unused_fdma,
+	plxc_m_req, plxc_m_we, plxc_m_addr, plxc_m_wdata, plxc_ld_busy, plxc_ld_seq,
+	plxc_ld_loads, plxc_ld_plxo, plxc_ld_bad, plxc_ld_torn};
 
 endmodule

@@ -84,12 +84,11 @@ set_global_assignment -name VERILOG_MACRO "DDR_FRAME_STORE=1"
 # stream_path.sv gates the instance; sim builds omit this macro.
 set_global_assignment -name VERILOG_MACRO "PRODUCT_NO_STUB=1"
 # =============================================================================
-# integ/720p-compose FIT CANDIDATE (ENABLED — not default-OFF baseline)
-# + w-osd plex_chrome HDMI_OUT plane (product-wired; FAB demos default-OFF).
-# Refresh claim (HONEST): PRESENT_CLK_PIX_PLL @ 29.700 MHz + COMPACT CEA totals
-#   H_TOTAL=1650 V_TOTAL=750 → target 24.000 Hz scanout on clk_pix.
-# WITHOUT PLL: fps_eff=20e6/1_237_500 ≈ 16.16 Hz — still photographs as 720p DE.
-# Chrome paints on clk_hdmi/glass (typ. 60 Hz HPS), NOT core 16.16/24 claim.
+# integ/720p-compose FIT CANDIDATE (ENABLED) + w-osd plex_chrome product plane
+# Refresh (HONEST): PRESENT_CLK_PIX_PLL @ 29.700 MHz + CEA 1650×750 → 24.000 Hz
+#   core scanout. WITHOUT PLL: fps_eff≈16.16 Hz — still photographs as 720p DE.
+# Chrome: clk_hdmi/glass (typ. 60 Hz HPS), idle when !has_frame (CDC). NOT core fps.
+# PLXC loader ENABLE=0 / m_gnt=0 until PLEX_CHROME_DDR + w-mem grant.
 # Do NOT enable PRESENT_CLK_PIX_74_25 (VIC-4 60 Hz only).
 # =============================================================================
 #set_global_assignment -name VERILOG_MACRO "FRAME_W=640"
@@ -102,14 +101,13 @@ set_global_assignment -name VERILOG_MACRO "PRESENT_MULTI_PIXEL=1"
 set_global_assignment -name VERILOG_MACRO "PRESENT_PX_PER_CLK=2"
 set_global_assignment -name VERILOG_MACRO "PRESENT_CLK_PIX_PLL=1"
 set_global_assignment -name SDC_FILE Plex_clk_pix.sdc
-# Fabric DDR→DDR publication engine (w-path/w-mem). Bounce ≤2 M10K; start tied
-# idle until ARM/handover wires kick — still in hierarchy for area measurement.
 set_global_assignment -name VERILOG_MACRO "FABRIC_FRAME_DMA=1"
-# HDMI_OUT plex_chrome demos — DEFAULT OFF (product path always instances plane).
+# HDMI_OUT plex_chrome demos — DEFAULT OFF (plane always instanced).
 #set_global_assignment -name VERILOG_MACRO "PLEX_FAB_IDLE=1"
 #set_global_assignment -name VERILOG_MACRO "PLEX_FAB_CHROME=1"
 #set_global_assignment -name VERILOG_MACRO "PLEX_FAB_BOOT_PLXC=1"
-# Chrome M10K LB 6 (list 2+2 + CDC 2); packing unmeasured — see plex_chrome.sv header.
+#set_global_assignment -name VERILOG_MACRO "PLEX_CHROME_DDR=1"
+# Chrome M10K LB 6 (list 2+2 + CDC 2); packing unmeasured — plex_chrome.sv header.
 #
 # --- Alternate: L4 compact beam (mutually exclusive with MULTI above) ---
 # Measured PMS asset: 1280x720 @ 24/1. w-clock beam: H=1312 V=762.

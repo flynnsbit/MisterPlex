@@ -1283,10 +1283,13 @@ cyclonev_hps_interface_peripheral_i2c hdmi_i2c
 	assign fab_play_beacon_en= 1'b0;
 `endif
 `else
-	// Macros unset: fail-open video (has_frame=1 → idle_en=0). No FAB paint.
-	assign has_frame_chrome  = 1'b1;
-	assign fab_idle_phase_en = 1'b0;
-	assign osd_idle_chrome   = 2'b00;
+	// PRODUCT COMPOSE (reconcile/720p integ): track real has_frame via CDC.
+	// idle_en = !has_frame && mode!=3 → fabric chevron when core has no frame.
+	// No cyan/magenta demo signatures (those need PLEX_FAB_* capture macros).
+	// Boot PLXC enable stays 0 (pass-through overlay) until ARM/loader commits.
+	assign has_frame_chrome  = has_frame_hdmi;
+	assign fab_idle_phase_en = 1'b1;
+	assign osd_idle_chrome   = 2'b00; // static chevron (mode 2 = screensaver drift)
 	assign fab_idle_sig_en   = 1'b0;
 	assign fab_chrome_sig_en = 1'b0;
 	assign fab_chrome_demo_en= 1'b0;

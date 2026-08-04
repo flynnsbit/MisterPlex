@@ -91,6 +91,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_pl330_encode $(ROOT)/b
 	$(ROOT)/build/test_playback_overlay
 	python3 $(ROOT)/tests/unit/test_plex_chrome_write_path_static.py
 	python3 $(ROOT)/tests/unit/test_plex_chrome_default_off_static.py
+	python3 $(ROOT)/tests/unit/test_plex_chrome_compose_static.py
 	$(ROOT)/build/test_input_mailbox
 	$(ROOT)/build/test_pixel_format
 	$(ROOT)/build/test_main_guard

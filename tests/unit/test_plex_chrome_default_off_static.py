@@ -104,6 +104,19 @@ def main() -> int:
     else:
         fail("no plxc_ext product path nets found")
 
+    # --- 3b) PRODUCT compose: default else must CDC has_frame (not hardwire 1)
+    # Negative twin: has_frame_chrome=1'b1 forever disables fabric idle forever.
+    if re.search(r"assign\s+has_frame_chrome\s*=\s*has_frame_hdmi", code):
+        ok("product compose has_frame_hdmi")
+    else:
+        fail("product default missing has_frame_hdmi compose")
+    # PRODUCT COMPOSE block must not reintroduce stuck-1
+    m_prod = re.search(r"// PRODUCT COMPOSE[\s\S]{0,600}?`endif", text)
+    if m_prod and re.search(
+        r"assign\s+has_frame_chrome\s*=\s*1'b1", strip_comments(m_prod.group(0))
+    ):
+        fail("product default hardwires has_frame_chrome=1 (idle never paints)")
+
     # --- 4) PLXC owns +0x130; PLXG at +0x800 in ABI (FIXED) ---
     if not ABI.is_file():
         fail(f"missing {ABI}")

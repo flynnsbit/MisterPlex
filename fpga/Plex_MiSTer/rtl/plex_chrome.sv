@@ -20,6 +20,14 @@
 // ALM of consequence and would soft-upscale chrome 1.333× — refuse unless a
 // measured fit forces pre-ascal insertion.
 //
+// === REFRESH HONESTY (parent 2026-08-04 16.16 Hz trap) =======================
+// This module clocks on clk_hdmi (post-ascal glass). Refresh = HDMI video_mode
+// rate (typically 60 Hz @1280×720 from HPS), NOT core present clk_pix.
+// The 16.16 Hz failure mode is CORE_DE same-clock CEA totals @20 MHz:
+//   fps_eff = 20e6/(1650*750) ≈ 16.16 — real 1280×720 DE, wrong refresh.
+// Still frames cannot tell 16 from 24. Chrome "720p geometry PASS" is NOT a
+// claim that CORE_DE is 24 fps. w-clock owns PRESENT_CLK_PIX_PLL @29.7 MHz.
+//
 // Geometry: paint beam W/H are 12-bit (0..4095). body_scale from layout_h
 // (half-even /240, clamp 2..8) → scale=3 @720p HDMI_OUT, scale=2 @540 CORE_DE.
 //
