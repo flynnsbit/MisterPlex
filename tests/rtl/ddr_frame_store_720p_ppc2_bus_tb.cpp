@@ -447,20 +447,33 @@ int main(int argc, char** argv) {
 	            (unsigned long long)g1.s.ddr_cycles,
 	            (unsigned long long)g1.s.de_groups);
 
-	std::printf("BEAT_SUMMARY term=payload_RD_beats/frame (NOT T_copy_arm ms)\n");
-	std::printf("  G0_ideal payload=%llu total_rd=%llu ddr_cy=%llu sys_cy=%llu residual=%lld\n",
+	// rd-duck binding labels: these are frame-store reader demand beats under an
+	// ASSUMED stall envelope — NOT measured sustainable DDR bandwidth, NOT total
+	// HPS controller traffic (pipe→heap, memcpy src reads, decode/ref extra).
+	// Host writes are not RTL-master beats; shared-controller contention stays open.
+	// R_req=33.1776 MB/s/dir and 66.3552 R+W are payload-rate arithmetic only.
+	std::printf("BEAT_SUMMARY class=frame_store_reader_demand (NOT sustainable_DDR_BW)\n");
+	std::printf("  separate: payload_RD vs doorbell/mailbox_RD; NOT T_copy_arm ms; NOT host_write\n");
+	std::printf("  G0_ideal payload_RD=%llu door_RD=%llu total_RD=%llu ddr_cy=%llu sys_cy=%llu "
+	            "residual_vs_24fps_ddr_cy=%lld\n",
 	            (unsigned long long)g0.s.payload_beats,
+	            (unsigned long long)g0.s.doorbell_beats,
 	            (unsigned long long)g0.s.accepted_rd_beats,
 	            (unsigned long long)g0.s.ddr_cycles,
 	            (unsigned long long)g0.s.sys_cycles,
 	            (long long)kBudgetDdrCycles24 - (long long)g0.s.ddr_cycles);
-	std::printf("  G1_stall payload=%llu total_rd=%llu ddr_cy=%llu sys_cy=%llu blocked=%llu residual=%lld\n",
+	std::printf("  G1_stall payload_RD=%llu door_RD=%llu total_RD=%llu ddr_cy=%llu sys_cy=%llu "
+	            "blocked=%llu residual_vs_24fps_ddr_cy=%lld\n",
 	            (unsigned long long)g1.s.payload_beats,
+	            (unsigned long long)g1.s.doorbell_beats,
 	            (unsigned long long)g1.s.accepted_rd_beats,
 	            (unsigned long long)g1.s.ddr_cycles,
 	            (unsigned long long)g1.s.sys_cycles,
 	            (unsigned long long)g1.s.rd_blocked,
 	            (long long)kBudgetDdrCycles24 - (long long)g1.s.ddr_cycles);
-	std::printf("PASS ddr_frame_store_720p_ppc2_bus FULL+STALL @20:90 LC>=32\n");
+	std::printf("  PROVES: reader beat demand + underrun tolerance to assumed stall envelope\n");
+	std::printf("  DOES_NOT_PROVE: HPS shared controller supply, host write beats, total traffic\n");
+	std::printf("PASS ddr_frame_store_720p_ppc2_bus FULL+STALL @20:90 LC>=32 "
+	            "(reader-demand class only)\n");
 	return 0;
 }
