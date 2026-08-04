@@ -56,6 +56,42 @@ constexpr uint8_t kYuv420BlackY = 16;
 constexpr uint8_t kYuv420BlackU = 128;
 constexpr uint8_t kYuv420BlackV = 128;
 
+// ---- Aggressive 720p tier (Path A presentation; opt-in RBF + PLXG) ----
+// Mirrors DDR_FRAME_720P_* in ddr_frame_layout_params.svh (dual-header lockstep).
+// Product default remains 480p silicon above. Option-C phys after bitstream ring.
+constexpr CodedWidth kPlex720pCodedWidth{1280};
+constexpr CodedHeight kPlex720pCodedHeight{720};
+constexpr DisplayWidth kPlex720pDisplayWidth{1280};
+constexpr DisplayHeight kPlex720pDisplayHeight{720};
+constexpr PresentedWidth kPlex720pPresentedWidth{1280};
+constexpr PresentedHeight kPlex720pPresentedHeight{720};
+constexpr int kPlex720pCropLeft = 0;
+constexpr int kPlex720pCropRight = 0;
+constexpr int kPlex720pCropTop = 0;
+constexpr int kPlex720pCropBottom = 0;
+constexpr int kPlex720pPillarboxLeft = 0;
+constexpr int kPlex720pPillarboxRight = 0;
+constexpr int kPlex720pYuvLumaLineQwords = 160;
+constexpr int kPlex720pYuvChromaLineQwords = 80;
+constexpr int kPlex720pYuv420pBytes = 1382400;
+constexpr int kPlex720pYPlaneOffset = 0;
+constexpr int kPlex720pUPlaneOffset = 921600;
+constexpr int kPlex720pVPlaneOffset = 1152000;
+constexpr int kPlex720pYStrideBytes = 1280;
+constexpr int kPlex720pChromaStrideBytes = 640;
+static_assert(kPlex720pYStrideBytes == kPlex720pCodedWidth.get(),
+              "720p Y stride must equal coded width");
+static_assert(kPlex720pChromaStrideBytes == kPlex720pCodedWidth.get() / 2,
+              "720p chroma stride must equal coded width/2");
+static_assert(kPlex720pYuv420pBytes == 1280 * 720 * 3 / 2, "720p I420 byte count");
+// alignUp(1382400, 0x40000) = 0x180000; doorbell = phys + 2*stride - 0x1000.
+constexpr uint32_t kPlex720pYuv420pBankStride = 0x00180000u;
+constexpr uint32_t kPlex720pDdrFramePhysBase = 0x30180000u;
+constexpr uint32_t kPlex720pYuv420pDoorbellPhys = 0x3047F000u;
+static_assert(kPlex720pYuv420pDoorbellPhys ==
+                  kPlex720pDdrFramePhysBase + 2u * kPlex720pYuv420pBankStride - 0x1000u,
+              "720p doorbell = base + 2*stride - 4KiB");
+
 enum class DdrFramePlacement {
     None,
     Pillarbox,
@@ -205,6 +241,13 @@ inline DdrFrameGeometry plex480pDdrFrameGeometry() {
     g.present_x = kPlex480pPillarboxLeft;
     g.present_y = 0;
     return g;
+}
+
+// 720p identity canvas (coded=display=presented 1280x720). Opt-in with matching RBF.
+inline DdrFrameGeometry plex720pDdrFrameGeometry() {
+    return makeDdrFrameGeometry(kPlex720pCodedWidth, kPlex720pCodedHeight, kPlex720pDisplayWidth,
+                                kPlex720pDisplayHeight, kPlex720pPresentedWidth,
+                                kPlex720pPresentedHeight, DdrFramePlacement::None);
 }
 
 // Map a *presented* scanout size to DDR geometry. 640x480 presented is the
@@ -379,6 +422,30 @@ inline bool ddrFrameLayoutMatchesProductSilicon(const DdrFrameLayout& l) {
         return false;
     if (l.bank_stride != kPlex480pYuv420pBankStride ||
         l.doorbell_phys != kPlex480pYuv420pDoorbellPhys)
+        return false;
+    return true;
+}
+
+// Option-C 720p bank map (phys 0x30180000, stride 0x180000, doorbell 0x3047F000).
+inline DdrFrameLayout makePlex720pDdrFrameLayout() {
+    return makeDdrFrameLayout(plex720pDdrFrameGeometry(), kPlex720pDdrFramePhysBase,
+                              kDdrFrameStrideAlign, DdrFrameFormat::Yuv420p);
+}
+
+inline bool ddrFrameLayoutMatches720pTier(const DdrFrameLayout& l) {
+    if (!ddrFrameLayoutValid(l))
+        return false;
+    if (l.format != DdrFrameFormat::Yuv420p)
+        return false;
+    if (l.coded_width.get() != kPlex720pCodedWidth.get() ||
+        l.coded_height.get() != kPlex720pCodedHeight.get())
+        return false;
+    if (l.line_bytes != kPlex720pYStrideBytes || l.chroma_line_bytes != kPlex720pChromaStrideBytes)
+        return false;
+    if (l.frame_bytes != static_cast<size_t>(kPlex720pYuv420pBytes))
+        return false;
+    if (l.phys_base != kPlex720pDdrFramePhysBase || l.bank_stride != kPlex720pYuv420pBankStride ||
+        l.doorbell_phys != kPlex720pYuv420pDoorbellPhys)
         return false;
     return true;
 }
