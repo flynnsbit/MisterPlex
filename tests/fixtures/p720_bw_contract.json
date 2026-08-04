@@ -101,7 +101,21 @@
       "concurrent_HPS_write",
       "T_copy_arm_e2e"
     ],
-    "not_partial": "full_1280x720_PPC2_20_90_not_624x48_not_1to1_not_prep_only"
+    "not_partial": "full_1280x720_PPC2_20_90_not_624x48_not_1to1_not_prep_only",
+    "rgb_output_sample": {
+      "g0_samples": 460800,
+      "g0_nonzero": 460722,
+      "g0_npx_dual": 459283,
+      "g0_fnv": "0xef3265d4",
+      "note": "asserted non-black DE RGB + dual-lane samples; NOT golden picture checksum; delivery still OPEN (underrun=77)"
+    },
+    "status_class": "STRESS_EVIDENCE_MEASURED_TIGHT",
+    "not_claimed": [
+      "reader CLOSED",
+      "fabric_bw_closed",
+      "product rate-match 24fps",
+      "fit release"
+    ]
   },
   "optional_not_headline": {
     "present_linebuf_i420_equiv_B_per_clk_sys_DE": {
@@ -189,6 +203,7 @@
       "G2 NEG discrimination",
       "still no underrun==0 force (would false-green)",
       "still no product rate-match"
-    ]
+    ],
+    "note": "rd-duck: tip >=9e5f2c86+RGB asserts; audit of 8a40f163 is stale pre-tighten"
   }
 }

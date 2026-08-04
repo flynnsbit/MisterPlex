@@ -1,5 +1,5 @@
 // Full 1280x720 I420 real ddr_frame_store under MULTI+PPC=2 recipe (w-clock).
-// rd-duck gap: end-of-frame accepted RD beat delta, not prep-only / not ideal fire.
+// STRESS_EVIDENCE: tight beat delta + RGB/n-lane sample checksum. NOT product rate-match.
 `default_nettype none
 
 module ddr_frame_store_720p_ppc2_bus_tb (
@@ -15,6 +15,11 @@ module ddr_frame_store_720p_ppc2_bus_tb (
 	output wire [7:0]  rd_r,
 	output wire [7:0]  rd_g,
 	output wire [7:0]  rd_b,
+	output wire [15:0] rd_r_n,
+	output wire [15:0] rd_g_n,
+	output wire [15:0] rd_b_n,
+	output wire [1:0]  rd_lane_valid_n,
+	output wire        rd_n_valid,
 	output wire        has_frame,
 	output wire        swap_pending,
 	output wire [15:0] underrun_count,
@@ -32,9 +37,6 @@ module ddr_frame_store_720p_ppc2_bus_tb (
 );
 	wire DDRAM_CLK;
 	wire [7:0] DDRAM_BE;
-	wire [15:0] rd_r_n, rd_g_n, rd_b_n;
-	wire [1:0] rd_lane_valid_n;
-	wire rd_n_valid;
 
 	ddr_frame_store #(
 		.FRAME_W(1280),

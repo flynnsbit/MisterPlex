@@ -334,6 +334,10 @@ struct FrameDelta {
 	uint16_t frames_done = 0;
 	uint16_t underrun_start = 0;
 	uint16_t underrun_end = 0;
+	uint64_t rgb_samples = 0;
+	uint64_t rgb_nonzero = 0;
+	uint64_t npx_dual = 0;
+	uint32_t rgb_fnv = 2166136261u;
 	bool ok = false;
 };
 
@@ -363,28 +367,59 @@ FrameDelta measureSteadyFrame(int stall_after, int hog_period, int hog_len,
 	}
 
 	// Steady delta: clear counters at frames_done edge, wait for next.
+	// Sample RGB / dual-lane outputs every sys posedge while has_frame+DE
+	// (rd-duck: underrun and rd_* must be *read*, not only wired).
 	const uint16_t fd1 = sim.top.frames_done;
 	out.underrun_start = sim.top.underrun_count;
 	sim.clearStats();
 	sim.starve_dout = starve_dout_after_prep;
 	sim.accept_cap = accept_cap_after_prep;
-	// Re-ring so next frame is available (double-buffer style present).
 	sim.ringDoorbell(0, 2);
-	if (!sim.waitFrameDelta(fd1, prep_timeout)) {
-		std::printf("STEADY_FAIL fd=%u beats=%llu returned=%llu underrun=%u\n",
-		            (unsigned)sim.top.frames_done,
-		            (unsigned long long)sim.st.accepted_rd_beats,
-		            (unsigned long long)sim.st.returned_rd_beats,
-		            (unsigned)sim.top.underrun_count);
-		out.s = sim.st;
-		out.frames_done = sim.top.frames_done;
-		out.underrun_end = sim.top.underrun_count;
-		out.ok = false; // deadline miss on steady window
-		return out;
+	const uint64_t sys0 = sim.st.sys_cycles;
+	bool got = false;
+	while (sim.st.sys_cycles - sys0 < prep_timeout) {
+		const uint8_t prev_clk = sim.clk_sys_lvl;
+		sim.advance();
+		// Sample on sys rising edge after eval
+		if (prev_clk == 0 && sim.clk_sys_lvl == 1) {
+			if (sim.top.has_frame && sim.top.rd_active) {
+				const uint8_t r = static_cast<uint8_t>(sim.top.rd_r);
+				const uint8_t g = static_cast<uint8_t>(sim.top.rd_g);
+				const uint8_t b = static_cast<uint8_t>(sim.top.rd_b);
+				++out.rgb_samples;
+				if (r | g | b)
+					++out.rgb_nonzero;
+				// FNV-1a over RGB triples
+				auto fnv = [&](uint8_t v) {
+					out.rgb_fnv ^= v;
+					out.rgb_fnv *= 16777619u;
+				};
+				fnv(r); fnv(g); fnv(b);
+				if (sim.top.rd_n_valid && (sim.top.rd_lane_valid_n & 0x3) == 0x3) {
+					++out.npx_dual;
+					fnv(static_cast<uint8_t>(sim.top.rd_r_n & 0xFF));
+					fnv(static_cast<uint8_t>((sim.top.rd_r_n >> 8) & 0xFF));
+				}
+			}
+		}
+		if (sim.top.frames_done > fd1 && sim.top.has_frame) {
+			got = true;
+			break;
+		}
 	}
 	out.s = sim.st;
 	out.frames_done = sim.top.frames_done;
 	out.underrun_end = sim.top.underrun_count;
+	if (!got) {
+		std::printf("STEADY_FAIL fd=%u beats=%llu returned=%llu underrun=%u rgb_samp=%llu\n",
+		            (unsigned)sim.top.frames_done,
+		            (unsigned long long)sim.st.accepted_rd_beats,
+		            (unsigned long long)sim.st.returned_rd_beats,
+		            (unsigned)sim.top.underrun_count,
+		            (unsigned long long)out.rgb_samples);
+		out.ok = false;
+		return out;
+	}
 	out.ok = true;
 	return out;
 }
@@ -403,7 +438,7 @@ int main(int argc, char** argv) {
 	            (unsigned long long)kYBeatsExpected,
 	            (unsigned long long)kUBeatsExpected,
 	            (unsigned long long)kVBeatsExpected);
-	std::printf("  G0/G1 ddr_cy<%llu; G1 payload==expected (no 3x band); busy↑ blocked>=10\n",
+	std::printf("  G0/G1 ddr_cy<%llu; payload==173120; RGB/npx sampled+FNV; busy↑ blocked>=10\n",
 	            (unsigned long long)kBudgetDdrCycles24);
 	std::printf("  G2 NEG: starve_dout AFTER prep → steady deadline fail\n");
 	std::printf("  beam 825*750@20M ≈32.323fps STRESS (not product rate-match 24fps)\n");
@@ -464,14 +499,26 @@ int main(int argc, char** argv) {
 	if (g0.underrun_end < g0.underrun_start)
 		return fail("G0 underrun_count wrapped");
 	// Do NOT require underrun==0 here — that would false-green delivery.
+	// Output path must be exercised (rd-duck: wired-but-unread is a hole).
+	if (g0.rgb_samples < 10000)
+		return fail("G0 too few RGB samples on DE (outputs unread/black path)");
+	if (g0.rgb_nonzero == 0)
+		return fail("G0 all RGB zero on DE (stale/black lines would pass beats-only)");
+	if (g0.npx_dual < 1000)
+		return fail("G0 too few dual-lane rd_n_valid samples");
+	if (g0.rgb_fnv == 2166136261u)
+		return fail("G0 RGB FNV never updated");
+	std::printf("G0_RGB samples=%llu nonzero=%llu npx_dual=%llu fnv=0x%08x underrun_delta=%u\n",
+	            (unsigned long long)g0.rgb_samples, (unsigned long long)g0.rgb_nonzero,
+	            (unsigned long long)g0.npx_dual, g0.rgb_fnv, g0_undr);
 
 	std::printf("PASS G0 stress payload=%llu (=ideal+%llu Y) door=%llu returned=%llu "
-	            "ddr_cy=%llu underrun_delta=%u\n",
+	            "ddr_cy=%llu underrun_delta=%u rgb_fnv=0x%08x\n",
 	            (unsigned long long)g0.s.payload_beats,
 	            (unsigned long long)kExtraYLineBeats,
 	            (unsigned long long)g0.s.doorbell_beats,
 	            (unsigned long long)g0.s.returned_rd_beats,
-	            (unsigned long long)g0.s.ddr_cycles, g0_undr);
+	            (unsigned long long)g0.s.ddr_cycles, g0_undr, g0.rgb_fnv);
 
 	// ----- G1 mild stall (corrected criterion: NOT wall-time; busy/blocked + tight payload) -----
 	FrameDelta g1 = measureSteadyFrame(3, 8, 3);
@@ -501,13 +548,23 @@ int main(int argc, char** argv) {
 		return fail("G1 returned_rd_beats != accepted");
 	const unsigned g1_undr =
 	    static_cast<unsigned>(g1.underrun_end - g1.underrun_start);
+	if (g1.underrun_end < g1.underrun_start)
+		return fail("G1 underrun_count wrapped");
+	if (g1.rgb_samples < 1000)
+		return fail("G1 RGB outputs unread (samples<1000)");
+	if (g1.rgb_nonzero == 0)
+		return fail("G1 all RGB zero under stall");
+	// Still do NOT require underrun_delta==0 — delivery OPEN on stress raster.
+	std::printf("G1_RGB samples=%llu nonzero=%llu fnv=0x%08x underrun_delta=%u\n",
+	            (unsigned long long)g1.rgb_samples, (unsigned long long)g1.rgb_nonzero,
+	            g1.rgb_fnv, g1_undr);
 	std::printf("PASS G1 mild-stall payload=%llu blocked=%llu busy=%llu (>G0 %llu) "
-	            "ddr_cy=%llu underrun_delta=%u\n",
+	            "ddr_cy=%llu underrun_delta=%u rgb_fnv=0x%08x\n",
 	            (unsigned long long)g1.s.payload_beats,
 	            (unsigned long long)g1.s.rd_blocked,
 	            (unsigned long long)g1.s.busy_cycles,
 	            (unsigned long long)g0.s.busy_cycles,
-	            (unsigned long long)g1.s.ddr_cycles, g1_undr);
+	            (unsigned long long)g1.s.ddr_cycles, g1_undr, g1.rgb_fnv);
 
 	// ----- G2 NEG: starve DOUT after healthy prep — steady deadline must fail -----
 	// PRE-REG: starve_dout_after_prep=true → steady waitFrameDelta times out (!ok)
