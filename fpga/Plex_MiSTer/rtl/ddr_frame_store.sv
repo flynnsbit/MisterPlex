@@ -1317,46 +1317,11 @@ module ddr_frame_store #(
 						                                  : pending_ready_c);
 					end
 					poll_div <= poll_div + 16'd1;
-					if (frame_mbox_req && (!frame_mbox_valid || poll_div[7:0] == 8'd224)
-					    && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
-						DDRAM_ADDR <= FRAME_MAILBOX_W;
-						DDRAM_BURSTCNT <= 8'd1;
-						DDRAM_DIN <= {frame_status_ddr, frame_mbox_seq + 8'd1, MAGIC_F};
-						DDRAM_WE <= 1'b1;
-						frame_mbox_seq <= frame_mbox_seq + 8'd1;
-						frame_mbox_last <= frame_status_ddr;
-						frame_mbox_valid <= 1'b1;
-						frame_mbox_req <= 1'b0;
-						state_ddr <= S_WRITE_WAIT;
-					end else if (bank_mbox_req && (!bank_mbox_valid || poll_div[7:0] == 8'd160)
-					    && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
-						// PLXD bank-release: tell ARM which bank is safe to write
-						// Layout: [63:48] frames_done (real swaps, CDC),
-						//   [47:36] bank_vsync_count[11:0] (glass/vsync free-run LSBs),
-						//   [35] swap_pending, [34] disp_bank,
-						//   [33:32] free_bank_mask, [31:0] magic
-						// frames_done MUST stay the real swap counter. Historical
-						// c5382bee packed bank_vsync into [63:48] so PLXD looked
-						// "live" while swaps stuck — ARM stale could not fire.
-						// Glass vsync now rides the former reserved nibble only
-						// (12-bit wrap ~68 s @60 Hz) so Δ glass rate is host-visible
-						// without reintroducing vsync-as-frames_done.
-						DDRAM_ADDR <= BANK_MAILBOX_W;
-						DDRAM_BURSTCNT <= 8'd1;
-						DDRAM_DIN <= {frames_done_d2,                       // [63:48] real swaps (CDC)
-						              bank_vsync_count[11:0],               // [47:36] glass vsync LSBs
-						              swap_pending_d2,                      // [35]
-						              disp_bank_d2,                         // [34]
-						              swap_pending_d2 ? 2'b00 :             // [33:32] free_bank_mask
-						                (disp_bank_d2 ? 2'b01 : 2'b10),
-						              MAGIC_D};                             // [31:0]
-						DDRAM_WE <= 1'b1;
-						bank_mbox_seq <= bank_mbox_seq + 8'd1;
-						bank_mbox_valid <= 1'b1;
-						bank_mbox_req <= 1'b0;
-						bank_mbox_hb <= 18'd0;
-						state_ddr <= S_WRITE_WAIT;
-					end else if (PIPELINE_REFILL_SCHEDULER && sched_valid) begin
+					// H-R1e M1: need_y/c_cur (+ display sched issue) BEFORE frame/bank mbox
+					// when has_frame. Prep demoted while display misses desired window.
+					// LINECAM freeze demote kept; force cur bank/targets on cur arms.
+					if (PIPELINE_REFILL_SCHEDULER && sched_valid && !sched_for_pending) begin
+						// (A) issue already-armed DISPLAY fill before any mbox
 						fill_bank <= sched_bank;
 						fill_idx <= sched_idx;
 						fill_plane_v <= 1'b0;
@@ -1376,46 +1341,143 @@ module ddr_frame_store #(
 							fill_is_chroma <= 1'b1;
 						end
 						state_ddr <= S_LINE_ISSUE;
-					// LINECAM_CUR_WINDOW_FIRST: cur listed first; sel_*_prep_r already
-					// demoted at schedule-reg sample when need_*_cur (see freeze above).
-					end else if ((has_frame_d2 && need_y_cur_r) || sel_y_prep_r) begin
-						// H-R1d: arm from frozen sel/bank/target_*_r only (no live swap_pending re-mux).
+					end else if (has_frame_d2 && need_y_cur_r) begin
+						// (B) ARM Y CUR only — force disp bank + cur targets
 						if (PIPELINE_REFILL_SCHEDULER) begin
 							sched_valid <= 1'b1;
 							sched_is_y <= 1'b1;
-							sched_for_pending <= sel_y_prep_r;
-							sched_bank <= sched_bank_y_src_r;
-							sched_y <= sel_y_prep_r ? target_y_prep_r : target_y_cur_r;
-							sched_idx <= sel_y_prep_r ? target_y_idx_prep_r : target_y_idx_cur_r;
+							sched_for_pending <= 1'b0;
+							sched_bank <= disp_bank_d2;
+							sched_y <= target_y_cur_r;
+							sched_idx <= target_y_idx_cur_r;
 							sched_pending_ready <= pending_ready_r;
 						end else begin
-							fill_bank <= sched_bank_y_src_r;
-							fill_y <= sel_y_prep_r ? target_y_prep_r : target_y_cur_r;
-							fill_idx <= sel_y_prep_r ? target_y_idx_prep_r : target_y_idx_cur_r;
-							y_valid[sel_y_prep_r ? target_y_idx_prep_r : target_y_idx_cur_r] <= 1'b0;
-							y_bank[sel_y_prep_r ? target_y_idx_prep_r : target_y_idx_cur_r] <= sched_bank_y_src_r;
+							fill_bank <= disp_bank_d2;
+							fill_y <= target_y_cur_r;
+							fill_idx <= target_y_idx_cur_r;
+							y_valid[target_y_idx_cur_r] <= 1'b0;
+							y_bank[target_y_idx_cur_r] <= disp_bank_d2;
 							fill_is_chroma <= 1'b0;
 							fill_plane_v <= 1'b0;
 							fill_qword <= '0;
 							qwords_remaining <= Y_LINE_QWORDS[Y_QW_AW:0];
 							state_ddr <= S_LINE_ISSUE;
 						end
-					end else if ((has_frame_d2 && need_c_cur_r) || sel_c_prep_r) begin
-						// H-R1d + CUR_WINDOW_FIRST chroma twin — frozen sel/bank/target only.
+					end else if (has_frame_d2 && need_c_cur_r) begin
+						// (C) ARM C CUR only — force disp bank + cur targets
 						if (PIPELINE_REFILL_SCHEDULER) begin
 							sched_valid <= 1'b1;
 							sched_is_y <= 1'b0;
-							sched_for_pending <= sel_c_prep_r;
+							sched_for_pending <= 1'b0;
+							sched_bank <= disp_bank_d2;
+							sched_cy <= target_c_cur_r;
+							sched_idx <= target_c_idx_cur_r;
+							sched_pending_ready <= pending_ready_r;
+						end else begin
+							fill_bank <= disp_bank_d2;
+							fill_cy <= target_c_cur_r;
+							fill_idx <= target_c_idx_cur_r;
+							c_valid[target_c_idx_cur_r] <= 1'b0;
+							c_bank[target_c_idx_cur_r] <= disp_bank_d2;
+							fill_is_chroma <= 1'b1;
+							fill_plane_v <= 1'b0;
+							fill_qword <= '0;
+							qwords_remaining <= C_LINE_QWORDS[Y_QW_AW:0];
+							state_ddr <= S_LINE_ISSUE;
+						end
+					end else if (frame_mbox_req && (!frame_mbox_valid || poll_div[7:0] == 8'd224)
+					    && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+						// (D) demoted under has_frame cur miss
+						DDRAM_ADDR <= FRAME_MAILBOX_W;
+						DDRAM_BURSTCNT <= 8'd1;
+						DDRAM_DIN <= {frame_status_ddr, frame_mbox_seq + 8'd1, MAGIC_F};
+						DDRAM_WE <= 1'b1;
+						frame_mbox_seq <= frame_mbox_seq + 8'd1;
+						frame_mbox_last <= frame_status_ddr;
+						frame_mbox_valid <= 1'b1;
+						frame_mbox_req <= 1'b0;
+						state_ddr <= S_WRITE_WAIT;
+					end else if (bank_mbox_req && (!bank_mbox_valid || poll_div[7:0] == 8'd160)
+					    && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+						// (E) PLXD bank-release: tell ARM which bank is safe to write
+						// Layout: [63:48] frames_done (real swaps, CDC),
+						//   [47:36] bank_vsync_count[11:0] (glass/vsync free-run LSBs),
+						//   [35] swap_pending, [34] disp_bank,
+						//   [33:32] free_bank_mask, [31:0] magic
+						DDRAM_ADDR <= BANK_MAILBOX_W;
+						DDRAM_BURSTCNT <= 8'd1;
+						DDRAM_DIN <= {frames_done_d2,                       // [63:48] real swaps (CDC)
+						              bank_vsync_count[11:0],               // [47:36] glass vsync LSBs
+						              swap_pending_d2,                      // [35]
+						              disp_bank_d2,                         // [34]
+						              swap_pending_d2 ? 2'b00 :             // [33:32] free_bank_mask
+						                (disp_bank_d2 ? 2'b01 : 2'b10),
+						              MAGIC_D};                             // [31:0]
+						DDRAM_WE <= 1'b1;
+						bank_mbox_seq <= bank_mbox_seq + 8'd1;
+						bank_mbox_valid <= 1'b1;
+						bank_mbox_req <= 1'b0;
+						bank_mbox_hb <= 18'd0;
+						state_ddr <= S_WRITE_WAIT;
+					end else if (PIPELINE_REFILL_SCHEDULER && sched_valid) begin
+						// (F) remaining sched issue (prep / pending)
+						fill_bank <= sched_bank;
+						fill_idx <= sched_idx;
+						fill_plane_v <= 1'b0;
+						fill_qword <= '0;
+						sched_valid <= 1'b0;
+						if (sched_is_y) begin
+							fill_y <= sched_y;
+							y_valid[sched_idx] <= 1'b0;
+							y_bank[sched_idx] <= sched_bank;
+							qwords_remaining <= Y_LINE_QWORDS[Y_QW_AW:0];
+							fill_is_chroma <= 1'b0;
+						end else begin
+							fill_cy <= sched_cy;
+							c_valid[sched_idx] <= 1'b0;
+							c_bank[sched_idx] <= sched_bank;
+							qwords_remaining <= C_LINE_QWORDS[Y_QW_AW:0];
+							fill_is_chroma <= 1'b1;
+						end
+						state_ddr <= S_LINE_ISSUE;
+					end else if (sel_y_prep_r) begin
+						// (G) prep-only Y arm (cur already handled above)
+						if (PIPELINE_REFILL_SCHEDULER) begin
+							sched_valid <= 1'b1;
+							sched_is_y <= 1'b1;
+							sched_for_pending <= 1'b1;
+							sched_bank <= sched_bank_y_src_r;
+							sched_y <= target_y_prep_r;
+							sched_idx <= target_y_idx_prep_r;
+							sched_pending_ready <= pending_ready_r;
+						end else begin
+							fill_bank <= sched_bank_y_src_r;
+							fill_y <= target_y_prep_r;
+							fill_idx <= target_y_idx_prep_r;
+							y_valid[target_y_idx_prep_r] <= 1'b0;
+							y_bank[target_y_idx_prep_r] <= sched_bank_y_src_r;
+							fill_is_chroma <= 1'b0;
+							fill_plane_v <= 1'b0;
+							fill_qword <= '0;
+							qwords_remaining <= Y_LINE_QWORDS[Y_QW_AW:0];
+							state_ddr <= S_LINE_ISSUE;
+						end
+					end else if (sel_c_prep_r) begin
+						// (H) prep-only C arm
+						if (PIPELINE_REFILL_SCHEDULER) begin
+							sched_valid <= 1'b1;
+							sched_is_y <= 1'b0;
+							sched_for_pending <= 1'b1;
 							sched_bank <= sched_bank_c_src_r;
-							sched_cy <= sel_c_prep_r ? target_c_prep_r : target_c_cur_r;
-							sched_idx <= sel_c_prep_r ? target_c_idx_prep_r : target_c_idx_cur_r;
+							sched_cy <= target_c_prep_r;
+							sched_idx <= target_c_idx_prep_r;
 							sched_pending_ready <= pending_ready_r;
 						end else begin
 							fill_bank <= sched_bank_c_src_r;
-							fill_cy <= sel_c_prep_r ? target_c_prep_r : target_c_cur_r;
-							fill_idx <= sel_c_prep_r ? target_c_idx_prep_r : target_c_idx_cur_r;
-							c_valid[sel_c_prep_r ? target_c_idx_prep_r : target_c_idx_cur_r] <= 1'b0;
-							c_bank[sel_c_prep_r ? target_c_idx_prep_r : target_c_idx_cur_r] <= sched_bank_c_src_r;
+							fill_cy <= target_c_prep_r;
+							fill_idx <= target_c_idx_prep_r;
+							c_valid[target_c_idx_prep_r] <= 1'b0;
+							c_bank[target_c_idx_prep_r] <= sched_bank_c_src_r;
 							fill_is_chroma <= 1'b1;
 							fill_plane_v <= 1'b0;
 							fill_qword <= '0;
