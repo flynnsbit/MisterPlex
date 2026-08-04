@@ -34,8 +34,8 @@
 `default_nettype none
 
 module h264_dpb_ref_commit #(
-	parameter int FRAME_W = 624,
-	parameter int FRAME_H = 480,
+	parameter int FRAME_W = 1280,
+	parameter int FRAME_H = 720,
 	parameter int MB_COUNT = ((FRAME_W + 15) / 16) * ((FRAME_H + 15) / 16),
 	parameter int BANK0_BASE = 0,
 	parameter int BANK1_BASE = (FRAME_W * FRAME_H + 2 * ((FRAME_W / 2) * (FRAME_H / 2))),

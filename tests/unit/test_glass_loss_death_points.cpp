@@ -157,13 +157,17 @@ int main() {
         std::printf("D6_OK maxDropRun=1 paces sparse pacedrops (not free-run skip storms)\n");
     }
 
-    // --- Geometry identity (load-bearing from 861ae49c) ---
+    // --- Geometry identity (product silicon is one FPGA canvas) ---
     {
         const auto a = ddrFrameGeometryForFpgaPresent(320, 240);
         const auto b = ddrFrameGeometryForFpgaPresent(624, 480);
+        const auto p = productDdrFrameStoreGeometry();
         expect(yuv420pCodedFrameBytes(a) == yuv420pCodedFrameBytes(b), "geom same bytes");
-        expect(yuv420pCodedFrameBytes(a) == 449280u, "geom 449280");
-        std::printf("GEOM_OK identical canvas 449280 both tiers\n");
+        expect(yuv420pCodedFrameBytes(a) == yuv420pCodedFrameBytes(p), "geom product canvas");
+        expect(yuv420pCodedFrameBytes(a) == static_cast<size_t>(kPlex720pYuv420pBytes),
+               "geom 1382400 product I420");
+        std::printf("GEOM_OK identical canvas %zu both tiers (product 720p)\n",
+                    yuv420pCodedFrameBytes(a));
     }
 
     if (g_fails) {

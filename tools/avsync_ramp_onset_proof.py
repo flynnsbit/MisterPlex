@@ -150,6 +150,12 @@ def main() -> int:
         default=ROOT / "avsync_hdmi_out" / "480p_repeat1_capture.mkv",
         help="Existing HDMI capture providing real PTS grid (not re-opened live)",
     )
+    ap.add_argument(
+        "--pts-json",
+        type=Path,
+        default=ROOT / "tests/fixtures/avsync/480p_repeat1_pts_60s.json",
+        help="Checked-in measured PTS grid (preferred; avoids 339 MB mkv dependency)",
+    )
     ap.add_argument("--duration", type=float, default=60.0, help="Seconds of PTS to use")
     ap.add_argument("--period", type=float, default=1.0, help="Flash period seconds")
     ap.add_argument(
@@ -168,7 +174,25 @@ def main() -> int:
     args = ap.parse_args()
 
     grid_src = "measured_capture_pts"
-    if args.capture.is_file():
+    if args.pts_json is not None and args.pts_json.is_file():
+        print(f"LOAD_PTS_JSON {args.pts_json}", flush=True)
+        blob = json.loads(args.pts_json.read_text())
+        if blob.get("grid_src") != "measured_capture_pts":
+            print(f"FAIL pts-json grid_src must be measured_capture_pts, got {blob.get('grid_src')}", flush=True)
+            return 1
+        t_rel = np.asarray(blob["t_rel_s"], dtype=np.float64)
+        t = t_rel[t_rel <= args.duration]
+        print(
+            f"CAPTURE_META fps_nom={blob.get('fps_nom')} "
+            f"pts_from_container={blob.get('pts_from_container')} "
+            f"n_frames={t.size} src=measured_pts_json "
+            f"source_capture={blob.get('source_capture')}",
+            flush=True,
+        )
+        if t.size < 30:
+            print("FAIL too few frames in pts-json window", flush=True)
+            return 1
+    elif args.capture.is_file():
         print(f"LOAD_CAPTURE {args.capture}", flush=True)
         _luma_ign, t_full, vmeta = load_video_luma(args.capture)
         print(
@@ -188,7 +212,10 @@ def main() -> int:
         n = int(args.duration * 30)
         t = np.arange(n, dtype=np.float64) / 30.0
     else:
-        print(f"FAIL missing capture {args.capture}", flush=True)
+        print(
+            f"FAIL missing pts-json {args.pts_json} and capture {args.capture}",
+            flush=True,
+        )
         return 1
 
     dts = np.diff(t)

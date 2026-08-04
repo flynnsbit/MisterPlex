@@ -131,32 +131,19 @@ def main() -> int:
         if needle not in snt:
             return fail(f"ddr_frame_store formula missing {needle}")
 
-    # Product geometry: baseline 640x480 L4-off, OR integ MULTI 1280x720 L4-off.
-    l4_active = re.search(
-        r"^\s*set_global_assignment\s+-name\s+VERILOG_MACRO\s+\"PLEX_PRESENT_720P_L4=1\"",
+    # Default-off product
+    if re.search(r"^\s*set_global_assignment.*PLEX_PRESENT_720P_L4=1", qsf, re.M):
+        return fail("PLEX_PRESENT_720P_L4 must stay commented/default-off in QSF")
+    # Active product canvas is 1280×720 (not merely commented prose).
+    act = re.findall(
+        r'^\s*set_global_assignment\s+-name\s+VERILOG_MACRO\s+"([^"]+)"',
         qsf,
-        re.M,
+        flags=re.M,
     )
-    multi_active = re.search(
-        r"^\s*set_global_assignment\s+-name\s+VERILOG_MACRO\s+\"PRESENT_MULTI_PIXEL=1\"",
-        qsf,
-        re.M,
-    )
-    if l4_active and multi_active:
-        return fail("L4 and MULTI both active")
-    if multi_active:
-        if not re.search(r'VERILOG_MACRO\s+"FRAME_W=1280"', qsf) and not re.search(
-            r'VERILOG_MACRO\s+"FRAME_W=1280"', qsf
-        ):
-            return fail("integ MULTI requires FRAME_W=1280")
-        if not re.search(r'VERILOG_MACRO\s+"FRAME_H=720"', qsf):
-            return fail("integ MULTI requires FRAME_H=720")
-        print("OK INTEG_ON store wire: MULTI 1280x720 L4-off")
-    else:
-        if l4_active:
-            return fail("PLEX_PRESENT_720P_L4 must stay commented/default-off in QSF (baseline)")
-        if not re.search(r"FRAME_W=640", qsf) or not re.search(r"FRAME_H=480", qsf):
-            return fail("product QSF must keep FRAME 640x480 active (baseline)")
+    if not any("FRAME_W=1280" in m for m in act) or not any("FRAME_H=720" in m for m in act):
+        return fail("product QSF must keep active FRAME 1280x720")
+    if any("FRAME_W=640" in m for m in act) or any("FRAME_H=480" in m for m in act):
+        return fail("legacy FRAME 640x480 must not be active product QSF")
 
     # NEGATIVE: empty consumer + no abi_select must go red
     fake_consumers = {**consumers, "DDR_FRAME_720P_CODED_WIDTH": []}

@@ -65,17 +65,13 @@ int store_y_at(int py, int scale, int v_store, int last_y) {
 
 int main() {
     // --- Source locks (product build config + T7 RTL) ---
-    // Baseline: FRAME 640x480. integ/720p-compose: FRAME 1280x720 + MULTI.
-    const bool qsf_480 =
-        file_contains("fpga/Plex_MiSTer/Plex.qsf", "FRAME_W=640") &&
-        file_contains("fpga/Plex_MiSTer/Plex.qsf", "FRAME_H=480");
-    const bool qsf_720 =
-        file_contains("fpga/Plex_MiSTer/Plex.qsf", "FRAME_W=1280") &&
-        file_contains("fpga/Plex_MiSTer/Plex.qsf", "FRAME_H=720");
-    EXPECT(qsf_480 || qsf_720, "Plex.qsf product FRAME 640x480 or integ 1280x720");
+    EXPECT(file_contains("fpga/Plex_MiSTer/Plex.qsf", "FRAME_W=1280"),
+           "Plex.qsf product FRAME_W=1280");
+    EXPECT(file_contains("fpga/Plex_MiSTer/Plex.qsf", "FRAME_H=720"),
+           "Plex.qsf product FRAME_H=720");
     EXPECT(file_contains("fpga/Plex_MiSTer/rtl/ddr_frame_layout_params.svh",
-                         "DDR_FRAME_CODED_WIDTH = 624"),
-           "CODED_W=624 separate from FRAME_W");
+                         "DDR_FRAME_CODED_WIDTH = 1280"),
+           "CODED_W=1280 product identity with FRAME_W");
     EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv", "NATIVE_V_1TO1"),
            "T7 NATIVE_V_1TO1 present");
     // Reconcile: accept origin T7 literals OR land TPL_* / FS_* parameterized forms.
@@ -128,9 +124,9 @@ int main() {
                           "DDRAM_DIN <= {bank_vsync_count"),
            "tip must NOT pack bank_vsync_count into PLXD");
 
-    // Product values
-    constexpr int FRAME_W = 640;
-    constexpr int FRAME_H = 480;
+    // Product values — 1280×720 identity canvas (Template H_DE still 529).
+    constexpr int FRAME_W = 1280;
+    constexpr int FRAME_H = 720;
     constexpr int H_DE = 529;
     constexpr int V_STORE = FRAME_H; // T7 native
     constexpr int CLK_SYS_HZ = 20'000'000;
@@ -142,61 +138,60 @@ int main() {
     std::printf("PRODUCT FRAME_W=%d FRAME_H=%d (from Plex.qsf macros)\n", FRAME_W, FRAME_H);
     std::printf("T7 V_STORE=%d STORE_X_SCALE=%d STORE_Y_SCALE=%d ratio_y=%.6f\n", V_STORE,
                 sx_scale, sy_scale, double(sy_scale) / 65536.0);
-    EXPECT(sx_scale == 79294, "STORE_X_SCALE product = 640*39647/320 = 79294");
-    EXPECT(sy_scale == 65536, "STORE_Y_SCALE product = 480*65536/480 = 65536 (=1.0<<16)");
+    EXPECT(sx_scale == 158588, "STORE_X_SCALE product = 1280*39647/320 = 158588");
+    EXPECT(sy_scale == 65536, "STORE_Y_SCALE product = 720*65536/720 = 65536 (=1.0<<16)");
     EXPECT(sy_scale == 1 * 65536, "STORE_Y_SCALE exactly 1.0 in Q16");
 
-    // Vertical T7: all rows 0..479 under py=vc for scandouble active range
+    // Vertical T7: all rows 0..719 under py=vc when timing exposes FRAME_H lines.
+    // Template colorbars currently wrap sooner — this is the address-map contract.
     std::set<int> ys;
     for (int py = 0; py < V_STORE; ++py)
         ys.insert(store_y_at(py, sy_scale, V_STORE, FRAME_H - 1));
     std::printf("unique store_y count=%zu min=%d max=%d\n", ys.size(), *ys.begin(),
                 *ys.rbegin());
-    EXPECT(ys.size() == 480, "exactly 480 unique store_y from 480 py");
-    EXPECT(*ys.begin() == 0 && *ys.rbegin() == 479, "store_y spans 0..479");
+    EXPECT(ys.size() == 720, "exactly 720 unique store_y from 720 py");
+    EXPECT(*ys.begin() == 0 && *ys.rbegin() == 719, "store_y spans 0..719");
     for (int y = 0; y < FRAME_H; ++y)
         EXPECT(ys.count(y) == 1, "every store row addressed exactly once in set");
 
-    // Pre-T7 defect must NOT hold on product math anymore
     std::set<int> odd;
     for (int y : ys)
         if (y & 1)
             odd.insert(y);
-    EXPECT(odd.size() == 240, "odd rows ARE fetched after T7 (was 0 pre-T7)");
+    EXPECT(odd.size() == 360, "odd rows ARE fetched after T7 (half of 720)");
 
-    // Horizontal: still 529 unique of 640
+    // Horizontal: Template H_DE=529 unique columns stretched across FRAME_W=1280.
     std::set<int> xs;
     for (int hc = 0; hc < H_DE; ++hc)
         xs.insert(store_x_at(hc, sx_scale, FRAME_W - 1));
     std::printf("unique store_x count=%zu min=%d max=%d (of FRAME_W=%d)\n", xs.size(),
                 *xs.begin(), *xs.rbegin(), FRAME_W);
-    EXPECT(xs.size() == 529, "529 unique store_x from H_DE");
+    EXPECT(xs.size() == 529, "529 unique store_x from H_DE (not full 1280 — w-clock gap)");
     EXPECT(*xs.begin() == 0, "store_x starts 0");
-    EXPECT(*xs.rbegin() == 638, "store_x max 638 under FRAME_W=640 scale");
+    EXPECT(*xs.rbegin() == 1277, "store_x max 1277 under FRAME_W=1280 scale");
 
-    // Clock budget: full H_DE=640 @ 60 Hz / 524 lines needs H_total>=640 and
-    // H_total*524*60 <= CLK_SYS. Max H_total = floor(CLK/60/524)=636 < 640.
+    // Clock budget: native H_DE=1280 @ 60 Hz / 524 lines needs H_total>=1280 and
+    // H_total*524*60 <= CLK_SYS. Max H_total = floor(CLK/60/524)=636 << 1280.
     const int max_h_total = CLK_SYS_HZ / REFRESH_HZ / V_TOTAL_SD;
     std::printf("CLK_SYS=%d REFRESH=%d V_TOTAL_SD=%d max_H_total=%d\n", CLK_SYS_HZ, REFRESH_HZ,
                 V_TOTAL_SD, max_h_total);
     EXPECT(max_h_total == 636, "20e6/60/524 = 636 clocks/line max");
-    EXPECT(max_h_total < 640, "H_DE=640 impossible at 20 MHz/60 Hz/524 lines");
-    std::printf("FACT: full-width 640 DE blocked by clk_sys; vertical 480 is the T7 win\n");
+    EXPECT(max_h_total < 1280, "H_DE=1280 impossible at 20 MHz/60 Hz/524 lines (w-clock)");
+    std::printf("FACT: full-width 1280 DE blocked by clk_sys; canvas ABI is 720p, raster needs w-clock\n");
 
     // Bandwidth: full-frame YUV420p read @ 60 Hz vs 90 MHz DDRAM 25% budget
-    constexpr double frame_bytes = 624.0 * 480.0 * 1.5; // CODED I420
+    constexpr double frame_bytes = 1280.0 * 720.0 * 1.5; // CODED I420
     constexpr double read_MBps = frame_bytes * 60.0 / 1e6;
     constexpr double ddr_clk_mhz = 90.0;
     constexpr double peak_MBps = ddr_clk_mhz * 8.0; // 64-bit
     constexpr double safe_read_MBps = peak_MBps * 0.25;
     std::printf("BW full-frame read=%.3f MB/s safe_budget_25pct=%.1f MB/s peak=%.1f\n", read_MBps,
                 safe_read_MBps, peak_MBps);
-    EXPECT(read_MBps < safe_read_MBps, "full 480-row frame read within 25% of 90 MHz peak");
-    // 2× vs pre-T7 even-only: still well under line budget parent measured (10us→~20us vs 63.8us)
+    EXPECT(read_MBps < safe_read_MBps, "full 720-row frame read within 25% of 90 MHz peak");
     constexpr double pre_t7_unique_y = 240.0;
-    constexpr double t7_unique_y = 480.0;
-    EXPECT(t7_unique_y / pre_t7_unique_y == 2.0, "T7 doubles unique Y line fetches");
-    std::printf("FACT: unique Y lines 240→480 (2×); parent line fill 10us*2=20us << 63.8us ESTIMATE\n");
+    constexpr double t7_unique_y = 720.0;
+    EXPECT(t7_unique_y / pre_t7_unique_y == 3.0, "720p triples unique Y vs 240p baseline");
+    std::printf("FACT: unique Y lines 240→720 (3×); line fill budget still ESTIMATE pending fit\n");
 
     // Legacy FRAME_H=240 path still 1:1 on 240 window
     {
@@ -212,11 +207,11 @@ int main() {
 
     std::printf("FACT: present_core store_x/y index FRAME_W x FRAME_H domain (%dx%d)\n", FRAME_W,
                 FRAME_H);
-    std::printf("FACT: ddr_frame_store planes use CODED_W=624 CODED_H=480\n");
-    std::printf("FACT: O[4] content_res wires exist in Plex.sv but FRAME_W/H are synthesis "
-                "macros — O[4] does not retarget the DDR store\n");
-    std::printf("VERDICT_T7: vertical FULL 480 rows addressed (scale 1.0); "
-                "horizontal still 529/640 until clk_sys or timing class changes.\n");
+    std::printf("FACT: ddr_frame_store planes use CODED_W=1280 CODED_H=720\n");
+    std::printf("FACT: O[5:4] content_res wires exist in Plex.sv but FRAME_W/H are synthesis "
+                "macros — status bits do not retarget the DDR store\n");
+    std::printf("VERDICT_T7: vertical FULL 720 rows addressable (scale 1.0); "
+                "horizontal still 529/1280 until w-clock timing class changes.\n");
     std::printf("VERDICT_PACK: frames_done_d2 pack present for next RBF (w-fit-1).\n");
 
     if (g_fails) {

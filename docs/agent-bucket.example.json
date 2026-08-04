@@ -1,0 +1,54 @@
+{
+  "updated": "2026-08-04T00:00:00-05:00",
+  "mandate": "FPGA offload DE10-Nano; PMS 240p+480p done; 720p active; real SV not fake green",
+  "start": "Memory/START_HERE.md",
+  "rd_duck": "clean_context_only — Memory/lab/agents/RD_DUCK_CHARTER.md",
+  "base_sha": "main",
+  "programme": "720p-fabric-present-publish",
+  "resources": ["FPGA", "DDR", "BRAM_M10K", "SDRAM", "SD_card", "ARM_thin"],
+  "fit_exclusive": "FREE",
+  "device_token": "none",
+  "target_workers": 6,
+  "max_workers": 10,
+  "active": [
+    {
+      "id": "w-integ",
+      "expert": "Integration",
+      "goal": "Compose enable branch; unit green before FIT_GO",
+      "worktree": "~/Projects/MisterPlex-wt-integ"
+    },
+    {
+      "id": "w-fpga",
+      "expert": "FPGA RTL",
+      "goal": "Real present/store SV under compose macros",
+      "worktree": "~/Projects/MisterPlex-wt-fpga"
+    },
+    {
+      "id": "w-mem",
+      "expert": "Memory",
+      "goal": "DDR/BRAM/SDRAM publish path; M10K depth×width",
+      "worktree": "~/Projects/MisterPlex-wt-mem"
+    },
+    {
+      "id": "w-clock",
+      "expert": "Clock",
+      "goal": "clk_pix + STA pre-register",
+      "worktree": "~/Projects/MisterPlex-wt-clock"
+    },
+    {
+      "id": "w-test",
+      "expert": "Tests",
+      "goal": "Red/green gates; no soft-skip PASS",
+      "worktree": "~/Projects/MisterPlex-wt-test"
+    },
+    {
+      "id": "rd-duck",
+      "expert": "Rubber duck",
+      "goal": "Clean-context NACK of next offload/fit claim only",
+      "worktree": null,
+      "clean_context": true
+    }
+  ],
+  "idle_until_fit_go": ["w-fit"],
+  "parked": ["w-arm", "w-build", "w-path"]
+}

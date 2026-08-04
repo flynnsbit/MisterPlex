@@ -251,8 +251,12 @@ int main() {
             const std::string nt = strip(text);
             // Product path: src_y_line (rd_y_visible) → pref_y (WANT_Y_LINE_ONLY=1)
             // → want_y_sys / y_hit. Control builds may bind pref_y to X-gated src_y.
+            // Accept bare (display_y+CROP) or cast form CODED_Y_W'(display_y)+CODED_Y_W'(CROP)
+            // used when CODED_* may exceed FRAME_* after crop widen for 720p.
             const bool has_line =
-                nt.find("src_y_line=rd_y_visible?(display_y+CROP_TOP_L):'0") != std::string::npos;
+                nt.find("src_y_line=rd_y_visible?(display_y+CROP_TOP_L):'0") != std::string::npos ||
+                nt.find("src_y_line=rd_y_visible?(CODED_Y_W'(display_y)+CODED_Y_W'(CROP_TOP_L)):'0") !=
+                    std::string::npos;
             const bool has_pref =
                 nt.find("pref_y=WANT_Y_LINE_ONLY?src_y_line:src_y") != std::string::npos;
             const bool default_line_only =

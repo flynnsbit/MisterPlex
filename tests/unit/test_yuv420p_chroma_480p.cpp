@@ -54,7 +54,7 @@ int main() {
 
     const int w = kPlex480pCodedWidth.get();
     const int h = kPlex480pCodedHeight.get();
-    expect(w == 624 && h == 480, "product coded 624x480");
+    expect(w == 624 && h == 480, "480p helper coded 624x480");
     const size_t frameBytes = static_cast<size_t>(w) * static_cast<size_t>(h) * 3u / 2u;
     expect(frameBytes == static_cast<size_t>(kPlex480pYuv420pBytes), "frame_bytes 449280");
 

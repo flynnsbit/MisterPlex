@@ -5,8 +5,8 @@
 // source lines directly from HPS DDR into bank-tagged M10K line buffers.
 
 module ddr_frame_store #(
-	parameter int FRAME_W = 640,
-	parameter int FRAME_H = 480,
+	parameter int FRAME_W = 1280,
+	parameter int FRAME_H = 720,
 	parameter int FRAME_STRIDE = FRAME_W,
 	parameter int CODED_W = FRAME_W,
 	parameter int CODED_H = FRAME_H,
@@ -18,7 +18,7 @@ module ddr_frame_store #(
 	parameter int PRESENT_Y = 0,
 	parameter int LINE_COUNT = 8,
 	parameter [31:0] PHYS_BASE = 32'h3000_0000,
-	parameter int HPS_BANK_STRIDE_BYTES = 524288,
+	parameter int HPS_BANK_STRIDE_BYTES = 1572864,
 	parameter [31:0] DOORBELL_PHYS = PHYS_BASE + (2 * HPS_BANK_STRIDE_BYTES) - 32'h1000,
 	parameter [31:0] MAILBOX_PHYS  = DOORBELL_PHYS + 32'h100,
 	parameter [31:0] INPUT_MAILBOX_PHYS = DOORBELL_PHYS + 32'h108,
@@ -202,8 +202,9 @@ module ddr_frame_store #(
 	wire [X_W-1:0] display_x = rd_x - PRESENT_X_L;
 	wire [Y_W-1:0] display_y = rd_y - PRESENT_Y_L;
 	// Pixel path: X+Y gate (outside present window → black / addr 0).
-	wire [CODED_X_W-1:0] src_x = rd_visible ? (display_x + CROP_LEFT_L) : '0;
-	wire [CODED_Y_W-1:0] src_y = rd_visible ? (display_y + CROP_TOP_L) : '0;
+	// Widen display coords before crop add (CODED_* may exceed FRAME_* when crop>0).
+	wire [CODED_X_W-1:0] src_x = rd_visible ? (CODED_X_W'(display_x) + CODED_X_W'(CROP_LEFT_L)) : '0;
+	wire [CODED_Y_W-1:0] src_y = rd_visible ? (CODED_Y_W'(display_y) + CODED_Y_W'(CROP_TOP_L)) : '0;
 	// Line identity / prefetch path: follow the vertical beam whenever Y is inside
 	// the present band — independent of horizontal blank. Gating line match and
 	// want_y on full rd_visible forced src_y→0 every HBlank (including store_x=LAST),
@@ -213,7 +214,7 @@ module ddr_frame_store #(
 	// freeze-class latch cost two fits; vsync/leave-VBlank naturally returns the
 	// beam (and thus want_y) to the top via present_core store_y.
 	// WANT_Y_LINE_ONLY=0 restores X-gated thrash for freeze/shear control builds.
-	wire [CODED_Y_W-1:0] src_y_line = rd_y_visible ? (display_y + CROP_TOP_L) : '0;
+	wire [CODED_Y_W-1:0] src_y_line = rd_y_visible ? (CODED_Y_W'(display_y) + CODED_Y_W'(CROP_TOP_L)) : '0;
 	wire [CODED_Y_W-1:0] pref_y = WANT_Y_LINE_ONLY ? src_y_line : src_y;
 	wire [Y_QW_AW-1:0] y_rd_addr = src_x[CODED_X_W-1:3];
 	wire [C_QW_AW-1:0] c_rd_addr = src_x[CODED_X_W-1:4];

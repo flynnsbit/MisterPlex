@@ -30,8 +30,8 @@
 `include "misterplex_clk_hz.svh"
 
 module present_core #(
-	parameter int FRAME_W = 320,
-	parameter int FRAME_H = 240,
+	parameter int FRAME_W = 1280,
+	parameter int FRAME_H = 720,
 	parameter int FRAME_STRIDE = FRAME_W,
 	parameter int SDRAM_REFRESH_CYCLES = 780,
 	// Template/FBAR paint window (colorbars DE). Defaults reproduce v0.3.0 /
@@ -429,24 +429,13 @@ module present_core #(
 	localparam [15:0] FRAME_LAST_X_16 = 16'(FRAME_W - 1);
 	localparam [15:0] FRAME_LAST_Y_16 = 16'(FRAME_H - 1);
 
-	// Stretch FRAME_W×FRAME_H frame_store across Template DE (colorbars hc/vc).
-	//
-	// Product (Plex.qsf FRAME_W=640 FRAME_H=480, forced scandouble):
-	//   colorbars NTSC scandouble active vc=0..479 (VBlank asserts at vc==480).
-	//   NATIVE_V_1TO1 maps store_y = vc with SCALE=1.0 so ALL FRAME_H rows are
-	//   addressed (fixes the pre-T7 even-row-only ceiling: V_STORE=240 + scale 2.0).
-	//
-	// Legacy FRAME_H<=240 builds keep half-height py=(scandouble?vc>>1:vc) + scale
-	// from a 240-line content window.
-	//
-	// Horizontal: H_DE stays 529 (FBAR Template class). Full 640 unique columns
-	// require H_DE>=640, which is impossible at clk_sys=20 MHz / 60 Hz / 524 lines
-	// (20e6/60/524 ≈ 636 clocks/line max; see test_present_store_scale_math).
-	// STORE_X still samples 529 of FRAME_W via the 39647 mul-shift.
-	//
-	// L4 / BEAM_960 / MULTI override the map below; these localparams remain the
-	// product-default Template path (macros off).
-	localparam H_DE = 10'd529;
+	// Stretch FRAME_W×FRAME_H frame_store across full Template DE — match colorbars in_content.
+	// Origin T7: NATIVE_V_1TO1 maps store_y=vc when FRAME_H>240 (product 1280×720 or 640×480).
+	// Land: TPL_* params + L4/BEAM_960 ifdef arms (default-OFF macros).
+	// Defaults: TPL_H_DE=529 TPL_V_STORE=240 — bit-identical legacy when FRAME_H<=240.
+	// Full unique FRAME_W columns need H_DE>=FRAME_W (w-clock timing path); STORE_X still
+	// samples H_DE of FRAME_W via mul-shift on the Template DE until that lands.
+	localparam H_DE    = 10'(TPL_H_DE);
 	localparam bit NATIVE_V_1TO1 = (FRAME_H > 240);
 	localparam int V_STORE_I = NATIVE_V_1TO1 ? FRAME_H : 240;
 	localparam [9:0] V_STORE = 10'(V_STORE_I);
@@ -454,8 +443,7 @@ module present_core #(
 	// store_x ≈ floor(hc * FRAME_W / 529); 39647/65536 ≈ 320/529.
 	localparam int STORE_X_SCALE = (FRAME_W * 39647) / 320;
 	localparam int STORE_Y_SCALE = (FRAME_H * 65536) / V_STORE_I;
-	// Beam Y for content + store. Native 480: use full vc (scandouble active 0..479).
-	// Legacy 240: half when scandoubled so two display lines share one store row.
+	// Beam Y: native canvas uses full vc; legacy 240 halves when scandoubled.
 	wire [9:0] py = NATIVE_V_1TO1 ? vc : (scandouble ? (vc >> 1) : vc);
 `ifdef PLEX_PRESENT_720P_L4
 	// L4: present_content_window owns store map (identity when content==DE).
@@ -868,6 +856,14 @@ module present_core #(
 	//   6 -> col0 MISSING, col319 w=14px
 	// Each extra clk of lag eats ~0.6 of a source column off the left and repeats it
 	// on the right, which is precisely the right-edge "bar".
+	//
+	// REQUIRES_FIT (DDR_FRAME_STORE @ FRAME_W=1280 product): DE_LAG has NOT been re-swept for
+	// ddr_frame_store's deeper path (rd_visible pipeline + YUV + BRAM). A too-small
+	// lag wraps previous-line right columns onto the left edge (ragged boundary +
+	// left clip). Parent HDMI after ARM stride fix still saw ~44 px per-line left
+	// wander — retune with gen_edge_markers.py on an authorised fit; do not guess
+	// a new constant here without that sweep. Keep the frame_store-proven value
+	// until then so we do not silently eat left columns.
 	localparam DE_LAG = 3'd3;
 	reg [DE_LAG-1:0] hb_sr, hs_sr;
 	always @(posedge clk) begin
