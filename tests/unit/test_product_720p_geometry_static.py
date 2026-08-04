@@ -44,9 +44,18 @@ def main() -> int:
     plex = PLEX.read_text(encoding="utf-8", errors="replace")
     store = STORE.read_text(encoding="utf-8", errors="replace")
 
-    need('VERILOG_MACRO "FRAME_W=1280"' in qsf, "QSF FRAME_W must be 1280")
-    need('VERILOG_MACRO "FRAME_H=720"' in qsf, "QSF FRAME_H must be 720")
-    need('VERILOG_MACRO "FRAME_W=640"' not in qsf, "QSF still has FRAME_W=640")
+    # Only live (non-# commented) QSF assignments count. Historical
+    # `#set_global_assignment ... "FRAME_W=640"` must not trip the product pin.
+    def qsf_live_macro(macro_eq: str) -> bool:
+        pat = re.compile(
+            rf'(?m)^(?!\s*#).*set_global_assignment\s+-name\s+VERILOG_MACRO\s+"{re.escape(macro_eq)}"'
+        )
+        return bool(pat.search(qsf))
+
+    need(qsf_live_macro("FRAME_W=1280"), "QSF live FRAME_W must be 1280")
+    need(qsf_live_macro("FRAME_H=720"), "QSF live FRAME_H must be 720")
+    need(not qsf_live_macro("FRAME_W=640"), "QSF still has live FRAME_W=640")
+    need(not qsf_live_macro("FRAME_H=480"), "QSF still has live FRAME_H=480")
 
     def svh_int(name: str) -> int:
         m = re.search(rf"localparam int {name} = ([^;]+);", svh)
