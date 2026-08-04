@@ -36,7 +36,22 @@ need("sampler_self_pct_onecpu" in d, "sampler_self present (may be 0.0 measured)
 # Missing MiSTer on host must be null not 0
 need(d.get("MiSTer_pct_onecpu") is None, f"MiSTer absence=null got={d.get('MiSTer_pct_onecpu')}")
 need(d.get("capacity_pct_onecpu") and d["capacity_pct_onecpu"]>=100, "capacity CAP=100*ncpu")
+need(d.get("silicon_capacity_pct_onecpu") == d.get("capacity_pct_onecpu"), "silicon_cap aliases capacity")
+# Host self-test has no MiSTer → effective product CAP must be NO-DATA (null), not invented 200.
+need(d.get("effective_product_capacity_pct_onecpu") is None,
+     f"effective_product_CAP absence=null got={d.get('effective_product_capacity_pct_onecpu')}")
+need("INELASTIC" in (d.get("headroom_note") or ""), "headroom_note says MiSTer INELASTIC")
 need(d.get("tag")=="measured", "tag=measured")
+# classify control: mpx-main comm maps to misterplexd class
+import importlib.util
+spec=importlib.util.spec_from_file_location("arm_cpu_sample", "$ROOT/tools/arm_cpu_sample.py")
+acs=importlib.util.module_from_spec(spec); spec.loader.exec_module(acs)
+need(acs.classify("/media/fat/misterplex/bin/misterplexd", "mpx-main")=="misterplexd",
+     "classify mpx-main+misterplexd exe")
+need(acs.classify("/usr/bin/foo", "mpx-main")=="misterplexd",
+     "classify mpx-main alone")
+need(acs.classify("/usr/bin/foo", "other")!="misterplexd",
+     "classify negative other comm")
 # line contract via re-run stdout checked separately
 sys.exit(fail)
 PY

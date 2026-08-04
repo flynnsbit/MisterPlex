@@ -19,10 +19,10 @@
 #
 #   SYSTEM_BUSY printed X/CAP
 #     100 * ncpu * (1 - Δidle/Δtotal) from /proc/stat line field1="cpu"
-#     idle = idle + iowait; CAP = 100*ncpu (dual A9 ⇒ 200)
+#     idle = idle + iowait; CAP = 100*ncpu (dual A9 silicon CAP⇒200; product effective CAP=100 when MiSTer observed)
 #     Use awk — never `read a b c` (field1 is the label "cpu")
 #
-#   H1_inelastic = ffmpeg + misterplexd  (Main elastic excluded)
+#   H1_inelastic = ffmpeg + misterplexd  (Main INELASTIC (one-core spin); H1=ffmpeg+daemon)
 #
 #   rbf_md5
 #     md5sum of RBF_PATH (default /media/fat/_Utility/Plex.rbf); missing=NO-DATA

@@ -24,20 +24,32 @@ BINDING method (quote every soak report — field name + derivation):
       (use field split — never `read a b c` which mis-aligns on the label).
       idle = idle + iowait (fields 4+5 of the numeric vector, 0-based 3+4).
       ncpu = count of cpuN lines in /proc/stat (online cores observed).
-      CAP = 100 * ncpu  (dual A9 ⇒ 200). "86.6% of 200" ≡ SYSTEM_BUSY/CAP.
+      silicon CAP = 100 * ncpu  (dual A9 ⇒ 200). "86.6% of 200" ≡ SYSTEM_BUSY/CAP.
+
+  effective_product_capacity_pct_onecpu
+    Derivation: when MiSTer is observed, product work has ONE free core:
+      effective = 100 (not silicon CAP). Parent 2026-08-04 /proc/stat: MiSTer is a
+      pure userspace spin (~100% of one core at idle, state R, wchan=0). When
+      MiSTer is NO-DATA (host self-test), effective is null — do not invent it.
+    Do NOT treat (silicon_CAP - SYSTEM_BUSY) as product headroom.
 
   H1_inelastic
-    Derivation: ffmpeg_pct_onecpu + misterplexd_pct_onecpu (Main excluded;
-    Main is elastic scavenger — do not treat (CAP - SYSTEM_BUSY) as headroom).
+    Derivation: ffmpeg_pct_onecpu + misterplexd_pct_onecpu.
+    MiSTer is INELASTIC (not an elastic scavenger). Contended-core budgets use
+    effective_product_capacity, not dual-core idle headroom.
+
+  daemon identity
+    exe basename misterplexd OR kernel comm mpx-main (parent: daemon runs as
+    comm=mpx-main; "search miss ≠ absent").
 
   rbf_md5 / rbf_path
     Derivation: md5sum of --rbf (default /media/fat/_Utility/Plex.rbf).
     Missing file ⇒ NO-DATA. Every line stamps this pair.
 
-  daemon_md5 / daemon_exe / daemon_pid
-    Derivation: find pid whose basename(readlink exe)==misterplexd;
-      md5sum of that exe path (or /proc/<pid>/exe). Prefer misterplex_v2 path
-      if multiple. Missing ⇒ NO-DATA.
+  daemon_md5 / daemon_exe / daemon_pid / daemon_comm
+    Derivation: find pid whose basename(readlink exe)==misterplexd OR
+      /proc/pid/stat comm==mpx-main; md5sum of that exe. Prefer misterplex_v2.
+      Missing ⇒ NO-DATA. Stamp kernel comm (often mpx-main).
 
   decode_src
     Derivation: --decode-src override, else last decode_src= token in --log
@@ -178,30 +190,46 @@ def read_ticks(pid: int) -> Optional[int]:
         return None
 
 
-def classify(exe: str) -> str:
+def read_comm(pid: int) -> Optional[str]:
+    """Kernel comm from /proc/<pid>/stat (field between parentheses)."""
+    try:
+        with open(f"/proc/{pid}/stat", "r", encoding="utf-8", errors="replace") as f:
+            raw = f.read()
+    except OSError:
+        return None
+    lp = raw.find("(")
+    rp = raw.rfind(")")
+    if lp < 0 or rp < 0 or rp <= lp:
+        return None
+    return raw[lp + 1 : rp]
+
+
+def classify(exe: str, comm: Optional[str] = None) -> str:
     base = os.path.basename(exe)
     bl = base.lower()
     if base == "MiSTer" or bl == "mister":
         return "MiSTer"
     if bl == "ffmpeg":
         return "ffmpeg"
-    if bl == "misterplexd":
+    # Product daemon: exe is misterplexd; kernel comm is often mpx-main.
+    if bl == "misterplexd" or (comm is not None and comm == "mpx-main"):
         return "misterplexd"
     return base
 
 
-def pick_daemon(rows_by_pid: Dict[int, Tuple[str, str, int]]) -> Optional[Tuple[int, str]]:
-    """Return (pid, exe) for misterplexd; prefer misterplex_v2 path."""
-    cands: List[Tuple[int, str]] = []
-    for pid, (cls, exe, _t) in rows_by_pid.items():
+def pick_daemon(
+    rows_by_pid: Dict[int, Tuple[str, str, int, Optional[str]]]
+) -> Optional[Tuple[int, str, Optional[str]]]:
+    """Return (pid, exe, comm) for misterplexd/mpx-main; prefer misterplex_v2."""
+    cands: List[Tuple[int, str, Optional[str]]] = []
+    for pid, (cls, exe, _t, comm) in rows_by_pid.items():
         if cls == "misterplexd":
-            cands.append((pid, exe))
+            cands.append((pid, exe, comm))
     if not cands:
         return None
 
-    def rank(item: Tuple[int, str]) -> Tuple[int, str]:
-        _pid, exe = item
-        # lower is better
+    def rank(item: Tuple[int, str, Optional[str]]) -> Tuple[int, str]:
+        _pid, exe, _c = item
         pref = 0 if "misterplex_v2" in exe else (1 if "misterplex" in exe else 2)
         return (pref, exe)
 
@@ -278,24 +306,26 @@ def sample_window(
     t0 = time.perf_counter()
     sys0 = read_system_cpu()
     c0 = read_cpu_lines()
-    p0: Dict[int, Tuple[str, str, int]] = {}
+    p0: Dict[int, Tuple[str, str, int, Optional[str]]] = {}
     for pid in list_pids():
         exe = read_exe(pid)
         ticks = read_ticks(pid)
         if exe is None or ticks is None:
             continue
-        p0[pid] = (classify(exe), exe, ticks)
+        comm = read_comm(pid)
+        p0[pid] = (classify(exe, comm), exe, ticks, comm)
     time.sleep(max(0.05, seconds))
     dwall = time.perf_counter() - t0
     sys1 = read_system_cpu()
     c1 = read_cpu_lines()
-    p1: Dict[int, Tuple[str, str, int]] = {}
+    p1: Dict[int, Tuple[str, str, int, Optional[str]]] = {}
     for pid in list_pids():
         exe = read_exe(pid)
         ticks = read_ticks(pid)
         if exe is None or ticks is None:
             continue
-        p1[pid] = (classify(exe), exe, ticks)
+        comm = read_comm(pid)
+        p1[pid] = (classify(exe, comm), exe, ticks, comm)
 
     per_core = []
     for (n0, tot0, idle0), (_n1, tot1, idle1) in zip(c0, c1):
@@ -313,7 +343,7 @@ def sample_window(
             system_busy = round(100.0 * ncpu * (dt - di) / dt, 3)
 
     rows = []
-    for pid, (cls, exe, t1) in p1.items():
+    for pid, (cls, exe, t1, comm) in p1.items():
         prev = p0.get(pid)
         if prev is None:
             continue
@@ -323,7 +353,7 @@ def sample_window(
             {
                 "pid": pid,
                 "class": cls,
-                "comm": os.path.basename(exe),
+                "comm": comm if comm is not None else os.path.basename(exe),
                 "exe": exe,
                 "pct_onecpu": round(pct, 3),
             }
@@ -354,36 +384,52 @@ def sample_window(
     daemon = pick_daemon(p1) or pick_daemon(p0)
     daemon_pid = daemon[0] if daemon else None
     daemon_exe = daemon[1] if daemon else None
+    daemon_comm = daemon[2] if daemon else None
     daemon_md5 = md5_proc_exe(daemon_pid, daemon_exe) if daemon else None
 
-    cap = 100.0 * float(ncpu)
+    silicon_cap = 100.0 * float(ncpu)
+    # Parent 2026-08-04: MiSTer permanently owns ~one core (userspace spin).
+    # Product decode+publish effective capacity is ONE core when MiSTer is present.
+    if mi is not None:
+        effective_cap: Optional[float] = 100.0
+    else:
+        effective_cap = None  # NO-DATA — host self-test without MiSTer
     return {
         "label": label,
         "wall_s": round(dwall, 4),
         "dwall_s": round(dwall, 4),  # alias
         "hz": hz,
         "ncpu": ncpu,
-        "capacity_pct_onecpu": cap,
+        "capacity_pct_onecpu": silicon_cap,  # silicon CAP = 100*ncpu (compat)
+        "silicon_capacity_pct_onecpu": silicon_cap,
+        "effective_product_capacity_pct_onecpu": effective_cap,
         "method": (
             "P=100*dticks/(HZ*wall_s); dticks=Δ(utime+stime) /proc/pid/stat f14+f15; "
-            "exe=realpath(readlink /proc/pid/exe); "
+            "exe=realpath(readlink /proc/pid/exe); comm=/proc/pid/stat; "
             "SYSTEM_BUSY=100*ncpu*(1-Δidle/Δtotal) from /proc/stat 'cpu ' "
-            "(idle=idle+iowait); CAP=100*ncpu; absence=NO-DATA"
+            "(idle=idle+iowait); silicon_CAP=100*ncpu; "
+            "effective_product_CAP=100 when MiSTer observed else NO-DATA; "
+            "daemon=exe misterplexd OR comm mpx-main; absence=NO-DATA"
         ),
         "derivations": {
-            "SYSTEM_BUSY": "100*ncpu*(1-Δidle/Δtotal) on /proc/stat cpu aggregate; printed X/CAP",
+            "SYSTEM_BUSY": "100*ncpu*(1-Δidle/Δtotal) on /proc/stat cpu aggregate; printed X/silicon_CAP",
             "pct_onecpu": "100*Δ(utime+stime)/(HZ*wall_s)",
-            "identity": "basename(realpath(readlink /proc/pid/exe)) — never cmdline",
+            "identity": "basename(realpath exe) or comm==mpx-main — never cmdline",
             "rbf_md5": f"md5 of {rbf_path}",
-            "daemon_md5": "md5 of realpath exe for basename misterplexd (prefer misterplex_v2)",
+            "daemon_md5": "md5 of realpath exe for misterplexd/mpx-main (prefer misterplex_v2)",
             "decode_src": "--decode-src or last decode_src= in log tail",
             "sampler_self_pct_onecpu": "same P formula on sampler PID — measured overhead",
             "H1_inelastic": "ffmpeg_pct_onecpu + misterplexd_pct_onecpu",
+            "effective_product_capacity_pct_onecpu": (
+                "100 when MiSTer observed (one free core); null if MiSTer NO-DATA"
+            ),
+            "MiSTer": "INELASTIC pure userspace spin — not elastic scavenger",
         },
         "rbf_path": rbf_path,
         "rbf_md5": rbf_md5,  # None ⇒ NO-DATA
         "daemon_pid": daemon_pid,
         "daemon_exe": daemon_exe,
+        "daemon_comm": daemon_comm,
         "daemon_md5": daemon_md5,
         "decode_src": decode_src,
         "measured_delivery": log_fields.get("measured_delivery"),
@@ -403,8 +449,9 @@ def sample_window(
         "sampler_pid": self_pid,
         "tag": "measured",
         "headroom_note": (
-            "Quote H1_inelastic and SYSTEM_BUSY separately. "
-            "MiSTer is elastic — never publish (CAP-SYSTEM_BUSY) as product headroom."
+            "Quote H1_inelastic, SYSTEM_BUSY, and effective_product_capacity separately. "
+            "MiSTer is INELASTIC (~one core spin). Never publish (silicon_CAP-SYSTEM_BUSY) "
+            "as product headroom; contended-core product capacity is one core when MiSTer lives."
         ),
     }
 
@@ -419,14 +466,19 @@ def _fmt(v: Optional[Any]) -> str:
 
 def format_line(data: Dict[str, Any]) -> str:
     sb = data.get("system_busy_pct_onecpu_sum")
-    cap = data.get("capacity_pct_onecpu") or (100.0 * float(data.get("ncpu") or 2))
+    cap = data.get("silicon_capacity_pct_onecpu") or data.get("capacity_pct_onecpu") or (
+        100.0 * float(data.get("ncpu") or 2)
+    )
     sb_s = "NO-DATA" if sb is None else f"{sb:.1f}/{cap:.0f}"
+    eff = data.get("effective_product_capacity_pct_onecpu")
     return (
         f"arm_cpu label={data['label']} wall_s={data.get('wall_s', data.get('dwall_s'))} "
         f"SYSTEM_BUSY={sb_s} "
+        f"eff_product_CAP={_fmt(eff)} "
         f"MiSTer={_fmt(data.get('MiSTer_pct_onecpu'))} "
         f"ffmpeg={_fmt(data.get('ffmpeg_pct_onecpu'))} "
         f"misterplexd={_fmt(data.get('misterplexd_pct_onecpu'))} "
+        f"daemon_comm={_fmt(data.get('daemon_comm'))} "
         f"H1_inelastic={_fmt(data.get('H1_stream_inelastic_pct_onecpu'))} "
         f"accounted={_fmt(data.get('accounted_sum_pct_onecpu'))} "
         f"sampler_self={_fmt(data.get('sampler_self_pct_onecpu'))} "
@@ -512,6 +564,10 @@ def main() -> int:
             "mean_H1_inelastic_pct_onecpu": mean_key("H1_stream_inelastic_pct_onecpu"),
             "mean_sampler_self_pct_onecpu": mean_key("sampler_self_pct_onecpu"),
             "capacity_pct_onecpu": last.get("capacity_pct_onecpu"),
+            "silicon_capacity_pct_onecpu": last.get("silicon_capacity_pct_onecpu"),
+            "effective_product_capacity_pct_onecpu": last.get(
+                "effective_product_capacity_pct_onecpu"
+            ),
             "ncpu": last.get("ncpu"),
             "windows": windows,
             "tag": "measured",
