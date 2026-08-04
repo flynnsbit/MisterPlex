@@ -1,13 +1,19 @@
 #!/usr/bin/env bash
 # T1: Prove deployed RBF c5382bee packs bank_vsync_count into PLXD[63:48].
-# Fitted freeze: .agent-work/w-fit/leftedge3-proj/rtl/ddr_frame_store.sv
+# Fitted freeze: tests/rtl/freeze/ddr_frame_store_c5382bee.sv (tracked in-repo).
 # md5 must match evidence-leftedge3-build-ok.txt fitted ddr_frame_store.md5.
+#
+# The freeze previously lived in .agent-work/w-fit/, an agent scratch tree that is
+# git-ignored and was never committed. This gate therefore passed only on the one
+# machine that still had that lane's scratch and failed on every fresh checkout.
+# The artifact is real evidence, so it now lives in the repo; md5 is unchanged at
+# c139274e814a4696c485c0bba3781ad8, which the assertions below still verify.
 # Soft-skip never. true rc direct.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-FIT="$ROOT/.agent-work/w-fit/leftedge3-proj/rtl/ddr_frame_store.sv"
+FIT="$ROOT/tests/rtl/freeze/ddr_frame_store_c5382bee.sv"
 TIP="$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv"
-EV="$ROOT/.agent-work/w-fit/evidence-leftedge3-build-ok.txt"
+EV="$ROOT/tests/rtl/freeze/evidence-leftedge3-build-ok.txt"
 
 FAIL=0
 if [[ ! -f "$FIT" ]]; then
@@ -16,13 +22,22 @@ if [[ ! -f "$FIT" ]]; then
 fi
 md=$(md5sum "$FIT" | awk '{print $1}')
 echo "fitted_ddr_frame_store_md5=$md"
-if [[ -f "$EV" ]] && grep -q 'ddr_frame_store.md5 fitted: c139274e814a4696c485c0bba3781ad8' "$EV"; then
-  if [[ "$md" != "c139274e814a4696c485c0bba3781ad8" ]]; then
-    echo "FAIL: fitted RTL md5 != evidence claim c139274e..." >&2
-    FAIL=1
-  else
-    echo "OK fitted md5 matches leftedge3 evidence (c5382bee freeze)"
-  fi
+# The evidence file is tracked in-repo, so its absence is a hard failure rather than a
+# silent skip of the md5 assertion. A conditional integrity check that quietly does
+# nothing is indistinguishable from a passing one.
+if [[ ! -f "$EV" ]]; then
+  echo "FAIL: missing freeze evidence $EV" >&2
+  exit 1
+fi
+if ! grep -q 'ddr_frame_store.md5 fitted: c139274e814a4696c485c0bba3781ad8' "$EV"; then
+  echo "FAIL: freeze evidence does not carry the c139274e md5 claim" >&2
+  exit 1
+fi
+if [[ "$md" != "c139274e814a4696c485c0bba3781ad8" ]]; then
+  echo "FAIL: fitted RTL md5 != evidence claim c139274e..." >&2
+  FAIL=1
+else
+  echo "OK fitted md5 matches leftedge3 evidence (c5382bee freeze)"
 fi
 
 echo "=== c5382bee freeze PLXD pack (must be bank_vsync_count) ==="
