@@ -24,3 +24,20 @@ See `docs/clk_pix_29p7_sta_prereg.md`:
 +8.962 ms remains PRE-REGISTERED arithmetic only; e2e OPEN until fabric DMA measured.
 
 Please pull/merge this branch into the 720p integration candidate before the exclusive fit.
+
+## Parent refresh commands (post-deploy)
+
+```bash
+# A) after ≥2s core uptime — needs set_status on device or host UIO
+./scripts/check_clk_pix_refresh.sh
+# or directly:
+set_status --raw
+# PASS: clk_pix_meas_verdict=PASS_24HZ_BAND  (fps_x10 ~240)
+# FAIL trap: FAIL_16HZ_TRAP (fps_x10 ~161)
+
+# B) HDMI PTS (parent capture exclusive)
+python3 scripts/hdmi_measure_refresh.py --seconds 2
+# PASS 23.0–25.5 Hz; FAIL trap 15.5–17.0
+```
+
+Tip: `3f7cc549` + follow-up harden set_status decode.
