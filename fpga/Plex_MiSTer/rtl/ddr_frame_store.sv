@@ -549,11 +549,17 @@ module ddr_frame_store #(
 
 			// want_y: product uses pref_y=src_y_line (Y beam only). Thrash control
 			// uses pref_y=src_y (X-gated). No FORCE_TOP.
-			// When WANT_Y_LINE_ONLY=0, rd_visible low forces pref_y=0 every HBlank.
+			// LINECAM_WANT_Y_HOLD_LAST: product (WANT_Y_LINE_ONLY=1) holds last
+			// in-band want_y_sys when !rd_y_visible — do NOT force 0. Force-to-0
+			// jumped gray want_y last→0 every VBlank/out-of-band; after gray-hold
+			// stabilized, desired_y_r snapped to top-of-frame refill tags (MEAN
+			// black residual after gray-hold + cur-window-first). pref_y/src_y_line
+			// still 0 out-of-band for y_hit/pixel; only the fill key holds.
+			// When WANT_Y_LINE_ONLY=0, rd_visible low still forces want_y→0 (shear).
 			if (WANT_Y_LINE_ONLY ? rd_y_visible : rd_visible) begin
 				if (want_y_sys != Y_W'(pref_y))
 					want_y_sys <= Y_W'(pref_y);
-			end else if (want_y_sys != '0) begin
+			end else if (!WANT_Y_LINE_ONLY && want_y_sys != '0) begin
 				want_y_sys <= '0;
 			end
 			want_y_gray <= y_bin2gray(want_y_sys);
