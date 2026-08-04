@@ -126,7 +126,7 @@ echo "W_OSD_ACCEPT_ddr_cycles_budget=required  # e.g. ddr_cycles bound; no unbou
 echo "W_OSD_ACCEPT_beat_conservation_tight=required  # G0 [1x,3x] too loose; exact/tight + returned beats"
 echo "W_OSD_ACCEPT_product_rate_or_labeled_stress=required  # 825*750@20MHz=32.3fps ≠ product 24/PPC2"
 echo "W_OSD_ACCEPT_prereg_deadline_plus_NEG_stall_mutant=required  # discrimination after criterion change"
-echo "FIT_SLOT_GRANT=NO until BOTH blockers green (parent + FIT_RPT); w-osd NACK stands"
+echo "FIT_SLOT_GRANT=NO until nostub + w-osd + PRESENT_PPC2 accept checklists green; NACKs stand"
 
 echo "=== SCORE SUMMARY ==="
 if [[ "$fail" -ne 0 ]]; then
