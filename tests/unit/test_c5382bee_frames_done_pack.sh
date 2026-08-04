@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # T1: Prove deployed RBF c5382bee packs bank_vsync_count into PLXD[63:48].
-# Fitted freeze: .agent-work/w-fit/leftedge3-proj/rtl/ddr_frame_store.sv
+# Fitted freeze: tests/fixtures/fitted_freeze/leftedge3/ddr_frame_store.sv
 # md5 must match evidence-leftedge3-build-ok.txt fitted ddr_frame_store.md5.
 # Soft-skip never. true rc direct.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-FIT="$ROOT/.agent-work/w-fit/leftedge3-proj/rtl/ddr_frame_store.sv"
+FIT="$ROOT/tests/fixtures/fitted_freeze/leftedge3/ddr_frame_store.sv"
 TIP="$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv"
-EV="$ROOT/.agent-work/w-fit/evidence-leftedge3-build-ok.txt"
+EV="$ROOT/tests/fixtures/fitted_freeze/leftedge3/evidence-leftedge3-build-ok.txt"
 
 FAIL=0
 if [[ ! -f "$FIT" ]]; then

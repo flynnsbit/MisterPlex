@@ -1,0 +1,68 @@
+=== LEFT-EDGE FREEZE-FIX FIT leftedge3 — BUILD_OK ===
+
+FITTED TIP
+  base HEAD: ee842f2e
+  WIP: src_y_line + PREP_SLOT_RECYCLE + PENDING_READY_STICKY_PREP (defaults 1'b1)
+  + Plex.sdc async_fifo mem→rd_data_r false_path (fp c61a3d15000b57d4)
+  + freeze/shear gates + run_verilator PINNOTFOUND hard-fail
+  e120842d: EXCLUDED (git merge-base --is-ancestor rc=1) — not silently dropped claim
+  ddr_frame_store.md5 fitted: c139274e814a4696c485c0bba3781ad8
+  Plex.sdc.md5 fitted: 8c1d06d3a80b80e6d1c1bbd50297b96f
+
+1) SDC JUSTIFICATION (before fit) — see .agent-work/w-fit/sdc-false-path-justification.txt
+  Quoted cut:
+    set_false_path -from {*async_fifo*mem*} -to {*async_fifo*rd_data_r*}
+  Real CDC: async_fifo.sv mem write wr_clk; rd_data_r sample rd_clk;
+  Gray 2FF wr_gray_r1/r2 + rd_gray_w1/w2 are the synchronisers (NOT cut).
+  Inventory #16/#22/#30 SAFE. Does NOT cut whole general[0]↔general[2].
+  timing-exclusion true rc=0 (baseline includes c61a3d15000b57d4).
+
+2) GATES vs EXACT fitted RTL (TB executed — case lines present)
+  freeze true rc=0
+    REPRO_OK src_y_line_9eb1431a freeze=1 no_swap=1
+    PASS src_y_line_product_fix motion=1 frames_done=7 late_hashes=4
+  shear true rc=0
+    REPRO_OK stride_fault col_frac=0.55
+    PASS product_slow clean / PASS product_fast clean
+  thrash true rc=0  FIXED thrash_to_zero=0 + RTL pref_y guard
+  define-parity 0 | quartus-sv-subset 0 | rollcall 0 (expected_commands=104)
+  timing-exclusion 0
+
+3) COMPILE-FAIL GUARD
+  scripts/run_verilator.sh: PINNOTFOUND / %Error → HARD FAIL rc=2 (even under -Wno-fatal)
+  freeze/shear assert_sim_executed markers required
+
+4) PRE-REGISTER vs ACTUAL (baseline 9eb1431a ALM 21095 DSP 74 RAM 465 setup+0.165 hold+0.245)
+  ALM  21095..21175  → 21093  HIT (slightly under baseline)
+  DSP  74            → 74     HIT
+  RAM  465/553       → 465    HIT (physical blocks)
+  setup >= +0.10     → +0.375 HIT
+  hold  >= +0.20     → +0.245 HIT
+
+5) FIT (quoted)
+  Fitter Status: Successful - Fri Jul 31 05:30:28 2026
+  Logic utilization (in ALMs): 21,093 / 41,910 (50%)
+  Total DSP Blocks: 74 / 112 (66%)
+  Total RAM Blocks: 465 / 553 (84%)   [physical M10K blocks]
+  Worst-case setup slack is 0.375
+  Worst-case hold slack is 0.245
+  post-fit-hierarchy true rc=0  (ddr_frame_store present)
+  post-fit-timing true rc=0     PASS timing: no negative ... slack
+  Negative-slack rows: 0
+
+6) RBF
+  path: .agent-work/w-fit/leftedge3-proj/remote_out/w-fit-leftedge3/Plex.rbf
+  md5:  c5382bee73cecdee8220b811e529c297
+  banned/do-not-ship check: NOT in {9eb1431a,ff2e3ca3,f0d3a385,2890baac,8832824e,75da8bb1,4d6ee356,4deaf6cc,dabdaeb0}
+  BUILD_OK=YES (Fitter Successful + hier0 + timing0 + non-neg slack)
+  READY_TO_DEPLOY: parent decides after VIEWED frame
+
+7) PARENT VERIFY (do not run here — no device)
+  DEPLOY_LOAD=menu ./scripts/deploy_plex_core.sh \\
+    # with RBF path above / or copy into deploy flow
+  Cast TNG rk=115454; discard grabber warm-up; VIEW frames.
+  PASS criteria: recognisable moving picture; frames differ; no one green band mean~1.5;
+    no ragged left black prefix.
+  Falsifiers: identical md5s / freeze band / shear streaks+variable left black.
+
+log: .agent-work/w-fit/plex_quartus_leftedge3.log
