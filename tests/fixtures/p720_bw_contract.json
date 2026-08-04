@@ -1,5 +1,5 @@
 {
-  "title": "P720 LOCK 33.1776 payload/dir; reader=HARNESS not CLOSED (rd-duck); fullframe e2e FILLED companion-only (38.53 RETRACTED); hps_write+T_copy OPEN; contract consumed in present_core",
+  "title": "P720 LOCK 33.1776 payload/dir; reader=HARNESS not CLOSED (rd-duck); fullframe e2e FILLED companion-only (38.53 RETRACTED); hps_write+T_copy OPEN; contract consumed in present_core; ARM effective capacity=1 core (MiSTer owns other)",
   "product_config": {
     "PRESENT_MULTI_PIXEL": true,
     "PRESENT_PX_PER_CLK": 2,
@@ -46,16 +46,16 @@
     "B_per_clk_ddr_avg_payload_RW": 0.73728,
     "formula_B_per_clk_ddr": "66.3552e6 / clk_ddr_hz",
     "note": "64-bit DDRAM beat width @90 MHz peak 720 MB/s",
-    "ddr_peak_MBps_at_90MHz_label": "ideal 64-bit port peak arithmetic (90e6*8=720) — NOT measured sustainable DDR BW",
-    "steady_RW_MBps_label": "2x frame-store I420 payload average — NOT total controller traffic (excludes pipe->heap, memcpy src reads, decode/ref, contention)",
-    "controller_payload_fraction_of_8B_beats_label": "ideal port utilization of payload R+W only (66.3552/720) — not measured load"
+    "ddr_peak_MBps_at_90MHz_label": "ideal 64-bit port peak arithmetic (90e6*8=720) \u2014 NOT measured sustainable DDR BW",
+    "steady_RW_MBps_label": "2x frame-store I420 payload average \u2014 NOT total controller traffic (excludes pipe->heap, memcpy src reads, decode/ref, contention)",
+    "controller_payload_fraction_of_8B_beats_label": "ideal port utilization of payload R+W only (66.3552/720) \u2014 not measured load"
   },
   "interface_peaks_separate_from_headline": {
     "note": "rd-duck: keep peaks separate from payload averages. Do NOT collapse into 1.65888.",
     "ppc2_store_to_present_RGB_B_per_accepted_sys_group": {
       "value": 6,
       "formula": "PPC * 3 = 2 RGB pixels * 3 bytes",
-      "domain": "store→present accepted sys group during DE (post-CSC RGB)"
+      "domain": "store\u2192present accepted sys group during DE (post-CSC RGB)"
     },
     "ppc2_i420_amortized_source_B_per_active_2px_group": {
       "value": 3,
@@ -67,7 +67,7 @@
       "formula": "PPC * 1.5 = 2 * 1.5",
       "reason_not_ddr_headline": "I420-equivalent of unique pixels served from LINE BUFFERS during DE, not DDRAM beats/clk. Hits skip DDR (rd_miss_now).",
       "sources": [
-        "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv:331 rd_miss_now (hit → no DDR)",
+        "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv:331 rd_miss_now (hit \u2192 no DDR)",
         "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv:77 Y_LINE_QWORDS=CODED_W/8",
         "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv:168 line_buf_ram yram"
       ]
@@ -79,14 +79,14 @@
       "formula": "PPC * 1.5 = 2 * 1.5",
       "reason_not_ddr_headline": "I420-equivalent of unique pixels served from LINE BUFFERS during DE, not DDRAM beats/clk. Hits skip DDR (rd_miss_now).",
       "sources": [
-        "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv:331 rd_miss_now (hit → no DDR)",
+        "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv:331 rd_miss_now (hit \u2192 no DDR)",
         "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv:77 Y_LINE_QWORDS=CODED_W/8",
         "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv:168 line_buf_ram yram"
       ]
     }
   },
   "NACK_history": {
-    "scaler_3p0_as_ddr_headline": "REJECTED by w-clock; w-scaler ACK 2026-08-03 — demoted to optional_not_headline / interface_peaks"
+    "scaler_3p0_as_ddr_headline": "REJECTED by w-clock; w-scaler ACK 2026-08-03 \u2014 demoted to optional_not_headline / interface_peaks"
   },
   "blackout_prefetch": {
     "t_line_us_ppc2_20M_1280": 32.0,
@@ -96,7 +96,7 @@
     "multi_line_floor": 16,
     "note": "latency cover, not average BW"
   },
-  "proof_gap": "reader_steady_delta=HARNESS (w-clock TB starting point, NOT CLOSED); fullframe_e2e=FILLED_companion_only (w-mem fd→fd beats; 38.53 RETRACTED); hps_write_concurrent + T_copy_e2e + delivery/correctness + hardware_contention OPEN",
+  "proof_gap": "reader_steady_delta=HARNESS (w-clock TB starting point, NOT CLOSED); fullframe_e2e=FILLED_companion_only (w-mem fd\u2192fd beats; 38.53 RETRACTED); hps_write_concurrent + T_copy_e2e + delivery/correctness + hardware_contention OPEN",
   "agreed_by": [
     "w-clock",
     "w-scaler",
@@ -117,7 +117,7 @@
   },
   "pending_ack": [],
   "parent_correction_sweep118": {
-    "overclaim_withdrawn": "ARM is no longer the constraint — TOO STRONG (parent Sweep 118)",
+    "overclaim_withdrawn": "ARM is no longer the constraint \u2014 TOO STRONG (parent Sweep 118)",
     "still_true": "busy-spin fixed: 49.0% idle / decode 1.3x deployed durable",
     "not_true": "ARM retired from critical path",
     "correct_status": "end-to-end overlap remains unproven"
@@ -138,13 +138,16 @@
     "formula_deficit": "T_copy_arm_ms - decode_headroom_ms",
     "meaning": "720p24 does NOT close e2e if decode and sendDdrFrame /dev/mem copy are serial",
     "closure_paths": {
-      "a_overlap": "copy concurrent with decode — unproven; 49% idle was PRE-decode (busyfix.sh:70 then :71); same-window /proc/stat+wait4 required",
-      "b_fabric_dma": "fabric path retires uncached publication memcpy only after pinned/coherent source; prefer dynamic-base direct reader; mem2mem staging→bank is FALLBACK (2x traffic); decode/raw still writes pixels — NOT 'ARM never touches payload'"
+      "a_overlap": "copy concurrent with decode \u2014 INFEASIBLE as free second-core parallel (MiSTer owns one core 100% idle). Time-slice on remaining core only; unproven wall win. Prefer path b_fabric_dma / native-geometry cut of T_copy.",
+      "b_fabric_dma": "fabric path retires uncached publication memcpy only after pinned/coherent source; prefer dynamic-base direct reader; mem2mem staging\u2192bank is FALLBACK (2x traffic); decode/raw still writes pixels \u2014 NOT 'ARM never touches payload'"
     },
     "w_scaler_scope": "content_window retires ARM *scale* (swscale), not T_copy_arm. Fabric present already reads DDR; DMA write path is w-mem/w-path joint territory.",
     "solves_for": "CPU_TIME_ms_per_frame_copy",
     "T_copy_arm_ms_full_float": 14.98135653409091,
-    "rounding_note": "Parent published 14.978; full float ~14.981356. Gate allows 0.01 ms."
+    "rounding_note": "Parent published 14.978; full float ~14.981356. Gate allows 0.01 ms.",
+    "effective_arm_cores_for_misterplex": 1,
+    "mister_framework_core_tax": "one entire core at idle (parent /proc/stat)",
+    "one_core_correction": "see arm_effective_capacity_one_core"
   },
   "reference_numbers_one_set": {
     "R_req_720p24_MBps_per_dir": 33.1776,
@@ -222,11 +225,14 @@
       "38.53 established MB/s",
       "ARM never touches frame",
       "free core during decode",
-      "reader beat delta unproven (unsplit — say HARNESS)"
+      "reader beat delta unproven (unsplit \u2014 say HARNESS)",
+      "two free ARM cores",
+      "dual-core free parallel decode||copy",
+      "effective capacity = nproc=2 without MiSTer tax"
     ],
     "hardware_contention": {
       "status": "OPEN",
-      "note": "host writes not RTL-master beats; TB assumed stall ≠ HW controller proof"
+      "note": "host writes not RTL-master beats; TB assumed stall \u2260 HW controller proof"
     },
     "fullframe_e2e_beat_delta": {
       "status": "FILLED_companion_only",
@@ -234,7 +240,7 @@
       "commit_original_fill": "b53197e5",
       "metric_fix_commit": "pending_this_commit",
       "tb": "tests/unit/test_ddr_ppc2_fullframe_beats.sh",
-      "method": "frames_done→frames_done window; window_MBps = beats*8/(sys_cyc/20e6)/1e6",
+      "method": "frames_done\u2192frames_done window; window_MBps = beats*8/(sys_cyc/20e6)/1e6",
       "G0_measured_this_fix": {
         "beats_fd_to_fd": 186371,
         "payload_ideal": 172800,
@@ -253,7 +259,7 @@
   },
   "three_lane_lock": {
     "status": "LOCKED",
-    "quote_for_parent": "Agreed (w-mem ⊕ w-clock ⊕ w-scaler): 33.1776 MB/s per full-frame direction @24 I420 1280×720 (1.65888 B/clk_sys avg). Steady R+W 66.3552 MB/s. PPC=2 does not multiply frame DDR bytes. 3.0 B/clk is linebuf DE consume, not DDR.",
+    "quote_for_parent": "Agreed (w-mem \u2295 w-clock \u2295 w-scaler): 33.1776 MB/s per full-frame direction @24 I420 1280\u00d7720 (1.65888 B/clk_sys avg). Steady R+W 66.3552 MB/s. PPC=2 does not multiply frame DDR bytes. 3.0 B/clk is linebuf DE consume, not DDR.",
     "w_mem_tip": "integ/fab-720p-product-v2 @ 211e0325",
     "rtl_contract": "fpga/Plex_MiSTer/rtl/plex_720p_bw_contract.svh",
     "cite_table": "Memory/lab/agents/AGREED_BW_720P_THREE_LANE_REPLY.md",
@@ -296,7 +302,7 @@
     "tb": "tests/unit/test_ddr_ppc2_fullframe_beats.sh",
     "true_rc_last": 0,
     "recipe": "1280x720 Option-C LINE=16 PPC=2 clk 20:90 + stall/hog",
-    "metric": "fd→fd accepted_rd_beats + window_MBps from elapsed sys_cyc @20MHz",
+    "metric": "fd\u2192fd accepted_rd_beats + window_MBps from elapsed sys_cyc @20MHz",
     "G0_after_metric_fix": {
       "beats_fd_to_fd": 186371,
       "payload_ideal": 172800,
@@ -325,7 +331,7 @@
     "reader_steady_delta": {
       "state": "HARNESS_NOT_CLOSED",
       "owner_tb": "w-clock",
-      "adopt_as": "starting harness — NOT CLOSED status (rd-duck audit dc2ae85d..8a40f163)",
+      "adopt_as": "starting harness \u2014 NOT CLOSED status (rd-duck audit dc2ae85d..8a40f163)",
       "test": "tests/unit/test_ddr_frame_store_720p_ppc2_bus.sh",
       "useful_evidence": {
         "G0_payload_beats": 173120,
@@ -392,7 +398,7 @@
     "fallback_lab": "fabric_ddr_frame_mem2mem staging_to_bank",
     "fallback_cost": "2x payload beats on controller (RD+WE)",
     "forbidden_claim": "ARM never touches frame",
-    "path_a_overlap": "unproven — 49pct idle was PRE-decode (busyfix.sh:70 then :71)",
+    "path_a_overlap": "unproven \u2014 49pct idle was PRE-decode (busyfix.sh:70 then :71)",
     "rd_duck_ack": true
   },
   "fit_release_blockers": {
@@ -402,17 +408,50 @@
     ]
   },
   "retracted_figures": {
-    "38.53_MBps": "RETRACTED — was beats*8*24 without elapsed sys_cyc (rd-duck NACK)"
+    "38.53_MBps": "RETRACTED \u2014 was beats*8*24 without elapsed sys_cyc (rd-duck NACK)"
   },
   "rtl_contract_consumption": {
     "file": "fpga/Plex_MiSTer/rtl/plex_720p_bw_contract.svh",
-    "consumer": "fpga/Plex_MiSTer/rtl/present_core.sv",
-    "mechanism": [
-      "`include plex_720p_bw_contract.svh",
-      "elab $error when PLEX_DDR_720P_TIER and FS_* != P720_*",
-      "(* keep, noprune *) wires p720_bw_contract_*"
+    "consumer_on_origin": "NONE yet \u2014 Path A dual-header only; do not list files.qip until include exists",
+    "rd_duck_dead_param_NACK": "honored on origin \u2014 contract file + fixture, not dead QIP claim",
+    "local_line_note": "present_core include may exist on local land-line only; not this branch"
+  },
+  "arm_effective_capacity_one_core": {
+    "status": "CORRECTED_2026-08-04",
+    "source": "parent live device /proc/stat 10s window",
+    "control": "per-core idle deltas from /proc/stat; USER_HZ=100; MiSTer pid ticks 1004/10s=100.4% one core; mpx-main 8/10s=0.8%; cpu0 idle 97.6% busy 2.4%; cpu1 idle 0.0% busy 100%",
+    "finding": "MiSTer framework binary permanently consumes one entire ARM core at idle. Effective ARM capacity for MiSTerPlex is ONE core, not two.",
+    "what_did_NOT_change": [
+      "R_req 33.1776 MB/s/dir \u2014 DDR I420 payload arithmetic, not ARM SMP",
+      "combined payload 66.3552 MB/s R+W \u2014 fabric/DDR, not core count",
+      "T_copy_arm_ms 14.978 \u2014 measured memcpy CPU TIME for 1382400 B @ ~88 MiB/s; single-thread cost",
+      "serial_deficit formula T_copy - decode_headroom \u2014 already serial one-thread budget"
     ],
-    "files_qip": "listed AND consumed — not dead compilation-unit only",
-    "rd_duck_dead_param_NACK": "addressed"
+    "what_DID_change": {
+      "path_a_overlap_decode_parallel_copy": {
+        "before": "unproven; could be read as true dual-core parallel",
+        "after": "INFEASIBLE as true parallel on free second core \u2014 that core is MiSTer. Any decode||copy concurrency is time-slice on the single remaining core (mpx-main + ffmpeg), not 2\u00d7 wall-time capacity.",
+        "feasibility": "WORSE / still OPEN \u2014 do not budget 2\u00d7 ARM wall work per frame"
+      },
+      "dual_core_aggregate_headroom_language": {
+        "before_if_any": "p480-headroom dual-core ceiling / ~26% onecpu remainder framing",
+        "after": "At idle, remaining capacity \u2248 one full core (the non-MiSTer core). Do not quote 200%\u2212tax dual-core remainder. Contended-core case is the design point (parent Sweep 127 renice: decode headroom 8.88\u219212.97 ms/f)."
+      },
+      "serial_720p24_e2e": {
+        "frame_ms": 41.666666666666664,
+        "T_copy_arm_ms": 14.978,
+        "decode_headroom_nice0_ms_parent": 8.88,
+        "decode_headroom_nice19_ms_parent": 12.97,
+        "serial_deficit_nice0_ms": 6.098,
+        "serial_deficit_nice19_ms": 2.008,
+        "conclusion": "STILL INFEASIBLE for serial decode+copy @720p24 on the one usable core: even after framework renice, ~2.01 ms/f deficit remains. Closure needs fab-dma / native-geometry push cut of T_copy, not a second core."
+      }
+    },
+    "forbidden_claims": [
+      "two free ARM cores",
+      "free core during decode (second core)",
+      "dual-core aggregate headroom without MiSTer 100% core tax",
+      "path_a_overlap as dual-core free parallel"
+    ]
   }
 }

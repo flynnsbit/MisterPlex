@@ -16,7 +16,12 @@
 //   (no present_core include on origin/main until scaler/store coordinate).
 //   Do NOT list in files.qip until a real `include consumer exists (rd-duck).
 //   Forbidden: reader CLOSED; fabric_bw_closed; free-core-during-decode;
-//     ARM-never-touches-frame; 38.53 as established rate.
+//     ARM-never-touches-frame; 38.53 as established rate; two free ARM cores.
+// ARM capacity (parent /proc/stat 10s): MiSTer framework = 100% of one core at
+// idle; mpx-main ~0.8%. Effective ARM for MiSTerPlex = ONE core. Decode||copy
+// overlap is NOT free second-core parallel. 33.1776 DDR payload math unchanged.
+// Serial 720p24: T_copy 14.978 ms still exceeds decode headroom even after
+// framework renice (~12.97 ms) → ~2.01 ms/f deficit; closure = cut T_copy.
 // rd-duck: 33.1776/66.3552/0.09216 = frame-store payload / ideal 64b port math ONLY.
 // NOT measured sustainable DDR BW; NOT total controller traffic; HPS write not RTL beats.
 //
