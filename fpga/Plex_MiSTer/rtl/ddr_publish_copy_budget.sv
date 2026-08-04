@@ -15,7 +15,13 @@
 //   pl330_vs_present:  different port (HPS MP vs FPGA) → lower direct collision
 //   pl330_vs_cpu:      same HPS DDR; MiSTer spin may still contend
 //
-// M10K: 0. No fit. Device PL330 bench is parent-only (see tools/ + REPORT).
+// M10K:
+//   This module itself: 0 (params/wires only).
+//   PL330 path: fabric M10K=0 (HPS DMA).
+//   Fabric bounce path PREREG=2: 128×64-bit buffer, layout EST 2×(256×32),
+//     NOT 1× from the retracted 1280 B/M10K byte-line premise (parent correction).
+//   Dyn-base mux path: M10K=0 (preferred when buffer already in bank).
+//   No fit of this hierarchy yet. Device PL330 BW: parent-only.
 
 module ddr_publish_copy_budget #(
 	parameter int FRAME_BYTES = 1_382_400,
@@ -52,7 +58,7 @@ module ddr_publish_copy_budget #(
 	// Changed only with an explicit GOLDEN-CHANGE + parent device evidence.
 	localparam int PR_PL330_M10K = 0;
 	localparam int PR_PL330_ALM = 0;
-	localparam int PR_FABRIC_BOUNCE_M10K = 1;   // DEPTH=128 * 8 B → ≤1–2 M10K EST
+	localparam int PR_FABRIC_BOUNCE_M10K = 2;   // 128×64b bounce: EST 2×(256×32) — see header
 	localparam int PR_FABRIC_ALM_EST = 400;     // UNVERIFIED pre-fit placeholder
 	localparam int PR_PL330_BW_KBps = 150_000;  // 150 MB/s conservative EST
 	localparam int PR_FABRIC_PEAK_KBps = 720_000; // 8 * 90e6

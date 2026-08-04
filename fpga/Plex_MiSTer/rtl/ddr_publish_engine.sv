@@ -10,7 +10,7 @@
 // present_want blocks NEW issues (RD/WE assert). In-flight accepted cmd completes.
 // WC present block ≤ 1 beat accept + engine react (see TB G1).
 //
-// M10K: 0 — bounce (* ramstyle="logic" *) MAX_BURST×64.
+// M10K: 0 — bounce forced (* ramstyle="logic" *) MAX_BURST×64; layout N/A (not M10K).
 // ALM: ESTIMATE ~250 — UNKNOWN until post-fit.
 // Not product-wired; do not files.qip until instantiated.
 

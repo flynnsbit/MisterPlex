@@ -15,7 +15,7 @@ int main(int argc, char** argv) {
 	// PRE-REGISTERED pins (must match rtl localparam; change = GOLDEN-CHANGE)
 	CHECK(top.pl330_m10k == 0, "PREREG pl330 M10K=0");
 	CHECK(top.pl330_alm == 0, "PREREG pl330 ALM=0");
-	CHECK(top.fab_m10k == 1, "PREREG fabric bounce M10K=1");
+	CHECK(top.fab_m10k == 2, "PREREG fabric bounce M10K=2 (128x64b EST 2x256x32)");
 	CHECK(top.fab_alm == 400, "PREREG fabric ALM EST=400");
 	CHECK(top.pl330_bw == 150000u, "PREREG pl330 150 MB/s EST");
 	CHECK(top.fab_peak == 720000u, "PREREG fabric peak 720 MB/s");

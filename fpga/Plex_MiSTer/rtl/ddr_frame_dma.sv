@@ -15,8 +15,13 @@
 // Default OFF: define FABRIC_FRAME_DMA only in research/sim builds.
 // Product QSF must NOT set FABRIC_FRAME_DMA until parent device-proves it.
 //
-// M10K: bounce[DEPTH] of 64-bit words. DEPTH=128 → 1024 B → ≤2 M10K typical.
-// Fits easily inside nostub reclaim (268 M10K CLAIM from fit L7275).
+// M10K (EST, layout-stated — NOT the retracted "1280 B/block" premise):
+//   bounce[DEPTH=128] × 64-bit = 8192 bits useful.
+//   Native M10K max width is 40b (handbook); 64b needs ≥2 blocks in parallel.
+//   Likely map: 2 × (256×32) → 2 M10K (depth 128 fits in 256; half depth spare).
+//   Byte-wide 1K×8 arithmetic does NOT apply (this is a 64-bit burst bounce).
+//   Unfitted — post-fit entity row is the only measurement that closes this.
+// Budget: 2 of ~356 free M10K (parent nostub HIT 197/553).
 //
 // Does NOT ring the doorbell (w-mem owns mailbox ABI). done pulses when the
 // bank payload is fully written; host/firmware may kick doorbell after.

@@ -14,7 +14,7 @@
 // Contrast source→bank DMA (ddr_frame_dma.sv): full R+W traffic; only retires
 // uncached publication memcpy after pin/SG/coherency; decode still writes pixels.
 //
-// PREREG area (pre-fit): ALM 0..4, M10K 0, REG 0, DSP 0.
+// PREREG area (pre-fit): ALM 0..4, M10K 0 (no RAM; layout N/A), REG 0, DSP 0.
 // No `timescale — matches ddr_frame_store / present_core (avoids TIMESCALEMOD).
 
 module ddr_frame_base_mux #(

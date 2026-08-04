@@ -9,7 +9,7 @@
 // global macro switch). This module does NOT flip QSF; it elaborates the ABI
 // that present_core must bind when the pack is selected.
 //
-// M10K: 0 (no arrays). Control: source — no ram_style / deep mem.
+// M10K: 0 (no arrays; layout N/A). Control: source — no ramstyle / deep mem.
 // Against ~356 M10K nostub reclaim: spends 0.
 
 module ddr_i420_store_width_check #(

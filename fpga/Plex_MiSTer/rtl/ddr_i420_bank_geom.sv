@@ -4,9 +4,10 @@
 // banks. Instantiate with the 720p pack (ddr_frame_layout_params.svh
 // DDR_FRAME_720P_*) for L4; do not retarget product defaults here.
 //
-// M10K cost: 0 — no memory arrays, no linebufs (control: no ram_style / deep
-// reg[] storage). ALM: wires + compares only; post-fit UNVERIFIED.
+// M10K cost: 0 — no memory arrays, no linebufs (control: no ramstyle / deep
+// reg[] storage; layout N/A). ALM: wires + compares only; post-fit UNVERIFIED.
 // Against ~356 M10K free after PRODUCT_NO_STUB strip: spends 0 of that budget.
+// Does NOT model present line_buf_ram cost (see docs/m10k-depth-width.md).
 //
 // Not a scanout beam generator (w-clock) and not present_core (w-osd). This is
 // the bank ABI math present/store must agree with the ARM writer on.
