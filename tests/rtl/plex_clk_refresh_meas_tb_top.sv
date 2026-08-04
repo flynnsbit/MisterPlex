@@ -1,4 +1,4 @@
-// TB top: product geometry defaults (1650×750 / DE 1280×720).
+// TB top: product geometry defaults (1600×750 / DE 1280×720).
 // rd-duck: VSync-only is insufficient; per-frame CE/lines/DE must match.
 `timescale 1ns/1ps
 module plex_clk_refresh_meas_tb_top (
@@ -26,10 +26,10 @@ module plex_clk_refresh_meas_tb_top (
 `ifndef TB_MEAS_WIN
 	`define TB_MEAS_WIN 20000
 `endif
-	// Product COMPACT geometry (matches present_video_timing_720p / present_core)
+	// Product COMPACT geometry H1600×V750 (28.8 MHz exact-24)
 	plex_clk_status #(
 		.MEAS_WINDOW_CYCLES(`TB_MEAS_WIN),
-		.H_TOTAL(1650),
+		.H_TOTAL(1600),
 		.V_TOTAL(750),
 		.H_ACTIVE(1280),
 		.V_ACTIVE(720)

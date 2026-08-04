@@ -4,29 +4,23 @@
 //   → Gray free-run counters in clk_pix + period-based fps from VSync.
 //
 // rd-duck NACK (VSync-only): VSync cadence alone is NOT 720p timing proof.
-//   Adversarial: H=1375,V=900 keeps HT*VT=1_237_500 (=1650*750) so fps and
-//   CE/frame match product while HSync/raster is wrong. DE 1280×720 can still
-//   be true. All-black with lane_valid=0 keeps VSync green.
+//   Adversarial wrong H/V with same HT*VT keeps fps/CE/frame while raster wrong.
 //   → Per-frame pixel-domain totals required:
-//        CE/frame  == H_TOTAL*V_TOTAL   (1_237_500)
-//        lines/frm == V_TOTAL           (750)          // catches 900
-//        CE/line   == H_TOTAL           (1650)         // catches 1375
+//        CE/frame  == H_TOTAL*V_TOTAL   (1_200_000 product)
+//        lines/frm == V_TOTAL           (750)
+//        CE/line   == H_TOTAL           (1600)
 //        DE/frame  == H_ACTIVE*V_ACTIVE (921_600)
 //        DE/line   == H_ACTIVE (1280) on each active line, 0 on blank
 //        active lines == V_ACTIVE (720)
-//        CE≈1 (ce_frame ≈ pix clocks/frame)
-//        underrun delta == 0
-//   One-second event counts have ±1 phase quantization; prefer period +
-//   per-frame totals over long windows alone.
+//        CE≈1, underrun delta == 0
 //
-// PRODUCT glass @ dedicated pll_pix 29.7 MHz H1650×V750: fps_eff = 24.000 (fps_x10=240)
-// Shared-PLL 30 MHz trap → 24.242 (fps_x10≈242) — FAIL_SHARED30 (do not ship).
-// Trap 16.16 Hz (20 MHz same-clock) → fps_x10≈162.
+// PRODUCT glass @ shared pll 28.8 MHz H1600×V750: fps_eff = 24.000 (fps_x10=240)
+// REJECT 242 (retired 30 MHz/H1650 defect). Trap ~16.67 Hz (20 MHz) → fps_x10≈167.
 //
 // flags: {raster_ok, de_ok, ce_ok, trap16, pll_on, fps_ok, pix_ok, valid}
 // PASS product: fps∈[239,241] + valid + fps_ok + pix_ok + ce_ok + de_ok + raster_ok
 //
-// Work item: p720-clock-dedicated-pll-pix / exact-24
+// Work item: p720-clock-28p8-exact24
 
 `include "misterplex_clk_hz.svh"
 `include "misterplex_clk_pix_recipe.svh"
@@ -34,7 +28,7 @@
 module plex_clk_status #(
 	parameter int MEAS_WINDOW_CYCLES = 0,
 	// Product COMPACT defaults; TB overrides for fast adversarial raster cases.
-	parameter int H_TOTAL  = 1650,
+	parameter int H_TOTAL  = 1600,
 	parameter int V_TOTAL  = 750,
 	parameter int H_ACTIVE = 1280,
 	parameter int V_ACTIVE = 720
@@ -80,7 +74,7 @@ module plex_clk_status #(
 	localparam int CEA_NEED = `MISTERPLEX_CEA720_F24_HZ;
 	localparam longint L4_NEED = longint'(`MISTERPLEX_L4_F24_HZ);
 
-	// Geometry expectations (product: 1650×750, DE 1280×720 → CE/frm=1_237_500, DE/frm=921_600)
+	// Geometry expectations (product: 1600×750, DE 1280×720 → CE/frm=1_200_000, DE/frm=921_600)
 	localparam int CE_FRAME_EXP = H_TOTAL * V_TOTAL;
 	localparam int DE_FRAME_EXP = H_ACTIVE * V_ACTIVE;
 
@@ -99,13 +93,19 @@ module plex_clk_status #(
 	(* keep, noprune *) wire [31:0] keep_clkpix_cea24 = MISTERPLEX_CLKPIX_CEA24_HZ[31:0];
 	(* keep, noprune *) wire [31:0] keep_clkpix_product = MISTERPLEX_CLKPIX_PRODUCT_HZ[31:0];
 	generate
-		// Product MUST be dedicated-PLL 29.7 MHz (exact 24.000 @ H1650×V750).
-		if (MISTERPLEX_CLKPIX_COMPACT_HZ != 29_700_000) begin : g_clkpix_compact
-			misterplex_clkpix_compact_must_be_29700000 u_compact();
+		// Product MUST be shared-PLL 28.8 MHz (exact 24.000 @ H1600×V750).
+		if (MISTERPLEX_CLKPIX_COMPACT_HZ != 28_800_000) begin : g_clkpix_compact
+			misterplex_clkpix_compact_must_be_28800000 u_compact();
 		end
-		// 30 MHz is the shared-VCO trap (24.242 Hz judder) — never product.
-		if (MISTERPLEX_CLKPIX_COMPACT_HZ == 30_000_000) begin : g_clkpix_no_shared30
-			misterplex_clkpix_30000000_is_shared_pll_trap_not_product u_no30();
+		if (MISTERPLEX_CLKPIX_COMPACT_H != 1600) begin : g_clkpix_h
+			misterplex_clkpix_compact_h_must_be_1600 u_h();
+		end
+		// 29.7 illegal on shared VCO; 30 MHz was false product (24.242).
+		if (MISTERPLEX_CLKPIX_COMPACT_HZ == 29_700_000) begin : g_clkpix_no297
+			misterplex_clkpix_297_illegal_on_shared_pll u_no297();
+		end
+		if (MISTERPLEX_CLKPIX_COMPACT_HZ == 30_000_000) begin : g_clkpix_no30
+			misterplex_clkpix_30000000_is_retired_false_product u_no30();
 		end
 		if (MISTERPLEX_CLKPIX_CEA24_HZ != 59_400_000) begin : g_clkpix_cea24
 			misterplex_clkpix_cea24_must_be_59400000 u_cea24();
@@ -113,7 +113,7 @@ module plex_clk_status #(
 		if (MISTERPLEX_CLKPIX_PRODUCT_HZ != MISTERPLEX_CLKPIX_COMPACT_HZ) begin : g_clkpix_product
 			misterplex_clkpix_product_must_be_compact u_prod();
 		end
-		// Dedicated pll_pix: 50*M/(N*C) must equal COMPACT_HZ exactly.
+		// Shared VCO recipe: 50*M/(N*C) must equal COMPACT_HZ exactly.
 		if ((64'd50_000_000 * MISTERPLEX_CLKPIX_COMPACT_PLL_M)
 		    / (64'(MISTERPLEX_CLKPIX_COMPACT_PLL_N) * 64'(MISTERPLEX_CLKPIX_COMPACT_PLL_C))
 		    != 64'(MISTERPLEX_CLKPIX_COMPACT_HZ)) begin : g_clkpix_mn_c
@@ -398,11 +398,11 @@ module plex_clk_status #(
 	reg        pix_ok_w, ce_ok_w, de_ok_w, fps_ok_w, trap_w, raster_ok_w;
 	reg        ce_frame_ok_w, de_frame_ok_w, lines_ok_w, active_ok_w, ce1_ok_w;
 
-	// Product exact-24 → fps_x10=240. Shared-30 trap → 242 (not PASS).
+	// Product exact-24 → fps_x10=240. MUST PASS 240 and REJECT 242 (false product).
 	localparam int FPS_PASS_LO = 239;
 	localparam int FPS_PASS_HI = 241;
-	localparam int FPS_SHARED30_LO = 242;
-	localparam int FPS_SHARED30_HI = 244;
+	localparam int FPS_DEFECT242_LO = 242;
+	localparam int FPS_DEFECT242_HI = 244;
 	localparam int FPS_TRAP_LO = 150;
 	localparam int FPS_TRAP_HI = 170;
 
@@ -416,7 +416,8 @@ module plex_clk_status #(
 		abs_diff32 = (a > b) ? int'(a - b) : int'(b - a);
 	endfunction
 	function automatic int abs_diff16(input [15:0] a, input [15:0] b);
-		abs_diff16 = (a > b) ? int'(a - b) : int'(b - a);
+		// Cast before SUB so Verilator does not WIDTHEXPAND 16→32 on operands.
+		abs_diff16 = (a > b) ? (int'(a) - int'(b)) : (int'(b) - int'(a));
 	endfunction
 
 	always @(*) begin

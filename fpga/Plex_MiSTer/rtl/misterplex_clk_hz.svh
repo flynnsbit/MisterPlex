@@ -2,8 +2,8 @@
 // Include after QSF macros are defined. Do not edit PLL strings without this.
 // Product default: clk_sys 20 MHz. Optional:
 //   CLK_SYS_24          → clk_sys 24_000_000 (L4 1312×762 @ ~24.006 Hz)
-//   PRESENT_CLK_PIX_PLL → clk_pix 29_700_000 via DEDICATED pll_pix (exact 24.000
-//                         @ H1650×V750). Never put 29.7 on shared pll_0002.
+//   PRESENT_CLK_PIX_PLL → clk_pix 28_800_000 on shared pll_0002 outclk_3
+//                         (exact 24.000 @ H1600×V750). Never 29.7 on shared PLL.
 
 `ifndef MISTERPLEX_CLK_HZ_SVH
 `define MISTERPLEX_CLK_HZ_SVH
@@ -20,28 +20,25 @@
 	`ifdef PRESENT_CLK_PIX_74_25
 		`define MISTERPLEX_CLK_PIX_HZ 74_250_000
 		`define MISTERPLEX_CLK_PIX_MHZ_STR "74.250000 MHz"
-	`elsif PRESENT_CLK_PIX_CEA24
-		`define MISTERPLEX_CLK_PIX_HZ 59_400_000
-		`define MISTERPLEX_CLK_PIX_MHZ_STR "59.400000 MHz"
 	`else
-		// PRODUCT: dedicated pll_pix 29.700000 MHz → exact 24.000 Hz glass
-		`define MISTERPLEX_CLK_PIX_HZ 29_700_000
-		`define MISTERPLEX_CLK_PIX_MHZ_STR "29.700000 MHz"
+		// PRODUCT: shared pll outclk_3 28.800000 MHz → exact 24.000 Hz @ H1600×V750
+		`define MISTERPLEX_CLK_PIX_HZ 28_800_000
+		`define MISTERPLEX_CLK_PIX_MHZ_STR "28.800000 MHz"
 	`endif
 `else
-	// No separate pix PLL: pixel domain = clk_sys
 	`define MISTERPLEX_CLK_PIX_HZ `MISTERPLEX_CLK_SYS_HZ
 	`define MISTERPLEX_CLK_PIX_MHZ_STR `MISTERPLEX_CLK_SYS_MHZ_STR
 `endif
 
-// Fabric COMPACT 720p totals (PRESENT_MULTI_PIXEL default beam H=1650).
-`define MISTERPLEX_CEA720_H_TOTAL 1650
+// Fabric COMPACT 720p totals (PRESENT_MULTI_PIXEL product beam H=1600).
+`define MISTERPLEX_CEA720_H_TOTAL 1600
 `define MISTERPLEX_CEA720_V_TOTAL 750
 `define MISTERPLEX_CEA720_PIX_FRAME (`MISTERPLEX_CEA720_H_TOTAL * `MISTERPLEX_CEA720_V_TOTAL)
-// Product glass @ 29.7 MHz: 29.7e6/(1650*750) = 24.000 exact
-`define MISTERPLEX_CEA720_F24_HZ 29_700_000
-// Shared-PLL 30 MHz trap (DO NOT SHIP): 24.242 Hz
+// Product glass @ 28.8 MHz: 28.8e6/(1600*750) = 24.000 exact
+`define MISTERPLEX_CEA720_F24_HZ 28_800_000
+// Retired traps
 `define MISTERPLEX_CEA720_SHARED30_TRAP_HZ 30_000_000
+`define MISTERPLEX_CEA720_ILLEGAL297_HZ 29_700_000
 // CEA-861 720p60 VIC4
 `define MISTERPLEX_CEA720_F60_HZ 74_250_000
 // True CEA-861 720p24 VIC60

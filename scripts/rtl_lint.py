@@ -115,11 +115,7 @@ def is_excluded(path: Path) -> bool:
     return (
         "/sys/" in f"/{r}"
         or "/rtl/pll/" in f"/{r}"
-        or         r in {
-            "fpga/Plex_MiSTer/rtl/pll.v",
-            "fpga/Plex_MiSTer/rtl/pll_pix.v",  # wrapper; core under rtl/pll/ (excluded)
-            "fpga/Plex_MiSTer/build_id.v",
-        }
+        or         r in {"fpga/Plex_MiSTer/rtl/pll.v", "fpga/Plex_MiSTer/build_id.v"}
     )
 
 

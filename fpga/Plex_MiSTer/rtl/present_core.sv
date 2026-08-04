@@ -9,13 +9,13 @@
 //       Instantiates present_content_window (store map). Requires FRAME_W=1280
 //       FRAME_H=720 in the same QSF enable recipe. Plex.sv wires geom_latch+mux.
 //   `define PRESENT_BEAM_960     — present_beam_content_de true-DE (max tier 960×540)
-//   `define PRESENT_MULTI_PIXEL  — 720p beam (COMPACT H1650 default) + present_npx_path (PPC)
+//   `define PRESENT_MULTI_PIXEL  — 720p beam (COMPACT H1600 default) + present_npx_path (PPC)
 //       Requires FRAME_W=1280 FRAME_H=720 (same store as L4). L4⊥MULTI beams,
 //       but BOTH use the shared 720p DDR ABI via ddr_frame_abi_select.svh when
 //       FRAME is 1280×720 (rd-duck: do not bind 720p bank only under L4).
 //   `define PRESENT_PX_PER_CLK N — 1|2|4 with MULTI_PIXEL (default 1).
 //                                  PPC=2 needs 40 Mpix/s capacity at 20 MHz for CEA
-//                                  720p24 (29.7 Mpix/s). Store exposes rd_*_n ports.
+//                                  720p24 (28.8 Mpix/s). Store exposes rd_*_n ports.
 //   `define PRESENT_CLK_PIX_PLL  — separate clk_pix + rate-match (optional)
 //   `define PLEX_DDR_ABI_720P    — force 720p bank/doorbell even if FRAME≠1280×720
 // Macros off → bit-identical Template H_DE=529 / DE_LAG=3 path (v0.3.0 baseline).
@@ -646,7 +646,7 @@ module present_core #(
 	// w-path compose: bank_geom + width_check + copy_budget stay in hierarchy when
 	// 720p ABI is selected (not QIP-only dark silicon). M10K=0 each (source).
 	// Refresh honesty: timing keep uses MISTERPLEX_CLK_PIX_HZ; without PLL,
-	// CEA 1650×750 @ 20 MHz ≈ 16.16 Hz — geometry can PASS while refresh fails.
+	// COMPACT 1600×750 @ 20 MHz ≈ 16.67 Hz — geometry can PASS while refresh fails.
 	generate
 		if (DDR_FS_USE_720P_ABI) begin : g_path_720p_compose
 			wire [31:0] geom_fb, geom_u, geom_v, geom_db;
@@ -888,8 +888,8 @@ module present_core #(
 `ifdef PRESENT_MULTI_PIXEL
 	// ------------------------------------------------------------------
 	// 720p multi-pixel path (macro ON only). Default OFF → leg_* above.
-	// Beam defaults H_TOTAL=1650 V_TOTAL=750 = COMPACT fabric raster
-	// (1650*750*24=29.7 MHz) — NOT CEA-861 720p24 VIC60 (H=3300 @ 59.4).
+	// Beam defaults H_TOTAL=1600 V_TOTAL=750 = COMPACT fabric raster
+	// (1600*750*24=28.8 MHz exact 24.000) — NOT CEA-861 720p24 VIC60 (H=3300 @ 59.4).
 	// True CEA24 needs different beam totals + clk_pix; see clk_pix recipe.
 	// Store exposes N-wide RGB (PX_PER_CLK); beam glass drives store address.
 	// ------------------------------------------------------------------
@@ -941,7 +941,7 @@ localparam int MP_CLK_PIX_HZ = `MISTERPLEX_CLK_PIX_HZ;
 	present_beam_ppc #(
 		.PX_PER_CLK(PRESENT_PPC),
 		.H_DE(1280),
-		.H_TOTAL(1650),
+		.H_TOTAL(1600),
 		.V_ACTIVE(720),
 		.V_TOTAL(750),
 		.H_SYNC_S(1390),
@@ -973,9 +973,9 @@ localparam int MP_CLK_PIX_HZ = `MISTERPLEX_CLK_PIX_HZ;
 			mp_store_y  <= '0;
 			mp_store_de <= 1'b0;
 		end else if (mp_beam_ce) begin
-			mp_store_x  <= (mp_glass_x0 > FRAME_LAST_X_16) ? FRAME_LAST_X
+			mp_store_x  <= (16'(mp_glass_x0) > FRAME_LAST_X_16) ? FRAME_LAST_X
 			             : mp_glass_x0[FRAME_X_W-1:0];
-			mp_store_y  <= (mp_glass_y > FRAME_LAST_Y_16) ? FRAME_LAST_Y
+			mp_store_y  <= (16'(mp_glass_y) > FRAME_LAST_Y_16) ? FRAME_LAST_Y
 			             : mp_glass_y[FRAME_Y_W-1:0];
 			mp_store_de <= |mp_lane_de;
 		end
