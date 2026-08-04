@@ -114,5 +114,16 @@
   "strategic": {
     "path_a_overlap": "unproven",
     "path_b_fabric_dma": "retires T_copy_arm; w-mem/w-path build; w-clock clocks+CDC"
+  },
+  "proof_status": {
+    "reader_steady_delta_1280x720_ppc2_20_90": "CLOSED",
+    "owner_closed": "w-clock",
+    "tb": "tests/unit/test_ddr_frame_store_720p_ppc2_bus.sh",
+    "G0_payload_beats": 173120,
+    "G0_total_rd_beats": 182809,
+    "hps_write_concurrent_same_controller": "OPEN",
+    "T_copy_arm_e2e_serial_or_overlap": "OPEN",
+    "fabric_dma_path_b": "NOT_BUILT",
+    "do_not_say": "fabric_BW_proof_gap_OPEN as a single blob"
   }
 }
