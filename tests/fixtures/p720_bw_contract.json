@@ -256,7 +256,37 @@
       "shared fabric BW closed"
     ],
     "hps_write_concurrent_same_controller": "OPEN",
-    "T_copy_e2e": "OPEN"
+    "T_copy_e2e": "OPEN",
+    "accepted_request_delta": {
+      "status": "CLOSED",
+      "label": "OBSERVED"
+    },
+    "ppc2_delivery": {
+      "status": "OPEN",
+      "label": "OPEN"
+    },
+    "fabric_bw": {
+      "status": "OPEN",
+      "label": "OPEN",
+      "fabric_bw_closed": false
+    },
+    "hps_write": {
+      "status": "OPEN",
+      "label": "OPEN"
+    },
+    "t_copy_e2e": {
+      "status": "OPEN",
+      "label": "OPEN",
+      "note": "e2e T_copy retire NOT measured; arithmetic PRE-REGISTERED only"
+    },
+    "t_copy_retire_arithmetic": {
+      "status": "PRE-REGISTERED",
+      "label": "PRE-REGISTERED_ARITHMETIC_ONLY",
+      "not_a_measurement": true,
+      "not_hit": true,
+      "prediction_if_copy_fully_retired_ms": 8.962,
+      "e2e": "OPEN"
+    }
   },
   "audit_ack": {
     "rd_duck": "ARITHMETIC_LABELS_ONLY",
@@ -338,16 +368,24 @@
     ],
     "miss_publish_rule": "If parent measures residual ARM pub path or decode\u226032.705 after DMA, update margin and mark HIT/MISS here",
     "measurement": {
-      "method": "arithmetic re-run of parent Sweep 116/118 inputs (no device)",
+      "method": "arithmetic re-run of parent Sweep 116/118 inputs (no device) \u2014 NOT an independent measurement/control",
       "frame_budget_ms": 41.667,
       "decode_ms": 32.705,
       "T_copy_arm_ms": 14.978,
       "margin_ms": 8.962,
       "arm_decode_frame_budget_closes": true,
       "vs_prereg_margin_ms": 8.962,
-      "result": "HIT",
-      "post_strip_sta_note": "Parent nostub-poststrip1: clk_ddr +0.311 ns, clk_sys +1.290 ns, TNS=0. Does not change ARM frame-budget arithmetic. clk_pix Fmax still UNKNOWN."
-    }
+      "result": "PRE-REGISTERED",
+      "post_strip_sta_note": "Parent nostub-poststrip1: clk_ddr +0.311 ns, clk_sys +1.290 ns, TNS=0. Does not change ARM frame-budget arithmetic. clk_pix Fmax still UNKNOWN.",
+      "not_independent_measurement": true,
+      "not_hit": true,
+      "e2e": "OPEN",
+      "note": "rd-duck: calling same-input arith MEASURE/HIT is forbidden; keep PRE-REGISTERED"
+    },
+    "label": "PRE-REGISTERED_ARITHMETIC_ONLY",
+    "not_a_measurement": true,
+    "not_hit": true,
+    "independent_control": false
   },
   "post_strip_sta": {
     "source": "parent nostub-poststrip1 (not w-clock device)",
@@ -362,5 +400,33 @@
     "TNS": 0.0,
     "clk_pix_in_that_fit": false,
     "clk_pix_fmax": "UNKNOWN \u2014 check after PRESENT_CLK_PIX_PLL fit"
+  },
+  "clk_pix_recipe": {
+    "compact_720p24": {
+      "label": "COMPACT_NON_CEA",
+      "H": 1650,
+      "V": 750,
+      "fps": 24,
+      "Hz": 29700000,
+      "note": "NOT CEA-861 720p24; half-H fabric raster for ascal input"
+    },
+    "cea_720p24_vic60": {
+      "label": "CEA-861_VIC60",
+      "H": 3300,
+      "V": 750,
+      "fps": 24,
+      "Hz": 59400000,
+      "Hblank": "1760+40+220",
+      "source": "/usr/include/linux/v4l2-dv-timings.h V4L2_DV_BT_CEA_1280X720P24"
+    },
+    "cea_720p60_vic4": {
+      "label": "CEA-861_VIC4",
+      "H": 1650,
+      "V": 750,
+      "fps": 60,
+      "Hz": 74250000
+    },
+    "product_default_when_clk_pix_pll": "COMPACT_NON_CEA_29700000",
+    "fitted_actual_Hz": "UNKNOWN_until_fit"
   }
 }

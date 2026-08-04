@@ -57,8 +57,25 @@ def main() -> int:
     # rd-duck FIT BLOCKER: PPC2 must use real dual-lane store, not scalar replicate.
     multi = re.search(r"`ifdef\s+PRESENT_MULTI_PIXEL\s*(.*?)\s*`else\s*\n\s*assign r = leg_r", core, re.S)
     multi_body = multi.group(1) if multi else core
-    if not re.search(r"mp_npx_r\s*=\s*fs_rd_r_n", multi_body):
-        fails.append("MULTI must wire mp_npx_r from fs_rd_r_n (dual-lane store)")
+    # Dual-lane RGB from store (direct or via mp_store_r = fs_rd_r_n + quality gate)
+    if "fs_rd_r_n" not in multi_body:
+        fails.append("MULTI must source RGB from fs_rd_r_n (dual-lane store)")
+    if not re.search(r"mp_store_r\s*=\s*fs_rd_r_n", multi_body) and not re.search(
+        r"mp_npx_r\s*=\s*fs_rd_r_n", multi_body
+    ):
+        fails.append("MULTI must wire store RGB from fs_rd_r_n (dual-lane)")
+    # rd-duck: fs_rd_n_valid must gate RGB/lane — never leave as _unused only
+    if re.search(r"wire\s+_unused_fs_n_valid\s*=\s*fs_rd_n_valid", multi_body):
+        fails.append("MULTI must not discard fs_rd_n_valid as _unused (gate RGB/lane)")
+    if "fs_rd_n_valid" not in multi_body and "mp_store_nv" not in multi_body:
+        fails.append("MULTI must consume fs_rd_n_valid")
+    if "mp_store_rgb_ok" not in multi_body and "fs_rd_n_valid" not in multi_body:
+        fails.append("MULTI must quality-gate RGB on store valid")
+    if "in_lane_valid(mp_npx_lv)" not in multi_body.replace(" ", "") and \
+       ".in_lane_valid(mp_npx_lv)" not in multi_body:
+        # allow whitespace
+        if not re.search(r"\.in_lane_valid\s*\(\s*mp_npx_lv\s*\)", multi_body):
+            fails.append("MULTI npx path must take in_lane_valid(mp_npx_lv) (store-gated)")
     if not re.search(r"fs_rd_x_w\s*=\s*mp_store_x", multi_body):
         fails.append("MULTI must drive fs_rd_x_w from mp_store_x (beam glass→store)")
     if not re.search(r"fs_rd_y_w\s*=\s*mp_store_y", multi_body):

@@ -28,6 +28,9 @@
 #   TNS 0.000 all
 # That fit does NOT measure clk_pix Fmax. Next fit with PRESENT_CLK_PIX_PLL must
 # re-interrogate general[3]. Thin +0.311 on clk_ddr is a risk if fabric DMA adds
+# TIMING NAME LOCK: default 29.700 MHz is COMPACT H1650×V750×24 fabric raster.
+# It is NOT CEA-861 720p24 (VIC60 = 59.4 MHz, Htotal 3300). True CEA24 uses
+# PRESENT_CLK_PIX_CEA24. CEA 720p60 VIC4 = 74.25 MHz (PRESENT_CLK_PIX_74_25).
 # DDR traffic — not proof that 29.7 clk_pix is impossible.
 #
 # Do NOT add false_path on residual_csum / decode sameclk paths.

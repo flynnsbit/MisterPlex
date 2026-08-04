@@ -57,14 +57,15 @@ module  pll_0002(
 `endif
 
 // clk_pix frequency string (only consumed when PRESENT_CLK_PIX_PLL).
-// Product target = 720p24 → 29.700000 MHz (1650*750*24). NOT 74.25 unless 74_25 macro.
-// Integer-N exact solutions from 50 MHz ref (fractional_vco_multiplier false):
-//   29.70: M=297 N=10 C=50 (VCO 1485 MHz) or M=297 N=20 C=25 (VCO 742.5)
-//   74.25: M=297 N=10 C=20 (VCO 1485 MHz) or M=297 N=20 C=10 (VCO 742.5)
-// ⇒ 0 ppm if Quartus selects those counters; fitted Actual UNKNOWN until fit.rpt.
-// See rtl/misterplex_clk_pix_recipe.svh. pll_hdmi is separate (148.5 frac + adj).
+// Default = COMPACT 720p24 fabric raster 29.700 MHz (H1650*V750*24) — NOT CEA VIC60.
+// True CEA-861 720p24 VIC60 = 59.400 MHz (H3300) via PRESENT_CLK_PIX_CEA24.
+// CEA 720p60 VIC4 = 74.250 MHz via PRESENT_CLK_PIX_74_25.
+// Integer-N exact from 50 MHz: 29.7 M=297/10/50; 59.4 M=297/10/25; 74.25 M=297/10/20.
+// Fitted Actual UNKNOWN until fit.rpt. pll_hdmi separate (148.5 frac + adj).
 `ifdef PRESENT_CLK_PIX_74_25
 `define MISTERPLEX_CLK_PIX_PLL_FREQ "74.250000 MHz"
+`elsif PRESENT_CLK_PIX_CEA24
+`define MISTERPLEX_CLK_PIX_PLL_FREQ "59.400000 MHz"
 `else
 `define MISTERPLEX_CLK_PIX_PLL_FREQ "29.700000 MHz"
 `endif

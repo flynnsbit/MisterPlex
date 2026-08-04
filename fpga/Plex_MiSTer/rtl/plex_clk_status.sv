@@ -31,25 +31,41 @@ module plex_clk_status (
 	localparam int CEA_NEED = `MISTERPLEX_CEA720_F24_HZ;
 	localparam longint L4_NEED = longint'(`MISTERPLEX_L4_F24_HZ); // 23_993_856
 
-	// Recipe lock: product pix target is 720p24 @ 29.7 (not 74.25).
-	(* keep, noprune *) wire [31:0] keep_clkpix_f24 = MISTERPLEX_CLKPIX_F24_HZ[31:0];
+	// Recipe lock: default product pix = COMPACT 29.7 (not CEA VIC60 59.4).
+	(* keep, noprune *) wire [31:0] keep_clkpix_compact = MISTERPLEX_CLKPIX_COMPACT_HZ[31:0];
+	(* keep, noprune *) wire [31:0] keep_clkpix_cea24 = MISTERPLEX_CLKPIX_CEA24_HZ[31:0];
 	(* keep, noprune *) wire [31:0] keep_clkpix_product = MISTERPLEX_CLKPIX_PRODUCT_HZ[31:0];
-	(* keep, noprune *) wire [15:0] keep_clkpix_pll_m = MISTERPLEX_CLKPIX_F24_PLL_M[15:0];
+	(* keep, noprune *) wire [15:0] keep_clkpix_pll_m = MISTERPLEX_CLKPIX_COMPACT_PLL_M[15:0];
 	generate
-		if (MISTERPLEX_CLKPIX_F24_HZ != 29_700_000) begin : g_clkpix_f24
-			misterplex_clkpix_f24_must_be_29700000 u_f24();
+		if (MISTERPLEX_CLKPIX_COMPACT_HZ != 29_700_000) begin : g_clkpix_compact
+			misterplex_clkpix_compact_must_be_29700000 u_compact();
 		end
-		if (MISTERPLEX_CLKPIX_F24_HZ != (MISTERPLEX_CLKPIX_CEA_H * MISTERPLEX_CLKPIX_CEA_V * MISTERPLEX_CLKPIX_FPS_24)) begin : g_clkpix_arith
-			misterplex_clkpix_f24_arith_broken u_arith();
+		if (MISTERPLEX_CLKPIX_CEA24_HZ != 59_400_000) begin : g_clkpix_cea24
+			misterplex_clkpix_cea24_must_be_59400000 u_cea24();
 		end
-		if (MISTERPLEX_CLKPIX_PRODUCT_HZ != MISTERPLEX_CLKPIX_F24_HZ) begin : g_clkpix_product_is_f24
-			misterplex_clkpix_product_must_be_f24 u_prod();
+		if (MISTERPLEX_CLKPIX_CEA24_HZ != (MISTERPLEX_CLKPIX_CEA24_H * MISTERPLEX_CLKPIX_CEA24_V * 24)) begin : g_clkpix_cea24_arith
+			misterplex_clkpix_cea24_arith_broken u_cea24_arith();
 		end
-		// Documented integer solution: 50e6 * M / (N*C) — use 64-bit (M*ref overflows 32b).
-		if ((64'd50_000_000 * MISTERPLEX_CLKPIX_F24_PLL_M)
-		    / (64'(MISTERPLEX_CLKPIX_F24_PLL_N) * 64'(MISTERPLEX_CLKPIX_F24_PLL_C))
-		    != 64'(MISTERPLEX_CLKPIX_F24_HZ)) begin : g_clkpix_mn_c
-			misterplex_clkpix_f24_mnc_not_exact u_mnc();
+		if (MISTERPLEX_CLKPIX_COMPACT_HZ != (MISTERPLEX_CLKPIX_COMPACT_H * MISTERPLEX_CLKPIX_COMPACT_V * 24)) begin : g_clkpix_compact_arith
+			misterplex_clkpix_compact_arith_broken u_c_arith();
+		end
+		if (MISTERPLEX_CLKPIX_PRODUCT_HZ != MISTERPLEX_CLKPIX_COMPACT_HZ) begin : g_clkpix_product_is_compact
+			misterplex_clkpix_product_must_be_compact_not_cea24 u_prod();
+		end
+		// True CEA24 must not be silently equal to compact (name collision guard)
+		if (MISTERPLEX_CLKPIX_CEA24_HZ == MISTERPLEX_CLKPIX_COMPACT_HZ) begin : g_clkpix_cea_ne_compact
+			misterplex_clkpix_cea24_must_differ_from_compact u_ne();
+		end
+		// Documented integer solution: 50e6 * M / (N*C) — 64-bit (M*ref overflows 32b).
+		if ((64'd50_000_000 * MISTERPLEX_CLKPIX_COMPACT_PLL_M)
+		    / (64'(MISTERPLEX_CLKPIX_COMPACT_PLL_N) * 64'(MISTERPLEX_CLKPIX_COMPACT_PLL_C))
+		    != 64'(MISTERPLEX_CLKPIX_COMPACT_HZ)) begin : g_clkpix_mn_c
+			misterplex_clkpix_compact_mnc_not_exact u_mnc();
+		end
+		if ((64'd50_000_000 * MISTERPLEX_CLKPIX_CEA24_PLL_M)
+		    / (64'(MISTERPLEX_CLKPIX_CEA24_PLL_N) * 64'(MISTERPLEX_CLKPIX_CEA24_PLL_C))
+		    != 64'(MISTERPLEX_CLKPIX_CEA24_HZ)) begin : g_clkpix_cea24_mn_c
+			misterplex_clkpix_cea24_mnc_not_exact u_cea_mnc();
 		end
 	endgenerate
 

@@ -44,7 +44,10 @@
     "RAW_PIPE_FAULT_NO_SET": "Injected raw-video-pipe expected-red fault: F_SETPIPE_SZ becomes a no-op so capacity stays at the kernel default.",
     "CAVLC_CYCLE_PROBE": "Injected CAVLC residual cycle probe for real-MB cycle accounting only.",
     "FAULT_NB_CTX_NO_GEOM_REJECT": "Injected intra nb-ctx expected-red fault: skip geometry reject path.",
-    "SCALAR_NEG_EXPECT_EQUAL": "Scalar-replicate NEG for PPC2 distinct gate (expect equal lanes / fail distinct)."
+    "SCALAR_NEG_EXPECT_EQUAL": "Scalar-replicate NEG for PPC2 distinct gate (expect equal lanes / fail distinct).",
+    "FRAME_LINES_16": "MULTI 720p e2e/elab: force 16-line store floor (product default remains FRAME_LINES_8).",
+    "PRESENT_MULTI_PIXEL": "MULTI 720p e2e/elab: enable multi-pixel present path (product default-OFF).",
+    "PRESENT_PX_PER_CLK": "MULTI 720p e2e/elab: PPC=2 dual-lane store (product default-OFF)."
   },
   "volatile_value_macros": {
     "BUILD_DATE": "Quartus generates the date in sys/build_id.tcl; Verilator lint uses a stable placeholder value."
