@@ -73,9 +73,25 @@ int main() {
         file_contains("fpga/Plex_MiSTer/Plex.qsf", "FRAME_W=1280") &&
         file_contains("fpga/Plex_MiSTer/Plex.qsf", "FRAME_H=720");
     EXPECT(qsf_480 || qsf_720, "Plex.qsf product FRAME 640x480 or integ 1280x720");
-    EXPECT(file_contains("fpga/Plex_MiSTer/rtl/ddr_frame_layout_params.svh",
-                         "DDR_FRAME_CODED_WIDTH = 1280"),
-           "CODED_W=1280 product identity with FRAME_W");
+    // Dual-header SSOT: primary DDR_FRAME_* stays 480p; 720p is DDR_FRAME_720P_*.
+    // Land single-header collapsed primary CODED to 1280 — reject that here.
+    const bool dual_480_primary = file_contains(
+        "fpga/Plex_MiSTer/rtl/ddr_frame_layout_params.svh", "DDR_FRAME_CODED_WIDTH = 624");
+    const bool tier_720_coded = file_contains(
+        "fpga/Plex_MiSTer/rtl/ddr_frame_layout_params.svh",
+        "DDR_FRAME_720P_CODED_WIDTH = 1280");
+    if (qsf_720) {
+        EXPECT(tier_720_coded,
+               "720p QSF: DDR_FRAME_720P_CODED_WIDTH=1280 matches FRAME_W (tier identity)");
+        EXPECT(dual_480_primary,
+               "720p QSF: primary DDR_FRAME_CODED_WIDTH stays 624 (dual-header, not land collapse)");
+    } else {
+        EXPECT(dual_480_primary, "480p QSF: primary CODED_W=624");
+    }
+    // Negative: naive land single-header would set primary CODED=1280 and drop 480p.
+    EXPECT(!file_contains("fpga/Plex_MiSTer/rtl/ddr_frame_layout_params.svh",
+                          "DDR_FRAME_CODED_WIDTH = 1280"),
+           "primary DDR_FRAME_CODED_WIDTH must not be 1280 (that collapses 480p)");
     EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv", "NATIVE_V_1TO1"),
            "T7 NATIVE_V_1TO1 present");
     // Reconcile: accept origin T7 literals OR land TPL_* / FS_* parameterized forms.
