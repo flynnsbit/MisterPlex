@@ -160,6 +160,24 @@ def check_file(path: Path) -> list[str]:
             "is rejected by Quartus; assign through a typed helper/temp first."
         )
 
+    # Observed Quartus 17.0 Error 10231: SV-2012 default values on module ports
+    # (`input wire foo = 1'b0`) parse as assign-to-input. Verilator accepts them.
+    # Scan ANSI port declarations only (direction keyword at decl start).
+    port_default = re.compile(
+        r"(?m)^\s*(input|output|inout)\b"
+        r"(?:\s+(?:wire|reg|logic|signed|unsigned))*"
+        r"(?:\s+\[[^\]]+\])*"
+        r"\s+[A-Za-z_]\w*"
+        r"(?:\s*\[[^\]]+\])*"
+        r"\s*="
+    )
+    for m in port_default.finditer(text):
+        errors.append(
+            f"{path}:{line_no(text, m.start())}: SV port default value is rejected by "
+            "Quartus 17 (Error 10231 assign-to-input/port); remove the default and "
+            "drive the port explicitly at every instantiation."
+        )
+
     # Observed Quartus 17.0.2 failure: h264_dpb ref_win[...] was concatenated
     # inside helper functions. Do not generalize this to every unpacked-array
     # concatenation: Quartus accepts some non-function and small helper cases in

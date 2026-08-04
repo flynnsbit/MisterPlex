@@ -42,11 +42,13 @@ module present_npx_path #(
 	input  wire [PX_PER_CLK*8-1:0] in_g,
 	input  wire [PX_PER_CLK*8-1:0] in_b,
 	input  wire [PX_PER_CLK-1:0]   in_lane_valid,
-	input  wire                 in_hblank = 1'b0,
-	input  wire                 in_hsync  = 1'b0,
-	input  wire                 in_vblank = 1'b0,
-	input  wire                 in_vsync  = 1'b0,
-	input  wire                 in_fstart = 1'b0,
+	// Quartus 17.0 rejects SV-2012 port defaults (Error 10231: assign-to-input).
+	// Callers must drive these explicitly (present_core MULTI path always does).
+	input  wire                 in_hblank,
+	input  wire                 in_hsync,
+	input  wire                 in_vblank,
+	input  wire                 in_vsync,
+	input  wire                 in_fstart,
 	output wire                 in_ready,
 
 	output reg                  out_ce,
