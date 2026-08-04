@@ -117,6 +117,8 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	python3 $(ROOT)/tests/unit/test_present_patha_origin_static.py
 	bash $(ROOT)/tests/unit/test_present_content_window_verilator.sh
 	bash $(ROOT)/tests/unit/test_yuv_bt601_npx_ppc2.sh
+	python3 $(ROOT)/tests/unit/test_present_nn_linebuf_scaler_static.py
+	bash $(ROOT)/tests/unit/test_present_nn_linebuf_scaler_verilator.sh
 	bash $(ROOT)/tests/unit/test_624x350_force_scale_out.sh
 	bash $(ROOT)/tests/unit/test_delivered_350_capability.sh
 	bash $(ROOT)/tests/unit/test_b2_b5_source_wiring.sh
