@@ -73,9 +73,11 @@ module present_core #(
 `endif
 	,
 	// DIAG I1/I2 tag RCA → ddr_frame_store.DIAG_TAG_RCA. Product default 0
-	// (identical PLXF pack). Sole DIAG fit: set .DIAG_TAG_RCA(1'b1) here from
-	// Plex.sv, OR add QSF `set_global_assignment -name VERILOG_MACRO "PLEX_DIAG_TAG_RCA=1"`
-	// (see localparam FS_DIAG_TAG_RCA below). DIAG ≠ product PASS; PRODUCT_WIRE=0.
+	// (identical PLXF pack). DIAG ≠ product PASS; PRODUCT_WIRE=0.
+	// Sole DIAG enable (pick one):
+	//   A) present_core #(.DIAG_TAG_RCA(1'b1)) from Plex.sv, or
+	//   B) QSF: set_global_assignment -name VERILOG_MACRO "MPLEX_DIAG_TAG_RCA=1"
+	//      (ifdef below forces 1; leave commented in product Plex.qsf).
 	parameter bit DIAG_TAG_RCA = 1'b0
 )(
 	input  wire        clk,
@@ -746,12 +748,12 @@ module present_core #(
 		.HPS_BANK_STRIDE_BYTES(FS_BANK_STRIDE),
 		.DOORBELL_PHYS(FS_DOORBELL),
 		.PX_PER_CLK(FS_PX_PER_CLK),
-		// Sole cutb-r1-diag: publish I1/I2 tag RCA in PLXF[63:40]. Product default
-		// DIAG_TAG_RCA=0 — leave 1 only for intentional DIAG sole (≠ product PASS).
+		// DIAG sole: MPLEX_DIAG_TAG_RCA macro OR module param DIAG_TAG_RCA=1.
+		// Product: both off → 0 (identical PLXF pack). PRODUCT_WIRE=0.
 `ifdef MPLEX_DIAG_TAG_RCA
 		.DIAG_TAG_RCA(1'b1)
 `else
-		.DIAG_TAG_RCA(1'b0)
+		.DIAG_TAG_RCA(DIAG_TAG_RCA)
 `endif
 	) fstore (
 		.clk(clk),
