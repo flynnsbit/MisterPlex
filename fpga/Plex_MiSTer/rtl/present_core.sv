@@ -10,8 +10,9 @@
 //       FRAME_H=720 in the same QSF enable recipe. Plex.sv wires geom_latch+mux.
 //   `define PRESENT_BEAM_960     — present_beam_content_de true-DE (max tier 960×540)
 //   `define PRESENT_MULTI_PIXEL  — CEA 720p beam + present_npx_path (PPC path)
-//   `define PRESENT_PX_PER_CLK N — 1|2|4 with MULTI_PIXEL (product land uses 1 until
-//                                  ddr_frame_store grows N-wide RGB ports)
+//   `define PRESENT_PX_PER_CLK N — 1|2|4 with MULTI_PIXEL (default 1).
+//                                  PPC=2 needs 40 Mpix/s capacity at 20 MHz for CEA
+//                                  720p24 (29.7 Mpix/s). Store exposes rd_*_n ports.
 //   `define PRESENT_CLK_PIX_PLL  — separate clk_pix + rate-match (optional)
 // Macros off → bit-identical Template H_DE=529 / DE_LAG=3 path (v0.3.0 baseline).
 // Mutually exclusive: L4 vs BEAM_960 vs MULTI_PIXEL. Parent enables in fit QSF only.
@@ -520,6 +521,17 @@ module present_core #(
 		end
 	end
 
+	// Frame-store read address mux. Default: Template-mapped store_x/y.
+	// PRESENT_MULTI_PIXEL: beam glass coords (assigned in MULTI block below).
+	wire [FRAME_X_W-1:0] fs_rd_x_w;
+	wire [FRAME_Y_W-1:0] fs_rd_y_w;
+	wire                 fs_rd_active_w;
+`ifndef PRESENT_MULTI_PIXEL
+	assign fs_rd_x_w      = store_x;
+	assign fs_rd_y_w      = store_y;
+	assign fs_rd_active_w = de_r;
+`endif
+
 	wire [7:0] fr, fg, fb;
 	wire       has_frame;
 	wire       swap_pending;
@@ -572,6 +584,15 @@ module present_core #(
 	localparam [31:0] FS_DOORBELL = DDR_FRAME_YUV420P_DOORBELL_PHYS;
 `endif
 
+`ifdef PRESENT_MULTI_PIXEL
+	localparam int FS_PX_PER_CLK = PRESENT_PPC;
+`else
+	localparam int FS_PX_PER_CLK = 1;
+`endif
+	wire [FS_PX_PER_CLK*8-1:0] fs_rd_r_n, fs_rd_g_n, fs_rd_b_n;
+	wire [FS_PX_PER_CLK-1:0]   fs_rd_lv_n;
+	wire                       fs_rd_n_valid;
+
 	ddr_frame_store #(
 		.FRAME_W(FRAME_W),
 		.FRAME_H(FRAME_H),
@@ -587,17 +608,23 @@ module present_core #(
 		.LINE_COUNT(FRAME_LINE_COUNT),
 		.PHYS_BASE(FS_PHYS_BASE),
 		.HPS_BANK_STRIDE_BYTES(FS_BANK_STRIDE),
-		.DOORBELL_PHYS(FS_DOORBELL)
+		.DOORBELL_PHYS(FS_DOORBELL),
+		.PX_PER_CLK(FS_PX_PER_CLK)
 	) fstore (
 		.clk(clk),
 		.clk_ddr(clk_ddr),
 		.reset(reset),
-		.rd_x(store_x),
-		.rd_y(store_y),
-		.rd_active(de_r),
+		.rd_x(fs_rd_x_w),
+		.rd_y(fs_rd_y_w),
+		.rd_active(fs_rd_active_w),
 		.rd_r(fr),
 		.rd_g(fg),
 		.rd_b(fb),
+		.rd_r_n(fs_rd_r_n),
+		.rd_g_n(fs_rd_g_n),
+		.rd_b_n(fs_rd_b_n),
+		.rd_lane_valid_n(fs_rd_lv_n),
+		.rd_n_valid(fs_rd_n_valid),
 		.start_req(ddr_start_req),
 		.bank_sel(ddr_bank_sel),
 		.status_osd(ddr_status_osd),
@@ -624,6 +651,10 @@ module present_core #(
 		.doorbell_ok(ddr_doorbell_ok),
 		.debug_state(frame_sdram_state)
 	);
+`ifndef PRESENT_MULTI_PIXEL
+	// N-wide ports exist at PX_PER_CLK=1 for port stability; scalar path uses rd_r/g/b.
+	wire _unused_fs_npx = |{fs_rd_r_n, fs_rd_g_n, fs_rd_b_n, fs_rd_lv_n, fs_rd_n_valid};
+`endif
 `else
 	frame_store #(
 		.FRAME_W(FRAME_W),
@@ -642,10 +673,10 @@ module present_core #(
 		.wr_ready(fs_wr_ready),
 		.wr_count(wr_count),
 		.wr_frame_done(wr_done),
-		.rd_x(store_x),
-		.rd_y(store_y),
+		.rd_x(fs_rd_x_w),
+		.rd_y(fs_rd_y_w),
 		// Full content DE (registered); hold inside frame_store across !ce_pix
-		.rd_active(de_r),
+		.rd_active(fs_rd_active_w),
 		.rd_r(fr),
 		.rd_g(fg),
 		.rd_b(fb),
@@ -715,13 +746,12 @@ module present_core #(
 `ifdef PRESENT_MULTI_PIXEL
 	// ------------------------------------------------------------------
 	// CEA 720p multi-pixel path (macro ON only). Default OFF → leg_* above.
-	// This land uses scalar ddr_frame_store RGB (PPC must be 1 until store
-	// grows N-wide ports). Beam + npx + timing packs are product-wired.
+	// Store exposes N-wide RGB (PX_PER_CLK); beam glass drives store address.
 	// ------------------------------------------------------------------
 	// synthesis translate_off
 	initial begin
-		if (PRESENT_PPC != 1)
-			$error("PRESENT_MULTI_PIXEL land requires PRESENT_PX_PER_CLK=1 until ddr_frame_store N-wide RGB (got %0d)",
+		if (!(PRESENT_PPC == 1 || PRESENT_PPC == 2 || PRESENT_PPC == 4))
+			$error("PRESENT_MULTI_PIXEL requires PRESENT_PX_PER_CLK in {1,2,4} (got %0d)",
 				PRESENT_PPC);
 `ifdef PRESENT_BEAM_960
 		$error("PRESENT_MULTI_PIXEL and PRESENT_BEAM_960 are mutually exclusive");
@@ -774,11 +804,41 @@ module present_core #(
 		.frame_start(mp_fstart)
 	);
 
-	// Scalar store sample → N-wide group (PPC=1 → passthrough).
+	// Identity-clamp glass → store; register on beam_ce (matches classic 1-cycle store_x).
+	reg [FRAME_X_W-1:0] mp_store_x;
+	reg [FRAME_Y_W-1:0] mp_store_y;
+	reg                 mp_store_de;
+	always @(posedge clk) begin
+		if (reset) begin
+			mp_store_x  <= '0;
+			mp_store_y  <= '0;
+			mp_store_de <= 1'b0;
+		end else if (mp_beam_ce) begin
+			mp_store_x  <= (mp_glass_x0 > FRAME_LAST_X_16) ? FRAME_LAST_X
+			             : mp_glass_x0[FRAME_X_W-1:0];
+			mp_store_y  <= (mp_glass_y > FRAME_LAST_Y_16) ? FRAME_LAST_Y
+			             : mp_glass_y[FRAME_Y_W-1:0];
+			mp_store_de <= |mp_lane_de;
+		end
+	end
+	assign fs_rd_x_w      = mp_store_x;
+	assign fs_rd_y_w      = mp_store_y;
+	assign fs_rd_active_w = mp_store_de;
+
+	// N-wide store RGB (ddr_frame_store.PX_PER_CLK). PPC=1: lane0 == fr/fg/fb.
+	// PPC>1: real multi-pixel YUV→RGB from line-buffer qwords (even glass_x0).
+`ifdef DDR_FRAME_STORE
+	wire [PRESENT_PPC*8-1:0] mp_npx_r = fs_rd_r_n;
+	wire [PRESENT_PPC*8-1:0] mp_npx_g = fs_rd_g_n;
+	wire [PRESENT_PPC*8-1:0] mp_npx_b = fs_rd_b_n;
+	wire [PRESENT_PPC-1:0]   mp_npx_lv = mp_lane_de & fs_rd_lv_n & {PRESENT_PPC{has_frame}};
+	wire _unused_fs_n_valid = fs_rd_n_valid;
+`else
 	wire [PRESENT_PPC*8-1:0] mp_npx_r = {PRESENT_PPC{fr}};
 	wire [PRESENT_PPC*8-1:0] mp_npx_g = {PRESENT_PPC{fg}};
 	wire [PRESENT_PPC*8-1:0] mp_npx_b = {PRESENT_PPC{fb}};
 	wire [PRESENT_PPC-1:0]   mp_npx_lv = mp_lane_de & {PRESENT_PPC{has_frame}};
+`endif
 
 	// Align store response: 1 (store_x reg) + typical ddr RGB pipe ≈ 4.
 	localparam int MP_STORE_LAT = 4;
@@ -874,11 +934,9 @@ module present_core #(
 		.rd_empty(mp_rd_empty)
 	);
 
-	// When MULTI_PIXEL is on, store read follows beam glass coords (identity clamp).
-	// Note: fstore still wired to store_x/y from Template regs above — full MULTI
-	// store remap is a follow-up when PPC>1 lands. PPC=1 same-clock uses leg path
-	// geometry unless parent also sets FRAME 1280×720.
-	wire _unused_mp_glass = |{mp_glass_x0, mp_glass_y, mp_npx_lv, mp_wr_full, mp_wr_af, mp_rd_ur, mp_rd_empty, mp_out_fs};
+	// Store read follows beam glass (mp_store_* → fs_rd_*_w). Needs FRAME_W/H
+	// matching glass (1280×720) when this path is product-enabled.
+	wire _unused_mp_glass = |{mp_npx_lv, mp_wr_full, mp_wr_af, mp_rd_ur, mp_rd_empty, mp_out_fs};
 	wire _unused_mp_clk_hz = (MP_CLK_PIX_HZ == 0);
 
 	assign r = mp_out_r;
