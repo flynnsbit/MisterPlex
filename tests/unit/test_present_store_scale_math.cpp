@@ -74,28 +74,42 @@ int main() {
            "CODED_W=624 separate from FRAME_W");
     EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv", "NATIVE_V_1TO1"),
            "T7 NATIVE_V_1TO1 present");
-    EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
-                         "localparam int V_STORE_I = NATIVE_V_1TO1 ? FRAME_H : 240"),
-           "V_STORE_I from FRAME_H when native");
-    EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv", "localparam H_DE = 10'd529"),
-           "H_DE hardcoded 529");
+    // Reconcile: accept origin T7 literals OR land TPL_* / FS_* parameterized forms.
+    const bool v_store_i_ok =
+        file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
+                      "localparam int V_STORE_I = NATIVE_V_1TO1 ? FRAME_H : 240") ||
+        file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
+                      "localparam int V_STORE_I = NATIVE_V_1TO1 ? FRAME_H : TPL_V_STORE");
+    EXPECT(v_store_i_ok, "V_STORE_I from FRAME_H when native");
+    const bool h_de_ok =
+        file_contains("fpga/Plex_MiSTer/rtl/present_core.sv", "localparam H_DE = 10'd529") ||
+        file_contains("fpga/Plex_MiSTer/rtl/present_core.sv", "localparam H_DE    = 10'(TPL_H_DE)") ||
+        file_contains("fpga/Plex_MiSTer/rtl/present_core.sv", "localparam H_DE = 10'(TPL_H_DE)");
+    EXPECT(h_de_ok, "H_DE hardcoded 529");
     EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv", "wire [9:0] read_hc = hc"),
            "read_hc is hc (identity)");
     EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
                          "STORE_Y_SCALE = (FRAME_H * 65536) / V_STORE_I"),
            "STORE_Y_SCALE uses V_STORE_I");
-    EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
-                         "STORE_X_SCALE = (FRAME_W * 39647) / 320"),
-           "STORE_X_SCALE formula");
+    const bool sx_ok =
+        file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
+                      "STORE_X_SCALE = (FRAME_W * 39647) / 320") ||
+        file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
+                      "STORE_X_SCALE = (FRAME_W * TPL_STORE_X_MUL) / TPL_SCALE_REF_W");
+    EXPECT(sx_ok, "STORE_X_SCALE formula");
     EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
                          "wire [9:0] py = NATIVE_V_1TO1 ? vc : (scandouble ? (vc >> 1) : vc)"),
            "py=vc on native 480 path");
     EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
                          "past_last_row = (py >= V_STORE)"),
            "past_last_row vs V_STORE");
-    EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
-                         ".CODED_W(DDR_FRAME_CODED_WIDTH)"),
-           "ddr_frame_store CODED_W from layout params");
+    const bool coded_ok =
+        file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
+                      ".CODED_W(DDR_FRAME_CODED_WIDTH)") ||
+        (file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
+                       "FS_CODED_W     = DDR_FRAME_CODED_WIDTH") &&
+         file_contains("fpga/Plex_MiSTer/rtl/present_core.sv", ".CODED_W(FS_CODED_W)"));
+    EXPECT(coded_ok, "ddr_frame_store CODED_W from layout params");
     // Honest swap pack must ship with this RBF for skip instrumentation.
     EXPECT(file_contains("fpga/Plex_MiSTer/rtl/ddr_frame_store.sv",
                          "DDRAM_DIN <= {frames_done_d2"),

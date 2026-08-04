@@ -17,8 +17,18 @@ pass() { echo "OK $*"; }
 grep -q 'gdmIsDiscoveryProbe' "$ID" || fail "player_identity.hpp missing gdmIsDiscoveryProbe"
 grep -q 'strncmp(buf, "HTTP/"' "$ID" || fail "gate must reject HTTP/ replies (storm loop)"
 grep -q 'Content-Type: plex/media-player' "$ID" || fail "gate must reject media-player Content-Type replies"
-# Production loop must call the gate — not a bare substring match.
-grep -q 'gdmIsDiscoveryProbe(' "$COMP" || fail "companion.cpp must call gdmIsDiscoveryProbe"
+# Production loop must call a storm gate — not a bare substring match.
+# Reconcile: origin used gdmIsDiscoveryProbe (rejects HTTP replies + media-player
+# Content-Type, still allows bare "plex"); land uses stricter gdmShouldReply
+# (M-SEARCH-only via host/libmisterplex/gdm_filter.hpp). Either is a gate; bare
+# strstr(buf,"plex") is the regression. Prefer gdmShouldReply when both present.
+if grep -q 'gdmShouldReply(' "$COMP"; then
+  pass "companion.cpp calls gdmShouldReply (M-SEARCH-only storm gate)"
+elif grep -q 'gdmIsDiscoveryProbe(' "$COMP"; then
+  pass "companion.cpp calls gdmIsDiscoveryProbe (origin storm gate)"
+else
+  fail "companion.cpp must call gdmShouldReply or gdmIsDiscoveryProbe"
+fi
 if grep -nE 'strstr\([[:space:]]*buf[[:space:]]*,[[:space:]]*"plex"' "$COMP" >/dev/null; then
   fail "companion.cpp reintroduced bare strstr(buf,\"plex\") — storm regression"
 fi
