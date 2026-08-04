@@ -1,3 +1,4 @@
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/plex_720p_bw_contract.svh
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_cadence.sv
 // 720p / ascal-native present path (default OFF via QSF macros — see present_core.sv).
 // Modules must stay in QIP or Quartus never sees them (orphan-class defect).

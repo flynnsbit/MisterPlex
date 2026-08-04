@@ -1,5 +1,5 @@
 {
-  "title": "P720 BW \u2014 reader_steady_delta CLOSED (w-clock); hps_write_concurrent+T_copy_e2e OPEN; headline 33.1776",
+  "title": "P720 THREE-LANE LOCK \u2014 33.1776 MB/s/dir (w-mem \u2295 w-clock \u2295 w-scaler)",
   "product_config": {
     "PRESENT_MULTI_PIXEL": true,
     "PRESENT_PX_PER_CLK": 2,
@@ -153,15 +153,14 @@
   },
   "agreed_by": [
     "w-clock",
-    "w-scaler"
+    "w-scaler",
+    "w-mem"
   ],
   "audit_ack": [
     "rd-duck",
     "w-clock-reader-proof"
   ],
-  "pending_ack": [
-    "w-mem"
-  ],
+  "pending_ack": [],
   "parent_correction_sweep118": {
     "overclaim_withdrawn": "ARM is no longer the constraint \u2014 TOO STRONG (parent Sweep 118)",
     "still_true": "busy-spin fixed: 49.0% idle / decode 1.3x deployed durable",
@@ -266,6 +265,18 @@
       "fabric BW proof_gap still OPEN (unsplit)",
       "reader beat delta unproven",
       "assign reader closure to w-mem+w-osd"
+    ]
+  },
+  "three_lane_lock": {
+    "status": "LOCKED",
+    "quote_for_parent": "Agreed (w-mem \u2295 w-clock \u2295 w-scaler): 33.1776 MB/s per full-frame direction @24 I420 1280\u00d7720 (1.65888 B/clk_sys avg). Steady R+W 66.3552 MB/s. PPC=2 does not multiply frame DDR bytes. 3.0 B/clk is linebuf DE consume, not DDR.",
+    "w_mem_tip": "integ/fab-720p-product-v2 @ 211e0325",
+    "rtl_contract": "fpga/Plex_MiSTer/rtl/plex_720p_bw_contract.svh",
+    "cite_table": "Memory/lab/agents/AGREED_BW_720P_THREE_LANE_REPLY.md",
+    "NACK": [
+      "3.0 as DDR headline",
+      "~4.66 as headline",
+      "~93 MB/s as headline"
     ]
   }
 }

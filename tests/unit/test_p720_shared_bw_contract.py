@@ -221,13 +221,30 @@ def main() -> int:
     print("OK rate vs CPU-time terms separated (solves_for locked)")
 
     agreed = c.get("agreed_by", [])
-    if "w-scaler" not in agreed or "w-clock" not in agreed:
-        return fail(f"agreed_by must include w-clock and w-scaler, got {agreed}")
+    for who in ("w-scaler", "w-clock", "w-mem"):
+        if who not in agreed:
+            return fail(f"agreed_by must include {who}, got {agreed}")
+    if c.get("pending_ack"):
+        return fail(f"pending_ack must be empty after three-lane lock, got {c.get('pending_ack')}")
+    tl = c.get("three_lane_lock") or {}
+    if tl.get("status") != "LOCKED":
+        return fail("three_lane_lock.status must be LOCKED")
+    q = tl.get("quote_for_parent", "")
+    if "33.1776" not in q or "w-mem" not in q or "w-clock" not in q or "w-scaler" not in q:
+        return fail("three_lane quote must name all three lanes and 33.1776")
     if "rd-duck" not in c.get("audit_ack", []):
         return fail("audit_ack must include rd-duck")
     if p.get("clk_ratio_sys_to_ddr") != "20:90":
         return fail("product_config must lock clk_ratio_sys_to_ddr=20:90")
-    print(f"OK agreed_by={agreed} audit_ack={c.get('audit_ack')}")
+    svh = ROOT / "fpga/Plex_MiSTer/rtl/plex_720p_bw_contract.svh"
+    if not svh.is_file():
+        return fail("missing plex_720p_bw_contract.svh (w-mem three-lane RTL)")
+    svht = svh.read_text(encoding="utf-8", errors="replace")
+    for tok in ("P720_I420_BYTES", "1_382_400", "P720_FABRIC_RD_BPS", "P720_HOST_COPY_US", "14_978", "P720_PPC"):
+        if tok not in svht:
+            return fail(f"svh missing {tok}")
+    print(f"OK THREE-LANE LOCK agreed_by={agreed} pending_ack=[]")
+    print(f"OK rtl {svh.relative_to(ROOT)} + quote locked")
 
     print(
         "PASS p720_shared_bw_contract: HEADLINE=33.1776 MB/s/dir "
