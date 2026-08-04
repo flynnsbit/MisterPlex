@@ -1,5 +1,5 @@
 {
-  "title": "P720 shared bandwidth contract — AGREED (w-clock + w-scaler); rd-duck audit ACK",
+  "title": "P720 shared BW + ARM CPU-time terms \u2014 AGREED; fabric BW OPEN; e2e overlap unproven",
   "product_config": {
     "PRESENT_MULTI_PIXEL": true,
     "PRESENT_PX_PER_CLK": 2,
@@ -31,7 +31,8 @@
       "datapath width sizing",
       "linefill burst rate",
       "instantaneous DDRAM port demand"
-    ]
+    ],
+    "solves_for": "payload_RATE_MBps_average_one_direction"
   },
   "companion": {
     "steady_RW_MBps": 66.3552,
@@ -51,7 +52,7 @@
     "ppc2_store_to_present_RGB_B_per_accepted_sys_group": {
       "value": 6,
       "formula": "PPC * 3 = 2 RGB pixels * 3 bytes",
-      "domain": "store→present accepted sys group during DE (post-CSC RGB)"
+      "domain": "store\u2192present accepted sys group during DE (post-CSC RGB)"
     },
     "ppc2_i420_amortized_source_B_per_active_2px_group": {
       "value": 3,
@@ -63,7 +64,7 @@
       "formula": "PPC * 1.5 = 2 * 1.5",
       "reason_not_ddr_headline": "I420-equivalent of unique pixels served from LINE BUFFERS during DE, not DDRAM beats/clk. Hits skip DDR (rd_miss_now).",
       "sources": [
-        "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv:331 rd_miss_now (hit → no DDR)",
+        "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv:331 rd_miss_now (hit \u2192 no DDR)",
         "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv:77 Y_LINE_QWORDS=CODED_W/8",
         "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv:168 line_buf_ram yram"
       ]
@@ -75,14 +76,14 @@
       "formula": "PPC * 1.5 = 2 * 1.5",
       "reason_not_ddr_headline": "I420-equivalent of unique pixels served from LINE BUFFERS during DE, not DDRAM beats/clk. Hits skip DDR (rd_miss_now).",
       "sources": [
-        "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv:331 rd_miss_now (hit → no DDR)",
+        "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv:331 rd_miss_now (hit \u2192 no DDR)",
         "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv:77 Y_LINE_QWORDS=CODED_W/8",
         "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv:168 line_buf_ram yram"
       ]
     }
   },
   "NACK_history": {
-    "scaler_3p0_as_ddr_headline": "REJECTED by w-clock; w-scaler ACK 2026-08-03 — demoted to optional_not_headline / interface_peaks"
+    "scaler_3p0_as_ddr_headline": "REJECTED by w-clock; w-scaler ACK 2026-08-03 \u2014 demoted to optional_not_headline / interface_peaks"
   },
   "blackout_prefetch": {
     "t_line_us_ppc2_20M_1280": 32.0,
@@ -110,7 +111,53 @@
     "owner_for_closure": "w-mem (bus/reader) + w-osd (full 720p L4 reader) with w-scaler consuming peaks only",
     "w_scaler_position": "ACK averages + peaks split; will NOT claim fabric BW closed until beat-delta proof lands"
   },
-  "agreed_by": ["w-clock", "w-scaler"],
-  "audit_ack": ["rd-duck"],
-  "pending_ack": ["w-mem"]
+  "agreed_by": [
+    "w-clock",
+    "w-scaler"
+  ],
+  "audit_ack": [
+    "rd-duck"
+  ],
+  "pending_ack": [
+    "w-mem"
+  ],
+  "parent_correction_sweep118": {
+    "overclaim_withdrawn": "ARM is no longer the constraint \u2014 TOO STRONG (parent Sweep 118)",
+    "still_true": "busy-spin fixed: 49.0% idle / decode 1.3x deployed durable",
+    "not_true": "ARM retired from critical path",
+    "correct_status": "end-to-end overlap remains unproven"
+  },
+  "arm_cpu_time_NOT_a_rate": {
+    "note": "w-path/rd-duck/parent: payload RATE and CPU TIME COST are not interchangeable. State which term you solve for.",
+    "frame_budget_ms_24fps": 41.666666666666664,
+    "formula_budget": "1000/24",
+    "T_decode_ms_sweep116": 32.705,
+    "formula_decode": "6541 ms / 200 frames",
+    "decode_headroom_ms": 8.961666666666666,
+    "formula_headroom": "41.666666666666664 - 32.705",
+    "C_arm_MiBps": 88.0,
+    "C_arm_unit": "MiB/s uncached-bank copy throughput",
+    "T_copy_arm_ms": 14.978,
+    "formula_T_copy": "1382400 / (88.0 * 1024*1024) * 1000",
+    "serial_deficit_ms": 6.016333333333334,
+    "formula_deficit": "T_copy_arm_ms - decode_headroom_ms",
+    "meaning": "720p24 does NOT close e2e if decode and sendDdrFrame /dev/mem copy are serial",
+    "closure_paths": {
+      "a_overlap": "copy concurrent with decode on free core \u2014 plausible, unproven (parent+rd-duck experiment)",
+      "b_fabric_dma": "fabric fetches/writes frame; ARM never touches payload \u2014 retires all T_copy_arm; strategic priority"
+    },
+    "w_scaler_scope": "content_window retires ARM *scale* (swscale), not T_copy_arm. Fabric present already reads DDR; DMA write path is w-mem/w-path joint territory.",
+    "solves_for": "CPU_TIME_ms_per_frame_copy",
+    "T_copy_arm_ms_full_float": 14.98135653409091,
+    "rounding_note": "Parent published 14.978; full float ~14.981356. Gate allows 0.01 ms."
+  },
+  "reference_numbers_one_set": {
+    "R_req_720p24_MBps_per_dir": 33.1776,
+    "combined_payload_MBps": 66.3552,
+    "B_per_clk_sys_avg_per_dir": 1.65888,
+    "PPC2_present_RGB_B_per_group": 6,
+    "T_copy_arm_ms": 14.978,
+    "C_arm_MiBps": 88.0,
+    "source": "parent Sweep 118 + rd-duck + w-path joint; w-scaler ACK"
+  }
 }

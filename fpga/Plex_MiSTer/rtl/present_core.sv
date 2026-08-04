@@ -15,6 +15,14 @@
 //   `define PRESENT_CLK_PIX_PLL  — separate clk_pix + rate-match (optional)
 // Macros off → bit-identical Template H_DE=529 / DE_LAG=3 path (v0.3.0 baseline).
 // Mutually exclusive: L4 vs BEAM_960 vs MULTI_PIXEL. Parent enables in fit QSF only.
+//
+// ARM offload scope (parent Sweep 118 — do not overclaim):
+//   present_content_window retires ARM *swscale* (geometry map in fabric).
+//   It does NOT retire T_copy_arm (~14.978 ms/frame sendDdrFrame /dev/mem).
+//   Fabric already *reads* DDR on the present path; strategic (b) fabric DMA is
+//   the *write* side (ARM never paints the bank) — w-mem/w-path territory.
+//   Product MULTI+PPC=2 still needs w-scaler-present-ppc N-wide store RGB;
+//   until then mp_npx_* replicates scalar fr/fg/fb (identity-only, not dual-map).
 
 `ifdef PRESENT_MULTI_PIXEL
 	`ifndef PRESENT_PX_PER_CLK
@@ -821,6 +829,8 @@ module present_core #(
 	);
 
 	// Scalar store sample → N-wide group (PPC=1 → passthrough).
+	// PPC>=2: REPLICATE scalar sample across lanes — identity/glass-aligned only.
+	// Dual-map store_x_lane1 + N-wide rd_*_n requires w-scaler-present-ppc land.
 	wire [PRESENT_PPC*8-1:0] mp_npx_r = {PRESENT_PPC{fr}};
 	wire [PRESENT_PPC*8-1:0] mp_npx_g = {PRESENT_PPC{fg}};
 	wire [PRESENT_PPC*8-1:0] mp_npx_b = {PRESENT_PPC{fb}};

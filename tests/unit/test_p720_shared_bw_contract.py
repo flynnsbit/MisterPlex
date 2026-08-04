@@ -18,7 +18,8 @@ doorbell/mailbox/refill overhead. Prep-only beat counts ≠ closure.
 Companions: steady R+W 66.3552 MB/s, 172800 payload beats/frame,
 345600 R+W payload pair, 16-line blackout floor.
 
-Negative: claiming 3.0 as headline fails; claiming fabric_bw_closed true fails.
+Negative: claiming 3.0 as headline fails; claiming fabric_bw_closed true fails;
+claiming serial e2e closed (deficit<=0) fails. T_copy_arm is CPU TIME not a rate.
 """
 from __future__ import annotations
 
@@ -133,6 +134,55 @@ def main() -> int:
             return fail(f"proof_gap.missing must mention {needle}")
     print("OK proof_gap OPEN — fabric BW NOT closed")
 
+    # --- ARM CPU TIME (not a rate) — parent Sweep 118 ---
+    arm = c["arm_cpu_time_NOT_a_rate"]
+    i420 = g["i420_bytes_per_frame"]
+    # Parent Sweep 118 published T_copy=14.978 @ C_arm=88.0 MiB/s.
+    # Full float: 1382400/(88*1024**2)*1000 = 14.981356... — lock published
+    # values; allow 0.01 ms (~0.07%) so rate↔time stay coupled without fighting rounding.
+    t_copy = i420 / (arm["C_arm_MiBps"] * 1024 * 1024) * 1000.0
+    if abs(t_copy - arm["T_copy_arm_ms"]) > 0.01:
+        return fail(f"T_copy_arm vs C_arm disagree: calc {t_copy} fixture {arm['T_copy_arm_ms']}")
+    if abs(arm["T_copy_arm_ms"] - 14.978) > 1e-6:
+        return fail(f"T_copy_arm locked 14.978 got {arm['T_copy_arm_ms']}")
+    budget = 1000.0 / g["fps"]
+    if abs(budget - arm["frame_budget_ms_24fps"]) > 1e-9:
+        return fail(f"frame budget want {budget}")
+    headroom = budget - arm["T_decode_ms_sweep116"]
+    if abs(headroom - arm["decode_headroom_ms"]) > 1e-9:
+        return fail(f"headroom want {headroom}")
+    deficit = arm["T_copy_arm_ms"] - arm["decode_headroom_ms"]
+    if abs(deficit - arm["serial_deficit_ms"]) > 1e-9:
+        return fail(f"serial deficit want {deficit}")
+    if deficit <= 0:
+        return fail("NEGATIVE: serial deficit must be >0 (e2e not closed serial)")
+    if "not interchangeable" not in arm["note"].lower() and "not interchangeable" not in arm.get("note", ""):
+        # allow either phrasing
+        if "not interchangeable" not in arm["note"].lower():
+            pass
+    note_l = arm["note"].lower()
+    if "rate" not in note_l or "time" not in note_l:
+        return fail("arm note must separate rate vs CPU time")
+    if h.get("solves_for") != "payload_RATE_MBps_average_one_direction":
+        return fail("headline.solves_for must name payload RATE")
+    if arm.get("solves_for") != "CPU_TIME_ms_per_frame_copy":
+        return fail("arm.solves_for must name CPU TIME")
+    ref = c["reference_numbers_one_set"]
+    if ref["R_req_720p24_MBps_per_dir"] != 33.1776:
+        return fail("ref R_req must be 33.1776")
+    if abs(ref["T_copy_arm_ms"] - 14.978) > 1e-3:
+        return fail("ref T_copy_arm must be ~14.978 ms")
+    if ref["C_arm_MiBps"] != 88.0:
+        return fail("ref C_arm must be 88.0 MiB/s")
+    if ref["PPC2_present_RGB_B_per_group"] != 6:
+        return fail("ref PPC2 RGB peak must be 6")
+    print(
+        f"OK ARM CPU-time T_copy={arm['T_copy_arm_ms']:.3f}ms "
+        f"headroom={arm['decode_headroom_ms']:.3f}ms "
+        f"serial_deficit={arm['serial_deficit_ms']:.3f}ms (e2e serial NOT closed)"
+    )
+    print("OK rate vs CPU-time terms separated (solves_for locked)")
+
     agreed = c.get("agreed_by", [])
     if "w-scaler" not in agreed or "w-clock" not in agreed:
         return fail(f"agreed_by must include w-clock and w-scaler, got {agreed}")
@@ -144,7 +194,8 @@ def main() -> int:
 
     print(
         "PASS p720_shared_bw_contract: HEADLINE=33.1776 MB/s/dir "
-        "(1.65888 avg ONLY); peaks RGB=6/I420=3; proof_gap=OPEN"
+        "(1.65888 avg ONLY); peaks RGB=6/I420=3; proof_gap=OPEN; "
+        "serial_deficit>0 (T_copy_arm CPU-time)"
     )
     return 0
 
