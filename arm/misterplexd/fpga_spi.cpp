@@ -2,6 +2,7 @@
 
 #include "libmisterplex/status_telemetry.hpp"
 #include "libmisterplex/pixel_format.hpp"
+#include "libmisterplex/ddr_bank_release_select.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -1339,55 +1340,107 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
     auto t0 = std::chrono::steady_clock::now();
 
     // --- Bank selection via PLXD bank-release ACK ---
-    // If the FPGA publishes a valid PLXD mailbox, use it to determine which
-    // bank is free instead of relying on fixed delays.  Fall back to the old
-    // timing-based mitigation only when PLXD is absent (pre-PLXD RBF).
+    // Prefer PLXD free_bank_mask. ABI (mailbox_abi_spec): swap_pending => free=0
+    // because BOTH banks are in use. On timeout: DROP/retry — never force-write
+    // disp^1 (that overwrites the pending bank; rd-duck). Legacy timing only
+    // when PLXD is entirely absent (pre-PLXD RBF / no magic). Unstable mid-
+    // session reads after a valid decode are also DROP, not legacy.
     //
-    // PLXD semantics (w-a3 b187df5):
-    //   free_bank_mask != 0 → at least one bank is safe to write
-    //   free_bank_mask == 0 → swap pending, both banks in use; poll or timeout
+    // PLXD semantics:
+    //   free_bank_mask != 0 -> at least one bank is safe to write
+    //   free_bank_mask == 0 -> swap pending, both banks in use; poll or drop
     auto tPrep0 = std::chrono::steady_clock::now();
     bool plxdUsed = false;
     {
-        BankReleaseStatus brs;
-        constexpr int kPlxdPollMaxIters = 50;  // 50 × 1ms = 50ms max
+        BankReleaseStatus brs{};
+        DdrBankSelectState& selSt = ddrBankSelSt_;
+
+        constexpr int kPlxdPollMaxIters = 50;  // 50 x 1ms = 50ms max
         int plxdIters = 0;
-        if (readBankRelease(brs)) {
-            // PLXD present — use it for bank selection.
-            if (brs.anyFree()) {
-                bank = brs.freeBank();
-                plxdUsed = true;
-            } else {
-                // Both banks in use (swap pending). Poll until free or timeout.
-                for (int i = 0; i < kPlxdPollMaxIters; ++i) {
-                    usleep(1000);
-                    ++plxdIters;
-                    if (readBankRelease(brs) && brs.anyFree()) {
-                        bank = brs.freeBank();
-                        plxdUsed = true;
-                        break;
-                    }
-                }
-                if (!plxdUsed) {
-                    // LOUD timeout — never silently fall back to old delay.
-                    fprintf(stderr,
-                            "[STALL] sendDdrFrame: PLXD bank-release timeout after %d ms "
-                            "(free_bank_mask=0, frames_done=%u disp_bank=%u swap_pending=%d)\n",
-                            plxdIters, static_cast<unsigned>(brs.frames_done),
-                            static_cast<unsigned>(brs.disp_bank),
-                            static_cast<int>(brs.swap_pending));
-                    // Use the opposite of disp_bank as a best-effort guess.
-                    bank = brs.disp_bank ^ 1;
-                }
+        bool sawValidPlxd = false;
+        bool sawUnstableAfterValid = false;
+        bool dropped = false;
+        const char* dropWhy = nullptr;
+
+        for (int i = 0; i < kPlxdPollMaxIters; ++i) {
+            if (i > 0) {
+                usleep(1000);
+                ++plxdIters;
             }
-            auto tPlxd1 = std::chrono::steady_clock::now();
-            timing.plxa_poll_us = elapsedUs(tPrep0, tPlxd1);
-            timing.plxa_poll_iters = plxdIters;
-            timing.plxa_used = plxdUsed || (!plxdUsed && plxdIters > 0);
-        } else {
-            // PLXD absent — pre-PLXD RBF or mailbox not yet written.
-            // Fall back to the old timing-based mitigation: brief yield for
-            // previous DMA (~1–3 ms) plus a two-vsync same-bank reuse floor.
+            if (!readBankRelease(brs)) {
+                if (sawValidPlxd)
+                    sawUnstableAfterValid = true;
+                continue;
+            }
+            sawValidPlxd = true;
+            const DdrBankSelectResult pick =
+                selectDdrWriteBank(brs, selSt, kPlxdPollMaxIters);
+            if (pick.action == DdrBankSelectAction::Write) {
+                bank = pick.bank & 1;
+                plxdUsed = true;
+                noteDdrBankPublished(selSt, bank);
+                break;
+            }
+            if (pick.action == DdrBankSelectAction::Drop) {
+                dropped = true;
+                dropWhy = pick.reason ? pick.reason : "timeout";
+                break;
+            }
+            // Wait — keep polling.
+        }
+
+        auto tPlxd1 = std::chrono::steady_clock::now();
+        timing.plxa_poll_us = elapsedUs(tPrep0, tPlxd1);
+        timing.plxa_poll_iters = plxdIters;
+        timing.plxa_used = plxdUsed || sawValidPlxd;
+
+        if (!plxdUsed) {
+            if (dropped || sawValidPlxd || sawUnstableAfterValid) {
+                // PLXD was live (or became unstable after a valid read).
+                // NEVER force disp^1. Drop the frame.
+                char buf[288];
+                std::snprintf(
+                    buf, sizeof(buf),
+                    "sendDdrFrame: PLXD bank-select drop (%s) after %d ms "
+                    "(free_mask=%u frames_done=%u disp=%u swap=%d unstable=%d) "
+                    "— no force-write",
+                    dropWhy ? dropWhy
+                            : (sawUnstableAfterValid ? "unstable_after_valid"
+                                                     : "no_free"),
+                    plxdIters,
+                    static_cast<unsigned>(brs.free_bank_mask),
+                    static_cast<unsigned>(brs.frames_done),
+                    static_cast<unsigned>(brs.disp_bank),
+                    static_cast<int>(brs.swap_pending),
+                    sawUnstableAfterValid ? 1 : 0);
+                std::fprintf(stderr, "[STALL] %s\n", buf);
+                setErr(buf);
+                return false;
+            }
+            // No successful PLXD decode in the poll window. Classify via
+            // readBankRelease lastError: "unstable" must DROP (not legacy);
+            // "absent" may use pre-PLXD legacy timing with the caller bank.
+            const std::string err = lastError();
+            // Prefer the classified strings from readBankRelease.
+            const bool unstable =
+                err.find("mailbox unstable") != std::string::npos ||
+                err.find("absent or unstable") != std::string::npos;
+            if (unstable) {
+                char buf[288];
+                std::snprintf(
+                    buf, sizeof(buf),
+                    "sendDdrFrame: PLXD unstable (no stable decode over %d ms; "
+                    "last_err=%s) — drop, never force-write or legacy",
+                    plxdIters + 1, err.c_str());
+                std::fprintf(stderr, "[STALL] %s\n", buf);
+                setErr(buf);
+                return false;
+            }
+            std::fprintf(stderr,
+                         "[STALL] sendDdrFrame: PLXD mailbox absent (no valid "
+                         "magic over %d ms; last_err=%s) — legacy timing "
+                         "fallback (caller bank=%d, NOT force disp^1)\n",
+                         plxdIters + 1, err.c_str(), bank);
             usleep(1500);
             const double nowMs = std::chrono::duration<double, std::milli>(
                                      std::chrono::steady_clock::now().time_since_epoch())
@@ -1589,19 +1642,58 @@ bool FpgaSpi::readBankRelease(BankReleaseStatus& out) {
         return false;
     }
     volatile uint32_t* mw = reinterpret_cast<volatile uint32_t*>(ddrMap_ + off);
+    uint32_t lastLo = 0;
+    uint32_t lastHi = 0;
+    bool sawStable = false;
+    bool sawMagic = false;
     for (int attempt = 0; attempt < 4; ++attempt) {
         const uint32_t lo0 = mw[0];
         const uint32_t hi0 = mw[1];
         __sync_synchronize();
         const uint32_t lo1 = mw[0];
         const uint32_t hi1 = mw[1];
+        lastLo = lo1;
+        lastHi = hi1;
+        if (lo0 == lo1 && hi0 == hi1)
+            sawStable = true;
+        if (lo0 == kBankReleaseMailboxMagic || lo1 == kBankReleaseMailboxMagic)
+            sawMagic = true;
         if (decodeStableBankRelease(lo0, hi0, lo1, hi1, out)) {
             clearErr();
             return true;
         }
         usleep(200);
     }
-    setErr("readBankRelease: PLXD mailbox absent or unstable");
+    // Distinguish ABSENT (stable non-magic / zeros) from UNSTABLE (tore mid-read
+    // or saw magic but never got a double-read match). Callers must not treat
+    // these the same: only ABSENT may use legacy timing (pre-PLXD RBF).
+    if (sawStable && !sawMagic) {
+        char buf[192]{};
+        std::snprintf(buf, sizeof(buf),
+                      "readBankRelease: PLXD mailbox absent "
+                      "(stable non-magic lo=0x%08x hi=0x%08x)",
+                      static_cast<unsigned>(lastLo),
+                      static_cast<unsigned>(lastHi));
+        setErr(buf);
+        return false;
+    }
+    if (sawMagic) {
+        char buf[160]{};
+        std::snprintf(buf, sizeof(buf),
+                      "readBankRelease: PLXD mailbox unstable "
+                      "(magic seen but double-read mismatch; last lo=0x%08x hi=0x%08x)",
+                      static_cast<unsigned>(lastLo),
+                      static_cast<unsigned>(lastHi));
+        setErr(buf);
+        return false;
+    }
+    char buf[160]{};
+    std::snprintf(buf, sizeof(buf),
+                  "readBankRelease: PLXD mailbox absent or unstable "
+                  "(lo=0x%08x hi=0x%08x)",
+                  static_cast<unsigned>(lastLo),
+                  static_cast<unsigned>(lastHi));
+    setErr(buf);
     return false;
 }
 

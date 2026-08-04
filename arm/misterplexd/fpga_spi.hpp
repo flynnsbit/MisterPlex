@@ -9,6 +9,7 @@
 
 #include "libmisterplex/ddr_frame_layout.hpp"
 #include "libmisterplex/ddr_bitstream_ring.hpp"
+#include "libmisterplex/ddr_bank_release_select.hpp"
 #include "libmisterplex/input_mailbox.hpp"
 
 namespace misterplex {
@@ -290,6 +291,8 @@ private:
     DdrFrameLayout ddrLayout_ = makeDdrFrameLayout(320, 240);
     uint32_t doorbellSeq_ = 0;
     double lastDdrBankDoorbellMs_[2] = {-1.0, -1.0};
+    // Persistent PLXD bank-select state (display-ack + wait counters).
+    DdrBankSelectState ddrBankSelSt_{};
     bool mboxInit_ = false;
     bool mboxAlive_ = false;
     uint16_t mboxSeq_ = 0;
