@@ -10,9 +10,14 @@
 // present_want blocks NEW issues (RD/WE assert). In-flight accepted cmd completes.
 // WC present block ≤ 1 beat accept + engine react (see TB G1).
 //
-// M10K: 0 — bounce forced (* ramstyle="logic" *) MAX_BURST×64; layout N/A (not M10K).
-// ALM: ESTIMATE ~250 — UNKNOWN until post-fit.
-// Not product-wired; do not files.qip until instantiated.
+// M10K COST (depth×width — Cyclone V handbook class):
+//   bounce array: depth=MAX_BURST (default 16) × width=64b = 1024 useful bits.
+//   Forced (* ramstyle="logic" *) → M10K = 0 by construction (not block-RAM).
+//   If ever mapped as M10K: native max width 40b ⇒ 64b needs ≥2 blocks
+//   (layout EST 2×(16×32) or similar) — forbidden here; keep logic.
+// ALM: ESTIMATE ~250–400 — UNKNOWN until post-fit hierarchy after product wire.
+// Against PRODUCT_NO_STUB free ~356 M10K (parent HIT M10K=197/553).
+// Not product-wired; do not files.qip until Plex.sv instantiate + TB green.
 
 module ddr_publish_engine #(
 	parameter int MAX_BURST = 16,
@@ -50,7 +55,8 @@ module ddr_publish_engine #(
 	output wire [7:0]        DDRAM_BE,
 	output reg               DDRAM_WE
 );
-	(* ramstyle = "logic" *) reg [63:0] bounce [0:MAX_BURST-1];
+	// depth=MAX_BURST × width=64 — index width matches array (no WIDTHTRUNC).
+(* ramstyle = "logic" *) reg [63:0] bounce [0:MAX_BURST-1];
 
 	// bounce[0:MAX_BURST-1] needs IDX_W=$clog2(MAX_BURST) index bits (not 5).
 	// burst_n holds 1..MAX_BURST inclusive → one extra bit.
