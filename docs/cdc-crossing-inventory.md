@@ -188,10 +188,44 @@ require approximately:
 
 When `PRESENT_CLK_PIX_PLL=1`, `pll_0002` adds `outclk_3` = clk_pix (29.70 MHz default, or 74.25 with `PRESENT_CLK_PIX_74_25`). Product build does not enable this.
 
-| # | Crossing | Dir | Protection |
-|---|---|---|---|
-| P1 | present_npx_path group data | clk_sys→clk_pix | async_fifo gray |
-| P2 | prefill_go | clk_sys→clk_pix | 2FF |
-| P3 | reset into pix | async | 2FF mp_rst_pix* |
+**Enable recipe (exact):** `docs/PRESENT_CLK_PIX_PLL_ENABLE.md`  
+Requires `PRESENT_MULTI_PIXEL` + `PRESENT_CLK_PIX_PLL` + `SDC_FILE Plex_clk_pix.sdc` together on product FRAME 1280×720. Never MULTI@CEA 1650×750 without the PLL (≈16.16 Hz trap at 20 MHz).
 
-SDC: `Plex_clk_pix.sdc` sets asynchronous clock groups clk_pix ⊥ clk_sys and clk_pix ⊥ clk_ddr. Do not false_path residual_csum.
+### Clock domains (when flag ON)
+
+| Domain | Signal | Frequency | PLL output | STA clock |
+|--------|--------|-----------|------------|-----------|
+| clk_sys | `clk_sys` | 20.000 MHz | `outclk_0` | `general[0].gpll` |
+| clk_ddr | `clk_ddr` | 90.000 MHz | `outclk_2` | `general[2].gpll` |
+| clk_pix | `clk_pix_pll` | **29.700** MHz (or 74.250) | `outclk_3` | `general[3].gpll` |
+
+### Crossings
+
+| # | Crossing | Dir | Protection | Verdict |
+|---|---|---|---|---|
+| P1 | present_npx_path group data | clk_sys→clk_pix | async_fifo gray | SAFE |
+| P2 | prefill_go | clk_sys→clk_pix | 2FF | SAFE |
+| P3 | reset into pix | async | 2FF mp_rst_pix* | SAFE |
+| P4 | CE_PIXEL / RGB / H/V | clk_pix domain | same-domain; `CLK_VIDEO=clk_pix_pll` under MULTI+PLL | SAFE |
+| P5 | ddr_frame_store / beam | clk_sys↔clk_ddr | existing inventory (unchanged) | existing |
+
+### SDC inventory
+
+| Constraint | File | Role |
+|---|---|---|
+| `derive_pll_clocks` | `Plex.sdc` | creates general[3] when PLL has 4 outputs |
+| `set_false_path` async_fifo mem→rd_data_r | `Plex.sdc` | all FIFO instances incl. npx |
+| `set_clock_groups -asynchronous` sys⊥pix | `Plex_clk_pix.sdc` | cut related-edge on gray/2FF |
+| `set_clock_groups -asynchronous` ddr⊥pix | `Plex_clk_pix.sdc` | no intentional ddr↔pix data path |
+
+**Do not** false_path residual_csum. **Do not** put clk_sys↔clk_ddr in exclusive groups in `Plex_clk_pix.sdc`.
+
+### Missing constraints / watch (compose enable)
+
+| Item | Status |
+|---|---|
+| Source `Plex_clk_pix.sdc` when PLL ON | **Required** — omit → false related-edge STA fails (M6) |
+| `expected_sta_clocks` product fixture lists only [0],[2] | intentional OFF; compose must also check general[3] |
+| intentional multicycle sys↔pix | none — async groups only |
+| CLK_VIDEO left on clk_sys with MULTI+PLL | **fixed** in `Plex.sv` (was missing) |
+| PPC=1@20 fabric feed &lt; 29.7 Mpix/s | functional wall, not SDC gap |

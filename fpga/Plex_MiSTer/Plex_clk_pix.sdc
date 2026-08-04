@@ -1,8 +1,13 @@
 # Plex_clk_pix.sdc — constraints for PRESENT_CLK_PIX_PLL (default OFF).
 #
-# Product QSF does NOT source this file. Enable only with the fit recipe:
+# Product QSF does NOT source this file. Enable only with the compose fit recipe
+# (product FRAME already 1280x720 on main; macros default-OFF):
+#   set_global_assignment -name VERILOG_MACRO "PRESENT_MULTI_PIXEL=1"
+#   set_global_assignment -name VERILOG_MACRO "PRESENT_PX_PER_CLK=1"
 #   set_global_assignment -name VERILOG_MACRO "PRESENT_CLK_PIX_PLL=1"
 #   set_global_assignment -name SDC_FILE Plex_clk_pix.sdc
+# See docs/PRESENT_CLK_PIX_PLL_ENABLE.md. Never MULTI@CEA totals without this
+# PLL — that is the ~16.16 Hz trap (20e6/1_237_500).
 #
 # Base Plex.sdc already runs derive_pll_clocks. This file names the new domain,
 # documents CDC policy, and adds exclusive groups so STA does not invent
@@ -12,6 +17,10 @@
 #   clk_sys  = general[0] = 20.000 MHz
 #   clk_ddr  = general[2] = 90.000 MHz
 #   clk_pix  = general[3] = 29.700 MHz  (or 74.250 with PRESENT_CLK_PIX_74_25)
+# PIX_PER_FRAME pack = 1650*750 = 1_237_500; f_pix@24 = 29_700_000 exact.
+#
+# RTL contract (Plex.sv): with MULTI+PLL, CLK_VIDEO = clk_pix_pll so CE_PIXEL /
+# VGA_* stay same-domain as present_npx_path unpack.
 #
 # Do NOT add false_path on residual_csum / decode sameclk paths.
 # Do NOT weaken setup to hide real violations.

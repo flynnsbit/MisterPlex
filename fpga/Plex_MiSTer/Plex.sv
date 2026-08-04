@@ -1005,7 +1005,19 @@ ddr_bus_arbiter ddr_arb (
 );
 `endif
 
+// CLK_VIDEO must match the domain that produces CE_PIXEL / VGA_*.
+// PRESENT_MULTI_PIXEL unpacks on clk_pix; with PRESENT_CLK_PIX_PLL that is
+// outclk_3 (29.70/74.25 MHz). Without MULTI (or without the PLL flag),
+// present_core still emits on clk_sys — leave CLK_VIDEO = clk_sys.
+`ifdef PRESENT_CLK_PIX_PLL
+`ifdef PRESENT_MULTI_PIXEL
+assign CLK_VIDEO = clk_pix_pll;
+`else
 assign CLK_VIDEO = clk_sys;
+`endif
+`else
+assign CLK_VIDEO = clk_sys;
+`endif
 assign CE_PIXEL  = ce_pix;
 assign VGA_DE = ~(HBlank | VBlank);
 assign VGA_HS = HSync;

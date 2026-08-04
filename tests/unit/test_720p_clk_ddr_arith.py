@@ -81,6 +81,14 @@ def main() -> int:
     plex = read(ROOT / "fpga/Plex_MiSTer/Plex.sv")
     check("clk_pix_pll" in plex, "Plex.sv declares clk_pix_pll under flag path")
     check(".clk_pix(clk_sys)" in plex, "product .clk_pix(clk_sys) still present")
+    # MULTI+PLL must drive CLK_VIDEO from clk_pix (not hardwired clk_sys only)
+    check("assign CLK_VIDEO = clk_pix_pll" in plex, "Plex.sv CLK_VIDEO tracks clk_pix_pll under MULTI+PLL")
+    check("PRESENT_MULTI_PIXEL" in plex and "CLK_VIDEO" in plex, "CLK_VIDEO gated with MULTI path")
+    # Anti-16Hz trap documented in QSF recipe
+    check("16.16" in qsf or "16 Hz" in qsf or "~16" in qsf, "QSF documents anti-16Hz trap")
+    check("PRESENT_MULTI_PIXEL=1" in qsf, "QSF compose recipe mentions MULTI")
+    check("docs/PRESENT_CLK_PIX_PLL_ENABLE.md" in qsf or "PRESENT_CLK_PIX_PLL_ENABLE" in qsf,
+          "QSF points at enable recipe doc")
 
     # present_video_timing pack constants
     tim = read(ROOT / "fpga/Plex_MiSTer/rtl/present_video_timing_720p.sv")
