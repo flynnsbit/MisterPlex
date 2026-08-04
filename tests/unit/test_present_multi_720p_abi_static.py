@@ -63,6 +63,10 @@ def main() -> int:
         fails.append("MULTI must drive fs_rd_x_w from mp_store_x (beam glass→store)")
     if not re.search(r"fs_rd_y_w\s*=\s*mp_store_y", multi_body):
         fails.append("MULTI must drive fs_rd_y_w from mp_store_y (beam glass→store)")
+    if not re.search(r"fs_vsync_w\s*=\s*mp_fstart", multi_body):
+        fails.append("MULTI must drive fs_vsync_w from mp_fstart (not legacy fstart)")
+    if "vsync_pulse(fs_vsync_w)" not in core and ".vsync_pulse(fs_vsync_w)" not in core:
+        fails.append("fstore must take vsync_pulse(fs_vsync_w)")
     if "g_mp_ppc_needs_ddr" not in multi_body and "present_multi_ppc_requires_ddr_frame_store" not in multi_body:
         fails.append("MULTI+PPC>1 needs synthesis-active DDR_FRAME_STORE gate")
     # Inside MULTI+DDR path: no scalar replicate of fr

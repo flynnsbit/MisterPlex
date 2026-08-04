@@ -546,14 +546,16 @@ module present_core #(
 	end
 
 	// Frame-store read address mux. Default: Template-mapped store_x/y.
-	// PRESENT_MULTI_PIXEL: beam glass coords (assigned in MULTI block below).
+	// PRESENT_MULTI_PIXEL: beam glass coords + mp_fstart (assigned in MULTI block).
 	wire [FRAME_X_W-1:0] fs_rd_x_w;
 	wire [FRAME_Y_W-1:0] fs_rd_y_w;
 	wire                 fs_rd_active_w;
+	wire                 fs_vsync_w;
 `ifndef PRESENT_MULTI_PIXEL
 	assign fs_rd_x_w      = store_x;
 	assign fs_rd_y_w      = store_y;
 	assign fs_rd_active_w = de_r;
+	assign fs_vsync_w     = fstart;
 `endif
 
 	wire [7:0] fr, fg, fb;
@@ -687,7 +689,7 @@ module present_core #(
 		.DDRAM_DIN(DDRAM_DIN),
 		.DDRAM_BE(DDRAM_BE),
 		.DDRAM_WE(DDRAM_WE),
-		.vsync_pulse(fstart),
+		.vsync_pulse(fs_vsync_w),
 		.has_frame(has_frame),
 		.swap_pending(swap_pending),
 		.underrun_count(frame_underruns),
@@ -735,7 +737,7 @@ module present_core #(
 		.sdram_refresh(sdram_refresh),
 		// Request on DMA/F1 complete; apply only at display frame_start (vsync)
 		.swap_banks(fs_swap),
-		.vsync_pulse(fstart),
+		.vsync_pulse(fs_vsync_w),
 		.has_frame(has_frame),
 		.swap_pending(swap_pending),
 		.underrun_count(frame_underruns),
@@ -882,6 +884,8 @@ localparam int MP_CLK_PIX_HZ = `MISTERPLEX_CLK_PIX_HZ;
 	assign fs_rd_x_w      = mp_store_x;
 	assign fs_rd_y_w      = mp_store_y;
 	assign fs_rd_active_w = mp_store_de;
+	// Bank swap must track MULTI beam, not legacy Template fstart (rd-duck).
+	assign fs_vsync_w     = mp_fstart;
 
 	// N-wide store RGB (ddr_frame_store.PX_PER_CLK). PPC=1: lane0 == fr/fg/fb.
 	// PPC>1: MUST use real dual-lane fs_rd_*_n — NEVER {PPC{fr}} replicate
