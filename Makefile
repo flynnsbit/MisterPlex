@@ -50,6 +50,7 @@ unit-unlocked: preflight $(ROOT)/build/test_gdm_filter $(ROOT)/build/test_spi_tx
 	python3 $(ROOT)/tests/unit/test_p720_shared_bw_contract.py
 	bash $(ROOT)/tests/unit/test_idle_thread_budget_gate.sh
 	bash $(ROOT)/tests/unit/test_io_ack_follow_rtl_sim.sh
+	bash $(ROOT)/tests/unit/test_bitstream_bit_feeder_rtl_sim.sh
 	$(ROOT)/build/test_cadence
 	$(ROOT)/build/test_avclock
 	$(ROOT)/build/test_mraudio_status
