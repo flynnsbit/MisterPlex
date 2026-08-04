@@ -25,6 +25,9 @@ echo "product true rc=$p_rc"
 tail -15 "$WORKDIR/prod.out"
 [[ "$p_rc" -eq 0 ]] || { cat "$WORKDIR/prod.err" >&2; exit "$p_rc"; }
 grep -q 'BLOCKER_PRESENT_PPC2=required' "$WORKDIR/prod.out"
+grep -q 'PARTIAL_CLOSED_READER' "$WORKDIR/prod.out"
+grep -q 'fabric_bw_closed=false' "$WORKDIR/prod.out"
+grep -q 'PPC2_ACCEPT_scalar_NEG_control=required' "$WORKDIR/prod.out"
 
 # RED: hollow present_core + QSF PPC=2
 cat >"$WORKDIR/hollow.sv" <<'SV'

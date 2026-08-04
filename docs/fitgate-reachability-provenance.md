@@ -168,5 +168,23 @@ Before fit release of a PPC2 product recipe, require:
 Gate: `make present-ppc2-blocker` / `scripts/check_present_ppc2_fit_blocker.py`.
 Hollow QSF PPC>=2 claim → **rc=1**. `FIT_SLOT_GRANT=NO` while hollow.
 
+### Discriminator — do not close PPC2 on G0/G1 counts (rd-duck)
+
+w-scaler’s **SCALAR** reader (explicitly no `PX_PER_CLK` / `rd_*_n`) can produce
+**bit-identical G0/G1 counts** to a claimed PPC2 proof. That metric measures
+**full-line refill demand only**. `rd_x += 2` skips odd *display* samples while
+refill still reads whole lines — counts are **insensitive to dual-lane
+correctness**.
+
+Status until odd/even proof lands:
+
+- `PPC2_STATUS=PARTIAL_CLOSED_READER`
+- `fabric_bw_closed=false`
+- `PPC2_READER_CORRECTNESS_CLOSED=false`
+
+**Required negative control:** a true PPC2 correctness gate must **fail the
+scalar reader** via adjacent odd/even output checksum and/or lane-valid checks.
+Count match alone must never clear the blocker.
+
 DMA note (rd-duck): a source→bank mover is **read+write**; prefer dynamic-base
 direct fabric read that eliminates the bank write.

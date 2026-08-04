@@ -10,7 +10,15 @@ Fit release must NOT treat PPC2 as follow-up. This gate:
   - Always prints BLOCKER_PRESENT_PPC2 status
   - If QSF claims MULTI + PPC>=2 while hollow patterns remain → exit 1
   - If PPC>=2 claimed without dual-lane store contract markers → exit 1
+  - Prints PARTIAL_CLOSED_READER / fabric_bw_closed=false until odd/even proof
   - Soft-skip 77 is never a pass
+
+rd-duck discriminator: SCALAR reader (no PX_PER_CLK/rd_*_n) can produce
+bit-identical G0/G1 *counts* to a claimed PPC2 proof — that metric only
+measures full-line refill demand. rd_x+=2 skips odd display samples while
+refill still reads whole lines. Counts are insensitive to dual-lane
+correctness. A true PPC2 correctness gate MUST fail the scalar negative
+control via adjacent odd/even output checksum / lane-valid checks.
 
 Exit: 0 = blocker documented and no false PPC2 claim; 1 = hollow PPC2 claim; 2 = bad inputs
 """
@@ -76,13 +84,18 @@ def find_hollow_patterns(text: str) -> list[str]:
 
 
 def has_dual_lane_contract_markers(text: str) -> bool:
-    """Positive markers that hollow PPC2 was replaced — require several."""
+    """Positive markers that hollow PPC2 was replaced — require several.
+
+    Markers alone never set fabric_bw_closed or PPC2_READER_CORRECTNESS_CLOSED.
+    Odd/even checksum + scalar NEG control must exist in the *test* path too.
+    """
     markers = [
         r"dual_lane_store",
         r"store_x0",
         r"store_x1",
-        r"odd_even.*checksum|checksum.*odd_even",
+        r"odd_even.*checksum|checksum.*odd_even|lane_valid",
         r"mp_npx_r\s*=\s*\{[^}]*fr1|lane1_r|px1_r",
+        r"scalar_neg_control|SCALAR_NEG|fail_scalar",
     ]
     return sum(1 for p in markers if re.search(p, text, re.I)) >= 2
 
@@ -157,11 +170,18 @@ wire _unused_mp_glass = |{mp_glass_x0, mp_glass_y};
 
     # Always an explicit fit blocker until dual-lane contract + synthesis-active gate.
     print("BLOCKER_PRESENT_PPC2=required")
+    print("PPC2_STATUS=PARTIAL_CLOSED_READER")
+    print("fabric_bw_closed=false")
+    print("PPC2_READER_CORRECTNESS_CLOSED=false")
     print("PPC2_ACCEPT_dual_lane_store_outputs=required")
     print("PPC2_ACCEPT_multi_beam_to_store_coords=required")
     print("PPC2_ACCEPT_odd_even_distinct_pixel_checksum=required")
     print("PPC2_ACCEPT_synthesis_active_recipe_gate=required  # not translate_off $error")
-    print("NOTE: clock reader TB scalar cannot close PPC2 (rd-duck)")
+    print("PPC2_ACCEPT_scalar_NEG_control=required  # true PPC2 gate must FAIL scalar")
+    print("NOTE: G0/G1 refill counts bit-identical scalar vs claimed-PPC2 → BW-only metric (rd-duck)")
+    print("NOTE: rd_x+=2 skips odd display samples; refill still whole-line — counts insensitive to lanes")
+    print("NOTE: do not call PPC2 reader closed on count match alone")
+    print("NOTE: clock reader TB scalar cannot close PPC2 correctness")
     print("NOTE: DMA source->bank mover is R+W; prefer dynamic-base direct fabric read")
 
     fail = 0
@@ -192,7 +212,7 @@ wire _unused_mp_glass = |{mp_glass_x0, mp_glass_y};
     else:
         print("PRESENT_PPC2_STATUS=no_hollow_markers_in_tree — still require accept checklist before PPC2 fit")
 
-    print("PASS PRESENT_PPC2_FIT_BLOCKER (no false PPC2 claim; blocker remains required for PPC2 product fit)")
+    print("PASS PRESENT_PPC2_FIT_BLOCKER (no false PPC2 claim; PARTIAL_CLOSED_READER; fabric_bw_closed=false)")
     return 0
 
 

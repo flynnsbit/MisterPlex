@@ -116,6 +116,9 @@ run present_ppc2 python3 "$ROOT/scripts/check_present_ppc2_fit_blocker.py" --roo
 # 8) Fit-release blockers (rd-duck: required unless parent explicitly resolves)
 echo "=== FIT_RELEASE_BLOCKERS (not scored green by this script) ==="
 echo "BLOCKER_PRESENT_PPC2=required  # dual-lane store+beam coords+checksum+synth gate"
+echo "PPC2_STATUS=PARTIAL_CLOSED_READER"
+echo "fabric_bw_closed=false"
+echo "PPC2_READER_CORRECTNESS_CLOSED=false  # scalar G0/G1 counts ≠ dual-lane proof"
 echo "BLOCKER_NOSTUB_RECLAIM=required  # PRODUCT_NO_STUB land + post-fit decode_stub ABSENT"
 echo "BLOCKER_W_OSD_720P_REAL_READER=required  # full 1280x720 real L4 @20:90+stalls — NOT CLOSED"
 echo "W_OSD_NACK_rd_duck=active  # do not clear blocker on current G0/G1 stress alone"
