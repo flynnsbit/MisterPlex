@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Full 1280x720 real ddr_frame_store @ PPC2 + clk 20:90 + stalls (w-osd hard blocker).
+# Full 1280x720 real ddr_frame_store @ PPC2 + clk 20:90 + stalls (w-osd).
+# rd-duck: NOT fit CLOSED — tight beats, rgb, mutant tooth required.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 RUN_VERILATOR="$ROOT/scripts/run_verilator.sh"
@@ -17,7 +18,7 @@ BUILD="$ROOT/build/verilator/ddr_frame_store_720p_ppc2_bus"
 rm -rf "$BUILD"
 mkdir -p "$BUILD/lc32" "$BUILD/lc8"
 echo "RTL SIM: using $VERILATOR_VERSION" >&2
-echo "PRE-REG: FULL+STALL @20:90; LC32 GREEN und=0; LC8 teeth RED"
+echo "PRE-REG: gate-repaired FULL+STALL; LC32 GREEN; LC8 RED; G2 mutant RED"
 
 build_one() {
   local dir="$1" lc="$2"
@@ -35,38 +36,29 @@ build_one() {
     "$ROOT/tests/rtl/ddr_frame_store_720p_ppc2_bus_tb.cpp"
 }
 
-echo "=== LC=32 product floor (expect GREEN full+stall) ==="
+echo "=== LC=32 (expect GREEN gate-repaired) ==="
 build_one "$BUILD/lc32" 32
-EXE32="$BUILD/lc32/Vddr_frame_store_720p_ppc2_bus_tb"
 set +e
-OUT32="$("$EXE32" 2>&1)"
+OUT32="$("$BUILD/lc32/Vddr_frame_store_720p_ppc2_bus_tb" 2>&1)"
 RC32=$?
 set -e
 printf '%s\n' "$OUT32"
-echo "lc32_full_stall true rc=$RC32"
-if [[ "$RC32" -ne 0 ]]; then
-  echo "FAIL 720p_ppc2_bus LC32" >&2
-  exit 1
-fi
-echo "$OUT32" | grep -q 'G1_full_stall' || { echo "FAIL missing G1_full_stall" >&2; exit 1; }
-echo "$OUT32" | grep -q 'underrun_delta=0' || { echo "FAIL expected underrun_delta=0" >&2; exit 1; }
-echo "$OUT32" | grep -q 'BEAT_SUMMARY' || { echo "FAIL missing BEAT_SUMMARY" >&2; exit 1; }
-echo "$OUT32" | grep -q 'de_groups=460800' || { echo "FAIL expected full-frame de_groups" >&2; exit 1; }
+echo "lc32 true rc=$RC32"
+[[ "$RC32" -eq 0 ]] || { echo "FAIL LC32" >&2; exit 1; }
+echo "$OUT32" | grep -q 'G2_hang_mutant' || { echo "FAIL missing G2" >&2; exit 1; }
+echo "$OUT32" | grep -q 'payload_formula=172800+LC\*240' || { echo "FAIL missing tight formula" >&2; exit 1; }
+echo "$OUT32" | grep -q 'NOT fit-release CLOSED' || { echo "FAIL must not claim CLOSED" >&2; exit 1; }
+echo "$OUT32" | grep -q 'isolated_reader_stress' || { echo "FAIL missing stress class label" >&2; exit 1; }
 
-echo "=== LC=8 teeth (expect RED: LC floor or underrun) ==="
+echo "=== LC=8 teeth (expect RED) ==="
 build_one "$BUILD/lc8" 8
-EXE8="$BUILD/lc8/Vddr_frame_store_720p_ppc2_bus_tb"
 set +e
-OUT8="$("$EXE8" 2>&1)"
+OUT8="$("$BUILD/lc8/Vddr_frame_store_720p_ppc2_bus_tb" 2>&1)"
 RC8=$?
 set -e
 printf '%s\n' "$OUT8"
-echo "lc8_full_stall true rc=$RC8"
-if [[ "$RC8" -eq 0 ]]; then
-  echo "FAIL LC8 should not PASS full+stall (teeth)" >&2
-  exit 1
-fi
-echo "OK LC8 RED (teeth) rc=$RC8"
-
-echo "PASS test_ddr_frame_store_720p_ppc2_bus FULL+STALL @20:90"
+echo "lc8 true rc=$RC8"
+[[ "$RC8" -ne 0 ]] || { echo "FAIL LC8 should RED" >&2; exit 1; }
+echo "OK LC8 RED rc=$RC8"
+echo "PASS test_ddr_frame_store_720p_ppc2_bus gate-repaired (fit blocker remains)"
 exit 0

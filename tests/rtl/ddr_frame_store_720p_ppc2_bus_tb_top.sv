@@ -1,7 +1,7 @@
 // Full 1280x720 I420 real ddr_frame_store under MULTI+PPC=2 recipe.
-// w-osd + w-clock / rd-duck: end-of-frame accepted RD beat delta at clk 20:90
-// WITH injected stalls on the FULL frame (not short-frame/ideal split).
-// LINE_COUNT default 32 (w-osd measured floor vs 500 µs blackout @ PPC2/20MHz).
+// w-osd / rd-duck: FULL frame + clk 20:90 + stalls. NOT product rate-match
+// (beam is isolated-reader stress @ 20e6/(825*750)≈32.32 fps, not 24).
+// LINE_COUNT default 32 (blackout floor @ PPC2/20MHz).
 `default_nettype none
 
 module ddr_frame_store_720p_ppc2_bus_tb #(
@@ -19,6 +19,11 @@ module ddr_frame_store_720p_ppc2_bus_tb #(
 	output wire [7:0]  rd_r,
 	output wire [7:0]  rd_g,
 	output wire [7:0]  rd_b,
+	output wire [15:0] rd_r_n,
+	output wire [15:0] rd_g_n,
+	output wire [15:0] rd_b_n,
+	output wire [1:0]  rd_lane_valid_n,
+	output wire        rd_n_valid,
 	output wire        has_frame,
 	output wire        swap_pending,
 	output wire [15:0] underrun_count,
@@ -37,9 +42,6 @@ module ddr_frame_store_720p_ppc2_bus_tb #(
 );
 	wire DDRAM_CLK;
 	wire [7:0] DDRAM_BE;
-	wire [15:0] rd_r_n, rd_g_n, rd_b_n;
-	wire [1:0] rd_lane_valid_n;
-	wire rd_n_valid;
 
 	assign abi_line_count = 16'(LINE_COUNT);
 
