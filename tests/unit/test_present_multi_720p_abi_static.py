@@ -54,6 +54,24 @@ def main() -> int:
     if "PRESENT_MULTI_PIXEL requires FRAME_W=1280" not in core:
         fails.append("MULTI path must $error unless FRAME 1280x720")
 
+    # rd-duck FIT BLOCKER: PPC2 must use real dual-lane store, not scalar replicate.
+    multi = re.search(r"`ifdef\s+PRESENT_MULTI_PIXEL\s*(.*?)\s*`else\s*\n\s*assign r = leg_r", core, re.S)
+    multi_body = multi.group(1) if multi else core
+    if not re.search(r"mp_npx_r\s*=\s*fs_rd_r_n", multi_body):
+        fails.append("MULTI must wire mp_npx_r from fs_rd_r_n (dual-lane store)")
+    if not re.search(r"fs_rd_x_w\s*=\s*mp_store_x", multi_body):
+        fails.append("MULTI must drive fs_rd_x_w from mp_store_x (beam glass→store)")
+    if not re.search(r"fs_rd_y_w\s*=\s*mp_store_y", multi_body):
+        fails.append("MULTI must drive fs_rd_y_w from mp_store_y (beam glass→store)")
+    if "g_mp_ppc_needs_ddr" not in multi_body and "present_multi_ppc_requires_ddr_frame_store" not in multi_body:
+        fails.append("MULTI+PPC>1 needs synthesis-active DDR_FRAME_STORE gate")
+    # Inside MULTI+DDR path: no scalar replicate of fr
+    if re.search(r"`ifdef\s+DDR_FRAME_STORE[\s\S]*?\{PRESENT_PPC\{fr\}\}", multi_body):
+        # only fail if replicate appears before the else of that ifdef
+        m2 = re.search(r"`ifdef\s+DDR_FRAME_STORE\s*([\s\S]*?)`else", multi_body)
+        if m2 and "{PRESENT_PPC{fr}}" in m2.group(1).replace(" ", ""):
+            fails.append("DDR_FRAME_STORE MULTI path must not replicate {PRESENT_PPC{fr}}")
+
     # QSF recipe: commented MULTI + FRAME 1280 + LINES_16 (default-off)
     def commented_recipe(macro: str) -> bool:
         return any(

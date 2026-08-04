@@ -168,6 +168,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	python3 $(ROOT)/tests/unit/test_p720_shared_bw_contract.py
 	$(ROOT)/tests/unit/test_plex_bw_status_verilator.sh
 	$(ROOT)/tests/unit/test_ddr_frame_store_720p_ppc2_bus.sh
+	$(ROOT)/tests/unit/test_ddr_frame_store_ppc2_distinct.sh
 	python3 $(ROOT)/tests/unit/test_product_no_stub_active_static.py
 	python3 $(ROOT)/tests/unit/test_decode_stub_removal_prereq_static.py
 	python3 $(ROOT)/tests/unit/test_720p_present_m10k_budget_static.py

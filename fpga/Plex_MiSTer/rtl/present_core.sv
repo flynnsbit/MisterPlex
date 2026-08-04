@@ -803,8 +803,23 @@ module present_core #(
 `ifdef PRESENT_BEAM_960
 		$error("PRESENT_MULTI_PIXEL and PRESENT_BEAM_960 are mutually exclusive");
 `endif
+`ifndef DDR_FRAME_STORE
+		if (PRESENT_PPC > 1)
+			$error("PRESENT_MULTI_PIXEL+PPC>1 requires DDR_FRAME_STORE (no scalar lane replicate)");
+`endif
 	end
 	// synthesis translate_on
+
+	// Synthesis-ACTIVE recipe gate (rd-duck FIT BLOCKER): PPC>1 without DDR store
+	// must not elaborate. translate_off $error is ignored by Quartus.
+	generate
+		if (PRESENT_PPC > 1) begin : g_mp_ppc_needs_ddr
+`ifndef DDR_FRAME_STORE
+			// Intentional missing module → hard synth/elab fail (not sim-only).
+			present_multi_ppc_requires_ddr_frame_store u_mp_ppc_ddr_gate();
+`endif
+		end
+	endgenerate
 
 	wire                mp_in_ready;
 	wire                mp_beam_ce;
@@ -869,14 +884,22 @@ localparam int MP_CLK_PIX_HZ = `MISTERPLEX_CLK_PIX_HZ;
 	assign fs_rd_active_w = mp_store_de;
 
 	// N-wide store RGB (ddr_frame_store.PX_PER_CLK). PPC=1: lane0 == fr/fg/fb.
-	// PPC>1: real multi-pixel YUV→RGB from line-buffer qwords (even glass_x0).
+	// PPC>1: MUST use real dual-lane fs_rd_*_n — NEVER {PPC{fr}} replicate
+	// (rd-duck FIT BLOCKER: replicate → half horizontal info while fit still greens).
 `ifdef DDR_FRAME_STORE
 	wire [PRESENT_PPC*8-1:0] mp_npx_r = fs_rd_r_n;
 	wire [PRESENT_PPC*8-1:0] mp_npx_g = fs_rd_g_n;
 	wire [PRESENT_PPC*8-1:0] mp_npx_b = fs_rd_b_n;
 	wire [PRESENT_PPC-1:0]   mp_npx_lv = mp_lane_de & fs_rd_lv_n & {PRESENT_PPC{has_frame}};
 	wire _unused_fs_n_valid = fs_rd_n_valid;
+	// Synthesis-active keep: dual-lane buses reach netlist under MULTI.
+	(* keep, noprune *) wire [PRESENT_PPC*8-1:0] keep_mp_npx_r = mp_npx_r;
+	(* keep, noprune *) wire [PRESENT_PPC*8-1:0] keep_mp_npx_g = mp_npx_g;
+	(* keep, noprune *) wire [PRESENT_PPC*8-1:0] keep_mp_npx_b = mp_npx_b;
+	(* keep, noprune *) wire [FRAME_X_W-1:0] keep_mp_store_x = mp_store_x;
+	(* keep, noprune *) wire [FRAME_Y_W-1:0] keep_mp_store_y = mp_store_y;
 `else
+	// PPC=1 only (gated above). Scalar passthrough — not a 720p product path.
 	wire [PRESENT_PPC*8-1:0] mp_npx_r = {PRESENT_PPC{fr}};
 	wire [PRESENT_PPC*8-1:0] mp_npx_g = {PRESENT_PPC{fg}};
 	wire [PRESENT_PPC*8-1:0] mp_npx_b = {PRESENT_PPC{fb}};
