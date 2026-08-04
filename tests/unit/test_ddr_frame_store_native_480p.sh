@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# Native 480p DDR path gate (w-geom).
-# A) Host publish ABI: 624x480 I420 accepted, plane offsets, capacity, no 320 clamp
-# B) RTL scanout: full-height product geometry, plane bases, left edge @ PRESENT_X
+# Native 480p DDR path gate (w-geom / w-nostub-720p).
+# A) Host publish ABI: product 1280×720 canvas + legacy480 helper (test_native_480p_ddr_publish)
+# B) RTL scanout: full-height lab 480p geometry, plane bases, left edge @ PRESENT_X
 # PINNOTFOUND / compile-only → rc=2 (not a pass). Soft-skip≠PASS.
+# Host markers must match tests/unit/test_native_480p_ddr_publish.cpp PASS line exactly
+# (post Wave-1 product canvas: legacy480_ok, not historical NO_320_CLAMP).
 set -euo pipefail
 
 assert_sim_executed() {
@@ -27,7 +29,7 @@ RUN_VERILATOR="$ROOT/scripts/run_verilator.sh"
 CXX="${CXX:-g++}"
 CXXFLAGS="-std=c++17 -O2 -Wall -Wextra -I$ROOT/host -I$ROOT/arm/misterplexd"
 
-echo "=== A) host publish ABI (624x480 I420, no 320 clamp) ===" >&2
+echo "=== A) host publish ABI (product 1280x720 + legacy480_ok) ===" >&2
 mkdir -p "$ROOT/build"
 "$CXX" $CXXFLAGS -o "$ROOT/build/test_native_480p_ddr_publish" \
   "$ROOT/tests/unit/test_native_480p_ddr_publish.cpp"
@@ -41,7 +43,11 @@ if [[ "$HOST_RC" -ne 0 ]]; then
   echo "FAIL native_480p host publish ABI" >&2
   exit 1
 fi
-assert_sim_executed "host-publish" "$HOST_OUT" "PASS test_native_480p_ddr_publish" "NO_320_CLAMP"
+# Dual markers from cpp PASS printf — red if binary empty/compile-only or marker drift.
+assert_sim_executed "host-publish" "$HOST_OUT" \
+  "PASS test_native_480p_ddr_publish" \
+  "legacy480_ok" \
+  "product_frame="
 
 set +e
 VERILATOR_VERSION="$($RUN_VERILATOR --version 2>&1)"
@@ -94,6 +100,7 @@ if [[ "$RTL_RC" -ne 0 ]]; then
   exit 1
 fi
 
-echo "OK ddr_frame_store_native_480p: host publish NO_320_CLAMP + RTL plane_bases + left_edge@PRESENT_X"
-echo "ARM-ONLY for content ladder: product RBF already CODED 624x480 / FRAME 640x480."
+echo "OK ddr_frame_store_native_480p: host publish product_frame+legacy480_ok + RTL plane_bases + left_edge@PRESENT_X"
+echo "LAB-ONLY 480p content-ladder helper (kPlex480p* / plex480pDdrFrameGeometry)."
+echo "Product RBF is CODED 1280x720 / FRAME 1280x720 identity — not 624x480 / 640x480."
 exit 0

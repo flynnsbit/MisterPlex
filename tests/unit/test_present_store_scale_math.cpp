@@ -3,12 +3,13 @@
 // Pre-T7 defect (LOCKED AS HISTORY): V_STORE=240 + STORE_Y_SCALE=FRAME_H*65536/240
 // at FRAME_H=480 → only even store rows → half vertical detail discarded.
 //
-// T7 product path (Plex.qsf FRAME_W=640 FRAME_H=480):
-//   NATIVE_V_1TO1 → V_STORE=FRAME_H=480, STORE_Y_SCALE=1.0, py=vc
-//   → all 480 store rows addressed under scandouble active vc=0..479.
+// T7 product path (Plex.qsf FRAME_W=1280 FRAME_H=720):
+//   NATIVE_V_1TO1 → V_STORE=FRAME_H=720, STORE_Y_SCALE=1.0, py=vc
+//   → all 720 store rows addressed under native active vc=0..719.
 //
-// Horizontal: H_DE=529 still samples 529 of 640 (clk_sys=20 MHz forbids H_DE=640
-// at 60 Hz / 524 lines). Documented, not papered over.
+// Horizontal: Template H_DE=529 still samples 529 of 1280 (clk_sys=20 MHz forbids
+// H_DE=1280 at 60 Hz / 524 lines). Documented, not papered over. Full native
+// 720p raster is w-clock work; canvas ABI is already 1280×720.
 //
 // true rc direct. Soft-skip never.
 

@@ -23,7 +23,8 @@ constexpr uint32_t kMemtestMailboxPhys     = mailbox_abi::kPlxmAddr;
 constexpr uint32_t kMemtestMailboxMagic    = mailbox_abi::kPlxmMagic;
 constexpr uint32_t kUnderrunMailboxPhys    = mailbox_abi::kPlxfAddr;
 constexpr uint32_t kUnderrunMailboxMagic   = mailbox_abi::kPlxfMagic;
-// Legacy absolute PLXD (0x3007F128). Do NOT use for product doorbell 0x300FF000.
+// Legacy absolute PLXD (0x3007F128). Do NOT use for product doorbell 0x302FF000
+// (720p I420) or legacy-helper 0x300FF000 (480p I420). Prefer offset + doorbell.
 constexpr uint32_t kBankReleaseMailboxPhys  = mailbox_abi::kPlxdAddr;
 constexpr uint32_t kBankReleaseMailboxMagic = mailbox_abi::kPlxdMagic;
 constexpr uint8_t kFrameStoreDebugFormatError = 0xE1;

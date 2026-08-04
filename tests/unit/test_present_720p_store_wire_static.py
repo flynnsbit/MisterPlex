@@ -3,7 +3,8 @@
 
 CONFIRMS reviewer point 5 was real on pre-fix main: DDR_FRAME_720P_* lived only
 in ddr_frame_layout_params.svh (+ host/tests). present_core must now select them
-behind PLEX_PRESENT_720P_L4 while default arm keeps 480p symbols.
+behind PLEX_PRESENT_720P_L4 while the default arm binds product DDR_FRAME_*
+symbols (1280×720 identity @ phys 0x30000000 — not legacy 480p pillarbox).
 
 Negative: a present_core that still only binds DDR_FRAME_CODED_WIDTH (no 720P
 symbols on the L4 arm) must fail.
@@ -95,7 +96,8 @@ def main() -> int:
         if not (in_core or in_abi or legacy_l4):
             return fail(f"{s} has no present_core/abi_select consumer: {consumers.get(s)}")
 
-    # Default/shared arm must still name 480p constants (via select or direct)
+    # Default/shared arm must still name product DDR_FRAME_* constants (via select or direct).
+    # On product 720p tip these symbols resolve to 1280×720 identity (not legacy 480p pillarbox).
     for needle in [
         "DDR_FRAME_CODED_WIDTH",
         "DDR_FRAME_DISPLAY_WIDTH",
@@ -103,7 +105,7 @@ def main() -> int:
         "DDR_FRAME_YUV420P_DOORBELL_PHYS",
     ]:
         if needle not in pnt and needle not in abi_nt:
-            return fail(f"480p ABI constant missing from core/abi_select: {needle}")
+            return fail(f"product DDR_FRAME_* ABI constant missing from core/abi_select: {needle}")
 
     # Store instance must take FS_* geometry ports
     for needle in [
@@ -164,7 +166,7 @@ def main() -> int:
     mode = "shared-ABI" if shared_abi else "legacy-L4"
     print(
         f"PASS present_720p_store_wire: {mode} 720p coded/display/pillar/stride/"
-        "doorbell/phys; 480p arm intact"
+        "doorbell/phys; default product DDR_FRAME_* arm intact; QSF L4 default-off"
     )
     return 0
 

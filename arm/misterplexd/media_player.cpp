@@ -844,7 +844,9 @@ void MediaPlayer::paintIdle() {
         bool ok = false;
         std::string ddrErr;
         if (useDdrF1_) {
-            const DdrFrameGeometry g = plex480pDdrFrameGeometry();
+            // Idle DDR must ring the product silicon canvas (1280×720 identity),
+            // not the legacy plex480p helper — else doorbell/bank disagree with RTL.
+            const DdrFrameGeometry g = productDdrFrameStoreGeometry();
             const int cw = g.coded_width.get();
             const int ch = g.coded_height.get();
             const DdrFrameLayout layout =
@@ -1872,7 +1874,7 @@ void MediaPlayer::streamPump(int sfd) {
             // C3 frame-store RTL is YUV-only. Never send RGB565 to the DDR doorbell.
             bool ok = false;
             if (useDdrF1_) {
-                // Silicon canvas is always productDdrFrameStoreGeometry() (624 coded).
+                // Silicon canvas is always productDdrFrameStoreGeometry() (1280 coded).
                 // Accept any MB-aligned recon size that fits, then center-pack into
                 // the compile-time bank so line stride matches RTL CODED_W.
                 if (ddrFrameStoreAcceptsResolution(rec.width, rec.height)) {
@@ -2880,9 +2882,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     if (onProgress_)
         onProgress_("buffering", startMs, durationMs);
 
-    // Product silicon CODED_W/H are compile-time (624x480). DECODE/outW_ only
+    // Product silicon CODED_W/H are compile-time (1280x720). DECODE/outW_ only
     // selects the PMS source ladder; FPGA DDR publish must always use the
-    // silicon canvas or line-stride shears (ARM 320 vs RTL 624).
+    // silicon canvas or line-stride shears (ARM 320 vs RTL 1280).
     const bool wantFpgaDdrCanvas =
         (presentMode_ == "fpga" || presentMode_ == "both");
     const DdrFrameGeometry ddrGeometry =
