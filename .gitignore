@@ -41,3 +41,8 @@ remote_out/
 # symlink itself get committed.
 Memory
 Memory/
+
+# Agent scratch/build logs: never belongs in the repo (parent swept 7398 lines
+# into a mislabeled commit via `git add -A`, 2026-08-04). Both forms: dir and symlink.
+.agent-work
+.agent-work/
