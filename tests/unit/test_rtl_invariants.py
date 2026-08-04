@@ -1522,8 +1522,23 @@ def check_ddr_frame_store_yuv_read_contract() -> None:
                 "fill_cy_qword={{(30-Y_W){1'b0}},fill_cy}*C_LINE_QWORDS_W",
                 "chroma DDR line address must stride by the chroma line width",
             ),
-            ("u_pix=pick_byte(selected_u_q,c_sel_r)", "YUV converter U input must come from U RAM"),
-            ("v_pix=pick_byte(selected_v_q,c_sel_r)", "YUV converter V input must come from V RAM"),
+            # 480p: pick_byte(selected_u_q). 720p PACK_PX5: stream from u_q5 (U RAM).
+            (
+                "u_pix=PACK_PX5?u_srd_byte:pick_byte(selected_u_q,c_sel_r)",
+                "YUV converter U input must come from U RAM (qword or PACK_PX5 stream)",
+            ),
+            (
+                "v_pix=PACK_PX5?v_srd_byte:pick_byte(selected_v_q,c_sel_r)",
+                "YUV converter V input must come from V RAM (qword or PACK_PX5 stream)",
+            ),
+            (
+                "u_srd_dout=u_q5[c_hit_idx_r]",
+                "PACK_PX5 U stream must read u_q5 (U line RAM)",
+            ),
+            (
+                "v_srd_dout=v_q5[c_hit_idx_r]",
+                "PACK_PX5 V stream must read v_q5 (V line RAM)",
+            ),
             ("r_calc_w=(y_ext<<<8)+(21'sd359*v_s)", "red channel must derive from V"),
             ("b_calc_w=(y_ext<<<8)+(21'sd454*u_s)", "blue channel must derive from U"),
         ]
@@ -1823,7 +1838,7 @@ def check_present_geometry_stride_contract() -> None:
             ),
             (
                 frame_norm,
-                "rd_miss_now=rd_active&&rd_visible&&has_frame&&(!y_hit_now||!c_hit_now)",
+                "rd_miss_now=rd_active&&rd_visible&&has_frame&&(!y_hit_now||!c_hit_now||!px5_stream_ready)",
                 "RTL must black on linebuf miss — mid-line late-hit is the other ragged-left mechanism",
             ),
         ]
