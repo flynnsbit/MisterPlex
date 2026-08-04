@@ -5,7 +5,7 @@ CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -I$(ROOT)/host
 FFMPEG_CFLAGS := $(shell pkg-config --cflags libavformat libavcodec libavutil 2>/dev/null)
 FFMPEG_LIBS   := $(shell pkg-config --libs libavformat libavcodec libavutil 2>/dev/null)
 
-.PHONY: all preflight unit unit-unlocked unit-rollcall rtl-sim rtl-sim-unlocked rtl-lint verilator-elab quartus-sv-subset define-parity pre-synth-gates prefit-reachability prefit-reachability-selftest fit-gate fit-gate-selftest post-fit-hierarchy post-fit-timing post-fit-timing-margin timing-exclusion pms-baseline-check pms-baseline-live pms-nal-stats arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools check-core-conf-geometry
+.PHONY: all preflight unit unit-unlocked unit-rollcall rtl-sim rtl-sim-unlocked rtl-lint verilator-elab quartus-sv-subset define-parity pre-synth-gates prefit-reachability prefit-reachability-selftest rbf-provenance rbf-provenance-selftest rbf-what-built fit-gate fit-gate-selftest post-fit-hierarchy post-fit-timing post-fit-timing-margin timing-exclusion pms-baseline-check pms-baseline-live pms-nal-stats arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools check-core-conf-geometry
 
 all: unit
 
@@ -20,6 +20,9 @@ help:
 	@echo "  make pre-synth-gates - run define parity + fast pre-Quartus RTL buildability gates"
 	@echo "  make prefit-reachability - critical modules in files.qip AND reachable from sys_top (not pruned)"
 	@echo "  make prefit-reachability-selftest - RED decoder hole + GREEN decode_stub/ddr_frame_store teeth"
+	@echo "  make rbf-provenance RBF=path - emit RBF md5+git+QIP provenance sidecar+registry"
+	@echo "  make rbf-provenance-selftest - RED/GREEN provenance + historical G-VID1 teeth"
+	@echo "  make rbf-what-built [MD5=hex|DEVICE=1] - one command: commit that built an RBF"
 	@echo "  make fit-gate [QSF=path] - fit-release gate: QSF macros + elab(fit macros) + true_de=1"
 	@echo "  make fit-gate-selftest - RED/GREEN twins for fit-release gate (hollow integ QSF must FAIL)"
 	@echo "  make post-fit-hierarchy FIT_RPT=... [MAP_RPT=...] [COMPILE_LOG=...] - critical fitted-module guard"
@@ -198,6 +201,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_mister_ini_plex_guard.sh
 	$(ROOT)/tests/unit/test_confstr_guard.sh
 	$(ROOT)/tests/unit/test_core_conf_geometry_gate.sh
+	$(ROOT)/tests/unit/test_rbf_provenance.sh
 	$(ROOT)/tests/unit/test_video_regression_liveness.sh
 	$(ROOT)/tests/unit/test_timing_margin_gate.sh
 	$(ROOT)/tests/unit/test_release_rbf_hash.sh
@@ -299,6 +303,27 @@ prefit-reachability:
 
 prefit-reachability-selftest:
 	$(ROOT)/scripts/check_prefit_reachability.py --root "$(ROOT)" --self-test
+
+# RBF provenance: bind bitstream bytes → git commit + dirty flag + QIP file list.
+# emit writes <rbf>.provenance.json + release_artifacts/rbf-manifests/<md5>.json
+rbf-provenance:
+	@test -n "$(RBF)" || (echo "usage: make rbf-provenance RBF=path/to/Plex.rbf" >&2; exit 2)
+	$(ROOT)/scripts/rbf_provenance.py --root "$(ROOT)" emit --rbf "$(RBF)" --builder make-rbf-provenance
+
+rbf-provenance-selftest:
+	$(ROOT)/scripts/rbf_provenance.py --root "$(ROOT)" selftest
+
+# One command: what commit built this RBF? MD5=… or DEVICE=1 (ssh live md5).
+rbf-what-built:
+	@if [ "$(DEVICE)" = "1" ]; then \
+	  $(ROOT)/scripts/rbf_provenance.py --root "$(ROOT)" device; \
+	elif [ -n "$(MD5)" ]; then \
+	  $(ROOT)/scripts/rbf_provenance.py --root "$(ROOT)" lookup --md5 "$(MD5)"; \
+	elif [ -n "$(RBF)" ]; then \
+	  $(ROOT)/scripts/rbf_provenance.py --root "$(ROOT)" lookup --rbf "$(RBF)"; \
+	else \
+	  echo "usage: make rbf-what-built MD5=hex | RBF=path | DEVICE=1" >&2; exit 2; \
+	fi
 
 # Fit-release gate: parse QSF macros (SoT) → elab with that set → counted true_de=1.
 # QSF= overrides the settings file (default: fpga/Plex_MiSTer/Plex.qsf).

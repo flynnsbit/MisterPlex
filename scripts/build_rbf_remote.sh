@@ -298,3 +298,20 @@ printf 'Artifacts: %s\n' "$([[ "$COPY_BACK" == "1" ]] && printf '%s' "$LOCAL_OUT
 printf 'Plex.rbf md5: %s\n' "$MD5"
 printf 'Negative-slack rows: %s\n' "$NEG_SLACK_COUNT"
 printf 'Logic utilization: %s\n' "${LOGIC_UTILIZATION:-not found}"
+
+# Provenance binding (static; no extra fit). Sidecar next to RBF + registry under
+# release_artifacts/rbf-manifests/<md5>.json so deploy and `rbf_provenance.py device`
+# can answer "what commit built this bitstream?" without a forensic dig.
+if [[ "$COPY_BACK" == "1" && -f "$RBF" ]]; then
+  set +e
+  python3 "$ROOT/scripts/rbf_provenance.py" --root "$ROOT" emit --rbf "$RBF" --builder build_rbf_remote
+  prov_rc=$?
+  set -e
+  echo "rbf_provenance emit true rc=$prov_rc"
+  if [[ "$prov_rc" -ne 0 ]]; then
+    echo "FAIL: could not emit RBF provenance manifest (rc=$prov_rc)" >&2
+    exit "$prov_rc"
+  fi
+else
+  echo "rbf_provenance: SKIP-NOT-PASS (no local RBF copy; COPY_BACK=$COPY_BACK)" >&2
+fi

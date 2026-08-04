@@ -99,6 +99,43 @@ else
   LOCAL_MD5=$(md5sum "$RBF" | awk '{print $1}')
   echo "Deploy $RBF (md5=$LOCAL_MD5)"
   echo "  host=$USER@$HOST  load=$DEPLOY_LOAD"
+
+  # Provenance binding: refuse (default) or loudly warn when RBF has no matching
+  # manifest. Prevents reasoning about current RTL from a months-old bitstream.
+  #   DEPLOY_PROVENANCE=require (default) — exit 8 if no/bad manifest
+  #   DEPLOY_PROVENANCE=warn              — print WARN, continue (distinct text)
+  #   DEPLOY_PROVENANCE=off               — skip (not a pass; logs SKIP-NOT-PASS)
+  DEPLOY_PROVENANCE="${DEPLOY_PROVENANCE:-require}"
+  case "$DEPLOY_PROVENANCE" in
+    off|0|skip)
+      echo "rbf_provenance: SKIP-NOT-PASS (DEPLOY_PROVENANCE=$DEPLOY_PROVENANCE) — not scored as deploy evidence" >&2
+      ;;
+    warn|require|1|on|"")
+      set +e
+      prov_out=$(python3 "$ROOT/scripts/rbf_provenance.py" --root "$ROOT" verify --rbf "$RBF" 2>&1)
+      prov_rc=$?
+      set -e
+      printf '%s\n' "$prov_out"
+      if [[ "$prov_rc" -eq 0 ]]; then
+        echo "rbf_provenance: PASS md5=$LOCAL_MD5"
+        python3 "$ROOT/scripts/rbf_provenance.py" --root "$ROOT" lookup --md5 "$LOCAL_MD5" || true
+      else
+        echo "rbf_provenance: FAIL true rc=$prov_rc (8=no manifest, 1=mismatch, 2=cannot determine)" >&2
+        if [[ "$DEPLOY_PROVENANCE" == "warn" ]]; then
+          echo "rbf_provenance: WARN continuing deploy (DEPLOY_PROVENANCE=warn) — NOT a provenance PASS" >&2
+        else
+          echo "REFUSED: RBF lacks binding to git commit + QIP list." >&2
+          echo "  Emit: python3 scripts/rbf_provenance.py emit --rbf $RBF" >&2
+          echo "  Or:   DEPLOY_PROVENANCE=warn|off (off is SKIP-NOT-PASS)" >&2
+          exit 8
+        fi
+      fi
+      ;;
+    *)
+      echo "Unknown DEPLOY_PROVENANCE=$DEPLOY_PROVENANCE (use require|warn|off)" >&2
+      exit 2
+      ;;
+  esac
 fi
 
 # --- remote prep: release SPI, soft-stop companion (never -9 first) ---

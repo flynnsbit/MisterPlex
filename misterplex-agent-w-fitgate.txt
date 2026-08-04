@@ -1,30 +1,42 @@
 lane=w-fitgate
 branch=w-fitgate
-sha=ffea4ce9
+sha=PENDING
 GRANT=NO
-status=PREFIT_REACHABILITY_GATE
+status=PREFIT_REACHABILITY+RBF_PROVENANCE
 
-TASK: pre-fit reachability gate for decoder prune class
+## 1) Prefit reachability (prior + still green)
   scripts/check_prefit_reachability.py
-  tests/fixtures/critical_prefit_reachability.json
   make prefit-reachability / prefit-reachability-selftest
-  fit_release_gate leg_prefit_reachability (before leg0)
-  docs/ascal-true-de-fit-card.md paragraph
+  Teeth: decoder NOT_IN_QIP / CAVLC PRUNED; decode_stub+ddr_frame_store REACHABLE
+  selftest true rc=0; full gate on this tree true rc=1 (refuse fit)
 
-TEETH on detached main@842e45c9:
-  RED: h264_decode_{top,core,skeleton}, h264_intra_nb_ctx = NOT_IN_QIP
-  RED: h264_cavlc_residual_block, h264_cavlc_nc_predictor = PRUNED
-       (file in QIP; only parent skeleton not in QIP)
-  GREEN: decode_stub, stream_path, ddr_frame_store, present_core = REACHABLE
-  selftest true rc=0 (teeth=1 pruned_cavlc=1)
-  gate true rc=1 (fit refuse)
+## 2) RBF provenance binding (NEW — stale-bitstream class)
+  scripts/rbf_provenance.py  emit|verify|lookup|device|selftest
+  registry: release_artifacts/rbf-manifests/<md5>.json
+  sidecar:  <rbf>.provenance.json
+  fields: rbf_md5 + git_commit + git_dirty + qip_files[] + digests
+  build_rbf_remote.sh emits after COPY_BACK
+  deploy_plex_core.sh DEPLOY_PROVENANCE=require (default) exit 8 if no/bad manifest
+  make rbf-what-built MD5=… | DEVICE=1
+  Historical G-VID1 seed: dfebf2bf… → 0139f2c5, qip_has_ddr_frame_store=0
 
-Parent-requested on detached HEAD@842e45c9:
-  make rtl-lint; true rc=0
-  make unit; true rc=0
+TEETH (directly captured):
+  rbf_provenance selftest true rc=0
+  test_rbf_provenance.sh true rc=0
+  orphan/no-manifest verify true rc=8
+  unknown md5 lookup true rc=8
+  G-VID1 lookup true rc=0 commit=0139f2c5… store=0 rd=1
+  v0.3.0 verify true rc=0
+  define_parity true rc=0 (allowlisted FIT_GATE_* test-only macros)
+  prefit reachability selftest true rc=0
 
-Proves: QIP + root reachability. Does NOT prove correctness.
-Soft-skip 77 is NOT a pass. Missing inputs rc=2.
+make unit on w-fitgate@d058d8b4+WIP:
+  true rc=2
+  cause: scripts/rtl_lint.py regression vs baseline
+    present_content_window.sv WIDTHEXPAND/WIDTHTRUNC
+    ddr_frame_store.sv WIDTHEXPAND
+  NOT introduced by this change set (no RTL edits). Did not edit lint baseline
+  (parent forbid weaken). test_rbf_provenance PASS inside suite before lint step.
 
-Landing: scripts/docs only; ON_MAIN=no product RTL
+Proves: presence/reachability + RBF↔source binding. NOT correctness/timing.
 NO Quartus. NO device. GRANT=NO.
