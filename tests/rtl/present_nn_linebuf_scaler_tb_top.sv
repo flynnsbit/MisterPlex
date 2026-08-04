@@ -15,6 +15,7 @@ module present_nn_linebuf_scaler_tb_top (
 	output wire [23:0] rd_pix,
 	output wire        rd_valid,
 	output wire [15:0] m10k_ideal_c,
+	output wire [15:0] m10k_naive_x8_c,
 	output wire [31:0] rd_bw_content_lines,
 	output wire [31:0] rd_bw_glass_hits,
 	output wire        cfg_ok
@@ -40,6 +41,7 @@ module present_nn_linebuf_scaler_tb_top (
 		.rd_pix(rd_pix),
 		.rd_valid(rd_valid),
 		.m10k_ideal_c(m10k_ideal_c),
+		.m10k_naive_x8_c(m10k_naive_x8_c),
 		.rd_bw_content_lines(rd_bw_content_lines),
 		.rd_bw_glass_hits(rd_bw_glass_hits),
 		.cfg_ok(cfg_ok)

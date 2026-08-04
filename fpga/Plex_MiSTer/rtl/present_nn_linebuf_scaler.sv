@@ -12,8 +12,8 @@
 //    Not 16: store already pays DDR look-ahead LINE_COUNT 8/16 — do not double.
 //
 // Q2 Drop scale stage by buffering more into 356 M10K?
-//    Full 720p I420 ≈ 1078 ideal M10K — does NOT fit (plex_m10k_geom.svh).
-//    Half-frame luma-only ≈ 360 — starves fabric copy + store linebufs.
+//    Full 720p I420 bit-ideal ≈ 1078 M10K; naive 1K×8 ≈ 2160 M10K — neither
+//    fits (plex_m10k_geom.svh). Free luma lines: 178 (naive x8) or 356 (pack40).
 //    => Keep thin line hold + NN map. Do NOT build frame-BRAM scaler.
 //
 // Q3 DDR BW vs present reader?
@@ -22,9 +22,15 @@
 //    (store OR scaler-fed), not both — else R adds. rd_bw_* count only.
 //    Contention with w-mem copy engine: OPEN (shared controller).
 //
-// M10K ideal: LINE_HOLD * CONTENT_W_MAX * PIX_W / 10240
-//   default 2 * 1280 * 24 / 10240 = **6.0 M10K**
-// ALM: mul-shift NN + bank mux — ESTIMATE <500, fit UNVERIFIED.
+// M10K (parent handbook correction 2026-08-04 — layout REQUIRED):
+//   Bit-capacity lower bound: LINE_HOLD*CONTENT_W*PIX_W/10240
+//     default 2*1280*24/10240 = **6** (NOT a legal port config by itself)
+//   Naive 1K×8 per RGB byte plane: LINE_HOLD * 3 * ceil(1280/1024)
+//     default 2*3*2 = **12 M10K**
+//   Packed 40-bit (5 px/word): only natural for 8-bit planes; RGB24 needs a
+//     defined pack map — NOT assumed here. ALM <500 ESTIMATE, fit UNVERIFIED.
+//   Product RAM is `reg [23:0] line_mem[HOLD][W]` — fitter packing UNVERIFIED;
+//   publish [bit_ideal, naive_x8] = [6, 12] until an entity row exists.
 //
 // V1 quality: nearest-neighbour only. No polyphase (ascal owns HDMI).
 // Pixel path: mul+shift only (sx_r updated off path over 20 clks).
@@ -57,7 +63,8 @@ module present_nn_linebuf_scaler #(
 	output reg  [PIX_W-1:0] rd_pix,
 	output reg         rd_valid,
 
-	output wire [15:0] m10k_ideal_c,
+	output wire [15:0] m10k_ideal_c,     // bit-capacity lower bound
+	output wire [15:0] m10k_naive_x8_c,  // 1K×8 per RGB byte plane upper
 	output wire [31:0] rd_bw_content_lines,
 	output wire [31:0] rd_bw_glass_hits,
 	output wire        cfg_ok
@@ -66,24 +73,42 @@ module present_nn_linebuf_scaler #(
 	localparam int AW = $clog2(CONTENT_W_MAX);
 	localparam int BW = (LINE_HOLD <= 1) ? 1 : $clog2(LINE_HOLD);
 	localparam int BITS_TOTAL = LINE_HOLD * CONTENT_W_MAX * PIX_W;
-	localparam int M10K_IDEAL = (BITS_TOTAL + PLEX_M10K_BITS - 1) / PLEX_M10K_BITS;
+	// Bit-capacity lower bound (handbook 10240 bits/block) — not a port config.
+	localparam int M10K_BIT_IDEAL = (BITS_TOTAL + PLEX_M10K_BITS - 1) / PLEX_M10K_BITS;
+	// Naive 1K×8: each 8-bit plane of a 1280-wide line needs 2 M10K; RGB24 ⇒ ×3.
+	localparam int BYTES_PER_PX = (PIX_W + 7) / 8;
+	localparam int M10K_PER_PLANE_LINE = (CONTENT_W_MAX + PLEX_M10K_BYTES_1K_X8 - 1) /
+		PLEX_M10K_BYTES_1K_X8; // ceil(W/1024) = 2 @1280
+	localparam int M10K_NAIVE_X8 = LINE_HOLD * BYTES_PER_PX * M10K_PER_PLANE_LINE;
 	localparam bit M10K_FITS_FREE =
-		(M10K_IDEAL <= PLEX_M10K_FREE_POSTSTRIP);
+		(M10K_NAIVE_X8 <= PLEX_M10K_FREE_POSTSTRIP);
 	localparam bit NO_FULL_FRAME =
-		(PLEX_M10K_FULL_I420_720P_IDEAL > PLEX_M10K_FREE_POSTSTRIP);
+		(PLEX_M10K_FULL_I420_720P_NAIVE_X8 > PLEX_M10K_FREE_POSTSTRIP);
 
-	assign m10k_ideal_c = 16'(M10K_IDEAL);
+	assign m10k_ideal_c    = 16'(M10K_BIT_IDEAL);
+	assign m10k_naive_x8_c = 16'(M10K_NAIVE_X8);
 	assign cfg_ok = M10K_FITS_FREE && NO_FULL_FRAME &&
-		(LINE_HOLD >= 1) && (LINE_HOLD <= 4);
+		(LINE_HOLD >= 1) && (LINE_HOLD <= 4) &&
+		(PLEX_M10K_LUMA_LINE_1280_NAIVE_X8 == 2) &&
+		(PLEX_M10K_LUMA_LINE_1280_PACK40 == 1);
 
 `ifndef SYNTHESIS
 	initial begin
-		if ((1280 * 8) != PLEX_M10K_BITS)
-			$error("plex_m10k_geom: 1280*8 != 10240");
-		if (PLEX_M10K_LUMA_LINE_1280 != 1)
-			$error("plex_m10k_geom: luma line must be 1.0 M10K ideal");
+		// Handbook bit capacity still 10240 — NOT "1280×8 is legal".
+		if (PLEX_M10K_BITS != 10_240)
+			$error("plex_m10k_geom: M10K bits must be 10240");
+		if (PLEX_M10K_BYTES_1K_X8 != 1024)
+			$error("plex_m10k_geom: 1K×8 must be 1024 bytes");
+		if (PLEX_M10K_LUMA_LINE_1280_NAIVE_X8 != 2)
+			$error("plex_m10k_geom: naive 1280×8 line must cost 2 M10K");
+		if (PLEX_M10K_LUMA_LINE_1280_PACK40 != 1)
+			$error("plex_m10k_geom: pack40 1280×8 line must cost 1 M10K");
+		// RETRACTED false control: 1280*8==10240 as "legal 1 block" — FORBIDDEN.
+		if ((1280 * 8) == PLEX_M10K_BITS && PLEX_M10K_LUMA_LINE_1280_NAIVE_X8 == 1)
+			$error("retracted false premise: naive line must not be 1 M10K");
 		if (!cfg_ok)
-			$error("present_nn_linebuf_scaler cfg_ok=0 M10K_IDEAL=%0d", M10K_IDEAL);
+			$error("present_nn_linebuf_scaler cfg_ok=0 bit=%0d naive=%0d",
+				M10K_BIT_IDEAL, M10K_NAIVE_X8);
 	end
 `endif
 
@@ -174,6 +199,7 @@ module present_nn_linebuf_scaler #(
 
 	(* noprune *) wire        cfg_ok_k = cfg_ok;
 	(* noprune *) wire [15:0] m10k_k   = m10k_ideal_c;
+	(* noprune *) wire [15:0] m10k_nx8 = m10k_naive_x8_c;
 
 endmodule
 

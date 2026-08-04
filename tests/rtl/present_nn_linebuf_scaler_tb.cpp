@@ -53,16 +53,22 @@ int main(int argc, char** argv) {
 		tick(top);
 
 	if (!top.cfg_ok) {
-		std::fprintf(stderr, "FAIL cfg_ok=0 m10k=%u\n", top.m10k_ideal_c);
+		std::fprintf(stderr, "FAIL cfg_ok=0 m10k_bit=%u naive=%u\n", top.m10k_ideal_c, top.m10k_naive_x8_c);
 		return 1;
 	}
-	// Default LINE_HOLD=2, 1280*24*2/10240 = 6
+	// Bit-ideal lower bound: LINE_HOLD=2, 1280*24*2/10240 = 6
+	// Naive 1K×8 RGB: 2 * 3 * ceil(1280/1024) = 12
 	if (top.m10k_ideal_c != 6) {
-		std::fprintf(stderr, "FAIL m10k_ideal want 6 got %u\n", top.m10k_ideal_c);
+		std::fprintf(stderr, "FAIL m10k_bit_ideal want 6 got %u\n", top.m10k_ideal_c);
 		return 1;
 	}
-	std::printf("OK m10k_ideal_c=%u cfg_ok=1 (1280*8=10240 control via RTL initial)\n",
-	            top.m10k_ideal_c);
+	if (top.m10k_naive_x8_c != 12) {
+		std::fprintf(stderr, "FAIL m10k_naive_x8 want 12 got %u\n", top.m10k_naive_x8_c);
+		return 1;
+	}
+	std::printf("OK m10k bit_ideal=%u naive_x8=%u cfg_ok=1 "
+	            "(handbook: 1K×8=1024B; 1280 line needs 2 M10K/plane)\n",
+	            top.m10k_ideal_c, top.m10k_naive_x8_c);
 
 	// Write one content line: pixel = (x, x^0x55, 255-x) in low 24b
 	for (uint32_t x = 0; x < cw; x++) {
@@ -132,8 +138,9 @@ int main(int argc, char** argv) {
 		std::fprintf(stderr, "FAIL glass_hits=%u want %u\n", top.rd_bw_glass_hits, dw);
 		return 1;
 	}
-	std::printf("PASS present_nn_linebuf_scaler checked=%d lines=1 hits=%u m10k=6\n",
-	            checked, top.rd_bw_glass_hits);
+	std::printf("PASS present_nn_linebuf_scaler checked=%d lines=1 hits=%u "
+	            "m10k_bit=%u naive=%u\n",
+	            checked, top.rd_bw_glass_hits, top.m10k_ideal_c, top.m10k_naive_x8_c);
 	return 0;
 #endif
 }
