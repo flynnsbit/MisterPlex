@@ -1,0 +1,35 @@
+{
+  "description": "Pre-fit reachability for fit release + historical prune teeth.",
+  "roots": [
+    "sys_top",
+    "emu"
+  ],
+  "critical_modules": [
+    "decode_stub",
+    "stream_path",
+    "ddr_frame_store",
+    "present_core",
+    "plex_rbf_build_id"
+  ],
+  "expect_reachable": [
+    "decode_stub",
+    "stream_path",
+    "ddr_frame_store",
+    "present_core",
+    "plex_rbf_build_id"
+  ],
+  "teeth_non_reachable": [
+    "h264_decode_top",
+    "h264_decode_core",
+    "h264_intra_nb_ctx",
+    "h264_decode_skeleton",
+    "h264_cavlc_residual_block",
+    "h264_cavlc_nc_predictor"
+  ],
+  "notes": [
+    "critical_modules/expect_reachable: product-path modules that must be REACHABLE for fit release (rc=0).",
+    "teeth_non_reachable: historical decoder/CAVLC hole \u2014 must remain ABSENT/NOT_IN_QIP/PRUNED until deliberately landed and moved into critical.",
+    "Proves presence/reachability only \u2014 not correctness, STA, or post-fit survival (FIT_RPT stage separate).",
+    "When fabric decode replaces decode_stub: move decoder modules from teeth \u2192 critical and remove decode_stub from critical."
+  ]
+}

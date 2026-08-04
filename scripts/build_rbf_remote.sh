@@ -100,9 +100,13 @@ printf 'Remote processors: %s\n' "${PROCESSORS:-preserve-qsf}"
 printf 'Reference RBF: %s\n' "${REFERENCE_RBF:-UNVERIFIED-OVERRIDE}"
 
 printf 'Running fast pre-synthesis gates before taking remote Quartus slot...\n'
+# Stamp fabric build-id params from this tree before rsync/fit.
+python3 "$ROOT/scripts/gen_rbf_build_id_vh.py" --root "$ROOT"
 "$ROOT/scripts/check_define_parity.py"
 "$ROOT/scripts/check_quartus_sv_subset.py" $("$ROOT/scripts/rtl_lint.py" --list-files)
 "$ROOT/scripts/check_verilator_elab.py"
+# Prefit reachability: critical modules must be in QIP AND root-reachable (not pruned).
+python3 "$ROOT/scripts/check_prefit_reachability.py" --root "$ROOT"
 
 ssh "$HOST" bash -s -- "$REMOTE_SLOT" "$REMOTE_PROJECT" "$REMOTE_DEV" <<'REMOTE_PREP'
 set -euo pipefail
@@ -298,3 +302,18 @@ printf 'Artifacts: %s\n' "$([[ "$COPY_BACK" == "1" ]] && printf '%s' "$LOCAL_OUT
 printf 'Plex.rbf md5: %s\n' "$MD5"
 printf 'Negative-slack rows: %s\n' "$NEG_SLACK_COUNT"
 printf 'Logic utilization: %s\n' "${LOGIC_UTILIZATION:-not found}"
+
+# Bind RBF md5 → git commit + QIP list. Registry:
+# release_artifacts/rbf-manifests/<md5>.json so deploy and `rbf_provenance.py device`
+# can answer "what commit built the on-device RBF?"
+if [[ "$COPY_BACK" == "1" && -f "$RBF" ]]; then
+  python3 "$ROOT/scripts/rbf_provenance.py" --root "$ROOT" emit --rbf "$RBF" --builder build_rbf_remote
+  prov_rc=$?
+  echo "rbf_provenance emit true rc=$prov_rc"
+  if [[ "$prov_rc" -ne 0 ]]; then
+    echo "FAIL: could not emit RBF provenance manifest (rc=$prov_rc)" >&2
+    exit "$prov_rc"
+  fi
+else
+  echo "rbf_provenance: SKIP-NOT-PASS (no local RBF copy; COPY_BACK=$COPY_BACK)" >&2
+fi

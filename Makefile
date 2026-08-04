@@ -5,7 +5,7 @@ CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -I$(ROOT)/host
 FFMPEG_CFLAGS := $(shell pkg-config --cflags libavformat libavcodec libavutil 2>/dev/null)
 FFMPEG_LIBS   := $(shell pkg-config --libs libavformat libavcodec libavutil 2>/dev/null)
 
-.PHONY: all preflight unit unit-unlocked unit-rollcall rtl-sim rtl-sim-unlocked rtl-lint verilator-elab quartus-sv-subset define-parity pre-synth-gates post-fit-hierarchy post-fit-timing post-fit-timing-margin timing-exclusion pms-baseline-check pms-baseline-live pms-nal-stats arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools check-core-conf-geometry
+.PHONY: all preflight unit unit-unlocked unit-rollcall rtl-sim rtl-sim-unlocked rtl-lint verilator-elab quartus-sv-subset define-parity pre-synth-gates prefit-reachability prefit-reachability-selftest rbf-provenance rbf-provenance-selftest rbf-what-built post-fit-hierarchy post-fit-timing post-fit-timing-margin timing-exclusion pms-baseline-check pms-baseline-live pms-nal-stats arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools check-core-conf-geometry
 
 all: unit
 
@@ -17,6 +17,8 @@ help:
 	@echo "  make verilator-elab - run fast Verilator elaboration guard for synthesis-fatal owned RTL errors"
 	@echo "  make quartus-sv-subset - curated Quartus SV subset guard plus fast Verilator elaboration"
 	@echo "  make define-parity - Quartus↔Verilator macros + host/RTL DDR geometry constants"
+	@echo "  make prefit-reachability - QIP+root-instantiation reachability (CAVLC prune class)"
+	@echo "  make rbf-provenance - emit/verify RBF↔git manifest; rbf-what-built MD5=..."
 	@echo "  make pre-synth-gates - run define parity + fast pre-Quartus RTL buildability gates"
 	@echo "  make post-fit-hierarchy FIT_RPT=... [MAP_RPT=...] [COMPILE_LOG=...] - critical fitted-module guard"
 	@echo "  make post-fit-timing STA_RPT=... - fail negative Quartus timing slack"
@@ -163,6 +165,8 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_plex_browse.sh
 	$(ROOT)/tests/unit/test_play_file_delivery.sh
 	$(ROOT)/tests/unit/test_no_private_data.sh
+	$(ROOT)/tests/unit/test_rbf_provenance.sh
+	$(ROOT)/tests/unit/test_plex_rbf_build_id_rtl_sim.sh
 	python3 $(ROOT)/tests/unit/test_gate_false_green_guard.py
 	$(ROOT)/tests/unit/test_capture_rig.sh
 	$(ROOT)/tests/unit/test_avsync_measure_hdmi.sh
@@ -270,7 +274,22 @@ quartus-sv-subset:
 define-parity:
 	$(ROOT)/scripts/check_define_parity.py
 
-pre-synth-gates: define-parity quartus-sv-subset
+pre-synth-gates: define-parity quartus-sv-subset prefit-reachability
+
+prefit-reachability:
+	python3 $(ROOT)/scripts/check_prefit_reachability.py
+
+prefit-reachability-selftest:
+	python3 $(ROOT)/scripts/check_prefit_reachability.py --self-test
+
+rbf-provenance:
+	python3 $(ROOT)/scripts/rbf_provenance.py selftest
+
+rbf-provenance-selftest: rbf-provenance
+
+rbf-what-built:
+	@test -n "$(MD5)" || (echo "usage: make rbf-what-built MD5=<rbf_md5>" >&2; exit 2)
+	python3 $(ROOT)/scripts/rbf_provenance.py lookup --md5 "$(MD5)"
 
 post-fit-hierarchy:
 	@if [ -z "$(FIT_RPT)" ]; then echo "FIT_RPT is required" >&2; exit 2; fi

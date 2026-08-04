@@ -1,0 +1,24 @@
+lane=w-fitgate
+branch=w-fitgate-clean
+base=origin/main@85bef583
+GRANT=NO
+
+WITHDRAWAL: "make unit rc=2 pre-existing rtl_lint drift" was WRONG.
+Evidence:
+  merge-base(w-fitgate, origin/main)=85bef583 (=main tip) — not stale base.
+  Dirty branch had foreign w-scaler RTL → lint/unit red.
+  Clean port onto main: make unit true rc=0.
+
+.sv: plex_rbf_build_id.sv + Plex.sv instance + params.vh
+IN_QIP=yes INSTANTIATED=yes ENABLED=yes ON_MAIN=pending-PR
+prefit full true rc=0 (product critical REACHABLE; teeth decoder PRUNED)
+prefit selftest true rc=0 (CAVLC PRUNED tooth)
+provenance selftest true rc=0
+build_id rtl sim true rc=0
+make unit true rc=0
+
+Prefit green definition (fit slot):
+  critical_modules+expect_reachable all REACHABLE AND teeth_non_reachable
+  stay ABSENT/NOT_IN_QIP/PRUNED. Product set today: decode_stub,stream_path,
+  ddr_frame_store,present_core,plex_rbf_build_id. Decoder stays teeth until
+  deliberately promoted. Post-fit survival still needs FIT_RPT.
