@@ -23,8 +23,8 @@
 `endif
 
 module present_core #(
-	parameter int FRAME_W = 320,
-	parameter int FRAME_H = 240,
+	parameter int FRAME_W = 1280,
+	parameter int FRAME_H = 720,
 	parameter int FRAME_STRIDE = FRAME_W,
 	parameter int SDRAM_REFRESH_CYCLES = 780,
 	// Template/FBAR paint window (colorbars DE). Defaults reproduce v0.3.0 /
@@ -409,9 +409,11 @@ module present_core #(
 	localparam [15:0] FRAME_LAST_Y_16 = 16'(FRAME_H - 1);
 
 	// Stretch FRAME_W×FRAME_H frame_store across full Template DE — match colorbars in_content.
-	// Origin T7: NATIVE_V_1TO1 maps store_y=vc when FRAME_H>240 (product 640×480).
+	// Origin T7: NATIVE_V_1TO1 maps store_y=vc when FRAME_H>240 (product 1280×720 or 640×480).
 	// Land: TPL_* params + L4/BEAM_960 ifdef arms (default-OFF macros).
 	// Defaults: TPL_H_DE=529 TPL_V_STORE=240 — bit-identical legacy when FRAME_H<=240.
+	// Full unique FRAME_W columns need H_DE>=FRAME_W (w-clock timing path); STORE_X still
+	// samples H_DE of FRAME_W via mul-shift on the Template DE until that lands.
 	localparam H_DE    = 10'(TPL_H_DE);
 	localparam bit NATIVE_V_1TO1 = (FRAME_H > 240);
 	localparam int V_STORE_I = NATIVE_V_1TO1 ? FRAME_H : TPL_V_STORE;
@@ -419,7 +421,7 @@ module present_core #(
 	localparam [9:0] V_STORE_LAST = 10'(V_STORE_I - 1);
 	localparam int STORE_X_SCALE = (FRAME_W * TPL_STORE_X_MUL) / TPL_SCALE_REF_W;
 	localparam int STORE_Y_SCALE = (FRAME_H * 65536) / V_STORE_I;
-	// Beam Y: native 480 uses full vc; legacy 240 halves when scandoubled.
+	// Beam Y: native canvas uses full vc; legacy 240 halves when scandoubled.
 	wire [9:0] py = NATIVE_V_1TO1 ? vc : (scandouble ? (vc >> 1) : vc);
 `ifdef PLEX_PRESENT_720P_L4
 	// L4: present_content_window owns store map (identity when content==DE).
@@ -680,7 +682,7 @@ module present_core #(
 	// Each extra clk of lag eats ~0.6 of a source column off the left and repeats it
 	// on the right, which is precisely the right-edge "bar".
 	//
-	// REQUIRES_FIT (DDR_FRAME_STORE @ FRAME_W=640): DE_LAG has NOT been re-swept for
+	// REQUIRES_FIT (DDR_FRAME_STORE @ FRAME_W=1280 product): DE_LAG has NOT been re-swept for
 	// ddr_frame_store's deeper path (rd_visible pipeline + YUV + BRAM). A too-small
 	// lag wraps previous-line right columns onto the left edge (ragged boundary +
 	// left clip). Parent HDMI after ARM stride fix still saw ~44 px per-line left

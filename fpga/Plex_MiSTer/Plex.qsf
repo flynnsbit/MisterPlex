@@ -83,8 +83,8 @@ set_global_assignment -name VERILOG_MACRO "DDR_FRAME_STORE=1"
 # Product netlist: no decode_stub painter / on-chip DPB (reclaim ~268 M10K).
 # stream_path.sv gates the instance; sim builds omit this macro.
 set_global_assignment -name VERILOG_MACRO "PRODUCT_NO_STUB=1"
-set_global_assignment -name VERILOG_MACRO "FRAME_W=640"
-set_global_assignment -name VERILOG_MACRO "FRAME_H=480"
+set_global_assignment -name VERILOG_MACRO "FRAME_W=1280"
+set_global_assignment -name VERILOG_MACRO "FRAME_H=720"
 set_global_assignment -name VERILOG_MACRO "FRAME_LINES_8=1"
 # 720p / ascal-native present path — DEFAULT OFF (v0.3.0 baseline must not change).
 # Parent enables in a granted fit QSF only.
