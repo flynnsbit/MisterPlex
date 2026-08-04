@@ -115,3 +115,30 @@ Unless the parent **explicitly** resolves the conflict in writing, treat **both*
 
 as hard blockers on releasing the exclusive Quartus slot. Parent wording that
 names only nostub does **not** clear the w-osd blocker (rd-duck).
+
+#### w-osd blocker — rd-duck NACK (not CLOSED)
+
+A stress test that “eventually completes requests” is **not** enough to clear
+this blocker. Fitgate will not treat G0/G1 as green until the following are
+fixed and re-proven (rd-duck source audit):
+
+1. **G1 must assert `underrun_count==0` and an output/checksum** — otherwise
+   stale/black lines can pass while all requests eventually complete.
+2. **G1 must bound work, not only floor it** — `payload>=172800` plus
+   blocked/busy is insufficient; need a **payload upper bound** and a hard
+   cycle budget (e.g. `ddr_cycles` ceiling). A 3× reread or missed-vsync frame
+   that still finishes inside a loose wall timeout must **fail**.
+3. **G0 beat conservation must be tight** — a `[1×,3×]` band is too loose;
+   unexplained +320 beats must be derived and locked; assert exact/tight
+   conservation **including returned beats**.
+4. **Label the clocking honestly** — driving `825×750` groups at 20 MHz
+   (≈32.3 fps) **bypasses product rate-match** and is **not** product PPC2 @24
+   integration. Conservative isolated-reader stress is allowed only if labeled
+   as such; it does not substitute for product-path proof.
+5. **Criterion changes require re-prereg + negative mutant** — if the G1 wall
+   criterion moved after a preregistered miss, prereg the corrected criterion
+   and prove discrimination with a **negative stall mutant** that forces
+   deadline/underrun failure.
+
+Until those land, `BLOCKER_W_OSD_720P_REAL_READER` stays **required** and
+`FIT_SLOT_GRANT=NO`.

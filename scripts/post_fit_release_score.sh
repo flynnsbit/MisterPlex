@@ -113,8 +113,16 @@ fi
 # 8) Fit-release blockers (rd-duck: both required unless parent explicitly resolves)
 echo "=== FIT_RELEASE_BLOCKERS (not scored green by this script) ==="
 echo "BLOCKER_NOSTUB_RECLAIM=required  # PRODUCT_NO_STUB land + post-fit decode_stub ABSENT"
-echo "BLOCKER_W_OSD_720P_REAL_READER=required  # full 1280x720 real L4 reader @20:90 WITH stalls"
-echo "FIT_SLOT_GRANT=NO until BOTH blockers green (parent hardware + FIT_RPT)"
+echo "BLOCKER_W_OSD_720P_REAL_READER=required  # full 1280x720 real L4 @20:90+stalls — NOT CLOSED"
+echo "W_OSD_NACK_rd_duck=active  # do not clear blocker on current G0/G1 stress alone"
+echo "W_OSD_ACCEPT_underrun_count_eq_0=required"
+echo "W_OSD_ACCEPT_output_or_checksum=required  # stale/black lines must fail"
+echo "W_OSD_ACCEPT_payload_upper_bound=required  # not payload>=172800 alone"
+echo "W_OSD_ACCEPT_ddr_cycles_budget=required  # e.g. ddr_cycles bound; no unbounded reread"
+echo "W_OSD_ACCEPT_beat_conservation_tight=required  # G0 [1x,3x] too loose; exact/tight + returned beats"
+echo "W_OSD_ACCEPT_product_rate_or_labeled_stress=required  # 825*750@20MHz=32.3fps ≠ product 24/PPC2"
+echo "W_OSD_ACCEPT_prereg_deadline_plus_NEG_stall_mutant=required  # discrimination after criterion change"
+echo "FIT_SLOT_GRANT=NO until BOTH blockers green (parent + FIT_RPT); w-osd NACK stands"
 
 echo "=== SCORE SUMMARY ==="
 if [[ "$fail" -ne 0 ]]; then
