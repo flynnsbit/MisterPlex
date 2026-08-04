@@ -271,6 +271,31 @@ def main() -> int:
     print(f"OK THREE-LANE LOCK agreed_by={agreed} pending_ack=[]")
     print(f"OK rtl {svh.relative_to(ROOT)} + quote locked")
 
+
+    # --- rd-duck blocking corrections (w-path ACK) ---
+    idle_c = c.get("rd_duck_idle_sampling_correction") or {}
+    if idle_c.get("status") != "BINDING":
+        return fail("rd_duck_idle_sampling_correction.status must be BINDING")
+    if idle_c.get("concurrent_with_decode") is not False:
+        return fail("49% idle must be marked NOT concurrent with decode")
+    if idle_c.get("kIdlePctSweep116AtRest") != 49.0:
+        return fail("at-rest idle pin must be 49.0")
+    dma_c = c.get("rd_duck_dma_scope_correction") or {}
+    if dma_c.get("status") != "BINDING":
+        return fail("rd_duck_dma_scope_correction.status must be BINDING")
+    if "never touch" not in (dma_c.get("too_strong_claim") or "").lower():
+        return fail("must name too-strong never-touch claim")
+    if "fabric reader" not in (dma_c.get("prefer") or "").lower():
+        return fail("must prefer fabric reader")
+    if "mover" not in (dma_c.get("disprefer") or "").lower():
+        return fail("must disprefer source-bank mover")
+    fitb = c.get("fit_release_blockers") or {}
+    if fitb.get("count") != 2:
+        return fail("fit_release_blockers.count must be 2 (nostub+osd)")
+    if "BOTH" not in str(fitb.get("status", "")).upper():
+        return fail("fit blockers status must require BOTH")
+    print("OK rd-duck: idle=at_rest; DMA=pub_only; prefer fabric reader; fit blockers=2")
+
     print(
         "PASS p720_shared_bw_contract: HEADLINE=33.1776 MB/s/dir "
         "(1.65888 avg ONLY); peaks RGB=6/I420=3; reader_CLOSED hps+T_copy_OPEN; "

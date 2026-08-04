@@ -15,10 +15,20 @@
 //   Pl330Userspace    — LAB ONLY. Raw DMAGO fights live dma-pl330; unbind hung
 //                       the SoC. Not a product path (parent incident 2026-08-03).
 //   KernelDma         — PRODUCT DMA route: dmaengine client / small module
+//                       Retires uncached *publication* memcpy ONLY after pinned
+//                       contiguous/SG + cache-coherency contract (rd-duck).
+//                       Does NOT mean "ARM never touches pixels" — software
+//                       decode/rawvideo still writes a source buffer first.
 //   CpuWriteCombine   — PRODUCT serial upgrade: driver WC map + CPU memcpy
+//   FabricDirectReader— STRATEGIC PREFER (w-mem/fabric): dynamic-base reader of
+//                       decode output; avoids source→bank mover (extra R+W).
 //
 // Ship product glass path is still 960×540 source → fabric upscale → 720p out.
-// True 720p *source* needs KernelDma and/or CpuWriteCombine ≥ ~230 MiB/s.
+// True 720p *source* needs KernelDma and/or CpuWriteCombine ≥ ~230 MiB/s, or
+// fabric-direct publish. Source→bank DMA mover is dispreferred (adds traffic).
+//
+// Sweep116 49% idle is IDLE-AT-REST (sampled before decode). Do not budget a
+// free core concurrent with decode until same-window /proc/stat+wait4.
 //
 // Doorbell ordering (absolute): payload FPGA-visible → real barrier → doorbell.
 // Coordinate w-mem: bank/doorbell ABI; fabric_ddr_writer = fabric producer.

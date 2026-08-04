@@ -189,13 +189,16 @@
     "formula_deficit": "T_copy_arm_ms - decode_headroom_ms",
     "meaning": "720p24 does NOT close e2e if decode and sendDdrFrame /dev/mem copy are serial",
     "closure_paths": {
-      "a_overlap": "copy concurrent with decode on free core \u2014 plausible, unproven (parent+rd-duck experiment)",
-      "b_fabric_dma": "fabric fetches/writes frame; ARM never touches payload \u2014 retires all T_copy_arm; strategic priority"
+      "a_overlap": "UNPROVEN. Requires same-window idle+decode. Do NOT assume free core from 49% at-rest.",
+      "b_dma_publication": "KernelDma/WC retires uncached publication memcpy only (not full pixel touch elimination). Needs SG+coherency.",
+      "b_fabric_direct_reader": "PREFERRED strategic: fabric reads decode output at dynamic base; avoids source\u2192bank mover R+W.",
+      "disprefer_source_to_bank_mover": true
     },
     "w_scaler_scope": "present_content_window retires ARM swscale only \u2014 NOT T_copy_arm. Fabric already reads DDR on present; strategic (b) fabric DMA is WRITE side (w-mem/w-path). present-ppc still MANDATORY for MULTI+PPC=2.",
     "solves_for": "CPU_TIME_ms_per_frame_copy",
     "T_copy_arm_ms_full_float": 14.98135653409091,
-    "rounding_note": "Parent published 14.978; full float ~14.981356. Gate allows 0.01 ms."
+    "rounding_note": "Parent published 14.978; full float ~14.981356. Gate allows 0.01 ms.",
+    "idle_pct_sweep116_note": "49% idle is AT REST before decode (busyfix.sh order). NOT concurrent free core. Do not use for overlap (a) budgeting."
   },
   "reference_numbers_one_set": {
     "R_req_720p24_MBps_per_dir": 33.1776,
@@ -319,7 +322,7 @@
   },
   "host_lane_ack": {
     "lane": "w-path",
-    "solves_for": "T_copy_arm_ms and R_req payload rate; not fabric B/clk",
+    "solves_for": "T_copy_arm_ms (publication memcpy CPU TIME) and R_req payload RATE; not fabric B/clk; not free-core-during-decode",
     "ack_w_scaler": "present_content_window retires ARM swscale only \u2014 NOT T_copy_arm. Strategic (b) fabric DMA is WRITE side (w-mem + w-path joint).",
     "product_copy_site": "arm/misterplexd/fpga_spi.cpp sendDdrFrame memcpy",
     "lab_dma": "pl330_mem2mem.hpp + ddr_pl330_ingest_bench (LAB ONLY; no unbind)",
@@ -328,6 +331,31 @@
       "fabric fetch (preferred)"
     ],
     "serial_deficit_ms_pin": 6.016,
-    "tip": "lab main f00fec54+"
+    "tip": "lab main f00fec54+",
+    "rd_duck_ack": "Accepted: idle-before-decode; DMA\u2260never-touch; prefer fabric reader; fit blockers = nostub AND w-osd."
+  },
+  "rd_duck_idle_sampling_correction": {
+    "status": "BINDING",
+    "claim_withdrawn": "budget free core during decode from Sweep116 49% idle",
+    "evidence": "Memory/scratch/busyfix.sh:70 idle_pct then :71 decode \u2014 sequential, not same-window",
+    "kIdlePctSweep116AtRest": 49.0,
+    "concurrent_with_decode": false,
+    "required_for_overlap_budget": "same-window /proc/stat + wait4 during decode"
+  },
+  "rd_duck_dma_scope_correction": {
+    "status": "BINDING",
+    "too_strong_claim": "fabric DMA and ARM never touches frame",
+    "narrow_true_claim": "DMA can retire uncached publication memcpy only after pinned contiguous/SG + cache-coherency contract",
+    "still_writes_pixels": "software decode/rawvideo pipe still writes a source buffer",
+    "prefer": "dynamic-base direct fabric reader",
+    "disprefer": "source\u2192bank mover (adds read+write traffic)"
+  },
+  "fit_release_blockers": {
+    "status": "BOTH_REQUIRED_UNLESS_PARENT_RESOLVES",
+    "blockers": [
+      "w-nostub reclaim (decode_stub strip / ALM M10K)",
+      "w-osd full 1280x720 real-reader @20:90 with injected stalls"
+    ],
+    "count": 2
   }
 }

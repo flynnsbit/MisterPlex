@@ -11,6 +11,20 @@
 // bank (fpga_spi.cpp sendDdrFrame copy). That is a CPU store into the uncached
 // frame bank — same class as the ddr_write_bench measurement.
 //
+// rd-duck BLOCKING corrections (2026-08-03, accepted by w-path):
+//   A) Sweep116 "49% idle" was sampled BEFORE decode, not during it
+//      (Memory/scratch/busyfix.sh:70 idle_pct then :71 decode). Do NOT budget a
+//      free core concurrent with decode. Simultaneous CPU availability is
+//      UNKNOWN until same-window /proc/stat + wait4. kIdlePctSweep116 is an
+//      idle-at-rest pin only.
+//   B) "Fabric DMA ⇒ ARM never touches the frame" is TOO STRONG. Software
+//      decode/rawvideo pipe still writes pixels somewhere. DMA can retire the
+//      uncached *publication* memcpy only after pinned contiguous/SG +
+//      cache-coherency contract. Prefer dynamic-base direct fabric reader over
+//      a source→bank mover (mover adds read+write traffic).
+//   C) Fit release: BOTH w-nostub reclaim AND w-osd full 720p 20:90 stalled
+//      real-reader proof are blockers unless parent explicitly resolves.
+//
 // Caveat (rd-duck): child FFmpeg may overlap decode with the parent present
 // thread through the pipe, so product throughput is NOT proven equal to the
 // serial sum. Serial sum is a HARD UPPER bound on "no overlap"; with partial
@@ -23,7 +37,8 @@
 //   2) Decode-only headroom after Sweep 116 is 41.667-32.705 = 8.962 ms/f.
 //   3) 8.962 < 14.978 → copy cannot hide entirely inside decode headroom.
 //   4) Making memcpy faster via O_SYNC/flags is DEAD (Sweep 11).
-//   5) Fabric decode or non-CPU (DMA/PL330) move is required for a true fit.
+//   5) Publication memcpy retirement needs KernelDma/WC or fabric reader —
+//      not "ARM free during decode" hope from idle-at-rest %.
 
 #pragma once
 
@@ -87,6 +102,36 @@ inline constexpr double kSerialDeficitSweep118Ms =
 // Payload RATE (not interchangeable with T_copy_arm CPU time).
 inline constexpr double kPayloadRate720p24MBps =
     static_cast<double>(kFrameBytes720pI420) * 24.0 / 1e6; // 33.1776
+
+// Sweep 116 idle% is IDLE-AT-REST (busyfix.sh samples idle BEFORE decode).
+// NOT concurrent free-core during decode. Do not use for overlap budgeting.
+inline constexpr double kIdlePctSweep116AtRest = 49.0;
+inline constexpr bool kIdlePctSweep116IsConcurrentWithDecode = false;
+
+// What DMA can retire (narrow claim): uncached publication memcpy only.
+// Decode/rawvideo pipe still produces pixels in some buffer first.
+inline constexpr bool kDmaRetiresPublicationMemcpyOnly = true;
+inline constexpr bool kDmaMeansArmNeverTouchesPixels = false; // TOO STRONG — forbidden claim
+
+// Prefer fabric reader of decode output (dynamic base) over HPS source→bank mover.
+enum class PreferredPublishPath : unsigned char {
+    CpuSerialDevMem = 0,       // product today — T_copy_arm structural
+    KernelDmaOrWriteCombine = 1, // retires publication memcpy if coherency OK
+    FabricDirectReader = 2,    // preferred strategic: fabric reads decode buffer
+    SourceToBankMover = 3,     // DISPREFERRED — adds read+write traffic
+};
+inline constexpr PreferredPublishPath kStrategicPublishPreference =
+    PreferredPublishPath::FabricDirectReader;
+inline constexpr bool kSourceToBankMoverPreferred = false;
+
+// Fit-release blockers (rd-duck): both unless parent explicitly drops one.
+inline constexpr bool kFitBlockerNostubReclaim = true;
+inline constexpr bool kFitBlockerOsd720pRealReader2090Stalled = true;
+inline constexpr int kFitReleaseBlockerCount = 2; // nostub + w-osd
+
+// Overlap (a) is UNPROVEN: requires same-window idle+decode measurement.
+inline constexpr bool kDecodeCopyOverlapProven = false;
+inline constexpr bool kMayBudgetFreeCoreDuringDecode = false;
 
 } // namespace p720_budget
 } // namespace misterplex

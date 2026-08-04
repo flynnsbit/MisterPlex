@@ -67,11 +67,30 @@ int main() {
     CHECK(kSerialDeficitSweep118Ms > 0.0, "serial path still short of 24fps");
     CHECK(std::fabs(kPayloadRate720p24MBps - 33.1776) < 0.001, "R_req ~33.18 MB/s");
 
+    // rd-duck blocking: idle% is at-rest, not concurrent with decode.
+    CHECK(std::fabs(kIdlePctSweep116AtRest - 49.0) < 1e-9, "idle-at-rest pin 49%");
+    CHECK(!kIdlePctSweep116IsConcurrentWithDecode, "49% must NOT mean free core in decode");
+    CHECK(!kMayBudgetFreeCoreDuringDecode, "forbid free-core-during-decode budget");
+    CHECK(!kDecodeCopyOverlapProven, "overlap unproven");
+
+    // DMA scope: publication memcpy only — not "ARM never touches pixels".
+    CHECK(kDmaRetiresPublicationMemcpyOnly, "DMA retires publication memcpy");
+    CHECK(!kDmaMeansArmNeverTouchesPixels, "forbid never-touches-pixels claim");
+    CHECK(kStrategicPublishPreference == PreferredPublishPath::FabricDirectReader,
+          "prefer fabric direct reader");
+    CHECK(!kSourceToBankMoverPreferred, "source→bank mover dispreferred");
+
+    // Fit release: BOTH blockers unless parent resolves.
+    CHECK(kFitBlockerNostubReclaim && kFitBlockerOsd720pRealReader2090Stalled,
+          "both fit blockers armed");
+    CHECK(kFitReleaseBlockerCount == 2, "two fit blockers");
+
     if (fails) {
         std::printf("test_p720_e2e_budget: %d FAIL(s)\n", fails);
         return 1;
     }
-    std::printf("test_p720_e2e_budget: OK serial=%.3f>deadline deficit=%.3fms (CPU copy)\n",
-                serial, kSerialDeficitSweep118Ms);
+    std::printf("test_p720_e2e_budget: OK serial=%.3f deficit=%.3f idle=at_rest "
+                "dma=pub_only fit_blockers=%d\n",
+                serial, kSerialDeficitSweep118Ms, kFitReleaseBlockerCount);
     return 0;
 }
