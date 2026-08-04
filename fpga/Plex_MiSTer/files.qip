@@ -58,6 +58,8 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_bank_geom_guard.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_bandwidth_meter.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_contended_bandwidth.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/sdram_line_spill.sv
+# Included by present_core (P720_* contract consumed there — not dead QIP-only).
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/plex_720p_bw_contract.svh
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_core.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/yuv_bt601_npx.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_beam_ppc.sv

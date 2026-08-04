@@ -4,15 +4,17 @@
 // Shipping glass: MULTI + PPC=2 + clk_pix@29.7e6, clk_sys@20e6.
 //
 // STATUS SPLIT (rd-duck binding — do not collapse):
-//   reader_steady_delta: HARNESS (w-clock TB) — NOT CLOSED status
-//     Adopt test_ddr_frame_store_720p_ppc2_bus.sh as starting harness only.
+//   reader_steady_delta: HARNESS_NOT_CLOSED (w-clock TB starting harness only).
 //     G0 counts useful (total_rd=182809 etc); delivery/correctness OPEN until
 //     G1 deadline+upper bound, underrun==0, dual-lane checksum, beat conservation,
 //     RED negative stall. Synthetic scan ~32.3fps bypasses product rate-match.
-//   fullframe_e2e_beat_delta: FILLED (w-mem b53197e5) companion ~38.53 — not pure 33.1776
+//   fullframe_e2e_beat_delta: FILLED_companion_only (fd→fd + elapsed sys window).
+//     38.53 MBps RETRACTED (was beats*8*24). NOT pure 33.1776 closed.
 //   hps_write_concurrent + T_copy_e2e: OPEN (w-mem/w-path/parent)
 //     HOST write is NOT f2sdram — archive /dev/mem 1382400 B = 14.978 ms/f CPU TIME
-//   Forbidden: claim reader CLOSED; claim fabric_bw_closed; unsplit proof_gap slogans
+//   Consumed by present_core.sv (include + keep + elab) — not dead QIP-only.
+//   Forbidden: reader CLOSED; fabric_bw_closed; free-core-during-decode;
+//     ARM-never-touches-frame; 38.53 as established rate.
 // rd-duck: 33.1776/66.3552/0.09216 = frame-store payload / ideal 64b port math ONLY.
 // NOT measured sustainable DDR BW; NOT total controller traffic; HPS write not RTL beats.
 //

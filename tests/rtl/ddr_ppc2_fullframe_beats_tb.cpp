@@ -185,6 +185,8 @@ struct RunResult {
 };
 
 RunResult runCase(const char* name, int stall_after, int hog_period, int hog_len) {
+	// rd-duck: do NOT clear at arbitrary doorbell then *24 for MB/s.
+	// Steady metric: frames_done N -> N+1 beat delta + elapsed sys_cyc.
 	RunResult r;
 	BusModel sim;
 	sim.stall_after_accept = stall_after;
@@ -192,60 +194,78 @@ RunResult runCase(const char* name, int stall_after, int hog_period, int hog_len
 	sim.hog_len = hog_len;
 	sim.fillBank(0);
 	sim.resetCore();
-	// Warm prep window before doorbell.
+	// Warm + first doorbell so has_frame / prep can settle.
 	for (int i = 0; i < 20000; ++i)
 		sim.tickSys();
 	sim.ringDoorbell(0, 1);
-	sim.clearStats();
-	const uint16_t fd0 = sim.top.frames_done;
 
-	// Drive until frames_done advances, then one full glass frame for scan e2e.
-	const int kMaxSys = kHTotal * (kActH + kVBlank) * 8; // plenty of headroom
+	const int kMaxSys = kHTotal * (kActH + kVBlank) * 12;
+	// Wait until first frames_done advance (prep excluded from rate window).
+	uint16_t fd_a = sim.top.frames_done;
+	bool got_a = false;
 	for (int i = 0; i < kMaxSys; ++i) {
 		sim.tickSys();
-		if (!sim.saw_fd && sim.top.frames_done > fd0 && sim.top.has_frame) {
-			sim.saw_fd = true;
-			sim.beats_at_fd = sim.accepted_rd_beats;
-			// Continue one more full vertical period for scanout refill accounting.
-			const int scan_left = kHTotal * (kActH + kVBlank) / kPpc + kHTotal;
-			for (int s = 0; s < scan_left; ++s)
-				sim.tickSys();
-			sim.beats_at_scan_end = sim.accepted_rd_beats;
+		if (sim.top.frames_done > fd_a && sim.top.has_frame) {
+			got_a = true;
+			fd_a = sim.top.frames_done;
 			break;
 		}
 	}
-	if (!sim.saw_fd) {
-		// Fallback: drain remaining budget once more
-		for (int i = 0; i < kHTotal * (kActH + kVBlank); ++i)
-			sim.tickSys();
-		if (sim.top.frames_done > fd0) {
+	if (!got_a) {
+		r.ok = false;
+		std::printf("CASE %s FAIL no first frames_done\n", name);
+		return r;
+	}
+
+	// Steady window start: clear beat counters at frames_done boundary.
+	sim.clearStats();
+	const uint64_t sys0 = sim.sys_cycles;
+	const uint64_t ddr0 = sim.ddr_cycles;
+	const uint64_t beats0 = sim.accepted_rd_beats;
+	sim.beats_at_fd = 0;
+	sim.saw_fd = false;
+
+	// Next frames_done = one product present cadence step under this TB beam.
+	bool got_b = false;
+	for (int i = 0; i < kMaxSys; ++i) {
+		sim.tickSys();
+		if (sim.top.frames_done > fd_a) {
+			got_b = true;
 			sim.saw_fd = true;
-			sim.beats_at_fd = sim.accepted_rd_beats;
-			sim.beats_at_scan_end = sim.accepted_rd_beats;
+			sim.beats_at_fd = sim.accepted_rd_beats - beats0;
+			sim.beats_at_scan_end = sim.accepted_rd_beats - beats0;
+			break;
 		}
 	}
 
-	r.sys_cyc = sim.sys_cycles;
-	r.ddr_cyc = sim.ddr_cycles;
-	r.rd_beats = sim.accepted_rd_beats;
+	r.sys_cyc = sim.sys_cycles - sys0;
+	r.ddr_cyc = sim.ddr_cycles - ddr0;
+	r.rd_beats = sim.accepted_rd_beats - beats0;
 	r.beats_fd = sim.beats_at_fd;
-	r.beats_e2e = sim.beats_at_scan_end ? sim.beats_at_scan_end : sim.accepted_rd_beats;
+	r.beats_e2e = sim.beats_at_scan_end;
 	r.underrun = sim.top.underrun_count;
 	r.n_valid = sim.n_valid;
 	r.rd_blocked = sim.rd_want_while_busy;
 	r.max_burst = sim.max_burst;
-	r.ok = sim.saw_fd && (r.beats_e2e > 0);
+	r.ok = got_b && (r.beats_e2e > 0);
 
 	const int64_t overhead = int64_t(r.beats_e2e) - int64_t(kPayloadBeats);
+	// Actual window rate from elapsed sim time (clk_sys 20 MHz) — NOT beats*8*24.
+	// TB CEA scan ~32.3 fps (rd-duck): window_MBps is NOT product 24 fps delivery rate.
+	const double sec = r.sys_cyc ? (double(r.sys_cyc) / 20e6) : 0.0;
+	const double window_MBps =
+		(sec > 0.0) ? (double(r.beats_e2e) * 8.0 / sec) / 1e6 : 0.0;
 	std::printf(
-		"CASE %s EXECUTED stall=%d hog=%d/%d sys_cyc=%llu ddr_cyc=%llu "
-		"beats_at_fd=%llu beats_e2e=%llu payload=%llu overhead=%lld "
+		"CASE %s EXECUTED stall=%d hog=%d/%d sys_cyc_window=%llu ddr_cyc_window=%llu "
+		"beats_fd_to_fd=%llu payload=%llu overhead=%lld "
+		"window_MBps_from_elapsed=%.4f TB_beam_not_24fps "
+		"(NOT beats*8*24; NOT product delivery; NOT sustainable DDR) "
 		"underrun=%llu n_valid=%llu max_burst=%llu rd_blocked=%llu "
 		"frames=%u has_frame=%u ratio_ddr_sys=%.3f\n",
 		name, stall_after, hog_period, hog_len, (unsigned long long)r.sys_cyc,
-		(unsigned long long)r.ddr_cyc, (unsigned long long)r.beats_fd,
-		(unsigned long long)r.beats_e2e, (unsigned long long)kPayloadBeats,
-		(long long)overhead, (unsigned long long)r.underrun, (unsigned long long)r.n_valid,
+		(unsigned long long)r.ddr_cyc, (unsigned long long)r.beats_e2e,
+		(unsigned long long)kPayloadBeats, (long long)overhead, window_MBps,
+		(unsigned long long)r.underrun, (unsigned long long)r.n_valid,
 		(unsigned long long)r.max_burst, (unsigned long long)r.rd_blocked,
 		(unsigned)sim.top.frames_done, (unsigned)sim.top.has_frame,
 		r.sys_cyc ? double(r.ddr_cyc) / double(r.sys_cyc) : 0.0);
@@ -280,13 +300,17 @@ int main(int argc, char** argv) {
 	const double ratio = g0.sys_cyc ? double(g0.ddr_cyc) / double(g0.sys_cyc) : 0.0;
 	if (ratio < 4.2 || ratio > 4.8)
 		return fail("G0 clock ratio not ~4.5 (20:90)");
-	std::printf("PASS G0 full720 beats_e2e=%llu payload=%llu overhead=%lld ratio=%.3f\n",
+	std::printf("PASS G0 full720 beats_fd_to_fd=%llu payload=%llu overhead=%lld ratio=%.3f\n",
 				(unsigned long long)g0.beats_e2e, (unsigned long long)kPayloadBeats,
 				(long long)g0.beats_e2e - (long long)kPayloadBeats, ratio);
-	// Effective fabric MB/s if this e2e cost every 1/24 s
-	const double e2e_B = double(g0.beats_e2e) * 8.0;
-	const double e2e_MBps = e2e_B * 24.0 / 1e6;
-	std::printf("MEAS G0 fabric_e2e_MBps=%.4f (payload 33.1776 + overhead)\n", e2e_MBps);
+	// rd-duck: NEVER report beats*8*24 as established MB/s (cleared phase was wrong).
+	const double sec = g0.sys_cyc ? (double(g0.sys_cyc) / 20e6) : 0.0;
+	const double window_MBps =
+		(sec > 0.0) ? (double(g0.beats_e2e) * 8.0 / sec) / 1e6 : 0.0;
+	std::printf("MEAS G0 window_MBps_from_elapsed_sys=%.4f sys_cyc=%llu "
+				"(NOT beats*8*24; NOT claimed closed sustainable DDR)\n",
+				window_MBps, (unsigned long long)g0.sys_cyc);
+	std::printf("NOTE prior 38.53 MBps figure RETRACTED (was beats*8*24 without elapsed norm)\n");
 	if (g0.ddr_cyc > kBudgetDdrCyc24 * 2)
 		return fail("G0 used >2 frame-times of ddr cycles (loose bound)");
 	std::printf("PASS G0 under_loose_ddr_budget ddr_cyc=%llu budget_1f=%llu\n",

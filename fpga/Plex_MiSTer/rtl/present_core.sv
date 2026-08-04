@@ -402,14 +402,44 @@ module present_core #(
 `include "ddr_frame_layout_params.svh"
 	// Shared 720p DDR ABI tier (L4 OR MULTI@1280×720). See plex_ddr_720p_tier.svh.
 	`include "plex_ddr_720p_tier.svh"
+	// ONE agreed BW/ABI contract — must be consumed (not files.qip-only dead params).
+	`include "plex_720p_bw_contract.svh"
+	// Elab-time: 720p tier FS_* must match P720_* (rd-duck: dead localparams ≠ fabric work).
 	// synthesis translate_off
 	initial begin
 		if (PLEX_DDR_720P_TIER && (FRAME_LINE_COUNT < FS_LINE_COUNT_MIN_720P))
 			$error("present_core: 720p tier needs LINE_COUNT>=%0d (got %0d) — MULTI@2px/20MHz blackout",
 				FS_LINE_COUNT_MIN_720P, FRAME_LINE_COUNT);
+		if (PLEX_DDR_720P_TIER && (FRAME_LINE_COUNT < P720_LINE_COUNT))
+			$error("present_core: P720 contract LINE_COUNT=%0d not met (got %0d)",
+				P720_LINE_COUNT, FRAME_LINE_COUNT);
+		if (PLEX_DDR_720P_TIER && (FS_CODED_W != P720_CODED_W || FS_CODED_H != P720_CODED_H))
+			$error("present_core: FS_CODED %0dx%0d != P720 %0dx%0d",
+				FS_CODED_W, FS_CODED_H, P720_CODED_W, P720_CODED_H);
+		if (PLEX_DDR_720P_TIER && (FS_BANK_STRIDE != P720_BANK_STRIDE))
+			$error("present_core: FS_BANK_STRIDE 0x%0x != P720 0x%0x",
+				FS_BANK_STRIDE, P720_BANK_STRIDE);
+		if (PLEX_DDR_720P_TIER && (FS_DOORBELL != P720_DOORBELL_PHYS))
+			$error("present_core: FS_DOORBELL 0x%0x != P720 0x%0x",
+				FS_DOORBELL, P720_DOORBELL_PHYS);
+		if (PLEX_DDR_720P_TIER && (FS_PHYS_BASE != DDR_FRAME_720P_PHYS_BASE))
+			$error("present_core: FS_PHYS_BASE 0x%0x != DDR_FRAME_720P_PHYS_BASE 0x%0x",
+				FS_PHYS_BASE, DDR_FRAME_720P_PHYS_BASE);
 	end
 	// synthesis translate_on
-	(* noprune *) wire plex_ddr_720p_tier_obs = PLEX_DDR_720P_TIER;
+	// Synthesis-active keep: contract constants reach the netlist when tier is on.
+	(* keep, noprune *) wire [31:0] p720_bw_contract_i420 = P720_I420_BYTES[31:0];
+	(* keep, noprune *) wire [31:0] p720_bw_contract_stride = P720_BANK_STRIDE[31:0];
+	(* keep, noprune *) wire [31:0] p720_bw_contract_doorbell = P720_DOORBELL_PHYS[31:0];
+	(* keep, noprune *) wire        p720_bw_contract_tied =
+		PLEX_DDR_720P_TIER &&
+		(FS_CODED_W == P720_CODED_W) &&
+		(FS_CODED_H == P720_CODED_H) &&
+		(FS_BANK_STRIDE == P720_BANK_STRIDE) &&
+		(FS_DOORBELL == P720_DOORBELL_PHYS) &&
+		(FS_PHYS_BASE == DDR_FRAME_720P_PHYS_BASE) &&
+		(FRAME_LINE_COUNT >= P720_LINE_COUNT);
+	(* noprune *) wire plex_ddr_720p_tier_obs = PLEX_DDR_720P_TIER | p720_bw_contract_tied;
 
 	// N-wide frame-store ports (PPC=1 ⇒ rd_*_n is scalar passthrough).
 	wire [PRESENT_PPC*8-1:0] fs_r_n, fs_g_n, fs_b_n;
