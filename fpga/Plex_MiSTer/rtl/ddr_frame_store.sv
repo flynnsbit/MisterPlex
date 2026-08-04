@@ -945,6 +945,103 @@ module ddr_frame_store #(
 		end
 	end
 
+	// OPT-1 S_IDLE priority pipeline REGISTERED (product residual TAG/LAG):
+	// Cycle N: one-hot pri_*_r from already-registered schedule + reqs only.
+	// Cycle N+1: S_IDLE thin mux on pri_*_r (holdlast mbox-before-cur order).
+	// FORBID: mbox_yield CE on need_*_c; wrap thrash; LEAD_K thrash.
+	reg pri_frame_mbox_r, pri_bank_mbox_r, pri_sched_issue_r;
+	reg pri_y_arm_r, pri_c_arm_r, pri_poll_r, pri_imbox_r, pri_smbox_r, pri_sdram_r;
+	wire bus_ok_c = !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE;
+	always @(posedge clk_ddr) begin
+		if (reset_ddr) begin
+			pri_frame_mbox_r <= 1'b0;
+			pri_bank_mbox_r <= 1'b0;
+			pri_sched_issue_r <= 1'b0;
+			pri_y_arm_r <= 1'b0;
+			pri_c_arm_r <= 1'b0;
+			pri_poll_r <= 1'b0;
+			pri_imbox_r <= 1'b0;
+			pri_smbox_r <= 1'b0;
+			pri_sdram_r <= 1'b0;
+		end else if (state_ddr == S_IDLE) begin
+			// Sample only in S_IDLE so arms match idle decision epoch.
+			// Cascade: first true wins (Option A holdlast order).
+			pri_frame_mbox_r <= frame_mbox_req
+			    && (!frame_mbox_valid || poll_div[7:0] == 8'd224) && bus_ok_c;
+			pri_bank_mbox_r <= !(frame_mbox_req
+			    && (!frame_mbox_valid || poll_div[7:0] == 8'd224) && bus_ok_c)
+			    && bank_mbox_req
+			    && (!bank_mbox_valid || poll_div[7:0] == 8'd160) && bus_ok_c;
+			pri_sched_issue_r <= !(frame_mbox_req
+			    && (!frame_mbox_valid || poll_div[7:0] == 8'd224) && bus_ok_c)
+			    && !(bank_mbox_req
+			    && (!bank_mbox_valid || poll_div[7:0] == 8'd160) && bus_ok_c)
+			    && PIPELINE_REFILL_SCHEDULER && sched_valid;
+			pri_y_arm_r <= !(frame_mbox_req
+			    && (!frame_mbox_valid || poll_div[7:0] == 8'd224) && bus_ok_c)
+			    && !(bank_mbox_req
+			    && (!bank_mbox_valid || poll_div[7:0] == 8'd160) && bus_ok_c)
+			    && !(PIPELINE_REFILL_SCHEDULER && sched_valid)
+			    && ((has_frame_d2 && need_y_cur_r) || sel_y_prep_r);
+			pri_c_arm_r <= !(frame_mbox_req
+			    && (!frame_mbox_valid || poll_div[7:0] == 8'd224) && bus_ok_c)
+			    && !(bank_mbox_req
+			    && (!bank_mbox_valid || poll_div[7:0] == 8'd160) && bus_ok_c)
+			    && !(PIPELINE_REFILL_SCHEDULER && sched_valid)
+			    && !((has_frame_d2 && need_y_cur_r) || sel_y_prep_r)
+			    && ((has_frame_d2 && need_c_cur_r) || sel_c_prep_r);
+			pri_poll_r <= !(frame_mbox_req
+			    && (!frame_mbox_valid || poll_div[7:0] == 8'd224) && bus_ok_c)
+			    && !(bank_mbox_req
+			    && (!bank_mbox_valid || poll_div[7:0] == 8'd160) && bus_ok_c)
+			    && !(PIPELINE_REFILL_SCHEDULER && sched_valid)
+			    && !((has_frame_d2 && need_y_cur_r) || sel_y_prep_r)
+			    && !((has_frame_d2 && need_c_cur_r) || sel_c_prep_r)
+			    && !poll_pending && poll_div[7:0] == 8'd0 && bus_ok_c;
+			pri_imbox_r <= !(frame_mbox_req
+			    && (!frame_mbox_valid || poll_div[7:0] == 8'd224) && bus_ok_c)
+			    && !(bank_mbox_req
+			    && (!bank_mbox_valid || poll_div[7:0] == 8'd160) && bus_ok_c)
+			    && !(PIPELINE_REFILL_SCHEDULER && sched_valid)
+			    && !((has_frame_d2 && need_y_cur_r) || sel_y_prep_r)
+			    && !((has_frame_d2 && need_c_cur_r) || sel_c_prep_r)
+			    && !(!poll_pending && poll_div[7:0] == 8'd0 && bus_ok_c)
+			    && !cmd_empty && poll_div[7:0] == 8'd64 && bus_ok_c;
+			pri_smbox_r <= !(frame_mbox_req
+			    && (!frame_mbox_valid || poll_div[7:0] == 8'd224) && bus_ok_c)
+			    && !(bank_mbox_req
+			    && (!bank_mbox_valid || poll_div[7:0] == 8'd160) && bus_ok_c)
+			    && !(PIPELINE_REFILL_SCHEDULER && sched_valid)
+			    && !((has_frame_d2 && need_y_cur_r) || sel_y_prep_r)
+			    && !((has_frame_d2 && need_c_cur_r) || sel_c_prep_r)
+			    && !(!poll_pending && poll_div[7:0] == 8'd0 && bus_ok_c)
+			    && !(!cmd_empty && poll_div[7:0] == 8'd64 && bus_ok_c)
+			    && mbox_req && poll_div[7:0] == 8'd128 && bus_ok_c;
+			pri_sdram_r <= !(frame_mbox_req
+			    && (!frame_mbox_valid || poll_div[7:0] == 8'd224) && bus_ok_c)
+			    && !(bank_mbox_req
+			    && (!bank_mbox_valid || poll_div[7:0] == 8'd160) && bus_ok_c)
+			    && !(PIPELINE_REFILL_SCHEDULER && sched_valid)
+			    && !((has_frame_d2 && need_y_cur_r) || sel_y_prep_r)
+			    && !((has_frame_d2 && need_c_cur_r) || sel_c_prep_r)
+			    && !(!poll_pending && poll_div[7:0] == 8'd0 && bus_ok_c)
+			    && !(!cmd_empty && poll_div[7:0] == 8'd64 && bus_ok_c)
+			    && !(mbox_req && poll_div[7:0] == 8'd128 && bus_ok_c)
+			    && sdram_mbox_req && poll_div[7:0] == 8'd192 && bus_ok_c;
+		end else begin
+			// Leave S_IDLE: clear so re-entry re-samples.
+			pri_frame_mbox_r <= 1'b0;
+			pri_bank_mbox_r <= 1'b0;
+			pri_sched_issue_r <= 1'b0;
+			pri_y_arm_r <= 1'b0;
+			pri_c_arm_r <= 1'b0;
+			pri_poll_r <= 1'b0;
+			pri_imbox_r <= 1'b0;
+			pri_smbox_r <= 1'b0;
+			pri_sdram_r <= 1'b0;
+		end
+	end
+
 	// I2 (DIAG): display/prep half occupancy + bank-mismatch on display half.
 	// Uses cur_base_idx/prep_base_idx from schedule combo (same half ownership).
 	integer oi;
@@ -1326,8 +1423,7 @@ end
 						                                  : pending_ready_c);
 					end
 					poll_div <= poll_div + 16'd1;
-					if (frame_mbox_req && (!frame_mbox_valid || poll_div[7:0] == 8'd224)
-					    && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+					if (pri_frame_mbox_r && bus_ok_c) begin
 						DDRAM_ADDR <= FRAME_MAILBOX_W;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_DIN <= {frame_status_ddr, frame_mbox_seq + 8'd1, MAGIC_F};
@@ -1337,8 +1433,7 @@ end
 						frame_mbox_valid <= 1'b1;
 						frame_mbox_req <= 1'b0;
 						state_ddr <= S_WRITE_WAIT;
-					end else if (bank_mbox_req && (!bank_mbox_valid || poll_div[7:0] == 8'd160)
-					    && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+					end else if (pri_bank_mbox_r && bus_ok_c) begin
 						// PLXD bank-release: tell ARM which bank is safe to write
 						// Layout: [63:48] frames_done (real swaps, CDC),
 						//   [47:36] bank_vsync_count[11:0] (glass/vsync free-run LSBs),
@@ -1365,7 +1460,7 @@ end
 						bank_mbox_req <= 1'b0;
 						bank_mbox_hb <= 18'd0;
 						state_ddr <= S_WRITE_WAIT;
-					end else if (PIPELINE_REFILL_SCHEDULER && sched_valid) begin
+					end else if (pri_sched_issue_r) begin
 						fill_bank <= sched_bank;
 						fill_idx <= sched_idx;
 						fill_plane_v <= 1'b0;
@@ -1387,7 +1482,7 @@ end
 						state_ddr <= S_LINE_ISSUE;
 					// LINECAM_CUR_WINDOW_FIRST: cur listed first; sel_*_prep_r already
 					// demoted at schedule-reg sample when need_*_cur (see freeze above).
-					end else if ((has_frame_d2 && need_y_cur_r) || sel_y_prep_r) begin
+					end else if (pri_y_arm_r) begin
 						// H-R1d: arm from frozen sel/bank/target_*_r only (no live swap_pending re-mux).
 						if (PIPELINE_REFILL_SCHEDULER) begin
 							sched_valid <= 1'b1;
@@ -1409,7 +1504,7 @@ end
 							qwords_remaining <= Y_LINE_QWORDS[Y_QW_AW:0];
 							state_ddr <= S_LINE_ISSUE;
 						end
-					end else if ((has_frame_d2 && need_c_cur_r) || sel_c_prep_r) begin
+					end else if (pri_c_arm_r) begin
 						// H-R1d + CUR_WINDOW_FIRST chroma twin — frozen sel/bank/target only.
 						if (PIPELINE_REFILL_SCHEDULER) begin
 							sched_valid <= 1'b1;
@@ -1431,13 +1526,13 @@ end
 							qwords_remaining <= C_LINE_QWORDS[Y_QW_AW:0];
 							state_ddr <= S_LINE_ISSUE;
 						end
-					end else if (!poll_pending && poll_div[7:0] == 8'd0 && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+					end else if (pri_poll_r && bus_ok_c) begin
 						DDRAM_ADDR <= DOORBELL_W;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_RD <= 1'b1;
 						poll_pending <= 1'b1;
 						state_ddr <= S_POLL_WAIT;
-					end else if (!cmd_empty && poll_div[7:0] == 8'd64 && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+					end else if (pri_imbox_r && bus_ok_c) begin
 						DDRAM_ADDR <= INPUT_MAILBOX_W;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_DIN <= {imbox_seq + 16'd1, imbox_cmd_seq + 8'd1, cmd_rdata, MAGIC_I};
@@ -1446,7 +1541,7 @@ end
 						imbox_seq <= imbox_seq + 16'd1;
 						imbox_cmd_seq <= imbox_cmd_seq + 8'd1;
 						state_ddr <= S_WRITE_WAIT;
-					end else if (mbox_req && poll_div[7:0] == 8'd128 && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+					end else if (pri_smbox_r && bus_ok_c) begin
 						DDRAM_ADDR <= MAILBOX_W;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_DIN <= {mbox_seq + 16'd1, status_osd_safe, MAGIC_S};
@@ -1456,7 +1551,7 @@ end
 						mbox_valid <= 1'b1;
 						mbox_req <= 1'b0;
 						state_ddr <= S_WRITE_WAIT;
-					end else if (sdram_mbox_req && poll_div[7:0] == 8'd192 && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+					end else if (pri_sdram_r && bus_ok_c) begin
 						DDRAM_ADDR <= SDRAM_MAILBOX_W;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_DIN <= {sdram_status_safe, sdram_mbox_seq + 8'd1, MAGIC_M};
