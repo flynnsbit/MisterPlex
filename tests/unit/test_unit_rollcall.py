@@ -139,6 +139,8 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/build/test_bitstream_ring_lifecycle",
     "$(ROOT)/build/test_ddr_720p_abi_origin",
     "bash $(ROOT)/tests/unit/test_ddr_publish_engine_rtl_sim.sh",
+    "bash $(ROOT)/tests/unit/test_ddr_publish_contended_rtl_sim.sh",
+    "python3 $(ROOT)/tests/unit/test_ddr_frame_base_mux_static.py",
     "$(ROOT)/build/test_frame_store_math",
     "$(ROOT)/build/test_coded_size_adopt",
     "$(ROOT)/build/test_ffmpeg_vf",
