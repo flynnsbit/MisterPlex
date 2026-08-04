@@ -15,6 +15,11 @@
 //
 // Host ABI: host/libmisterplex/ddr_contention_abi.hpp (PLXC layout).
 // Magic constant 0x504C5843 "PLXC" is stamped on the snapshot word0.
+//
+// PHYSICAL ACCEPTANCE (rd-duck): m2 publish counters are product-proof only
+// after contiguous src_phys (CMA/dma-buf/reserved ring + cache sync) replaces
+// heap std::vector frame in media_player. Meter itself is valid in sim now;
+// do not claim silicon copy-contention closed while m2 bus path is idle.
 
 `default_nettype none
 

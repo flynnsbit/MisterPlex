@@ -14,6 +14,9 @@
 #
 # Until a mailbox writer is muxed onto f2sdram, magic will not match — that
 # is an honest miss (counters are fabric noprune; publish is a follow-on).
+#
+# PHYSICAL ACCEPTANCE: m2 (publish) fields are not product proof until src is
+# contiguous PA (not heap vector). See ddr_contention_abi.hpp kPhysicalSrcAccepted.
 set -euo pipefail
 
 HOST="${MISTER_HOST:-192.168.1.183}"

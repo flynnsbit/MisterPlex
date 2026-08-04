@@ -3,6 +3,40 @@
 // RTL: fpga/Plex_MiSTer/rtl/ddr_contention_status.sv
 // Observation only (no arb policy). Counters are measured events on clk_ddr.
 //
+// ---------------------------------------------------------------------------
+// LOAD-BEARING HANDOVER GATE (rd-duck — physical acceptance)
+// ---------------------------------------------------------------------------
+// Fabric DMA (ddr_frame_dma / ddr_publish_*) needs one contiguous, cache-synced
+// src_phys. Today's playback path does NOT provide that:
+//   arm/misterplexd/media_player.cpp
+//     :3467  std::vector<uint8_t> frame(frameBytes);   // heap, non-PA
+//     :3984  ::read(rfd, frame.data() + got, ...)
+//     :3681  const uint8_t* txFrame = cleanFrame;      // still heap
+//     :3692  DdrPublishFrame{txFrame, ...} → ARM memcpy path, not fabric DMA
+//
+// Existing contiguous candidate (ARM PL330 staging, not yet fabric kick SoT):
+//   ddr_frame_layout.hpp kPl330StagingPhys (ABI region 0x30600000+)
+//
+// DO NOT treat m2 (publish) counters as product proof until:
+//   (1) src is CMA / dma-buf / reserved ring with known PA, AND
+//   (2) cache sync / coherent mapping is defined, AND
+//   (3) fabric DMA start is wired with that src_phys (not heap).
+// Until then: counters still prove the *meter* (sim + noprune hierarchy);
+// m0 present stalls on live product bus are scorable; m2 path is instrument-
+// ready, not acceptance-ready.
+//
+// Physical-acceptance counter set (owner split):
+//   FABRIC (this module / arbiter sidebands) — NOW:
+//     owner req / grant(accept) / wait(stall), RD beats (dout_ready),
+//     WE accepts, stall_while_peer, window_cycles, ddr vs arb stall split
+//   FABRIC — NEXT (when DMA on bus; extend module, do not invent here):
+//     burst length histogram, DMA start→done cycle timer (p50/p99/max host)
+//   FRAME-STORE / PLXF — already elsewhere:
+//     present underruns (PLXF underrun_count)
+//   HOST (misterplexd) — not fabric:
+//     content CRC, ARM decode time under DMA load, DMA wall p50/p99/max
+// ---------------------------------------------------------------------------
+//
 // Compact snapshot (4×64-bit LE words) — intended PLXC mailbox publish:
 //   w0 [31:0]  magic 0x504C5843 "PLXC"
 //   w0 [63:32] window_cycles
@@ -34,6 +68,10 @@ constexpr std::uint32_t kMagic = 0x504C5843u; // "PLXC"
 constexpr std::uint32_t kMailboxOffset = 0x130u;
 constexpr unsigned kSnapWords = 4;
 
+// Physical-acceptance flag for host tools: false until CMA/dma-buf/reserved
+// ring + fabric kick are product-wired. Meters may still move in sim.
+constexpr bool kPhysicalSrcAccepted = false;
+
 inline constexpr std::uint32_t mailboxPhys(std::uint32_t doorbell_phys) {
     return mailbox_abi::frameStoreMailboxPhys(doorbell_phys, kMailboxOffset);
 }
@@ -44,6 +82,7 @@ inline bool magicOk(std::uint32_t word0_lo) { return word0_lo == kMagic; }
 // FAIL heuristic (parent lab): present stall-while-publish / window > 2%.
 // Paper 720p24 concurrent duty is ~13.8% of ideal peak; m0 priority should
 // keep m0_stall_while_m2 near quantum noise, not percent-level of the frame.
+// Only meaningful as product FAIL when kPhysicalSrcAccepted && m2 on bus.
 constexpr double kFailStallWhileM2Ratio = 0.02;
 
 inline bool failPresentStarvedByPublish(std::uint32_t window,
