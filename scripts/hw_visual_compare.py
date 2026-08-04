@@ -586,12 +586,11 @@ class Geometry:
 
 
 def _parse_cpp_constants(path: Path) -> dict[str, int]:
-    """Parse product silicon geometry constants from ddr_frame_layout.hpp.
+    """Parse 720p tier geometry constants from ddr_frame_layout.hpp.
 
-    Product canvas is kPlex720p* (native 1280×720). Accepts both
-    ``constexpr int kPlex720pFoo = N;`` and strong-typed
-    ``constexpr CodedWidth kPlex720pFoo{N};`` forms. Derived expressions are
-    ignored — callers only need the primary geometry integers.
+    Dual-header SSOT: kPlex720p* pairs with RTL DDR_FRAME_720P_* (not bare
+    DDR_FRAME_*, which remain the 480p primary). Accepts both
+    ``constexpr int kPlex720pFoo = N;`` and strong-typed brace-init forms.
     """
     text = path.read_text(encoding="utf-8")
     out: dict[str, int] = {}
@@ -617,9 +616,13 @@ def _parse_cpp_constants(path: Path) -> dict[str, int]:
 
 
 def _parse_svh_constants(path: Path) -> dict[str, int]:
+    """Parse RTL layout params; prefer DDR_FRAME_720P_* for the 720p tier."""
     text = path.read_text(encoding="utf-8")
     out: dict[str, int] = {}
-    for name, value in re.findall(r"localparam\s+int\s+DDR_FRAME_([A-Z0-9_]+)\s*=\s*([^;]+);", text):
+    # Prefer 720p tier names; strip the 720P_ prefix so pairs stay CODED_WIDTH etc.
+    for name, value in re.findall(
+        r"localparam\s+int\s+DDR_FRAME_720P_([A-Z0-9_]+)\s*=\s*([^;]+);", text
+    ):
         value = value.strip().replace("_", "")
         if "'h" in value:
             out[name] = int(value.split("'h", 1)[1], 16)
@@ -627,6 +630,20 @@ def _parse_svh_constants(path: Path) -> dict[str, int]:
             out[name] = int(value[4:], 16)
         else:
             out[name] = int(value, 0)
+    # Fall back to primary DDR_FRAME_* only if 720p tier is absent (legacy trees).
+    if "CODED_WIDTH" not in out:
+        for name, value in re.findall(
+            r"localparam\s+int\s+DDR_FRAME_([A-Z0-9_]+)\s*=\s*([^;]+);", text
+        ):
+            if name.startswith("720P_"):
+                continue
+            value = value.strip().replace("_", "")
+            if "'h" in value:
+                out[name] = int(value.split("'h", 1)[1], 16)
+            elif value.startswith("32'h"):
+                out[name] = int(value[4:], 16)
+            else:
+                out[name] = int(value, 0)
     return out
 
 
