@@ -28,11 +28,23 @@ macro while still instantiating the stub is RED. Soft-skip (77) is not a pass.
 modules survived fitting (`plex_rbf_build_id` ≥8 regs), STA has no negative
 slack, prefit reachability still holds, and (when `PRODUCT_NO_STUB=1`)
 `decode_stub` fitted resources are 0. It does **not** prove 720p24 delivery.
-Fit/STA cannot see the ARM `/dev/mem` copy in `sendDdrFrame()` (~15 ms/frame)
-or end-to-end DDR write + present bandwidth. A core that only “fits” can still
-miss 24 fps if that copy stays serial with decode. Delivery evidence is a
-separate, parent-run measurement (frame time with present+DDR write, or a
-fabric DMA path that removes the ARM copy and is itself REACHABLE+fitted).
+Fit/STA cannot see the ARM uncached publication memcpy in `sendDdrFrame()`
+(~15 ms/frame) or end-to-end DDR write + present bandwidth. A core that only
+“fits” can still miss 24 fps if that copy stays serial with decode.
+
+**rd-duck corrections (binding on this gate):**
+- Sweep116 **49% idle was sampled BEFORE decode**, not during it
+  (`Memory/scratch/busyfix.sh`: `idle_pct` then `decode`). Do **not** budget a
+  free core for overlap during decode until same-window `/proc/stat`+`wait4`.
+- “Fabric DMA and ARM never touches the frame” is **too strong**. Software
+  decode/rawvideo still writes pixels. DMA can retire the **uncached
+  publication memcpy only**, and only after pinned contiguous/SG +
+  cache-coherency contract.
+- Prefer a **dynamic-base direct fabric reader** over a source→bank mover
+  (mover adds read+write traffic).
+
+Delivery evidence remains parent HW measurement; this score never sets
+`DELIVERY_PROVEN=1`.
 
 ## Parent command list after exclusive fit
 
@@ -81,17 +93,25 @@ Fabric-visible class bit for Sweep 118:
 
 | path_class[1:0] | Meaning |
 |---|---|
-| `01` | **ARM_COPY** (default product) — HPS `sendDdrFrame` `/dev/mem` path |
-| `10` | **FABRIC_DMA** claimed (`FABRIC_FRAME_DMA=1`) — not delivery-proven |
+| `01` | **ARM_COPY** (default) — HPS uncached publication memcpy (`sendDdrFrame`) |
+| `10` | **FABRIC_DMA** claimed (`FABRIC_FRAME_DMA=1`) — publication path only; not delivery-proven |
 
-Parent-measured serial deficit (do not re-derive casually):
+Parent-measured serial deficit (Sweep 118; do not re-derive casually):
 
 - frame budget @24 fps = 41.667 ms
 - decode = 32.705 ms/frame
-- `T_copy_arm` = 14.978 ms/frame
+- `T_copy_arm` = 14.978 ms/frame (publication memcpy CPU time, not a payload rate)
 - serial shortfall = **6.016 ms/frame**
 
 `post-fit-score` always prints `DELIVERY_CLASS=STRUCTURAL_ONLY` /
-`DELIVERY_PROVEN=0`. A structural FIT PASS with `arm_copy_path=1` is **not**
-720p24 delivery. Closing the deficit is either (a) overlap on the free core
-(parent HW experiment) or (b) fabric DMA that retires the copy (strategic RTL).
+`DELIVERY_PROVEN=0`. Structural FIT PASS ≠ 720p24 delivery.
+
+### Fit-slot blockers (both required)
+
+Unless the parent **explicitly** resolves the conflict in writing, treat **both**:
+
+1. **w-nostub reclaim** on main + post-fit `decode_stub` ABSENT under `PRODUCT_NO_STUB`
+2. **w-osd** full 1280×720 real L4 reader proof at 20:90 clock ratio **with injected stalls**
+
+as hard blockers on releasing the exclusive Quartus slot. Parent wording that
+names only nostub does **not** clear the w-osd blocker (rd-duck).

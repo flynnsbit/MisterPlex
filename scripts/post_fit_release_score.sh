@@ -89,7 +89,7 @@ grep -n 'decode_stub' "$FIT_RPT" | head -20
 set -e
 
 
-# 7) Delivery class — structural score ≠ 720p24 (parent Sweep 118, measured)
+# 7) Delivery class — structural score ≠ 720p24 (Sweep 118; rd-duck corrections)
 echo "=== DELIVERY_CLASS (Sweep 118 arithmetic; fit cannot close this) ==="
 echo "frame_budget_ms@24fps=41.667"
 echo "T_decode_ms=32.705"
@@ -98,13 +98,23 @@ echo "serial_deficit_ms=6.016"
 echo "R_req_MBps@720p24=33.1776"
 echo "DELIVERY_CLASS=STRUCTURAL_ONLY"
 echo "DELIVERY_PROVEN=0"
-echo "NOTE: ARM sendDdrFrame /dev/mem copy is outside FIT_RPT/STA."
-echo "NOTE: FABRIC_FRAME_DMA path retires T_copy_arm; until REACHABLE+fitted+HW-proven, GRANT delivery stays NO."
+echo "NOTE: T_copy_arm is uncached publication memcpy (sendDdrFrame), outside FIT_RPT/STA."
+echo "NOTE: FABRIC_FRAME_DMA claim retires that publication memcpy only — not all ARM pixel writes."
+echo "NOTE: software decode/rawvideo still produces pixels; DMA needs pin/SG + coherency contract."
+echo "NOTE: prefer dynamic-base direct fabric reader over source->bank mover (extra R+W)."
+echo "NOTE: Sweep116 49% idle was BEFORE decode (busyfix idle_pct then decode) — not same-window free core."
+echo "NOTE: overlap during decode is UNKNOWN until parent same-window /proc/stat+wait4."
 if grep -qE '^[^#]*VERILOG_MACRO.*"FABRIC_FRAME_DMA=1"' "$ROOT/fpga/Plex_MiSTer/Plex.qsf" 2>/dev/null; then
-  echo "FABRIC_FRAME_DMA_MACRO=1 — claimed at compile; still DELIVERY_PROVEN=0 without HW"
+  echo "FABRIC_FRAME_DMA_MACRO=1 — publication-path claim at compile; still DELIVERY_PROVEN=0 without HW"
 else
-  echo "FABRIC_FRAME_DMA_MACRO=0 — product path class is ARM_COPY (plex_delivery_path_stamp)"
+  echo "FABRIC_FRAME_DMA_MACRO=0 — publication class ARM_COPY (plex_delivery_path_stamp)"
 fi
+
+# 8) Fit-release blockers (rd-duck: both required unless parent explicitly resolves)
+echo "=== FIT_RELEASE_BLOCKERS (not scored green by this script) ==="
+echo "BLOCKER_NOSTUB_RECLAIM=required  # PRODUCT_NO_STUB land + post-fit decode_stub ABSENT"
+echo "BLOCKER_W_OSD_720P_REAL_READER=required  # full 1280x720 real L4 reader @20:90 WITH stalls"
+echo "FIT_SLOT_GRANT=NO until BOTH blockers green (parent hardware + FIT_RPT)"
 
 echo "=== SCORE SUMMARY ==="
 if [[ "$fail" -ne 0 ]]; then
@@ -113,6 +123,6 @@ if [[ "$fail" -ne 0 ]]; then
   exit 1
 fi
 echo "POST_FIT_SCORE structural PASS (hierarchy+timing+prefit[+prov])"
-echo "NOTE: this does NOT prove 720p24 delivery (ARM copy / DDR write / present BW)."
+echo "NOTE: structural PASS ≠ 720p24 delivery (publication copy / DDR BW / present / overlap unknown)."
 echo "true rc=0"
 exit 0

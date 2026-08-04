@@ -1,23 +1,31 @@
-// plex_delivery_path_stamp — fabric-visible frame delivery path class (w-fitgate).
+// plex_delivery_path_stamp — fabric-visible frame *publication* path class (w-fitgate).
 //
 // Parent Sweep 118 (measured): decode 32.705 ms/f + ARM sendDdrFrame copy
 // 14.978 ms/f is 6.016 ms/f SHORT of 24 fps when serial. Fit/STA cannot see
-// that copy. This stamp makes the *compiled* delivery path visible in the
+// that copy. This stamp makes the *compiled* publication path visible in the
 // netlist so a FIT_RPT cannot be mistaken for "720p24 delivery PASS".
 //
-// Default product path: ARM_COPY (HPS /dev/mem → DDR frame banks).
-// FABRIC_FRAME_DMA=1 (future w-mem/w-path): fabric fetches; ARM never copies.
-// Registered + preserve so the fitter cannot strip the class bits.
+// Default product path: ARM_COPY = HPS uncached /dev/mem publication memcpy
+// into DDR frame banks (sendDdrFrame class).
+// FABRIC_FRAME_DMA=1 (future): claim that fabric-side publication retires that
+// uncached memcpy only — NOT "ARM never touches pixels". Software decode /
+// rawvideo still writes the pixel buffer; DMA needs pinned contiguous or SG
+// memory plus a cache-coherency contract. Prefer a dynamic-base direct fabric
+// reader over a source→bank mover (mover adds read+write traffic).
 //
-// Does NOT prove DMA works — only which path class was elaborated.
+// rd-duck / Sweep116: 49% idle was sampled BEFORE decode, not during it
+// (busyfix.sh idle_pct then decode). Do not budget a free core for
+// overlap during decode until same-window /proc/stat+wait4 proves it.
+//
+// Does NOT prove DMA works or 720p24 closes — only which path class elaborated.
 
 `timescale 1ns / 1ps
 
 module plex_delivery_path_stamp (
 	input  wire        clk,
 	input  wire        reset,
-	output wire        arm_copy_path,     // 1 = product still relies on HPS sendDdrFrame copy
-	output wire        fabric_dma_path,   // 1 = FABRIC_FRAME_DMA macro claimed at compile
+	output wire        arm_copy_path,     // 1 = HPS uncached publication memcpy still in path
+	output wire        fabric_dma_path,   // 1 = FABRIC_FRAME_DMA claimed (publication only)
 	// Packed class for status/observe: {6'b0, fabric_dma_path, arm_copy_path}
 	output wire [7:0]  path_class,
 	// Live heart — parent top must consume so fitter cannot prune.
@@ -28,7 +36,7 @@ module plex_delivery_path_stamp (
 	localparam bit LP_FABRIC = 1'b1;
 	localparam bit LP_ARM    = 1'b0;
 `else
-	// Honest default: ARM copy path is live until fabric DMA lands.
+	// Honest default: uncached publication memcpy live until FABRIC_FRAME_DMA lands.
 	localparam bit LP_FABRIC = 1'b0;
 	localparam bit LP_ARM    = 1'b1;
 `endif
