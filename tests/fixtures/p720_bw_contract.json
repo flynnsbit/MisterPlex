@@ -1,5 +1,5 @@
 {
-  "title": "P720 BW \u2014 rates+CPU-time; reader proof CLOSED (w-clock); concurrent HPS write OPEN",
+  "title": "P720 BW \u2014 headline 33.1776; READER beat-delta CLOSED (w-clock+w-scaler reconfirm); concurrent HPS write OPEN (w-mem)",
   "product_config": {
     "PRESENT_MULTI_PIXEL": true,
     "PRESENT_PX_PER_CLK": 2,
@@ -94,7 +94,7 @@
     "note": "latency cover, not average BW"
   },
   "proof_gap": {
-    "status": "PARTIAL_CLOSED_READER",
+    "status": "READER_CLOSED_HPS_WRITE_OPEN",
     "fabric_bw_closed": false,
     "reader_steady_delta": {
       "status": "CLOSED",
@@ -146,7 +146,9 @@
       "fabric DMA write path retiring T_copy_arm (strategic b)"
     ],
     "headline_assumption": "33.1776 is payload average; real reader measured ~173120 payload beats/frame (+320 vs ideal) + doorbell overhead",
-    "w_scaler_position": "ACK w-clock CLOSED reader steady-delta; fabric_bw_closed remains false until HPS-write concurrent budget is owned"
+    "w_scaler_position": "ACK w-clock: reader beat-delta CLOSED by TB + local reconfirm rc=0. Do NOT assign reader closure to w-mem+w-osd. Only concurrent HPS write remains open on the bus budget.",
+    "reader_beat_delta_gap": "CLOSED",
+    "fabric_bw_closed_means": "False only because concurrent HPS /dev/mem write beats on same controller are unmeasured (w-mem). Reader-side steady beat-delta IS CLOSED \u2014 do not tell parent the reader proof gap is open."
   },
   "agreed_by": [
     "w-clock",

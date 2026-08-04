@@ -124,11 +124,14 @@ def main() -> int:
         return fail("16-line cover must be >=500us")
     print(f"OK blackout floor {bl['multi_line_floor']} lines")
 
-    # Reader steady-delta CLOSED by w-clock TB; full fabric BW still open (HPS write).
-    if gap.get("status") not in ("OPEN", "PARTIAL_CLOSED_READER"):
+    # Reader beat-delta CLOSED (w-clock TB + w-scaler local reconfirm).
+    # fabric_bw_closed stays false ONLY for concurrent HPS write (w-mem) — not reader gap.
+    if gap.get("status") not in ("OPEN", "PARTIAL_CLOSED_READER", "READER_CLOSED_HPS_WRITE_OPEN"):
         return fail(f"proof_gap.status unexpected: {gap.get('status')}")
     if gap.get("fabric_bw_closed") is not False:
-        return fail("NEGATIVE: fabric_bw_closed must be false until HPS-write concurrent budget")
+        return fail("NEGATIVE: fabric_bw_closed must stay false while HPS-write concurrent unmeasured")
+    if gap.get("reader_beat_delta_gap") != "CLOSED":
+        return fail("reader_beat_delta_gap must be CLOSED (do not report reader gap open)")
     reader = gap.get("reader_steady_delta") or c.get("real_reader_proof") or {}
     if reader.get("status") != "CLOSED":
         return fail("reader_steady_delta.status must be CLOSED (w-clock proof)")
@@ -145,12 +148,14 @@ def main() -> int:
     open_l = " ".join(gap.get("still_open", [])).lower()
     if "hps" not in open_l and "concurrent" not in open_l:
         return fail("still_open must mention concurrent HPS write")
+    # Must NOT list reader beat-delta as still open
+    if "reader" in open_l and "beat" in open_l and "closed" not in open_l:
+        return fail("still_open must not re-open reader beat-delta")
     print(
-        f"OK reader proof CLOSED (payload={g0.get('payload_beats')} "
+        f"OK READER beat-delta CLOSED (payload={g0.get('payload_beats')} "
         f"ddr_cy={g0.get('ddr_cycles')}<{g0.get('budget_ddr_24fps')}); "
-        "fabric_bw_closed=false (HPS write open)"
+        "only concurrent HPS write remains open on bus budget"
     )
-
     # --- ARM CPU TIME (not a rate) — parent Sweep 118 ---
     arm = c["arm_cpu_time_NOT_a_rate"]
     i420 = g["i420_bytes_per_frame"]
@@ -211,7 +216,7 @@ def main() -> int:
 
     print(
         "PASS p720_shared_bw_contract: HEADLINE=33.1776 MB/s/dir "
-        "(1.65888 avg ONLY); peaks RGB=6/I420=3; reader=CLOSED fabric_bw=OPEN; "
+        "(1.65888 avg ONLY); peaks RGB=6/I420=3; READER_CLOSED HPS_write_OPEN; "
         "serial_deficit>0 (T_copy_arm CPU-time)"
     )
     return 0
