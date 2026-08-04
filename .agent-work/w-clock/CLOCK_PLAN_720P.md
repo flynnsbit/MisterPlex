@@ -173,3 +173,15 @@ SDC_FILE Plex_clk_pix.sdc
 Post-fit: `make post-fit-timing STA_RPT=...` and  
 `python3 scripts/check_quartus_timing.py --sta-rpt ... --min-fmax-mhz 20`  
 plus inspect general[3] Fmax ≥ 29.70 when pix enabled.
+
+
+## Fmax provenance (2026-08-03 parent challenge)
+
+Retained `output_files/Plex.sta.rpt` **23.17 MHz** is **STUB-IN**:
+- `Plex.fit.rpt` decode_stub:stub hits = **2025**
+- ALMs **21252** (stub class), not nostub ~14k
+- Path owner in plain STA export: **unknown** (no From/To nodes)
+- Historical pair: stub **23.46** (`8fdf440f`) / nostub **32.59** (`c74c6863`)
+
+**clk_sys@24 remains blocked on stub-in evidence.** After w-nostub land + new fit,
+re-score using `FIT_PREREG_POST_NOSTUB.md` P1–P9. Do not promote 24 from 32.59 folklore alone.
