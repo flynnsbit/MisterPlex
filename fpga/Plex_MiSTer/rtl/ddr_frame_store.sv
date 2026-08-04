@@ -132,6 +132,21 @@ module ddr_frame_store #(
 	localparam [28:0] C_LINE_QWORDS_W = 29'(C_LINE_QWORDS);
 	localparam [Y_QW_AW:0] DDR_BURST_MAX_QWORDS = (Y_QW_AW+1)'(DDR_BURST_MAX);
 	localparam [31:0] MAGIC = 32'h504C_584B;
+	// Consume three-lane 720p BW/ABI contract when coded 1280x720 (rd-duck: not QIP-only).
+`include "plex_720p_bw_contract.svh"
+	generate
+		if ((CODED_W == 1280) && (CODED_H == 720)) begin : g_p720_store_contract
+			if (PHYS_BASE != P720_PHYS_BASE)
+				p720_store_phys_base_must_match_contract u_phys();
+			if (DOORBELL_PHYS != P720_DOORBELL_PHYS)
+				p720_store_doorbell_must_match_contract u_door();
+			if (HPS_BANK_STRIDE_BYTES != P720_BANK_STRIDE)
+				p720_store_stride_must_match_contract u_stride();
+			if (LINE_COUNT < P720_LINE_COUNT)
+				p720_store_line_count_below_contract_floor u_lines();
+		end
+	endgenerate
+
 	localparam [31:0] MAGIC_S = 32'h504C_5853;
 	localparam [31:0] MAGIC_I = 32'h504C_5849;
 	localparam [31:0] MAGIC_M = 32'h504C_584D;

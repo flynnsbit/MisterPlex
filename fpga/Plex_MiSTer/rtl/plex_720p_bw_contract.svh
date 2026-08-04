@@ -6,17 +6,15 @@
 // Numbers lock with misterplex_bw_contract.svh (w-clock SoT stamp) and
 // tests/fixtures/p720_bw_contract.json. P720_* names match w-mem consumers.
 //
-// STATUS SPLIT (rd-duck; do not collapse / do not say bare CLOSED):
-//   reader TB class: STRESS_EVIDENCE (825*750@20M ~32.3fps; not product rate-match).
-//   reader_payload_beat_delta_TB: MEASURED_TIGHT — G0 payload==173120 (=172800+2*160 Y),
-//     Y/U/V=115520/28800/28800, returned==accepted, ddr_cy<3750000.
-//   G1: payload==173120 (no 3x band) + ddr budget + busy/blocked (not wall-time).
-//   G2 NEG: starve_dout after prep → steady deadline fail (discrimination proven).
-//   reader_delivery_correctness: OPEN (G0 underrun_delta=77; no pixel checksum).
-//   hps_write_concurrent + T_copy_e2e: OPEN (w-mem / w-path / parent)
-//   Forbidden: reader CLOSED; fabric_bw_closed; fit_blocker_release by this TB.
-// 33.1776/66.3552 = frame-store payload / ideal 64b port math ONLY.
-// NOT measured sustainable DDR BW; NOT total controller traffic with HPS write.
+// CLAIM_SPLIT (rd-duck final):
+//   reader accepted-request steady delta: OBSERVED/CLOSED
+//   reader PPC2 delivery/correctness/deadline: OPEN
+//   shared fabric BW: OPEN
+// Arithmetic lock only: 33.1776 MB/s/dir (=33177600 B/s). NACK unnormalized 38.53.
+// audit_ack: rd-duck ACK = arithmetic labels ONLY — not reader CLOSED, not 38.53.
+// Forbidden: free core; ARM never touches payload; bare reader CLOSED; fabric_bw_closed.
+// Must be `include`d and bound into FS_*/store params or synthesis-active gates
+// (QIP listing alone is dead compilation-unit work — not fabric).
 
 `ifndef PLEX_720P_BW_CONTRACT_SVH
 `define PLEX_720P_BW_CONTRACT_SVH

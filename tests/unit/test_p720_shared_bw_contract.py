@@ -48,8 +48,8 @@ def main() -> int:
         for needle in (
             "P720_FABRIC_RD_BPS",
             "MISTERPLEX_BW_DIR_B_PER_S",
-            "reader_payload_beat_delta_TB",
-            "reader_delivery_correctness",
+            "reader accepted-request steady delta",
+            "shared fabric BW",
         ):
             if needle not in p:
                 fails.append(f"plex_720p_bw_contract missing {needle}")
@@ -61,6 +61,31 @@ def main() -> int:
     core = (ROOT / "fpga/Plex_MiSTer/rtl/present_core.sv").read_text(errors="replace")
     if "plex_720p_bw_contract.svh" not in core:
         fails.append("present_core must include plex_720p_bw_contract.svh")
+    if "P720_CODED_W" not in core or "FS_CODED_W" not in core:
+        fails.append("present_core must bind FS_* from P720 on 720p path")
+    if "DDR_FS_USE_720P_ABI ? P720_CODED_W" not in core and "P720_CODED_W :" not in core.replace(" ", ""):
+        # allow either ternary form
+        if "P720_CODED_W" not in core or "FS_CODED_W" not in core:
+            fails.append("present_core FS_CODED_W must select P720_CODED_W on 720p ABI")
+    if "g_p720_bps_gate" not in core and "p720_bw_contract_rd_bps_must_be_33177600" not in core:
+        fails.append("present_core needs synthesis-active P720 BPS gate")
+    store = (ROOT / "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv").read_text(errors="replace")
+    if "plex_720p_bw_contract.svh" not in store:
+        fails.append("ddr_frame_store must include plex_720p_bw_contract.svh")
+    if "g_p720_store_contract" not in store:
+        fails.append("ddr_frame_store needs synthesis-active 720p contract generate")
+    bwstat = (ROOT / "fpga/Plex_MiSTer/rtl/plex_bw_status.sv").read_text(errors="replace")
+    if "P720_FABRIC_RD_BPS" not in bwstat:
+        fails.append("plex_bw_status must load from P720_FABRIC_RD_BPS (not free literals only)")
+    if "p720_bw_contract_rd_bps_must_be_33177600" not in bwstat:
+        fails.append("plex_bw_status needs synthesis-active BPS gate")
+    # audit_ack must not claim rd-duck CLOSED/38.53
+    aa = c.get("audit_ack", {})
+    if aa.get("rd_duck") != "ARITHMETIC_LABELS_ONLY":
+        fails.append("audit_ack.rd_duck must be ARITHMETIC_LABELS_ONLY")
+    nack = c.get("NACK", {})
+    if isinstance(nack, dict) and "unnormalized_38_53_MBps" not in nack:
+        fails.append("fixture must NACK unnormalized 38.53 MB/s")
     if "p720_bw_contract_rd_bps" not in core:
         fails.append("present_core missing p720_bw_contract keep wire")
     qip = (ROOT / "fpga/Plex_MiSTer/files.qip").read_text(errors="replace")
@@ -119,10 +144,10 @@ def main() -> int:
     if ps.get("fabric_bw_closed") not in (False, "false", "OPEN"):
         fails.append("fabric_bw_closed must be false/OPEN")
     rstat = str(ps.get("reader_payload_beat_delta_TB", ""))
-    if "MEASURED" not in rstat:
-        fails.append("proof_status.reader_payload_beat_delta_TB must be MEASURED*")
-    if ps.get("reader_delivery_correctness") != "OPEN":
-        fails.append("proof_status.reader_delivery_correctness must stay OPEN")
+    if "MEASURED" not in rstat and ps.get("reader_accepted_request_steady_delta") != "OBSERVED/CLOSED":
+        fails.append("accepted-request delta must be MEASURED* or OBSERVED/CLOSED")
+    if ps.get("reader_delivery_correctness") != "OPEN" and ps.get("reader_PPC2_delivery_correctness_deadline") != "OPEN":
+        fails.append("PPC2 delivery/correctness must stay OPEN")
     if ps.get("hps_write_concurrent_same_controller") != "OPEN":
         fails.append("hps_write must stay OPEN")
     if "reader CLOSED" not in str(ps.get("NOT", [])):

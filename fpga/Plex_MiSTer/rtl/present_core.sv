@@ -585,49 +585,60 @@ module present_core #(
 	//   DDR_FS_USE_720P_ABI ? DDR_FRAME_720P_CODED_WIDTH : DDR_FRAME_CODED_WIDTH
 `define DDR_FS_APPLY_LINE_FLOOR
 `include "ddr_frame_abi_select.svh"
-	// ONE agreed BW/ABI contract (w-mem P720_* names ↔ w-clock MISTERPLEX_BW_*).
+	// ONE agreed BW/ABI contract — CONSUMED into FS_* (not QIP-only dead localparams).
+	// rd-duck: listing svh in files.qip alone ≠ fabric work.
 	`include "plex_720p_bw_contract.svh"
-	localparam int FS_CODED_W     = DDR_FS_CODED_W;
-	localparam int FS_CODED_H     = DDR_FS_CODED_H;
+	// 720p ABI: bind store geometry/ABI from P720_* contract (live parameters).
+	// 480p ABI: keep DDR_FS_* path.
+	localparam int FS_CODED_W     = DDR_FS_USE_720P_ABI ? P720_CODED_W : DDR_FS_CODED_W;
+	localparam int FS_CODED_H     = DDR_FS_USE_720P_ABI ? P720_CODED_H : DDR_FS_CODED_H;
 	localparam int FS_DISPLAY_W   = DDR_FS_DISPLAY_W;
 	localparam int FS_DISPLAY_H   = DDR_FS_DISPLAY_H;
 	localparam int FS_CROP_LEFT   = DDR_FS_CROP_LEFT;
 	localparam int FS_CROP_TOP    = DDR_FS_CROP_TOP;
 	localparam int FS_PRESENT_X   = DDR_FS_PRESENT_X;
 	localparam int FS_PRESENT_Y   = DDR_FS_PRESENT_Y;
-	localparam [31:0] FS_PHYS_BASE = DDR_FS_PHYS_BASE;
-	localparam int FS_BANK_STRIDE = DDR_FS_BANK_STRIDE;
-	localparam [31:0] FS_DOORBELL = DDR_FS_DOORBELL;
+	localparam [31:0] FS_PHYS_BASE = DDR_FS_USE_720P_ABI ? P720_PHYS_BASE[31:0] : DDR_FS_PHYS_BASE;
+	localparam int FS_BANK_STRIDE = DDR_FS_USE_720P_ABI ? P720_BANK_STRIDE : DDR_FS_BANK_STRIDE;
+	localparam [31:0] FS_DOORBELL = DDR_FS_USE_720P_ABI ? P720_DOORBELL_PHYS[31:0] : DDR_FS_DOORBELL;
 	// 16-line floor on 720p ABI (8 lines @ PPC2/20MHz ≈ 256 µs < 500 µs model).
-	localparam int FS_LINE_COUNT  = DDR_FS_LINE_COUNT;
+	localparam int FS_LINE_COUNT  = DDR_FS_USE_720P_ABI ? P720_LINE_COUNT : DDR_FS_LINE_COUNT;
 
-	// Elab-time: 720p tier FS_* must match P720_* (dead localparams ≠ fabric work).
 	// synthesis translate_off
 	initial begin
-		if (DDR_FS_USE_720P_ABI && (FS_LINE_COUNT < P720_LINE_COUNT))
-			$error("present_core: 720p tier needs LINE_COUNT>=%0d (got %0d)",
-				P720_LINE_COUNT, FS_LINE_COUNT);
+		if (DDR_FS_USE_720P_ABI && (FS_LINE_COUNT != P720_LINE_COUNT))
+			$error("present_core: FS_LINE_COUNT must equal P720_LINE_COUNT");
 		if (DDR_FS_USE_720P_ABI && (FS_CODED_W != P720_CODED_W || FS_CODED_H != P720_CODED_H))
-			$error("present_core: FS_CODED %0dx%0d != P720 %0dx%0d",
-				FS_CODED_W, FS_CODED_H, P720_CODED_W, P720_CODED_H);
+			$error("present_core: FS_CODED must equal P720 coded");
 		if (DDR_FS_USE_720P_ABI && (FS_BANK_STRIDE != P720_BANK_STRIDE))
-			$error("present_core: FS_BANK_STRIDE 0x%0x != P720 0x%0x",
-				FS_BANK_STRIDE, P720_BANK_STRIDE);
+			$error("present_core: FS_BANK_STRIDE must equal P720");
 		if (DDR_FS_USE_720P_ABI && (FS_DOORBELL != P720_DOORBELL_PHYS))
-			$error("present_core: FS_DOORBELL 0x%0x != P720 0x%0x",
-				FS_DOORBELL, P720_DOORBELL_PHYS);
+			$error("present_core: FS_DOORBELL must equal P720");
 		if (DDR_FS_USE_720P_ABI && (FS_PHYS_BASE != P720_PHYS_BASE))
-			$error("present_core: FS_PHYS_BASE 0x%0x != P720 0x%0x",
-				FS_PHYS_BASE, P720_PHYS_BASE);
+			$error("present_core: FS_PHYS_BASE must equal P720");
 		if (P720_FABRIC_RD_BPS != 33_177_600)
 			$error("present_core: P720_FABRIC_RD_BPS must be 33177600");
 	end
 	// synthesis translate_on
-	// Synthesis-active keep: contract constants reach the netlist when compiled.
+	// Synthesis-ACTIVE contract gates (Quartus cannot ignore missing modules).
+	generate
+		if (P720_FABRIC_RD_BPS != 33_177_600) begin : g_p720_bps_gate
+			p720_bw_contract_rd_bps_must_be_33177600 u_p720_bps_gate();
+		end
+		if (P720_I420_BYTES != 1_382_400) begin : g_p720_i420_gate
+			p720_bw_contract_i420_must_be_1382400 u_p720_i420_gate();
+		end
+		if (P720_BEATS_PER_FRAME != 172_800) begin : g_p720_beats_gate
+			p720_bw_contract_beats_must_be_172800 u_p720_beats_gate();
+		end
+	endgenerate
+	// Synthesis-active keep: contract constants + live FS binds reach netlist.
 	(* keep, noprune *) wire [31:0] p720_bw_contract_i420 = P720_I420_BYTES[31:0];
 	(* keep, noprune *) wire [31:0] p720_bw_contract_rd_bps = P720_FABRIC_RD_BPS[31:0];
-	(* keep, noprune *) wire [31:0] p720_bw_contract_stride = P720_BANK_STRIDE[31:0];
-	(* keep, noprune *) wire [31:0] p720_bw_contract_doorbell = P720_DOORBELL_PHYS[31:0];
+	(* keep, noprune *) wire [31:0] p720_bw_contract_stride = FS_BANK_STRIDE[31:0];
+	(* keep, noprune *) wire [31:0] p720_bw_contract_doorbell = FS_DOORBELL[31:0];
+	(* keep, noprune *) wire [31:0] p720_bw_contract_phys = FS_PHYS_BASE[31:0];
+	(* keep, noprune *) wire [7:0]  p720_bw_contract_lines = FS_LINE_COUNT[7:0];
 
 `ifdef PRESENT_MULTI_PIXEL
 	localparam int FS_PX_PER_CLK = PRESENT_PPC;

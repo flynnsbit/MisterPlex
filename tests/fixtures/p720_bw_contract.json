@@ -43,6 +43,15 @@
         "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv:1070,1109 DDRAM_RD only on fill path"
       ],
       "allowed_as": "optional metric present_linebuf_i420_equiv_B_per_clk_sys_DE \u2014 NOT the DDR budget headline"
+    },
+    "unnormalized_38_53_MBps": {
+      "value": 38.53,
+      "why": "Not established: beats*8*24 without /measured_sys_cyc normalization; window may include pre-swap + full scan + 2 lines. Use steady frame-to-frame delta or bytes/s from elapsed sim time.",
+      "status": "NACK"
+    },
+    "free_core_or_ARM_never_touches_payload": {
+      "status": "NACK",
+      "why": "49% idle was pre-decode; DMA retires publication memcpy only after pinned/coherent source"
     }
   },
   "blackout_prefetch": {
@@ -79,7 +88,8 @@
       "Y": 115520,
       "U": 28800,
       "V": 28800,
-      "returned_beats": 182809
+      "returned_beats": 182809,
+      "door": 9689
     },
     "G1_stall": {
       "payload_beats": 173120,
@@ -227,5 +237,22 @@
     ],
     "hps_write_concurrent_same_controller": "OPEN",
     "T_copy_e2e": "OPEN"
+  },
+  "audit_ack": {
+    "rd_duck": "ARITHMETIC_LABELS_ONLY",
+    "NOT": [
+      "rd-duck accepted reader CLOSED",
+      "rd-duck accepted 38.53 MB/s",
+      "rd-duck accepted fabric_bw_closed",
+      "rd-duck accepted free core",
+      "rd-duck accepted ARM never touches payload"
+    ],
+    "note": "rd-duck NACK dead svh-only contract and unnormalized MB/s; arithmetic 33.1776 stands"
+  },
+  "contract_consumption": {
+    "present_core": "include plex_720p_bw_contract.svh; FS_* binds P720_* on 720p ABI; synth-active gates",
+    "ddr_frame_store": "include + generate match PHYS/DOORBELL/STRIDE/LINE when CODED 1280x720",
+    "plex_bw_status": "regs loaded from P720_*; synth-active gates; instantiated in Plex.sv",
+    "files_qip_alone": "NOT sufficient (rd-duck)"
   }
 }

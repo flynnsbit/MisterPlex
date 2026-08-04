@@ -1,8 +1,9 @@
 // plex_bw_status — noprune fabric stamp of the agreed 720p BW contract.
-// Survives fitting so post-fit hierarchy can prove the SoT was compiled in.
-// Headline: 33_177_600 B/s per direction (= 33.1776 MB/s). NACK DE-peak 3.0 as DDR.
+// CONSUMES misterplex_bw_contract.svh / P720 aliases — not QIP-only dead code.
+// Headline: 33_177_600 B/s per direction. NACK DE-peak 3.0 as DDR.
+// claim_split: accepted-request delta OBSERVED/CLOSED; PPC2 delivery OPEN; fabric BW OPEN.
 
-`include "misterplex_bw_contract.svh"
+`include "plex_720p_bw_contract.svh"
 
 module plex_bw_status (
 	input  wire        clk,
@@ -14,23 +15,23 @@ module plex_bw_status (
 	output wire [15:0] bw_t_copy_arm_us,
 	output wire [15:0] bw_frame_budget_us
 );
+	// Live loads from shared contract (not independent magic numbers).
 	(* noprune *) reg [31:0] r_dir_bps = 32'd0;
 	(* noprune *) reg [17:0] r_beats   = 18'd0;
 	(* noprune *) reg [18:0] r_rw      = 19'd0;
 	(* noprune *) reg [7:0]  r_ppc     = 8'd0;
-	// Constant 1: DE-peak 3.0 B/clk is linebuf I420-equiv, not DDRAM design load.
 	(* noprune *) reg        r_nack    = 1'b1;
 	(* noprune *) reg [15:0] r_tcopy   = 16'd0;
 	(* noprune *) reg [15:0] r_budget  = 16'd0;
 
 	always @(posedge clk) begin
-		r_dir_bps <= 32'd33177600;
-		r_beats   <= 18'd172800;
-		r_rw      <= 19'd345600;
-		r_ppc     <= 8'd2;
-		r_nack    <= 1'b1;
-		r_tcopy   <= 16'd14978;
-		r_budget  <= 16'd41667;
+		r_dir_bps <= P720_FABRIC_RD_BPS[31:0];
+		r_beats   <= P720_BEATS_PER_FRAME[17:0];
+		r_rw      <= P720_BEATS_RW_PAIR[18:0];
+		r_ppc     <= P720_PPC[7:0];
+		r_nack    <= (P720_NACK_DE_PEAK_E1 == 30);
+		r_tcopy   <= P720_HOST_COPY_US[15:0];
+		r_budget  <= P720_FRAME_US[15:0];
 	end
 
 	assign bw_dir_b_per_s             = r_dir_bps;
@@ -41,7 +42,20 @@ module plex_bw_status (
 	assign bw_t_copy_arm_us           = r_tcopy;
 	assign bw_frame_budget_us         = r_budget;
 
-	// Elab-time arithmetic lock against the shared header
+	// Synthesis-ACTIVE gates (rd-duck: dead localparams ≠ fabric work).
+	generate
+		if (P720_FABRIC_RD_BPS != 33_177_600) begin : g_bwstat_bps
+			p720_bw_contract_rd_bps_must_be_33177600 u_bwstat_bps();
+		end
+		if (P720_BEATS_PER_FRAME != 172_800) begin : g_bwstat_beats
+			p720_bw_contract_beats_must_be_172800 u_bwstat_beats();
+		end
+		if (P720_I420_BYTES != 1_382_400) begin : g_bwstat_i420
+			p720_bw_contract_i420_must_be_1382400 u_bwstat_i420();
+		end
+	endgenerate
+
+	// synthesis translate_off
 	initial begin
 		if (MISTERPLEX_BW_I420_B_FRAME != (1280 * 720 * 3 / 2))
 			$error("plex_bw_status: I420 B_frame mismatch");
@@ -53,12 +67,10 @@ module plex_bw_status (
 			$error("plex_bw_status: R+W beats must be 2*frame");
 		if (MISTERPLEX_BW_NACK_DE_PEAK_E1 != 30)
 			$error("plex_bw_status: NACK marker missing");
-		if (MISTERPLEX_BW_BEATS_PER_FRAME != 172_800)
-			$error("plex_bw_status: beats_per_frame SoT drift");
 		if (MISTERPLEX_BW_T_COPY_ARM_US >= MISTERPLEX_BW_FRAME_BUDGET_US)
 			$error("plex_bw_status: T_copy_arm must be < frame budget (units check)");
-		// Serial deficit exists: T_copy 14978 > decode headroom ~8962 — fabric DMA target.
 		if (MISTERPLEX_BW_T_COPY_ARM_US <= 8962)
-			$error("plex_bw_status: T_copy_arm must reflect parent 14.978 ms (not under headroom)");
+			$error("plex_bw_status: T_copy_arm must reflect parent 14.978 ms");
 	end
+	// synthesis translate_on
 endmodule
