@@ -1176,21 +1176,25 @@ module ddr_frame_store #(
 					// complete, keep pending_ready high even while IDLE schedules
 					// a *current* refill. Legacy ternary
 					//   sched_valid ? (sched_for_pending && sched_pending_ready)
-					//               : pending_ready_r
+					//               : pending_ready_c
 					// clears ready whenever sched_valid && !sched_for_pending —
 					// continuous need_y_cur under src_y_line (beam-tracking want_y
 					// through VBlank) then misses the 1-cycle vsync swap window and
 					// freezes bank0 (silicon 9eb1431a). Do not revive FORCE_TOP.
-					// pending_ready_r / need_*_r / target_*_r: registered schedule
-					// (not combo *_c) so desired_y_r → mbox/DDRAM enables cut.
+					// need_*_r / target_*_r still drive S_IDLE refill (STA cut).
+					// Sticky ready uses combo pending_ready_c (not lagged pending_ready_r):
+					// after 6472789d schedule register, pending_ready_r stays 1 for one
+					// clk_ddr when swap_pending rises while prep incomplete → false ready
+					// / premature vsync swap / empty linebufs → underrun FFFF + black glass
+					// (silicon cceb58e7). pending_ready_c drops same cycle as prep miss.
 					if (PENDING_READY_STICKY_PREP) begin
 						pending_ready_ddr <= swap_pending_d2 &&
-						                     (pending_ready_r ||
+						                     (pending_ready_c ||
 						                      (sched_valid && sched_for_pending && sched_pending_ready));
 					end else begin
 						pending_ready_ddr <= swap_pending_d2 &&
 						                     (sched_valid ? (sched_for_pending && sched_pending_ready)
-						                                  : pending_ready_r);
+						                                  : pending_ready_c);
 					end
 					poll_div <= poll_div + 16'd1;
 					if (frame_mbox_req && (!frame_mbox_valid || poll_div[7:0] == 8'd224)
