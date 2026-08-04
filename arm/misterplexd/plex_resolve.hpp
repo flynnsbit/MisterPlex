@@ -161,7 +161,10 @@ std::string buildUniversalTranscodeUrl(const std::string& base,
 bool mediaVideoIsH264(const std::string& plexMetadataXml);
 
 // Resolve a playMedia key against PMS, or pass through local/http paths.
-// weakAlways: always request PMS universal H.264 ladder (recommended on dual A9 / STREAM=0).
+// weakAlways: always request PMS universal H.264 ladder (recommended on
+// STREAM=0). DE10 has two A9 cores, but MiSTer framework owns ~1 core
+// permanently — effective capacity for misterplexd is one core (see
+// ddr_bank_release_select.hpp ARM capacity note).
 // preferDirectH264: when true (STREAM=1 product path), use direct Part stream if source is
 // already H.264 so host CAVLC recon can run on Baseline/Main without High/CABAC remux.
 // Non-H.264 still falls through to the weak universal ladder.

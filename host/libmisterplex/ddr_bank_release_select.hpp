@@ -28,6 +28,13 @@
 //   3. On free_mask=0 timeout: DROP the frame — do not force-write disp^1.
 //   4. frames_done is the real swap counter on product RTL; bank select still
 //      treats free/disp identity as authoritative (do not require fd advance).
+//
+// ARM capacity (parent-measured 2026-08-04, /proc/stat 10 s deltas, USER_HZ=100):
+//   MiSTer framework permanently burns ~100% of one A9 core at idle; mpx-main
+//   (our daemon comm) is ~0.8% of a core at idle. Effective capacity for
+//   decode+publish is ONE core, not two. Publication is not CPU-starved by us —
+//   it is starved by the framework / contended-core case. Do not size bank-wait
+//   or frame budgets from an idle dual-core assumption; target contended-core.
 
 #include "libmisterplex/input_mailbox.hpp"
 
