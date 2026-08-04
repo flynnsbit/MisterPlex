@@ -214,6 +214,66 @@ int main(int argc, char** argv) {
     // Non-zero origin (PLXG island offset). Naive x0=0 implementation fails last-col+offset.
     if (!fault)
         rc |= run_frame(dut, 640, 480, 1280, 720, true, "g640off16", /*x0=*/16, /*y0=*/8);
+    // ODD origin — x0=16 (even) would miss a half-pixel/phase bug under PPC=2.
+    if (!fault)
+        rc |= run_frame(dut, 640, 480, 1280, 720, true, "g640off17odd", /*x0=*/17, /*y0=*/9);
+
+    // PPC=2 dual-map: lane1 must equal map(hc+1), NOT store_x+1 under scale.
+    // Adjacent-store N-wide fetch assumption fails here (negative for identity-only).
+    if (!fault) {
+        Ref ref960 = make_ref(true, 960, 540, 0, 0, 1280, 720, false);
+        reset_dut(dut);
+        dut.win_enable = 1;
+        dut.content_w = 960;
+        dut.content_h = 540;
+        dut.content_x0 = 0;
+        dut.content_y0 = 0;
+        dut.h_de = 1280;
+        dut.v_de = 720;
+        for (int i = 0; i < 3; ++i) tick(dut);
+
+        int ppc_mism = 0;
+        int adj_false = 0; // times lane1 != lane0+1 (expected often under scale)
+        int checked = 0;
+        for (int hc = 0; hc < 1279; hc += 7) {
+            dut.hc = hc;
+            dut.py = 100;
+            dut.in_content = 1;
+            dut.ce_pix = 1;
+            tick(dut);
+            dut.ce_pix = 0;
+            tick(dut);
+            uint32_t r0, r1, ry;
+            map_xy(ref960, hc, 100, r0, ry);
+            map_xy(ref960, hc + 1, 100, r1, ry);
+            uint32_t g0 = dut.store_x;
+            uint32_t g1 = dut.store_x_lane1;
+            ++checked;
+            if (g0 != r0 || g1 != r1) {
+                if (ppc_mism < 6) {
+                    std::cerr << "g960ppc2 hc=" << hc << " got=(" << g0 << "," << g1
+                              << ") ref=(" << r0 << "," << r1 << ")\n";
+                }
+                ++ppc_mism;
+            }
+            if (g1 != g0 + 1)
+                ++adj_false;
+        }
+        if (ppc_mism != 0) {
+            std::cerr << "g960ppc2 FAIL mism=" << ppc_mism << " checked=" << checked << "\n";
+            failures += ppc_mism;
+            rc |= 1;
+        } else if (adj_false < 8) {
+            // Negative: if lane1 always equals lane0+1 under 960→1280, dual-map is fake.
+            std::cerr << "g960ppc2 NEGATIVE FAIL: lane1 almost always store_x+1 (adj_false="
+                      << adj_false << ") — adjacent-store assumption not stressed\n";
+            failures++;
+            rc |= 1;
+        } else {
+            std::cout << "g960ppc2 PASS checked=" << checked << " non_adjacent_lane1="
+                      << adj_false << "\n";
+        }
+    }
 
     if (fault) {
         // For fault build, success is divergence

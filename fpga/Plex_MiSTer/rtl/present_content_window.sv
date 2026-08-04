@@ -24,6 +24,15 @@
 // Pixel path = mul-shift + add + clamp only. Scale dividers run when window
 // regs change and land in sx_r/sy_r — off the ce_pix critical path.
 //
+// PPC / MULTI reconciliation (w-clock product: MULTI+PPC=2+clk_pix@29.7):
+//   This module is ONE glass coordinate → ONE store coordinate per ce_pix.
+//   `store_x` = map(hc). For PPC=2, `store_x_lane1` = map(hc+1) is exposed as
+//   a second independent NN sample — NOT store_x+1. Adjacent-store N-wide
+//   fetch (ddr_frame_store PX_PER_CLK, even rd_x) is correct ONLY for identity
+//   (cw==h_de). Scaled islands (960→1280) must dual-map; odd content_x0 is a
+//   real case (g640off17). L4 vs MULTI remain mutually exclusive in present_core
+//   until MULTI wires these dual maps into fs_rd.
+//
 // Arbitrary source → arbitrary DE (PLXG): content_w/h are bank/content size.
 // Ship product source (parent measured): **960×540** → h_de/v_de **1280×720**
 // (~4/3 non-integer — NN shimmers; enable PRESENT_WINDOW_BILINEAR on glass if ugly).
@@ -70,7 +79,10 @@ module present_content_window #(
 	output reg  [$clog2(STORE_H)-1:0] store_y,
 	output reg         de_r,
 	// py past active DE rows — present_core ORs into VBlank (G-VID1).
-	output wire        past_last_row
+	output wire        past_last_row,
+	// PPC=2 prep: independent map(hc+1). Identity ⇒ often store_x+1; scaled NN
+	// may repeat or jump. present_core L4 still consumes store_x only.
+	output reg  [$clog2(STORE_W)-1:0] store_x_lane1
 	// Bilinear sample neighbourhood (meaningful when PRESENT_WINDOW_BILINEAR).
 	// When macro OFF, x1==x0, y1==y0, frac==0 → NN-equivalent if a consumer
 	// still wires lerp (safe default).
@@ -200,13 +212,28 @@ module present_content_window #(
 	end
 
 	// Pixel path: mul-shift + origin + clamp. No divide.
-	// hc(11) * sx(20) fits in 31b; Q16 field = prod[31:16] after 32b mul.
-	wire [10:0] read_hc = hc;
-	wire [31:0] store_x_prod = {21'd0, read_hc} * {12'd0, sx_r};
-	wire [15:0] store_x_q16  = store_x_prod[31:16];
-	wire [16:0] store_x_sum  = {1'b0, x0_r} + {1'b0, store_x_q16};
-	wire [15:0] store_x_comb =
-		(store_x_sum > {1'b0, last_x_r}) ? last_x_r : store_x_sum[15:0];
+	// map_glass_x(g): independent NN sample for glass column g (PPC lane k uses g=hc+k).
+	function automatic [15:0] map_glass_x;
+		input [10:0] g;
+		reg [31:0] prod;
+		reg [15:0] q16;
+		reg [16:0] sum;
+		begin
+			prod = {21'd0, g} * {12'd0, sx_r};
+			q16  = prod[31:16];
+			sum  = {1'b0, x0_r} + {1'b0, q16};
+			map_glass_x = (sum > {1'b0, last_x_r}) ? last_x_r : sum[15:0];
+		end
+	endfunction
+
+	wire [15:0] store_x_comb  = map_glass_x(hc);
+	// PPC lane1: map(hc+1), not store_x+1. Saturate glass at 2047 (11b).
+	wire [10:0] hc_p1 =
+		(hc >= 11'h7FF) ? 11'h7FF : (hc + 11'd1);
+	wire [15:0] store_x_l1_comb = map_glass_x(hc_p1);
+
+	// lane0 mul residue kept for bilinear frac (same as pre-function path).
+	wire [31:0] store_x_prod = {21'd0, hc} * {12'd0, sx_r};
 
 	assign past_last_row = (py >= v_de_r);
 	wire [10:0] v_last = (v_de_r == 11'd0) ? 11'd0 : (v_de_r - 11'd1);
@@ -218,6 +245,7 @@ module present_content_window #(
 		(store_y_sum > {1'b0, last_y_r}) ? last_y_r : store_y_sum[15:0];
 
 	wire [STORE_X_W-1:0] store_x_clamped = store_x_comb[STORE_X_W-1:0];
+	wire [STORE_X_W-1:0] store_x_l1_clamped = store_x_l1_comb[STORE_X_W-1:0];
 	wire [STORE_Y_W-1:0] store_y_addr    = store_y_comb[STORE_Y_W-1:0];
 
 	// Bilinear neighbourhood: ceil sample + Q8 frac from Q16 residue.
@@ -225,7 +253,7 @@ module present_content_window #(
 	// that bug was 4/3-specialisation only (present_scale_4_3); general path
 	// always takes the multiply residue. At last column/row, x1=x0 and frac
 	// forced 0 so lerp collapses to NN (no OOB read).
-wire [16:0] x1_sum = {1'b0, store_x_comb} + 17'd1;
+	wire [16:0] x1_sum = {1'b0, store_x_comb} + 17'd1;
 	wire [16:0] y1_sum = {1'b0, store_y_comb} + 17'd1;
 	wire [16:0] last_x_17 = {1'b0, last_x_r};
 	wire [16:0] last_y_17 = {1'b0, last_y_r};
@@ -244,6 +272,7 @@ wire [16:0] x1_sum = {1'b0, store_x_comb} + 17'd1;
 		if (reset) begin
 			store_x <= '0;
 			store_y <= '0;
+			store_x_lane1 <= '0;
 			de_r    <= 1'b0;
 `ifdef PRESENT_WINDOW_BILINEAR
 			store_x1 <= '0;
@@ -255,6 +284,7 @@ wire [16:0] x1_sum = {1'b0, store_x_comb} + 17'd1;
 			de_r    <= in_content;
 			store_x <= store_x_clamped;
 			store_y <= store_y_addr;
+			store_x_lane1 <= store_x_l1_clamped;
 `ifdef PRESENT_WINDOW_BILINEAR
 			store_x1 <= store_x1_comb[STORE_X_W-1:0];
 			store_y1 <= store_y1_comb[STORE_Y_W-1:0];

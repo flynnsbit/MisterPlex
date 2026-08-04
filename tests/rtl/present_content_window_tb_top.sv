@@ -15,6 +15,7 @@ module present_content_window_tb_top (
 	input  wire [10:0] h_de,
 	input  wire [10:0] v_de,
 	output wire [10:0] store_x,
+	output wire [10:0] store_x_lane1,
 	output wire [9:0]  store_y,
 	output wire        de_r,
 	output wire        past_last_row
@@ -41,6 +42,7 @@ module present_content_window_tb_top (
 		.h_de(h_de),
 		.v_de(v_de),
 		.store_x(store_x),
+		.store_x_lane1(store_x_lane1),
 		.store_y(store_y),
 		.de_r(de_r),
 		.past_last_row(past_last_row)

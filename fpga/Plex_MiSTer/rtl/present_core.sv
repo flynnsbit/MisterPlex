@@ -437,6 +437,7 @@ module present_core #(
 	wire in_content_l4 = ~hb & ~vb & (hc11 < hde_act11) & (vc11 < vact_act11);
 	wire past_last_row; // driven by content_window
 	wire [FRAME_X_W-1:0] store_x_clamped;
+	wire [FRAME_X_W-1:0] store_x_lane1_win; // map(hc+1); MULTI/PPC=2 prep
 	wire [FRAME_Y_W-1:0] store_y_addr;
 	wire de_r_win;
 	(* noprune *) present_content_window #(
@@ -463,13 +464,15 @@ module present_core #(
 		.store_x(store_x_clamped),
 		.store_y(store_y_addr),
 		.de_r(de_r_win),
-		.past_last_row(past_last_row)
+		.past_last_row(past_last_row),
+		// PPC=2 dual-map prep; L4 scalar path still reads store_x only.
+		.store_x_lane1(store_x_lane1_win)
 	);
 	wire in_content = in_content_l4;
 	// Clamp from FRAME_H (not 239) so 720p does not inherit 480p last-row.
 	wire [9:0] store_y_clamped =
 		past_last_row ? 10'(FRAME_H > 0 ? FRAME_H - 1 : 0) : py;
-	wire _unused_l4_win = de_r_win | |store_y_clamped;
+	wire _unused_l4_win = de_r_win | |store_y_clamped | |store_x_lane1_win;
 `elsif PRESENT_BEAM_960
 	wire in_content = ~hb & ~vb & (hc11 < hde_act11) & (vc11 < vact_act11);
 	wire       past_last_row = (py >= 10'(FRAME_H));
