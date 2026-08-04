@@ -861,11 +861,17 @@ present_core #(
 	// L4: content from plex_present_geom_mux (FABRIC_NATIVE_720P_GEOM → 1280×720).
 	// Default Template path ignores these (tied 0).
 `ifdef PLEX_PRESENT_720P_L4
+	// Content island from plex_present_geom_mux (PLXG / FABRIC_NATIVE_720P_GEOM).
+	// Must NOT stay 11'd0 under L4 — that forces identity-only win_content_*.
 	.content_w(present_content_w),
 	.content_h(present_content_h),
+	.content_x0(present_content_x0),
+	.content_y0(present_content_y0),
 `else
 	.content_w(11'd0),
 	.content_h(11'd0),
+	.content_x0(11'd0),
+	.content_y0(11'd0),
 `endif
 	.fs_wr_en(fs_wr_en),
 	.fs_wr_pixel(fs_wr_pixel),

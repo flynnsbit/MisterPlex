@@ -136,13 +136,54 @@ def main() -> int:
         fails.append("L4 still wires content_window from beam_* (identity-only / shrinks DE)")
     else:
         print("OK L4 content_window not driven by beam_* size")
+
+    # Plex.sv L4 must drive present_core from geom_mux, not hardwired 11'd0.
+    # Negative: only 11'd0 under L4 → identity-only island (ascal-quarter class).
+    m_pres = re.search(
+        r"present_core\s+#\s*\(.*?\)\s*present\s*\((.*?)\);",
+        plex,
+        flags=re.S,
+    )
+    if not m_pres:
+        fails.append("could not locate present_core present(…) instance in Plex.sv")
+    else:
+        pres = m_pres.group(1)
+        if ".content_w(present_content_w)" not in pres:
+            fails.append("Plex L4 missing .content_w(present_content_w) on present_core")
+        else:
+            print("OK Plex L4 .content_w(present_content_w)")
+        if ".content_h(present_content_h)" not in pres:
+            fails.append("Plex L4 missing .content_h(present_content_h) on present_core")
+        else:
+            print("OK Plex L4 .content_h(present_content_h)")
+        if ".content_x0(present_content_x0)" not in pres:
+            fails.append("Plex L4 missing .content_x0(present_content_x0) on present_core")
+        else:
+            print("OK Plex L4 .content_x0(present_content_x0)")
+        if ".content_y0(present_content_y0)" not in pres:
+            fails.append("Plex L4 missing .content_y0(present_content_y0) on present_core")
+        else:
+            print("OK Plex L4 .content_y0(present_content_y0)")
+        twin = (
+            pres.replace(".content_w(present_content_w)", ".content_w(11'd0)")
+            .replace(".content_h(present_content_h)", ".content_h(11'd0)")
+        )
+        if ".content_w(present_content_w)" in twin:
+            fails.append("negative twin could not strip present_content_w wire")
+        elif ".content_w(11'd0)" not in twin:
+            fails.append("negative twin did not produce hardcoded content_w")
+        else:
+            print("OK negative twin: hardcoded L4 content_w=0 would fail this gate")
+    if ".content_x0(content_x0)" not in core or ".content_y0(content_y0)" not in core:
+        fails.append("present_core L4 content_window still hardwires content_x0/y0")
+    else:
+        print("OK present_core passes content_x0/y0 into content_window")
     if "beam_hde_req  = 11'(L4_H_DE)" not in core and "beam_hde_req = 11'(L4_H_DE)" not in core:
         # tolerate whitespace variants
         if "L4_H_DE)" not in core or "beam_hde_req" not in core:
             fails.append("L4 beam_hde_req not fixed to L4_H_DE")
         else:
             # require assignment not content_w ternary
-            import re
             m = re.search(r"beam_hde_req\s*=\s*([^;]+);", core)
             if not m or "L4_H_DE" not in m.group(1) or "content_w" in m.group(1):
                 fails.append(f"L4 beam_hde_req must be fixed L4_H_DE, got: {m.group(1) if m else 'missing'}")

@@ -102,7 +102,7 @@ static void reset_dut(Vpresent_content_window_tb_top& dut) {
 }
 
 static int run_frame(Vpresent_content_window_tb_top& dut, int cw, int ch, int hde, int vde,
-                     bool expect_match, const char* tag) {
+                     bool expect_match, const char* tag, int x0 = 0, int y0 = 0) {
     const bool floor_fault =
 #ifdef PRESENT_WINDOW_FAULT_FLOOR_SCALE
         true
@@ -111,7 +111,7 @@ static int run_frame(Vpresent_content_window_tb_top& dut, int cw, int ch, int hd
 #endif
         ;
 
-    Ref ref = make_ref(true, cw, ch, 0, 0, hde, vde, /*ref always correct*/ false);
+    Ref ref = make_ref(true, cw, ch, x0, y0, hde, vde, /*ref always correct*/ false);
     // DUT under FAULT uses floor; positive build uses ceil.
     (void)floor_fault;
 
@@ -119,8 +119,8 @@ static int run_frame(Vpresent_content_window_tb_top& dut, int cw, int ch, int hd
     dut.win_enable = 1;
     dut.content_w = cw;
     dut.content_h = ch;
-    dut.content_x0 = 0;
-    dut.content_y0 = 0;
+    dut.content_x0 = x0;
+    dut.content_y0 = y0;
     dut.h_de = hde;
     dut.v_de = vde;
     // Let scale regs settle
@@ -211,6 +211,9 @@ int main(int argc, char** argv) {
     rc |= run_frame(dut, 640, 480, 1280, 720, !fault, "g640to720");
     // Ship product source tier: 960×540 → 1280×720 DE (non-integer ~4/3 NN)
     rc |= run_frame(dut, 960, 540, 1280, 720, !fault, "g960to720");
+    // Non-zero origin (PLXG island offset). Naive x0=0 implementation fails last-col+offset.
+    if (!fault)
+        rc |= run_frame(dut, 640, 480, 1280, 720, true, "g640off16", /*x0=*/16, /*y0=*/8);
 
     if (fault) {
         // For fault build, success is divergence

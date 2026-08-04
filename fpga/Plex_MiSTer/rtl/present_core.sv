@@ -80,10 +80,13 @@ module present_core #(
 	input  wire        audio_en,        // OSD tone enable (when no FIFO audio)
 	input  wire        use_frame_store, // OSD force bars when 1
 
-	// Delivered content geometry (PLXG / future mux). 0 → max-tier fallback when
-	// PRESENT_BEAM_960. Ignored on default Template path.
+	// Delivered content geometry (PLXG / geom_mux). 0 → max-tier fallback when
+	// PRESENT_BEAM_960 / L4 identity. Ignored on default Template path.
 	input  wire [10:0] content_w,
 	input  wire [10:0] content_h,
+	// Origin of content island inside the DDR bank (PLXG). Default 0.
+	input  wire [10:0] content_x0,
+	input  wire [10:0] content_y0,
 
 	// frame_store write (from ingest)
 	input  wire        fs_wr_en,
@@ -453,8 +456,8 @@ module present_core #(
 		.win_enable(1'b1),
 		.content_w(win_content_w),
 		.content_h(win_content_h),
-		.content_x0(11'd0),
-		.content_y0(11'd0),
+		.content_x0(content_x0),
+		.content_y0(content_y0),
 		.h_de(hde_act11),
 		.v_de(vact_act11),
 		.store_x(store_x_clamped),
@@ -919,7 +922,7 @@ module present_core #(
 		keep_960_hde, keep_960_htot, keep_960_vact, keep_960_vtot,
 		keep_960_hss, keep_960_hse, keep_960_vss, keep_960_vse,
 		keep_960_fps_milli, keep_960_mode30, keep_960_wide_fifo,
-		content_w, content_h, clk_pix
+		content_w, content_h, content_x0, content_y0, clk_pix
 	};
 
 	// --- Audio: FIFO preferred, else OSD tone ---
