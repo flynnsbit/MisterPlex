@@ -9,7 +9,7 @@ SET_STATUS_REMOTE="${SET_STATUS_REMOTE:-/media/fat/linux/set_status}"
 
 echo "=== check_clk_pix_refresh (parent device) ==="
 echo "PRODUCT: clk_pix=30 MHz H1650×V750 → fps_eff=24.242 → fps_x10≈242"
-echo "PASS [241,244]  EXACT24 [238,240]  FAIL_TRAP [150,170]"
+echo "PASS [241,244]+raster_ok; ADV H1375xV900 must FAIL_RASTER  EXACT24 [238,240]  FAIL_TRAP [150,170]"
 echo "LAYOUT: raw[14]=fps_x10  raw[15]=flags{valid,pix_ok,fps_ok,pll,trap,ce,de}"
 
 run_raw() {

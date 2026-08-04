@@ -89,6 +89,7 @@ assert_sim_executed "plex_clk_refresh_meas" "$out" \
   "PASS POS_242HZ" \
   "PASS NEG_16HZ_TRAP" \
   "PASS NEG_EXACT24" \
+  "PASS NEG_ADV_RASTER" \
   "PASS plex_clk_refresh_meas_tb all cases"
 
 if [[ "$rc" -ne 0 ]]; then
@@ -108,7 +109,11 @@ if ! grep -q 'PASS NEG_EXACT24' <<<"$out"; then
   echo "FAIL plex_clk_refresh_meas red-check: NEG_EXACT24 twin did not PASS" >&2
   exit 1
 fi
-echo "OK plex_clk_refresh_meas red-check: NEG_16HZ_TRAP + NEG_EXACT24 twins PASS (true rc twin path)"
+if ! grep -q 'PASS NEG_ADV_RASTER' <<<"$out"; then
+  echo "FAIL plex_clk_refresh_meas red-check: NEG_ADV_RASTER twin did not PASS" >&2
+  exit 1
+fi
+echo "OK plex_clk_refresh_meas red-check: NEG_16 + NEG_EXACT24 + NEG_ADV_RASTER twins PASS"
 echo "PASS test_plex_clk_refresh_meas_verilator"
 echo "true rc=0"
 exit 0

@@ -240,9 +240,12 @@ wire [31:0] clkstat_sys_hz, clkstat_pix_hz, clkstat_cea_pf, clkstat_l4_pf;
 wire [7:0]  clkstat_ppc;
 wire        clkstat_cea_fast, clkstat_l4_fast, clkstat_valid;
 wire [15:0] clkstat_peak_x10;
-wire        clkstat_clk_pix, clkstat_vsync, clkstat_ce_pix, clkstat_de;
+wire        clkstat_clk_pix, clkstat_vsync, clkstat_hsync, clkstat_ce_pix, clkstat_de;
+wire [15:0] clkstat_underrun_count;
 wire [31:0] clkstat_meas_pix, clkstat_meas_ce, clkstat_meas_de;
 wire [15:0] clkstat_meas_frm;
+wire [31:0] clkstat_meas_ce_frame, clkstat_meas_de_frame;
+wire [15:0] clkstat_meas_lines, clkstat_meas_active, clkstat_meas_ce_line;
 wire [7:0]  clkstat_meas_fps_x10, clkstat_meas_flags;
 wire        clkstat_meas_done;
 plex_clk_status u_plex_clk_status (
@@ -250,8 +253,10 @@ plex_clk_status u_plex_clk_status (
 	.reset(reset),
 	.clk_pix(clkstat_clk_pix),
 	.vsync(clkstat_vsync),
+	.hsync(clkstat_hsync),
 	.ce_pix(clkstat_ce_pix),
 	.de(clkstat_de),
+	.underrun_count(clkstat_underrun_count),
 	.clk_sys_hz(clkstat_sys_hz),
 	.clk_pix_hz(clkstat_pix_hz),
 	.present_ppc(clkstat_ppc),
@@ -265,6 +270,11 @@ plex_clk_status u_plex_clk_status (
 	.meas_ce_count(clkstat_meas_ce),
 	.meas_de_count(clkstat_meas_de),
 	.meas_frame_count(clkstat_meas_frm),
+	.meas_ce_frame(clkstat_meas_ce_frame),
+	.meas_de_frame(clkstat_meas_de_frame),
+	.meas_lines_frame(clkstat_meas_lines),
+	.meas_active_lines(clkstat_meas_active),
+	.meas_ce_line(clkstat_meas_ce_line),
 	.meas_fps_x10(clkstat_meas_fps_x10),
 	.meas_flags(clkstat_meas_flags),
 	.meas_window_done(clkstat_meas_done)
@@ -272,6 +282,8 @@ plex_clk_status u_plex_clk_status (
 wire _unused_clkstat = |{clkstat_sys_hz, clkstat_pix_hz, clkstat_ppc, clkstat_cea_pf,
 	clkstat_l4_pf, clkstat_cea_fast, clkstat_l4_fast, clkstat_peak_x10, clkstat_valid,
 	clkstat_meas_pix, clkstat_meas_ce, clkstat_meas_de, clkstat_meas_frm,
+	clkstat_meas_ce_frame, clkstat_meas_de_frame, clkstat_meas_lines,
+	clkstat_meas_active, clkstat_meas_ce_line,
 	clkstat_meas_fps_x10, clkstat_meas_flags, clkstat_meas_done};
 
 // Fabric BW contract stamp (w-clock): 33.1776 MB/s/dir SoT.
@@ -1080,8 +1092,10 @@ assign clkstat_clk_pix = clk_pix_pll;
 assign clkstat_clk_pix = clk_sys;
 `endif
 assign clkstat_vsync  = VSync;
+assign clkstat_hsync  = HSync;
 assign clkstat_ce_pix = ce_pix;
 assign clkstat_de     = ~(HBlank | VBlank);
+assign clkstat_underrun_count = frame_underruns;
 assign VGA_DE = ~(HBlank | VBlank);
 assign VGA_HS = HSync;
 assign VGA_VS = VSync;

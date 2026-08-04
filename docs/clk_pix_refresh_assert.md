@@ -33,3 +33,30 @@ Gray free-run counters in clk_pix + **VSync period** in clk_sys:
 ./scripts/check_clk_pix_refresh.sh
 # Expect: clk_pix_meas_verdict=PASS_242HZ_PRODUCT
 ```
+
+## rd-duck re-audit — VSync-only is insufficient
+
+VSync period distinguishes 16.16 vs 24.242 internal cadence, but is **not** full 720p
+timing proof:
+
+| Attack | VSync/fps | CE/frame | Caught by |
+|---|---|---|---|
+| 20 MHz same-clock (16.16 Hz) | FAIL trap | OK | fps_x10 ∈ [150,170] |
+| Exact-24 period pad | EXACT24 band | OK | fps_x10 ∈ [238,240] ≠ product |
+| **H1375×V900** (HT×VT same) | PASS 242 | OK 1_237_500 | **lines=900≠750, CE/line=1375≠1650** |
+| Black / lane_valid=0 | may PASS | DE may OK | **underrun delta ≠ 0** |
+
+Per-frame pixel-domain totals (sticky on VSync, Gray to sys):
+
+- CE/frame == 1_237_500 (±8)
+- lines/frame == 750 (±1)
+- CE/line == 1650 (±2)
+- DE/frame == 921_600 (±8)
+- DE/line == 1280 on each active line (0 on blank)
+- active lines == 720
+- CE≈1 (pix clocks/frame ≈ CE/frame)
+- underrun_count delta over window == 0
+
+`flags[7]=raster_ok` must be 1 for `PASS_242HZ_PRODUCT`. Adversarial →
+`FAIL_RASTER_ADVERSARIAL`. External HDMI PTS remains parent-owned
+(`scripts/hdmi_measure_refresh.py` / capture PTS grid).
