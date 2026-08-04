@@ -26,6 +26,10 @@ LIMITATIONS (stated, not hidden):
     a module inside a disabled branch is reported reachable here but may not
     survive synthesis. Post-fit hierarchy is the authority for what actually built.
   - Text-based, not a real elaborator.
+  - Source-graph LIVE != modules present in a deployed RBF (bitstream may predate
+    sources; nostub/PRODUCT_NO_STUB can drop the whole decode_stub branch).
+  - Edges are taken from module..endmodule bodies only (not whole multi-module files).
+  - Positive/negative controls must pass or the tool exits 3 (no LIVE/DEAD table).
 """
 import re
 import sys
@@ -61,6 +65,33 @@ def instantiations(text, known_modules):
 
 def strip_comments(t):
     return LINE_COMMENT_RE.sub('', BLOCK_COMMENT_RE.sub('', t))
+
+
+def module_bodies(text):
+    """Map module_name -> body text between module and matching endmodule.
+
+    Multi-module files must NOT share one file-wide instantiation set: each
+    module only owns instantiations that appear in its own body. (rd-duck NACK
+    on file-union edges: leaf h264_dpb_i420_addr was falsely given siblings'
+    children.)
+    """
+    bodies = {}
+    # Iterate declarations in order; body runs until the next endmodule at depth 1
+    decl_iter = list(MODULE_DECL_RE.finditer(text))
+    for i, m in enumerate(decl_iter):
+        name = m.group(1)
+        start = m.end()
+        # find endmodule after start; handle nested module rarely — scan linear
+        end_m = re.search(r'\bendmodule\b', text[start:])
+        if not end_m:
+            bodies[name] = text[start:]
+            continue
+        end = start + end_m.start()
+        # If another module decl appears before this endmodule, clamp (nested rare)
+        if i + 1 < len(decl_iter) and decl_iter[i + 1].start() < end:
+            end = decl_iter[i + 1].start()
+        bodies[name] = text[start:end]
+    return bodies
 
 
 def main():
@@ -100,10 +131,57 @@ def main():
     # the top file itself is compiled via the .qsf, not the .qip
     in_qip.add(top)
 
-    # Build the instantiation graph.
+    # Build the instantiation graph from PER-MODULE bodies (not whole-file text).
+    bodies_of = {}
+    for f, raw in text_of.items():
+        for name, body in module_bodies(raw).items():
+            bodies_of[name] = body
+
     edges = {}
-    for name, f in decl_file.items():
-        edges[name] = instantiations(text_of.get(f, ''), known)
+    for name in known:
+        edges[name] = instantiations(bodies_of.get(name, ''), known)
+
+    # ---- Positive / negative controls (fail closed if the instrument is broken) ----
+    control_failures = []
+
+    def require(cond, msg):
+        if not cond:
+            control_failures.append(msg)
+
+    # Negative: pure address helper must not own child module instances.
+    if 'h264_dpb_i420_addr' in edges:
+        require(
+            len(edges['h264_dpb_i420_addr']) == 0,
+            f"NEG h264_dpb_i420_addr children={sorted(edges['h264_dpb_i420_addr'])} "
+            f"(expected []); file-union edge bug?",
+        )
+
+    # Positive: decode_stub body must list known backend leaves (source intent).
+    if 'decode_stub' in edges:
+        stub_need = {
+            'h264_dequant4x4', 'h264_idct4x4', 'h264_recon4x4', 'h264_dpb_one_ref',
+        }
+        missing = sorted(stub_need - edges['decode_stub'])
+        require(not missing, f"POS decode_stub missing direct children {missing}")
+
+    # Positive: emu (Plex.sv) must instantiate stream_path when present.
+    if 'emu' in edges:
+        require('stream_path' in edges['emu'], f"POS emu children missing stream_path: {sorted(edges['emu'])}")
+
+    # Positive: stream_path must instantiate decode_stub and ddr_bitstream_reader.
+    if 'stream_path' in edges:
+        for need in ('decode_stub', 'ddr_bitstream_reader'):
+            require(need in edges['stream_path'],
+                    f"POS stream_path missing {need}: {sorted(edges['stream_path'])}")
+
+    if control_failures:
+        print('REACHABILITY_CONTROLS_FAILED:')
+        for msg in control_failures:
+            print(f'  - {msg}')
+        print('Instrument untrusted; refusing LIVE/DEAD table (rd-duck NACK class).')
+        return 3
+
+    print('REACHABILITY_CONTROLS_OK: body-sliced edges; leaf-neg + stub/emu/stream pos')
 
     # BFS from top, but only traverse INTO modules that Quartus actually compiles.
     seen, queue = set(), [top]
@@ -121,13 +199,15 @@ def main():
     dead = [n for n in h264 if n not in seen]
 
     print(f'top={top}  modules_declared={len(known)}  in_qip={len(in_qip)}  reachable={len(seen)}')
-    print(f'--- h264_* REACHABLE FROM TOP: {len(live)}')
+    print(f'--- h264_* REACHABLE FROM TOP (source graph; NOT post-fit): {len(live)}')
     for n in live:
         print(f'    LIVE {n:34s} ({decl_file[n].name})')
     print(f'--- h264_* NOT REACHABLE: {len(dead)}')
     for n in dead:
         why = 'not in files.qip' if n not in in_qip else 'in qip but never instantiated on a path from top'
         print(f'    DEAD {n:34s} ({decl_file[n].name}) [{why}]')
+    print('CAVEAT: ignores generate/ifdef/PRODUCT_NO_STUB; post-fit hierarchy is authority.')
+    print('CAVEAT: source reachability != deployed RBF contents / area paid.')
     return 0
 
 

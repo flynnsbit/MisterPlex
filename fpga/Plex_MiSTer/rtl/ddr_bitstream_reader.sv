@@ -9,12 +9,17 @@
 //
 // Fabric-decode feed (w-path) — two product wiring options for w-plxd:
 //
-//   (1) DEAD front-end chain (parent ground truth: rbsp_filter + exp_golomb are
-//       DEAD; backend dequant/idct/recon already LIVE via decode_stub):
+//   Source-graph note (rd-duck NACK on 19/17 file-union probe): treat LIVE/DEAD
+//   counts as instrument-dependent. Post-fit hierarchy + PRODUCT_NO_STUB are
+//   authority for what ships. decode_stub is diagnostic/partial; product frames
+//   still come from ARM FFmpeg until a complete fabric path is wired and fit.
+//   rbsp_filter + exp_golomb remain uninstantiated on the product path today.
+//
+//   (1) Front-end chain (w-plxd ENABLE_FABRIC_DECODE):
 //         reader.out_valid/out_byte/out_last  →  h264_rbsp_filter.in_*
 //         reader.out_full                    := !h264_rbsp_filter.in_ready
 //         reader.out_flush                   →  h264_rbsp_filter.clear (pulse)
-//         rbsp_filter.out_*                  →  byte→bit pack → h264_exp_golomb_reader
+//         rbsp_filter.out_*                  →  bit window (STRIP_EPB=0) → exp_golomb
 //
 //   (2) Integrated bit feed (ENABLE_BIT_FEED=1): reader does EPB strip + MSB bit
 //       window in-module and presents bit_valid/bit_value/bit_ready directly to
