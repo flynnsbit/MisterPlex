@@ -234,6 +234,8 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_pl330_encode $(ROOT)/b
 	$(ROOT)/tests/unit/test_sdram_startup_verilator.sh
 	$(ROOT)/tests/unit/test_sdram_dq_turnaround_verilator.sh
 	$(ROOT)/tests/unit/test_h264_cavlc_residual_verilator.sh
+	python3 $(ROOT)/tests/unit/test_cavlc_gap_assessment_static.py
+	$(ROOT)/tests/unit/test_h264_cavlc_real_mb_cycles.sh
 	$(ROOT)/tests/unit/test_level_width_verilator.sh
 	$(ROOT)/tests/unit/test_stream_path_recon_integration.sh
 	$(ROOT)/tests/unit/test_stream_path_full_frame_compare.sh
@@ -265,6 +267,8 @@ rtl-sim-unlocked:
 	$(ROOT)/tests/unit/test_p3_deblock_rtl_sim.sh
 	bash $(ROOT)/tests/unit/test_stream_path_ddr_ring_integration.sh
 	$(ROOT)/tests/unit/test_h264_cavlc_residual_verilator.sh
+	python3 $(ROOT)/tests/unit/test_cavlc_gap_assessment_static.py
+	$(ROOT)/tests/unit/test_h264_cavlc_real_mb_cycles.sh
 	$(ROOT)/tests/unit/test_p3_stream_path_recon_rtl_sim.sh
 	$(ROOT)/tests/unit/test_stream_path_deblock_integration.sh
 	$(ROOT)/tests/unit/test_ddr_frame_store_warm_reset.sh
