@@ -19,8 +19,9 @@
 //            h264_deblock (w-deblock)
 
 module h264_decode_core #(
-    parameter int FRAME_W   = 1280,
-    parameter int FRAME_H   = 720,
+    // Defaults match product FRAME_* (see Plex.sv / stream_path); override for 720p later.
+    parameter int FRAME_W   = 640,
+    parameter int FRAME_H   = 480,
     parameter int MB_W      = (FRAME_W + 15) / 16,
     parameter int MB_H      = (FRAME_H + 15) / 16,
     parameter int MB_COUNT  = MB_W * MB_H
@@ -126,17 +127,17 @@ module h264_decode_core #(
     //             nC context comes from h264_cavlc_nc_predictor.
     //
     // h264_dequant4x4 (w-cabac):
-    //   IN:  coeff signed [8:0] [0:15], qp[5:0], max_coeff[4:0]
-    //   OUT: dequant signed [17:0] [0:15]
+    //   IN:  coeff signed [15:0] [0:15], qp[5:0], max_coeff[4:0]
+    //   OUT: dequant signed [28:0] [0:15]
     //   CONTRACT: Combinational. Width: 29 bits internal (sat to 18 out).
     //
     // h264_idct4x4 (w-cabac):
-    //   IN:  dequant signed [17:0] [0:15]
-    //   OUT: residual signed [17:0] [0:15]
+    //   IN:  dequant signed [28:0] [0:15]
+    //   OUT: residual signed [28:0] [0:15]
     //   CONTRACT: Combinational. Butterfly + shift.
     //
     // h264_recon4x4 (w-cabac):
-    //   IN:  pred[7:0] [0:15], residual signed [17:0] [0:15]
+    //   IN:  pred[7:0] [0:15], residual signed [28:0] [0:15]
     //   OUT: recon[7:0] [0:15]
     //   CONTRACT: Combinational. clip(pred + (residual >> 6), 0, 255).
     //

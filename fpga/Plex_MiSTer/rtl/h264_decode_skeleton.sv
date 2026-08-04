@@ -24,8 +24,11 @@
 `default_nettype none
 
 module h264_decode_skeleton #(
-    parameter int FRAME_W  = 1280,  // 80 MB columns (720p content)
-    parameter int FRAME_H  = 720,   // 45 MB rows
+    // Default matches product Plex.sv / stream_path FRAME_* so
+    // h264_deblock_writeback_ctrl MB_AW specialization agrees with decode_stub
+    // under the same lint elaboration (avoid 12-bit vs 9-bit pin clash).
+    parameter int FRAME_W  = 640,
+    parameter int FRAME_H  = 480,
     parameter int MB_W     = (FRAME_W + 15) / 16,
     parameter int MB_H     = (FRAME_H + 15) / 16,
     parameter int MB_COUNT = MB_W * MB_H,
@@ -101,16 +104,18 @@ module h264_decode_skeleton #(
 
     // ════════════════════════════════════════════════════════════════════
     // 2. DEQUANT + IDCT + RECON — arithmetic pipeline (w-cabac)
+    // Leaf ports: coeff signed [15:0][0:15], path signed [28:0][0:15]
+    // (match h264_iq_idct_4x4.sv; do not truncate CAVLC to [8:0]).
     // ════════════════════════════════════════════════════════════════════
-    wire signed [8:0] dq_coeff [0:15];
+    wire signed [15:0] dq_coeff [0:15];
     genvar di;
     generate
         for (di = 0; di < 16; di = di + 1) begin : gen_dq_input
-            assign dq_coeff[di] = cavlc_coeff[di][8:0];
+            assign dq_coeff[di] = cavlc_coeff[di];
         end
     endgenerate
 
-    wire signed [17:0] dq_out [0:15];
+    wire signed [28:0] dq_out [0:15];
     h264_dequant4x4 u_dequant (
         .coeff(dq_coeff),
         .qp(stim_qp),
@@ -118,7 +123,7 @@ module h264_decode_skeleton #(
         .dequant(dq_out)
     );
 
-    wire signed [17:0] idct_out [0:15];
+    wire signed [28:0] idct_out [0:15];
     h264_idct4x4 u_idct (
         .dequant(dq_out),
         .residual(idct_out)
@@ -216,7 +221,7 @@ module h264_decode_skeleton #(
     wire [7:0] xor_intra = xor16x8(i4_pred) ^ i16_pred[0] ^ i16_pred[128] ^ i16_pred[255] ^
                             chroma_pred[0] ^ chroma_pred[32] ^ chroma_pred[63] ^
                             {4'd0, i4_used_mode} ^ {7'd0, i16_unsupported} ^
-                            {7'd0, guard_unsup_seen} ^ guard_unsup_code[3:0] ^
+                            {7'd0, guard_unsup_seen} ^ {4'd0, guard_unsup_code[3:0]} ^
                             guard_unsup_mb[7:0];
 
     // ════════════════════════════════════════════════════════════════════
@@ -315,10 +320,12 @@ module h264_decode_skeleton #(
     wire       dpb_mem_rd;
     wire [31:0] dpb_mem_raddr;
 
+    // Index width: clog2(2*DPB_FRAME_BYTES) — keep full low bits (was [19:0], short for 640x480 I420*2).
+    localparam int DPB_MEM_AW = (2*DPB_FRAME_BYTES <= 1) ? 1 : $clog2(2*DPB_FRAME_BYTES);
     always @(posedge clk) begin
         if (dpb_mem_we && dpb_mem_waddr < (2*DPB_FRAME_BYTES))
-            dpb_mem[dpb_mem_waddr[19:0]] <= dpb_mem_wdata;
-        dpb_rdata  <= dpb_mem[dpb_mem_raddr[19:0]];
+            dpb_mem[dpb_mem_waddr[DPB_MEM_AW-1:0]] <= dpb_mem_wdata;
+        dpb_rdata  <= dpb_mem[dpb_mem_raddr[DPB_MEM_AW-1:0]];
         dpb_rvalid <= dpb_mem_rd;
     end
 
@@ -466,7 +473,7 @@ module h264_decode_skeleton #(
         .idr_frame_start(stim_valid && stim_mode == 4'd5),
         .filtered_sample_valid(stim_valid),
         .filtered_mb_valid(stim_valid && stim_byte[0]),
-        .filtered_mb_addr(stim_byte[MB_AW-1:0]),
+        .filtered_mb_addr({{(MB_AW > 8 ? MB_AW - 8 : 0){1'b0}}, stim_byte[7:0]}),
         .filtered_mb_is_ref(1'b1),
         .filtered_frame_done(stim_valid && stim_byte[7]),
         .frame_slot_i(2'd0),
@@ -515,8 +522,8 @@ module h264_decode_skeleton #(
     );
 
     wire [7:0] xor_pmb = {pmb_is_skip, pmb_is_inter, pmb_is_intra, pmb_uses_sub,
-                           pmb_ref0_only, pmb_part_mode} ^ pmb_part_w[4:0] ^
-                          {3'd0, pmb_part_h[4:0]} ^ {4'd0, pmb_sub_w};
+                           pmb_ref0_only, pmb_part_mode[2:0]} ^ {3'd0, pmb_part_w[4:0]} ^
+                          {3'd0, pmb_part_h[4:0]} ^ {4'd0, pmb_sub_w[3:0]};
 
     // ════════════════════════════════════════════════════════════════════
     // 9. nC PREDICTOR — combinational context derivation (w-level)
@@ -623,8 +630,11 @@ module h264_decode_skeleton #(
     generate
         for (ldi = 0; ldi < 16; ldi = ldi + 1) begin : gen_luma_dc
             wire signed [15:0] l_in = cavlc_coeff[ldi];
-            wire signed [17:0] l_sum = l_in + cavlc_coeff[(ldi+1) & 4'hF];
-            wire signed [17:0] l_diff = l_in - cavlc_coeff[(ldi+2) & 4'hF];
+            wire signed [17:0] l_in_x = {{2{l_in[15]}}, l_in};
+            wire signed [17:0] l_b_x = {{2{cavlc_coeff[(ldi+1) & 4'hF][15]}}, cavlc_coeff[(ldi+1) & 4'hF]};
+            wire signed [17:0] l_c_x = {{2{cavlc_coeff[(ldi+2) & 4'hF][15]}}, cavlc_coeff[(ldi+2) & 4'hF]};
+            wire signed [17:0] l_sum = l_in_x + l_b_x;
+            wire signed [17:0] l_diff = l_in_x - l_c_x;
             assign luma_dc_out[ldi] = (l_sum + l_diff) * $signed({1'b0, stim_qp[1:0]});
         end
     endgenerate
