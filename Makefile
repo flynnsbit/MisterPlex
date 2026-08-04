@@ -166,6 +166,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_play_file_delivery.sh
 	$(ROOT)/tests/unit/test_no_private_data.sh
 	$(ROOT)/tests/unit/test_rbf_provenance.sh
+	$(ROOT)/tests/unit/test_prefit_reachability_product_no_stub.sh
 	$(ROOT)/tests/unit/test_plex_rbf_build_id_rtl_sim.sh
 	python3 $(ROOT)/tests/unit/test_gate_false_green_guard.py
 	$(ROOT)/tests/unit/test_capture_rig.sh

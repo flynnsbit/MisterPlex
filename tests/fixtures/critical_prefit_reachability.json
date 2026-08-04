@@ -5,14 +5,12 @@
     "emu"
   ],
   "critical_modules": [
-    "decode_stub",
     "stream_path",
     "ddr_frame_store",
     "present_core",
     "plex_rbf_build_id"
   ],
   "expect_reachable": [
-    "decode_stub",
     "stream_path",
     "ddr_frame_store",
     "present_core",
@@ -27,9 +25,20 @@
     "h264_cavlc_nc_predictor"
   ],
   "notes": [
-    "critical_modules/expect_reachable: product-path modules that must be REACHABLE for fit release (rc=0).",
-    "teeth_non_reachable: historical decoder/CAVLC hole \u2014 must remain ABSENT/NOT_IN_QIP/PRUNED until deliberately landed and moved into critical.",
-    "Proves presence/reachability only \u2014 not correctness, STA, or post-fit survival (FIT_RPT stage separate).",
-    "When fabric decode replaces decode_stub: move decoder modules from teeth \u2192 critical and remove decode_stub from critical."
-  ]
+    "critical_modules/expect_reachable: always-required product path (REACHABLE).",
+    "critical_if_macro_absent.PRODUCT_NO_STUB: decode_stub required REACHABLE when QSF does not set PRODUCT_NO_STUB (current main).",
+    "teeth_if_macro_present.PRODUCT_NO_STUB: decode_stub must be PRUNED/NOT_IN_QIP when PRODUCT_NO_STUB=1 (w-nostub reclaim).",
+    "teeth_non_reachable: historical decoder/CAVLC hole until deliberately landed.",
+    "Presence only \u2014 not correctness; post-fit needs FIT_RPT."
+  ],
+  "critical_if_macro_absent": {
+    "PRODUCT_NO_STUB": [
+      "decode_stub"
+    ]
+  },
+  "teeth_if_macro_present": {
+    "PRODUCT_NO_STUB": [
+      "decode_stub"
+    ]
+  }
 }
