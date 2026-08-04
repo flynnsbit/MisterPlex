@@ -199,7 +199,7 @@ If modal lands **exactly** on 24.000 with long span, still record MEASURED numbe
 
 ## 5. Discrimination quick tests (optional, after MEASURED)
 
-Use only to explain FAIL — not to invent PASS.
+Use only to explain FAIL / GRABBER cadence — not to invent PASS.
 
 | Hypothesis | Check |
 |------------|--------|
@@ -208,6 +208,25 @@ Use only to explain FAIL — not to invent PASS.
 | 74.25 / 60 Hz path | Confirm `PRESENT_CLK_PIX_74_25` **absent** on fitted QSF |
 | Grabber locked wrong size | Retry `--size 1280x720` and `1920x1080`; log both if they disagree |
 | Busy grabber | `fuser -v /dev/video0`; never zero-fill |
+| **Grabber reclock (~31.25)** | MS2109 UVC has **no 24 Hz interval**. Modal ~31.25 (`dt=0.032`) or modal tracking `--framerate` 20/30/60 with `span_hz≈request` is **USB/UVC delivery**, not glass. Tool: `cadence_class=GRABBER_OR_USB_CADENCE`, `rate_pass_eligible=0`. Cross-RBF invariance (STALE + cut-b same modal) seals it. |
+
+**Discriminator recipe** (grabber free; same stamp pair):
+
+```bash
+# Primary (150 warm-up, ≥300 frames after warm-up → --frames ≥450)
+python3 tools/measure_refresh_hz.py --device /dev/video0 --size 1280x720 \
+  --frames 450 --warmup 150 --discriminate \
+  --rbf-md5 "$RBF_MD5" --daemon-md5 "$DAEMON_MD5" --decode-src cutb_hdmi_rate
+
+# Multi-request probe — if modal follows --framerate, glass is NOT observed
+for FR in 20 30 60; do
+  python3 tools/measure_refresh_hz.py --device /dev/video0 --size 1280x720 \
+    --framerate $FR --frames 120 --warmup 30 --discriminate \
+    --rbf-md5 "$RBF_MD5" --daemon-md5 "$DAEMON_MD5" --decode-src probe_fr$FR
+done
+# Lab: fr30 → modal 31.25 span~30; fr60 → modal 62.5 span~60; fr20 → span~20
+# Glass candidate only if modal ∈ 23.5..24.5 independent of --framerate
+```
 
 ---
 
