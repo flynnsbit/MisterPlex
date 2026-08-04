@@ -14,7 +14,6 @@
 
 namespace {
 
-constexpr uint32_t kDdrFrameBase = 0x30000000u;
 constexpr size_t kDefaultFrameBytes = 320 * 240 * 3 / 2;
 
 const char* formatName(misterplex::DdrFrameFormat) {
@@ -66,11 +65,12 @@ void fillPattern(uint8_t* buf, size_t len) {
 void usage(const char* argv0) {
     std::printf(
         "Usage: %s [--sync|--no-sync] [--flush] [--host-copy]\n"
-        "          [--format yuv420p] [--geometry auto|exact|plex480p]\n"
-        "          [--width W --height H | --len BYTES]\n"
+        "          [--format yuv420p] [--geometry auto|exact|plex480p|optionc720p]\n"
+        "          [--base PHYS] [--width W --height H | --len BYTES]\n"
         "          [--loops N] [--bank 0|1]\n"
         "Writes a DDR frame window only; it does not touch SPI or kick the frame reader.\n"
-        "--host-copy avoids /dev/mem and measures memcpy scaling on the build host.\n",
+        "--host-copy avoids /dev/mem and measures memcpy scaling on the build host.\n"
+        "optionc720p / 1280x720 auto → phys 0x30180000 stride 0x180000 (w-mem Option-C).\n",
         argv0);
 }
 
@@ -86,6 +86,8 @@ int main(int argc, char** argv) {
     int width = 320;
     int height = 240;
     bool lenSet = false;
+    bool baseSet = false;
+    uint32_t physBase = misterplex::kDdrFramePhysBase;
     std::string geometryMode = "auto";
     misterplex::DdrFrameFormat format = misterplex::DdrFrameFormat::Yuv420p;
 
@@ -103,6 +105,9 @@ int main(int argc, char** argv) {
             width = std::atoi(argv[++i]);
         } else if (a == "--height" && i + 1 < argc) {
             height = std::atoi(argv[++i]);
+        } else if (a == "--base" && i + 1 < argc) {
+            physBase = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 0));
+            baseSet = true;
         } else if (a == "--format" && i + 1 < argc) {
             std::string v = argv[++i];
             if (v == "yuv420p" || v == "yuv420" || v == "i420") {
@@ -116,6 +121,8 @@ int main(int argc, char** argv) {
             std::string v = argv[++i];
             if (v == "plex480p" || v == "real480p") {
                 geometryMode = "plex480p";
+            } else if (v == "optionc720p" || v == "plex720p" || v == "720p") {
+                geometryMode = "optionc720p";
             } else if (v == "exact" || v == "coded") {
                 geometryMode = "exact";
             } else if (v == "auto") {
@@ -145,26 +152,40 @@ int main(int argc, char** argv) {
         geometryMode == "plex480p" ||
         (geometryMode == "auto" && width == misterplex::kPlex480pPresentedWidth &&
          height == misterplex::kPlex480pPresentedHeight);
-    const misterplex::DdrFrameGeometry geometry =
-        plex480pGeometry ? misterplex::plex480pDdrFrameGeometry()
-                         : misterplex::makeDdrFrameGeometry(width, height);
-    misterplex::DdrFrameLayout layout =
-        lenSet ? misterplex::makeDdrFrameLayout(320, static_cast<int>(len / (320 * 2)),
-                                                kDdrFrameBase)
-               : misterplex::makeDdrFrameLayout(geometry, kDdrFrameBase, 0x40000u, format);
-    if (lenSet) {
-        layout.width = 0;
-        layout.height = 0;
-        layout.line_bytes = 0;
-        layout.line_qwords = 0;
-        layout.chroma_line_bytes = 0;
-        layout.chroma_line_qwords = 0;
+    const bool optionc720pGeometry =
+        geometryMode == "optionc720p" ||
+        (geometryMode == "auto" && width == misterplex::kPlex720pCodedWidth.get() &&
+         height == misterplex::kPlex720pCodedHeight.get()) ||
+        (lenSet && len == static_cast<size_t>(misterplex::kPlex720pYuv420pBytes));
+    if (optionc720pGeometry && !baseSet)
+        physBase = misterplex::kPlex720pDdrFramePhysBase;
+    if (plex480pGeometry && !baseSet)
+        physBase = misterplex::kDdrFramePhysBase;
+
+    misterplex::DdrFrameLayout layout{};
+    if (optionc720pGeometry && !lenSet) {
+        layout = misterplex::makePlex720pDdrFrameLayout(format);
+        len = layout.frame_bytes;
+    } else if (lenSet) {
+        layout.phys_base = physBase;
         layout.frame_bytes = len;
         layout.format = format;
         layout.bank_stride = misterplex::alignUpU32(static_cast<uint32_t>(len), 0x40000u);
-        layout.doorbell_phys = kDdrFrameBase + layout.bank_stride * 2u - 0x1000u;
+        layout.doorbell_phys = physBase + layout.bank_stride * 2u - 0x1000u;
         layout.map_bytes = layout.bank_stride * 2u;
+        if (optionc720pGeometry) {
+            layout = misterplex::makePlex720pDdrFrameLayout(format);
+            layout.frame_bytes = len;
+            if (len > layout.bank_stride) {
+                std::fprintf(stderr, "len exceeds Option-C bank_stride\n");
+                return 2;
+            }
+        }
     } else {
+        const misterplex::DdrFrameGeometry geometry =
+            plex480pGeometry ? misterplex::plex480pDdrFrameGeometry()
+                             : misterplex::makeDdrFrameGeometry(width, height);
+        layout = misterplex::makeDdrFrameLayout(geometry, physBase, 0x40000u, format);
         len = layout.frame_bytes;
     }
 
@@ -195,9 +216,10 @@ int main(int argc, char** argv) {
                     "frame_ms=%.3f frame_cpu_ms=%.3f fps30_budget_pct=%.1f "
                     "fps60_budget_pct=%.1f\n",
                     hostCopy ? 1 : 0, useSync ? 1 : 0, flush ? 1 : 0, loops, len, bank,
-                    formatName(layout.format), layout.coded_width, layout.coded_height,
-                    layout.display_width, layout.display_height, layout.presented_width,
-                    layout.presented_height, layout.present_x, layout.present_y,
+                    formatName(layout.format), layout.coded_width.get(), layout.coded_height.get(),
+                    layout.display_width.get(), layout.display_height.get(),
+                    layout.presented_width.get(), layout.presented_height.get(),
+                    layout.present_x, layout.present_y,
                     layout.line_bytes, layout.line_qwords, layout.chroma_line_bytes,
                     layout.chroma_line_qwords,
                     layout.bank_stride, layout.map_bytes, wallSec, cpuSec, mib, mib / wallSec,
@@ -242,7 +264,7 @@ int main(int argc, char** argv) {
     }
 
     void* map = mmap(nullptr, layout.map_bytes, PROT_READ | PROT_WRITE, MAP_SHARED, fd,
-                     kDdrFrameBase);
+                     layout.phys_base);
     if (map == MAP_FAILED) {
         std::perror("mmap");
         ::close(fd);
