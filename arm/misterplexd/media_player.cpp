@@ -3464,6 +3464,10 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             holdBytesAtRelease_.store(-1, std::memory_order_release);
             firstAudioQueuedGe0MonoMs_.store(-1, std::memory_order_release);
         }
+        // Heap vector is NOT a fabric/PL330 DMA source (rd-duck). Contiguous PA
+        // for ddr_frame_dma requires FabricDmaStagingMap::loadCpuBytes into
+        // kFabricDmaStagingPhys (0x30601000) — see fabric_dma_source.hpp.
+        // Product path still sendDdrFrame bank memcpy until that lands.
         std::vector<uint8_t> frame(frameBytes);
         // Zero-init → green-cast under any underfill (U=V=0). Studio black
         // (Y=16,U=V=128) is greyscale-safe if a short frame is ever presented.

@@ -1362,6 +1362,10 @@ bool FpgaSpi::sendRgb565Frame(const uint16_t* rgb, int w, int h, uint8_t index) 
 }
 
 bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& plan) {
+    // PRODUCT bank publication: CPU memcpy into bank PA (retires nothing for
+    // fabric DMA). Fabric path (OPEN): loadCpuBytes → kFabricDmaStagingPhys →
+    // status[12] → ddr_frame_dma → dma_done store kick. See fabric_dma_source.hpp.
+    // Do not cast frame.payload to src_phys — heap is not a legal Avalon source.
     const uint8_t* payload = frame.payload;
     const size_t len = frame.len;
     int bank = plan.bank;

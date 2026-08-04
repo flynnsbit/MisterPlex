@@ -22,6 +22,11 @@
 //   CpuWriteCombine   — PRODUCT serial upgrade: driver WC map + CPU memcpy
 //   FabricDirectReader— STRATEGIC PREFER (w-mem/fabric): dynamic-base reader of
 //                       decode output; avoids source→bank mover (extra R+W).
+//   FabricStagingDma  — w-mem path: CPU fill reserved PA kFabricDmaStagingPhys
+//                       (0x30601000) then fabric ddr_frame_dma staging→bank.
+//                       Contract: fabric_dma_source.hpp. std::vector is never
+//                       src_phys. Staging fill is still a CPU copy; bank
+//                       publication copy is what fabric retires. OPEN product.
 //
 // Ship product glass path is still 960×540 source → fabric upscale → 720p out.
 // True 720p *source* needs KernelDma and/or CpuWriteCombine ≥ ~230 MiB/s, or

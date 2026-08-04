@@ -975,11 +975,11 @@ present_core #(
 `ifdef DDR_FRAME_STORE
 `ifdef FABRIC_FRAME_DMA
 // --- Fabric publication DMA (w-mem): staging → bank on f2sdram ---
-// Default OFF. NOT product-ready until: (1) HPS fills DDR_FRAME_DMA_STAGING_PHYS,
-// (2) status[12] means "staging ready, start mover" only, (3) device BW measured.
+// Default OFF. NOT product-ready until: (1) HPS fills DDR_FRAME_DMA_STAGING_PHYS
+// via fabric_dma_source.hpp (vector heap is NOT src_phys), (2) status[12] means
+// "staging ready, start mover" only, (3) device BW measured, (4) doorbell PLXD.
 // Handoff: status[12] → dma start; dma_done → fabric_dma_store_kick (store start).
-// Doorbell page is still OPEN (store kick path, not PLXD write-back).
-// M10K: bounce 2 EST + arb3 FIFO 2 EST (64b width-bound). MAX_BURST=8 = quantum.
+// M10K: bounce 8×64 MLAB=0 + arb3 async_fifo MLAB=0 (fit-measured analogue).
 `include "ddr_frame_layout_params.svh"
 wire        dma_busy;
 wire        dma_yield_window, dma_done, dma_err_align;
