@@ -675,7 +675,9 @@ $(ROOT)/build/test_pixel_format: $(ROOT)/tests/unit/test_pixel_format.cpp \
 $(ROOT)/build/test_log_redact: $(ROOT)/tests/unit/test_log_redact.cpp \
 		$(ROOT)/arm/misterplexd/log_redact.hpp
 	@mkdir -p $(ROOT)/build
-	$(CXX) $(CXXFLAGS) -I$(ROOT)/arm/misterplexd -o $@ \
+	# -U defeats env CXXFLAGS accidentally carrying -DLOG_REDACT_FAULT_IDENTITY
+	# (that define is ONLY for tests/unit/test_log_redact_red.sh mutation twin).
+	$(CXX) $(CXXFLAGS) -ULOG_REDACT_FAULT_IDENTITY -I$(ROOT)/arm/misterplexd -o $@ \
 		$(ROOT)/tests/unit/test_log_redact.cpp
 
 $(ROOT)/build/test_resolve: $(ROOT)/tests/unit/test_resolve.cpp \
