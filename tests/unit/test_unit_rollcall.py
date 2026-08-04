@@ -19,6 +19,7 @@ MAKEFILE = Path(os.environ.get("UNIT_ROLLCALL_MAKEFILE", ROOT / "Makefile"))
 EXPECTED_PREREQS = [
     "unit-rollcall",
     "preflight",
+    "$(ROOT)/build/test_p720_e2e_budget",
     "$(ROOT)/build/test_cadence",
     "$(ROOT)/build/test_cadence_swap_path",
     "$(ROOT)/build/test_publish_interval_ledger",
@@ -79,6 +80,7 @@ EXPECTED_PREREQS = [
 ]
 
 EXPECTED_COMMANDS = [
+    "$(ROOT)/build/test_p720_e2e_budget",
     "$(ROOT)/build/test_cadence",
     "$(ROOT)/build/test_cadence_swap_path",
     "$(ROOT)/tests/unit/test_cadence_swap_path_source.sh",
