@@ -6,6 +6,8 @@
 //   2) CpuWriteCombine  — mmap banks with pgprot_writecombine; CPU fill
 // Raw /dev/mem + userspace PL330 DMAGO is LAB ONLY and must not unbind dma-pl330.
 
+#include "libmisterplex/ddr_frame_layout.hpp"
+
 #include <cstdint>
 #include <cstring>
 
@@ -15,10 +17,17 @@ namespace misterplex {
 inline constexpr const char* kMisterplexBankDevPath = "/dev/misterplex_bank";
 inline constexpr const char* kMisterplexBankModName = "misterplex_bank";
 
-// Option-C style defaults (must match ddr_frame_layout / w-mem freeze).
-inline constexpr uint32_t kMisterplexBank0PhysDefault = 0x30000000u;
-inline constexpr uint32_t kMisterplexBank1PhysDefault = 0x30180000u;
-inline constexpr uint32_t kMisterplexBankBytesDefault = 0x00180000u; // 1.5 MiB window
+// Option-C 720p defaults — derived from ddr_frame_layout (w-mem freeze).
+// NOT legacy 480p 0x30000000 — that stomps bitstream ring @0x30100000 and
+// confuses bank1 with Option-C bank0. bank1 = base + stride = 0x30300000.
+inline constexpr uint32_t kMisterplexBank0PhysDefault = kPlex720pDdrFramePhysBase;
+inline constexpr uint32_t kMisterplexBankBytesDefault = kPlex720pYuv420pBankStride;
+inline constexpr uint32_t kMisterplexBank1PhysDefault =
+    kMisterplexBank0PhysDefault + kMisterplexBankBytesDefault;
+static_assert(kMisterplexBank0PhysDefault == 0x30180000u, "kabi bank0 Option-C");
+static_assert(kMisterplexBank1PhysDefault == 0x30300000u, "kabi bank1 Option-C");
+static_assert(kMisterplexBankBytesDefault == 0x00180000u, "kabi stride Option-C");
+static_assert(kMisterplexBank0PhysDefault != 0x30000000u, "kabi must not use legacy base");
 
 // ioctl magic — avoid clash with FPGA manager.
 inline constexpr unsigned kMisterplexBankIocMagic = 0xB7;
@@ -107,6 +116,12 @@ inline bool misterplexBankInfoSane(const MisterplexBankInfo& i) {
     if (i.bank0_phys == 0 || i.bank1_phys == 0)
         return false;
     if (i.bank0_phys == i.bank1_phys)
+        return false;
+    // True-720 product window: bank1 must be bank0 + bank_bytes (no overlap).
+    if (i.bank1_phys != i.bank0_phys + i.bank_bytes)
+        return false;
+    // Reject legacy 480p base disguised as 720p stride (ring stomp class).
+    if (i.bank0_phys == 0x30000000u)
         return false;
     return true;
 }

@@ -3,6 +3,8 @@
 // were measured under a rogue remote CPU burner — RETRACTED. Do not chase.
 // Clean re-measure pending; alignment facts below remain true independent of rates.
 #include "libmisterplex/bank_producer_order.hpp"
+#include "libmisterplex/ddr_frame_layout.hpp"
+#include "libmisterplex/misterplex_bank_kabi.hpp"
 #include <cstdio>
 
 using namespace misterplex;
@@ -15,6 +17,28 @@ int main() {
     CHECK(f.bank1 == 0x30300000u);
     CHECK(f.stride == 0x00180000u);
     CHECK(f.frame_bytes == 1382400u);
+
+    // KernelDma/WC kabi defaults MUST track Option-C (w-mem). RED if legacy base.
+    CHECK(kMisterplexBank0PhysDefault == kPlex720pDdrFramePhysBase);
+    CHECK(kMisterplexBank0PhysDefault == f.bank0);
+    CHECK(kMisterplexBank1PhysDefault == f.bank1);
+    CHECK(kMisterplexBankBytesDefault == kPlex720pYuv420pBankStride);
+    CHECK(kMisterplexBankBytesDefault == f.stride);
+    CHECK(kMisterplexBank0PhysDefault != 0x30000000u);
+    {
+        MisterplexBankInfo ok{};
+        ok.api_version = kMisterplexBankApiVersion;
+        ok.n_banks = 2;
+        ok.bank0_phys = kMisterplexBank0PhysDefault;
+        ok.bank1_phys = kMisterplexBank1PhysDefault;
+        ok.bank_bytes = kMisterplexBankBytesDefault;
+        CHECK(misterplexBankInfoSane(ok));
+        MisterplexBankInfo legacy{};
+        legacy = ok;
+        legacy.bank0_phys = 0x30000000u;
+        legacy.bank1_phys = 0x30180000u;
+        CHECK(!misterplexBankInfoSane(legacy)); // NEG: 480p base + wrong bank1
+    }
 
     CHECK(alignMod(f.bank0, 4096) == 0);
     CHECK(alignMod(f.bank1, 4096) == 0);

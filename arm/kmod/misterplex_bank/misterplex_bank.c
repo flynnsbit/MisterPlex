@@ -26,8 +26,9 @@
 #define MPB_MAP_WRITECOMBINE 1
 #define MPB_MAP_CACHED_LAB 2
 
-#define MPB_BANK0_PHYS 0x30000000u
-#define MPB_BANK1_PHYS 0x30180000u
+/* Option-C 720p (ddr_frame_layout.hpp). NOT legacy 0x30000000 — ring stomp. */
+#define MPB_BANK0_PHYS 0x30180000u
+#define MPB_BANK1_PHYS 0x30300000u
 #define MPB_BANK_BYTES 0x00180000u
 
 struct mpb_info {

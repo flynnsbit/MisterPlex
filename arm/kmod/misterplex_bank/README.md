@@ -31,6 +31,9 @@ See `host/libmisterplex/misterplex_bank_kabi.hpp`:
 - `/dev/misterplex_bank`
 - `MPB_IOC_INFO`, `MPB_IOC_DMA_MEMCPY`, `MPB_IOC_SET_MAP_PROT`
 - mmap offset `bank * bank_bytes` → bank window
+- **Default banks = Option-C 720p**: bank0 `0x30180000`, bank1 `0x30300000`,
+  stride `0x00180000` (matches `ddr_frame_layout.hpp`). Legacy `0x30000000`
+  is rejected by `misterplexBankInfoSane` (ring-stomp class).
 
 ## Hard rules
 
