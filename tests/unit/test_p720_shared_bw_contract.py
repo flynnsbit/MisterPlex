@@ -11,15 +11,18 @@ INTERFACE PEAKS (separate — do not collapse into headline):
   I420 amortized source   = 3 B per active 2-pixel group
   linebuf I420-equiv DE   = 3.0 B/clk_sys (NOT DDRAM; rd_miss_now hits skip)
 
-PROOF GAP OPEN: fabric BW is NOT closed. Need full 1280x720 real-reader
-end-of-frame beat delta under PPC2 + clk 20:90 + stalls, including
-doorbell/mailbox/refill overhead. Prep-only beat counts ≠ closure.
+PROOF GAP: PARTIAL_CLOSED_READER / fabric_bw_closed=false.
+  reader_refill_beats may be CLOSED (full-line refill demand).
+  PPC2 dual-lane correctness is NOT closed by beat TB — scalar DUT is
+  bit-identical G0/G1 (rd-duck discriminator). True PPC2 gate must FAIL
+  scalar via odd/even checksum. HPS concurrent write + T_copy remain OPEN.
 
 Companions: steady R+W 66.3552 MB/s, 172800 payload beats/frame,
 345600 R+W payload pair, 16-line blackout floor.
 
 Negative: claiming 3.0 as headline fails; claiming fabric_bw_closed true fails;
-claiming serial e2e closed (deficit<=0) fails. T_copy_arm is CPU TIME not a rate.
+claiming PPC2 reader closed from beat TB fails; claiming serial e2e closed
+(deficit<=0) fails. T_copy_arm is CPU TIME not a rate.
 """
 from __future__ import annotations
 
@@ -124,17 +127,72 @@ def main() -> int:
         return fail("16-line cover must be >=500us")
     print(f"OK blackout floor {bl['multi_line_floor']} lines")
 
-    # Reader beat-delta CLOSED (w-clock TB + w-scaler local reconfirm).
-    # fabric_bw_closed stays false ONLY for concurrent HPS write (w-mem) — not reader gap.
-    if gap.get("status") not in ("OPEN", "PARTIAL_CLOSED_READER", "READER_CLOSED_HPS_WRITE_OPEN", "READER_CLOSED_HPS_WRITE_AND_TCOPY_OPEN", "READER_AND_FULLFRAME_E2E_FILLED_HOST_OPEN"):
+    # PARTIAL_CLOSED_READER: refill beats may close; PPC2 dual-lane NOT from beat TB.
+    # fabric_bw_closed stays false (HPS write + dual-lane correctness gap).
+    if gap.get("status") not in (
+        "OPEN",
+        "PARTIAL_CLOSED_READER",
+        "READER_CLOSED_HPS_WRITE_OPEN",
+        "READER_CLOSED_HPS_WRITE_AND_TCOPY_OPEN",
+        "READER_AND_FULLFRAME_E2E_FILLED_HOST_OPEN",
+    ):
         return fail(f"proof_gap.status unexpected: {gap.get('status')}")
+    if gap.get("status") != "PARTIAL_CLOSED_READER":
+        return fail(
+            "NEGATIVE: proof_gap.status must be PARTIAL_CLOSED_READER "
+            f"(rd-duck discriminator; got {gap.get('status')!r})"
+        )
     if gap.get("fabric_bw_closed") is not False:
-        return fail("NEGATIVE: fabric_bw_closed must stay false while HPS-write concurrent unmeasured")
-    if gap.get("reader_beat_delta_gap") != "CLOSED":
-        return fail("reader_beat_delta_gap must be CLOSED (do not report reader gap open)")
+        return fail(
+            "NEGATIVE: fabric_bw_closed must stay false "
+            "(HPS write open + PPC2 dual-lane not proven by refill TB)"
+        )
+    # Unsplit "CLOSED" alone is forbidden — must name refill vs dual-lane
+    rbdg = gap.get("reader_beat_delta_gap")
+    if rbdg not in (
+        "CLOSED",
+        "REFILL_BEATS_CLOSED_PPC2_CORRECTNESS_OPEN",
+    ):
+        return fail(
+            f"reader_beat_delta_gap unexpected {rbdg!r} "
+            "(want CLOSED or REFILL_BEATS_CLOSED_PPC2_CORRECTNESS_OPEN)"
+        )
+    if rbdg == "CLOSED" and gap.get("status") == "PARTIAL_CLOSED_READER":
+        return fail(
+            "NEGATIVE: unsplit reader_beat_delta_gap=CLOSED under "
+            "PARTIAL_CLOSED_READER — must say REFILL_BEATS_CLOSED_PPC2_CORRECTNESS_OPEN"
+        )
+
     reader = gap.get("reader_steady_delta") or c.get("real_reader_proof") or {}
-    if reader.get("status") != "CLOSED":
-        return fail("reader_steady_delta.status must be CLOSED (w-clock proof)")
+    rstat = reader.get("status")
+    if rstat not in ("CLOSED", "REFILL_BEATS_CLOSED"):
+        return fail(f"reader_steady_delta.status unexpected {rstat!r}")
+    # Prefer explicit refill-only label
+    if rstat == "CLOSED":
+        return fail(
+            "NEGATIVE: reader_steady_delta.status=CLOSED without qualifier — "
+            "use REFILL_BEATS_CLOSED (beat TB is not PPC2 dual-lane proof)"
+        )
+    measures = (reader.get("measures") or "").lower()
+    if "refill" not in measures and "full-line" not in measures:
+        return fail("reader_steady_delta.measures must state full-line refill only")
+    disc = reader.get("rd_duck_discriminator") or {}
+    if not disc:
+        return fail("reader_steady_delta must include rd_duck_discriminator")
+    if "FAIL scalar" not in (disc.get("required_negative_control") or "") and \
+       "fail scalar" not in (disc.get("required_negative_control") or "").lower():
+        return fail("discriminator must require PPC2 gate FAIL scalar odd/even")
+
+    ppc2c = gap.get("ppc2_dual_lane_correctness") or {}
+    if not ppc2c:
+        return fail("proof_gap.ppc2_dual_lane_correctness required")
+    if "CLOSED" == ppc2c.get("status"):
+        return fail(
+            "NEGATIVE: ppc2_dual_lane_correctness must not claim CLOSED from beat TB"
+        )
+    if "NOT" not in (ppc2c.get("status") or "") and "OPEN" not in (ppc2c.get("status") or ""):
+        return fail(f"ppc2_dual_lane_correctness.status unexpected {ppc2c.get('status')!r}")
+
     tb = reader.get("tb", "")
     if "720p_ppc2_bus" not in tb:
         return fail("reader proof must cite 720p_ppc2_bus TB")
@@ -148,28 +206,58 @@ def main() -> int:
     open_l = " ".join(gap.get("still_open", [])).lower()
     if "hps" not in open_l and "concurrent" not in open_l:
         return fail("still_open must mention concurrent HPS write")
-    # Must NOT list reader beat-delta as an open item (notes saying NOT reader are ok)
+    if "ppc2" not in open_l and "dual-lane" not in open_l and "dual_lane" not in open_l:
+        return fail("still_open must mention ppc2_dual_lane_correctness (rd-duck)")
+    # Must NOT list unsplit "reader beat open" without dual-lane context
     for item in gap.get("still_open", []):
         il = item.lower()
         if "not reader" in il or "— not reader" in il or "- not reader" in il:
             continue
-        if "reader" in il and ("beat" in il or "steady" in il) and "closed" not in il:
-            return fail(f"still_open must not re-open reader beat-delta: {item}")
+        if "dual" in il or "ppc2" in il:
+            continue  # dual-lane open is required
+        if "reader" in il and ("beat" in il or "steady" in il) and "closed" not in il and "refill" not in il:
+            return fail(f"still_open must not re-open unsplit reader beat-delta: {item}")
+
     cs = c.get("claim_split") or {}
-    if (cs.get("reader_steady_delta") or {}).get("status") != "CLOSED":
-        return fail("claim_split.reader_steady_delta must be CLOSED")
+    cs_rs = (cs.get("reader_steady_delta") or {}).get("status")
+    if cs_rs not in ("CLOSED", "REFILL_BEATS_CLOSED"):
+        return fail(f"claim_split.reader_steady_delta.status unexpected {cs_rs!r}")
+    if cs_rs == "CLOSED":
+        return fail(
+            "NEGATIVE: claim_split.reader_steady_delta must be REFILL_BEATS_CLOSED "
+            "not unsplit CLOSED"
+        )
+    cs_ppc = cs.get("ppc2_dual_lane_correctness") or {}
+    if not cs_ppc:
+        return fail("claim_split.ppc2_dual_lane_correctness required")
+    if cs_ppc.get("status") in (None, "CLOSED"):
+        return fail("claim_split.ppc2_dual_lane_correctness must not be CLOSED")
+    if cs_ppc.get("scalar_negative_control_required") is not True:
+        return fail("claim_split.ppc2 requires scalar_negative_control_required=true")
     if (cs.get("hps_write_concurrent") or {}).get("status") != "OPEN":
         return fail("claim_split.hps_write_concurrent must be OPEN")
     if (cs.get("T_copy_e2e") or {}).get("status") != "OPEN":
         return fail("claim_split.T_copy_e2e must be OPEN")
     if gap.get("hps_write_concurrent") != "OPEN" or gap.get("T_copy_e2e") != "OPEN":
         return fail("proof_gap must mark hps_write_concurrent and T_copy_e2e OPEN")
-    print("OK claim_split: reader_steady_delta=CLOSED; hps_write+T_copy_e2e=OPEN")
+
+    rd_disc = (c.get("rd_duck_label_correction") or {}).get("ppc2_beat_tb_discriminator") or {}
+    if not rd_disc:
+        return fail("rd_duck_label_correction.ppc2_beat_tb_discriminator required")
+    if rd_disc.get("fabric_bw_closed") is not False:
+        return fail("discriminator fabric_bw_closed must be false")
+    if rd_disc.get("keep_status") != "PARTIAL_CLOSED_READER":
+        return fail("discriminator keep_status must be PARTIAL_CLOSED_READER")
 
     print(
-        f"OK READER beat-delta CLOSED (payload={g0.get('payload_beats')} "
+        "OK claim_split: reader_steady_delta=REFILL_BEATS_CLOSED; "
+        "ppc2_dual_lane NOT_CLOSED_BY_BEAT_TB; hps_write+T_copy_e2e=OPEN"
+    )
+    print(
+        f"OK PARTIAL_CLOSED_READER refill beats "
+        f"(payload={g0.get('payload_beats')} "
         f"ddr_cy={g0.get('ddr_cycles')}<{g0.get('budget_ddr_24fps')}); "
-        "only concurrent HPS write remains open on bus budget"
+        "PPC2 dual-lane NOT from beat TB; fabric_bw_closed=false"
     )
     # --- ARM CPU TIME (not a rate) — parent Sweep 118 ---
     arm = c["arm_cpu_time_NOT_a_rate"]
@@ -321,7 +409,8 @@ def main() -> int:
 
     print(
         "PASS p720_shared_bw_contract: HEADLINE=33.1776 MB/s/dir "
-        "(1.65888 avg ONLY); peaks RGB=6/I420=3; reader_CLOSED hps+T_copy_OPEN; "
+        "(1.65888 avg ONLY); peaks RGB=6/I420=3; REFILL_BEATS_CLOSED "
+        "ppc2_dual_lane_OPEN hps+T_copy_OPEN; "
         "serial_deficit>0 (T_copy_arm CPU-time)"
     )
     return 0
