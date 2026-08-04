@@ -1413,7 +1413,7 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
                 const char* label = "?";
                 switch (diag.provenance) {
                 case PlxdProvenance::Absent:    label = "ABSENT"; break;
-                case PlxdProvenance::Residue:   label = "RESIDUE(reserved!=0)"; break;
+                case PlxdProvenance::Residue:   label = "RESIDUE(illegal_free_mask)"; break;
                 case PlxdProvenance::InitOnly:  label = "INIT_ONLY(frames_done=0)"; break;
                 case PlxdProvenance::Alive:
                     label = "ALIVE(fd>0_static;fd_may_be_vsync_on_c5382bee)";
@@ -1424,12 +1424,13 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
                 }
                 fprintf(stderr,
                         "[PLXD-PROVENANCE] %s raw=0x%08x_%08x "
-                        "frames_done=%u frames_done_src=plxd[63:48]_rbf_dependent "
-                        "free_mask=%u disp=%u swap=%d reserved=0x%03x "
+                        "frames_done=%u frames_done_src=plxd[63:48]_swaps "
+                        "glass_vsync=%u glass_src=plxd[47:36]_bank_vsync_lo12 "
+                        "free_mask=%u disp=%u swap=%d "
                         "liveness=bank_identity_not_fd_alone\n",
                         label, diag.raw_hi, diag.raw_lo,
-                        diag.frames_done, diag.free_bank_mask,
-                        diag.disp_bank, diag.swap_pending, diag.reserved_bits);
+                        diag.frames_done, diag.glass_vsync_count,
+                        diag.free_bank_mask, diag.disp_bank, diag.swap_pending);
             }
 
             // --- Degeneracy defence (instrument-integrity #18) ---
@@ -1828,21 +1829,25 @@ FpgaSpi::PlxdDiag FpgaSpi::diagnosePlxdProvenance() {
     // [33:32] = raw_hi[1:0] = free_bank_mask
     // [34]    = raw_hi[2]   = disp_bank
     // [35]    = raw_hi[3]   = swap_pending
-    // [47:36] = raw_hi[15:4]= reserved (should be 0)
-    // [63:48] = raw_hi[31:16]= frames_done
+    // [47:36] = raw_hi[15:4]= glass_vsync_lo12 (bank_vsync_count LSBs)
+    // [63:48] = raw_hi[31:16]= frames_done (real swaps on tip)
     d.free_bank_mask = d.raw_hi & 0x03;
     d.disp_bank = (d.raw_hi >> 2) & 0x01;
     d.swap_pending = ((d.raw_hi >> 3) & 0x01) != 0;
-    d.reserved_bits = (d.raw_hi >> 4) & 0x0FFF;
+    d.glass_vsync_count = static_cast<uint16_t>((d.raw_hi >> 4) & 0x0FFF);
+    d.reserved_bits = d.glass_vsync_count; // log alias; not a residue flag
     d.frames_done = static_cast<uint16_t>(d.raw_hi >> 16);
 
-    // Reserved bits should be zero if RTL wrote this. Non-zero = suspect residue.
-    if (d.reserved_bits != 0) {
+    // Residue class: free_mask encoding illegal vs swap (boot coincidence).
+    // glass_vsync non-zero is normal after the first vsync — do NOT use it as
+    // residue (that was the pre-glass reserved==0 heuristic).
+    // RTL: swap_pending → free_mask=00. swap_pending && free_mask!=0 is residue.
+    if (d.swap_pending && d.free_bank_mask != 0) {
         d.provenance = PlxdProvenance::Residue;
         return d;
     }
 
-    // Valid magic, clean reserved bits. Check frames_done.
+    // Valid magic + legal-ish bank fields. Check frames_done.
     if (d.frames_done == 0) {
         d.provenance = PlxdProvenance::InitOnly;
         return d;

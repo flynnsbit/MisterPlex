@@ -1163,17 +1163,20 @@ module ddr_frame_store #(
 					end else if (bank_mbox_req && (!bank_mbox_valid || poll_div[7:0] == 8'd160)
 					    && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						// PLXD bank-release: tell ARM which bank is safe to write
-						// Layout: [63:48] frames_done, [35] swap_pending,
-						//   [34] disp_bank, [33:32] free_bank_mask, [31:0] magic
-						// frames_done MUST be the real swap counter (not
-						// bank_vsync_count). Packing vsync kept PLXD "live" while
-						// swaps stuck — ARM stale detector could not fire
-						// (playback freeze class on c5382bee). ARM now also
-						// gates on free/disp identity; keep ABI honest.
+						// Layout: [63:48] frames_done (real swaps, CDC),
+						//   [47:36] bank_vsync_count[11:0] (glass/vsync free-run LSBs),
+						//   [35] swap_pending, [34] disp_bank,
+						//   [33:32] free_bank_mask, [31:0] magic
+						// frames_done MUST stay the real swap counter. Historical
+						// c5382bee packed bank_vsync into [63:48] so PLXD looked
+						// "live" while swaps stuck — ARM stale could not fire.
+						// Glass vsync now rides the former reserved nibble only
+						// (12-bit wrap ~68 s @60 Hz) so Δ glass rate is host-visible
+						// without reintroducing vsync-as-frames_done.
 						DDRAM_ADDR <= BANK_MAILBOX_W;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_DIN <= {frames_done_d2,                       // [63:48] real swaps (CDC)
-						              12'd0,                                // [47:36] reserved
+						              bank_vsync_count[11:0],               // [47:36] glass vsync LSBs
 						              swap_pending_d2,                      // [35]
 						              disp_bank_d2,                         // [34]
 						              swap_pending_d2 ? 2'b00 :             // [33:32] free_bank_mask

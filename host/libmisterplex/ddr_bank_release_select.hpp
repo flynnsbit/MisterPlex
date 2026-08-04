@@ -14,12 +14,13 @@
 // HISTORICAL FAULT (fixed in product RTL pack): an older pack put
 // bank_vsync_count into the PLXD frames_done field so the mailbox looked
 // "live" while swaps were stuck. Product ddr_frame_store.sv now packs the
-// real swap counter only:
+// real swap counter in [63:48]; glass vsync LSBs ride former reserved [47:36]:
 //   frames_done <= frames_done + 1  inside (vsync && swap_pending && ready)
 //   vsync_toggle flips on EVERY vsync (swap arm and else-if vsync)
-//   PLXD[63:48] = frames_done_d2  // NOT bank_vsync_count (see pack comment)
+//   PLXD[63:48] = frames_done_d2              // NOT bank_vsync_count
+//   PLXD[47:36] = bank_vsync_count[11:0]      // glass free-run LSBs only
 // Do not reintroduce vsync-as-frames_done. input_mailbox.hpp / mailbox_abi_spec
-// correctly document frames_done as monotonic swap count.
+// document frames_done as swap count and glass_vsync_count separately.
 //
 // Protocol:
 //   1. Never write free_bank == disp_bank (stale/residue).

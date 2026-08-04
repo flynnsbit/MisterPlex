@@ -290,18 +290,20 @@ int main() {
     {
         BankReleaseStatus br;
 
-        // Helper: build a PLXD word matching w-a3's RTL layout (b187df5).
+        // Helper: PLXD word matching tip RTL pack (ddr_frame_store.sv).
         // [31:0]=magic, [33:32]=free_bank_mask, [34]=disp_bank,
-        // [35]=swap_pending, [63:48]=frames_done
-        auto plxd = [](uint8_t fbm, uint8_t db, bool sp, uint16_t fd) -> uint64_t {
+        // [35]=swap_pending, [47:36]=glass_vsync_lo12, [63:48]=frames_done
+        auto plxd = [](uint8_t fbm, uint8_t db, bool sp, uint16_t fd,
+                       uint16_t gv = 0) -> uint64_t {
             return static_cast<uint64_t>(kBankReleaseMailboxMagic) |
                    (static_cast<uint64_t>(fbm & 3u) << 32) |
                    (static_cast<uint64_t>(db & 1u) << 34) |
                    (static_cast<uint64_t>(sp ? 1u : 0u) << 35) |
+                   (static_cast<uint64_t>(gv & 0x0FFFu) << 36) |
                    (static_cast<uint64_t>(fd) << 48);
         };
 
-        // Bank 0 free, disp_bank=1, no swap pending, frames_done=42
+        // Bank 0 free, disp_bank=1, no swap pending, frames_done=42, glass=0
         const uint64_t w1 = plxd(0x01, 1, false, 42);
         CHECK(decodeBankReleaseWord(w1, br));
         CHECK(br.free_bank_mask == 0x01);
@@ -312,9 +314,10 @@ int main() {
         CHECK(br.disp_bank == 1);
         CHECK(!br.swap_pending);
         CHECK(br.frames_done == 42);
+        CHECK(br.glass_vsync_count == 0);
 
-        // Bank 1 free, disp_bank=0, swap pending, frames_done=1000
-        const uint64_t w2 = plxd(0x02, 0, true, 1000);
+        // Bank 1 free, disp_bank=0, swap pending, frames_done=1000, glass=0xABC
+        const uint64_t w2 = plxd(0x02, 0, true, 1000, 0xABC);
         CHECK(decodeBankReleaseWord(w2, br));
         CHECK(br.free_bank_mask == 0x02);
         CHECK(!br.bank0Free());
@@ -323,6 +326,7 @@ int main() {
         CHECK(br.disp_bank == 0);
         CHECK(br.swap_pending);
         CHECK(br.frames_done == 1000);
+        CHECK(br.glass_vsync_count == 0xABC);
 
         // Both banks free (idle — no pending frame)
         const uint64_t w3 = plxd(0x03, 0, false, 500);
@@ -349,26 +353,18 @@ int main() {
         // Torn read
         CHECK(!decodeStableBankRelease(lo(w1), hi(w1), lo(w2), hi(w2), br));
 
-        // --- Independent RTL cross-check ---
-        // This word is constructed from the RTL packing expression in
-        // ddr_frame_store.sv (b187df5), NOT from the spec constants.
-        // It proves the C++ decoder matches what the FPGA actually writes,
-        // not just that the codec is self-consistent.
-        //
-        // RTL packing (from ddr_frame_store.sv line 829-837):
-        //   DDRAM_DIN <= {bank_vsync_count,           // [63:48]
-        //                 12'd0,                       // [47:36]
+        // --- Independent RTL cross-check (tip pack) ---
+        // RTL packing (ddr_frame_store.sv):
+        //   DDRAM_DIN <= {frames_done_d2,              // [63:48] real swaps
+        //                 bank_vsync_count[11:0],      // [47:36] glass LSBs
         //                 swap_pending_d2,             // [35]
         //                 disp_bank_d2,                // [34]
         //                 swap_pending_d2 ? 2'b00 :    // [33:32]
         //                   (disp_bank_d2 ? 2'b01 : 2'b10),
         //                 MAGIC_D};                    // [31:0]
         //
-        // Test case: disp_bank=1, swap_pending=0, bank_vsync_count=7
-        //   free_bank_mask = disp_bank ? 0b01 : 0b10 = 0b01
-        //   bits: [63:48]=7, [35]=0, [34]=1, [33:32]=01, [31:0]=0x504C5844
-        //   upper word = (7 << 16) | (0 << 3) | (1 << 2) | 0x01 = 0x00070005
-        //   full word  = 0x0007000500000000 | 0x504C5844
+        // Test case: frames_done=7, glass=0, disp=1, swap=0 → free=01
+        //   upper = (7<<16) | (0<<4) | (0<<3) | (1<<2) | 0x01 = 0x00070005
         constexpr uint64_t rtl_word_a = 0x0007000500000000ull | 0x504C5844ull;
         CHECK(decodeBankReleaseWord(rtl_word_a, br));
         CHECK(br.free_bank_mask == 0x01);
@@ -377,13 +373,11 @@ int main() {
         CHECK(br.disp_bank == 1);
         CHECK(!br.swap_pending);
         CHECK(br.frames_done == 7);
+        CHECK(br.glass_vsync_count == 0);
 
-        // Test case: disp_bank=0, swap_pending=1, bank_vsync_count=0x1234
-        //   free_bank_mask = swap_pending ? 0b00 : ... = 0b00
-        //   bits: [63:48]=0x1234, [35]=1, [34]=0, [33:32]=00, [31:0]=0x504C5844
-        //   upper word = (0x1234 << 16) | (1 << 3) | (0 << 2) | 0x00 = 0x12340008
-        //   full word  = 0x1234000800000000 | 0x504C5844
-        constexpr uint64_t rtl_word_b = 0x1234000800000000ull | 0x504C5844ull;
+        // frames_done=0x1234, glass=0x0AB, disp=0, swap=1 → free=00
+        //   upper = (0x1234<<16) | (0x0AB<<4) | (1<<3) | 0 = 0x12340AB8
+        constexpr uint64_t rtl_word_b = 0x12340AB800000000ull | 0x504C5844ull;
         CHECK(decodeBankReleaseWord(rtl_word_b, br));
         CHECK(br.free_bank_mask == 0x00);
         CHECK(!br.anyFree());
@@ -391,13 +385,11 @@ int main() {
         CHECK(br.disp_bank == 0);
         CHECK(br.swap_pending);
         CHECK(br.frames_done == 0x1234);
+        CHECK(br.glass_vsync_count == 0x0AB);
 
-        // Test case: disp_bank=0, swap_pending=0, bank_vsync_count=0xFFFF
-        //   free_bank_mask = 0 ? 0b01 : 0b10 = 0b10
-        //   bits: [63:48]=0xFFFF, [35]=0, [34]=0, [33:32]=10, [31:0]=0x504C5844
-        //   upper word = (0xFFFF << 16) | (0 << 3) | (0 << 2) | 0x02 = 0xFFFF0002
-        //   full word  = 0xFFFF000200000000 | 0x504C5844
-        constexpr uint64_t rtl_word_c = 0xFFFF000200000000ull | 0x504C5844ull;
+        // frames_done=0xFFFF, glass=0xFFF, disp=0, swap=0 → free=10
+        //   upper = (0xFFFF<<16) | (0xFFF<<4) | 0x02 = 0xFFFFFFF2
+        constexpr uint64_t rtl_word_c = 0xFFFFFFF200000000ull | 0x504C5844ull;
         CHECK(decodeBankReleaseWord(rtl_word_c, br));
         CHECK(br.free_bank_mask == 0x02);
         CHECK(!br.bank0Free());
@@ -406,6 +398,7 @@ int main() {
         CHECK(br.disp_bank == 0);
         CHECK(!br.swap_pending);
         CHECK(br.frames_done == 0xFFFF);
+        CHECK(br.glass_vsync_count == 0xFFF);
     }
 
     if (fails) {

@@ -161,8 +161,8 @@ public:
     // the bank-release mailbox, without requiring valid magic.
     enum class PlxdProvenance {
         Absent,      // magic does not match — cold DDR, pre-PLXD RBF, or corruption
-        Residue,     // magic matches but reserved bits non-zero (coincidence/corruption)
-        InitOnly,    // magic valid, clean fields, frames_done==0
+        Residue,     // magic matches but free_bank_mask illegal vs swap/disp (coincidence/corruption)
+        InitOnly,    // magic valid, legal bank fields, frames_done==0
         Alive,       // magic valid, frames_done>0 (tip: swap; c5382bee: may be vsync only)
         LiveAdvance, // bank-identity moved between two reads (free/disp/swap) — swap path live
     };
@@ -174,7 +174,10 @@ public:
         uint8_t free_bank_mask = 0;
         uint8_t disp_bank = 0;
         bool swap_pending = false;
-        uint16_t reserved_bits = 0; // [47:36] should be zero if written by RTL
+        // [47:36] glass_vsync_lo12 (bank_vsync_count LSBs). Historical name
+        // reserved_bits kept for log compat; non-zero is normal after first vsync.
+        uint16_t reserved_bits = 0;
+        uint16_t glass_vsync_count = 0;
     };
     PlxdDiag diagnosePlxdProvenance();
 
