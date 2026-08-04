@@ -103,15 +103,25 @@ set_global_assignment -name VERILOG_MACRO "PRESENT_MULTI_PIXEL=1"
 set_global_assignment -name VERILOG_MACRO "PRESENT_PX_PER_CLK=2"
 set_global_assignment -name VERILOG_MACRO "PRESENT_CLK_PIX_PLL=1"
 set_global_assignment -name SDC_FILE Plex_clk_pix.sdc
-# Fabric DDR→DDR publication engine (w-path/w-mem). Bounce ≤2 M10K; start tied
-# idle until ARM/handover wires kick — still in hierarchy for area measurement.
+# Idle MULTI must not fall into content_window legacy 529 scale (win_enable=0).
+# FABRIC_NATIVE_720P_GEOM: win_en=1 + 1280×720 identity while PLXG idle.
+# (RTL also falls back under PRESENT_MULTI_PIXEL alone — this makes the fit
+# candidate explicit. Live PLXG still overrides — COLLISION #5.)
+set_global_assignment -name VERILOG_MACRO "FABRIC_NATIVE_720P_GEOM=1"
+# Fabric DDR→DDR publication engine (w-path/w-mem). Bounce ≤2 M10K EST
+# (layout 2×256×32 after handbook correction); start tied idle until ARM
+# handover wires kick — still in hierarchy for area measurement.
 set_global_assignment -name VERILOG_MACRO "FABRIC_FRAME_DMA=1"
+#
+# Refresh honesty (parent trap): geometry 1280×720 ≠ 24 Hz without PLL.
+# WITH PRESENT_CLK_PIX_PLL @ 29.700 MHz + COMPACT 1650×750 → target 24.000 Hz.
+# WITHOUT PLL @ clk_sys 20 MHz: fps_eff = 20e6/1_237_500 ≈ 16.16 Hz — still
+# photographs as "720p" on a still. Do not claim 24 from geometry alone.
 #
 # --- Alternate: L4 compact beam (mutually exclusive with MULTI above) ---
 # Measured PMS asset: 1280x720 @ 24/1. w-clock beam: H=1312 V=762.
 # At clk_sys=24 MHz → 24.006 Hz. At product 20 MHz → ~20.005 Hz (NOT 720p24).
 #set_global_assignment -name VERILOG_MACRO "PLEX_PRESENT_720P_L4=1"
-#set_global_assignment -name VERILOG_MACRO "FABRIC_NATIVE_720P_GEOM=1"
 #set_global_assignment -name VERILOG_MACRO "PRESENT_BEAM_960=1"
 #set_global_assignment -name VERILOG_MACRO "PRESENT_CLK_PIX_74_25=1"
 

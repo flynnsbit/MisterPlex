@@ -49,19 +49,28 @@ def main() -> int:
     act = active_macros(qsf)
     multi_on = any(m.startswith("PRESENT_MULTI_PIXEL") for m in act)
     l4_on = any(m.startswith("PLEX_PRESENT_720P_L4") for m in act)
+    native_on = any(m.startswith("FABRIC_NATIVE_720P_GEOM") for m in act)
     # L4 must stay OFF when MULTI integ is the fit recipe (mutually exclusive).
     if multi_on and l4_on:
         fails.append("INTEG: L4 and MULTI both active")
     for m in act:
-        if m.startswith("PLEX_PRESENT_720P_L4") or m.startswith("FABRIC_NATIVE_720P_GEOM"):
+        if m.startswith("PLEX_PRESENT_720P_L4"):
             if not l4_on:
                 fails.append(f"DEFAULT_OFF=no active QSF macro {m}")
+        # FABRIC_NATIVE_720P_GEOM is required ON for MULTI fit candidate (idle
+        # win_enable identity). Only require default-OFF when neither L4 nor MULTI.
+        if m.startswith("FABRIC_NATIVE_720P_GEOM") and not l4_on and not multi_on:
+            fails.append(f"DEFAULT_OFF=no active QSF macro {m}")
     if multi_on:
         if not any(m == "FRAME_W=1280" for m in act):
             fails.append("INTEG product FRAME_W=1280 missing")
         if not any(m == "FRAME_H=720" for m in act):
             fails.append("INTEG product FRAME_H=720 missing")
-        print("OK INTEG_ON: L4 remains off; MULTI owns 1280x720")
+        if not native_on:
+            fails.append("INTEG MULTI requires FABRIC_NATIVE_720P_GEOM=1 (idle identity)")
+        if not any(m.startswith("PRESENT_CLK_PIX_PLL") for m in act):
+            fails.append("INTEG MULTI requires PRESENT_CLK_PIX_PLL (else 16.16 Hz trap)")
+        print("OK INTEG_ON: L4 off; MULTI 1280x720 + NATIVE_GEOM + CLK_PIX_PLL")
     else:
         if not any("FRAME_W=640" in m for m in act):
             fails.append("DEFAULT product FRAME_W=640 missing from active QSF")

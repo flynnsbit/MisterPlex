@@ -119,6 +119,48 @@ def main() -> int:
         return fail("do not noprune-instantiate empty nn linebuf (wastes M10K)")
     print("OK nn linebuf: qip leaf, no empty product instance")
 
+    # --- MULTI idle must not use legacy 529 scale (win_enable=0 trap) ---
+    mux = (ROOT / "fpga/Plex_MiSTer/rtl/plex_present_geom_mux.sv").read_text(encoding="utf-8")
+    qsf = (ROOT / "fpga/Plex_MiSTer/Plex.qsf").read_text(encoding="utf-8")
+    cw = (ROOT / "fpga/Plex_MiSTer/rtl/present_content_window.sv").read_text(encoding="utf-8")
+
+    if "PRESENT_MULTI_PIXEL" not in mux:
+        return fail("mux must special-case PRESENT_MULTI_PIXEL idle 720p fallback")
+    # NEGATIVE: unconditional force_native_720p=1 under FABRIC_NATIVE (overrides PLXG)
+    if re.search(
+        r"`ifdef\s+FABRIC_NATIVE_720P_GEOM\s*\n\s*wire\s+force_native_720p\s*=\s*1'b1",
+        mux,
+    ):
+        return fail(
+            "NEGATIVE: force_native_720p must not be hard 1 under FABRIC_NATIVE "
+            "(COLLISION #5 — pins 1280 over live PLXG)"
+        )
+    if "force_native_720p = ~plxg_live" not in mux and "force_native_720p = ~ plxg_live" not in mux:
+        if "~plxg_live" not in mux:
+            return fail("force_native_720p must be ~plxg_live (idle-only fallback)")
+    print("OK mux: idle MULTI/NATIVE 720p force is ~plxg_live (not always-on)")
+
+    if 'VERILOG_MACRO "PRESENT_MULTI_PIXEL=1"' not in qsf:
+        return fail("fit QSF must enable PRESENT_MULTI_PIXEL")
+    if 'VERILOG_MACRO "FABRIC_NATIVE_720P_GEOM=1"' not in qsf:
+        return fail("fit QSF must enable FABRIC_NATIVE_720P_GEOM (explicit idle identity)")
+    if 'VERILOG_MACRO "PRESENT_CLK_PIX_PLL=1"' not in qsf:
+        return fail("fit QSF must enable PRESENT_CLK_PIX_PLL (else 16.16 Hz trap)")
+    if "16.16" not in qsf and "16.16 Hz" not in qsf:
+        return fail("QSF must document 16.16 Hz refresh trap without PLL")
+    print("OK QSF: MULTI + NATIVE_720P + CLK_PIX_PLL enabled; 16.16 Hz trap noted")
+
+    if "one luma line = 1 M10K" in cw or "1280 = one M10K" in cw:
+        return fail("content_window header still claims retracted 1 M10K/line")
+    if "M10K=0" not in cw and "0 M10K" not in cw:
+        return fail("content_window must state M10K=0")
+    print("OK content_window: M10K=0; no 1-line M10K premise")
+    # Refresh claim for parent: do not assert 24 Hz from this lane without PLL evidence
+    print("REFRESH claim (scaler lane): geometry via MULTI 1280x720 DE; "
+          "target scanout 24.000 Hz only WITH PRESENT_CLK_PIX_PLL@29.700MHz "
+          "+ COMPACT 1650x750 (w-clock). Without PLL @20MHz ≈16.16 Hz. "
+          "Still-frame HDMI is NOT a 24 Hz PASS.")
+
     print("PASS test_present_multi_content_window_compose_static")
     return 0
 

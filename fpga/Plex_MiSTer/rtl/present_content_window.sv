@@ -1,7 +1,9 @@
 // present_content_window — NN content→DE store address map (fabric scaler V1).
 //
 // Purpose: evacuate ARM swscale/pad. 720p is the reward for that evacuation —
-// widths/counters are sized for 1280×720 from day one (one luma line = 1 M10K).
+// widths/counters sized for 1280×720. M10K=0 (mul-shift map, no line RAM).
+// Parent handbook: 1K×8=1024 B → naive 1280×8 line = 2 M10K (pack40=1).
+// This mapper does not hold lines — see present_nn_linebuf_scaler / plex_m10k_geom.
 //
 // Maps DE beam (hc, py) into DDR/frame_store read coordinates.
 //   win_enable=0 → legacy full-bank FRAME_W×FRAME_H (bit-compatible 480p path)
@@ -39,7 +41,7 @@ module present_content_window #(
 	// Legacy full-map domain when win_enable=0 (product 480p: 640×480).
 	parameter int FRAME_W = 640,
 	parameter int FRAME_H = 480,
-	// Max addressable store/content (720p-native). 1280 = one M10K luma line.
+	// Max addressable store/content (720p-native). No M10K in this module.
 	parameter int STORE_W = 1280,
 	parameter int STORE_H = 720,
 	// Default DE geometry (overridden by h_de/v_de ports when non-zero).
