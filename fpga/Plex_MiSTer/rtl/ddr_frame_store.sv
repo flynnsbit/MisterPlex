@@ -1179,11 +1179,13 @@ module ddr_frame_store #(
 			// that decode to wrong beam lines → fill tags miss pref_y (DIAG
 			// T3/T5: bank_mm=0, occ full, miss sticky, MEAN black). Hold last
 			// desired_y_r until gray_s1==gray_s2. Keeps schedule-reg STA cut.
+// FILL_WINDOW_LEAD_K=2 (TAG_LAG product residual): bias window ahead of beam
+// for I3b class NOT sticky STALE. Nested clamp_ahead; no mbox CE / wrap.
 			want_y_gray_s1 <= want_y_gray;
 			want_y_gray_s2 <= want_y_gray_s1;
 			if (want_y_gray_s1 == want_y_gray_s2) begin
 				for (ti = 0; ti < LINE_COUNT; ti = ti + 1)
-					desired_y_r[ti] <= clamp_ahead(y_gray2bin(want_y_gray_s2), ti);
+					desired_y_r[ti] <= clamp_ahead(clamp_ahead(y_gray2bin(want_y_gray_s2), 2), ti); // FILL_WINDOW_LEAD_K=2 TAG_LAG
 			end
 
 			start_d1 <= start_req;
