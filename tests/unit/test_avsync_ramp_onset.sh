@@ -167,17 +167,18 @@ fi
 
 echo "=== HOST PROOF: ramp interp beats step quant on real capture PTS ==="
 PROOF="$ROOT/tools/avsync_ramp_onset_proof.py"
-CAP="$ROOT/avsync_hdmi_out/480p_repeat1_capture.mkv"
+PTS_JSON="$ROOT/tests/fixtures/avsync/480p_repeat1_pts_60s.json"
 PROOF_OUT="$OUT/onset_proof.json"
 if [[ ! -f "$PROOF" ]]; then
   echo "FAIL missing $PROOF"
   fail=$((fail + 1))
-elif [[ ! -f "$CAP" ]]; then
-  echo "FAIL missing capture $CAP (need checked-in or local HDMI capture for PTS grid)"
+elif [[ ! -f "$PTS_JSON" ]]; then
+  echo "FAIL missing measured PTS fixture $PTS_JSON"
   fail=$((fail + 1))
 else
   set +e
-  python3 "$PROOF" --capture "$CAP" --duration 60 --json-out "$PROOF_OUT" \
+  # Prefer checked-in measured PTS grid (parent Sweep 135: no SYNTH_GRID inflation).
+  python3 "$PROOF" --pts-json "$PTS_JSON" --duration 60 --json-out "$PROOF_OUT" \
     >"$OUT/onset_proof.log" 2>&1
   prc=$?
   set -e
@@ -186,7 +187,7 @@ else
     echo "PASS onset_proof_ramp_beats_step"
     pass=$((pass + 1))
     # Surface measured numbers
-    grep -E '^(PRE_REGISTER|MEASURED|PASS|FAIL|VERDICT)' "$OUT/onset_proof.log" | tail -20
+    grep -E '^(PRE_REGISTER|MEASURED|PASS|FAIL|VERDICT|LOAD_PTS)' "$OUT/onset_proof.log" | tail -20
   else
     echo "FAIL onset_proof"
     tail -n 40 "$OUT/onset_proof.log" | sed 's/^/  | /'
