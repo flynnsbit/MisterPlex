@@ -53,9 +53,13 @@ module  pll_0002(
 `ifdef PRESENT_CLK_PIX_74_25
 `define MISTERPLEX_CLK_PIX_PLL_FREQ "74.250000 MHz"
 `else
-// 29.70 MHz: CEA-861 720p blanking totals (H=1650,V=750) * 24 fps.
-// True CEA VIC 60 (720p24) uses H=3300 → 59.40 MHz; see arith docs.
-`define MISTERPLEX_CLK_PIX_PLL_FREQ "29.700000 MHz"
+// Product glass: H_TOTAL=1650 V_TOTAL=750 (COMPACT CEA). Ideal 24.000 Hz needs
+// 29.700000 MHz, but integer-N PLL from 50 MHz ref rejects that counter
+// (fitter: illegal '29.7 MHz'; legal example 30000000 Hz). Use 30.000000 MHz
+// → glass 30e6/(1650*750)=24.242424 Hz (still in 23.5..24.5 RATE_PASS band;
+// trap without PLL remains ~16.16). Fractional-VCO not enabled here to avoid
+// perturbing outclk0..2 integer nets.
+`define MISTERPLEX_CLK_PIX_PLL_FREQ "30.000000 MHz"
 `endif
 
 `ifdef PRESENT_CLK_PIX_PLL
