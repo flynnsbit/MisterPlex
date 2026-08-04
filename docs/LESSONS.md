@@ -177,6 +177,27 @@ the original. Commits in a *branch-named* worktree are safe in the shared object
 **detached HEAD** worktree's commits are GC-reachable only while registered — tag them
 before pruning.
 
+**L30 — Unit-green is not device-green. Capture the screen before believing a daemon fix.**
+`w-path`'s idle busy-loop fix (`e22deaf7`) had an honest RED→GREEN negative test and
+`make unit` **true rc=0**. Deployed, it rendered stub garbage instead of the Plex logo —
+HDMI capture `ORANGE_PX` collapsed from **33852** (chevron, correct) to **1187** and then
+**43**, with content *varying between captures*, which is itself the tell for garbage
+rather than a stable painted frame. Rolling back restored the logo immediately. The suite
+agreed with a binary that broke the product because **no test exercised the idle frame
+paint**. When a change touches the frame path, a capture is part of the evidence, not a
+formality. Suspected mechanism: a 2 ms wall cap on the SPI ACK wait aborting legitimate
+transactions and leaving partial writes — *silent partial success* is the real defect class.
+
+**L31 — Deploy to the path that is actually running.**
+`scripts/deploy_misterplexd.sh` installs to `/media/fat/misterplex/bin/`, but the live
+daemon runs from `/media/fat/misterplex_v2/bin/`. Using the script would have shipped
+nothing while reporting success. Always confirm the target path against `ps` output.
+
+**L32 — `ssh host 'cmd &'` hangs until the backgrounded child closes its fds.**
+A backgrounded supervisor inherits stdout and holds the SSH channel open. Use
+`nohup setsid cmd >/dev/null 2>&1 &`, or run the whole experiment detached on-device and
+poll a log file.
+
 ---
 
 ## Incident index
@@ -198,5 +219,6 @@ before pruning.
 | — | Those PLXD zeros indicted the RTL | The deployed RBF predates `ddr_frame_store.sv` entirely — it has **no PLXD writer**. Probe was invalid; conclusion withdrawn |
 | — | `misterplexd` ~136% + `MiSTer` ~131% at idle | Arithmetically impossible: 16.02 CPU-s claimed inside a 12 CPU-s dual-core window. Split withdrawn |
 | — | Native 720p24 is arithmetically dead at 0.939× | **1.31× (32 fps)** with the daemon stopped. The wall was a daemon busy-loop, not physics |
+| — | A green `make unit` meant the daemon fix was safe | It rendered stub garbage on HDMI; `ORANGE_PX` 33852 → 43. Reverted |
 
 Full narrative for each: `Memory/lab/parent/misterplex-parent-720p-decode-verdict.txt`.
