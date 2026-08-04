@@ -220,59 +220,74 @@ int main(int argc, char** argv) {
 
     // PPC=2 dual-map: lane1 must equal map(hc+1), NOT store_x+1 under scale.
     // Adjacent-store N-wide fetch assumption fails here (negative for identity-only).
+    // Combined with ODD x0=17 — even-only origin would miss mid-pair phase bugs.
     if (!fault) {
-        Ref ref960 = make_ref(true, 960, 540, 0, 0, 1280, 720, false);
-        reset_dut(dut);
-        dut.win_enable = 1;
-        dut.content_w = 960;
-        dut.content_h = 540;
-        dut.content_x0 = 0;
-        dut.content_y0 = 0;
-        dut.h_de = 1280;
-        dut.v_de = 720;
-        for (int i = 0; i < 3; ++i) tick(dut);
+        auto run_ppc2 = [&](int cw, int ch, int x0, int y0, const char* tag,
+                            bool require_non_adj) -> int {
+            Ref ref = make_ref(true, cw, ch, x0, y0, 1280, 720, false);
+            reset_dut(dut);
+            dut.win_enable = 1;
+            dut.content_w = cw;
+            dut.content_h = ch;
+            dut.content_x0 = x0;
+            dut.content_y0 = y0;
+            dut.h_de = 1280;
+            dut.v_de = 720;
+            for (int i = 0; i < 3; ++i) tick(dut);
 
-        int ppc_mism = 0;
-        int adj_false = 0; // times lane1 != lane0+1 (expected often under scale)
-        int checked = 0;
-        for (int hc = 0; hc < 1279; hc += 7) {
-            dut.hc = hc;
-            dut.py = 100;
-            dut.in_content = 1;
-            dut.ce_pix = 1;
-            tick(dut);
-            dut.ce_pix = 0;
-            tick(dut);
-            uint32_t r0, r1, ry;
-            map_xy(ref960, hc, 100, r0, ry);
-            map_xy(ref960, hc + 1, 100, r1, ry);
-            uint32_t g0 = dut.store_x;
-            uint32_t g1 = dut.store_x_lane1;
-            ++checked;
-            if (g0 != r0 || g1 != r1) {
-                if (ppc_mism < 6) {
-                    std::cerr << "g960ppc2 hc=" << hc << " got=(" << g0 << "," << g1
-                              << ") ref=(" << r0 << "," << r1 << ")\n";
+            int ppc_mism = 0;
+            int adj_false = 0;
+            int checked = 0;
+            // Include both even and odd glass_x0 group starts (PPC pair phase).
+            for (int hc = 0; hc < 1279; hc += 1) {
+                if (hc % 11 != 0 && hc % 2 != 1)
+                    continue; // dense on odds + every 11th even
+                dut.hc = hc;
+                dut.py = 100;
+                dut.in_content = 1;
+                dut.ce_pix = 1;
+                tick(dut);
+                dut.ce_pix = 0;
+                tick(dut);
+                uint32_t r0, r1, ry;
+                map_xy(ref, hc, 100, r0, ry);
+                map_xy(ref, hc + 1, 100, r1, ry);
+                uint32_t g0 = dut.store_x;
+                uint32_t g1 = dut.store_x_lane1;
+                ++checked;
+                if (g0 != r0 || g1 != r1) {
+                    if (ppc_mism < 8) {
+                        std::cerr << tag << " hc=" << hc << " x0=" << x0
+                                  << " got=(" << g0 << "," << g1 << ") ref=(" << r0
+                                  << "," << r1 << ")\n";
+                    }
+                    ++ppc_mism;
                 }
-                ++ppc_mism;
+                if (g1 != g0 + 1)
+                    ++adj_false;
             }
-            if (g1 != g0 + 1)
-                ++adj_false;
-        }
-        if (ppc_mism != 0) {
-            std::cerr << "g960ppc2 FAIL mism=" << ppc_mism << " checked=" << checked << "\n";
-            failures += ppc_mism;
-            rc |= 1;
-        } else if (adj_false < 8) {
-            // Negative: if lane1 always equals lane0+1 under 960→1280, dual-map is fake.
-            std::cerr << "g960ppc2 NEGATIVE FAIL: lane1 almost always store_x+1 (adj_false="
-                      << adj_false << ") — adjacent-store assumption not stressed\n";
-            failures++;
-            rc |= 1;
-        } else {
-            std::cout << "g960ppc2 PASS checked=" << checked << " non_adjacent_lane1="
-                      << adj_false << "\n";
-        }
+            if (ppc_mism != 0) {
+                std::cerr << tag << " FAIL mism=" << ppc_mism << " checked=" << checked
+                          << "\n";
+                failures += ppc_mism;
+                return 1;
+            }
+            if (require_non_adj && adj_false < 8) {
+                std::cerr << tag
+                          << " NEGATIVE FAIL: lane1 almost always store_x+1 (adj_false="
+                          << adj_false << ")\n";
+                failures++;
+                return 1;
+            }
+            std::cout << tag << " PASS checked=" << checked
+                      << " non_adjacent_lane1=" << adj_false << " x0=" << x0 << "\n";
+            return 0;
+        };
+        rc |= run_ppc2(960, 540, 0, 0, "g960ppc2", true);
+        // ODD origin + dual lane (parent: even x0=16 alone cannot catch phase).
+        rc |= run_ppc2(640, 480, 17, 9, "g640off17_ppc2", true);
+        // ODD glass start only: force hc odd path density already in loop.
+        rc |= run_ppc2(960, 540, 15, 7, "g960off15odd_ppc2", true);
     }
 
     if (fault) {
