@@ -25,6 +25,9 @@ module ddr_frame_store #(
 	parameter [31:0] SDRAM_MAILBOX_PHYS = 32'h3007_F110,
 	parameter [31:0] FRAME_MAILBOX_PHYS = 32'h3007_F118,
 	parameter [31:0] BANK_MAILBOX_PHYS  = 32'h3007_F128,
+	// PLXA self-describing map — FIXED absolute bootstrap so host never hardcodes
+	// product doorbell/PLXD. Must stay absolute even if other mailboxes go relative.
+	parameter [31:0] MAP_MAILBOX_PHYS   = 32'h3007_F0F0,
 	parameter int DDR_BURST_MAX = 128,
 	parameter bit IGNORE_STALE_DOORBELL_AFTER_RESET = 1'b1,
 	parameter int STALE_DOORBELL_FALLBACK_POLLS = 4096,
@@ -98,6 +101,7 @@ module ddr_frame_store #(
 	localparam [28:0] SDRAM_MAILBOX_W = SDRAM_MAILBOX_PHYS[31:3];
 	localparam [28:0] FRAME_MAILBOX_W = FRAME_MAILBOX_PHYS[31:3];
 	localparam [28:0] BANK_MAILBOX_W  = BANK_MAILBOX_PHYS[31:3];
+	localparam [28:0] MAP_MAILBOX_W   = MAP_MAILBOX_PHYS[31:3];
 	localparam [28:0] Y_PLANE_QWORDS = 29'((CODED_W * CODED_H) / 8);
 	localparam [28:0] C_PLANE_QWORDS = 29'((CODED_W * CODED_H) / 32);
 	localparam [28:0] U_PLANE_BASE = Y_PLANE_QWORDS;
@@ -111,6 +115,15 @@ module ddr_frame_store #(
 	localparam [31:0] MAGIC_M = 32'h504C_584D;
 	localparam [31:0] MAGIC_F = 32'h504C_5846;
 	localparam [31:0] MAGIC_D = 32'h504C_5844; // PLXD bank-release (Display-bank)
+	localparam [31:0] MAGIC_A = 32'h504C_5841; // PLXA self-describing map
+	// Must match host/libmisterplex/plxa_map.hpp kPlxaAbiVersion.
+	localparam [7:0] PLXA_ABI_VERSION = 8'd1;
+	// flags: bit0 relative-to-doorbell, bit1 has_plxd (see plxa_map.hpp)
+	localparam [7:0] PLXA_FLAG_HAS_PLXD = 8'h02;
+	// Main layout: PLXD is absolute BANK_MAILBOX_PHYS → relative flag clear.
+	// plxd_offset carries low 16 of absolute PLXD when relative=0.
+	localparam [7:0] PLXA_FLAGS = PLXA_FLAG_HAS_PLXD;
+	localparam [15:0] PLXA_PLXD_OFF = BANK_MAILBOX_PHYS[15:0];
 	localparam [1:0] DOORBELL_FORMAT_YUV420P = 2'd1;
 	localparam [7:0] DEBUG_FORMAT_ERROR = 8'hE1; // PLXF frame-debug: rejected non-YUV doorbell
 
@@ -468,6 +481,8 @@ module ddr_frame_store #(
 	reg bank_mbox_req, bank_mbox_valid;
 	reg [17:0] bank_mbox_hb;
 	reg [7:0] bank_mbox_seq;
+	reg map_mbox_req, map_mbox_valid;
+	reg [17:0] map_mbox_hb;
 	reg [15:0] bank_vsync_count;
 	reg vsync_t_d1, vsync_t_d2, vsync_t_seen;
 	reg start_d1, start_d2, start_seen;
@@ -748,6 +763,9 @@ module ddr_frame_store #(
 			bank_mbox_valid <= 1'b0;
 			bank_mbox_hb <= 18'd0;
 			bank_mbox_seq <= 8'd0;
+			map_mbox_req <= 1'b1;
+			map_mbox_valid <= 1'b0;
+			map_mbox_hb <= 18'd0;
 			bank_vsync_count <= 16'd0;
 			vsync_t_d1 <= 1'b0;
 			vsync_t_d2 <= 1'b0;
@@ -838,6 +856,11 @@ module ddr_frame_store #(
 			if (!bank_mbox_valid || (bank_mbox_hb == 18'd0))
 				bank_mbox_req <= 1'b1;
 
+			// PLXA map: unconditional post-reset + heartbeat (no doorbell required)
+			map_mbox_hb <= map_mbox_hb + 18'd1;
+			if (!map_mbox_valid || (map_mbox_hb == 18'd0))
+				map_mbox_req <= 1'b1;
+
 			if (db_bad_format) begin
 				format_error <= 1'b1;
 				doorbell_ok <= 1'b0;
@@ -873,7 +896,19 @@ module ddr_frame_store #(
 					pending_ready_ddr <= swap_pending_d2 &&
 					                     (sched_valid ? (sched_for_pending && sched_pending_ready) : pending_ready_c);
 					poll_div <= poll_div + 16'd1;
-					if (frame_mbox_req && (!frame_mbox_valid || poll_div[7:0] == 8'd224)
+					// PLXA first: host bootstrap must not starve behind frame/PLXD traffic
+					if (map_mbox_req && (!map_mbox_valid || poll_div[7:0] == 8'd32)
+					    && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+						// lo=MAGIC_A, hi={plxd_off[15:0], flags[7:0], version[7:0]}
+						DDRAM_ADDR <= MAP_MAILBOX_W;
+						DDRAM_BURSTCNT <= 8'd1;
+						DDRAM_DIN <= {PLXA_PLXD_OFF, PLXA_FLAGS, PLXA_ABI_VERSION, MAGIC_A};
+						DDRAM_WE <= 1'b1;
+						map_mbox_valid <= 1'b1;
+						map_mbox_req <= 1'b0;
+						map_mbox_hb <= 18'd0;
+						state_ddr <= S_WRITE_WAIT;
+					end else if (frame_mbox_req && (!frame_mbox_valid || poll_div[7:0] == 8'd224)
 					    && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						DDRAM_ADDR <= FRAME_MAILBOX_W;
 						DDRAM_BURSTCNT <= 8'd1;
