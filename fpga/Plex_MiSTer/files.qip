@@ -71,3 +71,4 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_core.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/plex_rbf_build_id.sv
 set_global_assignment -name SDC_FILE Plex.sdc
 set_global_assignment -name SYSTEMVERILOG_FILE Plex.sv
+# ddr_bus_arbiter4.sv — contract only; wire when DPB m3 lands (w-mem)

@@ -1118,6 +1118,9 @@ wire [31:0] perf_sh_cycles, perf_sh_wr, perf_sh_rd, perf_sh_stall;
 wire [31:0] perf_sh_lat_sum, perf_sh_lat_max, perf_sh_lat_n;
 wire [31:0] perf_sh_m0_rd, perf_sh_m0_wr, perf_sh_m1_rd, perf_sh_m1_wr;
 wire [31:0] perf_sh_m2_rd, perf_sh_m2_wr;
+wire [31:0] perf_sh_bin0, perf_sh_bin1, perf_sh_bin2;
+wire [31:0] perf_sh_bin3, perf_sh_bin4, perf_sh_bin5;
+wire [31:0] perf_sh_rd_cmds, perf_sh_burst_sum, perf_sh_single, perf_sh_issue;
 wire [15:0] perf_sh_sat;
 wire        perf_m2_busy;
 wire  [7:0] perf_m2_burstcnt;
@@ -1154,6 +1157,16 @@ ddr_perf_counters u_ddr_perf (
 	.sh_m1_wr(perf_sh_m1_wr),
 	.sh_m2_rd(perf_sh_m2_rd),
 	.sh_m2_wr(perf_sh_m2_wr),
+	.sh_lat_bin0(perf_sh_bin0),
+	.sh_lat_bin1(perf_sh_bin1),
+	.sh_lat_bin2(perf_sh_bin2),
+	.sh_lat_bin3(perf_sh_bin3),
+	.sh_lat_bin4(perf_sh_bin4),
+	.sh_lat_bin5(perf_sh_bin5),
+	.sh_rd_cmds(perf_sh_rd_cmds),
+	.sh_burst_sum(perf_sh_burst_sum),
+	.sh_single_cmds(perf_sh_single),
+	.sh_issue_cyc(perf_sh_issue),
 	.sh_sat_flags(perf_sh_sat)
 );
 
@@ -1178,6 +1191,16 @@ ddr_perf_mailbox #(
 	.sh_m1_wr(perf_sh_m1_wr),
 	.sh_m2_rd(perf_sh_m2_rd),
 	.sh_m2_wr(perf_sh_m2_wr),
+	.sh_lat_bin0(perf_sh_bin0),
+	.sh_lat_bin1(perf_sh_bin1),
+	.sh_lat_bin2(perf_sh_bin2),
+	.sh_lat_bin3(perf_sh_bin3),
+	.sh_lat_bin4(perf_sh_bin4),
+	.sh_lat_bin5(perf_sh_bin5),
+	.sh_rd_cmds(perf_sh_rd_cmds),
+	.sh_burst_sum(perf_sh_burst_sum),
+	.sh_single_cmds(perf_sh_single),
+	.sh_issue_cyc(perf_sh_issue),
 	.sh_sat_flags(perf_sh_sat),
 	.snap_req(perf_snap_req),
 	.clear_req(perf_clear_req),

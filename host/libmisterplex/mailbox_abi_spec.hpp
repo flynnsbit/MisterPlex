@@ -54,7 +54,7 @@ constexpr uint32_t kSdramDiagOffset = 0x120u;
 constexpr uint32_t kPlxdOffset = 0x128u;
 // PLXP — DDR perf counter page (FPGA→ARM), multi-qword seqlock.
 constexpr uint32_t kPlxpOffset = 0x200u;
-constexpr uint32_t kPlxpBytes  = 0x80u; // 16 qwords
+constexpr uint32_t kPlxpBytes  = 0xC0u; // 24 qwords (v2 hist+eff)
 
 // Legacy example doorbell base (historical 0x3007F000 control page).
 constexpr uint32_t kLegacyFrameStoreDoorbellPhys = 0x3007F000u;
@@ -110,7 +110,7 @@ constexpr uint32_t kPlxdMagic = 0x504C5844u; // "PLXD"
 // PLXP — fabric DDR perf counters (see docs/ddr-perf-counters.md).
 constexpr uint32_t kPlxpAddr  = 0x3007F200u; // legacy example base+0x200
 constexpr uint32_t kPlxpMagic = 0x504C5850u; // "PLXP"
-constexpr uint8_t  kPlxpVersion = 1;
+constexpr uint8_t  kPlxpVersion = 2;
 // Bit-field positions (in the upper 32 bits, i.e. offset from bit 32):
 constexpr unsigned kPlxdFreeBankMaskBit = 0;  // bits [33:32] → [1:0] of upper word
 constexpr unsigned kPlxdFreeBankMaskWidth = 2;
@@ -157,7 +157,7 @@ constexpr std::array<MailboxEntry, 9> kAllMailboxes = {{
     {"PLXF", kPlxfAddr,     kPlxfMagic,     8, "fpga_to_arm",  true},
     {"DIAG", kSdramDiagAddr, 0,             8, "fpga_to_arm",  false},
     {"PLXD", kPlxdAddr,     kPlxdMagic,     8, "fpga_to_arm",  true},
-    {"PLXP", kPlxpAddr,     kPlxpMagic,    128, "fpga_to_arm",  true},
+    {"PLXP", kPlxpAddr,     kPlxpMagic,    192, "fpga_to_arm",  true},
     {"PLXB", kPlxbAddr,     kPlxbMagic,     8, "arm_to_fpga",  true},
 }};
 

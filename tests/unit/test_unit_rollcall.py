@@ -97,6 +97,7 @@ EXPECTED_COMMANDS = [
     "bash $(ROOT)/tests/unit/test_present_npx_cdc_rtl_sim.sh",
     "bash $(ROOT)/tests/unit/test_cdc_pulse_toggle_rtl_sim.sh",
     "bash $(ROOT)/tests/unit/test_ddr_perf_counters_rtl_sim.sh",
+    "bash $(ROOT)/tests/unit/test_ddr_arbiter4_scanout_bound.sh",
     "$(ROOT)/build/test_ddr_perf_decode",
     "python3 $(ROOT)/tests/unit/test_clk_pix_cdc_static.py",
     "bash $(ROOT)/tests/unit/test_ddr_frame_dma_rtl_sim.sh",
