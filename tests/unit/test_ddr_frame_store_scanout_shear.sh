@@ -44,6 +44,7 @@ echo "RTL SIM: using $VERILATOR_VERSION" >&2
 
 "$RUN_VERILATOR" --cc --exe --build --top-module ddr_frame_store_scanout_shear_tb \
   -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-SELRANGE -Wno-UNSIGNED \
+  +incdir+"$ROOT/fpga/Plex_MiSTer/rtl" \
   -CFLAGS "-std=c++17 -O2" \
   --Mdir "$BUILD" \
   "$ROOT/tests/rtl/ddr_frame_store_scanout_shear_tb_top.sv" \

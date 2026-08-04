@@ -56,6 +56,7 @@ common_sv=(
 )
 vflags=(--cc --exe --build --top-module ddr_frame_store_scanout_colour_tb
   -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-SELRANGE -Wno-UNSIGNED
+  +incdir+"$ROOT/fpga/Plex_MiSTer/rtl"
   -CFLAGS "-std=c++17 -O2")
 
 echo "=== BUILD product geometry colour TB (CODED_W=624) ===" >&2

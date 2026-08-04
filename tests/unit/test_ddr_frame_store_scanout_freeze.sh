@@ -59,6 +59,7 @@ vflags=(--cc --exe --build --top-module ddr_frame_store_scanout_freeze_tb
 
 echo "=== A) BROKEN: src_y_line + sticky=0 recycle=0 (expect REPRO_OK freeze / 9eb1431a) ===" >&2
 "$RUN_VERILATOR" "${vflags[@]}" --Mdir "$BROKEN_BUILD" \
++incdir+"$ROOT/fpga/Plex_MiSTer/rtl" \
   -GWANT_Y_LINE_ONLY=1 -GPENDING_READY_STICKY_PREP=0 -GPREP_SLOT_RECYCLE=0 \
   "${common_sv[@]}"
 set +e
@@ -70,6 +71,7 @@ echo "broken rc=$BROKEN_RC"
 
 echo "=== B) GOOD: src_y_line + sticky=1 recycle=1 (expect PASS motion) ===" >&2
 "$RUN_VERILATOR" "${vflags[@]}" --Mdir "$GOOD_BUILD" \
++incdir+"$ROOT/fpga/Plex_MiSTer/rtl" \
   -GWANT_Y_LINE_ONLY=1 -GPENDING_READY_STICKY_PREP=1 -GPREP_SLOT_RECYCLE=1 \
   "${common_sv[@]}"
 set +e

@@ -60,6 +60,7 @@ vflags=(--cc --exe --build --top-module ddr_frame_store_plxd_handshake_tb
 
 echo "=== A) BROKEN sticky=0 recycle=0 (expect REPRO handshake stall) ===" >&2
 "$RUN_VERILATOR" "${vflags[@]}" --Mdir "$BROKEN_BUILD" \
++incdir+"$ROOT/fpga/Plex_MiSTer/rtl" \
   -GWANT_Y_LINE_ONLY=1 -GPENDING_READY_STICKY_PREP=0 -GPREP_SLOT_RECYCLE=0 \
   -GSWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC=1 \
   "${common_sv[@]}"
@@ -72,6 +73,7 @@ echo "broken rc=$BROKEN_RC"
 
 echo "=== B) GOOD sticky=1 recycle=1 (expect PASS PLXD advancing) ===" >&2
 "$RUN_VERILATOR" "${vflags[@]}" --Mdir "$GOOD_BUILD" \
++incdir+"$ROOT/fpga/Plex_MiSTer/rtl" \
   -GWANT_Y_LINE_ONLY=1 -GPENDING_READY_STICKY_PREP=1 -GPREP_SLOT_RECYCLE=1 \
   -GSWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC=1 \
   "${common_sv[@]}"

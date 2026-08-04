@@ -74,6 +74,7 @@ common_sv=(
 )
 vflags=(--cc --exe --build --top-module ddr_frame_store_native_480p_tb
   -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-SELRANGE -Wno-UNSIGNED
+  +incdir+"$ROOT/fpga/Plex_MiSTer/rtl"
   -CFLAGS "-std=c++17 -O2")
 
 echo "=== B) BUILD + RUN full-height native 480p scanout TB ===" >&2
