@@ -608,6 +608,11 @@ wire [15:0] ddr_frames;
 wire        ddr_doorbell_ok;
 wire        swap_pending;
 
+`ifdef FABRIC_FRAME_DMA
+// Driven later (clk_sys pulse from dma_done). Declared early for present_core port.
+wire fabric_dma_store_kick;
+`endif
+
 `ifdef DDR_FRAME_STORE
 assign ddr_wr_en = 1'b0;
 assign ddr_wr_pixel = 16'd0;
@@ -913,7 +918,13 @@ present_core #(
 	.sdram_bs(frame_sdram_bs),
 	.sdram_refresh(frame_sdram_refresh),
 `ifdef DDR_FRAME_STORE
+	// FABRIC_FRAME_DMA: store kicks on dma_done only (not status[12]).
+	// status[12] starts the mover; premature scanout was a rd-duck NACK.
+`ifdef FABRIC_FRAME_DMA
+	.ddr_start_req(fabric_dma_store_kick),
+`else
 	.ddr_start_req(status[12]),
+`endif
 	.ddr_bank_sel(status[13]),
 	.ddr_status_osd(status[15:0]),
 	.ddr_input_cmd_valid(playback_cmd_valid),
@@ -964,11 +975,14 @@ present_core #(
 `ifdef DDR_FRAME_STORE
 `ifdef FABRIC_FRAME_DMA
 // --- Fabric publication DMA (w-mem): staging → bank on f2sdram ---
-// Default OFF (FABRIC_FRAME_DMA undefined). When enabled by integration:
-//   m0 present > m2 dma > m1 bitstream via ddr_bus_arbiter3 (quantum=8).
-// M10K: bounce 1 EST + arbiter3 m1 FIFO ≤1. Does not ring doorbell.
+// Default OFF. NOT product-ready until: (1) HPS fills DDR_FRAME_DMA_STAGING_PHYS,
+// (2) status[12] means "staging ready, start mover" only, (3) device BW measured.
+// Handoff: status[12] → dma start; dma_done → fabric_dma_store_kick (store start).
+// Doorbell page is still OPEN (store kick path, not PLXD write-back).
+// M10K: bounce 2 EST + arb3 FIFO 2 EST (64b width-bound). MAX_BURST=8 = quantum.
 `include "ddr_frame_layout_params.svh"
-wire        dma_busy, dma_done, dma_err_align;
+wire        dma_busy;
+wire        dma_yield_window, dma_done, dma_err_align;
 wire [31:0] dma_rd_beats, dma_wr_beats, dma_last_fb;
 wire        dma_m2_busy;
 wire  [7:0] dma_m2_burstcnt;
@@ -994,6 +1008,21 @@ always @(posedge clk_ddr) begin
 end
 wire dma_start_pulse = st12_s2 & ~st12_s3;
 
+// dma_done (clk_ddr) → one-cycle store kick on clk_sys
+reg dma_done_s1, dma_done_s2, dma_done_s3;
+always @(posedge clk_sys) begin
+	if (reset) begin
+		dma_done_s1 <= 1'b0;
+		dma_done_s2 <= 1'b0;
+		dma_done_s3 <= 1'b0;
+	end else begin
+		dma_done_s1 <= dma_done;
+		dma_done_s2 <= dma_done_s1;
+		dma_done_s3 <= dma_done_s2;
+	end
+end
+assign fabric_dma_store_kick = dma_done_s2 & ~dma_done_s3;
+
 wire [31:0] dma_src_phys = DDR_FRAME_DMA_STAGING_PHYS[31:0];
 wire [31:0] dma_bank_phys = st13_s2
 	? (DDR_FRAME_720P_PHYS_BASE[31:0] + DDR_FRAME_720P_YUV420P_BANK_STRIDE[31:0])
@@ -1001,7 +1030,8 @@ wire [31:0] dma_bank_phys = st13_s2
 wire [31:0] dma_frame_bytes = DDR_FRAME_720P_YUV420P_BYTES[31:0];
 
 ddr_frame_dma #(
-	.BOUNCE_DEPTH(128),
+	.MAX_BURST(8),
+	.BOUNCE_DEPTH(8),
 	.DEFAULT_FRAME_BYTES(1_382_400)
 ) u_frame_dma (
 	.clk(clk_ddr),
@@ -1012,6 +1042,7 @@ ddr_frame_dma #(
 	.frame_bytes(dma_frame_bytes),
 	.busy(dma_busy),
 	.done(dma_done),
+	.yield_window(dma_yield_window),
 	.err_align(dma_err_align),
 	.rd_beats(dma_rd_beats),
 	.wr_beats(dma_wr_beats),
@@ -1053,6 +1084,7 @@ ddr_bus_arbiter3 #(
 	.m1_be(stream_ddr_be),
 	.m1_we(stream_ddr_we),
 	.m2_want(dma_m2_want),
+	.m2_yield_window(dma_yield_window),
 	.m2_busy(dma_m2_busy),
 	.m2_burstcnt(dma_m2_burstcnt),
 	.m2_addr(dma_m2_addr),

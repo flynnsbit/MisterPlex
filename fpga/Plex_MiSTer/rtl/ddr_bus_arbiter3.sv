@@ -1,52 +1,22 @@
-// Three-master f2sdram arbiter (w-mem) — product 2-master path untouched.
+// Three-master f2sdram arbiter (w-mem) — sticky-grant pass-through.
 //
-// Masters (all command ports sampled on clk = clk_ddr 90 MHz unless noted):
-//   m0 — frame-store present READ (highest priority when commanding)
-//   m2 — ddr_publish_engine / fabric bank fill (clk_ddr; RD+WE + doorbell)
-//   m1 — bitstream ring READ (clk_m1 = clk_sys; want sync + rsp FIFO as product)
+// Data path while owner==m2 is wire-identical to a direct DMA hookup.
+// Owner is sticky to m2 for the whole m2_want window, except quantum yield
+// to m0 at a command gap (!m2_rd && !m2_we && !wr_lock) after Q beats.
+// Write-burst lock prevents mid-burst revoke (rd-duck / f2sdram_safe_terminator).
 //
-// Grant policy (when bus free / no rsp pipe):
-//   1) m0_cmd wins immediately (scanout must not starve)
-//   2) else if m2_want → grant_m2 (publish COPY/DIRECT or fabric bank fill)
-//   3) else if m1_want → grant_m1
-//
-// CONTENTION (rd-duck open question — closed in sim, not on device):
-//   Ideal peak @90 MHz × 8 B = 720 MB/s (port math, NOT measured HPS BW).
-//   720p24 present RD = 33.1776 MB/s; COPY R+W = 66.3552; concurrent sum
-//   ≈ 99.53 MB/s ≈ 13.8% of ideal peak. Engine also asserts present_want so
-//   it issues no NEW cmd while m0 is commanding; arbiter quantum is the
-//   second fence if an in-flight m2 beat is mid-accept.
-//
-// m2 sticky while m0 idle. When m0_cmd during m2 stream, release after at most
-// M2_QUANTUM_BEATS accepted m2 cmds (default 8 ≈ LINE_COUNT refill slot).
-// Whole-frame sticky lockout underruns m0 (rd-duck) — FAULT twin proves it.
-//
-// FAULT DDR_ARB3_FAULT_M2_STICKY_NO_QUANTUM: hold grant_m2 through continuous
-// WE while m0_cmd for red twin (tests/rtl/ddr_publish_contended_tb.sv).
-//
-// M10K: no local arrays; m1 rsp async_fifo AW=3 × 64b data is WIDTH-BOUND
-// (Cyclone V max native 40b). Same class as product 2-master arbiter FIFO →
-// **2 M10K EST** (not ≤1 via bits/10240). Control analogy: nostub-poststrip1
-// line_buf_ram DATA_W=64 → 2 M10K even at 2496 bits. ALM EST ~400–600; no fit.
-//
-// Do NOT replace ddr_bus_arbiter.sv in-place. Not in product files.qip until
-// parent enables fabric publish after measured device BW.
-//
+// M10K: m1 async_fifo DATA_W=64 → 2 EST. ALM EST ~400-600.
 `default_nettype none
 
 module ddr_bus_arbiter3 #(
-	// Max accepted m2 beats while m0 is commanding before yield.
-	// 8 matches ddr_frame_store LINE_COUNT default (line-buffer depth).
 	parameter int M2_QUANTUM_BEATS = 8
 ) (
-	input  wire        clk,      // DDR bridge clock (90 MHz)
-	input  wire        clk_m1,   // m1 consumer clock (20 MHz / clk_sys)
-	input  wire        reset,    // synchronous to clk_m1 domain
-
+	input  wire        clk,
+	input  wire        clk_m1,
+	input  wire        reset,
 	input  wire        m1_want,
 	input  wire        m2_want,
-
-	// --- m0 frame store ---
+	input  wire        m2_yield_window, // DMA ST_YIELD (or 1 when m2 idle/CWE)
 	output wire        m0_busy,
 	input  wire  [7:0] m0_burstcnt,
 	input  wire [28:0] m0_addr,
@@ -56,8 +26,6 @@ module ddr_bus_arbiter3 #(
 	input  wire [63:0] m0_din,
 	input  wire  [7:0] m0_be,
 	input  wire        m0_we,
-
-	// --- m1 bitstream (clk_m1 domain on busy/dout_ready) ---
 	output wire        m1_busy,
 	input  wire  [7:0] m1_burstcnt,
 	input  wire [28:0] m1_addr,
@@ -67,8 +35,6 @@ module ddr_bus_arbiter3 #(
 	input  wire [63:0] m1_din,
 	input  wire  [7:0] m1_be,
 	input  wire        m1_we,
-
-	// --- m2 fabric writer (clk_ddr) ---
 	output wire        m2_busy,
 	input  wire  [7:0] m2_burstcnt,
 	input  wire [28:0] m2_addr,
@@ -78,8 +44,6 @@ module ddr_bus_arbiter3 #(
 	input  wire [63:0] m2_din,
 	input  wire  [7:0] m2_be,
 	input  wire        m2_we,
-
-	// --- physical DDRAM ---
 	input  wire        DDRAM_BUSY,
 	output wire  [7:0] DDRAM_BURSTCNT,
 	output wire [28:0] DDRAM_ADDR,
@@ -90,247 +54,221 @@ module ddr_bus_arbiter3 #(
 	output wire  [7:0] DDRAM_BE,
 	output wire        DDRAM_WE
 );
-	// reset: clk_m1 → clk_ddr
 	reg reset_s1, reset_s2;
 	always @(posedge clk or posedge reset) begin
-		if (reset) begin
-			reset_s1 <= 1'b1;
-			reset_s2 <= 1'b1;
-		end else begin
-			reset_s1 <= 1'b0;
-			reset_s2 <= reset_s1;
-		end
+		if (reset) begin reset_s1 <= 1'b1; reset_s2 <= 1'b1;
+		end else begin reset_s1 <= 1'b0; reset_s2 <= reset_s1; end
 	end
 	wire rst = reset_s2;
 
-	reg m1_want_s1, m1_want_s2;
-	reg m2_want_s1, m2_want_s2;
+	reg m1w1, m1w2;
 	always @(posedge clk) begin
-		if (rst) begin
-			m1_want_s1 <= 1'b0;
-			m1_want_s2 <= 1'b0;
-			m2_want_s1 <= 1'b0;
-			m2_want_s2 <= 1'b0;
-		end else begin
-			m1_want_s1 <= m1_want;
-			m1_want_s2 <= m1_want_s1;
-			// m2_want is already clk_ddr — still double-register for uniformity
-			m2_want_s1 <= m2_want;
-			m2_want_s2 <= m2_want_s1;
-		end
+		if (rst) begin m1w1 <= 0; m1w2 <= 0;
+		end else begin m1w1 <= m1_want; m1w2 <= m1w1; end
 	end
 
-	// grant one-hot among {m1, m2}; m0 is default when both grants low
-	reg grant_m1;
-	reg grant_m2;
-	// When m0 and m2 both want: alternate so neither starves (scanout glitch vs drop).
-	reg fair_pref_m2;
-	// Remaining accepted m2 cmds allowed while m0_cmd before forced yield.
-	reg [7:0] m2_quantum_cnt;
-	localparam [7:0] M2_QMAX = (M2_QUANTUM_BEATS < 1) ? 8'd1 :
-	                           (M2_QUANTUM_BEATS > 255) ? 8'd255 :
-	                           8'(M2_QUANTUM_BEATS);
-	reg rsp_owner_m1;
-	reg rsp_owner_m2;
-	reg [8:0] rsp_left;
-	reg [63:0] rsp_data_r;
-	reg        rsp_valid_r;
-	reg        rsp_owner_m1_r;
-	reg        rsp_owner_m2_r;
+	localparam [7:0] QMAX = (M2_QUANTUM_BEATS < 1) ? 8'd1 :
+	                        (M2_QUANTUM_BEATS > 255) ? 8'd255 :
+	                        8'(M2_QUANTUM_BEATS);
 
-	wire rsp_active = rsp_left != 9'd0;
-	wire rsp_pipe_active = rsp_active | rsp_valid_r;
-	wire m0_cmd = m0_rd | m0_we;
-	wire m1_cmd = m1_rd | m1_we;
-	wire m2_cmd = m2_rd | m2_we;
+	reg [1:0] owner /* verilator public_flat_rd */;
+	reg [7:0] wr_left /* verilator public_flat_rd */;
+	reg [7:0] rd_left /* verilator public_flat_rd */; // m2/m0 read data beats remaining
+	reg [7:0] qcnt /* verilator public_flat_rd */;
+	reg       m0_pri /* verilator public_flat_rd */;
+	reg       m0_rsp /* verilator public_flat_rd */; // m0 read data pending
 
-	wire use_m1 = grant_m1;
-	wire use_m2 = grant_m2 && !grant_m1;
-	wire [7:0] selected_burst =
-		use_m1 ? m1_burstcnt :
-		use_m2 ? m2_burstcnt : m0_burstcnt;
+	// Lock owner for entire write burst AND entire read response window.
+	wire wr_lock = (wr_left != 8'd0);
+	wire rd_lock = (rd_left != 8'd0);
+	wire xact_lock = wr_lock | rd_lock;
+	wire use1 = (owner == 2'd1);
+	wire use2 = (owner == 2'd2);
 
-	// Busy: block a master when someone else owns the bus or rsp pipe.
-	assign m0_busy = DDRAM_BUSY | grant_m1 | grant_m2 |
-	                 (rsp_active & (rsp_owner_m1 | rsp_owner_m2)) |
-	                 (rsp_valid_r & (rsp_owner_m1_r | rsp_owner_m2_r));
+	wire [7:0]  sel_bc = use1 ? m1_burstcnt : (use2 ? m2_burstcnt : m0_burstcnt);
+	wire        sel_rd = use1 ? m1_rd       : (use2 ? m2_rd       : m0_rd);
+	wire        sel_we = use1 ? m1_we       : (use2 ? m2_we       : m0_we);
+	wire [28:0] sel_ad = use1 ? m1_addr     : (use2 ? m2_addr     : m0_addr);
+	wire [63:0] sel_di = use1 ? m1_din      : (use2 ? m2_din      : m0_din);
+	wire [7:0]  sel_be = use1 ? m1_be       : (use2 ? m2_be       : m0_be);
 
-	// Registered busy (same shape as historical m2 path). Publish engine
-	// solo COPY is verified direct-to-bridge in engine TB; contended path
-	// uses quantum G1 continuous-WE (not engine single-beat WR through arb).
-	wire m2_busy_comb = DDRAM_BUSY | grant_m1 | !grant_m2 |
-	                    (rsp_active & !rsp_owner_m2) |
-	                    (rsp_valid_r & !rsp_owner_m2_r);
-	reg m2_busy_r;
+	// Pure pass-through while granted — identical to direct DMA hookup.
+	assign m2_busy       = DDRAM_BUSY | (owner != 2'd2);
+	assign m2_dout       = DDRAM_DOUT;
+	assign m2_dout_ready = DDRAM_DOUT_READY & (owner == 2'd2);
+
+	assign m0_busy       = DDRAM_BUSY | (owner != 2'd0);
+	assign m0_dout       = DDRAM_DOUT;
+	assign m0_dout_ready = DDRAM_DOUT_READY & (owner == 2'd0);
+
+	wire m1b_c = DDRAM_BUSY | (owner != 2'd1);
+	reg m1b_r, m1b_s1, m1b_s2;
 	always @(posedge clk) begin
-		if (rst)
-			m2_busy_r <= 1'b1;
-		else
-			m2_busy_r <= m2_busy_comb;
+		if (rst) m1b_r <= 1'b1; else m1b_r <= m1b_c;
 	end
-	assign m2_busy = m2_busy_r;
-
-	wire m1_busy_comb = DDRAM_BUSY | !grant_m1 | grant_m2 |
-	                    (rsp_active & !rsp_owner_m1) |
-	                    (rsp_valid_r & !rsp_owner_m1_r);
-	reg m1_busy_r;
-	always @(posedge clk) begin
-		if (rst)
-			m1_busy_r <= 1'b1;
-		else
-			m1_busy_r <= m1_busy_comb;
-	end
-	reg m1_busy_s1, m1_busy_s2;
 	always @(posedge clk_m1) begin
-		if (reset) begin
-			m1_busy_s1 <= 1'b1;
-			m1_busy_s2 <= 1'b1;
-		end else begin
-			m1_busy_s1 <= m1_busy_r;
-			m1_busy_s2 <= m1_busy_s1;
-		end
+		if (reset) begin m1b_s1 <= 1; m1b_s2 <= 1;
+		end else begin m1b_s1 <= m1b_r; m1b_s2 <= m1b_s1; end
 	end
-	assign m1_busy = m1_busy_s2;
+	assign m1_busy = m1b_s2;
 
-	assign DDRAM_BURSTCNT = use_m1 ? m1_burstcnt : (use_m2 ? m2_burstcnt : m0_burstcnt);
-	assign DDRAM_ADDR     = use_m1 ? m1_addr      : (use_m2 ? m2_addr      : m0_addr);
-	assign DDRAM_RD       = use_m1 ? m1_rd        : (use_m2 ? m2_rd        : m0_rd);
-	assign DDRAM_DIN      = use_m1 ? m1_din       : (use_m2 ? m2_din       : m0_din);
-	assign DDRAM_BE       = use_m1 ? m1_be        : (use_m2 ? m2_be        : m0_be);
-	assign DDRAM_WE       = use_m1 ? m1_we        : (use_m2 ? m2_we        : m0_we);
+	assign DDRAM_BURSTCNT = sel_bc;
+	assign DDRAM_ADDR     = sel_ad;
+	assign DDRAM_RD       = sel_rd;
+	assign DDRAM_DIN      = sel_di;
+	assign DDRAM_BE       = sel_be;
+	assign DDRAM_WE       = sel_we;
 
-	wire rsp_raw_valid = DDRAM_DOUT_READY & rsp_active;
-
-	assign m0_dout = rsp_data_r;
-	assign m0_dout_ready = rsp_valid_r & !rsp_owner_m1_r & !rsp_owner_m2_r;
-
-	assign m2_dout = rsp_data_r;
-	assign m2_dout_ready = rsp_valid_r & rsp_owner_m2_r;
-
-	// m1 response FIFO (clk_ddr → clk_m1) — same beat-conservation need as product
-	wire        m1_rsp_fifo_full;
-	wire        m1_rsp_fifo_empty;
-	wire [63:0] m1_rsp_fifo_rdata;
-	wire        m1_rsp_wr_en = rsp_valid_r & rsp_owner_m1_r;
-
+	wire f_full, f_empty;
+	wire [63:0] f_dout;
 	async_fifo #(.WIDTH(64), .AW(3)) m1_rsp_fifo (
-		.wr_clk   (clk),
-		.wr_reset (rst),
-		.wr_en    (m1_rsp_wr_en),
-		.wr_data  (rsp_data_r),
-		.wr_full  (m1_rsp_fifo_full),
-		.wr_almost_full (),
-		.rd_clk   (clk_m1),
-		.rd_reset (reset),
-		.rd_en    (!m1_rsp_fifo_empty),
-		.rd_data  (m1_rsp_fifo_rdata),
-		.rd_empty (m1_rsp_fifo_empty)
+		.wr_clk(clk), .wr_reset(rst),
+		.wr_en(DDRAM_DOUT_READY & (owner == 2'd1)),
+		.wr_data(DDRAM_DOUT),
+		.wr_full(f_full), .wr_almost_full(),
+		.rd_clk(clk_m1), .rd_reset(reset),
+		.rd_en(!f_empty), .rd_data(f_dout), .rd_empty(f_empty)
 	);
+	assign m1_dout = f_dout;
+	assign m1_dout_ready = !f_empty;
+	wire _uf = f_full;
 
-	assign m1_dout       = m1_rsp_fifo_rdata;
-	assign m1_dout_ready = !m1_rsp_fifo_empty;
+	wire acc = !DDRAM_BUSY;
+	wire m0_cmd = m0_rd | m0_we;
+	wire m2_cmd = m2_rd | m2_we;
+	wire m2_req = m2_want | m2_cmd;
+	wire m1_req = m1w2 | m1_rd | m1_we;
 
-	wire _unused_full = m1_rsp_fifo_full;
+	// Gap: m2 not driving a command this cycle and no write lock.
+	wire m2_gap = !m2_rd && !m2_we && !wr_lock;
 
 	always @(posedge clk) begin
 		if (rst) begin
-			grant_m1 <= 1'b0;
-			grant_m2 <= 1'b0;
-			fair_pref_m2 <= 1'b0; // first tie → prefer m0 (scanout)
-			m2_quantum_cnt <= M2_QMAX;
-			rsp_owner_m1 <= 1'b0;
-			rsp_owner_m2 <= 1'b0;
-			rsp_left <= 9'd0;
-			rsp_data_r <= 64'd0;
-			rsp_valid_r <= 1'b0;
-			rsp_owner_m1_r <= 1'b0;
-			rsp_owner_m2_r <= 1'b0;
+			owner   <= 2'd0;
+			wr_left <= 8'd0;
+			rd_left <= 8'd0;
+			qcnt    <= QMAX;
+			m0_pri  <= 1'b0;
+			m0_rsp  <= 1'b0;
 		end else begin
-			rsp_valid_r <= rsp_raw_valid;
-			if (rsp_raw_valid) begin
-				rsp_data_r <= DDRAM_DOUT;
-				rsp_owner_m1_r <= rsp_owner_m1;
-				rsp_owner_m2_r <= rsp_owner_m2;
-			end
+			// Clear m0_rsp on the response beat even if owner already moved
+			// (guards the NBA race where owner<=m2 same cycle as m0_rsp<=1).
+			if (m0_rsp && DDRAM_DOUT_READY)
+				m0_rsp <= 1'b0;
 
-			if (DDRAM_DOUT_READY && rsp_active)
-				rsp_left <= rsp_left - 9'd1;
-
-			if (!DDRAM_BUSY && !rsp_pipe_active) begin
-				if (grant_m1) begin
-					if (m1_rd) begin
-						rsp_owner_m1 <= 1'b1;
-						rsp_owner_m2 <= 1'b0;
-						rsp_left <= {1'b0, selected_burst};
-						grant_m1 <= 1'b0;
-					end else if (m1_we || !m1_want_s2 ||
-					            (m2_want_s2 && !m1_cmd)) begin
-						// Yield to m2 if m1 holds want without a command
-						// (TB + idle bitstream); avoids sticky m1 lockout.
-						grant_m1 <= 1'b0;
-					end
-				end else if (grant_m2) begin
-					// Sticky while m0 idle (full-frame WE OK). With m0_cmd:
-					// product bounds sticky to M2_QUANTUM_BEATS accepted cmds
-					// then yields so scanout refills before LINE_COUNT drains.
-					if (m2_rd) begin
-						rsp_owner_m1 <= 1'b0;
-						rsp_owner_m2 <= 1'b1;
-						rsp_left <= {1'b0, selected_burst};
-						grant_m2 <= 1'b0;
-					end else if (!m2_want_s2 && !m2_cmd) begin
-						grant_m2 <= 1'b0;
-					end else if (m0_cmd && !m2_cmd) begin
-						grant_m2 <= 1'b0; // gap / drain → scanout
+			// ---- Write-burst lock FSM + quantum + owner ----
+			// Capture BURSTCNT on first accepted WE only; never reload while WE stays high.
+			// Clear lock when WE drops or last beat accepted. Stale wr_left must not
+			// survive into RD/SETUP gaps (that blocked m0 quantum yield).
+			if (acc && sel_we) begin
 `ifndef DDR_ARB3_FAULT_M2_STICKY_NO_QUANTUM
-					end else if (m0_cmd && m2_cmd) begin
-						// Current beat still issues this cycle (grant_m2 held
-						// combinationally); drop grant for next cycle at quantum.
-						if (m2_quantum_cnt <= 8'd1) begin
-							grant_m2 <= 1'b0;
-							m2_quantum_cnt <= M2_QMAX;
-							fair_pref_m2 <= 1'b0; // next tie prefers m0
-						end else begin
-							m2_quantum_cnt <= m2_quantum_cnt - 8'd1;
+				if (owner == 2'd2 && (m0_cmd || m0_pri)) begin
+					if (qcnt <= 8'd1) begin m0_pri <= 1'b1; qcnt <= QMAX;
+					end else qcnt <= qcnt - 8'd1;
+				end
+`endif
+				// Half-duplex masters (ddr_frame_dma): a write accept means the
+				// preceding read response window is done. Scrub stale rd_left so
+				// xact_lock cannot stick at rd_left==1 across WR/SETUP gaps.
+				if (owner == 2'd2 || owner == 2'd0)
+					rd_left <= 8'd0;
+				if (!wr_lock) begin
+					// First beat of a write transaction
+					if (owner == 2'd0 && m0_pri) begin m0_pri <= 1'b0; qcnt <= QMAX; end
+					if (sel_bc > 8'd1)
+						wr_left <= sel_bc - 8'd1;
+					else begin
+						wr_left <= 8'd0;
+`ifndef DDR_ARB3_FAULT_M2_STICKY_NO_QUANTUM
+						// CWE path: continuous single-beat WE never drops to create a
+						// gap. Yield immediately after an accepted bc==1 when m0_pri.
+						if (owner == 2'd2 && m0_pri) begin
+							owner  <= 2'd0;
+							m0_pri <= 1'b0;
+							qcnt   <= QMAX;
 						end
 `endif
 					end
-					// FAULT / no m0: hold sticky through continuous WE stream
+				end else if (wr_left == 8'd1) begin
+					wr_left <= 8'd0;
 				end else begin
-					// idle owner = m0 path, with m0/m2 fair share when both demand
-					if (m0_cmd && m2_want_s2) begin
-						if (fair_pref_m2) begin
-							grant_m2 <= 1'b1;
-							m2_quantum_cnt <= M2_QMAX;
-							fair_pref_m2 <= 1'b0;
-						end else if (m0_rd) begin
-							rsp_owner_m1 <= 1'b0;
-							rsp_owner_m2 <= 1'b0;
-							rsp_left <= {1'b0, selected_burst};
-							fair_pref_m2 <= 1'b1;
-						end else begin
-							// m0_we without rd — still count as m0 turn
-							fair_pref_m2 <= 1'b1;
-						end
-					end else if (m0_rd) begin
-						rsp_owner_m1 <= 1'b0;
-						rsp_owner_m2 <= 1'b0;
-						rsp_left <= {1'b0, selected_burst};
-					end else if (!m0_cmd && m2_want_s2) begin
-						grant_m2 <= 1'b1;
-						m2_quantum_cnt <= M2_QMAX;
-					end else if (!m0_cmd && m1_want_s2) begin
-						grant_m1 <= 1'b1;
-					end
+					wr_left <= wr_left - 8'd1;
+				end
+			end else if (wr_lock && !sel_we) begin
+				// Master dropped WE — transaction over (or idle gap).
+				wr_left <= 8'd0;
+			end else if (acc && sel_rd && !rd_lock) begin
+				// Do not accept a new RD while responses are still outstanding.
+				// Continuous m0_rd (present hold) would otherwise reload rd_left
+				// every cycle and never retire m0_rsp / return the bus to DMA.
+`ifndef DDR_ARB3_FAULT_M2_STICKY_NO_QUANTUM
+				if (owner == 2'd2 && (m0_cmd || m0_pri)) begin
+					if (qcnt <= 8'd1) begin m0_pri <= 1'b1; qcnt <= QMAX;
+					end else qcnt <= qcnt - 8'd1;
+				end
+`endif
+				rd_left <= (sel_bc == 8'd0) ? 8'd1 : sel_bc;
+				if (owner == 2'd0) begin
+					m0_rsp <= 1'b1;
+					if (m0_pri) begin m0_pri <= 1'b0; qcnt <= QMAX; end
 				end
 			end
 
-			// m1 write: drop grant after accepted non-read cmd (product behaviour)
-			if (grant_m1 && !DDRAM_BUSY && m1_cmd && !m1_rd)
-				grant_m1 <= 1'b0;
-			// m2 WE release handled above (quantum / m0 pre-empt)
+			// Read-response countdown is INDEPENDENT of the write else-if chain.
+			// A wr_lock-clear cycle must not swallow a DOUT_READY (left rd_left==1
+			// forever and blocked all quantum yields via xact_lock).
+			if (!(acc && sel_rd) && rd_lock && DDRAM_DOUT_READY &&
+			    (owner == 2'd2 || owner == 2'd0)) begin
+				if (rd_left == 8'd1)
+					rd_left <= 8'd0;
+				else
+					rd_left <= rd_left - 8'd1;
+			end
+
+			// ---- Owner arbitration ----
+			// Never rearb mid-write (wr_lock) or mid-m0-read-response.
+			// Never rearb while the current owner still asserts RD/WE (command lock).
+`ifdef DDR_ARB3_FAULT_M2_STICKY_NO_QUANTUM
+			if (!xact_lock && !m0_rsp) begin
+				if (m2_req) owner <= 2'd2;
+				else if (m1_req) owner <= 2'd1;
+				else owner <= 2'd0;
+			end
+`else
+			// Product policy:
+			//  - m2 (DMA) is default owner while m2_req
+			//  - after Q accepted m2 beats, m0_pri one-shot yields at xact boundary
+			//  - m0 may complete one outstanding xact (rd_lock/wr_lock/m0_rsp), then
+			//    bus returns to m2 if m2_req — present cannot hog via held m0_rd
+			if (owner == 2'd2) begin
+				// Only yield inside DMA ST_YIELD (or when m2 fully idle).
+				// Prevents mid-RD_DATA steal when rd_left undercounts.
+				if (!xact_lock && !(m2_rd || m2_we) && (m2_yield_window || !m2_req)) begin
+					if (m0_pri) begin
+						owner  <= 2'd0;
+						m0_pri <= 1'b0; // one-shot
+						qcnt   <= QMAX;
+					end else if (!m2_req && m1_req)
+						owner <= 2'd1;
+				end
+			end else if (owner == 2'd0) begin
+				// After m0 xact retires, return to DMA even if present still
+				// holds m0_rd (one-shot slice). Block only while xact/rsp live.
+				if (!xact_lock && !m0_rsp) begin
+					if (m2_req) begin
+						owner <= 2'd2;
+						qcnt  <= QMAX;
+					end else if (m1_req)
+						owner <= 2'd1;
+				end
+			end else begin // owner m1
+				if (!m1_req && !xact_lock) begin
+					if (m2_req) owner <= 2'd2;
+					else owner <= 2'd0;
+				end
+			end
+`endif
 		end
 	end
 endmodule
-
 `default_nettype wire

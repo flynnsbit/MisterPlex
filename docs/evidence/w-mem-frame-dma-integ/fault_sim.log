@@ -1,0 +1,11 @@
+=== ddr_frame_dma_contended_tb EXECUTED ===
+PREREG arm=14978 ideal=3840 with_present=5760 m10k_dma=2 Q=8 cwe_deny=48 dma_deny=160
+REPRO_OK FAULT max_deny=499 grants=0
+PASS PROTO burst_hold_and_constant_addr_bc
+PASS M10K_PREREG dma=2 arb3=2
+PASS ddr_frame_dma_contended_tb all
+DEVICE_BW_VERIFIED=0 NOT_INTEGRATION_READY=staging_doorbell_OPEN
+- tests/rtl/ddr_frame_dma_contended_tb.sv:458: Verilog $finish
+- S i m u l a t i o n   R e p o r t: Verilator 5.051 devel
+- Verilator: $finish at 5us; walltime 0.000 s; speed 21.195 ms/s
+- Verilator: cpu 0.000 s on 1 threads; allocated 7 MB

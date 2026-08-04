@@ -1,89 +1,76 @@
-# w-mem: ddr_frame_dma as publication engine on reconcile
+# w-mem fabric DDR copy engine — NACK response evidence
 
-Branch: `w-mem-frame-dma-integ` (base `origin/reconcile/main-2026-08-04`)
-SHA: (see git)
+**Branch:** `w-mem-frame-dma-integ`  
+**Role:** fabric publication DMA + 3-port arbiter (rd-duck NACK closure)  
+**Fit:** none (design + Verilator only)  
+**Integration claim:** **NOT_INTEGRATION_READY** — staging `0x30601000` still unfilled by product; doorbell PLXD OPEN.
 
-## M10K layout correction (parent handbook — recheck)
+## M10K / ALM (EST, handbook width-bound)
 
-Parent invalidated “1280 B = 1 M10K” / bits÷10240 packing. Cyclone V legal modes
-max width **40b**; **64b is not native**.
-
-| Prior claim (WRONG) | Corrected EST | Layout assumed | Control |
+| Module | M10K EST | Layout | Control |
 |---|---:|---|---|
-| bounce 128×64 = 8192b → **1** M10K | **2** M10K | 2× parallel (typ. 256×32 each), depth 128 of 256 | nostub-poststrip1 entity: `line_buf_ram` DATA_W=64 yram 4992b→**2** M10K; uram 2496b→**2** M10K (width-bound) |
-| arb3 m1 FIFO ≤1 M10K | **2** M10K EST | same 64b width class, AW=3 shallow | same width-bound control (entity row for this FIFO not yet in a FABRIC_FRAME_DMA fit) |
+| `ddr_frame_dma` bounce[8]×64b | **2** | 64b → 2 blocks (not 1K×8) | header + static gate |
+| `ddr_bus_arbiter3` m1 async_fifo 64b | **2** | same | header + static gate |
+| Path total | **4 EST** | | free budget 356 M10K (post-strip fit parent) |
 
-**Budget total unchanged:** parent fit M10K 197/553 free **356**; ALM free **27_556**.
-What changed is how far 356 goes for 64-bit path engines.
+## rd-duck NACK items
 
-Entity fit of `ddr_frame_dma` itself: **UNVERIFIED** (no product fit with FABRIC_FRAME_DMA=1).
+| # | Finding | Status | Control |
+|---|---|---|---|
+| 1 | Mid-burst ADDR/BC/WE change under BUSY | **CLOSED** | legal ≤MAX_BURST=8; hold under waitrequest; unit TB `burst_mon=1` |
+| 2 | Arbiter revoke mid-burst | **CLOSED** | `wr_lock` + `rd_lock` through full xact; yield only in DMA `ST_YIELD` window |
+| 3 | TB false-green (BUSY=0, no G1 bit-exact) | **CLOSED** | rand BUSY G0b; G1 bit-exact dst; PROTO mon; FAULT twin REPRO_OK |
+| 4 | Plex dual-kick store+DMA on status[12] | **CLOSED (RTL)** | `fabric_dma_store_kick` from `dma_done` only under `FABRIC_FRAME_DMA` |
+| 5 | Staging unfilled / does not retire ARM memcpy | **OPEN** | product never populates `0x30601000` |
 
-## Delivered
+## Contended sim (product)
 
-| Module | Role | M10K | depth×width layout | ALM |
-|---|---|---:|---|---|
-| `ddr_frame_dma` | staging→bank COPY | **2 EST** | 128×64 → 2×(256×32) | ~300–500 EST |
-| `ddr_bus_arbiter3` | m0>m2>m1 + Q=8 | **2 EST** | m1 FIFO 8×64 class | ~400–600 EST |
-| `ddr_frame_base_mux` in store | present base select | **0** | combinational | ~20 EST |
-| `ddr_publish_copy_budget` | PL330 vs fabric PREREG | **0** | n/a | 0 |
-| **Path total (DMA on)** | | **~4 EST** | | ~700–1100 EST |
+Control: `bash tests/unit/test_ddr_frame_dma_contended_rtl_sim.sh` → `true rc=0`
 
-## Hierarchy wire (integration-ready)
+| Gate | Result |
+|---|---|
+| G2 misalign | PASS |
+| G0 solo bit-exact | PASS cyc=644 t_full_us_scaled=4830 (PR_ideal=3840) |
+| G0b rand BUSY bit-exact | PASS |
+| G1 copy bit-exact | PASS rd=256 wr=256 |
+| G1 present fairness | PASS max_deny=29 grants=22 (PR≤160) |
+| G1 vs ARM T_copy | PASS margin_us=9991 (t_cont=4987 < arm=14978) |
+| G1b CWE quantum | PASS max_deny=9 grants=486 (PR≤48) |
+| PROTO burst hold | PASS |
+| M10K prereg 2+2 | PASS |
+| FAULT twin no-quantum | REPRO_OK max_deny=499 grants=0 |
 
-- `files.qip`: dma, base_mux, arbiter3, geom, job, budget, width_check
-- `Plex.sv` under `FABRIC_FRAME_DMA` (default **OFF** in QSF):
-  - `u_frame_dma` + `ddr_bus_arbiter3` (replaces 2-port arbiter)
-  - start = status[12] CDC edge; bank=status[13]; src=`DDR_FRAME_DMA_STAGING_PHYS` (0x30601000)
-- Product path unchanged when macro undefined (2-port `ddr_bus_arbiter`)
+## Arbitration scheme (product)
 
-## PRE-REG then MEASURE (controls)
+1. **m2 (DMA) default owner** while `m2_req`.
+2. After Q=8 accepted m2 beats with `m0_cmd`, set `m0_pri` one-shot.
+3. Yield only when `m2_yield_window` (DMA `ST_YIELD`, ≥2 clean !WE cycles after each WR burst) and `!xact_lock`.
+4. m0 one-shot slice: finish RD response (`rd_lock`/`m0_rsp`), then force return to m2 even if present holds `m0_rd`.
+5. New RD accept blocked while `rd_lock` (prevents continuous-RD reload hang).
+6. Half-duplex scrub: write accept clears stale `rd_left`.
 
-| Pin | PRE-REG | MEASURE (ideal phys TB) | Control |
-|---|---:|---:|---|
-| T_copy_arm | 14978 µs | (host Sweep9; not remeasured) | parent archive |
-| T_ideal solo | 3840 µs | **3967 µs** scaled | G0 rc=0 |
-| T_with_present | 5760 µs | **4620 µs** @~6.25% present duty | G1 rc=0 ratio 80% |
-| Margin vs ARM | — | **10358 µs** | G1 beats arm |
-| FAULT max_deny | >>48 | **491** | REPRO_OK |
-| CWE quantum deny | ≤48 | **1** | G1b |
-| bounce M10K | **2** (was 1) | layout EST only | static + budget TB |
+## Contention number (sim, DEVICE_BW_VERIFIED=0)
 
-**DEVICE_BW_VERIFIED=0** — check is parent fit + HDMI capture after enable.
+| Quantity | Value | Control |
+|---|---:|---|
+| PREREG T_copy ARM 720p | 14.978 ms | prior arm scope |
+| G0 solo scaled full-frame | 4.830 ms | product_sim G0 |
+| G1 contended scaled | 4.987 ms | product_sim G1 |
+| Margin vs ARM | **9.991 ms** | 14978−4987 |
+| Present max_deny @Q=8 | 29 cycles | G1 |
+| MEASURE ratio vs PR_with_present | 86 (100=match) | G1 |
 
-## Contention (load-bearing)
+**Pre-register (earlier):** fabric retires T_copy with present duty; contended ~1.15× solo.  
+**Hit/miss:** solo 4830 vs ideal 3840 (~1.26×); contended 4987 vs PR 5760 (under PR — HIT on arm margin).
 
-Arbitration: **m0 present > m2 publish > m1 bitstream**; `M2_QUANTUM_BEATS=8`.
-Quantum requires holding `m0_rd` while busy (CWE). FAULT sticky twin max_deny=491.
+## PL330 cross-check
 
-Port math (NOT device): peak 90 MHz×8 B = 720 MB/s ideal.
-720p24 present RD 33.1776 + COPY R+W 66.3552 ≈ **99.53 MB/s ≈ 13.8%** ideal peak.
-TB contended copy ~4.62 ms vs ARM 14.978 → arithmetic margin ~10.4 ms (w-clock +8.962
-path assumes fabric retires T_copy). **Still sim-only.**
+PL330 remains 0 M10K alternate. Fabric path now has **legal bursts + measured present fairness in sim**. Staging fill still required before either path retires ARM memcpy. Prefer fabric if staging lands; PL330 if fabric port collision on device (DEVICE_BW_VERIFIED=0).
 
-## PL330 cross-check (honest)
+## NOT_INTEGRATION_READY
 
-| Route | M10K | T EST | Contends present f2sdram | Contends HPS CPU |
-|---|---:|---:|---|---|
-| Fabric DMA | **2** | 3.84 ideal / 5.76 PRE-REG cont / **4.62 meas TB** | YES | no |
-| PL330 | **0** | 9.216 @150MB/s EST | no | YES (MiSTer spin) |
-| Dyn-base reader | **0** | 1.92 present-R only | present is the reader | no |
+- Staging phys unfilled by product daemon path  
+- Doorbell PLXD not written by mover  
+- No device BW measurement  
+- `FABRIC_FRAME_DMA` default remains a compose flag for w-fitgate  
 
-**VERDICT_PREREG:** On time, contended fabric beats PL330 EST (4.6–5.8 < 9.2 ms) and ARM (14.978).
-PL330 wins **M10K=0** and avoids f2sdram collision; device may reverse BW ranking.
-Preferred zero-mover remains **dyn-base direct reader** when decode buffer is fabric-visible.
-If PL330 device-proves ≥150 MB/s under MiSTer spin, it is a valid alternate with 0 M10K —
-**lane would prefer that over its own 2-M10K engine** when dyn-base cannot apply.
-
-## Negative cases
-
-- G2 misalign → err_align
-- FAULT sticky twin → present starve REPRO
-- Static: FABRIC_FRAME_DMA on product QSF fails red twin
-- Static: naive bits/10240 still equals 1; corrected PREREG must be 2
-
-## OPEN
-
-1. Device sustained BW under live present
-2. status[12] shared with store doorbell kick — may need dedicated PLXG start bit
-3. FABRIC_FRAME_DMA still default OFF until parent enables on integ fit
-4. Entity-row M10K for `ddr_frame_dma` / arb3 FIFO after first FABRIC_FRAME_DMA fit
