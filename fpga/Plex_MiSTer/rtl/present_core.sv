@@ -19,6 +19,12 @@ module present_core #(
 	parameter int FRAME_W = 320,
 	parameter int FRAME_H = 240,
 	parameter int FRAME_STRIDE = FRAME_W,
+	// CODED_W/CODED_H: H.264 storage dimensions (may differ from FRAME_W/H display).
+	// When reading from DDR via ddr_frame_store, address generation must use CODED
+	// dimensions to match actual storage layout. Default to FRAME_W/H for backward
+	// compat with color-bar-only (no DDR) implementations.
+	parameter int CODED_W = FRAME_W,
+	parameter int CODED_H = FRAME_H,
 	parameter int SDRAM_REFRESH_CYCLES = 780,
 `ifdef FRAME_CMD_FIFO_AW4
 	parameter int FRAME_CMD_FIFO_AW = 4,
@@ -196,8 +202,15 @@ module present_core #(
 	localparam [15:0] FRAME_LAST_X_16 = 16'(FRAME_W - 1);
 	localparam [15:0] FRAME_LAST_Y_16 = 16'(FRAME_H - 1);
 
-	reg [FRAME_X_W-1:0] store_x;
-	reg [FRAME_Y_W-1:0] store_y;
+	// CODED dimensions for DDR frame store access (H.264 storage domain).
+	// Must match ddr_frame_store's CODED_W/H to generate correct addresses.
+	localparam int CODED_X_W = $clog2(CODED_W);
+	localparam int CODED_Y_W = $clog2(CODED_H);
+	localparam [15:0] CODED_LAST_X_16 = 16'(CODED_W - 1);
+	localparam [15:0] CODED_LAST_Y_16 = 16'(CODED_H - 1);
+
+	reg [CODED_X_W-1:0] store_x;
+	reg [CODED_Y_W-1:0] store_y;
 	reg       de_r;
 	wire       past_last_row;
 	wire       in_content;
@@ -355,16 +368,20 @@ module present_core #(
 	wire [9:0] read_hc = hc;
 	wire [31:0] store_x_prod = read_hc * STORE_X_SCALE;
 	wire [15:0] store_x_comb = store_x_prod[31:16];
-	wire [FRAME_X_W-1:0] store_x_clamped =
-		(store_x_comb > FRAME_LAST_X_16) ? FRAME_LAST_X : store_x_comb[FRAME_X_W-1:0];
+	// Clamp to CODED_W domain (DDR frame store storage dimension, not display).
+	wire [CODED_X_W-1:0] CODED_LAST_X = CODED_X_W'(CODED_W - 1);
+	wire [CODED_X_W-1:0] store_x_clamped =
+		(store_x_comb > CODED_LAST_X_16) ? CODED_LAST_X : store_x_comb[CODED_X_W-1:0];
 
 	assign past_last_row = (py >= V_STORE);
 	wire [9:0] store_y_clamped = past_last_row ? V_STORE_LAST : py;
 	wire [31:0] store_y_scale = 32'(STORE_Y_SCALE);
 	wire [31:0] store_y_prod = store_y_clamped * store_y_scale;
 	wire [15:0] store_y_comb = store_y_prod[31:16];
-	wire [FRAME_Y_W-1:0] store_y_addr =
-		(store_y_comb > FRAME_LAST_Y_16) ? FRAME_LAST_Y : store_y_comb[FRAME_Y_W-1:0];
+	// Clamp to CODED_H domain (DDR frame store storage dimension, not display).
+	wire [CODED_Y_W-1:0] CODED_LAST_Y = CODED_Y_W'(CODED_H - 1);
+	wire [CODED_Y_W-1:0] store_y_addr =
+		(store_y_comb > CODED_LAST_Y_16) ? CODED_LAST_Y : store_y_comb[CODED_Y_W-1:0];
 
 	always @(posedge clk) begin
 		if (reset) begin
@@ -579,17 +596,18 @@ module present_core #(
 	end
 	// synthesis translate_on
 	(* noprune *) wire mp_identity_geom_ok = MP_IDENTITY_FRAME_EQ_GLASS;
-	wire [FRAME_X_W-1:0] mp_store_x =
-		(mp_glass_x0 > 12'(FRAME_LAST_X)) ? FRAME_LAST_X
-			: mp_glass_x0[FRAME_X_W-1:0];
-	wire [FRAME_Y_W-1:0] mp_store_y =
-		(mp_glass_y > 12'(FRAME_LAST_Y)) ? FRAME_LAST_Y
-			: mp_glass_y[FRAME_Y_W-1:0];
+	// Multi-pixel store coordinates also use CODED domain for DDR access.
+	wire [CODED_X_W-1:0] mp_store_x =
+		(mp_glass_x0 > 12'(CODED_LAST_X_16)) ? CODED_LAST_X
+			: mp_glass_x0[CODED_X_W-1:0];
+	wire [CODED_Y_W-1:0] mp_store_y =
+		(mp_glass_y > 12'(CODED_LAST_Y_16)) ? CODED_LAST_Y
+			: mp_glass_y[CODED_Y_W-1:0];
 	wire mp_de_any = |mp_lane_de;
 
 	// Register beam→store one cycle (align with product store_x style).
-	reg [FRAME_X_W-1:0] mp_store_x_r;
-	reg [FRAME_Y_W-1:0] mp_store_y_r;
+	reg [CODED_X_W-1:0] mp_store_x_r;
+	reg [CODED_Y_W-1:0] mp_store_y_r;
 	reg                 mp_de_r;
 	reg [PRESENT_PPC-1:0] mp_lane_de_r;
 	always @(posedge clk) begin
@@ -621,8 +639,8 @@ module present_core #(
 		.FRAME_W(FRAME_W),
 		.FRAME_H(FRAME_H),
 		.FRAME_STRIDE(FRAME_STRIDE),
-		.CODED_W(FS_CODED_W),
-		.CODED_H(FS_CODED_H),
+		.CODED_W(DDR_FRAME_CODED_WIDTH),
+		.CODED_H(DDR_FRAME_CODED_HEIGHT),
 		.DISPLAY_W(FS_DISPLAY_W),
 		.DISPLAY_H(FS_DISPLAY_H),
 		.CROP_LEFT(FS_CROP_LEFT),
