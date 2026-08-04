@@ -111,14 +111,16 @@ set_global_assignment -name VERILOG_MACRO "FRAME_LINES_8=1"
 # DDR ABI selects 720p bank/doorbell when FRAME is 1280x720 (ddr_frame_abi_select.svh);
 # do NOT rely on PLEX_PRESENT_720P_L4 (mutually exclusive with MULTI).
 #set_global_assignment -name VERILOG_MACRO "PRESENT_PX_PER_CLK=2"
-# --- clk_pix PLL (w-clock; DEFAULT OFF) ---
-# Adds pll outclk_3. Default 29.700000 MHz = 1650*750*24 (CEA 720p totals @24).
-# Optional 74.250000 MHz = 1650*750*60 (CEA VIC 4 720p60): also set PRESENT_CLK_PIX_74_25.
-# Requires parent-granted fit. Source Plex_clk_pix.sdc with the same enable.
-# Rate note: MULTI_PIXEL + PPC=1 @ clk_sys=20 cannot feed 29.7 Mpix/s — need
-# PPC=2 (store N-wide) or beam-on-clk_pix. See .agent-work/w-clock/720P_CLK_DDR_ARITH.md
-# L4 compact raster (1312x762) needs clk_sys≈24 MHz for 24 fps. STA risk on
-# stub-class Fmax~23.2 — parent fit grant only; mutual with relying on 20 MHz default.
+# --- clk_pix PLL (w-clock; DEFAULT OFF) — product rate is 720p24 NOT 60 ---
+# Adds emu pll outclk_3. PRODUCT default when enabled: 29.700000 MHz = 1650*750*24.
+# Do NOT enable PRESENT_CLK_PIX_74_25 for 720p24 product (that is VIC-4 60 Hz only).
+# Integer-N exact M/N/C from 50 MHz exist (0 ppm) — rtl/misterplex_clk_pix_recipe.svh.
+# pll_hdmi stays separate (148.5 frac + adj); only CLK_VIDEO/present.clk_pix switch.
+# Requires parent-granted fit. ALWAYS pair with Plex_clk_pix.sdc.
+# Preferred glass recipe (with MULTI block above): PPC=2 + PRESENT_CLK_PIX_PLL @29.7
+#   OR PPC=2 @ clk_sys 20 + rate_match (no outclk_3) if fit defers clk_pix.
+# Post-strip STA (clk_pix OFF): clk_ddr +0.311 ns thin; clk_sys +1.290 — re-measure
+# general[3] on the first clk_pix-enabled fit. No agent fit.
 #set_global_assignment -name VERILOG_MACRO "CLK_SYS_24=1"
 #set_global_assignment -name VERILOG_MACRO "PRESENT_CLK_PIX_PLL=1"
 #set_global_assignment -name VERILOG_MACRO "PRESENT_CLK_PIX_74_25=1"

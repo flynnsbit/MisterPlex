@@ -318,7 +318,8 @@
       "swing_note": "removing T_copy flips -6.016 deficit to +8.962 margin; swing equals T_copy",
       "arm_decode_frame_budget_closes": true,
       "closes_by_ms": 8.962,
-      "decode_budget_utilization_pct": 78.49
+      "decode_budget_utilization_pct": 78.49,
+      "published_before_compute": true
     },
     "does_NOT_claim": [
       "e2e 720p24 product CLOSED",
@@ -335,6 +336,31 @@
       "DMA engine M10K vs linebuf budget (~356 shared)",
       "host pinned/coherent source before DMA"
     ],
-    "miss_publish_rule": "If parent measures residual ARM pub path or decode\u226032.705 after DMA, update margin and mark HIT/MISS here"
+    "miss_publish_rule": "If parent measures residual ARM pub path or decode\u226032.705 after DMA, update margin and mark HIT/MISS here",
+    "measurement": {
+      "method": "arithmetic re-run of parent Sweep 116/118 inputs (no device)",
+      "frame_budget_ms": 41.667,
+      "decode_ms": 32.705,
+      "T_copy_arm_ms": 14.978,
+      "margin_ms": 8.962,
+      "arm_decode_frame_budget_closes": true,
+      "vs_prereg_margin_ms": 8.962,
+      "result": "HIT",
+      "post_strip_sta_note": "Parent nostub-poststrip1: clk_ddr +0.311 ns, clk_sys +1.290 ns, TNS=0. Does not change ARM frame-budget arithmetic. clk_pix Fmax still UNKNOWN."
+    }
+  },
+  "post_strip_sta": {
+    "source": "parent nostub-poststrip1 (not w-clock device)",
+    "M10K": "197/553 (36%) HIT vs prereg 197",
+    "ALM": "14354/41910 (34%)",
+    "decode_stub_grep": 0,
+    "slack_ns": {
+      "clk_ddr_general2": 0.311,
+      "pll_hdmi": 0.571,
+      "clk_sys_general0": 1.29
+    },
+    "TNS": 0.0,
+    "clk_pix_in_that_fit": false,
+    "clk_pix_fmax": "UNKNOWN \u2014 check after PRESENT_CLK_PIX_PLL fit"
   }
 }

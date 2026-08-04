@@ -6,6 +6,7 @@
 // Product default: sys=20e6, pix=sys, ppc=1, cea_need_faster=1 (20 < 29.7).
 
 `include "misterplex_clk_hz.svh"
+`include "misterplex_clk_pix_recipe.svh"
 
 module plex_clk_status (
 	input  wire        clk,
@@ -29,6 +30,28 @@ module plex_clk_status (
 	// 29_700_000 and L4 24 fps needs
 	localparam int CEA_NEED = `MISTERPLEX_CEA720_F24_HZ;
 	localparam longint L4_NEED = longint'(`MISTERPLEX_L4_F24_HZ); // 23_993_856
+
+	// Recipe lock: product pix target is 720p24 @ 29.7 (not 74.25).
+	(* keep, noprune *) wire [31:0] keep_clkpix_f24 = MISTERPLEX_CLKPIX_F24_HZ[31:0];
+	(* keep, noprune *) wire [31:0] keep_clkpix_product = MISTERPLEX_CLKPIX_PRODUCT_HZ[31:0];
+	(* keep, noprune *) wire [15:0] keep_clkpix_pll_m = MISTERPLEX_CLKPIX_F24_PLL_M[15:0];
+	generate
+		if (MISTERPLEX_CLKPIX_F24_HZ != 29_700_000) begin : g_clkpix_f24
+			misterplex_clkpix_f24_must_be_29700000 u_f24();
+		end
+		if (MISTERPLEX_CLKPIX_F24_HZ != (MISTERPLEX_CLKPIX_CEA_H * MISTERPLEX_CLKPIX_CEA_V * MISTERPLEX_CLKPIX_FPS_24)) begin : g_clkpix_arith
+			misterplex_clkpix_f24_arith_broken u_arith();
+		end
+		if (MISTERPLEX_CLKPIX_PRODUCT_HZ != MISTERPLEX_CLKPIX_F24_HZ) begin : g_clkpix_product_is_f24
+			misterplex_clkpix_product_must_be_f24 u_prod();
+		end
+		// Documented integer solution: 50e6 * M / (N*C) — use 64-bit (M*ref overflows 32b).
+		if ((64'd50_000_000 * MISTERPLEX_CLKPIX_F24_PLL_M)
+		    / (64'(MISTERPLEX_CLKPIX_F24_PLL_N) * 64'(MISTERPLEX_CLKPIX_F24_PLL_C))
+		    != 64'(MISTERPLEX_CLKPIX_F24_HZ)) begin : g_clkpix_mn_c
+			misterplex_clkpix_f24_mnc_not_exact u_mnc();
+		end
+	endgenerate
 
 	(* noprune *) reg [31:0] r_sys, r_pix, r_cea_pf, r_l4_pf;
 	(* noprune *) reg [7:0]  r_ppc;
