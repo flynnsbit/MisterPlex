@@ -56,6 +56,35 @@ constexpr uint8_t kYuv420BlackY = 16;
 constexpr uint8_t kYuv420BlackU = 128;
 constexpr uint8_t kYuv420BlackV = 128;
 
+// ---- 720p tier (present path; opt-in RBF macros / MULTI+PPC2 product recipe) ----
+// Bank stride 0x180000 and doorbell 0x3047F000 match w-mem / ddr_frame_abi_select.
+// Plain ints for buffer math and define-parity string gates (see test_p720_shared_bw_contract).
+constexpr int kPlex720pCodedWidth = 1280;
+constexpr int kPlex720pCodedHeight = 720;
+constexpr int kPlex720pDisplayWidth = 1280;
+constexpr int kPlex720pDisplayHeight = 720;
+constexpr int kPlex720pPresentedWidth = 1280;
+constexpr int kPlex720pPresentedHeight = 720;
+constexpr int kPlex720pPillarboxLeft = 0;
+constexpr int kPlex720pPillarboxRight = 0;
+constexpr int kPlex720pYuv420pBytes = 1382400;
+constexpr int kPlex720pYStrideBytes = 1280;
+constexpr int kPlex720pChromaStrideBytes = 640;
+constexpr uint32_t kPlex720pYuv420pBankStride = 0x00180000u;
+constexpr uint32_t kPlex720pPhysBase = 0x30180000u;
+constexpr uint32_t kPlex720pYuv420pDoorbellPhys = 0x3047F000u;
+// L4 compact beam (w-clock): H=1312 V=762 @ clk_sys 24 → ~24.006 Hz (CLK_SYS_24 OFF until STA).
+constexpr int kPlex720p24BeamHTotal = 1312;
+constexpr int kPlex720p24BeamVTotal = 762;
+constexpr int kPlex720p24BeamHDe = 1280;
+constexpr int kPlex720p24BeamVActive = 720;
+constexpr int kPlex720p24ClkSysHz = 24000000;
+// CEA totals used with MULTI + clk_pix 29.70 (1650×750×24).
+constexpr int kPlex720pCeaHTotal = 1650;
+constexpr int kPlex720pCeaVTotal = 750;
+constexpr int kPlex960PresentedWidth = 960;
+constexpr int kPlex960PresentedHeight = 540;
+
 enum class DdrFramePlacement {
     None,
     Pillarbox,

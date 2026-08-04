@@ -1,4 +1,17 @@
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_cadence.sv
+// 720p / ascal-native present path (default OFF via QSF macros — see present_core.sv).
+// Modules must stay in QIP or Quartus never sees them (orphan-class defect).
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_video_timing_720p.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_video_timing_960.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_beam_content_de.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_beam_ppc.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_npx_path.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_pix_rate_match.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_content_window.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_geom_latch.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_vtotal_bresenham.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/yuv_bt601_npx.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/plex_present_geom_mux.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/colorbars.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio_tone.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio_fifo.sv
@@ -11,6 +24,7 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/frame_ingest.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddram_frame_rd.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/sdram.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/sdram_memtest.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/mplex_hold_lcell.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_bus_arbiter.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_bitstream_reader.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/bitstream_fifo.sv
@@ -42,9 +56,6 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/plex_product_cfg.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_core.sv
 # Fabric RBF↔git stamp (w-fitgate). Always compiled; instance in Plex.sv is L3/L4.
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/plex_rbf_build_id.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_video_timing_720p.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_video_timing_960.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_pix_rate_match.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/plex_clk_status.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/plex_bw_status.sv
 set_global_assignment -name SDC_FILE Plex.sdc

@@ -18,7 +18,10 @@ RTL = ROOT / "fpga/Plex_MiSTer"
 # (path regex fullmatch, line regex search)
 ALLOWLIST: list[tuple[str, str]] = [
     (r"fpga/Plex_MiSTer/rtl/misterplex_clk_hz\.svh", r"20_000_000|20\.000000|20 MHz|24_000_000|29_700"),
+    (r"fpga/Plex_MiSTer/rtl/misterplex_bw_contract\.svh", r"20_000_000|20000000|20 MHz"),
     (r"fpga/Plex_MiSTer/rtl/plex_clk_status\.sv", r"20|29_700"),
+    (r"fpga/Plex_MiSTer/rtl/plex_bw_status\.sv", r"20|t_copy|14978"),
+    (r"fpga/Plex_MiSTer/rtl/ddr_frame_abi_select\.svh", r"20 MHz|PPC=2"),
 
     (r"fpga/Plex_MiSTer/rtl/pll/pll_0002\.v", r"MISTERPLEX_CLK_SYS_PLL_FREQ|20\.000000 MHz"),
     (r"fpga/Plex_MiSTer/rtl/pll/pll_0002\.v", r"clk_sys 20 MHz"),
