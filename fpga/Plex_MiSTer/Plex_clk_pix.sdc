@@ -72,14 +72,16 @@ set_clock_groups -asynchronous \
 # Period sanity: derive_pll_clocks creates clocks from PLL generics.
 # Explicit create_clock on divclk is not used — PLL is the generator.
 #
-# Parent STA one-pass after a clk_pix-enabled fit:
-#   scripts/sta_onepass_interrogation.sh OUT/Plex.sta.rpt OUT/clk_sys_sameclk_setup.txt
-#   make post-fit-timing STA_RPT=OUT/Plex.sta.rpt
-#   make post-fit-timing-margin STA_RPT=OUT/Plex.sta.rpt
+# Parent STA one-pass after a clk_pix-enabled fit (script is required, not optional):
+#   scripts/sta_onepass_interrogation.sh OUT/Plex.sta.rpt OUT/
+#   make post-fit-timing-clk-pix STA_RPT=OUT/Plex.sta.rpt
+# That path FAILS on empty STA, missing general[3], or Fmax(general[3]) < 29.7.
+# Margin baseline: assets/timing_margin_baseline_720p_compose.json (clk_pix require_present).
 # HARD expects (clk_pix fit):
 #   - Fmax of general[3] (clk_pix) >= 29.7 MHz (or >= 74.25 if 74_25 macro)
-#   - Setup slack on clk_pix domain: no negative TNS
+#   - Setup slack on clk_pix domain: no negative TNS; general[3] present in Setup Summary
 #   - No setup fail inside present_npx_path on clk_pix
 #   - clk_ddr worst slack still >= 0 (watch +0.311 budget if DMA lands)
 #   - No decode_stub as Fmax owner (PRODUCT_NO_STUB)
 #   - NEW_RBF not in banned hash list
+# Plain `make post-fit-timing` alone is NOT sufficient for a PLL fit (no general[3] require).
