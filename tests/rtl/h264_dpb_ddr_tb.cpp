@@ -66,10 +66,19 @@ int main(int argc, char** argv) {
 	expect(m10k > 553u, "full DPB M10K lower bound exceeds part (553)");
 	expect(win_b == 603u, "window cache 441+81+81=603");
 	expect(path_b < 20000u, "DDR-path on-chip working set << frame");
+	// DELTA vs LIVE helpers (already synthesise; 0 frame storage in h264_dpb.sv)
+	expect(top->live_helper_frame_storage_bytes == 0u, "LIVE helpers add 0 frame storage");
+	expect(top->stub_bram_bytes_if_kept == dpb_b, "stub BRAM baseline = full DPB1");
+	expect(top->ddr_path_delta_onchip_bytes == path_b, "DDR path delta onchip = path working set");
 	// Publish vs prereg ≤12 M10K (~15kB): path_b bits/10240
 	const uint32_t path_m10k = (path_b * 8u + 10239u) / 10240u;
+	const int32_t m10k_delta = top->m10k_delta_vs_stub_bram;
 	std::printf("MEASURE path_onchip_bytes=%u path_m10k_lower=%u prereg_max=12\n", path_b, path_m10k);
+	std::printf("DELTA live_helper_frame_B=0 stub_bram_if_kept=%u ddr_path_add=%u m10k_delta_vs_stub=%d\n",
+	            top->stub_bram_bytes_if_kept, top->ddr_path_delta_onchip_bytes, m10k_delta);
 	expect(path_m10k <= 12u, "path M10K lower bound ≤ prereg 12");
+	// Prereg: replacing stub@720p BRAM with DDR path saves ~full DPB M10K (delta << 0)
+	expect(m10k_delta < -500, "DELTA m10k vs stub BRAM strongly negative (savings)");
 
 	// ── 2. Product default local backend: on-chip dual bank, bank0=0 ──
 	expect(top->loc_bank0 == 0u, "local bank0=0");

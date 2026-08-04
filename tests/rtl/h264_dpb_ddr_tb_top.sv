@@ -13,6 +13,10 @@ module h264_dpb_ddr_tb_top (
 	output wire [31:0] onchip_ddr_path_bytes,
 	output wire        full_frame_onchip_illegal,
 	output wire [31:0] m10k_lower_bound_full_dpb,
+	output wire [31:0] live_helper_frame_storage_bytes,
+	output wire [31:0] stub_bram_bytes_if_kept,
+	output wire [31:0] ddr_path_delta_onchip_bytes,
+	output wire signed [31:0] m10k_delta_vs_stub_bram,
 
 	// backend product-default (local 1-cy)
 	input  wire        loc_we,
@@ -103,7 +107,11 @@ module h264_dpb_ddr_tb_top (
 		.onchip_nb_bytes(onchip_nb_bytes),
 		.onchip_ddr_path_bytes(onchip_ddr_path_bytes),
 		.full_frame_onchip_illegal(full_frame_onchip_illegal),
-		.m10k_lower_bound_full_dpb(m10k_lower_bound_full_dpb)
+		.m10k_lower_bound_full_dpb(m10k_lower_bound_full_dpb),
+		.live_helper_frame_storage_bytes(live_helper_frame_storage_bytes),
+		.stub_bram_bytes_if_kept(stub_bram_bytes_if_kept),
+		.ddr_path_delta_onchip_bytes(ddr_path_delta_onchip_bytes),
+		.m10k_delta_vs_stub_bram(m10k_delta_vs_stub_bram)
 	);
 
 	h264_dpb_ddr_backend #(

@@ -1,9 +1,13 @@
 // h264_dpb_ddr_backend.sv — DDR-backed DPB1 storage + burst line fetch + area budget.
 //
+// DELTA framing (parent 2026-08-04 reachability ground truth):
+//   LIVE baseline already pays h264_dpb_one_ref + i420_addr + mb_write_addr ALMs and
+//   (when stub kept) decode_stub dpb_mem BRAM. This file is the storage DELTA for 720p:
+//   move frames off-chip; keep only window + nb working sets on M10K.
+//   Unwired (default): modules may be in qip but DEAD from sys_top → fit delta = 0.
 // ENABLE_DPB_DDR=0 (product default): 1-cycle local byte RAM (decode_stub contract).
 // ENABLE_DPB_DDR=1: banks at w-mem phys (0x30700000, stride 0x180000), multi-cycle
 //   reads; sim holds pixels in a model array (not for Quartus without f2sdram client).
-//
 // Present doorbell/base are NOT redefined here.
 `default_nettype none
 
@@ -252,7 +256,14 @@ module h264_dpb_area_budget #(
 	output wire [31:0] onchip_nb_bytes,
 	output wire [31:0] onchip_ddr_path_bytes,
 	output wire        full_frame_onchip_illegal,
-	output wire [31:0] m10k_lower_bound_full_dpb
+	output wire [31:0] m10k_lower_bound_full_dpb,
+	// DELTA vs LIVE baseline: helpers have 0 frame bytes; stub BRAM would hold DPB.
+	// ddr_path_delta_onchip = working set ADDED when ENABLE_DPB_DDR path is wired.
+	// m10k_delta_vs_stub_bram = path_m10k - full_dpb_m10k (negative => savings).
+	output wire [31:0] live_helper_frame_storage_bytes,
+	output wire [31:0] stub_bram_bytes_if_kept,
+	output wire [31:0] ddr_path_delta_onchip_bytes,
+	output wire signed [31:0] m10k_delta_vs_stub_bram
 );
 	`include "h264_dpb_ddr_params.svh"
 	localparam int FB = FRAME_W * FRAME_H + 2 * ((FRAME_W / 2) * (FRAME_H / 2));
@@ -261,6 +272,8 @@ module h264_dpb_area_budget #(
 	localparam int WIN = H264_DPB_WIN_TOTAL;
 	localparam int ONCHIP = WIN + NB;
 	localparam int M10K_FULL = (DPB * 8 + 10239) / 10240;
+	localparam int M10K_PATH = (ONCHIP * 8 + 10239) / 10240;
+	localparam int M10K_DELTA = M10K_PATH - M10K_FULL;
 
 	assign bytes_per_ref_frame = FB[31:0];
 	assign bytes_dpb1_total = DPB[31:0];
@@ -269,6 +282,10 @@ module h264_dpb_area_budget #(
 	assign onchip_ddr_path_bytes = ONCHIP[31:0];
 	assign full_frame_onchip_illegal = (DPB > 200_000);
 	assign m10k_lower_bound_full_dpb = M10K_FULL[31:0];
+	assign live_helper_frame_storage_bytes = 32'd0;
+	assign stub_bram_bytes_if_kept = DPB[31:0];
+	assign ddr_path_delta_onchip_bytes = ONCHIP[31:0];
+	assign m10k_delta_vs_stub_bram = M10K_DELTA[31:0];
 endmodule
 
 `default_nettype wire

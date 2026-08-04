@@ -1,9 +1,14 @@
 // Phase 3 motion-compensation decoded picture buffer helpers.
-// Storage locus (measured): this file has NO frame arrays. h264_dpb_i420_addr and
-// h264_dpb_mb_write_addr are pure address generators; h264_dpb_one_ref drives
-// external mem_* ports only. On-chip dual-bank storage lives in decode_stub.sv
-// (`(* ram_style = "block" *) reg [7:0] dpb_mem [0:DPB_MEM_BYTES-1]`). DDR path:
-// h264_dpb_ddr_backend.sv + h264_dpb_nb_cache.sv (ENABLE_DPB_DDR product default 0).
+//
+// Reachability (tools/rtl_reachability.py from sys_top; no ifdef/QSF eval):
+//   LIVE today: h264_dpb_one_ref, h264_dpb_i420_addr, h264_dpb_mb_write_addr
+//   (via stream_path -> decode_stub). Helpers already synthesise in product graph.
+// Storage locus (quoted): this file has NO frame arrays — address gens + mem_* only.
+// On-chip dual-bank frames live in decode_stub.sv:
+//   `(* ram_style = "block" *) reg [7:0] dpb_mem [0:DPB_MEM_BYTES-1]`
+// PRODUCT_NO_STUB strips that BRAM (post-fit authority; tool does not eval macros).
+// DDR path (DELTA, not from-scratch): h264_dpb_ddr_backend + h264_dpb_nb_cache
+// behind ENABLE_DPB_DDR=0 product default — DEAD until fabric decode wires them.
 // One short-term reference picture, one current reconstruction picture.
 //
 // Content contract: filtered_sample_* MUST be POST in-loop-deblock native I420
