@@ -878,7 +878,8 @@ def check_mailboxes() -> None:
 
     # --- Cross-check PLXD bank-release against spec ---
     # Legacy example absolute (doorbell base 0x3007F000) still equals 0x3007F128.
-    # Product doorbell is 0x300FF000 → live PLXD is 0x300FF128 via offset 0x128.
+    # Product 720p doorbell is 0x302FF000 → live PLXD is 0x302FF128 via offset 0x128.
+    # Legacy 480p doorbell 0x300FF000 remains a valid alternate contract.
     plxd_addr = cpp_const(host, "kBankReleaseMailboxPhys")
     plxd_magic = cpp_const(host, "kBankReleaseMailboxMagic")
     check(plxd_addr == 0x3007F128,
@@ -888,10 +889,10 @@ def check_mailboxes() -> None:
     plxd_off = cpp_const(spec_text, "kPlxdOffset")
     check(plxd_off == 0x128,
           f"kPlxdOffset must be 0x128 (got 0x{plxd_off:X})")
-    product_doorbell = 0x300FF000
+    product_doorbell = 0x302FF000
     product_plxd = product_doorbell + plxd_off
-    check(product_plxd == 0x300FF128,
-          f"product PLXD must be 0x300FF128 (got 0x{product_plxd:08X})")
+    check(product_plxd == 0x302FF128,
+          f"product PLXD must be 0x302FF128 (got 0x{product_plxd:08X})")
     check(product_plxd != 0x3007F128,
           "product PLXD must not collapse to legacy absolute 0x3007F128")
     spi = (ROOT / "arm" / "misterplexd" / "fpga_spi.cpp").read_text()
@@ -1256,33 +1257,34 @@ def check_status_telemetry() -> None:
 def check_ddr_frame_layout_contract() -> None:
     host = strip_comments(read(DDR_FRAME_LAYOUT_HPP))
     rtl = strip_comments(read(DDR_FRAME_LAYOUT_SVH))
+    # Product silicon is native 720p identity (define-parity DDR_LAYOUT_PAIRS).
     pairs = [
-        ("kPlex480pCodedWidth", "DDR_FRAME_CODED_WIDTH"),
-        ("kPlex480pCodedHeight", "DDR_FRAME_CODED_HEIGHT"),
-        ("kPlex480pDisplayWidth", "DDR_FRAME_DISPLAY_WIDTH"),
-        ("kPlex480pDisplayHeight", "DDR_FRAME_DISPLAY_HEIGHT"),
-        ("kPlex480pPresentedWidth", "DDR_FRAME_PRESENTED_WIDTH"),
-        ("kPlex480pPresentedHeight", "DDR_FRAME_PRESENTED_HEIGHT"),
-        ("kPlex480pCropLeft", "DDR_FRAME_CROP_LEFT"),
-        ("kPlex480pCropRight", "DDR_FRAME_CROP_RIGHT"),
-        ("kPlex480pCropTop", "DDR_FRAME_CROP_TOP"),
-        ("kPlex480pCropBottom", "DDR_FRAME_CROP_BOTTOM"),
-        ("kPlex480pPillarboxLeft", "DDR_FRAME_PILLARBOX_LEFT"),
-        ("kPlex480pPillarboxRight", "DDR_FRAME_PILLARBOX_RIGHT"),
-        ("kPlex480pRgb565LineQwords", "DDR_FRAME_RGB565_LINE_QWORDS"),
-        ("kPlex480pYuvLumaLineQwords", "DDR_FRAME_YUV_LUMA_LINE_QWORDS"),
-        ("kPlex480pYuvChromaLineQwords", "DDR_FRAME_YUV_CHROMA_LINE_QWORDS"),
-        ("kPlex480pRgb565Bytes", "DDR_FRAME_RGB565_BYTES"),
-        ("kPlex480pYuv420pBytes", "DDR_FRAME_YUV420P_BYTES"),
-        ("kPlex480pYPlaneOffset", "DDR_FRAME_Y_PLANE_OFFSET"),
-        ("kPlex480pUPlaneOffset", "DDR_FRAME_U_PLANE_OFFSET"),
-        ("kPlex480pVPlaneOffset", "DDR_FRAME_V_PLANE_OFFSET"),
-        ("kPlex480pYStrideBytes", "DDR_FRAME_Y_STRIDE_BYTES"),
-        ("kPlex480pChromaStrideBytes", "DDR_FRAME_CHROMA_STRIDE_BYTES"),
-        ("kPlex480pRgb565BankStride", "DDR_FRAME_RGB565_BANK_STRIDE"),
-        ("kPlex480pYuv420pBankStride", "DDR_FRAME_YUV420P_BANK_STRIDE"),
-        ("kPlex480pRgb565DoorbellPhys", "DDR_FRAME_RGB565_DOORBELL_PHYS"),
-        ("kPlex480pYuv420pDoorbellPhys", "DDR_FRAME_YUV420P_DOORBELL_PHYS"),
+        ("kPlex720pCodedWidth", "DDR_FRAME_CODED_WIDTH"),
+        ("kPlex720pCodedHeight", "DDR_FRAME_CODED_HEIGHT"),
+        ("kPlex720pDisplayWidth", "DDR_FRAME_DISPLAY_WIDTH"),
+        ("kPlex720pDisplayHeight", "DDR_FRAME_DISPLAY_HEIGHT"),
+        ("kPlex720pPresentedWidth", "DDR_FRAME_PRESENTED_WIDTH"),
+        ("kPlex720pPresentedHeight", "DDR_FRAME_PRESENTED_HEIGHT"),
+        ("kPlex720pCropLeft", "DDR_FRAME_CROP_LEFT"),
+        ("kPlex720pCropRight", "DDR_FRAME_CROP_RIGHT"),
+        ("kPlex720pCropTop", "DDR_FRAME_CROP_TOP"),
+        ("kPlex720pCropBottom", "DDR_FRAME_CROP_BOTTOM"),
+        ("kPlex720pPillarboxLeft", "DDR_FRAME_PILLARBOX_LEFT"),
+        ("kPlex720pPillarboxRight", "DDR_FRAME_PILLARBOX_RIGHT"),
+        ("kPlex720pRgb565LineQwords", "DDR_FRAME_RGB565_LINE_QWORDS"),
+        ("kPlex720pYuvLumaLineQwords", "DDR_FRAME_YUV_LUMA_LINE_QWORDS"),
+        ("kPlex720pYuvChromaLineQwords", "DDR_FRAME_YUV_CHROMA_LINE_QWORDS"),
+        ("kPlex720pRgb565Bytes", "DDR_FRAME_RGB565_BYTES"),
+        ("kPlex720pYuv420pBytes", "DDR_FRAME_YUV420P_BYTES"),
+        ("kPlex720pYPlaneOffset", "DDR_FRAME_Y_PLANE_OFFSET"),
+        ("kPlex720pUPlaneOffset", "DDR_FRAME_U_PLANE_OFFSET"),
+        ("kPlex720pVPlaneOffset", "DDR_FRAME_V_PLANE_OFFSET"),
+        ("kPlex720pYStrideBytes", "DDR_FRAME_Y_STRIDE_BYTES"),
+        ("kPlex720pChromaStrideBytes", "DDR_FRAME_CHROMA_STRIDE_BYTES"),
+        ("kPlex720pRgb565BankStride", "DDR_FRAME_RGB565_BANK_STRIDE"),
+        ("kPlex720pYuv420pBankStride", "DDR_FRAME_YUV420P_BANK_STRIDE"),
+        ("kPlex720pRgb565DoorbellPhys", "DDR_FRAME_RGB565_DOORBELL_PHYS"),
+        ("kPlex720pYuv420pDoorbellPhys", "DDR_FRAME_YUV420P_DOORBELL_PHYS"),
         ("kYuv420BlackY", "DDR_FRAME_YUV_BLACK_Y"),
         ("kYuv420BlackU", "DDR_FRAME_YUV_BLACK_U"),
         ("kYuv420BlackV", "DDR_FRAME_YUV_BLACK_V"),
@@ -1293,7 +1295,8 @@ def check_ddr_frame_layout_contract() -> None:
         ("kPlex720pPresentedHeight", "DDR_FRAME_720P_PRESENTED_HEIGHT"),
         ("kPlex720pYuv420pBankStride", "DDR_FRAME_720P_YUV420P_BANK_STRIDE"),
         ("kPlex720pPhysBase", "DDR_FRAME_720P_PHYS_BASE"),
-        ("kPlex720pYuv420pDoorbellPhys", "DDR_FRAME_720P_YUV420P_DOORBELL_PHYS"),
+        # Option-C dual-header doorbell (distinct from product kPlex720pYuv420pDoorbellPhys).
+        ("kPlex720pOptionCDoorbellPhys", "DDR_FRAME_720P_YUV420P_DOORBELL_PHYS"),
         ("kPlex720p24BeamHTotal", "DDR_FRAME_720P24_BEAM_H_TOTAL"),
         ("kPlex720p24BeamVTotal", "DDR_FRAME_720P24_BEAM_V_TOTAL"),
         ("kPlex720p24BeamHDe", "DDR_FRAME_720P24_BEAM_H_DE"),
@@ -1312,6 +1315,14 @@ def check_ddr_frame_layout_contract() -> None:
             "burst qwords, bank stride, and doorbell addresses.",
         )
     check(
+        cpp_const(host, "kPlex720pPillarboxLeft")
+        + cpp_const(host, "kPlex720pDisplayWidth")
+        + cpp_const(host, "kPlex720pPillarboxRight")
+        == cpp_const(host, "kPlex720pPresentedWidth"),
+        "720p identity pillarbox math no longer lands display width exactly in presented width",
+    )
+    # Legacy 480p pillarbox remains a declared host helper (not product silicon).
+    check(
         cpp_const(host, "kPlex480pPillarboxLeft")
         + cpp_const(host, "kPlex480pDisplayWidth")
         + cpp_const(host, "kPlex480pPillarboxRight")
@@ -1320,11 +1331,11 @@ def check_ddr_frame_layout_contract() -> None:
     )
     # Vacuity / red-check: a deliberate RTL coded-width edit must disagree with the
     # host writer constants (this is the shear: ARM line_bytes vs CODED_W).
-    host_stride = cpp_const(host, "kPlex480pYStrideBytes")
+    host_stride = cpp_const(host, "kPlex720pYStrideBytes")
     rtl_stride = sv_const(rtl, "DDR_FRAME_Y_STRIDE_BYTES")
     check(
-        host_stride == rtl_stride == 624,
-        f"product Y stride must be 624 on both sides (host={host_stride} rtl={rtl_stride})",
+        host_stride == rtl_stride == 1280,
+        f"product Y stride must be 1280 on both sides (host={host_stride} rtl={rtl_stride})",
     )
     rtl_fault = re.sub(
         r"(localparam\s+int\s+DDR_FRAME_CODED_WIDTH\s*=\s*)\d+",
@@ -1340,14 +1351,14 @@ def check_ddr_frame_layout_contract() -> None:
     )
     fault_coded = sv_const(rtl_fault, "DDR_FRAME_CODED_WIDTH")
     fault_stride = sv_const(rtl_fault, "DDR_FRAME_Y_STRIDE_BYTES")
-    if fault_coded == cpp_const(host, "kPlex480pCodedWidth") or fault_stride == host_stride:
+    if fault_coded == cpp_const(host, "kPlex720pCodedWidth") or fault_stride == host_stride:
         fail(
-            "deliberate RTL CODED_WIDTH/Y_STRIDE 624→320 fault did not diverge from host "
+            "deliberate RTL CODED_WIDTH/Y_STRIDE 1280→320 fault did not diverge from host "
             f"(fault_coded={fault_coded} fault_stride={fault_stride} host_stride={host_stride})"
         )
     print("PASS DDR frame layout ARM/RTL contract")
     print(
-        "PASS DDR stride parity red-check: RTL CODED_WIDTH/Y_STRIDE 624→320 diverges from host"
+        "PASS DDR stride parity red-check: RTL CODED_WIDTH/Y_STRIDE 1280→320 diverges from host"
     )
 
 
@@ -1474,7 +1485,7 @@ def check_ddr_frame_store_yuv_read_contract() -> None:
             # rd_visible. X-gating src_y→0 every HBlank thrashes want_y to line 0
             # and starves the beam line → left black prefix (parent median ~420 px).
             (
-                "src_y_line=rd_y_visible?(display_y+CROP_TOP_L):'0",
+                "src_y_line=rd_y_visible?(CODED_Y_W'(display_y)+CODED_Y_W'(CROP_TOP_L)):'0",
                 "line identity must track rd_y_visible (not X-gated rd_visible)",
             ),
             (
@@ -1578,7 +1589,7 @@ def check_ddr_frame_store_yuv_read_contract() -> None:
         .replace("want_y_sys<=Y_W'(pref_y)", "want_y_sys<=Y_W'(src_y)")
         .replace("y_line_v2[video_slot]==Y_W'(pref_y)", "y_line_v2[video_slot]==Y_W'(src_y)")
         .replace(
-            "src_y_line=rd_y_visible?(display_y+CROP_TOP_L):'0",
+            "src_y_line=rd_y_visible?(CODED_Y_W'(display_y)+CODED_Y_W'(CROP_TOP_L)):'0",
             "src_y_line=rd_visible?(display_y+CROP_TOP_L):'0",
         )
     )
@@ -1664,31 +1675,42 @@ def check_present_geometry_stride_contract() -> None:
     present_nt = norm(present_core)
     qsf_nt = norm(qsf)
 
-    coded_w = cpp_const(host, "kPlex480pCodedWidth")
-    coded_h = cpp_const(host, "kPlex480pCodedHeight")
-    display_w = cpp_const(host, "kPlex480pDisplayWidth")
-    presented_w = cpp_const(host, "kPlex480pPresentedWidth")
-    crop_right = cpp_const(host, "kPlex480pCropRight")
-    pillar_left = cpp_const(host, "kPlex480pPillarboxLeft")
-    pillar_right = cpp_const(host, "kPlex480pPillarboxRight")
-    y_stride = cpp_const(host, "kPlex480pYStrideBytes")
-    c_stride = cpp_const(host, "kPlex480pChromaStrideBytes")
-    y_offset = cpp_const(host, "kPlex480pYPlaneOffset")
-    u_offset = cpp_const(host, "kPlex480pUPlaneOffset")
-    v_offset = cpp_const(host, "kPlex480pVPlaneOffset")
-    y_bytes = cpp_const(host, "kPlex480pYuv420pBytes")
+    # Product silicon: native 720p identity.
+    coded_w = cpp_const(host, "kPlex720pCodedWidth")
+    coded_h = cpp_const(host, "kPlex720pCodedHeight")
+    display_w = cpp_const(host, "kPlex720pDisplayWidth")
+    presented_w = cpp_const(host, "kPlex720pPresentedWidth")
+    crop_right = cpp_const(host, "kPlex720pCropRight")
+    pillar_left = cpp_const(host, "kPlex720pPillarboxLeft")
+    pillar_right = cpp_const(host, "kPlex720pPillarboxRight")
+    y_stride = cpp_const(host, "kPlex720pYStrideBytes")
+    c_stride = cpp_const(host, "kPlex720pChromaStrideBytes")
+    y_offset = cpp_const(host, "kPlex720pYPlaneOffset")
+    u_offset = cpp_const(host, "kPlex720pUPlaneOffset")
+    v_offset = cpp_const(host, "kPlex720pVPlaneOffset")
+    y_bytes = cpp_const(host, "kPlex720pYuv420pBytes")
 
     check(
         (coded_w, coded_h, display_w, presented_w, crop_right, pillar_left, pillar_right)
-        == (624, 480, 618, 640, 6, 11, 11),
-        "480p geometry contract changed unexpectedly. If the PMS/profile target changed, "
-        "update the geometry table, visual provenance, and this stride gate together.",
+        == (1280, 720, 1280, 1280, 0, 0, 0),
+        "720p product geometry contract changed unexpectedly. If the PMS/profile target "
+        "changed, update the geometry table, visual provenance, and this stride gate together.",
     )
     check(
         (y_stride, c_stride, y_offset, u_offset, v_offset, y_bytes)
-        == (624, 312, 0, 299520, 374400, 449280),
-        "480p I420 byte layout changed unexpectedly. The product path must declare any "
+        == (1280, 640, 0, 921600, 1152000, 1382400),
+        "720p I420 byte layout changed unexpectedly. The product path must declare any "
         "stride/offset change before grading distorted-video reports.",
+    )
+    # Legacy 480p helper remains available for non-product paths.
+    check(
+        (
+            cpp_const(host, "kPlex480pCodedWidth"),
+            cpp_const(host, "kPlex480pPresentedWidth"),
+            cpp_const(host, "kPlex480pYStrideBytes"),
+        )
+        == (624, 640, 624),
+        "legacy 480p helper geometry drifted while product moved to 720p",
     )
 
     def missing_stride_requirements(
@@ -1698,12 +1720,12 @@ def check_present_geometry_stride_contract() -> None:
             (
                 host_norm,
                 "constuint64_tlineBytes=static_cast<uint64_t>(geom.coded_width.get())",
-                "ARM layout must derive luma stride from coded_width (624), not display/presented width",
+                "ARM layout must derive luma stride from coded_width (1280 product), not display/presented width",
             ),
             (
                 host_norm,
                 "constuint64_tchromaLineBytes=static_cast<uint64_t>(geom.coded_width.get()/2)",
-                "ARM layout must derive chroma stride from coded_width/2 (312), not cropped width/2",
+                "ARM layout must derive chroma stride from coded_width/2 (640 product), not cropped width/2",
             ),
             (
                 host_norm,
@@ -1712,13 +1734,18 @@ def check_present_geometry_stride_contract() -> None:
             ),
             (
                 host_norm,
-                "if(width==kPlex480pPresentedWidth&&height==kPlex480pPresentedHeight)returnplex480pDdrFrameGeometry();",
-                "640x480 presentation must map to the declared 624x480 coded / 618x480 display geometry",
+                "if(width==kPlex720pPresentedWidth&&height==kPlex720pPresentedHeight)returnplex720pDdrFrameGeometry();",
+                "1280x720 presentation must map to the declared 720p identity coded/display geometry",
             ),
             (
                 host_norm,
-                "inlineDdrFrameGeometryproductDdrFrameStoreGeometry(){returnplex480pDdrFrameGeometry();}",
-                "product silicon canvas helper must alias the declared 624x480 plex480p contract",
+                "if(width==kPlex480pPresentedWidth&&height==kPlex480pPresentedHeight)returnplex480pDdrFrameGeometry();",
+                "legacy 640x480 presentation must still map to 624x480 coded / 618x480 display",
+            ),
+            (
+                host_norm,
+                "inlineDdrFrameGeometryproductDdrFrameStoreGeometry(){returnplex720pDdrFrameGeometry();}",
+                "product silicon canvas helper must alias the declared 1280x720 plex720p contract",
             ),
             (
                 host_norm,
@@ -1726,13 +1753,13 @@ def check_present_geometry_stride_contract() -> None:
                 "FPGA present path must route every decode tier through ddrFrameGeometryForFpgaPresent",
             ),
             (
-                # Full body pin: decode WxH is ignored; always silicon 624 canvas.
+                # Full body pin: decode WxH is ignored; always silicon 1280 canvas.
                 # Reverting this to makeDdrFrameGeometry(decodeW,decodeH) is the
-                # classic ARM line_bytes=320 vs RTL CODED_W=624 shear.
+                # classic ARM line_bytes=320 vs RTL CODED_W=1280 shear.
                 host_norm,
                 "inlineDdrFrameGeometryddrFrameGeometryForFpgaPresent(CodedWidth,CodedHeight)"
                 "{returnproductDdrFrameStoreGeometry();}",
-                "ddrFrameGeometryForFpgaPresent must ignore DECODE and return productDdrFrameStoreGeometry (624)",
+                "ddrFrameGeometryForFpgaPresent must ignore DECODE and return productDdrFrameStoreGeometry (1280)",
             ),
             (
                 media_norm,
@@ -1742,12 +1769,12 @@ def check_present_geometry_stride_contract() -> None:
             (
                 media_norm,
                 "constintrawW=ddrGeometry.coded_width.get();",
-                "FFmpeg rawvideo width must be the coded stride width (624) for FPGA-presented 480p",
+                "FFmpeg rawvideo width must be the coded stride width (1280) for FPGA-presented 720p",
             ),
             (
                 media_norm,
                 "constintrawDisplayW=ddrGeometry.display_width.get();",
-                "FFmpeg visible scale width must be the cropped display width (618)",
+                "FFmpeg visible scale width must be the display width (1280 identity)",
             ),
             (
                 media_norm,
@@ -1759,7 +1786,7 @@ def check_present_geometry_stride_contract() -> None:
                 # Center inside the display window (crop_left/top is display origin in coded,
                 # not a left/top-align of the scaled picture). Matches packYuv origin policy.
                 'returnscaleFilterGeom(displayScale,sws_flags)+":force_original_aspect_ratio=decrease,pad="+scale+":"+padX+":"+padY+":color=black";',
-                "FFmpeg must scale into display geometry then center-pad into the coded 624-pixel stride",
+                "FFmpeg must scale into display geometry then center-pad into the coded 1280-pixel stride",
             ),
             (
                 media_norm,
@@ -1769,12 +1796,12 @@ def check_present_geometry_stride_contract() -> None:
             (
                 media_norm,
                 "clearPlane(yuv+yBytes,cW,cW,cH,g.crop_left/2,g.crop_right/2,g.crop_top/2,g.crop_bottom/2,kYuv420BlackU)",
-                "U crop padding must use chroma stride coded_width/2 (312) and half-resolution crop",
+                "U crop padding must use chroma stride coded_width/2 (640 product) and half-resolution crop",
             ),
             (
                 media_norm,
                 "clearPlane(yuv+yBytes+cW*cH,cW,cW,cH,g.crop_left/2,g.crop_right/2,g.crop_top/2,g.crop_bottom/2,kYuv420BlackV)",
-                "V crop padding must use chroma stride coded_width/2 (312) and half-resolution crop",
+                "V crop padding must use chroma stride coded_width/2 (640 product) and half-resolution crop",
             ),
             (
                 media_norm,
@@ -1784,17 +1811,17 @@ def check_present_geometry_stride_contract() -> None:
             (
                 frame_norm,
                 "Y_LINE_QWORDS=CODED_W/8",
-                "RTL luma DDR line stride must be CODED_W/8 qwords (624 bytes), not FRAME_W/8",
+                "RTL luma DDR line stride must be CODED_W/8 qwords (1280 bytes product), not a wrong pitch",
             ),
             (
                 frame_norm,
                 "C_LINE_QWORDS=CODED_W/16",
-                "RTL chroma DDR line stride must be CODED_W/16 qwords (312 bytes), not display/FRAME width",
+                "RTL chroma DDR line stride must be CODED_W/16 qwords (640 bytes product), not a wrong pitch",
             ),
             (
                 # DDR row pitch in the fill FSM — this is the reader stride that must
-                # match ARM line_bytes. Default CODED_W=FRAME_W (640) would walk 640 B/line
-                # while the writer lays 624 B/line → 16 px leftward creep per scanline.
+                # match ARM line_bytes. Under identity 720p CODED_W==FRAME_W is correct;
+                # a wrong CODED_W still shears.
                 frame_norm,
                 "fill_y_qword={{(29-Y_W){1'b0}},fill_y}*Y_LINE_QWORDS_W",
                 "RTL DDR Y fill address must step by Y_LINE_QWORDS (CODED_W/8), never FRAME_W",
@@ -1806,17 +1833,17 @@ def check_present_geometry_stride_contract() -> None:
             ),
             (
                 frame_norm,
-                "src_x=rd_visible?(display_x+CROP_LEFT_L):'0",
+                "src_x=rd_visible?(CODED_X_W'(display_x)+CODED_X_W'(CROP_LEFT_L)):'0",
                 "RTL source X must crop from display_x into coded coordinates exactly once",
             ),
             (
                 frame_norm,
                 "fill_cy_qword={{(30-Y_W){1'b0}},fill_cy}*C_LINE_QWORDS_W",
-                "RTL chroma fetch address must stride by 312-byte chroma lines",
+                "RTL chroma fetch address must stride by C_LINE_QWORDS (product 640 B chroma lines)",
             ),
             (
                 # Product path is planar YUV420p. RGB565_LINE_QWORDS must not appear in
-                # the store body (kills the "640 px RGB565 vs 624 pitch" theory for DDR).
+                # the store body (kills RGB565-vs-YUV pitch theories for DDR).
                 frame_norm,
                 "Y_PLANE_QWORDS=29'((CODED_W*CODED_H)/8)",
                 "RTL product DDR store is YUV planar (Y plane qwords from CODED_W*CODED_H), not RGB565",
@@ -1862,8 +1889,8 @@ def check_present_geometry_stride_contract() -> None:
     check(
         present_ddr_wiring_ok(present_nt),
         "present_core must instantiate ddr_frame_store from the shared layout params: "
-        "FRAME_W=640 for scanout, CODED_W=624 for DDR stride, DISPLAY_W=618 for crop, "
-        "PRESENT_X=11 for pillarbox.",
+        "FRAME_W=1280 scanout, CODED_W=DDR_FRAME_CODED_WIDTH, DISPLAY_W identity, "
+        "PRESENT_X=DDR_FRAME_PILLARBOX_LEFT (0 for 720p).",
     )
     # L4 consumer wiring (must not leave 720p constants unreferenced).
     # Read RAW module text (comments only stripped) — strip_inactive_preprocessor
@@ -1896,9 +1923,9 @@ def check_present_geometry_stride_contract() -> None:
     )
     check(
         'set_global_assignment-nameVERILOG_MACRO"DDR_FRAME_STORE=1"' in qsf_nt
-        and 'set_global_assignment-nameVERILOG_MACRO"FRAME_W=640"' in qsf_nt
-        and 'set_global_assignment-nameVERILOG_MACRO"FRAME_H=480"' in qsf_nt,
-        "Quartus build must declare DDR_FRAME_STORE with 640x480 presented scanout. "
+        and 'set_global_assignment-nameVERILOG_MACRO"FRAME_W=1280"' in qsf_nt
+        and 'set_global_assignment-nameVERILOG_MACRO"FRAME_H=720"' in qsf_nt,
+        "Quartus build must declare DDR_FRAME_STORE with 1280x720 presented scanout. "
         "A missing/changed FRAME_W silently changes the frame-store scanout geometry.",
     )
     check(
@@ -1913,25 +1940,25 @@ def check_present_geometry_stride_contract() -> None:
         "constuint64_tlineBytes=static_cast<uint64_t>(geom.presented_width.get())",
     )
     if not missing_stride_requirements(bad_host_presented_stride, media_nt, frame_nt, ffmpeg_vf_nt):
-        fail("deliberately changed ARM luma stride 624→640 did not make the geometry gate red")
+        fail("deliberately changed ARM luma stride coded→presented did not make the geometry gate red")
     bad_media_display_stride = media_nt.replace(
         "constintrawW=ddrGeometry.coded_width.get();",
         "constintrawW=ddrGeometry.display_width.get();",
     )
     if not missing_stride_requirements(host_nt, bad_media_display_stride, frame_nt, ffmpeg_vf_nt):
-        fail("deliberately changed FFmpeg raw stride 624→618 did not make the geometry gate red")
+        fail("deliberately changed FFmpeg raw stride coded→display did not make the geometry gate red")
     bad_chroma_stride = frame_nt.replace("C_LINE_QWORDS=CODED_W/16", "C_LINE_QWORDS=FRAME_W/16")
     if not missing_stride_requirements(host_nt, media_nt, bad_chroma_stride, ffmpeg_vf_nt):
-        fail("deliberately changed RTL chroma stride 312→320 did not make the geometry gate red")
+        fail("deliberately changed RTL chroma stride CODED_W/16→FRAME_W/16 did not make the geometry gate red")
     bad_luma_stride_frame_w = frame_nt.replace(
         "Y_LINE_QWORDS=CODED_W/8", "Y_LINE_QWORDS=FRAME_W/8"
     )
     if not missing_stride_requirements(host_nt, media_nt, bad_luma_stride_frame_w, ffmpeg_vf_nt):
         fail(
             "deliberately changed RTL luma stride CODED_W/8→FRAME_W/8 "
-            "(640 B/line reader vs 624 B writer = 16 px/line shear) did not make the gate red"
+            "did not make the gate red (identity product still requires explicit CODED_W formula)"
         )
-    # Classic shear: FPGA-present geometry follows DECODE (320) instead of silicon 624.
+    # Classic shear: FPGA-present geometry follows DECODE (320) instead of silicon 1280.
     bad_fpga_present_identity = host_nt.replace(
         "inlineDdrFrameGeometryddrFrameGeometryForFpgaPresent(CodedWidth,CodedHeight)"
         "{returnproductDdrFrameStoreGeometry();}",
@@ -1941,7 +1968,7 @@ def check_present_geometry_stride_contract() -> None:
     if not missing_stride_requirements(bad_fpga_present_identity, media_nt, frame_nt, ffmpeg_vf_nt):
         fail(
             "deliberately reverted ddrFrameGeometryForFpgaPresent to identity-DECODE "
-            "(320-wide writer vs 624 RTL) did not make the geometry gate red"
+            "(320-wide writer vs 1280 RTL) did not make the geometry gate red"
         )
     bad_media_identity = media_nt.replace(
         "wantFpgaDdrCanvas?ddrFrameGeometryForFpgaPresent(outW_,outH_)",
@@ -1952,8 +1979,8 @@ def check_present_geometry_stride_contract() -> None:
             "deliberately selected identity-DECODE geometry on PRESENT=fpga "
             "did not make the geometry gate red"
         )
-    # Dropping the explicit CODED_W port leaves parameter default CODED_W=FRAME_W=640
-    # → reader Y pitch 640 B/line while ARM writes 624 → 16 px/line leftward creep.
+    # Dropping the explicit CODED_W port is still a wiring defect under identity
+    # (shared layout constant required; silent FRAME_W default is wrong).
     # Reconcile: product may use direct .CODED_W(DDR_FRAME_*) or FS_CODED_W bind +
     # .CODED_W(FS_CODED_W). Red twin must break both forms.
     present_drop_coded = (
@@ -1964,34 +1991,43 @@ def check_present_geometry_stride_contract() -> None:
     if present_ddr_wiring_ok(present_drop_coded):
         fail(
             "deliberately dropping .CODED_W(DDR_FRAME_CODED_WIDTH) "
-            "(default CODED_W=FRAME_W=640 shear) did not make the wiring gate red"
+            "did not make the wiring gate red"
         )
 
     # Product DDR is YUV: RGB565 line-qword constant must not drive the store body.
     check(
         "RGB565_LINE_QWORDS" not in frame_nt and "DDR_FRAME_RGB565" not in frame_nt,
         "ddr_frame_store must not reference RGB565 line geometry "
-        "(product path is YUV420p; 640×2 vs 624×2 RGB pitch theory does not apply)",
+        "(product path is YUV420p; RGB565 pitch theory does not apply)",
     )
 
-    # Arithmetic pin: writer 624 B/line vs reader default-640 B/line = 16 B = 16 px/line.
-    coded_w = cpp_const(strip_comments(read(DDR_FRAME_LAYOUT_HPP)), "kPlex480pCodedWidth")
-    presented_w = cpp_const(strip_comments(read(DDR_FRAME_LAYOUT_HPP)), "kPlex480pPresentedWidth")
-    check(coded_w == 624 and presented_w == 640, "coded/presented constants drifted")
+    # Arithmetic pin: product identity (coded==presented==1280). Legacy 480p keeps
+    # the 16 px pillarbox delta as a separate helper contract.
+    coded_w = cpp_const(strip_comments(read(DDR_FRAME_LAYOUT_HPP)), "kPlex720pCodedWidth")
+    presented_w = cpp_const(strip_comments(read(DDR_FRAME_LAYOUT_HPP)), "kPlex720pPresentedWidth")
+    check(coded_w == 1280 and presented_w == 1280, "720p coded/presented constants drifted")
     check(
-        (presented_w - coded_w) == 16,
-        "expected 16 px creep if reader wrongly used FRAME_W pitch against coded writer",
+        (presented_w - coded_w) == 0,
+        "720p identity expects presented-coded delta 0",
+    )
+    leg_c = cpp_const(strip_comments(read(DDR_FRAME_LAYOUT_HPP)), "kPlex480pCodedWidth")
+    leg_p = cpp_const(strip_comments(read(DDR_FRAME_LAYOUT_HPP)), "kPlex480pPresentedWidth")
+    check(
+        (leg_p - leg_c) == 16,
+        "legacy 480p still expects 16 px presented-coded pillarbox delta",
     )
 
     print(
         "PASS present geometry/stride chain is declared end-to-end "
-        "(coded 624 stride, display 618 crop, presented 640 with 11px pillars, chroma stride 312)"
+        "(product 1280x720 identity I420; chroma stride 640; bank 0x180000; "
+        "legacy 480p helper retained)"
     )
     print(
         "PASS reader pitch is YUV CODED_W (not RGB565/FRAME_W); "
         "CODED_W port + Y_LINE_QWORDS=CODED_W/8 red-checks armed; "
         "NOTE: constant parity is BLIND to mid-line linebuf miss shear "
-        "(rd_miss_now→black) — that needs sim/fit, not define-parity"
+        "(rd_miss_now→black) — that needs sim/fit, not define-parity; "
+        "NOTE: Template H_DE=529 cannot expose 1280 unique columns (w-clock)"
     )
 
 

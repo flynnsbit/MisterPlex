@@ -43,11 +43,12 @@ int main() {
     CHECK(fromPresented.coded_width == kPlex480pCodedWidth);
     CHECK(fromPresented.presented_width == kPlex480pPresentedWidth);
 
-    // DECODE=320x240 must still select the silicon 624 canvas for FPGA present.
+    // DECODE=320x240 must still select the product silicon canvas for FPGA present.
+    // Product silicon is native 1280×720 identity (not the legacy 624×480 helper).
     const auto from240 = ddrFrameGeometryForFpgaPresent(CodedWidth{320}, CodedHeight{240});
-    CHECK(from240.coded_width == kPlex480pCodedWidth);
-    CHECK(from240.presented_width == kPlex480pPresentedWidth);
-    CHECK(productDdrFrameStoreGeometry().coded_width == kPlex480pCodedWidth);
+    CHECK(from240.coded_width == kPlex720pCodedWidth);
+    CHECK(from240.presented_width == kPlex720pPresentedWidth);
+    CHECK(productDdrFrameStoreGeometry().coded_width == kPlex720pCodedWidth);
     CHECK(ddrFrameLayoutMatchesProductSilicon(makeDdrFrameLayout(from240)));
 
     CHECK(weakBitrateKbpsForCodedSize(kPlex480pCodedWidth, kPlex480pCodedHeight) ==
@@ -55,7 +56,13 @@ int main() {
     CHECK(std::string_view(contentResolutionFor480p().label) == "624x480");
     CHECK(contentResolutionFor480p().width == kPlex480pCodedWidth);
 
-    // Doorbell remains geometry-derived from coded bank layout, not presented width.
+    // Product doorbell/bank from 720p layout; legacy 480p helper keeps its own map.
+    const auto productLayout = makeDdrFrameLayout(productDdrFrameStoreGeometry());
+    CHECK(ddrFrameLayoutValid(productLayout));
+    CHECK(productLayout.doorbell_phys == kPlex720pYuv420pDoorbellPhys);
+    CHECK(productLayout.bank_stride == kPlex720pYuv420pBankStride);
+    CHECK(productLayout.line_bytes == kPlex720pCodedWidth.get());
+
     const auto layout = makeDdrFrameLayout(g);
     CHECK(ddrFrameLayoutValid(layout));
     CHECK(layout.doorbell_phys == kPlex480pYuv420pDoorbellPhys);

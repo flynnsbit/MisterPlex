@@ -32,29 +32,29 @@ DEFAULT_RTL_LAYOUT = PROJECT / "rtl" / "ddr_frame_layout_params.svh"
 # VERILOG_MACRO names were compared). A 624-writer vs 640-reader pitch is the
 # classic 16 px/line shear; these names must stay paired.
 DDR_LAYOUT_PAIRS: tuple[tuple[str, str], ...] = (
-    ("kPlex480pCodedWidth", "DDR_FRAME_CODED_WIDTH"),
-    ("kPlex480pCodedHeight", "DDR_FRAME_CODED_HEIGHT"),
-    ("kPlex480pDisplayWidth", "DDR_FRAME_DISPLAY_WIDTH"),
-    ("kPlex480pDisplayHeight", "DDR_FRAME_DISPLAY_HEIGHT"),
-    ("kPlex480pPresentedWidth", "DDR_FRAME_PRESENTED_WIDTH"),
-    ("kPlex480pPresentedHeight", "DDR_FRAME_PRESENTED_HEIGHT"),
-    ("kPlex480pCropLeft", "DDR_FRAME_CROP_LEFT"),
-    ("kPlex480pCropRight", "DDR_FRAME_CROP_RIGHT"),
-    ("kPlex480pCropTop", "DDR_FRAME_CROP_TOP"),
-    ("kPlex480pCropBottom", "DDR_FRAME_CROP_BOTTOM"),
-    ("kPlex480pPillarboxLeft", "DDR_FRAME_PILLARBOX_LEFT"),
-    ("kPlex480pPillarboxRight", "DDR_FRAME_PILLARBOX_RIGHT"),
-    ("kPlex480pRgb565LineQwords", "DDR_FRAME_RGB565_LINE_QWORDS"),
-    ("kPlex480pYuvLumaLineQwords", "DDR_FRAME_YUV_LUMA_LINE_QWORDS"),
-    ("kPlex480pYuvChromaLineQwords", "DDR_FRAME_YUV_CHROMA_LINE_QWORDS"),
-    ("kPlex480pYStrideBytes", "DDR_FRAME_Y_STRIDE_BYTES"),
-    ("kPlex480pChromaStrideBytes", "DDR_FRAME_CHROMA_STRIDE_BYTES"),
-    ("kPlex480pYuv420pBytes", "DDR_FRAME_YUV420P_BYTES"),
-    ("kPlex480pYPlaneOffset", "DDR_FRAME_Y_PLANE_OFFSET"),
-    ("kPlex480pUPlaneOffset", "DDR_FRAME_U_PLANE_OFFSET"),
-    ("kPlex480pVPlaneOffset", "DDR_FRAME_V_PLANE_OFFSET"),
-    ("kPlex480pYuv420pBankStride", "DDR_FRAME_YUV420P_BANK_STRIDE"),
-    ("kPlex480pYuv420pDoorbellPhys", "DDR_FRAME_YUV420P_DOORBELL_PHYS"),
+    ("kPlex720pCodedWidth", "DDR_FRAME_CODED_WIDTH"),
+    ("kPlex720pCodedHeight", "DDR_FRAME_CODED_HEIGHT"),
+    ("kPlex720pDisplayWidth", "DDR_FRAME_DISPLAY_WIDTH"),
+    ("kPlex720pDisplayHeight", "DDR_FRAME_DISPLAY_HEIGHT"),
+    ("kPlex720pPresentedWidth", "DDR_FRAME_PRESENTED_WIDTH"),
+    ("kPlex720pPresentedHeight", "DDR_FRAME_PRESENTED_HEIGHT"),
+    ("kPlex720pCropLeft", "DDR_FRAME_CROP_LEFT"),
+    ("kPlex720pCropRight", "DDR_FRAME_CROP_RIGHT"),
+    ("kPlex720pCropTop", "DDR_FRAME_CROP_TOP"),
+    ("kPlex720pCropBottom", "DDR_FRAME_CROP_BOTTOM"),
+    ("kPlex720pPillarboxLeft", "DDR_FRAME_PILLARBOX_LEFT"),
+    ("kPlex720pPillarboxRight", "DDR_FRAME_PILLARBOX_RIGHT"),
+    ("kPlex720pRgb565LineQwords", "DDR_FRAME_RGB565_LINE_QWORDS"),
+    ("kPlex720pYuvLumaLineQwords", "DDR_FRAME_YUV_LUMA_LINE_QWORDS"),
+    ("kPlex720pYuvChromaLineQwords", "DDR_FRAME_YUV_CHROMA_LINE_QWORDS"),
+    ("kPlex720pYStrideBytes", "DDR_FRAME_Y_STRIDE_BYTES"),
+    ("kPlex720pChromaStrideBytes", "DDR_FRAME_CHROMA_STRIDE_BYTES"),
+    ("kPlex720pYuv420pBytes", "DDR_FRAME_YUV420P_BYTES"),
+    ("kPlex720pYPlaneOffset", "DDR_FRAME_Y_PLANE_OFFSET"),
+    ("kPlex720pUPlaneOffset", "DDR_FRAME_U_PLANE_OFFSET"),
+    ("kPlex720pVPlaneOffset", "DDR_FRAME_V_PLANE_OFFSET"),
+    ("kPlex720pYuv420pBankStride", "DDR_FRAME_YUV420P_BANK_STRIDE"),
+    ("kPlex720pYuv420pDoorbellPhys", "DDR_FRAME_YUV420P_DOORBELL_PHYS"),
 )
 
 
@@ -223,7 +223,7 @@ def parse_host_layout_consts(path: Path = DEFAULT_HOST_LAYOUT) -> dict[str, int]
     out: dict[str, int] = {}
     # constexpr Type name{value};  or  constexpr int name = value;
     for m in re.finditer(
-        r"constexpr\s+(?:\w+\s+)+(kPlex480p\w+|kYuv420Black\w+|kDdrFrame\w+)\s*(?:=\s*([^;]+);|\{\s*([^}]+)\s*\}\s*;)",
+        r"constexpr\s+(?:\w+\s+)+(kPlex720p\w+|kPlex480p\w+|kYuv420Black\w+|kDdrFrame\w+)\s*(?:=\s*([^;]+);|\{\s*([^}]+)\s*\}\s*;)",
         text,
     ):
         name = m.group(1)
@@ -308,14 +308,28 @@ def check_ddr_layout_parity(
         errors.append(
             f"pillarbox math broken: {pillar_l}+{display}+{pillar_r} != presented {presented}"
         )
-    if None not in (coded, presented) and (presented - coded) != 16:
+    # Geometry modes:
+    #  - 480p pillarbox: presented - coded == 16 (640-624), FRAME_W != CODED_W
+    #  - 720p native identity: coded==display==presented, pillar L/R==0, delta 0 OK
+    crop_l = rtl_eff.get("DDR_FRAME_CROP_LEFT")
+    crop_r = rtl_eff.get("DDR_FRAME_CROP_RIGHT")
+    native_identity = (
+        None not in (coded, presented, display, pillar_l, pillar_r, crop_l, crop_r)
+        and coded == presented == display
+        and pillar_l == 0
+        and pillar_r == 0
+        and crop_l == 0
+        and crop_r == 0
+    )
+    if None not in (coded, presented) and not native_identity and (presented - coded) != 16:
         # Pin the 16 px figure used in the 624-vs-640 shear arithmetic.
         errors.append(
             f"presented-coded delta is {presented - coded}, expected 16 "
             f"(640-624); used when reasoning about wrong FRAME_W pitch"
         )
 
-    # QSF FRAME_W/H are the *presented* scanout canvas, not coded DDR pitch.
+    # QSF FRAME_W/H are the *presented* scanout canvas, not coded DDR pitch
+    # (except native-identity 720p where presented==coded by design).
     fw = quartus.get("FRAME_W")
     fh = quartus.get("FRAME_H")
     if fw is None:
@@ -331,7 +345,12 @@ def check_ddr_layout_parity(
                 f"FRAME_W Quartus={fw_v} != DDR_FRAME_PRESENTED_WIDTH={presented}: "
                 f"scanout canvas must match presented width (not coded {coded})"
             )
-        if fw_v is not None and coded is not None and fw_v == coded:
+        if (
+            fw_v is not None
+            and coded is not None
+            and fw_v == coded
+            and not native_identity
+        ):
             errors.append(
                 f"FRAME_W={fw_v} equals CODED_WIDTH — presented scanout collapsed onto coded "
                 f"pitch; pillarbox contract lost"

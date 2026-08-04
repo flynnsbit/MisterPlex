@@ -1,14 +1,13 @@
-// Geometry-side frame cost lock: 240p vs 480p DECODE on the FPGA DDR path.
+// Geometry-side frame cost lock: DECODE tiers on the FPGA DDR path.
 //
 // Pre-register (must hold or this is RED):
-//   P1: ddrFrameGeometryForFpgaPresent(320,240) == ForFpgaPresent(624,480)
-//       (same coded bank, same crop, same frame_bytes=449280)
-//   P2: product FORCE_SCALE Always FOAR-scales into coded 624x480 (unverified
-//       claim and 624x350); pad=624:480. Never crop=618:480 on that path.
-//   P3: clearYuv crop_right=6 touches strips only, not full 449280
+//   P1: ddrFrameGeometryForFpgaPresent(any) == product 1280x720 identity
+//       (same coded bank, crop0, frame_bytes=1382400)
+//   P2: FORCE_SCALE Always FOAR-scales into a *requested* coded geometry (624
+//       helper path remains valid math; product canvas is 1280)
+//   P3: clearYuv strip cost << full product frame
 //   P4: drops (A/V pacer) ≠ publish_misses (DDR fail) in ledger semantics
-//   P5: T7 NATIVE_V_1TO1 — V_STORE=FRAME_H=480, STORE_Y_SCALE=1.0 ⇒ all 480 rows
-//       (arithmetic lock; needs RBF for silicon; pre-T7 was even-rows-only)
+//   P5: T7 NATIVE_V_1TO1 — V_STORE=FRAME_H product, STORE_Y_SCALE=1.0
 //
 // true rc captured by make/driver directly.
 #include "libmisterplex/ddr_frame_layout.hpp"
@@ -34,18 +33,20 @@ int main() {
     using namespace misterplex;
     using clock = std::chrono::steady_clock;
 
-    // --- P1: publish geometry identical for 240 and 480 DECODE tiers ---
+    // --- P1: publish geometry identical for all DECODE tiers (product 720p) ---
     const auto g240 = ddrFrameGeometryForFpgaPresent(320, 240);
     const auto g480 = ddrFrameGeometryForFpgaPresent(624, 480);
-    expect(g240.coded_width.get() == 624 && g240.coded_height.get() == 480, "P1 240→coded 624x480");
-    expect(g480.coded_width.get() == 624 && g480.coded_height.get() == 480, "P1 480→coded 624x480");
-    expect(g240.display_width.get() == 618 && g240.crop_right == 6, "P1 240 display/crop");
-    expect(g480.display_width.get() == 618 && g480.crop_right == 6, "P1 480 display/crop");
+    const auto g720 = ddrFrameGeometryForFpgaPresent(1280, 720);
+    expect(g240.coded_width.get() == 1280 && g240.coded_height.get() == 720, "P1 240→coded 1280x720");
+    expect(g480.coded_width.get() == 1280 && g480.coded_height.get() == 720, "P1 480→coded 1280x720");
+    expect(g720.coded_width.get() == 1280 && g720.coded_height.get() == 720, "P1 720→coded 1280x720");
+    expect(g240.display_width.get() == 1280 && g240.crop_right == 0, "P1 240 display/crop identity");
+    expect(g480.display_width.get() == 1280 && g480.crop_right == 0, "P1 480 display/crop identity");
     const size_t fb240 = yuv420pCodedFrameBytes(g240);
     const size_t fb480 = yuv420pCodedFrameBytes(g480);
-    expect(fb240 == 449280u && fb480 == 449280u, "P1 same frame_bytes 449280");
+    expect(fb240 == 1382400u && fb480 == 1382400u, "P1 same frame_bytes 1382400");
     expect(fb240 == fb480, "P1 240 decode does NOT shrink DDR publish");
-    std::printf("P1_OK coded=624x480 display=618 crop_right=6 frame_bytes=%zu (both tiers)\n",
+    std::printf("P1_OK coded=1280x720 display=1280 crop_right=0 frame_bytes=%zu (all tiers)\n",
                 fb240);
 
     // --- P2: FORCE_SCALE Always for both source sizes ---
@@ -99,14 +100,14 @@ int main() {
                     p240.vf.size(), p480.vf.size(), p350.vf.size());
     }
 
-    // --- P3: clearYuv is strip-only (crop_right=6) ---
+    // --- P3: clearYuv strip cost (legacy crop_right=6 arith) << product frame ---
     {
-        // Bytes touched if only right pad: Y: 480*6 + U/V: 240*3 each = 2880+720+720=4320
+        // Legacy 480p right-pad strip size (still a useful cost constant).
         const int yTouch = 480 * 6;
         const int cTouch = 240 * 3;
         const int strip = yTouch + 2 * cTouch;
         expect(strip == 4320, "P3 strip arithmetic 4320");
-        expect(strip * 100 < static_cast<int>(fb240), "P3 strip << full frame");
+        expect(strip * 100 < static_cast<int>(fb240), "P3 strip << full product frame");
         std::printf("P3_OK clearYuv strip_bytes=%d full=%zu ratio_x1000=%zu\n", strip, fb240,
                     (static_cast<size_t>(strip) * 1000u) / fb240);
     }
@@ -128,19 +129,18 @@ int main() {
         std::printf("P4_OK %s\n", frag.c_str());
     }
 
-    // --- P5: T7 V_STORE / STORE_Y_SCALE (present_core NATIVE_V_1TO1, qsf FRAME_H=480) ---
+    // --- P5: T7 V_STORE / STORE_Y_SCALE (present_core NATIVE_V_1TO1, qsf FRAME_H=720) ---
     {
-        constexpr int FRAME_H = 480; // Plex.qsf VERILOG_MACRO FRAME_H=480
+        constexpr int FRAME_H = 720; // Plex.qsf VERILOG_MACRO FRAME_H=720
         constexpr int V_STORE = FRAME_H; // T7: V_STORE_I = FRAME_H when >240
         constexpr int STORE_Y_SCALE = (FRAME_H * 65536) / V_STORE; // == 65536 (1.0)
         expect(STORE_Y_SCALE == 65536, "P5 STORE_Y_SCALE exact 1.0 in Q16 after T7");
-        // store_y = (py * STORE_Y_SCALE) >> 16 for py in 0..479 → identity
+        // Odd rows must map 1:1 (pre-T7 half-height path dropped them).
         expect(((0 * STORE_Y_SCALE) >> 16) == 0, "P5 py0→0");
         expect(((1 * STORE_Y_SCALE) >> 16) == 1, "P5 py1→1 (odd row fetched)");
         expect(((239 * STORE_Y_SCALE) >> 16) == 239, "P5 py239→239");
-        expect(((479 * STORE_Y_SCALE) >> 16) == 479, "P5 py479→479");
-        // Pre-T7 even-only ceiling is gone; this is scanout quality, not frame drops.
-        std::printf("P5_OK STORE_Y_SCALE=%d full_480_rows (T7 NATIVE_V_1TO1)\n", STORE_Y_SCALE);
+        expect(((719 * STORE_Y_SCALE) >> 16) == 719, "P5 py719→719");
+        std::printf("P5_OK STORE_Y_SCALE=%d full_product_rows (T7 NATIVE_V_1TO1)\n", STORE_Y_SCALE);
     }
 
     // --- Host microbench: chroma inspect + memcpy + strip clear (tag=measured) ---

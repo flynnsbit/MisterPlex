@@ -114,8 +114,16 @@ def main() -> int:
     # Default-off product
     if re.search(r"^\s*set_global_assignment.*PLEX_PRESENT_720P_L4=1", qsf, re.M):
         return fail("PLEX_PRESENT_720P_L4 must stay commented/default-off in QSF")
-    if not re.search(r"FRAME_W=640", qsf) or not re.search(r"FRAME_H=480", qsf):
-        return fail("product QSF must keep FRAME 640x480 active")
+    # Active product canvas is 1280×720 (not merely commented prose).
+    act = re.findall(
+        r'^\s*set_global_assignment\s+-name\s+VERILOG_MACRO\s+"([^"]+)"',
+        qsf,
+        flags=re.M,
+    )
+    if not any("FRAME_W=1280" in m for m in act) or not any("FRAME_H=720" in m for m in act):
+        return fail("product QSF must keep active FRAME 1280x720")
+    if any("FRAME_W=640" in m for m in act) or any("FRAME_H=480" in m for m in act):
+        return fail("legacy FRAME 640x480 must not be active product QSF")
 
     # NEGATIVE: strip L4 720p coded bind → must fail required consumer check
     bad = pnt.replace("FS_CODED_W=DDR_FRAME_720P_CODED_WIDTH", "FS_CODED_W=DDR_FRAME_CODED_WIDTH")

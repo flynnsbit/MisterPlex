@@ -78,21 +78,21 @@ else
 fi
 echo "OK red-check: define parity guard rejects missing shared DDR_FRAME_STORE"
 
-# Geometry layer: 624→320 CODED_W/Y_STRIDE is the classic ARM/RTL shear pair.
+# Geometry layer: product 1280->320 CODED_W/Y_STRIDE is the classic ARM/RTL shear pair.
 if "$ROOT/scripts/check_define_parity.py" --fault-rtl-coded-width 320 \
      >"$FAULT_DIR/define_parity_layout_red.out" 2>"$FAULT_DIR/define_parity_layout_red.err"; then
-  echo "FAIL: define parity layout guard accepted RTL CODED_WIDTH fault 624→320" >&2
+  echo "FAIL: define parity layout guard accepted RTL CODED_WIDTH fault 1280->320" >&2
   exit 1
 else
   rc=$?
-  if [[ "$rc" -ne 1 ]] || ! grep -q "kPlex480pCodedWidth=624 != DDR_FRAME_CODED_WIDTH=320" \
+  if [[ "$rc" -ne 1 ]] || ! grep -q "kPlex720pCodedWidth=1280 != DDR_FRAME_CODED_WIDTH=320" \
        "$FAULT_DIR/define_parity_layout_red.err"; then
     echo "FAIL: define parity CODED_WIDTH shear red-check returned rc=$rc, want rejection rc=1" >&2
     cat "$FAULT_DIR/define_parity_layout_red.err" >&2
     exit 1
   fi
 fi
-echo "OK red-check: define parity layout guard rejects RTL CODED_WIDTH 624→320 shear"
+echo "OK red-check: define parity layout guard rejects RTL CODED_WIDTH 1280->320 shear"
 
 FIT_GREEN="$FAULT_DIR/fake_fit_green.rpt"
 FIT_RED="$FAULT_DIR/fake_fit_red.rpt"
