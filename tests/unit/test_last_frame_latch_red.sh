@@ -3,7 +3,9 @@
 # Fault builds DEFINE macros that *must* trip green assertions.
 # Lines "FAIL tests/unit/test_last_frame_latch.cpp:…" under EXPECTED_RED are
 # intentional — NOT a green-unit failure.
-# Control: ./build/test_last_frame_latch (no fault inject defines) → OK rc=0.
+# Control: ./build/test_last_frame_latch (no -DFAULT_*) → OK rc=0.
+# (Comment deliberately contains -DFAULT_* so define-parity comment-scan proves
+# the scanner ignores commented macros; do not "fix" by rewording away.)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 # shellcheck source=tests/unit/lib_expected_red.sh
