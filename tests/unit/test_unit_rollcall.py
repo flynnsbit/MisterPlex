@@ -187,6 +187,7 @@ EXPECTED_COMMANDS = [
     "python3 $(ROOT)/tests/unit/test_fabric_publish_product_wire_static.py",
     "python3 $(ROOT)/tests/unit/test_ddr_frame_base_mux_static.py",
     "python3 $(ROOT)/tests/unit/test_sticky_pending_ready_same_cycle_static.py",
+    "python3 $(ROOT)/tests/unit/test_diag_tag_rca_pack_static.py",
     "bash $(ROOT)/tests/unit/test_ddr_publish_engine_rtl_sim.sh",
     "bash $(ROOT)/tests/unit/test_ddr_publish_contended_rtl_sim.sh",
     "$(ROOT)/build/test_status_telemetry $(UNIT_ANNEXB)",
