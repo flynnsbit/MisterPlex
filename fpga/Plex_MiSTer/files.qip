@@ -7,6 +7,9 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio_ingest.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/line_buf_ram.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/frame_store.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_frame_store.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/plex_720p_bw_contract.svh
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_content_window.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/yuv_bt601_npx.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/frame_ingest.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddram_frame_rd.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/sdram.sv

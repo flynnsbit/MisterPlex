@@ -46,7 +46,10 @@ module ddr_frame_store #(
 	//    NBA order cleared swap_pending after setting it, dropping the doorbell
 	//    under sustained high-rate publish (playback ~24 fps) while idle's slow
 	//    presents rarely collide with the 1-cycle vsync window.
-	parameter bit SWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC = 1'b1
+	parameter bit SWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC = 1'b1,
+	// Multi-pixel present (PPC path). Default 1 = scalar bit-identical.
+	// PX_PER_CLK in {1,2,4}. N>1 uses yuv_bt601_npx on latched beam qwords.
+	parameter int PX_PER_CLK = 1
 )(
 	input  wire        clk,
 	input  wire        clk_ddr,
@@ -58,6 +61,12 @@ module ddr_frame_store #(
 	output reg  [7:0]  rd_r,
 	output reg  [7:0]  rd_g,
 	output reg  [7:0]  rd_b,
+	// N-wide RGB (lane0 == rd_r/g/b when PX_PER_CLK==1). Safe to leave open.
+	output wire [PX_PER_CLK*8-1:0] rd_r_n,
+	output wire [PX_PER_CLK*8-1:0] rd_g_n,
+	output wire [PX_PER_CLK*8-1:0] rd_b_n,
+	output wire [PX_PER_CLK-1:0]   rd_lane_valid_n,
+	output wire                    rd_n_valid,
 
 	input  wire        start_req,
 	input  wire        bank_sel,
@@ -87,12 +96,47 @@ module ddr_frame_store #(
 	output reg         doorbell_ok,
 	output wire  [7:0] debug_state
 );
+	// Shared 720p24 BW contract (w-mem/w-clock/w-scaler). Must be *included*
+	// here — files.qip alone does not bind product RTL (rd-duck NACK).
+`include "plex_720p_bw_contract.svh"
+
 	localparam int X_W = $clog2(FRAME_W);
 	localparam int Y_W = $clog2(FRAME_H);
 	localparam int CODED_X_W = $clog2(CODED_W);
 	localparam int CODED_Y_W = $clog2(CODED_H);
 	localparam int Y_LINE_QWORDS = CODED_W / 8;
 	localparam int C_LINE_QWORDS = CODED_W / 16;
+
+	// Synthesis-ACTIVE: contract self-consistency always elaborates.
+	localparam bit P720_I420_OK =
+		(P720_I420_BYTES == (P720_CODED_W * P720_CODED_H * 3 / 2));
+	localparam bit P720_YQW_OK =
+		(P720_Y_LINE_QWORDS == (P720_CODED_W / 8));
+	localparam bit P720_CQW_OK =
+		(P720_C_LINE_QWORDS == (P720_CODED_W / 16));
+	localparam bit P720_GEOM_ACTIVE =
+		(CODED_W == P720_CODED_W) && (CODED_H == P720_CODED_H);
+	localparam bit P720_GEOM_MATCH =
+		!P720_GEOM_ACTIVE || (
+			(Y_LINE_QWORDS == P720_Y_LINE_QWORDS) &&
+			(C_LINE_QWORDS == P720_C_LINE_QWORDS) &&
+			(LINE_COUNT >= P720_LINE_COUNT) &&
+			(HPS_BANK_STRIDE_BYTES == P720_BANK_STRIDE) &&
+			(DOORBELL_PHYS == P720_DOORBELL_PHYS) &&
+			((PX_PER_CLK == 1) || (PX_PER_CLK == P720_PPC) ||
+			 (PX_PER_CLK == 4))
+		);
+	localparam bit P720_CONTRACT_OK =
+		P720_I420_OK && P720_YQW_OK && P720_CQW_OK && P720_GEOM_MATCH;
+	(* noprune *) wire        p720_bw_contract_ok  = P720_CONTRACT_OK;
+	(* noprune *) wire [31:0] p720_i420_bytes_c    = P720_I420_BYTES;
+	(* noprune *) wire [31:0] p720_fabric_rd_bps_c = P720_FABRIC_RD_BPS;
+	(* noprune *) wire p720_contract_live =
+		p720_bw_contract_ok | (|p720_i420_bytes_c) | (|p720_fabric_rd_bps_c);
+`ifndef SYNTHESIS
+	initial if (!P720_CONTRACT_OK)
+		$error("ddr_frame_store: plex_720p_bw_contract bind failed (geom/I420/LINE/stride/doorbell)");
+`endif
 	localparam int Y_QW_AW = $clog2(Y_LINE_QWORDS);
 	localparam int C_QW_AW = $clog2(C_LINE_QWORDS);
 	localparam int LINE_SLOTS = LINE_COUNT * 2;
@@ -331,11 +375,18 @@ module ddr_frame_store #(
 	reg y_hit_r, c_hit_r;
 	reg [SLOT_W-1:0] y_hit_idx_r, c_hit_idx_r;
 	reg [2:0] y_sel_r, c_sel_r;
+	reg [CODED_X_W-1:0] src_x_r, src_x_d; // align N-wide src_x0 with y_hit_r / commit
+	// N-wide commit latch (feeds yuv_bt601_npx when PX_PER_CLK>1)
+	reg        npx_commit_r;
+	reg [63:0] npx_y_q_r, npx_y_q_hi_r, npx_u_q_r, npx_v_q_r;
+	reg        npx_y_hi_valid_r;
+	reg [CODED_X_W-1:0] npx_src_x_r;
 
 	integer vi;
 	reg y_hit_now, c_hit_now;
 	reg [SLOT_W-1:0] y_hit_idx_now, c_hit_idx_now;
-	reg [63:0] selected_y_q, selected_u_q, selected_v_q;
+	reg [63:0] selected_y_q, selected_y_q_hi, selected_u_q, selected_v_q;
+	reg        selected_y_hi_valid;
 	reg [SLOT_W-1:0] video_slot;
 `ifdef DDR_FRAME_STORE_FAULT_CHROMA_VERTICAL_FULLRES
 	wire [CODED_Y_W-2:0] rd_cy = src_y_line[CODED_Y_W-2:0];
@@ -348,6 +399,8 @@ module ddr_frame_store #(
 		y_hit_idx_now = '0;
 		c_hit_idx_now = '0;
 		selected_y_q = 64'd0;
+		selected_y_q_hi = 64'd0;
+		selected_y_hi_valid = 1'b0;
 		selected_u_q = 64'd0;
 		selected_v_q = 64'd0;
 		for (vi = 0; vi < LINE_COUNT; vi = vi + 1) begin
@@ -370,6 +423,11 @@ module ddr_frame_store #(
 				selected_v_q = v_q[video_slot];
 			end
 		end
+		// y_qword_hi: dual-port not on this scalar store. PPC=2 with even src_x0
+		// never straddles an 8B boundary (lanes share one Y qword). Odd-origin
+		// dual-map is present_content_window's job; leave hi invalid here.
+		selected_y_hi_valid = 1'b0;
+		selected_y_q_hi = 64'd0;
 	end
 	// Miss when the line under the beam is not yet in an M10K slot → RGB black.
 	// Primary left-edge class: HBlank want_y/src_y thrash (fixed via src_y_line).
@@ -417,6 +475,15 @@ module ddr_frame_store #(
 			c_hit_idx_r <= '0;
 			y_sel_r <= 3'd0;
 			c_sel_r <= 3'd0;
+			src_x_r <= '0;
+			src_x_d <= '0;
+			npx_commit_r <= 1'b0;
+			npx_y_q_r <= 64'd0;
+			npx_y_q_hi_r <= 64'd0;
+			npx_u_q_r <= 64'd0;
+			npx_v_q_r <= 64'd0;
+			npx_y_hi_valid_r <= 1'b0;
+			npx_src_x_r <= '0;
 		end else begin
 			y_valid_v1 <= y_valid_hold;
 			y_valid_v2 <= y_valid_v1;
@@ -461,6 +528,8 @@ module ddr_frame_store #(
 			c_hit_idx_r <= c_hit_idx_now;
 			y_sel_r <= src_x[2:0];
 			c_sel_r <= src_x[3:1];
+			src_x_r <= CODED_X_W'(src_x);
+			src_x_d <= src_x_r;
 			miss_d <= rd_miss_now;
 			if (miss_d && underrun_count != 16'hFFFF) begin
 				underrun_count <= underrun_count + 16'd1;
@@ -471,13 +540,62 @@ module ddr_frame_store #(
 				rd_r <= sat8(r_calc);
 				rd_g <= sat8(g_calc);
 				rd_b <= sat8(b_calc);
+				npx_y_q_r <= selected_y_q;
+				npx_y_q_hi_r <= selected_y_q_hi;
+				npx_y_hi_valid_r <= selected_y_hi_valid;
+				npx_u_q_r <= selected_u_q;
+				npx_v_q_r <= selected_v_q;
+				npx_src_x_r <= src_x_r; // same age as y_hit_r / y_sel_r
+				npx_commit_r <= 1'b1;
 			end else if (!has_frame || !rd_visible_d || miss_d) begin
 				rd_r <= 8'd0;
 				rd_g <= 8'd0;
 				rd_b <= 8'd0;
+				npx_commit_r <= 1'b0;
+			end else begin
+				npx_commit_r <= 1'b0;
 			end
 		end
 	end
+
+	// --- N-wide RGB ports (MULTI+PPC path; default PX_PER_CLK=1 passthrough) ---
+	generate
+		if (PX_PER_CLK == 1) begin : gen_rd_npx_scalar
+			assign rd_r_n = rd_r;
+			assign rd_g_n = rd_g;
+			assign rd_b_n = rd_b;
+			assign rd_lane_valid_n = npx_commit_r ? 1'b1 : 1'b0;
+			assign rd_n_valid = npx_commit_r;
+		end else begin : gen_rd_npx_wide
+			wire npx_out_valid;
+			wire [PX_PER_CLK*8-1:0] npx_r, npx_g, npx_b;
+			wire [PX_PER_CLK-1:0] npx_lv;
+			yuv_bt601_npx #(
+				.PX_PER_CLK(PX_PER_CLK),
+				.X_W(CODED_X_W)
+			) u_yuv_npx (
+				.clk(clk),
+				.reset(reset),
+				.in_valid(npx_commit_r),
+				.src_x0(npx_src_x_r),
+				.y_qword(npx_y_q_r),
+				.u_qword(npx_u_q_r),
+				.v_qword(npx_v_q_r),
+				.y_qword_hi(npx_y_q_hi_r),
+				.y_hi_valid(npx_y_hi_valid_r),
+				.out_valid(npx_out_valid),
+				.out_r(npx_r),
+				.out_g(npx_g),
+				.out_b(npx_b),
+				.out_lane_valid(npx_lv)
+			);
+			assign rd_r_n = npx_r;
+			assign rd_g_n = npx_g;
+			assign rd_b_n = npx_b;
+			assign rd_lane_valid_n = npx_lv;
+			assign rd_n_valid = npx_out_valid;
+		end
+	endgenerate
 
 	localparam [3:0] S_IDLE       = 4'd0;
 	localparam [3:0] S_LINE_ISSUE = 4'd1;

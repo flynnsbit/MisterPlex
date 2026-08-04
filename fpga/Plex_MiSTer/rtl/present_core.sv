@@ -155,70 +155,78 @@ module present_core #(
 	localparam int FRAME_X_W = $clog2(FRAME_W);
 	localparam int FRAME_Y_W = $clog2(FRAME_H);
 
-	// Stretch FRAME_W×FRAME_H frame_store across Template DE (colorbars hc/vc).
+	// Stretch content across Template DE via present_content_window (Path A).
+	// win_enable=0 → legacy full-bank FRAME_W×FRAME_H map (bit-compat 480p).
+	// win_enable=1 → runtime content_w×content_h island (ARM drops swscale).
 	//
 	// Product (Plex.qsf FRAME_W=640 FRAME_H=480, forced scandouble):
 	//   colorbars NTSC scandouble active vc=0..479 (VBlank asserts at vc==480).
 	//   NATIVE_V_1TO1 maps store_y = vc with SCALE=1.0 so ALL FRAME_H rows are
 	//   addressed (fixes the pre-T7 even-row-only ceiling: V_STORE=240 + scale 2.0).
 	//
-	// Legacy FRAME_H<=240 builds keep half-height py=(scandouble?vc>>1:vc) + scale
-	// from a 240-line content window.
-	//
 	// Horizontal: H_DE stays 529 (FBAR Template class). Full 640 unique columns
 	// require H_DE>=640, which is impossible at clk_sys=20 MHz / 60 Hz / 524 lines
 	// (20e6/60/524 ≈ 636 clocks/line max; see test_present_store_scale_math).
-	// STORE_X still samples 529 of FRAME_W via the 39647 mul-shift.
 	localparam H_DE = 10'd529;
 	localparam bit NATIVE_V_1TO1 = (FRAME_H > 240);
 	localparam int V_STORE_I = NATIVE_V_1TO1 ? FRAME_H : 240;
 	localparam [9:0] V_STORE = 10'(V_STORE_I);
-	localparam [9:0] V_STORE_LAST = 10'(V_STORE_I - 1);
-	// store_x ≈ floor(hc * FRAME_W / 529); 39647/65536 ≈ 320/529.
-	localparam int STORE_X_SCALE = (FRAME_W * 39647) / 320;
-	localparam int STORE_Y_SCALE = (FRAME_H * 65536) / V_STORE_I;
-	localparam [FRAME_X_W-1:0] FRAME_LAST_X = FRAME_X_W'(FRAME_W - 1);
-	localparam [FRAME_Y_W-1:0] FRAME_LAST_Y = FRAME_Y_W'(FRAME_H - 1);
-	localparam [15:0] FRAME_LAST_X_16 = 16'(FRAME_W - 1);
-	localparam [15:0] FRAME_LAST_Y_16 = 16'(FRAME_H - 1);
 	// Beam Y for content + store. Native 480: use full vc (scandouble active 0..479).
 	// Legacy 240: half when scandoubled so two display lines share one store row.
 	wire [9:0] py = NATIVE_V_1TO1 ? vc : (scandouble ? (vc >> 1) : vc);
 	wire in_content = (hc < H_DE) && (py < V_STORE) && ~hb && ~vb;
 
-	// Drive store_x from free-running hc (no blank-time force-to-0). Blank-time
-	// reset handed column 0 to DE_LAG-delayed right-edge pixels (1 px wrap).
-	wire [9:0] read_hc = hc;
-	wire [31:0] store_x_prod = read_hc * STORE_X_SCALE;
-	wire [15:0] store_x_comb = store_x_prod[31:16];
-	wire [FRAME_X_W-1:0] store_x_clamped =
-		(store_x_comb > FRAME_LAST_X_16) ? FRAME_LAST_X : store_x_comb[FRAME_X_W-1:0];
+	// Runtime window regs (host mailbox TBD). Default OFF = legacy full-bank.
+	// M10K cost of mapper: 0 (mul-shift + regs only; no line RAM).
+	wire        win_enable  = 1'b0;
+	wire [10:0] win_content_w  = 11'(FRAME_W);
+	wire [10:0] win_content_h  = 11'(FRAME_H);
+	wire [10:0] win_content_x0 = 11'd0;
+	wire [10:0] win_content_y0 = 11'd0;
+	wire [10:0] win_h_de = 11'(H_DE);
+	wire [10:0] win_v_de = 11'(V_STORE_I);
 
-	// Clamp past the content window so an out-of-range row is never fetched.
-	// colorbars can expose one surplus line vs VBlank edges; past_last_row also
-	// feeds vb_d so that line is blanked (G-VID1 bottom-edge fix, generalized
-	// from the hard-coded 240-row form to V_STORE).
-	wire       past_last_row = (py >= V_STORE);
-	wire [9:0] store_y_clamped = past_last_row ? V_STORE_LAST : py;
-	wire [31:0] store_y_prod = store_y_clamped * STORE_Y_SCALE;
-	wire [15:0] store_y_comb = store_y_prod[31:16];
-	wire [FRAME_Y_W-1:0] store_y_addr =
-		(store_y_comb > FRAME_LAST_Y_16) ? FRAME_LAST_Y : store_y_comb[FRAME_Y_W-1:0];
+	// STORE_W=1280 → 11b x; STORE_H=720 → 10b y ($clog2).
+	wire [10:0] win_store_x;
+	wire [9:0]  win_store_y;
+	wire        de_r;
+	wire        past_last_row;
+	wire [10:0] win_store_x_lane1;
 
-	reg [FRAME_X_W-1:0] store_x;
-	reg [FRAME_Y_W-1:0] store_y;
-	reg       de_r; // registered in_content for frame_store read align
-	always @(posedge clk) begin
-		if (reset) begin
-			store_x <= 0;
-			store_y <= '0;
-			de_r    <= 1'b0;
-		end else if (ce_pix_i) begin
-			de_r    <= in_content;
-			store_y <= store_y_addr;
-			store_x <= store_x_clamped;
-		end
-	end
+	present_content_window #(
+		.FRAME_W(FRAME_W),
+		.FRAME_H(FRAME_H),
+		.STORE_W(1280),
+		.STORE_H(720),
+		.H_DE_DEFAULT(529),
+		.V_DE_DEFAULT(V_STORE_I)
+	) u_content_window (
+		.clk(clk),
+		.reset(reset),
+		.ce_pix(ce_pix_i),
+		.hc({1'b0, hc}),
+		.py({1'b0, py}),
+		.in_content(in_content),
+		.win_enable(win_enable),
+		.content_w(win_content_w),
+		.content_h(win_content_h),
+		.content_x0(win_content_x0),
+		.content_y0(win_content_y0),
+		.h_de(win_h_de),
+		.v_de(win_v_de),
+		.store_x(win_store_x),
+		.store_y(win_store_y),
+		.de_r(de_r),
+		.past_last_row(past_last_row),
+		.store_x_lane1(win_store_x_lane1)
+	);
+
+	// Clamp mapper outputs into FRAME_* address domain for current store geometry.
+	wire [FRAME_X_W-1:0] store_x = win_store_x[FRAME_X_W-1:0];
+	wire [FRAME_Y_W-1:0] store_y = FRAME_Y_W'(win_store_y);
+	// PPC=2 dual-map prep (identity often store_x+1). Present MULTI path will
+	// consume lane1; scalar product path leaves it observed-only.
+	(* noprune *) wire [FRAME_X_W-1:0] store_x_lane1 = win_store_x_lane1[FRAME_X_W-1:0];
 
 	wire [7:0] fr, fg, fb;
 	wire       has_frame;
@@ -241,6 +249,16 @@ module present_core #(
 	assign sdram_refresh = 1'b0;
 
 `include "ddr_frame_layout_params.svh"
+`include "plex_720p_bw_contract.svh"
+	// Consume contract constants so qip-only DCE cannot drop them (rd-duck).
+	// 480p product geom is NOT 1280×720 — bind is constant-true for I420 math only.
+	localparam bit P720_I420_OK =
+		(P720_I420_BYTES == (P720_CODED_W * P720_CODED_H * 3 / 2));
+	(* noprune *) wire p720_bw_contract_ok = P720_I420_OK;
+	(* noprune *) wire [31:0] p720_i420_bytes_c = P720_I420_BYTES;
+	(* noprune *) wire [31:0] p720_fabric_rd_bps_c = P720_FABRIC_RD_BPS;
+	(* noprune *) wire p720_contract_live =
+		p720_bw_contract_ok | (|p720_i420_bytes_c) | (|p720_fabric_rd_bps_c);
 
 	ddr_frame_store #(
 		.FRAME_W(FRAME_W),
@@ -268,6 +286,13 @@ module present_core #(
 		.rd_r(fr),
 		.rd_g(fg),
 		.rd_b(fb),
+		// N-wide ports (PX_PER_CLK=1 default → lane0==scalar). MULTI+PPC path
+		// will wire these into the beam; leave open for scalar product.
+		.rd_r_n(),
+		.rd_g_n(),
+		.rd_b_n(),
+		.rd_lane_valid_n(),
+		.rd_n_valid(),
 		.start_req(ddr_start_req),
 		.bank_sel(ddr_bank_sel),
 		.status_osd(ddr_status_osd),

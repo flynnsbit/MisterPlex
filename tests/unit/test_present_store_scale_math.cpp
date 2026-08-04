@@ -79,20 +79,19 @@ int main() {
            "V_STORE_I from FRAME_H when native");
     EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv", "localparam H_DE = 10'd529"),
            "H_DE hardcoded 529");
-    EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv", "wire [9:0] read_hc = hc"),
-           "read_hc is hc (identity)");
-    EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
-                         "STORE_Y_SCALE = (FRAME_H * 65536) / V_STORE_I"),
-           "STORE_Y_SCALE uses V_STORE_I");
-    EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
+    // Path A: store map owned by present_content_window (win_enable=0 = legacy).
+    EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv", "present_content_window"),
+           "present_core instantiates present_content_window");
+    EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_content_window.sv",
                          "STORE_X_SCALE = (FRAME_W * 39647) / 320"),
-           "STORE_X_SCALE formula");
+           "STORE_X_SCALE formula in content_window");
+    EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_content_window.sv", "STORE_Y_SCALE"),
+           "STORE_Y_SCALE in content_window");
     EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
                          "wire [9:0] py = NATIVE_V_1TO1 ? vc : (scandouble ? (vc >> 1) : vc)"),
            "py=vc on native 480 path");
-    EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
-                         "past_last_row = (py >= V_STORE)"),
-           "past_last_row vs V_STORE");
+    EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv", "past_last_row"),
+           "past_last_row from content_window");
     EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
                          ".CODED_W(DDR_FRAME_CODED_WIDTH)"),
            "ddr_frame_store CODED_W from layout params");
