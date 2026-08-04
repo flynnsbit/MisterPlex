@@ -112,6 +112,21 @@ several seconds. That is not a leak.
 
 ---
 
+**L26 — Always capture the UNCONTENDED baseline before declaring a performance wall.**
+Native 720p decode measured `speed=0.939×` and was declared arithmetically dead. The
+measurement had been taken with `misterplexd` running. With the daemon stopped and
+everything else identical, the same asset and command gave **`1.31×` (32 fps, idle
+0.0% → 49.4%)** — a 43% speedup that had been sitting invisible behind background load.
+A contended measurement is an upper bound on the *system*, never on the *capability*.
+When a measurement is blocked (flaky SSH, dropped session), mark it **UNMEASURED** and
+come back for it — do not let a contended number quietly become the accepted ceiling.
+
+**L27 — Run long device measurements detached (`nohup setsid …`), writing to a file.**
+The clean baseline above went uncaptured for days because SSH dropped mid-run on flaky
+WiFi. Detaching on-device makes the result survive the transport.
+
+---
+
 ## 5. Concurrency and flaky infrastructure
 
 **L21 — Prove flakiness; never assume it.**
@@ -145,6 +160,25 @@ that is.
 
 ---
 
+**L28 — The deployed bitstream is NOT your source tree. Verify provenance before inferring
+anything from the device.**
+`Plex.rbf` md5 `dfebf2bf` was assumed to match current RTL. It is the **G-VID1** build from
+FPGA commit `0139f2c5`, where `ddr_frame_store.sv` **does not exist** — that file was added
+later in `d0ea6dac` (`git merge-base --is-ancestor 0139f2c5 d0ea6dac` → rc=0). Mailbox
+probes against that core returned zeros, and the zeros were read as "the core fails to
+publish PLXD". The real reason is that the running core has **no PLXD writer at all**.
+Before drawing any conclusion from a device probe, answer: *which commit built the
+bitstream I am probing?* If that cannot be answered in one command, the tooling is the bug.
+
+**L29 — `git worktree move` cannot relocate a worktree off `/tmp`.**
+It uses `rename(2)`, which fails across filesystems with `Invalid cross-device link`
+(tmpfs → btrfs). Use `cp -a <src> <dest>` then `git worktree repair <dest>`, then remove
+the original. Commits in a *branch-named* worktree are safe in the shared object DB, but a
+**detached HEAD** worktree's commits are GC-reachable only while registered — tag them
+before pruning.
+
+---
+
 ## Incident index
 
 | # | Wrong conclusion | Reality |
@@ -161,5 +195,8 @@ that is.
 | — | ARM saturated at idle | First sample contained a live transcode; retracted, then re-established |
 | — | Two PLXG constants conflicted | `0x300FF000 + 0x800 == 0x300FF800` — identical; a pure duplicate |
 | — | PLXD alive at the doorbell-relative address | Zero at **every** candidate; only the host-written doorbell was live |
+| — | Those PLXD zeros indicted the RTL | The deployed RBF predates `ddr_frame_store.sv` entirely — it has **no PLXD writer**. Probe was invalid; conclusion withdrawn |
+| — | `misterplexd` ~136% + `MiSTer` ~131% at idle | Arithmetically impossible: 16.02 CPU-s claimed inside a 12 CPU-s dual-core window. Split withdrawn |
+| — | Native 720p24 is arithmetically dead at 0.939× | **1.31× (32 fps)** with the daemon stopped. The wall was a daemon busy-loop, not physics |
 
 Full narrative for each: `Memory/lab/parent/misterplex-parent-720p-decode-verdict.txt`.
