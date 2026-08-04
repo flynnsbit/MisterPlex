@@ -266,8 +266,8 @@
     "formula_deficit": "T_copy_arm_ms - decode_headroom_ms",
     "meaning": "720p24 does NOT close e2e if decode and sendDdrFrame /dev/mem copy are serial",
     "closure_paths": {
-      "a_overlap": "copy concurrent with decode \u2014 REQUIRES a free second core. Parent 2026-08-04 /proc/stat 10s: cpu1 busy=100% MiSTer pid permanent; cpu0 idle=97.6% at idle; EFFECTIVE product capacity = ONE core. Path (a) is NOT a free second-core plan; contended-core only; UNPROVEN / likely INFEASIBLE as sole closure.",
-      "b_fabric_dma": "fabric DMA can retire the publication memcpy path only after a pinned/coherent source is established. Do NOT claim 'ARM never touches payload' \u2014 decode/reference and other ARM traffic remain."
+      "a_overlap": "WITHDRAWN as plan of record. Parent ONE_CORE: MiSTer owns one A9 permanently (userspace spin). Dual-core decode||copy rescue is dead. Renice +13% decode (Sweep127) does not manufacture a core. Contended-core overlap UNPROVEN and not the funded closure path.",
+      "b_fabric_dma": "SOLE remaining copy-retire without a second core (parent strategic convergence 2026-08-04). Fabric/PL330 publication engine (w-mem/w-path) retires sendDdrFrame /dev/mem memcpy after pinned/coherent source. Do NOT claim ARM never touches payload \u2014 decode/reference remain. M10K competes with 720p present linebufs inside ~356 free post PRODUCT_NO_STUB strip."
     },
     "w_scaler_scope": "content_window retires ARM *scale* (swscale) on the ONE effective product core, not T_copy_arm. Fabric present already reads DDR; DMA write path is w-mem/w-path. Scale savings matter MORE under one-core capacity (not less).",
     "solves_for": "CPU_TIME_ms_per_frame_copy",
@@ -291,6 +291,16 @@
         "treat CAP=200% as available product headroom (MiSTer owns ~100% permanently)"
       ],
       "implication_for_serial_deficit": "serial_deficit_ms = T_copy - decode_headroom remains the honest serial model; overlap is not default-feasible. Path A content_window still retires scale on the ONE product core."
+    },
+    "copy_retire_plan_of_record": {
+      "status": "FABRIC_COPY",
+      "withdrawn": "dual_core_decode_parallel_copy",
+      "owners": [
+        "w-mem",
+        "w-path",
+        "w-plxd"
+      ],
+      "w_scaler_role": "presentation RTL only; every M10K competes with fabric copy engine; content_window/npx stay 0 M10K ESTIMATE; do not spend linebuf M10K on scaler extras"
     }
   },
   "reference_numbers_one_set": {
@@ -552,5 +562,12 @@
     "daemon_idle_pct_onecpu": 0.8,
     "control": "parent /proc/stat 10s per-core + pid ticks; USER_HZ=100",
     "Sweep127": "renice MiSTer \u2192 +13.0% decode; MiSTer ticks in decode window -40.0% (parent)"
+  },
+  "parent_strategic_convergence_fabric_copy": {
+    "status": "BINDING",
+    "date": "2026-08-04",
+    "statement": "DDR publication copy must move into FPGA fabric; path(a) second-core overlap withdrawn; path(b) fabric DMA is priority line above new present modules",
+    "R_req_unchanged_MBps": 33.1776,
+    "T_copy_serial_deficit_ms_approx": 6.0
   }
 }

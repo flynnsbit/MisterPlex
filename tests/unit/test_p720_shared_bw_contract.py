@@ -566,6 +566,15 @@ def main() -> int:
     if poc.get("daemon_comm") != "mpx-main":
         return fail("daemon_comm must be mpx-main (not misterplexd process name)")
     print("OK ONE_CORE capacity: MiSTer owns cpu1; path(a) second-core overlap NACK; daemon=mpx-main")
+    plan = arm.get("copy_retire_plan_of_record") or {}
+    if plan.get("status") != "FABRIC_COPY":
+        return fail("copy_retire_plan_of_record.status must be FABRIC_COPY")
+    if "WITHDRAWN" not in (arm.get("closure_paths") or {}).get("a_overlap", "").upper():
+        return fail("path(a) must be WITHDRAWN as plan of record")
+    b = (arm.get("closure_paths") or {}).get("b_fabric_dma", "").lower()
+    if "sole" not in b and "fabric" not in b:
+        return fail("path(b) must be sole fabric copy-retire language")
+    print("OK FABRIC_COPY plan of record; path(a) WITHDRAWN; path(b) sole retire")
 
     print(
         "PASS p720_shared_bw_contract: HEADLINE=33.1776 MB/s/dir "
