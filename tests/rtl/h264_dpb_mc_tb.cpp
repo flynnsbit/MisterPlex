@@ -478,6 +478,73 @@ int main(int argc, char** argv) {
         checkPartMc(s, luma, u, v, 4, 8, 3, 1);
         checkPartMc(s, luma, u, v, 4, 4, 3, 1);
 
+        // Part-sized DPB fetch (rd-duck): 8x8 must NOT issue fixed 441+81+81.
+        // Luma span = 8+5 = 13 → 169; chroma span = 4+1 = 5 → 25 each.
+        // Negative: a naive fixed-window core still returns 441 luma beats.
+        while (s.top.fetch_busy)
+            s.tick();
+        s.top.fetch_part_w = 8;
+        s.top.fetch_part_h = 8;
+        s.top.fetch_part_mode = 3; // P_8x8
+        s.top.fetch_part_idx = 0;
+        s.top.fetch_mv_x_qpel = 0;
+        s.top.fetch_mv_y_qpel = 0;
+        s.top.fetch_start = 1;
+        s.tick();
+        s.top.fetch_start = 0;
+        {
+            int lc8 = 0, uc8 = 0, vc8 = 0;
+            bool done8 = false;
+            std::array<bool, 441> l8{};
+            std::array<bool, 81> u8{};
+            std::array<bool, 81> v8{};
+            for (int guard = 0; guard < 400 && !done8; ++guard) {
+                s.tick();
+                if (s.top.luma_window_valid) {
+                    int idx = s.top.luma_window_idx;
+                    if (idx < 0 || idx >= 441) {
+                        std::cerr << "FAIL h264_dpb_mc RTL: 8x8 luma idx out of range " << idx << "\n";
+                        return 1;
+                    }
+                    if (!l8[static_cast<size_t>(idx)]) {
+                        l8[static_cast<size_t>(idx)] = true;
+                        ++lc8;
+                    }
+                }
+                if (s.top.chroma_u_window_valid) {
+                    int idx = s.top.chroma_window_idx;
+                    if (!u8[static_cast<size_t>(idx)]) {
+                        u8[static_cast<size_t>(idx)] = true;
+                        ++uc8;
+                    }
+                }
+                if (s.top.chroma_v_window_valid) {
+                    int idx = s.top.chroma_window_idx;
+                    if (!v8[static_cast<size_t>(idx)]) {
+                        v8[static_cast<size_t>(idx)] = true;
+                        ++vc8;
+                    }
+                }
+                done8 = done8 || s.top.fetch_done;
+            }
+            constexpr int want_l = 13 * 13; // 169
+            constexpr int want_c = 5 * 5;   // 25
+            if (lc8 == 441) {
+                std::cerr << "FAIL h264_dpb_mc RTL: 8x8 fetch still full 21x21 (441) — "
+                          << "part_w/h not narrowing DPB window\n";
+                return 1;
+            }
+            if (lc8 != want_l || uc8 != want_c || vc8 != want_c || !done8) {
+                std::cerr << "FAIL h264_dpb_mc RTL: 8x8 part fetch counts luma=" << lc8
+                          << " u=" << uc8 << " v=" << vc8 << " want " << want_l << "/"
+                          << want_c << "/" << want_c << " done=" << done8 << "\n";
+                return 1;
+            }
+            std::cout << "OK h264_dpb_mc part-sized fetch: 8x8 beats luma=" << lc8
+                      << " chroma=" << uc8 << "/" << vc8
+                      << " (fixed-603 would be 441/81/81)\n";
+        }
+
         s.top.idr_start = 1;
         s.tick();
         s.top.idr_start = 0;

@@ -172,10 +172,6 @@ module h264_dpb_one_ref #(
 
 	reg [2:0] phase;
 	reg [8:0] issue_idx;
-	wire [8:0] issue_mod9 = issue_idx % 9'd9;
-	wire [8:0] issue_div9 = issue_idx / 9'd9;
-	wire signed [15:0] issue_mod9_s = $signed({7'd0, issue_mod9});
-	wire signed [15:0] issue_div9_s = $signed({7'd0, issue_div9});
 	reg [1:0] pending_plane;
 	reg [8:0] pending_idx;
 	reg       pending_valid;
@@ -190,13 +186,26 @@ module h264_dpb_one_ref #(
 	reg signed [15:0] ly;
 	reg signed [15:0] cx;
 	reg signed [15:0] cy;
-	reg [1:0] lat_part_w_lo;
-	reg [1:0] lat_part_h_lo;
+	// Full part size (not [1:0] crumbs). Drives fetch window span.
+	// 6-tap luma support: span = part + 5 (max 21 for 16x16).
+	// Chroma epel: span = part/2 + 1 (max 9 for 8x8 chroma of 16x16).
+	reg [4:0] lat_part_w;
+	reg [4:0] lat_part_h;
+	reg [4:0] lat_luma_sw;   // 1..21
+	reg [4:0] lat_luma_sh;
+	reg [3:0] lat_chr_sw;    // 1..9
+	reg [3:0] lat_chr_sh;
+	reg [8:0] lat_luma_last; // sw*sh - 1
+	reg [8:0] lat_chr_last;  // sw*sh - 1
 	reg signed [15:0] sx;
 	reg signed [15:0] sy;
 	reg [15:0] clamped_x;
 	reg [15:0] clamped_y;
+	reg [8:0] issue_col;
+	reg [8:0] issue_row;
+	reg [8:0] layout_idx; // MC-stable: row*21+col (luma) / row*9+col (chroma)
 
+	// Part-sized raster over the support window (not fixed 21x21 / 9x9).
 	always @* begin
 		lx = luma_origin_x;
 		ly = luma_origin_y;
@@ -206,22 +215,35 @@ module h264_dpb_one_ref #(
 		sy = 16'sd0;
 		clamped_x = 16'd0;
 		clamped_y = 16'd0;
+		issue_col = 9'd0;
+		issue_row = 9'd0;
+		layout_idx = issue_idx;
 		case (phase)
 		PH_LUMA: begin
-			sx = lx + $signed({7'd0, (issue_idx % 9'd21)}) - 16'sd2;
-			sy = ly + $signed({7'd0, (issue_idx / 9'd21)}) - 16'sd2;
+			issue_col = (lat_luma_sw == 5'd0) ? 9'd0 :
+			            issue_idx % {4'd0, lat_luma_sw};
+			issue_row = (lat_luma_sw == 5'd0) ? 9'd0 :
+			            issue_idx / {4'd0, lat_luma_sw};
+			sx = lx + $signed({7'd0, issue_col}) - 16'sd2;
+			sy = ly + $signed({7'd0, issue_row}) - 16'sd2;
+			// Keep 21-wide layout so existing qpel/MC blocks stay valid.
+			layout_idx = issue_row * 9'd21 + issue_col;
 			clamped_x = clamp_coord(sx, FRAME_W[15:0]);
 			clamped_y = clamp_coord(sy, FRAME_H[15:0]);
 		end
 		default: begin
-			sx = cx + issue_mod9_s;
-			sy = cy + issue_div9_s;
+			issue_col = (lat_chr_sw == 4'd0) ? 9'd0 :
+			            issue_idx % {5'd0, lat_chr_sw};
+			issue_row = (lat_chr_sw == 4'd0) ? 9'd0 :
+			            issue_idx / {5'd0, lat_chr_sw};
+			sx = cx + $signed({7'd0, issue_col});
+			sy = cy + $signed({7'd0, issue_row});
+			layout_idx = issue_row * 9'd9 + issue_col;
 			clamped_x = clamp_coord(sx, C_W[15:0]);
 			clamped_y = clamp_coord(sy, C_H[15:0]);
 		end
 		endcase
 	end
-
 	always @(posedge clk) begin
 		mem_rd                <= 1'b0;
 		luma_window_valid     <= 1'b0;
@@ -249,8 +271,14 @@ module h264_dpb_one_ref #(
 			luma_origin_y       <= 16'sd0;
 			chroma_origin_x     <= 16'sd0;
 			chroma_origin_y     <= 16'sd0;
-			lat_part_w_lo       <= 2'd0;
-			lat_part_h_lo       <= 2'd0;
+			lat_part_w          <= 5'd16;
+			lat_part_h          <= 5'd16;
+			lat_luma_sw         <= 5'd21;
+			lat_luma_sh         <= 5'd21;
+			lat_chr_sw          <= 4'd9;
+			lat_chr_sh          <= 4'd9;
+			lat_luma_last       <= 9'd440;
+			lat_chr_last        <= 9'd80;
 			luma_window_idx     <= 9'd0;
 			luma_window_sample  <= 8'd0;
 			chroma_window_idx   <= 7'd0;
@@ -292,6 +320,28 @@ module h264_dpb_one_ref #(
 					fetch_done         <= 1'b0;
 					fetch_error_no_ref <= !ref_ready;
 					if (ref_ready) begin
+						// Part-sized support window (rd-duck bandwidth): not fixed 21×21.
+						// Blocking temps — span math must land in lat_* this cycle.
+						begin : fetch_span
+							reg [4:0] pw, ph, lsw, lsh;
+							reg [3:0] csw, csh;
+							pw  = (fetch_part_w == 5'd0) ? 5'd1 :
+							      (fetch_part_w > 5'd16) ? 5'd16 : fetch_part_w;
+							ph  = (fetch_part_h == 5'd0) ? 5'd1 :
+							      (fetch_part_h > 5'd16) ? 5'd16 : fetch_part_h;
+							lsw = pw + 5'd5;                 // 6-tap overhang
+							lsh = ph + 5'd5;
+							csw = 4'({1'b0, pw[4:1]} + 5'd1); // epel +1
+							csh = 4'({1'b0, ph[4:1]} + 5'd1);
+							lat_part_w    <= pw;
+							lat_part_h    <= ph;
+							lat_luma_sw   <= lsw;
+							lat_luma_sh   <= lsh;
+							lat_chr_sw    <= csw;
+							lat_chr_sh    <= csh;
+							lat_luma_last <= 9'(lsw * lsh - 1);
+							lat_chr_last  <= 9'(csw * csh - 1);
+						end
 						fetch_busy      <= 1'b1;
 						phase           <= PH_LUMA;
 						issue_idx       <= 9'd0;
@@ -311,8 +361,6 @@ module h264_dpb_one_ref #(
 						chroma_origin_y <= $signed({5'd0, fetch_mb_y, 3'd0}) +
 						                   (part_y_off(fetch_part_mode, fetch_part_idx) >>> 1) +
 						                   (fetch_mv_y_qpel >>> 3);
-						lat_part_w_lo   <= fetch_part_w[1:0];
-						lat_part_h_lo   <= fetch_part_h[1:0];
 					end else begin
 						fetch_done <= 1'b1;
 					end
@@ -329,34 +377,32 @@ module h264_dpb_one_ref #(
 				mem_rd        <= 1'b1;
 				pending_valid <= 1'b1;
 				pending_plane <= (phase == PH_LUMA) ? 2'd0 : ((phase == PH_U) ? 2'd1 : 2'd2);
-				pending_idx   <= issue_idx;
+				// MC layout index (21/9 stride), not dense issue_idx.
+				pending_idx   <= layout_idx;
 				mem_raddr     <= i420_addr(reference_base,
 				                           (phase == PH_LUMA) ? 2'd0 : ((phase == PH_U) ? 2'd1 : 2'd2),
 				                           clamped_x, clamped_y);
 				if (phase == PH_LUMA) begin
-					if (issue_idx == 9'd440) begin
+					if (issue_idx == lat_luma_last) begin
 						phase     <= PH_U;
 						issue_idx <= 9'd0;
 					end else begin
 						issue_idx <= issue_idx + 9'd1;
 					end
 				end else if (phase == PH_U) begin
-					if (issue_idx == 9'd80) begin
+					if (issue_idx == lat_chr_last) begin
 						phase     <= PH_V;
 						issue_idx <= 9'd0;
 					end else begin
 						issue_idx <= issue_idx + 9'd1;
 					end
 				end else begin
-					if (issue_idx == 9'd80) begin
+					if (issue_idx == lat_chr_last) begin
 						phase      <= PH_DRAIN;
 					end else begin
 						issue_idx <= issue_idx + 9'd1;
 					end
 				end
-			end
-			if (lat_part_w_lo != 2'd0 || lat_part_h_lo != 2'd0) begin
-				// Keep part_w/part_h observed for lint and future narrower fetch windows.
 			end
 		end
 	end

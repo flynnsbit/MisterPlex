@@ -227,6 +227,9 @@ def main() -> int:
         if key in edges:
             print(f"--- edges[{key}] ({len(edges[key])}): {sorted(edges[key])}")
 
+    print("CAVEAT: ignores generate/ifdef/PRODUCT_NO_STUB; post-fit hierarchy is authority.")
+    print("CAVEAT: source reachability != deployed RBF contents / area paid.")
+    print("CAVEAT: LIVE on skeleton branch is not main stub-only LIVE=17.")
     if control_fails:
         print("--- CONTROL FAILURES ---", file=sys.stderr)
         for msg in control_fails:
