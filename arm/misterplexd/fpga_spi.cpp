@@ -3,6 +3,7 @@
 #include "libmisterplex/status_telemetry.hpp"
 #include "libmisterplex/pixel_format.hpp"
 #include "libmisterplex/ddr_bank_release_select.hpp"
+#include "libmisterplex/plxa_map.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -1632,11 +1633,82 @@ bool FpgaSpi::readBankRelease(BankReleaseStatus& out) {
         return false;
     if (!ensureDdrMap())
         return false;
-    if (kBankReleaseMailboxPhys < ddrLayout_.phys_base) {
+
+    // --- PLXA bootstrap (once): discover PLXD phys or fail loud on mismatch ---
+    // plxaDiscoverState_: 0 unknown, 1 absent (pre-PLXA → absolute kBankRelease),
+    // 2 ok (plxdPhysResolved_ set), 3 rejected (version/capability — sticky fail).
+    if (plxaDiscoverState_ == 3) {
+        setErr("readBankRelease: PLXA previously rejected (version/capability)");
+        return false;
+    }
+    if (plxaDiscoverState_ == 0) {
+        const uint32_t plxaPhys = plxa::kPlxaPhys;
+        if (plxaPhys >= ddrLayout_.phys_base &&
+            (plxaPhys - ddrLayout_.phys_base) + 8u <= ddrMapLen_) {
+            const size_t poff =
+                static_cast<size_t>(plxaPhys - ddrLayout_.phys_base);
+            volatile uint32_t* pm =
+                reinterpret_cast<volatile uint32_t*>(ddrMap_ + poff);
+            const uint32_t lo0 = pm[0];
+            const uint32_t hi0 = pm[1];
+            __sync_synchronize();
+            const uint32_t lo1 = pm[0];
+            const uint32_t hi1 = pm[1];
+            if (lo0 == lo1 && hi0 == hi1) {
+                const uint64_t word = static_cast<uint64_t>(lo0) |
+                                     (static_cast<uint64_t>(hi0) << 32);
+                plxa::MapWord mw{};
+                if (plxa::decodePlxaWord(word, mw)) {
+                    const plxa::AcceptStatus st = plxa::acceptPlxa(mw);
+                    if (st == plxa::AcceptStatus::Ok) {
+                        plxdPhysResolved_ = plxa::resolvePlxdPhys(
+                            mw, ddrLayout_.doorbell_phys, kBankReleaseMailboxPhys);
+                        plxaDiscoverState_ = 2;
+                        std::fprintf(stderr,
+                            "[PLXA] map ok ver=%u flags=0x%02x plxd_phys=0x%08x "
+                            "(doorbell=0x%08x)\n",
+                            static_cast<unsigned>(mw.version),
+                            static_cast<unsigned>(mw.flags),
+                            static_cast<unsigned>(plxdPhysResolved_),
+                            static_cast<unsigned>(ddrLayout_.doorbell_phys));
+                    } else {
+                        // Version mismatch / missing PLXD: FAIL LOUD, sticky.
+                        char buf[224]{};
+                        std::snprintf(
+                            buf, sizeof(buf),
+                            "readBankRelease: PLXA rejected (%s) ver=%u "
+                            "flags=0x%02x — host/core ABI mismatch",
+                            plxa::acceptStatusName(st),
+                            static_cast<unsigned>(mw.version),
+                            static_cast<unsigned>(mw.flags));
+                        std::fprintf(stderr, "[PLXA] %s\n", buf);
+                        setErr(buf);
+                        plxaDiscoverState_ = 3;
+                        return false;
+                    }
+                } else {
+                    // Stable non-PLXA at bootstrap addr → pre-PLXA core.
+                    plxaDiscoverState_ = 1;
+                    plxdPhysResolved_ = kBankReleaseMailboxPhys;
+                }
+            } else {
+                // Unstable PLXA page — do not stick; try absolute this call.
+                plxdPhysResolved_ = kBankReleaseMailboxPhys;
+            }
+        } else {
+            plxaDiscoverState_ = 1;
+            plxdPhysResolved_ = kBankReleaseMailboxPhys;
+        }
+    }
+
+    const uint32_t plxdPhys =
+        (plxdPhysResolved_ != 0) ? plxdPhysResolved_ : kBankReleaseMailboxPhys;
+
+    if (plxdPhys < ddrLayout_.phys_base) {
         setErr("readBankRelease: PLXD mailbox is outside DDR frame window");
         return false;
     }
-    const size_t off = static_cast<size_t>(kBankReleaseMailboxPhys - ddrLayout_.phys_base);
+    const size_t off = static_cast<size_t>(plxdPhys - ddrLayout_.phys_base);
     if (off + 8 > ddrMapLen_) {
         setErr("readBankRelease: PLXD mailbox is outside mapped DDR frame window");
         return false;
@@ -1671,28 +1743,32 @@ bool FpgaSpi::readBankRelease(BankReleaseStatus& out) {
         char buf[192]{};
         std::snprintf(buf, sizeof(buf),
                       "readBankRelease: PLXD mailbox absent "
-                      "(stable non-magic lo=0x%08x hi=0x%08x)",
+                      "(stable non-magic lo=0x%08x hi=0x%08x phys=0x%08x)",
                       static_cast<unsigned>(lastLo),
-                      static_cast<unsigned>(lastHi));
+                      static_cast<unsigned>(lastHi),
+                      static_cast<unsigned>(plxdPhys));
         setErr(buf);
         return false;
     }
     if (sawMagic) {
-        char buf[160]{};
+        char buf[192]{};
         std::snprintf(buf, sizeof(buf),
                       "readBankRelease: PLXD mailbox unstable "
-                      "(magic seen but double-read mismatch; last lo=0x%08x hi=0x%08x)",
+                      "(magic seen but double-read mismatch; last lo=0x%08x "
+                      "hi=0x%08x phys=0x%08x)",
                       static_cast<unsigned>(lastLo),
-                      static_cast<unsigned>(lastHi));
+                      static_cast<unsigned>(lastHi),
+                      static_cast<unsigned>(plxdPhys));
         setErr(buf);
         return false;
     }
-    char buf[160]{};
+    char buf[176]{};
     std::snprintf(buf, sizeof(buf),
                   "readBankRelease: PLXD mailbox absent or unstable "
-                  "(lo=0x%08x hi=0x%08x)",
+                  "(lo=0x%08x hi=0x%08x phys=0x%08x)",
                   static_cast<unsigned>(lastLo),
-                  static_cast<unsigned>(lastHi));
+                  static_cast<unsigned>(lastHi),
+                  static_cast<unsigned>(plxdPhys));
     setErr(buf);
     return false;
 }

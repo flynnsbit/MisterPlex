@@ -46,10 +46,25 @@ int main() {
     CHECK(decodePlxaWord(good, m));
     CHECK(acceptPlxa(m, /*expected_version=*/0) == AcceptStatus::VersionMismatch);
 
+    // resolvePlxdPhys: relative vs absolute
+    CHECK(decodePlxaWord(good, m));
+    CHECK(resolvePlxdPhys(m, /*doorbell=*/0x300FF000u, /*fallback=*/0x3007F128u) ==
+          0x300FF128u);
+    const uint64_t abs_map =
+        packPlxaWord(kPlxaAbiVersion, kFlagHasPlxd, /*off ignored*/ 0);
+    CHECK(decodePlxaWord(abs_map, m));
+    CHECK(resolvePlxdPhys(m, 0x300FF000u, 0x3007F128u) == 0x3007F128u);
+
+    // NEGATIVE: wrong version must not be used to resolve a live address
+    CHECK(decodePlxaWord(wrong_ver, m));
+    CHECK(acceptPlxa(m) == AcceptStatus::VersionMismatch);
+    // Host path must refuse before resolve; document the invariant here.
+    CHECK(acceptPlxa(m) != AcceptStatus::Ok);
+
     if (fails) {
         std::fprintf(stderr, "test_plxa_map: %d failure(s)\n", fails);
         return 1;
     }
-    std::printf("test_plxa_map: OK (version_mismatch negative exercised)\n");
+    std::printf("test_plxa_map: OK (version_mismatch + resolve exercised)\n");
     return 0;
 }

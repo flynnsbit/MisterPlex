@@ -81,5 +81,15 @@ inline uint64_t packPlxaWord(uint8_t version, uint8_t flags, uint16_t plxd_offse
     return static_cast<uint64_t>(kPlxaMagic) | (static_cast<uint64_t>(hi) << 32);
 }
 
+// Resolve PLXD phys from an accepted PLXA map.
+// relative: doorbell_phys + plxd_offset; absolute: fallback_abs (registry).
+// Caller must have acceptPlxa(...) == Ok.
+inline uint32_t resolvePlxdPhys(const MapWord& m, uint32_t doorbell_phys,
+                                uint32_t fallback_abs) {
+    if ((m.flags & kFlagDoorbellRelative) != 0)
+        return doorbell_phys + static_cast<uint32_t>(m.plxd_offset);
+    return fallback_abs;
+}
+
 } // namespace plxa
 } // namespace misterplex

@@ -293,6 +293,9 @@ private:
     double lastDdrBankDoorbellMs_[2] = {-1.0, -1.0};
     // Persistent PLXD bank-select state (display-ack + wait counters).
     DdrBankSelectState ddrBankSelSt_{};
+    // PLXA-resolved PLXD phys (0 = not probed; sticky once set/rejected).
+    uint32_t plxdPhysResolved_ = 0;
+    int plxaDiscoverState_ = 0; // 0=unknown 1=absent 2=ok 3=rejected
     bool mboxInit_ = false;
     bool mboxAlive_ = false;
     uint16_t mboxSeq_ = 0;
