@@ -1177,6 +1177,265 @@ cyclonev_hps_interface_peripheral_i2c hdmi_i2c
 		.de_out(hdmi_de_mask)
 	);
 
+	// plex_chrome: post-ascal / post-shadowmask player chrome (HDMI output res).
+	// Product write path via plex_chrome_host_if — list_we is a real net (not 1'b0).
+	// Composite: ascal → shadowmask → plex_chrome → osd → pins.
+	// When cfg_enable=0 and idle_en=0, din passes through unmodified (1-cycle delay).
+	// DEFAULT-OFF (rd-duck audit): macros unset → boot PLXC enable=0, no FAB idle
+	// steal, no demo HUD. Video is pass-through aside from 1-cycle delay + blanking
+	// keep-sink (DE=0 only).
+	wire [23:0] hdmi_data_chrome;
+	wire        hdmi_de_chrome, hdmi_vs_chrome, hdmi_hs_chrome;
+	wire        plex_chrome_hw;
+	wire [11:0] plex_chrome_mon_w, plex_chrome_mon_h;
+	wire [3:0]  plex_chrome_mon_scale;
+
+	// PLXC host interface. Product ext path is emu.PLXC_EXT_* (from core DDR
+	// loader) CDC'd into clk_hdmi — never a local assign-0 that hid a dead path.
+	// has_frame_sys / plxc_ext_*_sys are module-scope (see near user_out).
+	wire        plxc_host_we;
+	wire [7:0]  plxc_host_addr;
+	wire [63:0] plxc_host_wdata;
+	// has_frame: 2FF level CDC (single bit).
+	reg  [1:0]  has_frame_cdc;
+	always @(posedge clk_hdmi) begin
+		if (reset_req)
+			has_frame_cdc <= 2'b00;
+		else
+			has_frame_cdc <= {has_frame_cdc[0], has_frame_sys};
+	end
+	wire has_frame_hdmi = has_frame_cdc[1];
+
+	// PLXC host beats: async FIFO clk_sys → clk_hdmi (rd-duck combined-path fix).
+	// Rising-edge detect on multi-cycle host_we drops all but the first beat —
+	// plex_chrome_ddr_loader S_PUSH_LIST holds we=1 for every consecutive cmd.
+	// Do NOT restore d2&~d3 here; see plex_chrome_plxc_cdc.sv + hierarchy TB.
+	wire        plxc_ext_we;
+	wire [7:0]  plxc_ext_addr;
+	wire [63:0] plxc_ext_wdata;
+	wire        plxc_cdc_full, plxc_cdc_afull, plxc_cdc_empty;
+	plex_chrome_plxc_cdc #(
+		.DEPTH(128)
+	) u_plxc_cdc (
+		.wr_clk(clk_sys),
+		.wr_rst(reset_req),
+		.wr_en(plxc_ext_we_sys),
+		.wr_addr(plxc_ext_addr_sys),
+		.wr_data(plxc_ext_wdata_sys),
+		.wr_full(plxc_cdc_full),
+		.wr_almost_full(plxc_cdc_afull),
+		.rd_clk(clk_hdmi),
+		.rd_rst(reset_req),
+		.rd_we(plxc_ext_we),
+		.rd_addr(plxc_ext_addr),
+		.rd_data(plxc_ext_wdata),
+		.rd_empty(plxc_cdc_empty)
+	);
+	// Back to core loader: accept only when FIFO has room (rd-duck silent-loss).
+	// almost_full is observational headroom; ready uses !full (exact accept).
+	wire plxc_ext_ready_sys = ~plxc_cdc_full;
+
+	// Boot keepalive: list_we must toggle (anti-elision). PLXC enable bit is 0
+	// unless PLEX_FAB_BOOT_PLXC — default-OFF is honest pass-through.
+	reg         plxc_boot_we;
+	reg  [7:0]  plxc_boot_addr;
+	reg  [63:0] plxc_boot_wdata;
+	reg  [1:0]  plxc_boot_st;
+	wire        has_frame_chrome;
+	wire [1:0]  osd_idle_chrome;
+	wire        fab_idle_phase_en;
+	wire        fab_idle_sig_en;
+	wire        fab_chrome_sig_en;
+	wire        fab_chrome_demo_en;
+	wire        fab_play_beacon_en;
+	// PLEX_FAB_IDLE and PLEX_FAB_CHROME are mutually exclusive integration demos.
+	// If both defined, IDLE wins (parent should enable one fit at a time).
+	// PLEX_FAB_PLAY_BEACON: lime 32×32 vsync-toggle marker for content-independent
+	// PLAYING motion. Allowed with CHROME or default path; forced off under IDLE.
+	//
+	// IDLE has_frame policy (rd-duck): never hardwire 0 forever on product IDLE —
+	// that steals video for the whole session. Product IDLE uses CDC(has_frame).
+	// PLEX_FAB_IDLE_FORCE = ARM-off capture milestone only (always paint idle).
+`ifdef PLEX_FAB_IDLE
+	assign fab_idle_phase_en = 1'b1;
+	assign osd_idle_chrome   = 2'b10; // screensaver
+	assign fab_idle_sig_en   = 1'b1;
+	assign fab_chrome_sig_en = 1'b0;
+	assign fab_chrome_demo_en= 1'b0;
+	assign fab_play_beacon_en= 1'b0;
+`ifdef PLEX_FAB_IDLE_FORCE
+	assign has_frame_chrome  = 1'b0; // ARM-off milestone only
+`else
+	assign has_frame_chrome  = has_frame_hdmi; // idle only when !has_frame
+`endif
+`elsif PLEX_FAB_CHROME
+	// Playback chrome demo: built-in STOPPED HUD + magenta TR/BL signature.
+	// has_frame=1 so idle plane stays off; video/din shows under the bar.
+	assign has_frame_chrome  = 1'b1;
+	assign fab_idle_phase_en = 1'b0;
+	assign osd_idle_chrome   = 2'b00;
+	assign fab_idle_sig_en   = 1'b0;
+	assign fab_chrome_sig_en = 1'b1;
+	assign fab_chrome_demo_en= 1'b1;
+`ifdef PLEX_FAB_PLAY_BEACON
+	assign fab_play_beacon_en= 1'b1;
+`else
+	assign fab_play_beacon_en= 1'b0;
+`endif
+`else
+	// PRODUCT COMPOSE (reconcile/720p integ): track real has_frame via CDC.
+	// idle_en = !has_frame && mode!=3 → fabric chevron when core has no frame.
+	// No cyan/magenta demo signatures (those need PLEX_FAB_* capture macros).
+	// Boot PLXC enable stays 0 (pass-through overlay) until ARM/loader commits.
+	assign has_frame_chrome  = has_frame_hdmi;
+	assign fab_idle_phase_en = 1'b1;
+	assign osd_idle_chrome   = 2'b00; // static chevron (mode 2 = screensaver drift)
+	assign fab_idle_sig_en   = 1'b0;
+	assign fab_chrome_sig_en = 1'b0;
+	assign fab_chrome_demo_en= 1'b0;
+`ifdef PLEX_FAB_PLAY_BEACON
+	assign fab_play_beacon_en= 1'b1;
+`else
+	assign fab_play_beacon_en= 1'b0;
+`endif
+`endif
+
+	// One-shot boot list push so list_we toggles after reset (RAM retention /
+	// anti-elision). Ctrl enable bit is 0 by default — only PLEX_FAB_BOOT_PLXC
+	// commits enable=1 (fit diagnostic glyph). Product ARM path uses PLXC_EXT_*.
+	always @(posedge clk_hdmi) begin
+		if (reset_req) begin
+			plxc_boot_st    <= 2'd0;
+			plxc_boot_we    <= 1'b0;
+			plxc_boot_addr  <= 8'd0;
+			plxc_boot_wdata <= 64'd0;
+		end else begin
+			plxc_boot_we <= 1'b0;
+			case (plxc_boot_st)
+				2'd0: begin
+					plxc_boot_we    <= 1'b1;
+					plxc_boot_addr  <= 8'd0;
+					// Glyph payload retained in list RAM for anti-elision; not shown
+					// unless enable=1 (BOOT_PLXC) or ARM/ext re-enables with count.
+					plxc_boot_wdata <= {8'h00, 8'h00, 8'h23, 16'd64, 16'd64, 8'd2};
+					plxc_boot_st    <= 2'd1;
+				end
+				2'd1: begin
+					plxc_boot_we    <= 1'b1;
+					plxc_boot_addr  <= 8'hFF;
+`ifdef PLEX_FAB_BOOT_PLXC
+					// Explicit fit macro: enable=1 count=1 (visible '#' diagnostic).
+					plxc_boot_wdata <= {16'd1, 14'd1, 1'b0, 1'b1, 32'h504C_5843};
+`else
+					// DEFAULT-OFF: magic+seq for list path exercise, enable=0.
+					plxc_boot_wdata <= {16'd1, 14'd0, 1'b0, 1'b0, 32'h504C_5843};
+`endif
+					plxc_boot_st    <= 2'd2;
+				end
+				default: begin
+					plxc_boot_we <= 1'b0;
+				end
+			endcase
+		end
+	end
+
+	assign plxc_host_we    = plxc_ext_we | plxc_boot_we;
+	assign plxc_host_addr  = plxc_ext_we ? plxc_ext_addr : plxc_boot_addr;
+	assign plxc_host_wdata = plxc_ext_we ? plxc_ext_wdata : plxc_boot_wdata;
+
+	wire        plex_chrome_list_we;
+	wire [7:0]  plex_chrome_list_waddr;
+	wire [63:0] plex_chrome_list_wdata;
+	wire        plxc_cfg_enable;
+	wire [15:0] plxc_cfg_seq;
+	wire [7:0]  plxc_cfg_cmd_count;
+	wire        plxc_idle_en;
+	wire [1:0]  plxc_idle_mode;
+	wire [15:0] plxc_idle_phase;
+
+	plex_chrome_host_if #(
+		.MAX_CMDS(112)
+	) u_plxc_if (
+		.clk(clk_hdmi),
+		.reset(reset_req),
+		.host_we(plxc_host_we),
+		.host_addr(plxc_host_addr),
+		.host_wdata(plxc_host_wdata),
+		.has_frame(has_frame_chrome),
+		.osd_idle_mode(osd_idle_chrome),
+		.idle_phase_in(16'd0),
+		.vsync_in(hdmi_vs_mask),
+		.fab_phase_en(fab_idle_phase_en),
+		.list_we(plex_chrome_list_we),
+		.list_waddr(plex_chrome_list_waddr),
+		.list_wdata(plex_chrome_list_wdata),
+		.cfg_enable(plxc_cfg_enable),
+		.cfg_seq(plxc_cfg_seq),
+		.cfg_cmd_count(plxc_cfg_cmd_count),
+		.idle_en(plxc_idle_en),
+		.idle_mode(plxc_idle_mode),
+		.idle_phase(plxc_idle_phase),
+		.chrome_hw_sticky(),
+		.plxo_seq()
+	);
+
+	plex_chrome #(
+		.BOOT_DEMO(0),
+		.MAX_CMDS(112),
+		.HIT_SCAN(48)
+	) u_plex_chrome (
+		.clk_hdmi(clk_hdmi),
+		.reset(reset_req),
+		.HDMI_WIDTH(hdmi_width),
+		.HDMI_HEIGHT(hdmi_height),
+		.din(hdmi_data_mask),
+		.hs_in(hdmi_hs_mask),
+		.vs_in(hdmi_vs_mask),
+		.de_in(hdmi_de_mask),
+		.dout(hdmi_data_chrome),
+		.hs_out(hdmi_hs_chrome),
+		.vs_out(hdmi_vs_chrome),
+		.de_out(hdmi_de_chrome),
+		.cfg_enable(plxc_cfg_enable),
+		.cfg_seq(plxc_cfg_seq),
+		.cfg_cmd_count(plxc_cfg_cmd_count),
+		.list_we(plex_chrome_list_we),
+		.list_waddr(plex_chrome_list_waddr),
+		.list_wdata(plex_chrome_list_wdata),
+		.idle_en(plxc_idle_en),
+		.idle_mode(plxc_idle_mode),
+		.idle_phase(plxc_idle_phase),
+		.idle_sig_en(fab_idle_sig_en),
+		.chrome_sig_en(fab_chrome_sig_en),
+		.chrome_demo_en(fab_chrome_demo_en),
+		.play_beacon_en(fab_play_beacon_en),
+		.chrome_hw(plex_chrome_hw),
+		.mon_width(plex_chrome_mon_w),
+		.mon_height(plex_chrome_mon_h),
+		.mon_body_scale(plex_chrome_mon_scale)
+	);
+
+	// Anti-elision keep-sink: mon_* / chrome_hw / sig enables were otherwise
+	// dangling and Quartus could drop them (and, with them, prove-nothing fits).
+	// XOR into RGB only when DE=0 so active video is bit-identical; blanking
+	// carries a sticky hash so the nets remain observable to the fitter.
+	// play_beacon_en folded in — default 0 does not change active-video path.
+	(* noprune *) (* preserve *) reg [23:0] chrome_keep_r;
+	always @(posedge clk_hdmi) begin
+		if (reset_req)
+			chrome_keep_r <= 24'd0;
+		else
+			chrome_keep_r <= chrome_keep_r
+				^ {plex_chrome_mon_w[11:0], plex_chrome_mon_h[11:0]}
+				^ {11'd0, plex_chrome_mon_scale[3:0],
+				   plex_chrome_hw, fab_idle_sig_en, fab_chrome_sig_en,
+				   fab_chrome_demo_en, fab_play_beacon_en, plxc_idle_en,
+				   fab_idle_phase_en, has_frame_chrome, 1'b1};
+	end
+	wire [23:0] hdmi_data_chrome_kept =
+		hdmi_de_chrome ? hdmi_data_chrome
+		               : (hdmi_data_chrome ^ chrome_keep_r);
+
 	wire [23:0] hdmi_data_osd;
 	wire        hdmi_de_osd, hdmi_vs_osd, hdmi_hs_osd;
 
@@ -1189,10 +1448,10 @@ cyclonev_hps_interface_peripheral_i2c hdmi_i2c
 		.io_din(io_din),
 
 		.clk_video(clk_hdmi),
-		.din(hdmi_data_mask),
-		.hs_in(hdmi_hs_mask),
-		.vs_in(hdmi_vs_mask),
-		.de_in(hdmi_de_mask),
+		.din(hdmi_data_chrome_kept),
+		.hs_in(hdmi_hs_chrome),
+		.vs_in(hdmi_vs_chrome),
+		.de_in(hdmi_de_chrome),
 
 		.dout(hdmi_data_osd),
 		.hs_out(hdmi_hs_osd),
@@ -1753,6 +2012,17 @@ wire [13:0] fb_stride;
 	assign fb_stride = 0;
 `endif
 
+// MiSTerPlex chrome: has_frame + PLXC beats from core (clk_sys).
+wire        has_frame_sys;
+wire        plxc_ext_we_sys;
+wire  [7:0] plxc_ext_addr_sys;
+wire [63:0] plxc_ext_wdata_sys;
+// plxc_ext_ready_sys driven by plex_chrome_plxc_cdc inside HDMI path.
+// Default only when HDMI path (and chrome) is compiled out.
+`ifdef MISTER_DEBUG_NOHDMI
+wire plxc_ext_ready_sys = 1'b1;
+`endif
+
 emu emu
 (
 	.CLK_50M(FPGA_CLK2_50),
@@ -1872,7 +2142,13 @@ emu emu
 	.UART_DSR(uart_dtr),
 
 	.USER_OUT(user_out),
-	.USER_IN(user_in)
+	.USER_IN(user_in),
+
+	.HAS_FRAME(has_frame_sys),
+	.PLXC_EXT_WE(plxc_ext_we_sys),
+	.PLXC_EXT_ADDR(plxc_ext_addr_sys),
+	.PLXC_EXT_WDATA(plxc_ext_wdata_sys),
+	.PLXC_EXT_READY(plxc_ext_ready_sys)
 );
 
 endmodule

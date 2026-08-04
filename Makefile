@@ -86,6 +86,10 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_pl330_encode $(ROOT)/b
 	$(ROOT)/build/test_osd_control
 	bash $(ROOT)/tests/unit/test_osd_menu_red.sh
 	bash $(ROOT)/tests/unit/test_quartus_sv_subset_abc.sh
+	python3 $(ROOT)/tests/unit/test_plex_chrome_write_path_static.py
+	python3 $(ROOT)/tests/unit/test_plex_chrome_default_off_static.py
+	python3 $(ROOT)/tests/unit/test_plex_chrome_compose_static.py
+	python3 $(ROOT)/tests/unit/test_plex_chrome_geom_audit_static.py
 	bash $(ROOT)/tests/unit/test_present_default_fpga.sh
 	$(ROOT)/build/test_last_frame_latch
 	bash $(ROOT)/tests/unit/test_last_frame_latch_red.sh
@@ -250,6 +254,8 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_pl330_encode $(ROOT)/b
 	$(ROOT)/tests/unit/test_ddr_frame_store_plxd_handshake.sh
 	$(ROOT)/tests/unit/test_ddr_frame_store_scanout_colour.sh
 	$(ROOT)/scripts/rtl_lint.py
+	$(ROOT)/tests/unit/test_plex_chrome_rtl_sim.sh
+	$(ROOT)/tests/unit/test_plex_chrome_idle720_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_syntax_primitives_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_sps_geometry_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_baseline_syntax_rtl_sim.sh
