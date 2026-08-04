@@ -20,13 +20,35 @@
 // ALM of consequence and would soft-upscale chrome 1.333× — refuse unless a
 // measured fit forces pre-ascal insertion.
 //
-// === REFRESH HONESTY (parent 2026-08-04 16.16 Hz trap) =======================
+// === REFRESH HONESTY + RASTER TOTALS (parent 2026-08-04) =======================
 // This module clocks on clk_hdmi (post-ascal glass). Refresh = HDMI video_mode
-// rate (typically 60 Hz @1280×720 from HPS), NOT core present clk_pix.
-// The 16.16 Hz failure mode is CORE_DE same-clock CEA totals @20 MHz:
-//   fps_eff = 20e6/(1650*750) ≈ 16.16 — real 1280×720 DE, wrong refresh.
+// rate (typically ~60 Hz @1280×720 from HPS), NOT core present clk_pix.
+// Product chrome uses ACTIVE beam only (HDMI_WIDTH/HEIGHT = H_ACTIVE×V_ACTIVE).
+// It never reads H_TOTAL/V_TOTAL — centering is (H_ACTIVE-size)/2, not H_TOTAL.
+//
+// CORE_DE compact 720p24 raster (w-clock; do NOT conflate with glass HDMI):
+//   ACTIVE 1280×720 UNCHANGED.
+//   NEW (fit-viable integer-N): clk_pix=28.800000 MHz, H_TOTAL=1600, V_TOTAL=750
+//     1600*750*24 = 28_800_000 EXACT → 24.000 Hz. H_BLANK = 1600-1280 = **320**.
+//   RETIRED compact: H_TOTAL=1650 @ 29.7 MHz (PLL-impossible on shared VCO with
+//     20/90). Do not reintroduce 1650 as "the" 720p24 total.
+//   STILL LEGITIMATE: CEA-861 VIC4 720p60 H_TOTAL=1650 @ 74.25 MHz — different
+//     mode; never blind-replace every 1650 literal in the tree.
+//   CEA VIC60 true 720p24: H_TOTAL=3300 @ 59.4 MHz (double H blank).
+// Same-clock @20 MHz still photographs as success:
+//   fps_eff = 20e6/(H_TOTAL*V_TOTAL) → ~16.7 Hz @1600×750 (was ~16.16 @1650).
 // Still frames cannot tell 16 from 24. Chrome "720p geometry PASS" is NOT a
-// claim that CORE_DE is 24 fps. w-clock owns PRESENT_CLK_PIX_PLL @29.7 MHz.
+// claim that CORE_DE is 24 fps. w-clock owns clk_pix recipe + status FPS gate.
+//
+// === H-BLANK BUDGET (CORE_DE 720p24 = 320 px) =================================
+// Product insertion is HDMI_OUT (ascal glass blanking, not CORE_DE 320).
+// If chrome were ever moved pre-ascal onto CORE_DE 720p24, worst-case work in
+// H blank is still tiny vs 320:
+//   EOL: 1 cycle (de fall → y_cnt++) · no line-buffer prefetch · no turnaround FSM
+//   list_we: ≤1 write/clk, host/CDC paced (HIT_SCAN=48 → 48 cyc if jammed in blank)
+//   VS bank swap: 1 cycle on vs_rise (V blank, not H)
+//   mon_*/keep-sink: concurrent always blocks, not blank-gated
+// BLOCKING only if any path needs >320 H-blank cycles — product needs **1** (EOL).
 //
 // Geometry: paint beam W/H are 12-bit (0..4095). body_scale from layout_h
 // (half-even /240, clamp 2..8) → scale=3 @720p HDMI_OUT, scale=2 @540 CORE_DE.
@@ -116,7 +138,17 @@ module plex_chrome #(
     // Red-twin: 10-bit beam X counter (0..1023). Wraps before 1280 — proves the
     // product 12-bit path is load-bearing at HDMI_OUT 720p. Default 0 = product.
     // Note: 11 bits hold 0..2047 so 1280 alone is NOT the trap; 10-bit is.
-    parameter bit FAULT_NARROW_BEAM_X = 1'b0
+    parameter bit FAULT_NARROW_BEAM_X = 1'b0,
+    // Red-twin: derive layout_w from a *total* (H_TOTAL) instead of H_ACTIVE.
+    // Compact 720p24 product total is 1600 (parent 2026-08-04); retired 1650
+    // differs by 50 blank px. Centering on H_TOTAL mis-places the chevron
+    // (ox=(1600-240)/2=680 vs product (1280-240)/2=520). Default 0 = product
+    // (ACTIVE only). Mutually exclusive with other layout faults in the mux.
+    parameter bit FAULT_LAYOUT_FROM_HTOTAL = 1'b0,
+    // Which total the HTOTAL fault uses. Default 1600 = current 720p24 compact.
+    // 1650 remains a valid CEA VIC4 constant elsewhere — only this fault path
+    // may consume it as a *layout* width, and only when explicitly set.
+    parameter int FAULT_HTOTAL_W = 1600
 ) (
     input  wire        clk_hdmi,
     input  wire        reset,
@@ -181,14 +213,18 @@ module plex_chrome #(
     endfunction
 
     // Active *layout* canvas for paint (idle / demo HUD / beacon / glyph scale).
-    // Product: layout == paint beam (HDMI_WIDTH/HEIGHT). Faults force a wrong
-    // domain so red-twins catch silent geometry bugs:
+    // Product: layout == paint beam ACTIVE (HDMI_WIDTH/HEIGHT). Never H_TOTAL.
+    // Faults force a wrong domain so red-twins catch silent geometry bugs:
     //   FAULT_LEGACY_480P_LAYOUT     → 624×480 math on true beam
     //   FAULT_HDMI_LAYOUT_ON_CORE_DE → 1280 math on CORE_DE beam (domain pin;
     //                                  guards pre-ascal soften, not product overflow)
+    //   FAULT_LAYOUT_FROM_HTOTAL     → layout_w = FAULT_HTOTAL_W (default 1600)
+    //                                  while mon/beam stay H_ACTIVE — proves
+    //                                  total-derived centering is load-bearing wrong
     wire [11:0] layout_w =
         FAULT_LEGACY_480P_LAYOUT     ? 12'd624  :
         FAULT_HDMI_LAYOUT_ON_CORE_DE ? 12'd1280 :
+        FAULT_LAYOUT_FROM_HTOTAL     ? FAULT_HTOTAL_W[11:0] :
                                        HDMI_WIDTH;
     wire [11:0] layout_h =
         FAULT_LEGACY_480P_LAYOUT     ? 12'd480 :

@@ -2,10 +2,11 @@
 """Static geometry audit for plex_chrome HDMI_OUT 720p path (w-osd).
 
 Positive: product counters are 12-bit (or wider via XW=12), layout from
-HDMI_WIDTH/HEIGHT ports, no bare 640/480 paint canvas, compose present.
+HDMI_WIDTH/HEIGHT ACTIVE ports (not H_TOTAL), no bare 640/480 paint canvas,
+compose present. Documents 720p24 compact totals (1600×750@28.8) vs ACTIVE.
 
-Negative: FAULT_NARROW_BEAM_X must exist (10b wrap trap); a shelfware 10-bit
-product x_cnt without the fault parameter must fail this gate.
+Negative: FAULT_NARROW_BEAM_X (10b wrap); FAULT_LAYOUT_FROM_HTOTAL must drive
+layout_w (total-derived centering trap). Dead fault params fail this gate.
 
 true rc: python3 ...; echo "true rc=$?"
 """
@@ -50,9 +51,9 @@ def main() -> int:
             "plex_chrome.sv: HDMI_WIDTH[11:0]",
         ),
         (
-            "layout tracks beam",
-            r"layout_w\s*=\s*[\s\S]{0,200}?HDMI_WIDTH",
-            "plex_chrome.sv: layout_w ← HDMI_WIDTH (product)",
+            "layout tracks beam ACTIVE",
+            r"layout_w\s*=\s*[\s\S]{0,400}?HDMI_WIDTH",
+            "plex_chrome.sv: layout_w ← HDMI_WIDTH (product ACTIVE)",
         ),
         (
             "body_scale /240",
@@ -70,6 +71,16 @@ def main() -> int:
             "plex_chrome.sv: FAULT_NARROW_BEAM_X default 0",
         ),
         (
+            "htotal layout fault present",
+            r"parameter\s+bit\s+FAULT_LAYOUT_FROM_HTOTAL\s*=\s*1'b0",
+            "plex_chrome.sv: FAULT_LAYOUT_FROM_HTOTAL default 0",
+        ),
+        (
+            "htotal default 1600 compact",
+            r"parameter\s+int\s+FAULT_HTOTAL_W\s*=\s*1600",
+            "plex_chrome.sv: FAULT_HTOTAL_W=1600 (720p24 compact)",
+        ),
+        (
             "compose chain",
             r"u_plex_chrome",
             "sys_top.v: u_plex_chrome instance",
@@ -82,6 +93,10 @@ def main() -> int:
     ]
 
     print("=== chrome 720p geometry audit ===")
+    print(
+        "ACTIVE 1280×720 | CORE_DE compact H_TOTAL=1600 V_TOTAL=750 @28.8 MHz "
+        "(H_BLANK=320); retired compact 1650 blank=370; CEA VIC4 1650@74.25 still ok"
+    )
     for name, pat, where in checks:
         if "sys_top" in where:
             src = SYS
@@ -103,10 +118,17 @@ def main() -> int:
 
     # Bare screen-dimension literals used as paint canvas (not fault/layout helpers)
     # Allow FAULT_* and comments; reject `HDMI_WIDTH = 12'd640` style product pins.
-    if re.search(r"HDMI_WIDTH\s*=\s*12'd(?:640|624|480)\b", CHROME):
-        fail("HDMI_WIDTH hardcoded to legacy width")
+    if re.search(r"HDMI_WIDTH\s*=\s*12'd(?:640|624|480|1600|1650)\b", CHROME):
+        fail("HDMI_WIDTH hardcoded to legacy/total width")
     else:
-        ok("HDMI_WIDTH not hardcoded legacy")
+        ok("HDMI_WIDTH not hardcoded legacy/total")
+
+    # H_TOTAL-derived values: product must NOT center on total.
+    # idle_ox uses layout_w; product layout_w = HDMI_WIDTH (ACTIVE).
+    if not re.search(r"idle_ox\s*=\s*\(layout_w\s*-", CHROME):
+        fail("idle_ox not from layout_w (expected ACTIVE-centered)")
+    else:
+        ok("idle_ox from layout_w (ACTIVE when faults off)")
 
     # Pipeline: 1-cycle dout — comment contract
     if "1-cycle" not in CHROME and "1 cycle" not in CHROME:
@@ -114,13 +136,34 @@ def main() -> int:
     else:
         ok("1-cycle pipeline contract mentioned")
 
-    # NEGATIVE: fault param must be referenced in XW (not dead)
+    # NEGATIVE: fault params must drive logic (not dead)
     if "FAULT_NARROW_BEAM_X" in CHROME and not re.search(
         r"XW\s*=\s*FAULT_NARROW_BEAM_X", CHROME
     ):
         fail("FAULT_NARROW_BEAM_X declared but not driving XW (tautological)")
     else:
         ok("FAULT_NARROW_BEAM_X drives XW")
+
+    if not re.search(
+        r"FAULT_LAYOUT_FROM_HTOTAL\s*\?\s*FAULT_HTOTAL_W", CHROME
+    ):
+        fail("FAULT_LAYOUT_FROM_HTOTAL declared but not driving layout_w")
+    else:
+        ok("FAULT_LAYOUT_FROM_HTOTAL drives layout_w")
+
+    # Math control: ACTIVE vs TOTAL origins (not executed RTL — arithmetic pin)
+    size = min(1280, 720) // 3  # 240
+    ox_act = (1280 - size) // 2  # 520
+    ox_1600 = (1600 - size) // 2  # 680
+    ox_1650 = (1650 - size) // 2  # 705
+    if ox_act != 520 or ox_1600 != 680:
+        fail(f"origin math drift act={ox_act} tot1600={ox_1600}")
+    else:
+        ok(f"origin math ACTIVE ox={ox_act} HTOTAL1600 ox={ox_1600} (Δ{ox_1600 - ox_act})")
+    if (ox_1650 - ox_1600) != 25:
+        fail(f"1650→1600 center delta expected 25 got {ox_1650 - ox_1600}")
+    else:
+        ok("1650→1600 center Δ=25; blank Δ=50 (parent blank shrink)")
 
     if fails:
         print(f"test_plex_chrome_geom_audit_static: {fails} FAIL(s)", file=sys.stderr)

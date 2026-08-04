@@ -10,7 +10,12 @@ paint beam, not STORAGE and not “HDMI constants while beam is CORE_DE”.
 |--------|---------------------|-------|---------|
 | **STORAGE** | 960×540 I420, 777 600 B | w-mem bank / ARM decode | **Never** PLXC canvas |
 | **CORE_DE** | 960×540 DE @ 24/30 Hz | core → ascal | Only if chrome moves **pre**-ascal |
-| **HDMI_OUT** | 1280×720@60 post-ascal | HPS `video_mode` + ascal | **Product paint** |
+| **HDMI_OUT** | 1280×720 ACTIVE post-ascal (~60 Hz glass) | HPS `video_mode` + ascal | **Product paint** (ACTIVE only; not CORE_DE H_TOTAL) |
+
+CORE_DE compact 720p24 raster (w-clock, not chrome ports): **H_TOTAL=1600,
+V_TOTAL=750, clk_pix=28.8 MHz** exact 24.000 Hz. H_BLANK=320 (was 370 under
+retired 1650@29.7). ACTIVE stays 1280×720. CEA VIC4 still uses H_TOTAL=1650 at
+74.25 MHz — do not blind-replace every 1650.
 
 Same numbers can appear in two domains (960×540 is STORAGE *and* CORE_DE). The
 **name** is the contract — size alone is not enough.

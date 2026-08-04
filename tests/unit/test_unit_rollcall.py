@@ -125,6 +125,7 @@ EXPECTED_COMMANDS = [
     "python3 $(ROOT)/tests/unit/test_plex_chrome_default_off_static.py",
     "python3 $(ROOT)/tests/unit/test_plex_chrome_compose_static.py",
     "python3 $(ROOT)/tests/unit/test_plex_chrome_geom_audit_static.py",
+    "python3 $(ROOT)/tests/unit/test_plex_chrome_blanking_budget_static.py",
     "$(ROOT)/tests/unit/test_plex_chrome_rtl_sim.sh",
     "$(ROOT)/tests/unit/test_plex_chrome_idle720_rtl_sim.sh",
     "bash $(ROOT)/tests/unit/test_present_default_fpga.sh",

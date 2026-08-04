@@ -3,6 +3,7 @@
 // FAULT_LEGACY_480P_LAYOUT=1: beam 1280×720, paint 480p-derived.
 // FAULT_HDMI_LAYOUT_ON_CORE_DE=1: beam CORE_DE 960×540, paint HDMI 1280×720 math
 //   (ascal-pivot class — wrong domain).
+// FAULT_LAYOUT_FROM_HTOTAL=1: layout_w from H_TOTAL (default 1600) not H_ACTIVE.
 // CORE_DE_BEAM=1 (green optional): beam+layout 960×540 (pre-ascal insertion sim).
 `timescale 1ns / 1ps
 
@@ -11,6 +12,8 @@ module plex_chrome_idle720_tb #(
     parameter bit FAULT_LEGACY_480P_LAYOUT = 1'b0,
     parameter bit FAULT_HDMI_LAYOUT_ON_CORE_DE = 1'b0,
     parameter bit FAULT_NARROW_BEAM_X = 1'b0,
+    parameter bit FAULT_LAYOUT_FROM_HTOTAL = 1'b0,
+    parameter int FAULT_HTOTAL_W = 1600,
     parameter bit CORE_DE_BEAM = 1'b0,
     parameter int PX_PER_CLK = 1
 ) (
@@ -88,7 +91,9 @@ module plex_chrome_idle720_tb #(
         .PX_PER_CLK(PX_PER_CLK),
         .FAULT_LEGACY_480P_LAYOUT(FAULT_LEGACY_480P_LAYOUT),
         .FAULT_HDMI_LAYOUT_ON_CORE_DE(FAULT_HDMI_LAYOUT_ON_CORE_DE),
-        .FAULT_NARROW_BEAM_X(FAULT_NARROW_BEAM_X)
+        .FAULT_NARROW_BEAM_X(FAULT_NARROW_BEAM_X),
+        .FAULT_LAYOUT_FROM_HTOTAL(FAULT_LAYOUT_FROM_HTOTAL),
+        .FAULT_HTOTAL_W(FAULT_HTOTAL_W)
     ) u_chrome (
         .clk_hdmi(clk),
         .reset(reset),

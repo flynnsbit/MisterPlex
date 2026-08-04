@@ -42,8 +42,13 @@ VFLAGS=(--cc --exe --build --top-module plex_chrome_idle720_tb
 BUILD_RED="$ROOT/build/verilator/plex_chrome_idle720_red"
 mkdir -p "$BUILD_RED"
 echo "=== BUILD idle720 RED (FAULT_480P_GEOM=1) ===" >&2
+G0=(-GFAULT_480P_GEOM=0 -GFAULT_LEGACY_480P_LAYOUT=0 \
+  -GFAULT_HDMI_LAYOUT_ON_CORE_DE=0 -GFAULT_NARROW_BEAM_X=0 \
+  -GFAULT_LAYOUT_FROM_HTOTAL=0 -GCORE_DE_BEAM=0)
+
 "$RUN" "${VFLAGS[@]}" -GFAULT_480P_GEOM=1 -GFAULT_LEGACY_480P_LAYOUT=0 \
-  -GFAULT_HDMI_LAYOUT_ON_CORE_DE=0 -GFAULT_NARROW_BEAM_X=0 -GCORE_DE_BEAM=0 \
+  -GFAULT_HDMI_LAYOUT_ON_CORE_DE=0 -GFAULT_NARROW_BEAM_X=0 \
+  -GFAULT_LAYOUT_FROM_HTOTAL=0 -GCORE_DE_BEAM=0 \
   --Mdir "$BUILD_RED" "${SV[@]}"
 echo "=== RUN idle720 RED ===" >&2
 set +e
@@ -60,7 +65,8 @@ BUILD_LEG="$ROOT/build/verilator/plex_chrome_idle720_legacy"
 mkdir -p "$BUILD_LEG"
 echo "=== BUILD idle720 LEGACY (FAULT_LEGACY_480P_LAYOUT=1) ===" >&2
 "$RUN" "${VFLAGS[@]}" -GFAULT_480P_GEOM=0 -GFAULT_LEGACY_480P_LAYOUT=1 \
-  -GFAULT_HDMI_LAYOUT_ON_CORE_DE=0 -GFAULT_NARROW_BEAM_X=0 -GCORE_DE_BEAM=0 \
+  -GFAULT_HDMI_LAYOUT_ON_CORE_DE=0 -GFAULT_NARROW_BEAM_X=0 \
+  -GFAULT_LAYOUT_FROM_HTOTAL=0 -GCORE_DE_BEAM=0 \
   --Mdir "$BUILD_LEG" "${SV[@]}"
 
 echo "=== RUN idle720 LEGACY ===" >&2
@@ -80,7 +86,8 @@ BUILD_HOD="$ROOT/build/verilator/plex_chrome_idle720_hdmi_on_de"
 mkdir -p "$BUILD_HOD"
 echo "=== BUILD idle720 HDMI_ON_DE (FAULT_HDMI_LAYOUT_ON_CORE_DE=1) ===" >&2
 "$RUN" "${VFLAGS[@]}" -GFAULT_480P_GEOM=0 -GFAULT_LEGACY_480P_LAYOUT=0 \
-  -GFAULT_HDMI_LAYOUT_ON_CORE_DE=1 -GFAULT_NARROW_BEAM_X=0 -GCORE_DE_BEAM=0 \
+  -GFAULT_HDMI_LAYOUT_ON_CORE_DE=1 -GFAULT_NARROW_BEAM_X=0 \
+  -GFAULT_LAYOUT_FROM_HTOTAL=0 -GCORE_DE_BEAM=0 \
   --Mdir "$BUILD_HOD" "${SV[@]}"
 
 echo "=== RUN idle720 HDMI_ON_DE ===" >&2
@@ -100,7 +107,8 @@ BUILD_CDE="$ROOT/build/verilator/plex_chrome_idle720_corede"
 mkdir -p "$BUILD_CDE"
 echo "=== BUILD idle720 CORE_DE green ===" >&2
 "$RUN" "${VFLAGS[@]}" -GFAULT_480P_GEOM=0 -GFAULT_LEGACY_480P_LAYOUT=0 \
-  -GFAULT_HDMI_LAYOUT_ON_CORE_DE=0 -GFAULT_NARROW_BEAM_X=0 -GCORE_DE_BEAM=1 \
+  -GFAULT_HDMI_LAYOUT_ON_CORE_DE=0 -GFAULT_NARROW_BEAM_X=0 \
+  -GFAULT_LAYOUT_FROM_HTOTAL=0 -GCORE_DE_BEAM=1 \
   --Mdir "$BUILD_CDE" "${SV[@]}"
 
 echo "=== RUN idle720 CORE_DE ===" >&2
@@ -120,7 +128,8 @@ BUILD_NX="$ROOT/build/verilator/plex_chrome_idle720_narrow_x"
 mkdir -p "$BUILD_NX"
 echo "=== BUILD idle720 NARROW_X (FAULT_NARROW_BEAM_X=1) ===" >&2
 "$RUN" "${VFLAGS[@]}" -GFAULT_480P_GEOM=0 -GFAULT_LEGACY_480P_LAYOUT=0 \
-  -GFAULT_HDMI_LAYOUT_ON_CORE_DE=0 -GFAULT_NARROW_BEAM_X=1 -GCORE_DE_BEAM=0 \
+  -GFAULT_HDMI_LAYOUT_ON_CORE_DE=0 -GFAULT_NARROW_BEAM_X=1 \
+  -GFAULT_LAYOUT_FROM_HTOTAL=0 -GCORE_DE_BEAM=0 \
   --Mdir "$BUILD_NX" "${SV[@]}"
 
 echo "=== RUN idle720 NARROW_X ===" >&2
@@ -135,13 +144,32 @@ assert_sim_executed "idle720-narrow-x" "$OUT_NX" \
   "plex_chrome_idle720_tb: PASS (narrow 10b X fault engaged)"
 [[ "$RC_NX" -eq 0 ]] || { echo "FAIL narrow_x rc=$RC_NX" >&2; exit "$RC_NX"; }
 
+# --- HTOTAL RED: layout_w from H_TOTAL=1600 (compact 720p24) not H_ACTIVE ---
+BUILD_HT="$ROOT/build/verilator/plex_chrome_idle720_htotal"
+mkdir -p "$BUILD_HT"
+echo "=== BUILD idle720 HTOTAL (FAULT_LAYOUT_FROM_HTOTAL=1 W=1600) ===" >&2
+"$RUN" "${VFLAGS[@]}" -GFAULT_480P_GEOM=0 -GFAULT_LEGACY_480P_LAYOUT=0 \
+  -GFAULT_HDMI_LAYOUT_ON_CORE_DE=0 -GFAULT_NARROW_BEAM_X=0 \
+  -GFAULT_LAYOUT_FROM_HTOTAL=1 -GFAULT_HTOTAL_W=1600 -GCORE_DE_BEAM=0 \
+  --Mdir "$BUILD_HT" "${SV[@]}"
+
+echo "=== RUN idle720 HTOTAL ===" >&2
+set +e
+OUT_HT="$(IDLE720_MODE=htotal "$BUILD_HT/Vplex_chrome_idle720_tb" 2>&1)"
+RC_HT=$?
+set -e
+printf '%s\n' "$OUT_HT"
+echo "idle720_htotal true rc=$RC_HT"
+assert_sim_executed "idle720-htotal" "$OUT_HT" \
+  "PASS idle720-htotal-layout-fault" \
+  "plex_chrome_idle720_tb: PASS (H_TOTAL layout fault engaged)"
+[[ "$RC_HT" -eq 0 ]] || { echo "FAIL htotal rc=$RC_HT" >&2; exit "$RC_HT"; }
+
 # --- GREEN: full HDMI_OUT 720p idle (product insertion) ---
 BUILD_G="$ROOT/build/verilator/plex_chrome_idle720"
 mkdir -p "$BUILD_G"
 echo "=== BUILD idle720 GREEN (HDMI_OUT) ===" >&2
-"$RUN" "${VFLAGS[@]}" -GFAULT_480P_GEOM=0 -GFAULT_LEGACY_480P_LAYOUT=0 \
-  -GFAULT_HDMI_LAYOUT_ON_CORE_DE=0 -GFAULT_NARROW_BEAM_X=0 -GCORE_DE_BEAM=0 \
-  --Mdir "$BUILD_G" "${SV[@]}"
+"$RUN" "${VFLAGS[@]}" "${G0[@]}" --Mdir "$BUILD_G" "${SV[@]}"
 
 echo "=== RUN idle720 GREEN ===" >&2
 set +e
@@ -154,6 +182,24 @@ assert_sim_executed "idle720-green" "$OUT_G" \
   "PASS idle720-geom" "PASS idle720-phase" "PASS idle720-screensaver-motion" \
   "PASS idle720-subsample" "plex_chrome_idle720_tb: PASS"
 [[ "$RC_G" -eq 0 ]] || { echo "FAIL green rc=$RC_G" >&2; exit "$RC_G"; }
+
+# --- blank320 POSITIVE: H_BLANK=320 pacing (CORE_DE 720p24) must keep geom ---
+BUILD_B="$ROOT/build/verilator/plex_chrome_idle720_blank320"
+mkdir -p "$BUILD_B"
+echo "=== BUILD idle720 BLANK320 ===" >&2
+"$RUN" "${VFLAGS[@]}" "${G0[@]}" --Mdir "$BUILD_B" "${SV[@]}"
+
+echo "=== RUN idle720 BLANK320 ===" >&2
+set +e
+OUT_B="$(IDLE720_MODE=blank320 "$BUILD_B/Vplex_chrome_idle720_tb" 2>&1)"
+RC_B=$?
+set -e
+printf '%s\n' "$OUT_B"
+echo "idle720_blank320 true rc=$RC_B"
+assert_sim_executed "idle720-blank320" "$OUT_B" \
+  "PASS idle720-blank320" \
+  "plex_chrome_idle720_tb: PASS (blank320)"
+[[ "$RC_B" -eq 0 ]] || { echo "FAIL blank320 rc=$RC_B" >&2; exit "$RC_B"; }
 
 echo "test_plex_chrome_idle720_rtl_sim: PASS"
 exit 0

@@ -90,6 +90,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_pl330_encode $(ROOT)/b
 	python3 $(ROOT)/tests/unit/test_plex_chrome_default_off_static.py
 	python3 $(ROOT)/tests/unit/test_plex_chrome_compose_static.py
 	python3 $(ROOT)/tests/unit/test_plex_chrome_geom_audit_static.py
+	python3 $(ROOT)/tests/unit/test_plex_chrome_blanking_budget_static.py
 	bash $(ROOT)/tests/unit/test_present_default_fpga.sh
 	$(ROOT)/build/test_last_frame_latch
 	bash $(ROOT)/tests/unit/test_last_frame_latch_red.sh

@@ -40,14 +40,16 @@ RTL still decoding geom at +0x130 is a hard integration blocker.
 
 | Item | Value |
 |------|-------|
-| Canvas | `HDMI_WIDTH=1280`, `HDMI_HEIGHT=720` |
+| Canvas | `HDMI_WIDTH=1280`, `HDMI_HEIGHT=720` (**H_ACTIVE×V_ACTIVE only**) |
+| Totals | Chrome **does not** read H_TOTAL/V_TOTAL. CORE_DE compact 720p24 is **1600×750 @ 28.8 MHz** (H_BLANK=320). Retired compact 1650@29.7; CEA VIC4 1650@74.25 still legitimate elsewhere. |
 | `body_scale` | half-even H/240 → **3** @720 |
 | Logo size | `min(W,H)/3` → **240** |
-| Origin | `((W-size)/2, (H-size)/2)` → **(520, 240)** |
+| Origin | `((W_ACTIVE-size)/2, (H_ACTIVE-size)/2)` → **(520, 240)** — never `(H_TOTAL-size)/2` (that is 680 @1600) |
 | Stroke | `max(1, size/5)` → **48** |
 | Colours | bg `24'h1F_23_26`, chevron `24'hE5_A0_0D` |
 | **Fabric signature** | cyan `24'h00_C8_FF` L-brackets TL+BR (64×12) when `idle_sig_en` — **ARM never paints** |
 | ARM | zero idle pixels when plane live (`chromePlaneLive`) |
+| H-blank budget | Product on HDMI_OUT. Pre-ascal CORE_DE 720p24: EOL **1** cycle vs **320** blank; list jam ≤48 still fits. **Not blocking.** |
 | Memory | **M10K LB 6** (list 2+2 + CDC 2; font/idle 0). Not bit-ceil. See `plex_chrome.sv` header: handbook max width 40b; prior 3–5 EST retired. Physical blocks **unmeasured** (no fit). |
 
 Parent capture PASS/FAIL: **`docs/fab-idle-parent-capture-contract.md`**.

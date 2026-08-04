@@ -28,8 +28,13 @@ static void tick(Vplex_chrome_idle720_tb* t) {
 
 // Drive to absolute pixel (x,y) with DE; return dout after 1-cycle chrome pipe.
 // Assumes PPC=1. Resets beam via vs edge then walks. Line width from mon_width.
-static uint32_t sampleAt(Vplex_chrome_idle720_tb* t, int tx, int ty, uint32_t din_color) {
+// h_blank_cycles: clocks with de=0 after each active line (CORE_DE 720p24 = 320).
+// Product chrome only needs 1 EOL cycle; exercising 320 proves no blank starvation.
+static uint32_t sampleAt(Vplex_chrome_idle720_tb* t, int tx, int ty, uint32_t din_color,
+                         int h_blank_cycles = 1) {
     const int line_w = static_cast<int>(t->mon_width) > 0 ? static_cast<int>(t->mon_width) - 1 : 1279;
+    if (h_blank_cycles < 1)
+        h_blank_cycles = 1;
     // vs rising resets counters
     t->de_in = 0;
     t->vs_in = 0;
@@ -51,9 +56,11 @@ static uint32_t sampleAt(Vplex_chrome_idle720_tb* t, int tx, int ty, uint32_t di
                 last = static_cast<uint32_t>(t->dout) & 0xFFFFFFu;
         }
         t->de_in = 0;
-        tick(t);
-        if (t->de_out)
-            last = static_cast<uint32_t>(t->dout) & 0xFFFFFFu;
+        for (int b = 0; b < h_blank_cycles; ++b) {
+            tick(t);
+            if (t->de_out)
+                last = static_cast<uint32_t>(t->dout) & 0xFFFFFFu;
+        }
     }
     return last;
 }
@@ -88,6 +95,10 @@ int main(int argc, char** argv) {
     const bool expect_corede = mode && std::strcmp(mode, "corede") == 0;
     // 10-bit X counter wraps at 1024 — right-edge glass must not match product.
     const bool expect_narrow_x = mode && std::strcmp(mode, "narrow_x") == 0;
+    // layout_w from H_TOTAL=1600 (compact 720p24) instead of H_ACTIVE=1280.
+    const bool expect_htotal = mode && std::strcmp(mode, "htotal") == 0;
+    // Green stress: walk beam with CORE_DE 720p24 H_BLANK=320 between lines.
+    const bool expect_blank320 = mode && std::strcmp(mode, "blank320") == 0;
 
     auto* t = new Vplex_chrome_idle720_tb;
     t->reset = 1;
@@ -231,6 +242,64 @@ int main(int argc, char** argv) {
             return 1;
         }
         std::fprintf(stderr, "plex_chrome_idle720_tb: PASS (narrow 10b X fault engaged)\n");
+        return 0;
+    }
+
+    if (expect_htotal) {
+        // mon stays 1280×720 (ACTIVE). Fault paints from H_TOTAL=1600 layout:
+        // size=min(1600,720)/3=240  ox=(1600-240)/2=680  oy=(720-240)/2=240
+        // Product ox=520. Amber at 680, not 520. (1650 would be ox=705; Δ blank=50.)
+        std::fprintf(stderr, "=== idle720 H_TOTAL-layout red-twin (1600) ===\n");
+        t->idle_sig_en = 0;
+        for (int i = 0; i < 2; ++i)
+            tick(t);
+        constexpr int kOxAct = 520, kOy = 240;
+        constexpr int kOxTot = 680; // (1600-240)/2
+        const uint32_t at_act = sampleAt(t, kOxAct, kOy, 0x00FF00);
+        const uint32_t at_tot = sampleAt(t, kOxTot, kOy, 0x00FF00);
+        std::fprintf(stderr, "htotal pix (520,240)=%06x (680,240)=%06x\n", at_act, at_tot);
+        if (at_act == 0xE5A00D)
+            fail("htotal fault still paints amber at H_ACTIVE chevron origin");
+        if (at_tot != 0xE5A00D)
+            fail("htotal fault must paint amber at H_TOTAL-derived origin 680");
+        if (fails == 0)
+            std::fprintf(stderr, "PASS idle720-htotal-layout-fault\n");
+        delete t;
+        if (fails) {
+            std::fprintf(stderr, "plex_chrome_idle720_tb HTOTAL: %d FAIL(s)\n", fails);
+            return 1;
+        }
+        std::fprintf(stderr, "plex_chrome_idle720_tb: PASS (H_TOTAL layout fault engaged)\n");
+        return 0;
+    }
+
+    if (expect_blank320) {
+        // Positive: product geometry survives CORE_DE 720p24 H_BLANK=320 pacing.
+        std::fprintf(stderr, "=== idle720 blank320 (H_BLANK=320 stress) ===\n");
+        t->idle_sig_en = 1;
+        for (int i = 0; i < 2; ++i)
+            tick(t);
+        constexpr int kBlank = 320;
+        constexpr int kOx = 520, kOy = 240;
+        const uint32_t c00 = sampleAt(t, 0, 0, 0x00FF00, kBlank);
+        const uint32_t c_br = sampleAt(t, 1279, 719, 0x00FF00, kBlank);
+        const uint32_t c_tl = sampleAt(t, kOx, kOy, 0x00FF00, kBlank);
+        std::fprintf(stderr, "blank320 pix (0,0)=%06x (1279,719)=%06x (520,240)=%06x\n",
+                     c00, c_br, c_tl);
+        if (c00 != 0x00C8FF)
+            fail("blank320 TL cyan");
+        if (c_br != 0x00C8FF)
+            fail("blank320 BR cyan (y_cnt must survive 320-cycle H blank)");
+        if (c_tl != 0xE5A00D)
+            fail("blank320 amber at ACTIVE origin");
+        if (fails == 0)
+            std::fprintf(stderr, "PASS idle720-blank320\n");
+        delete t;
+        if (fails) {
+            std::fprintf(stderr, "plex_chrome_idle720_tb BLANK320: %d FAIL(s)\n", fails);
+            return 1;
+        }
+        std::fprintf(stderr, "plex_chrome_idle720_tb: PASS (blank320)\n");
         return 0;
     }
 
