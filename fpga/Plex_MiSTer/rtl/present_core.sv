@@ -4,8 +4,10 @@
 // 720p / ascal-native present path (landed on main; DEFAULT OFF):
 //   `define PRESENT_BEAM_960     — present_beam_content_de true-DE (max tier 960×540)
 //   `define PRESENT_MULTI_PIXEL  — CEA 720p beam + present_npx_path (PPC path)
-//   `define PRESENT_PX_PER_CLK N — 1|2|4 with MULTI_PIXEL (product land uses 1 until
-//                                  ddr_frame_store grows N-wide RGB ports)
+//   `define PRESENT_PX_PER_CLK N — 1|2|4 with MULTI_PIXEL.
+//     Throughput: F_sys*PPC must be >= clk_pix Mpix/s (29.7 for CEA 720p24).
+//     PPC=1@20 → 20 < 29.7 wall. PPC=2@20 closes rate but needs unique N-wide RGB
+//     from ddr_frame_store (today replicates scalar fr — sim $error holds PPC=1).
 //   `define PRESENT_CLK_PIX_PLL  — separate clk_pix + rate-match (optional)
 // Macros off → bit-identical Template H_DE=529 / DE_LAG=3 path (v0.3.0 baseline).
 // Mutually exclusive: BEAM_960 vs MULTI_PIXEL. Parent enables in fit QSF only.
@@ -174,7 +176,11 @@ module present_core #(
 	(* noprune *) wire [15:0] keep_720_fps_milli;
 	(* noprune *) wire        keep_720_needs_fast;
 	present_video_timing_720p #(
+`ifdef PRESENT_CLK_PIX_PLL
+		.CLK_PIX_HZ(29_700_000)
+`else
 		.CLK_PIX_HZ(20_000_000)
+`endif
 	) u_keep_timing_720p (
 		.h_de(keep_720_hde),
 		.h_total(keep_720_htot),

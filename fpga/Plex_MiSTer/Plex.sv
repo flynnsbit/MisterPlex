@@ -42,8 +42,16 @@ assign BUTTONS = 0;
 //////////////////////////////////////////////////////////////////
 
 wire [1:0] ar = status[122:121];
-assign VIDEO_ARX = (!ar) ? 12'd4 : (ar - 1'd1);
-assign VIDEO_ARY = (!ar) ? 12'd3 : 12'd0;
+// Original aspect tracks content geometry macros (product QSF FRAME_W/H).
+// 640x480 → 4:3; 1280x720 → 16:9. Hardcoded 4:3 was wrong for 720p product.
+`ifndef FRAME_W
+`define FRAME_W 320
+`endif
+`ifndef FRAME_H
+`define FRAME_H 240
+`endif
+assign VIDEO_ARX = (!ar) ? 12'(`FRAME_W) : (ar - 1'd1);
+assign VIDEO_ARY = (!ar) ? 12'(`FRAME_H) : 12'd0;
 
 `include "build_id.v"
 localparam CONF_STR = {
@@ -207,6 +215,9 @@ end
 wire clk_sys;
 wire clk_sdram;
 wire clk_ddr;
+`ifdef PRESENT_CLK_PIX_PLL
+wire clk_pix_pll;
+`endif
 wire pll_locked;
 pll pll
 (
@@ -215,8 +226,12 @@ pll pll
 	.outclk_0(clk_sys),
 	.outclk_1(clk_sdram),
 	.outclk_2(clk_ddr),
+`ifdef PRESENT_CLK_PIX_PLL
+	.outclk_3(clk_pix_pll),
+`endif
 	.locked(pll_locked)
 );
+
 
 wire reset = RESET | status[0] | buttons[1];
 
@@ -705,9 +720,12 @@ present_core #(
 	.clk(clk_sys),
 	.clk_sdram(clk_sdram),
 	.clk_audio(CLK_AUDIO),
-	// clk_pix: product default ties to clk_sys. PRESENT_CLK_PIX_PLL fit will
-	// retarget this to outclk_3 when parent grants that fit.
+	// clk_pix: product default = clk_sys. PRESENT_CLK_PIX_PLL → outclk_3 29.70.
+`ifdef PRESENT_CLK_PIX_PLL
+	.clk_pix(clk_pix_pll),
+`else
 	.clk_pix(clk_sys),
+`endif
 	.reset(present_reset),
 	.pal(status[2]),
 	.scandouble(forced_scandoubler),
@@ -822,7 +840,12 @@ ddr_bus_arbiter ddr_arb (
 );
 `endif
 
+// CLK_VIDEO must match the domain of CE_PIXEL/VGA_*. MULTI+clk_pix emits on clk_pix.
+`ifdef PRESENT_CLK_PIX_PLL
+assign CLK_VIDEO = clk_pix_pll;
+`else
 assign CLK_VIDEO = clk_sys;
+`endif
 assign CE_PIXEL  = ce_pix;
 assign VGA_DE = ~(HBlank | VBlank);
 assign VGA_HS = HSync;
