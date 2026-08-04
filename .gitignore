@@ -35,4 +35,9 @@ remote_out/
 !release_artifacts/**
 
 # Permanent lab memory / rescued /tmp evidence (never shipped, may contain lab data)
+# The lab record lives in the private monorepo ~/Projects/lab-monorepo.
+# "Memory" is a SYMLINK to projects/misterplex/memory there, so both forms are
+# needed: "Memory/" alone matches only a real directory and would let the
+# symlink itself get committed.
+Memory
 Memory/
