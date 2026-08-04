@@ -5,13 +5,21 @@
 **Fit:** none (design + Verilator only)  
 **Integration claim:** **NOT_INTEGRATION_READY** — staging `0x30601000` still unfilled by product; doorbell PLXD OPEN.
 
-## M10K / ALM (EST, handbook width-bound)
+## M10K / ALM (republish — rd-duck fit correction)
 
-| Module | M10K EST | Layout | Control |
-|---|---:|---|---|
-| `ddr_frame_dma` bounce[8]×64b | **2** | 64b → 2 blocks (not 1K×8) | header + static gate |
-| `ddr_bus_arbiter3` m1 async_fifo 64b | **2** | same | header + static gate |
-| Path total | **4 EST** | | free budget 356 M10K (post-strip fit parent) |
+**Control:** `nostub-poststrip1/Plex.fit.rpt` L5258–5259:  
+`|ddr_bus_arbiter:ddr_arb|` **M10Ks=0** BlockMemBits=0; `|async_fifo:m1_rsp_fifo|` **M10Ks=0** BlockMemBits=0 ALMs_for_memory=0.0.  
+`async_fifo.sv` forces `ramstyle="MLAB"` — prior arbiter3 EST=2 was wrong for this codebase.
+
+| Layout | Depth×width | ramstyle | M10K |
+|---|---|---|---:|
+| old bounce | 128×64 | forced M10K | **2 EST** (64b width-bound; bits/10240 illegal) |
+| rev bounce | 8×64 (512b) | forced M10K | **2 EST** (still width-bound; wastes 2 blocks) |
+| **rev bounce (chosen)** | **8×64** | **MLAB** | **0** |
+| arbiter3 m1_rsp_fifo | AW=3 ×64 | MLAB (`async_fifo`) | **0** (fit analogue measured) |
+| **Path total** | | | **0 M10K** |
+
+ALM: fit `ddr_arb` 338.3 (incl. fifo). Bounce MLAB unfitted; small vs 27,556 free.
 
 ## rd-duck NACK items
 
@@ -39,7 +47,7 @@ Control: `bash tests/unit/test_ddr_frame_dma_contended_rtl_sim.sh` → `true rc=
 | G1 vs ARM T_copy | PASS margin_us=9451 (t_cont=5527 < arm=14978) |
 | G1b CWE quantum | PASS max_deny=10 grants=49 (PR≤48) |
 | PROTO burst hold | PASS |
-| M10K prereg 2+2 | PASS |
+| M10K prereg 0+0 (MLAB) | PASS |
 | FAULT twin no-quantum | REPRO_OK max_deny=499 grants=0 |
 
 ## Arbitration scheme (product)

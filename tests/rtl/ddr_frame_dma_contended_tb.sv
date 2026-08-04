@@ -4,8 +4,8 @@
 //   PR_T_COPY_ARM_US     = 14978
 //   PR_T_IDEAL_SOLO_US   = 3840
 //   PR_T_WITH_PRESENT_US = 5760
-//   PR_M10K_DMA          = 2
-//   PR_M10K_ARB3         = 2
+//   PR_M10K_DMA          = 0  (bounce 8×64 MLAB)
+//   PR_M10K_ARB3         = 0  (async_fifo MLAB; fit L5258-5259)
 //   PR_QUANTUM           = 8
 //   PR_MAX_M0_DENY_CWE   = 48
 //   PR_MAX_M0_DENY_DMA   = 160
@@ -27,8 +27,8 @@ module ddr_frame_dma_contended_tb;
 	localparam int PR_T_COPY_ARM_US = 14978;
 	localparam int PR_T_IDEAL_SOLO_US = 3840;
 	localparam int PR_T_WITH_PRESENT_US = 5760;
-	localparam int PR_M10K_DMA = 2;
-	localparam int PR_M10K_ARB3 = 2;
+	localparam int PR_M10K_DMA = 0;
+	localparam int PR_M10K_ARB3 = 0;
 	localparam int PR_QUANTUM = 8;
 	localparam int PR_MAX_M0_DENY_CWE = 48;
 	localparam int PR_MAX_M0_DENY_DMA = 160;
@@ -460,8 +460,9 @@ always @(posedge clk) begin
 		end else
 			$display("PASS PROTO burst_hold_and_constant_addr_bc");
 
-		if (PR_M10K_DMA != 2 || PR_M10K_ARB3 != 2) begin
-			$display("FAIL PREREG m10k"); fail = 1;
+		if (PR_M10K_DMA != 0 || PR_M10K_ARB3 != 0) begin
+			$display("FAIL M10K_PREREG dma=%0d arb3=%0d (expect 0+0 MLAB)", PR_M10K_DMA, PR_M10K_ARB3);
+			fail = 1;
 		end else
 			$display("PASS M10K_PREREG dma=%0d arb3=%0d", PR_M10K_DMA, PR_M10K_ARB3);
 

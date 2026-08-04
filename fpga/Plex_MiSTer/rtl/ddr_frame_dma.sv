@@ -8,8 +8,11 @@
 //   MAX_BURST default 8 (= arbiter3 quantum) so yield is inter-burst only.
 //   ST_YIELD: one-cycle (or longer if busy) !RD&&!WE between WR and RD.
 //
-// M10K: bounce[BOUNCE_DEPTH]×64b → **2 M10K EST** (64b width-bound; not bits/10240).
-// Control analogy: nostub-poststrip1 line_buf_ram DATA_W=64 → 2 M10K.
+// M10K layout (republish after rd-duck fit correction):
+//   old BOUNCE_DEPTH=128 ×64 forced M10K → 2 EST (64b width-bound; bits/10240 illegal)
+//   rev BOUNCE_DEPTH=8   ×64 forced M10K → 2 EST (still width-bound, wastes 2 blocks)
+//   rev BOUNCE_DEPTH=8   ×64 MLAB        → **0 M10K** (512b fits MLAB; chosen)
+// Control: async_fifo ramstyle=MLAB → fit M10K=0 (nostub-poststrip1 L5259).
 // ALM EST ~300–500. Does not ring doorbell; `done` is the handoff.
 
 `timescale 1ns / 1ps
@@ -47,7 +50,7 @@ module ddr_frame_dma #(
 	                                (MAX_BURST > 255) ? 255 : MAX_BURST;
 	localparam int BOUNCE_CLIP = (BOUNCE_DEPTH < MAX_BURST_CLIP) ? BOUNCE_DEPTH : MAX_BURST_CLIP;
 
-	(* ramstyle = "no_rw_check, M10K" *) reg [63:0] bounce [0:BOUNCE_DEPTH-1];
+	(* ramstyle = "no_rw_check, MLAB" *) reg [63:0] bounce [0:BOUNCE_DEPTH-1];
 	reg [BW-1:0] bidx;
 	reg [28:0] src_qw, dst_qw;
 	reg [31:0] qw_left;

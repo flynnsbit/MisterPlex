@@ -35,6 +35,7 @@ ROOT = Path(__file__).resolve().parents[2]
 QSF = ROOT / "fpga/Plex_MiSTer/Plex.qsf"
 QIP = ROOT / "fpga/Plex_MiSTer/files.qip"
 DMA = ROOT / "fpga/Plex_MiSTer/rtl/ddr_frame_dma.sv"
+ARB3 = ROOT / "fpga/Plex_MiSTer/rtl/ddr_bus_arbiter3.sv"
 MUX = ROOT / "fpga/Plex_MiSTer/rtl/ddr_frame_base_mux.sv"
 STORE = ROOT / "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv"
 CFG = ROOT / "fpga/Plex_MiSTer/rtl/plex_product_cfg.sv"
@@ -52,9 +53,12 @@ BOUNCE_BYTES = BOUNCE_DEPTH * BYTES_PER_BEAT
 # Cyclone V M10K max width 40b — 64b port is NOT native. bits/10240 is NOT a
 # legal cost. Fit control (nostub-poststrip1): line_buf_ram DATA_W=64 → 2 M10K.
 # Bounce 8×64 same width class → 2 EST.
-PREREG_BOUNCE_M10K = 2
+# bounce 8×64: forced M10K → 2 EST (width-bound); MLAB → 0 (chosen).
+PREREG_BOUNCE_M10K = 0
+PREREG_ARB3_M10K = 0  # async_fifo MLAB; fit L5258-5259 M10K=0
 PREREG_MUX_M10K = 0  # pure mux
-assert PREREG_BOUNCE_M10K == 2, "corrected cost must be 2"
+assert PREREG_BOUNCE_M10K == 0, "bounce MLAB path must prereg 0 M10K"
+assert PREREG_ARB3_M10K == 0, "arbiter3 async_fifo MLAB must prereg 0 M10K"
 
 
 def active_macros(qsf: str) -> set[str]:
@@ -71,6 +75,7 @@ def main() -> int:
     qsf = QSF.read_text(encoding="utf-8", errors="replace")
     qip = QIP.read_text(encoding="utf-8", errors="replace")
     dma = DMA.read_text(encoding="utf-8", errors="replace") if DMA.is_file() else ""
+    arb3 = ARB3.read_text(encoding="utf-8", errors="replace") if ARB3.is_file() else ""
     mux = MUX.read_text(encoding="utf-8", errors="replace") if MUX.is_file() else ""
     store = STORE.read_text(encoding="utf-8", errors="replace") if STORE.is_file() else ""
     plex = PLEX.read_text(encoding="utf-8", errors="replace")
@@ -124,8 +129,12 @@ def main() -> int:
         print("FAIL: ddr_frame_dma must state M10K cost in header", file=sys.stderr)
         return 1
     # Layout-aware cost must appear (reject retracted bits/10240 "1 M10K" claim)
-    if not re.search(r"\b2\s*M10K\b", dma):
-        print("FAIL: ddr_frame_dma header must state 2 M10K (64b width-bound)", file=sys.stderr)
+    # Must document MLAB→0 and the rejected forced-M10K→2 alternate.
+    if not re.search(r"0\s*M10K", dma):
+        print("FAIL: ddr_frame_dma header must state 0 M10K (MLAB bounce)", file=sys.stderr)
+        return 1
+    if "MLAB" not in dma:
+        print("FAIL: ddr_frame_dma header must name MLAB layout", file=sys.stderr)
         return 1
     if "f2sdram_safe_terminator" not in dma and "not to break the transaction" not in dma:
         print("FAIL: dma must cite f2sdram no-break-burst contract", file=sys.stderr)
@@ -141,6 +150,17 @@ def main() -> int:
     ):
         print("FAIL: retracted 1-M10K bits/10240 claim still present", file=sys.stderr)
         return 1
+    if not re.search(
+        r'ramstyle\s*=\s*"[^"]*MLAB[^"]*"\s*\*\)\s*reg\s*\[63:0\]\s*bounce', dma
+    ):
+        print("FAIL: bounce ramstyle must be MLAB (8×64)", file=sys.stderr)
+        return 1
+    if re.search(
+        r'ramstyle\s*=\s*"[^"]*M10K[^"]*"\s*\*\)\s*reg\s*\[63:0\]\s*bounce', dma
+    ):
+        print("FAIL: bounce still forced M10K; expect MLAB", file=sys.stderr)
+        return 1
+
 
     # Preferred path documents direct reader vs mover
     if "source" not in mux.lower():
@@ -153,6 +173,14 @@ def main() -> int:
     if t_ideal_dma_ms >= T_COPY_ARM_MS:
         print(f"FAIL: dma ideal {t_ideal_dma_ms:.3f} not < T_copy_arm", file=sys.stderr)
         return 1
+    if "0 M10K" not in arb3 and "0 M10K" not in arb3.replace("**",""):
+        if not re.search(r"0\s*M10K", arb3):
+            print("FAIL: ddr_bus_arbiter3 header must state 0 M10K (MLAB fifo)", file=sys.stderr)
+            return 1
+    if "MLAB" not in arb3:
+        print("FAIL: ddr_bus_arbiter3 must cite MLAB/async_fifo", file=sys.stderr)
+        return 1
+
     if PREREG_BOUNCE_M10K > NOSTUB_RECLAIM_M10K:
         print("FAIL: bounce exceeds nostub reclaim", file=sys.stderr)
         return 1
@@ -165,7 +193,7 @@ def main() -> int:
 
     print(
         "PASS option_b static | preferred=store.u_fill_base_mux m10k=0 DYN=0 | "
-        f"secondary=dma bounce_m10k={PREREG_BOUNCE_M10K} | "
+        f"secondary=dma bounce_m10k={PREREG_BOUNCE_M10K} arb3_m10k={PREREG_ARB3_M10K} | "
         f"R_req={R_REQ_MB_S:.4f}MB/s | T_copy_arm={T_COPY_ARM_MS}ms | "
         f"T_ideal_dma_RW={t_ideal_dma_ms:.3f}ms | T_ideal_present_R={t_ideal_present_r_ms:.3f}ms | "
         f"nostub_reclaim_m10k={NOSTUB_RECLAIM_M10K} | "

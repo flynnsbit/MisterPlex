@@ -5,7 +5,11 @@
 // to m0 at a command gap (!m2_rd && !m2_we && !wr_lock) after Q beats.
 // Write-burst lock prevents mid-burst revoke (rd-duck / f2sdram_safe_terminator).
 //
-// M10K: m1 async_fifo DATA_W=64 → 2 EST. ALM EST ~400-600.
+// M10K: m1 async_fifo ramstyle=MLAB → **0 M10K** (not 2).
+// Control: nostub-poststrip1 Plex.fit.rpt L5258-5259
+//   |ddr_bus_arbiter:ddr_arb| M10Ks=0 BlockMemBits=0
+//   |async_fifo:m1_rsp_fifo|  M10Ks=0 BlockMemBits=0 ALMs_for_memory=0
+// ALM EST ~400 (fit ddr_arb 338.3 incl. children).
 `default_nettype none
 
 module ddr_bus_arbiter3 #(
