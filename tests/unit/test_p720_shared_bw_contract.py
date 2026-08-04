@@ -237,12 +237,21 @@ def main() -> int:
     if p.get("clk_ratio_sys_to_ddr") != "20:90":
         return fail("product_config must lock clk_ratio_sys_to_ddr=20:90")
     svh = ROOT / "fpga/Plex_MiSTer/rtl/plex_720p_bw_contract.svh"
+    bw = ROOT / "fpga/Plex_MiSTer/rtl/misterplex_bw_contract.svh"
     if not svh.is_file():
         return fail("missing plex_720p_bw_contract.svh (w-mem three-lane RTL)")
     svht = svh.read_text(encoding="utf-8", errors="replace")
-    for tok in ("P720_I420_BYTES", "1_382_400", "P720_FABRIC_RD_BPS", "P720_HOST_COPY_US", "14_978", "P720_PPC"):
-        if tok not in svht:
+    bwt = bw.read_text(encoding="utf-8", errors="replace") if bw.is_file() else ""
+    combined = svht + "\n" + bwt
+    # Numeric SoT may live in misterplex_bw_contract.svh (included by plex_720p).
+    for tok in ("P720_I420_BYTES", "P720_FABRIC_RD_BPS", "P720_HOST_COPY_US", "P720_PPC"):
+        if tok not in combined:
             return fail(f"svh missing {tok}")
+    # I420 bytes / T_copy may use underscores or plain decimals across lanes.
+    if "1_382_400" not in combined and "1382400" not in combined:
+        return fail("svh missing I420 frame bytes (1_382_400 or 1382400)")
+    if "14_978" not in combined and "14978" not in combined:
+        return fail("svh missing T_copy_arm us (14_978 or 14978)")
     # rd-duck binding labels: payload/ideal-port only; no sustainable-DDR claim
     lab = c.get("rd_duck_label_correction") or {}
     if lab.get("status") != "BINDING":

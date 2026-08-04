@@ -49,12 +49,14 @@ echo "RTL SIM: using $VERILATOR_VERSION" >&2
 common_sv=(
   "$ROOT/tests/rtl/ddr_frame_store_plxd_handshake_tb_top.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_base_mux.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_ram.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/async_fifo.sv"
   "$ROOT/tests/rtl/ddr_frame_store_plxd_handshake_tb.cpp"
 )
 vflags=(--cc --exe --build --top-module ddr_frame_store_plxd_handshake_tb
   -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-SELRANGE -Wno-UNSIGNED
+  -I"$ROOT/fpga/Plex_MiSTer/rtl"
   -CFLAGS "-std=c++17 -O2")
 
 echo "=== A) BROKEN sticky=0 recycle=0 (expect REPRO handshake stall) ===" >&2

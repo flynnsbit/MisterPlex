@@ -53,6 +53,20 @@ void printRaw(const uint8_t raw[16]) {
         fps == 0 ? "24" : fps == 1 ? "30" : fps == 2 ? "60" : "12", pat,
         patternName(pat), (lo & 0x100) ? "On" : "Off", (lo >> 9) & 1,
         (lo >> 10) & 1, (lo >> 11) & 1, lo & 1, ar);
+    // PRODUCT_NO_STUB refresh measure: raw[14]=fps_x10, raw[15]=flags
+    const unsigned fps_x10 = raw[14];
+    const unsigned fl = raw[15];
+    std::printf(
+        "clk_pix_meas raw[14]=fps_x10=%u (%.1f Hz) raw[15]=flags=0x%02x "
+        "valid=%d pix_ok=%d fps_ok=%d pll_on=%d trap16=%d\n",
+        fps_x10, fps_x10 / 10.0, fl, fl & 1, (fl >> 1) & 1, (fl >> 2) & 1,
+        (fl >> 3) & 1, (fl >> 4) & 1);
+    if (fps_x10 >= 230 && fps_x10 <= 250 && (fl & 1) && ((fl >> 2) & 1))
+        std::printf("clk_pix_meas_verdict=PASS_24HZ_BAND\n");
+    else if (fps_x10 >= 150 && fps_x10 <= 170)
+        std::printf("clk_pix_meas_verdict=FAIL_16HZ_TRAP\n");
+    else
+        std::printf("clk_pix_meas_verdict=UNKNOWN_BAND\n");
 }
 
 bool readRawStable(misterplex::FpgaSpi& spi, uint8_t out[16]) {

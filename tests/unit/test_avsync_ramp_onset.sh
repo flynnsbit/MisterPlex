@@ -167,31 +167,117 @@ fi
 
 echo "=== HOST PROOF: ramp interp beats step quant on real capture PTS ==="
 PROOF="$ROOT/tools/avsync_ramp_onset_proof.py"
-CAP="$ROOT/avsync_hdmi_out/480p_repeat1_capture.mkv"
+# Checked-in measured PTS grid (extracted from 480p_repeat1_capture.mkv).
+# Do NOT require the 339 MB mkv; do NOT use --allow-missing-capture (SYNTH).
+PTS_GRID="$ROOT/tests/fixtures/avsync/480p_repeat1_capture_pts_60s.json"
 PROOF_OUT="$OUT/onset_proof.json"
 if [[ ! -f "$PROOF" ]]; then
   echo "FAIL missing $PROOF"
   fail=$((fail + 1))
-elif [[ ! -f "$CAP" ]]; then
-  echo "FAIL missing capture $CAP (need checked-in or local HDMI capture for PTS grid)"
+elif [[ ! -f "$PTS_GRID" ]]; then
+  echo "FAIL missing measured PTS fixture $PTS_GRID"
   fail=$((fail + 1))
 else
+  # Provenance hard checks (conditional skip forbidden).
   set +e
-  python3 "$PROOF" --capture "$CAP" --duration 60 --json-out "$PROOF_OUT" \
-    >"$OUT/onset_proof.log" 2>&1
-  prc=$?
+  python3 - "$PTS_GRID" <<'PY'
+import json, sys
+from pathlib import Path
+p = Path(sys.argv[1])
+d = json.loads(p.read_text())
+errs = []
+if d.get("schema") != "misterplex.measured_capture_pts_grid.v1":
+    errs.append(f"schema={d.get('schema')!r}")
+if d.get("grid_src") != "measured_capture_pts":
+    errs.append(f"grid_src={d.get('grid_src')!r}")
+prov = d.get("provenance") or {}
+for k in ("source_filename", "source_md5", "source_size_bytes", "captured_date_local"):
+    if prov.get(k) in (None, ""):
+        errs.append(f"missing provenance.{k}")
+if not isinstance(d.get("pts_rel_s"), list) or len(d["pts_rel_s"]) < 30:
+    errs.append("pts_rel_s too short")
+if float(d.get("median_dt_ms") or 0) <= 0:
+    errs.append("median_dt_ms")
+if errs:
+    print("FAIL pts_grid_provenance: " + "; ".join(errs))
+    sys.exit(1)
+print(
+    "PASS pts_grid_provenance "
+    f"n={len(d['pts_rel_s'])} median_dt_ms={d.get('median_dt_ms')} "
+    f"src_md5={prov.get('source_md5')} src_bytes={prov.get('source_size_bytes')}"
+)
+sys.exit(0)
+PY
+  prov_rc=$?
   set -e
-  echo "onset_proof true_rc=$prc"
-  if [[ "$prc" -eq 0 ]] && grep -q 'VERDICT=PASS' "$OUT/onset_proof.log"; then
-    echo "PASS onset_proof_ramp_beats_step"
-    pass=$((pass + 1))
-    # Surface measured numbers
-    grep -E '^(PRE_REGISTER|MEASURED|PASS|FAIL|VERDICT)' "$OUT/onset_proof.log" | tail -20
-  else
-    echo "FAIL onset_proof"
-    tail -n 40 "$OUT/onset_proof.log" | sed 's/^/  | /'
+  echo "pts_grid_provenance true_rc=$prov_rc"
+  if [[ "$prov_rc" -ne 0 ]]; then
     fail=$((fail + 1))
+  else
+    set +e
+    python3 "$PROOF" --pts-grid "$PTS_GRID" --duration 60 --json-out "$PROOF_OUT" \
+      >"$OUT/onset_proof.log" 2>&1
+    prc=$?
+    set -e
+    echo "onset_proof true_rc=$prc"
+    if [[ "$prc" -eq 0 ]] \
+      && grep -q 'VERDICT=PASS' "$OUT/onset_proof.log" \
+      && grep -q 'src=measured_capture_pts' "$OUT/onset_proof.log" \
+      && ! grep -q 'SYNTH_GRID' "$OUT/onset_proof.log"; then
+      echo "PASS onset_proof_ramp_beats_step grid_src=measured_capture_pts"
+      pass=$((pass + 1))
+      grep -E '^(PRE_REGISTER|MEASURED|PASS|FAIL|VERDICT|LOAD_PTS|CAPTURE_DT|PTS_GRID)' \
+        "$OUT/onset_proof.log" | tail -24
+    else
+      echo "FAIL onset_proof"
+      tail -n 40 "$OUT/onset_proof.log" | sed 's/^/  | /'
+      fail=$((fail + 1))
+    fi
   fi
+fi
+
+# NEGATIVE: tampered fixture must FAIL hard (not skip).
+echo "=== NEG: tampered PTS fixture must FAIL (not skip) ==="
+TAMPER="$OUT/pts_grid_tampered.json"
+python3 - "$PTS_GRID" "$TAMPER" <<'PY'
+import json, sys
+from pathlib import Path
+d = json.loads(Path(sys.argv[1]).read_text())
+# Corrupt measured claim: empty pts + relabel as if still measured.
+d["pts_rel_s"] = []
+d["n_frames"] = 0
+Path(sys.argv[2]).write_text(json.dumps(d) + "\n")
+PY
+set +e
+python3 "$PROOF" --pts-grid "$TAMPER" --duration 60 >"$OUT/onset_proof_tamper.log" 2>&1
+trc=$?
+set -e
+echo "onset_proof_tamper true_rc=$trc"
+if [[ "$trc" -eq 0 ]]; then
+  echo "FAIL tampered fixture unexpectedly PASSed (proof-class hole)"
+  fail=$((fail + 1))
+elif grep -qi 'SKIP\|UNSCORED\|allow-missing' "$OUT/onset_proof_tamper.log"; then
+  echo "FAIL tampered fixture soft-skipped instead of hard FAIL"
+  fail=$((fail + 1))
+else
+  echo "PASS neg_tampered_pts_grid_hard_fail rc=$trc"
+  pass=$((pass + 1))
+fi
+
+# NEGATIVE: missing fixture path must FAIL hard.
+echo "=== NEG: missing PTS fixture must FAIL (not skip) ==="
+set +e
+python3 "$PROOF" --pts-grid "$OUT/does_not_exist_pts.json" --duration 60 \
+  >"$OUT/onset_proof_missing.log" 2>&1
+mrc=$?
+set -e
+echo "onset_proof_missing true_rc=$mrc"
+if [[ "$mrc" -eq 0 ]]; then
+  echo "FAIL missing fixture unexpectedly PASSed"
+  fail=$((fail + 1))
+else
+  echo "PASS neg_missing_pts_grid_hard_fail rc=$mrc"
+  pass=$((pass + 1))
 fi
 
 echo "=== SUMMARY pass=$pass fail=$fail ==="

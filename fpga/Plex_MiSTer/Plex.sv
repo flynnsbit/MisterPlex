@@ -233,14 +233,24 @@ pll pll
 
 wire reset = RESET | status[0] | buttons[1];
 
-// Fabric clock kit stamp (w-clock): noprune constants for post-fit hierarchy.
+// Fabric clock kit + runtime refresh measure (w-clock).
+// meas_fps_x10 distinguishes 24 Hz from 16.16 Hz same-clock trap (stills cannot).
 wire [31:0] clkstat_sys_hz, clkstat_pix_hz, clkstat_cea_pf, clkstat_l4_pf;
 wire [7:0]  clkstat_ppc;
 wire        clkstat_cea_fast, clkstat_l4_fast, clkstat_valid;
 wire [15:0] clkstat_peak_x10;
+// clk_pix/vsync observers assigned after present_core (VSync, CLK_VIDEO domain).
+wire clkstat_clk_pix;
+wire clkstat_vsync;
+wire [31:0] clkstat_meas_pix;
+wire [15:0] clkstat_meas_frm;
+wire [7:0]  clkstat_meas_fps_x10, clkstat_meas_flags;
+wire        clkstat_meas_done;
 plex_clk_status u_plex_clk_status (
 	.clk(clk_sys),
 	.reset(reset),
+	.clk_pix(clkstat_clk_pix),
+	.vsync(clkstat_vsync),
 	.clk_sys_hz(clkstat_sys_hz),
 	.clk_pix_hz(clkstat_pix_hz),
 	.present_ppc(clkstat_ppc),
@@ -249,10 +259,17 @@ plex_clk_status u_plex_clk_status (
 	.cea_24_needs_faster_pix(clkstat_cea_fast),
 	.l4_24_needs_faster_sys(clkstat_l4_fast),
 	.peak_mpix_s_x10(clkstat_peak_x10),
-	.kit_id_valid(clkstat_valid)
+	.kit_id_valid(clkstat_valid),
+	.meas_pix_count(clkstat_meas_pix),
+	.meas_frame_count(clkstat_meas_frm),
+	.meas_fps_x10(clkstat_meas_fps_x10),
+	.meas_flags(clkstat_meas_flags),
+	.meas_window_done(clkstat_meas_done)
 );
 wire _unused_clkstat = |{clkstat_sys_hz, clkstat_pix_hz, clkstat_ppc, clkstat_cea_pf,
-	clkstat_l4_pf, clkstat_cea_fast, clkstat_l4_fast, clkstat_peak_x10, clkstat_valid};
+	clkstat_l4_pf, clkstat_cea_fast, clkstat_l4_fast, clkstat_peak_x10, clkstat_valid,
+	clkstat_meas_pix, clkstat_meas_frm, clkstat_meas_fps_x10, clkstat_meas_flags,
+	clkstat_meas_done};
 
 // Fabric BW contract stamp (w-clock): 33.1776 MB/s/dir SoT.
 wire [31:0] bwstat_dir_bps;
@@ -918,8 +935,8 @@ present_core #(
 	.clk(clk_sys),
 	.clk_sdram(clk_sdram),
 	.clk_audio(CLK_AUDIO),
-	// clk_pix: product default ties to clk_sys. PRESENT_CLK_PIX_PLL (default
-	// OFF) drives outclk_3 = 29.70 MHz (or 74.25 with PRESENT_CLK_PIX_74_25).
+	// clk_pix: PRESENT_CLK_PIX_PLL drives outclk_3=29.70 COMPACT (720p24).
+	// Without macro, clk_sys@20 → fps_eff≈16.16 Hz on COMPACT totals (trap).
 `ifdef PRESENT_CLK_PIX_PLL
 	.clk_pix(clk_pix_pll),
 `else
@@ -1057,6 +1074,13 @@ assign VGA_DE = ~(HBlank | VBlank);
 assign VGA_HS = HSync;
 assign VGA_VS = VSync;
 assign VGA_R  = r;
+// Refresh measure observers (do not touch present_core — tap VGA path here).
+`ifdef PRESENT_CLK_PIX_PLL
+assign clkstat_clk_pix = clk_pix_pll;
+`else
+assign clkstat_clk_pix = clk_sys;
+`endif
+assign clkstat_vsync = VSync;
 assign VGA_G  = g;
 assign VGA_B  = b;
 
@@ -1214,12 +1238,28 @@ always @(posedge clk_sys) begin
 		// residual half from sticky ONLY (never live residual_csum, never stream)
 		status_telem_r[103:96]  <= st_res_word_sticky[7:0];
 		status_telem_r[111:104] <= st_res_word_sticky[15:8];
+`ifdef PRODUCT_NO_STUB
+		// NO_STUB: publish observed refresh (not dead recon path).
+		// raw[14]=fps_x10 (240=24.0 Hz); raw[15]=flags{valid,pix_ok,fps_ok,pll_on,trap}
+		status_telem_r[119:112] <= clkstat_meas_fps_x10;
+		status_telem_r[127:120] <= clkstat_meas_flags;
+`else
 		status_telem_r[119:112] <= st_recon_sig_sticky;
 		status_telem_r[127:120] <= st_recon_dbg_sticky;
+`endif
 	end
 end
 
 // Rank2 structural mask: force residual/recon bytes from sticky before AR splice
+`ifdef PRODUCT_NO_STUB
+wire [127:0] status_telem_masked = {
+	clkstat_meas_flags,
+	clkstat_meas_fps_x10,
+	st_res_word_sticky[15:8],
+	st_res_word_sticky[7:0],
+	status_telem_r[95:0]
+};
+`else
 wire [127:0] status_telem_masked = {
 	st_recon_dbg_sticky,          // P3 recon RCA flags
 	st_recon_sig_sticky,          // recon signature forced from sticky
@@ -1227,6 +1267,7 @@ wire [127:0] status_telem_masked = {
 	st_res_word_sticky[7:0],      // dc forced from sticky
 	status_telem_r[95:0]
 };
+`endif
 
 // Preserve Aspect ratio OSD bits (may stomp recon_dbg bits [2:1] — OK)
 // status_set replaces entire word in Main; residual bits stay below AR splice.

@@ -287,6 +287,7 @@ public:
         uint8_t residual_csum = 0;
         // 3.3l-2: reconstructed-pixel signature for MB0 block0 after inv_quant+IDCT.
         // raw[14]/status[119:112] = XOR of 16 reconstructed Y samples; golden 0x3B.
+        // PRODUCT_NO_STUB: raw[14]=meas_fps_x10 (240=24.0 Hz), raw[15]=meas_flags.
         uint8_t recon_sig = 0;
         // raw[15]/status[127:120] = P3-3l2 silicon RCA flags. Bits [2:1] may be
         // altered by the Aspect Ratio OSD splice; use the other bits only.
