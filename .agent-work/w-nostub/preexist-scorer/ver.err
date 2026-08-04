@@ -1,0 +1,196 @@
+%Warning-WIDTHEXPAND: .agent-work/w-nostub/preexist-scorer/iq.sv:186:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                       : ... note: In instance 'h264_rtl_recon_scorer_tb.u_recon'
+  186 |  assign recon[0]  = clip8($signed({1'b0, pred[0]})  + residual[0]);
+      |                                                     ^
+                      ... For warning description see https://verilator.org/warn/WIDTHEXPAND?v=5.051
+                      ... Use "/* verilator lint_off WIDTHEXPAND */" and lint_on around source to disable this message.
+%Warning-WIDTHEXPAND: .agent-work/w-nostub/preexist-scorer/iq.sv:187:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                       : ... note: In instance 'h264_rtl_recon_scorer_tb.u_recon'
+  187 |  assign recon[1]  = clip8($signed({1'b0, pred[1]})  + residual[1]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: .agent-work/w-nostub/preexist-scorer/iq.sv:188:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                       : ... note: In instance 'h264_rtl_recon_scorer_tb.u_recon'
+  188 |  assign recon[2]  = clip8($signed({1'b0, pred[2]})  + residual[2]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: .agent-work/w-nostub/preexist-scorer/iq.sv:189:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                       : ... note: In instance 'h264_rtl_recon_scorer_tb.u_recon'
+  189 |  assign recon[3]  = clip8($signed({1'b0, pred[3]})  + residual[3]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: .agent-work/w-nostub/preexist-scorer/iq.sv:190:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                       : ... note: In instance 'h264_rtl_recon_scorer_tb.u_recon'
+  190 |  assign recon[4]  = clip8($signed({1'b0, pred[4]})  + residual[4]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: .agent-work/w-nostub/preexist-scorer/iq.sv:191:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                       : ... note: In instance 'h264_rtl_recon_scorer_tb.u_recon'
+  191 |  assign recon[5]  = clip8($signed({1'b0, pred[5]})  + residual[5]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: .agent-work/w-nostub/preexist-scorer/iq.sv:192:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                       : ... note: In instance 'h264_rtl_recon_scorer_tb.u_recon'
+  192 |  assign recon[6]  = clip8($signed({1'b0, pred[6]})  + residual[6]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: .agent-work/w-nostub/preexist-scorer/iq.sv:193:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                       : ... note: In instance 'h264_rtl_recon_scorer_tb.u_recon'
+  193 |  assign recon[7]  = clip8($signed({1'b0, pred[7]})  + residual[7]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: .agent-work/w-nostub/preexist-scorer/iq.sv:194:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                       : ... note: In instance 'h264_rtl_recon_scorer_tb.u_recon'
+  194 |  assign recon[8]  = clip8($signed({1'b0, pred[8]})  + residual[8]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: .agent-work/w-nostub/preexist-scorer/iq.sv:195:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                       : ... note: In instance 'h264_rtl_recon_scorer_tb.u_recon'
+  195 |  assign recon[9]  = clip8($signed({1'b0, pred[9]})  + residual[9]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: .agent-work/w-nostub/preexist-scorer/iq.sv:196:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                       : ... note: In instance 'h264_rtl_recon_scorer_tb.u_recon'
+  196 |  assign recon[10] = clip8($signed({1'b0, pred[10]}) + residual[10]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: .agent-work/w-nostub/preexist-scorer/iq.sv:197:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                       : ... note: In instance 'h264_rtl_recon_scorer_tb.u_recon'
+  197 |  assign recon[11] = clip8($signed({1'b0, pred[11]}) + residual[11]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: .agent-work/w-nostub/preexist-scorer/iq.sv:198:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                       : ... note: In instance 'h264_rtl_recon_scorer_tb.u_recon'
+  198 |  assign recon[12] = clip8($signed({1'b0, pred[12]}) + residual[12]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: .agent-work/w-nostub/preexist-scorer/iq.sv:199:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                       : ... note: In instance 'h264_rtl_recon_scorer_tb.u_recon'
+  199 |  assign recon[13] = clip8($signed({1'b0, pred[13]}) + residual[13]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: .agent-work/w-nostub/preexist-scorer/iq.sv:200:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                       : ... note: In instance 'h264_rtl_recon_scorer_tb.u_recon'
+  200 |  assign recon[14] = clip8($signed({1'b0, pred[14]}) + residual[14]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: .agent-work/w-nostub/preexist-scorer/iq.sv:201:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                       : ... note: In instance 'h264_rtl_recon_scorer_tb.u_recon'
+  201 |  assign recon[15] = clip8($signed({1'b0, pred[15]}) + residual[15]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: .agent-work/w-nostub/preexist-scorer/iq.sv:122:38: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 29 bits.
+                                                                       : ... note: In instance 'h264_rtl_recon_scorer_tb.u_idct'
+  122 |  wire signed [31:0] b0  = dequant[0] + 29'sd32;
+      |                                      ^
+%Warning-WIDTHEXPAND: .agent-work/w-nostub/preexist-scorer/iq.sv:122:38: Operator ADD expects 32 bits on the RHS, but RHS's CONST '29'sh20' generates 29 bits.
+                                                                       : ... note: In instance 'h264_rtl_recon_scorer_tb.u_idct'
+  122 |  wire signed [31:0] b0  = dequant[0] + 29'sd32;
+      |                                      ^
+%Warning-WIDTHEXPAND: .agent-work/w-nostub/preexist-scorer/iq.sv:123:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                       : ... note: In instance 'h264_rtl_recon_scorer_tb.u_idct'
+  123 |  wire signed [31:0] b1  = dequant[1];
+      |                         ^
+%Warning-WIDTHEXPAND: .agent-work/w-nostub/preexist-scorer/iq.sv:124:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                       : ... note: In instance 'h264_rtl_recon_scorer_tb.u_idct'
+  124 |  wire signed [31:0] b2  = dequant[2];
+      |                         ^
+%Warning-WIDTHEXPAND: .agent-work/w-nostub/preexist-scorer/iq.sv:125:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                       : ... note: In instance 'h264_rtl_recon_scorer_tb.u_idct'
+  125 |  wire signed [31:0] b3  = dequant[3];
+      |                         ^
+%Warning-WIDTHEXPAND: .agent-work/w-nostub/preexist-scorer/iq.sv:126:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                       : ... note: In instance 'h264_rtl_recon_scorer_tb.u_idct'
+  126 |  wire signed [31:0] b4  = dequant[4];
+      |                         ^
+%Warning-WIDTHEXPAND: .agent-work/w-nostub/preexist-scorer/iq.sv:127:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                       : ... note: In instance 'h264_rtl_recon_scorer_tb.u_idct'
+  127 |  wire signed [31:0] b5  = dequant[5];
+      |                         ^
+%Warning-WIDTHEXPAND: .agent-work/w-nostub/preexist-scorer/iq.sv:128:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                       : ... note: In instance 'h264_rtl_recon_scorer_tb.u_idct'
+  128 |  wire signed [31:0] b6  = dequant[6];
+      |                         ^
+%Warning-WIDTHEXPAND: .agent-work/w-nostub/preexist-scorer/iq.sv:129:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                       : ... note: In instance 'h264_rtl_recon_scorer_tb.u_idct'
+  129 |  wire signed [31:0] b7  = dequant[7];
+      |                         ^
+%Warning-WIDTHEXPAND: .agent-work/w-nostub/preexist-scorer/iq.sv:130:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                       : ... note: In instance 'h264_rtl_recon_scorer_tb.u_idct'
+  130 |  wire signed [31:0] b8  = dequant[8];
+      |                         ^
+%Warning-WIDTHEXPAND: .agent-work/w-nostub/preexist-scorer/iq.sv:131:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                       : ... note: In instance 'h264_rtl_recon_scorer_tb.u_idct'
+  131 |  wire signed [31:0] b9  = dequant[9];
+      |                         ^
+%Warning-WIDTHEXPAND: .agent-work/w-nostub/preexist-scorer/iq.sv:132:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                       : ... note: In instance 'h264_rtl_recon_scorer_tb.u_idct'
+  132 |  wire signed [31:0] b10 = dequant[10];
+      |                         ^
+%Warning-WIDTHEXPAND: .agent-work/w-nostub/preexist-scorer/iq.sv:133:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                       : ... note: In instance 'h264_rtl_recon_scorer_tb.u_idct'
+  133 |  wire signed [31:0] b11 = dequant[11];
+      |                         ^
+%Warning-WIDTHEXPAND: .agent-work/w-nostub/preexist-scorer/iq.sv:134:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                       : ... note: In instance 'h264_rtl_recon_scorer_tb.u_idct'
+  134 |  wire signed [31:0] b12 = dequant[12];
+      |                         ^
+%Warning-WIDTHEXPAND: .agent-work/w-nostub/preexist-scorer/iq.sv:135:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                       : ... note: In instance 'h264_rtl_recon_scorer_tb.u_idct'
+  135 |  wire signed [31:0] b13 = dequant[13];
+      |                         ^
+%Warning-WIDTHEXPAND: .agent-work/w-nostub/preexist-scorer/iq.sv:136:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                       : ... note: In instance 'h264_rtl_recon_scorer_tb.u_idct'
+  136 |  wire signed [31:0] b14 = dequant[14];
+      |                         ^
+%Warning-WIDTHEXPAND: .agent-work/w-nostub/preexist-scorer/iq.sv:137:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                       : ... note: In instance 'h264_rtl_recon_scorer_tb.u_idct'
+  137 |  wire signed [31:0] b15 = dequant[15];
+      |                         ^
+%Warning-WIDTHTRUNC: .agent-work/w-nostub/preexist-scorer/iq.sv:81:9: Operator ASSIGN expects 3 bits on the Assign RHS, but Assign RHS's MODDIV generates 32 or 6 bits.
+                                                                    : ... note: In instance 'h264_rtl_recon_scorer_tb.u_dequant'
+   81 |    qmod = q % 6;
+      |         ^
+                     ... For warning description see https://verilator.org/warn/WIDTHTRUNC?v=5.051
+                     ... Use "/* verilator lint_off WIDTHTRUNC */" and lint_on around source to disable this message.
+%Warning-WIDTHTRUNC: .agent-work/w-nostub/preexist-scorer/iq.sv:82:9: Operator ASSIGN expects 4 bits on the Assign RHS, but Assign RHS's DIV generates 32 or 6 bits.
+                                                                    : ... note: In instance 'h264_rtl_recon_scorer_tb.u_dequant'
+   82 |    qdiv = q / 6;
+      |         ^
+%Error: .agent-work/w-nostub/preexist-scorer/tb.sv:41:4: Illegal assignment: Array element types are not equivalent (IEEE 1800-2023 6.22.2)
+                                                       : ... note: In instance 'h264_rtl_recon_scorer_tb'
+                                                       : ... Pin data type: 'logic[15:0]$[0:15]' (4-state)
+                                                       : ... Expression data type: 'logic[8:0]$[0:15]' (4-state)
+   41 |   .coeff(inject_coeff),
+      |    ^~~~~
+        ... See the manual at https://verilator.org/verilator_doc.html?v=5.051 for more assistance.
+%Warning-WIDTHEXPAND: .agent-work/w-nostub/preexist-scorer/tb.sv:41:4: Input port connection 'coeff' expects 16 bits on the pin connection, but pin connection's VARREF 'inject_coeff' generates 9 bits.
+                                                                     : ... note: In instance 'h264_rtl_recon_scorer_tb'
+   41 |   .coeff(inject_coeff),
+      |    ^~~~~
+%Error: .agent-work/w-nostub/preexist-scorer/tb.sv:44:4: Illegal assignment: Array element types are not equivalent (IEEE 1800-2023 6.22.2)
+                                                       : ... note: In instance 'h264_rtl_recon_scorer_tb'
+                                                       : ... Pin data type: 'logic[28:0]$[0:15]' (4-state)
+                                                       : ... Expression data type: 'logic[17:0]$[0:15]' (4-state)
+   44 |   .dequant(dq)
+      |    ^~~~~~~
+%Warning-WIDTHEXPAND: .agent-work/w-nostub/preexist-scorer/tb.sv:44:4: Output port connection 'dequant' expects 29 bits on the pin connection, but pin connection's VARREF 'dq' generates 18 bits.
+                                                                     : ... note: In instance 'h264_rtl_recon_scorer_tb'
+   44 |   .dequant(dq)
+      |    ^~~~~~~
+%Error: .agent-work/w-nostub/preexist-scorer/tb.sv:59:4: Illegal assignment: Array element types are not equivalent (IEEE 1800-2023 6.22.2)
+                                                       : ... note: In instance 'h264_rtl_recon_scorer_tb'
+                                                       : ... Pin data type: 'logic[28:0]$[0:15]' (4-state)
+                                                       : ... Expression data type: 'logic[17:0]$[0:15]' (4-state)
+   59 |   .dequant(idct_in),
+      |    ^~~~~~~
+%Warning-WIDTHEXPAND: .agent-work/w-nostub/preexist-scorer/tb.sv:59:4: Input port connection 'dequant' expects 29 bits on the pin connection, but pin connection's VARREF 'idct_in' generates 18 bits.
+                                                                     : ... note: In instance 'h264_rtl_recon_scorer_tb'
+   59 |   .dequant(idct_in),
+      |    ^~~~~~~
+%Error: .agent-work/w-nostub/preexist-scorer/tb.sv:60:4: Illegal assignment: Array element types are not equivalent (IEEE 1800-2023 6.22.2)
+                                                       : ... note: In instance 'h264_rtl_recon_scorer_tb'
+                                                       : ... Pin data type: 'logic[28:0]$[0:15]' (4-state)
+                                                       : ... Expression data type: 'logic[17:0]$[0:15]' (4-state)
+   60 |   .residual(res)
+      |    ^~~~~~~~
+%Warning-WIDTHEXPAND: .agent-work/w-nostub/preexist-scorer/tb.sv:60:4: Output port connection 'residual' expects 29 bits on the pin connection, but pin connection's VARREF 'res' generates 18 bits.
+                                                                     : ... note: In instance 'h264_rtl_recon_scorer_tb'
+   60 |   .residual(res)
+      |    ^~~~~~~~
+%Error: .agent-work/w-nostub/preexist-scorer/tb.sv:67:4: Illegal assignment: Array element types are not equivalent (IEEE 1800-2023 6.22.2)
+                                                       : ... note: In instance 'h264_rtl_recon_scorer_tb'
+                                                       : ... Pin data type: 'logic[28:0]$[0:15]' (4-state)
+                                                       : ... Expression data type: 'logic[17:0]$[0:15]' (4-state)
+   67 |   .residual(res),
+      |    ^~~~~~~~
+%Warning-WIDTHEXPAND: .agent-work/w-nostub/preexist-scorer/tb.sv:67:4: Input port connection 'residual' expects 29 bits on the pin connection, but pin connection's VARREF 'res' generates 18 bits.
+                                                                     : ... note: In instance 'h264_rtl_recon_scorer_tb'
+   67 |   .residual(res),
+      |    ^~~~~~~~
+%Error: Exiting due to 5 error(s)

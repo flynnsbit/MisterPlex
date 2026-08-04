@@ -1,0 +1,1998 @@
+resource-preflight: waiting for exclusive heavy-validation slot: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/resource-preflight.lock
+resource-preflight: acquired slot for: make unit-unlocked
+preflight: paging 1 pages/s over 2s (limit 200)
+preflight: MemAvailable 61750MB (floor 4096MB)
+preflight: SwapFree 94001MB (floor 32MB)
+preflight OK: no local Quartus, no active paging, 61750MB available, 94001MB swap free
+resource-preflight: preflight OK on attempt 1; running command
+make[1]: Entering directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw'
+preflight: paging 0 pages/s over 2s (limit 200)
+preflight: MemAvailable 61681MB (floor 4096MB)
+preflight: SwapFree 94001MB (floor 32MB)
+preflight OK: no local Quartus, no active paging, 61681MB available, 94001MB swap free
+/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/test_cadence
+test_cadence: OK
+/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/test_avclock
+test_avclock: OK
+/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/test_mraudio_status
+test_mraudio_status: OK
+/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/test_osd_menu
+test_osd_menu: OK
+/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/test_playback_overlay
+test_playback_overlay: OK
+/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/test_input_mailbox
+test_input_mailbox: OK
+/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/test_pixel_format
+/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/test_main_guard
+test_main_guard: OK
+/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/test_status_telemetry
+test_status_telemetry: OK raw[12]=dc raw[13]=csum raw[14]=recon_sig raw[15]=recon_dbg; old raw[13]=0x53 alias rejected; PLXE bits 45/46/47 decoded
+/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/test_resolve
+test_resolve: OK
+/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/test_pms_timeline
+test_pms_timeline: OK
+/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/unit/test_pms_baseline_gate.sh
+PMS_BASELINE_SOURCE annexb=/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/pms-baseline-gate/green.264
+PMS_BASELINE_DELIVERED profile_idc=66 level_idc=30 pps_valid=1 entropy_cabac=0 max_num_ref_frames=1 coded=624x480 display=618x480 crop_flag=1 crop_lrtb=0,3,0,0 crop_unit=2x2
+PMS_BASELINE_SLICES vcl=2 idr=1 nonidr=1 i=1 p=1 b=0 other=0 bytes=37
+test_pms_baseline_profile: OK delivered Baseline/CAVLC/ref=1/no-B 624x480 stream
+PMS_BASELINE_SOURCE annexb=/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/pms-baseline-gate/bad_profile_high.264
+PMS_BASELINE_DELIVERED profile_idc=100 level_idc=30 pps_valid=1 entropy_cabac=0 max_num_ref_frames=1 coded=624x480 display=618x480 crop_flag=1 crop_lrtb=0,3,0,0 crop_unit=2x2
+PMS_BASELINE_SLICES vcl=2 idr=1 nonidr=1 i=1 p=1 b=0 other=0 bytes=38
+FAIL pms_baseline_profile: delivered stream violates MiSTerPlex 480p FPGA contract: profile_idc=100, expected 66; is MiSTerPlex.xml still installed in the PMS Profiles directory and has the plex container been restarted? See docs/pms-baseline-profile.md.
+PMS_BASELINE_SOURCE annexb=/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/pms-baseline-gate/bad_cabac.264
+PMS_BASELINE_DELIVERED profile_idc=66 level_idc=30 pps_valid=0 entropy_cabac=1 max_num_ref_frames=1 coded=624x480 display=618x480 crop_flag=1 crop_lrtb=0,3,0,0 crop_unit=2x2
+PMS_BASELINE_SLICES vcl=2 idr=1 nonidr=1 i=1 p=1 b=0 other=0 bytes=37
+FAIL pms_baseline_profile: delivered stream violates MiSTerPlex 480p FPGA contract: entropy_cabac=1, expected 0; pps_valid=0 for expected CAVLC stream; is MiSTerPlex.xml still installed in the PMS Profiles directory and has the plex container been restarted? See docs/pms-baseline-profile.md.
+PMS_BASELINE_SOURCE annexb=/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/pms-baseline-gate/bad_max_ref.264
+PMS_BASELINE_DELIVERED profile_idc=66 level_idc=30 pps_valid=1 entropy_cabac=0 max_num_ref_frames=4 coded=624x480 display=618x480 crop_flag=1 crop_lrtb=0,3,0,0 crop_unit=2x2
+PMS_BASELINE_SLICES vcl=2 idr=1 nonidr=1 i=1 p=1 b=0 other=0 bytes=37
+FAIL pms_baseline_profile: delivered stream violates MiSTerPlex 480p FPGA contract: max_num_ref_frames=4, expected 1; is MiSTerPlex.xml still installed in the PMS Profiles directory and has the plex container been restarted? See docs/pms-baseline-profile.md.
+PMS_BASELINE_SOURCE annexb=/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/pms-baseline-gate/bad_b_slice.264
+PMS_BASELINE_DELIVERED profile_idc=66 level_idc=30 pps_valid=1 entropy_cabac=0 max_num_ref_frames=1 coded=624x480 display=618x480 crop_flag=1 crop_lrtb=0,3,0,0 crop_unit=2x2
+PMS_BASELINE_SLICES vcl=1 idr=0 nonidr=1 i=0 p=0 b=1 other=0 bytes=29
+FAIL pms_baseline_profile: delivered stream violates MiSTerPlex 480p FPGA contract: b_slices=1, expected 0; is MiSTerPlex.xml still installed in the PMS Profiles directory and has the plex container been restarted? See docs/pms-baseline-profile.md.
+SKIP-NOT-PASS test_pms_baseline_profile: set PLEX_BASE, PLEX_TOKEN, and MISTERPLEX_BASELINE_KEY for the live PMS Baseline check.
+SKIP-NOT-PASS: this target is intentionally outside make unit and a skip must not be reported as pass.
+test_pms_baseline_gate: OK green plus red proofs for profile/cabac/ref/B and absent deps
+/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/test_h264_bitstream_source
+test_h264_bitstream_source: telemetry overrun=1 underrun=1 desync=1 last_bad_seq=7 wrap_reuse=1 fixture_nals=5 fixture_vcl=2 fixture_bytes=9060
+test_h264_bitstream_source: OK copy-on-push pause-replay full/underrun/overrun/desync
+/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/test_frame_store_math
+test_frame_store_math: OK
+/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/test_frame_store_sdram_sim
+test_frame_store_sdram_sim: 320x240 stride=320 OK (old path mismatches=38400; fixed path clean)
+test_frame_store_sdram_sim: 640x480 stride=640 OK (old path mismatches=153600; fixed path clean)
+test_frame_store_sdram_sim: 800x600 stride=800 OK (old path mismatches=240000; fixed path clean)
+test_frame_store_sdram_sim: 1024x768 stride=1024 OK (old path mismatches=393216; fixed path clean)
+test_frame_store_sdram_sim: 1280x720 stride=1280 OK (old path mismatches=460800; fixed path clean)
+test_frame_store_sdram_sim: 1280x1024 stride=1280 OK (old path mismatches=655360; fixed path clean)
+test_frame_store_sdram_sim: 1600x900 stride=1600 OK (old path mismatches=720000; fixed path clean)
+test_frame_store_sdram_sim: 1920x1080 stride=1920 OK (old path mismatches=1036800; fixed path clean)
+/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/test_frame_store_ddr_prefetch_sim
+test_frame_store_ddr_prefetch_sim: page-flip ownership OK (old mismatches=153600; fixed clean)
+test_frame_store_ddr_prefetch_sim: YUV420p 640x480@24 coded=624 20MHz line_count=8 OK under 500us DDR blackout
+test_frame_store_ddr_prefetch_sim: YUV420p 640x480@30 coded=624 20MHz line_count=4 expected underrun=35 first_line=18
+test_frame_store_ddr_prefetch_sim: YUV420p 640x480@30 coded=624 20MHz line_count=8 OK under 500us DDR blackout
+test_frame_store_ddr_prefetch_sim: YUV420p 640x480@60 coded=624 20MHz line_count=8 expected underrun=48 first_line=36
+test_frame_store_ddr_prefetch_sim: YUV420p 640x480@60 coded=624 20MHz line_count=16 OK under 500us DDR blackout
+test_frame_store_ddr_prefetch_sim: YUV420p 640x480@30 coded=624 80MHz line_count=8 OK under 500us DDR blackout
+test_frame_store_ddr_prefetch_sim: YUV420p 640x480@60 coded=624 80MHz line_count=8 expected underrun=32 first_line=36
+test_frame_store_ddr_prefetch_sim: YUV420p 640x480@60 coded=624 80MHz line_count=16 OK under 500us DDR blackout
+test_frame_store_ddr_prefetch_sim: YUV420p 1280x720@30 coded=1280 80MHz line_count=8 expected underrun=28 first_line=29
+test_frame_store_ddr_prefetch_sim: YUV420p 1280x720@30 coded=1280 80MHz line_count=16 OK under 500us DDR blackout
+test_frame_store_ddr_prefetch_sim: YUV420p 640x480@30 coded=624 85MHz line_count=8 OK under 500us DDR blackout
+test_frame_store_ddr_prefetch_sim: YUV420p 640x480@60 coded=624 85MHz line_count=8 expected underrun=32 first_line=36
+test_frame_store_ddr_prefetch_sim: YUV420p 640x480@60 coded=624 85MHz line_count=16 OK under 500us DDR blackout
+test_frame_store_ddr_prefetch_sim: YUV420p 1280x720@30 coded=1280 85MHz line_count=8 expected underrun=28 first_line=29
+test_frame_store_ddr_prefetch_sim: YUV420p 1280x720@30 coded=1280 85MHz line_count=16 OK under 500us DDR blackout
+test_frame_store_ddr_prefetch_sim: YUV420p 640x480@30 coded=624 90MHz line_count=8 OK under 500us DDR blackout
+test_frame_store_ddr_prefetch_sim: YUV420p 640x480@60 coded=624 90MHz line_count=8 expected underrun=32 first_line=36
+test_frame_store_ddr_prefetch_sim: YUV420p 640x480@60 coded=624 90MHz line_count=16 OK under 500us DDR blackout
+test_frame_store_ddr_prefetch_sim: YUV420p 1280x720@30 coded=1280 90MHz line_count=8 expected underrun=28 first_line=29
+test_frame_store_ddr_prefetch_sim: YUV420p 1280x720@30 coded=1280 90MHz line_count=16 OK under 500us DDR blackout
+test_frame_store_ddr_prefetch_sim: YUV420p 640x480@30 coded=624 100MHz line_count=8 OK under 500us DDR blackout
+test_frame_store_ddr_prefetch_sim: YUV420p 640x480@60 coded=624 100MHz line_count=8 expected underrun=32 first_line=36
+test_frame_store_ddr_prefetch_sim: YUV420p 640x480@60 coded=624 100MHz line_count=16 OK under 500us DDR blackout
+test_frame_store_ddr_prefetch_sim: YUV420p 1280x720@30 coded=1280 100MHz line_count=8 expected underrun=28 first_line=29
+test_frame_store_ddr_prefetch_sim: YUV420p 1280x720@30 coded=1280 100MHz line_count=16 OK under 500us DDR blackout
+/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/test_sdram_memtest_sim
+test_sdram_memtest_sim: OK (128MB model PASS size=5 max_addr=127; corrupt 128MB FAIL errors=3; burst-offset reproduces state=7 size=0 first_fail_addr=0 got=0x0000 want=0x1357; chip1-refresh-gap size=4 first_fail=4294967295; addr26-stuck size=3 pass=1; 64/32/16 alias probes OK)
+/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/test_sdram_mailbox
+test_sdram_mailbox: OK (decoded PLXM summary and diag; invalid magic/version rejected)
+/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/test_annexb_count
+test_annexb_count: OK (count=4 vcl=2 idr=1)
+wrote /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/plex_real_baseline.264 (6739 bytes) NALs types=[7, 8, 6, 5] expect SPS=7 PPS=8 IDR=5 dims=320x240
+/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/test_status_telemetry /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/plex_real_baseline.264
+test_status_telemetry: OK raw[12]=dc raw[13]=csum raw[14]=recon_sig raw[15]=recon_dbg; old raw[13]=0x53 alias rejected; PLXE bits 45/46/47 decoded
+/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/test_sps_parse /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/plex_real_baseline.264
+test_sps_parse: OK 320x240 profile=66 level=30
+/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/test_slice_hdr /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/plex_real_baseline.264
+test_slice_hdr: OK sps=320x240 pps deblock slice_type=7 mb0=0 qp=25 delta=2
+/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/test_cavlc_dc /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/plex_real_baseline.264
+test_cavlc_dc: OK probe_tc=8 t1=3 walk=300/300 FULL recon=320x240 rgb=76800 maeY=0.0000 maeU=0.0000 maeV=0.0000
+/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/test_idct_quant /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/plex_real_baseline.264
+OK gold table: coeff[16] locked csum=0x14 (20 XOR, not sum -20) dc=-24 tc=8 t1=3
+OK synth: qp=25 coeff0=-24 deq00=-4224 pred=128 → y=62 (uniform 4x4)
+GOLD coeffs scan: -24 4 4 0 -4 0 -1 0 0 -1 1 0 1 0 0 0
+GOLD res_csum=20 (0x14) — XOR sat8 (not arith sum -20)
+GOLD dequant 4x4 (row-major residual domain):
+   -4224   896     0  -224
+     896 -1152     0   288
+       0     0     0     0
+    -224   288     0     0
+GOLD recon Y 4x4 (pred=128, qp=25):
+   73 72 76 76
+   72 74 71 73
+   76 71 32 27
+   76 73 27 24
+GOLD y00=73 mean4x4=62 tc=8 t1=3 qp=25 csum8=0x14 res_dc=-24 paint_rgb565=0x4a49
+GOLD contrast: 3.3k stub paint y=104 (128+dc) vs true recon y00=73
+FPGA_GOLD coeff_scan=-24,4,4,0,-4,0,-1,0,0,-1,1,0,1,0,0,0
+FPGA_GOLD res_dc=-24 res_csum=20 res_csum_hex=0x14 res_tc=8 res_t1=3 qp=25
+FPGA_GOLD status_plan residual_dc[103:96] residual_csum8[111:104] stream_bytes[127:112]
+FPGA_GOLD csum_algo=XOR_sat8  (NOT arith_sum=-20 / 0xec)
+FPGA_GOLD pred=128 qp=25
+FPGA_GOLD dequant_rowmajor=-4224,896,0,-224,896,-1152,0,288,0,0,0,0,-224,288,0,0
+FPGA_GOLD recon_y_rowmajor=73,72,76,76,72,74,71,73,76,71,32,27,76,73,27,24
+FPGA_GOLD recon_y00=73 recon_mean4x4=62 paint_y00_rgb565=0x4a49 stub_dc_paint_y=104 stub_rgb565=0x6b4d
+FPGA_GOLD status_plan_3l2 recon_y00|recon_mean (optional telem); keep res_dc=-24 res_csum=20
+3.3l-2 paint vector (top-left 4x4, gray Y→RGB565, pred=128):
+  frame_store addrs (W=320): 0 1 2 3 320 321 322 323 640 641 642 643 960 961 962 963
+  [0][0] Y= 73 RGB565=0x4a49
+  [0][1] Y= 72 RGB565=0x4a49
+  [0][2] Y= 76 RGB565=0x4a69
+  [0][3] Y= 76 RGB565=0x4a69
+  [1][0] Y= 72 RGB565=0x4a49
+  [1][1] Y= 74 RGB565=0x4a49
+  [1][2] Y= 71 RGB565=0x4228
+  [1][3] Y= 73 RGB565=0x4a49
+  [2][0] Y= 76 RGB565=0x4a69
+  [2][1] Y= 71 RGB565=0x4228
+  [2][2] Y= 32 RGB565=0x2104
+  [2][3] Y= 27 RGB565=0x18c3
+  [3][0] Y= 76 RGB565=0x4a69
+  [3][1] Y= 73 RGB565=0x4a49
+  [3][2] Y= 27 RGB565=0x18c3
+  [3][3] Y= 24 RGB565=0x18c3
+  HW soft gate after inv_quant+idct: recon_y00==73 recon_mean==62 (keep res_dc=-24 res_csum=20 XOR not sum -20)
+OK 3l2-table: inv_quant+IDCT pred=128 → y00=73 mean=62 (no bitstream)
+HOST first residual scan: -24 4 4 0 -4 0 -1 0 0 -1 1 0 1 0 0 0  | csum8=20 (0x14) xor-sat8 coeff0=-24 coeff1=4
+FPGA expose map:
+  ON WIRE (lab RBF / test_f3_residual): res_ok=1 res_tc=8 res_t1=3 res_dc=-24
+  HOST FULL-16 (3.3l-1 golden): res_csum=0x14 (20) res_c1=4 full_on_wire=0
+  COMPARE: keep res_dc=-24; when telem packs csum expect res_csum=20 (0x14 XOR, not sum -20)
+FPGA_GOLD coeff_scan=-24,4,4,0,-4,0,-1,0,0,-1,1,0,1,0,0,0
+FPGA_GOLD res_dc=-24 res_csum=20 res_csum_hex=0x14 res_tc=8 res_t1=3 qp=25
+FPGA_GOLD status_plan residual_dc[103:96] residual_csum8[111:104] stream_bytes[127:112]
+FPGA_GOLD csum_algo=XOR_sat8  (NOT arith_sum=-20 / 0xec)
+OK 3l1: full-16 dump + csum=0x14 locked for FPGA compare (res_dc=-24)
+GOLD coeffs scan: -24 4 4 0 -4 0 -1 0 0 -1 1 0 1 0 0 0
+GOLD res_csum=20 (0x14) — XOR sat8 (not arith sum -20)
+GOLD dequant 4x4 (row-major residual domain):
+   -4224   896     0  -224
+     896 -1152     0   288
+       0     0     0     0
+    -224   288     0     0
+GOLD recon Y 4x4 (pred=128, qp=25):
+   73 72 76 76
+   72 74 71 73
+   76 71 32 27
+   76 73 27 24
+GOLD y00=73 mean4x4=62 tc=8 t1=3 qp=25 csum8=0x14 res_dc=-24 paint_rgb565=0x4a49
+GOLD contrast: 3.3k stub paint y=104 (128+dc) vs true recon y00=73
+FPGA_GOLD coeff_scan=-24,4,4,0,-4,0,-1,0,0,-1,1,0,1,0,0,0
+FPGA_GOLD res_dc=-24 res_csum=20 res_csum_hex=0x14 res_tc=8 res_t1=3 qp=25
+FPGA_GOLD status_plan residual_dc[103:96] residual_csum8[111:104] stream_bytes[127:112]
+FPGA_GOLD csum_algo=XOR_sat8  (NOT arith_sum=-20 / 0xec)
+FPGA_GOLD pred=128 qp=25
+FPGA_GOLD dequant_rowmajor=-4224,896,0,-224,896,-1152,0,288,0,0,0,0,-224,288,0,0
+FPGA_GOLD recon_y_rowmajor=73,72,76,76,72,74,71,73,76,71,32,27,76,73,27,24
+FPGA_GOLD recon_y00=73 recon_mean4x4=62 paint_y00_rgb565=0x4a49 stub_dc_paint_y=104 stub_rgb565=0x6b4d
+FPGA_GOLD status_plan_3l2 recon_y00|recon_mean (optional telem); keep res_dc=-24 res_csum=20
+3.3l-2 paint vector (top-left 4x4, gray Y→RGB565, pred=128):
+  frame_store addrs (W=320): 0 1 2 3 320 321 322 323 640 641 642 643 960 961 962 963
+  [0][0] Y= 73 RGB565=0x4a49
+  [0][1] Y= 72 RGB565=0x4a49
+  [0][2] Y= 76 RGB565=0x4a69
+  [0][3] Y= 76 RGB565=0x4a69
+  [1][0] Y= 72 RGB565=0x4a49
+  [1][1] Y= 74 RGB565=0x4a49
+  [1][2] Y= 71 RGB565=0x4228
+  [1][3] Y= 73 RGB565=0x4a49
+  [2][0] Y= 76 RGB565=0x4a69
+  [2][1] Y= 71 RGB565=0x4228
+  [2][2] Y= 32 RGB565=0x2104
+  [2][3] Y= 27 RGB565=0x18c3
+  [3][0] Y= 76 RGB565=0x4a69
+  [3][1] Y= 73 RGB565=0x4a49
+  [3][2] Y= 27 RGB565=0x18c3
+  [3][3] Y= 24 RGB565=0x18c3
+  HW soft gate after inv_quant+idct: recon_y00==73 recon_mean==62 (keep res_dc=-24 res_csum=20 XOR not sum -20)
+OK 3l2-real: first I_NxN 4x4 bit-exact; inv_quant+IDCT locked for FPGA paint
+test_idct_quant: OK (3.3l-0 synth + 3.3l-1 full-16/csum XOR0x14 + 3.3l-2 inv_quant/IDCT pred=128)
+/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/test_p3_host_recon_vectors
+test_p3_host_recon_vectors: OK vector_bytes=6739 mb=300/300 frame=320x240 maeY=0.000000 mb0_json=build/p3_host_recon_mb0_luma_v1.json frame_mae=build/p3_host_recon_frame_mae_v1.csv
+/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/unit/test_h264_golden_extractor.sh
+extract_h264_golden: OK input=tests/fixtures/p3_host_recon/plex_real_baseline_320x240_1f.264 mb=0 frame=320x240 csum=0x14 recon_sig=0x3b ref=match
+extract_h264_golden: OK input=tests/fixtures/p3_host_recon/plex_real_baseline_320x240_1f.264 mb=0 frame=320x240 csum=0x14 recon_sig=0x3b ref=match
+extract_h264_golden: OK sequence input=tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_320x240_12f.264 nals=15 vcl=12 i=1 p=11 sha256=d6f30bcb8226f7e1c204d01f9914bffe1ec661503e373f7312d23884b3bfa86e
+extract_h264_golden: OK sequence input=tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_320x240_12f.264 nals=15 vcl=12 i=1 p=11 sha256=d6f30bcb8226f7e1c204d01f9914bffe1ec661503e373f7312d23884b3bfa86e
+extract_h264_golden: OK sequence input=tests/fixtures/p3_multinal/wcap_residual14_idr_plus_p.264 nals=5 vcl=2 i=1 p=1 sha256=9f58c3f92a6c9cacc86d2b58c275329445017f328b54206fcdcef5de4b1a5b62
+test_h264_golden_extractor: OK deterministic MB0 + multi-NAL IDR/P sequence; latency red-check pred-only=0x00 vs recon=0x3b
+/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/unit/test_h264_frame_plane_goldens.sh
+extract_h264_frame_planes: OK input=tests/fixtures/p3_multinal/wcap_residual14_idr_plus_p.264 frames=2 geometry=320x240 planes_sha256=82aaafc0ed7c46851ec7f9d36a4db07d3fd229e540d9d5597220054a9f958b61
+extract_h264_frame_planes: OK verify frames=2 geometry=320x240 planes_sha256=82aaafc0ed7c46851ec7f9d36a4db07d3fd229e540d9d5597220054a9f958b61
+FRAME_PLANE_COMPARE raw frame=0 plane=Y exact=76800 pixels=76800 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=0 plane=U exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=0 plane=V exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=1 plane=Y exact=76800 pixels=76800 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=1 plane=U exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=1 plane=V exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE summary frames=2 bytes=230400 strict_pass=1
+extract_h264_frame_planes: OK verify frames=2 geometry=320x240 planes_sha256=82aaafc0ed7c46851ec7f9d36a4db07d3fd229e540d9d5597220054a9f958b61
+extract_h264_frame_planes: OK input=tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_320x240_12f.264 frames=12 geometry=320x240 planes_sha256=8be37ec608bb9b536b3831ec6fe850f6e0f99179403b592597db717d5ef96268
+extract_h264_frame_planes: OK verify frames=12 geometry=320x240 planes_sha256=8be37ec608bb9b536b3831ec6fe850f6e0f99179403b592597db717d5ef96268
+FRAME_PLANE_COMPARE raw frame=0 plane=Y exact=76800 pixels=76800 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=0 plane=U exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=0 plane=V exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=1 plane=Y exact=76800 pixels=76800 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=1 plane=U exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=1 plane=V exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=2 plane=Y exact=76800 pixels=76800 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=2 plane=U exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=2 plane=V exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=3 plane=Y exact=76800 pixels=76800 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=3 plane=U exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=3 plane=V exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=4 plane=Y exact=76800 pixels=76800 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=4 plane=U exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=4 plane=V exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=5 plane=Y exact=76800 pixels=76800 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=5 plane=U exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=5 plane=V exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=6 plane=Y exact=76800 pixels=76800 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=6 plane=U exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=6 plane=V exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=7 plane=Y exact=76800 pixels=76800 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=7 plane=U exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=7 plane=V exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=8 plane=Y exact=76800 pixels=76800 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=8 plane=U exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=8 plane=V exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=9 plane=Y exact=76800 pixels=76800 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=9 plane=U exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=9 plane=V exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=10 plane=Y exact=76800 pixels=76800 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=10 plane=U exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=10 plane=V exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=11 plane=Y exact=76800 pixels=76800 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=11 plane=U exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=11 plane=V exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE summary frames=12 bytes=1382400 strict_pass=1
+extract_h264_frame_planes: OK verify frames=12 geometry=320x240 planes_sha256=8be37ec608bb9b536b3831ec6fe850f6e0f99179403b592597db717d5ef96268
+extract_h264_frame_planes: OK input=tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_624x480_12f.264 frames=12 geometry=624x480 planes_sha256=d044f61bdd33e60616334841d9f1cf8ac55d42b8d5708c54bcf2faa6f5d46d02
+extract_h264_frame_planes: OK verify frames=12 geometry=624x480 planes_sha256=d044f61bdd33e60616334841d9f1cf8ac55d42b8d5708c54bcf2faa6f5d46d02
+FRAME_PLANE_COMPARE raw frame=0 plane=Y exact=299520 pixels=299520 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=0 plane=U exact=74880 pixels=74880 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=0 plane=V exact=74880 pixels=74880 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=1 plane=Y exact=299520 pixels=299520 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=1 plane=U exact=74880 pixels=74880 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=1 plane=V exact=74880 pixels=74880 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=2 plane=Y exact=299520 pixels=299520 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=2 plane=U exact=74880 pixels=74880 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=2 plane=V exact=74880 pixels=74880 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=3 plane=Y exact=299520 pixels=299520 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=3 plane=U exact=74880 pixels=74880 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=3 plane=V exact=74880 pixels=74880 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=4 plane=Y exact=299520 pixels=299520 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=4 plane=U exact=74880 pixels=74880 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=4 plane=V exact=74880 pixels=74880 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=5 plane=Y exact=299520 pixels=299520 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=5 plane=U exact=74880 pixels=74880 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=5 plane=V exact=74880 pixels=74880 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=6 plane=Y exact=299520 pixels=299520 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=6 plane=U exact=74880 pixels=74880 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=6 plane=V exact=74880 pixels=74880 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=7 plane=Y exact=299520 pixels=299520 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=7 plane=U exact=74880 pixels=74880 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=7 plane=V exact=74880 pixels=74880 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=8 plane=Y exact=299520 pixels=299520 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=8 plane=U exact=74880 pixels=74880 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=8 plane=V exact=74880 pixels=74880 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=9 plane=Y exact=299520 pixels=299520 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=9 plane=U exact=74880 pixels=74880 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=9 plane=V exact=74880 pixels=74880 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=10 plane=Y exact=299520 pixels=299520 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=10 plane=U exact=74880 pixels=74880 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=10 plane=V exact=74880 pixels=74880 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=11 plane=Y exact=299520 pixels=299520 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=11 plane=U exact=74880 pixels=74880 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=11 plane=V exact=74880 pixels=74880 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE summary frames=12 bytes=5391360 strict_pass=1
+extract_h264_frame_planes: OK verify frames=12 geometry=624x480 planes_sha256=d044f61bdd33e60616334841d9f1cf8ac55d42b8d5708c54bcf2faa6f5d46d02
+extract_h264_frame_planes: OK input=tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_320x240_12f.264 frames=12 geometry=320x240 planes_sha256=c1bde3ac3828be208d63a45641e34920c945e8fc774e7a533f39fe40a04edb9d
+extract_h264_frame_planes: OK verify frames=12 geometry=320x240 planes_sha256=c1bde3ac3828be208d63a45641e34920c945e8fc774e7a533f39fe40a04edb9d
+FRAME_PLANE_COMPARE raw frame=0 plane=Y exact=76800 pixels=76800 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=0 plane=U exact=19199 pixels=19200 mae=0.003906 max_abs=75
+FRAME_PLANE_COMPARE raw frame=0 plane=V exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=1 plane=Y exact=76800 pixels=76800 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=1 plane=U exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=1 plane=V exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=2 plane=Y exact=76800 pixels=76800 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=2 plane=U exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=2 plane=V exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=3 plane=Y exact=76800 pixels=76800 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=3 plane=U exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=3 plane=V exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=4 plane=Y exact=76800 pixels=76800 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=4 plane=U exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=4 plane=V exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=5 plane=Y exact=76800 pixels=76800 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=5 plane=U exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=5 plane=V exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=6 plane=Y exact=76800 pixels=76800 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=6 plane=U exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=6 plane=V exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=7 plane=Y exact=76800 pixels=76800 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=7 plane=U exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=7 plane=V exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=8 plane=Y exact=76800 pixels=76800 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=8 plane=U exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=8 plane=V exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=9 plane=Y exact=76800 pixels=76800 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=9 plane=U exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=9 plane=V exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=10 plane=Y exact=76800 pixels=76800 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=10 plane=U exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=10 plane=V exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=11 plane=Y exact=76800 pixels=76800 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=11 plane=U exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE raw frame=11 plane=V exact=19200 pixels=19200 mae=0.000000 max_abs=0
+FRAME_PLANE_COMPARE summary frames=12 bytes=1382400 strict_pass=0
+extract_h264_frame_planes: OK expected-red candidate diverged from golden
+test_h264_frame_plane_goldens: OK regenerated I420 goldens, alias/explicit loop-filter provenance verified, corrupt-plane/provenance RED checked
+/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/unit/test_i420_candidate_score.sh
+I420_CANDIDATE_SCORE raw frame=0 slice=I plane=Y exact=76800 pixels=76800 mae=0.000000 max_abs=0
+I420_CANDIDATE_SCORE raw frame=0 slice=I plane=U exact=19200 pixels=19200 mae=0.000000 max_abs=0
+I420_CANDIDATE_SCORE raw frame=0 slice=I plane=V exact=19200 pixels=19200 mae=0.000000 max_abs=0
+I420_CANDIDATE_SCORE raw frame=1 slice=P plane=Y exact=76800 pixels=76800 mae=0.000000 max_abs=0
+I420_CANDIDATE_SCORE raw frame=1 slice=P plane=U exact=19200 pixels=19200 mae=0.000000 max_abs=0
+I420_CANDIDATE_SCORE raw frame=1 slice=P plane=V exact=19200 pixels=19200 mae=0.000000 max_abs=0
+I420_CANDIDATE_SCORE raw frame=2 slice=P plane=Y exact=76800 pixels=76800 mae=0.000000 max_abs=0
+I420_CANDIDATE_SCORE raw frame=2 slice=P plane=U exact=19200 pixels=19200 mae=0.000000 max_abs=0
+I420_CANDIDATE_SCORE raw frame=2 slice=P plane=V exact=19200 pixels=19200 mae=0.000000 max_abs=0
+I420_CANDIDATE_SCORE raw frame=3 slice=P plane=Y exact=76800 pixels=76800 mae=0.000000 max_abs=0
+I420_CANDIDATE_SCORE raw frame=3 slice=P plane=U exact=19200 pixels=19200 mae=0.000000 max_abs=0
+I420_CANDIDATE_SCORE raw frame=3 slice=P plane=V exact=19200 pixels=19200 mae=0.000000 max_abs=0
+I420_CANDIDATE_SCORE raw frame=4 slice=P plane=Y exact=76800 pixels=76800 mae=0.000000 max_abs=0
+I420_CANDIDATE_SCORE raw frame=4 slice=P plane=U exact=19200 pixels=19200 mae=0.000000 max_abs=0
+I420_CANDIDATE_SCORE raw frame=4 slice=P plane=V exact=19200 pixels=19200 mae=0.000000 max_abs=0
+I420_CANDIDATE_SCORE raw frame=5 slice=P plane=Y exact=76800 pixels=76800 mae=0.000000 max_abs=0
+I420_CANDIDATE_SCORE raw frame=5 slice=P plane=U exact=19200 pixels=19200 mae=0.000000 max_abs=0
+I420_CANDIDATE_SCORE raw frame=5 slice=P plane=V exact=19200 pixels=19200 mae=0.000000 max_abs=0
+I420_CANDIDATE_SCORE raw frame=6 slice=P plane=Y exact=76800 pixels=76800 mae=0.000000 max_abs=0
+I420_CANDIDATE_SCORE raw frame=6 slice=P plane=U exact=19200 pixels=19200 mae=0.000000 max_abs=0
+I420_CANDIDATE_SCORE raw frame=6 slice=P plane=V exact=19200 pixels=19200 mae=0.000000 max_abs=0
+I420_CANDIDATE_SCORE raw frame=7 slice=P plane=Y exact=76800 pixels=76800 mae=0.000000 max_abs=0
+I420_CANDIDATE_SCORE raw frame=7 slice=P plane=U exact=19200 pixels=19200 mae=0.000000 max_abs=0
+I420_CANDIDATE_SCORE raw frame=7 slice=P plane=V exact=19200 pixels=19200 mae=0.000000 max_abs=0
+I420_CANDIDATE_SCORE raw frame=8 slice=P plane=Y exact=76800 pixels=76800 mae=0.000000 max_abs=0
+I420_CANDIDATE_SCORE raw frame=8 slice=P plane=U exact=19200 pixels=19200 mae=0.000000 max_abs=0
+I420_CANDIDATE_SCORE raw frame=8 slice=P plane=V exact=19200 pixels=19200 mae=0.000000 max_abs=0
+I420_CANDIDATE_SCORE raw frame=9 slice=P plane=Y exact=76800 pixels=76800 mae=0.000000 max_abs=0
+I420_CANDIDATE_SCORE raw frame=9 slice=P plane=U exact=19200 pixels=19200 mae=0.000000 max_abs=0
+I420_CANDIDATE_SCORE raw frame=9 slice=P plane=V exact=19200 pixels=19200 mae=0.000000 max_abs=0
+I420_CANDIDATE_SCORE raw frame=10 slice=P plane=Y exact=76800 pixels=76800 mae=0.000000 max_abs=0
+I420_CANDIDATE_SCORE raw frame=10 slice=P plane=U exact=19200 pixels=19200 mae=0.000000 max_abs=0
+I420_CANDIDATE_SCORE raw frame=10 slice=P plane=V exact=19200 pixels=19200 mae=0.000000 max_abs=0
+I420_CANDIDATE_SCORE raw frame=11 slice=P plane=Y exact=76800 pixels=76800 mae=0.000000 max_abs=0
+I420_CANDIDATE_SCORE raw frame=11 slice=P plane=U exact=19200 pixels=19200 mae=0.000000 max_abs=0
+I420_CANDIDATE_SCORE raw frame=11 slice=P plane=V exact=19200 pixels=19200 mae=0.000000 max_abs=0
+I420_CANDIDATE_SCORE summary intra=300/300 inter=3300/3300 strict_pass=1
+extract_h264_frame_planes: OK input=/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_320x240_12f.264 frames=12 geometry=320x240 planes_sha256=c1bde3ac3828be208d63a45641e34920c945e8fc774e7a533f39fe40a04edb9d
+test_i420_candidate_score: OK separated intra/inter score, colorspace/loop-filter/fault RED, and inter RCA diagnostic checks
+/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/unit/test_h264_multinal_stream_path.sh
+RTL SIM: using Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/verilator/h264_multinal_stream_path'
+make[2]: Nothing to be done for 'default'.
+make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/verilator/h264_multinal_stream_path'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
+- Verilator: Walltime 0.007 s (elab=0.000, cvt=0.000, bld=0.007); cpu 0.001 s on 1 threads; allocated 20.324 MB
+test_h264_multinal_stream_path: OK refuses implicit unproven defaults rc=2
+multi-NAL stream_path raw: bytes=9060 bytes_in=9060 bytes_seen=9060 nalu=5 sps=1 pps=1 idr=1 slice=1 place_pulses=1 saw_expected_csum=1 recon_sig_3b_cycles=15882 frames=2 saw_i=1 idle_between_vcl=1 saw_p=1 p_first_mb_seen=1 p_first_modes=1/0/0 p_first_bad=0 slice_parser_state=0 final_slice_type=5 final_p_skip_run=0 final_first_mb_type=0 final_first_part_mode=0 expect_csum=0x14 residual_csum=0x14 cycles=18485
+test_h264_multinal_stream_path: OK fixture exercises GREEN class (IDR->P re-entry plus recon 0x3b observed)
+multi-NAL stream_path raw: bytes=27653 bytes_in=27653 bytes_seen=27652 nalu=15 sps=1 pps=1 idr=1 slice=11 place_pulses=1 saw_expected_csum=1 recon_sig_3b_cycles=39780 frames=10 saw_i=1 idle_between_vcl=1 saw_p=1 p_first_mb_seen=11 p_first_modes=8/2/1 p_first_bad=0 slice_parser_state=0 final_slice_type=5 final_p_skip_run=0 final_first_mb_type=1 final_first_part_mode=1 expect_csum=0x10 residual_csum=0x10 cycles=55319
+test_h264_multinal_stream_path: OK fixture exercises GREEN class (IDR->P re-entry plus recon 0x3b observed)
+make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/verilator/h264_multinal_stream_path_recon_zero'
+make[2]: Nothing to be done for 'default'.
+make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/verilator/h264_multinal_stream_path_recon_zero'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
+- Verilator: Walltime 0.007 s (elab=0.000, cvt=0.000, bld=0.007); cpu 0.000 s on 1 threads; allocated 20.324 MB
+test_h264_multinal_stream_path: OK red-check forced recon_sig=0 rejected parsed P DPB/MC liveness
+test_h264_multinal_stream_path: OK deliberate RED wrong expected checksum rc=1
+/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/test_p3_idct_reference_model
+test_p3_idct_reference_model: OK vector_bytes=6739 coeff_csum=0x14 tc=8 t1=3 mb0_blocks=16 dequant16/idct16/recon16 match block0 frame_mae_rows=300 maeY=0.000000 y00=73 mean=62
+/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/test_p3_inter_pred_vectors
+wrote build/p3_inter_pred_regen.264 (27653 bytes) NALs types=[7, 8, 6, 5, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1] dims=320x240 frames=12
+unsupported probe: correctly rejects High/CABAC/B stream profile=100 level=30 B=7 refs=1
+test_p3_inter_pred_vectors: OK vector_bytes=27653 frames=12 I=1 P=11 B=0 refs=1 mvs=3095 parts=16x16:3095 max_qpel=(72,36)/4 frame_mae_rows=3600
+python3 /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/unit/test_no_conflict_markers.py
+OK: no unresolved conflict markers in tracked files
+python3 /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/unit/test_bench_rtl_filelists.py
+bench RTL file lists OK (83 benches checked against 66 modules)
+python3 /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/unit/test_p3_high_cabac_scope.py
+test_p3_high_cabac_scope: OK coded=624x480 display=618x480 mb=1170 fps=25 mb_per_s=29250 refs=4 yuv420_frame=449280 rgb565_frame=599040 dpb_refs=1797120 ref_plus_current=2246400 ref_current_present_yuv=2695680 cabac_lower=1.344Mbin/s cabac_plan=8.775Mbin/s cabac_stress=17.550Mbin/s clk20_plan_cycles_per_bin=2.28 clk20_stress_cycles_per_bin=1.14
+python3 /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/unit/test_p3_intra_mb0_verilator.py
+make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/obj_p3_intra_mb0_neg_25e3c8883b4a'
+g++  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -Os  -c -o p3_intra_mb0_neg_main.o /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/p3_intra_mb0_neg_main.cpp
+g++    p3_intra_mb0_neg_main.o verilated.o verilated_threads.o Vp3_intra_mb0_tb__ALL.a    -pthread -lpthread -latomic   -o Vp3_intra_mb0_tb
+make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/obj_p3_intra_mb0_neg_25e3c8883b4a'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
+- Verilator: Walltime 0.522 s (elab=0.000, cvt=0.000, bld=0.521); cpu 0.001 s on 1 threads; allocated 20.324 MB
+EXPECTED_RED p3_intra_mb0_negative: rc=1 matched 2 manifest substring(s) (tests/unit/test_p3_intra_mb0_verilator.py)
+P3 intra MB0 negative-direction check PASS: RTL perturbation was detected (red path).
+make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/obj_p3_intra_mb0_99ac5f762060'
+g++  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -Os  -c -o p3_intra_mb0_main.o /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/p3_intra_mb0_main.cpp
+g++    p3_intra_mb0_main.o verilated.o verilated_threads.o Vp3_intra_mb0_tb__ALL.a    -pthread -lpthread -latomic   -o Vp3_intra_mb0_tb
+make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/obj_p3_intra_mb0_99ac5f762060'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
+- Verilator: Walltime 0.528 s (elab=0.000, cvt=0.000, bld=0.527); cpu 0.001 s on 1 threads; allocated 20.324 MB
+P3 intra MB0 Verilator exact check PASS: 16 luma 4x4 blocks matched pred/recon exactly. CAVEAT: MB0 only exercises I4x4 DC/H/V, not full P3-3l3 coverage.
+make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/obj_p3_intra_guard_d83d6e71e5a3'
+g++  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -Os  -c -o p3_intra_guard_main.o /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/p3_intra_guard_main.cpp
+g++    p3_intra_guard_main.o verilated.o verilated_threads.o Vh264_intra_mode_guard__ALL.a    -pthread -lpthread -latomic   -o Vh264_intra_mode_guard
+make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/obj_p3_intra_guard_d83d6e71e5a3'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
+- Verilator: Walltime 0.513 s (elab=0.000, cvt=0.000, bld=0.513); cpu 0.001 s on 1 threads; allocated 20.324 MB
+P3 intra mode guard Verilator check PASS: I16 Plane accepted, IPCM+bad type still caught.
+python3 /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/unit/test_h264_intra_nb_ctx_verilator.py
+[RTL] Building h264_intra_nb_ctx testbench...
+[RTL] h264_intra_nb_ctx multi-MB test: mb_count=4 nb_used_count=1
+h264_intra_nb_ctx RTL check PASS: 1/4 MBs used real neighbour context
+python3 /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/unit/test_p3_idct_rtl_model.py
+RTL SIM: using Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/verilator/h264_iq_idct_4x4'
+make[2]: Nothing to be done for 'default'.
+make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/verilator/h264_iq_idct_4x4'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
+- Verilator: Walltime 0.006 s (elab=0.000, cvt=0.000, bld=0.006); cpu 0.000 s on 1 threads; allocated 20.324 MB
+OK real RTL sim: h264_iq_idct_4x4 elaborated with Verilator; blocks=16 compared_values=768 qp=25 fixture=/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/fixtures/p3_host_recon/mb0_luma_v1.json
+make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/verilator/decode_stub_recon'
+make[2]: Nothing to be done for 'default'.
+make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/verilator/decode_stub_recon'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
+- Verilator: Walltime 0.008 s (elab=0.000, cvt=0.000, bld=0.008); cpu 0.001 s on 1 threads; allocated 20.324 MB
+OK decode_stub RTL sim: product decode path recon_sig=0x3b recon_dbg=0xf9 qp=25 fixture=/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/fixtures/p3_host_recon/mb0_luma_v1.json
+make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/verilator/decode_stub_recon_pred_only'
+make[2]: Nothing to be done for 'default'.
+make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/verilator/decode_stub_recon_pred_only'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
+- Verilator: Walltime 0.007 s (elab=0.000, cvt=0.000, bld=0.006); cpu 0.000 s on 1 threads; allocated 20.324 MB
+EXPECTED_RED decode_stub_pred_only: rc=1 matched 1 manifest substring(s) (tests/unit/test_p3_idct_rtl_sim.sh)
+OK decode_stub RTL red-check: pred-only residual drop produced recon_sig=0x00 and failed golden 0x3b
+test_p3_idct_rtl_model: OK shared RTL integrated; mb0_luma_v1 recon_sig=0x3b (59) + behavioral RTL sim
+python3 /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/unit/test_p3_intra_frame_verilator.py
+make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/obj_p3_intra_frame_neg_93b97d3cc9c9'
+make[2]: Nothing to be done for 'default'.
+make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/obj_p3_intra_frame_neg_93b97d3cc9c9'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
+- Verilator: Walltime 0.008 s (elab=0.000, cvt=0.000, bld=0.007); cpu 0.001 s on 1 threads; allocated 20.324 MB
+EXPECTED_RED p3_intra_frame_negative: rc=1 matched 1 manifest substring(s) (tests/unit/test_p3_intra_frame_verilator.py)
+P3 intra frame-wide negative-direction check PASS: rare DDR-mode RTL perturbation was detected (red path).
+make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/obj_p3_intra_frame_e98b2c8539e6'
+make[2]: Nothing to be done for 'default'.
+make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/obj_p3_intra_frame_e98b2c8539e6'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
+- Verilator: Walltime 0.008 s (elab=0.000, cvt=0.000, bld=0.007); cpu 0.001 s on 1 threads; allocated 20.324 MB
+P3 intra frame-wide Verilator exact check PASS: mb_exact=300/300 frame=320x240 luma_pixels=76800 frame_mae_fixture=max_abs_y_zero
+I4 pass counts: V=656 H=298 DC=263 DDL=19 DDR=8 VR=14 HD=37 VL=22 HU=11 I_NxN_MBs=83
+I16 pass counts: V=195 H=13 DC=9 PlaneUnsupportedSeen=0 I16_MBs=217
+Chroma pass counts (MBs): DC=165 H=33 V=100 Plane=2 plane_evals={330,66,200,4}
+Neighbour coverage: no_above_blocks=48 no_left_blocks=12 top_right_replicated_blocks=465 dc_fallback_probe=PASS
+/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/unit/test_p3_inter_rtl_sim.sh
+RTL SIM: using Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/verilator/h264_inter_pred'
+make[2]: Nothing to be done for 'default'.
+make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/verilator/h264_inter_pred'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
+- Verilator: Walltime 0.006 s (elab=0.000, cvt=0.000, bld=0.006); cpu 0.001 s on 1 threads; allocated 20.324 MB
+OK real RTL sim: h264_inter_pred product RTL mv_cases=6 partition_cases=10 frame_mv_cases=9090 frame_modes=690/720/720/690/690 luma_qpel=16 chroma_epel=3 clamp=3 fetch=5 fixture=/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/fixtures/p3_inter_pred/inter_mc_v1.json
+make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/verilator/h264_inter_pred_bad_round'
+make[2]: Nothing to be done for 'default'.
+make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/verilator/h264_inter_pred_bad_round'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
+- Verilator: Walltime 0.006 s (elab=0.000, cvt=0.000, bld=0.006); cpu 0.001 s on 1 threads; allocated 20.324 MB
+EXPECTED_RED h264_inter_pred_bad_round: rc=1 matched 1 manifest substring(s) (tests/unit/test_p3_inter_rtl_sim.sh)
+OK h264_inter_pred RTL red-check: bad rounding fault failed golden
+make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/verilator/h264_inter_pred_bad_part_mv'
+make[2]: Nothing to be done for 'default'.
+make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/verilator/h264_inter_pred_bad_part_mv'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
+- Verilator: Walltime 0.006 s (elab=0.000, cvt=0.000, bld=0.005); cpu 0.000 s on 1 threads; allocated 20.324 MB
+EXPECTED_RED h264_inter_pred_bad_part_mv: rc=1 matched 1 manifest substring(s) (tests/unit/test_p3_inter_rtl_sim.sh)
+OK h264_inter_pred RTL red-check: bad partition MV fault failed golden
+/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/unit/test_p3_dpb_mc_rtl_sim.sh
+RTL SIM: using Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/verilator/h264_dpb_mc'
+make[2]: Nothing to be done for 'default'.
+make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/verilator/h264_dpb_mc'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
+- Verilator: Walltime 0.007 s (elab=0.000, cvt=0.000, bld=0.007); cpu 0.000 s on 1 threads; allocated 20.324 MB
+OK real RTL sim: h264_dpb_mc product RTL nals=15 i420_writes=1536 luma_window=441 chroma_windows=81/81 mc_pixels=256/64/64 part_modes=16x8/8x16/8x8/8x4/4x8/4x4 fixture=/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_624x480_12f.264
+make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/verilator/h264_dpb_mc_deblock_seam'
+make[2]: Nothing to be done for 'default'.
+make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/verilator/h264_dpb_mc_deblock_seam'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
+- Verilator: Walltime 0.009 s (elab=0.000, cvt=0.000, bld=0.008); cpu 0.001 s on 1 threads; allocated 20.324 MB
+OK h264_dpb_mc deblock-DPB seam: filtered samples precede wb_valid; terminal wb_valid precedes frame_done/ref_ready nals=15 fixture=/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_624x480_12f.264
+make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/verilator/h264_dpb_mc_deblock_seam_mb_fault'
+make[2]: Nothing to be done for 'default'.
+make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/verilator/h264_dpb_mc_deblock_seam_mb_fault'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
+- Verilator: Walltime 0.007 s (elab=0.000, cvt=0.000, bld=0.007); cpu 0.001 s on 1 threads; allocated 20.324 MB
+FAIL h264_dpb_mc RTL: deblock-DPB seam MB commit before all filtered samples wb=1 order_error=1 ref_ready=0
+OK h264_dpb_mc RTL red-check: deblock early MB commit fault failed seam
+make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/verilator/h264_dpb_mc_deblock_seam_ref_fault'
+make[2]: Nothing to be done for 'default'.
+make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/verilator/h264_dpb_mc_deblock_seam_ref_fault'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
+- Verilator: Walltime 0.007 s (elab=0.000, cvt=0.000, bld=0.006); cpu 0.001 s on 1 threads; allocated 20.324 MB
+FAIL h264_dpb_mc RTL: deblock-DPB seam terminal commit/ref_ready order phase pulse=0 ref_ready=1
+OK h264_dpb_mc RTL red-check: deblock early frame_done fault failed seam
+make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/verilator/h264_dpb_mc_bad_clamp'
+make[2]: Nothing to be done for 'default'.
+make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/verilator/h264_dpb_mc_bad_clamp'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
+- Verilator: Walltime 0.007 s (elab=0.000, cvt=0.000, bld=0.007); cpu 0.000 s on 1 threads; allocated 20.324 MB
+FAIL h264_dpb_mc RTL: luma window clamp mismatch idx=0 got=18 want=17 src=(0,0)
+OK h264_dpb_mc RTL red-check: bad edge clamp fault failed golden
+make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/verilator/h264_dpb_mc_bad_mc_round'
+make[2]: Nothing to be done for 'default'.
+make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/verilator/h264_dpb_mc_bad_mc_round'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
+- Verilator: Walltime 0.007 s (elab=0.000, cvt=0.000, bld=0.006); cpu 0.000 s on 1 threads; allocated 20.324 MB
+FAIL h264_dpb_mc RTL: MC luma prediction mismatch idx=0 got=18 want=17
+OK h264_dpb_mc RTL red-check: bad MC arithmetic fault failed golden
+make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/verilator/h264_dpb_mc_early_ref'
+make[2]: Nothing to be done for 'default'.
+make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/verilator/h264_dpb_mc_early_ref'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
+- Verilator: Walltime 0.007 s (elab=0.000, cvt=0.000, bld=0.006); cpu 0.001 s on 1 threads; allocated 20.324 MB
+FAIL h264_dpb_mc RTL: early reference publication before frame boundary
+OK h264_dpb_mc RTL red-check: early reference publication fault failed golden
+make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/verilator/h264_dpb_mc_bad_part_mask'
+make[2]: Nothing to be done for 'default'.
+make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/verilator/h264_dpb_mc_bad_part_mask'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
+- Verilator: Walltime 0.009 s (elab=0.000, cvt=0.000, bld=0.008); cpu 0.000 s on 1 threads; allocated 20.324 MB
+FAIL h264_dpb_mc RTL: part luma prediction/mask mismatch part=16x8 idx=8 valid=0 want_valid=1 got=38 want=38
+FAIL h264_dpb_mc RTL: part luma prediction/mask mismatch
+OK h264_dpb_mc RTL red-check: bad partition mask fault failed golden
+/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/unit/test_h264_p_slice_modes_rtl_sim.sh
+RTL SIM: using Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/verilator/h264_p_slice_modes'
+g++  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -Os  -c -o h264_p_slice_modes_tb.o /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/rtl/h264_p_slice_modes_tb.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -c -o verilated.o /home/flynnsbit/.local/oss-cad-suite/share/verilator/include/verilated.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -c -o verilated_threads.o /home/flynnsbit/.local/oss-cad-suite/share/verilator/include/verilated_threads.cpp
+python3 /home/flynnsbit/.local/oss-cad-suite/share/verilator/bin/verilator_includer -DVL_INCLUDE_OPT=include Vh264_p_slice_modes_tb_top.cpp Vh264_p_slice_modes_tb_top___024root__0.cpp Vh264_p_slice_modes_tb_top___024root__Slow.cpp Vh264_p_slice_modes_tb_top___024root__0__Slow.cpp Vh264_p_slice_modes_tb_top__Syms__Slow.cpp > Vh264_p_slice_modes_tb_top__ALL.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -c -o Vh264_p_slice_modes_tb_top__ALL.o Vh264_p_slice_modes_tb_top__ALL.cpp
+g++    h264_p_slice_modes_tb.o verilated.o verilated_threads.o Vh264_p_slice_modes_tb_top__ALL.a    -pthread -lpthread -latomic   -o Vh264_p_slice_modes_tb_top
+rm Vh264_p_slice_modes_tb_top__ALL.verilator_deplist.tmp
+make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/verilator/h264_p_slice_modes'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 0.052 MB sources in 3 modules, into 0.041 MB in 5 C++ files needing 0.000 MB
+- Verilator: Walltime 5.712 s (elab=0.001, cvt=0.004, bld=5.704); cpu 0.008 s on 1 threads; allocated 22.711 MB
+h264 P-slice mode RTL check PASS: cases=10 skip=1 p16x16=1 p16x8=1 p8x16=1 p8x8_mb=4 subpartitions=4 intra_map=1 unsupported=1
+make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/verilator/h264_p_slice_modes_fault'
+g++  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -Os  -c -o h264_p_slice_modes_tb.o /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/rtl/h264_p_slice_modes_tb.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -c -o verilated.o /home/flynnsbit/.local/oss-cad-suite/share/verilator/include/verilated.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -c -o verilated_threads.o /home/flynnsbit/.local/oss-cad-suite/share/verilator/include/verilated_threads.cpp
+python3 /home/flynnsbit/.local/oss-cad-suite/share/verilator/bin/verilator_includer -DVL_INCLUDE_OPT=include Vh264_p_slice_modes_tb_top.cpp Vh264_p_slice_modes_tb_top___024root__0.cpp Vh264_p_slice_modes_tb_top___024root__Slow.cpp Vh264_p_slice_modes_tb_top___024root__0__Slow.cpp Vh264_p_slice_modes_tb_top__Syms__Slow.cpp > Vh264_p_slice_modes_tb_top__ALL.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -c -o Vh264_p_slice_modes_tb_top__ALL.o Vh264_p_slice_modes_tb_top__ALL.cpp
+g++    h264_p_slice_modes_tb.o verilated.o verilated_threads.o Vh264_p_slice_modes_tb_top__ALL.a    -pthread -lpthread -latomic   -o Vh264_p_slice_modes_tb_top
+rm Vh264_p_slice_modes_tb_top__ALL.verilator_deplist.tmp
+make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/verilator/h264_p_slice_modes_fault'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 0.052 MB sources in 3 modules, into 0.044 MB in 5 C++ files needing 0.000 MB
+- Verilator: Walltime 5.707 s (elab=0.000, cvt=0.004, bld=5.700); cpu 0.007 s on 1 threads; allocated 22.723 MB
+EXPECTED_RED h264_p_slice_modes_swap_16x8: rc=1 matched 4 manifest substring(s) (tests/unit/test_h264_p_slice_modes_rtl_sim.sh)
+OK h264_p_slice_modes red-check: swapped 16x8 partition fault failed golden
+/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/unit/test_p3_inter_stream_path_rtl_sim.sh
+RTL SIM: using Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+%Warning-PINMISSING: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/rtl/stream_path_inter_tb_top.sv:74:4: Instance has missing pin: 'first_mb_p_skip'
+   74 |  ) dut (
+      |    ^~~
+                     /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/stream_path.sv:64:21: ... Location of port declaration
+   64 |  output wire        first_mb_p_skip,
+      |                     ^~~~~~~~~~~~~~~
+                     ... For warning description see https://verilator.org/warn/PINMISSING?v=5.051
+                     ... Use "/* verilator lint_off PINMISSING */" and lint_on around source to disable this message.
+%Warning-PINMISSING: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/rtl/stream_path_inter_tb_top.sv:74:4: Instance has missing pin: 'p_skip_run'
+   74 |  ) dut (
+      |    ^~~
+                     /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/stream_path.sv:65:21: ... Location of port declaration
+   65 |  output wire [7:0]  p_skip_run,
+      |                     ^~~~~~~~~~
+%Warning-PINMISSING: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/rtl/stream_path_inter_tb_top.sv:74:4: Instance has missing pin: 'first_mb_part_mode'
+   74 |  ) dut (
+      |    ^~~
+                     /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/stream_path.sv:66:21: ... Location of port declaration
+   66 |  output wire [2:0]  first_mb_part_mode,
+      |                     ^~~~~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/rtl/stream_path_inter_tb_top.sv:74:4: Instance has missing pin: 'first_mb_part_count'
+   74 |  ) dut (
+      |    ^~~
+                     /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/stream_path.sv:67:21: ... Location of port declaration
+   67 |  output wire [2:0]  first_mb_part_count,
+      |                     ^~~~~~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/rtl/stream_path_inter_tb_top.sv:74:4: Instance has missing pin: 'first_mb_uses_sub_mb'
+   74 |  ) dut (
+      |    ^~~
+                     /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/stream_path.sv:68:21: ... Location of port declaration
+   68 |  output wire        first_mb_uses_sub_mb,
+      |                     ^~~~~~~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/rtl/stream_path_inter_tb_top.sv:74:4: Instance has missing pin: 'first_mb_intra'
+   74 |  ) dut (
+      |    ^~~
+                     /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/stream_path.sv:69:21: ... Location of port declaration
+   69 |  output wire        first_mb_intra,
+      |                     ^~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/rtl/stream_path_inter_tb_top.sv:74:4: Instance has missing pin: 'disable_deblocking_filter_idc'
+   74 |  ) dut (
+      |    ^~~
+                     /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/stream_path.sv:71:21: ... Location of port declaration
+   71 |  output wire [1:0]  disable_deblocking_filter_idc,
+      |                     ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/rtl/stream_path_inter_tb_top.sv:74:4: Instance has missing pin: 'slice_alpha_c0_offset_div2'
+   74 |  ) dut (
+      |    ^~~
+                     /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/stream_path.sv:72:27: ... Location of port declaration
+   72 |  output wire signed [4:0] slice_alpha_c0_offset_div2,
+      |                           ^~~~~~~~~~~~~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/rtl/stream_path_inter_tb_top.sv:74:4: Instance has missing pin: 'slice_beta_offset_div2'
+   74 |  ) dut (
+      |    ^~~
+                     /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/stream_path.sv:73:27: ... Location of port declaration
+   73 |  output wire signed [4:0] slice_beta_offset_div2,
+      |                           ^~~~~~~~~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/rtl/stream_path_inter_tb_top.sv:74:4: Instance has missing pin: 'slice_alpha_c0_offset'
+   74 |  ) dut (
+      |    ^~~
+                     /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/stream_path.sv:74:27: ... Location of port declaration
+   74 |  output wire signed [4:0] slice_alpha_c0_offset,
+      |                           ^~~~~~~~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/rtl/stream_path_inter_tb_top.sv:74:4: Instance has missing pin: 'slice_beta_offset'
+   74 |  ) dut (
+      |    ^~~
+                     /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/stream_path.sv:75:27: ... Location of port declaration
+   75 |  output wire signed [4:0] slice_beta_offset,
+      |                           ^~~~~~~~~~~~~~~~~
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:186:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_recon4x4'
+  186 |  assign recon[0]  = clip8($signed({1'b0, pred[0]})  + residual[0]);
+      |                                                     ^
+                      ... For warning description see https://verilator.org/warn/WIDTHEXPAND?v=5.051
+                      ... Use "/* verilator lint_off WIDTHEXPAND */" and lint_on around source to disable this message.
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:187:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_recon4x4'
+  187 |  assign recon[1]  = clip8($signed({1'b0, pred[1]})  + residual[1]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:188:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_recon4x4'
+  188 |  assign recon[2]  = clip8($signed({1'b0, pred[2]})  + residual[2]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:189:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_recon4x4'
+  189 |  assign recon[3]  = clip8($signed({1'b0, pred[3]})  + residual[3]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:190:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_recon4x4'
+  190 |  assign recon[4]  = clip8($signed({1'b0, pred[4]})  + residual[4]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:191:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_recon4x4'
+  191 |  assign recon[5]  = clip8($signed({1'b0, pred[5]})  + residual[5]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:192:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_recon4x4'
+  192 |  assign recon[6]  = clip8($signed({1'b0, pred[6]})  + residual[6]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:193:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_recon4x4'
+  193 |  assign recon[7]  = clip8($signed({1'b0, pred[7]})  + residual[7]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:194:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_recon4x4'
+  194 |  assign recon[8]  = clip8($signed({1'b0, pred[8]})  + residual[8]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:195:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_recon4x4'
+  195 |  assign recon[9]  = clip8($signed({1'b0, pred[9]})  + residual[9]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:196:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_recon4x4'
+  196 |  assign recon[10] = clip8($signed({1'b0, pred[10]}) + residual[10]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:197:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_recon4x4'
+  197 |  assign recon[11] = clip8($signed({1'b0, pred[11]}) + residual[11]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:198:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_recon4x4'
+  198 |  assign recon[12] = clip8($signed({1'b0, pred[12]}) + residual[12]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:199:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_recon4x4'
+  199 |  assign recon[13] = clip8($signed({1'b0, pred[13]}) + residual[13]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:200:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_recon4x4'
+  200 |  assign recon[14] = clip8($signed({1'b0, pred[14]}) + residual[14]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:201:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_recon4x4'
+  201 |  assign recon[15] = clip8($signed({1'b0, pred[15]}) + residual[15]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:122:38: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 29 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_idct4x4'
+  122 |  wire signed [31:0] b0  = dequant[0] + 29'sd32;
+      |                                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:122:38: Operator ADD expects 32 bits on the RHS, but RHS's CONST '29'sh20' generates 29 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_idct4x4'
+  122 |  wire signed [31:0] b0  = dequant[0] + 29'sd32;
+      |                                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:123:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_idct4x4'
+  123 |  wire signed [31:0] b1  = dequant[1];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:124:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_idct4x4'
+  124 |  wire signed [31:0] b2  = dequant[2];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:125:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_idct4x4'
+  125 |  wire signed [31:0] b3  = dequant[3];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:126:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_idct4x4'
+  126 |  wire signed [31:0] b4  = dequant[4];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:127:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_idct4x4'
+  127 |  wire signed [31:0] b5  = dequant[5];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:128:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_idct4x4'
+  128 |  wire signed [31:0] b6  = dequant[6];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:129:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_idct4x4'
+  129 |  wire signed [31:0] b7  = dequant[7];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:130:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_idct4x4'
+  130 |  wire signed [31:0] b8  = dequant[8];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:131:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_idct4x4'
+  131 |  wire signed [31:0] b9  = dequant[9];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:132:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_idct4x4'
+  132 |  wire signed [31:0] b10 = dequant[10];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:133:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_idct4x4'
+  133 |  wire signed [31:0] b11 = dequant[11];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:134:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_idct4x4'
+  134 |  wire signed [31:0] b12 = dequant[12];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:135:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_idct4x4'
+  135 |  wire signed [31:0] b13 = dequant[13];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:136:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_idct4x4'
+  136 |  wire signed [31:0] b14 = dequant[14];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:137:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_idct4x4'
+  137 |  wire signed [31:0] b15 = dequant[15];
+      |                         ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:81:9: Operator ASSIGN expects 3 bits on the Assign RHS, but Assign RHS's MODDIV generates 32 or 6 bits.
+                                                                                                                  : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_dequant4x4'
+   81 |    qmod = q % 6;
+      |         ^
+                     ... For warning description see https://verilator.org/warn/WIDTHTRUNC?v=5.051
+                     ... Use "/* verilator lint_off WIDTHTRUNC */" and lint_on around source to disable this message.
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:82:9: Operator ASSIGN expects 4 bits on the Assign RHS, but Assign RHS's DIV generates 32 or 6 bits.
+                                                                                                                  : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_dequant4x4'
+   82 |    qdiv = q / 6;
+      |         ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/slice_hdr_parser.sv:154:6: Operator ASSIGN expects 16 bits on the Assign RHS, but Assign RHS's SHIFTRS generates 17 bits.
+                                                                                                                   : ... note: In instance 'stream_path_inter_tb.dut.slp'
+  154 |    t = ($signed({1'b0, code}) + 17'sd2) >>> 1;
+      |      ^
+make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/verilator/stream_path_inter'
+g++  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -Os  -c -o stream_path_inter_tb.o /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/rtl/stream_path_inter_tb.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -c -o verilated.o /home/flynnsbit/.local/oss-cad-suite/share/verilator/include/verilated.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -c -o verilated_threads.o /home/flynnsbit/.local/oss-cad-suite/share/verilator/include/verilated_threads.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -x c++-header Vstream_path_inter_tb__pch.h -o Vstream_path_inter_tb__pch.h.fast.gch
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vstream_path_inter_tb__pch.h.fast -c Vstream_path_inter_tb.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vstream_path_inter_tb__pch.h.fast -c Vstream_path_inter_tb___024root__0.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vstream_path_inter_tb__pch.h.fast -c Vstream_path_inter_tb___024root__1.cpp
+g++   -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -x c++-header Vstream_path_inter_tb__pch.h -o Vstream_path_inter_tb__pch.h.slow.gch
+g++   -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vstream_path_inter_tb__pch.h.slow -c Vstream_path_inter_tb__ConstPool__0__Slow.cpp
+g++   -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vstream_path_inter_tb__pch.h.slow -c Vstream_path_inter_tb___024root__Slow.cpp
+g++   -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vstream_path_inter_tb__pch.h.slow -c Vstream_path_inter_tb___024root__0__Slow.cpp
+g++   -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vstream_path_inter_tb__pch.h.slow -c Vstream_path_inter_tb___024root__1__Slow.cpp
+g++   -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vstream_path_inter_tb__pch.h.slow -c Vstream_path_inter_tb__Syms__Slow.cpp
+g++    stream_path_inter_tb.o verilated.o verilated_threads.o Vstream_path_inter_tb__ALL.a    -pthread -lpthread -latomic   -o Vstream_path_inter_tb
+rm Vstream_path_inter_tb__ALL.verilator_deplist.tmp
+make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/verilator/stream_path_inter'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 1.315 MB sources in 32 modules, into 3.427 MB in 8 C++ files needing 0.002 MB
+- Verilator: Walltime 14.787 s (elab=0.029, cvt=0.270, bld=14.437); cpu 0.348 s on 1 threads; allocated 61.906 MB
+OK real RTL sim: stream_path integrated inter vector nals=4 idr=1 p=0 frames=1 bytes=6739 sps=320x240 mb=20x15 inter_band_samples=48/48/48/48 idr-multinal cycles=195687
+OK real RTL sim: stream_path integrated inter vector nals=15 idr=1 p=11 frames=12 bytes=27653 sps=320x240 mb=20x15 inter_band_samples=576/576/576/576 p-slice-multinal cycles=1086352
+%Warning-PINMISSING: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/rtl/stream_path_inter_tb_top.sv:74:4: Instance has missing pin: 'first_mb_p_skip'
+   74 |  ) dut (
+      |    ^~~
+                     /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/stream_path.sv:64:21: ... Location of port declaration
+   64 |  output wire        first_mb_p_skip,
+      |                     ^~~~~~~~~~~~~~~
+                     ... For warning description see https://verilator.org/warn/PINMISSING?v=5.051
+                     ... Use "/* verilator lint_off PINMISSING */" and lint_on around source to disable this message.
+%Warning-PINMISSING: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/rtl/stream_path_inter_tb_top.sv:74:4: Instance has missing pin: 'p_skip_run'
+   74 |  ) dut (
+      |    ^~~
+                     /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/stream_path.sv:65:21: ... Location of port declaration
+   65 |  output wire [7:0]  p_skip_run,
+      |                     ^~~~~~~~~~
+%Warning-PINMISSING: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/rtl/stream_path_inter_tb_top.sv:74:4: Instance has missing pin: 'first_mb_part_mode'
+   74 |  ) dut (
+      |    ^~~
+                     /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/stream_path.sv:66:21: ... Location of port declaration
+   66 |  output wire [2:0]  first_mb_part_mode,
+      |                     ^~~~~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/rtl/stream_path_inter_tb_top.sv:74:4: Instance has missing pin: 'first_mb_part_count'
+   74 |  ) dut (
+      |    ^~~
+                     /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/stream_path.sv:67:21: ... Location of port declaration
+   67 |  output wire [2:0]  first_mb_part_count,
+      |                     ^~~~~~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/rtl/stream_path_inter_tb_top.sv:74:4: Instance has missing pin: 'first_mb_uses_sub_mb'
+   74 |  ) dut (
+      |    ^~~
+                     /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/stream_path.sv:68:21: ... Location of port declaration
+   68 |  output wire        first_mb_uses_sub_mb,
+      |                     ^~~~~~~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/rtl/stream_path_inter_tb_top.sv:74:4: Instance has missing pin: 'first_mb_intra'
+   74 |  ) dut (
+      |    ^~~
+                     /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/stream_path.sv:69:21: ... Location of port declaration
+   69 |  output wire        first_mb_intra,
+      |                     ^~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/rtl/stream_path_inter_tb_top.sv:74:4: Instance has missing pin: 'disable_deblocking_filter_idc'
+   74 |  ) dut (
+      |    ^~~
+                     /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/stream_path.sv:71:21: ... Location of port declaration
+   71 |  output wire [1:0]  disable_deblocking_filter_idc,
+      |                     ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/rtl/stream_path_inter_tb_top.sv:74:4: Instance has missing pin: 'slice_alpha_c0_offset_div2'
+   74 |  ) dut (
+      |    ^~~
+                     /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/stream_path.sv:72:27: ... Location of port declaration
+   72 |  output wire signed [4:0] slice_alpha_c0_offset_div2,
+      |                           ^~~~~~~~~~~~~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/rtl/stream_path_inter_tb_top.sv:74:4: Instance has missing pin: 'slice_beta_offset_div2'
+   74 |  ) dut (
+      |    ^~~
+                     /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/stream_path.sv:73:27: ... Location of port declaration
+   73 |  output wire signed [4:0] slice_beta_offset_div2,
+      |                           ^~~~~~~~~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/rtl/stream_path_inter_tb_top.sv:74:4: Instance has missing pin: 'slice_alpha_c0_offset'
+   74 |  ) dut (
+      |    ^~~
+                     /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/stream_path.sv:74:27: ... Location of port declaration
+   74 |  output wire signed [4:0] slice_alpha_c0_offset,
+      |                           ^~~~~~~~~~~~~~~~~~~~~
+%Warning-PINMISSING: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/rtl/stream_path_inter_tb_top.sv:74:4: Instance has missing pin: 'slice_beta_offset'
+   74 |  ) dut (
+      |    ^~~
+                     /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/stream_path.sv:75:27: ... Location of port declaration
+   75 |  output wire signed [4:0] slice_beta_offset,
+      |                           ^~~~~~~~~~~~~~~~~
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:186:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_recon4x4'
+  186 |  assign recon[0]  = clip8($signed({1'b0, pred[0]})  + residual[0]);
+      |                                                     ^
+                      ... For warning description see https://verilator.org/warn/WIDTHEXPAND?v=5.051
+                      ... Use "/* verilator lint_off WIDTHEXPAND */" and lint_on around source to disable this message.
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:187:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_recon4x4'
+  187 |  assign recon[1]  = clip8($signed({1'b0, pred[1]})  + residual[1]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:188:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_recon4x4'
+  188 |  assign recon[2]  = clip8($signed({1'b0, pred[2]})  + residual[2]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:189:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_recon4x4'
+  189 |  assign recon[3]  = clip8($signed({1'b0, pred[3]})  + residual[3]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:190:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_recon4x4'
+  190 |  assign recon[4]  = clip8($signed({1'b0, pred[4]})  + residual[4]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:191:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_recon4x4'
+  191 |  assign recon[5]  = clip8($signed({1'b0, pred[5]})  + residual[5]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:192:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_recon4x4'
+  192 |  assign recon[6]  = clip8($signed({1'b0, pred[6]})  + residual[6]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:193:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_recon4x4'
+  193 |  assign recon[7]  = clip8($signed({1'b0, pred[7]})  + residual[7]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:194:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_recon4x4'
+  194 |  assign recon[8]  = clip8($signed({1'b0, pred[8]})  + residual[8]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:195:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_recon4x4'
+  195 |  assign recon[9]  = clip8($signed({1'b0, pred[9]})  + residual[9]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:196:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_recon4x4'
+  196 |  assign recon[10] = clip8($signed({1'b0, pred[10]}) + residual[10]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:197:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_recon4x4'
+  197 |  assign recon[11] = clip8($signed({1'b0, pred[11]}) + residual[11]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:198:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_recon4x4'
+  198 |  assign recon[12] = clip8($signed({1'b0, pred[12]}) + residual[12]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:199:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_recon4x4'
+  199 |  assign recon[13] = clip8($signed({1'b0, pred[13]}) + residual[13]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:200:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_recon4x4'
+  200 |  assign recon[14] = clip8($signed({1'b0, pred[14]}) + residual[14]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:201:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_recon4x4'
+  201 |  assign recon[15] = clip8($signed({1'b0, pred[15]}) + residual[15]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:122:38: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 29 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_idct4x4'
+  122 |  wire signed [31:0] b0  = dequant[0] + 29'sd32;
+      |                                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:122:38: Operator ADD expects 32 bits on the RHS, but RHS's CONST '29'sh20' generates 29 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_idct4x4'
+  122 |  wire signed [31:0] b0  = dequant[0] + 29'sd32;
+      |                                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:123:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_idct4x4'
+  123 |  wire signed [31:0] b1  = dequant[1];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:124:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_idct4x4'
+  124 |  wire signed [31:0] b2  = dequant[2];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:125:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_idct4x4'
+  125 |  wire signed [31:0] b3  = dequant[3];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:126:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_idct4x4'
+  126 |  wire signed [31:0] b4  = dequant[4];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:127:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_idct4x4'
+  127 |  wire signed [31:0] b5  = dequant[5];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:128:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_idct4x4'
+  128 |  wire signed [31:0] b6  = dequant[6];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:129:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_idct4x4'
+  129 |  wire signed [31:0] b7  = dequant[7];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:130:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_idct4x4'
+  130 |  wire signed [31:0] b8  = dequant[8];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:131:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_idct4x4'
+  131 |  wire signed [31:0] b9  = dequant[9];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:132:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_idct4x4'
+  132 |  wire signed [31:0] b10 = dequant[10];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:133:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_idct4x4'
+  133 |  wire signed [31:0] b11 = dequant[11];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:134:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_idct4x4'
+  134 |  wire signed [31:0] b12 = dequant[12];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:135:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_idct4x4'
+  135 |  wire signed [31:0] b13 = dequant[13];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:136:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_idct4x4'
+  136 |  wire signed [31:0] b14 = dequant[14];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:137:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                     : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_idct4x4'
+  137 |  wire signed [31:0] b15 = dequant[15];
+      |                         ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:81:9: Operator ASSIGN expects 3 bits on the Assign RHS, but Assign RHS's MODDIV generates 32 or 6 bits.
+                                                                                                                  : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_dequant4x4'
+   81 |    qmod = q % 6;
+      |         ^
+                     ... For warning description see https://verilator.org/warn/WIDTHTRUNC?v=5.051
+                     ... Use "/* verilator lint_off WIDTHTRUNC */" and lint_on around source to disable this message.
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:82:9: Operator ASSIGN expects 4 bits on the Assign RHS, but Assign RHS's DIV generates 32 or 6 bits.
+                                                                                                                  : ... note: In instance 'stream_path_inter_tb.dut.stub.u_h264_dequant4x4'
+   82 |    qdiv = q / 6;
+      |         ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/fpga/Plex_MiSTer/rtl/slice_hdr_parser.sv:154:6: Operator ASSIGN expects 16 bits on the Assign RHS, but Assign RHS's SHIFTRS generates 17 bits.
+                                                                                                                   : ... note: In instance 'stream_path_inter_tb.dut.slp'
+  154 |    t = ($signed({1'b0, code}) + 17'sd2) >>> 1;
+      |      ^
+make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/verilator/stream_path_inter_bad_pixel'
+g++  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -Os  -c -o stream_path_inter_tb.o /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/rtl/stream_path_inter_tb.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -c -o verilated.o /home/flynnsbit/.local/oss-cad-suite/share/verilator/include/verilated.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -c -o verilated_threads.o /home/flynnsbit/.local/oss-cad-suite/share/verilator/include/verilated_threads.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -x c++-header Vstream_path_inter_tb__pch.h -o Vstream_path_inter_tb__pch.h.fast.gch
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vstream_path_inter_tb__pch.h.fast -c Vstream_path_inter_tb.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vstream_path_inter_tb__pch.h.fast -c Vstream_path_inter_tb___024root__0.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vstream_path_inter_tb__pch.h.fast -c Vstream_path_inter_tb___024root__1.cpp
+g++   -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -x c++-header Vstream_path_inter_tb__pch.h -o Vstream_path_inter_tb__pch.h.slow.gch
+g++   -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vstream_path_inter_tb__pch.h.slow -c Vstream_path_inter_tb__ConstPool__0__Slow.cpp
+g++   -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vstream_path_inter_tb__pch.h.slow -c Vstream_path_inter_tb___024root__Slow.cpp
+g++   -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vstream_path_inter_tb__pch.h.slow -c Vstream_path_inter_tb___024root__0__Slow.cpp
+g++   -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vstream_path_inter_tb__pch.h.slow -c Vstream_path_inter_tb___024root__1__Slow.cpp
+g++   -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vstream_path_inter_tb__pch.h.slow -c Vstream_path_inter_tb__Syms__Slow.cpp
+g++    stream_path_inter_tb.o verilated.o verilated_threads.o Vstream_path_inter_tb__ALL.a    -pthread -lpthread -latomic   -o Vstream_path_inter_tb
+rm Vstream_path_inter_tb__ALL.verilator_deplist.tmp
+make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/build/verilator/stream_path_inter_bad_pixel'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 1.315 MB sources in 32 modules, into 3.427 MB in 8 C++ files needing 0.002 MB
+- Verilator: Walltime 14.779 s (elab=0.030, cvt=0.249, bld=14.448); cpu 0.330 s on 1 threads; allocated 61.910 MB
+EXPECTED_RED stream_path_inter_bad_pixel: rc=1 matched 5 manifest substring(s) (tests/unit/test_p3_inter_stream_path_rtl_sim.sh)
+OK stream_path inter RTL red-check: bad diagnostic pixel fault failed golden
+/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/unit/test_companion_http.sh
+test_companion_http: using PORT=13005
+misterplexd: MATCH_SOURCE_HZ=off SOURCE_FPS=auto (cadence/OSD path; switchres TODO)
+misterplexd: SKIP_FORWARD_MS=30000 SKIP_BACK_MS=10000
+misterplexd: AUDIO_DELAY_MS=0 (0=fresh, no hardcoded lag)
+misterplexd: AUDIO_CLOCK_PPM=-638
+misterplexd: AV_PRESENT_LEAD_MS=40(default) AV_RESYNC_DROP_MS=80(default)
+misterplexd: OSD_CONTROL=0
+misterplexd: IDLE_SCREEN=logo(default) AV_OFFSET_MS=0
+misterplexd: DDR_MEM_SYNC=1 DDR_MEM_FLUSH=0
+misterplexd: DDR_FRAME_FORMAT=yuv420p
+misterplexd: PRESENT_PROFILE=0
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: WARNING no present path — companion only
+companion: GDM + HTTP :13005 name=MiSTerPlexTest
+misterplexd: no default Plex server configured; set PLEX_BASE in /media/fat/misterplex/misterplex.conf or pass --pms URL. Cast clients that include a server address can still select a server per play.
+misterplexd: running name=MiSTerPlexTest id=misterplex-1 port=13005 pms=(unset) servers=0 decode=320x240 weak=240p/320x240@1000k h264=baseline@L30 present=fb0 auto_next=1 subs=off
+GDM: listening UDP 32412
+HTTP: companion on :13005 ip≈192.168.1.24
+playMedia ACK key=/library/metadata/1 offMs=0
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/1 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=0 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+mirror staged key=/library/metadata/2
+playMedia ACK key=/library/metadata/9 offMs=0
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no such item on PMS (/library/metadata/9 returned no MediaContainer — deleted, renumbered by a library re-scan, or bad token) — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=0 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+playMedia ACK key=/library/metadata/11 offMs=74000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/11 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=74000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+playMedia ACK key=/library/metadata/12 offMs=0
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/12 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=0 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+playMedia ACK key=/library/metadata/13 offMs=0
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/13 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=0 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+playMedia ACK key=/library/metadata/20 offMs=0
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/20 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=0 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: seek re-resolve key=/library/metadata/20 offMs=30000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/20 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=30000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: seek re-resolve key=/library/metadata/20 offMs=40000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/20 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=40000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: seek re-resolve key=/library/metadata/20 offMs=30000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/20 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=30000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: skipPrevious restart@0 (t=30000)
+misterplexd: seek re-resolve key=/library/metadata/20 offMs=0
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/20 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=0 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: skipNext skip — no playQueue bound
+misterplexd: skipNext — no next item
+misterplexd: seek re-resolve key=/library/metadata/20 offMs=55000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/20 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=55000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: seek re-resolve key=/library/metadata/20 offMs=0
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/20 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=0 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: seek re-resolve key=/library/metadata/20 offMs=20000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/20 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=20000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: seek re-resolve key=/library/metadata/20 offMs=25000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/20 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=25000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+playMedia ACK key=/library/metadata/30 offMs=0
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/30 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=0 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: seek re-resolve key=/library/metadata/30 offMs=120000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/30 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=120000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: seek re-resolve key=/library/metadata/30 offMs=115000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/30 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=115000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: seek re-resolve key=/library/metadata/30 offMs=120000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/30 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=120000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: seek re-resolve key=/library/metadata/30 offMs=110000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/30 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=110000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: seek re-resolve key=/library/metadata/30 offMs=120000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/30 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=120000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: seek re-resolve key=/library/metadata/30 offMs=0
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/30 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=0 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: seek re-resolve key=/library/metadata/30 offMs=120000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/30 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=120000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: skipNext skip — no playQueue bound
+misterplexd: skipNext — no next item
+misterplexd: seek re-resolve key=/library/metadata/30 offMs=45000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/30 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=45000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+playMedia ACK key=/library/metadata/40 offMs=0
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/40 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=0 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+playMedia ACK key=/library/metadata/50 offMs=0
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/50 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=0 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: skipPrevious skip — no playQueue bound
+misterplexd: skipPrevious — no previous item (at 0)
+misterplexd: seek re-resolve key=/library/metadata/50 offMs=1500
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/50 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=1500 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: skipPrevious skip — no playQueue bound
+misterplexd: skipPrevious no prev — restart@0 (t=1500)
+misterplexd: seek re-resolve key=/library/metadata/50 offMs=0
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/50 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=0 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: seek re-resolve key=/library/metadata/50 offMs=45000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/50 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=45000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: skipPrevious restart@0 (t=45000)
+misterplexd: seek re-resolve key=/library/metadata/50 offMs=0
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/50 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=0 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: seek re-resolve key=/library/metadata/50 offMs=42000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/50 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=42000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: seek re-resolve key=/library/metadata/50 offMs=33000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/50 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=33000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: seek re-resolve key=/library/metadata/50 offMs=28000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/50 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=28000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: seek re-resolve key=/library/metadata/50 offMs=0
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/50 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=0 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: seek re-resolve key=/library/metadata/50 offMs=50000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/50 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=50000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: seek re-resolve key=/library/metadata/50 offMs=120000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/50 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=120000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: seek re-resolve key=/library/metadata/50 offMs=25000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/50 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=25000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: seek re-resolve key=/library/metadata/50 offMs=20000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/50 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=20000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: seek re-resolve key=/library/metadata/50 offMs=0
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/50 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=0 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: seek re-resolve key=/library/metadata/50 offMs=40000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/50 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=40000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: seek re-resolve key=/library/metadata/50 offMs=50000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/50 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=50000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: seek re-resolve key=/library/metadata/50 offMs=40000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/50 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=40000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+playMedia ACK key=/library/metadata/60 offMs=0
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/60 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=0 dur=120000
+playMedia ACK key=/library/metadata/61 offMs=999999999
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/61 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=120000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: seek re-resolve key=/library/metadata/61 offMs=17000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/61 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=17000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: seek re-resolve key=/library/metadata/61 offMs=22000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/61 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=22000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: seek re-resolve key=/library/metadata/61 offMs=32000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/61 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=32000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+playMedia ACK key=/library/metadata/70 offMs=0
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/70 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=0 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+playMedia ACK key=/library/metadata/80 offMs=0
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/80 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=0 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: seek re-resolve key=/library/metadata/80 offMs=10000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/80 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=10000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: seek re-resolve key=/library/metadata/80 offMs=20000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/80 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=20000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+playMedia ACK key=/library/metadata/81 offMs=0
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/81 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=0 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: seek re-resolve key=/library/metadata/81 offMs=3000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/81 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=3000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: skipPrevious skip — no playQueue bound
+misterplexd: skipPrevious no prev — restart@0 (t=3000)
+misterplexd: seek re-resolve key=/library/metadata/81 offMs=0
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/81 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=0 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: seek re-resolve key=/library/metadata/81 offMs=3001
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/81 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=3001 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: skipPrevious restart@0 (t=3001)
+misterplexd: seek re-resolve key=/library/metadata/81 offMs=0
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/81 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=0 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+playMedia ACK key=/library/metadata/82 offMs=19000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/82 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=19000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+playMedia ACK key=/library/metadata/90 offMs=0
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/90 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=0 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+playMedia ACK key=/library/metadata/91 offMs=5000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/91 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=5000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: seek re-resolve key=/library/metadata/91 offMs=15000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/91 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=15000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: seek re-resolve key=/library/metadata/91 offMs=20000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/91 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=20000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: seek re-resolve key=/library/metadata/91 offMs=15000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/91 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=15000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: seek re-resolve key=/library/metadata/91 offMs=10000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/91 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=10000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: seek re-resolve key=/library/metadata/91 offMs=20000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/91 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=20000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: seek re-resolve key=/library/metadata/91 offMs=30000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/91 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=30000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: seek re-resolve key=/library/metadata/91 offMs=40000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/91 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=40000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+companion: stopped
+test_companion_http: OK
+/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/unit/test_plex_browse.sh
+test_plex_browse: using PORT=13115
+misterplexd: MATCH_SOURCE_HZ=off SOURCE_FPS=auto (cadence/OSD path; switchres TODO)
+misterplexd: SKIP_FORWARD_MS=30000 SKIP_BACK_MS=10000
+misterplexd: AUDIO_DELAY_MS=0 (0=fresh, no hardcoded lag)
+misterplexd: AUDIO_CLOCK_PPM=-638
+misterplexd: AV_PRESENT_LEAD_MS=40(default) AV_RESYNC_DROP_MS=80(default)
+misterplexd: OSD_CONTROL=0
+misterplexd: IDLE_SCREEN=logo(default) AV_OFFSET_MS=0
+misterplexd: DDR_MEM_SYNC=1 DDR_MEM_FLUSH=0
+misterplexd: DDR_FRAME_FORMAT=yuv420p
+misterplexd: PRESENT_PROFILE=0
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: WARNING no present path — companion only
+companion: GDM + HTTP :13115 name=MiSTerPlexBrowseTest
+misterplexd: no default Plex server configured; set PLEX_BASE in /media/fat/misterplex/misterplex.conf or pass --pms URL. Cast clients that include a server address can still select a server per play.
+misterplexd: running name=MiSTerPlexBrowseTest id=misterplex-1 port=13115 pms=(unset) servers=0 decode=320x240 weak=240p/320x240@1000k h264=baseline@L30 present=fb0 auto_next=1 subs=off
+GDM: listening UDP 32412
+HTTP: companion on :13115 ip≈192.168.1.24
+playMedia ACK key=/library/metadata/99 offMs=0
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/99 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=0 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+misterplexd: seek re-resolve key=/library/metadata/99 offMs=12000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/99 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=12000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+seek OK offset=12000
+misterplexd: seek re-resolve key=/library/metadata/99 offMs=22000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/99 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=22000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+stepForward OK deltaMs=10000
+misterplexd: seek re-resolve key=/library/metadata/99 offMs=12000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/99 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=12000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+stepBack OK deltaMs=-10000
+misterplexd: skipNext skip — no playQueue bound
+misterplexd: skipNext — no next item
+skipNext OK
+misterplexd: skipPrevious restart@0 (t=12000)
+misterplexd: seek re-resolve key=/library/metadata/99 offMs=0
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/99 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=0 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+skipPrevious OK (restart@0 or queue previous when near start)
+misterplexd: seek re-resolve key=/library/metadata/99 offMs=5000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/99 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=5000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+stepForward OK deltaMs=5000
+misterplexd: seek re-resolve key=/library/metadata/99 offMs=120000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/99 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=120000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+stepForward OK deltaMs=120000
+misterplexd: seek re-resolve key=/library/metadata/99 offMs=115000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/99 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=115000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+stepBack OK deltaMs=-5000
+misterplexd: seek re-resolve key=/library/metadata/99 offMs=0
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/99 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=0 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+stepBack OK deltaMs=-120000
+misterplexd: seek re-resolve key=/library/metadata/99 offMs=10000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/99 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=10000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+stepForward OK deltaMs=10000
+misterplexd: seek re-resolve key=/library/metadata/99 offMs=0
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/99 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=0 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+stepBack OK deltaMs=-10000
+misterplexd: skipNext skip — no playQueue bound
+misterplexd: skipNext — no next item
+skipNext OK
+misterplexd: skipPrevious skip — no playQueue bound
+misterplexd: skipPrevious — no previous item (at 0)
+skipPrevious OK (restart@0 or queue previous when near start)
+misterplexd: seek re-resolve key=/library/metadata/99 offMs=120000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/99 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=120000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+seek OK offset=999999999
+pause OK
+misterplexd: seek re-resolve key=/library/metadata/99 offMs=8000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/99 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=8000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+seek OK offset=8000
+resume OK
+stop OK
+seek OK offset=5000
+stepForward OK deltaMs=10000
+stepBack OK deltaMs=-10000
+skipNext OK
+skipPrevious OK (restart@0 or queue previous when near start)
+pause OK
+resume OK
+# playMedia → http://127.0.0.1:13115 key=/library/metadata/88 offset=0
+playMedia ACK key=/library/metadata/88 offMs=0
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/88 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=0 dur=120000
+location="fullScreenVideo" state="buffering" time="0" duration="0" location="fullScreenVideo" key="/library/metadata/88" 
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+stop OK
+skipNext OK
+skipPrevious OK (restart@0 or queue previous when near start)
+# playMedia → http://127.0.0.1:13115 key=/library/metadata/92 offset=0
+playMedia ACK key=/library/metadata/92 offMs=0
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/92 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=0 dur=120000
+location="fullScreenVideo" state="buffering" time="0" duration="0" location="fullScreenVideo" key="/library/metadata/92" 
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+# playMedia → http://127.0.0.1:13115 key=/library/metadata/93 offset=0
+playMedia ACK key=/library/metadata/93 offMs=0
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/93 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=0 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+location="fullScreenVideo" state="buffering" time="0" duration="0" location="fullScreenVideo" key="/library/metadata/93" 
+misterplexd: seek re-resolve key=/library/metadata/93 offMs=25000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/93 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=25000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+seek OK offset=25000
+misterplexd: seek re-resolve key=/library/metadata/93 offMs=35000
+misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
+misterplexd: resolve failed: no PMS base for key=/library/metadata/93 — test pattern
+misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
+misterplexd: PLAY testsrc off=35000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+stepForward OK deltaMs=10000
+stop OK
+companion: stopped
+test_plex_browse: OK
+/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/unit/test_play_file_delivery.sh
+test_play_file_delivery: OK
+/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/unit/test_no_private_data.sh
+test_no_private_data: OK
+/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/unit/test_capture_rig.sh
+PASS synthetic known-good aligned frame
+PASS synthetic 1-source-pixel horizontal wrap rejected on H edge
+PASS synthetic 1-source-pixel vertical shift rejected
+PASS file-backed capture mode grades changed good frame
+PASS byte-identical consecutive grabs rejected as STALE
+PASS synthetic stale source rejected before grading
+/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/unit/test_resource_preflight.sh
+PASS preflight accepts synthetic high-headroom host
+PASS preflight accepts synthetic 6269MB steady-state host with swap slack
+preflight: paging 0 pages/s over 1s (limit 200)
+preflight: MemAvailable 6269MB (floor 4096MB)
+preflight: SwapFree 0MB (floor 32MB)
+PREFLIGHT REFUSED: only 0MB swap free, below 32MB exhaustion guard
+  Results produced under this condition are not trustworthy.
+  Fix the cause, or set MISTERPLEX_ALLOW_LOW_MEMORY_TESTS=1 to override.
+PASS preflight refuses synthetic swap-exhausted host
+/home/flynnsbit/Projects/MisterPlex-wt-land-mbw/scripts/check_define_parity.py
+DEFINE_PARITY_REJECTED(exit=1):
+  FAULT_NB_CTX_NO_GEOM_REJECT: test-only macro is not declared in /home/flynnsbit/Projects/MisterPlex-wt-land-mbw/tests/fixtures/define_parity_allowlist.json (tests/unit/test_h264_intra_nb_ctx_geom_reject.sh)
+DEFINE_PARITY_TABLE_BEGIN
+| macro | Quartus | Verilator/lint | Verilator targeted tests | status |
+|---|---|---|---|---|
+| `BUILD_DATE` | <generated> (fpga/Plex_MiSTer/sys/build_id.tcl:8) | lint (scripts/rtl_lint.py:qsf-macro-injection) | — | shared |
+| `CAVLC_NEGATIVE_TEST` | — | — | 1 (tests/unit/test_h264_cavlc_residual_verilator.sh) | allowed test-only: Injected CAVLC residual fault for expected-red simulation only. |
+| `DDR_FRAME_STORE` | 1 (fpga/Plex_MiSTer/Plex.qsf:82) | 1 (scripts/rtl_lint.py:qsf-macro-injection) | — | shared |
+| `DDR_FRAME_STORE_FAULT_CHROMA_LUMA_STRIDE` | — | — | 1 (tests/unit/test_ddr_frame_store_warm_reset.sh) | allowed test-only: Injected DDR frame-store expected-red fault. |
+| `DDR_FRAME_STORE_FAULT_CHROMA_VERTICAL_FULLRES` | — | — | 1 (tests/unit/test_ddr_frame_store_warm_reset.sh) | allowed test-only: Injected DDR frame-store expected-red fault. |
+| `DDR_FRAME_STORE_FAULT_SWAP_UV_READ` | — | — | 1 (tests/unit/test_ddr_frame_store_warm_reset.sh) | allowed test-only: Injected DDR frame-store expected-red fault. |
+| `DEQUANT_FAULT_QP_SWEEP` | — | — | 1 (tests/unit/test_dequant_qp_sweep.py) | allowed test-only: Injected dequant QP-sweep fault for overflow boundary verification. |
+| `FAULT_NB_CTX_NO_GEOM_REJECT` | — | — | 1 (tests/unit/test_h264_intra_nb_ctx_geom_reject.sh) | UNDECLARED TEST-ONLY |
+| `FRAME_H` | 480 (fpga/Plex_MiSTer/Plex.qsf:84) | 480 (scripts/rtl_lint.py:qsf-macro-injection) | — | shared |
+| `FRAME_LINES_8` | 1 (fpga/Plex_MiSTer/Plex.qsf:85) | 1 (scripts/rtl_lint.py:qsf-macro-injection) | — | shared |
+| `FRAME_W` | 640 (fpga/Plex_MiSTer/Plex.qsf:83) | 640 (scripts/rtl_lint.py:qsf-macro-injection) | — | shared |
+| `H264_DEBLOCK_FAULT_MB_COMMIT_EARLY` | — | — | 1 (tests/unit/test_p3_deblock_rtl_sim.sh)<br>1 (tests/unit/test_p3_dpb_mc_rtl_sim.sh) | allowed test-only: Injected deblock/DPB seam expected-red fault. |
+| `H264_DEBLOCK_FAULT_REF_READY_EARLY` | — | — | 1 (tests/unit/test_p3_deblock_rtl_sim.sh)<br>1 (tests/unit/test_p3_dpb_mc_rtl_sim.sh) | allowed test-only: Injected deblock/DPB seam expected-red fault. |
+| `P3_INTRA_FRAME_RARE_NEGATIVE_TEST` | — | — | 1 (tests/unit/test_p3_intra_frame_verilator.py) | allowed test-only: Injected intra-frame expected-red fault. |
+| `P3_INTRA_NEGATIVE_TEST` | — | — | 1 (tests/unit/test_p3_intra_mb0_verilator.py) | allowed test-only: Injected intra-MB0 expected-red fault. |
+| `SDRAM_CL3` | 1 (fpga/Plex_MiSTer/Plex.qsf:57) | 1 (scripts/rtl_lint.py:qsf-macro-injection) | 1 (tests/unit/test_sdram_dq_turnaround_verilator.sh)<br>1 (tests/unit/test_sdram_startup_verilator.sh) | shared |
+| `SDRAM_CLK_142` | 1 (fpga/Plex_MiSTer/Plex.qsf:56) | 1 (scripts/rtl_lint.py:qsf-macro-injection) | — | shared |
+DEFINE_PARITY_TABLE_END
+make[1]: *** [Makefile:95: unit-unlocked] Error 1
+make[1]: Leaving directory '/home/flynnsbit/Projects/MisterPlex-wt-land-mbw'
+make: *** [Makefile:41: unit] Error 2
