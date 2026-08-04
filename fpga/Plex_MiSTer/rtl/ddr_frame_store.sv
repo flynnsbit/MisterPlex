@@ -787,7 +787,7 @@ module ddr_frame_store #(
 			desired_c = desired_y_r[ti][Y_W-1:1];
 			found_line = 1'b0;
 			for (tj = 0; tj < LINE_COUNT; tj = tj + 1) begin
-				if (y_valid[cur_base_idx + tj[SLOT_W-1:0]] && (y_bank[cur_base_idx + tj[SLOT_W-1:0]] == disp_bank_d2)
+				if (y_valid[cur_base_idx + tj[SLOT_W-1:0]] && (y_bank[cur_base_idx + tj[SLOT_W-1:0]] == disp_bank_sched_r)
 				    && (y_line[cur_base_idx + tj[SLOT_W-1:0]] == desired_y))
 					found_line = 1'b1;
 			end
@@ -798,7 +798,7 @@ module ddr_frame_store #(
 
 			found_line = 1'b0;
 			for (tj = 0; tj < LINE_COUNT; tj = tj + 1) begin
-				if (c_valid[cur_base_idx + tj[SLOT_W-1:0]] && (c_bank[cur_base_idx + tj[SLOT_W-1:0]] == disp_bank_d2)
+				if (c_valid[cur_base_idx + tj[SLOT_W-1:0]] && (c_bank[cur_base_idx + tj[SLOT_W-1:0]] == disp_bank_sched_r)
 				    && (c_line[cur_base_idx + tj[SLOT_W-1:0]] == desired_c))
 					found_line = 1'b1;
 			end
@@ -809,7 +809,7 @@ module ddr_frame_store #(
 
 			found_line = 1'b0;
 			for (tj = 0; tj < LINE_COUNT; tj = tj + 1) begin
-				if (y_valid[prep_base_idx + tj[SLOT_W-1:0]] && (y_bank[prep_base_idx + tj[SLOT_W-1:0]] == pending_bank_d2)
+				if (y_valid[prep_base_idx + tj[SLOT_W-1:0]] && (y_bank[prep_base_idx + tj[SLOT_W-1:0]] == pending_bank_sched_r)
 				    && (y_line[prep_base_idx + tj[SLOT_W-1:0]] == ti[Y_W-1:0]))
 					found_line = 1'b1;
 			end
@@ -823,7 +823,7 @@ module ddr_frame_store #(
 
 			found_line = 1'b0;
 			for (tj = 0; tj < LINE_COUNT; tj = tj + 1) begin
-				if (c_valid[prep_base_idx + tj[SLOT_W-1:0]] && (c_bank[prep_base_idx + tj[SLOT_W-1:0]] == pending_bank_d2)
+				if (c_valid[prep_base_idx + tj[SLOT_W-1:0]] && (c_bank[prep_base_idx + tj[SLOT_W-1:0]] == pending_bank_sched_r)
 				    && (c_line[prep_base_idx + tj[SLOT_W-1:0]] == ti[Y_W-1:1]))
 					found_line = 1'b1;
 			end
@@ -839,7 +839,7 @@ module ddr_frame_store #(
 		for (tj = 0; tj < LINE_COUNT; tj = tj + 1) begin
 			slot_keep = 1'b0;
 			for (tk = 0; tk < LINE_COUNT; tk = tk + 1) begin
-				if (y_valid[cur_base_idx + tj[SLOT_W-1:0]] && (y_bank[cur_base_idx + tj[SLOT_W-1:0]] == disp_bank_d2)
+				if (y_valid[cur_base_idx + tj[SLOT_W-1:0]] && (y_bank[cur_base_idx + tj[SLOT_W-1:0]] == disp_bank_sched_r)
 				    && (y_line[cur_base_idx + tj[SLOT_W-1:0]] == desired_y_r[tk]))
 					slot_keep = 1'b1;
 			end
@@ -850,7 +850,7 @@ module ddr_frame_store #(
 
 			slot_keep = 1'b0;
 			for (tk = 0; tk < LINE_COUNT; tk = tk + 1) begin
-				if (c_valid[cur_base_idx + tj[SLOT_W-1:0]] && (c_bank[cur_base_idx + tj[SLOT_W-1:0]] == disp_bank_d2)
+				if (c_valid[cur_base_idx + tj[SLOT_W-1:0]] && (c_bank[cur_base_idx + tj[SLOT_W-1:0]] == disp_bank_sched_r)
 				    && (c_line[cur_base_idx + tj[SLOT_W-1:0]] == desired_y_r[tk][Y_W-1:1]))
 					slot_keep = 1'b1;
 			end
@@ -867,7 +867,7 @@ module ddr_frame_store #(
 				slot_keep = 1'b0;
 				for (tk = 0; tk < LINE_COUNT; tk = tk + 1) begin
 					if (y_valid[prep_base_idx + tj[SLOT_W-1:0]]
-					    && (y_bank[prep_base_idx + tj[SLOT_W-1:0]] == pending_bank_d2)
+					    && (y_bank[prep_base_idx + tj[SLOT_W-1:0]] == pending_bank_sched_r)
 					    && (y_line[prep_base_idx + tj[SLOT_W-1:0]] == tk[Y_W-1:0]))
 						slot_keep = 1'b1;
 				end
@@ -878,7 +878,7 @@ module ddr_frame_store #(
 				slot_keep = 1'b0;
 				for (tk = 0; tk < LINE_COUNT; tk = tk + 1) begin
 					if (c_valid[prep_base_idx + tj[SLOT_W-1:0]]
-					    && (c_bank[prep_base_idx + tj[SLOT_W-1:0]] == pending_bank_d2)
+					    && (c_bank[prep_base_idx + tj[SLOT_W-1:0]] == pending_bank_sched_r)
 					    && (c_line[prep_base_idx + tj[SLOT_W-1:0]] == tk[Y_W-1:1]))
 						slot_keep = 1'b1;
 				end
@@ -953,10 +953,11 @@ module ddr_frame_store #(
 				&& !(has_frame_d2 && need_y_cur_c);
 			sel_c_prep_r <= swap_pending_d2 && need_c_prep_c
 				&& !(has_frame_d2 && need_c_cur_c);
+			// Bank epoch matches schedule scan (disp_bank_sched_r / pending_bank_sched_r).
 			sched_bank_y_src_r <= (swap_pending_d2 && need_y_prep_c
-				&& !(has_frame_d2 && need_y_cur_c)) ? pending_bank_d2 : disp_bank_d2;
+				&& !(has_frame_d2 && need_y_cur_c)) ? pending_bank_sched_r : disp_bank_sched_r;
 			sched_bank_c_src_r <= (swap_pending_d2 && need_c_prep_c
-				&& !(has_frame_d2 && need_c_cur_c)) ? pending_bank_d2 : disp_bank_d2;
+				&& !(has_frame_d2 && need_c_cur_c)) ? pending_bank_sched_r : disp_bank_sched_r;
 			target_y_cur_r <= target_y_cur_c;
 			target_y_prep_r <= target_y_prep_c;
 			target_c_cur_r <= target_c_cur_c;
@@ -969,7 +970,7 @@ module ddr_frame_store #(
 	end
 
 	// I2 (DIAG): display/prep half occupancy + bank-mismatch on display half.
-	// Uses cur_base_idx/prep_base_idx from schedule combo (same half ownership).
+	// Uses registered schedule base/bank epoch (same as need/target scan).
 	integer oi;
 	always @* begin
 		occ_disp_y_c = 5'd0;
@@ -978,7 +979,7 @@ module ddr_frame_store #(
 		for (oi = 0; oi < LINE_COUNT; oi = oi + 1) begin
 			if (y_valid[cur_base_idx + oi[SLOT_W-1:0]]) begin
 				occ_disp_y_c = occ_disp_y_c + 5'd1;
-				if (y_bank[cur_base_idx + oi[SLOT_W-1:0]] != disp_bank_d2)
+				if (y_bank[cur_base_idx + oi[SLOT_W-1:0]] != disp_bank_sched_r)
 					bank_mm_disp_c = bank_mm_disp_c + 6'd1;
 			end
 			if (y_valid[prep_base_idx + oi[SLOT_W-1:0]])
