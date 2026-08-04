@@ -8,7 +8,8 @@
 2) host/libmisterplex/ddr_frame_layout.hpp must match
    fpga/.../ddr_frame_layout_params.svh for coded/display/presented geometry,
    YUV line qwords, strides, bank/doorbell. QSF FRAME_W/H must equal the
-   *presented* canvas (640x480), not the coded DDR pitch (624). Without (2)
+   *presented* canvas (480p: 640x480; 720p compose: 1280x720), not coded pitch.
+   Without (2)
    this gate was GREEN while a 624-writer vs 640-reader pitch shear was still
    possible at the constant layer.
 """
@@ -55,6 +56,27 @@ DDR_LAYOUT_PAIRS: tuple[tuple[str, str], ...] = (
     ("kPlex720pVPlaneOffset", "DDR_FRAME_V_PLANE_OFFSET"),
     ("kPlex720pYuv420pBankStride", "DDR_FRAME_YUV420P_BANK_STRIDE"),
     ("kPlex720pYuv420pDoorbellPhys", "DDR_FRAME_YUV420P_DOORBELL_PHYS"),
+)
+
+# 720p tier constants (always paired host↔RTL when present). QSF FRAME_W/H
+# select which tier is the *active scanout*; 480p pairs above stay required.
+DDR_LAYOUT_PAIRS_720P: tuple[tuple[str, str], ...] = (
+    ("kPlex720pCodedWidth", "DDR_FRAME_720P_CODED_WIDTH"),
+    ("kPlex720pCodedHeight", "DDR_FRAME_720P_CODED_HEIGHT"),
+    ("kPlex720pDisplayWidth", "DDR_FRAME_720P_DISPLAY_WIDTH"),
+    ("kPlex720pDisplayHeight", "DDR_FRAME_720P_DISPLAY_HEIGHT"),
+    ("kPlex720pPresentedWidth", "DDR_FRAME_720P_PRESENTED_WIDTH"),
+    ("kPlex720pPresentedHeight", "DDR_FRAME_720P_PRESENTED_HEIGHT"),
+    ("kPlex720pPillarboxLeft", "DDR_FRAME_720P_PILLARBOX_LEFT"),
+    ("kPlex720pPillarboxRight", "DDR_FRAME_720P_PILLARBOX_RIGHT"),
+    ("kPlex720pYStrideBytes", "DDR_FRAME_720P_Y_STRIDE_BYTES"),
+    ("kPlex720pChromaStrideBytes", "DDR_FRAME_720P_CHROMA_STRIDE_BYTES"),
+    ("kPlex720pYuv420pBytes", "DDR_FRAME_720P_YUV420P_BYTES"),
+    ("kPlex720pYuv420pBankStride", "DDR_FRAME_720P_YUV420P_BANK_STRIDE"),
+    ("kPlex720pPhysBase", "DDR_FRAME_720P_PHYS_BASE"),
+    ("kPlex720pOptionCDoorbellPhys", "DDR_FRAME_720P_YUV420P_DOORBELL_PHYS"),
+    ("kPlex720pCropLeft", "DDR_FRAME_720P_CROP_LEFT"),
+    ("kPlex720pCropTop", "DDR_FRAME_720P_CROP_TOP"),
 )
 
 
@@ -121,6 +143,124 @@ def verilator_define_args(qsf: Path = PROJECT / "Plex.qsf") -> list[str]:
     return args
 
 
+def strip_shell_or_python_comments(text: str) -> str:
+    """Drop # comments outside quotes so -DFOO in docs is not a live macro.
+
+    Instrument defect class: grepping raw text for -D matches explanatory
+    comments (e.g. \"no -DFAULT_*\") and invents macros that do not exist.
+    """
+    out: list[str] = []
+    for line in text.splitlines(keepends=True):
+        in_squote = False
+        in_dquote = False
+        escaped = False
+        cut = len(line)
+        i = 0
+        while i < len(line):
+            ch = line[i]
+            if escaped:
+                escaped = False
+                i += 1
+                continue
+            if ch == "\\" and (in_squote or in_dquote):
+                escaped = True
+                i += 1
+                continue
+            if ch == "'" and not in_dquote:
+                in_squote = not in_squote
+            elif ch == '"' and not in_squote:
+                in_dquote = not in_dquote
+            elif ch == "#" and not in_squote and not in_dquote:
+                cut = i
+                break
+            i += 1
+        # Preserve newline so line numbers stay stable for multi-line consumers.
+        nl = "\n" if line.endswith("\n") else ""
+        body = line[:cut]
+        if nl and not body.endswith("\n"):
+            out.append(body.rstrip("\r") + nl)
+        else:
+            out.append(body)
+    return "".join(out)
+
+
+def strip_c_family_comments(text: str) -> str:
+    """Remove // and /* */ comments (SV/C/Make-style), keep string literals."""
+    out: list[str] = []
+    i = 0
+    n = len(text)
+    in_squote = False
+    in_dquote = False
+    in_line = False
+    in_block = False
+    escaped = False
+    while i < n:
+        ch = text[i]
+        nxt = text[i + 1] if i + 1 < n else ""
+        if in_line:
+            if ch == "\n":
+                in_line = False
+                out.append(ch)
+            i += 1
+            continue
+        if in_block:
+            if ch == "*" and nxt == "/":
+                in_block = False
+                i += 2
+            else:
+                # Keep newlines so later tools can still map lines.
+                if ch == "\n":
+                    out.append(ch)
+                i += 1
+            continue
+        if escaped:
+            out.append(ch)
+            escaped = False
+            i += 1
+            continue
+        if ch == "\\" and (in_squote or in_dquote):
+            out.append(ch)
+            escaped = True
+            i += 1
+            continue
+        if ch == "'" and not in_dquote:
+            in_squote = not in_squote
+            out.append(ch)
+            i += 1
+            continue
+        if ch == '"' and not in_squote:
+            in_dquote = not in_dquote
+            out.append(ch)
+            i += 1
+            continue
+        if not in_squote and not in_dquote:
+            if ch == "/" and nxt == "/":
+                in_line = True
+                i += 2
+                continue
+            if ch == "/" and nxt == "*":
+                in_block = True
+                i += 2
+                continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def strip_source_comments_for_macro_scan(path: Path, text: str) -> str:
+    """Comment-strip before -D / +define+ scan. Makefile uses both # and //."""
+    suffix = path.suffix
+    name = path.name
+    if suffix in {".sh", ".py"} or name.endswith(".sh"):
+        return strip_shell_or_python_comments(text)
+    if suffix in {".sv", ".svh", ".v", ".cpp", ".hpp", ".h", ".c"}:
+        return strip_c_family_comments(text)
+    if name == "Makefile" or suffix == "":
+        # Make: # comments; also allow // if someone used them in recipes.
+        return strip_c_family_comments(strip_shell_or_python_comments(text))
+    return text
+
+
 def discover_test_macros(paths: list[Path] | None = None) -> dict[str, list[Macro]]:
     if paths is None:
         paths = [ROOT / "tests" / "unit", ROOT / "tests" / "rtl", ROOT / "scripts", ROOT / "Makefile"]
@@ -136,13 +276,25 @@ def discover_test_macros(paths: list[Path] | None = None) -> dict[str, list[Macr
         re.compile(r"\+define\+([A-Za-z_][A-Za-z0-9_]*)(?:=([^\s\\]+))?"),
         re.compile(r"(?<!\w)-D([A-Za-z_][A-Za-z0-9_]*)(?:=([^\s\"']+))?"),
     ]
+    # Meta self-tests of this scanner intentionally embed -DFOO in strings/docs.
+    # Scanning them invents UNDECLARED TEST-ONLY macros and blocks product gates.
+    skip_names = {
+        Path(__file__).name,
+        "test_define_parity_comment_scan.py",
+    }
     for path in files:
+        if path.name in skip_names:
+            continue
         if path.resolve() == Path(__file__).resolve():
             continue
         if path.suffix not in {".sh", ".py", ".sv", ".svh", ".v", ""} and path.name != "Makefile":
             continue
-        rel = path.relative_to(ROOT).as_posix()
+        try:
+            rel = path.relative_to(ROOT).as_posix()
+        except ValueError:
+            rel = path.as_posix()
         text = path.read_text(errors="ignore")
+        text = strip_source_comments_for_macro_scan(path, text)
         for pattern in patterns:
             for m in pattern.finditer(text):
                 name = m.group(1)
@@ -223,7 +375,9 @@ def parse_host_layout_consts(path: Path = DEFAULT_HOST_LAYOUT) -> dict[str, int]
     out: dict[str, int] = {}
     # constexpr Type name{value};  or  constexpr int name = value;
     for m in re.finditer(
-        r"constexpr\s+(?:\w+\s+)+(kPlex720p\w+|kPlex480p\w+|kYuv420Black\w+|kDdrFrame\w+)\s*(?:=\s*([^;]+);|\{\s*([^}]+)\s*\}\s*;)",
+        r"constexpr\s+(?:\w+\s+)+"
+        r"(kPlex480p\w+|kPlex720p\w+|kYuv420Black\w+|kDdrFrame\w+|kDdrPl330\w+|kPl330\w+)\s*"
+        r"(?:=\s*([^;]+);|\{\s*([^}]+)\s*\}\s*;)",
         text,
     ):
         name = m.group(1)
@@ -257,18 +411,28 @@ def check_ddr_layout_parity(
     print("DEFINE_PARITY_DDR_LAYOUT_BEGIN")
     print("| host | rtl | host_val | rtl_val | status |")
     print("|---|---|---|---|---|")
-    for host_name, rtl_name in DDR_LAYOUT_PAIRS:
+
+    def _pair_row(host_name: str, rtl_name: str, *, required: bool) -> None:
         hv = host.get(host_name)
         rv = rtl_eff.get(rtl_name)
         if hv is None and rv is None:
             status = "MISSING-BOTH"
-            errors.append(f"{host_name}/{rtl_name}: missing on both host and RTL layout headers")
+            if required:
+                errors.append(
+                    f"{host_name}/{rtl_name}: missing on both host and RTL layout headers"
+                )
         elif hv is None:
             status = "HOST-MISSING"
-            errors.append(f"{host_name}: missing from host ddr_frame_layout.hpp (RTL {rtl_name}={rv})")
+            if required:
+                errors.append(
+                    f"{host_name}: missing from host ddr_frame_layout.hpp (RTL {rtl_name}={rv})"
+                )
         elif rv is None:
             status = "RTL-MISSING"
-            errors.append(f"{rtl_name}: missing from ddr_frame_layout_params.svh (host {host_name}={hv})")
+            if required:
+                errors.append(
+                    f"{rtl_name}: missing from ddr_frame_layout_params.svh (host {host_name}={hv})"
+                )
         elif hv != rv:
             status = "VALUE-DIFF"
             errors.append(
@@ -277,30 +441,81 @@ def check_ddr_layout_parity(
             )
         else:
             status = "shared"
-        print(f"| `{host_name}` | `{rtl_name}` | {hv if hv is not None else '—'} | {rv if rv is not None else '—'} | {status} |")
+        print(
+            f"| `{host_name}` | `{rtl_name}` | "
+            f"{hv if hv is not None else '—'} | {rv if rv is not None else '—'} | {status} |"
+        )
+
+    for host_name, rtl_name in DDR_LAYOUT_PAIRS:
+        _pair_row(host_name, rtl_name, required=True)
+    # 720p pairs required when either side defines any 720p constant (compose tree).
+    has_720p = any(
+        host.get(h) is not None or rtl_eff.get(r) is not None
+        for h, r in DDR_LAYOUT_PAIRS_720P
+    )
+    if has_720p:
+        for host_name, rtl_name in DDR_LAYOUT_PAIRS_720P:
+            _pair_row(host_name, rtl_name, required=True)
     print("DEFINE_PARITY_DDR_LAYOUT_END")
 
-    # Internal product relations (source-proven; kill 640-as-pitch theories).
-    coded = rtl_eff.get("DDR_FRAME_CODED_WIDTH")
-    presented = rtl_eff.get("DDR_FRAME_PRESENTED_WIDTH")
-    display = rtl_eff.get("DDR_FRAME_DISPLAY_WIDTH")
-    y_stride = rtl_eff.get("DDR_FRAME_Y_STRIDE_BYTES")
-    y_qw = rtl_eff.get("DDR_FRAME_YUV_LUMA_LINE_QWORDS")
-    c_qw = rtl_eff.get("DDR_FRAME_YUV_CHROMA_LINE_QWORDS")
-    pillar_l = rtl_eff.get("DDR_FRAME_PILLARBOX_LEFT")
-    pillar_r = rtl_eff.get("DDR_FRAME_PILLARBOX_RIGHT")
+    # Active scanout tier from QSF FRAME_W/H (presented canvas).
+    fw = quartus.get("FRAME_W")
+    fh = quartus.get("FRAME_H")
+    fw_v: int | None = None
+    fh_v: int | None = None
+    if fw is None:
+        errors.append("FRAME_W: missing from Quartus product macros (presented scanout width)")
+    else:
+        try:
+            fw_v = int(fw.value, 0)
+        except ValueError:
+            errors.append(f"FRAME_W: unparseable Quartus value {fw.value!r}")
+    if fh is None:
+        errors.append("FRAME_H: missing from Quartus product macros (presented scanout height)")
+    else:
+        try:
+            fh_v = int(fh.value, 0)
+        except ValueError:
+            errors.append(f"FRAME_H: unparseable Quartus value {fh.value!r}")
+
+    tier_720p = fw_v == 1280 and fh_v == 720
+    if tier_720p:
+        coded = rtl_eff.get("DDR_FRAME_720P_CODED_WIDTH")
+        presented = rtl_eff.get("DDR_FRAME_720P_PRESENTED_WIDTH")
+        display = rtl_eff.get("DDR_FRAME_720P_DISPLAY_WIDTH")
+        y_stride = rtl_eff.get("DDR_FRAME_720P_Y_STRIDE_BYTES")
+        pillar_l = rtl_eff.get("DDR_FRAME_720P_PILLARBOX_LEFT")
+        pillar_r = rtl_eff.get("DDR_FRAME_720P_PILLARBOX_RIGHT")
+        rtl_ph = rtl_eff.get("DDR_FRAME_720P_PRESENTED_HEIGHT")
+        y_qw = None  # 720p line-qwords not in pair table; bank_geom owns them
+        c_qw = None
+        # 720p is square-pixel: coded == presented is correct (no pillar collapse bug).
+        expect_presented_coded_delta: int | None = 0
+    else:
+        # 480p product relations (source-proven; kill 640-as-pitch theories).
+        coded = rtl_eff.get("DDR_FRAME_CODED_WIDTH")
+        presented = rtl_eff.get("DDR_FRAME_PRESENTED_WIDTH")
+        display = rtl_eff.get("DDR_FRAME_DISPLAY_WIDTH")
+        y_stride = rtl_eff.get("DDR_FRAME_Y_STRIDE_BYTES")
+        y_qw = rtl_eff.get("DDR_FRAME_YUV_LUMA_LINE_QWORDS")
+        c_qw = rtl_eff.get("DDR_FRAME_YUV_CHROMA_LINE_QWORDS")
+        pillar_l = rtl_eff.get("DDR_FRAME_PILLARBOX_LEFT")
+        pillar_r = rtl_eff.get("DDR_FRAME_PILLARBOX_RIGHT")
+        rtl_ph = rtl_eff.get("DDR_FRAME_PRESENTED_HEIGHT")
+        expect_presented_coded_delta = 16  # 640-624 shear pin
+
     if None not in (coded, y_stride) and coded != y_stride:
         errors.append(
-            f"DDR_FRAME_Y_STRIDE_BYTES={y_stride} must equal DDR_FRAME_CODED_WIDTH={coded} "
+            f"Y_STRIDE_BYTES={y_stride} must equal CODED_WIDTH={coded} "
             f"(YUV line pitch is coded width, never presented width)"
         )
-    if None not in (coded, y_qw) and y_qw != coded // 8:
+    if y_qw is not None and coded is not None and y_qw != coded // 8:
         errors.append(
-            f"DDR_FRAME_YUV_LUMA_LINE_QWORDS={y_qw} must equal CODED_WIDTH/8={coded // 8 if coded is not None else '?'}"
+            f"DDR_FRAME_YUV_LUMA_LINE_QWORDS={y_qw} must equal CODED_WIDTH/8={coded // 8}"
         )
-    if None not in (coded, c_qw) and c_qw != coded // 16:
+    if c_qw is not None and coded is not None and c_qw != coded // 16:
         errors.append(
-            f"DDR_FRAME_YUV_CHROMA_LINE_QWORDS={c_qw} must equal CODED_WIDTH/16={coded // 16 if coded is not None else '?'}"
+            f"DDR_FRAME_YUV_CHROMA_LINE_QWORDS={c_qw} must equal CODED_WIDTH/16={coded // 16}"
         )
     if None not in (pillar_l, display, pillar_r, presented) and (
         pillar_l + display + pillar_r != presented
@@ -308,66 +523,39 @@ def check_ddr_layout_parity(
         errors.append(
             f"pillarbox math broken: {pillar_l}+{display}+{pillar_r} != presented {presented}"
         )
-    # Geometry modes:
-    #  - 480p pillarbox: presented - coded == 16 (640-624), FRAME_W != CODED_W
-    #  - 720p native identity: coded==display==presented, pillar L/R==0, delta 0 OK
-    crop_l = rtl_eff.get("DDR_FRAME_CROP_LEFT")
-    crop_r = rtl_eff.get("DDR_FRAME_CROP_RIGHT")
-    native_identity = (
-        None not in (coded, presented, display, pillar_l, pillar_r, crop_l, crop_r)
-        and coded == presented == display
-        and pillar_l == 0
-        and pillar_r == 0
-        and crop_l == 0
-        and crop_r == 0
-    )
-    if None not in (coded, presented) and not native_identity and (presented - coded) != 16:
-        # Pin the 16 px figure used in the 624-vs-640 shear arithmetic.
+    if (
+        expect_presented_coded_delta is not None
+        and None not in (coded, presented)
+        and (presented - coded) != expect_presented_coded_delta
+    ):
         errors.append(
-            f"presented-coded delta is {presented - coded}, expected 16 "
-            f"(640-624); used when reasoning about wrong FRAME_W pitch"
+            f"presented-coded delta is {presented - coded}, expected "
+            f"{expect_presented_coded_delta} "
+            f"({'720p square-pixel' if tier_720p else '640-624'}); "
+            f"used when reasoning about wrong FRAME_W pitch"
         )
 
-    # QSF FRAME_W/H are the *presented* scanout canvas, not coded DDR pitch
-    # (except native-identity 720p where presented==coded by design).
-    fw = quartus.get("FRAME_W")
-    fh = quartus.get("FRAME_H")
-    if fw is None:
-        errors.append("FRAME_W: missing from Quartus product macros (presented scanout width)")
-    else:
-        try:
-            fw_v = int(fw.value, 0)
-        except ValueError:
-            fw_v = None
-            errors.append(f"FRAME_W: unparseable Quartus value {fw.value!r}")
-        if fw_v is not None and presented is not None and fw_v != presented:
-            errors.append(
-                f"FRAME_W Quartus={fw_v} != DDR_FRAME_PRESENTED_WIDTH={presented}: "
-                f"scanout canvas must match presented width (not coded {coded})"
-            )
-        if (
-            fw_v is not None
-            and coded is not None
-            and fw_v == coded
-            and not native_identity
-        ):
-            errors.append(
-                f"FRAME_W={fw_v} equals CODED_WIDTH — presented scanout collapsed onto coded "
-                f"pitch; pillarbox contract lost"
-            )
-    if fh is None:
-        errors.append("FRAME_H: missing from Quartus product macros (presented scanout height)")
-    else:
-        try:
-            fh_v = int(fh.value, 0)
-        except ValueError:
-            fh_v = None
-            errors.append(f"FRAME_H: unparseable Quartus value {fh.value!r}")
-        rtl_ph = rtl_eff.get("DDR_FRAME_PRESENTED_HEIGHT")
-        if fh_v is not None and rtl_ph is not None and fh_v != rtl_ph:
-            errors.append(
-                f"FRAME_H Quartus={fh_v} != DDR_FRAME_PRESENTED_HEIGHT={rtl_ph}"
-            )
+    # QSF FRAME_W/H must match the *active* presented canvas.
+    if fw_v is not None and presented is not None and fw_v != presented:
+        tag = "DDR_FRAME_720P_PRESENTED_WIDTH" if tier_720p else "DDR_FRAME_PRESENTED_WIDTH"
+        errors.append(
+            f"FRAME_W Quartus={fw_v} != {tag}={presented}: "
+            f"scanout canvas must match presented width (not coded {coded})"
+        )
+    # 480p only: FRAME_W == coded collapses pillarbox. 720p coded==presented is OK.
+    if (
+        not tier_720p
+        and fw_v is not None
+        and coded is not None
+        and fw_v == coded
+    ):
+        errors.append(
+            f"FRAME_W={fw_v} equals CODED_WIDTH — presented scanout collapsed onto coded "
+            f"pitch; pillarbox contract lost"
+        )
+    if fh_v is not None and rtl_ph is not None and fh_v != rtl_ph:
+        tag_h = "DDR_FRAME_720P_PRESENTED_HEIGHT" if tier_720p else "DDR_FRAME_PRESENTED_HEIGHT"
+        errors.append(f"FRAME_H Quartus={fh_v} != {tag_h}={rtl_ph}")
 
     return errors
 

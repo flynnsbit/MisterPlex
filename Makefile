@@ -207,6 +207,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_pl330_encode $(ROOT)/b
 	$(ROOT)/tests/unit/test_resource_preflight.sh
 	$(ROOT)/tests/unit/test_mister_soft_bounce_lock.sh
 	$(ROOT)/scripts/check_define_parity.py
+	python3 $(ROOT)/tests/unit/test_define_parity_comment_scan.py
 	python3 $(ROOT)/tests/unit/test_hw_visual_compare.py
 	$(ROOT)/tests/unit/test_decode_throughput_gate.sh
 	$(ROOT)/tests/unit/test_rtl_invariants.sh
@@ -298,6 +299,7 @@ quartus-sv-subset:
 
 define-parity:
 	$(ROOT)/scripts/check_define_parity.py
+	python3 $(ROOT)/tests/unit/test_define_parity_comment_scan.py
 
 pre-synth-gates: define-parity quartus-sv-subset prefit-reachability
 

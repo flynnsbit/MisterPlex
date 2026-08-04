@@ -9,6 +9,8 @@
 # RED twins: strip measurement log or revert to :all=1-only / no silence scan.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+# shellcheck source=tests/unit/lib_expected_red.sh
+. "$ROOT/tests/unit/lib_expected_red.sh"
 MP="$ROOT/arm/misterplexd/media_player.cpp"
 AD="$ROOT/host/libmisterplex/audio_delay.hpp"
 WORK="$ROOT/build/audio-delay-authority-unit"
@@ -98,9 +100,9 @@ set +e
 MUT_RC=$?
 set -e
 echo "audio_delay_red_twin_prefill_cancel true rc=$MUT_RC"
+emit_expected_red_block "$(cat "$WORK/mutant_run.out")"
 if [[ "$MUT_RC" -eq 0 ]]; then
   echo "FAIL: red twin B — unit still PASSed when prefill-cancel mutant returns non-zero" >&2
-  cat "$WORK/mutant_run.out" >&2
   exit 1
 fi
 echo "PASS red twin B: unit fails when prefill is claimed to cancel adelay (rc=$MUT_RC)"

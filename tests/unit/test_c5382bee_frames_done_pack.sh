@@ -16,13 +16,21 @@ if [[ ! -f "$FIT" ]]; then
 fi
 md=$(md5sum "$FIT" | awk '{print $1}')
 echo "fitted_ddr_frame_store_md5=$md"
-if [[ -f "$EV" ]] && grep -q 'ddr_frame_store.md5 fitted: c139274e814a4696c485c0bba3781ad8' "$EV"; then
-  if [[ "$md" != "c139274e814a4696c485c0bba3781ad8" ]]; then
-    echo "FAIL: fitted RTL md5 != evidence claim c139274e..." >&2
-    FAIL=1
-  else
-    echo "OK fitted md5 matches leftedge3 evidence (c5382bee freeze)"
-  fi
+# Evidence is tracked in-repo: absence is a hard failure (PR #11 harden).
+# Conditional integrity that silently skips is indistinguishable from pass.
+if [[ ! -f "$EV" ]]; then
+  echo "FAIL: missing freeze evidence $EV" >&2
+  exit 1
+fi
+if ! grep -q 'ddr_frame_store.md5 fitted: c139274e814a4696c485c0bba3781ad8' "$EV"; then
+  echo "FAIL: freeze evidence does not carry the c139274e md5 claim" >&2
+  exit 1
+fi
+if [[ "$md" != "c139274e814a4696c485c0bba3781ad8" ]]; then
+  echo "FAIL: fitted RTL md5 != evidence claim c139274e..." >&2
+  FAIL=1
+else
+  echo "OK fitted md5 matches leftedge3 evidence (c5382bee freeze)"
 fi
 
 echo "=== c5382bee freeze PLXD pack (must be bank_vsync_count) ==="
