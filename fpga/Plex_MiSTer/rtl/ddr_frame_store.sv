@@ -1160,11 +1160,18 @@ module ddr_frame_store #(
 			frames_done_d1 <= frames_done;
 			frames_done_d2 <= frames_done_d1;
 
-			// want_y: Gray-coded 2-FF sync (crossing #13)
+			// want_y: Gray-coded 2-FF sync (crossing #13).
+			// Only adopt when gray is stable across the two FFs. Multi-bit jumps
+			// (e.g. last line → 0 at blank) otherwise sample illegal gray codes
+			// that decode to wrong beam lines → fill tags miss pref_y (DIAG
+			// T3/T5: bank_mm=0, occ full, miss sticky, MEAN black). Hold last
+			// desired_y_r until gray_s1==gray_s2. Keeps schedule-reg STA cut.
 			want_y_gray_s1 <= want_y_gray;
 			want_y_gray_s2 <= want_y_gray_s1;
-			for (ti = 0; ti < LINE_COUNT; ti = ti + 1)
-				desired_y_r[ti] <= clamp_ahead(y_gray2bin(want_y_gray_s2), ti);
+			if (want_y_gray_s1 == want_y_gray_s2) begin
+				for (ti = 0; ti < LINE_COUNT; ti = ti + 1)
+					desired_y_r[ti] <= clamp_ahead(y_gray2bin(want_y_gray_s2), ti);
+			end
 
 			start_d1 <= start_req;
 			start_d2 <= start_d1;
