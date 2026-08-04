@@ -1356,6 +1356,62 @@ bool FpgaSpi::sendRgb565Frame(const uint16_t* rgb, int w, int h, uint8_t index) 
     return sendFileTx(packed.data(), packed.size(), index);
 }
 
+bool FpgaSpi::sendDdrKickOnly(int bank) {
+    if (bank < 0 || bank > 1) {
+        setErr("sendDdrKickOnly: bank must be 0 or 1");
+        return false;
+    }
+    if (!ensureDdrMap())
+        return false;
+
+    BankReleaseStatus brs{};
+    if (readBankRelease(brs)) {
+        if (brs.swap_pending || !brs.anyFree()) {
+            setErr(brs.swap_pending ? "sendDdrKickOnly: swap_pending"
+                                    : "sendDdrKickOnly: no_free");
+            return false;
+        }
+        if ((brs.free_bank_mask & (1u << (bank & 1))) == 0) {
+            setErr("sendDdrKickOnly: free_bit_clear");
+            return false;
+        }
+        if ((bank & 1) == static_cast<int>(brs.disp_bank & 1u)) {
+            setErr("sendDdrKickOnly: bank_eq_disp");
+            return false;
+        }
+    }
+
+    __sync_synchronize();
+    bool kicked = false;
+    if (ddrKickMode_ == 1 || ddrKickMode_ == 0) {
+        if (kickDdrDoorbell(bank)) {
+            kicked = true;
+            if (ddrKickMode_ == 0)
+                ddrKickMode_ = 1;
+        }
+    }
+    if (!kicked && (ddrKickMode_ == 2 || ddrKickMode_ == 0)) {
+        bool saw_busy = false, saw_kick = false, saw_frame = false;
+        if (!kickDdrSpi(bank, ddrKickMode_ == 0, saw_busy, saw_kick, saw_frame))
+            return false;
+        kicked = true;
+        if (ddrKickMode_ == 0)
+            ddrKickMode_ = 2;
+    }
+    if (!kicked) {
+        setErr("sendDdrKickOnly: could not kick");
+        return false;
+    }
+    noteDdrBankPublished(ddrBankSelSt_, bank);
+    lastDdrBankDoorbellMs_[bank & 1] =
+        std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now().time_since_epoch())
+            .count();
+    lastDdrTiming_ = {};
+    lastDdrTiming_.copy_us = 0; // no ARM memcpy on this path
+    return true;
+}
+
 bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
     if (!payload || len != ddrLayout_.frame_bytes) {
         setErr("sendDdrFrame: frame size does not match DDR geometry");
