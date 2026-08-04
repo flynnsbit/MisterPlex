@@ -2,8 +2,7 @@
 // CONSUMES misterplex_bw_contract.svh / P720 aliases — not QIP-only dead code.
 // Headline: 33_177_600 B/s per direction. NACK DE-peak 3.0 as DDR.
 // claim_split: accepted-request delta OBSERVED/CLOSED; PPC2 delivery OPEN; fabric BW OPEN.
-
-`include "plex_720p_bw_contract.svh"
+// Include is INSIDE the module so P720_* localparams are module-local (rd-duck scope).
 
 module plex_bw_status (
 	input  wire        clk,
@@ -15,6 +14,9 @@ module plex_bw_status (
 	output wire [15:0] bw_t_copy_arm_us,
 	output wire [15:0] bw_frame_budget_us
 );
+	// Module-local contract expand (no global include guard on .svh).
+	`include "plex_720p_bw_contract.svh"
+
 	// Live loads from shared contract (not independent magic numbers).
 	(* noprune *) reg [31:0] r_dir_bps = 32'd0;
 	(* noprune *) reg [17:0] r_beats   = 18'd0;
