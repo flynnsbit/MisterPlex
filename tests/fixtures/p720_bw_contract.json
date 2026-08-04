@@ -324,7 +324,8 @@
       "class": "CPU_TIME_not_rate",
       "serial_deficit_ms_approx": 6.016,
       "path_a_overlap": "unproven parent",
-      "path_b_fabric_dma": "sim GREEN macro OFF (fabric_ddr_frame_mem2mem)"
+      "path_b_fabric_dma": "sim GREEN macro OFF (fabric_ddr_frame_mem2mem)",
+      "note": "DMA retires uncached publication memcpy only after pinned SG + coherency; decode/raw still writes pixels; prefer direct reader over mem2mem mover"
     },
     "language_forbidden": [
       "fabric BW proof_gap still OPEN (unsplit)",
@@ -333,5 +334,20 @@
     ]
   },
   "fabric_bw_closed": false,
-  "reader_steady_delta": "CLOSED"
+  "reader_steady_delta": "CLOSED",
+  "path_b_architecture": {
+    "preferred": "dynamic_base_direct_fabric_reader",
+    "preferred_means": "decode/raw writes once to pinned buffer; ddr_frame_store reads via runtime PHYS base; retires publication memcpy only",
+    "fallback_lab": "fabric_ddr_frame_mem2mem staging_to_bank",
+    "fallback_cost": "2x payload beats on controller (RD+WE)",
+    "forbidden_claim": "ARM never touches frame",
+    "path_a_overlap": "unproven \u2014 49pct idle was PRE-decode (busyfix.sh:70 then :71)",
+    "rd_duck_ack": true
+  },
+  "fit_release_blockers": {
+    "both_until_parent_resolves": [
+      "w-nostub reclaim on main",
+      "w-osd full 720p 20:90 stalled real-reader proof (or parent accepts w-clock TB)"
+    ]
+  }
 }

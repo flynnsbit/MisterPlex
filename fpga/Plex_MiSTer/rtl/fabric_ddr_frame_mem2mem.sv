@@ -1,20 +1,26 @@
-// fabric_ddr_frame_mem2mem — fabric pulls I420 from staging → Option-C bank + doorbell.
+// fabric_ddr_frame_mem2mem — FALLBACK lab path: RD staging to WE Option-C bank + doorbell.
 //
-// Parent Sweep-118: ARM /dev/mem bank copy T_copy_arm=14.978 ms/f serial-kills
-// 720p24 (headroom 8.962 < 14.978). Path (b): fabric DMA retires that CPU cost.
-// ARM only fills staging (hopefully WC/cached System RAM or reserved staging);
-// this module moves payload on clk_ddr and rings the product doorbell.
+// rd-duck binding: preferred product path is dynamic-base DIRECT fabric reader
+// (decode/raw writes once; ddr_frame_store reads that buffer — no source-to-bank mover).
+// This mover adds read+write traffic (2x payload beats) and does NOT mean
+// "ARM never touches the frame" (software decode/raw still writes pixels).
+// It can only retire the uncached publication memcpy (fpga_spi.cpp ddrMap_ copy,
+// T_copy_arm=14.978 ms archive) after pinned SG + cache-coherency contract.
+//
+// Sweep-118: serial decode + that memcpy fails 720p24 (~6 ms short). Path (a)
+// overlap unproven (49% idle was pre-decode, not during). Keep this module as
+// measured fallback (solo sim ~9.6 ms at 90MHz model) until direct-base lands.
 //
 // Macro FABRIC_DDR_FRAME_MEM2MEM default OFF — does not touch product path until
 // arbiter attach + parent enable. Not PL330 userspace (unbind hung SoC).
 //
 // Ordering (tearing class — same as fabric_ddr_writer):
-//   1) RD staging → WE bank for every payload qword (pipelined outstanding=1)
+//   1) RD staging to WE bank for every payload qword (pipelined outstanding=1)
 //   2) WRITE_DRAIN fence
-//   3) one doorbell WE {hi, PLXK}
+//   3) one doorbell WE (hi, PLXK)
 //   4) frame_done
 //
-// Defaults: Option-C 720p + staging @ 0x30601000 (kPl330StagingPhys).
+// Defaults: Option-C 720p + staging at 0x30601000 (kPl330StagingPhys).
 //
 `default_nettype none
 `include "ddr_frame_layout_params.svh"
