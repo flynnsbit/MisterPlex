@@ -99,5 +99,20 @@
       "not": "DDR design load",
       "source": "ddr_frame_store rd_miss_now hit path"
     }
+  },
+  "cpu_time_not_rate": {
+    "T_copy_arm_ms": 14.978,
+    "T_copy_arm_us": 14978,
+    "C_arm_MiBps": 88.0,
+    "frame_budget_ms": 41.667,
+    "decode_ms_sweep116": 32.705,
+    "decode_headroom_ms": 8.962,
+    "serial_deficit_ms": 6.016,
+    "source": "parent Sweep 118 / rd-duck",
+    "note": "T_copy_arm is CPU TIME; R_req 33.1776 is payload RATE \u2014 not interchangeable"
+  },
+  "strategic": {
+    "path_a_overlap": "unproven",
+    "path_b_fabric_dma": "retires T_copy_arm; w-mem/w-path build; w-clock clocks+CDC"
   }
 }

@@ -137,3 +137,19 @@ PRE-REG hit on payload≥172800 and budget.
 
 Still **not** modeled: concurrent HPS `/dev/mem` write beats on same controller.  
 Interface peaks (6 RGB B/group, 3 B I420 amort/2px) ≠ average headline 33.1776 MB/s/dir.
+
+---
+
+## Parent Sweep 118 correction (adopted)
+
+ARM busy-spin fix stands (49% idle, 1.3× decode). **ARM is NOT off the critical path.**
+
+| Symbol | Value | Kind |
+|--------|------:|------|
+| R_req | **33.1776 MB/s/dir** | payload **rate** |
+| T_copy_arm | **14.978 ms/frame** | CPU **time** @ 88 MiB/s |
+| serial deficit | **~6.0 ms/frame** | T_copy − decode headroom |
+
+Fabric stamp: `bw_t_copy_arm_us=14978`, `bw_frame_budget_us=41667` in `plex_bw_status`.  
+Strategic: **fabric DMA (b)** retires T_copy; see `FABRIC_DMA_CLK_REQ.md`.  
+w-osd full-frame+stall@20:90: **already** `test_ddr_frame_store_720p_ppc2_bus` (w-clock) — adopt, don't re-derive short/1:1.

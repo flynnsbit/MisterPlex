@@ -10,7 +10,9 @@ module plex_bw_status (
 	output wire [17:0] bw_beats_per_frame,
 	output wire [18:0] bw_beats_rw_pair,
 	output wire [7:0]  bw_product_ppc,
-	output wire        bw_nack_de_peak_is_not_ddr
+	output wire        bw_nack_de_peak_is_not_ddr,
+	output wire [15:0] bw_t_copy_arm_us,
+	output wire [15:0] bw_frame_budget_us
 );
 	(* noprune *) reg [31:0] r_dir_bps = 32'd0;
 	(* noprune *) reg [17:0] r_beats   = 18'd0;
@@ -18,6 +20,8 @@ module plex_bw_status (
 	(* noprune *) reg [7:0]  r_ppc     = 8'd0;
 	// Constant 1: DE-peak 3.0 B/clk is linebuf I420-equiv, not DDRAM design load.
 	(* noprune *) reg        r_nack    = 1'b1;
+	(* noprune *) reg [15:0] r_tcopy   = 16'd0;
+	(* noprune *) reg [15:0] r_budget  = 16'd0;
 
 	always @(posedge clk) begin
 		r_dir_bps <= 32'd33177600;
@@ -25,6 +29,8 @@ module plex_bw_status (
 		r_rw      <= 19'd345600;
 		r_ppc     <= 8'd2;
 		r_nack    <= 1'b1;
+		r_tcopy   <= 16'd14978;
+		r_budget  <= 16'd41667;
 	end
 
 	assign bw_dir_b_per_s             = r_dir_bps;
@@ -32,6 +38,8 @@ module plex_bw_status (
 	assign bw_beats_rw_pair           = r_rw;
 	assign bw_product_ppc             = r_ppc;
 	assign bw_nack_de_peak_is_not_ddr = r_nack;
+	assign bw_t_copy_arm_us           = r_tcopy;
+	assign bw_frame_budget_us         = r_budget;
 
 	// Elab-time arithmetic lock against the shared header
 	initial begin
@@ -47,5 +55,10 @@ module plex_bw_status (
 			$error("plex_bw_status: NACK marker missing");
 		if (MISTERPLEX_BW_BEATS_PER_FRAME != 172_800)
 			$error("plex_bw_status: beats_per_frame SoT drift");
+		if (MISTERPLEX_BW_T_COPY_ARM_US >= MISTERPLEX_BW_FRAME_BUDGET_US)
+			$error("plex_bw_status: T_copy_arm must be < frame budget (units check)");
+		// Serial deficit exists: T_copy 14978 > decode headroom ~8962 — fabric DMA target.
+		if (MISTERPLEX_BW_T_COPY_ARM_US <= 8962)
+			$error("plex_bw_status: T_copy_arm must reflect parent 14.978 ms (not under headroom)");
 	end
 endmodule
