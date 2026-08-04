@@ -1143,7 +1143,19 @@ ddr_bus_arbiter ddr_arb (
 `endif
 `endif
 
+// CLK_VIDEO must be the same domain as CE_PIXEL / VGA_* (emu_ports.vh).
+// PRESENT_CLK_PIX_PLL + PRESENT_MULTI_PIXEL: scanout leaves present_npx on
+// clk_pix — driving CLK_VIDEO=clk_sys would be an open CDC into ascal/OSD.
+// PLL alone without MULTI still uses leg path on clk_sys.
+`ifdef PRESENT_CLK_PIX_PLL
+`ifdef PRESENT_MULTI_PIXEL
+assign CLK_VIDEO = clk_pix_pll;
+`else
 assign CLK_VIDEO = clk_sys;
+`endif
+`else
+assign CLK_VIDEO = clk_sys;
+`endif
 assign CE_PIXEL  = ce_pix;
 assign VGA_DE = ~(HBlank | VBlank);
 assign VGA_HS = HSync;

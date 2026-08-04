@@ -23,14 +23,19 @@
 //   (same-clock with INCLUDE_SYNC=0 + direct beam H/V is a known trap — H/V lead).
 // rd_underrun: real mid-stream empty after stream_seen. Never hard-tied 0.
 // Product default: NOT instantiated (PRESENT_MULTI_PIXEL undefined).
-// CDC: async_fifo gray + 2FF prefill_go only.
+// CDC (clk_sys ↔ clk_pix; dedicated PLL ⇒ true async):
+//   P1 group RGB+sync  : async_fifo gray pointers (NOT per-bit sync)
+//   P2 prefill_go level: cdc_sync_bit 2FF preserve chain
+// Multi-bit data must never use bit-synchronisers (torn samples).
 
 module present_npx_path #(
 	parameter int PX_PER_CLK     = 4,
 	parameter int FIFO_AW        = 6,  // async depth 64 groups
 	parameter bit INCLUDE_SYNC   = 1'b0,
 	parameter int PREFILL_GROUPS = 8,  // 0 = start on first word (unit tests)
-	parameter int SKID_AW        = 4   // depth 16; headroom for store pipe
+	parameter int SKID_AW        = 4,  // depth 16; headroom for store pipe
+	// FAULT inject (sim only): 1 = bare assign prefill (no 2FF) — TB negative.
+	parameter bit FAULT_NO_PREFILL_SYNC = 1'b0
 )(
 	input  wire                 clk_sys,
 	input  wire                 reset_sys,
@@ -132,7 +137,7 @@ module present_npx_path #(
 
 	reg [PRE_W-1:0] wr_group_count;
 	reg             prefill_go_sys;
-	reg             prefill_go_p1, prefill_go_pix;
+	wire            prefill_go_pix;
 
 	wire [W-1:0] in_packed = pack_group(
 		in_fstart, in_vsync, in_hsync, in_vblank, in_hblank,
@@ -165,15 +170,20 @@ module present_npx_path #(
 		end
 	end
 
-	always @(posedge clk_pix) begin
-		if (reset_pix) begin
-			prefill_go_p1  <= 1'b0;
-			prefill_go_pix <= 1'b0;
-		end else begin
-			prefill_go_p1  <= prefill_go_sys;
-			prefill_go_pix <= prefill_go_p1;
+	// P2: single-bit level clk_sys → clk_pix. Preserve 2FF (not bare assign).
+	generate
+		if (FAULT_NO_PREFILL_SYNC) begin : g_fault_prefill
+			// NEGATIVE twin: unsynchronised level cross (sim FAULT only).
+			assign prefill_go_pix = prefill_go_sys;
+		end else begin : g_prefill_cdc
+			cdc_sync_bit #(.STAGES(2)) u_prefill_go_sync (
+				.clk_dst(clk_pix),
+				.rst_dst(reset_pix),
+				.d_src(prefill_go_sys),
+				.q_dst(prefill_go_pix)
+			);
 		end
-	end
+	endgenerate
 
 	reg                   hold_busy;
 	reg [LANE_W-1:0]      lane_idx;

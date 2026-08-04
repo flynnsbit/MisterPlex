@@ -195,3 +195,14 @@ When `PRESENT_CLK_PIX_PLL=1`, `pll_0002` adds `outclk_3` = clk_pix (29.70 MHz de
 | P3 | reset into pix | async | 2FF mp_rst_pix* |
 
 SDC: `Plex_clk_pix.sdc` sets asynchronous clock groups clk_pix ⊥ clk_sys and clk_pix ⊥ clk_ddr. Do not false_path residual_csum.
+
+## clk_pix dedicated / async (w-mem 2026-08-04)
+
+See **`docs/cdc-clk-pix-crossings.md`** for the exhaustive file:line table (P1–P11).
+
+Summary of product fixes under `PRESENT_MULTI_PIXEL` + `PRESENT_CLK_PIX_PLL`:
+- P2 prefill_go → `cdc_sync_bit` preserve
+- P3 reset_pix → `cdc_sync_bit`
+- P4 `mp_out_fs` → cadence via `cdc_pulse_toggle` (was bare async pulse)
+- P5 `CLK_VIDEO=clk_pix_pll` so CE_PIXEL/RGB share domain with ascal/OSD
+- SDC: `Plex_clk_pix_cdc.sdc` (`set_max_delay`, no blanket false_path on data)

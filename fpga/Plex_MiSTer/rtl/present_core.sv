@@ -815,7 +815,10 @@ module present_core #(
 	wire mp_push = mp_tq_v[MP_STORE_LAT-1];
 
 `ifdef PRESENT_CLK_PIX_PLL
-	(* noprune *) reg mp_rst_pix0, mp_rst_pix1;
+	// P3: reset CDC clk_sys → clk_pix. Standard async-assert / sync-deassert
+	// (NOT a plain 2FF of the reset level with rst_dst=0 — that misses POR
+	// because the chain powers up 0 while reset is still 1). Preserve chain.
+	(* preserve *) (* noprune *) reg mp_rst_pix0, mp_rst_pix1;
 	always @(posedge clk_pix or posedge reset) begin
 		if (reset) begin
 			mp_rst_pix0 <= 1'b1;
@@ -827,6 +830,7 @@ module present_core #(
 	end
 	wire mp_reset_pix = mp_rst_pix1;
 `else
+	// Same clock: pass-through (default product — byte-identical reset path).
 	wire mp_reset_pix = reset;
 `endif
 
@@ -834,7 +838,8 @@ module present_core #(
 		.PX_PER_CLK(PRESENT_PPC),
 		.FIFO_AW(6),
 		.INCLUDE_SYNC(MP_INCLUDE_SYNC),
-		.PREFILL_GROUPS(16)
+		.PREFILL_GROUPS(16),
+		.FAULT_NO_PREFILL_SYNC(1'b0)
 	) u_mp_npx_path (
 		.clk_sys(clk),
 		.reset_sys(reset),
@@ -870,7 +875,7 @@ module present_core #(
 	// Note: fstore still wired to store_x/y from Template regs above — full MULTI
 	// store remap is a follow-up when PPC>1 lands. PPC=1 same-clock uses leg path
 	// geometry unless parent also sets FRAME 1280×720.
-	wire _unused_mp_glass = |{mp_glass_x0, mp_glass_y, mp_npx_lv, mp_wr_full, mp_wr_af, mp_rd_ur, mp_rd_empty, mp_out_fs};
+	wire _unused_mp_glass = |{mp_glass_x0, mp_glass_y, mp_npx_lv, mp_wr_full, mp_wr_af, mp_rd_ur, mp_rd_empty};
 	wire _unused_mp_clk_hz = (MP_CLK_PIX_HZ == 0);
 
 	assign r = mp_out_r;
@@ -881,7 +886,23 @@ module present_core #(
 	assign HSync  = mp_out_hs;
 	assign VBlank = mp_out_vb;
 	assign VSync  = mp_out_vs;
+	// P4: display frame_start for cadence is on clk_sys. With dedicated clk_pix
+	// PLL, mp_out_fs is async — cross via toggle pulse CDC. Same-clock path
+	// (default) keeps direct assign (no extra latency on product OFF).
+`ifdef PRESENT_CLK_PIX_PLL
+	wire mp_frame_start_sys;
+	cdc_pulse_toggle #(.STAGES(2)) u_mp_fstart_cdc (
+		.clk_src(clk_pix),
+		.rst_src(mp_reset_pix),
+		.pulse_src(mp_out_fs),
+		.clk_dst(clk),
+		.rst_dst(reset),
+		.pulse_dst(mp_frame_start_sys)
+	);
+	assign frame_start = mp_frame_start_sys;
+`else
 	assign frame_start = mp_out_fs;
+`endif
 	wire _unused_leg_rgb = |{leg_r, leg_g, leg_b, ce_pix_i, hb_d, hs_d, vb_d, vs_d, fstart};
 `else
 	assign r = leg_r;
