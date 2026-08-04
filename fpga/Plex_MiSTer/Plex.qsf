@@ -83,12 +83,15 @@ set_global_assignment -name VERILOG_MACRO "DDR_FRAME_STORE=1"
 # Product netlist: no decode_stub painter / on-chip DPB (reclaim ~268 M10K).
 # stream_path.sv gates the instance; sim builds omit this macro.
 set_global_assignment -name VERILOG_MACRO "PRODUCT_NO_STUB=1"
-# HDMI_OUT plex_chrome (post-ascal). DEFAULT OFF — pass-through + 1-cycle delay.
-# Enable one demo at a time for parent capture (mutually exclusive IDLE vs CHROME):
+# HDMI_OUT plex_chrome (post-ascal). Product: idle chevron when !has_frame (CDC).
+# Overlay PLXC enable still 0 until ARM/loader; 1-cycle video pass-through.
+# Capture demos (mutually exclusive IDLE vs CHROME):
 #set_global_assignment -name VERILOG_MACRO "PLEX_FAB_IDLE=1"
 #set_global_assignment -name VERILOG_MACRO "PLEX_FAB_CHROME=1"
 #set_global_assignment -name VERILOG_MACRO "PLEX_FAB_BOOT_PLXC=1"
-# Geometry: chrome paints from hdmi_width/height (glass), NOT FRAME_W/H (w-nostub owns those).
+#set_global_assignment -name VERILOG_MACRO "PLEX_CHROME_DDR=1"
+# Geometry: chrome paints from hdmi_width/height (glass), NOT FRAME_W/H.
+# Refresh: clk_hdmi / video_mode (typ. 60 Hz) — NOT core 16.16 Hz clk_pix trap.
 set_global_assignment -name VERILOG_MACRO "FRAME_W=640"
 set_global_assignment -name VERILOG_MACRO "FRAME_H=480"
 set_global_assignment -name VERILOG_MACRO "FRAME_LINES_8=1"
