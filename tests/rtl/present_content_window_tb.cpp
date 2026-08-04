@@ -209,6 +209,8 @@ int main(int argc, char** argv) {
         rc |= run_frame(dut, 1280, 720, 1280, 720, true, "g1280id");
     // 640x480 → 1280x720
     rc |= run_frame(dut, 640, 480, 1280, 720, !fault, "g640to720");
+    // Ship product source tier: 960×540 → 1280×720 DE (non-integer ~4/3 NN)
+    rc |= run_frame(dut, 960, 540, 1280, 720, !fault, "g960to720");
 
     if (fault) {
         // For fault build, success is divergence

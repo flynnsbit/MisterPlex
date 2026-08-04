@@ -126,10 +126,15 @@ module present_content_window #(
 	// ceil(a/b) = (a + b - 1) / b for a>=0,b>0
 	wire [31:0] sx_num_ceil = sx_num_gen + {21'd0, hd_m1} - 32'd1;
 	wire [31:0] sy_num_ceil = sy_num_gen + {21'd0, vd_m1} - 32'd1;
-wire [19:0] sx_win_true = 20'(sx_num_ceil / {21'd0, hd_m1});
-	wire [19:0] sy_win_true = 20'(sy_num_ceil / {21'd0, vd_m1});
+	// Identity fast-path (adjacent w-path identity-clamp): content==DE → SX=SY=1.0
+	// without a divider. Wrong if forced when cw!=hde (see FAULT_IDENTITY_SCALE).
+	wire id_scale = (cw_eff == h_de_eff) && (ch_eff == v_de_eff);
+	wire [19:0] sx_win_div = 20'(sx_num_ceil / {21'd0, hd_m1});
+	wire [19:0] sy_win_div = 20'(sy_num_ceil / {21'd0, vd_m1});
+	wire [19:0] sx_win_true = id_scale ? 20'd65536 : sx_win_div;
+	wire [19:0] sy_win_true = id_scale ? 20'd65536 : sy_win_div;
 	// FAULT twins (sim-only +define) — green must be capable of going red:
-	//   IDENTITY_SCALE — sx=sy=65536 (midpoint fails on 720→1280)
+	//   IDENTITY_SCALE — force sx=sy=65536 even when cw!=hde (960→1280 mid fails)
 	//   FLOOR_SCALE    — floor Q16 instead of ceil (last DE pixel undershoots)
 	//   INVERT_RATIO   — (de-1)/(cw-1) instead of (cw-1)/(de-1) (ratio inverted)
 `ifdef PRESENT_WINDOW_FAULT_IDENTITY_SCALE

@@ -264,14 +264,20 @@ module present_core #(
 
 	wire [10:0] hc11, vc11, vtot_act11;
 	wire [10:0] hde_act11, htot_act11, vact_act11;
-	wire [10:0] beam_hde_req =
-		(content_w == 11'd0) ? 11'(L4_H_DE) :
-		(content_w > 11'(FRAME_W)) ? 11'(FRAME_W) : content_w;
-	wire [10:0] beam_vact_req =
-		(content_h == 11'd0) ? 11'(L4_V_ACT) :
-		(content_h > 11'(FRAME_H)) ? 11'(FRAME_H) : content_h;
+	// Glass DE is always full CEA 720p active. Shrinking DE to content_w made
+	// ascal upscale a smaller island (quarter-picture class). Content size is
+	// only for present_content_window (DDR island → full DE), not beam size.
+	// content_w/h==0 → identity (native 720p delivery / w-path identity-clamp).
+	wire [10:0] beam_hde_req  = 11'(L4_H_DE);
+	wire [10:0] beam_vact_req = 11'(L4_V_ACT);
 	wire [10:0] beam_htot_req = 11'(L4_H_TOTAL);
 	wire [10:0] beam_vtot_req = 11'(L4_V_TOTAL);
+	wire [10:0] win_content_w =
+		(content_w == 11'd0) ? 11'(L4_H_DE) :
+		(content_w > 11'(FRAME_W)) ? 11'(FRAME_W) : content_w;
+	wire [10:0] win_content_h =
+		(content_h == 11'd0) ? 11'(L4_V_ACT) :
+		(content_h > 11'(FRAME_H)) ? 11'(FRAME_H) : content_h;
 
 	(* noprune *) present_beam_content_de #(
 		.H_DE(L4_H_DE),
@@ -421,8 +427,10 @@ module present_core #(
 	// Exact clone of colorbars in_content (full DE paint region).
 	wire [9:0] py = scandouble ? (vc >> 1) : vc;
 `ifdef PLEX_PRESENT_720P_L4
-	// L4: present_content_window owns store map (identity when content==DE).
-	// STORE domain tracks FRAME_* so QSF 1280×720 cannot disagree with 480p-era 1280/720 literals.
+	// L4: present_content_window owns store map.
+	// win_content_* = DDR island; h_de/v_de = full glass DE (beam fixed 1280×720).
+	// content_w/h==0 → win == DE → identity (native 720p / path identity-clamp).
+	// content 960×540 → NN stretch across DE (ship product source tier).
 	wire in_content_l4 = ~hb & ~vb & (hc11 < hde_act11) & (vc11 < vact_act11);
 	wire past_last_row; // driven by content_window
 	wire [FRAME_X_W-1:0] store_x_clamped;
@@ -443,8 +451,8 @@ module present_core #(
 		.py(vc11),
 		.in_content(in_content_l4),
 		.win_enable(1'b1),
-		.content_w(beam_hde_req),
-		.content_h(beam_vact_req),
+		.content_w(win_content_w),
+		.content_h(win_content_h),
 		.content_x0(11'd0),
 		.content_y0(11'd0),
 		.h_de(hde_act11),

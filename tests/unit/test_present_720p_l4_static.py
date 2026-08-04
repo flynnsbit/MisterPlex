@@ -127,6 +127,30 @@ def main() -> int:
         else:
             print("OK negative twin: removing u_content_window would fail this gate")
 
+    # Glass DE fixed at L4 full size; content_w feeds window not beam (ascal island bug).
+    if "win_content_w" not in core or "win_content_h" not in core:
+        fails.append("L4 missing win_content_w/h (content island separate from glass DE)")
+    else:
+        print("OK L4 win_content_* separates DDR island from glass DE")
+    if ".content_w(beam_hde_req)" in core or ".content_h(beam_vact_req)" in core:
+        fails.append("L4 still wires content_window from beam_* (identity-only / shrinks DE)")
+    else:
+        print("OK L4 content_window not driven by beam_* size")
+    if "beam_hde_req  = 11'(L4_H_DE)" not in core and "beam_hde_req = 11'(L4_H_DE)" not in core:
+        # tolerate whitespace variants
+        if "L4_H_DE)" not in core or "beam_hde_req" not in core:
+            fails.append("L4 beam_hde_req not fixed to L4_H_DE")
+        else:
+            # require assignment not content_w ternary
+            import re
+            m = re.search(r"beam_hde_req\s*=\s*([^;]+);", core)
+            if not m or "L4_H_DE" not in m.group(1) or "content_w" in m.group(1):
+                fails.append(f"L4 beam_hde_req must be fixed L4_H_DE, got: {m.group(1) if m else 'missing'}")
+            else:
+                print("OK L4 glass DE fixed to L4_H_DE (not content_w)")
+    else:
+        print("OK L4 glass DE fixed to L4_H_DE (not content_w)")
+
     # fps arithmetic check (integer): 24000000 / (1312*762) milli
     pix = 1312 * 762
     fps_milli = (24_000_000 * 1000) // pix

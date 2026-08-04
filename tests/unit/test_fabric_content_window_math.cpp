@@ -100,6 +100,36 @@ int main() {
         std::printf("V1_1280id sx=%d sy=%d\n", sx, sy);
     }
 
+    // Ship product source: 960×540 → 1280×720 (endpoint-exact)
+    {
+        const int cw = 960, ch = 540, hde = 1280, vde = 720;
+        const int sx = win_store_x_scale(cw, hde);
+        const int sy = win_store_y_scale(ch, vde);
+        EXPECT(store_x_at(0, sx, 0, cw - 1) == 0, "960→720 x0");
+        EXPECT(store_x_at(hde - 1, sx, 0, cw - 1) == cw - 1, "960→720 x last");
+        EXPECT(store_y_at(0, sy, 0, vde, ch - 1) == 0, "960→720 y0");
+        EXPECT(store_y_at(vde - 1, sy, 0, vde, ch - 1) == ch - 1, "960→720 y last");
+        // Midpoint must NOT be identity (hc→hc) — identity-scale fault would fail this.
+        EXPECT(store_x_at(hde / 2, sx, 0, cw - 1) != hde / 2, "960 mid x != glass x");
+        EXPECT(store_x_at(hde / 2, sx, 0, cw - 1) == (int)(((int64_t)(hde / 2) * sx) >> 16),
+               "960 mid x matches Q16");
+        std::printf("V1_960to720 sx=%d sy=%d mid_x=%d\n", sx, sy,
+                    store_x_at(hde / 2, sx, 0, cw - 1));
+    }
+
+    // NEG: forcing identity scale on 960→1280 undershoots content coverage
+    {
+        const int sx_true = win_store_x_scale(960, 1280);
+        const int sx_id = 65536;
+        EXPECT(store_x_at(1279, sx_true, 0, 959) == 959, "true hits last content");
+        EXPECT(store_x_at(1279, sx_id, 0, 959) == 959, "id clamp still last (via clamp)");
+        // But mid glass column maps wrong under identity:
+        const int mid_true = store_x_at(640, sx_true, 0, 959);
+        const int mid_id = store_x_at(640, sx_id, 0, 959);
+        EXPECT(mid_true != mid_id, "NEG identity-scale mid != true scale mid");
+        std::printf("NEG_id_scale_on_960 mid_true=%d mid_id=%d\n", mid_true, mid_id);
+    }
+
     // NEG: floor undershoots last column
     {
         const int CW = 320, HDE = 1280;
