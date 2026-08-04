@@ -1164,6 +1164,15 @@ module ddr_frame_store #(
 			disp_bank_d2 <= disp_bank_d1;
 			disp_buf_d1 <= disp_buf;
 			disp_buf_d2 <= disp_buf_d1;
+// INVALIDATE_DISP_ON_BUF_FLIP (TAG_LAG product residual after I3b):
+// On disp_buf CDC edge (d1!=d2) clear half that just left display (d2 base).
+// Drops multi-epoch mixed tags. No mbox CE / wrap / LEAD_K thrash. DIAG=0.
+if (disp_buf_d1 != disp_buf_d2) begin
+for (ti = 0; ti < LINE_COUNT; ti = ti + 1) begin
+y_valid[(disp_buf_d2 ? SECOND_SET_BASE : {SLOT_W{1'b0}}) + ti[SLOT_W-1:0]] <= 1'b0;
+c_valid[(disp_buf_d2 ? SECOND_SET_BASE : {SLOT_W{1'b0}}) + ti[SLOT_W-1:0]] <= 1'b0;
+end
+end
 			has_frame_d1 <= has_frame;
 			has_frame_d2 <= has_frame_d1;
 			swap_pending_d1 <= swap_pending;
@@ -1179,13 +1188,11 @@ module ddr_frame_store #(
 			// that decode to wrong beam lines → fill tags miss pref_y (DIAG
 			// T3/T5: bank_mm=0, occ full, miss sticky, MEAN black). Hold last
 			// desired_y_r until gray_s1==gray_s2. Keeps schedule-reg STA cut.
-// FILL_WINDOW_LEAD_K=2 (TAG_LAG product residual): bias window ahead of beam
-// for I3b class NOT sticky STALE. Nested clamp_ahead; no mbox CE / wrap.
 			want_y_gray_s1 <= want_y_gray;
 			want_y_gray_s2 <= want_y_gray_s1;
 			if (want_y_gray_s1 == want_y_gray_s2) begin
 				for (ti = 0; ti < LINE_COUNT; ti = ti + 1)
-					desired_y_r[ti] <= clamp_ahead(clamp_ahead(y_gray2bin(want_y_gray_s2), 2), ti); // FILL_WINDOW_LEAD_K=2 TAG_LAG
+					desired_y_r[ti] <= clamp_ahead(y_gray2bin(want_y_gray_s2), ti);
 			end
 
 			start_d1 <= start_req;
