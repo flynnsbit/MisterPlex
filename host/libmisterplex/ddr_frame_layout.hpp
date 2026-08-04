@@ -50,60 +50,32 @@ constexpr uint32_t kPlex480pYuv420pBankStride = 0x00080000u;
 constexpr uint32_t kPlex240pSpiRgb565BankStride = 0x00040000u;
 constexpr uint32_t kPlex480pRgb565DoorbellPhys = 0x3017F000u;
 constexpr uint32_t kPlex480pYuv420pDoorbellPhys = 0x300FF000u;
-
-// 720p geometry contract (native identity — coded=display=presented 1280×720).
-// Bank stride / doorbell from docs/evidence p720 layout_math (phys 0x30000000).
-// Product silicon (PRODUCT path) uses these via productDdrFrameStoreGeometry().
-constexpr CodedWidth kPlex720pCodedWidth{1280};
-constexpr CodedHeight kPlex720pCodedHeight{720};
-constexpr DisplayWidth kPlex720pDisplayWidth{1280};
-constexpr DisplayHeight kPlex720pDisplayHeight{720};
-constexpr PresentedWidth kPlex720pPresentedWidth{1280};
-constexpr PresentedHeight kPlex720pPresentedHeight{720};
-constexpr int kPlex720pCropLeft = 0;
-constexpr int kPlex720pCropRight = 0;
-constexpr int kPlex720pCropTop = 0;
-constexpr int kPlex720pCropBottom = 0;
-constexpr int kPlex720pPillarboxLeft = 0;
-constexpr int kPlex720pPillarboxRight = 0;
-constexpr int kPlex720pRgb565LineQwords = 320;
-constexpr int kPlex720pYuvLumaLineQwords = 160;
-constexpr int kPlex720pYuvChromaLineQwords = 80;
-constexpr int kPlex720pRgb565Bytes = 1843200;
-constexpr int kPlex720pYuv420pBytes = 1382400;
-constexpr int kPlex720pYPlaneOffset = 0;
-constexpr int kPlex720pUPlaneOffset = 921600;
-constexpr int kPlex720pVPlaneOffset = 1152000;
-constexpr int kPlex720pYStrideBytes = 1280;
-constexpr int kPlex720pChromaStrideBytes = 640;
-static_assert(kPlex720pYStrideBytes == kPlex720pCodedWidth.get(),
-              "720p Y stride must equal coded width");
-static_assert(kPlex720pChromaStrideBytes == kPlex720pCodedWidth.get() / 2,
-              "720p chroma stride must equal coded width/2");
-static_assert(kPlex720pYuv420pBytes == 1280 * 720 * 3 / 2, "720p I420 size");
-static_assert(kPlex720pUPlaneOffset == 1280 * 720, "720p U plane offset");
-static_assert(kPlex720pVPlaneOffset == 1280 * 720 + 640 * 360, "720p V plane offset");
-constexpr uint32_t kPlex720pRgb565BankStride = 0x00200000u;
-constexpr uint32_t kPlex720pYuv420pBankStride = 0x00180000u;
-constexpr uint32_t kPlex720pRgb565DoorbellPhys = 0x303FF000u;
-// Product silicon: phys_base 0x30000000 + 2*0x180000 - 0x1000.
-constexpr uint32_t kPlex720pYuv420pDoorbellPhys = 0x302FF000u;
 constexpr uint32_t kDdrFrameDoorbellMagic = 0x504C584Bu; // PLXK
 constexpr uint32_t kDdrFrameDoorbellSeqMask = 0x1FFFFFFFu;
 constexpr uint8_t kYuv420BlackY = 16;
 constexpr uint8_t kYuv420BlackU = 128;
 constexpr uint8_t kYuv420BlackV = 128;
 
-// ---- Option-C / dual-header 720p map (PL330 ingest; NOT product doorbell) ----
-// Product DDR_FRAME_* uses phys 0x30000000 / doorbell 0x302FF000 (above).
-// Option-C carves banks at 0x30180000 with its own doorbell for DMA lab tools.
+// ---- 720p tier (present path land; opt-in RBF macros) ----
+constexpr int kPlex720pCodedWidth = 1280;
+constexpr int kPlex720pCodedHeight = 720;
+constexpr int kPlex720pDisplayWidth = 1280;
+constexpr int kPlex720pDisplayHeight = 720;
+constexpr int kPlex720pPresentedWidth = 1280;
+constexpr int kPlex720pPresentedHeight = 720;
+constexpr int kPlex720pPillarboxLeft = 0;
+constexpr int kPlex720pPillarboxRight = 0;
+constexpr int kPlex720pYuv420pBytes = 1382400;
+constexpr int kPlex720pYStrideBytes = 1280;
+constexpr int kPlex720pChromaStrideBytes = 640;
+constexpr uint32_t kPlex720pYuv420pBankStride = 0x00180000u;
 constexpr uint32_t kPlex720pPhysBase = 0x30180000u;
 // Native 720p content origin in bank (no pillar/letter crop for square pixels).
 constexpr int kPlex720pCropLeft = 0;
 constexpr int kPlex720pCropTop = 0;
 // Alias used by PL330/Option-C ingest code (integ naming).
 constexpr uint32_t kPlex720pDdrFramePhysBase = kPlex720pPhysBase;
-constexpr uint32_t kPlex720pOptionCDoorbellPhys = 0x3047F000u;
+constexpr uint32_t kPlex720pYuv420pDoorbellPhys = 0x3047F000u;
 // L4 beam (w-clock): 24 MHz, H=1312, V=762 → 24.006 Hz with DE 1280×720.
 constexpr int kPlex720p24BeamHTotal = 1312;
 constexpr int kPlex720p24BeamVTotal = 762;
@@ -197,8 +169,8 @@ enum class DdrFramePlacement {
 // Doorbell address family (geometry-derived):
 //   doorbell_phys = phys_base + bank_stride * 2 - 0x1000
 // Frame-store control page is DOORBELL-RELATIVE (RTL: DOORBELL_PHYS + offset):
-//   PLXS +0x100, PLXF +0x118, PLXD +0x128. Product 720p doorbell 0x302FF000 →
-//   PLXD 0x302FF128. Legacy 480p doorbell 0x300FF000 still appears in
+//   PLXS +0x100, PLXF +0x118, PLXD +0x128. Product doorbell 0x300FF000 →
+//   PLXD 0x300FF128. Legacy example base 0x3007F000 still appears in
 //   mailbox_abi_spec as documentation — never hard-read those absolutes against
 //   a product doorbell (bank0 padding / residue → false PLXD → bank desync).
 enum class DdrFrameFormat {
@@ -321,20 +293,6 @@ inline DdrFrameGeometry plex480pDdrFrameGeometry() {
     return g;
 }
 
-inline DdrFrameGeometry plex720pDdrFrameGeometry() {
-    DdrFrameGeometry g = makeDdrFrameGeometry(
-        kPlex720pCodedWidth, kPlex720pCodedHeight, kPlex720pDisplayWidth,
-        kPlex720pDisplayHeight, kPlex720pPresentedWidth, kPlex720pPresentedHeight,
-        DdrFramePlacement::None);
-    g.crop_left = kPlex720pCropLeft;
-    g.crop_right = kPlex720pCropRight;
-    g.crop_top = kPlex720pCropTop;
-    g.crop_bottom = kPlex720pCropBottom;
-    g.present_x = kPlex720pPillarboxLeft;
-    g.present_y = 0;
-    return g;
-}
-
 // Map a *presented* scanout size to DDR geometry. 640x480 presented is the
 // plex480p pillarbox contract (coded 624); other sizes fall back to identity.
 //
@@ -344,8 +302,6 @@ inline DdrFrameGeometry plex720pDdrFrameGeometry() {
 // ddrFrameGeometryForFpgaPresent() for any FPGA DDR publish path.
 inline DdrFrameGeometry ddrFrameGeometryForPresentedSize(PresentedWidth width,
                                                          PresentedHeight height) {
-    if (width == kPlex720pPresentedWidth && height == kPlex720pPresentedHeight)
-        return plex720pDdrFrameGeometry();
     if (width == kPlex480pPresentedWidth && height == kPlex480pPresentedHeight)
         return plex480pDdrFrameGeometry();
     return makeDdrFrameGeometry(CodedWidth{width.get()}, CodedHeight{height.get()});
@@ -357,19 +313,19 @@ inline DdrFrameGeometry ddrFrameGeometryForPresentedSize(int width, int height) 
 
 // Product FPGA DDR frame-store geometry — a SILICON CONSTANT, not DECODE.
 // present_core.sv wires ddr_frame_store with:
-//   CODED_W = DDR_FRAME_CODED_WIDTH (1280), Y_LINE_QWORDS = CODED_W/8,
-//   FRAME_W = 1280 presented scanout, bank/doorbell from ddr_frame_layout_params.svh.
-// There is no runtime stride/width register the ARM can program. DECODE/OSD
-// O[5:4] only selects the PMS source ladder; the writer must always emit this
-// canvas (scale+pad content into it) or the image shears line-to-line.
+//   CODED_W = DDR_FRAME_CODED_WIDTH (624), Y_LINE_QWORDS = CODED_W/8,
+//   FRAME_W = 640 presented scanout, bank/doorbell from ddr_frame_layout_params.svh.
+// There is no runtime stride/width register the ARM can program. DECODE/OSD O[4]
+// only selects the PMS source ladder; the writer must always emit this canvas
+// (scale+pad content into it) or the image shears line-to-line.
 inline DdrFrameGeometry productDdrFrameStoreGeometry() {
-    return plex720pDdrFrameGeometry();
+    return plex480pDdrFrameGeometry();
 }
 
 // FPGA-present geometry for any content/decode tier. Decode WxH is intentionally
-// ignored: a 320x240 source still occupies the product coded bank (1280-byte
-// Y stride) after force_original_aspect_ratio=decrease + pad. Returning
-// identity-320 here is the shear defect (ARM line_bytes=320 vs RTL CODED_W=1280).
+// ignored: a 320x240 source still occupies the 624-byte-stride coded bank after
+// force_original_aspect_ratio=decrease + pad. Returning identity-320 here is the
+// shear defect (ARM line_bytes=320 vs RTL CODED_W=624).
 inline DdrFrameGeometry ddrFrameGeometryForFpgaPresent(CodedWidth /*decodeWidth*/,
                                                       CodedHeight /*decodeHeight*/) {
     return productDdrFrameStoreGeometry();
@@ -492,23 +448,23 @@ inline bool ddrFrameLayoutMatchesProductSilicon(const DdrFrameLayout& l) {
         return false;
     if (l.format != DdrFrameFormat::Yuv420p)
         return false;
-    if (l.coded_width.get() != kPlex720pCodedWidth.get() ||
-        l.coded_height.get() != kPlex720pCodedHeight.get())
+    if (l.coded_width.get() != kPlex480pCodedWidth.get() ||
+        l.coded_height.get() != kPlex480pCodedHeight.get())
         return false;
-    if (l.line_bytes != kPlex720pYStrideBytes ||
-        l.chroma_line_bytes != kPlex720pChromaStrideBytes)
+    if (l.line_bytes != kPlex480pYStrideBytes ||
+        l.chroma_line_bytes != kPlex480pChromaStrideBytes)
         return false;
-    if (l.line_qwords != kPlex720pYuvLumaLineQwords ||
-        l.chroma_line_qwords != kPlex720pYuvChromaLineQwords)
+    if (l.line_qwords != kPlex480pYuvLumaLineQwords ||
+        l.chroma_line_qwords != kPlex480pYuvChromaLineQwords)
         return false;
-    if (l.frame_bytes != static_cast<size_t>(kPlex720pYuv420pBytes))
+    if (l.frame_bytes != static_cast<size_t>(kPlex480pYuv420pBytes))
         return false;
-    if (l.y_offset != static_cast<uint32_t>(kPlex720pYPlaneOffset) ||
-        l.u_offset != static_cast<uint32_t>(kPlex720pUPlaneOffset) ||
-        l.v_offset != static_cast<uint32_t>(kPlex720pVPlaneOffset))
+    if (l.y_offset != static_cast<uint32_t>(kPlex480pYPlaneOffset) ||
+        l.u_offset != static_cast<uint32_t>(kPlex480pUPlaneOffset) ||
+        l.v_offset != static_cast<uint32_t>(kPlex480pVPlaneOffset))
         return false;
-    if (l.bank_stride != kPlex720pYuv420pBankStride ||
-        l.doorbell_phys != kPlex720pYuv420pDoorbellPhys)
+    if (l.bank_stride != kPlex480pYuv420pBankStride ||
+        l.doorbell_phys != kPlex480pYuv420pDoorbellPhys)
         return false;
     return true;
 }
@@ -517,10 +473,7 @@ inline bool ddrFrameLayoutMatchesProductSilicon(const DdrFrameLayout& l) {
 // *display* crop window (not the full coded bank). Offsets are forced even for
 // 4:2:0 chroma alignment. Returns false if src cannot fit.
 //
-// Product pin (320x240 into silicon 1280x720 identity display):
-//   x0 = crop_left + (1280-320)/2 = 480 → even-aligned
-//   y0 = crop_top  + (720-240)/2 = 240
-// Legacy 480p pin (retained for plex480pDdrFrameGeometry tests):
+// Product pin (320x240 into silicon 624x480 / display 618x480):
 //   x0 = crop_left + (618-320)/2 = 149 → 148 after even align
 //   y0 = crop_top  + (480-240)/2 = 120
 // This origin is CONSTANT for every line — packYuv420pCenteredIntoCodedBank
@@ -631,8 +584,8 @@ inline bool decodeDdrDoorbell(uint32_t lo, uint32_t hi, DdrFrameFormat expectedF
 // Typed as CodedWidth because acceptance checks coded stream size against it.
 // Numerically equal to presented 480p width; the type prevents using the
 // presented constant by accident in coded-only math without an explicit claim.
-constexpr CodedWidth kDdrFrameStoreMaxWidth{1280};
-constexpr CodedHeight kDdrFrameStoreMaxHeight{720};
+constexpr CodedWidth kDdrFrameStoreMaxWidth{640};
+constexpr CodedHeight kDdrFrameStoreMaxHeight{480};
 
 // Check whether a decoded frame resolution is acceptable for the DDR frame store.
 // Requirements:
@@ -653,7 +606,7 @@ inline bool ddrFrameStoreAcceptsResolution(CodedWidth codedWidth, CodedHeight co
     if (frameBytes == 0)
         return false;
     const uint32_t bankStride = alignUpU32(static_cast<uint32_t>(frameBytes), kDdrFrameStrideAlign);
-    return bankStride <= kPlex720pYuv420pBankStride;
+    return bankStride <= kPlex480pYuv420pBankStride;
 }
 
 // Decoder-boundary overload: the caller claims these bare ints are coded size.

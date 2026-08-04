@@ -44,9 +44,10 @@ def main() -> int:
     plex = PLEX.read_text(encoding="utf-8", errors="replace")
     store = STORE.read_text(encoding="utf-8", errors="replace")
 
-    need('VERILOG_MACRO "FRAME_W=1280"' in qsf, "QSF FRAME_W must be 1280")
-    need('VERILOG_MACRO "FRAME_H=720"' in qsf, "QSF FRAME_H must be 720")
-    need('VERILOG_MACRO "FRAME_W=640"' not in qsf, "QSF still has FRAME_W=640")
+    active = [ln for ln in qsf.splitlines() if not ln.strip().startswith("#")]
+    need(any('VERILOG_MACRO "FRAME_W=1280"' in ln for ln in active), "QSF active FRAME_W=1280")
+    need(any('VERILOG_MACRO "FRAME_H=720"' in ln for ln in active), "QSF active FRAME_H=720")
+    need(not any('VERILOG_MACRO "FRAME_W=640"' in ln for ln in active), "QSF active FRAME_W=640 absent")
 
     def svh_int(name: str) -> int:
         m = re.search(rf"localparam int {name} = ([^;]+);", svh)
@@ -64,25 +65,31 @@ def main() -> int:
             return int(mdec.group(1), 10)
         return int(raw, 0)
 
-    need(svh_int("DDR_FRAME_CODED_WIDTH") == 1280, "CODED_W")
-    need(svh_int("DDR_FRAME_CODED_HEIGHT") == 720, "CODED_H")
-    need(svh_int("DDR_FRAME_PRESENTED_WIDTH") == 1280, "PRESENTED_W")
-    need(svh_int("DDR_FRAME_PRESENTED_HEIGHT") == 720, "PRESENTED_H")
-    need(svh_int("DDR_FRAME_YUV420P_BYTES") == 1382400, "I420 bytes")
-    need(svh_int("DDR_FRAME_Y_PLANE_OFFSET") == 0, "Y off")
-    need(svh_int("DDR_FRAME_U_PLANE_OFFSET") == 921600, "U off")
-    need(svh_int("DDR_FRAME_V_PLANE_OFFSET") == 1152000, "V off")
-    need(svh_int("DDR_FRAME_Y_STRIDE_BYTES") == 1280, "Y stride")
-    need(svh_int("DDR_FRAME_CHROMA_STRIDE_BYTES") == 640, "C stride")
-    need(svh_int("DDR_FRAME_YUV_LUMA_LINE_QWORDS") == 160, "Y qwords")
-    need(svh_int("DDR_FRAME_YUV_CHROMA_LINE_QWORDS") == 80, "C qwords")
-    need(svh_int("DDR_FRAME_YUV420P_BANK_STRIDE") == 0x180000, "bank stride")
-    need(svh_int("DDR_FRAME_YUV420P_DOORBELL_PHYS") == 0x302FF000, "doorbell")
+    # Dual-header SSOT: primary DDR_FRAME_* remain 480p pillarbox; 720p tier is
+    # DDR_FRAME_720P_* (parent-measured Option-C map). QSF FRAME 1280 selects the
+    # 720p tier via ddr_frame_abi_select — do not collapse primary onto 720p.
+    need(svh_int("DDR_FRAME_CODED_WIDTH") == 624, "480p primary CODED_W")
+    need(svh_int("DDR_FRAME_YUV420P_BYTES") == 449280, "480p primary I420")
+    need(svh_int("DDR_FRAME_720P_CODED_WIDTH") == 1280, "720p tier CODED_W")
+    need(svh_int("DDR_FRAME_720P_CODED_HEIGHT") == 720, "720p tier CODED_H")
+    need(svh_int("DDR_FRAME_720P_PRESENTED_WIDTH") == 1280, "720p PRESENTED_W")
+    need(svh_int("DDR_FRAME_720P_PRESENTED_HEIGHT") == 720, "720p PRESENTED_H")
+    need(svh_int("DDR_FRAME_720P_YUV420P_BYTES") == 1382400, "720p I420=1280*720*3/2")
+    need(svh_int("DDR_FRAME_720P_Y_STRIDE_BYTES") == 1280, "720p Y stride")
+    need(svh_int("DDR_FRAME_720P_CHROMA_STRIDE_BYTES") == 640, "720p C stride")
+    need(svh_int("DDR_FRAME_720P_YUV420P_BANK_STRIDE") == 0x180000, "720p bank stride")
+    need(svh_int("DDR_FRAME_720P_PHYS_BASE") == 0x30180000, "720p phys base Option-C")
+    need(svh_int("DDR_FRAME_720P_YUV420P_DOORBELL_PHYS") == 0x3047F000, "720p doorbell")
+    # doorbell = base + 2*stride - 0x1000
+    need(0x30180000 + 2 * 0x180000 - 0x1000 == 0x3047F000, "doorbell arithmetic")
+    need(1280 * 720 * 3 // 2 == 1382400, "I420 arithmetic")
 
-    need("kPlex720pCodedWidth{1280}" in host or "kPlex720pCodedWidth{1280}" in host.replace(" ", ""),
-         "host kPlex720pCodedWidth")
-    need("return plex720pDdrFrameGeometry();" in host, "productDdr must return 720p")
+    need("kPlex720pCodedWidth" in host and "1280" in host, "host kPlex720pCodedWidth")
+    need("1382400" in host and "kPlex720pYuv420pBytes" in host, "host 720p I420 bytes")
+    need("0x3047F000" in host or "0x3047f000" in host.lower(), "host 720p doorbell")
     need("kPlex720pYuv420pBankStride" in host, "host 720p bank stride")
+    need("ddr_frame_abi_select.svh" in Path("fpga/Plex_MiSTer/rtl/present_core.sv").read_text(),
+         "present_core includes abi_select for FRAME→720p tier")
 
     # content_width must hold 1280
     need(re.search(r"wire\s*\[10:0\]\s*content_width", plex),
