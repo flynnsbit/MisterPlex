@@ -148,9 +148,13 @@ def main() -> int:
     open_l = " ".join(gap.get("still_open", [])).lower()
     if "hps" not in open_l and "concurrent" not in open_l:
         return fail("still_open must mention concurrent HPS write")
-    # Must NOT list reader beat-delta as still open
-    if "reader" in open_l and "beat" in open_l and "closed" not in open_l:
-        return fail("still_open must not re-open reader beat-delta")
+    # Must NOT list reader beat-delta as an open item (notes saying NOT reader are ok)
+    for item in gap.get("still_open", []):
+        il = item.lower()
+        if "not reader" in il or "— not reader" in il or "- not reader" in il:
+            continue
+        if "reader" in il and ("beat" in il or "steady" in il) and "closed" not in il:
+            return fail(f"still_open must not re-open reader beat-delta: {item}")
     cs = c.get("claim_split") or {}
     if (cs.get("reader_steady_delta") or {}).get("status") != "CLOSED":
         return fail("claim_split.reader_steady_delta must be CLOSED")
