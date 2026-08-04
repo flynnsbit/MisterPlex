@@ -268,6 +268,21 @@ def main() -> int:
             return fail(f"companion.{key} must disclaim overclaim")
     print("OK rd-duck labels: payload/ideal-port only; contention OPEN; closure refusal CORRECT")
 
+    wma = c.get("w_mem_final_ack") or {}
+    if wma.get("status") != "ACK":
+        return fail("w_mem_final_ack required")
+    extra = wma.get("extra_not_competing_headline") or {}
+    if extra.get("payload_floor_remains") != 33.1776:
+        return fail("e2e overhead must not raise payload floor")
+    if int(extra.get("beats_e2e", 0)) <= 172800:
+        return fail("e2e beats should exceed pure payload (overhead)")
+    calc = int(extra["beats_e2e"]) * 8 * g["fps"] / 1e6
+    if abs(calc - float(extra.get("MBps_calc", extra.get("MBps_approx", 0)))) > 0.05:
+        return fail(f"e2e MBps calc mismatch {calc}")
+    if h["value"] != 33.1776:
+        return fail("headline must remain 33.1776 after w-mem e2e extra")
+    print(f"OK w-mem final ACK; e2e overhead ~{extra.get('MBps_approx')} MB/s not competing headline")
+
     print(f"OK THREE-LANE LOCK agreed_by={agreed} pending_ack=[]")
     print(f"OK rtl {svh.relative_to(ROOT)} + quote locked")
 

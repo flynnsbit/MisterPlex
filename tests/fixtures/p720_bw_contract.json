@@ -314,5 +314,19 @@
     ],
     "hardware_contention": "OPEN after TB",
     "w_scaler_refusal_to_claim_closure": "CORRECT"
+  },
+  "w_mem_final_ack": {
+    "status": "ACK",
+    "tip": "integ/fab-720p-product-v2 @ b53197e5",
+    "pending_ack": [],
+    "extra_not_competing_headline": {
+      "name": "fullframe_e2e_fabric_read_with_overhead",
+      "beats_e2e": 200676,
+      "MBps_approx": 38.53,
+      "formula_note": "200676 beats * 8 B * 24 / 1e6 \u2248 38.53 MB/s fabric read with overhead",
+      "payload_floor_remains": 33.1776,
+      "source": "w-mem b53197e5",
+      "MBps_calc": 38.5298
+    }
   }
 }
