@@ -78,6 +78,8 @@ unit-unlocked: preflight $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $
 	python3 $(ROOT)/tests/unit/test_no_conflict_markers.py
 	python3 $(ROOT)/tests/unit/test_bench_rtl_filelists.py
 	python3 $(ROOT)/tests/unit/test_present_720p_land_static.py
+	python3 $(ROOT)/tests/unit/test_720p_clock_plan_static.py
+	python3 $(ROOT)/tests/unit/test_clk_sys_20mhz_inventory.py
 	python3 $(ROOT)/tests/unit/test_present_720p_l4_static.py
 	python3 $(ROOT)/tests/unit/test_present_geom_params_static.py
 	$(ROOT)/tests/unit/test_present_geom_params_rtl_sim.sh

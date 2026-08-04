@@ -79,6 +79,18 @@ def parse_fmax_rows(path: Path) -> list[tuple[str, str, str]]:
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--sta-rpt", type=Path, required=True)
+    ap.add_argument(
+        "--min-fmax-mhz",
+        type=float,
+        default=None,
+        help="If set, require emu|pll general[0] (clk_sys) Restricted Fmax >= this value",
+    )
+    ap.add_argument(
+        "--min-fmax-clock-substr",
+        type=str,
+        default="emu|pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk",
+        help="Substring matching the Fmax clock name (default: clk_sys divclk)",
+    )
     args = ap.parse_args(argv[1:])
     if not args.sta_rpt.exists():
         print(f"QUARTUS_TIMING_REFUSED(exit=4): missing STA report {args.sta_rpt}", file=sys.stderr)
@@ -108,6 +120,32 @@ def main(argv: list[str]) -> int:
                 file=sys.stderr,
             )
         return 1
+
+    if args.min_fmax_mhz is not None:
+        matched = []
+        for clock, fmax_value, restricted in fmax:
+            if args.min_fmax_clock_substr in clock:
+                # parse "23.17 MHz"
+                import re as _re
+                m = _re.search(r"([0-9]+(?:\.[0-9]+)?)", restricted or fmax_value)
+                if not m:
+                    continue
+                mhz = float(m.group(1))
+                matched.append((clock, mhz))
+                print(f"TIMING_FMAX_GATE: {clock} restricted={mhz} min={args.min_fmax_mhz}")
+                if mhz < args.min_fmax_mhz:
+                    print(
+                        f"QUARTUS_TIMING_REJECTED(exit=1): Fmax {mhz} < min {args.min_fmax_mhz} on {clock}",
+                        file=sys.stderr,
+                    )
+                    return 1
+        if not matched:
+            print(
+                f"QUARTUS_TIMING_REJECTED(exit=1): no Fmax row matching {args.min_fmax_clock_substr!r}",
+                file=sys.stderr,
+            )
+            return 1
+
     print("PASS timing: no negative setup/hold/recovery/removal/min-pulse slack")
     return 0
 

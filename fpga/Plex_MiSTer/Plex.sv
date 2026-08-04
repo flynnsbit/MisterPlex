@@ -42,8 +42,15 @@ assign BUTTONS = 0;
 //////////////////////////////////////////////////////////////////
 
 wire [1:0] ar = status[122:121];
-assign VIDEO_ARX = (!ar) ? 12'd4 : (ar - 1'd1);
-assign VIDEO_ARY = (!ar) ? 12'd3 : 12'd0;
+// Original aspect tracks content FRAME_W:H (QSF macros). 1280x720 → 16:9.
+`ifndef FRAME_W
+`define FRAME_W 320
+`endif
+`ifndef FRAME_H
+`define FRAME_H 240
+`endif
+assign VIDEO_ARX = (!ar) ? 12'(`FRAME_W) : (ar - 1'd1);
+assign VIDEO_ARY = (!ar) ? 12'(`FRAME_H) : 12'd0;
 
 `include "build_id.v"
 localparam CONF_STR = {
@@ -966,7 +973,12 @@ ddr_bus_arbiter ddr_arb (
 );
 `endif
 
+// CLK_VIDEO must match CE_PIXEL/VGA_* domain. MULTI+clk_pix emits on clk_pix.
+`ifdef PRESENT_CLK_PIX_PLL
+assign CLK_VIDEO = clk_pix_pll;
+`else
 assign CLK_VIDEO = clk_sys;
+`endif
 assign CE_PIXEL  = ce_pix;
 assign VGA_DE = ~(HBlank | VBlank);
 assign VGA_HS = HSync;
