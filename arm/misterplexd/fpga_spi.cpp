@@ -983,48 +983,26 @@ void FpgaSpi::spiEn(uint32_t mask, int en) {
 uint16_t FpgaSpi::spiWord(uint16_t word) {
     // Caller must hold SpiExclusive (spiMutex). Touch err_ without re-locking.
     //
-    // ACK wait MUST yield (Sweep 113 CPU) but MUST NOT use a short wall timeout
-    // (Sweep 115: 2 ms wall aborted real status kicks → garbage HDMI). Abort
-    // only after the legacy 1e6 poll budget. Policy: spi_ack_wait.hpp.
-    uint32_t gpo = (gpoRead() & ~(0xFFFFu | SSPI_STROBE)) | word;
-    gpoWrite(gpo);
-    gpoWrite(gpo | SSPI_STROBE);
-
-    auto wait_phase = [&](bool want_strobe_set, const char* timeout_msg) -> int {
-        int last_gpi = 0;
-        bool not_user = false;
-        SpiAckWaitStats st;
-        const bool ok = spiAckWait(
-            [&]() {
-                last_gpi = gpiRead();
-                if (last_gpi < 0) {
-                    not_user = true;
-                    return true; // stop wait; caller maps to error
-                }
-                const bool set = (last_gpi & static_cast<int>(SSPI_STROBE)) != 0;
-                return want_strobe_set ? set : !set;
-            },
-            st);
-        if (not_user) {
-            err_ = "FPGA not in user mode";
-            return -1;
-        }
-        if (!ok) {
-            err_ = timeout_msg;
-            return -1;
-        }
-        return last_gpi;
-    };
-
-    const int gpi_set = wait_phase(true, "SPI ACK timeout (set)");
-    if (gpi_set < 0)
+    // Production path = spiWordTxn in spi_ack_wait.hpp (unit-tested):
+    //   - yield + poll-budget abort (no short wall)
+    //   - on set-phase fail: deassert SSPI_STROBE before return (rd-duck #1)
+    //   - latency stats exposed via lastSpiAckStats()
+    const uint32_t gpo_cur = gpoRead();
+    const SpiWordTxnResult r = spiWordTxn(
+        word, gpo_cur, SSPI_STROBE,
+        [this](uint32_t v) { gpoWrite(v); },
+        [this]() { return gpiRead(); },
+        spiAckDefaultSleepUs);
+    lastAckSet_ = r.set_stats;
+    lastAckClr_ = r.clr_stats;
+    if (!r.ok) {
+        if (r.err)
+            err_ = r.err;
+        else if (err_.empty())
+            err_ = "SPI ACK failed";
         return 0;
-
-    gpoWrite(gpo);
-    const int gpi_clr = wait_phase(false, "SPI ACK timeout (clr)");
-    if (gpi_clr < 0)
-        return 0;
-    return static_cast<uint16_t>(gpi_clr);
+    }
+    return r.data;
 }
 
 void FpgaSpi::spiByte(uint8_t b) { spiWord(b); }
@@ -1058,30 +1036,34 @@ void FpgaSpi::setDownload(int enable) {
 }
 
 // SPI body for UIO_SET_STATUS2. Caller must hold SpiExclusive and user mode.
-// Fail-closed: any spiWord timeout/error aborts and returns false so callers
-// cannot treat a half-written status (e.g. kick bit set, bank bit missing) as OK.
+// Production algorithm = statusWriteWordTxnEnabled (spi_ack_wait.hpp, unit-tested):
+// fail-closed mid-burst; status_ shadow updated ONLY on full success (rd-duck #2).
 bool FpgaSpi::writeStatusWordRaw(const uint8_t word[16]) {
     if (!word) {
         err_ = "writeStatusWordRaw: null";
         return false;
     }
-    std::memcpy(status_, word, 16);
     err_.clear();
-    enableIo(1);
-    (void)spiWord(UIO_SET_STATUS2);
-    if (!err_.empty()) {
-        enableIo(0);
+    int failed_at = -1;
+    const char* terr = nullptr;
+    const bool ok = statusWriteWordTxnEnabled(
+        word, status_,
+        [this](uint16_t w) -> SpiTxnPhaseResult {
+            (void)spiWord(w);
+            if (!err_.empty())
+                return SpiTxnPhaseResult{false, err_.c_str()};
+            return SpiTxnPhaseResult{true, nullptr};
+        },
+        [this](int on) { enableIo(on); }, failed_at, terr);
+    if (!ok) {
+        if (terr && err_.empty())
+            err_ = terr;
+        else if (err_.empty())
+            err_ = "writeStatusWordRaw: incomplete";
+        lastStatusWriteFailedAt_ = failed_at;
         return false;
     }
-    for (int i = 0; i < 16; i += 2) {
-        uint16_t w = static_cast<uint16_t>((status_[i + 1] << 8) | status_[i]);
-        (void)spiWord(w);
-        if (!err_.empty()) {
-            enableIo(0);
-            return false;
-        }
-    }
-    enableIo(0);
+    lastStatusWriteFailedAt_ = -1;
     return true;
 }
 

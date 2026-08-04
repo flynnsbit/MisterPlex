@@ -10,6 +10,7 @@
 #include "libmisterplex/ddr_frame_layout.hpp"
 #include "libmisterplex/ddr_bitstream_ring.hpp"
 #include "libmisterplex/input_mailbox.hpp"
+#include "libmisterplex/spi_ack_wait.hpp"
 
 namespace misterplex {
 
@@ -254,6 +255,10 @@ public:
     std::string lastError() const;
     // Last successful frame push duration (ms)
     double lastPushMs() const { return lastPushMs_; }
+    // Last spiWord ACK phase stats (set/clr). For device latency probes.
+    SpiAckWaitStats lastSpiAckSetStats() const { return lastAckSet_; }
+    SpiAckWaitStats lastSpiAckClrStats() const { return lastAckClr_; }
+    int lastStatusWriteFailedAt() const { return lastStatusWriteFailedAt_; }
 
 private:
     void setErr(std::string msg);
@@ -282,6 +287,9 @@ private:
     uint8_t status_[16]{};
     double lastPushMs_ = 0;
     std::string err_;
+    SpiAckWaitStats lastAckSet_{};
+    SpiAckWaitStats lastAckClr_{};
+    int lastStatusWriteFailedAt_ = -1;
     // Persistent HPS DDR frame window (both banks + doorbell page).
     int ddrMemFd_ = -1;
     uint8_t* ddrMap_ = nullptr;

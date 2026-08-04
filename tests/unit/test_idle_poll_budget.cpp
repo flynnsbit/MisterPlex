@@ -32,6 +32,8 @@ int main() {
     CHECK(kSpiAckBusySpinsBeforeYield <= kSpiAckBusySpinsCeiling);
     CHECK(kSpiAckMaxPolls >= 1000000); // legacy spin cap cardinality
     CHECK(kSpiAckUseWallTimeout == false);
+    CHECK(kSpiAckMaxTotalSleepUs > 0);
+    CHECK(kSpiAckMaxTotalSleepUs <= 100000); // no multi-second exclusive sleep
     // Document the bad band: a 2 ms wall is exactly Sweep 115.
     constexpr int kSweep115BadWallUs = 2000;
     CHECK(kSweep115BadWallUs < kSpiAckForbiddenShortWallUs);
