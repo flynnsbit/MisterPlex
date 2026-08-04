@@ -201,10 +201,10 @@ module ddr_bitstream_reader #(
 	input  wire        out_full,
 
 	// Optional integrated RBSP bit feed (ENABLE_BIT_FEED=1).
-	// Default bit_ready=1 so legacy stream_path instances (unconnected) stay X-clean.
+	// No port default — Quartus Error (10231); tie bit_ready at instance (stream_path).
 	output wire        bit_valid,
 	output wire        bit_value,
-	input  wire        bit_ready = 1'b1,
+	input  wire        bit_ready,
 	output wire        bit_nal_last,
 	output wire [15:0] bit_epb_removed,
 	output wire [15:0] bit_rbsp_bytes,

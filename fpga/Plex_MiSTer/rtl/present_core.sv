@@ -973,9 +973,10 @@ localparam int MP_CLK_PIX_HZ = `MISTERPLEX_CLK_PIX_HZ;
 			mp_store_y  <= '0;
 			mp_store_de <= 1'b0;
 		end else if (mp_beam_ce) begin
-			mp_store_x  <= (mp_glass_x0 > FRAME_LAST_X_16) ? FRAME_LAST_X
+			// Widen glass (12b beam) to 16b before GT vs FRAME_LAST_*_16 (lint WIDTHEXPAND).
+			mp_store_x  <= (16'(mp_glass_x0) > FRAME_LAST_X_16) ? FRAME_LAST_X
 			             : mp_glass_x0[FRAME_X_W-1:0];
-			mp_store_y  <= (mp_glass_y > FRAME_LAST_Y_16) ? FRAME_LAST_Y
+			mp_store_y  <= (16'(mp_glass_y) > FRAME_LAST_Y_16) ? FRAME_LAST_Y
 			             : mp_glass_y[FRAME_Y_W-1:0];
 			mp_store_de <= |mp_lane_de;
 		end

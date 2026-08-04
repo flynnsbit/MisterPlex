@@ -139,6 +139,8 @@ module stream_path #(
 		.out_byte(ddr_wr_data),
 		.out_flush(ddr_wr_flush),
 		.out_full(bf_wr_full | si_wr_en),
+		// bit_ready: no SV port default (Quartus 10231); idle accept when unused.
+		.bit_ready(1'b1),
 		.bus_want(ddr_bus_want),
 		.DDRAM_BUSY(ddr_busy),
 		.DDRAM_BURSTCNT(ddr_burstcnt),

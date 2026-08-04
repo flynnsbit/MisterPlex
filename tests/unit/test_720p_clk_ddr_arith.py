@@ -67,14 +67,25 @@ def main() -> int:
         "product else-branch number_of_clocks(3)",
     )
 
-    # QSF: PRESENT_CLK_PIX_PLL must be commented (default OFF)
+    # QSF: main ships PLL default-OFF; integ/720p-compose enables it with FRAME 1280x720.
+    # Never claim 720p24 from geometry alone @20 MHz (~16.16 Hz) — PLL ON is the real path.
     qsf = read(ROOT / "fpga/Plex_MiSTer/Plex.qsf")
     active_pix = [
         ln
         for ln in qsf.splitlines()
         if "PRESENT_CLK_PIX_PLL" in ln and not ln.strip().startswith("#")
     ]
-    check(not active_pix, "QSF PRESENT_CLK_PIX_PLL not active (default OFF)")
+    frame_1280 = any(
+        ("FRAME_W=1280" in ln) and not ln.strip().startswith("#")
+        for ln in qsf.splitlines()
+    )
+    if active_pix:
+        check(
+            frame_1280 and any("PRESENT_CLK_PIX_PLL=1" in ln for ln in active_pix),
+            "QSF PRESENT_CLK_PIX_PLL active only with enabled 720p FRAME_W=1280",
+        )
+    else:
+        check(not active_pix, "QSF PRESENT_CLK_PIX_PLL not active (default OFF)")
     check("Plex_clk_pix.sdc" in qsf, "QSF mentions Plex_clk_pix.sdc recipe")
 
     # Plex.sv wires clk_pix from PLL only under ifdef

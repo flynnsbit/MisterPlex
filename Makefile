@@ -85,6 +85,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_pl330_encode $(ROOT)/b
 	$(ROOT)/build/test_osd_menu
 	$(ROOT)/build/test_osd_control
 	bash $(ROOT)/tests/unit/test_osd_menu_red.sh
+	bash $(ROOT)/tests/unit/test_quartus_sv_subset_abc.sh
 	bash $(ROOT)/tests/unit/test_present_default_fpga.sh
 	$(ROOT)/build/test_last_frame_latch
 	bash $(ROOT)/tests/unit/test_last_frame_latch_red.sh
@@ -293,7 +294,7 @@ verilator-elab:
 	$(ROOT)/scripts/check_verilator_elab.py
 
 quartus-sv-subset:
-	$(ROOT)/scripts/check_quartus_sv_subset.py $$($(ROOT)/scripts/rtl_lint.py --list-files)
+	$(ROOT)/scripts/check_quartus_sv_subset.py --project-dir $(ROOT)/fpga/Plex_MiSTer $$($(ROOT)/scripts/rtl_lint.py --list-files)
 	$(ROOT)/scripts/check_verilator_elab.py
 
 define-parity:

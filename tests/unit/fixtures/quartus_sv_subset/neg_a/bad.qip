@@ -1,0 +1,3 @@
+# good tcl comment
+// BAD C-style — Quartus 125091
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/x.sv

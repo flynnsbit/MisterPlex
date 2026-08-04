@@ -107,12 +107,24 @@ int main() {
     EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
                          "past_last_row = (py >= V_STORE)"),
            "past_last_row vs V_STORE");
-    const bool coded_ok =
+    // Legacy direct bind OR integ 720p ABI: FS_CODED_W from DDR_FS_*/P720_* then
+    // .CODED_W(FS_CODED_W). DDR_FS_CODED_W still resolves via layout params.
+    const bool coded_direct =
         file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
-                      ".CODED_W(DDR_FRAME_CODED_WIDTH)") ||
-        (file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
-                       "FS_CODED_W     = DDR_FRAME_CODED_WIDTH") &&
-         file_contains("fpga/Plex_MiSTer/rtl/present_core.sv", ".CODED_W(FS_CODED_W)"));
+                      ".CODED_W(DDR_FRAME_CODED_WIDTH)");
+    const bool coded_fs_legacy =
+        file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
+                      "FS_CODED_W     = DDR_FRAME_CODED_WIDTH") &&
+        file_contains("fpga/Plex_MiSTer/rtl/present_core.sv", ".CODED_W(FS_CODED_W)");
+    const bool coded_fs_abi =
+        file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
+                      "FS_CODED_W     = DDR_FS_USE_720P_ABI ? P720_CODED_W : DDR_FS_CODED_W") &&
+        file_contains("fpga/Plex_MiSTer/rtl/present_core.sv", ".CODED_W(FS_CODED_W)") &&
+        (file_contains("fpga/Plex_MiSTer/rtl/ddr_frame_abi_select.svh",
+                       "DDR_FRAME_CODED_WIDTH") ||
+         file_contains("fpga/Plex_MiSTer/rtl/ddr_frame_layout_params.svh",
+                       "DDR_FRAME_CODED_WIDTH = 624"));
+    const bool coded_ok = coded_direct || coded_fs_legacy || coded_fs_abi;
     EXPECT(coded_ok, "ddr_frame_store CODED_W from layout params");
     // Honest swap pack must ship with this RBF for skip instrumentation.
     EXPECT(file_contains("fpga/Plex_MiSTer/rtl/ddr_frame_store.sv",

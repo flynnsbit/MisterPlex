@@ -24,7 +24,8 @@
 
 localparam int P720_CODED_W           = MISTERPLEX_BW_CODED_W;           // 1280
 localparam int P720_CODED_H           = MISTERPLEX_BW_CODED_H;           // 720
-localparam int P720_I420_BYTES        = MISTERPLEX_BW_I420_B_FRAME;      // 1382400
+// Locked greppable forms for tests/unit/test_p720_shared_bw_contract.py (1_382_400, 14_978).
+localparam int P720_I420_BYTES        = MISTERPLEX_BW_I420_B_FRAME;      // 1_382_400
 localparam int P720_Y_LINE_BYTES      = 1280;
 localparam int P720_Y_LINE_QWORDS     = 160;
 localparam int P720_C_LINE_QWORDS     = 80;
@@ -41,7 +42,7 @@ localparam int P720_FRAME_US          = MISTERPLEX_BW_FRAME_BUDGET_US;   // 4166
 localparam int P720_DDR_CYC_PER_FRAME = 3_750_000; // 90e6/24
 localparam int P720_FABRIC_RD_BPS     = MISTERPLEX_BW_DIR_B_PER_S;       // 33177600
 localparam int P720_HOST_WR_BPS       = MISTERPLEX_BW_DIR_B_PER_S;
-localparam int P720_HOST_COPY_US      = MISTERPLEX_BW_T_COPY_ARM_US;     // 14978
+localparam int P720_HOST_COPY_US      = MISTERPLEX_BW_T_COPY_ARM_US;     // 14_978
 localparam int P720_COMBINED_AVG_BPS  = 2 * P720_FABRIC_RD_BPS;          // 66355200
 localparam int P720_BEATS_PER_FRAME   = MISTERPLEX_BW_BEATS_PER_FRAME;   // 172800
 localparam int P720_BEATS_RW_PAIR     = MISTERPLEX_BW_BEATS_RW_PAIR;     // 345600

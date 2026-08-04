@@ -36,9 +36,12 @@ echo "RTL SIM: using $VERILATOR_VERSION" >&2
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD" \
   --top-module ddr_frame_store_warm_reset_tb -GSTALE_DOORBELL_FALLBACK_POLLS=256 -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-SELRANGE -Wno-UNSIGNED \
+  +incdir+"$ROOT/fpga/Plex_MiSTer/rtl" \
   -CFLAGS "-std=c++17 -O2" \
   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb_top.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/mplex_hold_lcell.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_base_mux.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_ram.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/async_fifo.sv" \
   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb.cpp"
@@ -47,9 +50,12 @@ echo "RTL SIM: using $VERILATOR_VERSION" >&2
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$FAULT_BUILD" \
   --top-module ddr_frame_store_warm_reset_tb -GIGNORE_STALE_DOORBELL_AFTER_RESET=0 -GSTALE_DOORBELL_FALLBACK_POLLS=256 -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-SELRANGE -Wno-UNSIGNED \
+  +incdir+"$ROOT/fpga/Plex_MiSTer/rtl" \
   -CFLAGS "-std=c++17 -O2" \
   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb_top.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/mplex_hold_lcell.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_base_mux.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_ram.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/async_fifo.sv" \
   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb.cpp"
@@ -71,9 +77,12 @@ echo "OK ddr_frame_store warm-reset red-check: stale-doorbell fault failed"
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$FORMAT_FAULT_BUILD" \
   --top-module ddr_frame_store_warm_reset_tb -GSTRICT_YUV_DOORBELL=0 -GSTALE_DOORBELL_FALLBACK_POLLS=256 -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-SELRANGE -Wno-UNSIGNED \
+  +incdir+"$ROOT/fpga/Plex_MiSTer/rtl" \
   -CFLAGS "-std=c++17 -O2" \
   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb_top.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/mplex_hold_lcell.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_base_mux.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_ram.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/async_fifo.sv" \
   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb.cpp"
@@ -95,9 +104,12 @@ echo "OK ddr_frame_store warm-reset red-check: non-YUV doorbell fault failed"
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BANK_FAULT_BUILD" \
   --top-module ddr_frame_store_warm_reset_tb -GSTALE_DOORBELL_FALLBACK_POLLS=256 +define+DDR_FRAME_STORE_FAULT_HOLD_DISP_BANK -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-SELRANGE -Wno-UNSIGNED \
+  +incdir+"$ROOT/fpga/Plex_MiSTer/rtl" \
   -CFLAGS "-std=c++17 -O2" \
   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb_top.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/mplex_hold_lcell.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_base_mux.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_ram.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/async_fifo.sv" \
   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb.cpp"
@@ -119,9 +131,12 @@ echo "OK ddr_frame_store warm-reset red-check: held display-bank fault failed"
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$UV_FAULT_BUILD" \
   --top-module ddr_frame_store_warm_reset_tb -GSTALE_DOORBELL_FALLBACK_POLLS=256 +define+DDR_FRAME_STORE_FAULT_SWAP_UV_READ -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-SELRANGE -Wno-UNSIGNED \
+  +incdir+"$ROOT/fpga/Plex_MiSTer/rtl" \
   -CFLAGS "-std=c++17 -O2" \
   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb_top.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/mplex_hold_lcell.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_base_mux.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_ram.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/async_fifo.sv" \
   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb.cpp"
@@ -143,9 +158,12 @@ echo "OK ddr_frame_store warm-reset red-check: U/V read-swap fault failed"
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$CHROMA_VERTICAL_FAULT_BUILD" \
   --top-module ddr_frame_store_warm_reset_tb -GSTALE_DOORBELL_FALLBACK_POLLS=256 +define+DDR_FRAME_STORE_FAULT_CHROMA_VERTICAL_FULLRES -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-SELRANGE -Wno-UNSIGNED \
+  +incdir+"$ROOT/fpga/Plex_MiSTer/rtl" \
   -CFLAGS "-std=c++17 -O2" \
   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb_top.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/mplex_hold_lcell.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_base_mux.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_ram.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/async_fifo.sv" \
   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb.cpp"
@@ -167,9 +185,12 @@ echo "OK ddr_frame_store warm-reset red-check: chroma vertical full-res fault fa
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$CHROMA_STRIDE_FAULT_BUILD" \
   --top-module ddr_frame_store_warm_reset_tb -GSTALE_DOORBELL_FALLBACK_POLLS=256 +define+DDR_FRAME_STORE_FAULT_CHROMA_LUMA_STRIDE -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-SELRANGE -Wno-UNSIGNED \
+  +incdir+"$ROOT/fpga/Plex_MiSTer/rtl" \
   -CFLAGS "-std=c++17 -O2" \
   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb_top.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/mplex_hold_lcell.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_base_mux.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_ram.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/async_fifo.sv" \
   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb.cpp"
@@ -191,9 +212,12 @@ echo "OK ddr_frame_store warm-reset red-check: chroma luma-stride fault failed"
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$SCHED_FAULT_BUILD" \
   --top-module ddr_frame_store_warm_reset_tb -GPIPELINE_REFILL_SCHEDULER=0 -GSTALE_DOORBELL_FALLBACK_POLLS=256 -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-SELRANGE -Wno-UNSIGNED \
+  +incdir+"$ROOT/fpga/Plex_MiSTer/rtl" \
   -CFLAGS "-std=c++17 -O2" \
   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb_top.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/mplex_hold_lcell.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_base_mux.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_ram.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/async_fifo.sv" \
   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb.cpp"

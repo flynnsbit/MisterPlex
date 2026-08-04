@@ -17,11 +17,11 @@ module ddr_i420_store_width_check #(
 	parameter int FRAME_H = 480,
 	parameter int CODED_W = 624,
 	parameter int CODED_H = 480,
-	parameter int BANK_STRIDE_BYTES = 524288,
-	parameter [31:0] PHYS_BASE = 32'h3000_0000,
-	// Reference 480p bank for 3× growth arithmetic (product YUV stride).
-	parameter int REF480_BANK_STRIDE_BYTES = 524288,
-	parameter int REF480_FRAME_BYTES = 449280
+	// 0 → consume ddr_frame_layout_params.svh (no bare 449280 / 0x80000 literals).
+	parameter int BANK_STRIDE_BYTES = 0,
+	parameter [31:0] PHYS_BASE = 32'd0,
+	parameter int REF480_BANK_STRIDE_BYTES = 0,
+	parameter int REF480_FRAME_BYTES = 0
 )(
 	// Derived geometry (same equations as ddr_frame_store / bank_geom)
 	output wire [15:0] x_w_bits,           // $clog2(FRAME_W)
@@ -67,6 +67,18 @@ module ddr_i420_store_width_check #(
 	output wire        naive_u7_y_line_qw_ok,   // 7-bit index holds y_line_qwords?
 	output wire        naive_ref480_stride_fits // frame fits REF480 stride?
 );
+	// Module-local layout SoT (not $unit) — defaults when parameters left 0.
+	`include "ddr_frame_layout_params.svh"
+	localparam int BANK_STRIDE_I =
+		(BANK_STRIDE_BYTES != 0) ? BANK_STRIDE_BYTES : DDR_FRAME_YUV420P_BANK_STRIDE;
+	localparam [31:0] PHYS_BASE_I =
+		(PHYS_BASE != 32'd0) ? PHYS_BASE : DDR_FRAME_PHYS_BASE[31:0];
+	localparam int REF480_BANK_STRIDE_I =
+		(REF480_BANK_STRIDE_BYTES != 0) ? REF480_BANK_STRIDE_BYTES
+			: DDR_FRAME_YUV420P_BANK_STRIDE;
+	localparam int REF480_FRAME_I =
+		(REF480_FRAME_BYTES != 0) ? REF480_FRAME_BYTES : DDR_FRAME_YUV420P_BYTES;
+
 	// Match ddr_frame_store.sv localparams (lines ~94-127 shape).
 	localparam int X_W = (FRAME_W <= 1) ? 1 : $clog2(FRAME_W);
 	localparam int Y_W = (FRAME_H <= 1) ? 1 : $clog2(FRAME_H);
@@ -89,12 +101,12 @@ module ddr_i420_store_width_check #(
 	// Reserved HPS window (host ddr_frame_layout.hpp kPlexDdrReserved*).
 	localparam [31:0] WIN_END = 32'h4000_0000;
 	localparam int BANKS_IN_WIN =
-		(PHYS_BASE < WIN_END) ? ((WIN_END - PHYS_BASE) / BANK_STRIDE_BYTES) : 0;
+		(PHYS_BASE_I < WIN_END) ? ((WIN_END - PHYS_BASE_I) / BANK_STRIDE_I) : 0;
 
-	localparam [31:0] BANK1 = PHYS_BASE + BANK_STRIDE_BYTES;
-	localparam [31:0] DOORBELL = PHYS_BASE + (2 * BANK_STRIDE_BYTES) - 32'h1000;
+	localparam [31:0] BANK1 = PHYS_BASE_I + BANK_STRIDE_I;
+	localparam [31:0] DOORBELL = PHYS_BASE_I + (2 * BANK_STRIDE_I) - 32'h1000;
 	// Qword address of first byte past bank1 payload window (base+2*stride).
-	localparam [31:0] MAP_END = PHYS_BASE + (2 * BANK_STRIDE_BYTES);
+	localparam [31:0] MAP_END = PHYS_BASE_I + (2 * BANK_STRIDE_I);
 	localparam [31:0] MAP_END_QW = MAP_END >> 3;
 
 	assign x_w_bits = 16'(X_W);
@@ -111,7 +123,7 @@ module ddr_i420_store_width_check #(
 	assign u_plane_offset = 32'(U_OFF_I);
 	assign v_plane_offset = 32'(V_OFF_I);
 	assign frame_bytes = 32'(FRAME_I);
-	assign bank_stride_bytes = 32'(BANK_STRIDE_BYTES);
+	assign bank_stride_bytes = 32'(BANK_STRIDE_I);
 	assign bank1_base = BANK1;
 	assign doorbell_phys = DOORBELL;
 	assign max_y_line_qword_off = 32'(MAX_Y_LINE_QW);
@@ -121,8 +133,8 @@ module ddr_i420_store_width_check #(
 	assign dual_bank_fits_window = (BANKS_IN_WIN >= 2);
 	assign triple_bank_fits_window = (BANKS_IN_WIN >= 3);
 	assign bank_stride_ge_3x_ref480 =
-		(BANK_STRIDE_BYTES >= (3 * REF480_BANK_STRIDE_BYTES));
-	assign frame_ge_3x_ref480 = (FRAME_I >= (3 * REF480_FRAME_BYTES));
+		(BANK_STRIDE_I >= (3 * REF480_BANK_STRIDE_I));
+	assign frame_ge_3x_ref480 = (FRAME_I >= (3 * REF480_FRAME_I));
 
 	// Store uses [28:0] DDRAM_ADDR (qword). Map end must fit.
 	assign addr29_covers_bank1_end = (MAP_END_QW < (32'h1 << 29));
@@ -142,7 +154,7 @@ module ddr_i420_store_width_check #(
 		addr29_covers_bank1_end &&
 		y_qw_aw_covers_line && c_qw_aw_covers_line &&
 		y_w_covers_height && x_w_covers_width &&
-		(FRAME_I <= BANK_STRIDE_BYTES) &&
+		(FRAME_I <= BANK_STRIDE_I) &&
 		(CODED_W[0] == 1'b0) && (CODED_H[0] == 1'b0) &&
 		dual_bank_fits_window;
 
@@ -150,5 +162,5 @@ module ddr_i420_store_width_check #(
 	assign naive_u16_frame_ok = (FRAME_I <= 65535);
 	assign naive_u16_y_plane_ok = (Y_BYTES_I <= 65535);
 	assign naive_u7_y_line_qw_ok = (Y_LINE_QWORDS <= 127);
-	assign naive_ref480_stride_fits = (FRAME_I <= REF480_BANK_STRIDE_BYTES);
+	assign naive_ref480_stride_fits = (FRAME_I <= REF480_BANK_STRIDE_I);
 endmodule

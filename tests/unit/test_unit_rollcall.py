@@ -120,6 +120,7 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/build/test_osd_menu",
     "$(ROOT)/build/test_osd_control",
     "bash $(ROOT)/tests/unit/test_osd_menu_red.sh",
+    "bash $(ROOT)/tests/unit/test_quartus_sv_subset_abc.sh",
     "bash $(ROOT)/tests/unit/test_present_default_fpga.sh",
     "$(ROOT)/build/test_last_frame_latch",
     "bash $(ROOT)/tests/unit/test_last_frame_latch_red.sh",

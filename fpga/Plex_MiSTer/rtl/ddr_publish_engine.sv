@@ -65,7 +65,11 @@ module ddr_publish_engine #(
 	reg [63:0] db_word_r;
 	reg [ADDR_W-1:0] src_w, dst_w, db_w;
 	reg [31:0] words_left, words_total;
-	reg [4:0]  burst_n, got, wr_i;
+	// bounce[0:MAX_BURST-1] needs IDX_W index bits; burst_n holds 1..MAX_BURST (CNT_W).
+	localparam int IDX_W = (MAX_BURST <= 1) ? 1 : $clog2(MAX_BURST);
+	localparam int CNT_W = $clog2(MAX_BURST + 1);
+	reg [CNT_W-1:0] burst_n;
+	reg [IDX_W-1:0] got, wr_i;
 	reg        hold_present;
 	reg        rd_issued, wr_issued;
 
@@ -83,14 +87,14 @@ module ddr_publish_engine #(
 	wire wr_accept = DDRAM_WE && !DDRAM_BUSY;
 	wire can_start_cmd = !DDRAM_BUSY && !hold_present && !DDRAM_RD && !DDRAM_WE;
 
-	function automatic [4:0] nburst(input [31:0] left);
+	function automatic [CNT_W-1:0] nburst(input [31:0] left);
 		begin
 			if (left >= 32'(MAX_BURST))
-				nburst = 5'(MAX_BURST);
+				nburst = CNT_W'(MAX_BURST);
 			else if (left == 32'd0)
-				nburst = 5'd0;
+				nburst = '0;
 			else
-				nburst = 5'(left[4:0]);
+				nburst = CNT_W'(left[CNT_W-1:0]);
 		end
 	endfunction
 
@@ -124,9 +128,9 @@ module ddr_publish_engine #(
 			db_w <= {ADDR_W{1'b0}};
 			words_left <= 32'd0;
 			words_total <= 32'd0;
-			burst_n <= 5'd0;
-			got <= 5'd0;
-			wr_i <= 5'd0;
+			burst_n <= '0;
+			got <= '0;
+			wr_i <= '0;
 			rd_issued <= 1'b0;
 			wr_issued <= 1'b0;
 		end else begin
@@ -201,7 +205,7 @@ module ddr_publish_engine #(
 				end else if (!rd_issued) begin
 					if (can_start_cmd) begin
 						burst_n <= nburst(words_left);
-						got <= 5'd0;
+						got <= '0;
 						DDRAM_RD <= 1'b1;
 						DDRAM_BURSTCNT <= 8'(nburst(words_left));
 						DDRAM_ADDR <= src_w;
@@ -220,12 +224,13 @@ module ddr_publish_engine #(
 				DDRAM_RD <= 1'b0;
 				if (DDRAM_DOUT_READY) begin
 					bounce[got] <= DDRAM_DOUT;
-					got <= got + 5'd1;
+					got <= got + IDX_W'(1);
 					beats_rd <= beats_rd + 16'd1;
 					src_w <= src_w + 1'b1;
 					words_left <= words_left - 32'd1;
-					if (got + 5'd1 == burst_n) begin
-						wr_i <= 5'd0;
+					// Widen got for compare: last beat when (got+1)==burst_n
+					if ((CNT_W'(got) + CNT_W'(1)) == burst_n) begin
+						wr_i <= '0;
 						wr_issued <= 1'b0;
 						state <= ST_WR_ISSUE;
 					end
@@ -248,10 +253,10 @@ module ddr_publish_engine #(
 					beats_wr <= beats_wr + 16'd1;
 					dst_w <= dst_w + 1'b1;
 					bytes_copied <= bytes_copied + 32'd8;
-					if (wr_i + 5'd1 == burst_n)
+					if ((CNT_W'(wr_i) + CNT_W'(1)) == burst_n)
 						state <= ST_RD_ISSUE;
 					else
-						wr_i <= wr_i + 5'd1;
+						wr_i <= wr_i + IDX_W'(1);
 				end
 			end
 

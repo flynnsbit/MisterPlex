@@ -1835,7 +1835,8 @@ def check_present_geometry_stride_contract() -> None:
 
     # Default (non-L4) arm must still bind the 480p layout symbols. L4 arm binds
     # DDR_FRAME_720P_* via FS_* localparams (see present_core.sv). Accept either
-    # direct .CODED_W(DDR_FRAME_*) or FS_CODED_W = DDR_FRAME_* (parameterized form).
+    # direct .CODED_W(DDR_FRAME_*), FS_CODED_W = DDR_FRAME_*, or integ shared ABI:
+    # FS_CODED_W = DDR_FS_USE_720P_ABI ? P720_* : DDR_FS_* (ddr_frame_abi_select).
     def present_ddr_wiring_ok(p_nt: str) -> bool:
         direct = (
             ".FRAME_W(FRAME_W)" in p_nt
@@ -1857,7 +1858,18 @@ def check_present_geometry_stride_contract() -> None:
             and ".CODED_W(FS_CODED_W)" in p_nt
             and ".HPS_BANK_STRIDE_BYTES(FS_BANK_STRIDE)" in p_nt
         )
-        return direct or fs_bind
+        # integ/720p-compose: FS_* from abi_select + P720 contract; still FS-bound.
+        fs_abi = (
+            ".FRAME_W(FRAME_W)" in p_nt
+            and ".FRAME_H(FRAME_H)" in p_nt
+            and "FS_CODED_W=DDR_FS_USE_720P_ABI?P720_CODED_W:DDR_FS_CODED_W" in p_nt
+            and "FS_DISPLAY_W=DDR_FS_DISPLAY_W" in p_nt
+            and "FS_PRESENT_X=DDR_FS_PRESENT_X" in p_nt
+            and ".CODED_W(FS_CODED_W)" in p_nt
+            and ".HPS_BANK_STRIDE_BYTES(FS_BANK_STRIDE)" in p_nt
+            and "DDR_FS_CODED_W" in p_nt
+        )
+        return direct or fs_bind or fs_abi
 
     check(
         present_ddr_wiring_ok(present_nt),
