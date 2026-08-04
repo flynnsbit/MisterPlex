@@ -28,6 +28,9 @@ grep -q 'BLOCKER_PRESENT_PPC2=required' "$WORKDIR/prod.out"
 grep -q 'PARTIAL_CLOSED_READER' "$WORKDIR/prod.out"
 grep -q 'fabric_bw_closed=false' "$WORKDIR/prod.out"
 grep -q 'PPC2_ACCEPT_scalar_NEG_control=required' "$WORKDIR/prod.out"
+grep -q 'PPC2_ACCEPTED_REQUEST_STEADY_DELTA=CLOSED_IF_PROVEN' "$WORKDIR/prod.out"
+grep -q 'PPC2_ACCEPT_scorer_observes_rd_n_lane_rgb_underrun=required' "$WORKDIR/prod.out"
+grep -q 'PPC2_DEADLINE_CLOSED=false' "$WORKDIR/prod.out"
 
 # RED: hollow present_core + QSF PPC=2
 cat >"$WORKDIR/hollow.sv" <<'SV'

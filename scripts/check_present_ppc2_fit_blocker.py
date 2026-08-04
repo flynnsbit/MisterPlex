@@ -13,12 +13,20 @@ Fit release must NOT treat PPC2 as follow-up. This gate:
   - Prints PARTIAL_CLOSED_READER / fabric_bw_closed=false until odd/even proof
   - Soft-skip 77 is never a pass
 
-rd-duck discriminator: SCALAR reader (no PX_PER_CLK/rd_*_n) can produce
-bit-identical G0/G1 *counts* to a claimed PPC2 proof — that metric only
-measures full-line refill demand. rd_x+=2 skips odd display samples while
-refill still reads whole lines. Counts are insensitive to dual-lane
-correctness. A true PPC2 correctness gate MUST fail the scalar negative
-control via adjacent odd/even output checksum / lane-valid checks.
+rd-duck (corrected): w-clock/dc2ae85d *does* instantiate PX_PER_CLK=2 and
+rd_*_n (scalar-instantiation claim WITHDRAWN). Narrower NACK stands:
+  - C++ scorer never observes rd_*_n, lane-valid, RGB, or underrun
+  - w-scaler scalar *adaptation* can yield identical accepted-request/beat counts
+  - accepted-request counts prove refill *demand*, not PPC2 output correctness
+    or deadline
+Split:
+  - accepted-request steady delta: may be CLOSED (demand metric)
+  - PPC2 delivery/correctness + shared-controller BW: OPEN
+  - fabric_bw_closed=false until shared-controller BW proven
+  - PPC2_READER_CORRECTNESS_CLOSED=false until scorer observes lanes/RGB/underrun
+    and odd/even (or equivalent) discrimination vs scalar control
+A true PPC2 correctness gate must FAIL a scalar negative control via
+odd/even output checksum / lane-valid — not via request-count match alone.
 
 Exit: 0 = blocker documented and no false PPC2 claim; 1 = hollow PPC2 claim; 2 = bad inputs
 """
@@ -171,17 +179,20 @@ wire _unused_mp_glass = |{mp_glass_x0, mp_glass_y};
     # Always an explicit fit blocker until dual-lane contract + synthesis-active gate.
     print("BLOCKER_PRESENT_PPC2=required")
     print("PPC2_STATUS=PARTIAL_CLOSED_READER")
-    print("fabric_bw_closed=false")
-    print("PPC2_READER_CORRECTNESS_CLOSED=false")
+    print("PPC2_ACCEPTED_REQUEST_STEADY_DELTA=CLOSED_IF_PROVEN  # demand metric only (rd-duck)")
+    print("fabric_bw_closed=false  # shared-controller BW OPEN")
+    print("PPC2_READER_CORRECTNESS_CLOSED=false  # delivery/correctness OPEN")
+    print("PPC2_DEADLINE_CLOSED=false")
     print("PPC2_ACCEPT_dual_lane_store_outputs=required")
     print("PPC2_ACCEPT_multi_beam_to_store_coords=required")
     print("PPC2_ACCEPT_odd_even_distinct_pixel_checksum=required")
     print("PPC2_ACCEPT_synthesis_active_recipe_gate=required  # not translate_off $error")
-    print("PPC2_ACCEPT_scalar_NEG_control=required  # true PPC2 gate must FAIL scalar")
-    print("NOTE: G0/G1 refill counts bit-identical scalar vs claimed-PPC2 → BW-only metric (rd-duck)")
-    print("NOTE: rd_x+=2 skips odd display samples; refill still whole-line — counts insensitive to lanes")
-    print("NOTE: do not call PPC2 reader closed on count match alone")
-    print("NOTE: clock reader TB scalar cannot close PPC2 correctness")
+    print("PPC2_ACCEPT_scorer_observes_rd_n_lane_rgb_underrun=required")
+    print("PPC2_ACCEPT_scalar_NEG_control=required  # must FAIL scalar; count match insufficient")
+    print("NOTE: rd-duck RETRACTED 'dc2ae85d is scalar' — w-clock has PX_PER_CLK=2 + rd_*_n")
+    print("NOTE: narrower NACK: C++ scorer never watches rd_*_n/lane-valid/RGB/underrun")
+    print("NOTE: scaler scalar adaptation can match beat counts — proves demand not correctness")
+    print("NOTE: do not call PPC2 reader/delivery closed on accepted-request counts alone")
     print("NOTE: DMA source->bank mover is R+W; prefer dynamic-base direct fabric read")
 
     fail = 0

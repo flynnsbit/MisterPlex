@@ -168,23 +168,31 @@ Before fit release of a PPC2 product recipe, require:
 Gate: `make present-ppc2-blocker` / `scripts/check_present_ppc2_fit_blocker.py`.
 Hollow QSF PPC>=2 claim → **rc=1**. `FIT_SLOT_GRANT=NO` while hollow.
 
-### Discriminator — do not close PPC2 on G0/G1 counts (rd-duck)
+### Discriminator — do not close PPC2 on accepted-request counts (rd-duck)
 
-w-scaler’s **SCALAR** reader (explicitly no `PX_PER_CLK` / `rd_*_n`) can produce
-**bit-identical G0/G1 counts** to a claimed PPC2 proof. That metric measures
-**full-line refill demand only**. `rd_x += 2` skips odd *display* samples while
-refill still reads whole lines — counts are **insensitive to dual-lane
-correctness**.
+**Retraction:** rd-duck withdrew “dc2ae85d / w-clock HEAD is a scalar reader.”
+`git grep` shows `PX_PER_CLK=2`, `rd_*_n`, and TB `.PX_PER_CLK(2)`.
 
-Status until odd/even proof lands:
+**Narrower NACK (stands):**
+
+- The C++ scorer never observes `rd_*_n`, lane-valid, RGB, or underrun.
+- w-scaler’s **scalar adaptation** can yield **identical accepted-request / beat
+  counts** to the PPC2 TB — that proves **refill demand**, not dual-lane output
+  correctness or deadline.
+- Accepted-request steady delta may be **CLOSED** as a demand metric.
+- **PPC2 delivery/correctness** and **shared-controller BW** remain **OPEN**.
+
+Status:
 
 - `PPC2_STATUS=PARTIAL_CLOSED_READER`
+- `PPC2_ACCEPTED_REQUEST_STEADY_DELTA=CLOSED_IF_PROVEN` (demand only)
 - `fabric_bw_closed=false`
 - `PPC2_READER_CORRECTNESS_CLOSED=false`
+- `PPC2_DEADLINE_CLOSED=false`
 
-**Required negative control:** a true PPC2 correctness gate must **fail the
-scalar reader** via adjacent odd/even output checksum and/or lane-valid checks.
-Count match alone must never clear the blocker.
+**Required:** scorer must watch lanes/RGB/underrun; true PPC2 correctness gate
+must **fail a scalar negative control** via odd/even checksum / lane-valid.
+Request-count match alone must never clear the blocker.
 
 DMA note (rd-duck): a source→bank mover is **read+write**; prefer dynamic-base
 direct fabric read that eliminates the bank write.
