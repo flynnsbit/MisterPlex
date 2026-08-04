@@ -206,7 +206,9 @@
       "mutant": "starve_dout after healthy prep",
       "result": "STEADY_FAIL deadline; accepted=128 returned=0 underrun=65535",
       "discrimination": "deadline_fail=1"
-    }
+    },
+    "hps_write_concurrent_same_controller": "OPEN",
+    "T_copy_e2e": "OPEN"
   },
   "fabric_bw_closed": false,
   "claim_split": {
@@ -222,6 +224,8 @@
       "PPC2 correctness",
       "deadline at product 24fps",
       "shared fabric BW closed"
-    ]
+    ],
+    "hps_write_concurrent_same_controller": "OPEN",
+    "T_copy_e2e": "OPEN"
   }
 }
