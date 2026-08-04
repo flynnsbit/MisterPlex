@@ -709,9 +709,6 @@ module ddr_frame_store #(
 	reg [5:0]  bank_mm_disp_c;
 	reg [4:0]  occ_disp_y_r, occ_prep_y_r;
 	reg [5:0]  bank_mm_disp_r;
-	// I3 (DIAG): min/max y_line on display half valid tags (tag identity RCA).
-	reg [Y_W-1:0] line_min_y_c, line_max_y_c;
-	reg [Y_W-1:0] line_min_y_r, line_max_y_r;
 
 	wire cmd_empty;
 	wire [7:0] cmd_rdata;
@@ -949,24 +946,17 @@ module ddr_frame_store #(
 	end
 
 	// I2 (DIAG): display/prep half occupancy + bank-mismatch on display half.
-	// I3 (DIAG): min/max y_line on display half valid tags.
 	// Uses cur_base_idx/prep_base_idx from schedule combo (same half ownership).
 	integer oi;
 	always @* begin
 		occ_disp_y_c = 5'd0;
 		occ_prep_y_c = 5'd0;
 		bank_mm_disp_c = 6'd0;
-		line_min_y_c = {Y_W{1'b1}};
-		line_max_y_c = {Y_W{1'b0}};
 		for (oi = 0; oi < LINE_COUNT; oi = oi + 1) begin
 			if (y_valid[cur_base_idx + oi[SLOT_W-1:0]]) begin
 				occ_disp_y_c = occ_disp_y_c + 5'd1;
 				if (y_bank[cur_base_idx + oi[SLOT_W-1:0]] != disp_bank_d2)
 					bank_mm_disp_c = bank_mm_disp_c + 6'd1;
-				if (y_line[cur_base_idx + oi[SLOT_W-1:0]] < line_min_y_c)
-					line_min_y_c = y_line[cur_base_idx + oi[SLOT_W-1:0]];
-				if (y_line[cur_base_idx + oi[SLOT_W-1:0]] > line_max_y_c)
-					line_max_y_c = y_line[cur_base_idx + oi[SLOT_W-1:0]];
 			end
 			if (y_valid[prep_base_idx + oi[SLOT_W-1:0]])
 				occ_prep_y_c = occ_prep_y_c + 5'd1;
@@ -1117,8 +1107,6 @@ module ddr_frame_store #(
 			occ_disp_y_r <= 5'd0;
 			occ_prep_y_r <= 5'd0;
 			bank_mm_disp_r <= 6'd0;
-			line_min_y_r <= {Y_W{1'b1}};
-			line_max_y_r <= {Y_W{1'b0}};
 			mbox_seq <= 16'd0;
 			mbox_last <= 16'd0;
 			mbox_req <= 1'b1;
@@ -1191,11 +1179,22 @@ module ddr_frame_store #(
 			// that decode to wrong beam lines → fill tags miss pref_y (DIAG
 			// T3/T5: bank_mm=0, occ full, miss sticky, MEAN black). Hold last
 			// desired_y_r until gray_s1==gray_s2. Keeps schedule-reg STA cut.
+			// M2 WRAP_PREFETCH: WANT_Y_LINE_ONLY wrap window pre-issue on holdlast base
+			// DIAG=0; no mbox CE; schedule-reg / H-R1d / gray / curwin / holdlast kept
+			// When fill key is within LINE_COUNT of FRAME end (holdlast blanks at last
+			// lines), stock clamp_ahead(0,ti) so tags exist at frame wrap. Mid-frame
+			// still uses clamp_ahead(want_bin,ti). No S_IDLE mbox_yield / A→H thrash.
 			want_y_gray_s1 <= want_y_gray;
 			want_y_gray_s2 <= want_y_gray_s1;
 			if (want_y_gray_s1 == want_y_gray_s2) begin
+				// near-wrap: want_bin + LINE_COUNT >= FRAME_H → base 0 wrap-prefetch
 				for (ti = 0; ti < LINE_COUNT; ti = ti + 1)
-					desired_y_r[ti] <= clamp_ahead(y_gray2bin(want_y_gray_s2), ti);
+					desired_y_r[ti] <= clamp_ahead(
+						(({{(32 - Y_W){1'b0}}, y_gray2bin(want_y_gray_s2)} + LINE_COUNT)
+							>= FRAME_H)
+							? {Y_W{1'b0}}
+							: y_gray2bin(want_y_gray_s2),
+						ti);
 			end
 
 			start_d1 <= start_req;
@@ -1234,14 +1233,11 @@ module ddr_frame_store #(
 			occ_disp_y_r   <= occ_disp_y_c;
 			occ_prep_y_r   <= occ_prep_y_c;
 			bank_mm_disp_r <= bank_mm_disp_c;
-			line_min_y_r   <= line_min_y_c;
-			line_max_y_r   <= line_max_y_c;
-			// Product pack vs DIAG pack (MAGIC/seq path unchanged at write).
-			// DIAG_I3_TAG_LINE_MINMAX: {max[9:0], min[9:0], any_hit, miss_both, miss_y, miss_c}
-			// (replaces I2 occ/bank_mm/state — already measured cff90813).
+			// Product pack vs DIAG I1/I2 pack (MAGIC/seq path unchanged at write).
 			if (DIAG_TAG_RCA)
-				frame_status_ddr <= {line_max_y_r[9:0], line_min_y_r[9:0],
-				                     any_hit_s2, miss_both_s2, miss_y_only_s2, miss_c_only_s2};
+				frame_status_ddr <= {occ_disp_y_r, occ_prep_y_r, bank_mm_disp_r,
+				                     any_hit_s2, miss_both_s2, miss_y_only_s2, miss_c_only_s2,
+				                     state_ddr};
 			else
 				frame_status_ddr <= {frame_underrun_ddr, debug_state};
 

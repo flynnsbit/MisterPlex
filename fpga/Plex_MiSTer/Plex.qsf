@@ -106,9 +106,9 @@ set_global_assignment -name SDC_FILE Plex_clk_pix.sdc
 # Fabric DDR→DDR publication engine (w-path/w-mem). Bounce ≤2 M10K; start tied
 # idle until ARM/handover wires kick — still in hierarchy for area measurement.
 set_global_assignment -name VERILOG_MACRO "FABRIC_FRAME_DMA=1"
-# DIAG sole only (cutb-r1-diag-i3): PLXF[63:40] I3 tag line min/max RCA. Not product PASS.
+# DIAG sole only (cutb-r1-diag): PLXF[63:40] I1/I2 tag RCA. Not product PASS.
 # PRODUCT_WIRE=0: leave commented for product fits. Uncomment for intentional DIAG sole:
-set_global_assignment -name VERILOG_MACRO "MPLEX_DIAG_TAG_RCA=1"
+#set_global_assignment -name VERILOG_MACRO "MPLEX_DIAG_TAG_RCA=1"
 # --- Alternate: L4 compact beam (mutually exclusive with MULTI above) ---
 # Measured PMS asset: 1280x720 @ 24/1. w-clock beam: H=1312 V=762.
 # At clk_sys=24 MHz → 24.006 Hz. At product 20 MHz → ~20.005 Hz (NOT 720p24).
