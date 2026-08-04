@@ -255,6 +255,22 @@ plex_clk_status u_plex_clk_status (
 wire _unused_clkstat = |{clkstat_sys_hz, clkstat_pix_hz, clkstat_ppc, clkstat_cea_pf,
 	clkstat_l4_pf, clkstat_cea_fast, clkstat_l4_fast, clkstat_peak_x10, clkstat_valid};
 
+// Fabric BW contract stamp (w-clock): 33.1776 MB/s/dir SoT; NACK DE-peak 3.0 as DDR.
+wire [31:0] bwstat_dir_bps;
+wire [17:0] bwstat_beats;
+wire [18:0] bwstat_rw;
+wire [7:0]  bwstat_ppc;
+wire        bwstat_nack_de;
+plex_bw_status u_plex_bw_status (
+	.clk(clk_sys),
+	.bw_dir_b_per_s(bwstat_dir_bps),
+	.bw_beats_per_frame(bwstat_beats),
+	.bw_beats_rw_pair(bwstat_rw),
+	.bw_product_ppc(bwstat_ppc),
+	.bw_nack_de_peak_is_not_ddr(bwstat_nack_de)
+);
+wire _unused_bwstat = |{bwstat_dir_bps, bwstat_beats, bwstat_rw, bwstat_ppc, bwstat_nack_de};
+
 // O[4] is the native content-resolution selector shared with misterplexd.
 // C1B owns the selector/ABI; the DDR-backed frame-store branch consumes these
 // dimensions for the actual 480p present path.
