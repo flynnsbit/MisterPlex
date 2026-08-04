@@ -49,6 +49,9 @@ echo "$OUT32" | grep -q 'G2_hang_mutant' || { echo "FAIL missing G2" >&2; exit 1
 echo "$OUT32" | grep -q 'payload_formula=172800+LC\*240' || { echo "FAIL missing tight formula" >&2; exit 1; }
 echo "$OUT32" | grep -q 'NOT fit-release CLOSED' || { echo "FAIL must not claim CLOSED" >&2; exit 1; }
 echo "$OUT32" | grep -q 'isolated_reader_stress' || { echo "FAIL missing stress class label" >&2; exit 1; }
+echo "$OUT32" | grep -q 'dual_dist=' || { echo "FAIL missing dual-lane checksum" >&2; exit 1; }
+echo "$OUT32" | grep -q 'fnv_want=' || { echo "FAIL missing full-frame FNV want" >&2; exit 1; }
+echo "$OUT32" | grep -q 'adopt harness NOT CLOSED' || { echo "FAIL must adopt harness not CLOSED" >&2; exit 1; }
 
 echo "=== LC=8 teeth (expect RED) ==="
 build_one "$BUILD/lc8" 8

@@ -7,12 +7,13 @@
 //   payload_ideal = 172800 (I420 qwords)
 //   dual-set warm = LINE_COUNT * 240  (Y=160 + C_avg=80 per luma line)
 //   payload_expect = ideal + LC*240   (measured LC32→180480, LC8→174720; locked)
-//   accepted_RD == returned_DOUT beats (conservation; in-flight slack ≤ max_burst)
-//   G0 ideal: payload==expect, underrun==0, de_groups>=460800, nonblack_rgb>=de-pipe,
-//             ddr_cy < 3750000 (24fps ddr tick budget as upper wall, even though beam>24)
-//   G1 stall (stall_after=3, hog 8/3): same payload/underrun/de/rgb/ddr_cy bounds,
-//             blocked>=10, busy_cycles > G0 busy (beam-locked wall ≈ G0 ddr_cy;
-//             discrimination is busy↑ + mutant, not ddr_cy growth)
+//   accepted_RD == returned_DOUT exactly after drain (no in-flight slack)
+//   dual-lane: bank Y even=40 odd=200 → lane0/lane1 RGB distinct + match (full-frame FNV)
+//   G0 ideal: payload==expect (upper=lower), underrun==0, de_groups>=460800,
+//             dual_lane_distinct, fnv==expect, ddr_cy < 3750000, sys_cy==beam period
+//   G1 stall (stall_after=3, hog 8/3): SAME tight payload upper+lower + underrun/rgb/fnv,
+//             blocked>=10, busy↑, ddr_cy < 3750000 AND beam-locked to G0,
+//             sys_cy deadline == one beam period (G1 must finish the frame)
 //   G2 negative mutant: hang payload RD after 4096 accepts → MUST fail
 //             (underrun>0 or prep/steady timeout or payload short or rgb starved)
 //   LC floor >=32; LC=8 shell teeth RED
@@ -89,7 +90,11 @@ struct Stats {
 	uint64_t rgb_valid_groups = 0;
 	uint64_t rgb_nonblack_groups = 0;
 	uint64_t rgb_mismatch = 0;
+	uint64_t dual_lane_distinct = 0;
+	uint64_t dual_lane_same = 0;
+	uint64_t dual_lane_match = 0;
 	uint64_t fnv = 14695981039346656037ull;
+	uint64_t fnv_want = 14695981039346656037ull;
 	uint16_t underrun_start = 0;
 	uint16_t underrun_end = 0;
 	uint16_t underrun_delta() const {
@@ -134,11 +139,24 @@ struct BusModel {
 	uint32_t offQ(uint32_t phys) const { return (phys - kBasePhys) / 8u; }
 	uint32_t addrOffQ(uint32_t addr) const { return addr - (kBasePhys >> 3); }
 
+	// Dual-lane tooth (rd-duck): even-X Y=40, odd-X Y=200, U=V=128 → R=G=B=Y.
+	// Scalar-replicate would force lane0==lane1 and fail dual_lane_distinct/match.
+	static constexpr uint8_t kYEven = 40;
+	static constexpr uint8_t kYOdd = 200;
+
 	void fillBank(int bank) {
 		const uint32_t base = (bank * kBankStrideBytes) / 8u;
-		for (int line = 0; line < kCodedH; ++line)
-			for (int q = 0; q < kYQ; ++q)
-				mem[base + line * kYQ + q] = pack8(static_cast<uint8_t>(16 + (line & 0x7f)));
+		for (int line = 0; line < kCodedH; ++line) {
+			for (int q = 0; q < kYQ; ++q) {
+				uint64_t word = 0;
+				for (int i = 0; i < 8; ++i) {
+					const int x = q * 8 + i;
+					const uint8_t y = (x & 1) ? kYOdd : kYEven;
+					word |= static_cast<uint64_t>(y) << (8 * i);
+				}
+				mem[base + static_cast<uint32_t>(line * kYQ + q)] = word;
+			}
+		}
 		for (int line = 0; line < kCodedH / 2; ++line)
 			for (int q = 0; q < kCQ; ++q) {
 				mem[base + kUQBase + line * kCQ + q] = pack8(128);
@@ -248,13 +266,24 @@ struct BusModel {
 		const uint8_t r1 = static_cast<uint8_t>((top.rd_r_n >> 8) & 0xff);
 		const uint8_t g1 = static_cast<uint8_t>((top.rd_g_n >> 8) & 0xff);
 		const uint8_t b1 = static_cast<uint8_t>((top.rd_b_n >> 8) & 0xff);
+		// U=V=128 → R=G=B=Y. Expect lane0=Yeven, lane1=Yodd for every valid group.
 		const bool gray0 = (r0 == g0) && (g0 == b0);
 		const bool gray1 = (r1 == g1) && (g1 == b1);
+		const bool match = gray0 && gray1 && (r0 == kYEven) && (r1 == kYOdd);
 		const bool nb = (r0 >= 16) || (r1 >= 16);
 		if (!gray0 || !gray1) ++st.rgb_mismatch;
-		if (nb && gray0 && gray1) ++st.rgb_nonblack_groups;
-		auto fold = [&](uint8_t v) { st.fnv ^= v; st.fnv *= 1099511628211ull; };
-		fold(r0); fold(g0); fold(b0); fold(r1); fold(g1); fold(b1);
+		if (match) {
+			++st.rgb_nonblack_groups;
+			++st.dual_lane_match;
+		}
+		if (r0 != r1 || g0 != g1 || b0 != b1) ++st.dual_lane_distinct;
+		else ++st.dual_lane_same;
+		auto fold = [&](uint64_t& h, uint8_t v) { h ^= v; h *= 1099511628211ull; };
+		fold(st.fnv, r0); fold(st.fnv, g0); fold(st.fnv, b0);
+		fold(st.fnv, r1); fold(st.fnv, g1); fold(st.fnv, b1);
+		// Full-frame expected checksum over every valid dual-lane sample (same order).
+		fold(st.fnv_want, kYEven); fold(st.fnv_want, kYEven); fold(st.fnv_want, kYEven);
+		fold(st.fnv_want, kYOdd); fold(st.fnv_want, kYOdd); fold(st.fnv_want, kYOdd);
 	}
 
 	void advanceBeamOnSysPosedge() {
@@ -293,6 +322,31 @@ struct BusModel {
 
 	void clearStats() { st = Stats{}; st.underrun_start = top.underrun_count; }
 	void snapshotUnderrunEnd() { st.underrun_end = top.underrun_count; }
+
+	// Complete in-flight DDR beats without advancing the beam / DE counters.
+	void drainDdrBeats(int max_steps = 20000) {
+		top.rd_active = 0;
+		top.vsync_pulse = 0;
+		for (int i = 0; i < max_steps; ++i) {
+			if (rdLeft <= 0 && rdDelay < 0 && busy <= 0) break;
+			// tick ddr only
+			clk_ddr_lvl ^= 1;
+			top.clk_ddr = clk_ddr_lvl;
+			if (clk_ddr_lvl == 1) {
+				++st.ddr_cycles;
+				ddrComb();
+			}
+			top.clk = clk_sys_lvl;
+			top.eval();
+			clk_ddr_lvl ^= 1;
+			top.clk_ddr = clk_ddr_lvl;
+			if (clk_ddr_lvl == 1) {
+				++st.ddr_cycles;
+				ddrComb();
+			}
+			top.eval();
+		}
+	}
 
 	void resetCore() {
 		top.reset = 1; for (int i = 0; i < 200; ++i) advance();
@@ -352,6 +406,9 @@ FrameDelta measureSteadyFrame(int stall_after, int hog_period, int hog_len, int 
 		out.timed_out = true; sim.snapshotUnderrunEnd(); out.s = sim.st;
 		return out;
 	}
+	// Drain in-flight DDR beats so accepted==returned is exact (rd-duck conservation).
+	// Do NOT advance beam — extra DE would corrupt dual-lane/FNV full-frame gates.
+	sim.drainDdrBeats();
 	sim.snapshotUnderrunEnd();
 	out.s = sim.st; out.frames_done = sim.top.frames_done; out.ok = true;
 	return out;
@@ -362,7 +419,8 @@ void printCase(const char* name, const FrameDelta& d) {
 	    "CASE %s EXECUTED payload=%llu door=%llu other=%llu accepted=%llu returned=%llu "
 	    "sys_cy=%llu ddr_cy=%llu busy=%llu blocked=%llu max_burst=%llu "
 	    "de_groups=%llu rgb_valid=%llu rgb_nonblack=%llu rgb_mismatch=%llu "
-	    "fnv=0x%016llx underrun_delta=%u LC=%d fd=%u ok=%d\n",
+	    "dual_dist=%llu dual_same=%llu dual_match=%llu "
+	    "fnv=0x%016llx fnv_want=0x%016llx underrun_delta=%u LC=%d fd=%u ok=%d\n",
 	    name, (unsigned long long)d.s.payload_beats, (unsigned long long)d.s.doorbell_beats,
 	    (unsigned long long)d.s.other_beats, (unsigned long long)d.s.accepted_rd_beats,
 	    (unsigned long long)d.s.returned_rd_beats, (unsigned long long)d.s.sys_cycles,
@@ -370,21 +428,20 @@ void printCase(const char* name, const FrameDelta& d) {
 	    (unsigned long long)d.s.rd_blocked, (unsigned long long)d.s.max_burst,
 	    (unsigned long long)d.s.de_groups, (unsigned long long)d.s.rgb_valid_groups,
 	    (unsigned long long)d.s.rgb_nonblack_groups, (unsigned long long)d.s.rgb_mismatch,
-	    (unsigned long long)d.s.fnv, (unsigned)d.s.underrun_delta(), d.line_count,
+	    (unsigned long long)d.s.dual_lane_distinct, (unsigned long long)d.s.dual_lane_same,
+	    (unsigned long long)d.s.dual_lane_match,
+	    (unsigned long long)d.s.fnv, (unsigned long long)d.s.fnv_want,
+	    (unsigned)d.s.underrun_delta(), d.line_count,
 	    (unsigned)d.frames_done, d.ok ? 1 : 0);
 }
 
 bool checkBeatConservation(const char* tag, const FrameDelta& d) {
 	const uint64_t acc = d.s.accepted_rd_beats;
 	const uint64_t ret = d.s.returned_rd_beats;
-	const uint64_t slack = d.s.max_burst > 0 ? d.s.max_burst : 128;
-	if (ret > acc) {
-		std::printf("%s returned(%llu) > accepted(%llu)\n", tag, (unsigned long long)ret, (unsigned long long)acc);
-		return false;
-	}
-	if (acc - ret > slack) {
-		std::printf("%s accepted-returned=%llu > slack=%llu\n", tag,
-		            (unsigned long long)(acc - ret), (unsigned long long)slack);
+	// Exact after drain (rd-duck): no in-flight slack allowance.
+	if (ret != acc) {
+		std::printf("%s returned(%llu) != accepted(%llu) (exact conservation)\n", tag,
+		            (unsigned long long)ret, (unsigned long long)acc);
 		return false;
 	}
 	if (d.s.payload_beats + d.s.doorbell_beats + d.s.other_beats != acc) {
@@ -413,24 +470,27 @@ bool checkOutput(const char* tag, const FrameDelta& d, uint64_t full_de) {
 		std::printf("%s de_groups=%llu < %llu\n", tag, (unsigned long long)d.s.de_groups, (unsigned long long)full_de);
 		return false;
 	}
-	// Pipe/warmup: first ~2.25 active lines may lag valid gray (measured gap 1440).
-	if (d.s.rgb_nonblack_groups + kRgbPipeSlack < full_de) {
-		std::printf("%s rgb_nonblack=%llu + slack(%llu) < de %llu\n", tag,
-		            (unsigned long long)d.s.rgb_nonblack_groups,
+	// dual_lane_match counts correct 40/200 pairs; allow pipe warmup slack.
+	if (d.s.dual_lane_match + kRgbPipeSlack < full_de) {
+		std::printf("%s dual_lane_match=%llu + slack(%llu) < de %llu\n", tag,
+		            (unsigned long long)d.s.dual_lane_match,
 		            (unsigned long long)kRgbPipeSlack,
 		            (unsigned long long)full_de);
 		return false;
 	}
-	if (d.s.rgb_nonblack_groups == 0) {
-		std::printf("%s rgb_nonblack==0\n", tag);
+	if (d.s.dual_lane_distinct == 0 || d.s.dual_lane_distinct <= d.s.dual_lane_same) {
+		std::printf("%s dual_lane not distinct dist=%llu same=%llu (scalar replicate?)\n", tag,
+		            (unsigned long long)d.s.dual_lane_distinct,
+		            (unsigned long long)d.s.dual_lane_same);
 		return false;
 	}
 	if (d.s.rgb_mismatch != 0) {
 		std::printf("%s rgb_mismatch=%llu\n", tag, (unsigned long long)d.s.rgb_mismatch);
 		return false;
 	}
-	if (d.s.fnv == 14695981039346656037ull) {
-		std::printf("%s FNV unchanged\n", tag);
+	if (d.s.fnv != d.s.fnv_want) {
+		std::printf("%s full-frame FNV got=0x%016llx want=0x%016llx\n", tag,
+		            (unsigned long long)d.s.fnv, (unsigned long long)d.s.fnv_want);
 		return false;
 	}
 	return true;
@@ -466,11 +526,14 @@ int main(int argc, char** argv) {
 	if (g0.s.doorbell_beats == 0) return fail("G0 expected doorbell RD");
 	if (g0.s.ddr_cycles >= kBudgetDdrCycles24) return fail("G0 ddr_cy over 24fps budget wall");
 	if (g0.s.max_burst < 2) return fail("G0 burst<=1");
+	// Deadline: one beam period (+ drain margin < 5% beam).
 	if (g0.s.sys_cycles < kBeamSysCycles) return fail("G0 sys_cy shorter than one beam period");
-	if (!checkOutput("G0", g0, kFullDeGroups)) return fail("G0 output/underrun/rgb");
-	std::printf("PASS G0 tight payload=%llu returned=%llu und=0 rgb_nb=%llu fnv=0x%016llx\n",
+	if (g0.s.sys_cycles > kBeamSysCycles + kBeamSysCycles / 20ull)
+		return fail("G0 sys_cy deadline miss (>> one beam + drain)");
+	if (!checkOutput("G0", g0, kFullDeGroups)) return fail("G0 output/underrun/rgb/dual/fnv");
+	std::printf("PASS G0 tight payload=%llu returned=%llu und=0 dual_match=%llu fnv_ok\n",
 	            (unsigned long long)g0.s.payload_beats, (unsigned long long)g0.s.returned_rd_beats,
-	            (unsigned long long)g0.s.rgb_nonblack_groups, (unsigned long long)g0.s.fnv);
+	            (unsigned long long)g0.s.dual_lane_match);
 
 	// G1 corrected wall (prereg): beam-locked ddr_cy ≈ G0; discrimination = busy↑ + mutant G2.
 	FrameDelta g1 = measureSteadyFrame(3, 8, 3, -1);
@@ -481,15 +544,22 @@ int main(int argc, char** argv) {
 	if (g1.s.rd_blocked < 10) return fail("G1 expected RD-while-BUSY (>=10)");
 	if (g1.s.busy_cycles <= g0.s.busy_cycles) return fail("G1 busy_cycles not higher than G0");
 	if (g1.s.ddr_cycles >= kBudgetDdrCycles24) return fail("G1 ddr_cy over 24fps budget wall");
+	// G1 deadline: must complete the stalled frame within one beam + drain (not hang).
+	if (g1.s.sys_cycles < kBeamSysCycles) return fail("G1 sys_cy shorter than one beam");
+	if (g1.s.sys_cycles > kBeamSysCycles + kBeamSysCycles / 20ull)
+		return fail("G1 deadline miss: sys_cy >> one beam (stall caused frame slip)");
+	// Upper beat bound = lower bound (tight equality already); restate payload ceiling.
+	if (g1.s.payload_beats > payloadExpect(g1.line_count))
+		return fail("G1 payload upper bound exceeded");
 	const uint64_t ddr_tol = g0.s.ddr_cycles / 50ull + 1ull;
 	if (g1.s.ddr_cycles + ddr_tol < g0.s.ddr_cycles ||
 	    g1.s.ddr_cycles > g0.s.ddr_cycles + ddr_tol)
 		return fail("G1 ddr_cy not beam-locked to G0");
-	if (!checkOutput("G1", g1, kFullDeGroups)) return fail("G1 output/underrun/rgb");
-	std::printf("PASS G1 stall payload=%llu blocked=%llu busy=%llu (>G0 %llu) und=0 rgb_nb=%llu\n",
+	if (!checkOutput("G1", g1, kFullDeGroups)) return fail("G1 output/underrun/rgb/dual/fnv");
+	std::printf("PASS G1 stall payload=%llu blocked=%llu busy=%llu deadline_sys=%llu und=0 dual_match=%llu\n",
 	            (unsigned long long)g1.s.payload_beats, (unsigned long long)g1.s.rd_blocked,
-	            (unsigned long long)g1.s.busy_cycles, (unsigned long long)g0.s.busy_cycles,
-	            (unsigned long long)g1.s.rgb_nonblack_groups);
+	            (unsigned long long)g1.s.busy_cycles, (unsigned long long)g1.s.sys_cycles,
+	            (unsigned long long)g1.s.dual_lane_match);
 
 	std::printf("PRE-REG G2: hang payload after 4096 accepts → must NOT pass tight/underrun/rgb\n");
 	FrameDelta g2 = measureSteadyFrame(0, 0, 0, 4096);
@@ -518,8 +588,9 @@ int main(int argc, char** argv) {
 	            (unsigned long long)g1.s.payload_beats, (unsigned long long)g1.s.doorbell_beats,
 	            (unsigned long long)g1.s.accepted_rd_beats, (unsigned long long)g1.s.returned_rd_beats,
 	            (unsigned long long)g1.s.rd_blocked);
-	std::printf("  PROVES: tight reader demand + underrun/rgb under assumed stall + mutant tooth\n");
+	std::printf("  PROVES: tight beats+upper, underrun0, dual-lane/full-frame FNV, G1 deadline, G2 RED\n");
 	std::printf("  DOES_NOT_PROVE: HPS supply, host write, product 24fps rate-match, sustainable BW\n");
+	std::printf("  class=isolated_reader_stress beam_fps=%.3f (adopt harness NOT CLOSED)\n", kBeamFps);
 	std::printf("PASS ddr_frame_store_720p_ppc2_bus gate-repaired (NOT fit-release CLOSED)\n");
 	return 0;
 }
