@@ -49,4 +49,19 @@ localparam int PDEC_ARB_PIPE_DDR_CYC    = 4;
 localparam int PDEC_PRESENT_WC_DDR_CYC  = PDEC_MAX_LOPRI_BURST + PDEC_ARB_PIPE_DDR_CYC; // 20
 // 20 / 90e6 = 222.2 ns << 512 µs blackout — bound holds with LINE=16 cover.
 
+// --- Byte-serial DPB tax (rd-duck; quoted h264_dpb_one_ref issue_idx bounds) ---
+// Fixed window per partition: 21x21 Y + 9x9 U + 9x9 V one-byte reads.
+// part_w/h latched only — NOT used to narrow fetch (see h264_dpb.sv comment).
+localparam int PDEC_DPB_LUMA_WIN_RDS   = 441;  // issue_idx 0..440
+localparam int PDEC_DPB_CHROMA_WIN_RDS = 81;   // issue_idx 0..80 per plane
+localparam int PDEC_DPB_PART_RDS =
+	PDEC_DPB_LUMA_WIN_RDS + 2 * PDEC_DPB_CHROMA_WIN_RDS; // 603
+localparam int PDEC_MB_720P            = 3600; // 80*45
+localparam int PDEC_DPB_REF_FETCH_CYC  = PDEC_DPB_PART_RDS * PDEC_MB_720P; // 2170800
+// TIME costs (clk_sys domain byte port) — NOT MB/s; do not confuse with R_req.
+// @20e6: 2170800/20e6 = 0.10854 s = 108.54 ms  (> 41.667 ms @24 fps)
+// I420 byte-serial write: 1382400/20e6 = 0.06912 s = 69.12 ms
+// HARD FAIL for 720p24 fabric MC without wide/burst DPB redesign.
+
+
 `endif
