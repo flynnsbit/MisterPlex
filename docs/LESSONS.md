@@ -198,6 +198,22 @@ A backgrounded supervisor inherits stdout and holds the SSH channel open. Use
 `nohup setsid cmd >/dev/null 2>&1 &`, or run the whole experiment detached on-device and
 poll a log file.
 
+**L33 — Moving an evidence store into the repo puts it inside every repo-wide scan.**
+`check_ddr_yuv_only_repo()` walks `ROOT.rglob("*")`. Relocating the lab store from
+`~/Projects/MisterPlex-lab` into `Memory/` turned a **verbatim quotation of a historical
+daemon log line** into a build failure. Git-ignored is not scan-ignored — `.gitignore` and
+a test's `skip_parts` are two independent lists, and only the second one governs `rglob`.
+When a repo-wide invariant fires on an evidence file, the honest fix is the **scan scope**.
+Redacting a true quotation to make a source rule pass would falsify the record, and
+loosening the rule itself would be gate self-weakening. Fix scope, then prove the gate
+still bites by planting the same string somewhere that must fail.
+
+**L34 — When you weaken anything a gate touches, hand it to an adversary.**
+A scope change and a coverage cut are indistinguishable from the commit message alone.
+Prove it four ways — skipped location green, product location still red, fix reverted
+reproduces the original failure, real artifact green — then have an independent lane try
+to break the claim. Especially when the author is the orchestrator.
+
 ---
 
 ## Incident index
@@ -220,5 +236,6 @@ poll a log file.
 | — | `misterplexd` ~136% + `MiSTer` ~131% at idle | Arithmetically impossible: 16.02 CPU-s claimed inside a 12 CPU-s dual-core window. Split withdrawn |
 | — | Native 720p24 is arithmetically dead at 0.939× | **1.31× (32 fps)** with the daemon stopped. The wall was a daemon busy-loop, not physics |
 | — | A green `make unit` meant the daemon fix was safe | It rendered stub garbage on HDMI; `ORANGE_PX` 33852 → 43. Reverted |
+| — | Main was RED on a forbidden DDR pattern | The hit was a **quoted historical daemon log line** in a git-ignored evidence store I had just moved into the repo tree. Scan scope was wrong, not the record |
 
 Full narrative for each: `Memory/lab/parent/misterplex-parent-720p-decode-verdict.txt`.
