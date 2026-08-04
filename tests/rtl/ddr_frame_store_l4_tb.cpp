@@ -17,6 +17,7 @@
 #include <cstring>
 #include <iostream>
 #include <string>
+#include <deque>
 #include <vector>
 
 namespace {
@@ -25,6 +26,7 @@ constexpr uint32_t kPhysBase = 0x30180000u;
 constexpr uint32_t kBankStride = 0x00180000u;
 constexpr uint32_t kDoorbellPhys = 0x3047F000u;
 constexpr uint32_t kMemBasePhys = 0x30000000u;
+// Covers bank0@PHYS, bank1@PHYS+STRIDE, doorbell@0x3047F000 (end 0x30580000).
 constexpr uint32_t kMemBytes = 0x00580000u;
 constexpr uint32_t kMagic = 0x504C584Bu;
 
@@ -84,6 +86,12 @@ uint8_t vAt(int x, int y, int bank) {
 }
 
 bool near8(int a, int b) { return a + 1 >= b && a <= b + 1; }
+
+uint64_t fnv1a64_update(uint64_t h, uint8_t b) {
+	h ^= b;
+	h *= 0x100000001b3ull;
+	return h;
+}
 
 struct Sim {
 	Vddr_frame_store_l4_tb top{};
@@ -304,42 +312,98 @@ struct ScanResult {
 	uint16_t underrun = 0;
 	int samples_ok = 0;
 	int samples_fail = 0;
+	int rgb_mismatch = 0;
+	uint64_t fnv_got = 0xcbf29ce484222325ull;
+	uint64_t fnv_want = 0xcbf29ce484222325ull;
 };
+
+// ddr_frame_store RGB path depth (rd_* -> YUV combo -> rd_r/g/b).
+// Measured: latency=1 is byte-identical FNV over full 1280x720 (921600 px);
+// latency 0/2+ go RED. If this drifts, full-frame FNV goes RED.
+constexpr int kRgbPipeLatency = 1;
 
 ScanResult scanFull(Sim& sim, int bank, bool sample_check) {
 	ScanResult r;
+	// Settle video-side line-hit CDC after present: dwell on (0,0) with
+	// rd_active like post-vsync blanking. Without this, bank1 cold scans
+	// miss (y_bank_v2/disp_bank) while bank0 can false-pass because reset
+	// y_bank=0 matches initial disp_bank=0 even before tags CDC through.
+	sim.suppressVsync = true;
+	sim.holdPixel(0, 0, 8);
+	sim.suppressVsync = false;
 	sim.scanX = 0;
 	sim.scanY = 0;
 	const uint64_t t0 = sim.cycle;
+	struct Pix { uint8_t r, g, b; int x, y; };
+	std::deque<Pix> pipe;
+
+	auto fold = [&](uint8_t gr, uint8_t gg, uint8_t gb, const Pix& w) {
+		r.fnv_got = fnv1a64_update(r.fnv_got, gr);
+		r.fnv_got = fnv1a64_update(r.fnv_got, gg);
+		r.fnv_got = fnv1a64_update(r.fnv_got, gb);
+		r.fnv_want = fnv1a64_update(r.fnv_want, w.r);
+		r.fnv_want = fnv1a64_update(r.fnv_want, w.g);
+		r.fnv_want = fnv1a64_update(r.fnv_want, w.b);
+		if (!near8(gr, w.r) || !near8(gg, w.g) || !near8(gb, w.b)) {
+			++r.rgb_mismatch;
+			if (r.rgb_mismatch <= 6) {
+				std::cerr << "FAIL rgb (" << w.x << "," << w.y << ") bank=" << bank
+				          << " got " << int(gr) << "/" << int(gg) << "/" << int(gb)
+				          << " want " << int(w.r) << "/" << int(w.g) << "/" << int(w.b)
+				          << "\n";
+			}
+		}
+		if (sample_check && sampleHere(w.x, w.y)) {
+			if (!near8(gr, w.r) || !near8(gg, w.g) || !near8(gb, w.b))
+				++r.samples_fail;
+			else
+				++r.samples_ok;
+		}
+	};
+
 	for (int y = 0; y < gH; ++y) {
 		for (int x = 0; x < gW; ++x) {
 			sim.videoTick();
 			++r.pixels;
 			++r.pure_pixel_ticks;
-			if (sample_check && sampleHere(x, y)) {
-				sim.holdPixel(x, y, 24);
-				uint8_t er, eg, eb;
-				yuvToRgb(yAt(x, y, bank), uAt(x, y, bank), vAt(x, y, bank), er, eg, eb);
-				if (!near8(sim.top.rd_r, er) || !near8(sim.top.rd_g, eg) ||
-				    !near8(sim.top.rd_b, eb)) {
-					std::cerr << "FAIL sample (" << x << "," << y << ") bank=" << bank
-					          << " got " << int(sim.top.rd_r) << "/" << int(sim.top.rd_g)
-					          << "/" << int(sim.top.rd_b) << " want " << int(er) << "/"
-					          << int(eg) << "/" << int(eb) << "\n";
-					++r.samples_fail;
-				} else {
-					++r.samples_ok;
-				}
+			uint8_t er, eg, eb;
+			yuvToRgb(yAt(x, y, bank), uAt(x, y, bank), vAt(x, y, bank), er, eg, eb);
+			pipe.push_back(Pix{er, eg, eb, x, y});
+			if (static_cast<int>(pipe.size()) > kRgbPipeLatency) {
+				const Pix w = pipe.front();
+				pipe.pop_front();
+				fold(sim.top.rd_r, sim.top.rd_g, sim.top.rd_b, w);
 			}
 		}
 		++r.lines;
 	}
+	// Drain pipeline at last pixel.
+	if (!pipe.empty()) {
+		const Pix last = pipe.back();
+		sim.holdPixel(last.x, last.y, kRgbPipeLatency + 2);
+		while (!pipe.empty()) {
+			const Pix w = pipe.front();
+			pipe.pop_front();
+			fold(sim.top.rd_r, sim.top.rd_g, sim.top.rd_b, w);
+		}
+	}
+
 	r.scan_cycles = sim.cycle - t0;
 	r.underrun = sim.top.underrun_count;
 	if (sample_check && r.samples_fail != 0)
 		std::exit(1);
 	if (sample_check && r.samples_ok < 4) {
 		std::cerr << "FAIL scanFull: too few boundary samples ok=" << r.samples_ok << "\n";
+		std::exit(1);
+	}
+	if (r.rgb_mismatch != 0) {
+		std::cerr << "FAIL scanFull: rgb_mismatch=" << r.rgb_mismatch << " of "
+		          << r.pixels << "\n";
+		std::exit(1);
+	}
+	if (r.fnv_got != r.fnv_want) {
+		std::cerr << "FAIL scanFull: full-frame FNV mismatch got=0x" << std::hex
+		          << r.fnv_got << " want=0x" << r.fnv_want << std::dec << "\n";
 		std::exit(1);
 	}
 	return r;
@@ -442,9 +506,13 @@ int runFullframe(int expect_pixels, bool enforce_expect) {
 		          << expect_pixels << "\n";
 		return 1;
 	}
+	std::cout << "fullframe: fnv=0x" << std::hex << r.fnv_got << std::dec
+	          << " rgb_mismatch=" << r.rgb_mismatch
+	          << " (FNV covers all " << r.pixels << " RGB triples)\n";
 	std::cout << "PASS fullframe: " << gW << "x" << gH
 	          << " complete scan, boundary samples OK, underrun=0"
-	          << " pixels=" << r.pixels << "\n";
+	          << " pixels=" << r.pixels
+	          << " fnv=0x" << std::hex << r.fnv_got << std::dec << "\n";
 	return 0;
 }
 
@@ -593,6 +661,10 @@ int runNegCount() {
 	          << " (true WxH=" << (gW * gH) << ")\n";
 	return runFullframe(wrong, true);
 }
+
+
+
+
 
 void applyGeomFromEnv() {
 	if (const char* w = std::getenv("L4_TB_W"))

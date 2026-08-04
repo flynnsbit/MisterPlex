@@ -53,16 +53,30 @@ module present_core #(
 `else
 	parameter int FRAME_CMD_FIFO_AW = 5,
 `endif
+// Line-buffer depth for ddr_frame_store. Product default is 8 (FRAME_LINES_8).
+// L4 720p: 8 lines cover ~437 µs @24 MHz H=1312 against a modelled 500 µs DDR
+// blackout — proven RED underrun in test_ddr_frame_store_l4_rtl_sim. When L4 is
+// selected, force 16 lines even if the QSF still has FRAME_LINES_8 (so enabling
+// PLEX_PRESENT_720P_L4 alone cannot ship the too-small buffer). Explicit
+// FRAME_LINES_16 wins; FRAME_LINES_1/4 remain available for sim stress only.
 `ifdef FRAME_LINES_1
 	parameter int FRAME_LINE_COUNT = 1
 `elsif FRAME_LINES_4
 	parameter int FRAME_LINE_COUNT = 4
-`elsif FRAME_LINES_8
-	parameter int FRAME_LINE_COUNT = 8
 `elsif FRAME_LINES_16
 	parameter int FRAME_LINE_COUNT = 16
+`elsif FRAME_LINES_8
+	`ifdef PLEX_PRESENT_720P_L4
+	parameter int FRAME_LINE_COUNT = 16
+	`else
+	parameter int FRAME_LINE_COUNT = 8
+	`endif
 `else
+	`ifdef PLEX_PRESENT_720P_L4
+	parameter int FRAME_LINE_COUNT = 16
+	`else
 	parameter int FRAME_LINE_COUNT = 4
+	`endif
 `endif
 )(
 	input  wire        clk,
@@ -243,6 +257,9 @@ module present_core #(
 		if (FRAME_W != 1280 || FRAME_H != 720)
 			$error("PLEX_PRESENT_720P_L4 requires FRAME_W=1280 FRAME_H=720 (got %0d x %0d)",
 				FRAME_W, FRAME_H);
+		if (FRAME_LINE_COUNT < 16)
+			$error("PLEX_PRESENT_720P_L4 requires FRAME_LINE_COUNT>=16 (got %0d); 8-line buffer underruns 500us DDR blackout",
+				FRAME_LINE_COUNT);
 `ifdef PRESENT_BEAM_960
 		$error("PLEX_PRESENT_720P_L4 and PRESENT_BEAM_960 are mutually exclusive");
 `endif
