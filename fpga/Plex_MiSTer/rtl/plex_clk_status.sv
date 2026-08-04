@@ -10,7 +10,7 @@
 //   meas_frame_count ~ 24         (+/-1)
 // FAIL mode (clk_pix tied to 20 MHz, same glass): pix~20e6, frames~16
 //
-// M10K: 0 (flops only). ALM: small counters — estimate <200 ALM UNVERIFIED until fit.
+// M10K: 0 — no RAM arrays (flops/counters only); layout N/A. ALM: <200 ESTIMATE UNVERIFIED until fit.
 
 `include "misterplex_clk_hz.svh"
 `include "misterplex_clk_pix_recipe.svh"
