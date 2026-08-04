@@ -270,7 +270,9 @@ private:
     void setIndex(uint8_t index);
     void setDownload(int enable);
     // Caller holds SpiExclusive + user mode.
-    void writeStatusWordRaw(const uint8_t word[16]);
+    // Returns false if any spiWord phase fails — must not report partial status
+    // writes as success (Sweep 115 silent-partial defect class).
+    bool writeStatusWordRaw(const uint8_t word[16]);
     bool readStatusRaw(uint8_t out[16]);
     bool sendDdrFrame(const uint8_t* payload, size_t len, int bank);
 

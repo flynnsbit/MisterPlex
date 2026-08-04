@@ -911,9 +911,13 @@ bool FpgaSpi::kickDdrSpi(int bank, bool first_verify, bool& saw_busy, bool& saw_
         word[1] = static_cast<uint8_t>(word[1] & ~0x20);
     word[1] = static_cast<uint8_t>(word[1] & ~0x10);
     word[1] = static_cast<uint8_t>(word[1] & ~0x02);
-    writeStatusWordRaw(word);
+    // Fail closed on any phase error — never return true after a partial kick
+    // (Sweep 115: silent partial SPI left DDR scanning garbage).
+    if (!writeStatusWordRaw(word))
+        return false;
     word[1] = static_cast<uint8_t>(word[1] | 0x10);
-    writeStatusWordRaw(word);
+    if (!writeStatusWordRaw(word))
+        return false;
     if (first_verify) {
         for (int i = 0; i < 40; ++i) {
             uint8_t raw[16]{};
@@ -932,7 +936,8 @@ bool FpgaSpi::kickDdrSpi(int bank, bool first_verify, bool& saw_busy, bool& saw_
         }
     }
     word[1] = static_cast<uint8_t>(word[1] & ~0x10);
-    writeStatusWordRaw(word);
+    if (!writeStatusWordRaw(word))
+        return false;
     if (first_verify) {
         uint8_t raw[16]{};
         if (readStatusRaw(raw)) {
@@ -946,7 +951,7 @@ bool FpgaSpi::kickDdrSpi(int bank, bool first_verify, bool& saw_busy, bool& saw_
         }
     }
     std::memcpy(status_, word, 16);
-    return true;
+    return err_.empty();
 }
 
 void FpgaSpi::gpoWrite(uint32_t v) {
@@ -978,10 +983,9 @@ void FpgaSpi::spiEn(uint32_t mask, int en) {
 uint16_t FpgaSpi::spiWord(uint16_t word) {
     // Caller must hold SpiExclusive (spiMutex). Touch err_ without re-locking.
     //
-    // ACK wait MUST yield. The previous bare 1e6-spin loops burned ~0.9 s of one
-    // core per getCoreStatus when the FPGA never raised SSPI_STROBE (pre-mailbox
-    // idle OSD path at 1 Hz → system idle% stuck at 0; Sweep 113). Policy lives
-    // in libmisterplex/spi_ack_wait.hpp and is unit-tested.
+    // ACK wait MUST yield (Sweep 113 CPU) but MUST NOT use a short wall timeout
+    // (Sweep 115: 2 ms wall aborted real status kicks → garbage HDMI). Abort
+    // only after the legacy 1e6 poll budget. Policy: spi_ack_wait.hpp.
     uint32_t gpo = (gpoRead() & ~(0xFFFFu | SSPI_STROBE)) | word;
     gpoWrite(gpo);
     gpoWrite(gpo | SSPI_STROBE);
@@ -1054,30 +1058,55 @@ void FpgaSpi::setDownload(int enable) {
 }
 
 // SPI body for UIO_SET_STATUS2. Caller must hold SpiExclusive and user mode.
-void FpgaSpi::writeStatusWordRaw(const uint8_t word[16]) {
+// Fail-closed: any spiWord timeout/error aborts and returns false so callers
+// cannot treat a half-written status (e.g. kick bit set, bank bit missing) as OK.
+bool FpgaSpi::writeStatusWordRaw(const uint8_t word[16]) {
+    if (!word) {
+        err_ = "writeStatusWordRaw: null";
+        return false;
+    }
     std::memcpy(status_, word, 16);
+    err_.clear();
     enableIo(1);
-    spiWord(UIO_SET_STATUS2);
+    (void)spiWord(UIO_SET_STATUS2);
+    if (!err_.empty()) {
+        enableIo(0);
+        return false;
+    }
     for (int i = 0; i < 16; i += 2) {
         uint16_t w = static_cast<uint16_t>((status_[i + 1] << 8) | status_[i]);
-        spiWord(w);
+        (void)spiWord(w);
+        if (!err_.empty()) {
+            enableIo(0);
+            return false;
+        }
     }
     enableIo(0);
+    return true;
 }
 
 // SPI body for UIO_GET_STATUS. Caller must hold SpiExclusive and user mode.
 bool FpgaSpi::readStatusRaw(uint8_t out[16]) {
     if (!out)
         return false;
+    err_.clear();
     enableIo(1);
     (void)spiWord(UIO_GET_STATUS);
+    if (!err_.empty()) {
+        enableIo(0);
+        return false;
+    }
     for (int i = 0; i < 16; i += 2) {
         uint16_t w = spiWord(0);
+        if (!err_.empty()) {
+            enableIo(0);
+            return false;
+        }
         out[i] = static_cast<uint8_t>(w & 0xFF);
         out[i + 1] = static_cast<uint8_t>((w >> 8) & 0xFF);
     }
     enableIo(0);
-    return err_.empty();
+    return true;
 }
 
 // UIO_GET_STRING: the same read Main_MiSTer does to build the OSD. Reading it back
@@ -1128,8 +1157,7 @@ bool FpgaSpi::setStatusWord(const uint8_t word[16]) {
         return false;
     }
     err_.clear();
-    writeStatusWordRaw(word);
-    return err_.empty();
+    return writeStatusWordRaw(word);
 }
 
 bool FpgaSpi::setStatusBit(int bit, int value) {

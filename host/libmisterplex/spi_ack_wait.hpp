@@ -1,23 +1,30 @@
 // SPI ACK wait policy + idle poll budgets for misterplexd.
 //
-// History (Sweep 113, parent-measured on DE10-Nano):
-//   misterplexd RUNNING idle: system idle 0.0%, native 720p decode 0.917x
-//   misterplexd STOPPED:      system idle 49.4%, native 720p decode 1.31x
-// The idle tax was not "physics" — it was host busy-work.
+// History
+// -------
+// Sweep 113: bare 1e6-spin spiWord (no yield) burned ~1 core when ACK missing.
+// Sweep 115: a 2 ms *wall* cap on the same wait aborted legitimate SPI status
+//            transactions during idle DDR paint → colour-band garbage on HDMI
+//            (parent capture). Product broken; unit suite green. REVERTED on
+//            device to 7cd10b4d.
 //
-// Root cause in source (fpga_spi.cpp spiWord, pre-fix):
-//   do { gpi = gpiRead(); if (++spins > 1000000) timeout; }
-//   while (!(gpi & SSPI_STROBE));
-// Two phases, no yield. On a missing/slow ACK each phase burned up to ~1e6
-// uncached /dev/mem loads. getCoreStatus issues 9 spiWords → worst case ~0.9 s
-// of one core per call. Pre-mailbox RBFs (e.g. G-VID1) take the SPI OSD path
-// once per quiet period; at 1 Hz that alone can zero system idle%.
+// Contract (this file)
+// --------------------
+// 1. MUST yield after kSpiAckBusySpinsBeforeYield failed polls (CPU).
+// 2. MUST NOT abort earlier than the legacy poll budget (correctness).
+//    Legacy abort was `if (++spins > 1000000) timeout` — a POLL COUNT, not a
+//    wall-clock. We keep kSpiAckMaxPolls = 1_000_000. A short wall timeout is
+//    FORBIDDEN: it trades frame integrity for CPU and is the Sweep 115 defect.
+// 3. Worst-case *legitimate* ACK latency is UNKNOWN from in-repo source/datasheet
+//    (FPGA strobe is combinational on a healthy user-mode core; under
+//    MainSafeWindow SIGSTOP + bus contention no bound is proven here). Therefore
+//    we never pick a "better" wall timeout by intuition.
+// 4. Idle SPI OSD fallback quiet period stays multi-second.
 //
-// Contract:
-//   - After every kSpiAckBusySpinsBeforeYield failed polls, MUST yield/sleep.
-//   - Hard wall kSpiAckMaxWallUs; timeout is failure, not infinite spin.
-//   - Idle SPI OSD fallback quiet period is multi-second (SIGSTOP Main is not free).
-// Unit tests pin the constants so a hot loop cannot reappear as a silent edit.
+// Call sites of spiWord (fpga_spi.cpp): writeStatusWordRaw, readStatusRaw,
+// getConfigString, enableIo path helpers, kickDdrSpi (via write/read status).
+// Idle logo paint → sendYuv420pFrameDdr → sendDdrFrame → kickDdrSpi/doorbell
+// verify uses those paths; aborting mid-status leaves a partial kick.
 
 #pragma once
 
@@ -28,29 +35,28 @@
 namespace misterplex {
 
 // --- SPI ACK phase -----------------------------------------------------------
-// Cap consecutive busy gpiRead polls before a voluntary yield. Keep this small:
-// uncached FPGA register reads dominate; a few dozen is plenty for a healthy ACK
-// which arrives in tens of nanoseconds on a live core.
+// Busy polls before a voluntary yield. Small: healthy ACK is near-immediate.
 inline constexpr int kSpiAckBusySpinsBeforeYield = 32;
-// Hard wall-clock budget per ACK phase (set or clr). 2 ms is far above a good
-// handshake and far below the old ~0.1–1 s 1e6-spin burn.
-inline constexpr int kSpiAckMaxWallUs = 2000;
+// Legacy-equivalent abort: total failed pred() polls, matching pre-fix
+// `spins > 1000000`. This is the ONLY abort criterion.
+inline constexpr int kSpiAckMaxPolls = 1000000;
+// Yield backoff while waiting (CPU only; does not shrink poll budget).
 inline constexpr int kSpiAckYieldFloorUs = 1;
-inline constexpr int kSpiAckYieldCapUs = 50;
+inline constexpr int kSpiAckYieldCapUs = 200;
 
 // --- Idle / OSD / input poll periods (media_player threads) ------------------
-// Mailbox path is a pair of uncached loads — cheap; keep snappy for OSD.
 inline constexpr int kOsdMailboxQuietMs = 200;
-// SPI fallback parks Main (SIGSTOP + /proc task scan). Rare when idle.
 inline constexpr int kOsdSpiPlayingQuietMs = 500;
 inline constexpr int kOsdSpiIdleQuietMs = 5000;
-// Input mailbox is DDR-only; 100 ms is fine for remote/key edge detect.
 inline constexpr int kInputMailboxQuietMs = 100;
 
-// Static floors the negative test enforces (must stay >= these).
+// Floors / ceilings the negative tests enforce.
 inline constexpr int kOsdSpiIdleQuietMsFloor = 2000;
 inline constexpr int kSpiAckBusySpinsCeiling = 64;
-inline constexpr int kSpiAckMaxWallUsCeiling = 5000;
+// A wall-only abort shorter than this many microseconds is the Sweep 115 bug.
+// We do not use wall abort at all; tests assert kSpiAckUseWallTimeout == false.
+inline constexpr bool kSpiAckUseWallTimeout = false;
+inline constexpr int kSpiAckForbiddenShortWallUs = 5000; // document the bad band
 
 struct SpiAckWaitStats {
     int busy_reads = 0;
@@ -59,16 +65,11 @@ struct SpiAckWaitStats {
     bool timed_out = false;
 };
 
-// Wait until pred() returns true. On success returns true.
-// On wall-clock timeout returns false and sets st.timed_out.
-// sleep_us(us) is invoked on every backoff; tests inject a counter.
-//
-// Invariant: consecutive failed pred() calls without a sleep_us invocation
-// never exceeds kSpiAckBusySpinsBeforeYield (captured in consecutive_busy_peak).
+// Wait until pred() is true. Returns false only after kSpiAckMaxPolls failed
+// polls (legacy cardinality). Always yields per kSpiAckBusySpinsBeforeYield.
 template <typename Pred, typename SleepUsFn>
 bool spiAckWait(Pred pred, SpiAckWaitStats& st, SleepUsFn sleep_us) {
     st = SpiAckWaitStats{};
-    const auto t0 = std::chrono::steady_clock::now();
     int consecutive = 0;
     int yield_us = kSpiAckYieldFloorUs;
 
@@ -81,10 +82,8 @@ bool spiAckWait(Pred pred, SpiAckWaitStats& st, SleepUsFn sleep_us) {
         if (consecutive > st.consecutive_busy_peak)
             st.consecutive_busy_peak = consecutive;
 
-        const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
-                                 std::chrono::steady_clock::now() - t0)
-                                 .count();
-        if (elapsed >= kSpiAckMaxWallUs) {
+        // Abort only on legacy poll budget — never on a short wall clock.
+        if (st.busy_reads >= kSpiAckMaxPolls) {
             st.timed_out = true;
             return false;
         }
@@ -93,8 +92,6 @@ bool spiAckWait(Pred pred, SpiAckWaitStats& st, SleepUsFn sleep_us) {
             sleep_us(yield_us);
             ++st.yields;
             consecutive = 0;
-            // Progressive backoff: 1,2,4,... us up to cap. Keeps total wall short
-            // while giving the FPGA / bus a real gap under load.
             if (yield_us < kSpiAckYieldCapUs) {
                 const int next = yield_us * 2;
                 yield_us = next > kSpiAckYieldCapUs ? kSpiAckYieldCapUs : next;
@@ -103,7 +100,6 @@ bool spiAckWait(Pred pred, SpiAckWaitStats& st, SleepUsFn sleep_us) {
     }
 }
 
-// Production sleep: yield for 0, else nanosleep via this_thread.
 inline void spiAckDefaultSleepUs(int us) {
     if (us <= 0) {
         std::this_thread::yield();
@@ -117,11 +113,42 @@ bool spiAckWait(Pred pred, SpiAckWaitStats& st) {
     return spiAckWait(pred, st, spiAckDefaultSleepUs);
 }
 
-// Quiet period for the OSD poller given path + play state.
 inline int osdPollQuietMs(bool via_mailbox, bool playing) {
     if (via_mailbox)
         return kOsdMailboxQuietMs;
     return playing ? kOsdSpiPlayingQuietMs : kOsdSpiIdleQuietMs;
 }
+
+// --- Multi-word SPI transaction completeness (model + production contract) ---
+// A status write is N spiWord phases. If phase k fails, phases k+1..N must not
+// be reported as success. Silent partial success is the Sweep 115 defect class
+// for the frame/status path (kickDdrSpi used to `return true` unconditionally).
+struct SpiTxnPhaseResult {
+    bool ok = false;
+    const char* err = nullptr;
+};
+
+// Simulated multi-word commit: calls issue(i) for i in [0, words). Stops on
+// first failure and returns false with failed_at set. Success only if ALL
+// words issued OK.
+template <typename IssueFn>
+bool spiTxnCommitAll(int words, IssueFn issue, int& failed_at, const char*& err) {
+    failed_at = -1;
+    err = nullptr;
+    if (words <= 0)
+        return true;
+    for (int i = 0; i < words; ++i) {
+        SpiTxnPhaseResult r = issue(i);
+        if (!r.ok) {
+            failed_at = i;
+            err = r.err ? r.err : "spi phase failed";
+            return false;
+        }
+    }
+    return true;
+}
+
+// How many spiWord calls a UIO_SET_STATUS2 status write performs (cmd + 8 words).
+inline constexpr int kStatusWriteSpiWords = 1 + 8; // 0x1e + 16 bytes as 8×16-bit
 
 } // namespace misterplex
