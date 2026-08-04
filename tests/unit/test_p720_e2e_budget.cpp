@@ -62,10 +62,16 @@ int main() {
     CHECK(!serialCpuPathMeets24(kDecodeOnlyMsPerFrameLegacy, kCpuCopyMsPerFrame),
           "legacy decode+copy serial fail");
 
+    // Sweep 118: named serial deficit pin (parent correction arithmetic).
+    CHECK(std::fabs(kSerialDeficitSweep118Ms - 6.016) < 0.01, "Sweep118 deficit ~6.016 ms");
+    CHECK(kSerialDeficitSweep118Ms > 0.0, "serial path still short of 24fps");
+    CHECK(std::fabs(kPayloadRate720p24MBps - 33.1776) < 0.001, "R_req ~33.18 MB/s");
+
     if (fails) {
         std::printf("test_p720_e2e_budget: %d FAIL(s)\n", fails);
         return 1;
     }
-    std::printf("test_p720_e2e_budget: OK serial=%.3f>deadline (CPU copy structural)\n", serial);
+    std::printf("test_p720_e2e_budget: OK serial=%.3f>deadline deficit=%.3fms (CPU copy)\n",
+                serial, kSerialDeficitSweep118Ms);
     return 0;
 }

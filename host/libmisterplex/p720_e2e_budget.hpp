@@ -79,5 +79,14 @@ inline constexpr bool kSerialSweep116Meets24 =
 inline constexpr bool kCopyExceedsSweep116Headroom =
     copyExceedsDecodeHeadroom(kDecodeOnlyMsPerFrameSweep116, kCpuCopyMsPerFrame);
 
+// Sweep 118 parent correction: serial deficit after GDM fix.
+// headroom 8.962 − needed 14.978 = SHORT by 6.016 ms/frame at 24 fps.
+inline constexpr double kSerialDeficitSweep118Ms =
+    kCpuCopyMsPerFrame - (kDeadline24Ms - kDecodeOnlyMsPerFrameSweep116); // 6.016
+
+// Payload RATE (not interchangeable with T_copy_arm CPU time).
+inline constexpr double kPayloadRate720p24MBps =
+    static_cast<double>(kFrameBytes720pI420) * 24.0 / 1e6; // 33.1776
+
 } // namespace p720_budget
 } // namespace misterplex

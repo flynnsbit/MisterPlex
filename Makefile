@@ -5,7 +5,7 @@ CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -I$(ROOT)/host
 FFMPEG_CFLAGS := $(shell pkg-config --cflags libavformat libavcodec libavutil 2>/dev/null)
 FFMPEG_LIBS   := $(shell pkg-config --libs libavformat libavcodec libavutil 2>/dev/null)
 
-.PHONY: all preflight unit unit-unlocked rtl-sim rtl-lint quartus-sv-subset define-parity post-fit-hierarchy post-fit-timing timing-exclusion pms-baseline-check pms-nal-stats arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools
+.PHONY: all preflight unit unit-unlocked rtl-sim rtl-lint quartus-sv-subset define-parity post-fit-hierarchy post-fit-timing timing-exclusion pms-baseline-check pms-nal-stats arm-plexd arm-ddr-bench arm-pl330-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools
 
 all: unit
 
@@ -27,6 +27,7 @@ help:
 	@echo "  make test       - alias for unit"
 	@echo "  make package    - dist tarball (ARM + conf + docs + Plex.rbf if present)"
 	@echo "  make arm-ddr-bench - cross-build DDR write microbenchmark"
+	@echo "  make arm-pl330-bench - cross-build PL330 ingest bench (lab DMA diag)"
 	@echo "  make arm-profile-tools - cross-build ARM decode/profile probes"
 	@echo "  make present-harness - build offline present-loop pipe/copy harness"
 
@@ -40,11 +41,12 @@ preflight:
 unit:
 	@bash $(ROOT)/scripts/run_with_resource_preflight.sh -- $(MAKE) unit-unlocked
 
-unit-unlocked: preflight $(ROOT)/build/test_gdm_filter $(ROOT)/build/test_spi_txn_complete $(ROOT)/build/test_idle_poll_budget $(ROOT)/build/test_p720_e2e_budget $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_osd_menu $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_pixel_format $(ROOT)/build/test_main_guard $(ROOT)/build/test_status_telemetry $(ROOT)/build/test_resolve $(ROOT)/build/test_pms_timeline $(ROOT)/build/pms_baseline_probe $(ROOT)/build/test_h264_bitstream_source $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_frame_store_sdram_sim $(ROOT)/build/test_frame_store_ddr_prefetch_sim $(ROOT)/build/test_sdram_memtest_sim $(ROOT)/build/test_sdram_mailbox $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant $(ROOT)/build/test_p3_host_recon_vectors $(ROOT)/build/test_p3_idct_reference_model $(ROOT)/build/test_p3_inter_pred_vectors $(ROOT)/build/extract_h264_golden
+unit-unlocked: preflight $(ROOT)/build/test_gdm_filter $(ROOT)/build/test_spi_txn_complete $(ROOT)/build/test_idle_poll_budget $(ROOT)/build/test_p720_e2e_budget $(ROOT)/build/test_pl330_encode $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_osd_menu $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_pixel_format $(ROOT)/build/test_main_guard $(ROOT)/build/test_status_telemetry $(ROOT)/build/test_resolve $(ROOT)/build/test_pms_timeline $(ROOT)/build/pms_baseline_probe $(ROOT)/build/test_h264_bitstream_source $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_frame_store_sdram_sim $(ROOT)/build/test_frame_store_ddr_prefetch_sim $(ROOT)/build/test_sdram_memtest_sim $(ROOT)/build/test_sdram_mailbox $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant $(ROOT)/build/test_p3_host_recon_vectors $(ROOT)/build/test_p3_idct_reference_model $(ROOT)/build/test_p3_inter_pred_vectors $(ROOT)/build/extract_h264_golden
 	$(ROOT)/build/test_gdm_filter
 	$(ROOT)/build/test_spi_txn_complete
 	$(ROOT)/build/test_idle_poll_budget
 	$(ROOT)/build/test_p720_e2e_budget
+	$(ROOT)/build/test_pl330_encode
 	bash $(ROOT)/tests/unit/test_idle_thread_budget_gate.sh
 	bash $(ROOT)/tests/unit/test_io_ack_follow_rtl_sim.sh
 	$(ROOT)/build/test_cadence
@@ -458,7 +460,18 @@ arm-ddr-bench:
 		-static
 	@file $(ROOT)/build/arm/ddr_write_bench
 
-arm-profile-tools: arm-ddr-bench
+# Lab-only PL330 ingest bench. Does NOT ring doorbell. Requires saw_executing +
+# content match; impossible throughput hard-fails. Do NOT unbind dma-pl330.
+arm-pl330-bench:
+	@if [ -z "$(ARM_CXX)" ]; then echo "No armhf g++ found"; exit 1; fi
+	@mkdir -p $(ROOT)/build/arm
+	$(ARM_CXX) -std=c++17 -O2 -Wall -I$(ROOT)/host -pthread \
+		-o $(ROOT)/build/arm/ddr_pl330_ingest_bench \
+		$(ROOT)/tools/ddr_pl330_ingest_bench.cpp \
+		-static -Wl,--whole-archive -lpthread -Wl,--no-whole-archive
+	@file $(ROOT)/build/arm/ddr_pl330_ingest_bench
+
+arm-profile-tools: arm-ddr-bench arm-pl330-bench
 	@if [ -z "$(ARM_CXX)" ]; then echo "No armhf g++ found"; exit 1; fi
 	@mkdir -p $(ROOT)/build/arm
 	$(ARM_CXX) -std=c++17 -O2 -Wall -I$(ROOT)/host \
@@ -530,4 +543,11 @@ $(ROOT)/build/test_p720_e2e_budget: $(ROOT)/tests/unit/test_p720_e2e_budget.cpp 
 		$(ROOT)/host/libmisterplex/p720_e2e_budget.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_p720_e2e_budget.cpp
+
+$(ROOT)/build/test_pl330_encode: $(ROOT)/tests/unit/test_pl330_encode.cpp \
+		$(ROOT)/host/libmisterplex/pl330_mem2mem.hpp \
+		$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp \
+		$(ROOT)/host/libmisterplex/ddr_zero_copy_ingest.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_pl330_encode.cpp
 
