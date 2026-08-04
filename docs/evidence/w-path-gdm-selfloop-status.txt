@@ -1,53 +1,51 @@
 w-path Sweep 114 GDM self-loop fix
 branch: w-path-idle-busyloop
-sha: e22deaf7ab5cca26f5e9e89bf545381d46d49870
+sha: 370519b910128d771bfcbfc2594f093879155aae
 worktree: /home/flynnsbit/Projects/MisterPlex-wt-path-720fix
 
-## Thread census (idle, OSD_CONTROL=0) — creation order
+## Thread census (idle, OSD_CONTROL=0) — creation order + file:line
 1. mpx-main     main.cpp:main                 sleep 200ms + resumeStrandedMain
 2. mpx-idle     media_player.cpp:startIdle    paint + sleep 30s (logo)
 3. mpx-input    media_player.cpp:startInput   DDR mailbox + sleep 100ms
-   (mpx-osd skipped when OSD_CONTROL=0)
+   (mpx-osd skipped when OSD_CONTROL=0 — startOsdPoll early-return)
 4. mpx-timeline pms_timeline.cpp:ctor         condvar wait
-5. mpx-gdm      companion.cpp:gdmLoop         *** WAS HOT tid 4397 ***
+5. mpx-gdm      companion.cpp:gdmLoop         *** WAS HOT tid 4397 (unnamed) ***
 6. mpx-http     companion.cpp:httpLoop        select 200ms
 
 Play-only: mpx-play, mpx-stream, mpx-audio
 
-## Root cause (quoted)
-companion.cpp gdmLoop PRE-FIX:
+## Root cause (quoted pre-fix)
+companion.cpp gdmLoop:
   if (strstr(buf, "M-SEARCH") || strstr(buf, "plex")) sendto(peer, advertise);
 gdmPayload contains many "plex" tokens. Own broadcast/loopback → match →
 sendto(self) → forever. select always readable; voluntary≈0; ~108% core;
-stime 3× utime. Matches parent forensics exactly.
+stime 3× utime. Matches parent Sweep 114 forensics exactly.
 
 ## Fix
-- gdmShouldReply(): M-SEARCH only (case-insensitive)
+- gdmShouldReply(): M-SEARCH only (case-insensitive) in gdm_filter.hpp
 - drop peer == selfIp / 127.0.0.1
-- max 20 replies/s; select error sleeps 50ms
+- max 20 replies/s; select error sleeps 50ms (no error spin)
 - all threads named
-- deploy script detects misterplex_v2 live path
+- deploy_misterplexd.sh prefers live misterplex_v2 path
 
 ## RED/GREEN
-- test_gdm_filter RED (legacy predicate header): true rc=1
+- test_gdm_filter RED (legacy "contains plex" header): true rc=1 (7 FAILs)
 - test_gdm_filter GREEN: true rc=0
 - make unit; echo "true rc=$?" → true rc=0
 
-## Device gate (parent — CURRENT binary must FAIL before deploy)
+## Device gate (parent)
+BEFORE deploy of this sha, on CURRENT spinning binary:
   INTERVAL=5 MAX_CORE_PCT=15 ./scripts/check_idle_thread_budget.sh
-  # expect FAIL on f315ffb3 / e22deaf7-class build (108% mpx-gdm)
-  # expect OK after this fix
+  # must FAIL (rc=1) — that is the RED proof against live 108% spin
+AFTER deploy:
+  INTERVAL=5 MAX_CORE_PCT=15 ./scripts/check_idle_thread_budget.sh  # expect OK
+  INTERVAL=5 ./scripts/daemon_thread_cpu.sh   # expect mpx-gdm << 5%
 
-  INTERVAL=5 ./scripts/daemon_thread_cpu.sh
+## PREDICTION (PREDICTION — not device claim)
+- system idle% daemon on, no play: **40–49%** (→ 49.4% stopped)
+- misterplexd sum %one_core idle: **< 5%**
+- hottest thread: **< 3%** (mpx-gdm in select)
+- Sweep 113 recipe decode w/ daemon: **1.20–1.30x** (→ 1.31x)
+Prior miss: spiWord was real but second-order; GDM self-loop was the wall.
 
-## PREDICTION (before parent measure — PREDICTION)
-- system idle% daemon on, no play: **40–49%** (toward 49.4% stopped ceiling)
-- misterplexd %one_core idle (sum threads): **< 5%**
-- hottest thread %one_core: **< 3%** (mpx-gdm blocking in select)
-- Sweep 113/114 decode w/ daemon: **1.20–1.30x** (toward 1.31x stopped)
-Prior miss published: spiWord was real but second-order; GDM loop was the wall.
-
-## Parent deploy
-  # from worktree after arm-plexd
-  # deploy_misterplexd.sh now prefers misterplex_v2 when live/present
-  MISTER_HOST=... ./scripts/deploy_misterplexd.sh
+No Quartus. No device by agent.
