@@ -56,6 +56,89 @@ constexpr uint8_t kYuv420BlackY = 16;
 constexpr uint8_t kYuv420BlackU = 128;
 constexpr uint8_t kYuv420BlackV = 128;
 
+// ---- 720p tier (present path land; opt-in RBF macros) ----
+constexpr int kPlex720pCodedWidth = 1280;
+constexpr int kPlex720pCodedHeight = 720;
+constexpr int kPlex720pDisplayWidth = 1280;
+constexpr int kPlex720pDisplayHeight = 720;
+constexpr int kPlex720pPresentedWidth = 1280;
+constexpr int kPlex720pPresentedHeight = 720;
+constexpr int kPlex720pPillarboxLeft = 0;
+constexpr int kPlex720pPillarboxRight = 0;
+constexpr int kPlex720pYuv420pBytes = 1382400;
+constexpr int kPlex720pYStrideBytes = 1280;
+constexpr int kPlex720pChromaStrideBytes = 640;
+constexpr uint32_t kPlex720pYuv420pBankStride = 0x00180000u;
+constexpr uint32_t kPlex720pPhysBase = 0x30180000u;
+// Alias used by PL330/Option-C ingest code (integ naming).
+constexpr uint32_t kPlex720pDdrFramePhysBase = kPlex720pPhysBase;
+constexpr uint32_t kPlex720pYuv420pDoorbellPhys = 0x3047F000u;
+// L4 beam (w-clock): 24 MHz, H=1312, V=762 → 24.006 Hz with DE 1280×720.
+constexpr int kPlex720p24BeamHTotal = 1312;
+constexpr int kPlex720p24BeamVTotal = 762;
+constexpr int kPlex720p24BeamHDe = 1280;
+constexpr int kPlex720p24BeamVActive = 720;
+constexpr int kPlex720p24ClkSysHz = 24000000;
+constexpr int kPlex960PresentedWidth = 960;
+constexpr int kPlex960PresentedHeight = 540;
+
+// Reserved HPS window (parent device: mem=511M memmap=513M$511M).
+constexpr uint32_t kPlexDdrReservedWindowStart = 0x1FF00000u;
+constexpr uint32_t kPlexDdrReservedWindowEnd = 0x40000000u;
+
+// Option-C triple end = first free byte after 3×720p banks (base+3*stride).
+constexpr uint32_t kPlex720pMapBytes3Bank = 0x00480000u; // 3 * 0x180000
+constexpr uint32_t kPlex720pOptionCTripleEndPhys =
+    kPlex720pDdrFramePhysBase + kPlex720pMapBytes3Bank; // 0x30600000
+
+// PL330 program scratch + contiguous staging (HPS DMA src). Collision fence only
+// until product DMA path lands. Mirror intent of DDR_PL330_SCRATCH_PHYS = 0x3060_0000.
+constexpr uint32_t kDdrPl330ScratchPhys = 0x30600000u;
+constexpr uint32_t kPl330AbiRegionPhys = kPlex720pOptionCTripleEndPhys;
+constexpr uint32_t kPl330ProgScratchPhys = kPl330AbiRegionPhys;
+constexpr uint32_t kPl330ProgScratchBytes = 0x1000u;
+constexpr uint32_t kPl330StagingPhys = kPl330ProgScratchPhys + kPl330ProgScratchBytes;
+constexpr uint32_t kPl330StagingBytes = kPlex720pYuv420pBankStride; // 0x180000
+constexpr uint32_t kPl330AbiRegionBytes = kPl330ProgScratchBytes + kPl330StagingBytes;
+constexpr uint32_t kPl330AbiRegionEndPhys = kPl330AbiRegionPhys + kPl330AbiRegionBytes;
+
+static_assert(kPl330AbiRegionPhys == 0x30600000u, "PL330 ABI base");
+static_assert(kPl330AbiRegionPhys == kDdrPl330ScratchPhys, "PL330 ABI == scratch phys");
+static_assert(kPl330AbiRegionPhys ==
+                  kPlex720pDdrFramePhysBase + 3u * kPlex720pYuv420pBankStride,
+              "PL330 sits after Option-C triple banks");
+static_assert(kPlex720pYuv420pDoorbellPhys + 0x1000u <= kPl330AbiRegionPhys,
+              "doorbell page must not reach PL330");
+static_assert(kPl330AbiRegionPhys >= kPlexDdrReservedWindowStart &&
+                  kPl330AbiRegionEndPhys <= kPlexDdrReservedWindowEnd,
+              "PL330 ABI inside memmap reserved window");
+static_assert(kDdrFramePhysBase + 2u * kPlex480pYuv420pBankStride <= kPlex720pDdrFramePhysBase,
+              "480p map must not overlap Option-C base");
+
+inline bool pl330PhysInProgScratch(uint32_t phys, uint32_t len = 1) {
+    if (len == 0)
+        return false;
+    if (phys < kPl330ProgScratchPhys)
+        return false;
+    return phys + len <= kPl330ProgScratchPhys + kPl330ProgScratchBytes;
+}
+
+inline bool pl330PhysInStaging(uint32_t phys, uint32_t len = 1) {
+    if (len == 0)
+        return false;
+    if (phys < kPl330StagingPhys)
+        return false;
+    return phys + len <= kPl330StagingPhys + kPl330StagingBytes;
+}
+
+inline bool pl330AbiOverlapsOptionCBanks(uint32_t phys, uint32_t len) {
+    const uint32_t a0 = phys;
+    const uint32_t a1 = phys + len;
+    const uint32_t b0 = kPlex720pDdrFramePhysBase;
+    const uint32_t b1 = kPlex720pOptionCTripleEndPhys;
+    return a0 < b1 && b0 < a1;
+}
+
 enum class DdrFramePlacement {
     None,
     Pillarbox,

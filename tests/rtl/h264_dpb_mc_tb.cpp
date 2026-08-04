@@ -722,8 +722,13 @@ int main(int argc, char** argv) {
             s.tick();
             if (s.top.luma_window_valid) {
                 int idx = s.top.luma_window_idx;
-                int sx = std::clamp(-2 + (idx % 21) - 2, 0, W - 1);
-                int sy = std::clamp(-2 + (idx / 21) - 2, 0, H - 1);
+                // H.264 8.4.2.1 / 6-tap support: sample at origin + win - 2,
+                // with out-of-picture coordinates clamped to the edge sample
+                // (not wrapped). origin already includes mb*16 + mv>>2.
+                const int ox = static_cast<int16_t>(s.top.luma_origin_x);
+                const int oy = static_cast<int16_t>(s.top.luma_origin_y);
+                int sx = std::clamp(ox + (idx % 21) - 2, 0, W - 1);
+                int sy = std::clamp(oy + (idx / 21) - 2, 0, H - 1);
                 uint8_t want = s.mem[i420Addr(0, 0, sx, sy)];
                 if (s.top.luma_window_sample != want) {
                     std::cerr << "FAIL h264_dpb_mc RTL: luma window clamp mismatch idx=" << idx
@@ -736,8 +741,10 @@ int main(int argc, char** argv) {
             }
             if (s.top.chroma_u_window_valid || s.top.chroma_v_window_valid) {
                 int idx = s.top.chroma_window_idx;
-                int sx = std::clamp(-1 + (idx % 9), 0, CW - 1);
-                int sy = std::clamp(-1 + (idx / 9), 0, CH - 1);
+                const int cx0 = static_cast<int16_t>(s.top.chroma_origin_x);
+                const int cy0 = static_cast<int16_t>(s.top.chroma_origin_y);
+                int sx = std::clamp(cx0 + (idx % 9), 0, CW - 1);
+                int sy = std::clamp(cy0 + (idx / 9), 0, CH - 1);
                 int plane = s.top.chroma_u_window_valid ? 1 : 2;
                 uint8_t want = s.mem[i420Addr(0, plane, sx, sy)];
                 if (s.top.chroma_window_sample != want) {

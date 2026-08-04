@@ -24,8 +24,8 @@
 `default_nettype none
 
 module h264_decode_skeleton #(
-    parameter int FRAME_W  = 640,   // 40 MB columns
-    parameter int FRAME_H  = 480,   // 30 MB rows
+    parameter int FRAME_W  = 1280,  // 80 MB columns (720p content)
+    parameter int FRAME_H  = 720,   // 45 MB rows
     parameter int MB_W     = (FRAME_W + 15) / 16,
     parameter int MB_H     = (FRAME_H + 15) / 16,
     parameter int MB_COUNT = MB_W * MB_H,

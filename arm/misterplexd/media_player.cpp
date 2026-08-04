@@ -1,3 +1,4 @@
+#include <pthread.h>
 #include "media_player.hpp"
 #include "log_redact.hpp"
 #include "plex_resolve.hpp"
@@ -545,6 +546,9 @@ void MediaPlayer::startOsdPoll() {
     osdCapability_.store(static_cast<int>(OsdCapability::Unknown));
     osdInertNotified_.store(false);
     osdThr_ = std::thread([this] {
+#if defined(__linux__)
+        pthread_setname_np(pthread_self(), "mpx-osd");
+#endif
         bool confstrLogged = false;
         bool transportLogged = false;
         bool applyLogged = false;
@@ -695,6 +699,9 @@ void MediaPlayer::startInputPoll() {
     if (inputThr_.joinable())
         inputThr_.join();
     inputThr_ = std::thread([this] {
+#if defined(__linux__)
+        pthread_setname_np(pthread_self(), "mpx-input");
+#endif
         bool logged = false;
         while (inputRun_.load()) {
             PlaybackCommand command = PlaybackCommand::None;
@@ -916,6 +923,9 @@ void MediaPlayer::startIdle() {
     if (idleThr_.joinable())
         idleThr_.join();
     idleThr_ = std::thread([this] {
+#if defined(__linux__)
+        pthread_setname_np(pthread_self(), "mpx-idle");
+#endif
         while (idleRun_.load()) {
             if (playing_.load() || idleMode() == IdleMode::LastFrame) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(200));
@@ -1368,6 +1378,9 @@ bool MediaPlayer::play(const std::string& urlOrPath, int64_t startOffsetMs,
         playing_.store(true);
         showPlaybackOverlay(PlaybackOverlayState::Playing, startOffsetMs, durationMs);
         thr_ = std::thread([this, urlOrPath, startOffsetMs, httpHeaders, durationMs] {
+#if defined(__linux__)
+        pthread_setname_np(pthread_self(), "mpx-play");
+#endif
             try {
                 threadMain(urlOrPath, startOffsetMs, httpHeaders, durationMs);
             } catch (const std::exception& ex) {

@@ -23,8 +23,8 @@
 //            h264_deblock (w-deblock)
 
 module h264_decode_core #(
-    parameter int FRAME_W   = 320,
-    parameter int FRAME_H   = 240,
+    parameter int FRAME_W   = 1280,
+    parameter int FRAME_H   = 720,
     parameter int MB_W      = (FRAME_W + 15) / 16,
     parameter int MB_H      = (FRAME_H + 15) / 16,
     parameter int MB_COUNT  = MB_W * MB_H

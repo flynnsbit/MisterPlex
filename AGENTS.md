@@ -42,7 +42,11 @@ Host: `MISTER_HOST` (default `192.168.1.183`), `MISTER_PASS` (default `1`).
 
 ## Status files
 
-| Path | Role |
+Keep writing to the `/tmp` paths below — they are unchanged. Each one is now a
+**symlink into a permanent store outside the worktree**, so evidence survives a
+reboot. `/tmp` being cleared has already destroyed a session's history once.
+
+| Path (write here) | Role |
 |------|------|
 | `/tmp/misterplex-loop-status.txt` | Parent tick |
 | `/tmp/misterplex-agent-bucket.json` | Planned workers |
@@ -83,6 +87,34 @@ failure where the core never frees a DDR bank.
 
 `/dev/video0` is exclusive — a desktop app (OBS, `xdg-open`, nautilus preview) holding it
 makes capture fail with `Device or resource busy`. Check with `fuser -v /dev/video0`.
+
+Permanent store: `$HOME/Projects/MisterPlex/Memory/` — `lab/` holds the live
+orchestration evidence (`parent/`, `agents/`, `status/`, `quartus/`), and
+`tmp-rescue-*/` holds artifacts recovered from `/tmp`. Read
+`lab/parent/misterplex-parent-720p-decode-verdict.txt` first — it is the
+authoritative project record. `Memory/README.md` indexes the whole store.
+
+After a reboot, or any time `/tmp` is cleared, restore the links:
+
+```bash
+scripts/relink_lab_evidence.sh
+```
+
+`/tmp` is **tmpfs**: it is guaranteed to be erased on reboot, so nothing of value
+may live there. `Memory/` is git-ignored (`.gitignore` + `.git/info/exclude`)
+because it holds the lab PMS address and device captures.
+
+**Known hazard:** git-ignored files inside a repo are exactly what `git clean -xfd`
+deletes. Two things contain that risk, and neither removes it — do not run
+`git clean -xfd` in the primary clone:
+
+1. `Memory/` lives in the **primary clone** (`~/Projects/MisterPlex`), while all
+   build/test work happens in separate worktrees (`MisterPlex-wt-*`), so a clean
+   during a build does not reach it.
+2. No script in this repo runs `git clean`; the risk is manual only.
+
+Live Plex tokens (`/tmp/.tok*`) are **never** copied into the store, and token
+values are redacted from every text file that is.
 
 ## Hard rules (lab)
 
@@ -161,6 +193,9 @@ These bind human-directed sessions and agent swarms alike, and must be encoded i
 
 ## Key docs
 
+- **[`docs/LESSONS.md`](docs/LESSONS.md) — accumulated case law under rule 0. Read this
+  before reasoning about a build, a gate, a device symptom, or an area budget. Every rule
+  in it was paid for with a real wrong conclusion in this project.**
 - `docs/phase3-decode.md`, `docs/phase3-3l-idct.md` — decode path  
 - `docs/p3-wide-rca.md` — full-width / pillar  
 - `docs/crt-lcd-lab-checklist.md` — CRT/LCD lab  

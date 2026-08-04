@@ -2,6 +2,8 @@
 #include "log_redact.hpp"
 #include "player_identity.hpp"
 
+#include "libmisterplex/gdm_filter.hpp"
+
 #include <arpa/inet.h>
 #include <cctype>
 #include <cerrno>
@@ -16,6 +18,7 @@
 #include <cstdio>
 #include <sstream>
 #include <string>
+#include <pthread.h>
 #include <thread>
 #include <vector>
 
@@ -571,8 +574,18 @@ void Companion::clearMedia() {
 bool Companion::start() {
     if (running_.exchange(true))
         return true;
-    gdmThr_ = std::thread([this] { gdmLoop(); });
-    httpThr_ = std::thread([this] { httpLoop(); });
+    gdmThr_ = std::thread([this] {
+#if defined(__linux__)
+        pthread_setname_np(pthread_self(), "mpx-gdm");
+#endif
+        gdmLoop();
+    });
+    httpThr_ = std::thread([this] {
+#if defined(__linux__)
+        pthread_setname_np(pthread_self(), "mpx-http");
+#endif
+        httpLoop();
+    });
     log("companion: GDM + HTTP :" + std::to_string(port_) + " name=" + name_);
     return true;
 }
@@ -631,6 +644,11 @@ void Companion::gdmLoop() {
         }
         timeval tv{0, 200000};
         int r = select(maxfd + 1, &rfds, nullptr, nullptr, &tv);
+        if (r < 0) {
+            // Avoid tight spin on repeated select errors.
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            continue;
+        }
         if (r > 0) {
             for (int fd : fds) {
                 if (!FD_ISSET(fd, &rfds))
@@ -643,7 +661,10 @@ void Companion::gdmLoop() {
                 if (n <= 0)
                     continue;
                 buf[n] = 0;
-                if (!gdmIsDiscoveryProbe(buf))
+                // M-SEARCH-only (gdm_filter.hpp). Bare "plex" self-advertise loop
+                // was the Sweep 114 108% core spin (mpx-gdm / unnamed tid).
+                // Prefer gdmShouldReply over gdmIsDiscoveryProbe (still allows bare "plex").
+                if (!misterplex::gdmShouldReply(buf, static_cast<size_t>(n)))
                     continue;
                 auto payload = gdmPayload();
                 const ssize_t sn = sendto(fd, payload.data(), payload.size(), 0,

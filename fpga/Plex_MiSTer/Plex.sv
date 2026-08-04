@@ -207,6 +207,9 @@ end
 wire clk_sys;
 wire clk_sdram;
 wire clk_ddr;
+`ifdef PRESENT_CLK_PIX_PLL
+wire clk_pix_pll;
+`endif
 wire pll_locked;
 pll pll
 (
@@ -215,6 +218,9 @@ pll pll
 	.outclk_0(clk_sys),
 	.outclk_1(clk_sdram),
 	.outclk_2(clk_ddr),
+`ifdef PRESENT_CLK_PIX_PLL
+	.outclk_3(clk_pix_pll),
+`endif
 	.locked(pll_locked)
 );
 
@@ -226,6 +232,133 @@ wire reset = RESET | status[0] | buttons[1];
 wire        content_res_640x480 = status[4];
 wire [9:0]  content_width       = content_res_640x480 ? 10'd640 : 10'd320;
 wire [9:0]  content_height      = content_res_640x480 ? 10'd480 : 10'd240;
+
+// ---------------------------------------------------------------------------
+// L4 720p present geom hierarchy (DEFAULT OFF via PLEX_PRESENT_720P_L4).
+// Instantiates present_geom_latch + plex_present_geom_mux so they are not
+// QIP-only dead code. Poller (plxg_ddr_poller) is w-mem — not this land;
+// latch wr_en/commit stay 0 here. Enable recipe also sets
+// FABRIC_NATIVE_720P_GEOM so mux forces 1280×720 static geometry until
+// poller lands. Product default (macro off) does not elaborate this block.
+// ---------------------------------------------------------------------------
+`ifdef PLEX_PRESENT_720P_L4
+wire        plxg_wr_en = 1'b0;
+wire [2:0]  plxg_wr_idx = 3'd0;
+wire [63:0] plxg_wr_data = 64'd0;
+wire        plxg_commit = 1'b0;
+wire        plxg_frame_boundary = 1'b0; // promote unused until poller+vsync wire
+wire        plxg_win_en, plxg_geom_en, plxg_live_valid;
+wire [10:0] plxg_cw, plxg_ch, plxg_cx0, plxg_cy0;
+wire [11:0] plxg_hde12, plxg_vde12;
+wire [10:0] plxg_hde = plxg_hde12[10:0];
+wire [10:0] plxg_vde = plxg_vde12[10:0];
+wire [10:0] plxg_coded_w, plxg_coded_h;
+wire [11:0] plxg_y_stride;
+wire [10:0] plxg_c_stride, plxg_dw, plxg_dh, plxg_px, plxg_py, plxg_cl, plxg_ct;
+wire        plxg_dar_valid, plxg_fps_valid;
+wire [11:0] plxg_dar_x, plxg_dar_y;
+wire [7:0]  plxg_content_fps;
+wire [15:0] plxg_live_seq;
+wire [13:0] plxg_live_epoch;
+wire        plxg_pending_valid, plxg_promote_pulse;
+
+(* noprune *) present_geom_latch u_plxg_latch (
+	.clk(clk_sys),
+	.reset(reset),
+	.wr_en(plxg_wr_en),
+	.wr_idx(plxg_wr_idx),
+	.wr_data(plxg_wr_data),
+	.commit(plxg_commit),
+	.frame_boundary(plxg_frame_boundary),
+	.win_enable(plxg_win_en),
+	.geom_enable(plxg_geom_en),
+	.content_w(plxg_cw),
+	.content_h(plxg_ch),
+	.content_x0(plxg_cx0),
+	.content_y0(plxg_cy0),
+	.h_de(plxg_hde12),
+	.v_de(plxg_vde12),
+	.coded_w(plxg_coded_w),
+	.coded_h(plxg_coded_h),
+	.y_stride(plxg_y_stride),
+	.chroma_stride(plxg_c_stride),
+	.display_w(plxg_dw),
+	.display_h(plxg_dh),
+	.present_x(plxg_px),
+	.present_y(plxg_py),
+	.crop_left(plxg_cl),
+	.crop_top(plxg_ct),
+	.dar_valid(plxg_dar_valid),
+	.dar_x(plxg_dar_x),
+	.dar_y(plxg_dar_y),
+	.fps_valid(plxg_fps_valid),
+	.content_fps(plxg_content_fps),
+	.live_valid(plxg_live_valid),
+	.live_seq(plxg_live_seq),
+	.live_epoch(plxg_live_epoch),
+	.pending_valid(plxg_pending_valid),
+	.promote_pulse(plxg_promote_pulse)
+);
+
+wire        present_win_enable, present_geom_enable;
+wire [10:0] present_content_w, present_content_h;
+wire [10:0] present_content_x0, present_content_y0;
+wire [10:0] present_win_h_de, present_win_v_de;
+wire [10:0] present_geom_coded_w, present_geom_coded_h;
+wire [11:0] present_geom_y_stride;
+wire [10:0] present_geom_chroma_stride;
+wire [10:0] present_geom_display_w, present_geom_display_h;
+wire [10:0] present_geom_present_x, present_geom_present_y;
+wire [10:0] present_geom_crop_left, present_geom_crop_top;
+
+(* noprune *) plex_present_geom_mux u_present_geom_mux (
+	.content_res_640x480(content_res_640x480),
+	.plxg_live_valid(plxg_live_valid),
+	.plxg_win_en(plxg_win_en),
+	.plxg_geom_en(plxg_geom_en),
+	.plxg_cw(plxg_cw),
+	.plxg_ch(plxg_ch),
+	.plxg_cx0(plxg_cx0),
+	.plxg_cy0(plxg_cy0),
+	.plxg_hde(plxg_hde),
+	.plxg_vde(plxg_vde),
+	.plxg_coded_w(plxg_coded_w),
+	.plxg_coded_h(plxg_coded_h),
+	.plxg_y_stride(plxg_y_stride),
+	.plxg_c_stride(plxg_c_stride),
+	.plxg_dw(plxg_dw),
+	.plxg_dh(plxg_dh),
+	.plxg_px(plxg_px),
+	.plxg_py(plxg_py),
+	.plxg_cl(plxg_cl),
+	.plxg_ct(plxg_ct),
+	.present_win_enable(present_win_enable),
+	.present_geom_enable(present_geom_enable),
+	.content_width(present_content_w),
+	.content_height(present_content_h),
+	.present_content_x0(present_content_x0),
+	.present_content_y0(present_content_y0),
+	.present_win_h_de(present_win_h_de),
+	.present_win_v_de(present_win_v_de),
+	.present_geom_coded_w(present_geom_coded_w),
+	.present_geom_coded_h(present_geom_coded_h),
+	.present_geom_y_stride(present_geom_y_stride),
+	.present_geom_chroma_stride(present_geom_chroma_stride),
+	.present_geom_display_w(present_geom_display_w),
+	.present_geom_display_h(present_geom_display_h),
+	.present_geom_present_x(present_geom_present_x),
+	.present_geom_present_y(present_geom_present_y),
+	.present_geom_crop_left(present_geom_crop_left),
+	.present_geom_crop_top(present_geom_crop_top)
+);
+
+// Anti-DCE: L4 hierarchy must survive map even before poller.
+(* keep = 1 *) wire _keep_l4_geom =
+	present_win_enable | present_geom_enable | |present_content_w | |present_content_h |
+	|present_win_h_de | |present_win_v_de | plxg_live_valid | |plxg_live_seq |
+	plxg_pending_valid | plxg_promote_pulse | |present_geom_y_stride |
+	|present_content_x0 | |present_content_y0 | |present_geom_display_w;
+`endif
 
 // Legacy cadence input is now fixed; the daemon handles exact content pacing.
 wire [7:0] content_fps = 8'd24;
@@ -736,6 +869,13 @@ present_core #(
 	.clk(clk_sys),
 	.clk_sdram(clk_sdram),
 	.clk_audio(CLK_AUDIO),
+	// clk_pix: product default ties to clk_sys. PRESENT_CLK_PIX_PLL (default
+	// OFF) drives outclk_3 = 29.70 MHz (or 74.25 with PRESENT_CLK_PIX_74_25).
+`ifdef PRESENT_CLK_PIX_PLL
+	.clk_pix(clk_pix_pll),
+`else
+	.clk_pix(clk_sys),
+`endif
 	.reset(present_reset),
 	.pal(status[2]),
 	.scandouble(forced_scandoubler),
@@ -746,7 +886,18 @@ present_core #(
 	// defaults (Pattern=None, Audio tone=Off, Force bars=No).
 	.pattern(2'd0),
 	.audio_en(1'b0),
+	// use_frame_store=1 FORCES colorbars (disables external frame). Keep 0 so
+	// DDR/has_frame can feed the store when present. Not an "enable store" bit.
 	.use_frame_store(1'b0),
+	// L4: content from plex_present_geom_mux (FABRIC_NATIVE_720P_GEOM → 1280×720).
+	// Default Template path ignores these (tied 0).
+`ifdef PLEX_PRESENT_720P_L4
+	.content_w(present_content_w),
+	.content_h(present_content_h),
+`else
+	.content_w(11'd0),
+	.content_h(11'd0),
+`endif
 	.fs_wr_en(fs_wr_en),
 	.fs_wr_pixel(fs_wr_pixel),
 	.fs_wr_reset(fs_wr_reset),

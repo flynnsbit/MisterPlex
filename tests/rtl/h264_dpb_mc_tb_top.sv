@@ -281,6 +281,40 @@ module h264_dpb_mc_tb #(
 		end
 	endgenerate
 
+	// Pin BANK1_BASE to fixture geometry. Product RTL defaults are 1280x720;
+	// leaving BANK1 unpinned made cur_base=1382400 and broke promotion checks.
+	h264_dpb_one_ref #(
+		.FRAME_W(624),
+		.FRAME_H(480),
+		.BANK1_BASE(624 * 480 * 3 / 2)
+	) u_dpb (
+		.clk(clk), .reset(reset),
+		.idr_start(idr_start), .frame_done(dpb_frame_done),
+		.ref_ready(ref_ready_good), .current_base(current_base), .reference_base(reference_base),
+		.filtered_sample_valid(filtered_sample_valid),
+		.filtered_mb_x(filtered_mb_x), .filtered_mb_y(filtered_mb_y),
+		.filtered_plane(filtered_plane), .filtered_sample_idx(filtered_sample_idx),
+		.filtered_sample(filtered_sample),
+		.mem_we(mem_we), .mem_waddr(mem_waddr), .mem_wdata(mem_wdata),
+		.fetch_start(fetch_start),
+		.fetch_mb_x(fetch_mb_x), .fetch_mb_y(fetch_mb_y),
+		.fetch_part_mode(fetch_part_mode), .fetch_part_idx(fetch_part_idx),
+		.fetch_part_w(fetch_part_w), .fetch_part_h(fetch_part_h),
+		.fetch_mv_x_qpel(fetch_mv_x_qpel), .fetch_mv_y_qpel(fetch_mv_y_qpel),
+		.fetch_busy(fetch_busy), .fetch_done(fetch_done), .fetch_error_no_ref(fetch_error_no_ref),
+		.luma_frac_x(luma_frac_x), .luma_frac_y(luma_frac_y),
+		.chroma_frac_x(chroma_frac_x), .chroma_frac_y(chroma_frac_y),
+		.luma_origin_x(luma_origin_x), .luma_origin_y(luma_origin_y),
+		.chroma_origin_x(chroma_origin_x), .chroma_origin_y(chroma_origin_y),
+		.mem_rd(mem_rd), .mem_raddr(mem_raddr), .mem_rdata(mem_rdata), .mem_rvalid(mem_rvalid),
+		.luma_window_valid(luma_window_valid_good), .luma_window_idx(luma_window_idx_good),
+		.luma_window_sample(luma_window_sample_good),
+		.chroma_u_window_valid(chroma_u_window_valid_good),
+		.chroma_v_window_valid(chroma_v_window_valid_good),
+		.chroma_window_idx(chroma_window_idx_good),
+		.chroma_window_sample(chroma_window_sample_good)
+	);
+
 	h264_inter_mc_part u_mc (
 		.luma_ref_win(luma_ref_win),
 		.chroma_u_ref_win(chroma_u_ref_win),
@@ -296,6 +330,9 @@ module h264_dpb_mc_tb #(
 	assign ref_ready = FAULT_EARLY_REF ? 1'b1 : ref_ready_good;
 	assign luma_window_valid = luma_window_valid_good;
 	assign luma_window_idx = luma_window_idx_good;
+	// Red twin: corrupt the first window beat. For the mv=(-5,-7) top-left
+	// case idx0 is fully edge-clamped (origin-2 → sample (0,0)); a wrong
+	// clamp/pipeline that never checks edge samples would miss this.
 	assign luma_window_sample = (FAULT_BAD_CLAMP && luma_window_valid_good && luma_window_idx_good == 9'd0) ?
 	                            (luma_window_sample_good + 8'd1) : luma_window_sample_good;
 	assign chroma_u_window_valid = chroma_u_window_valid_good;

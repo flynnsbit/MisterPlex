@@ -21,9 +21,10 @@ module h264_intra_nb_ctx_tb (
 	output wire [7:0]  recon [0:15],
 	// Degeneracy assertion outputs
 	output reg  [15:0] nb_used_count,  // MBs where has_above && has_left && pred != all-128
-	output reg  [15:0] mb_count
+	output reg  [15:0] mb_count,
+	output wire        geom_reject
 );
-	// Neighbour context module (DOES NOT EXIST YET — test will fail to compile)
+	// Neighbour context — default MAX=80 (1280/16)
 	wire [7:0] ctx_above [0:7];
 	wire [7:0] ctx_left [0:3];
 	wire [7:0] ctx_top_left;
@@ -31,7 +32,7 @@ module h264_intra_nb_ctx_tb (
 	wire       ctx_has_left;
 
 	h264_intra_nb_ctx #(
-		.MB_WIDTH_MAX(40)   // 640/16
+		.MB_WIDTH_MAX(80)   // 1280/16
 	) u_nb_ctx (
 		.clk(clk),
 		.reset(reset),
@@ -46,7 +47,8 @@ module h264_intra_nb_ctx_tb (
 		.left(ctx_left),
 		.top_left(ctx_top_left),
 		.has_above(ctx_has_above),
-		.has_left(ctx_has_left)
+		.has_left(ctx_has_left),
+		.geom_reject(geom_reject)
 	);
 
 	// Intra 4x4 prediction

@@ -17,6 +17,8 @@ module h264_rtl_recon_scorer_tb #(
 	input  wire        reset,
 
 	// Testbench injection: coefficients + QP + prediction for one 4x4 block
+	// Testbench injection: coefficients + QP + prediction for one 4x4 block.
+	// Widths track product h264_iq_idct_4x4.sv (coeff 16b, dequant/residual 29b).
 	input  wire signed [15:0] inject_coeff [0:15],
 	input  wire [5:0]         inject_qp,
 	input  wire [7:0]         inject_pred [0:15],
