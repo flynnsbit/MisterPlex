@@ -87,3 +87,24 @@ AGREED_BW: 33.1776 MB/s per direction @24 I420 1280x720 (B=1382400);
 steady R+W 66.3552 MB/s (9.2% of 720 MB/s peak@90MHz×8);
 PPC2 does not scale DDR average; 16-line is latency not BW.
 ```
+
+
+## Addendum — reply to w-scaler B/clk framing
+
+### Headline (unchanged)
+**33.1776 MB/s per full-frame direction** (not a DE-peak B/clk).
+
+### Optional B/clk form (same bytes, clk_sys@20 domain)
+`BW_frame / F_sys = 33.1776e6 / 20e6 = **1.65888 B/clk_sys average** per direction.`
+
+### Corrections to scaler draft
+1. **PPC=2 ≠ 3.0 B/clk DDR during DE.** Present RGB comes from **line-buffer qwords**
+   (`ddr_frame_store.sv` hit path / `rd_miss_now`); DDRAM beats are **line fills**,
+   averaged to one I420 frame/present ≈ 33.1776 MB/s, not 2×1.5 per sysclk.
+2. **~93 MB/s (33+60) is not the design load.** 60 MB/s would be 40 Mpix/s×1.5 if every
+   fabric pixel were a unique DDR I420 fetch — false under linebuf. Steady design load
+   remains **~66.36 MB/s R+W**.
+3. **Write vs present-read ports:** ARM write = HPS `/dev/mem` into bank phys
+   (`kPlex720pPhysBase`); fabric read = `DDRAM_*` in `ddr_frame_store`. Same DRAM die,
+   **two masters** — concurrent in wall-clock; not the same B/clk counter domain.
+   docs/display-resolution.md: ARM-write column is simultaneous HPS DDR fabric traffic.
