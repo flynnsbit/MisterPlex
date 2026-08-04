@@ -2,8 +2,15 @@
 // Coordinate: w-mem + w-clock + w-scaler. Do not invent a second B/clk number.
 // Clocks (pll_0002.v SoT): clk_sys=20e6, clk_ddr=90e6.
 // Shipping glass: MULTI + PPC=2 + clk_pix@29.7e6, clk_sys@20e6.
-// HOST write is NOT f2sdram — parent HW /dev/mem 1382400 B = 14.978 ms/f.
-
+//
+// STATUS SPLIT (do not collapse):
+//   reader_steady_delta: CLOSED by w-clock
+//     tests/unit/test_ddr_frame_store_720p_ppc2_bus.sh true rc=0
+//     G0 total_rd=182809 payload=173120 door=9689 ddr_cy=2784152<3750000 @20:90
+//   hps_write_concurrent + T_copy_e2e: OPEN (w-mem/w-path/parent)
+//     HOST write is NOT f2sdram — archive /dev/mem 1382400 B = 14.978 ms/f CPU TIME
+//   Forbidden phrasing: "fabric BW proof_gap still OPEN" without splitting reader vs HPS write.
+//
 localparam int P720_CODED_W           = 1280;
 localparam int P720_CODED_H           = 720;
 localparam int P720_I420_BYTES        = 1_382_400;
