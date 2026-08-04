@@ -46,3 +46,9 @@ Memory/
 # into a mislabeled commit via `git add -A`, 2026-08-04). Both forms: dir and symlink.
 .agent-work
 .agent-work/
+
+# Lab HDMI capture output (multi-GB .mkv). Lives as a real dir in the primary
+# checkout and as a symlink in worktrees; ignore both forms so `git add -A`
+# cannot sweep it (same trap class as .agent-work).
+avsync_hdmi_out
+avsync_hdmi_out/
