@@ -1,5 +1,5 @@
 === ddr_frame_dma_contended_tb EXECUTED ===
-PREREG arm=14978 ideal=3840 with_present=5760 m10k_dma=2 Q=8 cwe_deny=48 dma_deny=160
+PREREG arm=14978 ideal=3840 with_present=5760 m10k_dma=0 Q=8 cwe_deny=48 dma_deny=160
 PASS G2 misalign err_align
 PASS G0 solo copied=256 cyc=644 t_full_us_scaled=4830 (PR_ideal=3840)
 PASS G0b rand_busy bit_exact
@@ -10,10 +10,10 @@ PASS G1 fabric_contended_beats_arm margin_us=9451
 MEASURE G1 vs PREREG ratio_x100=95 (100=match)
 PASS G1b product CWE max_deny=10 grants=49 (quantum bound 48)
 PASS PROTO burst_hold_and_constant_addr_bc
-PASS M10K_PREREG dma=2 arb3=2
+PASS M10K_PREREG dma=0 arb3=0
 PASS ddr_frame_dma_contended_tb all
 DEVICE_BW_VERIFIED=0 NOT_INTEGRATION_READY=staging_doorbell_OPEN
-- tests/rtl/ddr_frame_dma_contended_tb.sv:475: Verilog $finish
+- /home/flynnsbit/Projects/MisterPlex-wt-integ-product-v2/tests/rtl/ddr_frame_dma_contended_tb.sv:476: Verilog $finish
 - S i m u l a t i o n   R e p o r t: Verilator 5.051 devel
-- Verilator: $finish at 27us; walltime 0.002 s; speed 12.865 ms/s
+- Verilator: $finish at 27us; walltime 0.003 s; speed 8.792 ms/s
 - Verilator: cpu 0.001 s on 1 threads; allocated 7 MB
