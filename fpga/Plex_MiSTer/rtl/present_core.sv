@@ -27,16 +27,26 @@ module present_core #(
 `else
 	parameter int FRAME_CMD_FIFO_AW = 5,
 `endif
+// Linebufs. 720p canvas (FRAME 1280×720 MULTI identity / L4): default 16 so
+// blackout ≥500 µs @ 2 px/clk / 20 MHz (8 lines = 256 µs — rd-duck MULTI gap).
+// Explicit FRAME_LINES_* still win; FRAME_LINES_8 on a 720p canvas auto-lifts
+// to 16 unless lab sets FRAME_LINES_8_FORCE.
 `ifdef FRAME_LINES_1
 	parameter int FRAME_LINE_COUNT = 1
 `elsif FRAME_LINES_4
 	parameter int FRAME_LINE_COUNT = 4
-`elsif FRAME_LINES_8
-	parameter int FRAME_LINE_COUNT = 8
 `elsif FRAME_LINES_16
 	parameter int FRAME_LINE_COUNT = 16
+`elsif FRAME_LINES_8
+	`ifdef FRAME_LINES_8_FORCE
+		parameter int FRAME_LINE_COUNT = 8
+	`else
+		parameter int FRAME_LINE_COUNT =
+			((FRAME_W == 1280) && (FRAME_H == 720)) ? 16 : 8
+	`endif
 `else
-	parameter int FRAME_LINE_COUNT = 4
+	parameter int FRAME_LINE_COUNT =
+		((FRAME_W == 1280) && (FRAME_H == 720)) ? 16 : 4
 `endif
 )(
 	input  wire        clk,
@@ -390,6 +400,16 @@ module present_core #(
 	assign sdram_refresh = 1'b0;
 
 `include "ddr_frame_layout_params.svh"
+	// Shared 720p DDR ABI tier (L4 OR MULTI@1280×720). See plex_ddr_720p_tier.svh.
+	`include "plex_ddr_720p_tier.svh"
+	// synthesis translate_off
+	initial begin
+		if (PLEX_DDR_720P_TIER && (FRAME_LINE_COUNT < FS_LINE_COUNT_MIN_720P))
+			$error("present_core: 720p tier needs LINE_COUNT>=%0d (got %0d) — MULTI@2px/20MHz blackout",
+				FS_LINE_COUNT_MIN_720P, FRAME_LINE_COUNT);
+	end
+	// synthesis translate_on
+	(* noprune *) wire plex_ddr_720p_tier_obs = PLEX_DDR_720P_TIER;
 
 	// N-wide frame-store ports (PPC=1 ⇒ rd_*_n is scalar passthrough).
 	wire [PRESENT_PPC*8-1:0] fs_r_n, fs_g_n, fs_b_n;
@@ -565,22 +585,23 @@ module present_core #(
 	wire                 fstore_rd_a = de_r;
 `endif
 
+	// FS_* from plex_ddr_720p_tier.svh — never hardwire 480p when canvas is 720p.
 	ddr_frame_store #(
 		.FRAME_W(FRAME_W),
 		.FRAME_H(FRAME_H),
 		.FRAME_STRIDE(FRAME_STRIDE),
-		.CODED_W(DDR_FRAME_CODED_WIDTH),
-		.CODED_H(DDR_FRAME_CODED_HEIGHT),
-		.DISPLAY_W(DDR_FRAME_DISPLAY_WIDTH),
-		.DISPLAY_H(DDR_FRAME_DISPLAY_HEIGHT),
-		.CROP_LEFT(DDR_FRAME_CROP_LEFT),
-		.CROP_TOP(DDR_FRAME_CROP_TOP),
-		.PRESENT_X(DDR_FRAME_PILLARBOX_LEFT),
-		.PRESENT_Y(0),
+		.CODED_W(FS_CODED_W),
+		.CODED_H(FS_CODED_H),
+		.DISPLAY_W(FS_DISPLAY_W),
+		.DISPLAY_H(FS_DISPLAY_H),
+		.CROP_LEFT(FS_CROP_LEFT),
+		.CROP_TOP(FS_CROP_TOP),
+		.PRESENT_X(FS_PRESENT_X),
+		.PRESENT_Y(FS_PRESENT_Y),
 		.LINE_COUNT(FRAME_LINE_COUNT),
-		.PHYS_BASE(32'h3000_0000),
-		.HPS_BANK_STRIDE_BYTES(DDR_FRAME_YUV420P_BANK_STRIDE),
-		.DOORBELL_PHYS(DDR_FRAME_YUV420P_DOORBELL_PHYS),
+		.PHYS_BASE(FS_PHYS_BASE),
+		.HPS_BANK_STRIDE_BYTES(FS_BANK_STRIDE),
+		.DOORBELL_PHYS(FS_DOORBELL),
 		.PHYS_BASE_720P(DDR_FRAME_720P_PHYS_BASE),
 		.HPS_BANK_STRIDE_BYTES_720P(DDR_FRAME_720P_YUV420P_BANK_STRIDE),
 		.DOORBELL_PHYS_720P(DDR_FRAME_720P_YUV420P_DOORBELL_PHYS)
