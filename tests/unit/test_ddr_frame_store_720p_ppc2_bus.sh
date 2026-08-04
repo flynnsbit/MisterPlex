@@ -21,7 +21,7 @@ rm -rf "$BUILD"
 mkdir -p "$BUILD/lc32" "$BUILD/lc8" "$BUILD/scalar_neg"
 echo "RTL SIM: using $VERILATOR_VERSION" >&2
 echo "PRE-REG: LC32 GREEN PARTIAL_CLOSED_READER; SCALAR_VIEW_NEG RED; LC8 RED; G2 RED"
-echo "PRE-REG: fabric_bw_closed=false; ppc2_reader_closed=false"
+echo "PRE-REG: fabric_bw_closed=false; ppc2_delivery_closed=false"
 
 build_one() {
   local dir="$1" lc="$2" cflags="$3"
@@ -52,7 +52,7 @@ echo "$OUT32" | grep -q 'G2_hang_mutant' || { echo "FAIL missing G2" >&2; exit 1
 echo "$OUT32" | grep -q 'payload_formula=172800+LC\*240' || { echo "FAIL missing tight formula" >&2; exit 1; }
 echo "$OUT32" | grep -q 'PARTIAL_CLOSED_READER' || { echo "FAIL must claim PARTIAL_CLOSED_READER only" >&2; exit 1; }
 echo "$OUT32" | grep -q 'fabric_bw_closed=false' || { echo "FAIL fabric_bw_closed must be false" >&2; exit 1; }
-echo "$OUT32" | grep -q 'ppc2_reader_closed=false' || { echo "FAIL ppc2_reader_closed must be false" >&2; exit 1; }
+echo "$OUT32" | grep -q 'ppc2_delivery_closed=false' || { echo "FAIL ppc2_delivery_closed must be false" >&2; exit 1; }
 echo "$OUT32" | grep -q 'NOT fit-release CLOSED' || { echo "FAIL must not claim fit CLOSED" >&2; exit 1; }
 echo "$OUT32" | grep -q 'isolated_reader_stress' || { echo "FAIL missing stress class label" >&2; exit 1; }
 echo "$OUT32" | grep -q 'dual_dist=' || { echo "FAIL missing dual-lane checksum" >&2; exit 1; }

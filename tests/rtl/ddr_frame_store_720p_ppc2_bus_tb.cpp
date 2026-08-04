@@ -617,13 +617,15 @@ int main(int argc, char** argv) {
 	std::printf("  PROVES: tight beats+upper, underrun0, dual-lane/full-frame FNV, G1 deadline, G2 RED\n");
 	std::printf("  DOES_NOT_PROVE: HPS supply, host write, product 24fps rate-match, sustainable BW\n");
 	std::printf("  class=isolated_reader_stress beam_fps=%.3f (adopt harness NOT CLOSED)\n", kBeamFps);
-	std::printf("  status=PARTIAL_CLOSED_READER fabric_bw_closed=false ppc2_reader_closed=false\n");
-	std::printf("  NOTE: payload beats are refill-demand only (scalar-identical); dual-lane is the PPC2 tooth\n");
+	// rd-duck split (post-retraction): demand counts ≠ PPC2 delivery.
+	std::printf("  CLOSED: accepted_request_steady_delta (payload tight + returned==accepted)\n");
+	std::printf("  OPEN: ppc2_delivery_correctness product_rate_match shared_controller_bw\n");
+	std::printf("  status=PARTIAL_CLOSED_READER fabric_bw_closed=false ppc2_delivery_closed=false\n");
+	std::printf("  NOTE: dual-lane rd_*_n/FNV is a delivery tooth; demand beats alone never close PPC2\n");
 #if SCALAR_VIEW_NEG
-	// Should not reach — dual/FNV must RED. If we got here, tooth is broken.
 	return fail("SCALAR_VIEW_NEG reached PASS — dual-lane gate insensitive (tooth broken)");
 #else
-	std::printf("PASS ddr_frame_store_720p_ppc2_bus PARTIAL_CLOSED_READER (NOT fit-release CLOSED)\n");
+	std::printf("PASS ddr_frame_store_720p_ppc2_bus PARTIAL_CLOSED_READER (demand CLOSED; delivery/BW OPEN)\n");
 	return 0;
 #endif
 }
