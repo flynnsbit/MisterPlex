@@ -11,7 +11,8 @@ This gate checks SOURCE for the combined recipe, not L4-only TB:
      — not the 480p 0x3000_0000 / 624×480 fall-through.
   2. MULTI floors LINE_COUNT to >=16 (8 lines @ PPC2/20MHz/1280 = 256 µs <
      500 µs modelled blackout; 16 lines = 512 µs).
-  3. MULTI requires FRAME_W=1280 FRAME_H=720 (elaborate $error present).
+  3. MULTI requires FRAME_W=1280 FRAME_H=720 (mp_recipe_ok / MP_FRAME_OK,
+     synthesis-active — not translate_off-only).
   4. Default product QSF keeps MULTI off and FRAME 640×480.
   5. Negative: stripping MULTI 720p PHYS bind must be detectable.
 
@@ -94,14 +95,21 @@ def main() -> int:
         return fail("ddr_frame_store not wired to FS_LINE_COUNT")
     print("OK MULTI FS_LINE_COUNT floors to 16; store uses FS_LINE_COUNT")
 
-    # --- MULTI requires FRAME 1280×720 ---
-    if "PRESENT_MULTI_PIXELrequiresFRAME_W=1280FRAME_H=720" not in pnt:
-        # tolerate spacing variants already stripped
-        if not re.search(
-            r"PRESENT_MULTI_PIXEL requires FRAME_W=1280 FRAME_H=720", present
-        ):
-            return fail("MULTI missing FRAME_W=1280 FRAME_H=720 elaborate check")
-    print("OK MULTI elaborates only at FRAME 1280×720")
+    # --- MULTI requires FRAME 1280×720 (synthesis-active recipe, rd-duck) ---
+    if "MP_FRAME_OK=(FRAME_W==1280)&&(FRAME_H==720)" not in pnt:
+        if "MP_FRAME_OK" not in present or "1280" not in present:
+            return fail("MULTI missing MP_FRAME_OK FRAME 1280×720 recipe gate")
+    if "mp_recipe_ok" not in present:
+        return fail("MULTI missing synthesis-active mp_recipe_ok")
+    # Must not rely solely on translate_off PPC!=1 block (old land)
+    if re.search(
+        r"synthesis\s+translate_off[\s\S]*?PRESENT_PPC\s*!=\s*1[\s\S]*?"
+        r"until ddr_frame_store N-wide",
+        present,
+        flags=re.I,
+    ):
+        return fail("stale translate_off PPC!=1 N-wide gate still present")
+    print("OK MULTI elaborates only at FRAME 1280×720 (mp_recipe_ok)")
 
     # --- Mutual exclusion L4 vs MULTI still present ---
     if "PLEX_PRESENT_720P_L4andPRESENT_MULTI_PIXELaremutuallyexclusive" not in pnt:

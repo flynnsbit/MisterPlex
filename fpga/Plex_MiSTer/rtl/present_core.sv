@@ -10,19 +10,22 @@
 //       FRAME_H=720 in the same QSF enable recipe. Plex.sv wires geom_latch+mux.
 //   `define PRESENT_BEAM_960     — present_beam_content_de true-DE (max tier 960×540)
 //   `define PRESENT_MULTI_PIXEL  — CEA 720p beam + present_npx_path (PPC path)
-//   `define PRESENT_PX_PER_CLK N — 1|2|4 with MULTI_PIXEL (product land uses 1 until
-//                                  ddr_frame_store grows N-wide RGB ports)
+//   `define PRESENT_PX_PER_CLK N — 1|2|4 with MULTI_PIXEL (product: 2)
 //   `define PRESENT_CLK_PIX_PLL  — separate clk_pix + rate-match (optional)
 // Macros off → bit-identical Template H_DE=529 / DE_LAG=3 path (v0.3.0 baseline).
 // Mutually exclusive: L4 vs BEAM_960 vs MULTI_PIXEL. Parent enables in fit QSF only.
+//
+// MULTI+PPC path (rd-duck FIT BLOCKER fixes):
+//   - Beam glass_x0/y → fstore rd_x/y (not unused; not Template store_x)
+//   - ddr_frame_store.PX_PER_CLK + rd_*_n (real dual-lane via yuv_bt601_npx)
+//   - mp_npx_* = fs_r_n (NOT {PPC{fr}} replicate)
+//   - Synthesis-active mp_recipe_ok (PPC in {1,2,4} + FRAME 1280×720)
 //
 // ARM offload scope (parent Sweep 118 — do not overclaim):
 //   present_content_window retires ARM *swscale* (geometry map in fabric).
 //   It does NOT retire T_copy_arm (~14.978 ms/frame sendDdrFrame /dev/mem).
 //   Fabric already *reads* DDR on the present path; strategic (b) fabric DMA is
-//   the *write* side (ARM never paints the bank) — w-mem/w-path territory.
-//   Product MULTI+PPC=2 still needs w-scaler-present-ppc N-wide store RGB;
-//   until then mp_npx_* replicates scalar fr/fg/fb (identity-only, not dual-map).
+//   a source→bank mover (read+write), preferably dynamic-base direct fabric read.
 
 `ifdef PRESENT_MULTI_PIXEL
 	`ifndef PRESENT_PX_PER_CLK
@@ -623,6 +626,103 @@ module present_core #(
 	localparam int FS_LINE_COUNT = FRAME_LINE_COUNT;
 `endif
 
+	// N-wide store RGB (PX_PER_CLK=PRESENT_PPC). Scalar path still uses fr/fg/fb.
+	wire [PRESENT_PPC*8-1:0] fs_r_n, fs_g_n, fs_b_n;
+	wire [PRESENT_PPC-1:0]   fs_lane_v_n;
+	wire                     fs_n_valid;
+
+`ifdef PRESENT_MULTI_PIXEL
+	// ------------------------------------------------------------------
+	// Beam + glass→store map MUST precede fstore (rd-duck FIT BLOCKER).
+	// Product: MULTI + PPC=2; store exposes real dual-lane RGB via yuv_bt601_npx.
+	// Identity glass→store requires FRAME 1280×720; non-identity is content_window.
+	// ------------------------------------------------------------------
+	// Synthesis-ACTIVE recipe gate (not translate_off — survives fit elaboration).
+	// Illegal PPC / frame size → zero-width wire forces hierarchy fail if mis-set.
+	localparam bit MP_PPC_OK =
+		(PRESENT_PPC == 1) || (PRESENT_PPC == 2) || (PRESENT_PPC == 4);
+	localparam bit MP_FRAME_OK = (FRAME_W == 1280) && (FRAME_H == 720);
+	localparam bit MP_RECIPE_OK = MP_PPC_OK && MP_FRAME_OK;
+	// noprune so post-fit hierarchy can see the recipe bit.
+	(* noprune *) wire mp_recipe_ok = MP_RECIPE_OK;
+`ifndef SYNTHESIS
+	initial begin
+		if (!MP_PPC_OK)
+			$error("PRESENT_MULTI_PIXEL: PRESENT_PX_PER_CLK must be 1|2|4 (got %0d)", PRESENT_PPC);
+		if (!MP_FRAME_OK)
+			$error("PRESENT_MULTI_PIXEL identity map needs FRAME 1280x720 (got %0dx%0d)",
+				FRAME_W, FRAME_H);
+	end
+`endif
+
+	wire                mp_in_ready;
+	wire                mp_beam_ce;
+	wire [11:0]         mp_glass_x0, mp_glass_y;
+	wire [PRESENT_PPC-1:0] mp_lane_de;
+	wire                mp_hb, mp_hs, mp_vb, mp_vs, mp_fstart;
+
+	wire mp_beam_en = ~reset & mp_in_ready & mp_recipe_ok;
+	present_beam_ppc #(
+		.PX_PER_CLK(PRESENT_PPC),
+		.H_DE(1280),
+		.H_TOTAL(1650),
+		.V_ACTIVE(720),
+		.V_TOTAL(750),
+		.H_SYNC_S(1390),
+		.H_SYNC_E(1430),
+		.V_SYNC_S(725),
+		.V_SYNC_E(730)
+	) u_mp_beam (
+		.clk(clk),
+		.reset(reset),
+		.enable(mp_beam_en),
+		.beam_ce(mp_beam_ce),
+		.glass_x0(mp_glass_x0),
+		.glass_y(mp_glass_y),
+		.lane_de(mp_lane_de),
+		.HBlank(mp_hb),
+		.HSync(mp_hs),
+		.VBlank(mp_vb),
+		.VSync(mp_vs),
+		.frame_start(mp_fstart)
+	);
+
+	// Identity clamp glass→store (native 1280×720 banks).
+	wire [FRAME_X_W-1:0] mp_store_x =
+		(mp_glass_x0 > 12'(FRAME_LAST_X)) ? FRAME_LAST_X
+			: mp_glass_x0[FRAME_X_W-1:0];
+	wire [FRAME_Y_W-1:0] mp_store_y =
+		(mp_glass_y > 12'(FRAME_LAST_Y)) ? FRAME_LAST_Y
+			: mp_glass_y[FRAME_Y_W-1:0];
+	wire mp_de_any = |mp_lane_de;
+
+	reg [FRAME_X_W-1:0] mp_store_x_r;
+	reg [FRAME_Y_W-1:0] mp_store_y_r;
+	reg                 mp_de_r;
+	reg [PRESENT_PPC-1:0] mp_lane_de_r;
+	always @(posedge clk) begin
+		if (reset) begin
+			mp_store_x_r <= '0;
+			mp_store_y_r <= '0;
+			mp_de_r      <= 1'b0;
+			mp_lane_de_r <= '0;
+		end else if (mp_beam_ce) begin
+			mp_store_x_r <= mp_store_x;
+			mp_store_y_r <= mp_store_y;
+			mp_de_r      <= mp_de_any;
+			mp_lane_de_r <= mp_lane_de;
+		end
+	end
+
+	wire [FRAME_X_W-1:0] fstore_rd_x = mp_store_x_r;
+	wire [FRAME_Y_W-1:0] fstore_rd_y = mp_store_y_r;
+	wire                 fstore_rd_a = mp_de_r;
+`else
+	wire [FRAME_X_W-1:0] fstore_rd_x = store_x;
+	wire [FRAME_Y_W-1:0] fstore_rd_y = store_y;
+	wire                 fstore_rd_a = de_r;
+`endif
+
 	ddr_frame_store #(
 		.FRAME_W(FRAME_W),
 		.FRAME_H(FRAME_H),
@@ -638,17 +738,23 @@ module present_core #(
 		.LINE_COUNT(FS_LINE_COUNT),
 		.PHYS_BASE(FS_PHYS_BASE),
 		.HPS_BANK_STRIDE_BYTES(FS_BANK_STRIDE),
-		.DOORBELL_PHYS(FS_DOORBELL)
+		.DOORBELL_PHYS(FS_DOORBELL),
+		.PX_PER_CLK(PRESENT_PPC)
 	) fstore (
 		.clk(clk),
 		.clk_ddr(clk_ddr),
 		.reset(reset),
-		.rd_x(store_x),
-		.rd_y(store_y),
-		.rd_active(de_r),
+		.rd_x(fstore_rd_x),
+		.rd_y(fstore_rd_y),
+		.rd_active(fstore_rd_a),
 		.rd_r(fr),
 		.rd_g(fg),
 		.rd_b(fb),
+		.rd_r_n(fs_r_n),
+		.rd_g_n(fs_g_n),
+		.rd_b_n(fs_b_n),
+		.rd_lane_valid_n(fs_lane_v_n),
+		.rd_n_valid(fs_n_valid),
 		.start_req(ddr_start_req),
 		.bank_sel(ddr_bank_sel),
 		.status_osd(ddr_status_osd),
@@ -765,29 +871,10 @@ module present_core #(
 
 `ifdef PRESENT_MULTI_PIXEL
 	// ------------------------------------------------------------------
-	// CEA 720p multi-pixel path (macro ON only). Default OFF → leg_* above.
-	// This land uses scalar ddr_frame_store RGB (PPC must be 1 until store
-	// grows N-wide ports). Beam + npx + timing packs are product-wired.
+	// CEA 720p multi-pixel path (macro ON only). Beam+glass→store is above
+	// fstore. Here: N-wide store RGB → present_npx_path → 1 px/clk out.
+	// rd-duck: NO scalar replicate across lanes (that halves horizontal info).
 	// ------------------------------------------------------------------
-	// synthesis translate_off
-	initial begin
-		if (FRAME_W != 1280 || FRAME_H != 720)
-			$error("PRESENT_MULTI_PIXEL requires FRAME_W=1280 FRAME_H=720 (got %0d x %0d)",
-				FRAME_W, FRAME_H);
-		if (PRESENT_PPC != 1)
-			$error("PRESENT_MULTI_PIXEL land requires PRESENT_PX_PER_CLK=1 until ddr_frame_store N-wide RGB (got %0d)",
-				PRESENT_PPC);
-`ifdef PRESENT_BEAM_960
-		$error("PRESENT_MULTI_PIXEL and PRESENT_BEAM_960 are mutually exclusive");
-`endif
-	end
-	// synthesis translate_on
-
-	wire                mp_in_ready;
-	wire                mp_beam_ce;
-	wire [11:0]         mp_glass_x0, mp_glass_y;
-	wire [PRESENT_PPC-1:0] mp_lane_de;
-	wire                mp_hb, mp_hs, mp_vb, mp_vs, mp_fstart;
 	wire                mp_out_ce;
 	wire [7:0]          mp_out_r, mp_out_g, mp_out_b;
 	wire                mp_out_hb, mp_out_hs, mp_out_vb, mp_out_vs, mp_out_fs;
@@ -800,44 +887,15 @@ module present_core #(
 `endif
 	localparam bit MP_INCLUDE_SYNC = 1'b1;
 
-	// Live timing instance (in addition to keep_* packs) drives beam params via
-	// parameters below — pack remains hierarchical proof of CEA constants.
-	wire mp_beam_en = ~reset & mp_in_ready;
-	present_beam_ppc #(
-		.PX_PER_CLK(PRESENT_PPC),
-		.H_DE(1280),
-		.H_TOTAL(1650),
-		.V_ACTIVE(720),
-		.V_TOTAL(750),
-		.H_SYNC_S(1390),
-		.H_SYNC_E(1430),
-		.V_SYNC_S(725),
-		.V_SYNC_E(730)
-	) u_mp_beam (
-		.clk(clk),
-		.reset(reset),
-		.enable(mp_beam_en),
-		.beam_ce(mp_beam_ce),
-		.glass_x0(mp_glass_x0),
-		.glass_y(mp_glass_y),
-		.lane_de(mp_lane_de),
-		.HBlank(mp_hb),
-		.HSync(mp_hs),
-		.VBlank(mp_vb),
-		.VSync(mp_vs),
-		.frame_start(mp_fstart)
-	);
+	// Real dual-lane (or N-lane) store samples — NOT {PPC{fr}}.
+	wire [PRESENT_PPC*8-1:0] mp_npx_r = fs_r_n;
+	wire [PRESENT_PPC*8-1:0] mp_npx_g = fs_g_n;
+	wire [PRESENT_PPC*8-1:0] mp_npx_b = fs_b_n;
+	wire [PRESENT_PPC-1:0]   mp_npx_lv =
+		mp_lane_de_r & fs_lane_v_n & {PRESENT_PPC{has_frame}};
 
-	// Scalar store sample → N-wide group (PPC=1 → passthrough).
-	// PPC>=2: REPLICATE scalar sample across lanes — identity/glass-aligned only.
-	// Dual-map store_x_lane1 + N-wide rd_*_n requires w-scaler-present-ppc land.
-	wire [PRESENT_PPC*8-1:0] mp_npx_r = {PRESENT_PPC{fr}};
-	wire [PRESENT_PPC*8-1:0] mp_npx_g = {PRESENT_PPC{fg}};
-	wire [PRESENT_PPC*8-1:0] mp_npx_b = {PRESENT_PPC{fb}};
-	wire [PRESENT_PPC-1:0]   mp_npx_lv = mp_lane_de & {PRESENT_PPC{has_frame}};
-
-	// Align store response: 1 (store_x reg) + typical ddr RGB pipe ≈ 4.
-	localparam int MP_STORE_LAT = 4;
+	// Align store/N-wide response: beam reg (1) + store pipe + yuv_npx (~1).
+	localparam int MP_STORE_LAT = 5;
 	reg [MP_STORE_LAT-1:0] mp_tq_v;
 	reg mp_tq_hb [0:MP_STORE_LAT-1];
 	reg mp_tq_hs [0:MP_STORE_LAT-1];
@@ -908,7 +966,7 @@ module present_core #(
 		.in_r(mp_npx_r),
 		.in_g(mp_npx_g),
 		.in_b(mp_npx_b),
-		.in_lane_valid(mp_tq_lde[MP_STORE_LAT-1] & {PRESENT_PPC{has_frame}}),
+		.in_lane_valid(mp_tq_lde[MP_STORE_LAT-1] & fs_lane_v_n & {PRESENT_PPC{has_frame}}),
 		.in_hblank(mp_tq_hb[MP_STORE_LAT-1]),
 		.in_hsync(mp_tq_hs[MP_STORE_LAT-1]),
 		.in_vblank(mp_tq_vb[MP_STORE_LAT-1]),
@@ -930,11 +988,9 @@ module present_core #(
 		.rd_empty(mp_rd_empty)
 	);
 
-	// When MULTI_PIXEL is on, store read follows beam glass coords (identity clamp).
-	// Note: fstore still wired to store_x/y from Template regs above — full MULTI
-	// store remap is a follow-up when PPC>1 lands. PPC=1 same-clock uses leg path
-	// geometry unless parent also sets FRAME 1280×720.
-	wire _unused_mp_glass = |{mp_glass_x0, mp_glass_y, mp_npx_lv, mp_wr_full, mp_wr_af, mp_rd_ur, mp_rd_empty, mp_out_fs};
+	// Glass drives fstore_rd_* above — not unused.
+	wire _unused_mp = |{mp_npx_lv, mp_wr_full, mp_wr_af, mp_rd_ur, mp_rd_empty,
+		mp_out_fs, fs_n_valid, mp_recipe_ok, mp_lane_de_r};
 	wire _unused_mp_clk_hz = (MP_CLK_PIX_HZ == 0);
 
 	assign r = mp_out_r;
@@ -946,7 +1002,8 @@ module present_core #(
 	assign VBlank = mp_out_vb;
 	assign VSync  = mp_out_vs;
 	assign frame_start = mp_out_fs;
-	wire _unused_leg_rgb = |{leg_r, leg_g, leg_b, ce_pix_i, hb_d, hs_d, vb_d, vs_d, fstart};
+	wire _unused_leg_rgb = |{leg_r, leg_g, leg_b, ce_pix_i, hb_d, hs_d, vb_d, vs_d, fstart,
+		store_x, store_y};
 `else
 	assign r = leg_r;
 	assign g = leg_g;
