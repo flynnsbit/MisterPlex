@@ -29,6 +29,26 @@ def main() -> int:
     if B != 1_382_400:
         fails.append("B_frame != 1382400")
 
+    # Fabric SoT stamp
+    svh = ROOT / "fpga/Plex_MiSTer/rtl/misterplex_bw_contract.svh"
+    st = ROOT / "fpga/Plex_MiSTer/rtl/plex_bw_status.sv"
+    if not svh.is_file():
+        fails.append("missing misterplex_bw_contract.svh")
+    else:
+        s = svh.read_text(errors="replace")
+        if "33177600" not in s and "33_177_600" not in s:
+            fails.append("svh missing 33177600 / 33_177_600")
+        if "MISTERPLEX_BW_NACK_DE_PEAK" not in s:
+            fails.append("svh missing NACK DE peak marker")
+    if not st.is_file():
+        fails.append("missing plex_bw_status.sv")
+    plex = (ROOT / "fpga/Plex_MiSTer/Plex.sv").read_text(errors="replace")
+    if "u_plex_bw_status" not in plex:
+        fails.append("Plex.sv missing u_plex_bw_status instance")
+    qip = (ROOT / "fpga/Plex_MiSTer/files.qip").read_text(errors="replace")
+    if "plex_bw_status.sv" not in qip:
+        fails.append("files.qip missing plex_bw_status.sv")
+
     # Host header agrees
     hpp = LAYOUT.read_text(errors="replace")
     if "kPlex720pYuv420pBytes = 1382400" not in hpp:

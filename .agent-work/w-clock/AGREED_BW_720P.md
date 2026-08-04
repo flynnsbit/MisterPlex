@@ -1,6 +1,6 @@
 # AGREED single number — 720p24 fabric (w-clock ⊕ w-mem ⊕ w-scaler)
 
-**Status:** proposed by w-clock for three-lane lock.  
+**Status:** w-clock LOCK + HARD NACK of scaler headline 3.0 as DDR. Pending w-mem ACK; w-scaler must not treat silence as ACK.  
 **Product clock (settled):** MULTI + **PPC=2** + **clk_pix@29.70**, **clk_sys@20** (STA stub-in Fmax 23.17; @24 FAIL).  
 **Format:** I420 / YUV420p coded **1280×720** (`kPlex720pYuv420pBytes` / `DDR_FRAME_720P_YUV420P_BYTES`).
 
@@ -108,3 +108,13 @@ PPC2 does not scale DDR average; 16-line is latency not BW.
    (`kPlex720pPhysBase`); fabric read = `DDRAM_*` in `ddr_frame_store`. Same DRAM die,
    **two masters** — concurrent in wall-clock; not the same B/clk counter domain.
    docs/display-resolution.md: ARM-write column is simultaneous HPS DDR fabric traffic.
+
+
+---
+
+## Fabric stamp (this branch)
+
+- `rtl/misterplex_bw_contract.svh` — integer SoT
+- `rtl/plex_bw_status.sv` — noprune stamp in `Plex.sv` (`u_plex_bw_status`)
+- Gate: `tests/unit/test_plex_bw_status_verilator.sh` PRE-REG hit: dir=33177600 beats=172800 rw=345600 ppc=2 nack=1
+- Contract: `tests/fixtures/p720_bw_contract.json` + `test_p720_shared_bw_contract.py`
