@@ -102,7 +102,14 @@ set_global_assignment -name VERILOG_MACRO "FRAME_LINES_8=1"
 # --- Alternate tiers (mutually exclusive with L4) ---
 #set_global_assignment -name VERILOG_MACRO "PRESENT_BEAM_960=1"
 #set_global_assignment -name VERILOG_MACRO "PRESENT_MULTI_PIXEL=1"
+# --- MULTI 720p product recipe (default OFF; enable together, comment 640x480) ---
+#set_global_assignment -name VERILOG_MACRO "FRAME_W=1280"
+#set_global_assignment -name VERILOG_MACRO "FRAME_H=720"
+#set_global_assignment -name VERILOG_MACRO "FRAME_LINES_16=1"
+# (comment out FRAME_W=640 / FRAME_H=480 / FRAME_LINES_8 above when enabling MULTI)
 # CEA 720p24 needs F_sys*PPC >= 29.7 → PPC=2 @20 MHz (N-wide store on main path).
+# DDR ABI selects 720p bank/doorbell when FRAME is 1280x720 (ddr_frame_abi_select.svh);
+# do NOT rely on PLEX_PRESENT_720P_L4 (mutually exclusive with MULTI).
 #set_global_assignment -name VERILOG_MACRO "PRESENT_PX_PER_CLK=2"
 # --- clk_pix PLL (w-clock; DEFAULT OFF) ---
 # Adds pll outclk_3. Default 29.700000 MHz = 1650*750*24 (CEA 720p totals @24).

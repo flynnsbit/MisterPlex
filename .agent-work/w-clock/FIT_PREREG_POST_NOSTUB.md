@@ -98,3 +98,11 @@ FRAME as product 720p if/when parent enables (else 640x480 content window)
 ## 4) Landing stance
 - **Do not merge** until w-nostub on main; then rebase + `make unit`, `rtl-lint`, `define-parity`.  
 - Expect conflicts in `present_core.sv` / `Plex.sv` / `files.qip`.
+
+
+## 5) rd-duck BLOCKING — MULTI 720p DDR ABI (fixed on this branch)
+
+Pre-fix: `FS_*` 720p constants were under `PLEX_PRESENT_720P_L4` only; MULTI fell through to 480p @ 0x30000000.
+Post-fix: `ddr_frame_abi_select.svh` keys off **FRAME_W/H==1280×720** (L4 or MULTI). LINE_COUNT floors to **16** on 720p ABI.
+QSF MULTI recipe (commented): FRAME 1280×720 + FRAME_LINES_16 + PPC=2 + CLK_PIX_PLL.
+Evidence: `test_ddr_frame_abi_select_verilator.sh` rc=0; `test_present_multi_720p_abi_static.py` rc=0.
