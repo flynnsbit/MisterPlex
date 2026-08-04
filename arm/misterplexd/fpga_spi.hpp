@@ -348,7 +348,7 @@ private:
     DdrTiming lastDdrTiming_{};
     BankReleaseStatus lastPublishBrs_{};
     bool lastPublishBrsOk_ = false;
-    // Default to the product silicon canvas (624 coded). DECODE=320x240 must not
+    // Default to the product silicon canvas (1280 coded). DECODE=320x240 must not
     // leave the doorbell/stride at the packed-320 layout or the first frame shears.
     DdrFrameLayout ddrLayout_ = makeDdrFrameLayout(productDdrFrameStoreGeometry());
     uint32_t doorbellSeq_ = 0;

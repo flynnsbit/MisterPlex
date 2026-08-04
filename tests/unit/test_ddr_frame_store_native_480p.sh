@@ -93,5 +93,6 @@ if [[ "$RTL_RC" -ne 0 ]]; then
 fi
 
 echo "OK ddr_frame_store_native_480p: host publish NO_320_CLAMP + RTL plane_bases + left_edge@PRESENT_X"
-echo "ARM-ONLY for content ladder: product RBF already CODED 624x480 / FRAME 640x480."
+echo "LAB-ONLY 480p content-ladder helper (kPlex480p* / plex480pDdrFrameGeometry)."
+echo "Product RBF is CODED 1280x720 / FRAME 1280x720 identity — not 624x480 / 640x480."
 exit 0

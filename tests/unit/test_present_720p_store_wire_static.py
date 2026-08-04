@@ -3,7 +3,8 @@
 
 CONFIRMS reviewer point 5 was real on pre-fix main: DDR_FRAME_720P_* lived only
 in ddr_frame_layout_params.svh (+ host/tests). present_core must now select them
-behind PLEX_PRESENT_720P_L4 while default arm keeps 480p symbols.
+behind PLEX_PRESENT_720P_L4 while the default arm binds product DDR_FRAME_*
+symbols (1280×720 identity @ phys 0x30000000 — not legacy 480p pillarbox).
 
 Negative: a present_core that still only binds DDR_FRAME_CODED_WIDTH (no 720P
 symbols on the L4 arm) must fail.
@@ -69,7 +70,7 @@ def main() -> int:
         if "present_core.sv" not in " ".join(consumers.get(s, [])):
             return fail(f"{s} has no present_core consumer: {consumers.get(s)}")
 
-    # Default arm still 480p
+    # Default arm: product DDR_FRAME_* (1280×720 identity), not L4 dual-header
     for needle in [
         "FS_CODED_W=DDR_FRAME_CODED_WIDTH",
         "FS_DISPLAY_W=DDR_FRAME_DISPLAY_WIDTH",
@@ -78,7 +79,7 @@ def main() -> int:
         "FS_PHYS_BASE=32'h3000_0000",
     ]:
         if needle not in pnt:
-            return fail(f"default 480p arm missing {needle}")
+            return fail(f"default product DDR_FRAME_* arm missing {needle}")
 
     # L4 arm
     for needle in [
@@ -145,8 +146,9 @@ def main() -> int:
         print(f"  {s}: {c if c else 'NONE (beam/test-only or unused)'}")
 
     print(
-        "PASS present_720p_store_wire: L4 binds 720p coded/display/pillar/stride/"
-        "doorbell/phys; default 480p arm intact; QSF default-off"
+        "PASS present_720p_store_wire: L4 binds 720P_* dual-header coded/display/"
+        "pillar/stride/doorbell/phys; default product DDR_FRAME_* arm intact; "
+        "QSF L4 default-off"
     )
     return 0
 
