@@ -30,6 +30,7 @@
 #include <fstream>
 #include <mutex>
 #include <string>
+#include <pthread.h>
 #include <thread>
 #include <vector>
 
@@ -195,6 +196,10 @@ std::string defaultFfmpegPath() {
 } // namespace
 
 int main(int argc, char** argv) {
+#if defined(__linux__)
+    pthread_setname_np(pthread_self(), "mpx-main");
+#endif
+
     std::string name = misterplex::kPlayerDefaultName;
     std::string machineId = misterplex::kPlayerDefaultMachineId;
     int port = misterplex::kPlayerDefaultPort;

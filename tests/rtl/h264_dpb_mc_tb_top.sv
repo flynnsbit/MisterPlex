@@ -214,7 +214,14 @@ module h264_dpb_mc_tb #(
 			assign deblock_mb_done = 1'b0;
 			assign dpb_invalidate_refs = deblock_dpb_invalidate_refs;
 
-			h264_dpb_one_ref #(.FRAME_W(624), .FRAME_H(480)) u_dpb (
+			// BANK1_BASE must be pinned: one_ref default is 1280x720 geometry
+			// (1382400), not derived from FRAME_W/H — land measured cur_base
+			// mismatch without this pin.
+			h264_dpb_one_ref #(
+				.FRAME_W(624),
+				.FRAME_H(480),
+				.BANK1_BASE(624 * 480 * 3 / 2)
+			) u_dpb (
 				.clk(clk), .reset(reset),
 				.idr_start(idr_start), .frame_done(dpb_frame_done),
 				.ref_ready(ref_ready_good), .current_base(current_base), .reference_base(reference_base),
@@ -251,7 +258,11 @@ module h264_dpb_mc_tb #(
 			assign deblock_mb_done = 1'b0;
 			assign dpb_invalidate_refs = 1'b0;
 
-			h264_dpb_one_ref #(.FRAME_W(624), .FRAME_H(480)) u_dpb (
+			h264_dpb_one_ref #(
+				.FRAME_W(624),
+				.FRAME_H(480),
+				.BANK1_BASE(624 * 480 * 3 / 2)
+			) u_dpb (
 				.clk(clk), .reset(reset),
 				.idr_start(idr_start), .frame_done(dpb_frame_done),
 				.ref_ready(ref_ready_good), .current_base(current_base), .reference_base(reference_base),
@@ -281,6 +292,9 @@ module h264_dpb_mc_tb #(
 		end
 	endgenerate
 
+	// NOTE: no second h264_dpb_one_ref outside generate — that multi-drove
+	// ref_ready/mem_* and bypassed H264_DPB_FAULT_NO_IDR_INVALIDATE.
+
 	h264_inter_mc_part u_mc (
 		.luma_ref_win(luma_ref_win),
 		.chroma_u_ref_win(chroma_u_ref_win),
@@ -296,6 +310,9 @@ module h264_dpb_mc_tb #(
 	assign ref_ready = FAULT_EARLY_REF ? 1'b1 : ref_ready_good;
 	assign luma_window_valid = luma_window_valid_good;
 	assign luma_window_idx = luma_window_idx_good;
+	// Red twin: corrupt the first window beat. For the mv=(-5,-7) top-left
+	// case idx0 is fully edge-clamped (origin-2 → sample (0,0)); a wrong
+	// clamp/pipeline that never checks edge samples would miss this.
 	assign luma_window_sample = (FAULT_BAD_CLAMP && luma_window_valid_good && luma_window_idx_good == 9'd0) ?
 	                            (luma_window_sample_good + 8'd1) : luma_window_sample_good;
 	assign chroma_u_window_valid = chroma_u_window_valid_good;

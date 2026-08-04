@@ -22,6 +22,16 @@ module h264_cavlc_residual_tb_top #(
     output wire signed [15:0] coeff [0:15],
     output wire signed [15:0] level_dbg [0:15],
     output wire [3:0]         run_dbg [0:15],
+`ifdef CAVLC_CYCLE_PROBE
+    output wire [15:0]        cy_token,
+    output wire [15:0]        cy_sign,
+    output wire [15:0]        cy_level,
+    output wire [15:0]        cy_total_zeros,
+    output wire [15:0]        cy_run_before,
+    output wire [15:0]        cy_place,
+    output wire [15:0]        cy_other,
+    output wire [15:0]        cy_total,
+`endif
 
     input  wire [7:0]         nc_mb_x,
     input  wire [7:0]         nc_mb_y,
@@ -60,6 +70,17 @@ module h264_cavlc_residual_tb_top #(
         .coeff(dut_coeff),
         .level_dbg(level_dbg),
         .run_dbg(run_dbg)
+`ifdef CAVLC_CYCLE_PROBE
+        ,
+        .cy_token(cy_token),
+        .cy_sign(cy_sign),
+        .cy_level(cy_level),
+        .cy_total_zeros(cy_total_zeros),
+        .cy_run_before(cy_run_before),
+        .cy_place(cy_place),
+        .cy_other(cy_other),
+        .cy_total(cy_total)
+`endif
     );
 
     genvar i;

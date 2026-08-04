@@ -515,19 +515,37 @@ def check_present_core() -> None:
     )
 
     nt = norm(text)
-    # T7: past_last_row is V_STORE-relative (product V_STORE=FRAME_H=480), not hard 240.
-    past_ok = (
+    # Reconcile: accept origin T7 V_STORE form OR land TPL_V_STORE/legacy 240 form.
+    past_ok_native = (
         "past_last_row=(py>=V_STORE)" in nt
         and (
             "store_y_clamped=past_last_row?V_STORE_LAST:py" in nt
             or "store_y_clamped=past_last_row?10'd239:py" in nt
         )
     )
+    legacy_clamp = (
+        "past_last_row=(py>=10'd240)" in nt
+        and "store_y_clamped=past_last_row?10'd239:py" in nt
+    )
+    param_clamp = (
+        "past_last_row=(py>=10'(TPL_V_STORE))" in nt
+        and "TPL_V_STORE=240" in nt
+        and (
+            "store_y_clamped=past_last_row?10'(TPL_V_STORE>0?TPL_V_STORE-1:0):py" in nt
+            or "store_y_clamped=past_last_row?10'(TPL_V_STORE-1):py" in nt
+        )
+    )
     check(
-        past_ok,
-        "present_core past_last_row clamp is missing. It prevents fetching past V_STORE and "
-        "stops the surplus-row/bottom-edge artifact; restore past_last_row and store_y_clamped "
-        "(T7: py>=V_STORE / V_STORE_LAST, not hard-coded 240).",
+        past_ok_native or legacy_clamp or param_clamp,
+        "present_core past_last_row clamp is missing. Need V_STORE (T7) or TPL_V_STORE/legacy "
+        "240 form so surplus-row/bottom-edge cannot fetch past the content window.",
+    )
+    check(
+        "TPL_H_DE=529" in nt or "H_DE=10'd529" in nt or "localparamH_DE=10'd529" in nt
+        or "TPL_H_DE = 529" in text
+        or "localparam H_DE    = 10'(TPL_H_DE)" in text
+        or "localparam H_DE = 10'(TPL_H_DE)" in text,
+        "present_core Template H_DE default is not 529 (FBAR/G-VID1 contract).",
     )
     check(
         "vb_d=vb|past_last_row" in nt,
@@ -1268,6 +1286,21 @@ def check_ddr_frame_layout_contract() -> None:
         ("kYuv420BlackY", "DDR_FRAME_YUV_BLACK_Y"),
         ("kYuv420BlackU", "DDR_FRAME_YUV_BLACK_U"),
         ("kYuv420BlackV", "DDR_FRAME_YUV_BLACK_V"),
+        # 720p tier (present path land; opt-in)
+        ("kPlex720pCodedWidth", "DDR_FRAME_720P_CODED_WIDTH"),
+        ("kPlex720pCodedHeight", "DDR_FRAME_720P_CODED_HEIGHT"),
+        ("kPlex720pPresentedWidth", "DDR_FRAME_720P_PRESENTED_WIDTH"),
+        ("kPlex720pPresentedHeight", "DDR_FRAME_720P_PRESENTED_HEIGHT"),
+        ("kPlex720pYuv420pBankStride", "DDR_FRAME_720P_YUV420P_BANK_STRIDE"),
+        ("kPlex720pPhysBase", "DDR_FRAME_720P_PHYS_BASE"),
+        ("kPlex720pYuv420pDoorbellPhys", "DDR_FRAME_720P_YUV420P_DOORBELL_PHYS"),
+        ("kPlex720p24BeamHTotal", "DDR_FRAME_720P24_BEAM_H_TOTAL"),
+        ("kPlex720p24BeamVTotal", "DDR_FRAME_720P24_BEAM_V_TOTAL"),
+        ("kPlex720p24BeamHDe", "DDR_FRAME_720P24_BEAM_H_DE"),
+        ("kPlex720p24BeamVActive", "DDR_FRAME_720P24_BEAM_V_ACTIVE"),
+        ("kPlex720p24ClkSysHz", "DDR_FRAME_720P24_CLK_SYS_HZ"),
+        ("kPlex960PresentedWidth", "DDR_FRAME_960_PRESENTED_WIDTH"),
+        ("kPlex960PresentedHeight", "DDR_FRAME_960_PRESENTED_HEIGHT"),
     ]
     for host_name, rtl_name in pairs:
         hv = cpp_const(host, host_name)
@@ -1800,8 +1833,11 @@ def check_present_geometry_stride_contract() -> None:
     if missing:
         fail(f"present geometry/stride contract: {missing[0]}")
 
+    # Default (non-L4) arm must still bind the 480p layout symbols. L4 arm binds
+    # DDR_FRAME_720P_* via FS_* localparams (see present_core.sv). Accept either
+    # direct .CODED_W(DDR_FRAME_*) or FS_CODED_W = DDR_FRAME_* (parameterized form).
     def present_ddr_wiring_ok(p_nt: str) -> bool:
-        return (
+        direct = (
             ".FRAME_W(FRAME_W)" in p_nt
             and ".FRAME_H(FRAME_H)" in p_nt
             and ".CODED_W(DDR_FRAME_CODED_WIDTH)" in p_nt
@@ -1810,12 +1846,53 @@ def check_present_geometry_stride_contract() -> None:
             and ".HPS_BANK_STRIDE_BYTES(DDR_FRAME_YUV420P_BANK_STRIDE)" in p_nt
             and ".DOORBELL_PHYS(DDR_FRAME_YUV420P_DOORBELL_PHYS)" in p_nt
         )
+        fs_bind = (
+            ".FRAME_W(FRAME_W)" in p_nt
+            and ".FRAME_H(FRAME_H)" in p_nt
+            and "FS_CODED_W=DDR_FRAME_CODED_WIDTH" in p_nt
+            and "FS_DISPLAY_W=DDR_FRAME_DISPLAY_WIDTH" in p_nt
+            and "FS_PRESENT_X=DDR_FRAME_PILLARBOX_LEFT" in p_nt
+            and "FS_BANK_STRIDE=DDR_FRAME_YUV420P_BANK_STRIDE" in p_nt
+            and "FS_DOORBELL=DDR_FRAME_YUV420P_DOORBELL_PHYS" in p_nt
+            and ".CODED_W(FS_CODED_W)" in p_nt
+            and ".HPS_BANK_STRIDE_BYTES(FS_BANK_STRIDE)" in p_nt
+        )
+        return direct or fs_bind
 
     check(
         present_ddr_wiring_ok(present_nt),
         "present_core must instantiate ddr_frame_store from the shared layout params: "
         "FRAME_W=640 for scanout, CODED_W=624 for DDR stride, DISPLAY_W=618 for crop, "
         "PRESENT_X=11 for pillarbox.",
+    )
+    # L4 consumer wiring (must not leave 720p constants unreferenced).
+    # Read RAW module text (comments only stripped) — strip_inactive_preprocessor
+    # drops the inactive `ifdef PLEX_PRESENT_720P_L4 arm because that macro is
+    # not in ACTIVE_SV_MACROS (product default is off). Dual-arm presence must
+    # still be proved from source.
+    present_raw = norm(
+        re.sub(
+            r"/\*.*?\*/",
+            "",
+            re.sub(r"//.*?$", "", read(PRESENT_CORE), flags=re.M),
+            flags=re.S,
+        )
+    )
+    l4_720_bind = (
+        "FS_CODED_W=DDR_FRAME_720P_CODED_WIDTH" in present_raw
+        and "FS_CODED_H=DDR_FRAME_720P_CODED_HEIGHT" in present_raw
+        and "FS_DISPLAY_W=DDR_FRAME_720P_DISPLAY_WIDTH" in present_raw
+        and "FS_DISPLAY_H=DDR_FRAME_720P_DISPLAY_HEIGHT" in present_raw
+        and "FS_PRESENT_X=DDR_FRAME_720P_PILLARBOX_LEFT" in present_raw
+        and "FS_BANK_STRIDE=DDR_FRAME_720P_YUV420P_BANK_STRIDE" in present_raw
+        and "FS_DOORBELL=DDR_FRAME_720P_YUV420P_DOORBELL_PHYS" in present_raw
+        and "FS_PHYS_BASE=DDR_FRAME_720P_PHYS_BASE" in present_raw
+        and "ifdefPLEX_PRESENT_720P_L4" in present_raw
+    )
+    check(
+        l4_720_bind,
+        "present_core L4 arm must wire DDR_FRAME_720P_* into ddr_frame_store "
+        "(coded/display/pillar/stride/doorbell/phys_base) behind PLEX_PRESENT_720P_L4.",
     )
     check(
         'set_global_assignment-nameVERILOG_MACRO"DDR_FRAME_STORE=1"' in qsf_nt
@@ -1877,7 +1954,13 @@ def check_present_geometry_stride_contract() -> None:
         )
     # Dropping the explicit CODED_W port leaves parameter default CODED_W=FRAME_W=640
     # → reader Y pitch 640 B/line while ARM writes 624 → 16 px/line leftward creep.
-    present_drop_coded = present_nt.replace(".CODED_W(DDR_FRAME_CODED_WIDTH)", "")
+    # Reconcile: product may use direct .CODED_W(DDR_FRAME_*) or FS_CODED_W bind +
+    # .CODED_W(FS_CODED_W). Red twin must break both forms.
+    present_drop_coded = (
+        present_nt.replace(".CODED_W(DDR_FRAME_CODED_WIDTH)", "")
+        .replace("FS_CODED_W=DDR_FRAME_CODED_WIDTH", "")
+        .replace(".CODED_W(FS_CODED_W)", "")
+    )
     if present_ddr_wiring_ok(present_drop_coded):
         fail(
             "deliberately dropping .CODED_W(DDR_FRAME_CODED_WIDTH) "
@@ -2404,6 +2487,26 @@ def check_yuv_ddr_writer_contract() -> None:
     ]
     allowed_paths = {Path("tests/unit/test_rtl_invariants.py")}
 
+    # Nested git worktrees / lab stores are not product sources (land).
+    skip_parts = {
+        ".git",
+        "build",
+        "__pycache__",
+        ".worktrees",
+        "Memory",
+        "artifacts",
+        ".copilot-session",
+        ".agent-work",
+        ".scratch-archive",
+        ".scratch-w-gate2",
+        "avsync_hdmi_out",
+        "captures",
+        "dist",
+        "output_files",
+        "db",
+        "incremental_db",
+    }
+
     def forbidden_ddr_rgb_offenders() -> list[str]:
         # Source-text sweep only. Binary assets under tools/ (e.g. .npz digit
         # templates) are tracked product files but must not be UTF-8-decoded —
@@ -2418,6 +2521,8 @@ def check_yuv_ddr_writer_contract() -> None:
                 continue
             rel = path.relative_to(ROOT)
             if rel in allowed_paths:
+                continue
+            if any(part in skip_parts for part in rel.parts):
                 continue
             if path.suffix.lower() not in text_suffixes:
                 continue

@@ -433,6 +433,11 @@ module decode_stub #(
 	wire signed [15:0] dpb_chroma_origin_x, dpb_chroma_origin_y;
 	wire              dpb_mem_rd;
 	wire [31:0]       dpb_mem_raddr;
+	// 1-cycle read pipe only (raddr_q → comb rdata). Do NOT add a second
+	// stage on rvalid: h264_dpb samples mem_rdata when mem_rvalid &&
+	// pending_valid (pending_* registered on the prior issue edge = exactly
+	// one cycle after mem_rd). A second metadata pipe (pending_*_d1) would
+	// double-delay and skew window idx vs sample.
 	reg [31:0]        dpb_mem_raddr_q;
 	reg               dpb_mem_rvalid;
 	wire [7:0]        dpb_mem_rdata;

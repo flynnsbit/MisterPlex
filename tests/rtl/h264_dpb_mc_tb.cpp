@@ -30,17 +30,14 @@ struct Sim {
         int idx = 0;
         uint64_t issuedCycle = 0;
     };
-    // Match decode_stub's product DPB store latency: h264_dpb registers
-    // mem_rd/mem_raddr on one edge; decode_stub samples them on the next edge
-    // into dpb_mem_rvalid/dpb_mem_raddr_q, and rdata is combinational from the
-    // registered address. Therefore mem_rvalid/mem_rdata reach h264_dpb two
-    // edges after mem_rd, aligned with h264_dpb's pending_*_d1 metadata.
+    // Reconcile latency model (land f97c242b): external SRAM/BRAM path presents
+    // mem_rvalid/mem_rdata one cycle after mem_rd/mem_raddr. pending_* is itself
+    // registered on the issue edge, so on the response edge pre-NBA pending_* is
+    // the metadata for the arriving beat. Do NOT model a second D1 stage — that
+    // matches origin's pending_*_d1 which land deliberately removed (idx skew).
     bool pendingRead = false;
-    bool pendingReadD1 = false;
     uint32_t pendingAddr = 0;
-    uint32_t pendingAddrD1 = 0;
     ReadTag readTag = {};
-    ReadTag readTagD1 = {};
     int nextFetchRead = 0;
     uint64_t cycle = 0;
 
@@ -74,7 +71,7 @@ struct Sim {
         if (top.mem_rvalid != expected.valid) {
             throw std::runtime_error("read latency contract: mem_rvalid observed " +
                                      std::to_string(int(top.mem_rvalid)) + " at cycle " +
-                                     std::to_string(cycle) + " but two-edge response valid is " +
+                                     std::to_string(cycle) + " but one-edge response valid is " +
                                      std::to_string(int(expected.valid)));
         }
 
@@ -84,7 +81,7 @@ struct Sim {
         int validCount = int(luma) + int(chromaU) + int(chromaV);
         if (!expected.valid) {
             if (validCount != 0) {
-                throw std::runtime_error("read latency contract: window valid without two-edge response at cycle " +
+                throw std::runtime_error("read latency contract: window valid without one-edge response at cycle " +
                                          std::to_string(cycle));
             }
             return;
@@ -106,9 +103,10 @@ struct Sim {
 
     void tick() {
         if (top.fetch_start) nextFetchRead = 0;
-        ReadTag expectedResponse = readTagD1;
-        top.mem_rvalid = pendingReadD1;
-        top.mem_rdata = pendingReadD1 && pendingAddrD1 < mem.size() ? mem[pendingAddrD1] : 0;
+        // One-edge: response metadata is the tag captured after the prior issue edge.
+        ReadTag expectedResponse = readTag;
+        top.mem_rvalid = pendingRead;
+        top.mem_rdata = pendingRead && pendingAddr < mem.size() ? mem[pendingAddr] : 0;
         top.clk = 0;
         top.eval();
         top.clk = 1;
@@ -118,11 +116,8 @@ struct Sim {
             if (top.mem_waddr >= mem.size()) throw std::runtime_error("write address out of DPB range");
             mem[top.mem_waddr] = static_cast<uint8_t>(top.mem_wdata);
         }
-        pendingReadD1 = pendingRead;
-        pendingAddrD1 = pendingAddr;
         pendingRead = top.mem_rd;
         pendingAddr = top.mem_raddr;
-        readTagD1 = readTag;
         readTag = top.mem_rd ? tagForIssuedRead() : ReadTag{};
         top.clk = 0;
         top.eval();
@@ -722,8 +717,13 @@ int main(int argc, char** argv) {
             s.tick();
             if (s.top.luma_window_valid) {
                 int idx = s.top.luma_window_idx;
-                int sx = std::clamp(-2 + (idx % 21) - 2, 0, W - 1);
-                int sy = std::clamp(-2 + (idx / 21) - 2, 0, H - 1);
+                // H.264 8.4.2.1 / 6-tap support: sample at origin + win - 2,
+                // with out-of-picture coordinates clamped to the edge sample
+                // (not wrapped). origin already includes mb*16 + mv>>2.
+                const int ox = static_cast<int16_t>(s.top.luma_origin_x);
+                const int oy = static_cast<int16_t>(s.top.luma_origin_y);
+                int sx = std::clamp(ox + (idx % 21) - 2, 0, W - 1);
+                int sy = std::clamp(oy + (idx / 21) - 2, 0, H - 1);
                 uint8_t want = s.mem[i420Addr(0, 0, sx, sy)];
                 if (s.top.luma_window_sample != want) {
                     std::cerr << "FAIL h264_dpb_mc RTL: luma window clamp mismatch idx=" << idx
@@ -736,8 +736,10 @@ int main(int argc, char** argv) {
             }
             if (s.top.chroma_u_window_valid || s.top.chroma_v_window_valid) {
                 int idx = s.top.chroma_window_idx;
-                int sx = std::clamp(-1 + (idx % 9), 0, CW - 1);
-                int sy = std::clamp(-1 + (idx / 9), 0, CH - 1);
+                const int cx0 = static_cast<int16_t>(s.top.chroma_origin_x);
+                const int cy0 = static_cast<int16_t>(s.top.chroma_origin_y);
+                int sx = std::clamp(cx0 + (idx % 9), 0, CW - 1);
+                int sy = std::clamp(cy0 + (idx / 9), 0, CH - 1);
                 int plane = s.top.chroma_u_window_valid ? 1 : 2;
                 uint8_t want = s.mem[i420Addr(0, plane, sx, sy)];
                 if (s.top.chroma_window_sample != want) {

@@ -5,7 +5,7 @@ CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -I$(ROOT)/host
 FFMPEG_CFLAGS := $(shell pkg-config --cflags libavformat libavcodec libavutil 2>/dev/null)
 FFMPEG_LIBS   := $(shell pkg-config --libs libavformat libavcodec libavutil 2>/dev/null)
 
-.PHONY: all preflight unit unit-unlocked unit-rollcall rtl-sim rtl-sim-unlocked rtl-lint verilator-elab quartus-sv-subset define-parity pre-synth-gates prefit-reachability prefit-reachability-selftest rbf-provenance rbf-provenance-selftest rbf-what-built post-fit-hierarchy post-fit-timing post-fit-timing-margin timing-exclusion pms-baseline-check pms-baseline-live pms-nal-stats arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools check-core-conf-geometry
+.PHONY: all preflight unit unit-unlocked unit-rollcall rtl-sim rtl-sim-unlocked rtl-lint verilator-elab quartus-sv-subset define-parity pre-synth-gates prefit-reachability prefit-reachability-selftest rbf-provenance rbf-provenance-selftest rbf-what-built post-fit-hierarchy post-fit-timing post-fit-timing-margin timing-exclusion pms-baseline-check pms-baseline-live pms-nal-stats arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools check-core-conf-geometry arm-pl330-bench
 
 all: unit
 
@@ -34,6 +34,7 @@ help:
 	@echo "  make package    - dist tarball (ARM + conf + docs + Plex.rbf if present)"
 	@echo "  make check-core-conf-geometry - resident core md5 vs daemon-adopted decode=WxH"
 	@echo "  make arm-ddr-bench - cross-build DDR write microbenchmark"
+	@echo "  make arm-pl330-bench - cross-build PL330 ingest bench (lab DMA diag)"
 	@echo "  make arm-profile-tools - cross-build ARM decode/profile probes"
 	@echo "  make present-harness - build offline present-loop pipe/copy harness"
 
@@ -50,7 +51,19 @@ unit:
 unit-rollcall:
 	python3 $(ROOT)/tests/unit/test_unit_rollcall.py
 
-unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/test_cadence_swap_path $(ROOT)/build/test_publish_interval_ledger $(ROOT)/build/test_publish_swap_delta_ledger $(ROOT)/build/test_plxd_liveness $(ROOT)/build/test_present_store_scale_math $(ROOT)/build/test_fabric_content_window_math $(ROOT)/build/test_avclock $(ROOT)/build/test_audio_delay $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_av_phase_rtl_quanta $(ROOT)/build/test_osd_menu $(ROOT)/build/test_osd_control $(ROOT)/build/test_last_frame_latch $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_pixel_format $(ROOT)/build/test_main_guard $(ROOT)/build/test_death_breadcrumb $(ROOT)/build/test_frame_ledger $(ROOT)/build/test_supply_bucket $(ROOT)/build/test_raw_video_pipe $(ROOT)/build/test_status_telemetry $(ROOT)/build/test_resolve $(ROOT)/build/test_log_redact $(ROOT)/build/test_pms_timeline $(ROOT)/build/test_plextv_device $(ROOT)/build/test_companion_eof $(ROOT)/build/test_companion_plant_seek $(ROOT)/build/test_gdm_resources_parity $(ROOT)/build/pms_baseline_probe $(ROOT)/build/test_h264_bitstream_source $(ROOT)/build/test_bitstream_ring_lifecycle $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_coded_size_adopt $(ROOT)/build/test_ffmpeg_vf $(ROOT)/build/test_force_scale_construction $(ROOT)/build/test_yuv420p_chroma_480p $(ROOT)/build/test_geom_frame_cost $(ROOT)/build/test_glass_loss_death_points $(ROOT)/build/test_frame_store_sdram_sim $(ROOT)/build/test_frame_store_ddr_prefetch_sim $(ROOT)/build/test_ddr_want_y_hblank_thrash $(ROOT)/build/test_ddr_bank_mailbox_phys $(ROOT)/build/test_ddr_scanout_multiframe $(ROOT)/build/test_sdram_memtest_sim $(ROOT)/build/test_sdram_mailbox $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant $(ROOT)/build/test_p3_host_recon_vectors $(ROOT)/build/test_p3_idct_reference_model $(ROOT)/build/test_p3_inter_pred_vectors $(ROOT)/build/extract_h264_golden $(ROOT)/build/misterplexd
+unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_pl330_encode $(ROOT)/build/test_p720_e2e_budget $(ROOT)/build/test_idle_poll_budget $(ROOT)/build/test_spi_txn_complete $(ROOT)/build/test_gdm_filter $(ROOT)/build/test_cadence $(ROOT)/build/test_cadence_swap_path $(ROOT)/build/test_publish_interval_ledger $(ROOT)/build/test_publish_swap_delta_ledger $(ROOT)/build/test_plxd_liveness $(ROOT)/build/test_present_store_scale_math $(ROOT)/build/test_fabric_content_window_math $(ROOT)/build/test_avclock $(ROOT)/build/test_audio_delay $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_av_phase_rtl_quanta $(ROOT)/build/test_osd_menu $(ROOT)/build/test_osd_control $(ROOT)/build/test_last_frame_latch $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_pixel_format $(ROOT)/build/test_main_guard $(ROOT)/build/test_death_breadcrumb $(ROOT)/build/test_frame_ledger $(ROOT)/build/test_supply_bucket $(ROOT)/build/test_raw_video_pipe $(ROOT)/build/test_status_telemetry $(ROOT)/build/test_resolve $(ROOT)/build/test_log_redact $(ROOT)/build/test_pms_timeline $(ROOT)/build/test_plextv_device $(ROOT)/build/test_companion_eof $(ROOT)/build/test_companion_plant_seek $(ROOT)/build/test_gdm_resources_parity $(ROOT)/build/pms_baseline_probe $(ROOT)/build/test_h264_bitstream_source $(ROOT)/build/test_bitstream_ring_lifecycle $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_coded_size_adopt $(ROOT)/build/test_ffmpeg_vf $(ROOT)/build/test_force_scale_construction $(ROOT)/build/test_yuv420p_chroma_480p $(ROOT)/build/test_geom_frame_cost $(ROOT)/build/test_glass_loss_death_points $(ROOT)/build/test_frame_store_sdram_sim $(ROOT)/build/test_frame_store_ddr_prefetch_sim $(ROOT)/build/test_ddr_want_y_hblank_thrash $(ROOT)/build/test_ddr_bank_mailbox_phys $(ROOT)/build/test_ddr_scanout_multiframe $(ROOT)/build/test_sdram_memtest_sim $(ROOT)/build/test_sdram_mailbox $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant $(ROOT)/build/test_p3_host_recon_vectors $(ROOT)/build/test_p3_idct_reference_model $(ROOT)/build/test_p3_inter_pred_vectors $(ROOT)/build/extract_h264_golden $(ROOT)/build/misterplexd
+	$(ROOT)/build/test_gdm_filter
+	$(ROOT)/build/test_spi_txn_complete
+	$(ROOT)/build/test_idle_poll_budget
+	$(ROOT)/build/test_p720_e2e_budget
+	$(ROOT)/build/test_pl330_encode
+	python3 $(ROOT)/tests/unit/test_p720_shared_bw_contract.py
+	bash $(ROOT)/tests/unit/test_idle_thread_budget_gate.sh
+	bash $(ROOT)/tests/unit/test_io_ack_follow_rtl_sim.sh
+	bash $(ROOT)/tests/unit/test_bitstream_bit_feeder_rtl_sim.sh
+	bash $(ROOT)/tests/unit/test_bitstream_to_exp_golomb_rtl_sim.sh
+	bash $(ROOT)/tests/unit/test_annexb_rbsp_exp_golomb_rtl_sim.sh
+
 	$(ROOT)/build/test_cadence
 	$(ROOT)/build/test_cadence_swap_path
 	$(ROOT)/tests/unit/test_cadence_swap_path_source.sh
@@ -151,6 +164,13 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	python3 $(ROOT)/tests/unit/test_product_no_stub_active_static.py
 	python3 $(ROOT)/tests/unit/test_decode_stub_removal_prereq_static.py
 	python3 $(ROOT)/tests/unit/test_720p_present_m10k_budget_static.py
+	python3 $(ROOT)/tests/unit/test_present_720p_land_static.py
+	python3 $(ROOT)/tests/unit/test_present_720p_l4_static.py
+	python3 $(ROOT)/tests/unit/test_present_geom_params_static.py
+	$(ROOT)/tests/unit/test_present_geom_params_rtl_sim.sh
+	python3 $(ROOT)/tests/unit/test_present_720p_store_wire_static.py
+	$(ROOT)/tests/unit/test_present_720p_store_wire_rtl_sim.sh
+	python3 $(ROOT)/tests/unit/test_720p_clk_ddr_arith.py
 	python3 $(ROOT)/tests/unit/test_p3_high_cabac_scope.py
 	python3 $(ROOT)/tests/unit/test_p3_intra_mb0_verilator.py
 	python3 $(ROOT)/tests/unit/test_h264_intra_nb_ctx_verilator.py
@@ -866,7 +886,18 @@ arm-ddr-bench:
 		-static
 	@file $(ROOT)/build/arm/ddr_write_bench
 
-arm-profile-tools: arm-ddr-bench
+# Lab-only PL330 ingest bench. Does NOT ring doorbell. Requires saw_executing +
+# content match; impossible throughput hard-fails. Do NOT unbind dma-pl330.
+arm-pl330-bench:
+	@if [ -z "$(ARM_CXX)" ]; then echo "No armhf g++ found"; exit 1; fi
+	@mkdir -p $(ROOT)/build/arm
+	$(ARM_CXX) -std=c++17 -O2 -Wall -I$(ROOT)/host -pthread \
+		-o $(ROOT)/build/arm/ddr_pl330_ingest_bench \
+		$(ROOT)/tools/ddr_pl330_ingest_bench.cpp \
+		-static -Wl,--whole-archive -lpthread -Wl,--no-whole-archive
+	@file $(ROOT)/build/arm/ddr_pl330_ingest_bench
+
+arm-profile-tools: arm-ddr-bench arm-pl330-bench
 	@if [ -z "$(ARM_CXX)" ]; then echo "No armhf g++ found"; exit 1; fi
 	@mkdir -p $(ROOT)/build/arm
 	$(ARM_CXX) -std=c++17 -O2 -Wall -I$(ROOT)/host \
@@ -920,3 +951,31 @@ package:
 
 clean:
 	rm -rf $(ROOT)/build
+
+$(ROOT)/build/test_gdm_filter: $(ROOT)/tests/unit/test_gdm_filter.cpp \
+		$(ROOT)/host/libmisterplex/gdm_filter.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_gdm_filter.cpp
+
+$(ROOT)/build/test_spi_txn_complete: $(ROOT)/tests/unit/test_spi_txn_complete.cpp \
+		$(ROOT)/host/libmisterplex/spi_ack_wait.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -pthread -o $@ $(ROOT)/tests/unit/test_spi_txn_complete.cpp
+
+$(ROOT)/build/test_idle_poll_budget: $(ROOT)/tests/unit/test_idle_poll_budget.cpp \
+		$(ROOT)/host/libmisterplex/spi_ack_wait.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -pthread -o $@ $(ROOT)/tests/unit/test_idle_poll_budget.cpp
+
+$(ROOT)/build/test_p720_e2e_budget: $(ROOT)/tests/unit/test_p720_e2e_budget.cpp \
+		$(ROOT)/host/libmisterplex/p720_e2e_budget.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_p720_e2e_budget.cpp
+
+$(ROOT)/build/test_pl330_encode: $(ROOT)/tests/unit/test_pl330_encode.cpp \
+		$(ROOT)/host/libmisterplex/pl330_mem2mem.hpp \
+		$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp \
+		$(ROOT)/host/libmisterplex/ddr_zero_copy_ingest.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_pl330_encode.cpp
+

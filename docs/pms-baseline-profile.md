@@ -58,10 +58,10 @@ recommended because it could affect other PMS clients that also select Generic.
 
 ## Exact path on this PMS
 
-The Plex container is named `plex`, and Docker maps `/home/shawn/plex/config` to `/config`. The profile is installed at:
+The Plex container is named `plex`, and Docker maps `/home/flynnsbit/plex/config` to `/config`. The profile is installed at:
 
 ```text
-/home/shawn/plex/config/Library/Application Support/Plex Media Server/Profiles/MiSTerPlex.xml
+/home/flynnsbit/plex/config/Library/Application Support/Plex Media Server/Profiles/MiSTerPlex.xml
 ```
 
 Inside the container, the same file is:
@@ -179,7 +179,7 @@ metadata key such as `MISTERPLEX_BASELINE_KEY=/library/metadata/N`.
 One-step server rollback:
 
 ```bash
-rm "/home/shawn/plex/config/Library/Application Support/Plex Media Server/Profiles/MiSTerPlex.xml" && docker restart plex
+rm "/home/flynnsbit/plex/config/Library/Application Support/Plex Media Server/Profiles/MiSTerPlex.xml" && docker restart plex
 ```
 
 If MiSTerPlex has also been changed to send `X-Plex-Client-Profile-Name: MiSTerPlex`, client-side rollback is to restore `Generic` or remove the custom profile-name override.
