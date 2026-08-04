@@ -10,6 +10,7 @@
     "DECODE_STUB_FAULT_DROP_INTER_RESIDUAL": "Injected decode_stub inter residual-add drop expected-red fault.",
     "DECODE_STUB_FAULT_SKIP_INTER_CHROMA_RESIDUAL": "Injected decode_stub inter chroma residual skip expected-red fault.",
     "DEQUANT_FAULT_QP_SWEEP": "Injected dequant QP-sweep fault for overflow boundary verification.",
+    "DYN_BASE_EN_TB": "Testbench-only DYN_BASE_EN mirror for ddr_frame_base_mux dual-mode sim.",
     "H264_DEBLOCK_FAULT_ALPHA_BIAS": "Injected deblock alpha-table bias expected-red fault.",
     "H264_DEBLOCK_FAULT_FORCE_BS2": "Injected deblock force-bS=2 expected-red fault.",
     "H264_DEBLOCK_FAULT_MB_COMMIT_EARLY": "Injected deblock/DPB seam expected-red fault.",

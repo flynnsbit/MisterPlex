@@ -221,6 +221,10 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_stream_path_deblock_integration.sh
 	bash $(ROOT)/tests/unit/test_stream_path_ddr_ring_integration.sh
 	$(ROOT)/tests/unit/test_ddr_frame_store_warm_reset.sh
+	$(ROOT)/tests/unit/test_ddr_frame_base_mux_rtl_sim.sh
+	python3 $(ROOT)/tests/unit/test_ddr_frame_base_mux_static.py
+	$(ROOT)/tests/unit/test_ddr_frame_dma_rtl_sim.sh
+	python3 $(ROOT)/tests/unit/test_fabric_frame_dma_static.py
 	$(ROOT)/tests/unit/test_ddr_frame_store_scanout_shear.sh
 	$(ROOT)/tests/unit/test_ddr_frame_store_scanout_freeze.sh
 	$(ROOT)/tests/unit/test_ddr_frame_store_scanout_sustained.sh
