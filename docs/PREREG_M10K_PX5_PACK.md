@@ -2,6 +2,10 @@
 
 Published before fit measurement. Control: parent fit leaf rows on `fit/720p-compose` with PACK_PX5.
 
+**Measured 64b waste baseline (p720probe1 map, no PACK_PX5):** see
+`docs/PREREG_M10K_P720PROBE1_LINEBUF.md` — yram 32×(160×64)→64 blk, u/v 32×(80×64)→64 each,
+**192 linebuf M10K**; n=32 = LINE_COUNT×2 disp+prep (intentional).
+
 ## Handbook layouts (parent-corrected)
 - Illegal: 1280×8
 - Naive byte: 1K×8 = 1024 B → 1280-px line = **2 M10K**

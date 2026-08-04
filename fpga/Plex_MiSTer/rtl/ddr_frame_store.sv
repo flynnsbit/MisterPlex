@@ -114,6 +114,10 @@ module ddr_frame_store #(
 	localparam int C_PX5_WORDS = PACK_PX5 ? ((CODED_W / 2) / 5) : 1;
 	localparam int Y_PX5_AW = $clog2(Y_PX5_WORDS > 1 ? Y_PX5_WORDS : 2);
 	localparam int C_PX5_AW = $clog2(C_PX5_WORDS > 1 ? C_PX5_WORDS : 2);
+	// LINE_SLOTS = 2 * LINE_COUNT is intentional ping-pong: one set is under the
+	// beam (disp_buf), the other is the prep/fill window. FRAME_LINES_16 =>
+	// LINE_COUNT=16 => 32 gen_line instances (p720probe1 map gen_line[0..31]).
+	// Do not "fix" n=32 down to 16 without a design change to drop prep-set RAM.
 	localparam int LINE_SLOTS = LINE_COUNT * 2;
 	localparam int SLOT_W = $clog2(LINE_SLOTS);
 	localparam [SLOT_W-1:0] SECOND_SET_BASE = SLOT_W'(LINE_COUNT);
