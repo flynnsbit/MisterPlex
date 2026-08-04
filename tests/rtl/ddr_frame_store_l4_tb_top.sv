@@ -1,15 +1,22 @@
 // L4 720p ddr_frame_store reader TB (sim only).
 // Geometry matches ddr_frame_layout_params 720p tier + present_core L4 FS_* bind.
-// LINE_COUNT is the variable under test (8 vs 16 blackout margin).
+// LINE_COUNT / FRAME_H / CODED_H / DISPLAY_H are variables under test.
 `default_nettype none
 
 module ddr_frame_store_l4_tb #(
-	parameter int LINE_COUNT = 8,
+	parameter int LINE_COUNT = 16,
+	parameter int FRAME_W = 1280,
+	parameter int FRAME_H = 720,
+	parameter int CODED_W = 1280,
+	parameter int CODED_H = 720,
+	parameter int DISPLAY_W = 1280,
+	parameter int DISPLAY_H = 720,
 	parameter int DDR_BURST_MAX = 64
 )(
 	input  wire        clk,
 	input  wire        clk_ddr,
 	input  wire        reset,
+	// Wide enough for 1280x720 and awkward heights <=1023.
 	input  wire [10:0] rd_x,
 	input  wire [9:0]  rd_y,
 	input  wire        rd_active,
@@ -38,17 +45,9 @@ module ddr_frame_store_l4_tb #(
 	wire DDRAM_CLK;
 	wire [7:0] DDRAM_BE;
 
-	// L4 layout (ddr_frame_layout_params.svh 720p tier)
-	localparam int FRAME_W = 1280;
-	localparam int FRAME_H = 720;
-	localparam int CODED_W = 1280;
-	localparam int CODED_H = 720;
-	localparam int DISPLAY_W = 1280;
-	localparam int DISPLAY_H = 720;
 	localparam [31:0] PHYS_BASE = 32'h3018_0000;
 	localparam int BANK_STRIDE = 32'h0018_0000;
 	localparam [31:0] DOORBELL = 32'h3047_F000;
-	// Mailboxes stay on the 480p control-plane addresses (not owned by this lane).
 	localparam [31:0] MAILBOX = 32'h3007_F100;
 	localparam [31:0] FRAME_MBOX = 32'h3007_F118;
 
@@ -81,8 +80,8 @@ module ddr_frame_store_l4_tb #(
 		.clk(clk),
 		.clk_ddr(clk_ddr),
 		.reset(reset),
-		.rd_x(rd_x),
-		.rd_y(rd_y),
+		.rd_x(rd_x[$clog2(FRAME_W)-1:0]),
+		.rd_y(rd_y[$clog2(FRAME_H)-1:0]),
 		.rd_active(rd_active),
 		.rd_r(rd_r),
 		.rd_g(rd_g),
