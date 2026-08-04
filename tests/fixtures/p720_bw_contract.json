@@ -453,5 +453,30 @@
       "dual-core aggregate headroom without MiSTer 100% core tax",
       "path_a_overlap as dual-core free parallel"
     ]
+  },
+  "fabric_publish_engine": {
+    "module": "fpga/Plex_MiSTer/rtl/ddr_publish_engine.sv",
+    "tb": "tests/rtl/ddr_publish_engine_tb.sv",
+    "modes": {
+      "DIRECT": "doorbell only; payload beats 0",
+      "COPY": "mem2mem 2x payload fallback"
+    },
+    "M10K": {
+      "value": 0,
+      "class": "PREREG_by_construction",
+      "note": "bounce ramstyle=logic MAX_BURST*64; not M10K"
+    },
+    "ALM": {
+      "value": null,
+      "class": "ESTIMATE_unfitted",
+      "estimate_range": "200-400",
+      "control": "post-fit hierarchy after ENABLE_FABRIC_PUBLISH wire"
+    },
+    "present_priority": "present_want blocks new RD/WE issue; TB G1 issues_while_present=0",
+    "product_wired": false,
+    "files_qip": false,
+    "budget_vs_linebufs": "must stay M10K=0 so 720p linebufs keep ~192-197 of ~356 strip reclaim",
+    "COPY_ddr_extra_MBps_720p24": 66.3552,
+    "control_sim": "tests/unit/test_ddr_publish_engine_rtl_sim.sh"
   }
 }

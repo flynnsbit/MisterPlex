@@ -138,6 +138,7 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/build/test_h264_bitstream_source",
     "$(ROOT)/build/test_bitstream_ring_lifecycle",
     "$(ROOT)/build/test_ddr_720p_abi_origin",
+    "bash $(ROOT)/tests/unit/test_ddr_publish_engine_rtl_sim.sh",
     "$(ROOT)/build/test_frame_store_math",
     "$(ROOT)/build/test_coded_size_adopt",
     "$(ROOT)/build/test_ffmpeg_vf",
