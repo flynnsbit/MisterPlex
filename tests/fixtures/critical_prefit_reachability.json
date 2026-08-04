@@ -8,13 +8,15 @@
     "stream_path",
     "ddr_frame_store",
     "present_core",
-    "plex_rbf_build_id"
+    "plex_rbf_build_id",
+    "plex_delivery_path_stamp"
   ],
   "expect_reachable": [
     "stream_path",
     "ddr_frame_store",
     "present_core",
-    "plex_rbf_build_id"
+    "plex_rbf_build_id",
+    "plex_delivery_path_stamp"
   ],
   "teeth_non_reachable": [
     "h264_decode_top",
@@ -22,14 +24,17 @@
     "h264_intra_nb_ctx",
     "h264_decode_skeleton",
     "h264_cavlc_residual_block",
-    "h264_cavlc_nc_predictor"
+    "h264_cavlc_nc_predictor",
+    "fabric_frame_dma"
   ],
   "notes": [
     "critical_modules/expect_reachable: always-required product path (REACHABLE).",
     "critical_if_macro_absent.PRODUCT_NO_STUB: decode_stub required REACHABLE when QSF does not set PRODUCT_NO_STUB (current main).",
     "teeth_if_macro_present.PRODUCT_NO_STUB: decode_stub must be PRUNED/NOT_IN_QIP when PRODUCT_NO_STUB=1 (w-nostub reclaim).",
     "teeth_non_reachable: historical decoder/CAVLC hole until deliberately landed.",
-    "Presence only \u2014 not correctness; post-fit needs FIT_RPT."
+    "Presence only \u2014 not correctness; post-fit needs FIT_RPT.",
+    "plex_delivery_path_stamp: fabric-visible ARM_COPY vs FABRIC_DMA class (Sweep 118).",
+    "fabric_frame_dma tooth: must stay non-reachable until w-mem/w-path lands real DMA."
   ],
   "critical_if_macro_absent": {
     "PRODUCT_NO_STUB": [

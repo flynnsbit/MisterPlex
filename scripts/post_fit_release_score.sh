@@ -88,6 +88,24 @@ grep -n 'plex_rbf_build_id' "$FIT_RPT" | head -20
 grep -n 'decode_stub' "$FIT_RPT" | head -20
 set -e
 
+
+# 7) Delivery class — structural score ≠ 720p24 (parent Sweep 118, measured)
+echo "=== DELIVERY_CLASS (Sweep 118 arithmetic; fit cannot close this) ==="
+echo "frame_budget_ms@24fps=41.667"
+echo "T_decode_ms=32.705"
+echo "T_copy_arm_ms=14.978"
+echo "serial_deficit_ms=6.016"
+echo "R_req_MBps@720p24=33.1776"
+echo "DELIVERY_CLASS=STRUCTURAL_ONLY"
+echo "DELIVERY_PROVEN=0"
+echo "NOTE: ARM sendDdrFrame /dev/mem copy is outside FIT_RPT/STA."
+echo "NOTE: FABRIC_FRAME_DMA path retires T_copy_arm; until REACHABLE+fitted+HW-proven, GRANT delivery stays NO."
+if grep -qE '^[^#]*VERILOG_MACRO.*"FABRIC_FRAME_DMA=1"' "$ROOT/fpga/Plex_MiSTer/Plex.qsf" 2>/dev/null; then
+  echo "FABRIC_FRAME_DMA_MACRO=1 — claimed at compile; still DELIVERY_PROVEN=0 without HW"
+else
+  echo "FABRIC_FRAME_DMA_MACRO=0 — product path class is ARM_COPY (plex_delivery_path_stamp)"
+fi
+
 echo "=== SCORE SUMMARY ==="
 if [[ "$fail" -ne 0 ]]; then
   echo "POST_FIT_SCORE FAIL — GRANT remains NO"

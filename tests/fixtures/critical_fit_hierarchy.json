@@ -39,6 +39,14 @@
       "min_comb_aluts": 0,
       "min_registers": 8,
       "notes": "Fabric git stamp \u2014 must survive fitting with non-trivial registers (post-fit stage; requires FIT_RPT)."
+    },
+    {
+      "name": "plex_delivery_path_stamp",
+      "entity": "plex_delivery_path_stamp",
+      "hierarchy_contains": "plex_delivery_path_stamp:u_delivery_path",
+      "min_comb_aluts": 0,
+      "min_registers": 4,
+      "notes": "Delivery path class stamp \u2014 must survive fitting (combinational OK)."
     }
   ]
 }

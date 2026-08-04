@@ -29,6 +29,8 @@ row() {
     '|sys_top|emu:emu|stream_path:spath|ddr_bitstream_reader:ddr_stream' 'ddr_bitstream_reader'
   row 'plex_rbf_build_id:u_rbf_build_id' 12 32 0 0 \
     '|sys_top|emu:emu|plex_rbf_build_id:u_rbf_build_id' 'plex_rbf_build_id'
+  row 'plex_delivery_path_stamp:u_delivery_path' 2 8 0 0 \
+    '|sys_top|emu:emu|plex_delivery_path_stamp:u_delivery_path' 'plex_delivery_path_stamp'
 } >"$WORKDIR/green_absent.fit.rpt"
 
 {

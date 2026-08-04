@@ -47,6 +47,14 @@
       "must_be_absent": true,
       "max_total_resources": 0,
       "notes": "PRODUCT_NO_STUB reclaim \u2014 fitted hierarchy must show 0 resources for decode_stub"
+    },
+    {
+      "name": "plex_delivery_path_stamp",
+      "entity": "plex_delivery_path_stamp",
+      "hierarchy_contains": "plex_delivery_path_stamp:u_delivery_path",
+      "min_comb_aluts": 0,
+      "min_registers": 4,
+      "notes": "Delivery path class stamp \u2014 must survive fitting (combinational OK)."
     }
   ]
 }

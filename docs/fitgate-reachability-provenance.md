@@ -74,3 +74,24 @@ grep -nE 'plex_rbf_build_id|decode_stub' path/Plex.fit.rpt | head
 
 `post-fit-score` structural PASS is **not** a 720p24 delivery PASS (ARM copy /
 DDR write / present BW are outside fit/STA).
+
+## Delivery path stamp (`plex_delivery_path_stamp`)
+
+Fabric-visible class bit for Sweep 118:
+
+| path_class[1:0] | Meaning |
+|---|---|
+| `01` | **ARM_COPY** (default product) — HPS `sendDdrFrame` `/dev/mem` path |
+| `10` | **FABRIC_DMA** claimed (`FABRIC_FRAME_DMA=1`) — not delivery-proven |
+
+Parent-measured serial deficit (do not re-derive casually):
+
+- frame budget @24 fps = 41.667 ms
+- decode = 32.705 ms/frame
+- `T_copy_arm` = 14.978 ms/frame
+- serial shortfall = **6.016 ms/frame**
+
+`post-fit-score` always prints `DELIVERY_CLASS=STRUCTURAL_ONLY` /
+`DELIVERY_PROVEN=0`. A structural FIT PASS with `arm_copy_path=1` is **not**
+720p24 delivery. Closing the deficit is either (a) overlap on the free core
+(parent HW experiment) or (b) fabric DMA that retires the copy (strategic RTL).
