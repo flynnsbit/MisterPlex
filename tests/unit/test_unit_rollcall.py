@@ -157,6 +157,8 @@ EXPECTED_COMMANDS = [
     "bash $(ROOT)/tests/unit/test_ddr_frame_base_mux_rtl_sim.sh",
     "bash $(ROOT)/tests/unit/test_ddr_frame_dma_rtl_sim.sh",
     "bash $(ROOT)/tests/unit/test_ddr_publish_job_rtl_sim.sh",
+    "bash $(ROOT)/tests/unit/test_ddr_i420_store_width_check_rtl_sim.sh",
+    "bash $(ROOT)/tests/unit/test_ddr_publish_copy_budget_rtl_sim.sh",
     "$(ROOT)/build/test_pl330_encode",
     "$(ROOT)/build/test_frame_store_sdram_sim",
     "$(ROOT)/build/test_frame_store_ddr_prefetch_sim",
