@@ -3,13 +3,14 @@
 // Source arithmetic: Memory/lab/agents/w-mem-DECODE_DDR_ARB_BW.md
 // Ideal port peak 90e6*8=720 MB/s is arithmetic ONLY — not measured sustainable DDR.
 //
-// LIVE vs DDR (parent reachability correction — verify before assuming traffic):
-//   h264_dpb_one_ref / MC helpers are LIVE under decode_stub (source graph), but
+// DDR traffic model (independent of any LIVE/DEAD reachability table):
+//   rd-duck NACK: parent 19/17 instrument is NOT ground truth — do not budget from it.
 //   decode_stub backs DPB with on-chip BRAM (`(* ram_style="block" *) dpb_mem`),
-//   not DDRAM ports. So LIVE MC/DPB ≠ current external DDR load.
-//   PDEC_DPB_* below are FUTURE external-DDR rates once w-fitgate moves the DPB
-//   off BRAM. Product DDR masters today: m0 present, m1 bitstream|PLXG, m2 fabric_attach.
-//   Bitstream (a) already exists as m1; budget below is still NOT a measured rate.
+//   not DDRAM ports — quoted fact, not a reachability claim.
+//   PDEC_DPB_* = FUTURE external-DDR rates after w-fitgate moves DPB off BRAM.
+//   Product DDR masters today: m0 present, m1 bitstream|PLXG, m2 fabric_attach.
+//   Bitstream (a) exists as m1; budget below is still NOT a measured rate.
+//   NOT claimed: helpers in shipping RBF, area paid, post-fit survival.
 `ifndef PLEX_DECODE_DDR_BW_SVH
 `define PLEX_DECODE_DDR_BW_SVH
 
