@@ -42,8 +42,15 @@ assign BUTTONS = 0;
 //////////////////////////////////////////////////////////////////
 
 wire [1:0] ar = status[122:121];
-assign VIDEO_ARX = (!ar) ? 12'd4 : (ar - 1'd1);
-assign VIDEO_ARY = (!ar) ? 12'd3 : 12'd0;
+// Original aspect tracks content FRAME_W:H (QSF macros). 1280x720 → 16:9.
+`ifndef FRAME_W
+`define FRAME_W 320
+`endif
+`ifndef FRAME_H
+`define FRAME_H 240
+`endif
+assign VIDEO_ARX = (!ar) ? 12'(`FRAME_W) : (ar - 1'd1);
+assign VIDEO_ARY = (!ar) ? 12'(`FRAME_H) : 12'd0;
 
 `include "build_id.v"
 localparam CONF_STR = {
@@ -207,6 +214,9 @@ end
 wire clk_sys;
 wire clk_sdram;
 wire clk_ddr;
+`ifdef PRESENT_CLK_PIX_PLL
+wire clk_pix_pll;
+`endif
 wire pll_locked;
 pll pll
 (
@@ -215,6 +225,9 @@ pll pll
 	.outclk_0(clk_sys),
 	.outclk_1(clk_sdram),
 	.outclk_2(clk_ddr),
+`ifdef PRESENT_CLK_PIX_PLL
+	.outclk_3(clk_pix_pll),
+`endif
 	.locked(pll_locked)
 );
 
@@ -736,6 +749,13 @@ present_core #(
 	.clk(clk_sys),
 	.clk_sdram(clk_sdram),
 	.clk_audio(CLK_AUDIO),
+	// clk_pix: product default ties to clk_sys. PRESENT_CLK_PIX_PLL (default
+	// OFF) drives outclk_3 = 29.70 MHz (or 74.25 with PRESENT_CLK_PIX_74_25).
+`ifdef PRESENT_CLK_PIX_PLL
+	.clk_pix(clk_pix_pll),
+`else
+	.clk_pix(clk_sys),
+`endif
 	.reset(present_reset),
 	.pal(status[2]),
 	.scandouble(forced_scandoubler),
@@ -746,7 +766,18 @@ present_core #(
 	// defaults (Pattern=None, Audio tone=Off, Force bars=No).
 	.pattern(2'd0),
 	.audio_en(1'b0),
+	// use_frame_store=1 FORCES colorbars (disables external frame). Keep 0 so
+	// DDR/has_frame can feed the store when present. Not an "enable store" bit.
 	.use_frame_store(1'b0),
+	// L4: content from plex_present_geom_mux (FABRIC_NATIVE_720P_GEOM → 1280×720).
+	// Default Template path ignores these (tied 0).
+`ifdef PLEX_PRESENT_720P_L4
+	.content_w(present_content_w),
+	.content_h(present_content_h),
+`else
+	.content_w(11'd0),
+	.content_h(11'd0),
+`endif
 	.fs_wr_en(fs_wr_en),
 	.fs_wr_pixel(fs_wr_pixel),
 	.fs_wr_reset(fs_wr_reset),
@@ -846,7 +877,12 @@ ddr_bus_arbiter ddr_arb (
 );
 `endif
 
+// CLK_VIDEO must match CE_PIXEL/VGA_* domain. MULTI+clk_pix emits on clk_pix.
+`ifdef PRESENT_CLK_PIX_PLL
+assign CLK_VIDEO = clk_pix_pll;
+`else
 assign CLK_VIDEO = clk_sys;
+`endif
 assign CE_PIXEL  = ce_pix;
 assign VGA_DE = ~(HBlank | VBlank);
 assign VGA_HS = HSync;
