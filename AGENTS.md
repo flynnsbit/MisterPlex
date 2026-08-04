@@ -11,7 +11,13 @@ Use the **multi-agent build harness** for all sustained work in this repo:
 - Project orchestration (run gates): [`docs/AGENT_ORCHESTRATION.md`](docs/AGENT_ORCHESTRATION.md)
 - Living backlog (source of truth): [`docs/PHASE_BACKLOG.md`](docs/PHASE_BACKLOG.md)
 
-Parent keeps **~6 specialists** filled (**hard max 10**). Roster experts: **FPGA, ARM, Memory, FPGA Fit, Builds, Tests, Rubber duck (rd-duck), Clock, Path/DMA, Integration**. **Quartus is the sole exclusive slot** (`w-fit` only). While fitting, fill only non-RBF work. Evidence-only gates. Never invent BUILD_OK.
+Parent keeps **~6 specialists** filled (**hard max 10**). Roster: **FPGA, ARM, Memory, FPGA Fit, Builds, Tests, Rubber duck (rd-duck), Clock, Path/DMA, Integration**.
+
+**Mandate:** real FPGA offload on DE10-Nano (DDR / BRAM / SDRAM / SD) for PMS **240p + 480p (done) + ≥720p (active)**. Start: `Memory/START_HERE.md`.
+
+**rd-duck** is always **clean context** (fresh agent, claim package only) — see `Memory/lab/agents/RD_DUCK_CHARTER.md`. No assumed green, no fake tests.
+
+**Quartus is the sole exclusive slot** (`w-fit` only). While fitting, fill only non-RBF work. Evidence-only gates. Never invent BUILD_OK.
 
 ## Safe deploy
 

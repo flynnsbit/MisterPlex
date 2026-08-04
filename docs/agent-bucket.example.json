@@ -1,7 +1,11 @@
 {
   "updated": "2026-08-04T00:00:00-05:00",
-  "base_sha": "ab18a382",
+  "mandate": "FPGA offload DE10-Nano; PMS 240p+480p done; 720p active; real SV not fake green",
+  "start": "Memory/START_HERE.md",
+  "rd_duck": "clean_context_only — Memory/lab/agents/RD_DUCK_CHARTER.md",
+  "base_sha": "main",
   "programme": "720p-fabric-present-publish",
+  "resources": ["FPGA", "DDR", "BRAM_M10K", "SDRAM", "SD_card", "ARM_thin"],
   "fit_exclusive": "FREE",
   "device_token": "none",
   "target_workers": 6,
@@ -10,38 +14,39 @@
     {
       "id": "w-integ",
       "expert": "Integration",
-      "goal": "Compose enable branch off ab18a382; unit green before FIT_GO",
+      "goal": "Compose enable branch; unit green before FIT_GO",
       "worktree": "~/Projects/MisterPlex-wt-integ"
-    },
-    {
-      "id": "w-clock",
-      "expert": "Clock / timing",
-      "goal": "clk_pix compose recipe + STA risk pre-register (Sweep 136 P4)",
-      "worktree": "~/Projects/MisterPlex-wt-clock"
-    },
-    {
-      "id": "w-mem",
-      "expert": "Memory / DDR",
-      "goal": "Product-wire publish engine; M10K depth×width for 720p linebufs",
-      "worktree": "~/Projects/MisterPlex-wt-mem"
     },
     {
       "id": "w-fpga",
       "expert": "FPGA RTL",
-      "goal": "Present/store under compose macros; Template path default-safe",
+      "goal": "Real present/store SV under compose macros",
       "worktree": "~/Projects/MisterPlex-wt-fpga"
+    },
+    {
+      "id": "w-mem",
+      "expert": "Memory",
+      "goal": "DDR/BRAM/SDRAM publish path; M10K depth×width",
+      "worktree": "~/Projects/MisterPlex-wt-mem"
+    },
+    {
+      "id": "w-clock",
+      "expert": "Clock",
+      "goal": "clk_pix + STA pre-register",
+      "worktree": "~/Projects/MisterPlex-wt-clock"
     },
     {
       "id": "w-test",
       "expert": "Tests",
-      "goal": "Compose unit/RTL gates; skip accounting",
+      "goal": "Red/green gates; no soft-skip PASS",
       "worktree": "~/Projects/MisterPlex-wt-test"
     },
     {
       "id": "rd-duck",
       "expert": "Rubber duck",
-      "goal": "Attack compose timing close + fabric COPY DDR contention claims",
-      "worktree": "~/Projects/MisterPlex-wt-duck"
+      "goal": "Clean-context NACK of next offload/fit claim only",
+      "worktree": null,
+      "clean_context": true
     }
   ],
   "idle_until_fit_go": ["w-fit"],

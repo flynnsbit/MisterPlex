@@ -2,39 +2,52 @@
 
 Update this file when work finishes. Loop agents claim items and mark `DONE` / `IN_PROGRESS` / `BLOCKED`.
 
+## PRODUCT ENDSTATE — PMS streaming 240p / 480p / ≥720p
+
+| Tier | Status | Notes |
+|------|--------|--------|
+| **240p** | **DONE / tested** | Tear-free present + product cast (see VSync milestone below) |
+| **480p** | **DONE / tested** | Same product present/cast stack; eyes-on + lab |
+| **≥720p** | **IN_PROGRESS** | Offload ARM→FPGA; fabric present + publish |
+
+**Mandate:** build **real FPGA** offload (DDR, BRAM/M10K, SDRAM, SD card for core/daemon) — not ARM-only polish.  
+**Start pack:** `Memory/START_HERE.md` · `Memory/AGENT_BRIEF.md` · [`AGENT_EXPERT_ROSTER.md`](AGENT_EXPERT_ROSTER.md)  
+**rd-duck:** clean context only — `Memory/lab/agents/RD_DUCK_CHARTER.md`
+
+---
+
 ## ACTIVE — 720p fabric present + publish (**IN_PROGRESS** 2026-08-04)
 
 | | |
 |--|--|
-| **Mandate** | 720p24 via ARM decode + **fabric present/publish** — full fabric H.264 decode is dead (M10K). |
-| **Authoritative record** | `Memory/lab/parent/misterplex-parent-720p-decode-verdict.txt` (Sweeps 113–136) · `Memory/AGENT_BRIEF.md` |
-| **Lab device** | `CORENAME=Plex` RBF md5 prefix **`dfebf2bf`** (stale vs current RTL — do not reason about device from source until ONE new LOCK_OK deploy) |
-| **Grok Build** | Multi-agent: **max 10 experts** — see [`AGENT_EXPERT_ROSTER.md`](AGENT_EXPERT_ROSTER.md). Skill `/multi-agent-build` + `~/.grok/rules/00-multi-agent-build.md`. Sole Quartus (`w-fit`). Evidence in `Memory/lab/`. |
+| **Mandate** | 720p24: ARM decode bootstrap + **fabric present/publish** (full fabric H.264 decode dead on M10K). Max offload from dual-A9. |
+| **Authoritative record** | `Memory/lab/parent/misterplex-parent-720p-decode-verdict.txt` · `Memory/START_HERE.md` |
+| **Lab device** | Prove CORENAME + RBF md5 before any device claim (often stale vs source) |
+| **Grok Build** | Max **10** experts · `/multi-agent-build` · sole Quartus `w-fit` · **rd-duck clean context** |
 
 ### Landed (base heal)
 
 | ID | Item | Status | Notes |
 |----|------|--------|-------|
-| G-RECONCILE | Merge Jul-27 split-brain into `origin/main` | **DONE** | PR **#12** → `08b09aa2` |
-| G-NO_STUB | PRODUCT_NO_STUB strip fit | **DONE** | M10K 465→197, free 356; RBF `3ed1f0a3…` not product-geometry |
-| G-IDLE | Daemon idle GDM busy-spin | **DONE** | On land line / reconcile (`d2e013a1`); PR #4 closed superseded |
-| G-GEOM | Product canvas 1280×720 identity | **IN_PROGRESS** | Branch `land/720p-geom` (PR #13 rebased onto healed main); host/RTL doorbell **0x302FF000**, bank **0x180000** |
+| G-RECONCILE | Merge Jul-27 split-brain into `origin/main` | **DONE** | PR **#12** |
+| G-NO_STUB | PRODUCT_NO_STUB strip fit | **DONE** | M10K 465→197, free 356 |
+| G-IDLE | Daemon idle GDM busy-spin | **DONE** | `d2e013a1` on land line |
+| G-GEOM | Product canvas 1280×720 identity | **DONE** | PR **#16** → main; doorbell **0x302FF000**, bank **0x180000**; `make unit` rc=0 |
 
 ### Open critical path (ordered)
 
 | ID | Item | Status | Notes |
 |----|------|--------|-------|
-| G-GEOM-UNIT | `make unit` green on `land/720p-geom` | **IN_PROGRESS** | Geometry/static/RTL present gates green; full suite long-running |
-| G-GEOM-MERGE | Land product geometry on `origin/main` | **PENDING** | After unit green |
-| G-COMPOSE | Enable L4/MULTI/clk_pix/FABRIC_FRAME_DMA compose cut | **PENDING** | PRs #14/#15 or equivalent; **one** exclusive fit; pre-register Sweep 136 P1–P5 |
-| G-PUBLISH | Wire fabric publish engine; delete ARM T_copy | **PENDING** | `ddr_publish_engine` DIRECT first |
-| G-DEVICE | ONE menu deploy + mailbox/720p24 measure | **PENDING** | Parent-only hardware; BUILD_OK ≠ product PASS |
-| G-WT-CLEAN | Prune dead worktrees after land | **PENDING** | ~210 worktrees; tag unique SHAs first |
+| G-COMPOSE | Enable L4/MULTI/clk_pix/FABRIC_FRAME_DMA compose cut | **PENDING** | One exclusive fit; Sweep 136 pre-register; rd-duck attacks STA claims |
+| G-PUBLISH | Wire fabric publish; delete ARM T_copy | **PENDING** | DIRECT first; DDR/BRAM/SDRAM trade-offs owned by w-mem |
+| G-DEVICE | ONE menu deploy + 720p24 measure | **PENDING** | Parent token; BUILD_OK ≠ product PASS |
+| G-REGRESS-480 | Hold 240p/480p cast after 720p RBF | **PENDING** | No tier regression |
+| G-WT-CLEAN | Prune dead worktrees | **PENDING** | After compose land |
 
 ### Explicitly deferred
 
-- Full High/CABAC/B fabric decoder / residual sticky 3l2 programme (historical HARD_FAIL track below remains archive)
-- 720p60 · Ethernet lab path · public release claiming 720p before G-DEVICE eyes-on
+- Full High/CABAC/B fabric decoder / residual sticky 3l2 (archive below)
+- 720p60 · Ethernet lab · public “720p done” release before G-DEVICE eyes-on
 
 ---
 
