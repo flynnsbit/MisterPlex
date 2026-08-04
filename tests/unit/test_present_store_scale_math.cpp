@@ -107,13 +107,26 @@ int main() {
     EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
                          "past_last_row = (py >= V_STORE)"),
            "past_last_row vs V_STORE");
+    // Legacy: direct .CODED_W(DDR_FRAME_CODED_WIDTH) or FS_=DDR_FRAME_CODED_WIDTH.
+    // integ/720p-compose: FS_CODED_W from abi_select ternary (480p DDR_FRAME_* /
+    // 720p DDR_FRAME_720P_* or P720_*), still bound .CODED_W(FS_CODED_W).
     const bool coded_ok =
         file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
                       ".CODED_W(DDR_FRAME_CODED_WIDTH)") ||
         (file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
                        "FS_CODED_W     = DDR_FRAME_CODED_WIDTH") &&
-         file_contains("fpga/Plex_MiSTer/rtl/present_core.sv", ".CODED_W(FS_CODED_W)"));
+         file_contains("fpga/Plex_MiSTer/rtl/present_core.sv", ".CODED_W(FS_CODED_W)")) ||
+        (file_contains("fpga/Plex_MiSTer/rtl/present_core.sv", ".CODED_W(FS_CODED_W)") &&
+         file_contains("fpga/Plex_MiSTer/rtl/ddr_frame_abi_select.svh", "DDR_FS_CODED_W") &&
+         file_contains("fpga/Plex_MiSTer/rtl/ddr_frame_abi_select.svh",
+                       "DDR_FRAME_CODED_WIDTH") &&
+         file_contains("fpga/Plex_MiSTer/rtl/ddr_frame_abi_select.svh",
+                       "DDR_FRAME_720P_CODED_WIDTH"));
     EXPECT(coded_ok, "ddr_frame_store CODED_W from layout params");
+    // Negative: bare literal CODED_W would bypass layout SSOT (compose bug class).
+    EXPECT(!file_contains("fpga/Plex_MiSTer/rtl/present_core.sv", ".CODED_W(624)") &&
+               !file_contains("fpga/Plex_MiSTer/rtl/present_core.sv", ".CODED_W(1280)"),
+           "CODED_W must not be a bare geometry literal");
     // Honest swap pack must ship with this RBF for skip instrumentation.
     EXPECT(file_contains("fpga/Plex_MiSTer/rtl/ddr_frame_store.sv",
                          "DDRAM_DIN <= {frames_done_d2"),

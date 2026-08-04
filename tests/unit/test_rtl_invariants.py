@@ -1835,11 +1835,12 @@ def check_present_geometry_stride_contract() -> None:
 
     # Default (non-L4) arm must still bind the 480p layout symbols. L4 arm binds
     # DDR_FRAME_720P_* via FS_* localparams (see present_core.sv). Accept either
-    # direct .CODED_W(DDR_FRAME_*) or FS_CODED_W = DDR_FRAME_* (parameterized form).
+    # direct .CODED_W(DDR_FRAME_*), FS_CODED_W = DDR_FRAME_* (parameterized form),
+    # or integ compose: FS_* from ddr_frame_abi_select (DDR_FS_* → layout SSOT).
     def present_ddr_wiring_ok(p_nt: str) -> bool:
+        frame_ports = ".FRAME_W(FRAME_W)" in p_nt and ".FRAME_H(FRAME_H)" in p_nt
         direct = (
-            ".FRAME_W(FRAME_W)" in p_nt
-            and ".FRAME_H(FRAME_H)" in p_nt
+            frame_ports
             and ".CODED_W(DDR_FRAME_CODED_WIDTH)" in p_nt
             and ".DISPLAY_W(DDR_FRAME_DISPLAY_WIDTH)" in p_nt
             and ".PRESENT_X(DDR_FRAME_PILLARBOX_LEFT)" in p_nt
@@ -1847,8 +1848,7 @@ def check_present_geometry_stride_contract() -> None:
             and ".DOORBELL_PHYS(DDR_FRAME_YUV420P_DOORBELL_PHYS)" in p_nt
         )
         fs_bind = (
-            ".FRAME_W(FRAME_W)" in p_nt
-            and ".FRAME_H(FRAME_H)" in p_nt
+            frame_ports
             and "FS_CODED_W=DDR_FRAME_CODED_WIDTH" in p_nt
             and "FS_DISPLAY_W=DDR_FRAME_DISPLAY_WIDTH" in p_nt
             and "FS_PRESENT_X=DDR_FRAME_PILLARBOX_LEFT" in p_nt
@@ -1857,13 +1857,30 @@ def check_present_geometry_stride_contract() -> None:
             and ".CODED_W(FS_CODED_W)" in p_nt
             and ".HPS_BANK_STRIDE_BYTES(FS_BANK_STRIDE)" in p_nt
         )
-        return direct or fs_bind
+        # integ/720p-compose: abi_select elaborates DDR_FS_* from layout params;
+        # present_core binds FS_* from DDR_FS_* / P720_* and .CODED_W(FS_CODED_W).
+        abi_sel = (
+            frame_ports
+            and 'include"ddr_frame_abi_select.svh"' in p_nt
+            and "DDR_FS_USE_720P_ABI" in p_nt
+            and "DDR_FS_CODED_W" in p_nt
+            and "FS_DISPLAY_W=DDR_FS_DISPLAY_W" in p_nt
+            and "FS_PRESENT_X=DDR_FS_PRESENT_X" in p_nt
+            and "FS_BANK_STRIDE=" in p_nt
+            and "FS_DOORBELL=" in p_nt
+            and ".CODED_W(FS_CODED_W)" in p_nt
+            and (
+                ".HPS_BANK_STRIDE_BYTES(FS_BANK_STRIDE)" in p_nt
+                or ".HPS_BANK_STRIDE_BYTES(DDR_FS_BANK_STRIDE)" in p_nt
+            )
+        )
+        return direct or fs_bind or abi_sel
 
     check(
         present_ddr_wiring_ok(present_nt),
         "present_core must instantiate ddr_frame_store from the shared layout params: "
         "FRAME_W=640 for scanout, CODED_W=624 for DDR stride, DISPLAY_W=618 for crop, "
-        "PRESENT_X=11 for pillarbox.",
+        "PRESENT_X=11 for pillarbox (or abi_select FS_* compose path).",
     )
     # L4 consumer wiring (must not leave 720p constants unreferenced).
     # Read RAW module text (comments only stripped) — strip_inactive_preprocessor

@@ -11,17 +11,20 @@
 //
 // M10K: 0 (no arrays; layout N/A). Control: source — no ramstyle / deep mem.
 // Against ~356 M10K nostub reclaim: spends 0.
+// Layout SSOT: defaults from ddr_frame_layout_params (no bare 449280 / 0x80000).
+
+`include "ddr_frame_layout_params.svh"
 
 module ddr_i420_store_width_check #(
-	parameter int FRAME_W = 640,
-	parameter int FRAME_H = 480,
-	parameter int CODED_W = 624,
-	parameter int CODED_H = 480,
-	parameter int BANK_STRIDE_BYTES = 524288,
-	parameter [31:0] PHYS_BASE = 32'h3000_0000,
+	parameter int FRAME_W = DDR_FRAME_PRESENTED_WIDTH,
+	parameter int FRAME_H = DDR_FRAME_PRESENTED_HEIGHT,
+	parameter int CODED_W = DDR_FRAME_CODED_WIDTH,
+	parameter int CODED_H = DDR_FRAME_CODED_HEIGHT,
+	parameter int BANK_STRIDE_BYTES = DDR_FRAME_YUV420P_BANK_STRIDE,
+	parameter [31:0] PHYS_BASE = 32'(DDR_FRAME_PHYS_BASE),
 	// Reference 480p bank for 3× growth arithmetic (product YUV stride).
-	parameter int REF480_BANK_STRIDE_BYTES = 524288,
-	parameter int REF480_FRAME_BYTES = 449280
+	parameter int REF480_BANK_STRIDE_BYTES = DDR_FRAME_YUV420P_BANK_STRIDE,
+	parameter int REF480_FRAME_BYTES = DDR_FRAME_YUV420P_BYTES
 )(
 	// Derived geometry (same equations as ddr_frame_store / bank_geom)
 	output wire [15:0] x_w_bits,           // $clog2(FRAME_W)
