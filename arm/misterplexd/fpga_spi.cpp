@@ -1542,6 +1542,10 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
     timing.prep_wait_us = elapsedUs(tPrep0, tPrep1);
 
     // Copy frame into bank (persistent map).
+    // FABRIC_COPY_HANDOVER: this host memcpy (+ cleanDcacheRange below) is the
+    // DELETE class when fabric owns DDR publication copy. See
+    // host/libmisterplex/fabric_copy_handover.hpp (M10K=0 contract; w-mem owns
+    // fabric). Contended-core: MiSTer owns one A9; decode||copy withdrawn.
     const size_t bankOff = static_cast<size_t>(bank) * plan.layout.bank_stride;
     auto tCopy0 = std::chrono::steady_clock::now();
     std::memcpy(ddrMap_ + bankOff, payload, len);

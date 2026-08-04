@@ -88,6 +88,7 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/build/test_plxd_liveness",
     "$(ROOT)/build/test_ddr_bank_select_contended",
     "$(ROOT)/build/test_ddr_playback_bank_select",
+    "python3 $(ROOT)/tests/unit/test_fabric_copy_handover_static.py",
     "$(ROOT)/tests/unit/test_c5382bee_frames_done_pack.sh",
     "bash $(ROOT)/tests/unit/test_delivered_geom_loglevel.sh",
     "bash $(ROOT)/tests/unit/test_arm_cpu_sample_contract.sh",
