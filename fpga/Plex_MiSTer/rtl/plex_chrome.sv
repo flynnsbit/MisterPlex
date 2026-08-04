@@ -55,25 +55,32 @@
 //   body_scale = half-even(layout_h/240) clamp 2..8  → 3 @720p, 2 @480/540
 //   idle chevron: size=min(W,H)/3, ox/oy centered — pure math (0 M10K)
 //   font: 8×8 combo ROM × body_scale (0 M10K); glyphs stay sharp on glass
-// REJECT upsample-480p-assets: would need linebufs ~1280×8b = 1 M10K/line
-//   (Cyclone V M10K = 10240 bits = 1280 bytes — handbook-class; packing still
-//   UNVERIFIED in Quartus) × several lines + soft edges; competes with w-mem copy.
+// REJECT upsample-480p-assets (linebufs). Parent handbook correction 2026-08-04:
+//   M10K = 10240 bits, but 1280×8 is NOT a legal depth×width. Byte port max is
+//   1K×8 = 1024 B/block → naive 1280-px 8-bit line = **2 M10K** (1K+256 waste).
+//   Packed 256×40 (5 px/word) hits 1280 B in **1** M10K but forces 5-pixel
+//   granularity on ports/phase — not free. Prior "1 M10K/line" claim RETIRED.
 // FRAME_W/H (640→1280) is w-nostub's global switch — chrome does NOT duplicate it.
 //
-// Budget (yosys generic cell counts, proc+opt_clean+memory -nomap; NOT Quartus ALM/Fmax):
-//   list 2×N×64b dual-buffer (consolidated M10K, not N tiny RAMs):
-//     N=48  → 6.0 kbit   yosys cells=35509
-//     N=80  → 10.0 kbit  yosys cells=56629  (Δ +59% vs 48)
-//     N=104 → 13.3 kbit  yosys cells=72469  (Δ +104% vs 48)
-//     N=112 → ~14.3 kbit  (product storage; HIT_SCAN=48 caps combo)
-//     N=128 → 16.0 kbit  yosys cells=88309  (Δ +149% vs 48)
-//   Product M10K EST: list 2×112×64 = 14336 bits → ceil(14336/10240)=2 M10K ideal
-//                     (if each bank maps 1 block: 2; shallow dual-port may be 2–4)
-//   CDC FIFO DEPTH=128 × 72b = 9216 bits → ≤1 M10K ideal
-//   font ROM combinational (0 M10K); idle chevron pure math (0 M10K)
-//   TOTAL chrome plane EST: 3–5 M10K, ALM UNKNOWN (no fit this lane; competes w-mem)
-//   Fmax on clk_hdmi: UNKNOWN without Quartus — HIT_SCAN is per-pixel combo depth.
-//   Evidence: .agent-work/chrome-area/stat_n{48,80,104,128}.txt (yosys only)
+// === M10K COST (analytical LB from handbook configs; NOT fitter-measured) =====
+// Legal M10K modes (Cyclone V Device Handbook, as parent-quoted):
+//   8K×1 | 4K×2 | 2K×4 | 2K×5 | 1K×8 | 1K×10 | 512×16 | 512×20 | 256×32 | 256×40
+// Max width 40b ⇒ a 64b or 72b logical word needs ≥2 physical blocks.
+//
+// | Array                         | Shape        | Assumed packing              | M10K LB |
+// | list_a (ramstyle M10K)        | 112 × 64     | 256×40 + 256×40 (40+24)      | **2**   |
+// | list_b (ramstyle M10K)        | 112 × 64     | same                         | **2**   |
+// | plxc_cdc mem (no ramstyle yet)| 128 × 72     | 256×40 + 256×40 (40+32)      | **2**   |
+// | font / idle chevron           | combo/math   | —                            | **0**   |
+// | **TOTAL chrome LB**           |              |                              | **6**   |
+//
+// RETIRED prior EST **3–5**: used ceil(bits/10240) and treated 64b/72b as one
+// block (illegal: width>40). That under-counted width split by ~2× on list+CDC.
+// Bit totals still: list 2×112×64=14336b, CDC 128×72=9216b — bits are not blocks.
+// Physical blocks UNKNOWN until a fit entity row; wire6 line_buf class shows
+// shallow arrays can cost several × bit-ceil (docs/m10k-physical-blocks-wire6.md).
+// ALM / Fmax: UNKNOWN (no fit this lane). Competes with w-mem inside 356 free.
+// yosys cell counts (logic only, -nomap): .agent-work/chrome-area/stat_n*.txt
 
 `timescale 1ns / 1ps
 

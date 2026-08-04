@@ -36,6 +36,8 @@
 
 module plex_chrome_plxc_cdc #(
 	// >= MAX_CMDS+1 (112 list + ctrl). hdmi>sys drains, but depth covers gray lag / brief stalls.
+	// M10K LB: DEPTH×72b @128 → width>40 needs ≥2 blocks (256×40+256×40). Not bit-ceil 1.
+	// Physical blocks unmeasured (no fit). See plex_chrome.sv M10K header.
 	parameter int DEPTH = 128  // power of 2, >= 4
 ) (
 	input  wire        wr_clk,
