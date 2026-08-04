@@ -29,6 +29,8 @@ localparam int DDR_FRAME_Y_STRIDE_BYTES = 1280;
 localparam int DDR_FRAME_CHROMA_STRIDE_BYTES = 640;
 localparam int DDR_FRAME_RGB565_BANK_STRIDE = 32'h0020_0000;
 localparam int DDR_FRAME_YUV420P_BANK_STRIDE = 32'h0018_0000;
+localparam int DDR_FRAME_PHYS_BASE = 32'h3000_0000;  // product dual-bank base
+
 localparam int DDR_FRAME_RGB565_DOORBELL_PHYS = 32'h303F_F000;
 localparam int DDR_FRAME_YUV420P_DOORBELL_PHYS = 32'h302F_F000;
 localparam int DDR_FRAME_YUV_BLACK_Y = 16;

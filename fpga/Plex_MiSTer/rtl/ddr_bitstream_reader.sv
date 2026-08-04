@@ -204,7 +204,7 @@ module ddr_bitstream_reader #(
 	// Default bit_ready=1 so legacy stream_path instances (unconnected) stay X-clean.
 	output wire        bit_valid,
 	output wire        bit_value,
-	input  wire        bit_ready = 1'b1,
+	input  wire        bit_ready,
 	output wire        bit_nal_last,
 	output wire [15:0] bit_epb_removed,
 	output wire [15:0] bit_rbsp_bytes,
