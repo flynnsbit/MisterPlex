@@ -100,6 +100,11 @@ public:
                              const DdrFrameGeometry& geometry, int bank = 0);
     bool sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len, int width, int height,
                              int bank = 0);
+    // Zero-copy publish: payload already resident at bank (DMA/fabric fill).
+    // Runs PLXD bank-select Drop policy then doorbell/SPI kick ONLY — no memcpy.
+    // Retires T_copy_arm (~14.978 ms) when producer owns the bytes. See
+    // ddr_kick_only_publish.hpp + plxd_bank_credit.sv.
+    bool sendDdrKickOnly(int bank);
     // DDR frame mmap policy. Default true keeps the proven strongly-ordered/device
     // mapping; false is a lab knob for write-combine/cacheable /dev/mem tests.
     // If a lab proves the no-sync mapping is cacheable, enable flush so the FPGA
