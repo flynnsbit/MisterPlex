@@ -13,11 +13,13 @@
     "decode_stub",
     "stream_path",
     "ddr_frame_store",
-    "present_core"
+    "present_core",
+    "plex_rbf_build_id"
   ],
   "notes": [
     "Proves presence/reachability from TOP_LEVEL_ENTITY sys_top only.",
     "Does NOT prove decode correctness, cycle budget, or post-fit area.",
-    "Historical RED: cavlc in QIP, only parent skeleton not in QIP → PRUNED."
+    "Historical RED: cavlc in QIP, only parent skeleton not in QIP → PRUNED.",
+    "plex_rbf_build_id is the fabric commit stamp — must be REACHABLE pre-fit; post-fit hierarchy is a separate stage (FIT_RPT)."
   ]
 }

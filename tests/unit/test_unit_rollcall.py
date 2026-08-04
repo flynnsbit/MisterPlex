@@ -228,6 +228,7 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/tests/unit/test_confstr_guard.sh",
     "$(ROOT)/tests/unit/test_core_conf_geometry_gate.sh",
     "$(ROOT)/tests/unit/test_rbf_provenance.sh",
+    "$(ROOT)/tests/unit/test_plex_rbf_build_id_rtl_sim.sh",
     "$(ROOT)/tests/unit/test_video_regression_liveness.sh",
     "$(ROOT)/tests/unit/test_timing_margin_gate.sh",
     "$(ROOT)/tests/unit/test_release_rbf_hash.sh",

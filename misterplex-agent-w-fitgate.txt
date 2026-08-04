@@ -1,42 +1,27 @@
 lane=w-fitgate
 branch=w-fitgate
-sha=0f086783
+sha=PENDING
 GRANT=NO
-status=PREFIT_REACHABILITY+RBF_PROVENANCE
+status=FABRIC_BUILD_ID+REACHABILITY+PROVENANCE
 
-## 1) Prefit reachability (prior + still green)
-  scripts/check_prefit_reachability.py
-  make prefit-reachability / prefit-reachability-selftest
-  Teeth: decoder NOT_IN_QIP / CAVLC PRUNED; decode_stub+ddr_frame_store REACHABLE
-  selftest true rc=0; full gate on this tree true rc=1 (refuse fit)
+.sv ADDED/CHANGED:
+  + fpga/Plex_MiSTer/rtl/plex_rbf_build_id.sv
+  + fpga/Plex_MiSTer/rtl/plex_rbf_build_id_params.vh
+  ~ fpga/Plex_MiSTer/Plex.sv (u_rbf_build_id instance)
+  ~ fpga/Plex_MiSTer/files.qip (L2)
 
-## 2) RBF provenance binding (NEW — stale-bitstream class)
-  scripts/rbf_provenance.py  emit|verify|lookup|device|selftest
-  registry: release_artifacts/rbf-manifests/<md5>.json
-  sidecar:  <rbf>.provenance.json
-  fields: rbf_md5 + git_commit + git_dirty + qip_files[] + digests
-  build_rbf_remote.sh emits after COPY_BACK
-  deploy_plex_core.sh DEPLOY_PROVENANCE=require (default) exit 8 if no/bad manifest
-  make rbf-what-built MD5=… | DEVICE=1
-  Historical G-VID1 seed: dfebf2bf… → 0139f2c5, qip_has_ddr_frame_store=0
+LADDER plex_rbf_build_id @ this branch:
+  ON_MAIN=no  IN_FILES_QIP=yes  INSTANTIATED=yes  ENABLED=yes (always-on)
+  Prefit REACHABLE=yes (measured)
+  Post-fit SURVIVED=unknown until FIT_RPT (stage: make post-fit-hierarchy)
 
-TEETH (directly captured):
+EVIDENCE:
+  test_plex_rbf_build_id_rtl_sim.sh true rc=0 (GREEN+FAULT RED twin)
+  prefit-reachability-selftest true rc=0 (plex_rbf_build_id REACHABLE; CAVLC PRUNED teeth)
+  prefit full gate true rc=1 (decoder still absent — fit refuse)
   rbf_provenance selftest true rc=0
-  test_rbf_provenance.sh true rc=0
-  orphan/no-manifest verify true rc=8
-  unknown md5 lookup true rc=8
-  G-VID1 lookup true rc=0 commit=0139f2c5… store=0 rd=1
-  v0.3.0 verify true rc=0
-  define_parity true rc=0 (allowlisted FIT_GATE_* test-only macros)
-  prefit reachability selftest true rc=0
+  make unit true rc=2 (pre-existing rtl_lint baseline drift; not this RTL)
 
-make unit on w-fitgate@d058d8b4+WIP:
-  true rc=2
-  cause: scripts/rtl_lint.py regression vs baseline
-    present_content_window.sv WIDTHEXPAND/WIDTHTRUNC
-    ddr_frame_store.sv WIDTHEXPAND
-  NOT introduced by this change set (no RTL edits). Did not edit lint baseline
-  (parent forbid weaken). test_rbf_provenance PASS inside suite before lint step.
-
-Proves: presence/reachability + RBF↔source binding. NOT correctness/timing.
+Proves: QIP+reachability+fabric stamp present; post-fit hierarchy when FIT_RPT.
+Does NOT prove: decode correctness; stamp survived fit until FIT_RPT green.
 NO Quartus. NO device. GRANT=NO.

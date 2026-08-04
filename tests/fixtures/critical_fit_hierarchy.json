@@ -31,6 +31,14 @@
       "hierarchy_contains": "ddr_bitstream_reader:ddr_stream",
       "min_comb_aluts": 100,
       "min_registers": 100
+    },
+    {
+      "name": "plex_rbf_build_id",
+      "entity": "plex_rbf_build_id",
+      "hierarchy_contains": "plex_rbf_build_id:u_rbf_build_id",
+      "min_comb_aluts": 0,
+      "min_registers": 8,
+      "notes": "Fabric git stamp — must survive fitting with non-trivial registers (post-fit stage; requires FIT_RPT)."
     }
   ]
 }

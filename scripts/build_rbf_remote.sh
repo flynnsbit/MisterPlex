@@ -100,9 +100,13 @@ printf 'Remote processors: %s\n' "${PROCESSORS:-preserve-qsf}"
 printf 'Reference RBF: %s\n' "${REFERENCE_RBF:-UNVERIFIED-OVERRIDE}"
 
 printf 'Running fast pre-synthesis gates before taking remote Quartus slot...\n'
+# Stamp fabric build-id params from git BEFORE rsync so the fit embeds COMMIT_PREFIX.
+python3 "$ROOT/scripts/gen_rbf_build_id_vh.py" --root "$ROOT"
 "$ROOT/scripts/check_define_parity.py"
 "$ROOT/scripts/check_quartus_sv_subset.py" $("$ROOT/scripts/rtl_lint.py" --list-files)
 "$ROOT/scripts/check_verilator_elab.py"
+# Prefit reachability (decoder prune + build-id stamp must be REACHABLE).
+python3 "$ROOT/scripts/check_prefit_reachability.py" --root "$ROOT"
 
 ssh "$HOST" bash -s -- "$REMOTE_SLOT" "$REMOTE_PROJECT" "$REMOTE_DEV" <<'REMOTE_PREP'
 set -euo pipefail
@@ -242,6 +246,7 @@ if [[ "$COPY_BACK" == "1" ]]; then
   rsync -a "$HOST:$REMOTE_SLOT/build_remote/compile.log" "$LOCAL_OUT/"
   rsync -a "$HOST:$REMOTE_SLOT/build_remote/summary.txt" "$LOCAL_OUT/"
   rsync -a "$HOST:$REMOTE_SLOT/build_remote/docker_stats.tsv" "$LOCAL_OUT/"
+  # Post-fit stage (requires FIT_RPT): critical modules + plex_rbf_build_id survived fitting.
   "$ROOT/scripts/check_quartus_fit_hierarchy.py" \
     --fit-rpt "$LOCAL_OUT/Plex.fit.rpt" \
     --map-rpt "$LOCAL_OUT/Plex.map.rpt" \
