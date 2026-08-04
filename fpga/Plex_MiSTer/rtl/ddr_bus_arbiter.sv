@@ -85,6 +85,11 @@ module ddr_bus_arbiter (
 	reg grant_m1;
 	reg rsp_owner_m1;
 	reg [8:0] rsp_left;
+	// Sticky m1_want with no m1_cmd held grant_m1 forever → m0_busy=1 and the
+	// frame-store PLXD/mailbox writer never reached DDR (parent: 0x3007F128
+	// stayed zero for 12s). Drop grant if m1 does not command in time.
+	localparam int M1_GRANT_TIMEOUT = 16;
+	reg [4:0] m1_grant_hold;
 
 	wire rsp_active = rsp_left != 9'd0;
 	wire m0_cmd = m0_rd | m0_we;
@@ -161,6 +166,7 @@ module ddr_bus_arbiter (
 			grant_m1 <= 1'b0;
 			rsp_owner_m1 <= 1'b0;
 			rsp_left <= 9'd0;
+			m1_grant_hold <= 5'd0;
 		end else begin
 			if (DDRAM_DOUT_READY && rsp_active)
 				rsp_left <= rsp_left - 9'd1;
@@ -171,10 +177,20 @@ module ddr_bus_arbiter (
 						rsp_owner_m1 <= 1'b1;
 						rsp_left <= {1'b0, selected_burst};
 						grant_m1 <= 1'b0;
+						m1_grant_hold <= 5'd0;
 					end else if (m1_we || !m1_want_s2) begin
 						grant_m1 <= 1'b0;
+						m1_grant_hold <= 5'd0;
+					end else if (m1_grant_hold >= 5'(M1_GRANT_TIMEOUT - 1)) begin
+						// m1 took the grant but never commanded — return bus to m0
+						// so PLXD/status mailboxes cannot be starved indefinitely.
+						grant_m1 <= 1'b0;
+						m1_grant_hold <= 5'd0;
+					end else begin
+						m1_grant_hold <= m1_grant_hold + 5'd1;
 					end
 				end else begin
+					m1_grant_hold <= 5'd0;
 					if (m0_rd) begin
 						rsp_owner_m1 <= 1'b0;
 						rsp_left <= {1'b0, selected_burst};
@@ -184,8 +200,10 @@ module ddr_bus_arbiter (
 				end
 			end
 
-			if (grant_m1 && !DDRAM_BUSY && m1_cmd && !m1_rd)
+			if (grant_m1 && !DDRAM_BUSY && m1_cmd && !m1_rd) begin
 				grant_m1 <= 1'b0;
+				m1_grant_hold <= 5'd0;
+			end
 		end
 	end
 endmodule

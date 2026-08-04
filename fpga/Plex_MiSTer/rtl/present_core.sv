@@ -587,7 +587,16 @@ module present_core #(
 		.LINE_COUNT(FRAME_LINE_COUNT),
 		.PHYS_BASE(FS_PHYS_BASE),
 		.HPS_BANK_STRIDE_BYTES(FS_BANK_STRIDE),
-		.DOORBELL_PHYS(FS_DOORBELL)
+		.DOORBELL_PHYS(FS_DOORBELL),
+		// Product mailboxes are doorbell-relative so ARM+core share one page
+		// (absolute defaults exist only so docs/plx_mailbox_map.json gate can
+		// parse numeric RTL params).
+		.MAILBOX_PHYS(FS_DOORBELL + 32'h100),
+		.INPUT_MAILBOX_PHYS(FS_DOORBELL + 32'h108),
+		.SDRAM_MAILBOX_PHYS(FS_DOORBELL + 32'h110),
+		.FRAME_MAILBOX_PHYS(FS_DOORBELL + 32'h118),
+		.BANK_MAILBOX_PHYS(FS_DOORBELL + 32'h128),
+		.MAP_MAILBOX_PHYS(32'h3007_F0F0)
 	) fstore (
 		.clk(clk),
 		.clk_ddr(clk_ddr),

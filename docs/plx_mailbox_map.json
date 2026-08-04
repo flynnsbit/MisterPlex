@@ -123,6 +123,24 @@
         "34:33": "format",
         "63:35": "seq + flags"
       }
+    },
+    {
+      "name": "PLXA",
+      "purpose": "Self-describing mailbox map bootstrap (core\u2192HPS)",
+      "address": "0x3007F0F0",
+      "magic": "0x504C5841",
+      "rtl_file": "rtl/ddr_frame_store.sv",
+      "rtl_addr_param": "MAP_MAILBOX_PHYS",
+      "rtl_magic_param": "MAGIC_A",
+      "arm_addr_const": null,
+      "arm_magic_const": null,
+      "layout": {
+        "31:0": "magic",
+        "39:32": "abi_version",
+        "47:40": "flags",
+        "63:48": "plxd_offset"
+      },
+      "_note": "Fixed absolute bootstrap; host plxa_map.hpp"
     }
   ],
   "bitstream_ring": {

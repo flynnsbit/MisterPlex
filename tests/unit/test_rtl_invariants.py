@@ -1013,7 +1013,12 @@ def check_ddr_frame_store_yuv_read_contract() -> None:
                 "line_addr=fill_is_chroma?chroma_addr:y_addr",
                 "chroma fill path must issue the selected chroma address",
             ),
-            ("rd_cy=src_y[CODED_Y_W-1:1]", "chroma line lookup must halve the source Y"),
+            # Product WANT_Y_LINE_ONLY uses src_y_line (beam Y, not X-gated src_y)
+            # so HBlank does not thrash chroma line identity. Still halves Y for 4:2:0.
+            (
+                "rd_cy=src_y_line[CODED_Y_W-1:1]",
+                "chroma line lookup must halve the beam source Y (src_y_line)",
+            ),
             (
                 "c_line_v2[video_slot]==(Y_W-1)'(rd_cy)",
                 "chroma line-buffer hit must compare against the halved source Y",
