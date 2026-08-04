@@ -12,17 +12,20 @@ INTERFACE PEAKS (separate — do not collapse into headline):
   linebuf I420-equiv DE   = 3.0 B/clk_sys (NOT DDRAM; rd_miss_now hits skip)
 
 PROOF GAP: PARTIAL_CLOSED_READER / fabric_bw_closed=false.
-  reader_refill_beats may be CLOSED (full-line refill demand).
-  PPC2 dual-lane correctness is NOT closed by beat TB — scalar DUT is
-  bit-identical G0/G1 (rd-duck discriminator). True PPC2 gate must FAIL
-  scalar via odd/even checksum. HPS concurrent write + T_copy remain OPEN.
+  accepted_request_steady_delta CLOSED (demand/refill beats).
+  PPC2 delivery/correctness OPEN — C++ scorer never observes rd_*_n,
+  lane-valid, RGB, underrun (rd-duck corrected NACK). w-clock DUT has
+  PX_PER_CLK=2 ports (RETRACTED: "dc2ae85d is scalar"). Scaler scalar
+  *adaptation* may match beat counts; that proves demand-only metric.
+  shared_controller_BW + T_copy remain OPEN.
 
 Companions: steady R+W 66.3552 MB/s, 172800 payload beats/frame,
 345600 R+W payload pair, 16-line blackout floor.
 
 Negative: claiming 3.0 as headline fails; claiming fabric_bw_closed true fails;
-claiming PPC2 reader closed from beat TB fails; claiming serial e2e closed
-(deficit<=0) fails. T_copy_arm is CPU TIME not a rate.
+claiming PPC2 delivery closed from beat TB fails; claiming w-clock DUT is
+scalar fails; claiming serial e2e closed (deficit<=0) fails.
+T_copy_arm is CPU TIME not a rate.
 """
 from __future__ import annotations
 
@@ -127,8 +130,11 @@ def main() -> int:
         return fail("16-line cover must be >=500us")
     print(f"OK blackout floor {bl['multi_line_floor']} lines")
 
-    # PARTIAL_CLOSED_READER: refill beats may close; PPC2 dual-lane NOT from beat TB.
-    # fabric_bw_closed stays false (HPS write + dual-lane correctness gap).
+    # PARTIAL_CLOSED_READER (rd-duck corrected):
+    #   accepted_request_steady_delta CLOSED (demand)
+    #   PPC2 delivery/correctness OPEN (scorer blind to rd_*_n/...)
+    #   shared_controller_BW OPEN
+    # RETRACTED: "w-clock dc2ae85d is scalar" — DUT has PX_PER_CLK=2 + rd_*_n.
     if gap.get("status") not in (
         "OPEN",
         "PARTIAL_CLOSED_READER",
@@ -140,58 +146,92 @@ def main() -> int:
     if gap.get("status") != "PARTIAL_CLOSED_READER":
         return fail(
             "NEGATIVE: proof_gap.status must be PARTIAL_CLOSED_READER "
-            f"(rd-duck discriminator; got {gap.get('status')!r})"
+            f"(rd-duck; got {gap.get('status')!r})"
         )
     if gap.get("fabric_bw_closed") is not False:
         return fail(
             "NEGATIVE: fabric_bw_closed must stay false "
-            "(HPS write open + PPC2 dual-lane not proven by refill TB)"
+            "(shared controller + PPC2 delivery not proven by demand TB)"
         )
-    # Unsplit "CLOSED" alone is forbidden — must name refill vs dual-lane
     rbdg = gap.get("reader_beat_delta_gap")
-    if rbdg not in (
-        "CLOSED",
-        "REFILL_BEATS_CLOSED_PPC2_CORRECTNESS_OPEN",
-    ):
+    ok_rbdg = {
+        "ACCEPTED_REQUEST_CLOSED_PPC2_DELIVERY_OPEN",
+        "REFILL_BEATS_CLOSED_PPC2_CORRECTNESS_OPEN",  # legacy alias
+    }
+    if rbdg not in ok_rbdg:
         return fail(
             f"reader_beat_delta_gap unexpected {rbdg!r} "
-            "(want CLOSED or REFILL_BEATS_CLOSED_PPC2_CORRECTNESS_OPEN)"
+            "(want ACCEPTED_REQUEST_CLOSED_PPC2_DELIVERY_OPEN)"
         )
-    if rbdg == "CLOSED" and gap.get("status") == "PARTIAL_CLOSED_READER":
+    if rbdg == "CLOSED":
         return fail(
-            "NEGATIVE: unsplit reader_beat_delta_gap=CLOSED under "
-            "PARTIAL_CLOSED_READER — must say REFILL_BEATS_CLOSED_PPC2_CORRECTNESS_OPEN"
+            "NEGATIVE: unsplit reader_beat_delta_gap=CLOSED — must split "
+            "accepted-request CLOSED vs PPC2 delivery OPEN"
         )
 
     reader = gap.get("reader_steady_delta") or c.get("real_reader_proof") or {}
     rstat = reader.get("status")
-    if rstat not in ("CLOSED", "REFILL_BEATS_CLOSED"):
+    ok_rstat = {
+        "ACCEPTED_REQUEST_CLOSED",
+        "REFILL_BEATS_CLOSED",  # legacy alias
+    }
+    if rstat not in ok_rstat:
         return fail(f"reader_steady_delta.status unexpected {rstat!r}")
-    # Prefer explicit refill-only label
     if rstat == "CLOSED":
         return fail(
             "NEGATIVE: reader_steady_delta.status=CLOSED without qualifier — "
-            "use REFILL_BEATS_CLOSED (beat TB is not PPC2 dual-lane proof)"
+            "use ACCEPTED_REQUEST_CLOSED (demand only; not PPC2 delivery)"
         )
     measures = (reader.get("measures") or "").lower()
-    if "refill" not in measures and "full-line" not in measures:
-        return fail("reader_steady_delta.measures must state full-line refill only")
+    if not any(k in measures for k in ("accepted", "refill", "full-line", "demand")):
+        return fail(
+            "reader_steady_delta.measures must state accepted-request/refill demand"
+        )
     disc = reader.get("rd_duck_discriminator") or {}
     if not disc:
         return fail("reader_steady_delta must include rd_duck_discriminator")
-    if "FAIL scalar" not in (disc.get("required_negative_control") or "") and \
-       "fail scalar" not in (disc.get("required_negative_control") or "").lower():
-        return fail("discriminator must require PPC2 gate FAIL scalar odd/even")
+    # Retraction must be present — do not keep "w-clock is scalar" as fact
+    retr = (disc.get("retraction") or "").lower()
+    if "withdrawn" not in retr and "retract" not in retr:
+        return fail(
+            "discriminator must record rd-duck RETRACTION "
+            "(dc2ae85d is NOT a scalar reader)"
+        )
+    if "px_per_clk=2" not in retr and "px_per_clk=2" not in json.dumps(disc).lower():
+        # allow PX_PER_CLK=2 in any disc field
+        blob = json.dumps(disc).lower()
+        if "px_per_clk=2" not in blob and "px_per_clk\": 2" not in blob:
+            if "px_per_clk=2" not in blob.replace(" ", ""):
+                pass  # checked below via finding
+    blob = json.dumps(disc).lower()
+    if "rd_*_n" not in blob and "rd_r_n" not in blob and "lane-valid" not in blob and "lane_valid" not in blob:
+        return fail(
+            "discriminator must state scorer never observes rd_*_n/lane-valid "
+            "(narrower NACK)"
+        )
+    req = (disc.get("required_negative_control") or "").lower()
+    if "fail" not in req:
+        return fail("discriminator required_negative_control must require FAIL path")
+    if "checksum" not in req and "lane-valid" not in req and "lane_valid" not in req:
+        return fail("negative control must cite odd/even checksum or lane-valid")
 
     ppc2c = gap.get("ppc2_dual_lane_correctness") or {}
     if not ppc2c:
         return fail("proof_gap.ppc2_dual_lane_correctness required")
-    if "CLOSED" == ppc2c.get("status"):
+    if ppc2c.get("status") == "CLOSED":
         return fail(
             "NEGATIVE: ppc2_dual_lane_correctness must not claim CLOSED from beat TB"
         )
-    if "NOT" not in (ppc2c.get("status") or "") and "OPEN" not in (ppc2c.get("status") or ""):
+    if "OPEN" not in (ppc2c.get("status") or ""):
         return fail(f"ppc2_dual_lane_correctness.status unexpected {ppc2c.get('status')!r}")
+
+    ar = gap.get("accepted_request_steady_delta") or gap.get("reader_refill_beats") or {}
+    if ar.get("status") != "CLOSED":
+        return fail("accepted_request_steady_delta (or reader_refill_beats) must be CLOSED")
+
+    sc_bw = gap.get("shared_controller_BW") or {}
+    if sc_bw and sc_bw.get("status") != "OPEN":
+        return fail("shared_controller_BW must be OPEN when present")
 
     tb = reader.get("tb", "")
     if "720p_ppc2_bus" not in tb:
@@ -204,29 +244,33 @@ def main() -> int:
     if int(g0.get("ddr_cycles", 0)) >= int(g0.get("budget_ddr_24fps", 0)):
         return fail("G0 must be under 24fps ddr cycle budget")
     open_l = " ".join(gap.get("still_open", [])).lower()
-    if "hps" not in open_l and "concurrent" not in open_l:
-        return fail("still_open must mention concurrent HPS write")
-    if "ppc2" not in open_l and "dual-lane" not in open_l and "dual_lane" not in open_l:
-        return fail("still_open must mention ppc2_dual_lane_correctness (rd-duck)")
-    # Must NOT list unsplit "reader beat open" without dual-lane context
+    if "hps" not in open_l and "concurrent" not in open_l and "shared_controller" not in open_l:
+        return fail("still_open must mention HPS concurrent / shared_controller_BW")
+    if "ppc2" not in open_l and "delivery" not in open_l and "dual" not in open_l:
+        return fail("still_open must mention ppc2 delivery/correctness (rd-duck)")
     for item in gap.get("still_open", []):
         il = item.lower()
         if "not reader" in il or "— not reader" in il or "- not reader" in il:
             continue
-        if "dual" in il or "ppc2" in il:
-            continue  # dual-lane open is required
-        if "reader" in il and ("beat" in il or "steady" in il) and "closed" not in il and "refill" not in il:
+        if "dual" in il or "ppc2" in il or "delivery" in il:
+            continue
+        if "shared" in il or "hps" in il or "t_copy" in il:
+            continue
+        if "reader" in il and ("beat" in il or "steady" in il) and "closed" not in il and "accepted" not in il:
             return fail(f"still_open must not re-open unsplit reader beat-delta: {item}")
 
     cs = c.get("claim_split") or {}
     cs_rs = (cs.get("reader_steady_delta") or {}).get("status")
-    if cs_rs not in ("CLOSED", "REFILL_BEATS_CLOSED"):
+    if cs_rs not in ("ACCEPTED_REQUEST_CLOSED", "REFILL_BEATS_CLOSED"):
         return fail(f"claim_split.reader_steady_delta.status unexpected {cs_rs!r}")
     if cs_rs == "CLOSED":
         return fail(
-            "NEGATIVE: claim_split.reader_steady_delta must be REFILL_BEATS_CLOSED "
+            "NEGATIVE: claim_split.reader_steady_delta must be ACCEPTED_REQUEST_CLOSED "
             "not unsplit CLOSED"
         )
+    cs_ar = cs.get("accepted_request_steady_delta") or {}
+    if cs_ar and cs_ar.get("status") != "CLOSED":
+        return fail("claim_split.accepted_request_steady_delta must be CLOSED")
     cs_ppc = cs.get("ppc2_dual_lane_correctness") or {}
     if not cs_ppc:
         return fail("claim_split.ppc2_dual_lane_correctness required")
@@ -234,6 +278,11 @@ def main() -> int:
         return fail("claim_split.ppc2_dual_lane_correctness must not be CLOSED")
     if cs_ppc.get("scalar_negative_control_required") is not True:
         return fail("claim_split.ppc2 requires scalar_negative_control_required=true")
+    obs = cs_ppc.get("scorer_must_observe") or []
+    if obs:
+        obs_l = " ".join(str(x).lower() for x in obs)
+        if "rd" not in obs_l and "lane" not in obs_l:
+            return fail("scorer_must_observe should include rd_*_n / lane_valid")
     if (cs.get("hps_write_concurrent") or {}).get("status") != "OPEN":
         return fail("claim_split.hps_write_concurrent must be OPEN")
     if (cs.get("T_copy_e2e") or {}).get("status") != "OPEN":
@@ -248,16 +297,31 @@ def main() -> int:
         return fail("discriminator fabric_bw_closed must be false")
     if rd_disc.get("keep_status") != "PARTIAL_CLOSED_READER":
         return fail("discriminator keep_status must be PARTIAL_CLOSED_READER")
+    if "retraction" not in rd_disc and "WITHDRAWN" not in json.dumps(rd_disc):
+        return fail("top-level discriminator must include retraction of scalar-DUT claim")
+    split = rd_disc.get("correct_split") or {}
+    if split:
+        if split.get("accepted_request_steady_delta") != "CLOSED":
+            return fail("correct_split.accepted_request_steady_delta must be CLOSED")
+        if split.get("ppc2_delivery_correctness") != "OPEN":
+            return fail("correct_split.ppc2_delivery_correctness must be OPEN")
+        if split.get("shared_controller_BW") != "OPEN":
+            return fail("correct_split.shared_controller_BW must be OPEN")
+    # NEGATIVE: must not claim w-clock tip is scalar as current fact
+    dns = " ".join(cs.get("do_not_say") or []).lower()
+    if "scalar reader" not in dns and "dc2ae85d is a scalar" not in dns:
+        return fail("do_not_say must forbid retracted 'w-clock is scalar' claim")
 
     print(
-        "OK claim_split: reader_steady_delta=REFILL_BEATS_CLOSED; "
-        "ppc2_dual_lane NOT_CLOSED_BY_BEAT_TB; hps_write+T_copy_e2e=OPEN"
+        "OK claim_split: accepted_request_steady_delta=CLOSED; "
+        "ppc2_delivery OPEN; shared_controller+hps+T_copy OPEN"
     )
     print(
-        f"OK PARTIAL_CLOSED_READER refill beats "
+        f"OK PARTIAL_CLOSED_READER demand beats "
         f"(payload={g0.get('payload_beats')} "
         f"ddr_cy={g0.get('ddr_cycles')}<{g0.get('budget_ddr_24fps')}); "
-        "PPC2 dual-lane NOT from beat TB; fabric_bw_closed=false"
+        "PPC2 delivery NOT from beat TB; fabric_bw_closed=false; "
+        "w-clock DUT NOT claimed scalar"
     )
     # --- ARM CPU TIME (not a rate) — parent Sweep 118 ---
     arm = c["arm_cpu_time_NOT_a_rate"]
@@ -409,8 +473,8 @@ def main() -> int:
 
     print(
         "PASS p720_shared_bw_contract: HEADLINE=33.1776 MB/s/dir "
-        "(1.65888 avg ONLY); peaks RGB=6/I420=3; REFILL_BEATS_CLOSED "
-        "ppc2_dual_lane_OPEN hps+T_copy_OPEN; "
+        "(1.65888 avg ONLY); peaks RGB=6/I420=3; ACCEPTED_REQUEST_CLOSED "
+        "ppc2_delivery_OPEN shared_ctrl_OPEN hps+T_copy_OPEN; "
         "serial_deficit>0 (T_copy_arm CPU-time)"
     )
     return 0

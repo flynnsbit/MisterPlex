@@ -100,7 +100,7 @@
     "status": "PARTIAL_CLOSED_READER",
     "fabric_bw_closed": false,
     "reader_steady_delta": {
-      "status": "REFILL_BEATS_CLOSED",
+      "status": "ACCEPTED_REQUEST_CLOSED",
       "owner": "w-clock",
       "source_tip": "w-clock-720p-sv@f992a5b7",
       "tb": "tests/unit/test_ddr_frame_store_720p_ppc2_bus.sh",
@@ -126,7 +126,7 @@
       "w_scaler_local_reconfirm": {
         "cmd": "bash tests/unit/test_ddr_frame_store_720p_ppc2_bus.sh",
         "true_rc": 0,
-        "DUT": "tip scalar ddr_frame_store (explicitly no PX_PER_CLK/rd_*_n at reconfirm time)",
+        "DUT": "w-scaler control: scalar adaptation for negative control; w-clock product TB remains PX_PER_CLK=2 (ports present, scorer blind)",
         "scan": "rd_x steps by 2 (PPC2 group alignment)",
         "G0_match_w_clock": {
           "payload_beats": 173120,
@@ -140,55 +140,73 @@
           "rd_blocked": 1248,
           "busy_cycles": 797290
         },
-        "note": "Numbers bit-identical to w-clock G0/G1 on SCALAR DUT \u2014 proves refill parity only; does NOT close PPC2 dual-lane correctness (rd-duck)"
+        "note": "Scalar *adaptation* beat counts bit-identical to w-clock G0/G1 \u2014 proves demand metric only; does NOT claim w-clock DUT is scalar (rd-duck retraction). Does NOT close PPC2 delivery/correctness."
       },
-      "measures": "full-line refill demand only (insensitive to dual-lane PPC2 correctness)",
+      "measures": "accepted DDR read-request / full-line refill demand only (payload_beats, door, ddr_cy) \u2014 NOT PPC2 delivery correctness",
       "NOT": [
         "PPC2 dual-lane output correctness",
-        "odd/even distinct pixel proof",
-        "rd_*_n / yuv_bt601_npx lane validity"
+        "rd_*_n / lane-valid / RGB observed by TB scorer",
+        "underrun / deadline delivery proof",
+        "shared-controller BW with concurrent HPS write"
       ],
       "rd_duck_discriminator": {
-        "finding": "w-scaler SCALAR reader (no PX_PER_CLK/rd_*_n) produces bit-identical G0/G1 to claimed PPC2 proof",
-        "implication": "beat metric insensitive to dual-lane correctness; rd_x+=2 skips odd display samples but refill still whole lines",
-        "required_negative_control": "true PPC2 correctness gate MUST FAIL scalar path via adjacent odd/even output checksum / lane-valid",
-        "scalar_reconfirm_note": "Numbers bit-identical to w-clock published G0/G1 on scalar DUT"
-      }
+        "retraction": "WITHDRAWN: claim that dc2ae85d/w-clock HEAD instantiated a scalar reader. git grep: PX_PER_CLK=2, rd_*_n, TB .PX_PER_CLK(2).",
+        "finding_corrected": "C++ scorer never observes rd_*_n, lane-valid, RGB, or underrun. w-scaler scalar adaptation (no dual-lane observe path) yields identical beat counts to claimed PPC2 proof.",
+        "implication": "accepted-request counts prove demand/refill load only, not PPC2 output correctness or deadline",
+        "required_negative_control": "true PPC2 delivery/correctness gate MUST FAIL a path that only counts accepted requests (or scalar replicate RGB) via adjacent odd/even output checksum / lane-valid \u2014 scorer must observe rd_*_n",
+        "w_clock_dut": "PX_PER_CLK=2 + rd_*_n present; scorer still demand-only"
+      },
+      "alias": [
+        "REFILL_BEATS_CLOSED",
+        "reader_steady_delta CLOSED as demand"
+      ]
     },
     "still_open": [
-      "ppc2_dual_lane_correctness (beat TB is refill-only; scalar bit-identical G0 \u2014 rd-duck)",
-      "hps_write_concurrent / host T_copy_arm 14.978 ms (not RTL-master beats)",
-      "hardware_contention under real HPS+FPGA shared controller (OPEN after TB)",
-      "T_copy_e2e overlap/DMA (parent Sweep 118) \u2014 NOT missing fullframe beat delta"
+      "ppc2_delivery_correctness OPEN (scorer never observes rd_*_n/lane-valid/RGB/underrun \u2014 rd-duck)",
+      "shared_controller_BW / hps_write_concurrent OPEN (w-mem/parent)",
+      "T_copy_e2e OPEN (w-path/parent) \u2014 14.978 ms CPU time"
     ],
     "headline_assumption": "33.1776 is payload average; real reader measured ~173120 payload beats/frame (+320 vs ideal) + doorbell overhead",
-    "w_scaler_position": "ACK rd-duck discriminator: scalar reader (no PX_PER_CLK/rd_*_n) bit-identical G0/G1 \u21d2 metric is full-line refill only; rd_x+=2 skips odd samples but refill still whole lines. Keep PARTIAL_CLOSED_READER / fabric_bw_closed=false. True PPC2 gate must FAIL scalar via odd/even checksum.",
-    "reader_beat_delta_gap": "REFILL_BEATS_CLOSED_PPC2_CORRECTNESS_OPEN",
-    "fabric_bw_closed_means": "False: (1) hps_write_concurrent OPEN; (2) PPC2 dual-lane correctness NOT proven by refill beat TB (scalar DUT bit-identical G0/G1 \u2014 rd-duck discriminator). reader_refill_beats may be CLOSED; do not call PPC2 reader closed.",
+    "w_scaler_position": "ACK rd-duck RETRACTION: w-clock dc2ae85d/HEAD is NOT scalar \u2014 has PX_PER_CLK=2 + rd_*_n + TB .PX_PER_CLK(2). Narrower NACK stands: C++ scorer never observes rd_*_n/lane-valid/RGB/underrun; w-scaler scalar adaptation yields identical beat counts \u21d2 accepted-request counts prove demand, not PPC2 output correctness/deadline. Split: accepted_request_steady_delta CLOSED; ppc2_delivery_correctness OPEN; shared_controller_BW OPEN.",
+    "reader_beat_delta_gap": "ACCEPTED_REQUEST_CLOSED_PPC2_DELIVERY_OPEN",
+    "fabric_bw_closed_means": "False: (1) shared-controller / hps_write_concurrent OPEN; (2) PPC2 delivery/correctness OPEN \u2014 beat TB C++ scorer never observes rd_*_n, lane-valid, RGB, or underrun (rd-duck corrected NACK). accepted-request steady delta may be CLOSED as demand only.",
     "hps_write_concurrent": "OPEN",
     "T_copy_e2e": "OPEN",
     "pending_ack": [],
     "filled": [
-      "reader_refill_beats CLOSED (w-clock 720p_ppc2_bus) \u2014 refill demand only",
-      "fullframe_e2e beat delta FILLED (w-mem b53197e5) \u2014 not dual-lane correctness"
+      "accepted_request_steady_delta CLOSED (w-clock 720p_ppc2_bus) \u2014 demand only",
+      "fullframe_e2e beat delta FILLED (w-mem b53197e5) \u2014 not dual-lane delivery correctness"
     ],
     "reader_refill_beats": {
       "status": "CLOSED",
+      "also_named": "accepted_request_steady_delta",
       "owner": "w-clock",
       "tb": "tests/unit/test_ddr_frame_store_720p_ppc2_bus.sh",
-      "note": "full-line refill demand; scalar and PPC2-labeled TBs can match"
+      "note": "accepted-request / refill demand CLOSED; not delivery correctness"
     },
     "ppc2_dual_lane_correctness": {
-      "status": "OPEN_UNTIL_NWIDE_GATE",
+      "status": "OPEN",
+      "also_named": "ppc2_delivery_correctness",
       "owner": "w-scaler",
-      "NOT_closed_by": "reader_steady_delta / 720p_ppc2_bus beat counts",
-      "required_gate": "odd/even adjacent output checksum + lane-valid; MUST fail scalar negative control",
+      "NOT_closed_by": "accepted-request steady delta / 720p_ppc2_bus beat counts (scorer blind to rd_*_n/lane-valid/RGB/underrun)",
+      "required_gate": "scorer must observe rd_*_n + lane-valid + odd/even RGB checksum; MUST fail demand-only / scalar-replicate negative control",
       "gates": [
         "tests/unit/test_present_ppc2_dual_lane_static.py",
         "tests/unit/test_yuv_bt601_npx_ppc2.sh",
         "tests/unit/test_ppc2_scalar_negative_control.py"
       ],
-      "status_after_present_ppc_fix": "N-wide RTL landed on w-scaler-present-ppc-fix; beat TB still not a correctness proof"
+      "w_clock_note": "w-clock DUT has PX_PER_CLK=2 ports; absence of scorer observe path is the gap, not absence of RTL ports (rd-duck retraction)"
+    },
+    "accepted_request_steady_delta": {
+      "status": "CLOSED",
+      "owner": "w-clock",
+      "tb": "tests/unit/test_ddr_frame_store_720p_ppc2_bus.sh",
+      "note": "rd-duck corrected name for reader demand proof"
+    },
+    "shared_controller_BW": {
+      "status": "OPEN",
+      "owner": "w-mem/parent HW",
+      "note": "concurrent HPS write on same controller; TB stall envelope \u2260 HW proof"
     }
   },
   "agreed_by": [
@@ -242,7 +260,7 @@
     "source": "parent Sweep 118 + rd-duck + w-path joint; w-scaler ACK"
   },
   "real_reader_proof": {
-    "status": "REFILL_BEATS_CLOSED",
+    "status": "ACCEPTED_REQUEST_CLOSED",
     "owner": "w-clock",
     "source_tip": "w-clock-720p-sv@f992a5b7",
     "tb": "tests/unit/test_ddr_frame_store_720p_ppc2_bus.sh",
@@ -282,19 +300,22 @@
         "rd_blocked": 1248,
         "busy_cycles": 797290
       },
-      "note": "Scalar DUT bit-identical G0/G1 = refill parity only (rd-duck discriminator)"
+      "note": "Scalar adaptation counts == w-clock G0/G1 = demand parity only; w-clock DUT has PPC2 ports (rd-duck retraction of 'scalar DUT')"
     },
-    "ppc2_dual_lane_correctness": "NOT_PROVEN_BY_THIS_TB"
+    "ppc2_dual_lane_correctness": "NOT_PROVEN_BY_THIS_TB",
+    "ppc2_delivery_correctness": "NOT_PROVEN_BY_THIS_TB",
+    "w_clock_dut_not_scalar": true
   },
   "claim_split": {
     "reader_steady_delta": {
-      "status": "REFILL_BEATS_CLOSED",
+      "status": "ACCEPTED_REQUEST_CLOSED",
       "alias_ok": [
+        "REFILL_BEATS_CLOSED",
         "PARTIAL_CLOSED_READER"
       ],
       "owner": "w-clock",
       "tb": "tests/unit/test_ddr_frame_store_720p_ppc2_bus.sh",
-      "note": "full-line refill only; NOT PPC2 dual-lane closed"
+      "note": "accepted-request demand CLOSED; NOT PPC2 delivery/correctness"
     },
     "hps_write_concurrent": {
       "status": "OPEN",
@@ -306,10 +327,11 @@
       "T_copy_arm_ms": 14.978
     },
     "do_not_say": [
-      "PPC2 reader closed (from beat TB)",
+      "PPC2 reader/delivery closed (from beat TB)",
       "fabric_bw_closed true",
       "dual-lane correctness proven by G0/G1 payload_beats",
-      "fabric BW proof_gap still OPEN (unsplit) without naming host write vs dual-lane"
+      "w-clock dc2ae85d is a scalar reader (RETRACTED \u2014 has PX_PER_CLK=2)",
+      "fabric BW proof_gap still OPEN (unsplit) without naming host write vs delivery"
     ],
     "hardware_contention": {
       "status": "OPEN",
@@ -329,9 +351,26 @@
       "owner": "w-clock"
     },
     "ppc2_dual_lane_correctness": {
-      "status": "NOT_CLOSED_BY_BEAT_TB",
+      "status": "OPEN",
+      "also_named": "ppc2_delivery_correctness",
       "owner": "w-scaler",
-      "scalar_negative_control_required": true
+      "scalar_negative_control_required": true,
+      "scorer_must_observe": [
+        "rd_*_n",
+        "lane_valid",
+        "RGB",
+        "underrun"
+      ],
+      "note": "w-clock has PX_PER_CLK=2 ports; scorer blind \u2014 not 'DUT is scalar'"
+    },
+    "accepted_request_steady_delta": {
+      "status": "CLOSED",
+      "owner": "w-clock",
+      "tb": "tests/unit/test_ddr_frame_store_720p_ppc2_bus.sh"
+    },
+    "shared_controller_BW": {
+      "status": "OPEN",
+      "owner": "w-mem/parent HW"
     }
   },
   "three_lane_lock": {
@@ -371,14 +410,20 @@
     "hardware_contention": "OPEN after TB",
     "w_scaler_refusal_to_claim_closure": "CORRECT",
     "ppc2_beat_tb_discriminator": {
-      "status": "BINDING",
-      "scalar_G0_G1_bit_identical_to_claimed_ppc2": true,
-      "metric_measures": "full-line refill demand only",
-      "metric_insensitive_to": "dual-lane PPC2 correctness (rd_x+=2 skips odd display samples; refill still whole lines)",
+      "status": "BINDING_CORRECTED",
+      "retraction": "WITHDRAWN sentence: dc2ae85d instantiated a scalar reader. Direct git grep: PX_PER_CLK=2 + rd_*_n + TB .PX_PER_CLK(2).",
+      "narrower_nack": "C++ scorer never observes rd_*_n, lane-valid, RGB, or underrun; w-scaler scalar adaptation yields identical beat counts",
+      "metric_measures": "accepted-request / refill demand only",
+      "metric_insensitive_to": "PPC2 output correctness/deadline/delivery",
+      "correct_split": {
+        "accepted_request_steady_delta": "CLOSED",
+        "ppc2_delivery_correctness": "OPEN",
+        "shared_controller_BW": "OPEN"
+      },
       "keep_status": "PARTIAL_CLOSED_READER",
       "fabric_bw_closed": false,
-      "do_not_call": "PPC2 reader closed",
-      "required_negative_control": "true PPC2 correctness gate must FAIL scalar via adjacent odd/even checksum/lane-valid"
+      "do_not_call": "PPC2 delivery/correctness closed from accepted-request counts",
+      "required_negative_control": "true PPC2 correctness gate must FAIL demand-only/scalar-replicate path via odd/even checksum/lane-valid with scorer observing rd_*_n"
     }
   },
   "w_mem_final_ack": {

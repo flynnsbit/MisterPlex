@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
-"""rd-duck discriminator: true PPC2 gate MUST FAIL scalar negative control.
+"""rd-duck discriminator (corrected): PPC2 delivery gate MUST FAIL demand-only /
+scalar-replicate negative control.
 
-Beat TBs (G0/G1 payload counts) are insensitive to dual-lane correctness:
-a scalar reader with rd_x+=2 still refills whole lines and can match PPC2
-beat counts bit-identically. That metric is REFILL_BEATS only.
+Beat TBs (G0/G1 accepted-request counts) prove demand, not delivery:
+C++ scorer never observes rd_*_n, lane-valid, RGB, underrun. w-clock DUT
+HAS PX_PER_CLK=2 + rd_*_n (rd-duck RETRACTED "dc2ae85d is scalar"). A
+scaler scalar *adaptation* can still match beat counts bit-identically.
 
 This gate:
-  1) Proves the *replicate* / scalar RGB path produces EQUAL adjacent-lane
-     checksums (no distinct odd/even) — the negative control that must FAIL
-     a dual-lane correctness check.
-  2) Proves the real yuv_bt601_npx dual-lane path produces UNEQUAL odd/even
-     checksums (positive path).
-  3) Fails if anyone claims PPC2 reader closed from beat TB alone in the
-     shared fixture without the PARTIAL_CLOSED_READER split.
+  1) Proves *replicate* / scalar RGB path produces EQUAL adjacent-lane
+     checksums — must FAIL a dual-lane delivery check.
+  2) Proves yuv_bt601_npx dual-lane path produces UNEQUAL odd/even checksums.
+  3) Fixture: PARTIAL_CLOSED_READER; accepted_request CLOSED; ppc2 delivery OPEN.
 
 Negative cases a naive wrong impl would miss:
   - Treating {PPC{scalar_r}} as dual-lane PASS
   - fixture fabric_bw_closed=true or unsplit reader CLOSED
+  - claiming w-clock tip is scalar (retracted)
 """
 from __future__ import annotations
 
@@ -117,7 +117,7 @@ def main() -> int:
         return fail("yuv_bt601_npx broadcasts y_n[0] to all lanes")
     print("OK yuv_bt601_npx present for dual-lane convert")
 
-    # --- 6) Fixture honesty: PARTIAL_CLOSED_READER / no PPC2 closed from beats ---
+    # --- 6) Fixture honesty: accepted-request CLOSED; PPC2 delivery OPEN ---
     c = json.loads(FIX.read_text(encoding="utf-8"))
     gap = c.get("proof_gap") or {}
     if gap.get("status") != "PARTIAL_CLOSED_READER":
@@ -127,18 +127,34 @@ def main() -> int:
     rsd = gap.get("reader_steady_delta") or {}
     if rsd.get("status") == "CLOSED":
         return fail(
-            "NEGATIVE: unsplit reader_steady_delta CLOSED — beat TB ≠ PPC2 dual-lane closed"
+            "NEGATIVE: unsplit reader_steady_delta CLOSED — demand ≠ PPC2 delivery closed"
         )
-    if rsd.get("status") != "REFILL_BEATS_CLOSED":
-        return fail(f"reader_steady_delta.status want REFILL_BEATS_CLOSED got {rsd.get('status')!r}")
+    if rsd.get("status") not in ("ACCEPTED_REQUEST_CLOSED", "REFILL_BEATS_CLOSED"):
+        return fail(
+            f"reader_steady_delta.status want ACCEPTED_REQUEST_CLOSED got {rsd.get('status')!r}"
+        )
     ppc = gap.get("ppc2_dual_lane_correctness") or {}
     if ppc.get("status") in (None, "CLOSED"):
         return fail("ppc2_dual_lane_correctness must not be CLOSED by beat TB")
     disc = rsd.get("rd_duck_discriminator") or {}
+    retr = (disc.get("retraction") or "").lower()
+    if "withdrawn" not in retr:
+        return fail("fixture must record rd-duck RETRACTION (dc2ae85d not scalar)")
     req = (disc.get("required_negative_control") or "").lower()
-    if "fail scalar" not in req and "fail" not in req:
-        return fail("fixture missing required_negative_control FAIL scalar language")
-    print("OK fixture PARTIAL_CLOSED_READER + REFILL_BEATS_CLOSED + dual-lane not from beats")
+    if "fail" not in req:
+        return fail("fixture missing required_negative_control FAIL language")
+    rd_top = (c.get("rd_duck_label_correction") or {}).get("ppc2_beat_tb_discriminator") or {}
+    split = rd_top.get("correct_split") or {}
+    if split.get("accepted_request_steady_delta") != "CLOSED":
+        return fail("correct_split.accepted_request_steady_delta must be CLOSED")
+    if split.get("ppc2_delivery_correctness") != "OPEN":
+        return fail("correct_split.ppc2_delivery_correctness must be OPEN")
+    if split.get("shared_controller_BW") != "OPEN":
+        return fail("correct_split.shared_controller_BW must be OPEN")
+    print(
+        "OK fixture PARTIAL_CLOSED_READER + accepted_request CLOSED + "
+        "ppc2 delivery OPEN + retraction recorded"
+    )
 
     # --- 7) Live dual-lane shell gate still green (positive) ---
     sh = ROOT / "tests/unit/test_yuv_bt601_npx_ppc2.sh"
