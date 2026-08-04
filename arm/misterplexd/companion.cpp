@@ -1,5 +1,7 @@
 #include "companion.hpp"
 
+#include "libmisterplex/gdm_filter.hpp"
+
 #include <arpa/inet.h>
 #include <cctype>
 #include <cstdlib>
@@ -12,6 +14,7 @@
 #include <chrono>
 #include <cstdio>
 #include <sstream>
+#include <pthread.h>
 #include <thread>
 #include <vector>
 
@@ -503,8 +506,18 @@ void Companion::clearMedia() {
 bool Companion::start() {
     if (running_.exchange(true))
         return true;
-    gdmThr_ = std::thread([this] { gdmLoop(); });
-    httpThr_ = std::thread([this] { httpLoop(); });
+    gdmThr_ = std::thread([this] {
+#if defined(__linux__)
+        pthread_setname_np(pthread_self(), "mpx-gdm");
+#endif
+        gdmLoop();
+    });
+    httpThr_ = std::thread([this] {
+#if defined(__linux__)
+        pthread_setname_np(pthread_self(), "mpx-http");
+#endif
+        httpLoop();
+    });
     log("companion: GDM + HTTP :" + std::to_string(port_) + " name=" + name_);
     return true;
 }
@@ -552,6 +565,11 @@ void Companion::gdmLoop() {
         FD_SET(fd, &rfds);
         timeval tv{0, 200000};
         int r = select(fd + 1, &rfds, nullptr, nullptr, &tv);
+        if (r < 0) {
+            // Avoid tight spin on repeated select errors.
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            continue;
+        }
         if (r > 0 && FD_ISSET(fd, &rfds)) {
             char buf[2048];
             sockaddr_in peer{};
@@ -559,7 +577,9 @@ void Companion::gdmLoop() {
             ssize_t n = recvfrom(fd, buf, sizeof(buf) - 1, 0, reinterpret_cast<sockaddr*>(&peer), &plen);
             if (n > 0) {
                 buf[n] = 0;
-                if (std::strstr(buf, "M-SEARCH") || std::strstr(buf, "plex")) {
+                // M-SEARCH-only (gdm_filter.hpp). Bare "plex" self-advertise loop
+                // was the Sweep 114 108% core spin (mpx-gdm / unnamed tid).
+                if (misterplex::gdmShouldReply(buf, static_cast<size_t>(n))) {
                     auto payload = gdmPayload();
                     sendto(fd, payload.data(), payload.size(), 0, reinterpret_cast<sockaddr*>(&peer),
                            plen);

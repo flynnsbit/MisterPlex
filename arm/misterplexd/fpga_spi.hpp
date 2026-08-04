@@ -10,6 +10,7 @@
 #include "libmisterplex/ddr_frame_layout.hpp"
 #include "libmisterplex/ddr_bitstream_ring.hpp"
 #include "libmisterplex/input_mailbox.hpp"
+#include "libmisterplex/spi_ack_wait.hpp"
 
 namespace misterplex {
 
@@ -270,7 +271,7 @@ private:
     void setIndex(uint8_t index);
     void setDownload(int enable);
     // Caller holds SpiExclusive + user mode.
-    void writeStatusWordRaw(const uint8_t word[16]);
+    bool writeStatusWordRaw(const uint8_t word[16]);
     bool readStatusRaw(uint8_t out[16]);
     bool sendDdrFrame(const uint8_t* payload, size_t len, int bank);
 
@@ -280,6 +281,9 @@ private:
     uint8_t status_[16]{};
     double lastPushMs_ = 0;
     std::string err_;
+    SpiAckWaitStats lastAckSet_{};
+    SpiAckWaitStats lastAckClr_{};
+    int lastStatusWriteFailedAt_ = -1;
     // Persistent HPS DDR frame window (both banks + doorbell page).
     int ddrMemFd_ = -1;
     uint8_t* ddrMap_ = nullptr;

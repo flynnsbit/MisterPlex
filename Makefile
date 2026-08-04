@@ -40,7 +40,13 @@ preflight:
 unit:
 	@bash $(ROOT)/scripts/run_with_resource_preflight.sh -- $(MAKE) unit-unlocked
 
-unit-unlocked: preflight $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_osd_menu $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_pixel_format $(ROOT)/build/test_main_guard $(ROOT)/build/test_status_telemetry $(ROOT)/build/test_resolve $(ROOT)/build/test_pms_timeline $(ROOT)/build/pms_baseline_probe $(ROOT)/build/test_h264_bitstream_source $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_frame_store_sdram_sim $(ROOT)/build/test_frame_store_ddr_prefetch_sim $(ROOT)/build/test_sdram_memtest_sim $(ROOT)/build/test_sdram_mailbox $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant $(ROOT)/build/test_p3_host_recon_vectors $(ROOT)/build/test_p3_idct_reference_model $(ROOT)/build/test_p3_inter_pred_vectors $(ROOT)/build/extract_h264_golden
+unit-unlocked: preflight $(ROOT)/build/test_gdm_filter $(ROOT)/build/test_spi_txn_complete $(ROOT)/build/test_idle_poll_budget $(ROOT)/build/test_p720_e2e_budget $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_osd_menu $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_pixel_format $(ROOT)/build/test_main_guard $(ROOT)/build/test_status_telemetry $(ROOT)/build/test_resolve $(ROOT)/build/test_pms_timeline $(ROOT)/build/pms_baseline_probe $(ROOT)/build/test_h264_bitstream_source $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_frame_store_sdram_sim $(ROOT)/build/test_frame_store_ddr_prefetch_sim $(ROOT)/build/test_sdram_memtest_sim $(ROOT)/build/test_sdram_mailbox $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant $(ROOT)/build/test_p3_host_recon_vectors $(ROOT)/build/test_p3_idct_reference_model $(ROOT)/build/test_p3_inter_pred_vectors $(ROOT)/build/extract_h264_golden
+	$(ROOT)/build/test_gdm_filter
+	$(ROOT)/build/test_spi_txn_complete
+	$(ROOT)/build/test_idle_poll_budget
+	$(ROOT)/build/test_p720_e2e_budget
+	bash $(ROOT)/tests/unit/test_idle_thread_budget_gate.sh
+	bash $(ROOT)/tests/unit/test_io_ack_follow_rtl_sim.sh
 	$(ROOT)/build/test_cadence
 	$(ROOT)/build/test_avclock
 	$(ROOT)/build/test_mraudio_status
@@ -504,3 +510,24 @@ package:
 
 clean:
 	rm -rf $(ROOT)/build
+
+$(ROOT)/build/test_gdm_filter: $(ROOT)/tests/unit/test_gdm_filter.cpp \
+		$(ROOT)/host/libmisterplex/gdm_filter.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_gdm_filter.cpp
+
+$(ROOT)/build/test_spi_txn_complete: $(ROOT)/tests/unit/test_spi_txn_complete.cpp \
+		$(ROOT)/host/libmisterplex/spi_ack_wait.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -pthread -o $@ $(ROOT)/tests/unit/test_spi_txn_complete.cpp
+
+$(ROOT)/build/test_idle_poll_budget: $(ROOT)/tests/unit/test_idle_poll_budget.cpp \
+		$(ROOT)/host/libmisterplex/spi_ack_wait.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -pthread -o $@ $(ROOT)/tests/unit/test_idle_poll_budget.cpp
+
+$(ROOT)/build/test_p720_e2e_budget: $(ROOT)/tests/unit/test_p720_e2e_budget.cpp \
+		$(ROOT)/host/libmisterplex/p720_e2e_budget.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_p720_e2e_budget.cpp
+
