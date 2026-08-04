@@ -107,6 +107,7 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/build/test_plxd_liveness",
     "$(ROOT)/tests/unit/test_c5382bee_frames_done_pack.sh",
     "python3 $(ROOT)/tests/unit/test_ddr_schedule_pipeline_static.py",
+    "python3 $(ROOT)/tests/unit/test_ddr_schedule_atomic_record_static.py",
     "python3 $(ROOT)/tests/unit/test_plxd_glass_field_static.py",
     "python3 $(ROOT)/tests/unit/test_plxf_upper_word_static.py",
     "bash $(ROOT)/tests/unit/test_delivered_geom_loglevel.sh",
