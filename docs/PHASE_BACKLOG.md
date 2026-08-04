@@ -40,7 +40,7 @@ Update this file when work finishes. Loop agents claim items and mark `DONE` / `
 |----|------|--------|-------|
 | G-COMPOSE | Enable L4/MULTI/clk_pix/FABRIC_FRAME_DMA compose cut | **PENDING** | One exclusive fit; Sweep 136 pre-register; rd-duck attacks STA claims |
 | G-PUBLISH | Wire fabric publish; delete ARM T_copy | **PENDING** | DIRECT first; DDR/BRAM/SDRAM trade-offs owned by w-mem |
-| G-DEVICE | ONE menu deploy + 720p24 measure | **PENDING** | Parent token; BUILD_OK ≠ product PASS |
+| G-DEVICE | ONE menu deploy + 720p24 measure | **PENDING** | Live RBF `cceb58e7`; package+rate green; **primary residual = PLXF underrun `0xFFFF` saturated (scanout miss_d)** — banks Y≈45 (paint OK), HDMI MEAN≈2.8 black; **FIT_GO only after named scanout fix**; BUILD_OK ≠ product PASS; PRODUCT_WIRE=0 |
 | G-REGRESS-480 | Hold 240p/480p cast after 720p RBF | **PENDING** | No tier regression |
 | G-WT-CLEAN | Prune dead worktrees | **PENDING** | After compose land |
 
