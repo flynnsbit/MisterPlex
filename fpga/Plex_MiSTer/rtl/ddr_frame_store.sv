@@ -280,6 +280,58 @@ module ddr_frame_store #(
 	localparam [31:0] LEG_BANK_USABLE_BYTES = 32'h0007_F000; // 520192
 	wire rt_need_optc = rt_raw_ok && (rt_payload_bytes > LEG_BANK_USABLE_BYTES);
 
+	// w-mem L3: bank capacity guards (static elab-fatal + runtime sticky).
+	// Instantiated before geom always so reject can OR into geom_reject_r.
+	wire        bank_cap_ovf_now;
+	wire        bank_cap_reject;
+	wire [31:0] bank_cap_frame_bytes;
+	wire [31:0] bank_cap_usable_bytes;
+	ddr_bank_geom_guard #(
+		.CODED_W(CODED_W),
+		.CODED_H(CODED_H),
+		.Y_STRIDE(CODED_W),
+		.C_STRIDE(CODED_W / 2),
+		.BANK_STRIDE(HPS_BANK_STRIDE_BYTES),
+		.DOORBELL_PAGE(32'h1000),
+		.FATAL_ON_STATIC_OVERFLOW(1'b1)
+	) u_bank_cap_static (
+		.clk(clk),
+		.reset(reset),
+		.rt_frame_bytes(32'd0),
+		.rt_bank_stride(32'd0),
+		.check_en(1'b1),
+		.frame_bytes(bank_cap_frame_bytes),
+		.usable_bytes(bank_cap_usable_bytes),
+		.overflow_now(bank_cap_ovf_now),
+		.overflow_reject(bank_cap_reject)
+	);
+	// Runtime uses active map stride (Option-C when capacity needs it).
+	// eff_optc_map is registered below; use combinational need for check stride.
+	wire [31:0] rt_check_stride =
+		rt_need_optc ? 32'(HPS_BANK_STRIDE_BYTES_720P) : 32'(HPS_BANK_STRIDE_BYTES);
+	wire bank_cap_rt_ovf_now;
+	wire bank_cap_rt_reject;
+	ddr_bank_geom_guard #(
+		.CODED_W(CODED_W),
+		.CODED_H(CODED_H),
+		.Y_STRIDE(CODED_W),
+		.C_STRIDE(CODED_W / 2),
+		.BANK_STRIDE(HPS_BANK_STRIDE_BYTES),
+		.DOORBELL_PAGE(32'h1000),
+		.FATAL_ON_STATIC_OVERFLOW(1'b0)
+	) u_bank_cap_runtime (
+		.clk(clk),
+		.reset(reset),
+		.rt_frame_bytes(rt_payload_bytes),
+		.rt_bank_stride(rt_check_stride),
+		.check_en(geom_enable & rt_raw_ok),
+		.frame_bytes(),
+		.usable_bytes(),
+		.overflow_now(bank_cap_rt_ovf_now),
+		.overflow_reject(bank_cap_rt_reject)
+	);
+	wire bank_cap_any = bank_cap_reject | bank_cap_rt_reject;
+
 	// FAULT: ignore geom_enable (always legacy pitch) — red twin for runtime-stride gate.
 `ifdef DDR_FRAME_STORE_FAULT_IGNORE_GEOM
 	wire geom_enable_eff = 1'b0;
@@ -302,6 +354,7 @@ module ddr_frame_store #(
 		if (reset) begin
 			geom_en_r      <= 1'b0;
 			geom_reject_r  <= 1'b0;
+			// bank_cap sticky cleared via same reset path
 			eff_coded_w    <= 11'(CODED_W);
 			eff_coded_h    <= 11'(CODED_H);
 			eff_y_stride   <= 12'(CODED_W);
@@ -326,9 +379,10 @@ module ddr_frame_store #(
 			geom_en_r      <= 1'b0;
 			// Sticky reject while host still asserts geom_enable with bad raw;
 			// clear only when geom is off (mode exit) — not on silent legacy fallthrough.
-			if (geom_reject_now)
+			// bank_cap_any: LOUD bank overflow (w-mem) — never silent fallthrough.
+			if (geom_reject_now || bank_cap_any)
 				geom_reject_r <= 1'b1;
-			else if (!geom_enable)
+			else if (!geom_enable && !bank_cap_any)
 				geom_reject_r <= 1'b0;
 			eff_coded_w    <= 11'(CODED_W);
 			eff_coded_h    <= 11'(CODED_H);
@@ -352,7 +406,8 @@ module ddr_frame_store #(
 			eff_doorbell_w <= LEG_DOORBELL_W;
 		end else begin
 			geom_en_r      <= 1'b1;
-			geom_reject_r  <= 1'b0; // accepted good geom clears sticky
+			// Good geom clears sticky unless bank capacity still rejects.
+			geom_reject_r  <= bank_cap_any ? 1'b1 : 1'b0;
 			eff_coded_w    <= rt_cw_cl;
 			eff_coded_h    <= rt_ch_cl;
 			eff_y_stride   <= rt_ys_cl;
@@ -1796,6 +1851,7 @@ module ddr_frame_store #(
 			endcase
 		end
 	end
+
 endmodule
 
 module mplex_hold_lcell (

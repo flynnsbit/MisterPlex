@@ -73,6 +73,7 @@ COMMON=(
   "$WRAP"
   "$RTL/present_core.sv" "$RTL/present_cadence.sv" "$RTL/colorbars.sv"
   "$RTL/ddr_frame_store.sv" "$RTL/frame_store.sv"
+  "$RTL/ddr_bank_geom_guard.sv"
   "$RTL/present_beam_ppc.sv" "$RTL/present_npx_path.sv"
   "$RTL/present_video_timing_720p.sv" "$RTL/present_beam_content_de.sv"
   "$RTL/present_pix_rate_match.sv"

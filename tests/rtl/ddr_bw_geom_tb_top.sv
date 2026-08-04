@@ -45,7 +45,33 @@ module ddr_bw_geom_tb_top (
 	output wire        sp_rd_valid,
 	output wire        sp_busy,
 	output wire        sp_done,
-	output wire        sp_ready
+	output wire        sp_ready,
+
+	// ---- contended multi-client (24 fps budget) ----
+	input  wire        c24_start,
+	input  wire        c24_host_en,
+	input  wire        c24_scan_en,
+	input  wire        c24_spill_en,
+	output wire        c24_busy,
+	output wire        c24_done,
+	output wire        c24_budget_fail,
+	output wire [31:0] c24_cycles,
+	output wire [31:0] c24_host_beats,
+	output wire [31:0] c24_scan_beats,
+	output wire [31:0] c24_total_beats,
+	output wire [31:0] c24_host_target,
+	output wire [31:0] c24_scan_target,
+	output wire [31:0] c24_budget,
+
+	// ---- contended tiny-budget NEG (starvation / miss) ----
+	input  wire        cneg_start,
+	input  wire        cneg_host_en,
+	input  wire        cneg_scan_en,
+	output wire        cneg_busy,
+	output wire        cneg_done,
+	output wire        cneg_budget_fail,
+	output wire [31:0] cneg_cycles,
+	output wire [31:0] cneg_total_beats
 );
 
 	// Green: 1280x720 into 0x180000 bank — must NOT reject.
@@ -128,6 +154,62 @@ module ddr_bw_geom_tb_top (
 		.spill_busy(sp_busy),
 		.spill_done(sp_done),
 		.line_ready(sp_ready)
+	);
+
+	// Concurrent host_wr + scan_rd of one 720p I420 each inside 24 fps window.
+	ddr_contended_bandwidth #(
+		.BEAT_BYTES(8),
+		.HOST_WR_BYTES(1382400),
+		.SCAN_RD_BYTES(1382400),
+		.SPILL_BYTES(0),
+		.BUDGET_CYCLES(3750000) // 90e6/24
+	) u_c24 (
+		.clk(clk),
+		.reset(reset),
+		.start(c24_start),
+		.host_wr_enable(c24_host_en),
+		.scan_rd_enable(c24_scan_en),
+		.spill_enable(c24_spill_en),
+		.busy(c24_busy),
+		.done(c24_done),
+		.budget_fail(c24_budget_fail),
+		.cycles(c24_cycles),
+		.host_beats(c24_host_beats),
+		.scan_beats(c24_scan_beats),
+		.spill_beats(),
+		.total_beats(c24_total_beats),
+		.host_target(c24_host_target),
+		.scan_target(c24_scan_target),
+		.spill_target(),
+		.budget_w(c24_budget)
+	);
+
+	// NEG: same payload, budget only 1000 cycles → must budget_fail even if both enabled.
+	ddr_contended_bandwidth #(
+		.BEAT_BYTES(8),
+		.HOST_WR_BYTES(1382400),
+		.SCAN_RD_BYTES(1382400),
+		.SPILL_BYTES(0),
+		.BUDGET_CYCLES(1000)
+	) u_cneg (
+		.clk(clk),
+		.reset(reset),
+		.start(cneg_start),
+		.host_wr_enable(cneg_host_en),
+		.scan_rd_enable(cneg_scan_en),
+		.spill_enable(1'b0),
+		.busy(cneg_busy),
+		.done(cneg_done),
+		.budget_fail(cneg_budget_fail),
+		.cycles(cneg_cycles),
+		.host_beats(),
+		.scan_beats(),
+		.spill_beats(),
+		.total_beats(cneg_total_beats),
+		.host_target(),
+		.scan_target(),
+		.spill_target(),
+		.budget_w()
 	);
 
 endmodule

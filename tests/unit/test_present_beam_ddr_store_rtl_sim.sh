@@ -33,6 +33,7 @@ sv_common=(
   "$RTL/present_beam_content_de.sv"
   "$RTL/present_content_window.sv"
   "$RTL/ddr_frame_store.sv"
+  "$RTL/ddr_bank_geom_guard.sv"
   "$RTL/line_buf_ram.sv"
   "$RTL/async_fifo.sv"
   "$ROOT/tests/rtl/present_beam_ddr_store_tb.cpp"

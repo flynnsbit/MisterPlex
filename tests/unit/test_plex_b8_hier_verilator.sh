@@ -30,6 +30,7 @@ build_one() {
     "$ROOT/fpga/Plex_MiSTer/rtl/present_cadence.sv"
     "$ROOT/fpga/Plex_MiSTer/rtl/present_core.sv"
     "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv"
+    "$ROOT/fpga/Plex_MiSTer/rtl/ddr_bank_geom_guard.sv"
     "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_ram.sv"
     "$ROOT/fpga/Plex_MiSTer/rtl/frame_store.sv"
     "$ROOT/fpga/Plex_MiSTer/rtl/colorbars.sv"

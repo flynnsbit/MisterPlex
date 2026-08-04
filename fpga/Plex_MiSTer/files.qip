@@ -56,6 +56,7 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_beam_content_de.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_video_timing_960.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_bank_geom_guard.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_bandwidth_meter.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_contended_bandwidth.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/sdram_line_spill.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_core.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/yuv_bt601_npx.sv

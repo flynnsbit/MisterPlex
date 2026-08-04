@@ -5,6 +5,8 @@
 //   G2: combined R+W 2*1382400 B @ 1 beat/clk finishes inside 24fps budget
 //   R2: starved beat rate trips budget_fail (NEGATIVE teeth)
 //   G3: sdram_line_spill latency path completes
+//   G4: contended host_wr+scan_rd @24 finishes inside budget (SIM proof)
+//   R3: contended tiny budget → budget_fail (NEGATIVE teeth)
 
 #include "Vddr_bw_geom_tb_top.h"
 #include "verilated.h"
@@ -35,6 +37,13 @@ void reset_dut(Vddr_bw_geom_tb_top& t) {
     t.sp_commit = 0;
     t.sp_rd_en = 0;
     t.sp_rd_addr = 0;
+    t.c24_start = 0;
+    t.c24_host_en = 0;
+    t.c24_scan_en = 0;
+    t.c24_spill_en = 0;
+    t.cneg_start = 0;
+    t.cneg_host_en = 0;
+    t.cneg_scan_en = 0;
     for (int i = 0; i < 4; ++i)
         tick(t);
     t.reset = 0;
@@ -208,6 +217,88 @@ int main(int argc, char** argv) {
     if (top.sp_rd_data != static_cast<uint8_t>(100 * 3))
         return fail("G3 rd_data mismatch");
     std::printf("PASS G3 sdram_line_spill latency+readback\n");
+
+    // ---------- G4: contended concurrent host_wr + scan_rd @24 ----------
+    // RR serves one client/clk → total beats = 2*(1382400/8) = 345600
+    // Budget 3750000 (90e6/24). PRED: done=1 fail=0 cycles≈345600.
+    reset_dut(top);
+    if (top.c24_host_target != 172800u)
+        return fail("G4 host_target != 172800");
+    if (top.c24_scan_target != 172800u)
+        return fail("G4 scan_target != 172800");
+    if (top.c24_budget != 3750000u)
+        return fail("G4 budget != 3750000");
+    top.c24_host_en = 1;
+    top.c24_scan_en = 1;
+    top.c24_spill_en = 0;
+    top.c24_start = 1;
+    tick(top);
+    top.c24_start = 0;
+    cyc = 0;
+    while (cyc < kCap && !top.c24_done && !top.c24_budget_fail) {
+        tick(top);
+        ++cyc;
+    }
+    if (!top.c24_done)
+        return fail("G4 contended did not complete");
+    if (top.c24_budget_fail)
+        return fail("G4 budget_fail incorrectly set");
+    if (top.c24_host_beats != 172800u)
+        return fail("G4 host_beats != 172800");
+    if (top.c24_scan_beats != 172800u)
+        return fail("G4 scan_beats != 172800");
+    if (top.c24_total_beats != 345600u)
+        return fail("G4 total_beats != 345600");
+    if (top.c24_cycles > 346000u)
+        return fail("G4 cycles unexpectedly large");
+    std::printf("PASS G4 contended_rw24 host=%u scan=%u total=%u cycles=%u fail=0\n",
+                top.c24_host_beats, top.c24_scan_beats, top.c24_total_beats, top.c24_cycles);
+
+    // ---------- R3: tiny budget NEG (cannot finish 345600 in 1000 cyc) ----------
+    reset_dut(top);
+    top.cneg_host_en = 1;
+    top.cneg_scan_en = 1;
+    top.cneg_start = 1;
+    tick(top);
+    top.cneg_start = 0;
+    cyc = 0;
+    while (cyc < 5000ull && !top.cneg_budget_fail && !top.cneg_done) {
+        tick(top);
+        ++cyc;
+    }
+    if (!top.cneg_budget_fail)
+        return fail("R3 NEG: budget_fail must set under tiny budget");
+    if (top.cneg_done)
+        return fail("R3 NEG: done must not set");
+    if (top.cneg_total_beats >= 345600u)
+        return fail("R3 NEG: should not reach full transfer");
+    std::printf("PASS R3 contended_tiny_budget fail=1 cycles=%u beats=%u (NEG teeth)\n",
+                top.cneg_cycles, top.cneg_total_beats);
+
+    // ---------- R4: scan starved (enable=0) under 24fps budget — still fails ----------
+    // Only host enabled → scan never completes → must budget_fail (not silent hang).
+    // Full 3.75M cycles is ~1s; acceptable for NEG teeth.
+    std::printf("R4: scan starved under 24fps budget (may take ~1s)...\n");
+    reset_dut(top);
+    top.c24_host_en = 1;
+    top.c24_scan_en = 0; // STARVE scan
+    top.c24_spill_en = 0;
+    top.c24_start = 1;
+    tick(top);
+    top.c24_start = 0;
+    cyc = 0;
+    while (cyc < 4000000ull && !top.c24_budget_fail && !top.c24_done) {
+        tick(top);
+        ++cyc;
+    }
+    if (!top.c24_budget_fail)
+        return fail("R4 NEG: budget_fail must set when scan starved");
+    if (top.c24_done)
+        return fail("R4 NEG: done must not set when scan starved");
+    if (top.c24_scan_beats != 0u)
+        return fail("R4 NEG: scan_beats must stay 0");
+    std::printf("PASS R4 scan_starved budget_fail=1 host=%u scan=0 (NEG teeth)\n",
+                top.c24_host_beats);
 
     std::printf("PASS ddr_bw_geom all\n");
     std::printf("OK ddr_bw_geom sim_executed\n");
