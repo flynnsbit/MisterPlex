@@ -437,17 +437,21 @@ module decode_stub #(
 	localparam int DPB_FRAME_BYTES = WIDTH * HEIGHT + 2 * ((WIDTH/2) * (HEIGHT/2));
 	localparam int DPB_BANK1_BASE = DPB_FRAME_BYTES;
 	localparam int DPB_MEM_BYTES  = 2 * DPB_FRAME_BYTES;
+	// Index width must cover 720p defaults (WIDTH=1280 HEIGHT=720 → ~22 bits).
+	// Hardcoded [17:0] was a 480p leftover and trips WIDTHEXPAND under PRODUCT_NO_STUB
+	// (stub not instance-parameterized; defaults elaborate at 720p).
+	localparam int DPB_AW = (DPB_MEM_BYTES <= 1) ? 1 : $clog2(DPB_MEM_BYTES);
 	(* ram_style = "block" *) reg [7:0] dpb_mem [0:DPB_MEM_BYTES-1];
 
 	// DPB write port (from fill path)
 	always @(posedge clk) begin
 		if (dpb_mem_we && dpb_mem_waddr < DPB_MEM_BYTES[31:0])
-			dpb_mem[dpb_mem_waddr[17:0]] <= dpb_mem_wdata;
+			dpb_mem[dpb_mem_waddr[DPB_AW-1:0]] <= dpb_mem_wdata;
 	end
 
 	// DPB read port (for MC reference fetch) — 1-cycle latency
 	assign dpb_mem_rdata = (dpb_mem_raddr_q < DPB_MEM_BYTES[31:0]) ?
-	                       dpb_mem[dpb_mem_raddr_q[17:0]] : 8'h00;
+	                       dpb_mem[dpb_mem_raddr_q[DPB_AW-1:0]] : 8'h00;
 
 	h264_deblock_writeback_ctrl #(
 		.MB_COUNT(DPB_MB_COUNT),

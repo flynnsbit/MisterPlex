@@ -40,6 +40,9 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_deblock.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_p_slice_modes.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_dpb.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_inter_pred.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_frame_base_mux.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_frame_dma.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/plex_product_cfg.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/decode_stub.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/stream_path.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_core.sv

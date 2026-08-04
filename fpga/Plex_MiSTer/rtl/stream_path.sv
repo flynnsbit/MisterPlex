@@ -1,5 +1,7 @@
 // Phase 3.3–3.3l-1: F3 → FIFO → NAL → SPS/PPS/slice_hdr(+full first residual) + decode_stub.
 // Hybrid: stub diagnostic paint is F3-only; host F1 recon owns product present (Plex.sv).
+// PRODUCT_NO_STUB (product QSF default): omit decode_stub — reclaim on-chip DPB/M10K;
+// product glass remains DDR doorbell/has_frame. Backend leaves under stub leave the product netlist.
 
 module stream_path #(
 	parameter int FRAME_W = 320,
@@ -286,6 +288,19 @@ module stream_path #(
 	assign residual_ok   = sl_res_ok;
 	assign residual_dc   = sl_rdc;
 
+	// PRODUCT_NO_STUB: strip decode_stub (+ on-chip dpb_mem) from product netlist.
+`ifdef PRODUCT_NO_STUB
+	assign stub_frames = 16'd0;
+	assign stub_busy = 1'b0;
+	assign recon_sig = 8'd0;
+	assign recon_dbg = 8'd0;
+	assign recon_dbg_valid = 1'b0;
+	assign recon_valid = 1'b0;
+	assign fs_wr_en = 1'b0;
+	assign fs_wr_pixel = 16'd0;
+	assign fs_wr_reset = 1'b0;
+	assign fs_swap = 1'b0;
+`else
 	decode_stub #(
 		.WIDTH(FRAME_W),
 		.HEIGHT(FRAME_H)
@@ -326,6 +341,7 @@ module stream_path #(
 		.busy(stub_busy),
 		.frames_out(stub_frames)
 	);
+`endif
 
 	(* keep = 1 *) wire keep_si = si_active;
 	(* keep = 1 *) wire keep_bf = bf_has;
