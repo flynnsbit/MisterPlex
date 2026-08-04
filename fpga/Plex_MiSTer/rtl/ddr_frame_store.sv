@@ -643,6 +643,8 @@ module ddr_frame_store #(
 	reg swap_pending_d1, swap_pending_d2;
 	reg pending_bank_d1, pending_bank_d2;
 	reg [Y_W-1:0] want_y_gray_s1, want_y_gray_s2;  // Gray-coded 2-FF sync
+	// M2b STA: registered fill base (wrap-prefetch or mid-frame want bin)
+	reg [Y_W-1:0] fill_base_r;
 	reg [Y_W-1:0] desired_y_r [0:LINE_COUNT-1];
 	reg [15:0] poll_div;
 	reg poll_pending;
@@ -1065,6 +1067,7 @@ module ddr_frame_store #(
 			pending_bank_d2 <= 1'b0;
 			want_y_gray_s1 <= '0;
 			want_y_gray_s2 <= '0;
+			fill_base_r <= '0;
 			for (ti = 0; ti < LINE_COUNT; ti = ti + 1)
 				desired_y_r[ti] <= '0;
 			pending_ready_ddr <= 1'b0;
@@ -1179,23 +1182,23 @@ module ddr_frame_store #(
 			// that decode to wrong beam lines → fill tags miss pref_y (DIAG
 			// T3/T5: bank_mm=0, occ full, miss sticky, MEAN black). Hold last
 			// desired_y_r until gray_s1==gray_s2. Keeps schedule-reg STA cut.
-			// M2 WRAP_PREFETCH: WANT_Y_LINE_ONLY wrap window pre-issue on holdlast base
+			// M2 WRAP_PREFETCH + M2b STA_RECOVER: wrap window on holdlast base
 			// DIAG=0; no mbox CE; schedule-reg / H-R1d / gray / curwin / holdlast kept
-			// When fill key is within LINE_COUNT of FRAME end (holdlast blanks at last
-			// lines), stock clamp_ahead(0,ti) so tags exist at frame wrap. Mid-frame
-			// still uses clamp_ahead(want_bin,ti). No S_IDLE mbox_yield / A→H thrash.
+			// M2 combo gray2bin×2+wrap in desired_y D-side was TIMING_RED setup=-0.196
+			// (ea494df3). M2b: resolve wrap/mid base into fill_base_r when gray stable;
+			// desired_y_r only clamp_ahead(fill_base_r,ti) — holdlast-class cone.
 			want_y_gray_s1 <= want_y_gray;
 			want_y_gray_s2 <= want_y_gray_s1;
 			if (want_y_gray_s1 == want_y_gray_s2) begin
 				// near-wrap: want_bin + LINE_COUNT >= FRAME_H → base 0 wrap-prefetch
-				for (ti = 0; ti < LINE_COUNT; ti = ti + 1)
-					desired_y_r[ti] <= clamp_ahead(
-						(({{(32 - Y_W){1'b0}}, y_gray2bin(want_y_gray_s2)} + LINE_COUNT)
-							>= FRAME_H)
-							? {Y_W{1'b0}}
-							: y_gray2bin(want_y_gray_s2),
-						ti);
+				if (({{(32 - Y_W){1'b0}}, y_gray2bin(want_y_gray_s2)} + LINE_COUNT)
+						>= FRAME_H)
+					fill_base_r <= {Y_W{1'b0}};
+				else
+					fill_base_r <= y_gray2bin(want_y_gray_s2);
 			end
+			for (ti = 0; ti < LINE_COUNT; ti = ti + 1)
+				desired_y_r[ti] <= clamp_ahead(fill_base_r, ti);
 
 			start_d1 <= start_req;
 			start_d2 <= start_d1;

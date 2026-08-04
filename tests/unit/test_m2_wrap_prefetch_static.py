@@ -42,10 +42,19 @@ def main() -> int:
     src = STORE.read_text(encoding="utf-8", errors="replace")
     qsf = QSF.read_text(encoding="utf-8", errors="replace") if QSF.is_file() else ""
 
-    if "M2 WRAP_PREFETCH" not in src:
-        return fail("missing M2 WRAP_PREFETCH land marker comment")
+    if "M2 WRAP_PREFETCH" not in src and "M2b STA_RECOVER" not in src:
+        return fail("missing M2 WRAP_PREFETCH / M2b STA_RECOVER land marker")
 
-    # desired_y_r assign must mention near-wrap / FRAME_H + base 0 class
+    if "fill_base_r" not in src:
+        return fail("M2b requires registered fill_base_r")
+
+    # Wrap detect must land into fill_base_r (near-wrap → 0)
+    if "FRAME_H" not in src or "LINE_COUNT" not in src:
+        return fail("M2 near-wrap must reference FRAME_H and LINE_COUNT")
+    if not re.search(r"fill_base_r\s*<=\s*\{Y_W\{1'b0\}\}", src):
+        return fail("M2 wrap must assign fill_base_r <= 0 on near-wrap")
+
+    # desired_y_r D-side must be clamp_ahead(fill_base_r) only (STA recover)
     dy = re.search(
         r"desired_y_r\[ti\]\s*<=\s*clamp_ahead\s*\((.*?)\)\s*;",
         src,
@@ -53,14 +62,11 @@ def main() -> int:
     )
     if not dy:
         return fail("desired_y_r[ti] <= clamp_ahead(...) not found")
-    body = dy.group(1)
-    body_code = "\n".join(strip_sv_comments(ln) for ln in body.splitlines())
-    if "FRAME_H" not in body_code and "FRAME_H" not in body:
-        return fail("M2 near-wrap must reference FRAME_H in desired base select")
-    if "LINE_COUNT" not in body:
-        return fail("M2 near-wrap must reference LINE_COUNT")
-    if not re.search(r"\{Y_W\{1'b0\}\}|'0", body_code):
-        return fail("M2 wrap base must include zero/base-0 alternative")
+    body_code = "\n".join(strip_sv_comments(ln) for ln in dy.group(1).splitlines())
+    if "fill_base_r" not in body_code:
+        return fail("M2b desired_y must clamp_ahead(fill_base_r,...)")
+    if "y_gray2bin" in body_code:
+        return fail("NEG: y_gray2bin must not sit on desired_y_r D-side (use fill_base_r)")
 
     if "LINECAM_WANT_Y_HOLD_LAST" not in src and "holds last" not in src.lower():
         # holdlast comment path
