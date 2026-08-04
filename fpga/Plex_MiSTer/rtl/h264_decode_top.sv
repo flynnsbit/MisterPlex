@@ -116,15 +116,17 @@ module h264_decode_top (
 
     // ════════════════════════════════════════════════════════════════════
     // SHARED ARITHMETIC PIPELINE (dequant → IDCT → recon)
+    // Widths match h264_iq_idct_4x4.sv leaf ports (coeff[15:0], path[28:0]).
+    // External block_coeff stays [8:0]; sign-extend into the leaf-facing bus.
     // ════════════════════════════════════════════════════════════════════
-    reg signed [8:0]   pipe_coeff [0:15];
+    reg signed [15:0]  pipe_coeff [0:15];
     reg [5:0]          pipe_qp;
     reg [7:0]          pipe_pred [0:15];
     reg [3:0]          pipe_block_idx;
     reg                pipe_valid;
     reg                pipe_is_i16;
 
-    wire signed [17:0] dq_out [0:15];
+    wire signed [28:0] dq_out [0:15];
     h264_dequant4x4 u_dequant (
         .coeff(pipe_coeff),
         .qp(pipe_qp),
@@ -133,8 +135,8 @@ module h264_decode_top (
     );
 
     // For I_16x16 blocks: DC comes from Hadamard, replace dq_out[0]
-    reg signed [17:0] dq_final [0:15];
-    reg signed [17:0] latched_i16_dc [0:15];
+    reg signed [28:0] dq_final [0:15];
+    reg signed [28:0] latched_i16_dc [0:15];
     integer dqi;
     always @* begin
         for (dqi = 0; dqi < 16; dqi = dqi + 1) begin
@@ -145,7 +147,7 @@ module h264_decode_top (
         end
     end
 
-    wire signed [17:0] idct_out [0:15];
+    wire signed [28:0] idct_out [0:15];
     h264_idct4x4 u_idct (
         .dequant(dq_final),
         .residual(idct_out)
@@ -353,8 +355,8 @@ module h264_decode_top (
             pipe_block_idx <= 4'd0;
             pipe_qp       <= 6'd0;
             for (si = 0; si < 16; si = si + 1) begin
-                pipe_coeff[si] <= 9'sd0;
-                latched_i16_dc[si] <= 18'sd0;
+                pipe_coeff[si] <= 16'sd0;
+                latched_i16_dc[si] <= 29'sd0;
             end
             for (si = 0; si < 256; si = si + 1) begin
                 local_recon[si] <= 8'd0;
@@ -363,10 +365,10 @@ module h264_decode_top (
         end else begin
             mb_recon_valid <= 1'b0;
 
-            // Latch I_16x16 DC values when provided
+            // Latch I_16x16 DC values when provided (sign-extend 18→29 for leaf path)
             if (i16_dc_valid)
                 for (si = 0; si < 16; si = si + 1)
-                    latched_i16_dc[si] <= i16_dc[si];
+                    latched_i16_dc[si] <= {{11{i16_dc[si][17]}}, i16_dc[si]};
 
             // MB start: reset block counter
             if (mb_start) begin
@@ -379,9 +381,9 @@ module h264_decode_top (
             case (state)
                 ST_IDLE: begin
                     if (block_valid && mb_started) begin
-                        // Latch coefficients and block index
+                        // Latch coefficients and block index (sign-extend 9→16 for dequant leaf)
                         for (si = 0; si < 16; si = si + 1)
-                            pipe_coeff[si] <= block_coeff[si];
+                            pipe_coeff[si] <= {{7{block_coeff[si][8]}}, block_coeff[si]};
                         pipe_block_idx <= block_index;
                         pipe_valid     <= 1'b1;
                         state          <= ST_STORE;
