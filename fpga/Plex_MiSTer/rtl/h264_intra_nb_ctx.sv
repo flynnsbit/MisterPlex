@@ -164,7 +164,9 @@ module h264_intra_nb_ctx #(
             end
             if (above_wr_active) begin
                 above_wr_en <= 1'b1;
-                above_wr_addr <= mb_x * 16 + {{(ABOVE_AW-5){1'b0}}, above_wr_cnt};
+                // Cast full pixel address; avoid {(ABOVE_AW-5){...}} which is
+                // illegal when ABOVE_AW < 5 (tiny FRAME_W unit configs).
+                above_wr_addr <= ABOVE_AW'(mb_x * 16 + {11'd0, above_wr_cnt});
                 above_wr_data <= mb_buf[15][above_wr_cnt[3:0]];
                 if (above_wr_cnt == 5'd15) begin
                     above_wr_active <= 1'b0;

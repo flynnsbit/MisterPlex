@@ -41,6 +41,7 @@ RTL_DPB="$ROOT/fpga/Plex_MiSTer/rtl/h264_dpb.sv"
 RTL_HOLD="$ROOT/fpga/Plex_MiSTer/rtl/h264_decode_skeleton.sv"
 RTL_CAVLC="$ROOT/fpga/Plex_MiSTer/rtl/h264_cavlc_residual.sv"
 RTL_INTRA="$ROOT/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv"
+RTL_NBCTX="$ROOT/fpga/Plex_MiSTer/rtl/h264_intra_nb_ctx.sv"
 RTL_SYN="$ROOT/fpga/Plex_MiSTer/rtl/h264_syntax_primitives.sv"
 RTL_PMB="$ROOT/fpga/Plex_MiSTer/rtl/h264_p_slice_modes.sv"
 TOP="$ROOT/tests/rtl/stream_path_recon_integration_tb_top.sv"
@@ -52,7 +53,7 @@ BUILD="$ROOT/build/verilator/stream_path_recon_integration"
 BUILD_FAULT="$ROOT/build/verilator/stream_path_recon_integration_fault"
 
 for f in "$QIP" "$RTL_STREAM" "$RTL_INGEST" "$RTL_DDR" "$RTL_FIFO" "$RTL_SCAN" "$RTL_SPS" "$RTL_PPS" \
-         "$RTL_SLICE" "$RTL_DECODE" "$RTL_IQ" "$RTL_INTER" "$RTL_DEBLOCK" "$RTL_DPB" "$RTL_HOLD" "$RTL_CAVLC" "$RTL_INTRA" "$RTL_SYN" "$RTL_PMB" "$TOP" "$TB" "$BITSTREAM" "$REF"; do
+         "$RTL_SLICE" "$RTL_DECODE" "$RTL_IQ" "$RTL_INTER" "$RTL_DEBLOCK" "$RTL_DPB" "$RTL_HOLD" "$RTL_CAVLC" "$RTL_INTRA" "$RTL_NBCTX" "$RTL_SYN" "$RTL_PMB" "$TOP" "$TB" "$BITSTREAM" "$REF"; do
   if [[ ! -f "$f" ]]; then
     echo "RTL SIM ERROR: missing required file: $f" >&2
     exit 2
@@ -62,6 +63,7 @@ for rtl in rtl/stream_path.sv rtl/stream_ingest.sv rtl/ddr_bitstream_reader.sv r
            rtl/sps_parser.sv rtl/pps_parser.sv rtl/slice_hdr_parser.sv rtl/decode_stub.sv \
            rtl/h264_iq_idct_4x4.sv rtl/h264_inter_pred.sv rtl/h264_deblock.sv rtl/h264_dpb.sv \
            rtl/h264_decode_skeleton.sv rtl/h264_cavlc_residual.sv rtl/h264_intra_pred.sv \
+           rtl/h264_intra_nb_ctx.sv \
            rtl/h264_syntax_primitives.sv rtl/h264_p_slice_modes.sv; do
   if ! grep -q "$rtl" "$QIP"; then
     echo "RTL SIM ERROR: files.qip does not list product RTL under simulation: $rtl" >&2
@@ -82,7 +84,7 @@ echo "RTL SIM: using $VERILATOR_VERSION (stream_path_recon_integration)" >&2
   -CFLAGS "-std=c++17 -O2" \
   "$TOP" "$RTL_STREAM" "$RTL_INGEST" "$RTL_DDR" "$RTL_FIFO" "$RTL_SCAN" "$RTL_SPS" "$RTL_PPS" \
   "$RTL_SLICE" "$RTL_DECODE" "$RTL_IQ" "$RTL_INTER" "$RTL_DEBLOCK" "$RTL_DPB" \
-  "$RTL_HOLD" "$RTL_CAVLC" "$RTL_INTRA" "$RTL_SYN" "$RTL_PMB" "$TB"
+  "$RTL_HOLD" "$RTL_CAVLC" "$RTL_INTRA" "$RTL_NBCTX" "$RTL_SYN" "$RTL_PMB" "$TB"
 
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD_FAULT" \
@@ -90,7 +92,7 @@ echo "RTL SIM: using $VERILATOR_VERSION (stream_path_recon_integration)" >&2
   -CFLAGS "-std=c++17 -O2" \
   "$TOP" "$RTL_STREAM" "$RTL_INGEST" "$RTL_DDR" "$RTL_FIFO" "$RTL_SCAN" "$RTL_SPS" "$RTL_PPS" \
   "$RTL_SLICE" "$RTL_DECODE" "$RTL_IQ" "$RTL_INTER" "$RTL_DEBLOCK" "$RTL_DPB" \
-  "$RTL_HOLD" "$RTL_CAVLC" "$RTL_INTRA" "$RTL_SYN" "$RTL_PMB" "$TB"
+  "$RTL_HOLD" "$RTL_CAVLC" "$RTL_INTRA" "$RTL_NBCTX" "$RTL_SYN" "$RTL_PMB" "$TB"
 
 "$BUILD/Vstream_path_recon_integration_tb_top" normal "$BITSTREAM" "$GOLD"
 "$BUILD/Vstream_path_recon_integration_tb_top" escape-red "$BITSTREAM" "$GOLD"

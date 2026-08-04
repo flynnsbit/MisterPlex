@@ -122,31 +122,58 @@ module h264_decode_skeleton #(
     wire [7:0] xor_arith = xor16x8(recon_out) ^ dq_out[0][7:0] ^ idct_out[8][7:0];
 
     // ════════════════════════════════════════════════════════════════════
-    // 3. INTRA PREDICTION — all three predictor modules (w-plane)
+    // 3. INTRA PREDICTION — nb_ctx feeds 4×4; I16/chroma use line-buffer nbs
     // ════════════════════════════════════════════════════════════════════
     wire [7:0] nb_above_16 [0:15];
     wire [7:0] nb_left_16 [0:15];
     wire [7:0] nb_above_8 [0:7];
     wire [7:0] nb_left_8 [0:7];
-    wire [7:0] nb_above_4 [0:7]; // 4 above + 4 above-right
+    // Legacy pads still driven by line buffers (i16/chroma + observe).
+    wire [7:0] nb_above_4 [0:7];
     wire [7:0] nb_left_4 [0:3];
     wire [7:0] nb_top_left;
 
-    // Intra 4×4
+    // Real neighbour context: recon feedback → nb_ctx → intra4x4 (Phase B).
+    wire [7:0] nbctx_above [0:7];
+    wire [7:0] nbctx_left [0:3];
+    wire [7:0] nbctx_top_left;
+    wire       nbctx_has_above, nbctx_has_left, nbctx_geom_reject;
+    // Product geometry gate is always 80 MB/row (1280px). Do not shrink with
+    // FRAME_W — tiny TB frames (e.g. multinal 16x16) must still elaborate.
+    h264_intra_nb_ctx #(
+        .MB_WIDTH_MAX(80)
+    ) u_intra_nb_ctx (
+        .clk(clk),
+        .reset(reset),
+        .mb_x(stim_byte),
+        .mb_y(stim_byte),
+        .mb_width(MB_W[7:0]),
+        .mb_start(stim_valid && stim_mode == 4'd0),
+        .block_idx(stim_mode),
+        .block_valid(stim_valid),
+        .recon_pixels(recon_out),
+        .above(nbctx_above),
+        .left(nbctx_left),
+        .top_left(nbctx_top_left),
+        .has_above(nbctx_has_above),
+        .has_left(nbctx_has_left),
+        .geom_reject(nbctx_geom_reject)
+    );
+
+    // Intra 4×4 — driven by nb_ctx, not stim pads.
     wire [3:0] i4_used_mode;
     wire [7:0] i4_pred [0:15];
     h264_intra4x4_pred #(
     ) u_intra4x4 (
         .mode(stim_mode),
-        .above(nb_above_4),
-        .left(nb_left_4),
-        .top_left(nb_top_left),
-        .has_above(stim_valid),
-        .has_left(stim_valid),
+        .above(nbctx_above),
+        .left(nbctx_left),
+        .top_left(nbctx_top_left),
+        .has_above(nbctx_has_above),
+        .has_left(nbctx_has_left),
         .used_mode(i4_used_mode),
         .pred(i4_pred)
     );
-
     // Intra 16×16 — product module is a 1–2 cycle pipe (clk/start/valid).
     wire       i16_unsupported;
     wire       i16_valid;
@@ -215,7 +242,9 @@ module h264_decode_skeleton #(
                             chroma_pred[0] ^ chroma_pred[32] ^ chroma_pred[63] ^
                             {4'd0, i4_used_mode} ^ {7'd0, i16_unsupported} ^
                             {7'd0, guard_unsup_seen} ^ {4'd0, guard_unsup_code} ^
-                            guard_unsup_mb[7:0] ^ {6'd0, i16_valid, chroma_valid};
+                            guard_unsup_mb[7:0] ^ {6'd0, i16_valid, chroma_valid} ^
+                            nbctx_above[0] ^ nbctx_left[0] ^ nbctx_top_left ^
+                            {5'd0, nbctx_has_above, nbctx_has_left, nbctx_geom_reject};
 
     // ════════════════════════════════════════════════════════════════════
     // 4. MOTION COMPENSATION — per-sample interpolation (w-mc)
@@ -768,6 +797,40 @@ module h264_decode_skeleton #(
         .done(rbsp_done)
     );
 
+    // SPS geometry — remaining front-end DEAD module (tool DEAD list).
+    wire        sps_in_ready, sps_valid, sps_error, sps_busy;
+    wire [7:0]  sps_profile, sps_level;
+    wire [4:0]  sps_log2_fn;
+    wire [2:0]  sps_poc_type;
+    wire [15:0] sps_coded_w, sps_coded_h, sps_disp_w, sps_disp_h;
+    wire [15:0] sps_crop_l, sps_crop_r, sps_crop_t, sps_crop_b, sps_bits;
+    h264_sps_geometry_parser #(
+        .MAX_RBSP_BYTES(128)
+    ) u_sps_geometry (
+        .clk(clk), .reset(reset),
+        .clear(reset),
+        .in_valid(rbsp_out_valid),
+        .in_byte(rbsp_out_byte),
+        .in_last(rbsp_out_last),
+        .in_ready(sps_in_ready),
+        .valid(sps_valid),
+        .error(sps_error),
+        .profile_idc(sps_profile),
+        .level_idc(sps_level),
+        .log2_max_frame_num(sps_log2_fn),
+        .poc_type(sps_poc_type),
+        .coded_width(sps_coded_w),
+        .coded_height(sps_coded_h),
+        .display_width(sps_disp_w),
+        .display_height(sps_disp_h),
+        .crop_left(sps_crop_l),
+        .crop_right(sps_crop_r),
+        .crop_top(sps_crop_t),
+        .crop_bottom(sps_crop_b),
+        .rbsp_bits_consumed(sps_bits),
+        .busy(sps_busy)
+    );
+
     // Small MAX_RBSP_BYTES keeps Verilator unit memory bounded; product can
     // raise this when fabric parse is on the live path.
     wire        syn_in_ready, syn_valid, syn_error, syn_unsup, syn_busy;
@@ -856,7 +919,10 @@ module h264_decode_skeleton #(
                              syn_mb_type ^ syn_slice_type ^ syn_slice_qp[7:0] ^
                              {syn_valid, syn_error, syn_unsup, syn_busy, syn_cabac,
                               syn_deblock_ctrl, syn_mb_skipped, 1'b0} ^
-                             syn_bits[7:0] ^ {4'd0, syn_part_mode} ^ {2'd0, syn_cbp};
+                             syn_bits[7:0] ^ {4'd0, syn_part_mode} ^ {2'd0, syn_cbp} ^
+                             sps_profile ^ sps_level ^ sps_coded_w[7:0] ^ sps_disp_w[7:0] ^
+                             {sps_in_ready, sps_valid, sps_error, sps_busy, sps_poc_type, 1'b0} ^
+                             sps_bits[7:0];
 
     // ════════════════════════════════════════════════════════════════════
     // 14. BITSTREAM FIFO — single-clock BRAM ring (32KB, M10K)
