@@ -86,6 +86,19 @@ for row in "${B[@]}"; do
     fail=1
   fi
 
+  # Sweep 114: hot thread kept default comm "misterplexd" and evaded named
+  # analysis. Any thread using >5% core MUST have an mpx-* name (or mpx-main).
+  significant_name=$(awk -v p="$pct" 'BEGIN{exit !(p+0 > 5.0)}' && echo 1 || echo 0)
+  if [[ "$significant_name" == "1" ]]; then
+    case "$cm" in
+      mpx-*) ;;
+      *)
+        echo "FAIL tid=$tid comm='$cm' burns ${pct}% but is unnamed (expected mpx-*)"
+        fail=1
+        ;;
+    esac
+  fi
+
   # Lifetime voluntary vs nonvoluntary (spin signature).
   stfile="/proc/$PID/task/$tid/status"
   if [[ -r "$stfile" ]]; then
