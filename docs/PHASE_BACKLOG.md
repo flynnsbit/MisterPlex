@@ -9,7 +9,7 @@ Update this file when work finishes. Loop agents claim items and mark `DONE` / `
 | **Mandate** | 720p24 via ARM decode + **fabric present/publish** — full fabric H.264 decode is dead (M10K). |
 | **Authoritative record** | `Memory/lab/parent/misterplex-parent-720p-decode-verdict.txt` (Sweeps 113–136) · `Memory/AGENT_BRIEF.md` |
 | **Lab device** | `CORENAME=Plex` RBF md5 prefix **`dfebf2bf`** (stale vs current RTL — do not reason about device from source until ONE new LOCK_OK deploy) |
-| **Grok Build** | Default harness: one intentional land line; sole Quartus; evidence in `Memory/lab/`. Multi-agent skill files under `~/.grok` are incomplete — use in-repo playbook. |
+| **Grok Build** | Multi-agent: **max 10 experts** — see [`AGENT_EXPERT_ROSTER.md`](AGENT_EXPERT_ROSTER.md). Skill `/multi-agent-build` + `~/.grok/rules/00-multi-agent-build.md`. Sole Quartus (`w-fit`). Evidence in `Memory/lab/`. |
 
 ### Landed (base heal)
 

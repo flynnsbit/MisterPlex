@@ -8,17 +8,21 @@
 **Default harness (all projects):** `~/.grok/rules/00-multi-agent-build.md` + skill `/multi-agent-build`  
 (`~/.grok/skills/multi-agent-build/SKILL.md`). Repo entry: root `AGENTS.md`.
 
+**Expert roster (max 10):** [`AGENT_EXPERT_ROSTER.md`](AGENT_EXPERT_ROSTER.md) — FPGA, ARM, Memory, FPGA Fit, Builds, Tests, Rubber duck, Clock, Path/DMA, Integration.  
+Bucket example: [`agent-bucket.example.json`](agent-bucket.example.json).
+
 ## Goal
-Keep **5–8 worker agents** busy until `docs/PHASE_BACKLOG.md` gates are green.
-Parent (top-level) verifies count and **refills the bucket** every tick.
+Keep **4–10 specialist agents** busy (target **6**) until `docs/PHASE_BACKLOG.md` gates are green.
+Parent (top-level) verifies count and **refills the bucket** every tick. Prefer roster IDs over ad-hoc names.
 
 ## Every orchestrator tick
-1. Read `docs/PHASE_BACKLOG.md` + `/tmp/misterplex-agent-bucket.json`
+1. Read `docs/PHASE_BACKLOG.md` + `/tmp/misterplex-agent-bucket.json` + roster
 2. Count open TODO/IN_PROGRESS items
-3. Detect Quartus: if `pgrep -f quartus` or docker `*quartus*` → **RBF slot occupied**
-4. Spawn workers until **target 6 concurrent** (min 4, max 8):
-   - If RBF slot free and FBAR/clean RBF needed → at most **1** build agent
-   - All other slots → non-RBF phase work
+3. Detect Quartus: if `pgrep -f quartus` or docker `*quartus*` → **RBF slot occupied** (`w-fit` only when FREE)
+4. Spawn workers until **target 6 concurrent** (min 4, **max 10**):
+   - If RBF slot free and intentional fit needed → at most **1** `w-fit`
+   - Always keep **rd-duck** available for high-risk claims
+   - All other slots → non-RBF phase work mapped to roster experts
 5. Write `/tmp/misterplex-loop-status.txt` with: time, agent goals spawned, RBF state, next gaps
 6. Update PHASE_BACKLOG statuses when workers report DONE
 

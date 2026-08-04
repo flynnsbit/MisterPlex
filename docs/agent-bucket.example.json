@@ -1,0 +1,49 @@
+{
+  "updated": "2026-08-04T00:00:00-05:00",
+  "base_sha": "ab18a382",
+  "programme": "720p-fabric-present-publish",
+  "fit_exclusive": "FREE",
+  "device_token": "none",
+  "target_workers": 6,
+  "max_workers": 10,
+  "active": [
+    {
+      "id": "w-integ",
+      "expert": "Integration",
+      "goal": "Compose enable branch off ab18a382; unit green before FIT_GO",
+      "worktree": "~/Projects/MisterPlex-wt-integ"
+    },
+    {
+      "id": "w-clock",
+      "expert": "Clock / timing",
+      "goal": "clk_pix compose recipe + STA risk pre-register (Sweep 136 P4)",
+      "worktree": "~/Projects/MisterPlex-wt-clock"
+    },
+    {
+      "id": "w-mem",
+      "expert": "Memory / DDR",
+      "goal": "Product-wire publish engine; M10K depth×width for 720p linebufs",
+      "worktree": "~/Projects/MisterPlex-wt-mem"
+    },
+    {
+      "id": "w-fpga",
+      "expert": "FPGA RTL",
+      "goal": "Present/store under compose macros; Template path default-safe",
+      "worktree": "~/Projects/MisterPlex-wt-fpga"
+    },
+    {
+      "id": "w-test",
+      "expert": "Tests",
+      "goal": "Compose unit/RTL gates; skip accounting",
+      "worktree": "~/Projects/MisterPlex-wt-test"
+    },
+    {
+      "id": "rd-duck",
+      "expert": "Rubber duck",
+      "goal": "Attack compose timing close + fabric COPY DDR contention claims",
+      "worktree": "~/Projects/MisterPlex-wt-duck"
+    }
+  ],
+  "idle_until_fit_go": ["w-fit"],
+  "parked": ["w-arm", "w-build", "w-path"]
+}

@@ -6,10 +6,12 @@ Use the **multi-agent build harness** for all sustained work in this repo:
 
 - Global rule: `~/.grok/rules/00-multi-agent-build.md`
 - Skill: `/multi-agent-build` → `~/.grok/skills/multi-agent-build/SKILL.md`
-- Project orchestration: [`docs/AGENT_ORCHESTRATION.md`](docs/AGENT_ORCHESTRATION.md)
+- **Expert roster (max 10):** [`docs/AGENT_EXPERT_ROSTER.md`](docs/AGENT_EXPERT_ROSTER.md)
+- Fleet playbook: [`docs/agent-fleet-playbook.md`](docs/agent-fleet-playbook.md)
+- Project orchestration (run gates): [`docs/AGENT_ORCHESTRATION.md`](docs/AGENT_ORCHESTRATION.md)
 - Living backlog (source of truth): [`docs/PHASE_BACKLOG.md`](docs/PHASE_BACKLOG.md)
 
-Parent keeps **~6 workers** filled. **Quartus is the sole exclusive slot.** While fitting, fill only non-RBF work. Evidence-only gates. Never invent BUILD_OK.
+Parent keeps **~6 specialists** filled (**hard max 10**). Roster experts: **FPGA, ARM, Memory, FPGA Fit, Builds, Tests, Rubber duck (rd-duck), Clock, Path/DMA, Integration**. **Quartus is the sole exclusive slot** (`w-fit` only). While fitting, fill only non-RBF work. Evidence-only gates. Never invent BUILD_OK.
 
 ## Safe deploy
 
