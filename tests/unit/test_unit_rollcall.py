@@ -253,6 +253,7 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/tests/unit/test_ddr_ppc2_feed.sh",
     "$(ROOT)/tests/unit/test_ddr_ppc2_fullframe_beats.sh",
     "$(ROOT)/tests/unit/test_fabric_ddr_frame_mem2mem.sh",
+    "$(ROOT)/tests/unit/test_fabric_mem2mem_arb_conc.sh",
     "$(ROOT)/tests/unit/test_present_multi_720p_abi.sh",
     "$(ROOT)/tests/unit/test_ddr_frame_store_scanout_shear.sh",
     "$(ROOT)/tests/unit/test_ddr_frame_store_scanout_freeze.sh",

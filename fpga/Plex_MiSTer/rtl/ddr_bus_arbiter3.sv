@@ -23,7 +23,12 @@
 //
 `default_nettype none
 
-module ddr_bus_arbiter3 (
+module ddr_bus_arbiter3 #(
+	// Path (b) mem2mem: when 1, m2 bank-fill outranks m0 scanout while m2_want
+	// (fill finishes; present relies on linebufs / blanking). Default 0 keeps
+	// legacy writer fair-share with scanout (existing arbiter3 TB).
+	parameter bit M2_OVER_M0 = 1'b0
+) (
 	input  wire        clk,      // DDR bridge clock (90 MHz)
 	input  wire        clk_m1,   // m1 consumer clock (20 MHz / clk_sys)
 	input  wire        reset,    // synchronous to clk_m1 domain
@@ -248,20 +253,26 @@ module ddr_bus_arbiter3 (
 				end else if (grant_m2) begin
 					// Sticky for streaming WE (do not drop mid-beat). Yield only when
 					// m2 is not commanding so scanout can slip into idle slots / gaps.
+					// Path (b) M2_OVER_M0: keep grant across m2_rd (RD→WE pair) and
+					// do not yield to m0 while m2_want (bank fill atomic vs scanout).
 					if (m2_rd) begin
 						rsp_owner_m1 <= 1'b0;
 						rsp_owner_m2 <= 1'b1;
 						rsp_left <= {1'b0, selected_burst};
-						grant_m2 <= 1'b0;
+						if (!M2_OVER_M0)
+							grant_m2 <= 1'b0;
 					end else if (!m2_want_s2 && !m2_cmd) begin
 						grant_m2 <= 1'b0;
-					end else if (m0_cmd && !m2_cmd) begin
-						grant_m2 <= 1'b0; // gap / drain → scanout
+					end else if (m0_cmd && !m2_cmd && !M2_OVER_M0) begin
+						grant_m2 <= 1'b0; // gap / drain → scanout (legacy writer)
 					end
-					// else hold sticky through continuous WE stream
+					// else hold sticky through continuous WE / mem2mem beat pair
 				end else begin
-					// idle owner = m0 path, with m0/m2 fair share when both demand
-					if (m0_cmd && m2_want_s2) begin
+					// idle owner
+					if (M2_OVER_M0 && m2_want_s2) begin
+						// path (b): bank fill wins until want drops
+						grant_m2 <= 1'b1;
+					end else if (m0_cmd && m2_want_s2) begin
 						if (fair_pref_m2) begin
 							grant_m2 <= 1'b1;
 							fair_pref_m2 <= 1'b0;

@@ -98,8 +98,10 @@ set_global_assignment -name VERILOG_MACRO "OPTION_C=1"
 #set_global_assignment -name SYSTEMVERILOG_FILE rtl/fabric_luma_linebuf.sv
 # fabric_ddr_frame_mem2mem — path (b) OFF by default (w-mem Sweep-118).
 # Staging 0x30601000 → Option-C bank + doorbell; retires ARM /dev/mem bank copy.
+# Attach via fabric_ddr_mem2mem_attach + ddr_bus_arbiter3 #(.M2_OVER_M0(1)).
 #set_global_assignment -name VERILOG_MACRO "FABRIC_DDR_FRAME_MEM2MEM=1"
 #set_global_assignment -name SYSTEMVERILOG_FILE rtl/fabric_ddr_frame_mem2mem.sv
+#set_global_assignment -name SYSTEMVERILOG_FILE rtl/fabric_ddr_mem2mem_attach.sv
 set_global_assignment -name VERILOG_MACRO "FRAME_W=640"
 set_global_assignment -name VERILOG_MACRO "FRAME_H=480"
 set_global_assignment -name VERILOG_MACRO "FRAME_LINES_8=1"
