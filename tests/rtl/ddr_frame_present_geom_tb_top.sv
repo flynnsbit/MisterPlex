@@ -1,6 +1,6 @@
 // Dual-geometry present-window probe:
-//   u480 — product 480p layout (default-off L4 path must stay bit-identical)
-//   u720 — L4 720p layout from ddr_frame_layout_params.svh
+//   u480 — legacy 480p helper layout (hardcoded; product silicon is now 720p identity)
+//   u720 — product/L4 720p layout from ddr_frame_layout_params.svh
 //   u240 — 320x240 presented with identity coded/display (working glass path dims)
 `include "ddr_frame_layout_params.svh"
 
@@ -54,19 +54,20 @@ module ddr_frame_present_geom_tb_top (
 	wire [$clog2(320)-1:0] srcx240;
 	wire [$clog2(240)-1:0] srcy240;
 
+	// Legacy 480p constants (not DDR_FRAME_* — those are product 1280×720).
 	ddr_frame_present_geom #(
 		.FRAME_W(640), .FRAME_H(480),
-		.CODED_W(DDR_FRAME_CODED_WIDTH),
-		.CODED_H(DDR_FRAME_CODED_HEIGHT),
-		.DISPLAY_W(DDR_FRAME_DISPLAY_WIDTH),
-		.DISPLAY_H(DDR_FRAME_DISPLAY_HEIGHT),
-		.CROP_LEFT(DDR_FRAME_CROP_LEFT),
-		.CROP_TOP(DDR_FRAME_CROP_TOP),
-		.PRESENT_X(DDR_FRAME_PILLARBOX_LEFT),
+		.CODED_W(624),
+		.CODED_H(480),
+		.DISPLAY_W(618),
+		.DISPLAY_H(480),
+		.CROP_LEFT(0),
+		.CROP_TOP(0),
+		.PRESENT_X(11),
 		.PRESENT_Y(0),
 		.PHYS_BASE(32'h3000_0000),
-		.HPS_BANK_STRIDE_BYTES(DDR_FRAME_YUV420P_BANK_STRIDE),
-		.DOORBELL_PHYS(DDR_FRAME_YUV420P_DOORBELL_PHYS)
+		.HPS_BANK_STRIDE_BYTES(32'h0008_0000),
+		.DOORBELL_PHYS(32'h300F_F000)
 	) u480 (
 		.rd_x(x480), .rd_y(y480),
 		.rd_visible(v480), .src_x(srcx480), .src_y(srcy480),

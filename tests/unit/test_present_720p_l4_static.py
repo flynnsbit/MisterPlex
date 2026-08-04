@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """L4 gate: dead modules become INSTANTIATED behind default-off PLEX_PRESENT_720P_L4.
 
-Default product (macro off):
+Default product (L4 macro off):
   - PLEX_PRESENT_720P_L4 must NOT be an active QSF macro
-  - FRAME_W/H stay 640/480
+  - FRAME_W/H are product silicon 1280/720 (canvas identity; L4 is beam path)
   - present_core still has colorbars Template path text
 
 When scanning sources (ifdef bodies count as instantiation intent):

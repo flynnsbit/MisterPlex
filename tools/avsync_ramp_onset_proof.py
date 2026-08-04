@@ -200,6 +200,12 @@ def main() -> int:
             "grid_src remains measured_capture_pts — not SYNTH."
         ),
     )
+    ap.add_argument(
+        "--pts-json",
+        type=Path,
+        default=ROOT / "tests/fixtures/avsync/480p_repeat1_pts_60s.json",
+        help="Checked-in measured PTS grid (preferred; avoids 339 MB mkv dependency)",
+    )
     ap.add_argument("--duration", type=float, default=60.0, help="Seconds of PTS to use")
     ap.add_argument("--period", type=float, default=1.0, help="Flash period seconds")
     ap.add_argument(

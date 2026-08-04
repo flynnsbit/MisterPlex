@@ -275,12 +275,17 @@ plex_bw_status u_plex_bw_status (
 wire _unused_bwstat = |{bwstat_dir_bps, bwstat_beats, bwstat_rw, bwstat_ppc, bwstat_nack_de,
 	bwstat_tcopy, bwstat_budget};
 
-// O[4] is the native content-resolution selector shared with misterplexd.
-// C1B owns the selector/ABI; the DDR-backed frame-store branch consumes these
-// dimensions for the actual 480p present path.
-wire        content_res_640x480 = status[4];
-wire [9:0]  content_width       = content_res_640x480 ? 10'd640 : 10'd320;
-wire [9:0]  content_height      = content_res_640x480 ? 10'd480 : 10'd240;
+// O[5:4] content-resolution selector (see p720 scope). Product elaborate-time
+// FRAME_W/H are the silicon canvas; these wires are status/OSD hints only.
+// Width must be ≥11 bits: 1280 does not fit in [9:0] (max 1023).
+// Arith: 1280 > 1023 → need [10:0].
+wire [1:0]  content_res_sel     = status[5:4];
+wire [10:0] content_width =
+	(content_res_sel == 2'b10) ? 11'd1280 :
+	(content_res_sel == 2'b01) ? 11'd640  : 11'd320;
+wire [10:0] content_height =
+	(content_res_sel == 2'b10) ? 11'd720  :
+	(content_res_sel == 2'b01) ? 11'd480  : 11'd240;
 
 // ---------------------------------------------------------------------------
 // L4 720p present geom hierarchy (DEFAULT OFF via PLEX_PRESENT_720P_L4).
@@ -459,9 +464,13 @@ localparam int FRAME_BYTES = FRAME_W * FRAME_H * 3 / 2;
 `else
 localparam int FRAME_BYTES = FRAME_STRIDE * FRAME_H * 2;
 `endif
+// Align with ddr_frame_layout_params / host kPlex720p bank stride when possible.
+// 1280×720 I420 = 1_382_400 B → 0x18_0000 (1.5 MiB) tier before 2 MiB.
 localparam int HPS_BANK_STRIDE_BYTES =
 	(FRAME_BYTES <= 262144)  ? 262144  :
+	(FRAME_BYTES <= 524288)  ? 524288  :
 	(FRAME_BYTES <= 1048576) ? 1048576 :
+	(FRAME_BYTES <= 1572864) ? 1572864 :
 	(FRAME_BYTES <= 2097152) ? 2097152 : 4194304;
 
 // Single-stick SDRAM controller. At cold start the destructive B1 memtest owns
