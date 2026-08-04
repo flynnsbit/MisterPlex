@@ -21,3 +21,196 @@ When `Plex.qsf` has active `PRODUCT_NO_STUB=1`, `decode_stub` moves from
 required-REACHABLE to `teeth_non_reachable` and the gate resolves
 `` `ifdef PRODUCT_NO_STUB `` in the instantiation graph. A QSF that claims the
 macro while still instantiating the stub is RED. Soft-skip (77) is not a pass.
+
+## Post-fit score vs 720p24 delivery
+
+`make post-fit-score FIT_RPT=… STA_RPT=… RBF=…` proves **structure**: critical
+modules survived fitting (`plex_rbf_build_id` ≥8 regs), STA has no negative
+slack, prefit reachability still holds, and (when `PRODUCT_NO_STUB=1`)
+`decode_stub` fitted resources are 0. It does **not** prove 720p24 delivery.
+Fit/STA cannot see the ARM uncached publication memcpy in `sendDdrFrame()`
+(~15 ms/frame) or end-to-end DDR write + present bandwidth. A core that only
+“fits” can still miss 24 fps if that copy stays serial with decode.
+
+**rd-duck corrections (binding on this gate):**
+- Sweep116 **49% idle was sampled BEFORE decode**, not during it
+  (`Memory/scratch/busyfix.sh`: `idle_pct` then `decode`). Do **not** budget a
+  free core for overlap during decode until same-window `/proc/stat`+`wait4`.
+- “Fabric DMA and ARM never touches the frame” is **too strong**. Software
+  decode/rawvideo still writes pixels. DMA can retire the **uncached
+  publication memcpy only**, and only after pinned contiguous/SG +
+  cache-coherency contract.
+- Prefer a **dynamic-base direct fabric reader** over a source→bank mover
+  (mover adds read+write traffic).
+
+Delivery evidence remains parent HW measurement; this score never sets
+`DELIVERY_PROVEN=1`.
+
+## Parent command list after exclusive fit
+
+Run from the **exact tree that built the RBF** (sha frozen by provenance). Capture
+each exit with `echo "true rc=$?"` outside any pipe. Soft-skip **77 is not PASS**.
+
+```bash
+make prefit-reachability; echo "true rc=$?"
+
+make post-fit-hierarchy \
+  FIT_RPT=path/Plex.fit.rpt \
+  MAP_RPT=path/Plex.map.rpt \
+  COMPILE_LOG=path/quartus.log
+echo "true rc=$?"
+# Require: plex_rbf_build_id registers >= 8 in FIT_HIERARCHY_TABLE
+
+# When PRODUCT_NO_STUB=1 is active in Plex.qsf:
+python3 scripts/check_quartus_fit_hierarchy.py \
+  --fit-rpt path/Plex.fit.rpt \
+  --config tests/fixtures/critical_fit_hierarchy_product_no_stub.json
+echo "true rc=$?"
+# Require: decode_stub status ABSENT_OK (0 fitted resources)
+
+make post-fit-timing STA_RPT=path/Plex.sta.rpt; echo "true rc=$?"
+make post-fit-timing-margin STA_RPT=path/Plex.sta.rpt; echo "true rc=$?"  # 77 = SKIP-NOT-PASS
+
+python3 scripts/rbf_provenance.py emit --rbf path/Plex.rbf --builder parent-fit
+python3 scripts/rbf_provenance.py verify --rbf path/Plex.rbf; echo "true rc=$?"
+
+# One-shot wrapper (same rules; prints SCORE SUMMARY):
+make post-fit-score \
+  FIT_RPT=path/Plex.fit.rpt STA_RPT=path/Plex.sta.rpt \
+  MAP_RPT=path/Plex.map.rpt COMPILE_LOG=path/quartus.log \
+  RBF=path/Plex.rbf
+echo "true rc=$?"
+
+grep -nE 'plex_rbf_build_id|decode_stub' path/Plex.fit.rpt | head
+```
+
+`post-fit-score` structural PASS is **not** a 720p24 delivery PASS (ARM copy /
+DDR write / present BW are outside fit/STA).
+
+## Delivery path stamp (`plex_delivery_path_stamp`)
+
+Fabric-visible class bit for Sweep 118:
+
+| path_class[1:0] | Meaning |
+|---|---|
+| `01` | **ARM_COPY** (default) — HPS uncached publication memcpy (`sendDdrFrame`) |
+| `10` | **FABRIC_DMA** claimed (`FABRIC_FRAME_DMA=1`) — publication path only; not delivery-proven |
+
+Parent-measured serial deficit (Sweep 118; do not re-derive casually):
+
+- frame budget @24 fps = 41.667 ms
+- decode = 32.705 ms/frame
+- `T_copy_arm` = 14.978 ms/frame (publication memcpy CPU time, not a payload rate)
+- serial shortfall = **6.016 ms/frame**
+
+`post-fit-score` always prints `DELIVERY_CLASS=STRUCTURAL_ONLY` /
+`DELIVERY_PROVEN=0`. Structural FIT PASS ≠ 720p24 delivery.
+
+### Fit-slot blockers (both required)
+
+Unless the parent **explicitly** resolves the conflict in writing, treat **both**:
+
+1. **w-nostub reclaim** on main + post-fit `decode_stub` ABSENT under `PRODUCT_NO_STUB`
+2. **w-osd** full 1280×720 real L4 reader proof at 20:90 clock ratio **with injected stalls**
+
+as hard blockers on releasing the exclusive Quartus slot. Parent wording that
+names only nostub does **not** clear the w-osd blocker (rd-duck).
+
+#### w-osd blocker — rd-duck NACK (not CLOSED)
+
+A stress test that “eventually completes requests” is **not** enough to clear
+this blocker. Fitgate will not treat G0/G1 as green until the following are
+fixed and re-proven (rd-duck source audit):
+
+1. **G1 must assert `underrun_count==0` and an output/checksum** — otherwise
+   stale/black lines can pass while all requests eventually complete.
+2. **G1 must bound work, not only floor it** — `payload>=172800` plus
+   blocked/busy is insufficient; need a **payload upper bound** and a hard
+   cycle budget (e.g. `ddr_cycles` ceiling). A 3× reread or missed-vsync frame
+   that still finishes inside a loose wall timeout must **fail**.
+3. **G0 beat conservation must be tight** — a `[1×,3×]` band is too loose;
+   unexplained +320 beats must be derived and locked; assert exact/tight
+   conservation **including returned beats**.
+4. **Label the clocking honestly** — driving `825×750` groups at 20 MHz
+   (≈32.3 fps) **bypasses product rate-match** and is **not** product PPC2 @24
+   integration. Conservative isolated-reader stress is allowed only if labeled
+   as such; it does not substitute for product-path proof.
+5. **Criterion changes require re-prereg + negative mutant** — if the G1 wall
+   criterion moved after a preregistered miss, prereg the corrected criterion
+   and prove discrimination with a **negative stall mutant** that forces
+   deadline/underrun failure.
+
+Until those land, `BLOCKER_W_OSD_720P_REAL_READER` stays **required** and
+`FIT_SLOT_GRANT=NO`.
+
+
+## PRESENT PPC2 fit blocker (rd-duck — not a follow-up)
+
+A Quartus fit with `PRESENT_MULTI_PIXEL` + `PRESENT_PX_PER_CLK>=2` can **succeed
+while the 720p picture is wrong**. Source on w-scaler `present_core.sv`:
+
+- `synthesis translate_off` wraps `$error` when `PRESENT_PPC != 1` — **sim-only**;
+  synthesis ignores it.
+- `mp_npx_{r,g,b} = {PRESENT_PPC{fr/fg/fb}}` **replicates one scalar store sample**
+  into both lanes → duplicated pixels / half horizontal information.
+- MULTI beam glass x/y are marked unused; **fstore still reads legacy Template
+  `store_x/y`**.
+
+Clock-domain reader TBs that are **scalar cannot close this**.
+
+Before fit release of a PPC2 product recipe, require:
+
+1. Real dual-lane store outputs (distinct pixels per lane)
+2. MULTI beam → store coordinate wiring (not legacy Template-only)
+3. Odd/even distinct-pixel checksum (sim, synthesis-visible contract)
+4. A **synthesis-active** recipe gate (not `translate_off` `$error`)
+
+Gate: `make present-ppc2-blocker` / `scripts/check_present_ppc2_fit_blocker.py`.
+Hollow QSF PPC>=2 claim → **rc=1**. `FIT_SLOT_GRANT=NO` while hollow.
+
+### Discriminator — do not close PPC2 on accepted-request counts (rd-duck)
+
+**Retraction:** rd-duck withdrew “dc2ae85d / w-clock HEAD is a scalar reader.”
+`git grep` shows `PX_PER_CLK=2`, `rd_*_n`, and TB `.PX_PER_CLK(2)`.
+
+**Narrower NACK (stands):**
+
+- The C++ scorer never observes `rd_*_n`, lane-valid, RGB, or underrun.
+- w-scaler’s **scalar adaptation** can yield **identical accepted-request / beat
+  counts** to the PPC2 TB — that proves **refill demand**, not dual-lane output
+  correctness or deadline.
+- Accepted-request steady delta may be **CLOSED** as a demand metric.
+- **PPC2 delivery/correctness** and **shared-controller BW** remain **OPEN**.
+
+Status:
+
+- `PPC2_STATUS=PARTIAL_CLOSED_READER`
+- `PPC2_ACCEPTED_REQUEST_STEADY_DELTA=CLOSED_IF_PROVEN` (demand only)
+- `fabric_bw_closed=false`
+- `PPC2_READER_CORRECTNESS_CLOSED=false`
+- `PPC2_DEADLINE_CLOSED=false`
+
+**Required:** scorer must watch lanes/RGB/underrun; true PPC2 correctness gate
+must **fail a scalar negative control** via odd/even checksum / lane-valid.
+Request-count match alone must never clear the blocker.
+
+DMA note (rd-duck): a source→bank mover is **read+write**; prefer dynamic-base
+direct fabric read that eliminates the bank write.
+
+
+## Dead QIP `.svh` contracts (rd-duck NACK)
+
+`plex_720p_bw_contract.svh` listed only in `files.qip` with **no** `` `include ``
+consumer is a **dead compilation-unit**. Localparams do not constrain product
+RTL and **must not count as fabric work**. Gate: `make qip-svh-consumed`.
+
+Also locked:
+
+- **R_req = 33.1776 MB/s/dir** @720p24 (arithmetic ACK)
+- **38.53 MB/s** is **not established** (rd-duck): `runCase` window/phase and
+  `beats*8*24` without normalizing by measured `sys_cyc` / elapsed sim time are
+  invalid. Prefer steady frame-to-frame delta or bytes/s from elapsed time.
+- **`audit_ack` ≠ reader CLOSED** — rd-duck ACK is arithmetic labels only
+- No **free core** budget from Sweep116 idle-before-decode
+- DMA retires **publication memcpy only** after pinned/coherent source — not
+  “ARM never touches payload”

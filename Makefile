@@ -5,7 +5,7 @@ CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -I$(ROOT)/host
 FFMPEG_CFLAGS := $(shell pkg-config --cflags libavformat libavcodec libavutil 2>/dev/null)
 FFMPEG_LIBS   := $(shell pkg-config --libs libavformat libavcodec libavutil 2>/dev/null)
 
-.PHONY: all preflight unit unit-unlocked unit-rollcall rtl-sim rtl-sim-unlocked rtl-lint verilator-elab quartus-sv-subset define-parity pre-synth-gates prefit-reachability prefit-reachability-selftest rbf-provenance rbf-provenance-selftest rbf-what-built post-fit-hierarchy post-fit-timing post-fit-timing-margin timing-exclusion pms-baseline-check pms-baseline-live pms-nal-stats arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools check-core-conf-geometry
+.PHONY: all preflight unit unit-unlocked unit-rollcall rtl-sim rtl-sim-unlocked rtl-lint verilator-elab quartus-sv-subset define-parity pre-synth-gates prefit-reachability prefit-reachability-selftest rbf-provenance rbf-provenance-selftest rbf-what-built post-fit-hierarchy post-fit-timing post-fit-timing-margin post-fit-score present-ppc2-blocker qip-svh-consumed timing-exclusion pms-baseline-check pms-baseline-live pms-nal-stats arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools check-core-conf-geometry
 
 all: unit
 
@@ -170,7 +170,11 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_no_private_data.sh
 	$(ROOT)/tests/unit/test_rbf_provenance.sh
 	$(ROOT)/tests/unit/test_prefit_reachability_product_no_stub.sh
+	$(ROOT)/tests/unit/test_fit_hierarchy_must_be_absent.sh
 	$(ROOT)/tests/unit/test_plex_rbf_build_id_rtl_sim.sh
+	$(ROOT)/tests/unit/test_plex_delivery_path_stamp_rtl_sim.sh
+	$(ROOT)/tests/unit/test_present_ppc2_fit_blocker.sh
+	$(ROOT)/tests/unit/test_qip_svh_consumed.sh
 	python3 $(ROOT)/tests/unit/test_gate_false_green_guard.py
 	$(ROOT)/tests/unit/test_capture_rig.sh
 	$(ROOT)/tests/unit/test_avsync_measure_hdmi.sh
@@ -313,6 +317,18 @@ post-fit-timing-margin:
 
 timing-exclusion:
 	$(ROOT)/scripts/check_timing_exclusions.py $(if $(STA_RPT),--sta-rpt "$(STA_RPT)",)
+
+# Ordered post-fit scorecard (parent runs after exclusive fit). Soft-skip≠PASS.
+present-ppc2-blocker:
+	python3 $(ROOT)/scripts/check_present_ppc2_fit_blocker.py --root $(ROOT)
+
+qip-svh-consumed:
+	python3 $(ROOT)/scripts/check_qip_svh_consumed.py --root $(ROOT)
+
+post-fit-score:
+	@test -n "$(FIT_RPT)" || (echo "FIT_RPT required" >&2; exit 2)
+	@test -n "$(STA_RPT)" || (echo "STA_RPT required" >&2; exit 2)
+	FIT_RPT="$(FIT_RPT)" STA_RPT="$(STA_RPT)" MAP_RPT="$(MAP_RPT)" COMPILE_LOG="$(COMPILE_LOG)" RBF="$(RBF)" OUT_DIR="$(or $(OUT_DIR),$(ROOT)/build/post_fit_score)" 		$(ROOT)/scripts/post_fit_release_score.sh
 
 pms-baseline-check: $(ROOT)/build/pms_baseline_probe
 	python3 $(ROOT)/scripts/run_with_skip_summary.py --label pms-baseline-check -- $(ROOT)/tests/hw/test_pms_baseline_profile.sh

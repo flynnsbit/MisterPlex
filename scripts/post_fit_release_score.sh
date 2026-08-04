@@ -1,0 +1,152 @@
+#!/usr/bin/env bash
+# Post-fit release scorecard for parent after exclusive Quartus fit.
+# Soft-skip (77) is NOT a pass. Capture each true rc outside pipes.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+FIT_RPT="${FIT_RPT:-}"
+STA_RPT="${STA_RPT:-}"
+MAP_RPT="${MAP_RPT:-}"
+COMPILE_LOG="${COMPILE_LOG:-}"
+RBF="${RBF:-}"
+OUT_DIR="${OUT_DIR:-$ROOT/build/post_fit_score}"
+mkdir -p "$OUT_DIR"
+
+echo "=== post_fit_release_score EXECUTED ==="
+echo "ROOT=$ROOT"
+echo "FIT_RPT=${FIT_RPT:-UNSET} STA_RPT=${STA_RPT:-UNSET} RBF=${RBF:-UNSET}"
+
+fail=0
+run() {
+  local label="$1"; shift
+  set +e
+  "$@" >"$OUT_DIR/${label}.out" 2>"$OUT_DIR/${label}.err"
+  local rc=$?
+  set -e
+  echo "${label} true rc=$rc"
+  if [[ -s "$OUT_DIR/${label}.out" ]]; then tail -n 30 "$OUT_DIR/${label}.out"; fi
+  if [[ -s "$OUT_DIR/${label}.err" ]]; then tail -n 20 "$OUT_DIR/${label}.err" >&2; fi
+  if [[ "$rc" -ne 0 ]]; then fail=1; fi
+  return 0
+}
+
+# 0) inputs present
+[[ -n "$FIT_RPT" && -f "$FIT_RPT" ]] || { echo "FAIL need FIT_RPT= path to Plex.fit.rpt" >&2; exit 2; }
+[[ -n "$STA_RPT" && -f "$STA_RPT" ]] || { echo "FAIL need STA_RPT= path to Plex.sta.rpt" >&2; exit 2; }
+
+# 1) Prefit reachability (source tree that built the RBF)
+run prefit python3 "$ROOT/scripts/check_prefit_reachability.py" --root "$ROOT"
+
+# 2) Hierarchy — product critical present; build_id >=8 regs
+HIER_ARGS=(--fit-rpt "$FIT_RPT")
+[[ -n "${MAP_RPT:-}" && -f "$MAP_RPT" ]] && HIER_ARGS+=(--map-rpt "$MAP_RPT")
+[[ -n "${COMPILE_LOG:-}" && -f "$COMPILE_LOG" ]] && HIER_ARGS+=(--log "$COMPILE_LOG")
+run hier_product python3 "$ROOT/scripts/check_quartus_fit_hierarchy.py" \
+  "${HIER_ARGS[@]}" --config "$ROOT/tests/fixtures/critical_fit_hierarchy.json"
+
+# 2b) If QSF has PRODUCT_NO_STUB, also require decode_stub absent (0 resources)
+if grep -qE '^[^#]*VERILOG_MACRO.*"PRODUCT_NO_STUB=1"' "$ROOT/fpga/Plex_MiSTer/Plex.qsf" 2>/dev/null; then
+  echo "PRODUCT_NO_STUB=1 active — scoring decode_stub must_be_absent"
+  run hier_nostub python3 "$ROOT/scripts/check_quartus_fit_hierarchy.py" \
+    "${HIER_ARGS[@]}" --config "$ROOT/tests/fixtures/critical_fit_hierarchy_product_no_stub.json"
+else
+  echo "PRODUCT_NO_STUB inactive — skip decode_stub-absent hierarchy (not a pass claim)"
+fi
+
+# 3) Timing hard fail on negative slack
+run timing python3 "$ROOT/scripts/check_quartus_timing.py" --sta-rpt "$STA_RPT"
+
+# 4) Timing margin vs baseline (77 = SKIP-NOT-PASS, not green)
+set +e
+python3 "$ROOT/scripts/check_timing_margin.py" --sta-rpt "$STA_RPT" \
+  >"$OUT_DIR/timing_margin.out" 2>"$OUT_DIR/timing_margin.err"
+tm_rc=$?
+set -e
+echo "timing_margin true rc=$tm_rc"
+tail -n 20 "$OUT_DIR/timing_margin.out" || true
+if [[ "$tm_rc" -eq 77 ]]; then
+  echo "timing_margin SKIP-NOT-PASS rc=77 — not scored as PASS"
+elif [[ "$tm_rc" -ne 0 ]]; then
+  fail=1
+fi
+
+# 5) Provenance bind if RBF present
+if [[ -n "${RBF:-}" && -f "$RBF" ]]; then
+  run prov_emit python3 "$ROOT/scripts/rbf_provenance.py" --root "$ROOT" emit --rbf "$RBF" --builder post_fit_score
+  run prov_verify python3 "$ROOT/scripts/rbf_provenance.py" --root "$ROOT" verify --rbf "$RBF"
+  MD5=$(md5sum "$RBF" | awk '{print $1}')
+  echo "RBF_MD5=$MD5"
+  run what_built python3 "$ROOT/scripts/rbf_provenance.py" --root "$ROOT" lookup --md5 "$MD5"
+else
+  echo "rbf_provenance SKIP-NOT-PASS (no RBF=) — not a provenance PASS"
+fi
+
+# 6) Explicit build_id / decode_stub greps from hierarchy table (belt+suspenders)
+echo "=== explicit FIT_RPT greps ==="
+set +e
+grep -n 'plex_rbf_build_id' "$FIT_RPT" | head -20
+grep -n 'decode_stub' "$FIT_RPT" | head -20
+set -e
+
+
+# 7) Delivery class — structural score ≠ 720p24 (Sweep 118; rd-duck corrections)
+echo "=== DELIVERY_CLASS (Sweep 118 arithmetic; fit cannot close this) ==="
+echo "frame_budget_ms@24fps=41.667"
+echo "T_decode_ms=32.705"
+echo "T_copy_arm_ms=14.978"
+echo "serial_deficit_ms=6.016"
+echo "R_req_MBps@720p24=33.1776"
+echo "DELIVERY_CLASS=STRUCTURAL_ONLY"
+echo "DELIVERY_PROVEN=0"
+echo "NOTE: T_copy_arm is uncached publication memcpy (sendDdrFrame), outside FIT_RPT/STA."
+echo "NOTE: FABRIC_FRAME_DMA claim retires that publication memcpy only — not all ARM pixel writes."
+echo "NOTE: software decode/rawvideo still produces pixels; DMA needs pin/SG + coherency contract."
+echo "NOTE: prefer dynamic-base direct fabric reader over source->bank mover (extra R+W)."
+echo "NOTE: Sweep116 49% idle was BEFORE decode (busyfix idle_pct then decode) — not same-window free core."
+echo "NOTE: overlap during decode is UNKNOWN until parent same-window /proc/stat+wait4."
+if grep -qE '^[^#]*VERILOG_MACRO.*"FABRIC_FRAME_DMA=1"' "$ROOT/fpga/Plex_MiSTer/Plex.qsf" 2>/dev/null; then
+  echo "FABRIC_FRAME_DMA_MACRO=1 — publication-path claim at compile; still DELIVERY_PROVEN=0 without HW"
+else
+  echo "FABRIC_FRAME_DMA_MACRO=0 — publication class ARM_COPY (plex_delivery_path_stamp)"
+fi
+
+# 7b) PRESENT PPC2 blocker (rd-duck: explicit fit blocker, not follow-up)
+run present_ppc2 python3 "$ROOT/scripts/check_present_ppc2_fit_blocker.py" --root "$ROOT"
+run qip_svh python3 "$ROOT/scripts/check_qip_svh_consumed.py" --root "$ROOT"
+
+# 8) Fit-release blockers (rd-duck: required unless parent explicitly resolves)
+echo "=== FIT_RELEASE_BLOCKERS (not scored green by this script) ==="
+echo "BLOCKER_PRESENT_PPC2=required  # dual-lane store+beam coords+checksum+synth gate"
+echo "BLOCKER_DEAD_BW_CONTRACT=required_if_qip_svh_unincluded  # plex_720p_bw_contract.svh must be \`include\`d"
+echo "BLOCKER_BW_MBS_METHOD=elapsed_sim_or_frame_delta  # 38.53 not established"
+echo "NOTE_AUDIT_ACK=arithmetic_labels_only"
+echo "R_req_MBps_per_dir_LOCKED=33.1776"
+echo "PPC2_STATUS=PARTIAL_CLOSED_READER"
+echo "PPC2_ACCEPTED_REQUEST_STEADY_DELTA=CLOSED_IF_PROVEN  # demand only"
+echo "fabric_bw_closed=false  # shared-controller BW OPEN"
+echo "PPC2_READER_CORRECTNESS_CLOSED=false  # delivery/correctness OPEN"
+echo "PPC2_DEADLINE_CLOSED=false"
+echo "NOTE: rd-duck retracted scalar-instantiation claim on dc2ae85d/w-clock (has PPC2 ports)"
+echo "NOTE: scorer still blind to rd_*_n/lane/RGB/underrun — counts ≠ correctness"
+echo "BLOCKER_NOSTUB_RECLAIM=required  # PRODUCT_NO_STUB land + post-fit decode_stub ABSENT"
+echo "BLOCKER_W_OSD_720P_REAL_READER=required  # full 1280x720 real L4 @20:90+stalls — NOT CLOSED"
+echo "W_OSD_NACK_rd_duck=active  # do not clear blocker on current G0/G1 stress alone"
+echo "W_OSD_ACCEPT_underrun_count_eq_0=required"
+echo "W_OSD_ACCEPT_output_or_checksum=required  # stale/black lines must fail"
+echo "W_OSD_ACCEPT_payload_upper_bound=required  # not payload>=172800 alone"
+echo "W_OSD_ACCEPT_ddr_cycles_budget=required  # e.g. ddr_cycles bound; no unbounded reread"
+echo "W_OSD_ACCEPT_beat_conservation_tight=required  # G0 [1x,3x] too loose; exact/tight + returned beats"
+echo "W_OSD_ACCEPT_product_rate_or_labeled_stress=required  # 825*750@20MHz=32.3fps ≠ product 24/PPC2"
+echo "W_OSD_ACCEPT_prereg_deadline_plus_NEG_stall_mutant=required  # discrimination after criterion change"
+echo "FIT_SLOT_GRANT=NO until nostub + w-osd + PRESENT_PPC2 accept checklists green; NACKs stand"
+
+echo "=== SCORE SUMMARY ==="
+if [[ "$fail" -ne 0 ]]; then
+  echo "POST_FIT_SCORE FAIL — GRANT remains NO"
+  echo "true rc=1"
+  exit 1
+fi
+echo "POST_FIT_SCORE structural PASS (hierarchy+timing+prefit[+prov])"
+echo "NOTE: structural PASS ≠ 720p24 delivery (publication copy / DDR BW / present / overlap unknown)."
+echo "true rc=0"
+exit 0

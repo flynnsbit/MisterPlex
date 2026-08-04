@@ -896,6 +896,21 @@ plex_product_cfg u_product_cfg (
 	.ddr_frame_store_en(product_cfg_ddr_fs)
 );
 
+// Delivery path class (w-fitgate / Sweep 118): default ARM copy until FABRIC_FRAME_DMA.
+// Fit structural PASS must not be read as 720p24 delivery; this stamp is the tell.
+wire delivery_arm_copy;
+wire delivery_fabric_dma;
+wire [7:0] delivery_path_class;
+wire delivery_stamp_alive;
+plex_delivery_path_stamp u_delivery_path (
+	.clk(clk_sys),
+	.reset(reset),
+	.arm_copy_path(delivery_arm_copy),
+	.fabric_dma_path(delivery_fabric_dma),
+	.path_class(delivery_path_class),
+	.stamp_alive(delivery_stamp_alive)
+);
+
 wire [7:0] telem_flags = {
 	pps_valid, sps_valid, stub_busy, has_idr,
 	audio_underrun, has_stream, has_audio, has_frame
@@ -1076,6 +1091,7 @@ wire _unused = |{disp_i, cont_i, advance, ingest_pixels, ingest_dl, af_active, i
 	stream_ddr_fpga_read, stream_ddr_bus_want, stream_ddr_burstcnt, stream_ddr_addr,
 	stream_ddr_rd, stream_ddr_din, stream_ddr_be, stream_ddr_we, _host_wr_unused,
 	rbf_stamp_alive, rbf_build_id_valid, rbf_build_id_observe_r,
-	product_cfg_no_stub, product_cfg_ddr_fs};
+	product_cfg_no_stub, product_cfg_ddr_fs,
+	delivery_arm_copy, delivery_fabric_dma, delivery_path_class, delivery_stamp_alive};
 
 endmodule
