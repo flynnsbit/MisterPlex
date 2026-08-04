@@ -1,6 +1,8 @@
 // Phase 3.3–3.3l-1: F3 → FIFO → NAL → SPS/PPS/slice_hdr(+full first residual) + decode_stub.
 // Hybrid: stub diagnostic paint is F3-only; host F1 recon owns product present (Plex.sv).
 // P3-3l5: expose product_recon_ok / hybrid_host_required for STREAM skip-host policy.
+// PRODUCT_NO_STUB (product QSF default): omit decode_stub — reclaim ~268 M10K dpb_mem +
+// painter ALMs. DDR_FRAME_STORE glass path uses doorbell/has_frame, not stub wr ports.
 
 module stream_path #(
 	parameter int FRAME_W = 320,
@@ -306,6 +308,31 @@ module stream_path #(
 	assign residual_dc   = sl_rdc;
 	assign entropy_cabac = pps_cabac;
 
+	// PRODUCT_NO_STUB: strip decode_stub (+ on-chip dpb_mem ~256 M10K) from product
+	// netlist. Sim/unit builds omit the macro and keep the painter for research.
+`ifdef PRODUCT_NO_STUB
+	// Tie every former stub-driven port. Product glass is DDR doorbell/has_frame;
+	// hybrid_host_required=1 keeps STREAM skip-host policy from claiming fabric recon.
+	assign stub_frames = 16'd0;
+	assign stub_busy = 1'b0;
+	assign recon_sig = 8'd0;
+	assign recon_dbg = 8'd0;
+	assign recon_dbg_valid = 1'b0;
+	assign recon_valid = 1'b0;
+	assign hybrid_fpga_owned = 1'b0;
+	assign hybrid_host_required = 1'b1;
+	assign product_recon_ok = 1'b0;
+	assign hybrid_own_code = 3'd0;
+	assign hybrid_own_reason = 4'd0;
+	assign product_fetch_mv_x = 16'sd0;
+	assign product_fetch_mv_y = 16'sd0;
+	assign product_luma_origin_x = 16'sd0;
+	assign product_luma_origin_y = 16'sd0;
+	assign fs_wr_en = 1'b0;
+	assign fs_wr_pixel = 16'd0;
+	assign fs_wr_reset = 1'b0;
+	assign fs_swap = 1'b0;
+`else
 	decode_stub #(
 		.WIDTH(FRAME_W),
 		.HEIGHT(FRAME_H)
@@ -359,6 +386,7 @@ module stream_path #(
 		.busy(stub_busy),
 		.frames_out(stub_frames)
 	);
+`endif
 
 	(* keep = 1 *) wire keep_si = si_active;
 	(* keep = 1 *) wire keep_bf = bf_has;

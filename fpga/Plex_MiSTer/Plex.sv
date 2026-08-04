@@ -887,6 +887,15 @@ assign LED_USER = has_stream ? (act_cnt[20] ^ nalu_count[0] ^ last_nal_type[0])
 //   [119:112] recon_sig        (3.3l-2 XOR recon Y[0:15]; MB0 block0 golden 0x3b)
 //   [127:120] p3_recon_dbg     (coeff/dequant/idct/recon non-zero flags for silicon RCA)
 //   [122:121] forced from status (Aspect ratio) — overlaps stream debug only
+// Product cfg stamp (w-nostub): fabric-visible PRODUCT_NO_STUB / DDR_FRAME_STORE.
+// Folded into _unused keep-chain so Quartus cannot strip the constants.
+wire product_cfg_no_stub;
+wire product_cfg_ddr_fs;
+plex_product_cfg u_product_cfg (
+	.product_no_stub(product_cfg_no_stub),
+	.ddr_frame_store_en(product_cfg_ddr_fs)
+);
+
 wire [7:0] telem_flags = {
 	pps_valid, sps_valid, stub_busy, has_idr,
 	audio_underrun, has_stream, has_audio, has_frame
@@ -1066,6 +1075,7 @@ wire _unused = |{disp_i, cont_i, advance, ingest_pixels, ingest_dl, af_active, i
 	stream_ddr_underruns, stream_ddr_overruns, stream_ddr_host_write,
 	stream_ddr_fpga_read, stream_ddr_bus_want, stream_ddr_burstcnt, stream_ddr_addr,
 	stream_ddr_rd, stream_ddr_din, stream_ddr_be, stream_ddr_we, _host_wr_unused,
-	rbf_stamp_alive, rbf_build_id_valid, rbf_build_id_observe_r};
+	rbf_stamp_alive, rbf_build_id_valid, rbf_build_id_observe_r,
+	product_cfg_no_stub, product_cfg_ddr_fs};
 
 endmodule
