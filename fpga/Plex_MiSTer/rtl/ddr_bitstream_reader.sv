@@ -308,17 +308,21 @@ module ddr_bitstream_reader #(
 	wire want_poll = enable && (poll_div == {POLL_DIV_BITS{1'b0}});
 	wire want_read = enable && ring_has_data && (beat_left == 4'd0);
 	wire want_pub = enable && publish_pending;
-	// Bit feeder backpressure (ENABLE_BIT_FEED): stall payload emit if RBSP skid full.
+	// Bit feeder backpressure (ENABLE_BIT_FEED): hold-reg valid/ready, not a
+	// single-cycle pulse. A pulse drops the next byte when the feeder skid is
+	// one slot from full (ready sampled cycle N, valid arrives N+1 after full).
 	wire bit_feed_in_ready;
-	wire payload_sink_ok = !out_full && (!ENABLE_BIT_FEED || bit_feed_in_ready);
+	reg         bit_in_valid;
+	reg  [7:0]  bit_in_byte;
+	reg         bit_in_last;
+	wire        bit_fire = bit_in_valid && bit_feed_in_ready;
+	wire        bit_slot_free = !bit_in_valid || bit_feed_in_ready;
+	wire payload_sink_ok = !out_full && (!ENABLE_BIT_FEED || bit_slot_free);
 	wire can_consume = (mode != MODE_PAYLOAD) || payload_sink_ok;
 	wire [15:0] state_flags = {4'd0, fatal_sticky, desync_sticky, paused, active,
 	                           overrun_sticky, underrun_sticky, mode, state};
 
-	// Payload byte → bit feeder (pulsed in ST_CONSUME alongside out_valid)
-	reg         bit_in_valid;
-	reg  [7:0]  bit_in_byte;
-	reg         bit_in_last;
+	// Payload byte → bit feeder holding register (cleared only on fire / clear)
 	reg         bit_feed_soft_clear; // EVENT_FLUSH / BEGIN / END / host flush
 	wire        bit_feed_clear = reset | bit_feed_soft_clear;
 
@@ -412,11 +416,14 @@ module ddr_bitstream_reader #(
 	always @(posedge clk) begin
 		out_valid <= 1'b0;
 		out_flush <= 1'b0;
-		bit_in_valid <= 1'b0;
-		bit_in_last <= 1'b0;
 		bit_feed_soft_clear <= 1'b0;
 		DDRAM_RD <= 1'b0;
 		DDRAM_WE <= 1'b0;
+		// Holding-reg handshake: drop valid only when feeder accepts.
+		if (bit_fire) begin
+			bit_in_valid <= 1'b0;
+			bit_in_last <= 1'b0;
+		end
 
 		if (reset) begin
 			state <= ST_RESET;
@@ -464,6 +471,8 @@ module ddr_bitstream_reader #(
 			state <= ST_IDLE;
 			active <= 1'b0;
 			paused <= 1'b0;
+			bit_in_valid <= 1'b0;
+			bit_in_last <= 1'b0;
 			bit_feed_soft_clear <= 1'b1;
 			reset_parser();
 		end else begin
@@ -474,6 +483,8 @@ module ddr_bitstream_reader #(
 				fpga_read_count <= write_count;
 				active <= 1'b0;
 				paused <= 1'b0;
+				bit_in_valid <= 1'b0;
+				bit_in_last <= 1'b0;
 				overrun_sticky <= 1'b0;
 				underrun_sticky <= 1'b0;
 				desync_sticky <= 1'b0;
@@ -681,6 +692,8 @@ module ddr_bitstream_reader #(
 										seen_payload <= 1'b0;
 										out_flush <= 1'b1;
 										bit_feed_soft_clear <= 1'b1;
+										bit_in_valid <= 1'b0;
+										bit_in_last <= 1'b0;
 									end
 								end else if (hdr[4] == EVENT_NAL) begin
 									if (!active || paused || hdr64(8) != current_session ||
@@ -704,6 +717,8 @@ module ddr_bitstream_reader #(
 									end else begin
 										out_flush <= 1'b1;
 										bit_feed_soft_clear <= 1'b1;
+										bit_in_valid <= 1'b0;
+										bit_in_last <= 1'b0;
 										seen_payload <= 1'b0;
 									end
 								end else if (hdr[4] == EVENT_END) begin
@@ -714,6 +729,8 @@ module ddr_bitstream_reader #(
 										paused <= 1'b0;
 										out_flush <= 1'b1;
 										bit_feed_soft_clear <= 1'b1;
+										bit_in_valid <= 1'b0;
+										bit_in_last <= 1'b0;
 									end
 								end else if (hdr[4] == EVENT_PAUSE) begin
 									if (!active || hdr64(8) != current_session || hdr32(20) != 32'd0)
