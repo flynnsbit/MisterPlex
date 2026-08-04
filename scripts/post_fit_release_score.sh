@@ -112,10 +112,15 @@ fi
 
 # 7b) PRESENT PPC2 blocker (rd-duck: explicit fit blocker, not follow-up)
 run present_ppc2 python3 "$ROOT/scripts/check_present_ppc2_fit_blocker.py" --root "$ROOT"
+run qip_svh python3 "$ROOT/scripts/check_qip_svh_consumed.py" --root "$ROOT"
 
 # 8) Fit-release blockers (rd-duck: required unless parent explicitly resolves)
 echo "=== FIT_RELEASE_BLOCKERS (not scored green by this script) ==="
 echo "BLOCKER_PRESENT_PPC2=required  # dual-lane store+beam coords+checksum+synth gate"
+echo "BLOCKER_DEAD_BW_CONTRACT=required_if_qip_svh_unincluded  # plex_720p_bw_contract.svh must be \`include\`d"
+echo "BLOCKER_BW_MBS_METHOD=elapsed_sim_or_frame_delta  # 38.53 not established"
+echo "NOTE_AUDIT_ACK=arithmetic_labels_only"
+echo "R_req_MBps_per_dir_LOCKED=33.1776"
 echo "PPC2_STATUS=PARTIAL_CLOSED_READER"
 echo "PPC2_ACCEPTED_REQUEST_STEADY_DELTA=CLOSED_IF_PROVEN  # demand only"
 echo "fabric_bw_closed=false  # shared-controller BW OPEN"

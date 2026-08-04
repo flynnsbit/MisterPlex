@@ -196,3 +196,21 @@ Request-count match alone must never clear the blocker.
 
 DMA note (rd-duck): a source→bank mover is **read+write**; prefer dynamic-base
 direct fabric read that eliminates the bank write.
+
+
+## Dead QIP `.svh` contracts (rd-duck NACK)
+
+`plex_720p_bw_contract.svh` listed only in `files.qip` with **no** `` `include ``
+consumer is a **dead compilation-unit**. Localparams do not constrain product
+RTL and **must not count as fabric work**. Gate: `make qip-svh-consumed`.
+
+Also locked:
+
+- **R_req = 33.1776 MB/s/dir** @720p24 (arithmetic ACK)
+- **38.53 MB/s** is **not established** (rd-duck): `runCase` window/phase and
+  `beats*8*24` without normalizing by measured `sys_cyc` / elapsed sim time are
+  invalid. Prefer steady frame-to-frame delta or bytes/s from elapsed time.
+- **`audit_ack` ≠ reader CLOSED** — rd-duck ACK is arithmetic labels only
+- No **free core** budget from Sweep116 idle-before-decode
+- DMA retires **publication memcpy only** after pinned/coherent source — not
+  “ARM never touches payload”

@@ -199,6 +199,7 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/tests/unit/test_plex_rbf_build_id_rtl_sim.sh",
     "$(ROOT)/tests/unit/test_plex_delivery_path_stamp_rtl_sim.sh",
     "$(ROOT)/tests/unit/test_present_ppc2_fit_blocker.sh",
+    "$(ROOT)/tests/unit/test_qip_svh_consumed.sh",
 "python3 $(ROOT)/tests/unit/test_gate_false_green_guard.py",
     "$(ROOT)/tests/unit/test_capture_rig.sh",
     "$(ROOT)/tests/unit/test_avsync_measure_hdmi.sh",
