@@ -159,6 +159,29 @@ def main() -> int:
     check("residual" not in sdc.lower() or "Do NOT" in sdc, "SDC does not silence residual")
     check("general[3]" in sdc, "SDC names general[3] clk_pix")
 
+    # CLK_PIX_SDC_GROUPING (rd-duck): ONE async command; pix alone; sys+ddr together.
+    # NEGATIVE: two pairwise commands or one-group form that can cut sys↔ddr.
+    cmds = re.findall(
+        r"set_clock_groups\s+-asynchronous\s*((?:\\?\s*-group\s+\[[^\]]+\]\s*)+)",
+        sdc,
+    )
+    # Fallback: count directives (continuation-aware already flattened poorly) —
+    # require exactly one set_clock_groups -asynchronous directive.
+    n_async = len(re.findall(r"(?m)^\s*set_clock_groups\s+-asynchronous\b", sdc))
+    check(n_async == 1, f"exactly one async clock_groups (got {n_async}) — not pairwise")
+    check("list $plex_clk_sys $plex_clk_ddr" in sdc or
+          "list $plex_clk_ddr $plex_clk_sys" in sdc,
+          "sys+ddr must share one -group via [list ...]")
+    check(re.search(r"-group\s+\[get_clocks\s+\$plex_clk_pix\]", sdc) is not None,
+          "pix alone in its -group")
+    # Forbidden: separate sys-vs-pix and ddr-vs-pix pair commands
+    check(not (
+        re.search(r"-group\s+\[get_clocks\s+\$plex_clk_sys\]\s*\\\s*"
+                  r"-group\s+\[get_clocks\s+\$plex_clk_pix\]", sdc)
+        and re.search(r"-group\s+\[get_clocks\s+\$plex_clk_ddr\]", sdc)
+        and n_async >= 2
+    ), "FORBIDDEN pairwise sys/pix + ddr/pix async commands")
+
     if fails:
         print("FAIL test_720p_clk_ddr_arith:", file=sys.stderr)
         for f in fails:

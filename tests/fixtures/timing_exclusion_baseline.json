@@ -52,8 +52,7 @@
     "88177291f638ba21": "false_path @ fpga/Plex_MiSTer/sys/sys_top.sdc:76 \u2014 REVIEW: false_path on non-obvious target",
     "cec5dcaef6dfb306": "false_path @ fpga/Plex_MiSTer/sys/sys_top.sdc:77 \u2014 REVIEW: false_path on non-obvious target",
     "c61a3d15000b57d4": "async_fifo mem[]\u2192rd_data_r data plane only (all instances; dominant ddr_bus_arbiter.m1_rsp_fifo). Gray pointer CDC is the real sync (docs/cdc-crossing-inventory.md #16/#22/#30). general[0]+general[2] share one exclusive clock group so STA applies a 5.556 ns related-edge relationship across intentional async FIFO data \u2014 placement-fragile (ac90b155 setup +0.502 data_delay 4.111; ff2e3ca3 -0.233/hold -0.517). Does NOT cut whole general[0]\u2194general[2] pair. Quartus 17 lacks set_max_delay -datapath_only. Evidence: .agent-work/w-fit/timing-rca-leftedge.txt",
-    "a2ff373066af8638": "clock_groups @ fpga/Plex_MiSTer/Plex_clk_pix.sdc:28 \u2014 PRESENT_CLK_PIX_PLL default-OFF SDC: clk_pix vs clk_sys crossed only via present_npx_path async_fifo gray + 2FF (source-proven CDC); file not sourced in product QSF",
-    "80914f1b557a9074": "clock_groups @ fpga/Plex_MiSTer/Plex_clk_pix.sdc:32 \u2014 PRESENT_CLK_PIX_PLL default-OFF SDC: clk_pix vs clk_ddr asynchronous; same FIFO CDC class; file not sourced in product QSF"
+    "fc48f664d0cfcd44": "clock_groups @ fpga/Plex_MiSTer/Plex_clk_pix.sdc:63 \u2014 PRESENT_CLK_PIX_PLL: ONE async command isolates clk_pix; clk_sys+clk_ddr share the other -group so related-domain product paths stay timed (rd-duck: forbids pairwise/one-group false-green that cuts sys\u2194ddr). CDC: present_npx_path async_fifo gray+2FF only."
   },
   "expected_sta_clocks": [
     "general[0].gpll",

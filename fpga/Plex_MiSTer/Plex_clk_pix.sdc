@@ -43,18 +43,31 @@ set plex_clk_pix {emu|pll|pll_inst|altera_pll_i|general[3].gpll~PLL_OUTPUT_COUNT
 
 # Exclusive: clk_pix is crossed only via async_fifo gray pointers + 2FF levels
 # (present_npx_path). Treat as asynchronous to clk_sys / clk_ddr.
-# If a future design intentionally uses related-edge multicycle between these,
+#
+# CRITICAL Quartus semantics (rd-duck prefit control):
+#   set_clock_groups -asynchronous with multiple -group options makes each
+#   group asynchronous to every OTHER group in THAT command. Clocks that share
+#   one -group stay related to each other.
+#   FORBIDDEN false-green: two pairwise commands
+#     (-group sys -group pix) + (-group ddr -group pix)
+#   are easy to mis-read; worse, a ONE-group form (-group X alone) cuts X from
+#   ALL other clocks in the design. Never use one-group form here.
+#
+# CORRECT: ONE command — isolate pix; keep sys+ddr in the SAME group so
+# existing product related-domain paths (fstore DDRAM_ADDR, etc.) remain timed.
+# sys_top.sdc already places all emu pll divclks in one -exclusive group vs
+# hdmi/audio/spi; this assignment only adds the pix async cut (async wins over
+# related for the pairs it names — TimeQuest cookbook).
+# If a future design intentionally uses related-edge multicycle pix↔sys,
 # remove this group and add proven multicycle — never a silent false_path.
 set_clock_groups -asynchronous \
-	-group [get_clocks $plex_clk_sys] \
-	-group [get_clocks $plex_clk_pix]
+	-group [get_clocks $plex_clk_pix] \
+	-group [get_clocks [list $plex_clk_sys $plex_clk_ddr]]
 
-set_clock_groups -asynchronous \
-	-group [get_clocks $plex_clk_ddr] \
-	-group [get_clocks $plex_clk_pix]
-
-# clk_sys <-> clk_ddr remain related (existing product CDC inventory). Do not
-# put them in exclusive groups here.
+# CONTROL (static; no STA yet): sys and ddr appear together in the non-pix
+# group above → sys↔ddr is NOT cut by this file. Pix is alone in its group →
+# pix↔sys and pix↔ddr are cut. See tests/unit/test_720p_clk_ddr_arith.py
+# CLK_PIX_SDC_GROUPING assertions + Memory/.../CLK_PIX_SDC_CONTROL.txt.
 
 # Period sanity: derive_pll_clocks creates clocks from PLL generics.
 # Explicit create_clock on divclk is not used — PLL is the generator.
