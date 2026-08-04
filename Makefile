@@ -40,7 +40,7 @@ preflight:
 unit:
 	@bash $(ROOT)/scripts/run_with_resource_preflight.sh -- $(MAKE) unit-unlocked
 
-unit-unlocked: preflight $(ROOT)/build/test_plxa_map $(ROOT)/build/test_ddr_bank_release_select $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_osd_menu $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_pixel_format $(ROOT)/build/test_main_guard $(ROOT)/build/test_status_telemetry $(ROOT)/build/test_resolve $(ROOT)/build/test_pms_timeline $(ROOT)/build/pms_baseline_probe $(ROOT)/build/test_h264_bitstream_source $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_frame_store_sdram_sim $(ROOT)/build/test_frame_store_ddr_prefetch_sim $(ROOT)/build/test_sdram_memtest_sim $(ROOT)/build/test_sdram_mailbox $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant $(ROOT)/build/test_p3_host_recon_vectors $(ROOT)/build/test_p3_idct_reference_model $(ROOT)/build/test_p3_inter_pred_vectors $(ROOT)/build/extract_h264_golden
+unit-unlocked: preflight $(ROOT)/build/test_plxa_map $(ROOT)/build/test_ddr_bank_release_select $(ROOT)/build/test_ddr_kick_only_publish $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_osd_menu $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_pixel_format $(ROOT)/build/test_main_guard $(ROOT)/build/test_status_telemetry $(ROOT)/build/test_resolve $(ROOT)/build/test_pms_timeline $(ROOT)/build/pms_baseline_probe $(ROOT)/build/test_h264_bitstream_source $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_frame_store_sdram_sim $(ROOT)/build/test_frame_store_ddr_prefetch_sim $(ROOT)/build/test_sdram_memtest_sim $(ROOT)/build/test_sdram_mailbox $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant $(ROOT)/build/test_p3_host_recon_vectors $(ROOT)/build/test_p3_idct_reference_model $(ROOT)/build/test_p3_inter_pred_vectors $(ROOT)/build/extract_h264_golden
 	$(ROOT)/build/test_cadence
 	$(ROOT)/build/test_avclock
 	$(ROOT)/build/test_mraudio_status
@@ -49,6 +49,7 @@ unit-unlocked: preflight $(ROOT)/build/test_plxa_map $(ROOT)/build/test_ddr_bank
 	$(ROOT)/build/test_input_mailbox
 	$(ROOT)/build/test_plxa_map
 	$(ROOT)/build/test_ddr_bank_release_select
+	$(ROOT)/build/test_ddr_kick_only_publish
 	$(ROOT)/build/test_pixel_format
 	$(ROOT)/build/test_main_guard
 	$(ROOT)/build/test_status_telemetry
@@ -126,6 +127,8 @@ unit-unlocked: preflight $(ROOT)/build/test_plxa_map $(ROOT)/build/test_ddr_bank
 	$(ROOT)/tests/unit/test_ddr_frame_store_plxa_map.sh
 	$(ROOT)/tests/unit/test_ddr_frame_store_spi_kick.sh
 	$(ROOT)/tests/unit/test_ddr_arbiter_plxd_starvation.sh
+	$(ROOT)/tests/unit/test_plxd_bank_credit.sh
+	$(ROOT)/build/test_ddr_kick_only_publish
 	$(ROOT)/scripts/rtl_lint.py
 	$(ROOT)/tests/unit/test_h264_syntax_primitives_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_sps_geometry_rtl_sim.sh
@@ -144,6 +147,7 @@ rtl-sim:
 	$(ROOT)/tests/unit/test_ddr_frame_store_plxa_map.sh
 	$(ROOT)/tests/unit/test_ddr_frame_store_spi_kick.sh
 	$(ROOT)/tests/unit/test_ddr_arbiter_plxd_starvation.sh
+	$(ROOT)/tests/unit/test_plxd_bank_credit.sh
 	$(ROOT)/tests/unit/test_stream_path_recon_integration.sh
 	$(ROOT)/tests/unit/test_stream_path_full_frame_compare.sh
 	$(ROOT)/tests/unit/test_h264_syntax_primitives_rtl_sim.sh
@@ -350,6 +354,13 @@ $(ROOT)/build/test_ddr_bank_release_select: $(ROOT)/tests/unit/test_ddr_bank_rel
 		$(ROOT)/host/libmisterplex/input_mailbox.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_ddr_bank_release_select.cpp
+
+$(ROOT)/build/test_ddr_kick_only_publish: $(ROOT)/tests/unit/test_ddr_kick_only_publish.cpp \
+		$(ROOT)/host/libmisterplex/ddr_kick_only_publish.hpp \
+		$(ROOT)/host/libmisterplex/ddr_bank_release_select.hpp \
+		$(ROOT)/host/libmisterplex/input_mailbox.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_ddr_kick_only_publish.cpp
 
 $(ROOT)/build/test_pixel_format: $(ROOT)/tests/unit/test_pixel_format.cpp \
 		$(ROOT)/host/libmisterplex/pixel_format.hpp
