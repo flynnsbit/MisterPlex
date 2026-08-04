@@ -197,10 +197,14 @@ module ddr_bus_arbiter3 #(
 			end else if (wr_lock && !sel_we) begin
 				// Master dropped WE — transaction over (or idle gap).
 				wr_left <= 8'd0;
-			end else if (acc && sel_rd && !rd_lock) begin
+			end else if (acc && sel_rd && !rd_lock &&
+			            // One-shot m0 slice: do not start a new m0 RD when DMA
+			            // is waiting to reclaim the bus. Prevents NBA race:
+			            //   last m0 DOUT → rd_left/m0_rsp clear
+			            //   same cycle owner→m2 AND m0 re-accept rd_left≤1
+			            // which stuck G1 as own=2 rdl=1 prdl=0 rspl=8.
+			            !(owner == 2'd0 && m2_req)) begin
 				// Do not accept a new RD while responses are still outstanding.
-				// Continuous m0_rd (present hold) would otherwise reload rd_left
-				// every cycle and never retire m0_rsp / return the bus to DMA.
 `ifndef DDR_ARB3_FAULT_M2_STICKY_NO_QUANTUM
 				if (owner == 2'd2 && (m0_cmd || m0_pri)) begin
 					if (qcnt <= 8'd1) begin m0_pri <= 1'b1; qcnt <= QMAX;
@@ -214,10 +218,10 @@ module ddr_bus_arbiter3 #(
 				end
 			end
 
-			// Read-response countdown is INDEPENDENT of the write else-if chain.
-			// A wr_lock-clear cycle must not swallow a DOUT_READY (left rd_left==1
-			// forever and blocked all quantum yields via xact_lock).
-			if (!(acc && sel_rd) && rd_lock && DDRAM_DOUT_READY &&
+			// Always count DOUT_READY under rd_lock. Do NOT gate on !sel_rd:
+			// present holds m0_rd, which previously skipped the last beat and
+			// froze rd_left==1 (xact_lock forever).
+			if (rd_lock && DDRAM_DOUT_READY &&
 			    (owner == 2'd2 || owner == 2'd0)) begin
 				if (rd_left == 8'd1)
 					rd_left <= 8'd0;

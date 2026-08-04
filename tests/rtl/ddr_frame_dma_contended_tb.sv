@@ -188,11 +188,19 @@ module ddr_frame_dma_contended_tb;
 		end
 	endfunction
 
+	// Dual-sample RD: pre-edge (arbiter align) + post-edge (one-cycle RD rise).
+	integer rd_fire;
+	reg [28:0] snap_addr;
+	reg [7:0] snap_bc;
+
 	task automatic step;
 		begin
 			busy_this = next_busy();
 			DDRAM_BUSY = busy_this[0];
 			DDRAM_DOUT_READY = 1'b0;
+			rd_fire = (!busy_this[0] && DDRAM_RD && (rd_left == 0) && (wr_left == 0));
+			snap_addr = DDRAM_ADDR;
+			snap_bc = (DDRAM_BURSTCNT == 0) ? 8'd1 : DDRAM_BURSTCNT;
 			if (rd_left > 0 && !busy_this[0]) begin
 				DDRAM_DOUT = mem[rd_a[11:0]];
 				DDRAM_DOUT_READY = 1'b1;
@@ -215,6 +223,9 @@ module ddr_frame_dma_contended_tb;
 					wr_left = wr_left - 1;
 					if (cwe_en) cwe_addr = cwe_addr + 1;
 				end
+			end else if (rd_fire) begin
+				rd_a = snap_addr;
+				rd_left = snap_bc;
 			end else if (!busy_this[0] && DDRAM_RD) begin
 				rd_a = DDRAM_ADDR;
 				rd_left = (DDRAM_BURSTCNT == 0) ? 1 : DDRAM_BURSTCNT;
@@ -241,7 +252,8 @@ always @(posedge clk) begin
 				m0_grants <= m0_grants + 1;
 				m0_deny <= 0;
 				m0_addr <= m0_addr + 1;
-			end else if (m0_busy) begin
+			end else if (u_arb.owner != 2'd0) begin
+				// Owner-starve only (not phys waitrequest under rand BUSY).
 				m0_deny <= m0_deny + 1;
 				if (m0_deny + 1 > m0_max_deny) m0_max_deny <= m0_deny + 1;
 			end
@@ -361,8 +373,10 @@ always @(posedge clk) begin
 			if (!local_fail) $display("PASS G0b rand_busy bit_exact");
 		end
 
-		// G1 DMA + present ~6.25% duty + bit-exact dst (BUSY=0; arbiter under test)
-		busy_force = 0;
+		// G1 DMA + present ~6.25% duty + bit-exact + randomized BUSY
+		// (rd-duck: G0b solo rand; G1 present+rand). Dual-sample phys closes
+		// one-cycle-RD vs arbiter accept skew under waitrequest.
+		busy_force = -1;
 		for (i = 0; i < N_QWORDS; i = i + 1) mem[(DST_PHYS/8) + i] = 64'd0;
 		m0_grants = 0; m0_deny = 0; m0_max_deny = 0;
 		present_div = 0; present_need = 1'b0;
@@ -370,7 +384,7 @@ always @(posedge clk) begin
 		repeat (16) begin step; end
 		dma_start_cyc = cyc;
 		dma_start = 1; step; dma_start = 0;
-		while (!dma_done && cyc < dma_start_cyc + 800000) begin
+		while (!dma_done && cyc < dma_start_cyc + 2000000) begin
 			if (present_div == 0)
 				present_need = 1'b1;
 			present_div = (present_div == 15) ? 0 : (present_div + 1);
@@ -386,6 +400,9 @@ always @(posedge clk) begin
 		m0_want = 0;
 		$display("G1 end done=%0d busy=%0d rd=%0d wr=%0d cyc=%0d grants=%0d max_deny=%0d",
 			dma_done, dma_busy, dma_rd_beats, dma_wr_beats, cont_cyc, m0_grants, m0_max_deny);
+		if (!dma_done)
+			$display("G1 HANG st=%0d own=%0d rdl=%0d prdl=%0d rspl=%0d",
+				u_dma.st, u_arb.owner, u_arb.rd_left, rd_left, u_dma.rsp_left);
 
 		local_fail = 0;
 		begin : g1_check
