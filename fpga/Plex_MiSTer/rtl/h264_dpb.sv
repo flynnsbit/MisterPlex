@@ -1,4 +1,14 @@
 // Phase 3 motion-compensation decoded picture buffer helpers.
+//
+// Source-graph reachability only (tools/rtl_reachability.py body-scoped edges +
+// code pos/neg controls). NOT a shipping-RBF / area-paid claim; no ifdef/QSF
+// eval (PRODUCT_NO_STUB). Post-fit hierarchy is authority. Stub path is
+// diagnostic/partial recon — not product playback frames.
+// Storage locus (quoted): this file has NO frame arrays — address gens + mem_* only.
+// On-chip dual-bank frames live in decode_stub.sv when stub is kept:
+//   `(* ram_style = "block" *) reg [7:0] dpb_mem [0:DPB_MEM_BYTES-1]`
+// PRODUCT_NO_STUB strips stub+BRAM. DDR path (ddr_backend + nb_cache,
+// ENABLE_DPB_DDR=0 default) stays DEAD until wired — fit delta 0 while DEAD.
 // One short-term reference picture, one current reconstruction picture.
 //
 // Content contract: filtered_sample_* MUST be POST in-loop-deblock native I420
@@ -60,7 +70,10 @@ module h264_dpb_one_ref #(
 	parameter int FRAME_W = 624,
 	parameter int FRAME_H = 480,
 	parameter int BANK0_BASE = 0,
-	parameter int BANK1_BASE = 898560 / 2
+	parameter int BANK1_BASE = 898560 / 2,
+	// 0 (product default): fixed 21x21+9x9+9x9 = 603 one-byte reads (legacy).
+	// 1: size window from fetch_part_w/h (still one-byte; use wide_window_fetch for beats).
+	parameter bit ENABLE_PART_SIZED_WINDOW = 1'b0
 )(
 	input  wire               clk,
 	input  wire               reset,
@@ -178,10 +191,6 @@ module h264_dpb_one_ref #(
 
 	reg [2:0] phase;
 	reg [8:0] issue_idx;
-	wire [8:0] issue_mod9 = issue_idx % 9'd9;
-	wire [8:0] issue_div9 = issue_idx / 9'd9;
-	wire signed [15:0] issue_mod9_s = $signed({7'd0, issue_mod9});
-	wire signed [15:0] issue_div9_s = $signed({7'd0, issue_div9});
 	reg [1:0] pending_plane;
 	reg [8:0] pending_idx;
 	reg       pending_valid;
@@ -195,12 +204,23 @@ module h264_dpb_one_ref #(
 	reg signed [15:0] ly;
 	reg signed [15:0] cx;
 	reg signed [15:0] cy;
-	reg [1:0] lat_part_w_lo;
-	reg [1:0] lat_part_h_lo;
+	reg [4:0] lat_part_w;
+	reg [4:0] lat_part_h;
 	reg signed [15:0] sx;
 	reg signed [15:0] sy;
 	reg [15:0] clamped_x;
 	reg [15:0] clamped_y;
+	// Window size: legacy fixed 21/9, or part-sized (part+5)/(part/2+1).
+	wire [5:0] luma_win_w = ENABLE_PART_SIZED_WINDOW ? ({1'b0, lat_part_w} + 6'd5) : 6'd21;
+	wire [5:0] luma_win_h = ENABLE_PART_SIZED_WINDOW ? ({1'b0, lat_part_h} + 6'd5) : 6'd21;
+	wire [5:0] chr_win_w  = ENABLE_PART_SIZED_WINDOW ? ({1'b0, lat_part_w[4:1]} + 6'd1) : 6'd9;
+	wire [5:0] chr_win_h  = ENABLE_PART_SIZED_WINDOW ? ({1'b0, lat_part_h[4:1]} + 6'd1) : 6'd9;
+	wire [8:0] luma_last  = luma_win_w * luma_win_h - 9'd1;
+	wire [8:0] chr_last   = chr_win_w * chr_win_h - 9'd1;
+	wire [8:0] issue_mod_luma = (luma_win_w == 6'd0) ? 9'd0 : (issue_idx % {3'd0, luma_win_w});
+	wire [8:0] issue_div_luma = (luma_win_w == 6'd0) ? 9'd0 : (issue_idx / {3'd0, luma_win_w});
+	wire [8:0] issue_mod_chr  = (chr_win_w == 6'd0) ? 9'd0 : (issue_idx % {3'd0, chr_win_w});
+	wire [8:0] issue_div_chr  = (chr_win_w == 6'd0) ? 9'd0 : (issue_idx / {3'd0, chr_win_w});
 
 	always @* begin
 		lx = luma_origin_x;
@@ -213,14 +233,14 @@ module h264_dpb_one_ref #(
 		clamped_y = 16'd0;
 		case (phase)
 		PH_LUMA: begin
-			sx = lx + $signed({7'd0, (issue_idx % 9'd21)}) - 16'sd2;
-			sy = ly + $signed({7'd0, (issue_idx / 9'd21)}) - 16'sd2;
+			sx = lx + $signed({7'd0, issue_mod_luma}) - 16'sd2;
+			sy = ly + $signed({7'd0, issue_div_luma}) - 16'sd2;
 			clamped_x = clamp_coord(sx, FRAME_W[15:0]);
 			clamped_y = clamp_coord(sy, FRAME_H[15:0]);
 		end
 		default: begin
-			sx = cx + issue_mod9_s;
-			sy = cy + issue_div9_s;
+			sx = cx + $signed({7'd0, issue_mod_chr});
+			sy = cy + $signed({7'd0, issue_div_chr});
 			clamped_x = clamp_coord(sx, C_W[15:0]);
 			clamped_y = clamp_coord(sy, C_H[15:0]);
 		end
@@ -261,8 +281,8 @@ module h264_dpb_one_ref #(
 			luma_origin_y       <= 16'sd0;
 			chroma_origin_x     <= 16'sd0;
 			chroma_origin_y     <= 16'sd0;
-			lat_part_w_lo       <= 2'd0;
-			lat_part_h_lo       <= 2'd0;
+			lat_part_w          <= 5'd16;
+			lat_part_h          <= 5'd16;
 			luma_window_idx     <= 9'd0;
 			luma_window_sample  <= 8'd0;
 			chroma_window_idx   <= 7'd0;
@@ -323,8 +343,8 @@ module h264_dpb_one_ref #(
 						chroma_origin_y <= $signed({5'd0, fetch_mb_y, 3'd0}) +
 						                   (part_y_off(fetch_part_mode, fetch_part_idx) >>> 1) +
 						                   (fetch_mv_y_qpel >>> 3);
-						lat_part_w_lo   <= fetch_part_w[1:0];
-						lat_part_h_lo   <= fetch_part_h[1:0];
+						lat_part_w      <= (fetch_part_w == 5'd0) ? 5'd16 : fetch_part_w;
+						lat_part_h      <= (fetch_part_h == 5'd0) ? 5'd16 : fetch_part_h;
 					end else begin
 						fetch_done <= 1'b1;
 					end
@@ -346,29 +366,31 @@ module h264_dpb_one_ref #(
 				                           (phase == PH_LUMA) ? 2'd0 : ((phase == PH_U) ? 2'd1 : 2'd2),
 				                           clamped_x, clamped_y);
 				if (phase == PH_LUMA) begin
-					if (issue_idx == 9'd440) begin
+					if (issue_idx == luma_last) begin
 						phase     <= PH_U;
 						issue_idx <= 9'd0;
 					end else begin
 						issue_idx <= issue_idx + 9'd1;
 					end
 				end else if (phase == PH_U) begin
-					if (issue_idx == 9'd80) begin
+					if (issue_idx == chr_last) begin
 						phase     <= PH_V;
 						issue_idx <= 9'd0;
 					end else begin
 						issue_idx <= issue_idx + 9'd1;
 					end
 				end else begin
-					if (issue_idx == 9'd80) begin
+					if (issue_idx == chr_last) begin
 						phase      <= PH_DRAIN;
 					end else begin
 						issue_idx <= issue_idx + 9'd1;
 					end
 				end
 			end
-			if (lat_part_w_lo != 2'd0 || lat_part_h_lo != 2'd0) begin
-				// Keep part_w/part_h observed for lint and future narrower fetch windows.
+			// lat_part_w/h drive window size when ENABLE_PART_SIZED_WINDOW=1;
+			// default path still uses 21/9 via the wires above (part values free for lint).
+			if (!ENABLE_PART_SIZED_WINDOW && (lat_part_w != 5'd0 || lat_part_h != 5'd0)) begin
+				// observed
 			end
 		end
 	end

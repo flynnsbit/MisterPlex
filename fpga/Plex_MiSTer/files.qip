@@ -29,6 +29,11 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_deblock_mb_serial.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_p_slice_modes.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_hybrid_mb_own.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_dpb.sv
+// PATH B (fabric DPB DDR/wide/nb) held off product qip — parent fork closed Path A.
+// Sources remain on branch for future work; unit TBs compile them directly.
+// set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_dpb_nb_cache.sv
+// set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_dpb_ddr_backend.sv
+// set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_dpb_wide_window_fetch.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_mc_luma_qpel.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_mc_chroma_epel.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_mc_block.sv
