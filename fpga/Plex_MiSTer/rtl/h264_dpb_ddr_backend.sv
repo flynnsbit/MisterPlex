@@ -1,10 +1,10 @@
 // h264_dpb_ddr_backend.sv — DDR-backed DPB1 storage + burst line fetch + area budget.
 //
-// DELTA framing (parent 2026-08-04 reachability ground truth):
-//   LIVE baseline already pays h264_dpb_one_ref + i420_addr + mb_write_addr ALMs and
-//   (when stub kept) decode_stub dpb_mem BRAM. This file is the storage DELTA for 720p:
-//   move frames off-chip; keep only window + nb working sets on M10K.
-//   Unwired (default): modules may be in qip but DEAD from sys_top → fit delta = 0.
+// DELTA framing (rd-duck NACK on file-wide edges + RBF "area paid" claims):
+//   Source-graph LIVE helpers ≠ shipping RBF and ≠ area paid. Deployed RBF may
+//   only carry decode_stub; PRODUCT_NO_STUB drops the stub branch entirely.
+//   This file is the 720p storage option: frames in external DDR, window+nb on M10K.
+//   Unwired (qip but DEAD): fit delta = 0. Do not claim area already paid.
 // ENABLE_DPB_DDR=0 (product default): 1-cycle local byte RAM (decode_stub contract).
 // ENABLE_DPB_DDR=1: banks at w-mem phys (0x30700000, stride 0x180000), multi-cycle
 //   reads; sim holds pixels in a model array (not for Quartus without f2sdram client).
