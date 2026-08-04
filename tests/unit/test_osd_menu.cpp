@@ -12,10 +12,18 @@
 #include <vector>
 
 static int fails = 0;
+// Mutant builds (OSD_MENU_FAULT_*) must not emit bare "FAIL " — that pollutes
+// make unit logs and looks like a green-path regression. Prefix distinguishes.
+#if defined(OSD_MENU_FAULT_SKIP_INITIAL_IDLE) || defined(OSD_MENU_FAULT_FALLBACK_624_BITRATE) || \
+    defined(OSD_MENU_FAULT_CLAMP_720_BITRATE)
+#define OSD_CHECK_TAG "MUTANT_FAIL"
+#else
+#define OSD_CHECK_TAG "FAIL"
+#endif
 #define CHECK(cond)                                                                              \
     do {                                                                                         \
         if (!(cond)) {                                                                           \
-            std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);                 \
+            std::fprintf(stderr, "%s %s:%d: %s\n", OSD_CHECK_TAG, __FILE__, __LINE__, #cond);    \
             ++fails;                                                                             \
         }                                                                                        \
     } while (0)
@@ -106,12 +114,25 @@ int main() {
     CHECK(contentResolutionFromSize(640, 480).width == kPlex480pCodedWidth);
     CHECK(contentResolutionFromSize(640, 480).weakBitrateKbps == kPlex480pWeakBitrateKbps);
     CHECK(weakBitrateKbpsForCodedSize(480, 360) == kPlex360pWeakBitrateKbps);
-    // Conf DECODE=1280x720 must not invent a native-720p host ladder.
+    // Conf DECODE=1280x720 must not invent a native-720p *canvas* ladder yet
+    // (OSD tiers still 240/480/ws480). Bitrate helper MUST still scale — a silent
+    // 2000 kbps clamp under-feeds 2.88–3.08× the pixels (negative below).
     const auto conf720 =
         contentResolutionFromCodedSize(CodedWidth{1280}, CodedHeight{720});
     CHECK(conf720.width == kPlex480pCodedWidth);
     CHECK(conf720.presentPolicy == ContentPresentPolicy::NativeCanvas);
     CHECK(std::string(conf720.userLabel).find("720") == std::string::npos);
+    CHECK(kPlex720pWeakBitrateKbps == 6154);
+    CHECK(weakBitrateKbpsForCodedSize(CodedWidth{kPlex720pCodedWidth},
+                                      CodedHeight{kPlex720pCodedHeight}) ==
+          kPlex720pWeakBitrateKbps);
+    // Negative: naive ">=480p → 480p bitrate" would return 2000 and fail here.
+    CHECK(weakBitrateKbpsForCodedSize(CodedWidth{kPlex720pCodedWidth},
+                                      CodedHeight{kPlex720pCodedHeight}) !=
+          kPlex480pWeakBitrateKbps);
+    CHECK(weakBitrateKbpsForCodedSize(CodedWidth{kPlex720pCodedWidth},
+                                      CodedHeight{kPlex720pCodedHeight}) >
+          kPlex480pWeakBitrateKbps);
 
     // --- change detection ignores core traffic ---
     // [10]/[11] flush pulses and [12]/[13] DDR kick/bank toggle constantly during

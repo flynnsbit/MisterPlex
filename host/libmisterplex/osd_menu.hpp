@@ -55,6 +55,17 @@ constexpr int kOsdAvOffsetStepMs = 20;
 constexpr int kPlex240pWeakBitrateKbps = 1000;
 constexpr int kPlex360pWeakBitrateKbps = 1500;
 constexpr int kPlex480pWeakBitrateKbps = 2000;
+// 720p weak ladder: pixel-proportional to 480p coded, not a silent 2000 clamp.
+// Control (integer, half-up):
+//   1280*720=921600, 624*480=299520, ratio=40/13
+//   2000 * 921600 / 299520 = 80000/13 = 6153.846... → 6154
+// A naive ">=480p → 2000" map under-requests ~3.08× for true 1280×720.
+constexpr int kPlex720pWeakBitrateKbps =
+    (kPlex480pWeakBitrateKbps * kPlex720pCodedWidth * kPlex720pCodedHeight +
+     (kPlex480pCodedWidth.get() * kPlex480pCodedHeight.get()) / 2) /
+    (kPlex480pCodedWidth.get() * kPlex480pCodedHeight.get());
+static_assert(kPlex720pWeakBitrateKbps == 6154,
+              "720p weak bitrate must stay pixel-proportional to 480p@2000");
 
 // Menu index 0 is the power-on default. The present loop waits for the audio
 // clock to reach `frameContentMs + avOffsetMs`, so POSITIVE holds the frame back
@@ -198,6 +209,15 @@ inline ContentResolution contentResolutionFromSize(int w, int h) {
 }
 
 inline int weakBitrateKbpsForCodedSize(CodedWidth w, CodedHeight h) {
+    // 720p-class first: must not fall through the 480p bucket (2000 kbps).
+    if (w.get() >= kPlex720pCodedWidth || h.get() >= kPlex720pCodedHeight) {
+#ifdef OSD_MENU_FAULT_CLAMP_720_BITRATE
+        // Fault mutant: old silent clamp — 720p coded still billed as 480p.
+        return kPlex480pWeakBitrateKbps;
+#else
+        return kPlex720pWeakBitrateKbps;
+#endif
+    }
     if (w.get() >= kPlex480pCodedWidth.get() || h.get() >= kPlex480pCodedHeight.get()) {
 #ifdef OSD_MENU_FAULT_FALLBACK_624_BITRATE
         return kPlex360pWeakBitrateKbps;

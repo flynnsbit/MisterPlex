@@ -122,7 +122,8 @@ struct WeakLadder {
 bool validateWeakLadder(const WeakLadder& weak, std::string* why = nullptr);
 
 // Recommended minimum maxVideoBitrateKbps for the ladder geometry (0 = unknown).
-// 480p → kPlex480pWeakBitrateKbps (2000); sub-480p → 750. Not a decoder contract.
+// 720p → kPlex720pWeakBitrateKbps (6154); 480p → 2000; sub-480p → 750.
+// Not a decoder contract.
 int recommendedMinVideoBitrateKbps(const WeakLadder& weak);
 
 // True when bitrate is positive but below recommendedMin. detail is greppable.
