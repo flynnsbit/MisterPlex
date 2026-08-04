@@ -89,6 +89,8 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_pl330_encode $(ROOT)/b
 	$(ROOT)/build/test_last_frame_latch
 	bash $(ROOT)/tests/unit/test_last_frame_latch_red.sh
 	$(ROOT)/build/test_playback_overlay
+	python3 $(ROOT)/tests/unit/test_plex_chrome_write_path_static.py
+	python3 $(ROOT)/tests/unit/test_plex_chrome_default_off_static.py
 	$(ROOT)/build/test_input_mailbox
 	$(ROOT)/build/test_pixel_format
 	$(ROOT)/build/test_main_guard
@@ -284,6 +286,8 @@ rtl-sim-unlocked:
 	$(ROOT)/tests/unit/test_p3_inter_rtl_sim.sh
 	$(ROOT)/tests/unit/test_p3_dpb_mc_rtl_sim.sh
 	$(ROOT)/tests/unit/test_p3_inter_stream_path_rtl_sim.sh
+	$(ROOT)/tests/unit/test_plex_chrome_rtl_sim.sh
+	$(ROOT)/tests/unit/test_plex_chrome_idle720_rtl_sim.sh
 
 rtl-lint:
 	$(ROOT)/scripts/rtl_lint.py

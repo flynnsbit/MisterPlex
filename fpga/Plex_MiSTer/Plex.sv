@@ -110,6 +110,16 @@ wire ioctl_wait = is_frame_dl && (sdram_startup_busy || !fs_wr_ready);
 wire [127:0] status_in;
 reg          status_set;
 wire         has_frame, has_audio, has_stream, audio_underrun;
+// HDMI chrome idle gate (sys_top CDC). Product path: idle only when !has_frame.
+assign HAS_FRAME = has_frame;
+// PLXC list path default-off (no DDR loader armed on this land). ARM semantic
+// list arrives later via plex_chrome_ddr_loader; until then WE=0 → pass-through
+// chrome (cfg_enable=0) + optional PLEX_FAB_* demo macros in sys_top.
+assign PLXC_EXT_WE    = 1'b0;
+assign PLXC_EXT_ADDR  = 8'd0;
+assign PLXC_EXT_WDATA = 64'd0;
+wire _unused_plxc_ready = PLXC_EXT_READY;
+
 wire         has_idr, stub_busy, sps_valid, pps_valid, slice_valid, slice_is_i, has_mb_type;
 wire         residual_ok;
 wire [15:0]  nalu_count, stub_frames, sps_width, sps_height;

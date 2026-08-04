@@ -1,4 +1,6 @@
 #pragma once
+#include "mailbox_abi_spec.hpp"
+
 
 #include "libmisterplex/geometry_units.hpp"
 
@@ -176,6 +178,31 @@ enum class DdrFramePlacement {
 enum class DdrFrameFormat {
     Yuv420p,
 };
+
+// PLXG present-geometry mailbox — MUST match mailbox_abi::kPlxgOffset (FIXED 0x800).
+// Parent freeze: not a function of MAX_CMDS. Compile-time reachable cross-header guard.
+constexpr uint32_t kDdrFramePlxgOffset = mailbox_abi::kPlxgOffset;
+constexpr uint32_t kDdrFramePlxgMagic = mailbox_abi::kPlxgMagic;
+constexpr uint32_t kDdrFramePlxgBytes = 40u;
+// Product doorbell 0x300FF000 + FIXED PLXG (not packed-320 0x3007F example).
+constexpr uint32_t kDdrFramePlxgBootstrapPhys = mailbox_abi::kPlxgBootstrapPhys;
+// PLXC fabric bootstrap — same product page; loader default DOORBELL_PHYS.
+constexpr uint32_t kDdrFramePlxcBootstrapDoorbellPhys = mailbox_abi::kProductYuv480pDoorbellPhys;
+constexpr uint32_t kDdrFramePlxcBootstrapPhys = mailbox_abi::kPlxcBootstrapPhys;
+constexpr uint32_t kDdrFrameOptionC720pDoorbellPhys = mailbox_abi::kOptionC720pDoorbellPhys;
+static_assert(kDdrFramePlxgOffset == mailbox_abi::kPlxgOffset,
+              "ddr_frame_layout PLXG must equal mailbox_abi PLXG");
+static_assert(kDdrFramePlxgOffset == 0x800u, "PLXG wire ABI FIXED at +0x800");
+static_assert(kDdrFramePlxgOffset != mailbox_abi::kPlxcOffset,
+              "PLXG must not collide with PLXC +0x130");
+static_assert(mailbox_abi::kPlxlOffset + mailbox_abi::kPlxcListMaxCmds * 8u <= kDdrFramePlxgOffset,
+              "chrome list must not grow into PLXG");
+static_assert(kDdrFramePlxcBootstrapDoorbellPhys == kPlex480pYuv420pDoorbellPhys,
+              "PLXC bootstrap door == product YUV doorbell");
+static_assert(kDdrFramePlxcBootstrapPhys == 0x300FF130u, "PLXC bootstrap ctrl phys");
+static_assert(kPlex480pYuv420pDoorbellPhys != 0x3007F000u,
+              "product YUV door is not packed-320 example 0x3007F000");
+
 
 inline uint32_t ddrFrameFormatCode(DdrFrameFormat) {
     return 1;
