@@ -126,7 +126,7 @@ def main() -> int:
 
     # Reader beat-delta CLOSED (w-clock TB + w-scaler local reconfirm).
     # fabric_bw_closed stays false ONLY for concurrent HPS write (w-mem) — not reader gap.
-    if gap.get("status") not in ("OPEN", "PARTIAL_CLOSED_READER", "READER_CLOSED_HPS_WRITE_OPEN"):
+    if gap.get("status") not in ("OPEN", "PARTIAL_CLOSED_READER", "READER_CLOSED_HPS_WRITE_OPEN", "READER_CLOSED_HPS_WRITE_AND_TCOPY_OPEN"):
         return fail(f"proof_gap.status unexpected: {gap.get('status')}")
     if gap.get("fabric_bw_closed") is not False:
         return fail("NEGATIVE: fabric_bw_closed must stay false while HPS-write concurrent unmeasured")
@@ -151,6 +151,17 @@ def main() -> int:
     # Must NOT list reader beat-delta as still open
     if "reader" in open_l and "beat" in open_l and "closed" not in open_l:
         return fail("still_open must not re-open reader beat-delta")
+    cs = c.get("claim_split") or {}
+    if (cs.get("reader_steady_delta") or {}).get("status") != "CLOSED":
+        return fail("claim_split.reader_steady_delta must be CLOSED")
+    if (cs.get("hps_write_concurrent") or {}).get("status") != "OPEN":
+        return fail("claim_split.hps_write_concurrent must be OPEN")
+    if (cs.get("T_copy_e2e") or {}).get("status") != "OPEN":
+        return fail("claim_split.T_copy_e2e must be OPEN")
+    if gap.get("hps_write_concurrent") != "OPEN" or gap.get("T_copy_e2e") != "OPEN":
+        return fail("proof_gap must mark hps_write_concurrent and T_copy_e2e OPEN")
+    print("OK claim_split: reader_steady_delta=CLOSED; hps_write+T_copy_e2e=OPEN")
+
     print(
         f"OK READER beat-delta CLOSED (payload={g0.get('payload_beats')} "
         f"ddr_cy={g0.get('ddr_cycles')}<{g0.get('budget_ddr_24fps')}); "
@@ -216,7 +227,7 @@ def main() -> int:
 
     print(
         "PASS p720_shared_bw_contract: HEADLINE=33.1776 MB/s/dir "
-        "(1.65888 avg ONLY); peaks RGB=6/I420=3; READER_CLOSED HPS_write_OPEN; "
+        "(1.65888 avg ONLY); peaks RGB=6/I420=3; reader_CLOSED hps+T_copy_OPEN; "
         "serial_deficit>0 (T_copy_arm CPU-time)"
     )
     return 0

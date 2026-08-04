@@ -1,5 +1,5 @@
 {
-  "title": "P720 BW \u2014 headline 33.1776; READER beat-delta CLOSED (w-clock+w-scaler reconfirm); concurrent HPS write OPEN (w-mem)",
+  "title": "P720 BW \u2014 reader_steady_delta CLOSED (w-clock); hps_write_concurrent+T_copy_e2e OPEN; headline 33.1776",
   "product_config": {
     "PRESENT_MULTI_PIXEL": true,
     "PRESENT_PX_PER_CLK": 2,
@@ -94,7 +94,7 @@
     "note": "latency cover, not average BW"
   },
   "proof_gap": {
-    "status": "READER_CLOSED_HPS_WRITE_OPEN",
+    "status": "READER_CLOSED_HPS_WRITE_AND_TCOPY_OPEN",
     "fabric_bw_closed": false,
     "reader_steady_delta": {
       "status": "CLOSED",
@@ -141,14 +141,15 @@
       }
     },
     "still_open": [
-      "concurrent_HPS_write_beats_same_controller (w-mem) \u2014 NOT claimed closed by w-clock",
-      "e2e serial/overlap of decode + T_copy_arm (parent Sweep 118) \u2014 unproven",
-      "fabric DMA write path retiring T_copy_arm (strategic b)"
+      "hps_write_concurrent (w-mem) \u2014 concurrent HPS /dev/mem WRITE on same controller",
+      "T_copy_e2e (w-path/parent) \u2014 serial 14.978 ms; overlap unproven; fabric DMA not built \u2014 NOT reader beat delta"
     ],
     "headline_assumption": "33.1776 is payload average; real reader measured ~173120 payload beats/frame (+320 vs ideal) + doorbell overhead",
-    "w_scaler_position": "ACK w-clock: reader beat-delta CLOSED by TB + local reconfirm rc=0. Do NOT assign reader closure to w-mem+w-osd. Only concurrent HPS write remains open on the bus budget.",
+    "w_scaler_position": "reader_steady_delta: CLOSED (w-clock). hps_write_concurrent + T_copy_e2e: OPEN (w-mem/w-path/parent).",
     "reader_beat_delta_gap": "CLOSED",
-    "fabric_bw_closed_means": "False only because concurrent HPS /dev/mem write beats on same controller are unmeasured (w-mem). Reader-side steady beat-delta IS CLOSED \u2014 do not tell parent the reader proof gap is open."
+    "fabric_bw_closed_means": "False because hps_write_concurrent OPEN and/or full R+W controller budget unowned. reader_steady_delta is CLOSED \u2014 never report as unproven reader gap.",
+    "hps_write_concurrent": "OPEN",
+    "T_copy_e2e": "OPEN"
   },
   "agreed_by": [
     "w-clock",
@@ -243,5 +244,28 @@
       },
       "note": "Numbers bit-identical to w-clock published G0/G1 on scalar DUT"
     }
+  },
+  "claim_split": {
+    "reader_steady_delta": {
+      "status": "CLOSED",
+      "owner": "w-clock",
+      "also": "w-scaler local reconfirm true rc=0 @ 8ca3d529/7cf2640a",
+      "tb": "tests/unit/test_ddr_frame_store_720p_ppc2_bus.sh",
+      "G0": "payload=173120 door=9689 total=182809 ddr_cy=2784152<3750000"
+    },
+    "hps_write_concurrent": {
+      "status": "OPEN",
+      "owner": "w-mem"
+    },
+    "T_copy_e2e": {
+      "status": "OPEN",
+      "owner": "w-path/parent",
+      "note": "T_copy_arm 14.978 ms CPU time; path (a) overlap unproven; path (b) fabric DMA not built \u2014 NOT reader beat delta"
+    },
+    "do_not_say": [
+      "fabric BW proof_gap still OPEN (unsplit)",
+      "reader beat delta unproven",
+      "assign reader closure to w-mem+w-osd"
+    ]
   }
 }
