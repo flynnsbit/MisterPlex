@@ -87,10 +87,18 @@ module present_core #(
 	input  wire        audio_en,        // OSD tone enable (when no FIFO audio)
 	input  wire        use_frame_store, // OSD force bars when 1
 
-	// Delivered content geometry (PLXG / future mux). 0 → max-tier fallback when
-	// PRESENT_BEAM_960. Ignored on default Template path.
+	// Delivered content geometry (PLXG / geom_mux). 0 → max-tier fallback when
+	// PRESENT_BEAM_960. Template path ignores unless win_enable (Path A).
 	input  wire [10:0] content_w,
 	input  wire [10:0] content_h,
+	// Fabric content window (runtime). win_enable=0 → legacy full-bank map on
+	// Template; on L4/MULTI win_enable=1 stretches content across full DE so
+	// ARM can stop swscale. content_x0/y0 place the island in the store.
+	input  wire        win_enable,
+	input  wire [10:0] content_x0,
+	input  wire [10:0] content_y0,
+	input  wire [10:0] win_h_de,
+	input  wire [10:0] win_v_de,
 
 	// frame_store write (from ingest)
 	input  wire        fs_wr_en,
@@ -285,12 +293,16 @@ module present_core #(
 
 	wire [10:0] hc11, vc11, vtot_act11;
 	wire [10:0] hde_act11, htot_act11, vact_act11;
-	wire [10:0] beam_hde_req =
+	// win_enable=1: full L4 DE; content_window scales content→DE (ARM drops swscale).
+	// win_enable=0: shrink DE to content (ascal-native island) — prior L4 behaviour.
+	wire [10:0] content_w_cl =
 		(content_w == 11'd0) ? 11'(L4_H_DE) :
 		(content_w > 11'(FRAME_W)) ? 11'(FRAME_W) : content_w;
-	wire [10:0] beam_vact_req =
+	wire [10:0] content_h_cl =
 		(content_h == 11'd0) ? 11'(L4_V_ACT) :
 		(content_h > 11'(FRAME_H)) ? 11'(FRAME_H) : content_h;
+	wire [10:0] beam_hde_req  = win_enable ? 11'(L4_H_DE)  : content_w_cl;
+	wire [10:0] beam_vact_req = win_enable ? 11'(L4_V_ACT) : content_h_cl;
 	wire [10:0] beam_htot_req = 11'(L4_H_TOTAL);
 	wire [10:0] beam_vtot_req = 11'(L4_V_TOTAL);
 
@@ -479,11 +491,11 @@ module present_core #(
 		.hc(hc11),
 		.py(vc11),
 		.in_content(in_content_l4),
-		.win_enable(1'b1),
-		.content_w(beam_hde_req),
-		.content_h(beam_vact_req),
-		.content_x0(11'd0),
-		.content_y0(11'd0),
+		.win_enable(win_enable),
+		.content_w(content_w_cl),
+		.content_h(content_h_cl),
+		.content_x0(content_x0),
+		.content_y0(content_y0),
 		.h_de(hde_act11),
 		.v_de(vact_act11),
 		.store_x(store_x_clamped),
@@ -980,11 +992,7 @@ localparam int MP_CLK_PIX_HZ = `MISTERPLEX_CLK_PIX_HZ;
 			mp_store_de <= |mp_lane_de;
 		end
 	end
-	assign fs_rd_x_w      = mp_store_x;
-	assign fs_rd_y_w      = mp_store_y;
-	assign fs_rd_active_w = mp_store_de;
-	// Bank swap must track MULTI beam, not legacy Template fstart (rd-duck).
-	assign fs_vsync_w     = mp_fstart;
+	// fs_rd_*_w driven by u_mp_content_window below (not identity clamp).
 
 	// N-wide store RGB (ddr_frame_store.PX_PER_CLK). PPC=1: lane0 == fr/fg/fb.
 	// PPC>1: MUST use real dual-lane fs_rd_*_n — NEVER {PPC{fr}} replicate
@@ -1121,9 +1129,56 @@ localparam int MP_CLK_PIX_HZ = `MISTERPLEX_CLK_PIX_HZ;
 		.rd_empty(mp_rd_empty)
 	);
 
-	// Store read follows beam glass (mp_store_* → fs_rd_*_w). Needs FRAME_W/H
-	// matching glass (1280×720) when this path is product-enabled.
-	wire _unused_mp_glass = |{mp_wr_full, mp_wr_af, mp_rd_ur, mp_rd_empty, mp_out_fs};
+	// MULTI store map: present_content_window on beam glass (NOT Template hc).
+	// win_enable=1 + content==DE → identity (native 1280). win_enable=1 + smaller
+	// content → NN scale across 1280×720 DE (ARM drops swscale). M10K=0 (mapper).
+	wire [10:0] mp_cw =
+		(content_w == 11'd0) ? 11'(FRAME_W) :
+		(content_w > 11'(FRAME_W)) ? 11'(FRAME_W) : content_w;
+	wire [10:0] mp_ch =
+		(content_h == 11'd0) ? 11'(FRAME_H) :
+		(content_h > 11'(FRAME_H)) ? 11'(FRAME_H) : content_h;
+	wire [10:0] mp_hde = (win_h_de == 11'd0) ? 11'd1280 : win_h_de;
+	wire [10:0] mp_vde = (win_v_de == 11'd0) ? 11'd720  : win_v_de;
+	wire mp_in_content = |mp_lane_de;
+	wire [FRAME_X_W-1:0] mp_win_x;
+	wire [FRAME_Y_W-1:0] mp_win_y;
+	wire mp_win_de_r, mp_past_last;
+	(* noprune *) present_content_window #(
+		.FRAME_W(FRAME_W),
+		.FRAME_H(FRAME_H),
+		.STORE_W(FRAME_W),
+		.STORE_H(FRAME_H),
+		.H_DE_DEFAULT(1280),
+		.V_DE_DEFAULT(720)
+	) u_mp_content_window (
+		.clk(clk),
+		.reset(reset),
+		.ce_pix(mp_beam_ce),
+		.hc(mp_glass_x0[10:0]),
+		.py(mp_glass_y[10:0]),
+		.in_content(mp_in_content),
+		.win_enable(win_enable),
+		.content_w(mp_cw),
+		.content_h(mp_ch),
+		.content_x0(content_x0),
+		.content_y0(content_y0),
+		.h_de(mp_hde),
+		.v_de(mp_vde),
+		.store_x(mp_win_x),
+		.store_y(mp_win_y),
+		.de_r(mp_win_de_r),
+		.past_last_row(mp_past_last)
+	);
+	// Drive frame_store from MULTI window map (closes Template-hc orphan).
+	assign fs_rd_x_w      = mp_win_x;
+	assign fs_rd_y_w      = mp_win_y;
+	assign fs_rd_active_w = mp_win_de_r;
+	assign fs_vsync_w     = mp_fstart;
+	// present_nn_linebuf_scaler (bit_ideal=6 / naive_x8=12 EST) stays in files.qip + Verilator RBG
+	// but is NOT product-instantiated here: empty noprune would still pay M10K.
+	// Wire when single-reader DDR feed is scheduled (Q3 OPEN vs w-mem copy).
+	wire _unused_mp_glass = |{mp_npx_lv, mp_wr_full, mp_wr_af, mp_rd_ur, mp_rd_empty, mp_out_fs, mp_past_last, |mp_store_x, |mp_store_y, mp_store_de};
 	wire _unused_mp_clk_hz = (MP_CLK_PIX_HZ == 0);
 
 	assign r = mp_out_r;
@@ -1156,7 +1211,7 @@ localparam int MP_CLK_PIX_HZ = `MISTERPLEX_CLK_PIX_HZ;
 		keep_960_hde, keep_960_htot, keep_960_vact, keep_960_vtot,
 		keep_960_hss, keep_960_hse, keep_960_vss, keep_960_vse,
 		keep_960_fps_milli, keep_960_mode30, keep_960_wide_fifo,
-		content_w, content_h, clk_pix
+		content_w, content_h, win_enable, content_x0, content_y0, win_h_de, win_v_de, clk_pix
 	};
 
 	// --- Audio: FIFO preferred, else OSD tone ---

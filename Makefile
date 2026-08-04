@@ -166,6 +166,9 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_pl330_encode $(ROOT)/b
 	python3 $(ROOT)/tests/unit/test_720p_present_m10k_budget_static.py
 	python3 $(ROOT)/tests/unit/test_present_720p_land_static.py
 	python3 $(ROOT)/tests/unit/test_present_720p_l4_static.py
+	python3 $(ROOT)/tests/unit/test_present_nn_linebuf_scaler_static.py
+	$(ROOT)/tests/unit/test_present_nn_linebuf_scaler_verilator.sh
+	python3 $(ROOT)/tests/unit/test_present_multi_content_window_compose_static.py
 	python3 $(ROOT)/tests/unit/test_present_geom_params_static.py
 	$(ROOT)/tests/unit/test_present_geom_params_rtl_sim.sh
 	python3 $(ROOT)/tests/unit/test_present_720p_store_wire_static.py

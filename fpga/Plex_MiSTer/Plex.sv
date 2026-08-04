@@ -283,14 +283,21 @@ wire [9:0]  content_width       = content_res_640x480 ? 10'd640 : 10'd320;
 wire [9:0]  content_height      = content_res_640x480 ? 10'd480 : 10'd240;
 
 // ---------------------------------------------------------------------------
-// L4 720p present geom hierarchy (DEFAULT OFF via PLEX_PRESENT_720P_L4).
+// 720p present geom hierarchy (DEFAULT OFF).
 // Instantiates present_geom_latch + plex_present_geom_mux so they are not
 // QIP-only dead code. Poller (plxg_ddr_poller) is w-mem — not this land;
 // latch wr_en/commit stay 0 here. Enable recipe also sets
 // FABRIC_NATIVE_720P_GEOM so mux forces 1280×720 static geometry until
-// poller lands. Product default (macro off) does not elaborate this block.
+// poller lands. Elaborates under L4 *or* MULTI (both need window ports).
+// Product default (both macros off) does not elaborate this block.
 // ---------------------------------------------------------------------------
 `ifdef PLEX_PRESENT_720P_L4
+`define PLEX_PRESENT_GEOM_HIER 1
+`endif
+`ifdef PRESENT_MULTI_PIXEL
+`define PLEX_PRESENT_GEOM_HIER 1
+`endif
+`ifdef PLEX_PRESENT_GEOM_HIER
 wire        plxg_wr_en = 1'b0;
 wire [2:0]  plxg_wr_idx = 3'd0;
 wire [63:0] plxg_wr_data = 64'd0;
@@ -401,13 +408,13 @@ wire [10:0] present_geom_crop_left, present_geom_crop_top;
 	.present_geom_crop_top(present_geom_crop_top)
 );
 
-// Anti-DCE: L4 hierarchy must survive map even before poller.
+// Anti-DCE: geom hierarchy must survive map even before poller.
 (* keep = 1 *) wire _keep_l4_geom =
 	present_win_enable | present_geom_enable | |present_content_w | |present_content_h |
 	|present_win_h_de | |present_win_v_de | plxg_live_valid | |plxg_live_seq |
 	plxg_pending_valid | plxg_promote_pulse | |present_geom_y_stride |
 	|present_content_x0 | |present_content_y0 | |present_geom_display_w;
-`endif
+`endif // PLEX_PRESENT_GEOM_HIER
 
 // Legacy cadence input is now fixed; the daemon handles exact content pacing.
 wire [7:0] content_fps = 8'd24;
@@ -938,14 +945,32 @@ present_core #(
 	// use_frame_store=1 FORCES colorbars (disables external frame). Keep 0 so
 	// DDR/has_frame can feed the store when present. Not an "enable store" bit.
 	.use_frame_store(1'b0),
-	// L4: content from plex_present_geom_mux (FABRIC_NATIVE_720P_GEOM → 1280×720).
-	// Default Template path ignores these (tied 0).
+	// L4 / MULTI: content+window from plex_present_geom_mux
+	// (FABRIC_NATIVE_720P_GEOM → win_en=1, 1280×720). Template ties 0/off.
 `ifdef PLEX_PRESENT_720P_L4
 	.content_w(present_content_w),
 	.content_h(present_content_h),
+	.win_enable(present_win_enable),
+	.content_x0(present_content_x0),
+	.content_y0(present_content_y0),
+	.win_h_de(present_win_h_de),
+	.win_v_de(present_win_v_de),
+`elsif PRESENT_MULTI_PIXEL
+	.content_w(present_content_w),
+	.content_h(present_content_h),
+	.win_enable(present_win_enable),
+	.content_x0(present_content_x0),
+	.content_y0(present_content_y0),
+	.win_h_de(present_win_h_de),
+	.win_v_de(present_win_v_de),
 `else
 	.content_w(11'd0),
 	.content_h(11'd0),
+	.win_enable(1'b0),
+	.content_x0(11'd0),
+	.content_y0(11'd0),
+	.win_h_de(11'd0),
+	.win_v_de(11'd0),
 `endif
 	.fs_wr_en(fs_wr_en),
 	.fs_wr_pixel(fs_wr_pixel),
