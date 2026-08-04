@@ -142,3 +142,31 @@ fixed and re-proven (rd-duck source audit):
 
 Until those land, `BLOCKER_W_OSD_720P_REAL_READER` stays **required** and
 `FIT_SLOT_GRANT=NO`.
+
+
+## PRESENT PPC2 fit blocker (rd-duck — not a follow-up)
+
+A Quartus fit with `PRESENT_MULTI_PIXEL` + `PRESENT_PX_PER_CLK>=2` can **succeed
+while the 720p picture is wrong**. Source on w-scaler `present_core.sv`:
+
+- `synthesis translate_off` wraps `$error` when `PRESENT_PPC != 1` — **sim-only**;
+  synthesis ignores it.
+- `mp_npx_{r,g,b} = {PRESENT_PPC{fr/fg/fb}}` **replicates one scalar store sample**
+  into both lanes → duplicated pixels / half horizontal information.
+- MULTI beam glass x/y are marked unused; **fstore still reads legacy Template
+  `store_x/y`**.
+
+Clock-domain reader TBs that are **scalar cannot close this**.
+
+Before fit release of a PPC2 product recipe, require:
+
+1. Real dual-lane store outputs (distinct pixels per lane)
+2. MULTI beam → store coordinate wiring (not legacy Template-only)
+3. Odd/even distinct-pixel checksum (sim, synthesis-visible contract)
+4. A **synthesis-active** recipe gate (not `translate_off` `$error`)
+
+Gate: `make present-ppc2-blocker` / `scripts/check_present_ppc2_fit_blocker.py`.
+Hollow QSF PPC>=2 claim → **rc=1**. `FIT_SLOT_GRANT=NO` while hollow.
+
+DMA note (rd-duck): a source→bank mover is **read+write**; prefer dynamic-base
+direct fabric read that eliminates the bank write.
