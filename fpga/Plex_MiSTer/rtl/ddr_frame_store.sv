@@ -917,10 +917,17 @@ module ddr_frame_store #(
 			need_c_prep_r <= need_c_prep_c;
 			pending_ready_r <= pending_ready_c;
 			// Same-cycle sample as need_*/target_*_r (not live re-eval at arm).
-			sel_y_prep_r <= swap_pending_d2 && need_y_prep_c;
-			sel_c_prep_r <= swap_pending_d2 && need_c_prep_c;
-			sched_bank_y_src_r <= (swap_pending_d2 && need_y_prep_c) ? pending_bank_d2 : disp_bank_d2;
-			sched_bank_c_src_r <= (swap_pending_d2 && need_c_prep_c) ? pending_bank_d2 : disp_bank_d2;
+			// LINECAM_CUR_WINDOW_FIRST: demote prep freeze while display half
+			// misses desired (has_frame && need_*_cur). Keeps sel+bank atomic
+			// with cur path (disp_bank); cold-start !has_frame still allows prep.
+			sel_y_prep_r <= swap_pending_d2 && need_y_prep_c
+				&& !(has_frame_d2 && need_y_cur_c);
+			sel_c_prep_r <= swap_pending_d2 && need_c_prep_c
+				&& !(has_frame_d2 && need_c_cur_c);
+			sched_bank_y_src_r <= (swap_pending_d2 && need_y_prep_c
+				&& !(has_frame_d2 && need_y_cur_c)) ? pending_bank_d2 : disp_bank_d2;
+			sched_bank_c_src_r <= (swap_pending_d2 && need_c_prep_c
+				&& !(has_frame_d2 && need_c_cur_c)) ? pending_bank_d2 : disp_bank_d2;
 			target_y_cur_r <= target_y_cur_c;
 			target_y_prep_r <= target_y_prep_c;
 			target_c_cur_r <= target_c_cur_c;
@@ -1363,7 +1370,9 @@ module ddr_frame_store #(
 							fill_is_chroma <= 1'b1;
 						end
 						state_ddr <= S_LINE_ISSUE;
-					end else if (sel_y_prep_r || (has_frame_d2 && need_y_cur_r)) begin
+					// LINECAM_CUR_WINDOW_FIRST: cur listed first; sel_*_prep_r already
+					// demoted at schedule-reg sample when need_*_cur (see freeze above).
+					end else if ((has_frame_d2 && need_y_cur_r) || sel_y_prep_r) begin
 						// H-R1d: arm from frozen sel/bank/target_*_r only (no live swap_pending re-mux).
 						if (PIPELINE_REFILL_SCHEDULER) begin
 							sched_valid <= 1'b1;
@@ -1385,8 +1394,8 @@ module ddr_frame_store #(
 							qwords_remaining <= Y_LINE_QWORDS[Y_QW_AW:0];
 							state_ddr <= S_LINE_ISSUE;
 						end
-					end else if (sel_c_prep_r || (has_frame_d2 && need_c_cur_r)) begin
-						// H-R1d: chroma arm twin — frozen sel/bank/target only.
+					end else if ((has_frame_d2 && need_c_cur_r) || sel_c_prep_r) begin
+						// H-R1d + CUR_WINDOW_FIRST chroma twin — frozen sel/bank/target only.
 						if (PIPELINE_REFILL_SCHEDULER) begin
 							sched_valid <= 1'b1;
 							sched_is_y <= 1'b0;
