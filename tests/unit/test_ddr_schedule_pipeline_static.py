@@ -2,12 +2,16 @@
 """Static gate: clk_ddr schedule pipeline must register need/target/ready.
 
 Land 6472789d: sample need_*_c / target_*_c / pending_ready_c on posedge
-clk_ddr into *_r, and drive S_IDLE decisions only from *_r.
+clk_ddr into *_r, and drive S_IDLE *refill* decisions from need_*/target_*_r.
+
+fc78adc6: sticky pending_ready_ddr may use combo pending_ready_c (same-cycle
+false when prep incomplete) while need_*/target_* stay registered for STA.
 
 POSITIVE:
   - combo always @* still computes need_*_c / target_*_c / pending_ready_c
   - always @(posedge clk_ddr) samples *_r <= *_c for the schedule outputs
-  - S_IDLE case body uses *_r for decisions (not combo *_c)
+  - S_IDLE refill path uses need_*/target_*_r (not combo need_*/target_*_c)
+  - pending_ready_c allowed in sticky ready only (not a DDRAM enable cone root)
 
 NEGATIVE:
   - Injecting need_y_cur_c into the S_IDLE decision path must fail the gate
@@ -42,10 +46,11 @@ COMBO_NAMES = (
 REG_NAMES = tuple(n[:-2] + "_r" for n in COMBO_NAMES)
 
 # Identifiers that must not appear as *code* (comments ok) inside S_IDLE body.
+# pending_ready_c is allowed for sticky prep ready (fc78adc6); need/target combo
+# must not re-enter S_IDLE enable/data decisions.
 COMBO_DECISION_RE = re.compile(
     r"\b(?:"
     r"need_[yc]_(?:cur|prep)_c|"
-    r"pending_ready_c|"
     r"target_[yc](?:_idx)?_(?:cur|prep)_c"
     r")\b"
 )
