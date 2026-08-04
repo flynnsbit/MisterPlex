@@ -63,9 +63,49 @@ HDMI stills cannot tell 16 Hz from 24 Hz. Geometry-only success ≠ refresh PASS
 |------|------|-----|-------|
 | Host layout / parity / API | 0 | 0 | measured (headers only) |
 | Completing 720p SSOT plane/qword params | 0 | 0 | constants; RTL already derived planes from CODED_W×H |
-| Full L4 stack fit (linebufs + timing + DMA) | **UNKNOWN** | **UNKNOWN** | needs w-fitgate integrated fit; pre-reg geometry linebuf HI Δ ~96–101 vs 480p against 356 free M10K |
+| Full L4 stack fit (linebufs + timing + DMA) | **UNKNOWN** (fit) | **UNKNOWN** | needs w-fitgate integrated fit |
 
 No Quartus in this lane.
+
+### M10K linebuf model — layout stated (parent M10K-width correction)
+
+**Do not use “1280 B = 1 M10K” for this product path.** That premise assumed a legal
+byte-wide (or packed 40-bit) *pixel* line. Handbook (Cyclone V): M10K depths are
+powers of two; max width **40** bits; **1K×8 = 1024 B** at byte width, not 1280.
+Naive 8-bit 1280-px line → **2 M10K** (1K×8 + partial). Packed 256×40 can hit 1280 B
+in one block but forces **5-px granularity**.
+
+**What this core actually builds** (control: `ddr_frame_store.sv` + fit fixture):
+
+```text
+line_buf_ram #(.WIDTH(Y_LINE_QWORDS), .DATA_W(64))  // depth in *qwords*, 64-bit port
+Y_LINE_QWORDS = CODED_W/8;  C_LINE_QWORDS = CODED_W/16;
+LINE_SLOTS = 2 * LINE_COUNT  // default LINE_COUNT=8 → 16 slots × (Y+U+V)
+```
+
+| Quantity | Value | Control |
+|----------|------:|---------|
+| Ideal bits @624 coded | 159 744 | `16×(78+2×39)×64` |
+| Measured `ddr_frame_store` M10K | **96** | `tests/fixtures/decode_stub_fit_hierarchy_480p.json` entity row |
+| Measured block bits | 159 744 | same fixture (matches ideal 624) |
+| Bits / M10K used | **1 664** | 159744/96 — **16.25% of 10 240** (shallow pack) |
+| Free after strip (budget total) | **356** | parent post-strip fit 197 used; **unaffected** by line layout |
+
+**720p present linebuf ESTIMATE** (same 64b qword architecture; **not** a new fit):
+
+| Model | M10K @1280 | Δ vs measured 96 | Notes |
+|-------|----------:|-----------------:|-------|
+| Bit-scale from measure | ceil(327680×96/159744)=**197** | **+101** | preserves measured shallow packing |
+| Instance-width double | 96×2=**192** | **+96** | depths ~2× (78→160, 39→80) |
+| Ideal bits/10240 only | 32 | +16 | **REJECT** — ignores measured packing |
+| Naive 8-bit “2 M10K/luma line” | n/a here | — | **different port width**; not our `DATA_W=64` |
+
+Gate output (executed): `python3 tests/unit/test_720p_present_m10k_budget_static.py` →
+`est_720=[192..197]`, `margin_with_reclaim=255`, `margin_no_reclaim=-13` (true rc=0).
+
+Against **356 free**: Δ≈96–101 **fits on estimate**, with large residual — but ALM/timing
+and non-linebuf L4 M10K remain **UNKNOWN until fitgate fit**. Geometry-only still ≠
+refresh PASS @20 MHz (~16.16 Hz).
 
 ## Gates
 
