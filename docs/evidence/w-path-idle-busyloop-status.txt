@@ -1,0 +1,48 @@
+w-path idle busy-loop fix
+branch: w-path-idle-busyloop
+sha: e22deaf7ab5cca26f5e9e89bf545381d46d49870
+worktree: /home/flynnsbit/Projects/MisterPlex-wt-path-720fix
+base_prior: 780b1a01 (720p identity-clamp accepted)
+
+TASK: find/kill misterplexd idle busy-loop (Sweep 113: daemon on 0% idle/0.917x; off 49.4%/1.31x)
+
+LOCATE (file:line evidence)
+1. PRIMARY — arm/misterplexd/fpga_spi.cpp spiWord (was ~977-1008)
+   do { gpi=gpiRead(); if (++spins>1000000) timeout; } while (!(gpi&SSPI_STROBE));
+   TWO phases, NO yield. Worst case ~1e6 uncached /dev/mem loads/phase.
+   getCoreStatus = 9 spiWords → ~0.9s one-core CPU if ACK missing/slow.
+   Idle OSD SPI fallback was 1 Hz (media_player.cpp quietMs=1000 when !mailbox)
+   → can zero system idle% alone. Matches Sweep 113 magnitude.
+2. media_player.cpp startOsdPoll: SPI fallback every 1s idle (now 5s)
+3. media_player.cpp startInputPoll ~50ms DDR loads (now 100ms) — secondary
+4. idle paint 30s logo / 100ms screensaver — cleared as primary
+5. companion select 200ms — blocking, cleared
+6. main resumeStrandedMain ~600ms /proc scan — light, cleared
+7. pms_timeline condvar — cleared
+
+FIX
+- host/libmisterplex/spi_ack_wait.hpp: spins-before-yield=32, wall=2ms,
+  progressive yield 1..50us; osd SPI idle quiet=5000ms
+- fpga_spi.cpp spiWord uses spiAckWait
+- media_player: osdPollQuietMs(); pthread names mpx-osd/input/idle
+- tests/unit/test_idle_poll_budget.cpp NEG ceilings + must-yield-on-timeout
+- scripts/daemon_thread_cpu.sh same-interval attribution
+
+RED/GREEN
+- RED (poisoned 1e6 policy header): true rc=1 (6 FAILs)
+- GREEN: test_idle_poll_budget true rc=0
+- make unit; echo "true rc=$?" → true rc=0
+  note: SKIP-NOT-PASS test_pms_baseline_profile (no PLEX_* env)
+
+PREDICTION (PREDICTION — not device claim)
+- system idle% daemon running no play: 35–48% (toward 49.4% stopped)
+- misterplexd %one_core idle: < 8%
+- Sweep 113 decode w/ daemon: 1.15–1.28x (toward 1.31x stopped)
+If SPI ACK was not top consumer, idle% recovery will MISS low.
+
+PARENT CMD
+  INTERVAL=5 ./scripts/daemon_thread_cpu.sh
+  # after deploy: expect mpx-osd / mpx-input thread names
+
+ON_MAIN/IN_FILES_QIP/INSTANTIATED/ENABLED: host-only daemon path; no QIP/RTL.
+No Quartus. No device.

@@ -1,0 +1,53 @@
+w-path Sweep 114 GDM self-loop fix
+branch: w-path-idle-busyloop
+sha: e22deaf7ab5cca26f5e9e89bf545381d46d49870
+worktree: /home/flynnsbit/Projects/MisterPlex-wt-path-720fix
+
+## Thread census (idle, OSD_CONTROL=0) — creation order
+1. mpx-main     main.cpp:main                 sleep 200ms + resumeStrandedMain
+2. mpx-idle     media_player.cpp:startIdle    paint + sleep 30s (logo)
+3. mpx-input    media_player.cpp:startInput   DDR mailbox + sleep 100ms
+   (mpx-osd skipped when OSD_CONTROL=0)
+4. mpx-timeline pms_timeline.cpp:ctor         condvar wait
+5. mpx-gdm      companion.cpp:gdmLoop         *** WAS HOT tid 4397 ***
+6. mpx-http     companion.cpp:httpLoop        select 200ms
+
+Play-only: mpx-play, mpx-stream, mpx-audio
+
+## Root cause (quoted)
+companion.cpp gdmLoop PRE-FIX:
+  if (strstr(buf, "M-SEARCH") || strstr(buf, "plex")) sendto(peer, advertise);
+gdmPayload contains many "plex" tokens. Own broadcast/loopback → match →
+sendto(self) → forever. select always readable; voluntary≈0; ~108% core;
+stime 3× utime. Matches parent forensics exactly.
+
+## Fix
+- gdmShouldReply(): M-SEARCH only (case-insensitive)
+- drop peer == selfIp / 127.0.0.1
+- max 20 replies/s; select error sleeps 50ms
+- all threads named
+- deploy script detects misterplex_v2 live path
+
+## RED/GREEN
+- test_gdm_filter RED (legacy predicate header): true rc=1
+- test_gdm_filter GREEN: true rc=0
+- make unit; echo "true rc=$?" → true rc=0
+
+## Device gate (parent — CURRENT binary must FAIL before deploy)
+  INTERVAL=5 MAX_CORE_PCT=15 ./scripts/check_idle_thread_budget.sh
+  # expect FAIL on f315ffb3 / e22deaf7-class build (108% mpx-gdm)
+  # expect OK after this fix
+
+  INTERVAL=5 ./scripts/daemon_thread_cpu.sh
+
+## PREDICTION (before parent measure — PREDICTION)
+- system idle% daemon on, no play: **40–49%** (toward 49.4% stopped ceiling)
+- misterplexd %one_core idle (sum threads): **< 5%**
+- hottest thread %one_core: **< 3%** (mpx-gdm blocking in select)
+- Sweep 113/114 decode w/ daemon: **1.20–1.30x** (toward 1.31x stopped)
+Prior miss published: spiWord was real but second-order; GDM loop was the wall.
+
+## Parent deploy
+  # from worktree after arm-plexd
+  # deploy_misterplexd.sh now prefers misterplex_v2 when live/present
+  MISTER_HOST=... ./scripts/deploy_misterplexd.sh

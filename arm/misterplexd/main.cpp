@@ -17,6 +17,7 @@
 #include <cstring>
 #include <fstream>
 #include <mutex>
+#include <pthread.h>
 #include <string>
 #include <thread>
 #include <vector>
@@ -90,6 +91,9 @@ std::string defaultFfmpegPath() {
 } // namespace
 
 int main(int argc, char** argv) {
+#if defined(__linux__)
+    pthread_setname_np(pthread_self(), "mpx-main");
+#endif
     std::string name = "MiSTerPlex";
     std::string machineId = "misterplex-1";
     int port = 3005;

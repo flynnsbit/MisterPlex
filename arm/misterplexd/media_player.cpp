@@ -1000,6 +1000,9 @@ bool MediaPlayer::play(const std::string& urlOrPath, int64_t startOffsetMs,
         playing_.store(true);
         showPlaybackOverlay(PlaybackOverlayState::Playing, startOffsetMs, durationMs);
         thr_ = std::thread([this, urlOrPath, startOffsetMs, httpHeaders, durationMs] {
+#if defined(__linux__)
+            pthread_setname_np(pthread_self(), "mpx-play");
+#endif
             try {
                 threadMain(urlOrPath, startOffsetMs, httpHeaders, durationMs);
             } catch (const std::exception& ex) {
@@ -2005,7 +2008,12 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             ::close(spipe[1]);
             if (spid > 0) {
                 streamPid_.store(spid);
-                streamThr_ = std::thread([this, sfd = spipe[0]] { streamPump(sfd); });
+                streamThr_ = std::thread([this, sfd = spipe[0]] {
+#if defined(__linux__)
+                    pthread_setname_np(pthread_self(), "mpx-stream");
+#endif
+                    streamPump(sfd);
+                });
                 if (looksElementaryH264(url))
                     log("media: STREAM demux elementary H.264 (no mp4toannexb)");
                 else
@@ -2057,7 +2065,12 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             ::close(apipe[1]);
             if (pid > 0) {
                 childPid_.store(pid);
-                audioThr_ = std::thread([this, afd = apipe[0]] { audioPump(afd); });
+                audioThr_ = std::thread([this, afd = apipe[0]] {
+#if defined(__linux__)
+                    pthread_setname_np(pthread_self(), "mpx-audio");
+#endif
+                    audioPump(afd);
+                });
             } else {
                 ::close(apipe[0]);
                 log("media: audio-only fork failed");
@@ -2328,7 +2341,12 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             fcntl(rfd, F_SETFL, rflags | O_NONBLOCK);
 
         if (apipe[0] >= 0) {
-            audioThr_ = std::thread([this, afd = apipe[0]] { audioPump(afd); });
+            audioThr_ = std::thread([this, afd = apipe[0]] {
+#if defined(__linux__)
+                pthread_setname_np(pthread_self(), "mpx-audio");
+#endif
+                audioPump(afd);
+            });
         }
 
         const size_t frameBytes = rawVideoFrameBytes(videoFmt, rawW, rawH);
