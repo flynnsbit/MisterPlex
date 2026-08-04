@@ -157,12 +157,24 @@ def main():
         )
 
     # Positive: decode_stub body must list known backend leaves (source intent).
+    # Origin PRODUCT_NO_STUB line uses h264_dpb_ref_commit (serial MC path);
+    # older land-line stubs used h264_dpb_one_ref. Accept either DPB child.
     if 'decode_stub' in edges:
         stub_need = {
-            'h264_dequant4x4', 'h264_idct4x4', 'h264_recon4x4', 'h264_dpb_one_ref',
+            'h264_dequant4x4', 'h264_idct4x4', 'h264_recon4x4',
         }
         missing = sorted(stub_need - edges['decode_stub'])
         require(not missing, f"POS decode_stub missing direct children {missing}")
+        dpb_ok = (
+            'h264_dpb_one_ref' in edges['decode_stub']
+            or 'h264_dpb_ref_commit' in edges['decode_stub']
+        )
+        require(
+            dpb_ok,
+            "POS decode_stub missing DPB child "
+            "(need h264_dpb_one_ref or h264_dpb_ref_commit): "
+            f"{sorted(edges['decode_stub'])}",
+        )
 
     # Positive: emu (Plex.sv) must instantiate stream_path when present.
     if 'emu' in edges:
