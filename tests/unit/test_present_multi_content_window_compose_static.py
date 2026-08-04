@@ -42,9 +42,10 @@ def main() -> int:
         return fail("MULTI missing u_mp_content_window instance")
     if not re.search(r"\.hc\s*\(\s*mp_glass_x0", core):
         return fail("MULTI content_window must take mp_glass_x0 as hc")
-    if not re.search(r"assign\s+fs_rd_x\s*=\s*mp_win_x", core):
-        return fail("fs_rd_x must be driven by mp_win_x under MULTI")
-    if not re.search(r"assign\s+fs_vsync_pulse\s*=\s*mp_fstart", core):
+    # integ names fs_rd_*_w (path compose); accept either while landing.
+    if not re.search(r"assign\s+fs_rd_x(_w)?\s*=\s*mp_win_x", core):
+        return fail("fs_rd_x(_w) must be driven by mp_win_x under MULTI")
+    if not re.search(r"assign\s+fs_vsync_(pulse|w)\s*=\s*mp_fstart", core):
         return fail("MULTI bank swap must track mp_fstart not Template fstart")
     print("OK MULTI: content_window on glass → fs_rd_*")
 
@@ -71,17 +72,32 @@ def main() -> int:
                     return fail("L4 beam must stay full DE when win_enable (fabric scale)")
     print("OK L4: win_enable keeps full DE for fabric scale")
 
-    # --- 720p ABI for MULTI ---
-    if "FS_USE_720P_ABI" not in core:
-        return fail("missing FS_USE_720P_ABI (MULTI must share 720p bank)")
-    if not re.search(
+    # --- 720p ABI for MULTI (integ: ddr_frame_abi_select.svh) ---
+    # FRAME 1280×720 selects 720p bank for L4 *or* MULTI (not L4-only ifdef).
+    abi = (ROOT / "fpga/Plex_MiSTer/rtl/ddr_frame_abi_select.svh").read_text(
+        encoding="utf-8"
+    )
+    if "DDR_FS_USE_720P_ABI" not in abi and "FS_USE_720P_ABI" not in core:
+        return fail("missing DDR_FS_USE_720P_ABI / FS_USE_720P_ABI")
+    multi_via_frame = (
+        "PRESENT_MULTI_PIXEL" in abi
+        and re.search(
+            r"DDR_FS_USE_720P_ABI\s*=\s*\(FRAME_W\s*==\s*1280\s*&&\s*FRAME_H\s*==\s*720\)",
+            abi,
+        )
+    )
+    multi_via_core = re.search(
         r"PRESENT_MULTI_PIXEL[\s\S]{0,200}FS_USE_720P_ABI\s*=\s*\(FRAME_W\s*==\s*1280",
         core,
-    ):
-        return fail("MULTI@1280x720 must select 720p DDR ABI")
-    print("OK ABI: MULTI@1280×720 → 720p bank")
-
-    # --- Plex wires ---
+    )
+    if not multi_via_frame and not multi_via_core:
+        return fail("MULTI@1280x720 must select 720p DDR ABI (FRAME_W/H gate)")
+    # NEGATIVE: L4-only gate would leave MULTI on 624×480 (rd-duck)
+    if re.search(
+        r"DDR_FS_USE_720P_ABI\s*=\s*1'b1", abi
+    ) and "PLEX_PRESENT_720P_L4" in abi and "PRESENT_MULTI_PIXEL" not in abi:
+        return fail("NEGATIVE: 720p ABI must not be L4-only")
+    print("OK ABI: MULTI@1280×720 → 720p bank")    # --- Plex wires ---
     if "PLEX_PRESENT_GEOM_HIER" not in plex:
         return fail("Plex must elaborate geom hierarchy under MULTI too")
     if not re.search(r"`elsif\s+PRESENT_MULTI_PIXEL", plex):
