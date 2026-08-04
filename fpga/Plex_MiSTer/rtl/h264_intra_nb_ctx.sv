@@ -15,7 +15,7 @@
 // Resource estimate: 1 M10K (640 bytes above row) + ~260 registers.
 
 module h264_intra_nb_ctx #(
-    parameter int MB_WIDTH_MAX = 40   // max MBs per row (640/16)
+    parameter int MB_WIDTH_MAX = 80   // max MBs per row (1280/16)
 )(
     input  wire        clk,
     input  wire        reset,

@@ -151,6 +151,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	python3 $(ROOT)/tests/unit/test_product_no_stub_active_static.py
 	python3 $(ROOT)/tests/unit/test_decode_stub_removal_prereq_static.py
 	python3 $(ROOT)/tests/unit/test_720p_present_m10k_budget_static.py
+	python3 $(ROOT)/tests/unit/test_product_720p_geometry_static.py
 	python3 $(ROOT)/tests/unit/test_p3_high_cabac_scope.py
 	python3 $(ROOT)/tests/unit/test_p3_intra_mb0_verilator.py
 	python3 $(ROOT)/tests/unit/test_h264_intra_nb_ctx_verilator.py

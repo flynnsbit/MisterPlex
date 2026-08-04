@@ -2,8 +2,8 @@
 // Display owns VSync; unique content advances only when present_cadence says so.
 
 module present_core #(
-	parameter int FRAME_W = 320,
-	parameter int FRAME_H = 240,
+	parameter int FRAME_W = 1280,
+	parameter int FRAME_H = 720,
 	parameter int FRAME_STRIDE = FRAME_W,
 	parameter int SDRAM_REFRESH_CYCLES = 780,
 `ifdef FRAME_CMD_FIFO_AW4
@@ -157,18 +157,17 @@ module present_core #(
 
 	// Stretch FRAME_W×FRAME_H frame_store across Template DE (colorbars hc/vc).
 	//
-	// Product (Plex.qsf FRAME_W=640 FRAME_H=480, forced scandouble):
-	//   colorbars NTSC scandouble active vc=0..479 (VBlank asserts at vc==480).
+	// Product (Plex.qsf FRAME_W/H elaborate-time; 1280×720 native canvas):
 	//   NATIVE_V_1TO1 maps store_y = vc with SCALE=1.0 so ALL FRAME_H rows are
-	//   addressed (fixes the pre-T7 even-row-only ceiling: V_STORE=240 + scale 2.0).
+	//   addressed when the timing generator exposes ≥FRAME_H active lines.
 	//
 	// Legacy FRAME_H<=240 builds keep half-height py=(scandouble?vc>>1:vc) + scale
 	// from a 240-line content window.
 	//
-	// Horizontal: H_DE stays 529 (FBAR Template class). Full 640 unique columns
-	// require H_DE>=640, which is impossible at clk_sys=20 MHz / 60 Hz / 524 lines
-	// (20e6/60/524 ≈ 636 clocks/line max; see test_present_store_scale_math).
-	// STORE_X still samples 529 of FRAME_W via the 39647 mul-shift.
+	// Horizontal: Template H_DE stays 529 until w-clock lands a 720p timing path.
+	// Full unique FRAME_W columns need H_DE>=FRAME_W and enough clk_sys/line;
+	// at 20 MHz / 60 Hz / 524 lines max ≈636 clocks/line — native 1280 DE is a
+	// separate timing job. STORE_X still samples H_DE of FRAME_W via mul-shift.
 	localparam H_DE = 10'd529;
 	localparam bit NATIVE_V_1TO1 = (FRAME_H > 240);
 	localparam int V_STORE_I = NATIVE_V_1TO1 ? FRAME_H : 240;
@@ -181,7 +180,7 @@ module present_core #(
 	localparam [FRAME_Y_W-1:0] FRAME_LAST_Y = FRAME_Y_W'(FRAME_H - 1);
 	localparam [15:0] FRAME_LAST_X_16 = 16'(FRAME_W - 1);
 	localparam [15:0] FRAME_LAST_Y_16 = 16'(FRAME_H - 1);
-	// Beam Y for content + store. Native 480: use full vc (scandouble active 0..479).
+	// Beam Y for content + store. Product canvas uses FRAME_H (720p identity or legacy).
 	// Legacy 240: half when scandoubled so two display lines share one store row.
 	wire [9:0] py = NATIVE_V_1TO1 ? vc : (scandouble ? (vc >> 1) : vc);
 	wire in_content = (hc < H_DE) && (py < V_STORE) && ~hb && ~vb;
@@ -367,7 +366,7 @@ module present_core #(
 	// Each extra clk of lag eats ~0.6 of a source column off the left and repeats it
 	// on the right, which is precisely the right-edge "bar".
 	//
-	// REQUIRES_FIT (DDR_FRAME_STORE @ FRAME_W=640): DE_LAG has NOT been re-swept for
+	// REQUIRES_FIT (DDR_FRAME_STORE @ FRAME_W=1280 product): DE_LAG has NOT been re-swept for
 	// ddr_frame_store's deeper path (rd_visible pipeline + YUV + BRAM). A too-small
 	// lag wraps previous-line right columns onto the left edge (ragged boundary +
 	// left clip). Parent HDMI after ARM stride fix still saw ~44 px per-line left
