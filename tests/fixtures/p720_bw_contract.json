@@ -54,11 +54,10 @@
   },
   "agreed_by": [
     "w-clock",
-    "w-scaler"
-  ],
-  "pending_ack": [
+    "w-scaler",
     "w-mem"
   ],
+  "pending_ack": [],
   "disagree_with": [],
   "real_reader_proof": {
     "tb": "tests/unit/test_ddr_frame_store_720p_ppc2_bus.sh",
@@ -73,22 +72,27 @@
       "sys_cycles": 618750,
       "ddr_cycles": 2784152,
       "budget_ddr_24fps": 3750000,
-      "max_burst": 128
+      "max_burst": 128,
+      "underrun_delta": 77,
+      "underrun_note": "TB synthetic scan; non-zero keeps reader_delivery_correctness OPEN"
     },
     "G1_stall": {
       "payload_beats": 173120,
       "rd_blocked": 1248,
       "busy_cycles": 797290,
-      "note": "beam-locked wall time; stall via busy/blocked not longer frame"
+      "note": "beam-locked wall time; stall via busy/blocked not longer frame",
+      "underrun_delta": 78
     },
     "iface_peaks_not_headline": {
       "PPC2_RGB_B_per_sys_group": 6,
       "I420_amort_B_per_2px_group": 3,
       "headline_MB_s_dir": 33.1776
     },
-    "status": "CLOSED_reader_steady_delta_w_clock_tb",
+    "status": "MEASURED_payload_beat_delta_TB_not_delivery",
     "open_items": [
-      "concurrent_HPS_write_beats_same_controller_w_mem"
+      "reader_delivery_correctness_product_beam",
+      "concurrent_HPS_write_beats_same_controller_w_mem",
+      "T_copy_arm_e2e"
     ],
     "not_partial": "full_1280x720_PPC2_20_90_not_624x48_not_1to1_not_prep_only"
   },
@@ -116,14 +120,39 @@
     "path_b_fabric_dma": "retires T_copy_arm; w-mem/w-path build; w-clock clocks+CDC"
   },
   "proof_status": {
-    "reader_steady_delta_1280x720_ppc2_20_90": "CLOSED",
-    "owner_closed": "w-clock",
+    "reader_payload_beat_delta_TB": "MEASURED",
+    "owner_measured": "w-clock",
     "tb": "tests/unit/test_ddr_frame_store_720p_ppc2_bus.sh",
     "G0_payload_beats": 173120,
     "G0_total_rd_beats": 182809,
+    "G0_checks": [
+      "payload>=172800",
+      "door>0",
+      "ddr_cy<3750000",
+      "beat_conservation",
+      "underrun_measured_not_forced_zero"
+    ],
+    "reader_delivery_correctness": "OPEN",
+    "open_delivery": [
+      "product_rate_match_beam",
+      "dual_lane_pixel_checksum",
+      "glass_underrun_CEA"
+    ],
     "hps_write_concurrent_same_controller": "OPEN",
     "T_copy_arm_e2e_serial_or_overlap": "OPEN",
     "fabric_dma_path_b": "NOT_BUILT",
-    "do_not_say": "fabric_BW_proof_gap_OPEN as a single blob"
+    "do_not_say": [
+      "fabric_bw_closed",
+      "bare reader CLOSED without qualifier",
+      "unsplit fabric BW proof_gap OPEN"
+    ],
+    "three_lane_svh": "fpga/Plex_MiSTer/rtl/plex_720p_bw_contract.svh",
+    "agreed_by": [
+      "w-clock",
+      "w-scaler",
+      "w-mem"
+    ],
+    "G0_underrun_delta": 77,
+    "why_delivery_open": "G0 underrun_delta=77 on TB scan; product rate-match/checksum unproven"
   }
 }

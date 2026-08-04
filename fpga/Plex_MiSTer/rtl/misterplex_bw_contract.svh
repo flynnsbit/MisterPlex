@@ -1,9 +1,13 @@
 // misterplex_bw_contract.svh — shared 720p24 I420 bandwidth SoT (w-clock).
 // Headline is average full-frame direction rate, NOT DE-peak PPC*1.5 as DDR.
 // Include from RTL/status modules only; do not redefine these locals elsewhere.
+// P720_* aliases live in plex_720p_bw_contract.svh (three-lane name lock w-mem).
 //
 // NACK: "3.0 B/clk_sys" (PPC*1.5 during DE) is linebuf pixel I420-equivalent,
 // not DDRAM beats. See ddr_frame_store rd_miss_now / fill-path DDRAM_RD.
+//
+// STATUS SPLIT: reader_payload_beat_delta_TB MEASURED; delivery/HPS/T_copy OPEN.
+// Forbidden: unsplit fabric_bw_closed; bare "reader CLOSED".
 
 `ifndef MISTERPLEX_BW_CONTRACT_SVH
 `define MISTERPLEX_BW_CONTRACT_SVH

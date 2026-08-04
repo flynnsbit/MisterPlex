@@ -29,8 +29,9 @@ def main() -> int:
     if B != 1_382_400:
         fails.append("B_frame != 1382400")
 
-    # Fabric SoT stamp
+    # Fabric SoT stamp (w-clock) + three-lane P720_* alias (w-mem name lock)
     svh = ROOT / "fpga/Plex_MiSTer/rtl/misterplex_bw_contract.svh"
+    p720 = ROOT / "fpga/Plex_MiSTer/rtl/plex_720p_bw_contract.svh"
     st = ROOT / "fpga/Plex_MiSTer/rtl/plex_bw_status.sv"
     if not svh.is_file():
         fails.append("missing misterplex_bw_contract.svh")
@@ -40,14 +41,33 @@ def main() -> int:
             fails.append("svh missing 33177600 / 33_177_600")
         if "MISTERPLEX_BW_NACK_DE_PEAK" not in s:
             fails.append("svh missing NACK DE peak marker")
+    if not p720.is_file():
+        fails.append("missing plex_720p_bw_contract.svh")
+    else:
+        p = p720.read_text(errors="replace")
+        for needle in (
+            "P720_FABRIC_RD_BPS",
+            "MISTERPLEX_BW_DIR_B_PER_S",
+            "reader_payload_beat_delta_TB",
+            "reader_delivery_correctness",
+        ):
+            if needle not in p:
+                fails.append(f"plex_720p_bw_contract missing {needle}")
     if not st.is_file():
         fails.append("missing plex_bw_status.sv")
     plex = (ROOT / "fpga/Plex_MiSTer/Plex.sv").read_text(errors="replace")
     if "u_plex_bw_status" not in plex:
         fails.append("Plex.sv missing u_plex_bw_status instance")
+    core = (ROOT / "fpga/Plex_MiSTer/rtl/present_core.sv").read_text(errors="replace")
+    if "plex_720p_bw_contract.svh" not in core:
+        fails.append("present_core must include plex_720p_bw_contract.svh")
+    if "p720_bw_contract_rd_bps" not in core:
+        fails.append("present_core missing p720_bw_contract keep wire")
     qip = (ROOT / "fpga/Plex_MiSTer/files.qip").read_text(errors="replace")
     if "plex_bw_status.sv" not in qip:
         fails.append("files.qip missing plex_bw_status.sv")
+    if "plex_720p_bw_contract.svh" not in qip:
+        fails.append("files.qip missing plex_720p_bw_contract.svh")
 
     # Host header agrees
     hpp = LAYOUT.read_text(errors="replace")
@@ -79,6 +99,21 @@ def main() -> int:
     if "test_ddr_frame_store_720p_ppc2_bus" not in str(rrp.get("tb", "")):
         fails.append("real_reader tb path missing")
 
+    ps = c.get("proof_status", {})
+    if ps.get("reader_payload_beat_delta_TB") != "MEASURED":
+        fails.append("proof_status.reader_payload_beat_delta_TB must be MEASURED")
+    if ps.get("reader_delivery_correctness") != "OPEN":
+        fails.append("proof_status.reader_delivery_correctness must stay OPEN")
+    if ps.get("hps_write_concurrent_same_controller") != "OPEN":
+        fails.append("hps_write must stay OPEN")
+    if "w-mem" not in c.get("agreed_by", []):
+        fails.append("agreed_by must include w-mem (three-lane lock)")
+
+    # Serial deficit lock (Sweep 118) — T_copy is TIME not rate
+    ct = c.get("cpu_time_not_rate", {})
+    if float(ct.get("serial_deficit_ms", 0)) <= 0:
+        fails.append("serial_deficit_ms must be >0 (e2e not closed serial)")
+
     if fails:
         print("FAIL test_p720_shared_bw_contract")
         for f in fails:
@@ -86,7 +121,7 @@ def main() -> int:
         return 1
     print(
         "PASS p720_bw_contract: headline 33.1776 MB/s/dir; "
-        "NACK 3.0 B/clk as DDR; linebuf path present"
+        "NACK 3.0; three-lane P720; beat_delta MEASURED delivery OPEN"
     )
     return 0
 

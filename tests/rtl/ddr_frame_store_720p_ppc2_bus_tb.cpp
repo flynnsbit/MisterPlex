@@ -286,6 +286,8 @@ int fail(const char* m) {
 struct FrameDelta {
 	Stats s;
 	uint16_t frames_done = 0;
+	uint16_t underrun_start = 0;
+	uint16_t underrun_end = 0;
 	bool ok = false;
 };
 
@@ -311,6 +313,7 @@ FrameDelta measureSteadyFrame(int stall_after, int hog_period, int hog_len) {
 
 	// Steady delta: clear counters at frames_done edge, wait for next.
 	const uint16_t fd1 = sim.top.frames_done;
+	out.underrun_start = sim.top.underrun_count;
 	sim.clearStats();
 	// Re-ring so next frame is available (double-buffer style present).
 	sim.ringDoorbell(0, 2);
@@ -321,6 +324,7 @@ FrameDelta measureSteadyFrame(int stall_after, int hog_period, int hog_len) {
 	}
 	out.s = sim.st;
 	out.frames_done = sim.top.frames_done;
+	out.underrun_end = sim.top.underrun_count;
 	out.ok = true;
 	return out;
 }
@@ -370,14 +374,25 @@ int main(int argc, char** argv) {
 		return fail("G0 steady frame exceeded 24fps ddr cycle budget");
 	if (g0.s.max_burst < 2)
 		return fail("G0 expected burst>1");
+	// Beat conservation: classified parts sum to accepted (no silent loss).
+	if (g0.s.payload_beats + g0.s.doorbell_beats + g0.s.other_beats != g0.s.accepted_rd_beats)
+		return fail("G0 beat conservation: payload+door+other != total");
+	// Measure underrun; non-zero on synthetic scan keeps delivery_correctness OPEN
+	// (do not force underrun==0 here — G0 delta observed 77 @ tip).
+	std::printf("G0_UNDRUN start=%u end=%u delta=%u\n",
+	            (unsigned)g0.underrun_start, (unsigned)g0.underrun_end,
+	            (unsigned)(g0.underrun_end - g0.underrun_start));
+	if (g0.underrun_end < g0.underrun_start)
+		return fail("G0 underrun_count wrapped");
 
 	std::printf("PASS G0 steady payload_delta=%llu (ideal %llu) overhead_total=%llu "
-	            "ddr_cy=%llu budget=%llu\n",
+	            "ddr_cy=%llu budget=%llu underrun_delta=%u\n",
 	            (unsigned long long)g0.s.payload_beats,
 	            (unsigned long long)kPayloadBeatsIdeal,
 	            (unsigned long long)(g0.s.accepted_rd_beats - g0.s.payload_beats),
 	            (unsigned long long)g0.s.ddr_cycles,
-	            (unsigned long long)kBudgetDdrCycles24);
+	            (unsigned long long)kBudgetDdrCycles24,
+	            (unsigned)(g0.underrun_end - g0.underrun_start));
 
 	FrameDelta g1 = measureSteadyFrame(3, 8, 3);
 	if (!g1.ok)
@@ -399,18 +414,25 @@ int main(int argc, char** argv) {
 	// duty + blocked accepts, not longer frame time.
 	if (g1.s.busy_cycles <= g0.s.busy_cycles)
 		return fail("G1 expected higher busy_cycles than G0 under stall/hog");
+	if (g1.s.payload_beats + g1.s.doorbell_beats + g1.s.other_beats != g1.s.accepted_rd_beats)
+		return fail("G1 beat conservation: payload+door+other != total");
+	// Stall may raise underrun — log only; G1 proves bus coupling, not glass DE.
 	std::printf("PASS G1 stall payload=%llu blocked=%llu busy=%llu (>G0 busy %llu) "
-	            "ddr_cy=%llu (beam-locked ~G0 %llu)\n",
+	            "ddr_cy=%llu (beam-locked ~G0 %llu) underrun_delta=%u\n",
 	            (unsigned long long)g1.s.payload_beats,
 	            (unsigned long long)g1.s.rd_blocked,
 	            (unsigned long long)g1.s.busy_cycles,
 	            (unsigned long long)g0.s.busy_cycles,
 	            (unsigned long long)g1.s.ddr_cycles,
-	            (unsigned long long)g0.s.ddr_cycles);
+	            (unsigned long long)g0.s.ddr_cycles,
+	            (unsigned)(g1.underrun_end - g1.underrun_start));
 
 	// Interface peak reminder (rd-duck): not the average headline
 	std::printf("NOTE iface_peaks: PPC2 group=6 RGB B/sysclk; I420 amort source=3 B/2px group; "
 	            "headline remains 33.1776 MB/s/dir avg — not 1.65888 for FIFO width\n");
+	std::printf("NOTE status_split: reader_payload_beat_delta_TB=MEASURED; "
+	            "reader_delivery_correctness=OPEN; hps_write+T_copy=OPEN; "
+	            "not fabric_bw_closed\n");
 
 	std::printf("PASS ddr_frame_store_720p_ppc2_bus all "
 	            "(steady frame beat delta REAL store 20:90 PPC2)\n");

@@ -583,6 +583,8 @@ module present_core #(
 	//   DDR_FS_USE_720P_ABI ? DDR_FRAME_720P_CODED_WIDTH : DDR_FRAME_CODED_WIDTH
 `define DDR_FS_APPLY_LINE_FLOOR
 `include "ddr_frame_abi_select.svh"
+	// ONE agreed BW/ABI contract (w-mem P720_* names ↔ w-clock MISTERPLEX_BW_*).
+	`include "plex_720p_bw_contract.svh"
 	localparam int FS_CODED_W     = DDR_FS_CODED_W;
 	localparam int FS_CODED_H     = DDR_FS_CODED_H;
 	localparam int FS_DISPLAY_W   = DDR_FS_DISPLAY_W;
@@ -596,6 +598,34 @@ module present_core #(
 	localparam [31:0] FS_DOORBELL = DDR_FS_DOORBELL;
 	// 16-line floor on 720p ABI (8 lines @ PPC2/20MHz ≈ 256 µs < 500 µs model).
 	localparam int FS_LINE_COUNT  = DDR_FS_LINE_COUNT;
+
+	// Elab-time: 720p tier FS_* must match P720_* (dead localparams ≠ fabric work).
+	// synthesis translate_off
+	initial begin
+		if (DDR_FS_USE_720P_ABI && (FS_LINE_COUNT < P720_LINE_COUNT))
+			$error("present_core: 720p tier needs LINE_COUNT>=%0d (got %0d)",
+				P720_LINE_COUNT, FS_LINE_COUNT);
+		if (DDR_FS_USE_720P_ABI && (FS_CODED_W != P720_CODED_W || FS_CODED_H != P720_CODED_H))
+			$error("present_core: FS_CODED %0dx%0d != P720 %0dx%0d",
+				FS_CODED_W, FS_CODED_H, P720_CODED_W, P720_CODED_H);
+		if (DDR_FS_USE_720P_ABI && (FS_BANK_STRIDE != P720_BANK_STRIDE))
+			$error("present_core: FS_BANK_STRIDE 0x%0x != P720 0x%0x",
+				FS_BANK_STRIDE, P720_BANK_STRIDE);
+		if (DDR_FS_USE_720P_ABI && (FS_DOORBELL != P720_DOORBELL_PHYS))
+			$error("present_core: FS_DOORBELL 0x%0x != P720 0x%0x",
+				FS_DOORBELL, P720_DOORBELL_PHYS);
+		if (DDR_FS_USE_720P_ABI && (FS_PHYS_BASE != P720_PHYS_BASE))
+			$error("present_core: FS_PHYS_BASE 0x%0x != P720 0x%0x",
+				FS_PHYS_BASE, P720_PHYS_BASE);
+		if (P720_FABRIC_RD_BPS != 33_177_600)
+			$error("present_core: P720_FABRIC_RD_BPS must be 33177600");
+	end
+	// synthesis translate_on
+	// Synthesis-active keep: contract constants reach the netlist when compiled.
+	(* keep, noprune *) wire [31:0] p720_bw_contract_i420 = P720_I420_BYTES[31:0];
+	(* keep, noprune *) wire [31:0] p720_bw_contract_rd_bps = P720_FABRIC_RD_BPS[31:0];
+	(* keep, noprune *) wire [31:0] p720_bw_contract_stride = P720_BANK_STRIDE[31:0];
+	(* keep, noprune *) wire [31:0] p720_bw_contract_doorbell = P720_DOORBELL_PHYS[31:0];
 
 `ifdef PRESENT_MULTI_PIXEL
 	localparam int FS_PX_PER_CLK = PRESENT_PPC;

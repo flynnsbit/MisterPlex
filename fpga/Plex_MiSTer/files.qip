@@ -57,5 +57,7 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_core.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/plex_rbf_build_id.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/plex_clk_status.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/plex_bw_status.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/plex_720p_bw_contract.svh
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/misterplex_bw_contract.svh
 set_global_assignment -name SDC_FILE Plex.sdc
 set_global_assignment -name SYSTEMVERILOG_FILE Plex.sv
