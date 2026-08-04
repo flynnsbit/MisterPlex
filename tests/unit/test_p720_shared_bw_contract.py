@@ -70,6 +70,15 @@ def main() -> int:
     if c["companion"]["w_mem_ideal_rw_beats"] != 345_600:
         fails.append("R+W beats must be 345600")
 
+    rrp = c.get("real_reader_proof", {})
+    g0 = rrp.get("G0", {})
+    if g0.get("payload_beats", 0) < 172800:
+        fails.append("real_reader G0 payload_beats missing or <172800")
+    if g0.get("total_rd_beats", 0) <= g0.get("payload_beats", 0):
+        fails.append("real_reader total must include overhead beyond payload")
+    if "test_ddr_frame_store_720p_ppc2_bus" not in str(rrp.get("tb", "")):
+        fails.append("real_reader tb path missing")
+
     if fails:
         print("FAIL test_p720_shared_bw_contract")
         for f in fails:
