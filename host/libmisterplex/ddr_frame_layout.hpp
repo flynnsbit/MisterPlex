@@ -88,6 +88,32 @@ constexpr uint32_t kPlex720pYuv420pBankStride = 0x00180000u;
 constexpr uint32_t kPlex720pRgb565DoorbellPhys = 0x303FF000u;
 // Product silicon: phys_base 0x30000000 + 2*0x180000 - 0x1000.
 constexpr uint32_t kPlex720pYuv420pDoorbellPhys = 0x302FF000u;
+// Fail closed: named product 720p bank/doorbell MUST equal the geometry formula
+// used by makeDdrFrameLayout (phys_base + 2*alignUp(frame_bytes) - 0x1000).
+// Drift here desyncs ARM doorbell from RTL ddr_frame_layout_params.svh and
+// reintroduces the PLXD residue class (legacy 0x3007F128 vs product 0x302FF128).
+static_assert(kPlex720pYuv420pBankStride ==
+                  ((static_cast<uint32_t>(kPlex720pYuv420pBytes) + kDdrFrameStrideAlign - 1u) &
+                   ~(kDdrFrameStrideAlign - 1u)),
+              "product 720p bank_stride must equal alignUp(I420 bytes, 0x40000)");
+static_assert(kPlex720pYuv420pDoorbellPhys ==
+                  kDdrFramePhysBase + 2u * kPlex720pYuv420pBankStride - 0x1000u,
+              "product 720p doorbell must equal phys_base + 2*bank_stride - 0x1000");
+static_assert(kPlex720pRgb565BankStride ==
+                  ((static_cast<uint32_t>(kPlex720pRgb565Bytes) + kDdrFrameStrideAlign - 1u) &
+                   ~(kDdrFrameStrideAlign - 1u)),
+              "product 720p RGB565 bank_stride must equal alignUp(frame bytes, 0x40000)");
+static_assert(kPlex720pRgb565DoorbellPhys ==
+                  kDdrFramePhysBase + 2u * kPlex720pRgb565BankStride - 0x1000u,
+              "product 720p RGB565 doorbell must equal phys_base + 2*bank_stride - 0x1000");
+// Legacy 480p named map: same formula (kept so 480 helpers cannot silently diverge).
+static_assert(kPlex480pYuv420pBankStride ==
+                  ((static_cast<uint32_t>(kPlex480pYuv420pBytes) + kDdrFrameStrideAlign - 1u) &
+                   ~(kDdrFrameStrideAlign - 1u)),
+              "legacy 480p bank_stride must equal alignUp(I420 bytes, 0x40000)");
+static_assert(kPlex480pYuv420pDoorbellPhys ==
+                  kDdrFramePhysBase + 2u * kPlex480pYuv420pBankStride - 0x1000u,
+              "legacy 480p doorbell must equal phys_base + 2*bank_stride - 0x1000");
 constexpr uint32_t kDdrFrameDoorbellMagic = 0x504C584Bu; // PLXK
 constexpr uint32_t kDdrFrameDoorbellSeqMask = 0x1FFFFFFFu;
 constexpr uint8_t kYuv420BlackY = 16;

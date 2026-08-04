@@ -1,6 +1,7 @@
 #include "fpga_spi.hpp"
 
 #include "libmisterplex/ddr_bank_release_select.hpp"
+#include "libmisterplex/ddr_zero_copy_ingest.hpp"
 #include "libmisterplex/plxd_liveness.hpp"
 #include "libmisterplex/status_telemetry.hpp"
 #include "libmisterplex/pixel_format.hpp"
@@ -1560,22 +1561,36 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
     auto tPrep1 = std::chrono::steady_clock::now();
     timing.prep_wait_us = elapsedUs(tPrep0, tPrep1);
 
-    // Copy frame into bank (persistent map).
+    // Copy frame into bank (persistent map) — T_copy (structural ~14.978 ms @720p).
+    // PRODUCT_WIRE=1 + fabric publish active may skip the memcpy body; product
+    // default keeps fabric path OFF so this always copies (see ddr_zero_copy_ingest.hpp).
+    // ON is legal with PRODUCT_WIRE=1 only. Do NOT set fabric active in product.
     const size_t bankOff = static_cast<size_t>(bank) * plan.layout.bank_stride;
     auto tCopy0 = std::chrono::steady_clock::now();
-    std::memcpy(ddrMap_ + bankOff, payload, len);
-    __sync_synchronize();
-    auto tCopy1 = std::chrono::steady_clock::now();
-    timing.copy_us = elapsedUs(tCopy0, tCopy1);
-    if (!ddrMemSync_ && ddrMemFlush_) {
-        auto tFlush0 = std::chrono::steady_clock::now();
-        if (!cleanDcacheRange(ddrMap_ + bankOff, len)) {
-            setErr("sendDdrFrame: cache clean failed");
-            return false;
-        }
+    const bool skip_t_copy =
+        ddrPublishSkipTcopyActive(kDdrPublishFabricPathEnabledInProduct);
+    if (!skip_t_copy) {
+        std::memcpy(ddrMap_ + bankOff, payload, len);
         __sync_synchronize();
-        auto tFlush1 = std::chrono::steady_clock::now();
-        timing.flush_us = elapsedUs(tFlush0, tFlush1);
+        auto tCopy1 = std::chrono::steady_clock::now();
+        timing.copy_us = elapsedUs(tCopy0, tCopy1);
+        if (!ddrMemSync_ && ddrMemFlush_) {
+            auto tFlush0 = std::chrono::steady_clock::now();
+            if (!cleanDcacheRange(ddrMap_ + bankOff, len)) {
+                setErr("sendDdrFrame: cache clean failed");
+                return false;
+            }
+            __sync_synchronize();
+            auto tFlush1 = std::chrono::steady_clock::now();
+            timing.flush_us = elapsedUs(tFlush0, tFlush1);
+        }
+    } else {
+        // Fabric owns bank payload: host still needs a visibility barrier before
+        // doorbell (ordering), but does not re-store the frame. copy_us stays 0 —
+        // do not report as "copy free" unless phase proves FPGA-visible payload.
+        __sync_synchronize();
+        timing.copy_us = 0;
+        timing.flush_us = 0;
     }
 
     bool saw_busy = false;

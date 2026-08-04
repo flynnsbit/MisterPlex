@@ -48,6 +48,31 @@ int main() {
            "product doorbell is 0x302FF000");
     expect(product.doorbell_phys == 0x302FF000u, "doorbell literal 0x302FF000");
 
+    // Fail closed: named constants vs makeDdrFrameLayout derivation formula.
+    // If bank_stride or doorbell literals drift from phys_base+2*stride-0x1000,
+    // product PLXD/doorbell land on the wrong page (residue desync class).
+    std::cout << "CASE product_doorbell_bank_derivation EXECUTED\n";
+    {
+        const uint32_t derived_stride =
+            alignUpU32(static_cast<uint32_t>(kPlex720pYuv420pBytes), kDdrFrameStrideAlign);
+        const uint32_t derived_doorbell =
+            kDdrFramePhysBase + 2u * derived_stride - 0x1000u;
+        expect(kPlex720pYuv420pBankStride == derived_stride,
+               "named 720p bank_stride == alignUp(I420, 0x40000)");
+        expect(kPlex720pYuv420pDoorbellPhys == derived_doorbell,
+               "named 720p doorbell == phys_base + 2*stride - 0x1000");
+        expect(product.bank_stride == kPlex720pYuv420pBankStride,
+               "layout bank_stride matches named constant");
+        expect(product.doorbell_phys == derived_doorbell,
+               "layout doorbell matches derivation");
+        expect(product.bank_stride == 0x00180000u, "bank_stride literal 0x180000");
+        // Divergence smoke: wrong legacy 480p map must NOT equal product doorbell.
+        expect(kPlex720pYuv420pDoorbellPhys != kPlex480pYuv420pDoorbellPhys,
+               "product 720p doorbell != legacy 480p doorbell");
+        expect(kPlex720pYuv420pBankStride != kPlex480pYuv420pBankStride,
+               "product 720p bank_stride != legacy 480p bank_stride");
+    }
+
     const uint32_t plxd = bankReleaseMailboxPhys(product.doorbell_phys);
     const uint32_t plxf = underrunMailboxPhys(product.doorbell_phys);
     const uint32_t plxs = statusMailboxPhys(product.doorbell_phys);

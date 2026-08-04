@@ -385,4 +385,56 @@ inline bool ddrIngestRouteABridgeCandidate(double decodeMs, double copyMs = kPar
            ddrIngestOverlapMaxFits(decodeMs, copyMs);
 }
 
+// =============================================================================
+// T_copy skip gate (Wave-3 w-path) — host/product flag for fabric publish
+// =============================================================================
+//
+// sendDdrFrame T_copy (fpga_spi.cpp std::memcpy into bank) is the structural
+// ~14.978 ms /dev/mem publication cost. When fabric publish owns the scanout
+// bank payload, the ARM memcpy body may be skipped.
+//
+// LEGALITY (hard):
+//   ON is legal with PRODUCT_WIRE=1 ONLY (fabric publish product-wire build).
+//   Default PRODUCT_WIRE=0 → skip always OFF → product memcpy path unchanged.
+//
+//   Do NOT enable fabric path / PRODUCT_WIRE in product until G-PUBLISH lands
+//   and parent accepts fabric-owned bank proof. Soft-skip ≠ PASS.
+//
+// Compile: -DMISTERPLEX_PRODUCT_WIRE=1  (lab/product-wire builds only)
+// Runtime: fabric_publish_active must also be true for the skip to take effect.
+//          PRODUCT_WIRE alone does not drop T_copy; fabric flag alone does not
+//          either (both required).
+//
+#ifndef MISTERPLEX_PRODUCT_WIRE
+#define MISTERPLEX_PRODUCT_WIRE 0
+#endif
+
+inline constexpr int kDdrPublishProductWire = MISTERPLEX_PRODUCT_WIRE;
+inline constexpr bool kDdrPublishProductWireOn = (kDdrPublishProductWire == 1);
+
+// Pure wire-level legality (testable without recompiling the daemon).
+inline constexpr bool ddrPublishSkipTcopyLegalForWire(int product_wire) {
+    return product_wire == 1;
+}
+
+// Skip T_copy body only when PRODUCT_WIRE=1 AND fabric publish owns the bank.
+inline constexpr bool ddrPublishSkipTcopyActiveFor(int product_wire,
+                                                   bool fabric_publish_active) {
+    return ddrPublishSkipTcopyLegalForWire(product_wire) && fabric_publish_active;
+}
+
+// This build's legality (default product: false).
+inline constexpr bool ddrPublishSkipTcopyLegal() {
+    return ddrPublishSkipTcopyLegalForWire(kDdrPublishProductWire);
+}
+
+// Product call site: pass fabric_publish_active=false until G-PUBLISH wires it.
+// Returns false under product default (PRODUCT_WIRE=0).
+inline constexpr bool ddrPublishSkipTcopyActive(bool fabric_publish_active) {
+    return ddrPublishSkipTcopyActiveFor(kDdrPublishProductWire, fabric_publish_active);
+}
+
+// Product must keep fabric path disabled (hard default for sendDdrFrame).
+inline constexpr bool kDdrPublishFabricPathEnabledInProduct = false;
+
 } // namespace misterplex
