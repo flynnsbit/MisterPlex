@@ -542,9 +542,10 @@ def check_present_core() -> None:
     )
     check(
         "TPL_H_DE=529" in nt or "H_DE=10'd529" in nt or "localparamH_DE=10'd529" in nt
-        or "TPL_H_DE = 529" in text,
+        or "TPL_H_DE = 529" in text
+        or "localparam H_DE    = 10'(TPL_H_DE)" in text
+        or "localparam H_DE = 10'(TPL_H_DE)" in text,
         "present_core Template H_DE default is not 529 (FBAR/G-VID1 contract).",
-    )
     )
     check(
         "vb_d=vb|past_last_row" in nt,
@@ -1865,16 +1866,28 @@ def check_present_geometry_stride_contract() -> None:
         "PRESENT_X=11 for pillarbox.",
     )
     # L4 consumer wiring (must not leave 720p constants unreferenced).
+    # Read RAW module text (comments only stripped) — strip_inactive_preprocessor
+    # drops the inactive `ifdef PLEX_PRESENT_720P_L4 arm because that macro is
+    # not in ACTIVE_SV_MACROS (product default is off). Dual-arm presence must
+    # still be proved from source.
+    present_raw = norm(
+        re.sub(
+            r"/\*.*?\*/",
+            "",
+            re.sub(r"//.*?$", "", read(PRESENT_CORE), flags=re.M),
+            flags=re.S,
+        )
+    )
     l4_720_bind = (
-        "FS_CODED_W=DDR_FRAME_720P_CODED_WIDTH" in present_nt
-        and "FS_CODED_H=DDR_FRAME_720P_CODED_HEIGHT" in present_nt
-        and "FS_DISPLAY_W=DDR_FRAME_720P_DISPLAY_WIDTH" in present_nt
-        and "FS_DISPLAY_H=DDR_FRAME_720P_DISPLAY_HEIGHT" in present_nt
-        and "FS_PRESENT_X=DDR_FRAME_720P_PILLARBOX_LEFT" in present_nt
-        and "FS_BANK_STRIDE=DDR_FRAME_720P_YUV420P_BANK_STRIDE" in present_nt
-        and "FS_DOORBELL=DDR_FRAME_720P_YUV420P_DOORBELL_PHYS" in present_nt
-        and "FS_PHYS_BASE=DDR_FRAME_720P_PHYS_BASE" in present_nt
-        and "ifdefPLEX_PRESENT_720P_L4" in present_nt
+        "FS_CODED_W=DDR_FRAME_720P_CODED_WIDTH" in present_raw
+        and "FS_CODED_H=DDR_FRAME_720P_CODED_HEIGHT" in present_raw
+        and "FS_DISPLAY_W=DDR_FRAME_720P_DISPLAY_WIDTH" in present_raw
+        and "FS_DISPLAY_H=DDR_FRAME_720P_DISPLAY_HEIGHT" in present_raw
+        and "FS_PRESENT_X=DDR_FRAME_720P_PILLARBOX_LEFT" in present_raw
+        and "FS_BANK_STRIDE=DDR_FRAME_720P_YUV420P_BANK_STRIDE" in present_raw
+        and "FS_DOORBELL=DDR_FRAME_720P_YUV420P_DOORBELL_PHYS" in present_raw
+        and "FS_PHYS_BASE=DDR_FRAME_720P_PHYS_BASE" in present_raw
+        and "ifdefPLEX_PRESENT_720P_L4" in present_raw
     )
     check(
         l4_720_bind,
@@ -1941,7 +1954,13 @@ def check_present_geometry_stride_contract() -> None:
         )
     # Dropping the explicit CODED_W port leaves parameter default CODED_W=FRAME_W=640
     # → reader Y pitch 640 B/line while ARM writes 624 → 16 px/line leftward creep.
-    present_drop_coded = present_nt.replace(".CODED_W(DDR_FRAME_CODED_WIDTH)", "")
+    # Reconcile: product may use direct .CODED_W(DDR_FRAME_*) or FS_CODED_W bind +
+    # .CODED_W(FS_CODED_W). Red twin must break both forms.
+    present_drop_coded = (
+        present_nt.replace(".CODED_W(DDR_FRAME_CODED_WIDTH)", "")
+        .replace("FS_CODED_W=DDR_FRAME_CODED_WIDTH", "")
+        .replace(".CODED_W(FS_CODED_W)", "")
+    )
     if present_ddr_wiring_ok(present_drop_coded):
         fail(
             "deliberately dropping .CODED_W(DDR_FRAME_CODED_WIDTH) "
