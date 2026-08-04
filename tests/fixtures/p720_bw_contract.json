@@ -1,5 +1,5 @@
 {
-  "title": "P720 THREE-LANE LOCK 33.1776 payload/dir \u2014 labels: ideal port util NOT sustainable DDR; reader CLOSED; controller contention OPEN (rd-duck)",
+  "title": "P720 LOCK 33.1776 payload/dir; fullframe e2e FILLED b53197e5 ~38.53; host T_copy OPEN; 3.0 demoted",
   "product_config": {
     "PRESENT_MULTI_PIXEL": true,
     "PRESENT_PX_PER_CLK": 2,
@@ -97,7 +97,7 @@
     "note": "latency cover, not average BW"
   },
   "proof_gap": {
-    "status": "READER_CLOSED_HPS_WRITE_AND_TCOPY_OPEN",
+    "status": "READER_AND_FULLFRAME_E2E_FILLED_HOST_OPEN",
     "fabric_bw_closed": false,
     "reader_steady_delta": {
       "status": "CLOSED",
@@ -144,16 +144,21 @@
       }
     },
     "still_open": [
-      "hps_write_concurrent (w-mem) \u2014 concurrent HPS /dev/mem WRITE on same controller",
-      "T_copy_e2e (w-path/parent) \u2014 serial 14.978 ms; overlap unproven; fabric DMA not built \u2014 NOT reader beat delta",
-      "hardware_contention OPEN after TB (rd-duck) \u2014 real-reader cannot prove shared HPS controller envelope"
+      "hps_write_concurrent / host T_copy_arm 14.978 ms (not RTL-master beats)",
+      "hardware_contention under real HPS+FPGA shared controller (OPEN after TB)",
+      "T_copy_e2e overlap/DMA (parent Sweep 118) \u2014 NOT missing fullframe beat delta"
     ],
     "headline_assumption": "33.1776 is payload average; real reader measured ~173120 payload beats/frame (+320 vs ideal) + doorbell overhead",
-    "w_scaler_position": "reader_steady_delta CLOSED (payload demand). Refusal to claim fabric/controller closure CORRECT (rd-duck). hps_write_concurrent + T_copy_e2e + hardware_contention OPEN.",
+    "w_scaler_position": "pending_ack w-mem CLEARED. Do not list fullframe e2e gap open without citing b53197e5. payload floor 33.1776 LOCKED; measured e2e ~38.5 companion; NOT closed at pure 33.1776. Host 14.978 still separate.",
     "reader_beat_delta_gap": "CLOSED",
     "fabric_bw_closed_means": "False because hps_write_concurrent OPEN and/or full R+W controller budget unowned. reader_steady_delta is CLOSED \u2014 never report as unproven reader gap.",
     "hps_write_concurrent": "OPEN",
-    "T_copy_e2e": "OPEN"
+    "T_copy_e2e": "OPEN",
+    "pending_ack": [],
+    "filled": [
+      "reader_steady_delta CLOSED (w-clock 720p_ppc2_bus)",
+      "fullframe_e2e beat delta FILLED (w-mem b53197e5 beats_e2e=200676 ~38.53 MB/s) \u2014 cite commit; not open without citation"
+    ]
   },
   "agreed_by": [
     "w-clock",
@@ -253,20 +258,17 @@
     "reader_steady_delta": {
       "status": "CLOSED",
       "owner": "w-clock",
-      "also": "w-scaler local reconfirm true rc=0 @ 8ca3d529/7cf2640a",
       "tb": "tests/unit/test_ddr_frame_store_720p_ppc2_bus.sh",
-      "G0": "payload=173120 door=9689 total=182809 ddr_cy=2784152<3750000",
-      "proves": "reader beat demand + assumed stall tolerance; payload and door counted separately",
-      "does_not_prove": "shared HPS controller supply under concurrent write; hardware contention"
+      "note": "steady frames_done delta; w-scaler reconfirm"
     },
     "hps_write_concurrent": {
       "status": "OPEN",
-      "owner": "w-mem"
+      "owner": "w-mem/parent HW"
     },
     "T_copy_e2e": {
       "status": "OPEN",
       "owner": "w-path/parent",
-      "note": "T_copy_arm 14.978 ms CPU time; path (a) overlap unproven; path (b) fabric DMA not built \u2014 NOT reader beat delta"
+      "T_copy_arm_ms": 14.978
     },
     "do_not_say": [
       "fabric BW proof_gap still OPEN (unsplit)",
@@ -275,7 +277,16 @@
     ],
     "hardware_contention": {
       "status": "OPEN",
-      "note": "remains open after real-reader TB; host writes not RTL-master beats"
+      "note": "host writes not RTL-master beats; TB assumed stall \u2260 HW controller proof"
+    },
+    "fullframe_e2e_beat_delta": {
+      "status": "FILLED",
+      "owner": "w-mem",
+      "commit": "b53197e5",
+      "tb": "tests/unit/test_ddr_ppc2_fullframe_beats.sh",
+      "beats_e2e_G0": 200676,
+      "fabric_e2e_MBps": 38.53,
+      "not": "closed_at_pure_33.1776"
     }
   },
   "three_lane_lock": {
@@ -322,11 +333,37 @@
     "extra_not_competing_headline": {
       "name": "fullframe_e2e_fabric_read_with_overhead",
       "beats_e2e": 200676,
+      "overhead_beats": 27876,
       "MBps_approx": 38.53,
-      "formula_note": "200676 beats * 8 B * 24 / 1e6 \u2248 38.53 MB/s fabric read with overhead",
+      "MBps_calc": 38.5298,
       "payload_floor_remains": 33.1776,
-      "source": "w-mem b53197e5",
-      "MBps_calc": 38.5298
+      "source": "w-mem b53197e5 test_ddr_ppc2_fullframe_beats.sh",
+      "status": "FILLED"
     }
+  },
+  "w_mem_fullframe_e2e": {
+    "status": "FILLED",
+    "not": "closed_at_pure_33.1776",
+    "commit": "b53197e5",
+    "branch": "integ/fab-720p-product-v2",
+    "tb": "tests/unit/test_ddr_ppc2_fullframe_beats.sh",
+    "true_rc": 0,
+    "recipe": "1280x720 Option-C LINE=16 PPC=2 clk 20:90 (meas ratio=4.500) + stall/hog",
+    "G0": {
+      "beats_at_fd_prep_do_not_cite_as_full_BW": 13953,
+      "beats_e2e": 200676,
+      "payload_ideal": 172800,
+      "overhead_beats": 27876,
+      "fabric_e2e_MBps": 38.53,
+      "underrun": 0
+    },
+    "G1": {
+      "stall": 3,
+      "hog": "8/3",
+      "beats_e2e": 193182,
+      "rd_blocked": 609,
+      "underrun": 0
+    },
+    "parent_statement": "payload floor 33.1776 MB/s/dir LOCKED; measured fabric read e2e ~38.5 MB/s under this TB (overhead included); fabric BW NOT claimed closed at 33.1776; host 14.978 ms still separate; w-osd full-pixel colour path complementary (w-mem owns beat delta)"
   }
 }

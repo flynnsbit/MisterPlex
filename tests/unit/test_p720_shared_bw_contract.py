@@ -126,7 +126,7 @@ def main() -> int:
 
     # Reader beat-delta CLOSED (w-clock TB + w-scaler local reconfirm).
     # fabric_bw_closed stays false ONLY for concurrent HPS write (w-mem) — not reader gap.
-    if gap.get("status") not in ("OPEN", "PARTIAL_CLOSED_READER", "READER_CLOSED_HPS_WRITE_OPEN", "READER_CLOSED_HPS_WRITE_AND_TCOPY_OPEN"):
+    if gap.get("status") not in ("OPEN", "PARTIAL_CLOSED_READER", "READER_CLOSED_HPS_WRITE_OPEN", "READER_CLOSED_HPS_WRITE_AND_TCOPY_OPEN", "READER_AND_FULLFRAME_E2E_FILLED_HOST_OPEN"):
         return fail(f"proof_gap.status unexpected: {gap.get('status')}")
     if gap.get("fabric_bw_closed") is not False:
         return fail("NEGATIVE: fabric_bw_closed must stay false while HPS-write concurrent unmeasured")
@@ -271,6 +271,36 @@ def main() -> int:
     wma = c.get("w_mem_final_ack") or {}
     if wma.get("status") != "ACK":
         return fail("w_mem_final_ack required")
+    if c.get("pending_ack"):
+        return fail("pending_ack must stay empty (w-mem cleared)")
+    ff = c.get("w_mem_fullframe_e2e") or {}
+    if ff.get("status") != "FILLED":
+        return fail("w_mem_fullframe_e2e.status must be FILLED (cite b53197e5)")
+    if ff.get("commit") != "b53197e5":
+        return fail("fullframe e2e must cite commit b53197e5")
+    if "fullframe_beats" not in ff.get("tb", ""):
+        return fail("fullframe e2e must cite test_ddr_ppc2_fullframe_beats.sh")
+    g0 = ff.get("G0") or {}
+    if int(g0.get("beats_e2e", 0)) != 200676:
+        return fail("G0 beats_e2e must be 200676")
+    if int(g0.get("overhead_beats", 0)) != 27876:
+        return fail("G0 overhead must be 27876")
+    if int(g0.get("beats_at_fd_prep_do_not_cite_as_full_BW", 0)) != 13953:
+        return fail("prep beats must be recorded and labeled do-not-cite")
+    if ff.get("not") != "closed_at_pure_33.1776":
+        return fail("must state NOT closed at pure 33.1776")
+    cs = c.get("claim_split") or {}
+    if (cs.get("fullframe_e2e_beat_delta") or {}).get("status") != "FILLED":
+        return fail("claim_split.fullframe_e2e_beat_delta must be FILLED")
+    # still_open must not claim fullframe e2e missing without b53197e5 context
+    for item in (c.get("proof_gap") or {}).get("still_open", []):
+        il = item.lower()
+        # Allow notes that explicitly say NOT missing fullframe / NOT reader
+        if "not missing fullframe" in il or "not missing" in il and "fullframe" in il:
+            continue
+        if il.startswith("fullframe") or ("fullframe e2e" in il and "open" in il):
+            if "b53197e5" not in il and "filled" not in il:
+                return fail(f"do not list fullframe e2e open without cite: {item}")
     extra = wma.get("extra_not_competing_headline") or {}
     if extra.get("payload_floor_remains") != 33.1776:
         return fail("e2e overhead must not raise payload floor")
@@ -281,7 +311,10 @@ def main() -> int:
         return fail(f"e2e MBps calc mismatch {calc}")
     if h["value"] != 33.1776:
         return fail("headline must remain 33.1776 after w-mem e2e extra")
-    print(f"OK w-mem final ACK; e2e overhead ~{extra.get('MBps_approx')} MB/s not competing headline")
+    print(
+        f"OK w-mem fullframe e2e FILLED b53197e5 beats_e2e={g0.get('beats_e2e')} "
+        f"~{g0.get('fabric_e2e_MBps')} MB/s; payload floor 33.1776; pending_ack=[]"
+    )
 
     print(f"OK THREE-LANE LOCK agreed_by={agreed} pending_ack=[]")
     print(f"OK rtl {svh.relative_to(ROOT)} + quote locked")
