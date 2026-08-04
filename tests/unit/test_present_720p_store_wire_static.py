@@ -78,18 +78,22 @@ def main() -> int:
     if "DDR_FRAME_CODED_WIDTH" not in abi:
         return fail("abi select missing 480p coded width ref")
 
-    # Shared 720p ABI (L4 or MULTI via FRAME 1280x720) — not L4-only ifdef
+    # Shared 720p ABI (L4 or MULTI via FRAME 1280x720) — not L4-only ifdef.
+    # 720p ABI binds FS_* from P720_* (contract); 480p keeps DDR_FS_*.
     for needle in [
         "ddr_frame_abi_select.svh",
-        "FS_CODED_W=DDR_FS_CODED_W",
-        "FS_CODED_H=DDR_FS_CODED_H",
+        "plex_720p_bw_contract.svh",
+        "FS_CODED_W",
+        "FS_CODED_H",
         "FS_DISPLAY_W=DDR_FS_DISPLAY_W",
         "FS_DISPLAY_H=DDR_FS_DISPLAY_H",
         "FS_PRESENT_X=DDR_FS_PRESENT_X",
-        "FS_BANK_STRIDE=DDR_FS_BANK_STRIDE",
-        "FS_PHYS_BASE=DDR_FS_PHYS_BASE",
-        "FS_DOORBELL=DDR_FS_DOORBELL",
-        "FS_LINE_COUNT=DDR_FS_LINE_COUNT",
+        "FS_BANK_STRIDE",
+        "FS_PHYS_BASE",
+        "FS_DOORBELL",
+        "FS_LINE_COUNT",
+        "P720_CODED_W",
+        "P720_LINE_COUNT",
         ".CODED_W(FS_CODED_W)",
         ".LINE_COUNT(FS_LINE_COUNT)",
         ".HPS_BANK_STRIDE_BYTES(FS_BANK_STRIDE)",
@@ -98,6 +102,17 @@ def main() -> int:
     ]:
         if needle not in pnt:
             return fail(f"720p ABI wire missing {needle}")
+    # Must select P720 on 720p ABI (not dead DDR_FS-only bind)
+    if "P720_CODED_W" not in present or "DDR_FS_USE_720P_ABI" not in present:
+        return fail("FS coded path must ternary on DDR_FS_USE_720P_ABI / P720_*")
+    # LINE floor: max(DDR_FS_LINE_COUNT, P720_LINE_COUNT) — not clamp-to-exactly-16
+    if "P720_LINE_COUNT" not in present or "DDR_FS_LINE_COUNT" not in present:
+        return fail("FS_LINE_COUNT must reference both DDR_FS_LINE_COUNT and P720 floor")
+    if "FS_LINE_COUNT  = DDR_FS_USE_720P_ABI ? P720_LINE_COUNT : DDR_FS_LINE_COUNT" in present.replace(" ", ""):
+        # old clamp-to-exactly-P720 form without max — reject if present as sole bind
+        pass  # allow if max form also present
+    if "DDR_FS_LINE_COUNT > P720_LINE_COUNT" not in present and "DDR_FS_LINE_COUNT>P720_LINE_COUNT" not in present.replace(" ", ""):
+        return fail("FS_LINE_COUNT must preserve floor with max(DDR_FS_LINE_COUNT,P720_LINE_COUNT)")
     # layout still defines 720p constants
     if "DDR_FRAME_720P_CODED_WIDTH" not in lnt:
         return fail("layout missing 720p coded width")

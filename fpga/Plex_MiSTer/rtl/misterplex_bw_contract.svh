@@ -1,3 +1,7 @@
+// MODULE-LOCAL include only: NO global `ifndef guard.
+// localparams must re-expand in every consumer module scope.
+// Global guards break multi-module compile (first include wins, rest undefined).
+// Do NOT list this .svh as a standalone files.qip SYSTEMVERILOG_FILE.
 // misterplex_bw_contract.svh — shared 720p24 I420 bandwidth SoT (w-clock).
 // Headline is average full-frame direction rate, NOT DE-peak PPC*1.5 as DDR.
 // Include from RTL/status modules only; do not redefine these locals elsewhere.
@@ -8,9 +12,6 @@
 //
 // STATUS SPLIT: reader_payload_beat_delta_TB MEASURED; delivery/HPS/T_copy OPEN.
 // Forbidden: unsplit fabric_bw_closed; bare "reader CLOSED".
-
-`ifndef MISTERPLEX_BW_CONTRACT_SVH
-`define MISTERPLEX_BW_CONTRACT_SVH
 
 // Geometry / frame (matches ddr_frame_layout_params.svh / host layout.hpp)
 localparam int MISTERPLEX_BW_CODED_W           = 1280;
@@ -58,4 +59,3 @@ localparam int MISTERPLEX_BW_EFFECTIVE_ARM_CORES = 1;
 //   Does NOT claim product e2e / fabric_bw / PPC2 closed.
 localparam int MISTERPLEX_BW_AFTER_COPY_RETIRE_MARGIN_US = 8962;
 
-`endif // MISTERPLEX_BW_CONTRACT_SVH

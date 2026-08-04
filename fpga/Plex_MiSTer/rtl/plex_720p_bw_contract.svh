@@ -1,3 +1,7 @@
+// MODULE-LOCAL include only: NO global `ifndef guard.
+// localparams must re-expand in every consumer module scope.
+// Global guards break multi-module compile (first include wins, rest undefined).
+// Do NOT list this .svh as a standalone files.qip SYSTEMVERILOG_FILE.
 // plex_720p_bw_contract.svh — ONE agreed 720p24 bandwidth contract (three-lane).
 // Coordinate: w-mem + w-clock + w-scaler. Do not invent a second B/clk number.
 // Clocks (pll_0002.v SoT): clk_sys=20e6, clk_ddr=90e6.
@@ -15,9 +19,6 @@
 // Forbidden: free core; ARM never touches payload; bare reader CLOSED; fabric_bw_closed.
 // Must be `include`d and bound into FS_*/store params or synthesis-active gates
 // (QIP listing alone is dead compilation-unit work — not fabric).
-
-`ifndef PLEX_720P_BW_CONTRACT_SVH
-`define PLEX_720P_BW_CONTRACT_SVH
 
 `include "misterplex_bw_contract.svh"
 
@@ -50,4 +51,3 @@ localparam int P720_BLACKOUT_US_8     = 256;
 // NACK: 3.0 B/clk_sys DE peak is linebuf I420-equiv (rd_miss_now hit→no DDRAM)
 localparam int P720_NACK_DE_PEAK_E1   = MISTERPLEX_BW_NACK_DE_PEAK_E1;   // 30
 
-`endif // PLEX_720P_BW_CONTRACT_SVH

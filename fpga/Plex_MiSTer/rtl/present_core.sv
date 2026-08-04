@@ -601,13 +601,16 @@ module present_core #(
 	localparam [31:0] FS_PHYS_BASE = DDR_FS_USE_720P_ABI ? P720_PHYS_BASE[31:0] : DDR_FS_PHYS_BASE;
 	localparam int FS_BANK_STRIDE = DDR_FS_USE_720P_ABI ? P720_BANK_STRIDE : DDR_FS_BANK_STRIDE;
 	localparam [31:0] FS_DOORBELL = DDR_FS_USE_720P_ABI ? P720_DOORBELL_PHYS[31:0] : DDR_FS_DOORBELL;
-	// 16-line floor on 720p ABI (8 lines @ PPC2/20MHz ≈ 256 µs < 500 µs model).
-	localparam int FS_LINE_COUNT  = DDR_FS_USE_720P_ABI ? P720_LINE_COUNT : DDR_FS_LINE_COUNT;
+	// 720p ABI: floor LINE_COUNT at P720_LINE_COUNT (16); allow higher (e.g. 32).
+	// Do not clamp max requests down to exactly 16 (rd-duck).
+	localparam int FS_LINE_COUNT = DDR_FS_USE_720P_ABI
+		? ((DDR_FS_LINE_COUNT > P720_LINE_COUNT) ? DDR_FS_LINE_COUNT : P720_LINE_COUNT)
+		: DDR_FS_LINE_COUNT;
 
 	// synthesis translate_off
 	initial begin
-		if (DDR_FS_USE_720P_ABI && (FS_LINE_COUNT != P720_LINE_COUNT))
-			$error("present_core: FS_LINE_COUNT must equal P720_LINE_COUNT");
+		if (DDR_FS_USE_720P_ABI && (FS_LINE_COUNT < P720_LINE_COUNT))
+			$error("present_core: FS_LINE_COUNT must be >= P720_LINE_COUNT floor");
 		if (DDR_FS_USE_720P_ABI && (FS_CODED_W != P720_CODED_W || FS_CODED_H != P720_CODED_H))
 			$error("present_core: FS_CODED must equal P720 coded");
 		if (DDR_FS_USE_720P_ABI && (FS_BANK_STRIDE != P720_BANK_STRIDE))

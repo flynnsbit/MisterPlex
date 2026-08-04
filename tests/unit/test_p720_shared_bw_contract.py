@@ -91,8 +91,11 @@ def main() -> int:
     qip = (ROOT / "fpga/Plex_MiSTer/files.qip").read_text(errors="replace")
     if "plex_bw_status.sv" not in qip:
         fails.append("files.qip missing plex_bw_status.sv")
-    if "plex_720p_bw_contract.svh" not in qip:
-        fails.append("files.qip missing plex_720p_bw_contract.svh")
+    # rd-duck: .svh must NOT be standalone QIP sources (module-local include only)
+    if "SYSTEMVERILOG_FILE rtl/plex_720p_bw_contract.svh" in qip:
+        fails.append("plex_720p_bw_contract.svh must not be standalone files.qip source")
+    if "SYSTEMVERILOG_FILE rtl/misterplex_bw_contract.svh" in qip:
+        fails.append("misterplex_bw_contract.svh must not be standalone files.qip source")
 
     # Host header agrees
     hpp = LAYOUT.read_text(errors="replace")
