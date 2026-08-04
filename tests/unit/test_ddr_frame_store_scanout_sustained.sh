@@ -49,6 +49,7 @@ echo "RTL SIM: using $VERILATOR_VERSION" >&2
 common_sv=(
   "$ROOT/tests/rtl/ddr_frame_store_scanout_sustained_tb_top.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/mplex_hold_lcell.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_base_mux.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_ram.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/async_fifo.sv"
