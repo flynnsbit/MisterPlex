@@ -586,17 +586,20 @@ module decode_stub #(
 	localparam int DPB_FRAME_BYTES = WIDTH * HEIGHT + 2 * ((WIDTH/2) * (HEIGHT/2));
 	localparam int DPB_BANK1_BASE = DPB_FRAME_BYTES;
 	localparam int DPB_MEM_BYTES  = 2 * DPB_FRAME_BYTES;
+	// Index width must cover DPB_MEM_BYTES (was hard-coded [17:0] → silent alias
+	// at 480p/720p). Product builds omit this array via PRODUCT_NO_STUB.
+	localparam int DPB_AW = (DPB_MEM_BYTES <= 1) ? 1 : $clog2(DPB_MEM_BYTES);
 	(* ram_style = "block" *) reg [7:0] dpb_mem [0:DPB_MEM_BYTES-1];
 
 	// DPB write port (from fill path)
 	always @(posedge clk) begin
 		if (dpb_mem_we && dpb_mem_waddr < DPB_MEM_BYTES[31:0])
-			dpb_mem[dpb_mem_waddr[17:0]] <= dpb_mem_wdata;
+			dpb_mem[dpb_mem_waddr[DPB_AW-1:0]] <= dpb_mem_wdata;
 	end
 
 	// DPB read port (for MC reference fetch) — 1-cycle latency
 	assign dpb_mem_rdata = (dpb_mem_raddr_q < DPB_MEM_BYTES[31:0]) ?
-	                       dpb_mem[dpb_mem_raddr_q[17:0]] : 8'h00;
+	                       dpb_mem[dpb_mem_raddr_q[DPB_AW-1:0]] : 8'h00;
 
 	// ── Product recon → deblock → DPB (h264_dpb_ref_commit) ─────────────
 	// Closes the diagnostic XOR fill: reconstructed MB samples stream into
