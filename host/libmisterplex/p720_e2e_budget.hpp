@@ -25,21 +25,31 @@
 //   C) Fit release: BOTH w-nostub reclaim AND w-osd full 720p 20:90 stalled
 //      real-reader proof are blockers unless parent explicitly resolves.
 //
-// Caveat (rd-duck): child FFmpeg may overlap decode with the parent present
-// thread through the pipe, so product throughput is NOT proven equal to the
-// serial sum. Serial sum is a HARD UPPER bound on "no overlap"; with partial
-// overlap the floor is max(decode, copy) and the realistic band is in between.
-// Do NOT claim "720p works" from decode-only 1.3x. Do NOT claim strict product
-// FAIL from serial arithmetic alone without a pipeline A/B.
+// PARENT 2026-08-04 — effective ARM capacity is ONE core, not two:
+//   clean 10 s /proc/stat per-core: cpu0 idle=97.6% busy=2.4%;
+//   cpu1 idle=0.0% busy=100%; MiSTer pid 19729 = 1004 ticks/10s = 100.4% of
+//   one core; mpx-main (daemon comm, NOT misterplexd) pid 9525 = 0.8%.
+//   USER_HZ=100 → 10 s = 1000 ticks/core. Framework permanently burns one
+//   entire core at idle doing non-work. Any budget that assumed two free
+//   cores for decode||copy pipeline is wrong by ~2× on capacity.
+//   Sweep 127: renice MiSTer → 13.0% decode speedup (order-balanced); further
+//   proof the burned core is contended non-work, not spare capacity.
+//
+// Overlap model (corrected): with only one usable core, two CPU-bound stages
+// (decode + publication memcpy) CANNOT achieve wall = max(decode, copy).
+// That floor required a free second core. On one core the right model for two
+// CPU-bound stages is serial sum (or worse under framework contention).
+// Offload (KernelDma/WC publication, or fabric reader) is the only way to
+// drop a stage off the single ARM core. Do NOT claim "720p works" from
+// decode-only 1.3x.
 //
 // What IS established:
 //   1) CPU full-frame copy to the bank is ~15 ms/f structural (uncached mapping).
 //   2) Decode-only headroom after Sweep 116 is 41.667-32.705 = 8.962 ms/f.
-//   3) 8.962 < 14.978 → copy cannot hide entirely inside decode headroom.
+//   3) 8.962 < 14.978 → copy cannot hide inside decode headroom on one core.
 //   4) Making memcpy faster via O_SYNC/flags is DEAD (Sweep 11).
-//   5) Publication memcpy retirement needs KernelDma/WC or fabric reader —
-//      not "ARM free during decode" hope from idle-at-rest %.
-
+//   5) Publication must leave the single ARM core (DMA/WC or fabric reader).
+//   6) Effective product ARM cores = 1 (MiSTer owns the other at 100% idle).
 #pragma once
 
 #include <cstddef>
@@ -103,10 +113,29 @@ inline constexpr double kSerialDeficitSweep118Ms =
 inline constexpr double kPayloadRate720p24MBps =
     static_cast<double>(kFrameBytes720pI420) * 24.0 / 1e6; // 33.1776
 
-// Sweep 116 idle% is IDLE-AT-REST (busyfix.sh samples idle BEFORE decode).
-// NOT concurrent free-core during decode. Do not use for overlap budgeting.
+// Sweep 116 "49% idle" is IDLE-AT-REST and is NOT "half of two cores free".
+// Parent 2026-08-04 control: one core is 100% MiSTer, the other ~98% idle at
+// rest — the 49% aggregate was one free core + one burned core, not spare
+// concurrent capacity during decode.
 inline constexpr double kIdlePctSweep116AtRest = 49.0;
 inline constexpr bool kIdlePctSweep116IsConcurrentWithDecode = false;
+inline constexpr bool kIdlePctSweep116MeansHalfSystemCapacity = false; // forbidden
+
+// Parent 2026-08-04 /proc/stat 10 s window (USER_HZ=100 → 1000 ticks/core).
+// Control quoted by parent: cpu0 idle 97.6%, cpu1 idle 0.0%;
+// MiSTer 1004 ticks, mpx-main 8 ticks. Look up daemon as comm=mpx-main.
+inline constexpr int kArmCoreCountPhysical = 2;
+inline constexpr int kEffectiveProductArmCores = 1; // MiSTer owns the other
+inline constexpr double kMisterFrameworkBusyPctOfOneCoreAtIdle = 100.4;
+inline constexpr double kMpxMainBusyPctOfOneCoreAtIdle = 0.8;
+inline constexpr double kCpu0IdlePctAtRestParent = 97.6;
+inline constexpr double kCpu1IdlePctAtRestParent = 0.0;
+// Sweep 127 parent: renice MiSTer → 13.0% decode wall speedup (order-balanced).
+inline constexpr double kSweep127DecodeSpeedupFracFromMisterRenice = 0.130;
+inline constexpr bool kMayAssumeTwoCoreDecodeCopyPipeline = false;
+// With one usable core, max(decode,copy) is NOT an achievable wall for two
+// CPU-bound stages. Serial sum is the correct single-core model.
+inline constexpr bool kMaxOfStagesIsAchievableWallOnOneCore = false;
 
 // What DMA can retire (narrow claim): uncached publication memcpy only.
 // Decode/rawvideo pipe still produces pixels in some buffer first.
@@ -133,9 +162,16 @@ inline constexpr bool kFitBlockerNostubReclaim = false; // landed e937d37d
 inline constexpr bool kFitBlockerOsd720pRealReader2090Stalled = true;
 inline constexpr int kFitReleaseBlockerCount = 1; // w-osd only
 
-// Overlap (a) is UNPROVEN: requires same-window idle+decode measurement.
+// Overlap of decode||copy on a second core is NOT available (one-core capacity).
 inline constexpr bool kDecodeCopyOverlapProven = false;
 inline constexpr bool kMayBudgetFreeCoreDuringDecode = false;
+// Feasibility under contended single-core CPU path (no offload):
+// serial Sweep116+copy already misses 24; one-core closes the "pipeline out"
+// escape. Conclusion moves: parallel-CPU rescue INFEASIBLE; offload required.
+inline constexpr bool kTwoCorePipelineRescueFeasible = false;
+inline constexpr bool kSingleCoreSerialCpuPathFeasible24 = kSerialSweep116Meets24; // false
+inline constexpr bool kOffloadRequiredFor720p24CpuPath =
+    !kSingleCoreSerialCpuPathFeasible24 && !kTwoCorePipelineRescueFeasible;
 
 // ---------------------------------------------------------------------------
 // Fabric DPB one-byte fetch tax (rd-duck UPDATED; source-quoted, not entropy-only)

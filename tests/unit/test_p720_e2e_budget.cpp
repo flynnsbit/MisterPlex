@@ -67,11 +67,33 @@ int main() {
     CHECK(kSerialDeficitSweep118Ms > 0.0, "serial path still short of 24fps");
     CHECK(std::fabs(kPayloadRate720p24MBps - 33.1776) < 0.001, "R_req ~33.18 MB/s");
 
-    // rd-duck blocking: idle% is at-rest, not concurrent with decode.
+    // rd-duck + parent: idle% is at-rest; 49% ≠ half-system capacity.
     CHECK(std::fabs(kIdlePctSweep116AtRest - 49.0) < 1e-9, "idle-at-rest pin 49%");
     CHECK(!kIdlePctSweep116IsConcurrentWithDecode, "49% must NOT mean free core in decode");
+    CHECK(!kIdlePctSweep116MeansHalfSystemCapacity, "49% must NOT mean half capacity");
     CHECK(!kMayBudgetFreeCoreDuringDecode, "forbid free-core-during-decode budget");
     CHECK(!kDecodeCopyOverlapProven, "overlap unproven");
+
+    // Parent 2026-08-04: one core permanently owned by MiSTer framework.
+    CHECK(kArmCoreCountPhysical == 2, "A9 dual physical");
+    CHECK(kEffectiveProductArmCores == 1, "effective product cores = 1");
+    CHECK(std::fabs(kMisterFrameworkBusyPctOfOneCoreAtIdle - 100.4) < 0.05,
+          "MiSTer ~100.4% of one core at idle");
+    CHECK(std::fabs(kMpxMainBusyPctOfOneCoreAtIdle - 0.8) < 0.05, "mpx-main ~0.8%");
+    CHECK(std::fabs(kCpu0IdlePctAtRestParent - 97.6) < 0.05, "cpu0 idle pin");
+    CHECK(std::fabs(kCpu1IdlePctAtRestParent - 0.0) < 0.05, "cpu1 idle pin");
+    CHECK(std::fabs(kSweep127DecodeSpeedupFracFromMisterRenice - 0.130) < 1e-9,
+          "Sweep127 renice speedup 13%");
+    // Negative: naive two-core pipeline would set these true and "rescue" 24fps.
+    CHECK(!kMayAssumeTwoCoreDecodeCopyPipeline, "forbid two-core decode||copy");
+    CHECK(!kMaxOfStagesIsAchievableWallOnOneCore, "max(decode,copy) not one-core wall");
+    CHECK(!kTwoCorePipelineRescueFeasible, "two-core rescue infeasible");
+    CHECK(!kSingleCoreSerialCpuPathFeasible24, "serial CPU path infeasible @24");
+    CHECK(kOffloadRequiredFor720p24CpuPath, "offload required for 720p24");
+    // Control: serial already misses; one-core does not invent headroom.
+    CHECK(kEffectiveProductArmCores * kDeadline24Ms <
+              serialDecodePlusCopyMs(kDecodeOnlyMsPerFrameSweep116, kCpuCopyMsPerFrame),
+          "one-core frame budget still < serial CPU work");
 
     // DMA scope: publication memcpy only — not "ARM never touches pixels".
     CHECK(kDmaRetiresPublicationMemcpyOnly, "DMA retires publication memcpy");
@@ -84,7 +106,6 @@ int main() {
     CHECK(!kFitBlockerNostubReclaim, "PRODUCT_NO_STUB already on origin/main");
     CHECK(kFitBlockerOsd720pRealReader2090Stalled, "w-osd 20:90 reader still blocks");
     CHECK(kFitReleaseBlockerCount == 1, "one remaining fit blocker (w-osd)");
-
     // rd-duck: DPB one-byte fetch is a hard 720p fabric blocker (not entropy-only).
     CHECK(kDpbFetchBytesPerPartition == 603, "603 B/partition (441Y+81U+81V)");
     CHECK(!kDpbPartWhNarrowsFetch, "part_w/h must not claim to narrow fetch");
@@ -100,9 +121,10 @@ int main() {
         std::printf("test_p720_e2e_budget: %d FAIL(s)\n", fails);
         return 1;
     }
-    std::printf("test_p720_e2e_budget: OK serial=%.3f deficit=%.3f idle=at_rest "
-                "dma=pub_only fit_blockers=%d dpb_fetch=%.2fms@20MHz\n",
-                serial, kSerialDeficitSweep118Ms, kFitReleaseBlockerCount,
-                kDpbP16x16RefFetchMs720pAt20MHz);
+    std::printf("test_p720_e2e_budget: OK serial=%.3f deficit=%.3f cores_eff=%d "
+                "idle=at_rest dma=pub_only fit_blockers=%d dpb_fetch=%.2fms@20MHz "
+                "offload_required=1\n",
+                serial, kSerialDeficitSweep118Ms, kEffectiveProductArmCores,
+                kFitReleaseBlockerCount, kDpbP16x16RefFetchMs720pAt20MHz);
     return 0;
 }
