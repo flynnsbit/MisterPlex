@@ -52,3 +52,24 @@ Memory/
 # cannot sweep it (same trap class as .agent-work).
 avsync_hdmi_out
 avsync_hdmi_out/
+
+# --- Lab / agent scratch that lives in the primary checkout ---------------
+# These accumulate in the working tree during long orchestration runs. None of
+# them are source. They are listed explicitly so that a `git add -A` by any lane
+# cannot sweep them into a commit (see 0b7851ed for the incident this prevents).
+.copilot-session/
+.copilot-w-*/
+.scratch-archive/
+.scratch-w-*/
+.session-w-*.txt
+.cpu_a_*
+.worktrees/
+MisterPlex-wt-*/
+artifacts/
+node_modules/
+# Editor / agent backup copies of source files
+*.bak-*
+# Agent status files belong in Memory/, never at the repo root
+misterplex-agent-*.txt
+# Numbered HDMI capture frame dumps (v1/f_001.png ...)
+/v[0-9]/
