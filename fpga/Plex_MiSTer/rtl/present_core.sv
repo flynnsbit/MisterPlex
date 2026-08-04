@@ -493,6 +493,10 @@ module present_core #(
 	reg [FRAME_X_W-1:0] store_x;
 	reg [FRAME_Y_W-1:0] store_y;
 	reg       de_r; // registered in_content for frame_store read align
+	// Template / L4 / BEAM_960: free-running store map on ce_pix_i.
+	// PRESENT_MULTI_PIXEL: store map + vsync come from CEA beam (below) so
+	// ddr_frame_store tracks glass identity coords, not H_DE=529 Template.
+`ifndef PRESENT_MULTI_PIXEL
 	always @(posedge clk) begin
 		if (reset) begin
 			store_x <= 0;
@@ -504,6 +508,11 @@ module present_core #(
 			store_x <= store_x_clamped;
 		end
 	end
+	wire fs_vsync_pulse = fstart;
+`else
+	// fs_vsync_pulse / store_x,y,de_r driven after present_beam_ppc.
+	wire fs_vsync_pulse;
+`endif
 
 	wire [7:0] fr, fg, fb;
 	wire       has_frame;
@@ -601,7 +610,7 @@ module present_core #(
 		.DDRAM_DIN(DDRAM_DIN),
 		.DDRAM_BE(DDRAM_BE),
 		.DDRAM_WE(DDRAM_WE),
-		.vsync_pulse(fstart),
+		.vsync_pulse(fs_vsync_pulse),
 		.has_frame(has_frame),
 		.swap_pending(swap_pending),
 		.underrun_count(frame_underruns),
@@ -645,7 +654,7 @@ module present_core #(
 		.sdram_refresh(sdram_refresh),
 		// Request on DMA/F1 complete; apply only at display frame_start (vsync)
 		.swap_banks(fs_swap),
-		.vsync_pulse(fstart),
+		.vsync_pulse(fs_vsync_pulse),
 		.has_frame(has_frame),
 		.swap_pending(swap_pending),
 		.underrun_count(frame_underruns),
@@ -868,12 +877,29 @@ module present_core #(
 		.rd_empty(mp_rd_empty)
 	);
 
-	// When MULTI_PIXEL is on, store read follows beam glass coords (identity clamp).
-	// Note: fstore still wired to store_x/y from Template regs above — full MULTI
-	// store remap is a follow-up when PPC>1 lands. PPC=1 same-clock uses leg path
-	// geometry unless parent also sets FRAME 1280×720.
-	wire _unused_mp_glass = |{mp_glass_x0, mp_glass_y, mp_npx_lv, mp_wr_full, mp_wr_af, mp_rd_ur, mp_rd_empty, mp_out_fs};
+	// MULTI store map: identity clamp of CEA glass coords into FRAME_W×FRAME_H.
+	// Bank swap uses beam-side frame_start (not Template colorbars fstart) so
+	// swap cadence matches the HDMI beam that actually leaves the core.
+	// PPC>1 still replicates scalar fr/fg/fb across lanes until ddr_frame_store
+	// grows N-wide RGB ports (sim $error when PRESENT_PPC!=1).
+	always @(posedge clk) begin
+		if (reset) begin
+			store_x <= 0;
+			store_y <= '0;
+			de_r    <= 1'b0;
+		end else if (mp_beam_ce) begin
+			store_x <= (mp_glass_x0 >= 12'(FRAME_W)) ? FRAME_LAST_X : FRAME_X_W'(mp_glass_x0);
+			store_y <= (mp_glass_y  >= 12'(FRAME_H)) ? FRAME_LAST_Y : FRAME_Y_W'(mp_glass_y);
+			de_r    <= |mp_lane_de;
+		end
+	end
+	assign fs_vsync_pulse = mp_fstart;
+
+	wire _unused_mp_glass = |{mp_npx_lv, mp_wr_full, mp_wr_af, mp_rd_ur, mp_rd_empty, mp_out_fs};
 	wire _unused_mp_clk_hz = (MP_CLK_PIX_HZ == 0);
+	// Template store comb still elaborates under MULTI (colorbar beam residual);
+	// keep reachable so lint does not flag dead nets on the dual-beam interim.
+	wire _unused_mp_tpl_store = |{store_x_clamped, store_y_addr, in_content, ce_pix_i, fstart};
 
 	assign r = mp_out_r;
 	assign g = mp_out_g;
