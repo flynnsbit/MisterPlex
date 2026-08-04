@@ -1,6 +1,6 @@
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_cadence.sv
-// 720p / ascal-native present path (default OFF via QSF macros — see present_core.sv).
-// Modules must stay in QIP or Quartus never sees them (orphan-class defect).
+# 720p / ascal-native present path (default OFF via QSF macros — see present_core.sv).
+# Modules must stay in QIP or Quartus never sees them (orphan-class defect).
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_video_timing_720p.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_video_timing_960.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_beam_content_de.sv
@@ -23,8 +23,8 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio_ingest.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/line_buf_ram.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/frame_store.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_frame_store.sv
-// 720p DDR ABI + fabric publication (w-path / w-mem). Compile always; product
-// hierarchy enable is FABRIC_FRAME_DMA (QSF). M10K: dma bounce ≤2; geom=0.
+# 720p DDR ABI + fabric publication (w-path / w-mem). Compile always; product
+# hierarchy enable is FABRIC_FRAME_DMA (QSF). M10K: dma bounce ≤2; geom=0.
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_i420_bank_geom.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_frame_base_mux.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_frame_dma.sv
