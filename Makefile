@@ -121,6 +121,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_p720_e2e_budget $(ROOT
 	$(ROOT)/build/test_geom_frame_cost
 	$(ROOT)/build/test_glass_loss_death_points
 	bash $(ROOT)/tests/unit/test_geometry_type_safety.sh
+	bash $(ROOT)/tests/unit/test_ddr_i420_bank_geom_rtl_sim.sh
 	$(ROOT)/build/test_frame_store_sdram_sim
 	$(ROOT)/build/test_frame_store_ddr_prefetch_sim
 	$(ROOT)/build/test_ddr_want_y_hblank_thrash

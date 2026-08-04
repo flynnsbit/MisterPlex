@@ -50,6 +50,38 @@ constexpr uint32_t kPlex480pYuv420pBankStride = 0x00080000u;
 constexpr uint32_t kPlex240pSpiRgb565BankStride = 0x00040000u;
 constexpr uint32_t kPlex480pRgb565DoorbellPhys = 0x3017F000u;
 constexpr uint32_t kPlex480pYuv420pDoorbellPhys = 0x300FF000u;
+
+// ---- 720p tier (present path; opt-in RBF macros — not product default) ----
+// Bank stride 0x180000 and doorbell 0x3047F000 match w-mem ABI select.
+// Plain ints for buffer math and define-parity string gates.
+// rtl/ddr_i420_bank_geom.sv elaborates the same pack (w-path presentation RTL).
+constexpr int kPlex720pCodedWidth = 1280;
+constexpr int kPlex720pCodedHeight = 720;
+constexpr int kPlex720pDisplayWidth = 1280;
+constexpr int kPlex720pDisplayHeight = 720;
+constexpr int kPlex720pPresentedWidth = 1280;
+constexpr int kPlex720pPresentedHeight = 720;
+constexpr int kPlex720pPillarboxLeft = 0;
+constexpr int kPlex720pPillarboxRight = 0;
+constexpr int kPlex720pYuv420pBytes = 1382400;
+constexpr int kPlex720pYPlaneOffset = 0;
+constexpr int kPlex720pUPlaneOffset = 921600;  // 1280*720
+constexpr int kPlex720pVPlaneOffset = 1152000; // 921600 + 640*360
+constexpr int kPlex720pYStrideBytes = 1280;
+constexpr int kPlex720pChromaStrideBytes = 640;
+constexpr int kPlex720pYuvLumaLineQwords = 160;   // 1280/8
+constexpr int kPlex720pYuvChromaLineQwords = 80;  // 1280/16
+constexpr uint32_t kPlex720pYuv420pBankStride = 0x00180000u;
+constexpr uint32_t kPlex720pPhysBase = 0x30180000u;
+constexpr uint32_t kPlex720pYuv420pDoorbellPhys = 0x3047F000u;
+static_assert(kPlex720pYuv420pBytes == kPlex720pCodedWidth * kPlex720pCodedHeight * 3 / 2,
+              "720p I420 byte count");
+static_assert(kPlex720pUPlaneOffset == kPlex720pCodedWidth * kPlex720pCodedHeight,
+              "720p U plane follows Y");
+static_assert(kPlex720pPhysBase + 2u * kPlex720pYuv420pBankStride - 0x1000u ==
+                  kPlex720pYuv420pDoorbellPhys,
+              "720p doorbell = base + 2*stride - 4KiB");
+
 constexpr uint32_t kDdrFrameDoorbellMagic = 0x504C584Bu; // PLXK
 constexpr uint32_t kDdrFrameDoorbellSeqMask = 0x1FFFFFFFu;
 constexpr uint8_t kYuv420BlackY = 16;

@@ -1268,6 +1268,26 @@ def check_ddr_frame_layout_contract() -> None:
         ("kYuv420BlackY", "DDR_FRAME_YUV_BLACK_Y"),
         ("kYuv420BlackU", "DDR_FRAME_YUV_BLACK_U"),
         ("kYuv420BlackV", "DDR_FRAME_YUV_BLACK_V"),
+        # 720p opt-in tier (w-path / w-mem ABI) — not product default scanout.
+        ("kPlex720pCodedWidth", "DDR_FRAME_720P_CODED_WIDTH"),
+        ("kPlex720pCodedHeight", "DDR_FRAME_720P_CODED_HEIGHT"),
+        ("kPlex720pDisplayWidth", "DDR_FRAME_720P_DISPLAY_WIDTH"),
+        ("kPlex720pDisplayHeight", "DDR_FRAME_720P_DISPLAY_HEIGHT"),
+        ("kPlex720pPresentedWidth", "DDR_FRAME_720P_PRESENTED_WIDTH"),
+        ("kPlex720pPresentedHeight", "DDR_FRAME_720P_PRESENTED_HEIGHT"),
+        ("kPlex720pPillarboxLeft", "DDR_FRAME_720P_PILLARBOX_LEFT"),
+        ("kPlex720pPillarboxRight", "DDR_FRAME_720P_PILLARBOX_RIGHT"),
+        ("kPlex720pYuv420pBytes", "DDR_FRAME_720P_YUV420P_BYTES"),
+        ("kPlex720pYPlaneOffset", "DDR_FRAME_720P_Y_PLANE_OFFSET"),
+        ("kPlex720pUPlaneOffset", "DDR_FRAME_720P_U_PLANE_OFFSET"),
+        ("kPlex720pVPlaneOffset", "DDR_FRAME_720P_V_PLANE_OFFSET"),
+        ("kPlex720pYStrideBytes", "DDR_FRAME_720P_Y_STRIDE_BYTES"),
+        ("kPlex720pChromaStrideBytes", "DDR_FRAME_720P_CHROMA_STRIDE_BYTES"),
+        ("kPlex720pYuvLumaLineQwords", "DDR_FRAME_720P_YUV_LUMA_LINE_QWORDS"),
+        ("kPlex720pYuvChromaLineQwords", "DDR_FRAME_720P_YUV_CHROMA_LINE_QWORDS"),
+        ("kPlex720pYuv420pBankStride", "DDR_FRAME_720P_YUV420P_BANK_STRIDE"),
+        ("kPlex720pPhysBase", "DDR_FRAME_720P_PHYS_BASE"),
+        ("kPlex720pYuv420pDoorbellPhys", "DDR_FRAME_720P_YUV420P_DOORBELL_PHYS"),
     ]
     for host_name, rtl_name in pairs:
         hv = cpp_const(host, host_name)
@@ -1312,10 +1332,28 @@ def check_ddr_frame_layout_contract() -> None:
             "deliberate RTL CODED_WIDTH/Y_STRIDE 624→320 fault did not diverge from host "
             f"(fault_coded={fault_coded} fault_stride={fault_stride} host_stride={host_stride})"
         )
+    check(
+        cpp_const(host, "kPlex720pYuv420pBytes") == 1_382_400,
+        "720p I420 must be 1382400 bytes",
+    )
+    check(
+        cpp_const(host, "kPlex720pPhysBase")
+        + 2 * cpp_const(host, "kPlex720pYuv420pBankStride")
+        - 0x1000
+        == cpp_const(host, "kPlex720pYuv420pDoorbellPhys"),
+        "720p doorbell must be base + 2*stride - 4KiB",
+    )
+    # Negative: 720p frame must not fit product 480p bank stride (naive W/H-only retarget).
+    check(
+        cpp_const(host, "kPlex720pYuv420pBytes")
+        > cpp_const(host, "kPlex480pYuv420pBankStride"),
+        "720p payload must exceed 480p bank stride (forces ABI retarget)",
+    )
     print("PASS DDR frame layout ARM/RTL contract")
     print(
         "PASS DDR stride parity red-check: RTL CODED_WIDTH/Y_STRIDE 624→320 diverges from host"
     )
+    print("PASS DDR 720p ABI pack + 720p-vs-480p stride negative")
 
 
 def check_runtime_ddr_layout_literal_sweep() -> None:
