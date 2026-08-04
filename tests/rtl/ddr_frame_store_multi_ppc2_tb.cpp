@@ -338,6 +338,9 @@ struct ScanResult {
 	int samples_ok = 0;
 	int samples_fail = 0;
 	int rgb_mismatch = 0;
+	// rd-duck: odd/even lane checksums must differ when adjacent Y differ.
+	int dual_lane_distinct = 0;
+	int dual_lane_same = 0;
 	uint64_t fnv_got = 0xcbf29ce484222325ull;
 	uint64_t fnv_want = 0xcbf29ce484222325ull;
 };
@@ -425,6 +428,15 @@ ScanResult scanFull(Sim& sim, int bank, bool sample_check) {
 					         sim.laneB(static_cast<int>(lane)),
 					         wgrp[lane], static_cast<int>(lane));
 				}
+				if (gPpc >= 2 && wgrp.size() >= 2) {
+					const uint8_t r0 = sim.laneR(0), g0 = sim.laneG(0), b0 = sim.laneB(0);
+					const uint8_t r1 = sim.laneR(1), g1 = sim.laneG(1), b1 = sim.laneB(1);
+					const uint32_t c0 = uint32_t(r0) * 3u + uint32_t(g0) * 5u + uint32_t(b0) * 7u;
+					const uint32_t c1 = uint32_t(r1) * 3u + uint32_t(g1) * 5u + uint32_t(b1) * 7u;
+					// yAt(x)=x*3+... so adjacent X almost always differ → distinct RGB.
+					if (c0 != c1) ++r.dual_lane_distinct;
+					else ++r.dual_lane_same;
+				}
 			}
 		}
 		++r.lines;
@@ -461,6 +473,16 @@ ScanResult scanFull(Sim& sim, int bank, bool sample_check) {
 		std::cerr << "FAIL scanFull: FNV mismatch got=0x" << std::hex << r.fnv_got
 		          << " want=0x" << r.fnv_want << std::dec << "\n";
 		std::exit(1);
+	}
+	// rd-duck FIT BLOCKER tooth: scalar-replicate would make every group csum equal.
+	if (gPpc >= 2) {
+		if (r.dual_lane_distinct < 1000) {
+			std::cerr << "FAIL scanFull: dual_lane_distinct=" << r.dual_lane_distinct
+			          << " (looks like scalar replicate of lane0)\n";
+			std::exit(1);
+		}
+		std::cout << "OK dual_lane odd/even distinct groups=" << r.dual_lane_distinct
+		          << " same=" << r.dual_lane_same << "\n";
 	}
 	return r;
 }

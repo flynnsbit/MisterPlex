@@ -50,9 +50,15 @@ def main() -> int:
     if "FS_LINE_COUNT" not in core or ".LINE_COUNT(FS_LINE_COUNT)" not in core:
         fails.append("ddr_frame_store must use FS_LINE_COUNT (32-line 720p floor)")
 
-    # MULTI elab requires FRAME 1280x720
-    if "PRESENT_MULTI_PIXEL requires FRAME_W=1280" not in core:
-        fails.append("MULTI path must $error unless FRAME 1280x720")
+    # MULTI requires FRAME 1280x720 via synthesis-active recipe (rd-duck FIT BLOCKER).
+    # Accept MP_FRAME_OK/mp_recipe_ok (preferred) or legacy $error string.
+    has_recipe = ("MP_FRAME_OK" in core and "mp_recipe_ok" in core and "1280" in core)
+    has_legacy_err = "PRESENT_MULTI_PIXEL requires FRAME_W=1280" in core
+    if not has_recipe and not has_legacy_err:
+        fails.append("MULTI path must gate FRAME 1280x720 (mp_recipe_ok or $error)")
+    if has_recipe and "mp_beam_en" in core and "mp_recipe_ok" not in core.split("mp_beam_en")[1][:200]:
+        # soft: dual_lane static owns beam_en detail
+        pass
 
     # QSF recipe: commented MULTI + FRAME 1280 + LINES_16 (default-off)
     def commented_recipe(macro: str) -> bool:

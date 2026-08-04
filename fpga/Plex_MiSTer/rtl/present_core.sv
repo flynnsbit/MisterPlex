@@ -592,11 +592,8 @@ module present_core #(
 	// a 500 µs DDR blackout; 32 lines do not — dual-set/CDC tax above naive 16).
 	localparam int FS_LINE_COUNT  = DDR_FS_LINE_COUNT;
 
-`ifdef PRESENT_MULTI_PIXEL
+// Port widths track PRESENT_PPC (1 default). MULTI product recipe sets PPC=2.
 	localparam int FS_PX_PER_CLK = PRESENT_PPC;
-`else
-	localparam int FS_PX_PER_CLK = 1;
-`endif
 	wire [FS_PX_PER_CLK*8-1:0] fs_rd_r_n, fs_rd_g_n, fs_rd_b_n;
 	wire [FS_PX_PER_CLK-1:0]   fs_rd_lv_n;
 	wire                       fs_rd_n_valid;
@@ -617,7 +614,8 @@ module present_core #(
 		.PHYS_BASE(FS_PHYS_BASE),
 		.HPS_BANK_STRIDE_BYTES(FS_BANK_STRIDE),
 		.DOORBELL_PHYS(FS_DOORBELL),
-		.PX_PER_CLK(FS_PX_PER_CLK)
+		// PRESENT_PPC (1 default; 2 under MULTI product recipe). Not hard-1.
+		.PX_PER_CLK(PRESENT_PPC)
 	) fstore (
 		.clk(clk),
 		.clk_ddr(clk_ddr),
@@ -754,21 +752,31 @@ module present_core #(
 `ifdef PRESENT_MULTI_PIXEL
 	// ------------------------------------------------------------------
 	// CEA 720p multi-pixel path (macro ON only). Default OFF → leg_* above.
-	// Store exposes N-wide RGB (PX_PER_CLK); beam glass drives store address.
+	// rd-duck FIT BLOCKER: dual-lane store RGB + glass→store + synth recipe.
 	// ------------------------------------------------------------------
-	// synthesis translate_off
+	// Synthesis-ACTIVE recipe gate (not translate_off — survives fit elab).
+	// Illegal PPC/frame → mp_recipe_ok=0 freezes beam (no silent wrong picture).
+	localparam bit MP_PPC_OK =
+		(PRESENT_PPC == 1) || (PRESENT_PPC == 2) || (PRESENT_PPC == 4);
+	localparam bit MP_FRAME_OK = (FRAME_W == 1280) && (FRAME_H == 720);
+	localparam bit MP_RECIPE_OK = MP_PPC_OK && MP_FRAME_OK;
+	(* noprune *) wire mp_recipe_ok = MP_RECIPE_OK;
+`ifndef SYNTHESIS
 	initial begin
-		if (!(PRESENT_PPC == 1 || PRESENT_PPC == 2 || PRESENT_PPC == 4))
-			$error("PRESENT_MULTI_PIXEL requires PRESENT_PX_PER_CLK in {1,2,4} (got %0d)",
+		if (!MP_PPC_OK)
+			$error("PRESENT_MULTI_PIXEL: PRESENT_PX_PER_CLK must be 1|2|4 (got %0d)",
 				PRESENT_PPC);
-		if (FRAME_W != 1280 || FRAME_H != 720)
-			$error("PRESENT_MULTI_PIXEL requires FRAME_W=1280 FRAME_H=720 for 720p DDR ABI (got %0d x %0d)",
+		if (!MP_FRAME_OK)
+			$error("PRESENT_MULTI_PIXEL needs FRAME 1280x720 (got %0dx%0d)",
 				FRAME_W, FRAME_H);
 `ifdef PRESENT_BEAM_960
 		$error("PRESENT_MULTI_PIXEL and PRESENT_BEAM_960 are mutually exclusive");
 `endif
+`ifndef DDR_FRAME_STORE
+		$error("PRESENT_MULTI_PIXEL requires DDR_FRAME_STORE (no scalar-replicate fallback)");
+`endif
 	end
-	// synthesis translate_on
+`endif
 
 	wire                mp_in_ready;
 	wire                mp_beam_ce;
@@ -783,9 +791,8 @@ module present_core #(
 localparam int MP_CLK_PIX_HZ = `MISTERPLEX_CLK_PIX_HZ;
 	localparam bit MP_INCLUDE_SYNC = 1'b1;
 
-	// Live timing instance (in addition to keep_* packs) drives beam params via
-	// parameters below — pack remains hierarchical proof of CEA constants.
-	wire mp_beam_en = ~reset & mp_in_ready;
+	// Beam runs only on a legal recipe (PPC + FRAME). Wrong QSF → black, not bad H.
+	wire mp_beam_en = ~reset & mp_in_ready & mp_recipe_ok;
 	present_beam_ppc #(
 		.PX_PER_CLK(PRESENT_PPC),
 		.H_DE(1280),
@@ -811,40 +818,56 @@ localparam int MP_CLK_PIX_HZ = `MISTERPLEX_CLK_PIX_HZ;
 		.frame_start(mp_fstart)
 	);
 
-	// Identity-clamp glass → store; register on beam_ce (matches classic 1-cycle store_x).
-	reg [FRAME_X_W-1:0] mp_store_x;
-	reg [FRAME_Y_W-1:0] mp_store_y;
-	reg                 mp_store_de;
+	// Identity-clamp glass → store (NOT Template store_x/y).
+	// Registered names match dual-lane static gate (mp_store_x_r / fstore_rd_*).
+	reg [FRAME_X_W-1:0] mp_store_x_r;
+	reg [FRAME_Y_W-1:0] mp_store_y_r;
+	reg                 mp_store_de_r;
+	reg [PRESENT_PPC-1:0] mp_lane_de_r;
 	always @(posedge clk) begin
 		if (reset) begin
-			mp_store_x  <= '0;
-			mp_store_y  <= '0;
-			mp_store_de <= 1'b0;
+			mp_store_x_r  <= '0;
+			mp_store_y_r  <= '0;
+			mp_store_de_r <= 1'b0;
+			mp_lane_de_r  <= '0;
 		end else if (mp_beam_ce) begin
-			mp_store_x  <= (mp_glass_x0 > FRAME_LAST_X_16) ? FRAME_LAST_X
-			             : mp_glass_x0[FRAME_X_W-1:0];
-			mp_store_y  <= (mp_glass_y > FRAME_LAST_Y_16) ? FRAME_LAST_Y
-			             : mp_glass_y[FRAME_Y_W-1:0];
-			mp_store_de <= |mp_lane_de;
+			mp_store_x_r  <= (mp_glass_x0 > FRAME_LAST_X_16) ? FRAME_LAST_X
+			               : mp_glass_x0[FRAME_X_W-1:0];
+			mp_store_y_r  <= (mp_glass_y > FRAME_LAST_Y_16) ? FRAME_LAST_Y
+			               : mp_glass_y[FRAME_Y_W-1:0];
+			mp_store_de_r <= |mp_lane_de;
+			mp_lane_de_r  <= mp_lane_de;
 		end
 	end
-	assign fs_rd_x_w      = mp_store_x;
-	assign fs_rd_y_w      = mp_store_y;
-	assign fs_rd_active_w = mp_store_de;
+	// Alias names for static gates / scaler-land parity.
+	wire [FRAME_X_W-1:0] fstore_rd_x = mp_store_x_r;
+	wire [FRAME_Y_W-1:0] fstore_rd_y = mp_store_y_r;
+	wire                 fstore_rd_a = mp_store_de_r;
+	assign fs_rd_x_w      = fstore_rd_x;
+	assign fs_rd_y_w      = fstore_rd_y;
+	assign fs_rd_active_w = fstore_rd_a;
 
-	// N-wide store RGB (ddr_frame_store.PX_PER_CLK). PPC=1: lane0 == fr/fg/fb.
-	// PPC>1: real multi-pixel YUV→RGB from line-buffer qwords (even glass_x0).
+	// Real dual-lane store RGB — NOT {PRESENT_PPC{fr}} scalar replicate.
+	// Alias fs_r_n for dual-lane static gate; product feed is mp_npx_*.
 `ifdef DDR_FRAME_STORE
-	wire [PRESENT_PPC*8-1:0] mp_npx_r = fs_rd_r_n;
-	wire [PRESENT_PPC*8-1:0] mp_npx_g = fs_rd_g_n;
-	wire [PRESENT_PPC*8-1:0] mp_npx_b = fs_rd_b_n;
-	wire [PRESENT_PPC-1:0]   mp_npx_lv = mp_lane_de & fs_rd_lv_n & {PRESENT_PPC{has_frame}};
-	wire _unused_fs_n_valid = fs_rd_n_valid;
+	wire [PRESENT_PPC*8-1:0] fs_r_n = fs_rd_r_n;
+	wire [PRESENT_PPC*8-1:0] fs_g_n = fs_rd_g_n;
+	wire [PRESENT_PPC*8-1:0] fs_b_n = fs_rd_b_n;
+	wire [PRESENT_PPC-1:0]   fs_lane_v_n = fs_rd_lv_n;
+	wire                     fs_n_valid = fs_rd_n_valid;
+	wire [PRESENT_PPC*8-1:0] mp_npx_r = fs_r_n;
+	wire [PRESENT_PPC*8-1:0] mp_npx_g = fs_g_n;
+	wire [PRESENT_PPC*8-1:0] mp_npx_b = fs_b_n;
 `else
-	wire [PRESENT_PPC*8-1:0] mp_npx_r = {PRESENT_PPC{fr}};
-	wire [PRESENT_PPC*8-1:0] mp_npx_g = {PRESENT_PPC{fg}};
-	wire [PRESENT_PPC*8-1:0] mp_npx_b = {PRESENT_PPC{fb}};
-	wire [PRESENT_PPC-1:0]   mp_npx_lv = mp_lane_de & {PRESENT_PPC{has_frame}};
+	// No product path: force zero (sim $error above). Never replicate scalar.
+	wire [PRESENT_PPC*8-1:0] fs_r_n = '0;
+	wire [PRESENT_PPC*8-1:0] fs_g_n = '0;
+	wire [PRESENT_PPC*8-1:0] fs_b_n = '0;
+	wire [PRESENT_PPC-1:0]   fs_lane_v_n = '0;
+	wire                     fs_n_valid = 1'b0;
+	wire [PRESENT_PPC*8-1:0] mp_npx_r = fs_r_n;
+	wire [PRESENT_PPC*8-1:0] mp_npx_g = fs_g_n;
+	wire [PRESENT_PPC*8-1:0] mp_npx_b = fs_b_n;
 `endif
 
 	// Align store response: 1 (store_x reg) + typical ddr RGB pipe ≈ 4.
@@ -856,6 +879,7 @@ localparam int MP_CLK_PIX_HZ = `MISTERPLEX_CLK_PIX_HZ;
 	reg mp_tq_vs [0:MP_STORE_LAT-1];
 	reg mp_tq_fs [0:MP_STORE_LAT-1];
 	reg [PRESENT_PPC-1:0] mp_tq_lde [0:MP_STORE_LAT-1];
+	reg [PRESENT_PPC-1:0] mp_tq_slv [0:MP_STORE_LAT-1];
 	integer mp_ti;
 	always @(posedge clk) begin
 		if (reset) begin
@@ -867,6 +891,7 @@ localparam int MP_CLK_PIX_HZ = `MISTERPLEX_CLK_PIX_HZ;
 				mp_tq_vs[mp_ti]  <= 1'b0;
 				mp_tq_fs[mp_ti]  <= 1'b0;
 				mp_tq_lde[mp_ti] <= '0;
+				mp_tq_slv[mp_ti] <= '0;
 			end
 		end else begin
 			for (mp_ti = MP_STORE_LAT-1; mp_ti > 0; mp_ti = mp_ti - 1) begin
@@ -877,6 +902,7 @@ localparam int MP_CLK_PIX_HZ = `MISTERPLEX_CLK_PIX_HZ;
 				mp_tq_vs[mp_ti]  <= mp_tq_vs[mp_ti-1];
 				mp_tq_fs[mp_ti]  <= mp_tq_fs[mp_ti-1];
 				mp_tq_lde[mp_ti] <= mp_tq_lde[mp_ti-1];
+				mp_tq_slv[mp_ti] <= mp_tq_slv[mp_ti-1];
 			end
 			mp_tq_v[0]   <= mp_beam_ce;
 			mp_tq_hb[0]  <= mp_beam_ce ? mp_hb : 1'b1;
@@ -885,9 +911,13 @@ localparam int MP_CLK_PIX_HZ = `MISTERPLEX_CLK_PIX_HZ;
 			mp_tq_vs[0]  <= mp_beam_ce ? mp_vs : 1'b0;
 			mp_tq_fs[0]  <= mp_beam_ce ? mp_fstart : 1'b0;
 			mp_tq_lde[0] <= mp_beam_ce ? mp_lane_de : '0;
+			// Sample store lane_valid with the same beam_ce cadence (pipe align).
+			mp_tq_slv[0] <= fs_lane_v_n;
 		end
 	end
 	wire mp_push = mp_tq_v[MP_STORE_LAT-1];
+	wire [PRESENT_PPC-1:0] mp_npx_lv =
+		mp_tq_lde[MP_STORE_LAT-1] & mp_tq_slv[MP_STORE_LAT-1] & {PRESENT_PPC{has_frame}};
 
 `ifdef PRESENT_CLK_PIX_PLL
 	(* noprune *) reg mp_rst_pix0, mp_rst_pix1;
@@ -919,7 +949,7 @@ localparam int MP_CLK_PIX_HZ = `MISTERPLEX_CLK_PIX_HZ;
 		.in_r(mp_npx_r),
 		.in_g(mp_npx_g),
 		.in_b(mp_npx_b),
-		.in_lane_valid(mp_tq_lde[MP_STORE_LAT-1] & {PRESENT_PPC{has_frame}}),
+		.in_lane_valid(mp_npx_lv),
 		.in_hblank(mp_tq_hb[MP_STORE_LAT-1]),
 		.in_hsync(mp_tq_hs[MP_STORE_LAT-1]),
 		.in_vblank(mp_tq_vb[MP_STORE_LAT-1]),
@@ -941,9 +971,9 @@ localparam int MP_CLK_PIX_HZ = `MISTERPLEX_CLK_PIX_HZ;
 		.rd_empty(mp_rd_empty)
 	);
 
-	// Store read follows beam glass (mp_store_* → fs_rd_*_w). Needs FRAME_W/H
-	// matching glass (1280×720) when this path is product-enabled.
-	wire _unused_mp_glass = |{mp_npx_lv, mp_wr_full, mp_wr_af, mp_rd_ur, mp_rd_empty, mp_out_fs};
+	// Glass drives fstore_rd_*; recipe bit kept alive for post-fit hierarchy.
+	wire _unused_mp_glass = |{mp_npx_lv, mp_wr_full, mp_wr_af, mp_rd_ur, mp_rd_empty,
+		mp_out_fs, fs_n_valid, mp_recipe_ok, mp_lane_de_r};
 	wire _unused_mp_clk_hz = (MP_CLK_PIX_HZ == 0);
 
 	assign r = mp_out_r;
