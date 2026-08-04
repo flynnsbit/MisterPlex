@@ -71,6 +71,12 @@ def main() -> int:
     if not re.search(r"assign\s+fs_wr_en\s*=\s*1'b0", m.group(1)):
         print("FAIL: nostub arm must tie fs_wr_en=0", file=sys.stderr)
         return 1
+    if not re.search(r"assign\s+product_recon_ok\s*=\s*1'b0", m.group(1)):
+        print("FAIL: nostub arm must tie product_recon_ok=0", file=sys.stderr)
+        return 1
+    if not re.search(r"assign\s+hybrid_host_required\s*=\s*1'b1", m.group(1)):
+        print("FAIL: nostub arm must set hybrid_host_required=1", file=sys.stderr)
+        return 1
 
     pnt = re.sub(r"\s+", "", present)
     if "use_ext=has_frame&&!use_frame_store" not in pnt:

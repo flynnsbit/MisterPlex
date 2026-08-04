@@ -67,9 +67,23 @@ def main() -> int:
     if not blk or "decode_stub" in blk.group(1) or "decode_stub" not in blk.group(2):
         print("FAIL: stream_path PRODUCT_NO_STUB gate broken", file=sys.stderr)
         return 1
+    nostub = blk.group(1)
+    # Undriven hybrid/product ports would X-prop into stub_allow / keep chains.
+    for needle in (
+        r"assign\s+product_recon_ok\s*=\s*1'b0",
+        r"assign\s+hybrid_host_required\s*=\s*1'b1",
+        r"assign\s+hybrid_fpga_owned\s*=\s*1'b0",
+        r"assign\s+fs_wr_en\s*=\s*1'b0",
+    ):
+        if not re.search(needle, nostub):
+            print(f"FAIL: nostub arm missing tie-off /{needle}/", file=sys.stderr)
+            return 1
 
     if "stub_allow" not in plex:
         print("FAIL: stub_allow missing", file=sys.stderr)
+        return 1
+    if "product_recon_ok_w" not in plex:
+        print("FAIL: stub_allow must gate on product_recon_ok_w", file=sys.stderr)
         return 1
 
     for mod in ("h264_decode_core", "h264_decode_top", "h264_decode_skeleton"):
