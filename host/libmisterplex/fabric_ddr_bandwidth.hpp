@@ -11,9 +11,10 @@
 //   Fabric full H.264 decode = multi-month endgame (NOT near-term; w-path/w-clock).
 //   Near-term unknown = KernelDma/WC → Option-C bank. Route A UNSCORED (pipe A/B).
 //
-// SEPARATION (rd-duck): fabric f2sdram beat budget / Verilator G4 proves the
-// *fabric* can move 2×1382400 B inside 24 fps on clk_ddr. That is NOT the ARM
-// uncached /dev/mem store cost. Do not cite G4 as closing the 14.978 ms problem.
+// SEPARATION (rd-duck BLOCKING): ideal beat counters (ddr_bandwidth_meter /
+// ddr_contended_bandwidth) are NOT bus proof — no DDRAM ports/stalls.
+// Real fabric scanout bus model: tests/rtl/ddr_frame_store_bus_stall_tb*.
+// ARM uncached /dev/mem store (~14.978 ms/f) is a separate host critical path.
 //
 // f2sdram peak (theoretical): clk_ddr * 8 B/cycle if 100% util.
 // Real efficiency unknown until parent measures — do not claim closes on glass.
@@ -175,13 +176,17 @@ constexpr double kParentCleanDecodeMarginMs = kFrameBudget24Ms - kParentCleanDec
 constexpr double kParentSweep116DecodeMs = 32.705;
 constexpr double kParentSweep116HeadroomMs = kFrameBudget24Ms - kParentSweep116DecodeMs; // 8.962
 constexpr double kParentArchiveBankCopyMs = 14.978;
-// Verilator contended R+W cycles @ ideal 1 beat/clk (w-mem G4) — fabric only.
-constexpr int kFabricContendedRwBeats720p = 345600; // 2 * (1382400/8)
+// Ideal arithmetic only (NOT bus proof). Real bus: ddr_frame_store_bus_stall TB.
+constexpr int kFabricIdealRwBeats720p = 345600; // 2 * (1382400/8) if 1 beat/clk
 constexpr int kFabricBudgetCycles24At90M = 3750000; // 90e6/24
 
-// Fabric side fits budget; ARM uncached copy does not — different bottlenecks.
+// Ideal counter inequality only — do not cite as measured fabric BW.
+inline bool fabricIdealRwBeatsFit24BudgetCounter() {
+    return kFabricIdealRwBeats720p <= kFabricBudgetCycles24At90M;
+}
+// Deprecated alias — name admits "ideal".
 inline bool fabricContendedRwFits24BudgetIdeal() {
-    return kFabricContendedRwBeats720p <= kFabricBudgetCycles24At90M;
+    return fabricIdealRwBeatsFit24BudgetCounter();
 }
 inline bool armDevMemCopyFitsSweep116Headroom() {
     return kParentArchiveBankCopyMs <= kParentSweep116HeadroomMs; // false

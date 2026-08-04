@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# 720p DDR bandwidth meter + bank geom guard (w-mem). Simulation proof.
+# Bank geom guard + ideal beat counters (w-mem). NOT DDR bus bandwidth proof.
+# Real store+stall: tests/unit/test_ddr_frame_store_bus_stall.sh
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 RUN_VERILATOR="$ROOT/scripts/run_verilator.sh"
@@ -43,7 +44,8 @@ if [[ "$RC" -ne 0 ]]; then
 fi
 # Static gate + runtime: prove TB executed (compile-only ≠ PASS).
 assert_sim_executed "ddr_bw_geom" "$OUT" \
-  "PASS G1" "PASS R1" "PASS G2" "PASS R2 rtl_budget_fail" "PASS G3" \
-  "PASS G4 contended_rw24" "PASS R3 contended_tiny_budget" "PASS R4 scan_starved" \
+  "PASS G1" "PASS R1" "PASS G2 ideal_counter_rw" "PASS R2 rtl_budget_fail" \
+  "PASS G3 m10k_line_latency_stub" "PASS G4 ideal_rr_counter24" \
+  "PASS R3 ideal_rr_tiny_budget" "PASS R4 scan_starved" \
   "PASS ddr_bw_geom all"
 exit 0

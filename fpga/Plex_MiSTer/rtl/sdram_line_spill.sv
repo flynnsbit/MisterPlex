@@ -1,15 +1,12 @@
-// sdram_line_spill — single-line staging toward the external SDRAM stick (w-mem).
+// sdram_line_spill — MISNOMER: M10K line hold + placeholder latency (w-mem).
 //
-// Tiering intent (product architecture):
-//   M10K  : active luma/chroma linebufs (1280 B = 1 M10K bit budget) — fabric_luma_linebuf
-//   SDRAM : optional spill / prefetch of the NEXT line when DDR3 f2sdram is contended
-//   DDR3  : double-banked full-frame I420 (Option-C 0x180000 stride)
+// *** NOT SDRAM. Does NOT drive sdram.sv / board SDRAM PHY (rd-duck). ***
+// Stores the line in M10K (`ramstyle=M10K`) and waits SPILL_LATENCY clocks.
+// That is a latency stub for TB smoke only — not memory tiering, not a stick.
 //
-// This module is a synthesizable *line* FIFO with programmable fill latency to
-// model SDRAM row cost in sim. It does NOT drive the board SDRAM PHY (sdram.sv
-// owns that). Single stick only — never dual-sdram.
-//
-// 1280-byte line default matches 720p luma = exactly one M10K.
+// Real tiering (when built): M10K linebufs + single SDRAM stick (sdram.sv) +
+// DDR3 Option-C banks. This file must not be cited as "SDRAM use".
+// Module name retained for qip stability; treat as m10k_line_latency_stub.
 
 `default_nettype none
 

@@ -1,15 +1,13 @@
-// ddr_contended_bandwidth — multi-client f2sdram beat share model (w-mem).
+// ddr_contended_bandwidth — IDEAL RR BEAT COUNTER (w-mem).
 //
-// Models the product DDR3 path under concurrent load:
-//   C0 host_wr   : ARM/HPS write of I420 into bank (33.18 MB/s @24)
-//   C1 scan_rd   : fabric read of I420 for present (same bytes/frame)
-//   C2 spill_rw  : optional SDRAM line spill assist (small; default OFF)
+// *** NOT A DDR BUS / ARBITER SIMULATION (rd-duck). ***
+// No DDRAM_BUSY, no waitrequest, no burst, no real ports. Serves one abstract
+// "beat" per clock to RR clients. HOST_WR_BYTES here is a *fabric-side* byte
+// counter label only — it does NOT model ARM /dev/mem uncached stores
+// (parent: 14.978 ms/f). Real store+stall proof:
+//   tests/rtl/ddr_frame_store_bus_stall_tb*
 //
-// One beat (8 B) per clk when any client is served. Round-robin among ready
-// clients. Proves (in sim) whether combined demand finishes inside BUDGET_CYCLES.
-//
-// Not a full memory controller — instrumentation / TB block. Product wiring is
-// optional; default OFF (files.qip only until parent enables).
+// Instrumentation stub; default OFF product path.
 
 `default_nettype none
 

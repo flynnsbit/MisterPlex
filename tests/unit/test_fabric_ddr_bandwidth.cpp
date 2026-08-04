@@ -72,10 +72,9 @@ int main() {
     // Direct product path well under half-share writer budget class.
     CHECK(fabricProductPathDirectMBps(24.0) < 0.5 * kFabricDdrPeakMBps);
 
-    // rd-duck separation: fabric ideal R+W fits 24fps; ARM /dev/mem copy does not
-    // fit Sweep-116 headroom. G4 sim ≠ ARM store cost.
-    CHECK(fabricContendedRwFits24BudgetIdeal());
-    CHECK(kFabricContendedRwBeats720p == 345600);
+    // Ideal counter arithmetic only (NOT bus proof). ARM /dev/mem separate.
+    CHECK(fabricIdealRwBeatsFit24BudgetCounter());
+    CHECK(kFabricIdealRwBeats720p == 345600);
     CHECK(kFabricBudgetCycles24At90M == 3750000);
     CHECK(kParentSweep116DecodeMs == 32.705);
     CHECK(kParentArchiveBankCopyMs == 14.978);

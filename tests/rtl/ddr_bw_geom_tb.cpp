@@ -1,12 +1,16 @@
-// Verilator TB: 720p DDR bandwidth + bank geom guard (w-mem).
-// Proves with SIMULATION (not host arithmetic alone):
+// Verilator TB: bank geom guard + IDEAL beat counters (w-mem).
+//
+// *** NOT DDR bandwidth bus proof (rd-duck BLOCKING). ***
+// G2/G4 drive beat_fire or ideal RR with no DDRAM ports — arithmetic only.
+// Real store+BUSY/burst proof: tests/rtl/ddr_frame_store_bus_stall_tb*.
+//
 //   G1: Option-C 720p geometry does not overflow
 //   R1: legacy 512KiB + 720p sticky-rejects (NEGATIVE teeth)
-//   G2: combined R+W 2*1382400 B @ 1 beat/clk finishes inside 24fps budget
-//   R2: starved beat rate trips budget_fail (NEGATIVE teeth)
-//   G3: sdram_line_spill latency path completes
-//   G4: contended host_wr+scan_rd @24 finishes inside budget (SIM proof)
-//   R3: contended tiny budget → budget_fail (NEGATIVE teeth)
+//   G2: ideal counter TARGET beats < budget (NOT bus)
+//   R2: starved beat_fire → budget_fail (counter teeth only)
+//   G3: m10k_line_latency_stub (sdram_line_spill misnomer) completes
+//   G4: ideal RR counter finishes (NOT bus / NOT ARM /dev/mem)
+//   R3/R4: ideal counter NEG teeth
 
 #include "Vddr_bw_geom_tb_top.h"
 #include "verilated.h"
@@ -124,7 +128,8 @@ int main(int argc, char** argv) {
     // At 1 beat/clk, cycles ≈ 345600 << 3750000
     if (top.bw_cycles > 346000u)
         return fail("G2 cycles unexpectedly large");
-    std::printf("PASS G2 bw_combined_rw beats=%u cycles=%u budget=%u fail=0\n",
+    std::printf("PASS G2 ideal_counter_rw beats=%u cycles=%u budget=%u fail=0 "
+                "(NOT bus proof)\n",
                 top.bw_beats, top.bw_cycles, top.bw_budget_cycles);
 
     // ---------- R2: starved bus → budget_fail (NEGATIVE) ----------
@@ -216,7 +221,7 @@ int main(int argc, char** argv) {
         return fail("G3 rd_valid");
     if (top.sp_rd_data != static_cast<uint8_t>(100 * 3))
         return fail("G3 rd_data mismatch");
-    std::printf("PASS G3 sdram_line_spill latency+readback\n");
+    std::printf("PASS G3 m10k_line_latency_stub (not SDRAM PHY)\n");
 
     // ---------- G4: contended concurrent host_wr + scan_rd @24 ----------
     // RR serves one client/clk → total beats = 2*(1382400/8) = 345600
@@ -251,7 +256,8 @@ int main(int argc, char** argv) {
         return fail("G4 total_beats != 345600");
     if (top.c24_cycles > 346000u)
         return fail("G4 cycles unexpectedly large");
-    std::printf("PASS G4 contended_rw24 host=%u scan=%u total=%u cycles=%u fail=0\n",
+    std::printf("PASS G4 ideal_rr_counter24 host=%u scan=%u total=%u cycles=%u fail=0 "
+                "(NOT bus/ARM proof)\n",
                 top.c24_host_beats, top.c24_scan_beats, top.c24_total_beats, top.c24_cycles);
 
     // ---------- R3: tiny budget NEG (cannot finish 345600 in 1000 cyc) ----------
@@ -272,7 +278,7 @@ int main(int argc, char** argv) {
         return fail("R3 NEG: done must not set");
     if (top.cneg_total_beats >= 345600u)
         return fail("R3 NEG: should not reach full transfer");
-    std::printf("PASS R3 contended_tiny_budget fail=1 cycles=%u beats=%u (NEG teeth)\n",
+    std::printf("PASS R3 ideal_rr_tiny_budget fail=1 cycles=%u beats=%u (NEG teeth)\n",
                 top.cneg_cycles, top.cneg_total_beats);
 
     // ---------- R4: scan starved (enable=0) under 24fps budget — still fails ----------

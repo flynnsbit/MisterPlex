@@ -1,18 +1,16 @@
-// ddr_bandwidth_meter — prove a payload transfer fits a frame-time budget (w-mem).
+// ddr_bandwidth_meter — IDEAL BEAT COUNTER ONLY (w-mem).
 //
-// Models f2sdram beats: BEAT_BYTES=8 at clk_ddr (product 90 MHz, pll_0002.v).
-// On start, counts beat_fire cycles until TARGET_BYTES are moved. If cycles
-// exceed BUDGET_CYCLES before done, sticky budget_fail.
+// *** NOT A DDR BUS SIMULATION (rd-duck BLOCKING on ff696624). ***
+// Does NOT touch DDRAM_* ports. TB drives beat_fire=1 every cycle → this only
+// checks that TARGET_BEATS < BUDGET_CYCLES (arithmetic as a counter).
+// Zero arbitration, backpressure, latency, or real ddr_frame_store.
 //
-// Product numbers (compile-time helpers via parameters):
-//   720p I420 = 1_382_400 B = 172_800 beats
-//   clk_ddr 90e6 / 24 fps = 3_750_000 cycles/frame
-//   R+W combined = 345_600 beats → fits with large peak-util margin
+// COMBINED_RW must NOT be read as "ARM host write on f2sdram". Host cost is
+// CPU /dev/mem stores (~14.978 ms/f @ 88 MiB/s, parent HW) — see
+// ddr_zero_copy_ingest.hpp. Fabric scanout bus proof lives in
+// tests/rtl/ddr_frame_store_bus_stall_tb*.
 //
-// This is a SIMULATION / instrumentation block. It does not touch the real
-// DDRAM ports; TBs drive beat_fire. Keep off product critical path until
-// parent wires a real probe (default OFF via no files.qip enable alone —
-// module is inert unless instantiated).
+// Kept as a cheap cycle-budget helper / instrumentation stub only.
 
 `default_nettype none
 
