@@ -1,5 +1,7 @@
 #include "fpga_spi.hpp"
 
+#include "libmisterplex/spi_ack_wait.hpp"
+
 #include "libmisterplex/ddr_bank_release_select.hpp"
 #include "libmisterplex/plxd_liveness.hpp"
 #include "libmisterplex/status_telemetry.hpp"
@@ -946,9 +948,11 @@ bool FpgaSpi::kickDdrSpi(int bank, bool first_verify, bool& saw_busy, bool& saw_
         }
     }
     encodeDdrSpiKickStatusWord(word, bank, false, word);
-    writeStatusWordRaw(word);
+    if (!writeStatusWordRaw(word))
+        return false;
     encodeDdrSpiKickStatusWord(word, bank, true, word);
-    writeStatusWordRaw(word);
+    if (!writeStatusWordRaw(word))
+        return false;
     if (first_verify) {
         for (int i = 0; i < 40; ++i) {
             uint8_t raw[16]{};
@@ -967,7 +971,8 @@ bool FpgaSpi::kickDdrSpi(int bank, bool first_verify, bool& saw_busy, bool& saw_
         }
     }
     encodeDdrSpiKickStatusWord(word, bank, false, word);
-    writeStatusWordRaw(word);
+    if (!writeStatusWordRaw(word))
+        return false;
     if (first_verify) {
         uint8_t raw[16]{};
         if (readStatusRaw(raw)) {
@@ -981,7 +986,7 @@ bool FpgaSpi::kickDdrSpi(int bank, bool first_verify, bool& saw_busy, bool& saw_
         }
     }
     std::memcpy(status_, word, 16);
-    return true;
+    return err_.empty();
 }
 
 void FpgaSpi::gpoWrite(uint32_t v) {
@@ -1012,37 +1017,24 @@ void FpgaSpi::spiEn(uint32_t mask, int en) {
 
 uint16_t FpgaSpi::spiWord(uint16_t word) {
     // Caller must hold SpiExclusive (spiMutex). Touch err_ without re-locking.
-    uint32_t gpo = (gpoRead() & ~(0xFFFFu | SSPI_STROBE)) | word;
-    gpoWrite(gpo);
-    gpoWrite(gpo | SSPI_STROBE);
-    int gpi;
-    int spins = 0;
-    do {
-        gpi = gpiRead();
-        if (gpi < 0) {
-            err_ = "FPGA not in user mode";
-            return 0;
-        }
-        if (++spins > 1000000) {
-            err_ = "SPI ACK timeout (set)";
-            return 0;
-        }
-    } while (!(gpi & static_cast<int>(SSPI_STROBE)));
-
-    gpoWrite(gpo);
-    spins = 0;
-    do {
-        gpi = gpiRead();
-        if (gpi < 0) {
-            err_ = "FPGA not in user mode";
-            return 0;
-        }
-        if (++spins > 1000000) {
-            err_ = "SPI ACK timeout (clr)";
-            return 0;
-        }
-    } while (gpi & static_cast<int>(SSPI_STROBE));
-    return static_cast<uint16_t>(gpi);
+    // Production path = spiWordTxn (spi_ack_wait.hpp, unit-tested):
+    // yield + poll-budget abort; deassert SSPI_STROBE on set-phase fail.
+    const uint32_t gpo_cur = gpoRead();
+    const SpiWordTxnResult r = spiWordTxn(
+        word, gpo_cur, SSPI_STROBE,
+        [this](uint32_t v) { gpoWrite(v); },
+        [this]() { return gpiRead(); },
+        spiAckDefaultSleepUs);
+    lastAckSet_ = r.set_stats;
+    lastAckClr_ = r.clr_stats;
+    if (!r.ok) {
+        if (r.err)
+            err_ = r.err;
+        else if (err_.empty())
+            err_ = "SPI ACK failed";
+        return 0;
+    }
+    return r.data;
 }
 
 void FpgaSpi::spiByte(uint8_t b) { spiWord(b); }
@@ -1076,30 +1068,58 @@ void FpgaSpi::setDownload(int enable) {
 }
 
 // SPI body for UIO_SET_STATUS2. Caller must hold SpiExclusive and user mode.
-void FpgaSpi::writeStatusWordRaw(const uint8_t word[16]) {
-    std::memcpy(status_, word, 16);
-    enableIo(1);
-    spiWord(UIO_SET_STATUS2);
-    for (int i = 0; i < 16; i += 2) {
-        uint16_t w = static_cast<uint16_t>((status_[i + 1] << 8) | status_[i]);
-        spiWord(w);
+// status_ shadow updates ONLY on full success (rd-duck #2).
+bool FpgaSpi::writeStatusWordRaw(const uint8_t word[16]) {
+    if (!word) {
+        err_ = "writeStatusWordRaw: null";
+        return false;
     }
-    enableIo(0);
+    err_.clear();
+    int failed_at = -1;
+    const char* terr = nullptr;
+    const bool ok = statusWriteWordTxnEnabled(
+        word, status_,
+        [this](uint16_t w) -> SpiTxnPhaseResult {
+            (void)spiWord(w);
+            if (!err_.empty())
+                return SpiTxnPhaseResult{false, err_.c_str()};
+            return SpiTxnPhaseResult{true, nullptr};
+        },
+        [this](int on) { enableIo(on); }, failed_at, terr);
+    if (!ok) {
+        if (terr && err_.empty())
+            err_ = terr;
+        else if (err_.empty())
+            err_ = "writeStatusWordRaw: incomplete";
+        lastStatusWriteFailedAt_ = failed_at;
+        return false;
+    }
+    lastStatusWriteFailedAt_ = -1;
+    return true;
 }
 
 // SPI body for UIO_GET_STATUS. Caller must hold SpiExclusive and user mode.
 bool FpgaSpi::readStatusRaw(uint8_t out[16]) {
     if (!out)
         return false;
+    err_.clear();
     enableIo(1);
     (void)spiWord(UIO_GET_STATUS);
+    if (!err_.empty()) {
+        enableIo(0);
+        return false;
+    }
     for (int i = 0; i < 16; i += 2) {
         uint16_t w = spiWord(0);
+        if (!err_.empty()) {
+            enableIo(0);
+            return false;
+        }
         out[i] = static_cast<uint8_t>(w & 0xFF);
         out[i + 1] = static_cast<uint8_t>((w >> 8) & 0xFF);
     }
     enableIo(0);
-    return err_.empty();
+    return true;
 }
 
 // UIO_GET_STRING: the same read Main_MiSTer does to build the OSD. Reading it back
@@ -1150,8 +1170,7 @@ bool FpgaSpi::setStatusWord(const uint8_t word[16]) {
         return false;
     }
     err_.clear();
-    writeStatusWordRaw(word);
-    return err_.empty();
+    return writeStatusWordRaw(word);
 }
 
 bool FpgaSpi::setStatusBit(int bit, int value) {

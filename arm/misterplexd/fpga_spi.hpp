@@ -12,6 +12,7 @@
 #include "libmisterplex/ddr_bitstream_ring.hpp"
 #include "libmisterplex/ddr_present_bank.hpp"
 #include "libmisterplex/input_mailbox.hpp"
+#include "libmisterplex/spi_ack_wait.hpp"
 #include "libmisterplex/plxd_liveness.hpp"
 
 namespace misterplex {
@@ -309,6 +310,9 @@ public:
     std::string lastError() const;
     // Last successful frame push duration (ms)
     double lastPushMs() const { return lastPushMs_; }
+    SpiAckWaitStats lastSpiAckSetStats() const { return lastAckSet_; }
+    SpiAckWaitStats lastSpiAckClrStats() const { return lastAckClr_; }
+    int lastStatusWriteFailedAt() const { return lastStatusWriteFailedAt_; }
 
 private:
     void setErr(std::string msg);
@@ -325,7 +329,7 @@ private:
     void setIndex(uint8_t index);
     void setDownload(int enable);
     // Caller holds SpiExclusive + user mode.
-    void writeStatusWordRaw(const uint8_t word[16]);
+    bool writeStatusWordRaw(const uint8_t word[16]);
     bool readStatusRaw(uint8_t out[16]);
     bool sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& plan);
 
@@ -335,6 +339,9 @@ private:
     uint8_t status_[16]{};
     double lastPushMs_ = 0;
     std::string err_;
+    SpiAckWaitStats lastAckSet_{};
+    SpiAckWaitStats lastAckClr_{};
+    int lastStatusWriteFailedAt_ = -1;
     // Persistent HPS DDR frame window (both banks + doorbell page).
     int ddrMemFd_ = -1;
     uint8_t* ddrMap_ = nullptr;

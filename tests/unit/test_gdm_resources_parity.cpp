@@ -49,9 +49,11 @@ uint16_t boundPort(int fd) {
 int main() {
     using namespace misterplex;
 
-    // --- probe filter (merge-storm / self-reply CPU) ---
+    // --- probe filter (Sweep 114 self-loop / merge-storm CPU) ---
+    // Contract: M-SEARCH only. Bare "plex" is the defect class (advertise body).
     require(gdmIsDiscoveryProbe("M-SEARCH * HTTP/1.1\r\n"), "M-SEARCH is a probe");
-    require(gdmIsDiscoveryProbe("plex\r\n"), "bare plex probe still accepted");
+    require(gdmIsDiscoveryProbe("m-search * HTTP/1.1\r\n"), "M-SEARCH is case-insensitive");
+    require(!gdmIsDiscoveryProbe("plex\r\n"), "bare plex must NOT be a probe (Sweep 114)");
     const char* selfReply = "HTTP/1.0 200 OK\r\n"
                             "Content-Type: plex/media-player\r\n"
                             "Protocol: plex\r\n"

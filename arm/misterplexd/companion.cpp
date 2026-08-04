@@ -10,6 +10,7 @@
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <pthread.h>
 #include <unistd.h>
 
 #include <chrono>
@@ -571,8 +572,18 @@ void Companion::clearMedia() {
 bool Companion::start() {
     if (running_.exchange(true))
         return true;
-    gdmThr_ = std::thread([this] { gdmLoop(); });
-    httpThr_ = std::thread([this] { httpLoop(); });
+    gdmThr_ = std::thread([this] {
+#if defined(__linux__)
+        pthread_setname_np(pthread_self(), "mpx-gdm");
+#endif
+        gdmLoop();
+    });
+    httpThr_ = std::thread([this] {
+#if defined(__linux__)
+        pthread_setname_np(pthread_self(), "mpx-http");
+#endif
+        httpLoop();
+    });
     log("companion: GDM + HTTP :" + std::to_string(port_) + " name=" + name_);
     return true;
 }
@@ -620,7 +631,17 @@ void Companion::gdmLoop() {
         advFd = fds.front();
 
     auto lastAdv = std::chrono::steady_clock::now();
+    std::string selfIp = lanIp();
+    auto lastSelfRefresh = lastAdv;
+    constexpr int kMaxRepliesPerSec = 20;
+    int repliesThisSec = 0;
+    auto replyWindowStart = lastAdv;
     while (running_.load()) {
+        auto nowTick = std::chrono::steady_clock::now();
+        if (nowTick - lastSelfRefresh > std::chrono::seconds(30)) {
+            selfIp = lanIp();
+            lastSelfRefresh = nowTick;
+        }
         fd_set rfds;
         FD_ZERO(&rfds);
         int maxfd = -1;
@@ -631,6 +652,10 @@ void Companion::gdmLoop() {
         }
         timeval tv{0, 200000};
         int r = select(maxfd + 1, &rfds, nullptr, nullptr, &tv);
+        if (r < 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            continue;
+        }
         if (r > 0) {
             for (int fd : fds) {
                 if (!FD_ISSET(fd, &rfds))
@@ -643,8 +668,21 @@ void Companion::gdmLoop() {
                 if (n <= 0)
                     continue;
                 buf[n] = 0;
+                char peerIp[64]{};
+                inet_ntop(AF_INET, &peer.sin_addr, peerIp, sizeof(peerIp));
+                // Drop self-sourced packets (broadcast loopback).
+                if (selfIp == peerIp || std::strcmp(peerIp, "127.0.0.1") == 0)
+                    continue;
                 if (!gdmIsDiscoveryProbe(buf))
                     continue;
+                auto nowPeer = std::chrono::steady_clock::now();
+                if (nowPeer - replyWindowStart >= std::chrono::seconds(1)) {
+                    replyWindowStart = nowPeer;
+                    repliesThisSec = 0;
+                }
+                if (repliesThisSec >= kMaxRepliesPerSec)
+                    continue;
+                ++repliesThisSec;
                 auto payload = gdmPayload();
                 const ssize_t sn = sendto(fd, payload.data(), payload.size(), 0,
                                           reinterpret_cast<sockaddr*>(&peer), plen);

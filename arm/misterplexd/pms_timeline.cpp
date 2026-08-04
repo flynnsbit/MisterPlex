@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <pthread.h>
 
 namespace misterplex {
 namespace {
@@ -74,7 +75,12 @@ PmsTimelineReporter::PmsTimelineReporter(HttpSink sink, bool async)
         sink_ = defaultSink;
     if (async_) {
         workerStarted_ = true;
-        worker_ = std::thread([this] { workerLoop(); });
+        worker_ = std::thread([this] {
+#if defined(__linux__)
+            pthread_setname_np(pthread_self(), "mpx-timeline");
+#endif
+            workerLoop();
+        });
     }
 }
 

@@ -11,6 +11,8 @@
 #include <cstring>
 #include <string>
 
+#include "libmisterplex/gdm_filter.hpp"
+
 namespace misterplex {
 
 inline constexpr const char kPlayerProduct[] = "MiSTerPlex";
@@ -26,19 +28,14 @@ inline constexpr const char kPlayerDefaultName[] = "MiSTerPlex";
 inline constexpr const char kPlayerDefaultMachineId[] = "misterplex-1";
 
 // True when a UDP datagram is a discovery *probe* we should answer.
-// GDM replies embed the substring "plex" (Protocol / Content-Type). We also
-// broadcast those replies to 32412, and Linux delivers them back to this
-// socket. Matching bare "plex" then re-emits a reply forever: creation-order 5
-// (mplex-gdm) measured 98%onecpu at true idle, d_vol=0, always R/running.
-// Replies are never probes; M-SEARCH and non-reply "plex" probes still match.
+// Sweep 114: bare "plex" substring (and even Content-Type-only filters) left a
+// path for self-advertise loops. Contract is M-SEARCH-only via gdmShouldReply
+// (host/libmisterplex/gdm_filter.hpp), unit-tested. Parent-measured fix recovered
+// ~49% system idle while daemon running.
 inline bool gdmIsDiscoveryProbe(const char* buf) {
     if (!buf || !*buf)
         return false;
-    if (std::strncmp(buf, "HTTP/", 5) == 0)
-        return false;
-    if (std::strstr(buf, "Content-Type: plex/media-player") != nullptr)
-        return false;
-    return std::strstr(buf, "M-SEARCH") != nullptr || std::strstr(buf, "plex") != nullptr;
+    return misterplex::gdmShouldReplyCStr(buf);
 }
 
 // PMS GDM discovery probes both 32412 and 32414 (broadcast M-SEARCH). Measured.
