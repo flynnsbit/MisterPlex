@@ -3,6 +3,7 @@
   "test_only_macros": {
     "CAVLC_NEGATIVE_TEST": "Injected CAVLC residual fault for expected-red simulation only.",
     "CAVLC_CYCLE_PROBE": "Test-only stage cycle counters on h264_cavlc_residual for cy/MB measurement harness.",
+    "DDR_ARB3_FAULT_M2_STICKY_NO_QUANTUM": "Injected arbiter3 expected-red fault: hold grant_m2 through continuous WE while m0_cmd (no quantum yield) for contended publish TB.",
     "DDR_FRAME_STORE_FAULT_CHROMA_LUMA_STRIDE": "Injected DDR frame-store expected-red fault.",
     "DDR_FRAME_STORE_FAULT_CHROMA_VERTICAL_FULLRES": "Injected DDR frame-store expected-red fault.",
     "DDR_FRAME_STORE_FAULT_HOLD_DISP_BANK": "Injected DDR frame-store expected-red fault.",
