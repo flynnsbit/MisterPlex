@@ -7,8 +7,13 @@
 //   CPU bank store STRUCTURAL ~88 MiB/s (14.97 ms/f) — map flags inert
 //   (bank outside kernel System RAM → uncached /dev/mem always)
 //   decode+CPU move >=50.9 FAIL — closed. "Faster copy" family DEAD.
+//   Sweep-116: decode 32.705 ms → headroom 8.962 < 14.978 copy — STILL FAIL
 //   Fabric full H.264 decode = multi-month endgame (NOT near-term; w-path/w-clock).
-//   Near-term unknown = PL330 DMA → Option-C bank (w-path). Route A SUSPECT.
+//   Near-term unknown = KernelDma/WC → Option-C bank. Route A UNSCORED (pipe A/B).
+//
+// SEPARATION (rd-duck): fabric f2sdram beat budget / Verilator G4 proves the
+// *fabric* can move 2×1382400 B inside 24 fps on clk_ddr. That is NOT the ARM
+// uncached /dev/mem store cost. Do not cite G4 as closing the 14.978 ms problem.
 //
 // f2sdram peak (theoretical): clk_ddr * 8 B/cycle if 100% util.
 // Real efficiency unknown until parent measures — do not claim closes on glass.
@@ -166,6 +171,21 @@ constexpr bool kParentBankCpuStoreStructuralCeiling = true;
 constexpr double kParentCleanDecodePlusMemPeerMs = 46.57;
 constexpr double kFrameBudget24Ms = 41.667;
 constexpr double kParentCleanDecodeMarginMs = kFrameBudget24Ms - kParentCleanDecodeAloneMs; // ~5.727
+// Sweep-116 + archive bench (rd-duck).
+constexpr double kParentSweep116DecodeMs = 32.705;
+constexpr double kParentSweep116HeadroomMs = kFrameBudget24Ms - kParentSweep116DecodeMs; // 8.962
+constexpr double kParentArchiveBankCopyMs = 14.978;
+// Verilator contended R+W cycles @ ideal 1 beat/clk (w-mem G4) — fabric only.
+constexpr int kFabricContendedRwBeats720p = 345600; // 2 * (1382400/8)
+constexpr int kFabricBudgetCycles24At90M = 3750000; // 90e6/24
+
+// Fabric side fits budget; ARM uncached copy does not — different bottlenecks.
+inline bool fabricContendedRwFits24BudgetIdeal() {
+    return kFabricContendedRwBeats720p <= kFabricBudgetCycles24At90M;
+}
+inline bool armDevMemCopyFitsSweep116Headroom() {
+    return kParentArchiveBankCopyMs <= kParentSweep116HeadroomMs; // false
+}
 
 // If fabric RW steals the same DDR controller as decode, residual shrinks.
 // Unknown mapping of fabric MB/s → decode ms inflation — parent must measure.

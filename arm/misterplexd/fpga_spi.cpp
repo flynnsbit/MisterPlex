@@ -1763,6 +1763,13 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
     timing.prep_wait_us = elapsedUs(tPrep0, tPrep1);
 
     // Copy frame into bank (persistent map). Fence before doorbell publish.
+    //
+    // COST CLASS (parent/rd-duck archive, not fabric BW):
+    //   /dev/mem bank is OUTSIDE System RAM → uncached stores always.
+    //   1382400 B @ ~88 MiB/s ≈ 14.978 ms/f. Sweep-116 decode headroom 8.962 ms
+    //   cannot pay that. True-720p source needs KernelDma/CpuWriteCombine
+    //   (ddr_zero_copy_ingest.hpp); this memcpy path remains for sub-720p /
+    //   product 540p source. Fabric beat-budget sim ≠ this ARM store cost.
     const size_t bankOff = static_cast<size_t>(bank) * plan.layout.bank_stride;
     const size_t copyLen = len;
     auto tCopy0 = std::chrono::steady_clock::now();

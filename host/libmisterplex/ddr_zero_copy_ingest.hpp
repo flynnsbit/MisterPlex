@@ -85,9 +85,23 @@ constexpr double kIngestBudget24fpsMs = 41.667;
 //   decode alone 35.94 (margin 5.73); CPU bank copy 14.978 STRUCTURAL uncached
 //   serial 50.9+ FAIL closed; DMA verified sustained = THE open ARM question
 //   DecodeIntoBank suspect (same uncached stores) — do not build further yet
+//
+// rd-duck archive attack (Memory/.../misterplex-parent-720p-decode-verdict.txt):
+//   :303-319  ddr_write_bench 1382400 → 88.022 MiB/s, 14.978 ms/f (14.763 CPU)
+//             serial decode 35.94 + copy 14.978 = 50.92 > 41.667 FAIL by 9.25
+//   :354-385  O_SYNC inert — bank outside System RAM → uncached /dev/mem always
+//   Sweep-116 1500k decode 32.705 ms/f → headroom 8.962 < 14.978 → STILL FAIL
+//   Product path: media_player → sendYuv420pFrameDdr → sendDdrFrame memcpy
+//   Caveat: FFmpeg child pipe MAY overlap decode|copy — need product A/B; do NOT
+//           claim strict sum solely from call graph. Fabric beat-budget sim ≠ ARM
+//           uncached store cost (w-mem G4 proves fabric side only).
 constexpr double kParentBankCopy720pMs = 14.978;
 constexpr double kParentBankCopy720pMiBps = 88.045; // --sync control, structural
 constexpr double kParentDecode720pCleanAloneMs = 35.94;
+// Sweep-116 (parent/rd-duck): faster decode still leaves insufficient headroom.
+constexpr double kParentDecode720pSweep116Ms = 32.705;
+constexpr double kParentSweep116HeadroomMs =
+    kIngestBudget24fpsMs - kParentDecode720pSweep116Ms; // 8.962
 // true ONLY for /dev/mem noncached maps of reserved banks (parent narrowed claim).
 // A driver WC map is a separate falsifiable route (target ≥ kParentTrue720pCopyMiBpsNeed).
 constexpr bool kParentCpuBankCopyIsStructuralCeiling = true;
@@ -120,12 +134,33 @@ inline bool ddrIngestTrue720pSerialCopyRateFits(double copyMiBps) {
     return copyMiBps >= kParentTrue720pCopyMiBpsNeed;
 }
 
+// Headroom after decode must cover measured /dev/mem bank copy — Sweep-116 fails.
+inline bool ddrIngestHeadroomCoversDevMemCopy(double decodeMs,
+                                              double copyMs = kParentBankCopy720pMs,
+                                              double budgetMs = kIngestBudget24fpsMs) {
+    return (budgetMs - decodeMs) >= copyMs;
+}
+
+// Full-frame true-720p I420 (1382400 B): CpuSerial into /dev/mem is product-forbidden
+// by parent arithmetic (not opinion). Smaller native/540p sources may still use it.
+inline bool ddrIngestCpuSerialAllowedForPayload(size_t payload_bytes) {
+    return payload_bytes < static_cast<size_t>(kPlex720pYuv420pBytes);
+}
+
+// Fabric beat budget (w-mem Verilator G4) must NEVER be cited as the ARM copy cost.
+// ARM uncached store is structural ~88 MiB/s; fabric peak theoretical 720 MB/s.
+inline bool ddrIngestFabricBwIsNotArmCopyCost() { return true; }
+
 // Route A sketch: throughput ~ max(decode, copy). NOT proven under DDR contention.
+// Product pipeline A/B required before shipping as PASS (rd-duck pipe-overlap caveat).
 inline bool ddrIngestOverlapMaxFits(double decodeMs, double copyMs = kParentBankCopy720pMs,
                                     double budgetMs = kIngestBudget24fpsMs) {
     const double m = (decodeMs > copyMs) ? decodeMs : copyMs;
     return m <= budgetMs;
 }
+
+// Overlap claim is UNSCORED as a product ship gate until parent measures pipeline A/B.
+inline bool ddrIngestOverlapIsProductShipGate() { return false; }
 
 inline const char* ddrIngestModeName(DdrIngestMode m) {
     switch (m) {
@@ -144,8 +179,15 @@ inline const char* ddrIngestModeName(DdrIngestMode m) {
 }
 
 inline bool ddrIngestModeIsProductCandidate(DdrIngestMode m) {
+    // CpuSerial remains product for sub-720p source only (see
+    // ddrIngestCpuSerialAllowedForPayload). True-720p source needs DMA/WC.
     return m == DdrIngestMode::KernelDma || m == DdrIngestMode::CpuWriteCombine ||
-           m == DdrIngestMode::CpuSerial; // CpuSerial product for 480/540 only
+           m == DdrIngestMode::CpuSerial;
+}
+
+// True-720p source product modes: KernelDma or measured WC ≥ 230.2 MiB/s.
+inline bool ddrIngestModeOkForTrue720pSource(DdrIngestMode m) {
+    return m == DdrIngestMode::KernelDma || m == DdrIngestMode::CpuWriteCombine;
 }
 
 inline bool ddrIngestModeIsLabOnly(DdrIngestMode m) {

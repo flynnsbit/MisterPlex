@@ -72,6 +72,15 @@ int main() {
     // Direct product path well under half-share writer budget class.
     CHECK(fabricProductPathDirectMBps(24.0) < 0.5 * kFabricDdrPeakMBps);
 
+    // rd-duck separation: fabric ideal R+W fits 24fps; ARM /dev/mem copy does not
+    // fit Sweep-116 headroom. G4 sim ≠ ARM store cost.
+    CHECK(fabricContendedRwFits24BudgetIdeal());
+    CHECK(kFabricContendedRwBeats720p == 345600);
+    CHECK(kFabricBudgetCycles24At90M == 3750000);
+    CHECK(kParentSweep116DecodeMs == 32.705);
+    CHECK(kParentArchiveBankCopyMs == 14.978);
+    CHECK(!armDevMemCopyFitsSweep116Headroom()); // NEG teeth: copy > headroom
+
     if (fails) { std::fprintf(stderr,"test_fabric_ddr_bandwidth: %d fails\n", fails); return 1; }
     std::printf("test_fabric_ddr_bandwidth: OK\n");
     std::printf("  peak_MBps=%.1f writer24=%.3f scan24=%.3f comb24=%.3f frac24=%.4f\n",

@@ -102,6 +102,7 @@ int main() {
           "overlap max PASS sketch");
     CHECK(ddrIngestRouteABridgeCandidate(kParentDecode720pCleanAloneMs), "route A candidate");
     CHECK(!ddrIngestRouteAIsShipGate(), "route A not ship gate");
+    CHECK(!ddrIngestOverlapIsProductShipGate(), "overlap UNSCORED as ship gate");
     CHECK(kParentDecode720pCleanAloneMs == 35.94, "clean alone constant");
     CHECK(kParentBankCopy720pMs == 14.978, "clean copy constant");
     CHECK(kParentDecode720pProduct2600kMs == 35.94, "product alias = clean");
@@ -109,6 +110,27 @@ int main() {
     // NEG: serial sum must exceed budget
     CHECK(kParentDecode720pCleanAloneMs + kParentBankCopy720pMs > kIngestBudget24fpsMs,
           "NEG serial over budget");
+
+    // rd-duck Sweep-116: faster decode still cannot pay 14.978 ms /dev/mem copy
+    CHECK(kParentDecode720pSweep116Ms == 32.705, "sweep116 decode");
+    CHECK(kParentSweep116HeadroomMs > 8.96 && kParentSweep116HeadroomMs < 8.97,
+          "sweep116 headroom ~8.962");
+    CHECK(!ddrIngestHeadroomCoversDevMemCopy(kParentDecode720pSweep116Ms),
+          "NEG sweep116 headroom < copy");
+    CHECK(!ddrIngestSerialDecodePlusCopyFits(kParentDecode720pSweep116Ms, kParentBankCopy720pMs),
+          "NEG sweep116 serial still FAIL");
+    // Teeth: if someone "fixes" constants so headroom covers copy, this goes RED
+    // only when math is wrong the other way — keep copy > headroom as invariant.
+    CHECK(kParentBankCopy720pMs > kParentSweep116HeadroomMs, "copy exceeds sweep116 headroom");
+
+    // True-720p full frame: CpuSerial product-forbidden; DMA/WC required
+    CHECK(!ddrIngestCpuSerialAllowedForPayload(1382400u), "NEG no CpuSerial @720p I420");
+    CHECK(ddrIngestCpuSerialAllowedForPayload(449280u), "480p CpuSerial ok");
+    CHECK(ddrIngestCpuSerialAllowedForPayload(777600u), "540p CpuSerial ok");
+    CHECK(ddrIngestModeOkForTrue720pSource(DdrIngestMode::KernelDma), "720p kernel dma");
+    CHECK(ddrIngestModeOkForTrue720pSource(DdrIngestMode::CpuWriteCombine), "720p wc");
+    CHECK(!ddrIngestModeOkForTrue720pSource(DdrIngestMode::CpuSerial), "NEG 720p CpuSerial");
+    CHECK(ddrIngestFabricBwIsNotArmCopyCost(), "fabric BW ≠ ARM copy");
 
     // Mode conf parse — "dma" means kernel owner; raw pl330 is lab-only alias.
     CHECK(ddrIngestModeFromConf("pl330") == DdrIngestMode::Pl330Userspace, "conf pl330 lab");
