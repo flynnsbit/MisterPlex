@@ -67,25 +67,26 @@ def main() -> int:
         "product else-branch number_of_clocks(3)",
     )
 
-    # QSF: main ships PLL default-OFF; integ/720p-compose enables it with FRAME 1280x720.
-    # Never claim 720p24 from geometry alone @20 MHz (~16.16 Hz) — PLL ON is the real path.
+    # QSF tier: dual-mode 480p keeps PLL OFF; integ/720p-compose enables
+    # FRAME 1280×720 + PRESENT_CLK_PIX_PLL (29.7 MHz) so refresh is not 16.16 Hz.
     qsf = read(ROOT / "fpga/Plex_MiSTer/Plex.qsf")
-    active_pix = [
-        ln
-        for ln in qsf.splitlines()
-        if "PRESENT_CLK_PIX_PLL" in ln and not ln.strip().startswith("#")
-    ]
-    frame_1280 = any(
-        ("FRAME_W=1280" in ln) and not ln.strip().startswith("#")
-        for ln in qsf.splitlines()
+    active_lines = [ln for ln in qsf.splitlines() if not ln.strip().startswith("#")]
+    active_frame_720 = any("FRAME_W=1280" in ln for ln in active_lines) and any(
+        "FRAME_H=720" in ln for ln in active_lines
     )
-    if active_pix:
+    active_pix = [ln for ln in active_lines if "PRESENT_CLK_PIX_PLL" in ln]
+    if active_frame_720:
+        check(bool(active_pix), "integ QSF PRESENT_CLK_PIX_PLL active with FRAME 1280x720")
+        # Negative: geometry-only 720p without PLL is the 16.16 Hz false-PASS trap
         check(
-            frame_1280 and any("PRESENT_CLK_PIX_PLL=1" in ln for ln in active_pix),
-            "QSF PRESENT_CLK_PIX_PLL active only with enabled 720p FRAME_W=1280",
+            not (
+                active_frame_720
+                and not active_pix
+            ),
+            "NEG: FRAME 1280x720 must not ship without PRESENT_CLK_PIX_PLL",
         )
     else:
-        check(not active_pix, "QSF PRESENT_CLK_PIX_PLL not active (default OFF)")
+        check(not active_pix, "480p QSF PRESENT_CLK_PIX_PLL not active (default OFF)")
     check("Plex_clk_pix.sdc" in qsf, "QSF mentions Plex_clk_pix.sdc recipe")
 
     # Plex.sv wires clk_pix from PLL only under ifdef

@@ -126,6 +126,10 @@ int main() {
                        "DDR_FRAME_CODED_WIDTH = 624"));
     const bool coded_ok = coded_direct || coded_fs_legacy || coded_fs_abi;
     EXPECT(coded_ok, "ddr_frame_store CODED_W from layout params");
+    // Negative: bare literal CODED_W would bypass layout SSOT (compose bug class).
+    EXPECT(!file_contains("fpga/Plex_MiSTer/rtl/present_core.sv", ".CODED_W(624)") &&
+               !file_contains("fpga/Plex_MiSTer/rtl/present_core.sv", ".CODED_W(1280)"),
+           "CODED_W must not be a bare geometry literal");
     // Honest swap pack must ship with this RBF for skip instrumentation.
     EXPECT(file_contains("fpga/Plex_MiSTer/rtl/ddr_frame_store.sv",
                          "DDRAM_DIN <= {frames_done_d2"),

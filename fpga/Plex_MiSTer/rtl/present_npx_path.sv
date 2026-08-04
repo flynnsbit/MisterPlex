@@ -42,7 +42,8 @@ module present_npx_path #(
 	input  wire [PX_PER_CLK*8-1:0] in_g,
 	input  wire [PX_PER_CLK*8-1:0] in_b,
 	input  wire [PX_PER_CLK-1:0]   in_lane_valid,
-	// No input defaults — Quartus Error (10231) rejects SV port defaults.
+	// No SV-2012 default port values: Quartus 17.0 treats `input = 1'b0` as
+	// assign-to-input (Error 10231). Call sites must connect explicitly.
 	input  wire                 in_hblank,
 	input  wire                 in_hsync,
 	input  wire                 in_vblank,

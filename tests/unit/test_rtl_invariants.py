@@ -1838,9 +1838,9 @@ def check_present_geometry_stride_contract() -> None:
     # direct .CODED_W(DDR_FRAME_*), FS_CODED_W = DDR_FRAME_*, or integ shared ABI:
     # FS_CODED_W = DDR_FS_USE_720P_ABI ? P720_* : DDR_FS_* (ddr_frame_abi_select).
     def present_ddr_wiring_ok(p_nt: str) -> bool:
+        frame_ports = ".FRAME_W(FRAME_W)" in p_nt and ".FRAME_H(FRAME_H)" in p_nt
         direct = (
-            ".FRAME_W(FRAME_W)" in p_nt
-            and ".FRAME_H(FRAME_H)" in p_nt
+            frame_ports
             and ".CODED_W(DDR_FRAME_CODED_WIDTH)" in p_nt
             and ".DISPLAY_W(DDR_FRAME_DISPLAY_WIDTH)" in p_nt
             and ".PRESENT_X(DDR_FRAME_PILLARBOX_LEFT)" in p_nt
@@ -1848,8 +1848,7 @@ def check_present_geometry_stride_contract() -> None:
             and ".DOORBELL_PHYS(DDR_FRAME_YUV420P_DOORBELL_PHYS)" in p_nt
         )
         fs_bind = (
-            ".FRAME_W(FRAME_W)" in p_nt
-            and ".FRAME_H(FRAME_H)" in p_nt
+            frame_ports
             and "FS_CODED_W=DDR_FRAME_CODED_WIDTH" in p_nt
             and "FS_DISPLAY_W=DDR_FRAME_DISPLAY_WIDTH" in p_nt
             and "FS_PRESENT_X=DDR_FRAME_PILLARBOX_LEFT" in p_nt
@@ -1875,7 +1874,7 @@ def check_present_geometry_stride_contract() -> None:
         present_ddr_wiring_ok(present_nt),
         "present_core must instantiate ddr_frame_store from the shared layout params: "
         "FRAME_W=640 for scanout, CODED_W=624 for DDR stride, DISPLAY_W=618 for crop, "
-        "PRESENT_X=11 for pillarbox.",
+        "PRESENT_X=11 for pillarbox (or abi_select FS_* compose path).",
     )
     # L4 consumer wiring (must not leave 720p constants unreferenced).
     # Read RAW module text (comments only stripped) — strip_inactive_preprocessor
