@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """L4 gate: dead modules become INSTANTIATED behind default-off PLEX_PRESENT_720P_L4.
 
-Default product (macro off):
+Default product (L4 macro off):
   - PLEX_PRESENT_720P_L4 must NOT be an active QSF macro
-  - FRAME_W/H stay 640/480
+  - FRAME_W/H are product silicon 1280/720 (canvas identity; L4 is beam path)
   - present_core still has colorbars Template path text
 
 When scanning sources (ifdef bodies count as instantiation intent):
@@ -50,16 +50,16 @@ def main() -> int:
     for m in act:
         if m.startswith("PLEX_PRESENT_720P_L4") or m.startswith("FABRIC_NATIVE_720P_GEOM"):
             fails.append(f"DEFAULT_OFF=no active QSF macro {m}")
-    if not any("FRAME_W=640" in m for m in act):
-        fails.append("DEFAULT product FRAME_W=640 missing from active QSF")
-    if not any("FRAME_H=480" in m for m in act):
-        fails.append("DEFAULT product FRAME_H=480 missing from active QSF")
+    if not any("FRAME_W=1280" in m for m in act):
+        fails.append("DEFAULT product FRAME_W=1280 missing from active QSF")
+    if not any("FRAME_H=720" in m for m in act):
+        fails.append("DEFAULT product FRAME_H=720 missing from active QSF")
+    if any("FRAME_W=640" in m for m in act) or any("FRAME_H=480" in m for m in act):
+        fails.append("legacy FRAME 640x480 must not be active product QSF (use 1280x720)")
     if not any("PLEX_PRESENT_720P_L4" in line and line.strip().startswith("#") for line in qsf.splitlines()):
         fails.append("QSF missing commented PLEX_PRESENT_720P_L4 enable recipe")
     if not any("FABRIC_NATIVE_720P_GEOM" in line and line.strip().startswith("#") for line in qsf.splitlines()):
         fails.append("QSF missing commented FABRIC_NATIVE_720P_GEOM recipe")
-    if not any("FRAME_W=1280" in line and line.strip().startswith("#") for line in qsf.splitlines()):
-        fails.append("QSF missing commented FRAME_W=1280 L4 recipe")
 
     # Instantiation intent (ifdef bodies)
     checks = [
