@@ -118,3 +118,22 @@ PPC2 does not scale DDR average; 16-line is latency not BW.
 - `rtl/plex_bw_status.sv` — noprune stamp in `Plex.sv` (`u_plex_bw_status`)
 - Gate: `tests/unit/test_plex_bw_status_verilator.sh` PRE-REG hit: dir=33177600 beats=172800 rw=345600 ppc=2 nack=1
 - Contract: `tests/fixtures/p720_bw_contract.json` + `test_p720_shared_bw_contract.py`
+
+---
+
+## Real-reader proof (rd-duck gap CLOSED on this branch)
+
+TB: `tests/unit/test_ddr_frame_store_720p_ppc2_bus.sh`  
+Recipe: 1280×720 I420, PPC=2, LINE=16, PHYS `0x30180000`, doorbell `0x3047F000`, **clk 20:90**.  
+Metric: **steady `frames_done` delta** (prep excluded).
+
+| Case | payload | door | total | ddr_cy | notes |
+|------|--------:|-----:|------:|-------:|-------|
+| G0 nostall | **173120** | 9689 | 182809 | 2784152 | ideal 172800; +320 Y refill; budget 3750000 |
+| G1 stall+hog | **173120** | 389 | 173509 | 2784152 | blocked=1248; busy 797290≫G0; beam-locked wall |
+
+PRE-REG hit on payload≥172800 and budget.  
+**MISS then fix:** G1 wall ddr_cy == G0 (beam-locked); criterion → busy↑+blocked.
+
+Still **not** modeled: concurrent HPS `/dev/mem` write beats on same controller.  
+Interface peaks (6 RGB B/group, 3 B I420 amort/2px) ≠ average headline 33.1776 MB/s/dir.

@@ -1,5 +1,5 @@
 {
-  "title": "P720 shared bandwidth contract — w-clock ACK position",
+  "title": "P720 shared bandwidth contract \u2014 w-clock ACK position",
   "product_config": {
     "PRESENT_MULTI_PIXEL": true,
     "PRESENT_PX_PER_CLK": 2,
@@ -37,12 +37,12 @@
       "value_rejected": 3.0,
       "reason": "PPC*1.5 is I420-equivalent of unique pixels produced from LINE BUFFERS during DE, not DDRAM beats per clk_sys. DDR fills are line bursts averaged to one I420 frame per present.",
       "sources": [
-        "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv:340 rd_miss_now (hit → no DDR)",
+        "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv:340 rd_miss_now (hit \u2192 no DDR)",
         "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv:501-515 pack_npx from linebuf on hit",
         "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv:86 Y_LINE_QWORDS=CODED_W/8",
         "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv:1070,1109 DDRAM_RD only on fill path"
       ],
-      "allowed_as": "optional metric present_linebuf_i420_equiv_B_per_clk_sys_DE — NOT the DDR budget headline"
+      "allowed_as": "optional metric present_linebuf_i420_equiv_B_per_clk_sys_DE \u2014 NOT the DDR budget headline"
     }
   },
   "blackout_prefetch": {
@@ -52,7 +52,42 @@
     "model_blackout_us": 500.0,
     "note": "latency, not average BW"
   },
-  "agreed_by": ["w-clock"],
-  "pending_ack": ["w-mem", "w-scaler"],
-  "disagree_with": ["w-scaler headline 3.0 B/clk_sys as DDR/shared load"]
+  "agreed_by": [
+    "w-clock"
+  ],
+  "pending_ack": [
+    "w-mem",
+    "w-scaler"
+  ],
+  "disagree_with": [
+    "w-scaler headline 3.0 B/clk_sys as DDR/shared load"
+  ],
+  "real_reader_proof": {
+    "tb": "tests/unit/test_ddr_frame_store_720p_ppc2_bus.sh",
+    "recipe": "MULTI+PPC2+LINE16+PHYS 0x30180000+20:90 clocks",
+    "measurement": "steady frames_done delta (not prep)",
+    "G0": {
+      "payload_beats": 173120,
+      "ideal_payload": 172800,
+      "doorbell_beats": 9689,
+      "total_rd_beats": 182809,
+      "overhead_beats": 9689,
+      "sys_cycles": 618750,
+      "ddr_cycles": 2784152,
+      "budget_ddr_24fps": 3750000,
+      "max_burst": 128
+    },
+    "G1_stall": {
+      "payload_beats": 173120,
+      "rd_blocked": 1248,
+      "busy_cycles": 797290,
+      "note": "beam-locked wall time; stall via busy/blocked not longer frame"
+    },
+    "iface_peaks_not_headline": {
+      "PPC2_RGB_B_per_sys_group": 6,
+      "I420_amort_B_per_2px_group": 3,
+      "headline_MB_s_dir": 33.1776
+    },
+    "status": "CLOSED for steady payload\u2248ideal+320 under this TB model; concurrent HPS write not in this TB"
+  }
 }
