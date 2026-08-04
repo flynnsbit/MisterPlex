@@ -52,7 +52,11 @@ module ddr_frame_store #(
 	parameter int PX_PER_CLK = 1,
 	// Product default 0: fill_bank_base via ddr_frame_base_mux.
 	// DYN_BASE_EN=1 future w-mem dyn base ABI; dyn_* tied off here.
-	parameter bit DYN_BASE_EN = 1'b0
+	parameter bit DYN_BASE_EN = 1'b0,
+	// DIAG-only tag RCA (I1 miss composition + I2 half occupancy). Default 0 =
+	// product-identical PLXF pack. DIAG_TAG_RCA=1 repacks PLXF[63:40]; MAGIC
+	// and seq unchanged. DIAG ≠ product PASS. Do not leave =1 on product wire.
+	parameter bit DIAG_TAG_RCA = 1'b0
 )(
 	input  wire        clk,
 	input  wire        clk_ddr,
@@ -354,6 +358,13 @@ module ddr_frame_store #(
 	reg [15:0] status_osd_hold;
 	reg [23:0] sdram_status_hold;
 	reg        frame_miss_toggle;
+	// I1 (DIAG): sticky miss composition on scanout clk (cleared only on reset).
+	// Sampled against registered y_hit_r/c_hit_r with miss_d so edges align with
+	// the underrun path (rd_miss_now → miss_d).
+	reg        miss_y_only_sticky;
+	reg        miss_c_only_sticky;
+	reg        miss_both_sticky;
+	reg        any_hit_sticky;
 
 	reg rd_active_r, rd_active_d, rd_visible_r, rd_visible_d, miss_d;
 	reg y_hit_r, c_hit_r;
@@ -494,6 +505,10 @@ module ddr_frame_store #(
 			status_osd_hold <= 16'd0;
 			sdram_status_hold <= 24'd0;
 			frame_miss_toggle <= 1'b0;
+			miss_y_only_sticky <= 1'b0;
+			miss_c_only_sticky <= 1'b0;
+			miss_both_sticky <= 1'b0;
+			any_hit_sticky <= 1'b0;
 			y_valid_v1 <= '0;
 			y_valid_v2 <= '0;
 			c_valid_v1 <= '0;
@@ -565,6 +580,15 @@ module ddr_frame_store #(
 				underrun_count <= underrun_count + 16'd1;
 				frame_miss_toggle <= ~frame_miss_toggle;
 			end
+			// I1 sticky composition (always collected; published only if DIAG_TAG_RCA).
+			// Uses registered hits + miss_d (same stage as underrun increment).
+			if (miss_d && has_frame) begin
+				if (!y_hit_r &&  c_hit_r) miss_y_only_sticky <= 1'b1;
+				if ( y_hit_r && !c_hit_r) miss_c_only_sticky <= 1'b1;
+				if (!y_hit_r && !c_hit_r) miss_both_sticky  <= 1'b1;
+			end
+			if (rd_visible_d && has_frame && !miss_d && y_hit_r && c_hit_r)
+				any_hit_sticky <= 1'b1;
 
 			if ((rd_active_d || !rd_active) && rd_visible_d && has_frame && !miss_d && y_hit_r && c_hit_r) begin
 				rd_r <= sat8(r_calc);
@@ -669,6 +693,16 @@ module ddr_frame_store #(
 	reg        frame_miss_tog_s1, frame_miss_tog_s2, frame_miss_tog_seen;
 	reg [15:0] frame_underrun_ddr;
 	reg [23:0] frame_status_ddr;
+	// I1 sticky CDC (clk → clk_ddr): sticky bits only 0→1, 2-FF safe.
+	reg        miss_y_only_s1, miss_y_only_s2;
+	reg        miss_c_only_s1, miss_c_only_s2;
+	reg        miss_both_s1,   miss_both_s2;
+	reg        any_hit_s1,     any_hit_s2;
+	// I2 sample regs (combo computed after schedule defines cur/prep base).
+	reg [4:0]  occ_disp_y_c, occ_prep_y_c;
+	reg [5:0]  bank_mm_disp_c;
+	reg [4:0]  occ_disp_y_r, occ_prep_y_r;
+	reg [5:0]  bank_mm_disp_r;
 
 	wire cmd_empty;
 	wire [7:0] cmd_rdata;
@@ -898,6 +932,23 @@ module ddr_frame_store #(
 		end
 	end
 
+	// I2 (DIAG): display/prep half occupancy + bank-mismatch on display half.
+	// Uses cur_base_idx/prep_base_idx from schedule combo (same half ownership).
+	integer oi;
+	always @* begin
+		occ_disp_y_c = 5'd0;
+		occ_prep_y_c = 5'd0;
+		bank_mm_disp_c = 6'd0;
+		for (oi = 0; oi < LINE_COUNT; oi = oi + 1) begin
+			if (y_valid[cur_base_idx + oi[SLOT_W-1:0]]) begin
+				occ_disp_y_c = occ_disp_y_c + 5'd1;
+				if (y_bank[cur_base_idx + oi[SLOT_W-1:0]] != disp_bank_d2)
+					bank_mm_disp_c = bank_mm_disp_c + 6'd1;
+			end
+			if (y_valid[prep_base_idx + oi[SLOT_W-1:0]])
+				occ_prep_y_c = occ_prep_y_c + 5'd1;
+		end
+	end
 
 	reg fill_bank, fill_is_chroma, fill_plane_v;
 	reg [Y_W-1:0] fill_y;
@@ -958,7 +1009,12 @@ module ddr_frame_store #(
 	                  db_stale_fallback;
 	wire spi_edge_ddr = start_d2 != start_seen;
 
-	assign debug_state = format_error ? DEBUG_FORMAT_ERROR : {LINE_COUNT[2:0], |y_valid, state_ddr};
+	// Product: {LINE_COUNT[2:0], |y_valid, state_ddr}. DIAG: I1 sticky nibble + state.
+	// format_error remains 0xE1 in both modes (host nonYuvDoorbellRejected).
+	assign debug_state = format_error ? DEBUG_FORMAT_ERROR
+	                   : (DIAG_TAG_RCA
+	                      ? {any_hit_s2, miss_both_s2, miss_y_only_s2, miss_c_only_s2, state_ddr}
+	                      : {LINE_COUNT[2:0], |y_valid, state_ddr});
 
 	always @(posedge clk_ddr) begin
 		if (reset_ddr) begin
@@ -1027,6 +1083,17 @@ module ddr_frame_store #(
 			frame_miss_tog_seen <= 1'b0;
 			frame_underrun_ddr <= 16'd0;
 			frame_status_ddr <= 24'd0;
+			miss_y_only_s1 <= 1'b0;
+			miss_y_only_s2 <= 1'b0;
+			miss_c_only_s1 <= 1'b0;
+			miss_c_only_s2 <= 1'b0;
+			miss_both_s1 <= 1'b0;
+			miss_both_s2 <= 1'b0;
+			any_hit_s1 <= 1'b0;
+			any_hit_s2 <= 1'b0;
+			occ_disp_y_r <= 5'd0;
+			occ_prep_y_r <= 5'd0;
+			bank_mm_disp_r <= 6'd0;
 			mbox_seq <= 16'd0;
 			mbox_last <= 16'd0;
 			mbox_req <= 1'b1;
@@ -1123,7 +1190,25 @@ module ddr_frame_store #(
 				if (frame_underrun_ddr != 16'hFFFF)
 					frame_underrun_ddr <= frame_underrun_ddr + 16'd1;
 			end
-			frame_status_ddr <= {frame_underrun_ddr, debug_state};
+			// I1 CDC + I2 sample (cheap; always run so DIAG param is pure pack select).
+			miss_y_only_s1 <= miss_y_only_sticky;
+			miss_y_only_s2 <= miss_y_only_s1;
+			miss_c_only_s1 <= miss_c_only_sticky;
+			miss_c_only_s2 <= miss_c_only_s1;
+			miss_both_s1   <= miss_both_sticky;
+			miss_both_s2   <= miss_both_s1;
+			any_hit_s1     <= any_hit_sticky;
+			any_hit_s2     <= any_hit_s1;
+			occ_disp_y_r   <= occ_disp_y_c;
+			occ_prep_y_r   <= occ_prep_y_c;
+			bank_mm_disp_r <= bank_mm_disp_c;
+			// Product pack vs DIAG I1/I2 pack (MAGIC/seq path unchanged at write).
+			if (DIAG_TAG_RCA)
+				frame_status_ddr <= {occ_disp_y_r, occ_prep_y_r, bank_mm_disp_r,
+				                     any_hit_s2, miss_both_s2, miss_y_only_s2, miss_c_only_s2,
+				                     state_ddr};
+			else
+				frame_status_ddr <= {frame_underrun_ddr, debug_state};
 
 			mbox_hb <= mbox_hb + 18'd1;
 			if (!mbox_valid || (status_osd_safe != mbox_last) || (mbox_hb == 18'd0))
