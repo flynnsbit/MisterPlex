@@ -46,7 +46,7 @@ Active-only lower bound (no blanking): 1280×720×24 = **22.1184 Mpix/s** — ne
 
 ### Compact L4 1312×762 (NOT on main tip `956e05d7`)
 
-If re-landed: 1312×762×24 = **23_994_336 ≈ 23.994 MHz**. That path would favor clk_sys@24 single domain. **Absent on this tip** — do not plan product around it until RTL returns.
+If re-landed: 1312×762×24 = **23_993_856 ≈ 23.994 MHz**. That path would favor clk_sys@24 single domain. **Absent on this tip** — do not plan product around it until RTL returns.
 
 ## 2. Current PLL (quoted)
 

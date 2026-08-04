@@ -110,6 +110,9 @@ set_global_assignment -name VERILOG_MACRO "FRAME_LINES_8=1"
 # Requires parent-granted fit. Source Plex_clk_pix.sdc with the same enable.
 # Rate note: MULTI_PIXEL + PPC=1 @ clk_sys=20 cannot feed 29.7 Mpix/s — need
 # PPC=2 (store N-wide) or beam-on-clk_pix. See .agent-work/w-clock/720P_CLK_DDR_ARITH.md
+# L4 compact raster (1312x762) needs clk_sys≈24 MHz for 24 fps. STA risk on
+# stub-class Fmax~23.2 — parent fit grant only; mutual with relying on 20 MHz default.
+#set_global_assignment -name VERILOG_MACRO "CLK_SYS_24=1"
 #set_global_assignment -name VERILOG_MACRO "PRESENT_CLK_PIX_PLL=1"
 #set_global_assignment -name VERILOG_MACRO "PRESENT_CLK_PIX_74_25=1"
 #set_global_assignment -name SDC_FILE Plex_clk_pix.sdc

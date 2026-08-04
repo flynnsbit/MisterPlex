@@ -233,6 +233,28 @@ pll pll
 
 wire reset = RESET | status[0] | buttons[1];
 
+// Fabric clock kit stamp (w-clock): noprune constants for post-fit hierarchy.
+wire [31:0] clkstat_sys_hz, clkstat_pix_hz, clkstat_cea_pf, clkstat_l4_pf;
+wire [7:0]  clkstat_ppc;
+wire        clkstat_cea_fast, clkstat_l4_fast, clkstat_valid;
+wire [15:0] clkstat_peak_x10;
+plex_clk_status u_plex_clk_status (
+	.clk(clk_sys),
+	.reset(reset),
+	.clk_sys_hz(clkstat_sys_hz),
+	.clk_pix_hz(clkstat_pix_hz),
+	.present_ppc(clkstat_ppc),
+	.cea_pix_frame(clkstat_cea_pf),
+	.l4_pix_frame(clkstat_l4_pf),
+	.cea_24_needs_faster_pix(clkstat_cea_fast),
+	.l4_24_needs_faster_sys(clkstat_l4_fast),
+	.peak_mpix_s_x10(clkstat_peak_x10),
+	.kit_id_valid(clkstat_valid)
+);
+// Keep hierarchy live (no functional load yet).
+wire _unused_clkstat = |{clkstat_sys_hz, clkstat_pix_hz, clkstat_ppc, clkstat_cea_pf,
+	clkstat_l4_pf, clkstat_cea_fast, clkstat_l4_fast, clkstat_peak_x10, clkstat_valid};
+
 // O[4] is the native content-resolution selector shared with misterplexd.
 // C1B owns the selector/ABI; the DDR-backed frame-store branch consumes these
 // dimensions for the actual 480p present path.

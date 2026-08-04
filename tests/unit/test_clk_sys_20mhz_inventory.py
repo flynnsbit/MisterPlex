@@ -17,7 +17,10 @@ RTL = ROOT / "fpga/Plex_MiSTer"
 
 # (path regex fullmatch, line regex search)
 ALLOWLIST: list[tuple[str, str]] = [
-    (r"fpga/Plex_MiSTer/rtl/pll/pll_0002\.v", r'output_clock_frequency0\("20\.000000 MHz"\)'),
+    (r"fpga/Plex_MiSTer/rtl/misterplex_clk_hz\.svh", r"20_000_000|20 MHz"),
+    (r"fpga/Plex_MiSTer/rtl/plex_clk_status\.sv", r"20|29_700"),
+
+    (r"fpga/Plex_MiSTer/rtl/pll/pll_0002\.v", r"MISTERPLEX_CLK_SYS_PLL_FREQ|20\.000000 MHz"),
     (r"fpga/Plex_MiSTer/rtl/pll/pll_0002\.v", r"clk_sys 20 MHz"),
     (r"fpga/Plex_MiSTer/rtl/pll\.v", r"clk_sys 20 MHz"),
     (r"fpga/Plex_MiSTer/rtl/present_core\.sv", r"CLK_PIX_HZ\(20_000_000\)"),
@@ -94,7 +97,7 @@ def main() -> int:
 
     # Required: PLL product 20 and F_SYS default must remain listed
     required = [
-        (r"fpga/Plex_MiSTer/rtl/pll/pll_0002\.v", r'output_clock_frequency0\("20\.000000 MHz"\)'),
+        (r"fpga/Plex_MiSTer/rtl/pll/pll_0002\.v", r"MISTERPLEX_CLK_SYS_PLL_FREQ|20\.000000 MHz"),
         (r"fpga/Plex_MiSTer/rtl/present_pix_rate_match\.sv", r"F_SYS_HZ\s*=\s*20_000_000"),
     ]
     for are, aln in required:

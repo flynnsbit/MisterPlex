@@ -23,6 +23,8 @@
 	`endif
 `endif
 
+`include "misterplex_clk_hz.svh"
+
 module present_core #(
 	parameter int FRAME_W = 320,
 	parameter int FRAME_H = 240,
@@ -200,7 +202,7 @@ module present_core #(
 	(* noprune *) wire [15:0] keep_720_fps_milli;
 	(* noprune *) wire        keep_720_needs_fast;
 	present_video_timing_720p #(
-		.CLK_PIX_HZ(20_000_000)
+		.CLK_PIX_HZ(`MISTERPLEX_CLK_PIX_HZ)
 	) u_keep_timing_720p (
 		.h_de(keep_720_hde),
 		.h_total(keep_720_htot),
@@ -219,7 +221,7 @@ module present_core #(
 	(* noprune *) wire        keep_960_mode30, keep_960_wide_fifo;
 	present_video_timing_960 #(
 		.MODE(0),
-		.CLK_PIX_HZ(20_000_000)
+		.CLK_PIX_HZ(`MISTERPLEX_CLK_SYS_HZ)
 	) u_keep_timing_960 (
 		.h_de(keep_960_hde),
 		.h_total(keep_960_htot),
@@ -769,11 +771,7 @@ module present_core #(
 	wire                mp_out_hb, mp_out_hs, mp_out_vb, mp_out_vs, mp_out_fs;
 	wire                mp_wr_full, mp_wr_af, mp_rd_ur, mp_rd_empty;
 
-`ifdef PRESENT_CLK_PIX_PLL
-	localparam int MP_CLK_PIX_HZ = 29_700_000;
-`else
-	localparam int MP_CLK_PIX_HZ = 20_000_000;
-`endif
+localparam int MP_CLK_PIX_HZ = `MISTERPLEX_CLK_PIX_HZ;
 	localparam bit MP_INCLUDE_SYNC = 1'b1;
 
 	// Live timing instance (in addition to keep_* packs) drives beam params via

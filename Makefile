@@ -154,6 +154,8 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	python3 $(ROOT)/tests/unit/test_present_720p_land_static.py
 	python3 $(ROOT)/tests/unit/test_720p_clock_plan_static.py
 	python3 $(ROOT)/tests/unit/test_clk_sys_20mhz_inventory.py
+	python3 $(ROOT)/tests/unit/test_clk_sys_pll_sot.py
+	$(ROOT)/tests/unit/test_plex_clk_status_verilator.sh
 	python3 $(ROOT)/tests/unit/test_present_720p_l4_static.py
 	python3 $(ROOT)/tests/unit/test_present_geom_params_static.py
 	$(ROOT)/tests/unit/test_present_geom_params_rtl_sim.sh
