@@ -42,8 +42,12 @@ def main() -> int:
     src = STORE.read_text(encoding="utf-8", errors="replace")
     qsf = QSF.read_text(encoding="utf-8", errors="replace") if QSF.is_file() else ""
 
-    if "M2 WRAP_PREFETCH" not in src and "M2b STA_RECOVER" not in src:
-        return fail("missing M2 WRAP_PREFETCH / M2b STA_RECOVER land marker")
+    if (
+        "M2 WRAP_PREFETCH" not in src
+        and "M2b STA_RECOVER" not in src
+        and "M2c" not in src
+    ):
+        return fail("missing M2 WRAP_PREFETCH / M2b/M2c STA_RECOVER land marker")
 
     if "fill_base_r" not in src:
         return fail("M2b requires registered fill_base_r")
