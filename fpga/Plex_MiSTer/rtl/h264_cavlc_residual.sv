@@ -768,6 +768,7 @@ module h264_cavlc_residual_block #(
                 if (bit_pos >= bit_len) st <= ST_FAIL;
                 else begin : g_tok_par
                     reg [31:0] twin;
+                    reg [31:0] twin_msb;
                     reg [4:0] tmax, tlen, blen;
                     reg [7:0] tcand, tbest;
                     reg found_t;
@@ -781,8 +782,9 @@ module h264_cavlc_residual_block #(
                     for (ti = 1; ti <= 16; ti = ti + 1) begin
                         tlen = ti[4:0];
                         if (tlen <= tmax && (bit_pos + {5'd0, tlen}) <= bit_len) begin
+                            twin_msb = take_msb(twin, {1'b0, tlen});
                             tcand = coeff_token_lookup(coeff_token_table, tlen,
-                                                       take_msb(twin, {1'b0, tlen})[15:0]);
+                                                       twin_msb[15:0]);
                             if (tcand[7] && !found_t) begin
                                 found_t = 1'b1;
                                 tbest = tcand;
@@ -1133,6 +1135,7 @@ module h264_cavlc_residual_block #(
                 end else if (bit_pos >= bit_len) st <= ST_FAIL;
                 else begin : g_tz_par
                     reg [31:0] zwin;
+                    reg [31:0] zwin_msb;
                     reg [4:0] zmax, zlen, zbest_len;
                     reg [4:0] zcand, zbest;
                     reg found_z;
@@ -1145,8 +1148,9 @@ module h264_cavlc_residual_block #(
                     for (zi = 1; zi <= 9; zi = zi + 1) begin
                         zlen = zi[4:0];
                         if (zlen <= zmax && (bit_pos + {5'd0, zlen}) <= bit_len) begin
+                            zwin_msb = take_msb(zwin, {1'b0, zlen});
                             zcand = total_zeros_lookup(tz_is_chroma, tc_r, zlen[3:0],
-                                                       take_msb(zwin, {1'b0, zlen})[8:0]);
+                                                       zwin_msb[8:0]);
                             if (zcand[4] && !found_z) begin
                                 found_z = 1'b1;
                                 zbest = zcand;
@@ -1179,6 +1183,7 @@ module h264_cavlc_residual_block #(
                 end else if (bit_pos >= bit_len) st <= ST_FAIL;
                 else begin : g_run_pair
                     reg [31:0] rwin_a, rwin_b;
+                    reg [31:0] rwin_a_msb, rwin_b_msb;
                     reg [4:0] rmax_a, rmax_b, rlen, rblen_a, rblen_b;
                     reg [4:0] rcand, rbest_a, rbest_b;
                     reg found_a, found_b, do_b;
@@ -1194,8 +1199,9 @@ module h264_cavlc_residual_block #(
                     for (ri = 1; ri <= 11; ri = ri + 1) begin
                         rlen = ri[4:0];
                         if (rlen <= rmax_a && (bit_pos + {5'd0, rlen}) <= bit_len) begin
+                            rwin_a_msb = take_msb(rwin_a, {1'b0, rlen});
                             rcand = run_before_lookup(zeros_left, rlen[3:0],
-                                                      take_msb(rwin_a, {1'b0, rlen})[4:0]);
+                                                      rwin_a_msb[4:0]);
                             if (rcand[4] && !found_a) begin
                                 found_a = 1'b1;
                                 rbest_a = rcand;
@@ -1228,8 +1234,9 @@ module h264_cavlc_residual_block #(
                             for (ri = 1; ri <= 11; ri = ri + 1) begin
                                 rlen = ri[4:0];
                                 if (rlen <= rmax_b && (bpos_a + {5'd0, rlen}) <= bit_len) begin
+                                    rwin_b_msb = take_msb(rwin_b, {1'b0, rlen});
                                     rcand = run_before_lookup(zl_a, rlen[3:0],
-                                                              take_msb(rwin_b, {1'b0, rlen})[4:0]);
+                                                              rwin_b_msb[4:0]);
                                     if (rcand[4] && !found_b) begin
                                         found_b = 1'b1;
                                         rbest_b = rcand;
