@@ -111,17 +111,21 @@
     },
     "status_class": "STRESS_EVIDENCE_MEASURED_TIGHT",
     "not_claimed": [
-      "reader CLOSED",
-      "fabric_bw_closed",
-      "product rate-match 24fps",
-      "fit release",
-      "PPC2 reader closed",
-      "product rate-match"
+      "PPC2 delivery CLOSED",
+      "PPC2 correctness from beat delta",
+      "reader PPC2 deadline CLOSED",
+      "shared fabric BW CLOSED",
+      "bare reader CLOSED"
     ],
     "metric_class": "REFILL_DEMAND_BEAT_DELTA",
     "scalar_insensitive": true,
     "scalar_note": "w-scaler SCALAR reader (no PX_PER_CLK/rd_*_n) produces bit-identical G0/G1 to this bus TB \u2014 metric measures full-line refill only; rd_x+=2 skips odd display samples but refill still reads whole lines. NOT a PPC2 correctness proof.",
-    "ppc2_correctness_gate": "tests/unit/test_ddr_frame_store_ppc2_distinct.sh (dual-lane + scalar NEG)"
+    "ppc2_correctness_gate": "tests/unit/test_ddr_frame_store_ppc2_distinct.sh (dual-lane + scalar NEG)",
+    "reader_accepted_request_steady_delta": "OBSERVED/CLOSED",
+    "reader_PPC2_delivery_correctness_deadline": "OPEN",
+    "shared_fabric_BW": "OPEN",
+    "do_not_assert_DUT_is_PPC2_from_this_TB": true,
+    "recipe_note": "TB top may set PX_PER_CLK=2 and driver rd_x+=2, but beat-delta is full-line refill demand \u2014 scalar/no-rd_*_n control is bit-identical. PPC2 correctness is a separate gate (distinct+scalar NEG), not this bus metric."
   },
   "optional_not_headline": {
     "present_linebuf_i420_equiv_B_per_clk_sys_DE": {
@@ -148,17 +152,26 @@
   },
   "proof_status": {
     "class": "PARTIAL_CLOSED_READER",
+    "reader_accepted_request_steady_delta": "OBSERVED/CLOSED",
+    "reader_PPC2_delivery_correctness_deadline": "OPEN",
+    "shared_fabric_BW": "OPEN",
     "reader_payload_beat_delta_TB": "MEASURED_TIGHT_REFILL_DEMAND",
+    "reader_delivery_correctness": "OPEN",
+    "fabric_bw_closed": false,
     "owner": "w-clock",
     "tb": "tests/unit/test_ddr_frame_store_720p_ppc2_bus.sh",
     "NOT": [
       "reader CLOSED",
+      "PPC2 reader closed",
+      "PPC2 delivery CLOSED",
       "product rate-match integration",
       "fabric_bw_closed",
       "fit_blocker_release",
-      "PPC2 reader closed"
+      "DUT-is-PPC2-proof from beat delta"
     ],
     "beam_note": "825*750@20MHz ~32.323fps isolated store stress; not product 24fps rate-match",
+    "scalar_insensitive": true,
+    "note": "rd-duck final terms: accepted-request steady delta OBSERVED/CLOSED; PPC2 delivery/correctness/deadline OPEN; shared fabric BW OPEN. Beat delta is not a PPC2 proof (scalar control identical).",
     "G0": {
       "payload_beats": 173120,
       "derived": "172800 I420 + 2*160 Y-line prefetch = 320",
@@ -193,27 +206,22 @@
       "mutant": "starve_dout after healthy prep",
       "result": "STEADY_FAIL deadline; accepted=128 returned=0 underrun=65535",
       "discrimination": "deadline_fail=1"
-    },
-    "reader_delivery_correctness": "OPEN",
-    "open_delivery": [
-      "underrun!=0 on G0",
-      "no dual-lane pixel checksum",
-      "no product rate-match beam"
-    ],
-    "hps_write_concurrent_same_controller": "OPEN",
-    "T_copy_arm_e2e_serial_or_overlap": "OPEN",
-    "rd_duck_ack_holes_addressed": [
-      "G1 payload upper bound ==173120",
-      "G1 ddr_cy budget",
-      "+320 derived as 2 Y lines",
-      "returned beat conservation",
-      "G2 NEG discrimination",
-      "still no underrun==0 force (would false-green)",
-      "still no product rate-match"
-    ],
-    "note": "rd-duck: bus beat-delta scalar-identical; PARTIAL_CLOSED_READER only",
-    "ppc2_dual_lane": "GATED_BY_DISTINCT_TB_NOT_BUS",
-    "fabric_bw_closed": false
+    }
   },
-  "fabric_bw_closed": false
+  "fabric_bw_closed": false,
+  "claim_split": {
+    "reader_accepted_request_steady_delta": "OBSERVED/CLOSED",
+    "reader_PPC2_delivery_correctness_deadline": "OPEN",
+    "shared_fabric_BW": "OPEN",
+    "rationale": "Accepted-request steady beat delta (payload+door) is OBSERVED and tightly locked. Scalar/no-rd_*_n control yields identical counts, so beat delta cannot establish PPC2 delivery/correctness/deadline. Shared fabric BW remains OPEN (HPS write + T_copy_e2e). JSON alone never closes a claim.",
+    "ppc2_correctness_gate": "tests/unit/test_ddr_frame_store_ppc2_distinct.sh",
+    "bus_tb": "tests/unit/test_ddr_frame_store_720p_ppc2_bus.sh",
+    "bus_tb_proves": "accepted-request steady delta only (refill demand)",
+    "bus_tb_does_not_prove": [
+      "PPC2 dual-lane delivery",
+      "PPC2 correctness",
+      "deadline at product 24fps",
+      "shared fabric BW closed"
+    ]
+  }
 }

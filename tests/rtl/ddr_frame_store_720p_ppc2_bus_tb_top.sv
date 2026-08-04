@@ -1,5 +1,5 @@
-// Full 1280x720 I420 real ddr_frame_store under MULTI+PPC=2 recipe (w-clock).
-// STRESS_EVIDENCE: tight beat delta + RGB/n-lane sample checksum. NOT product rate-match.
+// Bus TB: accepted-request steady beat delta (refill demand). PX_PER_CLK=2 here is NOT a PPC2 proof.
+// claim_split: accepted-delta OBSERVED/CLOSED; PPC2 delivery OPEN; fabric BW OPEN.
 `default_nettype none
 
 module ddr_frame_store_720p_ppc2_bus_tb (

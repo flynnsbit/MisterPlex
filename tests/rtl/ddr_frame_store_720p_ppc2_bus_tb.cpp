@@ -14,6 +14,13 @@
 // rd-duck: SCALAR reader yields bit-identical G0/G1 — refill-demand only, NOT PPC2 closed.
 // PPC2 correctness = test_ddr_frame_store_ppc2_distinct.sh (dual-lane + scalar NEG).
 // Status: PARTIAL_CLOSED_READER; fabric_bw_closed=false.
+// CLAIM_SPLIT (rd-duck final):
+//   reader accepted-request steady delta: OBSERVED/CLOSED
+//   reader PPC2 delivery/correctness/deadline: OPEN
+//   shared fabric BW: OPEN
+// Beat delta is refill-demand; scalar/no-rd_*_n control is bit-identical — NOT a PPC2 proof.
+// Do not assert "DUT is PPC2" from this TB (PX_PER_CLK=2 + rd_x+=2 ≠ dual-lane correctness).
+// PPC2 correctness gate: test_ddr_frame_store_ppc2_distinct.sh (+ scalar NEG).
 
 #include "Vddr_frame_store_720p_ppc2_bus_tb.h"
 #include "verilated.h"

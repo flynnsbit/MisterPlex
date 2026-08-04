@@ -104,6 +104,20 @@ def main() -> int:
     cls = ps.get("class")
     if cls not in ("STRESS_EVIDENCE", "PARTIAL_CLOSED_READER"):
         fails.append("proof_status.class must be STRESS_EVIDENCE or PARTIAL_CLOSED_READER (not CLOSED)")
+    # rd-duck final terminology (three-way claim_split)
+    cs = c.get("claim_split", {})
+    for src, key, want in (
+        (cs, "reader_accepted_request_steady_delta", "OBSERVED/CLOSED"),
+        (cs, "reader_PPC2_delivery_correctness_deadline", "OPEN"),
+        (cs, "shared_fabric_BW", "OPEN"),
+        (ps, "reader_accepted_request_steady_delta", "OBSERVED/CLOSED"),
+        (ps, "reader_PPC2_delivery_correctness_deadline", "OPEN"),
+        (ps, "shared_fabric_BW", "OPEN"),
+    ):
+        if src.get(key) != want:
+            fails.append(f"{key} must be {want!r} (got {src.get(key)!r})")
+    if ps.get("fabric_bw_closed") not in (False, "false", "OPEN"):
+        fails.append("fabric_bw_closed must be false/OPEN")
     rstat = str(ps.get("reader_payload_beat_delta_TB", ""))
     if "MEASURED" not in rstat:
         fails.append("proof_status.reader_payload_beat_delta_TB must be MEASURED*")
@@ -131,7 +145,7 @@ def main() -> int:
         return 1
     print(
         "PASS p720_bw_contract: headline 33.1776 MB/s/dir; "
-        "NACK 3.0; three-lane P720; beat_delta MEASURED delivery OPEN"
+        "NACK 3.0; three-lane P720; accepted-delta OBSERVED/CLOSED; PPC2 delivery OPEN; fabric BW OPEN"
     )
     return 0
 
