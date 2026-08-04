@@ -283,6 +283,34 @@ module ddr_frame_store #(
 			pending_ready_s1 <= pending_ready_ddr;
 			pending_ready_s2 <= pending_ready_s1;
 
+			// -----------------------------------------------------------------
+			// Tear-free bank swap (720p-critical invariant)
+			// -----------------------------------------------------------------
+			// Producer (PLXK doorbell on clk_ddr) raises swap_req_t_ddr and
+			// latches pending_bank_ddr; pending_ready_ddr sticks when prep has
+			// the new bank's line 0 (PENDING_READY_STICKY_PREP).
+			// OWNER of the commit: this sys-clk block.
+			// EVENT: vsync_pulse (= present beam frame_start at end of last
+			//   VBlank line — colorbars.sv:79 / present_beam_ppc.sv:107) AND
+			//   swap_pending AND pending_ready AND !rd_active.
+			// SCANOUT GUARANTEE: y/c hit match y_bank_v2==disp_bank (~L383);
+			//   disp_bank is NBA-updated only on the commit edge, so every
+			//   active line of a displayed frame sees one bank index.
+			// MID-SCANOUT REQUEST: doorbell only sets swap_pending/pending_bank;
+			//   it does NOT touch disp_bank. Commit is deferred to next vsync.
+			//   Producer-late → same disp_bank repeats (stale frame OK).
+			//   Producer-never after first frame → has_frame stays 1 (no bars).
+			// INVARIANT: disp_bank changes at most once per frame_start edge
+			//   outside active DE, so one displayed frame is always exactly
+			//   one bank's contents.
+			// 720p24 (parent-fixed): clk_pix=28.8 MHz, H_TOTAL=1600, V_TOTAL=750
+			//   → line=55.56 us, VBlank 30 lines=1.667 ms safe window,
+			//   frame=41.667 ms. Commit is at the VBlank→active boundary
+			//   (frame_start), never mid-active.
+			// FAULT twin DDR_FRAME_STORE_FAULT_MID_FRAME_SWAP commits during
+			//   rd_active so the tear checker is non-tautological.
+			// -----------------------------------------------------------------
+
 			// Capture new doorbell before vsync-swap decision so a same-cycle collision
 			// can retain swap_pending for the newly latched bank (product).
 			// Legacy: both branches NBA-assigned swap_pending; the vsync clear
@@ -291,11 +319,26 @@ module ddr_frame_store #(
 				swap_req_seen <= swap_req_s2;
 				pending_bank <= pending_bank_s2;
 				if (!(SWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC
-				      && vsync_pulse && swap_pending && pending_ready_s2))
+				      && vsync_pulse && swap_pending && pending_ready_s2
+				      && !rd_active))
 					swap_pending <= 1'b1;
 			end
 
-			if (vsync_pulse && swap_pending && pending_ready_s2) begin
+`ifdef DDR_FRAME_STORE_FAULT_MID_FRAME_SWAP
+			// NEGATIVE twin only: commit while DE is active → cross-bank tear.
+			// Product builds must never define this macro.
+			if (rd_active && swap_pending && pending_ready_s2) begin
+`ifndef DDR_FRAME_STORE_FAULT_HOLD_DISP_BANK
+				disp_bank <= pending_bank;
+`endif
+				disp_buf <= ~disp_buf;
+				has_frame <= 1'b1;
+				swap_pending <= 1'b0;
+				frames_done <= frames_done + 16'd1;
+			end else
+`endif
+			// Product: commit only on vsync edge outside active DE.
+			if (vsync_pulse && swap_pending && pending_ready_s2 && !rd_active) begin
 `ifndef DDR_FRAME_STORE_FAULT_HOLD_DISP_BANK
 				// Uses pre-NBA pending_bank: the bank that was ready this cycle.
 				// A same-cycle swap_req updates pending_bank for the *next* swap.

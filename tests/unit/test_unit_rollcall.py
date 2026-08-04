@@ -278,6 +278,7 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/tests/unit/test_ddr_frame_store_scanout_sustained.sh",
     "$(ROOT)/tests/unit/test_ddr_frame_store_scanout_skip.sh",
     "$(ROOT)/tests/unit/test_ddr_frame_store_plxd_handshake.sh",
+    "$(ROOT)/tests/unit/test_ddr_frame_store_bank_swap_tear.sh",
     "$(ROOT)/tests/unit/test_ddr_frame_store_scanout_colour.sh",
     "$(ROOT)/scripts/rtl_lint.py",
     "$(ROOT)/tests/unit/test_h264_syntax_primitives_rtl_sim.sh",

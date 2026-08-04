@@ -209,17 +209,24 @@ public:
         top.vsync_pulse = 0;
     }
 
+    // Product tear-free commit needs vsync while !rd_active (VBlank edge).
+    // Active kH lines, then kVBlank blank lines; frame_start on last blank pixel.
     void videoTick() {
-        top.rd_active = 1;
+        constexpr int kVBlank = 8;
+        constexpr int kTotalH = kH + kVBlank;
+        const bool in_active = (scanY < kH);
+        top.rd_active = in_active ? 1 : 0;
         top.rd_x = scanX;
-        top.rd_y = scanY;
-        top.vsync_pulse = (scanX == 0 && scanY == 0);
+        top.rd_y = in_active ? scanY : (kH - 1);
+        const bool at_frame_start =
+            (scanX == (kW - 1)) && (scanY == (kTotalH - 1));
+        top.vsync_pulse = at_frame_start ? 1 : 0;
         tick();
         ++scanX;
         if (scanX == kW) {
             scanX = 0;
             ++scanY;
-            if (scanY == kH)
+            if (scanY == kTotalH)
                 scanY = 0;
         }
     }
@@ -234,6 +241,8 @@ public:
     }
 
     void pulseVsync() {
+        // Commit interlock requires !rd_active (product tear-free path).
+        top.rd_active = 0;
         top.vsync_pulse = 1;
         tick();
     }
@@ -309,24 +318,29 @@ public:
     bool schedulerProven() const { return sawSchedValid && sawScheduledLineRead; }
 };
 
-uint8_t stableSample(Sim& sim) {
-    for (int i = 0; i < 1000; ++i)
+// Hold beam on the sample line long enough for prep/DDR fill after a VBlank
+// swap (rd_active may have been 0 on the commit edge).
+void settleBeam(Sim& sim, int x, int y, int cycles) {
+    sim.top.rd_x = x;
+    sim.top.rd_y = y;
+    // rd_active=0 is fine for want_y (LINE_ONLY); still allow miss accounting off.
+    sim.top.rd_active = 0;
+    for (int i = 0; i < cycles; ++i)
         sim.tick();
+}
+
+uint8_t stableSample(Sim& sim) {
+    settleBeam(sim, 0, 0, 4000);
     return sim.sample(0, 0);
 }
 
 Rgb stableSampleRgb(Sim& sim) {
-    for (int i = 0; i < 1000; ++i)
-        sim.tick();
+    settleBeam(sim, 0, 0, 4000);
     return sim.sampleRgb(0, 0);
 }
 
 Rgb stableSampleRgbAt(Sim& sim, int x, int y) {
-    sim.top.rd_x = x;
-    sim.top.rd_y = y;
-    sim.top.rd_active = 1;
-    for (int i = 0; i < 1600; ++i)
-        sim.tick();
+    settleBeam(sim, x, y, 4000);
     return sim.sampleRgb(x, y);
 }
 

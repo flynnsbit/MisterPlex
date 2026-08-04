@@ -269,14 +269,18 @@ struct Sim {
 		}
 	}
 
-	// Match freeze TB beam: free-run X through blank; vsync at end of blank.
+	// Match freeze/product beam: free-run X through blank; vsync on last
+	// blanking pixel (frame_start) with rd_active=0. Product commit requires
+	// !rd_active (ddr_frame_store tear-free interlock). Do NOT pulse vsync at
+	// (0,0) active — that collides with DE and blocks the swap.
 	bool videoTick() {
 		ddrStep();
 		const bool active = (hc < kFrameW) && (vc < kActH);
 		top.rd_active = active ? 1 : 0;
 		top.rd_x = (hc < kFrameW) ? hc : (kFrameW - 1);
 		top.rd_y = (vc < kActH) ? vc : (kActH - 1);
-		const bool at_frame_start = (hc == 0 && vc == 0);
+		const bool at_frame_start =
+		    (hc == (kHTotal - 1)) && (vc == (kActH + kVBlank - 1));
 		top.vsync_pulse = at_frame_start ? 1 : 0;
 
 		top.clk = 0;
