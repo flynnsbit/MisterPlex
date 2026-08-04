@@ -1103,26 +1103,56 @@ plex_product_cfg u_product_cfg (
 	.fabric_frame_dma_en(product_cfg_fabric_dma)
 );
 
-// Fabric DMA hierarchy (integ/720p-compose). start tied 0 until ARM handover
-// wires kick — pays bounce M10K + ALM in the fit without contending the live
-// f2sdram port (DDRAM_* held local). w-mem owns full bus mux (arbiter3) next.
+// Fabric DMA hierarchy (integ/720p-compose). w-plxd arm_kick latches Option-C
+// 720p defaults; kick input held 0 until HPS mailbox/SPI is wired. Bounce M10K
+// + ALM paid in fit without contending live f2sdram (DDRAM_* held local).
+// w-mem owns full bus mux (arbiter3) next. Refresh is w-clock (not this path).
 `ifdef FABRIC_FRAME_DMA
+// Option-C 720p I420 (ddr_frame_layout.hpp / plex_720p_bw_contract.svh).
+localparam [31:0] FDMA_SRC_PHYS_DEFAULT  = 32'h3060_1000; // kPl330StagingPhys
+localparam [31:0] FDMA_BANK0_PHYS        = 32'h3018_0000; // kPlex720pPhysBase
+localparam [31:0] FDMA_FRAME_BYTES_720P  = 32'd1_382_400; // kPlex720pYuv420pBytes
 wire        fdma_busy, fdma_done, fdma_err;
 wire [31:0] fdma_rd_beats, fdma_wr_beats, fdma_last_fb;
 wire  [7:0] fdma_bcnt, fdma_be;
 wire [28:0] fdma_addr;
 wire [63:0] fdma_din;
 wire        fdma_rd, fdma_we;
+wire        fdma_start;
+wire [31:0] fdma_src_phys, fdma_bank_phys, fdma_frame_bytes;
+wire        fdma_kick_accept, fdma_kick_reject, fdma_kick_err;
+wire [31:0] fdma_kicks_ok, fdma_kicks_bad;
+// ARM kick held idle for fit (no false DMA). Descriptor defaults are real 720p.
+(* noprune *) fabric_dma_arm_kick u_fabric_dma_arm_kick (
+	.clk(clk_ddr),
+	.reset(reset),
+	.kick(1'b0),
+	.src_phys_i(FDMA_SRC_PHYS_DEFAULT),
+	.bank_phys_i(FDMA_BANK0_PHYS),
+	.frame_bytes_i(FDMA_FRAME_BYTES_720P),
+	.dma_busy(fdma_busy),
+	.dma_done(fdma_done),
+	.dma_err_align(fdma_err),
+	.start(fdma_start),
+	.src_phys(fdma_src_phys),
+	.bank_phys(fdma_bank_phys),
+	.frame_bytes(fdma_frame_bytes),
+	.kick_accept(fdma_kick_accept),
+	.kick_reject(fdma_kick_reject),
+	.last_err_align(fdma_kick_err),
+	.kicks_accepted(fdma_kicks_ok),
+	.kicks_rejected(fdma_kicks_bad)
+);
 (* noprune *) ddr_frame_dma #(
 	.BOUNCE_DEPTH(128),
 	.DEFAULT_FRAME_BYTES(1_382_400)
 ) u_fabric_frame_dma (
 	.clk(clk_ddr),
 	.reset(reset),
-	.start(1'b0),
-	.src_phys(32'h0),
-	.bank_phys(32'h0),
-	.frame_bytes(32'd0),
+	.start(fdma_start),
+	.src_phys(fdma_src_phys),
+	.bank_phys(fdma_bank_phys),
+	.frame_bytes(fdma_frame_bytes),
 	.busy(fdma_busy),
 	.done(fdma_done),
 	.err_align(fdma_err),
@@ -1140,7 +1170,9 @@ wire        fdma_rd, fdma_we;
 	.DDRAM_WE(fdma_we)
 );
 wire _unused_fdma = |{fdma_busy, fdma_done, fdma_err, fdma_rd_beats, fdma_wr_beats,
-	fdma_last_fb, fdma_bcnt, fdma_addr, fdma_din, fdma_rd, fdma_we, fdma_be};
+	fdma_last_fb, fdma_bcnt, fdma_addr, fdma_din, fdma_rd, fdma_we, fdma_be,
+	fdma_start, fdma_src_phys, fdma_bank_phys, fdma_frame_bytes,
+	fdma_kick_accept, fdma_kick_reject, fdma_kick_err, fdma_kicks_ok, fdma_kicks_bad};
 `else
 wire _unused_fdma = 1'b0;
 `endif

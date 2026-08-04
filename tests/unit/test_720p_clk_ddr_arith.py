@@ -67,17 +67,31 @@ def main() -> int:
         "product else-branch number_of_clocks(3)",
     )
 
-    # QSF: PRESENT_CLK_PIX_PLL must be commented (default OFF)
+    # QSF: product default keeps PRESENT_CLK_PIX_PLL commented OFF.
+    # integ/720p-compose enables it for real 24 Hz (29.7 MHz pack) — accept either.
     qsf = read(ROOT / "fpga/Plex_MiSTer/Plex.qsf")
     active_pix = [
         ln
         for ln in qsf.splitlines()
         if "PRESENT_CLK_PIX_PLL" in ln and not ln.strip().startswith("#")
     ]
-    check(not active_pix, "QSF PRESENT_CLK_PIX_PLL not active (default OFF)")
+    integ_720p = (
+        'VERILOG_MACRO "FRAME_W=1280"' in qsf
+        and 'VERILOG_MACRO "FRAME_H=720"' in qsf
+        and 'VERILOG_MACRO "PRESENT_CLK_PIX_PLL=1"' in qsf
+    )
+    if integ_720p:
+        check(bool(active_pix), "integ QSF PRESENT_CLK_PIX_PLL=1 active (24 Hz path)")
+        check(
+            'VERILOG_MACRO "PRESENT_PX_PER_CLK=2"' in qsf
+            or "PRESENT_MULTI_PIXEL=1" in qsf,
+            "integ 720p pairs PLL with MULTI/PPC",
+        )
+    else:
+        check(not active_pix, "QSF PRESENT_CLK_PIX_PLL not active (default OFF)")
     check("Plex_clk_pix.sdc" in qsf, "QSF mentions Plex_clk_pix.sdc recipe")
 
-    # Plex.sv wires clk_pix from PLL only under ifdef
+    # Plex.sv wires clk_pix from PLL only under ifdef; product else still uses clk_sys.
     plex = read(ROOT / "fpga/Plex_MiSTer/Plex.sv")
     check("clk_pix_pll" in plex, "Plex.sv declares clk_pix_pll under flag path")
     check(".clk_pix(clk_sys)" in plex, "product .clk_pix(clk_sys) still present")

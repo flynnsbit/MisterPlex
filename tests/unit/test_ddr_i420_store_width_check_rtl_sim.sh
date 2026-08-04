@@ -8,11 +8,24 @@ mkdir -p "$OUT"
 "$RUN" --cc --exe --build --Mdir "$OUT" \
   --top-module ddr_i420_store_width_check_tb_top \
   -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC \
+  +incdir+"$ROOT/fpga/Plex_MiSTer/rtl" \
   -CFLAGS "-std=c++17 -O2" \
   "$ROOT/tests/rtl/ddr_i420_store_width_check_tb_top.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_i420_store_width_check.sv" \
   "$ROOT/tests/rtl/ddr_i420_store_width_check_tb.cpp"
 echo "verilator_build true rc=$?"
-"$OUT/Vddr_i420_store_width_check_tb_top"
-echo "sim true rc=$?"
+set +e
+SIM_OUT="$("$OUT/Vddr_i420_store_width_check_tb_top" 2>&1)"
+SIM_RC=$?
+set -e
+printf '%s\n' "$SIM_OUT"
+echo "sim true rc=$SIM_RC"
+if [[ "$SIM_RC" -ne 0 ]]; then
+  echo "FAIL sim rc=$SIM_RC" >&2
+  exit "$SIM_RC"
+fi
+if ! grep -q 'ddr_i420_store_width_check: OK' <<<"$SIM_OUT"; then
+  echo "FAIL missing TB OK marker (compile-only is not a pass)" >&2
+  exit 2
+fi
 echo "PASS test_ddr_i420_store_width_check_rtl_sim"

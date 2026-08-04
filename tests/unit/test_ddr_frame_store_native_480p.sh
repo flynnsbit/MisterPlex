@@ -23,6 +23,8 @@ assert_sim_executed() {
 }
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+RTL="$ROOT/fpga/Plex_MiSTer/rtl"
+INC="-I$RTL"
 RUN_VERILATOR="$ROOT/scripts/run_verilator.sh"
 CXX="${CXX:-g++}"
 CXXFLAGS="-std=c++17 -O2 -Wall -Wextra -I$ROOT/host -I$ROOT/arm/misterplexd"
@@ -66,12 +68,13 @@ echo "RTL SIM: using $VERILATOR_VERSION" >&2
 
 common_sv=(
   "$ROOT/tests/rtl/ddr_frame_store_native_480p_tb_top.sv"
-  "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_base_mux.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_ram.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/async_fifo.sv"
   "$ROOT/tests/rtl/ddr_frame_store_native_480p_tb.cpp"
 )
-vflags=(--cc --exe --build --top-module ddr_frame_store_native_480p_tb
+vflags=($INC --cc --exe --build --top-module ddr_frame_store_native_480p_tb
   -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-SELRANGE -Wno-UNSIGNED
   -CFLAGS "-std=c++17 -O2")
 

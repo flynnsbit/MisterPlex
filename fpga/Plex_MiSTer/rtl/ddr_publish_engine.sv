@@ -219,7 +219,8 @@ module ddr_publish_engine #(
 				bus_want <= 1'b1;
 				DDRAM_RD <= 1'b0;
 				if (DDRAM_DOUT_READY) begin
-					bounce[got] <= DDRAM_DOUT;
+					// bounce[0:MAX_BURST-1] needs $clog2(MAX_BURST) index (4b @16)
+					bounce[got[$clog2(MAX_BURST)-1:0]] <= DDRAM_DOUT;
 					got <= got + 5'd1;
 					beats_rd <= beats_rd + 16'd1;
 					src_w <= src_w + 1'b1;
@@ -239,7 +240,7 @@ module ddr_publish_engine #(
 						DDRAM_WE <= 1'b1;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_ADDR <= dst_w;
-						DDRAM_DIN <= bounce[wr_i];
+						DDRAM_DIN <= bounce[wr_i[$clog2(MAX_BURST)-1:0]];
 						wr_issued <= 1'b1;
 					end
 				end else if (wr_accept) begin

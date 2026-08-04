@@ -107,12 +107,17 @@ int main() {
     EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
                          "past_last_row = (py >= V_STORE)"),
            "past_last_row vs V_STORE");
+    // CODED_W roots in layout params (624) or 720p ABI select (P720/DDR_FS_*).
     const bool coded_ok =
         file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
                       ".CODED_W(DDR_FRAME_CODED_WIDTH)") ||
-        (file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
-                       "FS_CODED_W     = DDR_FRAME_CODED_WIDTH") &&
-         file_contains("fpga/Plex_MiSTer/rtl/present_core.sv", ".CODED_W(FS_CODED_W)"));
+        (file_contains("fpga/Plex_MiSTer/rtl/present_core.sv", ".CODED_W(FS_CODED_W)") &&
+         (file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
+                        "FS_CODED_W     = DDR_FRAME_CODED_WIDTH") ||
+          file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
+                        "FS_CODED_W     = DDR_FS_USE_720P_ABI ? P720_CODED_W : DDR_FS_CODED_W") ||
+          file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
+                        "FS_CODED_W = DDR_FS_USE_720P_ABI ? P720_CODED_W : DDR_FS_CODED_W")));
     EXPECT(coded_ok, "ddr_frame_store CODED_W from layout params");
     // Honest swap pack must ship with this RBF for skip instrumentation.
     EXPECT(file_contains("fpga/Plex_MiSTer/rtl/ddr_frame_store.sv",

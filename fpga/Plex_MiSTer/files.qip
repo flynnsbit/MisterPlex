@@ -28,6 +28,7 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_frame_store.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_i420_bank_geom.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_frame_base_mux.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_frame_dma.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/fabric_dma_arm_kick.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_publish_job.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_publish_copy_budget.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_i420_store_width_check.sv

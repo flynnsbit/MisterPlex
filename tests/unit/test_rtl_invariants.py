@@ -1857,7 +1857,19 @@ def check_present_geometry_stride_contract() -> None:
             and ".CODED_W(FS_CODED_W)" in p_nt
             and ".HPS_BANK_STRIDE_BYTES(FS_BANK_STRIDE)" in p_nt
         )
-        return direct or fs_bind
+        # integ/720p-compose: FS_* from ddr_frame_abi_select (480p SoT or 720p when ABI on).
+        fs_abi_select = (
+            ".FRAME_W(FRAME_W)" in p_nt
+            and ".FRAME_H(FRAME_H)" in p_nt
+            and "include\"ddr_frame_abi_select.svh\"" in p_nt
+            and "DDR_FS_USE_720P_ABI" in p_nt
+            and "FS_CODED_W=" in p_nt
+            and "DDR_FS_CODED_W" in p_nt
+            and ".CODED_W(FS_CODED_W)" in p_nt
+            and ".HPS_BANK_STRIDE_BYTES(FS_BANK_STRIDE)" in p_nt
+            and ".DOORBELL_PHYS(FS_DOORBELL)" in p_nt
+        )
+        return direct or fs_bind or fs_abi_select
 
     check(
         present_ddr_wiring_ok(present_nt),
