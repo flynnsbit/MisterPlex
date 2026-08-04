@@ -847,7 +847,13 @@ module ddr_frame_store #(
 	// launched from desired_y_r through this cone. Sample schedule outputs
 	// and drive S_IDLE only from *_r (+1 clk_ddr decision latency).
 	// Do not multicycle the same-clock cone; keep combo for TB probes.
+	// H-R1d SCHED_RECORD_ATOMIC: also freeze prep/cur select + bank with the
+	// same sample as need_*/target_*_r so S_IDLE arm never re-muxes live
+	// swap_pending_d2 against a lagged index epoch (set/bank ownership skew).
+	// Consume path (sched_valid issue) already uses only sched_*; latch is the gap.
 	reg need_y_cur_r, need_c_cur_r, need_y_prep_r, need_c_prep_r, pending_ready_r;
+	reg sel_y_prep_r, sel_c_prep_r;
+	reg sched_bank_y_src_r, sched_bank_c_src_r;
 	reg [Y_W-1:0] target_y_cur_r, target_y_prep_r;
 	reg [Y_W-2:0] target_c_cur_r, target_c_prep_r;
 	reg [SLOT_W-1:0] target_y_idx_cur_r, target_y_idx_prep_r, target_c_idx_cur_r, target_c_idx_prep_r;
@@ -858,6 +864,10 @@ module ddr_frame_store #(
 			need_y_prep_r <= 1'b0;
 			need_c_prep_r <= 1'b0;
 			pending_ready_r <= 1'b1;
+			sel_y_prep_r <= 1'b0;
+			sel_c_prep_r <= 1'b0;
+			sched_bank_y_src_r <= 1'b0;
+			sched_bank_c_src_r <= 1'b0;
 			target_y_cur_r <= '0;
 			target_y_prep_r <= '0;
 			target_c_cur_r <= '0;
@@ -872,6 +882,11 @@ module ddr_frame_store #(
 			need_y_prep_r <= need_y_prep_c;
 			need_c_prep_r <= need_c_prep_c;
 			pending_ready_r <= pending_ready_c;
+			// Same-cycle sample as need_*/target_*_r (not live re-eval at arm).
+			sel_y_prep_r <= swap_pending_d2 && need_y_prep_c;
+			sel_c_prep_r <= swap_pending_d2 && need_c_prep_c;
+			sched_bank_y_src_r <= (swap_pending_d2 && need_y_prep_c) ? pending_bank_d2 : disp_bank_d2;
+			sched_bank_c_src_r <= (swap_pending_d2 && need_c_prep_c) ? pending_bank_d2 : disp_bank_d2;
 			target_y_cur_r <= target_y_cur_c;
 			target_y_prep_r <= target_y_prep_c;
 			target_c_cur_r <= target_c_cur_c;
@@ -1256,42 +1271,44 @@ module ddr_frame_store #(
 							fill_is_chroma <= 1'b1;
 						end
 						state_ddr <= S_LINE_ISSUE;
-					end else if ((swap_pending_d2 && need_y_prep_r) || (has_frame_d2 && need_y_cur_r)) begin
+					end else if (sel_y_prep_r || (has_frame_d2 && need_y_cur_r)) begin
+						// H-R1d: arm from frozen sel/bank/target_*_r only (no live swap_pending re-mux).
 						if (PIPELINE_REFILL_SCHEDULER) begin
 							sched_valid <= 1'b1;
 							sched_is_y <= 1'b1;
-							sched_for_pending <= swap_pending_d2 && need_y_prep_r;
-							sched_bank <= (swap_pending_d2 && need_y_prep_r) ? pending_bank_d2 : disp_bank_d2;
-							sched_y <= (swap_pending_d2 && need_y_prep_r) ? target_y_prep_r : target_y_cur_r;
-							sched_idx <= (swap_pending_d2 && need_y_prep_r) ? target_y_idx_prep_r : target_y_idx_cur_r;
+							sched_for_pending <= sel_y_prep_r;
+							sched_bank <= sched_bank_y_src_r;
+							sched_y <= sel_y_prep_r ? target_y_prep_r : target_y_cur_r;
+							sched_idx <= sel_y_prep_r ? target_y_idx_prep_r : target_y_idx_cur_r;
 							sched_pending_ready <= pending_ready_r;
 						end else begin
-							fill_bank <= (swap_pending_d2 && need_y_prep_r) ? pending_bank_d2 : disp_bank_d2;
-							fill_y <= (swap_pending_d2 && need_y_prep_r) ? target_y_prep_r : target_y_cur_r;
-							fill_idx <= (swap_pending_d2 && need_y_prep_r) ? target_y_idx_prep_r : target_y_idx_cur_r;
-							y_valid[(swap_pending_d2 && need_y_prep_r) ? target_y_idx_prep_r : target_y_idx_cur_r] <= 1'b0;
-							y_bank[(swap_pending_d2 && need_y_prep_r) ? target_y_idx_prep_r : target_y_idx_cur_r] <= (swap_pending_d2 && need_y_prep_r) ? pending_bank_d2 : disp_bank_d2;
+							fill_bank <= sched_bank_y_src_r;
+							fill_y <= sel_y_prep_r ? target_y_prep_r : target_y_cur_r;
+							fill_idx <= sel_y_prep_r ? target_y_idx_prep_r : target_y_idx_cur_r;
+							y_valid[sel_y_prep_r ? target_y_idx_prep_r : target_y_idx_cur_r] <= 1'b0;
+							y_bank[sel_y_prep_r ? target_y_idx_prep_r : target_y_idx_cur_r] <= sched_bank_y_src_r;
 							fill_is_chroma <= 1'b0;
 							fill_plane_v <= 1'b0;
 							fill_qword <= '0;
 							qwords_remaining <= Y_LINE_QWORDS[Y_QW_AW:0];
 							state_ddr <= S_LINE_ISSUE;
 						end
-					end else if ((swap_pending_d2 && need_c_prep_r) || (has_frame_d2 && need_c_cur_r)) begin
+					end else if (sel_c_prep_r || (has_frame_d2 && need_c_cur_r)) begin
+						// H-R1d: chroma arm twin — frozen sel/bank/target only.
 						if (PIPELINE_REFILL_SCHEDULER) begin
 							sched_valid <= 1'b1;
 							sched_is_y <= 1'b0;
-							sched_for_pending <= swap_pending_d2 && need_c_prep_r;
-							sched_bank <= (swap_pending_d2 && need_c_prep_r) ? pending_bank_d2 : disp_bank_d2;
-							sched_cy <= (swap_pending_d2 && need_c_prep_r) ? target_c_prep_r : target_c_cur_r;
-							sched_idx <= (swap_pending_d2 && need_c_prep_r) ? target_c_idx_prep_r : target_c_idx_cur_r;
+							sched_for_pending <= sel_c_prep_r;
+							sched_bank <= sched_bank_c_src_r;
+							sched_cy <= sel_c_prep_r ? target_c_prep_r : target_c_cur_r;
+							sched_idx <= sel_c_prep_r ? target_c_idx_prep_r : target_c_idx_cur_r;
 							sched_pending_ready <= pending_ready_r;
 						end else begin
-							fill_bank <= (swap_pending_d2 && need_c_prep_r) ? pending_bank_d2 : disp_bank_d2;
-							fill_cy <= (swap_pending_d2 && need_c_prep_r) ? target_c_prep_r : target_c_cur_r;
-							fill_idx <= (swap_pending_d2 && need_c_prep_r) ? target_c_idx_prep_r : target_c_idx_cur_r;
-							c_valid[(swap_pending_d2 && need_c_prep_r) ? target_c_idx_prep_r : target_c_idx_cur_r] <= 1'b0;
-							c_bank[(swap_pending_d2 && need_c_prep_r) ? target_c_idx_prep_r : target_c_idx_cur_r] <= (swap_pending_d2 && need_c_prep_r) ? pending_bank_d2 : disp_bank_d2;
+							fill_bank <= sched_bank_c_src_r;
+							fill_cy <= sel_c_prep_r ? target_c_prep_r : target_c_cur_r;
+							fill_idx <= sel_c_prep_r ? target_c_idx_prep_r : target_c_idx_cur_r;
+							c_valid[sel_c_prep_r ? target_c_idx_prep_r : target_c_idx_cur_r] <= 1'b0;
+							c_bank[sel_c_prep_r ? target_c_idx_prep_r : target_c_idx_cur_r] <= sched_bank_c_src_r;
 							fill_is_chroma <= 1'b1;
 							fill_plane_v <= 1'b0;
 							fill_qword <= '0;
