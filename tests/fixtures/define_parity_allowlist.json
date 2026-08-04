@@ -44,7 +44,8 @@
     "P3_INTRA_FRAME_RARE_NEGATIVE_TEST": "Injected intra-frame expected-red fault.",
     "P3_INTRA_NEGATIVE_TEST": "Injected intra-MB0 expected-red fault.",
     "RAW_PIPE_FAULT_NO_SET": "Injected raw-video-pipe expected-red fault: F_SETPIPE_SZ becomes a no-op so capacity stays at the kernel default.",
-    "DYN_BASE_EN_TB": "Test-only Verilator CFLAGS for ddr_frame_base_mux dyn-base modes (0=product identity, 1=dyn select)."
+    "DYN_BASE_EN_TB": "Test-only Verilator CFLAGS for ddr_frame_base_mux dyn-base modes (0=product identity, 1=dyn select).",
+    "MISTERPLEX_PRODUCT_DDR_720P": "Host C++ product canvas tier (not a Quartus macro). integ/720p-compose misterplexd sets =1 so ARM phys/doorbell match QSF FRAME 1280x720 + ddr_frame_abi_select; unit tests omit it (480p silicon)."
   },
   "volatile_value_macros": {
     "BUILD_DATE": "Quartus generates the date in sys/build_id.tcl; Verilator lint uses a stable placeholder value."

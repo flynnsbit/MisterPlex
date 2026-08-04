@@ -51,7 +51,7 @@ unit:
 unit-rollcall:
 	python3 $(ROOT)/tests/unit/test_unit_rollcall.py
 
-unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_pl330_encode $(ROOT)/build/test_p720_e2e_budget $(ROOT)/build/test_idle_poll_budget $(ROOT)/build/test_spi_txn_complete $(ROOT)/build/test_gdm_filter $(ROOT)/build/test_cadence $(ROOT)/build/test_cadence_swap_path $(ROOT)/build/test_publish_interval_ledger $(ROOT)/build/test_publish_swap_delta_ledger $(ROOT)/build/test_plxd_liveness $(ROOT)/build/test_present_store_scale_math $(ROOT)/build/test_fabric_content_window_math $(ROOT)/build/test_avclock $(ROOT)/build/test_audio_delay $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_av_phase_rtl_quanta $(ROOT)/build/test_osd_menu $(ROOT)/build/test_osd_control $(ROOT)/build/test_last_frame_latch $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_pixel_format $(ROOT)/build/test_main_guard $(ROOT)/build/test_death_breadcrumb $(ROOT)/build/test_frame_ledger $(ROOT)/build/test_supply_bucket $(ROOT)/build/test_raw_video_pipe $(ROOT)/build/test_status_telemetry $(ROOT)/build/test_resolve $(ROOT)/build/test_log_redact $(ROOT)/build/test_pms_timeline $(ROOT)/build/test_plextv_device $(ROOT)/build/test_companion_eof $(ROOT)/build/test_companion_plant_seek $(ROOT)/build/test_gdm_resources_parity $(ROOT)/build/pms_baseline_probe $(ROOT)/build/test_h264_bitstream_source $(ROOT)/build/test_bitstream_ring_lifecycle $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_coded_size_adopt $(ROOT)/build/test_ffmpeg_vf $(ROOT)/build/test_force_scale_construction $(ROOT)/build/test_yuv420p_chroma_480p $(ROOT)/build/test_geom_frame_cost $(ROOT)/build/test_glass_loss_death_points $(ROOT)/build/test_frame_store_sdram_sim $(ROOT)/build/test_frame_store_ddr_prefetch_sim $(ROOT)/build/test_ddr_want_y_hblank_thrash $(ROOT)/build/test_ddr_bank_mailbox_phys $(ROOT)/build/test_ddr_scanout_multiframe $(ROOT)/build/test_sdram_memtest_sim $(ROOT)/build/test_sdram_mailbox $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant $(ROOT)/build/test_p3_host_recon_vectors $(ROOT)/build/test_p3_idct_reference_model $(ROOT)/build/test_p3_inter_pred_vectors $(ROOT)/build/extract_h264_golden $(ROOT)/build/misterplexd
+unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_pl330_encode $(ROOT)/build/test_p720_e2e_budget $(ROOT)/build/test_idle_poll_budget $(ROOT)/build/test_spi_txn_complete $(ROOT)/build/test_gdm_filter $(ROOT)/build/test_cadence $(ROOT)/build/test_cadence_swap_path $(ROOT)/build/test_publish_interval_ledger $(ROOT)/build/test_publish_swap_delta_ledger $(ROOT)/build/test_plxd_liveness $(ROOT)/build/test_present_store_scale_math $(ROOT)/build/test_fabric_content_window_math $(ROOT)/build/test_avclock $(ROOT)/build/test_audio_delay $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_av_phase_rtl_quanta $(ROOT)/build/test_osd_menu $(ROOT)/build/test_osd_control $(ROOT)/build/test_last_frame_latch $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_pixel_format $(ROOT)/build/test_main_guard $(ROOT)/build/test_death_breadcrumb $(ROOT)/build/test_frame_ledger $(ROOT)/build/test_supply_bucket $(ROOT)/build/test_raw_video_pipe $(ROOT)/build/test_status_telemetry $(ROOT)/build/test_resolve $(ROOT)/build/test_log_redact $(ROOT)/build/test_pms_timeline $(ROOT)/build/test_plextv_device $(ROOT)/build/test_companion_eof $(ROOT)/build/test_companion_plant_seek $(ROOT)/build/test_gdm_resources_parity $(ROOT)/build/pms_baseline_probe $(ROOT)/build/test_h264_bitstream_source $(ROOT)/build/test_bitstream_ring_lifecycle $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_coded_size_adopt $(ROOT)/build/test_ffmpeg_vf $(ROOT)/build/test_force_scale_construction $(ROOT)/build/test_yuv420p_chroma_480p $(ROOT)/build/test_geom_frame_cost $(ROOT)/build/test_glass_loss_death_points $(ROOT)/build/test_frame_store_sdram_sim $(ROOT)/build/test_frame_store_ddr_prefetch_sim $(ROOT)/build/test_ddr_want_y_hblank_thrash $(ROOT)/build/test_ddr_bank_mailbox_phys $(ROOT)/build/test_720p_l4_host_layout $(ROOT)/build/test_ddr_scanout_multiframe $(ROOT)/build/test_sdram_memtest_sim $(ROOT)/build/test_sdram_mailbox $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant $(ROOT)/build/test_p3_host_recon_vectors $(ROOT)/build/test_p3_idct_reference_model $(ROOT)/build/test_p3_inter_pred_vectors $(ROOT)/build/extract_h264_golden $(ROOT)/build/misterplexd
 	$(ROOT)/build/test_gdm_filter
 	$(ROOT)/build/test_spi_txn_complete
 	$(ROOT)/build/test_idle_poll_budget
@@ -166,6 +166,8 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_pl330_encode $(ROOT)/b
 	python3 $(ROOT)/tests/unit/test_720p_present_m10k_budget_static.py
 	python3 $(ROOT)/tests/unit/test_present_720p_land_static.py
 	python3 $(ROOT)/tests/unit/test_present_720p_l4_static.py
+	python3 $(ROOT)/tests/unit/test_present_720p_host_compose_static.py
+	$(ROOT)/build/test_720p_l4_host_layout
 	python3 $(ROOT)/tests/unit/test_present_geom_params_static.py
 	$(ROOT)/tests/unit/test_present_geom_params_rtl_sim.sh
 	python3 $(ROOT)/tests/unit/test_present_720p_store_wire_static.py
@@ -526,6 +528,11 @@ $(ROOT)/build/test_ddr_bank_mailbox_phys: $(ROOT)/tests/unit/test_ddr_bank_mailb
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -I$(ROOT)/host -o $@ $(ROOT)/tests/unit/test_ddr_bank_mailbox_phys.cpp
 
+$(ROOT)/build/test_720p_l4_host_layout: $(ROOT)/tests/unit/test_720p_l4_host_layout.cpp \
+		$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -I$(ROOT)/host -o $@ $(ROOT)/tests/unit/test_720p_l4_host_layout.cpp
+
 $(ROOT)/build/test_ddr_scanout_multiframe: $(ROOT)/tests/unit/test_ddr_scanout_multiframe.cpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_ddr_scanout_multiframe.cpp
@@ -829,6 +836,10 @@ MPLEX_HDR := \
 	$(ROOT)/host/libmisterplex/pixel_format.hpp \
 	$(MPLEX_BUILD_ID_H)
 
+# integ/720p-compose: daemon product canvas must match QSF FRAME 1280×720 +
+# ddr_frame_abi_select 720p PHYS/doorbell. Unit tests omit this flag (480p silicon).
+MPLEX_PRODUCT_DDR_FLAGS ?= -DMISTERPLEX_PRODUCT_DDR_720P=1
+
 $(ROOT)/build/misterplexd: $(MPLEX_SRC) \
 		$(ROOT)/arm/misterplexd/companion.hpp \
 		$(ROOT)/arm/misterplexd/death_breadcrumb.hpp \
@@ -840,7 +851,7 @@ $(ROOT)/build/misterplexd: $(MPLEX_SRC) \
 		$(ROOT)/arm/misterplexd/fpga_spi.hpp \
 		$(MPLEX_HDR)
 	@mkdir -p $(ROOT)/build
-	$(CXX) $(CXXFLAGS) $(MPLEX_INC) -pthread -o $@ $(MPLEX_SRC)
+	$(CXX) $(CXXFLAGS) $(MPLEX_PRODUCT_DDR_FLAGS) $(MPLEX_INC) -pthread -o $@ $(MPLEX_SRC)
 
 plexd: $(ROOT)/build/misterplexd
 
