@@ -213,6 +213,8 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_stream_path_deblock_integration.sh
 	bash $(ROOT)/tests/unit/test_stream_path_ddr_ring_integration.sh
 	$(ROOT)/tests/unit/test_ddr_frame_store_warm_reset.sh
+	$(ROOT)/tests/unit/test_ddr_frame_store_l4_rtl_sim.sh
+	python3 $(ROOT)/tests/unit/test_l4_frame_lines16_static.py
 	$(ROOT)/tests/unit/test_ddr_frame_store_scanout_shear.sh
 	$(ROOT)/tests/unit/test_ddr_frame_store_scanout_freeze.sh
 	$(ROOT)/tests/unit/test_ddr_frame_store_scanout_sustained.sh
@@ -236,6 +238,8 @@ rtl-sim-unlocked:
 	$(ROOT)/tests/unit/test_p3_stream_path_recon_rtl_sim.sh
 	$(ROOT)/tests/unit/test_stream_path_deblock_integration.sh
 	$(ROOT)/tests/unit/test_ddr_frame_store_warm_reset.sh
+	$(ROOT)/tests/unit/test_ddr_frame_store_l4_rtl_sim.sh
+	python3 $(ROOT)/tests/unit/test_l4_frame_lines16_static.py
 	$(ROOT)/tests/unit/test_ddr_frame_store_scanout_shear.sh
 	$(ROOT)/tests/unit/test_ddr_frame_store_scanout_freeze.sh
 	$(ROOT)/tests/unit/test_ddr_frame_store_scanout_sustained.sh

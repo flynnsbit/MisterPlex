@@ -50,6 +50,40 @@ constexpr uint32_t kPlex480pYuv420pBankStride = 0x00080000u;
 constexpr uint32_t kPlex240pSpiRgb565BankStride = 0x00040000u;
 constexpr uint32_t kPlex480pRgb565DoorbellPhys = 0x3017F000u;
 constexpr uint32_t kPlex480pYuv420pDoorbellPhys = 0x300FF000u;
+// ---- 720p tier (default-OFF present path; pairs RTL DDR_FRAME_720P_*) ----
+// Phys window starts after the product 480p dual-bank map (0x30000000 + 2*0x80000
+// = 0x30100000); 0x30180000 leaves a gap and uses bank_stride 0x180000 so doorbell
+// is phys + 2*stride - 0x1000 = 0x3047F000. Do not touch product 480p doorbell.
+constexpr CodedWidth kPlex720pCodedWidth{1280};
+constexpr CodedHeight kPlex720pCodedHeight{720};
+constexpr DisplayWidth kPlex720pDisplayWidth{1280};
+constexpr DisplayHeight kPlex720pDisplayHeight{720};
+constexpr PresentedWidth kPlex720pPresentedWidth{1280};
+constexpr PresentedHeight kPlex720pPresentedHeight{720};
+constexpr int kPlex720pPillarboxLeft = 0;
+constexpr int kPlex720pPillarboxRight = 0;
+constexpr int kPlex720pYuv420pBytes = 1382400;
+constexpr int kPlex720pYStrideBytes = 1280;
+constexpr int kPlex720pChromaStrideBytes = 640;
+static_assert(kPlex720pYStrideBytes == kPlex720pCodedWidth.get(),
+              "720p Y stride must equal coded width");
+static_assert(kPlex720pChromaStrideBytes == kPlex720pCodedWidth.get() / 2,
+              "720p chroma stride must equal coded width/2");
+static_assert(kPlex720pYuv420pBytes ==
+                  kPlex720pCodedWidth.get() * kPlex720pCodedHeight.get() * 3 / 2,
+              "720p I420 byte count");
+constexpr uint32_t kPlex720pYuv420pBankStride = 0x00180000u;
+constexpr uint32_t kPlex720pPhysBase = 0x30180000u;
+constexpr uint32_t kPlex720pYuv420pDoorbellPhys = 0x3047F000u;
+static_assert(kPlex720pYuv420pDoorbellPhys ==
+                  kPlex720pPhysBase + 2u * kPlex720pYuv420pBankStride - 0x1000u,
+              "720p doorbell must be final 4KiB of dual-bank window");
+// L4 beam (24 MHz, H=1312, V=762) → ~24.006 Hz with DE 1280×720.
+constexpr int kPlex720p24BeamHTotal = 1312;
+constexpr int kPlex720p24BeamVTotal = 762;
+constexpr int kPlex720p24BeamHDe = 1280;
+constexpr int kPlex720p24BeamVActive = 720;
+constexpr int kPlex720p24ClkSysHz = 24000000;
 constexpr uint32_t kDdrFrameDoorbellMagic = 0x504C584Bu; // PLXK
 constexpr uint32_t kDdrFrameDoorbellSeqMask = 0x1FFFFFFFu;
 constexpr uint8_t kYuv420BlackY = 16;

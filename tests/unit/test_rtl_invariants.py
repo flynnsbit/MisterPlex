@@ -1268,6 +1268,17 @@ def check_ddr_frame_layout_contract() -> None:
         ("kYuv420BlackY", "DDR_FRAME_YUV_BLACK_Y"),
         ("kYuv420BlackU", "DDR_FRAME_YUV_BLACK_U"),
         ("kYuv420BlackV", "DDR_FRAME_YUV_BLACK_V"),
+        # 720p tier (default-OFF present path; host already declares kPlex720p*)
+        ("kPlex720pCodedWidth", "DDR_FRAME_720P_CODED_WIDTH"),
+        ("kPlex720pCodedHeight", "DDR_FRAME_720P_CODED_HEIGHT"),
+        ("kPlex720pDisplayWidth", "DDR_FRAME_720P_DISPLAY_WIDTH"),
+        ("kPlex720pDisplayHeight", "DDR_FRAME_720P_DISPLAY_HEIGHT"),
+        ("kPlex720pYuv420pBytes", "DDR_FRAME_720P_YUV420P_BYTES"),
+        ("kPlex720pYStrideBytes", "DDR_FRAME_720P_Y_STRIDE_BYTES"),
+        ("kPlex720pChromaStrideBytes", "DDR_FRAME_720P_CHROMA_STRIDE_BYTES"),
+        ("kPlex720pYuv420pBankStride", "DDR_FRAME_720P_YUV420P_BANK_STRIDE"),
+        ("kPlex720pPhysBase", "DDR_FRAME_720P_PHYS_BASE"),
+        ("kPlex720pYuv420pDoorbellPhys", "DDR_FRAME_720P_YUV420P_DOORBELL_PHYS"),
     ]
     for host_name, rtl_name in pairs:
         hv = cpp_const(host, host_name)
@@ -1801,22 +1812,56 @@ def check_present_geometry_stride_contract() -> None:
         fail(f"present geometry/stride contract: {missing[0]}")
 
     def present_ddr_wiring_ok(p_nt: str) -> bool:
-        return (
-            ".FRAME_W(FRAME_W)" in p_nt
-            and ".FRAME_H(FRAME_H)" in p_nt
-            and ".CODED_W(DDR_FRAME_CODED_WIDTH)" in p_nt
+        """Default product bind: 480p layout constants reach ddr_frame_store.
+
+        Accepts legacy direct .CODED_W(DDR_FRAME_*) ports OR FS_* localparams
+        whose default arm assigns from the same 480p constants.
+        """
+        if not (".FRAME_W(FRAME_W)" in p_nt and ".FRAME_H(FRAME_H)" in p_nt):
+            return False
+        legacy = (
+            ".CODED_W(DDR_FRAME_CODED_WIDTH)" in p_nt
             and ".DISPLAY_W(DDR_FRAME_DISPLAY_WIDTH)" in p_nt
             and ".PRESENT_X(DDR_FRAME_PILLARBOX_LEFT)" in p_nt
             and ".HPS_BANK_STRIDE_BYTES(DDR_FRAME_YUV420P_BANK_STRIDE)" in p_nt
             and ".DOORBELL_PHYS(DDR_FRAME_YUV420P_DOORBELL_PHYS)" in p_nt
         )
+        fs_default = (
+            ".CODED_W(FS_CODED_W)" in p_nt
+            and ".DISPLAY_W(FS_DISPLAY_W)" in p_nt
+            and ".PRESENT_X(FS_PRESENT_X)" in p_nt
+            and ".HPS_BANK_STRIDE_BYTES(FS_BANK_STRIDE)" in p_nt
+            and ".DOORBELL_PHYS(FS_DOORBELL)" in p_nt
+            and "FS_CODED_W=DDR_FRAME_CODED_WIDTH" in p_nt
+            and "FS_DISPLAY_W=DDR_FRAME_DISPLAY_WIDTH" in p_nt
+            and "FS_PRESENT_X=DDR_FRAME_PILLARBOX_LEFT" in p_nt
+            and "FS_BANK_STRIDE=DDR_FRAME_YUV420P_BANK_STRIDE" in p_nt
+            and "FS_DOORBELL=DDR_FRAME_YUV420P_DOORBELL_PHYS" in p_nt
+        )
+        return legacy or fs_default
 
     check(
         present_ddr_wiring_ok(present_nt),
         "present_core must instantiate ddr_frame_store from the shared layout params: "
         "FRAME_W=640 for scanout, CODED_W=624 for DDR stride, DISPLAY_W=618 for crop, "
-        "PRESENT_X=11 for pillarbox.",
+        "PRESENT_X=11 for pillarbox (direct ports or FS_* default arm).",
     )
+    if "PLEX_PRESENT_720P_L4" in present_nt:
+        check(
+            "FS_CODED_W=DDR_FRAME_720P_CODED_WIDTH" in present_nt
+            and "FS_PHYS_BASE=DDR_FRAME_720P_PHYS_BASE" in present_nt
+            and "FS_DOORBELL=DDR_FRAME_720P_YUV420P_DOORBELL_PHYS" in present_nt
+            and "FS_BANK_STRIDE=DDR_FRAME_720P_YUV420P_BANK_STRIDE" in present_nt,
+            "PLEX_PRESENT_720P_L4 must bind FS_* from DDR_FRAME_720P_* (not 480p constants)",
+        )
+    present_drop_coded = present_nt.replace(".CODED_W(FS_CODED_W)", "").replace(
+        ".CODED_W(DDR_FRAME_CODED_WIDTH)", ""
+    )
+    if present_ddr_wiring_ok(present_drop_coded):
+        fail(
+            "deliberately dropping .CODED_W(...) "
+            "(default CODED_W=FRAME_W shear) did not make the wiring gate red"
+        )
     check(
         'set_global_assignment-nameVERILOG_MACRO"DDR_FRAME_STORE=1"' in qsf_nt
         and 'set_global_assignment-nameVERILOG_MACRO"FRAME_W=640"' in qsf_nt
@@ -1877,10 +1922,13 @@ def check_present_geometry_stride_contract() -> None:
         )
     # Dropping the explicit CODED_W port leaves parameter default CODED_W=FRAME_W=640
     # → reader Y pitch 640 B/line while ARM writes 624 → 16 px/line leftward creep.
-    present_drop_coded = present_nt.replace(".CODED_W(DDR_FRAME_CODED_WIDTH)", "")
-    if present_ddr_wiring_ok(present_drop_coded):
+    # FS_* bind uses .CODED_W(FS_CODED_W); legacy used .CODED_W(DDR_FRAME_CODED_WIDTH).
+    present_drop_coded2 = present_nt.replace(".CODED_W(FS_CODED_W)", "").replace(
+        ".CODED_W(DDR_FRAME_CODED_WIDTH)", ""
+    )
+    if present_ddr_wiring_ok(present_drop_coded2):
         fail(
-            "deliberately dropping .CODED_W(DDR_FRAME_CODED_WIDTH) "
+            "deliberately dropping .CODED_W(...) "
             "(default CODED_W=FRAME_W=640 shear) did not make the wiring gate red"
         )
 

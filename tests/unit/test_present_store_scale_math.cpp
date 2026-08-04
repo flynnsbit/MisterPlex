@@ -93,8 +93,14 @@ int main() {
     EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
                          "past_last_row = (py >= V_STORE)"),
            "past_last_row vs V_STORE");
+    // Default product bind: direct CODED_W(DDR_FRAME_*) or FS_* with default arm
+    // from the same 480p constants (L4 may add ifdef 720p arm).
     EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
-                         ".CODED_W(DDR_FRAME_CODED_WIDTH)"),
+                         ".CODED_W(DDR_FRAME_CODED_WIDTH)") ||
+               (file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
+                              ".CODED_W(FS_CODED_W)") &&
+                file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
+                              "FS_CODED_W     = DDR_FRAME_CODED_WIDTH")),
            "ddr_frame_store CODED_W from layout params");
     // Honest swap pack must ship with this RBF for skip instrumentation.
     EXPECT(file_contains("fpga/Plex_MiSTer/rtl/ddr_frame_store.sv",

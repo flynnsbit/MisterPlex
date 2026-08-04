@@ -1,5 +1,11 @@
 // Present core: color bars OR external frame_store, cadence, tone + audio FIFO.
 // Display owns VSync; unique content advances only when present_cadence says so.
+//
+// 720p present (DEFAULT OFF): `define PLEX_PRESENT_720P_L4
+//   - Binds ddr_frame_store to DDR_FRAME_720P_* layout (phys/stride/doorbell)
+//   - Forces FRAME_LINE_COUNT>=16 (8-line buffer underruns modelled 500us blackout)
+//   - Requires FRAME_W=1280 FRAME_H=720 in the same QSF enable recipe
+// Macros off → bit-identical 480p-era store bind (product default).
 
 module present_core #(
 	parameter int FRAME_W = 320,
@@ -13,16 +19,26 @@ module present_core #(
 `else
 	parameter int FRAME_CMD_FIFO_AW = 5,
 `endif
+// Line-buffer depth. Product default FRAME_LINES_8 → 8.
+// L4 720p: force 16 even if FRAME_LINES_8 remains set (w-osd blackout proof).
 `ifdef FRAME_LINES_1
 	parameter int FRAME_LINE_COUNT = 1
 `elsif FRAME_LINES_4
 	parameter int FRAME_LINE_COUNT = 4
-`elsif FRAME_LINES_8
-	parameter int FRAME_LINE_COUNT = 8
 `elsif FRAME_LINES_16
 	parameter int FRAME_LINE_COUNT = 16
+`elsif FRAME_LINES_8
+	`ifdef PLEX_PRESENT_720P_L4
+	parameter int FRAME_LINE_COUNT = 16
+	`else
+	parameter int FRAME_LINE_COUNT = 8
+	`endif
 `else
+	`ifdef PLEX_PRESENT_720P_L4
+	parameter int FRAME_LINE_COUNT = 16
+	`else
 	parameter int FRAME_LINE_COUNT = 4
+	`endif
 `endif
 )(
 	input  wire        clk,
@@ -242,22 +258,58 @@ module present_core #(
 
 `include "ddr_frame_layout_params.svh"
 
+	// Active DDR reader geometry. Default = 480p layout. L4 selects 720p block
+	// so FRAME_W/H=1280x720 does not still feed 624x480 into the store.
+`ifdef PLEX_PRESENT_720P_L4
+	initial begin
+		if (FRAME_W != 1280 || FRAME_H != 720)
+			$error("PLEX_PRESENT_720P_L4 requires FRAME_W=1280 FRAME_H=720 (got %0d x %0d)",
+				FRAME_W, FRAME_H);
+		if (FRAME_LINE_COUNT < 16)
+			$error("PLEX_PRESENT_720P_L4 requires FRAME_LINE_COUNT>=16 (got %0d); 8-line buffer underruns 500us DDR blackout",
+				FRAME_LINE_COUNT);
+	end
+	localparam int FS_CODED_W     = DDR_FRAME_720P_CODED_WIDTH;
+	localparam int FS_CODED_H     = DDR_FRAME_720P_CODED_HEIGHT;
+	localparam int FS_DISPLAY_W   = DDR_FRAME_720P_DISPLAY_WIDTH;
+	localparam int FS_DISPLAY_H   = DDR_FRAME_720P_DISPLAY_HEIGHT;
+	localparam int FS_CROP_LEFT   = 0;
+	localparam int FS_CROP_TOP    = 0;
+	localparam int FS_PRESENT_X   = DDR_FRAME_720P_PILLARBOX_LEFT;
+	localparam int FS_PRESENT_Y   = 0;
+	localparam [31:0] FS_PHYS_BASE = DDR_FRAME_720P_PHYS_BASE;
+	localparam int FS_BANK_STRIDE = DDR_FRAME_720P_YUV420P_BANK_STRIDE;
+	localparam [31:0] FS_DOORBELL = DDR_FRAME_720P_YUV420P_DOORBELL_PHYS;
+`else
+	localparam int FS_CODED_W     = DDR_FRAME_CODED_WIDTH;
+	localparam int FS_CODED_H     = DDR_FRAME_CODED_HEIGHT;
+	localparam int FS_DISPLAY_W   = DDR_FRAME_DISPLAY_WIDTH;
+	localparam int FS_DISPLAY_H   = DDR_FRAME_DISPLAY_HEIGHT;
+	localparam int FS_CROP_LEFT   = DDR_FRAME_CROP_LEFT;
+	localparam int FS_CROP_TOP    = DDR_FRAME_CROP_TOP;
+	localparam int FS_PRESENT_X   = DDR_FRAME_PILLARBOX_LEFT;
+	localparam int FS_PRESENT_Y   = 0;
+	localparam [31:0] FS_PHYS_BASE = 32'h3000_0000;
+	localparam int FS_BANK_STRIDE = DDR_FRAME_YUV420P_BANK_STRIDE;
+	localparam [31:0] FS_DOORBELL = DDR_FRAME_YUV420P_DOORBELL_PHYS;
+`endif
+
 	ddr_frame_store #(
 		.FRAME_W(FRAME_W),
 		.FRAME_H(FRAME_H),
 		.FRAME_STRIDE(FRAME_STRIDE),
-		.CODED_W(DDR_FRAME_CODED_WIDTH),
-		.CODED_H(DDR_FRAME_CODED_HEIGHT),
-		.DISPLAY_W(DDR_FRAME_DISPLAY_WIDTH),
-		.DISPLAY_H(DDR_FRAME_DISPLAY_HEIGHT),
-		.CROP_LEFT(DDR_FRAME_CROP_LEFT),
-		.CROP_TOP(DDR_FRAME_CROP_TOP),
-		.PRESENT_X(DDR_FRAME_PILLARBOX_LEFT),
-		.PRESENT_Y(0),
+		.CODED_W(FS_CODED_W),
+		.CODED_H(FS_CODED_H),
+		.DISPLAY_W(FS_DISPLAY_W),
+		.DISPLAY_H(FS_DISPLAY_H),
+		.CROP_LEFT(FS_CROP_LEFT),
+		.CROP_TOP(FS_CROP_TOP),
+		.PRESENT_X(FS_PRESENT_X),
+		.PRESENT_Y(FS_PRESENT_Y),
 		.LINE_COUNT(FRAME_LINE_COUNT),
-		.PHYS_BASE(32'h3000_0000),
-		.HPS_BANK_STRIDE_BYTES(DDR_FRAME_YUV420P_BANK_STRIDE),
-		.DOORBELL_PHYS(DDR_FRAME_YUV420P_DOORBELL_PHYS)
+		.PHYS_BASE(FS_PHYS_BASE),
+		.HPS_BANK_STRIDE_BYTES(FS_BANK_STRIDE),
+		.DOORBELL_PHYS(FS_DOORBELL)
 	) fstore (
 		.clk(clk),
 		.clk_ddr(clk_ddr),
