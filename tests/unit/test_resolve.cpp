@@ -228,6 +228,14 @@ int main() {
                                                            return w;
                                                        }());
         CHECK(url900.find("maxVideoBitrate=900") != std::string::npos);
+        // 720p coded must not inherit the 480p 2000 floor (2.88× pixels).
+        WeakLadder w720 = w480;
+        w720.videoResolution = "1280x720";
+        w720.maxVideoBitrateKbps = kPlex720pWeakBitrateKbps;
+        CHECK(recommendedMinVideoBitrateKbps(w720) == kPlex720pWeakBitrateKbps);
+        CHECK(recommendedMinVideoBitrateKbps(w720) != kPlex480pWeakBitrateKbps);
+        w720.maxVideoBitrateKbps = kPlex480pWeakBitrateKbps;
+        CHECK(weakLadderBitrateBelowRecommended(w720));
         CHECK(url900.find("maxVideoBitrate=2000") == std::string::npos);
         CHECK(validateWeakLadder([&] {
             WeakLadder w = w480;

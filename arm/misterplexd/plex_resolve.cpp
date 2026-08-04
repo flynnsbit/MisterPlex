@@ -350,7 +350,9 @@ int recommendedMinVideoBitrateKbps(const WeakLadder& weak) {
     if (!parseResolution(weak.videoResolution, w, h))
         return 0;
     // Defaults from osd_menu.hpp ladder constants — quality/ARM-margin heuristics,
-    // not H.264 level contracts. 480p default = kPlex480pWeakBitrateKbps (2000).
+    // not H.264 level contracts. Must track weakBitrateKbpsForCodedSize tiers.
+    if (w >= kPlex720pCodedWidth || h >= kPlex720pCodedHeight)
+        return kPlex720pWeakBitrateKbps;
     if (w >= kPlex480pCodedWidth.get() || h >= kPlex480pCodedHeight.get())
         return kPlex480pWeakBitrateKbps;
     // Legacy 240p path used a soft floor of 750 below the 1000 default.
