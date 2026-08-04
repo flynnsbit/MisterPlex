@@ -3,11 +3,12 @@
 // THROUGHPUT (rd-duck / w-clock confirmed):
 //   Old design serialised PPC lanes on clk_sys *before* the FIFO (1 + PPC sys
 //   cycles/group) → peak Mpix/s = F_sys * PPC/(1+PPC).
-//   At F_sys=20 MHz, PPC=2: 20*2/3 = **13.33 Mpix/s** << 29.7 needed for
-//   compact 720p24 (H1650@29.7; not VIC60).
+//   At F_sys=20 MHz, PPC=2: 20*2/3 = **13.33 Mpix/s** << 28.8 needed for
+//   compact 720p24 (H1600@28.8 MHz exact 24 Hz; not VIC60 H3300@59.4).
+//   Retired compact: H1650@29.7 (PLL-impossible on shared integer-N with 20/90).
 //
 //   This revision crosses **whole groups** on the async_fifo (1 write/group).
-//   Peak Mpix/s = F_sys*PPC (40 @20/PPC2 ≥ 29.7). Unpack on clk_pix.
+//   Peak Mpix/s = F_sys*PPC (40 @20/PPC2 ≥ 28.8). Unpack on clk_pix.
 //
 // PREFILL + SKID (rd-duck audit):
 //   Equal long-term Bresenham rates still have local gaps (e.g. 100 ns emit

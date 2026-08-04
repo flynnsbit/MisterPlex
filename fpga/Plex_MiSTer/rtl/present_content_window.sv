@@ -4,12 +4,22 @@
 //   win_enable=0 → legacy full-bank FRAME_W×FRAME_H (bit-compatible 480p path)
 //   win_enable=1 → stretch content_w×content_h at (content_x0,content_y0) across DE
 //
-// TIMING (720p clk_pix ~29.7 MHz) — ranked pixel-path combo (see pipe report):
+// TIMING target: 720p24 fabric compact @ clk_pix = 28.800000 MHz
+//   (H_TOTAL=1600, V_TOTAL=750, 1600*750*24 = 28_800_000 exact).
+//   Retired: 29.7 MHz / H_TOTAL=1650 (PLL-impossible on shared integer-N).
+//   CEA VIC4 720p60 still legitimately uses H_TOTAL=1650 @ 74.25 MHz — not us.
+//
+// Ranked pixel-path combo (pipe report):
 //   #1 Scale 32b/11b divide into sx_r/sy_r — multi-cycle iterative, mailbox rate
 //   #2 X: hc(11)*sx(20) → Q16 → +x0 → clamp last_x   (ce_pix)
 //   #3 Y: py clamp → *sy → +y0 → clamp last_y          (ce_pix)
 // PIPE_DEPTH (1..3) splits #2/#3. Default 2. Math unchanged; latency = PIPE_DEPTH
 // ce_pix regs. pipe_latency_ce exports that for MP_STORE_LAT / consumers.
+//
+// BLANKING: this module does NOT spend H-blank on work. Pixel map runs on every
+// ce_pix; scale div runs on clk after geom_change only (2*DIV_STEPS=64 clks).
+// Compact 720p24 H_BLANK = H_TOTAL-H_DE = 1600-1280 = 320 px — budget OK (0
+// per-line blank cycles required). See tests/unit/test_present_window_blank_budget.py.
 //
 // past_last_row is BEAM-TIMED (combo on py) — not delayed with store pipe (G-VID1).
 // Quartus 17.0: no SV-2012 default port values.
