@@ -53,13 +53,20 @@ fail() {
 }
 
 # --- 1. local Quartus ---------------------------------------------------------
-# Match the binaries, not a shell pattern that would also match this script.
-quartus_procs="$(ps -eo pid,rss,comm 2>/dev/null \
-  | awk '$3 ~ /^quartus_(fit|sh|sta|map|asm)$/ {printf "    pid=%s rss=%sKB %s\n", $1, $2, $3}')"
-if [[ -n "$quartus_procs" ]]; then
-  echo "Local Quartus processes detected:" >&2
-  echo "$quartus_procs" >&2
-  fail "a local Quartus fit is running (fits are remote-only: scripts/build_rbf_remote.sh slotN)"
+# Live-process check only on real hosts. Synthetic unit fixtures pin
+# MISTERPLEX_PREFLIGHT_MEMINFO to tests/fixtures/preflight/* and must not
+# fail because a sibling worktree holds the exclusive local Quartus slot.
+if [[ "$MEMINFO_FILE" == "/proc/meminfo" ]]; then
+  # Match the binaries, not a shell pattern that would also match this script.
+  quartus_procs="$(ps -eo pid,rss,comm 2>/dev/null \
+    | awk '$3 ~ /^quartus_(fit|sh|sta|map|asm)$/ {printf "    pid=%s rss=%sKB %s\n", $1, $2, $3}')"
+  if [[ -n "$quartus_procs" ]]; then
+    echo "Local Quartus processes detected:" >&2
+    echo "$quartus_procs" >&2
+    fail "a local Quartus fit is running (fits are remote-only: scripts/build_rbf_remote.sh slotN)"
+  fi
+else
+  echo "preflight: synthetic MEMINFO=${MEMINFO_FILE}; skipping live Quartus process scan"
 fi
 
 # --- 2. paging rate -----------------------------------------------------------
