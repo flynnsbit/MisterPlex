@@ -4,11 +4,12 @@
     "PRESENT_MULTI_PIXEL": true,
     "PRESENT_PX_PER_CLK": 2,
     "clk_sys_hz": 20000000,
-    "clk_pix_hz": 30000000,
+    "clk_pix_hz": 29700000,
     "clk_ddr_hz": 90000000,
     "clk_sys_overclock": false,
     "clk_ratio_sys_to_ddr": "20:90",
-    "reason_no_clksys24": "STA Fmax 23.17 MHz; clk_sys@24 fails margin (w-clock)"
+    "reason_no_clksys24": "STA Fmax 23.17 MHz; clk_sys@24 fails margin (w-clock)",
+    "clk_pix_note": "dedicated pll_pix 29.700000 MHz \u2192 exact 24.000 Hz @ H1650\u00d7V750; NOT shared pll_0002 (VCO cannot hit 29.7 with 20+90)"
   },
   "geometry": {
     "coded_w": 1280,

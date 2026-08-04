@@ -5,7 +5,7 @@
 // plex_720p_bw_contract.svh — ONE agreed 720p24 bandwidth contract (three-lane).
 // Coordinate: w-mem + w-clock + w-scaler. Do not invent a second B/clk number.
 // Clocks (pll_0002.v SoT): clk_sys=20e6, clk_ddr=90e6.
-// Shipping glass: MULTI + PPC=2 + clk_pix@30.0e6, clk_sys@20e6.
+// Shipping glass: MULTI + PPC=2 + clk_pix@29.7e6 (dedicated pll_pix), clk_sys@20e6.
 //
 // Numbers lock with misterplex_bw_contract.svh (w-clock SoT stamp) and
 // tests/fixtures/p720_bw_contract.json. P720_* names match w-mem consumers.
@@ -34,7 +34,7 @@ localparam int P720_PHYS_BASE         = 32'h3018_0000;
 localparam int P720_FPS               = MISTERPLEX_BW_FPS;               // 24
 localparam int P720_CLK_SYS_HZ        = MISTERPLEX_BW_CLK_SYS_HZ;        // 20e6
 localparam int P720_CLK_DDR_HZ        = 90_000_000;
-localparam int P720_CLK_PIX_HZ        = MISTERPLEX_BW_CLK_PIX_HZ;        // 30.0e6
+localparam int P720_CLK_PIX_HZ        = MISTERPLEX_BW_CLK_PIX_HZ;        // 29.7e6 dedicated
 localparam int P720_PPC               = MISTERPLEX_BW_PRODUCT_PPC;       // 2
 localparam int P720_LINE_COUNT        = 16;
 localparam int P720_FRAME_US          = MISTERPLEX_BW_FRAME_BUDGET_US;   // 41667

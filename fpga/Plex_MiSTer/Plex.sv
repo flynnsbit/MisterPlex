@@ -216,8 +216,11 @@ wire clk_sdram;
 wire clk_ddr;
 `ifdef PRESENT_CLK_PIX_PLL
 wire clk_pix_pll;
+wire pll_pix_locked;
 `endif
 wire pll_locked;
+// Fabric PLL: clk_sys/sdram/ddr only. clk_pix is a SEPARATE PLL (see below).
+// Justification: shared integer-N VCO cannot serve 20+90+29.7 (min VCO 5940 MHz).
 pll pll
 (
 	.refclk(CLK_50M),
@@ -225,17 +228,30 @@ pll pll
 	.outclk_0(clk_sys),
 	.outclk_1(clk_sdram),
 	.outclk_2(clk_ddr),
-`ifdef PRESENT_CLK_PIX_PLL
-	.outclk_3(clk_pix_pll),
-`endif
 	.locked(pll_locked)
 );
+`ifdef PRESENT_CLK_PIX_PLL
+// Dedicated clk_pix PLL: VCO=1485 MHz, C=50 → 29.700000 MHz (exact 24.000 @ H1650×V750).
+// Default OFF with macro. Consumers: present .clk_pix, CLK_VIDEO, plex_clk_status.
+pll_pix u_pll_pix (
+	.refclk(CLK_50M),
+	.rst(0),
+	.outclk_0(clk_pix_pll),
+	.locked(pll_pix_locked)
+);
+`endif
 
 wire reset = RESET | status[0] | buttons[1];
+// Hold fabric in reset until main PLL locks; when pix PLL on, require both.
+`ifdef PRESENT_CLK_PIX_PLL
+wire pll_locked_all = pll_locked & pll_pix_locked;
+`else
+wire pll_locked_all = pll_locked;
+`endif
 
 // Fabric clock kit + runtime refresh measure (w-clock).
-// Product clk_pix=30 MHz → fps_eff=24.242… @ H1650×V750 (29.7 illegal on PLL).
-// meas_fps_x10 (period-based) distinguishes 24.242 (≈242) from exact-24 (240) and 16.16 trap.
+// Product clk_pix=29.7 MHz (dedicated PLL) → fps_eff=24.000 exact @ H1650×V750.
+// meas_fps_x10 distinguishes 24.000 (240) from 24.242 shared-PLL trap (242) and 16.16.
 wire [31:0] clkstat_sys_hz, clkstat_pix_hz, clkstat_cea_pf, clkstat_l4_pf;
 wire [7:0]  clkstat_ppc;
 wire        clkstat_cea_fast, clkstat_l4_fast, clkstat_valid;
@@ -563,7 +579,7 @@ sdram_memtest #(
 	.REFRESH_CYCLES(SDRAM_REFRESH_CYCLES)
 ) sdram_test (
 	.clk(clk_sdram),
-	.reset(reset | ~pll_locked),
+	.reset(reset | ~pll_locked_all),
 	.sdram_dout(sdram_dout),
 	.sdram_ready(sdram_ready),
 	.sdram_sel(sdram_test_sel),
@@ -608,7 +624,7 @@ assign sdram_startup_busy = !sdram_test_done_s2;
 sdram #(
 	.SDRAM_CLK_HZ(SDRAM_CLK_HZ)
 ) sdram_ctl (
-	.init(reset | ~pll_locked),
+	.init(reset | ~pll_locked_all),
 	.clk(clk_sdram),
 	.SDRAM_DQ(SDRAM_DQ),
 	.SDRAM_A(SDRAM_A),
@@ -951,7 +967,7 @@ present_core #(
 	.clk_sdram(clk_sdram),
 	.clk_audio(CLK_AUDIO),
 	// clk_pix: product default ties to clk_sys. PRESENT_CLK_PIX_PLL (default
-	// OFF) drives outclk_3 = 30.00 MHz product (or 74.25 with PRESENT_CLK_PIX_74_25).
+	// OFF) sources dedicated pll_pix @ 29.700000 MHz (or 74.25 with PRESENT_CLK_PIX_74_25).
 `ifdef PRESENT_CLK_PIX_PLL
 	.clk_pix(clk_pix_pll),
 `else
@@ -1258,7 +1274,7 @@ always @(posedge clk_sys) begin
 		status_telem_r[103:96]  <= st_res_word_sticky[7:0];
 		status_telem_r[111:104] <= st_res_word_sticky[15:8];
 `ifdef PRESENT_CLK_PIX_PLL
-		// Refresh measure (stills-blind 16.16 vs 24.242 vs exact-24)
+		// Refresh measure (stills-blind 16.16 vs 24.000 product vs shared-30 24.242)
 		// raw[14]=fps_x10 period-based; raw[15]=flags{valid,pix_ok,fps_ok,pll,trap,ce,de}
 		status_telem_r[119:112] <= clkstat_meas_fps_x10;
 		status_telem_r[127:120] <= clkstat_meas_flags;

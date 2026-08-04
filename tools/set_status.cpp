@@ -55,9 +55,9 @@ void printRaw(const uint8_t raw[16]) {
         (lo >> 10) & 1, (lo >> 11) & 1, lo & 1, ar);
     // PRESENT_CLK_PIX_PLL refresh+raster measure (raw[14]/[15] when PLL on)
     // flags: {raster_ok,de_ok,ce_ok,trap16,pll_on,fps_ok,pix_ok,valid}
-    // Product 30 MHz H1650×V750 → 24.242 Hz → fps_x10≈242; exact-24 → 240; trap → ~162
-    // raster_ok requires per-frame CE=1_237_500, lines=750, CE/line=1650,
-    // DE=921_600, DE/line=1280 active, underrun delta=0 (rd-duck adversarial).
+    // Product dedicated 29.7 MHz H1650×V750 → 24.000 Hz → fps_x10≈240
+    // Shared-30 trap → 24.242 → 242; same-clock trap → ~162
+    // raster_ok: CE=1_237_500, lines=750, CE/line=1650, DE=921_600, underrunΔ=0
     {
         const unsigned fps_x10 = raw[14];
         const unsigned fl = raw[15];
@@ -75,13 +75,13 @@ void printRaw(const uint8_t raw[16]) {
             "ce_ok=%d de_ok=%d raster_ok=%d\n",
             fps_x10, fps_x10 / 10.0, fl, valid, pix_ok, fps_ok, pll_on, trap16,
             ce_ok, de_ok, raster_ok);
-        if (fps_x10 >= 241 && fps_x10 <= 244 && valid && fps_ok && pix_ok &&
+        if (fps_x10 >= 239 && fps_x10 <= 241 && valid && fps_ok && pix_ok &&
             ce_ok && de_ok && raster_ok && !trap16)
-            std::printf("clk_pix_meas_verdict=PASS_242HZ_PRODUCT\n");
-        else if (fps_x10 >= 241 && fps_x10 <= 244 && valid && fps_ok && !raster_ok)
+            std::printf("clk_pix_meas_verdict=PASS_240HZ_PRODUCT\n");
+        else if (fps_x10 >= 239 && fps_x10 <= 241 && valid && fps_ok && !raster_ok)
             std::printf("clk_pix_meas_verdict=FAIL_RASTER_ADVERSARIAL\n");
-        else if (fps_x10 >= 238 && fps_x10 <= 240 && valid)
-            std::printf("clk_pix_meas_verdict=EXACT24_NOT_PRODUCT\n");
+        else if (fps_x10 >= 242 && fps_x10 <= 244)
+            std::printf("clk_pix_meas_verdict=FAIL_SHARED30_TRAP\n");
         else if (fps_x10 >= 150 && fps_x10 <= 170)
             std::printf("clk_pix_meas_verdict=FAIL_16HZ_TRAP\n");
         else

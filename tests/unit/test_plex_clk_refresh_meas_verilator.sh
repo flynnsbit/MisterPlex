@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Verilator: refresh measure PASS@24.242 FAIL@16.16 EXACT24_not_product.
+# Verilator: refresh measure PASS@24.000 FAIL@16.16 FAIL@shared30 24.242 FAIL@ADV raster.
 # Soft-skip≠PASS. true rc captured directly (never through a pipe).
 # gate_false_green_guard: assert_sim_executed + red-check required.
 set -euo pipefail
@@ -83,12 +83,12 @@ printf '%s\n' "$out"
 echo "sim true rc=$rc"
 echo "SIM_ARTIFACT=$BIN"
 
-# GREEN + both NEG twins must execute (red-check corpus).
+# GREEN + NEG twins must execute (red-check corpus).
 assert_sim_executed "plex_clk_refresh_meas" "$out" \
   "CASE EXECUTED" \
-  "PASS POS_242HZ" \
+  "PASS POS_240HZ" \
   "PASS NEG_16HZ_TRAP" \
-  "PASS NEG_EXACT24" \
+  "PASS NEG_SHARED30" \
   "PASS NEG_ADV_RASTER" \
   "PASS plex_clk_refresh_meas_tb all cases"
 
@@ -100,20 +100,20 @@ fi
 
 # Explicit red-check wording for gate_false_green_guard corpus.
 # NEG_16HZ proves 20 MHz same-clock trap fails product PASS.
-# NEG_EXACT24 proves 24.000 Hz is NOT product PASS (distinguishes 240 vs 242).
+# NEG_SHARED30 proves 24.242 (shared PLL 30 MHz) is NOT product PASS.
 if ! grep -q 'PASS NEG_16HZ_TRAP' <<<"$out"; then
   echo "FAIL plex_clk_refresh_meas red-check: NEG_16HZ_TRAP twin did not PASS" >&2
   exit 1
 fi
-if ! grep -q 'PASS NEG_EXACT24' <<<"$out"; then
-  echo "FAIL plex_clk_refresh_meas red-check: NEG_EXACT24 twin did not PASS" >&2
+if ! grep -q 'PASS NEG_SHARED30' <<<"$out"; then
+  echo "FAIL plex_clk_refresh_meas red-check: NEG_SHARED30 twin did not PASS" >&2
   exit 1
 fi
 if ! grep -q 'PASS NEG_ADV_RASTER' <<<"$out"; then
   echo "FAIL plex_clk_refresh_meas red-check: NEG_ADV_RASTER twin did not PASS" >&2
   exit 1
 fi
-echo "OK plex_clk_refresh_meas red-check: NEG_16 + NEG_EXACT24 + NEG_ADV_RASTER twins PASS"
+echo "OK plex_clk_refresh_meas red-check: NEG_16 + NEG_SHARED30 + NEG_ADV_RASTER twins PASS"
 echo "PASS test_plex_clk_refresh_meas_verilator"
 echo "true rc=0"
 exit 0

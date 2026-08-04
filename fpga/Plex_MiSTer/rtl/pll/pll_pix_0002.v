@@ -1,62 +1,46 @@
 `timescale 1ns/10ps
-// Source of truth for Plex fabric PLL (not the stale megawizard strings in pll.v).
-// Product: 3 clocks — clk_sys 20 / clk_sdram (macro) / clk_ddr 90.
+// Dedicated clk_pix PLL — OWN VCO so 29.700000 MHz is legal.
 //
-// clk_pix is NOT on this PLL. Shared integer-N VCO cannot hit 29.7 with 20+90:
-//   VCO multiple of 180; 180k/29.7 integer ⇒ k|33 ⇒ min VCO=5940 MHz (out of range).
-//   Quartus 17.0.2 rejected general[3] '29.7 MHz' (Info: 30 MHz legal on this VCO family).
-// Dedicated PLL: rtl/pll/pll_pix_0002.v (VCO 1485, C=50 → 29.700000 MHz exact 24 Hz).
-module  pll_0002(
+// Why not outclk_3 on pll_0002?
+//   Shared integer-N VCO with 20 + 90 MHz forces VCO ∈ k*180 MHz.
+//   180k / 29.7 integer ⇒ k multiple of 33 ⇒ min VCO = 5940 MHz (out of Cyclone V range).
+//   Quartus 17.0.2 fit error on general[3] '29.7 MHz'; Info cited 30 MHz (VCO=900 family).
+//
+// Dedicated integer-N from 50 MHz:
+//   M=297, N=10 → VCO = 50*(297/10) = 1485 MHz  (Cyclone V fPLL VCO 600–1600 MHz: IN RANGE)
+//   C=50 → fout = 1485/50 = 29.700000 MHz  → H1650×V750 × 24.000 Hz EXACT
+//   C=20 → fout = 1485/20 = 74.250000 MHz  (PRESENT_CLK_PIX_74_25, VIC-4 60 Hz)
+//
+// Default OFF: only elaborated when PRESENT_CLK_PIX_PLL. Instantiated from rtl/pll_pix.v.
+// Do not put 29.7 back on pll_0002.
 
-	// interface 'refclk'
-	input wire refclk,
-
-	// interface 'reset'
-	input wire rst,
-
-	// interface 'outclk0' — clk_sys
+module pll_pix_0002 (
+	input  wire refclk,
+	input  wire rst,
 	output wire outclk_0,
-
-	// interface 'outclk1' — clk_sdram
-	output wire outclk_1,
-
-	// interface 'outclk2' — clk_ddr
-	output wire outclk_2,
-
-	// interface 'locked'
 	output wire locked
 );
 
-`ifdef SDRAM_CLK_142
-`define MISTERPLEX_SDRAM_PLL_FREQ "142.000000 MHz"
-`elsif SDRAM_CLK_133
-`define MISTERPLEX_SDRAM_PLL_FREQ "133.333333 MHz"
-`elsif SDRAM_CLK_120
-`define MISTERPLEX_SDRAM_PLL_FREQ "120.000000 MHz"
-`elsif SDRAM_CLK_110
-`define MISTERPLEX_SDRAM_PLL_FREQ "110.000000 MHz"
-`elsif SDRAM_CLK_80
-`define MISTERPLEX_SDRAM_PLL_FREQ "80.000000 MHz"
-`elsif SDRAM_CLK_75
-`define MISTERPLEX_SDRAM_PLL_FREQ "75.000000 MHz"
-`elsif SDRAM_CLK_50
-`define MISTERPLEX_SDRAM_PLL_FREQ "50.000000 MHz"
+`ifdef PRESENT_CLK_PIX_74_25
+	// 720p60 VIC-4 — same VCO, C=20
+	`define MISTERPLEX_PLL_PIX_FREQ "74.250000 MHz"
 `else
-`define MISTERPLEX_SDRAM_PLL_FREQ "100.000000 MHz"
+	// PRODUCT compact 720p24: 1650*750*24 = 29_700_000 exact
+	`define MISTERPLEX_PLL_PIX_FREQ "29.700000 MHz"
 `endif
 
 	altera_pll #(
 		.fractional_vco_multiplier("false"),
 		.reference_clock_frequency("50.0 MHz"),
 		.operation_mode("direct"),
-		.number_of_clocks(3),
-		.output_clock_frequency0("20.000000 MHz"),
+		.number_of_clocks(1),
+		.output_clock_frequency0(`MISTERPLEX_PLL_PIX_FREQ),
 		.phase_shift0("0 ps"),
 		.duty_cycle0(50),
-		.output_clock_frequency1(`MISTERPLEX_SDRAM_PLL_FREQ),
+		.output_clock_frequency1("0 MHz"),
 		.phase_shift1("0 ps"),
 		.duty_cycle1(50),
-		.output_clock_frequency2("90.000000 MHz"),
+		.output_clock_frequency2("0 MHz"),
 		.phase_shift2("0 ps"),
 		.duty_cycle2(50),
 		.output_clock_frequency3("0 MHz"),
@@ -107,12 +91,12 @@ module  pll_0002(
 		.pll_type("General"),
 		.pll_subtype("General")
 	) altera_pll_i (
-		.rst	(rst),
-		.outclk	({outclk_2, outclk_1, outclk_0}),
-		.locked	(locked),
-		.fboutclk	( ),
-		.fbclk	(1'b0),
-		.refclk	(refclk)
+		.rst(rst),
+		.outclk(outclk_0),
+		.locked(locked),
+		.fboutclk(),
+		.fbclk(1'b0),
+		.refclk(refclk)
 	);
 
 endmodule

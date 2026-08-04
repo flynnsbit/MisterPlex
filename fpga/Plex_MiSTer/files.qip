@@ -13,6 +13,11 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_vtotal_bresenham.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/yuv_bt601_npx.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/plex_present_geom_mux.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/plex_clk_status.sv
+# Dedicated clk_pix PLL (PRESENT_CLK_PIX_PLL). Own VCO=1485 → exact 29.700000 MHz.
+# Do NOT put 29.7 on pll_0002 (shared VCO with 20/90 cannot hit it). TCL comments are '#' only.
+set_global_assignment -name VERILOG_FILE rtl/pll_pix.v
+set_global_assignment -name VERILOG_FILE rtl/pll/pll_pix_0002.v
+set_global_assignment -name QIP_FILE rtl/pll/pll_pix_0002.qip
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/plex_bw_status.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/mplex_hold_lcell.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/colorbars.sv
