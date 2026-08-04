@@ -58,7 +58,9 @@ def main() -> int:
     check('output_clock_frequency2("90.000000 MHz")' in pll, "PLL out2 clk_ddr=90.000000 MHz")
     check('reference_clock_frequency("50.0 MHz")' in pll, "PLL ref=50.0 MHz")
     check("PRESENT_CLK_PIX_PLL" in pll, "PLL has PRESENT_CLK_PIX_PLL branch")
-    check('"29.700000 MHz"' in pll, "PLL default clk_pix string 29.700000 MHz")
+    # Integer-N Cyclone V from 50 MHz ref cannot hit 29.7; product uses 30.0
+    # (glass 24.242 Hz). Ideal 29.7 remains in comments / rate docs only.
+    check('"30.000000 MHz"' in pll, "PLL default clk_pix string 30.000000 MHz")
     check('"74.250000 MHz"' in pll, "PLL optional 74.250000 MHz string")
     # Product default must still be 3 clocks in the else branch
     check(
