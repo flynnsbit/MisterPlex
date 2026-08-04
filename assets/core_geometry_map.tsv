@@ -6,3 +6,4 @@
 41adb98c7a630b541091c22ce291be68	320x240	v0.3.0 product (release_artifacts/v0.3.0/Plex.rbf)
 a7ffca105fc8f50c084e49a0a27b7db4	1280x720	cut-b product-map (remote_out/cutb-product-map/Plex.rbf @ 89b52531 FullComp)
 cceb58e7d6fc5bfda91af918d110e79e	1280x720	product tip QSF FRAME_W=1280 FRAME_H=720 (PRODUCT_NO_STUB=1); parent-settled live RBF
+234448a7320e5666b3f0f0ffdad7b561	1280x720	sticky pending_ready_c cutb-sticky-ready tip 64bccaae
