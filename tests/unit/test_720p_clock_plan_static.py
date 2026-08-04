@@ -35,8 +35,13 @@ def main() -> int:
     else:
         print("OK pll has 29.700000 MHz")
 
-    # Product default still 20
-    if not re.search(r'output_clock_frequency0\("20\.000000 MHz"\)', pll):
+    # Product default still 20 (via macro or literal)
+    if 'MISTERPLEX_CLK_SYS_PLL_FREQ' in pll:
+        if '"20.000000 MHz"' not in pll and "20.000000 MHz" not in pll:
+            fails.append("product clk_sys macro arm missing 20.000000 MHz")
+        else:
+            print("OK product clk_sys via MISTERPLEX_CLK_SYS_PLL_FREQ (20 default)")
+    elif not re.search(r'output_clock_frequency0\("20\.000000 MHz"\)', pll):
         fails.append("product clk_sys is not 20.000000 MHz")
     else:
         print("OK product clk_sys 20.000000 MHz")
