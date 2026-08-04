@@ -156,7 +156,9 @@
     "serial_deficit_ms": 6.016,
     "source": "parent Sweep 118 / rd-duck",
     "note": "T_copy_arm is CPU TIME on the ONE effective ARM core; R_req 33.1776 is fabric payload RATE \u2014 not interchangeable. Do not budget copy on a second core.",
-    "effective_arm_cores": 1
+    "effective_arm_cores": 1,
+    "after_full_t_copy_retire_prereg_margin_ms": 8.962,
+    "after_full_t_copy_retire_prereg_closes_arm_serial": true
   },
   "strategic": {
     "path_a_overlap": {
@@ -170,7 +172,12 @@
       "status": "STRATEGIC_ONLY_VIABLE_COPY_RETIRE",
       "does": "retires T_copy_arm CPU time without needing a second ARM core",
       "owners": "w-mem/w-path build; w-clock clocks+CDC",
-      "not": "ARM never touches payload (needs pinned/coherent source first)"
+      "not": "ARM never touches payload (needs pinned/coherent source first)",
+      "frame_budget_prereg": {
+        "arm_decode_only_margin_ms": 8.962,
+        "closes_arm_serial_under_stated_ifs": true,
+        "e2e_product_still": "OPEN"
+      }
     }
   },
   "proof_status": {
@@ -279,5 +286,55 @@
     "control": "/proc/stat per-core deltas, 10s clean window; USER_HZ=100",
     "w_clock_rerun": "NOT re-run on device (no device access); adopt parent measurement",
     "implication": "Any budget assuming two free A9 cores is wrong by ~2x. Fabric payload rates (33.1776 MB/s/dir) are NOT ARM-core-count dependent."
+  },
+  "t_copy_retire_prereg": {
+    "title": "Frame budget if fabric retires T_copy_arm completely from ARM critical path",
+    "status": "PRE-REGISTERED \u2014 not measured e2e",
+    "inputs_parent_measured": {
+      "frame_budget_ms": 41.667,
+      "decode_ms_sweep116": 32.705,
+      "T_copy_arm_ms": 14.978,
+      "serial_deficit_ms": 6.016,
+      "effective_arm_cores": 1,
+      "sources": [
+        "parent Sweep 116 decode",
+        "parent Sweep 118 T_copy",
+        "parent 2026-08-04 one-core"
+      ]
+    },
+    "w_clock_device": "NOT re-run (no device access); arithmetic only on parent numbers",
+    "prediction": {
+      "if": [
+        "fabric DMA (or equivalent) retires the full 14.978 ms ARM publication memcpy from the critical path",
+        "decode remains 32.705 ms/frame on the one effective core (Sweep 116 class)",
+        "no new ARM work \u2265 headroom replaces the copy",
+        "residual doorbell/kick/setup \u226a 8.962 ms"
+      ],
+      "then_arm_serial_path": "decode-only vs 41.667 ms budget",
+      "margin_ms": 8.962,
+      "margin_formula": "41.667 - 32.705",
+      "was_serial_deficit_ms": 6.016,
+      "swing_ms": 14.978,
+      "swing_note": "removing T_copy flips -6.016 deficit to +8.962 margin; swing equals T_copy",
+      "arm_decode_frame_budget_closes": true,
+      "closes_by_ms": 8.962,
+      "decode_budget_utilization_pct": 78.49
+    },
+    "does_NOT_claim": [
+      "e2e 720p24 product CLOSED",
+      "PPC2 delivery CLOSED",
+      "fabric_bw_closed",
+      "decode stays 32.705 under 720p + DMA contention",
+      "zero residual ARM kick cost",
+      "presentation reader meets deadline under concurrent fabric write",
+      "live RBF has NO_STUB reclaim"
+    ],
+    "still_open_after_copy_retire": [
+      "G1-G9 presentation recipe/fit/linebuf/PPC2 (see w-clock-720p-raster-gap.txt)",
+      "fabric write vs present read arbitration (rd-duck attack surface)",
+      "DMA engine M10K vs linebuf budget (~356 shared)",
+      "host pinned/coherent source before DMA"
+    ],
+    "miss_publish_rule": "If parent measures residual ARM pub path or decode\u226032.705 after DMA, update margin and mark HIT/MISS here"
   }
 }

@@ -47,10 +47,34 @@ If fabric only **reads** staging once and **writes** present bank once per frame
 | w-nostub | ALM/M10K budget for DMA after reclaim lands |
 | w-osd | full-frame present proof; may reuse w-clock bus TB |
 
+## Frame budget PRE-REG after full T_copy retire (w-clock)
+
+Inputs (parent-measured; w-clock arithmetic only, no device):
+
+| Term | ms | Source |
+|------|---:|--------|
+| Frame budget @24 | 41.667 | 1000/24 |
+| Decode | 32.705 | Sweep 116 |
+| T_copy_arm | 14.978 | Sweep 118 |
+| Serial deficit (decode+copy) | 6.016 | 14.978−8.962 |
+
+**Prediction (IF fabric retires full 14.978 ms from ARM critical path AND decode stays
+32.705 AND residual kick ≪ headroom):**
+
+- ARM path becomes decode-only vs 41.667 → **margin +8.962 ms**
+- **ARM decode-vs-budget CLOSES by 8.962 ms** (was 6.016 ms short serial)
+- Swing = T_copy = 14.978 ms
+
+**Does NOT claim:** product e2e 720p24 CLOSED, fabric_bw_closed, PPC2 delivery,
+decode invariant under DMA, zero kick cost, reader deadline under concurrent fabric write.
+
+Locked in `tests/fixtures/p720_bw_contract.json` → `t_copy_retire_prereg` and
+`MISTERPLEX_BW_AFTER_COPY_RETIRE_MARGIN_US=8962`.
+
 ## Non-claims
 
 - Overlap path (a): **INFEASIBLE under one effective ARM core** (parent 2026-08-04:
   MiSTer framework ~100% of one core at idle; mpx-main ~0.8%). Not a dual-core rescue.
-- e2e 720p24 **not** closed.
+- e2e 720p24 **not** closed (prereg is ARM serial decode budget only).
 - Fabric DMA **not** implemented by this note alone.
 - w-clock did **not** re-run the device `/proc/stat` capture (no device access).

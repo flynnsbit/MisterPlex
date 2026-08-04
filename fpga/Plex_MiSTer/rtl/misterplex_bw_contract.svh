@@ -51,5 +51,11 @@ localparam int MISTERPLEX_BW_DECODE_MS_X1000   = 32705;  // 32.705 ms → µs
 // at ~100% idle busy). Path (a) decode||copy overlap is not dual-core-feasible.
 // Path (b) fabric DMA retires T_copy without a second ARM core — funded Path A.
 localparam int MISTERPLEX_BW_EFFECTIVE_ARM_CORES = 1;
+// PRE-REG (arithmetic on parent Sweep 116/118 only — not e2e measured):
+// If fabric retires full T_copy_arm from ARM critical path and decode stays 32.705 ms:
+//   margin = FRAME_BUDGET_US - DECODE = 41667 - 32705 = 8962 µs (+8.962 ms).
+//   Was serial deficit 6.016 ms; swing = T_copy. ARM decode-vs-budget CLOSES under those IFs.
+//   Does NOT claim product e2e / fabric_bw / PPC2 closed.
+localparam int MISTERPLEX_BW_AFTER_COPY_RETIRE_MARGIN_US = 8962;
 
 `endif // MISTERPLEX_BW_CONTRACT_SVH

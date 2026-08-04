@@ -184,6 +184,20 @@ def main() -> int:
         if "EFFECTIVE_ARM_CORES = 1" not in svh_txt and "EFFECTIVE_ARM_CORES=1" not in svh_txt:
             fails.append("EFFECTIVE_ARM_CORES must equal 1")
 
+    # T_copy retire frame-budget PRE-REG (parent strategic convergence)
+    pr = c.get("t_copy_retire_prereg", {})
+    pred = pr.get("prediction", {})
+    if abs(float(pred.get("margin_ms", 0)) - 8.962) > 1e-3:
+        fails.append("t_copy_retire_prereg.prediction.margin_ms must be 8.962")
+    if pred.get("arm_decode_frame_budget_closes") is not True:
+        fails.append("prereg must say arm_decode_frame_budget_closes True under IFs")
+    if "e2e 720p24 product CLOSED" not in str(pr.get("does_NOT_claim", [])):
+        fails.append("prereg must NOT claim e2e product CLOSED")
+    if "MISTERPLEX_BW_AFTER_COPY_RETIRE_MARGIN_US" not in svh_txt:
+        fails.append("svh missing AFTER_COPY_RETIRE_MARGIN_US")
+    if "8962" not in svh_txt:
+        fails.append("svh margin must be 8962 us")
+
     if fails:
         print("FAIL test_p720_shared_bw_contract")
         for f in fails:
