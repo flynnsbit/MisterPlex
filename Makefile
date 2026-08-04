@@ -89,6 +89,7 @@ unit-unlocked: preflight $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $
 	$(ROOT)/tests/unit/test_present_geom_params_rtl_sim.sh
 	python3 $(ROOT)/tests/unit/test_present_720p_store_wire_static.py
 	python3 $(ROOT)/tests/unit/test_present_multi_720p_abi_static.py
+	python3 $(ROOT)/tests/unit/test_p720_shared_bw_contract.py
 	$(ROOT)/tests/unit/test_ddr_frame_abi_select_verilator.sh
 	$(ROOT)/tests/unit/test_present_720p_store_wire_rtl_sim.sh
 	python3 $(ROOT)/tests/unit/test_720p_clk_ddr_arith.py
