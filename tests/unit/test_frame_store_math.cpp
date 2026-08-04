@@ -165,10 +165,38 @@ int main() {
     unsigned r8 = (p >> 11) << 3;
     CHECK(r8 >= 240);
 
+    // 720p tier: phys base + doorbell + PLXD offset must match RTL params.
+    // NEGATIVE: default phys base on 720p geom must NOT be used (wrong doorbell).
+    {
+        using namespace misterplex;
+        const DdrFrameLayout good = makePlex720pDdrFrameLayout();
+        CHECK(ddrFrameLayoutValid(good));
+        CHECK(good.phys_base == kPlex720pPhysBase);
+        CHECK(good.bank_stride == kPlex720pYuv420pBankStride);
+        CHECK(good.doorbell_phys == kPlex720pYuv420pDoorbellPhys);
+        CHECK(good.doorbell_phys == 0x3047F000u);
+        CHECK(plxdPhysFromDoorbell(good.doorbell_phys) == 0x3047F128u);
+        CHECK(good.frame_bytes == static_cast<size_t>(kPlex720pYuv420pBytes));
+
+        const DdrFrameLayout bad =
+            makeDdrFrameLayout(plex720pDdrFrameGeometry(), kDdrFramePhysBase);
+        CHECK(bad.doorbell_phys != kPlex720pYuv420pDoorbellPhys);
+        CHECK(bad.doorbell_phys == 0x302FF000u); // the desync class
+        CHECK(ddrFramePhysBaseForGeometry(plex720pDdrFrameGeometry()) ==
+              kPlex720pPhysBase);
+        CHECK(ddrFramePhysBaseForGeometry(plex480pDdrFrameGeometry()) ==
+              kDdrFramePhysBase);
+        // 480p product PLXD
+        const DdrFrameLayout p480 =
+            makeDdrFrameLayout(plex480pDdrFrameGeometry(), kDdrFramePhysBase);
+        CHECK(p480.doorbell_phys == 0x300FF000u);
+        CHECK(plxdPhysFromDoorbell(p480.doorbell_phys) == 0x300FF128u);
+    }
+
     if (fails) {
         std::fprintf(stderr, "test_frame_store_math: %d fails\n", fails);
         return 1;
     }
-    std::printf("test_frame_store_math: OK\n");
+    std::printf("test_frame_store_math: OK (720p doorbell+PLXD locked)\n");
     return 0;
 }

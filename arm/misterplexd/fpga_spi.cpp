@@ -421,6 +421,7 @@ bool FpgaSpi::open() {
 
 void FpgaSpi::close() {
     releaseDdrMap();
+    releasePlxaBootstrapMap();
     releaseBitstreamDdrMap();
     if (map_) {
         munmap((void*)map_, kMapSize);
@@ -680,8 +681,11 @@ bool FpgaSpi::ensureDdrMap() {
 }
 
 bool FpgaSpi::setDdrFrameLayout(const DdrFrameGeometry& geometry, DdrFrameFormat format) {
+    // 720p tier uses kPlex720pPhysBase (0x3018_0000) → doorbell 0x3047_F000.
+    // Blind kDdrFrameBase (0x3000_0000) yields 0x302F_F000 and desyncs RTL.
+    const uint32_t phys = ddrFramePhysBaseForGeometry(geometry);
     DdrFrameLayout next =
-        makeDdrFrameLayout(geometry, kDdrFrameBase, kDdrFrameStrideAlign, format);
+        makeDdrFrameLayout(geometry, phys, kDdrFrameStrideAlign, format);
     if (!ddrFrameLayoutValid(next)) {
         setErr("setDdrFrameLayout: invalid DDR frame layout");
         return false;
@@ -699,6 +703,9 @@ bool FpgaSpi::setDdrFrameLayout(const DdrFrameGeometry& geometry, DdrFrameFormat
         return true;
     ddrLayout_ = next;
     releaseDdrMap();
+    releasePlxaBootstrapMap();
+    plxaDiscoverState_ = 0;
+    plxdPhysResolved_ = 0;
     ddrKickMode_ = 0;
     ddrKickFailMs_ = -1.0;
     doorbellSeq_ = 0;
@@ -732,6 +739,47 @@ void FpgaSpi::releaseDdrMap() {
         ::close(ddrMemFd_);
         ddrMemFd_ = -1;
     }
+}
+
+void FpgaSpi::releasePlxaBootstrapMap() {
+    if (plxaMap_) {
+        munmap(plxaMap_, plxaMapLen_);
+        plxaMap_ = nullptr;
+        plxaMapLen_ = 0;
+        plxaMapPhys_ = 0;
+    }
+    if (plxaMemFd_ >= 0) {
+        ::close(plxaMemFd_);
+        plxaMemFd_ = -1;
+    }
+}
+
+bool FpgaSpi::ensurePlxaBootstrapMap() {
+    constexpr uint32_t kPage = 0x1000u;
+    const uint32_t pagePhys = plxa::kPlxaPhys & ~(kPage - 1u);
+    if (plxaMap_ && plxaMapPhys_ == pagePhys && plxaMemFd_ >= 0)
+        return true;
+    releasePlxaBootstrapMap();
+    int flags = O_RDWR | O_CLOEXEC;
+    if (ddrMemSync_)
+        flags |= O_SYNC;
+    plxaMemFd_ = ::open("/dev/mem", flags);
+    if (plxaMemFd_ < 0) {
+        setErr("ensurePlxaBootstrapMap: open /dev/mem failed");
+        return false;
+    }
+    void* p = mmap(nullptr, kPage, PROT_READ | PROT_WRITE, MAP_SHARED, plxaMemFd_,
+                   static_cast<off_t>(pagePhys));
+    if (p == MAP_FAILED) {
+        setErr("ensurePlxaBootstrapMap: mmap PLXA page failed");
+        ::close(plxaMemFd_);
+        plxaMemFd_ = -1;
+        return false;
+    }
+    plxaMap_ = static_cast<uint8_t*>(p);
+    plxaMapLen_ = kPage;
+    plxaMapPhys_ = pagePhys;
+    return true;
 }
 
 bool FpgaSpi::waitCoreFlag(bool clearBusy, bool clearPending, int maxUs) {
@@ -1643,12 +1691,20 @@ bool FpgaSpi::readBankRelease(BankReleaseStatus& out) {
     }
     if (plxaDiscoverState_ == 0) {
         const uint32_t plxaPhys = plxa::kPlxaPhys;
-        if (plxaPhys >= ddrLayout_.phys_base &&
+        volatile uint32_t* pm = nullptr;
+        // Prefer frame-window map when PLXA falls inside it (480p tier).
+        if (ddrMap_ && plxaPhys >= ddrLayout_.phys_base &&
             (plxaPhys - ddrLayout_.phys_base) + 8u <= ddrMapLen_) {
             const size_t poff =
                 static_cast<size_t>(plxaPhys - ddrLayout_.phys_base);
-            volatile uint32_t* pm =
-                reinterpret_cast<volatile uint32_t*>(ddrMap_ + poff);
+            pm = reinterpret_cast<volatile uint32_t*>(ddrMap_ + poff);
+        } else if (ensurePlxaBootstrapMap()) {
+            // 720p window starts at 0x30180000; PLXA@0x3007F0F0 needs its own page.
+            const size_t poff =
+                static_cast<size_t>(plxaPhys - plxaMapPhys_);
+            pm = reinterpret_cast<volatile uint32_t*>(plxaMap_ + poff);
+        }
+        if (pm) {
             const uint32_t lo0 = pm[0];
             const uint32_t hi0 = pm[1];
             __sync_synchronize();
@@ -1672,7 +1728,6 @@ bool FpgaSpi::readBankRelease(BankReleaseStatus& out) {
                             static_cast<unsigned>(plxdPhysResolved_),
                             static_cast<unsigned>(ddrLayout_.doorbell_phys));
                     } else {
-                        // Version mismatch / missing PLXD: FAIL LOUD, sticky.
                         char buf[224]{};
                         std::snprintf(
                             buf, sizeof(buf),
@@ -1687,17 +1742,16 @@ bool FpgaSpi::readBankRelease(BankReleaseStatus& out) {
                         return false;
                     }
                 } else {
-                    // Stable non-PLXA at bootstrap addr → pre-PLXA core.
                     plxaDiscoverState_ = 1;
-                    plxdPhysResolved_ = kBankReleaseMailboxPhys;
+                    // No PLXA: product PLXD is still doorbell-relative.
+                    plxdPhysResolved_ = plxdPhysFromDoorbell(ddrLayout_.doorbell_phys);
                 }
             } else {
-                // Unstable PLXA page — do not stick; try absolute this call.
-                plxdPhysResolved_ = kBankReleaseMailboxPhys;
+                plxdPhysResolved_ = plxdPhysFromDoorbell(ddrLayout_.doorbell_phys);
             }
         } else {
             plxaDiscoverState_ = 1;
-            plxdPhysResolved_ = kBankReleaseMailboxPhys;
+            plxdPhysResolved_ = plxdPhysFromDoorbell(ddrLayout_.doorbell_phys);
         }
     }
 

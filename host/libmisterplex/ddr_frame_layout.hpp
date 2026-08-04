@@ -54,6 +54,15 @@ constexpr int kPlex720pChromaStrideBytes = 640;
 constexpr uint32_t kPlex720pYuv420pBankStride = 0x00180000u;
 constexpr uint32_t kPlex720pPhysBase = 0x30180000u;
 constexpr uint32_t kPlex720pYuv420pDoorbellPhys = 0x3047F000u;
+// Doorbell = phys + 2*stride - 0x1000 (must match RTL ddr_frame_layout_params.svh).
+static_assert(kPlex720pPhysBase + 2u * kPlex720pYuv420pBankStride - 0x1000u ==
+                  kPlex720pYuv420pDoorbellPhys,
+              "720p doorbell must equal phys+2*stride-0x1000");
+// PLXD product offset from doorbell (present_core BANK_MAILBOX = DOORBELL+0x128).
+constexpr uint32_t kPlxdDoorbellOffset = 0x128u;
+static_assert(kPlex720pYuv420pDoorbellPhys + kPlxdDoorbellOffset == 0x3047F128u,
+              "720p PLXD phys");
+static_assert(0x300FF000u + kPlxdDoorbellOffset == 0x300FF128u, "480p PLXD phys");
 // L4 beam (w-clock): 24 MHz, H=1312, V=762 → 24.006 Hz with DE 1280×720.
 constexpr int kPlex720p24BeamHTotal = 1312;
 constexpr int kPlex720p24BeamVTotal = 762;
@@ -190,6 +199,36 @@ inline DdrFrameGeometry plex480pDdrFrameGeometry() {
     return g;
 }
 
+// 720p identity canvas — phys base is NOT kDdrFramePhysBase (0x3000_0000).
+// Using the 480p base yields doorbell 0x302FF000 and desyncs RTL at 0x3047F000.
+inline DdrFrameGeometry plex720pDdrFrameGeometry() {
+    DdrFrameGeometry g = makeDdrFrameGeometry(
+        kPlex720pCodedWidth, kPlex720pCodedHeight, kPlex720pDisplayWidth,
+        kPlex720pDisplayHeight, kPlex720pPresentedWidth, kPlex720pPresentedHeight,
+        DdrFramePlacement::None);
+    g.crop_left = 0;
+    g.crop_right = 0;
+    g.crop_top = 0;
+    g.crop_bottom = 0;
+    g.present_x = kPlex720pPillarboxLeft;
+    g.present_y = 0;
+    return g;
+}
+
+inline bool isPlex720pDdrGeometry(const DdrFrameGeometry& g) {
+    return g.coded_width == kPlex720pCodedWidth && g.coded_height == kPlex720pCodedHeight &&
+           g.display_width == kPlex720pDisplayWidth &&
+           g.display_height == kPlex720pDisplayHeight;
+}
+
+inline uint32_t ddrFramePhysBaseForGeometry(const DdrFrameGeometry& g) {
+    return isPlex720pDdrGeometry(g) ? kPlex720pPhysBase : kDdrFramePhysBase;
+}
+
+inline uint32_t plxdPhysFromDoorbell(uint32_t doorbell_phys) {
+    return doorbell_phys + kPlxdDoorbellOffset;
+}
+
 inline DdrFrameGeometry ddrFrameGeometryForPresentedSize(int width, int height) {
     if (width == kPlex480pPresentedWidth && height == kPlex480pPresentedHeight)
         return plex480pDdrFrameGeometry();
@@ -259,6 +298,12 @@ inline DdrFrameLayout makeDdrFrameLayout(int width, int height,
                                          uint32_t strideAlign = kDdrFrameStrideAlign,
                                          DdrFrameFormat format = DdrFrameFormat::Yuv420p) {
     return makeDdrFrameLayout(makeDdrFrameGeometry(width, height), physBase, strideAlign, format);
+}
+
+inline DdrFrameLayout makePlex720pDdrFrameLayout(
+    DdrFrameFormat format = DdrFrameFormat::Yuv420p) {
+    return makeDdrFrameLayout(plex720pDdrFrameGeometry(), kPlex720pPhysBase,
+                              kDdrFrameStrideAlign, format);
 }
 
 inline bool ddrFrameLayoutValid(const DdrFrameLayout& l) {

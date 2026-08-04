@@ -296,6 +296,14 @@ private:
     // PLXA-resolved PLXD phys (0 = not probed; sticky once set/rejected).
     uint32_t plxdPhysResolved_ = 0;
     int plxaDiscoverState_ = 0; // 0=unknown 1=absent 2=ok 3=rejected
+    // Separate page map for absolute PLXA (0x3007F0F0) — outside 720p window
+    // which starts at 0x30180000.
+    int plxaMemFd_ = -1;
+    uint8_t* plxaMap_ = nullptr;
+    size_t plxaMapLen_ = 0;
+    uint32_t plxaMapPhys_ = 0;
+    void releasePlxaBootstrapMap();
+    bool ensurePlxaBootstrapMap();
     bool mboxInit_ = false;
     bool mboxAlive_ = false;
     uint16_t mboxSeq_ = 0;
