@@ -289,6 +289,8 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/build/test_ddr_publish_barrier",
     "$(ROOT)/build/test_ddr_mem_map_policy",
     "$(ROOT)/tests/unit/test_fabric_ddr_writer_verilator.sh",
+    "$(ROOT)/tests/unit/test_ddr_bw_geom_verilator.sh",
+    "$(ROOT)/tests/unit/test_ddr_bank_geom_fatal_elab.sh",
     "$(ROOT)/tests/unit/test_fabric_ddr_write_path_verilator.sh",
     "$(ROOT)/tests/unit/test_fabric_bank_credit_async_verilator.sh",
     "$(ROOT)/tests/unit/test_ddr_bus_arbiter3_verilator.sh",

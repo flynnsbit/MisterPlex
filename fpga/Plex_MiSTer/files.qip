@@ -54,6 +54,9 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/plex_video_ar.sv
 # these explicitly and can hide a project-file omission (rd-duck).
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_beam_content_de.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_video_timing_960.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_bank_geom_guard.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_bandwidth_meter.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/sdram_line_spill.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_core.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/yuv_bt601_npx.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_beam_ppc.sv
