@@ -107,6 +107,13 @@ module ddr_frame_store #(
 	localparam int C_LINE_QWORDS = CODED_W / 16;
 	localparam int Y_QW_AW = $clog2(Y_LINE_QWORDS);
 	localparam int C_QW_AW = $clog2(C_LINE_QWORDS);
+	// 720p: pack linebufs as 256×40 (5 px/word) → 1 M10K/plane/slot (see PREREG).
+	// 480p stays DATA_W=64 (CODED_W=624 not divisible by 5).
+	localparam bit PACK_PX5 = (CODED_W == 1280) && (CODED_H == 720);
+	localparam int Y_PX5_WORDS = PACK_PX5 ? (CODED_W / 5) : 1;
+	localparam int C_PX5_WORDS = PACK_PX5 ? ((CODED_W / 2) / 5) : 1;
+	localparam int Y_PX5_AW = $clog2(Y_PX5_WORDS > 1 ? Y_PX5_WORDS : 2);
+	localparam int C_PX5_AW = $clog2(C_PX5_WORDS > 1 ? C_PX5_WORDS : 2);
 	localparam int LINE_SLOTS = LINE_COUNT * 2;
 	localparam int SLOT_W = $clog2(LINE_SLOTS);
 	localparam [SLOT_W-1:0] SECOND_SET_BASE = SLOT_W'(LINE_COUNT);
@@ -182,6 +189,15 @@ module ddr_frame_store #(
 	wire [63:0] y_q [0:LINE_SLOTS-1];
 	wire [63:0] u_q [0:LINE_SLOTS-1];
 	wire [63:0] v_q [0:LINE_SLOTS-1];
+	wire [39:0] y_q5 [0:LINE_SLOTS-1];
+	wire [39:0] u_q5 [0:LINE_SLOTS-1];
+	wire [39:0] v_q5 [0:LINE_SLOTS-1];
+	reg y_wr5_en, u_wr5_en, v_wr5_en;
+	reg [Y_PX5_AW-1:0] y_wr5_addr;
+	reg [C_PX5_AW-1:0] c_wr5_addr;
+	reg [39:0] y_wr5_data, u_wr5_data, v_wr5_data;
+	wire [Y_PX5_AW-1:0] y_rd5_addr;
+	wire [C_PX5_AW-1:0] c_rd5_addr;
 	wire rd_x_at_or_after_origin;
 	wire rd_y_at_or_after_origin;
 	generate
@@ -220,21 +236,67 @@ module ddr_frame_store #(
 
 	genvar li;
 	generate
-		for (li = 0; li < LINE_SLOTS; li = li + 1) begin : gen_line
-			line_buf_ram #(.WIDTH(Y_LINE_QWORDS), .AW(Y_QW_AW), .DATA_W(64)) yram (
-				.wr_clk(clk_ddr), .wr_en(y_wr[li]), .wr_addr(y_wr_addr), .wr_data(y_wr_data),
-				.rd_clk(clk), .rd_addr(y_rd_addr), .rd_data(y_q[li])
-			);
-			line_buf_ram #(.WIDTH(C_LINE_QWORDS), .AW(C_QW_AW), .DATA_W(64)) uram (
-				.wr_clk(clk_ddr), .wr_en(u_wr[li]), .wr_addr(c_wr_addr), .wr_data(u_wr_data),
-				.rd_clk(clk), .rd_addr(c_rd_addr), .rd_data(u_q[li])
-			);
-			line_buf_ram #(.WIDTH(C_LINE_QWORDS), .AW(C_QW_AW), .DATA_W(64)) vram (
-				.wr_clk(clk_ddr), .wr_en(v_wr[li]), .wr_addr(c_wr_addr), .wr_data(v_wr_data),
-				.rd_clk(clk), .rd_addr(c_rd_addr), .rd_data(v_q[li])
-			);
+		if (!PACK_PX5) begin : g_line_qw64
+			for (li = 0; li < LINE_SLOTS; li = li + 1) begin : gen_line
+				line_buf_ram #(.WIDTH(Y_LINE_QWORDS), .AW(Y_QW_AW), .DATA_W(64)) yram (
+					.wr_clk(clk_ddr), .wr_en(y_wr[li]), .wr_addr(y_wr_addr), .wr_data(y_wr_data),
+					.rd_clk(clk), .rd_addr(y_rd_addr), .rd_data(y_q[li])
+				);
+				line_buf_ram #(.WIDTH(C_LINE_QWORDS), .AW(C_QW_AW), .DATA_W(64)) uram (
+					.wr_clk(clk_ddr), .wr_en(u_wr[li]), .wr_addr(c_wr_addr), .wr_data(u_wr_data),
+					.rd_clk(clk), .rd_addr(c_rd_addr), .rd_data(u_q[li])
+				);
+				line_buf_ram #(.WIDTH(C_LINE_QWORDS), .AW(C_QW_AW), .DATA_W(64)) vram (
+					.wr_clk(clk_ddr), .wr_en(v_wr[li]), .wr_addr(c_wr_addr), .wr_data(v_wr_data),
+					.rd_clk(clk), .rd_addr(c_rd_addr), .rd_data(v_q[li])
+				);
+				assign y_q5[li] = 40'd0;
+				assign u_q5[li] = 40'd0;
+				assign v_q5[li] = 40'd0;
+			end
+			assign y_rd5_addr = '0;
+			assign c_rd5_addr = '0;
+		end else begin : g_line_px5
+			// layout 256×40 M10K: 1 block / plane / slot (chroma 128 words @50% util)
+			if (CROP_LEFT != 0)
+				px5_stream_rd_requires_crop_left_zero u_px5_crop();
+			for (li = 0; li < LINE_SLOTS; li = li + 1) begin : gen_line
+				line_buf_ram_px5 #(.DEPTH(Y_PX5_WORDS), .AW(Y_PX5_AW)) yram (
+					.wr_clk(clk_ddr), .wr_en(y_wr[li] && y_wr5_en),
+					.wr_addr(y_wr5_addr), .wr_data(y_wr5_data),
+					.rd_clk(clk), .rd_addr(y_rd5_addr), .rd_data(y_q5[li])
+				);
+				line_buf_ram_px5 #(.DEPTH(1 << C_PX5_AW), .AW(C_PX5_AW)) uram (
+					.wr_clk(clk_ddr), .wr_en(u_wr[li] && u_wr5_en),
+					.wr_addr(c_wr5_addr), .wr_data(u_wr5_data),
+					.rd_clk(clk), .rd_addr(c_rd5_addr), .rd_data(u_q5[li])
+				);
+				line_buf_ram_px5 #(.DEPTH(1 << C_PX5_AW), .AW(C_PX5_AW)) vram (
+					.wr_clk(clk_ddr), .wr_en(v_wr[li] && v_wr5_en),
+					.wr_addr(c_wr5_addr), .wr_data(v_wr5_data),
+					.rd_clk(clk), .rd_addr(c_rd5_addr), .rd_data(v_q5[li])
+				);
+				assign y_q[li] = 64'd0;
+				assign u_q[li] = 64'd0;
+				assign v_q[li] = 64'd0;
+			end
 		end
 	endgenerate
+
+	// Shared packers (one fill at a time) — PACK_PX5 only.
+	wire y_pk_out_v, u_pk_out_v, v_pk_out_v;
+	wire y_pk_done, u_pk_done, v_pk_done;
+	wire y_pk_busy, u_pk_busy, v_pk_busy;
+	wire [Y_PX5_AW-1:0] y_pk_addr;
+	wire [C_PX5_AW-1:0] u_pk_addr, v_pk_addr;
+	wire [39:0] y_pk_data, u_pk_data, v_pk_data;
+	reg y_pk_clear, u_pk_clear, v_pk_clear;
+	reg y_pk_in_v, u_pk_in_v, v_pk_in_v;
+	reg [63:0] y_pk_in_q, u_pk_in_q, v_pk_in_q;
+	reg y_srd_start, c_srd_start, y_srd_adv, c_srd_adv;
+	wire y_srd_valid, c_srd_valid, y_srd_primed, c_srd_primed;
+	wire [8*PX_PER_CLK-1:0] y_srd_bytes;
+	wire [7:0] u_srd_byte, v_srd_byte;
 
 	reg disp_bank;
 	reg pending_bank;
@@ -248,6 +310,35 @@ module ddr_frame_store #(
 	reg vsync_toggle;
 	reg reset_ddr_s1, reset_ddr_s2;
 	wire reset_ddr = reset_ddr_s2;
+
+	generate
+		if (PACK_PX5) begin : g_px5_pack
+			line_buf_px5_pack #(.PIXELS(1280), .AW(Y_PX5_AW), .FIFO_DEPTH(256), .SKID(160)) y_pack (
+				.clk(clk_ddr), .reset(reset_ddr), .clear(y_pk_clear),
+				.in_valid(y_pk_in_v), .in_q(y_pk_in_q),
+				.out_valid(y_pk_out_v), .out_addr(y_pk_addr), .out_data(y_pk_data),
+				.line_done(y_pk_done), .busy(y_pk_busy), .skid_overflow()
+			);
+			line_buf_px5_pack #(.PIXELS(640), .AW(C_PX5_AW), .FIFO_DEPTH(128), .SKID(80)) u_pack (
+				.clk(clk_ddr), .reset(reset_ddr), .clear(u_pk_clear),
+				.in_valid(u_pk_in_v), .in_q(u_pk_in_q),
+				.out_valid(u_pk_out_v), .out_addr(u_pk_addr), .out_data(u_pk_data),
+				.line_done(u_pk_done), .busy(u_pk_busy), .skid_overflow()
+			);
+			line_buf_px5_pack #(.PIXELS(640), .AW(C_PX5_AW), .FIFO_DEPTH(128), .SKID(80)) v_pack (
+				.clk(clk_ddr), .reset(reset_ddr), .clear(v_pk_clear),
+				.in_valid(v_pk_in_v), .in_q(v_pk_in_q),
+				.out_valid(v_pk_out_v), .out_addr(v_pk_addr), .out_data(v_pk_data),
+				.line_done(v_pk_done), .busy(v_pk_busy), .skid_overflow()
+			);
+		end else begin : g_px5_pack_tie
+			assign y_pk_out_v = 1'b0; assign u_pk_out_v = 1'b0; assign v_pk_out_v = 1'b0;
+			assign y_pk_done = 1'b0; assign u_pk_done = 1'b0; assign v_pk_done = 1'b0;
+			assign y_pk_busy = 1'b0; assign u_pk_busy = 1'b0; assign v_pk_busy = 1'b0;
+			assign y_pk_addr = '0; assign u_pk_addr = '0; assign v_pk_addr = '0;
+			assign y_pk_data = 40'd0; assign u_pk_data = 40'd0; assign v_pk_data = 40'd0;
+		end
+	endgenerate
 
 	always @(posedge clk_ddr) begin
 		if (reset) begin
@@ -359,6 +450,43 @@ module ddr_frame_store #(
 	reg [SLOT_W-1:0] y_hit_idx_r, c_hit_idx_r;
 	reg [2:0] y_sel_r, c_sel_r;
 
+	// PACK_PX5 stream readers (after hit idx regs exist for dout mux)
+	wire [39:0] y_srd_dout = y_q5[y_hit_idx_r];
+	wire [39:0] u_srd_dout = u_q5[c_hit_idx_r];
+	wire [39:0] v_srd_dout = v_q5[c_hit_idx_r];
+	generate
+		if (PACK_PX5) begin : g_px5_srd
+			line_buf_px5_stream_rd #(.PPC(PX_PER_CLK), .AW(Y_PX5_AW), .PIXELS(1280)) y_srd (
+				.clk(clk), .reset(reset),
+				.start(y_srd_start), .advance(y_srd_adv),
+				.rd_addr(y_rd5_addr), .rd_data(y_srd_dout),
+				.px_valid(y_srd_valid), .px_bytes(y_srd_bytes), .primed(y_srd_primed)
+			);
+			line_buf_px5_stream_rd #(.PPC(1), .AW(C_PX5_AW), .PIXELS(640)) u_srd (
+				.clk(clk), .reset(reset),
+				.start(c_srd_start), .advance(c_srd_adv),
+				.rd_addr(c_rd5_addr), .rd_data(u_srd_dout),
+				.px_valid(c_srd_valid), .px_bytes(u_srd_byte), .primed(c_srd_primed)
+			);
+			// V shares U address phase (identical 4:2:0 horizontal cadence).
+			wire [C_PX5_AW-1:0] c_rd5_addr_v_unused;
+			line_buf_px5_stream_rd #(.PPC(1), .AW(C_PX5_AW), .PIXELS(640)) v_srd (
+				.clk(clk), .reset(reset),
+				.start(c_srd_start), .advance(c_srd_adv),
+				.rd_addr(c_rd5_addr_v_unused), .rd_data(v_srd_dout),
+				.px_valid(), .px_bytes(v_srd_byte), .primed()
+			);
+		end else begin : g_px5_srd_tie
+			assign y_srd_valid = 1'b0;
+			assign c_srd_valid = 1'b0;
+			assign y_srd_primed = 1'b0;
+			assign c_srd_primed = 1'b0;
+			assign y_srd_bytes = '0;
+			assign u_srd_byte = 8'd0;
+			assign v_srd_byte = 8'd0;
+		end
+	endgenerate
+
 	integer vi;
 	reg y_hit_now, c_hit_now;
 	reg [SLOT_W-1:0] y_hit_idx_now, c_hit_idx_now;
@@ -448,9 +576,10 @@ module ddr_frame_store #(
 	endfunction
 
 	// Scalar path — keep the original wire form bit-identical to pre-PPC land.
-	wire [7:0] y_pix = pick_byte(selected_y_q, y_sel_r);
-	wire [7:0] u_pix = pick_byte(selected_u_q, c_sel_r);
-	wire [7:0] v_pix = pick_byte(selected_v_q, c_sel_r);
+	// PACK_PX5: bytes from streaming unpacker (L→R); else qword pick_byte.
+	wire [7:0] y_pix = PACK_PX5 ? y_srd_bytes[7:0] : pick_byte(selected_y_q, y_sel_r);
+	wire [7:0] u_pix = PACK_PX5 ? u_srd_byte : pick_byte(selected_u_q, c_sel_r);
+	wire [7:0] v_pix = PACK_PX5 ? v_srd_byte : pick_byte(selected_v_q, c_sel_r);
 	wire signed [11:0] y_s = {4'd0, y_pix};
 	wire signed [11:0] u_s = {4'd0, u_pix} - 12'sd128;
 	wire signed [11:0] v_s = {4'd0, v_pix} - 12'sd128;
@@ -471,9 +600,11 @@ module ddr_frame_store #(
 		for (gpi = 0; gpi < PX_PER_CLK; gpi = gpi + 1) begin : g_px
 			wire [2:0] y_sel_l = y_sel_r + 3'(gpi);
 			wire [2:0] c_sel_l = c_sel_r + 3'(gpi[2:1]);
-			wire [7:0] y_l = pick_byte(selected_y_q, y_sel_l);
-			wire [7:0] u_l = pick_byte(selected_u_q, c_sel_l);
-			wire [7:0] v_l = pick_byte(selected_v_q, c_sel_l);
+			wire [7:0] y_l = PACK_PX5 ? y_srd_bytes[gpi*8 +: 8]
+			                          : pick_byte(selected_y_q, y_sel_l);
+			// Chroma 4:2:0: stream advances every 2 luma px — u/v_srd_byte is current pair.
+			wire [7:0] u_l = PACK_PX5 ? u_srd_byte : pick_byte(selected_u_q, c_sel_l);
+			wire [7:0] v_l = PACK_PX5 ? v_srd_byte : pick_byte(selected_v_q, c_sel_l);
 			assign r_lane[gpi] = yuv_r(y_l, u_l, v_l);
 			assign g_lane[gpi] = yuv_g(y_l, u_l, v_l);
 			assign b_lane[gpi] = yuv_b(y_l, u_l, v_l);
@@ -507,6 +638,10 @@ module ddr_frame_store #(
 			c_hit_idx_r <= '0;
 			y_sel_r <= 3'd0;
 			c_sel_r <= 3'd0;
+			y_srd_start <= 1'b0;
+			c_srd_start <= 1'b0;
+			y_srd_adv <= 1'b0;
+			c_srd_adv <= 1'b0;
 			rd_r <= 8'd0;
 			rd_g <= 8'd0;
 			rd_b <= 8'd0;
@@ -559,6 +694,13 @@ module ddr_frame_store #(
 			c_hit_idx_r <= c_hit_idx_now;
 			y_sel_r <= src_x[2:0];
 			c_sel_r <= src_x[3:1];
+			// PACK_PX5 stream control: start at left edge of present line (CROP_LEFT=0).
+			y_srd_start <= PACK_PX5 && rd_y_visible && (display_x == '0) && !rd_x_visible;
+			c_srd_start <= PACK_PX5 && rd_y_visible && (display_x == '0) && !rd_x_visible;
+			// Advance during visible DE when hit; chroma every other luma px (4:2:0).
+			y_srd_adv <= PACK_PX5 && rd_visible && has_frame && y_hit_now && c_hit_now;
+			c_srd_adv <= PACK_PX5 && rd_visible && has_frame && y_hit_now && c_hit_now
+			             && !display_x[0];
 			miss_d <= rd_miss_now;
 			if (miss_d && underrun_count != 16'hFFFF) begin
 				underrun_count <= underrun_count + 16'd1;
@@ -600,6 +742,7 @@ module ddr_frame_store #(
 	localparam [3:0] S_LINE_WAIT  = 4'd2;
 	localparam [3:0] S_POLL_WAIT  = 4'd3;
 	localparam [3:0] S_WRITE_WAIT = 4'd4;
+	localparam [3:0] S_LINE_PACK_DRAIN = 4'd5; // PACK_PX5: wait packer FIFO empty + line_done
 
 	reg [3:0] state_ddr;
 	reg [LINE_SLOTS-1:0] y_valid, c_valid;
@@ -1020,6 +1163,36 @@ module ddr_frame_store #(
 			y_wr <= '0;
 			u_wr <= '0;
 			v_wr <= '0;
+			y_wr5_en <= 1'b0;
+			u_wr5_en <= 1'b0;
+			v_wr5_en <= 1'b0;
+			y_pk_clear <= 1'b0;
+			u_pk_clear <= 1'b0;
+			v_pk_clear <= 1'b0;
+			y_pk_in_v <= 1'b0;
+			u_pk_in_v <= 1'b0;
+			v_pk_in_v <= 1'b0;
+			// PACK_PX5: drain packer → slot RAM every cycle
+			if (PACK_PX5) begin
+				if (y_pk_out_v) begin
+					y_wr5_en <= 1'b1;
+					y_wr5_addr <= y_pk_addr;
+					y_wr5_data <= y_pk_data;
+					y_wr[fill_idx] <= 1'b1;
+				end
+				if (u_pk_out_v) begin
+					u_wr5_en <= 1'b1;
+					c_wr5_addr <= u_pk_addr;
+					u_wr5_data <= u_pk_data;
+					u_wr[fill_idx] <= 1'b1;
+				end
+				if (v_pk_out_v) begin
+					v_wr5_en <= 1'b1;
+					c_wr5_addr <= v_pk_addr;
+					v_wr5_data <= v_pk_data;
+					v_wr[fill_idx] <= 1'b1;
+				end
+			end
 			cmd_pop <= 1'b0;
 
 			disp_bank_d1 <= disp_bank;
@@ -1286,6 +1459,15 @@ module ddr_frame_store #(
 
 				S_LINE_ISSUE: begin
 					if (!DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+						// PACK_PX5: clear packer at the first beat of a plane fill.
+						if (PACK_PX5 && (fill_qword == '0)) begin
+							if (!fill_is_chroma)
+								y_pk_clear <= 1'b1;
+							else if (fill_plane_v)
+								v_pk_clear <= 1'b1;
+							else
+								u_pk_clear <= 1'b1;
+						end
 						DDRAM_ADDR <= line_addr;
 						DDRAM_BURSTCNT <= burst_this;
 						DDRAM_RD <= 1'b1;
@@ -1296,7 +1478,21 @@ module ddr_frame_store #(
 
 				S_LINE_WAIT: begin
 					if (DDRAM_DOUT_READY) begin
-						if (fill_is_chroma) begin
+						if (PACK_PX5) begin
+							// Feed 64b beat into the active plane packer (5-px words).
+							if (fill_is_chroma) begin
+								if (fill_plane_v) begin
+									v_pk_in_v <= 1'b1;
+									v_pk_in_q <= DDRAM_DOUT;
+								end else begin
+									u_pk_in_v <= 1'b1;
+									u_pk_in_q <= DDRAM_DOUT;
+								end
+							end else begin
+								y_pk_in_v <= 1'b1;
+								y_pk_in_q <= DDRAM_DOUT;
+							end
+						end else if (fill_is_chroma) begin
 							c_wr_addr <= fill_qword[C_QW_AW-1:0];
 							if (fill_plane_v) begin
 								v_wr_data <= DDRAM_DOUT;
@@ -1315,24 +1511,61 @@ module ddr_frame_store #(
 						burst_left <= burst_left - 1'b1;
 						if (qwords_remaining == 1) begin
 							if (fill_is_chroma && !fill_plane_v) begin
-								fill_plane_v <= 1'b1;
-								fill_qword <= '0;
-								qwords_remaining <= C_LINE_QWORDS[Y_QW_AW:0];
-								state_ddr <= S_LINE_ISSUE;
-							end else begin
-								if (fill_is_chroma) begin
-									c_line[fill_idx] <= fill_cy;
-									c_bank[fill_idx] <= fill_bank;
-									c_valid[fill_idx] <= 1'b1;
-								end else begin
-									y_line[fill_idx] <= fill_y;
-									y_bank[fill_idx] <= fill_bank;
-									y_valid[fill_idx] <= 1'b1;
+								// U plane beats done — PACK_PX5 must finish U pack before V.
+								if (PACK_PX5)
+									state_ddr <= S_LINE_PACK_DRAIN;
+								else begin
+									fill_plane_v <= 1'b1;
+									fill_qword <= '0;
+									qwords_remaining <= C_LINE_QWORDS[Y_QW_AW:0];
+									state_ddr <= S_LINE_ISSUE;
 								end
-								state_ddr <= S_IDLE;
+							end else begin
+								if (PACK_PX5)
+									state_ddr <= S_LINE_PACK_DRAIN;
+								else begin
+									if (fill_is_chroma) begin
+										c_line[fill_idx] <= fill_cy;
+										c_bank[fill_idx] <= fill_bank;
+										c_valid[fill_idx] <= 1'b1;
+									end else begin
+										y_line[fill_idx] <= fill_y;
+										y_bank[fill_idx] <= fill_bank;
+										y_valid[fill_idx] <= 1'b1;
+									end
+									state_ddr <= S_IDLE;
+								end
 							end
 						end else if (burst_left == 1) begin
 							state_ddr <= S_LINE_ISSUE;
+						end
+					end
+				end
+
+				S_LINE_PACK_DRAIN: begin
+					// Wait until the active packer has emitted line_done (and outs drained
+					// via the default y_wr5 path above).
+					if (!fill_is_chroma) begin
+						if (y_pk_done || (!y_pk_busy && !y_pk_out_v)) begin
+							y_line[fill_idx] <= fill_y;
+							y_bank[fill_idx] <= fill_bank;
+							y_valid[fill_idx] <= 1'b1;
+							state_ddr <= S_IDLE;
+						end
+					end else if (!fill_plane_v) begin
+						if (u_pk_done || (!u_pk_busy && !u_pk_out_v)) begin
+							// Start V plane
+							fill_plane_v <= 1'b1;
+							fill_qword <= '0;
+							qwords_remaining <= C_LINE_QWORDS[Y_QW_AW:0];
+							state_ddr <= S_LINE_ISSUE;
+						end
+					end else begin
+						if (v_pk_done || (!v_pk_busy && !v_pk_out_v)) begin
+							c_line[fill_idx] <= fill_cy;
+							c_bank[fill_idx] <= fill_bank;
+							c_valid[fill_idx] <= 1'b1;
+							state_ddr <= S_IDLE;
 						end
 					end
 				end

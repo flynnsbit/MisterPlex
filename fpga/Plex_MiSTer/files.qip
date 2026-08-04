@@ -21,6 +21,10 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio_fifo.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/async_fifo.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio_ingest.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/line_buf_ram.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/line_buf_ram_px5.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/line_buf_px5_pack.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/line_buf_px5_stream_rd.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/line_buf_px5_unpack.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/frame_store.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_frame_store.sv
 # 720p DDR ABI + fabric publication (w-path / w-mem). Compile always; product

@@ -89,6 +89,30 @@ def main() -> int:
         print("FAIL: line_buf_ram missing WIDTH param", file=sys.stderr)
         return 1
 
+    # Packed 256×40 path (w-nostub M10K pack) — modules + QIP must exist for 720p compose.
+    px5 = ROOT / "fpga/Plex_MiSTer/rtl/line_buf_ram_px5.sv"
+    pack = ROOT / "fpga/Plex_MiSTer/rtl/line_buf_px5_pack.sv"
+    srd = ROOT / "fpga/Plex_MiSTer/rtl/line_buf_px5_stream_rd.sv"
+    qip = (ROOT / "fpga/Plex_MiSTer/files.qip").read_text(encoding="utf-8", errors="replace")
+    for f, label in ((px5, "line_buf_ram_px5"), (pack, "line_buf_px5_pack"), (srd, "line_buf_px5_stream_rd")):
+        if not f.is_file():
+            print(f"FAIL: missing {label} RTL", file=sys.stderr)
+            return 1
+        if f"rtl/{label}.sv" not in qip and f"rtl/{f.name}" not in qip:
+            print(f"FAIL: {label} not in files.qip", file=sys.stderr)
+            return 1
+    px5_src = px5.read_text(encoding="utf-8", errors="replace")
+    if "256" not in px5_src or "39:0" not in px5_src:
+        print("FAIL: line_buf_ram_px5 must be 40-bit (39:0) depth-256 class", file=sys.stderr)
+        return 1
+    if "ramstyle" not in px5_src or "M10K" not in px5_src:
+        print("FAIL: line_buf_ram_px5 must force M10K ramstyle", file=sys.stderr)
+        return 1
+    # NEGATIVE: claiming 1 M10K/line via illegal 1280×8 must not appear as the design basis
+    if "1280 x 8" in px5_src.lower() or "1280×8" in px5_src:
+        print("FAIL: illegal 1280×8 M10K config must not be the design basis", file=sys.stderr)
+        return 1
+
     # NEGATIVE 1: hardcoded 480p yram width must be detected as red twin
     red_fs = re.sub(
         r"line_buf_ram\s*#\s*\(\s*\.WIDTH\s*\(\s*Y_LINE_QWORDS\s*\)",
@@ -215,7 +239,8 @@ def main() -> int:
         f"margin_no_reclaim={margin_no_reclaim} margin_with_reclaim={margin_reclaim} | "
         f"PREREG_m10k={prereg_m10k} MEASURE={meas_m10k} delta=0 HIT | "
         f"scope=present+stub_painter NOT fabric_decoder | "
-        f"fit_src={fix['source_fit_rpt']}:L{fix['decode_stub']['fit_rpt_line']}"
+        f"fit_src={fix['source_fit_rpt']}:L{fix['decode_stub']['fit_rpt_line']} | "
+        f"PACK_PX5_PREREG save_m10k=96 layout=256x40 (1/line Y) vs naive64b 192"
     )
     return 0
 

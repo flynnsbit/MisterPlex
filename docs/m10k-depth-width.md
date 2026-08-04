@@ -79,3 +79,15 @@ and is a separate architectural choice (5 px/word).
 # After a 720p-enabled fit only — extract leaf line_buf M10K:
 rg 'line_buf_ram:gen_line' remote_out/<tag>/Plex.fit.rpt | rg -v altsyncram
 ```
+
+## Packed 256×40 linebufs (w-nostub PACK_PX5)
+
+When `CODED_W==1280 && CODED_H==720`, `ddr_frame_store` uses `line_buf_ram_px5`
+(**256×40**, 5 px/word) via `PACK_PX5`. 480p remains DATA_W=64.
+
+| Line | Layout | M10K/slot |
+|------|--------|----------:|
+| Y 1280 | 256×40 | 1 |
+| U/V 640 | 128×40 in 256×40 | 1 each |
+
+See `docs/PREREG_M10K_PX5_PACK.md`. Unit: `test_line_buf_px5_rtl_sim.sh`.

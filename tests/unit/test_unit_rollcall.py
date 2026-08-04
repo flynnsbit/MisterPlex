@@ -95,6 +95,7 @@ EXPECTED_COMMANDS = [
     "bash $(ROOT)/tests/unit/test_idle_thread_budget_gate.sh",
     "bash $(ROOT)/tests/unit/test_io_ack_follow_rtl_sim.sh",
     "bash $(ROOT)/tests/unit/test_bitstream_bit_feeder_rtl_sim.sh",
+    "bash $(ROOT)/tests/unit/test_line_buf_px5_rtl_sim.sh",
     "bash $(ROOT)/tests/unit/test_bitstream_to_exp_golomb_rtl_sim.sh",
     "bash $(ROOT)/tests/unit/test_annexb_rbsp_exp_golomb_rtl_sim.sh",
     "$(ROOT)/build/test_cadence",

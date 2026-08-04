@@ -50,7 +50,12 @@ common_sv=(
   "$ROOT/tests/rtl/ddr_frame_store_plxd_handshake_tb_top.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_base_mux.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/mplex_hold_lcell.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_ram.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_ram_px5.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_px5_pack.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_px5_stream_rd.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_px5_unpack.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/async_fifo.sv"
   "$ROOT/tests/rtl/ddr_frame_store_plxd_handshake_tb.cpp"
 )

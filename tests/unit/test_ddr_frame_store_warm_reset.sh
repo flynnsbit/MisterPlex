@@ -41,7 +41,12 @@ echo "RTL SIM: using $VERILATOR_VERSION" >&2
   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb_top.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_base_mux.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/mplex_hold_lcell.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_ram.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_ram_px5.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_px5_pack.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_px5_stream_rd.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_px5_unpack.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/async_fifo.sv" \
   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb.cpp"
 "$BUILD/Vddr_frame_store_warm_reset_tb"
@@ -54,7 +59,12 @@ echo "RTL SIM: using $VERILATOR_VERSION" >&2
   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb_top.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_base_mux.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/mplex_hold_lcell.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_ram.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_ram_px5.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_px5_pack.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_px5_stream_rd.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_px5_unpack.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/async_fifo.sv" \
   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb.cpp"
 set +e
@@ -80,7 +90,12 @@ echo "OK ddr_frame_store warm-reset red-check: stale-doorbell fault failed"
   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb_top.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_base_mux.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/mplex_hold_lcell.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_ram.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_ram_px5.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_px5_pack.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_px5_stream_rd.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_px5_unpack.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/async_fifo.sv" \
   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb.cpp"
 set +e
@@ -106,7 +121,12 @@ echo "OK ddr_frame_store warm-reset red-check: non-YUV doorbell fault failed"
   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb_top.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_base_mux.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/mplex_hold_lcell.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_ram.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_ram_px5.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_px5_pack.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_px5_stream_rd.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_px5_unpack.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/async_fifo.sv" \
   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb.cpp"
 set +e
@@ -132,7 +152,12 @@ echo "OK ddr_frame_store warm-reset red-check: held display-bank fault failed"
   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb_top.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_base_mux.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/mplex_hold_lcell.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_ram.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_ram_px5.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_px5_pack.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_px5_stream_rd.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_px5_unpack.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/async_fifo.sv" \
   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb.cpp"
 set +e
@@ -158,7 +183,12 @@ echo "OK ddr_frame_store warm-reset red-check: U/V read-swap fault failed"
   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb_top.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_base_mux.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/mplex_hold_lcell.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_ram.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_ram_px5.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_px5_pack.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_px5_stream_rd.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_px5_unpack.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/async_fifo.sv" \
   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb.cpp"
 set +e
@@ -184,7 +214,12 @@ echo "OK ddr_frame_store warm-reset red-check: chroma vertical full-res fault fa
   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb_top.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_base_mux.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/mplex_hold_lcell.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_ram.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_ram_px5.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_px5_pack.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_px5_stream_rd.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_px5_unpack.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/async_fifo.sv" \
   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb.cpp"
 set +e
@@ -210,7 +245,12 @@ echo "OK ddr_frame_store warm-reset red-check: chroma luma-stride fault failed"
   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb_top.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_base_mux.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/mplex_hold_lcell.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_ram.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_ram_px5.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_px5_pack.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_px5_stream_rd.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_px5_unpack.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/async_fifo.sv" \
   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb.cpp"
 set +e
