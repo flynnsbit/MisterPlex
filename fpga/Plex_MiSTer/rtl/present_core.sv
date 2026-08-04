@@ -465,6 +465,9 @@ module present_core #(
 	wire [FRAME_X_W-1:0] store_x_clamped;
 	wire [FRAME_Y_W-1:0] store_y_addr;
 	wire de_r_win;
+	// PIPE_DEPTH default=2 (mul | add+clamp). pipe_latency_ce for MP_STORE_LAT /
+	// outer-reg accounting — L4 still has +1 store_x/y outer reg after this module.
+	wire [3:0] content_window_pipe_lat_ce;
 	(* noprune *) present_content_window #(
 		.FRAME_W(FRAME_W),
 		.FRAME_H(FRAME_H),
@@ -472,6 +475,7 @@ module present_core #(
 		.STORE_H(FRAME_H),
 		.H_DE_DEFAULT(L4_H_DE),
 		.V_DE_DEFAULT(L4_V_ACT)
+		// PIPE_DEPTH default 2 — see present_content_window.sv
 	) u_content_window (
 		.clk(clk),
 		.reset(reset),
@@ -489,8 +493,10 @@ module present_core #(
 		.store_x(store_x_clamped),
 		.store_y(store_y_addr),
 		.de_r(de_r_win),
-		.past_last_row(past_last_row)
+		.past_last_row(past_last_row),
+		.pipe_latency_ce(content_window_pipe_lat_ce)
 	);
+	wire _unused_cw_pipe_lat = |content_window_pipe_lat_ce;
 	wire in_content = in_content_l4;
 	// Clamp from FRAME_H (not 239) so 720p does not inherit 480p last-row.
 	wire [9:0] store_y_clamped =
