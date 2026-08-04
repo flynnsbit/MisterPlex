@@ -586,6 +586,7 @@ module present_core #(
 `endif
 
 	// FS_* from plex_ddr_720p_tier.svh — never hardwire 480p when canvas is 720p.
+	// PX_PER_CLK=PRESENT_PPC feeds rd_*_n → fs_r_n (was undriven on MULTI — black).
 	ddr_frame_store #(
 		.FRAME_W(FRAME_W),
 		.FRAME_H(FRAME_H),
@@ -604,7 +605,8 @@ module present_core #(
 		.DOORBELL_PHYS(FS_DOORBELL),
 		.PHYS_BASE_720P(DDR_FRAME_720P_PHYS_BASE),
 		.HPS_BANK_STRIDE_BYTES_720P(DDR_FRAME_720P_YUV420P_BANK_STRIDE),
-		.DOORBELL_PHYS_720P(DDR_FRAME_720P_YUV420P_DOORBELL_PHYS)
+		.DOORBELL_PHYS_720P(DDR_FRAME_720P_YUV420P_DOORBELL_PHYS),
+		.PX_PER_CLK(PRESENT_PPC)
 	) fstore (
 		.clk(clk),
 		.clk_ddr(clk_ddr),
@@ -616,6 +618,11 @@ module present_core #(
 		.rd_r(fr),
 		.rd_g(fg),
 		.rd_b(fb),
+		.rd_r_n(fs_r_n),
+		.rd_g_n(fs_g_n),
+		.rd_b_n(fs_b_n),
+		.rd_lane_valid_n(fs_lane_v_n),
+		.rd_n_valid(fs_n_valid),
 		.geom_enable(geom_enable),
 		.rt_coded_w(geom_coded_w),
 		.rt_coded_h(geom_coded_h),

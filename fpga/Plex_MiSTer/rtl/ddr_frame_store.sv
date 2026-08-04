@@ -68,7 +68,10 @@ module ddr_frame_store #(
 	//    NBA order cleared swap_pending after setting it, dropping the doorbell
 	//    under sustained high-rate publish (playback ~24 fps) while idle's slow
 	//    presents rarely collide with the 1-cycle vsync window.
-	parameter bit SWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC = 1'b1
+	parameter bit SWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC = 1'b1,
+	// Multi-pixel present (w-clock). Default 1 = bit-identical scalar path.
+	// PX_PER_CLK in {1,2,4}. N>1 uses yuv_bt601_npx on the latched beam qword.
+	parameter int PX_PER_CLK = 1
 )(
 	input  wire        clk,
 	input  wire        clk_ddr,
@@ -81,6 +84,12 @@ module ddr_frame_store #(
 	output reg  [7:0]  rd_r,
 	output reg  [7:0]  rd_g,
 	output reg  [7:0]  rd_b,
+	// N-wide RGB (lane0 == rd_r/g/b when PX_PER_CLK==1). Safe to leave open.
+	output wire [PX_PER_CLK*8-1:0] rd_r_n,
+	output wire [PX_PER_CLK*8-1:0] rd_g_n,
+	output wire [PX_PER_CLK*8-1:0] rd_b_n,
+	output wire [PX_PER_CLK-1:0]   rd_lane_valid_n,
+	output wire                    rd_n_valid,
 
 	// Optional multi-pixel handoff (w-clock yuv_bt601_npx). Enabled only when
 	// DDR_FRAME_STORE_EXPORT_QWORDS is defined so legacy TBs stay pin-compatible.
@@ -970,17 +979,68 @@ module ddr_frame_store #(
 				rd_r <= 8'd0;
 				rd_g <= 8'd0;
 				rd_b <= 8'd0;
+				npx_commit_r <= 1'b0;
 			end else if ((rd_active_d || !rd_active) && rd_visible_d && has_frame && !miss_d && y_hit_r && c_hit_r) begin
 				rd_r <= sat8(r_calc);
 				rd_g <= sat8(g_calc);
 				rd_b <= sat8(b_calc);
+				npx_y_q_r <= selected_y_q;
+				npx_y_q_hi_r <= selected_y_q_hi;
+				npx_y_hi_valid_r <= ({1'b0, src_x_d[10:3]} + 9'd1 < 9'(Y_LINE_QWORDS_MAX));
+				npx_u_q_r <= selected_u_q;
+				npx_v_q_r <= selected_v_q;
+				npx_src_x_r <= CODED_X_W'(src_x_d);
+				src_x_r <= CODED_X_W'(src_x_d);
+				npx_commit_r <= 1'b1;
 			end else if (!has_frame || !rd_visible_d || miss_d) begin
 				rd_r <= 8'd0;
 				rd_g <= 8'd0;
 				rd_b <= 8'd0;
+				npx_commit_r <= 1'b0;
+			end else begin
+				npx_commit_r <= 1'b0;
 			end
 		end
 	end
+
+	// --- N-wide RGB ports (w-clock multi-pixel / w-mem PPC=2 feed) -------------
+	generate
+		if (PX_PER_CLK == 1) begin : gen_rd_npx_scalar
+			assign rd_r_n = rd_r;
+			assign rd_g_n = rd_g;
+			assign rd_b_n = rd_b;
+			assign rd_lane_valid_n = npx_commit_r ? 1'b1 : 1'b0;
+			assign rd_n_valid = npx_commit_r;
+		end else begin : gen_rd_npx_wide
+			wire npx_out_valid;
+			wire [PX_PER_CLK*8-1:0] npx_r, npx_g, npx_b;
+			wire [PX_PER_CLK-1:0] npx_lv;
+			yuv_bt601_npx #(
+				.PX_PER_CLK(PX_PER_CLK),
+				.X_W(CODED_X_W)
+			) u_yuv_npx (
+				.clk(clk),
+				.reset(reset),
+				.in_valid(npx_commit_r),
+				.src_x0(npx_src_x_r),
+				.y_qword(npx_y_q_r),
+				.u_qword(npx_u_q_r),
+				.v_qword(npx_v_q_r),
+				.y_qword_hi(npx_y_q_hi_r),
+				.y_hi_valid(npx_y_hi_valid_r),
+				.out_valid(npx_out_valid),
+				.out_r(npx_r),
+				.out_g(npx_g),
+				.out_b(npx_b),
+				.out_lane_valid(npx_lv)
+			);
+			assign rd_r_n = npx_r;
+			assign rd_g_n = npx_g;
+			assign rd_b_n = npx_b;
+			assign rd_lane_valid_n = npx_lv;
+			assign rd_n_valid = npx_out_valid;
+		end
+	endgenerate
 
 	localparam [3:0] S_IDLE       = 4'd0;
 	localparam [3:0] S_LINE_ISSUE = 4'd1;
