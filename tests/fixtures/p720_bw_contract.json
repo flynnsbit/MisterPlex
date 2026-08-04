@@ -46,7 +46,7 @@
     "B_per_clk_ddr_avg_payload_RW": 0.73728,
     "formula_B_per_clk_ddr": "66.3552e6 / clk_ddr_hz",
     "note": "64-bit DDRAM beat width @90 MHz peak 720 MB/s",
-    "ddr_peak_MBps_at_90MHz_label": "ideal 64-bit port peak arithmetic (90e6*8) \u2014 NOT measured sustainable DDR BW",
+    "ddr_peak_MBps_at_90MHz_label": "ideal 64-bit port peak arithmetic (90e6*8=720) \u2014 NOT measured sustainable DDR BW",
     "steady_RW_MBps_label": "2x frame-store I420 payload average \u2014 NOT total controller traffic (excludes pipe->heap, memcpy src reads, decode/ref, contention)",
     "controller_payload_fraction_of_8B_beats_label": "ideal port utilization of payload R+W only (66.3552/720) \u2014 not measured load"
   },
@@ -96,7 +96,7 @@
     "multi_line_floor": 16,
     "note": "latency cover, not average BW"
   },
-  "proof_gap": "PARTIAL \u2014 reader CLOSED; hps_write_concurrent+T_copy_e2e OPEN",
+  "proof_gap": "PARTIAL \u2014 reader_steady_delta CLOSED (w-clock TB under assumed stalls); NOT closed as measured sustainable controller BW; hps_write_concurrent + hardware contention + T_copy_e2e OPEN",
   "agreed_by": [
     "w-clock",
     "w-scaler",
@@ -239,27 +239,10 @@
     ]
   },
   "rd_duck_label_correction": {
-    "status": "BINDING",
-    "payload_averages_mean": "33.1776/dir, 66.3552 R+W, 0.73728 B/clk_ddr, 0.09216 of 8B beats are frame-store PAYLOAD / ideal 64-bit-port utilization ONLY",
-    "FORBIDDEN_labels": [
-      "720 MB/s measured sustainable DDR bandwidth",
-      "66.3552 total controller traffic",
-      "real-reader TB proves shared HPS controller will supply the envelope"
-    ],
-    "additional_traffic_not_in_headline": [
-      "pipe->heap",
-      "memcpy source reads",
-      "decode/reference traffic"
-    ],
-    "real_reader_tb_proves": [
-      "reader beat demand (payload + door/mailbox overhead, counted separately)",
-      "tolerance to an ASSUMED stall envelope (G1)"
-    ],
-    "real_reader_tb_cannot_prove": [
-      "host writes as RTL-master beats (they are not)",
-      "shared HPS controller supplies the stall envelope under contention",
-      "hardware contention closed"
-    ],
+    "ack": true,
+    "binding": "33.1776/dir, 66.3552 R+W, 0.73728 B/clk_ddr, 0.09216 are arithmetic ONLY as frame-store I420 payload / ideal 64-bit-port utilization. NOT measured sustainable DDR BW. NOT total controller traffic (pipe->heap, memcpy src reads, decode/ref additional).",
+    "real_reader_tb_proves": "reader beat demand + tolerance to ASSUMED stall envelope; counts payload + doorbell/mailbox overhead separately",
+    "real_reader_tb_cannot_prove": "shared HPS controller will supply the envelope; host writes are not RTL-master beats",
     "hardware_contention": "OPEN after TB",
     "w_scaler_refusal_to_claim_closure": "CORRECT"
   },

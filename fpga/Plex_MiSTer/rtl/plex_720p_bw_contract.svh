@@ -10,6 +10,8 @@
 //   hps_write_concurrent + T_copy_e2e: OPEN (w-mem/w-path/parent)
 //     HOST write is NOT f2sdram — archive /dev/mem 1382400 B = 14.978 ms/f CPU TIME
 //   Forbidden phrasing: "fabric BW proof_gap still OPEN" without splitting reader vs HPS write.
+// rd-duck: 33.1776/66.3552/0.09216 = frame-store payload / ideal 64b port math ONLY.
+// NOT measured sustainable DDR BW; NOT total controller traffic; HPS write not RTL beats.
 //
 localparam int P720_CODED_W           = 1280;
 localparam int P720_CODED_H           = 720;
