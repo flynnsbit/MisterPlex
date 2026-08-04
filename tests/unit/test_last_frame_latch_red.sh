@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# Intentional RED twins for LastFrameLatch.
+# These builds DEFINE fault macros that *must* trip green assertions.
+# Lines that look like "FAIL tests/unit/test_last_frame_latch.cpp:…" are
+# EXPECTED under the fault binary — they are NOT a green-unit failure.
+# Control: ./build/test_last_frame_latch (no -DFAULT_*) must print OK rc=0.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 BUILD="$ROOT/build/last-frame-latch-red"
@@ -20,17 +25,22 @@ run_fault() {
   OUT="$($exe 2>&1)"
   RC=$?
   set -e
-  printf '%s\n' "$OUT"
+  # Prefix so `make unit` logs cannot be mistaken for green FAIL.
+  while IFS= read -r line; do
+    printf 'EXPECTED_RED %s\n' "$line"
+  done <<<"$OUT"
   if [[ "$RC" -eq 0 ]]; then
-    echo "FAIL: $label fault unexpectedly passed" >&2
+    echo "FAIL: $label fault unexpectedly passed (green binary would be OK; fault build must fail)" >&2
     exit 1
   fi
   grep -q "$needle" <<<"$OUT" || {
     echo "FAIL: $label red-check did not hit expected relationship: $needle" >&2
     exit 1
   }
-  echo "RED OK: $label"
+  echo "RED OK: $label (intentional assertion fire under fault macro; green separate)"
 }
+
+echo "=== test_last_frame_latch_red EXECUTED (fault builds only; not green) ==="
 
 "$CXX_BIN" "${CXX_FLAGS[@]}" -I"$ROOT/host" -DLAST_FRAME_LATCH_FAULT_IDLE_GEOMETRY \
   -o "$BUILD/test_last_frame_latch_idle_geometry_fault" \
@@ -45,3 +55,5 @@ run_fault "$BUILD/test_last_frame_latch_idle_geometry_fault" \
 run_fault "$BUILD/test_last_frame_latch_bank_base_fault" \
   "s.bank_phys == expectedPhys" \
   "LastFrame latch computes bank base from captured geometry stride"
+
+echo "PASS test_last_frame_latch_red (both fault twins fired; green is separate binary)"
