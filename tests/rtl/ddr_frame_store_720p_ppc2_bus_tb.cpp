@@ -18,8 +18,15 @@
 //             (underrun>0 or prep/steady timeout or payload short or rgb starved)
 //   LC floor >=32; LC=8 shell teeth RED
 //
+// SCALAR NEGATIVE CONTROL (rd-duck discriminator):
+//   Beat/payload counts measure full-line refill only — identical for scalar
+//   PX_PER_CLK=1 readers (rd_x+=2 skips odd samples; refill still whole lines).
+//   Compile -DSCALAR_VIEW_NEG=1 to sample only scalar rd_r/g/b replicated into
+//   both lanes: payload G0/G1 counts stay GREEN-shaped, dual-lane/FNV MUST RED.
+//   Status: PARTIAL_CLOSED_READER; fabric_bw_closed=false; PPC2 reader NOT closed.
+//
 // DOES_NOT_PROVE: HPS shared controller supply, host writes, sustainable DDR BW,
-// product 24fps rate-match path, free core during decode.
+// product 24fps rate-match path, free core during decode, dual-lane PPC2 closed.
 
 #include "Vddr_frame_store_720p_ppc2_bus_tb.h"
 #include "verilated.h"
@@ -28,6 +35,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
+
+#ifndef SCALAR_VIEW_NEG
+#define SCALAR_VIEW_NEG 0
+#endif
 
 namespace {
 
@@ -258,6 +269,20 @@ struct BusModel {
 	void sampleRgbOnSysPosedge() {
 		if (!top.rd_active) return;
 		++st.de_groups;
+#if SCALAR_VIEW_NEG
+		// Scalar-reader view: only rd_r/g/b (lane0). Replicate → odd/even collapse.
+		// n_valid proxy: has_frame && rd_active already; use rd_n_valid if present.
+		if (!top.rd_n_valid && !top.has_frame) return;
+		// Prefer n_valid when DUT is PPC2-capable; still force scalar RGB.
+		if (!top.rd_n_valid) return;
+		++st.rgb_valid_groups;
+		const uint8_t r0 = top.rd_r;
+		const uint8_t g0 = top.rd_g;
+		const uint8_t b0 = top.rd_b;
+		const uint8_t r1 = r0; // replicate — the scalar-reader defect under test
+		const uint8_t g1 = g0;
+		const uint8_t b1 = b0;
+#else
 		if (!top.rd_n_valid) return;
 		++st.rgb_valid_groups;
 		const uint8_t r0 = static_cast<uint8_t>(top.rd_r_n & 0xff);
@@ -266,6 +291,7 @@ struct BusModel {
 		const uint8_t r1 = static_cast<uint8_t>((top.rd_r_n >> 8) & 0xff);
 		const uint8_t g1 = static_cast<uint8_t>((top.rd_g_n >> 8) & 0xff);
 		const uint8_t b1 = static_cast<uint8_t>((top.rd_b_n >> 8) & 0xff);
+#endif
 		// U=V=128 → R=G=B=Y. Expect lane0=Yeven, lane1=Yodd for every valid group.
 		const bool gray0 = (r0 == g0) && (g0 == b0);
 		const bool gray1 = (r1 == g1) && (g1 == b1);
@@ -503,7 +529,7 @@ int main(int argc, char** argv) {
 	constexpr uint64_t kFullDeGroups =
 	    static_cast<uint64_t>(kCodedW / kPPC) * static_cast<uint64_t>(kCodedH);
 
-	std::printf("PRE-REG 720p_ppc2_bus FULL+STALL @20:90 (rd-duck gate repair):\n");
+	std::printf("PRE-REG 720p_ppc2_bus FULL+STALL @20:90 (rd-duck gate repair) SCALAR_VIEW_NEG=%d:\n", SCALAR_VIEW_NEG);
 	std::printf("  class=isolated_reader_stress beam_fps=%.3f (NOT product 24fps rate-match)\n", kBeamFps);
 	std::printf("  payload_expect=ideal+LC*240; accepted≈returned; underrun==0; rgb nonblack\n");
 	std::printf("  G0 ideal tight; G1 stall busy↑+same tight bounds+ddr_cy<%llu\n",
@@ -591,6 +617,13 @@ int main(int argc, char** argv) {
 	std::printf("  PROVES: tight beats+upper, underrun0, dual-lane/full-frame FNV, G1 deadline, G2 RED\n");
 	std::printf("  DOES_NOT_PROVE: HPS supply, host write, product 24fps rate-match, sustainable BW\n");
 	std::printf("  class=isolated_reader_stress beam_fps=%.3f (adopt harness NOT CLOSED)\n", kBeamFps);
-	std::printf("PASS ddr_frame_store_720p_ppc2_bus gate-repaired (NOT fit-release CLOSED)\n");
+	std::printf("  status=PARTIAL_CLOSED_READER fabric_bw_closed=false ppc2_reader_closed=false\n");
+	std::printf("  NOTE: payload beats are refill-demand only (scalar-identical); dual-lane is the PPC2 tooth\n");
+#if SCALAR_VIEW_NEG
+	// Should not reach — dual/FNV must RED. If we got here, tooth is broken.
+	return fail("SCALAR_VIEW_NEG reached PASS — dual-lane gate insensitive (tooth broken)");
+#else
+	std::printf("PASS ddr_frame_store_720p_ppc2_bus PARTIAL_CLOSED_READER (NOT fit-release CLOSED)\n");
 	return 0;
+#endif
 }
