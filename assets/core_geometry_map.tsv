@@ -9,3 +9,4 @@ cceb58e7d6fc5bfda91af918d110e79e	1280x720	product tip QSF FRAME_W=1280 FRAME_H=7
 234448a7320e5666b3f0f0ffdad7b561	1280x720	sticky pending_ready_c cutb-sticky-ready tip 64bccaae
 75065b0c62ece83c007dfc34690c2aa7	1280x720	# A/B pre-sched-reg MEAN~175 class
 a13a9079eaa44d552965eaa7cba53e1e	1280x720	cutb-r1-hr1d H-R1d SCHED_RECORD_ATOMIC sole; tip 6cc1e643; NEW_MD5 from harvest/CUTB/remote_out
+cff9081317ebdc7293c7dbe0f0f282a0	1280x720	cutb-r1-diag DIAG I1/I2 MPLEX_DIAG_TAG_RCA=1; tip 89abb26c/3a0579e1; DIAG≠product PASS
