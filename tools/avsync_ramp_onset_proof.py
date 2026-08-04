@@ -142,13 +142,63 @@ def score_recovery(
     return out
 
 
+def load_measured_pts_grid(path: Path, *, duration_s: float) -> tuple[np.ndarray, dict]:
+    """Load a checked-in measured PTS grid fixture (not synthetic).
+
+    Fixture schema misterplex.measured_capture_pts_grid.v1 — pts extracted from a
+    real HDMI capture via load_video_luma. grid_src stays measured_capture_pts.
+    """
+    if not path.is_file():
+        raise FileNotFoundError(f"missing measured pts grid {path}")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if data.get("schema") != "misterplex.measured_capture_pts_grid.v1":
+        raise ValueError(f"bad pts grid schema in {path}: {data.get('schema')!r}")
+    if data.get("grid_src") != "measured_capture_pts":
+        raise ValueError(
+            f"pts grid must declare grid_src=measured_capture_pts, got {data.get('grid_src')!r}"
+        )
+    pts = data.get("pts_rel_s")
+    if not isinstance(pts, list) or len(pts) < 30:
+        raise ValueError(f"pts_rel_s missing or too short in {path}")
+    t = np.asarray(pts, dtype=np.float64)
+    if t.ndim != 1 or not np.all(np.isfinite(t)):
+        raise ValueError(f"pts_rel_s not a finite 1-D series in {path}")
+    # pts_rel_s is relative to first frame (t[0]==0). Crop by duration.
+    t = t[t <= float(duration_s)].astype(np.float64)
+    if t.size < 30:
+        raise ValueError(f"too few pts after duration crop in {path}: n={t.size}")
+    # Monotonic non-decreasing (measured capture may have equal dt; reject time travel).
+    if np.any(np.diff(t) < -1e-9):
+        raise ValueError(f"pts_rel_s not monotonic in {path}")
+    meta = {
+        "fixture": str(path),
+        "provenance": data.get("provenance") or {},
+        "n_frames_fixture": int(data.get("n_frames") or 0),
+        "median_dt_ms_fixture": data.get("median_dt_ms"),
+        "source_md5": (data.get("provenance") or {}).get("source_md5"),
+        "source_size_bytes": (data.get("provenance") or {}).get("source_size_bytes"),
+        "source_filename": (data.get("provenance") or {}).get("source_filename"),
+    }
+    return t, meta
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument(
         "--capture",
         type=Path,
         default=ROOT / "avsync_hdmi_out" / "480p_repeat1_capture.mkv",
-        help="Existing HDMI capture providing real PTS grid (not re-opened live)",
+        help="Optional full HDMI capture mkv (heavy). Prefer --pts-grid fixture.",
+    )
+    ap.add_argument(
+        "--pts-grid",
+        type=Path,
+        default=None,
+        help=(
+            "Checked-in measured PTS grid JSON "
+            "(tests/fixtures/avsync/*_pts_*.json). "
+            "grid_src remains measured_capture_pts — not SYNTH."
+        ),
     )
     ap.add_argument("--duration", type=float, default=60.0, help="Seconds of PTS to use")
     ap.add_argument("--period", type=float, default=1.0, help="Flash period seconds")
@@ -163,12 +213,27 @@ def main() -> int:
     ap.add_argument(
         "--allow-missing-capture",
         action="store_true",
-        help="If capture missing, synthesise a 30 fps grid (labelled SYNTH_GRID)",
+        help="FORBIDDEN for unit gates: synthesises SYNTH_GRID_30fps. Do not use to green a gate.",
     )
     args = ap.parse_args()
 
     grid_src = "measured_capture_pts"
-    if args.capture.is_file():
+    grid_meta: dict = {}
+    if args.pts_grid is not None:
+        print(f"LOAD_PTS_GRID {args.pts_grid}", flush=True)
+        try:
+            t, grid_meta = load_measured_pts_grid(args.pts_grid, duration_s=args.duration)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            print(f"FAIL pts_grid: {exc}", flush=True)
+            return 1
+        print(
+            f"PTS_GRID_META n_frames={t.size} "
+            f"source_md5={grid_meta.get('source_md5')} "
+            f"source_file={grid_meta.get('source_filename')} "
+            f"src=measured_capture_pts",
+            flush=True,
+        )
+    elif args.capture.is_file():
         print(f"LOAD_CAPTURE {args.capture}", flush=True)
         _luma_ign, t_full, vmeta = load_video_luma(args.capture)
         print(
@@ -182,13 +247,30 @@ def main() -> int:
         if t.size < 30:
             print("FAIL too few frames after duration crop", flush=True)
             return 1
+        # Normalize to relative time so path matches fixture semantics.
+        t = (t - t[0]).astype(np.float64)
+        grid_meta = {
+            "capture": str(args.capture),
+            "pts_from_container": vmeta.get("pts_from_container"),
+            "fps_nom": vmeta.get("fps_nom"),
+        }
     elif args.allow_missing_capture:
         grid_src = "SYNTH_GRID_30fps"
         print("WARN capture missing; using synthetic 30 fps grid", flush=True)
         n = int(args.duration * 30)
         t = np.arange(n, dtype=np.float64) / 30.0
     else:
-        print(f"FAIL missing capture {args.capture}", flush=True)
+        print(
+            f"FAIL missing measured PTS input "
+            f"(need --pts-grid fixture or --capture mkv); "
+            f"capture={args.capture}",
+            flush=True,
+        )
+        return 1
+
+    # Refuse to claim measured when synth path was taken.
+    if grid_src != "measured_capture_pts" and args.pts_grid is not None:
+        print("FAIL internal: pts-grid path must keep measured_capture_pts", flush=True)
         return 1
 
     dts = np.diff(t)
@@ -292,7 +374,9 @@ def main() -> int:
 
     report = {
         "grid_src": grid_src,
-        "capture": str(args.capture),
+        "capture": str(args.capture) if args.pts_grid is None else None,
+        "pts_grid": str(args.pts_grid) if args.pts_grid is not None else None,
+        "grid_meta": grid_meta,
         "capture_dt_ms": capture_dt_ms,
         "pre_register": pred,
         "step": step,
@@ -300,12 +384,22 @@ def main() -> int:
         "fail": fail,
         "verdict": "PASS" if fail == 0 else "FAIL",
     }
+    if grid_src != "measured_capture_pts":
+        # Unit gates must never accept synth as measured proof.
+        print(
+            f"FAIL grid_src={grid_src} is not measured_capture_pts "
+            f"(proof-class inflation)",
+            flush=True,
+        )
+        fail += 1
+    report["fail"] = fail
+    report["verdict"] = "PASS" if fail == 0 else "FAIL"
     if args.json_out:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
         args.json_out.write_text(json.dumps(report, indent=2) + "\n")
         print(f"JSON {args.json_out}", flush=True)
 
-    print(f"VERDICT={report['verdict']} fail={fail}", flush=True)
+    print(f"VERDICT={report['verdict']} fail={fail} grid_src={grid_src}", flush=True)
     return 0 if fail == 0 else 1
 
 
