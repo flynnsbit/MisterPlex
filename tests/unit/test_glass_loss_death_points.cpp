@@ -164,9 +164,12 @@ int main() {
         const auto p = productDdrFrameStoreGeometry();
         expect(yuv420pCodedFrameBytes(a) == yuv420pCodedFrameBytes(b), "geom same bytes");
         expect(yuv420pCodedFrameBytes(a) == yuv420pCodedFrameBytes(p), "geom product canvas");
-        expect(yuv420pCodedFrameBytes(a) == static_cast<size_t>(kPlex720pYuv420pBytes),
-               "geom 1382400 product I420");
-        std::printf("GEOM_OK identical canvas %zu both tiers (product 720p)\n",
+        expect(yuv420pCodedFrameBytes(a) == static_cast<size_t>(kPlex480pYuv420pBytes),
+               "geom 449280 default product I420");
+        expect(yuv420pCodedFrameBytes(plex720pDdrFrameGeometry()) ==
+                   static_cast<size_t>(kPlex720pYuv420pBytes),
+               "geom 1382400 L4 I420");
+        std::printf("GEOM_OK identical canvas %zu both tiers (default product 480p)\n",
                     yuv420pCodedFrameBytes(a));
     }
 

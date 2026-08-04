@@ -1,10 +1,10 @@
 // Geometry-side frame cost lock: DECODE tiers on the FPGA DDR path.
 //
 // Pre-register (must hold or this is RED):
-//   P1: ddrFrameGeometryForFpgaPresent(any) == product 1280x720 identity
-//       (same coded bank, crop0, frame_bytes=1382400)
-//   P2: FORCE_SCALE Always FOAR-scales into a *requested* coded geometry (624
-//       helper path remains valid math; product canvas is 1280)
+//   P1: ddrFrameGeometryForFpgaPresent(any) == default product 480p bank
+//       (dual-header: coded 624x480, crop_right=6, frame_bytes=449280).
+//       Explicit L4 720p = plex720pDdrFrameGeometry (I420=1382400).
+//   P2: FORCE_SCALE Always FOAR-scales into a *requested* coded geometry (624)
 //   P3: clearYuv strip cost << full product frame
 //   P4: drops (A/V pacer) ≠ publish_misses (DDR fail) in ledger semantics
 //   P5: T7 NATIVE_V_1TO1 — V_STORE=FRAME_H product, STORE_Y_SCALE=1.0
@@ -33,20 +33,29 @@ int main() {
     using namespace misterplex;
     using clock = std::chrono::steady_clock;
 
-    // --- P1: publish geometry identical for all DECODE tiers (product 720p) ---
+    // --- P1: publish geometry identical for all DECODE tiers (default product 480p) ---
     const auto g240 = ddrFrameGeometryForFpgaPresent(320, 240);
     const auto g480 = ddrFrameGeometryForFpgaPresent(624, 480);
-    const auto g720 = ddrFrameGeometryForFpgaPresent(1280, 720);
-    expect(g240.coded_width.get() == 1280 && g240.coded_height.get() == 720, "P1 240→coded 1280x720");
-    expect(g480.coded_width.get() == 1280 && g480.coded_height.get() == 720, "P1 480→coded 1280x720");
-    expect(g720.coded_width.get() == 1280 && g720.coded_height.get() == 720, "P1 720→coded 1280x720");
-    expect(g240.display_width.get() == 1280 && g240.crop_right == 0, "P1 240 display/crop identity");
-    expect(g480.display_width.get() == 1280 && g480.crop_right == 0, "P1 480 display/crop identity");
+    const auto g720req = ddrFrameGeometryForFpgaPresent(1280, 720);
+    expect(g240.coded_width.get() == 624 && g240.coded_height.get() == 480, "P1 240→coded 624x480");
+    expect(g480.coded_width.get() == 624 && g480.coded_height.get() == 480, "P1 480→coded 624x480");
+    expect(g720req.coded_width.get() == 624 && g720req.coded_height.get() == 480,
+           "P1 720 decode still packs into default product 480p bank (no flag)");
+    expect(g240.display_width.get() == 618 && g240.crop_right == 6, "P1 240 display/crop 480p");
+    expect(g480.display_width.get() == 618 && g480.crop_right == 6, "P1 480 display/crop 480p");
     const size_t fb240 = yuv420pCodedFrameBytes(g240);
     const size_t fb480 = yuv420pCodedFrameBytes(g480);
-    expect(fb240 == 1382400u && fb480 == 1382400u, "P1 same frame_bytes 1382400");
+    expect(fb240 == 449280u && fb480 == 449280u, "P1 same frame_bytes 449280");
     expect(fb240 == fb480, "P1 240 decode does NOT shrink DDR publish");
-    std::printf("P1_OK coded=1280x720 display=1280 crop_right=0 frame_bytes=%zu (all tiers)\n",
+    // Explicit L4 720p geometry (compose path) — independent of product flag.
+    const auto gL4 = plex720pDdrFrameGeometry();
+    expect(gL4.coded_width.get() == 1280 && gL4.coded_height.get() == 720, "P1 L4 coded 1280x720");
+    expect(gL4.crop_right == 0 && gL4.display_width.get() == 1280, "P1 L4 identity crop");
+    expect(yuv420pCodedFrameBytes(gL4) == 1382400u, "P1 L4 I420=1382400");
+    // Negative: default product must not silently be L4 (land collapse).
+    expect(g240.coded_width.get() != 1280, "P1 default product is not land-collapsed 1280");
+    std::printf("P1_OK coded=624x480 display=618 crop_right=6 frame_bytes=%zu (all tiers); "
+                "L4=1280x720/1382400\n",
                 fb240);
 
     // --- P2: FORCE_SCALE Always for both source sizes ---
