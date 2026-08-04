@@ -709,6 +709,9 @@ module ddr_frame_store #(
 	reg [5:0]  bank_mm_disp_c;
 	reg [4:0]  occ_disp_y_r, occ_prep_y_r;
 	reg [5:0]  bank_mm_disp_r;
+	// I3 (DIAG): min/max y_line on display half valid tags (tag identity RCA).
+	reg [Y_W-1:0] line_min_y_c, line_max_y_c;
+	reg [Y_W-1:0] line_min_y_r, line_max_y_r;
 
 	wire cmd_empty;
 	wire [7:0] cmd_rdata;
@@ -893,8 +896,6 @@ module ddr_frame_store #(
 	// Consume path (sched_valid issue) already uses only sched_*; latch is the gap.
 	reg need_y_cur_r, need_c_cur_r, need_y_prep_r, need_c_prep_r, pending_ready_r;
 	reg sel_y_prep_r, sel_c_prep_r;
-	// H-R1e M1b_CLEAN: registered mbox yield under display cur miss (STA-safe CE)
-	reg mbox_yield_cur_r;
 	reg sched_bank_y_src_r, sched_bank_c_src_r;
 	reg [Y_W-1:0] target_y_cur_r, target_y_prep_r;
 	reg [Y_W-2:0] target_c_cur_r, target_c_prep_r;
@@ -906,7 +907,6 @@ module ddr_frame_store #(
 			need_y_prep_r <= 1'b0;
 			need_c_prep_r <= 1'b0;
 			pending_ready_r <= 1'b1;
-			mbox_yield_cur_r <= 1'b0;
 			sel_y_prep_r <= 1'b0;
 			sel_c_prep_r <= 1'b0;
 			sched_bank_y_src_r <= 1'b0;
@@ -925,8 +925,6 @@ module ddr_frame_store #(
 			need_y_prep_r <= need_y_prep_c;
 			need_c_prep_r <= need_c_prep_c;
 			pending_ready_r <= pending_ready_c;
-			// H-R1e M1b_CLEAN: freeze mbox yield with need_*_c (FF-only CE on mbox)
-			mbox_yield_cur_r <= has_frame_d2 && (need_y_cur_c || need_c_cur_c);
 			// Same-cycle sample as need_*/target_*_r (not live re-eval at arm).
 			// LINECAM_CUR_WINDOW_FIRST: demote prep freeze while display half
 			// misses desired (has_frame && need_*_cur). Keeps sel+bank atomic
@@ -951,17 +949,24 @@ module ddr_frame_store #(
 	end
 
 	// I2 (DIAG): display/prep half occupancy + bank-mismatch on display half.
+	// I3 (DIAG): min/max y_line on display half valid tags.
 	// Uses cur_base_idx/prep_base_idx from schedule combo (same half ownership).
 	integer oi;
 	always @* begin
 		occ_disp_y_c = 5'd0;
 		occ_prep_y_c = 5'd0;
 		bank_mm_disp_c = 6'd0;
+		line_min_y_c = {Y_W{1'b1}};
+		line_max_y_c = {Y_W{1'b0}};
 		for (oi = 0; oi < LINE_COUNT; oi = oi + 1) begin
 			if (y_valid[cur_base_idx + oi[SLOT_W-1:0]]) begin
 				occ_disp_y_c = occ_disp_y_c + 5'd1;
 				if (y_bank[cur_base_idx + oi[SLOT_W-1:0]] != disp_bank_d2)
 					bank_mm_disp_c = bank_mm_disp_c + 6'd1;
+				if (y_line[cur_base_idx + oi[SLOT_W-1:0]] < line_min_y_c)
+					line_min_y_c = y_line[cur_base_idx + oi[SLOT_W-1:0]];
+				if (y_line[cur_base_idx + oi[SLOT_W-1:0]] > line_max_y_c)
+					line_max_y_c = y_line[cur_base_idx + oi[SLOT_W-1:0]];
 			end
 			if (y_valid[prep_base_idx + oi[SLOT_W-1:0]])
 				occ_prep_y_c = occ_prep_y_c + 5'd1;
@@ -1112,6 +1117,8 @@ module ddr_frame_store #(
 			occ_disp_y_r <= 5'd0;
 			occ_prep_y_r <= 5'd0;
 			bank_mm_disp_r <= 6'd0;
+			line_min_y_r <= {Y_W{1'b1}};
+			line_max_y_r <= {Y_W{1'b0}};
 			mbox_seq <= 16'd0;
 			mbox_last <= 16'd0;
 			mbox_req <= 1'b1;
@@ -1227,11 +1234,14 @@ module ddr_frame_store #(
 			occ_disp_y_r   <= occ_disp_y_c;
 			occ_prep_y_r   <= occ_prep_y_c;
 			bank_mm_disp_r <= bank_mm_disp_c;
-			// Product pack vs DIAG I1/I2 pack (MAGIC/seq path unchanged at write).
+			line_min_y_r   <= line_min_y_c;
+			line_max_y_r   <= line_max_y_c;
+			// Product pack vs DIAG pack (MAGIC/seq path unchanged at write).
+			// DIAG_I3_TAG_LINE_MINMAX: {max[9:0], min[9:0], any_hit, miss_both, miss_y, miss_c}
+			// (replaces I2 occ/bank_mm/state — already measured cff90813).
 			if (DIAG_TAG_RCA)
-				frame_status_ddr <= {occ_disp_y_r, occ_prep_y_r, bank_mm_disp_r,
-				                     any_hit_s2, miss_both_s2, miss_y_only_s2, miss_c_only_s2,
-				                     state_ddr};
+				frame_status_ddr <= {line_max_y_r[9:0], line_min_y_r[9:0],
+				                     any_hit_s2, miss_both_s2, miss_y_only_s2, miss_c_only_s2};
 			else
 				frame_status_ddr <= {frame_underrun_ddr, debug_state};
 
@@ -1322,9 +1332,7 @@ module ddr_frame_store #(
 						                                  : pending_ready_c);
 					end
 					poll_div <= poll_div + 16'd1;
-					// H-R1e M1b_CLEAN: yield frame/bank mbox while display cur miss (reg FF).
-					if (frame_mbox_req && !mbox_yield_cur_r
-					    && (!frame_mbox_valid || poll_div[7:0] == 8'd224)
+					if (frame_mbox_req && (!frame_mbox_valid || poll_div[7:0] == 8'd224)
 					    && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						DDRAM_ADDR <= FRAME_MAILBOX_W;
 						DDRAM_BURSTCNT <= 8'd1;
@@ -1335,8 +1343,7 @@ module ddr_frame_store #(
 						frame_mbox_valid <= 1'b1;
 						frame_mbox_req <= 1'b0;
 						state_ddr <= S_WRITE_WAIT;
-					end else if (bank_mbox_req && !mbox_yield_cur_r
-					    && (!bank_mbox_valid || poll_div[7:0] == 8'd160)
+					end else if (bank_mbox_req && (!bank_mbox_valid || poll_div[7:0] == 8'd160)
 					    && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						// PLXD bank-release: tell ARM which bank is safe to write
 						// Layout: [63:48] frames_done (real swaps, CDC),
