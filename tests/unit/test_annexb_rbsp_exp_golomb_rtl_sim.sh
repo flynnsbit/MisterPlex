@@ -11,7 +11,7 @@ assert_sim_executed() {
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 RUN_VERILATOR="$ROOT/scripts/run_verilator.sh"
 MDIR="$ROOT/build/verilator/annexb_rbsp_exp_golomb"
-FEED="$ROOT/fpga/Plex_MiSTer/rtl/ddr_bitstream_reader.sv"
+FEED="$ROOT/fpga/Plex_MiSTer/rtl/bitstream_bit_feeder.sv"
 SYN="$ROOT/fpga/Plex_MiSTer/rtl/h264_syntax_primitives.sv"
 TOP="$ROOT/tests/rtl/annexb_rbsp_exp_golomb_tb_top.sv"
 TB="$ROOT/tests/rtl/annexb_rbsp_exp_golomb_tb.cpp"

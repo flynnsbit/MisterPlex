@@ -23,7 +23,7 @@ assert_sim_executed() {
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 RUN_VERILATOR="$ROOT/scripts/run_verilator.sh"
 MDIR="$ROOT/build/verilator/bitstream_bit_feeder"
-RTL="$ROOT/fpga/Plex_MiSTer/rtl/ddr_bitstream_reader.sv"
+RTL="$ROOT/fpga/Plex_MiSTer/rtl/bitstream_bit_feeder.sv"
 TOP="$ROOT/tests/rtl/bitstream_bit_feeder_tb_top.sv"
 TB="$ROOT/tests/rtl/bitstream_bit_feeder_tb.cpp"
 mkdir -p "$MDIR"

@@ -7,168 +7,15 @@
 // publishes read_count plus transport telemetry in DDR, keeping this path wholly
 // separate from MiSTer's shared HPS<->FPGA SPI/GPO register.
 //
-// Fabric-decode feed (w-path) — two product wiring options for w-plxd:
+// PATH A (parent): 720p presentation is the funded route. H.264 front-end bit
+// feed RTL is NOT elaborated here — see rtl/bitstream_bit_feeder.sv (not in
+// files.qip). Product surface is annex-B bytes: out_valid/out_byte/out_last/
+// out_flush/out_full. out_last = final byte of current NAL payload record.
 //
-//   Source-graph note (rd-duck NACK on 19/17 file-union probe): treat LIVE/DEAD
-//   counts as instrument-dependent. Post-fit hierarchy + PRODUCT_NO_STUB are
-//   authority for what ships. decode_stub is diagnostic/partial; product frames
-//   still come from ARM FFmpeg until a complete fabric path is wired and fit.
-//   rbsp_filter + exp_golomb remain uninstantiated on the product path today.
+// M10K cost of Path A delta (out_last): 0 inferred M10K. Only on-chip storage is
+// hdr[0:31] (32×8 distributed regs for the record header). Control: no ram_style
+// M10K attribute and no deep dual-port array in this file; post-fit UNVERIFIED.
 //
-//   (1) Front-end chain (w-plxd ENABLE_FABRIC_DECODE):
-//         reader.out_valid/out_byte/out_last  →  h264_rbsp_filter.in_*
-//         reader.out_full                    := !h264_rbsp_filter.in_ready
-//         reader.out_flush                   →  h264_rbsp_filter.clear (pulse)
-//         rbsp_filter.out_*                  →  bit window (STRIP_EPB=0) → exp_golomb
-//
-//   (2) Integrated bit feed (ENABLE_BIT_FEED=1): reader does EPB strip + MSB bit
-//       window in-module and presents bit_valid/bit_value/bit_ready directly to
-//       exp_golomb / CAVLC. Default ENABLE_BIT_FEED=0 keeps stream_path's
-//       legacy byte-only contract (out_valid/out_byte/out_full).
-
-// -----------------------------------------------------------------------------
-// bitstream_bit_feeder — byte stream → EPB strip → bit window (MSB-first).
-// Lives in this file so files.qip needs no second entry (collision control).
-// -----------------------------------------------------------------------------
-module bitstream_bit_feeder #(
-	parameter int BYTE_Q_DEPTH = 8, // power-of-two skid after optional EPB strip
-	// 1: annex-B in, strip 0x000003 (standalone path / ENABLE_BIT_FEED)
-	// 0: already-RBSP bytes in (after h264_rbsp_filter) — bit window only
-	parameter bit STRIP_EPB = 1'b1
-)(
-	input  wire        clk,
-	input  wire        reset,
-	input  wire        clear,
-
-	// Bytes in: annex-B when STRIP_EPB=1, RBSP when STRIP_EPB=0
-	input  wire        in_valid,
-	input  wire [7:0]  in_byte,
-	input  wire        in_last,   // pulses with final byte of a NAL payload
-	output wire        in_ready,
-
-	// Continuous bit stream for CAVLC / exp-golomb (H.264 MSB-first within byte)
-	output wire        bit_valid,
-	output wire        bit_value,
-	input  wire        bit_ready,
-
-	output reg         nal_bit_last, // 1-cycle pulse after last RBSP bit of NAL drained
-	output reg  [15:0] epb_removed,
-	output reg  [15:0] rbsp_bytes,
-	output reg  [31:0] bits_out,
-	output wire        byte_q_full,
-	output wire        byte_q_empty
-);
-	localparam int QAW = $clog2(BYTE_Q_DEPTH);
-
-	// --- Optional EPB strip (same contract as h264_rbsp_filter when STRIP_EPB=1) ---
-	reg [1:0] zero_count;
-	reg       inhibit_skip;
-	wire      epb_can_accept;
-	wire      skip_epb;
-
-	// --- RBSP byte skid (holds bytes while bit consumer backpressures) ---
-	reg [7:0] q_data [0:BYTE_Q_DEPTH-1];
-	reg       q_last [0:BYTE_Q_DEPTH-1];
-	reg [QAW:0] q_wr;
-	reg [QAW:0] q_rd;
-	wire [QAW:0] q_level = q_wr - q_rd;
-	assign byte_q_empty = (q_wr == q_rd);
-	assign byte_q_full  = (q_level >= BYTE_Q_DEPTH[QAW:0]);
-	assign epb_can_accept = !byte_q_full;
-	assign skip_epb = STRIP_EPB && in_valid && epb_can_accept && !inhibit_skip &&
-	                  (zero_count == 2'd2) && (in_byte == 8'h03);
-	// Accept input when EPB stage can push or skip without growing a full queue.
-	assign in_ready = epb_can_accept;
-
-	// --- Current byte under bit extraction ---
-	reg        have_cur;
-	reg [7:0]  cur_byte;
-	reg        cur_last;
-	reg [2:0]  bit_idx; // 0 = MSB (bit7)
-	reg        pending_nal_last;
-
-	wire bits_in_cur = have_cur;
-	assign bit_valid = bits_in_cur;
-	assign bit_value = cur_byte[3'd7 - bit_idx];
-
-	wire take_bit = bit_valid && bit_ready;
-	wire load_cur = !have_cur && !byte_q_empty;
-
-	integer qi;
-	always @(posedge clk) begin
-		if (reset || clear) begin
-			zero_count <= 2'd0;
-			inhibit_skip <= 1'b0;
-			epb_removed <= 16'd0;
-			rbsp_bytes <= 16'd0;
-			bits_out <= 32'd0;
-			q_wr <= '0;
-			q_rd <= '0;
-			have_cur <= 1'b0;
-			cur_byte <= 8'd0;
-			cur_last <= 1'b0;
-			bit_idx <= 3'd0;
-			pending_nal_last <= 1'b0;
-			nal_bit_last <= 1'b0;
-			for (qi = 0; qi < BYTE_Q_DEPTH; qi = qi + 1) begin
-				q_data[qi] <= 8'd0;
-				q_last[qi] <= 1'b0;
-			end
-		end else begin
-			nal_bit_last <= 1'b0;
-
-			// Optional EPB filter → push RBSP bytes into skid
-			if (in_valid && in_ready) begin
-				if (skip_epb) begin
-					if (epb_removed != 16'hFFFF)
-						epb_removed <= epb_removed + 16'd1;
-					inhibit_skip <= 1'b1;
-					// EPB is not last-of-RBSP content; if in_last, NAL ends after skip
-					if (in_last)
-						pending_nal_last <= 1'b1;
-				end else begin
-					q_data[q_wr[QAW-1:0]] <= in_byte;
-					q_last[q_wr[QAW-1:0]] <= in_last;
-					q_wr <= q_wr + 1'd1;
-					if (rbsp_bytes != 16'hFFFF)
-						rbsp_bytes <= rbsp_bytes + 16'd1;
-					if (STRIP_EPB) begin
-						if (in_byte == 8'h00)
-							zero_count <= (zero_count == 2'd2) ? 2'd2 : (zero_count + 2'd1);
-						else
-							zero_count <= 2'd0;
-						inhibit_skip <= 1'b0;
-					end
-				end
-			end
-
-			// Load next RBSP byte into bit window when empty
-			if (load_cur) begin
-				cur_byte <= q_data[q_rd[QAW-1:0]];
-				cur_last <= q_last[q_rd[QAW-1:0]];
-				q_rd <= q_rd + 1'd1;
-				have_cur <= 1'b1;
-				bit_idx <= 3'd0;
-			end
-
-			// Consume one bit under backpressure
-			if (take_bit) begin
-				if (bits_out != 32'hFFFF_FFFF)
-					bits_out <= bits_out + 32'd1;
-				if (bit_idx == 3'd7) begin
-					have_cur <= 1'b0;
-					bit_idx <= 3'd0;
-					if (cur_last || (pending_nal_last && byte_q_empty)) begin
-						nal_bit_last <= 1'b1;
-						pending_nal_last <= 1'b0;
-					end
-				end else begin
-					bit_idx <= bit_idx + 3'd1;
-				end
-			end
-		end
-	end
-endmodule
 
 module ddr_bitstream_reader #(
 	parameter [31:0] DATA_PHYS  = 32'h3010_0000,
@@ -183,9 +30,7 @@ module ddr_bitstream_reader #(
 	parameter [31:0] STAT5_PHYS = 32'h3014_0040,
 	parameter [31:0] STAT6_PHYS = 32'h3014_0048,
 	parameter int RING_BYTES    = 262144,
-	parameter int POLL_DIV_BITS = 6,
-	// w-path fabric-decode feed (default off: stream_path byte contract unchanged)
-	parameter bit ENABLE_BIT_FEED = 1'b0
+	parameter int POLL_DIV_BITS = 6
 )(
 	input  wire        clk,
 	input  wire        reset,
@@ -199,16 +44,6 @@ module ddr_bitstream_reader #(
 	output reg         out_last,   // 1 with final payload byte of current NAL record
 	output reg         out_flush,  // seek/BEGIN/END/FLUSH → rbsp_filter.clear
 	input  wire        out_full,
-
-	// Optional integrated RBSP bit feed (ENABLE_BIT_FEED=1).
-	// Default bit_ready=1 so legacy stream_path instances (unconnected) stay X-clean.
-	output wire        bit_valid,
-	output wire        bit_value,
-	input  wire        bit_ready = 1'b1,
-	output wire        bit_nal_last,
-	output wire [15:0] bit_epb_removed,
-	output wire [15:0] bit_rbsp_bytes,
-	output wire [31:0] bit_bits_out,
 
 	output reg         bus_want,
 	input  wire        DDRAM_BUSY,
@@ -324,55 +159,9 @@ module ddr_bitstream_reader #(
 	wire want_poll = enable && (poll_div == {POLL_DIV_BITS{1'b0}});
 	wire want_read = enable && ring_has_data && (beat_left == 4'd0);
 	wire want_pub = enable && publish_pending;
-	// Bit feeder backpressure (ENABLE_BIT_FEED): hold-reg valid/ready, not a
-	// single-cycle pulse. A pulse drops the next byte when the feeder skid is
-	// one slot from full (ready sampled cycle N, valid arrives N+1 after full).
-	wire bit_feed_in_ready;
-	reg         bit_in_valid;
-	reg  [7:0]  bit_in_byte;
-	reg         bit_in_last;
-	wire        bit_fire = bit_in_valid && bit_feed_in_ready;
-	wire        bit_slot_free = !bit_in_valid || bit_feed_in_ready;
-	wire payload_sink_ok = !out_full && (!ENABLE_BIT_FEED || bit_slot_free);
-	wire can_consume = (mode != MODE_PAYLOAD) || payload_sink_ok;
+	wire can_consume = (mode != MODE_PAYLOAD) || !out_full;
 	wire [15:0] state_flags = {4'd0, fatal_sticky, desync_sticky, paused, active,
 	                           overrun_sticky, underrun_sticky, mode, state};
-
-	// Payload byte → bit feeder holding register (cleared only on fire / clear)
-	reg         bit_feed_soft_clear; // EVENT_FLUSH / BEGIN / END / host flush
-	wire        bit_feed_clear = reset | bit_feed_soft_clear;
-
-	generate
-		if (ENABLE_BIT_FEED) begin : g_bit_feed
-			bitstream_bit_feeder #(.BYTE_Q_DEPTH(8)) u_bit_feed (
-				.clk(clk),
-				.reset(reset),
-				.clear(bit_feed_clear),
-				.in_valid(bit_in_valid),
-				.in_byte(bit_in_byte),
-				.in_last(bit_in_last),
-				.in_ready(bit_feed_in_ready),
-				.bit_valid(bit_valid),
-				.bit_value(bit_value),
-				.bit_ready(bit_ready),
-				.nal_bit_last(bit_nal_last),
-				.epb_removed(bit_epb_removed),
-				.rbsp_bytes(bit_rbsp_bytes),
-				.bits_out(bit_bits_out),
-				.byte_q_full(),
-				.byte_q_empty()
-			);
-		end else begin : g_bit_feed_off
-			assign bit_feed_in_ready = 1'b1;
-			assign bit_valid = 1'b0;
-			assign bit_value = 1'b0;
-			assign bit_nal_last = 1'b0;
-			assign bit_epb_removed = 16'd0;
-			assign bit_rbsp_bytes = 16'd0;
-			assign bit_bits_out = 32'd0;
-		end
-	endgenerate
-
 	function automatic [7:0] beat_byte(input [63:0] beat, input [2:0] idx);
 		begin
 			case (idx)
@@ -433,15 +222,8 @@ module ddr_bitstream_reader #(
 		out_valid <= 1'b0;
 		out_last <= 1'b0;
 		out_flush <= 1'b0;
-		bit_feed_soft_clear <= 1'b0;
 		DDRAM_RD <= 1'b0;
 		DDRAM_WE <= 1'b0;
-		// Holding-reg handshake: drop valid only when feeder accepts.
-		if (bit_fire) begin
-			bit_in_valid <= 1'b0;
-			bit_in_last <= 1'b0;
-		end
-
 		if (reset) begin
 			state <= ST_RESET;
 			mode <= MODE_HEADER;
@@ -481,17 +263,10 @@ module ddr_bitstream_reader #(
 			byte_idx <= 3'd0;
 			hdr_idx <= 5'd0;
 			payload_left <= 32'd0;
-			bit_in_valid <= 1'b0;
-			bit_in_byte <= 8'd0;
-			bit_in_last <= 1'b0;
-			bit_feed_soft_clear <= 1'b1;
 		end else if (!enable) begin
 			state <= ST_IDLE;
 			active <= 1'b0;
 			paused <= 1'b0;
-			bit_in_valid <= 1'b0;
-			bit_in_last <= 1'b0;
-			bit_feed_soft_clear <= 1'b1;
 			reset_parser();
 		end else begin
 			poll_div <= poll_div + 1'd1;
@@ -501,8 +276,6 @@ module ddr_bitstream_reader #(
 				fpga_read_count <= write_count;
 				active <= 1'b0;
 				paused <= 1'b0;
-				bit_in_valid <= 1'b0;
-				bit_in_last <= 1'b0;
 				overrun_sticky <= 1'b0;
 				underrun_sticky <= 1'b0;
 				desync_sticky <= 1'b0;
@@ -512,7 +285,6 @@ module ddr_bitstream_reader #(
 				expected_seq <= 32'd0;
 				consumer_seq <= 32'd0;
 				out_flush <= 1'b1;
-				bit_feed_soft_clear <= 1'b1;
 				publish_pending <= 1'b1;
 				publish_step <= 4'd0;
 				state <= ST_IDLE;
@@ -674,10 +446,6 @@ module ddr_bitstream_reader #(
 							out_valid <= 1'b1;
 							// NAL boundary for h264_rbsp_filter.in_last
 							out_last <= (payload_left == 32'd1);
-							// Fabric bit feed: same payload byte, last marks NAL end
-							bit_in_valid <= ENABLE_BIT_FEED;
-							bit_in_byte <= rx_byte;
-							bit_in_last <= ENABLE_BIT_FEED && (payload_left == 32'd1);
 							bytes_out <= bytes_out + 32'd1;
 							seen_payload <= 1'b1;
 							payload_left <= payload_left - 32'd1;
@@ -711,9 +479,6 @@ module ddr_bitstream_reader #(
 										consumer_seq <= 32'd0;
 										seen_payload <= 1'b0;
 										out_flush <= 1'b1;
-										bit_feed_soft_clear <= 1'b1;
-										bit_in_valid <= 1'b0;
-										bit_in_last <= 1'b0;
 									end
 								end else if (hdr[4] == EVENT_NAL) begin
 									if (!active || paused || hdr64(8) != current_session ||
@@ -736,9 +501,6 @@ module ddr_bitstream_reader #(
 										mark_desync(hdr32(16));
 									end else begin
 										out_flush <= 1'b1;
-										bit_feed_soft_clear <= 1'b1;
-										bit_in_valid <= 1'b0;
-										bit_in_last <= 1'b0;
 										seen_payload <= 1'b0;
 									end
 								end else if (hdr[4] == EVENT_END) begin
@@ -748,9 +510,6 @@ module ddr_bitstream_reader #(
 										active <= 1'b0;
 										paused <= 1'b0;
 										out_flush <= 1'b1;
-										bit_feed_soft_clear <= 1'b1;
-										bit_in_valid <= 1'b0;
-										bit_in_last <= 1'b0;
 									end
 								end else if (hdr[4] == EVENT_PAUSE) begin
 									if (!active || hdr64(8) != current_session || hdr32(20) != 32'd0)
