@@ -1,6 +1,6 @@
 lane=w-fitgate
 branch=w-fitgate
-sha=PENDING
+sha=0f086783
 GRANT=NO
 status=PREFIT_REACHABILITY+RBF_PROVENANCE
 
