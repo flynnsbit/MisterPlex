@@ -1,0 +1,42 @@
+{
+  "source_fit_rpt": "fpga/Plex_MiSTer/output_files/Plex.fit.rpt",
+  "source_note": "Historical product-style fit on lab tree (mtime 2025-07-30). Hierarchy row L7275. NOT a new fit — Quartus slot HELD. Scope: hierarchy WITH decode_stub + DDR_FRAME_STORE present path at FRAME 640x480-class linebufs. Excludes unbuilt h264_decode_top/core/skeleton.",
+  "device_m10k_total": 553,
+  "chip": {
+    "alm": 21082,
+    "alm_total": 41910,
+    "m10k": 465,
+    "block_memory_bits": 2997709,
+    "registers": 22429
+  },
+  "decode_stub": {
+    "hierarchy": "|sys_top|emu:emu|stream_path:spath|decode_stub:stub",
+    "fit_rpt_line": 7275,
+    "alm_needed": 6761.4,
+    "combinational_aluts": 10736,
+    "dedicated_logic_registers": 5064,
+    "block_memory_bits": 2124800,
+    "m10k": 268,
+    "dsp": 33,
+    "dpb_mem_m10k": 256,
+    "dpb_mem_bits": 2097152
+  },
+  "ddr_frame_store": {
+    "hierarchy": "|sys_top|emu:emu|present_core:present|ddr_frame_store:fstore",
+    "fit_rpt_line": 6786,
+    "alm_needed": 3477.5,
+    "m10k": 96,
+    "block_memory_bits": 159744,
+    "linebuf_note": "All 96 M10K are gen_line[*].{y,u,v}ram dual-clock line_buf_ram"
+  },
+  "prereg_before_measure": {
+    "m10k_reclaim": 268,
+    "alm_reclaim": 9200,
+    "basis": "Prior lane dark-silicon estimate ~9.2k ALM + ~268 M10K from earlier hierarchy dumps"
+  },
+  "measure_delta": {
+    "m10k": 0,
+    "alm": -2438.6,
+    "note": "M10K PREREG HIT. ALM overestimated (9200 predicted vs 6761.4 measured)."
+  }
+}
