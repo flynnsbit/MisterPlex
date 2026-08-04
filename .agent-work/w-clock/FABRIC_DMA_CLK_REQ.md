@@ -2,7 +2,8 @@
 
 Parent Sweep 118: ARM busy-spin is fixed; **ARM `/dev/mem` copy is not**.  
 `T_copy_arm = 14.978 ms/frame` > decode headroom `8.962 ms` → **serial deficit ~6.0 ms**.  
-Strategic path **(b) fabric DMA** retires all 14.978 ms (ARM never touches the frame bank).
+Strategic path **(b) fabric DMA** retires T_copy CPU time without needing a second ARM core
+(after pinned/coherent source — not “ARM never touches”).
 
 ## Terms (do not mix)
 
@@ -48,6 +49,8 @@ If fabric only **reads** staging once and **writes** present bank once per frame
 
 ## Non-claims
 
-- Overlap path (a) unproven — parent experiment.
+- Overlap path (a): **INFEASIBLE under one effective ARM core** (parent 2026-08-04:
+  MiSTer framework ~100% of one core at idle; mpx-main ~0.8%). Not a dual-core rescue.
 - e2e 720p24 **not** closed.
 - Fabric DMA **not** implemented by this note alone.
+- w-clock did **not** re-run the device `/proc/stat` capture (no device access).

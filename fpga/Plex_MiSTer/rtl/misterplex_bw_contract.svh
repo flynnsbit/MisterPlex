@@ -47,6 +47,9 @@ localparam int MISTERPLEX_BW_CLK_PIX_HZ        = 29_700_000; // 1650*750*24
 localparam int MISTERPLEX_BW_FRAME_BUDGET_US   = 41667;  // 1000/24 ms → µs
 localparam int MISTERPLEX_BW_T_COPY_ARM_US     = 14978;  // parent HW
 localparam int MISTERPLEX_BW_DECODE_MS_X1000   = 32705;  // 32.705 ms → µs
-// Fabric DMA goal: retire T_copy_arm (strategic path b). Overlap path a unproven.
+// Parent 2026-08-04: effective ARM capacity = ONE core (MiSTer framework owns the other
+// at ~100% idle busy). Path (a) decode||copy overlap is not dual-core-feasible.
+// Path (b) fabric DMA retires T_copy without a second ARM core — funded Path A.
+localparam int MISTERPLEX_BW_EFFECTIVE_ARM_CORES = 1;
 
 `endif // MISTERPLEX_BW_CONTRACT_SVH

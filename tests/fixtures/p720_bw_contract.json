@@ -51,7 +51,8 @@
     },
     "free_core_or_ARM_never_touches_payload": {
       "status": "NACK",
-      "why": "49% idle was pre-decode; DMA retires publication memcpy only after pinned/coherent source"
+      "why": "Parent 2026-08-04 /proc/stat 10s: cpu0 idle 97.6% busy 2.4%; cpu1 idle 0.0% busy 100%; MiSTer pid ~100.4% of one core; mpx-main ~0.8%. Effective ARM capacity = 1 core. 49% idle was not a free second core for copy||decode. DMA retires publication memcpy only after pinned/coherent source \u2014 not 'ARM never touches'.",
+      "source": "parent device capture 2026-08-04 (not re-run by w-clock)"
     }
   },
   "blackout_prefetch": {
@@ -154,11 +155,23 @@
     "decode_headroom_ms": 8.962,
     "serial_deficit_ms": 6.016,
     "source": "parent Sweep 118 / rd-duck",
-    "note": "T_copy_arm is CPU TIME; R_req 33.1776 is payload RATE \u2014 not interchangeable"
+    "note": "T_copy_arm is CPU TIME on the ONE effective ARM core; R_req 33.1776 is fabric payload RATE \u2014 not interchangeable. Do not budget copy on a second core.",
+    "effective_arm_cores": 1
   },
   "strategic": {
-    "path_a_overlap": "unproven",
-    "path_b_fabric_dma": "retires T_copy_arm; w-mem/w-path build; w-clock clocks+CDC"
+    "path_a_overlap": {
+      "status": "INFEASIBLE_UNDER_ONE_EFFECTIVE_CORE",
+      "was": "unproven",
+      "why": "Decode||copy overlap needs a second ARM core concurrent with decode. MiSTer framework permanently owns one core; effective capacity is one core. Contended-core case is the design case \u2014 not idle dual-core.",
+      "serial_deficit_ms_still": 6.016,
+      "note": "Serial deficit arithmetic unchanged; dual-core rescue path withdrawn"
+    },
+    "path_b_fabric_dma": {
+      "status": "STRATEGIC_ONLY_VIABLE_COPY_RETIRE",
+      "does": "retires T_copy_arm CPU time without needing a second ARM core",
+      "owners": "w-mem/w-path build; w-clock clocks+CDC",
+      "not": "ARM never touches payload (needs pinned/coherent source first)"
+    }
   },
   "proof_status": {
     "class": "PARTIAL_CLOSED_READER",
@@ -245,14 +258,26 @@
       "rd-duck accepted 38.53 MB/s",
       "rd-duck accepted fabric_bw_closed",
       "rd-duck accepted free core",
-      "rd-duck accepted ARM never touches payload"
+      "rd-duck accepted ARM never touches payload",
+      "two free ARM cores for decode||copy",
+      "path_a_overlap feasible on dual-core idle"
     ],
-    "note": "rd-duck NACK dead svh-only contract and unnormalized MB/s; arithmetic 33.1776 stands"
+    "note": "rd-duck NACK dead svh-only contract and unnormalized MB/s; arithmetic 33.1776 stands",
+    "arm_capacity_note": "effective_cores=1 per parent 2026-08-04; w-clock did not re-measure device"
   },
   "contract_consumption": {
     "present_core": "include plex_720p_bw_contract.svh; FS_* binds P720_* on 720p ABI; synth-active gates",
     "ddr_frame_store": "include + generate match PHYS/DOORBELL/STRIDE/LINE when CODED 1280x720",
     "plex_bw_status": "regs loaded from P720_*; synth-active gates; instantiated in Plex.sv",
     "files_qip_alone": "NOT sufficient (rd-duck)"
+  },
+  "arm_capacity": {
+    "effective_cores": 1,
+    "mister_framework": "consumes one entire core at idle (~100% of cpu1 in 10s window)",
+    "mpx_main_idle_fraction_of_one_core": 0.008,
+    "control_owner": "parent",
+    "control": "/proc/stat per-core deltas, 10s clean window; USER_HZ=100",
+    "w_clock_rerun": "NOT re-run on device (no device access); adopt parent measurement",
+    "implication": "Any budget assuming two free A9 cores is wrong by ~2x. Fabric payload rates (33.1776 MB/s/dir) are NOT ARM-core-count dependent."
   }
 }

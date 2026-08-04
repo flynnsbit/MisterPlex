@@ -163,6 +163,27 @@ def main() -> int:
     if float(ct.get("serial_deficit_ms", 0)) <= 0:
         fails.append("serial_deficit_ms must be >0 (e2e not closed serial)")
 
+    # Parent 2026-08-04: one effective ARM core (MiSTer owns the other)
+    arm = c.get("arm_capacity", {})
+    if arm.get("effective_cores") != 1:
+        fails.append("arm_capacity.effective_cores must be 1 (not dual-core free)")
+    if int(ct.get("effective_arm_cores", 0)) != 1:
+        fails.append("cpu_time_not_rate.effective_arm_cores must be 1")
+    strat = c.get("strategic", {})
+    pa = strat.get("path_a_overlap", {})
+    if isinstance(pa, dict):
+        if "INFEASIBLE" not in str(pa.get("status", "")):
+            fails.append("path_a_overlap must be INFEASIBLE under one effective core")
+    elif str(pa).lower() in ("unproven", "feasible", ""):
+        fails.append("path_a_overlap must not remain bare 'unproven'/feasible")
+    svh_txt = svh.read_text(errors="replace") if svh.is_file() else ""
+    if "MISTERPLEX_BW_EFFECTIVE_ARM_CORES" not in svh_txt:
+        fails.append("svh must stamp MISTERPLEX_BW_EFFECTIVE_ARM_CORES=1")
+    if "MISTERPLEX_BW_EFFECTIVE_ARM_CORES" in svh_txt and "= 1" not in svh_txt and "=1" not in svh_txt:
+        # require the localparam value 1 nearby
+        if "EFFECTIVE_ARM_CORES = 1" not in svh_txt and "EFFECTIVE_ARM_CORES=1" not in svh_txt:
+            fails.append("EFFECTIVE_ARM_CORES must equal 1")
+
     if fails:
         print("FAIL test_p720_shared_bw_contract")
         for f in fails:
