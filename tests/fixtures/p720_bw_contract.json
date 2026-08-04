@@ -53,15 +53,13 @@
     "note": "latency, not average BW"
   },
   "agreed_by": [
-    "w-clock"
-  ],
-  "pending_ack": [
-    "w-mem",
+    "w-clock",
     "w-scaler"
   ],
-  "disagree_with": [
-    "w-scaler headline 3.0 B/clk_sys as DDR/shared load"
+  "pending_ack": [
+    "w-mem"
   ],
+  "disagree_with": [],
   "real_reader_proof": {
     "tb": "tests/unit/test_ddr_frame_store_720p_ppc2_bus.sh",
     "recipe": "MULTI+PPC2+LINE16+PHYS 0x30180000+20:90 clocks",
@@ -89,5 +87,13 @@
       "headline_MB_s_dir": 33.1776
     },
     "status": "CLOSED for steady payload\u2248ideal+320 under this TB model; concurrent HPS write not in this TB"
+  },
+  "optional_not_headline": {
+    "present_linebuf_i420_equiv_B_per_clk_sys_DE": {
+      "value": 3.0,
+      "formula": "PPC * 1.5",
+      "not": "DDR design load",
+      "source": "ddr_frame_store rd_miss_now hit path"
+    }
   }
 }
