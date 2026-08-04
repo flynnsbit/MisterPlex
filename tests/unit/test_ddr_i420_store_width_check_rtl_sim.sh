@@ -10,6 +10,7 @@ mkdir -p "$OUT"
 "$RUN" --cc --exe --build --Mdir "$OUT" \
   --top-module ddr_i420_store_width_check_tb_top \
   -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC \
+  +incdir+"$ROOT/fpga/Plex_MiSTer/rtl" \
   -CFLAGS "-std=c++17 -O2" \
   "$ROOT/tests/rtl/ddr_i420_store_width_check_tb_top.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_i420_store_width_check.sv" \
