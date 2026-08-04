@@ -1,5 +1,5 @@
 {
-  "title": "P720 LOCK 33.1776 MB/s/dir; reader_steady_delta CLOSED (w-clock); hps_write_concurrent+T_copy_e2e OPEN (w-mem/w-path/parent)",
+  "title": "P720 LOCK 33.1776 payload/dir; reader CLOSED (w-clock); fullframe e2e FILLED b53197e5 ~38.53; hps_write+T_copy OPEN",
   "product_config": {
     "PRESENT_MULTI_PIXEL": true,
     "PRESENT_PX_PER_CLK": 2,
@@ -331,7 +331,20 @@
       "fabric BW proof_gap still OPEN (unsplit)",
       "reader beat delta unproven",
       "assign reader closure solely to w-mem+w-osd"
-    ]
+    ],
+    "fullframe_e2e_beat_delta": {
+      "state": "FILLED",
+      "owner": "w-mem",
+      "commit": "b53197e5",
+      "test": "tests/unit/test_ddr_ppc2_fullframe_beats.sh",
+      "G0": {
+        "beats_e2e": 200676,
+        "payload_ideal": 172800,
+        "overhead": 27876,
+        "e2e_MBps_approx": 38.53,
+        "note": "NOT claim closed at pure 33.1776; prep beats_at_fd=13953 do-not-cite as full BW"
+      }
+    }
   },
   "fabric_bw_closed": false,
   "reader_steady_delta": "CLOSED",
