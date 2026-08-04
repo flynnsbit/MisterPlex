@@ -439,8 +439,21 @@ module ddr_frame_store #(
 				c_line_v2[vi] <= c_line_v1[vi];
 			end
 
-			if (Y_W'(src_y) != want_y_sys)
+			// Refill target. Track the live DE line; when inactive on the last
+			// display line (product V-blank holds store_y at LAST_Y), or when
+			// y is not visible / vsync, aim at line 0 so the next frame head is
+			// prefetched. Holding LAST_Y through blank caused wrap underruns at
+			// y=0 under continuous CEA @720p PPC2 (w-osd full+stall bus diag).
+			if (rd_active && rd_visible) begin
+				if (Y_W'(src_y) != want_y_sys)
+					want_y_sys <= Y_W'(src_y);
+			end else if (vsync_pulse || !rd_y_visible
+			             || (rd_visible && !rd_active && (Y_W'(src_y) >= LAST_Y))) begin
+				if (want_y_sys != '0)
+					want_y_sys <= '0;
+			end else if (rd_visible && (Y_W'(src_y) != want_y_sys)) begin
 				want_y_sys <= Y_W'(src_y);
+			end
 			want_y_gray <= y_bin2gray(want_y_sys);
 
 			// Toggle-snapshot: status_osd (clk → clk_ddr)

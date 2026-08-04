@@ -7,7 +7,8 @@
 //   G0 full+ideal: payload>=172800, de_groups>=460800, underrun=0, ddr_cy<3750000
 //   G1 full+stall: payload complete, de>=460800, underrun=0, blocked>=10, busy↑
 //   LINE_COUNT product floor >= 32; LC=8 teeth must RED
-//   V-blank rd_y=0 so want_y prefetches frame start (else wrap underruns)
+//   V-blank holds last-line (product present_core clamp) — RTL want_y must
+//   prefetch line 0 on last-line inactive (ddr_frame_store wrap fix)
 //   PPC=2: rd_x steps by 2; PX_PER_CLK=2 in DUT
 
 #include "Vddr_frame_store_720p_ppc2_bus_tb.h"
@@ -214,9 +215,9 @@ struct BusModel {
 		// Even x for PPC=2 group alignment (store comment).
 		const int x_px = (hc < kHActiveG) ? (hc * kPPC) : (kCodedW - kPPC);
 		top.rd_x = x_px;
-		// V-blank: hold rd_y=0 so src_y/want_y prefetches line 0 before active.
-		// Holding last-line (719) through blank caused wrap underruns at y=0 (diag).
-		top.rd_y = (vc < kVActive) ? vc : 0;
+		// Product-like V-blank: clamp to last line (present_core store_y path).
+		// RTL want_y must prefetch 0 on last-line inactive — TB must not hide that.
+		top.rd_y = (vc < kVActive) ? vc : (kVActive - 1);
 		top.vsync_pulse = (hc == 0 && vc == 0) ? 1 : 0;
 	}
 
