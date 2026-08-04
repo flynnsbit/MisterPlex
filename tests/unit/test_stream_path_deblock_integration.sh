@@ -50,6 +50,11 @@ RTL=(
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_deblock.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_inter_pred.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_dpb.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_leaf_basename_hold.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_cavlc_residual.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_syntax_primitives.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_p_slice_modes.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/decode_stub.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/stream_path.sv"
 )

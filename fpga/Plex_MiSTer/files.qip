@@ -40,6 +40,9 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_deblock.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_p_slice_modes.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_dpb.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_inter_pred.sv
+// Phase A: fabric decode reachability hold (always under stream_path; paint still stub).
+// basename_hold = stream_path integrator; skeleton kept in QIP for optional area fits.
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_leaf_basename_hold.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/decode_stub.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/stream_path.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_core.sv
