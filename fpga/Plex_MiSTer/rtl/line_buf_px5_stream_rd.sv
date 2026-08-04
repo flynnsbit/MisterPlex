@@ -1,11 +1,20 @@
 // line_buf_px5_stream_rd — L→R byte stream from packed 40-bit line RAM.
 //
-// Single read port + byte queue hides 5-px granularity from the present path.
-// start: HBlank pulse. advance: consume PPC bytes/cycle when primed.
+// Adjacent-word cache = 16-byte queue (not a second M10K port). PPC=2 groups
+// straddle packed words every 5 groups: pixels [4,5] sit in word0[4] + word1[0].
+// Queue holds both sides after two captures so a single SDP read port keeps the
+// 256×40 = 1 M10K/line saving. No combinational /5 or %5 — only a fill counter
+// on the pack side and a byte pop count here.
 //
-// Registered SDP RAM: rd_data lags rd_addr by 1 cycle; sampling rd_data in a
-// peer always-block needs one more cycle → issue uses waitcnt=2 before capture.
-// One fetch in flight (simple, HBlank-friendly). M10K: 0. ALM EST ~80.
+// start: left-edge pulse (see ddr_frame_store; HBlank clamps x to LAST so
+//        !rd_x_visible never fires when PRESENT_X=0).
+// advance: consume PPC bytes/cycle when queue depth allows.
+//
+// Registered SDP RAM: rd_data lags rd_addr by 1 cycle; peer always-block sample
+// needs one more → issue uses waitcnt=2 before capture.
+// One fetch in flight; steady PPC=2 needs 2 B/cyc, supply is 5 B / 2 cyc = 2.5.
+// Mid-line random src_x / scaler jumps: NOT supported (would need dual-word
+// window + phase or 2× M10K). M10K: 0. ALM EST ~80.
 
 module line_buf_px5_stream_rd #(
 	parameter int PPC    = 2,
@@ -89,8 +98,9 @@ module line_buf_px5_stream_rd #(
 					wqn = wqn - 5'(PPC);
 				end
 
-				// Issue when idle and room (after capture/age above)
-				if (wwc == 2'd0 && (wqn < 5'd8) && (int'(wwrd) < NWORDS)) begin
+				// Prefetch while depth low — keeps word N+1 in flight so the
+				// [4,5] straddle group never waits a full RAM turnaround.
+				if (wwc == 2'd0 && (wqn < 5'd10) && (int'(wwrd) < NWORDS)) begin
 					rd_addr <= wwrd;
 					wwrd = wwrd + 1'b1;
 					wwc = 2'd2;

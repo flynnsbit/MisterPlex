@@ -1,7 +1,10 @@
 // line_buf_px5_unpack — registered phase extract from a 2-word window.
 //
-// word0/word1 already registered. phase = pixel_x % 5 (0..4).
-// PPC consecutive pixels; phase+PPC-1 may span into word1 (e.g. phase=4,PPC=2).
+// word0/word1 already registered. phase is a 0..4 counter (caller must not
+// use combinational pixel_x%5 on the present path — count phase with the beam).
+// PPC consecutive pixels; phase+PPC-1 may span into word1 (e.g. phase=4,PPC=2
+// → pixels [4,5] straddle). This is the dual-word window path for random
+// phase; product scanout uses line_buf_px5_stream_rd (byte queue) instead.
 //
 // One register stage on clk — no long comb from RAM dout to YUV math.
 // M10K: 0. ALM EST ~30.

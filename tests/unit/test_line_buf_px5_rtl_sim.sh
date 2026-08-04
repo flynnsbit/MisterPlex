@@ -85,7 +85,11 @@ assert_sim_executed "line_buf_px5" "$out" \
   "OK A pack_1280_continuous_beats" \
   "OK B stream_rd_1280" \
   "OK C NEGATIVE naive_first5of8_rejected" \
-  "OK D unpack_phase4" \
+  "OK D unpack_phases_0_4" \
+  "OK E stream_ppc2_straddle" \
+  "OK F NEGATIVE single_word_phase4" \
+  "OK G line_boundary" \
+  "OK H NEGATIVE_scaler_jump_unsupported" \
   "SUMMARY PASS"
 
 if [[ "$rc" -ne 0 ]]; then

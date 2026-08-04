@@ -29,10 +29,11 @@ Headline linebuf pool: **96 M10K packed** (same as 480p 64b pool size).
 ALM packer+unpacker+stream: **EST +200..400 ALM** — UNKNOWN until fit.
 Unpack/stream latency: registered (issue→capture waitcnt=2 on read; packer 1 word/clk out). No long comb on clk_sys (post-strip slack only **+0.311 ns**).
 
-## 5-px granularity handling
-- **Write:** `line_buf_px5_pack` folds 64b DDR beats → 40b words (LCM 40 B).
-- **Read:** `line_buf_px5_stream_rd` L→R byte queue (beam only). Random src_x mid-line NOT supported; CROP_LEFT must be 0 (generate guard).
-- **Phase extract:** `line_buf_px5_unpack` for dual-word window (phase=4,PPC=2 spans words); +1 reg stage.
+## 5-px granularity handling (rd-duck constraints)
+- **Write rate:** 5×64b beats → 8×40b words. One write port cannot absorb full-rate DOUT without SKID (beats) + side (≤2 words/fold) + M10K FIFO + 1 word/clk drain. Packer `fill` phase counter 0..4 — **no comb /5,%5**.
+- **PPC2 straddle:** groups [4,5] every 5 pairs. Single SDP port: **byte queue is the adjacent-word cache** (not a second M10K). Prefetch while `qn<10` keeps word N+1 in flight.
+- **Read:** `line_buf_px5_stream_rd` L→R only. Start = DE left-edge one-shot (HBlank clamps x→LAST so `!rd_x_visible` never fires at PRESENT_X=0). `!primed` → miss. Mid-line scaler jumps **unsupported** (fallback = dual-word unpack + phase counter, or 2× M10K naive). CROP_LEFT must be 0.
+- **Phase extract:** `line_buf_px5_unpack` dual-word window; caller supplies phase 0..4 counter. Unit covers phases 0..4 + NEGATIVE single-word phase4.
 
 ## Miss criteria
 - Fit Y leaf still ≥2 M10K under ramstyle M10K → packing miss

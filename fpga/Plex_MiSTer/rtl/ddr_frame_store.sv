@@ -446,6 +446,7 @@ module ddr_frame_store #(
 	reg        frame_miss_toggle;
 
 	reg rd_active_r, rd_active_d, rd_visible_r, rd_visible_d, miss_d;
+	reg [X_W-1:0] rd_x_d;
 	reg y_hit_r, c_hit_r;
 	reg [SLOT_W-1:0] y_hit_idx_r, c_hit_idx_r;
 	reg [2:0] y_sel_r, c_sel_r;
@@ -529,7 +530,10 @@ module ddr_frame_store #(
 	// Miss when the line under the beam is not yet in an M10K slot → RGB black.
 	// Primary left-edge class: HBlank want_y/src_y thrash (fixed via src_y_line).
 	// Residual miss under true DDR backlog still counts as underrun.
-	wire rd_miss_now = rd_active && rd_visible && has_frame && (!y_hit_now || !c_hit_now);
+	// PACK_PX5: also miss until stream readers are primed (left-edge RAM latency).
+	wire px5_stream_ready = !PACK_PX5 || (y_srd_primed && c_srd_primed);
+	wire rd_miss_now = rd_active && rd_visible && has_frame
+	                   && (!y_hit_now || !c_hit_now || !px5_stream_ready);
 
 	// BT.601 full-range helpers for multi-pixel lanes (matches host / yuv_bt601_npx).
 	function automatic [7:0] yuv_r(input [7:0] y, input [7:0] u, input [7:0] v);
@@ -617,6 +621,7 @@ module ddr_frame_store #(
 			rd_active_d <= 1'b0;
 			rd_visible_r <= 1'b0;
 			rd_visible_d <= 1'b0;
+			rd_x_d <= '0;
 			miss_d <= 1'b0;
 			underrun_count <= 16'd0;
 			want_y_sys <= '0;
@@ -688,19 +693,30 @@ module ddr_frame_store #(
 			rd_active_d <= rd_active_r;
 			rd_visible_r <= rd_visible;
 			rd_visible_d <= rd_visible_r;
+			rd_x_d <= rd_x;
 			y_hit_r <= y_hit_now;
 			c_hit_r <= c_hit_now;
 			y_hit_idx_r <= y_hit_idx_now;
 			c_hit_idx_r <= c_hit_idx_now;
 			y_sel_r <= src_x[2:0];
 			c_sel_r <= src_x[3:1];
-			// PACK_PX5 stream control: start at left edge of present line (CROP_LEFT=0).
-			y_srd_start <= PACK_PX5 && rd_y_visible && (display_x == '0) && !rd_x_visible;
-			c_srd_start <= PACK_PX5 && rd_y_visible && (display_x == '0) && !rd_x_visible;
-			// Advance during visible DE when hit; chroma every other luma px (4:2:0).
-			y_srd_adv <= PACK_PX5 && rd_visible && has_frame && y_hit_now && c_hit_now;
+			// PACK_PX5 stream: left-edge one-shot. present_core clamps HBlank x to
+			// FRAME_LAST_X, so !rd_x_visible never fires when PRESENT_X=0 — do not
+			// key start on that. Start when DE opens at present origin.
+			// CROP_LEFT must be 0 (generate guard): mid-line seek unsupported.
+			y_srd_start <= PACK_PX5 && rd_active && rd_y_visible
+			               && (rd_x == PRESENT_X_L)
+			               && ((rd_x_d != PRESENT_X_L) || !rd_active_r);
+			c_srd_start <= PACK_PX5 && rd_active && rd_y_visible
+			               && (rd_x == PRESENT_X_L)
+			               && ((rd_x_d != PRESENT_X_L) || !rd_active_r);
+			// Advance on DE+hit once primed. Chroma: one sample per PPC luma group
+			// when PX_PER_CLK>=2 (x steps by PPC); else every other px (4:2:0).
+			y_srd_adv <= PACK_PX5 && rd_visible && has_frame && y_hit_now && c_hit_now
+			             && y_srd_primed && c_srd_primed;
 			c_srd_adv <= PACK_PX5 && rd_visible && has_frame && y_hit_now && c_hit_now
-			             && !display_x[0];
+			             && y_srd_primed && c_srd_primed
+			             && ((PX_PER_CLK >= 2) || !display_x[0]);
 			miss_d <= rd_miss_now;
 			if (miss_d && underrun_count != 16'hFFFF) begin
 				underrun_count <= underrun_count + 16'd1;

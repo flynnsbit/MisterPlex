@@ -6,7 +6,12 @@
 // line_done: 1-cycle pulse on final word emit.
 //
 // PIXELS % 5 == 0 (1280 luma / 640 chroma).
-// SKID: beat skid depth; product fill @ continuous DOUT needs SKID >= beats/line.
+// Rate: 5 beats (40 B) → 8×40b words. One 40b write port = 1 word/clk, so a
+// full-rate DDR DOUT burst (1 beat/clk) cannot land directly — SKID holds
+// beats, side holds up to 2 words/fold, M10K FIFO absorbs the 8/5 write
+// expansion, and out_valid drains 1 word/clk into the line RAM.
+// Fold uses fill phase counter 0..4 (no combinational /5 or %5).
+// SKID: product continuous DOUT needs SKID >= beats/line (160 luma / 80 chroma).
 // FIFO_DEPTH: packed-word FIFO (M10K). Default 256 = full luma line.
 //
 // M10K EST: 1 (256×40 FIFO). ALM EST: ~120 + SKID*64 FFs.
