@@ -21,6 +21,11 @@ EXPECTED_PREREQS = [
     "preflight",
     # land-line 720p / PL330 / SPI fail-closed suite
     "$(ROOT)/build/test_pl330_encode",
+    "bash $(ROOT)/tests/unit/test_ddr_frame_dma_rtl_sim.sh",
+    "bash $(ROOT)/tests/unit/test_ddr_frame_dma_contended_rtl_sim.sh",
+    "python3 $(ROOT)/tests/unit/test_fabric_frame_dma_static.py",
+    "bash $(ROOT)/tests/unit/test_ddr_publish_copy_budget_rtl_sim.sh",
+    "bash $(ROOT)/tests/unit/test_ddr_i420_store_width_check_rtl_sim.sh",
     "$(ROOT)/build/test_p720_e2e_budget",
     "$(ROOT)/build/test_idle_poll_budget",
     "$(ROOT)/build/test_spi_txn_complete",

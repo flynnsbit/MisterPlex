@@ -962,6 +962,119 @@ present_core #(
 );
 
 `ifdef DDR_FRAME_STORE
+`ifdef FABRIC_FRAME_DMA
+// --- Fabric publication DMA (w-mem): staging → bank on f2sdram ---
+// Default OFF (FABRIC_FRAME_DMA undefined). When enabled by integration:
+//   m0 present > m2 dma > m1 bitstream via ddr_bus_arbiter3 (quantum=8).
+// M10K: bounce 1 EST + arbiter3 m1 FIFO ≤1. Does not ring doorbell.
+`include "ddr_frame_layout_params.svh"
+wire        dma_busy, dma_done, dma_err_align;
+wire [31:0] dma_rd_beats, dma_wr_beats, dma_last_fb;
+wire        dma_m2_busy;
+wire  [7:0] dma_m2_burstcnt;
+wire [28:0] dma_m2_addr;
+wire [63:0] dma_m2_dout;
+wire        dma_m2_dout_ready;
+wire        dma_m2_rd;
+wire [63:0] dma_m2_din;
+wire  [7:0] dma_m2_be;
+wire        dma_m2_we;
+wire        dma_m2_want = dma_busy | dma_m2_rd | dma_m2_we;
+
+// status[12]/[13] live in clk_sys; 2FF into clk_ddr then edge-detect start.
+reg st12_s1, st12_s2, st12_s3, st13_s1, st13_s2;
+always @(posedge clk_ddr) begin
+	if (reset) begin
+		st12_s1 <= 1'b0; st12_s2 <= 1'b0; st12_s3 <= 1'b0;
+		st13_s1 <= 1'b0; st13_s2 <= 1'b0;
+	end else begin
+		st12_s1 <= status[12]; st12_s2 <= st12_s1; st12_s3 <= st12_s2;
+		st13_s1 <= status[13]; st13_s2 <= st13_s1;
+	end
+end
+wire dma_start_pulse = st12_s2 & ~st12_s3;
+
+wire [31:0] dma_src_phys = DDR_FRAME_DMA_STAGING_PHYS[31:0];
+wire [31:0] dma_bank_phys = st13_s2
+	? (DDR_FRAME_720P_PHYS_BASE[31:0] + DDR_FRAME_720P_YUV420P_BANK_STRIDE[31:0])
+	: DDR_FRAME_720P_PHYS_BASE[31:0];
+wire [31:0] dma_frame_bytes = DDR_FRAME_720P_YUV420P_BYTES[31:0];
+
+ddr_frame_dma #(
+	.BOUNCE_DEPTH(128),
+	.DEFAULT_FRAME_BYTES(1_382_400)
+) u_frame_dma (
+	.clk(clk_ddr),
+	.reset(reset),
+	.start(dma_start_pulse),
+	.src_phys(dma_src_phys),
+	.bank_phys(dma_bank_phys),
+	.frame_bytes(dma_frame_bytes),
+	.busy(dma_busy),
+	.done(dma_done),
+	.err_align(dma_err_align),
+	.rd_beats(dma_rd_beats),
+	.wr_beats(dma_wr_beats),
+	.last_frame_bytes(dma_last_fb),
+	.DDRAM_BUSY(dma_m2_busy),
+	.DDRAM_BURSTCNT(dma_m2_burstcnt),
+	.DDRAM_ADDR(dma_m2_addr),
+	.DDRAM_DOUT(dma_m2_dout),
+	.DDRAM_DOUT_READY(dma_m2_dout_ready),
+	.DDRAM_RD(dma_m2_rd),
+	.DDRAM_DIN(dma_m2_din),
+	.DDRAM_BE(dma_m2_be),
+	.DDRAM_WE(dma_m2_we)
+);
+
+ddr_bus_arbiter3 #(
+	.M2_QUANTUM_BEATS(8)
+) ddr_arb (
+	.clk(clk_ddr),
+	.clk_m1(clk_sys),
+	.reset(reset),
+	.m1_want(stream_ddr_bus_want),
+	.m0_busy(present_ddr_busy),
+	.m0_burstcnt(present_ddr_burstcnt),
+	.m0_addr(present_ddr_addr),
+	.m0_dout(present_ddr_dout),
+	.m0_dout_ready(present_ddr_dout_ready),
+	.m0_rd(present_ddr_rd),
+	.m0_din(present_ddr_din),
+	.m0_be(present_ddr_be),
+	.m0_we(present_ddr_we),
+	.m1_busy(stream_ddr_busy),
+	.m1_burstcnt(stream_ddr_burstcnt),
+	.m1_addr(stream_ddr_addr),
+	.m1_dout(stream_ddr_dout),
+	.m1_dout_ready(stream_ddr_dout_ready),
+	.m1_rd(stream_ddr_rd),
+	.m1_din(stream_ddr_din),
+	.m1_be(stream_ddr_be),
+	.m1_we(stream_ddr_we),
+	.m2_want(dma_m2_want),
+	.m2_busy(dma_m2_busy),
+	.m2_burstcnt(dma_m2_burstcnt),
+	.m2_addr(dma_m2_addr),
+	.m2_dout(dma_m2_dout),
+	.m2_dout_ready(dma_m2_dout_ready),
+	.m2_rd(dma_m2_rd),
+	.m2_din(dma_m2_din),
+	.m2_be(dma_m2_be),
+	.m2_we(dma_m2_we),
+	.DDRAM_BUSY(DDRAM_BUSY),
+	.DDRAM_BURSTCNT(DDRAM_BURSTCNT),
+	.DDRAM_ADDR(DDRAM_ADDR),
+	.DDRAM_DOUT(DDRAM_DOUT),
+	.DDRAM_DOUT_READY(DDRAM_DOUT_READY),
+	.DDRAM_RD(DDRAM_RD),
+	.DDRAM_DIN(DDRAM_DIN),
+	.DDRAM_BE(DDRAM_BE),
+	.DDRAM_WE(DDRAM_WE)
+);
+// Keep dma_done/err visible to synth (status fold below).
+wire _dma_keep = dma_done | dma_err_align | (|dma_rd_beats) | (|dma_wr_beats) | (|dma_last_fb);
+`else
 ddr_bus_arbiter ddr_arb (
 	.clk(clk_ddr),
 	.clk_m1(clk_sys),
@@ -995,6 +1108,7 @@ ddr_bus_arbiter ddr_arb (
 	.DDRAM_BE(DDRAM_BE),
 	.DDRAM_WE(DDRAM_WE)
 );
+`endif
 `endif
 
 assign CLK_VIDEO = clk_sys;
@@ -1039,12 +1153,15 @@ assign LED_USER = has_stream ? (act_cnt[20] ^ nalu_count[0] ^ last_nal_type[0])
 //   [127:120] p3_recon_dbg     (coeff/dequant/idct/recon non-zero flags for silicon RCA)
 //   [122:121] forced from status (Aspect ratio) — overlaps stream debug only
 // Product cfg stamp (w-nostub): fabric-visible PRODUCT_NO_STUB / DDR_FRAME_STORE.
-// Folded into _unused keep-chain so Quartus cannot strip the constants.
+// fabric_frame_dma_en must stay 0 on product (FABRIC_FRAME_DMA off) until parent
+// device-proves the f2sdram copy path. Folded into _unused keep-chain.
 wire product_cfg_no_stub;
 wire product_cfg_ddr_fs;
+wire product_cfg_fabric_dma;
 plex_product_cfg u_product_cfg (
 	.product_no_stub(product_cfg_no_stub),
-	.ddr_frame_store_en(product_cfg_ddr_fs)
+	.ddr_frame_store_en(product_cfg_ddr_fs),
+	.fabric_frame_dma_en(product_cfg_fabric_dma)
 );
 
 wire [7:0] telem_flags = {
@@ -1227,6 +1344,10 @@ wire _unused = |{disp_i, cont_i, advance, ingest_pixels, ingest_dl, af_active, i
 	stream_ddr_fpga_read, stream_ddr_bus_want, stream_ddr_burstcnt, stream_ddr_addr,
 	stream_ddr_rd, stream_ddr_din, stream_ddr_be, stream_ddr_we, _host_wr_unused,
 	rbf_stamp_alive, rbf_build_id_valid, rbf_build_id_observe_r,
-	product_cfg_no_stub, product_cfg_ddr_fs};
+	product_cfg_no_stub, product_cfg_ddr_fs, product_cfg_fabric_dma
+`ifdef FABRIC_FRAME_DMA
+	, _dma_keep
+`endif
+	};
 
 endmodule

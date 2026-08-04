@@ -20,6 +20,14 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio_ingest.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/line_buf_ram.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/frame_store.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_frame_store.sv
+// 720p publish path (w-mem): DMA default-OFF via FABRIC_FRAME_DMA; always in QIP.
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_i420_bank_geom.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_frame_base_mux.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_frame_dma.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_publish_job.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_i420_store_width_check.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_publish_copy_budget.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_bus_arbiter3.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/frame_ingest.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddram_frame_rd.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/sdram.sv

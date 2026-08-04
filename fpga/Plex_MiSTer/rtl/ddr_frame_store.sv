@@ -46,7 +46,11 @@ module ddr_frame_store #(
 	//    NBA order cleared swap_pending after setting it, dropping the doorbell
 	//    under sustained high-rate publish (playback ~24 fps) while idle's slow
 	//    presents rarely collide with the 1-cycle vsync window.
-	parameter bit SWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC = 1'b1
+	parameter bit SWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC = 1'b1,
+	// Product default 0: fill_bank_base via ddr_frame_base_mux (= fill_bank ? BASE_W1 : BASE_W0).
+	// DYN_BASE_EN=1 is research/future doorbell base ABI; dyn_* tied off here.
+	// Preferred zero-mover present path: fabric READs published buffer in place (M10K=0).
+	parameter bit DYN_BASE_EN = 1'b0
 )(
 	input  wire        clk,
 	input  wire        clk_ddr,
@@ -734,7 +738,23 @@ module ddr_frame_store #(
 	reg [Y_QW_AW:0] qwords_remaining;
 	reg [7:0] imbox_cmd_seq;
 	reg [15:0] imbox_seq;
-	wire [28:0] fill_bank_base = fill_bank ? BASE_W1 : BASE_W0;
+	// Bank base via ddr_frame_base_mux. DYN_BASE_EN=0 → fixed select identical to
+	// former: fill_bank_base = fill_bank ? BASE_W1 : BASE_W0 (product bit-identical).
+	wire [28:0] fill_bank_base;
+	wire        fill_base_using_dyn;
+	ddr_frame_base_mux #(
+		.DYN_BASE_EN(DYN_BASE_EN)
+	) u_fill_base_mux (
+		.bank(fill_bank),
+		.base_w0(BASE_W0),
+		.base_w1(BASE_W1),
+		.dyn_base0(29'd0),
+		.dyn_base1(29'd0),
+		.dyn_valid0(1'b0),
+		.dyn_valid1(1'b0),
+		.fill_bank_base(fill_bank_base),
+		.using_dyn(fill_base_using_dyn)
+	);
 	wire [28:0] fill_y_qword = {{(29-Y_W){1'b0}}, fill_y} * Y_LINE_QWORDS_W;
 `ifdef DDR_FRAME_STORE_FAULT_CHROMA_LUMA_STRIDE
 	wire [28:0] fill_cy_qword = {{(30-Y_W){1'b0}}, fill_cy} * Y_LINE_QWORDS_W;

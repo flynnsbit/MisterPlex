@@ -57,6 +57,11 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_pl330_encode $(ROOT)/b
 	$(ROOT)/build/test_idle_poll_budget
 	$(ROOT)/build/test_p720_e2e_budget
 	$(ROOT)/build/test_pl330_encode
+	bash $(ROOT)/tests/unit/test_ddr_frame_dma_rtl_sim.sh
+	bash $(ROOT)/tests/unit/test_ddr_frame_dma_contended_rtl_sim.sh
+	python3 $(ROOT)/tests/unit/test_fabric_frame_dma_static.py
+	bash $(ROOT)/tests/unit/test_ddr_publish_copy_budget_rtl_sim.sh
+	bash $(ROOT)/tests/unit/test_ddr_i420_store_width_check_rtl_sim.sh
 	python3 $(ROOT)/tests/unit/test_p720_shared_bw_contract.py
 	bash $(ROOT)/tests/unit/test_idle_thread_budget_gate.sh
 	bash $(ROOT)/tests/unit/test_io_ack_follow_rtl_sim.sh

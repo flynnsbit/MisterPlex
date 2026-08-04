@@ -1,6 +1,8 @@
 // DDR frame layout contract mirrored from host/libmisterplex/ddr_frame_layout.hpp.
 // The C++ unit/RTL invariant tests compare these values against the host header;
 // update both sides together if the stream geometry or bank layout changes.
+`ifndef DDR_FRAME_LAYOUT_PARAMS_SVH
+`define DDR_FRAME_LAYOUT_PARAMS_SVH
 
 localparam int DDR_FRAME_CODED_WIDTH = 624;
 localparam int DDR_FRAME_CODED_HEIGHT = 480;
@@ -57,6 +59,16 @@ localparam int DDR_FRAME_720P24_BEAM_V_TOTAL = 762;
 localparam int DDR_FRAME_720P24_BEAM_H_DE = 1280;
 localparam int DDR_FRAME_720P24_BEAM_V_ACTIVE = 720;
 localparam int DDR_FRAME_720P24_CLK_SYS_HZ = 24_000_000;
+// Fabric DMA / PL330 staging (after Option-C triple bank end @ 0x3060_0000).
+// Mirrors host kPl330ProgScratchPhys / kPl330StagingPhys. Collision fence only
+// until product DMA path is device-proven.
+localparam int DDR_FRAME_PL330_SCRATCH_PHYS = 32'h3060_0000;
+localparam int DDR_FRAME_PL330_SCRATCH_BYTES = 32'h1000;
+localparam int DDR_FRAME_DMA_STAGING_PHYS =
+	DDR_FRAME_PL330_SCRATCH_PHYS + DDR_FRAME_PL330_SCRATCH_BYTES; // 0x3060_1000
+localparam int DDR_FRAME_DMA_STAGING_BYTES = DDR_FRAME_720P_YUV420P_BANK_STRIDE;
 // Product ascal-native max tier (PRESENT_BEAM_960) — not default raster.
 localparam int DDR_FRAME_960_PRESENTED_WIDTH = 960;
 localparam int DDR_FRAME_960_PRESENTED_HEIGHT = 540;
+
+`endif // DDR_FRAME_LAYOUT_PARAMS_SVH
