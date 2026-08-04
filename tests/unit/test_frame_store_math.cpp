@@ -329,11 +329,11 @@ int main() {
     checkConversion(320, 240);
     checkConversion(640, 480);
 
-    // Product silicon canvas is compile-time 624-stride. Every supported content
-    // tier (DECODE/OSD) must still produce a writer layout whose line stride
-    // equals RTL ddr_frame_layout_params.svh — otherwise HDMI shears.
+    // Product silicon canvas is compile-time 1280-stride identity. Every supported
+    // content tier (DECODE/OSD) must still produce a writer layout whose line
+    // stride equals RTL ddr_frame_layout_params.svh — otherwise HDMI shears.
     {
-        const int tiers[][2] = {{320, 240}, {624, 480}, {640, 480}};
+        const int tiers[][2] = {{320, 240}, {624, 480}, {640, 480}, {1280, 720}};
         for (const auto& tier : tiers) {
             const auto g = misterplex::ddrFrameGeometryForFpgaPresent(tier[0], tier[1]);
             const auto layout = misterplex::makeDdrFrameLayout(g);
@@ -347,33 +347,33 @@ int main() {
                              layout.height);
                 ++fails;
             }
-            CHECK(layout.line_bytes == misterplex::kPlex480pYStrideBytes);
-            CHECK(layout.line_qwords == misterplex::kPlex480pYuvLumaLineQwords);
-            CHECK(layout.chroma_line_bytes == misterplex::kPlex480pChromaStrideBytes);
-            CHECK(layout.chroma_line_qwords == misterplex::kPlex480pYuvChromaLineQwords);
+            CHECK(layout.line_bytes == misterplex::kPlex720pYStrideBytes);
+            CHECK(layout.line_qwords == misterplex::kPlex720pYuvLumaLineQwords);
+            CHECK(layout.chroma_line_bytes == misterplex::kPlex720pChromaStrideBytes);
+            CHECK(layout.chroma_line_qwords == misterplex::kPlex720pYuvChromaLineQwords);
         }
         // Identity-320 layout is valid math but MUST NOT match silicon — the
-        // shear defect is exactly "publish this against a 624-stride reader".
+        // shear defect is exactly "publish this against a 1280-stride reader".
         const auto bad320 = misterplex::makeDdrFrameLayout(320, 240);
         CHECK(misterplex::ddrFrameLayoutValid(bad320));
         CHECK(!misterplex::ddrFrameLayoutMatchesProductSilicon(bad320));
         CHECK(bad320.line_bytes == 320);
-        CHECK(bad320.line_bytes != misterplex::kPlex480pYStrideBytes);
+        CHECK(bad320.line_bytes != misterplex::kPlex720pYStrideBytes);
 
         // Center-pack 320x240 into the silicon bank preserves stride and black pads.
         std::vector<uint8_t> src(misterplex::yuv420pFrameBytes(320, 240), 0x40);
-        std::vector<uint8_t> dst(misterplex::yuv420pFrameBytes(misterplex::kPlex480pCodedWidth,
-                                                               misterplex::kPlex480pCodedHeight),
+        std::vector<uint8_t> dst(misterplex::yuv420pFrameBytes(misterplex::kPlex720pCodedWidth,
+                                                               misterplex::kPlex720pCodedHeight),
                                  0x00);
         const auto silicon = misterplex::productDdrFrameStoreGeometry();
-        // Exact left/top margin pin for 320x240-into-624x480 (display 618x480):
-        //   x0 = 0 + (618-320)/2 = 149 → 148 after even chroma align
-        //   y0 = 0 + (480-240)/2 = 120
+        // Exact left/top margin pin for 320x240-into-1280x720 identity:
+        //   x0 = (1280-320)/2 = 480
+        //   y0 = (720-240)/2 = 240
         // Origin is computed once; every packed row uses the same x0 (no wander).
         int pinX = -1, pinY = -1;
         CHECK(misterplex::codedContentOriginCentered(320, 240, silicon, pinX, pinY));
-        CHECK(pinX == 148);
-        CHECK(pinY == 120);
+        CHECK(pinX == 480);
+        CHECK(pinY == 240);
         CHECK(misterplex::packYuv420pCenteredIntoCodedBank(src.data(), 320, 240, dst.data(),
                                                            silicon));
         // Corners of the coded bank stay studio black; a mid-display sample is content.

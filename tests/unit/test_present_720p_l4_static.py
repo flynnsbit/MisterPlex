@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """L4 gate: dead modules become INSTANTIATED behind default-off PLEX_PRESENT_720P_L4.
 
-Default product (macro off):
+Default product (L4 macro off):
   - PLEX_PRESENT_720P_L4 must NOT be an active QSF macro
-  - FRAME_W/H stay 640/480
+  - FRAME_W/H are product silicon 1280/720 (canvas identity; L4 is beam path)
   - present_core still has colorbars Template path text
 
 When scanning sources (ifdef bodies count as instantiation intent):
@@ -54,25 +54,20 @@ def main() -> int:
         fails.append("INTEG: L4 and MULTI both active")
     for m in act:
         if m.startswith("PLEX_PRESENT_720P_L4") or m.startswith("FABRIC_NATIVE_720P_GEOM"):
-            if not l4_on:
-                fails.append(f"DEFAULT_OFF=no active QSF macro {m}")
+            fails.append(f"DEFAULT_OFF=no active QSF macro {m}")
+    # Product / integ canvas is 1280×720 (main #16 + integ ENABLED).
+    if not any(m == "FRAME_W=1280" for m in act):
+        fails.append("DEFAULT product FRAME_W=1280 missing from active QSF")
+    if not any(m == "FRAME_H=720" for m in act):
+        fails.append("DEFAULT product FRAME_H=720 missing from active QSF")
+    if any(m == "FRAME_W=640" for m in act) or any(m == "FRAME_H=480" for m in act):
+        fails.append("legacy FRAME 640x480 must not be active product QSF (use 1280x720)")
     if multi_on:
-        if not any(m == "FRAME_W=1280" for m in act):
-            fails.append("INTEG product FRAME_W=1280 missing")
-        if not any(m == "FRAME_H=720" for m in act):
-            fails.append("INTEG product FRAME_H=720 missing")
         print("OK INTEG_ON: L4 remains off; MULTI owns 1280x720")
-    else:
-        if not any("FRAME_W=640" in m for m in act):
-            fails.append("DEFAULT product FRAME_W=640 missing from active QSF")
-        if not any("FRAME_H=480" in m for m in act):
-            fails.append("DEFAULT product FRAME_H=480 missing from active QSF")
     if not any("PLEX_PRESENT_720P_L4" in line for line in qsf.splitlines()):
         fails.append("QSF missing PLEX_PRESENT_720P_L4 recipe (commented or active)")
     if not any("FABRIC_NATIVE_720P_GEOM" in line for line in qsf.splitlines()):
         fails.append("QSF missing FABRIC_NATIVE_720P_GEOM recipe")
-    if not any("FRAME_W=1280" in line for line in qsf.splitlines()):
-        fails.append("QSF missing FRAME_W=1280 recipe")
 
     # Instantiation intent (ifdef bodies)
     checks = [
