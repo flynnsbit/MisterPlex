@@ -1728,11 +1728,16 @@ def check_yuv_ddr_writer_contract() -> None:
     allowed_paths = {Path("tests/unit/test_rtl_invariants.py")}
     # Nested git worktrees, local agent session dirs, and pinned lab binaries are
     # not product sources; scanning them false-fails the YUV-only DDR migration gate.
+    # "Memory" is the git-ignored permanent lab/evidence store (see AGENTS.md). It
+    # holds historical records and verbatim quotations of past daemon output, so it
+    # documents what the system DID, not what it must do. Redacting a true quotation
+    # to satisfy a source invariant would falsify the record.
     skip_parts = {
         ".git",
         "build",
         "__pycache__",
         ".worktrees",
+        "Memory",
         "artifacts",
         ".copilot-session",
         ".agent-work",
