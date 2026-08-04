@@ -221,6 +221,15 @@ int main() {
             std::fprintf(stderr, "FAIL: early drops 12@%lld=%d 15@%lld=%d\n",
                          static_cast<long long>(lead12), early12.drops,
                          static_cast<long long>(lead15), early15.drops);
+            // Thrash signature: every other frame under maxDropRun=1 for full
+            // window ⇒ Drop wall ≈ period (kStartupDropWallMs must be 0).
+            if (early12.drops == kFrames / 2 && early15.drops == kFrames / 2) {
+                std::fprintf(stderr,
+                             "FAIL_CLASS: Drop/Present thrash (drops==frames/2). "
+                             "Usually kStartupDropWallMs≈period (must be 0). "
+                             "Not residual-lead map; see test_av_startup_hold_red "
+                             "EXPECTED_MUTANT bad_drop_wall.\n");
+            }
             return 1;
         }
 

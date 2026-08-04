@@ -354,8 +354,17 @@ inline void formatAvServoTelemetry(char* buf, size_t bufLen, int64_t driftMs, in
 enum class StartupAudioMode { EarlyPlay, CoArmOrigin, HoldUntilVideo };
 
 // First-principles wall advances (ms). Drop freezes relative audio; Present ~period.
+// CRITICAL: Drop wall MUST stay 0. If Drop advances audio by ~one content period
+// (e.g. 41 ms @24fps), drift never repays under maxDropRun=1 → permanent
+// Drop/Present thrash → exactly frames/2 drops (200→100). That is NOT residual-
+// lead variance; it is a broken reclaim model. Red control:
+// tests/unit/test_av_startup_hold_red.sh mutates 0→41 and expects FAIL.
 constexpr int64_t kStartupDropWallMs = 0;
 constexpr int64_t kStartupPresentWallMs = 41; // 1000/24
+static_assert(kStartupDropWallMs == 0,
+              "kStartupDropWallMs must be 0 (Drop freezes audio); wall≈period thrash");
+static_assert(kStartupPresentWallMs > 0 && kStartupPresentWallMs <= 50,
+              "kStartupPresentWallMs must stay near one 24fps period");
 
 struct StartupPacerSim {
     int drops = 0;

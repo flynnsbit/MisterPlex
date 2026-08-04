@@ -119,20 +119,87 @@ DLEAD=$(printf '%s\n' "$TIP_OUT" | sed -n 's/.*dLead=\([0-9][0-9]*\).*/\1/p' | h
 [[ -n "$DLEAD" && "$DLEAD" -ge 100 && "$DLEAD" -le 140 ]]
 echo "PASS discrimination drops12=$DROPS12 drops15=$DROPS15 hold_ideal_drops=$HOLD_DROPS dLead=$DLEAD"
 
-# Mutant: Drop wall ≈ content period ⇒ reclaim≈0 ⇒ cannot hit exact 12/15 map.
+# Mutant: Drop wall ≈ content period ⇒ reclaim≈0 ⇒ Drop/Present thrash
+# (exactly frames/2 drops, e.g. 100@200). This is an INTENTIONAL RED control.
+# Do NOT read EXPECTED_MUTANT_FAIL lines as make-unit product failures.
 mkdir -p "$WORK/inc/libmisterplex"
-sed 's/kStartupDropWallMs = 0/kStartupDropWallMs = 41/' "$AV" >"$WORK/inc/libmisterplex/av_clock.hpp"
-"$CXX_BIN" "${CXX_FLAGS[@]}" -I"$WORK/inc" -I"$ROOT/host" -o "$WORK/test_avclock_zero" "$ROOT/tests/unit/test_avclock.cpp"
-set +e; ZOUT="$("$WORK/test_avclock_zero" 2>&1)"; ZRC=$?; set -e
-printf '%s\n' "$ZOUT" | tail -20
-echo "bad_drop_wall rc=$ZRC"; [[ "$ZRC" -ne 0 ]]
+# Isolate mutant include tree; never leave it on the default -I path.
+MUT_INC="$WORK/inc_dropwall"
+mkdir -p "$MUT_INC/libmisterplex"
+# Force Drop wall≈period and drop the product static_assert so thrash is a
+# runtime FAIL with drops==frames/2 (the signature parent logged as 100@200).
+python3 - "$AV" "$MUT_INC/libmisterplex/av_clock.hpp" <<'PY'
+import re, sys
+src, dst = sys.argv[1], sys.argv[2]
+t = open(src, encoding="utf-8").read()
+if "kStartupDropWallMs = 0" not in t:
+    raise SystemExit("product header missing kStartupDropWallMs = 0")
+t = t.replace("kStartupDropWallMs = 0", "kStartupDropWallMs = 41", 1)
+t = re.sub(
+    r"static_assert\(\s*kStartupDropWallMs\s*==\s*0\s*,\s*\"[^\"]*\"\s*\)\s*;\s*",
+    "/* MUTANT: static_assert stripped to observe runtime thrash */\n",
+    t,
+    count=1,
+)
+open(dst, "w", encoding="utf-8").write(t)
+PY
+set +e
+"$CXX_BIN" "${CXX_FLAGS[@]}" -I"$MUT_INC" -I"$ROOT/host" \
+  -o "$WORK/test_avclock_zero" "$ROOT/tests/unit/test_avclock.cpp" \
+  >"$WORK/mutant_dropwall_compile.out" 2>&1
+COMP_RC=$?
+set -e
+if [[ "$COMP_RC" -ne 0 ]]; then
+  echo "EXPECTED_MUTANT_FAIL bad_drop_wall: compile rejected (rc=$COMP_RC)"
+  tail -20 "$WORK/mutant_dropwall_compile.out" | sed 's/^/EXPECTED_MUTANT_FAIL | /' || true
+  # Compile reject is acceptable ONLY if product assert still blocks; require
+  # evidence it is the drop-wall invariant, not a random break.
+  grep -E 'kStartupDropWallMs|static_assert|Drop freezes' \
+    "$WORK/mutant_dropwall_compile.out" >/dev/null \
+    || { echo "EXPECTED_MUTANT_FAIL compile fail without drop-wall evidence" >&2; exit 1; }
+else
+  set +e
+  ZOUT="$("$WORK/test_avclock_zero" 2>&1)"
+  ZRC=$?
+  set -e
+  echo "EXPECTED_MUTANT_FAIL bad_drop_wall runtime rc=$ZRC (product tip must stay green)"
+  # Prefix every line so log scrapers do not treat this as unit failure 2.
+  printf '%s\n' "$ZOUT" | tail -25 | sed 's/^/EXPECTED_MUTANT_FAIL | /'
+  [[ "$ZRC" -ne 0 ]]
+  printf '%s\n' "$ZOUT" | grep -q 'early drops 12@620=100' \
+    || printf '%s\n' "$ZOUT" | grep -q 'FAIL: early drops 12@620=100' \
+    || { echo "EXPECTED_MUTANT_FAIL missing thrash signature drops=100" >&2; exit 1; }
+  printf '%s\n' "$ZOUT" | grep -q 'FAIL_CLASS: Drop/Present thrash' \
+    || { echo "EXPECTED_MUTANT_FAIL missing FAIL_CLASS thrash label" >&2; exit 1; }
+fi
+echo "PASS bad_drop_wall negative control (mutant must not look like tip PASS)"
+rm -rf "$MUT_INC"
 
 # Mutant: holdDrainShouldPastBias always true (old past-bias-on-drain) ⇒ peer test RED.
+MUT_INC="$WORK/inc_pastbias"
+mkdir -p "$MUT_INC/libmisterplex"
 sed 's/return !holdBufNonEmpty;/return true; \/* MUTANT past-bias always *\//' "$AV" \
-  >"$WORK/inc/libmisterplex/av_clock.hpp"
-"$CXX_BIN" "${CXX_FLAGS[@]}" -I"$WORK/inc" -I"$ROOT/host" -o "$WORK/test_avclock_bias" \
-  "$ROOT/tests/unit/test_avclock.cpp"
-set +e; BOUT="$("$WORK/test_avclock_bias" 2>&1)"; BRC=$?; set -e
-printf '%s\n' "$BOUT" | tail -15
-echo "bad_past_bias rc=$BRC"; [[ "$BRC" -ne 0 ]]
+  >"$MUT_INC/libmisterplex/av_clock.hpp"
+set +e
+"$CXX_BIN" "${CXX_FLAGS[@]}" -I"$MUT_INC" -I"$ROOT/host" \
+  -o "$WORK/test_avclock_bias" "$ROOT/tests/unit/test_avclock.cpp" \
+  >"$WORK/mutant_pastbias_compile.out" 2>&1
+COMP_RC=$?
+set -e
+if [[ "$COMP_RC" -ne 0 ]]; then
+  echo "EXPECTED_MUTANT_FAIL bad_past_bias: compile rejected (rc=$COMP_RC)"
+  tail -15 "$WORK/mutant_pastbias_compile.out" || true
+else
+  set +e
+  BOUT="$("$WORK/test_avclock_bias" 2>&1)"
+  BRC=$?
+  set -e
+  echo "EXPECTED_MUTANT_FAIL bad_past_bias runtime rc=$BRC"
+  printf '%s\n' "$BOUT" | tail -15 | sed 's/^/EXPECTED_MUTANT_FAIL | /'
+  [[ "$BRC" -ne 0 ]]
+fi
+echo "PASS bad_past_bias negative control"
+rm -rf "$MUT_INC" "$WORK/inc" 2>/dev/null || true
+# Leave no mutant headers that could poison a stray -I.
+rm -f "$WORK"/test_avclock_zero "$WORK"/test_avclock_bias 2>/dev/null || true
 echo "OK hold B3/B4 + peer-drain red/green"
