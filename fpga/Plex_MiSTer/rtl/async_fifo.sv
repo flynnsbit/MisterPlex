@@ -26,9 +26,6 @@ module async_fifo #(
 	reg [AW:0] rd_bin, rd_gray;
 	reg [AW:0] rd_gray_w1, rd_gray_w2;
 	reg [AW:0] wr_gray_r1, wr_gray_r2;
-	// Registered first-word-fall-through read port: consumers still see
-	// rd_empty=0 only when rd_data is valid, but no fast-clock RAM data fans
-	// straight into slow-domain logic.
 	reg [WIDTH-1:0] rd_data_r;
 	reg             rd_valid;
 	localparam [AW:0] PTR_ONE = {{AW{1'b0}}, 1'b1};

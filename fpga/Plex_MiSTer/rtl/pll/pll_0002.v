@@ -1,6 +1,6 @@
 `timescale 1ns/10ps
 // Source of truth for Plex fabric PLL (not the stale megawizard strings in pll.v).
-// Product default: 3 clocks — clk_sys 20 / clk_sdram (macro) / clk_ddr 90.
+// Product default: 3 clocks — clk_sys 20 (CLK_SYS_24→24) / clk_sdram / clk_ddr 90.
 // PRESENT_CLK_PIX_PLL (default OFF): 4th output clk_pix for CEA 720p present.
 //   - default pix: 29.700000 MHz  (= 1650*750*24  — CEA-861 720p H/V totals @ 24 Hz)
 //   - PRESENT_CLK_PIX_74_25: 74.250000 MHz (= 1650*750*60 — CEA-861 VIC 4 720p60)
@@ -49,12 +49,24 @@ module  pll_0002(
 `define MISTERPLEX_SDRAM_PLL_FREQ "100.000000 MHz"
 `endif
 
+// clk_sys frequency (product 20; CLK_SYS_24 for L4 1312×762 @ ~24.006 Hz).
+`ifdef CLK_SYS_24
+`define MISTERPLEX_CLK_SYS_PLL_FREQ "24.000000 MHz"
+`else
+`define MISTERPLEX_CLK_SYS_PLL_FREQ "20.000000 MHz"
+`endif
+
 // clk_pix frequency string (only consumed when PRESENT_CLK_PIX_PLL).
+// Default = COMPACT 720p24 fabric raster 29.700 MHz (H1650*V750*24) — NOT CEA VIC60.
+// True CEA-861 720p24 VIC60 = 59.400 MHz (H3300) via PRESENT_CLK_PIX_CEA24.
+// CEA 720p60 VIC4 = 74.250 MHz via PRESENT_CLK_PIX_74_25.
+// Integer-N exact from 50 MHz: 29.7 M=297/10/50; 59.4 M=297/10/25; 74.25 M=297/10/20.
+// Fitted Actual UNKNOWN until fit.rpt. pll_hdmi separate (148.5 frac + adj).
 `ifdef PRESENT_CLK_PIX_74_25
 `define MISTERPLEX_CLK_PIX_PLL_FREQ "74.250000 MHz"
+`elsif PRESENT_CLK_PIX_CEA24
+`define MISTERPLEX_CLK_PIX_PLL_FREQ "59.400000 MHz"
 `else
-// 29.70 MHz: CEA-861 720p blanking totals (H=1650,V=750) * 24 fps.
-// True CEA VIC 60 (720p24) uses H=3300 → 59.40 MHz; see arith docs.
 `define MISTERPLEX_CLK_PIX_PLL_FREQ "29.700000 MHz"
 `endif
 
@@ -64,7 +76,7 @@ module  pll_0002(
 		.reference_clock_frequency("50.0 MHz"),
 		.operation_mode("direct"),
 		.number_of_clocks(4),
-		.output_clock_frequency0("20.000000 MHz"),
+		.output_clock_frequency0(`MISTERPLEX_CLK_SYS_PLL_FREQ),
 		.phase_shift0("0 ps"),
 		.duty_cycle0(50),
 		.output_clock_frequency1(`MISTERPLEX_SDRAM_PLL_FREQ),
@@ -134,7 +146,7 @@ module  pll_0002(
 		.reference_clock_frequency("50.0 MHz"),
 		.operation_mode("direct"),
 		.number_of_clocks(3),
-		.output_clock_frequency0("20.000000 MHz"),
+		.output_clock_frequency0(`MISTERPLEX_CLK_SYS_PLL_FREQ),
 		.phase_shift0("0 ps"),
 		.duty_cycle0(50),
 		.output_clock_frequency1(`MISTERPLEX_SDRAM_PLL_FREQ),

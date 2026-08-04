@@ -86,12 +86,14 @@ set_global_assignment -name VERILOG_MACRO "PRODUCT_NO_STUB=1"
 # =============================================================================
 # integ/720p-compose FIT CANDIDATE (ENABLED — not default-OFF baseline)
 # Branch purpose: compose 720p present + clk_pix 29.7 + fabric DMA for parent fit.
-# Refresh claim (HONEST): PRESENT_CLK_PIX_PLL @ 29.700 MHz + COMPACT CEA totals
-#   H_TOTAL=1650 V_TOTAL=750 → target 24.000 Hz scanout on clk_pix.
+# Refresh claim (HONEST): PRESENT_CLK_PIX_PLL @ 29.700 MHz + COMPACT H1650×V750
+#   → target 24.000 Hz scanout on clk_pix (NOT CEA VIC60 59.4/H3300).
 # Beam fabric on clk_sys@20 with PPC=2 → peak 40 Mpix/s >= 29.7 (rate-match).
-# WITHOUT PLL this would be fps_eff=20e6/1_237_500 ≈ 16.16 Hz (see timing pack).
-# Do NOT enable PRESENT_CLK_PIX_74_25 (that is VIC-4 60 Hz only).
-# L4 (1312×762) is mutually exclusive with MULTI — left commented as alternate.
+# WITHOUT PLL: fps_eff=20e6/1_237_500 ≈ 16.16 Hz — photographs as 720p win.
+# Parent falsifier: scripts/check_clk_pix_refresh.sh (fps_x10 ~240 vs ~161 trap).
+# Do NOT enable PRESENT_CLK_PIX_74_25 (VIC-4 60 Hz) or PRESENT_CLK_PIX_CEA24.
+# L4 (1312×762) mutually exclusive with MULTI — left commented as alternate.
+# STA PRE-REG: docs/clk_pix_29p7_sta_prereg.md (w-clock).
 # =============================================================================
 #set_global_assignment -name VERILOG_MACRO "FRAME_W=640"
 #set_global_assignment -name VERILOG_MACRO "FRAME_H=480"
@@ -103,8 +105,8 @@ set_global_assignment -name VERILOG_MACRO "PRESENT_MULTI_PIXEL=1"
 set_global_assignment -name VERILOG_MACRO "PRESENT_PX_PER_CLK=2"
 set_global_assignment -name VERILOG_MACRO "PRESENT_CLK_PIX_PLL=1"
 set_global_assignment -name SDC_FILE Plex_clk_pix.sdc
-# Fabric DDR→DDR publication engine (w-path/w-mem). Bounce ≤2 M10K; start tied
-# idle until ARM/handover wires kick — still in hierarchy for area measurement.
+# Fabric DDR→DDR publication engine (w-path/w-mem). Bounce layout-dependent M10K;
+# start tied idle until ARM/handover wires kick — still in hierarchy for area.
 set_global_assignment -name VERILOG_MACRO "FABRIC_FRAME_DMA=1"
 #
 # --- Alternate: L4 compact beam (mutually exclusive with MULTI above) ---
@@ -114,6 +116,7 @@ set_global_assignment -name VERILOG_MACRO "FABRIC_FRAME_DMA=1"
 #set_global_assignment -name VERILOG_MACRO "FABRIC_NATIVE_720P_GEOM=1"
 #set_global_assignment -name VERILOG_MACRO "PRESENT_BEAM_960=1"
 #set_global_assignment -name VERILOG_MACRO "PRESENT_CLK_PIX_74_25=1"
+#set_global_assignment -name VERILOG_MACRO "CLK_SYS_24=1"
 
 
 # sys/sys.tcl carries the upstream MiSTer single-stick SDRAM_* pin assignments.

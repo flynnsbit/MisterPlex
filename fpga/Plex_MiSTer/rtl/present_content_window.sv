@@ -1,7 +1,10 @@
 // present_content_window — NN content→DE store address map (fabric scaler V1).
 //
 // Purpose: evacuate ARM swscale/pad. 720p is the reward for that evacuation —
-// widths/counters are sized for 1280×720 from day one (one luma line = 1 M10K).
+// widths/counters are sized for 1280×720 from day one.
+// M10K note: a 1280×8 naive line is NOT 1 M10K — legal 1K×8 holds 1024 B only
+// (2 M10K naive); 256×40 packed hits 1280 B/block but forces 5 px/word. See
+// docs/m10k-layout-correction-w-clock.md. This module itself is 0 M10K (NN).
 //
 // Maps DE beam (hc, py) into DDR/frame_store read coordinates.
 //   win_enable=0 → legacy full-bank FRAME_W×FRAME_H (bit-compatible 480p path)
@@ -12,7 +15,8 @@
 //   V2 bilinear — `PRESENT_WINDOW_BILINEAR` (default OFF). This module exports
 //     floor/ceil sample coords + Q8 fracs; `present_bilinear_lerp.sv` does 2×2.
 //     Tap fetch / line hold is NOT auto-wired into present_core (fit risk).
-//     Cost when fully wired: lerp 0 M10K; dual Y lines ≈2 M10K @1280 or 2nd
+//     Cost when fully wired: lerp 0 M10K; dual Y lines layout-dependent
+//     (naive 8-bit ≈2–4 M10K @1280; packed 40-bit ≈2 M10K) or 2nd
 //     DDR fetch. Fmax: mul+>> only — OK at clk_pix 29.7 MHz (720p24 CEA) and
 //     74.25 MHz class; no pixel-path divide. 4-tap polyphase: do not build
 //     (ascal owns HDMI polyphase).
@@ -39,7 +43,7 @@ module present_content_window #(
 	// Legacy full-map domain when win_enable=0 (product 480p: 640×480).
 	parameter int FRAME_W = 640,
 	parameter int FRAME_H = 480,
-	// Max addressable store/content (720p-native). 1280 = one M10K luma line.
+	// Max addressable store/content (720p-native). 1280 px is NOT one M10K at 8-bit.
 	parameter int STORE_W = 1280,
 	parameter int STORE_H = 720,
 	// Default DE geometry (overridden by h_de/v_de ports when non-zero).

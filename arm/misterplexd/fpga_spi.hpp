@@ -287,9 +287,12 @@ public:
         uint8_t residual_csum = 0;
         // 3.3l-2: reconstructed-pixel signature for MB0 block0 after inv_quant+IDCT.
         // raw[14]/status[119:112] = XOR of 16 reconstructed Y samples; golden 0x3B.
+        // PRODUCT_NO_STUB + clk_pix live: raw[14] = meas_fps_x10 (240=24.0 Hz),
+        // raw[15] = meas_flags {valid,pix_ok,fps_ok,pll_on} — not recon (stub gone).
         uint8_t recon_sig = 0;
         // raw[15]/status[127:120] = P3-3l2 silicon RCA flags. Bits [2:1] may be
         // altered by the Aspect Ratio OSD splice; use the other bits only.
+        // Under PRODUCT_NO_STUB: refresh measure flags (see plex_clk_status).
         uint8_t recon_dbg = 0;
         bool ddr_busy = false;      // status_in[79] (v2) — DDR→BRAM copy in flight
         bool swap_pending = false;  // status_in[78] — display bank flip waiting for vsync
