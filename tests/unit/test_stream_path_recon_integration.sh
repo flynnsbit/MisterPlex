@@ -38,7 +38,7 @@ RTL_IQ="$ROOT/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv"
 RTL_INTER="$ROOT/fpga/Plex_MiSTer/rtl/h264_inter_pred.sv"
 RTL_DEBLOCK="$ROOT/fpga/Plex_MiSTer/rtl/h264_deblock.sv"
 RTL_DPB="$ROOT/fpga/Plex_MiSTer/rtl/h264_dpb.sv"
-RTL_HOLD="$ROOT/fpga/Plex_MiSTer/rtl/h264_leaf_basename_hold.sv"
+RTL_HOLD="$ROOT/fpga/Plex_MiSTer/rtl/h264_decode_skeleton.sv"
 RTL_CAVLC="$ROOT/fpga/Plex_MiSTer/rtl/h264_cavlc_residual.sv"
 RTL_INTRA="$ROOT/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv"
 RTL_SYN="$ROOT/fpga/Plex_MiSTer/rtl/h264_syntax_primitives.sv"
@@ -61,7 +61,7 @@ done
 for rtl in rtl/stream_path.sv rtl/stream_ingest.sv rtl/ddr_bitstream_reader.sv rtl/bitstream_fifo.sv rtl/nalu_scanner.sv \
            rtl/sps_parser.sv rtl/pps_parser.sv rtl/slice_hdr_parser.sv rtl/decode_stub.sv \
            rtl/h264_iq_idct_4x4.sv rtl/h264_inter_pred.sv rtl/h264_deblock.sv rtl/h264_dpb.sv \
-           rtl/h264_leaf_basename_hold.sv rtl/h264_cavlc_residual.sv rtl/h264_intra_pred.sv \
+           rtl/h264_decode_skeleton.sv rtl/h264_cavlc_residual.sv rtl/h264_intra_pred.sv \
            rtl/h264_syntax_primitives.sv rtl/h264_p_slice_modes.sv; do
   if ! grep -q "$rtl" "$QIP"; then
     echo "RTL SIM ERROR: files.qip does not list product RTL under simulation: $rtl" >&2

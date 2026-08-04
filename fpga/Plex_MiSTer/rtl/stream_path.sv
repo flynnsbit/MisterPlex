@@ -1,18 +1,16 @@
 // Phase 3.3–3.3l-1: F3 → FIFO → NAL → SPS/PPS/slice_hdr(+full first residual) + decode_stub.
 // Hybrid: stub diagnostic paint is F3-only; host F1 recon owns product present (Plex.sv).
 //
-// Phase A fabric-decode hold: h264_leaf_basename_hold is ALWAYS instantiated so
-// the leaf H.264 modules stay reachable for synthesis costing. It wraps the
-// real leaves under the 8 file-basename module names the parent reachability
-// probe greps for. ENABLE_FABRIC_DECODE only selects whether fabric_observe can
-// affect the paint mux (Phase A keeps paint on decode_stub either way).
+// Fabric decode: h264_decode_skeleton is ALWAYS instantiated (no generate-if) so
+// real H.264 leaf modules stay in the hierarchy for synthesis costing / Phase B.
+// ENABLE_FABRIC_DECODE selects whether fabric_observe can affect the paint mux
+// (default OFF keeps paint on decode_stub — product-identical).
 
 module stream_path #(
 	parameter int FRAME_W = 320,
 	parameter int FRAME_H = 240,
-	// 1'b0 = product: stub paints; fabric decode held for area only.
-	// 1'b1 = reserved: still stub paint in Phase A (no fabric pixels); observe
-	//        folded into paint LSB via mux so the enable path is real logic.
+	// 1'b0 = product: stub paints; fabric decode held for reachability/area.
+	// 1'b1 = observe folded into paint LSB via mux (Phase B still stub pixels).
 	parameter bit ENABLE_FABRIC_DECODE = 1'b0
 )(
 	input  wire        clk,
@@ -347,23 +345,16 @@ module stream_path #(
 		.frames_out(stub_frames)
 	);
 
-	// ── Fabric decode hold (ALWAYS instantiated — no generate-if) ──
-	// Integrator choice among core/top/skeleton (quoted evidence):
-	//   core  = INTERFACE SKELETON ONLY — zero leaf instances; EOF is assign stubs
-	//   top   = real intra MB pipe (dequant/idct/recon/intra4/16) but ports are
-	//           mb_start/block_coeff/nb_* — NOT live at stream_path boundary;
-	//           misses CAVLC/deblock/dpb/inter/p_slice/syntax leaves
-	//   skeleton = full leaf set + XOR observe, stim/observe ports match stream_path
-	// Phase A ships h264_leaf_basename_hold: same stim/observe contract as skeleton,
-	// plus 8 file-basename wrapper modules so the parent NOBODY probe finds each leaf
-	// file name as an instantiated module (real leaves live under those wrappers).
+	// ── Fabric decode (ALWAYS instantiated — no generate-if) ──
+	// Integrator: h264_decode_skeleton (quoted): sole multi-leaf holder among
+	// core/top/skeleton; stim/observe contract matches stream_path boundary.
 	wire [7:0] fabric_observe;
 	wire [7:0] fabric_stim_byte = sl_place_coeff[0][7:0] ^ residual_csum ^ last_nal_type;
 	wire [3:0] fabric_stim_mode = {first_mb_part_mode[0], first_mb_intra, sl_is_i, slice_valid};
 	wire [15:0] fabric_stim_mv_x = {8'd0, first_mb_type};
 	wire [15:0] fabric_stim_mv_y = {8'd0, sl_type};
 	wire fabric_stim_valid = residual_place_pulse | slice_valid | vcl_pulse;
-	h264_leaf_basename_hold #(
+	h264_decode_skeleton #(
 		.FRAME_W(FRAME_W),
 		.FRAME_H(FRAME_H)
 	) u_fabric_decode (
@@ -375,13 +366,12 @@ module stream_path #(
 		.stim_mode(fabric_stim_mode),
 		.stim_mv_x(fabric_stim_mv_x),
 		.stim_mv_y(fabric_stim_mv_y),
-		.observe(fabric_observe)
+		.skeleton_observe(fabric_observe)
 	);
 
-	// Paint mux: Phase A fabric has no pixel path — both arms are stub paint.
+	// Paint mux: fabric has no product pixel path yet — both arms are stub paint.
 	// ENABLE_FABRIC_DECODE folds observe[0] into pixel LSB only when ON so the
-	// enable is real mux logic, not a dangling param. Default OFF → bit-identical
-	// to pre-Phase-A stub paint (observe does not touch fs_wr_*).
+	// enable is real mux logic. Default OFF → bit-identical stub paint.
 	wire        fabric_fs_wr_en    = stub_fs_wr_en;
 	wire [15:0] fabric_fs_wr_pixel = stub_fs_wr_pixel ^ {15'd0, fabric_observe[0]};
 	wire        fabric_fs_wr_reset = stub_fs_wr_reset;

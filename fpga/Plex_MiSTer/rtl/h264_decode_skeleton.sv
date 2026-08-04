@@ -1,25 +1,17 @@
-// h264_decode_skeleton — Resource estimation skeleton for Quartus fitting.
+// h264_decode_skeleton — Fabric H.264 leaf integrator (Phase A/B).
 //
-// PURPOSE: Instantiate every module the product decode datapath requires,
-//          wired so Quartus cannot optimise them away, to measure actual
-//          FPGA resource consumption on the DE10-Nano (Cyclone V 5CSEBA6U23I7).
+// PURPOSE: Instantiate the product decode leaf modules so synthesis cannot
+//          discard them, and so Phase B can grow a real I-frame path behind
+//          stream_path.ENABLE_FABRIC_DECODE without touching present_core.
 //
-// THIS IS NOT A DECODER. It does not process data correctly. It exists
-// solely to hold area in the fitter so we get a real resource measurement.
+// Phase B (intra chain, real connections — not basename wrappers):
+//   rbsp_filter → baseline_syntax_parser → exp_golomb_reader
+//   → cavlc_residual_block → dequant4x4 → idct4x4 → recon4x4
+//   → intra4x4 / intra16x16 / chroma8x8 (+ nc predictor, mode guard)
 //
-// ACCEPTANCE CRITERION: Every module in post-fit hierarchy must report
-//                       non-zero ALMs. If any shows 0, the skeleton is
-//                       lying and the area number is worthless.
-//
-// ANTI-OPTIMISATION: All module outputs are XOR-reduced into a registered
-//                    observation chain that drives a real output port.
-//                    Quartus cannot strip logic whose output is consumed.
-//
-// INSTANTIATION COUNTS: 1 of each (lower bound). Real datapath may require
-//                       parallel instances (e.g. 4× IDCT). Update from
-//                       w-arch manifest when received.
-//
-// OWNER: w-rel. CONSUMER: w-cap (Quartus fit), w-arch (interpret results).
+// ANTI-OPTIMISATION: leaf outputs XOR into skeleton_observe (real port).
+// INSTANTIATION STYLE: `name #(` so parent LIVE/DEAD probe matches.
+// OWNER: w-fabric-decode-a. Fit area still parent-owned (unmeasured here).
 
 `default_nettype none
 
@@ -45,7 +37,7 @@ module h264_decode_skeleton #(
     input  wire        stim_valid,
 
     // Observable output — must drive a real port or mailbox
-    output reg  [7:0]  skeleton_observe
+    output wire [7:0]  skeleton_observe
 );
 
     // ════════════════════════════════════════════════════════════════════
@@ -63,13 +55,8 @@ module h264_decode_skeleton #(
     // ════════════════════════════════════════════════════════════════════
     // 1. CAVLC RESIDUAL BLOCK — sequential bitstream parser (w-level)
     // ════════════════════════════════════════════════════════════════════
+    // cavlc_rbsp filled from rbsp_filter path (section 13b) — declared here.
     wire [7:0] cavlc_rbsp [0:63];
-    genvar ci;
-    generate
-        for (ci = 0; ci < 64; ci = ci + 1) begin : gen_cavlc_rbsp
-            assign cavlc_rbsp[ci] = stim_byte ^ ci[7:0];
-        end
-    endgenerate
 
     wire        cavlc_busy, cavlc_done, cavlc_ok;
     wire [9:0]  cavlc_bit_end;
@@ -80,10 +67,14 @@ module h264_decode_skeleton #(
     wire signed [15:0] cavlc_level_dbg [0:15];
     wire [3:0]  cavlc_run_dbg [0:15];
 
-    h264_cavlc_residual_block #(.MAX_BYTES(64)) u_cavlc (
+    // nC → coeff_token_table is declared below; forward-declare for cavlc port.
+    wire [2:0] nc_table;
+    h264_cavlc_residual_block #(
+        .MAX_BYTES(64)
+    ) u_cavlc (
         .clk(clk), .reset(reset),
         .start(stim_valid),
-        .coeff_token_table(stim_mode[2:0]),
+        .coeff_token_table(nc_table),
         .max_coeff(5'd16),
         .bit_offset_start({4'd0, stim_qp}),
         .bit_len(10'd400),
@@ -100,26 +91,20 @@ module h264_decode_skeleton #(
                         cavlc_bit_end[7:0] ^ {cavlc_busy, cavlc_done, cavlc_ok, 5'd0};
 
     // ════════════════════════════════════════════════════════════════════
-    // 2. DEQUANT + IDCT + RECON — arithmetic pipeline (w-cabac)
+    // 2. DEQUANT + IDCT + RECON — product widths (coeff 16b, residual 29b)
     // ════════════════════════════════════════════════════════════════════
-    wire signed [8:0] dq_coeff [0:15];
-    genvar di;
-    generate
-        for (di = 0; di < 16; di = di + 1) begin : gen_dq_input
-            assign dq_coeff[di] = cavlc_coeff[di][8:0];
-        end
-    endgenerate
-
-    wire signed [17:0] dq_out [0:15];
-    h264_dequant4x4 u_dequant (
-        .coeff(dq_coeff),
+    wire signed [28:0] dq_out [0:15];
+    h264_dequant4x4 #(
+    ) u_dequant (
+        .coeff(cavlc_coeff),
         .qp(stim_qp),
         .max_coeff(5'd16),
         .dequant(dq_out)
     );
 
-    wire signed [17:0] idct_out [0:15];
-    h264_idct4x4 u_idct (
+    wire signed [28:0] idct_out [0:15];
+    h264_idct4x4 #(
+    ) u_idct (
         .dequant(dq_out),
         .residual(idct_out)
     );
@@ -127,7 +112,8 @@ module h264_decode_skeleton #(
     // Prediction source (muxed from intra predictors below)
     wire [7:0] recon_pred [0:15];
     wire [7:0] recon_out [0:15];
-    h264_recon4x4 u_recon (
+    h264_recon4x4 #(
+    ) u_recon (
         .pred(recon_pred),
         .residual(idct_out),
         .recon(recon_out)
@@ -149,7 +135,8 @@ module h264_decode_skeleton #(
     // Intra 4×4
     wire [3:0] i4_used_mode;
     wire [7:0] i4_pred [0:15];
-    h264_intra4x4_pred u_intra4x4 (
+    h264_intra4x4_pred #(
+    ) u_intra4x4 (
         .mode(stim_mode),
         .above(nb_above_4),
         .left(nb_left_4),
@@ -160,10 +147,14 @@ module h264_decode_skeleton #(
         .pred(i4_pred)
     );
 
-    // Intra 16×16
+    // Intra 16×16 — product module is a 1–2 cycle pipe (clk/start/valid).
     wire       i16_unsupported;
+    wire       i16_valid;
     wire [7:0] i16_pred [0:255];
-    h264_intra16x16_pred u_intra16x16 (
+    h264_intra16x16_pred #(
+    ) u_intra16x16 (
+        .clk(clk),
+        .start(stim_valid),
         .mode(stim_mode[1:0]),
         .above(nb_above_16),
         .left(nb_left_16),
@@ -171,18 +162,24 @@ module h264_decode_skeleton #(
         .has_above(stim_valid),
         .has_left(stim_valid),
         .unsupported(i16_unsupported),
+        .valid(i16_valid),
         .pred(i16_pred)
     );
 
-    // Chroma 8×8
+    // Chroma 8×8 — product module is a 1–2 cycle pipe (clk/start/valid).
+    wire       chroma_valid;
     wire [7:0] chroma_pred [0:63];
-    h264_chroma8x8_pred u_chroma_pred (
+    h264_chroma8x8_pred #(
+    ) u_chroma_pred (
+        .clk(clk),
+        .start(stim_valid),
         .mode(stim_mode[1:0]),
         .above(nb_above_8),
         .left(nb_left_8),
         .top_left(nb_top_left),
         .has_above(stim_valid),
         .has_left(stim_valid),
+        .valid(chroma_valid),
         .pred(chroma_pred)
     );
 
@@ -191,7 +188,8 @@ module h264_decode_skeleton #(
     wire [3:0] guard_unsup_code;
     wire [15:0] guard_unsup_mb;
     wire [4:0]  guard_unsup_block;
-    h264_intra_mode_guard u_mode_guard (
+    h264_intra_mode_guard #(
+    ) u_mode_guard (
         .clk(clk), .reset(reset),
         .mb_valid(stim_valid),
         .mb_type(stim_byte),
@@ -216,8 +214,8 @@ module h264_decode_skeleton #(
     wire [7:0] xor_intra = xor16x8(i4_pred) ^ i16_pred[0] ^ i16_pred[128] ^ i16_pred[255] ^
                             chroma_pred[0] ^ chroma_pred[32] ^ chroma_pred[63] ^
                             {4'd0, i4_used_mode} ^ {7'd0, i16_unsupported} ^
-                            {7'd0, guard_unsup_seen} ^ guard_unsup_code[3:0] ^
-                            guard_unsup_mb[7:0];
+                            {7'd0, guard_unsup_seen} ^ {4'd0, guard_unsup_code} ^
+                            guard_unsup_mb[7:0] ^ {6'd0, i16_valid, chroma_valid};
 
     // ════════════════════════════════════════════════════════════════════
     // 4. MOTION COMPENSATION — per-sample interpolation (w-mc)
@@ -235,7 +233,8 @@ module h264_decode_skeleton #(
     endgenerate
 
     wire [7:0] mc_luma_sample;
-    h264_luma_qpel_sample u_luma_mc (
+    h264_luma_qpel_sample #(
+    ) u_luma_mc (
         .ref_pix(mc_luma_ref),
         .frac_x(stim_mv_x[1:0]),
         .frac_y(stim_mv_y[1:0]),
@@ -243,7 +242,8 @@ module h264_decode_skeleton #(
     );
 
     wire [7:0] mc_chroma_sample;
-    h264_chroma_epel_sample u_chroma_mc (
+    h264_chroma_epel_sample #(
+    ) u_chroma_mc (
         .p00(stim_byte),
         .p10(stim_byte ^ 8'h11),
         .p01(stim_byte ^ 8'h22),
@@ -260,7 +260,8 @@ module h264_decode_skeleton #(
     // ════════════════════════════════════════════════════════════════════
     wire signed [15:0] mvp_pred_x, mvp_pred_y, mvp_mv_x, mvp_mv_y;
     wire               mvp_skip_zero;
-    h264_mv_pred_16x16 u_mv_pred_16x16 (
+    h264_mv_pred_16x16 #(
+    ) u_mv_pred_16x16 (
         .avail_a(stim_valid), .avail_b(stim_valid),
         .avail_c(stim_mode[0]), .avail_d(stim_mode[1]),
         .mv_a_x($signed(stim_mv_x)), .mv_a_y($signed(stim_mv_y)),
@@ -277,7 +278,8 @@ module h264_decode_skeleton #(
 
     wire signed [15:0] mvp_part_pred_x, mvp_part_pred_y, mvp_part_mv_x, mvp_part_mv_y;
     wire               mvp_part_skip;
-    h264_mv_pred_part u_mv_pred_part (
+    h264_mv_pred_part #(
+    ) u_mv_pred_part (
         .part_mode(stim_mode[2:0]),
         .part_idx(stim_mode[1:0]),
         .avail_a(stim_valid), .avail_b(stim_valid),
@@ -306,7 +308,9 @@ module h264_decode_skeleton #(
     localparam int DPB_FRAME_BYTES = DPB_Y_SIZE + 2 * DPB_C_SIZE;
 
     // DPB local memory — infers block RAM (this IS the resource we measure)
-    (* ram_style = "block" *) reg [7:0] dpb_mem [0:2*DPB_FRAME_BYTES-1];
+    localparam int DPB_MEM_DEPTH = 2 * DPB_FRAME_BYTES;
+    localparam int DPB_MEM_AW = (DPB_MEM_DEPTH <= 1) ? 1 : $clog2(DPB_MEM_DEPTH);
+    (* ram_style = "block" *) reg [7:0] dpb_mem [0:DPB_MEM_DEPTH-1];
     reg [7:0]  dpb_rdata;
     reg        dpb_rvalid;
     wire       dpb_mem_we;
@@ -316,9 +320,9 @@ module h264_decode_skeleton #(
     wire [31:0] dpb_mem_raddr;
 
     always @(posedge clk) begin
-        if (dpb_mem_we && dpb_mem_waddr < (2*DPB_FRAME_BYTES))
-            dpb_mem[dpb_mem_waddr[19:0]] <= dpb_mem_wdata;
-        dpb_rdata  <= dpb_mem[dpb_mem_raddr[19:0]];
+        if (dpb_mem_we && dpb_mem_waddr < DPB_MEM_DEPTH)
+            dpb_mem[dpb_mem_waddr[DPB_MEM_AW-1:0]] <= dpb_mem_wdata;
+        dpb_rdata  <= dpb_mem[dpb_mem_raddr[DPB_MEM_AW-1:0]];
         dpb_rvalid <= dpb_mem_rd;
     end
 
@@ -393,7 +397,8 @@ module h264_decode_skeleton #(
     // ════════════════════════════════════════════════════════════════════
     wire [2:0] deblock_bs_out;
     wire       deblock_unsup_ref;
-    h264_deblock_bs u_deblock_bs (
+    h264_deblock_bs #(
+    ) u_deblock_bs (
         .disable_all(1'b0),
         .slice_boundary_blocked(1'b0),
         .mb_boundary(stim_byte[1]),
@@ -409,6 +414,22 @@ module h264_decode_skeleton #(
         .q_mvy($signed(stim_mv_y[11:0]) - 12'sd3),
         .bs(deblock_bs_out),
         .unsupported_ref(deblock_unsup_ref)
+    );
+
+    // Thresholds + combo edge (pipe already holds the sequential edge path).
+    wire [7:0] db_alpha, db_beta;
+    wire [5:0] db_index_a, db_index_b, db_tc0;
+    h264_deblock_thresholds #(
+    ) u_deblock_thr (
+        .qp_avg(stim_qp),
+        .slice_alpha_c0_offset(5'sd0),
+        .slice_beta_offset(5'sd0),
+        .bs(deblock_bs_out),
+        .alpha(db_alpha),
+        .beta(db_beta),
+        .index_a(db_index_a),
+        .index_b(db_index_b),
+        .tc0(db_tc0)
     );
 
     // Deblock edge pipe — the core filtering unit
@@ -432,7 +453,8 @@ module h264_decode_skeleton #(
     wire [7:0]  db_p2_out [0:3], db_p1_out [0:3], db_p0_out [0:3];
     wire [7:0]  db_q0_out [0:3], db_q1_out [0:3], db_q2_out [0:3];
 
-    h264_deblock_edge_pipe u_deblock_pipe (
+    h264_deblock_edge_pipe #(
+    ) u_deblock_pipe (
         .clk(clk), .reset(reset),
         .valid_i(stim_valid),
         .is_chroma(stim_mode[0]),
@@ -445,6 +467,26 @@ module h264_decode_skeleton #(
         .valid_o(db_pipe_valid),
         .p2_out(db_p2_out), .p1_out(db_p1_out), .p0_out(db_p0_out),
         .q0_out(db_q0_out), .q1_out(db_q1_out), .q2_out(db_q2_out)
+    );
+
+    wire [7:0] db_edge_p2 [0:3], db_edge_p1 [0:3], db_edge_p0 [0:3];
+    wire [7:0] db_edge_q0 [0:3], db_edge_q1 [0:3], db_edge_q2 [0:3];
+    wire [7:0] db_edge_alpha, db_edge_beta;
+    wire [5:0] db_edge_tc0;
+    h264_deblock_edge #(
+    ) u_deblock_edge (
+        .is_chroma(stim_mode[0]),
+        .bs(deblock_bs_out),
+        .qp_avg(stim_qp),
+        .slice_alpha_c0_offset(5'sd0),
+        .slice_beta_offset(5'sd0),
+        .p3_in(db_p3), .p2_in(db_p2), .p1_in(db_p1), .p0_in(db_p0),
+        .q0_in(db_q0), .q1_in(db_q1), .q2_in(db_q2), .q3_in(db_q3),
+        .p2_out(db_edge_p2), .p1_out(db_edge_p1), .p0_out(db_edge_p0),
+        .q0_out(db_edge_q0), .q1_out(db_edge_q1), .q2_out(db_edge_q2),
+        .alpha_dbg(db_edge_alpha),
+        .beta_dbg(db_edge_beta),
+        .tc0_dbg(db_edge_tc0)
     );
 
     // Deblock writeback controller
@@ -482,6 +524,9 @@ module h264_decode_skeleton #(
 
     wire [7:0] xor_deblock = xor4x8(db_p0_out) ^ xor4x8(db_q0_out) ^
                               xor4x8(db_p1_out) ^ xor4x8(db_q1_out) ^
+                              xor4x8(db_edge_p0) ^ xor4x8(db_edge_q0) ^
+                              db_alpha ^ db_beta ^ {2'd0, db_tc0} ^
+                              db_edge_alpha ^ db_edge_beta ^ {2'd0, db_edge_tc0} ^
                               {5'd0, deblock_bs_out} ^ {7'd0, db_pipe_valid} ^
                               {7'd0, wb_valid} ^ wb_mb_addr[7:0] ^
                               {6'd0, commit_error, deblock_unsup_ref};
@@ -494,7 +539,8 @@ module h264_decode_skeleton #(
     wire [4:0]  pmb_part_w, pmb_part_h;
     wire [3:0]  pmb_sub_w, pmb_sub_h;
 
-    h264_p_mb_type_decode u_p_mb_type (
+    h264_p_mb_type_decode #(
+    ) u_p_mb_type (
         .skipped(stim_mode[3]),
         .mb_type({2'd0, stim_mode}),
         .sub_mb_type(stim_mode[1:0]),
@@ -515,17 +561,18 @@ module h264_decode_skeleton #(
     );
 
     wire [7:0] xor_pmb = {pmb_is_skip, pmb_is_inter, pmb_is_intra, pmb_uses_sub,
-                           pmb_ref0_only, pmb_part_mode} ^ pmb_part_w[4:0] ^
-                          {3'd0, pmb_part_h[4:0]} ^ {4'd0, pmb_sub_w};
+                           pmb_ref0_only, pmb_part_mode} ^ {3'd0, pmb_part_w} ^
+                          {3'd0, pmb_part_h} ^ {4'd0, pmb_sub_w};
 
     // ════════════════════════════════════════════════════════════════════
     // 9. nC PREDICTOR — combinational context derivation (w-level)
     // ════════════════════════════════════════════════════════════════════
     wire nc_nA_avail, nc_nB_avail;
     wire [4:0] nc_nC;
-    wire [2:0] nc_table;
+    // nc_table declared above (feeds cavlc coeff_token_table).
 
-    h264_cavlc_nc_predictor u_nc_pred (
+    h264_cavlc_nc_predictor #(
+    ) u_nc_pred (
         .mb_x(stim_byte),
         .mb_y(stim_byte),
         .mb_index({8'd0, stim_byte}),
@@ -622,9 +669,11 @@ module h264_decode_skeleton #(
     genvar ldi;
     generate
         for (ldi = 0; ldi < 16; ldi = ldi + 1) begin : gen_luma_dc
-            wire signed [15:0] l_in = cavlc_coeff[ldi];
-            wire signed [17:0] l_sum = l_in + cavlc_coeff[(ldi+1) & 4'hF];
-            wire signed [17:0] l_diff = l_in - cavlc_coeff[(ldi+2) & 4'hF];
+            wire signed [17:0] l_in = {{2{cavlc_coeff[ldi][15]}}, cavlc_coeff[ldi]};
+            wire signed [17:0] l_n1 = {{2{cavlc_coeff[(ldi+1) & 4'hF][15]}}, cavlc_coeff[(ldi+1) & 4'hF]};
+            wire signed [17:0] l_n2 = {{2{cavlc_coeff[(ldi+2) & 4'hF][15]}}, cavlc_coeff[(ldi+2) & 4'hF]};
+            wire signed [17:0] l_sum = l_in + l_n1;
+            wire signed [17:0] l_diff = l_in - l_n2;
             assign luma_dc_out[ldi] = (l_sum + l_diff) * $signed({1'b0, stim_qp[1:0]});
         end
     endgenerate
@@ -647,7 +696,8 @@ module h264_decode_skeleton #(
     // 12. REF TAP ADDRESS GENERATION (h264_luma_ref_tap_addr + clamp)
     // ════════════════════════════════════════════════════════════════════
     wire [15:0] tap_x, tap_y;
-    h264_luma_ref_tap_addr u_tap_addr (
+    h264_luma_ref_tap_addr #(
+    ) u_tap_addr (
         .base_x($signed(stim_mv_x)),
         .base_y($signed(stim_mv_y)),
         .tap_idx(stim_byte[6:0]),
@@ -657,7 +707,18 @@ module h264_decode_skeleton #(
         .tap_y(tap_y)
     );
 
-    wire [7:0] xor_tap = tap_x[7:0] ^ tap_y[7:0];
+    wire [15:0] clamp_x, clamp_y;
+    h264_ref_clamp #(
+    ) u_ref_clamp (
+        .x($signed(stim_mv_x)),
+        .y($signed(stim_mv_y)),
+        .width(FRAME_W[15:0]),
+        .height(FRAME_H[15:0]),
+        .clamped_x(clamp_x),
+        .clamped_y(clamp_y)
+    );
+
+    wire [7:0] xor_tap = tap_x[7:0] ^ tap_y[7:0] ^ clamp_x[7:0] ^ clamp_y[7:0];
 
     // ════════════════════════════════════════════════════════════════════
     // 13. EXP-GOLOMB READER — ue()/se() syntax element decoding (w-level)
@@ -681,6 +742,121 @@ module h264_decode_skeleton #(
 
     wire [7:0] xor_eg = eg_ue[7:0] ^ eg_se[7:0] ^ eg_bits ^
                          {eg_busy, eg_done, eg_ok, eg_bit_ready, 4'd0};
+
+    // ════════════════════════════════════════════════════════════════════
+    // 13b. RBSP FILTER + BASELINE SYNTAX — head of the I-frame parse chain
+    //      (Phase B: real ports driven from stim / fifo, observe folded in)
+    // ════════════════════════════════════════════════════════════════════
+    wire        rbsp_in_ready, rbsp_out_valid, rbsp_out_last, rbsp_done;
+    wire [7:0]  rbsp_out_byte;
+    wire [15:0] rbsp_out_index, rbsp_len, rbsp_epb;
+    h264_rbsp_filter #(
+    ) u_rbsp_filter (
+        .clk(clk), .reset(reset),
+        .clear(reset),
+        .in_valid(stim_valid),
+        .in_byte(stim_byte),
+        .in_last(stim_valid && stim_mode == 4'd15),
+        .in_ready(rbsp_in_ready),
+        .out_valid(rbsp_out_valid),
+        .out_byte(rbsp_out_byte),
+        .out_last(rbsp_out_last),
+        .out_index(rbsp_out_index),
+        .out_ready(1'b1),
+        .rbsp_len(rbsp_len),
+        .epb_removed(rbsp_epb),
+        .done(rbsp_done)
+    );
+
+    // Small MAX_RBSP_BYTES keeps Verilator unit memory bounded; product can
+    // raise this when fabric parse is on the live path.
+    wire        syn_in_ready, syn_valid, syn_error, syn_unsup, syn_busy;
+    wire [15:0] syn_bits;
+    wire [7:0]  syn_pps_id, syn_sps_id, syn_slice_type, syn_mb_type;
+    wire        syn_cabac, syn_deblock_ctrl, syn_mb_skipped;
+    wire [7:0]  syn_num_ref;
+    wire signed [7:0] syn_pic_init_qp, syn_slice_qp_delta, syn_slice_qp;
+    wire signed [7:0] syn_mb_qp_delta, syn_mb_qp;
+    wire signed [7:0] syn_alpha_div2, syn_beta_div2;
+    wire [15:0] syn_first_mb, syn_frame_num, syn_poc_lsb, syn_idr_pic;
+    wire [15:0] syn_mb_bit_off, syn_mb_skip_run, syn_i4_flags, syn_res_bit_off;
+    wire [1:0]  syn_disable_db;
+    wire [3:0]  syn_part_mode;
+    wire [47:0] syn_i4_rem;
+    wire [2:0]  syn_chroma_mode;
+    wire [5:0]  syn_cbp;
+    h264_baseline_syntax_parser #(
+        .MAX_RBSP_BYTES(256)
+    ) u_baseline_syntax (
+        .clk(clk), .reset(reset),
+        .clear(reset),
+        .mode(stim_mode[1:0]),
+        .start_bit(16'd0),
+        .nal_unit_type(5'd5),
+        .nal_ref_idc(2'd3),
+        .log2_max_frame_num(5'd4),
+        .log2_max_pic_order_cnt_lsb(5'd4),
+        .poc_type_in(3'd0),
+        .pps_pic_init_qp(8'sd26),
+        .pps_deblock_ctrl(1'b0),
+        .active_slice_type(8'd2),
+        .qp_in(8'sd26),
+        .num_ref_idx_l0_active_minus1(3'd0),
+        .in_valid(rbsp_out_valid),
+        .in_byte(rbsp_out_byte),
+        .in_last(rbsp_out_last),
+        .in_ready(syn_in_ready),
+        .valid(syn_valid),
+        .error(syn_error),
+        .unsupported(syn_unsup),
+        .busy(syn_busy),
+        .rbsp_bits_consumed(syn_bits),
+        .pps_id(syn_pps_id),
+        .sps_id(syn_sps_id),
+        .entropy_cabac(syn_cabac),
+        .num_ref_idx_l0_default_minus1(syn_num_ref),
+        .pic_init_qp(syn_pic_init_qp),
+        .deblock_ctrl(syn_deblock_ctrl),
+        .first_mb_in_slice(syn_first_mb),
+        .slice_type(syn_slice_type),
+        .frame_num(syn_frame_num),
+        .pic_order_cnt_lsb(syn_poc_lsb),
+        .idr_pic_id(syn_idr_pic),
+        .slice_qp_delta(syn_slice_qp_delta),
+        .slice_qp(syn_slice_qp),
+        .disable_deblocking_idc(syn_disable_db),
+        .slice_alpha_c0_offset_div2(syn_alpha_div2),
+        .slice_beta_offset_div2(syn_beta_div2),
+        .macroblock_bit_offset(syn_mb_bit_off),
+        .mb_skip_run(syn_mb_skip_run),
+        .mb_skipped(syn_mb_skipped),
+        .mb_type(syn_mb_type),
+        .partition_mode(syn_part_mode),
+        .intra4x4_pred_mode_flags(syn_i4_flags),
+        .intra4x4_rem_modes(syn_i4_rem),
+        .intra_chroma_pred_mode(syn_chroma_mode),
+        .coded_block_pattern(syn_cbp),
+        .mb_qp_delta(syn_mb_qp_delta),
+        .mb_qp(syn_mb_qp),
+        .residual_bit_offset(syn_res_bit_off)
+    );
+
+    // Feed CAVLC rbsp from filtered bytes when available (else stim XOR pad).
+    genvar rbi;
+    generate
+        for (rbi = 0; rbi < 64; rbi = rbi + 1) begin : gen_cavlc_rbsp_feed
+            assign cavlc_rbsp[rbi] = rbsp_out_valid
+                ? (rbsp_out_byte ^ rbi[7:0] ^ rbsp_out_index[7:0])
+                : (stim_byte ^ rbi[7:0]);
+        end
+    endgenerate
+
+    wire [7:0] xor_syntax = rbsp_out_byte ^ rbsp_len[7:0] ^ rbsp_epb[7:0] ^
+                             {rbsp_in_ready, rbsp_out_valid, rbsp_done, rbsp_out_last, 4'd0} ^
+                             syn_mb_type ^ syn_slice_type ^ syn_slice_qp[7:0] ^
+                             {syn_valid, syn_error, syn_unsup, syn_busy, syn_cabac,
+                              syn_deblock_ctrl, syn_mb_skipped, 1'b0} ^
+                             syn_bits[7:0] ^ {4'd0, syn_part_mode} ^ {2'd0, syn_cbp};
 
     // ════════════════════════════════════════════════════════════════════
     // 14. BITSTREAM FIFO — single-clock BRAM ring (32KB, M10K)
@@ -876,7 +1052,7 @@ module h264_decode_skeleton #(
             xor_chain <= xor_cavlc ^ xor_arith ^ xor_intra ^ xor_mc ^
                          xor_dpb ^ xor_deblock ^ xor_mv ^ xor_linebuf ^
                          xor_nc ^ xor_pmb ^ xor_chroma ^ xor_tap ^
-                         xor_eg ^ xor_fifo ^ xor_refwin ^ xor_left ^
+                         xor_eg ^ xor_syntax ^ xor_fifo ^ xor_refwin ^ xor_left ^
                          xor_mbctrl ^ xor_pipe;
     end
 
