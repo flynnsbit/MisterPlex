@@ -1290,14 +1290,15 @@ end
 // ---------------------------------------------------------------------------
 // Fabric RBF build stamp (w-fitgate) — binds bitstream to git commit prefix.
 // Params from rtl/plex_rbf_build_id_params.vh (scripts/gen_rbf_build_id_vh.py).
-// stamp_alive is consumed so the fitter cannot prune the entity; id folds into
-// a preserve reg observed by status_set change detect (no status_in layout change).
+// PRODUCT_WIRE stays 0: stamp is NOT muxed into status_in / video / DDR.
+// Hierarchy survival relies on (* noprune *) instance + noprune observe/keep
+// (preserve alone was pruned when fanout was only a dead _unused OR-tree).
 // ---------------------------------------------------------------------------
 `include "rtl/plex_rbf_build_id_params.vh"
 wire [63:0] rbf_build_id;
 wire        rbf_build_id_valid;
 wire        rbf_stamp_alive;
-plex_rbf_build_id #(
+(* noprune *) plex_rbf_build_id #(
 	.MAGIC(32'h504C5842),
 	.COMMIT_PREFIX(`PLEX_RBF_COMMIT_PREFIX),
 	.GIT_DIRTY(`PLEX_RBF_GIT_DIRTY),
@@ -1310,8 +1311,8 @@ plex_rbf_build_id #(
 	.id_valid(rbf_build_id_valid),
 	.stamp_alive(rbf_stamp_alive)
 );
-// Observe stamp in the status_set edge detector so the net is live load-bearing.
-(* preserve *) reg [31:0] rbf_build_id_observe_r;
+// Observe stamp into noprune flops + keep wire so map cannot strip the entity.
+(* preserve, noprune *) reg [31:0] rbf_build_id_observe_r;
 always @(posedge clk_sys) begin
 	if (reset)
 		rbf_build_id_observe_r <= 32'd0;
@@ -1319,6 +1320,8 @@ always @(posedge clk_sys) begin
 		rbf_build_id_observe_r <= rbf_build_id[63:32] ^ rbf_build_id[31:0] ^
 			{31'd0, rbf_stamp_alive} ^ {31'd0, rbf_build_id_valid};
 end
+(* keep, noprune *) wire _keep_rbf_build_id =
+	(|rbf_build_id_observe_r) | rbf_stamp_alive | rbf_build_id_valid | (|rbf_build_id);
 
 // Silence unused
 wire _unused = |{disp_i, cont_i, advance, ingest_pixels, ingest_dl, af_active, ioctl_addr,
@@ -1333,7 +1336,7 @@ wire _unused = |{disp_i, cont_i, advance, ingest_pixels, ingest_dl, af_active, i
 	stream_ddr_underruns, stream_ddr_overruns, stream_ddr_host_write,
 	stream_ddr_fpga_read, stream_ddr_bus_want, stream_ddr_burstcnt, stream_ddr_addr,
 	stream_ddr_rd, stream_ddr_din, stream_ddr_be, stream_ddr_we, _host_wr_unused,
-	rbf_stamp_alive, rbf_build_id_valid, rbf_build_id_observe_r,
+	rbf_stamp_alive, rbf_build_id_valid, rbf_build_id_observe_r, _keep_rbf_build_id,
 	product_cfg_no_stub, product_cfg_ddr_fs, product_cfg_fabric_dma,
 	_unused_clkstat, _unused_bwstat, _unused_fdma};
 

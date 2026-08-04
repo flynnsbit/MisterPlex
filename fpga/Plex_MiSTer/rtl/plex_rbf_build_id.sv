@@ -10,8 +10,9 @@
 // scripts/gen_rbf_build_id_vh.py (git rev-parse). Defaults keep the module
 // elaborable when the include is absent.
 //
-// Quartus must not prune this: outputs are registered with preserve and
-// folded into a sticky live bit that the parent top is required to consume.
+// Quartus must not prune this: outputs are registered with preserve+noprune
+// and the parent top must instantiate with (* noprune *) so the hierarchy
+// survives even when only a keep-chain observes the stamp (PRODUCT_WIRE=0).
 //
 // Does NOT prove functional correctness of decode/present — only that a
 // concrete build-id entity exists in the netlist with non-zero MAGIC.
@@ -59,9 +60,11 @@ module plex_rbf_build_id #(
 	};
 
 	// Fold full commit into a second keep word so low 17 bits are not dropped.
-	(* preserve *) reg [31:0] commit_fold_r;
-	(* preserve *) reg [63:0] build_id_r;
-	(* preserve *) reg        id_valid_r;
+	// noprune: preserve alone does not stop hierarchy removal when the only
+	// parent fanout is a dead _unused OR-tree (fit.rpt MISSING class).
+	(* preserve, noprune *) reg [31:0] commit_fold_r;
+	(* preserve, noprune *) reg [63:0] build_id_r;
+	(* preserve, noprune *) reg        id_valid_r;
 
 	wire stamp_ok = (MAGIC != 32'd0) && !FAULT_ZERO_STAMP;
 

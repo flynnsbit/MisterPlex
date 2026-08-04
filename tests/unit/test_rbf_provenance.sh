@@ -123,6 +123,41 @@ if ! grep -q 'rbf_provenance.py' "$ROOT/scripts/build_rbf_remote.sh"; then
   status=1
 fi
 
+# --- Static keep proof: hierarchy gate needs noprune on stamp (w-fpga) ---
+# Failure class: preserve-only flops + dead _unused fanout → Quartus prunes
+# plex_rbf_build_id:u_rbf_build_id from fit.rpt (hierarchy REJECT MISSING).
+PLEX_SV="$ROOT/fpga/Plex_MiSTer/Plex.sv"
+BUILD_ID_SV="$ROOT/fpga/Plex_MiSTer/rtl/plex_rbf_build_id.sv"
+if ! grep -nE '\(\*\s*noprune\s*\*\)\s*plex_rbf_build_id' "$PLEX_SV" | grep -q .; then
+  echo "FAIL: Plex.sv must instantiate plex_rbf_build_id with (* noprune *)" >&2
+  status=1
+else
+  echo "OK static: (* noprune *) plex_rbf_build_id instance"
+fi
+if ! grep -q 'u_rbf_build_id' "$PLEX_SV"; then
+  echo "FAIL: Plex.sv missing u_rbf_build_id (hierarchy_contains name)" >&2
+  status=1
+fi
+if ! grep -nE '\(\*\s*keep\s*,\s*noprune\s*\*\)\s*wire\s+_keep_rbf_build_id' "$PLEX_SV" | grep -q .; then
+  echo "FAIL: Plex.sv must keep _keep_rbf_build_id with (* keep, noprune *)" >&2
+  status=1
+else
+  echo "OK static: (* keep, noprune *) _keep_rbf_build_id"
+fi
+if ! grep -nE '\(\*\s*preserve\s*,\s*noprune\s*\*\)\s*reg' "$BUILD_ID_SV" | grep -q .; then
+  echo "FAIL: plex_rbf_build_id.sv must use (* preserve, noprune *) on stamp regs" >&2
+  status=1
+else
+  echo "OK static: plex_rbf_build_id.sv preserve+noprune stamp regs"
+fi
+# PRODUCT_WIRE=0: stamp must not be wired into status_in assignment.
+if grep -nE 'status_in\s*[<=].*rbf_build|status_in\s*[<=].*rbf_stamp|status_telem.*rbf_build' "$PLEX_SV" | grep -q .; then
+  echo "FAIL: rbf build stamp must not enter status_in (PRODUCT_WIRE stays 0)" >&2
+  status=1
+else
+  echo "OK static: PRODUCT_WIRE=0 (stamp not in status_in)"
+fi
+
 if [[ "$status" -eq 0 ]]; then
   echo "test_rbf_provenance: PASS"
 else
