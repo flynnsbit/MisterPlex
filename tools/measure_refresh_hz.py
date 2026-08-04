@@ -217,13 +217,14 @@ def main() -> int:
         work = root / ".agent-work" / "w-instr" / f"mref_{os.getpid()}_{int(time.time())}"
         work.mkdir(parents=True, exist_ok=True)
         try:
-            pts, st = capture_pts(args.device, args.frames, args.size, work)
-            if st.startswith("DEVICE_BUSY"):
-                print(f"DEVICE_BUSY der=open_fail fuser={holders!r} detail={st}")
+            # Do not shadow stamp object `st` (ArtifactStamp) — cap status is a str.
+            pts, cap_status = capture_pts(args.device, args.frames, args.size, work)
+            if cap_status.startswith("DEVICE_BUSY"):
+                print(f"DEVICE_BUSY der=open_fail fuser={holders!r} detail={cap_status}")
                 print("rc=2 — never report refresh_hz=0")
                 return RC_BUSY
-            if st.startswith("NO_DATA") or not pts:
-                print(f"NO_DATA der={st} fuser={holders!r} — empty means no-data not zero")
+            if cap_status.startswith("NO_DATA") or not pts:
+                print(f"NO_DATA der={cap_status} fuser={holders!r} — empty means no-data not zero")
                 return RC_UNSCORED
             rep = measure_from_pts(pts, args.warmup)
             rep["fuser"] = holders or "none"
