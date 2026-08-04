@@ -76,6 +76,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_pl330_encode $(ROOT)/b
 	python3 $(ROOT)/tests/unit/test_plxd_glass_field_static.py
 	python3 $(ROOT)/tests/unit/test_plxf_upper_word_static.py
 	python3 $(ROOT)/tests/unit/test_diag_tag_rca_pack_static.py
+	python3 $(ROOT)/tests/unit/test_diag_tag_rca_default_static.py
 	bash $(ROOT)/tests/unit/test_delivered_geom_loglevel.sh
 	bash $(ROOT)/tests/unit/test_arm_cpu_sample_contract.sh
 	$(ROOT)/build/test_present_store_scale_math
