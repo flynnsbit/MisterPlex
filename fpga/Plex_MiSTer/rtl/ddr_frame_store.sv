@@ -643,6 +643,8 @@ module ddr_frame_store #(
 	reg swap_pending_d1, swap_pending_d2;
 	reg pending_bank_d1, pending_bank_d2;
 	reg [Y_W-1:0] want_y_gray_s1, want_y_gray_s2;  // Gray-coded 2-FF sync
+	// M2b STA: registered fill base (wrap-prefetch or mid-frame want bin)
+	reg [Y_W-1:0] fill_base_r;
 	reg [Y_W-1:0] desired_y_r [0:LINE_COUNT-1];
 	reg [15:0] poll_div;
 	reg poll_pending;
@@ -709,9 +711,6 @@ module ddr_frame_store #(
 	reg [5:0]  bank_mm_disp_c;
 	reg [4:0]  occ_disp_y_r, occ_prep_y_r;
 	reg [5:0]  bank_mm_disp_r;
-	// I3b (DIAG): registered min/max y_line — sequential 1-slot/cycle (no comb reduce).
-	reg [Y_W-1:0] line_min_y_r, line_max_y_r;
-	reg [SLOT_W-1:0] i3_slot_r, i3_base_r;
 
 	wire cmd_empty;
 	wire [7:0] cmd_rdata;
@@ -1068,6 +1067,7 @@ module ddr_frame_store #(
 			pending_bank_d2 <= 1'b0;
 			want_y_gray_s1 <= '0;
 			want_y_gray_s2 <= '0;
+			fill_base_r <= '0;
 			for (ti = 0; ti < LINE_COUNT; ti = ti + 1)
 				desired_y_r[ti] <= '0;
 			pending_ready_ddr <= 1'b0;
@@ -1110,10 +1110,6 @@ module ddr_frame_store #(
 			occ_disp_y_r <= 5'd0;
 			occ_prep_y_r <= 5'd0;
 			bank_mm_disp_r <= 6'd0;
-			line_min_y_r <= {Y_W{1'b1}};
-			line_max_y_r <= {Y_W{1'b0}};
-			i3_slot_r <= '0;
-			i3_base_r <= '0;
 			mbox_seq <= 16'd0;
 			mbox_last <= 16'd0;
 			mbox_req <= 1'b1;
@@ -1186,12 +1182,23 @@ module ddr_frame_store #(
 			// that decode to wrong beam lines → fill tags miss pref_y (DIAG
 			// T3/T5: bank_mm=0, occ full, miss sticky, MEAN black). Hold last
 			// desired_y_r until gray_s1==gray_s2. Keeps schedule-reg STA cut.
+			// M2 WRAP_PREFETCH + M2b STA_RECOVER: wrap window on holdlast base
+			// DIAG=0; no mbox CE; schedule-reg / H-R1d / gray / curwin / holdlast kept
+			// M2 combo gray2bin×2+wrap in desired_y D-side was TIMING_RED setup=-0.196
+			// (ea494df3). M2b: resolve wrap/mid base into fill_base_r when gray stable;
+			// desired_y_r only clamp_ahead(fill_base_r,ti) — holdlast-class cone.
 			want_y_gray_s1 <= want_y_gray;
 			want_y_gray_s2 <= want_y_gray_s1;
 			if (want_y_gray_s1 == want_y_gray_s2) begin
-				for (ti = 0; ti < LINE_COUNT; ti = ti + 1)
-					desired_y_r[ti] <= clamp_ahead(y_gray2bin(want_y_gray_s2), ti);
+				// near-wrap: want_bin + LINE_COUNT >= FRAME_H → base 0 wrap-prefetch
+				if (({{(32 - Y_W){1'b0}}, y_gray2bin(want_y_gray_s2)} + LINE_COUNT)
+						>= FRAME_H)
+					fill_base_r <= {Y_W{1'b0}};
+				else
+					fill_base_r <= y_gray2bin(want_y_gray_s2);
 			end
+			for (ti = 0; ti < LINE_COUNT; ti = ti + 1)
+				desired_y_r[ti] <= clamp_ahead(fill_base_r, ti);
 
 			start_d1 <= start_req;
 			start_d2 <= start_d1;
@@ -1229,35 +1236,11 @@ module ddr_frame_store #(
 			occ_disp_y_r   <= occ_disp_y_c;
 			occ_prep_y_r   <= occ_prep_y_c;
 			bank_mm_disp_r <= bank_mm_disp_c;
-			// I3b: sequential min/max over display half — freeze base at slot 0,
-			// one compare/cycle (STA-safe vs comb I3 always@* reduce).
-			if (i3_slot_r == {SLOT_W{1'b0}}) begin
-				i3_base_r <= cur_base_idx;
-				if (y_valid[cur_base_idx]) begin
-					line_min_y_r <= y_line[cur_base_idx];
-					line_max_y_r <= y_line[cur_base_idx];
-				end else begin
-					line_min_y_r <= {Y_W{1'b1}};
-					line_max_y_r <= {Y_W{1'b0}};
-				end
-				i3_slot_r <= i3_slot_r + 1'b1;
-			end else begin
-				if (y_valid[i3_base_r + i3_slot_r]) begin
-					if (y_line[i3_base_r + i3_slot_r] < line_min_y_r)
-						line_min_y_r <= y_line[i3_base_r + i3_slot_r];
-					if (y_line[i3_base_r + i3_slot_r] > line_max_y_r)
-						line_max_y_r <= y_line[i3_base_r + i3_slot_r];
-				end
-				if (i3_slot_r == SLOT_W'(LINE_COUNT - 1))
-					i3_slot_r <= '0;
-				else
-					i3_slot_r <= i3_slot_r + 1'b1;
-			end
-			// Product pack vs DIAG I3b pack (MAGIC/seq path unchanged at write).
-			// DIAG_I3b: {max[9:0], min[9:0], any_hit, miss_both, miss_y, miss_c}
+			// Product pack vs DIAG I1/I2 pack (MAGIC/seq path unchanged at write).
 			if (DIAG_TAG_RCA)
-				frame_status_ddr <= {line_max_y_r[9:0], line_min_y_r[9:0],
-				                     any_hit_s2, miss_both_s2, miss_y_only_s2, miss_c_only_s2};
+				frame_status_ddr <= {occ_disp_y_r, occ_prep_y_r, bank_mm_disp_r,
+				                     any_hit_s2, miss_both_s2, miss_y_only_s2, miss_c_only_s2,
+				                     state_ddr};
 			else
 				frame_status_ddr <= {frame_underrun_ddr, debug_state};
 
