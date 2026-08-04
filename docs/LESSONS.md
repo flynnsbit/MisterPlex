@@ -214,6 +214,80 @@ Prove it four ways — skipped location green, product location still red, fix r
 reproduces the original failure, real artifact green — then have an independent lane try
 to break the claim. Especially when the author is the orchestrator.
 
+## L35 — Give every probe a positive control; a search that cannot succeed is not evidence of absence
+
+I "proved" the entire fabric H.264 decoder was dead code with:
+
+    grep -rlE "^\s*$m\s*(#|\()" --include='*.sv' .   for m in h264_cavlc_residual ...
+
+All eight modules reported **NOBODY**, and I published that as a headline structural
+finding. The probe searched for a module whose **name equals its filename**. In this
+codebase *no module is named after its file* — `rtl/h264_dpb.sv` declares seven modules
+and none of them is called `h264_dpb`. The probe could only ever return NOBODY. It was
+incapable of returning anything else.
+
+Running it once against a module I *knew* was instantiated would have returned NOBODY too
+and exposed it in seconds. **Before trusting a negative result, confirm the probe can
+produce a positive.**
+
+The corrected probe enumerates real declared module names and asks who instantiates each:
+`LIVE=4 DEAD=28`. The substance survived — there is still no fabric decode — but the
+numbers I broadcast to nine agents were wrong, and one agent shipped wrapper modules named
+after files purely to satisfy the bad grep. **A bad metric doesn't just mislead you, it
+deforms the code other people write.** Fix the probe, never the code shaped to satisfy it.
+
+Sibling of L34: adversarially audit your own scope changes → also audit your own *searches*.
+
+---
+
+## L36 — Select processes by `/proc/<pid>/comm`, never by grepping `ps`
+
+To test whether the MiSTer framework's busy-spin could be deprioritised:
+
+    M=$(ps aux | grep -w "[M]iSTer" | awk '{print $1}' | head -1)
+    renice -n 19 -p $M
+
+Decode got **worse** — 1.30× → 0.906×, twice in a row. I was one step from publishing
+"renicing MiSTer hurts decode".
+
+The tells: the PID changed on every invocation (19729 → 14253 → 14806), and
+`/proc/<pid>/status` said `Name: bash`. The `[M]iSTer` bracket trick defeats the classic
+self-match, but **my own ssh command line contained the string**, so `grep` matched the
+shell running the experiment. `renice` hit that shell, and `ffmpeg` — its child —
+*inherited* nice 19. I had measured my own harness sabotaging itself.
+
+Correct selection, and always verify the target and yourself:
+
+    for d in /proc/[0-9]*; do
+      [ "$(cat $d/comm 2>/dev/null)" = "MiSTer" ] && M=${d#/proc/} && break
+    done
+
+With the real target (`pid=19729 comm=MiSTer`, my shell confirmed distinct and left at
+nice 0, transition read from `/proc/19729/stat` as `nice=0 prio=20` → `nice=19 prio=39`),
+the true result was the **opposite**: **1.30× → 1.49× → 1.54×**, display bit-identical
+across three captures at `ORANGE_PX=33852`.
+
+Two lessons: an experiment that perturbs its own harness produces a confident, reproducible,
+completely wrong number — *reproducibility is not validity*. And always capture the
+controlled variable on **both** the target and yourself.
+
+---
+
+## L37 — Agent scratch directories must be git-ignored before they exist
+
+A parent `git add -A` swept **7,398 lines** of `.agent-work/w-nostub/` build logs and
+scratch RTL into a commit whose message claimed it was a lab pre-registration. Caught only
+by inspecting the commit instead of trusting the `COMMITTED` echo it printed.
+
+The trap was repo-wide, not personal: every lane writes scratch under `.agent-work/`, and
+nothing ignored it, so *any* `git add -A` in *any* worktree would commit that lane's
+scratch under someone else's message. Fixed in `0b7851ed` (both `.agent-work` and
+`.agent-work/` per L33).
+
+**An echoed success message is not a captured result.** `&&` chains print the success of
+the *last* command, not the correctness of what it did. Inspect what a commit actually
+contains. And prefer explicit paths over `git add -A` in any shared tree.
+
 ---
 
 ## Incident index
@@ -237,5 +311,8 @@ to break the claim. Especially when the author is the orchestrator.
 | — | Native 720p24 is arithmetically dead at 0.939× | **1.31× (32 fps)** with the daemon stopped. The wall was a daemon busy-loop, not physics |
 | — | A green `make unit` meant the daemon fix was safe | It rendered stub garbage on HDMI; `ORANGE_PX` 33852 → 43. Reverted |
 | — | Main was RED on a forbidden DDR pattern | The hit was a **quoted historical daemon log line** in a git-ignored evidence store I had just moved into the repo tree. Scan scope was wrong, not the record |
+| — | All 8 h264 leaf modules instantiated by NOBODY | Probe searched for module names equal to filenames; **no module here is named after its file**, so it could only return NOBODY. Corrected: `LIVE=4 DEAD=28` |
+| — | Renicing the MiSTer spinner slows decode (1.30×→0.906×) | `grep` matched my **own ssh shell**; `ffmpeg` inherited nice 19. Real result was the opposite: **1.30×→1.54×** |
+| — | A commit labelled "pre-register Sweep 119" | Contained 7,398 lines of another lane's `.agent-work` scratch logs. `git add -A` in an un-ignored tree |
 
 Full narrative for each: `Memory/lab/parent/misterplex-parent-720p-decode-verdict.txt`.
