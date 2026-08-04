@@ -10,3 +10,5 @@ cceb58e7d6fc5bfda91af918d110e79e	1280x720	product tip QSF FRAME_W=1280 FRAME_H=7
 75065b0c62ece83c007dfc34690c2aa7	1280x720	# A/B pre-sched-reg MEAN~175 class
 a13a9079eaa44d552965eaa7cba53e1e	1280x720	cutb-r1-hr1d H-R1d SCHED_RECORD_ATOMIC sole; tip 6cc1e643; NEW_MD5 from harvest/CUTB/remote_out
 cff9081317ebdc7293c7dbe0f0f282a0	1280x720	cutb-r1-diag DIAG I1/I2 MPLEX_DIAG_TAG_RCA=1; tip 89abb26c/3a0579e1; DIAG≠product PASS
+e3fd6c65bbbf2e107f10300e33e60c16	1280x720	cutb-r1-linecam WANT_Y_GRAY_STABLE_HOLD product DIAG=0; tip 1bd8e6af; NEW_MD5 from harvest/CUTB/remote_out
+dcc949c9935361d7765f6239ae3d571d	1280x720	cutb-r1-curwin LINECAM_CUR_WINDOW_FIRST product DIAG=0 tip 5127c8a6
