@@ -1,0 +1,58 @@
+{
+  "title": "P720 shared bandwidth contract — w-clock ACK position",
+  "product_config": {
+    "PRESENT_MULTI_PIXEL": true,
+    "PRESENT_PX_PER_CLK": 2,
+    "clk_sys_hz": 20000000,
+    "clk_pix_hz": 29700000,
+    "clk_sys_overclock": false,
+    "reason_no_clksys24": "STA Fmax 23.17 MHz stub-in; clk_sys@24 fails margin"
+  },
+  "geometry": {
+    "coded_w": 1280,
+    "coded_h": 720,
+    "fps": 24,
+    "i420_bytes_per_frame": 1382400,
+    "ddr_beat_bytes": 8,
+    "beats_per_frame_i420": 172800
+  },
+  "headline": {
+    "name": "i420_full_frame_direction_MBps",
+    "value": 33.1776,
+    "unit": "MB/s",
+    "formula": "i420_bytes_per_frame * fps / 1e6 = 1382400 * 24 / 1e6",
+    "domain": "average, one direction (ARM write OR fabric line-fill read)",
+    "B_per_clk_sys_avg": 1.65888,
+    "formula_B_per_clk": "33.1776e6 / 20e6"
+  },
+  "companion": {
+    "steady_RW_MBps": 66.3552,
+    "formula": "2 * 33.1776",
+    "w_mem_ideal_rw_beats": 345600,
+    "peak_ddr_MBps_model": 720.0,
+    "formula_peak": "90e6 * 8"
+  },
+  "NACK": {
+    "scaler_headline_3p0_B_per_clk": {
+      "value_rejected": 3.0,
+      "reason": "PPC*1.5 is I420-equivalent of unique pixels produced from LINE BUFFERS during DE, not DDRAM beats per clk_sys. DDR fills are line bursts averaged to one I420 frame per present.",
+      "sources": [
+        "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv:340 rd_miss_now (hit → no DDR)",
+        "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv:501-515 pack_npx from linebuf on hit",
+        "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv:86 Y_LINE_QWORDS=CODED_W/8",
+        "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv:1070,1109 DDRAM_RD only on fill path"
+      ],
+      "allowed_as": "optional metric present_linebuf_i420_equiv_B_per_clk_sys_DE — NOT the DDR budget headline"
+    }
+  },
+  "blackout_prefetch": {
+    "multi_line_floor": 16,
+    "cover_lines_8_us_at_ppc2_20M_1280": 256.0,
+    "cover_lines_16_us": 512.0,
+    "model_blackout_us": 500.0,
+    "note": "latency, not average BW"
+  },
+  "agreed_by": ["w-clock"],
+  "pending_ack": ["w-mem", "w-scaler"],
+  "disagree_with": ["w-scaler headline 3.0 B/clk_sys as DDR/shared load"]
+}
