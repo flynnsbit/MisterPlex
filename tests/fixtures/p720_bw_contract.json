@@ -1,11 +1,13 @@
 {
-  "title": "P720 shared bandwidth contract — AGREED (w-clock + w-scaler)",
+  "title": "P720 shared bandwidth contract — AGREED (w-clock + w-scaler); rd-duck audit ACK",
   "product_config": {
     "PRESENT_MULTI_PIXEL": true,
     "PRESENT_PX_PER_CLK": 2,
     "clk_sys_hz": 20000000,
     "clk_pix_hz": 29700000,
+    "clk_ddr_hz": 90000000,
     "clk_sys_overclock": false,
+    "clk_ratio_sys_to_ddr": "20:90",
     "reason_no_clksys24": "STA Fmax 23.17 MHz; clk_sys@24 fails margin (w-clock)"
   },
   "geometry": {
@@ -14,24 +16,58 @@
     "fps": 24,
     "i420_bytes_per_frame": 1382400,
     "ddr_beat_bytes": 8,
-    "beats_per_frame_i420": 172800
+    "beats_per_frame_i420_payload_only": 172800
   },
   "headline": {
     "name": "i420_full_frame_direction_MBps",
     "value": 33.1776,
     "unit": "MB/s",
     "formula": "i420_bytes_per_frame * fps / 1e6 = 1382400 * 24 / 1e6",
-    "domain": "average, one direction (ARM write OR fabric line-fill read of full I420)",
+    "domain": "average PAYLOAD, one direction (ARM write OR fabric line-fill read of full I420). Assumes exactly one payload read of the frame; excludes doorbell/mailbox/refill overhead.",
     "B_per_clk_sys_avg": 1.65888,
-    "formula_B_per_clk": "33.1776e6 / clk_sys_hz"
+    "formula_B_per_clk": "33.1776e6 / clk_sys_hz",
+    "B_per_clk_sys_avg_FORBIDDEN_USES": [
+      "FIFO width sizing",
+      "datapath width sizing",
+      "linefill burst rate",
+      "instantaneous DDRAM port demand"
+    ]
   },
   "companion": {
     "steady_RW_MBps": 66.3552,
     "formula": "2 * 33.1776",
-    "w_mem_ideal_rw_beats": 345600,
-    "formula_rw_beats": "2 * beats_per_frame_i420",
+    "w_mem_ideal_rw_payload_beats": 345600,
+    "formula_rw_beats": "2 * beats_per_frame_i420_payload_only",
     "ddr_native_peak_B_per_beat": 8,
-    "note": "64-bit DDRAM beat width"
+    "ddr_peak_MBps_at_90MHz": 720.0,
+    "controller_payload_fraction_of_8B_beats": 0.09216,
+    "formula_fraction": "66.3552 / 720.0",
+    "B_per_clk_ddr_avg_payload_RW": 0.73728,
+    "formula_B_per_clk_ddr": "66.3552e6 / clk_ddr_hz",
+    "note": "64-bit DDRAM beat width @90 MHz peak 720 MB/s"
+  },
+  "interface_peaks_separate_from_headline": {
+    "note": "rd-duck: keep peaks separate from payload averages. Do NOT collapse into 1.65888.",
+    "ppc2_store_to_present_RGB_B_per_accepted_sys_group": {
+      "value": 6,
+      "formula": "PPC * 3 = 2 RGB pixels * 3 bytes",
+      "domain": "store→present accepted sys group during DE (post-CSC RGB)"
+    },
+    "ppc2_i420_amortized_source_B_per_active_2px_group": {
+      "value": 3,
+      "formula": "2 * 1.5 I420 bytes/px = 3 B per active 2-pixel group",
+      "domain": "amortized unique I420 source for 2 output pixels (linebuf-served)"
+    },
+    "present_linebuf_i420_equiv_B_per_clk_sys_DE": {
+      "value": 3.0,
+      "formula": "PPC * 1.5 = 2 * 1.5",
+      "reason_not_ddr_headline": "I420-equivalent of unique pixels served from LINE BUFFERS during DE, not DDRAM beats/clk. Hits skip DDR (rd_miss_now).",
+      "sources": [
+        "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv:331 rd_miss_now (hit → no DDR)",
+        "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv:77 Y_LINE_QWORDS=CODED_W/8",
+        "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv:168 line_buf_ram yram"
+      ]
+    }
   },
   "optional_not_headline": {
     "present_linebuf_i420_equiv_B_per_clk_sys_DE": {
@@ -46,7 +82,7 @@
     }
   },
   "NACK_history": {
-    "scaler_3p0_as_ddr_headline": "REJECTED by w-clock; w-scaler ACK 2026-08-03 — demoted to optional_not_headline"
+    "scaler_3p0_as_ddr_headline": "REJECTED by w-clock; w-scaler ACK 2026-08-03 — demoted to optional_not_headline / interface_peaks"
   },
   "blackout_prefetch": {
     "t_line_us_ppc2_20M_1280": 32.0,
@@ -56,6 +92,25 @@
     "multi_line_floor": 16,
     "note": "latency cover, not average BW"
   },
+  "proof_gap": {
+    "status": "OPEN",
+    "fabric_bw_closed": false,
+    "headline_assumption": "33.1776 assumes exactly one full I420 payload transfer per direction per frame",
+    "missing": [
+      "full 1280x720 real-reader DDRAM beat delta end-of-frame (not prep-only)",
+      "doorbell + mailbox + refill overhead bytes/frame on the real reader path",
+      "injected-stall case under product PPC2 recipe",
+      "correct clk_sys:clk_ddr = 20:90 (not 1:1) in the beat-delta measurement"
+    ],
+    "existing_partial_evidence_not_closure": [
+      "fullframe-style reports that only quote prep beats are NOT end-of-frame bus delta",
+      "ddr_frame_store_warm_reset_tb uses FRAME_H=48 (not 720) and is not the product PPC2 path",
+      "prefetch sim arithmetic (test_frame_store_ddr_prefetch_sim) is model-clean/underrun, not measured bus beats"
+    ],
+    "owner_for_closure": "w-mem (bus/reader) + w-osd (full 720p L4 reader) with w-scaler consuming peaks only",
+    "w_scaler_position": "ACK averages + peaks split; will NOT claim fabric BW closed until beat-delta proof lands"
+  },
   "agreed_by": ["w-clock", "w-scaler"],
+  "audit_ack": ["rd-duck"],
   "pending_ack": ["w-mem"]
 }
