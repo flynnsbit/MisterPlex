@@ -118,12 +118,16 @@ int main() {
                         "ddr_frame_abi_select.svh")));
     EXPECT(coded_ok, "ddr_frame_store CODED_W from layout params");
     // Honest swap pack must ship with this RBF for skip instrumentation.
+    // Glass vsync LSBs may pack into former reserved [47:36]; [63:48] stays swaps.
     EXPECT(file_contains("fpga/Plex_MiSTer/rtl/ddr_frame_store.sv",
                          "DDRAM_DIN <= {frames_done_d2"),
            "tip packs frames_done_d2 for w-fit-1");
+    EXPECT(file_contains("fpga/Plex_MiSTer/rtl/ddr_frame_store.sv",
+                         "bank_vsync_count[11:0]"),
+           "tip packs bank_vsync_count[11:0] into PLXD reserved nibble");
     EXPECT(!file_contains("fpga/Plex_MiSTer/rtl/ddr_frame_store.sv",
-                          "DDRAM_DIN <= {bank_vsync_count"),
-           "tip must NOT pack bank_vsync_count into PLXD");
+                          "DDRAM_DIN <= {bank_vsync_count,"),
+           "tip must NOT put bank_vsync_count in frames_done slot [63:48]");
 
     // Product values — 1280×720 identity canvas (Template H_DE still 529).
     constexpr int FRAME_W = 1280;
@@ -213,7 +217,8 @@ int main() {
                 "macros — status bits do not retarget the DDR store\n");
     std::printf("VERDICT_T7: vertical FULL 720 rows addressable (scale 1.0); "
                 "horizontal still 529/1280 until w-clock timing class changes.\n");
-    std::printf("VERDICT_PACK: frames_done_d2 pack present for next RBF (w-fit-1).\n");
+    std::printf("VERDICT_PACK: frames_done_d2 + bank_vsync_count[11:0] glass pack "
+                "present for next RBF (READY_FOR_NEXT_FIT; not this sole).\n");
 
     if (g_fails) {
         std::fprintf(stderr, "%d present_store_scale fail(s)\n", g_fails);

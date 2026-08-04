@@ -915,17 +915,27 @@ def check_mailboxes() -> None:
     check(cpp_const(spec_text, "kPlxdFramesDoneWidth") == 16,
           "PLXD frames_done is 16 bits wide")
     # c5382bee packed bank_vsync_count as frames_done — liveness never saw stuck
-    # swaps. Product must pack the CDC'd real swap counter into DDRAM_DIN.
+    # swaps. Product packs frames_done_d2 into [63:48]; glass vsync LSBs may ride
+    # the former reserved field [47:36] (bank_vsync_count[11:0]).
     plxd_din = ""
     for chunk in ddr_fs.split("DDRAM_DIN <="):
         if "MAGIC_D" in chunk[:400]:
             plxd_din = chunk[:400]
             break
     check(plxd_din != "", "PLXD DDRAM_DIN assignment with MAGIC_D must exist")
-    check("bank_vsync_count" not in plxd_din,
-          "PLXD DIN must not pack bank_vsync_count as frames_done")
     check("frames_done_d2" in plxd_din,
           "PLXD DIN must pack frames_done_d2 (CDC'd real swap counter)")
+    # First concat field after `{` must be frames_done_d2, never bank_vsync.
+    plxd_compact = "".join(plxd_din.split())
+    check(plxd_compact.startswith("{frames_done_d2,") or
+          "{frames_done_d2," in plxd_compact[:40],
+          "PLXD [63:48] must be frames_done_d2 (not bank_vsync_count)")
+    check("bank_vsync_count[11:0]" in plxd_din or "bank_vsync_count[11:0]" in plxd_compact,
+          "PLXD [47:36] must pack bank_vsync_count[11:0] glass LSBs")
+    check(cpp_const(spec_text, "kPlxdGlassVsyncBit") == 4,
+          "PLXD glass_vsync starts at bit 4 of upper word (bits [47:36])")
+    check(cpp_const(spec_text, "kPlxdGlassVsyncWidth") == 12,
+          "PLXD glass_vsync is 12 bits (reserved field width)")
     check("selectDdrWriteBank" in spi,
           "sendDdrFrame must use selectDdrWriteBank (display-ack / stale-free guard)")
     check("no force-write" in spi,
@@ -1517,8 +1527,8 @@ def check_ddr_frame_store_yuv_read_contract() -> None:
                 "PLXD free_bank_mask must be 00 while pending else ~disp_bank",
             ),
             (
-                "DDRAM_DIN<={frames_done_d2,12'd0,swap_pending_d2,disp_bank_d2,swap_pending_d2?2'b00:(disp_bank_d2?2'b01:2'b10),MAGIC_D}",
-                "PLXD pack must use real frames_done (not vsync-only) + free/disp/pending",
+                "DDRAM_DIN<={frames_done_d2,bank_vsync_count[11:0],swap_pending_d2,disp_bank_d2,swap_pending_d2?2'b00:(disp_bank_d2?2'b01:2'b10),MAGIC_D}",
+                "PLXD pack: frames_done swaps + glass vsync LSBs + free/disp/pending",
             ),
             (
                 "rd_cy=src_y_line[CODED_Y_W-1:1]",

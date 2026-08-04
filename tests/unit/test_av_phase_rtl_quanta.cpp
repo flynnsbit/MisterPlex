@@ -96,6 +96,7 @@ int main() {
     {
         constexpr uint32_t hi = 0x00070005u;
         CHECK(plxd4FramesDone(hi) == 7);
+        CHECK(plxd4GlassVsync(hi) == 0);
         CHECK(plxd4FreeMask(hi) == 1);
         CHECK(plxd4DispBank(hi) == 1);
         CHECK(!plxd4SwapPending(hi));
@@ -105,15 +106,21 @@ int main() {
             (static_cast<uint64_t>(hi) << 32) | kBankReleaseMailboxMagic;
         CHECK(decodeBankReleaseWord(word, br));
         CHECK(br.frames_done == 7);
+        CHECK(br.glass_vsync_count == 0);
         CHECK(br.frames_done == plxd4FramesDone(hi));
+        CHECK(br.glass_vsync_count == plxd4GlassVsync(hi));
     }
 
     {
-        constexpr uint32_t hi = 0x12340008u;
+        // frames_done=0x1234, glass_vsync=0x0AB, swap=1, free=0
+        constexpr uint32_t hi = 0x12340AB8u;
         CHECK(plxd4FramesDone(hi) == 0x1234);
+        CHECK(plxd4GlassVsync(hi) == 0x0AB);
         CHECK(plxd4SwapPending(hi));
         CHECK(plxd4DispBank(hi) == 0);
         CHECK(plxd4FreeMask(hi) == 0);
+        CHECK(mailbox_abi::kPlxdGlassVsyncBit == 4u);
+        CHECK(mailbox_abi::kPlxdGlassVsyncWidth == 12u);
     }
 
     if (fails) {

@@ -105,7 +105,10 @@ struct BankReleaseStatus {
     uint8_t free_bank_mask = 0; // bit 0 = bank 0 free, bit 1 = bank 1 free
     uint8_t disp_bank = 0;     // 0 or 1
     bool swap_pending = false;
-    uint16_t frames_done = 0;  // monotonic swap count
+    uint16_t frames_done = 0;  // monotonic swap count (NOT glass vsync)
+    // Low 12 bits of RTL bank_vsync_count (vsync free-run). Modular Δ-rate only;
+    // full 16-bit glass counter needs a future extension mailbox.
+    uint16_t glass_vsync_count = 0;
 
     bool bank0Free() const { return free_bank_mask & 1u; }
     bool bank1Free() const { return (free_bank_mask >> 1) & 1u; }
@@ -128,6 +131,9 @@ inline bool decodeBankReleaseWord(uint64_t word, BankReleaseStatus& out) {
     out.disp_bank = static_cast<uint8_t>(
         (hi >> mailbox_abi::kPlxdDispBankBit) & 1u);
     out.swap_pending = ((hi >> mailbox_abi::kPlxdSwapPendingBit) & 1u) != 0;
+    out.glass_vsync_count = static_cast<uint16_t>(
+        (hi >> mailbox_abi::kPlxdGlassVsyncBit) &
+        ((1u << mailbox_abi::kPlxdGlassVsyncWidth) - 1u));
     out.frames_done = static_cast<uint16_t>(
         (hi >> mailbox_abi::kPlxdFramesDoneBit) &
         ((1u << mailbox_abi::kPlxdFramesDoneWidth) - 1u));

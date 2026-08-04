@@ -93,9 +93,13 @@ inline constexpr bool aen2MuteEqualsSepMsX100(int64_t sep_ms_x100) {
 }
 
 // PLXD high word (devmem +4 / "PLXD4"): bits match ddr_frame_store pack.
-// hi = (frames_done<<16) | (swap<<3) | (disp<<2) | free_mask
+// hi = (frames_done<<16) | (glass_vsync_lo12<<4) | (swap<<3) | (disp<<2) | free_mask
 inline constexpr uint16_t plxd4FramesDone(uint32_t hi) {
     return static_cast<uint16_t>(hi >> 16);
+}
+// bank_vsync_count[11:0] — glass/vsync free-run LSBs (NOT frames_done / swaps).
+inline constexpr uint16_t plxd4GlassVsync(uint32_t hi) {
+    return static_cast<uint16_t>((hi >> 4) & 0x0FFFu);
 }
 inline constexpr uint8_t plxd4FreeMask(uint32_t hi) {
     return static_cast<uint8_t>(hi & 0x3u);

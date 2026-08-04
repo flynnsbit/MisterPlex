@@ -93,13 +93,17 @@ constexpr uint32_t kSdramDiagAddr = 0x3007F120u;
 //   [33:32]  free_bank_mask[1:0] — bit i=1 means bank i is safe to overwrite
 //   [34]     disp_bank           — currently displayed bank (0 or 1)
 //   [35]     swap_pending        — doorbell received, vsync flip pending
-//   [47:36]  reserved (0)
+//   [47:36]  glass_vsync[11:0]   — bank_vsync_count LSBs (vsync free-run; NOT swaps)
 //   [63:48]  frames_done[15:0]   — monotonic bank-swap counter (wraps at 65535)
 //
 // Semantics:
 //   !swap_pending → free_bank_mask = disp_bank ? 0b01 : 0b10
 //   swap_pending  → free_bank_mask = 0b00 (both banks in use)
 //   On vsync swap: old disp_bank becomes free, frames_done++
+//   On every vsync (swap or not): bank_vsync_count++ → glass_vsync field (12-bit)
+// Full 16-bit glass counter needs a future extension word (e.g. +0x138); PLXC
+// @ +0x130 is reserved for RBF build-id. 12-bit wrap ~68 s @60 Hz is enough
+// for modular Δ-rate. NEVER put glass_vsync into frames_done (c5382bee class).
 // Legacy absolute (example base only) — product live addr is doorbell+0x128:
 constexpr uint32_t kPlxdAddr  = 0x3007F128u;
 constexpr uint32_t kPlxdMagic = 0x504C5844u; // "PLXD"
@@ -108,6 +112,8 @@ constexpr unsigned kPlxdFreeBankMaskBit = 0;  // bits [33:32] → [1:0] of upper
 constexpr unsigned kPlxdFreeBankMaskWidth = 2;
 constexpr unsigned kPlxdDispBankBit = 2;      // bit [34] → bit 2 of upper word
 constexpr unsigned kPlxdSwapPendingBit = 3;   // bit [35] → bit 3 of upper word
+constexpr unsigned kPlxdGlassVsyncBit = 4;    // bits [47:36] → [15:4] of upper word
+constexpr unsigned kPlxdGlassVsyncWidth = 12;
 constexpr unsigned kPlxdFramesDoneBit = 16;   // bits [63:48] → [31:16] of upper word
 constexpr unsigned kPlxdFramesDoneWidth = 16;
 
