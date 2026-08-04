@@ -1482,7 +1482,12 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
             // the bank that just became display. Never force-write disp^1.
             // Protocol: host/libmisterplex/ddr_bank_release_select.hpp
             // (selectDdrWriteBank — display-ack / stale-free guard).
+            //
+            // Reset attempt-local consecutive_wait. After Drop it sits at
+            // kPlxdPollMaxIters; without this the next paint Drop's at 0 ms
+            // (live: free_mask=0 swap=1 last_pub=0 seen_disp=1 storm).
             {
+                beginDdrBankSelectAttempt(ddrBankSelect_);
                 DdrBankSelectResult sel =
                     selectDdrWriteBank(brs, ddrBankSelect_, kPlxdPollMaxIters);
                 while (sel.action == DdrBankSelectAction::Wait) {

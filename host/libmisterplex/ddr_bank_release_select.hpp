@@ -39,6 +39,10 @@ struct DdrBankSelectState {
     int last_published_bank = 0;
     // True before the first publish and after PLXD disp_bank matches last publish.
     bool last_publish_seen_on_display = true;
+    // Polls within the *current* sendDdrFrame attempt only. Must be zeroed at
+    // each attempt start (beginDdrBankSelectAttempt). Leaving it at max after
+    // Drop makes the next call Drop at 0 ms without re-waiting for free —
+    // live STALL storm class: "after 0 ms ... swap_pending".
     int consecutive_wait = 0;
 };
 
@@ -54,7 +58,13 @@ struct DdrBankSelectResult {
     const char* reason = "";
 };
 
+// Call once per sendDdrFrame / publish attempt before the poll loop.
+inline void beginDdrBankSelectAttempt(DdrBankSelectState& st) {
+    st.consecutive_wait = 0;
+}
+
 // max_wait_iters: caller increments once per poll (e.g. 1 ms). At limit → Drop.
+// consecutive_wait is attempt-local; use beginDdrBankSelectAttempt at attempt start.
 inline DdrBankSelectResult selectDdrWriteBank(const BankReleaseStatus& brs,
                                               DdrBankSelectState& st,
                                               int max_wait_iters) {

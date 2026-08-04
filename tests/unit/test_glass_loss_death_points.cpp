@@ -144,6 +144,42 @@ int main() {
         expect(last.action == DdrBankSelectAction::Drop, "D5 no_free → Drop at limit");
         std::printf("D5_OK bank-select Drop after %d ms (> T_src=%.3f ms @24.000)\n",
                     kPlxdPollMaxIters, T_src_ms);
+
+        // D5b: Drop must not sticky-lock the next sendDdrFrame attempt.
+        // Live defect: consecutive_wait left at max → "after 0 ms" STALL storm
+        // while free windows exist (1ms free bursts between swap_pending).
+        expect(st.consecutive_wait >= kPlxdPollMaxIters, "D5b wait counter at Drop");
+        // Without beginDdrBankSelectAttempt: first poll under swap_pending Drops at 0.
+        {
+            BankReleaseStatus stuck = brs;
+            stuck.swap_pending = true;
+            stuck.free_bank_mask = 0;
+            DdrBankSelectState sticky = st; // consecutive_wait still at limit
+            auto zero = selectDdrWriteBank(stuck, sticky, kPlxdPollMaxIters);
+            expect(zero.action == DdrBankSelectAction::Drop, "D5b sticky → immediate Drop");
+            expect(std::string(zero.reason) == "swap_pending" ||
+                       std::string(zero.reason) == "no_free",
+                   "D5b sticky reason bank-credit");
+        }
+        // With attempt boundary reset: same stuck snapshot Waits, then free → Write.
+        {
+            BankReleaseStatus stuck = brs;
+            stuck.swap_pending = true;
+            stuck.free_bank_mask = 0;
+            beginDdrBankSelectAttempt(st);
+            expect(st.consecutive_wait == 0, "D5b begin zeros wait");
+            auto w = selectDdrWriteBank(stuck, st, kPlxdPollMaxIters);
+            expect(w.action == DdrBankSelectAction::Wait, "D5b after begin → Wait not Drop");
+            BankReleaseStatus free{};
+            free.free_bank_mask = 0x2;
+            free.disp_bank = 0;
+            free.swap_pending = false;
+            free.frames_done = 1;
+            auto wr = selectDdrWriteBank(free, st, kPlxdPollMaxIters);
+            expect(wr.action == DdrBankSelectAction::Write && wr.bank == 1,
+                   "D5b free after reset → Write bank1");
+        }
+        std::printf("D5b_OK beginDdrBankSelectAttempt clears Drop sticky (0ms STALL class)\n");
     }
 
     // --- D6: maxDropRun=1 ---
