@@ -57,6 +57,33 @@ DDR_LAYOUT_PAIRS: tuple[tuple[str, str], ...] = (
     ("kPlex480pYuv420pDoorbellPhys", "DDR_FRAME_YUV420P_DOORBELL_PHYS"),
 )
 
+# L4 720p tier (opt-in). Paired separately so 480p presented-coded delta-16 pin stays.
+DDR_LAYOUT_720P_PAIRS: tuple[tuple[str, str], ...] = (
+    ("kPlex720pCodedWidth", "DDR_FRAME_720P_CODED_WIDTH"),
+    ("kPlex720pCodedHeight", "DDR_FRAME_720P_CODED_HEIGHT"),
+    ("kPlex720pDisplayWidth", "DDR_FRAME_720P_DISPLAY_WIDTH"),
+    ("kPlex720pDisplayHeight", "DDR_FRAME_720P_DISPLAY_HEIGHT"),
+    ("kPlex720pPresentedWidth", "DDR_FRAME_720P_PRESENTED_WIDTH"),
+    ("kPlex720pPresentedHeight", "DDR_FRAME_720P_PRESENTED_HEIGHT"),
+    ("kPlex720pCropLeft", "DDR_FRAME_720P_CROP_LEFT"),
+    ("kPlex720pCropRight", "DDR_FRAME_720P_CROP_RIGHT"),
+    ("kPlex720pCropTop", "DDR_FRAME_720P_CROP_TOP"),
+    ("kPlex720pCropBottom", "DDR_FRAME_720P_CROP_BOTTOM"),
+    ("kPlex720pPillarboxLeft", "DDR_FRAME_720P_PILLARBOX_LEFT"),
+    ("kPlex720pPillarboxRight", "DDR_FRAME_720P_PILLARBOX_RIGHT"),
+    ("kPlex720pYuvLumaLineQwords", "DDR_FRAME_720P_YUV_LUMA_LINE_QWORDS"),
+    ("kPlex720pYuvChromaLineQwords", "DDR_FRAME_720P_YUV_CHROMA_LINE_QWORDS"),
+    ("kPlex720pYStrideBytes", "DDR_FRAME_720P_Y_STRIDE_BYTES"),
+    ("kPlex720pChromaStrideBytes", "DDR_FRAME_720P_CHROMA_STRIDE_BYTES"),
+    ("kPlex720pYuv420pBytes", "DDR_FRAME_720P_YUV420P_BYTES"),
+    ("kPlex720pYPlaneOffset", "DDR_FRAME_720P_Y_PLANE_OFFSET"),
+    ("kPlex720pUPlaneOffset", "DDR_FRAME_720P_U_PLANE_OFFSET"),
+    ("kPlex720pVPlaneOffset", "DDR_FRAME_720P_V_PLANE_OFFSET"),
+    ("kPlex720pYuv420pBankStride", "DDR_FRAME_720P_YUV420P_BANK_STRIDE"),
+    ("kPlex720pPhysBase", "DDR_FRAME_720P_PHYS_BASE"),
+    ("kPlex720pYuv420pDoorbellPhys", "DDR_FRAME_720P_YUV420P_DOORBELL_PHYS"),
+)
+
 
 @dataclass(frozen=True)
 class Macro:
@@ -221,9 +248,10 @@ def parse_rtl_layout_consts(path: Path = DEFAULT_RTL_LAYOUT) -> dict[str, int]:
 def parse_host_layout_consts(path: Path = DEFAULT_HOST_LAYOUT) -> dict[str, int]:
     text = path.read_text(errors="ignore")
     out: dict[str, int] = {}
-    # constexpr Type name{value};  or  constexpr int name = value;
+    # constexpr Type name{value};  or  constexpr int/uint32_t name = value;
+    # Includes kPlex720p* for L4 tier parity with DDR_FRAME_720P_*.
     for m in re.finditer(
-        r"constexpr\s+(?:\w+\s+)+(kPlex480p\w+|kYuv420Black\w+|kDdrFrame\w+)\s*(?:=\s*([^;]+);|\{\s*([^}]+)\s*\}\s*;)",
+        r"constexpr\s+(?:\w+\s+)+(kPlex480p\w+|kPlex720p\w+|kYuv420Black\w+|kDdrFrame\w+)\s*(?:=\s*([^;]+);|\{\s*([^}]+)\s*\}\s*;)",
         text,
     ):
         name = m.group(1)
@@ -279,6 +307,62 @@ def check_ddr_layout_parity(
             status = "shared"
         print(f"| `{host_name}` | `{rtl_name}` | {hv if hv is not None else '—'} | {rv if rv is not None else '—'} | {status} |")
     print("DEFINE_PARITY_DDR_LAYOUT_END")
+
+    # L4 720p tier pairs (identity canvas; no presented-coded delta-16 pin).
+    print("DEFINE_PARITY_DDR_LAYOUT_720P_BEGIN")
+    print("| host | rtl | host_val | rtl_val | status |")
+    print("|---|---|---|---|---|")
+    for host_name, rtl_name in DDR_LAYOUT_720P_PAIRS:
+        hv = host.get(host_name)
+        rv = rtl.get(rtl_name)  # unfaulted RTL; 720p tier is not in shear-fault path
+        if hv is None and rv is None:
+            status = "MISSING-BOTH"
+            errors.append(f"{host_name}/{rtl_name}: missing on both host and RTL 720p layout headers")
+        elif hv is None:
+            status = "HOST-MISSING"
+            errors.append(f"{host_name}: missing from host ddr_frame_layout.hpp (RTL {rtl_name}={rv})")
+        elif rv is None:
+            status = "RTL-MISSING"
+            errors.append(f"{rtl_name}: missing from ddr_frame_layout_params.svh (host {host_name}={hv})")
+        elif hv != rv:
+            status = "VALUE-DIFF"
+            errors.append(
+                f"{host_name}={hv} != {rtl_name}={rv}: L4 ARM writer / RTL reader 720p divergence"
+            )
+        else:
+            status = "shared"
+        print(f"| `{host_name}` | `{rtl_name}` | {hv if hv is not None else '—'} | {rv if rv is not None else '—'} | {status} |")
+    print("DEFINE_PARITY_DDR_LAYOUT_720P_END")
+
+    coded720 = rtl.get("DDR_FRAME_720P_CODED_WIDTH")
+    y_stride720 = rtl.get("DDR_FRAME_720P_Y_STRIDE_BYTES")
+    y_qw720 = rtl.get("DDR_FRAME_720P_YUV_LUMA_LINE_QWORDS")
+    c_qw720 = rtl.get("DDR_FRAME_720P_YUV_CHROMA_LINE_QWORDS")
+    if None not in (coded720, y_stride720) and coded720 != y_stride720:
+        errors.append(
+            f"DDR_FRAME_720P_Y_STRIDE_BYTES={y_stride720} must equal "
+            f"DDR_FRAME_720P_CODED_WIDTH={coded720}"
+        )
+    if None not in (coded720, y_qw720) and y_qw720 != coded720 // 8:
+        errors.append(
+            f"DDR_FRAME_720P_YUV_LUMA_LINE_QWORDS={y_qw720} must equal CODED/8="
+            f"{coded720 // 8 if coded720 is not None else '?'}"
+        )
+    if None not in (coded720, c_qw720) and c_qw720 != coded720 // 16:
+        errors.append(
+            f"DDR_FRAME_720P_YUV_CHROMA_LINE_QWORDS={c_qw720} must equal CODED/16="
+            f"{coded720 // 16 if coded720 is not None else '?'}"
+        )
+    phys720 = rtl.get("DDR_FRAME_720P_PHYS_BASE")
+    bank720 = rtl.get("DDR_FRAME_720P_YUV420P_BANK_STRIDE")
+    db720 = rtl.get("DDR_FRAME_720P_YUV420P_DOORBELL_PHYS")
+    if None not in (phys720, bank720, db720):
+        expect_db = phys720 + 2 * bank720 - 0x1000
+        if db720 != expect_db:
+            errors.append(
+                f"DDR_FRAME_720P_YUV420P_DOORBELL_PHYS={db720:#x} != "
+                f"phys+2*bank-0x1000={expect_db:#x}"
+            )
 
     # Internal product relations (source-proven; kill 640-as-pitch theories).
     coded = rtl_eff.get("DDR_FRAME_CODED_WIDTH")
