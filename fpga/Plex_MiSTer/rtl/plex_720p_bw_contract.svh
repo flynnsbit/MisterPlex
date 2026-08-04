@@ -3,13 +3,16 @@
 // Clocks (pll_0002.v SoT): clk_sys=20e6, clk_ddr=90e6.
 // Shipping glass: MULTI + PPC=2 + clk_pix@29.7e6, clk_sys@20e6.
 //
-// STATUS SPLIT (do not collapse):
-//   reader_steady_delta: CLOSED by w-clock
-//     tests/unit/test_ddr_frame_store_720p_ppc2_bus.sh true rc=0
-//     G0 total_rd=182809 payload=173120 door=9689 ddr_cy=2784152<3750000 @20:90
+// STATUS SPLIT (rd-duck binding — do not collapse):
+//   reader_steady_delta: HARNESS (w-clock TB) — NOT CLOSED status
+//     Adopt test_ddr_frame_store_720p_ppc2_bus.sh as starting harness only.
+//     G0 counts useful (total_rd=182809 etc); delivery/correctness OPEN until
+//     G1 deadline+upper bound, underrun==0, dual-lane checksum, beat conservation,
+//     RED negative stall. Synthetic scan ~32.3fps bypasses product rate-match.
+//   fullframe_e2e_beat_delta: FILLED (w-mem b53197e5) companion ~38.53 — not pure 33.1776
 //   hps_write_concurrent + T_copy_e2e: OPEN (w-mem/w-path/parent)
 //     HOST write is NOT f2sdram — archive /dev/mem 1382400 B = 14.978 ms/f CPU TIME
-//   Forbidden phrasing: "fabric BW proof_gap still OPEN" without splitting reader vs HPS write.
+//   Forbidden: claim reader CLOSED; claim fabric_bw_closed; unsplit proof_gap slogans
 // rd-duck: 33.1776/66.3552/0.09216 = frame-store payload / ideal 64b port math ONLY.
 // NOT measured sustainable DDR BW; NOT total controller traffic; HPS write not RTL beats.
 //

@@ -1,5 +1,5 @@
 {
-  "title": "P720 LOCK 33.1776 payload/dir; reader CLOSED (w-clock); fullframe e2e FILLED b53197e5 ~38.53; hps_write+T_copy OPEN",
+  "title": "P720 LOCK 33.1776; reader HARNESS not CLOSED (rd-duck); fullframe e2e FILLED b53197e5; hps_write+T_copy OPEN",
   "product_config": {
     "PRESENT_MULTI_PIXEL": true,
     "PRESENT_PX_PER_CLK": 2,
@@ -96,7 +96,7 @@
     "multi_line_floor": 16,
     "note": "latency cover, not average BW"
   },
-  "proof_gap": "PARTIAL \u2014 reader_steady_delta CLOSED (w-clock TB under assumed stalls); NOT closed as measured sustainable controller BW; hps_write_concurrent + hardware contention + T_copy_e2e OPEN",
+  "proof_gap": "reader_steady_delta = HARNESS (w-clock TB) not CLOSED per rd-duck; fullframe e2e FILLED w-mem b53197e5 companion; hps_write_concurrent + T_copy_e2e + delivery/correctness OPEN",
   "agreed_by": [
     "w-clock",
     "w-scaler",
@@ -288,29 +288,31 @@
   },
   "status_split": {
     "reader_steady_delta": {
-      "state": "CLOSED",
-      "owner": "w-clock",
+      "state": "HARNESS_NOT_CLOSED",
+      "owner_tb": "w-clock",
+      "adopt_as": "starting harness \u2014 NOT CLOSED status (rd-duck audit dc2ae85d..8a40f163)",
       "test": "tests/unit/test_ddr_frame_store_720p_ppc2_bus.sh",
-      "true_rc": 0,
-      "G0": {
-        "payload_beats": 173120,
-        "ideal_payload": 172800,
-        "doorbell_beats": 9689,
-        "total_rd": 182809,
-        "ddr_cy": 2784152,
+      "useful_evidence": {
+        "G0_payload_beats": 173120,
+        "G0_door": 9689,
+        "G0_total_rd": 182809,
+        "G0_ddr_cy": 2784152,
         "budget_ddr_cy": 3750000,
-        "max_burst": 128,
-        "clocks": "sys:ddr 20:90",
-        "geom": "1280x720 I420 PPC=2 LINE=16 PHYS 0x30180000",
-        "metric": "steady frames_done delta (prep excluded)"
+        "G1_rd_blocked": 1248,
+        "note": "accepted-request counts useful; delivery/correctness OPEN"
       },
-      "G1": {
-        "payload_beats": 173120,
-        "rd_blocked": 1248,
-        "busy_cycles": 797290,
-        "note": "stall+hog; wall beam-locked MISS published"
-      },
-      "w_mem_corroboration": "tests/unit/test_ddr_ppc2_fullframe_beats.sh beats_e2e=200676 ~38.53 MB/s"
+      "required_before_blocker_satisfied": [
+        "G1 deadline + upper beat bound",
+        "underrun==0",
+        "dual-lane/full-frame checksum",
+        "exact returned-beat conservation",
+        "RED negative stall case"
+      ],
+      "known_gaps": [
+        "synthetic scan ~32.323 fps bypasses product rate-match",
+        "later commits do not change TB (audit range)"
+      ],
+      "language": "Do NOT tell parent reader beat-delta CLOSED; adopt harness only"
     },
     "hps_write_concurrent": {
       "state": "OPEN",
