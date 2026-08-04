@@ -35,8 +35,12 @@ def main() -> int:
     lay = LAYOUT.read_text(encoding="utf-8", errors="replace")
     abi = ABI_SEL.read_text(encoding="utf-8", errors="replace")
 
-    if not re.search(r"localparam\s+int\s+P720_PHYS_BASE\s*=\s*32'h3018_0000", c):
-        print("FAIL: plex_720p_bw_contract missing P720_PHYS_BASE=0x30180000", file=sys.stderr)
+    # Product 720p map (not Option-C dual-header 0x30180000/0x3047F000).
+    if not re.search(r"localparam\s+int\s+P720_PHYS_BASE\s*=\s*32'h3000_0000", c):
+        print("FAIL: plex_720p_bw_contract missing P720_PHYS_BASE=0x30000000 (product)", file=sys.stderr)
+        return 1
+    if not re.search(r"localparam\s+int\s+P720_DOORBELL_PHYS\s*=\s*32'h302F_F000", c):
+        print("FAIL: plex_720p_bw_contract missing P720_DOORBELL_PHYS=0x302FF000 (product)", file=sys.stderr)
         return 1
     if not re.search(r"localparam\s+int\s+P720_BEATS_PER_FRAME\s*=", c):
         print("FAIL: contract missing P720_BEATS_PER_FRAME", file=sys.stderr)
@@ -68,16 +72,25 @@ def main() -> int:
         print("FAIL: present_core must include ddr_frame_abi_select", file=sys.stderr)
         return 1
 
+    # PRODUCT_WIRE=0: publish job/engine/path/arb3 intentionally NOT in QIP.
     for mod in (
         "ddr_i420_bank_geom.sv",
         "ddr_frame_base_mux.sv",
         "ddr_i420_store_width_check.sv",
         "ddr_publish_copy_budget.sv",
-        "ddr_publish_job.sv",
         "ddr_frame_dma.sv",
     ):
         if mod not in q:
             print(f"FAIL: {mod} not in files.qip", file=sys.stderr)
+            return 1
+    for dark in (
+        "ddr_publish_job.sv",
+        "ddr_publish_engine.sv",
+        "ddr_publish_path.sv",
+        "ddr_bus_arbiter3.sv",
+    ):
+        if dark in q:
+            print(f"FAIL: {dark} in files.qip while PRODUCT_WIRE=0 (dead/product wire leak)", file=sys.stderr)
             return 1
 
     if "DDR_FRAME_PHYS_BASE" not in lay or "DDR_FRAME_720P_PHYS_BASE" not in lay:
@@ -91,7 +104,7 @@ def main() -> int:
         return 1
 
     # NEG twin: strip PHYS_BASE from contract text → would fail present refs
-    c_neg = re.sub(r"localparam\s+int\s+P720_PHYS_BASE\s*=\s*32'h3018_0000\s*;", "", c)
+    c_neg = re.sub(r"localparam\s+int\s+P720_PHYS_BASE\s*=\s*32'h3000_0000\s*;", "", c)
     if "P720_PHYS_BASE" in c_neg.split("//")[0] or re.search(
         r"localparam\s+int\s+P720_PHYS_BASE", c_neg
     ):

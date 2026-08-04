@@ -28,9 +28,14 @@ localparam int P720_I420_BYTES        = MISTERPLEX_BW_I420_B_FRAME;      // 1_38
 localparam int P720_Y_LINE_BYTES      = 1280;
 localparam int P720_Y_LINE_QWORDS     = 160;
 localparam int P720_C_LINE_QWORDS     = 80;
+// Product 720p DDR map (host kPlex720pYuv420p* / DDR_FRAME_* SSOT):
+//   banks @ 0x30000000 stride 0x180000, doorbell 0x302FF000, PLXF +0x118.
+// Option-C dual-header (0x30180000 / 0x3047F000) is NOT the product map —
+// silicon c3575f63 measured PLXF live at Option-C while host product idle
+// wrote 0x302FF000 → black screen / PLXF absent (lab 2026-08-04).
 localparam int P720_BANK_STRIDE       = 32'h0018_0000;
-localparam int P720_DOORBELL_PHYS     = 32'h3047_F000;
-localparam int P720_PHYS_BASE         = 32'h3018_0000;
+localparam int P720_DOORBELL_PHYS     = 32'h302F_F000;
+localparam int P720_PHYS_BASE         = 32'h3000_0000;
 localparam int P720_FPS               = MISTERPLEX_BW_FPS;               // 24
 localparam int P720_CLK_SYS_HZ        = MISTERPLEX_BW_CLK_SYS_HZ;        // 20e6
 localparam int P720_CLK_DDR_HZ        = 90_000_000;

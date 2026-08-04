@@ -49,10 +49,10 @@ int main(int argc, char **argv) {
 	expect("720_y_line_qwords_160", top->yq720 == 160);   // 1280/8
 	expect("720_c_line_qwords_80", top->cq720 == 80);     // 1280/16
 	expect("720_frame_bytes_1382400", top->f720 == 1382400u);
-	expect("720_bank0", top->b720_0 == 0x30180000u);
-	expect("720_bank1", top->b720_1 == 0x30180000u + 0x00180000u);
-	expect("720_bank0_end", top->b720_end == 0x30180000u + 1382400u);
-	expect("720_doorbell", top->d720 == 0x3047F000u);
+	expect("720_bank0", top->b720_0 == 0x30000000u);
+	expect("720_bank1", top->b720_1 == 0x30000000u + 0x00180000u);
+	expect("720_bank0_end", top->b720_end == 0x30000000u + 1382400u);
+	expect("720_doorbell", top->d720 == 0x302FF000u);
 	expect("720_bank_last_lt_bank1", (top->b720_end - 1) < top->b720_1);
 	expect("720_bank_end_le_bank1", top->b720_end <= top->b720_1);
 	// exact bank boundary ±1 on stride (not just frame_bytes)
@@ -62,9 +62,9 @@ int main(int argc, char **argv) {
 	expect("720_frame_plus1_still_in_bank",
 	       (top->b720_0 + top->f720) < top->b720_1); // end == base+frame; last byte in bank
 	expect("720_byte_frame_minus1_in",
-	       (0x30180000u + 1382400u - 1u) < top->b720_1);
+	       (0x30000000u + 1382400u - 1u) < top->b720_1);
 	expect("720_byte_at_frame_end_is_bank_boundary_ok",
-	       (0x30180000u + 1382400u) <= top->b720_1);
+	       (0x30000000u + 1382400u) <= top->b720_1);
 	// first byte of bank1 is bank boundary
 	expect("720_bank1_is_boundary", top->b720_1 == 0x30300000u);
 

@@ -63,7 +63,7 @@ module ddr_i420_store_width_check_tb_top (
 		.FRAME_W(1280), .FRAME_H(720),
 		.CODED_W(1280), .CODED_H(720),
 		.BANK_STRIDE_BYTES(32'h0018_0000),
-		.PHYS_BASE(32'h3018_0000)
+		.PHYS_BASE(32'h3000_0000)
 	) u720 (
 		.x_w_bits(), .y_w_bits(p720_y_w_bits), .coded_x_w_bits(), .coded_y_w_bits(),
 		.y_line_qwords(p720_y_qw), .c_line_qwords(p720_c_qw),

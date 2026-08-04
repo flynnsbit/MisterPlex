@@ -34,7 +34,7 @@ int main(int argc, char** argv) {
 	CHECK(top.p720_triple, "720p Option-C triple fits window");
 	CHECK(top.p720_stride_ge_3x, "stride 0x180000 == 3*0x80000");
 	CHECK(top.p720_frame_ge_3x, "frame >= 3*449280");
-	CHECK(top.p720_doorbell == 0x3047F000u, "720p doorbell");
+	CHECK(top.p720_doorbell == 0x302FF000u, "720p doorbell");
 	// max y line qword off = 719*160 = 115040
 	CHECK(top.p720_max_y_line_qw == 115040u, "max y line qword offset");
 	// banks in [0x30180000, 0x40000000) / 0x180000 = 169
@@ -55,6 +55,6 @@ int main(int argc, char** argv) {
 	}
 	std::printf(
 		"ddr_i420_store_width_check: OK 720p widths+chroma640x360; "
-		"dual/triple banks; neg u16/u7/480p-stride; banks_win=169\n");
+		"dual/triple banks; neg u16/u7/480p-stride; banks_win=170\n");
 	return 0;
 }
