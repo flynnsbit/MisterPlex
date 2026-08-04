@@ -557,15 +557,33 @@ module present_core #(
 `include "ddr_frame_layout_params.svh"
 
 	// Active DDR reader geometry. Default = 480p layout (coded 624 / display
-	// 618 / pillar 11 / stride 0x80000). L4 selects the 720p block from the
-	// same svh — without this, FRAME_W/H=1280x720 still fed 624x480 into the
-	// store and visibility ended at x≈628 y=479 (reviewer point 5).
+	// 618 / pillar 11 / stride 0x80000).
+	//
+	// 720p DDR ABI tier (rd-duck BLOCKING cross-lane): must arm for ANY CEA
+	// 720p present path — L4 true-DE OR MULTI+PPC beam — not L4 alone.
+	// MULTI previously fell through to 0x3000_0000 / 624x480 doorbell while
+	// driving a 1280x720 beam → wrong bank, ~480p visibility only.
+	// Shared selection: `ifdef L4 `elsif MULTI `else 480p (see PLEX_FS_TIER_720P comment).
 `ifdef PLEX_PRESENT_720P_L4
+	// PLEX_FS_TIER_720P via L4
 	localparam int FS_CODED_W     = DDR_FRAME_720P_CODED_WIDTH;
 	localparam int FS_CODED_H     = DDR_FRAME_720P_CODED_HEIGHT;
 	localparam int FS_DISPLAY_W   = DDR_FRAME_720P_DISPLAY_WIDTH;
 	localparam int FS_DISPLAY_H   = DDR_FRAME_720P_DISPLAY_HEIGHT;
 	localparam int FS_CROP_LEFT   = 0; // 720p: display == coded (host kPlex720p*)
+	localparam int FS_CROP_TOP    = 0;
+	localparam int FS_PRESENT_X   = DDR_FRAME_720P_PILLARBOX_LEFT;
+	localparam int FS_PRESENT_Y   = 0;
+	localparam [31:0] FS_PHYS_BASE = DDR_FRAME_720P_PHYS_BASE;
+	localparam int FS_BANK_STRIDE = DDR_FRAME_720P_YUV420P_BANK_STRIDE;
+	localparam [31:0] FS_DOORBELL = DDR_FRAME_720P_YUV420P_DOORBELL_PHYS;
+`elsif PRESENT_MULTI_PIXEL
+	// PLEX_FS_TIER_720P via MULTI (CEA 1280×720 beam + PPC path)
+	localparam int FS_CODED_W     = DDR_FRAME_720P_CODED_WIDTH;
+	localparam int FS_CODED_H     = DDR_FRAME_720P_CODED_HEIGHT;
+	localparam int FS_DISPLAY_W   = DDR_FRAME_720P_DISPLAY_WIDTH;
+	localparam int FS_DISPLAY_H   = DDR_FRAME_720P_DISPLAY_HEIGHT;
+	localparam int FS_CROP_LEFT   = 0;
 	localparam int FS_CROP_TOP    = 0;
 	localparam int FS_PRESENT_X   = DDR_FRAME_720P_PILLARBOX_LEFT;
 	localparam int FS_PRESENT_Y   = 0;
@@ -586,6 +604,17 @@ module present_core #(
 	localparam [31:0] FS_DOORBELL = DDR_FRAME_YUV420P_DOORBELL_PHYS;
 `endif
 
+	// Prefetch depth into ddr_frame_store.
+	// MULTI+PPC2 @20 MHz, 1280 px: t_line = 1280/PPC/f = 32 us @PPC2.
+	//   FRAME_LINES_8  → 256 us  < 500 us modelled DDR blackout (FAIL cover)
+	//   FRAME_LINES_16 → 512 us  >= 500 us (PASS cover)
+	// Product QSF may still set FRAME_LINES_8 for 480p; MULTI floors to 16.
+`ifdef PRESENT_MULTI_PIXEL
+	localparam int FS_LINE_COUNT = (FRAME_LINE_COUNT < 16) ? 16 : FRAME_LINE_COUNT;
+`else
+	localparam int FS_LINE_COUNT = FRAME_LINE_COUNT;
+`endif
+
 	ddr_frame_store #(
 		.FRAME_W(FRAME_W),
 		.FRAME_H(FRAME_H),
@@ -598,7 +627,7 @@ module present_core #(
 		.CROP_TOP(FS_CROP_TOP),
 		.PRESENT_X(FS_PRESENT_X),
 		.PRESENT_Y(FS_PRESENT_Y),
-		.LINE_COUNT(FRAME_LINE_COUNT),
+		.LINE_COUNT(FS_LINE_COUNT),
 		.PHYS_BASE(FS_PHYS_BASE),
 		.HPS_BANK_STRIDE_BYTES(FS_BANK_STRIDE),
 		.DOORBELL_PHYS(FS_DOORBELL)
@@ -734,6 +763,9 @@ module present_core #(
 	// ------------------------------------------------------------------
 	// synthesis translate_off
 	initial begin
+		if (FRAME_W != 1280 || FRAME_H != 720)
+			$error("PRESENT_MULTI_PIXEL requires FRAME_W=1280 FRAME_H=720 (got %0d x %0d)",
+				FRAME_W, FRAME_H);
 		if (PRESENT_PPC != 1)
 			$error("PRESENT_MULTI_PIXEL land requires PRESENT_PX_PER_CLK=1 until ddr_frame_store N-wide RGB (got %0d)",
 				PRESENT_PPC);

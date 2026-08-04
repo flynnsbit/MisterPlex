@@ -1261,8 +1261,8 @@ def check_present_geometry_stride_contract() -> None:
         "FRAME_W=640 for scanout, CODED_W=624 for DDR stride, DISPLAY_W=618 for crop, "
         "PRESENT_X=11 for pillarbox.",
     )
-    # L4 consumer wiring (must not leave 720p constants unreferenced).
-    l4_720_bind = (
+    # 720p-tier consumer wiring (L4 OR MULTI — not L4 alone; rd-duck BLOCKING).
+    tier_720_bind = (
         "FS_CODED_W=DDR_FRAME_720P_CODED_WIDTH" in present_nt
         and "FS_CODED_H=DDR_FRAME_720P_CODED_HEIGHT" in present_nt
         and "FS_DISPLAY_W=DDR_FRAME_720P_DISPLAY_WIDTH" in present_nt
@@ -1272,11 +1272,13 @@ def check_present_geometry_stride_contract() -> None:
         and "FS_DOORBELL=DDR_FRAME_720P_YUV420P_DOORBELL_PHYS" in present_nt
         and "FS_PHYS_BASE=DDR_FRAME_720P_PHYS_BASE" in present_nt
         and "ifdefPLEX_PRESENT_720P_L4" in present_nt
+        and "elsifPRESENT_MULTI_PIXEL" in present_nt
+        and present_nt.count("FS_PHYS_BASE=DDR_FRAME_720P_PHYS_BASE") >= 2
     )
     check(
-        l4_720_bind,
-        "present_core L4 arm must wire DDR_FRAME_720P_* into ddr_frame_store "
-        "(coded/display/pillar/stride/doorbell/phys_base) behind PLEX_PRESENT_720P_L4.",
+        tier_720_bind,
+        "present_core 720p tier must wire DDR_FRAME_720P_* into ddr_frame_store "
+        "behind PLEX_PRESENT_720P_L4 OR PRESENT_MULTI_PIXEL (not L4-only).",
     )
     check(
         'set_global_assignment-nameVERILOG_MACRO"DDR_FRAME_STORE=1"' in qsf_nt

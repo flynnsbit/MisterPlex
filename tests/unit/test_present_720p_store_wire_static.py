@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""Inventory + wire check: 720p layout constants must feed ddr_frame_store on L4.
+"""Inventory + wire check: 720p layout constants must feed ddr_frame_store on L4 OR MULTI.
 
 CONFIRMS reviewer point 5 was real on pre-fix main: DDR_FRAME_720P_* lived only
-in ddr_frame_layout_params.svh (+ host/tests). present_core must now select them
-behind PLEX_PRESENT_720P_L4 while default arm keeps 480p symbols.
+in ddr_frame_layout_params.svh (+ host/tests). present_core must select them on
+the shared 720p tier (PLEX_PRESENT_720P_L4 OR PRESENT_MULTI_PIXEL) while the
+default arm keeps 480p symbols.
+
+rd-duck BLOCKING: MULTI-only CEA path must not fall through to 624x480 ABI.
 
 Negative: a present_core that still only binds DDR_FRAME_CODED_WIDTH (no 720P
-symbols on the L4 arm) must fail.
+symbols on the L4/MULTI arms) must fail.
 """
 from __future__ import annotations
 
@@ -80,9 +83,10 @@ def main() -> int:
         if needle not in pnt:
             return fail(f"default 480p arm missing {needle}")
 
-    # L4 arm
+    # Shared 720p tier: L4 OR MULTI (not L4-only)
     for needle in [
         "ifdefPLEX_PRESENT_720P_L4",
+        "elsifPRESENT_MULTI_PIXEL",
         "FS_CODED_W=DDR_FRAME_720P_CODED_WIDTH",
         "FS_CODED_H=DDR_FRAME_720P_CODED_HEIGHT",
         "FS_DISPLAY_W=DDR_FRAME_720P_DISPLAY_WIDTH",
@@ -95,10 +99,20 @@ def main() -> int:
         ".HPS_BANK_STRIDE_BYTES(FS_BANK_STRIDE)",
         ".DOORBELL_PHYS(FS_DOORBELL)",
         ".PHYS_BASE(FS_PHYS_BASE)",
+        ".LINE_COUNT(FS_LINE_COUNT)",
     ]:
         if needle not in pnt:
-            return fail(f"L4 wire missing {needle}")
+            return fail(f"720p-tier wire missing {needle}")
 
+    # MULTI arm must bind 720p PHYS/doorbell (not only L4)
+    # Count 720p PHYS binds: need >=2 (L4 block + MULTI block)
+    n_phys = pnt.count("FS_PHYS_BASE=DDR_FRAME_720P_PHYS_BASE")
+    if n_phys < 2:
+        return fail(
+            f"FS_PHYS_BASE 720p bind count={n_phys} want>=2 (L4+MULTI); "
+            "MULTI-only recipe would still see 480p base"
+        )
+    print(f"OK FS_PHYS_BASE 720p binds={n_phys} (L4+MULTI tier)")
     # Store still derives visibility from params (not hardcoded 618)
     snt = nt(store)
     for needle in [
@@ -137,7 +151,7 @@ def main() -> int:
         print(f"  {s}: {c if c else 'NONE (beam/test-only or unused)'}")
 
     print(
-        "PASS present_720p_store_wire: L4 binds 720p coded/display/pillar/stride/"
+        "PASS present_720p_store_wire: L4|MULTI bind 720p coded/display/pillar/stride/"
         "doorbell/phys; default 480p arm intact; QSF default-off"
     )
     return 0
