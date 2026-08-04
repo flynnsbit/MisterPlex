@@ -83,35 +83,31 @@ set_global_assignment -name VERILOG_MACRO "DDR_FRAME_STORE=1"
 # Product netlist: no decode_stub painter / on-chip DPB (reclaim ~268 M10K).
 # stream_path.sv gates the instance; sim builds omit this macro.
 set_global_assignment -name VERILOG_MACRO "PRODUCT_NO_STUB=1"
-set_global_assignment -name VERILOG_MACRO "FRAME_W=640"
-set_global_assignment -name VERILOG_MACRO "FRAME_H=480"
-set_global_assignment -name VERILOG_MACRO "FRAME_LINES_8=1"
-# 720p / ascal-native present path — DEFAULT OFF (v0.3.0 baseline must not change).
-# Parent enables in a granted fit QSF only.
 #
-# --- L4 720p24 product path (preferred first glass) ---
-# Measured PMS asset: 1280x720 @ 24/1. w-clock beam: H=1312 V=762.
-# At clk_sys=24 MHz → 24.006 Hz (1:1, no pulldown). Default product clk_sys is
-# still 20 MHz until fit grants 24 MHz PLL — beam math is correct either way.
+# === 720p24 MULTI + clk_pix LIVE (w-clock + w-fitgate integration candidate) ===
+# Parent 2026-08-04: clk_pix default-OFF was the gap between "720p RTL exists" and
+# "720p works". Same-clock CEA/COMPACT totals @20 MHz → fps_eff≈16.16 Hz which
+# photographs as a win. PRESENT_CLK_PIX_PLL @29.7 is therefore product-ON here.
+# Glass: COMPACT H1650×V750×24 (NOT CEA VIC60 H3300@59.4). PPC=2 dual-lane store.
+# Fit owns exclusive slot (w-fitgate). STA PRE-REG: see docs/clk_pix_29p7_sta_prereg.md
+# Rollback to 480p baseline: comment this block; uncomment FRAME_W=640/H=480/LINES_8.
+#set_global_assignment -name VERILOG_MACRO "FRAME_W=640"
+#set_global_assignment -name VERILOG_MACRO "FRAME_H=480"
+#set_global_assignment -name VERILOG_MACRO "FRAME_LINES_8=1"
+set_global_assignment -name VERILOG_MACRO "FRAME_W=1280"
+set_global_assignment -name VERILOG_MACRO "FRAME_H=720"
+set_global_assignment -name VERILOG_MACRO "FRAME_LINES_16=1"
+set_global_assignment -name VERILOG_MACRO "PRESENT_MULTI_PIXEL=1"
+set_global_assignment -name VERILOG_MACRO "PRESENT_PX_PER_CLK=2"
+set_global_assignment -name VERILOG_MACRO "PRESENT_CLK_PIX_PLL=1"
+set_global_assignment -name SDC_FILE Plex_clk_pix.sdc
+# Do NOT enable PRESENT_CLK_PIX_74_25 (VIC4 60 Hz) or PRESENT_CLK_PIX_CEA24 (59.4)
+# for this 24 fps COMPACT product path.
+# L4 / BEAM_960 mutually exclusive with MULTI — leave off.
 #set_global_assignment -name VERILOG_MACRO "PLEX_PRESENT_720P_L4=1"
-#set_global_assignment -name VERILOG_MACRO "FABRIC_NATIVE_720P_GEOM=1"
-#set_global_assignment -name VERILOG_MACRO "FRAME_W=1280"
-#set_global_assignment -name VERILOG_MACRO "FRAME_H=720"
-# (comment out the FRAME_W=640 / FRAME_H=480 lines above when enabling L4)
-#
-# --- Alternate tiers (mutually exclusive with L4) ---
 #set_global_assignment -name VERILOG_MACRO "PRESENT_BEAM_960=1"
-#set_global_assignment -name VERILOG_MACRO "PRESENT_MULTI_PIXEL=1"
-#set_global_assignment -name VERILOG_MACRO "PRESENT_PX_PER_CLK=1"
-# --- clk_pix PLL (w-clock; DEFAULT OFF) ---
-# Adds pll outclk_3. Default 29.700000 MHz = 1650*750*24 (CEA 720p totals @24).
-# Optional 74.250000 MHz = 1650*750*60 (CEA VIC 4 720p60): also set PRESENT_CLK_PIX_74_25.
-# Requires parent-granted fit. Source Plex_clk_pix.sdc with the same enable.
-# Rate note: MULTI_PIXEL + PPC=1 @ clk_sys=20 cannot feed 29.7 Mpix/s — need
-# PPC=2 (store N-wide) or beam-on-clk_pix. See .agent-work/w-clock/720P_CLK_DDR_ARITH.md
-#set_global_assignment -name VERILOG_MACRO "PRESENT_CLK_PIX_PLL=1"
+#set_global_assignment -name VERILOG_MACRO "CLK_SYS_24=1"
 #set_global_assignment -name VERILOG_MACRO "PRESENT_CLK_PIX_74_25=1"
-#set_global_assignment -name SDC_FILE Plex_clk_pix.sdc
 
 
 # sys/sys.tcl carries the upstream MiSTer single-stick SDRAM_* pin assignments.

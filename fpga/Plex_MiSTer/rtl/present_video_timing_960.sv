@@ -10,9 +10,11 @@
 // MODE=1: 1190×560. MODE=2 film legacy: 1389×600 → fps_milli trunc 23997..23998.
 // Film companion preferred: same H=1182, V=705 via beam rt_vtotal (not MODE=2).
 
+`include "misterplex_clk_hz.svh"
+
 module present_video_timing_960 #(
 	parameter int MODE = 0,
-	parameter int CLK_PIX_HZ = 20_000_000
+	parameter int CLK_PIX_HZ = `MISTERPLEX_CLK_SYS_HZ
 )(
 	output wire [11:0] h_de,
 	output wire [11:0] h_total,

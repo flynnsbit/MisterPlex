@@ -2,7 +2,6 @@
   "schema": "misterplex.define_parity_allowlist.v1",
   "test_only_macros": {
     "CAVLC_NEGATIVE_TEST": "Injected CAVLC residual fault for expected-red simulation only.",
-    "CAVLC_CYCLE_PROBE": "Test-only stage cycle counters on h264_cavlc_residual for cy/MB measurement harness.",
     "DDR_FRAME_STORE_FAULT_CHROMA_LUMA_STRIDE": "Injected DDR frame-store expected-red fault.",
     "DDR_FRAME_STORE_FAULT_CHROMA_VERTICAL_FULLRES": "Injected DDR frame-store expected-red fault.",
     "DDR_FRAME_STORE_FAULT_HOLD_DISP_BANK": "Injected DDR frame-store expected-red fault.",
@@ -13,7 +12,6 @@
     "DEQUANT_FAULT_QP_SWEEP": "Injected dequant QP-sweep fault for overflow boundary verification.",
     "H264_DEBLOCK_FAULT_ALPHA_BIAS": "Injected deblock alpha-table bias expected-red fault.",
     "H264_DEBLOCK_FAULT_FORCE_BS2": "Injected deblock force-bS=2 expected-red fault.",
-    "FAULT_NB_CTX_NO_GEOM_REJECT": "Injected nb_ctx expected-red fault: swallow sticky geom_reject to prove silent-corruption path is gated.",
     "H264_DEBLOCK_FAULT_MB_COMMIT_EARLY": "Injected deblock/DPB seam expected-red fault.",
     "H264_DEBLOCK_FAULT_REF_READY_EARLY": "Injected deblock/DPB seam expected-red fault.",
     "H264_DECODE_CORE_FAULT_BAD_RBSP_REQ": "Injected decode-core P16x16 syntax-walker RBSP request expected-red fault.",
@@ -43,7 +41,13 @@
     "OSD_MENU_FAULT_SKIP_INITIAL_IDLE": "Injected OSD expected-red fault: skip first idle paint so DDR idle screen never appears.",
     "P3_INTRA_FRAME_RARE_NEGATIVE_TEST": "Injected intra-frame expected-red fault.",
     "P3_INTRA_NEGATIVE_TEST": "Injected intra-MB0 expected-red fault.",
-    "RAW_PIPE_FAULT_NO_SET": "Injected raw-video-pipe expected-red fault: F_SETPIPE_SZ becomes a no-op so capacity stays at the kernel default."
+    "RAW_PIPE_FAULT_NO_SET": "Injected raw-video-pipe expected-red fault: F_SETPIPE_SZ becomes a no-op so capacity stays at the kernel default.",
+    "CAVLC_CYCLE_PROBE": "Injected CAVLC residual cycle probe for real-MB cycle accounting only.",
+    "FAULT_NB_CTX_NO_GEOM_REJECT": "Injected intra nb-ctx expected-red fault: skip geometry reject path.",
+    "SCALAR_NEG_EXPECT_EQUAL": "Scalar-replicate NEG for PPC2 distinct gate (expect equal lanes / fail distinct).",
+    "FRAME_LINES_16": "MULTI 720p e2e/elab: force 16-line store floor (product default remains FRAME_LINES_8).",
+    "PRESENT_MULTI_PIXEL": "MULTI 720p e2e/elab: enable multi-pixel present path (product default-OFF).",
+    "PRESENT_PX_PER_CLK": "MULTI 720p e2e/elab: PPC=2 dual-lane store (product default-OFF)."
   },
   "volatile_value_macros": {
     "BUILD_DATE": "Quartus generates the date in sys/build_id.tcl; Verilator lint uses a stable placeholder value."

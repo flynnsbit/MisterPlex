@@ -75,14 +75,32 @@ module yuv_bt601_npx #(
 		end
 	endfunction
 
-	integer li;
-	reg [X_W-1:0] x_i;
-	reg [7:0] y_i, u_i, v_i;
-	reg signed [11:0] y_s, u_s, v_s;
-	reg signed [20:0] r_w, g_w, b_w;
-	reg signed [11:0] r_c, g_c, b_c;
-	reg [7:0] r_i, g_i, b_i;
+	// Per-lane comb convert (no shared temps across NBA lane writes).
+	wire [7:0] lane_r [0:PX_PER_CLK-1];
+	wire [7:0] lane_g [0:PX_PER_CLK-1];
+	wire [7:0] lane_b [0:PX_PER_CLK-1];
 
+	genvar gi;
+	generate
+		for (gi = 0; gi < PX_PER_CLK; gi = gi + 1) begin : g_lane
+			wire [X_W-1:0] x_i = src_x0 + X_W'(gi);
+			wire [7:0] y_i = y_at(x_i);
+			wire [7:0] u_i = c_at(u_qword, x_i);
+			wire [7:0] v_i = c_at(v_qword, x_i);
+			wire signed [11:0] y_s = {4'd0, y_i};
+			wire signed [11:0] u_s = {4'd0, u_i} - 12'sd128;
+			wire signed [11:0] v_s = {4'd0, v_i} - 12'sd128;
+			wire signed [20:0] y_ext = {{9{y_s[11]}}, y_s};
+			wire signed [20:0] r_w = (y_ext <<< 8) + (21'sd359 * v_s);
+			wire signed [20:0] g_w = (y_ext <<< 8) - (21'sd88 * u_s) - (21'sd183 * v_s);
+			wire signed [20:0] b_w = (y_ext <<< 8) + (21'sd454 * u_s);
+			assign lane_r[gi] = sat8(r_w[19:8]);
+			assign lane_g[gi] = sat8(g_w[19:8]);
+			assign lane_b[gi] = sat8(b_w[19:8]);
+		end
+	endgenerate
+
+	integer li;
 	always @(posedge clk) begin
 		if (reset) begin
 			out_valid <= 1'b0;
@@ -94,25 +112,9 @@ module yuv_bt601_npx #(
 			out_valid <= in_valid;
 			out_lane_valid <= in_valid ? {PX_PER_CLK{1'b1}} : '0;
 			for (li = 0; li < PX_PER_CLK; li = li + 1) begin
-				x_i = src_x0 + X_W'(li);
-				y_i = y_at(x_i);
-				u_i = c_at(u_qword, x_i);
-				v_i = c_at(v_qword, x_i);
-				y_s = {4'd0, y_i};
-				u_s = {4'd0, u_i} - 12'sd128;
-				v_s = {4'd0, v_i} - 12'sd128;
-				r_w = ({{9{y_s[11]}}, y_s} <<< 8) + (21'sd359 * v_s);
-				g_w = ({{9{y_s[11]}}, y_s} <<< 8) - (21'sd88 * u_s) - (21'sd183 * v_s);
-				b_w = ({{9{y_s[11]}}, y_s} <<< 8) + (21'sd454 * u_s);
-				r_c = r_w[19:8];
-				g_c = g_w[19:8];
-				b_c = b_w[19:8];
-				r_i = sat8(r_c);
-				g_i = sat8(g_c);
-				b_i = sat8(b_c);
-				out_r[li*8 +: 8] <= r_i;
-				out_g[li*8 +: 8] <= g_i;
-				out_b[li*8 +: 8] <= b_i;
+				out_r[li*8 +: 8] <= lane_r[li];
+				out_g[li*8 +: 8] <= lane_g[li];
+				out_b[li*8 +: 8] <= lane_b[li];
 			end
 		end
 	end

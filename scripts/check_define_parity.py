@@ -281,26 +281,54 @@ def check_ddr_layout_parity(
     print("DEFINE_PARITY_DDR_LAYOUT_END")
 
     # Internal product relations (source-proven; kill 640-as-pitch theories).
-    coded = rtl_eff.get("DDR_FRAME_CODED_WIDTH")
-    presented = rtl_eff.get("DDR_FRAME_PRESENTED_WIDTH")
-    display = rtl_eff.get("DDR_FRAME_DISPLAY_WIDTH")
-    y_stride = rtl_eff.get("DDR_FRAME_Y_STRIDE_BYTES")
-    y_qw = rtl_eff.get("DDR_FRAME_YUV_LUMA_LINE_QWORDS")
-    c_qw = rtl_eff.get("DDR_FRAME_YUV_CHROMA_LINE_QWORDS")
-    pillar_l = rtl_eff.get("DDR_FRAME_PILLARBOX_LEFT")
-    pillar_r = rtl_eff.get("DDR_FRAME_PILLARBOX_RIGHT")
+    # When QSF FRAME is 1280x720, compare against 720p tier constants (not 480p).
+    fw = quartus.get("FRAME_W")
+    fh = quartus.get("FRAME_H")
+    try:
+        fw_v = int(fw.value, 0) if fw is not None else None
+    except ValueError:
+        fw_v = None
+    try:
+        fh_v = int(fh.value, 0) if fh is not None else None
+    except ValueError:
+        fh_v = None
+    is_720p_canvas = fw_v == 1280 and fh_v == 720
+
+    if is_720p_canvas:
+        coded = rtl_eff.get("DDR_FRAME_720P_CODED_WIDTH")
+        presented = rtl_eff.get("DDR_FRAME_720P_PRESENTED_WIDTH")
+        display = rtl_eff.get("DDR_FRAME_720P_DISPLAY_WIDTH")
+        y_stride = rtl_eff.get("DDR_FRAME_720P_Y_STRIDE_BYTES")
+        pillar_l = rtl_eff.get("DDR_FRAME_720P_PILLARBOX_LEFT")
+        pillar_r = rtl_eff.get("DDR_FRAME_720P_PILLARBOX_RIGHT")
+        rtl_ph = rtl_eff.get("DDR_FRAME_720P_PRESENTED_HEIGHT")
+        y_qw = None  # 720p tier uses byte strides in params header
+        c_qw = None
+        expect_delta = 0  # 1280 coded == 1280 presented
+    else:
+        coded = rtl_eff.get("DDR_FRAME_CODED_WIDTH")
+        presented = rtl_eff.get("DDR_FRAME_PRESENTED_WIDTH")
+        display = rtl_eff.get("DDR_FRAME_DISPLAY_WIDTH")
+        y_stride = rtl_eff.get("DDR_FRAME_Y_STRIDE_BYTES")
+        y_qw = rtl_eff.get("DDR_FRAME_YUV_LUMA_LINE_QWORDS")
+        c_qw = rtl_eff.get("DDR_FRAME_YUV_CHROMA_LINE_QWORDS")
+        pillar_l = rtl_eff.get("DDR_FRAME_PILLARBOX_LEFT")
+        pillar_r = rtl_eff.get("DDR_FRAME_PILLARBOX_RIGHT")
+        rtl_ph = rtl_eff.get("DDR_FRAME_PRESENTED_HEIGHT")
+        expect_delta = 16  # 640-624 shear pin
+
     if None not in (coded, y_stride) and coded != y_stride:
         errors.append(
-            f"DDR_FRAME_Y_STRIDE_BYTES={y_stride} must equal DDR_FRAME_CODED_WIDTH={coded} "
+            f"Y_STRIDE_BYTES={y_stride} must equal CODED_WIDTH={coded} "
             f"(YUV line pitch is coded width, never presented width)"
         )
-    if None not in (coded, y_qw) and y_qw != coded // 8:
+    if y_qw is not None and coded is not None and y_qw != coded // 8:
         errors.append(
-            f"DDR_FRAME_YUV_LUMA_LINE_QWORDS={y_qw} must equal CODED_WIDTH/8={coded // 8 if coded is not None else '?'}"
+            f"DDR_FRAME_YUV_LUMA_LINE_QWORDS={y_qw} must equal CODED_WIDTH/8={coded // 8}"
         )
-    if None not in (coded, c_qw) and c_qw != coded // 16:
+    if c_qw is not None and coded is not None and c_qw != coded // 16:
         errors.append(
-            f"DDR_FRAME_YUV_CHROMA_LINE_QWORDS={c_qw} must equal CODED_WIDTH/16={coded // 16 if coded is not None else '?'}"
+            f"DDR_FRAME_YUV_CHROMA_LINE_QWORDS={c_qw} must equal CODED_WIDTH/16={coded // 16}"
         )
     if None not in (pillar_l, display, pillar_r, presented) and (
         pillar_l + display + pillar_r != presented
@@ -308,30 +336,31 @@ def check_ddr_layout_parity(
         errors.append(
             f"pillarbox math broken: {pillar_l}+{display}+{pillar_r} != presented {presented}"
         )
-    if None not in (coded, presented) and (presented - coded) != 16:
-        # Pin the 16 px figure used in the 624-vs-640 shear arithmetic.
+    if None not in (coded, presented) and (presented - coded) != expect_delta:
         errors.append(
-            f"presented-coded delta is {presented - coded}, expected 16 "
-            f"(640-624); used when reasoning about wrong FRAME_W pitch"
+            f"presented-coded delta is {presented - coded}, expected {expect_delta} "
+            f"({'720p identity' if is_720p_canvas else '640-624 shear pin'})"
         )
 
     # QSF FRAME_W/H are the *presented* scanout canvas, not coded DDR pitch.
-    fw = quartus.get("FRAME_W")
-    fh = quartus.get("FRAME_H")
     if fw is None:
         errors.append("FRAME_W: missing from Quartus product macros (presented scanout width)")
     else:
-        try:
-            fw_v = int(fw.value, 0)
-        except ValueError:
-            fw_v = None
+        if fw_v is None:
             errors.append(f"FRAME_W: unparseable Quartus value {fw.value!r}")
         if fw_v is not None and presented is not None and fw_v != presented:
+            tier = "DDR_FRAME_720P_PRESENTED_WIDTH" if is_720p_canvas else "DDR_FRAME_PRESENTED_WIDTH"
             errors.append(
-                f"FRAME_W Quartus={fw_v} != DDR_FRAME_PRESENTED_WIDTH={presented}: "
+                f"FRAME_W Quartus={fw_v} != {tier}={presented}: "
                 f"scanout canvas must match presented width (not coded {coded})"
             )
-        if fw_v is not None and coded is not None and fw_v == coded:
+        # 480p only: FRAME_W must not collapse onto coded 624
+        if (
+            not is_720p_canvas
+            and fw_v is not None
+            and coded is not None
+            and fw_v == coded
+        ):
             errors.append(
                 f"FRAME_W={fw_v} equals CODED_WIDTH — presented scanout collapsed onto coded "
                 f"pitch; pillarbox contract lost"
@@ -339,16 +368,11 @@ def check_ddr_layout_parity(
     if fh is None:
         errors.append("FRAME_H: missing from Quartus product macros (presented scanout height)")
     else:
-        try:
-            fh_v = int(fh.value, 0)
-        except ValueError:
-            fh_v = None
+        if fh_v is None:
             errors.append(f"FRAME_H: unparseable Quartus value {fh.value!r}")
-        rtl_ph = rtl_eff.get("DDR_FRAME_PRESENTED_HEIGHT")
         if fh_v is not None and rtl_ph is not None and fh_v != rtl_ph:
-            errors.append(
-                f"FRAME_H Quartus={fh_v} != DDR_FRAME_PRESENTED_HEIGHT={rtl_ph}"
-            )
+            tier = "DDR_FRAME_720P_PRESENTED_HEIGHT" if is_720p_canvas else "DDR_FRAME_PRESENTED_HEIGHT"
+            errors.append(f"FRAME_H Quartus={fh_v} != {tier}={rtl_ph}")
 
     return errors
 

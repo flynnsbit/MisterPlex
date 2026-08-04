@@ -46,7 +46,10 @@ module ddr_frame_store #(
 	//    NBA order cleared swap_pending after setting it, dropping the doorbell
 	//    under sustained high-rate publish (playback ~24 fps) while idle's slow
 	//    presents rarely collide with the 1-cycle vsync window.
-	parameter bit SWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC = 1'b1
+	parameter bit SWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC = 1'b1,
+	// Multi-pixel present path (default 1 = legacy scalar RGB). PPC in {1,2,4}.
+	// Even rd_x required for PPC>1 so a group stays inside one Y qword (no dual-port).
+	parameter int PX_PER_CLK = 1
 )(
 	input  wire        clk,
 	input  wire        clk_ddr,
@@ -58,6 +61,12 @@ module ddr_frame_store #(
 	output reg  [7:0]  rd_r,
 	output reg  [7:0]  rd_g,
 	output reg  [7:0]  rd_b,
+	// N-wide RGB (lane 0 == rd_r/g/b). Tied off when unused by present_core.
+	output reg  [PX_PER_CLK*8-1:0] rd_r_n,
+	output reg  [PX_PER_CLK*8-1:0] rd_g_n,
+	output reg  [PX_PER_CLK*8-1:0] rd_b_n,
+	output reg  [PX_PER_CLK-1:0]   rd_lane_valid_n,
+	output reg                     rd_n_valid,
 
 	input  wire        start_req,
 	input  wire        bank_sel,
@@ -123,6 +132,21 @@ module ddr_frame_store #(
 	localparam [28:0] C_LINE_QWORDS_W = 29'(C_LINE_QWORDS);
 	localparam [Y_QW_AW:0] DDR_BURST_MAX_QWORDS = (Y_QW_AW+1)'(DDR_BURST_MAX);
 	localparam [31:0] MAGIC = 32'h504C_584B;
+	// Consume three-lane 720p BW/ABI contract when coded 1280x720 (rd-duck: not QIP-only).
+`include "plex_720p_bw_contract.svh"
+	generate
+		if ((CODED_W == 1280) && (CODED_H == 720)) begin : g_p720_store_contract
+			if (PHYS_BASE != P720_PHYS_BASE)
+				p720_store_phys_base_must_match_contract u_phys();
+			if (DOORBELL_PHYS != P720_DOORBELL_PHYS)
+				p720_store_doorbell_must_match_contract u_door();
+			if (HPS_BANK_STRIDE_BYTES != P720_BANK_STRIDE)
+				p720_store_stride_must_match_contract u_stride();
+			if (LINE_COUNT < P720_LINE_COUNT)
+				p720_store_line_count_below_contract_floor u_lines();
+		end
+	endgenerate
+
 	localparam [31:0] MAGIC_S = 32'h504C_5853;
 	localparam [31:0] MAGIC_I = 32'h504C_5849;
 	localparam [31:0] MAGIC_M = 32'h504C_584D;
@@ -376,6 +400,51 @@ module ddr_frame_store #(
 	// Residual miss under true DDR backlog still counts as underrun.
 	wire rd_miss_now = rd_active && rd_visible && has_frame && (!y_hit_now || !c_hit_now);
 
+	// BT.601 full-range helpers for multi-pixel lanes (matches host / yuv_bt601_npx).
+	function automatic [7:0] yuv_r(input [7:0] y, input [7:0] u, input [7:0] v);
+		reg signed [11:0] ys, us, vs, rc;
+		reg signed [20:0] w;
+		begin
+			ys = {4'd0, y};
+			us = {4'd0, u} - 12'sd128;
+			vs = {4'd0, v} - 12'sd128;
+			w = ({{9{ys[11]}}, ys} <<< 8) + (21'sd359 * vs);
+			rc = w[19:8];
+			if (rc < 0) yuv_r = 8'd0;
+			else if (rc > 12'sd255) yuv_r = 8'd255;
+			else yuv_r = rc[7:0];
+		end
+	endfunction
+	function automatic [7:0] yuv_g(input [7:0] y, input [7:0] u, input [7:0] v);
+		reg signed [11:0] ys, us, vs, rc;
+		reg signed [20:0] w;
+		begin
+			ys = {4'd0, y};
+			us = {4'd0, u} - 12'sd128;
+			vs = {4'd0, v} - 12'sd128;
+			w = ({{9{ys[11]}}, ys} <<< 8) - (21'sd88 * us) - (21'sd183 * vs);
+			rc = w[19:8];
+			if (rc < 0) yuv_g = 8'd0;
+			else if (rc > 12'sd255) yuv_g = 8'd255;
+			else yuv_g = rc[7:0];
+		end
+	endfunction
+	function automatic [7:0] yuv_b(input [7:0] y, input [7:0] u, input [7:0] v);
+		reg signed [11:0] ys, us, vs, rc;
+		reg signed [20:0] w;
+		begin
+			ys = {4'd0, y};
+			us = {4'd0, u} - 12'sd128;
+			vs = {4'd0, v} - 12'sd128;
+			w = ({{9{ys[11]}}, ys} <<< 8) + (21'sd454 * us);
+			rc = w[19:8];
+			if (rc < 0) yuv_b = 8'd0;
+			else if (rc > 12'sd255) yuv_b = 8'd255;
+			else yuv_b = rc[7:0];
+		end
+	endfunction
+
+	// Scalar path — keep the original wire form bit-identical to pre-PPC land.
 	wire [7:0] y_pix = pick_byte(selected_y_q, y_sel_r);
 	wire [7:0] u_pix = pick_byte(selected_u_q, c_sel_r);
 	wire [7:0] v_pix = pick_byte(selected_v_q, c_sel_r);
@@ -389,6 +458,24 @@ module ddr_frame_store #(
 	wire signed [11:0] r_calc = r_calc_w[19:8];
 	wire signed [11:0] g_calc = g_calc_w[19:8];
 	wire signed [11:0] b_calc = b_calc_w[19:8];
+
+	// Multi-pixel extract from the same registered qwords (PPC>1, even-aligned x).
+	wire [7:0] r_lane [0:PX_PER_CLK-1];
+	wire [7:0] g_lane [0:PX_PER_CLK-1];
+	wire [7:0] b_lane [0:PX_PER_CLK-1];
+	genvar gpi;
+	generate
+		for (gpi = 0; gpi < PX_PER_CLK; gpi = gpi + 1) begin : g_px
+			wire [2:0] y_sel_l = y_sel_r + 3'(gpi);
+			wire [2:0] c_sel_l = c_sel_r + 3'(gpi[2:1]);
+			wire [7:0] y_l = pick_byte(selected_y_q, y_sel_l);
+			wire [7:0] u_l = pick_byte(selected_u_q, c_sel_l);
+			wire [7:0] v_l = pick_byte(selected_v_q, c_sel_l);
+			assign r_lane[gpi] = yuv_r(y_l, u_l, v_l);
+			assign g_lane[gpi] = yuv_g(y_l, u_l, v_l);
+			assign b_lane[gpi] = yuv_b(y_l, u_l, v_l);
+		end
+	endgenerate
 
 	always @(posedge clk) begin
 		if (reset) begin
@@ -417,6 +504,14 @@ module ddr_frame_store #(
 			c_hit_idx_r <= '0;
 			y_sel_r <= 3'd0;
 			c_sel_r <= 3'd0;
+			rd_r <= 8'd0;
+			rd_g <= 8'd0;
+			rd_b <= 8'd0;
+			rd_r_n <= '0;
+			rd_g_n <= '0;
+			rd_b_n <= '0;
+			rd_lane_valid_n <= '0;
+			rd_n_valid <= 1'b0;
 		end else begin
 			y_valid_v1 <= y_valid_hold;
 			y_valid_v2 <= y_valid_v1;
@@ -471,10 +566,28 @@ module ddr_frame_store #(
 				rd_r <= sat8(r_calc);
 				rd_g <= sat8(g_calc);
 				rd_b <= sat8(b_calc);
+				rd_n_valid <= 1'b1;
+				begin : pack_npx
+					integer pxi;
+					for (pxi = 0; pxi < PX_PER_CLK; pxi = pxi + 1) begin
+						rd_r_n[pxi*8 +: 8] <= r_lane[pxi];
+						rd_g_n[pxi*8 +: 8] <= g_lane[pxi];
+						rd_b_n[pxi*8 +: 8] <= b_lane[pxi];
+						rd_lane_valid_n[pxi] <= 1'b1;
+					end
+				end
 			end else if (!has_frame || !rd_visible_d || miss_d) begin
 				rd_r <= 8'd0;
 				rd_g <= 8'd0;
 				rd_b <= 8'd0;
+				rd_r_n <= '0;
+				rd_g_n <= '0;
+				rd_b_n <= '0;
+				rd_lane_valid_n <= '0;
+				rd_n_valid <= 1'b0;
+			end else begin
+				rd_n_valid <= 1'b0;
+				rd_lane_valid_n <= '0;
 			end
 		end
 	end
