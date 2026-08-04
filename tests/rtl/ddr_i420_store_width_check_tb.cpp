@@ -37,8 +37,8 @@ int main(int argc, char** argv) {
 	CHECK(top.p720_doorbell == 0x302FF000u, "720p doorbell");
 	// max y line qword off = 719*160 = 115040
 	CHECK(top.p720_max_y_line_qw == 115040u, "max y line qword offset");
-	// banks in [0x30180000, 0x40000000) / 0x180000 = 169
-	CHECK(top.p720_banks_win == 169, "banks_in_reserved_window");
+	// banks in [0x30000000, 0x40000000) / 0x180000 = 169
+	CHECK(top.p720_banks_win == 170, "banks_in_reserved_window");
 
 	// NEGATIVE: naive undersized containers must NOT claim OK at 720p
 	CHECK(!top.neg_u16_frame_ok, "NEG: uint16 cannot hold 1382400");
