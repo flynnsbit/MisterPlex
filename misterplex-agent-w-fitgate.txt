@@ -1,6 +1,6 @@
 lane=w-fitgate
 branch=w-fitgate
-sha=PENDING
+sha=bd9658a4
 GRANT=NO
 status=FABRIC_BUILD_ID+REACHABILITY+PROVENANCE
 
