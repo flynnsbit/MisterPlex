@@ -52,7 +52,8 @@ COMMON=(
   -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-SELRANGE -Wno-UNSIGNED
   +define+DDR_FRAME_STORE_EXPORT_QWORDS
   "$ROOT/tests/rtl/ddr_frame_store_qword_export_tb_top.sv"
-  "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/yuv_bt601_npx.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_bank_geom_guard.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/async_fifo.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_ram.sv"

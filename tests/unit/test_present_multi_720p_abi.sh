@@ -66,10 +66,22 @@ echo "OK present_core source gates"
 
 SRCS=(
   "$TB"
+  "$PC"
   "$RTL/ddr_frame_store.sv"
+  "$RTL/yuv_bt601_npx.sv"
   "$RTL/ddr_bank_geom_guard.sv"
   "$RTL/line_buf_ram.sv"
   "$RTL/async_fifo.sv"
+  "$RTL/present_video_timing_720p.sv"
+  "$RTL/present_beam_ppc.sv"
+  "$RTL/present_beam_content_de.sv"
+  "$RTL/colorbars.sv"
+  "$RTL/frame_store.sv"
+  "$RTL/audio_tone.sv"
+  "$RTL/present_npx_path.sv"
+  "$RTL/audio_fifo.sv"
+  "$RTL/present_cadence.sv"
+  "$RTL/present_pix_rate_match.sv"
 )
 INCS=(-I"$RTL")
 COMMON=(-Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-SELRANGE -Wno-UNSIGNED --timing --binary --top-module present_multi_720p_abi_tb)

@@ -635,12 +635,15 @@ module present_core #(
 
 	// FS_* from plex_ddr_720p_tier.svh — never hardwire 480p when canvas is 720p.
 	// PX_PER_CLK=PRESENT_PPC feeds rd_*_n → fs_r_n (was undriven on MULTI — black).
+	// FS_* from plex_ddr_720p_tier.svh: 480p defaults to DDR_FRAME_*; 720p tier
+	// selects DDR_FRAME_720P_*. Do not hardwire DDR_FRAME_CODED_WIDTH here —
+	// that freezes MULTI 720p on 624 banks (test_present_multi_720p_abi).
 	ddr_frame_store #(
 		.FRAME_W(FRAME_W),
 		.FRAME_H(FRAME_H),
 		.FRAME_STRIDE(FRAME_STRIDE),
-		.CODED_W(DDR_FRAME_CODED_WIDTH),
-		.CODED_H(DDR_FRAME_CODED_HEIGHT),
+		.CODED_W(FS_CODED_W),
+		.CODED_H(FS_CODED_H),
 		.DISPLAY_W(FS_DISPLAY_W),
 		.DISPLAY_H(FS_DISPLAY_H),
 		.CROP_LEFT(FS_CROP_LEFT),

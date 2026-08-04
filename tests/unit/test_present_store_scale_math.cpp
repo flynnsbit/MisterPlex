@@ -101,9 +101,17 @@ int main() {
            "present_core instantiates content window");
     EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv", "win_enable"),
            "present_core exposes win_enable");
-    EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
-                         ".CODED_W(DDR_FRAME_CODED_WIDTH)"),
-           "ddr_frame_store CODED_W from layout params");
+    // Tier select: FS_CODED_W ← DDR_FRAME_CODED_WIDTH (480p) / DDR_FRAME_720P_* (720p).
+    // Direct DDR_FRAME_CODED_WIDTH hardwire freezes MULTI 720p on 624 banks.
+    EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv", ".CODED_W(FS_CODED_W)")
+               || file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
+                                ".CODED_W(DDR_FRAME_CODED_WIDTH)"),
+           "ddr_frame_store CODED_W from layout params (FS_* tier or direct)");
+    EXPECT(file_contains("fpga/Plex_MiSTer/rtl/plex_ddr_720p_tier.svh",
+                         "FS_CODED_W")
+               && file_contains("fpga/Plex_MiSTer/rtl/plex_ddr_720p_tier.svh",
+                                "DDR_FRAME_CODED_WIDTH"),
+           "FS_CODED_W derives from DDR_FRAME_CODED_WIDTH in tier svh");
     // Honest swap pack must ship with this RBF for skip instrumentation.
     EXPECT(file_contains("fpga/Plex_MiSTer/rtl/ddr_frame_store.sv",
                          "DDRAM_DIN <= {frames_done_d2"),

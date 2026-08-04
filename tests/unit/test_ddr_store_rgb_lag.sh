@@ -8,6 +8,7 @@ base=(--cc --exe --build --top-module ddr_store_rgb_lag_tb
   -Ifpga/Plex_MiSTer/rtl
   tests/rtl/ddr_store_rgb_lag_tb_top.sv
   fpga/Plex_MiSTer/rtl/ddr_frame_store.sv
+  "$ROOT/fpga/Plex_MiSTer/rtl/yuv_bt601_npx.sv"
   fpga/Plex_MiSTer/rtl/ddr_bank_geom_guard.sv
   fpga/Plex_MiSTer/rtl/line_buf_ram.sv
   fpga/Plex_MiSTer/rtl/async_fifo.sv

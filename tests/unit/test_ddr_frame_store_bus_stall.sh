@@ -20,6 +20,7 @@ OSS_CAD_SUITE="$OSS_CAD_SUITE" "$RUN_VERILATOR" --cc --exe --build \
   -Wno-SELRANGE -Wno-UNSIGNED \
   -CFLAGS "-std=c++17 -O2" \
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/yuv_bt601_npx.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_bank_geom_guard.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_ram.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/async_fifo.sv" \

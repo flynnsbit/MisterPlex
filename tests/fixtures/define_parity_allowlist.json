@@ -68,7 +68,12 @@
     "PRESENT_MULTI_PIXEL": "Targeted multi-pixel present path enable for elab tests.",
     "PRESENT_PX_PER_CLK": "Targeted pixels-per-clock override for multi-pixel elab tests.",
     "PRESENT_WINDOW_BILINEAR": "Targeted bilinear window path enable for present bilinear RTL sim.",
-    "RAW_PIPE_FAULT_NO_SET": "Injected raw-video-pipe expected-red fault: F_SETPIPE_SZ becomes a no-op so capacity stays at the kernel default."
+    "RAW_PIPE_FAULT_NO_SET": "Injected raw-video-pipe expected-red fault: F_SETPIPE_SZ becomes a no-op so capacity stays at the kernel default.",
+    "CASE_480P": "TB-only present_multi_720p_abi case select: legacy 480p banks.",
+    "CASE_FAULT_480": "TB-only present_multi_720p_abi expected-red: force 480 under 1280 canvas.",
+    "CASE_L4_ONLY": "TB-only present_multi_720p_abi case select: L4_ONLY forces 720p tier.",
+    "PLEX_DDR_720P_TIER_FAULT_FORCE_480": "Injected 720p-tier expected-red fault: force 480p bank map under 720 canvas.",
+    "PLEX_PRESENT_720P_L4": "TB-only L4 present-720p tier enable for multi_720p_abi elab cases."
   },
   "volatile_value_macros": {
     "BUILD_DATE": "Quartus generates the date in sys/build_id.tcl; Verilator lint uses a stable placeholder value."

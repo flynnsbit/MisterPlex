@@ -300,6 +300,7 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/tests/unit/test_fabric_ddr_write_path_verilator.sh",
     "$(ROOT)/tests/unit/test_fabric_bank_credit_async_verilator.sh",
     "$(ROOT)/tests/unit/test_ddr_bus_arbiter3_verilator.sh",
+    "$(ROOT)/tests/unit/test_ddr_fabric_decode_arb.sh",
     "$(ROOT)/tests/unit/test_fabric_luma_linebuf_verilator.sh",
     "bash $(ROOT)/tests/unit/test_fabric_scaler_delta.sh",
     "bash $(ROOT)/tests/unit/test_624x350_force_scale_out.sh",

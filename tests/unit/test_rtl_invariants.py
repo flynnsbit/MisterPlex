@@ -2129,7 +2129,8 @@ def check_present_geometry_stride_contract() -> None:
     if missing:
         fail(f"present geometry/stride contract: {missing[0]}")
 
-    def present_ddr_wiring_ok(p_nt: str) -> bool:
+    def present_ddr_wiring_classic(p_nt: str) -> bool:
+        """Direct shared-layout ports (480p-only historical wiring)."""
         return (
             ".FRAME_W(FRAME_W)" in p_nt
             and ".FRAME_H(FRAME_H)" in p_nt
@@ -2140,11 +2141,51 @@ def check_present_geometry_stride_contract() -> None:
             and ".DOORBELL_PHYS(DDR_FRAME_YUV420P_DOORBELL_PHYS)" in p_nt
         )
 
+    def present_ddr_wiring_tier(p_nt: str, tier_nt: str) -> bool:
+        """Option-C path: FS_* localparams from plex_ddr_720p_tier.svh.
+
+        FS_* must still resolve to DDR_FRAME_* / DDR_FRAME_720P_* layout params —
+        not free literals — so 480p default stays identical and 720p is a tier
+        select, not a hardwire drift.
+        """
+        ports_ok = (
+            ".FRAME_W(FRAME_W)" in p_nt
+            and ".FRAME_H(FRAME_H)" in p_nt
+            and (
+                ".CODED_W(DDR_FRAME_CODED_WIDTH)" in p_nt
+                or ".CODED_W(FS_CODED_W)" in p_nt
+            )
+            and ".DISPLAY_W(FS_DISPLAY_W)" in p_nt
+            and ".PRESENT_X(FS_PRESENT_X)" in p_nt
+            and ".HPS_BANK_STRIDE_BYTES(FS_BANK_STRIDE)" in p_nt
+            and ".DOORBELL_PHYS(FS_DOORBELL)" in p_nt
+        )
+        tier_derives = (
+            "FS_DISPLAY_W" in tier_nt
+            and "DDR_FRAME_DISPLAY_WIDTH" in tier_nt
+            and "DDR_FRAME_720P_DISPLAY_WIDTH" in tier_nt
+            and "FS_PRESENT_X" in tier_nt
+            and "DDR_FRAME_PILLARBOX_LEFT" in tier_nt
+            and "DDR_FRAME_720P_PILLARBOX_LEFT" in tier_nt
+            and "FS_BANK_STRIDE" in tier_nt
+            and "DDR_FRAME_YUV420P_BANK_STRIDE" in tier_nt
+            and "DDR_FRAME_720P_YUV420P_BANK_STRIDE" in tier_nt
+            and "FS_DOORBELL" in tier_nt
+            and "DDR_FRAME_YUV420P_DOORBELL_PHYS" in tier_nt
+            and "DDR_FRAME_720P_YUV420P_DOORBELL_PHYS" in tier_nt
+            and "PLEX_DDR_720P_TIER" in tier_nt
+        )
+        return ports_ok and tier_derives
+
+    tier_path = ROOT / "fpga/Plex_MiSTer/rtl/plex_ddr_720p_tier.svh"
+    tier_nt = norm(strip_comments(read(tier_path))) if tier_path.is_file() else ""
+
     check(
-        present_ddr_wiring_ok(present_nt),
+        present_ddr_wiring_classic(present_nt)
+        or present_ddr_wiring_tier(present_nt, tier_nt),
         "present_core must instantiate ddr_frame_store from the shared layout params: "
         "FRAME_W=640 for scanout, CODED_W=624 for DDR stride, DISPLAY_W=618 for crop, "
-        "PRESENT_X=11 for pillarbox.",
+        "PRESENT_X=11 for pillarbox (direct DDR_FRAME_* or FS_* tier that derives from them).",
     )
     check(
         'set_global_assignment-nameVERILOG_MACRO"DDR_FRAME_STORE=1"' in qsf_nt
@@ -2230,11 +2271,22 @@ def check_present_geometry_stride_contract() -> None:
         )
     # Dropping the explicit CODED_W port leaves parameter default CODED_W=FRAME_W=640
     # → reader Y pitch 640 B/line while ARM writes 624 → 16 px/line leftward creep.
-    present_drop_coded = present_nt.replace(".CODED_W(DDR_FRAME_CODED_WIDTH)", "")
-    if present_ddr_wiring_ok(present_drop_coded):
+    present_drop_coded = present_nt.replace(".CODED_W(DDR_FRAME_CODED_WIDTH)", "").replace(
+        ".CODED_W(FS_CODED_W)", ""
+    )
+    if present_ddr_wiring_classic(present_drop_coded) or present_ddr_wiring_tier(
+        present_drop_coded, tier_nt
+    ):
         fail(
-            "deliberately dropping .CODED_W(DDR_FRAME_CODED_WIDTH) "
+            "deliberately dropping .CODED_W(DDR_FRAME_CODED_WIDTH|FS_CODED_W) "
             "(default CODED_W=FRAME_W=640 shear) did not make the wiring gate red"
+        )
+    # Tier path must not accept free-literal FS_* (not derived from layout params).
+    bad_tier = tier_nt.replace("DDR_FRAME_DISPLAY_WIDTH", "618 /*literal*/")
+    if "DDR_FRAME_DISPLAY_WIDTH" in tier_nt and present_ddr_wiring_tier(present_nt, bad_tier):
+        fail(
+            "deliberately breaking FS_DISPLAY_W←DDR_FRAME_DISPLAY_WIDTH derivation "
+            "did not make the tier wiring gate red"
         )
 
     # Product DDR is YUV: RGB565 line-qword constant must not drive the store body.
