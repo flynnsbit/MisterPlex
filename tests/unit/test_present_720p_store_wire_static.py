@@ -46,7 +46,7 @@ def main() -> int:
     # Product RTL consumers excluding the svh itself
     rtl_root = ROOT / "fpga/Plex_MiSTer/rtl"
     consumers: dict[str, list[str]] = {s: [] for s in syms_720}
-    for path in sorted(rtl_root.rglob("*.sv")):
+    for path in sorted(list(rtl_root.rglob("*.sv")) + list(rtl_root.rglob("*.svh"))):
         if path.name == "ddr_frame_layout_params.svh":
             continue
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -65,39 +65,42 @@ def main() -> int:
         "DDR_FRAME_720P_PHYS_BASE",
         "DDR_FRAME_720P_YUV420P_DOORBELL_PHYS",
     ]
+    abi_rel = "fpga/Plex_MiSTer/rtl/ddr_frame_abi_select.svh"
+    abi_txt = (ROOT / abi_rel).read_text()
     for s in required:
-        if "present_core.sv" not in " ".join(consumers.get(s, [])):
-            return fail(f"{s} has no present_core consumer: {consumers.get(s)}")
+        if s not in abi_txt and "present_core.sv" not in " ".join(consumers.get(s, [])):
+            return fail(f"{s} missing from abi_select and present_core: {consumers.get(s)}")
 
-    # Default arm still 480p
-    for needle in [
-        "FS_CODED_W=DDR_FRAME_CODED_WIDTH",
-        "FS_DISPLAY_W=DDR_FRAME_DISPLAY_WIDTH",
-        "FS_BANK_STRIDE=DDR_FRAME_YUV420P_BANK_STRIDE",
-        "FS_DOORBELL=DDR_FRAME_YUV420P_DOORBELL_PHYS",
-        "FS_PHYS_BASE=32'h3000_0000",
-    ]:
-        if needle not in pnt:
-            return fail(f"default 480p arm missing {needle}")
+    # 480p constants remain available via abi select else-arm
+    abi = (ROOT / "fpga/Plex_MiSTer/rtl/ddr_frame_abi_select.svh").read_text()
+    if "32'h3000_0000" not in abi:
+        return fail("abi select missing 480p phys 0x30000000")
+    if "DDR_FRAME_CODED_WIDTH" not in abi:
+        return fail("abi select missing 480p coded width ref")
 
-    # L4 arm
+    # Shared 720p ABI (L4 or MULTI via FRAME 1280x720) — not L4-only ifdef
     for needle in [
-        "ifdefPLEX_PRESENT_720P_L4",
-        "FS_CODED_W=DDR_FRAME_720P_CODED_WIDTH",
-        "FS_CODED_H=DDR_FRAME_720P_CODED_HEIGHT",
-        "FS_DISPLAY_W=DDR_FRAME_720P_DISPLAY_WIDTH",
-        "FS_DISPLAY_H=DDR_FRAME_720P_DISPLAY_HEIGHT",
-        "FS_PRESENT_X=DDR_FRAME_720P_PILLARBOX_LEFT",
-        "FS_BANK_STRIDE=DDR_FRAME_720P_YUV420P_BANK_STRIDE",
-        "FS_PHYS_BASE=DDR_FRAME_720P_PHYS_BASE",
-        "FS_DOORBELL=DDR_FRAME_720P_YUV420P_DOORBELL_PHYS",
+        "ddr_frame_abi_select.svh",
+        "FS_CODED_W=DDR_FS_CODED_W",
+        "FS_CODED_H=DDR_FS_CODED_H",
+        "FS_DISPLAY_W=DDR_FS_DISPLAY_W",
+        "FS_DISPLAY_H=DDR_FS_DISPLAY_H",
+        "FS_PRESENT_X=DDR_FS_PRESENT_X",
+        "FS_BANK_STRIDE=DDR_FS_BANK_STRIDE",
+        "FS_PHYS_BASE=DDR_FS_PHYS_BASE",
+        "FS_DOORBELL=DDR_FS_DOORBELL",
+        "FS_LINE_COUNT=DDR_FS_LINE_COUNT",
         ".CODED_W(FS_CODED_W)",
+        ".LINE_COUNT(FS_LINE_COUNT)",
         ".HPS_BANK_STRIDE_BYTES(FS_BANK_STRIDE)",
         ".DOORBELL_PHYS(FS_DOORBELL)",
         ".PHYS_BASE(FS_PHYS_BASE)",
     ]:
         if needle not in pnt:
-            return fail(f"L4 wire missing {needle}")
+            return fail(f"720p ABI wire missing {needle}")
+    # layout still defines 720p constants
+    if "DDR_FRAME_720P_CODED_WIDTH" not in lnt:
+        return fail("layout missing 720p coded width")
 
     # Store still derives visibility from params (not hardcoded 618)
     snt = nt(store)
@@ -117,18 +120,16 @@ def main() -> int:
     if not re.search(r"FRAME_W=640", qsf) or not re.search(r"FRAME_H=480", qsf):
         return fail("product QSF must keep FRAME 640x480 active")
 
-    # NEGATIVE: strip L4 720p coded bind → must fail required consumer check
-    bad = pnt.replace("FS_CODED_W=DDR_FRAME_720P_CODED_WIDTH", "FS_CODED_W=DDR_FRAME_CODED_WIDTH")
-    if "FS_CODED_W=DDR_FRAME_720P_CODED_WIDTH" in bad:
-        return fail("negative setup failed to strip 720p coded bind")
-    if "FS_CODED_W=DDR_FRAME_720P_CODED_WIDTH" not in pnt:
-        return fail("positive file lost 720p coded bind")
-    # simulate consumer miss
-    if "present_core.sv" in " ".join(consumers["DDR_FRAME_720P_CODED_WIDTH"]):
-        # force a local negative on the required list logic
-        fake_consumers = {**consumers, "DDR_FRAME_720P_CODED_WIDTH": []}
-        if "present_core.sv" in " ".join(fake_consumers["DDR_FRAME_720P_CODED_WIDTH"]):
-            return fail("negative consumer empty-list did not go red")
+    # NEGATIVE: L4-only ifdef pattern must NOT return (rd-duck)
+    if re.search(r"`ifdef\s+PLEX_PRESENT_720P_L4[\s\S]{0,200}FS_CODED_W\s*=\s*DDR_FRAME_720P", present):
+        return fail("negative: L4-only FS_CODED_W pattern still present")
+    # Consumer path: abi svh references 720p symbols; present_core uses DDR_FS_*
+    abi_txt = (ROOT / "fpga/Plex_MiSTer/rtl/ddr_frame_abi_select.svh").read_text()
+    if "DDR_FRAME_720P_CODED_WIDTH" not in abi_txt:
+        return fail("abi select must reference DDR_FRAME_720P_CODED_WIDTH")
+    fake = {**consumers, "DDR_FRAME_720P_CODED_WIDTH": []}
+    if "present_core.sv" in " ".join(fake["DDR_FRAME_720P_CODED_WIDTH"]):
+        return fail("negative consumer empty-list did not go red")
 
     # Print inventory table
     print("INVENTORY DDR_FRAME_720P_* consumers (RTL .sv):")

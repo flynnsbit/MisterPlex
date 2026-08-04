@@ -10,10 +10,14 @@
 //       FRAME_H=720 in the same QSF enable recipe. Plex.sv wires geom_latch+mux.
 //   `define PRESENT_BEAM_960     — present_beam_content_de true-DE (max tier 960×540)
 //   `define PRESENT_MULTI_PIXEL  — CEA 720p beam + present_npx_path (PPC path)
+//       Requires FRAME_W=1280 FRAME_H=720 (same store as L4). L4⊥MULTI beams,
+//       but BOTH use the shared 720p DDR ABI via ddr_frame_abi_select.svh when
+//       FRAME is 1280×720 (rd-duck: do not bind 720p bank only under L4).
 //   `define PRESENT_PX_PER_CLK N — 1|2|4 with MULTI_PIXEL (default 1).
 //                                  PPC=2 needs 40 Mpix/s capacity at 20 MHz for CEA
 //                                  720p24 (29.7 Mpix/s). Store exposes rd_*_n ports.
 //   `define PRESENT_CLK_PIX_PLL  — separate clk_pix + rate-match (optional)
+//   `define PLEX_DDR_ABI_720P    — force 720p bank/doorbell even if FRAME≠1280×720
 // Macros off → bit-identical Template H_DE=529 / DE_LAG=3 path (v0.3.0 baseline).
 // Mutually exclusive: L4 vs BEAM_960 vs MULTI_PIXEL. Parent enables in fit QSF only.
 
@@ -569,36 +573,23 @@ module present_core #(
 	assign sdram_refresh = 1'b0;
 
 `include "ddr_frame_layout_params.svh"
-
-	// Active DDR reader geometry. Default = 480p layout (coded 624 / display
-	// 618 / pillar 11 / stride 0x80000). L4 selects the 720p block from the
-	// same svh — without this, FRAME_W/H=1280x720 still fed 624x480 into the
-	// store and visibility ended at x≈628 y=479 (reviewer point 5).
-`ifdef PLEX_PRESENT_720P_L4
-	localparam int FS_CODED_W     = DDR_FRAME_720P_CODED_WIDTH;
-	localparam int FS_CODED_H     = DDR_FRAME_720P_CODED_HEIGHT;
-	localparam int FS_DISPLAY_W   = DDR_FRAME_720P_DISPLAY_WIDTH;
-	localparam int FS_DISPLAY_H   = DDR_FRAME_720P_DISPLAY_HEIGHT;
-	localparam int FS_CROP_LEFT   = 0; // 720p: display == coded (host kPlex720p*)
-	localparam int FS_CROP_TOP    = 0;
-	localparam int FS_PRESENT_X   = DDR_FRAME_720P_PILLARBOX_LEFT;
-	localparam int FS_PRESENT_Y   = 0;
-	localparam [31:0] FS_PHYS_BASE = DDR_FRAME_720P_PHYS_BASE;
-	localparam int FS_BANK_STRIDE = DDR_FRAME_720P_YUV420P_BANK_STRIDE;
-	localparam [31:0] FS_DOORBELL = DDR_FRAME_720P_YUV420P_DOORBELL_PHYS;
-`else
-	localparam int FS_CODED_W     = DDR_FRAME_CODED_WIDTH;
-	localparam int FS_CODED_H     = DDR_FRAME_CODED_HEIGHT;
-	localparam int FS_DISPLAY_W   = DDR_FRAME_DISPLAY_WIDTH;
-	localparam int FS_DISPLAY_H   = DDR_FRAME_DISPLAY_HEIGHT;
-	localparam int FS_CROP_LEFT   = DDR_FRAME_CROP_LEFT;
-	localparam int FS_CROP_TOP    = DDR_FRAME_CROP_TOP;
-	localparam int FS_PRESENT_X   = DDR_FRAME_PILLARBOX_LEFT;
-	localparam int FS_PRESENT_Y   = 0;
-	localparam [31:0] FS_PHYS_BASE = 32'h3000_0000;
-	localparam int FS_BANK_STRIDE = DDR_FRAME_YUV420P_BANK_STRIDE;
-	localparam [31:0] FS_DOORBELL = DDR_FRAME_YUV420P_DOORBELL_PHYS;
-`endif
+	// Shared 720p/480p ABI: FRAME 1280×720 (L4 *or* MULTI) → 720p bank/doorbell.
+	// rd-duck: L4-only ifdef left MULTI+CEA on 624×480 @ 0x30000000 — wrong.
+`define DDR_FS_APPLY_LINE_FLOOR
+`include "ddr_frame_abi_select.svh"
+	localparam int FS_CODED_W     = DDR_FS_CODED_W;
+	localparam int FS_CODED_H     = DDR_FS_CODED_H;
+	localparam int FS_DISPLAY_W   = DDR_FS_DISPLAY_W;
+	localparam int FS_DISPLAY_H   = DDR_FS_DISPLAY_H;
+	localparam int FS_CROP_LEFT   = DDR_FS_CROP_LEFT;
+	localparam int FS_CROP_TOP    = DDR_FS_CROP_TOP;
+	localparam int FS_PRESENT_X   = DDR_FS_PRESENT_X;
+	localparam int FS_PRESENT_Y   = DDR_FS_PRESENT_Y;
+	localparam [31:0] FS_PHYS_BASE = DDR_FS_PHYS_BASE;
+	localparam int FS_BANK_STRIDE = DDR_FS_BANK_STRIDE;
+	localparam [31:0] FS_DOORBELL = DDR_FS_DOORBELL;
+	// 16-line floor on 720p ABI (8 lines @ PPC2/20MHz ≈ 256 µs < 500 µs model).
+	localparam int FS_LINE_COUNT  = DDR_FS_LINE_COUNT;
 
 `ifdef PRESENT_MULTI_PIXEL
 	localparam int FS_PX_PER_CLK = PRESENT_PPC;
@@ -621,7 +612,7 @@ module present_core #(
 		.CROP_TOP(FS_CROP_TOP),
 		.PRESENT_X(FS_PRESENT_X),
 		.PRESENT_Y(FS_PRESENT_Y),
-		.LINE_COUNT(FRAME_LINE_COUNT),
+		.LINE_COUNT(FS_LINE_COUNT),
 		.PHYS_BASE(FS_PHYS_BASE),
 		.HPS_BANK_STRIDE_BYTES(FS_BANK_STRIDE),
 		.DOORBELL_PHYS(FS_DOORBELL),
@@ -769,6 +760,9 @@ module present_core #(
 		if (!(PRESENT_PPC == 1 || PRESENT_PPC == 2 || PRESENT_PPC == 4))
 			$error("PRESENT_MULTI_PIXEL requires PRESENT_PX_PER_CLK in {1,2,4} (got %0d)",
 				PRESENT_PPC);
+		if (FRAME_W != 1280 || FRAME_H != 720)
+			$error("PRESENT_MULTI_PIXEL requires FRAME_W=1280 FRAME_H=720 for 720p DDR ABI (got %0d x %0d)",
+				FRAME_W, FRAME_H);
 `ifdef PRESENT_BEAM_960
 		$error("PRESENT_MULTI_PIXEL and PRESENT_BEAM_960 are mutually exclusive");
 `endif
