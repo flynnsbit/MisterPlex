@@ -143,6 +143,124 @@ def verilator_define_args(qsf: Path = PROJECT / "Plex.qsf") -> list[str]:
     return args
 
 
+def strip_shell_or_python_comments(text: str) -> str:
+    """Drop # comments outside quotes so -DFOO in docs is not a live macro.
+
+    Instrument defect class: grepping raw text for -D matches explanatory
+    comments (e.g. \"no -DFAULT_*\") and invents macros that do not exist.
+    """
+    out: list[str] = []
+    for line in text.splitlines(keepends=True):
+        in_squote = False
+        in_dquote = False
+        escaped = False
+        cut = len(line)
+        i = 0
+        while i < len(line):
+            ch = line[i]
+            if escaped:
+                escaped = False
+                i += 1
+                continue
+            if ch == "\\" and (in_squote or in_dquote):
+                escaped = True
+                i += 1
+                continue
+            if ch == "'" and not in_dquote:
+                in_squote = not in_squote
+            elif ch == '"' and not in_squote:
+                in_dquote = not in_dquote
+            elif ch == "#" and not in_squote and not in_dquote:
+                cut = i
+                break
+            i += 1
+        # Preserve newline so line numbers stay stable for multi-line consumers.
+        nl = "\n" if line.endswith("\n") else ""
+        body = line[:cut]
+        if nl and not body.endswith("\n"):
+            out.append(body.rstrip("\r") + nl)
+        else:
+            out.append(body)
+    return "".join(out)
+
+
+def strip_c_family_comments(text: str) -> str:
+    """Remove // and /* */ comments (SV/C/Make-style), keep string literals."""
+    out: list[str] = []
+    i = 0
+    n = len(text)
+    in_squote = False
+    in_dquote = False
+    in_line = False
+    in_block = False
+    escaped = False
+    while i < n:
+        ch = text[i]
+        nxt = text[i + 1] if i + 1 < n else ""
+        if in_line:
+            if ch == "\n":
+                in_line = False
+                out.append(ch)
+            i += 1
+            continue
+        if in_block:
+            if ch == "*" and nxt == "/":
+                in_block = False
+                i += 2
+            else:
+                # Keep newlines so later tools can still map lines.
+                if ch == "\n":
+                    out.append(ch)
+                i += 1
+            continue
+        if escaped:
+            out.append(ch)
+            escaped = False
+            i += 1
+            continue
+        if ch == "\\" and (in_squote or in_dquote):
+            out.append(ch)
+            escaped = True
+            i += 1
+            continue
+        if ch == "'" and not in_dquote:
+            in_squote = not in_squote
+            out.append(ch)
+            i += 1
+            continue
+        if ch == '"' and not in_squote:
+            in_dquote = not in_dquote
+            out.append(ch)
+            i += 1
+            continue
+        if not in_squote and not in_dquote:
+            if ch == "/" and nxt == "/":
+                in_line = True
+                i += 2
+                continue
+            if ch == "/" and nxt == "*":
+                in_block = True
+                i += 2
+                continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def strip_source_comments_for_macro_scan(path: Path, text: str) -> str:
+    """Comment-strip before -D / +define+ scan. Makefile uses both # and //."""
+    suffix = path.suffix
+    name = path.name
+    if suffix in {".sh", ".py"} or name.endswith(".sh"):
+        return strip_shell_or_python_comments(text)
+    if suffix in {".sv", ".svh", ".v", ".cpp", ".hpp", ".h", ".c"}:
+        return strip_c_family_comments(text)
+    if name == "Makefile" or suffix == "":
+        # Make: # comments; also allow // if someone used them in recipes.
+        return strip_c_family_comments(strip_shell_or_python_comments(text))
+    return text
+
+
 def discover_test_macros(paths: list[Path] | None = None) -> dict[str, list[Macro]]:
     if paths is None:
         paths = [ROOT / "tests" / "unit", ROOT / "tests" / "rtl", ROOT / "scripts", ROOT / "Makefile"]
@@ -158,13 +276,25 @@ def discover_test_macros(paths: list[Path] | None = None) -> dict[str, list[Macr
         re.compile(r"\+define\+([A-Za-z_][A-Za-z0-9_]*)(?:=([^\s\\]+))?"),
         re.compile(r"(?<!\w)-D([A-Za-z_][A-Za-z0-9_]*)(?:=([^\s\"']+))?"),
     ]
+    # Meta self-tests of this scanner intentionally embed -DFOO in strings/docs.
+    # Scanning them invents UNDECLARED TEST-ONLY macros and blocks product gates.
+    skip_names = {
+        Path(__file__).name,
+        "test_define_parity_comment_scan.py",
+    }
     for path in files:
+        if path.name in skip_names:
+            continue
         if path.resolve() == Path(__file__).resolve():
             continue
         if path.suffix not in {".sh", ".py", ".sv", ".svh", ".v", ""} and path.name != "Makefile":
             continue
-        rel = path.relative_to(ROOT).as_posix()
+        try:
+            rel = path.relative_to(ROOT).as_posix()
+        except ValueError:
+            rel = path.as_posix()
         text = path.read_text(errors="ignore")
+        text = strip_source_comments_for_macro_scan(path, text)
         for pattern in patterns:
             for m in pattern.finditer(text):
                 name = m.group(1)
