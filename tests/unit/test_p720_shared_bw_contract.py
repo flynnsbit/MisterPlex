@@ -243,6 +243,31 @@ def main() -> int:
     for tok in ("P720_I420_BYTES", "1_382_400", "P720_FABRIC_RD_BPS", "P720_HOST_COPY_US", "14_978", "P720_PPC"):
         if tok not in svht:
             return fail(f"svh missing {tok}")
+    # rd-duck binding labels: payload/ideal-port only; no sustainable-DDR claim
+    lab = c.get("rd_duck_label_correction") or {}
+    if lab.get("status") != "BINDING":
+        return fail("rd_duck_label_correction.status must be BINDING")
+    forb = " ".join(lab.get("FORBIDDEN_labels", [])).lower()
+    for needle_f in ("sustainable", "total controller", "shared hps"):
+        if needle_f not in forb:
+            return fail(f"FORBIDDEN_labels must ban mislabel involving {needle_f}")
+    if "720" not in forb and "sustainable" not in forb:
+        return fail("must forbid calling 720 MB/s measured sustainable")
+    add = " ".join(lab.get("additional_traffic_not_in_headline", [])).lower()
+    for a in ("pipe", "memcpy", "decode"):
+        if a not in add:
+            return fail(f"additional traffic must mention {a}")
+    if lab.get("hardware_contention", "").upper().find("OPEN") < 0 and lab.get("hardware_contention") != "OPEN after TB":
+        if str(lab.get("hardware_contention", "")).find("OPEN") < 0:
+            return fail("hardware_contention must be OPEN after TB")
+    if "CORRECT" not in str(lab.get("w_scaler_refusal_to_claim_closure", "")).upper():
+        return fail("must affirm w-scaler refusal to claim closure is CORRECT")
+    comp = c["companion"]
+    for key in ("ddr_peak_MBps_at_90MHz_label", "steady_RW_MBps_label"):
+        if key not in comp or "not" not in comp[key].lower():
+            return fail(f"companion.{key} must disclaim overclaim")
+    print("OK rd-duck labels: payload/ideal-port only; contention OPEN; closure refusal CORRECT")
+
     print(f"OK THREE-LANE LOCK agreed_by={agreed} pending_ack=[]")
     print(f"OK rtl {svh.relative_to(ROOT)} + quote locked")
 

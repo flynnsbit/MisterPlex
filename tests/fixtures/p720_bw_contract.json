@@ -1,5 +1,5 @@
 {
-  "title": "P720 THREE-LANE LOCK \u2014 33.1776 MB/s/dir (w-mem \u2295 w-clock \u2295 w-scaler)",
+  "title": "P720 THREE-LANE LOCK 33.1776 payload/dir \u2014 labels: ideal port util NOT sustainable DDR; reader CLOSED; controller contention OPEN (rd-duck)",
   "product_config": {
     "PRESENT_MULTI_PIXEL": true,
     "PRESENT_PX_PER_CLK": 2,
@@ -23,7 +23,7 @@
     "value": 33.1776,
     "unit": "MB/s",
     "formula": "i420_bytes_per_frame * fps / 1e6 = 1382400 * 24 / 1e6",
-    "domain": "average PAYLOAD, one direction (ARM write OR fabric line-fill read of full I420). Assumes exactly one payload read of the frame; excludes doorbell/mailbox/refill overhead.",
+    "domain": "frame-store I420 PAYLOAD average, one direction. Ideal math only. NOT total controller traffic; NOT measured sustainable DDR BW.",
     "B_per_clk_sys_avg": 1.65888,
     "formula_B_per_clk": "33.1776e6 / clk_sys_hz",
     "B_per_clk_sys_avg_FORBIDDEN_USES": [
@@ -45,7 +45,10 @@
     "formula_fraction": "66.3552 / 720.0",
     "B_per_clk_ddr_avg_payload_RW": 0.73728,
     "formula_B_per_clk_ddr": "66.3552e6 / clk_ddr_hz",
-    "note": "64-bit DDRAM beat width @90 MHz peak 720 MB/s"
+    "note": "64-bit DDRAM beat width @90 MHz peak 720 MB/s",
+    "ddr_peak_MBps_at_90MHz_label": "ideal 64-bit port peak arithmetic (90e6*8) \u2014 NOT measured sustainable DDR BW",
+    "steady_RW_MBps_label": "2x frame-store I420 payload average \u2014 NOT total controller traffic (excludes pipe->heap, memcpy src reads, decode/ref, contention)",
+    "controller_payload_fraction_of_8B_beats_label": "ideal port utilization of payload R+W only (66.3552/720) \u2014 not measured load"
   },
   "interface_peaks_separate_from_headline": {
     "note": "rd-duck: keep peaks separate from payload averages. Do NOT collapse into 1.65888.",
@@ -142,10 +145,11 @@
     },
     "still_open": [
       "hps_write_concurrent (w-mem) \u2014 concurrent HPS /dev/mem WRITE on same controller",
-      "T_copy_e2e (w-path/parent) \u2014 serial 14.978 ms; overlap unproven; fabric DMA not built \u2014 NOT reader beat delta"
+      "T_copy_e2e (w-path/parent) \u2014 serial 14.978 ms; overlap unproven; fabric DMA not built \u2014 NOT reader beat delta",
+      "hardware_contention OPEN after TB (rd-duck) \u2014 real-reader cannot prove shared HPS controller envelope"
     ],
     "headline_assumption": "33.1776 is payload average; real reader measured ~173120 payload beats/frame (+320 vs ideal) + doorbell overhead",
-    "w_scaler_position": "reader_steady_delta: CLOSED (w-clock). hps_write_concurrent + T_copy_e2e: OPEN (w-mem/w-path/parent).",
+    "w_scaler_position": "reader_steady_delta CLOSED (payload demand). Refusal to claim fabric/controller closure CORRECT (rd-duck). hps_write_concurrent + T_copy_e2e + hardware_contention OPEN.",
     "reader_beat_delta_gap": "CLOSED",
     "fabric_bw_closed_means": "False because hps_write_concurrent OPEN and/or full R+W controller budget unowned. reader_steady_delta is CLOSED \u2014 never report as unproven reader gap.",
     "hps_write_concurrent": "OPEN",
@@ -158,7 +162,8 @@
   ],
   "audit_ack": [
     "rd-duck",
-    "w-clock-reader-proof"
+    "w-clock-reader-proof",
+    "rd-duck-label-correction"
   ],
   "pending_ack": [],
   "parent_correction_sweep118": {
@@ -250,7 +255,9 @@
       "owner": "w-clock",
       "also": "w-scaler local reconfirm true rc=0 @ 8ca3d529/7cf2640a",
       "tb": "tests/unit/test_ddr_frame_store_720p_ppc2_bus.sh",
-      "G0": "payload=173120 door=9689 total=182809 ddr_cy=2784152<3750000"
+      "G0": "payload=173120 door=9689 total=182809 ddr_cy=2784152<3750000",
+      "proves": "reader beat demand + assumed stall tolerance; payload and door counted separately",
+      "does_not_prove": "shared HPS controller supply under concurrent write; hardware contention"
     },
     "hps_write_concurrent": {
       "status": "OPEN",
@@ -265,7 +272,11 @@
       "fabric BW proof_gap still OPEN (unsplit)",
       "reader beat delta unproven",
       "assign reader closure to w-mem+w-osd"
-    ]
+    ],
+    "hardware_contention": {
+      "status": "OPEN",
+      "note": "remains open after real-reader TB; host writes not RTL-master beats"
+    }
   },
   "three_lane_lock": {
     "status": "LOCKED",
@@ -278,5 +289,30 @@
       "~4.66 as headline",
       "~93 MB/s as headline"
     ]
+  },
+  "rd_duck_label_correction": {
+    "status": "BINDING",
+    "payload_averages_mean": "33.1776/dir, 66.3552 R+W, 0.73728 B/clk_ddr, 0.09216 of 8B beats are frame-store PAYLOAD / ideal 64-bit-port utilization ONLY",
+    "FORBIDDEN_labels": [
+      "720 MB/s measured sustainable DDR bandwidth",
+      "66.3552 total controller traffic",
+      "real-reader TB proves shared HPS controller will supply the envelope"
+    ],
+    "additional_traffic_not_in_headline": [
+      "pipe->heap",
+      "memcpy source reads",
+      "decode/reference traffic"
+    ],
+    "real_reader_tb_proves": [
+      "reader beat demand (payload + door/mailbox overhead, counted separately)",
+      "tolerance to an ASSUMED stall envelope (G1)"
+    ],
+    "real_reader_tb_cannot_prove": [
+      "host writes as RTL-master beats (they are not)",
+      "shared HPS controller supplies the stall envelope under contention",
+      "hardware contention closed"
+    ],
+    "hardware_contention": "OPEN after TB",
+    "w_scaler_refusal_to_claim_closure": "CORRECT"
   }
 }
