@@ -137,6 +137,7 @@ unit-unlocked: preflight $(ROOT)/build/test_gdm_filter $(ROOT)/build/test_spi_tx
 	python3 $(ROOT)/tests/unit/test_h264_decoder_leaves_quartus_subset.py
 	python3 $(ROOT)/tests/unit/test_h264_dead_frontend_quartus_subset.py
 	python3 $(ROOT)/tests/unit/test_rtl_reachability_controls.py
+	python3 $(ROOT)/tests/unit/test_h264_dpb_one_ref_fetch_budget.py
 
 rtl-sim:
 	$(ROOT)/tests/unit/test_p3_idct_rtl_sim.sh
