@@ -1690,18 +1690,22 @@ bool FpgaSpi::readBankRelease(BankReleaseStatus& out) {
         return false;
     }
     if (plxaDiscoverState_ == 0) {
-        const uint32_t plxaPhys = plxa::kPlxaPhys;
+        // Prefer in-window PLXA at doorbell+0x0F0 (always inside frame mmap).
+        // Fall back to absolute 0x3007F0F0 via bootstrap page (480p-era / dual).
         volatile uint32_t* pm = nullptr;
-        // Prefer frame-window map when PLXA falls inside it (480p tier).
-        if (ddrMap_ && plxaPhys >= ddrLayout_.phys_base &&
-            (plxaPhys - ddrLayout_.phys_base) + 8u <= ddrMapLen_) {
+        const uint32_t plxaDb = plxa::plxaPhysOnDoorbell(ddrLayout_.doorbell_phys);
+        if (ddrMap_ && plxaDb >= ddrLayout_.phys_base &&
+            (plxaDb - ddrLayout_.phys_base) + 8u <= ddrMapLen_) {
+            const size_t poff = static_cast<size_t>(plxaDb - ddrLayout_.phys_base);
+            pm = reinterpret_cast<volatile uint32_t*>(ddrMap_ + poff);
+        } else if (plxa::kPlxaPhys >= ddrLayout_.phys_base &&
+                   (plxa::kPlxaPhys - ddrLayout_.phys_base) + 8u <= ddrMapLen_) {
             const size_t poff =
-                static_cast<size_t>(plxaPhys - ddrLayout_.phys_base);
+                static_cast<size_t>(plxa::kPlxaPhys - ddrLayout_.phys_base);
             pm = reinterpret_cast<volatile uint32_t*>(ddrMap_ + poff);
         } else if (ensurePlxaBootstrapMap()) {
-            // 720p window starts at 0x30180000; PLXA@0x3007F0F0 needs its own page.
             const size_t poff =
-                static_cast<size_t>(plxaPhys - plxaMapPhys_);
+                static_cast<size_t>(plxa::kPlxaPhys - plxaMapPhys_);
             pm = reinterpret_cast<volatile uint32_t*>(plxaMap_ + poff);
         }
         if (pm) {
@@ -1743,7 +1747,6 @@ bool FpgaSpi::readBankRelease(BankReleaseStatus& out) {
                     }
                 } else {
                     plxaDiscoverState_ = 1;
-                    // No PLXA: product PLXD is still doorbell-relative.
                     plxdPhysResolved_ = plxdPhysFromDoorbell(ddrLayout_.doorbell_phys);
                 }
             } else {

@@ -14,10 +14,18 @@
 namespace misterplex {
 namespace plxa {
 
+// Absolute bootstrap (outside 720p phys window starting at 0x3018_0000).
 inline constexpr uint32_t kPlxaPhys = 0x3007F0F0u;
+// In-window mirror on every product doorbell page (RTL MAP_ON_DOORBELL).
+// Prefer this when the frame mmap already covers the doorbell.
+inline constexpr uint32_t kPlxaDoorbellOffset = 0x0F0u;
 inline constexpr uint32_t kPlxaMagic = 0x504C5841u; // "PLXA"
 // Bump when layout/flags semantics break. Host refuses unknown versions.
 inline constexpr uint8_t kPlxaAbiVersion = 1;
+
+inline uint32_t plxaPhysOnDoorbell(uint32_t doorbell_phys) {
+    return doorbell_phys + kPlxaDoorbellOffset;
+}
 
 // flags
 inline constexpr uint8_t kFlagDoorbellRelative = 1u << 0; // mailboxes at doorbell+off

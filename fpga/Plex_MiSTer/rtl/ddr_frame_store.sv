@@ -28,9 +28,11 @@ module ddr_frame_store #(
 	parameter [31:0] SDRAM_MAILBOX_PHYS = 32'h3007_F110,
 	parameter [31:0] FRAME_MAILBOX_PHYS = 32'h3007_F118,
 	parameter [31:0] BANK_MAILBOX_PHYS  = 32'h3007_F128,
-	// PLXA bootstrap map — FIXED absolute so host finds the map without already
-	// knowing the product doorbell. Stays absolute even when other mboxes are
-	// doorbell-relative (see host/libmisterplex/plxa_map.hpp).
+	// PLXA bootstrap map — FIXED absolute default so host can find a map without
+	// already knowing the product doorbell (docs/plx_mailbox_map.json). Product
+	// also mirrors PLXA onto DOORBELL+0x0F0 so a 720p frame mmap that starts at
+	// 0x3018_0000 (outside 0x3007_F0F0) still sees the map without a second
+	// /dev/mem window. Host prefers doorbell-page PLXA when present.
 	parameter [31:0] MAP_MAILBOX_PHYS   = 32'h3007_F0F0,
 	parameter int DDR_BURST_MAX = 128,
 	parameter bit IGNORE_STALE_DOORBELL_AFTER_RESET = 1'b1,
@@ -123,6 +125,11 @@ module ddr_frame_store #(
 	localparam [28:0] FRAME_MAILBOX_W = FRAME_MAILBOX_PHYS[31:3];
 	localparam [28:0] BANK_MAILBOX_W  = BANK_MAILBOX_PHYS[31:3];
 	localparam [28:0] MAP_MAILBOX_W   = MAP_MAILBOX_PHYS[31:3];
+	// In-window mirror: always inside the HPS frame mmap (doorbell page).
+	localparam [31:0] MAP_ON_DOORBELL_PHYS = DOORBELL_PHYS + 32'h0F0;
+	localparam [28:0] MAP_ON_DOORBELL_W   = MAP_ON_DOORBELL_PHYS[31:3];
+	localparam bit MAP_MIRROR_ON_DOORBELL =
+		(MAP_MAILBOX_PHYS != MAP_ON_DOORBELL_PHYS);
 	localparam [28:0] Y_PLANE_QWORDS = 29'((CODED_W * CODED_H) / 8);
 	localparam [28:0] C_PLANE_QWORDS = 29'((CODED_W * CODED_H) / 32);
 	localparam [28:0] U_PLANE_BASE = Y_PLANE_QWORDS;
@@ -542,6 +549,8 @@ module ddr_frame_store #(
 	reg [17:0] bank_mbox_hb;
 	reg [7:0] bank_mbox_seq;
 	reg map_mbox_req, map_mbox_valid;
+	// 0 = write MAP_MAILBOX_PHYS; 1 = write DOORBELL+0x0F0 mirror (when distinct).
+	reg map_mbox_sel;
 	reg [17:0] map_mbox_hb;
 	reg [15:0] bank_vsync_count;
 	reg [15:0] frames_done_d1, frames_done_d2; // clk→clk_ddr (PLXD pack)
@@ -881,6 +890,7 @@ module ddr_frame_store #(
 			bank_mbox_seq <= 8'd0;
 			map_mbox_req <= 1'b1;
 			map_mbox_valid <= 1'b0;
+			map_mbox_sel <= 1'b0;
 			map_mbox_hb <= 18'd0;
 			bank_vsync_count <= 16'd0;
 			frames_done_d1 <= 16'd0;
@@ -1052,17 +1062,31 @@ module ddr_frame_store #(
 						                                  : pending_ready_c);
 					end
 					poll_div <= poll_div + 16'd1;
-					// PLXA first so host bootstrap is not starved by PLXF/PLXD
+					// PLXA first so host bootstrap is not starved by PLXF/PLXD.
+					// Dual-publish when MAP_MAILBOX_PHYS != DOORBELL+0x0F0:
+					//   sel=0 → absolute bootstrap (0x3007_F0F0)
+					//   sel=1 → in-window mirror on doorbell page (720p-safe)
 					if (map_mbox_req && (!map_mbox_valid || poll_div[7:0] == 8'd32)
 					    && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						// lo=MAGIC_A, hi={plxd_off[15:0], flags[7:0], version[7:0]}
-						DDRAM_ADDR <= MAP_MAILBOX_W;
+						if (MAP_MIRROR_ON_DOORBELL && map_mbox_sel)
+							DDRAM_ADDR <= MAP_ON_DOORBELL_W;
+						else
+							DDRAM_ADDR <= MAP_MAILBOX_W;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_DIN <= {PLXA_PLXD_OFF, PLXA_FLAGS, PLXA_ABI_VERSION, MAGIC_A};
 						DDRAM_WE <= 1'b1;
-						map_mbox_valid <= 1'b1;
-						map_mbox_req <= 1'b0;
-						map_mbox_hb <= 18'd0;
+						if (MAP_MIRROR_ON_DOORBELL && !map_mbox_sel) begin
+							// Absolute done — queue doorbell-page mirror next.
+							map_mbox_sel <= 1'b1;
+							map_mbox_req <= 1'b1;
+							map_mbox_valid <= 1'b0;
+						end else begin
+							map_mbox_sel <= 1'b0;
+							map_mbox_valid <= 1'b1;
+							map_mbox_req <= 1'b0;
+							map_mbox_hb <= 18'd0;
+						end
 						state_ddr <= S_WRITE_WAIT;
 					end else if (frame_mbox_req && (!frame_mbox_valid || poll_div[7:0] == 8'd224)
 					    && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin

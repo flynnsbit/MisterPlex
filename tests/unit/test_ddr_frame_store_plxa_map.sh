@@ -60,5 +60,5 @@ OUT="$("$BUILD/Vddr_frame_store_plxa_map_tb" 2>&1)"
 RC=$?
 set -e
 printf '%s\n' "$OUT"
-assert_sim_executed "plxa_map" "$OUT" "summary plxa_map" "plxa_wr="
+assert_sim_executed "plxa_map" "$OUT" "summary plxa_map" "abs_wr=" "db_wr=" "PASS plxa_map"
 exit "$RC"

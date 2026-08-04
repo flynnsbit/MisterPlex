@@ -8,6 +8,8 @@
 
 // Keep in sync with host/libmisterplex/plxa_map.hpp
 static constexpr uint32_t kPlxaPhys = 0x3007F0F0u;
+// Default DUT doorbell = 0x30000000 + 2*0x80000 - 0x1000 = 0x300FF000
+static constexpr uint32_t kPlxaOnDoorbellPhys = 0x300FF0F0u;
 static constexpr uint32_t kPlxaMagic = 0x504C5841u;
 static constexpr uint8_t kPlxaAbiVersion = 1;
 static constexpr uint8_t kFlagRelative = 1u << 0;
@@ -38,11 +40,13 @@ int main(int argc, char** argv) {
   t->reset = 0;
 
   uint64_t plxa_wr = 0;
+  uint64_t plxa_db_wr = 0;
   uint64_t last_word = 0;
+  uint64_t last_db_word = 0;
   const int CYCLES = 100000;
 
-  // PRE-REGISTER: expect PASS — map_mbox_req fires on reset/heartbeat without doorbell.
-  std::printf("PRE-REGISTER: PASS plxa_map write @ 0x3007F0F0 without doorbell\n");
+  // PRE-REGISTER: dual publish without doorbell — absolute + DOORBELL+0x0F0.
+  std::printf("PRE-REGISTER: PASS plxa @ 0x3007F0F0 AND 0x300FF0F0 without doorbell\n");
 
   for (int i = 0; i < CYCLES; i++) {
     t->DDRAM_BUSY = 0;
@@ -53,19 +57,34 @@ int main(int argc, char** argv) {
     if (t->DDRAM_WE && !t->DDRAM_BUSY) {
       uint32_t phys = ((uint32_t)t->DDRAM_ADDR) << 3;
       uint64_t din = t->DDRAM_DIN;
-      if (phys == kPlxaPhys && (uint32_t)(din & 0xFFFFFFFFu) == kPlxaMagic) {
-        plxa_wr++;
-        last_word = din;
+      if ((uint32_t)(din & 0xFFFFFFFFu) == kPlxaMagic) {
+        if (phys == kPlxaPhys) {
+          plxa_wr++;
+          last_word = din;
+        } else if (phys == kPlxaOnDoorbellPhys) {
+          plxa_db_wr++;
+          last_db_word = din;
+        }
       }
     }
   }
 
-  std::printf("summary plxa_map: cycles=%d plxa_wr=%llu last=0x%016llx\n",
-              CYCLES, (unsigned long long)plxa_wr,
+  std::printf("summary plxa_map: cycles=%d abs_wr=%llu db_wr=%llu last=0x%016llx\n",
+              CYCLES, (unsigned long long)plxa_wr, (unsigned long long)plxa_db_wr,
               (unsigned long long)last_word);
 
   if (plxa_wr == 0) {
     std::printf("FAIL plxa_map: no PLXA write @ 0x3007F0F0 without doorbell\n");
+    return 1;
+  }
+  if (plxa_db_wr == 0) {
+    std::printf("FAIL plxa_map: no PLXA mirror @ DOORBELL+0x0F0 (0x300FF0F0)\n");
+    return 1;
+  }
+  if (last_db_word != last_word) {
+    std::printf("FAIL plxa_map: absolute and doorbell-page words differ "
+                "abs=0x%016llx db=0x%016llx\n",
+                (unsigned long long)last_word, (unsigned long long)last_db_word);
     return 1;
   }
 
@@ -105,7 +124,7 @@ int main(int argc, char** argv) {
   std::printf("NEG version_mismatch: host_expect=%u core_ver=%u → REJECT (as required)\n",
               wrong_expect, ver);
 
-  std::printf("PASS plxa_map: wr=%llu ver=%u flags=0x%02x plxd_off=0x%04x\n",
-              (unsigned long long)plxa_wr, ver, flags, off);
+  std::printf("PASS plxa_map: abs_wr=%llu db_wr=%llu ver=%u flags=0x%02x plxd_off=0x%04x\n",
+              (unsigned long long)plxa_wr, (unsigned long long)plxa_db_wr, ver, flags, off);
   return 0;
 }
