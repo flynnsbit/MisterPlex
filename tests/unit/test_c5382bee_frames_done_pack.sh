@@ -1,28 +1,34 @@
 #!/usr/bin/env bash
-# T1: Prove deployed RBF c5382bee packs bank_vsync_count into PLXD[63:48].
-# Fitted freeze: .agent-work/w-fit/leftedge3-proj/rtl/ddr_frame_store.sv
-# md5 must match evidence-leftedge3-build-ok.txt fitted ddr_frame_store.md5.
+# T1: Prove historical RBF class c5382bee packed bank_vsync_count into PLXD[63:48],
+# and that tip product RTL packs the real frames_done swap counter instead.
+#
+# Freeze is a TRACKED fixture (byte-identical to commit 052aa3de ddr_frame_store.sv /
+# leftedge3 fit md5 c139274e...). Do NOT read gitignored .agent-work — clean clones
+# must pass make unit without local fit debris.
 # Soft-skip never. true rc direct.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-FIT="$ROOT/.agent-work/w-fit/leftedge3-proj/rtl/ddr_frame_store.sv"
+FIT="$ROOT/tests/fixtures/plxd/c5382bee_ddr_frame_store.sv"
 TIP="$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv"
-EV="$ROOT/.agent-work/w-fit/evidence-leftedge3-build-ok.txt"
+EV="$ROOT/tests/fixtures/plxd/c5382bee_leftedge3_build_ok.txt"
+EXPECT_MD5="c139274e814a4696c485c0bba3781ad8"
 
 FAIL=0
 if [[ ! -f "$FIT" ]]; then
-  echo "FAIL: missing fitted freeze $FIT" >&2
+  echo "FAIL: missing historical freeze fixture $FIT" >&2
   exit 1
 fi
 md=$(md5sum "$FIT" | awk '{print $1}')
 echo "fitted_ddr_frame_store_md5=$md"
-if [[ -f "$EV" ]] && grep -q 'ddr_frame_store.md5 fitted: c139274e814a4696c485c0bba3781ad8' "$EV"; then
-  if [[ "$md" != "c139274e814a4696c485c0bba3781ad8" ]]; then
-    echo "FAIL: fitted RTL md5 != evidence claim c139274e..." >&2
-    FAIL=1
-  else
-    echo "OK fitted md5 matches leftedge3 evidence (c5382bee freeze)"
-  fi
+if [[ "$md" != "$EXPECT_MD5" ]]; then
+  echo "FAIL: freeze fixture md5=$md != $EXPECT_MD5 (do not regenerate lightly)" >&2
+  FAIL=1
+else
+  echo "OK freeze fixture md5 matches leftedge3/c5382bee claim $EXPECT_MD5"
+fi
+if [[ -f "$EV" ]] && ! grep -q "ddr_frame_store.md5 fitted: $EXPECT_MD5" "$EV"; then
+  echo "FAIL: evidence note missing fitted md5 claim $EXPECT_MD5" >&2
+  FAIL=1
 fi
 
 echo "=== c5382bee freeze PLXD pack (must be bank_vsync_count) ==="
