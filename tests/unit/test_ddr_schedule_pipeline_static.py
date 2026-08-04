@@ -185,12 +185,12 @@ def check_s_idle_decisions(body: str) -> list[str]:
         errs.append(f"S_IDLE code uses combo {name} at body-line {lineno}: {snippet}")
 
     # Required registered decision sites (at least one of each family).
+    # H-R1d: prep arm may use sel_y_prep_r / sel_c_prep_r (frozen with need_*_r)
+    # instead of live (swap_pending_d2 && need_*_prep_r).
     required_r = (
         "pending_ready_r",
         "need_y_cur_r",
-        "need_y_prep_r",
         "need_c_cur_r",
-        "need_c_prep_r",
         "target_y_cur_r",
         "target_y_prep_r",
         "target_c_cur_r",
@@ -199,6 +199,18 @@ def check_s_idle_decisions(body: str) -> list[str]:
     for name in required_r:
         if not re.search(rf"\b{name}\b", body):
             errs.append(f"S_IDLE body missing registered decision signal {name}")
+    if not (
+        re.search(r"\bneed_y_prep_r\b", body) or re.search(r"\bsel_y_prep_r\b", body)
+    ):
+        errs.append(
+            "S_IDLE body missing prep-Y decision (need_y_prep_r or sel_y_prep_r)"
+        )
+    if not (
+        re.search(r"\bneed_c_prep_r\b", body) or re.search(r"\bsel_c_prep_r\b", body)
+    ):
+        errs.append(
+            "S_IDLE body missing prep-C decision (need_c_prep_r or sel_c_prep_r)"
+        )
     return errs
 
 
