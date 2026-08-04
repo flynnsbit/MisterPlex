@@ -738,32 +738,14 @@ module ddr_frame_store #(
 	reg [Y_W-1:0] desired_y;
 	reg [Y_W-2:0] desired_c;
 	reg [SLOT_W-1:0] cur_base_idx, prep_base_idx;
-	// H-R1e STA_RECOVER: register half ownership before LINE_COUNT×LINE_COUNT scan.
-	// Path#1 on 9ee4ecab: disp_buf_d2 → target_y_cur_r setup -0.110. Break launch;
-	// +1 clk_ddr lag on base/bank vs live swap (same class as schedule-reg).
-	reg [SLOT_W-1:0] cur_base_idx_r, prep_base_idx_r;
-	reg disp_bank_sched_r, pending_bank_sched_r;
 	reg sched_valid, sched_is_y, sched_for_pending;
 	reg sched_bank, sched_pending_ready;
 	reg [Y_W-1:0] sched_y;
 	reg [Y_W-2:0] sched_cy;
 	reg [SLOT_W-1:0] sched_idx;
-	always @(posedge clk_ddr) begin
-		if (reset_ddr) begin
-			cur_base_idx_r <= '0;
-			prep_base_idx_r <= SECOND_SET_BASE;
-			disp_bank_sched_r <= 1'b0;
-			pending_bank_sched_r <= 1'b0;
-		end else begin
-			cur_base_idx_r <= disp_buf_d2 ? SECOND_SET_BASE : '0;
-			prep_base_idx_r <= disp_buf_d2 ? '0 : SECOND_SET_BASE;
-			disp_bank_sched_r <= disp_bank_d2;
-			pending_bank_sched_r <= pending_bank_d2;
-		end
-	end
 	always @* begin
-		cur_base_idx = cur_base_idx_r;
-		prep_base_idx = prep_base_idx_r;
+		cur_base_idx = disp_buf_d2 ? SECOND_SET_BASE : '0;
+		prep_base_idx = disp_buf_d2 ? '0 : SECOND_SET_BASE;
 		need_y_cur_c = 1'b0;
 		need_c_cur_c = 1'b0;
 		need_y_prep_c = 1'b0;
@@ -787,7 +769,7 @@ module ddr_frame_store #(
 			desired_c = desired_y_r[ti][Y_W-1:1];
 			found_line = 1'b0;
 			for (tj = 0; tj < LINE_COUNT; tj = tj + 1) begin
-				if (y_valid[cur_base_idx + tj[SLOT_W-1:0]] && (y_bank[cur_base_idx + tj[SLOT_W-1:0]] == disp_bank_sched_r)
+				if (y_valid[cur_base_idx + tj[SLOT_W-1:0]] && (y_bank[cur_base_idx + tj[SLOT_W-1:0]] == disp_bank_d2)
 				    && (y_line[cur_base_idx + tj[SLOT_W-1:0]] == desired_y))
 					found_line = 1'b1;
 			end
@@ -798,7 +780,7 @@ module ddr_frame_store #(
 
 			found_line = 1'b0;
 			for (tj = 0; tj < LINE_COUNT; tj = tj + 1) begin
-				if (c_valid[cur_base_idx + tj[SLOT_W-1:0]] && (c_bank[cur_base_idx + tj[SLOT_W-1:0]] == disp_bank_sched_r)
+				if (c_valid[cur_base_idx + tj[SLOT_W-1:0]] && (c_bank[cur_base_idx + tj[SLOT_W-1:0]] == disp_bank_d2)
 				    && (c_line[cur_base_idx + tj[SLOT_W-1:0]] == desired_c))
 					found_line = 1'b1;
 			end
@@ -809,7 +791,7 @@ module ddr_frame_store #(
 
 			found_line = 1'b0;
 			for (tj = 0; tj < LINE_COUNT; tj = tj + 1) begin
-				if (y_valid[prep_base_idx + tj[SLOT_W-1:0]] && (y_bank[prep_base_idx + tj[SLOT_W-1:0]] == pending_bank_sched_r)
+				if (y_valid[prep_base_idx + tj[SLOT_W-1:0]] && (y_bank[prep_base_idx + tj[SLOT_W-1:0]] == pending_bank_d2)
 				    && (y_line[prep_base_idx + tj[SLOT_W-1:0]] == ti[Y_W-1:0]))
 					found_line = 1'b1;
 			end
@@ -823,7 +805,7 @@ module ddr_frame_store #(
 
 			found_line = 1'b0;
 			for (tj = 0; tj < LINE_COUNT; tj = tj + 1) begin
-				if (c_valid[prep_base_idx + tj[SLOT_W-1:0]] && (c_bank[prep_base_idx + tj[SLOT_W-1:0]] == pending_bank_sched_r)
+				if (c_valid[prep_base_idx + tj[SLOT_W-1:0]] && (c_bank[prep_base_idx + tj[SLOT_W-1:0]] == pending_bank_d2)
 				    && (c_line[prep_base_idx + tj[SLOT_W-1:0]] == ti[Y_W-1:1]))
 					found_line = 1'b1;
 			end
@@ -839,7 +821,7 @@ module ddr_frame_store #(
 		for (tj = 0; tj < LINE_COUNT; tj = tj + 1) begin
 			slot_keep = 1'b0;
 			for (tk = 0; tk < LINE_COUNT; tk = tk + 1) begin
-				if (y_valid[cur_base_idx + tj[SLOT_W-1:0]] && (y_bank[cur_base_idx + tj[SLOT_W-1:0]] == disp_bank_sched_r)
+				if (y_valid[cur_base_idx + tj[SLOT_W-1:0]] && (y_bank[cur_base_idx + tj[SLOT_W-1:0]] == disp_bank_d2)
 				    && (y_line[cur_base_idx + tj[SLOT_W-1:0]] == desired_y_r[tk]))
 					slot_keep = 1'b1;
 			end
@@ -850,7 +832,7 @@ module ddr_frame_store #(
 
 			slot_keep = 1'b0;
 			for (tk = 0; tk < LINE_COUNT; tk = tk + 1) begin
-				if (c_valid[cur_base_idx + tj[SLOT_W-1:0]] && (c_bank[cur_base_idx + tj[SLOT_W-1:0]] == disp_bank_sched_r)
+				if (c_valid[cur_base_idx + tj[SLOT_W-1:0]] && (c_bank[cur_base_idx + tj[SLOT_W-1:0]] == disp_bank_d2)
 				    && (c_line[cur_base_idx + tj[SLOT_W-1:0]] == desired_y_r[tk][Y_W-1:1]))
 					slot_keep = 1'b1;
 			end
@@ -867,7 +849,7 @@ module ddr_frame_store #(
 				slot_keep = 1'b0;
 				for (tk = 0; tk < LINE_COUNT; tk = tk + 1) begin
 					if (y_valid[prep_base_idx + tj[SLOT_W-1:0]]
-					    && (y_bank[prep_base_idx + tj[SLOT_W-1:0]] == pending_bank_sched_r)
+					    && (y_bank[prep_base_idx + tj[SLOT_W-1:0]] == pending_bank_d2)
 					    && (y_line[prep_base_idx + tj[SLOT_W-1:0]] == tk[Y_W-1:0]))
 						slot_keep = 1'b1;
 				end
@@ -878,7 +860,7 @@ module ddr_frame_store #(
 				slot_keep = 1'b0;
 				for (tk = 0; tk < LINE_COUNT; tk = tk + 1) begin
 					if (c_valid[prep_base_idx + tj[SLOT_W-1:0]]
-					    && (c_bank[prep_base_idx + tj[SLOT_W-1:0]] == pending_bank_sched_r)
+					    && (c_bank[prep_base_idx + tj[SLOT_W-1:0]] == pending_bank_d2)
 					    && (c_line[prep_base_idx + tj[SLOT_W-1:0]] == tk[Y_W-1:1]))
 						slot_keep = 1'b1;
 				end
@@ -911,9 +893,9 @@ module ddr_frame_store #(
 	// Consume path (sched_valid issue) already uses only sched_*; latch is the gap.
 	reg need_y_cur_r, need_c_cur_r, need_y_prep_r, need_c_prep_r, pending_ready_r;
 	reg sel_y_prep_r, sel_c_prep_r;
-	reg sched_bank_y_src_r, sched_bank_c_src_r;
-	// H-R1e M1b: registered mbox-yield under display cur miss (STA cut; not S_IDLE reorder)
+	// H-R1e M1b_CLEAN: registered mbox yield under display cur miss (STA-safe CE)
 	reg mbox_yield_cur_r;
+	reg sched_bank_y_src_r, sched_bank_c_src_r;
 	reg [Y_W-1:0] target_y_cur_r, target_y_prep_r;
 	reg [Y_W-2:0] target_c_cur_r, target_c_prep_r;
 	reg [SLOT_W-1:0] target_y_idx_cur_r, target_y_idx_prep_r, target_c_idx_cur_r, target_c_idx_prep_r;
@@ -924,11 +906,11 @@ module ddr_frame_store #(
 			need_y_prep_r <= 1'b0;
 			need_c_prep_r <= 1'b0;
 			pending_ready_r <= 1'b1;
+			mbox_yield_cur_r <= 1'b0;
 			sel_y_prep_r <= 1'b0;
 			sel_c_prep_r <= 1'b0;
 			sched_bank_y_src_r <= 1'b0;
 			sched_bank_c_src_r <= 1'b0;
-			mbox_yield_cur_r <= 1'b0;
 			target_y_cur_r <= '0;
 			target_y_prep_r <= '0;
 			target_c_cur_r <= '0;
@@ -943,9 +925,9 @@ module ddr_frame_store #(
 			need_y_prep_r <= need_y_prep_c;
 			need_c_prep_r <= need_c_prep_c;
 			pending_ready_r <= pending_ready_c;
-			// Same-cycle sample as need_*/target_*_r (not live re-eval at arm).
-			// H-R1e M1b: freeze mbox yield with need_*_c so S_IDLE mbox CE is FF-only.
+			// H-R1e M1b_CLEAN: freeze mbox yield with need_*_c (FF-only CE on mbox)
 			mbox_yield_cur_r <= has_frame_d2 && (need_y_cur_c || need_c_cur_c);
+			// Same-cycle sample as need_*/target_*_r (not live re-eval at arm).
 			// LINECAM_CUR_WINDOW_FIRST: demote prep freeze while display half
 			// misses desired (has_frame && need_*_cur). Keeps sel+bank atomic
 			// with cur path (disp_bank); cold-start !has_frame still allows prep.
@@ -953,11 +935,10 @@ module ddr_frame_store #(
 				&& !(has_frame_d2 && need_y_cur_c);
 			sel_c_prep_r <= swap_pending_d2 && need_c_prep_c
 				&& !(has_frame_d2 && need_c_cur_c);
-			// Bank epoch matches schedule scan (disp_bank_sched_r / pending_bank_sched_r).
 			sched_bank_y_src_r <= (swap_pending_d2 && need_y_prep_c
-				&& !(has_frame_d2 && need_y_cur_c)) ? pending_bank_sched_r : disp_bank_sched_r;
+				&& !(has_frame_d2 && need_y_cur_c)) ? pending_bank_d2 : disp_bank_d2;
 			sched_bank_c_src_r <= (swap_pending_d2 && need_c_prep_c
-				&& !(has_frame_d2 && need_c_cur_c)) ? pending_bank_sched_r : disp_bank_sched_r;
+				&& !(has_frame_d2 && need_c_cur_c)) ? pending_bank_d2 : disp_bank_d2;
 			target_y_cur_r <= target_y_cur_c;
 			target_y_prep_r <= target_y_prep_c;
 			target_c_cur_r <= target_c_cur_c;
@@ -970,7 +951,7 @@ module ddr_frame_store #(
 	end
 
 	// I2 (DIAG): display/prep half occupancy + bank-mismatch on display half.
-	// Uses registered schedule base/bank epoch (same as need/target scan).
+	// Uses cur_base_idx/prep_base_idx from schedule combo (same half ownership).
 	integer oi;
 	always @* begin
 		occ_disp_y_c = 5'd0;
@@ -979,7 +960,7 @@ module ddr_frame_store #(
 		for (oi = 0; oi < LINE_COUNT; oi = oi + 1) begin
 			if (y_valid[cur_base_idx + oi[SLOT_W-1:0]]) begin
 				occ_disp_y_c = occ_disp_y_c + 5'd1;
-				if (y_bank[cur_base_idx + oi[SLOT_W-1:0]] != disp_bank_sched_r)
+				if (y_bank[cur_base_idx + oi[SLOT_W-1:0]] != disp_bank_d2)
 					bank_mm_disp_c = bank_mm_disp_c + 6'd1;
 			end
 			if (y_valid[prep_base_idx + oi[SLOT_W-1:0]])
@@ -1341,8 +1322,7 @@ module ddr_frame_store #(
 						                                  : pending_ready_c);
 					end
 					poll_div <= poll_div + 16'd1;
-					// H-R1e M1b: yield frame/bank mbox while display cur miss (reg FF).
-					// Holdlast S_IDLE order kept — no A→H mbox demote reorder (STA).
+					// H-R1e M1b_CLEAN: yield frame/bank mbox while display cur miss (reg FF).
 					if (frame_mbox_req && !mbox_yield_cur_r
 					    && (!frame_mbox_valid || poll_div[7:0] == 8'd224)
 					    && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
