@@ -62,6 +62,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_pl330_encode $(ROOT)/b
 	bash $(ROOT)/tests/unit/test_io_ack_follow_rtl_sim.sh
 	bash $(ROOT)/tests/unit/test_bitstream_bit_feeder_rtl_sim.sh
 	bash $(ROOT)/tests/unit/test_line_buf_px5_rtl_sim.sh
+	bash $(ROOT)/tests/unit/test_h264_dpb_ddr_rtl_sim.sh
 	bash $(ROOT)/tests/unit/test_bitstream_to_exp_golomb_rtl_sim.sh
 	bash $(ROOT)/tests/unit/test_annexb_rbsp_exp_golomb_rtl_sim.sh
 

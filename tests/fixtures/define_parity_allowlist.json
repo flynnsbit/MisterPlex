@@ -32,6 +32,8 @@
     "H264_DECODE_CORE_FAULT_SWAP_CHROMA_SCHEDULED_COEFF": "Injected decode-core P16x16 chroma CAVLC scan-order expected-red fault.",
     "H264_DECODE_CORE_FAULT_SWAP_SCHEDULED_COEFF": "Injected decode-core P16x16 scheduled CAVLC scan-order expected-red fault.",
     "H264_DECODE_CORE_FAULT_WRONG_CBP_BIT": "Injected decode-core P16x16 CBP 8x8-group bit inversion expected-red fault.",
+    "H264_DPB_DDR_FAULT_SMALL_WIN": "Injected DDR DPB ref-window cache undersize (no qpel border) expected-red fault.",
+    "H264_DPB_DDR_FAULT_WRONG_EVICT": "Injected DDR DPB slot-mgr newest-ref eviction expected-red fault.",
     "H264_DPB_FAULT_EARLY_PROMOTE": "Injected DPB early frame-promote expected-red fault.",
     "H264_DPB_FAULT_NO_IDR_INVALIDATE": "Injected DPB missing-IDR-invalidate expected-red fault.",
     "H264_DPB_FAULT_SKIP_DEBLOCK": "Injected DPB skip-deblock-before-commit expected-red fault.",

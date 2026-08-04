@@ -63,3 +63,15 @@ localparam int DDR_FRAME_720P24_CLK_SYS_HZ = 24_000_000;
 // Product ascal-native max tier (PRESENT_BEAM_960) — not default raster.
 localparam int DDR_FRAME_960_PRESENTED_WIDTH = 960;
 localparam int DDR_FRAME_960_PRESENTED_HEIGHT = 540;
+
+// ---- Fabric-decode DPB (DDR-resident multi-slot; host parity) ----
+// See host/libmisterplex/ddr_frame_layout.hpp kPlex720pDpb*.
+// All-on-chip M10K cannot hold one 720p frame; refs live here.
+localparam int DDR_FRAME_720P_DPB_SLOT_COUNT = 5;
+localparam int DDR_FRAME_720P_DPB_SLOT_STRIDE = 32'h0018_0000;
+localparam int DDR_FRAME_720P_DPB_PHYS_BASE = 32'h3080_0000;
+localparam int DDR_FRAME_720P_DPB_BYTES = 32'h0078_0000; // 5 * 0x180000
+localparam int DDR_FRAME_720P_DPB_END_PHYS = 32'h30F8_0000;
+localparam int DDR_FRAME_720P_DPB_Y_PLANE_OFFSET = 0;
+localparam int DDR_FRAME_720P_DPB_U_PLANE_OFFSET = 921600;
+localparam int DDR_FRAME_720P_DPB_V_PLANE_OFFSET = 1152000;

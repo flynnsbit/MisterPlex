@@ -77,6 +77,14 @@ DDR_LAYOUT_PAIRS_720P: tuple[tuple[str, str], ...] = (
     ("kPlex720pYuv420pDoorbellPhys", "DDR_FRAME_720P_YUV420P_DOORBELL_PHYS"),
     ("kPlex720pCropLeft", "DDR_FRAME_720P_CROP_LEFT"),
     ("kPlex720pCropTop", "DDR_FRAME_720P_CROP_TOP"),
+    ("kPlex720pDpbSlotCount", "DDR_FRAME_720P_DPB_SLOT_COUNT"),
+    ("kPlex720pDpbSlotStride", "DDR_FRAME_720P_DPB_SLOT_STRIDE"),
+    ("kPlex720pDpbPhysBase", "DDR_FRAME_720P_DPB_PHYS_BASE"),
+    ("kPlex720pDpbBytes", "DDR_FRAME_720P_DPB_BYTES"),
+    ("kPlex720pDpbEndPhys", "DDR_FRAME_720P_DPB_END_PHYS"),
+    ("kPlex720pDpbYPlaneOffset", "DDR_FRAME_720P_DPB_Y_PLANE_OFFSET"),
+    ("kPlex720pDpbUPlaneOffset", "DDR_FRAME_720P_DPB_U_PLANE_OFFSET"),
+    ("kPlex720pDpbVPlaneOffset", "DDR_FRAME_720P_DPB_V_PLANE_OFFSET"),
 )
 
 

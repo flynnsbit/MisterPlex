@@ -118,6 +118,60 @@ static_assert(kPl330AbiRegionPhys >= kPlexDdrReservedWindowStart &&
 static_assert(kDdrFramePhysBase + 2u * kPlex480pYuv420pBankStride <= kPlex720pDdrFramePhysBase,
               "480p map must not overlap Option-C base");
 
+// ---- Fabric-decode DPB (DDR-resident; NOT on-chip) ----
+// On-chip M10K total is 553 * 10240/8 = 707,840 B < one 720p I420 frame
+// (1,382,400 B). Multi-ref DPB MUST live in DDR. Slot stride matches the
+// present 720p bank stride so plane offsets stay identical to product I420.
+// Base is page-aligned after PL330 ABI end (0x30781000 → 0x30800000).
+// Slot layout inside each stride: Y@0, U@Y_BYTES, V@Y+C (same as present).
+// Coordinate with w-mem before wiring as an arbiter master (future m3).
+// Literals kept parseable by scripts/check_define_parity.py (_parse_int_token).
+constexpr int kPlex720pDpbSlotCount = 5; // 1 current + up to 4 short-term refs
+constexpr uint32_t kPlex720pDpbSlotStride = 0x00180000u; // == kPlex720pYuv420pBankStride
+constexpr uint32_t kPlex720pDpbPhysBase = 0x30800000u;
+constexpr uint32_t kPlex720pDpbBytes = 0x00780000u; // 5 * 0x180000
+constexpr uint32_t kPlex720pDpbEndPhys = 0x30F80000u;
+// Plane offsets inside a DPB slot (720p I420, coded stride).
+constexpr int kPlex720pDpbYPlaneOffset = 0;
+constexpr int kPlex720pDpbUPlaneOffset = 921600;  // 1280*720
+constexpr int kPlex720pDpbVPlaneOffset = 1152000; // U + 640*360
+
+static_assert(kPlex720pDpbSlotStride == kPlex720pYuv420pBankStride, "DPB stride == bank");
+static_assert(kPlex720pDpbPhysBase >= kPl330AbiRegionEndPhys,
+              "DPB must start at or after PL330 ABI end");
+static_assert(kPlex720pDpbPhysBase == 0x30800000u, "DPB base lock");
+static_assert(kPlex720pDpbEndPhys == 0x30F80000u, "DPB end = base + 5*stride");
+static_assert(kPlex720pDpbBytes ==
+                  static_cast<uint32_t>(kPlex720pDpbSlotCount) * kPlex720pDpbSlotStride,
+              "DPB bytes = slots * stride");
+static_assert(kPlex720pDpbEndPhys <= kPlexDdrReservedWindowEnd,
+              "DPB inside memmap reserved window");
+static_assert(kPlex720pDpbUPlaneOffset == kPlex720pCodedWidth * kPlex720pCodedHeight,
+              "720p Y plane bytes");
+static_assert(kPlex720pDpbVPlaneOffset ==
+                  kPlex720pDpbUPlaneOffset +
+                      (kPlex720pCodedWidth / 2) * (kPlex720pCodedHeight / 2),
+              "720p U plane end");
+static_assert(kPlex720pDpbVPlaneOffset + (kPlex720pCodedWidth / 2) * (kPlex720pCodedHeight / 2) ==
+                  kPlex720pYuv420pBytes,
+              "DPB I420 size matches product frame bytes");
+// Must not collide with Option-C present banks or PL330.
+static_assert(kPlex720pDpbPhysBase >= kPlex720pOptionCTripleEndPhys, "DPB after present banks");
+static_assert(kPlex720pDpbPhysBase >= kPl330AbiRegionEndPhys, "DPB after PL330 end");
+
+inline uint32_t plex720pDpbSlotPhys(unsigned slot) {
+    return kPlex720pDpbPhysBase +
+           static_cast<uint32_t>(slot) * kPlex720pDpbSlotStride;
+}
+
+inline bool plex720pDpbPhysInRegion(uint32_t phys, uint32_t len = 1) {
+    if (len == 0)
+        return false;
+    if (phys < kPlex720pDpbPhysBase)
+        return false;
+    return phys + len <= kPlex720pDpbEndPhys;
+}
+
 inline bool pl330PhysInProgScratch(uint32_t phys, uint32_t len = 1) {
     if (len == 0)
         return false;

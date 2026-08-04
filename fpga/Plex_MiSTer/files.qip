@@ -60,6 +60,12 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_deblock_mb_serial.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_p_slice_modes.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_hybrid_mb_own.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_dpb.sv
+# DDR-resident multi-slot DPB + on-chip ref window cache (w-nostub DPB lane).
+# Not instantiated from sys_top yet — hierarchy-ready; arbiter m3 is w-mem.
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_dpb_slot_mgr.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_dpb_ddr_byte_bridge.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_dpb_ref_win_cache.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_dpb_ddr_top.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_mc_luma_qpel.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_mc_chroma_epel.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_mc_block.sv
