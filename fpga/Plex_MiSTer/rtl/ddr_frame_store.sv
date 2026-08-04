@@ -841,6 +841,48 @@ module ddr_frame_store #(
 		end
 	end
 
+	// clk_ddr schedule pipeline: break combinational path
+	// desired_y_r → found_line/need_*_c → S_IDLE DDRAM_*/mbox enables.
+	// STA (cutb-buildid-keep): Fmax 87.4 < 90 on general[2]; TNS entirely
+	// launched from desired_y_r through this cone. Sample schedule outputs
+	// and drive S_IDLE only from *_r (+1 clk_ddr decision latency).
+	// Do not multicycle the same-clock cone; keep combo for TB probes.
+	reg need_y_cur_r, need_c_cur_r, need_y_prep_r, need_c_prep_r, pending_ready_r;
+	reg [Y_W-1:0] target_y_cur_r, target_y_prep_r;
+	reg [Y_W-2:0] target_c_cur_r, target_c_prep_r;
+	reg [SLOT_W-1:0] target_y_idx_cur_r, target_y_idx_prep_r, target_c_idx_cur_r, target_c_idx_prep_r;
+	always @(posedge clk_ddr) begin
+		if (reset_ddr) begin
+			need_y_cur_r <= 1'b0;
+			need_c_cur_r <= 1'b0;
+			need_y_prep_r <= 1'b0;
+			need_c_prep_r <= 1'b0;
+			pending_ready_r <= 1'b1;
+			target_y_cur_r <= '0;
+			target_y_prep_r <= '0;
+			target_c_cur_r <= '0;
+			target_c_prep_r <= '0;
+			target_y_idx_cur_r <= '0;
+			target_y_idx_prep_r <= '0;
+			target_c_idx_cur_r <= '0;
+			target_c_idx_prep_r <= '0;
+		end else begin
+			need_y_cur_r <= need_y_cur_c;
+			need_c_cur_r <= need_c_cur_c;
+			need_y_prep_r <= need_y_prep_c;
+			need_c_prep_r <= need_c_prep_c;
+			pending_ready_r <= pending_ready_c;
+			target_y_cur_r <= target_y_cur_c;
+			target_y_prep_r <= target_y_prep_c;
+			target_c_cur_r <= target_c_cur_c;
+			target_c_prep_r <= target_c_prep_c;
+			target_y_idx_cur_r <= target_y_idx_cur_c;
+			target_y_idx_prep_r <= target_y_idx_prep_c;
+			target_c_idx_cur_r <= target_c_idx_cur_c;
+			target_c_idx_prep_r <= target_c_idx_prep_c;
+		end
+	end
+
 
 	reg fill_bank, fill_is_chroma, fill_plane_v;
 	reg [Y_W-1:0] fill_y;
@@ -1134,19 +1176,21 @@ module ddr_frame_store #(
 					// complete, keep pending_ready high even while IDLE schedules
 					// a *current* refill. Legacy ternary
 					//   sched_valid ? (sched_for_pending && sched_pending_ready)
-					//               : pending_ready_c
+					//               : pending_ready_r
 					// clears ready whenever sched_valid && !sched_for_pending —
 					// continuous need_y_cur under src_y_line (beam-tracking want_y
 					// through VBlank) then misses the 1-cycle vsync swap window and
 					// freezes bank0 (silicon 9eb1431a). Do not revive FORCE_TOP.
+					// pending_ready_r / need_*_r / target_*_r: registered schedule
+					// (not combo *_c) so desired_y_r → mbox/DDRAM enables cut.
 					if (PENDING_READY_STICKY_PREP) begin
 						pending_ready_ddr <= swap_pending_d2 &&
-						                     (pending_ready_c ||
+						                     (pending_ready_r ||
 						                      (sched_valid && sched_for_pending && sched_pending_ready));
 					end else begin
 						pending_ready_ddr <= swap_pending_d2 &&
 						                     (sched_valid ? (sched_for_pending && sched_pending_ready)
-						                                  : pending_ready_c);
+						                                  : pending_ready_r);
 					end
 					poll_div <= poll_div + 16'd1;
 					if (frame_mbox_req && (!frame_mbox_valid || poll_div[7:0] == 8'd224)
@@ -1208,42 +1252,42 @@ module ddr_frame_store #(
 							fill_is_chroma <= 1'b1;
 						end
 						state_ddr <= S_LINE_ISSUE;
-					end else if ((swap_pending_d2 && need_y_prep_c) || (has_frame_d2 && need_y_cur_c)) begin
+					end else if ((swap_pending_d2 && need_y_prep_r) || (has_frame_d2 && need_y_cur_r)) begin
 						if (PIPELINE_REFILL_SCHEDULER) begin
 							sched_valid <= 1'b1;
 							sched_is_y <= 1'b1;
-							sched_for_pending <= swap_pending_d2 && need_y_prep_c;
-							sched_bank <= (swap_pending_d2 && need_y_prep_c) ? pending_bank_d2 : disp_bank_d2;
-							sched_y <= (swap_pending_d2 && need_y_prep_c) ? target_y_prep_c : target_y_cur_c;
-							sched_idx <= (swap_pending_d2 && need_y_prep_c) ? target_y_idx_prep_c : target_y_idx_cur_c;
-							sched_pending_ready <= pending_ready_c;
+							sched_for_pending <= swap_pending_d2 && need_y_prep_r;
+							sched_bank <= (swap_pending_d2 && need_y_prep_r) ? pending_bank_d2 : disp_bank_d2;
+							sched_y <= (swap_pending_d2 && need_y_prep_r) ? target_y_prep_r : target_y_cur_r;
+							sched_idx <= (swap_pending_d2 && need_y_prep_r) ? target_y_idx_prep_r : target_y_idx_cur_r;
+							sched_pending_ready <= pending_ready_r;
 						end else begin
-							fill_bank <= (swap_pending_d2 && need_y_prep_c) ? pending_bank_d2 : disp_bank_d2;
-							fill_y <= (swap_pending_d2 && need_y_prep_c) ? target_y_prep_c : target_y_cur_c;
-							fill_idx <= (swap_pending_d2 && need_y_prep_c) ? target_y_idx_prep_c : target_y_idx_cur_c;
-							y_valid[(swap_pending_d2 && need_y_prep_c) ? target_y_idx_prep_c : target_y_idx_cur_c] <= 1'b0;
-							y_bank[(swap_pending_d2 && need_y_prep_c) ? target_y_idx_prep_c : target_y_idx_cur_c] <= (swap_pending_d2 && need_y_prep_c) ? pending_bank_d2 : disp_bank_d2;
+							fill_bank <= (swap_pending_d2 && need_y_prep_r) ? pending_bank_d2 : disp_bank_d2;
+							fill_y <= (swap_pending_d2 && need_y_prep_r) ? target_y_prep_r : target_y_cur_r;
+							fill_idx <= (swap_pending_d2 && need_y_prep_r) ? target_y_idx_prep_r : target_y_idx_cur_r;
+							y_valid[(swap_pending_d2 && need_y_prep_r) ? target_y_idx_prep_r : target_y_idx_cur_r] <= 1'b0;
+							y_bank[(swap_pending_d2 && need_y_prep_r) ? target_y_idx_prep_r : target_y_idx_cur_r] <= (swap_pending_d2 && need_y_prep_r) ? pending_bank_d2 : disp_bank_d2;
 							fill_is_chroma <= 1'b0;
 							fill_plane_v <= 1'b0;
 							fill_qword <= '0;
 							qwords_remaining <= Y_LINE_QWORDS[Y_QW_AW:0];
 							state_ddr <= S_LINE_ISSUE;
 						end
-					end else if ((swap_pending_d2 && need_c_prep_c) || (has_frame_d2 && need_c_cur_c)) begin
+					end else if ((swap_pending_d2 && need_c_prep_r) || (has_frame_d2 && need_c_cur_r)) begin
 						if (PIPELINE_REFILL_SCHEDULER) begin
 							sched_valid <= 1'b1;
 							sched_is_y <= 1'b0;
-							sched_for_pending <= swap_pending_d2 && need_c_prep_c;
-							sched_bank <= (swap_pending_d2 && need_c_prep_c) ? pending_bank_d2 : disp_bank_d2;
-							sched_cy <= (swap_pending_d2 && need_c_prep_c) ? target_c_prep_c : target_c_cur_c;
-							sched_idx <= (swap_pending_d2 && need_c_prep_c) ? target_c_idx_prep_c : target_c_idx_cur_c;
-							sched_pending_ready <= pending_ready_c;
+							sched_for_pending <= swap_pending_d2 && need_c_prep_r;
+							sched_bank <= (swap_pending_d2 && need_c_prep_r) ? pending_bank_d2 : disp_bank_d2;
+							sched_cy <= (swap_pending_d2 && need_c_prep_r) ? target_c_prep_r : target_c_cur_r;
+							sched_idx <= (swap_pending_d2 && need_c_prep_r) ? target_c_idx_prep_r : target_c_idx_cur_r;
+							sched_pending_ready <= pending_ready_r;
 						end else begin
-							fill_bank <= (swap_pending_d2 && need_c_prep_c) ? pending_bank_d2 : disp_bank_d2;
-							fill_cy <= (swap_pending_d2 && need_c_prep_c) ? target_c_prep_c : target_c_cur_c;
-							fill_idx <= (swap_pending_d2 && need_c_prep_c) ? target_c_idx_prep_c : target_c_idx_cur_c;
-							c_valid[(swap_pending_d2 && need_c_prep_c) ? target_c_idx_prep_c : target_c_idx_cur_c] <= 1'b0;
-							c_bank[(swap_pending_d2 && need_c_prep_c) ? target_c_idx_prep_c : target_c_idx_cur_c] <= (swap_pending_d2 && need_c_prep_c) ? pending_bank_d2 : disp_bank_d2;
+							fill_bank <= (swap_pending_d2 && need_c_prep_r) ? pending_bank_d2 : disp_bank_d2;
+							fill_cy <= (swap_pending_d2 && need_c_prep_r) ? target_c_prep_r : target_c_cur_r;
+							fill_idx <= (swap_pending_d2 && need_c_prep_r) ? target_c_idx_prep_r : target_c_idx_cur_r;
+							c_valid[(swap_pending_d2 && need_c_prep_r) ? target_c_idx_prep_r : target_c_idx_cur_r] <= 1'b0;
+							c_bank[(swap_pending_d2 && need_c_prep_r) ? target_c_idx_prep_r : target_c_idx_cur_r] <= (swap_pending_d2 && need_c_prep_r) ? pending_bank_d2 : disp_bank_d2;
 							fill_is_chroma <= 1'b1;
 							fill_plane_v <= 1'b0;
 							fill_qword <= '0;
