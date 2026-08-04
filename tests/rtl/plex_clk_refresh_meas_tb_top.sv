@@ -1,16 +1,20 @@
-// TB top for plex_clk_status refresh measure (not a tool pragma).
-// Build defines: TB_MEAS_WIN, PRESENT_CLK_PIX_PLL (optional).
+// TB top for plex_clk_status Gray refresh measure.
+// Build: -DTB_MEAS_WIN=N -DPRESENT_CLK_PIX_PLL=1
 `timescale 1ns/1ps
 module plex_clk_refresh_meas_tb_top (
 	input  wire clk,
 	input  wire reset,
 	input  wire clk_pix,
 	input  wire vsync,
-	output wire [7:0] meas_fps_x10,
-	output wire [7:0] meas_flags,
-	output wire       meas_done,
+	input  wire ce_pix,
+	input  wire de,
+	output wire [7:0]  meas_fps_x10,
+	output wire [7:0]  meas_flags,
+	output wire        meas_done,
 	output wire [15:0] meas_frames,
-	output wire [31:0] meas_pix
+	output wire [31:0] meas_pix,
+	output wire [31:0] meas_ce,
+	output wire [31:0] meas_de
 );
 `ifndef TB_MEAS_WIN
 	`define TB_MEAS_WIN 20000
@@ -20,6 +24,8 @@ module plex_clk_refresh_meas_tb_top (
 		.reset(reset),
 		.clk_pix(clk_pix),
 		.vsync(vsync),
+		.ce_pix(ce_pix),
+		.de(de),
 		.clk_sys_hz(),
 		.clk_pix_hz(),
 		.present_ppc(),
@@ -30,6 +36,8 @@ module plex_clk_refresh_meas_tb_top (
 		.peak_mpix_s_x10(),
 		.kit_id_valid(),
 		.meas_pix_count(meas_pix),
+		.meas_ce_count(meas_ce),
+		.meas_de_count(meas_de),
 		.meas_frame_count(meas_frames),
 		.meas_fps_x10(meas_fps_x10),
 		.meas_flags(meas_flags),

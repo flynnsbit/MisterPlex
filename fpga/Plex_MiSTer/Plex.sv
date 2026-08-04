@@ -246,11 +246,16 @@ wire [31:0] clkstat_meas_pix;
 wire [15:0] clkstat_meas_frm;
 wire [7:0]  clkstat_meas_fps_x10, clkstat_meas_flags;
 wire        clkstat_meas_done;
+wire clkstat_ce_pix;
+wire clkstat_de;
+wire [31:0] clkstat_meas_ce, clkstat_meas_de;
 plex_clk_status u_plex_clk_status (
 	.clk(clk_sys),
 	.reset(reset),
 	.clk_pix(clkstat_clk_pix),
 	.vsync(clkstat_vsync),
+	.ce_pix(clkstat_ce_pix),
+	.de(clkstat_de),
 	.clk_sys_hz(clkstat_sys_hz),
 	.clk_pix_hz(clkstat_pix_hz),
 	.present_ppc(clkstat_ppc),
@@ -261,6 +266,8 @@ plex_clk_status u_plex_clk_status (
 	.peak_mpix_s_x10(clkstat_peak_x10),
 	.kit_id_valid(clkstat_valid),
 	.meas_pix_count(clkstat_meas_pix),
+	.meas_ce_count(clkstat_meas_ce),
+	.meas_de_count(clkstat_meas_de),
 	.meas_frame_count(clkstat_meas_frm),
 	.meas_fps_x10(clkstat_meas_fps_x10),
 	.meas_flags(clkstat_meas_flags),
@@ -268,8 +275,8 @@ plex_clk_status u_plex_clk_status (
 );
 wire _unused_clkstat = |{clkstat_sys_hz, clkstat_pix_hz, clkstat_ppc, clkstat_cea_pf,
 	clkstat_l4_pf, clkstat_cea_fast, clkstat_l4_fast, clkstat_peak_x10, clkstat_valid,
-	clkstat_meas_pix, clkstat_meas_frm, clkstat_meas_fps_x10, clkstat_meas_flags,
-	clkstat_meas_done};
+	clkstat_meas_pix, clkstat_meas_ce, clkstat_meas_de, clkstat_meas_frm,
+	clkstat_meas_fps_x10, clkstat_meas_flags, clkstat_meas_done};
 
 // Fabric BW contract stamp (w-clock): 33.1776 MB/s/dir SoT.
 wire [31:0] bwstat_dir_bps;
@@ -1081,6 +1088,8 @@ assign clkstat_clk_pix = clk_pix_pll;
 assign clkstat_clk_pix = clk_sys;
 `endif
 assign clkstat_vsync = VSync;
+assign clkstat_ce_pix = ce_pix;
+assign clkstat_de = ~(HBlank | VBlank);
 assign VGA_G  = g;
 assign VGA_B  = b;
 
@@ -1240,7 +1249,7 @@ always @(posedge clk_sys) begin
 		status_telem_r[111:104] <= st_res_word_sticky[15:8];
 `ifdef PRODUCT_NO_STUB
 		// NO_STUB: publish observed refresh (not dead recon path).
-		// raw[14]=fps_x10 (240=24.0 Hz); raw[15]=flags{valid,pix_ok,fps_ok,pll_on,trap}
+		// raw[14]=fps_x10 (240=24.0 Hz); raw[15]=flags{valid,pix_ok,fps_ok,pll_on,trap,ce_ok,de_ok}
 		status_telem_r[119:112] <= clkstat_meas_fps_x10;
 		status_telem_r[127:120] <= clkstat_meas_flags;
 `else

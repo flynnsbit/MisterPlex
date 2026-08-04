@@ -54,14 +54,25 @@ void printRaw(const uint8_t raw[16]) {
         patternName(pat), (lo & 0x100) ? "On" : "Off", (lo >> 9) & 1,
         (lo >> 10) & 1, (lo >> 11) & 1, lo & 1, ar);
     // PRODUCT_NO_STUB refresh measure: raw[14]=fps_x10, raw[15]=flags
+    // flags: {0,de_ok,ce_ok,trap16,pll_on,fps_ok,pix_ok,valid}
     const unsigned fps_x10 = raw[14];
     const unsigned fl = raw[15];
+    const int valid  = fl & 1;
+    const int pix_ok = (fl >> 1) & 1;
+    const int fps_ok = (fl >> 2) & 1;
+    const int pll_on = (fl >> 3) & 1;
+    const int trap16 = (fl >> 4) & 1;
+    const int ce_ok  = (fl >> 5) & 1;
+    const int de_ok  = (fl >> 6) & 1;
     std::printf(
         "clk_pix_meas raw[14]=fps_x10=%u (%.1f Hz) raw[15]=flags=0x%02x "
-        "valid=%d pix_ok=%d fps_ok=%d pll_on=%d trap16=%d\n",
-        fps_x10, fps_x10 / 10.0, fl, fl & 1, (fl >> 1) & 1, (fl >> 2) & 1,
-        (fl >> 3) & 1, (fl >> 4) & 1);
-    if (fps_x10 >= 230 && fps_x10 <= 250 && (fl & 1) && ((fl >> 2) & 1))
+        "valid=%d pix_ok=%d fps_ok=%d pll_on=%d trap16=%d ce_ok=%d de_ok=%d\n",
+        fps_x10, fps_x10 / 10.0, fl, valid, pix_ok, fps_ok, pll_on, trap16,
+        ce_ok, de_ok);
+    // PASS requires observed fps band + valid + fps_ok + pix_ok (Gray delta).
+    // ce_ok/de_ok are reported but not required for the stills-trap verdict
+    // (VSync+pix rate already separates 16.16 from 24; DE/CE are secondary).
+    if (fps_x10 >= 230 && fps_x10 <= 250 && valid && fps_ok && pix_ok && !trap16)
         std::printf("clk_pix_meas_verdict=PASS_24HZ_BAND\n");
     else if (fps_x10 >= 150 && fps_x10 <= 170)
         std::printf("clk_pix_meas_verdict=FAIL_16HZ_TRAP\n");

@@ -2,7 +2,7 @@
 # Parent-only: falsify 16.16 Hz trap vs 24 Hz refresh.
 # Agents never run this against hardware.
 #
-# PASS: fps_x10 in [230,250] AND flags.valid AND flags.fps_ok
+# PASS: fps_x10 in [230,250] AND valid AND fps_ok AND pix_ok (Gray) AND !trap16
 # FAIL trap: fps_x10 in [150,170]  (20e6/(1650*750) ≈ 16.16 → x10≈162)
 #
 # Exact commands:
@@ -19,7 +19,7 @@ WAIT_S="${WAIT_S:-3}"
 SET_STATUS_REMOTE="${SET_STATUS_REMOTE:-/media/fat/linux/set_status}"
 
 echo "=== check_clk_pix_refresh (parent device) ==="
-echo "LAYOUT PRODUCT_NO_STUB: raw[14]=fps_x10  raw[15]=flags{valid,pix_ok,fps_ok,pll_on,trap16}"
+echo "LAYOUT PRODUCT_NO_STUB: raw[14]=fps_x10  raw[15]=flags{valid,pix_ok,fps_ok,pll_on,trap16,ce_ok,de_ok}"
 echo "PASS [230,250]  FAIL_TRAP [150,170]  arith: 29.7e6/1237500=24  20e6/1237500≈16.16"
 
 run_raw() {
