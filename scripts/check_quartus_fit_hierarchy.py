@@ -160,8 +160,9 @@ def format_table(rows: list[tuple[dict[str, object], HierRow | None]]) -> str:
     ]
     for spec, row in rows:
         if not row:
+            st = "ABSENT_OK" if spec.get("must_be_absent") else "MISSING"
             lines.append(
-                f"| `{spec.get('name')}` | `{spec.get('entity')}` | `{spec.get('hierarchy_contains')}` | — | — | — | — | — | MISSING |"
+                f"| `{spec.get('name')}` | `{spec.get('entity')}` | `{spec.get('hierarchy_contains')}` | — | — | — | — | — | {st} |"
             )
             continue
         lines.append(
@@ -197,6 +198,22 @@ def main(argv: list[str]) -> int:
     errors: list[str] = []
     for spec, row in found:
         name = str(spec.get("name"))
+        must_absent = bool(spec.get("must_be_absent"))
+        if must_absent:
+            if row is None:
+                print(f"FIT_HIERARCHY_ABSENT_OK {name}")
+                continue
+            # Present with any non-trivial logic = reclaim failed
+            resources = row.comb_aluts + row.registers + row.block_memory_bits + row.m10ks
+            if resources > float(spec.get("max_total_resources", 0)):
+                errors.append(
+                    f"{name}: must_be_absent but fitted resources="
+                    f"alut={row.comb_aluts:g} reg={row.registers:g} "
+                    f"m10k={row.m10ks:g} (want 0 — PRODUCT_NO_STUB reclaim)"
+                )
+            else:
+                print(f"FIT_HIERARCHY_ABSENT_OK {name} (zero-resource residual)")
+            continue
         if not row:
             errors.append(f"{name}: missing from Quartus fitted hierarchy")
             continue
@@ -211,6 +228,9 @@ def main(argv: list[str]) -> int:
             key = "min_" + field
             if key in spec and value < float(spec[key]):
                 errors.append(f"{name}: {field} {value:g} < required {spec[key]}")
+            key_max = "max_" + field
+            if key_max in spec and value > float(spec[key_max]):
+                errors.append(f"{name}: {field} {value:g} > allowed {spec[key_max]}")
 
     warning_hits = scan_log(args.log, [str(spec.get("name")) for spec in specs])
     if warning_hits:
