@@ -14,3 +14,10 @@ or that a fitted RBF still contains the stamp until FIT_RPT is scored.
 Run: `make prefit-reachability`, `make rbf-what-built MD5=...`, unit twins
 `test_rbf_provenance.sh` / `test_plex_rbf_build_id_rtl_sim.sh`. Soft-skip (77) is
 never a pass.
+
+## PRODUCT_NO_STUB (w-nostub)
+
+When `Plex.qsf` has active `PRODUCT_NO_STUB=1`, `decode_stub` moves from
+required-REACHABLE to `teeth_non_reachable` and the gate resolves
+`` `ifdef PRODUCT_NO_STUB `` in the instantiation graph. A QSF that claims the
+macro while still instantiating the stub is RED. Soft-skip (77) is not a pass.

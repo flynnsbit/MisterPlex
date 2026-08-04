@@ -78,11 +78,104 @@ def parse_qip_sv_files(qip: Path, plex_dir: Path) -> list[Path]:
     return out
 
 
+def parse_active_qsf_macros(qsf: Path) -> dict[str, str]:
+    """Active (non-commented) VERILOG_MACRO name→value from Plex.qsf."""
+    out: dict[str, str] = {}
+    if not qsf.is_file():
+        return out
+    for line in qsf.read_text(errors="replace").splitlines():
+        s = line.strip()
+        if not s or s.startswith("//") or s.startswith("#"):
+            continue
+        m = re.search(
+            r"\bset_global_assignment\b.*?-name\s+VERILOG_MACRO\s+(.+)$",
+            s,
+            re.I,
+        )
+        if not m:
+            continue
+        raw = m.group(1).strip().strip('"').strip("'")
+        if "=" in raw:
+            name, _, val = raw.partition("=")
+            out[name.strip()] = val.strip()
+        else:
+            out[raw.strip()] = "1"
+    return out
+
+
+
+
+def preprocess_ifdefs(text: str, macros: dict[str, str]) -> str:
+    """Resolve `ifdef/`ifndef/`else/`endif only for controlled product macros.
+
+    Controlled set (must match QSF product intent): PRODUCT_NO_STUB.
+    All other `ifdef NAME` blocks are left intact so optional research paths
+    remain visible to the reachability graph (unknown-macro drop would false-PRUNE).
+    """
+    controlled = {"PRODUCT_NO_STUB"}
+    lines = text.splitlines(keepends=True)
+    out: list[str] = []
+    # stack entries: ("ctrl", keeping) or ("passthrough",)
+    stack: list[tuple] = []
+
+    def active() -> bool:
+        for ent in stack:
+            if ent[0] == "ctrl" and not ent[1]:
+                return False
+        return True
+
+    for line in lines:
+        raw = line.lstrip()
+        m_if = re.match(r"`ifdef\s+(\w+)", raw)
+        m_ifndef = re.match(r"`ifndef\s+(\w+)", raw)
+        m_else = re.match(r"`else\b", raw)
+        m_endif = re.match(r"`endif\b", raw)
+        if m_if:
+            name = m_if.group(1)
+            if name in controlled:
+                stack.append(("ctrl", name in macros))
+                continue  # swallow directive
+            stack.append(("passthrough",))
+            if active():
+                out.append(line)
+            continue
+        if m_ifndef:
+            name = m_ifndef.group(1)
+            if name in controlled:
+                stack.append(("ctrl", name not in macros))
+                continue
+            stack.append(("passthrough",))
+            if active():
+                out.append(line)
+            continue
+        if m_else:
+            if stack and stack[-1][0] == "ctrl":
+                keeping = stack.pop()[1]
+                stack.append(("ctrl", not keeping))
+                continue
+            if active():
+                out.append(line)
+            continue
+        if m_endif:
+            if stack:
+                ent = stack.pop()
+                if ent[0] == "ctrl":
+                    continue  # swallow
+            if active():
+                out.append(line)
+            continue
+        if active():
+            out.append(line)
+    return "".join(out)
+
+
 def extract_modules_and_insts(
-    path: Path, text: str
+    path: Path, text: str, macros: dict[str, str] | None = None
 ) -> tuple[list[str], list[tuple[str, str]]]:
     """Return (defined_module_names, list of (parent_module, child_type))."""
     body = _strip_comments(text)
+    if macros is not None:
+        body = preprocess_ifdefs(body, macros)
     defined = _MODULE_DEF.findall(body)
     if not defined:
         return [], []
@@ -158,6 +251,7 @@ def extract_modules_and_insts(
 
 def build_graph(
     files: list[Path],
+    macros: dict[str, str] | None = None,
 ) -> tuple[dict[str, Path], dict[str, set[str]], list[str]]:
     """module -> path; parent -> children types; warnings."""
     mod_file: dict[str, Path] = {}
@@ -170,7 +264,7 @@ def build_graph(
         if path.suffix.lower() not in {".sv", ".v", ".vh"}:
             continue
         text = _read(path)
-        defined, edges = extract_modules_and_insts(path, text)
+        defined, edges = extract_modules_and_insts(path, text, macros)
         for d in defined:
             if d in mod_file and mod_file[d] != path:
                 warnings.append(f"DUP_MODULE {d} {mod_file[d]} vs {path}")
@@ -236,6 +330,8 @@ def load_config(path: Path) -> dict:
         raise ValueError("config needs critical_modules and expect_reachable")
     # teeth_non_reachable optional: historical prune class (must stay non-reachable)
     data.setdefault("teeth_non_reachable", [])
+    data.setdefault("critical_if_macro_absent", {})
+    data.setdefault("teeth_if_macro_present", {})
     return data
 
 
@@ -268,11 +364,21 @@ def run_gate(
         return 2, msgs
 
     qip_files = parse_qip_sv_files(qip, plex_dir)
+    qsf = plex_dir / "Plex.qsf"
+    macros = parse_active_qsf_macros(qsf)
+    macro_keys = sorted(macros.keys())
+    msgs.append(
+        "PREFIT_REACHABILITY_QSF_MACROS "
+        + (" ".join(f"{k}={macros[k]}" for k in macro_keys) if macro_keys else "(none)")
+    )
+    product_no_stub = macros.get("PRODUCT_NO_STUB") in {"1", "true", "TRUE", "yes", "YES"}
+    msgs.append(f"PREFIT_REACHABILITY_PRODUCT_NO_STUB={int(product_no_stub)}")
+
     # Design file set: QIP + always sys_top (via sys.qip, not files.qip)
     files = list(dict.fromkeys(qip_files + [sys_top]))
     msgs.append(f"PREFIT_REACHABILITY_FILESET n_qip_sv={len(qip_files)} +sys_top=1")
 
-    mod_file, children, warnings = build_graph(files)
+    mod_file, children, warnings = build_graph(files, macros)
     for w in warnings[:20]:
         msgs.append(f"PREFIT_REACHABILITY_WARN {w}")
 
@@ -334,6 +440,24 @@ def run_gate(
     failures: list[str] = []
     critical = list(config.get("critical_modules") or [])
     expect_ok = list(config.get("expect_reachable") or [])
+    teeth = list(config.get("teeth_non_reachable") or [])
+
+    # Expand critical/teeth from QSF-conditioned lists (w-nostub PRODUCT_NO_STUB).
+    for macro, mods in (config.get("critical_if_macro_absent") or {}).items():
+        if macro not in macros:
+            for m in mods:
+                if m not in critical:
+                    critical.append(m)
+                if m not in expect_ok:
+                    expect_ok.append(m)
+    for macro, mods in (config.get("teeth_if_macro_present") or {}).items():
+        if macro in macros and macros.get(macro) in {"1", "true", "TRUE", "yes", "YES"}:
+            for m in mods:
+                if m not in teeth:
+                    teeth.append(m)
+                # must not also be required REACHABLE
+                critical = [c for c in critical if c != m]
+                expect_ok = [c for c in expect_ok if c != m]
 
     msgs.append("PREFIT_REACHABILITY_CRITICAL_BEGIN")
     for mod in critical:
@@ -353,7 +477,6 @@ def run_gate(
             failures.append(f"expect_ok_{mod}:{st}")
     msgs.append("PREFIT_REACHABILITY_EXPECT_OK_END")
 
-    teeth = list(config.get("teeth_non_reachable") or [])
     msgs.append("PREFIT_REACHABILITY_TEETH_BEGIN")
     teeth_fail: list[str] = []
     for mod in teeth:
