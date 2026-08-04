@@ -143,6 +143,41 @@ int main() {
                                         lo(frameWord(6, 0x23, 7)),
                                         hi(frameWord(6, 0x23, 7)), fs));
 
+    // --- Independent RTL cross-check (PLXF upper word) ---
+    // RTL packing (ddram_frame_rd.sv):
+    //   DDRAM_DIN <= {frame_underrun_count,   // [63:48]
+    //                 frame_sdram_state,      // [47:40] = host debug_state
+    //                 frame_mbox_seq + 8'd1,  // [39:32] = host seq
+    //                 MAGIC_F};               // [31:0]  0x504C5846
+    //
+    // Synthetic: underrun=0x0011, debug=0xE1, seq=4 → upper=0x0011E104
+    constexpr uint64_t plxf_rtl_a = 0x0011E10400000000ull | 0x504C5846ull;
+    CHECK(decodeFrameStoreStatusWord(plxf_rtl_a, fs));
+    CHECK(fs.underrun_count == 0x0011);
+    CHECK(fs.debug_state == 0xE1);
+    CHECK(fs.seq == 4);
+    CHECK(fs.nonYuvDoorbellRejected());
+    CHECK(hi(plxf_rtl_a) == 0x0011E104u);
+    CHECK(lo(plxf_rtl_a) == kUnderrunMailboxMagic);
+
+    // Live lab sample (parent-settled): upper=0xFFFF12E1
+    //   underrun=0xFFFF, debug_state=0x12, seq=0xE1
+    constexpr uint64_t plxf_live = 0xFFFF12E100000000ull | 0x504C5846ull;
+    CHECK(decodeFrameStoreStatusWord(plxf_live, fs));
+    CHECK(fs.underrun_count == 0xFFFFu);
+    CHECK(fs.debug_state == 0x12);
+    CHECK(fs.seq == 0xE1);
+    CHECK(hi(plxf_live) == 0xFFFF12E1u);
+    CHECK(!fs.nonYuvDoorbellRejected()); // 0x12 ≠ format-error 0xE1
+    // Stable double-read of the same live word
+    CHECK(decodeStableFrameStoreStatus(lo(plxf_live), hi(plxf_live), lo(plxf_live),
+                                       hi(plxf_live), fs));
+    CHECK(fs.underrun_count == 0xFFFFu && fs.debug_state == 0x12 && fs.seq == 0xE1);
+    // Degeneracy: swapped lane interpretation must not match settled fields.
+    // If underrun were low-16 of upper: 0x12E1; if debug were MSB: 0xFF.
+    CHECK(fs.underrun_count != 0x12E1u);
+    CHECK(fs.debug_state != 0xFFu);
+
     const uint64_t good = word(10, 1, PlaybackCommand::PlayPause);
     CHECK(decodeStableInputMailbox(lo(good), hi(good), lo(good), hi(good), s));
     CHECK(!decodeStableInputMailbox(lo(good), hi(good), lo(good) ^ 1u, hi(good), s));
