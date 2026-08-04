@@ -1,0 +1,69 @@
+{
+  "title": "P720 shared bandwidth contract (w-mem / w-clock / w-scaler)",
+  "product_config": {
+    "PRESENT_MULTI_PIXEL": true,
+    "PRESENT_PX_PER_CLK": 2,
+    "clk_sys_hz": 20000000,
+    "clk_pix_hz": 29700000,
+    "clk_sys_overclock": false,
+    "reason_no_clksys24": "STA Fmax 23.17 MHz; clk_sys@24 fails margin (w-clock parent)"
+  },
+  "geometry": {
+    "coded_w": 1280,
+    "coded_h": 720,
+    "fps": 24,
+    "i420_bytes_per_frame": 1382400,
+    "ddr_beat_bytes": 8,
+    "beats_per_frame_i420": 172800
+  },
+  "headline": {
+    "name": "present_de_peak_B_per_clk_sys",
+    "value": 3.0,
+    "unit": "bytes/clk_sys",
+    "formula": "PPC * bytes_per_pix_yuv420_avg = 2 * 1.5",
+    "domain": "clk_sys 20 MHz during DE (MULTI+PPC=2)"
+  },
+  "terms": {
+    "write_MBps": {
+      "value": 33.1776,
+      "formula": "1280*720*1.5*24 / 1e6",
+      "B_per_clk_sys_avg": 1.65888,
+      "formula_B_per_clk": "write_MBps*1e6 / clk_sys_hz"
+    },
+    "present_active_Mpix_s": {
+      "value": 22.1184,
+      "formula": "1280*720*24 / 1e6"
+    },
+    "present_cea_Mpix_s": {
+      "value": 29.7,
+      "formula": "1650*750*24 / 1e6"
+    },
+    "present_capacity_Mpix_s_ppc2_clksys20": {
+      "value": 40.0,
+      "formula": "clk_sys_hz/1e6 * PPC = 20*2"
+    },
+    "present_capacity_Mpix_s_clkpix297_ppc1": {
+      "value": 29.7,
+      "formula": "clk_pix_hz/1e6 * 1"
+    },
+    "w_mem_ideal_rw_beats_per_frame_pair": {
+      "value": 345600,
+      "formula": "2 * beats_per_frame_i420 (one write + one read of full I420)",
+      "sim_note": "w-mem G2: 345600 beats in 345600 cyc under 3750000 budget (90e6/24)"
+    },
+    "ddr_native_peak_B_per_beat_clk": {
+      "value": 8,
+      "formula": "64-bit DDRAM beat",
+      "note": "Peak capability if 1 beat/clk granted; not average load"
+    }
+  },
+  "agreed_by": ["w-scaler"],
+  "pending_ack": ["w-mem", "w-clock"],
+  "blackout_prefetch": {
+    "t_line_us_ppc2_20M_1280": 32.0,
+    "cover_lines_8_us": 256.0,
+    "cover_lines_16_us": 512.0,
+    "model_blackout_us": 500.0,
+    "multi_line_floor": 16
+  }
+}
