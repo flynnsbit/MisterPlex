@@ -4,6 +4,7 @@
 #include "libmisterplex/idle_screen.hpp"
 #include "libmisterplex/osd_menu.hpp"
 #include "libmisterplex/playback_vf.hpp"
+#include "libmisterplex/spi_ack_wait.hpp"
 #include "libmisterplex/h264_nal_dispatch.hpp"
 #include "libmisterplex/h264_recon.hpp"
 #include <algorithm>
@@ -13,6 +14,7 @@
 #include <cstring>
 #include <chrono>
 #include <exception>
+#include <pthread.h>
 #include <signal.h>
 #include <time.h>
 #include <vector>
@@ -463,6 +465,9 @@ void MediaPlayer::startOsdPoll() {
     if (osdThr_.joinable())
         osdThr_.join();
     osdThr_ = std::thread([this] {
+#if defined(__linux__)
+        pthread_setname_np(pthread_self(), "mpx-osd");
+#endif
         bool mailboxLogged = false;
         while (osdRun_.load()) {
             uint16_t word = 0;
@@ -479,6 +484,8 @@ void MediaPlayer::startOsdPoll() {
                     // Pre-mailbox RBF: fall back to UIO_GET_STATUS over SPI.
                     // status[15:0] is the only slice the core echoes back;
                     // everything above it is telemetry that Main overwrites.
+                    // Quiet period for this path is multi-second when idle
+                    // (kOsdSpiIdleQuietMs) — SPI ACK spin used to burn a core.
                     uint8_t raw[16]{};
                     if (fpga_.getCoreStatus(raw)) {
                         word = static_cast<uint16_t>(raw[0] | (raw[1] << 8));
@@ -497,9 +504,8 @@ void MediaPlayer::startOsdPoll() {
                     applyOsd(word);
                 }
             }
-            // The mailbox is free to poll. The SPI fallback is not: it has to
-            // park Main for the critical section, so keep that path slow.
-            const int quietMs = viaMailbox ? 100 : (playing_.load() ? 250 : 1000);
+            // Mailbox is cheap; SPI parks Main — budgets in spi_ack_wait.hpp.
+            const int quietMs = osdPollQuietMs(viaMailbox, playing_.load());
             for (int slept = 0; slept < quietMs && osdRun_.load(); slept += 50)
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
@@ -529,6 +535,9 @@ void MediaPlayer::startInputPoll() {
     if (inputThr_.joinable())
         inputThr_.join();
     inputThr_ = std::thread([this] {
+#if defined(__linux__)
+        pthread_setname_np(pthread_self(), "mpx-input");
+#endif
         bool logged = false;
         while (inputRun_.load()) {
             PlaybackCommand command = PlaybackCommand::None;
@@ -544,7 +553,8 @@ void MediaPlayer::startInputPoll() {
                 }
                 dispatchPlaybackInput(command);
             }
-            for (int slept = 0; slept < 50 && inputRun_.load(); slept += 10)
+            const int quietMs = kInputMailboxQuietMs;
+            for (int slept = 0; slept < quietMs && inputRun_.load(); slept += 10)
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
     });
@@ -640,6 +650,9 @@ void MediaPlayer::startIdle() {
     if (idleThr_.joinable())
         idleThr_.join();
     idleThr_ = std::thread([this] {
+#if defined(__linux__)
+        pthread_setname_np(pthread_self(), "mpx-idle");
+#endif
         while (idleRun_.load()) {
             if (playing_.load() || idleMode() == IdleMode::LastFrame) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(200));

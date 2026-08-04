@@ -2,6 +2,7 @@
 
 #include "libmisterplex/status_telemetry.hpp"
 #include "libmisterplex/pixel_format.hpp"
+#include "libmisterplex/spi_ack_wait.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -976,37 +977,50 @@ void FpgaSpi::spiEn(uint32_t mask, int en) {
 
 uint16_t FpgaSpi::spiWord(uint16_t word) {
     // Caller must hold SpiExclusive (spiMutex). Touch err_ without re-locking.
+    //
+    // ACK wait MUST yield. The previous bare 1e6-spin loops burned ~0.9 s of one
+    // core per getCoreStatus when the FPGA never raised SSPI_STROBE (pre-mailbox
+    // idle OSD path at 1 Hz → system idle% stuck at 0; Sweep 113). Policy lives
+    // in libmisterplex/spi_ack_wait.hpp and is unit-tested.
     uint32_t gpo = (gpoRead() & ~(0xFFFFu | SSPI_STROBE)) | word;
     gpoWrite(gpo);
     gpoWrite(gpo | SSPI_STROBE);
-    int gpi;
-    int spins = 0;
-    do {
-        gpi = gpiRead();
-        if (gpi < 0) {
+
+    auto wait_phase = [&](bool want_strobe_set, const char* timeout_msg) -> int {
+        int last_gpi = 0;
+        bool not_user = false;
+        SpiAckWaitStats st;
+        const bool ok = spiAckWait(
+            [&]() {
+                last_gpi = gpiRead();
+                if (last_gpi < 0) {
+                    not_user = true;
+                    return true; // stop wait; caller maps to error
+                }
+                const bool set = (last_gpi & static_cast<int>(SSPI_STROBE)) != 0;
+                return want_strobe_set ? set : !set;
+            },
+            st);
+        if (not_user) {
             err_ = "FPGA not in user mode";
-            return 0;
+            return -1;
         }
-        if (++spins > 1000000) {
-            err_ = "SPI ACK timeout (set)";
-            return 0;
+        if (!ok) {
+            err_ = timeout_msg;
+            return -1;
         }
-    } while (!(gpi & static_cast<int>(SSPI_STROBE)));
+        return last_gpi;
+    };
+
+    const int gpi_set = wait_phase(true, "SPI ACK timeout (set)");
+    if (gpi_set < 0)
+        return 0;
 
     gpoWrite(gpo);
-    spins = 0;
-    do {
-        gpi = gpiRead();
-        if (gpi < 0) {
-            err_ = "FPGA not in user mode";
-            return 0;
-        }
-        if (++spins > 1000000) {
-            err_ = "SPI ACK timeout (clr)";
-            return 0;
-        }
-    } while (gpi & static_cast<int>(SSPI_STROBE));
-    return static_cast<uint16_t>(gpi);
+    const int gpi_clr = wait_phase(false, "SPI ACK timeout (clr)");
+    if (gpi_clr < 0)
+        return 0;
+    return static_cast<uint16_t>(gpi_clr);
 }
 
 void FpgaSpi::spiByte(uint8_t b) { spiWord(b); }
