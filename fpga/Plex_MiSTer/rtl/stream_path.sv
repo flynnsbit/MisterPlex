@@ -131,6 +131,9 @@ module stream_path #(
 	wire        ddr_wr_flush;
 	wire        bf_wr_full;
 
+	// Legacy byte path: ENABLE_BIT_FEED defaults to 0 (module param); bit feed
+	// unused. Drive bit_ready=1'b1 explicitly — Quartus 17.0 has no default
+	// port values; leaving the input open would float (X).
 	ddr_bitstream_reader ddr_stream (
 		.clk(clk), .reset(reset),
 		.enable(ddr_stream_enable),
@@ -139,6 +142,7 @@ module stream_path #(
 		.out_byte(ddr_wr_data),
 		.out_flush(ddr_wr_flush),
 		.out_full(bf_wr_full | si_wr_en),
+		.bit_ready(1'b1),
 		.bus_want(ddr_bus_want),
 		.DDRAM_BUSY(ddr_busy),
 		.DDRAM_BURSTCNT(ddr_burstcnt),
