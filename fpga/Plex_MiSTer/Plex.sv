@@ -261,15 +261,20 @@ wire [17:0] bwstat_beats;
 wire [18:0] bwstat_rw;
 wire [7:0]  bwstat_ppc;
 wire        bwstat_nack_de;
+wire [15:0] bwstat_tcopy;
+wire [15:0] bwstat_budget;
 plex_bw_status u_plex_bw_status (
 	.clk(clk_sys),
 	.bw_dir_b_per_s(bwstat_dir_bps),
 	.bw_beats_per_frame(bwstat_beats),
 	.bw_beats_rw_pair(bwstat_rw),
 	.bw_product_ppc(bwstat_ppc),
-	.bw_nack_de_peak_is_not_ddr(bwstat_nack_de)
+	.bw_nack_de_peak_is_not_ddr(bwstat_nack_de),
+	.bw_t_copy_arm_us(bwstat_tcopy),
+	.bw_frame_budget_us(bwstat_budget)
 );
-wire _unused_bwstat = |{bwstat_dir_bps, bwstat_beats, bwstat_rw, bwstat_ppc, bwstat_nack_de};
+wire _unused_bwstat = |{bwstat_dir_bps, bwstat_beats, bwstat_rw, bwstat_ppc, bwstat_nack_de,
+	bwstat_tcopy, bwstat_budget};
 
 // O[4] is the native content-resolution selector shared with misterplexd.
 // C1B owns the selector/ABI; the DDR-backed frame-store branch consumes these

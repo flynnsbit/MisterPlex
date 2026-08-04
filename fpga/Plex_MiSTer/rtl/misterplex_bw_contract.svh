@@ -36,4 +36,13 @@ localparam int MISTERPLEX_BW_NACK_DE_PEAK_E1   = 30; // 3.0 * 10
 localparam int MISTERPLEX_BW_PRODUCT_PPC       = 2;
 localparam int MISTERPLEX_BW_CLK_PIX_HZ        = 29_700_000; // 1650*750*24
 
+// Parent Sweep 118 — CPU TIME is not a payload RATE (rd-duck / w-path).
+// T_copy_arm = 14.978 ms/frame @ 88.0 MiB/s uncached /dev/mem for 1382400 B.
+// Frame budget 41.667 ms; decode ~32.705 ms → headroom 8.962 ms → SERIAL DEFICIT ~6.0 ms.
+// These are documentation integers for fabric-DMA motivation; not DDR beats.
+localparam int MISTERPLEX_BW_FRAME_BUDGET_US   = 41667;  // 1000/24 ms → µs
+localparam int MISTERPLEX_BW_T_COPY_ARM_US     = 14978;  // parent HW
+localparam int MISTERPLEX_BW_DECODE_MS_X1000   = 32705;  // 32.705 ms → µs
+// Fabric DMA goal: retire T_copy_arm (strategic path b). Overlap path a unproven.
+
 `endif // MISTERPLEX_BW_CONTRACT_SVH
