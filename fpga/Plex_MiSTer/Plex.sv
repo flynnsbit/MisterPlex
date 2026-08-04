@@ -891,9 +891,11 @@ assign LED_USER = has_stream ? (act_cnt[20] ^ nalu_count[0] ^ last_nal_type[0])
 // Folded into _unused keep-chain so Quartus cannot strip the constants.
 wire product_cfg_no_stub;
 wire product_cfg_ddr_fs;
+wire product_cfg_fabric_dma;
 plex_product_cfg u_product_cfg (
 	.product_no_stub(product_cfg_no_stub),
-	.ddr_frame_store_en(product_cfg_ddr_fs)
+	.ddr_frame_store_en(product_cfg_ddr_fs),
+	.fabric_frame_dma_en(product_cfg_fabric_dma)
 );
 
 wire [7:0] telem_flags = {
@@ -1076,6 +1078,6 @@ wire _unused = |{disp_i, cont_i, advance, ingest_pixels, ingest_dl, af_active, i
 	stream_ddr_fpga_read, stream_ddr_bus_want, stream_ddr_burstcnt, stream_ddr_addr,
 	stream_ddr_rd, stream_ddr_din, stream_ddr_be, stream_ddr_we, _host_wr_unused,
 	rbf_stamp_alive, rbf_build_id_valid, rbf_build_id_observe_r,
-	product_cfg_no_stub, product_cfg_ddr_fs};
+	product_cfg_no_stub, product_cfg_ddr_fs, product_cfg_fabric_dma};
 
 endmodule
