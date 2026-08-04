@@ -2,6 +2,7 @@
 # Hold until first video + B3 timeout + B4 ring drop-head + Drop reclaim discrimination.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+echo "=== test_av_startup_hold_red EXECUTED (mutation twins; not green unit FAIL) ==="
 MP="$ROOT/arm/misterplexd/media_player.cpp"
 AV="$ROOT/host/libmisterplex/av_clock.hpp"
 HPP="$ROOT/arm/misterplexd/media_player.hpp"
