@@ -10,6 +10,7 @@
     "DECODE_STUB_FAULT_DROP_INTER_RESIDUAL": "Injected decode_stub inter residual-add drop expected-red fault.",
     "DECODE_STUB_FAULT_SKIP_INTER_CHROMA_RESIDUAL": "Injected decode_stub inter chroma residual skip expected-red fault.",
     "DEQUANT_FAULT_QP_SWEEP": "Injected dequant QP-sweep fault for overflow boundary verification.",
+    "DYN_BASE_EN_TB": "C++ TB compile flag selecting DYN_BASE_EN=0/1 cases for ddr_frame_base_mux_rtl_sim; not a product Verilog macro.",
     "H264_DEBLOCK_FAULT_ALPHA_BIAS": "Injected deblock alpha-table bias expected-red fault.",
     "H264_DEBLOCK_FAULT_FORCE_BS2": "Injected deblock force-bS=2 expected-red fault.",
     "H264_DEBLOCK_FAULT_MB_COMMIT_EARLY": "Injected deblock/DPB seam expected-red fault.",

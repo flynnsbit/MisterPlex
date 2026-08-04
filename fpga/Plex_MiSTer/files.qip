@@ -9,6 +9,9 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/frame_store.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_frame_store.sv
 // I420 bank ABI elaborator (w-path). M10K=0; not in hierarchy until present path wires it.
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_i420_bank_geom.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_frame_base_mux.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_frame_dma.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_publish_job.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/frame_ingest.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddram_frame_rd.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/sdram.sv
