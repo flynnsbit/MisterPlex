@@ -1,25 +1,19 @@
 #!/usr/bin/env python3
-"""DEAD H.264 front-end cleanliness — parent ground truth via rtl_reachability.
+"""DEAD H.264 front-end cleanliness — body-scoped reachability only.
 
-Parent correction (use ONLY tools/rtl_reachability.py):
-  LIVE=19 back-end (dequant/idct/recon/MC/DPB/...) already in shipping RBF
-  DEAD=17 entropy/syntax/intra/integrators — the real gap
+rd-duck NACK of parent 19/17 (db9735e7 instrument):
+  (1) edges were file-wide unions in multi-module .sv — FIXED in tools/rtl_reachability.py
+  (2) positive controls were docstring-only — FIXED (code asserts, rc=3 on fail)
+  (3) NOT ground truth for shipping RBF / PRODUCT_NO_STUB elaborated config
 
-w-scaler owns Quartus-subset + Verilator cleanliness of DEAD front-end sources
-so w-plxd can connect them without a fit-time debt bomb.
+This gate:
+  - runs corrected rtl_reachability.py; requires controls=PASS and rc=0
+  - NEGATIVE: h264_dpb_i420_addr body children must be empty (union bug detector)
+  - does NOT lock LIVE=19/DEAD=17 (those numbers are retired)
+  - keeps Quartus-subset clean on entropy/syntax/intra/integrator sources
+  - refuses shipping-RBF / area-paid claims in fixture language
 
-POSITIVE:
-  - reachability tool: LIVE>=19, DEAD list matches expected front-end set
-  - tool positive controls already asserted inside rtl_reachability.py
-  - every DEAD module's source file is on files.qip + rtl_lint list
-  - check_quartus_sv_subset.py on DEAD unique files returns 0
-  - no take_msb(...)[part-select] in cavlc (prior Quartus reject)
-
-NEGATIVE (naive wrong impl fails):
-  - Claiming "all fabric decode is dead" when LIVE h264 count < 19
-  - Dropping a DEAD front-end file from QIP
-  - Synthetic take_msb()[n:0] fails subset checker
-  - Reachability tool missing / non-zero exit must fail (no silent skip)
+NEGATIVE twins: QIP drop; synthetic take_msb()[part-select]; tool rc!=0.
 """
 from __future__ import annotations
 
@@ -38,42 +32,20 @@ LINT = ROOT / "scripts/rtl_lint.py"
 CAVLC = RTL / "h264_cavlc_residual.sv"
 PROJECT = ROOT / "fpga/Plex_MiSTer"
 
-# Parent ground-truth DEAD set (17). Priority for w-plxd connection order.
-DEAD_EXPECTED = [
-    "h264_rbsp_filter",
-    "h264_exp_golomb_reader",
-    "h264_baseline_syntax_parser",
-    "h264_sps_geometry_parser",
-    "h264_cavlc_nc_predictor",
-    "h264_cavlc_residual_block",
-    "h264_intra4x4_pred",
-    "h264_intra16x16_pred",
-    "h264_chroma8x8_pred",
-    "h264_intra_mode_guard",
-    "h264_intra_nb_ctx",
-    "h264_deblock_bs",
-    "h264_deblock_edge_pipe",
-    "h264_p_mb_type_decode",
-    "h264_decode_top",
-    "h264_decode_skeleton",
-    "h264_decode_core",
-]
-
-# Unique source files that host DEAD modules (prioritize these for subset).
-DEAD_SOURCE_FILES = [
+# Front-end / integrator sources w-scaler keeps subset-clean (w-plxd connect order).
+# Includes modules that may be LIVE or DEAD under source graph — cleanliness is
+# independent of the retired 19/17 headline.
+DEAD_PRIORITY_SOURCES = [
     "h264_syntax_primitives.sv",  # rbsp, exp_golomb, baseline_syntax, sps_geometry
     "h264_cavlc_residual.sv",
     "h264_intra_pred.sv",
     "h264_intra_nb_ctx.sv",
-    "h264_deblock.sv",  # also hosts LIVE edge/thresholds — still must stay clean
     "h264_p_slice_modes.sv",
     "h264_decode_top.sv",
     "h264_decode_skeleton.sv",
     "h264_decode_core.sv",
+    "h264_deblock.sv",  # hosts both stub-live writeback_ctrl and dead edge/bs
 ]
-
-LIVE_MIN = 19
-DEAD_EXACT = 17
 
 
 def fail(msg: str) -> int:
@@ -83,9 +55,43 @@ def fail(msg: str) -> int:
 
 def main() -> int:
     if not REACH.is_file():
-        return fail("missing tools/rtl_reachability.py — refuse to guess LIVE/DEAD")
+        return fail("missing tools/rtl_reachability.py")
 
-    # --- Reachability (instrument with positive controls inside the tool) ---
+    # --- Prove body-scoped edges (inline negative control) ---
+    sys.path.insert(0, str(ROOT / "tools"))
+    # Load without running main
+    code = REACH.read_text(encoding="utf-8")
+    ns: dict = {}
+    exec(
+        compile(
+            code.replace('if __name__ == "__main__":\n    sys.exit(main())', "pass"),
+            str(REACH),
+            "exec",
+        ),
+        ns,
+    )
+    decl_file, edges, _in_qip, bodies = ns["build_graph"](PROJECT)
+    leaf = "h264_dpb_i420_addr"
+    if leaf not in edges:
+        return fail(f"expected {leaf} in graph")
+    if edges[leaf]:
+        return fail(
+            f"NEGATIVE: {leaf} body children must be [] after body-slice; "
+            f"got {sorted(edges[leaf])} (file-wide union regression)"
+        )
+    print(f"OK NEGATIVE control: {leaf} body children=[]")
+
+    # decode_stub positive edge (source-level only)
+    if "decode_stub" in edges:
+        need = {"h264_dequant4x4", "h264_idct4x4", "h264_recon4x4", "h264_dpb_one_ref"}
+        miss = need - edges["decode_stub"]
+        if miss:
+            return fail(f"POSITIVE: decode_stub missing {sorted(miss)}")
+        print(f"OK POSITIVE control: decode_stub -> {sorted(need)}")
+    else:
+        return fail("decode_stub not in edges")
+
+    # --- Full tool run must PASS controls ---
     proc = subprocess.run(
         [sys.executable, str(REACH), str(PROJECT), "sys_top"],
         cwd=ROOT,
@@ -95,54 +101,53 @@ def main() -> int:
     )
     out = (proc.stdout or "") + (proc.stderr or "")
     if proc.returncode != 0:
-        return fail(f"rtl_reachability rc={proc.returncode}\n{out[-2000:]}")
+        return fail(f"rtl_reachability rc={proc.returncode}\n{out[-2500:]}")
+    if "controls=PASS" not in out:
+        return fail("tool must print controls=PASS")
+    if "NOT claimed: modules present in any deployed/shipping RBF" not in out:
+        return fail("tool must print shipping-RBF non-claim")
+    if "PRODUCT_NO_STUB" not in out:
+        return fail("tool must warn PRODUCT_NO_STUB not evaluated")
 
-    # Parse LIVE/DEAD h264 lines
-    live = sorted(
-        re.findall(r"^\s*LIVE\s+(h264_\S+)", out, flags=re.M)
-    )
-    dead = sorted(
-        re.findall(r"^\s*DEAD\s+(h264_\S+)", out, flags=re.M)
-    )
-    m = re.search(r"reachable=(\d+)", out)
-    reachable = int(m.group(1)) if m else -1
+    live = sorted(re.findall(r"^\s*LIVE\s+(h264_\S+)", out, flags=re.M))
+    dead = sorted(re.findall(r"^\s*DEAD\s+(h264_\S+)", out, flags=re.M))
 
-    if len(live) < LIVE_MIN:
-        return fail(
-            f"NEGATIVE: LIVE h264={len(live)} < {LIVE_MIN} — "
-            "do not claim 'all fabric decode is dead'; got {live}"
+    # Retired headline must not be re-asserted as locked truth in this gate
+    if len(live) == 19 and len(dead) == 17:
+        # Could happen by chance only if bug returns — still require leaf control above.
+        print(
+            "NOTE: LIVE=19 DEAD=17 observed — not treated as locked ground truth; "
+            "body-scoped leaf control is binding"
         )
-    if len(dead) != DEAD_EXACT:
-        return fail(
-            f"DEAD h264 count {len(dead)} != {DEAD_EXACT} (parent ground truth); "
-            f"dead={dead}"
-        )
-    exp = sorted(DEAD_EXPECTED)
-    if dead != exp:
-        missing = sorted(set(exp) - set(dead))
-        extra = sorted(set(dead) - set(exp))
-        return fail(f"DEAD set mismatch missing={missing} extra={extra}")
 
-    print(f"OK reachability LIVE={len(live)} DEAD={len(dead)} reachable={reachable}")
-    print(f"OK DEAD front-end set matches parent ground truth ({DEAD_EXACT})")
+    # Source-graph sanity: stub path should reach some back-end, not zero
+    if len(live) < 1:
+        return fail("LIVE h264 count is 0 — unexpected for source graph with decode_stub")
+    if "h264_dequant4x4" not in live:
+        return fail("source graph should reach h264_dequant4x4 via decode_stub")
+    # deblock_edge was a false-LIVE under file-union; under body-scope it is typically DEAD
+    # unless something instantiates it — do not require either way, just report.
+    print(
+        f"OK source-graph LIVE={len(live)} DEAD={len(dead)} "
+        f"(NOT shipping RBF; NOT PRODUCT_NO_STUB-elaborated)"
+    )
+    print(f"OK LIVE sample: {live[:5]}...")
+    print(f"OK DEAD sample: {dead[:5]}...")
 
-    # --- QIP + lint list cover every DEAD source file ---
+    # --- QIP + subset on priority front-end sources ---
     qip = QIP.read_text(encoding="utf-8", errors="replace")
-    for name in DEAD_SOURCE_FILES:
+    for name in DEAD_PRIORITY_SOURCES:
         if name not in qip:
-            return fail(f"files.qip missing DEAD-host file {name}")
+            return fail(f"files.qip missing {name}")
         if not (RTL / name).is_file():
             return fail(f"RTL missing {name}")
 
-    # NEGATIVE: stripped QIP misses a DEAD host
     stripped = "\n".join(
         ln for ln in qip.splitlines() if "h264_syntax_primitives.sv" not in ln
     )
     if "h264_syntax_primitives.sv" in stripped:
         return fail("NEGATIVE twin setup failed")
-    if "h264_syntax_primitives.sv" not in qip:
-        return fail("syntax_primitives must be on real QIP")
-    print("OK NEGATIVE twin: dropping syntax_primitives from QIP would be detected")
+    print("OK NEGATIVE twin: QIP drop of syntax_primitives detectable")
 
     lp = subprocess.run(
         [sys.executable, str(LINT), "--list-files"],
@@ -154,14 +159,12 @@ def main() -> int:
     if lp.returncode != 0:
         return fail(f"rtl_lint --list-files rc={lp.returncode}")
     listed = set(lp.stdout.split())
-    for name in DEAD_SOURCE_FILES:
+    for name in DEAD_PRIORITY_SOURCES:
         rel = f"fpga/Plex_MiSTer/rtl/{name}"
         if rel not in listed:
-            return fail(f"rtl_lint list missing DEAD-host {rel}")
-    print(f"OK rtl_lint lists all {len(DEAD_SOURCE_FILES)} DEAD-host sources")
+            return fail(f"rtl_lint list missing {rel}")
 
-    # --- Quartus subset on DEAD sources only ---
-    paths = [str(RTL / n) for n in DEAD_SOURCE_FILES]
+    paths = [str(RTL / n) for n in DEAD_PRIORITY_SOURCES]
     sp = subprocess.run(
         [sys.executable, str(SUBSET), *paths],
         cwd=ROOT,
@@ -170,23 +173,17 @@ def main() -> int:
         check=False,
     )
     if sp.returncode != 0:
-        return fail(
-            f"quartus-sv-subset on DEAD sources rc={sp.returncode}\n"
-            f"{sp.stdout}\n{sp.stderr}"
-        )
-    print(f"OK quartus-sv-subset DEAD-host files ({len(DEAD_SOURCE_FILES)}) rc=0")
+        return fail(f"quartus-sv-subset rc={sp.returncode}\n{sp.stdout}\n{sp.stderr}")
+    print(f"OK quartus-sv-subset priority sources ({len(DEAD_PRIORITY_SOURCES)}) rc=0")
 
-    # --- CAVLC part-select regression ---
     cav = CAVLC.read_text(encoding="utf-8", errors="replace")
-    # strip comments
     cav_code = "\n".join(ln.split("//", 1)[0] for ln in cav.splitlines())
     if re.search(r"take_msb\s*\([^;]*\)\s*\[", cav_code):
         return fail("cavlc reintroduced take_msb(...)[part-select]")
     if "tmsb16" not in cav and "zmsb9" not in cav:
-        return fail("cavlc missing named take_msb temps (tmsb16/zmsb9)")
-    print("OK cavlc uses named temps (no function-call part-select)")
+        return fail("cavlc missing named take_msb temps")
+    print("OK cavlc named temps (no function-call part-select)")
 
-    # NEGATIVE: synthetic function-call part-select must fail subset
     text = """// synthetic
 module h264_dead_fe_bad_partsel(
   input wire [31:0] x,
@@ -209,21 +206,17 @@ endmodule
             check=False,
         )
         if bp.returncode == 0:
-            return fail(
-                "NEGATIVE: subset checker accepted take_msb()[7:0] — gate blind"
-            )
-    print("OK NEGATIVE: subset rejects take_msb()[part-select] synthetic")
+            return fail("NEGATIVE: subset accepted take_msb()[7:0]")
+    print("OK NEGATIVE: subset rejects take_msb()[part-select]")
 
-    # Priority order note for w-plxd (not a code change)
     print(
-        "OK priority for DEAD->LIVE (w-plxd): "
-        "rbsp_filter -> exp_golomb_reader -> baseline_syntax_parser -> "
-        "cavlc_residual_block -> intra_*  (drive LIVE dequant/idct/recon)"
+        "OK missing work is NOT entropy-only: dead intra/deblock/integrators remain; "
+        "stub LIVE modules are diagnostic/partial (rd-duck)"
     )
     print(
-        "PASS h264_dead_frontend: "
-        f"LIVE={len(live)} DEAD={len(dead)} subset_clean={len(DEAD_SOURCE_FILES)} "
-        "files; instrument=rtl_reachability.py"
+        f"PASS h264_dead_frontend: controls=PASS body-scoped; "
+        f"source LIVE={len(live)} DEAD={len(dead)}; subset_clean={len(DEAD_PRIORITY_SOURCES)}; "
+        f"19/17 NOT locked"
     )
     return 0
 
