@@ -8,13 +8,15 @@
     "stream_path",
     "ddr_frame_store",
     "present_core",
-    "plex_rbf_build_id"
+    "plex_rbf_build_id",
+    "ddr_frame_base_mux"
   ],
   "expect_reachable": [
     "stream_path",
     "ddr_frame_store",
     "present_core",
-    "plex_rbf_build_id"
+    "plex_rbf_build_id",
+    "ddr_frame_base_mux"
   ],
   "teeth_non_reachable": [
     "h264_decode_top",
@@ -29,7 +31,8 @@
     "critical_if_macro_absent.PRODUCT_NO_STUB: decode_stub required REACHABLE when QSF does not set PRODUCT_NO_STUB (current main).",
     "teeth_if_macro_present.PRODUCT_NO_STUB: decode_stub must be PRUNED/NOT_IN_QIP when PRODUCT_NO_STUB=1 (w-nostub reclaim).",
     "teeth_non_reachable: historical decoder/CAVLC hole until deliberately landed.",
-    "Presence only \u2014 not correctness; post-fit needs FIT_RPT."
+    "Presence only \u2014 not correctness; post-fit needs FIT_RPT.",
+    "ddr_frame_base_mux: Path A option-b live under ddr_frame_store (DYN_BASE_EN=0)."
   ],
   "critical_if_macro_absent": {
     "PRODUCT_NO_STUB": [
