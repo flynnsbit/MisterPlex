@@ -11,7 +11,10 @@
     "H264_DEBLOCK_FAULT_MB_COMMIT_EARLY": "Injected deblock/DPB seam expected-red fault.",
     "H264_DEBLOCK_FAULT_REF_READY_EARLY": "Injected deblock/DPB seam expected-red fault.",
     "P3_INTRA_FRAME_RARE_NEGATIVE_TEST": "Injected intra-frame expected-red fault.",
-    "P3_INTRA_NEGATIVE_TEST": "Injected intra-MB0 expected-red fault."
+    "P3_INTRA_NEGATIVE_TEST": "Injected intra-MB0 expected-red fault.",
+    "PRESENT_WINDOW_FAULT_FLOOR_SCALE": "Injected content-window floor-Q16 scale fault for expected-red last-column OBO sim only.",
+    "PRESENT_WINDOW_FAULT_IDENTITY_SCALE": "Injected content-window forced identity scale fault for expected-red non-id map sim only.",
+    "PRESENT_WINDOW_FAULT_INVERT_RATIO": "Injected content-window inverted scale-ratio fault for expected-red sim only."
   },
   "volatile_value_macros": {
     "BUILD_DATE": "Quartus generates the date in sys/build_id.tcl; Verilator lint uses a stable placeholder value."

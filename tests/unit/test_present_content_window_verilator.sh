@@ -41,7 +41,7 @@ build_one() {
 }
 
 # RED: floor-scale fault must diverge (exe returns non-zero)
-build_one present_content_window_neg -DPRESENT_WINDOW_FAULT_FLOOR_SCALE -DPRESENT_WINDOW_FAULT_FLOOR_SCALE
+build_one present_content_window_neg -DPRESENT_WINDOW_FAULT_FLOOR_SCALE '-DPRESENT_WINDOW_FAULT_FLOOR_SCALE'
 NEG_EXE="$ROOT/build/verilator/present_content_window_neg/Vpresent_content_window_tb_top"
 set +e
 "$NEG_EXE" > "$ROOT/build/present_content_window_negative.log" 2>&1
