@@ -15,5 +15,11 @@ verilator --cc --exe --build \
   "$ROOT/tests/rtl/plex_clk_status_tb_top.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/plex_clk_status.sv" \
   "$ROOT/tests/rtl/plex_clk_status_tb.cpp"
-"$MDIR/Vplex_clk_status_tb_top"
+set +e
+OUT="$("$MDIR/Vplex_clk_status_tb_top" 2>&1)"
+RC=$?
+set -e
+printf '%s\n' "$OUT"
+echo "$OUT" | grep -q PASS || { echo "FAIL clk_status: no PASS in TB out" >&2; exit 1; }
+[[ "$RC" -eq 0 ]] || exit "$RC"
 echo "plex_clk_status Verilator gate PASS"

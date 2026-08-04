@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Prefit reachability must track PRODUCT_NO_STUB (w-nostub reclaim).
-# GREEN main: no macro → decode_stub REACHABLE required.
+# GREEN baseline: no macro → decode_stub REACHABLE (strip product PNS if present).
 # RED hollow: macro set but stub still instantiated → teeth FAIL.
-# GREEN strip: macro + nostub stream_path ifdef → decode_stub PRUNED tooth OK.
+# GREEN product/strip: macro + nostub stream_path → decode_stub PRUNED tooth OK.
 # Soft-skip≠PASS. true rc direct.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -19,13 +19,39 @@ cp "$QSF" "$Q_BAK"
 cleanup() { cp "$SP_BAK" "$SP"; cp "$Q_BAK" "$QSF"; rm -f "$SP_BAK" "$Q_BAK"; }
 trap cleanup EXIT
 
+strip_pns() {
+  # Comment-out or delete active PRODUCT_NO_STUB assignment (product default is ON post-nostub).
+  sed -i '/VERILOG_MACRO "PRODUCT_NO_STUB=1"/d' "$QSF"
+}
+
 inject_pns() {
-  if ! grep -q 'PRODUCT_NO_STUB' "$QSF"; then
+  if ! grep -q 'VERILOG_MACRO "PRODUCT_NO_STUB=1"' "$QSF"; then
     sed -i 's/VERILOG_MACRO "DDR_FRAME_STORE=1"/VERILOG_MACRO "DDR_FRAME_STORE=1"\nset_global_assignment -name VERILOG_MACRO "PRODUCT_NO_STUB=1"/' "$QSF"
   fi
 }
 
 echo "=== GREEN baseline (no PRODUCT_NO_STUB) ==="
+# Product QSF now ships PRODUCT_NO_STUB=1 (w-nostub on main). Force it off so
+# the REACHABLE baseline is still a red-before-green check of the stub graph.
+strip_pns
+# Also need stream_path that still instantiates the stub (pre-nostub body).
+if git -C "$ROOT" cat-file -e e40440ea:fpga/Plex_MiSTer/rtl/stream_path.sv 2>/dev/null; then
+  git -C "$ROOT" show e40440ea:fpga/Plex_MiSTer/rtl/stream_path.sv >"$SP"
+elif git -C "$ROOT" rev-parse --verify origin/main >/dev/null 2>&1 && \
+     git -C "$ROOT" show origin/main:fpga/Plex_MiSTer/rtl/stream_path.sv 2>/dev/null | grep -q 'decode_stub'; then
+  # If main stream_path still has stub under !PRODUCT_NO_STUB, keep current after strip.
+  :
+fi
+# Prefer current SP if it still has a decode_stub instance under ifndef PRODUCT_NO_STUB.
+if ! grep -q 'decode_stub' "$SP"; then
+  # Fall back to any history object that still wires the stub.
+  if git -C "$ROOT" cat-file -e e40440ea:fpga/Plex_MiSTer/rtl/stream_path.sv 2>/dev/null; then
+    git -C "$ROOT" show e40440ea:fpga/Plex_MiSTer/rtl/stream_path.sv >"$SP"
+  else
+    echo "FAIL baseline: no stream_path with decode_stub available" >&2
+    exit 1
+  fi
+fi
 set +e
 out=$(python3 "$GATE" --root "$ROOT" 2>&1)
 rc=$?
@@ -37,7 +63,15 @@ echo "$out" | grep -q 'decode_stub STATUS=REACHABLE' || { echo "FAIL baseline de
 echo "PASS baseline"
 
 echo "=== RED hollow: PRODUCT_NO_STUB but stub still in graph ==="
+# Restore product QSF (has PNS) but keep pre-nostub stream_path (stub wired).
+cp "$Q_BAK" "$QSF"
 inject_pns
+# Ensure SP still has stub instance (hollow: macro on, stub still reachable).
+if ! grep -q 'decode_stub' "$SP"; then
+  if git -C "$ROOT" cat-file -e e40440ea:fpga/Plex_MiSTer/rtl/stream_path.sv 2>/dev/null; then
+    git -C "$ROOT" show e40440ea:fpga/Plex_MiSTer/rtl/stream_path.sv >"$SP"
+  fi
+fi
 set +e
 out=$(python3 "$GATE" --root "$ROOT" 2>&1)
 rc=$?
@@ -50,14 +84,18 @@ echo "$out" | grep -q 'decode_stub:REACHABLE_but_listed_as_teeth\|decode_stub ST
 echo "PASS hollow red-check true_rc=$rc"
 
 echo "=== GREEN strip: PRODUCT_NO_STUB + ifdef-stripped stream_path ==="
-# Minimal synthetic stream_path fragment is insufficient for full graph; use
-# committed nostub tip if available, else embed controlled ifdef wrapper test via
-# git show when object exists.
-if git -C "$ROOT" cat-file -e 96163ed9:fpga/Plex_MiSTer/rtl/stream_path.sv 2>/dev/null; then
-  git -C "$ROOT" show 96163ed9:fpga/Plex_MiSTer/rtl/stream_path.sv >"$SP"
-else
-  echo "SKIP-NOT-PASS nostub stream_path object 96163ed9 unavailable" >&2
-  exit 77
+# Product tip stream_path (or nostub object) + PRODUCT_NO_STUB → stub PRUNED.
+cp "$Q_BAK" "$QSF"
+inject_pns
+cp "$SP_BAK" "$SP"
+# Prefer current (product) stream_path; else nostub reclaim object.
+if ! grep -q 'PRODUCT_NO_STUB' "$SP"; then
+  if git -C "$ROOT" cat-file -e 96163ed9:fpga/Plex_MiSTer/rtl/stream_path.sv 2>/dev/null; then
+    git -C "$ROOT" show 96163ed9:fpga/Plex_MiSTer/rtl/stream_path.sv >"$SP"
+  else
+    echo "SKIP-NOT-PASS nostub stream_path object 96163ed9 unavailable" >&2
+    exit 77
+  fi
 fi
 set +e
 out=$(python3 "$GATE" --root "$ROOT" 2>&1)

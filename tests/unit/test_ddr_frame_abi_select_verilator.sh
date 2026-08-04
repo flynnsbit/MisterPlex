@@ -14,5 +14,11 @@ verilator --cc --exe --build \
   -I"$ROOT/fpga/Plex_MiSTer/rtl" \
   "$ROOT/tests/rtl/ddr_frame_abi_select_tb_top.sv" \
   "$ROOT/tests/rtl/ddr_frame_abi_select_tb.cpp"
-"$MDIR/Vddr_frame_abi_select_tb_top"
+set +e
+OUT="$("$MDIR/Vddr_frame_abi_select_tb_top" 2>&1)"
+RC=$?
+set -e
+printf '%s\n' "$OUT"
+echo "$OUT" | grep -q PASS || { echo "FAIL abi_select: no PASS in TB out" >&2; exit 1; }
+[[ "$RC" -eq 0 ]] || exit "$RC"
 echo "ddr_frame_abi_select Verilator gate PASS"

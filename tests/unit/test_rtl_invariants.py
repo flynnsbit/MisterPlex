@@ -1801,7 +1801,8 @@ def check_present_geometry_stride_contract() -> None:
         fail(f"present geometry/stride contract: {missing[0]}")
 
     def present_ddr_wiring_ok(p_nt: str) -> bool:
-        return (
+        # Classic 480p product: direct DDR_FRAME_* on the store port.
+        direct = (
             ".FRAME_W(FRAME_W)" in p_nt
             and ".FRAME_H(FRAME_H)" in p_nt
             and ".CODED_W(DDR_FRAME_CODED_WIDTH)" in p_nt
@@ -1810,6 +1811,29 @@ def check_present_geometry_stride_contract() -> None:
             and ".HPS_BANK_STRIDE_BYTES(DDR_FRAME_YUV420P_BANK_STRIDE)" in p_nt
             and ".DOORBELL_PHYS(DDR_FRAME_YUV420P_DOORBELL_PHYS)" in p_nt
         )
+        # 720p-capable product: FS_* via ddr_frame_abi_select.svh. 480p still
+        # resolves to DDR_FRAME_CODED_WIDTH / DISPLAY / pillar / stride / doorbell
+        # when FRAME≠1280×720 (false branch of the ternary).
+        abi_path = ROOT / "fpga/Plex_MiSTer/rtl/ddr_frame_abi_select.svh"
+        abi_nt = re.sub(r"\s+", "", abi_path.read_text(encoding="utf-8", errors="replace"))
+        shared = (
+            ".FRAME_W(FRAME_W)" in p_nt
+            and ".FRAME_H(FRAME_H)" in p_nt
+            and ".CODED_W(FS_CODED_W)" in p_nt
+            and ".DISPLAY_W(FS_DISPLAY_W)" in p_nt
+            and ".PRESENT_X(FS_PRESENT_X)" in p_nt
+            and ".HPS_BANK_STRIDE_BYTES(FS_BANK_STRIDE)" in p_nt
+            and ".DOORBELL_PHYS(FS_DOORBELL)" in p_nt
+            and "ddr_frame_abi_select.svh" in p_nt
+            and "DDR_FRAME_CODED_WIDTH" in abi_nt
+            and "DDR_FRAME_DISPLAY_WIDTH" in abi_nt
+            and "DDR_FRAME_PILLARBOX_LEFT" in abi_nt
+            and "DDR_FRAME_YUV420P_BANK_STRIDE" in abi_nt
+            and "DDR_FRAME_YUV420P_DOORBELL_PHYS" in abi_nt
+            and "DDR_FS_USE_720P_ABI?DDR_FRAME_720P_CODED_WIDTH:DDR_FRAME_CODED_WIDTH"
+            in abi_nt
+        )
+        return direct or shared
 
     check(
         present_ddr_wiring_ok(present_nt),
@@ -1877,10 +1901,14 @@ def check_present_geometry_stride_contract() -> None:
         )
     # Dropping the explicit CODED_W port leaves parameter default CODED_W=FRAME_W=640
     # → reader Y pitch 640 B/line while ARM writes 624 → 16 px/line leftward creep.
-    present_drop_coded = present_nt.replace(".CODED_W(DDR_FRAME_CODED_WIDTH)", "")
+    # Accept either direct DDR_FRAME_* or FS_* (abi_select) port forms.
+    present_drop_coded = (
+        present_nt.replace(".CODED_W(DDR_FRAME_CODED_WIDTH)", "")
+        .replace(".CODED_W(FS_CODED_W)", "")
+    )
     if present_ddr_wiring_ok(present_drop_coded):
         fail(
-            "deliberately dropping .CODED_W(DDR_FRAME_CODED_WIDTH) "
+            "deliberately dropping .CODED_W(DDR_FRAME_CODED_WIDTH|FS_CODED_W) "
             "(default CODED_W=FRAME_W=640 shear) did not make the wiring gate red"
         )
 

@@ -15,5 +15,11 @@ verilator --cc --exe --build \
   "$ROOT/tests/rtl/present_pix_rate_match_tb_top.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/present_pix_rate_match.sv" \
   "$ROOT/tests/rtl/present_pix_rate_match_tb.cpp"
-"$MDIR/Vpresent_pix_rate_match_tb_top"
+set +e
+OUT="$("$MDIR/Vpresent_pix_rate_match_tb_top" 2>&1)"
+RC=$?
+set -e
+printf '%s\n' "$OUT"
+echo "$OUT" | grep -q PASS || { echo "FAIL rate_match: no PASS in TB out" >&2; exit 1; }
+[[ "$RC" -eq 0 ]] || exit "$RC"
 echo "present_pix_rate_match Verilator gate PASS"

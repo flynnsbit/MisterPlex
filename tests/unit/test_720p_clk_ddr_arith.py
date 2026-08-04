@@ -53,8 +53,16 @@ def main() -> int:
     check(active_only_24 == 22_118_400, f"NEG twin value active_only_24={active_only_24}")
 
     # --- Quote PLL SoT on disk ---
+    # Product default clk_sys is 20 MHz. PLL may bind the literal or the
+    # MISTERPLEX_CLK_SYS_PLL_FREQ macro (CLK_SYS_24 → 24 MHz, default-OFF).
     pll = read(ROOT / "fpga/Plex_MiSTer/rtl/pll/pll_0002.v")
-    check('output_clock_frequency0("20.000000 MHz")' in pll, "PLL out0 clk_sys=20.000000 MHz")
+    pll_out0_lit = 'output_clock_frequency0("20.000000 MHz")' in pll
+    pll_out0_macro = (
+        "output_clock_frequency0(`MISTERPLEX_CLK_SYS_PLL_FREQ)" in pll
+        and '`define MISTERPLEX_CLK_SYS_PLL_FREQ "20.000000 MHz"' in pll
+        and "CLK_SYS_24" in pll
+    )
+    check(pll_out0_lit or pll_out0_macro, "PLL out0 clk_sys=20.000000 MHz")
     check('output_clock_frequency2("90.000000 MHz")' in pll, "PLL out2 clk_ddr=90.000000 MHz")
     check('reference_clock_frequency("50.0 MHz")' in pll, "PLL ref=50.0 MHz")
     check("PRESENT_CLK_PIX_PLL" in pll, "PLL has PRESENT_CLK_PIX_PLL branch")

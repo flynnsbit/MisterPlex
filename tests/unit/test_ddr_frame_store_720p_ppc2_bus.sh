@@ -41,5 +41,6 @@ OUT="$("$EXE" 2>&1)"
 RC=$?
 set -e
 printf '%s\n' "$OUT"
+echo "$OUT" | grep -q PASS || { echo "FAIL 720p_ppc2_bus: no PASS in TB out" >&2; exit 1; }
 echo "ddr_frame_store_720p_ppc2_bus true rc=$RC"
 exit "$RC"

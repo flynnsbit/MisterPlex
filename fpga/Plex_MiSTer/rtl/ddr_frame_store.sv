@@ -20,16 +20,33 @@ module ddr_frame_store #(
 	parameter [31:0] PHYS_BASE = 32'h3000_0000,
 	parameter int HPS_BANK_STRIDE_BYTES = 524288,
 	parameter [31:0] DOORBELL_PHYS = PHYS_BASE + (2 * HPS_BANK_STRIDE_BYTES) - 32'h1000,
-	parameter [31:0] MAILBOX_PHYS  = 32'h3007_F100,
-	parameter [31:0] INPUT_MAILBOX_PHYS = 32'h3007_F108,
-	parameter [31:0] SDRAM_MAILBOX_PHYS = 32'h3007_F110,
-	parameter [31:0] FRAME_MAILBOX_PHYS = 32'h3007_F118,
-	parameter [31:0] BANK_MAILBOX_PHYS  = 32'h3007_F128,
+	parameter [31:0] MAILBOX_PHYS  = DOORBELL_PHYS + 32'h100,
+	parameter [31:0] INPUT_MAILBOX_PHYS = DOORBELL_PHYS + 32'h108,
+	parameter [31:0] SDRAM_MAILBOX_PHYS = DOORBELL_PHYS + 32'h110,
+	parameter [31:0] FRAME_MAILBOX_PHYS = DOORBELL_PHYS + 32'h118,
+	parameter [31:0] BANK_MAILBOX_PHYS  = DOORBELL_PHYS + 32'h128,
 	parameter int DDR_BURST_MAX = 128,
 	parameter bit IGNORE_STALE_DOORBELL_AFTER_RESET = 1'b1,
 	parameter int STALE_DOORBELL_FALLBACK_POLLS = 4096,
 	parameter bit PIPELINE_REFILL_SCHEDULER = 1'b1,
 	parameter bit STRICT_YUV_DOORBELL = 1'b1,
+	// 1: want_y / y_hit follow vertical beam (src_y_line) — product anti-thrash.
+	// 0: legacy X-gated src_y thrash (HBlank want_y→0) — shear control only.
+	parameter bit WANT_Y_LINE_ONLY = 1'b1,
+	// 1: pending_ready holds while prep is complete even if IDLE schedules a
+	//    current-window refill (product). 0: legacy clear-on-current-sched —
+	//    freezes when want_y tracks the beam (silicon 9eb1431a class).
+	parameter bit PENDING_READY_STICKY_PREP = 1'b1,
+	// 1: prep slot alloc recycles valid-but-stale (wrong bank/line) slots.
+	// 0: invalid-only (9eb1431a) — after first swap prep set is full of old-bank
+	//    lines and hammers prep_base forever.
+	parameter bit PREP_SLOT_RECYCLE = 1'b1,
+	// 1 (product): if a new swap_req is accepted on the same sys clk as a vsync
+	//    swap, keep swap_pending=1 for the newly latched pending_bank. Legacy
+	//    NBA order cleared swap_pending after setting it, dropping the doorbell
+	//    under sustained high-rate publish (playback ~24 fps) while idle's slow
+	//    presents rarely collide with the 1-cycle vsync window.
+	parameter bit SWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC = 1'b1,
 	// Multi-pixel present path (default 1 = legacy scalar RGB). PPC in {1,2,4}.
 	// Even rd_x required for PPC>1 so a group stays inside one Y qword (no dual-port).
 	parameter int PX_PER_CLK = 1
@@ -166,8 +183,20 @@ module ddr_frame_store #(
 	wire rd_visible = rd_x_visible && rd_y_visible;
 	wire [X_W-1:0] display_x = rd_x - PRESENT_X_L;
 	wire [Y_W-1:0] display_y = rd_y - PRESENT_Y_L;
+	// Pixel path: X+Y gate (outside present window → black / addr 0).
 	wire [CODED_X_W-1:0] src_x = rd_visible ? (display_x + CROP_LEFT_L) : '0;
 	wire [CODED_Y_W-1:0] src_y = rd_visible ? (display_y + CROP_TOP_L) : '0;
+	// Line identity / prefetch path: follow the vertical beam whenever Y is inside
+	// the present band — independent of horizontal blank. Gating line match and
+	// want_y on full rd_visible forced src_y→0 every HBlank (including store_x=LAST),
+	// which thrashed the fill scheduler off the beam line and produced a variable
+	// black prefix at DE open (parent: ragged left edge, interiors aligned, median
+	// miss ~420 px on silicon). Do NOT use force_top (WANT_Y_FORCE_TOP) — that
+	// freeze-class latch cost two fits; vsync/leave-VBlank naturally returns the
+	// beam (and thus want_y) to the top via present_core store_y.
+	// WANT_Y_LINE_ONLY=0 restores X-gated thrash for freeze/shear control builds.
+	wire [CODED_Y_W-1:0] src_y_line = rd_y_visible ? (display_y + CROP_TOP_L) : '0;
+	wire [CODED_Y_W-1:0] pref_y = WANT_Y_LINE_ONLY ? src_y_line : src_y;
 	wire [Y_QW_AW-1:0] y_rd_addr = src_x[CODED_X_W-1:3];
 	wire [C_QW_AW-1:0] c_rd_addr = src_x[CODED_X_W-1:4];
 
@@ -236,17 +265,31 @@ module ddr_frame_store #(
 			pending_ready_s1 <= pending_ready_ddr;
 			pending_ready_s2 <= pending_ready_s1;
 
+			// Capture new doorbell before vsync-swap decision so a same-cycle collision
+			// can retain swap_pending for the newly latched bank (product).
+			// Legacy: both branches NBA-assigned swap_pending; the vsync clear
+			// won, consuming swap_req_seen while dropping the new pending frame.
 			if (swap_req_s2 != swap_req_seen) begin
 				swap_req_seen <= swap_req_s2;
 				pending_bank <= pending_bank_s2;
-				swap_pending <= 1'b1;
+				if (!(SWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC
+				      && vsync_pulse && swap_pending && pending_ready_s2))
+					swap_pending <= 1'b1;
 			end
 
 			if (vsync_pulse && swap_pending && pending_ready_s2) begin
+`ifndef DDR_FRAME_STORE_FAULT_HOLD_DISP_BANK
+				// Uses pre-NBA pending_bank: the bank that was ready this cycle.
+				// A same-cycle swap_req updates pending_bank for the *next* swap.
 				disp_bank <= pending_bank;
+`endif
 				disp_buf <= ~disp_buf;
 				has_frame <= 1'b1;
-				swap_pending <= 1'b0;
+				if (SWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC
+				    && (swap_req_s2 != swap_req_seen))
+					swap_pending <= 1'b1;
+				else
+					swap_pending <= 1'b0;
 				frames_done <= frames_done + 16'd1;
 				vsync_toggle <= ~vsync_toggle;
 			end else if (vsync_pulse) begin
@@ -288,11 +331,10 @@ module ddr_frame_store #(
 	reg [Y_W-1:0] want_y_sys;
 	reg [Y_W-1:0] want_y_gray;  // Gray-encoded want_y for safe CDC
 
-	// Toggle-snapshot registers for multi-bit CDC (clk → clk_ddr)
+	// Source-domain status registers for clk → clk_ddr telemetry.
 	reg [15:0] status_osd_hold;
-	reg        status_osd_toggle;
 	reg [23:0] sdram_status_hold;
-	reg        sdram_status_toggle;
+	reg        frame_miss_toggle;
 
 	reg rd_active_r, rd_active_d, rd_visible_r, rd_visible_d, miss_d;
 	reg y_hit_r, c_hit_r;
@@ -305,9 +347,9 @@ module ddr_frame_store #(
 	reg [63:0] selected_y_q, selected_u_q, selected_v_q;
 	reg [SLOT_W-1:0] video_slot;
 `ifdef DDR_FRAME_STORE_FAULT_CHROMA_VERTICAL_FULLRES
-	wire [CODED_Y_W-2:0] rd_cy = src_y[CODED_Y_W-2:0];
+	wire [CODED_Y_W-2:0] rd_cy = src_y_line[CODED_Y_W-2:0];
 `else
-	wire [CODED_Y_W-2:0] rd_cy = src_y[CODED_Y_W-1:1];
+	wire [CODED_Y_W-2:0] rd_cy = src_y_line[CODED_Y_W-1:1];
 `endif
 	always @* begin
 		y_hit_now = 1'b0;
@@ -319,8 +361,9 @@ module ddr_frame_store #(
 		selected_v_q = 64'd0;
 		for (vi = 0; vi < LINE_COUNT; vi = vi + 1) begin
 			video_slot = (disp_buf ? SECOND_SET_BASE : '0) + vi[SLOT_W-1:0];
+			// Match beam line via pref_y (product: src_y_line; thrash control: src_y).
 			if (y_valid_v2[video_slot] && (y_bank_v2[video_slot] == disp_bank)
-			    && (y_line_v2[video_slot] == Y_W'(src_y)) && !y_hit_now) begin
+			    && (y_line_v2[video_slot] == Y_W'(pref_y)) && !y_hit_now) begin
 				y_hit_now = 1'b1;
 				y_hit_idx_now = video_slot;
 			end
@@ -337,9 +380,12 @@ module ddr_frame_store #(
 			end
 		end
 	end
+	// Miss when the line under the beam is not yet in an M10K slot → RGB black.
+	// Primary left-edge class: HBlank want_y/src_y thrash (fixed via src_y_line).
+	// Residual miss under true DDR backlog still counts as underrun.
 	wire rd_miss_now = rd_active && rd_visible && has_frame && (!y_hit_now || !c_hit_now);
 
-	// BT.601 full-range (matches host pixel_format.hpp / yuv_bt601_npx).
+	// BT.601 full-range helpers for multi-pixel lanes (matches host / yuv_bt601_npx).
 	function automatic [7:0] yuv_r(input [7:0] y, input [7:0] u, input [7:0] v);
 		reg signed [11:0] ys, us, vs, rc;
 		reg signed [20:0] w;
@@ -427,9 +473,8 @@ module ddr_frame_store #(
 			want_y_sys <= '0;
 			want_y_gray <= '0;
 			status_osd_hold <= 16'd0;
-			status_osd_toggle <= 1'b0;
 			sdram_status_hold <= 24'd0;
-			sdram_status_toggle <= 1'b0;
+			frame_miss_toggle <= 1'b0;
 			y_valid_v1 <= '0;
 			y_valid_v2 <= '0;
 			c_valid_v1 <= '0;
@@ -453,36 +498,38 @@ module ddr_frame_store #(
 			rd_lane_valid_n <= '0;
 			rd_n_valid <= 1'b0;
 		end else begin
-			y_valid_v1 <= y_valid;
+			y_valid_v1 <= y_valid_hold;
 			y_valid_v2 <= y_valid_v1;
-			c_valid_v1 <= c_valid;
+			c_valid_v1 <= c_valid_hold;
 			c_valid_v2 <= c_valid_v1;
-			y_bank_v1 <= y_bank;
+			y_bank_v1 <= y_bank_hold;
 			y_bank_v2 <= y_bank_v1;
-			c_bank_v1 <= c_bank;
+			c_bank_v1 <= c_bank_hold;
 			c_bank_v2 <= c_bank_v1;
 			for (vi = 0; vi < LINE_SLOTS; vi = vi + 1) begin
-				y_line_v1[vi] <= y_line[vi];
+				y_line_v1[vi] <= y_line_hold[vi];
 				y_line_v2[vi] <= y_line_v1[vi];
-				c_line_v1[vi] <= c_line[vi];
+				c_line_v1[vi] <= c_line_hold[vi];
 				c_line_v2[vi] <= c_line_v1[vi];
 			end
 
-			if (Y_W'(src_y) != want_y_sys)
-				want_y_sys <= Y_W'(src_y);
+			// want_y: product uses pref_y=src_y_line (Y beam only). Thrash control
+			// uses pref_y=src_y (X-gated). No FORCE_TOP.
+			// When WANT_Y_LINE_ONLY=0, rd_visible low forces pref_y=0 every HBlank.
+			if (WANT_Y_LINE_ONLY ? rd_y_visible : rd_visible) begin
+				if (want_y_sys != Y_W'(pref_y))
+					want_y_sys <= Y_W'(pref_y);
+			end else if (want_y_sys != '0) begin
+				want_y_sys <= '0;
+			end
 			want_y_gray <= y_bin2gray(want_y_sys);
 
-			// Toggle-snapshot: status_osd (clk → clk_ddr)
 			if (status_osd != status_osd_hold) begin
 				status_osd_hold <= status_osd;
-				status_osd_toggle <= ~status_osd_toggle;
 			end
 
-			// Toggle-snapshot: sdram_status (clk → clk_ddr)
-			if ({sdram_error_count, sdram_size_code, sdram_test_state} != sdram_status_hold) begin
+			if ({sdram_error_count, sdram_size_code, sdram_test_state} != sdram_status_hold)
 				sdram_status_hold <= {sdram_error_count, sdram_size_code, sdram_test_state};
-				sdram_status_toggle <= ~sdram_status_toggle;
-			end
 
 			rd_active_r <= rd_active;
 			rd_active_d <= rd_active_r;
@@ -495,8 +542,10 @@ module ddr_frame_store #(
 			y_sel_r <= src_x[2:0];
 			c_sel_r <= src_x[3:1];
 			miss_d <= rd_miss_now;
-			if (miss_d && underrun_count != 16'hFFFF)
+			if (miss_d && underrun_count != 16'hFFFF) begin
 				underrun_count <= underrun_count + 16'd1;
+				frame_miss_toggle <= ~frame_miss_toggle;
+			end
 
 			if ((rd_active_d || !rd_active) && rd_visible_d && has_frame && !miss_d && y_hit_r && c_hit_r) begin
 				rd_r <= sat8(r_calc);
@@ -548,6 +597,10 @@ module ddr_frame_store #(
 	reg [Y_W-1:0] desired_y_r [0:LINE_COUNT-1];
 	reg [15:0] poll_div;
 	reg poll_pending;
+	wire [LINE_SLOTS-1:0] y_valid_hold, c_valid_hold;
+	wire [LINE_SLOTS-1:0] y_bank_hold, c_bank_hold;
+	wire [Y_W-1:0] y_line_hold [0:LINE_SLOTS-1];
+	wire [Y_W-2:0] c_line_hold [0:LINE_SLOTS-1];
 	localparam int STALE_DB_POLL_MAX = (STALE_DOORBELL_FALLBACK_POLLS < 1) ? 1 : STALE_DOORBELL_FALLBACK_POLLS;
 	localparam int STALE_DB_POLL_W = $clog2(STALE_DB_POLL_MAX + 1);
 	reg [31:0] last_seq;
@@ -567,15 +620,36 @@ module ddr_frame_store #(
 	reg [17:0] bank_mbox_hb;
 	reg [7:0] bank_mbox_seq;
 	reg [15:0] bank_vsync_count;
+	reg [15:0] frames_done_d1, frames_done_d2; // clk→clk_ddr (PLXD pack)
+	reg bank_plxd_swap_d, bank_plxd_disp_d;    // edge detect for fresher free_mask
 	reg vsync_t_d1, vsync_t_d2, vsync_t_seen;
 	reg start_d1, start_d2, start_seen;
 	reg bank_sel_d1, bank_sel_d2;
 
-	// Toggle-snapshot CDC receivers (clk → clk_ddr)
-	reg        status_osd_tog_s1, status_osd_tog_s2, status_osd_tog_seen;
+	genvar mi, ybi, cbi;
+	generate
+		for (mi = 0; mi < LINE_SLOTS; mi = mi + 1) begin : gen_meta_hold_pad
+			mplex_hold_lcell y_valid_pad (.din(y_valid[mi]), .dout(y_valid_hold[mi]));
+			mplex_hold_lcell c_valid_pad (.din(c_valid[mi]), .dout(c_valid_hold[mi]));
+			mplex_hold_lcell y_bank_pad  (.din(y_bank[mi]),  .dout(y_bank_hold[mi]));
+			mplex_hold_lcell c_bank_pad  (.din(c_bank[mi]),  .dout(c_bank_hold[mi]));
+			for (ybi = 0; ybi < Y_W; ybi = ybi + 1) begin : gen_y_line_hold_pad
+				mplex_hold_lcell y_line_pad (.din(y_line[mi][ybi]), .dout(y_line_hold[mi][ybi]));
+			end
+			for (cbi = 0; cbi < Y_W-1; cbi = cbi + 1) begin : gen_c_line_hold_pad
+				mplex_hold_lcell c_line_pad (.din(c_line[mi][cbi]), .dout(c_line_hold[mi][cbi]));
+			end
+		end
+	endgenerate
+
+	// clk → clk_ddr telemetry receivers.
+	reg [15:0] status_osd_s1, status_osd_s2, status_osd_s3;
 	reg [15:0] status_osd_safe;
-	reg        sdram_status_tog_s1, sdram_status_tog_s2, sdram_status_tog_seen;
+	reg [23:0] sdram_status_s1, sdram_status_s2, sdram_status_s3;
 	reg [23:0] sdram_status_safe;
+	reg        frame_miss_tog_s1, frame_miss_tog_s2, frame_miss_tog_seen;
+	reg [15:0] frame_underrun_ddr;
+	reg [23:0] frame_status_ddr;
 
 	wire cmd_empty;
 	wire [7:0] cmd_rdata;
@@ -708,16 +782,46 @@ module ddr_frame_store #(
 				target_c_idx_cur_c = cur_base_idx + tj[SLOT_W-1:0];
 			end
 
-			if ((!y_valid[prep_base_idx + tj[SLOT_W-1:0]]) && !found_slot_y_prep) begin
-				found_slot_y_prep = 1'b1;
-				target_y_idx_prep_c = prep_base_idx + tj[SLOT_W-1:0];
-			end
-			if ((!c_valid[prep_base_idx + tj[SLOT_W-1:0]]) && !found_slot_c_prep) begin
-				found_slot_c_prep = 1'b1;
-				target_c_idx_prep_c = prep_base_idx + tj[SLOT_W-1:0];
+			// Prep slots must recycle stale post-swap contents (valid but wrong
+			// bank/line). Invalid-only selection left the set full of old-bank
+			// lines and hammered prep_base forever — prep never reached
+			// pending_ready_c (freeze after first swap under src_y_line).
+			if (PREP_SLOT_RECYCLE) begin
+				slot_keep = 1'b0;
+				for (tk = 0; tk < LINE_COUNT; tk = tk + 1) begin
+					if (y_valid[prep_base_idx + tj[SLOT_W-1:0]]
+					    && (y_bank[prep_base_idx + tj[SLOT_W-1:0]] == pending_bank_d2)
+					    && (y_line[prep_base_idx + tj[SLOT_W-1:0]] == tk[Y_W-1:0]))
+						slot_keep = 1'b1;
+				end
+				if ((!y_valid[prep_base_idx + tj[SLOT_W-1:0]] || !slot_keep) && !found_slot_y_prep) begin
+					found_slot_y_prep = 1'b1;
+					target_y_idx_prep_c = prep_base_idx + tj[SLOT_W-1:0];
+				end
+				slot_keep = 1'b0;
+				for (tk = 0; tk < LINE_COUNT; tk = tk + 1) begin
+					if (c_valid[prep_base_idx + tj[SLOT_W-1:0]]
+					    && (c_bank[prep_base_idx + tj[SLOT_W-1:0]] == pending_bank_d2)
+					    && (c_line[prep_base_idx + tj[SLOT_W-1:0]] == tk[Y_W-1:1]))
+						slot_keep = 1'b1;
+				end
+				if ((!c_valid[prep_base_idx + tj[SLOT_W-1:0]] || !slot_keep) && !found_slot_c_prep) begin
+					found_slot_c_prep = 1'b1;
+					target_c_idx_prep_c = prep_base_idx + tj[SLOT_W-1:0];
+				end
+			end else begin
+				if ((!y_valid[prep_base_idx + tj[SLOT_W-1:0]]) && !found_slot_y_prep) begin
+					found_slot_y_prep = 1'b1;
+					target_y_idx_prep_c = prep_base_idx + tj[SLOT_W-1:0];
+				end
+				if ((!c_valid[prep_base_idx + tj[SLOT_W-1:0]]) && !found_slot_c_prep) begin
+					found_slot_c_prep = 1'b1;
+					target_c_idx_prep_c = prep_base_idx + tj[SLOT_W-1:0];
+				end
 			end
 		end
 	end
+
 
 	reg fill_bank, fill_is_chroma, fill_plane_v;
 	reg [Y_W-1:0] fill_y;
@@ -819,14 +923,19 @@ module ddr_frame_store #(
 			start_seen <= 1'b0;
 			bank_sel_d1 <= 1'b0;
 			bank_sel_d2 <= 1'b0;
-			status_osd_tog_s1 <= 1'b0;
-			status_osd_tog_s2 <= 1'b0;
-			status_osd_tog_seen <= 1'b0;
+			status_osd_s1 <= 16'd0;
+			status_osd_s2 <= 16'd0;
+			status_osd_s3 <= 16'd0;
 			status_osd_safe <= 16'd0;
-			sdram_status_tog_s1 <= 1'b0;
-			sdram_status_tog_s2 <= 1'b0;
-			sdram_status_tog_seen <= 1'b0;
+			sdram_status_s1 <= 24'd0;
+			sdram_status_s2 <= 24'd0;
+			sdram_status_s3 <= 24'd0;
 			sdram_status_safe <= 24'd0;
+			frame_miss_tog_s1 <= 1'b0;
+			frame_miss_tog_s2 <= 1'b0;
+			frame_miss_tog_seen <= 1'b0;
+			frame_underrun_ddr <= 16'd0;
+			frame_status_ddr <= 24'd0;
 			mbox_seq <= 16'd0;
 			mbox_last <= 16'd0;
 			mbox_req <= 1'b1;
@@ -847,6 +956,10 @@ module ddr_frame_store #(
 			bank_mbox_hb <= 18'd0;
 			bank_mbox_seq <= 8'd0;
 			bank_vsync_count <= 16'd0;
+			frames_done_d1 <= 16'd0;
+			frames_done_d2 <= 16'd0;
+			bank_plxd_swap_d <= 1'b0;
+			bank_plxd_disp_d <= 1'b0;
 			vsync_t_d1 <= 1'b0;
 			vsync_t_d2 <= 1'b0;
 			vsync_t_seen <= 1'b0;
@@ -886,6 +999,8 @@ module ddr_frame_store #(
 			swap_pending_d2 <= swap_pending_d1;
 			pending_bank_d1 <= pending_bank;
 			pending_bank_d2 <= pending_bank_d1;
+			frames_done_d1 <= frames_done;
+			frames_done_d2 <= frames_done_d1;
 
 			// want_y: Gray-coded 2-FF sync (crossing #13)
 			want_y_gray_s1 <= want_y_gray;
@@ -898,21 +1013,26 @@ module ddr_frame_store #(
 			bank_sel_d1 <= bank_sel;
 			bank_sel_d2 <= bank_sel_d1;
 
-			// status_osd: toggle-snapshot CDC (crossing #14)
-			status_osd_tog_s1 <= status_osd_toggle;
-			status_osd_tog_s2 <= status_osd_tog_s1;
-			if (status_osd_tog_s2 != status_osd_tog_seen) begin
-				status_osd_safe <= status_osd_hold;
-				status_osd_tog_seen <= status_osd_tog_s2;
-			end
+			status_osd_s1 <= status_osd_hold;
+			status_osd_s2 <= status_osd_s1;
+			status_osd_s3 <= status_osd_s2;
+			if (status_osd_s2 == status_osd_s3)
+				status_osd_safe <= status_osd_s3;
 
-			// sdram_status: toggle-snapshot CDC (crossing #15)
-			sdram_status_tog_s1 <= sdram_status_toggle;
-			sdram_status_tog_s2 <= sdram_status_tog_s1;
-			if (sdram_status_tog_s2 != sdram_status_tog_seen) begin
-				sdram_status_safe <= sdram_status_hold;
-				sdram_status_tog_seen <= sdram_status_tog_s2;
+			sdram_status_s1 <= sdram_status_hold;
+			sdram_status_s2 <= sdram_status_s1;
+			sdram_status_s3 <= sdram_status_s2;
+			if (sdram_status_s2 == sdram_status_s3)
+				sdram_status_safe <= sdram_status_s3;
+
+			frame_miss_tog_s1 <= frame_miss_toggle;
+			frame_miss_tog_s2 <= frame_miss_tog_s1;
+			if (frame_miss_tog_s2 != frame_miss_tog_seen) begin
+				frame_miss_tog_seen <= frame_miss_tog_s2;
+				if (frame_underrun_ddr != 16'hFFFF)
+					frame_underrun_ddr <= frame_underrun_ddr + 16'd1;
 			end
+			frame_status_ddr <= {frame_underrun_ddr, debug_state};
 
 			mbox_hb <= mbox_hb + 18'd1;
 			if (!mbox_valid || (status_osd_safe != mbox_last) || (mbox_hb == 18'd0))
@@ -921,7 +1041,7 @@ module ddr_frame_store #(
 			if (!sdram_mbox_valid || (sdram_status_safe != sdram_mbox_last) || (sdram_mbox_hb == 18'd0))
 				sdram_mbox_req <= 1'b1;
 			frame_mbox_hb <= frame_mbox_hb + 18'd1;
-			if (!frame_mbox_valid || ({underrun_count, debug_state} != frame_mbox_last) || (frame_mbox_hb == 18'd0))
+			if (!frame_mbox_valid || (frame_status_ddr != frame_mbox_last) || (frame_mbox_hb == 18'd0))
 				frame_mbox_req <= 1'b1;
 
 			// PLXD bank-release: vsync toggle sync and heartbeat
@@ -930,6 +1050,14 @@ module ddr_frame_store #(
 			if (vsync_t_d2 != vsync_t_seen) begin
 				vsync_t_seen <= vsync_t_d2;
 				bank_vsync_count <= bank_vsync_count + 16'd1;
+				bank_mbox_req <= 1'b1;
+			end
+			// Fresher free_mask: republish when swap_pending or disp_bank changes,
+			// not only on vsync/heartbeat. Closes the stale-free window that lets
+			// ARM overwrite the new display bank under playback-rate presents.
+			if ((swap_pending_d2 != bank_plxd_swap_d) || (disp_bank_d2 != bank_plxd_disp_d)) begin
+				bank_plxd_swap_d <= swap_pending_d2;
+				bank_plxd_disp_d <= disp_bank_d2;
 				bank_mbox_req <= 1'b1;
 			end
 			bank_mbox_hb <= bank_mbox_hb + 18'd1;
@@ -968,17 +1096,33 @@ module ddr_frame_store #(
 
 			case (state_ddr)
 				S_IDLE: begin
-					pending_ready_ddr <= swap_pending_d2 &&
-					                     (sched_valid ? (sched_for_pending && sched_pending_ready) : pending_ready_c);
+					// Product (PENDING_READY_STICKY_PREP=1): once prep lines are
+					// complete, keep pending_ready high even while IDLE schedules
+					// a *current* refill. Legacy ternary
+					//   sched_valid ? (sched_for_pending && sched_pending_ready)
+					//               : pending_ready_c
+					// clears ready whenever sched_valid && !sched_for_pending —
+					// continuous need_y_cur under src_y_line (beam-tracking want_y
+					// through VBlank) then misses the 1-cycle vsync swap window and
+					// freezes bank0 (silicon 9eb1431a). Do not revive FORCE_TOP.
+					if (PENDING_READY_STICKY_PREP) begin
+						pending_ready_ddr <= swap_pending_d2 &&
+						                     (pending_ready_c ||
+						                      (sched_valid && sched_for_pending && sched_pending_ready));
+					end else begin
+						pending_ready_ddr <= swap_pending_d2 &&
+						                     (sched_valid ? (sched_for_pending && sched_pending_ready)
+						                                  : pending_ready_c);
+					end
 					poll_div <= poll_div + 16'd1;
 					if (frame_mbox_req && (!frame_mbox_valid || poll_div[7:0] == 8'd224)
 					    && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						DDRAM_ADDR <= FRAME_MAILBOX_W;
 						DDRAM_BURSTCNT <= 8'd1;
-						DDRAM_DIN <= {underrun_count, debug_state, frame_mbox_seq + 8'd1, MAGIC_F};
+						DDRAM_DIN <= {frame_status_ddr, frame_mbox_seq + 8'd1, MAGIC_F};
 						DDRAM_WE <= 1'b1;
 						frame_mbox_seq <= frame_mbox_seq + 8'd1;
-						frame_mbox_last <= {underrun_count, debug_state};
+						frame_mbox_last <= frame_status_ddr;
 						frame_mbox_valid <= 1'b1;
 						frame_mbox_req <= 1'b0;
 						state_ddr <= S_WRITE_WAIT;
@@ -987,9 +1131,14 @@ module ddr_frame_store #(
 						// PLXD bank-release: tell ARM which bank is safe to write
 						// Layout: [63:48] frames_done, [35] swap_pending,
 						//   [34] disp_bank, [33:32] free_bank_mask, [31:0] magic
+						// frames_done MUST be the real swap counter (not
+						// bank_vsync_count). Packing vsync kept PLXD "live" while
+						// swaps stuck — ARM stale detector could not fire
+						// (playback freeze class on c5382bee). ARM now also
+						// gates on free/disp identity; keep ABI honest.
 						DDRAM_ADDR <= BANK_MAILBOX_W;
 						DDRAM_BURSTCNT <= 8'd1;
-						DDRAM_DIN <= {bank_vsync_count,                    // [63:48] frames_done
+						DDRAM_DIN <= {frames_done_d2,                       // [63:48] real swaps (CDC)
 						              12'd0,                                // [47:36] reserved
 						              swap_pending_d2,                      // [35]
 						              disp_bank_d2,                         // [34]
@@ -1172,5 +1321,26 @@ module ddr_frame_store #(
 			endcase
 		end
 	end
+endmodule
 
+module mplex_hold_lcell (
+	input  wire din,
+	output wire dout
+);
+`ifdef VERILATOR
+	assign dout = din;
+`else
+	cyclonev_lcell_comb #(
+		.lut_mask(64'hAAAAAAAAAAAAAAAA),
+		.dont_touch("on")
+	) hold_lcell (
+		.dataa(din),
+		.datab(1'b0),
+		.datac(1'b0),
+		.datad(1'b0),
+		.datae(1'b0),
+		.dataf(1'b0),
+		.combout(dout)
+	);
+`endif
 endmodule

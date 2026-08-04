@@ -93,9 +93,25 @@ int main() {
     EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
                          "past_last_row = (py >= V_STORE)"),
            "past_last_row vs V_STORE");
-    EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
-                         ".CODED_W(DDR_FRAME_CODED_WIDTH)"),
-           "ddr_frame_store CODED_W from layout params");
+    // Product 480p: CODED_W resolves to DDR_FRAME_CODED_WIDTH. Shared ABI
+    // (ddr_frame_abi_select.svh) ternary-selects 720P_* when FRAME is 1280×720;
+    // false branch MUST remain DDR_FRAME_CODED_WIDTH. present_core ports
+    // .CODED_W(FS_CODED_W) with FS_CODED_W = DDR_FS_CODED_W.
+    {
+        const bool coded_direct = file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
+                                                ".CODED_W(DDR_FRAME_CODED_WIDTH)");
+        const bool coded_fs = file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
+                                            ".CODED_W(FS_CODED_W)");
+        const bool coded_ternary = file_contains(
+            "fpga/Plex_MiSTer/rtl/ddr_frame_abi_select.svh",
+            "DDR_FS_USE_720P_ABI ? DDR_FRAME_720P_CODED_WIDTH : DDR_FRAME_CODED_WIDTH");
+        const bool fs_from_abi = file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
+                                               "FS_CODED_W     = DDR_FS_CODED_W") ||
+                                 file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
+                                               "FS_CODED_W = DDR_FS_CODED_W");
+        EXPECT(coded_direct || (coded_fs && coded_ternary && fs_from_abi),
+               "ddr_frame_store CODED_W from layout params");
+    }
     // Honest swap pack must ship with this RBF for skip instrumentation.
     EXPECT(file_contains("fpga/Plex_MiSTer/rtl/ddr_frame_store.sv",
                          "DDRAM_DIN <= {frames_done_d2"),
