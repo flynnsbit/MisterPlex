@@ -46,9 +46,11 @@ Fitter Resource Utilization by Entity, leaf `|line_buf_ram:gen_line[*].{y,u,v}ra
 | U/V | 80 | 5120 | **2** each (same as 480p chroma pattern) |
 
 Per slot EST **6 M10K** — same structure as 480p fit, **not** 1 M10K/luma-line.
-At LINE_COUNT=16 (720p blackout floor in abi_select): EST **96 M10K** linebufs alone.
-**Closes only with a 720p-enabled fit entity row.** Packed 40-bit would change this
-and is a separate architectural choice (5 px/word).
+LINE_SLOTS = LINE_COUNT×2. At LINE_COUNT=16 → **32 slots × 6 = 192 M10K EST**
+(rd-duck confirmed). Prior “96” was a slots/2 slip — **retracted**.
+Alternates (not product RTL): byte-wide 1K×8 → 4/slot×32 = **128**; pack40 →
+3/slot×32 = **96** but needs 64↔40 gearbox + PPC/scaler straddle handling.
+**Closes only with a 720p-enabled fit entity row.**
 
 ## w-path module M10K table (republished)
 

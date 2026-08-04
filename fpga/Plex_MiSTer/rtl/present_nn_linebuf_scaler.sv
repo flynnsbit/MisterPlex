@@ -12,9 +12,11 @@
 //    Not 16: store already pays DDR look-ahead LINE_COUNT 8/16 — do not double.
 //
 // Q2 Drop scale stage by buffering more into 356 M10K?
-//    Full 720p I420 bit-ideal ≈ 1078 M10K; naive 1K×8 ≈ 2160 M10K — neither
-//    fits (plex_m10k_geom.svh). Free luma lines: 178 (naive x8) or 356 (pack40).
-//    => Keep thin line hold + NN map. Do NOT build frame-BRAM scaler.
+//    Full 720p I420 bit-ideal ≈ 1078; naive_x8 ≈ 2160 — neither fits.
+//    Product store linebufs alone @720p LINE_COUNT=16: **192 M10K EST**
+//    (64b qword class, rd-duck; 32 slots × 6). Headroom ≈164 for copy+scaler+OSD.
+//    Free pure-luma lines if no store: 178 naive_x8 / 356 pack40.
+//    => Keep thin LINE_HOLD=2 + NN map. Do NOT build frame-BRAM scaler.
 //
 // Q3 DDR BW vs present reader?
 //    Each wr_line_done ≡ one content line fetch (if fed from DDR).

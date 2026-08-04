@@ -65,6 +65,21 @@ def main() -> int:
         return fail("free luma lines naive x8 must be 178")
     print("OK free luma lines: 178 naive_x8 / 356 pack40")
 
+    # rd-duck MEASURED product store is 64b qword class, not byte-wide
+    if "PLEX_M10K_STORE_LINEBUF_480P_MEASURED" not in geom:
+        return fail("geom missing 480p linebuf MEASURED pin")
+    if not re.search(r"PLEX_M10K_STORE_LINEBUF_480P_MEASURED\s*=\s*96", geom):
+        return fail("480p store linebuf must pin 96 MEASURED")
+    if not re.search(r"PLEX_M10K_STORE_LINEBUF_720P_64B_EST\s*=\s*192", geom):
+        return fail("720p 64b linebuf EST must be 192 (32 slots × 6)")
+    if "96 M10K EST" in geom and "192" not in geom:
+        return fail("retracted 720p=96 slip still sole claim")
+    # NEGATIVE: 720p EST must not equal 480p measured (slots doubled)
+    if re.search(r"PLEX_M10K_STORE_LINEBUF_720P_64B_EST\s*=\s*96\b", geom):
+        return fail("NEGATIVE: 720p 64b EST must not be 96 (that was slots/2 slip)")
+    print("OK store linebuf: 480p 96 MEASURED (64b); 720p 192 EST (64b class)")
+    print("OK alternates noted: naive_x8 128 / pack40 96 (gearbox)")
+
     # Q1 LINE_HOLD=2
     if not re.search(r"LINE_HOLD\s*=\s*2", sv):
         return fail("default LINE_HOLD must be 2")
