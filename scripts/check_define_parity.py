@@ -69,14 +69,21 @@ DDR_LAYOUT_PAIRS_720P: tuple[tuple[str, str], ...] = (
     ("kPlex720pPresentedHeight", "DDR_FRAME_720P_PRESENTED_HEIGHT"),
     ("kPlex720pPillarboxLeft", "DDR_FRAME_720P_PILLARBOX_LEFT"),
     ("kPlex720pPillarboxRight", "DDR_FRAME_720P_PILLARBOX_RIGHT"),
+    ("kPlex720pYuvLumaLineQwords", "DDR_FRAME_720P_YUV_LUMA_LINE_QWORDS"),
+    ("kPlex720pYuvChromaLineQwords", "DDR_FRAME_720P_YUV_CHROMA_LINE_QWORDS"),
     ("kPlex720pYStrideBytes", "DDR_FRAME_720P_Y_STRIDE_BYTES"),
     ("kPlex720pChromaStrideBytes", "DDR_FRAME_720P_CHROMA_STRIDE_BYTES"),
     ("kPlex720pYuv420pBytes", "DDR_FRAME_720P_YUV420P_BYTES"),
+    ("kPlex720pYPlaneOffset", "DDR_FRAME_720P_Y_PLANE_OFFSET"),
+    ("kPlex720pUPlaneOffset", "DDR_FRAME_720P_U_PLANE_OFFSET"),
+    ("kPlex720pVPlaneOffset", "DDR_FRAME_720P_V_PLANE_OFFSET"),
     ("kPlex720pYuv420pBankStride", "DDR_FRAME_720P_YUV420P_BANK_STRIDE"),
     ("kPlex720pPhysBase", "DDR_FRAME_720P_PHYS_BASE"),
     ("kPlex720pYuv420pDoorbellPhys", "DDR_FRAME_720P_YUV420P_DOORBELL_PHYS"),
     ("kPlex720pCropLeft", "DDR_FRAME_720P_CROP_LEFT"),
+    ("kPlex720pCropRight", "DDR_FRAME_720P_CROP_RIGHT"),
     ("kPlex720pCropTop", "DDR_FRAME_720P_CROP_TOP"),
+    ("kPlex720pCropBottom", "DDR_FRAME_720P_CROP_BOTTOM"),
 )
 
 
