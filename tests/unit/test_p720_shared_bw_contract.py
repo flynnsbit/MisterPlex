@@ -100,12 +100,20 @@ def main() -> int:
         fails.append("real_reader tb path missing")
 
     ps = c.get("proof_status", {})
-    if ps.get("reader_payload_beat_delta_TB") != "MEASURED":
-        fails.append("proof_status.reader_payload_beat_delta_TB must be MEASURED")
+    if ps.get("class") != "STRESS_EVIDENCE":
+        fails.append("proof_status.class must be STRESS_EVIDENCE (not CLOSED)")
+    rstat = str(ps.get("reader_payload_beat_delta_TB", ""))
+    if "MEASURED" not in rstat:
+        fails.append("proof_status.reader_payload_beat_delta_TB must be MEASURED*")
     if ps.get("reader_delivery_correctness") != "OPEN":
         fails.append("proof_status.reader_delivery_correctness must stay OPEN")
     if ps.get("hps_write_concurrent_same_controller") != "OPEN":
         fails.append("hps_write must stay OPEN")
+    if "reader CLOSED" not in str(ps.get("NOT", [])):
+        fails.append("proof_status.NOT must forbid bare reader CLOSED")
+    g0 = ps.get("G0", {})
+    if g0.get("payload_beats") != 173120:
+        fails.append("G0 payload must lock 173120 (ideal+2 Y lines)")
     if "w-mem" not in c.get("agreed_by", []):
         fails.append("agreed_by must include w-mem (three-lane lock)")
 

@@ -6,18 +6,16 @@
 // Numbers lock with misterplex_bw_contract.svh (w-clock SoT stamp) and
 // tests/fixtures/p720_bw_contract.json. P720_* names match w-mem consumers.
 //
-// STATUS SPLIT (do not collapse into one "fabric BW" blob):
-//   reader_payload_beat_delta_TB:
-//     MEASURED — w-clock tests/unit/test_ddr_frame_store_720p_ppc2_bus.sh
-//     G0 payload=173120 door=9689 total=182809 ddr_cy=2784152 @20:90 PPC2 LINE=16
-//     Synthetic scan; NOT product rate-match glass delivery.
-//   reader_delivery_correctness: OPEN
-//     product rate-match beam, dual-lane pixel checksum, glass underrun@CEA
+// STATUS SPLIT (rd-duck; do not collapse / do not say bare CLOSED):
+//   reader TB class: STRESS_EVIDENCE (825*750@20M ~32.3fps; not product rate-match).
+//   reader_payload_beat_delta_TB: MEASURED_TIGHT — G0 payload==173120 (=172800+2*160 Y),
+//     Y/U/V=115520/28800/28800, returned==accepted, ddr_cy<3750000.
+//   G1: payload==173120 (no 3x band) + ddr budget + busy/blocked (not wall-time).
+//   G2 NEG: starve_dout after prep → steady deadline fail (discrimination proven).
+//   reader_delivery_correctness: OPEN (G0 underrun_delta=77; no pixel checksum).
 //   hps_write_concurrent + T_copy_e2e: OPEN (w-mem / w-path / parent)
-//     HOST write is /dev/mem memcpy — T_copy_arm=14.978 ms/frame CPU TIME
-//   Forbidden unsplit labels: fabric_bw_closed; bare "reader CLOSED"
-//
-// 33.1776/66.3552/0.09216 = frame-store payload / ideal 64b port math ONLY.
+//   Forbidden: reader CLOSED; fabric_bw_closed; fit_blocker_release by this TB.
+// 33.1776/66.3552 = frame-store payload / ideal 64b port math ONLY.
 // NOT measured sustainable DDR BW; NOT total controller traffic with HPS write.
 
 `ifndef PLEX_720P_BW_CONTRACT_SVH

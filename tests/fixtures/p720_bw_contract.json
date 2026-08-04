@@ -74,7 +74,12 @@
       "budget_ddr_24fps": 3750000,
       "max_burst": 128,
       "underrun_delta": 77,
-      "underrun_note": "TB synthetic scan; non-zero keeps reader_delivery_correctness OPEN"
+      "underrun_note": "TB synthetic scan; non-zero keeps reader_delivery_correctness OPEN",
+      "extra_y_line_beats": 320,
+      "Y": 115520,
+      "U": 28800,
+      "V": 28800,
+      "returned_beats": 182809
     },
     "G1_stall": {
       "payload_beats": 173120,
@@ -88,10 +93,12 @@
       "I420_amort_B_per_2px_group": 3,
       "headline_MB_s_dir": 33.1776
     },
-    "status": "MEASURED_payload_beat_delta_TB_not_delivery",
+    "status": "STRESS_EVIDENCE_MEASURED_TIGHT_not_CLOSED",
     "open_items": [
-      "reader_delivery_correctness_product_beam",
-      "concurrent_HPS_write_beats_same_controller_w_mem",
+      "reader_delivery_correctness",
+      "product_rate_match_integration",
+      "dual_lane_checksum",
+      "concurrent_HPS_write",
       "T_copy_arm_e2e"
     ],
     "not_partial": "full_1280x720_PPC2_20_90_not_624x48_not_1to1_not_prep_only"
@@ -120,39 +127,68 @@
     "path_b_fabric_dma": "retires T_copy_arm; w-mem/w-path build; w-clock clocks+CDC"
   },
   "proof_status": {
-    "reader_payload_beat_delta_TB": "MEASURED",
-    "owner_measured": "w-clock",
+    "class": "STRESS_EVIDENCE",
+    "reader_payload_beat_delta_TB": "MEASURED_TIGHT",
+    "owner": "w-clock",
     "tb": "tests/unit/test_ddr_frame_store_720p_ppc2_bus.sh",
-    "G0_payload_beats": 173120,
-    "G0_total_rd_beats": 182809,
-    "G0_checks": [
-      "payload>=172800",
-      "door>0",
-      "ddr_cy<3750000",
-      "beat_conservation",
-      "underrun_measured_not_forced_zero"
+    "NOT": [
+      "reader CLOSED",
+      "product rate-match integration",
+      "fabric_bw_closed",
+      "fit_blocker_release"
     ],
+    "beam_note": "825*750@20MHz ~32.323fps isolated store stress; not product 24fps rate-match",
+    "G0": {
+      "payload_beats": 173120,
+      "derived": "172800 I420 + 2*160 Y-line prefetch = 320",
+      "Y_U_V_pad": [
+        115520,
+        28800,
+        28800,
+        0
+      ],
+      "returned_eq_accepted": 182809,
+      "door": 9689,
+      "ddr_cy": 2784152,
+      "underrun_delta": 77,
+      "checks": [
+        "payload==173120 exact",
+        "plane lock",
+        "returned==accepted",
+        "class conservation",
+        "ddr_cy<3750000"
+      ]
+    },
+    "G1": {
+      "payload_beats": 173120,
+      "no_3x_band": true,
+      "ddr_cy_budget": true,
+      "blocked": 1248,
+      "busy_gt_G0": true,
+      "underrun_delta": 78,
+      "criterion": "busy/blocked coupling \u2014 NOT wall-time (beam-locked)"
+    },
+    "G2_NEG": {
+      "mutant": "starve_dout after healthy prep",
+      "result": "STEADY_FAIL deadline; accepted=128 returned=0 underrun=65535",
+      "discrimination": "deadline_fail=1"
+    },
     "reader_delivery_correctness": "OPEN",
     "open_delivery": [
-      "product_rate_match_beam",
-      "dual_lane_pixel_checksum",
-      "glass_underrun_CEA"
+      "underrun!=0 on G0",
+      "no dual-lane pixel checksum",
+      "no product rate-match beam"
     ],
     "hps_write_concurrent_same_controller": "OPEN",
     "T_copy_arm_e2e_serial_or_overlap": "OPEN",
-    "fabric_dma_path_b": "NOT_BUILT",
-    "do_not_say": [
-      "fabric_bw_closed",
-      "bare reader CLOSED without qualifier",
-      "unsplit fabric BW proof_gap OPEN"
-    ],
-    "three_lane_svh": "fpga/Plex_MiSTer/rtl/plex_720p_bw_contract.svh",
-    "agreed_by": [
-      "w-clock",
-      "w-scaler",
-      "w-mem"
-    ],
-    "G0_underrun_delta": 77,
-    "why_delivery_open": "G0 underrun_delta=77 on TB scan; product rate-match/checksum unproven"
+    "rd_duck_ack_holes_addressed": [
+      "G1 payload upper bound ==173120",
+      "G1 ddr_cy budget",
+      "+320 derived as 2 Y lines",
+      "returned beat conservation",
+      "G2 NEG discrimination",
+      "still no underrun==0 force (would false-green)",
+      "still no product rate-match"
+    ]
   }
 }

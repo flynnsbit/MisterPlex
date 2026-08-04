@@ -1,15 +1,16 @@
-// Full 1280×720 real-reader beat delta @ MULTI+PPC2, clk 20:90 (w-clock / rd-duck).
+// Full 1280x720 real-reader beat delta @ MULTI+PPC2, clk 20:90 (w-clock / rd-duck).
 //
-// Measures accepted DDRAM RD beats between successive frames_done edges
-// (steady frame delta — NOT prep-only). Classifies payload vs doorbell/mailbox.
+// Isolated ddr_frame_store stress — NOT product present_pix_rate_match integration.
+// Beam 825*750 @20 MHz ~32.323 fps (conservative vs 24 fps glass).
+// Status: STRESS_EVIDENCE only. delivery_correctness OPEN (underrun/checksum/rate-match).
+// Fit blocker NOT released by this TB.
 //
-// PRE-REG (publish before measure):
-//   payload ideal = 172800 beats (1382400/8)
-//   steady payload_delta ∈ [172800, 172800*3]  (1× fill .. 3× refill bound)
-//   doorbell_delta > 0
-//   G0 ddr_cycles for one frame_delta < 3750000 (90e6/24)
-//   G1 stall: completes, rd_blocked>0, wall ddr_cycles > G0
-//   PPC=2: rd_x steps by 2; PX_PER_CLK=2 in DUT
+// PRE-REG (rd-duck tightened):
+//   I420 ideal 172800; DERIVED +2 Y lines = 320 -> payload == 173120 exact
+//   G0: Y/U/V/pad lock; returned==accepted; class conservation; ddr_cy<3750000
+//   G1: payload==173120 (no 3x band); ddr_cy budget; blocked>=10; busy>G0
+//   G2 NEG: starve_dout AFTER prep -> steady deadline fail
+//   PPC=2: rd_x step 2; PX_PER_CLK=2
 
 #include "Vddr_frame_store_720p_ppc2_bus_tb.h"
 #include "verilated.h"
@@ -35,9 +36,17 @@ constexpr int kUQwords = (kCodedW * kCodedH) / 32; // 28800 U qwords
 constexpr int kVBaseQ = kUQBase + kUQwords;        // 144000 V base
 // Total payload qwords = 115200+28800+28800 = 172800
 constexpr uint64_t kPayloadBeatsIdeal = 172800ull;
+// Derived (plane split): +2 Y-line refills under LINE=16 pipeline @ this TB.
+// 2 * Y_LINE_QWORDS(160) = 320 → expected payload 173120. Locked, not a slop band.
+constexpr uint64_t kExtraYLineBeats = 2ull * static_cast<uint64_t>(kYQ); // 320
+constexpr uint64_t kPayloadBeatsExpected = kPayloadBeatsIdeal + kExtraYLineBeats; // 173120
+constexpr uint64_t kYBeatsExpected = static_cast<uint64_t>(kUQBase) + kExtraYLineBeats; // 115520
+constexpr uint64_t kUBeatsExpected = static_cast<uint64_t>(kUQwords); // 28800
+constexpr uint64_t kVBeatsExpected = static_cast<uint64_t>(kUQwords); // 28800
 constexpr uint64_t kBudgetDdrCycles24 = 3750000ull; // 90e6/24
 
 // Beam on clk_sys: MULTI-class groups (2 px/clk). CEA-ish totals halved in X.
+// NOTE: free-running 825*750 @20MHz ≈ 32.323 fps — not product 24 fps rate-match.
 constexpr int kHActiveG = kCodedW / kPPC; // 640
 constexpr int kVActive = kCodedH;         // 720
 constexpr int kHTotalG = 825;             // 1650/2
@@ -60,7 +69,12 @@ uint64_t pack8(uint8_t v) {
 
 struct Stats {
 	uint64_t accepted_rd_beats = 0;
+	uint64_t returned_rd_beats = 0; // DOUT_READY pulses
 	uint64_t payload_beats = 0;
+	uint64_t payload_y = 0;
+	uint64_t payload_u = 0;
+	uint64_t payload_v = 0;
+	uint64_t payload_pad = 0; // bank window but outside I420 planes
 	uint64_t doorbell_beats = 0;
 	uint64_t other_beats = 0;
 	uint64_t busy_cycles = 0;
@@ -84,6 +98,9 @@ struct BusModel {
 	int hog_len = 0;
 	int hog_cnt = 0;
 	int hog_left = 0;
+	// G2 NEG: accept RD addresses but never return DOUT (starves refill).
+	bool starve_dout = false;
+	uint64_t accept_cap = 0; // 0=unlimited accepts; else stop accepting after N beats
 
 	int hc = 0;
 	int vc = 0;
@@ -138,15 +155,30 @@ struct BusModel {
 		const uint64_t n = static_cast<uint64_t>(nbeats);
 		st.accepted_rd_beats += n;
 		const uint32_t door_q = kDoorbellPhys >> 3;
-		// Bank payload window: two banks from PHYS_BASE
 		const uint32_t bank0 = kBasePhys >> 3;
 		const uint32_t bank_end = bank0 + (2u * kBankStrideBytes) / 8u;
+		const uint32_t bank_qw = kBankStrideBytes / 8u;
 		if (addr_q >= door_q && addr_q < door_q + 64u) {
 			st.doorbell_beats += n;
-		} else if (addr_q >= bank0 && addr_q < bank_end) {
-			st.payload_beats += n;
-		} else {
+			return;
+		}
+		if (addr_q < bank0 || addr_q >= bank_end) {
 			st.other_beats += n;
+			return;
+		}
+		st.payload_beats += n;
+		// Per-beat plane split inside bank (I420 packed at bank base).
+		for (int i = 0; i < nbeats; ++i) {
+			const uint32_t aq = addr_q + static_cast<uint32_t>(i);
+			const uint32_t off = (aq - bank0) % bank_qw; // bank-relative qword
+			if (off < static_cast<uint32_t>(kUQBase))
+				++st.payload_y;
+			else if (off < static_cast<uint32_t>(kVBaseQ))
+				++st.payload_u;
+			else if (off < static_cast<uint32_t>(kPayloadBeatsIdeal))
+				++st.payload_v;
+			else
+				++st.payload_pad;
 		}
 	}
 
@@ -174,26 +206,40 @@ struct BusModel {
 		if (rdDelay > 0) {
 			--rdDelay;
 		} else if (rdDelay == 0 && rdLeft > 0) {
-			const uint32_t idx = addrOffQ(rdAddr) + static_cast<uint32_t>(rdIndex);
-			top.DDRAM_DOUT = (idx < mem.size()) ? mem[idx] : 0;
-			top.DDRAM_DOUT_READY = 1;
-			++rdIndex;
-			--rdLeft;
-			if (rdLeft == 0)
-				rdDelay = -1;
-			else
-				rdDelay = 0;
+			if (starve_dout) {
+				// Hold outstanding read forever — no DOUT_READY.
+				top.DDRAM_DOUT_READY = 0;
+			} else {
+				const uint32_t idx = addrOffQ(rdAddr) + static_cast<uint32_t>(rdIndex);
+				top.DDRAM_DOUT = (idx < mem.size()) ? mem[idx] : 0;
+				top.DDRAM_DOUT_READY = 1;
+				++st.returned_rd_beats;
+				++rdIndex;
+				--rdLeft;
+				if (rdLeft == 0)
+					rdDelay = -1;
+				else
+					rdDelay = 0;
+			}
 		}
 
 		if (top.DDRAM_RD && busy == 0 && hog_left == 0 && rdDelay < 0) {
-			rdAddr = top.DDRAM_ADDR;
-			rdLeft = top.DDRAM_BURSTCNT ? top.DDRAM_BURSTCNT : 1;
-			if (static_cast<uint64_t>(rdLeft) > st.max_burst)
-				st.max_burst = static_cast<uint64_t>(rdLeft);
-			rdIndex = 0;
-			rdDelay = kRdDelay;
-			classifyAccept(rdAddr, rdLeft);
-			busy = 1 + stall_after_accept;
+			const int want = top.DDRAM_BURSTCNT ? top.DDRAM_BURSTCNT : 1;
+			if (accept_cap && st.accepted_rd_beats + static_cast<uint64_t>(want) > accept_cap) {
+				// Refuse further accepts — bus looks permanently busy.
+				top.DDRAM_BUSY = 1;
+				++st.busy_cycles;
+				++st.rd_blocked;
+			} else {
+				rdAddr = top.DDRAM_ADDR;
+				rdLeft = want;
+				if (static_cast<uint64_t>(rdLeft) > st.max_burst)
+					st.max_burst = static_cast<uint64_t>(rdLeft);
+				rdIndex = 0;
+				rdDelay = kRdDelay;
+				classifyAccept(rdAddr, rdLeft);
+				busy = 1 + stall_after_accept;
+			}
 		}
 		if (top.DDRAM_WE && busy == 0 && hog_left == 0) {
 			const uint32_t idx = addrOffQ(top.DDRAM_ADDR);
@@ -291,12 +337,17 @@ struct FrameDelta {
 	bool ok = false;
 };
 
-FrameDelta measureSteadyFrame(int stall_after, int hog_period, int hog_len) {
+FrameDelta measureSteadyFrame(int stall_after, int hog_period, int hog_len,
+                              bool starve_dout_after_prep = false,
+                              uint64_t accept_cap_after_prep = 0) {
 	FrameDelta out;
 	BusModel sim;
 	sim.stall_after_accept = stall_after;
 	sim.hog_period = hog_period;
 	sim.hog_len = hog_len;
+	// Prep always healthy — mutants apply only on the steady window.
+	sim.starve_dout = false;
+	sim.accept_cap = 0;
 	sim.fillBank(0);
 	sim.resetCore();
 
@@ -315,11 +366,20 @@ FrameDelta measureSteadyFrame(int stall_after, int hog_period, int hog_len) {
 	const uint16_t fd1 = sim.top.frames_done;
 	out.underrun_start = sim.top.underrun_count;
 	sim.clearStats();
+	sim.starve_dout = starve_dout_after_prep;
+	sim.accept_cap = accept_cap_after_prep;
 	// Re-ring so next frame is available (double-buffer style present).
 	sim.ringDoorbell(0, 2);
 	if (!sim.waitFrameDelta(fd1, prep_timeout)) {
-		std::printf("STEADY_FAIL fd=%u beats=%llu\n", (unsigned)sim.top.frames_done,
-		            (unsigned long long)sim.st.accepted_rd_beats);
+		std::printf("STEADY_FAIL fd=%u beats=%llu returned=%llu underrun=%u\n",
+		            (unsigned)sim.top.frames_done,
+		            (unsigned long long)sim.st.accepted_rd_beats,
+		            (unsigned long long)sim.st.returned_rd_beats,
+		            (unsigned)sim.top.underrun_count);
+		out.s = sim.st;
+		out.frames_done = sim.top.frames_done;
+		out.underrun_end = sim.top.underrun_count;
+		out.ok = false; // deadline miss on steady window
 		return out;
 	}
 	out.s = sim.st;
@@ -334,29 +394,43 @@ FrameDelta measureSteadyFrame(int stall_after, int hog_period, int hog_len) {
 int main(int argc, char** argv) {
 	Verilated::commandArgs(argc, argv);
 
-	std::printf("PRE-REG 720p_ppc2_bus:\n");
-	std::printf("  payload_ideal=%llu\n", (unsigned long long)kPayloadBeatsIdeal);
-	std::printf("  steady payload_delta in [%llu, %llu]\n",
+	std::printf("PRE-REG 720p_ppc2_bus (rd-duck tightened):\n");
+	std::printf("  I420_ideal=%llu extra_Y_lines=2 (+%llu) expected_payload=%llu\n",
 	            (unsigned long long)kPayloadBeatsIdeal,
-	            (unsigned long long)(kPayloadBeatsIdeal * 3ull));
-	std::printf("  doorbell_delta>0; G0 ddr_cycles/frame <%llu; G1 busy↑+blocked (beam-locked wall)\n",
+	            (unsigned long long)kExtraYLineBeats,
+	            (unsigned long long)kPayloadBeatsExpected);
+	std::printf("  Y/U/V expect=%llu/%llu/%llu; returned==accepted; class conservation\n",
+	            (unsigned long long)kYBeatsExpected,
+	            (unsigned long long)kUBeatsExpected,
+	            (unsigned long long)kVBeatsExpected);
+	std::printf("  G0/G1 ddr_cy<%llu; G1 payload==expected (no 3x band); busy↑ blocked>=10\n",
 	            (unsigned long long)kBudgetDdrCycles24);
+	std::printf("  G2 NEG: starve_dout AFTER prep → steady deadline fail\n");
+	std::printf("  beam 825*750@20M ≈32.323fps STRESS (not product rate-match 24fps)\n");
 	std::printf("  clocks 20:90 ps half=%lld/%lld PPC=%d LINE=16 PHYS=0x%08x\n",
 	            (long long)kHalfSysPs, (long long)kHalfDdrPs, kPPC, kBasePhys);
 
-	// Sanity of plane math
 	if (kUQBase + 2 * kUQwords != static_cast<int>(kPayloadBeatsIdeal))
 		return fail("plane qword math != 172800");
+	if (kPayloadBeatsExpected != 173120ull)
+		return fail("expected payload constant drift");
 
+	// ----- G0 ideal bus -----
 	FrameDelta g0 = measureSteadyFrame(0, 0, 0);
 	if (!g0.ok)
 		return fail("G0 steady frame delta not observed");
-	std::printf("CASE G0_steady EXECUTED payload=%llu door=%llu other=%llu total=%llu "
+	std::printf("CASE G0_steady EXECUTED payload=%llu door=%llu other=%llu total=%llu returned=%llu "
+	            "Y=%llu U=%llu V=%llu pad=%llu "
 	            "sys_cy=%llu ddr_cy=%llu busy=%llu blocked=%llu max_burst=%llu fd=%u\n",
 	            (unsigned long long)g0.s.payload_beats,
 	            (unsigned long long)g0.s.doorbell_beats,
 	            (unsigned long long)g0.s.other_beats,
 	            (unsigned long long)g0.s.accepted_rd_beats,
+	            (unsigned long long)g0.s.returned_rd_beats,
+	            (unsigned long long)g0.s.payload_y,
+	            (unsigned long long)g0.s.payload_u,
+	            (unsigned long long)g0.s.payload_v,
+	            (unsigned long long)g0.s.payload_pad,
 	            (unsigned long long)g0.s.sys_cycles,
 	            (unsigned long long)g0.s.ddr_cycles,
 	            (unsigned long long)g0.s.busy_cycles,
@@ -364,77 +438,105 @@ int main(int argc, char** argv) {
 	            (unsigned long long)g0.s.max_burst,
 	            (unsigned)g0.frames_done);
 
-	if (g0.s.payload_beats < kPayloadBeatsIdeal)
-		return fail("G0 payload_delta < 172800 (incomplete I420 read)");
-	if (g0.s.payload_beats > kPayloadBeatsIdeal * 3ull)
-		return fail("G0 payload_delta > 3x ideal (unbounded refill)");
+	if (g0.s.payload_beats != kPayloadBeatsExpected)
+		return fail("G0 payload_beats != derived 173120 (ideal+2 Y lines)");
+	if (g0.s.payload_y != kYBeatsExpected || g0.s.payload_u != kUBeatsExpected ||
+	    g0.s.payload_v != kVBeatsExpected || g0.s.payload_pad != 0)
+		return fail("G0 plane split Y/U/V/pad mismatch (extra must be Y-only)");
 	if (g0.s.doorbell_beats == 0)
 		return fail("G0 expected doorbell/mailbox RD in frame window");
 	if (g0.s.ddr_cycles >= kBudgetDdrCycles24)
 		return fail("G0 steady frame exceeded 24fps ddr cycle budget");
 	if (g0.s.max_burst < 2)
 		return fail("G0 expected burst>1");
-	// Beat conservation: classified parts sum to accepted (no silent loss).
 	if (g0.s.payload_beats + g0.s.doorbell_beats + g0.s.other_beats != g0.s.accepted_rd_beats)
 		return fail("G0 beat conservation: payload+door+other != total");
-	// Measure underrun; non-zero on synthetic scan keeps delivery_correctness OPEN
-	// (do not force underrun==0 here — G0 delta observed 77 @ tip).
-	std::printf("G0_UNDRUN start=%u end=%u delta=%u\n",
-	            (unsigned)g0.underrun_start, (unsigned)g0.underrun_end,
-	            (unsigned)(g0.underrun_end - g0.underrun_start));
+	if (g0.s.returned_rd_beats != g0.s.accepted_rd_beats)
+		return fail("G0 returned_rd_beats != accepted (missing DOUT)");
+	if (g0.s.payload_y + g0.s.payload_u + g0.s.payload_v + g0.s.payload_pad !=
+	    g0.s.payload_beats)
+		return fail("G0 plane sum != payload");
+
+	const unsigned g0_undr =
+	    static_cast<unsigned>(g0.underrun_end - g0.underrun_start);
+	std::printf("G0_UNDRUN start=%u end=%u delta=%u (delivery OPEN if !=0)\n",
+	            (unsigned)g0.underrun_start, (unsigned)g0.underrun_end, g0_undr);
 	if (g0.underrun_end < g0.underrun_start)
 		return fail("G0 underrun_count wrapped");
+	// Do NOT require underrun==0 here — that would false-green delivery.
 
-	std::printf("PASS G0 steady payload_delta=%llu (ideal %llu) overhead_total=%llu "
-	            "ddr_cy=%llu budget=%llu underrun_delta=%u\n",
+	std::printf("PASS G0 stress payload=%llu (=ideal+%llu Y) door=%llu returned=%llu "
+	            "ddr_cy=%llu underrun_delta=%u\n",
 	            (unsigned long long)g0.s.payload_beats,
-	            (unsigned long long)kPayloadBeatsIdeal,
-	            (unsigned long long)(g0.s.accepted_rd_beats - g0.s.payload_beats),
-	            (unsigned long long)g0.s.ddr_cycles,
-	            (unsigned long long)kBudgetDdrCycles24,
-	            (unsigned)(g0.underrun_end - g0.underrun_start));
+	            (unsigned long long)kExtraYLineBeats,
+	            (unsigned long long)g0.s.doorbell_beats,
+	            (unsigned long long)g0.s.returned_rd_beats,
+	            (unsigned long long)g0.s.ddr_cycles, g0_undr);
 
+	// ----- G1 mild stall (corrected criterion: NOT wall-time; busy/blocked + tight payload) -----
 	FrameDelta g1 = measureSteadyFrame(3, 8, 3);
 	if (!g1.ok)
 		return fail("G1 stalled steady frame not observed");
-	std::printf("CASE G1_stall EXECUTED payload=%llu door=%llu total=%llu "
-	            "sys_cy=%llu ddr_cy=%llu blocked=%llu\n",
+	std::printf("CASE G1_stall EXECUTED payload=%llu door=%llu total=%llu returned=%llu "
+	            "sys_cy=%llu ddr_cy=%llu blocked=%llu busy=%llu\n",
 	            (unsigned long long)g1.s.payload_beats,
 	            (unsigned long long)g1.s.doorbell_beats,
 	            (unsigned long long)g1.s.accepted_rd_beats,
+	            (unsigned long long)g1.s.returned_rd_beats,
 	            (unsigned long long)g1.s.sys_cycles,
 	            (unsigned long long)g1.s.ddr_cycles,
-	            (unsigned long long)g1.s.rd_blocked);
-	if (g1.s.payload_beats < kPayloadBeatsIdeal)
-		return fail("G1 payload incomplete");
+	            (unsigned long long)g1.s.rd_blocked,
+	            (unsigned long long)g1.s.busy_cycles);
+	if (g1.s.payload_beats != kPayloadBeatsExpected)
+		return fail("G1 payload_beats != 173120 (upper+lower locked; no 3x band)");
+	if (g1.s.ddr_cycles >= kBudgetDdrCycles24)
+		return fail("G1 exceeded 24fps ddr cycle budget");
 	if (g1.s.rd_blocked < 10)
 		return fail("G1 expected RD-while-BUSY observations");
-	// Beam is free-running on clk_sys CEA raster — wall ddr_cycles track beam
-	// period (825*750 sys → fixed), not bus backlog. Stall couples via BUSY
-	// duty + blocked accepts, not longer frame time.
 	if (g1.s.busy_cycles <= g0.s.busy_cycles)
 		return fail("G1 expected higher busy_cycles than G0 under stall/hog");
 	if (g1.s.payload_beats + g1.s.doorbell_beats + g1.s.other_beats != g1.s.accepted_rd_beats)
 		return fail("G1 beat conservation: payload+door+other != total");
-	// Stall may raise underrun — log only; G1 proves bus coupling, not glass DE.
-	std::printf("PASS G1 stall payload=%llu blocked=%llu busy=%llu (>G0 busy %llu) "
-	            "ddr_cy=%llu (beam-locked ~G0 %llu) underrun_delta=%u\n",
+	if (g1.s.returned_rd_beats != g1.s.accepted_rd_beats)
+		return fail("G1 returned_rd_beats != accepted");
+	const unsigned g1_undr =
+	    static_cast<unsigned>(g1.underrun_end - g1.underrun_start);
+	std::printf("PASS G1 mild-stall payload=%llu blocked=%llu busy=%llu (>G0 %llu) "
+	            "ddr_cy=%llu underrun_delta=%u\n",
 	            (unsigned long long)g1.s.payload_beats,
 	            (unsigned long long)g1.s.rd_blocked,
 	            (unsigned long long)g1.s.busy_cycles,
 	            (unsigned long long)g0.s.busy_cycles,
-	            (unsigned long long)g1.s.ddr_cycles,
-	            (unsigned long long)g0.s.ddr_cycles,
-	            (unsigned)(g1.underrun_end - g1.underrun_start));
+	            (unsigned long long)g1.s.ddr_cycles, g1_undr);
 
-	// Interface peak reminder (rd-duck): not the average headline
-	std::printf("NOTE iface_peaks: PPC2 group=6 RGB B/sysclk; I420 amort source=3 B/2px group; "
-	            "headline remains 33.1776 MB/s/dir avg — not 1.65888 for FIFO width\n");
-	std::printf("NOTE status_split: reader_payload_beat_delta_TB=MEASURED; "
-	            "reader_delivery_correctness=OPEN; hps_write+T_copy=OPEN; "
-	            "not fabric_bw_closed\n");
+	// ----- G2 NEG: starve DOUT after healthy prep — steady deadline must fail -----
+	// PRE-REG: starve_dout_after_prep=true → steady waitFrameDelta times out (!ok)
+	// with accepted>returned (outstanding starved). Proves gate goes red.
+	FrameDelta g2 = measureSteadyFrame(0, 0, 0, /*starve_after_prep=*/true, 0);
+	std::printf("CASE G2_NEG_starve_dout EXECUTED ok=%d payload=%llu returned=%llu "
+	            "blocked=%llu underrun_delta=%u\n",
+	            g2.ok ? 1 : 0,
+	            (unsigned long long)g2.s.payload_beats,
+	            (unsigned long long)g2.s.returned_rd_beats,
+	            (unsigned long long)g2.s.rd_blocked,
+	            g2.ok ? (unsigned)(g2.underrun_end - g2.underrun_start) : 0u);
+	const bool g2_deadline_fail = !g2.ok;
+	const bool g2_payload_fail =
+	    g2.ok && (g2.s.payload_beats < kPayloadBeatsIdeal / 2ull);
+	const bool g2_return_fail =
+	    g2.ok && (g2.s.returned_rd_beats + 1000ull < g2.s.accepted_rd_beats);
+	if (!g2_deadline_fail && !g2_payload_fail && !g2_return_fail)
+		return fail("G2 NEG starve mutant did not discriminate (expected !ok or starved returns)");
+	std::printf("PASS G2 NEG discrimination deadline_fail=%d payload_fail=%d return_fail=%d\n",
+	            g2_deadline_fail ? 1 : 0, g2_payload_fail ? 1 : 0, g2_return_fail ? 1 : 0);
+
+	std::printf("NOTE iface_peaks: PPC2 group=6 RGB B/sysclk; I420 amort=3 B/2px; "
+	            "headline 33.1776 MB/s/dir — not 1.65888 for FIFO\n");
+	std::printf("NOTE status: STRESS_EVIDENCE only; NOT product rate-match; "
+	            "NOT reader CLOSED; delivery OPEN (underrun/checksum/rate-match); "
+	            "NOT fabric_bw_closed; fit blocker NOT released by this TB\n");
 
 	std::printf("PASS ddr_frame_store_720p_ppc2_bus all "
-	            "(steady frame beat delta REAL store 20:90 PPC2)\n");
+	            "(tight beat lock + G2 NEG; stress not product integration)\n");
 	return 0;
 }
