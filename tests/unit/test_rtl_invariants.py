@@ -1232,9 +1232,12 @@ def check_present_geometry_stride_contract() -> None:
     if missing:
         fail(f"present geometry/stride contract: {missing[0]}")
 
-    # Default (non-L4) arm must still bind the 480p layout symbols. L4 arm binds
-    # DDR_FRAME_720P_* via FS_* localparams (see present_core.sv). Accept either
-    # direct .CODED_W(DDR_FRAME_*) or FS_CODED_W = DDR_FRAME_* (parameterized form).
+    # Default product arm must still bind the 480p layout symbols. Accept:
+    #   (a) direct .CODED_W(DDR_FRAME_*)
+    #   (b) FS_* = DDR_FRAME_* (parameterized form)
+    #   (c) FS_* = DDR_FS_* via ddr_frame_abi_select (shared 480/720 tier;
+    #       product QSF FRAME 640x480 keeps DDR_FS_* on the 480p constants).
+    # Equal strength: all three feed .CODED_W(FS_*) or direct DDR_FRAME_*.
     default_480_bind = (
         (
             ".CODED_W(DDR_FRAME_CODED_WIDTH)" in present_nt
@@ -1252,6 +1255,18 @@ def check_present_geometry_stride_contract() -> None:
             and ".CODED_W(FS_CODED_W)" in present_nt
             and ".HPS_BANK_STRIDE_BYTES(FS_BANK_STRIDE)" in present_nt
         )
+        or (
+            "include\"ddr_frame_abi_select.svh\"" in present_nt
+            and "FS_CODED_W=DDR_FS_CODED_W" in present_nt
+            and "FS_DISPLAY_W=DDR_FS_DISPLAY_W" in present_nt
+            and "FS_PRESENT_X=DDR_FS_PRESENT_X" in present_nt
+            and "FS_BANK_STRIDE=DDR_FS_BANK_STRIDE" in present_nt
+            and "FS_DOORBELL=DDR_FS_DOORBELL" in present_nt
+            and "FS_PHYS_BASE=DDR_FS_PHYS_BASE" in present_nt
+            and ".CODED_W(FS_CODED_W)" in present_nt
+            and ".HPS_BANK_STRIDE_BYTES(FS_BANK_STRIDE)" in present_nt
+            and ".PHYS_BASE(FS_PHYS_BASE)" in present_nt
+        )
     )
     check(
         ".FRAME_W(FRAME_W)" in present_nt
@@ -1261,7 +1276,9 @@ def check_present_geometry_stride_contract() -> None:
         "FRAME_W=640 for scanout, CODED_W=624 for DDR stride, DISPLAY_W=618 for crop, "
         "PRESENT_X=11 for pillarbox.",
     )
-    # L4 consumer wiring (must not leave 720p constants unreferenced).
+    # 720p consumer wiring must not leave DDR_FRAME_720P_* unreferenced.
+    # Accept L4-only FS_* bind OR shared abi_select that maps FRAME 1280x720 /
+    # PLEX_DDR_ABI_720P onto DDR_FRAME_720P_* (MULTI+L4 share the tier).
     l4_720_bind = (
         "FS_CODED_W=DDR_FRAME_720P_CODED_WIDTH" in present_nt
         and "FS_CODED_H=DDR_FRAME_720P_CODED_HEIGHT" in present_nt
@@ -1273,10 +1290,33 @@ def check_present_geometry_stride_contract() -> None:
         and "FS_PHYS_BASE=DDR_FRAME_720P_PHYS_BASE" in present_nt
         and "ifdefPLEX_PRESENT_720P_L4" in present_nt
     )
+    shared_720_bind = (
+        "include\"ddr_frame_abi_select.svh\"" in present_nt
+        and "FS_CODED_W=DDR_FS_CODED_W" in present_nt
+        and "DDR_FRAME_720P_CODED_WIDTH" in present_nt
+        and "DDR_FRAME_720P_PHYS_BASE" in present_nt
+        and "DDR_FRAME_720P_YUV420P_DOORBELL_PHYS" in present_nt
+        and "DDR_FRAME_720P_YUV420P_BANK_STRIDE" in present_nt
+        and "FRAME_W==1280&&FRAME_H==720" in present_nt
+    )
+    # abi_select may live in its own .svh (present_core only includes it).
+    abi_sel_path = ROOT / "fpga" / "Plex_MiSTer" / "rtl" / "ddr_frame_abi_select.svh"
+    abi_sel_nt = ""
+    if abi_sel_path.is_file():
+        abi_sel_nt = norm(abi_sel_path.read_text(encoding="utf-8", errors="replace"))
+    shared_720_via_svh = (
+        "include\"ddr_frame_abi_select.svh\"" in present_nt
+        and "FS_CODED_W=DDR_FS_CODED_W" in present_nt
+        and "DDR_FRAME_720P_CODED_WIDTH" in abi_sel_nt
+        and "DDR_FRAME_720P_PHYS_BASE" in abi_sel_nt
+        and "DDR_FRAME_720P_YUV420P_DOORBELL_PHYS" in abi_sel_nt
+        and "DDR_FRAME_720P_YUV420P_BANK_STRIDE" in abi_sel_nt
+        and "FRAME_W==1280&&FRAME_H==720" in abi_sel_nt
+    )
     check(
-        l4_720_bind,
-        "present_core L4 arm must wire DDR_FRAME_720P_* into ddr_frame_store "
-        "(coded/display/pillar/stride/doorbell/phys_base) behind PLEX_PRESENT_720P_L4.",
+        l4_720_bind or shared_720_bind or shared_720_via_svh,
+        "present_core must wire DDR_FRAME_720P_* into ddr_frame_store via L4 FS_* "
+        "or shared ddr_frame_abi_select (FRAME 1280x720 / MULTI+L4 tier).",
     )
     check(
         'set_global_assignment-nameVERILOG_MACRO"DDR_FRAME_STORE=1"' in qsf_nt

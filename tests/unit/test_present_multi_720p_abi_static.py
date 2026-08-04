@@ -48,7 +48,7 @@ def main() -> int:
             fails.append("present_core must assign FS_* from DDR_FS_* shared select")
 
     if "FS_LINE_COUNT" not in core or ".LINE_COUNT(FS_LINE_COUNT)" not in core:
-        fails.append("ddr_frame_store must use FS_LINE_COUNT (16-line 720p floor)")
+        fails.append("ddr_frame_store must use FS_LINE_COUNT (32-line 720p floor)")
 
     # MULTI elab requires FRAME 1280x720
     if "PRESENT_MULTI_PIXEL requires FRAME_W=1280" not in core:

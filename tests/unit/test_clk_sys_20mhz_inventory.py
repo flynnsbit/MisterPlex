@@ -38,6 +38,8 @@ ALLOWLIST: list[tuple[str, str]] = [
     (r"fpga/Plex_MiSTer/rtl/ddr_bus_arbiter\.sv", r"20 MHz"),
     (r"fpga/Plex_MiSTer/rtl/tb_arb_beat_conservation\.sv", r"20 MHz"),
     (r"fpga/Plex_MiSTer/rtl/tb_audio_fifo_cdc\.sv", r"~20 MHz"),
+    # w-osd MULTI+PPC2 blackout floor (LINE_COUNT 32) measured @ clk_sys 20 MHz
+    (r"fpga/Plex_MiSTer/rtl/ddr_frame_abi_select\.svh", r"20 MHz"),
 ]
 
 # Avoid matching 120_000_000 or 200000000 addresses

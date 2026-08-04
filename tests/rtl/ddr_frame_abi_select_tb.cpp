@@ -1,5 +1,5 @@
 // RED-before-green intent: 1280x720 FRAME (MULTI recipe, no L4) must pick
-// 720p phys/doorbell/stride and LINE_COUNT floor 16. 640x480 stays 480p.
+// 720p phys/doorbell/stride and LINE_COUNT floor 32. 640x480 stays 480p.
 #include "Vddr_frame_abi_select_tb_top.h"
 #include "verilated.h"
 #include <cstdio>
@@ -18,7 +18,7 @@ int main(int argc, char** argv) {
 	const uint32_t STRIDE_720 = 0x00180000u;
 
 	int rc = 0;
-	std::printf("PRE-REG: 480→phys=0x30000000 lines=8; 720→phys=0x30180000 lines=16 coded=1280\n");
+	std::printf("PRE-REG: 480→phys=0x30000000 lines=8; 720→phys=0x30180000 lines=32 coded=1280\n");
 
 	if (top.p480_use_720 != 0) {
 		std::fprintf(stderr, "FAIL 480p probe selected 720p ABI\n");
@@ -45,9 +45,10 @@ int main(int argc, char** argv) {
 			top.p720_phys, top.p720_doorbell, top.p720_stride, top.p720_coded_w);
 		rc = 1;
 	}
-	// Blackout: FRAME_LINES_8 input must floor to 16 on 720p ABI
-	if (top.p720_lines != 16) {
-		std::fprintf(stderr, "FAIL 720p line floor: got %u want 16 (8→16)\n",
+	// Blackout: FRAME_LINES_8 input must floor to 32 on 720p ABI
+	// (w-osd MULTI+PPC2 sim: 16 still underruns 500 µs; 32 does not).
+	if (top.p720_lines != 32) {
+		std::fprintf(stderr, "FAIL 720p line floor: got %u want 32 (8→32)\n",
 			top.p720_lines);
 		rc = 1;
 	}

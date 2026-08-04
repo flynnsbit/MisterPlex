@@ -54,7 +54,16 @@ def main() -> int:
 
     # --- Quote PLL SoT on disk ---
     pll = read(ROOT / "fpga/Plex_MiSTer/rtl/pll/pll_0002.v")
-    check('output_clock_frequency0("20.000000 MHz")' in pll, "PLL out0 clk_sys=20.000000 MHz")
+    # w-clock SoT: out0 uses MISTERPLEX_CLK_SYS_PLL_FREQ (default "20.000000 MHz").
+    # Equal strength to prior literal pin: require macro wire-up AND default string.
+    check(
+        (
+            'output_clock_frequency0(`MISTERPLEX_CLK_SYS_PLL_FREQ)' in pll
+            and 'MISTERPLEX_CLK_SYS_PLL_FREQ "20.000000 MHz"' in pll
+        )
+        or 'output_clock_frequency0("20.000000 MHz")' in pll,
+        "PLL out0 clk_sys=20.000000 MHz (literal or SoT macro default)",
+    )
     check('output_clock_frequency2("90.000000 MHz")' in pll, "PLL out2 clk_ddr=90.000000 MHz")
     check('reference_clock_frequency("50.0 MHz")' in pll, "PLL ref=50.0 MHz")
     check("PRESENT_CLK_PIX_PLL" in pll, "PLL has PRESENT_CLK_PIX_PLL branch")

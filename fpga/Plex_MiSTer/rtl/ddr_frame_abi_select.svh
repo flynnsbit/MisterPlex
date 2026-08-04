@@ -44,11 +44,15 @@ localparam [31:0] DDR_FS_DOORBELL =
 	DDR_FS_USE_720P_ABI ? 32'(DDR_FRAME_720P_YUV420P_DOORBELL_PHYS)
 	                    : 32'(DDR_FRAME_YUV420P_DOORBELL_PHYS);
 
-// 720p blackout model (docs/display-resolution.md): 500 µs class needs 16 lines
-// at PPC=2 / 20 MHz (8 lines ≈ 256 µs). Floor LINE_COUNT to 16 on 720p ABI
-// unless the including module already requested more.
+// 720p blackout model @ PPC=2 / 20 MHz (w-osd measured through real store):
+//   t_line = 1280/2/20e6 = 32 µs
+//   naive cover:  8 lines → 256 µs  < 500 µs  (FAIL)
+//                 16 lines → 512 µs >= 500 µs  (arith PASS, store FAIL)
+//                 32 lines → 1024 µs           (store PASS, underrun delta=0)
+// Dual-set linebuf + CDC + chroma slots mean 16 is NOT enough in the real
+// ddr_frame_store; floor to 32 on 720p ABI unless the module already asked more.
 // Requires FRAME_LINE_COUNT parameter in including scope when used.
 `ifdef DDR_FS_APPLY_LINE_FLOOR
 localparam int DDR_FS_LINE_COUNT =
-	(DDR_FS_USE_720P_ABI && (FRAME_LINE_COUNT < 16)) ? 16 : FRAME_LINE_COUNT;
+	(DDR_FS_USE_720P_ABI && (FRAME_LINE_COUNT < 32)) ? 32 : FRAME_LINE_COUNT;
 `endif

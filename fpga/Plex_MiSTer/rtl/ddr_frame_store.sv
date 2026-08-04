@@ -340,50 +340,11 @@ module ddr_frame_store #(
 	wire rd_miss_now = rd_active && rd_visible && has_frame && (!y_hit_now || !c_hit_now);
 
 	// BT.601 full-range (matches host pixel_format.hpp / yuv_bt601_npx).
-	function automatic [7:0] yuv_r(input [7:0] y, input [7:0] u, input [7:0] v);
-		reg signed [11:0] ys, us, vs, rc;
-		reg signed [20:0] w;
-		begin
-			ys = {4'd0, y};
-			us = {4'd0, u} - 12'sd128;
-			vs = {4'd0, v} - 12'sd128;
-			w = ({{9{ys[11]}}, ys} <<< 8) + (21'sd359 * vs);
-			rc = w[19:8];
-			if (rc < 0) yuv_r = 8'd0;
-			else if (rc > 12'sd255) yuv_r = 8'd255;
-			else yuv_r = rc[7:0];
-		end
-	endfunction
-	function automatic [7:0] yuv_g(input [7:0] y, input [7:0] u, input [7:0] v);
-		reg signed [11:0] ys, us, vs, rc;
-		reg signed [20:0] w;
-		begin
-			ys = {4'd0, y};
-			us = {4'd0, u} - 12'sd128;
-			vs = {4'd0, v} - 12'sd128;
-			w = ({{9{ys[11]}}, ys} <<< 8) - (21'sd88 * us) - (21'sd183 * vs);
-			rc = w[19:8];
-			if (rc < 0) yuv_g = 8'd0;
-			else if (rc > 12'sd255) yuv_g = 8'd255;
-			else yuv_g = rc[7:0];
-		end
-	endfunction
-	function automatic [7:0] yuv_b(input [7:0] y, input [7:0] u, input [7:0] v);
-		reg signed [11:0] ys, us, vs, rc;
-		reg signed [20:0] w;
-		begin
-			ys = {4'd0, y};
-			us = {4'd0, u} - 12'sd128;
-			vs = {4'd0, v} - 12'sd128;
-			w = ({{9{ys[11]}}, ys} <<< 8) + (21'sd454 * us);
-			rc = w[19:8];
-			if (rc < 0) yuv_b = 8'd0;
-			else if (rc > 12'sd255) yuv_b = 8'd255;
-			else yuv_b = rc[7:0];
-		end
-	endfunction
-
-	// Scalar path — keep the original wire form bit-identical to pre-PPC land.
+	// Scalar path: original wire form (bit-identical to pre-PPC land).
+	// Multi-pixel path MUST use the same wire/signed multiply shape. A prior
+	// function-automatic form (21'sdK * reg signed[11:0]) mis-widened in sim
+	// when V!=128 (vs=-1 made R/G sat 255 while scalar stayed correct).
+	// Probe: bank1 (0,0) scalar 15/17/18 vs multi 255/255/18 before this fix.
 	wire [7:0] y_pix = pick_byte(selected_y_q, y_sel_r);
 	wire [7:0] u_pix = pick_byte(selected_u_q, c_sel_r);
 	wire [7:0] v_pix = pick_byte(selected_v_q, c_sel_r);
@@ -410,9 +371,19 @@ module ddr_frame_store #(
 			wire [7:0] y_l = pick_byte(selected_y_q, y_sel_l);
 			wire [7:0] u_l = pick_byte(selected_u_q, c_sel_l);
 			wire [7:0] v_l = pick_byte(selected_v_q, c_sel_l);
-			assign r_lane[gpi] = yuv_r(y_l, u_l, v_l);
-			assign g_lane[gpi] = yuv_g(y_l, u_l, v_l);
-			assign b_lane[gpi] = yuv_b(y_l, u_l, v_l);
+			wire signed [11:0] y_s_l = {4'd0, y_l};
+			wire signed [11:0] u_s_l = {4'd0, u_l} - 12'sd128;
+			wire signed [11:0] v_s_l = {4'd0, v_l} - 12'sd128;
+			wire signed [20:0] y_ext_l = {{9{y_s_l[11]}}, y_s_l};
+			wire signed [20:0] r_w_l = (y_ext_l <<< 8) + (21'sd359 * v_s_l);
+			wire signed [20:0] g_w_l = (y_ext_l <<< 8) - (21'sd88 * u_s_l) - (21'sd183 * v_s_l);
+			wire signed [20:0] b_w_l = (y_ext_l <<< 8) + (21'sd454 * u_s_l);
+			wire signed [11:0] r_c_l = r_w_l[19:8];
+			wire signed [11:0] g_c_l = g_w_l[19:8];
+			wire signed [11:0] b_c_l = b_w_l[19:8];
+			assign r_lane[gpi] = sat8(r_c_l);
+			assign g_lane[gpi] = sat8(g_c_l);
+			assign b_lane[gpi] = sat8(b_c_l);
 		end
 	endgenerate
 

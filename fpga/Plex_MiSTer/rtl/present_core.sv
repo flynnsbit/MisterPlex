@@ -588,7 +588,8 @@ module present_core #(
 	localparam [31:0] FS_PHYS_BASE = DDR_FS_PHYS_BASE;
 	localparam int FS_BANK_STRIDE = DDR_FS_BANK_STRIDE;
 	localparam [31:0] FS_DOORBELL = DDR_FS_DOORBELL;
-	// 16-line floor on 720p ABI (8 lines @ PPC2/20MHz ≈ 256 µs < 500 µs model).
+	// 32-line floor on 720p ABI (w-osd MULTI+PPC2 sim: 16 lines still underrun
+	// a 500 µs DDR blackout; 32 lines do not — dual-set/CDC tax above naive 16).
 	localparam int FS_LINE_COUNT  = DDR_FS_LINE_COUNT;
 
 `ifdef PRESENT_MULTI_PIXEL
