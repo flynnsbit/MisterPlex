@@ -62,25 +62,27 @@
 //   granularity on ports/phase — not free. Prior "1 M10K/line" claim RETIRED.
 // FRAME_W/H (640→1280) is w-nostub's global switch — chrome does NOT duplicate it.
 //
-// === M10K COST (analytical LB from handbook configs; NOT fitter-measured) =====
-// Legal M10K modes (Cyclone V Device Handbook, as parent-quoted):
+// === M10K COST (layout stated; 64b class MEASURED by rd-duck on current fit) ===
+// Legal M10K modes (Cyclone V handbook, parent-quoted):
 //   8K×1 | 4K×2 | 2K×4 | 2K×5 | 1K×8 | 1K×10 | 512×16 | 512×20 | 256×32 | 256×40
-// Max width 40b ⇒ a 64b or 72b logical word needs ≥2 physical blocks.
+// Max width 40b; 1K×8 = 1024 B (NOT 1280 B).
 //
-// | Array                         | Shape        | Assumed packing              | M10K LB |
-// | list_a (ramstyle M10K)        | 112 × 64     | 256×40 + 256×40 (40+24)      | **2**   |
-// | list_b (ramstyle M10K)        | 112 × 64     | same                         | **2**   |
-// | plxc_cdc mem (no ramstyle yet)| 128 × 72     | 256×40 + 256×40 (40+32)      | **2**   |
-// | font / idle chevron           | combo/math   | —                            | **0**   |
-// | **TOTAL chrome LB**           |              |                              | **6**   |
+// rd-duck CONTROL (fitter, this device): every 78×64 Y and 39×64 U/V logical
+// RAM → **2 M10K**; 48 line_buf → **96 M10K** measured. 64-bit qword memories
+// pack at 2 blocks each — not bit-ceil 1.
 //
-// RETIRED prior EST **3–5**: used ceil(bits/10240) and treated 64b/72b as one
-// block (illegal: width>40). That under-counted width split by ~2× on list+CDC.
-// Bit totals still: list 2×112×64=14336b, CDC 128×72=9216b — bits are not blocks.
-// Physical blocks UNKNOWN until a fit entity row; wire6 line_buf class shows
-// shallow arrays can cost several × bit-ceil (docs/m10k-physical-blocks-wire6.md).
-// ALM / Fmax: UNKNOWN (no fit this lane). Competes with w-mem inside 356 free.
-// yosys cell counts (logic only, -nomap): .agent-work/chrome-area/stat_n*.txt
+// | Array                         | Shape     | Layout / class                 | M10K EST |
+// | list_a (ramstyle M10K)        | 112 × 64  | 64b qword class (=2 measured)  | **2**    |
+// | list_b (ramstyle M10K)        | 112 × 64  | same                           | **2**    |
+// | plxc_cdc mem (no ramstyle)    | 128 × 72  | if M10K: ≥2 (40+32); else MLAB | **0–2**  |
+// | font / idle chevron           | combo     | —                              | **0**    |
+// | **TOTAL chrome**              |           | primary PREREG assumes CDC M10K| **4–6**  |
+//
+// HIT 4–8 · SOFT_MISS 9–12 · HARD_MISS >12 or list elide 0.
+// RETIRED EST 3–5 (bit-ceil) and "1 M10K/1280×8 line" (illegal byte depth).
+// Product has NO 720p linebufs (procedural scale). w-scaler LINE_COUNT=16 slot
+// costs (192/128/96 by layout) are outside this module — quote their layout.
+// ALM/Fmax UNKNOWN (no fit this lane). Competes inside 356 free with w-mem.
 
 `timescale 1ns / 1ps
 
