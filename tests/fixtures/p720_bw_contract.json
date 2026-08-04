@@ -207,7 +207,10 @@
     "PPC2_present_RGB_B_per_group": 6,
     "T_copy_arm_ms": 14.978,
     "C_arm_MiBps": 88.0,
-    "source": "parent Sweep 118 + rd-duck + w-path joint; w-scaler ACK"
+    "source": "parent Sweep 118 + rd-duck + w-path joint; w-scaler ACK",
+    "T_dpb_P16x16_ref_fetch_ms_720p_at_20MHz": 108.54,
+    "dpb_fetch_B_per_partition": 603,
+    "note_dpb": "rd-duck: one-byte DPB fetch structural; not interchangeable with R_req or T_copy_arm"
   },
   "real_reader_proof": {
     "status": "CLOSED",
@@ -357,5 +360,29 @@
       "w-osd full 1280x720 real-reader @20:90 with injected stalls"
     ],
     "count": 2
+  },
+  "fabric_dpb_one_byte_fetch": {
+    "owner_note": "rd-duck UPDATED + w-path pin; source h264_dpb.sv issue_idx 0..440/0..80",
+    "solves_for": "fabric_byte_cycles_and_ms_at_clk_sys \u2014 NOT entropy-frontend-only framing",
+    "luma_fetch_B_per_part": 441,
+    "chroma_fetch_B_per_plane": 81,
+    "fetch_B_per_partition": 603,
+    "part_wh_narrows_fetch": false,
+    "part_wh_note": "lat_part_w_lo/h_lo observed only for lint/future; not used to narrow issue_idx",
+    "mb_count_720p": 3600,
+    "P16x16_ref_fetch_cycles_720p": 2170800,
+    "formula_cycles": "603 * 3600",
+    "clk_sys_Hz": 20000000,
+    "P16x16_ref_fetch_ms_at_20MHz": 108.54,
+    "formula_ms": "2170800 / 20e6 * 1000",
+    "I420_write_byte_cycles_720p": 1382400,
+    "I420_write_ms_at_20MHz": 69.12,
+    "meets_24fps_at_20MHz": false,
+    "deadline_24_ms": 41.666666666666664,
+    "stub_dpb_mem_proves_720p": false,
+    "stub_dpb_note": "decode_stub dpb_mem[17:0] @ FRAME 640x480 \u2192 256KiB alias; not 720p DPB proof",
+    "PRODUCT_NO_STUB_removes_branch": true,
+    "remaining_work_entropy_frontend_only": false,
+    "w_path_ack": "Feed path still required; DPB wide/burst redesign is a hard 720p fabric blocker alongside entropy. Do not frame remaining work as entropy-only."
   }
 }

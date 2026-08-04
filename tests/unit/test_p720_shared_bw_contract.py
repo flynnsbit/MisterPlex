@@ -296,10 +296,30 @@ def main() -> int:
         return fail("fit blockers status must require BOTH")
     print("OK rd-duck: idle=at_rest; DMA=pub_only; prefer fabric reader; fit blockers=2")
 
+    # --- rd-duck DPB one-byte fetch (hard fabric blocker; not entropy-only) ---
+    dpb = c.get("fabric_dpb_one_byte_fetch") or {}
+    if dpb.get("fetch_B_per_partition") != 603:
+        return fail("dpb fetch_B_per_partition must be 603 (441+81+81)")
+    if dpb.get("part_wh_narrows_fetch") is not False:
+        return fail("part_wh_narrows_fetch must be false (observed only)")
+    if dpb.get("P16x16_ref_fetch_cycles_720p") != 2170800:
+        return fail("P16x16 ref fetch cycles must be 603*3600=2170800")
+    if abs(float(dpb.get("P16x16_ref_fetch_ms_at_20MHz", 0)) - 108.54) > 0.01:
+        return fail("P16x16 ref fetch must be ~108.54 ms @20MHz")
+    if abs(float(dpb.get("I420_write_ms_at_20MHz", 0)) - 69.12) > 0.01:
+        return fail("I420 write must be ~69.12 ms @20MHz")
+    if dpb.get("meets_24fps_at_20MHz") is not False:
+        return fail("NEGATIVE: one-byte DPB fetch must NOT meet 24fps @20MHz")
+    if dpb.get("remaining_work_entropy_frontend_only") is not False:
+        return fail("NEGATIVE: forbid entropy-frontend-only remaining-work framing")
+    if dpb.get("stub_dpb_mem_proves_720p") is not False:
+        return fail("stub dpb_mem must not claim to prove 720p")
+    print("OK rd-duck DPB: 603 B/part → 108.54 ms @20MHz; not entropy-only; stub≠720p")
+
     print(
         "PASS p720_shared_bw_contract: HEADLINE=33.1776 MB/s/dir "
         "(1.65888 avg ONLY); peaks RGB=6/I420=3; reader_CLOSED hps+T_copy_OPEN; "
-        "serial_deficit>0 (T_copy_arm CPU-time)"
+        "serial_deficit>0 (T_copy_arm CPU-time); dpb_fetch=108.54ms@20MHz"
     )
     return 0
 

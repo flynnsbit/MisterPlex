@@ -133,5 +133,41 @@ inline constexpr int kFitReleaseBlockerCount = 2; // nostub + w-osd
 inline constexpr bool kDecodeCopyOverlapProven = false;
 inline constexpr bool kMayBudgetFreeCoreDuringDecode = false;
 
+// ---------------------------------------------------------------------------
+// Fabric DPB one-byte fetch tax (rd-duck UPDATED; source-quoted, not entropy-only)
+// h264_dpb_one_ref issues fixed windows regardless of part_w/h:
+//   luma issue_idx 0..440 → 441 B; chroma U/V 0..80 → 81 B each → 603 B/partition
+//   (h264_dpb.sv: issue_idx==9'd440 / 9'd80; lat_part_w/h only "observed")
+// 720p MB grid 80×45 = 3600 MB; one P16x16-ref per MB:
+//   603 * 3600 = 2_170_800 one-byte read cycles
+// @ clk_sys 20 MHz → 108.54 ms  (>> 41.667 ms @24 fps) — structural without burst/wide DPB
+// Full I420 write 1_382_400 B @ 1 B/clk → 69.12 ms @20 MHz
+// decode_stub dpb_mem[17:0] aliases 256 KiB @ FRAME 640×480 — does NOT prove 720p DPB.
+// PRODUCT_NO_STUB removes the stub/back-end branch entirely.
+// Remaining work is NOT "entropy frontend only".
+// ---------------------------------------------------------------------------
+inline constexpr int kDpbLumaFetchBytesPerPart = 441;   // 21×21 qpel window
+inline constexpr int kDpbChromaFetchBytesPerPart = 81;  // 9×9 epel window (each plane)
+inline constexpr int kDpbFetchBytesPerPartition =
+    kDpbLumaFetchBytesPerPart + 2 * kDpbChromaFetchBytesPerPart; // 603
+inline constexpr bool kDpbPartWhNarrowsFetch = false; // lat_part_* observed only
+
+inline constexpr int kMbCount720p = (1280 / 16) * (720 / 16); // 80*45 = 3600
+inline constexpr long long kDpbP16x16RefFetchCycles720p =
+    static_cast<long long>(kDpbFetchBytesPerPartition) * kMbCount720p; // 2170800
+
+inline constexpr double kClkSysHzProduct = 20.0e6;
+inline constexpr double kDpbP16x16RefFetchMs720pAt20MHz =
+    1000.0 * static_cast<double>(kDpbP16x16RefFetchCycles720p) / kClkSysHzProduct; // 108.54
+
+inline constexpr long long kI420WriteByteCycles720p = 1382400LL;
+inline constexpr double kI420WriteMs720pAt20MHz =
+    1000.0 * static_cast<double>(kI420WriteByteCycles720p) / kClkSysHzProduct; // 69.12
+
+inline constexpr bool kDpbOneByteFetchMeets24At20MHz =
+    kDpbP16x16RefFetchMs720pAt20MHz <= kDeadline24Ms; // false
+inline constexpr bool kRemainingWorkIsEntropyFrontendOnly = false;
+inline constexpr bool kStubDpbMemProves720p = false; // 640×480 + [17:0] alias
+
 } // namespace p720_budget
 } // namespace misterplex

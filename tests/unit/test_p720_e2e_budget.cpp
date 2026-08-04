@@ -85,12 +85,24 @@ int main() {
           "both fit blockers armed");
     CHECK(kFitReleaseBlockerCount == 2, "two fit blockers");
 
+    // rd-duck: DPB one-byte fetch is a hard 720p fabric blocker (not entropy-only).
+    CHECK(kDpbFetchBytesPerPartition == 603, "603 B/partition (441Y+81U+81V)");
+    CHECK(!kDpbPartWhNarrowsFetch, "part_w/h must not claim to narrow fetch");
+    CHECK(kMbCount720p == 3600, "720p MB grid 80x45");
+    CHECK(kDpbP16x16RefFetchCycles720p == 2170800LL, "603*3600 cycles");
+    CHECK(std::fabs(kDpbP16x16RefFetchMs720pAt20MHz - 108.54) < 0.01, "108.54 ms @20MHz");
+    CHECK(std::fabs(kI420WriteMs720pAt20MHz - 69.12) < 0.01, "I420 write 69.12 ms @20MHz");
+    CHECK(!kDpbOneByteFetchMeets24At20MHz, "DPB fetch alone misses 24fps @20MHz");
+    CHECK(!kRemainingWorkIsEntropyFrontendOnly, "forbid entropy-only remaining-work framing");
+    CHECK(!kStubDpbMemProves720p, "stub 640x480 dpb_mem does not prove 720p");
+
     if (fails) {
         std::printf("test_p720_e2e_budget: %d FAIL(s)\n", fails);
         return 1;
     }
     std::printf("test_p720_e2e_budget: OK serial=%.3f deficit=%.3f idle=at_rest "
-                "dma=pub_only fit_blockers=%d\n",
-                serial, kSerialDeficitSweep118Ms, kFitReleaseBlockerCount);
+                "dma=pub_only fit_blockers=%d dpb_fetch=%.2fms@20MHz\n",
+                serial, kSerialDeficitSweep118Ms, kFitReleaseBlockerCount,
+                kDpbP16x16RefFetchMs720pAt20MHz);
     return 0;
 }
