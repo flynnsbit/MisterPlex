@@ -24,13 +24,14 @@ int main() {
     CHECK(!latch.haveFrame());
 
     // Differential geometry (not product silicon): proves the latch keeps the
-    // *remembered* layout, not idle 480p. Product path (media_player) always
-    // remembers ddrFrameGeometryForFpgaPresent → 624x480 / stride 0x80000.
+    // *remembered* layout, not a different tier. Product path (media_player)
+    // remembers ddrFrameGeometryForFpgaPresent → 1280×720 / stride 0x180000.
     // 320x240 → bank_stride 0x40000, doorbell 0x3007F000 (formula, single source).
     const DdrFrameGeometry playbackGeometry = makeDdrFrameGeometry(320, 240);
     const DdrFrameLayout capturedLayout =
         makeDdrFrameLayout(playbackGeometry, kDdrFramePhysBase, kDdrFrameStrideAlign,
                            DdrFrameFormat::Yuv420p);
+    // Legacy 480p tier — valid layout but NOT product silicon after #16.
     const DdrFrameLayout idleLayout = makeDdrFrameLayout(
         plex480pDdrFrameGeometry(), kDdrFramePhysBase, kDdrFrameStrideAlign,
         DdrFrameFormat::Yuv420p);
@@ -43,7 +44,7 @@ int main() {
     CHECK(capturedLayout.doorbell_phys == 0x3007F000u);
     CHECK(idleLayout.bank_stride == kPlex480pYuv420pBankStride);
     CHECK(idleLayout.doorbell_phys == kPlex480pYuv420pDoorbellPhys);
-    CHECK(ddrFrameLayoutMatchesProductSilicon(idleLayout));
+    CHECK(!ddrFrameLayoutMatchesProductSilicon(idleLayout));
     CHECK(!ddrFrameLayoutMatchesProductSilicon(capturedLayout));
 
     std::vector<uint8_t> frame(capturedLayout.frame_bytes);
@@ -112,8 +113,8 @@ int main() {
     CHECK(ddrFrameLayoutMatchesProductSilicon(productLayout));
     std::vector<uint8_t> productFrame(productLayout.frame_bytes, 0x10);
     CHECK(productLatch.remember(productFrame.data(), productFrame.size(), productGeom));
-    CHECK(productLatch.frame().layout().bank_stride == kPlex480pYuv420pBankStride);
-    CHECK(productLatch.frame().layout().doorbell_phys == kPlex480pYuv420pDoorbellPhys);
+    CHECK(productLatch.frame().layout().bank_stride == kPlex720pYuv420pBankStride);
+    CHECK(productLatch.frame().layout().doorbell_phys == kPlex720pYuv420pDoorbellPhys);
     int pBank = 0;
     std::vector<Send> pSends;
     CHECK(productLatch.publishToBothBanks(
@@ -125,10 +126,10 @@ int main() {
         pBank));
     CHECK(pSends.size() == 2);
     for (const auto& s : pSends) {
-        CHECK(s.frame_layout.bank_stride == 0x80000u);
-        CHECK(s.frame_layout.doorbell_phys == 0x300FF000u);
+        CHECK(s.frame_layout.bank_stride == kPlex720pYuv420pBankStride);
+        CHECK(s.frame_layout.doorbell_phys == kPlex720pYuv420pDoorbellPhys);
         CHECK(s.bank_phys == kDdrFramePhysBase +
-                                 static_cast<uint32_t>(s.bank) * kPlex480pYuv420pBankStride);
+                                 static_cast<uint32_t>(s.bank) * kPlex720pYuv420pBankStride);
     }
 
     if (fails) {
