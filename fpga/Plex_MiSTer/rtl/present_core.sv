@@ -236,6 +236,20 @@ module present_core #(
 		.needs_wide_fifo(keep_960_wide_fifo)
 	);
 
+	// Always-on rate-match pack: proves Bresenham throttle + CEA F24 defaults
+	// survive map. Observational only on default path (fire not wired to beam).
+	(* noprune *) wire keep_rm_fire;
+	present_pix_rate_match #(
+		.F_SYS_HZ(`MISTERPLEX_CLK_SYS_HZ),
+		.F_PIX_HZ(`MISTERPLEX_CEA720_F24_HZ),
+		.PX_PER_CLK((`MISTERPLEX_PRESENT_PPC < 1) ? 1 : `MISTERPLEX_PRESENT_PPC)
+	) u_keep_pix_rate_match (
+		.clk(clk),
+		.reset(reset),
+		.in_ready(1'b1),
+		.fire(keep_rm_fire)
+	);
+
 `ifdef PLEX_PRESENT_720P_L4
 	// =====================================================================
 	// L4 720p24 true-DE beam (DEFAULT OFF). w-clock: H=1312 V=762 @ 24 MHz

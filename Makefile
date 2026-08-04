@@ -21,7 +21,7 @@ help:
 	@echo "  make rbf-provenance - emit/verify RBF↔git manifest; rbf-what-built MD5=..."
 	@echo "  make pre-synth-gates - run define parity + fast pre-Quartus RTL buildability gates"
 	@echo "  make post-fit-hierarchy FIT_RPT=... [MAP_RPT=...] [COMPILE_LOG=...] - critical fitted-module guard"
-	@echo "  make post-fit-timing STA_RPT=... - fail negative Quartus timing slack"
+	@echo "  make post-fit-timing STA_RPT=... [MIN_FMAX_MHZ=..] - fail negative slack / optional Fmax floor"
 	@echo "  make post-fit-timing-margin STA_RPT=... - fail STA margin regression vs wtime4 baseline"
 	@echo "  make timing-exclusion [STA_RPT=...] - detect timing closed by exclusion not design"
 	@echo "  make pms-baseline-check - live PMS delivered-SPS guard (requires PLEX_BASE/TOKEN/KEY)"
@@ -156,6 +156,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	python3 $(ROOT)/tests/unit/test_clk_sys_20mhz_inventory.py
 	python3 $(ROOT)/tests/unit/test_clk_sys_pll_sot.py
 	$(ROOT)/tests/unit/test_plex_clk_status_verilator.sh
+	$(ROOT)/tests/unit/test_present_pix_rate_match_verilator.sh
 	python3 $(ROOT)/tests/unit/test_present_720p_l4_static.py
 	python3 $(ROOT)/tests/unit/test_present_geom_params_static.py
 	$(ROOT)/tests/unit/test_present_geom_params_rtl_sim.sh
@@ -320,12 +321,21 @@ post-fit-hierarchy:
 
 post-fit-timing:
 	@if [ -z "$(STA_RPT)" ]; then echo "STA_RPT is required" >&2; exit 2; fi
-	$(ROOT)/scripts/check_quartus_timing.py --sta-rpt "$(STA_RPT)"
+	$(ROOT)/scripts/check_quartus_timing.py --sta-rpt "$(STA_RPT)" \
+		$(if $(MIN_FMAX_MHZ),--min-fmax-mhz $(MIN_FMAX_MHZ),) \
+		$(if $(MIN_FMAX_CLOCK_SUBSTR),--min-fmax-clock-substr "$(MIN_FMAX_CLOCK_SUBSTR)",)
 
-# Margin vs wtime4 (assets/timing_margin_baseline.json). Positive slack that
-# silently eats the budget is a hard fail. ABSENT/malformed STA => rc=77.
+# Convenience: require clk_sys Restricted Fmax >= MIN_FMAX_MHZ (default 20).
+# Product L4@24 needs MIN_FMAX_MHZ=24 (retained STA currently ~23.17 → FAIL).
+# Product MULTI+clk_pix needs separate substr general[3] after that fit.
+# Also runs wtime4 baseline margin (assets/timing_margin_baseline.json).
+post-fit-timing-margin: STA_RPT ?=
+post-fit-timing-margin: MIN_FMAX_MHZ ?= 20
 post-fit-timing-margin:
 	@if [ -z "$(STA_RPT)" ]; then echo "STA_RPT is required" >&2; exit 2; fi
+	$(ROOT)/scripts/check_quartus_timing.py --sta-rpt "$(STA_RPT)" \
+		--min-fmax-mhz $(MIN_FMAX_MHZ) \
+		$(if $(MIN_FMAX_CLOCK_SUBSTR),--min-fmax-clock-substr "$(MIN_FMAX_CLOCK_SUBSTR)",)
 	$(ROOT)/scripts/check_timing_margin.py --sta-rpt "$(STA_RPT)"
 
 timing-exclusion:

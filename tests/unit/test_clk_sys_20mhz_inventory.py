@@ -17,7 +17,7 @@ RTL = ROOT / "fpga/Plex_MiSTer"
 
 # (path regex fullmatch, line regex search)
 ALLOWLIST: list[tuple[str, str]] = [
-    (r"fpga/Plex_MiSTer/rtl/misterplex_clk_hz\.svh", r"20_000_000|20 MHz"),
+    (r"fpga/Plex_MiSTer/rtl/misterplex_clk_hz\.svh", r"20_000_000|20\.000000|20 MHz|24_000_000|29_700"),
     (r"fpga/Plex_MiSTer/rtl/plex_clk_status\.sv", r"20|29_700"),
 
     (r"fpga/Plex_MiSTer/rtl/pll/pll_0002\.v", r"MISTERPLEX_CLK_SYS_PLL_FREQ|20\.000000 MHz"),
@@ -26,10 +26,10 @@ ALLOWLIST: list[tuple[str, str]] = [
     (r"fpga/Plex_MiSTer/rtl/present_core\.sv", r"CLK_PIX_HZ\(20_000_000\)"),
     (r"fpga/Plex_MiSTer/rtl/present_core\.sv", r"MP_CLK_PIX_HZ = 20_000_000"),
     (r"fpga/Plex_MiSTer/rtl/present_core\.sv", r"20 MHz"),
-    (r"fpga/Plex_MiSTer/rtl/present_pix_rate_match\.sv", r"F_SYS_HZ\s*=\s*20_000_000"),
-    (r"fpga/Plex_MiSTer/rtl/present_video_timing_720p\.sv", r"CLK_PIX_HZ = 20_000_000"),
+    (r"fpga/Plex_MiSTer/rtl/present_pix_rate_match\.sv", r"MISTERPLEX_CLK_SYS_HZ|F_SYS|20 MHz|CEA"),
+    (r"fpga/Plex_MiSTer/rtl/present_video_timing_720p\.sv", r"MISTERPLEX_CLK_PIX_HZ|20 MHz|CLK_PIX"),
     (r"fpga/Plex_MiSTer/rtl/present_video_timing_720p\.sv", r"clk_sys == 20 MHz|@20 MHz"),
-    (r"fpga/Plex_MiSTer/rtl/present_video_timing_960\.sv", r"CLK_PIX_HZ = 20_000_000"),
+    (r"fpga/Plex_MiSTer/rtl/present_video_timing_960\.sv", r"MISTERPLEX_CLK_SYS_HZ|20 MHz|CLK_PIX"),
     (r"fpga/Plex_MiSTer/rtl/present_video_timing_960\.sv", r"@ 20 MHz"),
     (r"fpga/Plex_MiSTer/rtl/present_vtotal_bresenham\.sv", r"20 MHz"),
     (r"fpga/Plex_MiSTer/rtl/present_npx_path\.sv", r"F_sys=20 MHz|@20/PPC"),
@@ -69,7 +69,7 @@ def main() -> int:
         if not root.is_dir():
             continue
         for path in root.rglob("*"):
-            if path.suffix in {".sv", ".v", ".vh"} and "sys/" not in str(path).replace("\\", "/"):
+            if path.suffix in {".sv", ".v", ".vh", ".svh"} and "sys/" not in str(path).replace("\\", "/"):
                 files.append(path)
     # also Plex.sv
     files.append(RTL / "Plex.sv")
@@ -95,14 +95,21 @@ def main() -> int:
         if not ok:
             fails.append(f"UNLISTED 20MHz assumption {rel}:{i}: {line}")
 
-    # Required: PLL product 20 and F_SYS default must remain listed
+    # Required: PLL product default remains listed among 20 MHz hits
     required = [
         (r"fpga/Plex_MiSTer/rtl/pll/pll_0002\.v", r"MISTERPLEX_CLK_SYS_PLL_FREQ|20\.000000 MHz"),
-        (r"fpga/Plex_MiSTer/rtl/present_pix_rate_match\.sv", r"F_SYS_HZ\s*=\s*20_000_000"),
+        (r"fpga/Plex_MiSTer/rtl/misterplex_clk_hz\.svh", r"20_000_000|20 MHz"),
     ]
     for are, aln in required:
         if not any(re.fullmatch(are, r) and re.search(aln, l) for r, _, l in hits):
             fails.append(f"MISSING required inventory site {are} / {aln}")
+
+    # rate_match defaults must come from SoT (no bare 20_000_000 left)
+    rm = (ROOT / "fpga/Plex_MiSTer/rtl/present_pix_rate_match.sv").read_text(errors="ignore")
+    if "MISTERPLEX_CLK_SYS_HZ" not in rm or "MISTERPLEX_CEA720_F24_HZ" not in rm:
+        fails.append("present_pix_rate_match must default F_SYS/F_PIX from misterplex_clk_hz.svh")
+    if re.search(r"(?<![0-9])20_000_000(?![0-9])", rm):
+        fails.append("present_pix_rate_match still hardcodes 20_000_000 (use SoT macro)")
 
     if fails:
         print("FAIL test_clk_sys_20mhz_inventory")
