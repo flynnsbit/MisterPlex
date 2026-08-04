@@ -1019,6 +1019,40 @@ always @(posedge clk_sys) begin
 	end
 end
 
+
+// ---------------------------------------------------------------------------
+// Fabric RBF build stamp (w-fitgate) — binds bitstream to git commit prefix.
+// Params from rtl/plex_rbf_build_id_params.vh (scripts/gen_rbf_build_id_vh.py).
+// stamp_alive is consumed so the fitter cannot prune the entity; id folds into
+// a preserve reg observed by status_set change detect (no status_in layout change).
+// ---------------------------------------------------------------------------
+`include "rtl/plex_rbf_build_id_params.vh"
+wire [63:0] rbf_build_id;
+wire        rbf_build_id_valid;
+wire        rbf_stamp_alive;
+plex_rbf_build_id #(
+	.MAGIC(32'h504C5842),
+	.COMMIT_PREFIX(`PLEX_RBF_COMMIT_PREFIX),
+	.GIT_DIRTY(`PLEX_RBF_GIT_DIRTY),
+	.QIP_COUNT(`PLEX_RBF_QIP_COUNT),
+	.FAULT_ZERO_STAMP(1'b0)
+) u_rbf_build_id (
+	.clk(clk_sys),
+	.reset(reset),
+	.build_id(rbf_build_id),
+	.id_valid(rbf_build_id_valid),
+	.stamp_alive(rbf_stamp_alive)
+);
+// Observe stamp in the status_set edge detector so the net is live load-bearing.
+(* preserve *) reg [31:0] rbf_build_id_observe_r;
+always @(posedge clk_sys) begin
+	if (reset)
+		rbf_build_id_observe_r <= 32'd0;
+	else
+		rbf_build_id_observe_r <= rbf_build_id[63:32] ^ rbf_build_id[31:0] ^
+			{31'd0, rbf_stamp_alive} ^ {31'd0, rbf_build_id_valid};
+end
+
 // Silence unused
 wire _unused = |{disp_i, cont_i, advance, ingest_pixels, ingest_dl, af_active, ioctl_addr,
 	sps_count, pps_count, slice_count, wr_count, stream_bytes_seen, sps_profile, sps_level,
@@ -1031,6 +1065,7 @@ wire _unused = |{disp_i, cont_i, advance, ingest_pixels, ingest_dl, af_active, i
 	stream_fifo_level, ddr_frames, stream_ddr_active, stream_ddr_bytes_out,
 	stream_ddr_underruns, stream_ddr_overruns, stream_ddr_host_write,
 	stream_ddr_fpga_read, stream_ddr_bus_want, stream_ddr_burstcnt, stream_ddr_addr,
-	stream_ddr_rd, stream_ddr_din, stream_ddr_be, stream_ddr_we, _host_wr_unused};
+	stream_ddr_rd, stream_ddr_din, stream_ddr_be, stream_ddr_we, _host_wr_unused,
+	rbf_stamp_alive, rbf_build_id_valid, rbf_build_id_observe_r};
 
 endmodule
