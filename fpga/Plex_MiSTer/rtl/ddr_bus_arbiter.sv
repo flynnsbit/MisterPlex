@@ -55,7 +55,8 @@ module ddr_bus_arbiter (
 	output wire        DDRAM_RD,
 	output wire [63:0] DDRAM_DIN,
 	output wire  [7:0] DDRAM_BE,
-	output wire        DDRAM_WE
+	output wire        DDRAM_WE,
+	output wire  [1:0] grant_owner
 );
 	// Reset synchroniser (reset originates in clk_sys, we run on clk_ddr)
 	reg reset_s1, reset_s2;
@@ -83,6 +84,7 @@ module ddr_bus_arbiter (
 	end
 
 	reg grant_m1;
+	assign grant_owner = grant_m1 ? 2'd1 : 2'd0;
 	reg rsp_owner_m1;
 	reg [8:0] rsp_left;
 	reg [63:0] rsp_data_r;

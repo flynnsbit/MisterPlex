@@ -99,7 +99,8 @@ module ddr_beat_conservation_real_tb #(
 		.DDRAM_RD(DDRAM_RD),
 		.DDRAM_DIN(DDRAM_DIN),
 		.DDRAM_BE(DDRAM_BE),
-		.DDRAM_WE(DDRAM_WE)
+		.DDRAM_WE(DDRAM_WE),
+		.grant_owner()
 	);
 
 	// --- Master 1 request generator (clk_sys, like ddr_bitstream_reader) ---

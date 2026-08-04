@@ -56,7 +56,9 @@ module ddr_bus_arbiter3 #(
 	output wire        DDRAM_RD,
 	output wire [63:0] DDRAM_DIN,
 	output wire  [7:0] DDRAM_BE,
-	output wire        DDRAM_WE
+	output wire        DDRAM_WE,
+	// Post-grant owner for perf counters (0=m0 present, 1=m1 stream, 2=m2)
+	output wire  [1:0] grant_owner
 );
 	reg reset_s1, reset_s2;
 	always @(posedge clk or posedge reset) begin
@@ -76,6 +78,7 @@ module ddr_bus_arbiter3 #(
 	                        8'(M2_QUANTUM_BEATS);
 
 	reg [1:0] owner /* verilator public_flat_rd */;
+	assign grant_owner = owner;
 	reg [7:0] wr_left /* verilator public_flat_rd */;
 	reg [7:0] rd_left /* verilator public_flat_rd */; // m2/m0 read data beats remaining
 	reg [7:0] qcnt /* verilator public_flat_rd */;

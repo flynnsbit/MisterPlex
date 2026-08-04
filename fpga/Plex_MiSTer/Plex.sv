@@ -973,6 +973,8 @@ present_core #(
 );
 
 `ifdef DDR_FRAME_STORE
+// Post-arbiter owner for optional DDR_PERF_COUNTERS (0=present,1=stream,2=m2).
+wire [1:0] ddr_grant_owner;
 `ifdef FABRIC_FRAME_DMA
 // --- Fabric publication DMA (w-mem): staging → bank on f2sdram ---
 // Default OFF. NOT product-ready until: (1) HPS fills DDR_FRAME_DMA_STAGING_PHYS
@@ -1102,11 +1104,145 @@ ddr_bus_arbiter3 #(
 	.DDRAM_RD(DDRAM_RD),
 	.DDRAM_DIN(DDRAM_DIN),
 	.DDRAM_BE(DDRAM_BE),
-	.DDRAM_WE(DDRAM_WE)
+	.DDRAM_WE(DDRAM_WE),
+	.grant_owner(ddr_grant_owner)
 );
 // Keep dma_done/err visible to synth (status fold below).
 wire _dma_keep = dma_done | dma_err_align | (|dma_rd_beats) | (|dma_wr_beats) | (|dma_last_fb);
+`elsif DDR_PERF_COUNTERS
+// Perf-only 3-master path: m2 = PLXP mailbox publisher (no fabric DMA).
+`include "ddr_frame_layout_params.svh"
+wire        perf_snap_req, perf_clear_req, perf_want;
+wire [7:0]  perf_snap_seq;
+wire [31:0] perf_sh_cycles, perf_sh_wr, perf_sh_rd, perf_sh_stall;
+wire [31:0] perf_sh_lat_sum, perf_sh_lat_max, perf_sh_lat_n;
+wire [31:0] perf_sh_m0_rd, perf_sh_m0_wr, perf_sh_m1_rd, perf_sh_m1_wr;
+wire [31:0] perf_sh_m2_rd, perf_sh_m2_wr;
+wire [15:0] perf_sh_sat;
+wire        perf_m2_busy;
+wire  [7:0] perf_m2_burstcnt;
+wire [28:0] perf_m2_addr;
+wire [63:0] perf_m2_dout;
+wire        perf_m2_dout_ready;
+wire        perf_m2_rd;
+wire [63:0] perf_m2_din;
+wire  [7:0] perf_m2_be;
+wire        perf_m2_we;
+
+ddr_perf_counters u_ddr_perf (
+	.clk(clk_ddr),
+	.reset(reset),
+	.DDRAM_BUSY(DDRAM_BUSY),
+	.DDRAM_RD(DDRAM_RD),
+	.DDRAM_WE(DDRAM_WE),
+	.DDRAM_DOUT_READY(DDRAM_DOUT_READY),
+	.DDRAM_BURSTCNT(DDRAM_BURSTCNT),
+	.owner(ddr_grant_owner),
+	.snap_req(perf_snap_req),
+	.clear_req(perf_clear_req),
+	.snap_seq(perf_snap_seq),
+	.sh_cycles(perf_sh_cycles),
+	.sh_wr_beats(perf_sh_wr),
+	.sh_rd_beats(perf_sh_rd),
+	.sh_stall_cyc(perf_sh_stall),
+	.sh_lat_sum(perf_sh_lat_sum),
+	.sh_lat_max(perf_sh_lat_max),
+	.sh_lat_n(perf_sh_lat_n),
+	.sh_m0_rd(perf_sh_m0_rd),
+	.sh_m0_wr(perf_sh_m0_wr),
+	.sh_m1_rd(perf_sh_m1_rd),
+	.sh_m1_wr(perf_sh_m1_wr),
+	.sh_m2_rd(perf_sh_m2_rd),
+	.sh_m2_wr(perf_sh_m2_wr),
+	.sh_sat_flags(perf_sh_sat)
+);
+
+// PLXP at product 480p doorbell+0x200. 720p fits: redefine via param if needed.
+ddr_perf_mailbox #(
+	.PLXP_PHYS(DDR_FRAME_YUV420P_DOORBELL_PHYS + 32'h200),
+	.PUBLISH_PERIOD_LOG2(20)
+) u_ddr_perf_mbox (
+	.clk(clk_ddr),
+	.reset(reset),
+	.snap_seq(perf_snap_seq),
+	.sh_cycles(perf_sh_cycles),
+	.sh_wr_beats(perf_sh_wr),
+	.sh_rd_beats(perf_sh_rd),
+	.sh_stall_cyc(perf_sh_stall),
+	.sh_lat_sum(perf_sh_lat_sum),
+	.sh_lat_max(perf_sh_lat_max),
+	.sh_lat_n(perf_sh_lat_n),
+	.sh_m0_rd(perf_sh_m0_rd),
+	.sh_m0_wr(perf_sh_m0_wr),
+	.sh_m1_rd(perf_sh_m1_rd),
+	.sh_m1_wr(perf_sh_m1_wr),
+	.sh_m2_rd(perf_sh_m2_rd),
+	.sh_m2_wr(perf_sh_m2_wr),
+	.sh_sat_flags(perf_sh_sat),
+	.snap_req(perf_snap_req),
+	.clear_req(perf_clear_req),
+	.want(perf_want),
+	.DDRAM_BUSY(perf_m2_busy),
+	.DDRAM_BURSTCNT(perf_m2_burstcnt),
+	.DDRAM_ADDR(perf_m2_addr),
+	.DDRAM_DOUT(perf_m2_dout),
+	.DDRAM_DOUT_READY(perf_m2_dout_ready),
+	.DDRAM_RD(perf_m2_rd),
+	.DDRAM_DIN(perf_m2_din),
+	.DDRAM_BE(perf_m2_be),
+	.DDRAM_WE(perf_m2_we)
+);
+
+ddr_bus_arbiter3 #(
+	.M2_QUANTUM_BEATS(8)
+) ddr_arb (
+	.clk(clk_ddr),
+	.clk_m1(clk_sys),
+	.reset(reset),
+	.m1_want(stream_ddr_bus_want),
+	.m0_busy(present_ddr_busy),
+	.m0_burstcnt(present_ddr_burstcnt),
+	.m0_addr(present_ddr_addr),
+	.m0_dout(present_ddr_dout),
+	.m0_dout_ready(present_ddr_dout_ready),
+	.m0_rd(present_ddr_rd),
+	.m0_din(present_ddr_din),
+	.m0_be(present_ddr_be),
+	.m0_we(present_ddr_we),
+	.m1_busy(stream_ddr_busy),
+	.m1_burstcnt(stream_ddr_burstcnt),
+	.m1_addr(stream_ddr_addr),
+	.m1_dout(stream_ddr_dout),
+	.m1_dout_ready(stream_ddr_dout_ready),
+	.m1_rd(stream_ddr_rd),
+	.m1_din(stream_ddr_din),
+	.m1_be(stream_ddr_be),
+	.m1_we(stream_ddr_we),
+	.m2_want(perf_want),
+	.m2_yield_window(1'b1),
+	.m2_busy(perf_m2_busy),
+	.m2_burstcnt(perf_m2_burstcnt),
+	.m2_addr(perf_m2_addr),
+	.m2_dout(perf_m2_dout),
+	.m2_dout_ready(perf_m2_dout_ready),
+	.m2_rd(perf_m2_rd),
+	.m2_din(perf_m2_din),
+	.m2_be(perf_m2_be),
+	.m2_we(perf_m2_we),
+	.DDRAM_BUSY(DDRAM_BUSY),
+	.DDRAM_BURSTCNT(DDRAM_BURSTCNT),
+	.DDRAM_ADDR(DDRAM_ADDR),
+	.DDRAM_DOUT(DDRAM_DOUT),
+	.DDRAM_DOUT_READY(DDRAM_DOUT_READY),
+	.DDRAM_RD(DDRAM_RD),
+	.DDRAM_DIN(DDRAM_DIN),
+	.DDRAM_BE(DDRAM_BE),
+	.DDRAM_WE(DDRAM_WE),
+	.grant_owner(ddr_grant_owner)
+);
+wire _perf_keep = |{perf_snap_seq, perf_sh_wr[7:0], perf_sh_rd[7:0], perf_sh_stall[7:0]};
 `else
+// Product default: 2-master arbiter (present + stream).
 ddr_bus_arbiter ddr_arb (
 	.clk(clk_ddr),
 	.clk_m1(clk_sys),
@@ -1138,7 +1274,8 @@ ddr_bus_arbiter ddr_arb (
 	.DDRAM_RD(DDRAM_RD),
 	.DDRAM_DIN(DDRAM_DIN),
 	.DDRAM_BE(DDRAM_BE),
-	.DDRAM_WE(DDRAM_WE)
+	.DDRAM_WE(DDRAM_WE),
+	.grant_owner(ddr_grant_owner)
 );
 `endif
 `endif

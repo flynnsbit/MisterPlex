@@ -31,6 +31,9 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_publish_job.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_i420_store_width_check.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_publish_copy_budget.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_bus_arbiter3.sv
+# DDR perf counters (w-mem): default OFF via DDR_PERF_COUNTERS macro
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_perf_counters.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_perf_mailbox.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/frame_ingest.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddram_frame_rd.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/sdram.sv

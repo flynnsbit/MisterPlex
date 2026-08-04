@@ -22,6 +22,7 @@ EXPECTED_PREREQS = [
     # land-line 720p / PL330 / SPI fail-closed suite
     "$(ROOT)/build/test_pl330_encode",
     "$(ROOT)/build/test_fabric_dma_source",
+    "$(ROOT)/build/test_ddr_perf_decode",
     "$(ROOT)/build/test_p720_e2e_budget",
     "$(ROOT)/build/test_idle_poll_budget",
     "$(ROOT)/build/test_spi_txn_complete",
@@ -95,6 +96,8 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/build/test_fabric_dma_source",
     "bash $(ROOT)/tests/unit/test_present_npx_cdc_rtl_sim.sh",
     "bash $(ROOT)/tests/unit/test_cdc_pulse_toggle_rtl_sim.sh",
+    "bash $(ROOT)/tests/unit/test_ddr_perf_counters_rtl_sim.sh",
+    "$(ROOT)/build/test_ddr_perf_decode",
     "python3 $(ROOT)/tests/unit/test_clk_pix_cdc_static.py",
     "bash $(ROOT)/tests/unit/test_ddr_frame_dma_rtl_sim.sh",
     "bash $(ROOT)/tests/unit/test_ddr_frame_dma_contended_rtl_sim.sh",

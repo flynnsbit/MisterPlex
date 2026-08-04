@@ -152,7 +152,8 @@ module ddr_frame_dma_contended_tb;
 		.DDRAM_RD(DDRAM_RD),
 		.DDRAM_DIN(DDRAM_DIN),
 		.DDRAM_BE(DDRAM_BE),
-		.DDRAM_WE(DDRAM_WE)
+		.DDRAM_WE(DDRAM_WE),
+		.grant_owner()
 	);
 
 	// ---- Unit-TB-style phys (pre-edge drive, post-edge retire) ----

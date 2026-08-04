@@ -51,7 +51,8 @@ module tb_arb_beat_conservation;
 		.DDRAM_RD(ddr_rd),
 		.DDRAM_DIN(ddr_din),
 		.DDRAM_BE(ddr_be),
-		.DDRAM_WE(ddr_we)
+		.DDRAM_WE(ddr_we),
+		.grant_owner()
 	);
 
 	// --- Beat counters ---
