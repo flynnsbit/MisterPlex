@@ -2,6 +2,14 @@
 // Units: bytes, MB/s (=1e6 B/s), clk ticks. Do NOT confuse RATE with CPU TIME.
 // Source arithmetic: Memory/lab/agents/w-mem-DECODE_DDR_ARB_BW.md
 // Ideal port peak 90e6*8=720 MB/s is arithmetic ONLY — not measured sustainable DDR.
+//
+// LIVE vs DDR (parent reachability correction — verify before assuming traffic):
+//   h264_dpb_one_ref / MC helpers are LIVE under decode_stub (source graph), but
+//   decode_stub backs DPB with on-chip BRAM (`(* ram_style="block" *) dpb_mem`),
+//   not DDRAM ports. So LIVE MC/DPB ≠ current external DDR load.
+//   PDEC_DPB_* below are FUTURE external-DDR rates once w-fitgate moves the DPB
+//   off BRAM. Product DDR masters today: m0 present, m1 bitstream|PLXG, m2 fabric_attach.
+//   Bitstream (a) already exists as m1; budget below is still NOT a measured rate.
 `ifndef PLEX_DECODE_DDR_BW_SVH
 `define PLEX_DECODE_DDR_BW_SVH
 
@@ -11,13 +19,13 @@ localparam int PDEC_CLK_SYS_HZ          = 20_000_000;
 localparam int PDEC_CLK_DDR_HZ          = 90_000_000;
 localparam int PDEC_BEAT_BYTES          = 8;
 
-// (c) present read — hard realtime display path
+// (c) present read — hard realtime display path (product m0 today)
 localparam int PDEC_PRESENT_RD_BPS      = PDEC_I420_BYTES * PDEC_FPS; // 33177600
-// (b) DPB reconstructed frame write
+// (b) DPB reconstructed frame write — FUTURE external DDR (BRAM today)
 localparam int PDEC_DPB_WR_BPS          = PDEC_I420_BYTES * PDEC_FPS; // 33177600
-// (b) DPB MC read — I-frame-only fabric path = 0 (P-frame OPEN)
+// (b) DPB MC read — I-frame-only fabric path = 0 (P-frame OPEN); also BRAM today
 localparam int PDEC_DPB_RD_MC_I_BPS     = 0;
-// (a) bitstream placeholder headroom (NOT measured) — 2 MB/s design budget
+// (a) bitstream — product m1 exists; 2 MB/s is design budget NOT measured
 localparam int PDEC_BITSTREAM_BPS_BUDGET = 2_000_000;
 
 localparam int PDEC_SUM_I_ONLY_BPS =
