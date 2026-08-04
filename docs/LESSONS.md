@@ -314,5 +314,63 @@ contains. And prefer explicit paths over `git add -A` in any shared tree.
 | — | All 8 h264 leaf modules instantiated by NOBODY | Probe searched for module names equal to filenames; **no module here is named after its file**, so it could only return NOBODY. Corrected: `LIVE=4 DEAD=28` |
 | — | Renicing the MiSTer spinner slows decode (1.30×→0.906×) | `grep` matched my **own ssh shell**; `ffmpeg` inherited nice 19. Real result was the opposite: **1.30×→1.54×** |
 | — | A commit labelled "pre-register Sweep 119" | Contained 7,398 lines of another lane's `.agent-work` scratch logs. `git add -A` in an un-ignored tree |
+| — | LIVE=4 DEAD=28 | Regex `^\s*MODULE\s*(#\|\()` matches only `foo (` / `foo #(`; it misses the ordinary `foo inst (` form, which is most of them |
+| — | A purpose-built reachability tool settled it (LIVE=19) | Edges were built per module from the **whole file**, so every module in a multi-module `.sv` inherited its file's union. Corrected: **LIVE=17 DEAD=19** |
+| — | The tool had positive controls | They existed only in the **docstring**. No `assert` was in the code |
+| — | The h264 back end already ships, so its area is paid | `git show <deployed>:files.qip \| grep -c h264` → **0**. The shipping RBF contains no H.264 at all |
+| — | …therefore nothing was ever fitted | Also wrong. Six candidate fit reports contain fitted `h264_*` hierarchy. Correct: shipping RBF has none; candidate fits have a **partial diagnostic** one |
 
 Full narrative for each: `Memory/lab/parent/misterplex-parent-720p-decode-verdict.txt`.
+
+## L38 — A control that is written in a comment is not a control; execute it and fail closed
+
+Three of my probes in one night returned a plausible number that I broadcast before
+checking whether the instrument could have returned a *different* number. The fourth was
+worse: `tools/rtl_reachability.py` **documented** its positive controls in the docstring
+and asserted nothing. A reviewer reproduced the run, grepped for `assert`, and found none.
+
+A control is only a control when it **runs** and can **fail the tool**. The fixed version
+executes a known-leaf negative control and three positive controls, and exits `3` without
+printing a LIVE/DEAD table if any of them fails. If the instrument is broken you get no
+number at all, which is the only safe output.
+
+Corollary, learned the same night: when you fix an instrument, re-run the *conclusions*
+that instrument produced. The body-slicing fix moved all four `deblock` modules from LIVE
+to DEAD — a fact I had already broadcast to ten agents the other way round.
+
+## L39 — Measure the binding constraint before choosing an architecture
+
+The plan of record assumed the fabric decoder and the 720p presentation path were
+complementary work streams. They are in **direct contention**, and one fit report settles it:
+
+| | ALMs | M10K |
+|---|---|---|
+| `sys_top` total | 21,082 / 41,910 (50 %) | **465 / 553 (84 %)** |
+| `decode_stub` subtree | 6,761 | **268** |
+
+ALMs are at 50 % and are not the constraint. **M10K is at 84 %**, leaving 88 free — while
+the *incomplete* decode back end already holds 268, i.e. 3.05× what remains, and 48 % of
+the whole device. Completing it (19 modules still absent) costs more again.
+
+So the fabric decoder does not merely carry risk, it **does not fit**, and stripping it is
+what releases 356 M10K for 720p line buffers. That reframes `PRODUCT_NO_STUB` from an
+optimisation into the **enabling step** for 720p.
+
+Two independent derivations agreeing is what made this trustworthy: the entity-table parse
+reproduced a separate lane's "~268 M10K / ~6.8k ALM" estimate to three significant figures.
+An earlier parse of the same table was off by one column (reading DSP as M10K) and was
+caught only by that cross-check.
+
+## L40 — The primary checkout can silently be a stale detached HEAD
+
+`main` was checked out in a land worktree, so the primary checkout could not hold it and sat
+**detached, 13 commits behind, with 0 unique commits**. Every repo-hygiene fix — including
+the `.agent-work` ignore rule added precisely to stop `git add -A` accidents — was therefore
+absent from the directory people actually work in. It showed **186 untracked entries**,
+among them 5.5 GB of HDMI captures and four nested worktrees.
+
+Check `git rev-parse --abbrev-ref HEAD` (it prints `HEAD` when detached) and
+`git rev-list --count HEAD..main` before trusting that a fix is live where you are standing.
+Advancing was safe only because the unique-commit count was zero; the one dirty file turned
+out to be an uncompilable half-edit (three accessors whose members it had deleted) that
+`main` already superseded, so it was stashed rather than discarded.
