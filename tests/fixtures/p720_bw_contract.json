@@ -93,7 +93,7 @@
       "I420_amort_B_per_2px_group": 3,
       "headline_MB_s_dir": 33.1776
     },
-    "status": "STRESS_EVIDENCE_MEASURED_TIGHT_not_CLOSED",
+    "status": "PARTIAL_CLOSED_READER",
     "open_items": [
       "reader_delivery_correctness",
       "product_rate_match_integration",
@@ -114,8 +114,14 @@
       "reader CLOSED",
       "fabric_bw_closed",
       "product rate-match 24fps",
-      "fit release"
-    ]
+      "fit release",
+      "PPC2 reader closed",
+      "product rate-match"
+    ],
+    "metric_class": "REFILL_DEMAND_BEAT_DELTA",
+    "scalar_insensitive": true,
+    "scalar_note": "w-scaler SCALAR reader (no PX_PER_CLK/rd_*_n) produces bit-identical G0/G1 to this bus TB \u2014 metric measures full-line refill only; rd_x+=2 skips odd display samples but refill still reads whole lines. NOT a PPC2 correctness proof.",
+    "ppc2_correctness_gate": "tests/unit/test_ddr_frame_store_ppc2_distinct.sh (dual-lane + scalar NEG)"
   },
   "optional_not_headline": {
     "present_linebuf_i420_equiv_B_per_clk_sys_DE": {
@@ -141,15 +147,16 @@
     "path_b_fabric_dma": "retires T_copy_arm; w-mem/w-path build; w-clock clocks+CDC"
   },
   "proof_status": {
-    "class": "STRESS_EVIDENCE",
-    "reader_payload_beat_delta_TB": "MEASURED_TIGHT",
+    "class": "PARTIAL_CLOSED_READER",
+    "reader_payload_beat_delta_TB": "MEASURED_TIGHT_REFILL_DEMAND",
     "owner": "w-clock",
     "tb": "tests/unit/test_ddr_frame_store_720p_ppc2_bus.sh",
     "NOT": [
       "reader CLOSED",
       "product rate-match integration",
       "fabric_bw_closed",
-      "fit_blocker_release"
+      "fit_blocker_release",
+      "PPC2 reader closed"
     ],
     "beam_note": "825*750@20MHz ~32.323fps isolated store stress; not product 24fps rate-match",
     "G0": {
@@ -204,6 +211,9 @@
       "still no underrun==0 force (would false-green)",
       "still no product rate-match"
     ],
-    "note": "rd-duck: tip >=9e5f2c86+RGB asserts; audit of 8a40f163 is stale pre-tighten"
-  }
+    "note": "rd-duck: bus beat-delta scalar-identical; PARTIAL_CLOSED_READER only",
+    "ppc2_dual_lane": "GATED_BY_DISTINCT_TB_NOT_BUS",
+    "fabric_bw_closed": false
+  },
+  "fabric_bw_closed": false
 }

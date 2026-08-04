@@ -11,6 +11,9 @@
 //   G1: payload==173120 (no 3x band); ddr_cy budget; blocked>=10; busy>G0
 //   G2 NEG: starve_dout AFTER prep -> steady deadline fail
 //   PPC=2: rd_x step 2; PX_PER_CLK=2
+// rd-duck: SCALAR reader yields bit-identical G0/G1 — refill-demand only, NOT PPC2 closed.
+// PPC2 correctness = test_ddr_frame_store_ppc2_distinct.sh (dual-lane + scalar NEG).
+// Status: PARTIAL_CLOSED_READER; fabric_bw_closed=false.
 
 #include "Vddr_frame_store_720p_ppc2_bus_tb.h"
 #include "verilated.h"

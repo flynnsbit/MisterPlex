@@ -100,8 +100,10 @@ def main() -> int:
         fails.append("real_reader tb path missing")
 
     ps = c.get("proof_status", {})
-    if ps.get("class") != "STRESS_EVIDENCE":
-        fails.append("proof_status.class must be STRESS_EVIDENCE (not CLOSED)")
+    # rd-duck: bus beat-delta is refill-demand only (scalar-identical) → PARTIAL_CLOSED_READER
+    cls = ps.get("class")
+    if cls not in ("STRESS_EVIDENCE", "PARTIAL_CLOSED_READER"):
+        fails.append("proof_status.class must be STRESS_EVIDENCE or PARTIAL_CLOSED_READER (not CLOSED)")
     rstat = str(ps.get("reader_payload_beat_delta_TB", ""))
     if "MEASURED" not in rstat:
         fails.append("proof_status.reader_payload_beat_delta_TB must be MEASURED*")
