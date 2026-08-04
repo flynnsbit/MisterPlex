@@ -7,23 +7,35 @@
 // publishes read_count plus transport telemetry in DDR, keeping this path wholly
 // separate from MiSTer's shared HPS<->FPGA SPI/GPO register.
 //
-// Fabric-decode feed (w-path): optional ENABLE_BIT_FEED exposes a continuous
-// RBSP bit stream (EPB 0x000003 removed) with bit_ready backpressure suitable
-// for h264_exp_golomb_reader / CAVLC. Default ENABLE_BIT_FEED=0 keeps the
-// existing byte-only contract used by stream_path (out_valid/out_byte/out_full).
+// Fabric-decode feed (w-path) — two product wiring options for w-plxd:
+//
+//   (1) DEAD front-end chain (parent ground truth: rbsp_filter + exp_golomb are
+//       DEAD; backend dequant/idct/recon already LIVE via decode_stub):
+//         reader.out_valid/out_byte/out_last  →  h264_rbsp_filter.in_*
+//         reader.out_full                    := !h264_rbsp_filter.in_ready
+//         reader.out_flush                   →  h264_rbsp_filter.clear (pulse)
+//         rbsp_filter.out_*                  →  byte→bit pack → h264_exp_golomb_reader
+//
+//   (2) Integrated bit feed (ENABLE_BIT_FEED=1): reader does EPB strip + MSB bit
+//       window in-module and presents bit_valid/bit_value/bit_ready directly to
+//       exp_golomb / CAVLC. Default ENABLE_BIT_FEED=0 keeps stream_path's
+//       legacy byte-only contract (out_valid/out_byte/out_full).
 
 // -----------------------------------------------------------------------------
 // bitstream_bit_feeder — byte stream → EPB strip → bit window (MSB-first).
 // Lives in this file so files.qip needs no second entry (collision control).
 // -----------------------------------------------------------------------------
 module bitstream_bit_feeder #(
-	parameter int BYTE_Q_DEPTH = 8 // power-of-two skid after EPB strip
+	parameter int BYTE_Q_DEPTH = 8, // power-of-two skid after optional EPB strip
+	// 1: annex-B in, strip 0x000003 (standalone path / ENABLE_BIT_FEED)
+	// 0: already-RBSP bytes in (after h264_rbsp_filter) — bit window only
+	parameter bit STRIP_EPB = 1'b1
 )(
 	input  wire        clk,
 	input  wire        reset,
 	input  wire        clear,
 
-	// Annex-B / NAL payload bytes (may contain EPB 0x000003)
+	// Bytes in: annex-B when STRIP_EPB=1, RBSP when STRIP_EPB=0
 	input  wire        in_valid,
 	input  wire [7:0]  in_byte,
 	input  wire        in_last,   // pulses with final byte of a NAL payload
@@ -43,12 +55,9 @@ module bitstream_bit_feeder #(
 );
 	localparam int QAW = $clog2(BYTE_Q_DEPTH);
 
-	// --- EPB strip (same contract as h264_rbsp_filter; local so we don't edit h264_*) ---
+	// --- Optional EPB strip (same contract as h264_rbsp_filter when STRIP_EPB=1) ---
 	reg [1:0] zero_count;
 	reg       inhibit_skip;
-	reg       epb_out_valid;
-	reg [7:0] epb_out_byte;
-	reg       epb_out_last;
 	wire      epb_can_accept;
 	wire      skip_epb;
 
@@ -61,7 +70,7 @@ module bitstream_bit_feeder #(
 	assign byte_q_empty = (q_wr == q_rd);
 	assign byte_q_full  = (q_level >= BYTE_Q_DEPTH[QAW:0]);
 	assign epb_can_accept = !byte_q_full;
-	assign skip_epb = in_valid && epb_can_accept && !inhibit_skip &&
+	assign skip_epb = STRIP_EPB && in_valid && epb_can_accept && !inhibit_skip &&
 	                  (zero_count == 2'd2) && (in_byte == 8'h03);
 	// Accept input when EPB stage can push or skip without growing a full queue.
 	assign in_ready = epb_can_accept;
@@ -85,9 +94,6 @@ module bitstream_bit_feeder #(
 		if (reset || clear) begin
 			zero_count <= 2'd0;
 			inhibit_skip <= 1'b0;
-			epb_out_valid <= 1'b0;
-			epb_out_byte <= 8'd0;
-			epb_out_last <= 1'b0;
 			epb_removed <= 16'd0;
 			rbsp_bytes <= 16'd0;
 			bits_out <= 32'd0;
@@ -106,7 +112,7 @@ module bitstream_bit_feeder #(
 		end else begin
 			nal_bit_last <= 1'b0;
 
-			// EPB filter → push RBSP bytes into skid
+			// Optional EPB filter → push RBSP bytes into skid
 			if (in_valid && in_ready) begin
 				if (skip_epb) begin
 					if (epb_removed != 16'hFFFF)
@@ -121,11 +127,13 @@ module bitstream_bit_feeder #(
 					q_wr <= q_wr + 1'd1;
 					if (rbsp_bytes != 16'hFFFF)
 						rbsp_bytes <= rbsp_bytes + 16'd1;
-					if (in_byte == 8'h00)
-						zero_count <= (zero_count == 2'd2) ? 2'd2 : (zero_count + 2'd1);
-					else
-						zero_count <= 2'd0;
-					inhibit_skip <= 1'b0;
+					if (STRIP_EPB) begin
+						if (in_byte == 8'h00)
+							zero_count <= (zero_count == 2'd2) ? 2'd2 : (zero_count + 2'd1);
+						else
+							zero_count <= 2'd0;
+						inhibit_skip <= 1'b0;
+					end
 				end
 			end
 
@@ -179,12 +187,15 @@ module ddr_bitstream_reader #(
 	input  wire        enable,
 	input  wire        flush,
 
+	// Annex-B NAL payload bytes (EPB still present). Matches h264_rbsp_filter
+	// input contract when out_full = !rbsp_filter.in_ready.
 	output reg         out_valid,
 	output reg  [7:0]  out_byte,
-	output reg         out_flush,
+	output reg         out_last,   // 1 with final payload byte of current NAL record
+	output reg         out_flush,  // seek/BEGIN/END/FLUSH → rbsp_filter.clear
 	input  wire        out_full,
 
-	// Optional RBSP bit feed for fabric decoder.
+	// Optional integrated RBSP bit feed (ENABLE_BIT_FEED=1).
 	// Default bit_ready=1 so legacy stream_path instances (unconnected) stay X-clean.
 	output wire        bit_valid,
 	output wire        bit_value,
@@ -415,6 +426,7 @@ module ddr_bitstream_reader #(
 
 	always @(posedge clk) begin
 		out_valid <= 1'b0;
+		out_last <= 1'b0;
 		out_flush <= 1'b0;
 		bit_feed_soft_clear <= 1'b0;
 		DDRAM_RD <= 1'b0;
@@ -434,6 +446,7 @@ module ddr_bitstream_reader #(
 			DDRAM_BURSTCNT <= 8'd1;
 			DDRAM_ADDR <= 29'd0;
 			DDRAM_DIN <= 64'd0;
+			out_last <= 1'b0;
 			active <= 1'b0;
 			paused <= 1'b0;
 			bytes_out <= 32'd0;
@@ -654,6 +667,8 @@ module ddr_bitstream_reader #(
 						if (mode == MODE_PAYLOAD) begin
 							out_byte <= rx_byte;
 							out_valid <= 1'b1;
+							// NAL boundary for h264_rbsp_filter.in_last
+							out_last <= (payload_left == 32'd1);
 							// Fabric bit feed: same payload byte, last marks NAL end
 							bit_in_valid <= ENABLE_BIT_FEED;
 							bit_in_byte <= rx_byte;

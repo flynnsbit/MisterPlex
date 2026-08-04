@@ -52,6 +52,7 @@ unit-unlocked: preflight $(ROOT)/build/test_gdm_filter $(ROOT)/build/test_spi_tx
 	bash $(ROOT)/tests/unit/test_io_ack_follow_rtl_sim.sh
 	bash $(ROOT)/tests/unit/test_bitstream_bit_feeder_rtl_sim.sh
 	bash $(ROOT)/tests/unit/test_bitstream_to_exp_golomb_rtl_sim.sh
+	bash $(ROOT)/tests/unit/test_annexb_rbsp_exp_golomb_rtl_sim.sh
 	$(ROOT)/build/test_cadence
 	$(ROOT)/build/test_avclock
 	$(ROOT)/build/test_mraudio_status
