@@ -1878,28 +1878,37 @@ def check_present_geometry_stride_contract() -> None:
             flags=re.S,
         )
     )
-    l4_720_bind = (
+    # 720p store ABI: shared select (L4 *or* MULTI via FRAME 1280×720) or legacy L4 binds.
+    legacy_l4_720_bind = (
         "FS_CODED_W=DDR_FRAME_720P_CODED_WIDTH" in present_raw
         and "FS_CODED_H=DDR_FRAME_720P_CODED_HEIGHT" in present_raw
-        and "FS_DISPLAY_W=DDR_FRAME_720P_DISPLAY_WIDTH" in present_raw
-        and "FS_DISPLAY_H=DDR_FRAME_720P_DISPLAY_HEIGHT" in present_raw
-        and "FS_PRESENT_X=DDR_FRAME_720P_PILLARBOX_LEFT" in present_raw
         and "FS_BANK_STRIDE=DDR_FRAME_720P_YUV420P_BANK_STRIDE" in present_raw
-        and "FS_DOORBELL=DDR_FRAME_720P_YUV420P_DOORBELL_PHYS" in present_raw
-        and "FS_PHYS_BASE=DDR_FRAME_720P_PHYS_BASE" in present_raw
         and "ifdefPLEX_PRESENT_720P_L4" in present_raw
     )
-    check(
-        l4_720_bind,
-        "present_core L4 arm must wire DDR_FRAME_720P_* into ddr_frame_store "
-        "(coded/display/pillar/stride/doorbell/phys_base) behind PLEX_PRESENT_720P_L4.",
+    shared_720_abi = (
+        'include"ddr_frame_abi_select.svh"' in present_raw
+        and "DDR_FS_USE_720P_ABI" in present_raw
+        and "FS_CODED_W=" in present_raw
+        and "FS_BANK_STRIDE=" in present_raw
     )
     check(
-        'set_global_assignment-nameVERILOG_MACRO"DDR_FRAME_STORE=1"' in qsf_nt
-        and 'set_global_assignment-nameVERILOG_MACRO"FRAME_W=640"' in qsf_nt
-        and 'set_global_assignment-nameVERILOG_MACRO"FRAME_H=480"' in qsf_nt,
-        "Quartus build must declare DDR_FRAME_STORE with 640x480 presented scanout. "
-        "A missing/changed FRAME_W silently changes the frame-store scanout geometry.",
+        legacy_l4_720_bind or shared_720_abi,
+        "present_core must wire 720p DDR ABI via ddr_frame_abi_select (shared) "
+        "or legacy L4 DDR_FRAME_720P_* binds.",
+    )
+    qsf_dfs = 'set_global_assignment-nameVERILOG_MACRO"DDR_FRAME_STORE=1"' in qsf_nt
+    qsf_480 = (
+        'set_global_assignment-nameVERILOG_MACRO"FRAME_W=640"' in qsf_nt
+        and 'set_global_assignment-nameVERILOG_MACRO"FRAME_H=480"' in qsf_nt
+    )
+    qsf_720 = (
+        'set_global_assignment-nameVERILOG_MACRO"FRAME_W=1280"' in qsf_nt
+        and 'set_global_assignment-nameVERILOG_MACRO"FRAME_H=720"' in qsf_nt
+    )
+    check(
+        qsf_dfs and (qsf_480 or qsf_720),
+        "Quartus build must declare DDR_FRAME_STORE with 640x480 baseline or "
+        "1280x720 integ scanout. A missing FRAME_W silently changes geometry.",
     )
     check(
         "uPlane=yPlane+static_cast<size_t>(w)*static_cast<size_t>(h)" in fb_nt

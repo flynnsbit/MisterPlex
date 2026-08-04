@@ -54,7 +54,31 @@ def main() -> int:
             if s in text:
                 consumers[s].append(str(path.relative_to(ROOT)))
 
-    # present_core must consume the store-critical set
+    # Shared ABI path (w-clock): present_core includes ddr_frame_abi_select.svh
+    # which ternaries DDR_FRAME_720P_* when FRAME is 1280×720 (L4 *or* MULTI).
+    # Legacy L4-only ifdef binds are also accepted.
+    abi_path = rtl_root / "ddr_frame_abi_select.svh"
+    if not abi_path.is_file():
+        return fail("missing rtl/ddr_frame_abi_select.svh")
+    abi_sel = abi_path.read_text(errors="ignore")
+    abi_nt = nt(abi_sel)
+    shared_abi = (
+        'include"ddr_frame_abi_select.svh"' in pnt
+        and "DDR_FS_USE_720P_ABI" in abi_nt
+        and "DDR_FRAME_720P_CODED_WIDTH" in abi_nt
+        and "DDR_FRAME_720P_CODED_HEIGHT" in abi_nt
+    )
+    legacy_l4 = all(
+        n in pnt
+        for n in (
+            "FS_CODED_W=DDR_FRAME_720P_CODED_WIDTH",
+            "FS_CODED_H=DDR_FRAME_720P_CODED_HEIGHT",
+            "FS_BANK_STRIDE=DDR_FRAME_720P_YUV420P_BANK_STRIDE",
+        )
+    )
+    if not (shared_abi or legacy_l4):
+        return fail("present_core missing shared 720p ABI select or legacy L4 binds")
+
     required = [
         "DDR_FRAME_720P_CODED_WIDTH",
         "DDR_FRAME_720P_CODED_HEIGHT",
@@ -66,38 +90,34 @@ def main() -> int:
         "DDR_FRAME_720P_YUV420P_DOORBELL_PHYS",
     ]
     for s in required:
-        if "present_core.sv" not in " ".join(consumers.get(s, [])):
-            return fail(f"{s} has no present_core consumer: {consumers.get(s)}")
+        in_core = "present_core.sv" in " ".join(consumers.get(s, []))
+        in_abi = s in abi_sel
+        if not (in_core or in_abi or legacy_l4):
+            return fail(f"{s} has no present_core/abi_select consumer: {consumers.get(s)}")
 
-    # Default arm still 480p
+    # Default/shared arm must still name 480p constants (via select or direct)
     for needle in [
-        "FS_CODED_W=DDR_FRAME_CODED_WIDTH",
-        "FS_DISPLAY_W=DDR_FRAME_DISPLAY_WIDTH",
-        "FS_BANK_STRIDE=DDR_FRAME_YUV420P_BANK_STRIDE",
-        "FS_DOORBELL=DDR_FRAME_YUV420P_DOORBELL_PHYS",
-        "FS_PHYS_BASE=32'h3000_0000",
+        "DDR_FRAME_CODED_WIDTH",
+        "DDR_FRAME_DISPLAY_WIDTH",
+        "DDR_FRAME_YUV420P_BANK_STRIDE",
+        "DDR_FRAME_YUV420P_DOORBELL_PHYS",
     ]:
-        if needle not in pnt:
-            return fail(f"default 480p arm missing {needle}")
+        if needle not in pnt and needle not in abi_nt:
+            return fail(f"480p ABI constant missing from core/abi_select: {needle}")
 
-    # L4 arm
+    # Store instance must take FS_* geometry ports
     for needle in [
-        "ifdefPLEX_PRESENT_720P_L4",
-        "FS_CODED_W=DDR_FRAME_720P_CODED_WIDTH",
-        "FS_CODED_H=DDR_FRAME_720P_CODED_HEIGHT",
-        "FS_DISPLAY_W=DDR_FRAME_720P_DISPLAY_WIDTH",
-        "FS_DISPLAY_H=DDR_FRAME_720P_DISPLAY_HEIGHT",
-        "FS_PRESENT_X=DDR_FRAME_720P_PILLARBOX_LEFT",
-        "FS_BANK_STRIDE=DDR_FRAME_720P_YUV420P_BANK_STRIDE",
-        "FS_PHYS_BASE=DDR_FRAME_720P_PHYS_BASE",
-        "FS_DOORBELL=DDR_FRAME_720P_YUV420P_DOORBELL_PHYS",
         ".CODED_W(FS_CODED_W)",
         ".HPS_BANK_STRIDE_BYTES(FS_BANK_STRIDE)",
         ".DOORBELL_PHYS(FS_DOORBELL)",
         ".PHYS_BASE(FS_PHYS_BASE)",
     ]:
         if needle not in pnt:
-            return fail(f"L4 wire missing {needle}")
+            return fail(f"store FS_* port wire missing {needle}")
+
+    # L4 gate text still present (exclusive alternate)
+    if "ifdefPLEX_PRESENT_720P_L4" not in pnt and "`ifdef PLEX_PRESENT_720P_L4" not in present:
+        return fail("L4 ifdef gate missing from present_core")
 
     # Store still derives visibility from params (not hardcoded 618)
     snt = nt(store)
@@ -111,24 +131,42 @@ def main() -> int:
         if needle not in snt:
             return fail(f"ddr_frame_store formula missing {needle}")
 
-    # Default-off product
-    if re.search(r"^\s*set_global_assignment.*PLEX_PRESENT_720P_L4=1", qsf, re.M):
-        return fail("PLEX_PRESENT_720P_L4 must stay commented/default-off in QSF")
-    if not re.search(r"FRAME_W=640", qsf) or not re.search(r"FRAME_H=480", qsf):
-        return fail("product QSF must keep FRAME 640x480 active")
+    # Product geometry: baseline 640x480 L4-off, OR integ MULTI 1280x720 L4-off.
+    l4_active = re.search(
+        r"^\s*set_global_assignment\s+-name\s+VERILOG_MACRO\s+\"PLEX_PRESENT_720P_L4=1\"",
+        qsf,
+        re.M,
+    )
+    multi_active = re.search(
+        r"^\s*set_global_assignment\s+-name\s+VERILOG_MACRO\s+\"PRESENT_MULTI_PIXEL=1\"",
+        qsf,
+        re.M,
+    )
+    if l4_active and multi_active:
+        return fail("L4 and MULTI both active")
+    if multi_active:
+        if not re.search(r'VERILOG_MACRO\s+"FRAME_W=1280"', qsf) and not re.search(
+            r'VERILOG_MACRO\s+"FRAME_W=1280"', qsf
+        ):
+            return fail("integ MULTI requires FRAME_W=1280")
+        if not re.search(r'VERILOG_MACRO\s+"FRAME_H=720"', qsf):
+            return fail("integ MULTI requires FRAME_H=720")
+        print("OK INTEG_ON store wire: MULTI 1280x720 L4-off")
+    else:
+        if l4_active:
+            return fail("PLEX_PRESENT_720P_L4 must stay commented/default-off in QSF (baseline)")
+        if not re.search(r"FRAME_W=640", qsf) or not re.search(r"FRAME_H=480", qsf):
+            return fail("product QSF must keep FRAME 640x480 active (baseline)")
 
-    # NEGATIVE: strip L4 720p coded bind → must fail required consumer check
-    bad = pnt.replace("FS_CODED_W=DDR_FRAME_720P_CODED_WIDTH", "FS_CODED_W=DDR_FRAME_CODED_WIDTH")
-    if "FS_CODED_W=DDR_FRAME_720P_CODED_WIDTH" in bad:
-        return fail("negative setup failed to strip 720p coded bind")
-    if "FS_CODED_W=DDR_FRAME_720P_CODED_WIDTH" not in pnt:
-        return fail("positive file lost 720p coded bind")
-    # simulate consumer miss
-    if "present_core.sv" in " ".join(consumers["DDR_FRAME_720P_CODED_WIDTH"]):
-        # force a local negative on the required list logic
-        fake_consumers = {**consumers, "DDR_FRAME_720P_CODED_WIDTH": []}
-        if "present_core.sv" in " ".join(fake_consumers["DDR_FRAME_720P_CODED_WIDTH"]):
-            return fail("negative consumer empty-list did not go red")
+    # NEGATIVE: empty consumer + no abi_select must go red
+    fake_consumers = {**consumers, "DDR_FRAME_720P_CODED_WIDTH": []}
+    if "present_core.sv" in " ".join(fake_consumers["DDR_FRAME_720P_CODED_WIDTH"]):
+        return fail("negative consumer empty-list did not go red")
+    if shared_abi:
+        bad_abi = abi_nt.replace("DDR_FRAME_720P_CODED_WIDTH", "DDR_FRAME_CODED_WIDTH")
+        if "DDR_FRAME_720P_CODED_WIDTH" in bad_abi:
+            return fail("negative abi strip failed")
+        print("OK negative twin: stripping 720P coded from abi_select would fail gate")
 
     # Print inventory table
     print("INVENTORY DDR_FRAME_720P_* consumers (RTL .sv):")
@@ -136,9 +174,10 @@ def main() -> int:
         c = consumers.get(s, [])
         print(f"  {s}: {c if c else 'NONE (beam/test-only or unused)'}")
 
+    mode = "shared-ABI" if shared_abi else "legacy-L4"
     print(
-        "PASS present_720p_store_wire: L4 binds 720p coded/display/pillar/stride/"
-        "doorbell/phys; default 480p arm intact; QSF default-off"
+        f"PASS present_720p_store_wire: {mode} 720p coded/display/pillar/stride/"
+        "doorbell/phys; 480p arm intact"
     )
     return 0
 

@@ -70,6 +70,9 @@ constexpr int kPlex720pYStrideBytes = 1280;
 constexpr int kPlex720pChromaStrideBytes = 640;
 constexpr uint32_t kPlex720pYuv420pBankStride = 0x00180000u;
 constexpr uint32_t kPlex720pPhysBase = 0x30180000u;
+// Native 720p content origin in bank (no pillar/letter crop for square pixels).
+constexpr int kPlex720pCropLeft = 0;
+constexpr int kPlex720pCropTop = 0;
 // Alias used by PL330/Option-C ingest code (integ naming).
 constexpr uint32_t kPlex720pDdrFramePhysBase = kPlex720pPhysBase;
 constexpr uint32_t kPlex720pYuv420pDoorbellPhys = 0x3047F000u;

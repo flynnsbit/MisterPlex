@@ -12,6 +12,9 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_geom_latch.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_vtotal_bresenham.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/yuv_bt601_npx.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/plex_present_geom_mux.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/plex_clk_status.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/plex_bw_status.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/mplex_hold_lcell.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/colorbars.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio_tone.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio_fifo.sv
@@ -20,6 +23,17 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio_ingest.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/line_buf_ram.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/frame_store.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_frame_store.sv
+// 720p DDR ABI + fabric publication (w-path / w-mem). Compile always; product
+// hierarchy enable is FABRIC_FRAME_DMA (QSF). M10K: dma bounce ≤2; geom=0.
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_i420_bank_geom.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_frame_base_mux.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_frame_dma.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_publish_job.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_publish_copy_budget.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_i420_store_width_check.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_publish_engine.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_publish_path.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_bus_arbiter3.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/frame_ingest.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddram_frame_rd.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/sdram.sv

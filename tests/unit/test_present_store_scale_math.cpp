@@ -65,10 +65,14 @@ int store_y_at(int py, int scale, int v_store, int last_y) {
 
 int main() {
     // --- Source locks (product build config + T7 RTL) ---
-    EXPECT(file_contains("fpga/Plex_MiSTer/Plex.qsf", "FRAME_W=640"),
-           "Plex.qsf product FRAME_W=640");
-    EXPECT(file_contains("fpga/Plex_MiSTer/Plex.qsf", "FRAME_H=480"),
-           "Plex.qsf product FRAME_H=480");
+    // Baseline: FRAME 640x480. integ/720p-compose: FRAME 1280x720 + MULTI.
+    const bool qsf_480 =
+        file_contains("fpga/Plex_MiSTer/Plex.qsf", "FRAME_W=640") &&
+        file_contains("fpga/Plex_MiSTer/Plex.qsf", "FRAME_H=480");
+    const bool qsf_720 =
+        file_contains("fpga/Plex_MiSTer/Plex.qsf", "FRAME_W=1280") &&
+        file_contains("fpga/Plex_MiSTer/Plex.qsf", "FRAME_H=720");
+    EXPECT(qsf_480 || qsf_720, "Plex.qsf product FRAME 640x480 or integ 1280x720");
     EXPECT(file_contains("fpga/Plex_MiSTer/rtl/ddr_frame_layout_params.svh",
                          "DDR_FRAME_CODED_WIDTH = 624"),
            "CODED_W=624 separate from FRAME_W");
