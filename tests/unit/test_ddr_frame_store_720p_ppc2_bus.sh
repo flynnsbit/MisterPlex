@@ -23,6 +23,7 @@ echo "PRE-REG: steady payload_delta>=172800; 20:90 clocks; PPC=2 scan step; LINE
   --Mdir "$BUILD" \
   --top-module ddr_frame_store_720p_ppc2_bus_tb \
   -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-SELRANGE -Wno-UNSIGNED \
+  -I"$ROOT/fpga/Plex_MiSTer/rtl" \
   -CFLAGS "-std=c++17 -O2" \
   +incdir+"$ROOT/fpga/Plex_MiSTer/rtl" \
   "$ROOT/tests/rtl/ddr_frame_store_720p_ppc2_bus_tb_top.sv" \

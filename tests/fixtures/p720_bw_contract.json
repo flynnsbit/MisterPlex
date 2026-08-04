@@ -164,7 +164,8 @@
     "still_open": [
       "ppc2_delivery_correctness OPEN (scorer never observes rd_*_n/lane-valid/RGB/underrun \u2014 rd-duck)",
       "shared_controller_BW / hps_write_concurrent OPEN (w-mem/parent)",
-      "T_copy_e2e OPEN (w-path/parent) \u2014 14.978 ms CPU time"
+      "T_copy_e2e OPEN (w-path/parent) \u2014 14.978 ms CPU time",
+      "w-mem fabric_e2e_MBps NOT_ESTABLISHED \u2014 need frame-to-frame delta or bytes/elapsed sys_cyc (rd-duck)"
     ],
     "headline_assumption": "33.1776 is payload average; real reader measured ~173120 payload beats/frame (+320 vs ideal) + doorbell overhead",
     "w_scaler_position": "ACK rd-duck RETRACTION: w-clock dc2ae85d/HEAD is NOT scalar \u2014 has PX_PER_CLK=2 + rd_*_n + TB .PX_PER_CLK(2). Narrower NACK stands: C++ scorer never observes rd_*_n/lane-valid/RGB/underrun; w-scaler scalar adaptation yields identical beat counts \u21d2 accepted-request counts prove demand, not PPC2 output correctness/deadline. Split: accepted_request_steady_delta CLOSED; ppc2_delivery_correctness OPEN; shared_controller_BW OPEN.",
@@ -175,7 +176,7 @@
     "pending_ack": [],
     "filled": [
       "accepted_request_steady_delta CLOSED (w-clock 720p_ppc2_bus) \u2014 demand only",
-      "fullframe_e2e beat delta FILLED (w-mem b53197e5) \u2014 not dual-lane delivery correctness"
+      "fullframe e2e raw beats observed (w-mem b53197e5) \u2014 MB/s NOT_ESTABLISHED (rd-duck)"
     ],
     "reader_refill_beats": {
       "status": "CLOSED",
@@ -214,11 +215,34 @@
     "w-scaler",
     "w-mem"
   ],
-  "audit_ack": [
-    "rd-duck",
-    "w-clock-reader-proof",
-    "rd-duck-label-correction"
-  ],
+  "audit_ack": {
+    "rd-duck": {
+      "scope": "arithmetic_labels_only",
+      "ACK": [
+        "33.1776 MB/s/dir payload average formula",
+        "1.65888 B/clk_sys avg forbidden for FIFO/linefill",
+        "3.0 demoted to present_linebuf_i420_equiv not DDR",
+        "66.3552 R+W payload companion arithmetic"
+      ],
+      "NOT_ACK": [
+        "reader CLOSED as delivery/correctness proof",
+        "fabric_bw_closed",
+        "w-mem 38.53 MB/s established sustainable fabric rate",
+        "beats*8*24 without elapsed sys_cyc normalization",
+        "plex_720p_bw_contract.svh as fabric work when qip-only (pre-consume)",
+        "free core / ARM never touches payload slogans"
+      ],
+      "note": "rd-duck ACK is arithmetic labels only \u2014 do not imply acceptance of reader CLOSED or 38.53"
+    },
+    "w-clock-reader-proof": "accepted_request demand beats (separate from rd-duck arithmetic ACK)",
+    "rd-duck-label-correction": "BINDING payload/ideal-port labels",
+    "rd-duck-blocking-nacks": [
+      "svh must be `include-consumed in present/store with synthesis-active bind",
+      "38.53 MBps methodology not established",
+      "audit_ack must not imply reader CLOSED/38.53 accepted",
+      "remove free-core and ARM-never-touches-payload claims"
+    ]
+  },
   "pending_ack": [],
   "parent_correction_sweep118": {
     "overclaim_withdrawn": "ARM is no longer the constraint \u2014 TOO STRONG (parent Sweep 118)",
@@ -242,13 +266,17 @@
     "formula_deficit": "T_copy_arm_ms - decode_headroom_ms",
     "meaning": "720p24 does NOT close e2e if decode and sendDdrFrame /dev/mem copy are serial",
     "closure_paths": {
-      "a_overlap": "copy concurrent with decode on free core \u2014 plausible, unproven (parent+rd-duck experiment)",
-      "b_fabric_dma": "fabric fetches/writes frame; ARM never touches payload \u2014 retires all T_copy_arm; strategic priority"
+      "a_overlap": "copy concurrent with decode on second core \u2014 plausible, unproven (parent+rd-duck experiment). Do NOT claim 'free core' from the 49% figure: 49% was measured before decode load.",
+      "b_fabric_dma": "fabric DMA can retire the publication memcpy path only after a pinned/coherent source is established. Do NOT claim 'ARM never touches payload' \u2014 decode/reference and other ARM traffic remain."
     },
     "w_scaler_scope": "content_window retires ARM *scale* (swscale), not T_copy_arm. Fabric present already reads DDR; DMA write path is w-mem/w-path joint territory.",
     "solves_for": "CPU_TIME_ms_per_frame_copy",
     "T_copy_arm_ms_full_float": 14.98135653409091,
-    "rounding_note": "Parent published 14.978; full float ~14.981356. Gate allows 0.01 ms."
+    "rounding_note": "Parent published 14.978; full float ~14.981356. Gate allows 0.01 ms.",
+    "FORBIDDEN_slogans": [
+      "free core (from 49% idle \u2014 measured before decode)",
+      "ARM never touches payload"
+    ]
   },
   "reference_numbers_one_set": {
     "R_req_720p24_MBps_per_dir": 33.1776,
@@ -338,13 +366,16 @@
       "note": "host writes not RTL-master beats; TB assumed stall \u2260 HW controller proof"
     },
     "fullframe_e2e_beat_delta": {
-      "status": "FILLED",
+      "status": "BEATS_RECORDED_MBPS_NOT_ESTABLISHED",
       "owner": "w-mem",
       "commit": "b53197e5",
       "tb": "tests/unit/test_ddr_ppc2_fullframe_beats.sh",
-      "beats_e2e_G0": 200676,
-      "fabric_e2e_MBps": 38.53,
-      "not": "closed_at_pure_33.1776"
+      "beats_e2e_G0_observed": 200676,
+      "fabric_e2e_MBps": "NOT_ESTABLISHED (rd-duck methodology NACK)",
+      "not": [
+        "closed_at_pure_33.1776",
+        "established_38.53_MBps"
+      ]
     },
     "reader_refill_beats": {
       "status": "CLOSED",
@@ -383,7 +414,12 @@
       "3.0 as DDR headline",
       "~4.66 as headline",
       "~93 MB/s as headline"
-    ]
+    ],
+    "rtl_contract_consumers": [
+      "fpga/Plex_MiSTer/rtl/present_core.sv (`include + mp_recipe_ok bind)",
+      "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv (`include + geom match when 720p)"
+    ],
+    "rtl_contract_NOT": "files.qip listing alone (dead compilation-unit localparams)"
   },
   "rd_duck_label_correction": {
     "status": "BINDING",
@@ -424,6 +460,13 @@
       "fabric_bw_closed": false,
       "do_not_call": "PPC2 delivery/correctness closed from accepted-request counts",
       "required_negative_control": "true PPC2 correctness gate must FAIL demand-only/scalar-replicate path via odd/even checksum/lane-valid with scorer observing rd_*_n"
+    },
+    "blocking_nacks_implementation": {
+      "status": "ACK_BY_W_SCALER",
+      "1_svh_consume": "present_core + ddr_frame_store `include + synthesis-active bind",
+      "2_38_53": "NOT_ESTABLISHED \u2014 methodology NACK recorded",
+      "3_audit_ack": "arithmetic_labels_only \u2014 no reader CLOSED / 38.53 acceptance",
+      "4_slogans": "free core + ARM never touches payload removed"
     }
   },
   "w_mem_final_ack": {
@@ -434,15 +477,17 @@
       "name": "fullframe_e2e_fabric_read_with_overhead",
       "beats_e2e": 200676,
       "overhead_beats": 27876,
-      "MBps_approx": 38.53,
-      "MBps_calc": 38.5298,
+      "MBps_approx": "NOT_ESTABLISHED",
+      "MBps_calc": "NOT_ESTABLISHED",
       "payload_floor_remains": 33.1776,
       "source": "w-mem b53197e5 test_ddr_ppc2_fullframe_beats.sh",
-      "status": "FILLED"
-    }
+      "status": "FILLED",
+      "rd_duck_nack": "beats*8*24 without elapsed sys_cyc is not established MB/s"
+    },
+    "note": "w-mem beats observation retained; fabric_e2e_MBps NOT_ESTABLISHED per rd-duck"
   },
   "w_mem_fullframe_e2e": {
-    "status": "FILLED",
+    "status": "BEATS_RECORDED_MBPS_NOT_ESTABLISHED",
     "not": "closed_at_pure_33.1776",
     "commit": "b53197e5",
     "branch": "integ/fab-720p-product-v2",
@@ -454,8 +499,9 @@
       "beats_e2e": 200676,
       "payload_ideal": 172800,
       "overhead_beats": 27876,
-      "fabric_e2e_MBps": 38.53,
-      "underrun": 0
+      "underrun": 0,
+      "note": "beats_e2e raw counter observation only \u2014 NOT established MB/s (rd-duck methodology NACK)",
+      "fabric_e2e_MBps_NOT_ESTABLISHED": 38.53
     },
     "G1": {
       "stall": 3,
@@ -464,6 +510,23 @@
       "rd_blocked": 609,
       "underrun": 0
     },
-    "parent_statement": "payload floor 33.1776 MB/s/dir LOCKED; measured fabric read e2e ~38.5 MB/s under this TB (overhead included); fabric BW NOT claimed closed at 33.1776; host 14.978 ms still separate; w-osd full-pixel colour path complementary (w-mem owns beat delta)"
+    "parent_statement": "payload floor 33.1776 MB/s/dir LOCKED; measured fabric read e2e ~38.5 MB/s under this TB (overhead included); fabric BW NOT claimed closed at 33.1776; host 14.978 ms still separate; w-osd full-pixel colour path complementary (w-mem owns beat delta)",
+    "rd_duck_methodology_nack": {
+      "status": "NACK",
+      "issues": [
+        "runCase clears at arbitrary doorbell phase",
+        "waits to frames_done then accumulates another 1650*750/2+1650 sys groups (full frame + 2 lines)",
+        "beats_e2e includes both pre-swap interval and scan",
+        "MB/s computed as beats*8*24 without normalizing by measured sys_cyc"
+      ],
+      "required": "steady product-cadence frame-to-frame delta OR bytes/s from actual elapsed simulation time"
+    },
+    "fabric_e2e_MBps": {
+      "claimed_by_w_mem": 38.53,
+      "status": "NOT_ESTABLISHED",
+      "formula_used_by_claim": "beats_e2e * 8 * 24 / 1e6",
+      "formula_problem": "no elapsed sys_cyc normalization; window not pure steady frame-to-frame",
+      "do_not_cite_as": "established fabric read MB/s"
+    }
   }
 }

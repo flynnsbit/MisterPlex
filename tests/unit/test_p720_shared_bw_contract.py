@@ -384,8 +384,24 @@ def main() -> int:
     q = tl.get("quote_for_parent", "")
     if "33.1776" not in q or "w-mem" not in q or "w-clock" not in q or "w-scaler" not in q:
         return fail("three_lane quote must name all three lanes and 33.1776")
-    if "rd-duck" not in c.get("audit_ack", []):
-        return fail("audit_ack must include rd-duck")
+    ack = c.get("audit_ack")
+    # rd-duck ACK is arithmetic labels ONLY — not reader CLOSED / 38.53
+    if isinstance(ack, list):
+        return fail(
+            "NEGATIVE: audit_ack must not be a bare list implying full rd-duck "
+            "acceptance — use structured arithmetic_labels_only"
+        )
+    if not isinstance(ack, dict) or "rd-duck" not in ack:
+        return fail("audit_ack must include structured rd-duck entry")
+    rda = ack["rd-duck"]
+    if isinstance(rda, str):
+        return fail("audit_ack.rd-duck must be object with arithmetic_labels_only scope")
+    if rda.get("scope") != "arithmetic_labels_only":
+        return fail("audit_ack.rd-duck.scope must be arithmetic_labels_only")
+    not_ack = " ".join(rda.get("NOT_ACK") or []).lower()
+    for needle in ("38.53", "reader closed", "free core", "never touches"):
+        if needle not in not_ack:
+            return fail(f"audit_ack.rd-duck.NOT_ACK must list {needle}")
     if p.get("clk_ratio_sys_to_ddr") != "20:90":
         return fail("product_config must lock clk_ratio_sys_to_ddr=20:90")
     svh = ROOT / "fpga/Plex_MiSTer/rtl/plex_720p_bw_contract.svh"
@@ -395,6 +411,24 @@ def main() -> int:
     for tok in ("P720_I420_BYTES", "1_382_400", "P720_FABRIC_RD_BPS", "P720_HOST_COPY_US", "14_978", "P720_PPC"):
         if tok not in svht:
             return fail(f"svh missing {tok}")
+    # rd-duck NACK (1): svh must be consumed by product RTL, not qip-only
+    present = (ROOT / "fpga/Plex_MiSTer/rtl/present_core.sv").read_text(
+        encoding="utf-8", errors="replace"
+    )
+    store = (ROOT / "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv").read_text(
+        encoding="utf-8", errors="replace"
+    )
+    if 'include "plex_720p_bw_contract.svh"' not in present:
+        return fail("present_core must `include plex_720p_bw_contract.svh (not qip-only)")
+    if 'include "plex_720p_bw_contract.svh"' not in store:
+        return fail("ddr_frame_store must `include plex_720p_bw_contract.svh (not qip-only)")
+    if "p720_bw_contract_ok" not in present or "P720_" not in present:
+        return fail("present_core must synthesis-bind P720 contract (p720_bw_contract_ok)")
+    if "p720_bw_contract_ok" not in store:
+        return fail("ddr_frame_store must synthesis-bind p720_bw_contract_ok")
+    if "mp_recipe_ok" in present and "P720_PRESENT_BIND_OK" not in present:
+        return fail("MULTI mp_recipe_ok must include P720_PRESENT_BIND_OK")
+    print("OK plex_720p_bw_contract.svh consumed by present_core + ddr_frame_store")
     # rd-duck binding labels: payload/ideal-port only; no sustainable-DDR claim
     lab = c.get("rd_duck_label_correction") or {}
     if lab.get("status") != "BINDING":
@@ -426,46 +460,83 @@ def main() -> int:
     if c.get("pending_ack"):
         return fail("pending_ack must stay empty (w-mem cleared)")
     ff = c.get("w_mem_fullframe_e2e") or {}
-    if ff.get("status") != "FILLED":
-        return fail("w_mem_fullframe_e2e.status must be FILLED (cite b53197e5)")
+    # rd-duck NACK (2): 38.53 MB/s NOT established; raw beats may be recorded
+    if ff.get("status") in ("FILLED", "CLOSED"):
+        return fail(
+            "NEGATIVE: w_mem_fullframe_e2e must not claim FILLED/CLOSED MB/s — "
+            "use BEATS_RECORDED_MBPS_NOT_ESTABLISHED (rd-duck methodology NACK)"
+        )
+    if ff.get("status") != "BEATS_RECORDED_MBPS_NOT_ESTABLISHED":
+        return fail(f"w_mem_fullframe_e2e.status unexpected {ff.get('status')!r}")
     if ff.get("commit") != "b53197e5":
         return fail("fullframe e2e must cite commit b53197e5")
     if "fullframe_beats" not in ff.get("tb", ""):
         return fail("fullframe e2e must cite test_ddr_ppc2_fullframe_beats.sh")
     g0 = ff.get("G0") or {}
     if int(g0.get("beats_e2e", 0)) != 200676:
-        return fail("G0 beats_e2e must be 200676")
+        return fail("G0 beats_e2e must be 200676 (raw observation)")
     if int(g0.get("overhead_beats", 0)) != 27876:
         return fail("G0 overhead must be 27876")
     if int(g0.get("beats_at_fd_prep_do_not_cite_as_full_BW", 0)) != 13953:
         return fail("prep beats must be recorded and labeled do-not-cite")
-    if ff.get("not") != "closed_at_pure_33.1776":
-        return fail("must state NOT closed at pure 33.1776")
+    mbp = ff.get("fabric_e2e_MBps")
+    if isinstance(mbp, (int, float)):
+        return fail(
+            "NEGATIVE: fabric_e2e_MBps must not be a bare number — NOT_ESTABLISHED object"
+        )
+    if isinstance(mbp, dict):
+        if mbp.get("status") != "NOT_ESTABLISHED":
+            return fail("fabric_e2e_MBps.status must be NOT_ESTABLISHED")
+    nack = ff.get("rd_duck_methodology_nack") or {}
+    if nack.get("status") != "NACK":
+        return fail("rd_duck_methodology_nack required on fullframe e2e")
+    issues = " ".join(nack.get("issues") or []).lower()
+    for needle in ("doorbell", "sys", "24", "elapsed"):
+        if needle not in issues and needle not in json.dumps(nack).lower():
+            pass
+    if "elapsed" not in json.dumps(nack).lower() and "sys_cyc" not in json.dumps(nack).lower():
+        return fail("methodology NACK must mention elapsed sys_cyc / time normalization")
     cs = c.get("claim_split") or {}
-    if (cs.get("fullframe_e2e_beat_delta") or {}).get("status") != "FILLED":
-        return fail("claim_split.fullframe_e2e_beat_delta must be FILLED")
-    # still_open must not claim fullframe e2e missing without b53197e5 context
-    for item in (c.get("proof_gap") or {}).get("still_open", []):
-        il = item.lower()
-        # Allow notes that explicitly say NOT missing fullframe / NOT reader
-        if "not missing fullframe" in il or "not missing" in il and "fullframe" in il:
-            continue
-        if il.startswith("fullframe") or ("fullframe e2e" in il and "open" in il):
-            if "b53197e5" not in il and "filled" not in il:
-                return fail(f"do not list fullframe e2e open without cite: {item}")
+    cs_ff = (cs.get("fullframe_e2e_beat_delta") or {}).get("status")
+    if cs_ff in ("FILLED", "CLOSED"):
+        return fail(
+            "NEGATIVE: claim_split.fullframe_e2e must not be FILLED as established MB/s"
+        )
+    if cs_ff != "BEATS_RECORDED_MBPS_NOT_ESTABLISHED":
+        return fail(f"claim_split.fullframe_e2e status unexpected {cs_ff!r}")
     extra = wma.get("extra_not_competing_headline") or {}
     if extra.get("payload_floor_remains") != 33.1776:
         return fail("e2e overhead must not raise payload floor")
     if int(extra.get("beats_e2e", 0)) <= 172800:
         return fail("e2e beats should exceed pure payload (overhead)")
-    calc = int(extra["beats_e2e"]) * 8 * g["fps"] / 1e6
-    if abs(calc - float(extra.get("MBps_calc", extra.get("MBps_approx", 0)))) > 0.05:
-        return fail(f"e2e MBps calc mismatch {calc}")
+    # NEGATIVE: must NOT treat beats*8*24 as established MB/s
+    for key in ("MBps_calc", "MBps_approx"):
+        val = extra.get(key)
+        if isinstance(val, (int, float)):
+            return fail(
+                f"NEGATIVE: extra.{key}={val} numeric implies established MB/s — "
+                "mark NOT_ESTABLISHED (rd-duck)"
+            )
     if h["value"] != 33.1776:
         return fail("headline must remain 33.1776 after w-mem e2e extra")
+    # (4) slogans forbidden as claims — allowed only inside FORBIDDEN_slogans /
+    # explicit "Do NOT claim" prose.
+    arm = c["arm_cpu_time_NOT_a_rate"]
+    paths = arm.get("closure_paths") or {}
+    for k, v in paths.items():
+        vl = str(v).lower()
+        if "arm never touches payload" in vl and "do not claim" not in vl:
+            return fail(
+                f"NEGATIVE: closure_paths.{k} claims 'ARM never touches payload' (rd-duck)"
+            )
+        if "free core" in vl and "do not claim" not in vl and "unproven" not in vl:
+            return fail(f"NEGATIVE: closure_paths.{k} bare 'free core' claim (rd-duck)")
+    forb = " ".join(arm.get("FORBIDDEN_slogans") or []).lower()
+    if "free core" not in forb or "never touches" not in forb:
+        return fail("arm_cpu_time must list FORBIDDEN_slogans free core + never touches")
     print(
-        f"OK w-mem fullframe e2e FILLED b53197e5 beats_e2e={g0.get('beats_e2e')} "
-        f"~{g0.get('fabric_e2e_MBps')} MB/s; payload floor 33.1776; pending_ack=[]"
+        f"OK w-mem fullframe beats recorded b53197e5 beats_e2e={g0.get('beats_e2e')} "
+        "MB/s NOT_ESTABLISHED (rd-duck); payload floor 33.1776; slogans scrubbed"
     )
 
     print(f"OK THREE-LANE LOCK agreed_by={agreed} pending_ack=[]")

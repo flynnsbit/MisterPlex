@@ -566,6 +566,9 @@ module present_core #(
 	assign sdram_refresh = 1'b0;
 
 `include "ddr_frame_layout_params.svh"
+// Shared 720p24 BW contract — consumed by product present path (rd-duck:
+// qip-only listing is dead; must `include and bind).
+`include "plex_720p_bw_contract.svh"
 
 	// Active DDR reader geometry. Default = 480p layout (coded 624 / display
 	// 618 / pillar 11 / stride 0x80000).
@@ -575,32 +578,33 @@ module present_core #(
 	// MULTI previously fell through to 0x3000_0000 / 624x480 doorbell while
 	// driving a 1280x720 beam → wrong bank, ~480p visibility only.
 	// Shared selection: `ifdef L4 `elsif MULTI `else 480p (see PLEX_FS_TIER_720P comment).
+	// 720p tier binds layout + BW contract constants (single SoT).
 `ifdef PLEX_PRESENT_720P_L4
 	// PLEX_FS_TIER_720P via L4
-	localparam int FS_CODED_W     = DDR_FRAME_720P_CODED_WIDTH;
-	localparam int FS_CODED_H     = DDR_FRAME_720P_CODED_HEIGHT;
-	localparam int FS_DISPLAY_W   = DDR_FRAME_720P_DISPLAY_WIDTH;
-	localparam int FS_DISPLAY_H   = DDR_FRAME_720P_DISPLAY_HEIGHT;
+	localparam int FS_CODED_W     = P720_CODED_W;
+	localparam int FS_CODED_H     = P720_CODED_H;
+	localparam int FS_DISPLAY_W   = P720_CODED_W;
+	localparam int FS_DISPLAY_H   = P720_CODED_H;
 	localparam int FS_CROP_LEFT   = 0; // 720p: display == coded (host kPlex720p*)
 	localparam int FS_CROP_TOP    = 0;
 	localparam int FS_PRESENT_X   = DDR_FRAME_720P_PILLARBOX_LEFT;
 	localparam int FS_PRESENT_Y   = 0;
 	localparam [31:0] FS_PHYS_BASE = DDR_FRAME_720P_PHYS_BASE;
-	localparam int FS_BANK_STRIDE = DDR_FRAME_720P_YUV420P_BANK_STRIDE;
-	localparam [31:0] FS_DOORBELL = DDR_FRAME_720P_YUV420P_DOORBELL_PHYS;
+	localparam int FS_BANK_STRIDE = P720_BANK_STRIDE;
+	localparam [31:0] FS_DOORBELL = P720_DOORBELL_PHYS;
 `elsif PRESENT_MULTI_PIXEL
 	// PLEX_FS_TIER_720P via MULTI (CEA 1280×720 beam + PPC path)
-	localparam int FS_CODED_W     = DDR_FRAME_720P_CODED_WIDTH;
-	localparam int FS_CODED_H     = DDR_FRAME_720P_CODED_HEIGHT;
-	localparam int FS_DISPLAY_W   = DDR_FRAME_720P_DISPLAY_WIDTH;
-	localparam int FS_DISPLAY_H   = DDR_FRAME_720P_DISPLAY_HEIGHT;
+	localparam int FS_CODED_W     = P720_CODED_W;
+	localparam int FS_CODED_H     = P720_CODED_H;
+	localparam int FS_DISPLAY_W   = P720_CODED_W;
+	localparam int FS_DISPLAY_H   = P720_CODED_H;
 	localparam int FS_CROP_LEFT   = 0;
 	localparam int FS_CROP_TOP    = 0;
 	localparam int FS_PRESENT_X   = DDR_FRAME_720P_PILLARBOX_LEFT;
 	localparam int FS_PRESENT_Y   = 0;
 	localparam [31:0] FS_PHYS_BASE = DDR_FRAME_720P_PHYS_BASE;
-	localparam int FS_BANK_STRIDE = DDR_FRAME_720P_YUV420P_BANK_STRIDE;
-	localparam [31:0] FS_DOORBELL = DDR_FRAME_720P_YUV420P_DOORBELL_PHYS;
+	localparam int FS_BANK_STRIDE = P720_BANK_STRIDE;
+	localparam [31:0] FS_DOORBELL = P720_DOORBELL_PHYS;
 `else
 	localparam int FS_CODED_W     = DDR_FRAME_CODED_WIDTH;
 	localparam int FS_CODED_H     = DDR_FRAME_CODED_HEIGHT;
@@ -619,11 +623,43 @@ module present_core #(
 	// MULTI+PPC2 @20 MHz, 1280 px: t_line = 1280/PPC/f = 32 us @PPC2.
 	//   FRAME_LINES_8  → 256 us  < 500 us modelled DDR blackout (FAIL cover)
 	//   FRAME_LINES_16 → 512 us  >= 500 us (PASS cover)
-	// Product QSF may still set FRAME_LINES_8 for 480p; MULTI floors to 16.
+	// Product QSF may still set FRAME_LINES_8 for 480p; MULTI floors to contract.
 `ifdef PRESENT_MULTI_PIXEL
-	localparam int FS_LINE_COUNT = (FRAME_LINE_COUNT < 16) ? 16 : FRAME_LINE_COUNT;
+	localparam int FS_LINE_COUNT =
+		(FRAME_LINE_COUNT < P720_LINE_COUNT) ? P720_LINE_COUNT : FRAME_LINE_COUNT;
 `else
 	localparam int FS_LINE_COUNT = FRAME_LINE_COUNT;
+`endif
+
+	// Synthesis-ACTIVE contract bind (720p tiers only). Always elaborates
+	// self-consistency; noprune so hierarchy/fit sees the consumer.
+	localparam bit P720_I420_OK =
+		(P720_I420_BYTES == (P720_CODED_W * P720_CODED_H * 3 / 2));
+`ifdef PLEX_PRESENT_720P_L4
+	localparam bit P720_PRESENT_BIND_OK =
+		P720_I420_OK &&
+		(FS_CODED_W == P720_CODED_W) && (FS_CODED_H == P720_CODED_H) &&
+		(FS_BANK_STRIDE == P720_BANK_STRIDE) &&
+		(FS_DOORBELL == P720_DOORBELL_PHYS);
+`elsif PRESENT_MULTI_PIXEL
+	localparam bit P720_PRESENT_BIND_OK =
+		P720_I420_OK &&
+		(FS_CODED_W == P720_CODED_W) && (FS_CODED_H == P720_CODED_H) &&
+		(FS_LINE_COUNT >= P720_LINE_COUNT) &&
+		(FS_BANK_STRIDE == P720_BANK_STRIDE) &&
+		(FS_DOORBELL == P720_DOORBELL_PHYS) &&
+		((PRESENT_PPC == P720_PPC) || (PRESENT_PPC == 1) || (PRESENT_PPC == 4));
+`else
+	localparam bit P720_PRESENT_BIND_OK = P720_I420_OK;
+`endif
+	(* noprune *) wire        p720_bw_contract_ok   = P720_PRESENT_BIND_OK;
+	(* noprune *) wire [31:0] p720_i420_bytes_c     = P720_I420_BYTES;
+	(* noprune *) wire [31:0] p720_fabric_rd_bps_c  = P720_FABRIC_RD_BPS;
+	(* noprune *) wire p720_contract_live =
+		p720_bw_contract_ok | (|p720_i420_bytes_c) | (|p720_fabric_rd_bps_c);
+`ifndef SYNTHESIS
+	initial if (!P720_PRESENT_BIND_OK)
+		$error("present_core: plex_720p_bw_contract bind failed (720p tier geom/stride/doorbell/I420)");
 `endif
 
 	// N-wide store RGB (PX_PER_CLK=PRESENT_PPC). Scalar path still uses fr/fg/fb.
@@ -641,10 +677,13 @@ module present_core #(
 	// Illegal PPC / frame size → zero-width wire forces hierarchy fail if mis-set.
 	localparam bit MP_PPC_OK =
 		(PRESENT_PPC == 1) || (PRESENT_PPC == 2) || (PRESENT_PPC == 4);
-	localparam bit MP_FRAME_OK = (FRAME_W == 1280) && (FRAME_H == 720);
-	localparam bit MP_RECIPE_OK = MP_PPC_OK && MP_FRAME_OK;
+	localparam bit MP_FRAME_OK =
+		(FRAME_W == P720_CODED_W) && (FRAME_H == P720_CODED_H);
+	// Bind BW contract into the live recipe gate (synthesis-active consumer).
+	localparam bit MP_RECIPE_OK =
+		MP_PPC_OK && MP_FRAME_OK && P720_PRESENT_BIND_OK;
 	// noprune so post-fit hierarchy can see the recipe bit.
-	(* noprune *) wire mp_recipe_ok = MP_RECIPE_OK;
+	(* noprune *) wire mp_recipe_ok = MP_RECIPE_OK & p720_contract_live;
 `ifndef SYNTHESIS
 	initial begin
 		if (!MP_PPC_OK)
@@ -664,9 +703,9 @@ module present_core #(
 	wire mp_beam_en = ~reset & mp_in_ready & mp_recipe_ok;
 	present_beam_ppc #(
 		.PX_PER_CLK(PRESENT_PPC),
-		.H_DE(1280),
+		.H_DE(P720_CODED_W),
 		.H_TOTAL(1650),
-		.V_ACTIVE(720),
+		.V_ACTIVE(P720_CODED_H),
 		.V_TOTAL(750),
 		.H_SYNC_S(1390),
 		.H_SYNC_E(1430),

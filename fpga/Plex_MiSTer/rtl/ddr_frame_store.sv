@@ -79,12 +79,50 @@ module ddr_frame_store #(
 	output reg         doorbell_ok,
 	output wire  [7:0] debug_state
 );
+	// Shared 720p24 BW contract (w-mem/w-clock/w-scaler). Must be *included*
+	// here — files.qip alone does not bind product RTL (rd-duck NACK).
+`include "plex_720p_bw_contract.svh"
+
 	localparam int X_W = $clog2(FRAME_W);
 	localparam int Y_W = $clog2(FRAME_H);
 	localparam int CODED_X_W = $clog2(CODED_W);
 	localparam int CODED_Y_W = $clog2(CODED_H);
 	localparam int Y_LINE_QWORDS = CODED_W / 8;
 	localparam int C_LINE_QWORDS = CODED_W / 16;
+
+	// Synthesis-ACTIVE: contract self-consistency always elaborates.
+	localparam bit P720_I420_OK =
+		(P720_I420_BYTES == (P720_CODED_W * P720_CODED_H * 3 / 2));
+	localparam bit P720_YQW_OK =
+		(P720_Y_LINE_QWORDS == (P720_CODED_W / 8));
+	localparam bit P720_CQW_OK =
+		(P720_C_LINE_QWORDS == (P720_CODED_W / 16));
+	// When this instance is the 720p product geometry, params must match contract.
+	localparam bit P720_GEOM_ACTIVE =
+		(CODED_W == P720_CODED_W) && (CODED_H == P720_CODED_H);
+	localparam bit P720_GEOM_MATCH =
+		!P720_GEOM_ACTIVE || (
+			(Y_LINE_QWORDS == P720_Y_LINE_QWORDS) &&
+			(C_LINE_QWORDS == P720_C_LINE_QWORDS) &&
+			(LINE_COUNT >= P720_LINE_COUNT) &&
+			(HPS_BANK_STRIDE_BYTES == P720_BANK_STRIDE) &&
+			(DOORBELL_PHYS == P720_DOORBELL_PHYS) &&
+			((PX_PER_CLK == 1) || (PX_PER_CLK == P720_PPC) ||
+			 (PX_PER_CLK == 4))
+		);
+	localparam bit P720_CONTRACT_OK =
+		P720_I420_OK && P720_YQW_OK && P720_CQW_OK && P720_GEOM_MATCH;
+	// noprune consumers — constants participate in product hierarchy (not DCE).
+	(* noprune *) wire        p720_bw_contract_ok  = P720_CONTRACT_OK;
+	(* noprune *) wire [31:0] p720_i420_bytes_c    = P720_I420_BYTES;
+	(* noprune *) wire [31:0] p720_fabric_rd_bps_c = P720_FABRIC_RD_BPS;
+	// Live OR so BPS/I420 cannot be stripped as unread locals.
+	(* noprune *) wire p720_contract_live =
+		p720_bw_contract_ok | (|p720_i420_bytes_c) | (|p720_fabric_rd_bps_c);
+`ifndef SYNTHESIS
+	initial if (!P720_CONTRACT_OK)
+		$error("ddr_frame_store: plex_720p_bw_contract bind failed (geom/I420/LINE/stride/doorbell)");
+`endif
 	localparam int Y_QW_AW = $clog2(Y_LINE_QWORDS);
 	localparam int C_QW_AW = $clog2(C_LINE_QWORDS);
 	localparam int LINE_SLOTS = LINE_COUNT * 2;
