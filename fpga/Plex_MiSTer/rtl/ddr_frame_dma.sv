@@ -4,10 +4,14 @@
 // Copies frame_bytes planar YUV420p src_phys → bank_phys on the single HPS
 // f2sdram port. Bounce holds one burst so RD then WE share the port.
 //
-// M10K COST (stated up front):
-//   bounce[BOUNCE_DEPTH] × 64b. DEPTH=128 → 8192 bits → **1 M10K EST**
-//   (M10K cell = 10240 bits). ALM EST ~300–500 (FSM + addr; UNVERIFIED fit).
-//   Budget: parent post-strip free 356 M10K / 27_556 ALM.
+// M10K COST (stated up front — layout, not bits/10240):
+//   bounce[BOUNCE_DEPTH] × 64b, DEPTH=128 → 8192 bits logical.
+//   Cyclone V M10K legal modes max width 40b (256×40). **64b is not native.**
+//   Implementation: 2× parallel M10K (typ. 256×32 each), depth 128 used of 256.
+//   => **2 M10K EST** (NOT 1). Control: nostub-poststrip1 fit entity rows for
+//   line_buf_ram DATA_W=64 (yram 4992b→2 M10K; uram 2496b→2 M10K) — width-bound.
+//   Bits-only 8192/10240=1 was the parent-corrected false premise; retracted.
+//   ALM EST ~300–500 (FSM; UNVERIFIED fit). Budget free 356 M10K / 27_556 ALM.
 //
 // Beat math (payload RATE, not CPU time) — ideal solo port:
 //   R_req @720p24     = 33.1776 MB/s one direction (1_382_400 * 24)
@@ -59,7 +63,7 @@ module ddr_frame_dma #(
 );
 	localparam int BW = (BOUNCE_DEPTH <= 2) ? 1 : $clog2(BOUNCE_DEPTH);
 
-	// 8192b @ DEPTH=128 → 1 M10K EST. Keep M10K (not logic) for burst BW.
+	// 128×64b → 2 M10K EST (2×256×32 parallel; see header). Keep M10K for burst BW.
 	(* ramstyle = "no_rw_check, M10K" *) reg [63:0] bounce [0:BOUNCE_DEPTH-1];
 	reg [BW-1:0] bidx;
 	reg [7:0]    bcount;

@@ -49,9 +49,15 @@ BYTES_PER_BEAT = 8
 BOUNCE_DEPTH = 128
 NOSTUB_RECLAIM_M10K = 268
 BOUNCE_BYTES = BOUNCE_DEPTH * BYTES_PER_BEAT
-M10K_BITS = 10_240
-PREREG_BOUNCE_M10K = max(1, math.ceil(BOUNCE_BYTES * 8 / M10K_BITS))
+# Cyclone V M10K max width 40b — 64b port is NOT native. bits/10240 is NOT a
+# legal cost. Fit control (nostub-poststrip1): every line_buf_ram DATA_W=64 uses
+# 2 M10Ks (yram 4992b→2; uram 2496b→2). Bounce 128×64 same width class → 2.
+PREREG_BOUNCE_M10K = 2
 PREREG_MUX_M10K = 0  # pure mux
+# Retraction check: naive bits formula under-counts (parent 1280B premise class)
+_NAIVE_BITS_M10K = max(1, math.ceil(BOUNCE_BYTES * 8 / 10_240))
+assert _NAIVE_BITS_M10K == 1, "expected naive formula to still say 1 (the bug)"
+assert PREREG_BOUNCE_M10K == 2, "corrected cost must be 2"
 
 
 def active_macros(qsf: str) -> set[str]:
@@ -119,6 +125,15 @@ def main() -> int:
         return 1
     if "M10K" not in dma and "m10k" not in dma.lower():
         print("FAIL: ddr_frame_dma must state M10K cost in header", file=sys.stderr)
+        return 1
+    # Layout-aware cost must appear (reject retracted bits/10240 "1 M10K" claim)
+    if not re.search(r"\b2\s*M10K\b", dma):
+        print("FAIL: ddr_frame_dma header must state 2 M10K (64b width-bound)", file=sys.stderr)
+        return 1
+    if re.search(r"8192 bits → \*\*1 M10K", dma) or re.search(
+        r"DEPTH=128 → 8192 bits → \*\*1 M10K", dma
+    ):
+        print("FAIL: retracted 1-M10K bits/10240 claim still present", file=sys.stderr)
         return 1
 
     # Preferred path documents direct reader vs mover

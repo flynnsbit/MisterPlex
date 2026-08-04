@@ -57,7 +57,8 @@ module ddr_publish_copy_budget #(
 	// Changed only with an explicit GOLDEN-CHANGE + parent device evidence.
 	localparam int PR_PL330_M10K = 0;
 	localparam int PR_PL330_ALM = 0;
-	localparam int PR_FABRIC_BOUNCE_M10K = 1;   // DEPTH=128 * 8 B → 1 M10K EST
+	// 128×64b bounce: 2 M10K EST (2× parallel; max native width 40b). NOT bits/10240.
+	localparam int PR_FABRIC_BOUNCE_M10K = 2;
 	localparam int PR_FABRIC_ALM_EST = 400;     // UNVERIFIED pre-fit placeholder
 	localparam int PR_PL330_BW_KBps = 150_000;  // 150 MB/s conservative EST
 	localparam int PR_FABRIC_PEAK_KBps = 720_000; // 8 * 90e6

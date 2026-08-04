@@ -24,8 +24,10 @@
 // FAULT DDR_ARB3_FAULT_M2_STICKY_NO_QUANTUM: hold grant_m2 through continuous
 // WE while m0_cmd for red twin (tests/rtl/ddr_publish_contended_tb.sv).
 //
-// M10K: 0 arrays here; m1 rsp uses async_fifo AW=3 → ≤1 M10K typical (same as
-// product 2-master arbiter). ALM ESTIMATE ~400–600 vs 2-port; UNVERIFIED fit.
+// M10K: no local arrays; m1 rsp async_fifo AW=3 × 64b data is WIDTH-BOUND
+// (Cyclone V max native 40b). Same class as product 2-master arbiter FIFO →
+// **2 M10K EST** (not ≤1 via bits/10240). Control analogy: nostub-poststrip1
+// line_buf_ram DATA_W=64 → 2 M10K even at 2496 bits. ALM EST ~400–600; no fit.
 //
 // Do NOT replace ddr_bus_arbiter.sv in-place. Not in product files.qip until
 // parent enables fabric publish after measured device BW.

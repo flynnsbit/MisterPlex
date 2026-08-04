@@ -4,8 +4,8 @@
 //   PR_T_COPY_ARM_US           = 14978
 //   PR_T_IDEAL_SOLO_US         = 3840   // 2*(1382400/8)/90
 //   PR_T_WITH_PRESENT_US       = 5760   // 1.5× ideal (present R share)
-//   PR_M10K_DMA                = 1      // bounce DEPTH=128
-//   PR_M10K_ARB3               = 1      // m1 FIFO typical upper
+//   PR_M10K_DMA                = 2      // bounce 128×64b → 2×M10K (width-bound)
+//   PR_M10K_ARB3               = 2      // m1 FIFO 8×64b same width class upper
 //   PR_QUANTUM                 = 8
 //   PR_MAX_M0_DENY_PRODUCT     = 48
 //
@@ -25,8 +25,8 @@ module ddr_frame_dma_contended_tb;
 	localparam int PR_T_COPY_ARM_US = 14978;
 	localparam int PR_T_IDEAL_SOLO_US = 3840;
 	localparam int PR_T_WITH_PRESENT_US = 5760;
-	localparam int PR_M10K_DMA = 1;
-	localparam int PR_M10K_ARB3 = 1;
+	localparam int PR_M10K_DMA = 2;
+	localparam int PR_M10K_ARB3 = 2;
 	localparam int PR_QUANTUM = 8;
 	localparam int PR_MAX_M0_DENY_CWE = 48;
 	// DMA bounce WR can hold m2 for up to BOUNCE_DEPTH beats before m0 samples;
@@ -341,10 +341,11 @@ module ddr_frame_dma_contended_tb;
 			$display("PASS G1b product CWE max_deny=%0d grants=%0d (quantum bound %0d)", m0_max_deny, m0_grants, PR_MAX_M0_DENY_CWE);
 `endif
 
-		if (PR_M10K_DMA != 1 || PR_M10K_ARB3 != 1) begin
-			$display("FAIL PREREG m10k"); fail = 1;
+		if (PR_M10K_DMA != 2 || PR_M10K_ARB3 != 2) begin
+			$display("FAIL PREREG m10k (expect 2/2 width-bound 64b)"); fail = 1;
 		end else
-			$display("PASS M10K_PREREG dma=%0d arb3=%0d (EST; fit UNVERIFIED)", PR_M10K_DMA, PR_M10K_ARB3);
+			$display("PASS M10K_PREREG dma=%0d arb3=%0d (64b→2×M10K layout; entity fit UNVERIFIED)",
+				PR_M10K_DMA, PR_M10K_ARB3);
 
 		if (fail) begin $display("FAIL ddr_frame_dma_contended_tb"); $finish(1); end
 		$display("PASS ddr_frame_dma_contended_tb all");
