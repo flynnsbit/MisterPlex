@@ -1164,14 +1164,14 @@ module ddr_frame_store #(
 			disp_bank_d2 <= disp_bank_d1;
 			disp_buf_d1 <= disp_buf;
 			disp_buf_d2 <= disp_buf_d1;
-// INVALIDATE_DISP_ON_BUF_FLIP (TAG_LAG product residual after I3b):
-// On disp_buf CDC edge (d1!=d2) clear half that just left display (d2 base).
-// Drops multi-epoch mixed tags. No mbox CE / wrap / LEAD_K thrash. DIAG=0.
+// INVALIDATE_BOTH_ON_BUF_FLIP (TAG_LAG residual after INV_DISP alone FAIL):
+// On disp_buf CDC edge clear ALL line-buffer valids (both halves). Outgoing-half
+// alone (4f2b0220) STA green but F1 FFFF / F2 MEAN~2.6 residual FAIL.
+// Full clear forces full-window refill from desired_y under gray holdlast.
+// No mbox CE / wrap / LEAD_K thrash. DIAG=0.
 if (disp_buf_d1 != disp_buf_d2) begin
-for (ti = 0; ti < LINE_COUNT; ti = ti + 1) begin
-y_valid[(disp_buf_d2 ? SECOND_SET_BASE : {SLOT_W{1'b0}}) + ti[SLOT_W-1:0]] <= 1'b0;
-c_valid[(disp_buf_d2 ? SECOND_SET_BASE : {SLOT_W{1'b0}}) + ti[SLOT_W-1:0]] <= 1'b0;
-end
+y_valid <= '0;
+c_valid <= '0;
 end
 			has_frame_d1 <= has_frame;
 			has_frame_d2 <= has_frame_d1;
