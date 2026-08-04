@@ -19,6 +19,12 @@ MAKEFILE = Path(os.environ.get("UNIT_ROLLCALL_MAKEFILE", ROOT / "Makefile"))
 EXPECTED_PREREQS = [
     "unit-rollcall",
     "preflight",
+    # land-line 720p / PL330 / SPI fail-closed suite
+    "$(ROOT)/build/test_pl330_encode",
+    "$(ROOT)/build/test_p720_e2e_budget",
+    "$(ROOT)/build/test_idle_poll_budget",
+    "$(ROOT)/build/test_spi_txn_complete",
+    "$(ROOT)/build/test_gdm_filter",
     "$(ROOT)/build/test_cadence",
     "$(ROOT)/build/test_cadence_swap_path",
     "$(ROOT)/build/test_publish_interval_ledger",
@@ -79,6 +85,18 @@ EXPECTED_PREREQS = [
 ]
 
 EXPECTED_COMMANDS = [
+    # land-line additions (must stay ahead of cadence — Makefile order)
+    "$(ROOT)/build/test_gdm_filter",
+    "$(ROOT)/build/test_spi_txn_complete",
+    "$(ROOT)/build/test_idle_poll_budget",
+    "$(ROOT)/build/test_p720_e2e_budget",
+    "$(ROOT)/build/test_pl330_encode",
+    "python3 $(ROOT)/tests/unit/test_p720_shared_bw_contract.py",
+    "bash $(ROOT)/tests/unit/test_idle_thread_budget_gate.sh",
+    "bash $(ROOT)/tests/unit/test_io_ack_follow_rtl_sim.sh",
+    "bash $(ROOT)/tests/unit/test_bitstream_bit_feeder_rtl_sim.sh",
+    "bash $(ROOT)/tests/unit/test_bitstream_to_exp_golomb_rtl_sim.sh",
+    "bash $(ROOT)/tests/unit/test_annexb_rbsp_exp_golomb_rtl_sim.sh",
     "$(ROOT)/build/test_cadence",
     "$(ROOT)/build/test_cadence_swap_path",
     "$(ROOT)/tests/unit/test_cadence_swap_path_source.sh",
@@ -177,6 +195,13 @@ EXPECTED_COMMANDS = [
     "python3 $(ROOT)/tests/unit/test_product_no_stub_active_static.py",
     "python3 $(ROOT)/tests/unit/test_decode_stub_removal_prereq_static.py",
     "python3 $(ROOT)/tests/unit/test_720p_present_m10k_budget_static.py",
+    "python3 $(ROOT)/tests/unit/test_present_720p_land_static.py",
+    "python3 $(ROOT)/tests/unit/test_present_720p_l4_static.py",
+    "python3 $(ROOT)/tests/unit/test_present_geom_params_static.py",
+    "$(ROOT)/tests/unit/test_present_geom_params_rtl_sim.sh",
+    "python3 $(ROOT)/tests/unit/test_present_720p_store_wire_static.py",
+    "$(ROOT)/tests/unit/test_present_720p_store_wire_rtl_sim.sh",
+    "python3 $(ROOT)/tests/unit/test_720p_clk_ddr_arith.py",
     "python3 $(ROOT)/tests/unit/test_p3_high_cabac_scope.py",
     "python3 $(ROOT)/tests/unit/test_p3_intra_mb0_verilator.py",
     "python3 $(ROOT)/tests/unit/test_h264_intra_nb_ctx_verilator.py",
