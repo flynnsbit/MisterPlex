@@ -1,5 +1,5 @@
 {
-  "title": "P720 shared BW + ARM CPU-time terms \u2014 AGREED; fabric BW OPEN; e2e overlap unproven",
+  "title": "P720 BW \u2014 rates+CPU-time; reader proof CLOSED (w-clock); concurrent HPS write OPEN",
   "product_config": {
     "PRESENT_MULTI_PIXEL": true,
     "PRESENT_PX_PER_CLK": 2,
@@ -94,29 +94,67 @@
     "note": "latency cover, not average BW"
   },
   "proof_gap": {
-    "status": "OPEN",
+    "status": "PARTIAL_CLOSED_READER",
     "fabric_bw_closed": false,
-    "headline_assumption": "33.1776 assumes exactly one full I420 payload transfer per direction per frame",
-    "missing": [
-      "full 1280x720 real-reader DDRAM beat delta end-of-frame (not prep-only)",
-      "doorbell + mailbox + refill overhead bytes/frame on the real reader path",
-      "injected-stall case under product PPC2 recipe",
-      "correct clk_sys:clk_ddr = 20:90 (not 1:1) in the beat-delta measurement"
+    "reader_steady_delta": {
+      "status": "CLOSED",
+      "owner": "w-clock",
+      "source_tip": "w-clock-720p-sv@f992a5b7",
+      "tb": "tests/unit/test_ddr_frame_store_720p_ppc2_bus.sh",
+      "recipe": "MULTI+PPC2+LINE16+PHYS 0x30180000+clk_sys:clk_ddr 20:90",
+      "measurement": "steady frames_done delta (prep excluded)",
+      "G0": {
+        "payload_beats": 173120,
+        "ideal_payload": 172800,
+        "overhead_beats_doorbell": 9689,
+        "total_rd_beats": 182809,
+        "ddr_cycles": 2784152,
+        "budget_ddr_24fps": 3750000,
+        "max_burst": 128,
+        "note": "payload ideal+320; under budget"
+      },
+      "G1_stall": {
+        "payload_beats": 173120,
+        "rd_blocked": 1248,
+        "busy_cycles": 797290,
+        "note": "beam-locked wall; stall via busy/blocked not longer frame"
+      },
+      "w_scaler_ack": "ACK reader proof; brought TB onto w-scaler-720win for local reconfirm",
+      "w_scaler_local_reconfirm": {
+        "cmd": "bash tests/unit/test_ddr_frame_store_720p_ppc2_bus.sh",
+        "true_rc": 0,
+        "DUT": "tip scalar ddr_frame_store (no PX_PER_CLK; N-wide ports deferred to present-ppc)",
+        "scan": "rd_x steps by 2 (PPC2 group alignment)",
+        "G0_match_w_clock": {
+          "payload_beats": 173120,
+          "doorbell_beats": 9689,
+          "total_rd_beats": 182809,
+          "ddr_cycles": 2784152,
+          "budget_ddr_24fps": 3750000
+        },
+        "G1_match_w_clock": {
+          "payload_beats": 173120,
+          "rd_blocked": 1248,
+          "busy_cycles": 797290
+        },
+        "note": "Numbers bit-identical to w-clock published G0/G1 on scalar DUT"
+      }
+    },
+    "still_open": [
+      "concurrent_HPS_write_beats_same_controller (w-mem) \u2014 NOT claimed closed by w-clock",
+      "e2e serial/overlap of decode + T_copy_arm (parent Sweep 118) \u2014 unproven",
+      "fabric DMA write path retiring T_copy_arm (strategic b)"
     ],
-    "existing_partial_evidence_not_closure": [
-      "fullframe-style reports that only quote prep beats are NOT end-of-frame bus delta",
-      "ddr_frame_store_warm_reset_tb uses FRAME_H=48 (not 720) and is not the product PPC2 path",
-      "prefetch sim arithmetic (test_frame_store_ddr_prefetch_sim) is model-clean/underrun, not measured bus beats"
-    ],
-    "owner_for_closure": "w-mem (bus/reader) + w-osd (full 720p L4 reader) with w-scaler consuming peaks only",
-    "w_scaler_position": "ACK averages + peaks split; will NOT claim fabric BW closed until beat-delta proof lands"
+    "headline_assumption": "33.1776 is payload average; real reader measured ~173120 payload beats/frame (+320 vs ideal) + doorbell overhead",
+    "w_scaler_position": "ACK w-clock CLOSED reader steady-delta; fabric_bw_closed remains false until HPS-write concurrent budget is owned"
   },
   "agreed_by": [
     "w-clock",
     "w-scaler"
   ],
   "audit_ack": [
-    "rd-duck"
+    "rd-duck",
+    "w-clock-reader-proof"
   ],
   "pending_ack": [
     "w-mem"
@@ -159,5 +197,49 @@
     "T_copy_arm_ms": 14.978,
     "C_arm_MiBps": 88.0,
     "source": "parent Sweep 118 + rd-duck + w-path joint; w-scaler ACK"
+  },
+  "real_reader_proof": {
+    "status": "CLOSED",
+    "owner": "w-clock",
+    "source_tip": "w-clock-720p-sv@f992a5b7",
+    "tb": "tests/unit/test_ddr_frame_store_720p_ppc2_bus.sh",
+    "recipe": "MULTI+PPC2+LINE16+PHYS 0x30180000+clk_sys:clk_ddr 20:90",
+    "measurement": "steady frames_done delta (prep excluded)",
+    "G0": {
+      "payload_beats": 173120,
+      "ideal_payload": 172800,
+      "overhead_beats_doorbell": 9689,
+      "total_rd_beats": 182809,
+      "ddr_cycles": 2784152,
+      "budget_ddr_24fps": 3750000,
+      "max_burst": 128,
+      "note": "payload ideal+320; under budget"
+    },
+    "G1_stall": {
+      "payload_beats": 173120,
+      "rd_blocked": 1248,
+      "busy_cycles": 797290,
+      "note": "beam-locked wall; stall via busy/blocked not longer frame"
+    },
+    "w_scaler_ack": "ACK reader proof; brought TB onto w-scaler-720win for local reconfirm",
+    "w_scaler_local_reconfirm": {
+      "cmd": "bash tests/unit/test_ddr_frame_store_720p_ppc2_bus.sh",
+      "true_rc": 0,
+      "DUT": "tip scalar ddr_frame_store (no PX_PER_CLK; N-wide ports deferred to present-ppc)",
+      "scan": "rd_x steps by 2 (PPC2 group alignment)",
+      "G0_match_w_clock": {
+        "payload_beats": 173120,
+        "doorbell_beats": 9689,
+        "total_rd_beats": 182809,
+        "ddr_cycles": 2784152,
+        "budget_ddr_24fps": 3750000
+      },
+      "G1_match_w_clock": {
+        "payload_beats": 173120,
+        "rd_blocked": 1248,
+        "busy_cycles": 797290
+      },
+      "note": "Numbers bit-identical to w-clock published G0/G1 on scalar DUT"
+    }
   }
 }
