@@ -129,7 +129,7 @@ def main() -> int:
 
     print(
         "PASS product_720p_geometry | FRAME=1280x720 | I420=1382400 | "
-        f"bank=0x180000 doorbell=0x302FF000 | "
+        f"bank=0x180000 doorbell=0x3047F000 | "
         f"PREREG_linebuf_M10K={PREREG_LINEBUF_M10K_LO}..{PREREG_LINEBUF_M10K_HI} "
         f"ESTIMATE free_after_strip={FREE_AFTER_STRIP} remain_lo={FREE_AFTER_STRIP-PREREG_LINEBUF_M10K_HI} | "
         f"PREREG_ALM_delta={PREREG_ALM_DELTA}_UNMEASURED | "

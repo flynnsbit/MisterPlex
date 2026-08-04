@@ -329,14 +329,17 @@ int main() {
     checkConversion(320, 240);
     checkConversion(640, 480);
 
-    // Product silicon canvas is compile-time 1280-stride identity. Every supported
-    // content tier (DECODE/OSD) must still produce a writer layout whose line
-    // stride equals RTL ddr_frame_layout_params.svh — otherwise HDMI shears.
+    // Dual-header product: default unit TU = 480p silicon (624-stride). Decode tier
+    // is ignored by ddrFrameGeometryForFpgaPresent — all content packs into the
+    // product bank. 720p L4 is always available via plex720p* helpers (not the
+    // default product flag). Land single-header assumed always-1280 product —
+    // that is wrong on dual-header and is the failure mode this block guards.
     {
         const int tiers[][2] = {{320, 240}, {624, 480}, {640, 480}, {1280, 720}};
         for (const auto& tier : tiers) {
             const auto g = misterplex::ddrFrameGeometryForFpgaPresent(tier[0], tier[1]);
-            const auto layout = misterplex::makeDdrFrameLayout(g);
+            const auto layout = misterplex::productDdrFrameStoreLayout();
+            (void)g;
             if (!misterplex::ddrFrameLayoutMatchesProductSilicon(layout)) {
                 std::fprintf(stderr,
                              "FPGA present geometry for decode %dx%d diverges from product "
@@ -347,39 +350,47 @@ int main() {
                              layout.height);
                 ++fails;
             }
-            CHECK(layout.line_bytes == misterplex::kPlex720pYStrideBytes);
-            CHECK(layout.line_qwords == misterplex::kPlex720pYuvLumaLineQwords);
-            CHECK(layout.chroma_line_bytes == misterplex::kPlex720pChromaStrideBytes);
-            CHECK(layout.chroma_line_qwords == misterplex::kPlex720pYuvChromaLineQwords);
+            // Default product = 480p primary (not land 720p collapse).
+            CHECK(layout.line_bytes == misterplex::kPlex480pYStrideBytes);
+            CHECK(layout.line_qwords == misterplex::kPlex480pYuvLumaLineQwords);
+            CHECK(layout.chroma_line_bytes == misterplex::kPlex480pChromaStrideBytes);
+            CHECK(layout.chroma_line_qwords == misterplex::kPlex480pYuvChromaLineQwords);
+            CHECK(g.coded_width == misterplex::kPlex480pCodedWidth);
         }
-        // Identity-320 layout is valid math but MUST NOT match silicon — the
-        // shear defect is exactly "publish this against a 1280-stride reader".
+        // Identity-320 layout is valid math but MUST NOT match product silicon —
+        // shear is "publish this against a 624-stride reader".
         const auto bad320 = misterplex::makeDdrFrameLayout(320, 240);
         CHECK(misterplex::ddrFrameLayoutValid(bad320));
         CHECK(!misterplex::ddrFrameLayoutMatchesProductSilicon(bad320));
         CHECK(bad320.line_bytes == 320);
-        CHECK(bad320.line_bytes != misterplex::kPlex720pYStrideBytes);
+        CHECK(bad320.line_bytes != misterplex::kPlex480pYStrideBytes);
 
-        // Center-pack 320x240 into the silicon bank preserves stride and black pads.
+        // Explicit 720p L4 bank (compose path), independent of product flag.
+        const auto l720 = misterplex::plex720pDdrFrameStoreLayout();
+        CHECK(misterplex::ddrFrameLayoutMatchesL4Silicon(l720));
+        CHECK(l720.line_bytes == misterplex::kPlex720pYStrideBytes);
+        CHECK(l720.line_qwords == misterplex::kPlex720pYuvLumaLineQwords);
+        CHECK(l720.chroma_line_bytes == misterplex::kPlex720pChromaStrideBytes);
+        CHECK(l720.chroma_line_qwords == misterplex::kPlex720pYuvChromaLineQwords);
+        CHECK(l720.phys_base == misterplex::kPlex720pPhysBase);
+        CHECK(l720.doorbell_phys == misterplex::kPlex720pYuv420pDoorbellPhys);
+
+        // Center-pack 320x240 into the 720p L4 bank preserves stride and black pads.
         std::vector<uint8_t> src(misterplex::yuv420pFrameBytes(320, 240), 0x40);
         std::vector<uint8_t> dst(misterplex::yuv420pFrameBytes(misterplex::kPlex720pCodedWidth,
                                                                misterplex::kPlex720pCodedHeight),
                                  0x00);
-        const auto silicon = misterplex::productDdrFrameStoreGeometry();
+        const auto silicon = misterplex::plex720pDdrFrameGeometry();
         // Exact left/top margin pin for 320x240-into-1280x720 identity:
         //   x0 = (1280-320)/2 = 480
         //   y0 = (720-240)/2 = 240
-        // Origin is computed once; every packed row uses the same x0 (no wander).
         int pinX = -1, pinY = -1;
         CHECK(misterplex::codedContentOriginCentered(320, 240, silicon, pinX, pinY));
         CHECK(pinX == 480);
         CHECK(pinY == 240);
         CHECK(misterplex::packYuv420pCenteredIntoCodedBank(src.data(), 320, 240, dst.data(),
                                                            silicon));
-        // Corners of the coded bank stay studio black; a mid-display sample is content.
         CHECK(dst[0] == misterplex::kYuv420BlackY);
-        // Column just left of the packed picture is black; first content column is 0x40
-        // on every row of the packed band — proves constant left margin (no shear).
         const int dstW = silicon.coded_width.get();
         for (int row = 0; row < 240; ++row) {
             const size_t rowBase =
@@ -397,6 +408,10 @@ int main() {
         const size_t midOff = static_cast<size_t>(midY) * static_cast<size_t>(silicon.coded_width.get()) +
                               static_cast<size_t>(midX);
         CHECK(dst[midOff] == 0x40);
+
+        // Negative: default product must NOT be L4 (guards land collapse).
+        CHECK(!misterplex::ddrFrameLayoutMatchesL4Silicon(
+            misterplex::productDdrFrameStoreLayout()));
     }
 
     // LE pack as frame_ingest: lo then hi
