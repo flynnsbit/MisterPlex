@@ -14,6 +14,7 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/yuv_bt601_npx.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/plex_present_geom_mux.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/plex_clk_status.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/plex_bw_status.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_contention_status.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/mplex_hold_lcell.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/colorbars.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio_tone.sv

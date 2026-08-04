@@ -1,0 +1,71 @@
+// Top for ddr_contention_status Verilator TB (w-plxd).
+`timescale 1ns/1ps
+`default_nettype none
+
+module ddr_contention_status_tb_top (
+	input  wire        clk,
+	input  wire        reset,
+	input  wire        clear,
+	input  wire        m0_busy,
+	input  wire        m0_rd,
+	input  wire        m0_we,
+	input  wire        m0_dout_ready,
+	input  wire        m2_busy,
+	input  wire        m2_rd,
+	input  wire        m2_we,
+	input  wire        m2_dout_ready,
+	input  wire        ddram_busy,
+	output wire [31:0] window_cycles,
+	output wire [31:0] m0_req_cycles,
+	output wire [31:0] m0_cmd_accepts,
+	output wire [31:0] m0_rd_beats,
+	output wire [31:0] m0_stall_cycles,
+	output wire [31:0] m0_stall_ddr,
+	output wire [31:0] m0_stall_arb,
+	output wire [31:0] m0_stall_while_m2,
+	output wire [31:0] m2_req_cycles,
+	output wire [31:0] m2_cmd_accepts,
+	output wire [31:0] m2_rd_beats,
+	output wire [31:0] m2_wr_accepts,
+	output wire [31:0] m2_stall_cycles,
+	output wire [31:0] m2_stall_while_m0,
+	output wire [63:0] snap_w0,
+	output wire [63:0] snap_w1,
+	output wire [63:0] snap_w2,
+	output wire [63:0] snap_w3
+);
+	ddr_contention_status u_dut (
+		.clk(clk),
+		.reset(reset),
+		.clear(clear),
+		.m0_busy(m0_busy),
+		.m0_rd(m0_rd),
+		.m0_we(m0_we),
+		.m0_dout_ready(m0_dout_ready),
+		.m2_busy(m2_busy),
+		.m2_rd(m2_rd),
+		.m2_we(m2_we),
+		.m2_dout_ready(m2_dout_ready),
+		.ddram_busy(ddram_busy),
+		.window_cycles(window_cycles),
+		.m0_req_cycles(m0_req_cycles),
+		.m0_cmd_accepts(m0_cmd_accepts),
+		.m0_rd_beats(m0_rd_beats),
+		.m0_stall_cycles(m0_stall_cycles),
+		.m0_stall_ddr(m0_stall_ddr),
+		.m0_stall_arb(m0_stall_arb),
+		.m0_stall_while_m2(m0_stall_while_m2),
+		.m2_req_cycles(m2_req_cycles),
+		.m2_cmd_accepts(m2_cmd_accepts),
+		.m2_rd_beats(m2_rd_beats),
+		.m2_wr_accepts(m2_wr_accepts),
+		.m2_stall_cycles(m2_stall_cycles),
+		.m2_stall_while_m0(m2_stall_while_m0),
+		.snap_w0(snap_w0),
+		.snap_w1(snap_w1),
+		.snap_w2(snap_w2),
+		.snap_w3(snap_w3)
+	);
+endmodule
+
+`default_nettype wire

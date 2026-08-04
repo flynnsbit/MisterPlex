@@ -221,6 +221,7 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/tests/unit/test_rbf_provenance.sh",
     "$(ROOT)/tests/unit/test_prefit_reachability_product_no_stub.sh",
 "$(ROOT)/tests/unit/test_plex_rbf_build_id_rtl_sim.sh",
+    "$(ROOT)/tests/unit/test_ddr_contention_status_rtl_sim.sh",
 "python3 $(ROOT)/tests/unit/test_gate_false_green_guard.py",
     "$(ROOT)/tests/unit/test_capture_rig.sh",
     "$(ROOT)/tests/unit/test_avsync_measure_hdmi.sh",

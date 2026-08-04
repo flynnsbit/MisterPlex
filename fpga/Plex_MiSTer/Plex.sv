@@ -275,6 +275,10 @@ plex_bw_status u_plex_bw_status (
 wire _unused_bwstat = |{bwstat_dir_bps, bwstat_beats, bwstat_rw, bwstat_ppc, bwstat_nack_de,
 	bwstat_tcopy, bwstat_budget};
 
+// DDR contention meters (w-plxd): observe present vs fabric-copy at the
+// f2sdram arbiter boundary. Observation only — no arb policy change.
+// Wired after ddr_arb under DDR_FRAME_STORE; see u_ddr_contention below.
+
 // O[4] is the native content-resolution selector shared with misterplexd.
 // C1B owns the selector/ABI; the DDR-backed frame-store branch consumes these
 // dimensions for the actual 480p present path.
@@ -1145,6 +1149,71 @@ wire _unused_fdma = |{fdma_busy, fdma_done, fdma_err, fdma_rd_beats, fdma_wr_bea
 wire _unused_fdma = 1'b0;
 `endif
 
+// DDR contention meters (w-plxd). Observation only at the present (m0) vs
+// fabric-copy (m2) boundary. No arb policy change. Product 2-master arbiter
+// still drives m0; m2 stays idle until w-mem wires arbiter3 + live fdma bus.
+// Instantiated under DDR_FRAME_STORE so present_ddr_* sidebands exist.
+`ifdef DDR_FRAME_STORE
+wire cont_m2_busy;
+wire cont_m2_rd;
+wire cont_m2_we;
+wire cont_m2_dout_ready;
+`ifdef FABRIC_FRAME_DMA
+// fdma bus-disconnected (BUSY=1, start=0) — cmds stay 0; hierarchy still pays.
+assign cont_m2_busy       = 1'b1;
+assign cont_m2_rd         = fdma_rd;
+assign cont_m2_we         = fdma_we;
+assign cont_m2_dout_ready = 1'b0;
+`else
+assign cont_m2_busy       = 1'b1;
+assign cont_m2_rd         = 1'b0;
+assign cont_m2_we         = 1'b0;
+assign cont_m2_dout_ready = 1'b0;
+`endif
+wire [31:0] cont_window, cont_m0_req, cont_m0_acc, cont_m0_rdb, cont_m0_stall;
+wire [31:0] cont_m0_st_ddr, cont_m0_st_arb, cont_m0_st_m2;
+wire [31:0] cont_m2_req, cont_m2_acc, cont_m2_rdb, cont_m2_wra, cont_m2_stall, cont_m2_st_m0;
+wire [63:0] cont_snap0, cont_snap1, cont_snap2, cont_snap3;
+(* noprune *) ddr_contention_status u_ddr_contention (
+	.clk(clk_ddr),
+	.reset(reset),
+	.clear(1'b0),
+	.m0_busy(present_ddr_busy),
+	.m0_rd(present_ddr_rd),
+	.m0_we(present_ddr_we),
+	.m0_dout_ready(present_ddr_dout_ready),
+	.m2_busy(cont_m2_busy),
+	.m2_rd(cont_m2_rd),
+	.m2_we(cont_m2_we),
+	.m2_dout_ready(cont_m2_dout_ready),
+	.ddram_busy(DDRAM_BUSY),
+	.window_cycles(cont_window),
+	.m0_req_cycles(cont_m0_req),
+	.m0_cmd_accepts(cont_m0_acc),
+	.m0_rd_beats(cont_m0_rdb),
+	.m0_stall_cycles(cont_m0_stall),
+	.m0_stall_ddr(cont_m0_st_ddr),
+	.m0_stall_arb(cont_m0_st_arb),
+	.m0_stall_while_m2(cont_m0_st_m2),
+	.m2_req_cycles(cont_m2_req),
+	.m2_cmd_accepts(cont_m2_acc),
+	.m2_rd_beats(cont_m2_rdb),
+	.m2_wr_accepts(cont_m2_wra),
+	.m2_stall_cycles(cont_m2_stall),
+	.m2_stall_while_m0(cont_m2_st_m0),
+	.snap_w0(cont_snap0),
+	.snap_w1(cont_snap1),
+	.snap_w2(cont_snap2),
+	.snap_w3(cont_snap3)
+);
+wire _unused_cont = |{cont_window, cont_m0_req, cont_m0_acc, cont_m0_rdb, cont_m0_stall,
+	cont_m0_st_ddr, cont_m0_st_arb, cont_m0_st_m2, cont_m2_req, cont_m2_acc,
+	cont_m2_rdb, cont_m2_wra, cont_m2_stall, cont_m2_st_m0,
+	cont_snap0, cont_snap1, cont_snap2, cont_snap3};
+`else
+wire _unused_cont = 1'b0;
+`endif
+
 wire [7:0] telem_flags = {
 	pps_valid, sps_valid, stub_busy, has_idr,
 	audio_underrun, has_stream, has_audio, has_frame
@@ -1326,6 +1395,6 @@ wire _unused = |{disp_i, cont_i, advance, ingest_pixels, ingest_dl, af_active, i
 	stream_ddr_rd, stream_ddr_din, stream_ddr_be, stream_ddr_we, _host_wr_unused,
 	rbf_stamp_alive, rbf_build_id_valid, rbf_build_id_observe_r,
 	product_cfg_no_stub, product_cfg_ddr_fs, product_cfg_fabric_dma,
-	_unused_clkstat, _unused_bwstat, _unused_fdma};
+	_unused_clkstat, _unused_bwstat, _unused_fdma, _unused_cont};
 
 endmodule
