@@ -1018,9 +1018,14 @@ module ddr_frame_store #(
 				doorbell_ok <= 1'b1;
 				stale_db_polls <= '0;
 			end
+			// SPI kick (status[12] edge + bank_sel): ARM fallback when doorbell
+			// path is unavailable. Previously STRICT_YUV_DOORBELL also required
+			// have_seq (a prior PLXK), so pure SPI multi-present could never arm
+			// swap_pending — one idle SPI paint then freeze if doorbell never
+			// landed. Format gate stays: reject only while format_error is sticky.
 			if (spi_edge_ddr) begin
 				start_seen <= start_d2;
-				if (!STRICT_YUV_DOORBELL || (have_seq && !format_error)) begin
+				if (!STRICT_YUV_DOORBELL || !format_error) begin
 					pending_bank_ddr <= bank_sel_d2;
 					swap_req_t_ddr <= ~swap_req_t_ddr;
 				end
