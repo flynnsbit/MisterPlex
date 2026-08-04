@@ -3,7 +3,7 @@
 # Product QSF does NOT source this file. Enable only with the fit recipe:
 #   set_global_assignment -name VERILOG_MACRO "PRESENT_CLK_PIX_PLL=1"
 #   set_global_assignment -name SDC_FILE Plex_clk_pix.sdc
-# Product rate is 720p24 → clk_pix 29.700 MHz (NOT 74.25 unless PRESENT_CLK_PIX_74_25).
+# Product rate is 720p24 → clk_pix 30.000 MHz (NOT 74.25 unless PRESENT_CLK_PIX_74_25).
 #
 # Base Plex.sdc already runs derive_pll_clocks. This file names the new domain,
 # documents CDC policy, and adds exclusive groups so STA does not invent
@@ -12,7 +12,7 @@
 # Frequencies (pll_0002.v SoT; refclk 50.0 MHz):
 #   clk_sys  = general[0] = 20.000 MHz  (CLK_SYS_24 → 24.000)
 #   clk_ddr  = general[2] = 90.000 MHz
-#   clk_pix  = general[3] = 29.700 MHz  (or 74.250 with PRESENT_CLK_PIX_74_25)
+#   clk_pix  = general[3] = 30.000 MHz  (or 74.250 with PRESENT_CLK_PIX_74_25)
 #
 # Exact integer M/N/C from 50 MHz exist (0 ppm if chosen) — see
 # rtl/misterplex_clk_pix_recipe.svh. Fitted counters UNKNOWN until fit "Actual".
@@ -28,10 +28,10 @@
 #   TNS 0.000 all
 # That fit does NOT measure clk_pix Fmax. Next fit with PRESENT_CLK_PIX_PLL must
 # re-interrogate general[3]. Thin +0.311 on clk_ddr is a risk if fabric DMA adds
-# TIMING NAME LOCK: default 29.700 MHz is COMPACT H1650×V750×24 fabric raster.
+# TIMING NAME LOCK: default 30.000 MHz is COMPACT H1650×V750×24 fabric raster.
 # It is NOT CEA-861 720p24 (VIC60 = 59.4 MHz, Htotal 3300). True CEA24 uses
 # PRESENT_CLK_PIX_CEA24. CEA 720p60 VIC4 = 74.25 MHz (PRESENT_CLK_PIX_74_25).
-# DDR traffic — not proof that 29.7 clk_pix is impossible.
+# DDR traffic — not proof that 30.0 clk_pix is impossible.
 #
 # Do NOT add false_path on residual_csum / decode sameclk paths.
 # Do NOT weaken setup to hide real violations.
@@ -64,7 +64,7 @@ set_clock_groups -asynchronous \
 #   make post-fit-timing STA_RPT=OUT/Plex.sta.rpt
 #   make post-fit-timing-margin STA_RPT=OUT/Plex.sta.rpt
 # HARD expects (clk_pix fit):
-#   - Fmax of general[3] (clk_pix) >= 29.7 MHz (or >= 74.25 if 74_25 macro)
+#   - Fmax of general[3] (clk_pix) >= 30.0 MHz (or >= 74.25 if 74_25 macro)
 #   - Setup slack on clk_pix domain: no negative TNS
 #   - No setup fail inside present_npx_path on clk_pix
 #   - clk_ddr worst slack still >= 0 (watch +0.311 budget if DMA lands)

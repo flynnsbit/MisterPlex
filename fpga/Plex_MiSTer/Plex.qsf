@@ -85,10 +85,10 @@ set_global_assignment -name VERILOG_MACRO "DDR_FRAME_STORE=1"
 set_global_assignment -name VERILOG_MACRO "PRODUCT_NO_STUB=1"
 # =============================================================================
 # integ/720p-compose FIT CANDIDATE (ENABLED — not default-OFF baseline)
-# Branch purpose: compose 720p present + clk_pix 29.7 + fabric DMA for parent fit.
-# Refresh claim (HONEST): PRESENT_CLK_PIX_PLL @ 29.700 MHz + COMPACT CEA totals
+# Branch purpose: compose 720p present + clk_pix 30.0 + fabric DMA for parent fit.
+# Refresh claim (HONEST): PRESENT_CLK_PIX_PLL @ 30.000 MHz + COMPACT CEA totals
 #   H_TOTAL=1650 V_TOTAL=750 → target 24.000 Hz scanout on clk_pix.
-# Beam fabric on clk_sys@20 with PPC=2 → peak 40 Mpix/s >= 29.7 (rate-match).
+# Beam fabric on clk_sys@20 with PPC=2 → peak 40 Mpix/s >= 30.0 (rate-match).
 # WITHOUT PLL this would be fps_eff=20e6/1_237_500 ≈ 16.16 Hz (see timing pack).
 # Do NOT enable PRESENT_CLK_PIX_74_25 (that is VIC-4 60 Hz only).
 # L4 (1312×762) is mutually exclusive with MULTI — left commented as alternate.

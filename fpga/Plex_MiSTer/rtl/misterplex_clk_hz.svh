@@ -2,7 +2,8 @@
 // Include after QSF macros are defined. Do not edit PLL strings without this.
 // Product default: clk_sys 20 MHz. Optional:
 //   CLK_SYS_24          → clk_sys 24_000_000 (L4 1312×762 @ ~24.006 Hz)
-//   PRESENT_CLK_PIX_PLL → clk_pix 29_700_000 (or 74_250_000 with PRESENT_CLK_PIX_74_25)
+//   PRESENT_CLK_PIX_PLL → clk_pix 30_000_000 (PLL-legal; was illegal 29.7)
+//                         fps_eff @ H1650×V750 = 24.242424… Hz (not exact 24)
 
 `ifndef MISTERPLEX_CLK_HZ_SVH
 `define MISTERPLEX_CLK_HZ_SVH
@@ -22,10 +23,14 @@
 	`elsif PRESENT_CLK_PIX_CEA24
 		`define MISTERPLEX_CLK_PIX_HZ 59_400_000
 		`define MISTERPLEX_CLK_PIX_MHZ_STR "59.400000 MHz"
+	`elsif PRESENT_CLK_PIX_EXACT24
+		// ALT: 28.8 MHz + H1600 (requires beam totals change — not default)
+		`define MISTERPLEX_CLK_PIX_HZ 28_800_000
+		`define MISTERPLEX_CLK_PIX_MHZ_STR "28.800000 MHz"
 	`else
-		// COMPACT H1650@24 — not CEA VIC60
-		`define MISTERPLEX_CLK_PIX_HZ 29_700_000
-		`define MISTERPLEX_CLK_PIX_MHZ_STR "29.700000 MHz"
+		// PRODUCT: PLL-legal 30.000 MHz (Quartus rejected 29.7 on this integer-N PLL)
+		`define MISTERPLEX_CLK_PIX_HZ 30_000_000
+		`define MISTERPLEX_CLK_PIX_MHZ_STR "30.000000 MHz"
 	`endif
 `else
 	// No separate pix PLL: pixel domain = clk_sys
@@ -38,13 +43,19 @@
 `define MISTERPLEX_CEA720_H_TOTAL 1650
 `define MISTERPLEX_CEA720_V_TOTAL 750
 `define MISTERPLEX_CEA720_PIX_FRAME (`MISTERPLEX_CEA720_H_TOTAL * `MISTERPLEX_CEA720_V_TOTAL)
-// Compact 24 fps: 1650*750*24 = 29_700_000 (ascal input raster — not CEA VIC60)
-`define MISTERPLEX_CEA720_F24_HZ 29_700_000
+// Product glass rate at 30 MHz: 30e6/(1650*750) = 24.242424… (not exact 24)
+// MISTERPLEX_CEA720_F24_HZ = product clk_pix target (rate-match / need-faster gate)
+`define MISTERPLEX_CEA720_F24_HZ 30_000_000
+// Legacy name: exact-24 arithmetic used to claim 29.7 — ILLEGAL on this PLL
+`define MISTERPLEX_CEA720_EXACT24_ILLEGAL_HZ 29_700_000
 // CEA-861 720p60 VIC4: 1650*750*60 = 74_250_000
 `define MISTERPLEX_CEA720_F60_HZ 74_250_000
 // True CEA-861 720p24 VIC60: 3300*750*24 = 59_400_000
 `define MISTERPLEX_CEA720_TRUE24_H_TOTAL 3300
 `define MISTERPLEX_CEA720_TRUE24_HZ 59_400_000
+// ALT exact-24 geometry (not default beam)
+`define MISTERPLEX_CEA720_EXACT24_H_TOTAL 1600
+`define MISTERPLEX_CEA720_EXACT24_HZ 28_800_000
 
 // L4 compact raster (PLEX_PRESENT_720P_L4)
 `define MISTERPLEX_L4_H_TOTAL 1312
@@ -54,7 +65,7 @@
 `define MISTERPLEX_L4_F24_HZ 23_993_856
 
 // Peak Mpix/s production on clk_sys with PPC (MULTI path)
-// Need >= CEA 29.7 for 24 fps steady state.
+// Need >= product clk_pix (30 Mpix/s) for steady state.
 `ifndef PRESENT_PX_PER_CLK
 	`define MISTERPLEX_PRESENT_PPC 1
 `else

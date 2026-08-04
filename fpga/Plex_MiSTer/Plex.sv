@@ -233,14 +233,25 @@ pll pll
 
 wire reset = RESET | status[0] | buttons[1];
 
-// Fabric clock kit stamp (w-clock): noprune constants for post-fit hierarchy.
+// Fabric clock kit + runtime refresh measure (w-clock).
+// Product clk_pix=30 MHz → fps_eff=24.242… @ H1650×V750 (29.7 illegal on PLL).
+// meas_fps_x10 (period-based) distinguishes 24.242 (≈242) from exact-24 (240) and 16.16 trap.
 wire [31:0] clkstat_sys_hz, clkstat_pix_hz, clkstat_cea_pf, clkstat_l4_pf;
 wire [7:0]  clkstat_ppc;
 wire        clkstat_cea_fast, clkstat_l4_fast, clkstat_valid;
 wire [15:0] clkstat_peak_x10;
+wire        clkstat_clk_pix, clkstat_vsync, clkstat_ce_pix, clkstat_de;
+wire [31:0] clkstat_meas_pix, clkstat_meas_ce, clkstat_meas_de;
+wire [15:0] clkstat_meas_frm;
+wire [7:0]  clkstat_meas_fps_x10, clkstat_meas_flags;
+wire        clkstat_meas_done;
 plex_clk_status u_plex_clk_status (
 	.clk(clk_sys),
 	.reset(reset),
+	.clk_pix(clkstat_clk_pix),
+	.vsync(clkstat_vsync),
+	.ce_pix(clkstat_ce_pix),
+	.de(clkstat_de),
 	.clk_sys_hz(clkstat_sys_hz),
 	.clk_pix_hz(clkstat_pix_hz),
 	.present_ppc(clkstat_ppc),
@@ -249,10 +260,19 @@ plex_clk_status u_plex_clk_status (
 	.cea_24_needs_faster_pix(clkstat_cea_fast),
 	.l4_24_needs_faster_sys(clkstat_l4_fast),
 	.peak_mpix_s_x10(clkstat_peak_x10),
-	.kit_id_valid(clkstat_valid)
+	.kit_id_valid(clkstat_valid),
+	.meas_pix_count(clkstat_meas_pix),
+	.meas_ce_count(clkstat_meas_ce),
+	.meas_de_count(clkstat_meas_de),
+	.meas_frame_count(clkstat_meas_frm),
+	.meas_fps_x10(clkstat_meas_fps_x10),
+	.meas_flags(clkstat_meas_flags),
+	.meas_window_done(clkstat_meas_done)
 );
 wire _unused_clkstat = |{clkstat_sys_hz, clkstat_pix_hz, clkstat_ppc, clkstat_cea_pf,
-	clkstat_l4_pf, clkstat_cea_fast, clkstat_l4_fast, clkstat_peak_x10, clkstat_valid};
+	clkstat_l4_pf, clkstat_cea_fast, clkstat_l4_fast, clkstat_peak_x10, clkstat_valid,
+	clkstat_meas_pix, clkstat_meas_ce, clkstat_meas_de, clkstat_meas_frm,
+	clkstat_meas_fps_x10, clkstat_meas_flags, clkstat_meas_done};
 
 // Fabric BW contract stamp (w-clock): 33.1776 MB/s/dir SoT.
 wire [31:0] bwstat_dir_bps;
@@ -919,7 +939,7 @@ present_core #(
 	.clk_sdram(clk_sdram),
 	.clk_audio(CLK_AUDIO),
 	// clk_pix: product default ties to clk_sys. PRESENT_CLK_PIX_PLL (default
-	// OFF) drives outclk_3 = 29.70 MHz (or 74.25 with PRESENT_CLK_PIX_74_25).
+	// OFF) drives outclk_3 = 30.00 MHz product (or 74.25 with PRESENT_CLK_PIX_74_25).
 `ifdef PRESENT_CLK_PIX_PLL
 	.clk_pix(clk_pix_pll),
 `else
@@ -1053,6 +1073,15 @@ assign CLK_VIDEO = clk_pix_pll;
 assign CLK_VIDEO = clk_sys;
 `endif
 assign CE_PIXEL  = ce_pix;
+// Refresh measure observers (w-clock) — after present outputs exist
+`ifdef PRESENT_CLK_PIX_PLL
+assign clkstat_clk_pix = clk_pix_pll;
+`else
+assign clkstat_clk_pix = clk_sys;
+`endif
+assign clkstat_vsync  = VSync;
+assign clkstat_ce_pix = ce_pix;
+assign clkstat_de     = ~(HBlank | VBlank);
 assign VGA_DE = ~(HBlank | VBlank);
 assign VGA_HS = HSync;
 assign VGA_VS = VSync;
@@ -1214,12 +1243,28 @@ always @(posedge clk_sys) begin
 		// residual half from sticky ONLY (never live residual_csum, never stream)
 		status_telem_r[103:96]  <= st_res_word_sticky[7:0];
 		status_telem_r[111:104] <= st_res_word_sticky[15:8];
+`ifdef PRESENT_CLK_PIX_PLL
+		// Refresh measure (stills-blind 16.16 vs 24.242 vs exact-24)
+		// raw[14]=fps_x10 period-based; raw[15]=flags{valid,pix_ok,fps_ok,pll,trap,ce,de}
+		status_telem_r[119:112] <= clkstat_meas_fps_x10;
+		status_telem_r[127:120] <= clkstat_meas_flags;
+`else
 		status_telem_r[119:112] <= st_recon_sig_sticky;
 		status_telem_r[127:120] <= st_recon_dbg_sticky;
+`endif
 	end
 end
 
 // Rank2 structural mask: force residual/recon bytes from sticky before AR splice
+`ifdef PRESENT_CLK_PIX_PLL
+// When clk_pix PLL on: high bytes carry refresh measure from status_telem_r (not recon sticky)
+wire [127:0] status_telem_masked = {
+	status_telem_r[127:112],
+	st_res_word_sticky[15:8],
+	st_res_word_sticky[7:0],
+	status_telem_r[95:0]
+};
+`else
 wire [127:0] status_telem_masked = {
 	st_recon_dbg_sticky,          // P3 recon RCA flags
 	st_recon_sig_sticky,          // recon signature forced from sticky
@@ -1227,6 +1272,7 @@ wire [127:0] status_telem_masked = {
 	st_res_word_sticky[7:0],      // dc forced from sticky
 	status_telem_r[95:0]
 };
+`endif
 
 // Preserve Aspect ratio OSD bits (may stomp recon_dbg bits [2:1] — OK)
 // status_set replaces entire word in Main; residual bits stay below AR splice.

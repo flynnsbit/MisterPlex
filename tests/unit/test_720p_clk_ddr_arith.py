@@ -40,16 +40,32 @@ def main() -> int:
     pix24_vic = h24v * v24v * fps24
     check(pix24_vic == 59_400_000, f"CEA VIC60 720p24 f_pix={pix24_vic} (==59400000)")
 
-    # Same totals as VIC4 @ 24 fps (PRESENT_CLK_PIX_PLL default target)
+    # COMPACT H1650×V750: exact-24 needs 29.7 MHz — ILLEGAL on product integer-N PLL.
     h_pack, v_pack = 1650, 750
-    pix24_pack = h_pack * v_pack * 24
-    check(pix24_pack == 29_700_000, f"pack 1650*750*24 f_pix={pix24_pack} (==29700000)")
+    pix24_illegal = h_pack * v_pack * 24
+    check(pix24_illegal == 29_700_000, f"arith 1650*750*24={pix24_illegal} (illegal PLL target)")
     ppf = h_pack * v_pack
     check(ppf == 1_237_500, f"PIX_PER_FRAME pack={ppf}")
+    # PRODUCT: PLL-legal 30 MHz → fps_eff = 24.242424…
+    fps_prod = 30_000_000 / ppf
+    check(abs(fps_prod - 24.242424) < 1e-5, f"product fps_eff@30M={fps_prod}")
+    check(30_000_000 != 29_700_000, "NEG: product 30 MHz != illegal 29.7")
+    # Parent claim: no H>1280 V>720 pair for exact-24 at 30 MHz (HT*VT=1250000=2^a5^b)
+    exact_prod = 30_000_000 // 24
+    check(exact_prod == 1_250_000, f"30e6/24 product HT*VT need={exact_prod}")
+    pairs = []
+    for h in range(1281, 2501):
+        if exact_prod % h == 0:
+            v = exact_prod // h
+            if v > 720:
+                pairs.append((h, v))
+    check(len(pairs) == 0, f"NEG: no exact-24 geometry at 30 MHz, got {pairs[:3]}")
+    # ALT exact-24: 28.8 MHz × H1600×V750
+    check(1600 * 750 * 24 == 28_800_000, "ALT exact-24 1600*750*24=28.8e6")
 
-    # NEGATIVE: active-only blanking is NOT a legal CEA pixel clock
+    # NEGATIVE: active-only blanking is NOT a legal pixel clock
     active_only_24 = 1280 * 720 * 24
-    check(active_only_24 != 29_700_000, "NEG: active-only 1280*720*24 != 29.70 MHz")
+    check(active_only_24 != 30_000_000, "NEG: active-only 1280*720*24 != 30.00 MHz")
     check(active_only_24 == 22_118_400, f"NEG twin value active_only_24={active_only_24}")
 
     # --- Quote PLL SoT on disk ---
@@ -58,7 +74,8 @@ def main() -> int:
     check('output_clock_frequency2("90.000000 MHz")' in pll, "PLL out2 clk_ddr=90.000000 MHz")
     check('reference_clock_frequency("50.0 MHz")' in pll, "PLL ref=50.0 MHz")
     check("PRESENT_CLK_PIX_PLL" in pll, "PLL has PRESENT_CLK_PIX_PLL branch")
-    check('"29.700000 MHz"' in pll, "PLL default clk_pix string 29.700000 MHz")
+    check('"30.000000 MHz"' in pll, "PLL default clk_pix string 30.000000 MHz")
+    check('"29.700000 MHz"' not in pll, "NEG: illegal 29.700000 MHz string must be gone")
     check('"74.250000 MHz"' in pll, "PLL optional 74.250000 MHz string")
     # Product default must still be 3 clocks in the else branch
     check(
@@ -67,7 +84,7 @@ def main() -> int:
         "product else-branch number_of_clocks(3)",
     )
 
-    # QSF: integ/720p-compose ENABLES PRESENT_CLK_PIX_PLL (29.7 MHz → 24 Hz).
+    # QSF: integ/720p-compose ENABLES PRESENT_CLK_PIX_PLL (30 MHz → 24.242 Hz).
     # Without it, CEA 1650×750 @ clk_sys 20 MHz is ~16.16 Hz (timing pack hazard).
     qsf = read(ROOT / "fpga/Plex_MiSTer/Plex.qsf")
     active_pix = [
@@ -150,8 +167,8 @@ def main() -> int:
     check(rd60 > old_budget_20, "NEG: 720p60 YUV would FAIL if DDR were 20 MHz")
 
     # Throughput: PPC=1 @20 MHz cannot feed 29.7 Mpix/s
-    check(20.0 < 29.7, "NEG: clk_sys 20 MHz < 29.7 Mpix/s need (PPC=1)")
-    check(20.0 * 2 >= 29.7, "PPC=2 @20 MHz fabric groups can feed 29.7")
+    check(20.0 < 30.0, "NEG: clk_sys 20 MHz < 30.0 Mpix/s need (PPC=1)")
+    check(20.0 * 2 >= 30.0, "PPC=2 @20 MHz fabric groups can feed 30.0")
 
     # SDC file exists and does not false_path residual
     sdc = read(ROOT / "fpga/Plex_MiSTer/Plex_clk_pix.sdc")

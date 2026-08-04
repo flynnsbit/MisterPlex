@@ -66,7 +66,7 @@ def main() -> int:
         if not fw1280 or not fh720:
             fails.append("INTEG MULTI requires active FRAME_W=1280 FRAME_H=720")
         if not any(m.startswith("PRESENT_CLK_PIX_PLL") for m in active):
-            fails.append("INTEG MULTI fit recipe requires PRESENT_CLK_PIX_PLL=1 (29.7 MHz)")
+            fails.append("INTEG MULTI fit recipe requires PRESENT_CLK_PIX_PLL=1 (30.0 MHz)")
         if not any(m.startswith("PRESENT_PX_PER_CLK") for m in active):
             fails.append("INTEG MULTI requires PRESENT_PX_PER_CLK")
         print("OK INTEG_ON: PRESENT_MULTI_PIXEL + FRAME 1280x720 + clk_pix recipe")

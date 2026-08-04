@@ -4,7 +4,7 @@
     "PRESENT_MULTI_PIXEL": true,
     "PRESENT_PX_PER_CLK": 2,
     "clk_sys_hz": 20000000,
-    "clk_pix_hz": 29700000,
+    "clk_pix_hz": 30000000,
     "clk_ddr_hz": 90000000,
     "clk_sys_overclock": false,
     "clk_ratio_sys_to_ddr": "20:90",

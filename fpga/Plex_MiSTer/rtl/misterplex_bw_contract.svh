@@ -39,7 +39,7 @@ localparam int MISTERPLEX_BW_NACK_DE_PEAK_E1   = 30; // 3.0 * 10
 
 // Product present recipe (not a BW multiplier for DDR average)
 localparam int MISTERPLEX_BW_PRODUCT_PPC       = 2;
-localparam int MISTERPLEX_BW_CLK_PIX_HZ        = 29_700_000; // 1650*750*24
+localparam int MISTERPLEX_BW_CLK_PIX_HZ        = 30_000_000; // PLL-legal product clk_pix (H1650×V750 → 24.242 Hz)
 
 // Parent Sweep 118 — CPU TIME is not a payload RATE (rd-duck / w-path).
 // T_copy_arm = 14.978 ms/frame @ 88.0 MiB/s uncached /dev/mem for 1382400 B.

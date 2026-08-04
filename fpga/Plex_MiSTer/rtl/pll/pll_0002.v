@@ -1,8 +1,10 @@
 `timescale 1ns/10ps
 // Source of truth for Plex fabric PLL (not the stale megawizard strings in pll.v).
 // Product default: 3 clocks — clk_sys 20 / clk_sdram (macro) / clk_ddr 90.
-// PRESENT_CLK_PIX_PLL (default OFF): 4th output clk_pix for CEA 720p present.
-//   - default pix: 29.700000 MHz  (= 1650*750*24  — CEA-861 720p H/V totals @ 24 Hz)
+// PRESENT_CLK_PIX_PLL (default OFF): 4th output clk_pix for 720p present.
+//   - default pix: 30.000000 MHz  (PLL-legal; H1650×V750 → fps_eff=24.242424…)
+//     29.700000 was ILLEGAL on this integer-N PLL (Quartus 17.0.2 fit error).
+//   - PRESENT_CLK_PIX_EXACT24: 28.800000 MHz (H1600×V750 exact 24 — beam change req.)
 //   - PRESENT_CLK_PIX_74_25: 74.250000 MHz (= 1650*750*60 — CEA-861 VIC 4 720p60)
 // Never enable in product QSF without a parent-granted fit.
 module  pll_0002(
@@ -52,10 +54,13 @@ module  pll_0002(
 // clk_pix frequency string (only consumed when PRESENT_CLK_PIX_PLL).
 `ifdef PRESENT_CLK_PIX_74_25
 `define MISTERPLEX_CLK_PIX_PLL_FREQ "74.250000 MHz"
+`elsif PRESENT_CLK_PIX_EXACT24
+// ALT exact-24: 28.8 MHz with H1600×V750 (not default beam).
+`define MISTERPLEX_CLK_PIX_PLL_FREQ "28.800000 MHz"
 `else
-// 29.70 MHz: CEA-861 720p blanking totals (H=1650,V=750) * 24 fps.
-// True CEA VIC 60 (720p24) uses H=3300 → 59.40 MHz; see arith docs.
-`define MISTERPLEX_CLK_PIX_PLL_FREQ "29.700000 MHz"
+// PRODUCT: 30.000 MHz — only near-band value Quartus accepted (rejected 29.7).
+// fps_eff @ H1650×V750 = 24.242424… Hz (+0.606 s/min vs true-24 content).
+`define MISTERPLEX_CLK_PIX_PLL_FREQ "30.000000 MHz"
 `endif
 
 `ifdef PRESENT_CLK_PIX_PLL
