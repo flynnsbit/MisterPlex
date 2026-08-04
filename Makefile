@@ -5,7 +5,7 @@ CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -I$(ROOT)/host
 FFMPEG_CFLAGS := $(shell pkg-config --cflags libavformat libavcodec libavutil 2>/dev/null)
 FFMPEG_LIBS   := $(shell pkg-config --libs libavformat libavcodec libavutil 2>/dev/null)
 
-.PHONY: all preflight unit unit-unlocked rtl-sim rtl-lint quartus-sv-subset define-parity post-fit-hierarchy post-fit-timing timing-exclusion pms-baseline-check pms-nal-stats arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools
+.PHONY: all preflight unit unit-unlocked rtl-sim rtl-lint quartus-sv-subset define-parity post-fit-hierarchy post-fit-timing post-fit-timing-margin timing-exclusion pms-baseline-check pms-nal-stats arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools
 
 all: unit
 
@@ -17,7 +17,8 @@ help:
 	@echo "  make quartus-sv-subset - curated Quartus SV subset guard with toolchain presence probe"
 	@echo "  make define-parity - verify Quartus product macros match Verilator/lint macros"
 	@echo "  make post-fit-hierarchy FIT_RPT=... [MAP_RPT=...] [COMPILE_LOG=...] - critical fitted-module guard"
-	@echo "  make post-fit-timing STA_RPT=... - fail negative Quartus timing slack"
+	@echo "  make post-fit-timing STA_RPT=... [MIN_FMAX_MHZ=..] - fail negative slack / optional Fmax floor"
+	@echo "  make post-fit-timing-margin STA_RPT=... MIN_FMAX_MHZ=20 - hard Fmax floor (default 20)"
 	@echo "  make timing-exclusion [STA_RPT=...] - detect timing closed by exclusion not design"
 	@echo "  make pms-baseline-check - live PMS delivered-SPS guard (requires PLEX_BASE/TOKEN/KEY)"
 	@echo "  make pms-nal-stats      - live PMS NAL size/jitter probe (requires PLEX_BASE/TOKEN/KEY)"
@@ -82,6 +83,7 @@ unit-unlocked: preflight $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $
 	python3 $(ROOT)/tests/unit/test_clk_sys_20mhz_inventory.py
 	python3 $(ROOT)/tests/unit/test_clk_sys_pll_sot.py
 	$(ROOT)/tests/unit/test_plex_clk_status_verilator.sh
+	$(ROOT)/tests/unit/test_present_pix_rate_match_verilator.sh
 	python3 $(ROOT)/tests/unit/test_present_720p_l4_static.py
 	python3 $(ROOT)/tests/unit/test_present_geom_params_static.py
 	$(ROOT)/tests/unit/test_present_geom_params_rtl_sim.sh
@@ -168,7 +170,20 @@ post-fit-hierarchy:
 
 post-fit-timing:
 	@if [ -z "$(STA_RPT)" ]; then echo "STA_RPT is required" >&2; exit 2; fi
-	$(ROOT)/scripts/check_quartus_timing.py --sta-rpt "$(STA_RPT)"
+	$(ROOT)/scripts/check_quartus_timing.py --sta-rpt "$(STA_RPT)" \
+		$(if $(MIN_FMAX_MHZ),--min-fmax-mhz $(MIN_FMAX_MHZ),) \
+		$(if $(MIN_FMAX_CLOCK_SUBSTR),--min-fmax-clock-substr "$(MIN_FMAX_CLOCK_SUBSTR)",)
+
+# Convenience: require clk_sys Restricted Fmax >= MIN_FMAX_MHZ (default 20).
+# Product L4@24 needs MIN_FMAX_MHZ=24 (retained STA currently ~23.17 → FAIL).
+# Product MULTI+clk_pix needs separate substr general[3] after that fit.
+post-fit-timing-margin: STA_RPT ?=
+post-fit-timing-margin: MIN_FMAX_MHZ ?= 20
+post-fit-timing-margin:
+	@if [ -z "$(STA_RPT)" ]; then echo "STA_RPT is required" >&2; exit 2; fi
+	$(ROOT)/scripts/check_quartus_timing.py --sta-rpt "$(STA_RPT)" \
+		--min-fmax-mhz $(MIN_FMAX_MHZ) \
+		$(if $(MIN_FMAX_CLOCK_SUBSTR),--min-fmax-clock-substr "$(MIN_FMAX_CLOCK_SUBSTR)",)
 
 timing-exclusion:
 	$(ROOT)/scripts/check_timing_exclusions.py $(if $(STA_RPT),--sta-rpt "$(STA_RPT)",)

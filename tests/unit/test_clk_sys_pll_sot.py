@@ -28,6 +28,13 @@ def main() -> int:
         fails.append("header missing CLK_SYS_24 arm")
     if "1650" not in hdr or "1312" not in hdr:
         fails.append("header missing CEA/L4 totals")
+    if "MISTERPLEX_CEA720_F24_HZ 29_700_000" not in hdr:
+        fails.append("header missing CEA720_F24_HZ")
+    if "MISTERPLEX_L4_F24_HZ 23_993_856" not in hdr:
+        fails.append("header missing L4_F24_HZ exact product")
+    core = (ROOT / "fpga/Plex_MiSTer/rtl/present_core.sv").read_text(errors="ignore")
+    if "u_keep_pix_rate_match" not in core:
+        fails.append("present_core missing keep pix_rate_match pack")
     # QSF default-OFF
     active = re.findall(r'^\s*set_global_assignment\s+-name\s+VERILOG_MACRO\s+"([^"]+)"', qsf, re.M)
     for m in active:

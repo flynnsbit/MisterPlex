@@ -27,8 +27,8 @@ module plex_clk_status (
 	localparam int CEA_PF  = `MISTERPLEX_CEA720_PIX_FRAME;
 	localparam int L4_PF   = `MISTERPLEX_L4_PIX_FRAME;
 	// 29_700_000 and L4 24 fps needs
-	localparam int CEA_NEED = 29_700_000;
-	localparam longint L4_NEED = 24 * longint'(L4_PF); // 1312*762*24 = 23_993_856
+	localparam int CEA_NEED = `MISTERPLEX_CEA720_F24_HZ;
+	localparam longint L4_NEED = longint'(`MISTERPLEX_L4_F24_HZ); // 23_993_856
 
 	(* noprune *) reg [31:0] r_sys, r_pix, r_cea_pf, r_l4_pf;
 	(* noprune *) reg [7:0]  r_ppc;

@@ -25,8 +25,10 @@
 //
 // Template H_DE=529 (colorbars / FBAR) is a separate mode — never retcon here.
 
+`include "misterplex_clk_hz.svh"
+
 module present_video_timing_720p #(
-	parameter int CLK_PIX_HZ = 20_000_000
+	parameter int CLK_PIX_HZ = `MISTERPLEX_CLK_PIX_HZ
 )(
 	// Purely elaborative / readable constants via parameters on the instance.
 	// Outputs are wires tied to parameters so hierarchy tools see the mode.
@@ -65,5 +67,5 @@ module present_video_timing_720p #(
 	assign v_sync_s = 12'(V_SYNC_S_L);
 	assign v_sync_e = 12'(V_SYNC_E_L);
 	assign fps_eff_milli = 16'(FPS_MILLI);
-	assign cea_24_needs_faster_pix = (CLK_PIX_HZ < 29_700_000);
+	assign cea_24_needs_faster_pix = (CLK_PIX_HZ < `MISTERPLEX_CEA720_F24_HZ);
 endmodule
