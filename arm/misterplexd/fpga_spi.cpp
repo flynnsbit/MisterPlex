@@ -36,7 +36,9 @@ constexpr uint8_t FIO_FILE_INDEX = 0x55;
 constexpr uint8_t UIO_SET_STATUS2 = 0x1e;
 constexpr uint8_t UIO_GET_STATUS = 0x29;
 constexpr uint8_t UIO_GET_STRING = 0x14;
-constexpr int kDdrBankReuseMinUs = 40000;
+// Same-bank reuse floor when PLXD absent only. 40ms forced half-rate at 24fps;
+// 16ms still covers ~one 60Hz glass period without multi-frame stalls.
+constexpr int kDdrBankReuseMinUs = 16000;
 
 // Serialize all HPS↔FPGA SPI (F1/F2/F3 + status). Audio + video + stream threads
 // share one FpgaSpi; concurrent sendFileTx without this races GPO and Main pause.
@@ -1369,7 +1371,10 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
     bool plxdUsed = false;
     {
         BankReleaseStatus brs;
-        constexpr int kPlxdPollMaxIters = 50;  // 50 × 1ms = 50ms max
+        // Cap PLXD wait: 50×1ms was burning ~50ms/present when both banks busy
+        // (720p lastPushMs~64 class). Prefer short poll then write non-display bank;
+        // tear risk beats A/V death spiral from multi-frame stalls.
+        constexpr int kPlxdPollMaxIters = 16; // 16 × 500us ≈ 8ms max
         int plxdIters = 0;
         if (readBankRelease(brs)) {
             // PLXD present — use it for bank selection.
@@ -1377,9 +1382,9 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
                 bank = brs.freeBank();
                 plxdUsed = true;
             } else {
-                // Both banks in use (swap pending). Poll until free or timeout.
+                // Both banks in use (swap pending). Poll briefly then best-effort.
                 for (int i = 0; i < kPlxdPollMaxIters; ++i) {
-                    usleep(1000);
+                    usleep(500);
                     ++plxdIters;
                     if (readBankRelease(brs) && brs.anyFree()) {
                         bank = brs.freeBank();
@@ -1390,9 +1395,11 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
                 if (!plxdUsed) {
                     // LOUD timeout — never silently fall back to old delay.
                     fprintf(stderr,
-                            "[STALL] sendDdrFrame: PLXD bank-release timeout after %d ms "
-                            "(free_bank_mask=0, frames_done=%u disp_bank=%u swap_pending=%d)\n",
-                            plxdIters, static_cast<unsigned>(brs.frames_done),
+                            "[STALL] sendDdrFrame: PLXD bank-release timeout after ~%d us "
+                            "(iters=%d free_bank_mask=0, frames_done=%u disp_bank=%u "
+                            "swap_pending=%d)\n",
+                            plxdIters * 500, plxdIters,
+                            static_cast<unsigned>(brs.frames_done),
                             static_cast<unsigned>(brs.disp_bank),
                             static_cast<int>(brs.swap_pending));
                     // Use the opposite of disp_bank as a best-effort guess.
@@ -1472,8 +1479,9 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
             kicked = true;
             if (first) {
                 // Give poller time to see seq; expect busy / pending / has_frame.
-                usleep(3000);
-                for (int i = 0; i < 40; ++i) {
+                // Keep first-frame wait short — 3ms+20ms SPI poll stacked with PLXD.
+                usleep(1000);
+                for (int i = 0; i < 20; ++i) {
                     uint8_t raw[16]{};
                     {
                         SpiExclusive guard(map_);
