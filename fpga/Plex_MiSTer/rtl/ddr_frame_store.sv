@@ -370,6 +370,8 @@ module ddr_frame_store #(
 	reg y_hit_r, c_hit_r;
 	reg [SLOT_W-1:0] y_hit_idx_r, c_hit_idx_r;
 	reg [2:0] y_sel_r, c_sel_r;
+	// YEL_B_UV_PHASE_PPC2: register full src_x with y/c_sel for absolute multi-pixel phase
+	reg [CODED_X_W-1:0] src_x_r;
 
 	integer vi;
 	reg y_hit_now, c_hit_now;
@@ -481,8 +483,10 @@ module ddr_frame_store #(
 	genvar gpi;
 	generate
 		for (gpi = 0; gpi < PX_PER_CLK; gpi = gpi + 1) begin : g_px
-			wire [2:0] y_sel_l = y_sel_r + 3'(gpi);
-			wire [2:0] c_sel_l = c_sel_r + 3'(gpi[2:1]);
+			// Absolute per-lane phase (match yuv_bt601_npx); BRAM 1-cy pairs with src_x_r.
+			wire [CODED_X_W-1:0] x_l = src_x_r + CODED_X_W'(gpi);
+			wire [2:0] y_sel_l = x_l[2:0];
+			wire [2:0] c_sel_l = x_l[3:1];
 			wire [7:0] y_l = pick_byte(selected_y_q, y_sel_l);
 			wire [7:0] u_l = pick_byte(selected_u_q, c_sel_l);
 			wire [7:0] v_l = pick_byte(selected_v_q, c_sel_l);
@@ -523,6 +527,7 @@ module ddr_frame_store #(
 			c_hit_idx_r <= '0;
 			y_sel_r <= 3'd0;
 			c_sel_r <= 3'd0;
+			src_x_r <= '0;
 			rd_r <= 8'd0;
 			rd_g <= 8'd0;
 			rd_b <= 8'd0;
@@ -581,6 +586,7 @@ module ddr_frame_store #(
 			c_hit_idx_r <= c_hit_idx_now;
 			y_sel_r <= src_x[2:0];
 			c_sel_r <= src_x[3:1];
+			src_x_r <= src_x;
 			miss_d <= rd_miss_now;
 			if (miss_d && underrun_count != 16'hFFFF) begin
 				underrun_count <= underrun_count + 16'd1;

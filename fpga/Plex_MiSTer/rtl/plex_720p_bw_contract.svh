@@ -41,10 +41,10 @@ localparam int P720_CLK_SYS_HZ        = MISTERPLEX_BW_CLK_SYS_HZ;        // 20e6
 localparam int P720_CLK_DDR_HZ        = 90_000_000;
 localparam int P720_CLK_PIX_HZ        = MISTERPLEX_BW_CLK_PIX_HZ;        // 29.7e6
 localparam int P720_PPC               = MISTERPLEX_BW_PRODUCT_PPC;       // 2
-// Floor 32 after yellow/static on non-uniform 720p (logo/video) while solid I420
+// Floor 16 residual (line32 FIT_FAIL); yellow/static still open on non-uniform 720p (logo/video) while solid I420
 // pushed clean: chroma miss class under LINE_COUNT=16. 16 remains legal min only
-// for analysis; product sole uses FRAME_LINES_32.
-localparam int P720_LINE_COUNT        = 32;
+// for analysis; line32 FIT_FAIL shelved; product floor 16 until cheaper yellow hyp.
+localparam int P720_LINE_COUNT        = 16;
 localparam int P720_FRAME_US          = MISTERPLEX_BW_FRAME_BUDGET_US;   // 41667
 localparam int P720_DDR_CYC_PER_FRAME = 3_750_000; // 90e6/24
 localparam int P720_FABRIC_RD_BPS     = MISTERPLEX_BW_DIR_B_PER_S;       // 33177600
