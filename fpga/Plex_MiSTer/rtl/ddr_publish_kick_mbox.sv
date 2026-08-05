@@ -212,19 +212,16 @@ module ddr_publish_kick_mbox #(
 				wr_issued <= 1'b0;
 				poll_div <= poll_div + 1'b1;
 
-				// Only when publish engine idle (no bus_want conflict with u_pub).
-				// Still poll while posted_busy so a new start edge can raise
-				// err_busy_kick; edge detect (toggle/start_w) prevents re-accept
-				// of the same host command between start_pulse and pub_busy.
-				//
-				// GRANT DEADLOCK FIX (device PLXH MagicMissing dump: PLXG sticky
-				// host-ok, PLXH forever 0): PRODUCT_WIRE m2 mux forces
-				// DDRAM_BUSY=1 until kick bus_want is granted. Old ST_IDLE
-				// required can_cmd(!BUSY) *before* asserting bus_want → never
-				// left IDLE, never wrote PLXH. Assert bus_want on intent first;
-				// advance to RD/WR only when can_issue; hold bus_want while
-				// waiting for grant.
-				if (pub_busy) begin
+				// GRANT DEADLOCK FIX: assert bus_want before can_issue (PLXH magic).
+				// YIELD FIX (device BusyStuck after grantfix: PLXH hi=0x21
+				// busy+accepted, done never): after accept/start, posted_busy=1
+				// while pub_busy still 0. Old path kept polling PLXG with
+				// bus_want=1 → m2 kick_grant starved u_pub COPY forever.
+				// While posted_busy, release bus and do not poll until
+				// pub_done_pulse clears posted_busy (need_status_wr path).
+				if (posted_busy) begin
+					bus_want <= 1'b0;
+				end else if (pub_busy) begin
 					bus_want <= 1'b0;
 				end else begin
 					// Intent: status refresh due, or PLXG poll slot, or already
