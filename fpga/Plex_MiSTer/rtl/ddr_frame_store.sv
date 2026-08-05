@@ -955,9 +955,19 @@ module ddr_frame_store #(
 	// Cycle N: one-hot pri_*_r from already-registered schedule + reqs only.
 	// Cycle N+1: S_IDLE thin mux on pri_*_r (holdlast mbox-before-cur order).
 	// FORBID: mbox_yield CE on need_*_c; wrap thrash; LEAD_K thrash.
+	// YEL_A_CHROMA_FILL_PRI: when Y and C both need under mbox/sched clear,
+	// round-robin so chroma is not permanently starved by pri_y-before-pri_c.
 	reg pri_frame_mbox_r, pri_bank_mbox_r, pri_sched_issue_r;
 	reg pri_y_arm_r, pri_c_arm_r, pri_poll_r, pri_imbox_r, pri_smbox_r, pri_sdram_r;
+	reg chroma_rr_r;
 	wire bus_ok_c = !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE;
+	wire y_arm_need_c = (has_frame_d2 && need_y_cur_r) || sel_y_prep_r;
+	wire c_arm_need_c = (has_frame_d2 && need_c_cur_r) || sel_c_prep_r;
+	wire higher_than_yc_c = (frame_mbox_req
+	    && (!frame_mbox_valid || poll_div[7:0] == 8'd224) && bus_ok_c)
+	    || (bank_mbox_req
+	    && (!bank_mbox_valid || poll_div[7:0] == 8'd160) && bus_ok_c)
+	    || (PIPELINE_REFILL_SCHEDULER && sched_valid);
 	always @(posedge clk_ddr) begin
 		if (reset_ddr) begin
 			pri_frame_mbox_r <= 1'b0;
@@ -969,9 +979,11 @@ module ddr_frame_store #(
 			pri_imbox_r <= 1'b0;
 			pri_smbox_r <= 1'b0;
 			pri_sdram_r <= 1'b0;
+			chroma_rr_r <= 1'b0;
 		end else if (state_ddr == S_IDLE) begin
 			// Sample only in S_IDLE so arms match idle decision epoch.
-			// Cascade: first true wins (Option A holdlast order).
+			// Cascade: first true wins (Option A holdlast order) for mbox/sched;
+			// YEL_A: Y/C co-assert uses registered RR instead of hard Y-before-C.
 			pri_frame_mbox_r <= frame_mbox_req
 			    && (!frame_mbox_valid || poll_div[7:0] == 8'd224) && bus_ok_c;
 			pri_bank_mbox_r <= !(frame_mbox_req
@@ -983,53 +995,34 @@ module ddr_frame_store #(
 			    && !(bank_mbox_req
 			    && (!bank_mbox_valid || poll_div[7:0] == 8'd160) && bus_ok_c)
 			    && PIPELINE_REFILL_SCHEDULER && sched_valid;
-			pri_y_arm_r <= !(frame_mbox_req
-			    && (!frame_mbox_valid || poll_div[7:0] == 8'd224) && bus_ok_c)
-			    && !(bank_mbox_req
-			    && (!bank_mbox_valid || poll_div[7:0] == 8'd160) && bus_ok_c)
-			    && !(PIPELINE_REFILL_SCHEDULER && sched_valid)
-			    && ((has_frame_d2 && need_y_cur_r) || sel_y_prep_r);
-			pri_c_arm_r <= !(frame_mbox_req
-			    && (!frame_mbox_valid || poll_div[7:0] == 8'd224) && bus_ok_c)
-			    && !(bank_mbox_req
-			    && (!bank_mbox_valid || poll_div[7:0] == 8'd160) && bus_ok_c)
-			    && !(PIPELINE_REFILL_SCHEDULER && sched_valid)
-			    && !((has_frame_d2 && need_y_cur_r) || sel_y_prep_r)
-			    && ((has_frame_d2 && need_c_cur_r) || sel_c_prep_r);
-			pri_poll_r <= !(frame_mbox_req
-			    && (!frame_mbox_valid || poll_div[7:0] == 8'd224) && bus_ok_c)
-			    && !(bank_mbox_req
-			    && (!bank_mbox_valid || poll_div[7:0] == 8'd160) && bus_ok_c)
-			    && !(PIPELINE_REFILL_SCHEDULER && sched_valid)
-			    && !((has_frame_d2 && need_y_cur_r) || sel_y_prep_r)
-			    && !((has_frame_d2 && need_c_cur_r) || sel_c_prep_r)
+			// YEL_A: sole y / sole c / co-assert RR (chroma_rr_r==1 prefers C)
+			pri_y_arm_r <= !higher_than_yc_c
+			    && y_arm_need_c
+			    && !(c_arm_need_c && chroma_rr_r);
+			pri_c_arm_r <= !higher_than_yc_c
+			    && c_arm_need_c
+			    && !(y_arm_need_c && !chroma_rr_r);
+			// Toggle RR only when both arms compete and we are in Y/C tier
+			if (!higher_than_yc_c && y_arm_need_c && c_arm_need_c)
+				chroma_rr_r <= ~chroma_rr_r;
+			pri_poll_r <= !higher_than_yc_c
+			    && !y_arm_need_c
+			    && !c_arm_need_c
 			    && !poll_pending && poll_div[7:0] == 8'd0 && bus_ok_c;
-			pri_imbox_r <= !(frame_mbox_req
-			    && (!frame_mbox_valid || poll_div[7:0] == 8'd224) && bus_ok_c)
-			    && !(bank_mbox_req
-			    && (!bank_mbox_valid || poll_div[7:0] == 8'd160) && bus_ok_c)
-			    && !(PIPELINE_REFILL_SCHEDULER && sched_valid)
-			    && !((has_frame_d2 && need_y_cur_r) || sel_y_prep_r)
-			    && !((has_frame_d2 && need_c_cur_r) || sel_c_prep_r)
+			pri_imbox_r <= !higher_than_yc_c
+			    && !y_arm_need_c
+			    && !c_arm_need_c
 			    && !(!poll_pending && poll_div[7:0] == 8'd0 && bus_ok_c)
 			    && !cmd_empty && poll_div[7:0] == 8'd64 && bus_ok_c;
-			pri_smbox_r <= !(frame_mbox_req
-			    && (!frame_mbox_valid || poll_div[7:0] == 8'd224) && bus_ok_c)
-			    && !(bank_mbox_req
-			    && (!bank_mbox_valid || poll_div[7:0] == 8'd160) && bus_ok_c)
-			    && !(PIPELINE_REFILL_SCHEDULER && sched_valid)
-			    && !((has_frame_d2 && need_y_cur_r) || sel_y_prep_r)
-			    && !((has_frame_d2 && need_c_cur_r) || sel_c_prep_r)
+			pri_smbox_r <= !higher_than_yc_c
+			    && !y_arm_need_c
+			    && !c_arm_need_c
 			    && !(!poll_pending && poll_div[7:0] == 8'd0 && bus_ok_c)
 			    && !(!cmd_empty && poll_div[7:0] == 8'd64 && bus_ok_c)
 			    && mbox_req && poll_div[7:0] == 8'd128 && bus_ok_c;
-			pri_sdram_r <= !(frame_mbox_req
-			    && (!frame_mbox_valid || poll_div[7:0] == 8'd224) && bus_ok_c)
-			    && !(bank_mbox_req
-			    && (!bank_mbox_valid || poll_div[7:0] == 8'd160) && bus_ok_c)
-			    && !(PIPELINE_REFILL_SCHEDULER && sched_valid)
-			    && !((has_frame_d2 && need_y_cur_r) || sel_y_prep_r)
-			    && !((has_frame_d2 && need_c_cur_r) || sel_c_prep_r)
+			pri_sdram_r <= !higher_than_yc_c
+			    && !y_arm_need_c
+			    && !c_arm_need_c
 			    && !(!poll_pending && poll_div[7:0] == 8'd0 && bus_ok_c)
 			    && !(!cmd_empty && poll_div[7:0] == 8'd64 && bus_ok_c)
 			    && !(mbox_req && poll_div[7:0] == 8'd128 && bus_ok_c)
@@ -1045,6 +1038,7 @@ module ddr_frame_store #(
 			pri_imbox_r <= 1'b0;
 			pri_smbox_r <= 1'b0;
 			pri_sdram_r <= 1'b0;
+			// keep chroma_rr_r across non-idle for fair RR
 		end
 	end
 
