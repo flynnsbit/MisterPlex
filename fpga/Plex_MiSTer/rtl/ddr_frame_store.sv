@@ -945,28 +945,13 @@ module ddr_frame_store #(
 		end
 	end
 
-	// OPT-1-B S_IDLE priority pipeline REGISTERED (product residual underrun):
+	// OPT-1 S_IDLE priority pipeline REGISTERED (product residual TAG/LAG):
 	// Cycle N: one-hot pri_*_r from already-registered schedule + reqs only.
-	// Cycle N+1: S_IDLE thin mux on pri_*_r.
-	// Option B order: fill/sched + cur/prep arms BEFORE frame/bank mbox
-	// (M1 intent, registered — NOT combo mbox_yield CE on need_*_c).
-	// Base: OPT-1 A tip 3fd92f05 F2 PASS MEAN168.6 / F1 sticky FFFF FAIL.
-	// FORBID: mbox_yield CE; wrap thrash; LEAD_K thrash.
+	// Cycle N+1: S_IDLE thin mux on pri_*_r (holdlast mbox-before-cur order).
+	// FORBID: mbox_yield CE on need_*_c; wrap thrash; LEAD_K thrash.
 	reg pri_frame_mbox_r, pri_bank_mbox_r, pri_sched_issue_r;
 	reg pri_y_arm_r, pri_c_arm_r, pri_poll_r, pri_imbox_r, pri_smbox_r, pri_sdram_r;
 	wire bus_ok_c = !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE;
-	// Intermediate want wires (combo sample into pri_*_r only; no need_*_c CE into mbox).
-	wire want_sched_c = PIPELINE_REFILL_SCHEDULER && sched_valid;
-	wire want_y_arm_c = (has_frame_d2 && need_y_cur_r) || sel_y_prep_r;
-	wire want_c_arm_c = (has_frame_d2 && need_c_cur_r) || sel_c_prep_r;
-	wire want_frame_c = frame_mbox_req
-	    && (!frame_mbox_valid || poll_div[7:0] == 8'd224) && bus_ok_c;
-	wire want_bank_c = bank_mbox_req
-	    && (!bank_mbox_valid || poll_div[7:0] == 8'd160) && bus_ok_c;
-	wire want_poll_c = !poll_pending && poll_div[7:0] == 8'd0 && bus_ok_c;
-	wire want_imbox_c = !cmd_empty && poll_div[7:0] == 8'd64 && bus_ok_c;
-	wire want_smbox_c = mbox_req && poll_div[7:0] == 8'd128 && bus_ok_c;
-	wire want_sdram_c = sdram_mbox_req && poll_div[7:0] == 8'd192 && bus_ok_c;
 	always @(posedge clk_ddr) begin
 		if (reset_ddr) begin
 			pri_frame_mbox_r <= 1'b0;
@@ -979,24 +964,70 @@ module ddr_frame_store #(
 			pri_smbox_r <= 1'b0;
 			pri_sdram_r <= 1'b0;
 		end else if (state_ddr == S_IDLE) begin
-			// Option B cascade: first true wins (cur/fill before mbox).
-			pri_sched_issue_r <= want_sched_c;
-			pri_y_arm_r <= !want_sched_c && want_y_arm_c;
-			pri_c_arm_r <= !want_sched_c && !want_y_arm_c && want_c_arm_c;
-			pri_frame_mbox_r <= !want_sched_c && !want_y_arm_c && !want_c_arm_c
-			    && want_frame_c;
-			pri_bank_mbox_r <= !want_sched_c && !want_y_arm_c && !want_c_arm_c
-			    && !want_frame_c && want_bank_c;
-			pri_poll_r <= !want_sched_c && !want_y_arm_c && !want_c_arm_c
-			    && !want_frame_c && !want_bank_c && want_poll_c;
-			pri_imbox_r <= !want_sched_c && !want_y_arm_c && !want_c_arm_c
-			    && !want_frame_c && !want_bank_c && !want_poll_c && want_imbox_c;
-			pri_smbox_r <= !want_sched_c && !want_y_arm_c && !want_c_arm_c
-			    && !want_frame_c && !want_bank_c && !want_poll_c && !want_imbox_c
-			    && want_smbox_c;
-			pri_sdram_r <= !want_sched_c && !want_y_arm_c && !want_c_arm_c
-			    && !want_frame_c && !want_bank_c && !want_poll_c && !want_imbox_c
-			    && !want_smbox_c && want_sdram_c;
+			// Sample only in S_IDLE so arms match idle decision epoch.
+			// Cascade: first true wins (Option A holdlast order).
+			pri_frame_mbox_r <= frame_mbox_req
+			    && (!frame_mbox_valid || poll_div[7:0] == 8'd224) && bus_ok_c;
+			pri_bank_mbox_r <= !(frame_mbox_req
+			    && (!frame_mbox_valid || poll_div[7:0] == 8'd224) && bus_ok_c)
+			    && bank_mbox_req
+			    && (!bank_mbox_valid || poll_div[7:0] == 8'd160) && bus_ok_c;
+			pri_sched_issue_r <= !(frame_mbox_req
+			    && (!frame_mbox_valid || poll_div[7:0] == 8'd224) && bus_ok_c)
+			    && !(bank_mbox_req
+			    && (!bank_mbox_valid || poll_div[7:0] == 8'd160) && bus_ok_c)
+			    && PIPELINE_REFILL_SCHEDULER && sched_valid;
+			pri_y_arm_r <= !(frame_mbox_req
+			    && (!frame_mbox_valid || poll_div[7:0] == 8'd224) && bus_ok_c)
+			    && !(bank_mbox_req
+			    && (!bank_mbox_valid || poll_div[7:0] == 8'd160) && bus_ok_c)
+			    && !(PIPELINE_REFILL_SCHEDULER && sched_valid)
+			    && ((has_frame_d2 && need_y_cur_r) || sel_y_prep_r);
+			pri_c_arm_r <= !(frame_mbox_req
+			    && (!frame_mbox_valid || poll_div[7:0] == 8'd224) && bus_ok_c)
+			    && !(bank_mbox_req
+			    && (!bank_mbox_valid || poll_div[7:0] == 8'd160) && bus_ok_c)
+			    && !(PIPELINE_REFILL_SCHEDULER && sched_valid)
+			    && !((has_frame_d2 && need_y_cur_r) || sel_y_prep_r)
+			    && ((has_frame_d2 && need_c_cur_r) || sel_c_prep_r);
+			pri_poll_r <= !(frame_mbox_req
+			    && (!frame_mbox_valid || poll_div[7:0] == 8'd224) && bus_ok_c)
+			    && !(bank_mbox_req
+			    && (!bank_mbox_valid || poll_div[7:0] == 8'd160) && bus_ok_c)
+			    && !(PIPELINE_REFILL_SCHEDULER && sched_valid)
+			    && !((has_frame_d2 && need_y_cur_r) || sel_y_prep_r)
+			    && !((has_frame_d2 && need_c_cur_r) || sel_c_prep_r)
+			    && !poll_pending && poll_div[7:0] == 8'd0 && bus_ok_c;
+			pri_imbox_r <= !(frame_mbox_req
+			    && (!frame_mbox_valid || poll_div[7:0] == 8'd224) && bus_ok_c)
+			    && !(bank_mbox_req
+			    && (!bank_mbox_valid || poll_div[7:0] == 8'd160) && bus_ok_c)
+			    && !(PIPELINE_REFILL_SCHEDULER && sched_valid)
+			    && !((has_frame_d2 && need_y_cur_r) || sel_y_prep_r)
+			    && !((has_frame_d2 && need_c_cur_r) || sel_c_prep_r)
+			    && !(!poll_pending && poll_div[7:0] == 8'd0 && bus_ok_c)
+			    && !cmd_empty && poll_div[7:0] == 8'd64 && bus_ok_c;
+			pri_smbox_r <= !(frame_mbox_req
+			    && (!frame_mbox_valid || poll_div[7:0] == 8'd224) && bus_ok_c)
+			    && !(bank_mbox_req
+			    && (!bank_mbox_valid || poll_div[7:0] == 8'd160) && bus_ok_c)
+			    && !(PIPELINE_REFILL_SCHEDULER && sched_valid)
+			    && !((has_frame_d2 && need_y_cur_r) || sel_y_prep_r)
+			    && !((has_frame_d2 && need_c_cur_r) || sel_c_prep_r)
+			    && !(!poll_pending && poll_div[7:0] == 8'd0 && bus_ok_c)
+			    && !(!cmd_empty && poll_div[7:0] == 8'd64 && bus_ok_c)
+			    && mbox_req && poll_div[7:0] == 8'd128 && bus_ok_c;
+			pri_sdram_r <= !(frame_mbox_req
+			    && (!frame_mbox_valid || poll_div[7:0] == 8'd224) && bus_ok_c)
+			    && !(bank_mbox_req
+			    && (!bank_mbox_valid || poll_div[7:0] == 8'd160) && bus_ok_c)
+			    && !(PIPELINE_REFILL_SCHEDULER && sched_valid)
+			    && !((has_frame_d2 && need_y_cur_r) || sel_y_prep_r)
+			    && !((has_frame_d2 && need_c_cur_r) || sel_c_prep_r)
+			    && !(!poll_pending && poll_div[7:0] == 8'd0 && bus_ok_c)
+			    && !(!cmd_empty && poll_div[7:0] == 8'd64 && bus_ok_c)
+			    && !(mbox_req && poll_div[7:0] == 8'd128 && bus_ok_c)
+			    && sdram_mbox_req && poll_div[7:0] == 8'd192 && bus_ok_c;
 		end else begin
 			// Leave S_IDLE: clear so re-entry re-samples.
 			pri_frame_mbox_r <= 1'b0;
@@ -1280,7 +1311,15 @@ end
 
 			frame_miss_tog_s1 <= frame_miss_toggle;
 			frame_miss_tog_s2 <= frame_miss_tog_s1;
-			if (frame_miss_tog_s2 != frame_miss_tog_seen) begin
+			// UNDERRUN_EPOCH_CLEAR (product residual after OPT-1 F2 PASS / F1 sticky FFFF):
+			// Clear frame_underrun_ddr on display swap (frames_done advance) so F1 can
+			// climb/clear after warm miss burst. KEEP miss toggle CDC +1 path.
+			// STA-safe: single compare + load; no pri/mbox/wrap thrash.
+			if (frames_done_d2 != frames_done_d1) begin
+				frame_underrun_ddr <= 16'd0;
+				if (frame_miss_tog_s2 != frame_miss_tog_seen)
+					frame_miss_tog_seen <= frame_miss_tog_s2;
+			end else if (frame_miss_tog_s2 != frame_miss_tog_seen) begin
 				frame_miss_tog_seen <= frame_miss_tog_s2;
 				if (frame_underrun_ddr != 16'hFFFF)
 					frame_underrun_ddr <= frame_underrun_ddr + 16'd1;
