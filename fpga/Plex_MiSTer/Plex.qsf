@@ -107,11 +107,14 @@ set_global_assignment -name VERILOG_MACRO "PRESENT_CLK_PIX_PLL=1"
 set_global_assignment -name SDC_FILE Plex_clk_pix.sdc
 # Fabric DDR→DDR publication engine (w-path/w-mem). Bounce ≤2 M10K; start tied
 # idle until ARM/handover wires kick — still in hierarchy for area measurement.
-set_global_assignment -name VERILOG_MACRO "FABRIC_FRAME_DMA=1"
+# OPT-1 sole cutb-r1-pw-kick-sta1: FABRIC_FRAME_DMA OFF (drop ~171 ALM area stub;
+# phase2 functional path is kick+u_pub via PRODUCT_WIRE, not fabric stub).
+#set_global_assignment -name VERILOG_MACRO "FABRIC_FRAME_DMA=1"
 # REAL bank-fill offload research (arb3 m2 + ddr_publish_path COPY).
 # PRODUCT_WIRE default OFF — product elaborates arb2. Uncomment for research fit only
 # after static gate green + parent FIT_GO (phase1 start=0 hierarchy proof).
-#set_global_assignment -name VERILOG_MACRO "PRODUCT_WIRE=1"
+# Sole cutb-r1-pw-kick-sta1: PRODUCT_WIRE=1 ON for hierarchy/STA recover (OPT-1).
+set_global_assignment -name VERILOG_MACRO "PRODUCT_WIRE=1"
 # DIAG sole only (cutb-r1-diag): PLXF[63:40] I1/I2 tag RCA. Not product PASS.
 # PRODUCT_WIRE=0: leave commented for product fits. Uncomment for intentional DIAG sole:
 #set_global_assignment -name VERILOG_MACRO "MPLEX_DIAG_TAG_RCA=1"
