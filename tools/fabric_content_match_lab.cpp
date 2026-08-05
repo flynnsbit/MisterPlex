@@ -352,7 +352,19 @@ int main(int argc, char** argv) {
     job.frame_bytes = frame_bytes;
     job.bank_sel = (bank != 0);
     job.use_bank_sel = false; // R2 bankphys path: explicit BANK_PHYS
+    // R9/R10: fixed 0x00c1 + sticky done_seq can false-Success without new COPY.
+    // If caller did not pass --cmd-seq, derive a unique seq from time.
+    if (cmd_seq == 0x00c1u) {
+        const auto ns = static_cast<uint16_t>(
+            std::chrono::steady_clock::now().time_since_epoch().count() & 0xffffu);
+        if (ns != 0)
+            cmd_seq = ns;
+        if (cmd_seq == 0x00c1u)
+            cmd_seq = 0x00c2u;
+    }
     job.cmd_seq = cmd_seq;
+    std::printf("SCORE cmd_seq_effective=0x%04x use_bank_sel=0 bank_sel=%d\n",
+                cmd_seq, job.bank_sel ? 1 : 0);
 
     FabricKickHostState kick_st;
     FabricKickWaitResult wait_r = FabricKickWaitResult::BadArgs;
@@ -471,10 +483,29 @@ int main(int argc, char** argv) {
     std::vector<uint8_t> payload(frame_bytes, 0);
     fillPattern(payload.data(), frame_bytes);
 
-    // Poison bank so idle/false-complete cannot content-match.
+    // Poison target bank so idle/false-complete cannot content-match.
     std::memset(bank_map, 0xA5, frame_bytes);
     __sync_synchronize();
     dumpHexHead("bank_after_poison", bank_map, 32);
+
+    // Also poison the OTHER bank so WRONG_BANK landing cannot be stale R8 gold.
+    MapWin win_other;
+    const uint32_t other_phys =
+        (bank == 0) ? (misterplex::kDdrFramePhysBase + kPlex720pYuv420pBankStride)
+                    : misterplex::kDdrFramePhysBase;
+    std::string err_other;
+    uint8_t* other_map = nullptr;
+    if (mapWindow(win_other, other_phys, static_cast<size_t>(frame_bytes),
+                  &err_other)) {
+        other_map = win_other.ptrAt(other_phys);
+        if (other_map) {
+            std::memset(other_map, 0x5A, frame_bytes);
+            __sync_synchronize();
+            dumpHexHead("other_bank_after_poison_0x5a", other_map, 32);
+        }
+    } else {
+        std::printf("SCORE other_bank_map_fail %s\n", err_other.c_str());
+    }
 
     const auto fr = fillStagingFromPayloadEx(
         staging_map, payload.data(), frame_bytes, stagingRegionBytes());
@@ -482,6 +513,7 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "fillStaging failed: %s\n", stagingFillResultName(fr));
         printScore("device", FabricKickWaitResult::BadArgs, 0, 0, 0, 0, false,
                    frame_bytes, bank_phys, src_phys, cmd_seq, ring_plxk, false);
+        win_other.close();
         win_bank.close();
         win_staging.close();
         win_doorbell.close();
@@ -491,10 +523,15 @@ int main(int argc, char** argv) {
     dumpHexHead("bank_after_fill_pre_kick", bank_map, 32);
 
     VolatileFabricKickMem io(doorbell_page, 0x1000u);
+    // Clear sticky done/err so a prior seq cannot false-Success.
+    kick_st.last_cmd_seq = job.cmd_seq;
+    clearFabricKickDone(io, kick_st, true);
+    dumpDoorbellWords(io, "post_clr_done");
     if (!programFabricKick(io, kick_st, job, start_mode)) {
         std::fprintf(stderr, "programFabricKick failed (align/args)\n");
         printScore("device", FabricKickWaitResult::BadArgs, 0, 0, 0, 0, false,
                    frame_bytes, bank_phys, src_phys, cmd_seq, ring_plxk, false);
+        win_other.close();
         win_bank.close();
         win_staging.close();
         win_doorbell.close();
@@ -511,21 +548,8 @@ int main(int argc, char** argv) {
     __sync_synchronize(); // payload barrier before bank read
     dumpHexHead("staging_post_wait", staging_map, 32);
     dumpHexHead("bank_post_wait", bank_map, 32);
-
-    // R7 write-landing probe: also observe bank1 head when lab targets bank0.
-    if (bank == 0) {
-        MapWin win_bank1;
-        std::string err1;
-        const uint32_t bank1_phys = 0x30180000u;
-        if (mapWindow(win_bank1, bank1_phys, 64u, &err1)) {
-            uint8_t* b1 = win_bank1.ptrAt(bank1_phys);
-            if (b1)
-                dumpHexHead("bank1_0x30180000_post_wait", b1, 32);
-            win_bank1.close();
-        } else {
-            std::printf("SCORE bank1_map_fail %s\n", err1.c_str());
-        }
-    }
+    if (other_map)
+        dumpHexHead("other_bank_post_wait", other_map, 32);
 
     // Optional PLXK only after PLXH success and only if explicitly requested.
     if (ring_plxk) {
@@ -560,6 +584,7 @@ int main(int argc, char** argv) {
         }
     }
 
+    win_other.close();
     win_bank.close();
     win_staging.close();
     win_doorbell.close();
