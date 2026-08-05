@@ -2553,11 +2553,22 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     if (profilePresent)
                         ++prof.presented;
                     if ((presentCount_ % 48) == 0) {
+                        const auto dt = fpga_.lastDdrTiming();
                         log(std::string("media: fpga frame_tx ok via ") +
                             "DDR" +
                             " presents=" + std::to_string(presentCount_) +
                             " frames=" + std::to_string(frameIndex) +
-                            " ms=" + std::to_string(static_cast<int>(fpga_.lastPushMs())));
+                            " ms=" + std::to_string(static_cast<int>(fpga_.lastPushMs())) +
+                            " prep_us=" + std::to_string(dt.prep_wait_us) +
+                            " copy_us=" + std::to_string(dt.copy_us) +
+                            " flush_us=" + std::to_string(dt.flush_us) +
+                            " doorbell_us=" + std::to_string(dt.doorbell_us) +
+                            " post_us=" + std::to_string(dt.post_wait_us) +
+                            " bank_reuse_us=" + std::to_string(dt.bank_reuse_wait_us) +
+                            " plxd_us=" + std::to_string(dt.plxa_poll_us) +
+                            " plxd_iters=" + std::to_string(dt.plxa_poll_iters) +
+                            " plxd_used=" + (dt.plxa_used ? "1" : "0") +
+                            " total_us=" + std::to_string(dt.total_us));
                     }
                 }
             }
