@@ -1020,6 +1020,129 @@ present_core #(
 );
 
 `ifdef DDR_FRAME_STORE
+`ifdef PRODUCT_WIRE
+// ── PRODUCT_WIRE ON (research): present m0 > publish m2 > bitstream m1 ──
+// PHASE1: start=0, COPY mode, host owns doorbell. FIT_GO requires parent sole.
+`include "rtl/ddr_frame_layout_params.svh"
+wire        pub_busy, pub_done, pub_err, pub_job_legal, pub_src_aligned;
+wire        pub_bus_want;
+wire [31:0] pub_frame_bytes, pub_dst_bank, pub_db_phys, pub_bytes_copied;
+wire [15:0] pub_beats_rd, pub_beats_wr;
+wire  [7:0] pub_burstcnt, pub_be;
+wire [28:0] pub_addr;
+wire [63:0] pub_dout, pub_din;
+wire        pub_dout_ready, pub_rd, pub_we;
+wire        pub_m2_busy;
+
+// Host kick CDC (clk_sys → clk_ddr) = phase2; phase1 ties controls idle.
+wire        pub_start_ddr      = 1'b0;   // phase1: still idle
+wire        pub_cmd_mode       = 1'b1;   // 1 = COPY (primary bank fill)
+wire        pub_bank_sel       = 1'b0;
+wire [31:0] pub_src_phys       = 32'h0;
+wire        pub_ring_db        = 1'b0;   // HOST owns doorbell after done
+wire [63:0] pub_db_word        = 64'h0;
+wire [31:0] pub_bytes_override = 32'd0;
+
+// present_want: fence NEW publish issues while present is commanding
+wire present_cmd = present_ddr_rd | present_ddr_we;
+
+(* noprune *) ddr_publish_path #(
+	.CODED_W(DDR_FRAME_CODED_WIDTH),
+	.CODED_H(DDR_FRAME_CODED_HEIGHT),
+	.PHYS_BASE(32'h3000_0000),
+	.BANK_STRIDE_BYTES(DDR_FRAME_YUV420P_BANK_STRIDE), // 0x0018_0000
+	.DOORBELL_PHYS(DDR_FRAME_YUV420P_DOORBELL_PHYS),   // 0x302F_F000
+	.MAX_BURST(16),
+	.ADDR_W(29)
+) u_pub (
+	.clk(clk_ddr),
+	.reset(reset),
+	.start(pub_start_ddr),
+	.cmd_mode(pub_cmd_mode),
+	.bank_sel(pub_bank_sel),
+	.src_phys(pub_src_phys),
+	.ring_doorbell(pub_ring_db),
+	.doorbell_word(pub_db_word),
+	.bytes_override(pub_bytes_override),
+	.busy(pub_busy),
+	.done_pulse(pub_done),
+	.err(pub_err),
+	.job_legal(pub_job_legal),
+	.src_aligned(pub_src_aligned),
+	.frame_bytes(pub_frame_bytes),
+	.dst_bank_phys(pub_dst_bank),
+	.doorbell_phys_o(pub_db_phys),
+	.bytes_copied(pub_bytes_copied),
+	.beats_rd(pub_beats_rd),
+	.beats_wr(pub_beats_wr),
+	.present_want(present_cmd),
+	.bus_want(pub_bus_want),
+	.DDRAM_BUSY(pub_m2_busy),
+	.DDRAM_BURSTCNT(pub_burstcnt),
+	.DDRAM_ADDR(pub_addr),
+	.DDRAM_DOUT(pub_dout),
+	.DDRAM_DOUT_READY(pub_dout_ready),
+	.DDRAM_RD(pub_rd),
+	.DDRAM_DIN(pub_din),
+	.DDRAM_BE(pub_be),
+	.DDRAM_WE(pub_we)
+);
+
+ddr_bus_arbiter3 #(.M2_QUANTUM_BEATS(8)) ddr_arb3 (
+	.clk(clk_ddr),
+	.clk_m1(clk_sys),
+	.reset(reset),
+	.m1_want(stream_ddr_bus_want),
+	.m2_want(pub_bus_want),
+	// m0 present
+	.m0_busy(present_ddr_busy),
+	.m0_burstcnt(present_ddr_burstcnt),
+	.m0_addr(present_ddr_addr),
+	.m0_dout(present_ddr_dout),
+	.m0_dout_ready(present_ddr_dout_ready),
+	.m0_rd(present_ddr_rd),
+	.m0_din(present_ddr_din),
+	.m0_be(present_ddr_be),
+	.m0_we(present_ddr_we),
+	// m1 bitstream
+	.m1_busy(stream_ddr_busy),
+	.m1_burstcnt(stream_ddr_burstcnt),
+	.m1_addr(stream_ddr_addr),
+	.m1_dout(stream_ddr_dout),
+	.m1_dout_ready(stream_ddr_dout_ready),
+	.m1_rd(stream_ddr_rd),
+	.m1_din(stream_ddr_din),
+	.m1_be(stream_ddr_be),
+	.m1_we(stream_ddr_we),
+	// m2 publish
+	.m2_busy(pub_m2_busy),
+	.m2_burstcnt(pub_burstcnt),
+	.m2_addr(pub_addr),
+	.m2_dout(pub_dout),
+	.m2_dout_ready(pub_dout_ready),
+	.m2_rd(pub_rd),
+	.m2_din(pub_din),
+	.m2_be(pub_be),
+	.m2_we(pub_we),
+	// physical DDRAM
+	.DDRAM_BUSY(DDRAM_BUSY),
+	.DDRAM_BURSTCNT(DDRAM_BURSTCNT),
+	.DDRAM_ADDR(DDRAM_ADDR),
+	.DDRAM_DOUT(DDRAM_DOUT),
+	.DDRAM_DOUT_READY(DDRAM_DOUT_READY),
+	.DDRAM_RD(DDRAM_RD),
+	.DDRAM_DIN(DDRAM_DIN),
+	.DDRAM_BE(DDRAM_BE),
+	.DDRAM_WE(DDRAM_WE)
+);
+
+// Keep publish status/path live so map cannot strip u_pub when start=0.
+(* keep, noprune *) wire _keep_pub = pub_busy | pub_done | pub_err | pub_job_legal |
+	pub_src_aligned | pub_bus_want | (|pub_frame_bytes) | (|pub_dst_bank) |
+	(|pub_db_phys) | (|pub_bytes_copied) | (|pub_beats_rd) | (|pub_beats_wr);
+wire _unused_pub = _keep_pub;
+`else
+// ── PRODUCT_WIRE OFF (default): product 2-master present m0 + bitstream m1 ──
 ddr_bus_arbiter ddr_arb (
 	.clk(clk_ddr),
 	.clk_m1(clk_sys),
@@ -1053,6 +1176,10 @@ ddr_bus_arbiter ddr_arb (
 	.DDRAM_BE(DDRAM_BE),
 	.DDRAM_WE(DDRAM_WE)
 );
+wire _unused_pub = 1'b0;
+`endif
+`else
+wire _unused_pub = 1'b0;
 `endif
 
 // CLK_VIDEO must match CE_PIXEL/VGA_* domain. MULTI+clk_pix emits on clk_pix.
@@ -1338,6 +1465,6 @@ wire _unused = |{disp_i, cont_i, advance, ingest_pixels, ingest_dl, af_active, i
 	stream_ddr_rd, stream_ddr_din, stream_ddr_be, stream_ddr_we, _host_wr_unused,
 	rbf_stamp_alive, rbf_build_id_valid, rbf_build_id_observe_r, _keep_rbf_build_id,
 	product_cfg_no_stub, product_cfg_ddr_fs, product_cfg_fabric_dma,
-	_unused_clkstat, _unused_bwstat, _unused_fdma};
+	_unused_clkstat, _unused_bwstat, _unused_fdma, _unused_pub};
 
 endmodule
