@@ -27,6 +27,12 @@ constexpr uint32_t kUnderrunMailboxMagic   = mailbox_abi::kPlxfMagic;
 // (720p I420) or legacy-helper 0x300FF000 (480p I420). Prefer offset + doorbell.
 constexpr uint32_t kBankReleaseMailboxPhys  = mailbox_abi::kPlxdAddr;
 constexpr uint32_t kBankReleaseMailboxMagic = mailbox_abi::kPlxdMagic;
+// Fabric kick/status (PHASE2 host ABI). Prefer offset + doorbell; do not MMIO
+// until RTL frontend lands. Product fabric path remains hard OFF.
+constexpr uint32_t kFabricKickMailboxPhys   = mailbox_abi::kPlxgAddr;
+constexpr uint32_t kFabricKickMailboxMagic  = mailbox_abi::kPlxgMagic;
+constexpr uint32_t kFabricStatusMailboxPhys = mailbox_abi::kPlxhAddr;
+constexpr uint32_t kFabricStatusMailboxMagic = mailbox_abi::kPlxhMagic;
 constexpr uint8_t kFrameStoreDebugFormatError = 0xE1;
 
 // Offsets from live DOORBELL_PHYS (RTL: DOORBELL_PHYS + offset).
@@ -35,6 +41,8 @@ constexpr uint32_t kInputMailboxOffset = mailbox_abi::kPlxiOffset;
 constexpr uint32_t kMemtestMailboxOffset = mailbox_abi::kPlxmOffset;
 constexpr uint32_t kUnderrunMailboxOffset = mailbox_abi::kPlxfOffset;
 constexpr uint32_t kBankReleaseMailboxOffset = mailbox_abi::kPlxdOffset;
+constexpr uint32_t kFabricKickMailboxOffset = mailbox_abi::kPlxgOffset;
+constexpr uint32_t kFabricStatusMailboxOffset = mailbox_abi::kPlxhOffset;
 
 // Resolve a frame-store control mailbox against the active doorbell.
 inline constexpr uint32_t frameStoreMailboxPhys(uint32_t doorbell_phys, uint32_t offset) {
@@ -51,6 +59,12 @@ inline constexpr uint32_t statusMailboxPhys(uint32_t doorbell_phys) {
 }
 inline constexpr uint32_t inputMailboxPhys(uint32_t doorbell_phys) {
     return frameStoreMailboxPhys(doorbell_phys, kInputMailboxOffset);
+}
+inline constexpr uint32_t fabricKickMailboxPhys(uint32_t doorbell_phys) {
+    return frameStoreMailboxPhys(doorbell_phys, kFabricKickMailboxOffset);
+}
+inline constexpr uint32_t fabricStatusMailboxPhys(uint32_t doorbell_phys) {
+    return frameStoreMailboxPhys(doorbell_phys, kFabricStatusMailboxOffset);
 }
 
 enum class PlaybackCommand : uint8_t {

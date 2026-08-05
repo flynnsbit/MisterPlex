@@ -123,6 +123,61 @@
         "34:33": "format",
         "63:35": "seq + flags"
       }
+    },
+    {
+      "name": "PLXG",
+      "purpose": "Fabric publish kick/cmd (HPS\u2192core) \u2014 host ABI reserved PHASE2",
+      "address": "0x3007F140",
+      "magic": "0x504C5847",
+      "doorbell_offset": "0x140",
+      "rtl_file": null,
+      "rtl_addr_param": null,
+      "rtl_magic_param": null,
+      "arm_addr_const": "kPlxgAddr",
+      "arm_magic_const": "kPlxgMagic",
+      "layout": {
+        "31:0": "magic PLXG",
+        "32": "start_w",
+        "33": "start_toggle",
+        "34": "clr_done",
+        "35": "clr_err",
+        "36": "bank_sel",
+        "37": "use_bank_sel",
+        "38": "abort",
+        "47:39": "reserved0",
+        "63:48": "cmd_seq[15:0]"
+      },
+      "data_words": {
+        "+0x148": "SRC_PHYS[31:0]",
+        "+0x14C": "BANK_PHYS[31:0]",
+        "+0x150": "FRAME_BYTES[31:0]",
+        "+0x154": "RESERVED"
+      },
+      "_note": "Host ABI land only (mailbox_abi_spec.hpp). RTL frontend not applied. Product path hard OFF. Runtime: frameStoreMailboxPhys(doorbell, 0x140)."
+    },
+    {
+      "name": "PLXH",
+      "purpose": "Fabric publish handshake/status (core\u2192HPS) \u2014 host ABI reserved PHASE2",
+      "address": "0x3007F158",
+      "magic": "0x504C5848",
+      "doorbell_offset": "0x158",
+      "rtl_file": null,
+      "rtl_addr_param": null,
+      "rtl_magic_param": null,
+      "arm_addr_const": "kPlxhAddr",
+      "arm_magic_const": "kPlxhMagic",
+      "layout": {
+        "31:0": "magic PLXH",
+        "32": "busy",
+        "33": "done_sticky",
+        "34": "err_align",
+        "35": "err_timeout",
+        "36": "err_busy_kick",
+        "37": "accepted",
+        "47:38": "reserved1",
+        "63:48": "done_seq[15:0]"
+      },
+      "_note": "Host ABI land only. Success: magic==PLXH && done_sticky && done_seq==cmd_seq && !err_align && !busy. Product fabric path hard OFF."
     }
   ],
   "bitstream_ring": {
