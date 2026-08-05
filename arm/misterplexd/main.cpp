@@ -68,6 +68,9 @@ misterplex::WeakLadder weakForContentResolution(const misterplex::WeakLadder& ba
                                                 bool bitrateExplicit) {
     misterplex::WeakLadder weak = base;
     // Prefer named profile so level/bitrate stay consistent with tier.
+    // applyPlexTranscodeProfile always rewrites maxVideoBitrateKbps from the
+    // named ladder (e.g. 720p→4000). Preserve operator WEAK_BITRATE when set.
+    const int explicitBitrateKbps = base.maxVideoBitrateKbps;
     if (!misterplex::applyPlexTranscodeProfile(res.label, weak) &&
         !misterplex::applyPlexTranscodeProfile(
             std::to_string(res.width) + "x" + std::to_string(res.height), weak)) {
@@ -78,7 +81,9 @@ misterplex::WeakLadder weakForContentResolution(const misterplex::WeakLadder& ba
             weak.videoQuality = 70;
         }
     }
-    if (!bitrateExplicit)
+    if (bitrateExplicit)
+        weak.maxVideoBitrateKbps = explicitBitrateKbps;
+    else
         weak.maxVideoBitrateKbps = res.weakBitrateKbps;
     return weak;
 }
