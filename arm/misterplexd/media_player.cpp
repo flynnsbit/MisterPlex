@@ -18,6 +18,7 @@
 #include <vector>
 
 #include <fcntl.h>
+#include <sched.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -989,6 +990,16 @@ bool MediaPlayer::play(const std::string& urlOrPath, int64_t startOffsetMs,
         thr_ = std::thread([this, urlOrPath, startOffsetMs, httpHeaders, durationMs] {
 #if defined(__linux__)
         pthread_setname_np(pthread_self(), "mpx-play");
+        // Dual-A9: pin present/play path to CPU0 so bank memcpy avoids sharing
+        // the same core with ffmpeg decode under 720p concurrent load.
+        {
+            cpu_set_t cpus;
+            CPU_ZERO(&cpus);
+            CPU_SET(0, &cpus);
+            (void)pthread_setaffinity_np(pthread_self(), sizeof(cpus), &cpus);
+            // Prefer present over decode when the scheduler must choose.
+            (void)::setpriority(PRIO_PROCESS, 0, -5);
+        }
 #endif
             try {
                 threadMain(urlOrPath, startOffsetMs, httpHeaders, durationMs);
@@ -1012,7 +1023,16 @@ pid_t MediaPlayer::spawnFfmpeg(const std::vector<std::string>& args, int vWriteF
         setpgid(0, 0);
         // Prefer present-path CPU over decode when dual-A9 is saturated: uncached
         // DDR bank memcpy is the 720p present bottleneck under concurrent ffmpeg.
-        ::setpriority(PRIO_PROCESS, 0, 10);
+        // Pin decode to CPU1; play thread takes CPU0 (see play thr_ affinity).
+#if defined(__linux__)
+        {
+            cpu_set_t cpus;
+            CPU_ZERO(&cpus);
+            CPU_SET(1, &cpus);
+            (void)sched_setaffinity(0, sizeof(cpus), &cpus);
+        }
+#endif
+        ::setpriority(PRIO_PROCESS, 0, 15);
         // Video → stdout (pipe:1)
         if (vWriteFd >= 0) {
             dup2(vWriteFd, STDOUT_FILENO);
