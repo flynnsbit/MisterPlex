@@ -145,6 +145,12 @@ module ddr_bus_arbiter3 #(
 	wire m0_cmd = m0_rd | m0_we;
 	wire m1_cmd = m1_rd | m1_we;
 	wire m2_cmd = m2_rd | m2_we;
+	// R6 rsppath (cut A): m2 is clk_ddr-local. Double-reg m2_want_s2 alone
+	// dropped sticky grant during kick→pub want handoff before eng RD NBA,
+	// while registered m2_busy still 0 → false RD accept / ST_RD_DATA hang.
+	// Live want (raw|s1|s2) holds grant across the lag; s2 retained for m1-style
+	// policy symmetry and for 1–2 cy drain after want falls.
+	wire m2_want_live = m2_want | m2_want_s1 | m2_want_s2;
 
 	wire use_m1 = grant_m1;
 	wire use_m2 = grant_m2 && !grant_m1;
@@ -266,7 +272,7 @@ module ddr_bus_arbiter3 #(
 						rsp_left <= {1'b0, selected_burst};
 						grant_m1 <= 1'b0;
 					end else if (m1_we || !m1_want_s2 ||
-					            (m2_want_s2 && !m1_cmd)) begin
+					            (m2_want_live && !m1_cmd)) begin
 						// Yield to m2 if m1 holds want without a command
 						// (TB + idle bitstream); avoids sticky m1 lockout.
 						grant_m1 <= 1'b0;
@@ -280,7 +286,8 @@ module ddr_bus_arbiter3 #(
 						rsp_owner_m2 <= 1'b1;
 						rsp_left <= {1'b0, selected_burst};
 						grant_m2 <= 1'b0;
-					end else if (!m2_want_s2 && !m2_cmd) begin
+					end else if (!m2_want_live && !m2_cmd) begin
+						// Drop only when raw+sync want pipeline is empty (cut A).
 						grant_m2 <= 1'b0;
 					end else if (m0_cmd && !m2_cmd) begin
 						grant_m2 <= 1'b0; // gap / drain → scanout
@@ -300,7 +307,7 @@ module ddr_bus_arbiter3 #(
 					// FAULT / no m0: hold sticky through continuous WE stream
 				end else begin
 					// idle owner = m0 path, with m0/m2 fair share when both demand
-					if (m0_cmd && m2_want_s2) begin
+					if (m0_cmd && m2_want_live) begin
 						if (fair_pref_m2) begin
 							grant_m2 <= 1'b1;
 							m2_quantum_cnt <= M2_QMAX;
@@ -318,7 +325,7 @@ module ddr_bus_arbiter3 #(
 						rsp_owner_m1 <= 1'b0;
 						rsp_owner_m2 <= 1'b0;
 						rsp_left <= {1'b0, selected_burst};
-					end else if (!m0_cmd && m2_want_s2) begin
+					end else if (!m0_cmd && m2_want_live) begin
 						grant_m2 <= 1'b1;
 						m2_quantum_cnt <= M2_QMAX;
 					end else if (!m0_cmd && m1_want_s2) begin
