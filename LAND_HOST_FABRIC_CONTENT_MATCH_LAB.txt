@@ -1,0 +1,112 @@
+# LAND_HOST_FABRIC_CONTENT_MATCH_LAB
+TS=2026-08-05T06:31:05-05:00
+AUTHOR=w-path
+WORKTREE=/home/flynnsbit/Projects/MisterPlex-wt-fleet-path
+BRANCH=research/host-plxg-plxh-abi
+BASE_TIP=c02ab2c1
+MODE=RESEARCH-ONLY device lab harness (no RBF load/scp/deploy; no Quartus)
+RESULT=LANDED
+FIT_GO=NO
+G-DEVICE=NO (parent-only later)
+DEVICE=NO load this land
+QUARTUS=NONE
+CLAIM_720=NO
+PRODUCT_FABRIC=OFF (kDdrPublishFabricPathEnabledInProduct=false HARD)
+RING_PLXK=default OFF (caller-owned; --ring-plxk opt-in only)
+
+SoT=
+  DESIGN_CARD_FABRIC_DEVICE_CONTENT_MATCH_R2.txt
+  DESIGN_CARD_FABRIC_STAGING_BRINGUP.txt
+  DESIGN_CARD_HOST_FABRIC_KICK_MAILBOX.txt
+  LAND_HOST_PROGRAM_FABRIC_KICK.txt
+  LAND_HOST_STAGING_FILL_HELPER.txt
+  LAND_HOST_RESEARCH_SEQ_UNIT.txt
+  RECIPE_FABRIC_RESEARCH_DEVICE_LAB.txt
+
+================================================================
+GOAL
+================================================================
+Parent can prove REAL fabric offload content_match on device once a
+research RBF is loaded (parent-only). Previously only offline
+MockFabricKickMem units existed — no ARM /dev/mem tool.
+
+================================================================
+LANDED
+================================================================
+1) tools/fabric_content_match_lab.cpp
+   - open /dev/mem O_RDWR|O_SYNC
+   - MapWin pattern (ddr_pl330_ingest_bench style):
+       doorbell page @ 0x302FF000 (kPlex720pYuv420pDoorbellPhys)
+       staging       @ 0x30601000 (stagingPhysBase Rank2 OPT-A)
+       bank0/1       @ 0x30000000 / 0x30180000 (or --bank-phys)
+   - fillStagingFromPayloadEx with deterministic lab pattern
+   - VolatileFabricKickMem + programFabricKick + waitFabricKickDone
+   - After Success: memcmp + CRC32 bank vs staging; content_match_frac
+   - Gate fail-closed: MISTERPLEX_FABRIC_DMA=1 OR --force-lab
+     (--mock allowed alone for offline CI smoke)
+   - Default NO PLXK; --ring-plxk opt-in AFTER PLXH Success only
+   - Score lines: PLXH_result, wait_us, content_match_frac,
+     CLAIM_720=NO, PRODUCT_FABRIC=OFF, FIT_GO=NO
+   - Exit 0 only if PLXH Success AND full content_match
+   - --mock: MockFabricKickMem + heap bank/staging (simulates COPY)
+
+2) Makefile target arm-fabric-content-match
+   - static ARM cross, -I host, mirrors arm-pl330-bench style
+   - binary: build/arm/fabric_content_match_lab
+
+================================================================
+USAGE
+================================================================
+Build:
+  make arm-fabric-content-match
+  → build/arm/fabric_content_match_lab  (ELF 32-bit ARM static)
+
+Offline CI smoke (host or ARM binary under qemu):
+  ./build/fabric_content_match_lab --mock --len 4096
+  → exit 0, content_match_frac=1.0, PRODUCT_FABRIC=OFF
+
+Device (parent only AFTER research RBF load — this tool does NOT load RBF):
+  MISTERPLEX_FABRIC_DMA=1 ./fabric_content_match_lab --len 4096 --bank 0
+  MISTERPLEX_FABRIC_DMA=1 ./fabric_content_match_lab --len 65536 --bank 1
+  # optional:
+  #   --force-lab   instead of env
+  #   --bank-phys 0x...
+  #   --cmd-seq N --polls N --start-w
+  #   --ring-plxk   (default OFF; present after PLXH done only)
+
+Exit codes:
+  0  full content_match (PLXH Success + bank==staging)
+  1  PLXH fail and/or content mismatch
+  2  gate closed / bad args / product flag ON
+  3  mmap /dev/mem or map failure
+
+================================================================
+GATES / FORBID
+================================================================
+GATES (device score requires parent):
+  - Exclusive free + parent authorize research RBF load (not this land)
+  - MISTERPLEX_FABRIC_DMA=1 for lab process only
+  - product flag remains false
+  - No concurrent PL330 on 0x30601000
+
+FORBID this land / tool default:
+  - NO device load / scp / deploy of RBF (parent-only later)
+  - NO Quartus
+  - kDdrPublishFabricPathEnabledInProduct stays false
+  - Do NOT ring PLXK from programFabricKick path (helpers never do)
+  - Lab tool default: NO PLXK unless --ring-plxk
+  - FORBID leave research RBF as product / overnight LIVE
+  - FORBID claim 720 PASS / visual / G-DEVICE / product fabric ship
+
+================================================================
+VERIFICATION (this land)
+================================================================
+  g++ host build + --mock --len 4096 → exit 0, match_frac=1.0
+  no env / no --force-lab → exit 2 fail closed
+  make arm-fabric-content-match → ARM static binary file(1) OK
+  product_flag assert OFF at runtime
+
+================================================================
+STATUS=DONE_HOST_FABRIC_CONTENT_MATCH_LAB
+BINARY=build/arm/fabric_content_match_lab
+FIT_GO=NO G-DEVICE=NO CLAIM_720=NO PRODUCT_FABRIC=OFF

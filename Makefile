@@ -5,7 +5,7 @@ CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -I$(ROOT)/host
 FFMPEG_CFLAGS := $(shell pkg-config --cflags libavformat libavcodec libavutil 2>/dev/null)
 FFMPEG_LIBS   := $(shell pkg-config --libs libavformat libavcodec libavutil 2>/dev/null)
 
-.PHONY: all preflight unit unit-unlocked unit-rollcall rtl-sim rtl-sim-unlocked rtl-lint verilator-elab quartus-sv-subset define-parity pre-synth-gates prefit-reachability prefit-reachability-selftest rbf-provenance rbf-provenance-selftest rbf-what-built post-fit-hierarchy post-fit-timing post-fit-timing-margin timing-exclusion pms-baseline-check pms-baseline-live pms-nal-stats arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools check-core-conf-geometry arm-pl330-bench
+.PHONY: all preflight unit unit-unlocked unit-rollcall rtl-sim rtl-sim-unlocked rtl-lint verilator-elab quartus-sv-subset define-parity pre-synth-gates prefit-reachability prefit-reachability-selftest rbf-provenance rbf-provenance-selftest rbf-what-built post-fit-hierarchy post-fit-timing post-fit-timing-margin timing-exclusion pms-baseline-check pms-baseline-live pms-nal-stats arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools check-core-conf-geometry arm-pl330-bench arm-fabric-content-match
 
 all: unit
 
@@ -35,6 +35,7 @@ help:
 	@echo "  make check-core-conf-geometry - resident core md5 vs daemon-adopted decode=WxH"
 	@echo "  make arm-ddr-bench - cross-build DDR write microbenchmark"
 	@echo "  make arm-pl330-bench - cross-build PL330 ingest bench (lab DMA diag)"
+	@echo "  make arm-fabric-content-match - cross-build fabric content_match lab (research /dev/mem)"
 	@echo "  make arm-profile-tools - cross-build ARM decode/profile probes"
 	@echo "  make present-harness - build offline present-loop pipe/copy harness"
 
@@ -978,6 +979,20 @@ arm-pl330-bench:
 		$(ROOT)/tools/ddr_pl330_ingest_bench.cpp \
 		-static -Wl,--whole-archive -lpthread -Wl,--no-whole-archive
 	@file $(ROOT)/build/arm/ddr_pl330_ingest_bench
+
+# RESEARCH-ONLY fabric offload content_match lab (device /dev/mem or --mock).
+# Maps doorbell 0x302FF000, staging 0x30601000, bank 0x30000000/0x30180000.
+# Uses VolatileFabricKickMem + programFabricKick + waitFabricKickDone.
+# Default: NO PLXK. Gate: MISTERPLEX_FABRIC_DMA=1 or --force-lab. Product flag OFF.
+# Does NOT load/scp/deploy RBF. Parent-only device score later.
+arm-fabric-content-match:
+	@if [ -z "$(ARM_CXX)" ]; then echo "No armhf g++ found"; exit 1; fi
+	@mkdir -p $(ROOT)/build/arm
+	$(ARM_CXX) -std=c++17 -O2 -Wall -I$(ROOT)/host \
+		-o $(ROOT)/build/arm/fabric_content_match_lab \
+		$(ROOT)/tools/fabric_content_match_lab.cpp \
+		-static
+	@file $(ROOT)/build/arm/fabric_content_match_lab
 
 arm-profile-tools: arm-ddr-bench arm-pl330-bench
 	@if [ -z "$(ARM_CXX)" ]; then echo "No armhf g++ found"; exit 1; fi
