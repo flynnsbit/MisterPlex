@@ -1560,11 +1560,19 @@ bool FpgaSpi::readFrameStoreStatus(FrameStoreStatus& out) {
         return false;
     if (!ensureDdrMap())
         return false;
-    if (kUnderrunMailboxPhys < ddrLayout_.phys_base) {
+    // RTL: FRAME_MAILBOX_PHYS = DOORBELL_PHYS + 0x118 (not fixed 0x3007F118).
+    // Legacy kUnderrunMailboxPhys is 480-era absolute; product 720 doorbell is
+    // phys+2*bank_stride-0x1000 (e.g. 0x302FF000) so PLXF lives at +0x118.
+    if (ddrLayout_.doorbell_phys < ddrLayout_.phys_base) {
+        setErr("readFrameStoreStatus: invalid doorbell_phys");
+        return false;
+    }
+    const uint32_t plxfPhys = ddrLayout_.doorbell_phys + 0x118u;
+    if (plxfPhys < ddrLayout_.phys_base) {
         setErr("readFrameStoreStatus: PLXF mailbox is outside DDR frame window");
         return false;
     }
-    const size_t off = static_cast<size_t>(kUnderrunMailboxPhys - ddrLayout_.phys_base);
+    const size_t off = static_cast<size_t>(plxfPhys - ddrLayout_.phys_base);
     if (off + 8 > ddrMapLen_) {
         setErr("readFrameStoreStatus: PLXF mailbox is outside mapped DDR frame window");
         return false;
@@ -1606,11 +1614,18 @@ bool FpgaSpi::readBankRelease(BankReleaseStatus& out) {
         return false;
     if (!ensureDdrMap())
         return false;
-    if (kBankReleaseMailboxPhys < ddrLayout_.phys_base) {
+    // RTL: BANK_MAILBOX_PHYS = DOORBELL_PHYS + 0x128. Absolute 0x3007F128 is the
+    // pre-cut-b 480 map and lands in bank payload on 720 (plxd_used=0 forever).
+    if (ddrLayout_.doorbell_phys < ddrLayout_.phys_base) {
+        setErr("readBankRelease: invalid doorbell_phys");
+        return false;
+    }
+    const uint32_t plxdPhys = ddrLayout_.doorbell_phys + 0x128u;
+    if (plxdPhys < ddrLayout_.phys_base) {
         setErr("readBankRelease: PLXD mailbox is outside DDR frame window");
         return false;
     }
-    const size_t off = static_cast<size_t>(kBankReleaseMailboxPhys - ddrLayout_.phys_base);
+    const size_t off = static_cast<size_t>(plxdPhys - ddrLayout_.phys_base);
     if (off + 8 > ddrMapLen_) {
         setErr("readBankRelease: PLXD mailbox is outside mapped DDR frame window");
         return false;
