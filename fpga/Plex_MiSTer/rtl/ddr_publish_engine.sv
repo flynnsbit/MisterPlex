@@ -146,7 +146,6 @@ module ddr_publish_engine #(
 			wr_i <= '0;
 			rd_issued <= 1'b0;
 			wr_issued <= 1'b0;
-			ce_wr_issue_r <= 1'b0;
 		end else begin
 			done_pulse <= 1'b0;
 
@@ -158,7 +157,6 @@ module ddr_publish_engine #(
 				DDRAM_WE <= 1'b0;
 				rd_issued <= 1'b0;
 				wr_issued <= 1'b0;
-				ce_wr_issue_r <= 1'b0;
 				if (cmd_start) begin
 					if (!align_ok || (cmd_mode && words_cmd == 32'd0)) begin
 						err <= 1'b1;
