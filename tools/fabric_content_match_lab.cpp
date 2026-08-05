@@ -158,6 +158,13 @@ double contentMatchFrac(const uint8_t* a, const uint8_t* b, size_t n) {
 
 // Raw doorbell fabric-block snapshot for lab RCA (read-only).
 // Dumps +0x140..+0x15c and observes +0x000 PLXK only (never writes PLXK here).
+static void dumpHexHead(const char* tag, const uint8_t* p, size_t n) {
+    std::printf("SCORE hex_head %s n=%zu:", tag, n);
+    for (size_t i = 0; i < n; ++i)
+        std::printf(" %02x", p[i]);
+    std::printf("\n");
+}
+
 void dumpDoorbellWords(const misterplex::FabricKickMemIo& io, const char* phase) {
     const uint32_t plxg_lo = io.read32(0x140u);
     const uint32_t plxg_hi = io.read32(0x144u);
@@ -467,6 +474,7 @@ int main(int argc, char** argv) {
     // Poison bank so idle/false-complete cannot content-match.
     std::memset(bank_map, 0xA5, frame_bytes);
     __sync_synchronize();
+    dumpHexHead("bank_after_poison", bank_map, 32);
 
     const auto fr = fillStagingFromPayloadEx(
         staging_map, payload.data(), frame_bytes, stagingRegionBytes());
@@ -479,6 +487,8 @@ int main(int argc, char** argv) {
         win_doorbell.close();
         return 1;
     }
+    dumpHexHead("staging_after_fill", staging_map, 32);
+    dumpHexHead("bank_after_fill_pre_kick", bank_map, 32);
 
     VolatileFabricKickMem io(doorbell_page, 0x1000u);
     if (!programFabricKick(io, kick_st, job, start_mode)) {
@@ -499,6 +509,23 @@ int main(int argc, char** argv) {
     dumpDoorbellWords(io, "post_wait");
 
     __sync_synchronize(); // payload barrier before bank read
+    dumpHexHead("staging_post_wait", staging_map, 32);
+    dumpHexHead("bank_post_wait", bank_map, 32);
+
+    // R7 write-landing probe: also observe bank1 head when lab targets bank0.
+    if (bank == 0) {
+        MapWin win_bank1;
+        std::string err1;
+        const uint32_t bank1_phys = 0x30180000u;
+        if (mapWindow(win_bank1, bank1_phys, 64u, &err1)) {
+            uint8_t* b1 = win_bank1.ptrAt(bank1_phys);
+            if (b1)
+                dumpHexHead("bank1_0x30180000_post_wait", b1, 32);
+            win_bank1.close();
+        } else {
+            std::printf("SCORE bank1_map_fail %s\n", err1.c_str());
+        }
+    }
 
     // Optional PLXK only after PLXH success and only if explicitly requested.
     if (ring_plxk) {
