@@ -1140,7 +1140,11 @@ assign kick_dout_ready  = m2_sel_kick ? m2_dout_ready_phys : 1'b0;
 	.bytes_copied(pub_bytes_copied),
 	.beats_rd(pub_beats_rd),
 	.beats_wr(pub_beats_wr),
-	.present_want(present_cmd),
+	// BusyStuck residual (R3/R4 device): eng hold_present from present_cmd can
+	// starve COPY forever while kick already posted PLXH busy|accepted.
+	// PRODUCT_WIRE research: do not yield fabric publish to present scan.
+	// Product ship must re-evaluate present-yield policy.
+	.present_want(1'b0),
 	.bus_want(pub_bus_want),
 	.DDRAM_BUSY(pub_m2_busy),
 	.DDRAM_BURSTCNT(pub_burstcnt),
