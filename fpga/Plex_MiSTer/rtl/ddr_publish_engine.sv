@@ -85,6 +85,9 @@ module ddr_publish_engine #(
 	reg [IDX_W-1:0] got, wr_i;
 	reg        hold_present;
 	reg        rd_issued, wr_issued;
+	// R8 false-done: 32-bit retired word counts (beats_rd/wr are 16b and wrap
+	// on full 720p frames). COPY ST_FINISH requires full retire before clean done.
+	reg [31:0] words_rd_done, words_wr_done;
 
 	assign DDRAM_BE = 8'hFF;
 
@@ -146,6 +149,8 @@ module ddr_publish_engine #(
 			wr_i <= '0;
 			rd_issued <= 1'b0;
 			wr_issued <= 1'b0;
+			words_rd_done <= 32'd0;
+			words_wr_done <= 32'd0;
 		end else begin
 			done_pulse <= 1'b0;
 
@@ -175,6 +180,8 @@ module ddr_publish_engine #(
 						bytes_copied <= 32'd0;
 						beats_rd <= 16'd0;
 						beats_wr <= 16'd0;
+						words_rd_done <= 32'd0;
+						words_wr_done <= 32'd0;
 						if (!cmd_mode) begin
 							if (cmd_ring_doorbell) begin
 								bus_want <= 1'b1;
@@ -239,6 +246,7 @@ module ddr_publish_engine #(
 					bounce[got] <= DDRAM_DOUT;
 					got <= got + IDX_W'(1);
 					beats_rd <= beats_rd + 16'd1;
+					words_rd_done <= words_rd_done + 32'd1;
 					src_w <= src_w + 1'b1;
 					words_left <= words_left - 32'd1;
 					if (BN_W'(got) + BN_W'(1) == burst_n) begin
@@ -273,6 +281,7 @@ module ddr_publish_engine #(
 					DDRAM_WE <= 1'b0;
 					wr_issued <= 1'b0;
 					beats_wr <= beats_wr + 16'd1;
+					words_wr_done <= words_wr_done + 32'd1;
 					dst_w <= dst_w + 1'b1;
 					bytes_copied <= bytes_copied + 32'd8;
 					if (BN_W'(wr_i) + BN_W'(1) == burst_n)
@@ -284,14 +293,23 @@ module ddr_publish_engine #(
 				end
 			end
 
+			// R8: COPY must not claim clean done without full RD+WR retire.
+			// Host Success requires !err_align — short/false path → ErrAlign, not Success.
+			// DIRECT (mode_r=0): doorbell-only OK; non-zero words_total without
+			// ring still finishes (legacy). PRODUCT_WIRE forces mode=1 at path pin.
 			ST_FINISH: begin
 				bus_want <= 1'b0;
 				busy <= 1'b0;
 				DDRAM_RD <= 1'b0;
 				DDRAM_WE <= 1'b0;
 				done_pulse <= 1'b1;
-				if (mode_r)
-					bytes_copied <= words_total << 3;
+				if (mode_r) begin
+					if ((words_rd_done != words_total) || (words_wr_done != words_total)) begin
+						err <= 1'b1;
+						// keep incremental bytes_copied (do not claim full frame)
+					end else
+						bytes_copied <= words_total << 3;
+				end
 				state <= ST_IDLE;
 			end
 

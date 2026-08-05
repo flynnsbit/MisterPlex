@@ -1123,7 +1123,11 @@ assign kick_dout_ready  = m2_sel_kick ? m2_dout_ready_phys : 1'b0;
 	.clk(clk_ddr),
 	.reset(reset),
 	.start(kick_start),
-	.cmd_mode(pub_cmd_mode),
+	// R8 false-done: force COPY (1). DIRECT (0)+!ring finishes ST_FINISH with
+	// zero bank traffic → PLXH Success in ~us while poison intact (device R6/R7).
+	// kick_mbox already hardwires cmd_mode_copy=1; pin 1'b1 so map/synth cannot
+	// leave eng on DIRECT. pub_cmd_mode retained on keep set via kick.
+	.cmd_mode(1'b1),
 	.bank_sel(kick_bank_sel),
 	.src_phys(kick_src_phys),
 	.ring_doorbell(pub_ring_db),

@@ -166,6 +166,10 @@ module ddr_bus_arbiter3 #(
 	// Registered busy (same shape as historical m2 path). Publish engine
 	// solo COPY is verified direct-to-bridge in engine TB; contended path
 	// uses quantum G1 continuous-WE (not engine single-beat WR through arb).
+	// R8 note: comb (m2_busy_r | !grant_m2) was tried to close false WE accept
+	// after grant drop; compose TB deadlocked after first MAX_BURST (eng cannot
+	// assert cmd while busy includes !grant, re-grant path starved mid-COPY).
+	// R8 false-done cut is eng ST_FINISH full-retire gate + force COPY in Plex.
 	wire m2_busy_comb = DDRAM_BUSY | grant_m1 | !grant_m2 |
 	                    (rsp_active & !rsp_owner_m2) |
 	                    (rsp_valid_r & !rsp_owner_m2_r);

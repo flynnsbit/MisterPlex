@@ -3,12 +3,16 @@
 // Compose: kick_mbox + ddr_publish_path/engine + Plex PRODUCT_WIRE m2 mux
 //           + ddr_bus_arbiter3 + simple f2sdram slave.
 // Goal: pin stop-cause of silicon BusyStuck hi=0x21 offline (R5 residual).
+// R8: also pin false-done / no bank write (G_CONTENT bank==staging after done).
 //
-// Cases (CI gate): C0_NOPRESENT, C4_YIELD_REGRESS, C3_KICK_GRANT_STUCK (fault).
+// Cases (CI gate): C0_NOPRESENT (+G_CONTENT), C4_YIELD_REGRESS, C3_KICK_GRANT_STUCK.
 // NO device / NO Quartus / FIT_GO=NO. TB PASS ≠ silicon PASS.
 //
-// Status: Memory/lab/status/UNIT_KICK_TO_PUB_DONE_TB.txt
-// Design: Memory/lab/status/DESIGN_CARD_FULLPATH_KICK_TO_PUB_DONE_TB.txt
+// Pre-R8 false-green class: G2 counted beats (model accepts) only — could PASS
+// while silicon bank stayed poison. G_CONTENT requires model bank==staging.
+//
+// Status: Memory/lab/status/UNIT_KICK_TO_PUB_DONE_TB_R8.txt
+// Design: Memory/lab/status/DESIGN_CARD_PW_KICK_R8_FALSE_DONE.txt
 
 `timescale 1ns / 1ps
 `default_nettype none
@@ -501,12 +505,39 @@ module ddr_publish_kick_to_pub_done_tb;
 		end
 	endtask
 
+	// R8 G_CONTENT: bank qwords must equal staging for LAB_LEN after COPY done.
+	// Staging uses mem_read default pattern when never host-written.
+	function automatic integer bank_content_match;
+		integer qi, nq, bad;
+		reg [28:0] a_src, a_dst;
+		begin
+			nq  = LAB_LEN >> 3;
+			bad = 0;
+			a_src = LAB_SRC[31:3];
+			a_dst = LAB_BANK[31:3];
+			for (qi = 0; qi < nq; qi = qi + 1) begin
+				if (mem_read(a_dst + qi[28:0]) !== mem_read(a_src + qi[28:0]))
+					bad = bad + 1;
+			end
+			bank_content_match = (bad == 0) ? 1 : 0;
+		end
+	endfunction
+
+	// Diagnostic: beats progress without bank content (pre-R8 false-green class)
+	function automatic integer beats_without_content;
+		begin
+			beats_without_content =
+				((max_beats_rd > 0) && (max_beats_wr > 0) && !bank_content_match()) ? 1 : 0;
+		end
+	endfunction
+
 	function automatic [3:0] classify_stop;
 		reg [3:0] s;
 		reg final_21;
 		begin
 			final_21 = (mem_plxh[31:0] == MAGIC_H) &&
 			           (mem_plxh[32]) && !mem_plxh[33] && mem_plxh[37];
+			// STOP_OK_DONE still uses beats+done (G_CONTENT is a separate C0 gate)
 			if (saw_done_plxh && !mem_plxh[32] &&
 			    (plxh_done_seq_cap == LAB_SEQ) && (max_beats_rd > 0) && (max_beats_wr > 0))
 				s = STOP_OK_DONE;
@@ -655,6 +686,32 @@ module ddr_publish_kick_to_pub_done_tb;
 			end else
 				$display("PASS C0_G2_BEATS brd=%0d bwr=%0d", max_beats_rd, max_beats_wr);
 
+			// R8 G_CONTENT: bank payload must match staging (model store proof).
+			// Pre-R8: G2 alone could green on accepts without this (false-green vs silicon).
+			begin : c0_g_content
+				integer content_ok;
+				integer false_green_class;
+				content_ok = bank_content_match();
+				false_green_class = beats_without_content();
+				if (false_green_class)
+					$display("C0_EVIDENCE PRE_R8_FALSE_GREEN_CLASS beats>0 but bank!=staging");
+				if (!content_ok) begin
+					$display("FAIL C0 G_CONTENT bank!=staging brd=%0d bwr=%0d STOP=%s",
+					         max_beats_rd, max_beats_wr, stop_name(stop));
+					$display("FAIL_FALSE_DONE_NO_WRITE (compose model content residual)");
+					local_fail = 1'b1;
+				end else
+					$display("PASS C0_G_CONTENT bank==staging len=%0d", LAB_LEN);
+			end
+
+			// G2b: eng must report full lab beat budget (512 for 0x1000)
+			if (max_beats_rd < 16'd512 || max_beats_wr < 16'd512) begin
+				$display("FAIL C0 G2b_BEATS_EXPECTED brd=%0d bwr=%0d need=512",
+				         max_beats_rd, max_beats_wr);
+				local_fail = 1'b1;
+			end else
+				$display("PASS C0_G2b_BEATS_EXPECTED brd=%0d bwr=%0d", max_beats_rd, max_beats_wr);
+
 			if (!(saw_done_plxh && !mem_plxh[32] && (plxh_done_seq_cap == LAB_SEQ) &&
 			      (mem_plxh[31:0] == MAGIC_H))) begin
 				$display("FAIL C0 G3_DONE_STICKY plxh=%h seq=%h STOP=%s",
@@ -677,18 +734,28 @@ module ddr_publish_kick_to_pub_done_tb;
 			end else
 				$display("PASS C0_G4_NEG_DEVICE_SIG");
 
+			// G5: no err_align on happy path (R8 eng short-copy → err)
+			if (mem_plxh[31:0] == MAGIC_H && mem_plxh[34]) begin
+				$display("FAIL C0 G5_ERR_ALIGN unexpected err_align plxh=%h", mem_plxh);
+				local_fail = 1'b1;
+			end else
+				$display("PASS C0_G5_NO_ERR_ALIGN");
+
 			if (local_fail) begin
 				if (stop == STOP_S0_START_EDGE || stop == STOP_S2_ENG_ACCEPT)
-					$display("FAIL C0_NOPRESENT STOP=%s R6_SOLE=cutb-r1-pw-kick-r6-engstart",
+					$display("FAIL C0_NOPRESENT STOP=%s R8_SOLE=cutb-r1-pw-kick-r8-engstart",
 					         stop_name(stop));
 				else if (stop == STOP_S4_M2_GRANT || stop == STOP_S3_CAN_START)
-					$display("FAIL C0_NOPRESENT STOP=%s R6_SOLE=cutb-r1-pw-kick-r6-m2grant",
+					$display("FAIL C0_NOPRESENT STOP=%s R8_SOLE=cutb-r1-pw-kick-r8-m2grant",
 					         stop_name(stop));
 				else if (stop == STOP_S5_COPY_RSP)
-					$display("FAIL C0_NOPRESENT STOP=%s R6_SOLE=cutb-r1-pw-kick-r6-rsppath",
+					$display("FAIL C0_NOPRESENT STOP=%s R8_SOLE=cutb-r1-pw-kick-r8-rsppath",
+					         stop_name(stop));
+				else if (!bank_content_match())
+					$display("FAIL C0_NOPRESENT STOP=%s R8_SOLE=cutb-r1-pw-kick-r8-false-done",
 					         stop_name(stop));
 				else
-					$display("FAIL C0_NOPRESENT STOP=%s R6_SOLE=cutb-r1-pw-kick-r6-investigate",
+					$display("FAIL C0_NOPRESENT STOP=%s R8_SOLE=cutb-r1-pw-kick-r8-investigate",
 					         stop_name(stop));
 				// Extra pin for parent: H-S0 closed if eng_busy rose
 				if (saw_eng_busy)
@@ -697,7 +764,7 @@ module ddr_publish_kick_to_pub_done_tb;
 				fails = fails + 1;
 				case_fails = 1;
 			end else begin
-				$display("PASS C0_NOPRESENT STOP_OK_DONE");
+				$display("PASS C0_NOPRESENT STOP_OK_DONE G_CONTENT");
 			end
 		end
 	endtask
