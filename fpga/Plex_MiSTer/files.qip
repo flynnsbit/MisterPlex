@@ -34,6 +34,7 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_publish_copy_budget.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_publish_job.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_publish_engine.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_publish_path.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_publish_kick_mbox.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_bus_arbiter3.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_i420_store_width_check.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/frame_ingest.sv

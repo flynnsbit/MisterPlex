@@ -1022,7 +1022,8 @@ present_core #(
 `ifdef DDR_FRAME_STORE
 `ifdef PRODUCT_WIRE
 // ── PRODUCT_WIRE ON (research): present m0 > publish m2 > bitstream m1 ──
-// PHASE1: start=0, COPY mode, host owns doorbell. FIT_GO requires parent sole.
+// PHASE2: PLXG/PLXH kick mbox → u_pub start/src/bank/len. COPY mode.
+// Host owns PLXK doorbell (ring_doorbell=0). FIT_GO=NO until parent sole.
 `include "rtl/ddr_frame_layout_params.svh"
 wire        pub_busy, pub_done, pub_err, pub_job_legal, pub_src_aligned;
 wire        pub_bus_want;
@@ -1034,17 +1035,81 @@ wire [63:0] pub_dout, pub_din;
 wire        pub_dout_ready, pub_rd, pub_we;
 wire        pub_m2_busy;
 
-// Host kick CDC (clk_sys → clk_ddr) = phase2; phase1 ties controls idle.
-wire        pub_start_ddr      = 1'b0;   // phase1: still idle
-wire        pub_cmd_mode       = 1'b1;   // 1 = COPY (primary bank fill)
-wire        pub_bank_sel       = 1'b0;
-wire [31:0] pub_src_phys       = 32'h0;
-wire        pub_ring_db        = 1'b0;   // HOST owns doorbell after done
-wire [63:0] pub_db_word        = 64'h0;
-wire [31:0] pub_bytes_override = 32'd0;
+// PHASE2 host kick mailbox (PLXG/PLXH @ doorbell+0x140)
+wire        kick_start;
+wire        kick_bank_sel;
+wire [31:0] kick_src_phys, kick_bank_phys, kick_frame_bytes;
+wire        pub_cmd_mode;       // 1 = COPY (hardwired in kick mbox)
+wire        pub_ring_db;        // 0 = HOST owns doorbell after done
+wire [63:0] pub_db_word = 64'h0;
+wire        kick_bus_want;
+wire  [7:0] kick_burstcnt, kick_be;
+wire [28:0] kick_addr;
+wire [63:0] kick_dout, kick_din;
+wire        kick_dout_ready, kick_rd, kick_we;
+wire        kick_m2_busy;
 
 // present_want: fence NEW publish issues while present is commanding
 wire present_cmd = present_ddr_rd | present_ddr_we;
+
+// m2 mux: sticky kick grant until kick drops bus_want; else u_pub.
+// Prevents mid-beat switch when pub_busy rises during a mailbox xfer.
+reg kick_grant;
+always @(posedge clk_ddr) begin
+	if (reset)
+		kick_grant <= 1'b0;
+	else if (kick_grant)
+		kick_grant <= kick_bus_want; // hold through multi-beat poll/write
+	else if (kick_bus_want && !pub_busy && !pub_bus_want)
+		kick_grant <= 1'b1;
+end
+wire m2_sel_kick = kick_grant || (kick_bus_want && !pub_busy && !pub_bus_want);
+wire m2_sel_pub  = !m2_sel_kick;
+wire m2_want     = m2_sel_kick ? kick_bus_want : pub_bus_want;
+wire  [7:0] m2_burstcnt = m2_sel_kick ? kick_burstcnt : pub_burstcnt;
+wire [28:0] m2_addr     = m2_sel_kick ? kick_addr     : pub_addr;
+wire [63:0] m2_din      = m2_sel_kick ? kick_din      : pub_din;
+wire  [7:0] m2_be       = m2_sel_kick ? kick_be       : pub_be;
+wire        m2_rd       = m2_sel_kick ? kick_rd       : pub_rd;
+wire        m2_we       = m2_sel_kick ? kick_we       : pub_we;
+// Split phys responses so inactive master does not sample foreign beats
+wire        m2_busy_phys;
+wire [63:0] m2_dout_phys;
+wire        m2_dout_ready_phys;
+assign pub_m2_busy      = m2_sel_pub ? m2_busy_phys : 1'b1;
+assign pub_dout         = m2_dout_phys;
+assign pub_dout_ready   = m2_sel_pub ? m2_dout_ready_phys : 1'b0;
+assign kick_m2_busy     = m2_sel_kick ? m2_busy_phys : 1'b1;
+assign kick_dout        = m2_dout_phys;
+assign kick_dout_ready  = m2_sel_kick ? m2_dout_ready_phys : 1'b0;
+
+(* noprune *) ddr_publish_kick_mbox #(
+	.DOORBELL_PHYS(DDR_FRAME_YUV420P_DOORBELL_PHYS), // 0x302F_F000
+	.ADDR_W(29)
+) u_kick_mbox (
+	.clk(clk_ddr),
+	.reset(reset),
+	.pub_busy(pub_busy),
+	.pub_done_pulse(pub_done),
+	.pub_err(pub_err),
+	.start_pulse(kick_start),
+	.bank_sel(kick_bank_sel),
+	.src_phys(kick_src_phys),
+	.bank_phys(kick_bank_phys),
+	.frame_bytes(kick_frame_bytes),
+	.cmd_mode_copy(pub_cmd_mode),
+	.ring_doorbell(pub_ring_db),
+	.bus_want(kick_bus_want),
+	.DDRAM_BUSY(kick_m2_busy),
+	.DDRAM_BURSTCNT(kick_burstcnt),
+	.DDRAM_ADDR(kick_addr),
+	.DDRAM_DOUT(kick_dout),
+	.DDRAM_DOUT_READY(kick_dout_ready),
+	.DDRAM_RD(kick_rd),
+	.DDRAM_DIN(kick_din),
+	.DDRAM_BE(kick_be),
+	.DDRAM_WE(kick_we)
+);
 
 (* noprune *) ddr_publish_path #(
 	.CODED_W(DDR_FRAME_CODED_WIDTH),
@@ -1057,13 +1122,13 @@ wire present_cmd = present_ddr_rd | present_ddr_we;
 ) u_pub (
 	.clk(clk_ddr),
 	.reset(reset),
-	.start(pub_start_ddr),
+	.start(kick_start),
 	.cmd_mode(pub_cmd_mode),
-	.bank_sel(pub_bank_sel),
-	.src_phys(pub_src_phys),
+	.bank_sel(kick_bank_sel),
+	.src_phys(kick_src_phys),
 	.ring_doorbell(pub_ring_db),
 	.doorbell_word(pub_db_word),
-	.bytes_override(pub_bytes_override),
+	.bytes_override(kick_frame_bytes),
 	.busy(pub_busy),
 	.done_pulse(pub_done),
 	.err(pub_err),
@@ -1093,7 +1158,7 @@ ddr_bus_arbiter3 #(.M2_QUANTUM_BEATS(8)) ddr_arb3 (
 	.clk_m1(clk_sys),
 	.reset(reset),
 	.m1_want(stream_ddr_bus_want),
-	.m2_want(pub_bus_want),
+	.m2_want(m2_want),
 	// m0 present
 	.m0_busy(present_ddr_busy),
 	.m0_burstcnt(present_ddr_burstcnt),
@@ -1114,16 +1179,16 @@ ddr_bus_arbiter3 #(.M2_QUANTUM_BEATS(8)) ddr_arb3 (
 	.m1_din(stream_ddr_din),
 	.m1_be(stream_ddr_be),
 	.m1_we(stream_ddr_we),
-	// m2 publish
-	.m2_busy(pub_m2_busy),
-	.m2_burstcnt(pub_burstcnt),
-	.m2_addr(pub_addr),
-	.m2_dout(pub_dout),
-	.m2_dout_ready(pub_dout_ready),
-	.m2_rd(pub_rd),
-	.m2_din(pub_din),
-	.m2_be(pub_be),
-	.m2_we(pub_we),
+	// m2 publish path + kick mbox (muxed)
+	.m2_busy(m2_busy_phys),
+	.m2_burstcnt(m2_burstcnt),
+	.m2_addr(m2_addr),
+	.m2_dout(m2_dout_phys),
+	.m2_dout_ready(m2_dout_ready_phys),
+	.m2_rd(m2_rd),
+	.m2_din(m2_din),
+	.m2_be(m2_be),
+	.m2_we(m2_we),
 	// physical DDRAM
 	.DDRAM_BUSY(DDRAM_BUSY),
 	.DDRAM_BURSTCNT(DDRAM_BURSTCNT),
@@ -1136,10 +1201,12 @@ ddr_bus_arbiter3 #(.M2_QUANTUM_BEATS(8)) ddr_arb3 (
 	.DDRAM_WE(DDRAM_WE)
 );
 
-// Keep publish status/path live so map cannot strip u_pub when start=0.
+// Keep publish + kick live so map cannot strip when idle.
 (* keep, noprune *) wire _keep_pub = pub_busy | pub_done | pub_err | pub_job_legal |
-	pub_src_aligned | pub_bus_want | (|pub_frame_bytes) | (|pub_dst_bank) |
-	(|pub_db_phys) | (|pub_bytes_copied) | (|pub_beats_rd) | (|pub_beats_wr);
+	pub_src_aligned | pub_bus_want | kick_bus_want | kick_start |
+	(|pub_frame_bytes) | (|pub_dst_bank) | (|pub_db_phys) | (|pub_bytes_copied) |
+	(|pub_beats_rd) | (|pub_beats_wr) | (|kick_src_phys) | (|kick_bank_phys) |
+	(|kick_frame_bytes);
 wire _unused_pub = _keep_pub;
 `else
 // ── PRODUCT_WIRE OFF (default): product 2-master present m0 + bitstream m1 ──

@@ -4,13 +4,15 @@
 Settled premise: T_copy ~15 ms fails serial 720p24 → fabric publish required.
 Product doorbell 0x302FF000 / bank stride 0x180000 on main.
 
-PHASE1 compose (parent-authorized research land):
-  - engine + arbiter3 + path exist with DIRECT vs COPY + m0 > m2 > m1
-  - modules MAY be in files.qip + Plex.sv when nested under `ifdef PRODUCT_WIRE
+PHASE1 compose (landed):
+  - engine + arbiter3 + path under `ifdef PRODUCT_WIRE
   - product default: PRODUCT_WIRE QSF macro stays COMMENTED (arb2 elaborates)
-  - phase1 controls: start=0, cmd_mode=1 COPY, ring_doorbell=0
-  - present_want = present_ddr_rd | present_ddr_we
-  - u_fabric_frame_dma stub may remain under FABRIC_FRAME_DMA (area only)
+
+PHASE2 kick mailbox (this gate):
+  - ddr_publish_kick_mbox PLXG/PLXH @ doorbell+0x140/+0x158
+  - start from kick (not tied 1'b0); cmd_mode=COPY; ring_doorbell=0 STILL
+  - u_pub wired from kick src/bank_sel/frame_bytes
+  - u_fabric_frame_dma stub remains start=0 if present
 
 This gate does NOT claim product wire live or device offload.
 NEGATIVE (must FAIL when broken):
@@ -19,6 +21,7 @@ NEGATIVE (must FAIL when broken):
   - PRODUCT_WIRE=1 live-enabled in product QSF
   - bounce lacks ramstyle=logic / depth×width note
   - doorbell/stride drift off product constants
+  - ring_doorbell live from fabric (host must own PLXK)
 """
 from __future__ import annotations
 
@@ -36,6 +39,7 @@ ENGINE = RTL / "ddr_publish_engine.sv"
 ARB3 = RTL / "ddr_bus_arbiter3.sv"
 PATH = RTL / "ddr_publish_path.sv"
 JOB = RTL / "ddr_publish_job.sv"
+KICK = RTL / "ddr_publish_kick_mbox.sv"
 
 PRODUCT_DOORBELL = "32'h302F_F000"
 PRODUCT_STRIDE = "32'h0018_0000"
@@ -49,13 +53,14 @@ def fail(msg: str) -> None:
 def main() -> int:
     print("=== test_fabric_publish_product_wire_static EXECUTED ===")
 
-    for p in (ENGINE, ARB3, PATH, JOB, QIP, PLEX, QSF, SVH):
+    for p in (ENGINE, ARB3, PATH, JOB, KICK, QIP, PLEX, QSF, SVH):
         if not p.is_file():
             fail(f"missing {p.relative_to(ROOT)}")
 
     eng = ENGINE.read_text(encoding="utf-8", errors="replace")
     arb = ARB3.read_text(encoding="utf-8", errors="replace")
     path = PATH.read_text(encoding="utf-8", errors="replace")
+    kick = KICK.read_text(encoding="utf-8", errors="replace")
     qip = QIP.read_text(encoding="utf-8", errors="replace")
     plex = PLEX.read_text(encoding="utf-8", errors="replace")
     qsf = QSF.read_text(encoding="utf-8", errors="replace")
@@ -101,6 +106,26 @@ def main() -> int:
     if "ddr_publish_engine" not in path:
         fail("ddr_publish_path must instantiate ddr_publish_engine")
 
+    # --- PHASE2 kick mailbox ABI ---
+    if "504C_5847" not in kick and "504C5847" not in kick:
+        fail("kick mbox must define PLXG magic 0x504C5847")
+    if "504C_5848" not in kick and "504C5848" not in kick:
+        fail("kick mbox must define PLXH magic 0x504C5848")
+    if "32'h140" not in kick and "0x140" not in kick:
+        fail("kick mbox must use compact map +0x140 PLXG")
+    if "32'h158" not in kick and "0x158" not in kick:
+        fail("kick mbox must use compact map +0x158 PLXH")
+    if "start_pulse" not in kick:
+        fail("kick mbox must expose start_pulse to u_pub")
+    if not re.search(r"ring_doorbell\s*=\s*1'b0", kick) and not re.search(
+        r"assign\s+ring_doorbell\s*=\s*1'b0", kick
+    ):
+        fail("kick mbox must hardwire ring_doorbell=0 (host owns PLXK)")
+    if not re.search(r"cmd_mode_copy\s*=\s*1'b1", kick) and not re.search(
+        r"assign\s+cmd_mode_copy\s*=\s*1'b1", kick
+    ):
+        fail("kick mbox must hardwire cmd_mode_copy=1 (COPY default)")
+
     # --- product ABI on main ---
     if "32'h0018_0000" not in svh and "32'h180000" not in svh:
         fail("layout params missing product bank stride 0x180000")
@@ -112,14 +137,15 @@ def main() -> int:
     qip_lists |= bool(re.search(r"ddr_bus_arbiter3\.sv", qip))
     qip_lists |= bool(re.search(r"ddr_publish_path\.sv", qip))
     qip_lists |= bool(re.search(r"ddr_publish_job\.sv", qip))
+    qip_lists |= bool(re.search(r"ddr_publish_kick_mbox\.sv", qip))
     plex_path = bool(re.search(r"\bddr_publish_path\b", plex))
     plex_arb3 = bool(re.search(r"\bddr_bus_arbiter3\b", plex))
-    plex_inst = plex_path or plex_arb3 or bool(
+    plex_kick = bool(re.search(r"\bddr_publish_kick_mbox\b", plex))
+    plex_inst = plex_path or plex_arb3 or plex_kick or bool(
         re.search(r"\bddr_publish_engine\b", plex)
     )
 
-    # Product else path must keep 2-master arbiter (name token appears outside
-    # arbiter3). Prefer instance form "ddr_bus_arbiter ddr_arb".
+    # Product else path must keep 2-master arbiter
     has_arb2 = bool(re.search(r"\bddr_bus_arbiter\s+ddr_arb\b", plex)) or bool(
         re.search(r"\bddr_bus_arbiter\s+#?\s*\(", plex)
     )
@@ -147,7 +173,7 @@ def main() -> int:
         fail("dead QIP: publish modules in files.qip but not instantiated in Plex.sv")
 
     if qip_lists or plex_inst:
-        # Intentional phase1 compose: tokens allowed only under PRODUCT_WIRE ifdef.
+        # Intentional compose: tokens allowed only under PRODUCT_WIRE ifdef.
         if not re.search(r"`ifdef\s+PRODUCT_WIRE", plex):
             fail(
                 "publish tokens require nested `ifdef PRODUCT_WIRE in Plex.sv "
@@ -157,6 +183,10 @@ def main() -> int:
             fail("PRODUCT_WIRE path must instantiate ddr_publish_path (u_pub)")
         if not plex_arb3:
             fail("PRODUCT_WIRE path must instantiate ddr_bus_arbiter3")
+        if not plex_kick:
+            fail("PHASE2: PRODUCT_WIRE must instantiate ddr_publish_kick_mbox")
+        if not re.search(r"ddr_publish_kick_mbox\.sv", qip):
+            fail("PHASE2: ddr_publish_kick_mbox.sv must be in files.qip")
         if not has_arb2:
             fail("PRODUCT_WIRE else path must keep ddr_bus_arbiter (product OFF elaborates arb2)")
         if not commented_pw:
@@ -165,24 +195,31 @@ def main() -> int:
                 '#set_global_assignment -name VERILOG_MACRO "PRODUCT_WIRE=1"'
             )
 
-        # Phase1 control bindings (start idle, COPY, host doorbell)
-        if not re.search(r"pub_start_ddr\s*=\s*1'b0", plex):
-            fail("phase1: pub_start_ddr must be tied 1'b0")
-        if not re.search(r"pub_cmd_mode\s*=\s*1'b1", plex):
-            fail("phase1: pub_cmd_mode must be 1'b1 (COPY)")
-        if not re.search(r"pub_ring_db\s*=\s*1'b0", plex) and not re.search(
-            r"ring_doorbell\s*\(\s*1'b0\s*\)", plex
+        # PHASE2 control bindings: kick → u_pub; COPY; host doorbell
+        if not re.search(r"\.start\s*\(\s*kick_start\s*\)", plex) and not re.search(
+            r"\.start\s*\(\s*u_kick", plex
         ):
-            # accept either wire assign or port tie
-            if not re.search(
-                r"pub_ring_db\s*=\s*1'b0|\.ring_doorbell\s*\(\s*pub_ring_db\s*\)", plex
-            ):
-                fail("phase1: ring_doorbell must be 0 (host owns doorbell)")
-            # if only port uses pub_ring_db, require the wire is 0
-            if "pub_ring_db" in plex and not re.search(
-                r"pub_ring_db\s*=\s*1'b0", plex
-            ):
-                fail("phase1: pub_ring_db must be tied 1'b0")
+            if not re.search(r"start_pulse\s*\(\s*kick_start\s*\)", plex):
+                fail("PHASE2: u_pub.start must come from kick_start / kick mbox")
+        if not re.search(r"u_kick_mbox", plex):
+            fail("PHASE2: expect u_kick_mbox instance name")
+        # cmd_mode COPY still required (from kick hardwire or explicit 1'b1)
+        if not re.search(r"pub_cmd_mode", plex) and not re.search(
+            r"\.cmd_mode\s*\(\s*1'b1\s*\)", plex
+        ):
+            fail("PHASE2: cmd_mode must be wired (COPY via kick or 1'b1)")
+        # ring_doorbell must remain 0 — never live fabric ring
+        if re.search(r"\.ring_doorbell\s*\(\s*1'b1\s*\)", plex):
+            fail("FORBID: ring_doorbell=1 (host owns PLXK; fabric must not ring)")
+        if not re.search(r"pub_ring_db", plex) and not re.search(
+            r"\.ring_doorbell\s*\(\s*1'b0\s*\)", plex
+        ):
+            fail("PHASE2: ring_doorbell must be 0 (host owns doorbell)")
+        # Ensure kick hardwire still 0 and path uses pub_ring_db from kick
+        if "pub_ring_db" in plex and re.search(
+            r"pub_ring_db\s*=\s*1'b1", plex
+        ):
+            fail("pub_ring_db must not be tied 1")
 
         # present_want = present_ddr_rd | present_ddr_we
         if not re.search(
@@ -199,15 +236,20 @@ def main() -> int:
             if not re.search(r"\.start\s*\(\s*1'b0\s*\)", plex):
                 fail("u_fabric_frame_dma stub must keep start=0")
 
+        # Magics / offsets visible in PRODUCT_WIRE region (kick module + Plex)
+        if "504C_5847" not in plex and "PLXG" not in plex and "kick" not in plex.lower():
+            # Plex may not spell magic; instance is enough if kick file checked
+            pass
+
         print(
             "PASS fabric_publish_product_wire_static "
             "DIRECT+COPY engine present; arb3 m0>m2>m1; "
             "M10K bounce depth=MAX_BURST×64b logic=0; "
             "m1_fifo DEPTH=8×64b MLAB; "
             "product doorbell 0x302FF000 stride 0x180000; "
-            "PHASE1 PRODUCT_WIRE compose in qip+Plex under `ifdef; "
+            "PHASE2 PRODUCT_WIRE compose: kick_mbox PLXG/PLXH→u_pub; "
             "PRODUCT_WIRE QSF default OFF (commented); "
-            "start=0 COPY ring_db=0 present_want=rd|we; "
+            "COPY ring_db=0 present_want=rd|we; "
             "budget class PRODUCT_NO_STUB free ~356 M10K"
         )
     else:
