@@ -1023,16 +1023,10 @@ pid_t MediaPlayer::spawnFfmpeg(const std::vector<std::string>& args, int vWriteF
         setpgid(0, 0);
         // Prefer present-path CPU over decode when dual-A9 is saturated: uncached
         // DDR bank memcpy is the 720p present bottleneck under concurrent ffmpeg.
-        // Pin decode to CPU1; play thread takes CPU0 (see play thr_ affinity).
-#if defined(__linux__)
-        {
-            cpu_set_t cpus;
-            CPU_ZERO(&cpus);
-            CPU_SET(1, &cpus);
-            (void)sched_setaffinity(0, sizeof(cpus), &cpus);
-        }
-#endif
-        ::setpriority(PRIO_PROCESS, 0, 15);
+        // Do NOT pin ffmpeg to a single core — multi-thread decode/scale needs both
+        // A9s (CPU1-only pin regressed 720 to ~0.3 pfps / 32 frames in 55s).
+        // Play thr_ remains on CPU0 with mild priority; ffmpeg is niceness-only.
+        ::setpriority(PRIO_PROCESS, 0, 10);
         // Video → stdout (pipe:1)
         if (vWriteFd >= 0) {
             dup2(vWriteFd, STDOUT_FILENO);
