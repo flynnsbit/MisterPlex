@@ -477,6 +477,10 @@ module ddr_frame_store #(
 	wire signed [11:0] b_calc = b_calc_w[19:8];
 
 	// Multi-pixel extract from the same registered qwords (PPC>1, even-aligned x).
+	// Wire-form BT.601 per lane (match scalar r_calc/g_calc/b_calc). Do NOT call
+	// yuv_r/g/b functions here: concurrent generate assigns can share function
+	// temps under Verilator/synth and corrupt V-128<0 (PROBE_R3_P0: multi
+	// 255/255/200 while scalar gold 197/201/200; product QSF PPC=2 uses rd_r_n).
 	wire [7:0] r_lane [0:PX_PER_CLK-1];
 	wire [7:0] g_lane [0:PX_PER_CLK-1];
 	wire [7:0] b_lane [0:PX_PER_CLK-1];
@@ -490,9 +494,16 @@ module ddr_frame_store #(
 			wire [7:0] y_l = pick_byte(selected_y_q, y_sel_l);
 			wire [7:0] u_l = pick_byte(selected_u_q, c_sel_l);
 			wire [7:0] v_l = pick_byte(selected_v_q, c_sel_l);
-			assign r_lane[gpi] = yuv_r(y_l, u_l, v_l);
-			assign g_lane[gpi] = yuv_g(y_l, u_l, v_l);
-			assign b_lane[gpi] = yuv_b(y_l, u_l, v_l);
+			wire signed [11:0] y_ls = {4'd0, y_l};
+			wire signed [11:0] u_ls = {4'd0, u_l} - 12'sd128;
+			wire signed [11:0] v_ls = {4'd0, v_l} - 12'sd128;
+			wire signed [20:0] y_lext = {{9{y_ls[11]}}, y_ls};
+			wire signed [20:0] r_lw = (y_lext <<< 8) + (21'sd359 * v_ls);
+			wire signed [20:0] g_lw = (y_lext <<< 8) - (21'sd88 * u_ls) - (21'sd183 * v_ls);
+			wire signed [20:0] b_lw = (y_lext <<< 8) + (21'sd454 * u_ls);
+			assign r_lane[gpi] = sat8(r_lw[19:8]);
+			assign g_lane[gpi] = sat8(g_lw[19:8]);
+			assign b_lane[gpi] = sat8(b_lw[19:8]);
 		end
 	endgenerate
 
