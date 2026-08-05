@@ -123,11 +123,20 @@ module ddr_publish_kick_mbox #(
 	wire        cmd_bank_sel   = DDRAM_DOUT[36];
 	wire        cmd_use_bsel   = DDRAM_DOUT[37];
 	wire [15:0] cmd_seq        = DDRAM_DOUT[63:48];
-	wire        cmd_tog_edge   = have_toggle && (cmd_start_tog != last_toggle);
+	// Toggle edge: after baseline armed, any change fires. First sample after
+	// reset: accept start_toggle=1 as arm+start (host Toggle flips 0→1 once).
+	// have_toggle alone gated edges → first Toggle kick never started (H3 lab).
+	wire        cmd_tog_edge   = have_toggle
+	                             ? (cmd_start_tog != last_toggle)
+	                             : cmd_start_tog;
 	wire        cmd_sw_rise    = cmd_start_w && !last_start_w;
 	wire        cmd_want_start = cmd_tog_edge || cmd_sw_rise;
 
-	wire can_cmd   = !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE;
+	// Parent PRODUCT_WIRE mux forces DDRAM_BUSY=1 when kick is not granted.
+	// can_issue is for actual RD/WE arms only. Request path must assert
+	// bus_want *before* grant (else can_cmd∧bus_want deadlock — PLXH silent).
+	wire can_issue = !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE;
+	wire can_cmd   = can_issue; // legacy name for RD/WE issue sites
 	wire rd_accept = DDRAM_RD && !DDRAM_BUSY;
 	wire wr_accept = DDRAM_WE && !DDRAM_BUSY;
 
@@ -197,7 +206,6 @@ module ddr_publish_kick_mbox #(
 
 			case (st)
 			ST_IDLE: begin
-				bus_want <= 1'b0;
 				DDRAM_RD <= 1'b0;
 				DDRAM_WE <= 1'b0;
 				rd_issued <= 1'b0;
@@ -208,15 +216,31 @@ module ddr_publish_kick_mbox #(
 				// Still poll while posted_busy so a new start edge can raise
 				// err_busy_kick; edge detect (toggle/start_w) prevents re-accept
 				// of the same host command between start_pulse and pub_busy.
-				if (!pub_busy) begin
-					if (need_status_wr && can_cmd && (poll_div[1:0] == 2'b01)) begin
-						bus_want <= 1'b1;
+				//
+				// GRANT DEADLOCK FIX (device PLXH MagicMissing dump: PLXG sticky
+				// host-ok, PLXH forever 0): PRODUCT_WIRE m2 mux forces
+				// DDRAM_BUSY=1 until kick bus_want is granted. Old ST_IDLE
+				// required can_cmd(!BUSY) *before* asserting bus_want → never
+				// left IDLE, never wrote PLXH. Assert bus_want on intent first;
+				// advance to RD/WR only when can_issue; hold bus_want while
+				// waiting for grant.
+				if (pub_busy) begin
+					bus_want <= 1'b0;
+				end else begin
+					// Intent: status refresh due, or PLXG poll slot, or already
+					// holding bus_want waiting for grant on a prior intent.
+					if (need_status_wr && (poll_div[1:0] == 2'b01 || bus_want)) begin
+						bus_want   <= 1'b1;
 						bus_addr_r <= Q_PLXH;
-						st <= ST_WR_DONE;
-					end else if ((poll_div == {POLL_DIV_BITS{1'b0}}) && can_cmd) begin
-						bus_want <= 1'b1;
+						if (can_issue)
+							st <= ST_WR_DONE;
+					end else if ((poll_div == {POLL_DIV_BITS{1'b0}}) || bus_want) begin
+						bus_want   <= 1'b1;
 						bus_addr_r <= Q_PLXG;
-						st <= ST_RD_CMD;
+						if (can_issue)
+							st <= ST_RD_CMD;
+					end else begin
+						bus_want <= 1'b0;
 					end
 				end
 			end
