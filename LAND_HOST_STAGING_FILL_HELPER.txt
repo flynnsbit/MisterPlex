@@ -1,0 +1,65 @@
+LAND_HOST_STAGING_FILL_HELPER
+=============================
+Worktree: MisterPlex-wt-fleet-path
+Branch:   research/host-plxg-plxh-abi
+Agent:    w-path
+Date:     2026-08-05
+Mode:     RESEARCH-ONLY / OFFLINE (no device, exclusive FIT integ)
+
+GOAL
+----
+Host helper that fills Rank2 fabric_src_staging from a virt payload
+(memcpy into mapped or mock staging), then documents handoff to
+programFabricKick(src=stagingPhys) — WITHOUT product fabric flag ON
+and WITHOUT wiring sendDdrFrame.
+
+LANDED
+------
+1) host/libmisterplex/fabric_src_staging.hpp
+   - fillStagingFromPayload / fillStagingFromPayloadEx
+     bounds: null map/payload, zero len, oversize vs staging_cap,
+     8B align (fabric kick contract)
+   - memcpy + __sync_synchronize() on success
+   - makeStagingFabricJob: job.src_phys = stagingPhysBase()
+   - Research sequence doc in header:
+       fill → programFabricKick(src=stagingPhys) → wait → caller PLXK
+
+2) tests/unit/test_fabric_staging_fill.cpp
+   - mock heap buffer (no mmap /dev/mem)
+   - reject path + pattern fill + full 720 I420 fill
+   - research sequence: fill → make job → programFabricKick, no PLXK
+   - asserts kDdrPublishFabricPathEnabledInProduct == false
+
+3) Makefile + test_unit_rollcall.py wire for test_fabric_staging_fill
+
+4) fabric_src_phys.hpp note pointing at adjacent fill land
+
+NOT LANDED / FORBIDDEN THIS LAND
+--------------------------------
+- kDdrPublishFabricPathEnabledInProduct remains false
+- sendDdrFrame hot path unchanged (no fork / skip T_copy)
+- ensureFabricSrcStagingMap / mmap /dev/mem
+- PLXK ring inside fill or kick helpers
+- FIT_GO / device bring-up / product flag ON
+
+RESEARCH SEQUENCE (caller-owned)
+--------------------------------
+  1) staging_map = lab mmap(stagingPhysBase()) OR unit mock buffer
+  2) fillStagingFromPayload(staging_map, payload, frame_bytes)
+  3) programFabricKick(..., job with src_phys=stagingPhysBase())
+  4) waitFabricKickDone(...)
+  5) Caller rings PLXK / kickDdrDoorbell after done + barrier
+
+UNIT GATE
+---------
+  make $(ROOT)/build/test_fabric_staging_fill
+  ./build/test_fabric_staging_fill
+  → PASS mock memcpy + research sequence src=0x30601000 product_flag=0
+
+SSOT CROSS-LINKS
+----------------
+  fabric_src_phys.hpp     Rank2 PA layout OPT-A 0x30601000
+  fabric_dma_host.hpp     programFabricKick / waitFabricKickDone
+  ddr_zero_copy_ingest.hpp  kDdrPublishFabricPathEnabledInProduct=false
+
+FIT_GO=NO  G-DEVICE=NO  PRODUCT_WIRE=OFF

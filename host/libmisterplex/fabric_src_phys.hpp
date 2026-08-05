@@ -16,6 +16,9 @@
 //   - kDdrPublishFabricPathEnabledInProduct (stays false)
 //   - product flag ON / device / FIT_GO
 //
+// Adjacent research land (fill helper, still no product wire):
+//   fabric_src_staging.hpp — fillStagingFromPayload + kick handoff sequence
+//
 // Bring-up PA ranking (card §1.2):
 //   OPT-A LAB DEFAULT: kPl330StagingPhys = 0x30601000 (named fabric_src_staging role)
 //     cap = kPl330StagingBytes = 0x180000 ≥ 1382400
