@@ -595,8 +595,10 @@ void MediaPlayer::paintIdle() {
     const IdleMode m = idleMode();
     if (m == IdleMode::LastFrame)
         return;
-    const int w = 320;
-    const int h = 240;
+    // Idle canvas must match DECODE / content bank (outW_/outH_), not a hardcoded
+    // 240/480 geometry. A 1280x720 core + 624x480 idle paint is the yellow/static class.
+    const int w = outW_ > 0 ? outW_ : 320;
+    const int h = outH_ > 0 ? outH_ : 240;
     std::vector<uint8_t> buf(static_cast<size_t>(w) * h * 3);
     renderIdleRgb24(buf.data(), w, h, m, idlePhase_.load());
 
@@ -609,12 +611,13 @@ void MediaPlayer::paintIdle() {
     if (fpga_.ok()) {
         bool ok = false;
         if (useDdrF1_) {
-            const DdrFrameGeometry g = plex480pDdrFrameGeometry();
+            const DdrFrameGeometry g = ddrFrameGeometryForPresentedSize(w, h);
             const DdrFrameLayout layout =
                 makeDdrFrameLayout(g, kDdrFramePhysBase, kDdrFrameStrideAlign,
                                    DdrFrameFormat::Yuv420p);
             std::vector<uint8_t> yuv(layout.frame_bytes);
-            if (renderIdleYuv420p(yuv.data(), g.coded_width, g.coded_height, m,
+            if (layout.frame_bytes > 0 &&
+                renderIdleYuv420p(yuv.data(), g.coded_width, g.coded_height, m,
                                   idlePhase_.load())) {
                 ok = fpga_.sendYuv420pFrameDdr(yuv.data(), yuv.size(), g, ddrBank_);
             }
@@ -1317,7 +1320,8 @@ void MediaPlayer::streamPump(int sfd) {
             // C3 frame-store RTL is YUV-only. Never send RGB565 to the DDR doorbell.
             bool ok = false;
             if (useDdrF1_) {
-                const DdrFrameGeometry g = plex480pDdrFrameGeometry();
+                // Match play path: geometry from current decode bank, not 480-only.
+                const DdrFrameGeometry g = ddrFrameGeometryForPresentedSize(outW_, outH_);
                 if (rec.width == g.coded_width && rec.height == g.coded_height) {
                     ensureYuv420p();
                     clearYuv420pCropPadding(yuv420p.data(), g);
@@ -1332,8 +1336,9 @@ void MediaPlayer::streamPump(int sfd) {
                     }
                 } else if (!reconDdrMismatchLogged) {
                     reconDdrMismatchLogged = true;
-                    log("media: recon F1 skipped: YUV DDR frame-store requires coded 624x480, got " +
-                        std::to_string(rec.width) + "x" + std::to_string(rec.height));
+                    log("media: recon F1 skipped: YUV DDR frame-store expects coded " +
+                        std::to_string(g.coded_width) + "x" + std::to_string(g.coded_height) +
+                        ", got " + std::to_string(rec.width) + "x" + std::to_string(rec.height));
                 }
             }
             if (ok)

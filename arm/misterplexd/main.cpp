@@ -67,7 +67,17 @@ misterplex::WeakLadder weakForContentResolution(const misterplex::WeakLadder& ba
                                                 const misterplex::ContentResolution& res,
                                                 bool bitrateExplicit) {
     misterplex::WeakLadder weak = base;
-    weak.videoResolution = res.label;
+    // Prefer named profile so level/bitrate stay consistent with tier.
+    if (!misterplex::applyPlexTranscodeProfile(res.label, weak) &&
+        !misterplex::applyPlexTranscodeProfile(
+            std::to_string(res.width) + "x" + std::to_string(res.height), weak)) {
+        weak.profileName = res.label;
+        weak.videoResolution = res.label;
+        if (res.width >= 1280 || res.height >= 720) {
+            weak.h264Level = 31;
+            weak.videoQuality = 70;
+        }
+    }
     if (!bitrateExplicit)
         weak.maxVideoBitrateKbps = res.weakBitrateKbps;
     return weak;
@@ -313,13 +323,24 @@ int main(int argc, char** argv) {
         weak.videoResolution == "320x240" && (decodeW != 320 || decodeH != 240)) {
         const std::string decodeRes = std::to_string(decodeW) + "x" + std::to_string(decodeH);
         if (!misterplex::applyPlexTranscodeProfile(decodeRes, weak)) {
-            weak.profileName = "custom";
-            weak.videoResolution = decodeRes;
-            if (!weakBitrateExplicit) {
-                if (decodeW >= 640)
-                    weak.maxVideoBitrateKbps = 2500;
-                else if (decodeW >= 480)
-                    weak.maxVideoBitrateKbps = 1500;
+            // Named profile miss: still publish a valid weak ladder for 720p custom.
+            if (decodeW >= 1280 || decodeH >= 720) {
+                if (!misterplex::applyPlexTranscodeProfile("720p", weak)) {
+                    weak.profileName = "720p";
+                    weak.videoResolution = "1280x720";
+                    weak.h264Level = 31;
+                    if (!weakBitrateExplicit)
+                        weak.maxVideoBitrateKbps = 4000;
+                }
+            } else {
+                weak.profileName = "custom";
+                weak.videoResolution = decodeRes;
+                if (!weakBitrateExplicit) {
+                    if (decodeW >= 640)
+                        weak.maxVideoBitrateKbps = 2500;
+                    else if (decodeW >= 480)
+                        weak.maxVideoBitrateKbps = 1500;
+                }
             }
         }
     }

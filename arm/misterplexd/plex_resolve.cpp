@@ -149,6 +149,8 @@ const std::vector<PlexTranscodeProfile>& plexTranscodeProfiles() {
     static const std::vector<PlexTranscodeProfile> profiles = {
         {"240p", "320x240", 1000, 40, "baseline", 30},
         {"480p", "640x480", 2500, 60, "baseline", 30},
+        // Level 3.1 required for 1280x720 (level 3.0 MaxFS is too small).
+        {"720p", "1280x720", 4000, 70, "baseline", 31},
     };
     return profiles;
 }
@@ -311,11 +313,20 @@ bool validateWeakLadder(const WeakLadder& weak, std::string* why) {
         return fail("audioCodec must be aac");
     if (weak.h264Profile != "baseline")
         return fail("H.264 profile must be baseline for the current decoder");
-    if (weak.h264Level > 30)
-        return fail("H.264 level must not exceed 3.0 for the current decoder");
-    if (w >= 640 || h >= 480) {
+    if (w >= 1280 || h >= 720) {
+        if (w > 1280 || h > 720)
+            return fail("current built-in profiles stop at 1280x720");
+        if (weak.h264Level > 31)
+            return fail("H.264 level must not exceed 3.1 for 720p ARM decode path");
+        if (weak.h264Level < 31)
+            return fail("720p requires H.264 level 3.1 (level 3.0 MaxFS is insufficient)");
+        if (weak.maxVideoBitrateKbps < 3000)
+            return fail("720p profile bitrate is too low");
+    } else if (weak.h264Level > 30) {
+        return fail("H.264 level must not exceed 3.0 for 240p/480p profiles");
+    } else if (w >= 640 || h >= 480) {
         if (w > 640 || h > 480)
-            return fail("current built-in profiles stop at 640x480");
+            return fail("use 720p profile for resolutions above 640x480");
         if (weak.maxVideoBitrateKbps < 2000)
             return fail("480p profile bitrate is too low");
     } else if (weak.maxVideoBitrateKbps < 750) {

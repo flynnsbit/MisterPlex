@@ -89,12 +89,19 @@ inline int osdAvOffsetMsFromIndex(unsigned idx) {
 }
 
 inline ContentResolution contentResolutionFromOsdWord(uint16_t word) {
+    // O[4] is only one bit historically (240 vs 480). 720p is conf/DECODE-driven
+    // until a dedicated OSD bit ships; do not invent a third OSD code here.
     if ((word >> 4) & 1u)
         return {640, 480, "640x480", 2000};
     return {320, 240, "320x240", 1000};
 }
 
 inline ContentResolution contentResolutionFromSize(int w, int h) {
+    // Match product DDR frame-store tiers: 320x240, 640x480 (→624 coded), 1280x720.
+    // Prior bug: any w>=640 collapsed to 640x480, so DECODE=1280x720 still played
+    // 624x480 into a 1280x720 core → full-field yellow/static on glass.
+    if (w >= 1280 || h >= 720)
+        return {1280, 720, "1280x720", 4000};
     if (w >= 640 || h >= 480)
         return {640, 480, "640x480", 2000};
     return {320, 240, "320x240", 1000};
