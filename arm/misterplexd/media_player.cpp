@@ -2163,6 +2163,10 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         // Matches scale=...:flags=fast_bilinear; global flag covers any implicit sws.
         args.push_back("-sws_flags");
         args.push_back("fast_bilinear");
+        // D3 decode cost: skip in-loop deblock on dual-A9 (lab). Softens slightly;
+        // measure pfps only — not a quality/product PASS claim.
+        args.push_back("-skip_loop_filter");
+        args.push_back("all");
 
         if (testPattern) {
             std::string lavfi;
