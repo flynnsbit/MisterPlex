@@ -106,6 +106,14 @@ module ddr_publish_kick_mbox #(
 	reg [31:0] latched_bank;
 	reg [31:0] latched_len;
 
+	// R2 retime (STA): one-hop bank_phys_r + registered bus addr target.
+	// Fanout: u_kick_mbox|bank_phys combo ~97 (packing). Latch bank on
+	// ST_RD_SRC; promote bank_phys from bank_phys_r on accept. Drive
+	// DDRAM_ADDR from bus_addr_r (loaded one hop before issue arm).
+	// ABI offsets Q_* unchanged. Busy-kick poll + RD handshake preserved.
+	reg [31:0]       bank_phys_r;
+	reg [ADDR_W-1:0] bus_addr_r;
+
 	// Live PLXG_HI decode (valid only with DOUT_READY in ST_RD_CMD)
 	wire        cmd_magic_ok   = (DDRAM_DOUT[31:0] == MAGIC_G);
 	wire        cmd_start_w    = DDRAM_DOUT[32];
@@ -160,6 +168,8 @@ module ddr_publish_kick_mbox #(
 			latched_src <= 32'd0;
 			latched_bank <= 32'd0;
 			latched_len <= 32'd0;
+			bank_phys_r <= 32'd0;
+			bus_addr_r <= '0;
 			start_pulse <= 1'b0;
 			bank_sel <= 1'b0;
 			src_phys <= 32'd0;
@@ -201,9 +211,11 @@ module ddr_publish_kick_mbox #(
 				if (!pub_busy) begin
 					if (need_status_wr && can_cmd && (poll_div[1:0] == 2'b01)) begin
 						bus_want <= 1'b1;
+						bus_addr_r <= Q_PLXH;
 						st <= ST_WR_DONE;
 					end else if ((poll_div == {POLL_DIV_BITS{1'b0}}) && can_cmd) begin
 						bus_want <= 1'b1;
+						bus_addr_r <= Q_PLXG;
 						st <= ST_RD_CMD;
 					end
 				end
@@ -215,7 +227,7 @@ module ddr_publish_kick_mbox #(
 				bus_want <= 1'b1;
 				if (!rd_issued) begin
 					if (can_cmd) begin
-						DDRAM_ADDR <= Q_PLXG;
+						DDRAM_ADDR <= bus_addr_r;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_RD <= 1'b1;
 						rd_issued <= 1'b1;
@@ -244,19 +256,23 @@ module ddr_publish_kick_mbox #(
 								if (pub_busy || posted_busy) begin
 									st_err_busy_kick <= 1'b1;
 									need_status_wr <= 1'b1;
+									bus_addr_r <= Q_PLXH;
 									st <= ST_WR_DONE;
 								end else begin
 									latched_cmd_seq <= cmd_seq;
 									latched_bank_sel <= cmd_bank_sel;
 									latched_use_bank_sel <= cmd_use_bsel;
+									bus_addr_r <= Q_SRC;
 									st <= ST_RD_SRC;
 								end
 							end else if (need_status_wr) begin
+								bus_addr_r <= Q_PLXH;
 								st <= ST_WR_DONE;
 							end else begin
 								st <= ST_IDLE;
 							end
 						end else if (need_status_wr) begin
+							bus_addr_r <= Q_PLXH;
 							st <= ST_WR_DONE;
 						end else begin
 							st <= ST_IDLE;
@@ -269,7 +285,7 @@ module ddr_publish_kick_mbox #(
 				bus_want <= 1'b1;
 				if (!rd_issued) begin
 					if (can_cmd) begin
-						DDRAM_ADDR <= Q_SRC;
+						DDRAM_ADDR <= bus_addr_r;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_RD <= 1'b1;
 						rd_issued <= 1'b1;
@@ -281,6 +297,9 @@ module ddr_publish_kick_mbox #(
 						rd_issued <= 1'b0;
 						latched_src  <= DDRAM_DOUT[31:0];
 						latched_bank <= DDRAM_DOUT[63:32];
+						// R2: latch bank one hop early into bank_phys_r
+						bank_phys_r  <= DDRAM_DOUT[63:32];
+						bus_addr_r   <= Q_LEN;
 						st <= ST_RD_LEN;
 					end
 				end
@@ -290,7 +309,7 @@ module ddr_publish_kick_mbox #(
 				bus_want <= 1'b1;
 				if (!rd_issued) begin
 					if (can_cmd) begin
-						DDRAM_ADDR <= Q_LEN;
+						DDRAM_ADDR <= bus_addr_r;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_RD <= 1'b1;
 						rd_issued <= 1'b1;
@@ -302,14 +321,16 @@ module ddr_publish_kick_mbox #(
 						rd_issued <= 1'b0;
 						latched_len <= DDRAM_DOUT[31:0];
 						// Prepare accept status: busy sticky + clear prior done
+						// R2: bank_phys from registered bank_phys_r (not latched_bank)
 						src_phys    <= latched_src;
-						bank_phys   <= latched_bank;
+						bank_phys   <= bank_phys_r;
 						bank_sel    <= latched_bank_sel;
 						frame_bytes <= DDRAM_DOUT[31:0];
 						posted_busy <= 1'b1;
 						st_accepted <= 1'b1;
 						st_done_sticky <= 1'b0;
 						st_err_align <= 1'b0;
+						bus_addr_r  <= Q_PLXH;
 						st <= ST_WR_ACCEPT;
 					end
 				end
@@ -320,7 +341,7 @@ module ddr_publish_kick_mbox #(
 				bus_want <= 1'b1;
 				if (!wr_issued) begin
 					if (can_cmd) begin
-						DDRAM_ADDR <= Q_PLXH;
+						DDRAM_ADDR <= bus_addr_r;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_DIN <= plxh_qword;
 						DDRAM_WE <= 1'b1;
@@ -347,7 +368,7 @@ module ddr_publish_kick_mbox #(
 				bus_want <= 1'b1;
 				if (!wr_issued) begin
 					if (can_cmd) begin
-						DDRAM_ADDR <= Q_PLXH;
+						DDRAM_ADDR <= bus_addr_r;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_DIN <= plxh_qword;
 						DDRAM_WE <= 1'b1;
