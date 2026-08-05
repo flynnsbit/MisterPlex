@@ -1,2 +1,2 @@
-2026-08-05T06:31:05-05:00 w-path: LANDED fabric_content_match_lab ARM /dev/mem harness + make arm-fabric-content-match; --mock exit0; product_flag=0 PLXK default OFF FIT_GO=NO
-w-path: LANDED fabric content_match lab BINARY=build/arm/fabric_content_match_lab RESULT=LANDED FIT_GO=NO G-DEVICE=NO product_flag=0 CLAIM_720=NO 2026-08-05T06:31:05-0500
+2026-08-05T06:42:06-05:00 w-path: DONE_HARNESS_LAND fabric_content_match_lab + doorbell dump SCORE (post_program/post_wait dump_plxh_lo/hi +0x140..0x15c +PLXK observe); mock PASS; device FAIL MagicMissing ref; product_flag=0 PLXK default OFF FIT_GO=NO
+w-path: LANDED fabric content_match lab BINARY=build/arm/fabric_content_match_lab RESULT=DONE_HARNESS_LAND DUMP=doorbell_raw SCORE mock=PASS device=FAIL_MagicMissing product_flag=0 CLAIM_720=NO 2026-08-05T06:42:06-0500

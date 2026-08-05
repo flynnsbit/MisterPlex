@@ -156,6 +156,30 @@ double contentMatchFrac(const uint8_t* a, const uint8_t* b, size_t n) {
     return static_cast<double>(match) / static_cast<double>(n);
 }
 
+// Raw doorbell fabric-block snapshot for lab RCA (read-only).
+// Dumps +0x140..+0x15c and observes +0x000 PLXK only (never writes PLXK here).
+void dumpDoorbellWords(const misterplex::FabricKickMemIo& io, const char* phase) {
+    const uint32_t plxg_lo = io.read32(0x140u);
+    const uint32_t plxg_hi = io.read32(0x144u);
+    const uint32_t src = io.read32(0x148u);
+    const uint32_t bank = io.read32(0x14cu);
+    const uint32_t len = io.read32(0x150u);
+    const uint32_t pad = io.read32(0x154u);
+    const uint32_t plxh_lo = io.read32(0x158u);
+    const uint32_t plxh_hi = io.read32(0x15cu);
+    const uint32_t plxk_lo = io.read32(0x000u); // observe only; no write
+    std::printf("SCORE doorbell_dump phase=%s\n", phase);
+    std::printf("dump_off_140_plxg_lo=0x%08x\n", plxg_lo);
+    std::printf("dump_off_144_plxg_hi=0x%08x\n", plxg_hi);
+    std::printf("dump_off_148_src_phys=0x%08x\n", src);
+    std::printf("dump_off_14c_bank_phys=0x%08x\n", bank);
+    std::printf("dump_off_150_frame_bytes=0x%08x\n", len);
+    std::printf("dump_off_154_pad=0x%08x\n", pad);
+    std::printf("dump_plxh_lo=0x%08x\n", plxh_lo);
+    std::printf("dump_plxh_hi=0x%08x\n", plxh_hi);
+    std::printf("dump_off_000_plxk_lo=0x%08x (observe_only no_write)\n", plxk_lo);
+}
+
 void printScore(const char* mode, FabricKickWaitResult wait_r, double wait_us,
                 double match_frac, uint32_t crc_s, uint32_t crc_b, bool full_match,
                 uint32_t frame_bytes, uint32_t bank_phys, uint32_t src_phys,
@@ -357,6 +381,7 @@ int main(int argc, char** argv) {
                        false);
             return 1;
         }
+        dumpDoorbellWords(mem, "post_program");
         if (mem.wrotePlxk()) {
             std::fprintf(stderr, "FATAL: programFabricKick wrote PLXK\n");
             return 1;
@@ -375,6 +400,7 @@ int main(int argc, char** argv) {
         wait_r = waitFabricKickDone(mem, job.cmd_seq, max_polls);
         const auto t1 = std::chrono::steady_clock::now();
         wait_us = std::chrono::duration<double, std::micro>(t1 - t0).count();
+        dumpDoorbellWords(mem, "post_wait");
 
         if (mem.wrotePlxk()) {
             std::fprintf(stderr, "FATAL: wait path wrote PLXK\n");
@@ -464,11 +490,13 @@ int main(int argc, char** argv) {
         win_doorbell.close();
         return 1;
     }
+    dumpDoorbellWords(io, "post_program");
 
     const auto t0 = std::chrono::steady_clock::now();
     wait_r = waitFabricKickDone(io, job.cmd_seq, max_polls);
     const auto t1 = std::chrono::steady_clock::now();
     wait_us = std::chrono::duration<double, std::micro>(t1 - t0).count();
+    dumpDoorbellWords(io, "post_wait");
 
     __sync_synchronize(); // payload barrier before bank read
 

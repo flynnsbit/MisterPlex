@@ -1,11 +1,11 @@
 # LAND_HOST_FABRIC_CONTENT_MATCH_LAB
-TS=2026-08-05T06:31:05-05:00
+TS=2026-08-05T06:42:06-05:00
 AUTHOR=w-path
 WORKTREE=/home/flynnsbit/Projects/MisterPlex-wt-fleet-path
 BRANCH=research/host-plxg-plxh-abi
-BASE_TIP=c02ab2c1
+BASE_TIP=c3c691d5 (pre-dump; dump land commits atop)
 MODE=RESEARCH-ONLY device lab harness (no RBF load/scp/deploy; no Quartus)
-RESULT=LANDED
+RESULT=LANDED + DOORBELL_DUMP
 FIT_GO=NO
 G-DEVICE=NO (parent-only later)
 DEVICE=NO load this land
@@ -27,8 +27,8 @@ SoT=
 GOAL
 ================================================================
 Parent can prove REAL fabric offload content_match on device once a
-research RBF is loaded (parent-only). Previously only offline
-MockFabricKickMem units existed — no ARM /dev/mem tool.
+research RBF is loaded (parent-only). Offline MockFabricKickMem units
++ ARM /dev/mem tool with raw doorbell SCORE dumps for RCA.
 
 ================================================================
 LANDED
@@ -49,6 +49,12 @@ LANDED
      CLAIM_720=NO, PRODUCT_FABRIC=OFF, FIT_GO=NO
    - Exit 0 only if PLXH Success AND full content_match
    - --mock: MockFabricKickMem + heap bank/staging (simulates COPY)
+   - DOORBELL DUMP (dumpDoorbellWords): after programFabricKick and
+     after waitFabricKickDone, read32 observe-only:
+       +0x140 PLXG_LO, +0x144 PLXG_HI, +0x148 SRC, +0x14c BANK,
+       +0x150 LEN, +0x154 pad, +0x158 PLXH_LO, +0x15c PLXH_HI,
+       +0x000 PLXK_LO (observe only — never write unless --ring-plxk)
+     SCORE lines: dump_plxh_lo / dump_plxh_hi / dump_off_* hex
 
 2) Makefile target arm-fabric-content-match
    - static ARM cross, -I host, mirrors arm-pl330-bench style
@@ -60,6 +66,8 @@ USAGE
 Build:
   make arm-fabric-content-match
   → build/arm/fabric_content_match_lab  (ELF 32-bit ARM static)
+  g++ host:
+  → build/fabric_content_match_lab
 
 Offline CI smoke (host or ARM binary under qemu):
   ./build/fabric_content_match_lab --mock --len 4096
@@ -102,11 +110,52 @@ FORBID this land / tool default:
 VERIFICATION (this land)
 ================================================================
   g++ host build + --mock --len 4096 → exit 0, match_frac=1.0
+  SCORE doorbell_dump phase=post_program + post_wait present
+  mock post_wait dump_plxh_lo=0x504c5848 (PLXH magic after seed)
   no env / no --force-lab → exit 2 fail closed
   make arm-fabric-content-match → ARM static binary file(1) OK
   product_flag assert OFF at runtime
 
 ================================================================
-STATUS=DONE_HOST_FABRIC_CONTENT_MATCH_LAB
+SCORE REFERENCE — mock PASS (host 2026-08-05T06:42)
+================================================================
+SCORE mode=mock
+PLXH_result=Success
+content_match_frac=1.000000
+content_match_full=1
+crc32_staging=0xaf0bf1e7 crc32_bank=0xaf0bf1e7
+frame_bytes=4096 src_phys=0x30601000 bank_phys=0x30000000 cmd_seq=0x00c1
+ring_plxk=0
+CLAIM_720=NO
+PRODUCT_FABRIC=OFF
+FIT_GO=NO G-DEVICE=parent_only RESEARCH_LAB=1
+true_rc=0
+
+mock post_program dumps (excerpt):
+  dump_off_140_plxg_lo=0x504c5847  dump_off_148_src_phys=0x30601000
+  dump_plxh_lo=0x00000000  dump_plxh_hi=0x00000000
+  dump_off_000_plxk_lo=0x00000000 (observe_only no_write)
+mock post_wait dumps (excerpt):
+  dump_plxh_lo=0x504c5848  dump_plxh_hi=0x00c10022
+  dump_off_000_plxk_lo=0x00000000 (observe_only no_write)
+
+================================================================
+SCORE REFERENCE — device FAIL MagicMissing (parent lab; no re-deploy here)
+================================================================
+Device path (prior parent lab / research RBF context):
+  PLXH_result=MagicMissing
+  → waitFabricKickDone: final PLXH_LO != 0x504C5848 after max_polls
+  content_match_full=0 (no fabric COPY observed)
+  true_rc=1 FAIL
+  CLAIM_720=NO PRODUCT_FABRIC=OFF FIT_GO=NO G-DEVICE=NO
+  RCA next: SCORE doorbell_dump post_program/post_wait
+    dump_plxh_lo / dump_plxh_hi + PLXG pack words on live doorbell
+  This land does NOT load RBF and does NOT re-run device deploy.
+
+================================================================
+STATUS=DONE_HARNESS_LAND
 BINARY=build/arm/fabric_content_match_lab
+HOST_BINARY=build/fabric_content_match_lab
+DUMP=doorbell raw words post_program+post_wait SCORE dump_plxh_*
+MOCK=PASS device=FAIL_MagicMissing (reference; not re-run this land)
 FIT_GO=NO G-DEVICE=NO CLAIM_720=NO PRODUCT_FABRIC=OFF
