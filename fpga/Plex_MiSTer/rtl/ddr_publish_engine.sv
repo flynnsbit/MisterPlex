@@ -63,17 +63,22 @@ module ddr_publish_engine #(
 	localparam int IDX_W = (MAX_BURST <= 1) ? 1 : $clog2(MAX_BURST);
 	localparam int BN_W  = $clog2(MAX_BURST + 1);
 
+	// R1 retime (STA): ST_WR_LOAD one-hop pipelines bounce[wr_i] → din_r before
+	// ST_WR_ISSUE WE arm. Breaks ST_WR_ISSUE fanout packing (bounce combo→DDRAM_DIN)
+	// without delaying the WE accept path itself. +1 clk_ddr per beat OK vs poll/RTT.
 	localparam [2:0]
 		ST_IDLE     = 3'd0,
 		ST_DB       = 3'd1,
 		ST_RD_ISSUE = 3'd2,
 		ST_RD_DATA  = 3'd3,
-		ST_WR_ISSUE = 3'd4,
-		ST_FINISH   = 3'd5;
+		ST_WR_LOAD  = 3'd4,
+		ST_WR_ISSUE = 3'd5,
+		ST_FINISH   = 3'd6;
 
 	reg [2:0] state;
 	reg       mode_r, ring_db_r;
 	reg [63:0] db_word_r;
+	reg [63:0] din_r;
 	reg [ADDR_W-1:0] src_w, dst_w, db_w;
 	reg [31:0] words_left, words_total;
 	reg [BN_W-1:0]  burst_n;
@@ -141,6 +146,7 @@ module ddr_publish_engine #(
 			wr_i <= '0;
 			rd_issued <= 1'b0;
 			wr_issued <= 1'b0;
+			ce_wr_issue_r <= 1'b0;
 		end else begin
 			done_pulse <= 1'b0;
 
@@ -152,6 +158,7 @@ module ddr_publish_engine #(
 				DDRAM_WE <= 1'b0;
 				rd_issued <= 1'b0;
 				wr_issued <= 1'b0;
+				ce_wr_issue_r <= 1'b0;
 				if (cmd_start) begin
 					if (!align_ok || (cmd_mode && words_cmd == 32'd0)) begin
 						err <= 1'b1;
@@ -239,9 +246,19 @@ module ddr_publish_engine #(
 					if (BN_W'(got) + BN_W'(1) == burst_n) begin
 						wr_i <= '0;
 						wr_issued <= 1'b0;
-						state <= ST_WR_ISSUE;
+						state <= ST_WR_LOAD;
 					end
 				end
+			end
+
+			// R1: register bounce leaf before WE (fanout break)
+			ST_WR_LOAD: begin
+				bus_want <= 1'b1;
+				DDRAM_RD <= 1'b0;
+				DDRAM_WE <= 1'b0;
+				din_r <= bounce[wr_i];
+				wr_issued <= 1'b0;
+				state <= ST_WR_ISSUE;
 			end
 
 			ST_WR_ISSUE: begin
@@ -251,7 +268,7 @@ module ddr_publish_engine #(
 						DDRAM_WE <= 1'b1;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_ADDR <= dst_w;
-						DDRAM_DIN <= bounce[wr_i];
+						DDRAM_DIN <= din_r;
 						wr_issued <= 1'b1;
 					end
 				end else if (wr_accept) begin
@@ -262,8 +279,10 @@ module ddr_publish_engine #(
 					bytes_copied <= bytes_copied + 32'd8;
 					if (BN_W'(wr_i) + BN_W'(1) == burst_n)
 						state <= ST_RD_ISSUE;
-					else
+					else begin
 						wr_i <= wr_i + IDX_W'(1);
+						state <= ST_WR_LOAD;
+					end
 				end
 			end
 
