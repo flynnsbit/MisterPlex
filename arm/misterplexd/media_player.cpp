@@ -18,6 +18,7 @@
 #include <vector>
 
 #include <fcntl.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -1009,6 +1010,9 @@ pid_t MediaPlayer::spawnFfmpeg(const std::vector<std::string>& args, int vWriteF
         return -1;
     if (pid == 0) {
         setpgid(0, 0);
+        // Prefer present-path CPU over decode when dual-A9 is saturated: uncached
+        // DDR bank memcpy is the 720p present bottleneck under concurrent ffmpeg.
+        ::setpriority(PRIO_PROCESS, 0, 10);
         // Video → stdout (pipe:1)
         if (vWriteFd >= 0) {
             dup2(vWriteFd, STDOUT_FILENO);

@@ -1538,13 +1538,10 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
                                        std::chrono::steady_clock::now().time_since_epoch())
                                        .count();
 
-    // Steady-state: short yield only (DMA finishes in ~1–3 ms). Vsync page-flip
-    // in frame_store prevents tears without host blocking on swap_pending.
-    // When PLXA is active, skip: the next frame's PLXA poll handles the wait.
+    // No post usleep: under dual-A9 decode load usleep(500) was inflated to
+    // tens of ms; PLXD (when live) already serializes bank ownership.
     auto tPost0 = std::chrono::steady_clock::now();
-    if (!first && !timing.plxa_used)
-        usleep(500);
-    auto tPost1 = std::chrono::steady_clock::now();
+    auto tPost1 = tPost0;
     timing.post_wait_us = elapsedUs(tPost0, tPost1);
 
     auto t1 = std::chrono::steady_clock::now();
