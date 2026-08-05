@@ -27,8 +27,9 @@ constexpr uint32_t kUnderrunMailboxMagic   = mailbox_abi::kPlxfMagic;
 // (720p I420) or legacy-helper 0x300FF000 (480p I420). Prefer offset + doorbell.
 constexpr uint32_t kBankReleaseMailboxPhys  = mailbox_abi::kPlxdAddr;
 constexpr uint32_t kBankReleaseMailboxMagic = mailbox_abi::kPlxdMagic;
-// Fabric kick/status (PHASE2 host ABI). Prefer offset + doorbell; do not MMIO
-// until RTL frontend lands. Product fabric path remains hard OFF.
+// Fabric kick/status (PHASE2 host ABI). Prefer offset + doorbell.
+// Research writers: fabric_dma_host.hpp programFabricKick / waitFabricKickDone
+// (never ring PLXK inside helpers). Product fabric path remains hard OFF.
 constexpr uint32_t kFabricKickMailboxPhys   = mailbox_abi::kPlxgAddr;
 constexpr uint32_t kFabricKickMailboxMagic  = mailbox_abi::kPlxgMagic;
 constexpr uint32_t kFabricStatusMailboxPhys = mailbox_abi::kPlxhAddr;
