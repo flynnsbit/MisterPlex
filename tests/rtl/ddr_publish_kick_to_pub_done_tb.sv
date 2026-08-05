@@ -4,15 +4,21 @@
 //           + ddr_bus_arbiter3 + simple f2sdram slave.
 // Goal: pin stop-cause of silicon BusyStuck hi=0x21 offline (R5 residual).
 // R8: also pin false-done / no bank write (G_CONTENT bank==staging after done).
+// R9: bank dest — eng must land at programmed bank_phys (0x30000000), not bank1
+//     (0x30180000) when use_bank_sel=0 (device face).
 //
-// Cases (CI gate): C0_NOPRESENT (+G_CONTENT), C4_YIELD_REGRESS, C3_KICK_GRANT_STUCK.
+// Cases (CI gate): C0_NOPRESENT (+G_CONTENT + G_BANK0_LAND), C4_YIELD_REGRESS,
+//                  C3_KICK_GRANT_STUCK.
 // NO device / NO Quartus / FIT_GO=NO. TB PASS ≠ silicon PASS.
 //
 // Pre-R8 false-green class: G2 counted beats (model accepts) only — could PASS
 // while silicon bank stayed poison. G_CONTENT requires model bank==staging.
+// Pre-R9 false-green: bank_sel=0 + use_bank_sel=1 made geom==LAB_BANK so
+// bank_phys unused still greened G_CONTENT. C0 now programs device face
+// use_bank_sel=0, bank_phys=0x30000000, bank_sel=1 (geom trap → bank1).
 //
-// Status: Memory/lab/status/UNIT_KICK_TO_PUB_DONE_TB_R8.txt
-// Design: Memory/lab/status/DESIGN_CARD_PW_KICK_R8_FALSE_DONE.txt
+// Status: Memory/lab/status/UNIT_KICK_TO_PUB_DONE_TB_R9.txt
+// Design: Memory/lab/status/DESIGN_CARD_PW_KICK_R9_BANK_DEST.txt
 
 `timescale 1ns / 1ps
 `default_nettype none
@@ -28,10 +34,11 @@ module ddr_publish_kick_to_pub_done_tb;
 	localparam [31:0] BANK_STRIDE   = 32'h0018_0000;
 
 	// Lab job (device content_match_lab face)
-	localparam [31:0] LAB_SRC  = 32'h3060_1000;
-	localparam [31:0] LAB_BANK = 32'h3000_0000;
-	localparam [31:0] LAB_LEN  = 32'h0000_1000; // 4096 B
-	localparam [15:0] LAB_SEQ  = 16'h00C1;
+	localparam [31:0] LAB_SRC   = 32'h3060_1000;
+	localparam [31:0] LAB_BANK  = 32'h3000_0000; // bank0 absolute (BANK_PHYS)
+	localparam [31:0] LAB_BANK1 = 32'h3018_0000; // bank1 (wrong-bank residual)
+	localparam [31:0] LAB_LEN   = 32'h0000_1000; // 4096 B
+	localparam [15:0] LAB_SEQ   = 16'h00C1;
 
 	localparam [31:0] OFF_PLXG = 32'h140;
 	localparam [31:0] OFF_SRC  = 32'h148;
@@ -65,6 +72,7 @@ module ddr_publish_kick_to_pub_done_tb;
 	// ── kick_mbox ────────────────────────────────────────────────────────
 	wire        kick_start;
 	wire        kick_bank_sel;
+	wire        kick_use_bank_sel;
 	wire [31:0] kick_src_phys, kick_bank_phys, kick_frame_bytes;
 	wire        pub_cmd_mode;
 	wire        pub_ring_db;
@@ -169,6 +177,7 @@ module ddr_publish_kick_to_pub_done_tb;
 		.pub_err(pub_err),
 		.start_pulse(kick_start),
 		.bank_sel(kick_bank_sel),
+		.use_bank_sel(kick_use_bank_sel),
 		.src_phys(kick_src_phys),
 		.bank_phys(kick_bank_phys),
 		.frame_bytes(kick_frame_bytes),
@@ -200,6 +209,8 @@ module ddr_publish_kick_to_pub_done_tb;
 		.start(kick_start),
 		.cmd_mode(pub_cmd_mode),
 		.bank_sel(kick_bank_sel),
+		.use_bank_sel(kick_use_bank_sel),
+		.bank_phys_abs(kick_bank_phys),
 		.src_phys(kick_src_phys),
 		.ring_doorbell(pub_ring_db),
 		.doorbell_word(pub_db_word),
@@ -488,6 +499,9 @@ module ddr_publish_kick_to_pub_done_tb;
 	endtask
 
 	// Host-like program: SRC/BANK/LEN then PLXG with toggle edge (magic last via 64b)
+	// R9 device face: use_bank_sel=0 + BANK_PHYS=LAB_BANK (0x30000000).
+	// bank_sel=1 is a geom TRAP: if eng still uses bank_sel only, COPY lands at
+	// bank1 0x30180000 and G_CONTENT/G_WRONG_BANK fail offline (device residual).
 	task automatic host_program_lab_kick;
 		input        tog;
 		input [15:0] seq;
@@ -495,8 +509,8 @@ module ddr_publish_kick_to_pub_done_tb;
 		begin
 			hi = 32'd0;
 			hi[1] = tog;          // start_toggle
-			hi[4] = 1'b0;         // bank_sel=0
-			hi[5] = 1'b1;         // use_bank_sel
+			hi[4] = 1'b1;         // bank_sel=1 TRAP (geom → bank1 if abs unused)
+			hi[5] = 1'b0;         // use_bank_sel=0 (device R2 absolute BANK_PHYS)
 			hi[31:16] = seq;
 			mem_src = {LAB_BANK, LAB_SRC};
 			mem_len = {32'd0, LAB_LEN};
@@ -505,16 +519,17 @@ module ddr_publish_kick_to_pub_done_tb;
 		end
 	endtask
 
-	// R8 G_CONTENT: bank qwords must equal staging for LAB_LEN after COPY done.
+	// R8/R9 G_CONTENT: bank0 (LAB_BANK / programmed bank_phys) == staging.
 	// Staging uses mem_read default pattern when never host-written.
 	function automatic integer bank_content_match;
+		input [31:0] bank_base;
 		integer qi, nq, bad;
 		reg [28:0] a_src, a_dst;
 		begin
 			nq  = LAB_LEN >> 3;
 			bad = 0;
 			a_src = LAB_SRC[31:3];
-			a_dst = LAB_BANK[31:3];
+			a_dst = bank_base[31:3];
 			for (qi = 0; qi < nq; qi = qi + 1) begin
 				if (mem_read(a_dst + qi[28:0]) !== mem_read(a_src + qi[28:0]))
 					bad = bad + 1;
@@ -523,11 +538,21 @@ module ddr_publish_kick_to_pub_done_tb;
 		end
 	endfunction
 
-	// Diagnostic: beats progress without bank content (pre-R8 false-green class)
+	function automatic integer wrong_bank_class;
+		begin
+			// Device residual class: payload at bank1, bank0 still empty/poison.
+			wrong_bank_class =
+				(bank_content_match(LAB_BANK1) != 0) &&
+				(bank_content_match(LAB_BANK) == 0) ? 1 : 0;
+		end
+	endfunction
+
+	// Diagnostic: beats progress without bank0 content (pre-R8 false-green class)
 	function automatic integer beats_without_content;
 		begin
 			beats_without_content =
-				((max_beats_rd > 0) && (max_beats_wr > 0) && !bank_content_match()) ? 1 : 0;
+				((max_beats_rd > 0) && (max_beats_wr > 0) &&
+				 (bank_content_match(LAB_BANK) == 0)) ? 1 : 0;
 		end
 	endfunction
 
@@ -686,22 +711,47 @@ module ddr_publish_kick_to_pub_done_tb;
 			end else
 				$display("PASS C0_G2_BEATS brd=%0d bwr=%0d", max_beats_rd, max_beats_wr);
 
-			// R8 G_CONTENT: bank payload must match staging (model store proof).
+			// R8/R9 G_CONTENT: bank0 @ 0x30000000 must match staging (model store proof).
 			// Pre-R8: G2 alone could green on accepts without this (false-green vs silicon).
+			// R9: bank_sel trap + use_bank_sel=0; wrong land at 0x30180000 is FAIL.
 			begin : c0_g_content
 				integer content_ok;
 				integer false_green_class;
-				content_ok = bank_content_match();
+				integer wb;
+				integer m1;
+				content_ok = bank_content_match(LAB_BANK);
 				false_green_class = beats_without_content();
+				wb = wrong_bank_class();
+				m1 = bank_content_match(LAB_BANK1);
 				if (false_green_class)
-					$display("C0_EVIDENCE PRE_R8_FALSE_GREEN_CLASS beats>0 but bank!=staging");
+					$display("C0_EVIDENCE PRE_R8_FALSE_GREEN_CLASS beats>0 but bank0!=staging");
+				if (wb)
+					$display("C0_EVIDENCE WRONG_BANK_CLASS bank1@0x%h==staging bank0@0x%h empty",
+					         LAB_BANK1, LAB_BANK);
+				$display("C0_BANK_PROBE dst_stat=%h kick_bank_phys=%h use_bsel=%0d bank_sel=%0d m0=%0d m1=%0d",
+				         pub_dst_bank, kick_bank_phys, kick_use_bank_sel, kick_bank_sel,
+				         content_ok, m1);
 				if (!content_ok) begin
-					$display("FAIL C0 G_CONTENT bank!=staging brd=%0d bwr=%0d STOP=%s",
-					         max_beats_rd, max_beats_wr, stop_name(stop));
-					$display("FAIL_FALSE_DONE_NO_WRITE (compose model content residual)");
+					$display("FAIL C0 G_CONTENT bank0@0x%h!=staging brd=%0d bwr=%0d STOP=%s",
+					         LAB_BANK, max_beats_rd, max_beats_wr, stop_name(stop));
+					if (wb)
+						$display("FAIL_WRONG_BANK bank1@0x%h has staging (R9 residual)",
+						         LAB_BANK1);
+					else
+						$display("FAIL_FALSE_DONE_NO_WRITE (compose model content residual)");
 					local_fail = 1'b1;
 				end else
-					$display("PASS C0_G_CONTENT bank==staging len=%0d", LAB_LEN);
+					$display("PASS C0_G_CONTENT bank0@0x%h==staging len=%0d", LAB_BANK, LAB_LEN);
+
+				// G_BANK0_LAND: eng dst status and content at programmed bank_phys
+				if (content_ok && (pub_dst_bank == LAB_BANK) && !wb)
+					$display("PASS C0_G_BANK0_LAND dst=%h bank0 match bank1_match=%0d",
+					         pub_dst_bank, m1);
+				else begin
+					$display("FAIL C0 G_BANK0_LAND dst=%h expect=%h content0=%0d wrong_bank=%0d",
+					         pub_dst_bank, LAB_BANK, content_ok, wb);
+					local_fail = 1'b1;
+				end
 			end
 
 			// G2b: eng must report full lab beat budget (512 for 0x1000)
@@ -751,11 +801,14 @@ module ddr_publish_kick_to_pub_done_tb;
 				else if (stop == STOP_S5_COPY_RSP)
 					$display("FAIL C0_NOPRESENT STOP=%s R8_SOLE=cutb-r1-pw-kick-r8-rsppath",
 					         stop_name(stop));
-				else if (!bank_content_match())
+				else if (wrong_bank_class())
+					$display("FAIL C0_NOPRESENT STOP=%s R9_SOLE=cutb-r1-pw-kick-r9-bank-dest",
+					         stop_name(stop));
+				else if (bank_content_match(LAB_BANK) == 0)
 					$display("FAIL C0_NOPRESENT STOP=%s R8_SOLE=cutb-r1-pw-kick-r8-false-done",
 					         stop_name(stop));
 				else
-					$display("FAIL C0_NOPRESENT STOP=%s R8_SOLE=cutb-r1-pw-kick-r8-investigate",
+					$display("FAIL C0_NOPRESENT STOP=%s R9_SOLE=cutb-r1-pw-kick-r9-investigate",
 					         stop_name(stop));
 				// Extra pin for parent: H-S0 closed if eng_busy rose
 				if (saw_eng_busy)
@@ -764,7 +817,7 @@ module ddr_publish_kick_to_pub_done_tb;
 				fails = fails + 1;
 				case_fails = 1;
 			end else begin
-				$display("PASS C0_NOPRESENT STOP_OK_DONE G_CONTENT");
+				$display("PASS C0_NOPRESENT STOP_OK_DONE G_CONTENT G_BANK0_LAND");
 			end
 		end
 	endtask

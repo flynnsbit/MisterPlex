@@ -137,6 +137,8 @@ module ddr_publish_contended_tb;
 	) path (
 		.clk(clk), .reset(reset),
 		.start(p_start), .cmd_mode(p_mode), .bank_sel(p_bank),
+		// Contended TB drives geom path (use_bank_sel=1); R9 bank_phys abs unused.
+		.use_bank_sel(1'b1), .bank_phys_abs(32'd0),
 		.src_phys(p_src), .ring_doorbell(p_ring), .doorbell_word(p_dbw),
 		.bytes_override(p_bov),
 		.busy(p_busy), .done_pulse(p_done), .err(p_err),

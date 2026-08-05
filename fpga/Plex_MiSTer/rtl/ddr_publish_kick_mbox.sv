@@ -4,7 +4,7 @@
 //   +0x140 PLXG_LO magic 0x504C5847 "PLXG"
 //   +0x144 PLXG_HI command (start_w / start_toggle / clr_* / bank_sel / cmd_seq)
 //   +0x148 SRC_PHYS
-//   +0x14C BANK_PHYS   (latched; u_pub uses bank_sel today)
+//   +0x14C BANK_PHYS   (latched; eng dst when use_bank_sel=0 — R9)
 //   +0x150 FRAME_BYTES
 //   +0x154 RESERVED
 //   +0x158 PLXH_LO magic 0x504C5848 "PLXH"
@@ -41,8 +41,9 @@ module ddr_publish_kick_mbox #(
 	// Job outputs → u_pub
 	output reg               start_pulse,      // 1-cycle start to u_pub
 	output reg               bank_sel,
+	output reg               use_bank_sel,     // 1: geom(bank_sel); 0: bank_phys abs (R9)
 	output reg  [31:0]       src_phys,
-	output reg  [31:0]       bank_phys,        // absolute PA (diagnostic / future)
+	output reg  [31:0]       bank_phys,        // absolute PA → eng dst when !use_bank_sel
 	output reg  [31:0]       frame_bytes,      // → bytes_override
 	output wire              cmd_mode_copy,    // hardwired 1 = COPY
 	output wire              ring_doorbell,    // hardwired 0 — host owns PLXK
@@ -181,6 +182,7 @@ module ddr_publish_kick_mbox #(
 			bus_addr_r <= '0;
 			start_pulse <= 1'b0;
 			bank_sel <= 1'b0;
+			use_bank_sel <= 1'b1;
 			src_phys <= 32'd0;
 			bank_phys <= 32'd0;
 			frame_bytes <= 32'd0;
@@ -343,10 +345,12 @@ module ddr_publish_kick_mbox #(
 						latched_len <= DDRAM_DOUT[31:0];
 						// Prepare accept status: busy sticky + clear prior done
 						// R2: bank_phys from registered bank_phys_r (not latched_bank)
-						src_phys    <= latched_src;
-						bank_phys   <= bank_phys_r;
-						bank_sel    <= latched_bank_sel;
-						frame_bytes <= DDRAM_DOUT[31:0];
+						// R9: promote use_bank_sel so path can mux eng dst
+						src_phys      <= latched_src;
+						bank_phys     <= bank_phys_r;
+						bank_sel      <= latched_bank_sel;
+						use_bank_sel  <= latched_use_bank_sel;
+						frame_bytes   <= DDRAM_DOUT[31:0];
 						posted_busy <= 1'b1;
 						st_accepted <= 1'b1;
 						st_done_sticky <= 1'b0;
@@ -407,8 +411,6 @@ module ddr_publish_kick_mbox #(
 			endcase
 		end
 	end
-
-	(* keep *) wire _keep_use_bsel = latched_use_bank_sel;
 
 endmodule
 

@@ -29,7 +29,10 @@ module ddr_publish_path #(
 	// Host/firmware kick (clk_ddr domain)
 	input  wire              start,
 	input  wire              cmd_mode,       // 0 DIRECT  1 COPY
-	input  wire              bank_sel,       // destination bank 0/1
+	input  wire              bank_sel,       // destination bank 0/1 (geom path)
+	// R9 bank dest: use_bank_sel=1 → geom(bank_sel); =0 → bank_phys_abs absolute
+	input  wire              use_bank_sel,
+	input  wire [31:0]       bank_phys_abs,  // programmed BANK_PHYS (kick +0x14C)
 	input  wire [31:0]       src_phys,       // staging / decode out (COPY)
 	input  wire              ring_doorbell,
 	input  wire [63:0]       doorbell_word,
@@ -82,10 +85,14 @@ module ddr_publish_path #(
 		.src_aligned(src_ok)
 	);
 
+	// R9: host use_bank_sel=0 programs absolute BANK_PHYS (device face).
+	// Pre-R9 eng always used geom(bank_sel) → bank_phys latched but unused.
+	wire [31:0] dst_eff = use_bank_sel ? job_dst : bank_phys_abs;
+
 	assign job_legal       = job_ok;
 	assign src_aligned     = src_ok;
 	assign frame_bytes     = job_fb;
-	assign dst_bank_phys   = job_dst;
+	assign dst_bank_phys   = dst_eff;
 	assign doorbell_phys_o = job_db;
 
 	wire [31:0] bytes_eff =
@@ -124,7 +131,7 @@ module ddr_publish_path #(
 		.cmd_start(eng_start),
 		.cmd_mode(cmd_mode),
 		.cmd_src_phys(src_phys),
-		.cmd_dst_phys(job_dst),
+		.cmd_dst_phys(dst_eff),
 		.cmd_bytes(bytes_eff),
 		.cmd_doorbell_phys(job_db),
 		.cmd_ring_doorbell(ring_doorbell),

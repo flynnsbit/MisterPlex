@@ -53,7 +53,7 @@ printf '%s\n' "$OUT" | tail -100
 echo "sim true rc=$RC"
 
 # Always surface named stop / sole pin for status harvest (even on FAIL)
-echo "$OUT" | grep -E 'FAIL_BUSYSTUCK_0x21|FAIL_FALSE_DONE|STOP_S|R8_SOLE=|R6_SOLE=|C0_RANK|C0_EVIDENCE|G_CONTENT|PASS C0|PASS C4|PASS C3' || true
+echo "$OUT" | grep -E 'FAIL_BUSYSTUCK_0x21|FAIL_FALSE_DONE|FAIL_WRONG_BANK|STOP_S|R9_SOLE=|R8_SOLE=|R6_SOLE=|C0_RANK|C0_EVIDENCE|G_CONTENT|G_BANK0_LAND|PASS C0|PASS C4|PASS C3' || true
 
 if echo "$OUT" | grep -q 'PASS ddr_publish_kick_to_pub_done_tb all' \
   && echo "$OUT" | grep -q 'PASS C0' \

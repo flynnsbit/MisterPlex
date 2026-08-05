@@ -1038,6 +1038,7 @@ wire        pub_m2_busy;
 // PHASE2 host kick mailbox (PLXG/PLXH @ doorbell+0x140)
 wire        kick_start;
 wire        kick_bank_sel;
+wire        kick_use_bank_sel;
 wire [31:0] kick_src_phys, kick_bank_phys, kick_frame_bytes;
 wire        pub_cmd_mode;       // 1 = COPY (hardwired in kick mbox)
 wire        pub_ring_db;        // 0 = HOST owns doorbell after done
@@ -1094,6 +1095,7 @@ assign kick_dout_ready  = m2_sel_kick ? m2_dout_ready_phys : 1'b0;
 	.pub_err(pub_err),
 	.start_pulse(kick_start),
 	.bank_sel(kick_bank_sel),
+	.use_bank_sel(kick_use_bank_sel),
 	.src_phys(kick_src_phys),
 	.bank_phys(kick_bank_phys),
 	.frame_bytes(kick_frame_bytes),
@@ -1129,6 +1131,10 @@ assign kick_dout_ready  = m2_sel_kick ? m2_dout_ready_phys : 1'b0;
 	// leave eng on DIRECT. pub_cmd_mode retained on keep set via kick.
 	.cmd_mode(1'b1),
 	.bank_sel(kick_bank_sel),
+	// R9 WRONG_BANK: device programs use_bank_sel=0 + BANK_PHYS absolute.
+	// Pre-R9 eng used geom(bank_sel) only → bank0 job could land bank1.
+	.use_bank_sel(kick_use_bank_sel),
+	.bank_phys_abs(kick_bank_phys),
 	.src_phys(kick_src_phys),
 	.ring_doorbell(pub_ring_db),
 	.doorbell_word(pub_db_word),
@@ -1211,7 +1217,7 @@ ddr_bus_arbiter3 #(.M2_QUANTUM_BEATS(8)) ddr_arb3 (
 
 // Keep publish + kick live so map cannot strip when idle.
 (* keep, noprune *) wire _keep_pub = pub_busy | pub_done | pub_err | pub_job_legal |
-	pub_src_aligned | pub_bus_want | kick_bus_want | kick_start |
+	pub_src_aligned | pub_bus_want | kick_bus_want | kick_start | kick_use_bank_sel |
 	(|pub_frame_bytes) | (|pub_dst_bank) | (|pub_db_phys) | (|pub_bytes_copied) |
 	(|pub_beats_rd) | (|pub_beats_wr) | (|kick_src_phys) | (|kick_bank_phys) |
 	(|kick_frame_bytes);
