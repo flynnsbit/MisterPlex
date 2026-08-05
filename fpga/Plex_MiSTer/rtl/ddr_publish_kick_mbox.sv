@@ -194,22 +194,23 @@ module ddr_publish_kick_mbox #(
 				wr_issued <= 1'b0;
 				poll_div <= poll_div + 1'b1;
 
-				// Only when publish engine idle (no bus_want conflict).
-				// posted_busy covers the accept→done window so we do not
-				// re-enter poll between start_pulse and pub_busy rise.
+				// Only when publish engine idle (no bus_want conflict with u_pub).
+				// Still poll while posted_busy so a new start edge can raise
+				// err_busy_kick; edge detect (toggle/start_w) prevents re-accept
+				// of the same host command between start_pulse and pub_busy.
 				if (!pub_busy) begin
 					if (need_status_wr && can_cmd && (poll_div[1:0] == 2'b01)) begin
 						bus_want <= 1'b1;
 						st <= ST_WR_DONE;
-					end else if (!posted_busy
-					            && (poll_div == {POLL_DIV_BITS{1'b0}})
-					            && can_cmd) begin
+					end else if ((poll_div == {POLL_DIV_BITS{1'b0}}) && can_cmd) begin
 						bus_want <= 1'b1;
 						st <= ST_RD_CMD;
 					end
 				end
 			end
 
+			// Read handshake: keep rd_issued until DOUT_READY. Clearing it on
+			// rd_accept made the if (!rd_issued) arm swallow data beats (stuck).
 			ST_RD_CMD: begin
 				bus_want <= 1'b1;
 				if (!rd_issued) begin
@@ -219,45 +220,47 @@ module ddr_publish_kick_mbox #(
 						DDRAM_RD <= 1'b1;
 						rd_issued <= 1'b1;
 					end
-				end else if (rd_accept) begin
-					DDRAM_RD <= 1'b0;
-					rd_issued <= 1'b0;
-				end else if (DDRAM_DOUT_READY) begin
-					if (cmd_magic_ok) begin
-						if (!pub_busy && cmd_clr_done) begin
-							st_done_sticky <= 1'b0;
-							st_err_align <= 1'b0;
-							st_err_busy_kick <= 1'b0;
-							need_status_wr <= 1'b1;
-						end else if (!pub_busy && cmd_clr_err) begin
-							st_err_align <= 1'b0;
-							need_status_wr <= 1'b1;
-						end
-
-						last_toggle  <= cmd_start_tog;
-						have_toggle  <= 1'b1;
-						last_start_w <= cmd_start_w;
-
-						if (cmd_want_start) begin
-							if (pub_busy || posted_busy) begin
-								st_err_busy_kick <= 1'b1;
+				end else begin
+					if (rd_accept)
+						DDRAM_RD <= 1'b0;
+					if (DDRAM_DOUT_READY) begin
+						rd_issued <= 1'b0;
+						if (cmd_magic_ok) begin
+							if (!pub_busy && cmd_clr_done) begin
+								st_done_sticky <= 1'b0;
+								st_err_align <= 1'b0;
+								st_err_busy_kick <= 1'b0;
 								need_status_wr <= 1'b1;
+							end else if (!pub_busy && cmd_clr_err) begin
+								st_err_align <= 1'b0;
+								need_status_wr <= 1'b1;
+							end
+
+							last_toggle  <= cmd_start_tog;
+							have_toggle  <= 1'b1;
+							last_start_w <= cmd_start_w;
+
+							if (cmd_want_start) begin
+								if (pub_busy || posted_busy) begin
+									st_err_busy_kick <= 1'b1;
+									need_status_wr <= 1'b1;
+									st <= ST_WR_DONE;
+								end else begin
+									latched_cmd_seq <= cmd_seq;
+									latched_bank_sel <= cmd_bank_sel;
+									latched_use_bank_sel <= cmd_use_bsel;
+									st <= ST_RD_SRC;
+								end
+							end else if (need_status_wr) begin
 								st <= ST_WR_DONE;
 							end else begin
-								latched_cmd_seq <= cmd_seq;
-								latched_bank_sel <= cmd_bank_sel;
-								latched_use_bank_sel <= cmd_use_bsel;
-								st <= ST_RD_SRC;
+								st <= ST_IDLE;
 							end
 						end else if (need_status_wr) begin
 							st <= ST_WR_DONE;
 						end else begin
 							st <= ST_IDLE;
 						end
-					end else if (need_status_wr) begin
-						st <= ST_WR_DONE;
-					end else begin
-						st <= ST_IDLE;
 					end
 				end
 			end
@@ -271,13 +274,15 @@ module ddr_publish_kick_mbox #(
 						DDRAM_RD <= 1'b1;
 						rd_issued <= 1'b1;
 					end
-				end else if (rd_accept) begin
-					DDRAM_RD <= 1'b0;
-					rd_issued <= 1'b0;
-				end else if (DDRAM_DOUT_READY) begin
-					latched_src  <= DDRAM_DOUT[31:0];
-					latched_bank <= DDRAM_DOUT[63:32];
-					st <= ST_RD_LEN;
+				end else begin
+					if (rd_accept)
+						DDRAM_RD <= 1'b0;
+					if (DDRAM_DOUT_READY) begin
+						rd_issued <= 1'b0;
+						latched_src  <= DDRAM_DOUT[31:0];
+						latched_bank <= DDRAM_DOUT[63:32];
+						st <= ST_RD_LEN;
+					end
 				end
 			end
 
@@ -290,21 +295,23 @@ module ddr_publish_kick_mbox #(
 						DDRAM_RD <= 1'b1;
 						rd_issued <= 1'b1;
 					end
-				end else if (rd_accept) begin
-					DDRAM_RD <= 1'b0;
-					rd_issued <= 1'b0;
-				end else if (DDRAM_DOUT_READY) begin
-					latched_len <= DDRAM_DOUT[31:0];
-					// Prepare accept status: busy sticky + clear prior done
-					src_phys    <= latched_src;
-					bank_phys   <= latched_bank;
-					bank_sel    <= latched_bank_sel;
-					frame_bytes <= DDRAM_DOUT[31:0];
-					posted_busy <= 1'b1;
-					st_accepted <= 1'b1;
-					st_done_sticky <= 1'b0;
-					st_err_align <= 1'b0;
-					st <= ST_WR_ACCEPT;
+				end else begin
+					if (rd_accept)
+						DDRAM_RD <= 1'b0;
+					if (DDRAM_DOUT_READY) begin
+						rd_issued <= 1'b0;
+						latched_len <= DDRAM_DOUT[31:0];
+						// Prepare accept status: busy sticky + clear prior done
+						src_phys    <= latched_src;
+						bank_phys   <= latched_bank;
+						bank_sel    <= latched_bank_sel;
+						frame_bytes <= DDRAM_DOUT[31:0];
+						posted_busy <= 1'b1;
+						st_accepted <= 1'b1;
+						st_done_sticky <= 1'b0;
+						st_err_align <= 1'b0;
+						st <= ST_WR_ACCEPT;
+					end
 				end
 			end
 
