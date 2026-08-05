@@ -68,6 +68,8 @@ module present_core #(
 	parameter int FRAME_LINE_COUNT = 8
 `elsif FRAME_LINES_16
 	parameter int FRAME_LINE_COUNT = 16
+`elsif FRAME_LINES_32
+	parameter int FRAME_LINE_COUNT = 32
 `else
 	parameter int FRAME_LINE_COUNT = 4
 `endif

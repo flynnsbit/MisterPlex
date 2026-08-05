@@ -53,6 +53,7 @@ localparam [31:0] DDR_FS_DOORBELL =
 
 // 720p blackout model: floor LINE_COUNT to 16 on 720p glass unless more requested.
 `ifdef DDR_FS_APPLY_LINE_FLOOR
+// 720p product floor tracks P720_LINE_COUNT (32 after yellow/chroma-miss sole).
 localparam int DDR_FS_LINE_COUNT =
-	(DDR_FS_USE_720P_ABI && (FRAME_LINE_COUNT < 16)) ? 16 : FRAME_LINE_COUNT;
+	(DDR_FS_USE_720P_ABI && (FRAME_LINE_COUNT < 32)) ? 32 : FRAME_LINE_COUNT;
 `endif

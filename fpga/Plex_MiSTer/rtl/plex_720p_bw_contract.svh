@@ -41,7 +41,10 @@ localparam int P720_CLK_SYS_HZ        = MISTERPLEX_BW_CLK_SYS_HZ;        // 20e6
 localparam int P720_CLK_DDR_HZ        = 90_000_000;
 localparam int P720_CLK_PIX_HZ        = MISTERPLEX_BW_CLK_PIX_HZ;        // 29.7e6
 localparam int P720_PPC               = MISTERPLEX_BW_PRODUCT_PPC;       // 2
-localparam int P720_LINE_COUNT        = 16;
+// Floor 32 after yellow/static on non-uniform 720p (logo/video) while solid I420
+// pushed clean: chroma miss class under LINE_COUNT=16. 16 remains legal min only
+// for analysis; product sole uses FRAME_LINES_32.
+localparam int P720_LINE_COUNT        = 32;
 localparam int P720_FRAME_US          = MISTERPLEX_BW_FRAME_BUDGET_US;   // 41667
 localparam int P720_DDR_CYC_PER_FRAME = 3_750_000; // 90e6/24
 localparam int P720_FABRIC_RD_BPS     = MISTERPLEX_BW_DIR_B_PER_S;       // 33177600
@@ -50,7 +53,8 @@ localparam int P720_HOST_COPY_US      = MISTERPLEX_BW_T_COPY_ARM_US;     // 14_9
 localparam int P720_COMBINED_AVG_BPS  = 2 * P720_FABRIC_RD_BPS;          // 66355200
 localparam int P720_BEATS_PER_FRAME   = MISTERPLEX_BW_BEATS_PER_FRAME;   // 172800
 localparam int P720_BEATS_RW_PAIR     = MISTERPLEX_BW_BEATS_RW_PAIR;     // 345600
-// Blackout cover @ PPC2 / 20 MHz / 1280: 8 lines=256µs FAIL model; 16=512µs PASS
+// Blackout cover @ PPC2 / 20 MHz / 1280: 8=256µs FAIL; 16=512µs marginal; 32=1024µs
+localparam int P720_BLACKOUT_US_32    = 1024;
 localparam int P720_BLACKOUT_US_16    = 512;
 localparam int P720_BLACKOUT_US_8     = 256;
 // NACK: 3.0 B/clk_sys DE peak is linebuf I420-equiv (rd_miss_now hit→no DDRAM)
