@@ -1934,13 +1934,15 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     if (rawDisplayW != rawW || rawDisplayH != rawH) {
         char displayScale[64];
         std::snprintf(displayScale, sizeof(displayScale), "%d:%d", rawDisplayW, rawDisplayH);
+        // flags=fast_bilinear: dual-A9 scale cost; bicubic default is pure waste on cast.
         vf += std::string("scale=") + displayScale +
-              ":force_original_aspect_ratio=decrease,pad=" + scale + ":" +
+              ":force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=" + scale + ":" +
               std::to_string(ddrGeometry.crop_left) + ":" +
               std::to_string(ddrGeometry.crop_top) + ":color=black";
     } else {
         vf += std::string("scale=") + scale +
-              ":force_original_aspect_ratio=decrease,pad=" + scale + ":(ow-iw)/2:(oh-ih)/2";
+              ":force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=" + scale +
+              ":(ow-iw)/2:(oh-ih)/2";
     }
 
     const bool testPattern = (url == "testsrc" || url.rfind("lavfi", 0) == 0);
@@ -2154,6 +2156,13 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         args.push_back("-loglevel");
         args.push_back("error");
         args.push_back("-nostdin");
+        // Dual-A9: allow both cores for decode/scale. Cap at 2 so ffmpeg cannot
+        // oversubscribe; never pin/thread=1 (CPU1-only pin regressed 720 to ~0.3 pfps).
+        args.push_back("-threads");
+        args.push_back("2");
+        // Matches scale=...:flags=fast_bilinear; global flag covers any implicit sws.
+        args.push_back("-sws_flags");
+        args.push_back("fast_bilinear");
 
         if (testPattern) {
             std::string lavfi;
