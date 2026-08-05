@@ -136,7 +136,14 @@ module ddr_publish_kick_mbox #(
 	// Parent PRODUCT_WIRE mux forces DDRAM_BUSY=1 when kick is not granted.
 	// can_issue is for actual RD/WE arms only. Request path must assert
 	// bus_want *before* grant (else can_cmd∧bus_want deadlock — PLXH silent).
-	wire can_issue = !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE;
+	//
+	// R4 STA: sample busy/pub into registers so ST_IDLE grant logic and
+	// can_issue do not sit on long u_pub/arb combo into clk_ddr (R3 margin
+	// fail setup=+0.113 < floor 0.234). One-cycle lag is fine for mailbox.
+	reg ddram_busy_d;
+	reg pub_busy_d;
+	reg posted_busy_d;
+	wire can_issue = !ddram_busy_d && !DDRAM_RD && !DDRAM_WE;
 	wire can_cmd   = can_issue; // legacy name for RD/WE issue sites
 	wire rd_accept = DDRAM_RD && !DDRAM_BUSY;
 	wire wr_accept = DDRAM_WE && !DDRAM_BUSY;
@@ -192,8 +199,15 @@ module ddr_publish_kick_mbox #(
 			DDRAM_RD <= 1'b0;
 			DDRAM_DIN <= 64'd0;
 			DDRAM_WE <= 1'b0;
+			ddram_busy_d <= 1'b1;
+			pub_busy_d <= 1'b0;
+			posted_busy_d <= 1'b0;
 		end else begin
 			start_pulse <= 1'b0;
+			// R4 STA samples (before ST_IDLE uses them)
+			ddram_busy_d  <= DDRAM_BUSY;
+			pub_busy_d    <= pub_busy;
+			posted_busy_d <= posted_busy;
 
 			// Done path: sticky + force status write once engine frees bus
 			if (pub_done_pulse) begin
@@ -221,9 +235,10 @@ module ddr_publish_kick_mbox #(
 				// bus_want=1 → m2 kick_grant starved u_pub COPY forever.
 				// While posted_busy, release bus and do not poll until
 				// pub_done_pulse clears posted_busy (need_status_wr path).
-				if (posted_busy) begin
+				// R4: use *_d samples for STA cut on clk_ddr.
+				if (posted_busy_d) begin
 					bus_want <= 1'b0;
-				end else if (pub_busy) begin
+				end else if (pub_busy_d) begin
 					bus_want <= 1'b0;
 				end else begin
 					// Intent: status refresh due, or PLXG poll slot, or already
