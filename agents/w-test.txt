@@ -1,0 +1,9 @@
+agent=w-test
+tick=2026-08-05
+mode=OFFLINE
+status=DONE
+note=harness post_plxk dump after ring_plxk=done (dump_off_000_plxk_lo); NOTE_HARNESS_PLXK_POST_DUMP.txt; NO device NO G-DEVICE
+RESULT=harness_only post_plxk SCORE dump added
+DEVICE=NO QUARTUS=NONE FIT_GO=NO G-DEVICE=NO DEPLOY=NO CLAIM_720=NO
+CLAIM=none; observe-only PLXK dump path; no green
+NEXT=parent/device may compare post_wait vs post_plxk PLXK; w-test idle offline

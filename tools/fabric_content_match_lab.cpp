@@ -556,6 +556,8 @@ int main(int argc, char** argv) {
         if (wait_r == FabricKickWaitResult::Success) {
             ringPlxkPresent(io, static_cast<uint32_t>(bank));
             std::printf("ring_plxk=done bank=%d (opt-in)\n", bank);
+            // Observe PLXK write (dump_off_000_plxk_lo); prior dumps are pre-ring only.
+            dumpDoorbellWords(io, "post_plxk");
         } else {
             std::printf("ring_plxk=skipped (PLXH not Success)\n");
         }

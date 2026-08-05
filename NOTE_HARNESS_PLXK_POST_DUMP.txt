@@ -1,0 +1,30 @@
+NOTE_HARNESS_PLXK_POST_DUMP
+worktree=MisterPlex-wt-fleet-path
+agent=w-test mode=OFFLINE
+date=2026-08-05
+
+WHAT
+  tools/fabric_content_match_lab.cpp: after ring_plxk=done, dump SCORE
+  doorbell phase=post_plxk (includes dump_off_000_plxk_lo).
+
+WHY
+  Prior dumps (post_clr_done / post_program / post_wait) are pre-ring only.
+  PLXK write via ringPlxkPresent was not observed in SCORE doorbell_dump.
+
+CHANGE
+  After printf ring_plxk=done, call dumpDoorbellWords(io, "post_plxk").
+  dumpDoorbellWords already reads +0x000 PLXK observe-only (no write).
+  Skipped path (PLXH not Success) still has no post_plxk dump.
+
+SCOPE
+  Harness/RCA only. NO device. NO deploy. NO G-DEVICE claim.
+  CLAIM_720=NO PRODUCT_FABRIC=OFF FIT_GO=NO RESEARCH_LAB=1
+
+VERIFY (offline)
+  Code path only; no silicon run this tick.
+  Expect log line: SCORE doorbell_dump phase=post_plxk
+  + dump_off_000_plxk_lo=0x... after ring_plxk=done when --ring-plxk.
+
+NEXT
+  Device run (parent/other agent) may use post_plxk vs post_wait PLXK
+  to confirm present ring landed. w-test idle offline.
