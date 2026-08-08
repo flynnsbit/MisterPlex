@@ -128,10 +128,13 @@ bool mediaVideoIsH264(const std::string& plexMetadataXml);
 // preferDirectH264: when true (STREAM=1 product path), use direct Part stream if source is
 // already H.264 so host CAVLC recon can run on Baseline/Main without High/CABAC remux.
 // Non-H.264 still falls through to the weak universal ladder.
+// decodeW/H: when >0 and Media size covers the bank, prefer direct Part even on STREAM=0
+// (skip PMS re-encode for true-720 sources like Grid720). FOAR 720x480 does not cover 1280x720.
 ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::string& plexBase,
                                 const std::string& token, int64_t offsetMs = 0,
                                 bool weakAlways = true, const WeakLadder& weak = {},
-                                bool preferDirectH264 = false);
+                                bool preferDirectH264 = false, int decodeW = 0,
+                                int decodeH = 0);
 
 // Fetch /playQueues/{id} for next-episode / skipNext. currentKey or playQueueItemId
 // selects currentIndex when present.

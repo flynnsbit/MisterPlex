@@ -596,7 +596,8 @@ bool mediaVideoIsH264(const std::string& plexMetadataXml) {
 
 ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::string& plexBase,
                                 const std::string& token, int64_t offsetMs, bool weakAlways,
-                                const WeakLadder& weak, bool preferDirectH264) {
+                                const WeakLadder& weak, bool preferDirectH264, int decodeW,
+                                int decodeH) {
     ResolveResult r;
     std::string key = urlDecode(rawKeyOrPath);
     if (key.empty() || key == "test" || key == "testsrc") {
@@ -750,10 +751,12 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
 
     // STREAM product path: prefer direct H.264 Part (elementary after demux) so host
     // CAVLC recon can work on Baseline/Main. PMS Chrome universal often emits High/CABAC.
+    // STREAM=0 rate path: also direct when source Media covers DECODE bank (true 720
+    // already at bank size — skip PMS re-transcode). Never direct FOAR 720x480 into HD.
     const bool metaOk = metaFound;
     const bool isH264 = metaOk && mediaVideoIsH264(xml);
-    const bool wantDirect = preferDirectH264 && key.rfind("/library", 0) == 0;
-    const bool directH264 = wantDirect && isH264;
+    const bool mediaCoversDecode = decodeW > 0 && decodeH > 0 && r.mediaWidth >= decodeW &&
+                                   r.mediaHeight >= decodeH;
     // Optional profile tag for operator logs (High often implies CABAC sticky skip).
     auto videoProfileNote = [&]() -> std::string {
         if (!metaOk)
@@ -782,6 +785,24 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
             p = attr(xml, "Media", "videoCodec");
         return p;
     };
+    // STREAM=0 rate: direct Part only when Media covers DECODE *and* profile is
+    // baseline/main. High@L4 Grid720 measured ~17 pfps direct vs ~18.6 via Main
+    // universal + scale bypass — keep weak ladder for High.
+    const std::string srcProfEarly = videoProfileNote();
+    auto profLower = srcProfEarly;
+    for (char& c : profLower) {
+        if (c >= 'A' && c <= 'Z')
+            c = static_cast<char>(c - 'A' + 'a');
+    }
+    const bool lightDirectProfile =
+        profLower.find("baseline") != std::string::npos ||
+        profLower == "main" || profLower.find("constrained baseline") != std::string::npos ||
+        (profLower.find("main") != std::string::npos &&
+         profLower.find("high") == std::string::npos);
+    const bool wantDirect =
+        key.rfind("/library", 0) == 0 &&
+        (preferDirectH264 || (mediaCoversDecode && lightDirectProfile));
+    const bool directH264 = wantDirect && isH264;
     if (directH264) {
         const std::string prof = videoProfileNote();
         const std::string profSuffix = prof.empty() ? "" : (" profile=" + prof);
@@ -795,7 +816,8 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
                               std::string("X-Plex-Token=") + urlEncodeQuery(token);
             r.ok = true;
             r.transcoded = false;
-            r.detail = "direct H.264 Part (STREAM" + profSuffix + ")";
+            r.detail = std::string("direct H.264 Part (") +
+                       (preferDirectH264 ? "STREAM" : "media_covers_decode") + profSuffix + ")";
             return r;
         }
         auto file = attr(xml, "Part", "file");
@@ -803,7 +825,8 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
             r.playable = urlDecode(file);
             r.ok = true;
             r.transcoded = false;
-            r.detail = "direct H.264 Part file (STREAM" + profSuffix + ")";
+            r.detail = std::string("direct H.264 Part file (") +
+                       (preferDirectH264 ? "STREAM" : "media_covers_decode") + profSuffix + ")";
             return r;
         }
         // Fall through to universal if Part missing

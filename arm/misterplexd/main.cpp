@@ -620,11 +620,13 @@ int main(int argc, char** argv) {
             selected = preferredBase.empty() ? defaultPms : preferredBase;
 
         auto tryBase = [&](const std::string& base) -> misterplex::ResolveResult {
-            // STREAM=1: prefer direct H.264 Part for CAVLC host recon; still weakAlways for
-            // non-H.264. STREAM=0: always weak universal (dual-A9 cast path).
+            // STREAM=1: prefer direct H.264 Part for CAVLC host recon.
+            // STREAM=0: weak universal by default, but resolve still takes decodeW/H so
+            // true-720 sources (Media covers bank) can direct-Part and skip PMS re-encode.
             return misterplex::resolvePlayTarget(req.key, base, token, off, /*weakAlways=*/true,
                                                  weakForPlay,
-                                                 /*preferDirectH264=*/streamEnabled);
+                                                 /*preferDirectH264=*/streamEnabled, decodeW,
+                                                 decodeH);
         };
 
         auto resolved = tryBase(selected);
