@@ -146,9 +146,13 @@ def validate(entries: list[str]) -> None:
         else:
             fail(f"unrecognised entry `{entry}`")
 
-    for required in ("F1", "F2", "F3", "O[4]", "O[9:6]", "O[15:14]", "J1", "v"):
-        if required not in seen:
-            fail(f"required CONF_STR entry `{required}` is missing")
+    # v8+: O[5:4] content resolution (240p/480p/720p). Accept legacy O[4] too.
+    required = ["F1", "F2", "F3", "O[9:6]", "O[15:14]", "J1", "v"]
+    for req in required:
+        if req not in seen:
+            fail(f"required CONF_STR entry `{req}` is missing")
+    if "O[5:4]" not in seen and "O[4]" not in seen:
+        fail("required CONF_STR entry `O[5:4]` (or legacy `O[4]`) is missing")
     print("PASS CONF_STR guard: structure, field counts, file slots and status bits are sane")
 
 

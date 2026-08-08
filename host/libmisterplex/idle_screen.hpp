@@ -66,6 +66,51 @@ inline bool idleChevronHit(int x, int y, int ox, int oy, int size) {
     return d >= 0 && d < stroke;
 }
 
+// Coverage 0..256 (8.8 fixed) for anti-aliased chevron stroke.
+// Hard binary edges + 4:2:0 + 1280→1920 scale produce multi-colour "dot crawl"
+// on the silhouette (visible on VGA/HDMI). Feather ~3px so scaled glass has no
+// single-pixel chroma ticks. Solid (256) only where idleChevronHit is true so
+// overscan margin / binary tests stay honest; skirt never invents full FG.
+inline int idleChevronCover256(int x, int y, int ox, int oy, int size) {
+    if (size <= 0)
+        return 0;
+    if (idleChevronHit(x, y, ox, oy, size))
+        return 256;
+    const int lx = x - ox;
+    const int ly = y - oy;
+    // Soft skirt just outside the stroke (box ±3). No full coverage out here.
+    if (lx < -3 || ly < -3 || lx > size + 2 || ly > size + 2)
+        return 0;
+    const int half = size / 2;
+    const int stroke = size / 5 > 0 ? size / 5 : 1;
+    // Clamp ly into the diagonal domain so out-of-box samples don't fake a hit.
+    const int lyC = ly < 0 ? 0 : (ly >= size ? size - 1 : ly);
+    const int d = lyC <= half ? (lx - lyC) : (lx - (size - 1 - lyC));
+    int outside = 0;
+    if (d < 0)
+        outside = -d;
+    else if (d >= stroke)
+        outside = d - (stroke - 1);
+    // Also push away when outside the box vertically/horizontally.
+    if (lx < 0)
+        outside += -lx;
+    else if (lx >= size)
+        outside += lx - (size - 1);
+    if (ly < 0)
+        outside += -ly;
+    else if (ly >= size)
+        outside += ly - (size - 1);
+    if (outside <= 0)
+        return 0; // should be unreachable (hit handled above)
+    if (outside == 1)
+        return 192;
+    if (outside == 2)
+        return 64;
+    if (outside == 3)
+        return 16;
+    return 0;
+}
+
 struct IdleRenderState {
     bool blank = false;
     int size = 0;
@@ -93,10 +138,27 @@ inline IdleRenderState idleRenderState(int w, int h, IdleMode mode, int phase) {
 
 inline void idlePixelRgb(int x, int y, const IdleRenderState& s,
                          uint8_t& r, uint8_t& g, uint8_t& b) {
-    const bool on = !s.blank && idleChevronHit(x, y, s.ox, s.oy, s.size);
-    r = on ? kIdleFgR : (s.blank ? 0 : kIdleBgR);
-    g = on ? kIdleFgG : (s.blank ? 0 : kIdleBgG);
-    b = on ? kIdleFgB : (s.blank ? 0 : kIdleBgB);
+    if (s.blank) {
+        r = g = b = 0;
+        return;
+    }
+    const int cov = idleChevronCover256(x, y, s.ox, s.oy, s.size);
+    if (cov <= 0) {
+        r = kIdleBgR;
+        g = kIdleBgG;
+        b = kIdleBgB;
+        return;
+    }
+    if (cov >= 256) {
+        r = kIdleFgR;
+        g = kIdleFgG;
+        b = kIdleFgB;
+        return;
+    }
+    // Blend fg over bg (cov is 0..256).
+    r = static_cast<uint8_t>((kIdleFgR * cov + kIdleBgR * (256 - cov) + 128) >> 8);
+    g = static_cast<uint8_t>((kIdleFgG * cov + kIdleBgG * (256 - cov) + 128) >> 8);
+    b = static_cast<uint8_t>((kIdleFgB * cov + kIdleBgB * (256 - cov) + 128) >> 8);
 }
 
 inline uint8_t idleClamp8(int v) {
@@ -154,24 +216,43 @@ inline bool renderIdleYuv420p(uint8_t* yuv, int w, int h, IdleMode mode, int pha
         }
     }
 
+    // Chroma 2x2: do NOT average orange with dark bg — that yields mid-Y + near-
+    // neutral UV which decodes green on the right silhouette (4:2:0 classic).
+    // Prefer solid FG UV whenever any sample is inside the stroke; otherwise
+    // coverage-weighted blend of FG UV toward neutral (bg UV=128).
+    const uint8_t uFg = idleRgbToU(kIdleFgR, kIdleFgG, kIdleFgB);
+    const uint8_t vFg = idleRgbToV(kIdleFgR, kIdleFgG, kIdleFgB);
+    const uint8_t uBg = idleRgbToU(kIdleBgR, kIdleBgG, kIdleBgB);
+    const uint8_t vBg = idleRgbToV(kIdleBgR, kIdleBgG, kIdleBgB);
     for (int cy = 0; cy < h / 2; ++cy) {
         for (int cx = 0; cx < w / 2; ++cx) {
-            int rSum = 0, gSum = 0, bSum = 0;
+            int covMax = 0;
             for (int dy = 0; dy < 2; ++dy) {
                 for (int dx = 0; dx < 2; ++dx) {
-                    uint8_t r = 0, g = 0, b = 0;
-                    idlePixelRgb(cx * 2 + dx, cy * 2 + dy, state, r, g, b);
-                    rSum += r;
-                    gSum += g;
-                    bSum += b;
+                    const int cov = idleChevronCover256(
+                        cx * 2 + dx, cy * 2 + dy, state.ox, state.oy, state.size);
+                    if (cov > covMax)
+                        covMax = cov;
                 }
             }
-            const int r = (rSum + 2) / 4;
-            const int g = (gSum + 2) / 4;
-            const int b = (bSum + 2) / 4;
             const size_t ci = static_cast<size_t>(cy) * static_cast<size_t>(w / 2) + cx;
-            uPlane[ci] = idleRgbToU(r, g, b);
-            vPlane[ci] = idleRgbToV(r, g, b);
+            if (state.blank) {
+                uPlane[ci] = 128;
+                vPlane[ci] = 128;
+            } else if (covMax <= 0) {
+                // Solid dark field — use BG chroma (not neutral 128).
+                uPlane[ci] = uBg;
+                vPlane[ci] = vBg;
+            } else if (covMax >= 256) {
+                // Any fully-inside sample → pure amber chroma (avoid green fringe).
+                uPlane[ci] = uFg;
+                vPlane[ci] = vFg;
+            } else {
+                // Partial AA: blend FG chroma toward BG chroma by coverage.
+                const int t = covMax; // 1..255
+                uPlane[ci] = idleClamp8((int(uFg) * t + int(uBg) * (256 - t) + 128) >> 8);
+                vPlane[ci] = idleClamp8((int(vFg) * t + int(vBg) * (256 - t) + 128) >> 8);
+            }
         }
     }
     return true;

@@ -1177,12 +1177,12 @@ def check_present_geometry_stride_contract() -> None:
             ),
             (
                 media_norm,
-                'vf+=std::string("scale=")+displayScale+":force_original_aspect_ratio=decrease,pad="+scale+":"+std::to_string(ddrGeometry.crop_left)+":"+std::to_string(ddrGeometry.crop_top)+":color=black";',
+                'vf+=std::string("scale=")+displayScale+":force_original_aspect_ratio=decrease:flags="+swsFlags+",pad="+scale+":"+std::to_string(ddrGeometry.crop_left)+":"+std::to_string(ddrGeometry.crop_top)+":color=black";',
                 "FFmpeg must scale into display geometry then pad once into the coded 624-pixel stride",
             ),
             (
                 media_norm,
-                "clearYuv420pCropPadding(frame.data(),ddrGeometry)",
+                "clearYuv420pCropPadding(slotFrame,ddrGeometry)",
                 "rawvideo DDR frames must blacken coded crop padding before the frame-store reads them",
             ),
             (
@@ -1330,8 +1330,9 @@ def check_ddr_bank_handoff_contract() -> None:
         required = [
             (
                 cpp_norm,
-                "constexprintkDdrBankReuseMinUs=40000;",
-                "ARM DDR writer must enforce a same-bank reuse floor of at least two vsyncs",
+                "constexprintkDdrBankReuseMinUs=16000;",
+                "ARM DDR writer must enforce a same-bank reuse floor of at least one 60Hz vsync "
+                "(16ms; 40ms half-rates 24fps and is banned on the product rate path)",
             ),
             (
                 h_norm,
@@ -1522,8 +1523,8 @@ def check_yuv_ddr_writer_contract() -> None:
             ),
             (
                 media_norm,
-                "n=::read(rfd,frame.data()+got,frameBytes-got);",
-                "decoded rawvideo bytes must be read contiguously into frame.data()",
+                "n=::read(rfd,dst+got,frameBytes-got);",
+                "decoded rawvideo bytes must be read contiguously into the frame/DDR destination",
             ),
             (
                 media_norm,
@@ -1649,7 +1650,13 @@ def check_yuv_ddr_writer_contract() -> None:
     compact_media = norm(media)
     check(
         "renderIdleYuv420p" in media
-        and "sendYuv420pFrameDdr(yuv.data(),yuv.size(),g,ddrBank_)" in compact_media,
+        and (
+            "sendYuv420pFrameDdr(yuv.data(),yuv.size(),g,ddrBank_)" in compact_media
+            or (
+                "sendYuv420pFrameDdr(yuv.data(),yuv.size(),g,0)" in compact_media
+                and "sendYuv420pFrameDdr(yuv.data(),yuv.size(),g,1)" in compact_media
+            )
+        ),
         "MediaPlayer::paintIdle must send the rendered logo/screensaver through the YUV420p "
         "DDR path. A hard-coded black I420 payload clears stale video but makes the selectable "
         "FPGA idle logo/screensaver disappear under PRESENT=fpga.",
@@ -1749,12 +1756,19 @@ def check_yuv_ddr_writer_contract() -> None:
         "output_files",
         "db",
         "incremental_db",
+        # Accidental nested worktree checkouts inside the primary clone.
+        "MisterPlex-wt-path-land",
+        "MisterPlex-wt-main-pin",
+        "MisterPlex-wt-clock-pin-035fae51",
+        "MisterPlex-wt-plxd-audit",
     }
     for path in ROOT.rglob("*"):
         if not path.is_file():
             continue
         rel = path.relative_to(ROOT)
         if rel in allowed_paths or any(part in skip_parts for part in rel.parts):
+            continue
+        if any(part.startswith("MisterPlex-wt-") for part in rel.parts):
             continue
         try:
             text = path.read_text(encoding="utf-8", errors="ignore")
@@ -1869,7 +1883,7 @@ def check_present_path_degradation_contract() -> None:
                 "(including frame_status=absent or frame_debug=0xE1)",
             ),
             (
-                'log("media:reconF1skipped:YUVDDRframe-storerequirescoded624x480,got"+',
+                'log("media:reconF1skipped:YUVDDRframe-storeexpectscoded"+',
                 "geometry fallback/skip in STREAM recon must be a named skip, not a quiet "
                 "absence of F1 frames",
             ),

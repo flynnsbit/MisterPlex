@@ -5,7 +5,7 @@ Multi-resolution cast release: **240p / 480p / 720p**, live PMS encoder match, D
 ## Highlights
 
 - **Content resolution labels:** OSD and product profiles use **240p / 480p / 720p** (CONF_STR v8 `O[5:4]`). Internal banks remain 320×240, 640×480 (624 coded), 1280×720.
-- **Live PMS match:** Changing content resolution retargets the Plex universal weak ladder (`videoResolution` + bitrate/profile) and restarts the session at the same playhead. When PMS size matches DECODE, FFmpeg **scale/pad is skipped** (`scale=bypass`).
+- **Live PMS match:** Changing content resolution retargets the Plex universal weak ladder (`videoResolution` + bitrate/profile) and restarts the session at the same playhead. FFmpeg always FOAR+pads network/PMS streams to the DECODE bank (PMS often returns a smaller coded size than requested — never trust `videoResolution` alone). Local identity play-files may skip scale.
 - **DDR always available:** HPS DDR frame store is the shipping present path. **SDRAM stick is optional** — not required for 240p/480p/720p. Conf documents `PRESENT_MEM=auto|ddr`.
 - **480p geometry:** FOAR+pad contract coded 624 × display 618 × present 640 (lab-proven in daemon logs).
 - **Companion version:** 0.4.0.
