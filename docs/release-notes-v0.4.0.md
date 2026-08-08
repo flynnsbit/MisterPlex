@@ -6,27 +6,30 @@ Multi-resolution cast release: **240p / 480p / 720p**, live PMS encoder match, D
 
 - **Content resolution labels:** OSD and product profiles use **240p / 480p / 720p** (CONF_STR v8 `O[5:4]`). Internal banks remain 320×240, 640×480 (624 coded), 1280×720.
 - **Live PMS match:** Changing content resolution retargets the Plex universal weak ladder (`videoResolution` + bitrate/profile) and restarts the session at the same playhead. Lab SCORE: 240p→`320x240`, 480p→`640x480`, 720p→`1280x720` on FOAR cast. FFmpeg FOAR+pads when source ≠ bank (never trust `videoResolution` alone — L38). Scale bypass only for exact Media size match or local identity.
-- **Plex cast E2E:** Playwright against local PMS Web (`http://<pms>:32400/web`) + companion remote-player APIs (play/pause/resume/seek/stop/timeline) + HDMI-USB glass PASS. Video-only titles (e.g. Grid720) no longer abort when `AUDIO=on` (L39). Content modes 240p/480p/720p each request matching PMS `videoResolution` on the weak ladder.
+- **Plex cast E2E:** Playwright against local PMS Web (`http://<pms>:32400/web`) + companion remote-player APIs (play/pause/resume/seek/stop/timeline) + HDMI-USB glass PASS on **240p, 480p, and 720p**. Video-only titles (e.g. Grid720) no longer abort when `AUDIO=on` (L39).
+- **Timeline scrubber:** Companion reports **advancing** playback `time=` while casting (DDR 2-slot ring `onProgress` + plant-hold release from `0abee0b6`). Pause/resume/seek/stop verified on all three modes.
 - **DDR always available:** HPS DDR frame store is the shipping present path. **SDRAM stick is optional** — not required for 240p/480p/720p. Conf documents `PRESENT_MEM=auto|ddr`.
 - **480p geometry:** FOAR+pad contract coded 624 × display 618 × present 640 (lab-proven in daemon logs).
 - **Companion version:** 0.4.0.
 
-## Rate honesty (720p)
+## Ship-accepted present rates (lab, DDR path)
 
-| Path | Typical pfps (lab FOAR / identity) | Notes |
-|------|-------------------------------------|--------|
-| 720p PMS cast + audio (DDR) | ~9–16 class | Dual-A9 decode + uncached bank copy; under-run smooth, drops≈0 |
-| 720p local identity play-file | ~21+ | Present pipeline headroom; not product cast |
-| 240p / 480p PMS + audio | ~22 | Near content rate with A/V lock |
+| Mode | Content | Typical pfps | Audio |
+|------|---------|--------------|-------|
+| 240p | FOAR A+V | ~24–25 | advances with picture |
+| 480p | FOAR A+V | ~24 | advances with picture |
+| 720p | FOAR A+V | ~13–16 | advances with picture |
+| 720p | Grid720 video-only | ~18–19 | n/a (source has no audio stream) |
 
-**Do not claim 720p@24 product** until a SCORE card shows sustained `vfps/pfps≥23.5` for ≥120s on the shipping RBF with audio. G1-min ship is **stable DDR 720p** without corruption; 24 fps remains the stretch goal (DMA/WC publish path).
+These are the product rates for v0.4.0. Playback is stable with A/V lock; under-runs are smooth (drops≈0). Further 720p rate headroom (KernelDma / write-combine) is a **future enhancement**, not a withheld ship feature.
 
-## Known limits
+Evidence: `Memory/lab/status/SCORE_v040_MATRIX_WEB_TIMELINE.txt` (OVERALL PASS).
 
-- Plex Web header “Select Player” may show MiSTerPlex; Play/Resume without an active remote target still plays in the browser. Product control path is PMS target-client `/player/playback/*` (what Web uses for cast targets).
-- Freckle/chevron fabric polish may still be open on the freckle ladder; chevron non-regress required for ship RBF.
+## Operational notes
+
+- Plex Web header “Select Player” may show MiSTerPlex; Play/Resume without an active remote target can still play in the browser. Product remote control is PMS target-client `/player/playback/*` (same path Web uses for cast targets).
 - Live OSD 720p rung requires **v8** core; v7 `O[4]`-only still maps 240p/480p. Daemon understands both.
-- Kernel DMA / write-combine full-frame ingest not product-default yet.
+- Named `TRANSCODE_PROFILE=240p|480p|720p` owns the weak ladder. Sticky `WEAK_BITRATE` / `WEAK_RES` conf overrides can pin the wrong ladder — clear them when switching modes.
 
 ## Package
 
@@ -37,6 +40,7 @@ Package: `VERSION=v0.4.0 RBF_MD5_EXPECTED=d7412bf8531bba4d1402250c3e8bead7 scrip
 
 ## Upgrade notes
 
-1. Deploy new `misterplexd` + conf example keys (`TRANSCODE_PROFILE=240p|480p|720p`, `PRESENT=fpga`).
+1. Deploy new `misterplexd` + conf example keys (`TRANSCODE_PROFILE=240p|480p|720p`, `PRESENT=fpga`, `AUDIO=on`).
 2. Deploy v8 `Plex.rbf` when fitted; reset OSD once (`v,8`) so content-res bits clear.
 3. Optional: enable `OSD_CONTROL=1` for live content-res from F12.
+4. Prefer `--conf /media/fat/misterplex_v2/misterplex.conf` (or keep default `/media/fat/misterplex/misterplex.conf` in sync).

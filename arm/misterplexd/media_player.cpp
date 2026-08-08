@@ -3022,7 +3022,12 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                         " fps=" + std::to_string(fpsNum) + "/" + std::to_string(fpsDen) +
                         " decode=" + std::to_string(outW_) + "x" + std::to_string(outH_) +
                         " pipe=1");
-                    positionMs_.store(startMs + wall2);
+                    // DDR 2-slot ring never hits the non-pipe progress path (frameIndex%15).
+                    // Without this, Companion/Plex Web scrubber freezes at plant offset.
+                    const int64_t tms = startMs + wall2;
+                    positionMs_.store(tms);
+                    if (onProgress_)
+                        onProgress_("playing", tms, durationMs);
                 }
             }
             readerEof.store(true);

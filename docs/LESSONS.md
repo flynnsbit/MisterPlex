@@ -364,3 +364,19 @@ user request and without PASS. User rejected that. Rule: never `scheduler_delete
 a pass-gated loop unless PASS is proven or the user cancels. Pivot the prompt
 to architecture work instead. Lab note:
 `Memory/lab/status/LESSON_DO_NOT_CANCEL_LOOP_BEFORE_PASS.txt`.
+
+## L40 — DDR 2-slot ring must call onProgress (Web scrubber freeze)
+
+**Symptom:** Plex Web / companion timeline stuck at plant offset (e.g. `time=3000`) while
+`frames`/`pfps`/`audio_s` advance and HDMI shows content.
+
+**Cause:** `PRESENT=fpga` uses `present_pipeline=2slot_cached_ring`. That path stored
+`positionMs_` on the 1 Hz log tick but **never called `onProgress_`**. Companion only
+received the initial `playing@startMs` plant → scrubber freeze. Separate from the older
+plant-hold bug (`0abee0b6` far-ahead release + `seedPlaybackPosition`).
+
+**Fix:** Call `onProgress_("playing", startMs+wall, dur)` alongside `positionMs_.store` in
+the DDR pipe loop. Keep `0abee0b6` plant-ahead release + `seedPlaybackPosition` in
+companion. Unit: `tests/unit/test_companion_plant_seek.cpp`.
+
+**Evidence:** SCORE_v040_MATRIX_WEB_TIMELINE.txt — timeline advances on 240/480/720 after fix.

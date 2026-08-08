@@ -69,6 +69,12 @@ public:
     // Ensures bindMedia key-match accepts the upcoming doPlay for this key.
     void stagePlay(const PlayRequest& req);
 
+    // Align plant + displayed clock to the demux start about to begin (e.g. PMS
+    // viewOffset when cast omitted offset=). Keeps seek-hold semantics: early
+    // demux restart behind this target still pins; live time ahead adopts.
+    // Port of 0abee0b6 — without this, Web scrubber freezes at 0:00.
+    void seedPlaybackPosition(int64_t timeMs, int64_t durationMs);
+
     // Clear media bind (after stop finishes).
     void clearMedia();
 
