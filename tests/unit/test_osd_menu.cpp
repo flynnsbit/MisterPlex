@@ -65,7 +65,14 @@ int main() {
     CHECK(decodeOsdWord(3u << 4).contentResolution.width == 1280);
     CHECK(decodeOsdWord(0xFu << 6).avOffsetMs == kOsdAvOffsetDefaultMs - 20); // O[9:6] idx 15
     CHECK(decodeOsdWord(8u << 6).avOffsetMs == kOsdAvOffsetDefaultMs - 160); // O[9:6] idx 8
-    CHECK(decodeOsdWord(3u << 14).idleMode == 3);           // O[15:14] Idle screen
+    // v9: O[15:14] Display — 0=follow content, 1=240p, 2=480p, 3=720p.
+    CHECK(decodeOsdWord(0u).displayResolution.width == 320); // follow 240p content
+    CHECK(decodeOsdWord(2u << 4).displayResolution.width == 1280); // follow 720p content
+    CHECK(decodeOsdWord((2u << 4) | (1u << 14)).displayResolution.width == 320); // force 240p
+    CHECK(std::string(decodeOsdWord((2u << 4) | (1u << 14)).displayResolution.label) == "240p");
+    CHECK(decodeOsdWord((0u << 4) | (2u << 14)).displayResolution.width == 640);
+    CHECK(decodeOsdWord((0u << 4) | (3u << 14)).displayResolution.width == 1280);
+    CHECK(decodeOsdWord(3u << 14).idleMode == 0); // idle conf-only
     // Core-owned bits must not leak into user settings (O[5] is content-res high).
     for (int bit : {0, 2, 10, 11, 12, 13}) {
         const OsdSettings d = decodeOsdWord(static_cast<uint16_t>(1u << bit));

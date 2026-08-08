@@ -615,17 +615,23 @@ void MediaPlayer::applyOsd(uint16_t word) {
     if (idleChanged && !playing_.load())
         paintIdle();
 
-    // Content resolution (O[5:4]): notify main so PMS weak ladder can retarget.
-    // First OSD sample seeds lastContentRes_ without a spurious restart.
+    // Content (O[5:4]) and Display (O[15:14] v9): notify main so PMS ladder + conf
+    // + present bank retarget. First OSD sample seeds without a spurious restart.
     const ContentResolution& cr = s.contentResolution;
+    const ContentResolution& dr = s.displayResolution;
     const bool havePrev = lastContentRes_.width > 0;
-    const bool resChanged =
+    const bool contentChanged =
         havePrev && (cr.width != lastContentRes_.width || cr.height != lastContentRes_.height);
+    const bool havePrevDisp = lastDisplayRes_.width > 0;
+    const bool displayChanged =
+        havePrevDisp &&
+        (dr.width != lastDisplayRes_.width || dr.height != lastDisplayRes_.height);
     lastContentRes_ = cr;
-    if (resChanged && onContentRes_) {
+    lastDisplayRes_ = dr;
+    if ((contentChanged || displayChanged) && onContentRes_) {
         const bool nowPlaying = playing_.load();
-        log(std::string("media: content_res change → ") + cr.label + " " +
-            std::to_string(cr.width) + "x" + std::to_string(cr.height) +
+        log(std::string("media: res change content→") + cr.label + " display→" + dr.label +
+            " " + std::to_string(dr.width) + "x" + std::to_string(dr.height) +
             (nowPlaying ? " (live restart)" : " (next play)"));
         onContentRes_(cr, nowPlaying);
     }
@@ -633,7 +639,7 @@ void MediaPlayer::applyOsd(uint16_t word) {
     log("media: OSD word=0x" + hex16(word) + " av_offset_ms=" + std::to_string(s.avOffsetMs) +
         " clock_ppm=" + std::to_string(audioClockPpm_) +
         " resync=" + (s.resyncEnabled ? "on" : "off") +
-        " idle=" + std::to_string(s.idleMode) + " content_res=" + cr.label);
+        " content_res=" + cr.label + " display_res=" + dr.label);
 }
 
 void MediaPlayer::paintIdle() {

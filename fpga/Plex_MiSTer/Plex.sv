@@ -56,11 +56,12 @@ localparam CONF_STR = {
 	"O[122:121],Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
 	// Default first option = NTSC (status[2]=0). Bump v, so saved PAL is cleared.
 	"O[2],TV Mode,NTSC,PAL;",
-	// O[5:4] content resolution (product labels). misterplexd reads the same OSD
-	// word and retargets the PMS weak ladder (live session restart). Content FPS
-	// is software-only (MATCH_SOURCE_HZ / SOURCE_FPS) — not an OSD item.
+	// O[5:4] CONTENT resolution → PMS weak ladder / DECODE (misterplexd).
+	// O[15:14] DISPLAY resolution → FPGA present bank (may differ for lab A/V).
 	// 0=240p (320x240), 1=480p (640x480 bank), 2/3=720p (1280x720).
 	"O[5:4],Content resolution,240p,480p,720p,720p;",
+	// 0=Follow content (v8-safe default); 1/2/3 force present bank independent of PMS.
+	"O[15:14],Display resolution,Follow content,240p,480p,720p;",
 	"-;",
 	// misterplexd reads these back over UIO and applies them live (no restart).
 	// Positive = hold the frame back = video LATER. Raise it when audio sounds
@@ -70,7 +71,8 @@ localparam CONF_STR = {
 	"O[9:6],Video delay,0ms,+20ms,+40ms,+60ms,+80ms,+100ms,+120ms,+140ms,-160ms,-140ms,-120ms,-100ms,-80ms,-60ms,-40ms,-20ms;",
 	"O[1],A/V auto resync,On,Off;",
 	"O[3],Audio clock trim,On,Off;",
-	"O[15:14],Idle screen,Plex logo,Black,Screensaver,Last frame;",
+	// Idle screen is conf IDLE_SCREEN= (logo/black/screensaver/last) — bits freed
+	// for Display resolution above so users can A/B content vs glass bank.
 	"-;",
 	"T[10],Flush audio FIFO;",
 	"T[11],Flush bitstream FIFO;",
@@ -79,7 +81,7 @@ localparam CONF_STR = {
 	"R[0],Reset and close OSD;",
 	// J1 maps to joystick_0 bits 4..7; names feed MiSTer's controller mapper.
 	"J1,Play/Pause,Stop,Skip Fwd,Skip Back;",
-	"v,8;", // reset OSD: v8 O[5:4] content-res 240p/480p/720p (was v7 O[4]-only)
+	"v,9;", // reset OSD: v9 O[15:14]=Display res (was Idle); Content still O[5:4]
 	"V,v",`BUILD_DATE
 };
 
@@ -226,17 +228,25 @@ pll pll
 
 wire reset = RESET | status[0] | buttons[1];
 
-// O[5:4] native content-resolution selector shared with misterplexd (v8).
-// status[5:4]: 0=240p, 1=480p, 2|3=720p. Softc FRAME_W/H may still be 1280x720
-// compile-time; runtime DDR layout comes from SPI. L4 mux consumes the 480p bit
-// for the 320/640 ladder when PLXG is idle (720p still via FABRIC_NATIVE / PLXG).
+// O[5:4] CONTENT (PMS/DECODE) — misterplexd OSD mailbox.
+// O[15:14] DISPLAY present bank (v9+). Glass geometry follows display; content
+// may differ for lab A/B. Softc FRAME_W/H may still be 1280x720 compile-time;
+// runtime DDR layout comes from SPI. L4 mux still uses content 480p bit for the
+// 320/640 ladder when PLXG is idle (720p via FABRIC_NATIVE / PLXG).
 wire [1:0]  content_res_sel     = status[5:4];
+// Display: 0=follow content, 1=240p, 2=480p, 3=720p
+wire [1:0]  display_res_menu    = status[15:14];
+wire [1:0]  display_res_sel     = (display_res_menu == 2'd0) ? content_res_sel :
+                                  (display_res_menu == 2'd1) ? 2'd0 :
+                                  (display_res_menu == 2'd2) ? 2'd1 : 2'd2;
 wire        content_res_640x480 = (content_res_sel == 2'd1);
 wire        content_res_720p    = (content_res_sel >= 2'd2);
-wire [10:0] content_width       = content_res_720p ? 11'd1280 :
-                                  (content_res_640x480 ? 11'd640 : 11'd320);
-wire [10:0] content_height      = content_res_720p ? 11'd720 :
-                                  (content_res_640x480 ? 11'd480 : 11'd240);
+wire        display_res_640x480 = (display_res_sel == 2'd1);
+wire        display_res_720p    = (display_res_sel >= 2'd2);
+wire [10:0] content_width       = display_res_720p ? 11'd1280 :
+                                  (display_res_640x480 ? 11'd640 : 11'd320);
+wire [10:0] content_height      = display_res_720p ? 11'd720 :
+                                  (display_res_640x480 ? 11'd480 : 11'd240);
 
 // ---------------------------------------------------------------------------
 // L4 720p present geom hierarchy (DEFAULT OFF via PLEX_PRESENT_720P_L4).

@@ -238,6 +238,7 @@ private:
     ProgressFn onProgress_;
     ContentResFn onContentRes_;
     ContentResolution lastContentRes_{};
+    ContentResolution lastDisplayRes_{};
     std::string ffmpeg_ = "/media/fat/mistercast/bin/ffmpeg";
     // Default bicubic: soft 480p→720 skies without vertical banding (see SCORE_BANDING_FIX).
     // Light present-rate ladder overrides via setFfmpegSwsFlags / FFMPEG_SWS_FLAGS.

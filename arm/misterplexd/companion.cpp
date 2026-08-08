@@ -671,20 +671,36 @@ void Companion::httpLoop() {
         buf[n] = 0;
         std::string req(buf, static_cast<size_t>(n));
 
-        // Refresh PMS timeline auth from cast-bearing player requests. Device
-        // evidence: a live session token can 200 once then 401 later — pick up
-        // newer tokens from subsequent playMedia/seek/poll without restarting.
+        // Refresh PMS timeline auth only from cast *control* requests that carry the
+        // playing server's token (playMedia/seek/playback/*). Do NOT take tokens from
+        // timeline poll/subscribe: Plex Web long-polls with the *controller* PMS token
+        // (often local 192.168.x) while playMedia used a remote plex.direct transient
+        // token — overwriting it yields /:/timeline HTTP 401 and Web scrubber stuck
+        // at 0:00 (L41 follow-up; user rk 154219/154269 on machine 1cdd…).
         if (onTokenUpdate_ && req.find("/player/") != std::string::npos) {
-            std::string tok = pctDecode(queryParam(req, "token"));
-            if (tok.empty())
-                tok = pctDecode(queryParam(req, "X-Plex-Token"));
-            if (tok.empty())
-                tok = pctDecode(headerValue(req, "X-Plex-Token"));
-            if (!tok.empty()) {
-                try {
-                    onTokenUpdate_(tok);
-                } catch (...) {
-                    log("token update handler exception");
+            const bool castControl =
+                req.find("playMedia") != std::string::npos ||
+                req.find("/player/playback/") != std::string::npos ||
+                req.find("/player/timeline/seekTo") != std::string::npos ||
+                req.find("seekTo") != std::string::npos ||
+                req.find("/player/command") != std::string::npos;
+            const bool isPoll =
+                req.find("/player/timeline/poll") != std::string::npos ||
+                req.find("/player/timeline/subscribe") != std::string::npos ||
+                req.find("/player/timeline/unsubscribe") != std::string::npos ||
+                req.find("/player/proxy/timeline") != std::string::npos;
+            if (castControl && !isPoll) {
+                std::string tok = pctDecode(queryParam(req, "token"));
+                if (tok.empty())
+                    tok = pctDecode(queryParam(req, "X-Plex-Token"));
+                if (tok.empty())
+                    tok = pctDecode(headerValue(req, "X-Plex-Token"));
+                if (!tok.empty()) {
+                    try {
+                        onTokenUpdate_(tok);
+                    } catch (...) {
+                        log("token update handler exception");
+                    }
                 }
             }
         }

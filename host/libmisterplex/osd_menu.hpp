@@ -15,17 +15,16 @@
 //   [1]      A/V resync       0=On 1=Off
 //   [2]      TV Mode          (core)
 //   [3]      Audio clock trim 0=On (685 ppm) 1=Off
-//   [5:4]    Content res      0=240p (320x240), 1=480p (640x480 bank),
-//                             2=720p (1280x720), 3=720p (alias; 2-bit menu pad)
-//                             v7 cores only drove O[4] (bit5=0) → 240p/480p only.
-//   [9:6]    A/V offset       4-bit SIGNED, 20 ms per step -> -160..+140 ms.
-//                             Signed (not biased) so the power-on value 0 means
-//                             0 ms without needing a non-zero CONF_STR default,
-//                             which Main_MiSTer cannot express.
-//   [10]     T Flush audio FIFO      (core)
-//   [11]     T Flush bitstream FIFO  (core)
-//   [12:13]  reserved for HPS DDR kick/bank — never reuse
-//   [15:14]  Idle screen      0=Logo 1=Black 2=Screensaver 3=Last frame
+//   [5:4]    Content res      PMS ladder / DECODE — 0=240p 1=480p 2|3=720p
+//                             (v7 only drove O[4] → 240p/480p)
+//   [9:6]    A/V offset       4-bit SIGNED, 20 ms/step → -160..+140 ms
+//   [10]     T Flush audio FIFO
+//   [11]     T Flush bitstream FIFO
+//   [12:13]  reserved HPS DDR kick/bank — never reuse
+//   [15:14]  Display res (v9) 0=Follow content, 1=240p, 2=480p, 3=720p
+//                             Default 0 keeps v8 cores safe (those bits were Idle
+//                             logo=0) so PMS 720p is not forced to 240p present.
+//                             Idle screen is conf IDLE_SCREEN= only from v9.
 //
 // Pure decode so it can be unit-tested without an FPGA.
 //
@@ -75,8 +74,9 @@ struct OsdSettings {
     // The ppm itself belongs to the daemon; the menu only says on or off.
     bool audioClockTrimEnabled = true;
     bool resyncEnabled = true;
-    int idleMode = 0; // matches IdleMode enum
-    ContentResolution contentResolution;
+    int idleMode = 0; // conf IDLE_SCREEN from v9; legacy v8 OSD bits ignored
+    ContentResolution contentResolution; // O[5:4] → PMS / DECODE
+    ContentResolution displayResolution; // O[15:14] → FPGA present bank (v9)
 };
 
 // Signed wrap around the default: index 0 is the default, 1..7 step up and
@@ -116,13 +116,30 @@ inline ContentResolution contentResolutionFromSize(int w, int h) {
     return {320, 240, "240p", 1000};
 }
 
+inline ContentResolution displayResolutionFromOsdWord(uint16_t word,
+                                                      const ContentResolution& content) {
+    // O[15:14] v9: 0=Follow content (also v8 idle default), 1=240p, 2=480p, 3=720p.
+    switch ((word >> 14) & 3u) {
+    case 1:
+        return {320, 240, "240p", 1000};
+    case 2:
+        return {640, 480, "480p", 2500};
+    case 3:
+        return {1280, 720, "720p", 20000};
+    default:
+        return content;
+    }
+}
+
 inline OsdSettings decodeOsdWord(uint16_t word) {
     OsdSettings s;
     s.contentResolution = contentResolutionFromOsdWord(word);
+    s.displayResolution = displayResolutionFromOsdWord(word, s.contentResolution);
     s.resyncEnabled = ((word >> 1) & 1u) == 0u;
     s.audioClockTrimEnabled = ((word >> 3) & 1u) == 0u;
     s.avOffsetMs = osdAvOffsetMsFromIndex((word >> 6) & 0x0Fu);
-    s.idleMode = (word >> 14) & 3u;
+    // Idle screen is conf-only from v9 (O[15:14] = display res). Leave 0=logo.
+    s.idleMode = 0;
     return s;
 }
 
@@ -133,7 +150,7 @@ inline OsdSettings decodeOsdWord(uint16_t word) {
 // The daemon NEVER writes these bits. Main_MiSTer owns the OSD word (and saves it
 // to config/Plex_v7.CFG); a daemon-side write only fights Main's shadow and makes
 // the value flap between the two.
-// Includes O[5] (content-res high bit) so 240↔720 transitions are not ignored.
+// Includes O[5] content-res and O[15:14] display-res so 240↔720 are not ignored.
 constexpr uint16_t kOsdOwnedMask = 0xC3FA;
 
 inline bool osdChanged(uint16_t a, uint16_t b) {

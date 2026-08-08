@@ -59,6 +59,39 @@ std::vector<std::string> loadConfAll(const std::string& path, const char* key) {
     return out;
 }
 
+// Upsert KEY=value in conf (preserves comments/other keys). Used so F12 OSD
+// content/display choices persist into conf the user can inspect.
+bool upsertConfKey(const std::string& path, const char* key, const std::string& value) {
+    if (path.empty() || !key || !*key)
+        return false;
+    std::ifstream in(path);
+    std::vector<std::string> lines;
+    std::string line;
+    bool found = false;
+    const std::string p = std::string(key) + "=";
+    if (in) {
+        while (std::getline(in, line)) {
+            if (!found && line.rfind(p, 0) == 0) {
+                lines.push_back(p + value);
+                found = true;
+            } else {
+                lines.push_back(line);
+            }
+        }
+    }
+    if (!found)
+        lines.push_back(p + value);
+    const std::string tmp = path + ".tmp";
+    {
+        std::ofstream out(tmp, std::ios::trunc);
+        if (!out)
+            return false;
+        for (const auto& l : lines)
+            out << l << '\n';
+    }
+    return ::rename(tmp.c_str(), path.c_str()) == 0;
+}
+
 bool confTruthy(const std::string& v) {
     return v == "1" || v == "true" || v == "yes" || v == "on";
 }
@@ -607,11 +640,42 @@ int main(int argc, char** argv) {
             return misterplex::contentResolutionFromOsdWord(player.lastOsdWord());
         return misterplex::contentResolutionFromSize(decodeW, decodeH);
     };
+    // FPGA present bank (v9 O[15:14]). May differ from content/PMS ladder for lab A/B.
+    auto displayResolutionForNextPlay = [&]() -> misterplex::ContentResolution {
+        if (osdControl) {
+            const auto content = misterplex::contentResolutionFromOsdWord(player.lastOsdWord());
+            return misterplex::displayResolutionFromOsdWord(player.lastOsdWord(), content);
+        }
+        return misterplex::contentResolutionFromSize(decodeW, decodeH);
+    };
+    auto persistOsdResToConf = [&](const misterplex::ContentResolution& content,
+                                   const misterplex::ContentResolution& display) {
+        // Keep conf aligned with F12 so reboot/restart matches the menu.
+        const std::string cGeom =
+            std::to_string(content.width) + "x" + std::to_string(content.height);
+        const std::string dGeom =
+            std::to_string(display.width) + "x" + std::to_string(display.height);
+        if (!upsertConfKey(confPath, "DECODE", dGeom))
+            std::fprintf(stderr, "misterplexd: conf upsert DECODE failed path=%s\n",
+                         confPath.c_str());
+        if (!upsertConfKey(confPath, "TRANSCODE_PROFILE", content.label))
+            std::fprintf(stderr, "misterplexd: conf upsert TRANSCODE_PROFILE failed\n");
+        if (!upsertConfKey(confPath, "DISPLAY_RES", display.label))
+            std::fprintf(stderr, "misterplexd: conf upsert DISPLAY_RES failed\n");
+        if (!upsertConfKey(confPath, "CONTENT_RES", content.label))
+            std::fprintf(stderr, "misterplexd: conf upsert CONTENT_RES failed\n");
+        decodeW = display.width;
+        decodeH = display.height;
+        std::fprintf(stderr,
+                     "misterplexd: conf synced from OSD content=%s display=%s DECODE=%s "
+                     "TRANSCODE_PROFILE=%s\n",
+                     content.label, display.label, dGeom.c_str(), content.label);
+    };
 
     auto resolveAgainstServers = [&](const misterplex::PlayRequest& req,
                                      const std::string& preferredBase, int64_t off,
-                                     const misterplex::WeakLadder& weakForPlay)
-        -> std::pair<misterplex::ResolveResult, std::string> {
+                                     const misterplex::WeakLadder& weakForPlay, int matchW,
+                                     int matchH) -> std::pair<misterplex::ResolveResult, std::string> {
         // Cast-pinned host must not authenticate with conf token (different PMS).
         std::string token;
         if (!req.token.empty())
@@ -626,12 +690,12 @@ int main(int argc, char** argv) {
 
         auto tryBase = [&](const std::string& base) -> misterplex::ResolveResult {
             // STREAM=1: prefer direct H.264 Part for CAVLC host recon.
-            // STREAM=0: weak universal by default, but resolve still takes decodeW/H so
-            // true-720 sources (Media covers bank) can direct-Part and skip PMS re-encode.
+            // STREAM=0: weak universal by default. matchW/H are CONTENT bank for
+            // direct-Part size match (not display present size).
             return misterplex::resolvePlayTarget(req.key, base, token, off, /*weakAlways=*/true,
                                                  weakForPlay,
-                                                 /*preferDirectH264=*/streamEnabled, decodeW,
-                                                 decodeH);
+                                                 /*preferDirectH264=*/streamEnabled, matchW,
+                                                 matchH);
         };
 
         auto resolved = tryBase(selected);
@@ -658,17 +722,22 @@ int main(int argc, char** argv) {
         const uint64_t gen = ++playGen;
         int64_t off = req.offsetMs;
         const auto contentRes = contentResolutionForNextPlay();
-        player.setDecodeSize(contentRes.width, contentRes.height);
+        const auto displayRes = displayResolutionForNextPlay();
+        // Present/DDR bank follows display; PMS ladder follows content (may differ).
+        player.setDecodeSize(displayRes.width, displayRes.height);
         const auto weakForPlay = weakForContentResolution(
             weak, contentRes, weakBitrateExplicit, weakQualityExplicit, weakH264ProfileExplicit);
         std::fprintf(stderr,
-                     "misterplexd: content resolution=%s source=%s status_word=0x%04x "
-                     "pms_videoResolution=%s bitrate=%d decode=%dx%d "
+                     "misterplexd: content=%s display=%s source=%s status_word=0x%04x "
+                     "pms_videoResolution=%s bitrate=%d present=%dx%d "
                      "PRESENT=fpga DDR path (SDRAM stick optional)\n",
-                     contentRes.label, osdControl ? "OSD O[5:4]" : "conf/--decode",
+                     contentRes.label, displayRes.label,
+                     osdControl ? "OSD O[5:4]/O[15:14]" : "conf/--decode",
                      player.lastOsdWord(), weakForPlay.videoResolution.c_str(),
-                     weakForPlay.maxVideoBitrateKbps, contentRes.width, contentRes.height);
-        auto [resolved, base] = resolveAgainstServers(req, defaultPms, off, weakForPlay);
+                     weakForPlay.maxVideoBitrateKbps, displayRes.width, displayRes.height);
+        auto [resolved, base] =
+            resolveAgainstServers(req, defaultPms, off, weakForPlay, contentRes.width,
+                                  contentRes.height);
 
         if (gen != playGen.load()) {
             std::fprintf(stderr, "misterplexd: PLAY superseded during resolve key=%s\n",
@@ -887,15 +956,18 @@ int main(int argc, char** argv) {
         player.play(resolved.playable, startAt, resolved.httpHeaders, resolved.durationMs);
     };
 
-    // Live content-res change (OSD O[5:4]): retarget PMS weak ladder via session
-    // restart at the same playhead. Idle changes only affect the next playMedia.
-    // DDR present path stays the default backend regardless of SDRAM stick.
+    // Live content/display-res change (OSD O[5:4] / O[15:14]): sync conf, retarget
+    // PMS weak ladder, restart session at same playhead. No misterplexd process
+    // restart required — conf write is for persistence across daemon restarts.
     player.setOnContentResolutionChanged(
         [&](const misterplex::ContentResolution& cr, bool playingNow) {
+            const auto displayRes = displayResolutionForNextPlay();
             std::fprintf(stderr,
-                         "misterplexd: content_res OSD→%s (%dx%d) playing=%d — PMS will match "
-                         "videoResolution on next resolve (PRESENT=fpga DDR path)\n",
-                         cr.label, cr.width, cr.height, playingNow ? 1 : 0);
+                         "misterplexd: content_res OSD→%s (%dx%d) display=%s playing=%d — "
+                         "PMS ladder + conf sync (PRESENT=fpga DDR path)\n",
+                         cr.label, cr.width, cr.height, displayRes.label, playingNow ? 1 : 0);
+            persistOsdResToConf(cr, displayRes);
+            player.setDecodeSize(displayRes.width, displayRes.height);
             if (!playingNow)
                 return;
             misterplex::PlayRequest cur;
@@ -912,9 +984,10 @@ int main(int argc, char** argv) {
             cur.offsetMs = pos > 0 ? pos : cur.offsetMs;
             cur.offsetPresent = true;
             std::fprintf(stderr,
-                         "misterplexd: content_res live restart key=%s offset_ms=%lld → %s\n",
+                         "misterplexd: content_res live restart key=%s offset_ms=%lld → "
+                         "content=%s display=%s\n",
                          cur.key.empty() ? cur.ratingKey.c_str() : cur.key.c_str(),
-                         static_cast<long long>(cur.offsetMs), cr.label);
+                         static_cast<long long>(cur.offsetMs), cr.label, displayRes.label);
             // Async so we never restart from inside the OSD poller thread.
             std::thread([&, cur]() {
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
