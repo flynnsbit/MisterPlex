@@ -1,6 +1,6 @@
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_cadence.sv
-// 720p / ascal-native present path (default OFF via QSF macros — see present_core.sv).
-// Modules must stay in QIP or Quartus never sees them (orphan-class defect).
+# 720p / ascal-native present path (default OFF via QSF macros — see present_core.sv).
+# Modules must stay in QIP or Quartus never sees them (orphan-class defect).
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_video_timing_720p.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_video_timing_960.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_beam_content_de.sv

@@ -150,7 +150,10 @@ const std::vector<PlexTranscodeProfile>& plexTranscodeProfiles() {
         {"240p", "320x240", 1000, 40, "baseline", 30},
         {"480p", "640x480", 2500, 60, "baseline", 30},
         // Level 3.1 required for 1280x720 (level 3.0 MaxFS is too small).
-        {"720p", "1280x720", 4000, 70, "baseline", 31},
+        // Host ffmpeg I420 path (PRESENT=fpga) can take Main; baseline@q70
+        // showed full-frame vertical H.264 banding on BBB (76_bbb_banding).
+        // Main@q100/20M kills MB stripes while fabric flat remains center_std=0.
+        {"720p", "1280x720", 20000, 100, "main", 31},
     };
     return profiles;
 }
@@ -311,8 +314,10 @@ bool validateWeakLadder(const WeakLadder& weak, std::string* why) {
         return fail("videoCodec must be h264");
     if (weak.audioCodec != "aac")
         return fail("audioCodec must be aac");
-    if (weak.h264Profile != "baseline")
-        return fail("H.264 profile must be baseline for the current decoder");
+    // 720p PRESENT=fpga is host-ffmpeg → I420 DDR (not fabric CABAC). Allow
+    // baseline|main. Keep baseline-only for ≤480p profiles (legacy ladder).
+    if (weak.h264Profile != "baseline" && weak.h264Profile != "main")
+        return fail("H.264 profile must be baseline or main");
     if (w >= 1280 || h >= 720) {
         if (w > 1280 || h > 720)
             return fail("current built-in profiles stop at 1280x720");
@@ -322,6 +327,8 @@ bool validateWeakLadder(const WeakLadder& weak, std::string* why) {
             return fail("720p requires H.264 level 3.1 (level 3.0 MaxFS is insufficient)");
         if (weak.maxVideoBitrateKbps < 3000)
             return fail("720p profile bitrate is too low");
+    } else if (weak.h264Profile != "baseline") {
+        return fail("H.264 profile must be baseline for ≤480p profiles");
     } else if (weak.h264Level > 30) {
         return fail("H.264 level must not exceed 3.0 for 240p/480p profiles");
     } else if (w >= 640 || h >= 480) {

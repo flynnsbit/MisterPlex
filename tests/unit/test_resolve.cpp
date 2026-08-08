@@ -46,9 +46,9 @@ int main() {
     CHECK(h.find("X-Plex-Session-Identifier: sess1") != std::string::npos);
     CHECK(h.find("X-Plex-Token: tok") != std::string::npos);
 
-    // --- PMS universal transcode profile table / 480p guard ---
+    // --- PMS universal transcode profile table (240p/480p/720p) ---
     const auto& profiles = plexTranscodeProfiles();
-    CHECK(profiles.size() == 2);
+    CHECK(profiles.size() == 3);
     WeakLadder w240;
     CHECK(applyPlexTranscodeProfile("240p", w240));
     CHECK(w240.profileName == "240p");
@@ -74,6 +74,18 @@ int main() {
     WeakLadder byRes;
     CHECK(applyPlexTranscodeProfile("640x480", byRes));
     CHECK(byRes.profileName == "480p");
+
+    WeakLadder w720;
+    CHECK(applyPlexTranscodeProfile("720p", w720));
+    CHECK(w720.profileName == "720p");
+    CHECK(w720.videoResolution == "1280x720");
+    CHECK(w720.maxVideoBitrateKbps == 20000);
+    CHECK(w720.h264Profile == "main");
+    CHECK(w720.h264Level == 31);
+    CHECK(validateWeakLadder(w720));
+    WeakLadder by720;
+    CHECK(applyPlexTranscodeProfile("1280x720", by720));
+    CHECK(by720.profileName == "720p");
 
     const auto start480 =
         buildUniversalTranscodeUrl("http://pms.example:32400", "/library/metadata/3", "tok",

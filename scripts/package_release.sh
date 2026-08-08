@@ -8,8 +8,18 @@ STAGE="$OUT_DIR/stage-misterplex"
 TAR="$OUT_DIR/misterplex-${VERSION}.tar.gz"
 
 ARM_BIN="$ROOT/build/arm/misterplexd"
-RBF_MD5_EXPECTED="41adb98c7a630b541091c22ce291be68"
-RBF_DEFAULT="$ROOT/release_artifacts/v0.3.0/Plex.rbf"
+# Dual-gate: v0.4.0+ uses its own pinned RBF; legacy v0.3.0 keeps 41adb98c…
+# Override either path or md5 via RBF_PATH / RBF_MD5_EXPECTED for lab freezes.
+case "$VERSION" in
+  v0.4.0*|0.4.0*)
+    RBF_MD5_EXPECTED="${RBF_MD5_EXPECTED:-REPLACE_AT_FREEZE}"
+    RBF_DEFAULT="$ROOT/release_artifacts/v0.4.0/Plex.rbf"
+    ;;
+  *)
+    RBF_MD5_EXPECTED="${RBF_MD5_EXPECTED:-41adb98c7a630b541091c22ce291be68}"
+    RBF_DEFAULT="$ROOT/release_artifacts/v0.3.0/Plex.rbf"
+    ;;
+esac
 RBF_SRC="${RBF_PATH:-$RBF_DEFAULT}"
 CONF_EX="$ROOT/assets/misterplex.conf.example"
 # Static armhf ffmpeg to bundle so the package is self-contained. Override with
@@ -107,12 +117,17 @@ fi
 # indistinguishable by path and have already nearly shipped once. Operators may
 # pass RBF_PATH=/path/to/Plex.rbf, but every candidate is gated by this MD5.
 if [[ -n "${PACKAGE_ALLOW_NO_RBF:-}" || -n "${PACKAGE_DAEMON_ONLY:-}" ]]; then
-  echo "ERROR: daemon-only packages are disabled for release builds; v0.3.0 must ship a verified Plex.rbf." >&2
+  echo "ERROR: daemon-only packages are disabled for release builds; $VERSION must ship a verified Plex.rbf." >&2
+  exit 1
+fi
+if [[ "$RBF_MD5_EXPECTED" == "REPLACE_AT_FREEZE" ]]; then
+  echo "ERROR: RBF_MD5_EXPECTED still REPLACE_AT_FREEZE for $VERSION." >&2
+  echo "       Freeze a LOCK_OK core into release_artifacts/ and set RBF_MD5_EXPECTED=<md5>." >&2
   exit 1
 fi
 if [[ ! -f "$RBF_SRC" ]]; then
   echo "ERROR: verified release core missing: $RBF_SRC" >&2
-  echo "       Use the tracked release_artifacts/v0.3.0/Plex.rbf, or set RBF_PATH to a core with MD5 $RBF_MD5_EXPECTED." >&2
+  echo "       Use release_artifacts for $VERSION, or set RBF_PATH to a core with MD5 $RBF_MD5_EXPECTED." >&2
   exit 1
 fi
 RBF_MD5_ACTUAL="$(md5sum "$RBF_SRC" | awk '{print $1}')"
@@ -120,14 +135,14 @@ if [[ "$RBF_MD5_ACTUAL" != "$RBF_MD5_EXPECTED" ]]; then
   echo "ERROR: refusing to package unverified Plex.rbf: $RBF_SRC" >&2
   echo "       expected md5: $RBF_MD5_EXPECTED" >&2
   echo "       actual md5:   $RBF_MD5_ACTUAL" >&2
-  echo "       v0.3.0 ships only the Phase A playback-controls core validated on hardware." >&2
+  echo "       $VERSION ships only a hardware-validated core (see docs/release-notes-${VERSION#v}.md)." >&2
   exit 1
 fi
 cp -a "$RBF_SRC" "$STAGE/cores/Plex.rbf"
 echo "Included verified cores/Plex.rbf from $RBF_SRC ($(wc -c <"$STAGE/cores/Plex.rbf") bytes, md5=$RBF_MD5_ACTUAL)"
 
 # Operator docs
-for doc in release.md release-notes-v0.3.0.md display-resolution.md match-source-hz.md crt-lcd-matrix.md architecture.md subtitles-burnin.md; do
+for doc in release.md release-notes-v0.3.0.md release-notes-v0.4.0.md display-resolution.md match-source-hz.md crt-lcd-matrix.md architecture.md subtitles-burnin.md; do
   if [[ -f "$ROOT/docs/$doc" ]]; then
     cp -a "$ROOT/docs/$doc" "$STAGE/docs/"
   fi
@@ -152,7 +167,7 @@ Contents
   bin/push_frame           optional SPI frame/bitstream tool
   bin/set_status           optional OSD status RMW tool (pattern/TV/FPS/…)
   conf/misterplex.conf.example
-  cores/Plex.rbf           Phase A playback-controls core (MD5 41adb98c7a630b541091c22ce291be68)
+  cores/Plex.rbf           hardware-validated core (MD5 ${RBF_MD5_ACTUAL})
   scripts/plex_browse.sh   list library + play/status/stop via misterplexd
   scripts/plex_menu.sh     interactive on-device menu (sections → playMedia)
   licenses/ffmpeg/         GPLv3 text, build provenance, source pointers
@@ -171,7 +186,7 @@ Install on MiSTer SD
   /media/fat/misterplex/bin/ffmpeg        # bundled static armhf FFmpeg (GPLv3)
   /media/fat/misterplex/misterplex.conf   # copy from conf example; set PLEX_* / DECODE / PRESENT
   /media/fat/linux/_user-startup.sh      # start daemon (see scripts/deploy_misterplexd.sh)
-  /media/fat/_Utility/Plex.rbf           # verified v0.3.0 core; md5 41adb98c7a630b541091c22ce291be68
+  /media/fat/_Utility/Plex.rbf           # verified ${VERSION} core; md5 ${RBF_MD5_ACTUAL}
 
 Configure Plex server and credentials
 -------------------------------------
@@ -205,11 +220,11 @@ Launch the core
 
 Plex.rbf locations (release / device)
 -------------------------------------
-  In this monorepo for v0.3.0 packaging:
-    release_artifacts/v0.3.0/Plex.rbf          # tracked, MD5-gated release core
+  In this monorepo packaging lane:
+    release_artifacts/${VERSION}/Plex.rbf      # tracked, MD5-gated release core
 
   Override only with an explicitly validated core:
-    RBF_PATH=/path/to/Plex.rbf make package    # must md5 to 41adb98c7a630b541091c22ce291be68
+    RBF_PATH=/path/to/Plex.rbf RBF_MD5_EXPECTED=<md5> make package
 
   On MiSTer (lab canonical):
     /media/fat/_Utility/Plex.rbf

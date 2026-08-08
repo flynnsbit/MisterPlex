@@ -46,10 +46,35 @@ public:
 
     using LogFn = std::function<void(const std::string&)>;
     using ProgressFn = std::function<void(const std::string& state, int64_t timeMs, int64_t durMs)>;
+    // Fired when OSD content-resolution bits change (O[5:4]). Main uses this to
+    // re-resolve the PMS weak ladder / restart the session at the same offset.
+    using ContentResFn = std::function<void(const ContentResolution& res, bool playing)>;
 
     void setLog(LogFn f) { log_ = std::move(f); }
     void setProgress(ProgressFn f) { onProgress_ = std::move(f); }
+    void setOnContentResolutionChanged(ContentResFn f) { onContentRes_ = std::move(f); }
     void setFfmpegPath(std::string p) { ffmpeg_ = std::move(p); }
+    // Conf FFMPEG_SWS_FLAGS: bicubic (quality) | fast_bilinear (rate ladder) | neighbor |
+    // skip|none|off|identity (omit scale) | exact[_fast_bilinear|_neighbor] (force WxH,
+    // no foar/pad — size contract for DDR I420 without dual-pass scale+pad).
+    void setFfmpegSwsFlags(std::string flags) {
+        if (!flags.empty())
+            swsFlags_ = std::move(flags);
+    }
+    // Conf FFMPEG_FPS_FILTER=off: omit fps= filter when content is already CFR at
+    // the paced rate (saves dual-A9 filtergraph cost). Default on (safe for VFR).
+    void setFfmpegFpsFilter(bool on) { fpsFilter_ = on; }
+    // Conf UV_U_BIAS / UV_V_BIAS: add to every chroma sample before DDR present.
+    // Lab HDMI@B6 showed systematic U≈−8 vs source (fluorescent green L/R foliage).
+    // Positive U bias pulls green toward neutral. Range clamped ±32.
+    void setUvBias(int uBias, int vBias) {
+        if (uBias < -32) uBias = -32;
+        if (uBias > 32) uBias = 32;
+        if (vBias < -32) vBias = -32;
+        if (vBias > 32) vBias = 32;
+        uvUBias_ = uBias;
+        uvVBias_ = vBias;
+    }
     void setAudioPath(std::string p) { audioDev_ = std::move(p); }
     void setAudioEnabled(bool on) { audioEnabled_ = on; }
     // present: "fb0" (default) and/or "fpga" (DDR YUV420p → frame_store)
@@ -200,7 +225,15 @@ private:
 
     LogFn log_;
     ProgressFn onProgress_;
+    ContentResFn onContentRes_;
+    ContentResolution lastContentRes_{};
     std::string ffmpeg_ = "/media/fat/mistercast/bin/ffmpeg";
+    // Default bicubic: soft 480p→720 skies without vertical banding (see SCORE_BANDING_FIX).
+    // Light present-rate ladder overrides via setFfmpegSwsFlags / FFMPEG_SWS_FLAGS.
+    std::string swsFlags_ = "bicubic";
+    bool fpsFilter_ = true;
+    int uvUBias_ = 0;
+    int uvVBias_ = 0;
     std::string audioDev_ = "/dev/MrAudio";
     std::string presentMode_ = "fb0"; // "fb0", "fpga", "both"
     bool audioEnabled_ = true;

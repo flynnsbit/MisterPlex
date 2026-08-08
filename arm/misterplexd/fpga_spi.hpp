@@ -3,6 +3,7 @@
 // Mirrors Main_MiSTer FIO_FILE_* protocol. Shares GPO/GPI with Main — short
 // transfers only; optional flock reduces races.
 
+#include <chrono>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -100,6 +101,13 @@ public:
                              const DdrFrameGeometry& geometry, int bank = 0);
     bool sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len, int width, int height,
                              int bank = 0);
+    // Zero-intermediate-buffer present: PLXD bank select + mapped write pointer.
+    // Caller fills outLen bytes at the returned pointer, then commitDdrBankIngest.
+    // Returns nullptr on failure (lastError set). outBank is the bank actually selected.
+    uint8_t* beginDdrBankIngest(size_t expectLen, int preferredBank, int& outBank);
+    // Fence/flush + doorbell after beginDdrBankIngest payload write. copy_us=0 (ingest
+    // cost is attributed by the caller as pipe-read into the bank).
+    bool commitDdrBankIngest(int bank, size_t len);
     // DDR frame mmap policy. Default true keeps the proven strongly-ordered/device
     // mapping; false is a lab knob for write-combine/cacheable /dev/mem tests.
     // If a lab proves the no-sync mapping is cacheable, enable flush so the FPGA
@@ -301,6 +309,9 @@ private:
     InputMailboxEdgeDetector inputMboxEdge_;
     int ddrKickMode_ = 0; // 0=unknown, 1=doorbell, 2=SPI kick, -1=fail
     double ddrKickFailMs_ = -1.0; // steady_clock timestamp of last ddrKickMode_ = -1
+    // beginDdrBankIngest / commitDdrBankIngest pairing state
+    std::chrono::steady_clock::time_point ingestT0_{};
+    int ingestBank_ = -1;
     bool ensureDdrMap();
     void releaseDdrMap();
     bool ensureBitstreamDdrMap();

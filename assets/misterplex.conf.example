@@ -15,17 +15,28 @@
 # --- Decode / present (Phase 2 transitional ARM path) ---
 # Static ARM ffmpeg. Default probes bin/ffmpeg here, then mistercast-linux.
 # FFMPEG=/media/fat/misterplex/bin/ffmpeg
-DECODE=320x240
-# PMS universal transcode profile. 240p is the current RTL/ARM product path.
-# 480p requests 640x480 H.264 Baseline Level 3.0 at 2500 kbps for the 480p
-# streaming build; enable only with the matching 640x480 frame-store/present path.
-# TRANSCODE_PROFILE=240p
-# TRANSCODE_PROFILE=480p
+# DECODE bank size when OSD_CONTROL=0 (or before first OSD sample). Product tiers:
+#   320x240 (240p), 640x480 (480p bank / 624 coded), 1280x720 (720p).
+# With OSD_CONTROL=1 the core menu O[5:4] (240p/480p/720p) wins per play and can
+# live-retarget the PMS weak ladder mid-session (stop → re-resolve → resume).
+DECODE=1280x720
+# PMS universal transcode profile names match product labels:
+# TRANSCODE_PROFILE=240p   # 320x240 baseline @1M
+# TRANSCODE_PROFILE=480p   # 640x480 baseline @2.5M
+# TRANSCODE_PROFILE=720p   # 1280x720 main@L3.1 @20M
+TRANSCODE_PROFILE=720p
 # Legacy per-field overrides (kept for lab experiments):
-# WEAK_RES=320x240
-# WEAK_BITRATE=1000
-# PRESENT=fb0|fpga|both
-PRESENT=fb0
+# WEAK_RES=1280x720
+# WEAK_BITRATE=20000
+# PRESENT=fb0|fpga|both — product glass uses fpga (DDR frame store).
+PRESENT=fpga
+# PRESENT_MEM: present backend memory policy (v0.4.0+).
+#   auto — use HPS DDR frame store; optional SDRAM stick never required
+#   ddr  — force DDR path (no-stick / stick-fail safe; shipping default behavior)
+# External SDRAM stick is optional acceleration only; shipping RBF always keeps
+# ddr_frame_store so users without a stick still get 240p/480p/720p (720p may be
+# ≤24 fps until publish-path work lands).
+# PRESENT_MEM=auto
 # STREAM=1  # annex-B → host I-recon F1 + F3 (Phase 3.3i product path)
 # Prefer direct H.264 Part when STREAM=1 (avoids High/CABAC universal for recon).
 # High/CABAC: sticky skip from PPS entropy flag (no residual walk per IDR).
@@ -104,20 +115,20 @@ AUDIO_CLOCK_PPM=-638
 # SKIP_FORWARD_MS=30000
 # SKIP_BACK_MS=10000
 
-# --- OSD menu controls (Plex core CONF_STR v3) --------------------------------
+# --- OSD menu controls (Plex core CONF_STR v8) --------------------------------
 #
 # OSD_CONTROL: let the core's OSD menu (F12) drive playback settings live. The
 # daemon polls status[15:0] ~4x/s and applies A/V offset, auto-resync, audio
-# clock trim and the idle screen without a restart or a conf edit.
+# clock trim, idle screen, and content resolution (O[5:4]: 240p/480p/720p).
+# Content-res changes while playing restart the session at the same offset so
+# PMS re-encodes to the new weak ladder (no on-device scale when sizes match).
 #
 # The daemon NEVER writes these bits. Main_MiSTer owns the OSD word and persists
-# it to /media/fat/config/Plex_v3.CFG; a daemon-side write fights Main's shadow
+# it to /media/fat/config/Plex_v*.CFG; a daemon-side write fights Main's shadow
 # copy and makes the value flap. Read-only polling is the whole contract.
 #
-# REQUIRES a v3 or newer Plex.rbf (check with `set_status --confstr`). On an
-# older core those same bits mean Pattern / Audio tone / Force bars, so enabling
-# this would decode a stale "Force bars=Yes" as a bogus A/V offset. Set to 0 if
-# you are running a pre-v3 core.
+# REQUIRES a v3+ Plex.rbf for A/V knobs; content-res 720p rung needs v8 CONF_STR
+# (O[5:4]). v7 O[4]-only still maps 240p/480p. Set OSD_CONTROL=0 on pre-v3 cores.
 OSD_CONTROL=1
 #
 # AV_OFFSET_MS: constant audio-vs-video trim applied inside the pacing loop (NOT

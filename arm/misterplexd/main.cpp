@@ -65,26 +65,40 @@ bool confTruthy(const std::string& v) {
 
 misterplex::WeakLadder weakForContentResolution(const misterplex::WeakLadder& base,
                                                 const misterplex::ContentResolution& res,
-                                                bool bitrateExplicit) {
+                                                bool bitrateExplicit,
+                                                bool qualityExplicit,
+                                                bool h264ProfileExplicit) {
     misterplex::WeakLadder weak = base;
     // Prefer named profile so level/bitrate stay consistent with tier.
-    // applyPlexTranscodeProfile always rewrites maxVideoBitrateKbps from the
-    // named ladder (e.g. 720p→4000). Preserve operator WEAK_BITRATE when set.
+    // applyPlexTranscodeProfile always rewrites maxVideoBitrateKbps / videoQuality /
+    // h264Profile from the named ladder (e.g. 720p→main@20M@q100). Preserve operator
+    // WEAK_BITRATE / WEAK_QUALITY / WEAK_H264_PROFILE when set so the light present-rate
+    // ladder can stick (baseline is cheaper to decode on dual-A9).
     const int explicitBitrateKbps = base.maxVideoBitrateKbps;
+    const int explicitQuality = base.videoQuality;
+    const std::string explicitH264Profile = base.h264Profile;
+    const std::string geomRes =
+        std::to_string(res.width) + "x" + std::to_string(res.height);
+    // Prefer named product label (240p/480p/720p), then WxH geometry.
     if (!misterplex::applyPlexTranscodeProfile(res.label, weak) &&
-        !misterplex::applyPlexTranscodeProfile(
-            std::to_string(res.width) + "x" + std::to_string(res.height), weak)) {
+        !misterplex::applyPlexTranscodeProfile(geomRes, weak)) {
         weak.profileName = res.label;
-        weak.videoResolution = res.label;
+        // PMS universal wants WxH in videoResolution=, never the short label alone.
+        weak.videoResolution = geomRes;
         if (res.width >= 1280 || res.height >= 720) {
             weak.h264Level = 31;
-            weak.videoQuality = 70;
+            if (!qualityExplicit)
+                weak.videoQuality = 95;
         }
     }
     if (bitrateExplicit)
         weak.maxVideoBitrateKbps = explicitBitrateKbps;
     else
         weak.maxVideoBitrateKbps = res.weakBitrateKbps;
+    if (qualityExplicit && explicitQuality >= 1 && explicitQuality <= 100)
+        weak.videoQuality = explicitQuality;
+    if (h264ProfileExplicit && (explicitH264Profile == "baseline" || explicitH264Profile == "main"))
+        weak.h264Profile = explicitH264Profile;
     return weak;
 }
 
@@ -135,6 +149,8 @@ int main(int argc, char** argv) {
     bool transcodeProfileExplicit = false;
     bool weakResExplicit = false;
     bool weakBitrateExplicit = false;
+    bool weakQualityExplicit = false;
+    bool weakH264ProfileExplicit = false;
     std::vector<std::string> servers;
     std::string defaultPms;
     int64_t skipForwardMs = 30000;
@@ -238,6 +254,29 @@ int main(int argc, char** argv) {
         if (!v.empty()) {
             weakBitrateExplicit = true;
             weak.maxVideoBitrateKbps = std::atoi(v.c_str());
+        }
+        v = loadConf(confPath, "WEAK_QUALITY");
+        if (!v.empty()) {
+            const int q = std::atoi(v.c_str());
+            if (q >= 1 && q <= 100) {
+                weak.videoQuality = q;
+                weakQualityExplicit = true;
+            }
+        }
+        // Lab present-rate ladder: WEAK_H264_PROFILE=baseline (cheaper dual-A9 decode).
+        // Default 720p named profile is main (quality path); baseline may band more.
+        v = loadConf(confPath, "WEAK_H264_PROFILE");
+        if (v.empty())
+            v = loadConf(confPath, "H264_PROFILE");
+        if (!v.empty()) {
+            if (v == "baseline" || v == "main") {
+                weak.h264Profile = v;
+                weakH264ProfileExplicit = true;
+            } else {
+                std::fprintf(stderr,
+                             "misterplexd: WEAK_H264_PROFILE=%s ignored (use baseline|main)\n",
+                             v.c_str());
+            }
         }
         v = loadConf(confPath, "PRESENT");
         if (!v.empty())
@@ -376,6 +415,33 @@ int main(int argc, char** argv) {
 
     misterplex::MediaPlayer player;
     player.setFfmpegPath(ffmpeg);
+    {
+        // Lab present-rate ladder: FFMPEG_SWS_FLAGS=fast_bilinear|exact_fast_bilinear|…
+        // Default remains bicubic for soft-sky banding (see SCORE_BANDING_FIX).
+        auto sws = loadConf(confPath, "FFMPEG_SWS_FLAGS");
+        if (!sws.empty()) {
+            player.setFfmpegSwsFlags(sws);
+            std::fprintf(stderr, "misterplexd: FFMPEG_SWS_FLAGS=%s\n", sws.c_str());
+        }
+        auto fpsf = loadConf(confPath, "FFMPEG_FPS_FILTER");
+        if (!fpsf.empty()) {
+            const bool on = confTruthy(fpsf); // off/0/false → omit fps= filter
+            player.setFfmpegFpsFilter(on);
+            std::fprintf(stderr, "misterplexd: FFMPEG_FPS_FILTER=%s\n", on ? "on" : "off");
+        }
+        // UV bias: counter fluorescent green (measured U low on HDMI vs source).
+        int uBias = 0, vBias = 0;
+        auto ub = loadConf(confPath, "UV_U_BIAS");
+        auto vb = loadConf(confPath, "UV_V_BIAS");
+        if (!ub.empty())
+            uBias = std::atoi(ub.c_str());
+        if (!vb.empty())
+            vBias = std::atoi(vb.c_str());
+        if (uBias != 0 || vBias != 0) {
+            player.setUvBias(uBias, vBias);
+            std::fprintf(stderr, "misterplexd: UV_U_BIAS=%d UV_V_BIAS=%d\n", uBias, vBias);
+        }
+    }
     player.setDecodeSize(decodeW, decodeH);
     player.setPresentMode(presentMode);
     player.setDdrFrameFormat(ddrFrameFormat);
@@ -586,14 +652,15 @@ int main(int argc, char** argv) {
         int64_t off = req.offsetMs;
         const auto contentRes = contentResolutionForNextPlay();
         player.setDecodeSize(contentRes.width, contentRes.height);
-        const auto weakForPlay =
-            weakForContentResolution(weak, contentRes, weakBitrateExplicit);
+        const auto weakForPlay = weakForContentResolution(
+            weak, contentRes, weakBitrateExplicit, weakQualityExplicit, weakH264ProfileExplicit);
         std::fprintf(stderr,
                      "misterplexd: content resolution=%s source=%s status_word=0x%04x "
-                     "weak=%s bitrate=%d\n",
-                     contentRes.label, osdControl ? "OSD O[4]" : "conf/--decode",
+                     "pms_videoResolution=%s bitrate=%d decode=%dx%d "
+                     "PRESENT=fpga DDR path (SDRAM stick optional)\n",
+                     contentRes.label, osdControl ? "OSD O[5:4]" : "conf/--decode",
                      player.lastOsdWord(), weakForPlay.videoResolution.c_str(),
-                     weakForPlay.maxVideoBitrateKbps);
+                     weakForPlay.maxVideoBitrateKbps, contentRes.width, contentRes.height);
         auto [resolved, base] = resolveAgainstServers(req, defaultPms, off, weakForPlay);
 
         if (gen != playGen.load()) {
@@ -760,6 +827,41 @@ int main(int argc, char** argv) {
                      static_cast<long long>(startAt), static_cast<long long>(resolved.durationMs));
         player.play(resolved.playable, startAt, resolved.httpHeaders, resolved.durationMs);
     };
+
+    // Live content-res change (OSD O[5:4]): retarget PMS weak ladder via session
+    // restart at the same playhead. Idle changes only affect the next playMedia.
+    // DDR present path stays the default backend regardless of SDRAM stick.
+    player.setOnContentResolutionChanged(
+        [&](const misterplex::ContentResolution& cr, bool playingNow) {
+            std::fprintf(stderr,
+                         "misterplexd: content_res OSD→%s (%dx%d) playing=%d — PMS will match "
+                         "videoResolution on next resolve (PRESENT=fpga DDR path)\n",
+                         cr.label, cr.width, cr.height, playingNow ? 1 : 0);
+            if (!playingNow)
+                return;
+            misterplex::PlayRequest cur;
+            {
+                std::lock_guard<std::mutex> lk(sessionMu);
+                cur = lastPlay;
+            }
+            if (cur.key.empty() && cur.ratingKey.empty()) {
+                std::fprintf(stderr,
+                             "misterplexd: content_res change ignored — no bound session\n");
+                return;
+            }
+            const int64_t pos = player.positionMs();
+            cur.offsetMs = pos > 0 ? pos : cur.offsetMs;
+            cur.offsetPresent = true;
+            std::fprintf(stderr,
+                         "misterplexd: content_res live restart key=%s offset_ms=%lld → %s\n",
+                         cur.key.empty() ? cur.ratingKey.c_str() : cur.key.c_str(),
+                         static_cast<long long>(cur.offsetMs), cr.label);
+            // Async so we never restart from inside the OSD poller thread.
+            std::thread([&, cur]() {
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                doPlay(cur);
+            }).detach();
+        });
 
     // Shared play-queue step: delta=+1 (auto-next / skipNext), delta=-1 (skipPrevious).
     // Returns true when a new title was started via doPlay.

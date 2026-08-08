@@ -50,17 +50,24 @@ int main() {
         CHECK(d.idleMode == 0);
         CHECK(d.contentResolution.width == 320);
         CHECK(d.contentResolution.height == 240);
-        CHECK(std::string(d.contentResolution.label) == "320x240");
+        CHECK(std::string(d.contentResolution.label) == "240p");
+        CHECK(d.contentResolution.weakBitrateKbps == 1000);
     }
     CHECK(decodeOsdWord(1u << 1).resyncEnabled == false);   // O[1] A/V auto resync
     CHECK(!decodeOsdWord(1u << 3).audioClockTrimEnabled); // O[3] Audio clock trim
-    CHECK(decodeOsdWord(1u << 4).contentResolution.width == 640); // O[4] Content resolution
+    // O[5:4] content resolution: 0=240p, 1=480p, 2|3=720p (v7 O[4]-only still 240/480)
+    CHECK(decodeOsdWord(1u << 4).contentResolution.width == 640);
     CHECK(decodeOsdWord(1u << 4).contentResolution.height == 480);
+    CHECK(std::string(decodeOsdWord(1u << 4).contentResolution.label) == "480p");
+    CHECK(decodeOsdWord(2u << 4).contentResolution.width == 1280);
+    CHECK(decodeOsdWord(2u << 4).contentResolution.height == 720);
+    CHECK(std::string(decodeOsdWord(2u << 4).contentResolution.label) == "720p");
+    CHECK(decodeOsdWord(3u << 4).contentResolution.width == 1280);
     CHECK(decodeOsdWord(0xFu << 6).avOffsetMs == kOsdAvOffsetDefaultMs - 20); // O[9:6] idx 15
     CHECK(decodeOsdWord(8u << 6).avOffsetMs == kOsdAvOffsetDefaultMs - 160); // O[9:6] idx 8
     CHECK(decodeOsdWord(3u << 14).idleMode == 3);           // O[15:14] Idle screen
-    // Core-owned bits must not leak into user settings.
-    for (int bit : {0, 2, 5, 10, 11, 12, 13}) {
+    // Core-owned bits must not leak into user settings (O[5] is content-res high).
+    for (int bit : {0, 2, 10, 11, 12, 13}) {
         const OsdSettings d = decodeOsdWord(static_cast<uint16_t>(1u << bit));
         CHECK(d.avOffsetMs == kOsdAvOffsetDefaultMs);
         CHECK(d.resyncEnabled);
@@ -68,15 +75,21 @@ int main() {
         CHECK(d.idleMode == 0);
         CHECK(d.contentResolution.width == 320);
     }
+    // Alone, O[5]=1 with O[4]=0 is code 2 → 720p (not a leak).
+    CHECK(decodeOsdWord(1u << 5).contentResolution.width == 1280);
     CHECK(contentResolutionFromSize(320, 240).width == 320);
+    CHECK(std::string(contentResolutionFromSize(320, 240).label) == "240p");
     CHECK(contentResolutionFromSize(640, 480).width == 640);
+    CHECK(std::string(contentResolutionFromSize(640, 480).label) == "480p");
+    CHECK(contentResolutionFromSize(1280, 720).width == 1280);
+    CHECK(std::string(contentResolutionFromSize(1280, 720).label) == "720p");
 
     // --- change detection ignores core traffic ---
     // [10]/[11] flush pulses and [12]/[13] DDR kick/bank toggle constantly during
     // playback; reacting to them would re-log and re-apply settings every frame.
-    for (int bit : {0, 2, 5, 10, 11, 12, 13})
+    for (int bit : {0, 2, 10, 11, 12, 13})
         CHECK(!osdChanged(0, static_cast<uint16_t>(1u << bit)));
-    for (int bit : {1, 3, 4, 6, 7, 8, 9, 14, 15})
+    for (int bit : {1, 3, 4, 5, 6, 7, 8, 9, 14, 15})
         CHECK(osdChanged(0, static_cast<uint16_t>(1u << bit)));
 
     // --- idle mode bits match CONF_STR order ---

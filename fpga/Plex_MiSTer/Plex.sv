@@ -56,11 +56,11 @@ localparam CONF_STR = {
 	"O[122:121],Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
 	// Default first option = NTSC (status[2]=0). Bump v, so saved PAL is cleared.
 	"O[2],TV Mode,NTSC,PAL;",
-	// O[5:4] Content FPS is written by misterplexd from the exact PMS frame rate,
-	// so it is intentionally NOT a menu item. O[4] is now the single source of
-	// truth for native content resolution; misterplexd reads the same OSD word
-	// through the DDR mailbox before each play.
-	"O[4],Content resolution,320x240,640x480;",
+	// O[5:4] content resolution (product labels). misterplexd reads the same OSD
+	// word and retargets the PMS weak ladder (live session restart). Content FPS
+	// is software-only (MATCH_SOURCE_HZ / SOURCE_FPS) — not an OSD item.
+	// 0=240p (320x240), 1=480p (640x480 bank), 2/3=720p (1280x720).
+	"O[5:4],Content resolution,240p,480p,720p,720p;",
 	"-;",
 	// misterplexd reads these back over UIO and applies them live (no restart).
 	// Positive = hold the frame back = video LATER. Raise it when audio sounds
@@ -79,7 +79,7 @@ localparam CONF_STR = {
 	"R[0],Reset and close OSD;",
 	// J1 maps to joystick_0 bits 4..7; names feed MiSTer's controller mapper.
 	"J1,Play/Pause,Stop,Skip Fwd,Skip Back;",
-	"v,7;", // reset OSD: v7 clears stale pre-480p status[4] before content-res owns it
+	"v,8;", // reset OSD: v8 O[5:4] content-res 240p/480p/720p (was v7 O[4]-only)
 	"V,v",`BUILD_DATE
 };
 
@@ -226,12 +226,17 @@ pll pll
 
 wire reset = RESET | status[0] | buttons[1];
 
-// O[4] is the native content-resolution selector shared with misterplexd.
-// C1B owns the selector/ABI; the DDR-backed frame-store branch consumes these
-// dimensions for the actual 480p present path.
-wire        content_res_640x480 = status[4];
-wire [9:0]  content_width       = content_res_640x480 ? 10'd640 : 10'd320;
-wire [9:0]  content_height      = content_res_640x480 ? 10'd480 : 10'd240;
+// O[5:4] native content-resolution selector shared with misterplexd (v8).
+// status[5:4]: 0=240p, 1=480p, 2|3=720p. Softc FRAME_W/H may still be 1280x720
+// compile-time; runtime DDR layout comes from SPI. L4 mux consumes the 480p bit
+// for the 320/640 ladder when PLXG is idle (720p still via FABRIC_NATIVE / PLXG).
+wire [1:0]  content_res_sel     = status[5:4];
+wire        content_res_640x480 = (content_res_sel == 2'd1);
+wire        content_res_720p    = (content_res_sel >= 2'd2);
+wire [10:0] content_width       = content_res_720p ? 11'd1280 :
+                                  (content_res_640x480 ? 11'd640 : 11'd320);
+wire [10:0] content_height      = content_res_720p ? 11'd720 :
+                                  (content_res_640x480 ? 11'd480 : 11'd240);
 
 // ---------------------------------------------------------------------------
 // L4 720p present geom hierarchy (DEFAULT OFF via PLEX_PRESENT_720P_L4).

@@ -1371,10 +1371,10 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
     bool plxdUsed = false;
     {
         BankReleaseStatus brs;
-        // Cap PLXD wait: 50×1ms was burning ~50ms/present when both banks busy
-        // (720p lastPushMs~64 class). Prefer short poll then write non-display bank;
-        // tear risk beats A/V death spiral from multi-frame stalls.
-        constexpr int kPlxdPollMaxIters = 16; // 16 × 500us ≈ 8ms max
+        // Cap PLXD wait: 120-iter poll was ~20ms/present (12 pfps); 4-iter ~2ms
+        // (15→20.7 with direct ingest). At 20.7 we still miss 24 — zero poll:
+        // free bank if available else non-display immediately (tear ≪ rate miss).
+        constexpr int kPlxdPollMaxIters = 0;
         int plxdIters = 0;
         if (readBankRelease(brs)) {
             // PLXD present — use it for bank selection.
@@ -1382,7 +1382,7 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
                 bank = brs.freeBank();
                 plxdUsed = true;
             } else {
-                // Both banks in use (swap pending). Poll briefly then best-effort.
+                // Both banks in use (swap pending). Optional brief poll then non-display.
                 for (int i = 0; i < kPlxdPollMaxIters; ++i) {
                     usleep(500);
                     ++plxdIters;
@@ -1393,16 +1393,7 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
                     }
                 }
                 if (!plxdUsed) {
-                    // LOUD timeout — never silently fall back to old delay.
-                    fprintf(stderr,
-                            "[STALL] sendDdrFrame: PLXD bank-release timeout after ~%d us "
-                            "(iters=%d free_bank_mask=0, frames_done=%u disp_bank=%u "
-                            "swap_pending=%d)\n",
-                            plxdIters * 500, plxdIters,
-                            static_cast<unsigned>(brs.frames_done),
-                            static_cast<unsigned>(brs.disp_bank),
-                            static_cast<int>(brs.swap_pending));
-                    // Use the opposite of disp_bank as a best-effort guess.
+                    // Best-effort: non-display bank (may tear once; beats stall).
                     bank = brs.disp_bank ^ 1;
                 }
             }
@@ -1547,6 +1538,196 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
     auto t1 = std::chrono::steady_clock::now();
     lastPushMs_ = std::chrono::duration<double, std::milli>(t1 - t0).count();
     timing.total_us = elapsedUs(t0, t1);
+    lastDdrTiming_ = timing;
+    clearErr();
+    return true;
+}
+
+uint8_t* FpgaSpi::beginDdrBankIngest(size_t expectLen, int preferredBank, int& outBank) {
+    if (expectLen != ddrLayout_.frame_bytes && ddrLayout_.frame_bytes != 0) {
+        // Layout may not be programmed yet; open/map will set it via geometry path.
+    }
+    if (preferredBank < 0 || preferredBank > 1) {
+        setErr("beginDdrBankIngest: bank must be 0 or 1");
+        return nullptr;
+    }
+    if (ddrKickMode_ < 0) {
+        constexpr double kReprobeIntervalMs = 5000.0;
+        const double nowMs = std::chrono::duration<double, std::milli>(
+                                 std::chrono::steady_clock::now().time_since_epoch())
+                                 .count();
+        if (ddrKickFailMs_ >= 0.0 && (nowMs - ddrKickFailMs_) < kReprobeIntervalMs) {
+            setErr("beginDdrBankIngest: DDR path previously unavailable");
+            return nullptr;
+        }
+        ddrKickMode_ = 0;
+    }
+    if (!ok() && !open())
+        return nullptr;
+    if (!ensureDdrMap())
+        return nullptr;
+    if (expectLen != ddrLayout_.frame_bytes) {
+        setErr("beginDdrBankIngest: frame size does not match DDR geometry");
+        return nullptr;
+    }
+
+    DdrTiming timing{};
+    ingestT0_ = std::chrono::steady_clock::now();
+    auto tPrep0 = ingestT0_;
+    int bank = preferredBank;
+    bool plxdUsed = false;
+    {
+        BankReleaseStatus brs;
+        constexpr int kPlxdPollMaxIters = 0; // match sendDdrFrame: no wait for free bank
+        int plxdIters = 0;
+        if (readBankRelease(brs)) {
+            if (brs.anyFree()) {
+                bank = brs.freeBank();
+                plxdUsed = true;
+            } else {
+                for (int i = 0; i < kPlxdPollMaxIters; ++i) {
+                    usleep(500);
+                    ++plxdIters;
+                    if (readBankRelease(brs) && brs.anyFree()) {
+                        bank = brs.freeBank();
+                        plxdUsed = true;
+                        break;
+                    }
+                }
+                if (!plxdUsed)
+                    bank = brs.disp_bank ^ 1;
+            }
+            auto tPlxd1 = std::chrono::steady_clock::now();
+            timing.plxa_poll_us = elapsedUs(tPrep0, tPlxd1);
+            timing.plxa_poll_iters = plxdIters;
+            timing.plxa_used = plxdUsed || (!plxdUsed && plxdIters > 0);
+        } else {
+            // No PLXD: skip multi-ms reuse floor on rate path (begin ingest).
+            usleep(200);
+        }
+    }
+    auto tPrep1 = std::chrono::steady_clock::now();
+    timing.prep_wait_us = elapsedUs(tPrep0, tPrep1);
+    timing.copy_us = 0; // caller fills bank via pipe read
+    lastDdrTiming_ = timing;
+    ingestBank_ = bank;
+    outBank = bank;
+    clearErr();
+    return ddrMap_ + static_cast<size_t>(bank) * ddrLayout_.bank_stride;
+}
+
+bool FpgaSpi::commitDdrBankIngest(int bank, size_t len) {
+    if (bank < 0 || bank > 1 || !ddrMap_) {
+        setErr("commitDdrBankIngest: bad bank/map");
+        return false;
+    }
+    if (len != ddrLayout_.frame_bytes) {
+        setErr("commitDdrBankIngest: frame size mismatch");
+        return false;
+    }
+    DdrTiming timing = lastDdrTiming_;
+    auto t0 = ingestT0_;
+    const size_t bankOff = static_cast<size_t>(bank) * ddrLayout_.bank_stride;
+    __sync_synchronize();
+    if (!ddrMemSync_ && ddrMemFlush_) {
+        auto tFlush0 = std::chrono::steady_clock::now();
+        if (!cleanDcacheRange(ddrMap_ + bankOff, len)) {
+            setErr("commitDdrBankIngest: cache clean failed");
+            return false;
+        }
+        __sync_synchronize();
+        auto tFlush1 = std::chrono::steady_clock::now();
+        timing.flush_us = elapsedUs(tFlush0, tFlush1);
+    }
+
+    bool saw_busy = false;
+    bool saw_kick = false;
+    bool saw_frame = false;
+    const bool first = (ddrKickMode_ == 0);
+    auto frameStoreStatusSuffix = [this]() -> std::string {
+        FrameStoreStatus st{};
+        if (readFrameStoreStatus(st)) {
+            if (st.nonYuvDoorbellRejected())
+                return std::string(": ") + frameStoreDebugDescription(st.debug_state);
+            char buf[128]{};
+            std::snprintf(buf, sizeof(buf),
+                          ": frame-store status frame_debug=0x%02x frame_seq=%u "
+                          "frame_underrun=%u",
+                          static_cast<unsigned>(st.debug_state), static_cast<unsigned>(st.seq),
+                          static_cast<unsigned>(st.underrun_count));
+            return std::string(buf);
+        }
+        return std::string(": ") + frameStoreStatusUnavailableDescription() + ": " + lastError();
+    };
+
+    bool kicked = false;
+    auto tKick0 = std::chrono::steady_clock::now();
+    if (ddrKickMode_ == 1 || ddrKickMode_ == 0) {
+        if (kickDdrDoorbell(bank)) {
+            kicked = true;
+            if (first) {
+                usleep(1000);
+                for (int i = 0; i < 20; ++i) {
+                    uint8_t raw[16]{};
+                    {
+                        SpiExclusive guard(map_);
+                        if (!guard.safe() || !readStatusRaw(raw))
+                            break;
+                    }
+                    CoreStatus st = parseCoreStatus(raw);
+                    if (st.ddr_busy)
+                        saw_busy = true;
+                    if (st.has_frame)
+                        saw_frame = true;
+                    if (st.swap_pending)
+                        saw_kick = true;
+                    if (saw_busy || saw_frame || saw_kick)
+                        break;
+                    usleep(500);
+                }
+                if (!(saw_busy || saw_frame || saw_kick)) {
+                    kicked = false;
+                } else {
+                    ddrKickMode_ = 1;
+                }
+            }
+        }
+    }
+    if (!kicked && (ddrKickMode_ == 2 || ddrKickMode_ == 0)) {
+        if (!kickDdrSpi(bank, first, saw_busy, saw_kick, saw_frame))
+            return false;
+        if (first) {
+            const bool okKick = saw_busy || (saw_kick && saw_frame) || saw_frame;
+            if (!okKick) {
+                ddrKickMode_ = -1;
+                ddrKickFailMs_ = std::chrono::duration<double, std::milli>(
+                                     std::chrono::steady_clock::now().time_since_epoch())
+                                     .count();
+                setErr("commitDdrBankIngest: no kick/frame via SPI or doorbell" +
+                       frameStoreStatusSuffix());
+                return false;
+            }
+            ddrKickMode_ = 2;
+        }
+    }
+    auto tKick1 = std::chrono::steady_clock::now();
+    timing.doorbell_us = elapsedUs(tKick0, tKick1);
+    if (first && ddrKickMode_ == 0) {
+        ddrKickMode_ = -1;
+        ddrKickFailMs_ = std::chrono::duration<double, std::milli>(
+                             std::chrono::steady_clock::now().time_since_epoch())
+                             .count();
+        setErr("commitDdrBankIngest: could not kick DDR path" + frameStoreStatusSuffix());
+        return false;
+    }
+    lastDdrBankDoorbellMs_[bank] = std::chrono::duration<double, std::milli>(
+                                       std::chrono::steady_clock::now().time_since_epoch())
+                                       .count();
+    timing.post_wait_us = 0;
+    auto t1 = std::chrono::steady_clock::now();
+    lastPushMs_ = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    timing.total_us = elapsedUs(t0, t1);
+    // copy_us remains 0 — pipe read into bank is timed by media_player as read_us.
     lastDdrTiming_ = timing;
     clearErr();
     return true;
