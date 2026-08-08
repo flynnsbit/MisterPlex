@@ -27,6 +27,11 @@ struct ResolveResult {
     // Drives A/V pacing; must NOT be bucketed (23.976 vs 24 = ~1 ms/s of lipsync drift).
     int fpsNum = 0;
     int fpsDen = 0;
+    // Source Media/Stream coded size from PMS metadata (0 = unknown). Used to decide
+    // whether PMS can deliver DECODE without on-device FOAR+pad. Never trust
+    // videoResolution alone (L38: FOAR @720p request can still be 720×480).
+    int mediaWidth = 0;
+    int mediaHeight = 0;
 };
 
 struct QueueItem {

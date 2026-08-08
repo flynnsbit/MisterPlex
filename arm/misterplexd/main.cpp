@@ -721,6 +721,17 @@ int main(int argc, char** argv) {
                          fnum, fden,
                          resolved.frameRate.empty() ? "-" : resolved.frameRate.c_str(),
                          resolved.videoFrameRate.empty() ? "-" : resolved.videoFrameRate.c_str());
+            player.setSourceMediaSize(resolved.mediaWidth, resolved.mediaHeight);
+            if (resolved.mediaWidth > 0 && resolved.mediaHeight > 0) {
+                std::fprintf(stderr,
+                             "misterplexd: pms source media=%dx%d decode=%dx%d scale=%s\n",
+                             resolved.mediaWidth, resolved.mediaHeight, player.decodeW(),
+                             player.decodeH(),
+                             (resolved.mediaWidth >= player.decodeW() &&
+                              resolved.mediaHeight >= player.decodeH())
+                                 ? "bypass_if_full_bank"
+                                 : "foar_pad_required");
+            }
         }
 
         if (!req.offsetPresent && resolved.viewOffsetMs > 0)

@@ -706,6 +706,46 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
         }
         r.sourceFpsHint = contentFpsHint(r.videoFrameRate, r.frameRate);
         parseExactFps(r.videoFrameRate, r.frameRate, r.fpsNum, r.fpsDen);
+
+        // Source coded size: prefer video Stream width/height, else Media@.
+        // Used by media_player to skip FOAR+pad only when source covers DECODE
+        // (Grid720 1280×720 @720p bank). FOAR 720×480 must keep on-device pad (L38).
+        {
+            int mw = 0, mh = 0;
+            size_t sp = 0;
+            while ((sp = xml.find("<Stream", sp)) != std::string::npos) {
+                auto end = xml.find('>', sp);
+                if (end == std::string::npos)
+                    break;
+                const std::string slice = xml.substr(sp, end - sp);
+                const bool isVideo = slice.find("streamType=\"1\"") != std::string::npos ||
+                                     slice.find("type=\"video\"") != std::string::npos;
+                if (isVideo) {
+                    auto w = attrIn(slice, "width");
+                    auto h = attrIn(slice, "height");
+                    if (w.empty())
+                        w = attrIn(slice, "codedWidth");
+                    if (h.empty())
+                        h = attrIn(slice, "codedHeight");
+                    if (!w.empty() && !h.empty()) {
+                        mw = static_cast<int>(std::strtol(w.c_str(), nullptr, 10));
+                        mh = static_cast<int>(std::strtol(h.c_str(), nullptr, 10));
+                    }
+                    break;
+                }
+                sp = end + 1;
+            }
+            if (mw <= 0 || mh <= 0) {
+                auto w = attr(xml, "Media", "width");
+                auto h = attr(xml, "Media", "height");
+                if (!w.empty() && !h.empty()) {
+                    mw = static_cast<int>(std::strtol(w.c_str(), nullptr, 10));
+                    mh = static_cast<int>(std::strtol(h.c_str(), nullptr, 10));
+                }
+            }
+            r.mediaWidth = mw > 0 ? mw : 0;
+            r.mediaHeight = mh > 0 ? mh : 0;
+        }
     }
 
     // STREAM product path: prefer direct H.264 Part (elementary after demux) so host

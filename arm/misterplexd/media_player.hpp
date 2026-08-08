@@ -169,6 +169,14 @@ public:
     int64_t avDriftMs() const { return avDriftMs_.load(); }
     int64_t droppedFrames() const { return droppedFrames_.load(); }
     void setDecodeSize(int w, int h);
+    // PMS Media/Stream coded size for this session (0 = unknown / local file).
+    // When source covers DECODE bank size, skip ffmpeg scale/pad on HTTP paths.
+    void setSourceMediaSize(int w, int h) {
+        sourceMediaW_ = w > 0 ? w : 0;
+        sourceMediaH_ = h > 0 ? h : 0;
+    }
+    int sourceMediaW() const { return sourceMediaW_; }
+    int sourceMediaH() const { return sourceMediaH_; }
     // Host recon frames presented this session (I/IDR only)
     int64_t reconFrames() const { return reconFrames_.load(); }
     bool reconPresentOk() const { return reconPresentOk_.load(); }
@@ -234,6 +242,8 @@ private:
     bool fpsFilter_ = true;
     int uvUBias_ = 0;
     int uvVBias_ = 0;
+    int sourceMediaW_ = 0;
+    int sourceMediaH_ = 0;
     std::string audioDev_ = "/dev/MrAudio";
     std::string presentMode_ = "fb0"; // "fb0", "fpga", "both"
     bool audioEnabled_ = true;

@@ -299,9 +299,17 @@ bank → rainbow banding. push_frame and local play-file stayed PASS, so the cor
 blamed first.
 
 **Rule:** only skip scale for (1) explicit lab `FFMPEG_SWS_FLAGS=skip|none|off|identity`,
-or (2) a **local** file already at DECODE bank size. Network/PMS always FOAR+pad (or
-exact) to coded WxH. Prove stream dimensions with host `ffmpeg -i` before claiming
-identity match. HDMI-USB (`/dev/video0`) is the glass SoT — not DDR dumps alone.
+(2) a **local** file already at DECODE bank size, or (3) PMS **Media/Stream coded size
+covers DECODE** (`width≥outW && height≥outH`) — never `videoResolution` alone. FOAR
+(rk139) is 720×480 source → must FOAR+pad at a 1280×720 bank; Grid720 (rk143) is
+true 1280×720 → `pms_source_covers_bank` bypass is safe (HDMI glass PASS). Prove with
+metadata + HDMI-USB (`/dev/video0`), not DDR dumps alone.
+
+**Rate (v0.4.0 ladder):** 1280×720 glass is **possible**. Product 24 fps is still open:
+identity play-file ~21 pfps (historical pipeline peak 25.8 with free A9); true-720 PMS
+~18 pfps after scale skip; FOAR@720 bank ~9–10. Bottleneck = uncached bank memcpy
+(~14 ms) + decode contention. Path to 24 = KernelDma/WC, not more RBF thrash.
+See `Memory/lab/status/SCORE_v040_720_RATE_LADDER.txt`.
 
 ---
 

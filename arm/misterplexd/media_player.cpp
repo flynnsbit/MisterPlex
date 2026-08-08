@@ -1018,6 +1018,10 @@ bool MediaPlayer::play(const std::string& urlOrPath, int64_t startOffsetMs,
             currentHeaders_ = httpHeaders;
             durationMs_ = durationMs;
         }
+        // Local / lab play-file: do not inherit PMS Media size from prior cast.
+        // Companion path calls setSourceMediaSize() again after resolve, before play.
+        if (!urlOrPath.empty() && urlOrPath[0] == '/' && urlOrPath.rfind("http", 0) != 0)
+            setSourceMediaSize(0, 0);
 
         stop_.store(false);
         paused_.store(false);
@@ -2002,18 +2006,24 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     const bool skipScaleFlag =
         (swsFlags_ == "skip" || swsFlags_ == "none" || swsFlags_ == "off" ||
          swsFlags_ == "identity");
-    // NEVER auto-skip scale because weak ladder videoResolution == DECODE.
+    // NEVER auto-skip scale because weak ladder videoResolution == DECODE alone.
     // PMS often returns a smaller coded size (lab FOAR @720p request → 720x480
-    // H.264). Bypassing then packs wrong stride into 1280x720 banks → rainbow.
-    // Identity skip is lab-only via FFMPEG_SWS_FLAGS=skip|none|off|identity, or
-    // local play-file already at coded WxH (no network size lie).
+    // H.264). Bypassing then packs wrong stride into 1280x720 banks → rainbow (L38).
+    // Safe skip sources:
+    //   - lab FFMPEG_SWS_FLAGS=skip|none|off|identity
+    //   - local play-file already at coded WxH
+    //   - PMS Media/Stream size covers DECODE (source >= bank); FOAR 720x480 does not
     const bool urlIsLocalFile =
         !url.empty() && url[0] == '/' && url.rfind("http", 0) != 0 && url != "testsrc" &&
         url.rfind("lavfi", 0) != 0;
     const bool identityLocalFile =
         urlIsLocalFile && !forceExact && rawDisplayW == rawW && rawDisplayH == rawH &&
         outW_ == rawW && outH_ == rawH;
-    const bool skipScale = skipScaleFlag || identityLocalFile;
+    const bool pmsSourceCoversBank =
+        !forceExact && !urlIsLocalFile && sourceMediaW_ > 0 && sourceMediaH_ > 0 &&
+        sourceMediaW_ >= outW_ && sourceMediaH_ >= outH_ && rawDisplayW == rawW &&
+        rawDisplayH == rawH && outW_ == rawW && outH_ == rawH;
+    const bool skipScale = skipScaleFlag || identityLocalFile || pmsSourceCoversBank;
     // skip|none|off|identity are NOT valid libswscale flag names — if 480p (or any
     // non-identity geom) still needs FOAR+pad, fall back to bicubic.
     if (skipScaleFlag && !(skipScale && rawDisplayW == rawW && rawDisplayH == rawH)) {
@@ -2022,11 +2032,19 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             " ignored for non-identity geom; using bicubic FOAR+pad");
     }
     if (skipScale && rawDisplayW == rawW && rawDisplayH == rawH) {
-        // Explicit lab skip, or local file already at DECODE bank size.
+        // Explicit lab skip, local identity, or PMS source covers DECODE bank.
         if (!vf.empty() && vf.back() == ',')
             vf.pop_back();
-        log(std::string("media: scale/pad skipped (") +
-            (identityLocalFile && !skipScaleFlag ? "local_identity_file" : "FFMPEG_SWS_FLAGS=" + swsFlags_) +
+        const char* why = "FFMPEG_SWS_FLAGS";
+        if (identityLocalFile && !skipScaleFlag)
+            why = "local_identity_file";
+        else if (pmsSourceCoversBank && !skipScaleFlag)
+            why = "pms_source_covers_bank";
+        log(std::string("media: scale/pad skipped (") + why +
+            (pmsSourceCoversBank
+                 ? (" src=" + std::to_string(sourceMediaW_) + "x" +
+                    std::to_string(sourceMediaH_))
+                 : "") +
             " coded=" + std::to_string(rawW) + "x" + std::to_string(rawH) +
             " scale=bypass)");
     } else if (forceExact) {
