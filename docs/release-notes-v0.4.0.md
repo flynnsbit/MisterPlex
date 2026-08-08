@@ -6,7 +6,7 @@ Multi-resolution cast release: **240p / 480p / 720p**, live PMS encoder match, D
 
 - **Content resolution labels:** OSD and product profiles use **240p / 480p / 720p** (CONF_STR v8 `O[5:4]`). Internal banks remain 320×240, 640×480 (624 coded), 1280×720.
 - **Live PMS match:** Changing content resolution retargets the Plex universal weak ladder (`videoResolution` + bitrate/profile) and restarts the session at the same playhead. Lab SCORE: 240p→`320x240`, 480p→`640x480`, 720p→`1280x720` on FOAR cast. FFmpeg FOAR+pads when source ≠ bank (never trust `videoResolution` alone — L38). Scale bypass only for exact Media size match or local identity.
-- **Plex cast E2E:** Companion playback APIs (play/pause/seek/stop/timeline) + HDMI-USB glass PASS. Video-only titles (e.g. Grid720) no longer abort when `AUDIO=on` (L39).
+- **Plex cast E2E:** Playwright against local PMS Web (`http://<pms>:32400/web`) + companion remote-player APIs (play/pause/resume/seek/stop/timeline) + HDMI-USB glass PASS. Video-only titles (e.g. Grid720) no longer abort when `AUDIO=on` (L39). Content modes 240p/480p/720p each request matching PMS `videoResolution` on the weak ladder.
 - **DDR always available:** HPS DDR frame store is the shipping present path. **SDRAM stick is optional** — not required for 240p/480p/720p. Conf documents `PRESENT_MEM=auto|ddr`.
 - **480p geometry:** FOAR+pad contract coded 624 × display 618 × present 640 (lab-proven in daemon logs).
 - **Companion version:** 0.4.0.
@@ -23,6 +23,7 @@ Multi-resolution cast release: **240p / 480p / 720p**, live PMS encoder match, D
 
 ## Known limits
 
+- Plex Web header “Select Player” may show MiSTerPlex; Play/Resume without an active remote target still plays in the browser. Product control path is PMS target-client `/player/playback/*` (what Web uses for cast targets).
 - Freckle/chevron fabric polish may still be open on the freckle ladder; chevron non-regress required for ship RBF.
 - Live OSD 720p rung requires **v8** core; v7 `O[4]`-only still maps 240p/480p. Daemon understands both.
 - Kernel DMA / write-combine full-frame ingest not product-default yet.
