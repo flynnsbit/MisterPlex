@@ -1020,8 +1020,10 @@ bool MediaPlayer::play(const std::string& urlOrPath, int64_t startOffsetMs,
         }
         // Local / lab play-file: do not inherit PMS Media size from prior cast.
         // Companion path calls setSourceMediaSize() again after resolve, before play.
-        if (!urlOrPath.empty() && urlOrPath[0] == '/' && urlOrPath.rfind("http", 0) != 0)
+        if (!urlOrPath.empty() && urlOrPath[0] == '/' && urlOrPath.rfind("http", 0) != 0) {
             setSourceMediaSize(0, 0);
+            setSourceHasAudio(true); // local probe below decides
+        }
 
         stop_.store(false);
         paused_.store(false);
@@ -2012,18 +2014,20 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     // Safe skip sources:
     //   - lab FFMPEG_SWS_FLAGS=skip|none|off|identity
     //   - local play-file already at coded WxH
-    //   - PMS Media/Stream size covers DECODE (source >= bank); FOAR 720x480 does not
+    //   - PMS Media/Stream size *exactly matches* DECODE (identity). Source larger
+    //     than bank (FOAR 720×480 into 640×480/320×240) must still scale down — and
+    //     preferably come from PMS weak ladder at bank size (G0b).
     const bool urlIsLocalFile =
         !url.empty() && url[0] == '/' && url.rfind("http", 0) != 0 && url != "testsrc" &&
         url.rfind("lavfi", 0) != 0;
     const bool identityLocalFile =
         urlIsLocalFile && !forceExact && rawDisplayW == rawW && rawDisplayH == rawH &&
         outW_ == rawW && outH_ == rawH;
-    const bool pmsSourceCoversBank =
+    const bool pmsSourceMatchesBank =
         !forceExact && !urlIsLocalFile && sourceMediaW_ > 0 && sourceMediaH_ > 0 &&
-        sourceMediaW_ >= outW_ && sourceMediaH_ >= outH_ && rawDisplayW == rawW &&
+        sourceMediaW_ == outW_ && sourceMediaH_ == outH_ && rawDisplayW == rawW &&
         rawDisplayH == rawH && outW_ == rawW && outH_ == rawH;
-    const bool skipScale = skipScaleFlag || identityLocalFile || pmsSourceCoversBank;
+    const bool skipScale = skipScaleFlag || identityLocalFile || pmsSourceMatchesBank;
     // skip|none|off|identity are NOT valid libswscale flag names — if 480p (or any
     // non-identity geom) still needs FOAR+pad, fall back to bicubic.
     if (skipScaleFlag && !(skipScale && rawDisplayW == rawW && rawDisplayH == rawH)) {
@@ -2032,16 +2036,16 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             " ignored for non-identity geom; using bicubic FOAR+pad");
     }
     if (skipScale && rawDisplayW == rawW && rawDisplayH == rawH) {
-        // Explicit lab skip, local identity, or PMS source covers DECODE bank.
+        // Explicit lab skip, local identity, or PMS source exact DECODE match.
         if (!vf.empty() && vf.back() == ',')
             vf.pop_back();
         const char* why = "FFMPEG_SWS_FLAGS";
         if (identityLocalFile && !skipScaleFlag)
             why = "local_identity_file";
-        else if (pmsSourceCoversBank && !skipScaleFlag)
-            why = "pms_source_covers_bank";
+        else if (pmsSourceMatchesBank && !skipScaleFlag)
+            why = "pms_source_matches_bank";
         log(std::string("media: scale/pad skipped (") + why +
-            (pmsSourceCoversBank
+            (pmsSourceMatchesBank
                  ? (" src=" + std::to_string(sourceMediaW_) + "x" +
                     std::to_string(sourceMediaH_))
                  : "") +
@@ -2089,7 +2093,15 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     // Match audioPump: F2 only when PRESENT=fpga and MrAudio unavailable.
     const bool wantF2 = fpga_.ok() && presentMode_ == "fpga" && !wantMr;
     bool wantAudio = audioEnabled_ && (wantMr || wantF2);
-    if (wantAudio && localFile && !ffmpegHasAudioStream(ffmpeg_, url, headers, startMs)) {
+    // Dual-output (pipe:1 + pipe:3) aborts the whole ffmpeg process when the
+    // container has no audio — Grid720 freckle map is video-only. Prefer resolve
+    // metadata (hasAudio=false); fall back to a local-file probe.
+    if (wantAudio && !sourceHasAudio_) {
+        wantAudio = false;
+        log("media: audio disabled for session: source metadata has no audio stream "
+            "(avoid empty pipe:3 abort)");
+    } else if (wantAudio && localFile &&
+               !ffmpegHasAudioStream(ffmpeg_, url, headers, startMs)) {
         wantAudio = false;
         log("media: audio disabled for session: no audio stream detected; avoiding empty "
             "audio output abort");
@@ -2328,7 +2340,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             args.push_back("120");
             args.push_back("-map");
             args.push_back("0:v:0");
-            args.push_back("-an");
+            // Same rule as universal path: -an only when no audio output follows.
+            if (!wantAudio)
+                args.push_back("-an");
             args.push_back("-f");
             args.push_back("rawvideo");
             args.push_back("-pix_fmt");
@@ -2380,9 +2394,15 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             args.push_back("-i");
             args.push_back(url);
 
+            // Video output first. Do NOT pass global -an when a second audio
+            // output follows — FFmpeg 6/7 treats -an as disable-all-audio and
+            // then fails pipe:3 ("Output file does not contain any stream"),
+            // which aborts the whole process (pipeline short read 0). Video-only
+            // sessions still use -an so demux does not pull unused audio.
             args.push_back("-map");
             args.push_back("0:v:0");
-            args.push_back("-an");
+            if (!wantAudio)
+                args.push_back("-an");
             args.push_back("-f");
             args.push_back("rawvideo");
             args.push_back("-pix_fmt");

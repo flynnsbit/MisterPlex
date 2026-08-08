@@ -175,6 +175,9 @@ public:
         sourceMediaW_ = w > 0 ? w : 0;
         sourceMediaH_ = h > 0 ? h : 0;
     }
+    // When false, do not open ffmpeg pipe:3 (source has no audio stream).
+    void setSourceHasAudio(bool v) { sourceHasAudio_ = v; }
+    bool sourceHasAudio() const { return sourceHasAudio_; }
     int sourceMediaW() const { return sourceMediaW_; }
     int sourceMediaH() const { return sourceMediaH_; }
     // Host recon frames presented this session (I/IDR only)
@@ -244,6 +247,7 @@ private:
     int uvVBias_ = 0;
     int sourceMediaW_ = 0;
     int sourceMediaH_ = 0;
+    bool sourceHasAudio_ = true; // fail-open until resolve says otherwise
     std::string audioDev_ = "/dev/MrAudio";
     std::string presentMode_ = "fb0"; // "fb0", "fpga", "both"
     bool audioEnabled_ = true;

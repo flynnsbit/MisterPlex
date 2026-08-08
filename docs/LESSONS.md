@@ -300,9 +300,10 @@ blamed first.
 
 **Rule:** only skip scale for (1) explicit lab `FFMPEG_SWS_FLAGS=skip|none|off|identity`,
 (2) a **local** file already at DECODE bank size, or (3) PMS **Media/Stream coded size
-covers DECODE** (`width≥outW && height≥outH`) — never `videoResolution` alone. FOAR
-(rk139) is 720×480 source → must FOAR+pad at a 1280×720 bank; Grid720 (rk143) is
-true 1280×720 → `pms_source_covers_bank` bypass is safe (HDMI glass PASS). Prove with
+exactly matches DECODE** (`width==outW && height==outH`) — never `videoResolution`
+alone, and never “source ≥ bank” (that skipped the weak ladder for FOAR into 240/480
+and broke content-mode→PMS encode). FOAR (rk139) is 720×480 → FOAR+pad at 1280×720;
+Grid720 (rk143) is true 1280×720 → `pms_source_matches_bank` bypass is safe. Prove with
 metadata + HDMI-USB (`/dev/video0`), not DDR dumps alone.
 
 **Rate (v0.4.0 ladder):** 1280×720 glass is **possible**. Product 24 fps is still open:
@@ -310,6 +311,19 @@ identity play-file ~21 pfps (historical pipeline peak 25.8 with free A9); true
 ~18 pfps after scale skip; FOAR@720 bank ~9–10. Bottleneck = uncached bank memcpy
 (~14 ms) + decode contention. Path to 24 = KernelDma/WC, not more RBF thrash.
 See `Memory/lab/status/SCORE_v040_720_RATE_LADDER.txt`.
+
+## L39 — Dual-out FFmpeg aborts when the source has no audio
+
+With `AUDIO=on`, single-process spawn opens `pipe:1` (rawvideo) + `pipe:3` (s16le).
+Grid720 freckle map has **no** `streamType=2` audio. FFmpeg still builds the second
+output; optional `-map 0:a:0?` leaves it empty → `Output file does not contain any
+stream` → process exit → `pipeline short read got=0` and idle chevron while timeline
+claims playing. Global `-an` before a later audio map makes the same class of failure
+worse.
+
+**Rule:** parse PMS metadata for audio (`hasAudio`); if false, spawn **video-only**
+(`-an`, no pipe:3). Never open an empty audio output. Probe local files the same way.
+FOAR (AAC) keeps dual-out. HDMI-USB + `ffmpeg.err` on USB lab path are the glass proof.
 
 ---
 
@@ -338,6 +352,8 @@ See `Memory/lab/status/SCORE_v040_720_RATE_LADDER.txt`.
 | — | Renicing the MiSTer spinner slows decode (1.30×→0.906×) | `grep` matched my **own ssh shell**; `ffmpeg` inherited nice 19. Real result was the opposite: **1.30×→1.54×** |
 | — | A commit labelled "pre-register Sweep 119" | Contained 7,398 lines of another lane's `.agent-work` scratch logs. `git add -A` in an un-ignored tree |
 | — | softc24 / daemon glass dead (PMS FOAR rainbow) | PMS returned **720×480**; `pms_match_decode` scale bypass desynced rawvideo. Fix: never auto-skip scale on HTTP |
+| — | Web cast frames=0 with AUDIO=on | Grid720 has **no audio**; dual pipe:3 aborted ffmpeg (L39) |
+| — | 240/480 mode skipped PMS encode | “covers bank” direct Part on FOAR; need **exact** bank match (L38) |
 
 Full narrative for each: `Memory/lab/parent/misterplex-parent-720p-decode-verdict.txt`.
 

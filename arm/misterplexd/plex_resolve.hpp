@@ -32,6 +32,11 @@ struct ResolveResult {
     // videoResolution alone (L38: FOAR @720p request can still be 720×480).
     int mediaWidth = 0;
     int mediaHeight = 0;
+    // True when metadata lists an audio Stream (streamType=2). False when metadata
+    // was parsed and only video is present (e.g. Grid720 freckle map). Unknown
+    // (no metadata) stays true so product audio is not suppressed by accident.
+    // FFmpeg dual-out aborts the whole process if pipe:3 is opened with no audio.
+    bool hasAudio = true;
 };
 
 struct QueueItem {
@@ -128,8 +133,9 @@ bool mediaVideoIsH264(const std::string& plexMetadataXml);
 // preferDirectH264: when true (STREAM=1 product path), use direct Part stream if source is
 // already H.264 so host CAVLC recon can run on Baseline/Main without High/CABAC remux.
 // Non-H.264 still falls through to the weak universal ladder.
-// decodeW/H: when >0 and Media size covers the bank, prefer direct Part even on STREAM=0
-// (skip PMS re-encode for true-720 sources like Grid720). FOAR 720x480 does not cover 1280x720.
+// decodeW/H: when >0 and Media size exactly matches the bank, prefer direct Part on
+// STREAM=0 (skip PMS re-encode for true-720→720). Larger sources into smaller banks
+// must use the weak ladder so content mode reaches PMS encode (G0b).
 ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::string& plexBase,
                                 const std::string& token, int64_t offsetMs = 0,
                                 bool weakAlways = true, const WeakLadder& weak = {},

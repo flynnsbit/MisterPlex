@@ -747,16 +747,42 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
             r.mediaWidth = mw > 0 ? mw : 0;
             r.mediaHeight = mh > 0 ? mh : 0;
         }
+
+        // Audio presence: dual-output ffmpeg (pipe:1 video + pipe:3 audio) aborts
+        // with "Output file does not contain any stream" when the source has no
+        // audio track (Grid720). Detect streamType=2 / type=audio up front.
+        {
+            bool foundAudio = false;
+            size_t sp = 0;
+            while ((sp = xml.find("<Stream", sp)) != std::string::npos) {
+                auto end = xml.find('>', sp);
+                if (end == std::string::npos)
+                    break;
+                const std::string slice = xml.substr(sp, end - sp);
+                if (slice.find("streamType=\"2\"") != std::string::npos ||
+                    slice.find("type=\"audio\"") != std::string::npos) {
+                    foundAudio = true;
+                    break;
+                }
+                sp = end + 1;
+            }
+            // Only force false when we successfully parsed Stream tags at all.
+            // Empty/malformed metadata keeps hasAudio=true (fail open).
+            if (xml.find("<Stream") != std::string::npos)
+                r.hasAudio = foundAudio;
+        }
     }
 
     // STREAM product path: prefer direct H.264 Part (elementary after demux) so host
     // CAVLC recon can work on Baseline/Main. PMS Chrome universal often emits High/CABAC.
-    // STREAM=0 rate path: also direct when source Media covers DECODE bank (true 720
-    // already at bank size — skip PMS re-transcode). Never direct FOAR 720x480 into HD.
+    // STREAM=0 rate path: direct only when source Media *exactly matches* DECODE bank
+    // (true 720 into 720 — skip PMS re-transcode). Do NOT treat FOAR 720×480 as covering
+    // 640×480/320×240: that skipped the weak ladder and broke G0b (mode→PMS encode).
+    // Never direct FOAR 720x480 into HD either (not an exact match).
     const bool metaOk = metaFound;
     const bool isH264 = metaOk && mediaVideoIsH264(xml);
-    const bool mediaCoversDecode = decodeW > 0 && decodeH > 0 && r.mediaWidth >= decodeW &&
-                                   r.mediaHeight >= decodeH;
+    const bool mediaMatchesDecode = decodeW > 0 && decodeH > 0 && r.mediaWidth == decodeW &&
+                                    r.mediaHeight == decodeH;
     // Optional profile tag for operator logs (High often implies CABAC sticky skip).
     auto videoProfileNote = [&]() -> std::string {
         if (!metaOk)
@@ -785,8 +811,8 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
             p = attr(xml, "Media", "videoCodec");
         return p;
     };
-    // STREAM=0 rate: direct Part only when Media covers DECODE *and* profile is
-    // baseline/main. High@L4 Grid720 measured ~17 pfps direct vs ~18.6 via Main
+    // STREAM=0 rate: direct Part only when Media exactly matches DECODE *and* profile
+    // is baseline/main. High@L4 Grid720 measured ~17 pfps direct vs ~18.6 via Main
     // universal + scale bypass — keep weak ladder for High.
     const std::string srcProfEarly = videoProfileNote();
     auto profLower = srcProfEarly;
@@ -801,7 +827,7 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
          profLower.find("high") == std::string::npos);
     const bool wantDirect =
         key.rfind("/library", 0) == 0 &&
-        (preferDirectH264 || (mediaCoversDecode && lightDirectProfile));
+        (preferDirectH264 || (mediaMatchesDecode && lightDirectProfile));
     const bool directH264 = wantDirect && isH264;
     if (directH264) {
         const std::string prof = videoProfileNote();

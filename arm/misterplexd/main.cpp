@@ -724,15 +724,21 @@ int main(int argc, char** argv) {
                          resolved.frameRate.empty() ? "-" : resolved.frameRate.c_str(),
                          resolved.videoFrameRate.empty() ? "-" : resolved.videoFrameRate.c_str());
             player.setSourceMediaSize(resolved.mediaWidth, resolved.mediaHeight);
+            player.setSourceHasAudio(resolved.hasAudio);
             if (resolved.mediaWidth > 0 && resolved.mediaHeight > 0) {
                 std::fprintf(stderr,
-                             "misterplexd: pms source media=%dx%d decode=%dx%d scale=%s\n",
+                             "misterplexd: pms source media=%dx%d decode=%dx%d scale=%s "
+                             "hasAudio=%d\n",
                              resolved.mediaWidth, resolved.mediaHeight, player.decodeW(),
                              player.decodeH(),
-                             (resolved.mediaWidth >= player.decodeW() &&
-                              resolved.mediaHeight >= player.decodeH())
-                                 ? "bypass_if_full_bank"
-                                 : "foar_pad_required");
+                             (resolved.mediaWidth == player.decodeW() &&
+                              resolved.mediaHeight == player.decodeH())
+                                 ? "identity_match_bank"
+                                 : "scale_or_pad",
+                             resolved.hasAudio ? 1 : 0);
+            } else {
+                std::fprintf(stderr, "misterplexd: pms hasAudio=%d\n",
+                             resolved.hasAudio ? 1 : 0);
             }
         }
 
