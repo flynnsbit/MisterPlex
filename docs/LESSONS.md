@@ -290,6 +290,21 @@ contains. And prefer explicit paths over `git add -A` in any shared tree.
 
 ---
 
+## L38 — Never trust PMS `videoResolution` as the coded frame size
+
+Auto `pms_match_decode` scale bypass assumed weak-ladder `videoResolution=1280x720`
+meant the HTTP body was already 1280×720 I420. Host probe of the same FOAR URL
+proved PMS delivered **h264 720×480**. Skipping swscale packed SD stride into a HD
+bank → rainbow banding. push_frame and local play-file stayed PASS, so the core was
+blamed first.
+
+**Rule:** only skip scale for (1) explicit lab `FFMPEG_SWS_FLAGS=skip|none|off|identity`,
+or (2) a **local** file already at DECODE bank size. Network/PMS always FOAR+pad (or
+exact) to coded WxH. Prove stream dimensions with host `ffmpeg -i` before claiming
+identity match. HDMI-USB (`/dev/video0`) is the glass SoT — not DDR dumps alone.
+
+---
+
 ## Incident index
 
 | # | Wrong conclusion | Reality |
@@ -314,5 +329,14 @@ contains. And prefer explicit paths over `git add -A` in any shared tree.
 | — | All 8 h264 leaf modules instantiated by NOBODY | Probe searched for module names equal to filenames; **no module here is named after its file**, so it could only return NOBODY. Corrected: `LIVE=4 DEAD=28` |
 | — | Renicing the MiSTer spinner slows decode (1.30×→0.906×) | `grep` matched my **own ssh shell**; `ffmpeg` inherited nice 19. Real result was the opposite: **1.30×→1.54×** |
 | — | A commit labelled "pre-register Sweep 119" | Contained 7,398 lines of another lane's `.agent-work` scratch logs. `git add -A` in an un-ignored tree |
+| — | softc24 / daemon glass dead (PMS FOAR rainbow) | PMS returned **720×480**; `pms_match_decode` scale bypass desynced rawvideo. Fix: never auto-skip scale on HTTP |
 
 Full narrative for each: `Memory/lab/parent/misterplex-parent-720p-decode-verdict.txt`.
+
+## Scheduler /loop: do not cancel before PASS (2026-08-07)
+
+Parent cancelled a "until 24 fps" loop after conf knobs were exhausted, without
+user request and without PASS. User rejected that. Rule: never `scheduler_delete`
+a pass-gated loop unless PASS is proven or the user cancels. Pivot the prompt
+to architecture work instead. Lab note:
+`Memory/lab/status/LESSON_DO_NOT_CANCEL_LOOP_BEFORE_PASS.txt`.
