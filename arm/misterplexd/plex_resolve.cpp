@@ -453,11 +453,83 @@ std::string plexFfmpegHeaders(const std::string& sessionId, const std::string& t
     return o.str();
 }
 
+bool hasHeader(const std::vector<std::pair<std::string, std::string>>& headers,
+               const char* name) {
+    for (const auto& h : headers) {
+        if (h.first == name)
+            return true;
+    }
+    return false;
+}
+
+bool plexHttpStatusOk(int httpStatus) {
+    return httpStatus >= 200 && httpStatus < 300;
+}
+
+int parseCurlHttpCode(const std::string& curlWriteOut) {
+    std::string out = curlWriteOut;
+    while (!out.empty() &&
+           (out.back() == '\n' || out.back() == '\r' || out.back() == ' ' || out.back() == '\t'))
+        out.pop_back();
+    size_t start = 0;
+    while (start < out.size() &&
+           (out[start] == ' ' || out[start] == '\t' || out[start] == '\n' || out[start] == '\r'))
+        ++start;
+    if (out.size() - start < 3)
+        return 0;
+    // Take the last 3 digits if curl appended noise; prefer exact 3-char body.
+    std::string code = (out.size() - start == 3) ? out.substr(start) : out.substr(out.size() - 3);
+    if (code.size() != 3)
+        return 0;
+    for (char c : code) {
+        if (c < '0' || c > '9')
+            return 0;
+    }
+    return (code[0] - '0') * 100 + (code[1] - '0') * 10 + (code[2] - '0');
+}
+
+PlexHttpNoBodyResult plexHttpGetNoBodyResult(
+    const std::string& url, const std::vector<std::pair<std::string, std::string>>& headers,
+    int timeoutSec) {
+    // Prefer curl HTTP status over body non-empty: /:/timeline may return empty 200,
+    // and 401 Unauthorized is a 91-byte HTML body — !body.empty() false-OKed auth fails
+    // (docs/evidence/timeline-stuck-20260730T173000Z).
+    PlexHttpNoBodyResult r;
+    const bool defaultIdentity = !hasHeader(headers, "X-Plex-Client-Identifier");
+    std::ostringstream cmd;
+    cmd << "curl -sS -g -k -L --http1.1 --connect-timeout 6 --max-time " << timeoutSec
+        << " -o /dev/null -w '%{http_code}' -H 'Accept: application/xml'";
+    if (defaultIdentity) {
+        cmd << " -H 'X-Plex-Client-Identifier: misterplex'"
+            << " -H 'X-Plex-Product: Plex Web'"
+            << " -H 'X-Plex-Version: 4.125.0'"
+            << " -H 'X-Plex-Platform: Chrome'"
+            << " -H 'X-Plex-Platform-Version: 120.0'"
+            << " -H 'X-Plex-Device: Linux'"
+            << " -H 'X-Plex-Device-Name: Chrome'"
+            << " -H 'X-Plex-Client-Profile-Name: MiSTerPlex'"
+            << " -H 'X-Plex-Model: bundled'"
+            << " -H 'X-Plex-Provides: player'";
+    }
+    cmd << curlHeaderArgs(headers) << " " << shellQuote(url) << " 2>/dev/null";
+    FILE* p = popen(cmd.str().c_str(), "r");
+    if (!p)
+        return r;
+    std::string out;
+    char buf[64];
+    while (fgets(buf, sizeof(buf), p))
+        out += buf;
+    (void)pclose(p);
+    r.httpStatus = parseCurlHttpCode(out);
+    // curl may exit non-zero on 404 with -f; we do not use -f, so status is authoritative.
+    r.ok = plexHttpStatusOk(r.httpStatus);
+    return r;
+}
+
 bool plexHttpGetNoBody(const std::string& url,
                        const std::vector<std::pair<std::string, std::string>>& headers,
                        int timeoutSec) {
-    const std::string body = httpGet(url, timeoutSec, curlHeaderArgs(headers));
-    return !body.empty();
+    return plexHttpGetNoBodyResult(url, headers, timeoutSec).ok;
 }
 
 std::string buildPlexBase(const std::string& protocol, const std::string& address,

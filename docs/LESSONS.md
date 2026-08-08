@@ -380,3 +380,22 @@ the DDR pipe loop. Keep `0abee0b6` plant-ahead release + `seedPlaybackPosition` 
 companion. Unit: `tests/unit/test_companion_plant_seek.cpp`.
 
 **Evidence:** SCORE_v040_MATRIX_WEB_TIMELINE.txt — timeline advances on 240/480/720 after fix.
+
+## L41 — PMS `/:/timeline` must be HTTP 2xx + cast token (Web 0:00)
+
+**Symptom:** Companion `/player/timeline/poll` advances, media plays, but Plex Web scrubber
+stays at **0:00**. User cast often uses `*.plex.direct` (different machine id than conf
+`PLEX_BASE`).
+
+**Cause (device evidence `timeline-stuck-20260730T173000Z` / commits `eeae7943`, `0abee0b6`):**
+1. `plexHttpGetNoBody` treated **non-empty body as OK** — 401 HTML (91 B) logged as success.
+2. Timeline session mixed **cast host** with **conf `PLEX_TOKEN`** from another PMS → silent 401.
+3. Playing cadence was 10s; Web-bound “Now Playing” needs ~1s updates.
+
+**Fix:** `plexHttpGetNoBodyResult` uses curl `%{http_code}` (2xx only); cast token preferred
+(conf token only when cast did not pin a host); `updateToken` from later `/player/` requests;
+`type=video` on `/:/timeline`; `clientIdentifier` = player id; log `http=N` always; playing
+cadence **1s**. Port of `eeae7943` + plant-ahead `0abee0b6` + L40.
+
+**Evidence:** Lab cast rk=143 — companion time 2s→11s; `pms timeline: update ok http=200`
+with advancing `time=`; PMS `/status/sessions` `viewOffset` matches player.

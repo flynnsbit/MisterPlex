@@ -1,6 +1,7 @@
 #include <pthread.h>
 #include "pms_timeline.hpp"
 
+#include "log_redact.hpp"
 #include "plex_resolve.hpp"
 
 #include <algorithm>
@@ -16,8 +17,10 @@ bool validState(const std::string& state) {
            state == "buffering";
 }
 
-bool defaultSink(const PmsTimelineHttpRequest& req) {
-    return plexHttpGetNoBody(req.url, req.headers, 4);
+PmsTimelineSinkResult defaultSink(const PmsTimelineHttpRequest& req) {
+    // GET is the Plex client convention for /:/timeline (query carries state/time).
+    const auto r = plexHttpGetNoBodyResult(req.url, req.headers, 4);
+    return PmsTimelineSinkResult{r.ok, r.httpStatus};
 }
 
 } // namespace
@@ -44,11 +47,12 @@ bool buildPmsTimelineHttpRequest(const PmsTimelineSession& session, const std::s
     if (key.empty())
         key = "/library/metadata/" + session.ratingKey;
 
+    // type=video matches Plex Web cast playMedia and common player clients.
     out.url = base + "/:/timeline?ratingKey=" + urlEncodeQuery(session.ratingKey) +
               "&key=" + urlEncodeQuery(key) + "&state=" + urlEncodeQuery(state) +
               "&time=" + urlEncodeQuery(std::to_string(timeMs)) +
               "&duration=" + urlEncodeQuery(std::to_string(durationMs)) +
-              "&identifier=com.plexapp.plugins.library";
+              "&type=video&identifier=com.plexapp.plugins.library";
     if (!session.playQueueItemId.empty())
         out.url += "&playQueueItemID=" + urlEncodeQuery(session.playQueueItemId);
     if (!session.containerKey.empty())
@@ -96,6 +100,18 @@ void PmsTimelineReporter::beginSession(const PmsTimelineSession& session, int64_
         lastPlayingSent_ = {};
         if (!buildPmsTimelineHttpRequest(session_, "buffering", timeMs, durationMs, req)) {
             active_ = false;
+            if (log_) {
+                const char* why = "unknown";
+                if (session.token.empty())
+                    why = "empty token";
+                else if (session.ratingKey.empty())
+                    why = "empty ratingKey";
+                else if (normalizePlexBase(session.baseUrl).empty())
+                    why = "empty/invalid baseUrl";
+                log_(redactSensitive(std::string("pms timeline: beginSession skipped (") + why +
+                                     ") base=" + session.baseUrl +
+                                     " ratingKey=" + session.ratingKey));
+            }
             return;
         }
         lastSentState_ = "buffering";
@@ -175,16 +191,34 @@ void PmsTimelineReporter::enqueue(PmsTimelineHttpRequest request, const std::str
     cv_.notify_one();
 }
 
+void PmsTimelineReporter::updateToken(const std::string& token) {
+    if (token.empty())
+        return;
+    std::lock_guard<std::mutex> lock(mu_);
+    if (!active_)
+        return;
+    if (session_.token == token)
+        return;
+    session_.token = token;
+    if (log_)
+        log_("pms timeline: session token refreshed");
+}
+
 bool PmsTimelineReporter::send(const Pending& pending) {
-    bool ok = false;
+    PmsTimelineSinkResult result;
     try {
-        ok = sink_(pending.request);
+        result = sink_(pending.request);
     } catch (...) {
-        ok = false;
+        result = {};
     }
-    if (!ok && log_)
-        log_("pms timeline: update failed state=" + pending.state);
-    return ok;
+    if (log_) {
+        // Always log outcome + http status. Non-2xx must read as failed (FIX A).
+        log_(redactSensitive(std::string("pms timeline: update ") +
+                             (result.ok ? "ok" : "failed") +
+                             " http=" + std::to_string(result.httpStatus) +
+                             " state=" + pending.state + " url=" + pending.request.url));
+    }
+    return result.ok;
 }
 
 void PmsTimelineReporter::workerLoop() {
