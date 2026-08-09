@@ -82,28 +82,44 @@ module ddr_bus_arbiter (
 		end
 	end
 
-	// o24: m1_rd/m1_we are single-cycle clk_m1 pulses. Sampling them directly on
-	// clk_ddr (and only while grant_m1) drops CTRL/DATA reads → cons=0 / telem_seq=1.
-	// 2-FF sync + sticky hold until the granted beat is accepted. Addr/burst/din
-	// are protocol-stable while !m1_busy; latch on sticky capture.
-	reg m1_rd_s1, m1_rd_s2;
-	reg m1_we_s1, m1_we_s2;
-	reg m1_rd_sticky, m1_we_sticky;
-	reg [28:0] m1_addr_r;
-	reg [7:0]  m1_burst_r;
-	reg [63:0] m1_din_r;
-	reg [7:0]  m1_be_r;
-	always @(posedge clk) begin
-		if (rst) begin
-			m1_rd_s1 <= 1'b0;
-			m1_rd_s2 <= 1'b0;
-			m1_we_s1 <= 1'b0;
-			m1_we_s2 <= 1'b0;
+	// o25: lower-density lost-pulse recovery vs o24.
+	// Root cause unchanged: m1_rd/m1_we are single-cycle clk_m1 pulses; sampling
+	// them only while grant_m1 on clk_ddr drops CTRL/DATA → cons=0.
+	// o24 stuck those pulses with 2FF+sticky *and* latched addr/burst/din/be on
+	// clk_ddr (~109 extra FFs into the DDRAM_* mux) → STA −0.674 NODEPLOY.
+	// o25: sticky req lives on clk_m1; clk_ddr only 2FF-syncs the levels and
+	// returns a 1-bit ack. Addr/burst/din/be stay on the live m1_* nets
+	// (protocol-stable from issue until the next command).
+	reg m1_rd_req, m1_we_req;
+	reg m1_rd_ack, m1_we_ack;
+	reg m1_rd_ack_s1, m1_rd_ack_s2;
+	reg m1_we_ack_s1, m1_we_ack_s2;
+	reg m1_rd_req_s1, m1_rd_req_s2;
+	reg m1_we_req_s1, m1_we_req_s2;
+
+	always @(posedge clk_m1) begin
+		if (reset) begin
+			m1_rd_req <= 1'b0;
+			m1_we_req <= 1'b0;
+			m1_rd_ack_s1 <= 1'b0;
+			m1_rd_ack_s2 <= 1'b0;
+			m1_we_ack_s1 <= 1'b0;
+			m1_we_ack_s2 <= 1'b0;
 		end else begin
-			m1_rd_s1 <= m1_rd;
-			m1_rd_s2 <= m1_rd_s1;
-			m1_we_s1 <= m1_we;
-			m1_we_s2 <= m1_we_s1;
+			m1_rd_ack_s1 <= m1_rd_ack;
+			m1_rd_ack_s2 <= m1_rd_ack_s1;
+			m1_we_ack_s1 <= m1_we_ack;
+			m1_we_ack_s2 <= m1_we_ack_s1;
+
+			if (m1_rd)
+				m1_rd_req <= 1'b1;
+			else if (m1_rd_ack_s2)
+				m1_rd_req <= 1'b0;
+
+			if (m1_we)
+				m1_we_req <= 1'b1;
+			else if (m1_we_ack_s2)
+				m1_we_req <= 1'b0;
 		end
 	end
 
@@ -121,12 +137,16 @@ module ddr_bus_arbiter (
 	localparam [5:0] M1_WAIT_MAX = 6'd32;
 	wire m1_starved = m1_want_s2 && (m1_wait >= M1_WAIT_MAX);
 
+	// ready = req visible on clk_ddr and not yet acked (prevents double-accept
+	// during the req/ack drain back to clk_m1).
+	wire m1_rd_ready = m1_rd_req_s2 & ~m1_rd_ack;
+	wire m1_we_ready = m1_we_req_s2 & ~m1_we_ack;
 	wire rsp_active = rsp_left != 9'd0;
 	wire rsp_pipe_active = rsp_active | rsp_valid_r;
 	wire m0_cmd = m0_rd | m0_we;
-	wire m1_cmd = m1_rd_sticky | m1_we_sticky;
+	wire m1_cmd = m1_rd_ready | m1_we_ready;
 	wire use_m1 = grant_m1;
-	wire [7:0] selected_burst = use_m1 ? m1_burst_r : m0_burstcnt;
+	wire [7:0] selected_burst = use_m1 ? m1_burstcnt : m0_burstcnt;
 
 	// When m1 has waited M1_WAIT_MAX without a grant, raise m0_busy so the
 	// frame-store stops issuing new reads and the pipe can drain — otherwise
@@ -162,13 +182,14 @@ module ddr_bus_arbiter (
 	end
 	assign m1_busy = m1_busy_s2;
 
-	assign DDRAM_BURSTCNT = use_m1 ? m1_burst_r : m0_burstcnt;
-	assign DDRAM_ADDR     = use_m1 ? m1_addr_r  : m0_addr;
-	// Drive sticky cmd only while granted so a pending RD cannot leak onto m0 beats.
-	assign DDRAM_RD       = use_m1 ? m1_rd_sticky : m0_rd;
-	assign DDRAM_DIN      = use_m1 ? m1_din_r    : m0_din;
-	assign DDRAM_BE       = use_m1 ? m1_be_r     : m0_be;
-	assign DDRAM_WE       = use_m1 ? m1_we_sticky : m0_we;
+	// Live m1_* (stable while req held). Drive cmd only while granted so a
+	// pending RD cannot leak onto m0 beats.
+	assign DDRAM_BURSTCNT = use_m1 ? m1_burstcnt : m0_burstcnt;
+	assign DDRAM_ADDR     = use_m1 ? m1_addr     : m0_addr;
+	assign DDRAM_RD       = use_m1 ? m1_rd_ready : m0_rd;
+	assign DDRAM_DIN      = use_m1 ? m1_din      : m0_din;
+	assign DDRAM_BE       = use_m1 ? m1_be       : m0_be;
+	assign DDRAM_WE       = use_m1 ? m1_we_ready : m0_we;
 
 	wire [63:0] ddram_dout_pad;
 	wire        ddram_dout_ready_pad;
@@ -248,13 +269,25 @@ module ddr_bus_arbiter (
 			rsp_valid_r <= 1'b0;
 			rsp_owner_m1_r <= 1'b0;
 			m1_wait <= 6'd0;
-			m1_rd_sticky <= 1'b0;
-			m1_we_sticky <= 1'b0;
-			m1_addr_r <= 29'd0;
-			m1_burst_r <= 8'd1;
-			m1_din_r <= 64'd0;
-			m1_be_r <= 8'hFF;
+			m1_rd_req_s1 <= 1'b0;
+			m1_rd_req_s2 <= 1'b0;
+			m1_we_req_s1 <= 1'b0;
+			m1_we_req_s2 <= 1'b0;
+			m1_rd_ack <= 1'b0;
+			m1_we_ack <= 1'b0;
 		end else begin
+			// 2-FF sync req levels (clk_m1 → clk_ddr)
+			m1_rd_req_s1 <= m1_rd_req;
+			m1_rd_req_s2 <= m1_rd_req_s1;
+			m1_we_req_s1 <= m1_we_req;
+			m1_we_req_s2 <= m1_we_req_s1;
+
+			// 4-phase drain: drop ack once source req has fallen.
+			if (!m1_rd_req_s2)
+				m1_rd_ack <= 1'b0;
+			if (!m1_we_req_s2)
+				m1_we_ack <= 1'b0;
+
 			rsp_valid_r <= rsp_raw_valid;
 			if (rsp_raw_valid) begin
 				rsp_data_r <= ddram_dout_pad;
@@ -264,20 +297,6 @@ module ddr_bus_arbiter (
 			if (DDRAM_DOUT_READY && rsp_active)
 				rsp_left <= rsp_left - 9'd1;
 
-			// Capture clk_m1 pulses into sticky clk_ddr commands.
-			if (m1_rd_s2) begin
-				m1_rd_sticky <= 1'b1;
-				m1_addr_r <= m1_addr;
-				m1_burst_r <= m1_burstcnt;
-			end
-			if (m1_we_s2) begin
-				m1_we_sticky <= 1'b1;
-				m1_addr_r <= m1_addr;
-				m1_burst_r <= m1_burstcnt;
-				m1_din_r <= m1_din;
-				m1_be_r <= m1_be;
-			end
-
 			// Count consecutive ddr cycles m1 wants but is not granted.
 			if (!m1_want_s2 || grant_m1)
 				m1_wait <= 6'd0;
@@ -286,16 +305,16 @@ module ddr_bus_arbiter (
 
 			if (!DDRAM_BUSY && !rsp_pipe_active) begin
 				if (grant_m1) begin
-					if (m1_rd_sticky) begin
+					if (m1_rd_ready) begin
 						rsp_owner_m1 <= 1'b1;
-						rsp_left <= {1'b0, m1_burst_r};
+						rsp_left <= {1'b0, m1_burstcnt};
 						grant_m1 <= 1'b0;
-						m1_rd_sticky <= 1'b0;
+						m1_rd_ack <= 1'b1;
 						m1_wait <= 6'd0;
-					end else if (m1_we_sticky) begin
-						// Posted write: one granted cycle with WE sticky high.
+					end else if (m1_we_ready) begin
+						// Posted write: one granted cycle with WE ready high.
 						grant_m1 <= 1'b0;
-						m1_we_sticky <= 1'b0;
+						m1_we_ack <= 1'b1;
 						m1_wait <= 6'd0;
 					end else if (!m1_want_s2) begin
 						grant_m1 <= 1'b0;
@@ -303,7 +322,7 @@ module ddr_bus_arbiter (
 					end
 				end else begin
 					// Prefer m1 when idle-gap OR when starved by continuous m0_rd.
-					// Also take m1 if a sticky cmd is already waiting (lost-RD recovery).
+					// Also take m1 if a ready cmd is already waiting (lost-RD recovery).
 					if ((m1_want_s2 || m1_cmd) && (!m0_cmd || m1_starved || m1_cmd)) begin
 						grant_m1 <= 1'b1;
 					end else if (m0_rd) begin
