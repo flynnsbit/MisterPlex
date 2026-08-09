@@ -133,11 +133,8 @@ module ddr_bus_arbiter (
 	// starve bitstream m1 forever (o13: PLXR telem_seq stuck at 1, consumer=0
 	// while host PLXB producer filled 256KiB). After M1_WAIT_MAX ddr cycles of
 	// pending m1_want without grant, block new m0_rd starts so m1 gets a slot.
-	// o29: shrink fairness counter 6→5 bits (MAX 32→16). o28 hit −0.047 ns —
-	// need one more density cut, not SEED thrash. 16 ddr cycles (~178 ns) still
-	// bounds m0 starve of m1 for bitstream bursts.
-	reg [4:0] m1_wait;
-	localparam [4:0] M1_WAIT_MAX = 5'd16;
+	reg [5:0] m1_wait;
+	localparam [5:0] M1_WAIT_MAX = 6'd32;
 	wire m1_starved = m1_want_s2 && (m1_wait >= M1_WAIT_MAX);
 
 	// ready = req visible on clk_ddr and not yet acked (prevents double-accept
@@ -283,7 +280,7 @@ module ddr_bus_arbiter (
 			rsp_data_r <= 64'd0;
 			rsp_valid_r <= 1'b0;
 			rsp_owner_m1_r <= 1'b0;
-			m1_wait <= 5'd0;
+			m1_wait <= 6'd0;
 			m1_rd_req_s1 <= 1'b0;
 			m1_rd_req_s2 <= 1'b0;
 			m1_we_req_s1 <= 1'b0;
@@ -320,9 +317,9 @@ module ddr_bus_arbiter (
 
 			// Count consecutive ddr cycles m1 wants but is not granted.
 			if (!m1_want_s2 || grant_m1)
-				m1_wait <= 5'd0;
-			else if (m1_wait != 5'h1f)
-				m1_wait <= m1_wait + 5'd1;
+				m1_wait <= 6'd0;
+			else if (m1_wait != 6'h3f)
+				m1_wait <= m1_wait + 6'd1;
 
 			// Hold command while HPS asserts BUSY; otherwise drop one-shot RD/WE
 			// unless re-issued below in the same cycle.
@@ -344,7 +341,7 @@ module ddr_bus_arbiter (
 						rsp_left <= {1'b0, m1_burstcnt};
 						grant_m1 <= 1'b0;
 						m1_rd_ack <= 1'b1;
-						m1_wait <= 5'd0;
+						m1_wait <= 6'd0;
 					end else if (m1_we_ready) begin
 						// Posted write: one registered WE beat while granted.
 						ddram_burstcnt_q <= m1_burstcnt;
@@ -355,10 +352,10 @@ module ddr_bus_arbiter (
 						ddram_we_q       <= 1'b1;
 						grant_m1 <= 1'b0;
 						m1_we_ack <= 1'b1;
-						m1_wait <= 5'd0;
+						m1_wait <= 6'd0;
 					end else if (!m1_want_s2) begin
 						grant_m1 <= 1'b0;
-						m1_wait <= 5'd0;
+						m1_wait <= 6'd0;
 					end
 				end else begin
 					// Prefer m1 when idle-gap OR when starved by continuous m0_rd.
