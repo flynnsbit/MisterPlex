@@ -112,9 +112,9 @@ module ddr_bus_arbiter (
 	// frame-store stops issuing new reads and the pipe can drain — otherwise
 	// continuous m0_rd keeps rsp_pipe_active and m1 never enters the
 	// !rsp_pipe_active grant window (o14 still cons=0 / telem_seq=1).
-	assign m0_busy = DDRAM_BUSY | grant_m1 | m1_starved |
-	                 (rsp_active & rsp_owner_m1) |
-	                 (rsp_valid_r & rsp_owner_m1_r);
+	// Register m0_busy — comb m1_starved into present issue failed STA o16-o20.
+	reg m0_busy_r;
+	assign m0_busy = m0_busy_r;
 
 	// m1_busy: register on clk_ddr to eliminate combinational glitches,
 	// then 2-FF sync to clk_m1 for proper CDC.  The consumer uses this
@@ -247,6 +247,10 @@ module ddr_bus_arbiter (
 				m1_wait <= 6'd0;
 			else if (m1_wait != 6'h3f)
 				m1_wait <= m1_wait + 6'd1;
+
+			m0_busy_r <= DDRAM_BUSY | grant_m1 | m1_starved |
+			              (rsp_active & rsp_owner_m1) |
+			              (rsp_valid_r & rsp_owner_m1_r);
 
 			if (!DDRAM_BUSY && !rsp_pipe_active) begin
 				if (grant_m1) begin
