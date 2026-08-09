@@ -108,9 +108,6 @@ module ddr_bitstream_reader #(
 	reg [3:0] state;
 	reg [1:0] mode;
 	reg [POLL_DIV_BITS-1:0] poll_div;
-	// o36/o23: throttle lost-RD reissue while waiting for DOUT (o28 restore dropped o22/o23).
-	// Live o35: telem_seq stuck at 1 / consumer=0 with host PLXB advancing.
-	reg [2:0] rd_retry_cnt;
 	reg [63:0] beat_q;
 	reg [2:0] byte_idx;
 	reg [3:0] beat_left;
@@ -220,7 +217,6 @@ module ddr_bitstream_reader #(
 			state <= ST_RESET;
 			mode <= MODE_HEADER;
 			poll_div <= '0;
-			rd_retry_cnt <= 3'd0;
 			DDRAM_RD <= 1'b0;
 			DDRAM_WE <= 1'b0;
 			DDRAM_BURSTCNT <= 8'd1;
@@ -397,14 +393,11 @@ module ddr_bitstream_reader #(
 					end
 				end
 
-				// o36 (=o22/o23): single-cycle RD can be lost if m1 not granted that
-				// cycle, or response dropped before DOUT_READY is observed. Stay in
-				// ST_POLL/ST_READ_WAIT with bus_want high and re-issue RD after 8 free
-				// cycles until DOUT_READY arrives. Without retry, o35 live shows
-				// telem_seq stuck at 1 and consumer_bytes=0 while host PLXB advances.
+				// o37: lost-RD reissue without new FFs (o36 STA −0.426/−0.712 at 97% ALM).
+				// Throttle with existing poll_div==0 (~64 clk_sys) so density matches o35
+				// dual-set baseline; still recovers o35 live cons=0 / telem_seq=1.
 				ST_POLL: begin
 					if (DDRAM_DOUT_READY) begin
-						rd_retry_cnt <= 3'd0;
 						if (ctrl_magic_ok) begin
 							have_ctrl <= 1'b1;
 							write_count <= {1'b0, ctrl_write_count};
@@ -435,37 +428,24 @@ module ddr_bitstream_reader #(
 							end
 						end
 						state <= ST_IDLE;
-					end else if (DDRAM_BUSY) begin
-						rd_retry_cnt <= 3'd0;
-					end else if (!DDRAM_RD && !DDRAM_WE) begin
-						if (rd_retry_cnt == 3'd7) begin
-							DDRAM_ADDR <= CTRL_W;
-							DDRAM_BURSTCNT <= 8'd1;
-							DDRAM_RD <= 1'b1;
-							rd_retry_cnt <= 3'd0;
-						end else begin
-							rd_retry_cnt <= rd_retry_cnt + 3'd1;
-						end
+					end else if (!DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE &&
+					            (poll_div == {POLL_DIV_BITS{1'b0}})) begin
+						DDRAM_ADDR <= CTRL_W;
+						DDRAM_BURSTCNT <= 8'd1;
+						DDRAM_RD <= 1'b1;
 					end
 				end
 
 				ST_READ_WAIT: begin
 					if (DDRAM_DOUT_READY) begin
-						rd_retry_cnt <= 3'd0;
 						beat_q <= DDRAM_DOUT;
 						beat_left <= consume_count;
 						state <= ST_CONSUME;
-					end else if (DDRAM_BUSY) begin
-						rd_retry_cnt <= 3'd0;
-					end else if (!DDRAM_RD && !DDRAM_WE) begin
-						if (rd_retry_cnt == 3'd7) begin
-							DDRAM_ADDR <= DATA_W + read_qword_offset;
-							DDRAM_BURSTCNT <= 8'd1;
-							DDRAM_RD <= 1'b1;
-							rd_retry_cnt <= 3'd0;
-						end else begin
-							rd_retry_cnt <= rd_retry_cnt + 3'd1;
-						end
+					end else if (!DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE &&
+					            (poll_div == {POLL_DIV_BITS{1'b0}})) begin
+						DDRAM_ADDR <= DATA_W + read_qword_offset;
+						DDRAM_BURSTCNT <= 8'd1;
+						DDRAM_RD <= 1'b1;
 					end
 				end
 
