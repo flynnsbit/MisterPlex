@@ -327,6 +327,29 @@ int main() {
     checkConversion(320, 240);
     checkConversion(640, 480);
 
+    // 720p product dual-bank glass ABI (o9): phys 0x30000000 / stride 0x180000 /
+    // doorbell 0x302FF000 — NOT Option-C 0x30180000 / 0x3047F000.
+    {
+        const auto g720 =
+            misterplex::ddrFrameGeometryForPresentedSize(misterplex::kPlex720pPresentedWidth,
+                                                         misterplex::kPlex720pPresentedHeight);
+        CHECK(g720.coded_width == 1280);
+        CHECK(g720.coded_height == 720);
+        checkLayout(g720, misterplex::kPlex720pYuv420pBytes, 160,
+                    misterplex::DdrFrameFormat::Yuv420p, 80);
+        const auto l720 =
+            misterplex::makeDdrFrameLayout(g720, misterplex::kDdrFramePhysBase,
+                                           misterplex::kDdrFrameStrideAlign,
+                                           misterplex::DdrFrameFormat::Yuv420p);
+        CHECK(l720.phys_base == 0x30000000u);
+        CHECK(l720.bank_stride == misterplex::kPlex720pYuv420pBankStride);
+        CHECK(l720.doorbell_phys == misterplex::kPlex720pYuv420pDoorbellPhys);
+        CHECK(l720.doorbell_phys == 0x302FF000u);
+        CHECK(misterplex::ddrFrameStoreAcceptsResolution(1280, 720));
+        CHECK(misterplex::ddrFrameStoreAcceptsResolution(624, 480));
+        CHECK(!misterplex::ddrFrameStoreAcceptsResolution(1920, 1080));
+    }
+
     // LE pack as frame_ingest: lo then hi
     uint16_t p = rgb565(255, 0, 0); // red-ish
     uint8_t lo = static_cast<uint8_t>(p & 0xFF);

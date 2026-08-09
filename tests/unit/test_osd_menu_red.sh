@@ -47,8 +47,8 @@ if [[ "$RC" -eq 0 ]]; then
   echo "FAIL: OSD 480p fallback bitrate fault unexpectedly passed" >&2
   exit 1
 fi
-grep -q "weakBitrateKbpsForCodedSize(kPlex480pCodedWidth, kPlex480pCodedHeight)" <<<"$OUT" || {
+grep -q "weakBitrateKbpsForCodedSize(640, 480)" <<<"$OUT" || {
   echo "FAIL: OSD 480p fallback bitrate red-check did not hit bitrate equality guard" >&2
   exit 1
 }
-echo "RED OK: OSD and fallback 480p coded geometry share one bitrate"
+echo "RED OK: OSD and fallback 480p product geometry share one bitrate"
