@@ -2161,15 +2161,18 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     if (fpsNum_ > 0 && fpsDen_ > 0) {
         vf = "fps=" + std::to_string(fpsNum_) + "/" + std::to_string(fpsDen_) + ",";
     }
+    // Dual-A9: bilinear is expensive at 720p; fast_bilinear keeps glass sharp enough
+    // for OSD grids while cutting scale CPU (product WC path is no longer the limit).
+    constexpr const char* kScaleFlags = "flags=fast_bilinear";
     if (rawDisplayW != rawW || rawDisplayH != rawH) {
         char displayScale[64];
         std::snprintf(displayScale, sizeof(displayScale), "%d:%d", rawDisplayW, rawDisplayH);
-        vf += std::string("scale=") + displayScale +
+        vf += std::string("scale=") + displayScale + ":" + kScaleFlags +
               ":force_original_aspect_ratio=decrease,pad=" + scale + ":" +
               std::to_string(ddrGeometry.crop_left) + ":" +
               std::to_string(ddrGeometry.crop_top) + ":color=black";
     } else {
-        vf += std::string("scale=") + scale +
+        vf += std::string("scale=") + scale + ":" + kScaleFlags +
               ":force_original_aspect_ratio=decrease,pad=" + scale + ":(ow-iw)/2:(oh-ih)/2";
     }
 
@@ -2193,7 +2196,11 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     // Match audioPump: F2 only when PRESENT=fpga and MrAudio unavailable.
     const bool wantF2 = fpga_.ok() && presentMode_ == "fpga" && !wantMr;
     bool wantAudio = audioEnabled_ && (wantMr || wantF2);
-    if (wantAudio && localFile && !ffmpegHasAudioStream(ffmpeg_, url, headers, startMs)) {
+    // Probe local *and* network/universal URLs. Video-only assets (e.g. Grid720)
+    // make FFmpeg abort with: "Output file does not contain any stream" on pipe:3
+    // even when mapped as 0:a:0? — empty second output is still fatal.
+    if (wantAudio && !testPattern &&
+        !ffmpegHasAudioStream(ffmpeg_, url, headers, startMs)) {
         wantAudio = false;
         log("media: audio disabled for session: no audio stream detected; avoiding empty "
             "audio output abort");
@@ -2403,6 +2410,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         args.push_back("-loglevel");
         args.push_back("error");
         args.push_back("-nostdin");
+        // Dual-A9: pin decode threads so H.264 + scale share cores without oversubscription.
+        args.push_back("-threads");
+        args.push_back("2");
 
         if (testPattern) {
             std::string lavfi;

@@ -673,6 +673,8 @@ bool FpgaSpi::ensureDdrMap() {
             if (p != MAP_FAILED) {
                 ddrMemFd_ = mfd;
                 ddrMapViaMplex_ = true;
+                std::fprintf(stderr,
+                             "misterplexd: DDR frame map via /dev/mplex_ddr (write-combine)\n");
             } else {
                 ::close(mfd);
                 p = MAP_FAILED;
