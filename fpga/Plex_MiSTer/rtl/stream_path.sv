@@ -95,7 +95,13 @@ module stream_path #(
 	output logic        fs_wr_en,
 	output logic [15:0] fs_wr_pixel,
 	output logic        fs_wr_reset,
-	output logic        fs_swap
+	output logic        fs_swap,
+
+	// Product DDR writeback (h264_decode_core → fpga_ddr_writeback)
+	output wire        decode_dpb_wr_en,
+	output wire [31:0] decode_dpb_wr_addr,
+	output wire [7:0]  decode_dpb_wr_data,
+	output wire        decode_frame_done
 );
 
 	wire        si_wr_en;
@@ -641,6 +647,12 @@ module stream_path #(
 		);
 		end
 	endgenerate
+
+	// Export DPB byte-writes + frame_done for product DDR present path.
+	assign decode_dpb_wr_en   = core_dpb_wr_en;
+	assign decode_dpb_wr_addr = core_dpb_wr_addr;
+	assign decode_dpb_wr_data = core_dpb_wr_data;
+	assign decode_frame_done  = core_frame_done;
 
 	(* keep = 1 *) wire keep_si = si_active;
 	(* keep = 1 *) wire keep_bf = bf_has;

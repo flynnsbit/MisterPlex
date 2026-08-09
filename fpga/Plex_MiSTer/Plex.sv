@@ -569,6 +569,23 @@ wire        stream_ddr_rd;
 wire [63:0] stream_ddr_din;
 wire  [7:0] stream_ddr_be;
 wire        stream_ddr_we;
+
+// Product DDR writeback (stream_path decode_core → fpga_ddr_writeback)
+wire        decode_dpb_wr_en;
+wire [31:0] decode_dpb_wr_addr;
+wire [7:0]  decode_dpb_wr_data;
+wire        decode_frame_done;
+wire        wb_ddr_want;
+wire  [7:0] wb_ddr_burstcnt;
+wire [28:0] wb_ddr_addr;
+wire [63:0] wb_ddr_din;
+wire  [7:0] wb_ddr_be;
+wire        wb_ddr_we;
+wire        wb_ddr_rd;
+wire [15:0] wb_frames_written;
+wire        wb_active;
+wire        fpga_glass_swap;
+
 `ifdef DDR_FRAME_STORE
 wire        stream_ddr_enable = 1'b1;
 `else
@@ -594,11 +611,11 @@ stream_path #(
 	.flush(status[11]),
 	.ddr_stream_enable(stream_ddr_enable),
 	.ddr_bus_want(stream_ddr_bus_want),
-	.ddr_busy(stream_ddr_busy),
+	.ddr_busy(stream_ddr_busy | wb_ddr_want),
 	.ddr_burstcnt(stream_ddr_burstcnt),
 	.ddr_addr(stream_ddr_addr),
 	.ddr_dout(stream_ddr_dout),
-	.ddr_dout_ready(stream_ddr_dout_ready),
+	.ddr_dout_ready(stream_ddr_dout_ready & ~wb_ddr_want),
 	.ddr_rd(stream_ddr_rd),
 	.ddr_din(stream_ddr_din),
 	.ddr_be(stream_ddr_be),
@@ -650,12 +667,56 @@ stream_path #(
 	.fs_wr_en(stub_wr_en),
 	.fs_wr_pixel(stub_wr_pixel),
 	.fs_wr_reset(stub_wr_reset),
-	.fs_swap(stub_swap)
+	.fs_swap(stub_swap),
+	.decode_dpb_wr_en(decode_dpb_wr_en),
+	.decode_dpb_wr_addr(decode_dpb_wr_addr),
+	.decode_dpb_wr_data(decode_dpb_wr_data),
+	.decode_frame_done(decode_frame_done)
 );
+
+// FPGA decode → DDR present bank (PLXK doorbell). Shares m1 with stream ingest.
+`ifdef DDR_FRAME_STORE
+`include "ddr_frame_layout_params.svh"
+fpga_ddr_writeback #(
+	.PHYS_BASE(32'h3000_0000),
+	.BANK_STRIDE_BYTES(DDR_FRAME_YUV420P_BANK_STRIDE),
+	.DOORBELL_PHYS(DDR_FRAME_YUV420P_DOORBELL_PHYS)
+) u_fpga_wb (
+	.clk(clk_sys),
+	.reset(reset),
+	.dpb_wr_en(decode_dpb_wr_en),
+	.dpb_wr_addr(decode_dpb_wr_addr),
+	.dpb_wr_data(decode_dpb_wr_data),
+	.frame_done(decode_frame_done),
+	.ddr_want(wb_ddr_want),
+	.ddr_busy(stream_ddr_busy),
+	.ddr_burstcnt(wb_ddr_burstcnt),
+	.ddr_addr(wb_ddr_addr),
+	.ddr_din(wb_ddr_din),
+	.ddr_be(wb_ddr_be),
+	.ddr_we(wb_ddr_we),
+	.ddr_rd(wb_ddr_rd),
+	.frames_written(wb_frames_written),
+	.active(wb_active)
+);
+assign fpga_glass_swap = decode_frame_done;
+`else
+assign wb_ddr_want = 1'b0;
+assign wb_ddr_burstcnt = 8'd0;
+assign wb_ddr_addr = 29'd0;
+assign wb_ddr_din = 64'd0;
+assign wb_ddr_be = 8'd0;
+assign wb_ddr_we = 1'b0;
+assign wb_ddr_rd = 1'b0;
+assign wb_frames_written = 16'd0;
+assign wb_active = 1'b0;
+assign fpga_glass_swap = 1'b0;
+`endif
 
 // Phase 3.3j / 3.1b hybrid present:
 //   Host F1 SPI or DDR bulk owns product frame_store once any host frame has
 //   swapped. decode_stub F3 diagnostic paint is suppressed after that.
+//   FPGA decode glass (fpga_ddr_writeback doorbell) can reclaim ownership.
 //   Priority while writing: F1 ioctl download > DDR DMA > stub.
 reg host_owns_fs;
 always @(posedge clk_sys) begin
@@ -663,6 +724,8 @@ always @(posedge clk_sys) begin
 		host_owns_fs <= 1'b0;
 	else if (f1_swap | ddr_swap)
 		host_owns_fs <= 1'b1;
+	else if (fpga_glass_swap)
+		host_owns_fs <= 1'b0;
 end
 
 wire        stub_allow  = ~host_owns_fs & ~ingest_dl & ~ddr_busy;
@@ -780,11 +843,20 @@ present_core #(
 );
 
 `ifdef DDR_FRAME_STORE
+// m1 mux: writeback (FPGA recon present) beats bitstream reader when both want.
+wire        m1_want     = wb_ddr_want | stream_ddr_bus_want;
+wire  [7:0] m1_burstcnt = wb_ddr_want ? wb_ddr_burstcnt : stream_ddr_burstcnt;
+wire [28:0] m1_addr     = wb_ddr_want ? wb_ddr_addr     : stream_ddr_addr;
+wire        m1_rd       = wb_ddr_want ? wb_ddr_rd       : stream_ddr_rd;
+wire [63:0] m1_din      = wb_ddr_want ? wb_ddr_din      : stream_ddr_din;
+wire  [7:0] m1_be       = wb_ddr_want ? wb_ddr_be       : stream_ddr_be;
+wire        m1_we       = wb_ddr_want ? wb_ddr_we       : stream_ddr_we;
+
 ddr_bus_arbiter ddr_arb (
 	.clk(clk_ddr),
 	.clk_m1(clk_sys),
 	.reset(reset),
-	.m1_want(stream_ddr_bus_want),
+	.m1_want(m1_want),
 	.m0_busy(present_ddr_busy),
 	.m0_burstcnt(present_ddr_burstcnt),
 	.m0_addr(present_ddr_addr),
@@ -795,14 +867,14 @@ ddr_bus_arbiter ddr_arb (
 	.m0_be(present_ddr_be),
 	.m0_we(present_ddr_we),
 	.m1_busy(stream_ddr_busy),
-	.m1_burstcnt(stream_ddr_burstcnt),
-	.m1_addr(stream_ddr_addr),
+	.m1_burstcnt(m1_burstcnt),
+	.m1_addr(m1_addr),
 	.m1_dout(stream_ddr_dout),
 	.m1_dout_ready(stream_ddr_dout_ready),
-	.m1_rd(stream_ddr_rd),
-	.m1_din(stream_ddr_din),
-	.m1_be(stream_ddr_be),
-	.m1_we(stream_ddr_we),
+	.m1_rd(m1_rd),
+	.m1_din(m1_din),
+	.m1_be(m1_be),
+	.m1_we(m1_we),
 	.DDRAM_BUSY(DDRAM_BUSY),
 	.DDRAM_BURSTCNT(DDRAM_BURSTCNT),
 	.DDRAM_ADDR(DDRAM_ADDR),
