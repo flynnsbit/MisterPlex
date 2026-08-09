@@ -397,9 +397,8 @@ module ddr_bitstream_reader #(
 					end
 				end
 
-				// o40: hold-until-pop (arbiter FWFT). DOUT_READY stays high until
-				// rsp_pop; no auto-pop race. Keep poll_div-throttled RD reissue as
-				// belt-and-suspenders if sticky grant never delivered a beat.
+				// o41: hold-until-pop only (drop o37 RD reissue — o40 STA −0.371/−0.621).
+				// Arbiter FWFT keeps DOUT_READY high until rsp_pop; no one-cycle miss.
 				ST_POLL: begin
 					if (DDRAM_DOUT_READY) begin
 						rsp_pop <= 1'b1;
@@ -433,11 +432,6 @@ module ddr_bitstream_reader #(
 							end
 						end
 						state <= ST_IDLE;
-					end else if (!DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE &&
-					            (poll_div == {POLL_DIV_BITS{1'b0}})) begin
-						DDRAM_ADDR <= CTRL_W;
-						DDRAM_BURSTCNT <= 8'd1;
-						DDRAM_RD <= 1'b1;
 					end
 				end
 
@@ -447,11 +441,6 @@ module ddr_bitstream_reader #(
 						beat_q <= DDRAM_DOUT;
 						beat_left <= consume_count;
 						state <= ST_CONSUME;
-					end else if (!DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE &&
-					            (poll_div == {POLL_DIV_BITS{1'b0}})) begin
-						DDRAM_ADDR <= DATA_W + read_qword_offset;
-						DDRAM_BURSTCNT <= 8'd1;
-						DDRAM_RD <= 1'b1;
 					end
 				end
 
