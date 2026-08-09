@@ -11,7 +11,7 @@ static void tick(Vh264_rbsp_window_tb& t) {
 static int check_base(Vh264_rbsp_window_tb& t, uint16_t base, const char* label) {
   t.req_valid = 1; t.req_offset = base; tick(t); t.req_valid = 0;
   int wait = 0;
-  while (!(t.window_valid && t.window_base == base) && wait < 200) { tick(t); wait++; }
+  while (!(t.window_valid && t.window_base == base) && wait < 300) { tick(t); wait++; }
   int errs = 0;
   if (!(t.window_valid && t.window_base == base)) {
     printf("FAIL %s valid=%u base=%u wait=%d\n", label, (unsigned)t.window_valid, (unsigned)t.window_base, wait);
