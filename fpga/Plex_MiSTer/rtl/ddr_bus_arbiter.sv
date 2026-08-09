@@ -240,7 +240,7 @@ module ddr_bus_arbiter (
 		.wr_clk   (clk),
 		.wr_reset (rst),
 		.wr_en    (m1_rsp_wr_en),
-		.wr_data  (rsp_data_out_pad),
+		.wr_data  (rsp_data_r),
 		.wr_full  (m1_rsp_fifo_full),
 		.wr_almost_full (),
 
