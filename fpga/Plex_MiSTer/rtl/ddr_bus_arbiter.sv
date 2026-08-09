@@ -93,8 +93,13 @@ module ddr_bus_arbiter (
 	// while host PLXB producer filled 256KiB). After M1_WAIT_MAX ddr cycles of
 	// pending m1_want without grant, block new m0_rd starts so m1 gets a slot.
 	reg [5:0] m1_wait;
-	localparam [5:0] M1_WAIT_MAX = 6'd32;
-	wire m1_starved = m1_want_s2 && (m1_wait >= M1_WAIT_MAX);
+	// 32 was unreachable while want_poll is 1 clk_sys (~4 clk_ddr). 4 matches one poll pulse.
+	localparam [5:0] M1_WAIT_MAX = 6'd4;
+	// Stretch brief clk_sys poll pulses (1 cycle @20-30MHz ≈ few clk_ddr) so
+	// m1_wait can reach M1_WAIT_MAX without sticky bus_want in the reader (STA).
+	reg [5:0] m1_want_hold;
+	wire m1_want_eff = m1_want_s2 | (m1_want_hold != 6'd0);
+	wire m1_starved = m1_want_eff && (m1_wait >= M1_WAIT_MAX);
 
 	wire rsp_active = rsp_left != 9'd0;
 	wire rsp_pipe_active = rsp_active | rsp_valid_r;
@@ -233,7 +238,12 @@ module ddr_bus_arbiter (
 				rsp_left <= rsp_left - 9'd1;
 
 			// Count consecutive ddr cycles m1 wants but is not granted.
-			if (!m1_want_s2 || grant_m1)
+			if (m1_want_s2)
+				m1_want_hold <= 6'd32; // ~0.35us stretch @90MHz
+			else if (m1_want_hold != 6'd0)
+				m1_want_hold <= m1_want_hold - 6'd1;
+
+			if (!m1_want_eff || grant_m1)
 				m1_wait <= 6'd0;
 			else if (m1_wait != 6'h3f)
 				m1_wait <= m1_wait + 6'd1;
@@ -245,13 +255,13 @@ module ddr_bus_arbiter (
 						rsp_left <= {1'b0, selected_burst};
 						grant_m1 <= 1'b0;
 						m1_wait <= 6'd0;
-					end else if (m1_we || !m1_want_s2) begin
+					end else if (m1_we || !m1_want_eff) begin
 						grant_m1 <= 1'b0;
 						m1_wait <= 6'd0;
 					end
 				end else begin
 					// Prefer m1 when idle-gap OR when starved by continuous m0_rd.
-					if (m1_want_s2 && (!m0_cmd || m1_starved)) begin
+					if (m1_want_eff && (!m0_cmd || m1_starved)) begin
 						grant_m1 <= 1'b1;
 					end else if (m0_rd) begin
 						rsp_owner_m1 <= 1'b0;

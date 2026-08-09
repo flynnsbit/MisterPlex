@@ -125,7 +125,6 @@ module ddr_bitstream_reader #(
 	reg have_ctrl;
 	reg empty_seen;
 	reg seen_payload;
-	reg poll_req; // sticky until CTRL beat (telem_seq=1 RCA)
 
 	reg [7:0] hdr [0:31];
 	reg [4:0] hdr_idx;
@@ -150,7 +149,7 @@ module ddr_bitstream_reader #(
 	wire [31:0] consume_count_w =
 		(avail < bytes_to_qword_end) ? avail : bytes_to_qword_end;
 	wire [3:0] consume_count = consume_count_w[3:0];
-	wire want_poll = enable && poll_req;
+	wire want_poll = enable && (poll_div == {POLL_DIV_BITS{1'b0}});
 	wire want_read = enable && ring_has_data && (beat_left == 4'd0);
 	wire want_pub = enable && publish_pending;
 	wire can_consume = (mode != MODE_PAYLOAD) || !out_full;
@@ -253,7 +252,6 @@ module ddr_bitstream_reader #(
 			byte_idx <= 3'd0;
 			hdr_idx <= 5'd0;
 			payload_left <= 32'd0;
-			poll_req <= 1'b1;
 		end else if (!enable) begin
 			state <= ST_IDLE;
 			bus_want <= 1'b0;
@@ -263,8 +261,6 @@ module ddr_bitstream_reader #(
 		end else begin
 			bus_want <= !flush && bus_want_comb;
 			poll_div <= poll_div + 1'd1;
-			if (poll_div == {POLL_DIV_BITS{1'b0}})
-				poll_req <= 1'b1;
 
 			if (flush) begin
 				read_count <= write_count;
@@ -282,7 +278,6 @@ module ddr_bitstream_reader #(
 				out_flush <= 1'b1;
 				publish_pending <= 1'b1;
 				publish_step <= 4'd0;
-				poll_req <= 1'b1;
 				state <= ST_IDLE;
 				reset_parser();
 			end
@@ -400,7 +395,6 @@ module ddr_bitstream_reader #(
 
 				ST_POLL: begin
 					if (DDRAM_DOUT_READY) begin
-						poll_req <= 1'b0;
 						if (ctrl_magic_ok) begin
 							have_ctrl <= 1'b1;
 							write_count <= {1'b0, ctrl_write_count};
