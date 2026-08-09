@@ -888,6 +888,9 @@ module stream_path #(
 	end
 	wire core_slice_start = slice_valid & ~core_slice_valid_d;
 
+	// PRODUCT_FABRIC_DECODE=1 instantiates full H.264 core (~8–16k ALM).
+	// Default OFF restores softc23-class present headroom for host cast glass.
+`ifdef PRODUCT_FABRIC_DECODE
 	h264_decode_core #(
 		.FRAME_W(CORE_FRAME_W),
 		.FRAME_H(CORE_FRAME_H),
@@ -983,6 +986,28 @@ module stream_path #(
 		.current_mb_addr(core_current_mb_addr),
 		.error(core_error)
 	);
+`else
+	// Feeder still drives residual/luma taps; only core outputs are tied off.
+	assign core_rbsp_request_offset_raw = 16'd0;
+	assign core_rbsp_request_valid_raw = 1'b0;
+	assign core_dpb_wr_en = 1'b0;
+	assign core_dpb_wr_addr = 32'd0;
+	assign core_dpb_wr_data = 8'd0;
+	assign core_dpb_rd_en = 1'b0;
+	assign core_dpb_rd_addr = 32'd0;
+	assign core_dpb_rd_valid = 1'b0;
+	assign core_ref_req_valid = 1'b0;
+	assign core_ref_req_plane = 2'd0;
+	assign core_ref_req_x = 16'd0;
+	assign core_ref_req_y = 16'd0;
+	assign core_frame_done = 1'b0;
+	assign core_frame_mb_count = 16'd0;
+	assign core_intra_blocks_done = 16'd0;
+	assign core_busy = 1'b0;
+	assign core_decode_state = 8'd0;
+	assign core_current_mb_addr = 16'd0;
+	assign core_error = 1'b0;
+`endif
 
 	// Product decode rooted at product_decode_core.
 	// PRODUCT GLASS: gate decode_stub under DDR_FRAME_STORE (painter offline-only).
