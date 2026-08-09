@@ -150,19 +150,9 @@ module ddr_bus_arbiter (
 	// frame-store stops issuing new reads and the pipe can drain — otherwise
 	// continuous m0_rd keeps rsp_pipe_active and m1 never enters the
 	// !rsp_pipe_active grant window (o14 still cons=0 / telem_seq=1).
-	// o31: register m0_busy (o28 baseline −0.047; prior o30 commit was a no-op).
-	// Frame-store uses busy as a level gate — one-cycle delay is safe.
-	reg m0_busy_r;
-	wire m0_busy_comb = DDRAM_BUSY | grant_m1 | m1_starved |
-	                    (rsp_active & rsp_owner_m1) |
-	                    (rsp_valid_r & rsp_owner_m1_r);
-	always @(posedge clk) begin
-		if (rst)
-			m0_busy_r <= 1'b1;
-		else
-			m0_busy_r <= m0_busy_comb;
-	end
-	assign m0_busy = m0_busy_r;
+	assign m0_busy = DDRAM_BUSY | grant_m1 | m1_starved |
+	                 (rsp_active & rsp_owner_m1) |
+	                 (rsp_valid_r & rsp_owner_m1_r);
 
 	// m1_busy: register on clk_ddr to eliminate combinational glitches,
 	// then 2-FF sync to clk_m1 for proper CDC.  The consumer uses this
@@ -227,30 +217,12 @@ module ddr_bus_arbiter (
 		.dout (ddram_dout_ready_pad)
 	);
 
-	wire [63:0] rsp_data_out_pad;
-	wire        rsp_valid_out_pad;
-	wire        rsp_owner_m1_out_pad;
-	generate
-		for (rsp_pad_i = 0; rsp_pad_i < 64; rsp_pad_i = rsp_pad_i + 1) begin : gen_rsp_out_pad
-			mplex_hold_lcell rsp_data_out_pad_i (
-				.din  (rsp_data_r[rsp_pad_i]),
-				.dout (rsp_data_out_pad[rsp_pad_i])
-			);
-		end
-	endgenerate
-	mplex_hold_lcell rsp_valid_out_pad_i (
-		.din  (rsp_valid_r),
-		.dout (rsp_valid_out_pad)
-	);
-	mplex_hold_lcell rsp_owner_out_pad_i (
-		.din  (rsp_owner_m1_r),
-		.dout (rsp_owner_m1_out_pad)
-	);
-
+	// o32: drop OUT hold pads only (rsp_*_r already registered). Keep IN pads
+	// on DDRAM_DOUT (o27 full strip regressed; o28 −0.047 needs ~50ps).
 	wire rsp_raw_valid = ddram_dout_ready_pad & rsp_active;
 
-	assign m0_dout = rsp_data_out_pad;
-	assign m0_dout_ready = rsp_valid_out_pad & !rsp_owner_m1_out_pad;
+	assign m0_dout = rsp_data_r;
+	assign m0_dout_ready = rsp_valid_r & !rsp_owner_m1_r;
 
 	// ── m1 response FIFO (clk_ddr → clk_m1) ──
 	// DDRAM_DOUT_READY is a single clk_ddr pulse per beat.  The clk_m1
@@ -260,7 +232,7 @@ module ddr_bus_arbiter (
 	wire        m1_rsp_fifo_full;
 	wire        m1_rsp_fifo_empty;
 	wire [63:0] m1_rsp_fifo_rdata;
-	wire        m1_rsp_wr_en = rsp_valid_out_pad & rsp_owner_m1_out_pad;
+	wire        m1_rsp_wr_en = rsp_valid_r & rsp_owner_m1_r;
 
 	// o28: AW 3→2 (depth 8→4). o27 pad-strip regressed STA; restore o26 pads
 	// and cut only FIFO depth (CAS burst beats rarely need 8).
