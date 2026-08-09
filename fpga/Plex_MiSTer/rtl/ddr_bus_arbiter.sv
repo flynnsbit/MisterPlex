@@ -217,12 +217,30 @@ module ddr_bus_arbiter (
 		.dout (ddram_dout_ready_pad)
 	);
 
-	// o32: drop OUT hold pads only (rsp_*_r already registered). Keep IN pads
-	// on DDRAM_DOUT (o27 full strip regressed; o28 −0.047 needs ~50ps).
+	wire [63:0] rsp_data_out_pad;
+	wire        rsp_valid_out_pad;
+	wire        rsp_owner_m1_out_pad;
+	generate
+		for (rsp_pad_i = 0; rsp_pad_i < 64; rsp_pad_i = rsp_pad_i + 1) begin : gen_rsp_out_pad
+			mplex_hold_lcell rsp_data_out_pad_i (
+				.din  (rsp_data_r[rsp_pad_i]),
+				.dout (rsp_data_out_pad[rsp_pad_i])
+			);
+		end
+	endgenerate
+	mplex_hold_lcell rsp_valid_out_pad_i (
+		.din  (rsp_valid_r),
+		.dout (rsp_valid_out_pad)
+	);
+	mplex_hold_lcell rsp_owner_out_pad_i (
+		.din  (rsp_owner_m1_r),
+		.dout (rsp_owner_m1_out_pad)
+	);
+
 	wire rsp_raw_valid = ddram_dout_ready_pad & rsp_active;
 
-	assign m0_dout = rsp_data_r;
-	assign m0_dout_ready = rsp_valid_r & !rsp_owner_m1_r;
+	assign m0_dout = rsp_data_out_pad;
+	assign m0_dout_ready = rsp_valid_out_pad & !rsp_owner_m1_out_pad;
 
 	// ── m1 response FIFO (clk_ddr → clk_m1) ──
 	// DDRAM_DOUT_READY is a single clk_ddr pulse per beat.  The clk_m1
@@ -232,7 +250,7 @@ module ddr_bus_arbiter (
 	wire        m1_rsp_fifo_full;
 	wire        m1_rsp_fifo_empty;
 	wire [63:0] m1_rsp_fifo_rdata;
-	wire        m1_rsp_wr_en = rsp_valid_r & rsp_owner_m1_r;
+	wire        m1_rsp_wr_en = rsp_valid_out_pad & rsp_owner_m1_out_pad;
 
 	// o28: AW 3→2 (depth 8→4). o27 pad-strip regressed STA; restore o26 pads
 	// and cut only FIFO depth (CAS burst beats rarely need 8).
@@ -240,7 +258,7 @@ module ddr_bus_arbiter (
 		.wr_clk   (clk),
 		.wr_reset (rst),
 		.wr_en    (m1_rsp_wr_en),
-		.wr_data  (rsp_data_r),
+		.wr_data  (rsp_data_out_pad),
 		.wr_full  (m1_rsp_fifo_full),
 		.wr_almost_full (),
 
