@@ -444,17 +444,21 @@ module decode_stub #(
 	localparam int DPB_FRAME_BYTES = WIDTH * HEIGHT + 2 * ((WIDTH/2) * (HEIGHT/2));
 	localparam int DPB_BANK1_BASE = DPB_FRAME_BYTES;
 	localparam int DPB_MEM_BYTES  = 2 * DPB_FRAME_BYTES;
-	(* ram_style = "block" *) reg [7:0] dpb_mem [0:DPB_MEM_BYTES-1];
+	generate
+		if (ENABLE_DPB_REF_SEAM) begin : gen_diag_dpb_mem
+			(* ramstyle = "M10K" *) reg [7:0] mem [0:DPB_MEM_BYTES-1];
 
-	// DPB write port (from fill path)
-	always @(posedge clk) begin
-		if (dpb_mem_we && dpb_mem_waddr < DPB_MEM_BYTES[31:0])
-			dpb_mem[dpb_mem_waddr[17:0]] <= dpb_mem_wdata;
-	end
+			always @(posedge clk) begin
+				if (dpb_mem_we && dpb_mem_waddr < DPB_MEM_BYTES[31:0])
+					mem[dpb_mem_waddr[17:0]] <= dpb_mem_wdata;
+			end
 
-	// DPB read port (for MC reference fetch) — 1-cycle latency
-	assign dpb_mem_rdata = (dpb_mem_raddr_q < DPB_MEM_BYTES[31:0]) ?
-	                       dpb_mem[dpb_mem_raddr_q[17:0]] : 8'h00;
+			assign dpb_mem_rdata = (dpb_mem_raddr_q < DPB_MEM_BYTES[31:0]) ?
+			                       mem[dpb_mem_raddr_q[17:0]] : 8'h00;
+		end else begin : gen_no_diag_dpb_mem
+			assign dpb_mem_rdata = 8'h00;
+		end
+	endgenerate
 
 	h264_deblock_writeback_ctrl #(
 		.MB_COUNT(DPB_MB_COUNT),
