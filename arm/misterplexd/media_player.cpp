@@ -2952,7 +2952,36 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 }
                 size_t got = 0;
                 uint8_t* dst = ring[static_cast<size_t>(readSlot)].data();
+                auto lastWaitProgress = std::chrono::steady_clock::now();
                 while (got < frameBytes && !stop_.load()) {
+                    // Poll so video-only casts can advance the scrubber while
+                    // ffmpeg is still buffering the first full YUV frame.
+                    fd_set rfds;
+                    FD_ZERO(&rfds);
+                    FD_SET(rfd, &rfds);
+                    timeval tv{};
+                    tv.tv_sec = 0;
+                    tv.tv_usec = 200000; // 200ms
+                    const int pr = ::select(rfd + 1, &rfds, nullptr, nullptr, &tv);
+                    if (pr < 0) {
+                        if (errno == EINTR)
+                            continue;
+                        log("media: pipeline select err errno=" + std::to_string(errno));
+                        break;
+                    }
+                    const auto nowWait = std::chrono::steady_clock::now();
+                    if (nowWait - lastWaitProgress >= std::chrono::seconds(1)) {
+                        lastWaitProgress = nowWait;
+                        const int64_t wallWait =
+                            std::chrono::duration_cast<std::chrono::milliseconds>(nowWait - t0)
+                                .count();
+                        const int64_t tms = startMs + std::max<int64_t>(0, wallWait);
+                        positionMs_.store(tms);
+                        if (onProgress_)
+                            onProgress_("playing", tms, durationMs);
+                    }
+                    if (pr == 0)
+                        continue; // timeout — keep waiting for first/next bytes
                     const ssize_t n =
                         ::read(rfd, dst + got, frameBytes - got);
                     if (n < 0) {

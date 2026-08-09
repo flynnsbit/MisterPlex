@@ -3,11 +3,13 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <iomanip>
 #include <sstream>
+#include <unistd.h>
 #include <vector>
 
 namespace misterplex {
@@ -66,7 +68,12 @@ std::string curlHeaderArgs(const std::vector<std::pair<std::string, std::string>
 }
 
 std::string makeSessionId() {
-    static std::atomic<uint32_t> n{1};
+    // Seed from time so the first cast after every daemon restart is not always
+    // mplex-9e3779b1 (n=1 * golden). PMS keeps per-session transcoder state;
+    // reusing that id after a restart stalls ffmpeg on /universal/start.
+    static std::atomic<uint32_t> n{static_cast<uint32_t>(
+        std::chrono::steady_clock::now().time_since_epoch().count() ^
+        (static_cast<uint64_t>(::getpid()) * 0x9E3779B9u))};
     std::ostringstream o;
     o << "mplex-" << std::hex << (n.fetch_add(1) * 2654435761u);
     return o.str();
