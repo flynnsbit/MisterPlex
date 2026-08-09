@@ -44,6 +44,7 @@ module h264_rbsp_window #(
 	localparam int FILL_BEATS  = (WINDOW_BYTES / WORD_BYTES) + 1;
 	localparam int BEAT_W      = (FILL_BEATS <= 1) ? 1 : $clog2(FILL_BEATS);
 	localparam int LANE_W      = (WORD_BYTES <= 1) ? 1 : $clog2(WORD_BYTES);
+	localparam int WIN_IDX_W   = (WINDOW_BYTES <= 1) ? 1 : $clog2(WINDOW_BYTES);
 	localparam int BYTE_ADDR_W = (DEPTH_BYTES <= 1) ? 1 : $clog2(DEPTH_BYTES);
 	localparam [15:0] DEPTH_W  = 16'(DEPTH_BYTES);
 
@@ -170,9 +171,9 @@ module h264_rbsp_window #(
 					abs_byte = fill_base_r + win_idx_s[15:0];
 					if (win_idx_s >= 0 && win_idx_s < 17'(WINDOW_BYTES)) begin
 						if (abs_byte < len_r)
-							window[win_idx_s[15:0]] <= mem[rd_addr_r][bj*8 +: 8];
+							window[win_idx_s[WIN_IDX_W-1:0]] <= mem[rd_addr_r][bj*8 +: 8];
 						else
-							window[win_idx_s[15:0]] <= 8'd0;
+							window[win_idx_s[WIN_IDX_W-1:0]] <= 8'd0;
 					end
 				end
 
