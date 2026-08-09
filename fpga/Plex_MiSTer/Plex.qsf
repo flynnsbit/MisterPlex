@@ -100,5 +100,6 @@ set_global_assignment -name VERILOG_MACRO "FILL_C_QWORD_OFF=2"
 
 set_global_assignment -name VERILOG_MACRO "SOFT_C_HOLD_MAX=0"
 
-# overnight9: fabric H.264 core gated OFF for present headroom (set =1 for STREAM fabric fit)
-#set_global_assignment -name VERILOG_MACRO "PRODUCT_FABRIC_DECODE=1"
+# overnight10: re-enable fabric H.264 core after STREAM=0 720p present glass PASS on o9.
+# Host ABI fixed (daemon 720p ladder → doorbell 0x302FF000). Expect ~softc23+decode ALM.
+set_global_assignment -name VERILOG_MACRO "PRODUCT_FABRIC_DECODE=1"

@@ -15,20 +15,16 @@
 //   [1]      A/V resync       0=On 1=Off
 //   [2]      TV Mode          (core)
 //   [3]      Audio clock trim 0=On (685 ppm) 1=Off
-//   [4]      Content res      0=320x240 (proven default), 1=480p path.
-//                             Main's CONF_STR still labels this 640x480 because
-//                             that is the presented scanout size; the payload
-//                             advertised to PMS and decoded by the daemon is
-//                             the DDR contract's coded 624x480 frame.
-//   [5]      reserved         do not reuse without a config-version bump
-//   [9:6]    A/V offset       4-bit SIGNED, 20 ms per step -> -160..+140 ms.
-//                             Signed (not biased) so the power-on value 0 means
-//                             0 ms without needing a non-zero CONF_STR default,
-//                             which Main_MiSTer cannot express.
-//   [10]     T Flush audio FIFO      (core)
-//   [11]     T Flush bitstream FIFO  (core)
-//   [12:13]  reserved for HPS DDR kick/bank — never reuse
-//   [15:14]  Idle screen      0=Logo 1=Black 2=Screensaver 3=Last frame
+//   [5:4]    Content res      PMS ladder / DECODE — 0=240p 1=480p 2|3=720p
+//                             (v7 only drove O[4] → 240p/480p)
+//   [9:6]    A/V offset       4-bit SIGNED, 20 ms/step → -160..+140 ms
+//   [10]     T Flush audio FIFO
+//   [11]     T Flush bitstream FIFO
+//   [12:13]  reserved HPS DDR kick/bank — never reuse
+//   [15:14]  Display res (v9) 0=Follow content, 1=240p, 2=480p, 3=720p
+//                             Default 0 keeps v8 cores safe (those bits were Idle
+//                             logo=0) so PMS 720p is not forced to 240p present.
+//                             Idle screen is conf IDLE_SCREEN= only from v9.
 //
 // Pure decode so it can be unit-tested without an FPGA.
 //
@@ -38,17 +34,12 @@
 
 #include <cstdint>
 
-#include "libmisterplex/ddr_frame_layout.hpp"
-
 namespace misterplex {
 
 // Step/bias of the video delay list. Kept here so the CONF_STR generator, the
 // daemon and the tests cannot disagree about what a menu index means.
 constexpr int kOsdAvOffsetSteps = 16;
 constexpr int kOsdAvOffsetStepMs = 20;
-constexpr int kPlex240pWeakBitrateKbps = 1000;
-constexpr int kPlex360pWeakBitrateKbps = 1500;
-constexpr int kPlex480pWeakBitrateKbps = 2000;
 
 // Menu index 0 is the power-on default. The present loop waits for the audio
 // clock to reach `frameContentMs + avOffsetMs`, so POSITIVE holds the frame back
@@ -67,12 +58,11 @@ constexpr int kPlex480pWeakBitrateKbps = 2000;
 // THIS clock; a value tuned against the old submitted-byte clock is not
 // comparable, because it silently absorbed that session's ring depth.
 constexpr int kOsdAvOffsetDefaultMs = 0;
-constexpr uint16_t kOsdIdleMask = 0xC000;
 
 struct ContentResolution {
     int width = 320;
     int height = 240;
-    const char* label = "320x240";
+    const char* label = "240p";
     int weakBitrateKbps = 1000;
 };
 
@@ -84,8 +74,9 @@ struct OsdSettings {
     // The ppm itself belongs to the daemon; the menu only says on or off.
     bool audioClockTrimEnabled = true;
     bool resyncEnabled = true;
-    int idleMode = 0; // matches IdleMode enum
-    ContentResolution contentResolution;
+    int idleMode = 0; // conf IDLE_SCREEN from v9; legacy v8 OSD bits ignored
+    ContentResolution contentResolution; // O[5:4] → PMS / DECODE
+    ContentResolution displayResolution; // O[15:14] → FPGA present bank (v9)
 };
 
 // Signed wrap around the default: index 0 is the default, 1..7 step up and
@@ -98,64 +89,89 @@ inline int osdAvOffsetMsFromIndex(unsigned idx) {
     return i * kOsdAvOffsetStepMs + kOsdAvOffsetDefaultMs;
 }
 
-inline ContentResolution contentResolutionFor480p() {
-    // 624x480 is still the 480p ladder. Use the 2000 kbps PMS/validator floor
-    // until W-FEED (or equivalent ARM-boundary profiling) proves a higher
-    // bitrate safe; this path has only millisecond-scale decode margin.
-    return {kPlex480pCodedWidth, kPlex480pCodedHeight, "624x480",
-            kPlex480pWeakBitrateKbps};
-}
-
-inline ContentResolution contentResolutionFor240p() {
-    return {320, 240, "320x240", kPlex240pWeakBitrateKbps};
-}
-
 inline ContentResolution contentResolutionFromOsdWord(uint16_t word) {
-    if ((word >> 4) & 1u)
-        return contentResolutionFor480p();
-    return contentResolutionFor240p();
+    // O[5:4] two-bit selector (v8+). v7 only toggled O[4] with O[5]=0, so
+    // codes 0/1 still mean 240p/480p on older cores without a daemon break.
+    // Labels are product names (240p/480p/720p); width/height remain bank geom.
+    // weakBitrateKbps matches plexTranscodeProfiles() when WEAK_BITRATE unset.
+    switch ((word >> 4) & 3u) {
+    case 1:
+        return {640, 480, "480p", 2500};
+    case 2:
+    case 3:
+        return {1280, 720, "720p", 20000};
+    default:
+        return {320, 240, "240p", 1000};
+    }
 }
 
 inline ContentResolution contentResolutionFromSize(int w, int h) {
-    if (w >= kPlex480pCodedWidth || h >= kPlex480pCodedHeight)
-        return contentResolutionFor480p();
-    return contentResolutionFor240p();
+    // Match product DDR frame-store tiers: 320x240, 640x480 (→624 coded), 1280x720.
+    // Prior bug: any w>=640 collapsed to 640x480, so DECODE=1280x720 still played
+    // 624x480 into a 1280x720 core → full-field yellow/static on glass.
+    if (w >= 1280 || h >= 720)
+        return {1280, 720, "720p", 20000};
+    if (w >= 640 || h >= 480)
+        return {640, 480, "480p", 2500};
+    return {320, 240, "240p", 1000};
 }
 
-inline int weakBitrateKbpsForCodedSize(int w, int h) {
-    if (w >= kPlex480pCodedWidth || h >= kPlex480pCodedHeight) {
-#ifdef OSD_MENU_FAULT_FALLBACK_624_BITRATE
-        return kPlex360pWeakBitrateKbps;
-#else
-        return contentResolutionFor480p().weakBitrateKbps;
-#endif
+inline ContentResolution displayResolutionFromOsdWord(uint16_t word,
+                                                      const ContentResolution& content) {
+    // O[15:14] v9: 0=Follow content (also v8 idle default), 1=240p, 2=480p, 3=720p.
+    switch ((word >> 14) & 3u) {
+    case 1:
+        return {320, 240, "240p", 1000};
+    case 2:
+        return {640, 480, "480p", 2500};
+    case 3:
+        return {1280, 720, "720p", 20000};
+    default:
+        return content;
     }
-    if (w >= 480 || h >= 360)
-        return kPlex360pWeakBitrateKbps;
-    return contentResolutionFor240p().weakBitrateKbps;
 }
 
 inline OsdSettings decodeOsdWord(uint16_t word) {
     OsdSettings s;
     s.contentResolution = contentResolutionFromOsdWord(word);
+    s.displayResolution = displayResolutionFromOsdWord(word, s.contentResolution);
     s.resyncEnabled = ((word >> 1) & 1u) == 0u;
     s.audioClockTrimEnabled = ((word >> 3) & 1u) == 0u;
     s.avOffsetMs = osdAvOffsetMsFromIndex((word >> 6) & 0x0Fu);
-    s.idleMode = (word >> 14) & 3u;
+    // Idle screen is conf-only from v9 (O[15:14] = display res). Leave 0=logo.
+    s.idleMode = 0;
     return s;
 }
 
-// Bits the daemon reacts to. [0] reset, [2] TV mode, [5] reserved,
+// Bits the daemon reacts to. [0] reset, [2] TV mode,
 // [10]/[11] flush triggers and [13:12] DDR kick/bank are not user settings and
-// toggle constantly during playback.
+// toggle constantly during playback. O[5] is part of content-res (v8).
 //
 // The daemon NEVER writes these bits. Main_MiSTer owns the OSD word (and saves it
 // to config/Plex_v7.CFG); a daemon-side write only fights Main's shadow and makes
 // the value flap between the two.
-constexpr uint16_t kOsdOwnedMask = 0xC3DA;
+// Includes O[5] content-res and O[15:14] display-res so 240↔720 are not ignored.
+constexpr uint16_t kOsdOwnedMask = 0xC3FA;
 
 inline bool osdChanged(uint16_t a, uint16_t b) {
     return ((a ^ b) & kOsdOwnedMask) != 0;
+}
+
+
+// Overnight compatibility: idle is conf IDLE_SCREEN from v9 (decode leaves idleMode=0),
+// but media_player still gates first-sample apply via shouldApplyOsdIdle.
+constexpr uint16_t kOsdIdleMask = 0xC000;
+constexpr int kPlex240pWeakBitrateKbps = 1000;
+constexpr int kPlex360pWeakBitrateKbps = 1500;
+constexpr int kPlex480pWeakBitrateKbps = 2500;
+constexpr int kPlex720pWeakBitrateKbps = 20000;
+
+inline int weakBitrateKbpsForCodedSize(int w, int h) {
+#ifdef OSD_MENU_FAULT_FALLBACK_624_BITRATE
+    if (w >= 640 || h >= 480)
+        return kPlex360pWeakBitrateKbps;
+#endif
+    return contentResolutionFromSize(w, h).weakBitrateKbps;
 }
 
 inline bool osdIdleChanged(uint16_t a, uint16_t b) {
