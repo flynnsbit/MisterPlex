@@ -26,12 +26,23 @@ DECODE=320x240
 # WEAK_BITRATE=1000
 # PRESENT=fb0|fpga|both
 PRESENT=fb0
-# STREAM=1  # annex-B → host I-recon F1 + F3 (Phase 3.3i product path)
+# STREAM=1  # annex-B demux → DDR/SPI F3 fabric feed (+ host I-recon F1)
 # Prefer direct H.264 Part when STREAM=1 (avoids High/CABAC universal for recon).
 # High/CABAC: sticky skip from PPS entropy flag (no residual walk per IDR).
-# STREAM_SKIP_RGB=auto  # skip heavy RGB only when PRESENT=fpga (audio + recon from start)
+# STREAM_SKIP_RGB=auto  # skip heavy RGB only when PRESENT=fpga (audio + demux from start)
 # STREAM_SKIP_RGB=0     # always FFmpeg RGB (CABAC fallback / PRESENT=both keeps RGB anyway)
 # PRESENT=both always keeps FFmpeg RGB for continuous fb0 regardless of STREAM_SKIP_RGB.
+#
+# Glass fabric recipe (PMS cast → annex-B → FPGA bitstream path, MrAudio locked):
+#   STREAM=1
+#   PRESENT=fpga
+#   AUDIO=on
+#   STREAM_SKIP_RGB=auto
+#   DECODE=320x240   # or 640x480 / 1280x720 matching OSD content
+#   BITSTREAM_FEED=0 # STREAM=1 owns the ring; STREAM=0 product tee is separate
+# Safe lab (ARM rawvideo fallback still paints): STREAM=1 PRESENT=both STREAM_SKIP_RGB=auto
+# STREAM=0 product still paints every-frame DDR F1; optional:
+#   BITSTREAM_FEED=1 # tee Annex-B into DDR ring while rawvideo presents (default on)
 
 # --- Phase 4 UX ---
 # AUTO_NEXT=1  # on media EOF, play next playQueue item when bound (default on)

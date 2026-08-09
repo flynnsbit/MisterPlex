@@ -440,7 +440,7 @@ int main(int argc, char** argv) {
     player.setLog([](const std::string& s) { std::fprintf(stderr, "%s\n", s.c_str()); });
     if (streamEnabled) {
         std::fprintf(stderr,
-                     "misterplexd: STREAM=1 (annex-B → host I-recon F1 + F3; preferDirectH264; "
+                     "misterplexd: STREAM=1 (annex-B → DDR/SPI F3 fabric feed + host I-recon F1; preferDirectH264; "
                      "PRESENT=%s STREAM_SKIP_RGB=%s — skip RGB only when PRESENT=fpga)\n",
                      presentMode.c_str(), streamSkipRgb.c_str());
     }

@@ -125,8 +125,10 @@ Display output mode is **not** a `misterplex.conf` key; set `[Plex] video_mode` 
 | `WEAK_RES` | `320x240` | Legacy PMS universal ladder resolution override |
 | `WEAK_BITRATE` | `1000` | Legacy ladder max video kbps override |
 | **`PRESENT`** | `fb0` \| `fpga` \| `both` | Where RGB lands |
-| **`STREAM`** | `0` \| `1` | Annex-B → host I-recon F1 + F3 |
-| `STREAM_SKIP_RGB` | `auto` | `auto`: skip heavy RGB when `PRESENT=fpga` (keep audio); `0` always RGB |
+| **`STREAM`** | `0` \| `1` | Annex-B → host I-recon F1 + F3/DDR fabric feed |
+| `STREAM_SKIP_RGB` | `auto` | `auto`: skip heavy RGB when `PRESENT=fpga` (keep audio + wall-clock timeline); `0` always RGB |
+| `BITSTREAM_FEED` | `1` | STREAM=0 only: tee Annex-B into DDR ring while rawvideo presents (ignored when STREAM=1) |
+| `AUDIO` | `on` | MrAudio dual-pipe (`/dev/MrAudio`); keep on for glass |
 | `MATCH_SOURCE_HZ` | `off` | `on` logs target Hz; cadence-only until switchres |
 | `SOURCE_FPS` | `auto` | `auto`\|`12`\|`24`\|`30`\|`60`\|`off` — Content FPS hint from PMS |
 
