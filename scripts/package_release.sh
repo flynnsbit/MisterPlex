@@ -149,10 +149,16 @@ for doc in release.md release-notes-v0.3.0.md release-notes-v0.4.0.md display-re
   fi
 done
 mkdir -p "$STAGE/scripts"
-for scr in plex_browse.sh plex_menu.sh; do
+for scr in plex_browse.sh plex_menu.sh misterplexd_supervise.sh misterplex_core_watch.sh; do
   if [[ -f "$ROOT/scripts/$scr" ]]; then
     cp -a "$ROOT/scripts/$scr" "$STAGE/scripts/"
     chmod +x "$STAGE/scripts/$scr"
+  fi
+done
+# Boot helpers also under bin/ so _user-startup paths stay short.
+for scr in misterplexd_supervise.sh misterplex_core_watch.sh; do
+  if [[ -f "$STAGE/scripts/$scr" ]]; then
+    cp -a "$STAGE/scripts/$scr" "$STAGE/bin/$scr"
   fi
 done
 
@@ -163,16 +169,18 @@ version: ${VERSION}
 
 Contents
 --------
-  bin/misterplexd          static ARM companion + media daemon
-  bin/ffmpeg               static armhf FFmpeg 7.0.2 (GPLv3 — see licenses/ffmpeg)
-  bin/push_frame           optional SPI frame/bitstream tool
-  bin/set_status           optional OSD status RMW tool (pattern/TV/FPS/…)
+  bin/misterplexd               static ARM companion + media daemon
+  bin/misterplex_core_watch.sh  start daemon on boot / when Plex core loads
+  bin/misterplexd_supervise.sh  respawn misterplexd on crash
+  bin/ffmpeg                    static armhf FFmpeg 7.0.2 (GPLv3 — see licenses/ffmpeg)
+  bin/push_frame                optional SPI frame/bitstream tool
+  bin/set_status                optional OSD status RMW tool (pattern/TV/FPS/…)
   conf/misterplex.conf.example
-  cores/Plex.rbf           hardware-validated core (MD5 ${RBF_MD5_ACTUAL})
-  scripts/plex_browse.sh   list library + play/status/stop via misterplexd
-  scripts/plex_menu.sh     interactive on-device menu (sections → playMedia)
-  licenses/ffmpeg/         GPLv3 text, build provenance, source pointers
-  docs/                    install/release, display resolution, match-source-Hz, subtitles
+  cores/Plex.rbf                hardware-validated core (MD5 ${RBF_MD5_ACTUAL})
+  scripts/plex_browse.sh        list library + play/status/stop via misterplexd
+  scripts/plex_menu.sh          interactive on-device menu (sections → playMedia)
+  licenses/ffmpeg/              GPLv3 text, build provenance, source pointers
+  docs/                         install/release, display resolution, match-source-Hz, subtitles
 
 Quick install from this extracted directory
 -------------------------------------------
@@ -200,22 +208,26 @@ Configure Plex server and credentials
   if you want on-device library browsing via scripts/plex_browse.sh or
   scripts/plex_menu.sh.
 
-Start on boot
--------------
-  Append this to /media/fat/linux/_user-startup.sh:
+Start on boot + when Plex core loads
+------------------------------------
+  The FPGA RBF cannot start Linux processes. Ship ARM helpers instead:
 
-    /media/fat/misterplex/bin/misterplexd \\
-      --name MiSTerPlex --id misterplex --port 3005 \\
-      --conf /media/fat/misterplex/misterplex.conf \\
-      >>/media/fat/misterplex/misterplexd.log 2>&1 &
+    bin/misterplex_core_watch.sh   # watches /tmp/CORENAME; starts daemon if down
+    bin/misterplexd_supervise.sh   # respawns misterplexd on crash
 
-  Then reboot, or run that command once over SSH for a first test.
+  Append this to /media/fat/linux/_user-startup.sh (deploy_misterplexd.sh does it):
+
+    nohup /media/fat/misterplex/bin/misterplex_core_watch.sh \\
+      >>/media/fat/misterplex/misterplex_core_watch.log 2>&1 &
+
+  The watch script also ensures the daemon at boot (cast discovery) and again
+  whenever Main loads Plex (CORENAME=Plex).
 
 Launch the core
 ---------------
-  On MiSTer, open the OSD with F12 and load Plex from _Utility. After the daemon
-  is running, Plex apps on the same network should offer MiSTerPlex as a cast
-  target. Verify with:
+  On MiSTer, open the OSD with F12 and load Plex from _Utility. If the core-watch
+  helper is installed, misterplexd starts automatically when the core loads.
+  Plex apps on the same network should offer MiSTerPlex as a cast target:
 
     curl http://<mister-ip>:3005/resources
 

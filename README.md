@@ -72,27 +72,33 @@ token, so `PLEX_TOKEN` is optional for casting; set it if you want the on-device
 scripts to list your libraries. A fully annotated reference lives in
 [`assets/misterplex.conf.example`](assets/misterplex.conf.example).
 
-### 3. Start on boot
+### 3. Start on boot (and when the Plex core loads)
 
-Append to `/media/fat/linux/_user-startup.sh` (create it if absent):
+The `Plex.rbf` FPGA bitstream **cannot** start Linux processes. MiSTerPlex ships a
+small ARM helper that watches Main’s `/tmp/CORENAME` and starts `misterplexd` if
+it is down when **Plex** is loaded (and also ensures it once at boot for cast
+discovery):
 
 ```sh
-/media/fat/misterplex/bin/misterplexd \
-  --conf /media/fat/misterplex/misterplex.conf \
-  >>/media/fat/misterplex/misterplexd.log 2>&1 &
+# /media/fat/linux/_user-startup.sh
+nohup /media/fat/misterplex/bin/misterplex_core_watch.sh \
+  >>/media/fat/misterplex/misterplex_core_watch.log 2>&1 &
 ```
 
-Then reboot, or start it by hand for a first try:
+`scripts/deploy_misterplexd.sh` installs this hook idempotently. For a first try
+without reboot:
 
 ```bash
 ssh root@<mister-ip>
 chmod +x /media/fat/misterplex/bin/*
-/media/fat/misterplex/bin/misterplexd --conf /media/fat/misterplex/misterplex.conf &
+nohup /media/fat/misterplex/bin/misterplex_core_watch.sh \
+  >>/media/fat/misterplex/misterplex_core_watch.log 2>&1 &
 ```
 
 ### 4. Load the core and cast
 
-1. On the MiSTer, open the OSD (**F12**) and load **Plex** from `_Utility`.
+1. On the MiSTer, open the OSD (**F12**) and load **Plex** from `_Utility`
+   (core-watch starts the daemon if needed).
 2. Open any Plex app on the same network.
 3. Pick a video, hit the cast button, and choose **MiSTerPlex**.
 

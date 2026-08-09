@@ -24,36 +24,66 @@ sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no "$USER@$HOST" \
    if [ -f /media/fat/misterplex/bin/misterplexd ]; then
      cp -f /media/fat/misterplex/bin/misterplexd /media/fat/misterplex/bin/misterplexd.prev-c2
    fi
+   # Stop watch/supervise/daemon cleanly before replace (numeric PIDs only).
    for p in $(pidof misterplexd 2>/dev/null) $(pidof ffmpeg 2>/dev/null); do
+     kill -9 "$p" 2>/dev/null || true
+   done
+   for p in $(ps w | awk "/misterplexd_supervise\\.sh|misterplex_core_watch\\.sh/ && !/awk/ {print \$1}"); do
      kill -9 "$p" 2>/dev/null || true
    done
    sleep 0.4
    rm -f /media/fat/misterplex/bin/misterplexd'
 sshpass -p "$PASS" scp -o StrictHostKeyChecking=no "$BIN" "$USER@$HOST:/media/fat/misterplex/bin/misterplexd"
-# On-device browse / menu (Phase 4 UX)
-if [[ -f "$ROOT/scripts/plex_browse.sh" ]]; then
+# On-device browse / menu + core-load autostart helpers
+SCP_SCRIPTS=()
+for s in plex_browse.sh plex_menu.sh misterplexd_supervise.sh misterplex_core_watch.sh; do
+  [[ -f "$ROOT/scripts/$s" ]] && SCP_SCRIPTS+=("$ROOT/scripts/$s")
+done
+if ((${#SCP_SCRIPTS[@]})); then
   sshpass -p "$PASS" scp -o StrictHostKeyChecking=no \
-    "$ROOT/scripts/plex_browse.sh" "$ROOT/scripts/plex_menu.sh" \
+    "${SCP_SCRIPTS[@]}" \
     "$USER@$HOST:/media/fat/misterplex/scripts/"
 fi
 sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no "$USER@$HOST" \
   "PLAYER_ID='$PLAYER_ID' PMS_URL='$PMS_URL' bash -s" <<'REMOTE'
 set -e
+# Helpers live in bin/ for boot path simplicity; scripts/ keeps copies for package layout.
+for s in misterplexd_supervise.sh misterplex_core_watch.sh; do
+  if [ -f "/media/fat/misterplex/scripts/$s" ]; then
+    cp -f "/media/fat/misterplex/scripts/$s" "/media/fat/misterplex/bin/$s"
+  fi
+done
 chmod +x /media/fat/misterplex/bin/misterplexd
-chmod +x /media/fat/misterplex/scripts/plex_browse.sh /media/fat/misterplex/scripts/plex_menu.sh 2>/dev/null || true
-# Startup hook (idempotent)
+chmod +x /media/fat/misterplex/bin/misterplexd_supervise.sh \
+         /media/fat/misterplex/bin/misterplex_core_watch.sh 2>/dev/null || true
+chmod +x /media/fat/misterplex/scripts/*.sh 2>/dev/null || true
+
+# Startup hook (idempotent): core watch starts/respawns daemon when Plex loads
+# and also ensures it is up at boot (cast discovery). RBF cannot exec ARM.
 HOOK=/media/fat/linux/_user-startup.sh
-PMS_ARG=""
-if [[ -n "${PMS_URL:-}" ]]; then
-  PMS_ARG=" --pms ${PMS_URL}"
-fi
-LINE="/media/fat/misterplex/bin/misterplexd --name MiSTerPlex --id ${PLAYER_ID:-misterplex-dev} --port 3005 --conf /media/fat/misterplex/misterplex.conf${PMS_ARG} >>/media/fat/misterplex/misterplexd.log 2>&1 &"
+MPX_ID="${PLAYER_ID:-misterplex-dev}"
+WATCH_LINE="MISTERPLEX_ID=${MPX_ID} nohup /media/fat/misterplex/bin/misterplex_core_watch.sh >>/media/fat/misterplex/misterplex_core_watch.log 2>&1 &"
 mkdir -p /media/fat/linux /media/fat/misterplex
 touch "$HOOK"
-if ! grep -q 'misterplex/bin/misterplexd' "$HOOK" 2>/dev/null; then
-  printf '\n# MiSTerPlex companion + media\n%s\n' "$LINE" >>"$HOOK"
-  echo "Added startup hook"
+# Drop legacy bare-daemon lines (no supervise / no nohup) so we do not double-spawn.
+if grep -qE '^[^#].*misterplex/bin/misterplexd ' "$HOOK" 2>/dev/null; then
+  cp -f "$HOOK" "$HOOK.bak-before-core-watch-$(date -u +%Y%m%dT%H%M%SZ)"
+  sed -i 's|^\([^#].*misterplex/bin/misterplexd .*\)|# LEGACY_DIRECT_DAEMON \1|' "$HOOK" || true
 fi
+if ! grep -q 'misterplex_core_watch\.sh' "$HOOK" 2>/dev/null; then
+  printf '\n# MiSTerPlex: core-load + boot ensure (RBF cannot start ARM processes)\n%s\n' "$WATCH_LINE" >>"$HOOK"
+  echo "Added core-watch startup hook"
+else
+  # Refresh hook line so MISTERPLEX_ID stays current
+  if ! grep -q "MISTERPLEX_ID=${MPX_ID}.*misterplex_core_watch" "$HOOK" 2>/dev/null; then
+    sed -i '/misterplex_core_watch\.sh/d' "$HOOK" || true
+    printf '\n# MiSTerPlex: core-load + boot ensure (RBF cannot start ARM processes)\n%s\n' "$WATCH_LINE" >>"$HOOK"
+    echo "Refreshed core-watch startup hook (id=$MPX_ID)"
+  else
+    echo "core-watch startup hook already present"
+  fi
+fi
+
 # Ensure conf exists (token optional — cast can supply transient tokens)
 if [[ ! -f /media/fat/misterplex/misterplex.conf ]]; then
   cat >/media/fat/misterplex/misterplex.conf <<'CONF'
@@ -65,12 +95,15 @@ CONF
     printf 'PLEX_BASE=%s\n' "$PMS_URL" >>/media/fat/misterplex/misterplex.conf
   fi
 fi
-: >/media/fat/misterplex/misterplexd.log
-nohup /media/fat/misterplex/bin/misterplexd --name MiSTerPlex --id "${PLAYER_ID:-misterplex-dev}" --port 3005 \
-  --conf /media/fat/misterplex/misterplex.conf ${PMS_ARG} \
-  >>/media/fat/misterplex/misterplexd.log 2>&1 &
-sleep 0.8
-ps w | grep '[m]isterplexd' || true
+
+export MISTERPLEX_ID="${PLAYER_ID:-misterplex-dev}"
+: >>/media/fat/misterplex/misterplexd.log
+nohup env MISTERPLEX_ID="$MISTERPLEX_ID" \
+  /media/fat/misterplex/bin/misterplex_core_watch.sh \
+  >>/media/fat/misterplex/misterplex_core_watch.log 2>&1 &
+sleep 1.2
+ps w | grep -E '[m]isterplexd|[m]isterplex_core_watch|[m]isterplexd_supervise' || true
 wget -qO- http://127.0.0.1:3005/resources | head -c 300; echo
+echo "CORENAME=$(tr -d '\000\r\n' </tmp/CORENAME 2>/dev/null || echo none)"
 REMOTE
-echo "Deployed misterplexd → $HOST"
+echo "Deployed misterplexd + core-watch → $HOST"
