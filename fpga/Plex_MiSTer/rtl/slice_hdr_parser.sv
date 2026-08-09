@@ -65,6 +65,9 @@ module slice_hdr_parser (
 	output reg         first_luma4x4_blocks_valid,
 	output reg         first_luma4x4_blocks_present,
 	output reg signed [15:0] first_luma4x4_coeff [0:15][0:15],
+	// Absolute RBSP bit offset where first-MB residual/skip syntax begins.
+	// Used by product_decode_core CAVLC window relative addressing.
+	output wire [15:0] first_mb_residual_bit_offset,
 	// 3.3f/k residual (first I residual block, nC=0)
 	output reg  [4:0]  residual_tc,
 	output reg  [1:0]  residual_t1,
@@ -121,6 +124,7 @@ module slice_hdr_parser (
 	reg [3:0]  full_luma_cbp;
 	reg        full_start_req;
 	reg [9:0]  full_start_bit;
+	assign first_mb_residual_bit_offset = {6'd0, full_start_bit};
 	// Normalised intra mb_type: identical to mb_type in an I slice, and
 	// mb_type - 5 for an intra macroblock inside a P slice, so the intra parse
 	// flow below never has to know which slice type it is running in.

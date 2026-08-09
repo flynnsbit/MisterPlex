@@ -34,9 +34,11 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_pskip_mv.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_inter_part.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_mb_recon_route.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_decode_core.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_rbsp_window.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/decode_stub.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/stream_path.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/fpga_ddr_writeback.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_core.sv
 set_global_assignment -name SDC_FILE Plex.sdc
 set_global_assignment -name SYSTEMVERILOG_FILE Plex.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_iq_idct_seq.sv
