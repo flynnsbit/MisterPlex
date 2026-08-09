@@ -235,8 +235,9 @@ module ddr_bus_arbiter (
 			if (DDRAM_DOUT_READY && rsp_active)
 				rsp_left <= rsp_left - 9'd1;
 
-			// Sticky need + consecutive wait while ungranted.
-			if (m1_want_s2)
+			// Sticky need while ungranted and no m1 rsp in flight.
+			if (m1_want_s2 && !grant_m1 && !(rsp_active && rsp_owner_m1) &&
+			    !(rsp_valid_r && rsp_owner_m1_r))
 				m1_need <= 1'b1;
 			if (grant_m1)
 				m1_need <= 1'b0;

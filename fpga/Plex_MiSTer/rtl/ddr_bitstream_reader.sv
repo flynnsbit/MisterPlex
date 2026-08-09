@@ -125,9 +125,8 @@ module ddr_bitstream_reader #(
 	reg have_ctrl;
 	reg empty_seen;
 	reg seen_payload;
-	// Sticky poll request: poll_div alone only asserts want 1/2^POLL_DIV_BITS
-	// cycles, so m1_wait never reaches starved and CTRL RD pulses are almost
-	// always lost after the one-shot boot publish (o12-o15: telem_seq stuck at 1).
+	// Sticky poll_req: poll_div-only want is 1/64 duty and drops bus_want so
+	// m1 never starves after boot publish (o12-o15 telem_seq stuck at 1).
 	reg poll_req;
 	reg [15:0] xfer_wait;
 
@@ -268,7 +267,6 @@ module ddr_bitstream_reader #(
 		end else begin
 			bus_want <= !flush && bus_want_comb;
 			poll_div <= poll_div + 1'd1;
-			// Keep poll_req sticky until a CTRL beat actually completes.
 			if (poll_div == {POLL_DIV_BITS{1'b0}})
 				poll_req <= 1'b1;
 
@@ -409,9 +407,8 @@ module ddr_bitstream_reader #(
 				end
 
 				ST_POLL: begin
-					// Hold/re-issue CTRL RD until a beat returns. Single-cycle RD is
-					// lost when grant/BUSY misalign; without retry we park forever
-					// after the boot publish (telem_seq=1, consumer=0).
+					// Re-issue CTRL RD until beat returns; lost single-cycle RD
+					// parked forever after boot publish (telem_seq=1, cons=0).
 					if (DDRAM_DOUT_READY) begin
 						xfer_wait <= 16'd0;
 						poll_req <= 1'b0;
@@ -448,8 +445,8 @@ module ddr_bitstream_reader #(
 					end else begin
 						if (xfer_wait != 16'hffff)
 							xfer_wait <= xfer_wait + 16'd1;
-						// Re-issue if the previous RD pulse was dropped by the arbiter.
-						if (!DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+						// Retry at most every 64 cycles — not every free cycle.
+						if (!DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE && (xfer_wait[5:0] == 6'd0)) begin
 							DDRAM_ADDR <= CTRL_W;
 							DDRAM_BURSTCNT <= 8'd1;
 							DDRAM_RD <= 1'b1;
@@ -471,7 +468,7 @@ module ddr_bitstream_reader #(
 					end else begin
 						if (xfer_wait != 16'hffff)
 							xfer_wait <= xfer_wait + 16'd1;
-						if (!DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+						if (!DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE && (xfer_wait[5:0] == 6'd0)) begin
 							DDRAM_ADDR <= DATA_W + read_qword_offset;
 							DDRAM_BURSTCNT <= 8'd1;
 							DDRAM_RD <= 1'b1;
