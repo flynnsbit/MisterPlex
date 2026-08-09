@@ -26,7 +26,7 @@ module ddr_bitstream_reader #(
 	parameter [31:0] STAT5_PHYS = 32'h3034_0040,
 	parameter [31:0] STAT6_PHYS = 32'h3034_0048,
 	parameter int RING_BYTES    = 262144,
-	parameter int POLL_DIV_BITS = 6
+	parameter int POLL_DIV_BITS = 2 // was 6; faster CTRL retry
 )(
 	input  wire        clk,
 	input  wire        reset,
