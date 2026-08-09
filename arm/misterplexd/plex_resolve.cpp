@@ -788,7 +788,48 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
     };
     const std::string profNote = videoProfileNote();
     const bool skipDirectHigh = profileLooksHighOrCabac(profNote);
-    const bool directH264 = wantDirect && isH264 && !skipDirectHigh;
+    // Fabric banks are fixed to weak ladder geom (e.g. 1280x720). Direct Part of a
+    // smaller source (BBB 624x480) made host recon skip and left empty F3 feed.
+    auto mediaWidthHeight = [&]() -> std::pair<int, int> {
+        if (!metaOk)
+            return {0, 0};
+        auto w = attr(xml, "Media", "width");
+        auto h = attr(xml, "Media", "height");
+        if (w.empty() || h.empty()) {
+            // Fall back to video Stream dimensions.
+            size_t sp = 0;
+            while ((sp = xml.find("<Stream", sp)) != std::string::npos) {
+                auto end = xml.find('>', sp);
+                if (end == std::string::npos)
+                    break;
+                const std::string slice = xml.substr(sp, end - sp);
+                const bool isVideo = slice.find("streamType=\"1\"") != std::string::npos ||
+                                     slice.find("type=\"video\"") != std::string::npos;
+                if (isVideo) {
+                    if (w.empty())
+                        w = attrIn(slice, "width");
+                    if (h.empty())
+                        h = attrIn(slice, "height");
+                    break;
+                }
+                sp = end + 1;
+            }
+        }
+        return {w.empty() ? 0 : std::atoi(w.c_str()), h.empty() ? 0 : std::atoi(h.c_str())};
+    };
+    const auto [srcW, srcH] = mediaWidthHeight();
+    int weakW = 0, weakH = 0;
+    if (!weak.videoResolution.empty()) {
+        const auto x = weak.videoResolution.find('x');
+        if (x != std::string::npos) {
+            weakW = std::atoi(weak.videoResolution.substr(0, x).c_str());
+            weakH = std::atoi(weak.videoResolution.substr(x + 1).c_str());
+        }
+    }
+    const bool skipDirectGeom =
+        preferDirectH264 && weakW > 0 && weakH > 0 && srcW > 0 && srcH > 0 &&
+        (srcW != weakW || srcH != weakH);
+    const bool directH264 = wantDirect && isH264 && !skipDirectHigh && !skipDirectGeom;
     if (directH264) {
         const std::string prof = profNote;
         const std::string profSuffix = prof.empty() ? "" : (" profile=" + prof);
@@ -817,9 +858,9 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
     }
 
     // Prefer weak universal for dual A9 (STREAM=0 cast path / non-H.264 STREAM).
-    // STREAM=1 High/CABAC: force 720p baseline@L31 so PMS delivers fabric CAVLC.
+    // STREAM=1 fabric: force baseline@L31 720p when High/CABAC or source geom ≠ banks.
     const bool forceFabricCavlc =
-        preferDirectH264 && wantDirect && isH264 && skipDirectHigh;
+        preferDirectH264 && wantDirect && isH264 && (skipDirectHigh || skipDirectGeom);
     const WeakLadder ladder = forceFabricCavlc ? fabricCavlc720pLadder(weak) : weak;
     if (weakAlways && key.rfind("/library", 0) == 0) {
         const std::string session = makeSessionId();
@@ -834,8 +875,13 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
                        " " + key;
             // STREAM preferDirect fallthrough reasons (operator logs).
             if (preferDirectH264) {
-                if (forceFabricCavlc)
+                if (forceFabricCavlc && skipDirectHigh)
                     r.detail += " (STREAM fabric: High/CABAC source profile=" + profNote +
+                                " → universal baseline@L31 720p CAVLC; skip preferDirect)";
+                else if (forceFabricCavlc && skipDirectGeom)
+                    r.detail += " (STREAM fabric: source " + std::to_string(srcW) + "x" +
+                                std::to_string(srcH) + " != bank " + std::to_string(weakW) + "x" +
+                                std::to_string(weakH) +
                                 " → universal baseline@L31 720p CAVLC; skip preferDirect)";
                 else if (!metaOk)
                     r.detail += " (STREAM preferDirect: no metadata)";
