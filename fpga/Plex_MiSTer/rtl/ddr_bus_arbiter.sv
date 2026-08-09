@@ -88,6 +88,13 @@ module ddr_bus_arbiter (
 	reg [63:0] rsp_data_r;
 	reg        rsp_valid_r;
 	reg        rsp_owner_m1_r;
+	// Fairness: present (m0) streams continuous frame-store reads and can
+	// starve bitstream m1 forever (o13: PLXR telem_seq stuck at 1, consumer=0
+	// while host PLXB producer filled 256KiB). After M1_WAIT_MAX ddr cycles of
+	// pending m1_want without grant, block new m0_rd starts so m1 gets a slot.
+	reg [5:0] m1_wait;
+	localparam [5:0] M1_WAIT_MAX = 6'd32;
+	wire m1_starved = m1_want_s2 && (m1_wait >= M1_WAIT_MAX);
 
 	wire rsp_active = rsp_left != 9'd0;
 	wire rsp_pipe_active = rsp_active | rsp_valid_r;
@@ -210,6 +217,7 @@ module ddr_bus_arbiter (
 			rsp_data_r <= 64'd0;
 			rsp_valid_r <= 1'b0;
 			rsp_owner_m1_r <= 1'b0;
+			m1_wait <= 6'd0;
 		end else begin
 			rsp_valid_r <= rsp_raw_valid;
 			if (rsp_raw_valid) begin
@@ -220,21 +228,30 @@ module ddr_bus_arbiter (
 			if (DDRAM_DOUT_READY && rsp_active)
 				rsp_left <= rsp_left - 9'd1;
 
+			// Count consecutive ddr cycles m1 wants but is not granted.
+			if (!m1_want_s2 || grant_m1)
+				m1_wait <= 6'd0;
+			else if (m1_wait != 6'h3f)
+				m1_wait <= m1_wait + 6'd1;
+
 			if (!DDRAM_BUSY && !rsp_pipe_active) begin
 				if (grant_m1) begin
 					if (m1_rd) begin
 						rsp_owner_m1 <= 1'b1;
 						rsp_left <= {1'b0, selected_burst};
 						grant_m1 <= 1'b0;
+						m1_wait <= 6'd0;
 					end else if (m1_we || !m1_want_s2) begin
 						grant_m1 <= 1'b0;
+						m1_wait <= 6'd0;
 					end
 				end else begin
-					if (m0_rd) begin
+					// Prefer m1 when idle-gap OR when starved by continuous m0_rd.
+					if (m1_want_s2 && (!m0_cmd || m1_starved)) begin
+						grant_m1 <= 1'b1;
+					end else if (m0_rd) begin
 						rsp_owner_m1 <= 1'b0;
 						rsp_left <= {1'b0, selected_burst};
-					end else if (!m0_cmd && m1_want_s2) begin
-						grant_m1 <= 1'b1;
 					end
 				end
 			end

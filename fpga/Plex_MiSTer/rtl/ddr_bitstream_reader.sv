@@ -309,7 +309,15 @@ module ddr_bitstream_reader #(
 				end
 
 				ST_IDLE: begin
-					if (publish_pending && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+					// Prefer CTRL poll when we have never seen PLXB — otherwise
+					// multi-step publish can occupy the rare m1 slots and leave
+					// write_count=0 forever (consumer stuck).
+					if ((!have_ctrl && want_poll) && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+						DDRAM_ADDR <= CTRL_W;
+						DDRAM_BURSTCNT <= 8'd1;
+						DDRAM_RD <= 1'b1;
+						state <= ST_POLL;
+					end else if (publish_pending && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						DDRAM_BURSTCNT <= 8'd1;
 						case (publish_step)
 							4'd0: begin
