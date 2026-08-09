@@ -56,6 +56,39 @@ module h264_dequant4x4 (
 		end
 	endfunction
 
+	// DSP trap: never qp%6 / qp/6 (infer lpm_divide ×16 lanes ×N instances).
+	// Match h264_iq_idct_seq LevelScale: d = ((c * na * 16) << (qdiv+2) + 32) >> 6
+	function automatic [2:0] qp_mod6;
+		input [5:0] q;
+		begin
+			case (q)
+			6'd0,6'd6,6'd12,6'd18,6'd24,6'd30,6'd36,6'd42,6'd48: qp_mod6 = 3'd0;
+			6'd1,6'd7,6'd13,6'd19,6'd25,6'd31,6'd37,6'd43,6'd49: qp_mod6 = 3'd1;
+			6'd2,6'd8,6'd14,6'd20,6'd26,6'd32,6'd38,6'd44,6'd50: qp_mod6 = 3'd2;
+			6'd3,6'd9,6'd15,6'd21,6'd27,6'd33,6'd39,6'd45,6'd51: qp_mod6 = 3'd3;
+			6'd4,6'd10,6'd16,6'd22,6'd28,6'd34,6'd40,6'd46:       qp_mod6 = 3'd4;
+			default:                                             qp_mod6 = 3'd5;
+			endcase
+		end
+	endfunction
+
+	function automatic [3:0] qp_div6;
+		input [5:0] q;
+		begin
+			case (q)
+			6'd0,6'd1,6'd2,6'd3,6'd4,6'd5:             qp_div6 = 4'd0;
+			6'd6,6'd7,6'd8,6'd9,6'd10,6'd11:           qp_div6 = 4'd1;
+			6'd12,6'd13,6'd14,6'd15,6'd16,6'd17:       qp_div6 = 4'd2;
+			6'd18,6'd19,6'd20,6'd21,6'd22,6'd23:       qp_div6 = 4'd3;
+			6'd24,6'd25,6'd26,6'd27,6'd28,6'd29:       qp_div6 = 4'd4;
+			6'd30,6'd31,6'd32,6'd33,6'd34,6'd35:       qp_div6 = 4'd5;
+			6'd36,6'd37,6'd38,6'd39,6'd40,6'd41:       qp_div6 = 4'd6;
+			6'd42,6'd43,6'd44,6'd45,6'd46,6'd47:       qp_div6 = 4'd7;
+			default:                                   qp_div6 = 4'd8; // 48..51
+			endcase
+		end
+	endfunction
+
 	function automatic signed [28:0] dequant_one;
 		input signed [15:0] c;
 		input [5:0] q;
@@ -65,8 +98,10 @@ module h264_dequant4x4 (
 		reg [1:0] mi;
 		reg [2:0] qmod;
 		reg [3:0] qdiv;
-		reg signed [31:0] qmul;
-		reg signed [31:0] v;
+		reg [4:0] na;
+		reg signed [31:0] mul_norm;
+		reg signed [47:0] shifted;
+		reg signed [47:0] v;
 		begin
 			if (skip_dc)
 				z = zigzag(scan + 5'd1);
@@ -78,11 +113,14 @@ module h264_dequant4x4 (
 				mi = 2'd1;
 			else
 				mi = 2'd2;
-			qmod = q % 6;
-			qdiv = q / 6;
-			qmul = $signed({1'b0, norm_adjust(qmod, mi)}) * 32'sd16;
-			qmul = qmul <<< (qdiv + 4'd2);
-			v = ($signed(c) * qmul + 32'sd32) >>> 6;
+			qmod = qp_mod6(q);
+			qdiv = qp_div6(q);
+			na = norm_adjust(qmod, mi);
+			// 16×5 multiply only (cheap); scale via 48-bit shift mux — no qp divide.
+			mul_norm = $signed(c) * $signed({11'd0, na});
+			// ((c * na * 16) << (qdiv+2) + 32) >> 6  ==  ((c*na) << (qdiv+6) + 32) >> 6
+			shifted = {{16{mul_norm[31]}}, mul_norm} <<< (qdiv + 4'd6);
+			v = (shifted + 48'sd32) >>> 6;
 			dequant_one = v[28:0];
 		end
 	endfunction
