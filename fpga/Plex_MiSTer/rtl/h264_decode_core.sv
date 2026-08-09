@@ -351,6 +351,33 @@ module h264_decode_core #(
     reg [9:0]  p16_res_bit_offset_r;
     reg [4:0]  p16_res_block_idx;
     reg        cavlc_start_r;
+
+    // --- nC predictor for CAVLC coeff_token table selection ---
+    reg [4:0]  p16_tc_cache [0:15];
+    reg [4:0]  p16_tc_above [0:3];
+    reg        p16_tc_above_valid;
+    reg [4:0]  p16_tc_left  [0:3];
+    reg        p16_tc_left_valid;
+    wire [1:0] p16_cur_blk_x = {p16_res_block_idx[2], p16_res_block_idx[0]};
+    wire [1:0] p16_cur_blk_y = {p16_res_block_idx[3], p16_res_block_idx[1]};
+    wire [1:0] p16_left_x = p16_cur_blk_x - 2'd1;
+    wire [3:0] p16_left_idx = {p16_cur_blk_y[1], p16_left_x[1], p16_cur_blk_y[0], p16_left_x[0]};
+    wire [1:0] p16_above_y = p16_cur_blk_y - 2'd1;
+    wire [3:0] p16_above_idx = {p16_above_y[1], p16_cur_blk_x[1], p16_above_y[0], p16_cur_blk_x[0]};
+    wire p16_nc_left_avail = (p16_cur_blk_x != 2'd0) ? 1'b1 : p16_tc_left_valid;
+    wire p16_nc_above_avail = (p16_cur_blk_y != 2'd0) ? 1'b1 : p16_tc_above_valid;
+    wire [4:0] p16_nc_left_tc = (p16_cur_blk_x != 2'd0) ? p16_tc_cache[p16_left_idx] :
+                                                            p16_tc_left[p16_cur_blk_y];
+    wire [4:0] p16_nc_above_tc = (p16_cur_blk_y != 2'd0) ? p16_tc_cache[p16_above_idx] :
+                                                             p16_tc_above[p16_cur_blk_x];
+    wire [4:0] p16_nC = (p16_nc_left_avail && p16_nc_above_avail) ?
+                             ((p16_nc_left_tc + p16_nc_above_tc + 5'd1) >> 1) :
+                         p16_nc_left_avail ? p16_nc_left_tc :
+                         p16_nc_above_avail ? p16_nc_above_tc : 5'd0;
+    wire [2:0] p16_coeff_token_table = (p16_nC < 5'd2) ? 3'd0 :
+                                       (p16_nC < 5'd4) ? 3'd1 :
+                                       (p16_nC < 5'd8) ? 3'd2 : 3'd3;
+
     reg [15:0] syntax_mb_addr_r;
     reg [15:0] rbsp_request_offset_r;
     reg        rbsp_request_valid_r;
@@ -912,7 +939,7 @@ module h264_decode_core #(
         .clk(clk),
         .reset(reset || slice_start),
         .start(cavlc_start_r),
-        .coeff_token_table(3'd0),
+        .coeff_token_table(p16_coeff_token_table),
         .max_coeff(5'd16),
         .bit_offset_start(p16_res_bit_offset_r),
         .bit_len(10'd512),
@@ -1377,6 +1404,8 @@ module h264_decode_core #(
             p16_res_bit_offset_r <= 10'd0;
             p16_res_block_idx <= 5'd0;
             cavlc_start_r <= 1'b0;
+            p16_tc_above_valid <= 1'b0;
+            p16_tc_left_valid <= 1'b0;
             syntax_mb_addr_r <= reset ? 16'd0 : first_mb_in_slice;
             rbsp_request_offset_r <= 16'd0;
             rbsp_request_valid_r <= 1'b0;
