@@ -436,6 +436,7 @@ public:
     std::vector<Write> writes;
     std::vector<uint16_t> rbspRequests;
     bool frameDoneSeen = false;
+    bool cavlcStartedBeforeWindow = false;
     bool pendingValid = false;
     uint8_t pendingData = 0;
     int rbspWindowDelay = -1;
@@ -463,6 +464,8 @@ public:
             rbspWindowDelay = 2;
             top.rbsp_window_valid = 0;
         }
+        if (top.decode_state == 6 && !top.rbsp_window_valid)
+            cavlcStartedBeforeWindow = true;
         if (top.frame_done) frameDoneSeen = true;
         const bool sawRead = top.dpb_rd_en;
         const uint32_t readAddr = top.dpb_rd_addr;
@@ -658,6 +661,10 @@ int checkScoreboard(const Sim& s) {
     }
     if (s.frameDoneSeen) {
         std::cerr << "FAIL h264_decode_core p16x16 real-P scoreboard: nonterminal frame_done asserted\n";
+        return 1;
+    }
+    if (s.cavlcStartedBeforeWindow) {
+        std::cerr << "FAIL h264_decode_core p16x16 real-P scoreboard: CAVLC started before RBSP window_valid\n";
         return 1;
     }
     if (s.top.frame_mb_count != kCases.size()) {
