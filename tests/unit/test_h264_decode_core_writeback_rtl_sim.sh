@@ -59,7 +59,15 @@ echo "RTL SIM: using $VERILATOR_VERSION (h264_decode_core writeback)" >&2
   --top-module h264_decode_core_wb_tb -Wno-fatal \
   -CFLAGS "-std=c++17 -O2" \
   "$TOP" "$CAVLC_RTL" "$IQ_IDCT_RTL" "$INTRA_PRED_RTL" "$NB_CTX_RTL" "$DECODE_TOP_RTL" "$INTER_RTL" "$INTER_PART_RTL" "$PSKIP_RTL" "$MB_ROUTE_RTL" "$INTRA16_RTL" "$DPB_RTL" "$RTL" "$TB"
-"$BUILD/Vh264_decode_core_wb_tb"
+set +e
+POS_OUT="$("$BUILD/Vh264_decode_core_wb_tb" 2>&1)"
+POS_RC=$?
+set -e
+printf '%s\n' "$POS_OUT"
+if [[ "$POS_RC" -ne 0 ]] || ! grep -q 'OK h264_decode_core writeback scoreboard' <<<"$POS_OUT"; then
+  echo "FAIL h264_decode_core writeback positive path" >&2
+  exit 1
+fi
 
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD_FAULT" \
