@@ -1104,9 +1104,11 @@ module h264_decode_core #(
 `endif
         end
     endgenerate
-    // P16 residual CAVLC/IDCT stays available when ENABLE_INTER=1. With
-    // ENABLE_INTER=0 the P16 launch is hard-gated, so these become unreachable
-    // but still elaborate for the residual FSM nets.
+    // P16 residual CAVLC/IDCT only when ENABLE_INTER=1 (~2k+0.9k ALM).
+    wire signed [28:0] p16_res_idct [0:15];
+    wire p16_iq_done;
+    generate
+    if (ENABLE_INTER) begin : g_p16_residual
     h264_cavlc_residual_block u_product_p16_residual0 (
         .clk(clk),
         .reset(reset || slice_start),
@@ -1127,8 +1129,6 @@ module h264_decode_core #(
         .level_dbg(cavlc_level_dbg),
         .run_dbg(cavlc_run_dbg)
     );
-    wire signed [28:0] p16_res_idct [0:15];
-    wire p16_iq_done;
     h264_iq_idct_seq u_product_p16_iq_idct (
         .clk(clk),
         .reset(reset || slice_start),
@@ -1142,6 +1142,23 @@ module h264_decode_core #(
         .residual(p16_res_idct),
         .done(p16_iq_done)
     );
+    end else begin : g_p16_residual_stub
+        assign cavlc_busy = 1'b0;
+        assign cavlc_done = 1'b0;
+        assign cavlc_ok = 1'b0;
+        assign cavlc_bit_offset_end = 10'd0;
+        assign cavlc_total_coeff = 5'd0;
+        assign cavlc_trailing_ones = 2'd0;
+        assign cavlc_total_zeros = 4'd0;
+        assign p16_iq_done = 1'b0;
+        for (genvar si = 0; si < 16; si = si + 1) begin : g_p16_zero
+            assign cavlc_coeff[si] = 16'sd0;
+            assign cavlc_level_dbg[si] = 16'sd0;
+            assign cavlc_run_dbg[si] = 4'd0;
+            assign p16_res_idct[si] = 29'sd0;
+        end
+    end
+    endgenerate
 `ifdef H264_DECODE_CORE_FAULT_DROP_LAST_LUMA_RESIDUAL
     wire p16_drop_this_luma_residual = (p16_res_block_idx == (P16_LUMA_RES_BLOCKS - 5'd1));
 `else
