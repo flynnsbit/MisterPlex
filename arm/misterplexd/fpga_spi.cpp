@@ -610,12 +610,16 @@ FpgaSpi::BitstreamPushResult FpgaSpi::writeBitstreamRecord(ddr_bitstream_ring::E
     put32(16, seq);
     put32(20, static_cast<uint32_t>(len));
 
+    // Byte-wise stores only. /dev/mem DDR mappings on MiSTer fault on unaligned
+    // half/word accesses (o13 host crash: alignment exception at DATA+0x46 after
+    // Begin+6B NAL left write_count unaligned; memcpy used multi-byte stores).
     auto writeBytes = [&](const uint8_t* src, size_t n) {
         uint32_t wr = bitstreamWriteCount_ & static_cast<uint32_t>(ring::kRingBytes - 1u);
-        const size_t first = std::min(n, static_cast<size_t>(ring::kRingBytes - wr));
-        std::memcpy(bitstreamMap_ + wr, src, first);
-        if (first < n)
-            std::memcpy(bitstreamMap_, src + first, n - first);
+        volatile uint8_t* dst = bitstreamMap_;
+        for (size_t i = 0; i < n; ++i) {
+            dst[wr] = src[i];
+            wr = (wr + 1u) & static_cast<uint32_t>(ring::kRingBytes - 1u);
+        }
         bitstreamWriteCount_ += static_cast<uint32_t>(n);
     };
     writeBytes(header.data(), header.size());
