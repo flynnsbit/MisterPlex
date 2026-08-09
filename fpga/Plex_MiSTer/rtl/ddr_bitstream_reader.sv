@@ -108,6 +108,7 @@ module ddr_bitstream_reader #(
 	reg [3:0] state;
 	reg [1:0] mode;
 	reg [POLL_DIV_BITS-1:0] poll_div;
+	reg [2:0] rd_retry_cnt; // o23: throttle lost-RD reissue (8 free cycles)
 	reg [63:0] beat_q;
 	reg [2:0] byte_idx;
 	reg [3:0] beat_left;
@@ -217,6 +218,7 @@ module ddr_bitstream_reader #(
 			state <= ST_RESET;
 			mode <= MODE_HEADER;
 			poll_div <= '0;
+			rd_retry_cnt <= 3'd0;
 			DDRAM_RD <= 1'b0;
 			DDRAM_WE <= 1'b0;
 			DDRAM_BURSTCNT <= 8'd1;
@@ -393,13 +395,13 @@ module ddr_bitstream_reader #(
 					end
 				end
 
-				// o22: single-cycle RD can be lost if m1 not granted that cycle.
+				// o22/o23: single-cycle RD can be lost if m1 not granted that cycle.
 				// Stay in ST_POLL/ST_READ_WAIT with bus_want high (fairness) and
-				// re-issue RD whenever !busy until DOUT_READY (FIFO) arrives.
-				// Without retry, grant_m1 can stick waiting for m1_rd forever
-				// while we wait for a response that was never accepted (cons=0).
+				// re-issue RD after 8 free cycles until DOUT_READY (FIFO) arrives.
+				// Throttle avoids RD spam / duplicate-accept race (rubber-duck o22).
 				ST_POLL: begin
 					if (DDRAM_DOUT_READY) begin
+						rd_retry_cnt <= 3'd0;
 						if (ctrl_magic_ok) begin
 							have_ctrl <= 1'b1;
 							write_count <= {1'b0, ctrl_write_count};
@@ -430,22 +432,37 @@ module ddr_bitstream_reader #(
 							end
 						end
 						state <= ST_IDLE;
-					end else if (!DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
-						DDRAM_ADDR <= CTRL_W;
-						DDRAM_BURSTCNT <= 8'd1;
-						DDRAM_RD <= 1'b1;
+					end else if (DDRAM_BUSY) begin
+						rd_retry_cnt <= 3'd0;
+					end else if (!DDRAM_RD && !DDRAM_WE) begin
+						if (rd_retry_cnt == 3'd7) begin
+							DDRAM_ADDR <= CTRL_W;
+							DDRAM_BURSTCNT <= 8'd1;
+							DDRAM_RD <= 1'b1;
+							rd_retry_cnt <= 3'd0;
+						end else begin
+							rd_retry_cnt <= rd_retry_cnt + 3'd1;
+						end
 					end
 				end
 
 				ST_READ_WAIT: begin
 					if (DDRAM_DOUT_READY) begin
+						rd_retry_cnt <= 3'd0;
 						beat_q <= DDRAM_DOUT;
 						beat_left <= consume_count;
 						state <= ST_CONSUME;
-					end else if (!DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
-						DDRAM_ADDR <= DATA_W + read_qword_offset;
-						DDRAM_BURSTCNT <= 8'd1;
-						DDRAM_RD <= 1'b1;
+					end else if (DDRAM_BUSY) begin
+						rd_retry_cnt <= 3'd0;
+					end else if (!DDRAM_RD && !DDRAM_WE) begin
+						if (rd_retry_cnt == 3'd7) begin
+							DDRAM_ADDR <= DATA_W + read_qword_offset;
+							DDRAM_BURSTCNT <= 8'd1;
+							DDRAM_RD <= 1'b1;
+							rd_retry_cnt <= 3'd0;
+						end else begin
+							rd_retry_cnt <= rd_retry_cnt + 3'd1;
+						end
 					end
 				end
 
