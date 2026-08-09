@@ -1131,6 +1131,7 @@ module slice_hdr_parser (
 					full_luma_cbp <= cbp_mapped[3:0];
 					if (cbp_mapped == 6'd0) begin
 						// No residual and no mb_qp_delta: the macroblock ends here.
+						full_start_bit <= cur_bit_offset();
 						st <= ST_DONE;
 					end else begin
 						zcnt <= 0; ue_cont <= ST_MBQP; st <= ST_UE_Z;
