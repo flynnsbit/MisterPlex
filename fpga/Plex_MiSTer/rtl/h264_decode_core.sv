@@ -328,6 +328,10 @@ module h264_decode_core #(
     // macroblock buffers the single-partition paths use.
     localparam [7:0] ST_PART_START   = 8'd11;
     localparam [7:0] ST_PART_WAIT    = 8'd12;
+    // Hold busy one cycle after last sample so mvcommit_valid (mvflush delayed
+    // by one cycle) retires the 4x4 field into left/above before the next MB
+    // can launch and sample MVP. Without this, back-to-back P16 MBs see MVP=0.
+    localparam [7:0] ST_MV_COMMIT    = 8'd13;
     localparam [4:0] P16_LUMA_RES_BLOCKS = 5'd16;
     localparam [4:0] P16_CHROMA_RES_BLOCKS = 5'd8;
     localparam [4:0] P16_RES_BLOCKS = P16_LUMA_RES_BLOCKS + P16_CHROMA_RES_BLOCKS;
@@ -506,10 +510,11 @@ module h264_decode_core #(
 
     function automatic signed [15:0] sat16(input signed [28:0] value);
         begin
+            // Avoid Quartus Warning 10259 on -29'sd32768 (signed literal overflow).
             if (value > 29'sd32767)
                 sat16 = 16'sd32767;
-            else if (value < -29'sd32768)
-                sat16 = -16'sd32768;
+            else if (value < -29'sd32767)
+                sat16 = 16'sh8000; // -32768
             else
                 sat16 = value[15:0];
         end
@@ -1869,7 +1874,9 @@ module h264_decode_core #(
                 p16_wr_addr_r <= wb_addr;
                 p16_wr_data_r <= clip_u8(p16_recon_sum);
                 if (wb_last_sample) begin
-                    wb_state <= ST_IDLE;
+                    // Stay busy through ST_MV_COMMIT so left/above MVP state
+                    // is visible before the next syntax launch.
+                    wb_state <= ST_MV_COMMIT;
                     if (wb_mb_is_ref) begin
                         mb_count_r <= mb_count_r + 16'd1;
                         mv_top_x[wb_mb_idx] <= p16_mv_x_qpel_r;
@@ -1895,9 +1902,14 @@ module h264_decode_core #(
                     wb_state <= ST_P16_TAP_REQ;
                 end
             end
+            ST_MV_COMMIT: begin
+                // mvcommit_valid_r tracks mvflush_r by one cycle; this state
+                // absorbs that cycle while busy stays high.
+                wb_state <= ST_IDLE;
+            end
             ST_WRITE: begin
                 if (wb_last_sample) begin
-                    wb_state <= ST_IDLE;
+                    wb_state <= ST_MV_COMMIT;
                     if (wb_mb_is_ref)
                         mb_count_r <= mb_count_r + 16'd1;
                     // Publish this macroblock's L0 motion so the next P_Skip
