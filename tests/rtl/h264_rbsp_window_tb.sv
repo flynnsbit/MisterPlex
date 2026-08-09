@@ -9,6 +9,8 @@ module h264_rbsp_window_tb (
   input  wire [15:0] req_offset,
   output wire [7:0] window0,
   output wire [7:0] window1,
+  output wire [7:0] window2,
+  output wire [7:0] window3,
   output wire [7:0] window16,
   output wire [7:0] window63,
   output wire [15:0] window_base,
@@ -28,6 +30,8 @@ module h264_rbsp_window_tb (
   );
   assign window0 = window[0];
   assign window1 = window[1];
+  assign window2 = window[2];
+  assign window3 = window[3];
   assign window16 = window[16];
   assign window63 = window[63];
 endmodule
