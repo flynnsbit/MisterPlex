@@ -760,6 +760,7 @@ wire        stream_ddr_rd;
 wire [63:0] stream_ddr_din;
 wire  [7:0] stream_ddr_be;
 wire        stream_ddr_we;
+wire        stream_ddr_rsp_pop;
 
 // Product DDR writeback (overnight stream_path decode_core → fpga_ddr_writeback)
 wire        decode_dpb_wr_en;
@@ -789,6 +790,7 @@ wire        stream_ddr_enable = 1'b0;
 assign stream_ddr_busy = 1'b1;
 assign stream_ddr_dout = 64'd0;
 assign stream_ddr_dout_ready = 1'b0;
+assign stream_ddr_rsp_pop = 1'b0;
 `endif
 
 // Overnight stream_path has no softc23 hybrid_* ports; tie keeps for status chain.
@@ -826,6 +828,7 @@ stream_path #(
 	.ddr_din(stream_ddr_din),
 	.ddr_be(stream_ddr_be),
 	.ddr_we(stream_ddr_we),
+	.ddr_rsp_pop(stream_ddr_rsp_pop),
 	.has_stream(has_stream),
 	.nalu_count(nalu_count),
 	.last_nal_type(last_nal_type),
@@ -1111,6 +1114,7 @@ ddr_bus_arbiter ddr_arb (
 	.m1_din(m1_din),
 	.m1_be(m1_be),
 	.m1_we(m1_we),
+	.m1_rsp_pop(stream_ddr_rsp_pop),
 	.DDRAM_BUSY(DDRAM_BUSY),
 	.DDRAM_BURSTCNT(DDRAM_BURSTCNT),
 	.DDRAM_ADDR(DDRAM_ADDR),

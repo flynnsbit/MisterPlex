@@ -48,6 +48,8 @@ module ddr_bitstream_reader #(
 	output reg  [63:0] DDRAM_DIN,
 	output wire  [7:0] DDRAM_BE,
 	output reg         DDRAM_WE,
+	// o40: pop m1 FWFT response after sampling DOUT_READY (arbiter holds word).
+	output reg         rsp_pop,
 
 	output reg         active,
 	output reg  [31:0] bytes_out,
@@ -212,6 +214,7 @@ module ddr_bitstream_reader #(
 		out_flush <= 1'b0;
 		DDRAM_RD <= 1'b0;
 		DDRAM_WE <= 1'b0;
+		rsp_pop <= 1'b0;
 
 		if (reset) begin
 			state <= ST_RESET;
@@ -219,6 +222,7 @@ module ddr_bitstream_reader #(
 			poll_div <= '0;
 			DDRAM_RD <= 1'b0;
 			DDRAM_WE <= 1'b0;
+			rsp_pop <= 1'b0;
 			DDRAM_BURSTCNT <= 8'd1;
 			DDRAM_ADDR <= 29'd0;
 			DDRAM_DIN <= 64'd0;
@@ -393,11 +397,12 @@ module ddr_bitstream_reader #(
 					end
 				end
 
-				// o37: lost-RD reissue without new FFs (o36 STA −0.426/−0.712 at 97% ALM).
-				// Throttle with existing poll_div==0 (~64 clk_sys) so density matches o35
-				// dual-set baseline; still recovers o35 live cons=0 / telem_seq=1.
+				// o40: hold-until-pop (arbiter FWFT). DOUT_READY stays high until
+				// rsp_pop; no auto-pop race. Keep poll_div-throttled RD reissue as
+				// belt-and-suspenders if sticky grant never delivered a beat.
 				ST_POLL: begin
 					if (DDRAM_DOUT_READY) begin
+						rsp_pop <= 1'b1;
 						if (ctrl_magic_ok) begin
 							have_ctrl <= 1'b1;
 							write_count <= {1'b0, ctrl_write_count};
@@ -438,6 +443,7 @@ module ddr_bitstream_reader #(
 
 				ST_READ_WAIT: begin
 					if (DDRAM_DOUT_READY) begin
+						rsp_pop <= 1'b1;
 						beat_q <= DDRAM_DOUT;
 						beat_left <= consume_count;
 						state <= ST_CONSUME;

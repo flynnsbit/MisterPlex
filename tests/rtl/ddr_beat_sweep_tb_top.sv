@@ -70,6 +70,7 @@ module ddr_beat_sweep_tb #(
 		.m1_busy(m1_busy), .m1_burstcnt(8'd1), .m1_addr(m1_addr),
 		.m1_dout(m1_dout), .m1_dout_ready(m1_dout_ready),
 		.m1_rd(m1_rd), .m1_din(64'd0), .m1_be(8'd0), .m1_we(1'b0),
+		.m1_rsp_pop(m1_dout_ready), // o40 hold-pop; tests keep auto-pop via ready
 		.DDRAM_BUSY(DDRAM_BUSY), .DDRAM_BURSTCNT(DDRAM_BURSTCNT),
 		.DDRAM_ADDR(DDRAM_ADDR), .DDRAM_DOUT(DDRAM_DOUT),
 		.DDRAM_DOUT_READY(DDRAM_DOUT_READY), .DDRAM_RD(DDRAM_RD),

@@ -90,6 +90,7 @@ module ddr_beat_conservation_real_tb #(
 		.m1_din(64'd0),
 		.m1_be(8'd0),
 		.m1_we(1'b0),
+		.m1_rsp_pop(m1_dout_ready), // o40 hold-pop; tests keep auto-pop via ready
 
 		.DDRAM_BUSY(DDRAM_BUSY),
 		.DDRAM_BURSTCNT(DDRAM_BURSTCNT),
