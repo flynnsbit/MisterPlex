@@ -62,9 +62,6 @@ module h264_intra_nb_ctx #(
     output reg         has_chroma_left
 );
 
-    localparam int LUMA_ABOVE_DEPTH = MB_WIDTH_MAX * 16;
-    localparam int CHROMA_ABOVE_DEPTH = MB_WIDTH_MAX * 8;
-
     // Raster 4x4 block coordinates within the current luma MB.
     wire [3:0] blk_x = {block_idx[1:0], 2'b00};
     wire [3:0] blk_y = {block_idx[3:2], 2'b00};
@@ -87,18 +84,6 @@ module h264_intra_nb_ctx #(
     wire ext_topright_available = (mb_y != 8'd0) &&
                                   ((mb_x + 8'd1) < active_mb_width) &&
                                   (top_right_mb_index >= first_mb_in_slice);
-
-    function automatic int luma_addr(input [7:0] x, input [3:0] col);
-        begin
-            luma_addr = (int'(x) * 16) + int'(col);
-        end
-    endfunction
-
-    function automatic int chroma_addr(input [7:0] x, input [2:0] col);
-        begin
-            chroma_addr = (int'(x) * 8) + int'(col);
-        end
-    endfunction
 
     function automatic [7:0] maybe_fault_luma(input [7:0] value);
         begin
@@ -136,9 +121,28 @@ module h264_intra_nb_ctx #(
     reg [7:0] mb_u_buf [0:7][0:7];
     reg [7:0] mb_v_buf [0:7][0:7];
 
-    (* ramstyle = "M10K" *) reg [7:0] above_y_row [0:LUMA_ABOVE_DEPTH-1];
-    (* ramstyle = "M10K" *) reg [7:0] above_u_row [0:CHROMA_ABOVE_DEPTH-1];
-    (* ramstyle = "M10K" *) reg [7:0] above_v_row [0:CHROMA_ABOVE_DEPTH-1];
+    // Pack one boundary row per macroblock column. The flat byte arrays needed
+    // 16/8 simultaneous writes and overnight2 implemented them as ~10k flops.
+    (* ramstyle = "MLAB" *) reg [127:0] above_y_mb [0:MB_WIDTH_MAX-1];
+    (* ramstyle = "MLAB" *) reg [63:0]  above_u_mb [0:MB_WIDTH_MAX-1];
+    (* ramstyle = "MLAB" *) reg [63:0]  above_v_mb [0:MB_WIDTH_MAX-1];
+
+    wire [127:0] mb_y_bottom_packed;
+    wire [63:0]  mb_u_bottom_packed;
+    wire [63:0]  mb_v_bottom_packed;
+    genvar top_pack_i;
+    generate
+        for (top_pack_i = 0; top_pack_i < 16; top_pack_i = top_pack_i + 1) begin : g_top_pack_y
+            assign mb_y_bottom_packed[top_pack_i*8 +: 8] =
+                maybe_fault_luma(mb_y_buf[15][top_pack_i]);
+        end
+        for (top_pack_i = 0; top_pack_i < 8; top_pack_i = top_pack_i + 1) begin : g_top_pack_c
+            assign mb_u_bottom_packed[top_pack_i*8 +: 8] =
+                maybe_fault_u(mb_u_buf[7][top_pack_i], mb_v_buf[7][top_pack_i]);
+            assign mb_v_bottom_packed[top_pack_i*8 +: 8] =
+                maybe_fault_v(mb_u_buf[7][top_pack_i], mb_v_buf[7][top_pack_i]);
+        end
+    endgenerate
 
     reg [7:0] left_y_col [0:15];
     reg [7:0] left_u_col [0:7];
@@ -180,18 +184,18 @@ module h264_intra_nb_ctx #(
             // back here, or intra prediction will read the wrong tap.
             if (commit_pending) begin
                 row_tl_y_corner <= (mb_y != 8'd0) ?
-                                   above_y_row[luma_addr(mb_x, 4'd15)] : 8'd128;
+                                   above_y_mb[mb_x][15*8 +: 8] : 8'd128;
                 row_tl_u_corner <= (mb_y != 8'd0) ?
-                                   above_u_row[chroma_addr(mb_x, 3'd7)] : 8'd128;
+                                   above_u_mb[mb_x][7*8 +: 8] : 8'd128;
                 row_tl_v_corner <= (mb_y != 8'd0) ?
-                                   above_v_row[chroma_addr(mb_x, 3'd7)] : 8'd128;
+                                   above_v_mb[mb_x][7*8 +: 8] : 8'd128;
+                above_y_mb[mb_x] <= mb_y_bottom_packed;
+                above_u_mb[mb_x] <= mb_u_bottom_packed;
+                above_v_mb[mb_x] <= mb_v_bottom_packed;
                 for (i = 0; i < 16; i = i + 1) begin
-                    above_y_row[luma_addr(mb_x, i[3:0])] <= maybe_fault_luma(mb_y_buf[15][i]);
                     left_y_col[i] <= maybe_fault_luma(mb_y_buf[i][15]);
                 end
                 for (i = 0; i < 8; i = i + 1) begin
-                    above_u_row[chroma_addr(mb_x, i[2:0])] <= maybe_fault_u(mb_u_buf[7][i], mb_v_buf[7][i]);
-                    above_v_row[chroma_addr(mb_x, i[2:0])] <= maybe_fault_v(mb_u_buf[7][i], mb_v_buf[7][i]);
                     left_u_col[i] <= maybe_fault_u(mb_u_buf[i][7], mb_v_buf[i][7]);
                     left_v_col[i] <= maybe_fault_v(mb_u_buf[i][7], mb_v_buf[i][7]);
                 end
@@ -275,14 +279,14 @@ module h264_intra_nb_ctx #(
         mb_avail_topright = ext_topright_available;
         for (oi = 0; oi < 16; oi = oi + 1) begin
             nb_top[oi] = mb_avail_top ?
-                         maybe_fault_luma(above_y_row[luma_addr(mb_x, oi[3:0])]) : 8'd128;
+                         maybe_fault_luma(above_y_mb[mb_x][oi*8 +: 8]) : 8'd128;
             nb_left[oi] = mb_avail_left ?
                           maybe_fault_luma(left_y_col[oi]) : 8'd128;
         end
         nb_topleft = (mb_avail_top && mb_avail_left) ? maybe_fault_luma(tl_y_corner) : 8'd128;
         if (mb_avail_topright) begin
             for (oi = 0; oi < 4; oi = oi + 1)
-                nb_topright[oi] = maybe_fault_luma(above_y_row[luma_addr(mb_x + 8'd1, oi[3:0])]);
+                nb_topright[oi] = maybe_fault_luma(above_y_mb[mb_x + 8'd1][oi*8 +: 8]);
         end
 
         if (has_above) begin
@@ -299,15 +303,15 @@ module h264_intra_nb_ctx #(
                 end
             end else begin
                 for (oi = 0; oi < 4; oi = oi + 1)
-                    above[oi] = maybe_fault_luma(above_y_row[luma_addr(mb_x, blk_x + oi[3:0])]);
+                    above[oi] = maybe_fault_luma(above_y_mb[mb_x][(blk_x + oi)*8 +: 8]);
                 if (blk_x < 4'd12) begin
                     has_above_right = 1'b1;
                     for (oi = 0; oi < 4; oi = oi + 1)
-                        above[4 + oi] = maybe_fault_luma(above_y_row[luma_addr(mb_x, blk_x + 4'd4 + oi[3:0])]);
+                        above[4 + oi] = maybe_fault_luma(above_y_mb[mb_x][(blk_x + 4 + oi)*8 +: 8]);
                 end else if (ext_topright_available) begin
                     has_above_right = 1'b1;
                     for (oi = 0; oi < 4; oi = oi + 1)
-                        above[4 + oi] = maybe_fault_luma(above_y_row[luma_addr(mb_x + 8'd1, oi[3:0])]);
+                        above[4 + oi] = maybe_fault_luma(above_y_mb[mb_x + 8'd1][oi*8 +: 8]);
                 end else begin
                     for (oi = 0; oi < 4; oi = oi + 1)
                         above[4 + oi] = above[3];
@@ -331,15 +335,15 @@ module h264_intra_nb_ctx #(
             else if (blk_x == 4'd0 && blk_y != 4'd0)
                 top_left = has_left ? maybe_fault_luma(left_y_col[blk_y - 4'd1]) : 8'd128;
             else if (blk_x != 4'd0 && blk_y == 4'd0)
-                top_left = has_above ? maybe_fault_luma(above_y_row[luma_addr(mb_x, blk_x - 4'd1)]) : 8'd128;
+                top_left = has_above ? maybe_fault_luma(above_y_mb[mb_x][(blk_x - 1)*8 +: 8]) : 8'd128;
             else
                 top_left = ext_topleft_available ? maybe_fault_luma(tl_y_corner) : 8'd128;
         end
 
         if (has_chroma_above) begin
             for (oi = 0; oi < 8; oi = oi + 1) begin
-                chroma_u_above[oi] = above_u_row[chroma_addr(mb_x, oi[2:0])];
-                chroma_v_above[oi] = above_v_row[chroma_addr(mb_x, oi[2:0])];
+                chroma_u_above[oi] = above_u_mb[mb_x][oi*8 +: 8];
+                chroma_v_above[oi] = above_v_mb[mb_x][oi*8 +: 8];
             end
         end
         if (has_chroma_left) begin
