@@ -225,6 +225,7 @@ module ddr_bus_arbiter (
 			rsp_valid_r <= 1'b0;
 			rsp_owner_m1_r <= 1'b0;
 			m1_wait <= 6'd0;
+			m1_need <= 1'b0;
 		end else begin
 			rsp_valid_r <= rsp_raw_valid;
 			if (rsp_raw_valid) begin
