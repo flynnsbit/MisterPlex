@@ -52,6 +52,7 @@ module h264_decode_core #(
     // This interface provides a window of RBSP bytes around the current position.
     input  wire [7:0]  rbsp_byte [0:63],     // 64-byte window of RBSP data
     input  wire [15:0] rbsp_window_base,     // byte offset of rbsp_byte[0] in stream
+    input  wire        rbsp_window_valid,    // window/base correspond to the last request
     output wire [15:0] rbsp_request_offset,  // request: advance window to this offset
     output wire        rbsp_request_valid,
 
@@ -356,6 +357,7 @@ module h264_decode_core #(
     reg [6:0]  p16_tap_idx;
     reg [9:0]  p16_res_bit_offset_r;
     reg [4:0]  p16_res_block_idx;
+    reg        p16_rbsp_ready_r;
     reg        cavlc_start_r;
     reg        p16_iq_start_r;
 
@@ -438,6 +440,8 @@ module h264_decode_core #(
     reg [15:0] syntax_mb_addr_r;
     reg [15:0] rbsp_request_offset_r;
     reg        rbsp_request_valid_r;
+    wire       p16_rbsp_window_match =
+        rbsp_window_valid && (rbsp_window_base == rbsp_request_offset_r);
     reg signed [15:0] mv_top_x [0:MB_W-1];
     reg signed [15:0] mv_top_y [0:MB_W-1];
     reg [1:0]  mv_top_ref [0:MB_W-1];
@@ -963,8 +967,10 @@ module h264_decode_core #(
         .skip_zero(syntax_mv_skip_zero)
     );
 
-    wire [15:0] launch_residual_window_bit_base = {rbsp_window_base[12:0], 3'd0};
-    wire [15:0] launch_residual_rel_bit_offset = mb_residual_bit_offset - launch_residual_window_bit_base;
+    // The core requests the byte containing the first residual bit.  With a
+    // registered window, rbsp_window_base still names the previous request at
+    // launch, so derive the relative offset from the request itself.
+    wire [15:0] launch_residual_rel_bit_offset = {13'd0, mb_residual_bit_offset[2:0]};
     wire        cavlc_busy;
     wire        cavlc_done;
     wire        cavlc_ok;
@@ -1502,6 +1508,7 @@ module h264_decode_core #(
             p16_tap_idx <= 7'd0;
             p16_res_bit_offset_r <= 10'd0;
             p16_res_block_idx <= 5'd0;
+            p16_rbsp_ready_r <= 1'b0;
             cavlc_start_r <= 1'b0;
             p16_iq_start_r <= 1'b0;
             p16_tc_above_valid <= 1'b0;
@@ -1600,12 +1607,14 @@ module h264_decode_core #(
             p16_iq_start_r <= 1'b0;
             if (syntax_p16_candidate) begin
                 rbsp_request_valid_r <= 1'b1;
+                p16_rbsp_ready_r <= 1'b0;
 `ifdef H264_DECODE_CORE_FAULT_BAD_RBSP_REQ
                 rbsp_request_offset_r <= syntax_request_byte_offset + 16'd1;
 `else
                 rbsp_request_offset_r <= syntax_request_byte_offset;
 `endif
-            end
+            end else if (p16_rbsp_window_match)
+                p16_rbsp_ready_r <= 1'b1;
             if (mb_type_valid)
                 syntax_mb_addr_r <= syntax_mb_addr_r + 16'd1;
             if (pskip_launch)
@@ -1815,8 +1824,10 @@ module h264_decode_core #(
                 wb_state <= ST_WRITE;
             end
             ST_P16_RES_START: begin
-                cavlc_start_r <= 1'b1;
-                wb_state <= ST_P16_RES_WAIT;
+                if (p16_rbsp_ready_r || p16_rbsp_window_match) begin
+                    cavlc_start_r <= 1'b1;
+                    wb_state <= ST_P16_RES_WAIT;
+                end
             end
             ST_P16_RES_WAIT: begin
                 if (cavlc_done) begin
@@ -2010,6 +2021,7 @@ module h264_decode_core #(
     (* keep = 1 *) wire _keep_decode_core_inputs =
         slice_is_idr | slice_is_i | |slice_qp_y | |first_mb_in_slice |
         |pps_chroma_qp_index_offset | |rbsp_byte[0] | |rbsp_window_base |
+        rbsp_window_valid |
         mb_type_valid | |mb_type | mb_skip | |intra4x4_modes[0] |
         |intra16x16_mode | |chroma_pred_mode | |cbp_luma | |cbp_chroma |
         |mb_qp_delta | |mb_residual_bit_offset | luma4x4_valid | |luma4x4_idx |

@@ -61,9 +61,10 @@ module h264_i_mb_feed #(
 	// Bit offset after first skip_run (P_Skip) or at first residual (coded MB).
 	input  wire [15:0] first_residual_bit_offset,
 
-	// RBSP window (combinational read; request moves the base).
+	// RBSP window. Consumers wait until valid and base match the request.
 	input  wire [7:0]  rbsp_byte [0:63],
 	input  wire [15:0] rbsp_window_base,
+	input  wire        rbsp_window_valid,
 	output reg  [15:0] rbsp_request_offset,
 	output reg         rbsp_request_valid,
 	input  wire [15:0] rbsp_length,
@@ -214,6 +215,8 @@ module h264_i_mb_feed #(
 	reg [5:0]  blk_guard;
 	reg [15:0] guard;
 	reg        win_armed;
+	wire       rbsp_window_match =
+		rbsp_window_valid && (rbsp_window_base == rbsp_request_offset);
 	reg [15:0] skip_left;
 	reg        after_skip_run_r; // 1: skip-run just finished → next is coded MB
 	reg [2:0]  part_mode_r;
@@ -887,6 +890,8 @@ module h264_i_mb_feed #(
 			for (ci = 0; ci < MB_W_MAX; ci = ci + 1)
 				tc_top_valid[ci] <= 1'b0;
 		end else begin
+			if (rbsp_window_match)
+				win_armed <= 1'b1;
 			case (st)
 			ST_IDLE: begin
 				frame_feed_done <= 1'b0;
@@ -1148,8 +1153,7 @@ module h264_i_mb_feed #(
 			end
 
 			ST_RES_ARM: begin
-				win_armed <= 1'b1;
-				if (win_armed)
+				if (win_armed || rbsp_window_match)
 					st <= ST_RES_START;
 			end
 
@@ -1445,10 +1449,9 @@ module h264_i_mb_feed #(
 			end
 
 			ST_P_SKIP_RUN: begin
-				// Need window armed for more_rbsp_w + ue parse
-				win_armed <= 1'b1;
-				if (!win_armed) begin
-					// wait one edge
+				// Need the requested window before more_rbsp_w + ue parse.
+				if (!(win_armed || rbsp_window_match)) begin
+					// wait for the registered window
 				end else if (!more_rbsp_w) begin
 					// Clean EOS if skip-run spanned to picture end; else early.
 					if (mb_addr < mb_total)
@@ -1477,8 +1480,7 @@ module h264_i_mb_feed #(
 			end
 
 			ST_EOS_ARM: begin
-				win_armed <= 1'b1;
-				if (win_armed) begin
+				if (win_armed || rbsp_window_match) begin
 					// Cross-check PicSizeInMbs vs bitstream end / trailing bits.
 					// more_rbsp_w false ⇒ only rbsp_trailing_bits (or empty) remain.
 					// Also accept more_left<=8 at exact PicSizeInMbs: stop_one_bit +
@@ -1509,8 +1511,7 @@ module h264_i_mb_feed #(
 			end
 
 			ST_SYN_ARM: begin
-				win_armed <= 1'b1;
-				if (win_armed) begin
+				if (win_armed || rbsp_window_match) begin
 					// Preserve ret_st — callers set it (mb_type=0, skip_run=6, …)
 					// and window realign from ST_SYN_UE0/BIT must not clobber it.
 					ue_zeros <= 8'd0;

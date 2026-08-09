@@ -148,7 +148,7 @@ struct MbCase {
 // residualBitOffset / rbspWindowBase sized so each MB's nC-correct CAVLC
 // bitstream fits the 64-byte RBSP window (relative bit_offset < 512).
 const std::vector<MbCase> kCases = {
-    {1, 0, 2, 0, 0, 0, 2, 0, 296, 32},
+    {1, 0, 2, 0, 0, 0, 2, 0, 296, 37},
     {2, 0, 3, 0, 2, 0, 5, 0, 600, 75},
     {3, 0, 4, 0, 5, 0, 9, 0, 949, 118},
 };
@@ -438,8 +438,18 @@ public:
     bool frameDoneSeen = false;
     bool pendingValid = false;
     uint8_t pendingData = 0;
+    int rbspWindowDelay = -1;
+    uint16_t rbspPendingBase = 0;
 
     void tick() {
+        if (rbspWindowDelay > 0) {
+            top.rbsp_window_valid = 0;
+            --rbspWindowDelay;
+        } else if (rbspWindowDelay == 0) {
+            top.rbsp_window_base = rbspPendingBase;
+            top.rbsp_window_valid = 1;
+            rbspWindowDelay = -1;
+        }
         top.clk = 0;
         top.dpb_rd_valid = pendingValid ? 1 : 0;
         top.dpb_rd_data = pendingData;
@@ -447,7 +457,12 @@ public:
         top.clk = 1;
         top.eval();
         if (top.dpb_wr_en) writes.push_back({top.dpb_wr_addr, static_cast<uint8_t>(top.dpb_wr_data)});
-        if (top.rbsp_request_valid) rbspRequests.push_back(top.rbsp_request_offset);
+        if (top.rbsp_request_valid) {
+            rbspRequests.push_back(top.rbsp_request_offset);
+            rbspPendingBase = top.rbsp_request_offset;
+            rbspWindowDelay = 2;
+            top.rbsp_window_valid = 0;
+        }
         if (top.frame_done) frameDoneSeen = true;
         const bool sawRead = top.dpb_rd_en;
         const uint32_t readAddr = top.dpb_rd_addr;
@@ -486,6 +501,7 @@ void clearInputs(Sim& s) {
     s.top.dpb_rd_valid = 0;
     s.top.dpb_rd_data = 0;
     s.top.rbsp_window_base = 0;
+    s.top.rbsp_window_valid = 0;
     for (int i = 0; i < 64; ++i) s.top.rbsp_byte_in[i] = 0;
     for (int i = 0; i < 256; ++i) s.top.p16_residual_y[i] = 0;
     for (int i = 0; i < 64; ++i) {
@@ -541,7 +557,6 @@ void driveMb(Sim& s, int mbOrdinal) {
     s.top.p16_mvd_y_qpel = mb.mvdY;
     s.top.p16_ref_idx_l0 = 0;
     s.top.mb_residual_bit_offset = mb.residualBitOffset;
-    s.top.rbsp_window_base = mb.rbspWindowBase;
     s.top.mb_type = 0;
     s.top.mb_skip = 0;
     s.top.mb_type_valid = 1;

@@ -515,12 +515,11 @@ module stream_path #(
 		end
 	endgenerate
 
-	// Whole-slice EPB-stripped RBSP store + combo 64-byte sliding window.
-	// Prior art: h264_rbsp_window (combo MLAB banks). Core has no ready/valid
-	// window handshake; request updates base on the next edge and CAVLC starts
-	// one cycle later (ST_P16_RES_START), matching that lag.
+	// Whole-slice EPB-stripped RBSP store + registered 64-byte sliding window.
+	// Both consumers wait for window_valid and the requested base before reads.
 	wire [7:0]  core_rbsp_byte [0:63];
 	wire [15:0] core_rbsp_window_base;
+	wire        core_rbsp_window_valid;
 	wire [15:0] core_rbsp_avail;
 	wire [15:0] core_rbsp_length;
 	wire        core_rbsp_complete;
@@ -546,6 +545,7 @@ module stream_path #(
 		.req_offset(core_rbsp_request_offset),
 		.window(core_rbsp_byte),
 		.window_base(core_rbsp_window_base),
+		.window_valid(core_rbsp_window_valid),
 		.window_avail(core_rbsp_avail),
 		.length(core_rbsp_length),
 		.complete(core_rbsp_complete),
@@ -603,6 +603,7 @@ module stream_path #(
 		.first_residual_bit_offset(sl_first_mb_residual_bit_offset),
 		.rbsp_byte(core_rbsp_byte),
 		.rbsp_window_base(core_rbsp_window_base),
+		.rbsp_window_valid(core_rbsp_window_valid),
 		.rbsp_request_offset(feed_rbsp_request_offset),
 		.rbsp_request_valid(feed_rbsp_request_valid),
 		.rbsp_length(core_rbsp_length),
@@ -783,6 +784,7 @@ module stream_path #(
 		.pps_chroma_qp_index_offset(pps_chroma_qp_index_offset),
 		.rbsp_byte(core_rbsp_byte),
 		.rbsp_window_base(core_rbsp_window_base),
+		.rbsp_window_valid(core_rbsp_window_valid),
 		.rbsp_request_offset(core_rbsp_request_offset_raw),
 		.rbsp_request_valid(core_rbsp_request_valid_raw),
 		.mb_type_valid(feed_mb_type_valid),

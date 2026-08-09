@@ -29,6 +29,7 @@ module h264_decode_core_p16z_tb #(
 	input  wire signed [15:0] p16_residual_v [0:63],
 	input  wire [7:0]  rbsp_byte_in [0:63],
 	input  wire [15:0] rbsp_window_base,
+	input  wire        rbsp_window_valid,
 	input  wire [7:0]  dpb_rd_data,
 	input  wire        dpb_rd_valid,
 
@@ -85,6 +86,7 @@ module h264_decode_core_p16z_tb #(
 		.pps_chroma_qp_index_offset(5'sd0),
 		.rbsp_byte(rbsp_byte_in),
 		.rbsp_window_base(rbsp_window_base),
+		.rbsp_window_valid(rbsp_window_valid),
 		.rbsp_request_offset(rbsp_request_offset),
 		.rbsp_request_valid(rbsp_request_valid),
 		.mb_type_valid(mb_type_valid),

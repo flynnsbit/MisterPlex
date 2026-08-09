@@ -1,26 +1,23 @@
 // Slice RBSP byte store with a sliding read window.
 //
-// CONTRACT (registered M10K variant — 2-cycle read latency):
+// CONTRACT (dual-port M10K + multi-beat registered fill — ALM-safe):
 //
-//   * Write side is append-only.  `wr_clear` starts a new NAL, `wr_en` appends
-//     one EPB-stripped RBSP byte, `wr_end` marks the NAL complete.  Bytes past
-//     DEPTH_BYTES are dropped and raise `overflow`.
-//   * Read side presents WINDOW_BYTES consecutive RBSP bytes starting at
-//     `window_base`.  `req_valid` moves the base to `req_offset`.
-//   * LATENCY: 2 cycles from req_valid to stable window output.
-//       cycle 0: req_valid + req_offset captured
-//       cycle 1: M10K read address applied
-//       cycle 2: window[0:WINDOW_BYTES-1] stable, window_valid asserts
-//   * `window_valid` is HIGH when the window output corresponds to the last
-//     completed request.  Consumers must gate CAVLC/bitparse on window_valid.
-//   * Reads past `length` return 0.
+//   * Write: append-only wr_clear / wr_en / wr_end. Overflow sticky if full.
+//   * Read: req_valid captures req_offset and fills window[0:WINDOW_BYTES-1]
+//     using one synchronous read port (WORD_BYTES per beat).
+//   * LATENCY: about 2*FILL_BEATS cycles (WINDOW=64, WORD=8 → ~16 cycles).
+//   * window_valid stays high until the next req_valid (or reset/clear).
+//     Consumers gate on: window_valid && (window_base == requested_offset).
 //
-// Storage: single M10K byte memory, read via WINDOW_BYTES simple dual-port
-// inferred ports (one per output byte).  Each port addresses the full depth.
+// overnight3 map: combo bank+rotate design → ~63704 ALMs in this module.
+// One DP M10K + sequential fill avoids multi-port replication and combo muxes.
+
+`default_nettype none
 
 module h264_rbsp_window #(
 	parameter int DEPTH_BYTES  = 4096,
-	parameter int WINDOW_BYTES = 64
+	parameter int WINDOW_BYTES = 64,
+	parameter int WORD_BYTES   = 8
 )(
 	input  wire        clk,
 	input  wire        reset,
@@ -41,119 +38,155 @@ module h264_rbsp_window #(
 	output wire        overflow,
 	output reg         window_valid
 );
-	localparam int ADDR_W = (DEPTH_BYTES <= 1) ? 1 : $clog2(DEPTH_BYTES);
-	localparam [15:0] DEPTH_W = 16'(DEPTH_BYTES);
+	localparam int WORDS       = (DEPTH_BYTES + WORD_BYTES - 1) / WORD_BYTES;
+	localparam int WORD_ADDR_W = (WORDS <= 1) ? 1 : $clog2(WORDS);
+	localparam int FILL_BEATS  = (WINDOW_BYTES + WORD_BYTES - 1) / WORD_BYTES;
+	localparam int BEAT_W      = (FILL_BEATS <= 1) ? 1 : $clog2(FILL_BEATS);
+	localparam int LANE_W      = (WORD_BYTES <= 1) ? 1 : $clog2(WORD_BYTES);
+	localparam int BYTE_ADDR_W = (DEPTH_BYTES <= 1) ? 1 : $clog2(DEPTH_BYTES);
+	localparam [15:0] DEPTH_W  = 16'(DEPTH_BYTES);
 
-	// ─── Storage: M10K byte RAM ────────────────────────────────────────
 	(* ramstyle = "M10K,no_rw_check" *)
-	reg [7:0] mem [0:DEPTH_BYTES-1];
+	reg [WORD_BYTES*8-1:0] mem [0:WORDS-1];
 
-	// ─── Write side ────────────────────────────────────────────────────
-	reg [15:0] len_r;
-	reg        complete_r;
-	reg        overflow_r;
+	reg [15:0]             len_r;
+	reg                    complete_r;
+	reg                    overflow_r;
+	reg [WORD_BYTES*8-1:0] wr_pack_r;
+	reg [LANE_W-1:0]       wr_lane_r;
+	reg [WORD_ADDR_W-1:0]  wr_word_r;
 
 	wire wr_fits = (len_r < DEPTH_W);
 	wire wr_take = wr_en && wr_fits;
+	wire wr_last_lane = (wr_lane_r == LANE_W'(WORD_BYTES - 1));
+
+	reg [WORD_BYTES*8-1:0] wr_pack_next;
+	integer pi;
+	always @(*) begin
+		wr_pack_next = wr_pack_r;
+		for (pi = 0; pi < WORD_BYTES; pi = pi + 1) begin
+			if (wr_take && (wr_lane_r == LANE_W'(pi)))
+				wr_pack_next[pi*8 +: 8] = wr_data;
+		end
+	end
 
 	always @(posedge clk) begin
 		if (reset) begin
 			len_r      <= 16'd0;
 			complete_r <= 1'b0;
 			overflow_r <= 1'b0;
+			wr_pack_r  <= '0;
+			wr_lane_r  <= '0;
+			wr_word_r  <= '0;
 		end else if (wr_clear) begin
 			len_r      <= 16'd0;
 			complete_r <= 1'b0;
 			overflow_r <= 1'b0;
+			wr_pack_r  <= '0;
+			wr_lane_r  <= '0;
+			wr_word_r  <= '0;
 		end else begin
-			if (wr_take)
+			if (wr_take) begin
 				len_r <= len_r + 16'd1;
-			else if (wr_en)
+				if (wr_last_lane) begin
+					mem[wr_word_r] <= wr_pack_next;
+					wr_pack_r <= '0;
+					wr_lane_r <= '0;
+					wr_word_r <= wr_word_r + 1'b1;
+				end else begin
+					wr_pack_r <= wr_pack_next;
+					wr_lane_r <= wr_lane_r + 1'b1;
+					if (wr_end) begin
+						mem[wr_word_r] <= wr_pack_next;
+						wr_pack_r <= '0;
+						wr_lane_r <= '0;
+					end
+				end
+			end else if (wr_en) begin
 				overflow_r <= 1'b1;
+			end else if (wr_end && (wr_lane_r != '0)) begin
+				mem[wr_word_r] <= wr_pack_r;
+				wr_pack_r <= '0;
+				wr_lane_r <= '0;
+			end
+
 			if (wr_end)
 				complete_r <= 1'b1;
 		end
 	end
 
-	always @(posedge clk) begin
-		if (wr_take)
-			mem[len_r[ADDR_W-1:0]] <= wr_data;
-	end
+	// Fill FSM: beat loop with registered M10K read.
+	// Phase 0: drive address. Phase 1: capture word + scatter into window.
+	reg                    fill_active_r;
+	reg                    fill_phase_r; // 0=addr, 1=capt
+	reg [15:0]             fill_base_r;
+	reg [BEAT_W-1:0]       beat_r;
+	reg [WORD_ADDR_W-1:0]  rd_addr_r;
+	reg [WORD_BYTES*8-1:0] rd_data_r;
 
-	// ─── Read side: 2-cycle pipeline ───────────────────────────────────
-	// Stage 0 (req capture): latch base address
-	reg [15:0] rd_base_s0;
-	reg        rd_pending_s1;  // stage-1 active
-	reg        rd_pending_s2;  // stage-2 active
-	reg [15:0] rd_base_s1;    // for output registration
+	wire [15:0] req_base_clamped =
+		(req_offset >= DEPTH_W) ? (DEPTH_W - 16'(WINDOW_BYTES)) : req_offset;
 
+	wire [15:0] beat_base = 16'(beat_r) * 16'(WORD_BYTES);
+
+	integer bi, bj;
 	always @(posedge clk) begin
 		if (reset || wr_clear) begin
-			rd_base_s0   <= 16'd0;
-			rd_pending_s1 <= 1'b0;
-			rd_pending_s2 <= 1'b0;
-			window_valid <= 1'b0;
-			window_base  <= 16'd0;
-		end else begin
-			// New request launches pipeline
-			if (req_valid) begin
-				rd_base_s0 <= (req_offset >= DEPTH_W)
-					? (DEPTH_W - 16'(WINDOW_BYTES))
-					: req_offset;
-				rd_pending_s1 <= 1'b1;
-				window_valid  <= 1'b0;
+			fill_active_r <= 1'b0;
+			fill_phase_r  <= 1'b0;
+			fill_base_r   <= 16'd0;
+			beat_r        <= '0;
+			rd_addr_r     <= '0;
+			rd_data_r     <= '0;
+			window_valid  <= 1'b0;
+			window_base   <= 16'd0;
+			for (bi = 0; bi < WINDOW_BYTES; bi = bi + 1)
+				window[bi] <= 8'd0;
+		end else if (req_valid) begin
+			fill_active_r <= 1'b1;
+			fill_phase_r  <= 1'b0;
+			fill_base_r   <= req_base_clamped;
+			beat_r        <= '0;
+			rd_addr_r     <= req_base_clamped[BYTE_ADDR_W-1:LANE_W];
+			window_valid  <= 1'b0;
+		end else if (fill_active_r) begin
+			if (!fill_phase_r) begin
+				// Address held on rd_addr_r this cycle; capture next.
+				fill_phase_r <= 1'b1;
 			end else begin
-				rd_pending_s1 <= 1'b0;
-			end
+				rd_data_r <= mem[rd_addr_r];
+				// Scatter happens with the captured data next cycle via
+				// delayed beat — do it here using mem[] directly for the
+				// beat (synchronous read result registered).
+				for (bj = 0; bj < WORD_BYTES; bj = bj + 1) begin
+					if ((beat_base + 16'(bj)) < 16'(WINDOW_BYTES)) begin
+						if ((fill_base_r + beat_base + 16'(bj)) < len_r)
+							window[beat_base + 16'(bj)] <= mem[rd_addr_r][bj*8 +: 8];
+						else
+							window[beat_base + 16'(bj)] <= 8'd0;
+					end
+				end
 
-			// Stage 1→2 advance
-			rd_pending_s2 <= rd_pending_s1;
-			if (rd_pending_s1)
-				rd_base_s1 <= rd_base_s0;
-
-			// Stage 2: output valid
-			if (rd_pending_s2) begin
-				window_valid <= 1'b1;
-				window_base  <= rd_base_s1;
+				if (beat_r == BEAT_W'(FILL_BEATS - 1)) begin
+					fill_active_r <= 1'b0;
+					fill_phase_r  <= 1'b0;
+					beat_r        <= '0;
+					window_valid  <= 1'b1;
+					window_base   <= fill_base_r;
+				end else begin
+					beat_r       <= beat_r + 1'b1;
+					rd_addr_r    <= (fill_base_r +
+						(16'(beat_r) + 16'd1) * 16'(WORD_BYTES)) >> LANE_W;
+					fill_phase_r <= 1'b0;
+				end
 			end
 		end
 	end
 
-	// Stage 1: M10K read (address applied, data available next cycle)
-	// Stage 2: register output from BRAM read data
-	// We use generate to create WINDOW_BYTES read ports.  Each port reads
-	// mem[base + k].  The M10K output register captures it in stage 2.
-	genvar gk;
-	generate
-		for (gk = 0; gk < WINDOW_BYTES; gk = gk + 1) begin : g_rd
-			reg [7:0] rd_data_s2;
-			reg       rd_valid_s2;
-
-			// byte_addr is combinational from rd_base_s0 (stable since cycle 0)
-			wire [15:0] byte_addr = rd_base_s0 + 16'(gk);
-			wire        in_range  = (byte_addr < len_r) && (byte_addr < DEPTH_W);
-
-			// Stage 1→2: M10K read with combinational address, registered
-			// output.  This is the canonical Quartus M10K inference pattern:
-			//   always @(posedge clk) q <= mem[addr];
-			always @(posedge clk) begin
-				if (rd_pending_s1) begin
-					rd_data_s2 <= mem[byte_addr[ADDR_W-1:0]];
-					rd_valid_s2 <= in_range;
-				end
-			end
-
-			// Output: latch into window on stage-2 completion
-			always @(posedge clk) begin
-				if (rd_pending_s2)
-					window[gk] <= rd_valid_s2 ? rd_data_s2 : 8'd0;
-			end
-		end
-	endgenerate
-
-	// ─── Outputs ───────────────────────────────────────────────────────
 	assign window_avail = (len_r > window_base) ? (len_r - window_base) : 16'd0;
 	assign length       = len_r;
 	assign complete     = complete_r;
 	assign overflow     = overflow_r;
 endmodule
+
+`default_nettype wire
