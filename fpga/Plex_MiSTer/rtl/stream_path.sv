@@ -427,9 +427,6 @@ module stream_path #(
 	wire [5:0]  core_i16_dc_qp;
 	wire [4:0]  core_intra_blocks_done;
 	wire        core_busy;
-	// Fabric MVP: keep the full feeder source/test surface, but do not fit its
-	// 9.4k-ALUT multi-MB syntax walker until the baseline datapath fits.
-	localparam bit PRODUCT_FULL_MB_FEED = 1'b0;
 
 	function automatic [1:0] core_i4_bx;
 		input [3:0] idx;
@@ -573,8 +570,6 @@ module stream_path #(
 	// intra_chroma_residual_* inputs — those feed outputs are kept only.
 	// Luma4x4 residual + per-MB syntax (type/skip/cbp/qpδ/mvd/i4 modes) ARE
 	// consumed. mb_skip_run_* tied off: feed expands skip_run itself.
-	generate
-	if (PRODUCT_FULL_MB_FEED) begin : gen_full_mb_feed
 	h264_i_mb_feed #(
 		.MB_W_MAX(40),
 		.ENABLE_RECON_EXPORT(1'b0)
@@ -656,114 +651,6 @@ module stream_path #(
 		.slice_desync_cause(feed_slice_desync_cause),
 		.slice_desync_mb(feed_slice_desync_mb)
 	);
-	end else begin : gen_lite_mb_feed
-		reg lite_mb_valid_r;
-		reg lite_mb_sent_r;
-		reg lite_luma_active_r;
-		reg lite_luma_wait_r;
-		reg [3:0] lite_luma_idx_r;
-		reg lite_luma_valid_r;
-
-		wire lite_i4_mb = (sl_is_i && (sl_mbt == 8'd0)) ||
-		                  (!sl_is_i && (sl_mbt == 8'd5));
-		wire [1:0] lite_i16_mode =
-			(sl_is_i && (sl_mbt >= 8'd1) && (sl_mbt <= 8'd24)) ?
-				((sl_mbt - 8'd1) & 2'd3) :
-			(!sl_is_i && (sl_mbt >= 8'd6) && (sl_mbt <= 8'd29)) ?
-				((sl_mbt - 8'd6) & 2'd3) : 2'd2;
-
-		always @(posedge clk) begin
-			lite_mb_valid_r <= 1'b0;
-			lite_luma_valid_r <= 1'b0;
-			if (reset | flush | vcl_cap_clear) begin
-				lite_mb_sent_r <= 1'b0;
-				lite_luma_active_r <= 1'b0;
-				lite_luma_wait_r <= 1'b0;
-				lite_luma_idx_r <= 4'd0;
-			end else begin
-				if (core_slice_start) begin
-					lite_mb_sent_r <= 1'b0;
-					lite_luma_active_r <= 1'b0;
-					lite_luma_wait_r <= 1'b0;
-					lite_luma_idx_r <= 4'd0;
-				end
-				if (!lite_mb_sent_r && slice_valid && sl_has_mbt && !core_busy) begin
-					lite_mb_valid_r <= 1'b1;
-					lite_mb_sent_r <= 1'b1;
-					if (lite_i4_mb) begin
-						lite_luma_active_r <= 1'b1;
-						lite_luma_wait_r <= 1'b0;
-						lite_luma_idx_r <= 4'd0;
-					end
-				end else if (lite_luma_active_r) begin
-					if (!lite_luma_wait_r) begin
-						lite_luma_valid_r <= 1'b1;
-						lite_luma_wait_r <= 1'b1;
-					end else if (core_intra_blocks_done > {1'b0, lite_luma_idx_r}) begin
-						if (lite_luma_idx_r == 4'd15) begin
-							lite_luma_active_r <= 1'b0;
-							lite_luma_wait_r <= 1'b0;
-						end else begin
-							lite_luma_idx_r <= lite_luma_idx_r + 4'd1;
-							lite_luma_wait_r <= 1'b0;
-						end
-					end
-				end
-			end
-		end
-
-		assign feed_i4_pred_mode_flags = sl_i4_pred_mode_flags;
-		assign feed_i4_rem_modes = sl_i4_rem_modes;
-		assign feed_i4_modes_present = sl_i4_modes_present;
-		assign feed_i16_mode = lite_i16_mode;
-		assign feed_chroma_pred_mode = sl_chroma_pred_mode;
-		assign feed_cbp_luma = sl_first_mb_cbp_luma;
-		assign feed_cbp_chroma = sl_first_mb_cbp_chroma;
-		assign feed_mb_qp_delta = sl_qpd[5:0];
-		assign feed_mb_qp_y = sl_qp;
-		assign feed_mb_residual_bit_offset = sl_first_mb_residual_bit_offset;
-		assign feed_busy = 1'b0;
-		assign feed_frame_done = 1'b0;
-		assign feed_error = 1'b0;
-		assign feed_slice_desync = 1'b0;
-		assign feed_slice_desync_early = 1'b0;
-		assign feed_slice_desync_long = 1'b0;
-		assign feed_slice_desync_cause = 4'd0;
-		assign feed_slice_desync_mb = 16'd0;
-		assign feed_chroma_residual_valid = 1'b0;
-		assign feed_rbsp_request_offset = 16'd0;
-		assign feed_rbsp_request_valid = 1'b0;
-		assign feed_mb_type_valid = lite_mb_valid_r;
-		assign feed_mb_type = sl_mbt[4:0];
-		assign feed_mb_skip = first_mb_p_skip;
-		assign feed_mb_intra = first_mb_intra;
-		assign feed_part_mode = first_mb_part_mode;
-		assign feed_sub_mb_types = sl_sub_mb_types;
-		assign feed_ref_idx_l0_packed = sl_ref_idx_l0;
-		assign feed_mvd_valid = sl_mvd_valid;
-		assign core_luma4x4_valid = lite_luma_valid_r;
-		assign core_luma4x4_idx = lite_luma_idx_r;
-		assign core_luma4x4_qp = sl_place_qp;
-		assign core_luma4x4_total_coeff =
-			(lite_luma_idx_r == 4'd0 && sl_luma4x4_blocks_present) ? 5'd16 : 5'd0;
-		assign core_luma4x4_trailing_ones = 2'd0;
-		assign core_i16_dc_level_valid = 1'b0;
-		assign core_i16_dc_qp = 6'd0;
-
-		for (core_gi = 0; core_gi < 16; core_gi = core_gi + 1) begin : gen_lite_coeff
-			assign feed_mvd_x[core_gi] = sl_mvd_x[core_gi];
-			assign feed_mvd_y[core_gi] = sl_mvd_y[core_gi];
-			assign core_luma4x4_coeff_zigzag[core_gi] =
-				(lite_luma_idx_r == 4'd0 && sl_luma4x4_blocks_present) ?
-					sl_luma4x4_coeff[0][core_gi] : 16'sd0;
-			assign core_i16_dc_level[core_gi] = 16'sd0;
-		end
-		for (core_gi = 0; core_gi < 64; core_gi = core_gi + 1) begin : gen_lite_chroma
-			assign feed_chroma_residual_u[core_gi] = 16'sd0;
-			assign feed_chroma_residual_v[core_gi] = 16'sd0;
-		end
-	end
-	endgenerate
 
 	wire [7:0] core_recon_y [0:255];
 	wire [7:0] core_recon_u [0:63];
@@ -883,8 +770,7 @@ module stream_path #(
 
 	h264_decode_core #(
 		.FRAME_W(CORE_FRAME_W),
-		.FRAME_H(CORE_FRAME_H),
-		.ENABLE_FULL_INTER(1'b0)
+		.FRAME_H(CORE_FRAME_H)
 	) product_decode_core (
 		.clk(clk),
 		.reset(reset | flush),

@@ -30,10 +30,7 @@ module h264_decode_core #(
     //    dpb_rd_* port using dpb_ref_base (works today, no new memory).
     // 1: the external ref_req_*/ref_rsp_* port is authoritative. Set this once
     //    the dedicated DDR reference reader is attached.
-    parameter bit REF_PORT_EXTERNAL = 1'b0,
-    // Fabric MVP keeps P16x16 but omits P_Skip and multi-partition engines.
-    // Full inter remains available for focused tests and a later area budget.
-    parameter bit ENABLE_FULL_INTER = 1'b1
+    parameter bit REF_PORT_EXTERNAL = 1'b0
 )(
     input  wire        clk,
     input  wire        reset,
@@ -603,8 +600,7 @@ module h264_decode_core #(
         .coded_pending(skiprun_coded_pending)
     );
     wire slice_is_p = !slice_is_i && !slice_is_idr;
-    wire pskip_pending = ENABLE_FULL_INTER && slice_is_p &&
-                         (skiprun_mb_is_skip || (mb_type_valid && mb_skip));
+    wire pskip_pending = slice_is_p && (skiprun_mb_is_skip || (mb_type_valid && mb_skip));
 
     wire syntax_p16_candidate = mb_type_valid && !slice_is_i && !slice_is_idr &&
                                 !pskip_pending &&
@@ -685,7 +681,7 @@ module h264_decode_core #(
     // rather than on slice_is_i means the intra macroblocks scattered through
     // P slices now reconstruct too instead of being dropped.
     wire route_is_i4 = (mb_route == ROUTE_INTRA4);
-    wire route_is_ppart = ENABLE_FULL_INTER && (mb_route == ROUTE_PPART);
+    wire route_is_ppart = (mb_route == ROUTE_PPART);
     // 16x8 and 8x16 only ever use slots 0 and 1; 8x8 walks all sixteen.
     wire [3:0] part_slot_max = (part_mode_r == 3'd3) ? 4'd15 : 4'd1;
 
@@ -2039,6 +2035,8 @@ module h264_decode_core #(
         |part_mode | |part_idx | cavlc_busy | |cavlc_bit_offset_end |
         |part_sub_mb_types | |part_ref_idx_l0 | |part_mvd_valid |
         |part_mvd_x[0] | |part_mvd_y[0] | |mb_route_part_mode |
+        part_geo_valid | |part_geo_mask | part_shape_override | part_busy |
+        |part_pred_idx | |part_pred_sample | |part_pred_plane |
         |cavlc_total_coeff | |cavlc_trailing_ones | |cavlc_total_zeros |
         |cavlc_level_dbg[0] | |cavlc_run_dbg[0] |
         |mb_route | |mb_route_cbp_chroma | mb_route_cbp_luma_ac |
@@ -2049,6 +2047,7 @@ module h264_decode_core #(
         |chroma_u_dc_tl | |chroma_u_dc_tr | |chroma_u_dc_bl | |chroma_u_dc_br |
         |chroma_v_dc_tl | |chroma_v_dc_tr | |chroma_v_dc_bl | |chroma_v_dc_br |
         skiprun_need_run | |skiprun_left | skiprun_coded_pending |
-        |syntax_mv_x | |syntax_mv_y;
+        |pskip_ref_idx_l0 | |pskip_mvp_x | |pskip_mvp_y | pskip_zero_mv |
+        |pskip_zero_reason | |syntax_mv_x | |syntax_mv_y | p16_mvp_directional;
 
 endmodule
