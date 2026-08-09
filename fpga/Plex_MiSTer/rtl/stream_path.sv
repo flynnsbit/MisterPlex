@@ -676,65 +676,59 @@ module stream_path #(
 	wire [31:0] core_dpb_rd_addr;
 	wire core_frame_done;
 	wire [15:0] core_frame_mb_count;
-	// Read the previous fpga_ddr_writeback presentation bank as the DPB. This
-	// avoids a 7.2-Mbit dual-frame BRAM at 624x480 and reuses the existing m1
-	// path; top-level writeback already blocks this port until its flush ends.
-	localparam [31:0] PRODUCT_DPB_DDR_BASE = 32'h3000_0000;
-	localparam [31:0] PRODUCT_DPB_BANK_STRIDE = 32'h0008_0000;
+	// On-chip DPB byte RAM so dpb_rd_data returns samples the core wrote
+	// (1-cycle lag; core waits on dpb_rd_valid). The prior DDR stub set
+	// write/ref base to 0 and dpb_ddr_we=0, so readback could never observe
+	// fabric recon.
+	// Geometry: CORE_FRAME (product coded 624x480 via ddr_frame_layout_params).
+	// Dual-bank I420 at 624x480 ≈ 7.2 Mbit exceeds Cyclone V M10K (~5.6 Mbit),
+	// which is why a pure dual-bank landing was reverted. Policy:
+	//   * dual-bank when 2*frame*8 <= PRODUCT_DPB_BRAM_BUDGET_BITS (320x240 OK)
+	//   * else single-bank (~3.6 Mbit @624x480) — correct read-after-write for
+	//     active-frame / I-slice; prev-frame P ref shares the same bank until a
+	//     real DDR DPB writer lands. Do NOT restore we=0 DDR theater.
+	localparam int PRODUCT_DPB_FRAME_BYTES = (CORE_FRAME_W * CORE_FRAME_H * 3) / 2;
+	localparam int PRODUCT_DPB_BRAM_BUDGET_BITS = 4500000;
+	localparam bit PRODUCT_DPB_DUAL =
+		((PRODUCT_DPB_FRAME_BYTES * 2 * 8) <= PRODUCT_DPB_BRAM_BUDGET_BITS);
+	localparam int PRODUCT_DPB_BANKS = PRODUCT_DPB_DUAL ? 2 : 1;
+	localparam int PRODUCT_DPB_DEPTH = PRODUCT_DPB_FRAME_BYTES * PRODUCT_DPB_BANKS;
+	(* ramstyle = "M10K" *) reg [7:0] product_dpb_mem [0:PRODUCT_DPB_DEPTH-1];
 	reg [7:0]  product_dpb_rdata;
 	reg        core_dpb_rd_valid;
-	reg        product_dpb_pending;
-	reg        product_dpb_issued;
-	reg [31:0] product_dpb_addr_q;
-	reg [2:0]  product_dpb_byte_sel;
 	reg        product_dpb_write_bank;
 	reg        product_dpb_ref_bank;
-	wire [31:0] product_dpb_write_base = 32'd0;
-	wire [31:0] product_dpb_ref_base = 32'd0;
-	wire [31:0] product_dpb_phys_addr = PRODUCT_DPB_DDR_BASE +
-		(product_dpb_ref_bank ? PRODUCT_DPB_BANK_STRIDE : 32'd0) +
-		product_dpb_addr_q;
+	wire [31:0] product_dpb_write_base = (PRODUCT_DPB_DUAL && product_dpb_write_bank) ?
+		PRODUCT_DPB_FRAME_BYTES[31:0] : 32'd0;
+	wire [31:0] product_dpb_ref_base = (PRODUCT_DPB_DUAL && product_dpb_ref_bank) ?
+		PRODUCT_DPB_FRAME_BYTES[31:0] : 32'd0;
+	wire [31:0] product_dpb_wr_abs = product_dpb_write_base + core_dpb_wr_addr;
+	wire [31:0] product_dpb_rd_abs = product_dpb_ref_base + core_dpb_rd_addr;
 
-	assign dpb_ddr_req = product_dpb_pending;
-	assign dpb_ddr_burstcnt = 8'd1;
-	assign dpb_ddr_addr = product_dpb_phys_addr[31:3];
-	assign dpb_ddr_rd = product_dpb_pending && !product_dpb_issued && !dpb_ddr_busy;
+	// Bitstream reader keeps the DDR bus; on-chip DPB does not use it.
+	assign dpb_ddr_req = 1'b0;
+	assign dpb_ddr_burstcnt = 8'd0;
+	assign dpb_ddr_addr = 29'd0;
+	assign dpb_ddr_rd = 1'b0;
 	assign dpb_ddr_din = 64'd0;
-	assign dpb_ddr_be = 8'hff;
+	assign dpb_ddr_be = 8'h00;
 	assign dpb_ddr_we = 1'b0;
 
 	always @(posedge clk) begin
-		if (reset | flush) begin
-			core_dpb_rd_valid <= 1'b0;
+		if (core_dpb_wr_en && (product_dpb_wr_abs < PRODUCT_DPB_DEPTH[31:0]))
+			product_dpb_mem[product_dpb_wr_abs] <= core_dpb_wr_data;
+		if (core_dpb_rd_en && (product_dpb_rd_abs < PRODUCT_DPB_DEPTH[31:0]))
+			product_dpb_rdata <= product_dpb_mem[product_dpb_rd_abs];
+		else if (core_dpb_rd_en)
 			product_dpb_rdata <= 8'd0;
-			product_dpb_pending <= 1'b0;
-			product_dpb_issued <= 1'b0;
-			product_dpb_addr_q <= 32'd0;
-			product_dpb_byte_sel <= 3'd0;
-		end else begin
-			core_dpb_rd_valid <= 1'b0;
-			if (core_dpb_rd_en && !product_dpb_pending) begin
-				product_dpb_pending <= 1'b1;
-				product_dpb_issued <= 1'b0;
-				product_dpb_addr_q <= core_dpb_rd_addr;
-				product_dpb_byte_sel <= core_dpb_rd_addr[2:0];
-			end
-			if (dpb_ddr_rd)
-				product_dpb_issued <= 1'b1;
-			if (dpb_dout_ready && product_dpb_pending && product_dpb_issued) begin
-				product_dpb_rdata <= ddr_dout[product_dpb_byte_sel * 8 +: 8];
-				core_dpb_rd_valid <= 1'b1;
-				product_dpb_pending <= 1'b0;
-				product_dpb_issued <= 1'b0;
-			end
-		end
+		core_dpb_rd_valid <= (!reset && !flush) && core_dpb_rd_en;
 	end
 
 	always @(posedge clk) begin
 		if (reset) begin
 			product_dpb_write_bank <= 1'b0;
 			product_dpb_ref_bank <= 1'b0;
-		end else if (core_frame_done) begin
+		end else if (core_frame_done && PRODUCT_DPB_DUAL) begin
 			product_dpb_ref_bank <= product_dpb_write_bank;
 			product_dpb_write_bank <= ~product_dpb_write_bank;
 		end
