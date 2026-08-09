@@ -797,7 +797,7 @@ def check_mailboxes() -> None:
         "PLXF": ("kPlxfAddr", "kPlxfMagic", 0x3007F118, 0x504C5846),
         "DIAG": ("kSdramDiagAddr", None, 0x3007F120, None),
         "PLXD": ("kPlxdAddr", "kPlxdMagic", 0x3007F128, 0x504C5844),
-        "PLXB": ("kPlxbAddr", "kPlxbMagic", 0x30140000, 0x504C5842),
+        "PLXB": ("kPlxbAddr", "kPlxbMagic", 0x30340000, 0x504C5842),
     }
     for name, (addr_sym, magic_sym, exp_addr, exp_magic) in spec_entries.items():
         sa = cpp_const(spec_text, addr_sym)
@@ -1045,17 +1045,17 @@ def check_ddr_bitstream_ring() -> None:
     host = spec_text + "\n" + strip_comments(read(DDR_BITSTREAM_RING_HPP))
     fpga_spi = strip_comments(read(FPGA_SPI_CPP))
     cases = [
-        ("DATA_PHYS", "kDataPhys", 0x30100000),
-        ("CTRL_PHYS", "kCtrlPhys", 0x30140000),
-        ("READ_PHYS", "kReadPhys", 0x30140008),
-        ("ERR_PHYS", "kErrPhys", 0x30140010),
-        ("STAT0_PHYS", "kStat0Phys", 0x30140018),
-        ("STAT1_PHYS", "kStat1Phys", 0x30140020),
-        ("STAT2_PHYS", "kStat2Phys", 0x30140028),
-        ("STAT3_PHYS", "kStat3Phys", 0x30140030),
-        ("STAT4_PHYS", "kStat4Phys", 0x30140038),
-        ("STAT5_PHYS", "kStat5Phys", 0x30140040),
-        ("STAT6_PHYS", "kStat6Phys", 0x30140048),
+        ("DATA_PHYS", "kDataPhys", 0x30300000),
+        ("CTRL_PHYS", "kCtrlPhys", 0x30340000),
+        ("READ_PHYS", "kReadPhys", 0x30340008),
+        ("ERR_PHYS", "kErrPhys", 0x30340010),
+        ("STAT0_PHYS", "kStat0Phys", 0x30340018),
+        ("STAT1_PHYS", "kStat1Phys", 0x30340020),
+        ("STAT2_PHYS", "kStat2Phys", 0x30340028),
+        ("STAT3_PHYS", "kStat3Phys", 0x30340030),
+        ("STAT4_PHYS", "kStat4Phys", 0x30340038),
+        ("STAT5_PHYS", "kStat5Phys", 0x30340040),
+        ("STAT6_PHYS", "kStat6Phys", 0x30340048),
         ("RING_BYTES", "kRingBytes", 262144),
         ("MAGIC_CTRL", "kCtrlMagic", 0x504C5842),
         ("MAGIC_READ", "kReadMagic", 0x504C5852),

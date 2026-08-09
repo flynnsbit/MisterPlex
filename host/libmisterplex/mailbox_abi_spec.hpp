@@ -82,9 +82,12 @@ constexpr unsigned kPlxdFramesDoneBit = 16;   // bits [63:48] → [31:16] of upp
 constexpr unsigned kPlxdFramesDoneWidth = 16;
 
 // ---- Bitstream ring mailboxes (ddr_bitstream_reader) ----
+// 720p dual-bank frame store ends at 0x30300000 (phys 0x30000000 / stride
+// 0x180000); doorbell page is 0x302FF000. Ring DATA/CTRL must sit AFTER that
+// map — never inside bank0 (legacy 0x30100000/0x30140000 collided with 720p).
 
 // PLXB — Ring CTRL (ARM→FPGA). Bitstream ring control word.
-constexpr uint32_t kPlxbAddr  = 0x30140000u;
+constexpr uint32_t kPlxbAddr  = 0x30340000u;
 constexpr uint32_t kPlxbMagic = 0x504C5842u; // "PLXB"
 // PLXD in the PLXB CTRL slot marks the bitstream producer intentionally dormant
 // (STREAM=0). This is an in-band diagnostic value at kPlxbAddr, not a separate

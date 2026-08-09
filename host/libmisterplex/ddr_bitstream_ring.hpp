@@ -6,18 +6,36 @@
 
 namespace misterplex::ddr_bitstream_ring {
 
-constexpr uint32_t kDataPhys = 0x30100000u;
-constexpr uint32_t kCtrlPhys = mailbox_abi::kPlxbAddr;
-constexpr uint32_t kReadPhys = 0x30140008u;
-constexpr uint32_t kErrPhys = 0x30140010u;
-constexpr uint32_t kStat0Phys = 0x30140018u;
-constexpr uint32_t kStat1Phys = 0x30140020u;
-constexpr uint32_t kStat2Phys = 0x30140028u;
-constexpr uint32_t kStat3Phys = 0x30140030u;
-constexpr uint32_t kStat4Phys = 0x30140038u;
-constexpr uint32_t kStat5Phys = 0x30140040u;
-constexpr uint32_t kStat6Phys = 0x30140048u;
+// Layout (after 720p dual-bank glass ABI):
+//   frame banks [0x30000000, 0x30300000), doorbell page 0x302FF000
+//   DATA  0x30300000..0x3033FFFF  (256 KiB)
+//   CTRL+ 0x30340000..            (PLXB/PLXR/PLXE/STATn)
+constexpr uint32_t kDataPhys = 0x30300000u;
+constexpr uint32_t kCtrlPhys = mailbox_abi::kPlxbAddr; // 0x30340000
+// Stats/READ/ERR keep +0x08 steps from CTRL (literal for ABI gate parse).
+constexpr uint32_t kReadPhys = 0x30340008u;
+constexpr uint32_t kErrPhys = 0x30340010u;
+constexpr uint32_t kStat0Phys = 0x30340018u;
+constexpr uint32_t kStat1Phys = 0x30340020u;
+constexpr uint32_t kStat2Phys = 0x30340028u;
+constexpr uint32_t kStat3Phys = 0x30340030u;
+constexpr uint32_t kStat4Phys = 0x30340038u;
+constexpr uint32_t kStat5Phys = 0x30340040u;
+constexpr uint32_t kStat6Phys = 0x30340048u;
 constexpr size_t kRingBytes = 262144u;
+
+// 720p dual-bank end ≤ DATA; DATA+256K ≤ CTRL; doorbell page before DATA.
+constexpr uint32_t kPlex720pDualBankMapEnd = 0x30300000u;
+constexpr uint32_t kPlex720pDoorbellPage = 0x302FF000u;
+static_assert(kPlex720pDualBankMapEnd <= kDataPhys,
+              "bitstream DATA must start at/after 720p dual-bank map end");
+static_assert(kDataPhys + static_cast<uint32_t>(kRingBytes) <= kCtrlPhys,
+              "bitstream DATA+256KiB must not overlap CTRL");
+static_assert(kPlex720pDoorbellPage + 0x1000u <= kDataPhys,
+              "doorbell page 0x302FF000 must not overlap bitstream DATA");
+static_assert(kCtrlPhys == 0x30340000u, "kPlxbAddr / CTRL_PHYS ABI drift");
+static_assert(kReadPhys == 0x30340008u && kErrPhys == 0x30340010u,
+              "READ/ERR offsets must remain +0x08/+0x10 from CTRL");
 
 constexpr uint32_t kCtrlMagic = mailbox_abi::kPlxbMagic;
 constexpr uint32_t kCtrlDormantMagic = mailbox_abi::kPlxbDormantMagic;

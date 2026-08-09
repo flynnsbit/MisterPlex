@@ -7,18 +7,24 @@
 // publishes read_count plus transport telemetry in DDR, keeping this path wholly
 // separate from MiSTer's shared HPS<->FPGA SPI/GPO register.
 
+// Physical map (must match host/libmisterplex/ddr_bitstream_ring.hpp):
+//   720p dual-bank frame store occupies [0x30000000, 0x30300000) with doorbell
+//   0x302FF000. Ring sits AFTER that map end — legacy 0x3010_0000/0x3014_0000
+//   collided with bank0 and made ddr_status unreadable.
+//   DATA  0x30300000..0x3033FFFF (256 KiB)
+//   CTRL+ 0x30340000 (PLXB/PLXR/PLXE/STATn)
 module ddr_bitstream_reader #(
-	parameter [31:0] DATA_PHYS  = 32'h3010_0000,
-	parameter [31:0] CTRL_PHYS  = 32'h3014_0000,
-	parameter [31:0] READ_PHYS  = 32'h3014_0008,
-	parameter [31:0] ERR_PHYS   = 32'h3014_0010,
-	parameter [31:0] STAT0_PHYS = 32'h3014_0018,
-	parameter [31:0] STAT1_PHYS = 32'h3014_0020,
-	parameter [31:0] STAT2_PHYS = 32'h3014_0028,
-	parameter [31:0] STAT3_PHYS = 32'h3014_0030,
-	parameter [31:0] STAT4_PHYS = 32'h3014_0038,
-	parameter [31:0] STAT5_PHYS = 32'h3014_0040,
-	parameter [31:0] STAT6_PHYS = 32'h3014_0048,
+	parameter [31:0] DATA_PHYS  = 32'h3030_0000,
+	parameter [31:0] CTRL_PHYS  = 32'h3034_0000,
+	parameter [31:0] READ_PHYS  = 32'h3034_0008,
+	parameter [31:0] ERR_PHYS   = 32'h3034_0010,
+	parameter [31:0] STAT0_PHYS = 32'h3034_0018,
+	parameter [31:0] STAT1_PHYS = 32'h3034_0020,
+	parameter [31:0] STAT2_PHYS = 32'h3034_0028,
+	parameter [31:0] STAT3_PHYS = 32'h3034_0030,
+	parameter [31:0] STAT4_PHYS = 32'h3034_0038,
+	parameter [31:0] STAT5_PHYS = 32'h3034_0040,
+	parameter [31:0] STAT6_PHYS = 32'h3034_0048,
 	parameter int RING_BYTES    = 262144,
 	parameter int POLL_DIV_BITS = 6
 )(

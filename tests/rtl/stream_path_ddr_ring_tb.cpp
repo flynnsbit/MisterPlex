@@ -10,8 +10,8 @@
 
 namespace {
 
-constexpr uint32_t DATA_PHYS = 0x30100000u;
-constexpr uint32_t CTRL_PHYS = 0x30140000u;
+constexpr uint32_t DATA_PHYS = 0x30300000u;
+constexpr uint32_t CTRL_PHYS = 0x30340000u;
 constexpr uint32_t STAT2_PHYS = 0x30140028u;
 constexpr uint32_t STAT6_PHYS = 0x30140048u;
 constexpr uint32_t RING_BYTES = 262144u;

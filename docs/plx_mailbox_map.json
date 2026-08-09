@@ -126,49 +126,49 @@
     }
   ],
   "bitstream_ring": {
-    "_comment": "Bitstream ring control mailboxes at 0x30140000+, separate address space",
+    "_comment": "Bitstream ring after 720p dual-bank end: DATA 0x30300000, CTRL+ 0x30340000",
     "PLXB_CTRL": {
-      "address": "0x30140000",
+      "address": "0x30340000",
       "magic": "0x504C5842"
     },
     "PLXR_READ": {
-      "address": "0x30140008",
+      "address": "0x30340008",
       "magic": "0x504C5852"
     },
     "PLXE_ERR": {
-      "address": "0x30140010",
+      "address": "0x30340010",
       "magic": "0x504C5845"
     },
     "PLXN_REC": {
-      "address": "0x30100000",
+      "address": "0x30300000",
       "magic": "0x504C584E"
     },
     "PLXT_ST0": {
-      "address": "0x30140018",
+      "address": "0x30340018",
       "magic": "0x504C5854"
     },
     "PLXU_ST1": {
-      "address": "0x30140020",
+      "address": "0x30340020",
       "magic": "0x504C5855"
     },
     "PLXV_ST2": {
-      "address": "0x30140028",
+      "address": "0x30340028",
       "magic": "0x504C5856"
     },
     "PLXW_ST3": {
-      "address": "0x30140030",
+      "address": "0x30340030",
       "magic": "0x504C5857"
     },
     "PLXY_ST4": {
-      "address": "0x30140038",
+      "address": "0x30340038",
       "magic": "0x504C5859"
     },
     "PLXZ_ST5": {
-      "address": "0x30140040",
+      "address": "0x30340040",
       "magic": "0x504C585A"
     },
     "PLXQ_ST6": {
-      "address": "0x30140048",
+      "address": "0x30340048",
       "magic": "0x504C5851"
     }
   }

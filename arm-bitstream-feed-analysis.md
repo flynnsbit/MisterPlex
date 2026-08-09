@@ -185,7 +185,7 @@ and the DDR ring path (`writeBitstreamRecord` → `publishBitstreamCtrl`) are
 
 | Property | SPI/ioctl path | DDR ring path |
 |----------|----------------|---------------|
-| Hardware | GPO @ `0xFF706010` | `/dev/mem` @ `0x30100000` |
+| Hardware | GPO @ `0xFF706010` | `/dev/mem` @ `0x30300000` (post-720p map; was `0x30100000`) |
 | Protocol | F3 file_tx download | PLXB/PLXN record ring |
 | Concurrency | Requires Main SPI lock | No SPI involvement |
 | Used by | Decode gate fixtures | Product stream feed |

@@ -43,7 +43,7 @@ module stream_path_ddr_ring_tb_top #(
 	end
 
 	assign ddr_dout_to_dut =
-		(FAULT_WRAP_DATA && ddr_model_dout_ready && rd_addr_q == 29'(32'h3010_0000 >> 3))
+		(FAULT_WRAP_DATA && ddr_model_dout_ready && rd_addr_q == 29'(32'h3030_0000 >> 3))
 			? (ddr_model_dout ^ 64'h0000_0000_0000_00FF) : ddr_model_dout;
 	assign stream_ddr_underruns = FAULT_UNDERRUN_TELEM ? 16'd0 : underruns_raw;
 	assign stream_ddr_overruns  = FAULT_OVERRUN_TELEM  ? 16'd0 : overruns_raw;

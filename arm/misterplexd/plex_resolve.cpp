@@ -156,7 +156,36 @@ bool videoCodecIsH264(const std::string& codecRaw) {
            c.find("x264") != std::string::npos;
 }
 
+// Fabric STREAM path: High* / explicit CABAC cannot be preferDirect'd.
+bool profileLooksHighOrCabac(const std::string& profileRaw) {
+    const std::string c = lowerCopy(profileRaw);
+    if (c.empty())
+        return false;
+    if (c.find("cabac") != std::string::npos)
+        return true;
+    // high, high10, high 4:2:2, high@L4.1, etc. Do not match "baseline"/"main".
+    return c.find("high") != std::string::npos;
+}
+
+// Force PMS universal ladder: Baseline CAVLC @ L3.1 720p for fabric (no CABAC).
+WeakLadder fabricCavlc720pLadder(const WeakLadder& fallback) {
+    WeakLadder ladder = fallback;
+    ladder.profileName = "720p";
+    ladder.videoResolution = "1280x720";
+    ladder.maxVideoBitrateKbps = 20000;
+    ladder.videoQuality = 100;
+    ladder.videoCodec = "h264";
+    ladder.audioCodec = "aac";
+    ladder.h264Profile = "baseline"; // prefer baseline CAVLC over main
+    ladder.h264Level = 31;
+    return ladder;
+}
+
 } // namespace
+
+bool h264ProfileLooksHigh(const std::string& profileRaw) {
+    return profileLooksHighOrCabac(profileRaw);
+}
 
 const std::vector<PlexTranscodeProfile>& plexTranscodeProfiles() {
     static const std::vector<PlexTranscodeProfile> profiles = {
@@ -723,12 +752,12 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
         parseExactFps(r.videoFrameRate, r.frameRate, r.fpsNum, r.fpsDen);
     }
 
-    // STREAM product path: prefer direct H.264 Part (elementary after demux) so host
-    // CAVLC recon can work on Baseline/Main. PMS Chrome universal often emits High/CABAC.
+    // STREAM product path: prefer direct H.264 Part only when Baseline/Main (CAVLC).
+    // High/CABAC direct-play is sticky-skip on fabric (no CABAC) and host recon.
+    // Fall through to weak universal (720p main@L31 / baseline) so PMS remuxes CAVLC.
     const bool metaOk = metaFound;
     const bool isH264 = metaOk && mediaVideoIsH264(xml);
     const bool wantDirect = preferDirectH264 && key.rfind("/library", 0) == 0;
-    const bool directH264 = wantDirect && isH264;
     // Optional profile tag for operator logs (High often implies CABAC sticky skip).
     auto videoProfileNote = [&]() -> std::string {
         if (!metaOk)
@@ -757,8 +786,11 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
             p = attr(xml, "Media", "videoCodec");
         return p;
     };
+    const std::string profNote = videoProfileNote();
+    const bool skipDirectHigh = profileLooksHighOrCabac(profNote);
+    const bool directH264 = wantDirect && isH264 && !skipDirectHigh;
     if (directH264) {
-        const std::string prof = videoProfileNote();
+        const std::string prof = profNote;
         const std::string profSuffix = prof.empty() ? "" : (" profile=" + prof);
         auto partKey = attr(xml, "Part", "key");
         if (!partKey.empty()) {
@@ -784,25 +816,33 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
         // Fall through to universal if Part missing
     }
 
-    // Prefer weak universal for dual A9 (STREAM=0 cast path / non-H.264 STREAM)
+    // Prefer weak universal for dual A9 (STREAM=0 cast path / non-H.264 STREAM).
+    // STREAM=1 High/CABAC: force 720p baseline@L31 so PMS delivers fabric CAVLC.
+    const bool forceFabricCavlc =
+        preferDirectH264 && wantDirect && isH264 && skipDirectHigh;
+    const WeakLadder ladder = forceFabricCavlc ? fabricCavlc720pLadder(weak) : weak;
     if (weakAlways && key.rfind("/library", 0) == 0) {
         const std::string session = makeSessionId();
         const std::string start = buildUniversalTranscodeUrl(plexBase, key, token, session,
-                                                             offsetMs > 0 ? offsetMs : 0, weak);
-        if (ensureUniversalDecision(start, session, token, weak)) {
+                                                             offsetMs > 0 ? offsetMs : 0, ladder);
+        if (ensureUniversalDecision(start, session, token, ladder)) {
             r.ok = true;
             r.transcoded = true;
             r.playable = start;
-            r.httpHeaders = plexFfmpegHeaders(session, token, weak);
-            r.detail = "PMS universal " + weak.profileName + " " + weak.videoResolution + " " + key;
-            // STREAM preferDirect fallthrough: operator can see why recon may hit CABAC.
+            r.httpHeaders = plexFfmpegHeaders(session, token, ladder);
+            r.detail = "PMS universal " + ladder.profileName + " " + ladder.videoResolution +
+                       " " + key;
+            // STREAM preferDirect fallthrough reasons (operator logs).
             if (preferDirectH264) {
-                if (!metaOk)
+                if (forceFabricCavlc)
+                    r.detail += " (STREAM fabric: High/CABAC source profile=" + profNote +
+                                " → universal baseline@L31 720p CAVLC; skip preferDirect)";
+                else if (!metaOk)
                     r.detail += " (STREAM preferDirect: no metadata)";
                 else if (!isH264)
                     r.detail += " (STREAM preferDirect: source not H.264)";
                 else
-                    r.detail += " (STREAM preferDirect: H.264 Part missing → universal may be High/CABAC)";
+                    r.detail += " (STREAM preferDirect: H.264 Part missing → universal)";
             }
             return r;
         }
