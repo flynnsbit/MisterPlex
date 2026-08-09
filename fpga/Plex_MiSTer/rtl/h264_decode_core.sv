@@ -353,23 +353,73 @@ module h264_decode_core #(
     reg        cavlc_start_r;
 
     // --- nC predictor for CAVLC coeff_token table selection ---
+    // Luma: 4x4 TotalCoeff cache in 4x4-block scan order (0..15).
+    // Chroma AC (synthetic all-16 schedule): separate 2x2 caches per plane.
+    // nC = avg_round(nA,nB) per H.264 9.2.1; coeff_token table from nC bins.
     reg [4:0]  p16_tc_cache [0:15];
     reg [4:0]  p16_tc_above [0:3];
     reg        p16_tc_above_valid;
     reg [4:0]  p16_tc_left  [0:3];
     reg        p16_tc_left_valid;
+    reg [4:0]  p16_tc_chr_u [0:3];
+    reg [4:0]  p16_tc_chr_v [0:3];
+    reg [4:0]  p16_tc_chr_u_left [0:1];
+    reg [4:0]  p16_tc_chr_u_above [0:1];
+    reg [4:0]  p16_tc_chr_v_left [0:1];
+    reg [4:0]  p16_tc_chr_v_above [0:1];
+    reg        p16_tc_chr_left_valid;
+    reg        p16_tc_chr_above_valid;
+
+    wire p16_res_is_luma = (p16_res_block_idx < P16_LUMA_RES_BLOCKS);
+    wire p16_res_is_chr_u = (p16_res_block_idx >= P16_LUMA_RES_BLOCKS) &&
+                            (p16_res_block_idx < (P16_LUMA_RES_BLOCKS + 5'd4));
+    wire p16_res_is_chr_v = (p16_res_block_idx >= (P16_LUMA_RES_BLOCKS + 5'd4));
+
+    // Luma 4x4 raster from scan index: x={b2,b0}, y={b3,b1}
     wire [1:0] p16_cur_blk_x = {p16_res_block_idx[2], p16_res_block_idx[0]};
     wire [1:0] p16_cur_blk_y = {p16_res_block_idx[3], p16_res_block_idx[1]};
     wire [1:0] p16_left_x = p16_cur_blk_x - 2'd1;
     wire [3:0] p16_left_idx = {p16_cur_blk_y[1], p16_left_x[1], p16_cur_blk_y[0], p16_left_x[0]};
     wire [1:0] p16_above_y = p16_cur_blk_y - 2'd1;
     wire [3:0] p16_above_idx = {p16_above_y[1], p16_cur_blk_x[1], p16_above_y[0], p16_cur_blk_x[0]};
-    wire p16_nc_left_avail = (p16_cur_blk_x != 2'd0) ? 1'b1 : p16_tc_left_valid;
-    wire p16_nc_above_avail = (p16_cur_blk_y != 2'd0) ? 1'b1 : p16_tc_above_valid;
-    wire [4:0] p16_nc_left_tc = (p16_cur_blk_x != 2'd0) ? p16_tc_cache[p16_left_idx] :
-                                                            p16_tc_left[p16_cur_blk_y];
-    wire [4:0] p16_nc_above_tc = (p16_cur_blk_y != 2'd0) ? p16_tc_cache[p16_above_idx] :
-                                                             p16_tc_above[p16_cur_blk_x];
+    wire p16_luma_left_avail = (p16_cur_blk_x != 2'd0) ? 1'b1 : p16_tc_left_valid;
+    wire p16_luma_above_avail = (p16_cur_blk_y != 2'd0) ? 1'b1 : p16_tc_above_valid;
+    wire [4:0] p16_luma_left_tc = (p16_cur_blk_x != 2'd0) ? p16_tc_cache[p16_left_idx] :
+                                                             p16_tc_left[p16_cur_blk_y];
+    wire [4:0] p16_luma_above_tc = (p16_cur_blk_y != 2'd0) ? p16_tc_cache[p16_above_idx] :
+                                                              p16_tc_above[p16_cur_blk_x];
+
+    // Chroma 2x2: schedule order 0,1,2,3 → (x,y)=(0,0),(1,0),(0,1),(1,1)
+    wire [1:0] p16_chr_blk = p16_res_block_idx[1:0];
+    wire       p16_chr_x = p16_chr_blk[0];
+    wire       p16_chr_y = p16_chr_blk[1];
+    wire [1:0] p16_chr_left_i = {p16_chr_y, 1'b0};   // (0,y)
+    wire [1:0] p16_chr_above_i = {1'b0, p16_chr_x};  // (x,0)
+    wire p16_chr_left_avail = p16_chr_x ? 1'b1 : p16_tc_chr_left_valid;
+    wire p16_chr_above_avail = p16_chr_y ? 1'b1 : p16_tc_chr_above_valid;
+    wire [4:0] p16_chr_u_left_tc = p16_chr_x ? p16_tc_chr_u[p16_chr_left_i] :
+                                               p16_tc_chr_u_left[p16_chr_y];
+    wire [4:0] p16_chr_u_above_tc = p16_chr_y ? p16_tc_chr_u[p16_chr_above_i] :
+                                                p16_tc_chr_u_above[p16_chr_x];
+    wire [4:0] p16_chr_v_left_tc = p16_chr_x ? p16_tc_chr_v[p16_chr_left_i] :
+                                               p16_tc_chr_v_left[p16_chr_y];
+    wire [4:0] p16_chr_v_above_tc = p16_chr_y ? p16_tc_chr_v[p16_chr_above_i] :
+                                                p16_tc_chr_v_above[p16_chr_x];
+
+    wire p16_nc_left_avail =
+        p16_res_is_luma ? p16_luma_left_avail :
+        p16_chr_left_avail;
+    wire p16_nc_above_avail =
+        p16_res_is_luma ? p16_luma_above_avail :
+        p16_chr_above_avail;
+    wire [4:0] p16_nc_left_tc =
+        p16_res_is_luma ? p16_luma_left_tc :
+        p16_res_is_chr_u ? p16_chr_u_left_tc :
+                           p16_chr_v_left_tc;
+    wire [4:0] p16_nc_above_tc =
+        p16_res_is_luma ? p16_luma_above_tc :
+        p16_res_is_chr_u ? p16_chr_u_above_tc :
+                           p16_chr_v_above_tc;
     wire [4:0] p16_nC = (p16_nc_left_avail && p16_nc_above_avail) ?
                              ((p16_nc_left_tc + p16_nc_above_tc + 5'd1) >> 1) :
                          p16_nc_left_avail ? p16_nc_left_tc :
@@ -1406,6 +1456,22 @@ module h264_decode_core #(
             cavlc_start_r <= 1'b0;
             p16_tc_above_valid <= 1'b0;
             p16_tc_left_valid <= 1'b0;
+            p16_tc_chr_left_valid <= 1'b0;
+            p16_tc_chr_above_valid <= 1'b0;
+            for (wb_i = 0; wb_i < 16; wb_i = wb_i + 1)
+                p16_tc_cache[wb_i] <= 5'd0;
+            for (wb_i = 0; wb_i < 4; wb_i = wb_i + 1) begin
+                p16_tc_above[wb_i] <= 5'd0;
+                p16_tc_left[wb_i] <= 5'd0;
+                p16_tc_chr_u[wb_i] <= 5'd0;
+                p16_tc_chr_v[wb_i] <= 5'd0;
+            end
+            for (wb_i = 0; wb_i < 2; wb_i = wb_i + 1) begin
+                p16_tc_chr_u_left[wb_i] <= 5'd0;
+                p16_tc_chr_u_above[wb_i] <= 5'd0;
+                p16_tc_chr_v_left[wb_i] <= 5'd0;
+                p16_tc_chr_v_above[wb_i] <= 5'd0;
+            end
             syntax_mb_addr_r <= reset ? 16'd0 : first_mb_in_slice;
             rbsp_request_offset_r <= 16'd0;
             rbsp_request_valid_r <= 1'b0;
@@ -1727,27 +1793,53 @@ module h264_decode_core #(
                         end
                     end
 `endif
+                    // Publish TotalCoeff into neighbour caches (0 if CAVLC failed).
+                    // Scan order guarantees left/above of later blocks already stored.
+                    if (p16_res_is_luma) begin
+                        p16_tc_cache[p16_res_block_idx[3:0]] <=
+                            cavlc_ok ? cavlc_total_coeff : 5'd0;
+                    end else if (p16_res_is_chr_u) begin
+                        p16_tc_chr_u[p16_chr_blk] <=
+                            cavlc_ok ? cavlc_total_coeff : 5'd0;
+                    end else begin
+                        p16_tc_chr_v[p16_chr_blk] <=
+                            cavlc_ok ? cavlc_total_coeff : 5'd0;
+                    end
+
                     if (p16_res_block_idx == (P16_RES_BLOCKS - 5'd1)) begin
-                        // Update cross-MB nC: bottom row for above, right col for left
+                        // Cross-MB nC: luma bottom row → above, right col → left.
+                        // Chroma: bottom 2x1 → above, right 1x2 → left (per plane).
+                        // Note: last block is chroma V[3]; its TC is written above with
+                        // non-blocking assign, so read prior V cache and override index 3.
                         p16_tc_above[0] <= p16_tc_cache[4'd10]; // (0,3)
                         p16_tc_above[1] <= p16_tc_cache[4'd11]; // (1,3)
                         p16_tc_above[2] <= p16_tc_cache[4'd14]; // (2,3)
                         p16_tc_above[3] <= p16_tc_cache[4'd15]; // (3,3)
-                        p16_tc_left[0] <= p16_tc_cache[4'd5];   // (3,0)
-                        p16_tc_left[1] <= p16_tc_cache[4'd7];   // (3,1)
-                        p16_tc_left[2] <= p16_tc_cache[4'd13];  // (3,2)
-                        p16_tc_left[3] <= p16_tc_cache[4'd15];  // (3,3)
+                        p16_tc_left[0]  <= p16_tc_cache[4'd5];  // (3,0)
+                        p16_tc_left[1]  <= p16_tc_cache[4'd7];  // (3,1)
+                        p16_tc_left[2]  <= p16_tc_cache[4'd13]; // (3,2)
+                        p16_tc_left[3]  <= p16_tc_cache[4'd15]; // (3,3)
                         p16_tc_above_valid <= 1'b1;
-                        p16_tc_left_valid <= 1'b1;
+                        p16_tc_left_valid  <= 1'b1;
+
+                        p16_tc_chr_u_above[0] <= p16_tc_chr_u[2'd2]; // (0,1)
+                        p16_tc_chr_u_above[1] <= p16_tc_chr_u[2'd3]; // (1,1)
+                        p16_tc_chr_u_left[0]  <= p16_tc_chr_u[2'd1]; // (1,0)
+                        p16_tc_chr_u_left[1]  <= p16_tc_chr_u[2'd3]; // (1,1)
+                        p16_tc_chr_v_above[0] <= p16_tc_chr_v[2'd2]; // (0,1)
+                        // V[3] is this block — use live total_coeff (not stale cache)
+                        p16_tc_chr_v_above[1] <= cavlc_ok ? cavlc_total_coeff : 5'd0;
+                        p16_tc_chr_v_left[0]  <= p16_tc_chr_v[2'd1]; // (1,0)
+                        p16_tc_chr_v_left[1]  <= cavlc_ok ? cavlc_total_coeff : 5'd0;
+                        p16_tc_chr_above_valid <= 1'b1;
+                        p16_tc_chr_left_valid  <= 1'b1;
+
                         wb_state <= ST_P16_TAP_REQ;
                     end else begin
                         p16_res_block_idx <= p16_res_block_idx + 5'd1;
                         p16_res_bit_offset_r <= cavlc_bit_offset_end;
                         wb_state <= ST_P16_RES_START;
                     end
-                    // Store total_coeff for nC prediction of subsequent blocks
-                    if (p16_res_block_idx < P16_LUMA_RES_BLOCKS)
-                        p16_tc_cache[p16_res_block_idx[3:0]] <= cavlc_total_coeff;
                 end
             end
             ST_P16_TAP_REQ: begin

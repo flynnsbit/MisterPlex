@@ -1,9 +1,10 @@
-// fpga_ddr_writeback testbench — verify byte accumulation and doorbell.
+// fpga_ddr_writeback testbench — verify byte accumulation, BE, and doorbell ABI.
+// Doorbell ABI: lo32=MAGIC_PLXK(0x504C584B), hi32={bank[31], format[30:29]=2'b01, seq[28:0]}
 `timescale 1ns/1ps
 
 module fpga_ddr_writeback_tb;
     reg clk = 0;
-    always #5 clk = ~clk;  // 100 MHz
+    always #5 clk = ~clk;
 
     reg reset = 1;
     reg dpb_wr_en = 0;
@@ -61,7 +62,6 @@ module fpga_ddr_writeback_tb;
 
     task wait_ddr_write;
         begin
-            // Wait for ddr_we to assert
             while (!ddr_we) @(posedge clk);
             @(posedge clk);
         end
@@ -71,38 +71,41 @@ module fpga_ddr_writeback_tb;
         $dumpfile("fpga_ddr_writeback_tb.vcd");
         $dumpvars(0, fpga_ddr_writeback_tb);
 
-        // Release reset
         repeat(5) @(posedge clk);
         reset <= 0;
         repeat(5) @(posedge clk);
 
-        // Test 1: Write 8 bytes to same qword → should trigger one DDR write
-        $display("TEST 1: 8-byte accumulation");
-        for (i = 0; i < 8; i = i + 1) begin
+        // ── TEST 1: Full 8-byte qword accumulation ──
+        $display("TEST 1: 8-byte accumulation + BE=FF");
+        for (i = 0; i < 8; i = i + 1)
             write_byte(32'd0 + i, 8'hA0 + i[7:0]);
-        end
 
         wait_ddr_write;
 
-        // Check address: PHYS_BASE[31:3] + 0 = 32'h3000_0000 >> 3 = 29'h06000000
         if (ddr_addr !== 29'h0600_0000) begin
-            $display("FAIL: ddr_addr = %h, expected 06000000", ddr_addr);
+            $display("FAIL T1: addr=%h exp 06000000", ddr_addr);
             errors = errors + 1;
         end
-        // Check data
         if (ddr_din !== 64'hA7A6A5A4A3A2A1A0) begin
-            $display("FAIL: ddr_din = %h, expected A7A6A5A4A3A2A1A0", ddr_din);
+            $display("FAIL T1: din=%h exp A7A6A5A4A3A2A1A0", ddr_din);
+            errors = errors + 1;
+        end
+        if (ddr_be !== 8'hFF) begin
+            $display("FAIL T1: be=%h exp FF", ddr_be);
             errors = errors + 1;
         end
         if (ddr_burstcnt !== 8'd1) begin
-            $display("FAIL: burstcnt = %d", ddr_burstcnt);
+            $display("FAIL T1: burstcnt=%d exp 1", ddr_burstcnt);
             errors = errors + 1;
         end
 
         repeat(10) @(posedge clk);
 
-        // Test 2: frame_done → doorbell write
-        $display("TEST 2: doorbell on frame_done");
+        // ── TEST 2: Doorbell ABI ──
+        // hi32 = {bank=0, format=2'b01, seq=29'd1}
+        // Expected hi32 = 32'b0_01_00000000000000000000000000001 = 32'h2000_0001
+        // Full 64b = {32'h2000_0001, 32'h504C_584B}
+        $display("TEST 2: doorbell ABI (format=1 YUV420p)");
         @(posedge clk);
         frame_done <= 1;
         @(posedge clk);
@@ -110,43 +113,105 @@ module fpga_ddr_writeback_tb;
 
         wait_ddr_write;
 
-        // Doorbell address: 0x300FF000 >> 3 = 29'h0601FE00
+        // Address: 0x300FF000 >> 3 = 29'h0601FE00
         if (ddr_addr !== 29'h0601_FE00) begin
-            $display("FAIL: doorbell addr = %h, expected 0601FE00", ddr_addr);
+            $display("FAIL T2: addr=%h exp 0601FE00", ddr_addr);
             errors = errors + 1;
         end
-        // Check PLXK magic in lower 32 bits
+        // lo32 = PLXK magic
         if (ddr_din[31:0] !== 32'h504C_584B) begin
-            $display("FAIL: doorbell magic = %h, expected 504C584B", ddr_din[31:0]);
+            $display("FAIL T2: lo32=%h exp 504C584B", ddr_din[31:0]);
             errors = errors + 1;
         end
-        // Bank bit should be 0 initially (first frame goes to bank 0, doorbell switches to bank 1)
+        // hi32[31] = bank = 0 (first frame written to bank 0)
         if (ddr_din[63] !== 1'b0) begin
-            $display("FAIL: doorbell bank = %b, expected 0", ddr_din[63]);
+            $display("FAIL T2: bank=%b exp 0", ddr_din[63]);
+            errors = errors + 1;
+        end
+        // hi32[30:29] = format = 2'b01 (YUV420p — CRITICAL for ddr_frame_store acceptance)
+        if (ddr_din[62:61] !== 2'b01) begin
+            $display("FAIL T2: format=%b exp 01", ddr_din[62:61]);
+            errors = errors + 1;
+        end
+        // hi32[28:0] = seq = 1 (first doorbell)
+        if (ddr_din[60:32] !== 29'd1) begin
+            $display("FAIL T2: seq=%d exp 1", ddr_din[60:32]);
+            errors = errors + 1;
+        end
+        if (ddr_be !== 8'hFF) begin
+            $display("FAIL T2: be=%h exp FF", ddr_be);
             errors = errors + 1;
         end
         if (frames_written !== 16'd1) begin
-            $display("FAIL: frames_written = %d, expected 1", frames_written);
+            $display("FAIL T2: frames_written=%d exp 1", frames_written);
             errors = errors + 1;
         end
 
         repeat(10) @(posedge clk);
 
-        // Test 3: Second frame writes to bank 1
-        $display("TEST 3: bank toggle");
-        for (i = 0; i < 8; i = i + 1) begin
+        // ── TEST 3: Bank toggle — second frame goes to bank 1 ──
+        $display("TEST 3: bank toggle (writes to bank 1)");
+        for (i = 0; i < 8; i = i + 1)
             write_byte(32'd0 + i, 8'hB0 + i[7:0]);
-        end
         wait_ddr_write;
-        // Bank 1 base = (0x3000_0000 + 0x0008_0000) >> 3 = (0x30080000) >> 3 = 29'h06010000
+        // Bank 1 base: (0x3000_0000 + 0x0008_0000) >> 3 = 0x30080000 >> 3 = 29'h06010000
         if (ddr_addr !== 29'h0601_0000) begin
-            $display("FAIL: bank1 addr = %h, expected 06010000", ddr_addr);
+            $display("FAIL T3: addr=%h exp 06010000", ddr_addr);
             errors = errors + 1;
         end
 
         repeat(10) @(posedge clk);
 
-        // Summary
+        // ── TEST 4: Partial qword flush before doorbell ──
+        $display("TEST 4: partial flush before doorbell (BE != FF)");
+        // Write only 3 bytes to a qword, then frame_done forces flush
+        write_byte(32'd16, 8'hC0);  // lane 0
+        write_byte(32'd18, 8'hC2);  // lane 2
+        write_byte(32'd19, 8'hC3);  // lane 3
+        @(posedge clk);
+        frame_done <= 1;
+        @(posedge clk);
+        frame_done <= 0;
+
+        // Should see partial write first, then doorbell
+        wait_ddr_write;
+        // Partial flush: BE should have lanes 0,2,3 set = 8'b0000_1101 = 8'h0D
+        if (ddr_be !== 8'h0D) begin
+            $display("FAIL T4: partial be=%h exp 0D", ddr_be);
+            errors = errors + 1;
+        end
+        if (ddr_din[7:0] !== 8'hC0) begin
+            $display("FAIL T4: lane0=%h exp C0", ddr_din[7:0]);
+            errors = errors + 1;
+        end
+        if (ddr_din[23:16] !== 8'hC2) begin
+            $display("FAIL T4: lane2=%h exp C2", ddr_din[23:16]);
+            errors = errors + 1;
+        end
+
+        // Then doorbell
+        wait_ddr_write;
+        if (ddr_din[31:0] !== 32'h504C_584B) begin
+            $display("FAIL T4: doorbell lo32=%h exp 504C584B", ddr_din[31:0]);
+            errors = errors + 1;
+        end
+        // Bank=1 now (toggled after test 2 doorbell)
+        if (ddr_din[63] !== 1'b1) begin
+            $display("FAIL T4: doorbell bank=%b exp 1", ddr_din[63]);
+            errors = errors + 1;
+        end
+        if (ddr_din[62:61] !== 2'b01) begin
+            $display("FAIL T4: doorbell format=%b exp 01", ddr_din[62:61]);
+            errors = errors + 1;
+        end
+        // seq=2
+        if (ddr_din[60:32] !== 29'd2) begin
+            $display("FAIL T4: doorbell seq=%d exp 2", ddr_din[60:32]);
+            errors = errors + 1;
+        end
+
+        repeat(10) @(posedge clk);
+
         if (errors == 0)
             $display("PASS: fpga_ddr_writeback_tb — all tests passed");
         else
@@ -155,9 +220,8 @@ module fpga_ddr_writeback_tb;
         $finish;
     end
 
-    // Timeout
     initial begin
-        #100000;
+        #200000;
         $display("TIMEOUT");
         $finish;
     end

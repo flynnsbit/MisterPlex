@@ -1112,13 +1112,18 @@ module slice_hdr_parser (
 			end
 			ST_INTER_CBP: begin
 				// ue(coded_block_pattern) through the INTER column of Table 9-4.
+				// Quartus rejects part-select on function-call results — stage through temp.
 				cbp_me <= ue_val[5:0];
-				full_luma_cbp <= cbp_inter_map(ue_val[5:0]) [3:0];
-				if (cbp_inter_map(ue_val[5:0]) == 6'd0) begin
-					// No residual and no mb_qp_delta: the macroblock ends here.
-					st <= ST_DONE;
-				end else begin
-					zcnt <= 0; ue_cont <= ST_MBQP; st <= ST_UE_Z;
+				begin : inter_cbp_map
+					reg [5:0] cbp_mapped;
+					cbp_mapped = cbp_inter_map(ue_val[5:0]);
+					full_luma_cbp <= cbp_mapped[3:0];
+					if (cbp_mapped == 6'd0) begin
+						// No residual and no mb_qp_delta: the macroblock ends here.
+						st <= ST_DONE;
+					end else begin
+						zcnt <= 0; ue_cont <= ST_MBQP; st <= ST_UE_Z;
+					end
 				end
 			end
 			ST_I4MODE: begin
