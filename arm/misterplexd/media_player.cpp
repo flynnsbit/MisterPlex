@@ -2155,15 +2155,17 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     char scale[64];
     std::snprintf(scale, sizeof(scale), "%d:%d", rawW, rawH);
     std::string vf;
-    // Force CFR at the exact content rate FIRST in the chain: frameIndex ↔ content
-    // time then holds by construction (even if PMS emits a different rate than its
-    // metadata claims), and frames dropped by the fps filter are never scaled.
-    if (fpsNum_ > 0 && fpsDen_ > 0) {
+    // Force CFR at the exact content rate FIRST in the chain for ≤480p: frameIndex
+    // ↔ content time then holds by construction. At 720p on dual-A9 the fps=
+    // filter is a full second pass and is the main present-rate killer; wall /
+    // audio clock already paces STREAM=0 present, so skip fps= there.
+    const bool heavy720 = (rawW >= 1280 || rawH >= 720);
+    if (fpsNum_ > 0 && fpsDen_ > 0 && !heavy720) {
         vf = "fps=" + std::to_string(fpsNum_) + "/" + std::to_string(fpsDen_) + ",";
     }
-    // Dual-A9: bilinear is expensive at 720p; fast_bilinear keeps glass sharp enough
-    // for OSD grids while cutting scale CPU (product WC path is no longer the limit).
-    constexpr const char* kScaleFlags = "flags=fast_bilinear";
+    // Dual-A9: bilinear is expensive at 720p; neighbor is cheaper for product glass
+    // (grid/OSD readability holds; WC DDR path is no longer the limiter).
+    const char* kScaleFlags = heavy720 ? "flags=neighbor" : "flags=fast_bilinear";
     if (rawDisplayW != rawW || rawDisplayH != rawH) {
         char displayScale[64];
         std::snprintf(displayScale, sizeof(displayScale), "%d:%d", rawDisplayW, rawDisplayH);
@@ -2413,6 +2415,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         // Dual-A9: pin decode threads so H.264 + scale share cores without oversubscription.
         args.push_back("-threads");
         args.push_back("2");
+        // Prefer cheaper in-loop filter path on dual-A9 (product STREAM=0 glass).
+        args.push_back("-skip_loop_filter");
+        args.push_back("all");
 
         if (testPattern) {
             std::string lavfi;
