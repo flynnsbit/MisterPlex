@@ -1728,12 +1728,26 @@ module h264_decode_core #(
                     end
 `endif
                     if (p16_res_block_idx == (P16_RES_BLOCKS - 5'd1)) begin
+                        // Update cross-MB nC: bottom row for above, right col for left
+                        p16_tc_above[0] <= p16_tc_cache[4'd10]; // (0,3)
+                        p16_tc_above[1] <= p16_tc_cache[4'd11]; // (1,3)
+                        p16_tc_above[2] <= p16_tc_cache[4'd14]; // (2,3)
+                        p16_tc_above[3] <= p16_tc_cache[4'd15]; // (3,3)
+                        p16_tc_left[0] <= p16_tc_cache[4'd5];   // (3,0)
+                        p16_tc_left[1] <= p16_tc_cache[4'd7];   // (3,1)
+                        p16_tc_left[2] <= p16_tc_cache[4'd13];  // (3,2)
+                        p16_tc_left[3] <= p16_tc_cache[4'd15];  // (3,3)
+                        p16_tc_above_valid <= 1'b1;
+                        p16_tc_left_valid <= 1'b1;
                         wb_state <= ST_P16_TAP_REQ;
                     end else begin
                         p16_res_block_idx <= p16_res_block_idx + 5'd1;
                         p16_res_bit_offset_r <= cavlc_bit_offset_end;
                         wb_state <= ST_P16_RES_START;
                     end
+                    // Store total_coeff for nC prediction of subsequent blocks
+                    if (p16_res_block_idx < P16_LUMA_RES_BLOCKS)
+                        p16_tc_cache[p16_res_block_idx[3:0]] <= cavlc_total_coeff;
                 end
             end
             ST_P16_TAP_REQ: begin
