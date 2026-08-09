@@ -312,12 +312,15 @@ public:
         if (!fpga_.ok())
             return h264stream::ControlResult::Fatal;
 
+        // PRODUCT_FABRIC_DECODE consumes the DDR ring only. SPI F3 ioctl is a
+        // legacy debug path and must not silently replace DDR when the FPGA
+        // consumer is slow/stuck — that left o12 with prod=32/cons=0 and no NALs
+        // in the ring while logs claimed "spi-ioctl-fallback".
         spi_mode_ = false;
-        if (fpga_.beginBitstreamSession(session_id, 250)) {
-            spi_mode_ = false;
-        } else {
-            // DDR consumer stuck (prod=32, cons=0). SPI path does not need Begin.
-            spi_mode_ = true;
+        if (!fpga_.beginBitstreamSession(session_id, 500)) {
+            // Still stay on DDR: Begin may have been written; keep pushing NALs so
+            // PLXB producer advances and the consumer can catch up after epoch fix.
+            // Caller sees transport=ddr-ring even if first wait timed out.
         }
 
         session_id_ = session_id;

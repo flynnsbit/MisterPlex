@@ -391,10 +391,15 @@ module ddr_bitstream_reader #(
 							have_ctrl <= 1'b1;
 							write_count <= {1'b0, ctrl_write_count};
 							host_write_count <= {1'b0, ctrl_write_count};
+							// Epoch edge: host zeroed the ring and toggled CTRL[63].
+							// Always snap consumer to 0 — NEVER to current write_count.
+							// Race: flush(count=0,epoch++) then Begin(count=32) can land
+							// in one POLL; snapping to write_count would skip Begin+NALs
+							// and leave PLXR consumer stuck at 0 forever (o12 STREAM=1).
 							if (ctrl_reset != reset_seen) begin
 								reset_seen <= ctrl_reset;
-								read_count <= {1'b0, ctrl_write_count};
-								fpga_read_count <= {1'b0, ctrl_write_count};
+								read_count <= 32'd0;
+								fpga_read_count <= 32'd0;
 								active <= 1'b0;
 								paused <= 1'b0;
 								overrun_sticky <= 1'b0;

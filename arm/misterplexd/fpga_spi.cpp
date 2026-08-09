@@ -1844,7 +1844,14 @@ bool FpgaSpi::beginBitstreamSession(uint64_t session_id, int timeout_ms) {
                                         nullptr, 0, timeout_ms);
     if (r != BitstreamPushResult::Ok)
         return false;
-    return waitBitstreamReadCount(bitstreamWriteCount_, timeout_ms);
+    // Prefer consumer catch-up, but do not fail the session if the FPGA is still
+    // publishing telemetry — host must keep writing NALs onto the DDR ring.
+    if (waitBitstreamReadCount(bitstreamWriteCount_, timeout_ms))
+        return true;
+    // Soft OK: Begin is on the ring (producer advanced). Consumer lag is observable
+    // via PLXR; SPI fallback is disabled for fabric decode.
+    clearErr();
+    return true;
 }
 
 FpgaSpi::BitstreamPushResult FpgaSpi::pushBitstreamNal(const BitstreamNal& nal,
