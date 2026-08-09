@@ -86,7 +86,12 @@ module h264_cavlc_residual_block #(
     reg [4:0] place_i;
     reg signed [5:0] coeff_num;
 
-    wire cur_bit = (bit_pos < bit_len) ? rbsp[bit_pos[8:3]][3'd7 - bit_pos[2:0]] : 1'b0;
+    // bit_pos[8:3] is only 6 bits and wraps at byte 64, but slice_hdr_parser
+    // instantiates this block with MAX_BYTES=96.  Derive the byte index width
+    // from MAX_BYTES so the whole RBSP window is addressable.
+    localparam int BYTE_IDX_W = (MAX_BYTES <= 1) ? 1 : $clog2(MAX_BYTES);
+    wire [9:0] cur_byte = bit_pos >> 3;
+    wire cur_bit = (bit_pos < bit_len) ? rbsp[cur_byte[BYTE_IDX_W-1:0]][3'd7 - bit_pos[2:0]] : 1'b0;
     wire token_too_long = (coeff_token_table == 3'd3) ? (code_len >= 5'd6) :
                           (coeff_token_table == 3'd4) ? (code_len >= 5'd8) : (code_len >= 5'd16);
     wire tz_is_chroma = (max_coeff == 5'd4);
