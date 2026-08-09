@@ -857,26 +857,17 @@ module stream_path #(
 		.error(core_error)
 	);
 
-	// Product decode is always rooted at product_decode_core above.
-	// Under DDR_FRAME_STORE, drop decode_stub entirely — it costs ~5–8k ALM +
-	// a third IQ path and product glass is writeback/PLXK, not stub paint.
-`ifdef DDR_FRAME_STORE
-	assign recon_sig = 8'd0;
-	assign recon_dbg = 8'd0;
-	assign recon_dbg_valid = 1'b0;
-	assign recon_valid = 1'b0;
-	assign fs_wr_en = 1'b0;
-	assign fs_wr_pixel = 16'd0;
-	assign fs_wr_reset = 1'b0;
-	assign fs_swap = 1'b0;
-	assign stub_busy = 1'b0;
-	assign stub_frames = 16'd0;
-`else
+	// Product decode is always rooted at product_decode_core above.  The legacy
+	// decode_stub remains only as the diagnostic frame-store painter until the
+	// core owns presentation; DECODE_REAL_INTRA no longer swaps the product
+	// decoder subtree or bypasses MC/DPB/deblock.
 	generate
 		begin : gen_diagnostic_present
 		decode_stub #(
 			.WIDTH(FRAME_W),
 			.HEIGHT(FRAME_H),
+			// Product decode owns DPB via DDR writeback + stream DDR read FSM.
+			// Keep stub as painter only; disable its diagnostic DPB seam.
 			.ENABLE_DPB_REF_SEAM(1'b0)
 		) stub (
 			.clk(clk), .reset(reset | flush),
@@ -917,7 +908,6 @@ module stream_path #(
 		);
 		end
 	endgenerate
-`endif
 
 	// Export DPB byte-writes + frame_done for product DDR present path.
 	assign decode_dpb_wr_en   = core_dpb_wr_en;
