@@ -125,6 +125,10 @@ module ddr_bitstream_reader #(
 	reg have_ctrl;
 	reg empty_seen;
 	reg seen_payload;
+	// o45: sticky capture of any DOUT beat so ST_POLL/ST_READ_WAIT cannot miss
+	// a one-cycle (or stretched) ready while publishing or between grants.
+	reg        rsp_skid_v;
+	reg [63:0] rsp_skid_d;
 
 	reg [7:0] hdr [0:31];
 	reg [4:0] hdr_idx;
@@ -136,9 +140,11 @@ module ddr_bitstream_reader #(
 	reg [31:0] last_bad_seq;
 	reg [7:0] rx_byte;
 
-	wire ctrl_magic_ok = DDRAM_DOUT[31:0] == MAGIC_CTRL;
-	wire ctrl_reset = DDRAM_DOUT[63];
-	wire [30:0] ctrl_write_count = DDRAM_DOUT[62:32];
+	wire [63:0] rsp_word = rsp_skid_v ? rsp_skid_d : DDRAM_DOUT;
+	wire        rsp_hit  = rsp_skid_v | DDRAM_DOUT_READY;
+	wire ctrl_magic_ok = rsp_word[31:0] == MAGIC_CTRL;
+	wire ctrl_reset = rsp_word[63];
+	wire [30:0] ctrl_write_count = rsp_word[62:32];
 	wire [31:0] avail = write_count - read_count;
 	wire [31:0] ring_level = (avail > RING_BYTES_W) ? RING_BYTES_W : avail;
 	wire ring_has_data = have_ctrl && (avail != 32'd0) && !overrun_sticky && !fatal_sticky;
@@ -219,6 +225,8 @@ module ddr_bitstream_reader #(
 			poll_div <= '0;
 			DDRAM_RD <= 1'b0;
 			DDRAM_WE <= 1'b0;
+			rsp_skid_v <= 1'b0;
+			rsp_skid_d <= 64'd0;
 			DDRAM_BURSTCNT <= 8'd1;
 			DDRAM_ADDR <= 29'd0;
 			DDRAM_DIN <= 64'd0;
@@ -257,10 +265,16 @@ module ddr_bitstream_reader #(
 			bus_want <= 1'b0;
 			active <= 1'b0;
 			paused <= 1'b0;
+			rsp_skid_v <= 1'b0;
 			reset_parser();
 		end else begin
 			bus_want <= !flush && bus_want_comb;
 			poll_div <= poll_div + 1'd1;
+			// Capture any beat the moment ready rises; FSM may be mid-publish.
+			if (DDRAM_DOUT_READY && !rsp_skid_v) begin
+				rsp_skid_d <= DDRAM_DOUT;
+				rsp_skid_v <= 1'b1;
+			end
 
 			if (flush) begin
 				read_count <= write_count;
@@ -393,10 +407,11 @@ module ddr_bitstream_reader #(
 					end
 				end
 
-				// o44: restore o37 lost-RD reissue (no new FFs) + drop hold-pop.
-				// Unmask of dout_ready from wb_ddr_want is in Plex.sv (S2).
+				// o45: consume rsp_skid/rsp_hit (stretched FIFO ready + skid).
+				// Keep o37 poll_div reissue when still waiting.
 				ST_POLL: begin
-					if (DDRAM_DOUT_READY) begin
+					if (rsp_hit) begin
+						rsp_skid_v <= 1'b0;
 						if (ctrl_magic_ok) begin
 							have_ctrl <= 1'b1;
 							write_count <= {1'b0, ctrl_write_count};
@@ -436,8 +451,9 @@ module ddr_bitstream_reader #(
 				end
 
 				ST_READ_WAIT: begin
-					if (DDRAM_DOUT_READY) begin
-						beat_q <= DDRAM_DOUT;
+					if (rsp_hit) begin
+						rsp_skid_v <= 1'b0;
+						beat_q <= rsp_word;
 						beat_left <= consume_count;
 						state <= ST_CONSUME;
 					end else if (!DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE &&
