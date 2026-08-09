@@ -312,6 +312,7 @@ private:
     int ddrMemFd_ = -1;
     uint8_t* ddrMap_ = nullptr;
     size_t ddrMapLen_ = 0;
+    bool ddrMapViaMplex_ = false; // /dev/mplex_ddr WC chardev when loaded
     bool ddrMemSync_ = true;
     bool ddrMemFlush_ = false;
     DdrTiming lastDdrTiming_{};

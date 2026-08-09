@@ -660,21 +660,43 @@ bool FpgaSpi::ensureDdrMap() {
     // Map both frame banks plus the final doorbell/mailbox page. 320×240 keeps
     // the historical 0x80000 window; larger cores grow this at runtime.
     const size_t kLen = ddrLayout_.map_bytes;
-    int flags = O_RDWR | O_CLOEXEC;
-    if (ddrMemSync_)
-        flags |= O_SYNC;
-    ddrMemFd_ = ::open("/dev/mem", flags);
-    if (ddrMemFd_ < 0) {
-        setErr("ensureDdrMap: open /dev/mem failed");
-        return false;
+    void* p = MAP_FAILED;
+    ddrMapViaMplex_ = false;
+
+    // Product 720p track: optional WC chardev (kmod/mplex_ddr). Falls back to
+    // /dev/mem when the module is absent. WC path ignores O_SYNC (mapping is
+    // pgprot_writecombine in the driver).
+    {
+        int mfd = ::open("/dev/mplex_ddr", O_RDWR | O_CLOEXEC);
+        if (mfd >= 0) {
+            p = mmap(nullptr, kLen, PROT_READ | PROT_WRITE, MAP_SHARED, mfd, 0);
+            if (p != MAP_FAILED) {
+                ddrMemFd_ = mfd;
+                ddrMapViaMplex_ = true;
+            } else {
+                ::close(mfd);
+                p = MAP_FAILED;
+            }
+        }
     }
-    void* p = mmap(nullptr, kLen, PROT_READ | PROT_WRITE, MAP_SHARED, ddrMemFd_,
-                   static_cast<off_t>(ddrLayout_.phys_base));
+
     if (p == MAP_FAILED) {
-        setErr("ensureDdrMap: mmap frame window failed");
-        ::close(ddrMemFd_);
-        ddrMemFd_ = -1;
-        return false;
+        int flags = O_RDWR | O_CLOEXEC;
+        if (ddrMemSync_)
+            flags |= O_SYNC;
+        ddrMemFd_ = ::open("/dev/mem", flags);
+        if (ddrMemFd_ < 0) {
+            setErr("ensureDdrMap: open /dev/mem failed");
+            return false;
+        }
+        p = mmap(nullptr, kLen, PROT_READ | PROT_WRITE, MAP_SHARED, ddrMemFd_,
+                 static_cast<off_t>(ddrLayout_.phys_base));
+        if (p == MAP_FAILED) {
+            setErr("ensureDdrMap: mmap frame window failed");
+            ::close(ddrMemFd_);
+            ddrMemFd_ = -1;
+            return false;
+        }
     }
 
     ddrMap_ = static_cast<uint8_t*>(p);
@@ -753,6 +775,7 @@ void FpgaSpi::releaseDdrMap() {
         ::close(ddrMemFd_);
         ddrMemFd_ = -1;
     }
+    ddrMapViaMplex_ = false;
 }
 
 bool FpgaSpi::waitCoreFlag(bool clearBusy, bool clearPending, int maxUs) {

@@ -66,6 +66,7 @@ void fillPattern(uint8_t* buf, size_t len) {
 void usage(const char* argv0) {
     std::printf(
         "Usage: %s [--sync|--no-sync] [--flush] [--host-copy]\n"
+        "          [--dev PATH]   (default /dev/mem; try /dev/mplex_ddr for WC)\n"
         "          [--format yuv420p] [--geometry auto|exact|plex480p]\n"
         "          [--width W --height H | --len BYTES]\n"
         "          [--loops N] [--bank 0|1]\n"
@@ -87,6 +88,7 @@ int main(int argc, char** argv) {
     int height = 240;
     bool lenSet = false;
     std::string geometryMode = "auto";
+    std::string devPath = "/dev/mem";
     misterplex::DdrFrameFormat format = misterplex::DdrFrameFormat::Yuv420p;
 
     for (int i = 1; i < argc; ++i) {
@@ -97,6 +99,8 @@ int main(int argc, char** argv) {
             useSync = false;
         } else if (a == "--flush") {
             flush = true;
+        } else if (a == "--dev" && i + 1 < argc) {
+            devPath = argv[++i];
         } else if (a == "--host-copy") {
             hostCopy = true;
         } else if (a == "--width" && i + 1 < argc) {
@@ -232,23 +236,27 @@ int main(int argc, char** argv) {
     }
 
     int flags = O_RDWR | O_CLOEXEC;
-    if (useSync)
+    const bool useMplex = (devPath != "/dev/mem");
+    // O_SYNC only applies to /dev/mem; WC chardev owns its own pgprot.
+    if (useSync && !useMplex)
         flags |= O_SYNC;
-    int fd = ::open("/dev/mem", flags);
+    int fd = ::open(devPath.c_str(), flags);
     if (fd < 0) {
-        std::perror("open /dev/mem");
+        std::perror(devPath.c_str());
         std::free(srcRaw);
         return 1;
     }
 
-    void* map = mmap(nullptr, layout.map_bytes, PROT_READ | PROT_WRITE, MAP_SHARED, fd,
-                     kDdrFrameBase);
+    const off_t mapOff = useMplex ? 0 : static_cast<off_t>(kDdrFrameBase);
+    void* map = mmap(nullptr, layout.map_bytes, PROT_READ | PROT_WRITE, MAP_SHARED, fd, mapOff);
     if (map == MAP_FAILED) {
         std::perror("mmap");
         ::close(fd);
         std::free(srcRaw);
         return 1;
     }
+    std::printf("dev=%s map_off=0x%llx sync=%d\n", devPath.c_str(),
+                static_cast<unsigned long long>(mapOff), useSync && !useMplex ? 1 : 0);
 
     uint8_t* dst = static_cast<uint8_t*>(map) + static_cast<size_t>(bank) * layout.bank_stride;
     std::memcpy(dst, src, len);
