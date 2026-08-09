@@ -145,8 +145,6 @@ module ddr_bus_arbiter (
 	wire rsp_pipe_active = rsp_active | rsp_valid_r;
 	wire m0_cmd = m0_rd | m0_we;
 	wire m1_cmd = m1_rd_ready | m1_we_ready;
-	wire use_m1 = grant_m1;
-	wire [7:0] selected_burst = use_m1 ? m1_burstcnt : m0_burstcnt;
 
 	// When m1 has waited M1_WAIT_MAX without a grant, raise m0_busy so the
 	// frame-store stops issuing new reads and the pipe can drain — otherwise
@@ -182,14 +180,26 @@ module ddr_bus_arbiter (
 	end
 	assign m1_busy = m1_busy_s2;
 
-	// Live m1_* (stable while req held). Drive cmd only while granted so a
-	// pending RD cannot leak onto m0 beats.
-	assign DDRAM_BURSTCNT = use_m1 ? m1_burstcnt : m0_burstcnt;
-	assign DDRAM_ADDR     = use_m1 ? m1_addr     : m0_addr;
-	assign DDRAM_RD       = use_m1 ? m1_rd_ready : m0_rd;
-	assign DDRAM_DIN      = use_m1 ? m1_din      : m0_din;
-	assign DDRAM_BE       = use_m1 ? m1_be       : m0_be;
-	assign DDRAM_WE       = use_m1 ? m1_we_ready : m0_we;
+	// o26: register DDRAM_* command port on clk_ddr.
+	// o25 drove a wide combo mux (use_m1 ? m1_* : m0_*) straight into the HPS
+	// f2sdram bridge → density STA −0.458 on general[2] (ddr clk). Registering
+	// the post-mux command beats cuts that combo cone. Protocol: while
+	// DDRAM_BUSY, hold the last command; when free, RD/WE are single-cycle
+	// pulses issued in the same FSM step that opens rsp_left / acks m1.
+	// m1 addr/burst/din/be remain live (stable while sticky req held).
+	reg  [7:0] ddram_burstcnt_q;
+	reg [28:0] ddram_addr_q;
+	reg        ddram_rd_q;
+	reg [63:0] ddram_din_q;
+	reg  [7:0] ddram_be_q;
+	reg        ddram_we_q;
+
+	assign DDRAM_BURSTCNT = ddram_burstcnt_q;
+	assign DDRAM_ADDR     = ddram_addr_q;
+	assign DDRAM_RD       = ddram_rd_q;
+	assign DDRAM_DIN      = ddram_din_q;
+	assign DDRAM_BE       = ddram_be_q;
+	assign DDRAM_WE       = ddram_we_q;
 
 	wire [63:0] ddram_dout_pad;
 	wire        ddram_dout_ready_pad;
@@ -275,6 +285,12 @@ module ddr_bus_arbiter (
 			m1_we_req_s2 <= 1'b0;
 			m1_rd_ack <= 1'b0;
 			m1_we_ack <= 1'b0;
+			ddram_burstcnt_q <= 8'd0;
+			ddram_addr_q <= 29'd0;
+			ddram_rd_q <= 1'b0;
+			ddram_din_q <= 64'd0;
+			ddram_be_q <= 8'd0;
+			ddram_we_q <= 1'b0;
 		end else begin
 			// 2-FF sync req levels (clk_m1 → clk_ddr)
 			m1_rd_req_s1 <= m1_rd_req;
@@ -303,16 +319,35 @@ module ddr_bus_arbiter (
 			else if (m1_wait != 6'h3f)
 				m1_wait <= m1_wait + 6'd1;
 
+			// Hold command while HPS asserts BUSY; otherwise drop one-shot RD/WE
+			// unless re-issued below in the same cycle.
+			if (!DDRAM_BUSY) begin
+				ddram_rd_q <= 1'b0;
+				ddram_we_q <= 1'b0;
+			end
+
 			if (!DDRAM_BUSY && !rsp_pipe_active) begin
 				if (grant_m1) begin
 					if (m1_rd_ready) begin
+						ddram_burstcnt_q <= m1_burstcnt;
+						ddram_addr_q     <= m1_addr;
+						ddram_rd_q       <= 1'b1;
+						ddram_din_q      <= m1_din;
+						ddram_be_q       <= m1_be;
+						ddram_we_q       <= 1'b0;
 						rsp_owner_m1 <= 1'b1;
 						rsp_left <= {1'b0, m1_burstcnt};
 						grant_m1 <= 1'b0;
 						m1_rd_ack <= 1'b1;
 						m1_wait <= 6'd0;
 					end else if (m1_we_ready) begin
-						// Posted write: one granted cycle with WE ready high.
+						// Posted write: one registered WE beat while granted.
+						ddram_burstcnt_q <= m1_burstcnt;
+						ddram_addr_q     <= m1_addr;
+						ddram_rd_q       <= 1'b0;
+						ddram_din_q      <= m1_din;
+						ddram_be_q       <= m1_be;
+						ddram_we_q       <= 1'b1;
 						grant_m1 <= 1'b0;
 						m1_we_ack <= 1'b1;
 						m1_wait <= 6'd0;
@@ -326,8 +361,21 @@ module ddr_bus_arbiter (
 					if ((m1_want_s2 || m1_cmd) && (!m0_cmd || m1_starved || m1_cmd)) begin
 						grant_m1 <= 1'b1;
 					end else if (m0_rd) begin
+						ddram_burstcnt_q <= m0_burstcnt;
+						ddram_addr_q     <= m0_addr;
+						ddram_rd_q       <= 1'b1;
+						ddram_din_q      <= m0_din;
+						ddram_be_q       <= m0_be;
+						ddram_we_q       <= 1'b0;
 						rsp_owner_m1 <= 1'b0;
-						rsp_left <= {1'b0, selected_burst};
+						rsp_left <= {1'b0, m0_burstcnt};
+					end else if (m0_we) begin
+						ddram_burstcnt_q <= m0_burstcnt;
+						ddram_addr_q     <= m0_addr;
+						ddram_rd_q       <= 1'b0;
+						ddram_din_q      <= m0_din;
+						ddram_be_q       <= m0_be;
+						ddram_we_q       <= 1'b1;
 					end
 				end
 			end
