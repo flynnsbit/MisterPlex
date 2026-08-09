@@ -58,7 +58,7 @@ public:
     void setDdrMemFlush(bool on) { fpga_.setDdrMemFlush(on); }
     void setDdrFrameFormat(DdrFrameFormat format) { ddrFrameFormat_ = format; }
     void setPresentProfile(bool on) { presentProfile_ = on; }
-    // STREAM=1: demux annex-B H.264 → host I-slice recon (I420 → F1) + F3 stub feed
+    // STREAM=1: demux annex-B H.264 → DDR/SPI F3 fabric feed + host I-slice recon (I420 → F1)
     void setStreamEnabled(bool on) { streamEnabled_ = on; }
     // STREAM=0 product path: tee compressed H.264 Annex-B into the DDR bitstream
     // ring while rawvideo still feeds the proven present path.

@@ -36,6 +36,17 @@ check("feed pump drains after fatal", "draining pipe so raw present does not blo
 check("feed logs bytes per VCL", "bytes_per_vcl=" in media)
 check("feed logs CPU cost per VCL", "feed_cpu_us_per_vcl=" in media)
 
+
+check("STREAM1 demux spawn exists", "spawnStreamDemux" in media)
+check("STREAM1 streamPump pushes F3", "pushF3Nal" in media or "f3Dispatch.handleNal" in media)
+check("STREAM1 FpgaBitstreamProducer has SPI fallback", "spi_mode_" in media and "sendBitstreamChunk" in media)
+check("STREAM1 begin logs transport", "transport=spi-ioctl-fallback" in media and "transport=ddr-ring" in media)
+check("STREAM1 skip RGB wall clock progress", "STREAM no-RGB t_ms=" in media)
+check("STREAM1 audio-only dual pipe", "spawnAudioOnly" in media)
+check("main parses STREAM", 'loadConf(confPath, "STREAM")' in main)
+check("main parses STREAM_SKIP_RGB", 'loadConf(confPath, "STREAM_SKIP_RGB")' in main)
+check("wantSkipRgb only when PRESENT=fpga", "presentMode_ == \"fpga\"" in media or 'presentMode_ == "fpga"' in media)
+
 print(f"Scope: {len(checks)}", flush=True)
 if not checks:
     print("FAIL bitstream_feed_static: Scope: 0 cannot claim PASS", file=sys.stderr)

@@ -54,6 +54,7 @@ struct DispatchStats {
     uint64_t nal_pushed = 0;
     uint64_t bytes_pushed = 0;
     uint64_t nal_dropped_paused = 0;
+    uint64_t nal_dropped_pre_idr = 0; // non-IDR VCL dropped before first IDR
     uint64_t sps_replayed = 0;
     uint64_t pps_replayed = 0;
     uint64_t full_retries = 0;
@@ -155,6 +156,11 @@ public:
         paused_ = false;
         sps_delivered_ = false;
         pps_delivered_ = false;
+        // FPGA decode has no reference until the first IDR. Drop non-IDR VCL
+        // until nal_type==5 so a seek/mid-GOP demux start cannot feed P-frames
+        // of garbage. SPS/PPS still publish immediately.
+        seen_idr_ = false;
+        resyncing_ = false;
         sps_.clear();
         pps_.clear();
         stats_ = {};
@@ -222,6 +228,14 @@ public:
             return PushResult::Ok;
         }
 
+        // Drop non-IDR coded slices until the first IDR so a mid-GOP demux
+        // start cannot feed P-frames with no reference. SPS/PPS/SEI/AUD still
+        // flow immediately (parameter sets must land before the IDR).
+        if (!seen_idr_ && type == 1) {
+            ++stats_.nal_dropped_pre_idr;
+            return PushResult::Ok;
+        }
+
         // Resyncing: the ring stayed full, so the consumer has certainly lost
         // stream continuity. Only an IDR can restore it; everything else is
         // undecodable without the frames we already dropped.
@@ -254,6 +268,8 @@ public:
                 sps_delivered_ = true;
             else if (type == 8)
                 pps_delivered_ = true;
+            else if (type == 5)
+                seen_idr_ = true;
         }
         return absorbFull(r);
     }
@@ -334,6 +350,7 @@ private:
     bool paused_ = false;
     bool sps_delivered_ = false;
     bool pps_delivered_ = false;
+    bool seen_idr_ = false;
     bool resyncing_ = false;
     std::vector<uint8_t> sps_;
     std::vector<uint8_t> pps_;
