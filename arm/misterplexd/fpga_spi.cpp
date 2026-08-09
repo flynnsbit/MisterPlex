@@ -1561,16 +1561,20 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
         return std::string(": ") + frameStoreStatusUnavailableDescription() + ": " + lastError();
     };
 
-    // Prefer mmap doorbell (no SPI on hot path). Fall back to SPI kick.
+    // Prefer mmap doorbell every frame (no SPI on hot path). A one-shot SPI
+    // status verify that misses must NOT permanently lock ddrKickMode_=2 —
+    // lab profile showed ~14 ms/frame SPI tax after a soft first-frame miss
+    // while the doorbell write itself was fine (WC product path).
     bool kicked = false;
     auto tKick0 = std::chrono::steady_clock::now();
-    if (ddrKickMode_ == 1 || ddrKickMode_ == 0) {
+    if (ddrKickMode_ != 2 && ddrKickMode_ != -1) {
         if (kickDdrDoorbell(bank)) {
             kicked = true;
-            if (first) {
-                // Give poller time to see seq; expect busy / pending / has_frame.
-                usleep(3000);
-                for (int i = 0; i < 40; ++i) {
+            if (ddrKickMode_ != 1) {
+                // Optional one-shot SPI observe for logs; never demote doorbell
+                // on soft miss — present path is PLXD/doorbell, not status bits.
+                usleep(1000);
+                for (int i = 0; i < 10; ++i) {
                     uint8_t raw[16]{};
                     {
                         SpiExclusive guard(map_);
@@ -1586,23 +1590,27 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
                         saw_kick = true;
                     if (saw_busy || saw_frame || saw_kick)
                         break;
-                    usleep(500);
+                    usleep(200);
                 }
-                if (!(saw_busy || saw_frame || saw_kick)) {
-                    kicked = false; // fall through to SPI
-                } else {
-                    ddrKickMode_ = 1;
+                ddrKickMode_ = 1;
+                static bool loggedSoftMiss = false;
+                if (!(saw_busy || saw_frame || saw_kick) && !loggedSoftMiss) {
+                    loggedSoftMiss = true;
+                    std::fprintf(stderr,
+                                 "misterplexd: DDR doorbell armed (SPI status soft-miss; "
+                                 "staying on mmap doorbell)\n");
                 }
             }
         }
     }
-    if (!kicked && (ddrKickMode_ == 2 || ddrKickMode_ == 0)) {
+    if (!kicked && ddrKickMode_ != -1) {
         if (!kickDdrSpi(bank, first, saw_busy, saw_kick, saw_frame))
             return false;
         if (first) {
             const bool ok = saw_busy || (saw_kick && saw_frame) || saw_frame;
             if (!ok) {
-                ddrKickMode_ = -1;
+                // Do not lock out future doorbell attempts forever.
+                ddrKickMode_ = 0;
                 ddrKickFailMs_ = std::chrono::duration<double, std::milli>(
                                      std::chrono::steady_clock::now().time_since_epoch())
                                      .count();
@@ -1610,13 +1618,14 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
                        frameStoreStatusSuffix());
                 return false;
             }
-            ddrKickMode_ = 2;
+            // SPI worked this frame only as fallback; next frames still try doorbell.
+            ddrKickMode_ = 0;
         }
+        kicked = true;
     }
     auto tKick1 = std::chrono::steady_clock::now();
     timing.doorbell_us = elapsedUs(tKick0, tKick1);
-    if (first && ddrKickMode_ == 0) {
-        ddrKickMode_ = -1;
+    if (!kicked) {
         ddrKickFailMs_ = std::chrono::duration<double, std::milli>(
                              std::chrono::steady_clock::now().time_since_epoch())
                              .count();
