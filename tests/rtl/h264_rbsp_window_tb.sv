@@ -20,7 +20,7 @@ module h264_rbsp_window_tb (
   wire [7:0] window [0:63];
   wire [15:0] window_avail;
   wire complete, overflow;
-  h264_rbsp_window #(.DEPTH_BYTES(256), .WINDOW_BYTES(64), .WORD_BYTES(8)) dut (
+  h264_rbsp_window #(.DEPTH_BYTES(256), .WINDOW_BYTES(64)) dut (
     .clk(clk), .reset(reset),
     .wr_clear(wr_clear), .wr_en(wr_en), .wr_data(wr_data), .wr_end(wr_end),
     .req_valid(req_valid), .req_offset(req_offset),
