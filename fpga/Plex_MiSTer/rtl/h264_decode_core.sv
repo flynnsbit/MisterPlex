@@ -774,8 +774,13 @@ module h264_decode_core #(
         .mvp_y(p16_mvp_y),
         .directional(p16_mvp_directional)
     );
-    wire signed [15:0] p16_mv_from_mvd_x = p16_mvp_x + mvd_x_qpel;
-    wire signed [15:0] p16_mv_from_mvd_y = p16_mvp_y + mvd_y_qpel;
+    // P_L0_16x16 uses the MB-level neighbour taps (mv_left/top), which are
+    // published on the last write sample of the previous P16 — one cycle
+    // earlier than the 4x4 field retire. Using the 4x4/P_Skip predictor here
+    // raced: next MB launched after busy cleared still saw MVP=0 because
+    // mb_commit trails blk_wr by a cycle. Partition modes keep the 4x4 path.
+    wire signed [15:0] p16_mv_from_mvd_x = syntax_mv_x;
+    wire signed [15:0] p16_mv_from_mvd_y = syntax_mv_y;
 
     wire signed [15:0] pskip_mv_x;
     wire signed [15:0] pskip_mv_y;
