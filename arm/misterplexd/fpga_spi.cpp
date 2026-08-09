@@ -1864,8 +1864,10 @@ FpgaSpi::BitstreamPushResult FpgaSpi::pushBitstreamNal(const BitstreamNal& nal,
     if (readBitstreamStatus(st)) {
         if (st.fatal || st.desync)
             return BitstreamPushResult::Desync;
-        if (!st.active || st.session_id != nal.session_id) {
-            setErr("pushBitstreamNal: stale or inactive session");
+        // Allow inactive: FPGA may not have consumed Begin yet (epoch race / lag).
+        // Only reject a *different* live session.
+        if (st.active && st.session_id != 0 && st.session_id != nal.session_id) {
+            setErr("pushBitstreamNal: stale session (FPGA holds other session)");
             return BitstreamPushResult::Desync;
         }
     }
