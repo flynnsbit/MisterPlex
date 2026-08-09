@@ -132,7 +132,7 @@ int main(int argc, char** argv) {
             dut->qp = static_cast<uint8_t>(qp);
             dut->max_coeff = 16;
             for (int i = 0; i < 16; ++i)
-                dut->coeff[i] = static_cast<uint16_t>(pat.coeffs[i] & 0x1FF);
+                dut->coeff[i] = static_cast<uint16_t>(pat.coeffs[i]);
             dut->eval();
 
             // Compute host reference
@@ -169,7 +169,7 @@ int main(int argc, char** argv) {
         dut->qp = static_cast<uint8_t>(qp);
         dut->max_coeff = 16;
         for (int i = 0; i < 16; ++i)
-            dut->coeff[i] = c[i] & 0x1FF;
+            dut->coeff[i] = static_cast<uint16_t>(c[i]);
         dut->eval();
         int32_t rtl_val = dut->dequant[0];
         if (rtl_val & (1 << 17))

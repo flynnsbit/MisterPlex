@@ -89,6 +89,25 @@ module h264_dequant4x4 (
 		end
 	endfunction
 
+	function automatic signed [31:0] mul_norm_const;
+		input signed [31:0] c;
+		input [4:0] na;
+		begin
+			case (na)
+			5'd10:   mul_norm_const = (c <<< 3) + (c <<< 1);
+			5'd11:   mul_norm_const = (c <<< 3) + (c <<< 1) + c;
+			5'd13:   mul_norm_const = (c <<< 3) + (c <<< 2) + c;
+			5'd14:   mul_norm_const = (c <<< 4) - (c <<< 1);
+			5'd16:   mul_norm_const = (c <<< 4);
+			5'd18:   mul_norm_const = (c <<< 4) + (c <<< 1);
+			5'd20:   mul_norm_const = (c <<< 4) + (c <<< 2);
+			5'd23:   mul_norm_const = (c <<< 4) + (c <<< 3) - c;
+			5'd25:   mul_norm_const = (c <<< 4) + (c <<< 3) + c;
+			default: mul_norm_const = (c <<< 5) - (c <<< 1) - c;
+			endcase
+		end
+	endfunction
+
 	function automatic signed [28:0] dequant_one;
 		input signed [15:0] c;
 		input [5:0] q;
@@ -116,8 +135,9 @@ module h264_dequant4x4 (
 			qmod = qp_mod6(q);
 			qdiv = qp_div6(q);
 			na = norm_adjust(qmod, mi);
-			// 16×5 multiply only (cheap); scale via 48-bit shift mux — no qp divide.
-			mul_norm = $signed(c) * $signed({11'd0, na});
+			// Constant shift/add scale prevents DSP inference and preserves
+			// the signed coefficient at every QP.
+			mul_norm = mul_norm_const({{16{c[15]}}, c}, na);
 			// ((c * na * 16) << (qdiv+2) + 32) >> 6  ==  ((c*na) << (qdiv+6) + 32) >> 6
 			shifted = {{16{mul_norm[31]}}, mul_norm} <<< (qdiv + 4'd6);
 			v = (shifted + 48'sd32) >>> 6;
