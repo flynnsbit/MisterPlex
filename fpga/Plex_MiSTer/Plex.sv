@@ -698,9 +698,11 @@ fpga_ddr_writeback #(
 	.ddr_we(wb_ddr_we),
 	.ddr_rd(wb_ddr_rd),
 	.frames_written(wb_frames_written),
+	.doorbell_pulse(fpga_glass_swap),
 	.active(wb_active)
 );
-assign fpga_glass_swap = decode_frame_done;
+// fpga_glass_swap = writeback doorbell_pulse (not decode_frame_done): reclaim
+// only after pixel flush + PLXK publish so ddr_frame_store can present the bank.
 `else
 assign wb_ddr_want = 1'b0;
 assign wb_ddr_burstcnt = 8'd0;
@@ -717,7 +719,8 @@ assign fpga_glass_swap = 1'b0;
 // Phase 3.3j / 3.1b hybrid present:
 //   Host F1 SPI or DDR bulk owns product frame_store once any host frame has
 //   swapped. decode_stub F3 diagnostic paint is suppressed after that.
-//   FPGA decode glass (fpga_ddr_writeback doorbell) can reclaim ownership.
+//   FPGA decode glass reclaims ownership when writeback rings PLXK (doorbell
+//   complete), not on raw decode_frame_done (writeback may still be flushing).
 //   Priority while writing: F1 ioctl download > DDR DMA > stub.
 reg host_owns_fs;
 always @(posedge clk_sys) begin

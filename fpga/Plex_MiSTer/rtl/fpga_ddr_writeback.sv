@@ -38,6 +38,9 @@ module fpga_ddr_writeback #(
 	output wire        ddr_rd,
 
 	output reg  [15:0] frames_written,
+	// 1-cycle pulse when PLXK doorbell is issued (pixels flushed + published).
+	// Use this — not raw frame_done — for host_owns_fs reclaim / glass ownership.
+	output reg         doorbell_pulse,
 	output reg         active
 );
 	assign ddr_rd = 1'b0;
@@ -100,8 +103,11 @@ module fpga_ddr_writeback #(
 			ddr_be <= 8'h00;
 			ddr_we <= 1'b0;
 			frames_written <= 16'd0;
+			doorbell_pulse <= 1'b0;
 			active <= 1'b0;
 		end else begin
+			doorbell_pulse <= 1'b0;
+
 			if (!ddr_busy)
 				ddr_we <= 1'b0;
 
@@ -193,6 +199,7 @@ module fpga_ddr_writeback #(
 					write_bank <= ~write_bank;
 					seq_counter <= seq_counter + 29'd1;
 					frames_written <= frames_written + 16'd1;
+					doorbell_pulse <= 1'b1;
 					state <= S_WAIT;
 				end
 			end

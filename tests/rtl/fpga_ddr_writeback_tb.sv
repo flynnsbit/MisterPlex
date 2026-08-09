@@ -21,6 +21,7 @@ module fpga_ddr_writeback_tb;
     wire ddr_we;
     wire ddr_rd;
     wire [15:0] frames_written;
+    wire doorbell_pulse;
     wire active;
 
     fpga_ddr_writeback #(
@@ -43,6 +44,7 @@ module fpga_ddr_writeback_tb;
         .ddr_we(ddr_we),
         .ddr_rd(ddr_rd),
         .frames_written(frames_written),
+        .doorbell_pulse(doorbell_pulse),
         .active(active)
     );
 
@@ -106,13 +108,22 @@ module fpga_ddr_writeback_tb;
         // Expected hi32 = 32'b0_01_00000000000000000000000000001 = 32'h2000_0001
         // Full 64b = {32'h2000_0001, 32'h504C_584B}
         $display("TEST 2: doorbell ABI (format=1 YUV420p)");
+        if (doorbell_pulse !== 1'b0) begin
+            $display("FAIL T2: doorbell_pulse sticky before frame_done");
+            errors = errors + 1;
+        end
         @(posedge clk);
         frame_done <= 1;
         @(posedge clk);
         frame_done <= 0;
+        // frame_done alone must NOT pulse glass reclaim (writeback still in flight)
+        if (doorbell_pulse !== 1'b0) begin
+            $display("FAIL T2: doorbell_pulse on frame_done (too early)");
+            errors = errors + 1;
+        end
 
-        wait_ddr_write;
-
+        // Sample on the PLXK issue cycle (ddr_we + doorbell_pulse same edge).
+        while (!ddr_we) @(posedge clk);
         // Address: 0x300FF000 >> 3 = 29'h0601FE00
         if (ddr_addr !== 29'h0601_FE00) begin
             $display("FAIL T2: addr=%h exp 0601FE00", ddr_addr);
@@ -144,6 +155,16 @@ module fpga_ddr_writeback_tb;
         end
         if (frames_written !== 16'd1) begin
             $display("FAIL T2: frames_written=%d exp 1", frames_written);
+            errors = errors + 1;
+        end
+        // doorbell_pulse coincides with the PLXK write cycle (glass reclaim edge)
+        if (doorbell_pulse !== 1'b1) begin
+            $display("FAIL T2: doorbell_pulse missing on PLXK issue");
+            errors = errors + 1;
+        end
+        @(posedge clk);
+        if (doorbell_pulse !== 1'b0) begin
+            $display("FAIL T2: doorbell_pulse not 1-cycle");
             errors = errors + 1;
         end
 

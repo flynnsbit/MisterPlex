@@ -48,11 +48,26 @@ per 8 samples at decode rate).
 Previously, once the host ARM wrote any frame via F1/DDR, `host_owns_fs` latched
 permanently, suppressing all FPGA diagnostic paint and (now) FPGA glass.
 
-Fixed: `fpga_glass_swap` (asserted on `frame_done`) **clears** `host_owns_fs`,
-allowing FPGA-decoded frames to own present. If the host ARM later writes a
-frame, it reclaims ownership. This creates a natural dual-source mux:
-- ARM active → host owns present
-- ARM idle + FPGA decoding → FPGA owns present
+Fixed: `fpga_glass_swap` is the writeback **`doorbell_pulse`** (1-cycle when
+PLXK is issued after pixel flush). That pulse **clears** `host_owns_fs`,
+allowing FPGA-decoded frames to own present / stub diagnostic paint again.
+
+**Do not** wire `fpga_glass_swap` to raw `decode_frame_done` — writeback may
+still be flushing partial qwords and has not published PLXK yet.
+
+If the host ARM later writes a frame, it reclaims ownership. Dual-source mux:
+- ARM active → host owns present (stub paint suppressed)
+- ARM idle + FPGA decoding → FPGA owns present after doorbell
+
+### Present path after host F1 (`DDR_FRAME_STORE`)
+
+Product present is **`ddr_frame_store`**, not the classic `frame_store` paint path.
+FPGA glass presents by writing I420 banks + ringing PLXK; `ddr_frame_store`
+polls the doorbell and bank-swaps on vsync. That path does **not** consult
+`host_owns_fs` — PLXK present still works after host F1 has set
+`host_owns_fs=1`. Under `DDR_FRAME_STORE`, Plex hardwires `ddr_swap=0`; host
+ownership is via `f1_swap` (SPI) and/or host PLXK/SPI kick into the same
+doorbell reader. `host_owns_fs` only gates `stub_allow` diagnostic paint.
 
 ## Open Glass Risks
 
