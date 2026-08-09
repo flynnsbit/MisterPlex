@@ -1268,36 +1268,69 @@ module h264_decode_core #(
         .pred(chroma_v_dc_pred_unused)
     );
 
-    wire       chroma_u_full_valid;
-    wire       chroma_v_full_valid;
-    wire [7:0] chroma_u_full_pred [0:63];
-    wire [7:0] chroma_v_full_pred [0:63];
-    h264_chroma8x8_pred u_product_chroma_u_full (
+    // U and V use identical arithmetic and are not latency-critical relative
+    // to the 16-block luma walk. Run them through one predictor sequentially.
+    reg        chroma_full_start_r;
+    reg        chroma_full_plane_v_r;
+    reg        chroma_full_pair_valid_r;
+    wire       chroma_full_valid;
+    wire [7:0] chroma_full_pred [0:63];
+    reg  [7:0] chroma_u_full_pred [0:63];
+    reg  [7:0] chroma_v_full_pred [0:63];
+    wire [7:0] chroma_full_above [0:7];
+    wire [7:0] chroma_full_left [0:7];
+    wire [7:0] chroma_full_top_left =
+        chroma_full_plane_v_r ? product_intra_ctx_chroma_v_top_left
+                              : product_intra_ctx_chroma_u_top_left;
+    genvar chroma_input_gi;
+    generate
+        for (chroma_input_gi = 0; chroma_input_gi < 8; chroma_input_gi = chroma_input_gi + 1) begin : g_chroma_full_input
+            assign chroma_full_above[chroma_input_gi] =
+                chroma_full_plane_v_r ? product_intra_ctx_chroma_v_above[chroma_input_gi]
+                                      : product_intra_ctx_chroma_u_above[chroma_input_gi];
+            assign chroma_full_left[chroma_input_gi] =
+                chroma_full_plane_v_r ? product_intra_ctx_chroma_v_left[chroma_input_gi]
+                                      : product_intra_ctx_chroma_u_left[chroma_input_gi];
+        end
+    endgenerate
+
+    h264_chroma8x8_pred u_product_chroma_full (
         .clk(clk),
-        .start(intra_chroma_start_r && !chroma_mode_is_dc),
+        .start(chroma_full_start_r),
         .mode(chroma_mode_r),
-        .above(product_intra_ctx_chroma_u_above),
-        .left(product_intra_ctx_chroma_u_left),
-        .top_left(product_intra_ctx_chroma_u_top_left),
+        .above(chroma_full_above),
+        .left(chroma_full_left),
+        .top_left(chroma_full_top_left),
         .has_above(product_intra_ctx_has_chroma_above),
         .has_left(product_intra_ctx_has_chroma_left),
-        .valid(chroma_u_full_valid),
-        .pred(chroma_u_full_pred)
-    );
-    h264_chroma8x8_pred u_product_chroma_v_full (
-        .clk(clk),
-        .start(intra_chroma_start_r && !chroma_mode_is_dc),
-        .mode(chroma_mode_r),
-        .above(product_intra_ctx_chroma_v_above),
-        .left(product_intra_ctx_chroma_v_left),
-        .top_left(product_intra_ctx_chroma_v_top_left),
-        .has_above(product_intra_ctx_has_chroma_above),
-        .has_left(product_intra_ctx_has_chroma_left),
-        .valid(chroma_v_full_valid),
-        .pred(chroma_v_full_pred)
+        .valid(chroma_full_valid),
+        .pred(chroma_full_pred)
     );
 
-    wire chroma_pred_valid = chroma_u_dc_valid || chroma_u_full_valid;
+    integer chroma_copy_i;
+    always @(posedge clk) begin
+        chroma_full_start_r <= 1'b0;
+        chroma_full_pair_valid_r <= 1'b0;
+        if (reset || slice_start) begin
+            chroma_full_plane_v_r <= 1'b0;
+        end else if (intra_chroma_start_r && !chroma_mode_is_dc) begin
+            chroma_full_plane_v_r <= 1'b0;
+            chroma_full_start_r <= 1'b1;
+        end else if (chroma_full_valid) begin
+            if (!chroma_full_plane_v_r) begin
+                for (chroma_copy_i = 0; chroma_copy_i < 64; chroma_copy_i = chroma_copy_i + 1)
+                    chroma_u_full_pred[chroma_copy_i] <= chroma_full_pred[chroma_copy_i];
+                chroma_full_plane_v_r <= 1'b1;
+                chroma_full_start_r <= 1'b1;
+            end else begin
+                for (chroma_copy_i = 0; chroma_copy_i < 64; chroma_copy_i = chroma_copy_i + 1)
+                    chroma_v_full_pred[chroma_copy_i] <= chroma_full_pred[chroma_copy_i];
+                chroma_full_pair_valid_r <= 1'b1;
+            end
+        end
+    end
+
+    wire chroma_pred_valid = chroma_u_dc_valid || chroma_full_pair_valid_r;
     reg  chroma_sel_dc_r;
     always @(posedge clk) begin
         if (reset || slice_start)
@@ -1997,7 +2030,7 @@ module h264_decode_core #(
         |mb_route | |mb_route_cbp_chroma | mb_route_cbp_luma_ac |
         mb_route_is_intra | mb_route_is_inter | mb_route_unsupported |
         |i16dc_value | chroma_u_dc_valid | chroma_v_dc_valid |
-        |i16dc_pred_unused[0] | i16full_unsupported | chroma_v_full_valid |
+        |i16dc_pred_unused[0] | i16full_unsupported | chroma_full_valid |
         |chroma_u_dc_pred_unused[0] | |chroma_v_dc_pred_unused[0] |
         |chroma_u_dc_tl | |chroma_u_dc_tr | |chroma_u_dc_bl | |chroma_u_dc_br |
         |chroma_v_dc_tl | |chroma_v_dc_tr | |chroma_v_dc_bl | |chroma_v_dc_br |
