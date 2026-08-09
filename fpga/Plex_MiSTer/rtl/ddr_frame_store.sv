@@ -871,27 +871,21 @@ module ddr_frame_store #(
 	reg found_line, slot_keep, found_slot_y_cur, found_slot_y_prep, found_slot_c_cur, found_slot_c_prep;
 	reg [Y_W-1:0] desired_y;
 	reg [Y_W-2:0] desired_c;
-	// o34: register set-base from disp_buf_d2. o28 STA −0.047 was
-	// disp_buf_d2 → target_y_cur_r (9 levels / 10.561 ns) — NOT arbiter.
-	// One-cycle lagged base matches existing d1/d2 bank freeze style.
-	reg [SLOT_W-1:0] cur_base_idx_r, prep_base_idx_r;
-	wire [SLOT_W-1:0] cur_base_idx = cur_base_idx_r;
-	wire [SLOT_W-1:0] prep_base_idx = prep_base_idx_r;
+	// o35: back to combo bases (o34 registered base → -0.629 + hold fail).
+	// o28 critical was disp_buf_d2 → index mux → y_* → target_y_cur_r.
+	// Dual-set Y home probes both halves with fixed indices; disp_buf_d2 only
+	// muxes the two found bits (1 level) instead of steering array addresses.
+	reg [SLOT_W-1:0] cur_base_idx, prep_base_idx;
+	reg [SLOT_W-1:0] y_home0, y_home1;
+	reg found_y0, found_y1;
 	reg sched_valid, sched_is_y, sched_for_pending;
 	reg sched_bank, sched_pending_ready;
 	reg [Y_W-1:0] sched_y;
 	reg [Y_W-2:0] sched_cy;
 	reg [SLOT_W-1:0] sched_idx;
-	always @(posedge clk_ddr) begin
-		if (reset_ddr) begin
-			cur_base_idx_r <= '0;
-			prep_base_idx_r <= SECOND_SET_BASE;
-		end else begin
-			cur_base_idx_r <= disp_buf_d2 ? SECOND_SET_BASE : '0;
-			prep_base_idx_r <= disp_buf_d2 ? '0 : SECOND_SET_BASE;
-		end
-	end
 	always @* begin
+		cur_base_idx = disp_buf_d2 ? SECOND_SET_BASE : '0;
+		prep_base_idx = disp_buf_d2 ? '0 : SECOND_SET_BASE;
 		need_y_cur_c = 1'b0;
 		need_c_cur_c = 1'b0;
 		need_y_prep_c = 1'b0;
@@ -910,14 +904,24 @@ module ddr_frame_store #(
 		found_slot_c_cur = 1'b0;
 		found_slot_c_prep = 1'b0;
 		pending_ready_c = 1'b1;
+		y_home0 = '0;
+		y_home1 = SECOND_SET_BASE;
+		found_y0 = 1'b0;
+		found_y1 = 1'b0;
 
 		for (ti = 0; ti < LINE_COUNT; ti = ti + 1) begin
 			desired_y = desired_y_r[ti];
 			desired_c = desired_y_r[ti][Y_W-1:1];
-			// Y: probe home slot only (direct identity).
-			found_line = y_valid[cur_base_idx + y_home_off(desired_y)]
-			    && (y_bank[cur_base_idx + y_home_off(desired_y)] == disp_bank_d2)
-			    && (y_line[cur_base_idx + y_home_off(desired_y)] == desired_y);
+			// Y cur: dual-set home probe (fixed indices; mux found only).
+			y_home0 = y_home_off(desired_y);
+			y_home1 = SECOND_SET_BASE + y_home_off(desired_y);
+			found_y0 = y_valid[y_home0]
+			    && (y_bank[y_home0] == disp_bank_d2)
+			    && (y_line[y_home0] == desired_y);
+			found_y1 = y_valid[y_home1]
+			    && (y_bank[y_home1] == disp_bank_d2)
+			    && (y_line[y_home1] == desired_y);
+			found_line = disp_buf_d2 ? found_y1 : found_y0;
 			if (!found_line && !need_y_cur_c) begin
 				need_y_cur_c = 1'b1;
 				target_y_cur_c = desired_y;
@@ -935,10 +939,17 @@ module ddr_frame_store #(
 				target_c_cur_c = desired_c;
 			end
 
-			// Prep Y: lines 0..LINE_COUNT-1 of pending bank; home == ti.
-			found_line = y_valid[prep_base_idx + y_home_off(ti[Y_W-1:0])]
-			    && (y_bank[prep_base_idx + y_home_off(ti[Y_W-1:0])] == pending_bank_d2)
-			    && (y_line[prep_base_idx + y_home_off(ti[Y_W-1:0])] == ti[Y_W-1:0]);
+			// Prep Y: dual-set home (prep half = !disp_buf); pending bank compare.
+			y_home0 = y_home_off(ti[Y_W-1:0]);
+			y_home1 = SECOND_SET_BASE + y_home_off(ti[Y_W-1:0]);
+			found_y0 = y_valid[y_home0]
+			    && (y_bank[y_home0] == pending_bank_d2)
+			    && (y_line[y_home0] == ti[Y_W-1:0]);
+			found_y1 = y_valid[y_home1]
+			    && (y_bank[y_home1] == pending_bank_d2)
+			    && (y_line[y_home1] == ti[Y_W-1:0]);
+			// disp_buf_d2=0 → prep set1; disp_buf_d2=1 → prep set0
+			found_line = disp_buf_d2 ? found_y0 : found_y1;
 			if (swap_pending_d2 && !found_line) begin
 				pending_ready_c = 1'b0;
 				if (!need_y_prep_c) begin
