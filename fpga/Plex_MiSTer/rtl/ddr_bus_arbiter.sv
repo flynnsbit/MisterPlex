@@ -150,9 +150,19 @@ module ddr_bus_arbiter (
 	// frame-store stops issuing new reads and the pipe can drain — otherwise
 	// continuous m0_rd keeps rsp_pipe_active and m1 never enters the
 	// !rsp_pipe_active grant window (o14 still cons=0 / telem_seq=1).
-	assign m0_busy = DDRAM_BUSY | grant_m1 | m1_starved |
-	                 (rsp_active & rsp_owner_m1) |
-	                 (rsp_valid_r & rsp_owner_m1_r);
+	// o31: register m0_busy (o28 baseline −0.047; prior o30 commit was a no-op).
+	// Frame-store uses busy as a level gate — one-cycle delay is safe.
+	reg m0_busy_r;
+	wire m0_busy_comb = DDRAM_BUSY | grant_m1 | m1_starved |
+	                    (rsp_active & rsp_owner_m1) |
+	                    (rsp_valid_r & rsp_owner_m1_r);
+	always @(posedge clk) begin
+		if (rst)
+			m0_busy_r <= 1'b1;
+		else
+			m0_busy_r <= m0_busy_comb;
+	end
+	assign m0_busy = m0_busy_r;
 
 	// m1_busy: register on clk_ddr to eliminate combinational glitches,
 	// then 2-FF sync to clk_m1 for proper CDC.  The consumer uses this
