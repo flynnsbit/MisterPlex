@@ -103,7 +103,11 @@ module ddr_bus_arbiter (
 	wire use_m1 = grant_m1;
 	wire [7:0] selected_burst = use_m1 ? m1_burstcnt : m0_burstcnt;
 
-	assign m0_busy = DDRAM_BUSY | grant_m1 |
+	// When m1 has waited M1_WAIT_MAX without a grant, raise m0_busy so the
+	// frame-store stops issuing new reads and the pipe can drain — otherwise
+	// continuous m0_rd keeps rsp_pipe_active and m1 never enters the
+	// !rsp_pipe_active grant window (o14 still cons=0 / telem_seq=1).
+	assign m0_busy = DDRAM_BUSY | grant_m1 | m1_starved |
 	                 (rsp_active & rsp_owner_m1) |
 	                 (rsp_valid_r & rsp_owner_m1_r);
 
