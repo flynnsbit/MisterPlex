@@ -31,8 +31,6 @@ module stream_path #(
 	output wire [63:0] ddr_din,
 	output wire  [7:0] ddr_be,
 	output wire        ddr_we,
-	// o40: pop m1 FWFT beat after bitstream reader or DPB samples it
-	output wire        ddr_rsp_pop,
 
 	output wire        has_stream,
 	output wire [15:0] nalu_count,
@@ -168,8 +166,6 @@ module stream_path #(
 	wire bsr_dout_ready = ddr_dout_ready & ~bus_owner_dpb;
 	wire dpb_ddr_busy   = ddr_busy | ~bus_owner_dpb;
 	wire dpb_dout_ready = ddr_dout_ready & bus_owner_dpb;
-	wire bsr_rsp_pop;
-	// ddr_rsp_pop assigned after product_dpb_* regs exist (below).
 
 	ddr_bitstream_reader ddr_stream (
 		.clk(clk), .reset(reset),
@@ -189,7 +185,6 @@ module stream_path #(
 		.DDRAM_DIN(bsr_din),
 		.DDRAM_BE(bsr_be),
 		.DDRAM_WE(bsr_we),
-		.rsp_pop(bsr_rsp_pop),
 		.active(stream_ddr_active),
 		.bytes_out(stream_ddr_bytes_out),
 		.underrun_count(stream_ddr_underruns),
@@ -825,9 +820,6 @@ module stream_path #(
 	reg [2:0]  product_dpb_byte_sel;
 	reg        product_dpb_write_bank;
 	reg        product_dpb_ref_bank;
-	// o40: pop m1 FWFT when DPB or bitstream reader samples a beat.
-	wire dpb_rsp_pop = dpb_dout_ready && product_dpb_pending && product_dpb_issued;
-	assign ddr_rsp_pop = bus_owner_dpb ? dpb_rsp_pop : bsr_rsp_pop;
 	wire [31:0] product_dpb_write_base = 32'd0;
 	wire [31:0] product_dpb_ref_base = 32'd0;
 	wire [31:0] product_dpb_phys_addr = PRODUCT_DPB_DDR_BASE +

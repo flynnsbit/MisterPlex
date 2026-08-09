@@ -48,8 +48,6 @@ module ddr_bitstream_reader #(
 	output reg  [63:0] DDRAM_DIN,
 	output wire  [7:0] DDRAM_BE,
 	output reg         DDRAM_WE,
-	// o40: pop m1 FWFT response after sampling DOUT_READY (arbiter holds word).
-	output reg         rsp_pop,
 
 	output reg         active,
 	output reg  [31:0] bytes_out,
@@ -214,7 +212,6 @@ module ddr_bitstream_reader #(
 		out_flush <= 1'b0;
 		DDRAM_RD <= 1'b0;
 		DDRAM_WE <= 1'b0;
-		rsp_pop <= 1'b0;
 
 		if (reset) begin
 			state <= ST_RESET;
@@ -222,7 +219,6 @@ module ddr_bitstream_reader #(
 			poll_div <= '0;
 			DDRAM_RD <= 1'b0;
 			DDRAM_WE <= 1'b0;
-			rsp_pop <= 1'b0;
 			DDRAM_BURSTCNT <= 8'd1;
 			DDRAM_ADDR <= 29'd0;
 			DDRAM_DIN <= 64'd0;
@@ -397,11 +393,10 @@ module ddr_bitstream_reader #(
 					end
 				end
 
-				// o41: hold-until-pop only (drop o37 RD reissue — o40 STA −0.371/−0.621).
-				// Arbiter FWFT keeps DOUT_READY high until rsp_pop; no one-cycle miss.
+				// o44: restore o37 lost-RD reissue (no new FFs) + drop hold-pop.
+				// Unmask of dout_ready from wb_ddr_want is in Plex.sv (S2).
 				ST_POLL: begin
 					if (DDRAM_DOUT_READY) begin
-						rsp_pop <= 1'b1;
 						if (ctrl_magic_ok) begin
 							have_ctrl <= 1'b1;
 							write_count <= {1'b0, ctrl_write_count};
@@ -432,15 +427,24 @@ module ddr_bitstream_reader #(
 							end
 						end
 						state <= ST_IDLE;
+					end else if (!DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE &&
+					            (poll_div == {POLL_DIV_BITS{1'b0}})) begin
+						DDRAM_ADDR <= CTRL_W;
+						DDRAM_BURSTCNT <= 8'd1;
+						DDRAM_RD <= 1'b1;
 					end
 				end
 
 				ST_READ_WAIT: begin
 					if (DDRAM_DOUT_READY) begin
-						rsp_pop <= 1'b1;
 						beat_q <= DDRAM_DOUT;
 						beat_left <= consume_count;
 						state <= ST_CONSUME;
+					end else if (!DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE &&
+					            (poll_div == {POLL_DIV_BITS{1'b0}})) begin
+						DDRAM_ADDR <= DATA_W + read_qword_offset;
+						DDRAM_BURSTCNT <= 8'd1;
+						DDRAM_RD <= 1'b1;
 					end
 				end
 

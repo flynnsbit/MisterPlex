@@ -46,9 +46,6 @@ module ddr_bus_arbiter (
 	input  wire [63:0] m1_din,
 	input  wire  [7:0] m1_be,
 	input  wire        m1_we,
-	// o40: consumer must pop FWFT response; auto-pop dropped beats before
-	// ST_POLL sampled (o35 live telem_seq=1 / cons=0).
-	input  wire        m1_rsp_pop,
 
 	input  wire        DDRAM_BUSY,
 	output wire  [7:0] DDRAM_BURSTCNT,
@@ -248,10 +245,10 @@ module ddr_bus_arbiter (
 	// ── m1 response FIFO (clk_ddr → clk_m1) ──
 	// DDRAM_DOUT_READY is a single clk_ddr pulse per beat.  The clk_m1
 	// (20 MHz) consumer would miss ~70 % of those pulses if sampled
-	// directly.  The FIFO absorbs beats on the fast side. o40: do NOT
-	// auto-pop — hold FWFT word until m1_rsp_pop (reader/DPB sampled it).
-	// Auto-pop made ready a one-cycle pulse; if ST_POLL missed it, cons=0
-	// forever (o35 live: telem_seq stuck at 1, PLXR=0, host PLXB advancing).
+	// directly.  The FIFO absorbs beats on the fast side and auto-pops
+	// them one per clk_m1 cycle on the slow side.
+	// o44: restore o35 auto-pop (hold-pop o40–o43 STA-hostile at 97% ALM).
+	// Functional fix is unmask dout_ready from wb_ddr_want + RD reissue.
 	wire        m1_rsp_fifo_full;
 	wire        m1_rsp_fifo_empty;
 	wire [63:0] m1_rsp_fifo_rdata;
@@ -269,7 +266,7 @@ module ddr_bus_arbiter (
 
 		.rd_clk   (clk_m1),
 		.rd_reset (reset),       // reset is synchronous to clk_m1
-		.rd_en    (m1_rsp_pop && !m1_rsp_fifo_empty),
+		.rd_en    (!m1_rsp_fifo_empty),  // auto-pop (o35/o44)
 		.rd_data  (m1_rsp_fifo_rdata),
 		.rd_empty (m1_rsp_fifo_empty)
 	);
