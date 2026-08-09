@@ -5,8 +5,8 @@
 // source lines directly from HPS DDR into bank-tagged M10K line buffers.
 
 module ddr_frame_store #(
-	parameter int FRAME_W = 640,
-	parameter int FRAME_H = 480,
+	parameter int FRAME_W = 1280,
+	parameter int FRAME_H = 720,
 	parameter int FRAME_STRIDE = FRAME_W,
 	parameter int CODED_W = FRAME_W,
 	parameter int CODED_H = FRAME_H,
@@ -18,7 +18,7 @@ module ddr_frame_store #(
 	parameter int PRESENT_Y = 0,
 	parameter int LINE_COUNT = 8,
 	parameter [31:0] PHYS_BASE = 32'h3000_0000,
-	parameter int HPS_BANK_STRIDE_BYTES = 524288,
+	parameter int HPS_BANK_STRIDE_BYTES = 1572864,
 	parameter [31:0] DOORBELL_PHYS = PHYS_BASE + (2 * HPS_BANK_STRIDE_BYTES) - 32'h1000,
 	parameter [31:0] MAILBOX_PHYS  = DOORBELL_PHYS + 32'h100,
 	parameter [31:0] INPUT_MAILBOX_PHYS = DOORBELL_PHYS + 32'h108,
@@ -29,7 +29,34 @@ module ddr_frame_store #(
 	parameter bit IGNORE_STALE_DOORBELL_AFTER_RESET = 1'b1,
 	parameter int STALE_DOORBELL_FALLBACK_POLLS = 4096,
 	parameter bit PIPELINE_REFILL_SCHEDULER = 1'b1,
-	parameter bit STRICT_YUV_DOORBELL = 1'b1
+	parameter bit STRICT_YUV_DOORBELL = 1'b1,
+	// 1: want_y / y_hit follow vertical beam (src_y_line) — product anti-thrash.
+	// 0: legacy X-gated src_y thrash (HBlank want_y→0) — shear control only.
+	parameter bit WANT_Y_LINE_ONLY = 1'b1,
+	// 1: pending_ready holds while prep is complete even if IDLE schedules a
+	//    current-window refill (product). 0: legacy clear-on-current-sched —
+	//    freezes when want_y tracks the beam (silicon 9eb1431a class).
+	parameter bit PENDING_READY_STICKY_PREP = 1'b1,
+	// 1: prep slot alloc recycles valid-but-stale (wrong bank/line) slots.
+	// 0: invalid-only (9eb1431a) — after first swap prep set is full of old-bank
+	//    lines and hammers prep_base forever.
+	parameter bit PREP_SLOT_RECYCLE = 1'b1,
+	// 1 (product): if a new swap_req is accepted on the same sys clk as a vsync
+	//    swap, keep swap_pending=1 for the newly latched pending_bank. Legacy
+	//    NBA order cleared swap_pending after setting it, dropping the doorbell
+	//    under sustained high-rate publish (playback ~24 fps) while idle's slow
+	//    presents rarely collide with the 1-cycle vsync window.
+	parameter bit SWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC = 1'b1,
+	// Multi-pixel present path (default 1 = legacy scalar RGB). PPC in {1,2,4}.
+	// Even rd_x required for PPC>1 so a group stays inside one Y qword (no dual-port).
+	parameter int PX_PER_CLK = 1,
+	// Product default 0: fill_bank_base via ddr_frame_base_mux.
+	// DYN_BASE_EN=1 future w-mem dyn base ABI; dyn_* tied off here.
+	parameter bit DYN_BASE_EN = 1'b0,
+	// DIAG-only tag RCA (I1 miss composition + I2 half occupancy). Default 0 =
+	// product-identical PLXF pack. DIAG_TAG_RCA=1 repacks PLXF[63:40]; MAGIC
+	// and seq unchanged. DIAG ≠ product PASS. Do not leave =1 on product wire.
+	parameter bit DIAG_TAG_RCA = 1'b0
 )(
 	input  wire        clk,
 	input  wire        clk_ddr,
@@ -41,6 +68,12 @@ module ddr_frame_store #(
 	output reg  [7:0]  rd_r,
 	output reg  [7:0]  rd_g,
 	output reg  [7:0]  rd_b,
+	// N-wide RGB (lane 0 == rd_r/g/b). Tied off when unused by present_core.
+	output reg  [PX_PER_CLK*8-1:0] rd_r_n,
+	output reg  [PX_PER_CLK*8-1:0] rd_g_n,
+	output reg  [PX_PER_CLK*8-1:0] rd_b_n,
+	output reg  [PX_PER_CLK-1:0]   rd_lane_valid_n,
+	output reg                     rd_n_valid,
 
 	input  wire        start_req,
 	input  wire        bank_sel,
@@ -106,6 +139,21 @@ module ddr_frame_store #(
 	localparam [28:0] C_LINE_QWORDS_W = 29'(C_LINE_QWORDS);
 	localparam [Y_QW_AW:0] DDR_BURST_MAX_QWORDS = (Y_QW_AW+1)'(DDR_BURST_MAX);
 	localparam [31:0] MAGIC = 32'h504C_584B;
+	// Consume three-lane 720p BW/ABI contract when coded 1280x720 (rd-duck: not QIP-only).
+`include "plex_720p_bw_contract.svh"
+	generate
+		if ((CODED_W == 1280) && (CODED_H == 720)) begin : g_p720_store_contract
+			if (PHYS_BASE != P720_PHYS_BASE)
+				p720_store_phys_base_must_match_contract u_phys();
+			if (DOORBELL_PHYS != P720_DOORBELL_PHYS)
+				p720_store_doorbell_must_match_contract u_door();
+			if (HPS_BANK_STRIDE_BYTES != P720_BANK_STRIDE)
+				p720_store_stride_must_match_contract u_stride();
+			if (LINE_COUNT < P720_LINE_COUNT)
+				p720_store_line_count_below_contract_floor u_lines();
+		end
+	endgenerate
+
 	localparam [31:0] MAGIC_S = 32'h504C_5853;
 	localparam [31:0] MAGIC_I = 32'h504C_5849;
 	localparam [31:0] MAGIC_M = 32'h504C_584D;
@@ -157,9 +205,26 @@ module ddr_frame_store #(
 	wire rd_visible = rd_x_visible && rd_y_visible;
 	wire [X_W-1:0] display_x = rd_x - PRESENT_X_L;
 	wire [Y_W-1:0] display_y = rd_y - PRESENT_Y_L;
-	wire [CODED_X_W-1:0] src_x = rd_visible ? (display_x + CROP_LEFT_L) : '0;
-	wire [CODED_Y_W-1:0] src_y = rd_visible ? (display_y + CROP_TOP_L) : '0;
+	// Pixel path: X+Y gate (outside present window → black / addr 0).
+	// Widen display coords before crop add (CODED_* may exceed FRAME_* when crop>0).
+	wire [CODED_X_W-1:0] src_x = rd_visible ? (CODED_X_W'(display_x) + CODED_X_W'(CROP_LEFT_L)) : '0;
+	wire [CODED_Y_W-1:0] src_y = rd_visible ? (CODED_Y_W'(display_y) + CODED_Y_W'(CROP_TOP_L)) : '0;
+	// Line identity / prefetch path: follow the vertical beam whenever Y is inside
+	// the present band — independent of horizontal blank. Gating line match and
+	// want_y on full rd_visible forced src_y→0 every HBlank (including store_x=LAST),
+	// which thrashed the fill scheduler off the beam line and produced a variable
+	// black prefix at DE open (parent: ragged left edge, interiors aligned, median
+	// miss ~420 px on silicon). Do NOT use force_top (WANT_Y_FORCE_TOP) — that
+	// freeze-class latch cost two fits; vsync/leave-VBlank naturally returns the
+	// beam (and thus want_y) to the top via present_core store_y.
+	// WANT_Y_LINE_ONLY=0 restores X-gated thrash for freeze/shear control builds.
+	wire [CODED_Y_W-1:0] src_y_line = rd_y_visible ? (CODED_Y_W'(display_y) + CODED_Y_W'(CROP_TOP_L)) : '0;
+	wire [CODED_Y_W-1:0] pref_y = WANT_Y_LINE_ONLY ? src_y_line : src_y;
 	wire [Y_QW_AW-1:0] y_rd_addr = src_x[CODED_X_W-1:3];
+	// softc17-cqwoff: restore softc2 C BRAM index (src_x>>4). softc15/16
+	// C_X_HALF_OFF ±1 left R multi ~2× src (FAIL 120/121). Next lever is
+	// DDR fill_qword_c phase (see FILL_C_QWORD_OFF below), not present-side
+	// half-index offset.
 	wire [C_QW_AW-1:0] c_rd_addr = src_x[CODED_X_W-1:4];
 
 	genvar li;
@@ -227,19 +292,31 @@ module ddr_frame_store #(
 			pending_ready_s1 <= pending_ready_ddr;
 			pending_ready_s2 <= pending_ready_s1;
 
+			// Capture new doorbell before vsync-swap decision so a same-cycle collision
+			// can retain swap_pending for the newly latched bank (product).
+			// Legacy: both branches NBA-assigned swap_pending; the vsync clear
+			// won, consuming swap_req_seen while dropping the new pending frame.
 			if (swap_req_s2 != swap_req_seen) begin
 				swap_req_seen <= swap_req_s2;
 				pending_bank <= pending_bank_s2;
-				swap_pending <= 1'b1;
+				if (!(SWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC
+				      && vsync_pulse && swap_pending && pending_ready_s2))
+					swap_pending <= 1'b1;
 			end
 
 			if (vsync_pulse && swap_pending && pending_ready_s2) begin
 `ifndef DDR_FRAME_STORE_FAULT_HOLD_DISP_BANK
+				// Uses pre-NBA pending_bank: the bank that was ready this cycle.
+				// A same-cycle swap_req updates pending_bank for the *next* swap.
 				disp_bank <= pending_bank;
 `endif
 				disp_buf <= ~disp_buf;
 				has_frame <= 1'b1;
-				swap_pending <= 1'b0;
+				if (SWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC
+				    && (swap_req_s2 != swap_req_seen))
+					swap_pending <= 1'b1;
+				else
+					swap_pending <= 1'b0;
 				frames_done <= frames_done + 16'd1;
 				vsync_toggle <= ~vsync_toggle;
 			end else if (vsync_pulse) begin
@@ -285,11 +362,29 @@ module ddr_frame_store #(
 	reg [15:0] status_osd_hold;
 	reg [23:0] sdram_status_hold;
 	reg        frame_miss_toggle;
+	// I1 (DIAG): sticky miss composition on scanout clk (cleared only on reset).
+	// Sampled against registered y_hit_r/c_hit_r with miss_d so edges align with
+	// the underrun path (rd_miss_now → miss_d).
+	reg        miss_y_only_sticky;
+	reg        miss_c_only_sticky;
+	reg        miss_both_sticky;
+	reg        any_hit_sticky;
 
-	reg rd_active_r, rd_active_d, rd_visible_r, rd_visible_d, miss_d;
+	reg rd_active_r, rd_active_d, rd_visible_r, rd_visible_d, miss_d, c_lag_d;
+	// Last good active-region pixel (not HBlank). Used when linebuf misses at DE.
+	reg [7:0] last_active_r, last_active_g, last_active_b;
+	reg last_active_valid;
+	// Previous-line RGB by coded X — vertical hold on miss (avoids single-pixel
+	// horizontal color stubs when left-edge misses after line switch).
+	(* ramstyle = "no_rw_check, M10K" *)
+	reg [23:0] prev_line_rgb [0:2047];
+	reg [23:0] prev_line_q;
+	reg        prev_line_q_valid;
 	reg y_hit_r, c_hit_r;
 	reg [SLOT_W-1:0] y_hit_idx_r, c_hit_idx_r;
 	reg [2:0] y_sel_r, c_sel_r;
+	// YEL_B_UV_PHASE_PPC2: register full src_x with y/c_sel for absolute multi-pixel phase
+	reg [CODED_X_W-1:0] src_x_r;
 
 	integer vi;
 	reg y_hit_now, c_hit_now;
@@ -297,9 +392,9 @@ module ddr_frame_store #(
 	reg [63:0] selected_y_q, selected_u_q, selected_v_q;
 	reg [SLOT_W-1:0] video_slot;
 `ifdef DDR_FRAME_STORE_FAULT_CHROMA_VERTICAL_FULLRES
-	wire [CODED_Y_W-2:0] rd_cy = src_y[CODED_Y_W-2:0];
+	wire [CODED_Y_W-2:0] rd_cy = src_y_line[CODED_Y_W-2:0];
 `else
-	wire [CODED_Y_W-2:0] rd_cy = src_y[CODED_Y_W-1:1];
+	wire [CODED_Y_W-2:0] rd_cy = src_y_line[CODED_Y_W-1:1];
 `endif
 	always @* begin
 		y_hit_now = 1'b0;
@@ -309,10 +404,19 @@ module ddr_frame_store #(
 		selected_y_q = 64'd0;
 		selected_u_q = 64'd0;
 		selected_v_q = 64'd0;
+		// Y home slot first (matches Y_HOME_SLOT fill). Fallback scan whole half.
+		video_slot = (disp_buf ? SECOND_SET_BASE : {SLOT_W{1'b0}})
+		    + SLOT_W'(Y_W'(pref_y) % LINE_COUNT);
+		if (y_valid_v2[video_slot] && (y_bank_v2[video_slot] == disp_bank)
+		    && (y_line_v2[video_slot] == Y_W'(pref_y))) begin
+			y_hit_now = 1'b1;
+			y_hit_idx_now = video_slot;
+		end
 		for (vi = 0; vi < LINE_COUNT; vi = vi + 1) begin
-			video_slot = (disp_buf ? SECOND_SET_BASE : '0) + vi[SLOT_W-1:0];
+			video_slot = (disp_buf ? SECOND_SET_BASE : {SLOT_W{1'b0}}) + vi[SLOT_W-1:0];
+			// Match beam line via pref_y (product: src_y_line; thrash control: src_y).
 			if (y_valid_v2[video_slot] && (y_bank_v2[video_slot] == disp_bank)
-			    && (y_line_v2[video_slot] == Y_W'(src_y)) && !y_hit_now) begin
+			    && (y_line_v2[video_slot] == Y_W'(pref_y)) && !y_hit_now) begin
 				y_hit_now = 1'b1;
 				y_hit_idx_now = video_slot;
 			end
@@ -329,11 +433,79 @@ module ddr_frame_store #(
 			end
 		end
 	end
-	wire rd_miss_now = rd_active && rd_visible && has_frame && (!y_hit_now || !c_hit_now);
+	// Hard miss only when Y under the beam is missing. C-only lag used to force
+	// full-pixel hold (prev-line/last-active) and painted visible colored streaks
+	// under content; soft-hit with neutral chroma instead (see u/v_pix below).
+	// Primary left-edge class: HBlank want_y/src_y thrash (fixed via src_y_line).
+	// Residual Y miss under true DDR backlog still counts as underrun.
+	wire rd_miss_now = rd_active && rd_visible && has_frame && !y_hit_now;
+	// Sticky C-lag for I1 RCA (not a hard display miss).
+	wire rd_c_lag_now = rd_active && rd_visible && has_frame && y_hit_now && !c_hit_now;
 
+	// BT.601 full-range helpers for multi-pixel lanes (matches host / yuv_bt601_npx).
+	function automatic [7:0] yuv_r(input [7:0] y, input [7:0] u, input [7:0] v);
+		reg signed [11:0] ys, us, vs, rc;
+		reg signed [20:0] w;
+		begin
+			ys = {4'd0, y};
+			us = {4'd0, u} - 12'sd128;
+			vs = {4'd0, v} - 12'sd128;
+			w = ({{9{ys[11]}}, ys} <<< 8) + (21'sd359 * vs);
+			rc = w[19:8];
+			if (rc < 0) yuv_r = 8'd0;
+			else if (rc > 12'sd255) yuv_r = 8'd255;
+			else yuv_r = rc[7:0];
+		end
+	endfunction
+	function automatic [7:0] yuv_g(input [7:0] y, input [7:0] u, input [7:0] v);
+		reg signed [11:0] ys, us, vs, rc;
+		reg signed [20:0] w;
+		begin
+			ys = {4'd0, y};
+			us = {4'd0, u} - 12'sd128;
+			vs = {4'd0, v} - 12'sd128;
+			w = ({{9{ys[11]}}, ys} <<< 8) - (21'sd88 * us) - (21'sd183 * vs);
+			rc = w[19:8];
+			if (rc < 0) yuv_g = 8'd0;
+			else if (rc > 12'sd255) yuv_g = 8'd255;
+			else yuv_g = rc[7:0];
+		end
+	endfunction
+	function automatic [7:0] yuv_b(input [7:0] y, input [7:0] u, input [7:0] v);
+		reg signed [11:0] ys, us, vs, rc;
+		reg signed [20:0] w;
+		begin
+			ys = {4'd0, y};
+			us = {4'd0, u} - 12'sd128;
+			vs = {4'd0, v} - 12'sd128;
+			w = ({{9{ys[11]}}, ys} <<< 8) + (21'sd454 * us);
+			rc = w[19:8];
+			if (rc < 0) yuv_b = 8'd0;
+			else if (rc > 12'sd255) yuv_b = 8'd255;
+			else yuv_b = rc[7:0];
+		end
+	endfunction
+
+	// Scalar path — keep the original wire form bit-identical to pre-PPC land.
+	// Soft C: DOT_CRAWL_FIX3c held last UV forever on C-lag (cleared only at
+	// HBlank/line start). On multi-colour video that *smears* the previous
+	// chroma into miss pixels — bright green bleed when the prior sample was
+	// foliage green (user BBB HDMI 91_green_still). DOT_CRAWL_FIX3d: hold at
+	// most SOFT_C_HOLD_MAX consecutive miss samples, then neutral 128 so green
+	// UV cannot paint across rocks/sky/text. HOLD_MAX=0 (softc3): never hold —
+	// UV cannot paint across rocks/sky/text. Orange logo edges still get 1–2
+	// samples of hold (enough for free-list slip without full-line smear).
+	localparam int SOFT_C_HOLD_MAX = 0;
+	localparam int SOFT_C_HOLD_W = 2; // clog2(2+1)
+	reg [7:0] last_u_r, last_v_r;
+	reg       last_c_valid;
+	reg [SOFT_C_HOLD_W-1:0] soft_c_hold_n;
+	wire soft_c_hold_ok = last_c_valid && (soft_c_hold_n < SOFT_C_HOLD_W'(SOFT_C_HOLD_MAX));
 	wire [7:0] y_pix = pick_byte(selected_y_q, y_sel_r);
-	wire [7:0] u_pix = pick_byte(selected_u_q, c_sel_r);
-	wire [7:0] v_pix = pick_byte(selected_v_q, c_sel_r);
+	wire [7:0] u_raw = pick_byte(selected_u_q, c_sel_r);
+	wire [7:0] v_raw = pick_byte(selected_v_q, c_sel_r);
+	wire [7:0] u_pix = c_hit_r ? u_raw : (soft_c_hold_ok ? last_u_r : 8'd128);
+	wire [7:0] v_pix = c_hit_r ? v_raw : (soft_c_hold_ok ? last_v_r : 8'd128);
 	wire signed [11:0] y_s = {4'd0, y_pix};
 	wire signed [11:0] u_s = {4'd0, u_pix} - 12'sd128;
 	wire signed [11:0] v_s = {4'd0, v_pix} - 12'sd128;
@@ -345,6 +517,41 @@ module ddr_frame_store #(
 	wire signed [11:0] g_calc = g_calc_w[19:8];
 	wire signed [11:0] b_calc = b_calc_w[19:8];
 
+	// Multi-pixel extract from the same registered qwords (PPC>1, even-aligned x).
+	// Wire-form BT.601 per lane (match scalar r_calc/g_calc/b_calc). Do NOT call
+	// yuv_r/g/b functions here: concurrent generate assigns can share function
+	// temps under Verilator/synth and corrupt V-128<0 (PROBE_R3_P0: multi
+	// 255/255/200 while scalar gold 197/201/200; product QSF PPC=2 uses rd_r_n).
+	wire [7:0] r_lane [0:PX_PER_CLK-1];
+	wire [7:0] g_lane [0:PX_PER_CLK-1];
+	wire [7:0] b_lane [0:PX_PER_CLK-1];
+	genvar gpi;
+	generate
+		for (gpi = 0; gpi < PX_PER_CLK; gpi = gpi + 1) begin : g_px
+			// Absolute per-lane phase (match yuv_bt601_npx); BRAM 1-cy pairs with src_x_r.
+			wire [CODED_X_W-1:0] x_l = src_x_r + CODED_X_W'(gpi);
+			wire [2:0] y_sel_l = x_l[2:0];
+			// softc17: legacy softc2 in-qword C sample (x[3:1]); fill phase is separate.
+			wire [2:0] c_sel_l = x_l[3:1];
+			wire [7:0] y_l = pick_byte(selected_y_q, y_sel_l);
+			// Same soft-C hold limit as scalar (SOFT_C_HOLD_MAX).
+			wire [7:0] u_l = c_hit_r ? pick_byte(selected_u_q, c_sel_l)
+			                         : (soft_c_hold_ok ? last_u_r : 8'd128);
+			wire [7:0] v_l = c_hit_r ? pick_byte(selected_v_q, c_sel_l)
+			                         : (soft_c_hold_ok ? last_v_r : 8'd128);
+			wire signed [11:0] y_ls = {4'd0, y_l};
+			wire signed [11:0] u_ls = {4'd0, u_l} - 12'sd128;
+			wire signed [11:0] v_ls = {4'd0, v_l} - 12'sd128;
+			wire signed [20:0] y_lext = {{9{y_ls[11]}}, y_ls};
+			wire signed [20:0] r_lw = (y_lext <<< 8) + (21'sd359 * v_ls);
+			wire signed [20:0] g_lw = (y_lext <<< 8) - (21'sd88 * u_ls) - (21'sd183 * v_ls);
+			wire signed [20:0] b_lw = (y_lext <<< 8) + (21'sd454 * u_ls);
+			assign r_lane[gpi] = sat8(r_lw[19:8]);
+			assign g_lane[gpi] = sat8(g_lw[19:8]);
+			assign b_lane[gpi] = sat8(b_lw[19:8]);
+		end
+	endgenerate
+
 	always @(posedge clk) begin
 		if (reset) begin
 			rd_active_r <= 1'b0;
@@ -352,12 +559,17 @@ module ddr_frame_store #(
 			rd_visible_r <= 1'b0;
 			rd_visible_d <= 1'b0;
 			miss_d <= 1'b0;
+			c_lag_d <= 1'b0;
 			underrun_count <= 16'd0;
 			want_y_sys <= '0;
 			want_y_gray <= '0;
 			status_osd_hold <= 16'd0;
 			sdram_status_hold <= 24'd0;
 			frame_miss_toggle <= 1'b0;
+			miss_y_only_sticky <= 1'b0;
+			miss_c_only_sticky <= 1'b0;
+			miss_both_sticky <= 1'b0;
+			any_hit_sticky <= 1'b0;
 			y_valid_v1 <= '0;
 			y_valid_v2 <= '0;
 			c_valid_v1 <= '0;
@@ -372,7 +584,48 @@ module ddr_frame_store #(
 			c_hit_idx_r <= '0;
 			y_sel_r <= 3'd0;
 			c_sel_r <= 3'd0;
+			src_x_r <= '0;
+			rd_r <= 8'd0;
+			rd_g <= 8'd0;
+			rd_b <= 8'd0;
+			rd_r_n <= '0;
+			rd_g_n <= '0;
+			rd_b_n <= '0;
+			rd_lane_valid_n <= '0;
+			rd_n_valid <= 1'b0;
+			last_active_r <= 8'd0;
+			last_active_g <= 8'd0;
+			last_active_b <= 8'd0;
+			last_active_valid <= 1'b0;
+			prev_line_q <= 24'd0;
+			prev_line_q_valid <= 1'b0;
+			last_u_r <= 8'd128;
+			last_v_r <= 8'd128;
+			last_c_valid <= 1'b0;
+			soft_c_hold_n <= '0;
 		end else begin
+			// Soft-C hold: capture good chroma; clear at blank / line start.
+			// On miss, count consecutive holds; after SOFT_C_HOLD_MAX force
+			// neutral UV (soft_c_hold_ok) so foliage UV cannot smear far.
+			if (!rd_visible_d || (rd_visible_d && src_x_r == '0)) begin
+				last_c_valid <= 1'b0;
+				soft_c_hold_n <= '0;
+			end else if (c_hit_r && rd_visible_d && has_frame && !miss_d) begin
+				last_u_r <= u_raw;
+				last_v_r <= v_raw;
+				last_c_valid <= 1'b1;
+				soft_c_hold_n <= '0;
+			end else if (rd_visible_d && has_frame && !c_hit_r) begin
+				if (soft_c_hold_n != {SOFT_C_HOLD_W{1'b1}})
+					soft_c_hold_n <= soft_c_hold_n + 1'b1;
+			end
+			// Sync read previous-line RGB for miss path (1-cycle; addr = src_x_r).
+			if (src_x_r < CODED_X_W'(2048)) begin
+				prev_line_q <= prev_line_rgb[src_x_r[10:0]];
+				prev_line_q_valid <= 1'b1;
+			end else begin
+				prev_line_q_valid <= 1'b0;
+			end
 			y_valid_v1 <= y_valid_hold;
 			y_valid_v2 <= y_valid_v1;
 			c_valid_v1 <= c_valid_hold;
@@ -388,8 +641,21 @@ module ddr_frame_store #(
 				c_line_v2[vi] <= c_line_v1[vi];
 			end
 
-			if (Y_W'(src_y) != want_y_sys)
-				want_y_sys <= Y_W'(src_y);
+			// want_y: product uses pref_y=src_y_line (Y beam only). Thrash control
+			// uses pref_y=src_y (X-gated). No FORCE_TOP.
+			// LINECAM_WANT_Y_HOLD_LAST: product (WANT_Y_LINE_ONLY=1) holds last
+			// in-band want_y_sys when !rd_y_visible — do NOT force 0. Force-to-0
+			// jumped gray want_y last→0 every VBlank/out-of-band; after gray-hold
+			// stabilized, desired_y_r snapped to top-of-frame refill tags (MEAN
+			// black residual after gray-hold + cur-window-first). pref_y/src_y_line
+			// still 0 out-of-band for y_hit/pixel; only the fill key holds.
+			// When WANT_Y_LINE_ONLY=0, rd_visible low still forces want_y→0 (shear).
+			if (WANT_Y_LINE_ONLY ? rd_y_visible : rd_visible) begin
+				if (want_y_sys != Y_W'(pref_y))
+					want_y_sys <= Y_W'(pref_y);
+			end else if (!WANT_Y_LINE_ONLY && want_y_sys != '0) begin
+				want_y_sys <= '0;
+			end
 			want_y_gray <= y_bin2gray(want_y_sys);
 
 			if (status_osd != status_osd_hold) begin
@@ -408,21 +674,77 @@ module ddr_frame_store #(
 			y_hit_idx_r <= y_hit_idx_now;
 			c_hit_idx_r <= c_hit_idx_now;
 			y_sel_r <= src_x[2:0];
+			// softc17: legacy softc2 c_sel = x[3:1]
 			c_sel_r <= src_x[3:1];
+			src_x_r <= src_x;
 			miss_d <= rd_miss_now;
+			c_lag_d <= rd_c_lag_now;
 			if (miss_d && underrun_count != 16'hFFFF) begin
 				underrun_count <= underrun_count + 16'd1;
 				frame_miss_toggle <= ~frame_miss_toggle;
 			end
+			// I1 sticky composition (always collected; published only if DIAG_TAG_RCA).
+			// Y-hard-miss vs C-soft-lag tracked separately after soft-C change.
+			if (miss_d && has_frame) begin
+				if (!y_hit_r &&  c_hit_r) miss_y_only_sticky <= 1'b1;
+				if (!y_hit_r && !c_hit_r) miss_both_sticky  <= 1'b1;
+			end
+			if (c_lag_d && has_frame)
+				miss_c_only_sticky <= 1'b1;
+			if (rd_visible_d && has_frame && !miss_d && y_hit_r && c_hit_r)
+				any_hit_sticky <= 1'b1;
 
-			if ((rd_active_d || !rd_active) && rd_visible_d && has_frame && !miss_d && y_hit_r && c_hit_r) begin
+			// Y-hit is enough to paint (C soft-hit uses neutral UV above).
+			if ((rd_active_d || !rd_active) && rd_visible_d && has_frame && !miss_d && y_hit_r) begin
 				rd_r <= sat8(r_calc);
 				rd_g <= sat8(g_calc);
 				rd_b <= sat8(b_calc);
-			end else if (!has_frame || !rd_visible_d || miss_d) begin
+				// EDGE_ROLL_FIX: do NOT latch last_active for miss paint.
+				// last_active (horizontal hold) painted rightward orange dots on
+				// the chevron silhouette and black nicks on the left (HDMI video
+				// 19_temporal_maxdiff: motion only on outline). Keep regs idle.
+				last_active_valid <= 1'b0;
+				// Same-X vertical hold buffer for the *next* line only.
+				// Commit on any Y hit (soft-C RGB is fine) so prev_line is dense.
+				if (src_x_r < CODED_X_W'(2048))
+					prev_line_rgb[src_x_r[10:0]] <= {sat8(r_calc), sat8(g_calc), sat8(b_calc)};
+				rd_n_valid <= 1'b1;
+				begin : pack_npx
+					integer pxi;
+					for (pxi = 0; pxi < PX_PER_CLK; pxi = pxi + 1) begin
+						rd_r_n[pxi*8 +: 8] <= r_lane[pxi];
+						rd_g_n[pxi*8 +: 8] <= g_lane[pxi];
+						rd_b_n[pxi*8 +: 8] <= b_lane[pxi];
+						rd_lane_valid_n[pxi] <= 1'b1;
+					end
+				end
+			end else if (rd_visible_d && has_frame && miss_d) begin
+				// EDGE_ROLL_FIX2: NO hold path. prev_line same-X on diagonal
+				// chevron edges crawled 1 row (vertical roll); last_active
+				// smeared orange right. With Y_HOME+KEEP_VALID miss rate is
+				// low — paint black on residual miss so silhouette stays put.
 				rd_r <= 8'd0;
 				rd_g <= 8'd0;
 				rd_b <= 8'd0;
+				rd_r_n <= '0;
+				rd_g_n <= '0;
+				rd_b_n <= '0;
+				rd_lane_valid_n <= {PX_PER_CLK{1'b1}};
+				rd_n_valid <= 1'b1;
+			end else if (!has_frame || !rd_visible_d) begin
+				// Outside active: black porch. Kill any last_active across HBlank.
+				rd_r <= 8'd0;
+				rd_g <= 8'd0;
+				rd_b <= 8'd0;
+				rd_r_n <= '0;
+				rd_g_n <= '0;
+				rd_b_n <= '0;
+				rd_lane_valid_n <= '0;
+				rd_n_valid <= 1'b0;
+				last_active_valid <= 1'b0;
+			end else begin
+				rd_n_valid <= 1'b0;
+				rd_lane_valid_n <= '0;
 			end
 		end
 	end
@@ -470,6 +792,8 @@ module ddr_frame_store #(
 	reg [17:0] bank_mbox_hb;
 	reg [7:0] bank_mbox_seq;
 	reg [15:0] bank_vsync_count;
+	reg [15:0] frames_done_d1, frames_done_d2; // clk→clk_ddr (PLXD pack)
+	reg bank_plxd_swap_d, bank_plxd_disp_d;    // edge detect for fresher free_mask
 	reg vsync_t_d1, vsync_t_d2, vsync_t_seen;
 	reg start_d1, start_d2, start_seen;
 	reg bank_sel_d1, bank_sel_d2;
@@ -498,6 +822,16 @@ module ddr_frame_store #(
 	reg        frame_miss_tog_s1, frame_miss_tog_s2, frame_miss_tog_seen;
 	reg [15:0] frame_underrun_ddr;
 	reg [23:0] frame_status_ddr;
+	// I1 sticky CDC (clk → clk_ddr): sticky bits only 0→1, 2-FF safe.
+	reg        miss_y_only_s1, miss_y_only_s2;
+	reg        miss_c_only_s1, miss_c_only_s2;
+	reg        miss_both_s1,   miss_both_s2;
+	reg        any_hit_s1,     any_hit_s2;
+	// I2 sample regs (combo computed after schedule defines cur/prep base).
+	reg [4:0]  occ_disp_y_c, occ_prep_y_c;
+	reg [5:0]  bank_mm_disp_c;
+	reg [4:0]  occ_disp_y_r, occ_prep_y_r;
+	reg [5:0]  bank_mm_disp_r;
 
 	wire cmd_empty;
 	wire [7:0] cmd_rdata;
@@ -516,6 +850,17 @@ module ddr_frame_store #(
 			sum = sum + ahead;
 			clamp_ahead = (sum >= FRAME_H) ? LAST_Y : sum[Y_W-1:0];
 		end
+	endfunction
+
+	// Y_HOME_SLOT (Track A2): pitch-LINE_COUNT miss RCA — free-list put line L
+	// in an arbitrary free slot; every L%LINE_COUNT==0 systematically failed
+	// y_hit on silicon (missblack solid). Map Y fills to a stable home:
+	//   idx = half_base + (line % LINE_COUNT)
+	// Window size LINE_COUNT guarantees L and L+LC never co-resident.
+	// Chroma keeps free-list (shared across Y pairs; different occupancy).
+	function automatic [SLOT_W-1:0] y_home_off(input [Y_W-1:0] line_y);
+		// LINE_COUNT is power-of-2 in product (16); % synthesizes to low bits.
+		y_home_off = SLOT_W'(line_y % LINE_COUNT);
 	endfunction
 
 	integer ti, tj, tk;
@@ -543,12 +888,13 @@ module ddr_frame_store #(
 		target_y_prep_c = '0;
 		target_c_cur_c = desired_y_r[0][Y_W-1:1];
 		target_c_prep_c = '0;
-		target_y_idx_cur_c = cur_base_idx;
+		// Y home default for desired[0]
+		target_y_idx_cur_c = cur_base_idx + y_home_off(desired_y_r[0]);
 		target_y_idx_prep_c = prep_base_idx;
 		target_c_idx_cur_c = cur_base_idx;
 		target_c_idx_prep_c = prep_base_idx;
-		found_slot_y_cur = 1'b0;
-		found_slot_y_prep = 1'b0;
+		found_slot_y_cur = 1'b1; // home always exists
+		found_slot_y_prep = 1'b1;
 		found_slot_c_cur = 1'b0;
 		found_slot_c_prep = 1'b0;
 		pending_ready_c = 1'b1;
@@ -556,15 +902,14 @@ module ddr_frame_store #(
 		for (ti = 0; ti < LINE_COUNT; ti = ti + 1) begin
 			desired_y = desired_y_r[ti];
 			desired_c = desired_y_r[ti][Y_W-1:1];
-			found_line = 1'b0;
-			for (tj = 0; tj < LINE_COUNT; tj = tj + 1) begin
-				if (y_valid[cur_base_idx + tj[SLOT_W-1:0]] && (y_bank[cur_base_idx + tj[SLOT_W-1:0]] == disp_bank_d2)
-				    && (y_line[cur_base_idx + tj[SLOT_W-1:0]] == desired_y))
-					found_line = 1'b1;
-			end
+			// Y: probe home slot only (direct identity).
+			found_line = y_valid[cur_base_idx + y_home_off(desired_y)]
+			    && (y_bank[cur_base_idx + y_home_off(desired_y)] == disp_bank_d2)
+			    && (y_line[cur_base_idx + y_home_off(desired_y)] == desired_y);
 			if (!found_line && !need_y_cur_c) begin
 				need_y_cur_c = 1'b1;
 				target_y_cur_c = desired_y;
+				target_y_idx_cur_c = cur_base_idx + y_home_off(desired_y);
 			end
 
 			found_line = 1'b0;
@@ -578,17 +923,16 @@ module ddr_frame_store #(
 				target_c_cur_c = desired_c;
 			end
 
-			found_line = 1'b0;
-			for (tj = 0; tj < LINE_COUNT; tj = tj + 1) begin
-				if (y_valid[prep_base_idx + tj[SLOT_W-1:0]] && (y_bank[prep_base_idx + tj[SLOT_W-1:0]] == pending_bank_d2)
-				    && (y_line[prep_base_idx + tj[SLOT_W-1:0]] == ti[Y_W-1:0]))
-					found_line = 1'b1;
-			end
+			// Prep Y: lines 0..LINE_COUNT-1 of pending bank; home == ti.
+			found_line = y_valid[prep_base_idx + y_home_off(ti[Y_W-1:0])]
+			    && (y_bank[prep_base_idx + y_home_off(ti[Y_W-1:0])] == pending_bank_d2)
+			    && (y_line[prep_base_idx + y_home_off(ti[Y_W-1:0])] == ti[Y_W-1:0]);
 			if (swap_pending_d2 && !found_line) begin
 				pending_ready_c = 1'b0;
 				if (!need_y_prep_c) begin
 					need_y_prep_c = 1'b1;
 					target_y_prep_c = ti[Y_W-1:0];
+					target_y_idx_prep_c = prep_base_idx + y_home_off(ti[Y_W-1:0]);
 				end
 			end
 
@@ -607,18 +951,8 @@ module ddr_frame_store #(
 			end
 		end
 
+		// Chroma free-list only (Y home indices already set).
 		for (tj = 0; tj < LINE_COUNT; tj = tj + 1) begin
-			slot_keep = 1'b0;
-			for (tk = 0; tk < LINE_COUNT; tk = tk + 1) begin
-				if (y_valid[cur_base_idx + tj[SLOT_W-1:0]] && (y_bank[cur_base_idx + tj[SLOT_W-1:0]] == disp_bank_d2)
-				    && (y_line[cur_base_idx + tj[SLOT_W-1:0]] == desired_y_r[tk]))
-					slot_keep = 1'b1;
-			end
-			if ((!y_valid[cur_base_idx + tj[SLOT_W-1:0]] || !slot_keep) && !found_slot_y_cur) begin
-				found_slot_y_cur = 1'b1;
-				target_y_idx_cur_c = cur_base_idx + tj[SLOT_W-1:0];
-			end
-
 			slot_keep = 1'b0;
 			for (tk = 0; tk < LINE_COUNT; tk = tk + 1) begin
 				if (c_valid[cur_base_idx + tj[SLOT_W-1:0]] && (c_bank[cur_base_idx + tj[SLOT_W-1:0]] == disp_bank_d2)
@@ -630,34 +964,197 @@ module ddr_frame_store #(
 				target_c_idx_cur_c = cur_base_idx + tj[SLOT_W-1:0];
 			end
 
-			slot_keep = 1'b0;
-			for (tk = 0; tk < LINE_COUNT; tk = tk + 1) begin
-				if (y_valid[prep_base_idx + tj[SLOT_W-1:0]] && (y_bank[prep_base_idx + tj[SLOT_W-1:0]] == pending_bank_d2)
-				    && (y_line[prep_base_idx + tj[SLOT_W-1:0]] == tk[Y_W-1:0]))
-					slot_keep = 1'b1;
+			if (PREP_SLOT_RECYCLE) begin
+				slot_keep = 1'b0;
+				for (tk = 0; tk < LINE_COUNT; tk = tk + 1) begin
+					if (c_valid[prep_base_idx + tj[SLOT_W-1:0]]
+					    && (c_bank[prep_base_idx + tj[SLOT_W-1:0]] == pending_bank_d2)
+					    && (c_line[prep_base_idx + tj[SLOT_W-1:0]] == tk[Y_W-1:1]))
+						slot_keep = 1'b1;
+				end
+				if ((!c_valid[prep_base_idx + tj[SLOT_W-1:0]] || !slot_keep) && !found_slot_c_prep) begin
+					found_slot_c_prep = 1'b1;
+					target_c_idx_prep_c = prep_base_idx + tj[SLOT_W-1:0];
+				end
+			end else begin
+				if ((!c_valid[prep_base_idx + tj[SLOT_W-1:0]]) && !found_slot_c_prep) begin
+					found_slot_c_prep = 1'b1;
+					target_c_idx_prep_c = prep_base_idx + tj[SLOT_W-1:0];
+				end
 			end
-`ifdef DDR_FRAME_STORE_FAULT_PREP_INVALID_ONLY
-			if ((!y_valid[prep_base_idx + tj[SLOT_W-1:0]]) && !found_slot_y_prep) begin
-`else
-			if ((!y_valid[prep_base_idx + tj[SLOT_W-1:0]] || !slot_keep) && !found_slot_y_prep) begin
-`endif
-				found_slot_y_prep = 1'b1;
-				target_y_idx_prep_c = prep_base_idx + tj[SLOT_W-1:0];
+		end
+	end
+
+	// clk_ddr schedule pipeline: break combinational path
+	// desired_y_r → found_line/need_*_c → S_IDLE DDRAM_*/mbox enables.
+	// STA (cutb-buildid-keep): Fmax 87.4 < 90 on general[2]; TNS entirely
+	// launched from desired_y_r through this cone. Sample schedule outputs
+	// and drive S_IDLE only from *_r (+1 clk_ddr decision latency).
+	// Do not multicycle the same-clock cone; keep combo for TB probes.
+	// H-R1d SCHED_RECORD_ATOMIC: also freeze prep/cur select + bank with the
+	// same sample as need_*/target_*_r so S_IDLE arm never re-muxes live
+	// swap_pending_d2 against a lagged index epoch (set/bank ownership skew).
+	// Consume path (sched_valid issue) already uses only sched_*; latch is the gap.
+	reg need_y_cur_r, need_c_cur_r, need_y_prep_r, need_c_prep_r, pending_ready_r;
+	reg sel_y_prep_r, sel_c_prep_r;
+	reg sched_bank_y_src_r, sched_bank_c_src_r;
+	reg [Y_W-1:0] target_y_cur_r, target_y_prep_r;
+	reg [Y_W-2:0] target_c_cur_r, target_c_prep_r;
+	reg [SLOT_W-1:0] target_y_idx_cur_r, target_y_idx_prep_r, target_c_idx_cur_r, target_c_idx_prep_r;
+	always @(posedge clk_ddr) begin
+		if (reset_ddr) begin
+			need_y_cur_r <= 1'b0;
+			need_c_cur_r <= 1'b0;
+			need_y_prep_r <= 1'b0;
+			need_c_prep_r <= 1'b0;
+			pending_ready_r <= 1'b1;
+			sel_y_prep_r <= 1'b0;
+			sel_c_prep_r <= 1'b0;
+			sched_bank_y_src_r <= 1'b0;
+			sched_bank_c_src_r <= 1'b0;
+			target_y_cur_r <= '0;
+			target_y_prep_r <= '0;
+			target_c_cur_r <= '0;
+			target_c_prep_r <= '0;
+			target_y_idx_cur_r <= '0;
+			target_y_idx_prep_r <= '0;
+			target_c_idx_cur_r <= '0;
+			target_c_idx_prep_r <= '0;
+		end else begin
+			need_y_cur_r <= need_y_cur_c;
+			need_c_cur_r <= need_c_cur_c;
+			need_y_prep_r <= need_y_prep_c;
+			need_c_prep_r <= need_c_prep_c;
+			pending_ready_r <= pending_ready_c;
+			// Same-cycle sample as need_*/target_*_r (not live re-eval at arm).
+			// LINECAM_CUR_WINDOW_FIRST: demote prep freeze while display half
+			// misses desired (has_frame && need_*_cur). Keeps sel+bank atomic
+			// with cur path (disp_bank); cold-start !has_frame still allows prep.
+			sel_y_prep_r <= swap_pending_d2 && need_y_prep_c
+				&& !(has_frame_d2 && need_y_cur_c);
+			sel_c_prep_r <= swap_pending_d2 && need_c_prep_c
+				&& !(has_frame_d2 && need_c_cur_c);
+			sched_bank_y_src_r <= (swap_pending_d2 && need_y_prep_c
+				&& !(has_frame_d2 && need_y_cur_c)) ? pending_bank_d2 : disp_bank_d2;
+			sched_bank_c_src_r <= (swap_pending_d2 && need_c_prep_c
+				&& !(has_frame_d2 && need_c_cur_c)) ? pending_bank_d2 : disp_bank_d2;
+			target_y_cur_r <= target_y_cur_c;
+			target_y_prep_r <= target_y_prep_c;
+			target_c_cur_r <= target_c_cur_c;
+			target_c_prep_r <= target_c_prep_c;
+			target_y_idx_cur_r <= target_y_idx_cur_c;
+			target_y_idx_prep_r <= target_y_idx_prep_c;
+			target_c_idx_cur_r <= target_c_idx_cur_c;
+			target_c_idx_prep_r <= target_c_idx_prep_c;
+		end
+	end
+
+	// OPT-1 S_IDLE priority pipeline REGISTERED (product residual TAG/LAG):
+	// Cycle N: one-hot pri_*_r from already-registered schedule + reqs only.
+	// Cycle N+1: S_IDLE thin mux on pri_*_r (holdlast mbox-before-cur order).
+	// FORBID: mbox_yield CE on need_*_c (combo); wrap thrash; LEAD_K thrash.
+	// LINE_PRESSURE_MBOX_DEMOTE: when display window is incomplete, demote
+	// frame/bank mbox using *registered* need_*_r only (STA-safe; not combo).
+	// SOFT_C_Y_BEFORE_C (chevron ladder 08–12): soft-C paints U/V=128 on C lag,
+	// so chroma fill is cosmetic bandwidth. YEL_A chroma RR burned ~half the
+	// Y/C tier on C while display Y still incomplete → NO_HOLD black field
+	// (yhome-noinv MEAN~12) despite Y_HOME killing pitch-LC. Hard Y-before-C
+	// and starve all C arms while need_y_cur so residual underrun can close.
+	reg pri_frame_mbox_r, pri_bank_mbox_r, pri_sched_issue_r;
+	reg pri_y_arm_r, pri_c_arm_r, pri_poll_r, pri_imbox_r, pri_smbox_r, pri_sdram_r;
+	wire bus_ok_c = !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE;
+	wire y_arm_need_c = (has_frame_d2 && need_y_cur_r) || sel_y_prep_r;
+	// C arm only when display Y window is complete (need_y_cur_r==0). Prep C
+	// still allowed only when not under cur-Y pressure (sel_c_prep already
+	// demoted by LINECAM_CUR_WINDOW_FIRST when need_c_cur, not need_y_cur —
+	// gate here so Y pressure also blocks prep C).
+	wire c_arm_need_c = ((has_frame_d2 && need_c_cur_r) || sel_c_prep_r)
+	    && !(has_frame_d2 && need_y_cur_r);
+	// Registered window pressure: Y-only (C lag is soft). Keeps mbox demoted
+	// while Y incomplete without treating C lag as line pressure.
+	wire line_pressure_r = has_frame_d2 && need_y_cur_r;
+	wire mbox_frame_ok_c = !line_pressure_r
+	    && frame_mbox_req
+	    && (!frame_mbox_valid || poll_div[7:0] == 8'd224) && bus_ok_c;
+	wire mbox_bank_ok_c = !line_pressure_r
+	    && bank_mbox_req
+	    && (!bank_mbox_valid || poll_div[7:0] == 8'd160) && bus_ok_c;
+	wire higher_than_yc_c = mbox_frame_ok_c
+	    || mbox_bank_ok_c
+	    || (PIPELINE_REFILL_SCHEDULER && sched_valid);
+	always @(posedge clk_ddr) begin
+		if (reset_ddr) begin
+			pri_frame_mbox_r <= 1'b0;
+			pri_bank_mbox_r <= 1'b0;
+			pri_sched_issue_r <= 1'b0;
+			pri_y_arm_r <= 1'b0;
+			pri_c_arm_r <= 1'b0;
+			pri_poll_r <= 1'b0;
+			pri_imbox_r <= 1'b0;
+			pri_smbox_r <= 1'b0;
+			pri_sdram_r <= 1'b0;
+		end else if (state_ddr == S_IDLE) begin
+			// Sample only in S_IDLE so arms match idle decision epoch.
+			// Cascade: first true wins; mbox demoted under line_pressure_r.
+			// Hard Y-before-C (no chroma RR).
+			pri_frame_mbox_r <= mbox_frame_ok_c;
+			pri_bank_mbox_r <= !mbox_frame_ok_c && mbox_bank_ok_c;
+			pri_sched_issue_r <= !mbox_frame_ok_c
+			    && !mbox_bank_ok_c
+			    && PIPELINE_REFILL_SCHEDULER && sched_valid;
+			pri_y_arm_r <= !higher_than_yc_c && y_arm_need_c;
+			pri_c_arm_r <= !higher_than_yc_c && c_arm_need_c && !y_arm_need_c;
+			pri_poll_r <= !higher_than_yc_c
+			    && !y_arm_need_c
+			    && !c_arm_need_c
+			    && !poll_pending && poll_div[7:0] == 8'd0 && bus_ok_c;
+			pri_imbox_r <= !higher_than_yc_c
+			    && !y_arm_need_c
+			    && !c_arm_need_c
+			    && !(!poll_pending && poll_div[7:0] == 8'd0 && bus_ok_c)
+			    && !cmd_empty && poll_div[7:0] == 8'd64 && bus_ok_c;
+			pri_smbox_r <= !higher_than_yc_c
+			    && !y_arm_need_c
+			    && !c_arm_need_c
+			    && !(!poll_pending && poll_div[7:0] == 8'd0 && bus_ok_c)
+			    && !(!cmd_empty && poll_div[7:0] == 8'd64 && bus_ok_c)
+			    && mbox_req && poll_div[7:0] == 8'd128 && bus_ok_c;
+			pri_sdram_r <= !higher_than_yc_c
+			    && !y_arm_need_c
+			    && !c_arm_need_c
+			    && !(!poll_pending && poll_div[7:0] == 8'd0 && bus_ok_c)
+			    && !(!cmd_empty && poll_div[7:0] == 8'd64 && bus_ok_c)
+			    && !(mbox_req && poll_div[7:0] == 8'd128 && bus_ok_c)
+			    && sdram_mbox_req && poll_div[7:0] == 8'd192 && bus_ok_c;
+		end else begin
+			// Leave S_IDLE: clear so re-entry re-samples.
+			pri_frame_mbox_r <= 1'b0;
+			pri_bank_mbox_r <= 1'b0;
+			pri_sched_issue_r <= 1'b0;
+			pri_y_arm_r <= 1'b0;
+			pri_c_arm_r <= 1'b0;
+			pri_poll_r <= 1'b0;
+			pri_imbox_r <= 1'b0;
+			pri_smbox_r <= 1'b0;
+			pri_sdram_r <= 1'b0;
+		end
+	end
+
+	// I2 (DIAG): display/prep half occupancy + bank-mismatch on display half.
+	// Uses cur_base_idx/prep_base_idx from schedule combo (same half ownership).
+	integer oi;
+	always @* begin
+		occ_disp_y_c = 5'd0;
+		occ_prep_y_c = 5'd0;
+		bank_mm_disp_c = 6'd0;
+		for (oi = 0; oi < LINE_COUNT; oi = oi + 1) begin
+			if (y_valid[cur_base_idx + oi[SLOT_W-1:0]]) begin
+				occ_disp_y_c = occ_disp_y_c + 5'd1;
+				if (y_bank[cur_base_idx + oi[SLOT_W-1:0]] != disp_bank_d2)
+					bank_mm_disp_c = bank_mm_disp_c + 6'd1;
 			end
-			slot_keep = 1'b0;
-			for (tk = 0; tk < LINE_COUNT; tk = tk + 1) begin
-				if (c_valid[prep_base_idx + tj[SLOT_W-1:0]] && (c_bank[prep_base_idx + tj[SLOT_W-1:0]] == pending_bank_d2)
-				    && (c_line[prep_base_idx + tj[SLOT_W-1:0]] == tk[Y_W-1:1]))
-					slot_keep = 1'b1;
-			end
-`ifdef DDR_FRAME_STORE_FAULT_PREP_INVALID_ONLY
-			if ((!c_valid[prep_base_idx + tj[SLOT_W-1:0]]) && !found_slot_c_prep) begin
-`else
-			if ((!c_valid[prep_base_idx + tj[SLOT_W-1:0]] || !slot_keep) && !found_slot_c_prep) begin
-`endif
-				found_slot_c_prep = 1'b1;
-				target_c_idx_prep_c = prep_base_idx + tj[SLOT_W-1:0];
-			end
+			if (y_valid[prep_base_idx + oi[SLOT_W-1:0]])
+				occ_prep_y_c = occ_prep_y_c + 5'd1;
 		end
 	end
 
@@ -670,7 +1167,22 @@ module ddr_frame_store #(
 	reg [Y_QW_AW:0] qwords_remaining;
 	reg [7:0] imbox_cmd_seq;
 	reg [15:0] imbox_seq;
-	wire [28:0] fill_bank_base = fill_bank ? BASE_W1 : BASE_W0;
+	// Bank base via ddr_frame_base_mux (DYN_BASE_EN=0 → bit-identical fixed select).
+	wire [28:0] fill_bank_base;
+	wire        fill_base_using_dyn;
+	ddr_frame_base_mux #(
+		.DYN_BASE_EN(DYN_BASE_EN)
+	) u_fill_base_mux (
+		.bank(fill_bank),
+		.base_w0(BASE_W0),
+		.base_w1(BASE_W1),
+		.dyn_base0(29'd0),
+		.dyn_base1(29'd0),
+		.dyn_valid0(1'b0),
+		.dyn_valid1(1'b0),
+		.fill_bank_base(fill_bank_base),
+		.using_dyn(fill_base_using_dyn)
+	);
 	wire [28:0] fill_y_qword = {{(29-Y_W){1'b0}}, fill_y} * Y_LINE_QWORDS_W;
 `ifdef DDR_FRAME_STORE_FAULT_CHROMA_LUMA_STRIDE
 	wire [28:0] fill_cy_qword = {{(30-Y_W){1'b0}}, fill_cy} * Y_LINE_QWORDS_W;
@@ -678,7 +1190,22 @@ module ddr_frame_store #(
 	wire [28:0] fill_cy_qword = {{(30-Y_W){1'b0}}, fill_cy} * C_LINE_QWORDS_W;
 `endif
 	wire [28:0] fill_qword_y = {{(29-Y_QW_AW){1'b0}}, fill_qword[Y_QW_AW-1:0]};
-	wire [28:0] fill_qword_c = {{(29-C_QW_AW){1'b0}}, fill_qword[C_QW_AW-1:0]};
+	// softc23-cqwoffp2: FILL_C_QWORD_OFF=+2 (ladder softc17=+1 softc18=-1 softc22=-2)
+	// cut R multi 2.06→1.85× still FAIL (122). This fire: OFF=-1 (signed)
+	// opposite DDR C qword phase. Present path remains softc2 c_rd/c_sel.
+	// HOLD_MAX=0. No UV_U_BIAS / conf thrash. Clamp [0 .. C_LINE_QWORDS-1].
+	localparam int FILL_C_QWORD_OFF = 2;
+	// Signed add (OFF may be negative). Widen +1 bit so -1 is not all-ones
+	// cast into unsigned width (would corrupt +OFF).
+	wire signed [C_QW_AW+1:0] fill_c_idx_raw =
+		$signed({1'b0, fill_qword[C_QW_AW-1:0]})
+		+ (C_QW_AW+2)'(signed'(FILL_C_QWORD_OFF));
+	wire [C_QW_AW-1:0] fill_c_idx =
+		(fill_c_idx_raw < 0) ? '0
+		: (fill_c_idx_raw >= (C_QW_AW+2)'(C_LINE_QWORDS))
+			? C_QW_AW'(C_LINE_QWORDS - 1)
+			: fill_c_idx_raw[C_QW_AW-1:0];
+	wire [28:0] fill_qword_c = {{(29-C_QW_AW){1'b0}}, fill_c_idx};
 	wire [28:0] y_addr = fill_bank_base + fill_y_qword + fill_qword_y;
 	wire [28:0] u_addr = fill_bank_base + U_PLANE_BASE + fill_cy_qword + fill_qword_c;
 	wire [28:0] v_addr = fill_bank_base + V_PLANE_BASE + fill_cy_qword + fill_qword_c;
@@ -705,7 +1232,12 @@ module ddr_frame_store #(
 	                  db_stale_fallback;
 	wire spi_edge_ddr = start_d2 != start_seen;
 
-	assign debug_state = format_error ? DEBUG_FORMAT_ERROR : {LINE_COUNT[2:0], |y_valid, state_ddr};
+	// Product: {LINE_COUNT[2:0], |y_valid, state_ddr}. DIAG: I1 sticky nibble + state.
+	// format_error remains 0xE1 in both modes (host nonYuvDoorbellRejected).
+	assign debug_state = format_error ? DEBUG_FORMAT_ERROR
+	                   : (DIAG_TAG_RCA
+	                      ? {any_hit_s2, miss_both_s2, miss_y_only_s2, miss_c_only_s2, state_ddr}
+	                      : {LINE_COUNT[2:0], |y_valid, state_ddr});
 
 	always @(posedge clk_ddr) begin
 		if (reset_ddr) begin
@@ -774,6 +1306,17 @@ module ddr_frame_store #(
 			frame_miss_tog_seen <= 1'b0;
 			frame_underrun_ddr <= 16'd0;
 			frame_status_ddr <= 24'd0;
+			miss_y_only_s1 <= 1'b0;
+			miss_y_only_s2 <= 1'b0;
+			miss_c_only_s1 <= 1'b0;
+			miss_c_only_s2 <= 1'b0;
+			miss_both_s1 <= 1'b0;
+			miss_both_s2 <= 1'b0;
+			any_hit_s1 <= 1'b0;
+			any_hit_s2 <= 1'b0;
+			occ_disp_y_r <= 5'd0;
+			occ_prep_y_r <= 5'd0;
+			bank_mm_disp_r <= 6'd0;
 			mbox_seq <= 16'd0;
 			mbox_last <= 16'd0;
 			mbox_req <= 1'b1;
@@ -794,6 +1337,10 @@ module ddr_frame_store #(
 			bank_mbox_hb <= 18'd0;
 			bank_mbox_seq <= 8'd0;
 			bank_vsync_count <= 16'd0;
+			frames_done_d1 <= 16'd0;
+			frames_done_d2 <= 16'd0;
+			bank_plxd_swap_d <= 1'b0;
+			bank_plxd_disp_d <= 1'b0;
 			vsync_t_d1 <= 1'b0;
 			vsync_t_d2 <= 1'b0;
 			vsync_t_seen <= 1'b0;
@@ -827,18 +1374,30 @@ module ddr_frame_store #(
 			disp_bank_d2 <= disp_bank_d1;
 			disp_buf_d1 <= disp_buf;
 			disp_buf_d2 <= disp_buf_d1;
+// INV_NONE_ON_BUF_FLIP + Y_HOME (chevron loop): no valid clear on swap.
+// Hit requires bank match so stale half is ignored until refilled.
+// (INVALIDATE_BOTH / INV_OUTGOING disabled — cold refill caused miss/shear.)
 			has_frame_d1 <= has_frame;
 			has_frame_d2 <= has_frame_d1;
 			swap_pending_d1 <= swap_pending;
 			swap_pending_d2 <= swap_pending_d1;
 			pending_bank_d1 <= pending_bank;
 			pending_bank_d2 <= pending_bank_d1;
+			frames_done_d1 <= frames_done;
+			frames_done_d2 <= frames_done_d1;
 
-			// want_y: Gray-coded 2-FF sync (crossing #13)
+			// want_y: Gray-coded 2-FF sync (crossing #13).
+			// Only adopt when gray is stable across the two FFs. Multi-bit jumps
+			// (e.g. last line → 0 at blank) otherwise sample illegal gray codes
+			// that decode to wrong beam lines → fill tags miss pref_y (DIAG
+			// T3/T5: bank_mm=0, occ full, miss sticky, MEAN black). Hold last
+			// desired_y_r until gray_s1==gray_s2. Keeps schedule-reg STA cut.
 			want_y_gray_s1 <= want_y_gray;
 			want_y_gray_s2 <= want_y_gray_s1;
-			for (ti = 0; ti < LINE_COUNT; ti = ti + 1)
-				desired_y_r[ti] <= clamp_ahead(y_gray2bin(want_y_gray_s2), ti);
+			if (want_y_gray_s1 == want_y_gray_s2) begin
+				for (ti = 0; ti < LINE_COUNT; ti = ti + 1)
+					desired_y_r[ti] <= clamp_ahead(y_gray2bin(want_y_gray_s2), ti);
+			end
 
 			start_d1 <= start_req;
 			start_d2 <= start_d1;
@@ -859,12 +1418,38 @@ module ddr_frame_store #(
 
 			frame_miss_tog_s1 <= frame_miss_toggle;
 			frame_miss_tog_s2 <= frame_miss_tog_s1;
-			if (frame_miss_tog_s2 != frame_miss_tog_seen) begin
+			// UNDERRUN_EPOCH_CLEAR (product residual after OPT-1 F2 PASS / F1 sticky FFFF):
+			// Clear frame_underrun_ddr on display swap (frames_done advance) so F1 can
+			// climb/clear after warm miss burst. KEEP miss toggle CDC +1 path.
+			// STA-safe: single compare + load; no pri/mbox/wrap thrash.
+			if (frames_done_d2 != frames_done_d1) begin
+				frame_underrun_ddr <= 16'd0;
+				if (frame_miss_tog_s2 != frame_miss_tog_seen)
+					frame_miss_tog_seen <= frame_miss_tog_s2;
+			end else if (frame_miss_tog_s2 != frame_miss_tog_seen) begin
 				frame_miss_tog_seen <= frame_miss_tog_s2;
 				if (frame_underrun_ddr != 16'hFFFF)
 					frame_underrun_ddr <= frame_underrun_ddr + 16'd1;
 			end
-			frame_status_ddr <= {frame_underrun_ddr, debug_state};
+			// I1 CDC + I2 sample (cheap; always run so DIAG param is pure pack select).
+			miss_y_only_s1 <= miss_y_only_sticky;
+			miss_y_only_s2 <= miss_y_only_s1;
+			miss_c_only_s1 <= miss_c_only_sticky;
+			miss_c_only_s2 <= miss_c_only_s1;
+			miss_both_s1   <= miss_both_sticky;
+			miss_both_s2   <= miss_both_s1;
+			any_hit_s1     <= any_hit_sticky;
+			any_hit_s2     <= any_hit_s1;
+			occ_disp_y_r   <= occ_disp_y_c;
+			occ_prep_y_r   <= occ_prep_y_c;
+			bank_mm_disp_r <= bank_mm_disp_c;
+			// Product pack vs DIAG I1/I2 pack (MAGIC/seq path unchanged at write).
+			if (DIAG_TAG_RCA)
+				frame_status_ddr <= {occ_disp_y_r, occ_prep_y_r, bank_mm_disp_r,
+				                     any_hit_s2, miss_both_s2, miss_y_only_s2, miss_c_only_s2,
+				                     state_ddr};
+			else
+				frame_status_ddr <= {frame_underrun_ddr, debug_state};
 
 			mbox_hb <= mbox_hb + 18'd1;
 			if (!mbox_valid || (status_osd_safe != mbox_last) || (mbox_hb == 18'd0))
@@ -882,6 +1467,14 @@ module ddr_frame_store #(
 			if (vsync_t_d2 != vsync_t_seen) begin
 				vsync_t_seen <= vsync_t_d2;
 				bank_vsync_count <= bank_vsync_count + 16'd1;
+				bank_mbox_req <= 1'b1;
+			end
+			// Fresher free_mask: republish when swap_pending or disp_bank changes,
+			// not only on vsync/heartbeat. Closes the stale-free window that lets
+			// ARM overwrite the new display bank under playback-rate presents.
+			if ((swap_pending_d2 != bank_plxd_swap_d) || (disp_bank_d2 != bank_plxd_disp_d)) begin
+				bank_plxd_swap_d <= swap_pending_d2;
+				bank_plxd_disp_d <= disp_bank_d2;
 				bank_mbox_req <= 1'b1;
 			end
 			bank_mbox_hb <= bank_mbox_hb + 18'd1;
@@ -920,16 +1513,32 @@ module ddr_frame_store #(
 
 			case (state_ddr)
 				S_IDLE: begin
-					// pending_ready_ddr must stay high when prep IS ready but a
-					// CURRENT-line fill is being scheduled (sched_for_pending=0).
-					// Original: sched_valid alone suppressed pending_ready_c,
-					// creating a 1-cycle pulse at 90 MHz that the 20 MHz CLK
-					// domain 2-FF sync could not reliably capture (4.5:1 ratio).
-					pending_ready_ddr <= swap_pending_d2 &&
-					                     ((sched_valid && sched_for_pending) ? sched_pending_ready : pending_ready_c);
+					// Product (PENDING_READY_STICKY_PREP=1): once prep lines are
+					// complete, keep pending_ready high even while IDLE schedules
+					// a *current* refill. Legacy ternary
+					//   sched_valid ? (sched_for_pending && sched_pending_ready)
+					//               : pending_ready_c
+					// clears ready whenever sched_valid && !sched_for_pending —
+					// continuous need_y_cur under src_y_line (beam-tracking want_y
+					// through VBlank) then misses the 1-cycle vsync swap window and
+					// freezes bank0 (silicon 9eb1431a). Do not revive FORCE_TOP.
+					// need_*_r / target_*_r still drive S_IDLE refill (STA cut).
+					// Sticky ready uses combo pending_ready_c (not lagged pending_ready_r):
+					// after 6472789d schedule register, pending_ready_r stays 1 for one
+					// clk_ddr when swap_pending rises while prep incomplete → false ready
+					// / premature vsync swap / empty linebufs → underrun FFFF + black glass
+					// (silicon cceb58e7). pending_ready_c drops same cycle as prep miss.
+					if (PENDING_READY_STICKY_PREP) begin
+						pending_ready_ddr <= swap_pending_d2 &&
+						                     (pending_ready_c ||
+						                      (sched_valid && sched_for_pending && sched_pending_ready));
+					end else begin
+						pending_ready_ddr <= swap_pending_d2 &&
+						                     (sched_valid ? (sched_for_pending && sched_pending_ready)
+						                                  : pending_ready_c);
+					end
 					poll_div <= poll_div + 16'd1;
-					if (frame_mbox_req && (!frame_mbox_valid || poll_div[7:0] == 8'd224)
-					    && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+					if (pri_frame_mbox_r && bus_ok_c) begin
 						DDRAM_ADDR <= FRAME_MAILBOX_W;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_DIN <= {frame_status_ddr, frame_mbox_seq + 8'd1, MAGIC_F};
@@ -939,15 +1548,22 @@ module ddr_frame_store #(
 						frame_mbox_valid <= 1'b1;
 						frame_mbox_req <= 1'b0;
 						state_ddr <= S_WRITE_WAIT;
-					end else if (bank_mbox_req && (!bank_mbox_valid || poll_div[7:0] == 8'd160)
-					    && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+					end else if (pri_bank_mbox_r && bus_ok_c) begin
 						// PLXD bank-release: tell ARM which bank is safe to write
-						// Layout: [63:48] frames_done, [35] swap_pending,
-						//   [34] disp_bank, [33:32] free_bank_mask, [31:0] magic
+						// Layout: [63:48] frames_done (real swaps, CDC),
+						//   [47:36] bank_vsync_count[11:0] (glass/vsync free-run LSBs),
+						//   [35] swap_pending, [34] disp_bank,
+						//   [33:32] free_bank_mask, [31:0] magic
+						// frames_done MUST stay the real swap counter. Historical
+						// c5382bee packed bank_vsync into [63:48] so PLXD looked
+						// "live" while swaps stuck — ARM stale could not fire.
+						// Glass vsync now rides the former reserved nibble only
+						// (12-bit wrap ~68 s @60 Hz) so Δ glass rate is host-visible
+						// without reintroducing vsync-as-frames_done.
 						DDRAM_ADDR <= BANK_MAILBOX_W;
 						DDRAM_BURSTCNT <= 8'd1;
-						DDRAM_DIN <= {bank_vsync_count,                    // [63:48] frames_done
-						              12'd0,                                // [47:36] reserved
+						DDRAM_DIN <= {frames_done_d2,                       // [63:48] real swaps (CDC)
+						              bank_vsync_count[11:0],               // [47:36] glass vsync LSBs
 						              swap_pending_d2,                      // [35]
 						              disp_bank_d2,                         // [34]
 						              swap_pending_d2 ? 2'b00 :             // [33:32] free_bank_mask
@@ -959,75 +1575,77 @@ module ddr_frame_store #(
 						bank_mbox_req <= 1'b0;
 						bank_mbox_hb <= 18'd0;
 						state_ddr <= S_WRITE_WAIT;
-					end else if (PIPELINE_REFILL_SCHEDULER && sched_valid) begin
+					end else if (pri_sched_issue_r) begin
 						fill_bank <= sched_bank;
 						fill_idx <= sched_idx;
 						fill_plane_v <= 1'b0;
 						fill_qword <= '0;
 						sched_valid <= 1'b0;
+						// KEEP_VALID_UNTIL_FILL_DONE (yhome shear RCA): do NOT clear
+						// y_valid/c_valid or retag bank here. In-place Y_HOME refill
+						// used to drop valid mid-scanout → last_active orange trails
+						// (14_yhome_ychold worse than softc free-list). Tag+valid
+						// commit only when the full line lands (S_LINE_WAIT done).
 						if (sched_is_y) begin
 							fill_y <= sched_y;
-							y_valid[sched_idx] <= 1'b0;
-							y_bank[sched_idx] <= sched_bank;
 							qwords_remaining <= Y_LINE_QWORDS[Y_QW_AW:0];
 							fill_is_chroma <= 1'b0;
 						end else begin
 							fill_cy <= sched_cy;
-							c_valid[sched_idx] <= 1'b0;
-							c_bank[sched_idx] <= sched_bank;
 							qwords_remaining <= C_LINE_QWORDS[Y_QW_AW:0];
 							fill_is_chroma <= 1'b1;
 						end
 						state_ddr <= S_LINE_ISSUE;
-					end else if ((swap_pending_d2 && need_y_prep_c) || (has_frame_d2 && need_y_cur_c)) begin
+					// LINECAM_CUR_WINDOW_FIRST: cur listed first; sel_*_prep_r already
+					// demoted at schedule-reg sample when need_*_cur (see freeze above).
+					end else if (pri_y_arm_r) begin
+						// H-R1d: arm from frozen sel/bank/target_*_r only (no live swap_pending re-mux).
+						// KEEP_VALID_UNTIL_FILL_DONE: non-pipeline path also defers valid/bank tag.
 						if (PIPELINE_REFILL_SCHEDULER) begin
 							sched_valid <= 1'b1;
 							sched_is_y <= 1'b1;
-							sched_for_pending <= swap_pending_d2 && need_y_prep_c;
-							sched_bank <= (swap_pending_d2 && need_y_prep_c) ? pending_bank_d2 : disp_bank_d2;
-							sched_y <= (swap_pending_d2 && need_y_prep_c) ? target_y_prep_c : target_y_cur_c;
-							sched_idx <= (swap_pending_d2 && need_y_prep_c) ? target_y_idx_prep_c : target_y_idx_cur_c;
-							sched_pending_ready <= pending_ready_c;
+							sched_for_pending <= sel_y_prep_r;
+							sched_bank <= sched_bank_y_src_r;
+							sched_y <= sel_y_prep_r ? target_y_prep_r : target_y_cur_r;
+							sched_idx <= sel_y_prep_r ? target_y_idx_prep_r : target_y_idx_cur_r;
+							sched_pending_ready <= pending_ready_r;
 						end else begin
-							fill_bank <= (swap_pending_d2 && need_y_prep_c) ? pending_bank_d2 : disp_bank_d2;
-							fill_y <= (swap_pending_d2 && need_y_prep_c) ? target_y_prep_c : target_y_cur_c;
-							fill_idx <= (swap_pending_d2 && need_y_prep_c) ? target_y_idx_prep_c : target_y_idx_cur_c;
-							y_valid[(swap_pending_d2 && need_y_prep_c) ? target_y_idx_prep_c : target_y_idx_cur_c] <= 1'b0;
-							y_bank[(swap_pending_d2 && need_y_prep_c) ? target_y_idx_prep_c : target_y_idx_cur_c] <= (swap_pending_d2 && need_y_prep_c) ? pending_bank_d2 : disp_bank_d2;
+							fill_bank <= sched_bank_y_src_r;
+							fill_y <= sel_y_prep_r ? target_y_prep_r : target_y_cur_r;
+							fill_idx <= sel_y_prep_r ? target_y_idx_prep_r : target_y_idx_cur_r;
 							fill_is_chroma <= 1'b0;
 							fill_plane_v <= 1'b0;
 							fill_qword <= '0;
 							qwords_remaining <= Y_LINE_QWORDS[Y_QW_AW:0];
 							state_ddr <= S_LINE_ISSUE;
 						end
-					end else if ((swap_pending_d2 && need_c_prep_c) || (has_frame_d2 && need_c_cur_c)) begin
+					end else if (pri_c_arm_r) begin
+						// H-R1d + CUR_WINDOW_FIRST chroma twin — frozen sel/bank/target only.
 						if (PIPELINE_REFILL_SCHEDULER) begin
 							sched_valid <= 1'b1;
 							sched_is_y <= 1'b0;
-							sched_for_pending <= swap_pending_d2 && need_c_prep_c;
-							sched_bank <= (swap_pending_d2 && need_c_prep_c) ? pending_bank_d2 : disp_bank_d2;
-							sched_cy <= (swap_pending_d2 && need_c_prep_c) ? target_c_prep_c : target_c_cur_c;
-							sched_idx <= (swap_pending_d2 && need_c_prep_c) ? target_c_idx_prep_c : target_c_idx_cur_c;
-							sched_pending_ready <= pending_ready_c;
+							sched_for_pending <= sel_c_prep_r;
+							sched_bank <= sched_bank_c_src_r;
+							sched_cy <= sel_c_prep_r ? target_c_prep_r : target_c_cur_r;
+							sched_idx <= sel_c_prep_r ? target_c_idx_prep_r : target_c_idx_cur_r;
+							sched_pending_ready <= pending_ready_r;
 						end else begin
-							fill_bank <= (swap_pending_d2 && need_c_prep_c) ? pending_bank_d2 : disp_bank_d2;
-							fill_cy <= (swap_pending_d2 && need_c_prep_c) ? target_c_prep_c : target_c_cur_c;
-							fill_idx <= (swap_pending_d2 && need_c_prep_c) ? target_c_idx_prep_c : target_c_idx_cur_c;
-							c_valid[(swap_pending_d2 && need_c_prep_c) ? target_c_idx_prep_c : target_c_idx_cur_c] <= 1'b0;
-							c_bank[(swap_pending_d2 && need_c_prep_c) ? target_c_idx_prep_c : target_c_idx_cur_c] <= (swap_pending_d2 && need_c_prep_c) ? pending_bank_d2 : disp_bank_d2;
+							fill_bank <= sched_bank_c_src_r;
+							fill_cy <= sel_c_prep_r ? target_c_prep_r : target_c_cur_r;
+							fill_idx <= sel_c_prep_r ? target_c_idx_prep_r : target_c_idx_cur_r;
 							fill_is_chroma <= 1'b1;
 							fill_plane_v <= 1'b0;
 							fill_qword <= '0;
 							qwords_remaining <= C_LINE_QWORDS[Y_QW_AW:0];
 							state_ddr <= S_LINE_ISSUE;
 						end
-					end else if (!poll_pending && poll_div[7:0] == 8'd0 && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+					end else if (pri_poll_r && bus_ok_c) begin
 						DDRAM_ADDR <= DOORBELL_W;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_RD <= 1'b1;
 						poll_pending <= 1'b1;
 						state_ddr <= S_POLL_WAIT;
-					end else if (!cmd_empty && poll_div[7:0] == 8'd64 && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+					end else if (pri_imbox_r && bus_ok_c) begin
 						DDRAM_ADDR <= INPUT_MAILBOX_W;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_DIN <= {imbox_seq + 16'd1, imbox_cmd_seq + 8'd1, cmd_rdata, MAGIC_I};
@@ -1036,7 +1654,7 @@ module ddr_frame_store #(
 						imbox_seq <= imbox_seq + 16'd1;
 						imbox_cmd_seq <= imbox_cmd_seq + 8'd1;
 						state_ddr <= S_WRITE_WAIT;
-					end else if (mbox_req && poll_div[7:0] == 8'd128 && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+					end else if (pri_smbox_r && bus_ok_c) begin
 						DDRAM_ADDR <= MAILBOX_W;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_DIN <= {mbox_seq + 16'd1, status_osd_safe, MAGIC_S};
@@ -1046,7 +1664,7 @@ module ddr_frame_store #(
 						mbox_valid <= 1'b1;
 						mbox_req <= 1'b0;
 						state_ddr <= S_WRITE_WAIT;
-					end else if (sdram_mbox_req && poll_div[7:0] == 8'd192 && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+					end else if (pri_sdram_r && bus_ok_c) begin
 						DDRAM_ADDR <= SDRAM_MAILBOX_W;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_DIN <= {sdram_status_safe, sdram_mbox_seq + 8'd1, MAGIC_M};
@@ -1130,25 +1748,5 @@ module ddr_frame_store #(
 		end
 	end
 endmodule
-
-module mplex_hold_lcell (
-	input  wire din,
-	output wire dout
-);
-`ifdef VERILATOR
-	assign dout = din;
-`else
-	cyclonev_lcell_comb #(
-		.lut_mask(64'hAAAAAAAAAAAAAAAA),
-		.dont_touch("on")
-	) hold_lcell (
-		.dataa(din),
-		.datab(1'b0),
-		.datac(1'b0),
-		.datad(1'b0),
-		.datae(1'b0),
-		.dataf(1'b0),
-		.combout(dout)
-	);
-`endif
-endmodule
+// mplex_hold_lcell lives in rtl/mplex_hold_lcell.sv (files.qip) — do not
+// redeclare here (Quartus Error 10228: cannot be declared more than once).

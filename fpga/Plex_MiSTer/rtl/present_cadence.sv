@@ -23,7 +23,9 @@ module present_cadence (
 			if (dh == 0)
 				floor_mul = n;
 			else
-				floor_mul = (n * cf) / dh;
+				// content_index = floor(n * cf / dh); widen 8-bit rates to 32
+				// so DIV/MUL match the 32-bit accumulator (cf,dh are fps/Hz ≤255).
+				floor_mul = (n * {24'd0, cf}) / {24'd0, dh};
 		end
 	endfunction
 

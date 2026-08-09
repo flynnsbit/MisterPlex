@@ -42,8 +42,15 @@ assign BUTTONS = 0;
 //////////////////////////////////////////////////////////////////
 
 wire [1:0] ar = status[122:121];
-assign VIDEO_ARX = (!ar) ? 12'd4 : (ar - 1'd1);
-assign VIDEO_ARY = (!ar) ? 12'd3 : 12'd0;
+// Aspect tracks content FRAME_W:H (QSF). 1280x720 → 16:9.
+`ifndef FRAME_W
+`define FRAME_W 320
+`endif
+`ifndef FRAME_H
+`define FRAME_H 240
+`endif
+assign VIDEO_ARX = (!ar) ? 12'(`FRAME_W) : (ar - 1'd1);
+assign VIDEO_ARY = (!ar) ? 12'(`FRAME_H) : 12'd0;
 
 `include "build_id.v"
 localparam CONF_STR = {
@@ -207,6 +214,9 @@ end
 wire clk_sys;
 wire clk_sdram;
 wire clk_ddr;
+`ifdef PRESENT_CLK_PIX_PLL
+wire clk_pix_pll;
+`endif
 wire pll_locked;
 pll pll
 (
@@ -215,17 +225,194 @@ pll pll
 	.outclk_0(clk_sys),
 	.outclk_1(clk_sdram),
 	.outclk_2(clk_ddr),
+`ifdef PRESENT_CLK_PIX_PLL
+	.outclk_3(clk_pix_pll),
+`endif
 	.locked(pll_locked)
 );
 
 wire reset = RESET | status[0] | buttons[1];
 
-// O[4] is the native content-resolution selector shared with misterplexd.
-// C1B owns the selector/ABI; the DDR-backed frame-store branch consumes these
-// dimensions for the actual 480p present path.
-wire        content_res_640x480 = status[4];
-wire [9:0]  content_width       = content_res_640x480 ? 10'd640 : 10'd320;
-wire [9:0]  content_height      = content_res_640x480 ? 10'd480 : 10'd240;
+// Fabric clock kit stamp (w-clock): noprune constants for post-fit hierarchy.
+wire [31:0] clkstat_sys_hz, clkstat_pix_hz, clkstat_cea_pf, clkstat_l4_pf;
+wire [7:0]  clkstat_ppc;
+wire        clkstat_cea_fast, clkstat_l4_fast, clkstat_valid;
+wire [15:0] clkstat_peak_x10;
+plex_clk_status u_plex_clk_status (
+	.clk(clk_sys),
+	.reset(reset),
+	.clk_sys_hz(clkstat_sys_hz),
+	.clk_pix_hz(clkstat_pix_hz),
+	.present_ppc(clkstat_ppc),
+	.cea_pix_frame(clkstat_cea_pf),
+	.l4_pix_frame(clkstat_l4_pf),
+	.cea_24_needs_faster_pix(clkstat_cea_fast),
+	.l4_24_needs_faster_sys(clkstat_l4_fast),
+	.peak_mpix_s_x10(clkstat_peak_x10),
+	.kit_id_valid(clkstat_valid)
+);
+wire _unused_clkstat = |{clkstat_sys_hz, clkstat_pix_hz, clkstat_ppc, clkstat_cea_pf,
+	clkstat_l4_pf, clkstat_cea_fast, clkstat_l4_fast, clkstat_peak_x10, clkstat_valid};
+
+// Fabric BW contract stamp (w-clock): 33.1776 MB/s/dir SoT.
+wire [31:0] bwstat_dir_bps;
+wire [17:0] bwstat_beats;
+wire [18:0] bwstat_rw;
+wire [7:0]  bwstat_ppc;
+wire        bwstat_nack_de;
+wire [15:0] bwstat_tcopy;
+wire [15:0] bwstat_budget;
+plex_bw_status u_plex_bw_status (
+	.clk(clk_sys),
+	.bw_dir_b_per_s(bwstat_dir_bps),
+	.bw_beats_per_frame(bwstat_beats),
+	.bw_beats_rw_pair(bwstat_rw),
+	.bw_product_ppc(bwstat_ppc),
+	.bw_nack_de_peak_is_not_ddr(bwstat_nack_de),
+	.bw_t_copy_arm_us(bwstat_tcopy),
+	.bw_frame_budget_us(bwstat_budget)
+);
+wire _unused_bwstat = |{bwstat_dir_bps, bwstat_beats, bwstat_rw, bwstat_ppc, bwstat_nack_de,
+	bwstat_tcopy, bwstat_budget};
+
+// O[5:4] content-resolution selector (see p720 scope). Product elaborate-time
+// FRAME_W/H are the silicon canvas; these wires are status/OSD hints only.
+// Width must be ≥11 bits: 1280 does not fit in [9:0] (max 1023).
+wire [1:0]  content_res_sel     = status[5:4];
+wire [10:0] content_width =
+	(content_res_sel == 2'b10) ? 11'd1280 :
+	(content_res_sel == 2'b01) ? 11'd640  : 11'd320;
+wire [10:0] content_height =
+	(content_res_sel == 2'b10) ? 11'd720  :
+	(content_res_sel == 2'b01) ? 11'd480  : 11'd240;
+// Legacy 1-bit view of O[4] for plex_present_geom_mux (640 vs 320 ladder).
+wire        content_res_640x480 = (content_res_sel == 2'b01);
+// ---------------------------------------------------------------------------
+// L4 720p present geom hierarchy (DEFAULT OFF via PLEX_PRESENT_720P_L4).
+// Instantiates present_geom_latch + plex_present_geom_mux so they are not
+// QIP-only dead code. Poller (plxg_ddr_poller) is w-mem — not this land;
+// latch wr_en/commit stay 0 here. Enable recipe also sets
+// FABRIC_NATIVE_720P_GEOM so mux forces 1280×720 static geometry until
+// poller lands. Product default (macro off) does not elaborate this block.
+// ---------------------------------------------------------------------------
+`ifdef PLEX_PRESENT_720P_L4
+wire        plxg_wr_en = 1'b0;
+wire [2:0]  plxg_wr_idx = 3'd0;
+wire [63:0] plxg_wr_data = 64'd0;
+wire        plxg_commit = 1'b0;
+wire        plxg_frame_boundary = 1'b0; // promote unused until poller+vsync wire
+wire        plxg_win_en, plxg_geom_en, plxg_live_valid;
+wire [10:0] plxg_cw, plxg_ch, plxg_cx0, plxg_cy0;
+wire [11:0] plxg_hde12, plxg_vde12;
+wire [10:0] plxg_hde = plxg_hde12[10:0];
+wire [10:0] plxg_vde = plxg_vde12[10:0];
+wire [10:0] plxg_coded_w, plxg_coded_h;
+wire [11:0] plxg_y_stride;
+wire [10:0] plxg_c_stride, plxg_dw, plxg_dh, plxg_px, plxg_py, plxg_cl, plxg_ct;
+wire        plxg_dar_valid, plxg_fps_valid;
+wire [11:0] plxg_dar_x, plxg_dar_y;
+wire [7:0]  plxg_content_fps;
+wire [15:0] plxg_live_seq;
+wire [13:0] plxg_live_epoch;
+wire        plxg_pending_valid, plxg_promote_pulse;
+
+(* noprune *) present_geom_latch u_plxg_latch (
+	.clk(clk_sys),
+	.reset(reset),
+	.wr_en(plxg_wr_en),
+	.wr_idx(plxg_wr_idx),
+	.wr_data(plxg_wr_data),
+	.commit(plxg_commit),
+	.frame_boundary(plxg_frame_boundary),
+	.win_enable(plxg_win_en),
+	.geom_enable(plxg_geom_en),
+	.content_w(plxg_cw),
+	.content_h(plxg_ch),
+	.content_x0(plxg_cx0),
+	.content_y0(plxg_cy0),
+	.h_de(plxg_hde12),
+	.v_de(plxg_vde12),
+	.coded_w(plxg_coded_w),
+	.coded_h(plxg_coded_h),
+	.y_stride(plxg_y_stride),
+	.chroma_stride(plxg_c_stride),
+	.display_w(plxg_dw),
+	.display_h(plxg_dh),
+	.present_x(plxg_px),
+	.present_y(plxg_py),
+	.crop_left(plxg_cl),
+	.crop_top(plxg_ct),
+	.dar_valid(plxg_dar_valid),
+	.dar_x(plxg_dar_x),
+	.dar_y(plxg_dar_y),
+	.fps_valid(plxg_fps_valid),
+	.content_fps(plxg_content_fps),
+	.live_valid(plxg_live_valid),
+	.live_seq(plxg_live_seq),
+	.live_epoch(plxg_live_epoch),
+	.pending_valid(plxg_pending_valid),
+	.promote_pulse(plxg_promote_pulse)
+);
+
+wire        present_win_enable, present_geom_enable;
+wire [10:0] present_content_w, present_content_h;
+wire [10:0] present_content_x0, present_content_y0;
+wire [10:0] present_win_h_de, present_win_v_de;
+wire [10:0] present_geom_coded_w, present_geom_coded_h;
+wire [11:0] present_geom_y_stride;
+wire [10:0] present_geom_chroma_stride;
+wire [10:0] present_geom_display_w, present_geom_display_h;
+wire [10:0] present_geom_present_x, present_geom_present_y;
+wire [10:0] present_geom_crop_left, present_geom_crop_top;
+
+(* noprune *) plex_present_geom_mux u_present_geom_mux (
+	.content_res_640x480(content_res_640x480),
+	.plxg_live_valid(plxg_live_valid),
+	.plxg_win_en(plxg_win_en),
+	.plxg_geom_en(plxg_geom_en),
+	.plxg_cw(plxg_cw),
+	.plxg_ch(plxg_ch),
+	.plxg_cx0(plxg_cx0),
+	.plxg_cy0(plxg_cy0),
+	.plxg_hde(plxg_hde),
+	.plxg_vde(plxg_vde),
+	.plxg_coded_w(plxg_coded_w),
+	.plxg_coded_h(plxg_coded_h),
+	.plxg_y_stride(plxg_y_stride),
+	.plxg_c_stride(plxg_c_stride),
+	.plxg_dw(plxg_dw),
+	.plxg_dh(plxg_dh),
+	.plxg_px(plxg_px),
+	.plxg_py(plxg_py),
+	.plxg_cl(plxg_cl),
+	.plxg_ct(plxg_ct),
+	.present_win_enable(present_win_enable),
+	.present_geom_enable(present_geom_enable),
+	.content_width(present_content_w),
+	.content_height(present_content_h),
+	.present_content_x0(present_content_x0),
+	.present_content_y0(present_content_y0),
+	.present_win_h_de(present_win_h_de),
+	.present_win_v_de(present_win_v_de),
+	.present_geom_coded_w(present_geom_coded_w),
+	.present_geom_coded_h(present_geom_coded_h),
+	.present_geom_y_stride(present_geom_y_stride),
+	.present_geom_chroma_stride(present_geom_chroma_stride),
+	.present_geom_display_w(present_geom_display_w),
+	.present_geom_display_h(present_geom_display_h),
+	.present_geom_present_x(present_geom_present_x),
+	.present_geom_present_y(present_geom_present_y),
+	.present_geom_crop_left(present_geom_crop_left),
+	.present_geom_crop_top(present_geom_crop_top)
+);
+
+// Anti-DCE: L4 hierarchy must survive map even before poller.
+(* keep = 1 *) wire _keep_l4_geom =
+	present_win_enable | present_geom_enable | |present_content_w | |present_content_h |
+	|present_win_h_de | |present_win_v_de | plxg_live_valid | |plxg_live_seq |
+	plxg_pending_valid | plxg_promote_pulse | |present_geom_y_stride |
+	|present_content_x0 | |present_content_y0 | |present_geom_display_w;
+`endif
 
 // Legacy cadence input is now fixed; the daemon handles exact content pacing.
 wire [7:0] content_fps = 8'd24;
@@ -277,9 +464,13 @@ localparam int FRAME_BYTES = FRAME_W * FRAME_H * 3 / 2;
 `else
 localparam int FRAME_BYTES = FRAME_STRIDE * FRAME_H * 2;
 `endif
+// Align with ddr_frame_layout_params / host kPlex720p bank stride when possible.
+// 1280×720 I420 = 1_382_400 B → 0x18_0000 (1.5 MiB) tier before 2 MiB.
 localparam int HPS_BANK_STRIDE_BYTES =
 	(FRAME_BYTES <= 262144)  ? 262144  :
+	(FRAME_BYTES <= 524288)  ? 524288  :
 	(FRAME_BYTES <= 1048576) ? 1048576 :
+	(FRAME_BYTES <= 1572864) ? 1572864 :
 	(FRAME_BYTES <= 2097152) ? 2097152 : 4194304;
 
 // Single-stick SDRAM controller. At cold start the destructive B1 memtest owns
@@ -570,7 +761,7 @@ wire [63:0] stream_ddr_din;
 wire  [7:0] stream_ddr_be;
 wire        stream_ddr_we;
 
-// Product DDR writeback (stream_path decode_core → fpga_ddr_writeback)
+// Product DDR writeback (overnight stream_path decode_core → fpga_ddr_writeback)
 wire        decode_dpb_wr_en;
 wire [31:0] decode_dpb_wr_addr;
 wire [7:0]  decode_dpb_wr_data;
@@ -599,6 +790,17 @@ assign stream_ddr_busy = 1'b1;
 assign stream_ddr_dout = 64'd0;
 assign stream_ddr_dout_ready = 1'b0;
 `endif
+
+// Overnight stream_path has no softc23 hybrid_* ports; tie keeps for status chain.
+wire        hybrid_fpga_owned_w = 1'b0;
+wire        hybrid_host_required_w = 1'b0;
+wire        product_recon_ok_w = 1'b0;
+wire [2:0]  hybrid_own_code_w = 3'd0;
+wire [3:0]  hybrid_own_reason_w = 4'd0;
+wire        entropy_cabac_w = 1'b0;
+wire signed [15:0] product_fetch_mv_x_w = 16'sd0, product_fetch_mv_y_w = 16'sd0;
+wire signed [15:0] product_luma_origin_x_w = 16'sd0, product_luma_origin_y_w = 16'sd0;
+wire signed [15:0] first_mb_mvd_x_w = 16'sd0, first_mb_mvd_y_w = 16'sd0;
 
 stream_path #(
 	.FRAME_W(FRAME_W),
@@ -734,6 +936,8 @@ always @(posedge clk_sys) begin
 		host_owns_fs <= 1'b0;
 end
 
+// Host F1/DDR paths win while owning; stub paint only when host does not own.
+// product_recon_ok_w is tied 0 on overnight stream_path (no hybrid ports).
 wire        stub_allow  = ~host_owns_fs & ~ingest_dl & ~ddr_busy;
 wire        host_wr     = ingest_dl | f1_wr_en | ddr_wr_en;
 wire        fs_wr_en    = ingest_dl ? f1_wr_en
@@ -745,6 +949,14 @@ wire [15:0] fs_wr_pixel = ingest_dl ? f1_wr_pixel
 wire        fs_wr_reset = f1_wr_reset | ddr_wr_reset | (stub_wr_reset & stub_allow);
 wire        fs_swap     = f1_swap | ddr_swap | (stub_swap & stub_allow);
 wire        _host_wr_unused = host_wr;
+// Observe hybrid handoff ties so fitting cannot prune keep nets as dead.
+(* keep = 1 *) wire _keep_hybrid_product =
+	product_recon_ok_w | hybrid_host_required_w | hybrid_fpga_owned_w |
+	|hybrid_own_code_w | |hybrid_own_reason_w |
+	|product_fetch_mv_x_w | |product_fetch_mv_y_w |
+	|product_luma_origin_x_w | |product_luma_origin_y_w |
+	|first_mb_mvd_x_w | |first_mb_mvd_y_w |
+	|wb_frames_written | wb_active | fpga_glass_swap;
 
 wire ce_pix, HBlank, HSync, VBlank, VSync;
 wire [7:0] r, g, b;
@@ -774,6 +986,13 @@ present_core #(
 	.clk(clk_sys),
 	.clk_sdram(clk_sdram),
 	.clk_audio(CLK_AUDIO),
+	// clk_pix: product default ties to clk_sys. PRESENT_CLK_PIX_PLL (default
+	// OFF) drives outclk_3 = 29.70 MHz (or 74.25 with PRESENT_CLK_PIX_74_25).
+`ifdef PRESENT_CLK_PIX_PLL
+	.clk_pix(clk_pix_pll),
+`else
+	.clk_pix(clk_sys),
+`endif
 	.reset(present_reset),
 	.pal(status[2]),
 	.scandouble(forced_scandoubler),
@@ -784,7 +1003,18 @@ present_core #(
 	// defaults (Pattern=None, Audio tone=Off, Force bars=No).
 	.pattern(2'd0),
 	.audio_en(1'b0),
+	// use_frame_store=1 FORCES colorbars (disables external frame). Keep 0 so
+	// DDR/has_frame can feed the store when present. Not an "enable store" bit.
 	.use_frame_store(1'b0),
+	// L4: content from plex_present_geom_mux (FABRIC_NATIVE_720P_GEOM → 1280×720).
+	// Default Template path ignores these (tied 0).
+`ifdef PLEX_PRESENT_720P_L4
+	.content_w(present_content_w),
+	.content_h(present_content_h),
+`else
+	.content_w(11'd0),
+	.content_h(11'd0),
+`endif
 	.fs_wr_en(fs_wr_en),
 	.fs_wr_pixel(fs_wr_pixel),
 	.fs_wr_reset(fs_wr_reset),
@@ -893,7 +1123,12 @@ ddr_bus_arbiter ddr_arb (
 );
 `endif
 
+// CLK_VIDEO must match CE_PIXEL/VGA_* domain. MULTI+clk_pix emits on clk_pix.
+`ifdef PRESENT_CLK_PIX_PLL
+assign CLK_VIDEO = clk_pix_pll;
+`else
 assign CLK_VIDEO = clk_sys;
+`endif
 assign CE_PIXEL  = ce_pix;
 assign VGA_DE = ~(HBlank | VBlank);
 assign VGA_HS = HSync;
@@ -934,6 +1169,59 @@ assign LED_USER = has_stream ? (act_cnt[20] ^ nalu_count[0] ^ last_nal_type[0])
 //   [119:112] recon_sig        (3.3l-2 XOR recon Y[0:15]; MB0 block0 golden 0x3b)
 //   [127:120] p3_recon_dbg     (coeff/dequant/idct/recon non-zero flags for silicon RCA)
 //   [122:121] forced from status (Aspect ratio) — overlaps stream debug only
+// Product cfg stamp (w-nostub): fabric-visible PRODUCT_NO_STUB / DDR_FRAME_STORE /
+// FABRIC_FRAME_DMA. Folded into _unused keep-chain so Quartus cannot strip them.
+wire product_cfg_no_stub;
+wire product_cfg_ddr_fs;
+wire product_cfg_fabric_dma;
+plex_product_cfg u_product_cfg (
+	.product_no_stub(product_cfg_no_stub),
+	.ddr_frame_store_en(product_cfg_ddr_fs),
+	.fabric_frame_dma_en(product_cfg_fabric_dma)
+);
+
+// Fabric DMA hierarchy (integ/720p-compose). start tied 0 until ARM handover
+// wires kick — pays bounce M10K + ALM in the fit without contending the live
+// f2sdram port (DDRAM_* held local). w-mem owns full bus mux (arbiter3) next.
+`ifdef FABRIC_FRAME_DMA
+wire        fdma_busy, fdma_done, fdma_err;
+wire [31:0] fdma_rd_beats, fdma_wr_beats, fdma_last_fb;
+wire  [7:0] fdma_bcnt, fdma_be;
+wire [28:0] fdma_addr;
+wire [63:0] fdma_din;
+wire        fdma_rd, fdma_we;
+(* noprune *) ddr_frame_dma #(
+	.BOUNCE_DEPTH(128),
+	.DEFAULT_FRAME_BYTES(1_382_400)
+) u_fabric_frame_dma (
+	.clk(clk_ddr),
+	.reset(reset),
+	.start(1'b0),
+	.src_phys(32'h0),
+	.bank_phys(32'h0),
+	.frame_bytes(32'd0),
+	.busy(fdma_busy),
+	.done(fdma_done),
+	.err_align(fdma_err),
+	.rd_beats(fdma_rd_beats),
+	.wr_beats(fdma_wr_beats),
+	.last_frame_bytes(fdma_last_fb),
+	.DDRAM_BUSY(1'b1),
+	.DDRAM_BURSTCNT(fdma_bcnt),
+	.DDRAM_ADDR(fdma_addr),
+	.DDRAM_DOUT(64'd0),
+	.DDRAM_DOUT_READY(1'b0),
+	.DDRAM_RD(fdma_rd),
+	.DDRAM_DIN(fdma_din),
+	.DDRAM_BE(fdma_be),
+	.DDRAM_WE(fdma_we)
+);
+wire _unused_fdma = |{fdma_busy, fdma_done, fdma_err, fdma_rd_beats, fdma_wr_beats,
+	fdma_last_fb, fdma_bcnt, fdma_addr, fdma_din, fdma_rd, fdma_we, fdma_be};
+`else
+wire _unused_fdma = 1'b0;
+`endif
+
 wire [7:0] telem_flags = {
 	pps_valid, sps_valid, stub_busy, has_idr,
 	audio_underrun, has_stream, has_audio, has_frame
@@ -1066,6 +1354,43 @@ always @(posedge clk_sys) begin
 	end
 end
 
+
+// ---------------------------------------------------------------------------
+// Fabric RBF build stamp (w-fitgate) — binds bitstream to git commit prefix.
+// Params from rtl/plex_rbf_build_id_params.vh (scripts/gen_rbf_build_id_vh.py).
+// PRODUCT_WIRE stays 0: stamp is NOT muxed into status_in / video / DDR.
+// Hierarchy survival relies on (* noprune *) instance + noprune observe/keep
+// (preserve alone was pruned when fanout was only a dead _unused OR-tree).
+// ---------------------------------------------------------------------------
+`include "rtl/plex_rbf_build_id_params.vh"
+wire [63:0] rbf_build_id;
+wire        rbf_build_id_valid;
+wire        rbf_stamp_alive;
+(* noprune *) plex_rbf_build_id #(
+	.MAGIC(32'h504C5842),
+	.COMMIT_PREFIX(`PLEX_RBF_COMMIT_PREFIX),
+	.GIT_DIRTY(`PLEX_RBF_GIT_DIRTY),
+	.QIP_COUNT(`PLEX_RBF_QIP_COUNT),
+	.FAULT_ZERO_STAMP(1'b0)
+) u_rbf_build_id (
+	.clk(clk_sys),
+	.reset(reset),
+	.build_id(rbf_build_id),
+	.id_valid(rbf_build_id_valid),
+	.stamp_alive(rbf_stamp_alive)
+);
+// Observe stamp into noprune flops + keep wire so map cannot strip the entity.
+(* preserve, noprune *) reg [31:0] rbf_build_id_observe_r;
+always @(posedge clk_sys) begin
+	if (reset)
+		rbf_build_id_observe_r <= 32'd0;
+	else
+		rbf_build_id_observe_r <= rbf_build_id[63:32] ^ rbf_build_id[31:0] ^
+			{31'd0, rbf_stamp_alive} ^ {31'd0, rbf_build_id_valid};
+end
+(* keep, noprune *) wire _keep_rbf_build_id =
+	(|rbf_build_id_observe_r) | rbf_stamp_alive | rbf_build_id_valid | (|rbf_build_id);
+
 // Silence unused
 wire _unused = |{disp_i, cont_i, advance, ingest_pixels, ingest_dl, af_active, ioctl_addr,
 	sps_count, pps_count, slice_count, wr_count, stream_bytes_seen, sps_profile, sps_level,
@@ -1078,6 +1403,11 @@ wire _unused = |{disp_i, cont_i, advance, ingest_pixels, ingest_dl, af_active, i
 	stream_fifo_level, ddr_frames, stream_ddr_active, stream_ddr_bytes_out,
 	stream_ddr_underruns, stream_ddr_overruns, stream_ddr_host_write,
 	stream_ddr_fpga_read, stream_ddr_bus_want, stream_ddr_burstcnt, stream_ddr_addr,
-	stream_ddr_rd, stream_ddr_din, stream_ddr_be, stream_ddr_we, _host_wr_unused};
+	stream_ddr_rd, stream_ddr_din, stream_ddr_be, stream_ddr_we, _host_wr_unused,
+	rbf_stamp_alive, rbf_build_id_valid, rbf_build_id_observe_r, _keep_rbf_build_id,
+	product_cfg_no_stub, product_cfg_ddr_fs, product_cfg_fabric_dma,
+	_unused_clkstat, _unused_bwstat, _unused_fdma,
+	wb_ddr_want, wb_ddr_burstcnt, wb_ddr_addr, wb_ddr_din, wb_ddr_be, wb_ddr_we, wb_ddr_rd,
+	wb_frames_written, wb_active, fpga_glass_swap, decode_frame_done, decode_dpb_wr_en};
 
 endmodule
