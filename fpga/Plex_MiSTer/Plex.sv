@@ -676,7 +676,8 @@ stream_path #(
 
 // FPGA decode → DDR present bank (PLXK doorbell). Shares m1 with stream ingest.
 `ifdef DDR_FRAME_STORE
-`include "ddr_frame_layout_params.svh"
+// Plex.sv lives at project root; Quartus include path is not rtl/ (unlike modules under rtl/).
+`include "rtl/ddr_frame_layout_params.svh"
 fpga_ddr_writeback #(
 	.PHYS_BASE(32'h3000_0000),
 	.BANK_STRIDE_BYTES(DDR_FRAME_YUV420P_BANK_STRIDE),
