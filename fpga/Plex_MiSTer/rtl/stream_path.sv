@@ -974,20 +974,6 @@ module stream_path #(
 		.error(core_error)
 	);
 
-	// Product decode rooted at product_decode_core.
-	// PRODUCT GLASS: gate decode_stub under DDR_FRAME_STORE (fit5 painter is offline-only).
-`ifdef DDR_FRAME_STORE
-	assign recon_sig = 8'd0;
-	assign recon_dbg = 8'd0;
-	assign recon_dbg_valid = 1'b0;
-	assign recon_valid = 1'b0;
-	assign fs_wr_en = 1'b0;
-	assign fs_wr_pixel = 16'd0;
-	assign fs_wr_reset = 1'b0;
-	assign fs_swap = 1'b0;
-	assign stub_busy = 1'b0;
-	assign stub_frames = 16'd0;
-`else
 	// Product decode is always rooted at product_decode_core above.  The legacy
 	// decode_stub remains the required diagnostic painter. Product DPB state is
 	// not duplicated because ENABLE_DPB_REF_SEAM=0 below.
@@ -1038,8 +1024,6 @@ module stream_path #(
 		);
 		end
 	endgenerate
-`endif
-
 	// Export DPB byte-writes + frame_done for product DDR present path.
 	assign decode_dpb_wr_en   = core_dpb_wr_en;
 	assign decode_dpb_wr_addr = core_dpb_wr_addr;
