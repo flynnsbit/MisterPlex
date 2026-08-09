@@ -40,7 +40,8 @@ module h264_rbsp_window #(
 );
 	localparam int WORDS       = (DEPTH_BYTES + WORD_BYTES - 1) / WORD_BYTES;
 	localparam int WORD_ADDR_W = (WORDS <= 1) ? 1 : $clog2(WORDS);
-	localparam int FILL_BEATS  = (WINDOW_BYTES + WORD_BYTES - 1) / WORD_BYTES;
+	// +1 beat needed when base is unaligned (tail spills into next word)
+	localparam int FILL_BEATS  = (WINDOW_BYTES / WORD_BYTES) + 1;
 	localparam int BEAT_W      = (FILL_BEATS <= 1) ? 1 : $clog2(FILL_BEATS);
 	localparam int LANE_W      = (WORD_BYTES <= 1) ? 1 : $clog2(WORD_BYTES);
 	localparam int BYTE_ADDR_W = (DEPTH_BYTES <= 1) ? 1 : $clog2(DEPTH_BYTES);
@@ -117,9 +118,13 @@ module h264_rbsp_window #(
 
 	// Fill FSM: beat loop with registered M10K read.
 	// Phase 0: drive address. Phase 1: capture word + scatter into window.
+	// Unaligned base: lane_offset = fill_base_r[LANE_W-1:0]; window[k] gets
+	// the byte at absolute address (fill_base_r + k).  For beat b, byte bj of
+	// the word maps to win_idx = b*WORD_BYTES + bj - lane_offset.
 	reg                    fill_active_r;
 	reg                    fill_phase_r; // 0=addr, 1=capt
 	reg [15:0]             fill_base_r;
+	reg [LANE_W-1:0]       fill_lane_off_r; // fill_base_r[LANE_W-1:0]
 	reg [BEAT_W-1:0]       beat_r;
 	reg [WORD_ADDR_W-1:0]  rd_addr_r;
 	reg [WORD_BYTES*8-1:0] rd_data_r;
@@ -127,47 +132,57 @@ module h264_rbsp_window #(
 	wire [15:0] req_base_clamped =
 		(req_offset >= DEPTH_W) ? (DEPTH_W - 16'(WINDOW_BYTES)) : req_offset;
 
-	wire [15:0] beat_base = 16'(beat_r) * 16'(WORD_BYTES);
-
 	integer bi, bj;
 	always @(posedge clk) begin
 		if (reset || wr_clear) begin
-			fill_active_r <= 1'b0;
-			fill_phase_r  <= 1'b0;
-			fill_base_r   <= 16'd0;
-			beat_r        <= '0;
-			rd_addr_r     <= '0;
-			rd_data_r     <= '0;
-			window_valid  <= 1'b0;
-			window_base   <= 16'd0;
+			fill_active_r  <= 1'b0;
+			fill_phase_r   <= 1'b0;
+			fill_base_r    <= 16'd0;
+			fill_lane_off_r <= '0;
+			beat_r         <= '0;
+			rd_addr_r      <= '0;
+			rd_data_r      <= '0;
+			window_valid   <= 1'b0;
+			window_base    <= 16'd0;
 			for (bi = 0; bi < WINDOW_BYTES; bi = bi + 1)
 				window[bi] <= 8'd0;
 		end else if (req_valid) begin
-			fill_active_r <= 1'b1;
-			fill_phase_r  <= 1'b0;
-			fill_base_r   <= req_base_clamped;
-			beat_r        <= '0;
-			rd_addr_r     <= req_base_clamped[BYTE_ADDR_W-1:LANE_W];
-			window_valid  <= 1'b0;
+			fill_active_r  <= 1'b1;
+			fill_phase_r   <= 1'b0;
+			fill_base_r    <= req_base_clamped;
+			fill_lane_off_r <= req_base_clamped[LANE_W-1:0];
+			beat_r         <= '0;
+			rd_addr_r      <= req_base_clamped[BYTE_ADDR_W-1:LANE_W];
+			window_valid   <= 1'b0;
 		end else if (fill_active_r) begin
 			if (!fill_phase_r) begin
-				// Address held on rd_addr_r this cycle; capture next.
+				// Address held on rd_addr_r this cycle; next cycle captures data.
 				fill_phase_r <= 1'b1;
 			end else begin
-				rd_data_r <= mem[rd_addr_r];
-				// Scatter happens with the captured data next cycle via
-				// delayed beat — do it here using mem[] directly for the
-				// beat (synchronous read result registered).
-				for (bj = 0; bj < WORD_BYTES; bj = bj + 1) begin
-					if ((beat_base + 16'(bj)) < 16'(WINDOW_BYTES)) begin
-						if ((fill_base_r + beat_base + 16'(bj)) < len_r)
-							window[beat_base + 16'(bj)] <= mem[rd_addr_r][bj*8 +: 8];
+				// Scatter captured word into window with lane-offset correction.
+				// win_idx = beat_r * WORD_BYTES + bj - fill_lane_off_r
+				for (bj = 0; bj < WORD_BYTES; bj = bj + 1) begin : scatter
+					// Use 16-bit signed arithmetic to detect negative/overflow
+					reg signed [16:0] win_idx_s;
+					reg [15:0] abs_byte;
+					win_idx_s = 17'(16'(beat_r) * 16'(WORD_BYTES))
+					          + 17'(16'(bj)) - 17'({12'd0, fill_lane_off_r});
+					abs_byte = fill_base_r + win_idx_s[15:0];
+					if (win_idx_s >= 0 && win_idx_s < 17'(WINDOW_BYTES)) begin
+						if (abs_byte < len_r)
+							window[win_idx_s[15:0]] <= mem[rd_addr_r][bj*8 +: 8];
 						else
-							window[beat_base + 16'(bj)] <= 8'd0;
+							window[win_idx_s[15:0]] <= 8'd0;
 					end
 				end
 
-				if (beat_r == BEAT_W'(FILL_BEATS - 1)) begin
+				// Check if we've filled all WINDOW_BYTES.
+				// Last valid win_idx of this beat:
+				//   (beat_r+1)*WORD_BYTES - 1 - fill_lane_off_r
+				// Done when that >= WINDOW_BYTES-1, i.e.:
+				//   (beat_r+1)*WORD_BYTES - fill_lane_off_r >= WINDOW_BYTES
+				if (((16'(beat_r) + 16'd1) * 16'(WORD_BYTES) - {12'd0, fill_lane_off_r})
+				     >= 16'(WINDOW_BYTES)) begin
 					fill_active_r <= 1'b0;
 					fill_phase_r  <= 1'b0;
 					beat_r        <= '0;
@@ -175,8 +190,7 @@ module h264_rbsp_window #(
 					window_base   <= fill_base_r;
 				end else begin
 					beat_r       <= beat_r + 1'b1;
-					rd_addr_r    <= (fill_base_r +
-						(16'(beat_r) + 16'd1) * 16'(WORD_BYTES)) >> LANE_W;
+					rd_addr_r    <= rd_addr_r + 1'b1;
 					fill_phase_r <= 1'b0;
 				end
 			end
