@@ -20,7 +20,9 @@ static int fails = 0;
 static void checkProfileMatchesContentResolution(const char* path,
                                                  const misterplex::WeakLadder& weak,
                                                  const misterplex::ContentResolution& content) {
-    const bool same = weak.videoResolution == content.label &&
+    const std::string geom =
+        std::to_string(content.width) + "x" + std::to_string(content.height);
+    const bool same = weak.videoResolution == geom &&
                       weak.maxVideoBitrateKbps == content.weakBitrateKbps;
     if (!same) {
         std::fprintf(stderr,
@@ -62,23 +64,25 @@ int main() {
     CHECK(h.find("X-Plex-Session-Identifier: sess1") != std::string::npos);
     CHECK(h.find("X-Plex-Token: tok") != std::string::npos);
 
-    // --- PMS universal transcode profile table / 480p guard ---
+    // --- PMS universal transcode profile table (240p/480p/720p) ---
     const auto& profiles = plexTranscodeProfiles();
-    CHECK(profiles.size() == 2);
-    const auto osd240 = contentResolutionFromOsdWord(0);
-    const auto osd480 = contentResolutionFromOsdWord(1u << 4);
+    CHECK(profiles.size() == 3);
     WeakLadder w240;
     CHECK(applyPlexTranscodeProfile("240p", w240));
     CHECK(w240.profileName == "240p");
-    checkProfileMatchesContentResolution("built-in profile 240p", w240, osd240);
+    CHECK(w240.videoResolution == "320x240");
+    CHECK(w240.maxVideoBitrateKbps == 1000);
     CHECK(w240.h264Profile == "baseline");
     CHECK(w240.h264Level == 30);
     CHECK(validateWeakLadder(w240));
+    checkProfileMatchesContentResolution("built-in profile 240p", w240,
+                                         contentResolutionFromSize(320, 240));
 
     WeakLadder w480;
     CHECK(applyPlexTranscodeProfile("480p", w480));
     CHECK(w480.profileName == "480p");
-    checkProfileMatchesContentResolution("built-in profile 480p", w480, osd480);
+    CHECK(w480.videoResolution == "640x480");
+    CHECK(w480.maxVideoBitrateKbps == 2500);
     CHECK(w480.videoQuality == 60);
     CHECK(w480.videoCodec == "h264");
     CHECK(w480.audioCodec == "aac");
@@ -88,17 +92,29 @@ int main() {
     CHECK(validateWeakLadder(w480));
     // Resolution alias selects the 480p profile too.
     WeakLadder byRes;
-    CHECK(applyPlexTranscodeProfile(osd480.label, byRes));
+    CHECK(applyPlexTranscodeProfile("640x480", byRes));
     CHECK(byRes.profileName == "480p");
-    checkProfileMatchesContentResolution("resolution alias 480p", byRes, osd480);
+
+    WeakLadder w720;
+    CHECK(applyPlexTranscodeProfile("720p", w720));
+    CHECK(w720.profileName == "720p");
+    CHECK(w720.videoResolution == "1280x720");
+    CHECK(w720.maxVideoBitrateKbps == 20000);
+    CHECK(w720.h264Profile == "main");
+    CHECK(w720.h264Level == 31);
+    CHECK(validateWeakLadder(w720));
+    WeakLadder by720;
+    CHECK(applyPlexTranscodeProfile("1280x720", by720));
+    CHECK(by720.profileName == "720p");
+    CHECK(contentResolutionFromSize(1280, 720).width == 1280);
+    CHECK(std::string(contentResolutionFromSize(1280, 720).label) == "720p");
 
     const auto start480 =
         buildUniversalTranscodeUrl("http://pms.example:32400", "/library/metadata/3", "tok",
                                    "sess480", 1500, w480);
     CHECK(start480.find("/video/:/transcode/universal/start.mp4") != std::string::npos);
-    CHECK(start480.find(std::string("videoResolution=") + osd480.label) != std::string::npos);
-    CHECK(start480.find("maxVideoBitrate=" + std::to_string(osd480.weakBitrateKbps)) !=
-          std::string::npos);
+    CHECK(start480.find("videoResolution=640x480") != std::string::npos);
+    CHECK(start480.find("maxVideoBitrate=2500") != std::string::npos);
     CHECK(start480.find("videoQuality=60") != std::string::npos);
     CHECK(start480.find("videoCodec=h264") != std::string::npos);
     CHECK(start480.find("audioCodec=aac") != std::string::npos);
@@ -113,13 +129,11 @@ int main() {
     CHECK(extra480.find("name=video.profile&list=baseline") != std::string::npos);
     CHECK(extra480.find("name=video.level&value=30") != std::string::npos);
     CHECK(extra480.find("scope=videoTranscodeTarget&scopeName=h264") != std::string::npos);
-    CHECK(extra480.find("name=video.width&value=" + std::to_string(osd480.width)) !=
-          std::string::npos);
-    CHECK(extra480.find("name=video.height&value=" + std::to_string(osd480.height)) !=
-          std::string::npos);
+    CHECK(extra480.find("name=video.width&value=640") != std::string::npos);
+    CHECK(extra480.find("name=video.height&value=480") != std::string::npos);
     const auto caps480 = plexClientCapabilities(w480);
-    CHECK(caps480.find(std::string("videoDecoders=h264{profile:baseline&resolution:") +
-                        osd480.label + "&level:30}") != std::string::npos);
+    CHECK(caps480.find("videoDecoders=h264{profile:baseline&resolution:640x480&level:30}") !=
+          std::string::npos);
     const auto headers480 = plexFfmpegHeaders("sess480", "tok", w480);
     CHECK(headers480.find("X-Plex-Client-Profile-Name: MiSTerPlex") != std::string::npos);
     CHECK(headers480.find("X-Plex-Client-Profile-Name: Generic") == std::string::npos);
@@ -142,6 +156,13 @@ int main() {
     bad480 = w480;
     bad480.h264Level = 31;
     CHECK(!validateWeakLadder(bad480));
+    WeakLadder bad720 = w720;
+    bad720.h264Level = 30;
+    CHECK(!validateWeakLadder(bad720));
+    bad720 = w720;
+    bad720.h264Profile = "baseline";
+    bad720.h264Level = 31;
+    CHECK(validateWeakLadder(bad720)); // host path allows baseline|main @720p
 
     // --- Phase 4 multi-server conf helpers (no network) ---
     CHECK(normalizePlexBase("http://pms.lan:32400/") == "http://pms.lan:32400");

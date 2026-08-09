@@ -39,6 +39,23 @@ constexpr uint8_t kYuv420BlackY = 16;
 constexpr uint8_t kYuv420BlackU = 128;
 constexpr uint8_t kYuv420BlackV = 128;
 
+// ---- 720p tier (product dual-bank glass ABI for overnight o9 RBF) ----
+// makeDdrFrameLayout(1280,720) with default phys 0x30000000 yields:
+//   bank_stride 0x180000, doorbell 0x302FF000, map 0x300000.
+// Do NOT default host layout to Option-C base 0x30180000 / doorbell 0x3047F000
+// unless the loaded RTL matches that map.
+constexpr int kPlex720pCodedWidth = 1280;
+constexpr int kPlex720pCodedHeight = 720;
+constexpr int kPlex720pDisplayWidth = 1280;
+constexpr int kPlex720pDisplayHeight = 720;
+constexpr int kPlex720pPresentedWidth = 1280;
+constexpr int kPlex720pPresentedHeight = 720;
+constexpr int kPlex720pYuv420pBytes = 1382400;
+constexpr int kPlex720pYStrideBytes = 1280;
+constexpr int kPlex720pChromaStrideBytes = 640;
+constexpr uint32_t kPlex720pYuv420pBankStride = 0x00180000u;
+constexpr uint32_t kPlex720pYuv420pDoorbellPhys = 0x302FF000u; // base 0x30000000 dual-bank
+
 enum class DdrFramePlacement {
     None,
     Pillarbox,
@@ -281,17 +298,16 @@ inline bool decodeDdrDoorbell(uint32_t lo, uint32_t hi, DdrFrameFormat expectedF
     return true;
 }
 
-// Maximum coded width the RTL frame store can present (ddr_frame_store.sv FRAME_W).
-constexpr int kDdrFrameStoreMaxWidth = 640;
-constexpr int kDdrFrameStoreMaxHeight = 480;
+// Maximum coded size the product dual-bank frame store accepts (o9 720p glass).
+// 480p path stays 624 coded / 640 present; 720p is full 1280x720 I420.
+constexpr int kDdrFrameStoreMaxWidth = 1280;
+constexpr int kDdrFrameStoreMaxHeight = 720;
 
 // Check whether a decoded frame resolution is acceptable for the DDR frame store.
 // Requirements:
 //   1. MB-aligned (width and height are multiples of 16)
-//   2. Width <= RTL FRAME_W (640) and Height <= RTL FRAME_H (480)
-//   3. YUV420p payload fits within bank stride (currently 512 KiB)
-// This replaces the old hardcoded equality check against 624x480 and accepts
-// any valid resolution the frame store can handle, including 640x480 streams.
+//   2. Width/height within kDdrFrameStoreMax*
+//   3. YUV420p payload fits within the 720p bank stride (1.5 MiB)
 inline bool ddrFrameStoreAcceptsResolution(int codedWidth, int codedHeight) {
     if (codedWidth <= 0 || codedHeight <= 0)
         return false;
@@ -303,7 +319,7 @@ inline bool ddrFrameStoreAcceptsResolution(int codedWidth, int codedHeight) {
     if (frameBytes == 0)
         return false;
     const uint32_t bankStride = alignUpU32(static_cast<uint32_t>(frameBytes), kDdrFrameStrideAlign);
-    return bankStride <= kPlex480pYuv420pBankStride;
+    return bankStride <= kPlex720pYuv420pBankStride;
 }
 
 } // namespace misterplex

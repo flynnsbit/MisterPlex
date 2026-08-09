@@ -83,8 +83,21 @@ misterplex::WeakLadder weakForContentResolution(const misterplex::WeakLadder& ba
                                                 const misterplex::ContentResolution& res,
                                                 bool bitrateExplicit) {
     misterplex::WeakLadder weak = base;
-    weak.videoResolution = res.label;
-    if (!bitrateExplicit)
+    const int explicitBitrateKbps = base.maxVideoBitrateKbps;
+    const std::string geomRes =
+        std::to_string(res.width) + "x" + std::to_string(res.height);
+    // Prefer named product label (240p/480p/720p), then WxH geometry. PMS universal
+    // wants WxH in videoResolution=, never the short label alone.
+    if (!misterplex::applyPlexTranscodeProfile(res.label, weak) &&
+        !misterplex::applyPlexTranscodeProfile(geomRes, weak)) {
+        weak.profileName = res.label;
+        weak.videoResolution = geomRes;
+        if (res.width >= 1280 || res.height >= 720)
+            weak.h264Level = 31;
+    }
+    if (bitrateExplicit)
+        weak.maxVideoBitrateKbps = explicitBitrateKbps;
+    else
         weak.maxVideoBitrateKbps = res.weakBitrateKbps;
     return weak;
 }
@@ -168,7 +181,7 @@ int main(int argc, char** argv) {
             playSeconds = std::atoi(argv[++i]);
         } else if (std::strcmp(argv[i], "--help") == 0) {
             std::printf("misterplexd [--name N] [--id ID] [--port N] [--ffmpeg PATH] [--pms URL] "
-                        "[--conf PATH] [--decode WxH] [--transcode-profile 240p|480p] "
+                        "[--conf PATH] [--decode WxH] [--transcode-profile 240p|480p|720p] "
                         "[--play-file PATH] [--play-seconds N]\n");
             return 0;
         }
@@ -327,14 +340,29 @@ int main(int argc, char** argv) {
     // word (O[4]) is the content-resolution source of truth.
     if (!transcodeProfileExplicit && !weakResExplicit &&
         weak.videoResolution == "320x240" && (decodeW != 320 || decodeH != 240)) {
-        const std::string decodeRes = std::to_string(decodeW) + "x" + std::to_string(decodeH);
-        if (!misterplex::applyPlexTranscodeProfile(decodeRes, weak)) {
-            weak.profileName = "custom";
-            weak.videoResolution = decodeRes;
-            if (!weakBitrateExplicit) {
-                weak.maxVideoBitrateKbps =
-                    misterplex::weakBitrateKbpsForCodedSize(decodeW, decodeH);
+        const auto content = misterplex::contentResolutionFromSize(decodeW, decodeH);
+        const std::string decodeRes =
+            std::to_string(content.width) + "x" + std::to_string(content.height);
+        if (!misterplex::applyPlexTranscodeProfile(content.label, weak) &&
+            !misterplex::applyPlexTranscodeProfile(decodeRes, weak)) {
+            // Named profile miss: still publish a valid weak ladder for 720p custom.
+            if (content.width >= 1280 || content.height >= 720) {
+                if (!misterplex::applyPlexTranscodeProfile("720p", weak)) {
+                    weak.profileName = "720p";
+                    weak.videoResolution = "1280x720";
+                    weak.h264Level = 31;
+                    if (!weakBitrateExplicit)
+                        weak.maxVideoBitrateKbps = 20000;
+                }
+            } else {
+                weak.profileName = "custom";
+                weak.videoResolution = decodeRes;
+                if (!weakBitrateExplicit)
+                    weak.maxVideoBitrateKbps =
+                        misterplex::weakBitrateKbpsForCodedSize(content.width, content.height);
             }
+        } else if (!weakBitrateExplicit) {
+            weak.maxVideoBitrateKbps = content.weakBitrateKbps;
         }
     }
     std::string weakWhy;

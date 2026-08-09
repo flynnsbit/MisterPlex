@@ -171,7 +171,15 @@ inline int weakBitrateKbpsForCodedSize(int w, int h) {
     if (w >= 640 || h >= 480)
         return kPlex360pWeakBitrateKbps;
 #endif
-    return contentResolutionFromSize(w, h).weakBitrateKbps;
+    // Keep the 360p mid-rung for DECODE=480x360 confs; product OSD tiers are
+    // 240p/480p/720p only.
+    if (w >= 1280 || h >= 720)
+        return kPlex720pWeakBitrateKbps;
+    if (w >= 640 || h >= 480)
+        return kPlex480pWeakBitrateKbps;
+    if (w >= 480 || h >= 360)
+        return kPlex360pWeakBitrateKbps;
+    return kPlex240pWeakBitrateKbps;
 }
 
 inline bool osdIdleChanged(uint16_t a, uint16_t b) {

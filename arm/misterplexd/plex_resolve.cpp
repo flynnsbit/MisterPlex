@@ -159,14 +159,16 @@ bool videoCodecIsH264(const std::string& codecRaw) {
 } // namespace
 
 const std::vector<PlexTranscodeProfile>& plexTranscodeProfiles() {
-    static const std::vector<PlexTranscodeProfile> profiles = [] {
-        const auto p240 = contentResolutionFor240p();
-        const auto p480 = contentResolutionFor480p();
-        return std::vector<PlexTranscodeProfile>{
-            {"240p", p240.label, p240.weakBitrateKbps, 40, "baseline", 30},
-            {"480p", p480.label, p480.weakBitrateKbps, 60, "baseline", 30},
-        };
-    }();
+    static const std::vector<PlexTranscodeProfile> profiles = {
+        {"240p", "320x240", 1000, 40, "baseline", 30},
+        {"480p", "640x480", 2500, 60, "baseline", 30},
+        // Level 3.1 required for 1280x720 (level 3.0 MaxFS is too small).
+        // Host ffmpeg I420 path (PRESENT=fpga / STREAM=0) can take Main; baseline@q70
+        // showed full-frame vertical H.264 banding on BBB. Main@q100/20M kills MB
+        // stripes on the host ladder. Overnight o9 glass ABI remains dual-bank
+        // phys 0x30000000 / stride 0x180000 / doorbell 0x302FF000.
+        {"720p", "1280x720", 20000, 100, "main", 31},
+    };
     return profiles;
 }
 
@@ -326,15 +328,26 @@ bool validateWeakLadder(const WeakLadder& weak, std::string* why) {
         return fail("videoCodec must be h264");
     if (weak.audioCodec != "aac")
         return fail("audioCodec must be aac");
-    if (weak.h264Profile != "baseline")
-        return fail("H.264 profile must be baseline for the current decoder");
-    if (weak.h264Level > 30)
-        return fail("H.264 level must not exceed 3.0 for the current decoder");
-    if (w >= kPlex480pCodedWidth || h >= kPlex480pCodedHeight) {
-        if (w > kDdrFrameStoreMaxWidth || h > kDdrFrameStoreMaxHeight)
-            return fail("current built-in profiles stop at " +
-                        std::to_string(kDdrFrameStoreMaxWidth) + "x" +
-                        std::to_string(kDdrFrameStoreMaxHeight));
+    // 720p PRESENT=fpga / STREAM=0 is host-ffmpeg → I420 DDR (not fabric CABAC).
+    // Allow baseline|main. Keep baseline-only for ≤480p profiles (legacy ladder).
+    if (weak.h264Profile != "baseline" && weak.h264Profile != "main")
+        return fail("H.264 profile must be baseline or main");
+    if (w >= 1280 || h >= 720) {
+        if (w > 1280 || h > 720)
+            return fail("current built-in profiles stop at 1280x720");
+        if (weak.h264Level > 31)
+            return fail("H.264 level must not exceed 3.1 for 720p ARM decode path");
+        if (weak.h264Level < 31)
+            return fail("720p requires H.264 level 3.1 (level 3.0 MaxFS is insufficient)");
+        if (weak.maxVideoBitrateKbps < 3000)
+            return fail("720p profile bitrate is too low");
+    } else if (weak.h264Profile != "baseline") {
+        return fail("H.264 profile must be baseline for ≤480p profiles");
+    } else if (weak.h264Level > 30) {
+        return fail("H.264 level must not exceed 3.0 for 240p/480p profiles");
+    } else if (w >= 640 || h >= 480) {
+        if (w > 640 || h > 480)
+            return fail("use 720p profile for resolutions above 640x480");
         if (weak.maxVideoBitrateKbps < 2000)
             return fail("480p profile bitrate is too low");
     } else if (weak.maxVideoBitrateKbps < 750) {
