@@ -8,6 +8,7 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <time.h>
 #include <utility>
 #include <vector>
 
@@ -48,11 +49,26 @@ struct NalStats {
     int pps = 0;
     int other = 0;
     int pclose_rc = 0;
+    uint64_t feed_wall_us = 0;
+    uint64_t feed_cpu_us = 0;
+    uint64_t feed_nals = 0;
+    uint64_t feed_bytes = 0;
+    uint64_t feed_full_retries = 0;
+    uint64_t feed_full_escalations = 0;
+    uint64_t feed_desync_or_fatal = 0;
 };
 
 uint64_t microsSince(Clock::time_point start, Clock::time_point now) {
     return static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::microseconds>(now - start).count());
+}
+
+uint64_t threadCpuMicros() {
+    timespec ts{};
+    if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts) != 0)
+        return 0;
+    return static_cast<uint64_t>(ts.tv_sec) * 1000000ull +
+           static_cast<uint64_t>(ts.tv_nsec) / 1000ull;
 }
 
 bool runFfmpegNalStats(const std::string& url, const std::string& headers, int seconds,
@@ -69,7 +85,30 @@ bool runFfmpegNalStats(const std::string& url, const std::string& headers, int s
         return false;
 
     misterplex::h264stream::AnnexBFramer framer;
+    misterplex::h264stream::CopyRingBitstreamProducer feedRing(16u * 1024u * 1024u);
+    misterplex::h264stream::DispatchConfig feedCfg;
+    feedCfg.max_full_retries = 0;
+    feedCfg.full_retry_sleep_ms = 0;
+    misterplex::h264stream::NalDispatcher feedDispatch(feedRing, feedCfg);
+    (void)feedDispatch.begin(1);
     const auto t0 = Clock::now();
+    auto feedNal = [&](const uint8_t* p, size_t len) {
+        const auto w0 = Clock::now();
+        const uint64_t c0 = threadCpuMicros();
+        const auto r = feedDispatch.handleNal(p, len);
+        const uint64_t c1 = threadCpuMicros();
+        const auto w1 = Clock::now();
+        stats.feed_wall_us += microsSince(w0, w1);
+        if (c1 >= c0)
+            stats.feed_cpu_us += c1 - c0;
+        const auto ds = feedDispatch.stats();
+        stats.feed_nals = ds.nal_pushed;
+        stats.feed_bytes = ds.bytes_pushed;
+        stats.feed_full_retries = ds.full_retries;
+        stats.feed_full_escalations = ds.full_escalations;
+        stats.feed_desync_or_fatal = ds.desync_or_fatal;
+        return r == misterplex::h264stream::PushResult::Ok;
+    };
     char buf[16384];
     while (true) {
         const size_t n = std::fread(buf, 1, sizeof(buf), pipe);
@@ -93,6 +132,7 @@ bool runFfmpegNalStats(const std::string& url, const std::string& headers, int s
                                                 ++stats.pps;
                                             else if (type != 1)
                                                 ++stats.other;
+                                            (void)feedNal(p, len);
                                         });
             if (!ok)
                 break;
@@ -117,7 +157,9 @@ bool runFfmpegNalStats(const std::string& url, const std::string& headers, int s
             ++stats.pps;
         else if (type != 1)
             ++stats.other;
+        (void)feedNal(p, len);
     });
+    (void)feedDispatch.end();
     stats.pclose_rc = pclose(pipe);
     return !stats.samples.empty();
 }
@@ -273,5 +315,14 @@ int main(int argc, char** argv) {
     std::cout << "PMS_NAL_BURST_BYTES win100ms=" << burst100 << " win250ms=" << burst250
               << " win500ms=" << burst500 << " win1000ms=" << burst1000
               << " suggested_ring_bytes=" << suggested << "\n";
+    const uint64_t vclDen = stats.vcl > 0 ? static_cast<uint64_t>(stats.vcl) : 1;
+    std::cout << "PMS_NAL_FEED_SIM nals=" << stats.feed_nals
+              << " bytes=" << stats.feed_bytes
+              << " bytes_per_vcl=" << (stats.feed_bytes / vclDen)
+              << " feed_wall_us_per_vcl=" << (stats.feed_wall_us / vclDen)
+              << " feed_cpu_us_per_vcl=" << (stats.feed_cpu_us / vclDen)
+              << " full_retries=" << stats.feed_full_retries
+              << " full_escalations=" << stats.feed_full_escalations
+              << " desync_or_fatal=" << stats.feed_desync_or_fatal << "\n";
     return 0;
 }
