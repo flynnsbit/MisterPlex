@@ -93,13 +93,8 @@ module ddr_bus_arbiter (
 	// while host PLXB producer filled 256KiB). After M1_WAIT_MAX ddr cycles of
 	// pending m1_want without grant, block new m0_rd starts so m1 gets a slot.
 	reg [5:0] m1_wait;
-	// 32 was unreachable while want_poll is 1 clk_sys (~4 clk_ddr). 4 matches one poll pulse.
-	localparam [5:0] M1_WAIT_MAX = 6'd4;
-	// Stretch brief clk_sys poll pulses (1 cycle @20-30MHz ≈ few clk_ddr) so
-	// m1_wait can reach M1_WAIT_MAX without sticky bus_want in the reader (STA).
-	reg [5:0] m1_want_hold;
-	wire m1_want_eff = m1_want_s2 | (m1_want_hold != 6'd0);
-	wire m1_starved = m1_want_eff && (m1_wait >= M1_WAIT_MAX);
+	localparam [5:0] M1_WAIT_MAX = 6'd32;
+	wire m1_starved = m1_want_s2 && (m1_wait >= M1_WAIT_MAX);
 
 	wire rsp_active = rsp_left != 9'd0;
 	wire rsp_pipe_active = rsp_active | rsp_valid_r;
@@ -112,9 +107,9 @@ module ddr_bus_arbiter (
 	// frame-store stops issuing new reads and the pipe can drain — otherwise
 	// continuous m0_rd keeps rsp_pipe_active and m1 never enters the
 	// !rsp_pipe_active grant window (o14 still cons=0 / telem_seq=1).
-	// Register m0_busy — comb m1_starved into present issue failed STA o16-o20.
-	reg m0_busy_r;
-	assign m0_busy = m0_busy_r;
+	assign m0_busy = DDRAM_BUSY | grant_m1 | m1_starved |
+	                 (rsp_active & rsp_owner_m1) |
+	                 (rsp_valid_r & rsp_owner_m1_r);
 
 	// m1_busy: register on clk_ddr to eliminate combinational glitches,
 	// then 2-FF sync to clk_m1 for proper CDC.  The consumer uses this
@@ -238,19 +233,10 @@ module ddr_bus_arbiter (
 				rsp_left <= rsp_left - 9'd1;
 
 			// Count consecutive ddr cycles m1 wants but is not granted.
-			if (m1_want_s2)
-				m1_want_hold <= 6'd32; // ~0.35us stretch @90MHz
-			else if (m1_want_hold != 6'd0)
-				m1_want_hold <= m1_want_hold - 6'd1;
-
-			if (!m1_want_eff || grant_m1)
+			if (!m1_want_s2 || grant_m1)
 				m1_wait <= 6'd0;
 			else if (m1_wait != 6'h3f)
 				m1_wait <= m1_wait + 6'd1;
-
-			m0_busy_r <= DDRAM_BUSY | grant_m1 | m1_starved |
-			              (rsp_active & rsp_owner_m1) |
-			              (rsp_valid_r & rsp_owner_m1_r);
 
 			if (!DDRAM_BUSY && !rsp_pipe_active) begin
 				if (grant_m1) begin
@@ -259,13 +245,13 @@ module ddr_bus_arbiter (
 						rsp_left <= {1'b0, selected_burst};
 						grant_m1 <= 1'b0;
 						m1_wait <= 6'd0;
-					end else if (m1_we || !m1_want_eff) begin
+					end else if (m1_we || !m1_want_s2) begin
 						grant_m1 <= 1'b0;
 						m1_wait <= 6'd0;
 					end
 				end else begin
 					// Prefer m1 when idle-gap OR when starved by continuous m0_rd.
-					if (m1_want_eff && (!m0_cmd || m1_starved)) begin
+					if (m1_want_s2 && (!m0_cmd || m1_starved)) begin
 						grant_m1 <= 1'b1;
 					end else if (m0_rd) begin
 						rsp_owner_m1 <= 1'b0;
