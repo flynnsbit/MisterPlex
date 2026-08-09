@@ -250,6 +250,16 @@ int main() {
               "<Stream type=\"video\" codec=\"avc1\" />") == true);
     CHECK(mediaVideoIsH264(
               "<Stream streamType=\"2\" codec=\"aac\" /><Media videoCodec=\"hevc\"/>") == false);
+    // High/CABAC must not preferDirect on STREAM fabric (no CABAC engine).
+    CHECK(h264ProfileLooksHigh("") == false);
+    CHECK(h264ProfileLooksHigh("baseline") == false);
+    CHECK(h264ProfileLooksHigh("main") == false);
+    CHECK(h264ProfileLooksHigh("Main") == false);
+    CHECK(h264ProfileLooksHigh("high") == true);
+    CHECK(h264ProfileLooksHigh("High") == true);
+    CHECK(h264ProfileLooksHigh("high10") == true);
+    CHECK(h264ProfileLooksHigh("high@L4.1") == true);
+    CHECK(h264ProfileLooksHigh("cabac") == true);
     // Local path + direct URL still resolve without preferDirect flag
     auto directLocal =
 

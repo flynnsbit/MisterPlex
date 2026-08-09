@@ -199,7 +199,10 @@ Phase 3.3k (product path polish — done earlier this arc):
       CAVLC PPS clears for re-probe; backup path still sets sticky on `fail_reason=cabac`
   **Prefer direct elementary H.264 for STREAM:**
     - resolve `preferDirectH264` when STREAM=1 → direct Part if Media/Stream is h264/avc
-    - avoids Chrome universal High/CABAC that host CAVLC cannot recon
+      **and profile is not High/CABAC** (fabric ENABLE_INTER=0 has no CABAC)
+    - High/CABAC source falls through to universal **720p baseline@L31** (CAVLC);
+      main@L31 only if baseline ladder unavailable
+    - bitstream ring phys: DATA `0x30300000` / CTRL `0x30340000` (after 720p map end)
     - local `.264` demux skips `h264_mp4toannexb` BSF
   **Optional skip heavy FFmpeg RGB** (`STREAM_SKIP_RGB=auto|on|off`):
     - auto/on + PRESENT=fpga: skip RGB **from session start** (audio + demux; recon owns F1)

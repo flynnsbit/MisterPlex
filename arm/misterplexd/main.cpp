@@ -573,8 +573,8 @@ int main(int argc, char** argv) {
             selected = preferredBase.empty() ? defaultPms : preferredBase;
 
         auto tryBase = [&](const std::string& base) -> misterplex::ResolveResult {
-            // STREAM=1: prefer direct H.264 Part for CAVLC host recon; still weakAlways for
-            // non-H.264. STREAM=0: always weak universal (dual-A9 cast path).
+            // STREAM=1: preferDirect Baseline/Main H.264 Part; High/CABAC skips direct and
+            // forces universal 720p baseline@L31 (fabric CAVLC). STREAM=0: weak universal.
             return misterplex::resolvePlayTarget(req.key, base, token, off, /*weakAlways=*/true,
                                                  weakForPlay,
                                                  /*preferDirectH264=*/streamEnabled);

@@ -118,11 +118,16 @@ std::string buildUniversalTranscodeUrl(const std::string& base,
 // True when metadata Media@videoCodec looks like H.264/AVC (direct Part friendly for STREAM).
 bool mediaVideoIsH264(const std::string& plexMetadataXml);
 
+// True when a PMS videoProfile / Stream@profile looks High (or explicitly CABAC).
+// STREAM=1 fabric path must not preferDirect such sources — no FPGA CABAC.
+bool h264ProfileLooksHigh(const std::string& profileRaw);
+
 // Resolve a playMedia key against PMS, or pass through local/http paths.
 // weakAlways: always request PMS universal H.264 ladder (recommended on dual A9 / STREAM=0).
 // preferDirectH264: when true (STREAM=1 product path), use direct Part stream if source is
-// already H.264 so host CAVLC recon can run on Baseline/Main without High/CABAC remux.
-// Non-H.264 still falls through to the weak universal ladder.
+// already H.264 Baseline/Main (CAVLC-friendly). High/CABAC sources skip direct and force a
+// universal 720p baseline@L31 ladder so PMS delivers fabric-safe CAVLC. Non-H.264 still
+// falls through to the caller's weak universal ladder.
 ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::string& plexBase,
                                 const std::string& token, int64_t offsetMs = 0,
                                 bool weakAlways = true, const WeakLadder& weak = {},
