@@ -72,7 +72,8 @@ module h264_decode_core_p16z_tb #(
 
 	h264_decode_core #(
 		.FRAME_W(FRAME_W),
-		.FRAME_H(FRAME_H)
+		.FRAME_H(FRAME_H),
+		.ENABLE_INTER(1'b1)
 	) dut (
 		.clk(clk),
 		.reset(reset),

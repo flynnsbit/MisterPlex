@@ -33,7 +33,10 @@ module h264_decode_core #(
     parameter bit REF_PORT_EXTERNAL = 1'b0,
     // Product feeder supplies incrementally tracked macroblock coordinates,
     // avoiding a wide quotient/remainder circuit for every syntax address.
-    parameter bit MB_COORD_EXTERNAL = 1'b0
+    parameter bit MB_COORD_EXTERNAL = 1'b0,
+    // Glass / overnight MVP: keep I-slice + writeback, drop P/inter fabric.
+    // When 0, qpel/epel/MV/P_Skip/partition MC are not instantiated (~8-12k ALMs).
+    parameter bit ENABLE_INTER = 1'b0
 )(
     input  wire        clk,
     input  wire        reset,
@@ -618,11 +621,12 @@ module h264_decode_core #(
     wire slice_is_p = !slice_is_i && !slice_is_idr;
     wire pskip_pending = slice_is_p && (skiprun_mb_is_skip || (mb_type_valid && mb_skip));
 
-    wire syntax_p16_candidate = mb_type_valid && !slice_is_i && !slice_is_idr &&
+    wire syntax_p16_candidate = ENABLE_INTER && mb_type_valid && !slice_is_i && !slice_is_idr &&
                                 !pskip_pending &&
                                 (mb_type == 5'd0) && (part_mode == 3'd0);
     wire syntax_p16_launch = syntax_p16_candidate && (wb_state == ST_IDLE);
-    wire p16_launch = p16_zero_mv_valid || syntax_p16_launch;
+    // External zero-MV P16 probe path stays available only with inter fabric.
+    wire p16_launch = ENABLE_INTER && (p16_zero_mv_valid || syntax_p16_launch);
     wire [7:0] p16_launch_mb_x = p16_zero_mv_valid ? p16_mb_x : syntax_mb_x;
     wire [7:0] p16_launch_mb_y = p16_zero_mv_valid ? p16_mb_y : syntax_mb_y;
     wire p16_launch_is_ref = p16_zero_mv_valid ? p16_mb_is_ref : 1'b1;
@@ -702,7 +706,10 @@ module h264_decode_core #(
     // 16x8 and 8x16 only ever use slots 0 and 1; 8x8 walks all sixteen.
     wire [3:0] part_slot_max = (part_mode_r == 3'd3) ? 4'd15 : 4'd1;
 
-    // ── P_Skip: MV derivation and MC copy ──────────────────────────────────
+    // ── Inter / P_Skip fabric (optional for glass I-first MVP) ─────────────
+    // ENABLE_INTER=0 drops qpel/epel, MV neighbour context, P_Skip MC, and
+    // multi-partition MC so overnight5 can fit. Outputs are stubbed idle/zero
+    // so the writeback + intra FSM still elaborates cleanly.
     wire        pskip_nb_a_present, pskip_nb_a_inter;
     wire [1:0]  pskip_nb_a_ref;
     wire signed [15:0] pskip_nb_a_mv_x, pskip_nb_a_mv_y;
@@ -715,94 +722,18 @@ module h264_decode_core #(
     wire        pskip_nb_d_present, pskip_nb_d_inter;
     wire [1:0]  pskip_nb_d_ref;
     wire signed [15:0] pskip_nb_d_mv_x, pskip_nb_d_mv_y;
-    // Partition geometry of the slot currently being predicted. Everything
-    // except the multi-partition path queries a 16x16 partition at (0,0),
-    // which reproduces the macroblock-level taps exactly.
     wire [4:0] part_geo_x, part_geo_y, part_geo_w, part_geo_h;
     wire       part_geo_valid;
-    h264_part_geometry u_product_part_geo (
-        .part_mode(part_mode_r),
-        .slot(part_slot_r),
-        .sub_mb_type(part_sub_mb_types[part_slot_r[3:2] * 2 +: 2]),
-        .part_x(part_geo_x),
-        .part_y(part_geo_y),
-        .part_w(part_geo_w),
-        .part_h(part_geo_h),
-        .part_valid(part_geo_valid)
-    );
     wire [15:0] part_geo_mask;
-    h264_part_mask u_product_part_mask (
-        .part_x(part_geo_x),
-        .part_y(part_geo_y),
-        .part_w(part_geo_w),
-        .part_h(part_geo_h),
-        .mask(part_geo_mask)
-    );
-    wire part_query_active = (wb_state == ST_PART_START);
+    wire part_query_active = ENABLE_INTER && (wb_state == ST_PART_START);
     wire [4:0] nb_q_x = part_query_active ? part_geo_x : 5'd0;
     wire [4:0] nb_q_y = part_query_active ? part_geo_y : 5'd0;
     wire [4:0] nb_q_w = part_query_active ? part_geo_w : 5'd16;
     wire [1:0] part_ref_idx_slot = part_ref_idx_l0[part_slot_r[3:2] * 2 +: 2];
 
-    h264_mv_nb_ctx4x4 #(
-        .MB_WIDTH_MAX(MB_W),
-        .MB_WIDTH_DEFAULT(MB_W)
-    ) u_product_pskip_nb_ctx (
-        .clk(clk),
-        .reset(reset),
-        .mb_x(syntax_mb_x),
-        .mb_y(syntax_mb_y),
-        .mb_width(mb_width),
-        .first_mb_in_slice(first_mb_in_slice),
-        .mb_start(mvblk_mb_start_r),
-        .blk_wr_valid(mvblk_valid_r),
-        .blk_wr_mask(mvblk_mask_r),
-        .blk_wr_inter(mvblk_inter_r),
-        .blk_wr_ref(mvblk_ref_r),
-        .blk_wr_mv_x(mvblk_mv_x_r),
-        .blk_wr_mv_y(mvblk_mv_y_r),
-        .mb_commit(mvcommit_valid_r),
-        .commit_mb_x(mvcommit_mb_x_r),
-        .q_x(nb_q_x),
-        .q_y(nb_q_y),
-        .q_w(nb_q_w),
-        .q_ref_idx(part_ref_idx_slot),
-        .nb_a_present(pskip_nb_a_present), .nb_a_inter(pskip_nb_a_inter),
-        .nb_a_ref(pskip_nb_a_ref), .nb_a_mv_x(pskip_nb_a_mv_x), .nb_a_mv_y(pskip_nb_a_mv_y),
-        .nb_b_present(pskip_nb_b_present), .nb_b_inter(pskip_nb_b_inter),
-        .nb_b_ref(pskip_nb_b_ref), .nb_b_mv_x(pskip_nb_b_mv_x), .nb_b_mv_y(pskip_nb_b_mv_y),
-        .nb_c_present(pskip_nb_c_present), .nb_c_inter(pskip_nb_c_inter),
-        .nb_c_ref(pskip_nb_c_ref), .nb_c_mv_x(pskip_nb_c_mv_x), .nb_c_mv_y(pskip_nb_c_mv_y),
-        .nb_d_present(pskip_nb_d_present), .nb_d_inter(pskip_nb_d_inter),
-        .nb_d_ref(pskip_nb_d_ref), .nb_d_mv_x(pskip_nb_d_mv_x), .nb_d_mv_y(pskip_nb_d_mv_y)
-    );
-
-    // P_L0_16x16 motion vector prediction, clause 8.4.1.3. The predictor is
-    // shared with P_Skip so a P16x16 macroblock sees P_Skip neighbours (and
-    // vice versa) -- with 79% of a P frame skipped, a predictor that only
-    // tracked coded macroblocks would drift immediately.
     wire signed [15:0] p16_mvp_x;
     wire signed [15:0] p16_mvp_y;
     wire        p16_mvp_directional;
-    h264_pskip_mv_pred u_product_p16_mvp (
-        .ref_idx_l0(ref_idx_l0),
-        .nb_a_present(pskip_nb_a_present), .nb_a_inter(pskip_nb_a_inter),
-        .nb_a_ref(pskip_nb_a_ref), .nb_a_mv_x(pskip_nb_a_mv_x), .nb_a_mv_y(pskip_nb_a_mv_y),
-        .nb_b_present(pskip_nb_b_present), .nb_b_inter(pskip_nb_b_inter),
-        .nb_b_ref(pskip_nb_b_ref), .nb_b_mv_x(pskip_nb_b_mv_x), .nb_b_mv_y(pskip_nb_b_mv_y),
-        .nb_c_present(pskip_nb_c_present), .nb_c_inter(pskip_nb_c_inter),
-        .nb_c_ref(pskip_nb_c_ref), .nb_c_mv_x(pskip_nb_c_mv_x), .nb_c_mv_y(pskip_nb_c_mv_y),
-        .nb_d_present(pskip_nb_d_present), .nb_d_inter(pskip_nb_d_inter),
-        .nb_d_ref(pskip_nb_d_ref), .nb_d_mv_x(pskip_nb_d_mv_x), .nb_d_mv_y(pskip_nb_d_mv_y),
-        .mvp_x(p16_mvp_x),
-        .mvp_y(p16_mvp_y),
-        .directional(p16_mvp_directional)
-    );
-    // P_L0_16x16 uses the MB-level neighbour taps (mv_left/top), which are
-    // published on the last write sample of the previous P16 — one cycle
-    // earlier than the 4x4 field retire. Using the 4x4/P_Skip predictor here
-    // raced: next MB launched after busy cleared still saw MVP=0 because
-    // mb_commit trails blk_wr by a cycle. Partition modes keep the 4x4 path.
     wire signed [15:0] p16_mv_from_mvd_x = syntax_mv_x;
     wire signed [15:0] p16_mv_from_mvd_y = syntax_mv_y;
 
@@ -813,40 +744,16 @@ module h264_decode_core #(
     wire signed [15:0] pskip_mvp_y;
     wire        pskip_zero_mv;
     wire [3:0]  pskip_zero_reason;
-    h264_pskip_mv u_product_pskip_mv (
-        .nb_a_present(pskip_nb_a_present), .nb_a_inter(pskip_nb_a_inter),
-        .nb_a_ref(pskip_nb_a_ref), .nb_a_mv_x(pskip_nb_a_mv_x), .nb_a_mv_y(pskip_nb_a_mv_y),
-        .nb_b_present(pskip_nb_b_present), .nb_b_inter(pskip_nb_b_inter),
-        .nb_b_ref(pskip_nb_b_ref), .nb_b_mv_x(pskip_nb_b_mv_x), .nb_b_mv_y(pskip_nb_b_mv_y),
-        .nb_c_present(pskip_nb_c_present), .nb_c_inter(pskip_nb_c_inter),
-        .nb_c_ref(pskip_nb_c_ref), .nb_c_mv_x(pskip_nb_c_mv_x), .nb_c_mv_y(pskip_nb_c_mv_y),
-        .nb_d_present(pskip_nb_d_present), .nb_d_inter(pskip_nb_d_inter),
-        .nb_d_ref(pskip_nb_d_ref), .nb_d_mv_x(pskip_nb_d_mv_x), .nb_d_mv_y(pskip_nb_d_mv_y),
-        .mv_x(pskip_mv_x),
-        .mv_y(pskip_mv_y),
-        .ref_idx_l0(pskip_ref_idx_l0),
-        .mvp_x(pskip_mvp_x),
-        .mvp_y(pskip_mvp_y),
-        .zero_mv(pskip_zero_mv),
-        .zero_reason(pskip_zero_reason)
-    );
-
     wire       pskip_pred_valid;
     wire [1:0] pskip_pred_plane;
     wire [7:0] pskip_pred_idx;
     wire [7:0] pskip_pred_sample;
     wire       pskip_busy;
     wire       pskip_done;
-    // Reference sample sourcing. Until the dedicated DDR reference reader is
-    // attached the requests are serviced over the DPB read port that this
-    // module already owns, so P_Skip reconstructs against real reference
-    // samples instead of stalling on an unconnected port. Either way the
-    // samples are POST-deblock: the DPB holds the filtered picture.
+
     localparam bit REF_BRIDGE = !REF_PORT_EXTERNAL;
-    // The P_Skip engine and the partition engine are mutually exclusive by
-    // state, so the reference port needs a mux rather than an arbiter.
-    wire        pskip_ref_grant = (wb_state == ST_PSKIP_WAIT);
-    wire        part_ref_grant  = (wb_state == ST_PART_WAIT);
+    wire        pskip_ref_grant = ENABLE_INTER && (wb_state == ST_PSKIP_WAIT);
+    wire        part_ref_grant  = ENABLE_INTER && (wb_state == ST_PART_WAIT);
     wire        any_ref_grant   = pskip_ref_grant || part_ref_grant;
     wire        mc_ref_req_ready = REF_BRIDGE ? pskip_ref_grant : ref_req_ready;
     wire        part_ref_req_ready = REF_BRIDGE ? part_ref_grant : ref_req_ready;
@@ -868,121 +775,297 @@ module h264_decode_core #(
     assign ref_req_x     = part_ref_grant ? part_ref_req_x     : pskip_ref_req_x;
     assign ref_req_y     = part_ref_grant ? part_ref_req_y     : pskip_ref_req_y;
     wire [31:0] pskip_ref_addr;
-    h264_dpb_i420_addr #(.FRAME_W(FRAME_W), .FRAME_H(FRAME_H)) u_product_pskip_rd_addr (
-        .base(part_ref_grant ? part_ref_base_r : pskip_ref_base_r),
-        .plane(ref_req_plane),
-        .x(ref_req_x),
-        .y(ref_req_y),
-        .addr(pskip_ref_addr)
-    );
-    h264_pskip_mc_copy u_product_pskip_mc (
-        .clk(clk),
-        .reset(reset || slice_start),
-        .start(pskip_start_r),
-        .mb_x(wb_mb_x),
-        .mb_y(wb_mb_y),
-        .mv_x_qpel(pskip_mv_x_r),
-        .mv_y_qpel(pskip_mv_y_r),
-        .frame_w(FRAME_W16),
-        .frame_h(FRAME_H16),
-        .ref_req_valid(pskip_ref_req_valid),
-        .ref_req_plane(pskip_ref_req_plane),
-        .ref_req_x(pskip_ref_req_x),
-        .ref_req_y(pskip_ref_req_y),
-        .ref_req_ready(mc_ref_req_ready),
-        .ref_rsp_valid(mc_ref_rsp_valid),
-        .ref_rsp_sample(mc_ref_rsp_sample),
-        .pred_valid(pskip_pred_valid),
-        .pred_plane(pskip_pred_plane),
-        .pred_idx(pskip_pred_idx),
-        .pred_sample(pskip_pred_sample),
-        .busy(pskip_busy),
-        .done(pskip_done)
-    );
-    // ── Multi-partition inter reconstruction (16x8 / 8x16 / 8x8) ──────────
-    // Clause 8.4.1.3 including the shape-specific overrides that 16x8 and
-    // 8x16 use instead of the median for specific partition indices.
+
     wire signed [15:0] part_mvp_x;
     wire signed [15:0] part_mvp_y;
     wire        part_shape_override;
-    h264_mv_pred_partition u_product_part_mvp (
-        .part_mode(part_mode_r),
-        .slot(part_slot_r),
-        .ref_idx_l0(part_ref_idx_slot),
-        .nb_a_present(pskip_nb_a_present), .nb_a_inter(pskip_nb_a_inter),
-        .nb_a_ref(pskip_nb_a_ref), .nb_a_mv_x(pskip_nb_a_mv_x), .nb_a_mv_y(pskip_nb_a_mv_y),
-        .nb_b_present(pskip_nb_b_present), .nb_b_inter(pskip_nb_b_inter),
-        .nb_b_ref(pskip_nb_b_ref), .nb_b_mv_x(pskip_nb_b_mv_x), .nb_b_mv_y(pskip_nb_b_mv_y),
-        .nb_c_present(pskip_nb_c_present), .nb_c_inter(pskip_nb_c_inter),
-        .nb_c_ref(pskip_nb_c_ref), .nb_c_mv_x(pskip_nb_c_mv_x), .nb_c_mv_y(pskip_nb_c_mv_y),
-        .nb_d_present(pskip_nb_d_present), .nb_d_inter(pskip_nb_d_inter),
-        .nb_d_ref(pskip_nb_d_ref), .nb_d_mv_x(pskip_nb_d_mv_x), .nb_d_mv_y(pskip_nb_d_mv_y),
-        .mvp_x(part_mvp_x),
-        .mvp_y(part_mvp_y),
-        .shape_override(part_shape_override)
-    );
     wire signed [15:0] part_mv_x = part_mvp_x + part_mvd_x[part_slot_r];
     wire signed [15:0] part_mv_y = part_mvp_y + part_mvd_y[part_slot_r];
-
     wire       part_pred_valid;
     wire [1:0] part_pred_plane;
     wire [7:0] part_pred_idx;
     wire [7:0] part_pred_sample;
     wire       part_busy;
     wire       part_done;
-    h264_inter_mc_part_stream u_product_part_mc (
-        .clk(clk),
-        .reset(reset || slice_start),
-        .start(part_start_r),
-        .mb_x(wb_mb_x),
-        .mb_y(wb_mb_y),
-        .part_x(part_geo_x),
-        .part_y(part_geo_y),
-        .part_w(part_geo_w),
-        .part_h(part_geo_h),
-        .mv_x_qpel(part_mv_x_r),
-        .mv_y_qpel(part_mv_y_r),
-        .frame_w(FRAME_W16),
-        .frame_h(FRAME_H16),
-        .ref_req_valid(part_ref_req_valid),
-        .ref_req_plane(part_ref_req_plane),
-        .ref_req_x(part_ref_req_x),
-        .ref_req_y(part_ref_req_y),
-        .ref_req_ready(part_ref_req_ready),
-        .ref_rsp_valid(part_ref_rsp_valid),
-        .ref_rsp_sample(mc_ref_rsp_sample),
-        .pred_valid(part_pred_valid),
-        .pred_plane(part_pred_plane),
-        .pred_idx(part_pred_idx),
-        .pred_sample(part_pred_sample),
-        .busy(part_busy),
-        .done(part_done)
-    );
 
-    h264_mv_pred_part u_product_p16_mv_pred (
-        .part_mode(3'd0),
-        .part_idx(2'd0),
-        .avail_a(mv_avail_a),
-        .avail_b(mv_avail_b),
-        .avail_c(mv_avail_c),
-        .avail_d(1'b0),
-        .mv_a_x(mv_left_x),
-        .mv_a_y(mv_left_y),
-        .mv_b_x(mv_top_x[syntax_mb_idx]),
-        .mv_b_y(mv_top_y[syntax_mb_idx]),
-        .mv_c_x(mv_top_x[syntax_top_right_idx]),
-        .mv_c_y(mv_top_y[syntax_top_right_idx]),
-        .mv_d_x(16'sd0),
-        .mv_d_y(16'sd0),
-        .mvd_x(mvd_x_qpel),
-        .mvd_y(mvd_y_qpel),
-        .p_skip(mb_skip),
-        .pred_x(syntax_mv_pred_x),
-        .pred_y(syntax_mv_pred_y),
-        .mv_x(syntax_mv_x),
-        .mv_y(syntax_mv_y),
-        .skip_zero(syntax_mv_skip_zero)
-    );
+    wire [7:0] p16_luma_pred_sample;
+    wire [7:0] p16_chroma_pred_sample;
+    wire [7:0] p16_pred_sample = (wb_plane == 2'd0) ? p16_luma_pred_sample : p16_chroma_pred_sample;
+
+    generate
+        if (ENABLE_INTER) begin : g_inter
+            h264_part_geometry u_product_part_geo (
+                .part_mode(part_mode_r),
+                .slot(part_slot_r),
+                .sub_mb_type(part_sub_mb_types[part_slot_r[3:2] * 2 +: 2]),
+                .part_x(part_geo_x),
+                .part_y(part_geo_y),
+                .part_w(part_geo_w),
+                .part_h(part_geo_h),
+                .part_valid(part_geo_valid)
+            );
+            h264_part_mask u_product_part_mask (
+                .part_x(part_geo_x),
+                .part_y(part_geo_y),
+                .part_w(part_geo_w),
+                .part_h(part_geo_h),
+                .mask(part_geo_mask)
+            );
+
+            h264_mv_nb_ctx4x4 #(
+                .MB_WIDTH_MAX(MB_W),
+                .MB_WIDTH_DEFAULT(MB_W)
+            ) u_product_pskip_nb_ctx (
+                .clk(clk),
+                .reset(reset),
+                .mb_x(syntax_mb_x),
+                .mb_y(syntax_mb_y),
+                .mb_width(mb_width),
+                .first_mb_in_slice(first_mb_in_slice),
+                .mb_start(mvblk_mb_start_r),
+                .blk_wr_valid(mvblk_valid_r),
+                .blk_wr_mask(mvblk_mask_r),
+                .blk_wr_inter(mvblk_inter_r),
+                .blk_wr_ref(mvblk_ref_r),
+                .blk_wr_mv_x(mvblk_mv_x_r),
+                .blk_wr_mv_y(mvblk_mv_y_r),
+                .mb_commit(mvcommit_valid_r),
+                .commit_mb_x(mvcommit_mb_x_r),
+                .q_x(nb_q_x),
+                .q_y(nb_q_y),
+                .q_w(nb_q_w),
+                .q_ref_idx(part_ref_idx_slot),
+                .nb_a_present(pskip_nb_a_present), .nb_a_inter(pskip_nb_a_inter),
+                .nb_a_ref(pskip_nb_a_ref), .nb_a_mv_x(pskip_nb_a_mv_x), .nb_a_mv_y(pskip_nb_a_mv_y),
+                .nb_b_present(pskip_nb_b_present), .nb_b_inter(pskip_nb_b_inter),
+                .nb_b_ref(pskip_nb_b_ref), .nb_b_mv_x(pskip_nb_b_mv_x), .nb_b_mv_y(pskip_nb_b_mv_y),
+                .nb_c_present(pskip_nb_c_present), .nb_c_inter(pskip_nb_c_inter),
+                .nb_c_ref(pskip_nb_c_ref), .nb_c_mv_x(pskip_nb_c_mv_x), .nb_c_mv_y(pskip_nb_c_mv_y),
+                .nb_d_present(pskip_nb_d_present), .nb_d_inter(pskip_nb_d_inter),
+                .nb_d_ref(pskip_nb_d_ref), .nb_d_mv_x(pskip_nb_d_mv_x), .nb_d_mv_y(pskip_nb_d_mv_y)
+            );
+
+            h264_pskip_mv_pred u_product_p16_mvp (
+                .ref_idx_l0(ref_idx_l0),
+                .nb_a_present(pskip_nb_a_present), .nb_a_inter(pskip_nb_a_inter),
+                .nb_a_ref(pskip_nb_a_ref), .nb_a_mv_x(pskip_nb_a_mv_x), .nb_a_mv_y(pskip_nb_a_mv_y),
+                .nb_b_present(pskip_nb_b_present), .nb_b_inter(pskip_nb_b_inter),
+                .nb_b_ref(pskip_nb_b_ref), .nb_b_mv_x(pskip_nb_b_mv_x), .nb_b_mv_y(pskip_nb_b_mv_y),
+                .nb_c_present(pskip_nb_c_present), .nb_c_inter(pskip_nb_c_inter),
+                .nb_c_ref(pskip_nb_c_ref), .nb_c_mv_x(pskip_nb_c_mv_x), .nb_c_mv_y(pskip_nb_c_mv_y),
+                .nb_d_present(pskip_nb_d_present), .nb_d_inter(pskip_nb_d_inter),
+                .nb_d_ref(pskip_nb_d_ref), .nb_d_mv_x(pskip_nb_d_mv_x), .nb_d_mv_y(pskip_nb_d_mv_y),
+                .mvp_x(p16_mvp_x),
+                .mvp_y(p16_mvp_y),
+                .directional(p16_mvp_directional)
+            );
+
+            h264_pskip_mv u_product_pskip_mv (
+                .nb_a_present(pskip_nb_a_present), .nb_a_inter(pskip_nb_a_inter),
+                .nb_a_ref(pskip_nb_a_ref), .nb_a_mv_x(pskip_nb_a_mv_x), .nb_a_mv_y(pskip_nb_a_mv_y),
+                .nb_b_present(pskip_nb_b_present), .nb_b_inter(pskip_nb_b_inter),
+                .nb_b_ref(pskip_nb_b_ref), .nb_b_mv_x(pskip_nb_b_mv_x), .nb_b_mv_y(pskip_nb_b_mv_y),
+                .nb_c_present(pskip_nb_c_present), .nb_c_inter(pskip_nb_c_inter),
+                .nb_c_ref(pskip_nb_c_ref), .nb_c_mv_x(pskip_nb_c_mv_x), .nb_c_mv_y(pskip_nb_c_mv_y),
+                .nb_d_present(pskip_nb_d_present), .nb_d_inter(pskip_nb_d_inter),
+                .nb_d_ref(pskip_nb_d_ref), .nb_d_mv_x(pskip_nb_d_mv_x), .nb_d_mv_y(pskip_nb_d_mv_y),
+                .mv_x(pskip_mv_x),
+                .mv_y(pskip_mv_y),
+                .ref_idx_l0(pskip_ref_idx_l0),
+                .mvp_x(pskip_mvp_x),
+                .mvp_y(pskip_mvp_y),
+                .zero_mv(pskip_zero_mv),
+                .zero_reason(pskip_zero_reason)
+            );
+
+            h264_dpb_i420_addr #(.FRAME_W(FRAME_W), .FRAME_H(FRAME_H)) u_product_pskip_rd_addr (
+                .base(part_ref_grant ? part_ref_base_r : pskip_ref_base_r),
+                .plane(ref_req_plane),
+                .x(ref_req_x),
+                .y(ref_req_y),
+                .addr(pskip_ref_addr)
+            );
+            h264_pskip_mc_copy u_product_pskip_mc (
+                .clk(clk),
+                .reset(reset || slice_start),
+                .start(pskip_start_r),
+                .mb_x(wb_mb_x),
+                .mb_y(wb_mb_y),
+                .mv_x_qpel(pskip_mv_x_r),
+                .mv_y_qpel(pskip_mv_y_r),
+                .frame_w(FRAME_W16),
+                .frame_h(FRAME_H16),
+                .ref_req_valid(pskip_ref_req_valid),
+                .ref_req_plane(pskip_ref_req_plane),
+                .ref_req_x(pskip_ref_req_x),
+                .ref_req_y(pskip_ref_req_y),
+                .ref_req_ready(mc_ref_req_ready),
+                .ref_rsp_valid(mc_ref_rsp_valid),
+                .ref_rsp_sample(mc_ref_rsp_sample),
+                .pred_valid(pskip_pred_valid),
+                .pred_plane(pskip_pred_plane),
+                .pred_idx(pskip_pred_idx),
+                .pred_sample(pskip_pred_sample),
+                .busy(pskip_busy),
+                .done(pskip_done)
+            );
+
+            h264_mv_pred_partition u_product_part_mvp (
+                .part_mode(part_mode_r),
+                .slot(part_slot_r),
+                .ref_idx_l0(part_ref_idx_slot),
+                .nb_a_present(pskip_nb_a_present), .nb_a_inter(pskip_nb_a_inter),
+                .nb_a_ref(pskip_nb_a_ref), .nb_a_mv_x(pskip_nb_a_mv_x), .nb_a_mv_y(pskip_nb_a_mv_y),
+                .nb_b_present(pskip_nb_b_present), .nb_b_inter(pskip_nb_b_inter),
+                .nb_b_ref(pskip_nb_b_ref), .nb_b_mv_x(pskip_nb_b_mv_x), .nb_b_mv_y(pskip_nb_b_mv_y),
+                .nb_c_present(pskip_nb_c_present), .nb_c_inter(pskip_nb_c_inter),
+                .nb_c_ref(pskip_nb_c_ref), .nb_c_mv_x(pskip_nb_c_mv_x), .nb_c_mv_y(pskip_nb_c_mv_y),
+                .nb_d_present(pskip_nb_d_present), .nb_d_inter(pskip_nb_d_inter),
+                .nb_d_ref(pskip_nb_d_ref), .nb_d_mv_x(pskip_nb_d_mv_x), .nb_d_mv_y(pskip_nb_d_mv_y),
+                .mvp_x(part_mvp_x),
+                .mvp_y(part_mvp_y),
+                .shape_override(part_shape_override)
+            );
+
+            h264_inter_mc_part_stream u_product_part_mc (
+                .clk(clk),
+                .reset(reset || slice_start),
+                .start(part_start_r),
+                .mb_x(wb_mb_x),
+                .mb_y(wb_mb_y),
+                .part_x(part_geo_x),
+                .part_y(part_geo_y),
+                .part_w(part_geo_w),
+                .part_h(part_geo_h),
+                .mv_x_qpel(part_mv_x_r),
+                .mv_y_qpel(part_mv_y_r),
+                .frame_w(FRAME_W16),
+                .frame_h(FRAME_H16),
+                .ref_req_valid(part_ref_req_valid),
+                .ref_req_plane(part_ref_req_plane),
+                .ref_req_x(part_ref_req_x),
+                .ref_req_y(part_ref_req_y),
+                .ref_req_ready(part_ref_req_ready),
+                .ref_rsp_valid(part_ref_rsp_valid),
+                .ref_rsp_sample(mc_ref_rsp_sample),
+                .pred_valid(part_pred_valid),
+                .pred_plane(part_pred_plane),
+                .pred_idx(part_pred_idx),
+                .pred_sample(part_pred_sample),
+                .busy(part_busy),
+                .done(part_done)
+            );
+
+            h264_mv_pred_part u_product_p16_mv_pred (
+                .part_mode(3'd0),
+                .part_idx(2'd0),
+                .avail_a(mv_avail_a),
+                .avail_b(mv_avail_b),
+                .avail_c(mv_avail_c),
+                .avail_d(1'b0),
+                .mv_a_x(mv_left_x),
+                .mv_a_y(mv_left_y),
+                .mv_b_x(mv_top_x[syntax_mb_idx]),
+                .mv_b_y(mv_top_y[syntax_mb_idx]),
+                .mv_c_x(mv_top_x[syntax_top_right_idx]),
+                .mv_c_y(mv_top_y[syntax_top_right_idx]),
+                .mv_d_x(16'sd0),
+                .mv_d_y(16'sd0),
+                .mvd_x(mvd_x_qpel),
+                .mvd_y(mvd_y_qpel),
+                .p_skip(mb_skip),
+                .pred_x(syntax_mv_pred_x),
+                .pred_y(syntax_mv_pred_y),
+                .mv_x(syntax_mv_x),
+                .mv_y(syntax_mv_y),
+                .skip_zero(syntax_mv_skip_zero)
+            );
+
+            h264_luma_qpel_sample u_product_p16_luma_pred (
+                .ref_pix(p16_luma_ref),
+                .frac_x(p16_mv_x_qpel_r[1:0]),
+                .frac_y(p16_mv_y_qpel_r[1:0]),
+                .sample(p16_luma_pred_sample)
+            );
+            h264_chroma_epel_sample u_product_p16_chroma_pred (
+                .p00(p16_chroma_ref[0]),
+                .p10(p16_chroma_ref[1]),
+                .p01(p16_chroma_ref[2]),
+                .p11(p16_chroma_ref[3]),
+                .frac_x(p16_mv_x_qpel_r[2:0]),
+                .frac_y(p16_mv_y_qpel_r[2:0]),
+                .sample(p16_chroma_pred_sample)
+            );
+        end else begin : g_inter_off
+            assign pskip_nb_a_present = 1'b0;
+            assign pskip_nb_a_inter = 1'b0;
+            assign pskip_nb_a_ref = 2'd0;
+            assign pskip_nb_a_mv_x = 16'sd0;
+            assign pskip_nb_a_mv_y = 16'sd0;
+            assign pskip_nb_b_present = 1'b0;
+            assign pskip_nb_b_inter = 1'b0;
+            assign pskip_nb_b_ref = 2'd0;
+            assign pskip_nb_b_mv_x = 16'sd0;
+            assign pskip_nb_b_mv_y = 16'sd0;
+            assign pskip_nb_c_present = 1'b0;
+            assign pskip_nb_c_inter = 1'b0;
+            assign pskip_nb_c_ref = 2'd0;
+            assign pskip_nb_c_mv_x = 16'sd0;
+            assign pskip_nb_c_mv_y = 16'sd0;
+            assign pskip_nb_d_present = 1'b0;
+            assign pskip_nb_d_inter = 1'b0;
+            assign pskip_nb_d_ref = 2'd0;
+            assign pskip_nb_d_mv_x = 16'sd0;
+            assign pskip_nb_d_mv_y = 16'sd0;
+            assign part_geo_x = 5'd0;
+            assign part_geo_y = 5'd0;
+            assign part_geo_w = 5'd0;
+            assign part_geo_h = 5'd0;
+            assign part_geo_valid = 1'b0;
+            assign part_geo_mask = 16'd0;
+            assign p16_mvp_x = 16'sd0;
+            assign p16_mvp_y = 16'sd0;
+            assign p16_mvp_directional = 1'b0;
+            assign pskip_mv_x = 16'sd0;
+            assign pskip_mv_y = 16'sd0;
+            assign pskip_ref_idx_l0 = 2'd0;
+            assign pskip_mvp_x = 16'sd0;
+            assign pskip_mvp_y = 16'sd0;
+            assign pskip_zero_mv = 1'b1;
+            assign pskip_zero_reason = 4'd0;
+            assign pskip_pred_valid = 1'b0;
+            assign pskip_pred_plane = 2'd0;
+            assign pskip_pred_idx = 8'd0;
+            assign pskip_pred_sample = 8'd0;
+            assign pskip_busy = 1'b0;
+            assign pskip_done = 1'b0;
+            assign pskip_ref_req_valid = 1'b0;
+            assign pskip_ref_req_plane = 2'd0;
+            assign pskip_ref_req_x = 16'd0;
+            assign pskip_ref_req_y = 16'd0;
+            assign pskip_ref_addr = 32'd0;
+            assign part_mvp_x = 16'sd0;
+            assign part_mvp_y = 16'sd0;
+            assign part_shape_override = 1'b0;
+            assign part_ref_req_valid = 1'b0;
+            assign part_ref_req_plane = 2'd0;
+            assign part_ref_req_x = 16'd0;
+            assign part_ref_req_y = 16'd0;
+            assign part_pred_valid = 1'b0;
+            assign part_pred_plane = 2'd0;
+            assign part_pred_idx = 8'd0;
+            assign part_pred_sample = 8'd0;
+            assign part_busy = 1'b0;
+            assign part_done = 1'b0;
+            assign syntax_mv_pred_x = 16'sd0;
+            assign syntax_mv_pred_y = 16'sd0;
+            assign syntax_mv_x = 16'sd0;
+            assign syntax_mv_y = 16'sd0;
+            assign syntax_mv_skip_zero = 1'b1;
+            assign p16_luma_pred_sample = 8'd0;
+            assign p16_chroma_pred_sample = 8'd0;
+        end
+    endgenerate
 
     // The core requests the byte containing the first residual bit.  With a
     // registered window, rbsp_window_base still names the previous request at
@@ -1021,6 +1104,9 @@ module h264_decode_core #(
 `endif
         end
     endgenerate
+    // P16 residual CAVLC/IDCT stays available when ENABLE_INTER=1. With
+    // ENABLE_INTER=0 the P16 launch is hard-gated, so these become unreachable
+    // but still elaborate for the residual FSM nets.
     h264_cavlc_residual_block u_product_p16_residual0 (
         .clk(clk),
         .reset(reset || slice_start),
@@ -1112,24 +1198,6 @@ module h264_decode_core #(
         (wb_plane == 2'd0) ? lat_p16_residual_y[wb_sample_idx] :
         (wb_plane == 2'd1) ? lat_p16_residual_u[wb_sample_idx[5:0]] :
                              lat_p16_residual_v[wb_sample_idx[5:0]];
-    wire [7:0] p16_luma_pred_sample;
-    h264_luma_qpel_sample u_product_p16_luma_pred (
-        .ref_pix(p16_luma_ref),
-        .frac_x(p16_mv_x_qpel_r[1:0]),
-        .frac_y(p16_mv_y_qpel_r[1:0]),
-        .sample(p16_luma_pred_sample)
-    );
-    wire [7:0] p16_chroma_pred_sample;
-    h264_chroma_epel_sample u_product_p16_chroma_pred (
-        .p00(p16_chroma_ref[0]),
-        .p10(p16_chroma_ref[1]),
-        .p01(p16_chroma_ref[2]),
-        .p11(p16_chroma_ref[3]),
-        .frac_x(p16_mv_x_qpel_r[2:0]),
-        .frac_y(p16_mv_y_qpel_r[2:0]),
-        .sample(p16_chroma_pred_sample)
-    );
-    wire [7:0] p16_pred_sample = (wb_plane == 2'd0) ? p16_luma_pred_sample : p16_chroma_pred_sample;
 `ifdef H264_DECODE_CORE_FAULT_DROP_PRED
     wire signed [17:0] p16_pred_term = 18'sd0;
 `else
@@ -1473,13 +1541,16 @@ module h264_decode_core #(
     // itself while the run is draining. mb_skip_run has already been parsed by
     // the time the run is non-zero, and the coded macroblock that terminates
     // the run arrives afterwards as a normal mb_type_valid pulse.
-    wire pskip_launch = pskip_pending && (wb_state == ST_IDLE) &&
+    wire pskip_launch = ENABLE_INTER && pskip_pending && (wb_state == ST_IDLE) &&
                         !p16_launch && !product_recon_mb_valid && !pskip_busy;
     // 16x8 / 8x16 / 8x8 macroblocks reconstruct partition by partition.
-    wire ppart_launch = mb_type_valid && route_is_ppart && (wb_state == ST_IDLE) &&
+    wire ppart_launch = ENABLE_INTER && mb_type_valid && route_is_ppart && (wb_state == ST_IDLE) &&
                         !pskip_pending && !p16_launch && !product_recon_mb_valid &&
                         !part_busy;
-    assign skip_consume = pskip_launch || (mb_type_valid && !pskip_pending);
+    // Glass MVP (ENABLE_INTER=0): still drain mb_skip_run so the feeder advances.
+    wire pskip_discard = !ENABLE_INTER && pskip_pending && (wb_state == ST_IDLE) &&
+                         !product_recon_mb_valid;
+    assign skip_consume = pskip_launch || pskip_discard || (mb_type_valid && !pskip_pending);
     wire [7:0] product_recon_mb_x = product_intra_recon_valid ? intra_mb_x_r : recon_mb_x;
     wire [7:0] product_recon_mb_y = product_intra_recon_valid ? intra_mb_y_r : recon_mb_y;
     wire product_recon_mb_is_ref = product_intra_recon_valid ? intra_mb_is_ref_r : recon_mb_is_ref;
@@ -1634,7 +1705,7 @@ module h264_decode_core #(
                 p16_rbsp_ready_r <= 1'b1;
             if (mb_type_valid)
                 syntax_mb_addr_r <= syntax_mb_addr_r + 16'd1;
-            if (pskip_launch)
+            if (pskip_launch || pskip_discard)
                 syntax_mb_addr_r <= syntax_mb_addr_r + 16'd1;
             if (product_intra_mb_start || i16_launch) begin
                 intra_active_r <= 1'b1;
