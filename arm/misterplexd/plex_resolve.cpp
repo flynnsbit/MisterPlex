@@ -826,9 +826,13 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
             weakH = std::atoi(weak.videoResolution.substr(x + 1).c_str());
         }
     }
+    // Only block preferDirect when source EXCEEDS the weak bank (would not fit
+    // DDR/present). Exact mismatch (e.g. Glass 624x480 vs bank 640x480) used to
+    // force universal 720p CAVLC and left STREAM=1 fabric on a heavy ladder while
+    // FPGA consumer was still dark. Smaller-or-equal source can direct-play.
     const bool skipDirectGeom =
         preferDirectH264 && weakW > 0 && weakH > 0 && srcW > 0 && srcH > 0 &&
-        (srcW != weakW || srcH != weakH);
+        (srcW > weakW || srcH > weakH);
     const bool directH264 = wantDirect && isH264 && !skipDirectHigh && !skipDirectGeom;
     if (directH264) {
         const std::string prof = profNote;
@@ -880,7 +884,7 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
                                 " → universal baseline@L31 720p CAVLC; skip preferDirect)";
                 else if (forceFabricCavlc && skipDirectGeom)
                     r.detail += " (STREAM fabric: source " + std::to_string(srcW) + "x" +
-                                std::to_string(srcH) + " != bank " + std::to_string(weakW) + "x" +
+                                std::to_string(srcH) + " exceeds bank " + std::to_string(weakW) + "x" +
                                 std::to_string(weakH) +
                                 " → universal baseline@L31 720p CAVLC; skip preferDirect)";
                 else if (!metaOk)
