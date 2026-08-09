@@ -48,6 +48,7 @@ RTL=(
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_cavlc_residual.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/slice_hdr_parser.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_iq_idct_seq.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_deblock.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_inter_pred.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv"
@@ -56,6 +57,8 @@ RTL=(
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_decode_top.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_decode_core.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_rbsp_window.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_i_mb_feed.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_feed_chroma.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/decode_stub.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/stream_path.sv"
 )

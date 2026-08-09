@@ -43,6 +43,7 @@ echo "RTL SIM: using $VERILATOR_VERSION" >&2
   fpga/Plex_MiSTer/rtl/h264_cavlc_residual.sv \
   fpga/Plex_MiSTer/rtl/slice_hdr_parser.sv \
   fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv \
+  fpga/Plex_MiSTer/rtl/h264_iq_idct_seq.sv \
   fpga/Plex_MiSTer/rtl/h264_inter_pred.sv \
   fpga/Plex_MiSTer/rtl/h264_intra_pred.sv \
   fpga/Plex_MiSTer/rtl/h264_intra_nb_ctx.sv \
@@ -51,6 +52,8 @@ echo "RTL SIM: using $VERILATOR_VERSION" >&2
   fpga/Plex_MiSTer/rtl/h264_decode_top.sv \
   fpga/Plex_MiSTer/rtl/h264_decode_core.sv \
   fpga/Plex_MiSTer/rtl/h264_rbsp_window.sv \
+  fpga/Plex_MiSTer/rtl/h264_i_mb_feed.sv \
+  fpga/Plex_MiSTer/rtl/h264_feed_chroma.sv \
   fpga/Plex_MiSTer/rtl/decode_stub.sv \
   tests/rtl/h264_multinal_stream_path_tb.cpp
 
@@ -84,6 +87,7 @@ echo "test_h264_multinal_stream_path: OK refuses implicit unproven defaults rc=$
   fpga/Plex_MiSTer/rtl/h264_cavlc_residual.sv \
   fpga/Plex_MiSTer/rtl/slice_hdr_parser.sv \
   fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv \
+  fpga/Plex_MiSTer/rtl/h264_iq_idct_seq.sv \
   fpga/Plex_MiSTer/rtl/h264_inter_pred.sv \
   fpga/Plex_MiSTer/rtl/h264_intra_pred.sv \
   fpga/Plex_MiSTer/rtl/h264_intra_nb_ctx.sv \
@@ -92,6 +96,8 @@ echo "test_h264_multinal_stream_path: OK refuses implicit unproven defaults rc=$
   fpga/Plex_MiSTer/rtl/h264_decode_top.sv \
   fpga/Plex_MiSTer/rtl/h264_decode_core.sv \
   fpga/Plex_MiSTer/rtl/h264_rbsp_window.sv \
+  fpga/Plex_MiSTer/rtl/h264_i_mb_feed.sv \
+  fpga/Plex_MiSTer/rtl/h264_feed_chroma.sv \
   fpga/Plex_MiSTer/rtl/decode_stub.sv \
   tests/rtl/h264_multinal_stream_path_tb.cpp
 set +e
