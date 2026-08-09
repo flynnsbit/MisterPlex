@@ -82,6 +82,31 @@ module ddr_bus_arbiter (
 		end
 	end
 
+	// o24: m1_rd/m1_we are single-cycle clk_m1 pulses. Sampling them directly on
+	// clk_ddr (and only while grant_m1) drops CTRL/DATA reads → cons=0 / telem_seq=1.
+	// 2-FF sync + sticky hold until the granted beat is accepted. Addr/burst/din
+	// are protocol-stable while !m1_busy; latch on sticky capture.
+	reg m1_rd_s1, m1_rd_s2;
+	reg m1_we_s1, m1_we_s2;
+	reg m1_rd_sticky, m1_we_sticky;
+	reg [28:0] m1_addr_r;
+	reg [7:0]  m1_burst_r;
+	reg [63:0] m1_din_r;
+	reg [7:0]  m1_be_r;
+	always @(posedge clk) begin
+		if (rst) begin
+			m1_rd_s1 <= 1'b0;
+			m1_rd_s2 <= 1'b0;
+			m1_we_s1 <= 1'b0;
+			m1_we_s2 <= 1'b0;
+		end else begin
+			m1_rd_s1 <= m1_rd;
+			m1_rd_s2 <= m1_rd_s1;
+			m1_we_s1 <= m1_we;
+			m1_we_s2 <= m1_we_s1;
+		end
+	end
+
 	reg grant_m1;
 	reg rsp_owner_m1;
 	reg [8:0] rsp_left;
@@ -99,9 +124,9 @@ module ddr_bus_arbiter (
 	wire rsp_active = rsp_left != 9'd0;
 	wire rsp_pipe_active = rsp_active | rsp_valid_r;
 	wire m0_cmd = m0_rd | m0_we;
-	wire m1_cmd = m1_rd | m1_we;
+	wire m1_cmd = m1_rd_sticky | m1_we_sticky;
 	wire use_m1 = grant_m1;
-	wire [7:0] selected_burst = use_m1 ? m1_burstcnt : m0_burstcnt;
+	wire [7:0] selected_burst = use_m1 ? m1_burst_r : m0_burstcnt;
 
 	// When m1 has waited M1_WAIT_MAX without a grant, raise m0_busy so the
 	// frame-store stops issuing new reads and the pipe can drain — otherwise
@@ -137,12 +162,13 @@ module ddr_bus_arbiter (
 	end
 	assign m1_busy = m1_busy_s2;
 
-	assign DDRAM_BURSTCNT = use_m1 ? m1_burstcnt : m0_burstcnt;
-	assign DDRAM_ADDR     = use_m1 ? m1_addr      : m0_addr;
-	assign DDRAM_RD       = use_m1 ? m1_rd        : m0_rd;
-	assign DDRAM_DIN      = use_m1 ? m1_din       : m0_din;
-	assign DDRAM_BE       = use_m1 ? m1_be        : m0_be;
-	assign DDRAM_WE       = use_m1 ? m1_we        : m0_we;
+	assign DDRAM_BURSTCNT = use_m1 ? m1_burst_r : m0_burstcnt;
+	assign DDRAM_ADDR     = use_m1 ? m1_addr_r  : m0_addr;
+	// Drive sticky cmd only while granted so a pending RD cannot leak onto m0 beats.
+	assign DDRAM_RD       = use_m1 ? m1_rd_sticky : m0_rd;
+	assign DDRAM_DIN      = use_m1 ? m1_din_r    : m0_din;
+	assign DDRAM_BE       = use_m1 ? m1_be_r     : m0_be;
+	assign DDRAM_WE       = use_m1 ? m1_we_sticky : m0_we;
 
 	wire [63:0] ddram_dout_pad;
 	wire        ddram_dout_ready_pad;
@@ -222,6 +248,12 @@ module ddr_bus_arbiter (
 			rsp_valid_r <= 1'b0;
 			rsp_owner_m1_r <= 1'b0;
 			m1_wait <= 6'd0;
+			m1_rd_sticky <= 1'b0;
+			m1_we_sticky <= 1'b0;
+			m1_addr_r <= 29'd0;
+			m1_burst_r <= 8'd1;
+			m1_din_r <= 64'd0;
+			m1_be_r <= 8'hFF;
 		end else begin
 			rsp_valid_r <= rsp_raw_valid;
 			if (rsp_raw_valid) begin
@@ -232,6 +264,20 @@ module ddr_bus_arbiter (
 			if (DDRAM_DOUT_READY && rsp_active)
 				rsp_left <= rsp_left - 9'd1;
 
+			// Capture clk_m1 pulses into sticky clk_ddr commands.
+			if (m1_rd_s2) begin
+				m1_rd_sticky <= 1'b1;
+				m1_addr_r <= m1_addr;
+				m1_burst_r <= m1_burstcnt;
+			end
+			if (m1_we_s2) begin
+				m1_we_sticky <= 1'b1;
+				m1_addr_r <= m1_addr;
+				m1_burst_r <= m1_burstcnt;
+				m1_din_r <= m1_din;
+				m1_be_r <= m1_be;
+			end
+
 			// Count consecutive ddr cycles m1 wants but is not granted.
 			if (!m1_want_s2 || grant_m1)
 				m1_wait <= 6'd0;
@@ -240,18 +286,25 @@ module ddr_bus_arbiter (
 
 			if (!DDRAM_BUSY && !rsp_pipe_active) begin
 				if (grant_m1) begin
-					if (m1_rd) begin
+					if (m1_rd_sticky) begin
 						rsp_owner_m1 <= 1'b1;
-						rsp_left <= {1'b0, selected_burst};
+						rsp_left <= {1'b0, m1_burst_r};
 						grant_m1 <= 1'b0;
+						m1_rd_sticky <= 1'b0;
 						m1_wait <= 6'd0;
-					end else if (m1_we || !m1_want_s2) begin
+					end else if (m1_we_sticky) begin
+						// Posted write: one granted cycle with WE sticky high.
+						grant_m1 <= 1'b0;
+						m1_we_sticky <= 1'b0;
+						m1_wait <= 6'd0;
+					end else if (!m1_want_s2) begin
 						grant_m1 <= 1'b0;
 						m1_wait <= 6'd0;
 					end
 				end else begin
 					// Prefer m1 when idle-gap OR when starved by continuous m0_rd.
-					if (m1_want_s2 && (!m0_cmd || m1_starved)) begin
+					// Also take m1 if a sticky cmd is already waiting (lost-RD recovery).
+					if ((m1_want_s2 || m1_cmd) && (!m0_cmd || m1_starved || m1_cmd)) begin
 						grant_m1 <= 1'b1;
 					end else if (m0_rd) begin
 						rsp_owner_m1 <= 1'b0;
@@ -259,9 +312,6 @@ module ddr_bus_arbiter (
 					end
 				end
 			end
-
-			if (grant_m1 && !DDRAM_BUSY && m1_cmd && !m1_rd)
-				grant_m1 <= 1'b0;
 		end
 	end
 endmodule
