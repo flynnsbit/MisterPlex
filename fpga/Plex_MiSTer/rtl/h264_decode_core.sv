@@ -1151,7 +1151,8 @@ module h264_decode_core #(
         assign cavlc_trailing_ones = 2'd0;
         assign cavlc_total_zeros = 4'd0;
         assign p16_iq_done = 1'b0;
-        for (genvar si = 0; si < 16; si = si + 1) begin : g_p16_zero
+        genvar si;
+        for (si = 0; si < 16; si = si + 1) begin : g_p16_zero
             assign cavlc_coeff[si] = 16'sd0;
             assign cavlc_level_dbg[si] = 16'sd0;
             assign cavlc_run_dbg[si] = 4'd0;
