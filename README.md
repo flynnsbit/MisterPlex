@@ -57,15 +57,20 @@ Edit `/media/fat/misterplex/misterplex.conf` and set your server:
 
 ```ini
 PLEX_BASE=http://YOUR-PLEX-SERVER:32400
-DECODE=320x240
-PRESENT=fb0
+PRESENT=fpga
+AUDIO=on
+OSD_CONTROL=1
+TRANSCODE_PROFILE=720p
+DECODE=1280x720
 # PLEX_TOKEN=<optional-token>
 ```
 
 Set `PLEX_BASE` to the URL of **your** Plex Media Server (usually port `32400` on the server
-host). Cast sessions usually supply a transient Plex token, so `PLEX_TOKEN` is optional for
-casting; set it if you want the on-device browse/menu scripts to list your libraries. A fully
-annotated reference lives in [`assets/misterplex.conf.example`](assets/misterplex.conf.example).
+host). With `OSD_CONTROL=1`, F12 **Content resolution** and **Display resolution** drive the
+PMS ladder and present bank live (recommended). Cast sessions usually supply a transient Plex
+token, so `PLEX_TOKEN` is optional for casting; set it if you want the on-device browse/menu
+scripts to list your libraries. A fully annotated reference lives in
+[`assets/misterplex.conf.example`](assets/misterplex.conf.example).
 
 ### 3. Start on boot
 
@@ -152,25 +157,26 @@ export PLEX_TOKEN=<your-token>
 ./scripts/plex_menu.sh                    # interactive TUI; runs on the MiSTer too
 ```
 
-## Display and output resolution
+## Content, display, and HDMI output
 
-MiSTerPlex currently decodes/presents **320×240** content internally, but MiSTer's scaler can
-output higher HDMI modes without extra ARM cost. Lab sweep results show 720p and 1080p HDMI
-output modes keep the same drop/drift band and **0% CPU idle** as the 800×600 default.
+v0.4.0 ships three **content** ladders and matching present banks:
 
-Change output mode in `/media/fat/MiSTer.ini`, not `misterplex.conf`: edit the `[Plex]`
-section's `video_mode`, `video_mode_ntsc`, and `video_mode_pal`, then soft-reboot. Default is
-`video_mode=5` (800×600@60). Common supported HDMI choices are `0` (1280×720@60), `7`
-(1280×720@50), `8` (1920×1080@60), and `9` (1920×1080@50). VGA users should stay at
-mode `5`, or use `6` (640×480@60), because `vga_scaler=1` makes VGA follow the same mode as
-HDMI.
+| Label | Bank | PMS ladder |
+|-------|------|------------|
+| **240p** | 320×240 | ~1 Mbps baseline |
+| **480p** | 640×480 | ~2.5 Mbps baseline |
+| **720p** | 1280×720 | high-bitrate main@L3.1 |
 
-Native content resolution is a separate OSD setting (**F12 → Content resolution**). `320x240`
-remains the proven default; `640x480` is for 480p test builds that include the DDR frame-store,
-ARM DDR write, and 640×480 Plex ladder pieces.
+**F12 → Content resolution** tells PMS which ladder to send. **F12 → Display resolution**
+chooses the FPGA present size (`Follow content` keeps them matched). Set `OSD_CONTROL=1` in
+`misterplex.conf` so the daemon applies those choices live (conf upsert + session retarget).
 
-Full guidance and the supported matrix: [docs/display-resolution.md](docs/display-resolution.md).
-Draft v0.3.0 release notes: [docs/release-notes-v0.3.0.md](docs/release-notes-v0.3.0.md).
+MiSTer's HDMI **output mode** is separate and free: change `video_mode` under `[Plex]` in
+`/media/fat/MiSTer.ini` (e.g. `0` = 1280×720@60, `8` = 1920×1080@60). Higher HDMI modes do not
+add ARM decode cost; the content bank does.
+
+Full matrix: [docs/display-resolution.md](docs/display-resolution.md).  
+Release notes: [docs/release-notes-v0.4.0.md](docs/release-notes-v0.4.0.md).
 
 ## Troubleshooting
 
@@ -190,8 +196,11 @@ Draft v0.3.0 release notes: [docs/release-notes-v0.3.0.md](docs/release-notes-v0
 | Key | Meaning |
 |---|---|
 | `PLEX_BASE` | Server URL. Multiple servers via `PLEX_SERVERS=a,b` or repeated `PLEX_BASE=` lines. |
-| `DECODE` | Decode/present size, default `320x240`; `480x360` is hardware-verified. |
-| `PRESENT` | `fb0` (default, safe), `fpga`, or `both`. |
+| `OSD_CONTROL` | `1` = F12 Content/Display bits drive the ladder and present bank (recommended). |
+| `TRANSCODE_PROFILE` | `240p` / `480p` / `720p` PMS weak ladder (used when OSD is off or as default). |
+| `DECODE` | Bank size when `OSD_CONTROL=0`: `320x240`, `640x480`, or `1280x720`. |
+| `PRESENT` | Product glass uses `fpga` (DDR frame store). `fb0` / `both` also work. |
+| `AUDIO` | `on` for dual-pipe A+V (default product). |
 | `SUBTITLES` | `off`, `burn` (server-side), or `ffmpeg` (local files). |
 | `AUTO_NEXT` | Play the next play-queue item at end of media. Default on. |
 | `SKIP_FORWARD_MS` / `SKIP_BACK_MS` | Core input skip deltas; defaults are +30s / -10s. |
@@ -205,13 +214,17 @@ Full reference: [`assets/misterplex.conf.example`](assets/misterplex.conf.exampl
 ## Features
 
 - Cast from any Plex client — play, pause, resume, stop, seek
+- **Plex Web timeline scrubber** advances while playing (companion + PMS `/:/timeline`)
 - Scrubber with duration and seek range; step ±10 s; skip next/previous
+- **240p / 480p / 720p** content ladders with live PMS retarget
+- **F12 Content + Display resolution** (Follow content or fixed bank)
 - Auto-play the next episode from the play queue
 - Multi-server support, with the cast-selected server winning
 - On-device browse CLI and interactive menu
 - Subtitle burn-in (server-side or local)
-- OSD controls: Content FPS, test patterns, TV mode, audio tone
+- OSD controls: Content FPS, content/display resolution, test patterns, TV mode, audio tone
 - 3:2 / 2:2 cadence handling so 24 fps film is correct on a 60 Hz display
+- DDR present path always on — external SDRAM stick optional
 
 ---
 

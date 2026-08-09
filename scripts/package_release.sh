@@ -12,7 +12,8 @@ ARM_BIN="$ROOT/build/arm/misterplexd"
 # Override either path or md5 via RBF_PATH / RBF_MD5_EXPECTED for lab freezes.
 case "$VERSION" in
   v0.4.0*|0.4.0*)
-    RBF_MD5_EXPECTED="${RBF_MD5_EXPECTED:-REPLACE_AT_FREEZE}"
+    # softc24 HOLD=2 + CONF_STR v9 Content O[5:4] + Display O[15:14] Follow
+    RBF_MD5_EXPECTED="${RBF_MD5_EXPECTED:-1c6ed06fe832fb54259d4f4ce504ccae}"
     RBF_DEFAULT="$ROOT/release_artifacts/v0.4.0/Plex.rbf"
     ;;
   *)

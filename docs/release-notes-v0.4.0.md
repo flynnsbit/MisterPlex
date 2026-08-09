@@ -1,46 +1,78 @@
 # MiSTerPlex v0.4.0
 
-Multi-resolution cast release: **240p / 480p / 720p**, live PMS encoder match, DDR present always on.
+Multi-resolution cast release: **240p / 480p / 720p**, live PMS encoder match, DDR present,
+F12 Content + Display resolution control, and a working Plex Web timeline scrubber.
 
 ## Highlights
 
-- **Content resolution labels:** OSD and product profiles use **240p / 480p / 720p** (CONF_STR v8 `O[5:4]`). Internal banks remain 320×240, 640×480 (624 coded), 1280×720.
-- **Live PMS match:** Changing content resolution retargets the Plex universal weak ladder (`videoResolution` + bitrate/profile) and restarts the session at the same playhead. Lab SCORE: 240p→`320x240`, 480p→`640x480`, 720p→`1280x720` on FOAR cast. FFmpeg FOAR+pads when source ≠ bank (never trust `videoResolution` alone — L38). Scale bypass only for exact Media size match or local identity.
-- **Plex cast E2E:** Playwright against local PMS Web (`http://<pms>:32400/web`) + companion remote-player APIs (play/pause/resume/seek/stop/timeline) + HDMI-USB glass PASS on **240p, 480p, and 720p**. Video-only titles (e.g. Grid720) no longer abort when `AUDIO=on` (L39).
-- **Timeline scrubber:** Companion reports **advancing** playback `time=` while casting (DDR 2-slot ring `onProgress` + plant-hold release from `0abee0b6`). PMS `/:/timeline` uses real HTTP **2xx** + **cast token** (not conf token on foreign `plex.direct` hosts) so Plex Web “Now Playing” / scrubber tracks the player (L40/L41 / `eeae7943`). Pause/resume/seek/stop verified on all three modes.
-- **DDR always available:** HPS DDR frame store is the shipping present path. **SDRAM stick is optional** — not required for 240p/480p/720p. Conf documents `PRESENT_MEM=auto|ddr`.
-- **480p geometry:** FOAR+pad contract coded 624 × display 618 × present 640 (lab-proven in daemon logs).
+- **Content + Display resolution (F12):** OSD **Content resolution** (`O[5:4]`: 240p / 480p / 720p)
+  chooses the PMS universal ladder. OSD **Display resolution** (`O[15:14]`: Follow content /
+  240p / 480p / 720p) chooses the FPGA present bank. With `OSD_CONTROL=1` the daemon applies
+  changes live (conf upsert + session retarget / restart at playhead).
+- **Content resolution labels:** Product profiles use **240p / 480p / 720p**. Internal banks remain
+  320×240, 640×480 (624 coded), 1280×720.
+- **Live PMS match:** Changing content resolution retargets the Plex universal weak ladder
+  (`videoResolution` + bitrate/profile) and restarts the session at the same playhead. Lab SCORE:
+  240p→`320x240`, 480p→`640x480`, 720p→`1280x720` on FOAR cast.
+- **Plex Web timeline scrubber:** Companion reports advancing `time=` while casting. PMS
+  `/:/timeline` uses real HTTP **2xx** + the **cast token** (poll/subscribe never refresh the cast
+  host token). Video-only titles (e.g. Grid720) advance the scrubber while the first frame buffers.
+  Unique PMS session ids after daemon restart avoid sticky transcoder stalls.
+- **Plex cast E2E:** Playwright + companion remote-player APIs (play/pause/resume/seek/stop/timeline)
+  + HDMI-USB glass on **240p, 480p, and 720p**. Video-only sources no longer abort when `AUDIO=on`.
+- **DDR always available:** HPS DDR frame store is the shipping present path. **SDRAM stick is
+  optional** — not required for 240p/480p/720p. Conf documents `PRESENT_MEM=auto|ddr`.
+- **480p geometry:** FOAR+pad contract coded 624 × display 618 × present 640.
 - **Companion version:** 0.4.0.
 
 ## Ship-accepted present rates (lab, DDR path)
 
 | Mode | Content | Typical pfps | Audio |
 |------|---------|--------------|-------|
-| 240p | FOAR A+V | ~24–25 | advances with picture |
-| 480p | FOAR A+V | ~24 | advances with picture |
-| 720p | FOAR A+V | ~13–16 | advances with picture |
+| 240p | FOAR A+V | ~20–25 | advances with picture |
+| 480p | FOAR A+V | ~18–27 | advances with picture |
+| 720p | FOAR A+V | ~10–16 | advances with picture |
 | 720p | Grid720 video-only | ~18–19 | n/a (source has no audio stream) |
 
-These are the product rates for v0.4.0. Playback is stable with A/V lock; under-runs are smooth (drops≈0). Further 720p rate headroom (KernelDma / write-combine) is a **future enhancement**, not a withheld ship feature.
-
-Evidence: `Memory/lab/status/SCORE_v040_MATRIX_WEB_TIMELINE.txt` (OVERALL PASS).
+Playback is stable with A/V lock; under-runs are smooth (drops≈0). Further 720p rate headroom
+is a future enhancement, not a withheld ship feature.
 
 ## Operational notes
 
-- Plex Web header “Select Player” may show MiSTerPlex; Play/Resume without an active remote target can still play in the browser. Product remote control is PMS target-client `/player/playback/*` (same path Web uses for cast targets).
-- Live OSD 720p rung requires **v8** core; v7 `O[4]`-only still maps 240p/480p. Daemon understands both.
-- Named `TRANSCODE_PROFILE=240p|480p|720p` owns the weak ladder. Sticky `WEAK_BITRATE` / `WEAK_RES` conf overrides can pin the wrong ladder — clear them when switching modes.
+- Plex Web “Select Player” → **MiSTerPlex**; cast play/pause/seek/stop track via companion + PMS.
+- `OSD_CONTROL=1` (recommended) reads the live core status word. Default content bits = **240p**
+  until you change F12 **Content resolution**. With `OSD_CONTROL=0`, conf `DECODE` /
+  `TRANSCODE_PROFILE` own the ladder.
+- Named `TRANSCODE_PROFILE=240p|480p|720p` owns the weak ladder. Clear sticky `WEAK_BITRATE` /
+  `WEAK_RES` when switching modes.
+- After installing a new RBF, load Menu then Plex once (or reboot) so the FPGA picks up the bitstream.
 
 ## Package
 
-Pinned RBF: `release_artifacts/v0.4.0/Plex.rbf`  
-md5 **`d7412bf8531bba4d1402250c3e8bead7`** (softc24 HOLD=2 + CONF_STR v8 240p/480p/720p).  
-Fit: ALM 76%, M10K bits 24%, DSP 38%, STA setup slack +0.353.  
-Package: `VERSION=v0.4.0 RBF_MD5_EXPECTED=d7412bf8531bba4d1402250c3e8bead7 scripts/package_release.sh`.
+| Artifact | Identity |
+|----------|----------|
+| `cores/Plex.rbf` | md5 **`1c6ed06fe832fb54259d4f4ce504ccae`** (v9 SEED2, Content+Display OSD) |
+| `bin/misterplexd` | static ARM; timeline + session-id + OSD follow |
+| `bin/ffmpeg` | bundled static armhf FFmpeg 7.0.2 (GPLv3) |
+
+STA: worst setup slack **−0.027 ns** on `general[2]` (accept-ambiguous); holds positive.  
+Package: `VERSION=v0.4.0 scripts/package_release.sh` (MD5 gate built-in).
 
 ## Upgrade notes
 
-1. Deploy new `misterplexd` + conf example keys (`TRANSCODE_PROFILE=240p|480p|720p`, `PRESENT=fpga`, `AUDIO=on`).
-2. Deploy v8 `Plex.rbf` when fitted; reset OSD once (`v,8`) so content-res bits clear.
-3. Optional: enable `OSD_CONTROL=1` for live content-res from F12.
-4. Prefer `--conf /media/fat/misterplex_v2/misterplex.conf` (or keep default `/media/fat/misterplex/misterplex.conf` in sync).
+1. Install the v0.4.0 tarball (`bin/`, `cores/Plex.rbf`, `docs/`, `licenses/`, `scripts/`).
+2. Copy `conf/misterplex.conf.example` → `/media/fat/misterplex/misterplex.conf` (or merge keys).
+   Recommended product defaults: `PRESENT=fpga`, `AUDIO=on`, `OSD_CONTROL=1`,
+   `TRANSCODE_PROFILE=720p` (or your preferred ladder), `DECODE=1280x720`.
+3. Load **Plex** from `_Utility` (Menu bounce once after first install).
+4. F12 → set **Content resolution** and **Display resolution** (Follow content is fine for most users).
+5. Cast from any Plex app; the Web scrubber should move while playing.
+
+## Known limitations
+
+- 720p software decode on the dual-A9 is rate-limited (~10–16 pfps typical with A+V); picture and
+  audio stay locked.
+- FPGA-side full H.264 reconstruction remains under development; product path uses ARM + FFmpeg.
+- `MATCH_SOURCE_HZ` logs cadence hints; true runtime modeline switching is not finished.
+- On-device browse/menu scripts need a `PLEX_TOKEN`; casting from a Plex app usually supplies a
+  transient token automatically.
