@@ -871,15 +871,27 @@ module ddr_frame_store #(
 	reg found_line, slot_keep, found_slot_y_cur, found_slot_y_prep, found_slot_c_cur, found_slot_c_prep;
 	reg [Y_W-1:0] desired_y;
 	reg [Y_W-2:0] desired_c;
-	reg [SLOT_W-1:0] cur_base_idx, prep_base_idx;
+	// o34: register set-base from disp_buf_d2. o28 STA −0.047 was
+	// disp_buf_d2 → target_y_cur_r (9 levels / 10.561 ns) — NOT arbiter.
+	// One-cycle lagged base matches existing d1/d2 bank freeze style.
+	reg [SLOT_W-1:0] cur_base_idx_r, prep_base_idx_r;
+	wire [SLOT_W-1:0] cur_base_idx = cur_base_idx_r;
+	wire [SLOT_W-1:0] prep_base_idx = prep_base_idx_r;
 	reg sched_valid, sched_is_y, sched_for_pending;
 	reg sched_bank, sched_pending_ready;
 	reg [Y_W-1:0] sched_y;
 	reg [Y_W-2:0] sched_cy;
 	reg [SLOT_W-1:0] sched_idx;
+	always @(posedge clk_ddr) begin
+		if (reset_ddr) begin
+			cur_base_idx_r <= '0;
+			prep_base_idx_r <= SECOND_SET_BASE;
+		end else begin
+			cur_base_idx_r <= disp_buf_d2 ? SECOND_SET_BASE : '0;
+			prep_base_idx_r <= disp_buf_d2 ? '0 : SECOND_SET_BASE;
+		end
+	end
 	always @* begin
-		cur_base_idx = disp_buf_d2 ? SECOND_SET_BASE : '0;
-		prep_base_idx = disp_buf_d2 ? '0 : SECOND_SET_BASE;
 		need_y_cur_c = 1'b0;
 		need_c_cur_c = 1'b0;
 		need_y_prep_c = 1'b0;
