@@ -201,46 +201,14 @@ module ddr_bus_arbiter (
 	assign DDRAM_BE       = ddram_be_q;
 	assign DDRAM_WE       = ddram_we_q;
 
-	wire [63:0] ddram_dout_pad;
-	wire        ddram_dout_ready_pad;
-	genvar rsp_pad_i;
-	generate
-		for (rsp_pad_i = 0; rsp_pad_i < 64; rsp_pad_i = rsp_pad_i + 1) begin : gen_rsp_in_pad
-			mplex_hold_lcell rsp_data_in_pad (
-				.din  (DDRAM_DOUT[rsp_pad_i]),
-				.dout (ddram_dout_pad[rsp_pad_i])
-			);
-		end
-	endgenerate
-	mplex_hold_lcell rsp_ready_in_pad (
-		.din  (DDRAM_DOUT_READY),
-		.dout (ddram_dout_ready_pad)
-	);
+	// o27: drop mplex_hold_lcell forest on rsp in/out (130+ LCs into ddr clk
+	// fabric). o26 registered DDRAM_* cmd improved general[2] −0.458→−0.283
+	// but still red and pll_hdmi slipped to −0.161; pad density is the next
+	// cut. Direct wires; rsp_*_r already registers the DOUT sample.
+	wire rsp_raw_valid = DDRAM_DOUT_READY & rsp_active;
 
-	wire [63:0] rsp_data_out_pad;
-	wire        rsp_valid_out_pad;
-	wire        rsp_owner_m1_out_pad;
-	generate
-		for (rsp_pad_i = 0; rsp_pad_i < 64; rsp_pad_i = rsp_pad_i + 1) begin : gen_rsp_out_pad
-			mplex_hold_lcell rsp_data_out_pad_i (
-				.din  (rsp_data_r[rsp_pad_i]),
-				.dout (rsp_data_out_pad[rsp_pad_i])
-			);
-		end
-	endgenerate
-	mplex_hold_lcell rsp_valid_out_pad_i (
-		.din  (rsp_valid_r),
-		.dout (rsp_valid_out_pad)
-	);
-	mplex_hold_lcell rsp_owner_out_pad_i (
-		.din  (rsp_owner_m1_r),
-		.dout (rsp_owner_m1_out_pad)
-	);
-
-	wire rsp_raw_valid = ddram_dout_ready_pad & rsp_active;
-
-	assign m0_dout = rsp_data_out_pad;
-	assign m0_dout_ready = rsp_valid_out_pad & !rsp_owner_m1_out_pad;
+	assign m0_dout = rsp_data_r;
+	assign m0_dout_ready = rsp_valid_r & !rsp_owner_m1_r;
 
 	// ── m1 response FIFO (clk_ddr → clk_m1) ──
 	// DDRAM_DOUT_READY is a single clk_ddr pulse per beat.  The clk_m1
@@ -250,13 +218,13 @@ module ddr_bus_arbiter (
 	wire        m1_rsp_fifo_full;
 	wire        m1_rsp_fifo_empty;
 	wire [63:0] m1_rsp_fifo_rdata;
-	wire        m1_rsp_wr_en = rsp_valid_out_pad & rsp_owner_m1_out_pad;
+	wire        m1_rsp_wr_en = rsp_valid_r & rsp_owner_m1_r;
 
 	async_fifo #(.WIDTH(64), .AW(3)) m1_rsp_fifo (
 		.wr_clk   (clk),
 		.wr_reset (rst),
 		.wr_en    (m1_rsp_wr_en),
-		.wr_data  (rsp_data_out_pad),
+		.wr_data  (rsp_data_r),
 		.wr_full  (m1_rsp_fifo_full),
 		.wr_almost_full (),
 
@@ -306,7 +274,7 @@ module ddr_bus_arbiter (
 
 			rsp_valid_r <= rsp_raw_valid;
 			if (rsp_raw_valid) begin
-				rsp_data_r <= ddram_dout_pad;
+				rsp_data_r <= DDRAM_DOUT;
 				rsp_owner_m1_r <= rsp_owner_m1;
 			end
 
