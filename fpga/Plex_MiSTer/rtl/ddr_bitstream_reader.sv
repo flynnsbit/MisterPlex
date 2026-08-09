@@ -125,10 +125,7 @@ module ddr_bitstream_reader #(
 	reg have_ctrl;
 	reg empty_seen;
 	reg seen_payload;
-	// Sticky poll_req: poll_div-only want is 1/64 duty and drops bus_want so
-	// m1 never starves after boot publish (o12-o15 telem_seq stuck at 1).
-	reg poll_req;
-	reg [15:0] xfer_wait;
+	reg poll_req; // sticky until CTRL beat (telem_seq=1 RCA)
 
 	reg [7:0] hdr [0:31];
 	reg [4:0] hdr_idx;
@@ -257,7 +254,6 @@ module ddr_bitstream_reader #(
 			hdr_idx <= 5'd0;
 			payload_left <= 32'd0;
 			poll_req <= 1'b1;
-			xfer_wait <= 16'd0;
 		end else if (!enable) begin
 			state <= ST_IDLE;
 			bus_want <= 1'b0;
@@ -287,7 +283,6 @@ module ddr_bitstream_reader #(
 				publish_pending <= 1'b1;
 				publish_step <= 4'd0;
 				poll_req <= 1'b1;
-				xfer_wait <= 16'd0;
 				state <= ST_IDLE;
 				reset_parser();
 			end
@@ -326,7 +321,6 @@ module ddr_bitstream_reader #(
 						DDRAM_ADDR <= CTRL_W;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_RD <= 1'b1;
-						xfer_wait <= 16'd0;
 						state <= ST_POLL;
 					end else if (publish_pending && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						DDRAM_BURSTCNT <= 8'd1;
@@ -394,23 +388,18 @@ module ddr_bitstream_reader #(
 						DDRAM_ADDR <= CTRL_W;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_RD <= 1'b1;
-						xfer_wait <= 16'd0;
 						state <= ST_POLL;
 					end else if (want_read && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						DDRAM_ADDR <= DATA_W + read_qword_offset;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_RD <= 1'b1;
 						byte_idx <= read_byte_index;
-						xfer_wait <= 16'd0;
 						state <= ST_READ_WAIT;
 					end
 				end
 
 				ST_POLL: begin
-					// Re-issue CTRL RD until beat returns; lost single-cycle RD
-					// parked forever after boot publish (telem_seq=1, cons=0).
 					if (DDRAM_DOUT_READY) begin
-						xfer_wait <= 16'd0;
 						poll_req <= 1'b0;
 						if (ctrl_magic_ok) begin
 							have_ctrl <= 1'b1;
@@ -442,41 +431,14 @@ module ddr_bitstream_reader #(
 							end
 						end
 						state <= ST_IDLE;
-					end else begin
-						if (xfer_wait != 16'hffff)
-							xfer_wait <= xfer_wait + 16'd1;
-						// Retry at most every 64 cycles — not every free cycle.
-						if (!DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE && (xfer_wait[5:0] == 6'd0)) begin
-							DDRAM_ADDR <= CTRL_W;
-							DDRAM_BURSTCNT <= 8'd1;
-							DDRAM_RD <= 1'b1;
-						end
-						if (xfer_wait == 16'hffff) begin
-							xfer_wait <= 16'd0;
-							poll_req <= 1'b1;
-							state <= ST_IDLE;
-						end
 					end
 				end
 
 				ST_READ_WAIT: begin
 					if (DDRAM_DOUT_READY) begin
-						xfer_wait <= 16'd0;
 						beat_q <= DDRAM_DOUT;
 						beat_left <= consume_count;
 						state <= ST_CONSUME;
-					end else begin
-						if (xfer_wait != 16'hffff)
-							xfer_wait <= xfer_wait + 16'd1;
-						if (!DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE && (xfer_wait[5:0] == 6'd0)) begin
-							DDRAM_ADDR <= DATA_W + read_qword_offset;
-							DDRAM_BURSTCNT <= 8'd1;
-							DDRAM_RD <= 1'b1;
-						end
-						if (xfer_wait == 16'hffff) begin
-							xfer_wait <= 16'd0;
-							state <= ST_IDLE;
-						end
 					end
 				end
 
