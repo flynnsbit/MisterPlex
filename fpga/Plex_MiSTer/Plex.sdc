@@ -83,3 +83,26 @@ set_max_delay -from [get_keepers {*ddr_arb*m1_rsp_fifo|mem*}] 50.0
 # Cross-reference: w-a3 inventory, crossing in ddr_frame_store (tolerable by design).
 # Safety: self-correcting via heartbeat; diagnostic-only data.
 set_false_path -from [get_keepers {*ddr_frame_store*underrun_count[*]}] -to [get_keepers {*ddr_frame_store*frame_mbox_last[*]}]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CONSTRAINT 7: m1_busy 2-FF synchroniser first stage (clk_ddr → clk_sys)
+# Source: ddr_bus_arbiter.sv m1_busy_s1 <= m1_busy_r
+set_false_path -to [get_keepers {*ddr_arb|m1_busy_s1}]
+
+# CONSTRAINT 8: protocol-stable m1 command bus into f2sdram (clk_sys → clk_ddr)
+# Source: ddr_bus_arbiter.sv
+#   DDRAM_* = use_m1 ? m1_* : m0_*
+# m1_addr/rd/we/din/be are held stable by the consumer while !m1_busy
+# (protocol gate). They are only selected after grant_m1 on clk_ddr.
+# Timing these as single-cycle 90 MHz paths is incorrect; bound by clk_sys
+# period (20 MHz → 50 ns) with margin.
+#
+# overnight5 STA: worst -0.56 ns was m1_busy_s2/DDRAM_RD/product_dpb_addr_q
+# → f2sdram across general[0]→general[2] with 5.555 ns relationship.
+set_max_delay -from [get_clocks {*general[0].gpll~PLL_OUTPUT_COUNTER|divclk}] \
+              -to   [get_clocks {*general[2].gpll~PLL_OUTPUT_COUNTER|divclk}] 25.0
+
+# Also cut reverse diagnostic/control crossings that are already 2-FF'd or
+# protocol-stable (avoid reverse false positives tightening fit).
+set_max_delay -from [get_clocks {*general[2].gpll~PLL_OUTPUT_COUNTER|divclk}] \
+              -to   [get_clocks {*general[0].gpll~PLL_OUTPUT_COUNTER|divclk}] 25.0
