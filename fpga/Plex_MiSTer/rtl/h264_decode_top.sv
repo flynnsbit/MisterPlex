@@ -89,7 +89,7 @@ module h264_decode_top (
     endfunction
 
     // ════════════════════════════════════════════════════════════════════
-    // SHARED ARITHMETIC PIPELINE (dequant → IDCT → recon)
+    // SHARED ARITHMETIC PIPELINE (serial dequant → IDCT, then recon)
     // ════════════════════════════════════════════════════════════════════
     reg signed [15:0]  pipe_coeff [0:15];
     reg [5:0]          pipe_qp;
@@ -97,31 +97,22 @@ module h264_decode_top (
     reg [3:0]          pipe_block_idx;
     reg                pipe_is_i16;
 
-    wire signed [28:0] dq_out [0:15];
-    h264_dequant4x4 u_dequant (
+    reg xform_start;
+    wire xform_done;
+    wire signed [28:0] idct_out [0:15];
+    reg signed [28:0] latched_i16_dc [0:15];
+    h264_iq_idct_seq u_iq_idct (
+        .clk(clk),
+        .reset(reset),
+        .start(xform_start),
         .coeff(pipe_coeff),
         .qp(pipe_qp),
         .max_coeff(5'd16),
-        .dequant(dq_out)
-    );
-
-    // For I_16x16 blocks: DC comes from Hadamard, replace dq_out[0]
-    reg signed [28:0] dq_final [0:15];
-    reg signed [28:0] latched_i16_dc [0:15];
-    integer dqi;
-    always @* begin
-        for (dqi = 0; dqi < 16; dqi = dqi + 1) begin
-            if (dqi == 0 && pipe_is_i16)
-                dq_final[dqi] = latched_i16_dc[pipe_block_idx];
-            else
-                dq_final[dqi] = dq_out[dqi];
-        end
-    end
-
-    wire signed [28:0] idct_out [0:15];
-    h264_idct4x4 u_idct (
-        .dequant(dq_final),
-        .residual(idct_out)
+        .skip_dc(1'b0),
+        .dc_override(pipe_is_i16),
+        .dc_value(latched_i16_dc[pipe_block_idx]),
+        .residual(idct_out),
+        .done(xform_done)
     );
 
     wire [7:0] recon_block [0:15];
@@ -272,14 +263,16 @@ module h264_decode_top (
     //   ST_NBFETCH  13 cycles: gather the intra 4×4 neighbour taps
     //   ST_PREDCAP   1 cycle : latch the 16 predicted samples
     //   ST_I16FETCH 16 cycles: gather this block's slice of the I16 plane
+    //   ST_XFORM   ~21 cycles: one shared inverse-scale/IDCT datapath
     //   ST_STORE    16 cycles: write the reconstructed samples back
     // ════════════════════════════════════════════════════════════════════
     localparam [2:0] ST_IDLE     = 3'd0,
                      ST_NBFETCH  = 3'd1,
                      ST_PREDCAP  = 3'd2,
                      ST_I16FETCH = 3'd3,
-                     ST_STORE    = 3'd4,
-                     ST_DONE     = 3'd5;
+                     ST_XFORM    = 3'd4,
+                     ST_STORE    = 3'd5,
+                     ST_DONE     = 3'd6;
 
     reg [2:0] state;
     reg       mb_started;
@@ -308,6 +301,7 @@ module h264_decode_top (
             i16_pred_ready <= 1'b0;
             pipe_block_idx <= 4'd0;
             pipe_qp        <= 6'd0;
+            xform_start     <= 1'b0;
             nbc            <= 4'd0;
             wcnt           <= 4'd0;
             skid_full      <= 1'b0;
@@ -329,6 +323,7 @@ module h264_decode_top (
             end
         end else begin
             mb_recon_valid <= 1'b0;
+            xform_start     <= 1'b0;
             if (i16_pred_valid)
                 i16_pred_ready <= 1'b1;
 
@@ -381,23 +376,30 @@ module h264_decode_top (
                     // taps, so one cycle after the last tap lands it is stable.
                     for (si = 0; si < 16; si = si + 1)
                         pipe_pred[si] <= i4_pred_pixels[si];
-                    wcnt  <= 4'd0;
-                    state <= ST_STORE;
+                    xform_start <= 1'b1;
+                    state <= ST_XFORM;
                 end
 
                 ST_I16FETCH: begin
                     pipe_pred[wcnt] <= i16_pred_pixels[walk_addr];
                     if (wcnt == 4'd15) begin
-                        wcnt  <= 4'd0;
-                        state <= ST_STORE;
+                        xform_start <= 1'b1;
+                        state <= ST_XFORM;
                     end else begin
                         wcnt <= wcnt + 4'd1;
                     end
                 end
 
+                ST_XFORM: begin
+                    if (xform_done) begin
+                        wcnt  <= 4'd0;
+                        state <= ST_STORE;
+                    end
+                end
+
                 ST_STORE: begin
-                    // recon_block is combinational over pipe_pred and the IDCT,
-                    // both of which are stable for the whole walk.
+                    // The serial transform result and prediction are stable
+                    // for the whole writeback walk.
                     local_recon[walk_addr] <= recon_block[wcnt];
                     recon_y[walk_addr]     <= recon_block[wcnt];
                     if (wcnt == 4'd15) begin

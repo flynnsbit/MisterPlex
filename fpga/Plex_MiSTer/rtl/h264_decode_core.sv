@@ -332,6 +332,7 @@ module h264_decode_core #(
     // by one cycle) retires the 4x4 field into left/above before the next MB
     // can launch and sample MVP. Without this, back-to-back P16 MBs see MVP=0.
     localparam [7:0] ST_MV_COMMIT    = 8'd13;
+    localparam [7:0] ST_P16_IQ_WAIT  = 8'd14;
     localparam [4:0] P16_LUMA_RES_BLOCKS = 5'd16;
     localparam [4:0] P16_CHROMA_RES_BLOCKS = 5'd8;
     localparam [4:0] P16_RES_BLOCKS = P16_LUMA_RES_BLOCKS + P16_CHROMA_RES_BLOCKS;
@@ -355,6 +356,7 @@ module h264_decode_core #(
     reg [9:0]  p16_res_bit_offset_r;
     reg [4:0]  p16_res_block_idx;
     reg        cavlc_start_r;
+    reg        p16_iq_start_r;
 
     // --- nC predictor for CAVLC coeff_token table selection ---
     // Luma: 4x4 TotalCoeff cache in 4x4-block scan order (0..15).
@@ -1015,17 +1017,20 @@ module h264_decode_core #(
         .level_dbg(cavlc_level_dbg),
         .run_dbg(cavlc_run_dbg)
     );
-    wire signed [28:0] p16_res_dequant [0:15];
     wire signed [28:0] p16_res_idct [0:15];
-    h264_dequant4x4 u_product_p16_res_dequant (
+    wire p16_iq_done;
+    h264_iq_idct_seq u_product_p16_iq_idct (
+        .clk(clk),
+        .reset(reset || slice_start),
+        .start(p16_iq_start_r),
         .coeff(cavlc_dequant_coeff),
         .qp(slice_qp_y),
         .max_coeff(5'd16),
-        .dequant(p16_res_dequant)
-    );
-    h264_idct4x4 u_product_p16_res_idct (
-        .dequant(p16_res_dequant),
-        .residual(p16_res_idct)
+        .skip_dc(1'b0),
+        .dc_override(1'b0),
+        .dc_value(29'sd0),
+        .residual(p16_res_idct),
+        .done(p16_iq_done)
     );
 `ifdef H264_DECODE_CORE_FAULT_DROP_LAST_LUMA_RESIDUAL
     wire p16_drop_this_luma_residual = (p16_res_block_idx == (P16_LUMA_RES_BLOCKS - 5'd1));
@@ -1464,6 +1469,7 @@ module h264_decode_core #(
             p16_res_bit_offset_r <= 10'd0;
             p16_res_block_idx <= 5'd0;
             cavlc_start_r <= 1'b0;
+            p16_iq_start_r <= 1'b0;
             p16_tc_above_valid <= 1'b0;
             p16_tc_left_valid <= 1'b0;
             p16_tc_chr_left_valid <= 1'b0;
@@ -1557,6 +1563,7 @@ module h264_decode_core #(
                 mv_top_valid[wb_i] <= 1'b0;
             end
         end else begin
+            p16_iq_start_r <= 1'b0;
             if (syntax_p16_candidate) begin
                 rbsp_request_valid_r <= 1'b1;
 `ifdef H264_DECODE_CORE_FAULT_BAD_RBSP_REQ
@@ -1779,6 +1786,12 @@ module h264_decode_core #(
             end
             ST_P16_RES_WAIT: begin
                 if (cavlc_done) begin
+                    p16_iq_start_r <= 1'b1;
+                    wb_state <= ST_P16_IQ_WAIT;
+                end
+            end
+            ST_P16_IQ_WAIT: begin
+                if (p16_iq_done) begin
 `ifndef H264_DECODE_CORE_FAULT_DROP_SCHEDULED_RESIDUAL
                     if (cavlc_ok) begin
                         for (wb_i = 0; wb_i < 16; wb_i = wb_i + 1) begin
