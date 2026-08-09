@@ -571,7 +571,8 @@ module stream_path #(
 	// Luma4x4 residual + per-MB syntax (type/skip/cbp/qpδ/mvd/i4 modes) ARE
 	// consumed. mb_skip_run_* tied off: feed expands skip_run itself.
 	h264_i_mb_feed #(
-		.MB_W_MAX(40)
+		.MB_W_MAX(40),
+		.ENABLE_RECON_EXPORT(1'b0)
 	) i_mb_feed (
 		.clk(clk),
 		.reset(reset | flush),

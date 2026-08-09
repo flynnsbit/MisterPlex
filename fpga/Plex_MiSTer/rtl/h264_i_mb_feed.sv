@@ -22,7 +22,10 @@
 `default_nettype none
 
 module h264_i_mb_feed #(
-	parameter int MB_W_MAX = 40
+	parameter int MB_W_MAX = 40,
+	// The current product core consumes luma4x4_* but has no I16-DC/chroma
+	// residual input ports. Keep these exports for focused feeder tests only.
+	parameter bit ENABLE_RECON_EXPORT = 1'b1
 )(
 	input  wire        clk,
 	input  wire        reset,
@@ -608,11 +611,6 @@ module h264_i_mb_feed #(
 	assign cav_coeff_chr_dc[1] = cav_coeff[1];
 	assign cav_coeff_chr_dc[2] = cav_coeff[2];
 	assign cav_coeff_chr_dc[3] = cav_coeff[3];
-	h264_chroma_dc_hadamard_inv u_feed_chr_dc_had (
-		.coeff(cav_coeff_chr_dc),
-		.qp_c(feed_qp_c),
-		.dc(feed_chr_dc_had)
-	);
 	wire [2:0] feed_chr_ac_i = res_step - STEP_CHR_AC0;
 	wire       feed_chr_ac_is_v = feed_chr_ac_i[2];
 	wire [1:0] feed_chr_ac_blk = feed_chr_ac_i[1:0];
@@ -661,19 +659,36 @@ module h264_i_mb_feed #(
 			assign feed_iq_coeff[fci] = feed_iq_dc_only_r ? 16'sd0 : cav_coeff[fci];
 		end
 	endgenerate
-	h264_iq_idct_seq u_feed_iq_idct (
-		.clk(clk),
-		.reset(reset || slice_go),
-		.start(feed_iq_start_r),
-		.coeff(feed_iq_coeff),
-		.qp(feed_qp_c),
-		.max_coeff(5'd15),
-		.skip_dc(1'b1),
-		.dc_override(1'b1),
-		.dc_value(feed_chr_dc_inj),
-		.residual(feed_idct),
-		.done(feed_iq_done)
-	);
+	generate
+		if (ENABLE_RECON_EXPORT) begin : g_recon_export
+			h264_chroma_dc_hadamard_inv u_feed_chr_dc_had (
+				.coeff(cav_coeff_chr_dc),
+				.qp_c(feed_qp_c),
+				.dc(feed_chr_dc_had)
+			);
+			h264_iq_idct_seq u_feed_iq_idct (
+				.clk(clk),
+				.reset(reset || slice_go),
+				.start(feed_iq_start_r),
+				.coeff(feed_iq_coeff),
+				.qp(feed_qp_c),
+				.max_coeff(5'd15),
+				.skip_dc(1'b1),
+				.dc_override(1'b1),
+				.dc_value(feed_chr_dc_inj),
+				.residual(feed_idct),
+				.done(feed_iq_done)
+			);
+		end else begin : g_no_recon_export
+			assign feed_iq_done = 1'b0;
+			for (fci = 0; fci < 4; fci = fci + 1) begin : g_zero_dc
+				assign feed_chr_dc_had[fci] = 29'sd0;
+			end
+			for (fci = 0; fci < 16; fci = fci + 1) begin : g_zero_idct
+				assign feed_idct[fci] = 29'sd0;
+			end
+		end
+	endgenerate
 	function automatic [5:0] chroma4x4_index;
 		input [1:0] block;
 		input [3:0] sample;
@@ -1159,7 +1174,7 @@ module h264_i_mb_feed #(
 					chr_top_v[{mb_x8[5:0], 1'b0}] <= chr_tc_v[2'd2];
 					chr_top_v[{mb_x8[5:0], 1'b1}] <= chr_tc_v[2'd3];
 					chr_top_valid[mb_x8] <= 1'b1;
-					if (feed_luma_r)
+					if (feed_luma_r && ENABLE_RECON_EXPORT)
 						chroma_residual_valid <= 1'b1;
 					if (inter_res_only_r && !mb_skip_r) begin
 						// Finished pre-pulse bit-sync for inter: now launch core.
@@ -1201,7 +1216,7 @@ module h264_i_mb_feed #(
 						end
 					end else if (res_step == STEP_CHR_DC_U || res_step == STEP_CHR_DC_V) begin
 						// Uncoded chroma DC → zero Hadamard state.
-						if (feed_luma_r) begin
+						if (feed_luma_r && ENABLE_RECON_EXPORT) begin
 							for (ci = 0; ci < 4; ci = ci + 1) begin
 								if (res_step == STEP_CHR_DC_U)
 									chr_dc_u[ci] <= 29'sd0;
@@ -1216,7 +1231,7 @@ module h264_i_mb_feed #(
 							chr_tc_v[feed_chr_ac_blk] <= 5'd0;
 						else
 							chr_tc_u[feed_chr_ac_blk] <= 5'd0;
-						if (feed_luma_r && (cbp_c_r != 2'd0)) begin
+						if (feed_luma_r && ENABLE_RECON_EXPORT && (cbp_c_r != 2'd0)) begin
 							feed_iq_dc_only_r <= 1'b1;
 							feed_iq_pending_r <= 1'b1;
 							st <= ST_RES_IQ;
@@ -1275,8 +1290,8 @@ module h264_i_mb_feed #(
 							// Hand DC plane to core; do not consume a luma4x4 slot.
 							// AC nC map stays AC-total_coeff only.
 							i16_dc_pending <= 1'b0;
-							i16_dc_qp <= qp_r;
-							if (feed_luma_r) begin
+							if (feed_luma_r && ENABLE_RECON_EXPORT) begin
+								i16_dc_qp <= qp_r;
 								i16_dc_level_valid <= 1'b1;
 								for (ci = 0; ci < 16; ci = ci + 1)
 									i16_dc_level[ci] <= cav_coeff[ci];
@@ -1298,7 +1313,7 @@ module h264_i_mb_feed #(
 								st <= ST_RES_START;
 							end
 						end else if (res_step == STEP_CHR_DC_U || res_step == STEP_CHR_DC_V) begin
-							if (feed_luma_r) begin
+							if (feed_luma_r && ENABLE_RECON_EXPORT) begin
 								for (ci = 0; ci < 4; ci = ci + 1) begin
 									if (res_step == STEP_CHR_DC_U)
 										chr_dc_u[ci] <= feed_chr_dc_had[ci];
@@ -1314,7 +1329,7 @@ module h264_i_mb_feed #(
 								chr_tc_v[feed_chr_ac_blk] <= cav_tc;
 							else
 								chr_tc_u[feed_chr_ac_blk] <= cav_tc;
-							if (feed_luma_r) begin
+							if (feed_luma_r && ENABLE_RECON_EXPORT) begin
 								feed_iq_dc_only_r <= 1'b0;
 								feed_iq_pending_r <= 1'b1;
 								st <= ST_RES_IQ;
