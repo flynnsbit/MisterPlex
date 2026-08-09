@@ -393,6 +393,8 @@ module stream_path #(
 	wire signed [5:0] feed_mb_qp_delta;
 	wire [5:0]  feed_mb_qp_y;
 	wire [15:0] feed_mb_residual_bit_offset;
+	wire [7:0]  feed_mb_x;
+	wire [7:0]  feed_mb_y;
 	wire        feed_busy;
 	wire        feed_frame_done;
 	wire        feed_error;
@@ -630,6 +632,8 @@ module stream_path #(
 		.mb_qp_delta(feed_mb_qp_delta),
 		.mb_qp_y(feed_mb_qp_y),
 		.mb_residual_bit_offset(feed_mb_residual_bit_offset),
+		.mb_x(feed_mb_x),
+		.mb_y(feed_mb_y),
 		.luma4x4_valid(core_luma4x4_valid),
 		.luma4x4_idx(core_luma4x4_idx),
 		.luma4x4_qp(core_luma4x4_qp),
@@ -770,7 +774,8 @@ module stream_path #(
 
 	h264_decode_core #(
 		.FRAME_W(CORE_FRAME_W),
-		.FRAME_H(CORE_FRAME_H)
+		.FRAME_H(CORE_FRAME_H),
+		.MB_COORD_EXTERNAL(1'b1)
 	) product_decode_core (
 		.clk(clk),
 		.reset(reset | flush),
@@ -781,6 +786,8 @@ module stream_path #(
 		.first_mb_in_slice(sl_first),
 		.mb_width(sps_mb_w),
 		.mb_height(sps_mb_h),
+		.mb_x_external(feed_mb_x),
+		.mb_y_external(feed_mb_y),
 		.pps_chroma_qp_index_offset(pps_chroma_qp_index_offset),
 		.rbsp_byte(core_rbsp_byte),
 		.rbsp_window_base(core_rbsp_window_base),

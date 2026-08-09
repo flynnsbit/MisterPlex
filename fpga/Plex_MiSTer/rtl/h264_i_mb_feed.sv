@@ -95,6 +95,8 @@ module h264_i_mb_feed #(
 	output reg  signed [5:0] mb_qp_delta,
 	output reg  [5:0]  mb_qp_y,
 	output reg  [15:0] mb_residual_bit_offset,
+	output reg  [7:0]  mb_x,
+	output reg  [7:0]  mb_y,
 
 	// Per-block residual coeffs → decode_core luma4x4_* ports (I / intra-in-P)
 	output reg         luma4x4_valid,
@@ -162,7 +164,8 @@ module h264_i_mb_feed #(
 		ST_EOS_ARM      = 6'd24,
 		// Multi-cycle chroma IQ+IDCT (replaces combo dequant+idct ~7.4k ALUT).
 		// LATENCY: start → ~21 cyc → done; residual held. Consumers wait here.
-		ST_RES_IQ       = 6'd25;
+		ST_RES_IQ       = 6'd25,
+		ST_COORD_INIT   = 6'd26;
 
 	// Residual step index: 0..15 luma, 16/17 chroma DC, 18..25 chroma AC
 	localparam [4:0] STEP_LUMA_END  = 5'd16;
@@ -196,6 +199,7 @@ module h264_i_mb_feed #(
 	reg [5:0]  st;
 	reg [15:0] mb_addr;
 	reg [15:0] mb_total;
+	reg [15:0] coord_rem;
 	// Bit positions must cover full RBSP (length_bytes*8). 16-bit abs_bit
 	// saturated at 8192B; rbsp_bits used to take length[12:0]<<3 (cap 21616)
 	// which falsely tripped DSC_RBSP_OVERRUN mid-frame (~MB249 on 624x480).
@@ -363,14 +367,19 @@ module h264_i_mb_feed #(
 
 	function automatic [5:0] i16_cbp_from_type;
 		input [7:0] mt;
-		reg [7:0] t;
 		begin
-			t = mt;
-			if (t >= 8'd1 && t <= 8'd24) begin
-				i16_cbp_from_type[5:4] = ((t - 8'd1) / 8'd4) % 8'd3;
-				i16_cbp_from_type[3:0] = ((t - 8'd1) >= 8'd12) ? 4'hF : 4'h0;
-			end else
+			if (mt >= 8'd1 && mt <= 8'd24) begin
+				if ((mt >= 8'd9 && mt <= 8'd12) || mt >= 8'd21)
+					i16_cbp_from_type[5:4] = 2'd2;
+				else if ((mt >= 8'd5 && mt <= 8'd8) ||
+				         (mt >= 8'd17 && mt <= 8'd20))
+					i16_cbp_from_type[5:4] = 2'd1;
+				else
+					i16_cbp_from_type[5:4] = 2'd0;
+				i16_cbp_from_type[3:0] = (mt >= 8'd13) ? 4'hF : 4'h0;
+			end else begin
 				i16_cbp_from_type = 6'd0;
+			end
 		end
 	endfunction
 
@@ -444,8 +453,8 @@ module h264_i_mb_feed #(
 	wire [3:0] cur_blk = res_step[3:0];
 	wire [1:0] cur_bx = blk_x(cur_blk);
 	wire [1:0] cur_by = blk_y(cur_blk);
-	wire [7:0] mb_x8 = (mb_width == 8'd0) ? 8'd0 : mb_addr % {8'd0, mb_width};
-	wire [7:0] mb_y8 = (mb_width == 8'd0) ? 8'd0 : mb_addr / {8'd0, mb_width};
+	wire [7:0] mb_x8 = mb_x;
+	wire [7:0] mb_y8 = mb_y;
 	// Picture-edge availability: previous-MB left cache is NOT valid at mb_x==0
 	// (row wrap). Top cache is only valid for mb_y>0.
 	wire       left_mb_avail = (mb_x8 != 8'd0);
@@ -805,6 +814,9 @@ module h264_i_mb_feed #(
 			st <= ST_IDLE;
 			mb_addr <= 16'd0;
 			mb_total <= 16'd0;
+			coord_rem <= 16'd0;
+			mb_x <= 8'd0;
+			mb_y <= 8'd0;
 			abs_bit <= 19'd0;
 			res_start_bit <= 19'd0;
 			res_step <= 5'd0;
@@ -898,6 +910,9 @@ module h264_i_mb_feed #(
 				if (slice_go && (mb_width != 8'd0) && (mb_height != 8'd0) && rbsp_complete) begin
 					mb_total <= {8'd0, mb_width} * {8'd0, mb_height};
 					mb_addr <= first_mb_in_slice;
+					coord_rem <= first_mb_in_slice;
+					mb_x <= 8'd0;
+					mb_y <= 8'd0;
 					qp_r <= slice_qp_y;
 					slice_is_i_r <= slice_is_i;
 					num_ref_r <= (num_ref_idx_l0_active == 8'd0) ? 8'd1 : num_ref_idx_l0_active;
@@ -915,6 +930,16 @@ module h264_i_mb_feed #(
 					slice_desync_cause <= DSC_NONE;
 					slice_desync_mb <= 16'd0;
 					guard <= 16'd0;
+					st <= ST_COORD_INIT;
+				end
+			end
+
+			ST_COORD_INIT: begin
+				if (coord_rem >= {8'd0, mb_width}) begin
+					coord_rem <= coord_rem - {8'd0, mb_width};
+					mb_y <= mb_y + 8'd1;
+				end else begin
+					mb_x <= coord_rem[7:0];
 					st <= ST_MB0_LOAD;
 				end
 			end
@@ -1385,6 +1410,12 @@ module h264_i_mb_feed #(
 				if ((!core_busy && (guard > 16'd3)) || (guard == 16'hFFFF)) begin
 					guard <= 16'd0;
 					mb_addr <= mb_addr + 16'd1;
+					if (mb_x + 8'd1 >= mb_width) begin
+						mb_x <= 8'd0;
+						mb_y <= mb_y + 8'd1;
+					end else begin
+						mb_x <= mb_x + 8'd1;
+					end
 					st <= ST_P_AFTER_MB;
 				end
 			end
@@ -1395,6 +1426,12 @@ module h264_i_mb_feed #(
 				if ((!core_busy && (guard > 16'd3)) || (guard == 16'hFFFF)) begin
 					guard <= 16'd0;
 					mb_addr <= mb_addr + 16'd1;
+					if (mb_x + 8'd1 >= mb_width) begin
+						mb_x <= 8'd0;
+						mb_y <= mb_y + 8'd1;
+					end else begin
+						mb_x <= mb_x + 8'd1;
+					end
 					st <= ST_P_AFTER_MB;
 				end
 			end
@@ -1894,6 +1931,9 @@ module h264_i_mb_feed #(
 				if (slice_go && (mb_width != 8'd0) && (mb_height != 8'd0) && rbsp_complete) begin
 					mb_total <= {8'd0, mb_width} * {8'd0, mb_height};
 					mb_addr <= first_mb_in_slice;
+					coord_rem <= first_mb_in_slice;
+					mb_x <= 8'd0;
+					mb_y <= 8'd0;
 					qp_r <= slice_qp_y;
 					slice_is_i_r <= slice_is_i;
 					num_ref_r <= (num_ref_idx_l0_active == 8'd0) ? 8'd1 : num_ref_idx_l0_active;
@@ -1911,7 +1951,7 @@ module h264_i_mb_feed #(
 					slice_desync_cause <= DSC_NONE;
 					slice_desync_mb <= 16'd0;
 					guard <= 16'd0;
-					st <= ST_MB0_LOAD;
+					st <= ST_COORD_INIT;
 				end else begin
 					st <= ST_IDLE;
 				end
@@ -1927,6 +1967,9 @@ module h264_i_mb_feed #(
 				if (slice_go && (mb_width != 8'd0) && (mb_height != 8'd0) && rbsp_complete) begin
 					mb_total <= {8'd0, mb_width} * {8'd0, mb_height};
 					mb_addr <= first_mb_in_slice;
+					coord_rem <= first_mb_in_slice;
+					mb_x <= 8'd0;
+					mb_y <= 8'd0;
 					qp_r <= slice_qp_y;
 					slice_is_i_r <= slice_is_i;
 					num_ref_r <= (num_ref_idx_l0_active == 8'd0) ? 8'd1 : num_ref_idx_l0_active;
@@ -1944,7 +1987,7 @@ module h264_i_mb_feed #(
 					slice_desync_cause <= DSC_NONE;
 					slice_desync_mb <= 16'd0;
 					guard <= 16'd0;
-					st <= ST_MB0_LOAD;
+					st <= ST_COORD_INIT;
 				end else begin
 					st <= ST_IDLE;
 				end
