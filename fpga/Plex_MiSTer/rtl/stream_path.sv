@@ -858,6 +858,21 @@ module stream_path #(
 		.error(core_error)
 	);
 
+	// Product decode is always rooted at product_decode_core above.
+	// Under DDR_FRAME_STORE, drop decode_stub entirely — product glass is
+	// writeback/PLXK, not stub paint (~3.6k+ fitted ALMs on overnight2).
+`ifdef DDR_FRAME_STORE
+	assign recon_sig = 8'd0;
+	assign recon_dbg = 8'd0;
+	assign recon_dbg_valid = 1'b0;
+	assign recon_valid = 1'b0;
+	assign fs_wr_en = 1'b0;
+	assign fs_wr_pixel = 16'd0;
+	assign fs_wr_reset = 1'b0;
+	assign fs_swap = 1'b0;
+	assign stub_busy = 1'b0;
+	assign stub_frames = 16'd0;
+`else
 	// Product decode is always rooted at product_decode_core above.  The legacy
 	// decode_stub remains only as the diagnostic frame-store painter until the
 	// core owns presentation; DECODE_REAL_INTRA no longer swaps the product
@@ -909,6 +924,7 @@ module stream_path #(
 		);
 		end
 	endgenerate
+`endif
 
 	// Export DPB byte-writes + frame_done for product DDR present path.
 	assign decode_dpb_wr_en   = core_dpb_wr_en;
@@ -931,9 +947,9 @@ module stream_path #(
 	             core_luma4x4_valid | feed_mb_type_valid | feed_busy | feed_frame_done |
 	             feed_error | feed_slice_desync | feed_slice_desync_early |
 	             feed_slice_desync_long | |feed_slice_desync_cause | |feed_slice_desync_mb |
-	             feed_chroma_residual_valid | feed_mb_intra | |feed_mb_qp_y |
-	             feed_chroma_residual_u[0][0] | feed_chroma_residual_v[0][0] |
-	             core_i16_dc_level_valid | core_i16_dc_level[0][0] | |core_i16_dc_qp |
+	             feed_mb_intra | |feed_mb_qp_y |
+	             // feed chroma/i16_dc exports intentionally not kept: core has no
+	             // ports for them and ENABLE_RECON_EXPORT=0 gates the IQ path.
 	             product_dpb_write_bank | product_dpb_ref_bank |
 	             core_dpb_wr_en |
 	             |core_dpb_wr_addr | |core_dpb_wr_data | core_dpb_rd_en |
