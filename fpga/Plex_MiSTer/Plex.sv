@@ -592,6 +592,8 @@ wire        stream_ddr_enable = 1'b1;
 wire        stream_ddr_enable = 1'b0;
 `endif
 
+`include "rtl/ddr_frame_layout_params.svh"
+
 `ifndef DDR_FRAME_STORE
 assign stream_ddr_busy = 1'b1;
 assign stream_ddr_dout = 64'd0;
@@ -600,7 +602,9 @@ assign stream_ddr_dout_ready = 1'b0;
 
 stream_path #(
 	.FRAME_W(FRAME_W),
-	.FRAME_H(FRAME_H)
+	.FRAME_H(FRAME_H),
+	.CODED_W(DDR_FRAME_CODED_WIDTH),
+	.CODED_H(DDR_FRAME_CODED_HEIGHT)
 ) spath (
 	.clk(clk_sys),
 	.reset(reset),
@@ -676,8 +680,6 @@ stream_path #(
 
 // FPGA decode → DDR present bank (PLXK doorbell). Shares m1 with stream ingest.
 `ifdef DDR_FRAME_STORE
-// Plex.sv lives at project root; Quartus include path is not rtl/ (unlike modules under rtl/).
-`include "rtl/ddr_frame_layout_params.svh"
 fpga_ddr_writeback #(
 	.PHYS_BASE(32'h3000_0000),
 	.BANK_STRIDE_BYTES(DDR_FRAME_YUV420P_BANK_STRIDE),

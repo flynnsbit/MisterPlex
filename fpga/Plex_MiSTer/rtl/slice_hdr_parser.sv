@@ -65,6 +65,8 @@ module slice_hdr_parser (
 	output reg         first_luma4x4_blocks_valid,
 	output reg         first_luma4x4_blocks_present,
 	output reg signed [15:0] first_luma4x4_coeff [0:15][0:15],
+	output wire [3:0]  first_mb_cbp_luma,
+	output wire [1:0]  first_mb_cbp_chroma,
 	// Absolute RBSP bit offset where first-MB residual/skip syntax begins.
 	// Used by product_decode_core CAVLC window relative addressing.
 	output wire [15:0] first_mb_residual_bit_offset,
@@ -124,6 +126,10 @@ module slice_hdr_parser (
 	reg [3:0]  full_luma_cbp;
 	reg        full_start_req;
 	reg [9:0]  full_start_bit;
+	assign first_mb_cbp_luma = full_luma_cbp;
+	wire [5:0] first_mb_cbp_full = (p_mbt <= 6'd4) ? cbp_inter_map(cbp_me)
+	                                                 : cbp_intra_map(cbp_me);
+	assign first_mb_cbp_chroma = first_mb_cbp_full[5:4];
 	assign first_mb_residual_bit_offset = {6'd0, full_start_bit};
 	// Normalised intra mb_type: identical to mb_type in an I slice, and
 	// mb_type - 5 for an intra macroblock inside a P slice, so the intra parse
@@ -966,6 +972,7 @@ module slice_hdr_parser (
 						first_mb_part_count <= p_part_count_of(1'b1, 8'd0);
 						first_mb_uses_sub_mb <= 1'b0;
 						first_mb_intra <= 1'b0;
+						full_start_bit <= cur_bit_offset();
 						st <= ST_DONE;
 					end else begin
 						first_mb_p_skip <= 1'b0;
@@ -1185,6 +1192,7 @@ module slice_hdr_parser (
 				full_luma_cbp <= cbp_intra_luma_map(ue_val[5:0]);
 				if (ue_val == 16'd3) begin
 					// cbp=0: no residual (shouldn't happen on real first MB)
+					full_start_bit <= cur_bit_offset();
 					tcode <= 0; tbits <= 0; st <= ST_TOK_BIT;
 				end else begin
 					zcnt <= 0; ue_cont <= ST_MBQP; st <= ST_UE_Z;
@@ -1192,10 +1200,9 @@ module slice_hdr_parser (
 			end
 			ST_MBQP: begin
 				// se(mb_qp_delta) consumed; start coeff_token nC=0
-				if (intra_mbt == 8'd0) begin
+				if (intra_mbt == 8'd0)
 					full_start_req <= 1'b1;
-					full_start_bit <= cur_bit_offset();
-				end
+				full_start_bit <= cur_bit_offset();
 				tcode <= 0;
 				tbits <= 0;
 				st <= ST_TOK_BIT;

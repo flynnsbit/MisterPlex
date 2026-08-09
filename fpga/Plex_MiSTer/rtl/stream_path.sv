@@ -7,7 +7,9 @@
 
 module stream_path #(
 	parameter int FRAME_W = 320,
-	parameter int FRAME_H = 240
+	parameter int FRAME_H = 240,
+	parameter int CODED_W = FRAME_W,
+	parameter int CODED_H = FRAME_H
 )(
 	input  wire        clk,
 	input  wire        reset,
@@ -104,6 +106,10 @@ module stream_path #(
 	output wire        decode_frame_done
 );
 
+	localparam int CORE_FRAME_W = CODED_W;
+	localparam int CORE_FRAME_H = CODED_H;
+	localparam int RBSP_DEPTH_BYTES = 16384;
+
 	wire        si_wr_en;
 	wire [7:0]  si_wr_data;
 	wire        si_wr_flush;
@@ -122,6 +128,45 @@ module stream_path #(
 	wire        ddr_wr_flush;
 	wire        bf_wr_full;
 
+	wire        bsr_bus_want;
+	wire  [7:0] bsr_burstcnt;
+	wire [28:0] bsr_addr;
+	wire        bsr_rd;
+	wire [63:0] bsr_din;
+	wire  [7:0] bsr_be;
+	wire        bsr_we;
+	wire        dpb_ddr_req;
+	wire  [7:0] dpb_ddr_burstcnt;
+	wire [28:0] dpb_ddr_addr;
+	wire        dpb_ddr_rd;
+	wire [63:0] dpb_ddr_din;
+	wire  [7:0] dpb_ddr_be;
+	wire        dpb_ddr_we;
+	reg         bus_owner_dpb;
+
+	always @(posedge clk) begin
+		if (reset | flush)
+			bus_owner_dpb <= 1'b0;
+		else if (!bus_owner_dpb) begin
+			if (!bsr_bus_want && dpb_ddr_req)
+				bus_owner_dpb <= 1'b1;
+		end else if (!dpb_ddr_req) begin
+			bus_owner_dpb <= 1'b0;
+		end
+	end
+
+	assign ddr_bus_want = bsr_bus_want | dpb_ddr_req;
+	assign ddr_burstcnt = bus_owner_dpb ? dpb_ddr_burstcnt : bsr_burstcnt;
+	assign ddr_addr     = bus_owner_dpb ? dpb_ddr_addr     : bsr_addr;
+	assign ddr_rd       = bus_owner_dpb ? dpb_ddr_rd       : bsr_rd;
+	assign ddr_din      = bus_owner_dpb ? dpb_ddr_din      : bsr_din;
+	assign ddr_be       = bus_owner_dpb ? dpb_ddr_be       : bsr_be;
+	assign ddr_we       = bus_owner_dpb ? dpb_ddr_we       : bsr_we;
+	wire bsr_ddr_busy   = ddr_busy | bus_owner_dpb;
+	wire bsr_dout_ready = ddr_dout_ready & ~bus_owner_dpb;
+	wire dpb_ddr_busy   = ddr_busy | ~bus_owner_dpb;
+	wire dpb_dout_ready = ddr_dout_ready & bus_owner_dpb;
+
 	ddr_bitstream_reader ddr_stream (
 		.clk(clk), .reset(reset),
 		.enable(ddr_stream_enable),
@@ -130,16 +175,16 @@ module stream_path #(
 		.out_byte(ddr_wr_data),
 		.out_flush(ddr_wr_flush),
 		.out_full(bf_wr_full | si_wr_en),
-		.bus_want(ddr_bus_want),
-		.DDRAM_BUSY(ddr_busy),
-		.DDRAM_BURSTCNT(ddr_burstcnt),
-		.DDRAM_ADDR(ddr_addr),
+		.bus_want(bsr_bus_want),
+		.DDRAM_BUSY(bsr_ddr_busy),
+		.DDRAM_BURSTCNT(bsr_burstcnt),
+		.DDRAM_ADDR(bsr_addr),
 		.DDRAM_DOUT(ddr_dout),
-		.DDRAM_DOUT_READY(ddr_dout_ready),
-		.DDRAM_RD(ddr_rd),
-		.DDRAM_DIN(ddr_din),
-		.DDRAM_BE(ddr_be),
-		.DDRAM_WE(ddr_we),
+		.DDRAM_DOUT_READY(bsr_dout_ready),
+		.DDRAM_RD(bsr_rd),
+		.DDRAM_DIN(bsr_din),
+		.DDRAM_BE(bsr_be),
+		.DDRAM_WE(bsr_we),
 		.active(stream_ddr_active),
 		.bytes_out(stream_ddr_bytes_out),
 		.underrun_count(stream_ddr_underruns),
@@ -215,6 +260,7 @@ module stream_path #(
 	wire pps_busy, pps_cabac, pps_deblock;
 	wire [7:0] pps_id_w, pps_sps_id, pps_nref;
 	wire signed [7:0] pps_qp;
+	wire signed [4:0] pps_chroma_qp_index_offset;
 
 	pps_parser pps (
 		.clk(clk), .reset(reset | flush),
@@ -222,7 +268,9 @@ module stream_path #(
 		.cap_data(pps_cap_data), .cap_end(pps_cap_end),
 		.valid(pps_valid), .pps_id(pps_id_w), .sps_id(pps_sps_id),
 		.entropy_cabac(pps_cabac), .num_ref_l0(pps_nref),
-		.pic_init_qp(pps_qp), .deblock_ctrl(pps_deblock), .busy(pps_busy)
+		.pic_init_qp(pps_qp),
+		.chroma_qp_index_offset(pps_chroma_qp_index_offset),
+		.deblock_ctrl(pps_deblock), .busy(pps_busy)
 	);
 
 	wire sl_busy, sl_is_i, sl_has_mbt, sl_res_ok;
@@ -248,6 +296,8 @@ module stream_path #(
 	wire sl_luma4x4_blocks_valid;
 	wire sl_luma4x4_blocks_present;
 	wire signed [15:0] sl_luma4x4_coeff [0:15][0:15];
+	wire [3:0] sl_first_mb_cbp_luma;
+	wire [1:0] sl_first_mb_cbp_chroma;
 	wire [15:0] sl_first_mb_residual_bit_offset;
 	wire sl_place_ok;
 	wire [4:0] sl_place_tc;
@@ -301,6 +351,8 @@ module stream_path #(
 		.first_luma4x4_blocks_valid(sl_luma4x4_blocks_valid),
 		.first_luma4x4_blocks_present(sl_luma4x4_blocks_present),
 		.first_luma4x4_coeff(sl_luma4x4_coeff),
+		.first_mb_cbp_luma(sl_first_mb_cbp_luma),
+		.first_mb_cbp_chroma(sl_first_mb_cbp_chroma),
 		.first_mb_residual_bit_offset(sl_first_mb_residual_bit_offset),
 		.residual_tc(sl_rtc), .residual_t1(sl_rt1), .residual_ok(sl_res_ok),
 		.residual_dc(sl_rdc),
@@ -330,6 +382,51 @@ module stream_path #(
 	assign residual_t1   = sl_rt1;
 	assign residual_ok   = sl_res_ok;
 	assign residual_dc   = sl_rdc;
+
+	wire [15:0] feed_i4_pred_mode_flags;
+	wire [47:0] feed_i4_rem_modes;
+	wire        feed_i4_modes_present;
+	wire [1:0]  feed_i16_mode;
+	wire [1:0]  feed_chroma_pred_mode;
+	wire [3:0]  feed_cbp_luma;
+	wire [1:0]  feed_cbp_chroma;
+	wire signed [5:0] feed_mb_qp_delta;
+	wire [5:0]  feed_mb_qp_y;
+	wire [15:0] feed_mb_residual_bit_offset;
+	wire        feed_busy;
+	wire        feed_frame_done;
+	wire        feed_error;
+	wire        feed_slice_desync;
+	wire        feed_slice_desync_early;
+	wire        feed_slice_desync_long;
+	wire [3:0]  feed_slice_desync_cause;
+	wire [15:0] feed_slice_desync_mb;
+	wire        feed_chroma_residual_valid;
+	wire signed [15:0] feed_chroma_residual_u [0:63];
+	wire signed [15:0] feed_chroma_residual_v [0:63];
+	wire [15:0] feed_rbsp_request_offset;
+	wire        feed_rbsp_request_valid;
+	wire        feed_mb_type_valid;
+	wire [4:0]  feed_mb_type;
+	wire        feed_mb_skip;
+	wire        feed_mb_intra;
+	wire [2:0]  feed_part_mode;
+	wire [7:0]  feed_sub_mb_types;
+	wire [7:0]  feed_ref_idx_l0_packed;
+	wire [15:0] feed_mvd_valid;
+	wire signed [15:0] feed_mvd_x [0:15];
+	wire signed [15:0] feed_mvd_y [0:15];
+	wire        core_luma4x4_valid;
+	wire [3:0]  core_luma4x4_idx;
+	wire [5:0]  core_luma4x4_qp;
+	wire [4:0]  core_luma4x4_total_coeff;
+	wire [1:0]  core_luma4x4_trailing_ones;
+	wire signed [15:0] core_luma4x4_coeff_zigzag [0:15];
+	wire        core_i16_dc_level_valid;
+	wire signed [15:0] core_i16_dc_level [0:15];
+	wire [5:0]  core_i16_dc_qp;
+	wire [4:0]  core_intra_blocks_done;
+	wire        core_busy;
 
 	function automatic [1:0] core_i4_bx;
 		input [3:0] idx;
@@ -400,10 +497,10 @@ module stream_path #(
 					core_i4_modes_calc[left_idx] : core_i4_modes_calc[top_idx];
 			else
 				pred_mode = 4'd2;
-			rem_mode = sl_i4_rem_modes[core_mi * 3 +: 3];
-			if (!sl_i4_modes_present)
+			rem_mode = feed_i4_rem_modes[core_mi * 3 +: 3];
+			if (!feed_i4_modes_present)
 				core_i4_modes_calc[core_mi] = 4'd2;
-			else if (sl_i4_pred_mode_flags[core_mi])
+			else if (feed_i4_pred_mode_flags[core_mi])
 				core_i4_modes_calc[core_mi] = pred_mode;
 			else
 				core_i4_modes_calc[core_mi] = (rem_mode < pred_mode[2:0]) ?
@@ -418,67 +515,22 @@ module stream_path #(
 		end
 	endgenerate
 
-	reg core_luma4x4_valid;
-	reg [3:0] core_luma4x4_idx;
-	reg [5:0] core_luma4x4_qp;
-	reg [4:0] core_luma4x4_total_coeff;
-	reg [1:0] core_luma4x4_trailing_ones;
-	reg signed [15:0] core_luma4x4_coeff_zigzag [0:15];
-	reg signed [15:0] core_luma4x4_latched [0:15][0:15];
-	reg core_luma_feed_active;
-	reg [3:0] core_luma_feed_idx;
-	integer core_li;
-	integer core_lj;
-	always @(posedge clk) begin
-		core_luma4x4_valid <= 1'b0;
-		if (reset | flush) begin
-			core_luma_feed_active <= 1'b0;
-			core_luma_feed_idx <= 4'd0;
-			core_luma4x4_idx <= 4'd0;
-			core_luma4x4_qp <= 6'd0;
-			core_luma4x4_total_coeff <= 5'd0;
-			core_luma4x4_trailing_ones <= 2'd0;
-			for (core_li = 0; core_li < 16; core_li = core_li + 1) begin
-				core_luma4x4_coeff_zigzag[core_li] <= 16'sd0;
-				for (core_lj = 0; core_lj < 16; core_lj = core_lj + 1)
-					core_luma4x4_latched[core_li][core_lj] <= 16'sd0;
-			end
-		end else begin
-			if (!core_luma_feed_active && sl_luma4x4_blocks_valid && sl_luma4x4_blocks_present) begin
-				core_luma_feed_active <= 1'b1;
-				core_luma_feed_idx <= 4'd0;
-				core_luma4x4_qp <= sl_place_qp;
-				for (core_li = 0; core_li < 16; core_li = core_li + 1)
-					for (core_lj = 0; core_lj < 16; core_lj = core_lj + 1)
-						core_luma4x4_latched[core_li][core_lj] <= sl_luma4x4_coeff[core_li][core_lj];
-			end else if (core_luma_feed_active) begin
-				core_luma4x4_valid <= 1'b1;
-				core_luma4x4_idx <= core_luma_feed_idx;
-				core_luma4x4_total_coeff <= 5'd16;
-				core_luma4x4_trailing_ones <= 2'd0;
-				for (core_li = 0; core_li < 16; core_li = core_li + 1)
-					core_luma4x4_coeff_zigzag[core_li] <= core_luma4x4_latched[core_luma_feed_idx][core_li];
-				if (core_luma_feed_idx == 4'd15)
-					core_luma_feed_active <= 1'b0;
-				else
-					core_luma_feed_idx <= core_luma_feed_idx + 4'd1;
-			end
-		end
-	end
-
 	// Whole-slice EPB-stripped RBSP store + combo 64-byte sliding window.
 	// Prior art: h264_rbsp_window (combo MLAB banks). Core has no ready/valid
 	// window handshake; request updates base on the next edge and CAVLC starts
 	// one cycle later (ST_P16_RES_START), matching that lag.
-	localparam int RBSP_DEPTH_BYTES = 4096;
 	wire [7:0]  core_rbsp_byte [0:63];
 	wire [15:0] core_rbsp_window_base;
 	wire [15:0] core_rbsp_avail;
 	wire [15:0] core_rbsp_length;
 	wire        core_rbsp_complete;
 	wire        core_rbsp_overflow;
-	wire [15:0] core_rbsp_request_offset;
-	wire        core_rbsp_request_valid;
+	wire [15:0] core_rbsp_request_offset_raw;
+	wire        core_rbsp_request_valid_raw;
+	wire [15:0] core_rbsp_request_offset =
+		feed_busy ? feed_rbsp_request_offset : core_rbsp_request_offset_raw;
+	wire        core_rbsp_request_valid =
+		feed_busy ? feed_rbsp_request_valid : core_rbsp_request_valid_raw;
 
 	h264_rbsp_window #(
 		.DEPTH_BYTES(RBSP_DEPTH_BYTES),
@@ -498,6 +550,104 @@ module stream_path #(
 		.length(core_rbsp_length),
 		.complete(core_rbsp_complete),
 		.overflow(core_rbsp_overflow)
+	);
+
+	reg feed_started;
+	wire feed_slice_ready = slice_valid && (sl_is_i || first_mb_p_skip || sl_has_mbt);
+	wire feed_slice_go = feed_slice_ready && core_rbsp_complete &&
+	                     (sps_mb_w != 8'd0) && (sps_mb_h != 8'd0) &&
+	                     !feed_started && !feed_busy;
+	always @(posedge clk) begin
+		if (reset | flush | vcl_cap_clear)
+			feed_started <= 1'b0;
+		else if (feed_slice_go)
+			feed_started <= 1'b1;
+	end
+
+	// Multi-MB residual feeder owns RBSP while busy; yields during ST_YIELD_CORE
+	// so core P residual walk can request the window. Core port subset note:
+	// current h264_decode_core has no mb_intra / i16_dc_level_* /
+	// intra_chroma_residual_* inputs — those feed outputs are kept only.
+	// Luma4x4 residual + per-MB syntax (type/skip/cbp/qpδ/mvd/i4 modes) ARE
+	// consumed. mb_skip_run_* tied off: feed expands skip_run itself.
+	h264_i_mb_feed #(
+		.MB_W_MAX(40)
+	) i_mb_feed (
+		.clk(clk),
+		.reset(reset | flush),
+		.slice_go(feed_slice_go),
+		.slice_is_i(sl_is_i),
+		.mb_width(sps_mb_w),
+		.mb_height(sps_mb_h),
+		.first_mb_in_slice(sl_first),
+		.slice_qp_y(sl_qp),
+		.pps_chroma_qp_index_offset(pps_chroma_qp_index_offset),
+		.first_mb_type(sl_mbt),
+		.first_mb_p_skip(first_mb_p_skip),
+		.first_p_skip_run({8'd0, p_skip_run}),
+		.first_mb_intra(first_mb_intra),
+		.first_mb_part_mode(first_mb_part_mode),
+		.first_sub_mb_types(sl_sub_mb_types),
+		.first_mb_ref_idx_l0(sl_ref_idx_l0),
+		.first_mb_mvd_valid(sl_mvd_valid),
+		.first_mb_mvd_x(sl_mvd_x),
+		.first_mb_mvd_y(sl_mvd_y),
+		.num_ref_idx_l0_active(sl_num_ref_idx_l0_am1 + 8'd1),
+		.first_i4_pred_mode_flags(sl_i4_pred_mode_flags),
+		.first_i4_rem_modes(sl_i4_rem_modes),
+		.first_i4_modes_present(sl_i4_modes_present),
+		.first_chroma_pred_mode(sl_chroma_pred_mode),
+		.first_cbp_luma(sl_first_mb_cbp_luma),
+		.first_cbp_chroma(sl_first_mb_cbp_chroma),
+		.first_residual_bit_offset(sl_first_mb_residual_bit_offset),
+		.rbsp_byte(core_rbsp_byte),
+		.rbsp_window_base(core_rbsp_window_base),
+		.rbsp_request_offset(feed_rbsp_request_offset),
+		.rbsp_request_valid(feed_rbsp_request_valid),
+		.rbsp_length(core_rbsp_length),
+		.rbsp_complete(core_rbsp_complete),
+		.core_busy(core_busy),
+		.core_intra_blocks_done(core_intra_blocks_done),
+		.mb_type_valid(feed_mb_type_valid),
+		.mb_type(feed_mb_type),
+		.mb_skip(feed_mb_skip),
+		.mb_intra(feed_mb_intra),
+		.part_mode(feed_part_mode),
+		.sub_mb_types(feed_sub_mb_types),
+		.ref_idx_l0_packed(feed_ref_idx_l0_packed),
+		.mvd_valid(feed_mvd_valid),
+		.mvd_x(feed_mvd_x),
+		.mvd_y(feed_mvd_y),
+		.i4_pred_mode_flags(feed_i4_pred_mode_flags),
+		.i4_rem_modes(feed_i4_rem_modes),
+		.i4_modes_present(feed_i4_modes_present),
+		.intra16x16_mode(feed_i16_mode),
+		.chroma_pred_mode(feed_chroma_pred_mode),
+		.cbp_luma(feed_cbp_luma),
+		.cbp_chroma(feed_cbp_chroma),
+		.mb_qp_delta(feed_mb_qp_delta),
+		.mb_qp_y(feed_mb_qp_y),
+		.mb_residual_bit_offset(feed_mb_residual_bit_offset),
+		.luma4x4_valid(core_luma4x4_valid),
+		.luma4x4_idx(core_luma4x4_idx),
+		.luma4x4_qp(core_luma4x4_qp),
+		.luma4x4_total_coeff(core_luma4x4_total_coeff),
+		.luma4x4_trailing_ones(core_luma4x4_trailing_ones),
+		.luma4x4_coeff_zigzag(core_luma4x4_coeff_zigzag),
+		.i16_dc_level_valid(core_i16_dc_level_valid),
+		.i16_dc_level(core_i16_dc_level),
+		.i16_dc_qp(core_i16_dc_qp),
+		.chroma_residual_u(feed_chroma_residual_u),
+		.chroma_residual_v(feed_chroma_residual_v),
+		.chroma_residual_valid(feed_chroma_residual_valid),
+		.busy(feed_busy),
+		.frame_feed_done(feed_frame_done),
+		.error(feed_error),
+		.slice_desync(feed_slice_desync),
+		.slice_desync_early(feed_slice_desync_early),
+		.slice_desync_long(feed_slice_desync_long),
+		.slice_desync_cause(feed_slice_desync_cause),
+		.slice_desync_mb(feed_slice_desync_mb)
 	);
 
 	wire [7:0] core_recon_y [0:255];
@@ -526,22 +676,70 @@ module stream_path #(
 	wire [31:0] core_dpb_rd_addr;
 	wire core_frame_done;
 	wire [15:0] core_frame_mb_count;
-	wire core_busy;
-	// DPB readback: full dual-frame I420 on-chip is ~7.3 Mbit and will not fit
-	// with the rest of the core (device BRAM 5.6 Mbit). I-frame writeback does
-	// not need dpb_rd; P/Skip MC needs external DDR DPB (fit5 u_dpb_ddr) next.
-	// Keep 1-cycle valid lag so the core handshake stays honest.
+	// Read the previous fpga_ddr_writeback presentation bank as the DPB. This
+	// avoids a 7.2-Mbit dual-frame BRAM at 624x480 and reuses the existing m1
+	// path; top-level writeback already blocks this port until its flush ends.
+	localparam [31:0] PRODUCT_DPB_DDR_BASE = 32'h3000_0000;
+	localparam [31:0] PRODUCT_DPB_BANK_STRIDE = 32'h0008_0000;
 	reg [7:0]  product_dpb_rdata;
 	reg        core_dpb_rd_valid;
+	reg        product_dpb_pending;
+	reg        product_dpb_issued;
+	reg [31:0] product_dpb_addr_q;
+	reg [2:0]  product_dpb_byte_sel;
+	reg        product_dpb_write_bank;
+	reg        product_dpb_ref_bank;
+	wire [31:0] product_dpb_write_base = 32'd0;
+	wire [31:0] product_dpb_ref_base = 32'd0;
+	wire [31:0] product_dpb_phys_addr = PRODUCT_DPB_DDR_BASE +
+		(product_dpb_ref_bank ? PRODUCT_DPB_BANK_STRIDE : 32'd0) +
+		product_dpb_addr_q;
+
+	assign dpb_ddr_req = product_dpb_pending;
+	assign dpb_ddr_burstcnt = 8'd1;
+	assign dpb_ddr_addr = product_dpb_phys_addr[31:3];
+	assign dpb_ddr_rd = product_dpb_pending && !product_dpb_issued && !dpb_ddr_busy;
+	assign dpb_ddr_din = 64'd0;
+	assign dpb_ddr_be = 8'hff;
+	assign dpb_ddr_we = 1'b0;
+
 	always @(posedge clk) begin
 		if (reset | flush) begin
 			core_dpb_rd_valid <= 1'b0;
 			product_dpb_rdata <= 8'd0;
+			product_dpb_pending <= 1'b0;
+			product_dpb_issued <= 1'b0;
+			product_dpb_addr_q <= 32'd0;
+			product_dpb_byte_sel <= 3'd0;
 		end else begin
-			core_dpb_rd_valid <= core_dpb_rd_en;
-			product_dpb_rdata <= 8'd0;
+			core_dpb_rd_valid <= 1'b0;
+			if (core_dpb_rd_en && !product_dpb_pending) begin
+				product_dpb_pending <= 1'b1;
+				product_dpb_issued <= 1'b0;
+				product_dpb_addr_q <= core_dpb_rd_addr;
+				product_dpb_byte_sel <= core_dpb_rd_addr[2:0];
+			end
+			if (dpb_ddr_rd)
+				product_dpb_issued <= 1'b1;
+			if (dpb_dout_ready && product_dpb_pending && product_dpb_issued) begin
+				product_dpb_rdata <= ddr_dout[product_dpb_byte_sel * 8 +: 8];
+				core_dpb_rd_valid <= 1'b1;
+				product_dpb_pending <= 1'b0;
+				product_dpb_issued <= 1'b0;
+			end
 		end
 	end
+
+	always @(posedge clk) begin
+		if (reset) begin
+			product_dpb_write_bank <= 1'b0;
+			product_dpb_ref_bank <= 1'b0;
+		end else if (core_frame_done) begin
+			product_dpb_ref_bank <= product_dpb_write_bank;
+			product_dpb_write_bank <= ~product_dpb_write_bank;
+		end
+	end
+
 	wire [7:0] core_decode_state;
 	wire [15:0] core_current_mb_addr;
 	wire core_error;
@@ -549,9 +747,6 @@ module stream_path #(
 	wire [1:0] core_ref_req_plane;
 	wire [15:0] core_ref_req_x;
 	wire [15:0] core_ref_req_y;
-	wire [1:0] core_i16_pred_mode =
-		(sl_mbt >= 8'd1 && sl_mbt <= 8'd24) ? (sl_mbt[1:0] - 2'd1) : 2'd2;
-
 	// slice_valid is sticky; core treats slice_start as a pulse (resets CAVLC).
 	reg core_slice_valid_d;
 	always @(posedge clk) begin
@@ -562,19 +757,9 @@ module stream_path #(
 	end
 	wire core_slice_start = slice_valid & ~core_slice_valid_d;
 
-	// Pulse mb_type_valid once per accepted slice (first MB handoff).
-	reg core_mb_type_sent;
-	always @(posedge clk) begin
-		if (reset | flush | core_slice_start)
-			core_mb_type_sent <= 1'b0;
-		else if (core_mb_type_sent == 1'b0 && slice_valid && sl_has_mbt && !core_busy)
-			core_mb_type_sent <= 1'b1;
-	end
-	wire core_mb_type_valid = slice_valid && sl_has_mbt && !core_mb_type_sent && !core_busy;
-
 	h264_decode_core #(
-		.FRAME_W(FRAME_W),
-		.FRAME_H(FRAME_H)
+		.FRAME_W(CORE_FRAME_W),
+		.FRAME_H(CORE_FRAME_H)
 	) product_decode_core (
 		.clk(clk),
 		.reset(reset | flush),
@@ -585,30 +770,28 @@ module stream_path #(
 		.first_mb_in_slice(sl_first),
 		.mb_width(sps_mb_w),
 		.mb_height(sps_mb_h),
-		.pps_chroma_qp_index_offset(5'sd0),
+		.pps_chroma_qp_index_offset(pps_chroma_qp_index_offset),
 		.rbsp_byte(core_rbsp_byte),
 		.rbsp_window_base(core_rbsp_window_base),
-		.rbsp_request_offset(core_rbsp_request_offset),
-		.rbsp_request_valid(core_rbsp_request_valid),
-		.mb_type_valid(core_mb_type_valid),
-		.mb_type(sl_mbt[4:0]),
-		.mb_skip(first_mb_p_skip),
-		// The parser publishes mb_skip_run once per slice with the first
-		// coded macroblock; the core drains that run into P_Skip macroblocks.
-		.mb_skip_run_valid(core_slice_start && !sl_is_i && !sl_is_idr),
-		.mb_skip_run({8'd0, p_skip_run}),
+		.rbsp_request_offset(core_rbsp_request_offset_raw),
+		.rbsp_request_valid(core_rbsp_request_valid_raw),
+		.mb_type_valid(feed_mb_type_valid),
+		.mb_type(feed_mb_type),
+		.mb_skip(feed_mb_skip),
+		.mb_skip_run_valid(1'b0),
+		.mb_skip_run(16'd0),
 		.intra4x4_modes(core_i4_modes),
-		.intra16x16_mode(core_i16_pred_mode),
-		.chroma_pred_mode(sl_chroma_pred_mode),
-		.part_sub_mb_types(sl_sub_mb_types),
-		.part_ref_idx_l0(sl_ref_idx_l0),
-		.part_mvd_valid(sl_mvd_valid),
-		.part_mvd_x(sl_mvd_x),
-		.part_mvd_y(sl_mvd_y),
-		.cbp_luma(4'hf),
-		.cbp_chroma(2'd0),
-		.mb_qp_delta(sl_qpd[5:0]),
-		.mb_residual_bit_offset(sl_first_mb_residual_bit_offset),
+		.intra16x16_mode(feed_i16_mode),
+		.chroma_pred_mode(feed_chroma_pred_mode),
+		.part_sub_mb_types(feed_sub_mb_types),
+		.part_ref_idx_l0(feed_ref_idx_l0_packed),
+		.part_mvd_valid(feed_mvd_valid),
+		.part_mvd_x(feed_mvd_x),
+		.part_mvd_y(feed_mvd_y),
+		.cbp_luma(feed_cbp_luma),
+		.cbp_chroma(feed_cbp_chroma),
+		.mb_qp_delta(feed_mb_qp_delta),
+		.mb_residual_bit_offset(feed_mb_residual_bit_offset),
 		.luma4x4_valid(core_luma4x4_valid),
 		.luma4x4_idx(core_luma4x4_idx),
 		.luma4x4_qp(core_luma4x4_qp),
@@ -617,11 +800,11 @@ module stream_path #(
 		.luma4x4_coeff_zigzag(core_luma4x4_coeff_zigzag),
 		.mv_x_qpel(16'sd0),
 		.mv_y_qpel(16'sd0),
-		.part_mode(first_mb_part_mode),
+		.part_mode(feed_part_mode),
 		.part_idx(2'd0),
-		.mvd_x_qpel(16'sd0),
-		.mvd_y_qpel(16'sd0),
-		.ref_idx_l0(2'd0),
+		.mvd_x_qpel(feed_mvd_x[0]),
+		.mvd_y_qpel(feed_mvd_y[0]),
+		.ref_idx_l0(feed_ref_idx_l0_packed[1:0]),
 		.recon_mb_valid(1'b0),
 		.recon_mb_x(8'd0),
 		.recon_mb_y(8'd0),
@@ -658,6 +841,7 @@ module stream_path #(
 		.ref_rsp_sample(8'd0),
 		.frame_done(core_frame_done),
 		.frame_mb_count(core_frame_mb_count),
+		.intra_blocks_done(core_intra_blocks_done),
 		.busy(core_busy),
 		.decode_state(core_decode_state),
 		.current_mb_addr(core_current_mb_addr),
@@ -731,16 +915,23 @@ module stream_path #(
 	             sl_luma4x4_blocks_valid | sl_luma4x4_blocks_present |
 	             residual_coeff[0][0] | residual_coeff[1][0] |
 	             residual_coeff[15][0] | sl_place_coeff[0][0] | sl_place_coeff[15][0] |
-	             core_luma4x4_valid | core_luma_feed_active | core_dpb_wr_en |
+	             core_luma4x4_valid | feed_mb_type_valid | feed_busy | feed_frame_done |
+	             feed_error | feed_slice_desync | feed_slice_desync_early |
+	             feed_slice_desync_long | |feed_slice_desync_cause | |feed_slice_desync_mb |
+	             feed_chroma_residual_valid | feed_mb_intra | |feed_mb_qp_y |
+	             feed_chroma_residual_u[0][0] | feed_chroma_residual_v[0][0] |
+	             core_i16_dc_level_valid | core_i16_dc_level[0][0] | |core_i16_dc_qp |
+	             product_dpb_write_bank | product_dpb_ref_bank |
+	             core_dpb_wr_en |
 	             |core_dpb_wr_addr | |core_dpb_wr_data | core_dpb_rd_en |
 	             |core_dpb_rd_addr | core_frame_done | |core_frame_mb_count |
 	             core_rbsp_request_valid | |core_rbsp_request_offset | core_busy |
 	             |core_rbsp_window_base | |core_rbsp_avail | |core_rbsp_length |
 	             core_rbsp_complete | core_rbsp_overflow | |product_dpb_rdata |
-	             |product_dpb_write_base | |product_dpb_ref_base |
+	             |product_dpb_write_base | |product_dpb_ref_base | dpb_ddr_req |
 	             vcl_cap_clear | vcl_cap_en | vcl_cap_end | |vcl_cap_data |
 	             |sl_first_mb_residual_bit_offset | core_slice_start |
-	             core_mb_type_valid | |core_decode_state | |core_current_mb_addr |
+	             |core_intra_blocks_done | |core_decode_state | |core_current_mb_addr |
 	             core_error;
 
 endmodule

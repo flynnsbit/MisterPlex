@@ -163,6 +163,7 @@ module h264_decode_core #(
     output wire [15:0] frame_mb_count,       // MBs decoded this frame
 
     // ── Status/debug ──
+    output wire [4:0]  intra_blocks_done,
     output wire        busy,
     output wire [7:0]  decode_state,         // FSM state for debug
     output wire [15:0] current_mb_addr,      // current MB being decoded
@@ -595,7 +596,7 @@ module h264_decode_core #(
         .coded_pending(skiprun_coded_pending)
     );
     wire slice_is_p = !slice_is_i && !slice_is_idr;
-    wire pskip_pending = slice_is_p && skiprun_mb_is_skip;
+    wire pskip_pending = slice_is_p && (skiprun_mb_is_skip || (mb_type_valid && mb_skip));
 
     wire syntax_p16_candidate = mb_type_valid && !slice_is_i && !slice_is_idr &&
                                 !pskip_pending &&
@@ -1966,6 +1967,7 @@ module h264_decode_core #(
     assign rbsp_request_valid = rbsp_request_valid_r;
     assign frame_done = frame_done_r;
     assign frame_mb_count = mb_count_r;
+    assign intra_blocks_done = product_intra_blocks_done;
     assign busy = (wb_state != ST_IDLE) || intra_active_r || pskip_busy;
     assign decode_state = wb_state;
     assign current_mb_addr = (wb_state == ST_IDLE) ? syntax_mb_addr_r : wb_mb_addr16;
