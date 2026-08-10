@@ -365,6 +365,10 @@ module ddr_bitstream_reader #(
 								DDRAM_WE <= 1'b1;
 								publish_step <= 4'd1;
 							end
+							// o89 publish-lite: only PLXR + PLXE (2 WE). Full ST0..ST6
+							// 9-step bursts survived wipe but died after first DATA RD
+							// (o85–o88 plant: LIVE then cons=0/telem freeze). Gate needs
+							// cons (PLXR) + telem (PLXE); ST* can return later if needed.
 							4'd1: begin
 								DDRAM_ADDR <= ERR_W;
 								DDRAM_DIN <= {overrun_count[7:0], underrun_count[7:0],
@@ -372,48 +376,11 @@ module ddr_bitstream_reader #(
 								              telem_seq + 8'd1, MAGIC_ERR};
 								DDRAM_WE <= 1'b1;
 								telem_seq <= telem_seq + 8'd1;
-								publish_step <= 4'd2;
-							end
-							4'd2: begin
-								DDRAM_ADDR <= STAT0_W;
-								DDRAM_DIN <= {ring_level, MAGIC_ST0};
-								DDRAM_WE <= 1'b1;
-								publish_step <= 4'd3;
-							end
-							4'd3: begin
-								DDRAM_ADDR <= STAT1_W;
-								DDRAM_DIN <= {consumer_seq, MAGIC_ST1};
-								DDRAM_WE <= 1'b1;
-								publish_step <= 4'd4;
-							end
-							4'd4: begin
-								DDRAM_ADDR <= STAT2_W;
-								DDRAM_DIN <= {last_bad_seq, MAGIC_ST2};
-								DDRAM_WE <= 1'b1;
-								publish_step <= 4'd5;
-							end
-							4'd5: begin
-								DDRAM_ADDR <= STAT3_W;
-								DDRAM_DIN <= {current_session[31:0], MAGIC_ST3};
-								DDRAM_WE <= 1'b1;
-								publish_step <= 4'd6;
-							end
-							4'd6: begin
-								DDRAM_ADDR <= STAT4_W;
-								DDRAM_DIN <= {current_session[63:32], MAGIC_ST4};
-								DDRAM_WE <= 1'b1;
-								publish_step <= 4'd7;
-							end
-							4'd7: begin
-								DDRAM_ADDR <= STAT5_W;
-								DDRAM_DIN <= {underrun_count, overrun_count, MAGIC_ST5};
-								DDRAM_WE <= 1'b1;
-								publish_step <= 4'd8;
+								publish_step <= 4'd0;
+								publish_pending <= 1'b0;
 							end
 							default: begin
-								DDRAM_ADDR <= STAT6_W;
-								DDRAM_DIN <= {desync_count, state_flags, MAGIC_ST6};
-								DDRAM_WE <= 1'b1;
+								// unreachable in o89 lite; keep safe clear
 								publish_step <= 4'd0;
 								publish_pending <= 1'b0;
 							end
