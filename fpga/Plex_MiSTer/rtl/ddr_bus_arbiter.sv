@@ -307,12 +307,13 @@ module ddr_bus_arbiter (
 	// rsp_pipe_active blocks *all* m0/m1 traffic (BSR silent, PLXR stuck 0).
 	// Bring-up probes done — product arbiter only.
 
-	// o81: short o78 rsp_watch (~0.7ms) could clear credit before late DOUT
-	// landed in m1 FIFO. Keep a *long* orphan guard only (~186ms @90MHz) so a
-	// true never-DOUT wedge cannot silence publish forever.
+	// o78: rsp_left watchdog — if DOUT never returns, drop pipe so bus recovers.
+	// o84: restore short o78 rsp_watch (~0.7ms @90MHz). A/B on device:
+	// o80 (short) = PUBLISH_LIVE; o83 (long o81 rsp_watch_long) = PUBLISH_DEAD
+	// with BSR identical to o80. Long guard is the remaining o80→o83 delta.
 	// o79: grant_m1 held with m1_want but no m1_rd/we ready deadlocks m0.
 	reg [5:0] grant_idle;
-	reg [23:0] rsp_watch_long;
+	reg [15:0] rsp_watch;
 
 	always @(posedge clk) begin
 		if (rst) begin
@@ -336,7 +337,7 @@ module ddr_bus_arbiter (
 			ddram_be_q <= 8'd0;
 			ddram_we_q <= 1'b0;
 			grant_idle <= 6'd0;
-			rsp_watch_long <= 24'd0;
+			rsp_watch <= 16'd0;
 		end else begin
 			// 2-FF sync req levels (clk_m1 → clk_ddr)
 			m1_rd_req_s1 <= m1_rd_req;
@@ -372,12 +373,12 @@ module ddr_bus_arbiter (
 				ddram_we_q <= 1'b0;
 			end
 
-			// Long orphan rsp_left guard only (see o81 comment above).
+			// rsp_left watchdog (~0.7ms @90MHz): abandon orphan response credit.
 			if (!rsp_active)
-				rsp_watch_long <= 24'd0;
-			else if (rsp_watch_long != 24'hff_ffff)
-				rsp_watch_long <= rsp_watch_long + 24'd1;
-			if (rsp_active && rsp_watch_long == 24'hff_ffff)
+				rsp_watch <= 16'd0;
+			else if (rsp_watch != 16'hffff)
+				rsp_watch <= rsp_watch + 16'd1;
+			if (rsp_active && rsp_watch == 16'hffff)
 				rsp_left <= 9'd0;
 
 			if (!DDRAM_BUSY && !rsp_pipe_active) begin
