@@ -1916,7 +1916,21 @@ bool FpgaSpi::flushBitstreamDdr() {
     bitstreamWriteCount_ = 0;
     bitstreamLegacySeq_ = 0;
     bitstreamLegacyActive_ = false;
-    bitstreamResetEpoch_ = !bitstreamResetEpoch_;
+    // o77: force an epoch *edge* vs the live PLXB bit63. Software toggle alone
+    // fails when DDR still holds bit63=1 from a prior session and the daemon
+    // starts with bitstreamResetEpoch_=false → first flush also publishes 1
+    // (no edge). FPGA then keeps overrun_sticky from stale write_count>>ring
+    // and never consumes (cons=0, flags o1, last_bad=PLXB).
+    {
+        const size_t off = ring::kCtrlPhys - ring::kDataPhys;
+        (void)cleanDcacheRange(bitstreamMap_ + off, sizeof(uint64_t));
+        volatile uint64_t* p =
+            reinterpret_cast<volatile uint64_t*>(bitstreamMap_ + off);
+        const uint64_t cur = *p;
+        const bool curEpoch =
+            (static_cast<uint32_t>(cur) == ring::kCtrlMagic) && ((cur >> 63) & 1ull);
+        bitstreamResetEpoch_ = !curEpoch;
+    }
     std::memset(bitstreamMap_, 0, ring::kRingBytes);
     (void)cleanDcacheRange(bitstreamMap_, ring::kRingBytes);
     publishBitstreamCtrl();
