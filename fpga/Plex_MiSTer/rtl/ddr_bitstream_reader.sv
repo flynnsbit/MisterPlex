@@ -528,7 +528,10 @@ module ddr_bitstream_reader #(
 						beat_left <= beat_left - 4'd1;
 						read_count <= read_count + 32'd1;
 						fpga_read_count <= read_count + 32'd1;
-						publish_pending <= 1'b1;
+						// o85: do NOT publish every byte. Per-byte publish_pending forced a
+						// full 9-beat PLXR..ST6 WE burst between nearly every DATA beat and
+						// left m1 WE dead after plant (telem freeze, cons sticky). Publish
+						// on beat end / record boundary / desync / HB only.
 
 						if (mode == MODE_PAYLOAD) begin
 							out_byte <= rx_byte;
@@ -539,24 +542,34 @@ module ddr_bitstream_reader #(
 							if (payload_left == 32'd1) begin
 								mode <= MODE_HEADER;
 								hdr_idx <= 5'd0;
+								publish_pending <= 1'b1;
+								publish_step <= 4'd0;
 							end
 						end else if (mode == MODE_DROP) begin
 							payload_left <= payload_left - 32'd1;
 							if (payload_left == 32'd1) begin
 								mode <= MODE_HEADER;
 								hdr_idx <= 5'd0;
+								publish_pending <= 1'b1;
+								publish_step <= 4'd0;
 							end
 						end else begin
 							hdr[hdr_idx] = rx_byte;
 							if (hdr_idx == 5'd31) begin
 								hdr_idx <= 5'd0;
+								// Always surface PLXR after a full 32B header parse.
+								publish_pending <= 1'b1;
+								publish_step <= 4'd0;
 								if (hdr32(0) != MAGIC_REC || hdr32(24) != 32'd0) begin
-									fatal_sticky <= 1'b1;
+									// o85: desync+continue, no fatal_sticky. Permanent fatal
+									// cleared ring_has_data and froze cons at 0x20 on junk
+									// plant (o80–o84). Epoch flush still hard-resets; host
+									// STREAM can re-align. Keep draining remaining avail.
 									active <= 1'b0;
 									mark_desync(hdr32(16));
 								end else if (hdr[4] == EVENT_BEGIN) begin
 									if (active || hdr32(20) != 32'd0) begin
-										fatal_sticky <= 1'b1;
+										// Protocol error on BEGIN — desync, keep bus alive.
 										mark_desync(hdr32(16));
 									end else begin
 										active <= 1'b1;
@@ -616,8 +629,12 @@ module ddr_bitstream_reader #(
 							end
 						end
 
-						if (beat_left == 4'd1)
+						// Beat complete → IDLE so publish/poll can run; one publish/beat.
+						if (beat_left == 4'd1) begin
 							state <= ST_IDLE;
+							publish_pending <= 1'b1;
+							publish_step <= 4'd0;
+						end
 						poll_wait <= 16'd0;
 					end else if (beat_left == 4'd0) begin
 						state <= ST_IDLE;
