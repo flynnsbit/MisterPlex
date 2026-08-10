@@ -271,8 +271,10 @@ module ddr_bus_arbiter (
 	// and cut only FIFO depth (CAS burst beats rarely need 8).
 	// o68: hold each m1 rsp beat ~16 clk_m1 cycles before pop so ST_POLL can
 	// sample under m1_busy CDC (o67 telem stuck=1 ⇒ never saw DOUT_READY).
-	// o81: also pop on a new m1_rd so a stale poll beat cannot sit !empty into
-	// ST_READ_WAIT (BSR also gates accept with rd_inflight).
+	// o82: do NOT pop on m1_rd. o81 did; ST_POLL/READ_WAIT sparse reissue
+	// pulses m1_rd while a good beat sat in the FIFO and discarded it before
+	// BSR could sample → PUBLISH freeze, PLXE=0, cons stuck, fatal sticky.
+	// Stale-beat protection is BSR rd_inflight only.
 	reg [3:0] m1_rsp_age;
 	always @(posedge clk_m1) begin
 		if (reset || m1_rsp_fifo_empty)
@@ -280,7 +282,7 @@ module ddr_bus_arbiter (
 		else if (m1_rsp_age != 4'd15)
 			m1_rsp_age <= m1_rsp_age + 4'd1;
 	end
-	wire m1_rsp_pop = !m1_rsp_fifo_empty && (m1_rd || (m1_rsp_age == 4'd15));
+	wire m1_rsp_pop = !m1_rsp_fifo_empty && (m1_rsp_age == 4'd15);
 
 	async_fifo #(.WIDTH(64), .AW(2)) m1_rsp_fifo (
 		.wr_clk   (clk),
