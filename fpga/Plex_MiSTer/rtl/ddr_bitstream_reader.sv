@@ -126,9 +126,9 @@ module ddr_bitstream_reader #(
 	reg empty_seen;
 	reg seen_payload;
 	// o49 RCA: poll_div==0 is a 1-cycle pulse; m1 grant/busy CDC needs many
-	// cycles → CTRL RD starved (live telem_seq=1). o50 sticky poll_req FF was
-	// STA-hostile at 97% ALM (best −75ps). o54: no extra FF — level want_poll
-	// until first PLXB, then an 8/64-cycle window; keep ST_POLL reissue.
+	// cycles → CTRL RD starved (live telem_seq=1). o50 sticky FF STA-hostile.
+	// o54 8/64 window: setup −77 hold −283. o55: level want_poll ONLY until
+	// first PLXB, then original 1-cycle pulse; keep ST_POLL reissue.
 	reg [7:0] hdr [0:31];
 	reg [4:0] hdr_idx;
 	reg [31:0] payload_left;
@@ -152,9 +152,8 @@ module ddr_bitstream_reader #(
 	wire [31:0] consume_count_w =
 		(avail < bytes_to_qword_end) ? avail : bytes_to_qword_end;
 	wire [3:0] consume_count = consume_count_w[3:0];
-	// 8 consecutive cycles each 64 — multi-cycle grant window without sticky FF.
-	wire poll_window = (poll_div[5:3] == 3'd0);
-	wire want_poll = enable && (!have_ctrl || poll_window);
+	// Until first PLXB: level (survives m1 busy CDC). After: 1-cyc/64 like o44.
+	wire want_poll = enable && (!have_ctrl || (poll_div == {POLL_DIV_BITS{1'b0}}));
 	wire want_read = enable && ring_has_data && (beat_left == 4'd0);
 	wire want_pub = enable && publish_pending;
 	wire can_consume = (mode != MODE_PAYLOAD) || !out_full;
