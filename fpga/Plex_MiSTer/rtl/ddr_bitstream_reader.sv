@@ -163,8 +163,12 @@ module ddr_bitstream_reader #(
 		(avail < bytes_to_qword_end) ? avail : bytes_to_qword_end;
 	wire [3:0] consume_count = consume_count_w[3:0];
 	// Until first PLXB: level (survives m1 busy CDC). After: 1-cyc/64 like o44.
-	wire want_poll = enable && (!have_ctrl || (poll_div == {POLL_DIV_BITS{1'b0}}));
-	wire want_read = enable && ring_has_data && (beat_left == 4'd0);
+	// o86 R1: while publish_pending, suppress poll/read so bus_want is WE-only.
+	// After DATA RD, competing want_read re-armed sticky m1_rd before the 9-step
+	// publish WE completed → host saw PUBLISH_LIVE then plant telem freeze (o80–o85).
+	wire want_poll = enable && !publish_pending &&
+	                 (!have_ctrl || (poll_div == {POLL_DIV_BITS{1'b0}}));
+	wire want_read = enable && !publish_pending && ring_has_data && (beat_left == 4'd0);
 	wire want_pub = enable && publish_pending;
 	wire can_consume = (mode != MODE_PAYLOAD) || !out_full;
 	wire [15:0] state_flags = {4'd0, fatal_sticky, desync_sticky, paused, active,
@@ -217,8 +221,9 @@ module ddr_bitstream_reader #(
 		end
 	endtask
 
+	// o86 R1: publish_pending → want_pub only (poll/read already gated above).
 	wire bus_want_comb =
-		(state == ST_IDLE) ? (want_poll || want_read || want_pub) :
+		(state == ST_IDLE) ? (want_pub || want_poll || want_read) :
 		((state == ST_POLL) || (state == ST_READ_WAIT));
 
 	always @(posedge clk) begin
