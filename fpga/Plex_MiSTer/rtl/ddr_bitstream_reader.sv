@@ -98,7 +98,10 @@ module ddr_bitstream_reader #(
 		ST_IDLE      = 4'd1,
 		ST_POLL      = 4'd2,
 		ST_READ_WAIT = 4'd3,
-		ST_CONSUME   = 4'd4;
+		ST_CONSUME   = 4'd4,
+		// o96: force complete lite PLXR→PLXE without poll/read stealing mid-step.
+		// o95 arm_publish still PUBLISH_DEAD (PLXR only, PLXE=0 on wipe).
+		ST_PUBLISH   = 4'd5;
 
 	localparam [1:0]
 		MODE_HEADER  = 2'd0,
@@ -236,7 +239,7 @@ module ddr_bitstream_reader #(
 
 	wire bus_want_comb =
 		(state == ST_IDLE) ? (want_poll || want_read || want_pub) :
-		((state == ST_POLL) || (state == ST_READ_WAIT));
+		((state == ST_POLL) || (state == ST_READ_WAIT) || (state == ST_PUBLISH));
 
 	always @(posedge clk) begin
 		out_valid <= 1'b0;
@@ -363,35 +366,29 @@ module ddr_bitstream_reader #(
 					// o72: publish MUST beat poll. o79: after DEAD0003 CONSUME timeout we
 					// land here with beat_left>0 — publish/poll first, then resume
 					// CONSUME (want_read alone cannot, it requires beat_left==0).
+					// o96: issue PLXR then enter ST_PUBLISH for PLXE — do not stay in
+					// IDLE between steps (want_poll level pre-have_ctrl can race the
+					// post-WE dead cycle; o95 step-preserve still wiped PLXE=0).
 					if (publish_pending && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						DDRAM_BURSTCNT <= 8'd1;
-						case (publish_step)
-							4'd0: begin
-								DDRAM_ADDR <= READ_W;
-								DDRAM_DIN <= {read_count, MAGIC_READ};
-								DDRAM_WE <= 1'b1;
-								publish_step <= 4'd1;
-							end
-							// o89 publish-lite: only PLXR + PLXE (2 WE). Full ST0..ST6
-							// 9-step bursts survived wipe but died after first DATA RD
-							// (o85–o88 plant: LIVE then cons=0/telem freeze). Gate needs
-							// cons (PLXR) + telem (PLXE); ST* can return later if needed.
-							4'd1: begin
-								DDRAM_ADDR <= ERR_W;
-								DDRAM_DIN <= {overrun_count[7:0], underrun_count[7:0],
-								              active, overrun_sticky, underrun_sticky, 5'd0,
-								              telem_seq + 8'd1, MAGIC_ERR};
-								DDRAM_WE <= 1'b1;
-								telem_seq <= telem_seq + 8'd1;
-								publish_step <= 4'd0;
-								publish_pending <= 1'b0;
-							end
-							default: begin
-								// unreachable in o89 lite; keep safe clear
-								publish_step <= 4'd0;
-								publish_pending <= 1'b0;
-							end
-						endcase
+						if (publish_step == 4'd0) begin
+							DDRAM_ADDR <= READ_W;
+							DDRAM_DIN <= {read_count, MAGIC_READ};
+							DDRAM_WE <= 1'b1;
+							publish_step <= 4'd1;
+							poll_wait <= 16'd0;
+							state <= ST_PUBLISH;
+						end else begin
+							// Recover mid-lite (step1) if re-entered IDLE without ST_PUBLISH.
+							DDRAM_ADDR <= ERR_W;
+							DDRAM_DIN <= {overrun_count[7:0], underrun_count[7:0],
+							              active, overrun_sticky, underrun_sticky, 5'd0,
+							              telem_seq + 8'd1, MAGIC_ERR};
+							DDRAM_WE <= 1'b1;
+							telem_seq <= telem_seq + 8'd1;
+							publish_step <= 4'd0;
+							publish_pending <= 1'b0;
+					end
 					end else if (want_poll && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						DDRAM_ADDR <= CTRL_W;
 						DDRAM_BURSTCNT <= 8'd1;
@@ -408,6 +405,29 @@ module ddr_bitstream_reader #(
 						// o79: resume partial beat after publish/poll window
 						state <= ST_CONSUME;
 						poll_wait <= 16'd0;
+					end
+				end
+
+				// o96: second lite WE only — no poll/read until PLXE posted.
+				ST_PUBLISH: begin
+					if (!DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+						DDRAM_BURSTCNT <= 8'd1;
+						DDRAM_ADDR <= ERR_W;
+						DDRAM_DIN <= {overrun_count[7:0], underrun_count[7:0],
+						              active, overrun_sticky, underrun_sticky, 5'd0,
+						              telem_seq + 8'd1, MAGIC_ERR};
+						DDRAM_WE <= 1'b1;
+						telem_seq <= telem_seq + 8'd1;
+						publish_step <= 4'd0;
+						publish_pending <= 1'b0;
+						state <= ST_IDLE;
+					end else if (poll_wait == 16'hFFFF) begin
+						// Escape if bus stuck; re-arm so IDLE can retry PLXE path.
+						last_bad_seq <= 32'hDEAD0006;
+						poll_wait <= 16'd0;
+						state <= ST_IDLE;
+					end else begin
+						poll_wait <= poll_wait + 16'd1;
 					end
 				end
 
