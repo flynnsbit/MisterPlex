@@ -163,8 +163,13 @@ module ddr_bitstream_reader #(
 		(avail < bytes_to_qword_end) ? avail : bytes_to_qword_end;
 	wire [3:0] consume_count = consume_count_w[3:0];
 	// Until first PLXB: level (survives m1 busy CDC). After: 1-cyc/64 like o44.
+	// Until first PLXB: level want_poll. After: 1-cyc/64.
+	// o88: soft hold — suppress DATA want_read only while publish_pending so
+	// the 9-step WE can finish after a beat. Do NOT gate want_poll (o86 hard
+	// hold on poll+read + WE-before-RD regressed wipe to PUBLISH_DEAD).
+	// o87 kept LIVE wipe + R3 no beat-end publish; plant still cons=0/telem freeze.
 	wire want_poll = enable && (!have_ctrl || (poll_div == {POLL_DIV_BITS{1'b0}}));
-	wire want_read = enable && ring_has_data && (beat_left == 4'd0);
+	wire want_read = enable && !publish_pending && ring_has_data && (beat_left == 4'd0);
 	wire want_pub = enable && publish_pending;
 	wire can_consume = (mode != MODE_PAYLOAD) || !out_full;
 	wire [15:0] state_flags = {4'd0, fatal_sticky, desync_sticky, paused, active,
