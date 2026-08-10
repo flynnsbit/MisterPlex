@@ -271,19 +271,9 @@ module ddr_bus_arbiter (
 
 	// o28: AW 3→2 (depth 8→4). o27 pad-strip regressed STA; restore o26 pads
 	// and cut only FIFO depth (CAS burst beats rarely need 8).
-	// o65: 2-cycle hold-pop — present ready for two clk_m1 beats before
-	// advancing FIFO. o35 auto-pop is 1-cycle; ST_POLL may sample late
-	// under m1_busy CDC (live WC host still cons=0). Lighter than o56 skid.
-	reg m1_rsp_hold;
-	always @(posedge clk_m1) begin
-		if (reset)
-			m1_rsp_hold <= 1'b0;
-		else if (m1_rsp_fifo_empty)
-			m1_rsp_hold <= 1'b0;
-		else
-			m1_rsp_hold <= ~m1_rsp_hold;
-	end
-	wire m1_rsp_pop = !m1_rsp_fifo_empty & m1_rsp_hold;
+	// o67: restore o35 auto-pop — o65 hold-pop STA green but stream-only m1
+	// still never republished PLXR after boot (DOUT path still dead or silent).
+	wire m1_rsp_pop = !m1_rsp_fifo_empty;
 
 	async_fifo #(.WIDTH(64), .AW(2)) m1_rsp_fifo (
 		.wr_clk   (clk),
@@ -301,7 +291,6 @@ module ddr_bus_arbiter (
 	);
 
 	assign m1_dout       = m1_rsp_fifo_rdata;
-	// ready entire time word is visible (both hold phases while !empty)
 	assign m1_dout_ready = !m1_rsp_fifo_empty;
 
 	always @(posedge clk) begin

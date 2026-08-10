@@ -129,6 +129,9 @@ module ddr_bitstream_reader #(
 	// cycles → CTRL RD starved (live telem_seq=1). o50 sticky FF STA-hostile.
 	// o54 8/64 window: setup −77 hold −283. o55: level want_poll ONLY until
 	// first PLXB, then original 1-cycle pulse; keep ST_POLL reissue.
+	// o67: poll-complete heartbeat — live o66 stream-only still never moves
+	// PLXR after boot publish; distinguish ST_POLL stuck vs silent !PLXB RD.
+	reg [5:0] poll_hb;
 	reg [7:0] hdr [0:31];
 	reg [4:0] hdr_idx;
 	reg [31:0] payload_left;
@@ -252,6 +255,7 @@ module ddr_bitstream_reader #(
 			have_ctrl <= 1'b0;
 			empty_seen <= 1'b0;
 			seen_payload <= 1'b0;
+			poll_hb <= 6'd0;
 			beat_left <= 4'd0;
 			byte_idx <= 3'd0;
 			hdr_idx <= 5'd0;
@@ -401,6 +405,8 @@ module ddr_bitstream_reader #(
 				// is level/window combo so IDLE can arm without sticky FF.
 				ST_POLL: begin
 					if (DDRAM_DOUT_READY) begin
+						// o67: always stash low 32 of CTRL beat (PLXB or garbage).
+						last_bad_seq <= DDRAM_DOUT[31:0];
 						if (ctrl_magic_ok) begin
 							have_ctrl <= 1'b1;
 							write_count <= {1'b0, ctrl_write_count};
@@ -429,6 +435,14 @@ module ddr_bitstream_reader #(
 								publish_step <= 4'd0;
 								reset_parser();
 							end
+						end
+						// Heartbeat publish every 64 POLL completions (not every beat —
+						// o61 always-publish was STA-red). Proves DOUT path + exposes
+						// last_bad_seq/telem_seq on host without full diag tax.
+						poll_hb <= poll_hb + 6'd1;
+						if (poll_hb == 6'd63) begin
+							publish_pending <= 1'b1;
+							publish_step <= 4'd0;
 						end
 						state <= ST_IDLE;
 					end else if (!DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
