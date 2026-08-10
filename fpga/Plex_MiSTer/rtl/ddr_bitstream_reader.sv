@@ -125,6 +125,10 @@ module ddr_bitstream_reader #(
 	reg [7:0] telem_seq;
 	reg publish_pending;
 	reg [3:0] publish_step;
+	// o97: cycles to wait after PLXR WE before PLXE so m1 we_ack_s2 of first
+	// grant cannot clear m1_we_req after second WE latch (o96 ST_PUBLISH still
+	// DEAD: PLXR live PLXE=0 — 1-cycle WE gap races ack_s2).
+	reg [4:0] pub_gap;
 	reg have_ctrl;
 	reg empty_seen;
 	reg seen_payload;
@@ -279,6 +283,7 @@ module ddr_bitstream_reader #(
 			telem_seq <= 8'd0;
 			publish_pending <= 1'b1;
 			publish_step <= 4'd0;
+			pub_gap <= 5'd0;
 			have_ctrl <= 1'b0;
 			empty_seen <= 1'b0;
 			seen_payload <= 1'b0;
@@ -376,6 +381,8 @@ module ddr_bitstream_reader #(
 							DDRAM_DIN <= {read_count, MAGIC_READ};
 							DDRAM_WE <= 1'b1;
 							publish_step <= 4'd1;
+							// ≥16 cyc: grant + 2FF ack_s2 + margin before second WE
+							pub_gap <= 5'd16;
 							poll_wait <= 16'd0;
 							state <= ST_PUBLISH;
 						end else begin
@@ -408,9 +415,13 @@ module ddr_bitstream_reader #(
 					end
 				end
 
-				// o96: second lite WE only — no poll/read until PLXE posted.
+				// o96/o97: second lite WE only — no poll/read until PLXE posted.
+				// o97: wait pub_gap after PLXR so first m1 we_ack_s2 cannot drop
+				// m1_we_req that latched PLXE (o96 1-cycle gap → PLXE lost, PLXR ok).
 				ST_PUBLISH: begin
-					if (!DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+					if (pub_gap != 5'd0) begin
+						pub_gap <= pub_gap - 5'd1;
+					end else if (!DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_ADDR <= ERR_W;
 						DDRAM_DIN <= {overrun_count[7:0], underrun_count[7:0],
