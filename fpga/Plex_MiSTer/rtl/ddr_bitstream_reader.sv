@@ -203,13 +203,25 @@ module ddr_bitstream_reader #(
 		end
 	endfunction
 
+	// o95: re-arm must not reset publish_step while a lite publish (PLXR→PLXE)
+	// is in flight. o94 post-DOUT / empty-beat re-arms every 8B and kept
+	// restarting at step0 → PLXR live (cons advanced) but PLXE never written
+	// (wipe telem_u=0 / PUBLISH_DEAD with cons=0x40 residual).
+	task automatic arm_publish;
+		begin
+			if (!publish_pending)
+				publish_step <= 4'd0;
+			publish_pending <= 1'b1;
+		end
+	endtask
+
 	task automatic mark_desync(input [31:0] bad_seq);
 		begin
 			desync_sticky <= 1'b1;
 			last_bad_seq <= bad_seq;
 			if (desync_count != 16'hFFFF)
 				desync_count <= desync_count + 16'd1;
-			publish_pending <= 1'b1;
+			arm_publish();
 		end
 	endtask
 
@@ -290,8 +302,7 @@ module ddr_bitstream_reader #(
 			// freeze forever; force publish_pending so IDLE can emit PLXR.
 			hb_div <= hb_div + 16'd1;
 			if (hb_div == 16'hffff) begin
-				publish_pending <= 1'b1;
-				publish_step <= 4'd0;
+				arm_publish();
 			end
 			// o80: escape non-IDLE stick (~2ms) back to IDLE for publish/poll.
 			if (state == ST_IDLE || state == ST_RESET)
@@ -300,8 +311,7 @@ module ddr_bitstream_reader #(
 				stuck_cnt <= stuck_cnt + 16'd1;
 			if (state != ST_IDLE && state != ST_RESET && stuck_cnt == 16'hffff) begin
 				last_bad_seq <= 32'hDEAD0004;
-				publish_pending <= 1'b1;
-				publish_step <= 4'd0;
+				arm_publish();
 				poll_wait <= 16'd0;
 				state <= ST_IDLE;
 			end
@@ -320,8 +330,7 @@ module ddr_bitstream_reader #(
 				expected_seq <= 32'd0;
 				consumer_seq <= 32'd0;
 				out_flush <= 1'b1;
-				publish_pending <= 1'b1;
-				publish_step <= 4'd0;
+				arm_publish();
 				state <= ST_IDLE;
 				reset_parser();
 			end
@@ -332,7 +341,7 @@ module ddr_bitstream_reader #(
 				underrun_sticky <= 1'b1;
 				if (underrun_count != 16'hFFFF)
 					underrun_count <= underrun_count + 16'd1;
-				publish_pending <= 1'b1;
+				arm_publish();
 			end else if (avail != 32'd0) begin
 				empty_seen <= 1'b0;
 			end
@@ -341,15 +350,13 @@ module ddr_bitstream_reader #(
 				overrun_sticky <= 1'b1;
 				if (overrun_count != 16'hFFFF)
 					overrun_count <= overrun_count + 16'd1;
-				publish_pending <= 1'b1;
-				publish_step <= 4'd0;
+				arm_publish();
 			end
 
 			case (state)
 				ST_RESET: begin
 					state <= ST_IDLE;
-					publish_pending <= 1'b1;
-					publish_step <= 4'd0;
+					arm_publish();
 				end
 
 				ST_IDLE: begin
@@ -436,8 +443,7 @@ module ddr_bitstream_reader #(
 								expected_seq <= 32'd0;
 								consumer_seq <= 32'd0;
 								out_flush <= 1'b1;
-								publish_pending <= 1'b1;
-								publish_step <= 4'd0;
+								arm_publish();
 								reset_parser();
 							end
 						end
@@ -446,15 +452,13 @@ module ddr_bitstream_reader #(
 						// last_bad_seq/telem_seq on host without full diag tax.
 						poll_hb <= poll_hb + 6'd1;
 						if (poll_hb == 6'd63) begin
-							publish_pending <= 1'b1;
-							publish_step <= 4'd0;
+							arm_publish();
 						end
 						state <= ST_IDLE;
 					end else if (poll_wait == 16'hFFFF) begin
 						// o68: ~2ms @30MHz with no DOUT — abandon, publish marker.
 						last_bad_seq <= 32'hDEAD0001; // poll timeout, no DOUT_READY
-						publish_pending <= 1'b1;
-						publish_step <= 4'd0;
+						arm_publish();
 						poll_wait <= 16'd0;
 						state <= ST_IDLE;
 					end else begin
@@ -487,13 +491,11 @@ module ddr_bitstream_reader #(
 						poll_wait <= 16'd0;
 						// o94: surface after every DATA beat arrives (PLXE moves
 						// even before CONSUME finishes; cons still needs consume).
-						publish_pending <= 1'b1;
-						publish_step <= 4'd0;
+						arm_publish();
 						state <= ST_IDLE; // publish then resume CONSUME via beat_left
 					end else if (poll_wait == 16'hFFFF) begin
 						last_bad_seq <= 32'hDEAD0002; // data RD timeout
-						publish_pending <= 1'b1;
-						publish_step <= 4'd0;
+						arm_publish();
 						poll_wait <= 16'd0;
 						state <= ST_IDLE;
 					end else begin
@@ -527,24 +529,21 @@ module ddr_bitstream_reader #(
 							if (payload_left == 32'd1) begin
 								mode <= MODE_HEADER;
 								hdr_idx <= 5'd0;
-								publish_pending <= 1'b1;
-								publish_step <= 4'd0;
+								arm_publish();
 							end
 						end else if (mode == MODE_DROP) begin
 							payload_left <= payload_left - 32'd1;
 							if (payload_left == 32'd1) begin
 								mode <= MODE_HEADER;
 								hdr_idx <= 5'd0;
-								publish_pending <= 1'b1;
-								publish_step <= 4'd0;
+								arm_publish();
 							end
 						end else begin
 							hdr[hdr_idx] = rx_byte;
 							if (hdr_idx == 5'd31) begin
 								hdr_idx <= 5'd0;
 								// Always surface PLXR after a full 32B header parse.
-								publish_pending <= 1'b1;
-								publish_step <= 4'd0;
+								arm_publish();
 								if (hdr32(0) != MAGIC_REC || hdr32(24) != 32'd0) begin
 									// o85: desync+continue, no fatal_sticky. Permanent fatal
 									// cleared ring_has_data and froze cons at 0x20 on junk
@@ -625,15 +624,13 @@ module ddr_bitstream_reader #(
 						// o89 never armed here → plant cons=0 after DATA; o84 per-byte
 						// reached 0x20. Empty-entry publish restores beat surface.
 						state <= ST_IDLE;
-						publish_pending <= 1'b1;
-						publish_step <= 4'd0;
+						arm_publish();
 						poll_wait <= 16'd0;
 					end else if (poll_wait == 16'hFFFF) begin
 						// o74: out_full (or other) stall — return to IDLE so
 						// publish/poll can run; keep beat for retry.
 						last_bad_seq <= 32'hDEAD0003;
-						publish_pending <= 1'b1;
-						publish_step <= 4'd0;
+						arm_publish();
 						poll_wait <= 16'd0;
 						state <= ST_IDLE;
 					end else begin
