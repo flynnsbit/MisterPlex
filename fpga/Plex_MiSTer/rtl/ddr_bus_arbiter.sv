@@ -84,9 +84,9 @@ module ddr_bus_arbiter (
 
 	// o25: sticky req on clk_m1; clk_ddr 2FF-syncs levels + 1-bit ack.
 	// o66: also latch addr/burst/din/be on clk_m1 at the pulse (not live nets).
-	// Live m1_addr can switch under wb/stream mux while sticky RD waits → CTRL
-	// miss (host PLXB advances, PLXR stuck at boot publish). Holds stay constant
-	// for the whole req so clk_ddr grant samples a level, not a 1-cycle pulse.
+	// o72: sticky-path probe — after delay, inject one WE via m1_we_req/holds
+	// (not direct ddram_*), magic PLXE|0x5A5A0002 at CTRL ERR (0x30340010).
+	// o71 direct force already proved ddram_* WE; this isolates sticky+grant.
 	reg m1_rd_req, m1_we_req;
 	reg m1_rd_ack, m1_we_ack;
 	reg m1_rd_ack_s1, m1_rd_ack_s2;
@@ -97,6 +97,10 @@ module ddr_bus_arbiter (
 	reg  [7:0] m1_rd_burst_h, m1_we_burst_h;
 	reg [63:0] m1_we_din_h;
 	reg  [7:0] m1_we_be_h;
+	reg        sticky_probe_done;
+	reg [15:0] sticky_probe_div;
+	localparam [28:0] STICKY_PROBE_ADDR = 29'h06068002; // 0x30340010>>3
+	localparam [63:0] STICKY_PROBE_DATA = {32'h5A5A_0002, 32'h504C_5845}; // PLXE
 
 	always @(posedge clk_m1) begin
 		if (reset) begin
@@ -112,11 +116,16 @@ module ddr_bus_arbiter (
 			m1_we_burst_h <= 8'd0;
 			m1_we_din_h <= 64'd0;
 			m1_we_be_h <= 8'd0;
+			sticky_probe_done <= 1'b0;
+			sticky_probe_div <= 16'd0;
 		end else begin
 			m1_rd_ack_s1 <= m1_rd_ack;
 			m1_rd_ack_s2 <= m1_rd_ack_s1;
 			m1_we_ack_s1 <= m1_we_ack;
 			m1_we_ack_s2 <= m1_we_ack_s1;
+
+			if (!sticky_probe_done && sticky_probe_div != 16'hffff)
+				sticky_probe_div <= sticky_probe_div + 16'd1;
 
 			if (m1_rd) begin
 				m1_rd_req <= 1'b1;
@@ -132,6 +141,14 @@ module ddr_bus_arbiter (
 				m1_we_burst_h <= m1_burstcnt;
 				m1_we_din_h <= m1_din;
 				m1_we_be_h <= m1_be;
+			end else if (!sticky_probe_done && sticky_probe_div >= 16'd40000 && !m1_we_req) begin
+				// ~2ms @20MHz — after o71 direct force (~0.7ms @90MHz)
+				m1_we_req <= 1'b1;
+				m1_we_addr_h <= STICKY_PROBE_ADDR;
+				m1_we_burst_h <= 8'd1;
+				m1_we_din_h <= STICKY_PROBE_DATA;
+				m1_we_be_h <= 8'hFF;
+				sticky_probe_done <= 1'b1;
 			end else if (m1_we_ack_s2) begin
 				m1_we_req <= 1'b0;
 			end
