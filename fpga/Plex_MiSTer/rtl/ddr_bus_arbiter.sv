@@ -394,10 +394,14 @@ module ddr_bus_arbiter (
 				m1_we_boost <= 1'b0;
 			end
 
-			if (!DDRAM_BUSY && !rsp_pipe_active) begin
+			// o93: posted m1 WE needs no response credit — allow while rsp_pipe_active
+			// when no concurrent m1 RD is pending. RD still requires !rsp_pipe_active.
+			// o92 plant: wipe LIVE + boost still cons=0/telem freeze after DATA → WE
+			// was gated behind full pipe idle; publish never lands post-DATA RD.
+			if (!DDRAM_BUSY) begin
 				if (grant_m1) begin
-					// o92: if boost+WE ready, take WE before RD (one-shot).
-					if (m1_we_boost && m1_we_ready) begin
+					// Posted WE first when no RD competing (or o92 boost, or pipe idle).
+					if (m1_we_ready && (!m1_rd_ready || m1_we_boost || !rsp_pipe_active)) begin
 						ddram_burstcnt_q <= m1_we_burst_h;
 						ddram_addr_q     <= m1_we_addr_h;
 						ddram_rd_q       <= 1'b0;
@@ -409,7 +413,7 @@ module ddr_bus_arbiter (
 						m1_we_boost <= 1'b0;
 						m1_wait <= 6'd0;
 						grant_idle <= 6'd0;
-					end else if (m1_rd_ready) begin
+					end else if (m1_rd_ready && !rsp_pipe_active) begin
 						// o66: use clk_m1-held cmd, not live m1_* (mux-stable).
 						ddram_burstcnt_q <= m1_rd_burst_h;
 						ddram_addr_q     <= m1_rd_addr_h;
@@ -423,19 +427,6 @@ module ddr_bus_arbiter (
 						m1_rd_ack <= 1'b1;
 						m1_wait <= 6'd0;
 						grant_idle <= 6'd0;
-					end else if (m1_we_ready) begin
-						// Posted write: one registered WE beat while granted.
-						ddram_burstcnt_q <= m1_we_burst_h;
-						ddram_addr_q     <= m1_we_addr_h;
-						ddram_rd_q       <= 1'b0;
-						ddram_din_q      <= m1_we_din_h;
-						ddram_be_q       <= m1_we_be_h;
-						ddram_we_q       <= 1'b1;
-						grant_m1 <= 1'b0;
-						m1_we_ack <= 1'b1;
-						m1_we_boost <= 1'b0;
-						m1_wait <= 6'd0;
-						grant_idle <= 6'd0;
 					end else if (!m1_want_s2) begin
 						grant_m1 <= 1'b0;
 						m1_wait <= 6'd0;
@@ -447,7 +438,7 @@ module ddr_bus_arbiter (
 					end else begin
 						grant_idle <= grant_idle + 6'd1;
 					end
-				end else begin
+				end else if (!rsp_pipe_active) begin
 					grant_idle <= 6'd0;
 					if ((m1_want_s2 || m1_cmd) && (!m0_cmd || m1_starved || m1_cmd)) begin
 						// Prefer m1 when idle-gap OR when starved by continuous m0_rd.
@@ -469,6 +460,10 @@ module ddr_bus_arbiter (
 						ddram_be_q       <= m0_be;
 						ddram_we_q       <= 1'b1;
 					end
+				end else if (m1_we_ready && !m1_rd_ready) begin
+					// o93: open grant for WE-only while response pipe drains.
+					grant_m1 <= 1'b1;
+					grant_idle <= 6'd0;
 				end
 			end
 		end
