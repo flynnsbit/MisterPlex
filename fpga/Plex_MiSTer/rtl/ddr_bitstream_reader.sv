@@ -126,10 +126,9 @@ module ddr_bitstream_reader #(
 	reg empty_seen;
 	reg seen_payload;
 	// o49 RCA: poll_div==0 is a 1-cycle pulse; m1 grant/busy CDC needs many
-	// cycles → CTRL RD starved (live telem_seq=1). o55 level-until-PLXB GREEN
-	// but live cons=0. o56: 1-beat rsp_skid so auto-pop DOUT is not missed.
-	reg        rsp_skid_v;
-	reg [63:0] rsp_skid_d;
+	// cycles → CTRL RD starved (live telem_seq=1). o50 sticky FF STA-hostile.
+	// o54 8/64 window: setup −77 hold −283. o55: level want_poll ONLY until
+	// first PLXB, then original 1-cycle pulse; keep ST_POLL reissue.
 	reg [7:0] hdr [0:31];
 	reg [4:0] hdr_idx;
 	reg [31:0] payload_left;
@@ -158,8 +157,6 @@ module ddr_bitstream_reader #(
 	wire want_read = enable && ring_has_data && (beat_left == 4'd0);
 	wire want_pub = enable && publish_pending;
 	wire can_consume = (mode != MODE_PAYLOAD) || !out_full;
-	// Do not issue a new RD while a captured response is pending.
-	wire can_issue = !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE && !rsp_skid_v;
 	wire [15:0] state_flags = {4'd0, fatal_sticky, desync_sticky, paused, active,
 	                           overrun_sticky, underrun_sticky, mode, state};
 
@@ -224,8 +221,6 @@ module ddr_bitstream_reader #(
 			state <= ST_RESET;
 			mode <= MODE_HEADER;
 			poll_div <= '0;
-			rsp_skid_v <= 1'b0;
-			rsp_skid_d <= 64'd0;
 			DDRAM_RD <= 1'b0;
 			DDRAM_WE <= 1'b0;
 			DDRAM_BURSTCNT <= 8'd1;
@@ -266,16 +261,10 @@ module ddr_bitstream_reader #(
 			bus_want <= 1'b0;
 			active <= 1'b0;
 			paused <= 1'b0;
-			rsp_skid_v <= 1'b0;
 			reset_parser();
 		end else begin
 			bus_want <= !flush && bus_want_comb;
 			poll_div <= poll_div + 1'd1;
-			// o56: latch auto-pop beat so ST_POLL/ST_READ_WAIT cannot miss it.
-			if (DDRAM_DOUT_READY && !rsp_skid_v) begin
-				rsp_skid_d <= DDRAM_DOUT;
-				rsp_skid_v <= 1'b1;
-			end
 
 			if (flush) begin
 				read_count <= write_count;
@@ -293,7 +282,6 @@ module ddr_bitstream_reader #(
 				out_flush <= 1'b1;
 				publish_pending <= 1'b1;
 				publish_step <= 4'd0;
-				rsp_skid_v <= 1'b0;
 				state <= ST_IDLE;
 				reset_parser();
 			end
@@ -328,12 +316,12 @@ module ddr_bitstream_reader #(
 					// Prefer CTRL poll when we have never seen PLXB — otherwise
 					// multi-step publish can occupy the rare m1 slots and leave
 					// write_count=0 forever (consumer stuck).
-					if ((!have_ctrl && want_poll) && can_issue) begin
+					if ((!have_ctrl && want_poll) && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						DDRAM_ADDR <= CTRL_W;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_RD <= 1'b1;
 						state <= ST_POLL;
-					end else if (publish_pending && can_issue) begin
+					end else if (publish_pending && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						DDRAM_BURSTCNT <= 8'd1;
 						case (publish_step)
 							4'd0: begin
@@ -395,12 +383,12 @@ module ddr_bitstream_reader #(
 								publish_pending <= 1'b0;
 							end
 						endcase
-					end else if (want_poll && can_issue) begin
+					end else if (want_poll && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						DDRAM_ADDR <= CTRL_W;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_RD <= 1'b1;
 						state <= ST_POLL;
-					end else if (want_read && can_issue) begin
+					end else if (want_read && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						DDRAM_ADDR <= DATA_W + read_qword_offset;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_RD <= 1'b1;
@@ -409,20 +397,21 @@ module ddr_bitstream_reader #(
 					end
 				end
 
-				// o56: skid-only consume (one outstanding RD via can_issue).
+				// o54: reissue CTRL RD while waiting (grant/busy CDC); want_poll
+				// is level/window combo so IDLE can arm without sticky FF.
 				ST_POLL: begin
-					if (rsp_skid_v) begin
-						if (rsp_skid_d[31:0] == MAGIC_CTRL) begin
+					if (DDRAM_DOUT_READY) begin
+						if (ctrl_magic_ok) begin
 							have_ctrl <= 1'b1;
-							write_count <= {1'b0, rsp_skid_d[62:32]};
-							host_write_count <= {1'b0, rsp_skid_d[62:32]};
+							write_count <= {1'b0, ctrl_write_count};
+							host_write_count <= {1'b0, ctrl_write_count};
 							// Epoch edge: host zeroed the ring and toggled CTRL[63].
 							// Always snap consumer to 0 — NEVER to current write_count.
 							// Race: flush(count=0,epoch++) then Begin(count=32) can land
 							// in one POLL; snapping to write_count would skip Begin+NALs
 							// and leave PLXR consumer stuck at 0 forever (o12 STREAM=1).
-							if (rsp_skid_d[63] != reset_seen) begin
-								reset_seen <= rsp_skid_d[63];
+							if (ctrl_reset != reset_seen) begin
+								reset_seen <= ctrl_reset;
 								read_count <= 32'd0;
 								fpga_read_count <= 32'd0;
 								active <= 1'b0;
@@ -441,9 +430,8 @@ module ddr_bitstream_reader #(
 								reset_parser();
 							end
 						end
-						rsp_skid_v <= 1'b0;
 						state <= ST_IDLE;
-					end else if (can_issue) begin
+					end else if (!DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						DDRAM_ADDR <= CTRL_W;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_RD <= 1'b1;
@@ -451,12 +439,11 @@ module ddr_bitstream_reader #(
 				end
 
 				ST_READ_WAIT: begin
-					if (rsp_skid_v) begin
-						beat_q <= rsp_skid_d;
+					if (DDRAM_DOUT_READY) begin
+						beat_q <= DDRAM_DOUT;
 						beat_left <= consume_count;
-						rsp_skid_v <= 1'b0;
 						state <= ST_CONSUME;
-					end else if (can_issue) begin
+					end else if (!DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						DDRAM_ADDR <= DATA_W + read_qword_offset;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_RD <= 1'b1;
