@@ -135,6 +135,8 @@ module ddr_bitstream_reader #(
 	// poll, stamps last_bad, forces publish so WE path/heartbeat is visible.
 	reg [5:0] poll_hb;
 	reg [15:0] poll_wait;
+	reg [15:0] hb_div;
+	reg [15:0] stuck_cnt;
 	reg [7:0] hdr [0:31];
 	reg [4:0] hdr_idx;
 	reg [31:0] payload_left;
@@ -260,6 +262,8 @@ module ddr_bitstream_reader #(
 			seen_payload <= 1'b0;
 			poll_hb <= 6'd0;
 			poll_wait <= 16'd0;
+			hb_div <= 16'd0;
+			stuck_cnt <= 16'd0;
 			beat_left <= 4'd0;
 			byte_idx <= 3'd0;
 			hdr_idx <= 5'd0;
@@ -273,6 +277,27 @@ module ddr_bitstream_reader #(
 		end else begin
 			bus_want <= !flush && bus_want_comb;
 			poll_div <= poll_div + 1'd1;
+
+			// o80: free-running publish heartbeat (~2ms @30MHz) independent of
+			// POLL completion. If ST_READ_WAIT/CONSUME wedges, telem used to
+			// freeze forever; force publish_pending so IDLE can emit PLXR.
+			hb_div <= hb_div + 16'd1;
+			if (hb_div == 16'hffff) begin
+				publish_pending <= 1'b1;
+				publish_step <= 4'd0;
+			end
+			// o80: escape non-IDLE stick (~2ms) back to IDLE for publish/poll.
+			if (state == ST_IDLE || state == ST_RESET)
+				stuck_cnt <= 16'd0;
+			else if (stuck_cnt != 16'hffff)
+				stuck_cnt <= stuck_cnt + 16'd1;
+			if (state != ST_IDLE && state != ST_RESET && stuck_cnt == 16'hffff) begin
+				last_bad_seq <= 32'hDEAD0004;
+				publish_pending <= 1'b1;
+				publish_step <= 4'd0;
+				poll_wait <= 16'd0;
+				state <= ST_IDLE;
+			end
 
 			if (flush) begin
 				read_count <= write_count;
