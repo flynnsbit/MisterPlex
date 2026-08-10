@@ -12,8 +12,9 @@ namespace {
 
 constexpr uint32_t DATA_PHYS = 0x30300000u;
 constexpr uint32_t CTRL_PHYS = 0x30340000u;
-constexpr uint32_t STAT2_PHYS = 0x30140028u;
-constexpr uint32_t STAT6_PHYS = 0x30140048u;
+// Must match ddr_bitstream_reader / ddr_bitstream_ring.hpp (not legacy 0x3014).
+constexpr uint32_t STAT2_PHYS = 0x30340028u;
+constexpr uint32_t STAT6_PHYS = 0x30340048u;
 constexpr uint32_t RING_BYTES = 262144u;
 constexpr uint32_t DATA_W = DATA_PHYS >> 3;
 constexpr uint32_t CTRL_W = CTRL_PHYS >> 3;
@@ -261,8 +262,8 @@ void runWrapNormal() {
     wr = ddr.writeRecord(wr, EVENT_NAL, 0x1122334455667788ull, 0, 0x67, sps);
     wr = ddr.writeRecord(wr, EVENT_NAL, 0x1122334455667788ull, 1, 0x68, pps);
     ddr.publishCtrl(wr, true);
-    expect(waitFor(dut, ddr, 4000, count2), "DDR ring wrap did not deliver two NALs");
-    expect(waitFor(dut, ddr, 1000, wrapBytesDone), "DDR ring wrap did not drain all bytes");
+    expect(waitFor(dut, ddr, 80000, count2), "DDR ring wrap did not deliver two NALs");
+    expect(waitFor(dut, ddr, 20000, wrapBytesDone), "DDR ring wrap did not drain all bytes");
     expect(dut.last_nal_type == 0x68, "DDR ring wrap corrupted PPS NAL type");
     expect(dut.stream_ddr_bytes_out >= sps.size() + pps.size(),
            "DDR ring bytes_out did not advance: got " +

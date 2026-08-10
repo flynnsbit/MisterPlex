@@ -150,7 +150,13 @@ module ddr_bus_arbiter (
 	// frame-store stops issuing new reads and the pipe can drain — otherwise
 	// continuous m0_rd keeps rsp_pipe_active and m1 never enters the
 	// !rsp_pipe_active grant window (o14 still cons=0 / telem_seq=1).
-	assign m0_busy = DDRAM_BUSY | grant_m1 | m1_starved |
+	// o59: while m1 wants the port (o55 level-poll until first PLXB keeps
+	// want high), raise m0_busy so present m0_rd cannot hold rsp_pipe_active
+	// forever. Live o55: m1 WE publish OK (telem_seq=1) but CTRL RD never
+	// lands (cons=0) — grant window never opens under continuous m0 video.
+	// After have_ctrl, want is 1/64 and present resumes.
+	assign m0_busy = DDRAM_BUSY | grant_m1 | m1_starved | m1_want_s2 |
+	                 m1_rd_ready | m1_we_ready |
 	                 (rsp_active & rsp_owner_m1) |
 	                 (rsp_valid_r & rsp_owner_m1_r);
 

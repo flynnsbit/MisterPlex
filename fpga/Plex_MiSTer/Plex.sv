@@ -817,9 +817,9 @@ stream_path #(
 	.flush(status[11]),
 	.ddr_stream_enable(stream_ddr_enable),
 	.ddr_bus_want(stream_ddr_bus_want),
-	// o57: do NOT busy-block stream on wb_want — STREAM=1 fabric must issue
-	// CTRL/DATA RDs even while FPGA writeback wants m1. Mux prefers stream.
-	.ddr_busy(stream_ddr_busy),
+	// o59: restore o55 wb busy-OR on stream (o57/o58 stream-priority STA red).
+	// Arbiter now raises m0_busy on sticky m1 RD immediately (see ddr_bus_arbiter).
+	.ddr_busy(stream_ddr_busy | wb_ddr_want),
 	.ddr_burstcnt(stream_ddr_burstcnt),
 	.ddr_addr(stream_ddr_addr),
 	.ddr_dout(stream_ddr_dout),
@@ -896,8 +896,7 @@ fpga_ddr_writeback #(
 	.dpb_wr_data(decode_dpb_wr_data),
 	.frame_done(decode_frame_done),
 	.ddr_want(wb_ddr_want),
-	// o57: writeback yields while bitstream reader wants the shared m1 port.
-	.ddr_busy(stream_ddr_busy | stream_ddr_bus_want),
+	.ddr_busy(stream_ddr_busy),
 	.ddr_burstcnt(wb_ddr_burstcnt),
 	.ddr_addr(wb_ddr_addr),
 	.ddr_din(wb_ddr_din),
@@ -1082,17 +1081,14 @@ present_core #(
 );
 
 `ifdef DDR_FRAME_STORE
-// o57 m1 mux: bitstream reader beats writeback when both want (was wb-first).
-// o55 live still cons=0 with level-poll; wb-priority + stream busy|wb could
-// starve CTRL RD while fabric/ARM recon traffic holds want.
+// o59: restore wb-first m1 mux (o57 stream-first SEED5/3 both NODEPLOY).
 wire        m1_want     = wb_ddr_want | stream_ddr_bus_want;
-wire        m1_sel_stream = stream_ddr_bus_want;
-wire  [7:0] m1_burstcnt = m1_sel_stream ? stream_ddr_burstcnt : wb_ddr_burstcnt;
-wire [28:0] m1_addr     = m1_sel_stream ? stream_ddr_addr     : wb_ddr_addr;
-wire        m1_rd       = m1_sel_stream ? stream_ddr_rd       : wb_ddr_rd;
-wire [63:0] m1_din      = m1_sel_stream ? stream_ddr_din      : wb_ddr_din;
-wire  [7:0] m1_be       = m1_sel_stream ? stream_ddr_be       : wb_ddr_be;
-wire        m1_we       = m1_sel_stream ? stream_ddr_we       : wb_ddr_we;
+wire  [7:0] m1_burstcnt = wb_ddr_want ? wb_ddr_burstcnt : stream_ddr_burstcnt;
+wire [28:0] m1_addr     = wb_ddr_want ? wb_ddr_addr     : stream_ddr_addr;
+wire        m1_rd       = wb_ddr_want ? wb_ddr_rd       : stream_ddr_rd;
+wire [63:0] m1_din      = wb_ddr_want ? wb_ddr_din      : stream_ddr_din;
+wire  [7:0] m1_be       = wb_ddr_want ? wb_ddr_be       : stream_ddr_be;
+wire        m1_we       = wb_ddr_want ? wb_ddr_we       : stream_ddr_we;
 
 ddr_bus_arbiter ddr_arb (
 	.clk(clk_ddr),
