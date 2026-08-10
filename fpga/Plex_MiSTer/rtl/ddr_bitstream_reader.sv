@@ -137,6 +137,9 @@ module ddr_bitstream_reader #(
 	reg [15:0] poll_wait;
 	reg [15:0] hb_div;
 	reg [15:0] stuck_cnt;
+	// o81: only accept m1 FIFO dout for the RD we issued (stale poll beats
+	// remain !empty ~16 cycles and must not look like DATA).
+	reg rd_inflight;
 	reg [7:0] hdr [0:31];
 	reg [4:0] hdr_idx;
 	reg [31:0] payload_left;
@@ -268,11 +271,13 @@ module ddr_bitstream_reader #(
 			byte_idx <= 3'd0;
 			hdr_idx <= 5'd0;
 			payload_left <= 32'd0;
+			rd_inflight <= 1'b0;
 		end else if (!enable) begin
 			state <= ST_IDLE;
 			bus_want <= 1'b0;
 			active <= 1'b0;
 			paused <= 1'b0;
+			rd_inflight <= 1'b0;
 			reset_parser();
 		end else begin
 			bus_want <= !flush && bus_want_comb;
@@ -296,6 +301,7 @@ module ddr_bitstream_reader #(
 				publish_pending <= 1'b1;
 				publish_step <= 4'd0;
 				poll_wait <= 16'd0;
+				rd_inflight <= 1'b0;
 				state <= ST_IDLE;
 			end
 
@@ -315,6 +321,7 @@ module ddr_bitstream_reader #(
 				out_flush <= 1'b1;
 				publish_pending <= 1'b1;
 				publish_step <= 4'd0;
+				rd_inflight <= 1'b0;
 				state <= ST_IDLE;
 				reset_parser();
 			end
@@ -415,12 +422,14 @@ module ddr_bitstream_reader #(
 						DDRAM_ADDR <= CTRL_W;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_RD <= 1'b1;
+						rd_inflight <= 1'b1;
 						poll_wait <= 16'd0;
 						state <= ST_POLL;
 					end else if (want_read && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						DDRAM_ADDR <= DATA_W + read_qword_offset;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_RD <= 1'b1;
+						rd_inflight <= 1'b1;
 						byte_idx <= read_byte_index;
 						state <= ST_READ_WAIT;
 					end else if (beat_left != 4'd0) begin
@@ -433,10 +442,13 @@ module ddr_bitstream_reader #(
 				// o54: reissue CTRL RD while waiting (grant/busy CDC); want_poll
 				// is level/window combo so IDLE can arm without sticky FF.
 				ST_POLL: begin
-					if (DDRAM_DOUT_READY) begin
+					// o81: require rd_inflight so leftover m1 FIFO beats after a
+					// prior accept cannot re-trigger POLL with stale PLXB/DATA.
+					if (rd_inflight && DDRAM_DOUT_READY) begin
 						// o67: always stash low 32 of CTRL beat (PLXB or garbage).
 						last_bad_seq <= DDRAM_DOUT[31:0];
 						poll_wait <= 16'd0;
+						rd_inflight <= 1'b0;
 						if (ctrl_magic_ok) begin
 							have_ctrl <= 1'b1;
 							write_count <= {1'b0, ctrl_write_count};
@@ -481,10 +493,19 @@ module ddr_bitstream_reader #(
 						publish_pending <= 1'b1;
 						publish_step <= 4'd0;
 						poll_wait <= 16'd0;
+						rd_inflight <= 1'b0;
 						state <= ST_IDLE;
 					end else begin
 						poll_wait <= poll_wait + 16'd1;
-						if (!DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+						if (!rd_inflight && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+							DDRAM_ADDR <= CTRL_W;
+							DDRAM_BURSTCNT <= 8'd1;
+							DDRAM_RD <= 1'b1;
+							rd_inflight <= 1'b1;
+						end else if (!DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE &&
+						            (poll_wait[3:0] == 4'd0)) begin
+							// Sparse reissue while inflight (CDC/lost-req); keep
+							// rd_inflight set so stale FIFO cannot double-accept.
 							DDRAM_ADDR <= CTRL_W;
 							DDRAM_BURSTCNT <= 8'd1;
 							DDRAM_RD <= 1'b1;
@@ -495,20 +516,29 @@ module ddr_bitstream_reader #(
 				ST_READ_WAIT: begin
 					// o74: mirror ST_POLL timeout — DATA RD with no DOUT left BSR
 					// stuck out of IDLE (no publish, cons=0) after have_ctrl.
-					if (DDRAM_DOUT_READY) begin
+					// o81: rd_inflight gates accept (see ST_POLL).
+					if (rd_inflight && DDRAM_DOUT_READY) begin
 						beat_q <= DDRAM_DOUT;
 						beat_left <= consume_count;
 						poll_wait <= 16'd0;
+						rd_inflight <= 1'b0;
 						state <= ST_CONSUME;
 					end else if (poll_wait == 16'hFFFF) begin
 						last_bad_seq <= 32'hDEAD0002; // data RD timeout
 						publish_pending <= 1'b1;
 						publish_step <= 4'd0;
 						poll_wait <= 16'd0;
+						rd_inflight <= 1'b0;
 						state <= ST_IDLE;
 					end else begin
 						poll_wait <= poll_wait + 16'd1;
-						if (!DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+						if (!rd_inflight && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+							DDRAM_ADDR <= DATA_W + read_qword_offset;
+							DDRAM_BURSTCNT <= 8'd1;
+							DDRAM_RD <= 1'b1;
+							rd_inflight <= 1'b1;
+						end else if (!DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE &&
+						            (poll_wait[3:0] == 4'd0)) begin
 							DDRAM_ADDR <= DATA_W + read_qword_offset;
 							DDRAM_BURSTCNT <= 8'd1;
 							DDRAM_RD <= 1'b1;

@@ -271,6 +271,8 @@ module ddr_bus_arbiter (
 	// and cut only FIFO depth (CAS burst beats rarely need 8).
 	// o68: hold each m1 rsp beat ~16 clk_m1 cycles before pop so ST_POLL can
 	// sample under m1_busy CDC (o67 telem stuck=1 ⇒ never saw DOUT_READY).
+	// o81: also pop on a new m1_rd so a stale poll beat cannot sit !empty into
+	// ST_READ_WAIT (BSR also gates accept with rd_inflight).
 	reg [3:0] m1_rsp_age;
 	always @(posedge clk_m1) begin
 		if (reset || m1_rsp_fifo_empty)
@@ -278,7 +280,7 @@ module ddr_bus_arbiter (
 		else if (m1_rsp_age != 4'd15)
 			m1_rsp_age <= m1_rsp_age + 4'd1;
 	end
-	wire m1_rsp_pop = !m1_rsp_fifo_empty && (m1_rsp_age == 4'd15);
+	wire m1_rsp_pop = !m1_rsp_fifo_empty && (m1_rd || (m1_rsp_age == 4'd15));
 
 	async_fifo #(.WIDTH(64), .AW(2)) m1_rsp_fifo (
 		.wr_clk   (clk),
@@ -303,11 +305,12 @@ module ddr_bus_arbiter (
 	// rsp_pipe_active blocks *all* m0/m1 traffic (BSR silent, PLXR stuck 0).
 	// Bring-up probes done — product arbiter only.
 
-	// o78: rsp_left watchdog — if DOUT never returns, drop pipe so bus recovers.
-	reg [15:0] rsp_watch;
-	// o79: grant_m1 held with m1_want but no m1_rd/we ready (BSR in ST_POLL/WAIT
-	// after req already acked) deadlocks: grant blocks m0 and never drops.
+	// o81: short o78 rsp_watch (~0.7ms) could clear credit before late DOUT
+	// landed in m1 FIFO. Keep a *long* orphan guard only (~186ms @90MHz) so a
+	// true never-DOUT wedge cannot silence publish forever.
+	// o79: grant_m1 held with m1_want but no m1_rd/we ready deadlocks m0.
 	reg [5:0] grant_idle;
+	reg [23:0] rsp_watch_long;
 
 	always @(posedge clk) begin
 		if (rst) begin
@@ -330,8 +333,8 @@ module ddr_bus_arbiter (
 			ddram_din_q <= 64'd0;
 			ddram_be_q <= 8'd0;
 			ddram_we_q <= 1'b0;
-			rsp_watch <= 16'd0;
 			grant_idle <= 6'd0;
+			rsp_watch_long <= 24'd0;
 		end else begin
 			// 2-FF sync req levels (clk_m1 → clk_ddr)
 			m1_rd_req_s1 <= m1_rd_req;
@@ -367,12 +370,12 @@ module ddr_bus_arbiter (
 				ddram_we_q <= 1'b0;
 			end
 
-			// rsp_left watchdog (~0.7ms @90MHz): abandon orphan response credit.
+			// Long orphan rsp_left guard only (see o81 comment above).
 			if (!rsp_active)
-				rsp_watch <= 16'd0;
-			else if (rsp_watch != 16'hffff)
-				rsp_watch <= rsp_watch + 16'd1;
-			if (rsp_active && rsp_watch == 16'hffff)
+				rsp_watch_long <= 24'd0;
+			else if (rsp_watch_long != 24'hff_ffff)
+				rsp_watch_long <= rsp_watch_long + 24'd1;
+			if (rsp_active && rsp_watch_long == 24'hff_ffff)
 				rsp_left <= 9'd0;
 
 			if (!DDRAM_BUSY && !rsp_pipe_active) begin
