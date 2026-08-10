@@ -439,6 +439,31 @@ bool FpgaSpi::ensureBitstreamDdrMap() {
         return true;
     releaseBitstreamDdrMap();
     bitstreamMapLen_ = ring::kRingBytes + 0x1000u;
+
+    // o64: prefer write-combine /dev/mplex_ddr. Product window was 3MiB ending
+    // exactly at DATA_PHYS 0x30300000 — ring sat on cached /dev/mem and FPGA
+    // never saw PLXB (cons=0). Expanded kmod covers through CTRL page.
+    constexpr uint32_t kMplexPhys = 0x30000000u;
+    const size_t kBitstreamOff = static_cast<size_t>(ring::kDataPhys - kMplexPhys);
+    const size_t kNeedFromMplex = kBitstreamOff + bitstreamMapLen_;
+    int mfd = ::open("/dev/mplex_ddr", O_RDWR | O_CLOEXEC);
+    if (mfd >= 0) {
+        void* base = mmap(nullptr, kNeedFromMplex, PROT_READ | PROT_WRITE, MAP_SHARED, mfd, 0);
+        if (base != MAP_FAILED) {
+            bitstreamMemFd_ = mfd;
+            bitstreamMapBase_ = static_cast<uint8_t*>(base);
+            bitstreamMapBaseLen_ = kNeedFromMplex;
+            bitstreamMap_ = bitstreamMapBase_ + kBitstreamOff;
+            bitstreamMapViaMplex_ = true;
+            std::fprintf(stderr,
+                         "misterplexd: bitstream ring via /dev/mplex_ddr WC "
+                         "(off=0x%zx len=0x%zx)\n",
+                         kBitstreamOff, bitstreamMapLen_);
+            return true;
+        }
+        ::close(mfd);
+    }
+
     bitstreamMemFd_ = ::open("/dev/mem", O_RDWR | O_CLOEXEC | O_SYNC);
     if (bitstreamMemFd_ < 0) {
         setErr("ensureBitstreamDdrMap: open /dev/mem failed");
@@ -454,15 +479,26 @@ bool FpgaSpi::ensureBitstreamDdrMap() {
         return false;
     }
     bitstreamMap_ = static_cast<uint8_t*>(p);
+    bitstreamMapBase_ = bitstreamMap_;
+    bitstreamMapBaseLen_ = bitstreamMapLen_;
+    bitstreamMapViaMplex_ = false;
+    std::fprintf(stderr,
+                 "misterplexd: bitstream ring via /dev/mem (cached fallback; "
+                 "dcache clean active)\n");
     return true;
 }
 
 void FpgaSpi::releaseBitstreamDdrMap() {
-    if (bitstreamMap_) {
+    if (bitstreamMapBase_) {
+        munmap(bitstreamMapBase_, bitstreamMapBaseLen_);
+    } else if (bitstreamMap_) {
         munmap(bitstreamMap_, bitstreamMapLen_);
-        bitstreamMap_ = nullptr;
-        bitstreamMapLen_ = 0;
     }
+    bitstreamMapBase_ = nullptr;
+    bitstreamMapBaseLen_ = 0;
+    bitstreamMap_ = nullptr;
+    bitstreamMapLen_ = 0;
+    bitstreamMapViaMplex_ = false;
     if (bitstreamMemFd_ >= 0) {
         ::close(bitstreamMemFd_);
         bitstreamMemFd_ = -1;

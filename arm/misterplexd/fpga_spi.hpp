@@ -362,8 +362,11 @@ private:
     static constexpr uint32_t SSPI_STROBE = (1u << 17);
 
     int bitstreamMemFd_ = -1;
-    uint8_t* bitstreamMap_ = nullptr;
-    size_t bitstreamMapLen_ = 0;
+    uint8_t* bitstreamMap_ = nullptr;       // points at DATA_PHYS view (ring[0])
+    size_t bitstreamMapLen_ = 0;          // ring + CTRL page length from DATA
+    uint8_t* bitstreamMapBase_ = nullptr; // actual mmap base (may be mplex 0x30000000)
+    size_t bitstreamMapBaseLen_ = 0;
+    bool bitstreamMapViaMplex_ = false;
     uint32_t bitstreamWriteCount_ = 0;
     uint64_t bitstreamLegacySessionId_ = 1;
     uint32_t bitstreamLegacySeq_ = 0;

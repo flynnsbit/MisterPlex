@@ -13,7 +13,7 @@ stride `0x180000`, doorbell `0x302FF000`). Mapping that window through
 |------|--------|
 | Node | `/dev/mplex_ddr` (0666) |
 | Phys | `0x30000000` |
-| Size | `0x300000` (3 MiB — banks + doorbell page) |
+| Size | `0x400000` (4 MiB — banks + doorbell + bitstream ring/CTRL @ `0x30300000`) |
 | Map | `mmap` offset 0, `PROT_READ|PROT_WRITE`, `MAP_SHARED` |
 
 `misterplexd` opens `/dev/mplex_ddr` first in `ensureDdrMap()` and falls back

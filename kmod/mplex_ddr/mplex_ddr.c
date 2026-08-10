@@ -18,9 +18,11 @@
 #include <asm/io.h>
 
 #define MPLEX_DDR_NAME "mplex_ddr"
-/* 720p dual-bank window: phys 0x30000000, 3 MiB (2*0x180000) */
+/* 720p dual-bank (2*0x180000) + bitstream ring/CTRL at 0x30300000.
+ * Legacy 0x300000 ended exactly at DATA_PHYS so the ring fell on cached
+ * /dev/mem and FPGA consumer never saw PLXB (STREAM1 cons=0). */
 #define MPLEX_DDR_PHYS 0x30000000UL
-#define MPLEX_DDR_SIZE 0x300000UL
+#define MPLEX_DDR_SIZE 0x400000UL
 
 static dev_t mplex_devt;
 static struct class *mplex_class;
