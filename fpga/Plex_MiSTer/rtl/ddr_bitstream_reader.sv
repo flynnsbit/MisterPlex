@@ -401,6 +401,9 @@ module ddr_bitstream_reader #(
 				// is level/window combo so IDLE can arm without sticky FF.
 				ST_POLL: begin
 					if (DDRAM_DOUT_READY) begin
+						// o61: always re-arm publish after any CTRL beat so live
+						// STAT2/ST6 show whether RD returned (even non-PLXB).
+						publish_pending <= 1'b1;
 						if (ctrl_magic_ok) begin
 							have_ctrl <= 1'b1;
 							write_count <= {1'b0, ctrl_write_count};
@@ -429,6 +432,11 @@ module ddr_bitstream_reader #(
 								publish_step <= 4'd0;
 								reset_parser();
 							end
+						end else begin
+							// o61 RCA: capture low32 of non-PLXB CTRL beat (0=zeros/miss path)
+							last_bad_seq <= DDRAM_DOUT[31:0];
+							if (desync_count != 16'hFFFF)
+								desync_count <= desync_count + 16'd1;
 						end
 						state <= ST_IDLE;
 					end else if (!DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
