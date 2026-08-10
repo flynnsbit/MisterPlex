@@ -478,6 +478,8 @@ bool FpgaSpi::readBitstreamFpgaCount(uint32_t& readCount) {
     if (!ensureBitstreamDdrMap())
         return false;
     const size_t off = ring::kReadPhys - ring::kDataPhys;
+    // Invalidate CPU cache so FPGA-published PLXR is visible (o63).
+    (void)cleanDcacheRange(bitstreamMap_ + off, sizeof(uint64_t));
     volatile uint64_t* p = reinterpret_cast<volatile uint64_t*>(bitstreamMap_ + off);
     const uint64_t raw = *p;
     if (static_cast<uint32_t>(raw) != ring::kReadMagic)
@@ -491,6 +493,9 @@ bool FpgaSpi::readBitstreamStatus(BitstreamStatus& status) {
     status = BitstreamStatus{};
     if (!ensureBitstreamDdrMap())
         return false;
+    // CTRL..STAT6 span 0x00..0x48 within the +0x1000 CTRL page.
+    const size_t ctrlPage = ring::kCtrlPhys - ring::kDataPhys;
+    (void)cleanDcacheRange(bitstreamMap_ + ctrlPage, 0x50u);
     auto read64 = [&](uint32_t phys) -> uint64_t {
         const size_t off = phys - ring::kDataPhys;
         volatile uint64_t* p = reinterpret_cast<volatile uint64_t*>(bitstreamMap_ + off);
@@ -616,11 +621,24 @@ FpgaSpi::BitstreamPushResult FpgaSpi::writeBitstreamRecord(ddr_bitstream_ring::E
     auto writeBytes = [&](const uint8_t* src, size_t n) {
         uint32_t wr = bitstreamWriteCount_ & static_cast<uint32_t>(ring::kRingBytes - 1u);
         volatile uint8_t* dst = bitstreamMap_;
+        // Track dirty span for dcache clean (ring may wrap once).
+        const uint32_t wr0 = wr;
         for (size_t i = 0; i < n; ++i) {
             dst[wr] = src[i];
             wr = (wr + 1u) & static_cast<uint32_t>(ring::kRingBytes - 1u);
         }
         bitstreamWriteCount_ += static_cast<uint32_t>(n);
+        // o63: bitstream sits at 0x30300000 OUTSIDE mplex_ddr WC window
+        // (ends at 0x30300000). /dev/mem mmap is CPU-cached; without clean,
+        // FPGA f2sdram RD sees stale DRAM → PLXB never observed (cons=0)
+        // while host cached read still shows PLXB. Mirror F1 cleanDcacheRange.
+        if (wr0 + n <= ring::kRingBytes) {
+            (void)cleanDcacheRange(bitstreamMap_ + wr0, n);
+        } else {
+            const size_t first = ring::kRingBytes - wr0;
+            (void)cleanDcacheRange(bitstreamMap_ + wr0, first);
+            (void)cleanDcacheRange(bitstreamMap_, n - first);
+        }
     };
     writeBytes(header.data(), header.size());
     if (len)
@@ -638,6 +656,8 @@ void FpgaSpi::publishBitstreamCtrl() {
     *p = (static_cast<uint64_t>(bitstreamResetEpoch_ ? 1u : 0u) << 63) |
          (static_cast<uint64_t>(bitstreamWriteCount_ & 0x7fffffffu) << 32) |
          ring::kCtrlMagic;
+    // Push CTRL qword to DRAM for FPGA reader (see writeBytes o63 note).
+    (void)cleanDcacheRange(bitstreamMap_ + off, sizeof(uint64_t));
 }
 
 bool FpgaSpi::publishBitstreamDormant() {
@@ -650,6 +670,7 @@ bool FpgaSpi::publishBitstreamDormant() {
     // harmlessly ignored.  A DDR probe sees a valid MiSTerPlex mailbox and
     // knows the ARM wrote it deliberately with STREAM=0.
     *p = ring::kCtrlDormantMagic;
+    (void)cleanDcacheRange(bitstreamMap_ + off, sizeof(uint64_t));
     return true;
 }
 
@@ -1861,6 +1882,7 @@ bool FpgaSpi::flushBitstreamDdr() {
     bitstreamLegacyActive_ = false;
     bitstreamResetEpoch_ = !bitstreamResetEpoch_;
     std::memset(bitstreamMap_, 0, ring::kRingBytes);
+    (void)cleanDcacheRange(bitstreamMap_, ring::kRingBytes);
     publishBitstreamCtrl();
     clearErr();
     return true;
