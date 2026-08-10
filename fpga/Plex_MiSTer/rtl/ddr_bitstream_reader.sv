@@ -465,14 +465,26 @@ module ddr_bitstream_reader #(
 				end
 
 				ST_READ_WAIT: begin
+					// o74: mirror ST_POLL timeout — DATA RD with no DOUT left BSR
+					// stuck out of IDLE (no publish, cons=0) after have_ctrl.
 					if (DDRAM_DOUT_READY) begin
 						beat_q <= DDRAM_DOUT;
 						beat_left <= consume_count;
+						poll_wait <= 16'd0;
 						state <= ST_CONSUME;
-					end else if (!DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
-						DDRAM_ADDR <= DATA_W + read_qword_offset;
-						DDRAM_BURSTCNT <= 8'd1;
-						DDRAM_RD <= 1'b1;
+					end else if (poll_wait == 16'hFFFF) begin
+						last_bad_seq <= 32'hDEAD0002; // data RD timeout
+						publish_pending <= 1'b1;
+						publish_step <= 4'd0;
+						poll_wait <= 16'd0;
+						state <= ST_IDLE;
+					end else begin
+						poll_wait <= poll_wait + 16'd1;
+						if (!DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+							DDRAM_ADDR <= DATA_W + read_qword_offset;
+							DDRAM_BURSTCNT <= 8'd1;
+							DDRAM_RD <= 1'b1;
+						end
 					end
 				end
 
@@ -573,8 +585,20 @@ module ddr_bitstream_reader #(
 
 						if (beat_left == 4'd1)
 							state <= ST_IDLE;
+						poll_wait <= 16'd0;
 					end else if (beat_left == 4'd0) begin
 						state <= ST_IDLE;
+						poll_wait <= 16'd0;
+					end else if (poll_wait == 16'hFFFF) begin
+						// o74: out_full (or other) stall — return to IDLE so
+						// publish/poll can run; keep beat for retry.
+						last_bad_seq <= 32'hDEAD0003;
+						publish_pending <= 1'b1;
+						publish_step <= 4'd0;
+						poll_wait <= 16'd0;
+						state <= ST_IDLE;
+					end else begin
+						poll_wait <= poll_wait + 16'd1;
 					end
 				end
 
