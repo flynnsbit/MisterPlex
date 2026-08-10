@@ -601,14 +601,15 @@ module ddr_bitstream_reader #(
 							end
 						end
 
-						// Beat complete → IDLE so poll/read can run.
-						// o87 R3: do NOT arm full 9-step publish every 8B beat.
-						// o86 R1 (publish-hold + WE-before-RD) regressed wipe to
-						// PUBLISH_DEAD; revert R1 and cut beat-end WE density so
-						// HB + record-boundary publish can keep telem moving after DATA.
-						// Publish still armed on hdr_idx==31 / payload end / desync / HB.
+						// Beat complete → IDLE. o90: re-arm lite publish every 8B.
+						// o87 dropped beat-end publish (R3); o89 made publish 2 WE
+						// (PLXR+PLXE) but plant still cons=0/telem freeze after DATA.
+						// With lite cost, beat-end publish + o88 soft want_read hold
+						// forces RD→2WE→RD so host sees cons climb during plant.
 						if (beat_left == 4'd1) begin
 							state <= ST_IDLE;
+							publish_pending <= 1'b1;
+							publish_step <= 4'd0;
 						end
 						poll_wait <= 16'd0;
 					end else if (beat_left == 4'd0) begin
