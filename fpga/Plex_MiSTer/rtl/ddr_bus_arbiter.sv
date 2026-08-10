@@ -317,14 +317,22 @@ module ddr_bus_arbiter (
 	assign m1_dout       = m1_rsp_fifo_rdata;
 	assign m1_dout_ready = !m1_rsp_fifo_empty;
 
-	// o71: one-shot posted WE to bitstream CTRL READ slot (phys 0x30340008),
-	// bypassing BSR sticky path. Proves f2sdram WE from arbiter after o68 wipe
-	// stayed zero (BSR/m1 never published). Magic PLXR + 0x00C0FFEE marker.
-	// qword addr = 0x30340008[31:3] = 0x6068001.
-	localparam [28:0] FORCE_CTRL_READ_W = 29'h06068001;
-	localparam [63:0] FORCE_CTRL_READ_D = {32'h00C0_FFEE, 32'h504C_5852};
-	reg        force_we_pending;
-	reg [15:0] force_we_delay;
+	// o71/o73 bring-up probe (preempts m0 one-shot after delay):
+	//   ph1 WE READ slot  magic PLXR|00C0FFEE  (WE path)
+	//   ph2 RD CTRL PLXB  capture DOUT
+	//   ph3 WE STAT2      magic PLXV | DOUT[31:0] in hi — host sees what f2sdram RD returns
+	// o72: BSR publish-before-poll LIVE; STREAM1 still cons=0 with host PLXB visible
+	// → suspect RD returns 0 / wrong beat (ST2 last_bad stayed 0 during play).
+	localparam [28:0] FORCE_PLXR_W  = 29'h06068001; // 0x30340008>>3
+	localparam [28:0] FORCE_CTRL_W  = 29'h06068000; // 0x30340000>>3
+	// Past BSR STAT6 (0x30340048) so publish cannot overwrite the RD sample.
+	localparam [28:0] FORCE_DBG_W   = 29'h0606800A; // 0x30340050>>3
+	localparam [63:0] FORCE_PLXR_D  = {32'h00C0_FFEE, 32'h504C_5852};
+	localparam [31:0] FORCE_DBG_MAG = 32'h504C_5844; // PLXD diag
+	reg [2:0]  force_ph;
+	reg [15:0] force_delay;
+	reg [63:0] force_dout;
+	reg        force_dout_valid;
 
 	always @(posedge clk) begin
 		if (rst) begin
@@ -347,8 +355,10 @@ module ddr_bus_arbiter (
 			ddram_din_q <= 64'd0;
 			ddram_be_q <= 8'd0;
 			ddram_we_q <= 1'b0;
-			force_we_pending <= 1'b1;
-			force_we_delay <= 16'd0;
+			force_ph <= 3'd0;
+			force_delay <= 16'd0;
+			force_dout <= 64'd0;
+			force_dout_valid <= 1'b0;
 		end else begin
 			// 2-FF sync req levels (clk_m1 → clk_ddr)
 			m1_rd_req_s1 <= m1_rd_req;
@@ -366,6 +376,11 @@ module ddr_bus_arbiter (
 			if (rsp_raw_valid) begin
 				rsp_data_r <= ddram_dout_pad;
 				rsp_owner_m1_r <= rsp_owner_m1;
+				// o73: capture force-RD beat before FIFO (same pad as m1 path).
+				if (force_ph == 3'd3 && rsp_owner_m1) begin
+					force_dout <= ddram_dout_pad;
+					force_dout_valid <= 1'b1;
+				end
 			end
 
 			if (DDRAM_DOUT_READY && rsp_active)
@@ -377,8 +392,8 @@ module ddr_bus_arbiter (
 			else if (m1_wait != 6'h3f)
 				m1_wait <= m1_wait + 6'd1;
 
-			if (force_we_pending && force_we_delay != 16'hffff)
-				force_we_delay <= force_we_delay + 16'd1;
+			if (force_ph == 3'd0 && force_delay != 16'hffff)
+				force_delay <= force_delay + 16'd1;
 
 			// Hold command while HPS asserts BUSY; otherwise drop one-shot RD/WE
 			// unless re-issued below in the same cycle.
@@ -386,6 +401,10 @@ module ddr_bus_arbiter (
 				ddram_rd_q <= 1'b0;
 				ddram_we_q <= 1'b0;
 			end
+
+			// Advance force ph3→ph4 once DOUT captured and pipe idle.
+			if (force_ph == 3'd3 && force_dout_valid && !rsp_pipe_active)
+				force_ph <= 3'd4;
 
 			if (!DDRAM_BUSY && !rsp_pipe_active) begin
 				if (grant_m1) begin
@@ -418,16 +437,35 @@ module ddr_bus_arbiter (
 						m1_wait <= 6'd0;
 					end
 				end else begin
-					// o71 force WE once delay elapses (~0.7ms @90MHz). Preempt m0 one-shot
-					// so continuous present RD cannot starve the bring-up probe.
-					if (force_we_pending && (force_we_delay >= 16'd65535)) begin
+					// o73 force FSM (after ~0.7ms). Preempt m0.
+					if (force_ph == 3'd0 && force_delay >= 16'd65535) begin
 						ddram_burstcnt_q <= 8'd1;
-						ddram_addr_q     <= FORCE_CTRL_READ_W;
+						ddram_addr_q     <= FORCE_PLXR_W;
 						ddram_rd_q       <= 1'b0;
-						ddram_din_q      <= FORCE_CTRL_READ_D;
+						ddram_din_q      <= FORCE_PLXR_D;
 						ddram_be_q       <= 8'hFF;
 						ddram_we_q       <= 1'b1;
-						force_we_pending <= 1'b0;
+						force_ph <= 3'd2; // skip to RD next idle (WE is posted)
+					end else if (force_ph == 3'd2) begin
+						ddram_burstcnt_q <= 8'd1;
+						ddram_addr_q     <= FORCE_CTRL_W;
+						ddram_rd_q       <= 1'b1;
+						ddram_din_q      <= 64'd0;
+						ddram_be_q       <= 8'hFF;
+						ddram_we_q       <= 1'b0;
+						rsp_owner_m1 <= 1'b1;
+						rsp_left <= 9'd1;
+						force_dout_valid <= 1'b0;
+						force_ph <= 3'd3;
+					end else if (force_ph == 3'd4) begin
+						ddram_burstcnt_q <= 8'd1;
+						ddram_addr_q     <= FORCE_DBG_W;
+						ddram_rd_q       <= 1'b0;
+						// lo=PLXD, hi=DOUT[31:0] (what f2sdram RD saw at CTRL)
+						ddram_din_q      <= {force_dout[31:0], FORCE_DBG_MAG};
+						ddram_be_q       <= 8'hFF;
+						ddram_we_q       <= 1'b1;
+						force_ph <= 3'd5;
 					end else if ((m1_want_s2 || m1_cmd) && (!m0_cmd || m1_starved || m1_cmd)) begin
 						// Prefer m1 when idle-gap OR when starved by continuous m0_rd.
 						grant_m1 <= 1'b1;
