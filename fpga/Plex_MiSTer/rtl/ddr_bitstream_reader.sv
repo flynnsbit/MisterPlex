@@ -131,7 +131,10 @@ module ddr_bitstream_reader #(
 	// first PLXB, then original 1-cycle pulse; keep ST_POLL reissue.
 	// o67: poll-complete heartbeat — live o66 stream-only still never moves
 	// PLXR after boot publish; distinguish ST_POLL stuck vs silent !PLXB RD.
+	// o68: o67 telem stuck at 1 ⇒ ST_POLL never saw DOUT_READY. Timeout abandons
+	// poll, stamps last_bad, forces publish so WE path/heartbeat is visible.
 	reg [5:0] poll_hb;
+	reg [15:0] poll_wait;
 	reg [7:0] hdr [0:31];
 	reg [4:0] hdr_idx;
 	reg [31:0] payload_left;
@@ -256,6 +259,7 @@ module ddr_bitstream_reader #(
 			empty_seen <= 1'b0;
 			seen_payload <= 1'b0;
 			poll_hb <= 6'd0;
+			poll_wait <= 16'd0;
 			beat_left <= 4'd0;
 			byte_idx <= 3'd0;
 			hdr_idx <= 5'd0;
@@ -324,6 +328,7 @@ module ddr_bitstream_reader #(
 						DDRAM_ADDR <= CTRL_W;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_RD <= 1'b1;
+						poll_wait <= 16'd0;
 						state <= ST_POLL;
 					end else if (publish_pending && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						DDRAM_BURSTCNT <= 8'd1;
@@ -391,6 +396,7 @@ module ddr_bitstream_reader #(
 						DDRAM_ADDR <= CTRL_W;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_RD <= 1'b1;
+						poll_wait <= 16'd0;
 						state <= ST_POLL;
 					end else if (want_read && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						DDRAM_ADDR <= DATA_W + read_qword_offset;
@@ -407,6 +413,7 @@ module ddr_bitstream_reader #(
 					if (DDRAM_DOUT_READY) begin
 						// o67: always stash low 32 of CTRL beat (PLXB or garbage).
 						last_bad_seq <= DDRAM_DOUT[31:0];
+						poll_wait <= 16'd0;
 						if (ctrl_magic_ok) begin
 							have_ctrl <= 1'b1;
 							write_count <= {1'b0, ctrl_write_count};
@@ -445,10 +452,20 @@ module ddr_bitstream_reader #(
 							publish_step <= 4'd0;
 						end
 						state <= ST_IDLE;
-					end else if (!DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
-						DDRAM_ADDR <= CTRL_W;
-						DDRAM_BURSTCNT <= 8'd1;
-						DDRAM_RD <= 1'b1;
+					end else if (poll_wait == 16'hFFFF) begin
+						// o68: ~2ms @30MHz with no DOUT — abandon, publish marker.
+						last_bad_seq <= 32'hDEAD0001; // poll timeout, no DOUT_READY
+						publish_pending <= 1'b1;
+						publish_step <= 4'd0;
+						poll_wait <= 16'd0;
+						state <= ST_IDLE;
+					end else begin
+						poll_wait <= poll_wait + 16'd1;
+						if (!DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+							DDRAM_ADDR <= CTRL_W;
+							DDRAM_BURSTCNT <= 8'd1;
+							DDRAM_RD <= 1'b1;
+						end
 					end
 				end
 
