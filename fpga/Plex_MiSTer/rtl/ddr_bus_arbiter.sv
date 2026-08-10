@@ -298,16 +298,13 @@ module ddr_bus_arbiter (
 	assign m1_dout       = m1_rsp_fifo_rdata;
 	assign m1_dout_ready = !m1_rsp_fifo_empty;
 
-	// o75: DO NOT WE PLXR — host treats PLXR[63:32] as consumer_bytes.
-	// o76: force RD DATA base (0x30300000) → PLXD. CTRL RD already proved
-	// (saw PLXB); STREAM1 still cons=0 with last_bad=PLXB ⇒ DATA RD suspect.
-	localparam [28:0] FORCE_DATA_W  = 29'h06060000; // 0x30300000>>3
-	localparam [28:0] FORCE_DBG_W   = 29'h0606800A; // 0x30340050>>3
-	localparam [31:0] FORCE_DBG_MAG = 32'h504C_5844; // PLXD diag
-	reg [2:0]  force_ph;
-	reg [15:0] force_delay;
-	reg [63:0] force_dout;
-	reg        force_dout_valid;
+	// o78: remove force-RD/WE FSM. o71–o76 proved f2sdram WE/RD and DATA path,
+	// but a force RD that never returns DOUT leaves rsp_left>0 forever so
+	// rsp_pipe_active blocks *all* m0/m1 traffic (BSR silent, PLXR stuck 0).
+	// Bring-up probes done — product arbiter only.
+
+	// o78: rsp_left watchdog — if DOUT never returns, drop pipe so bus recovers.
+	reg [15:0] rsp_watch;
 
 	always @(posedge clk) begin
 		if (rst) begin
@@ -330,10 +327,7 @@ module ddr_bus_arbiter (
 			ddram_din_q <= 64'd0;
 			ddram_be_q <= 8'd0;
 			ddram_we_q <= 1'b0;
-			force_ph <= 3'd0;
-			force_delay <= 16'd0;
-			force_dout <= 64'd0;
-			force_dout_valid <= 1'b0;
+			rsp_watch <= 16'd0;
 		end else begin
 			// 2-FF sync req levels (clk_m1 → clk_ddr)
 			m1_rd_req_s1 <= m1_rd_req;
@@ -351,11 +345,6 @@ module ddr_bus_arbiter (
 			if (rsp_raw_valid) begin
 				rsp_data_r <= ddram_dout_pad;
 				rsp_owner_m1_r <= rsp_owner_m1;
-				// o73: capture force-RD beat before FIFO (same pad as m1 path).
-				if (force_ph == 3'd3 && rsp_owner_m1) begin
-					force_dout <= ddram_dout_pad;
-					force_dout_valid <= 1'b1;
-				end
 			end
 
 			if (DDRAM_DOUT_READY && rsp_active)
@@ -367,9 +356,6 @@ module ddr_bus_arbiter (
 			else if (m1_wait != 6'h3f)
 				m1_wait <= m1_wait + 6'd1;
 
-			if (force_ph == 3'd0 && force_delay != 16'hffff)
-				force_delay <= force_delay + 16'd1;
-
 			// Hold command while HPS asserts BUSY; otherwise drop one-shot RD/WE
 			// unless re-issued below in the same cycle.
 			if (!DDRAM_BUSY) begin
@@ -377,9 +363,13 @@ module ddr_bus_arbiter (
 				ddram_we_q <= 1'b0;
 			end
 
-			// Advance force ph3→ph4 once DOUT captured and pipe idle.
-			if (force_ph == 3'd3 && force_dout_valid && !rsp_pipe_active)
-				force_ph <= 3'd4;
+			// rsp_left watchdog (~0.7ms @90MHz): abandon orphan response credit.
+			if (!rsp_active)
+				rsp_watch <= 16'd0;
+			else if (rsp_watch != 16'hffff)
+				rsp_watch <= rsp_watch + 16'd1;
+			if (rsp_active && rsp_watch == 16'hffff)
+				rsp_left <= 9'd0;
 
 			if (!DDRAM_BUSY && !rsp_pipe_active) begin
 				if (grant_m1) begin
@@ -412,28 +402,7 @@ module ddr_bus_arbiter (
 						m1_wait <= 6'd0;
 					end
 				end else begin
-					// o76 force FSM (after ~0.7ms): RD DATA ring base → WE PLXD sample.
-					if (force_ph == 3'd0 && force_delay >= 16'd65535) begin
-						ddram_burstcnt_q <= 8'd1;
-						ddram_addr_q     <= FORCE_DATA_W;
-						ddram_rd_q       <= 1'b1;
-						ddram_din_q      <= 64'd0;
-						ddram_be_q       <= 8'hFF;
-						ddram_we_q       <= 1'b0;
-						rsp_owner_m1 <= 1'b1;
-						rsp_left <= 9'd1;
-						force_dout_valid <= 1'b0;
-						force_ph <= 3'd3;
-					end else if (force_ph == 3'd4) begin
-						ddram_burstcnt_q <= 8'd1;
-						ddram_addr_q     <= FORCE_DBG_W;
-						ddram_rd_q       <= 1'b0;
-						// lo=PLXD, hi=DOUT[31:0] (what f2sdram RD saw at CTRL)
-						ddram_din_q      <= {force_dout[31:0], FORCE_DBG_MAG};
-						ddram_be_q       <= 8'hFF;
-						ddram_we_q       <= 1'b1;
-						force_ph <= 3'd5;
-					end else if ((m1_want_s2 || m1_cmd) && (!m0_cmd || m1_starved || m1_cmd)) begin
+					if ((m1_want_s2 || m1_cmd) && (!m0_cmd || m1_starved || m1_cmd)) begin
 						// Prefer m1 when idle-gap OR when starved by continuous m0_rd.
 						grant_m1 <= 1'b1;
 					end else if (m0_rd) begin
