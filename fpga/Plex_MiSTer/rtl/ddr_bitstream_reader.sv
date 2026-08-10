@@ -601,19 +601,19 @@ module ddr_bitstream_reader #(
 							end
 						end
 
-						// Beat complete → IDLE. o90: re-arm lite publish every 8B.
-						// o87 dropped beat-end publish (R3); o89 made publish 2 WE
-						// (PLXR+PLXE) but plant still cons=0/telem freeze after DATA.
-						// With lite cost, beat-end publish + o88 soft want_read hold
-						// forces RD→2WE→RD so host sees cons climb during plant.
-						if (beat_left == 4'd1) begin
-							state <= ST_IDLE;
-							publish_pending <= 1'b1;
-							publish_step <= 4'd0;
-						end
+						// o91: do NOT jump IDLE on beat_left==1 same cycle as last byte
+						// (o90 did; fit STA_RED setup g2 -0.159 / hold g0 -0.246 — no deploy).
+						// After last byte, nonblocking beat_left→0; next cycle empty branch
+						// arms lite publish + IDLE. Same host cadence as o90 (RD→CONSUME→
+						// 2WE→RD) with less combo on the consume path for STA.
 						poll_wait <= 16'd0;
 					end else if (beat_left == 4'd0) begin
+						// o91: every completed DATA beat → lite publish (PLXR+PLXE).
+						// o89 never armed here → plant cons=0 after DATA; o84 per-byte
+						// reached 0x20. Empty-entry publish restores beat surface.
 						state <= ST_IDLE;
+						publish_pending <= 1'b1;
+						publish_step <= 4'd0;
 						poll_wait <= 16'd0;
 					end else if (poll_wait == 16'hFFFF) begin
 						// o74: out_full (or other) stall — return to IDLE so
