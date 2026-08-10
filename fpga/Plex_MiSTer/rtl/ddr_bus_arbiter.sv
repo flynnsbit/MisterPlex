@@ -82,10 +82,11 @@ module ddr_bus_arbiter (
 		end
 	end
 
-	// o25 sticky req on clk_m1; clk_ddr 2FF-syncs levels + 1-bit ack.
-	// o70: restore o66 cmd-latch WITH wb-first mux. Live m1_* under wb-first
-	// can switch while sticky waits (o69). Latch freezes addr/burst/din/be at
-	// the m1_rd/m1_we pulse so grant samples a stable command.
+	// o25: sticky req on clk_m1; clk_ddr 2FF-syncs levels + 1-bit ack.
+	// o66: also latch addr/burst/din/be on clk_m1 at the pulse (not live nets).
+	// Live m1_addr can switch under wb/stream mux while sticky RD waits → CTRL
+	// miss (host PLXB advances, PLXR stuck at boot publish). Holds stay constant
+	// for the whole req so clk_ddr grant samples a level, not a 1-cycle pulse.
 	reg m1_rd_req, m1_we_req;
 	reg m1_rd_ack, m1_we_ack;
 	reg m1_rd_ack_s1, m1_rd_ack_s2;
@@ -270,8 +271,16 @@ module ddr_bus_arbiter (
 
 	// o28: AW 3→2 (depth 8→4). o27 pad-strip regressed STA; restore o26 pads
 	// and cut only FIFO depth (CAS burst beats rarely need 8).
-	// o69: o35 auto-pop (16-cycle hold did not help; root was no m1 traffic).
-	wire m1_rsp_pop = !m1_rsp_fifo_empty;
+	// o68: hold each m1 rsp beat ~16 clk_m1 cycles before pop so ST_POLL can
+	// sample under m1_busy CDC (o67 telem stuck=1 ⇒ never saw DOUT_READY).
+	reg [3:0] m1_rsp_age;
+	always @(posedge clk_m1) begin
+		if (reset || m1_rsp_fifo_empty)
+			m1_rsp_age <= 4'd0;
+		else if (m1_rsp_age != 4'd15)
+			m1_rsp_age <= m1_rsp_age + 4'd1;
+	end
+	wire m1_rsp_pop = !m1_rsp_fifo_empty && (m1_rsp_age == 4'd15);
 
 	async_fifo #(.WIDTH(64), .AW(2)) m1_rsp_fifo (
 		.wr_clk   (clk),
@@ -290,6 +299,15 @@ module ddr_bus_arbiter (
 
 	assign m1_dout       = m1_rsp_fifo_rdata;
 	assign m1_dout_ready = !m1_rsp_fifo_empty;
+
+	// o71: one-shot posted WE to bitstream CTRL READ slot (phys 0x30340008),
+	// bypassing BSR sticky path. Proves f2sdram WE from arbiter after o68 wipe
+	// stayed zero (BSR/m1 never published). Magic PLXR + 0x00C0FFEE marker.
+	// qword addr = 0x30340008[31:3] = 0x6068001.
+	localparam [28:0] FORCE_CTRL_READ_W = 29'h06068001;
+	localparam [63:0] FORCE_CTRL_READ_D = {32'h00C0_FFEE, 32'h504C_5852};
+	reg        force_we_pending;
+	reg [15:0] force_we_delay;
 
 	always @(posedge clk) begin
 		if (rst) begin
@@ -312,6 +330,8 @@ module ddr_bus_arbiter (
 			ddram_din_q <= 64'd0;
 			ddram_be_q <= 8'd0;
 			ddram_we_q <= 1'b0;
+			force_we_pending <= 1'b1;
+			force_we_delay <= 16'd0;
 		end else begin
 			// 2-FF sync req levels (clk_m1 → clk_ddr)
 			m1_rd_req_s1 <= m1_rd_req;
@@ -340,6 +360,9 @@ module ddr_bus_arbiter (
 			else if (m1_wait != 6'h3f)
 				m1_wait <= m1_wait + 6'd1;
 
+			if (force_we_pending && force_we_delay != 16'hffff)
+				force_we_delay <= force_we_delay + 16'd1;
+
 			// Hold command while HPS asserts BUSY; otherwise drop one-shot RD/WE
 			// unless re-issued below in the same cycle.
 			if (!DDRAM_BUSY) begin
@@ -350,7 +373,7 @@ module ddr_bus_arbiter (
 			if (!DDRAM_BUSY && !rsp_pipe_active) begin
 				if (grant_m1) begin
 					if (m1_rd_ready) begin
-						// o70: clk_m1-held cmd (stable under wb/stream mux).
+						// o66: use clk_m1-held cmd, not live m1_* (mux-stable).
 						ddram_burstcnt_q <= m1_rd_burst_h;
 						ddram_addr_q     <= m1_rd_addr_h;
 						ddram_rd_q       <= 1'b1;
@@ -378,9 +401,18 @@ module ddr_bus_arbiter (
 						m1_wait <= 6'd0;
 					end
 				end else begin
-					// Prefer m1 when idle-gap OR when starved by continuous m0_rd.
-					// Also take m1 if a ready cmd is already waiting (lost-RD recovery).
-					if ((m1_want_s2 || m1_cmd) && (!m0_cmd || m1_starved || m1_cmd)) begin
+					// o71 force WE once delay elapses (~0.7ms @90MHz). Preempt m0 one-shot
+					// so continuous present RD cannot starve the bring-up probe.
+					if (force_we_pending && (force_we_delay >= 16'd65535)) begin
+						ddram_burstcnt_q <= 8'd1;
+						ddram_addr_q     <= FORCE_CTRL_READ_W;
+						ddram_rd_q       <= 1'b0;
+						ddram_din_q      <= FORCE_CTRL_READ_D;
+						ddram_be_q       <= 8'hFF;
+						ddram_we_q       <= 1'b1;
+						force_we_pending <= 1'b0;
+					end else if ((m1_want_s2 || m1_cmd) && (!m0_cmd || m1_starved || m1_cmd)) begin
+						// Prefer m1 when idle-gap OR when starved by continuous m0_rd.
 						grant_m1 <= 1'b1;
 					end else if (m0_rd) begin
 						ddram_burstcnt_q <= m0_burstcnt;

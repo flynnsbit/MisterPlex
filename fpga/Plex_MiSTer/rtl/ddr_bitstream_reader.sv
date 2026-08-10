@@ -44,7 +44,6 @@ module ddr_bitstream_reader #(
 	output reg  [28:0] DDRAM_ADDR,
 	input  wire [63:0] DDRAM_DOUT,
 	input  wire        DDRAM_DOUT_READY,
-	// o70: drop o69 keep on RD/WE — keep forced placement and o69 went STA −50ps.
 	output reg         DDRAM_RD,
 	output reg  [63:0] DDRAM_DIN,
 	output wire  [7:0] DDRAM_BE,

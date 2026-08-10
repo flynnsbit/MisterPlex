@@ -89,17 +89,6 @@ set_false_path -from [get_keepers {*ddr_frame_store*underrun_count[*]}] -to [get
 # Source: ddr_bus_arbiter.sv m1_busy_s1 <= m1_busy_r
 set_false_path -to [get_keepers {*ddr_arb|m1_busy_s1}]
 
-# CONSTRAINT 7b (o70): sticky m1 req/ack 2-FF first stages (same pattern as want).
-# m1_rd_req/m1_we_req live on clk_m1; s1 captures on clk_ddr.
-# m1_rd_ack/m1_we_ack live on clk_ddr; s1 captures on clk_m1.
-set_false_path -to [get_keepers {*ddr_arb|m1_rd_req_s1}]
-set_false_path -to [get_keepers {*ddr_arb|m1_we_req_s1}]
-set_false_path -to [get_keepers {*ddr_arb|m1_rd_ack_s1}]
-set_false_path -to [get_keepers {*ddr_arb|m1_we_ack_s1}]
-# Cmd-latch holds are protocol-stable on clk_m1 while sticky req is set; grant
-# samples them on clk_ddr. Bound by sys period (covered by CONSTRAINT 8 max_delay)
-# and do not time the first-stage req sync as 90 MHz setup.
-
 # CONSTRAINT 8: protocol-stable m1 command bus into f2sdram (clk_sys → clk_ddr)
 # Source: ddr_bus_arbiter.sv
 #   DDRAM_* = use_m1 ? m1_* : m0_*

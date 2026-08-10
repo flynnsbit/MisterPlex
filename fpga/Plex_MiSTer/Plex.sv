@@ -817,8 +817,8 @@ stream_path #(
 	.flush(status[11]),
 	.ddr_stream_enable(stream_ddr_enable),
 	.ddr_bus_want(stream_ddr_bus_want),
-	// o70: wb busy-OR on stream with wb-first m1 mux + arbiter cmd-latch.
-	.ddr_busy(stream_ddr_busy | wb_ddr_want),
+	// o66: do not stall BSR on wb_want while m1 is stream-only (see m1 mux).
+	.ddr_busy(stream_ddr_busy),
 	.ddr_burstcnt(stream_ddr_burstcnt),
 	.ddr_addr(stream_ddr_addr),
 	.ddr_dout(stream_ddr_dout),
@@ -1080,15 +1080,17 @@ present_core #(
 );
 
 `ifdef DDR_FRAME_STORE
-// o70: wb-first m1 mux + arbiter cmd-latch (o69 live-m1 under mux was racy).
-// o68 wipe-zero still stands: must prove live CTRL WE after green fit.
-wire        m1_want     = wb_ddr_want | stream_ddr_bus_want;
-wire  [7:0] m1_burstcnt = wb_ddr_want ? wb_ddr_burstcnt : stream_ddr_burstcnt;
-wire [28:0] m1_addr     = wb_ddr_want ? wb_ddr_addr     : stream_ddr_addr;
-wire        m1_rd       = wb_ddr_want ? wb_ddr_rd       : stream_ddr_rd;
-wire [63:0] m1_din      = wb_ddr_want ? wb_ddr_din      : stream_ddr_din;
-wire  [7:0] m1_be       = wb_ddr_want ? wb_ddr_be       : stream_ddr_be;
-wire        m1_we       = wb_ddr_want ? wb_ddr_we       : stream_ddr_we;
+// o66: STREAM1 RCA — host PLXB/count advance + FPGA boot PLXR/telem_seq=1, but
+// PLXR never moves and cons=0. wb-first mux drops stream_ddr_rd pulses whenever
+// wb_ddr_want=1 (m1_rd follows wb only). Isolate m1 to bitstream reader to test
+// CTRL RD/consume; host F1 glass still uses m0 present. Restore wb mux after cons>0.
+wire        m1_want     = stream_ddr_bus_want;
+wire  [7:0] m1_burstcnt = stream_ddr_burstcnt;
+wire [28:0] m1_addr     = stream_ddr_addr;
+wire        m1_rd       = stream_ddr_rd;
+wire [63:0] m1_din      = stream_ddr_din;
+wire  [7:0] m1_be       = stream_ddr_be;
+wire        m1_we       = stream_ddr_we;
 
 ddr_bus_arbiter ddr_arb (
 	.clk(clk_ddr),
