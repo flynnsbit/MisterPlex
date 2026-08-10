@@ -82,21 +82,16 @@ module ddr_bus_arbiter (
 		end
 	end
 
-	// o25: sticky req on clk_m1; clk_ddr 2FF-syncs levels + 1-bit ack.
-	// o66: also latch addr/burst/din/be on clk_m1 at the pulse (not live nets).
-	// Live m1_addr can switch under wb/stream mux while sticky RD waits → CTRL
-	// miss (host PLXB advances, PLXR stuck at boot publish). Holds stay constant
-	// for the whole req so clk_ddr grant samples a level, not a 1-cycle pulse.
+	// o25/o69: sticky req on clk_m1; clk_ddr 2FF-syncs levels + 1-bit ack.
+	// o66 cmd-latch removed — live wipe showed CTRL never written (addr holds
+	// suspected 0 / WE not reaching 0x3034). Use live m1_* while sticky held
+	// (protocol-stable from issue until next command) as o25.
 	reg m1_rd_req, m1_we_req;
 	reg m1_rd_ack, m1_we_ack;
 	reg m1_rd_ack_s1, m1_rd_ack_s2;
 	reg m1_we_ack_s1, m1_we_ack_s2;
 	reg m1_rd_req_s1, m1_rd_req_s2;
 	reg m1_we_req_s1, m1_we_req_s2;
-	reg [28:0] m1_rd_addr_h, m1_we_addr_h;
-	reg  [7:0] m1_rd_burst_h, m1_we_burst_h;
-	reg [63:0] m1_we_din_h;
-	reg  [7:0] m1_we_be_h;
 
 	always @(posedge clk_m1) begin
 		if (reset) begin
@@ -106,35 +101,21 @@ module ddr_bus_arbiter (
 			m1_rd_ack_s2 <= 1'b0;
 			m1_we_ack_s1 <= 1'b0;
 			m1_we_ack_s2 <= 1'b0;
-			m1_rd_addr_h <= 29'd0;
-			m1_we_addr_h <= 29'd0;
-			m1_rd_burst_h <= 8'd0;
-			m1_we_burst_h <= 8'd0;
-			m1_we_din_h <= 64'd0;
-			m1_we_be_h <= 8'd0;
 		end else begin
 			m1_rd_ack_s1 <= m1_rd_ack;
 			m1_rd_ack_s2 <= m1_rd_ack_s1;
 			m1_we_ack_s1 <= m1_we_ack;
 			m1_we_ack_s2 <= m1_we_ack_s1;
 
-			if (m1_rd) begin
+			if (m1_rd)
 				m1_rd_req <= 1'b1;
-				m1_rd_addr_h <= m1_addr;
-				m1_rd_burst_h <= m1_burstcnt;
-			end else if (m1_rd_ack_s2) begin
+			else if (m1_rd_ack_s2)
 				m1_rd_req <= 1'b0;
-			end
 
-			if (m1_we) begin
+			if (m1_we)
 				m1_we_req <= 1'b1;
-				m1_we_addr_h <= m1_addr;
-				m1_we_burst_h <= m1_burstcnt;
-				m1_we_din_h <= m1_din;
-				m1_we_be_h <= m1_be;
-			end else if (m1_we_ack_s2) begin
+			else if (m1_we_ack_s2)
 				m1_we_req <= 1'b0;
-			end
 		end
 	end
 
@@ -271,16 +252,8 @@ module ddr_bus_arbiter (
 
 	// o28: AW 3→2 (depth 8→4). o27 pad-strip regressed STA; restore o26 pads
 	// and cut only FIFO depth (CAS burst beats rarely need 8).
-	// o68: hold each m1 rsp beat ~16 clk_m1 cycles before pop so ST_POLL can
-	// sample under m1_busy CDC (o67 telem stuck=1 ⇒ never saw DOUT_READY).
-	reg [3:0] m1_rsp_age;
-	always @(posedge clk_m1) begin
-		if (reset || m1_rsp_fifo_empty)
-			m1_rsp_age <= 4'd0;
-		else if (m1_rsp_age != 4'd15)
-			m1_rsp_age <= m1_rsp_age + 4'd1;
-	end
-	wire m1_rsp_pop = !m1_rsp_fifo_empty && (m1_rsp_age == 4'd15);
+	// o69: o35 auto-pop (16-cycle hold did not help; root was no m1 traffic).
+	wire m1_rsp_pop = !m1_rsp_fifo_empty;
 
 	async_fifo #(.WIDTH(64), .AW(2)) m1_rsp_fifo (
 		.wr_clk   (clk),
@@ -359,25 +332,24 @@ module ddr_bus_arbiter (
 			if (!DDRAM_BUSY && !rsp_pipe_active) begin
 				if (grant_m1) begin
 					if (m1_rd_ready) begin
-						// o66: use clk_m1-held cmd, not live m1_* (mux-stable).
-						ddram_burstcnt_q <= m1_rd_burst_h;
-						ddram_addr_q     <= m1_rd_addr_h;
+						ddram_burstcnt_q <= m1_burstcnt;
+						ddram_addr_q     <= m1_addr;
 						ddram_rd_q       <= 1'b1;
-						ddram_din_q      <= 64'd0;
-						ddram_be_q       <= 8'hFF;
+						ddram_din_q      <= m1_din;
+						ddram_be_q       <= m1_be;
 						ddram_we_q       <= 1'b0;
 						rsp_owner_m1 <= 1'b1;
-						rsp_left <= {1'b0, m1_rd_burst_h};
+						rsp_left <= {1'b0, m1_burstcnt};
 						grant_m1 <= 1'b0;
 						m1_rd_ack <= 1'b1;
 						m1_wait <= 6'd0;
 					end else if (m1_we_ready) begin
 						// Posted write: one registered WE beat while granted.
-						ddram_burstcnt_q <= m1_we_burst_h;
-						ddram_addr_q     <= m1_we_addr_h;
+						ddram_burstcnt_q <= m1_burstcnt;
+						ddram_addr_q     <= m1_addr;
 						ddram_rd_q       <= 1'b0;
-						ddram_din_q      <= m1_we_din_h;
-						ddram_be_q       <= m1_we_be_h;
+						ddram_din_q      <= m1_din;
+						ddram_be_q       <= m1_be;
 						ddram_we_q       <= 1'b1;
 						grant_m1 <= 1'b0;
 						m1_we_ack <= 1'b1;
