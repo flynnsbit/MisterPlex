@@ -312,8 +312,14 @@ module ddr_bus_arbiter (
 	// o80 (short) = PUBLISH_LIVE; o83 (long o81 rsp_watch_long) = PUBLISH_DEAD
 	// with BSR identical to o80. Long guard is the remaining o80→o83 delta.
 	// o79: grant_m1 held with m1_want but no m1_rd/we ready deadlocks m0.
+	// o92: one-shot WE-after-DATA — after an m1 RD response completes, prefer
+	// m1_we over m1_rd for the next grant so BSR post-beat PLXR/PLXE can land
+	// before a sticky RD reissue (ST_READ_WAIT / poll) starves publish.
+	// NOT permanent WE-first (o86 R1 → PUBLISH_DEAD). Boost clears on WE accept
+	// or rsp_watch abandon.
 	reg [5:0] grant_idle;
 	reg [15:0] rsp_watch;
+	reg        m1_we_boost;
 
 	always @(posedge clk) begin
 		if (rst) begin
@@ -338,6 +344,7 @@ module ddr_bus_arbiter (
 			ddram_we_q <= 1'b0;
 			grant_idle <= 6'd0;
 			rsp_watch <= 16'd0;
+			m1_we_boost <= 1'b0;
 		end else begin
 			// 2-FF sync req levels (clk_m1 → clk_ddr)
 			m1_rd_req_s1 <= m1_rd_req;
@@ -357,8 +364,12 @@ module ddr_bus_arbiter (
 				rsp_owner_m1_r <= rsp_owner_m1;
 			end
 
-			if (DDRAM_DOUT_READY && rsp_active)
+			// Last beat of m1 RD response → arm one WE-prefer grant (o92).
+			if (DDRAM_DOUT_READY && rsp_active) begin
+				if (rsp_left == 9'd1 && rsp_owner_m1)
+					m1_we_boost <= 1'b1;
 				rsp_left <= rsp_left - 9'd1;
+			end
 
 			// Count consecutive ddr cycles m1 wants but is not granted.
 			if (!m1_want_s2 || grant_m1)
@@ -378,12 +389,27 @@ module ddr_bus_arbiter (
 				rsp_watch <= 16'd0;
 			else if (rsp_watch != 16'hffff)
 				rsp_watch <= rsp_watch + 16'd1;
-			if (rsp_active && rsp_watch == 16'hffff)
+			if (rsp_active && rsp_watch == 16'hffff) begin
 				rsp_left <= 9'd0;
+				m1_we_boost <= 1'b0;
+			end
 
 			if (!DDRAM_BUSY && !rsp_pipe_active) begin
 				if (grant_m1) begin
-					if (m1_rd_ready) begin
+					// o92: if boost+WE ready, take WE before RD (one-shot).
+					if (m1_we_boost && m1_we_ready) begin
+						ddram_burstcnt_q <= m1_we_burst_h;
+						ddram_addr_q     <= m1_we_addr_h;
+						ddram_rd_q       <= 1'b0;
+						ddram_din_q      <= m1_we_din_h;
+						ddram_be_q       <= m1_we_be_h;
+						ddram_we_q       <= 1'b1;
+						grant_m1 <= 1'b0;
+						m1_we_ack <= 1'b1;
+						m1_we_boost <= 1'b0;
+						m1_wait <= 6'd0;
+						grant_idle <= 6'd0;
+					end else if (m1_rd_ready) begin
 						// o66: use clk_m1-held cmd, not live m1_* (mux-stable).
 						ddram_burstcnt_q <= m1_rd_burst_h;
 						ddram_addr_q     <= m1_rd_addr_h;
@@ -407,6 +433,7 @@ module ddr_bus_arbiter (
 						ddram_we_q       <= 1'b1;
 						grant_m1 <= 1'b0;
 						m1_we_ack <= 1'b1;
+						m1_we_boost <= 1'b0;
 						m1_wait <= 6'd0;
 						grant_idle <= 6'd0;
 					end else if (!m1_want_s2) begin
