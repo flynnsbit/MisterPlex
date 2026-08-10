@@ -383,22 +383,7 @@ module ddr_bus_arbiter (
 
 			if (!DDRAM_BUSY && !rsp_pipe_active) begin
 				if (grant_m1) begin
-					// o86 R1: prefer m1 WE over RD when both sticky. Post-DATA the
-					// BSR arms publish WE; if an orphan/stale m1_rd_req is still
-					// ready, RD-first starved PLXR/PLXE (wipe LIVE, plant telem=1).
-					if (m1_we_ready) begin
-						// Posted write: one registered WE beat while granted.
-						ddram_burstcnt_q <= m1_we_burst_h;
-						ddram_addr_q     <= m1_we_addr_h;
-						ddram_rd_q       <= 1'b0;
-						ddram_din_q      <= m1_we_din_h;
-						ddram_be_q       <= m1_we_be_h;
-						ddram_we_q       <= 1'b1;
-						grant_m1 <= 1'b0;
-						m1_we_ack <= 1'b1;
-						m1_wait <= 6'd0;
-						grant_idle <= 6'd0;
-					end else if (m1_rd_ready) begin
+					if (m1_rd_ready) begin
 						// o66: use clk_m1-held cmd, not live m1_* (mux-stable).
 						ddram_burstcnt_q <= m1_rd_burst_h;
 						ddram_addr_q     <= m1_rd_addr_h;
@@ -410,6 +395,18 @@ module ddr_bus_arbiter (
 						rsp_left <= {1'b0, m1_rd_burst_h};
 						grant_m1 <= 1'b0;
 						m1_rd_ack <= 1'b1;
+						m1_wait <= 6'd0;
+						grant_idle <= 6'd0;
+					end else if (m1_we_ready) begin
+						// Posted write: one registered WE beat while granted.
+						ddram_burstcnt_q <= m1_we_burst_h;
+						ddram_addr_q     <= m1_we_addr_h;
+						ddram_rd_q       <= 1'b0;
+						ddram_din_q      <= m1_we_din_h;
+						ddram_be_q       <= m1_we_be_h;
+						ddram_we_q       <= 1'b1;
+						grant_m1 <= 1'b0;
+						m1_we_ack <= 1'b1;
 						m1_wait <= 6'd0;
 						grant_idle <= 6'd0;
 					end else if (!m1_want_s2) begin

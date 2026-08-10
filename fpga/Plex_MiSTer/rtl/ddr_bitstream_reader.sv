@@ -163,12 +163,8 @@ module ddr_bitstream_reader #(
 		(avail < bytes_to_qword_end) ? avail : bytes_to_qword_end;
 	wire [3:0] consume_count = consume_count_w[3:0];
 	// Until first PLXB: level (survives m1 busy CDC). After: 1-cyc/64 like o44.
-	// o86 R1: while publish_pending, suppress poll/read so bus_want is WE-only.
-	// After DATA RD, competing want_read re-armed sticky m1_rd before the 9-step
-	// publish WE completed → host saw PUBLISH_LIVE then plant telem freeze (o80–o85).
-	wire want_poll = enable && !publish_pending &&
-	                 (!have_ctrl || (poll_div == {POLL_DIV_BITS{1'b0}}));
-	wire want_read = enable && !publish_pending && ring_has_data && (beat_left == 4'd0);
+	wire want_poll = enable && (!have_ctrl || (poll_div == {POLL_DIV_BITS{1'b0}}));
+	wire want_read = enable && ring_has_data && (beat_left == 4'd0);
 	wire want_pub = enable && publish_pending;
 	wire can_consume = (mode != MODE_PAYLOAD) || !out_full;
 	wire [15:0] state_flags = {4'd0, fatal_sticky, desync_sticky, paused, active,
@@ -221,9 +217,8 @@ module ddr_bitstream_reader #(
 		end
 	endtask
 
-	// o86 R1: publish_pending → want_pub only (poll/read already gated above).
 	wire bus_want_comb =
-		(state == ST_IDLE) ? (want_pub || want_poll || want_read) :
+		(state == ST_IDLE) ? (want_poll || want_read || want_pub) :
 		((state == ST_POLL) || (state == ST_READ_WAIT));
 
 	always @(posedge clk) begin
@@ -634,11 +629,14 @@ module ddr_bitstream_reader #(
 							end
 						end
 
-						// Beat complete → IDLE so publish/poll can run; one publish/beat.
+						// Beat complete → IDLE so poll/read can run.
+						// o87 R3: do NOT arm full 9-step publish every 8B beat.
+						// o86 R1 (publish-hold + WE-before-RD) regressed wipe to
+						// PUBLISH_DEAD; revert R1 and cut beat-end WE density so
+						// HB + record-boundary publish can keep telem moving after DATA.
+						// Publish still armed on hdr_idx==31 / payload end / desync / HB.
 						if (beat_left == 4'd1) begin
 							state <= ST_IDLE;
-							publish_pending <= 1'b1;
-							publish_step <= 4'd0;
 						end
 						poll_wait <= 16'd0;
 					end else if (beat_left == 4'd0) begin
