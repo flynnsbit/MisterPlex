@@ -125,12 +125,10 @@ module ddr_bitstream_reader #(
 	reg have_ctrl;
 	reg empty_seen;
 	reg seen_payload;
-	// o49: poll_div==0 is a 1-cycle pulse; m1 grant/busy CDC needs many
-	// cycles, so ST_IDLE almost never saw !busy&&want_poll together. Publish
-	// is level-sticky (hence live telem_seq=1) while CTRL RD starved forever.
-	// Keep a level poll_req until a CTRL RD is actually issued.
-	reg poll_req;
-
+	// o49 RCA: poll_div==0 is a 1-cycle pulse; m1 grant/busy CDC needs many
+	// cycles → CTRL RD starved (live telem_seq=1). o50 sticky poll_req FF was
+	// STA-hostile at 97% ALM (best −75ps). o54: no extra FF — level want_poll
+	// until first PLXB, then an 8/64-cycle window; keep ST_POLL reissue.
 	reg [7:0] hdr [0:31];
 	reg [4:0] hdr_idx;
 	reg [31:0] payload_left;
@@ -154,8 +152,9 @@ module ddr_bitstream_reader #(
 	wire [31:0] consume_count_w =
 		(avail < bytes_to_qword_end) ? avail : bytes_to_qword_end;
 	wire [3:0] consume_count = consume_count_w[3:0];
-	wire poll_tick = enable && (poll_div == {POLL_DIV_BITS{1'b0}});
-	wire want_poll = enable && poll_req;
+	// 8 consecutive cycles each 64 — multi-cycle grant window without sticky FF.
+	wire poll_window = (poll_div[5:3] == 3'd0);
+	wire want_poll = enable && (!have_ctrl || poll_window);
 	wire want_read = enable && ring_has_data && (beat_left == 4'd0);
 	wire want_pub = enable && publish_pending;
 	wire can_consume = (mode != MODE_PAYLOAD) || !out_full;
@@ -223,7 +222,6 @@ module ddr_bitstream_reader #(
 			state <= ST_RESET;
 			mode <= MODE_HEADER;
 			poll_div <= '0;
-			poll_req <= 1'b1;
 			DDRAM_RD <= 1'b0;
 			DDRAM_WE <= 1'b0;
 			DDRAM_BURSTCNT <= 8'd1;
@@ -264,13 +262,10 @@ module ddr_bitstream_reader #(
 			bus_want <= 1'b0;
 			active <= 1'b0;
 			paused <= 1'b0;
-			poll_req <= 1'b0;
 			reset_parser();
 		end else begin
 			bus_want <= !flush && bus_want_comb;
 			poll_div <= poll_div + 1'd1;
-			if (poll_tick)
-				poll_req <= 1'b1;
 
 			if (flush) begin
 				read_count <= write_count;
@@ -288,7 +283,6 @@ module ddr_bitstream_reader #(
 				out_flush <= 1'b1;
 				publish_pending <= 1'b1;
 				publish_step <= 4'd0;
-				poll_req <= 1'b1;
 				state <= ST_IDLE;
 				reset_parser();
 			end
@@ -327,7 +321,6 @@ module ddr_bitstream_reader #(
 						DDRAM_ADDR <= CTRL_W;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_RD <= 1'b1;
-						poll_req <= 1'b0;
 						state <= ST_POLL;
 					end else if (publish_pending && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						DDRAM_BURSTCNT <= 8'd1;
@@ -395,7 +388,6 @@ module ddr_bitstream_reader #(
 						DDRAM_ADDR <= CTRL_W;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_RD <= 1'b1;
-						poll_req <= 1'b0;
 						state <= ST_POLL;
 					end else if (want_read && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						DDRAM_ADDR <= DATA_W + read_qword_offset;
@@ -406,9 +398,8 @@ module ddr_bitstream_reader #(
 					end
 				end
 
-				// o49: sticky poll_req arms CTRL RD across m1 grant CDC.
-				// Reissue whenever granted again while still waiting (no 1-cycle
-				// poll_div gate — that never lined up with !busy).
+				// o54: reissue CTRL RD while waiting (grant/busy CDC); want_poll
+				// is level/window combo so IDLE can arm without sticky FF.
 				ST_POLL: begin
 					if (DDRAM_DOUT_READY) begin
 						if (ctrl_magic_ok) begin
