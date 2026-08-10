@@ -321,10 +321,9 @@ module ddr_bitstream_reader #(
 				end
 
 				ST_IDLE: begin
-					// o72: publish MUST beat poll. o55 preferred poll-before-PLXB so
-					// write_count could move, but that starved boot publish forever
-					// whenever ST_POLL got no DOUT (o68 wipe stayed 0; o71 force WE
-					// proved f2sdram). Emit PLXR/telem first, then poll for PLXB.
+					// o72: publish MUST beat poll. o79: after DEAD0003 CONSUME timeout we
+					// land here with beat_left>0 — publish/poll first, then resume
+					// CONSUME (want_read alone cannot, it requires beat_left==0).
 					if (publish_pending && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						DDRAM_BURSTCNT <= 8'd1;
 						case (publish_step)
@@ -399,6 +398,10 @@ module ddr_bitstream_reader #(
 						DDRAM_RD <= 1'b1;
 						byte_idx <= read_byte_index;
 						state <= ST_READ_WAIT;
+					end else if (beat_left != 4'd0) begin
+						// o79: resume partial beat after publish/poll window
+						state <= ST_CONSUME;
+						poll_wait <= 16'd0;
 					end
 				end
 

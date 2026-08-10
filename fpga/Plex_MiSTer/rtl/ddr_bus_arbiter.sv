@@ -305,6 +305,9 @@ module ddr_bus_arbiter (
 
 	// o78: rsp_left watchdog — if DOUT never returns, drop pipe so bus recovers.
 	reg [15:0] rsp_watch;
+	// o79: grant_m1 held with m1_want but no m1_rd/we ready (BSR in ST_POLL/WAIT
+	// after req already acked) deadlocks: grant blocks m0 and never drops.
+	reg [5:0] grant_idle;
 
 	always @(posedge clk) begin
 		if (rst) begin
@@ -328,6 +331,7 @@ module ddr_bus_arbiter (
 			ddram_be_q <= 8'd0;
 			ddram_we_q <= 1'b0;
 			rsp_watch <= 16'd0;
+			grant_idle <= 6'd0;
 		end else begin
 			// 2-FF sync req levels (clk_m1 → clk_ddr)
 			m1_rd_req_s1 <= m1_rd_req;
@@ -386,6 +390,7 @@ module ddr_bus_arbiter (
 						grant_m1 <= 1'b0;
 						m1_rd_ack <= 1'b1;
 						m1_wait <= 6'd0;
+						grant_idle <= 6'd0;
 					end else if (m1_we_ready) begin
 						// Posted write: one registered WE beat while granted.
 						ddram_burstcnt_q <= m1_we_burst_h;
@@ -397,11 +402,20 @@ module ddr_bus_arbiter (
 						grant_m1 <= 1'b0;
 						m1_we_ack <= 1'b1;
 						m1_wait <= 6'd0;
+						grant_idle <= 6'd0;
 					end else if (!m1_want_s2) begin
 						grant_m1 <= 1'b0;
 						m1_wait <= 6'd0;
+						grant_idle <= 6'd0;
+					end else if (grant_idle >= 6'd16) begin
+						// o79: drop orphan grant so m0/m1 can reschedule.
+						grant_m1 <= 1'b0;
+						grant_idle <= 6'd0;
+					end else begin
+						grant_idle <= grant_idle + 6'd1;
 					end
 				end else begin
+					grant_idle <= 6'd0;
 					if ((m1_want_s2 || m1_cmd) && (!m0_cmd || m1_starved || m1_cmd)) begin
 						// Prefer m1 when idle-gap OR when starved by continuous m0_rd.
 						grant_m1 <= 1'b1;
