@@ -84,9 +84,7 @@ module ddr_bus_arbiter (
 
 	// o25: sticky req on clk_m1; clk_ddr 2FF-syncs levels + 1-bit ack.
 	// o66: also latch addr/burst/din/be on clk_m1 at the pulse (not live nets).
-	// o72: sticky-path probe — after delay, inject one WE via m1_we_req/holds
-	// (not direct ddram_*), magic PLXE|0x5A5A0002 at CTRL ERR (0x30340010).
-	// o71 direct force already proved ddram_* WE; this isolates sticky+grant.
+	// o75: remove sticky PLXE probe — it polluted host telem and is proven.
 	reg m1_rd_req, m1_we_req;
 	reg m1_rd_ack, m1_we_ack;
 	reg m1_rd_ack_s1, m1_rd_ack_s2;
@@ -97,10 +95,6 @@ module ddr_bus_arbiter (
 	reg  [7:0] m1_rd_burst_h, m1_we_burst_h;
 	reg [63:0] m1_we_din_h;
 	reg  [7:0] m1_we_be_h;
-	reg        sticky_probe_done;
-	reg [15:0] sticky_probe_div;
-	localparam [28:0] STICKY_PROBE_ADDR = 29'h06068002; // 0x30340010>>3
-	localparam [63:0] STICKY_PROBE_DATA = {32'h5A5A_0002, 32'h504C_5845}; // PLXE
 
 	always @(posedge clk_m1) begin
 		if (reset) begin
@@ -116,16 +110,11 @@ module ddr_bus_arbiter (
 			m1_we_burst_h <= 8'd0;
 			m1_we_din_h <= 64'd0;
 			m1_we_be_h <= 8'd0;
-			sticky_probe_done <= 1'b0;
-			sticky_probe_div <= 16'd0;
 		end else begin
 			m1_rd_ack_s1 <= m1_rd_ack;
 			m1_rd_ack_s2 <= m1_rd_ack_s1;
 			m1_we_ack_s1 <= m1_we_ack;
 			m1_we_ack_s2 <= m1_we_ack_s1;
-
-			if (!sticky_probe_done && sticky_probe_div != 16'hffff)
-				sticky_probe_div <= sticky_probe_div + 16'd1;
 
 			if (m1_rd) begin
 				m1_rd_req <= 1'b1;
@@ -141,14 +130,6 @@ module ddr_bus_arbiter (
 				m1_we_burst_h <= m1_burstcnt;
 				m1_we_din_h <= m1_din;
 				m1_we_be_h <= m1_be;
-			end else if (!sticky_probe_done && sticky_probe_div >= 16'd40000 && !m1_we_req) begin
-				// ~2ms @20MHz — after o71 direct force (~0.7ms @90MHz)
-				m1_we_req <= 1'b1;
-				m1_we_addr_h <= STICKY_PROBE_ADDR;
-				m1_we_burst_h <= 8'd1;
-				m1_we_din_h <= STICKY_PROBE_DATA;
-				m1_we_be_h <= 8'hFF;
-				sticky_probe_done <= 1'b1;
 			end else if (m1_we_ack_s2) begin
 				m1_we_req <= 1'b0;
 			end
@@ -317,17 +298,11 @@ module ddr_bus_arbiter (
 	assign m1_dout       = m1_rsp_fifo_rdata;
 	assign m1_dout_ready = !m1_rsp_fifo_empty;
 
-	// o71/o73 bring-up probe (preempts m0 one-shot after delay):
-	//   ph1 WE READ slot  magic PLXR|00C0FFEE  (WE path)
-	//   ph2 RD CTRL PLXB  capture DOUT
-	//   ph3 WE STAT2      magic PLXV | DOUT[31:0] in hi — host sees what f2sdram RD returns
-	// o72: BSR publish-before-poll LIVE; STREAM1 still cons=0 with host PLXB visible
-	// → suspect RD returns 0 / wrong beat (ST2 last_bad stayed 0 during play).
-	localparam [28:0] FORCE_PLXR_W  = 29'h06068001; // 0x30340008>>3
+	// o75: DO NOT WE PLXR — host treats PLXR[63:32] as consumer_bytes; o71
+	// 00C0FFEE marker == 12648430 and faked FIRST_CONS_GT0. Keep force RD of
+	// CTRL → PLXD diag only (outside BSR STAT range).
 	localparam [28:0] FORCE_CTRL_W  = 29'h06068000; // 0x30340000>>3
-	// Past BSR STAT6 (0x30340048) so publish cannot overwrite the RD sample.
 	localparam [28:0] FORCE_DBG_W   = 29'h0606800A; // 0x30340050>>3
-	localparam [63:0] FORCE_PLXR_D  = {32'h00C0_FFEE, 32'h504C_5852};
 	localparam [31:0] FORCE_DBG_MAG = 32'h504C_5844; // PLXD diag
 	reg [2:0]  force_ph;
 	reg [15:0] force_delay;
@@ -437,16 +412,8 @@ module ddr_bus_arbiter (
 						m1_wait <= 6'd0;
 					end
 				end else begin
-					// o73 force FSM (after ~0.7ms). Preempt m0.
+					// o75 force FSM (after ~0.7ms): RD CTRL → WE PLXD sample only.
 					if (force_ph == 3'd0 && force_delay >= 16'd65535) begin
-						ddram_burstcnt_q <= 8'd1;
-						ddram_addr_q     <= FORCE_PLXR_W;
-						ddram_rd_q       <= 1'b0;
-						ddram_din_q      <= FORCE_PLXR_D;
-						ddram_be_q       <= 8'hFF;
-						ddram_we_q       <= 1'b1;
-						force_ph <= 3'd2; // skip to RD next idle (WE is posted)
-					end else if (force_ph == 3'd2) begin
 						ddram_burstcnt_q <= 8'd1;
 						ddram_addr_q     <= FORCE_CTRL_W;
 						ddram_rd_q       <= 1'b1;
