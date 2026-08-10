@@ -134,7 +134,8 @@ module ddr_bus_arbiter (
 	// while host PLXB producer filled 256KiB). After M1_WAIT_MAX ddr cycles of
 	// pending m1_want without grant, block new m0_rd starts so m1 gets a slot.
 	reg [5:0] m1_wait;
-	localparam [5:0] M1_WAIT_MAX = 6'd32;
+	// o60: 32→8 ddr cycles — open m1 grant window sooner under continuous m0.
+	localparam [5:0] M1_WAIT_MAX = 6'd8;
 	wire m1_starved = m1_want_s2 && (m1_wait >= M1_WAIT_MAX);
 
 	// ready = req visible on clk_ddr and not yet acked (prevents double-accept
@@ -150,12 +151,9 @@ module ddr_bus_arbiter (
 	// frame-store stops issuing new reads and the pipe can drain — otherwise
 	// continuous m0_rd keeps rsp_pipe_active and m1 never enters the
 	// !rsp_pipe_active grant window (o14 still cons=0 / telem_seq=1).
-	// o59: while m1 wants the port (o55 level-poll until first PLXB keeps
-	// want high), raise m0_busy so present m0_rd cannot hold rsp_pipe_active
-	// forever. Live o55: m1 WE publish OK (telem_seq=1) but CTRL RD never
-	// lands (cons=0) — grant window never opens under continuous m0 video.
-	// After have_ctrl, want is 1/64 and present resumes.
-	assign m0_busy = DDRAM_BUSY | grant_m1 | m1_starved | m1_want_s2 |
+	// o60: drop o59 m1_want→m0_busy (STA hold/setup red). Keep sticky-cmd
+	// boost only; faster starve (8) + grant prefers m1_want below.
+	assign m0_busy = DDRAM_BUSY | grant_m1 | m1_starved |
 	                 m1_rd_ready | m1_we_ready |
 	                 (rsp_active & rsp_owner_m1) |
 	                 (rsp_valid_r & rsp_owner_m1_r);
@@ -368,7 +366,10 @@ module ddr_bus_arbiter (
 				end else begin
 					// Prefer m1 when idle-gap OR when starved by continuous m0_rd.
 					// Also take m1 if a ready cmd is already waiting (lost-RD recovery).
-					if ((m1_want_s2 || m1_cmd) && (!m0_cmd || m1_starved || m1_cmd)) begin
+					// o60: m1_want alone takes the idle grant (was: need
+					// !m0_cmd || starved || m1_cmd). Continuous present m0_rd
+					// previously blocked grant until starve counter filled.
+					if (m1_want_s2 || m1_cmd) begin
 						grant_m1 <= 1'b1;
 					end else if (m0_rd) begin
 						ddram_burstcnt_q <= m0_burstcnt;
