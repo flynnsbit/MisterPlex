@@ -245,14 +245,19 @@ module ddr_bus_arbiter (
 	// ── m1 response FIFO (clk_ddr → clk_m1) ──
 	// DDRAM_DOUT_READY is a single clk_ddr pulse per beat.  The clk_m1
 	// (20 MHz) consumer would miss ~70 % of those pulses if sampled
-	// directly.  The FIFO absorbs beats on the fast side and auto-pops
-	// them one per clk_m1 cycle on the slow side.
-	// o44: restore o35 auto-pop (hold-pop o40–o43 STA-hostile at 97% ALM).
-	// Functional fix is unmask dout_ready from wb_ddr_want + RD reissue.
+	// directly.  The FIFO absorbs beats on the fast side.
+	//
+	// o45: hold FWFT word for HOLD_CYC clk_m1 cycles before auto-pop.
+	// o35 one-cycle auto-pop + o44 unmask still left live telem_seq=1 /
+	// cons=0 (PLXB visible in DDR, FPGA never latched have_ctrl). Stretch
+	// ready in-arbiter (no hierarchical m1_rsp_pop — that burned o40–o43 STA).
 	wire        m1_rsp_fifo_full;
 	wire        m1_rsp_fifo_empty;
 	wire [63:0] m1_rsp_fifo_rdata;
 	wire        m1_rsp_wr_en = rsp_valid_out_pad & rsp_owner_m1_out_pad;
+	localparam [2:0] M1_RSP_HOLD_CYC = 3'd7; // 8 clk_sys ≈ 400 ns level ready
+	reg  [2:0] m1_rsp_hold_cnt;
+	wire       m1_rsp_do_pop = !m1_rsp_fifo_empty && (m1_rsp_hold_cnt == M1_RSP_HOLD_CYC);
 
 	// o28: AW 3→2 (depth 8→4). o27 pad-strip regressed STA; restore o26 pads
 	// and cut only FIFO depth (CAS burst beats rarely need 8).
@@ -266,10 +271,19 @@ module ddr_bus_arbiter (
 
 		.rd_clk   (clk_m1),
 		.rd_reset (reset),       // reset is synchronous to clk_m1
-		.rd_en    (!m1_rsp_fifo_empty),  // auto-pop (o35/o44)
+		.rd_en    (m1_rsp_do_pop),
 		.rd_data  (m1_rsp_fifo_rdata),
 		.rd_empty (m1_rsp_fifo_empty)
 	);
+
+	always @(posedge clk_m1) begin
+		if (reset)
+			m1_rsp_hold_cnt <= 3'd0;
+		else if (m1_rsp_fifo_empty || m1_rsp_do_pop)
+			m1_rsp_hold_cnt <= 3'd0;
+		else
+			m1_rsp_hold_cnt <= m1_rsp_hold_cnt + 3'd1;
+	end
 
 	assign m1_dout       = m1_rsp_fifo_rdata;
 	assign m1_dout_ready = !m1_rsp_fifo_empty;
