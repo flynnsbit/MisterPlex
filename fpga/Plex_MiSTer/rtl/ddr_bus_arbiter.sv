@@ -298,10 +298,10 @@ module ddr_bus_arbiter (
 	assign m1_dout       = m1_rsp_fifo_rdata;
 	assign m1_dout_ready = !m1_rsp_fifo_empty;
 
-	// o75: DO NOT WE PLXR — host treats PLXR[63:32] as consumer_bytes; o71
-	// 00C0FFEE marker == 12648430 and faked FIRST_CONS_GT0. Keep force RD of
-	// CTRL → PLXD diag only (outside BSR STAT range).
-	localparam [28:0] FORCE_CTRL_W  = 29'h06068000; // 0x30340000>>3
+	// o75: DO NOT WE PLXR — host treats PLXR[63:32] as consumer_bytes.
+	// o76: force RD DATA base (0x30300000) → PLXD. CTRL RD already proved
+	// (saw PLXB); STREAM1 still cons=0 with last_bad=PLXB ⇒ DATA RD suspect.
+	localparam [28:0] FORCE_DATA_W  = 29'h06060000; // 0x30300000>>3
 	localparam [28:0] FORCE_DBG_W   = 29'h0606800A; // 0x30340050>>3
 	localparam [31:0] FORCE_DBG_MAG = 32'h504C_5844; // PLXD diag
 	reg [2:0]  force_ph;
@@ -412,10 +412,10 @@ module ddr_bus_arbiter (
 						m1_wait <= 6'd0;
 					end
 				end else begin
-					// o75 force FSM (after ~0.7ms): RD CTRL → WE PLXD sample only.
+					// o76 force FSM (after ~0.7ms): RD DATA ring base → WE PLXD sample.
 					if (force_ph == 3'd0 && force_delay >= 16'd65535) begin
 						ddram_burstcnt_q <= 8'd1;
-						ddram_addr_q     <= FORCE_CTRL_W;
+						ddram_addr_q     <= FORCE_DATA_W;
 						ddram_rd_q       <= 1'b1;
 						ddram_din_q      <= 64'd0;
 						ddram_be_q       <= 8'hFF;
