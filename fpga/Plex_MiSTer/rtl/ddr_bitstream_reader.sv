@@ -472,11 +472,24 @@ module ddr_bitstream_reader #(
 					// o74: mirror ST_POLL timeout — DATA RD with no DOUT left BSR
 					// stuck out of IDLE (no publish, cons=0) after have_ctrl.
 					// o83: accept without rd_inflight (o80).
-					if (DDRAM_DOUT_READY) begin
+					// o94: if HB/stuck armed publish while waiting DOUT, abandon RD
+					// reissue and return IDLE so PLXR/PLXE can land. o93 still
+					// plant-froze telem after DATA — READ_WAIT reissue holds
+					// m1_rd sticky and blocks the publish window for ~2ms+, and
+					// may starve WE entirely under busy grant. Prefer publish.
+					if (publish_pending && !DDRAM_DOUT_READY) begin
+						last_bad_seq <= 32'hDEAD0005; // abandon DATA wait for publish
+						poll_wait <= 16'd0;
+						state <= ST_IDLE;
+					end else if (DDRAM_DOUT_READY) begin
 						beat_q <= DDRAM_DOUT;
 						beat_left <= consume_count;
 						poll_wait <= 16'd0;
-						state <= ST_CONSUME;
+						// o94: surface after every DATA beat arrives (PLXE moves
+						// even before CONSUME finishes; cons still needs consume).
+						publish_pending <= 1'b1;
+						publish_step <= 4'd0;
+						state <= ST_IDLE; // publish then resume CONSUME via beat_left
 					end else if (poll_wait == 16'hFFFF) begin
 						last_bad_seq <= 32'hDEAD0002; // data RD timeout
 						publish_pending <= 1'b1;
