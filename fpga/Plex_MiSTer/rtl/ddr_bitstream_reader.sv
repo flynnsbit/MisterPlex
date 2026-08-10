@@ -44,12 +44,11 @@ module ddr_bitstream_reader #(
 	output reg  [28:0] DDRAM_ADDR,
 	input  wire [63:0] DDRAM_DOUT,
 	input  wire        DDRAM_DOUT_READY,
-	// o69: keep RD/WE visible — fit reports deleted DDRAM_RD helper nets while
-	// live CTRL wipe showed zero FPGA traffic (stale PLXR residue).
-	(* keep = 1 *) output reg         DDRAM_RD,
+	// o70: drop o69 keep on RD/WE — keep forced placement and o69 went STA −50ps.
+	output reg         DDRAM_RD,
 	output reg  [63:0] DDRAM_DIN,
 	output wire  [7:0] DDRAM_BE,
-	(* keep = 1 *) output reg         DDRAM_WE,
+	output reg         DDRAM_WE,
 
 	output reg         active,
 	output reg  [31:0] bytes_out,

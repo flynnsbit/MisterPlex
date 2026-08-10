@@ -817,7 +817,7 @@ stream_path #(
 	.flush(status[11]),
 	.ddr_stream_enable(stream_ddr_enable),
 	.ddr_bus_want(stream_ddr_bus_want),
-	// o69: restore o55 wb busy-OR on stream with wb-first m1 mux.
+	// o70: wb busy-OR on stream with wb-first m1 mux + arbiter cmd-latch.
 	.ddr_busy(stream_ddr_busy | wb_ddr_want),
 	.ddr_burstcnt(stream_ddr_burstcnt),
 	.ddr_addr(stream_ddr_addr),
@@ -1080,9 +1080,8 @@ present_core #(
 );
 
 `ifdef DDR_FRAME_STORE
-// o69: restore wb-first m1 mux. o66–o68 stream-only + cmd-latch never wrote CTRL
-// (wipe test: CTRL stayed 0) — PLXR/telem=1 was stale DDR residue, not live FPGA.
-// Revert isolation; keep o68 poll-timeout reader. Next: prove m1 WE reaches CTRL.
+// o70: wb-first m1 mux + arbiter cmd-latch (o69 live-m1 under mux was racy).
+// o68 wipe-zero still stands: must prove live CTRL WE after green fit.
 wire        m1_want     = wb_ddr_want | stream_ddr_bus_want;
 wire  [7:0] m1_burstcnt = wb_ddr_want ? wb_ddr_burstcnt : stream_ddr_burstcnt;
 wire [28:0] m1_addr     = wb_ddr_want ? wb_ddr_addr     : stream_ddr_addr;

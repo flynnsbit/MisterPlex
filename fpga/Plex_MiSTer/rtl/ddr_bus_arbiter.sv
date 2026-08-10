@@ -82,16 +82,20 @@ module ddr_bus_arbiter (
 		end
 	end
 
-	// o25/o69: sticky req on clk_m1; clk_ddr 2FF-syncs levels + 1-bit ack.
-	// o66 cmd-latch removed — live wipe showed CTRL never written (addr holds
-	// suspected 0 / WE not reaching 0x3034). Use live m1_* while sticky held
-	// (protocol-stable from issue until next command) as o25.
+	// o25 sticky req on clk_m1; clk_ddr 2FF-syncs levels + 1-bit ack.
+	// o70: restore o66 cmd-latch WITH wb-first mux. Live m1_* under wb-first
+	// can switch while sticky waits (o69). Latch freezes addr/burst/din/be at
+	// the m1_rd/m1_we pulse so grant samples a stable command.
 	reg m1_rd_req, m1_we_req;
 	reg m1_rd_ack, m1_we_ack;
 	reg m1_rd_ack_s1, m1_rd_ack_s2;
 	reg m1_we_ack_s1, m1_we_ack_s2;
 	reg m1_rd_req_s1, m1_rd_req_s2;
 	reg m1_we_req_s1, m1_we_req_s2;
+	reg [28:0] m1_rd_addr_h, m1_we_addr_h;
+	reg  [7:0] m1_rd_burst_h, m1_we_burst_h;
+	reg [63:0] m1_we_din_h;
+	reg  [7:0] m1_we_be_h;
 
 	always @(posedge clk_m1) begin
 		if (reset) begin
@@ -101,21 +105,35 @@ module ddr_bus_arbiter (
 			m1_rd_ack_s2 <= 1'b0;
 			m1_we_ack_s1 <= 1'b0;
 			m1_we_ack_s2 <= 1'b0;
+			m1_rd_addr_h <= 29'd0;
+			m1_we_addr_h <= 29'd0;
+			m1_rd_burst_h <= 8'd0;
+			m1_we_burst_h <= 8'd0;
+			m1_we_din_h <= 64'd0;
+			m1_we_be_h <= 8'd0;
 		end else begin
 			m1_rd_ack_s1 <= m1_rd_ack;
 			m1_rd_ack_s2 <= m1_rd_ack_s1;
 			m1_we_ack_s1 <= m1_we_ack;
 			m1_we_ack_s2 <= m1_we_ack_s1;
 
-			if (m1_rd)
+			if (m1_rd) begin
 				m1_rd_req <= 1'b1;
-			else if (m1_rd_ack_s2)
+				m1_rd_addr_h <= m1_addr;
+				m1_rd_burst_h <= m1_burstcnt;
+			end else if (m1_rd_ack_s2) begin
 				m1_rd_req <= 1'b0;
+			end
 
-			if (m1_we)
+			if (m1_we) begin
 				m1_we_req <= 1'b1;
-			else if (m1_we_ack_s2)
+				m1_we_addr_h <= m1_addr;
+				m1_we_burst_h <= m1_burstcnt;
+				m1_we_din_h <= m1_din;
+				m1_we_be_h <= m1_be;
+			end else if (m1_we_ack_s2) begin
 				m1_we_req <= 1'b0;
+			end
 		end
 	end
 
@@ -332,24 +350,25 @@ module ddr_bus_arbiter (
 			if (!DDRAM_BUSY && !rsp_pipe_active) begin
 				if (grant_m1) begin
 					if (m1_rd_ready) begin
-						ddram_burstcnt_q <= m1_burstcnt;
-						ddram_addr_q     <= m1_addr;
+						// o70: clk_m1-held cmd (stable under wb/stream mux).
+						ddram_burstcnt_q <= m1_rd_burst_h;
+						ddram_addr_q     <= m1_rd_addr_h;
 						ddram_rd_q       <= 1'b1;
-						ddram_din_q      <= m1_din;
-						ddram_be_q       <= m1_be;
+						ddram_din_q      <= 64'd0;
+						ddram_be_q       <= 8'hFF;
 						ddram_we_q       <= 1'b0;
 						rsp_owner_m1 <= 1'b1;
-						rsp_left <= {1'b0, m1_burstcnt};
+						rsp_left <= {1'b0, m1_rd_burst_h};
 						grant_m1 <= 1'b0;
 						m1_rd_ack <= 1'b1;
 						m1_wait <= 6'd0;
 					end else if (m1_we_ready) begin
 						// Posted write: one registered WE beat while granted.
-						ddram_burstcnt_q <= m1_burstcnt;
-						ddram_addr_q     <= m1_addr;
+						ddram_burstcnt_q <= m1_we_burst_h;
+						ddram_addr_q     <= m1_we_addr_h;
 						ddram_rd_q       <= 1'b0;
-						ddram_din_q      <= m1_din;
-						ddram_be_q       <= m1_be;
+						ddram_din_q      <= m1_we_din_h;
+						ddram_be_q       <= m1_we_be_h;
 						ddram_we_q       <= 1'b1;
 						grant_m1 <= 1'b0;
 						m1_we_ack <= 1'b1;
