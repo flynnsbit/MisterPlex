@@ -1231,11 +1231,19 @@ module h264_decode_core #(
     wire [31:0] wb_mb_y32 = {24'd0, wb_mb_y};
     wire [31:0] mb_width32 = {24'd0, mb_width};
     wire [31:0] mb_height32 = {24'd0, mb_height};
+    // o104: content grid from SPS when present; params MB_W/H stay coded-bank max
+    // (product FRAME_W/H = CODED 1280×720). Glass 640×480 → mb 40×30 must complete
+    // frame_done at (39,29), not coded last (79,44). Zero SPS falls back to params.
+    // Clamp oversize SPS into the bank max so last_mb cannot address past the DPB.
+    wire [31:0] active_mb_w32 = (mb_width == 8'd0)  ? MB_W :
+                                (mb_width32 > MB_W)  ? MB_W : mb_width32;
+    wire [31:0] active_mb_h32 = (mb_height == 8'd0) ? MB_H :
+                                (mb_height32 > MB_H) ? MB_H : mb_height32;
     wire [31:0] wb_mb_addr32 = wb_mb_y32 * MB_W + wb_mb_x32;
     wire [15:0] wb_mb_addr16 = wb_mb_addr32[15:0];
     wire        wb_last_sample = (wb_idx == 9'd383);
-    wire        wb_last_mb = (wb_mb_x32 == (MB_W - 1)) &&
-                             (wb_mb_y32 == (MB_H - 1));
+    wire        wb_last_mb = (wb_mb_x32 == (active_mb_w32 - 32'd1)) &&
+                             (wb_mb_y32 == (active_mb_h32 - 32'd1));
     wire        product_intra_mb_start = mb_type_valid && route_is_i4 && !pskip_pending;
     wire [7:0]  product_intra_mb_type = {2'd0, mb_route_norm_mb_type};
     wire [1:0]  product_intra_i16_mode = intra16x16_mode;
@@ -2133,8 +2141,10 @@ module h264_decode_core #(
     assign busy = (wb_state != ST_IDLE) || intra_active_r || pskip_busy;
     assign decode_state = wb_state;
     assign current_mb_addr = (wb_state == ST_IDLE) ? syntax_mb_addr_r : wb_mb_addr16;
-    assign error = (mb_width != 8'd0 && mb_width32 != MB_W) ||
-                   (mb_height != 8'd0 && mb_height32 != MB_H);
+    // o104: content window inside coded bank is legal (SPS ≤ param). Error only
+    // when SPS exceeds coded max — old equality sticky blocked Glass 40×30 forever.
+    assign error = (mb_width != 8'd0 && mb_width32 > MB_W) ||
+                   (mb_height != 8'd0 && mb_height32 > MB_H);
 
     (* keep = 1 *) wire _keep_decode_core_inputs =
         slice_is_idr | slice_is_i | |slice_qp_y | |first_mb_in_slice |
