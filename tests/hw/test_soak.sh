@@ -16,6 +16,21 @@
 #   SOAK_FETCH_CONF if 0, never scp conf from MiSTer (default 1)
 #   SOAK_NET_LABEL  optional label for Wi-Fi/Ethernet matrix rows (e.g. wifi|eth)
 #   SOAK_LOG_NET    if 1, ssh and log active iface / wireless quality (default 1)
+#
+# --- Product STREAM=1 longer soak (G1 cast half only) ---
+# This script is **cast/timeline only**. It does NOT sample PLXB/PLXR/PLXE,
+# does NOT edit STREAM= conf, and does NOT score H1–H7. For the full product
+# lab pack (conf STREAM=1, Glass#23 + Grid720#143, HOLD_S=60, cons/telem,
+# STREAM=0 restore, H-gates) see:
+#   docs/stream1-acceptance-criteria.md
+#   Memory/lab/status/STREAM1_LONGER_SOAK_PLAN.txt
+#   scripts/lab_stream1_product_soak.sh
+#
+# Cast-layer example (conf must already be STREAM=1 PRESENT=both … on device):
+#   SOAK_KEYS="/library/metadata/23 /library/metadata/143" \
+#   SOAK_HOLD_S=60 SOAK_ROUNDS=1 SOAK_PROGRESS=1 SOAK_NET_LABEL=lab \
+#   ./tests/hw/test_soak.sh
+# Always restore STREAM=0 on device when idle (parent lab rule). Soft-skip ≠ PASS.
 set -euo pipefail
 
 HOST="${MISTER_HOST:-192.168.1.183}"

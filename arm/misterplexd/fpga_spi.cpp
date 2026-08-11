@@ -618,9 +618,17 @@ FpgaSpi::BitstreamPushResult FpgaSpi::writeBitstreamRecord(ddr_bitstream_ring::E
 
     uint32_t readCount = bitstreamWriteCount_;
     (void)readBitstreamFpgaCount(readCount);
+    // If host writeCount was reset below a sticky FPGA consumer (flush residual),
+    // uint (write-read+len) underflows and looks "full" forever. Seed once.
+    if (static_cast<int32_t>(bitstreamWriteCount_ - readCount) < 0 &&
+        (readCount - bitstreamWriteCount_) < static_cast<uint32_t>(ring::kRingBytes)) {
+        bitstreamWriteCount_ = readCount;
+        publishBitstreamCtrl();
+    }
     const auto deadline = std::chrono::steady_clock::now() +
                           std::chrono::milliseconds(std::max(0, timeout_ms));
-    while (bitstreamWriteCount_ - readCount + recordLen > ring::kRingBytes) {
+    while (static_cast<uint32_t>(bitstreamWriteCount_ - readCount) + recordLen >
+           ring::kRingBytes) {
         if (std::chrono::steady_clock::now() >= deadline) {
             setErr("writeBitstreamRecord: FPGA ring full");
             return BitstreamPushResult::Full;
@@ -631,6 +639,11 @@ FpgaSpi::BitstreamPushResult FpgaSpi::writeBitstreamRecord(ddr_bitstream_ring::E
             return BitstreamPushResult::Desync;
         }
         (void)readBitstreamFpgaCount(readCount);
+        if (static_cast<int32_t>(bitstreamWriteCount_ - readCount) < 0 &&
+            (readCount - bitstreamWriteCount_) < static_cast<uint32_t>(ring::kRingBytes)) {
+            bitstreamWriteCount_ = readCount;
+            publishBitstreamCtrl();
+        }
     }
 
     std::vector<uint8_t> header(ring::kRecordHeaderBytes, 0);
@@ -1934,6 +1947,35 @@ bool FpgaSpi::flushBitstreamDdr() {
     std::memset(bitstreamMap_, 0, ring::kRingBytes);
     (void)cleanDcacheRange(bitstreamMap_, ring::kRingBytes);
     publishBitstreamCtrl();
+
+    // STREAM1 soak RCA: plant gate waits cons==0 after count0 epoch; without that,
+    // FPGA may keep a residual consumer (e.g. 0x40/0x8) while host writeCount=0.
+    // That yields ring_level = 0-cons (uint underflow) and Full-check poison, and
+    // Begin is published at ring offset 0 while the reader is still at residual.
+    // Wait briefly for a snap; if residual remains, seed writeCount to cons so
+    // absolute producer/consumer math and ring write pointer stay coherent.
+    {
+        const int stepUs = 500;
+        const int maxUs = 400 * 1000; // 400ms — plant uses ~1s; keep begin snappy
+        uint32_t cons = 0;
+        bool snapped = false;
+        for (int waited = 0; waited <= maxUs; waited += stepUs) {
+            if (readBitstreamFpgaCount(cons) && cons == 0) {
+                snapped = true;
+                break;
+            }
+            usleep(stepUs);
+        }
+        if (!snapped) {
+            if (!readBitstreamFpgaCount(cons))
+                cons = 0;
+            if (cons != 0) {
+                bitstreamWriteCount_ = cons;
+                publishBitstreamCtrl();
+            }
+        }
+    }
+
     clearErr();
     return true;
 }
@@ -1949,6 +1991,16 @@ bool FpgaSpi::beginBitstreamSession(uint64_t session_id, int timeout_ms) {
     if (readBitstreamStatus(st) && st.active) {
         setErr("beginBitstreamSession: session already active; end first");
         return false;
+    }
+    // Re-check residual after flush seed: if still inverted, refuse hard so the
+    // caller can retry rather than filling a ring the FPGA will never drain.
+    {
+        uint32_t cons = 0;
+        if (readBitstreamFpgaCount(cons) &&
+            static_cast<int32_t>(bitstreamWriteCount_ - cons) < 0) {
+            bitstreamWriteCount_ = cons;
+            publishBitstreamCtrl();
+        }
     }
     const auto r = writeBitstreamRecord(ddr_bitstream_ring::Event::Begin, session_id, 0, 0,
                                         nullptr, 0, timeout_ms);

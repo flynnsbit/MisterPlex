@@ -11,6 +11,8 @@ Use the **multi-agent build harness** for all sustained work in this repo:
 
 Parent keeps **~6 workers** filled. **Quartus is the sole exclusive slot.** While fitting, fill only non-RBF work. Evidence-only gates. Never invent BUILD_OK.
 
+**Chat token efficiency (hard):** [`docs/GROK_TOKEN_EFFICIENCY.md`](docs/GROK_TOKEN_EFFICIENCY.md) — short status lines; full dumps only in `Memory/lab/`; report loop fires on change only; parallelize non-fit thinking, not Quartus.
+
 ## Safe deploy
 
 ```bash
