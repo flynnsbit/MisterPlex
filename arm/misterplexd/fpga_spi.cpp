@@ -885,6 +885,71 @@ bool FpgaSpi::readInputMailbox(PlaybackCommand& command) {
     return false;
 }
 
+bool FpgaSpi::readPathPlay(std::string& path) {
+    path.clear();
+    if (!ensureDdrMap())
+        return false;
+    if (ddrLayout_.doorbell_phys < ddrLayout_.phys_base)
+        return false;
+    const uint32_t ctrlPhys = ddrPathMailboxPhys();
+    const uint32_t bufPhys = ddrPathBufferPhys();
+    if (ctrlPhys < ddrLayout_.phys_base || bufPhys < ddrLayout_.phys_base)
+        return false;
+    const size_t ctrlOff = static_cast<size_t>(ctrlPhys - ddrLayout_.phys_base);
+    const size_t bufOff = static_cast<size_t>(bufPhys - ddrLayout_.phys_base);
+    // 256-byte path payload + 8-byte ctrl must fit the mmap.
+    if (ctrlOff + 8 > ddrMapLen_ || bufOff + 256 > ddrMapLen_)
+        return false;
+
+    volatile uint32_t* mb = reinterpret_cast<volatile uint32_t*>(ddrMap_ + ctrlOff);
+    uint16_t seq = 0;
+    uint8_t len = 0;
+    bool ok = false;
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        const uint32_t lo = mb[0];
+        const uint32_t hi = mb[1];
+        __sync_synchronize();
+        const uint32_t verifyLo = mb[0];
+        const uint32_t verifyHi = mb[1];
+        if (lo != verifyLo || hi != verifyHi)
+            continue;
+        const uint64_t word =
+            static_cast<uint64_t>(lo) | (static_cast<uint64_t>(hi) << 32);
+        if (!decodePathMailboxWord(word, seq, len))
+            return false;
+        ok = true;
+        break;
+    }
+    if (!ok)
+        return false;
+
+    uint8_t raw[256]{};
+    volatile uint8_t* pb = reinterpret_cast<volatile uint8_t*>(ddrMap_ + bufOff);
+    for (unsigned i = 0; i < len && i < 256; ++i)
+        raw[i] = pb[i];
+    __sync_synchronize();
+    // Re-check ctrl so a torn path buffer is rejected.
+    {
+        const uint32_t lo = mb[0];
+        const uint32_t hi = mb[1];
+        uint16_t seq2 = 0;
+        uint8_t len2 = 0;
+        const uint64_t word =
+            static_cast<uint64_t>(lo) | (static_cast<uint64_t>(hi) << 32);
+        if (!decodePathMailboxWord(word, seq2, len2) || seq2 != seq || len2 != len)
+            return false;
+    }
+
+    const std::string candidate = pathFromBuffer(raw, len);
+    if (candidate.empty() || candidate[0] != '/')
+        return false;
+    std::string out;
+    if (!pathMboxEdge_.accept(seq, candidate, out))
+        return false;
+    path = std::move(out);
+    return true;
+}
+
 bool FpgaSpi::kickDdrSpi(int bank, bool first_verify, bool& saw_busy, bool& saw_kick,
                          bool& saw_frame) {
     SpiExclusive guard(map_);

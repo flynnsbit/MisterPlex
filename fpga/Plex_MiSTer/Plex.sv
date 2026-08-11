@@ -49,9 +49,10 @@ assign VIDEO_ARY = (!ar) ? 12'd3 : 12'd0;
 localparam CONF_STR = {
 	"Plex;;",
 	"-;",
-	"F1,raw,RGB565 frame (320x240);",
-	"F2,raw,s16le stereo PCM @48k;",
-	"F3,264,H.264 annex-B elementary;",
+	// F1: tiny .mpx path stubs → PLXP → misterplexd local play (not raw RGB).
+	// F3: annex-B fabric test only. F2 raw PCM removed from OSD (unused).
+	"F1,mpx,Play local (daemon);",
+	"F3,264,H.264 annex-B test;",
 	"-;",
 	"O[122:121],Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
 	// Default first option = NTSC (status[2]=0). Bump v, so saved PAL is cleared.
@@ -81,7 +82,7 @@ localparam CONF_STR = {
 	"R[0],Reset and close OSD;",
 	// J1 maps to joystick_0 bits 4..7; names feed MiSTer's controller mapper.
 	"J1,Play/Pause,Stop,Skip Fwd,Skip Back;",
-	"v,9;", // reset OSD: v9 O[15:14]=Display res (was Idle); Content still O[5:4]
+	"v,10;", // v10: F1=mpx local-play stubs; drop F2 raw PCM from OSD
 	"V,v",`BUILD_DATE
 };
 
@@ -96,10 +97,12 @@ wire        ioctl_wr;
 wire [26:0] ioctl_addr;
 wire  [7:0] ioctl_dout;
 wire [15:0] ioctl_index;
-wire is_frame_dl = (ioctl_index[5:0] == 6'd1);
+// F1 is path-stub (.mpx) ingest — never block Main on frame_store readiness.
+wire is_path_dl = (ioctl_index[5:0] == 6'd1);
+wire is_frame_dl = 1'b0; // legacy RGB565 F1 ingest retired from OSD
 wire fs_wr_ready;
 wire sdram_startup_busy;
-wire ioctl_wait = is_frame_dl && (sdram_startup_busy || !fs_wr_ready);
+wire ioctl_wait = 1'b0;
 
 // Core→HPS status (UIO_GET_STATUS / 0x29). See docs/phase3-decode.md layout.
 wire [127:0] status_in;
@@ -582,11 +585,41 @@ wire present_reset = reset | sdram_startup_busy;
 
 wire [7:0] display_hz = status[2] ? 8'd50 : 8'd60; // PAL/NTSC family
 
-// F1 = frame (1), F2 = audio (2), F3 = elementary bitstream (3)
+// F1 = path stub (1), F2 = audio unused in OSD (2), F3 = elementary bitstream (3)
 wire is_audio_dl = (ioctl_index[5:0] == 6'd2);
 wire is_stream_dl = (ioctl_index[5:0] == 6'd3);
 
-// Frame ingest from F1
+// Path ingest from F1 (.mpx) → PLXP via present_core / ddr_frame_store
+wire        path_req;
+wire  [7:0] path_len;
+wire [2047:0] path_bytes;
+wire        path_ack_ddr; // clk_ddr domain from present_core
+reg         path_ack_s1, path_ack_s2;
+
+always @(posedge clk_sys) begin
+	if (reset) begin
+		path_ack_s1 <= 1'b0;
+		path_ack_s2 <= 1'b0;
+	end else begin
+		path_ack_s1 <= path_ack_ddr;
+		path_ack_s2 <= path_ack_s1;
+	end
+end
+
+path_ingest pinst (
+	.clk(clk_sys),
+	.reset(reset),
+	.ioctl_download(ioctl_download),
+	.ioctl_wr(ioctl_wr),
+	.ioctl_dout(ioctl_dout),
+	.enable(is_path_dl),
+	.path_req(path_req),
+	.path_len(path_len),
+	.path_bytes(path_bytes),
+	.path_ack(path_ack_s2)
+);
+
+// Legacy frame ingest kept instantiated but disabled (is_frame_dl=0).
 wire        f1_wr_en;
 wire [15:0] f1_wr_pixel;
 wire        f1_wr_reset;
@@ -902,6 +935,10 @@ present_core #(
 	.ddr_status_osd(status[15:0]),
 	.ddr_input_cmd_valid(playback_cmd_valid),
 	.ddr_input_cmd(playback_cmd),
+	.ddr_path_req(path_req),
+	.ddr_path_len(path_len),
+	.ddr_path_bytes(path_bytes),
+	.ddr_path_ack(path_ack_ddr),
 	.ddr_sdram_test_state(sdram_test_state),
 	.ddr_sdram_size_code(sdram_size_code),
 	.ddr_sdram_error_count(sdram_error_count),

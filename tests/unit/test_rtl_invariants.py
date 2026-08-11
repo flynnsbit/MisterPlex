@@ -291,11 +291,12 @@ def check_present_core() -> None:
 def check_phase_a_surface() -> None:
     text = strip_comments(read(PLEX_SV))
     strings = " ".join(re.findall(r'"([^"]*)"', text))
-    for entry in ("F1,raw", "F2,raw", "F3,264"):
+    # v10+: F1 mpx path stubs → daemon local play; F3 264 fabric test.
+    for entry in ("F1,mpx", "F3,264"):
         check(
             entry in strings,
-            f"Plex.sv CONF_STR missing `{entry}`. That drops a Phase A shipping file slot; "
-            "restore F1 raw frame, F2 raw audio, and F3 H.264 annex-B menu entries.",
+            f"Plex.sv CONF_STR missing `{entry}`. Product OSD must expose F1 mpx "
+            "local-play stubs and F3 H.264 annex-B test (see docs/osd-file-slots.md).",
         )
     for label in ("Play/Pause", "Stop", "Skip Fwd", "Skip Back"):
         check(
@@ -506,6 +507,7 @@ def check_mailboxes() -> None:
         "PLXF": ("kPlxfAddr", "kPlxfMagic", 0x3007F118, 0x504C5846),
         "DIAG": ("kSdramDiagAddr", None, 0x3007F120, None),
         "PLXD": ("kPlxdAddr", "kPlxdMagic", 0x3007F128, 0x504C5844),
+        "PLXP": ("kPlxpAddr", "kPlxpMagic", 0x3007F130, 0x504C5850),
         "PLXB": ("kPlxbAddr", "kPlxbMagic", 0x30140000, 0x504C5842),
     }
     for name, (addr_sym, magic_sym, exp_addr, exp_magic) in spec_entries.items():
@@ -563,6 +565,32 @@ def check_mailboxes() -> None:
           f"PLXD bank-release address must be 0x3007F128 (got 0x{plxd_addr:08X})")
     check(plxd_magic == 0x504C5844,
           f"PLXD bank-release magic must be 0x504C5844 'PLXD' (got 0x{plxd_magic:08X})")
+
+    # --- PLXP path-play (doorbell-relative ctrl + path buffer) ---
+    plxp_addr = cpp_const(spec_text, "kPlxpAddr")
+    plxp_magic = cpp_const(spec_text, "kPlxpMagic")
+    plxp_path = cpp_const(spec_text, "kPlxpPathAddr")
+    check(plxp_addr == 0x3007F130,
+          f"PLXP ctrl address must be 0x3007F130 (got 0x{plxp_addr:08X})")
+    check(plxp_path == 0x3007F138,
+          f"PLXP path buffer must be 0x3007F138 (got 0x{plxp_path:08X})")
+    check(plxp_magic == 0x504C5850,
+          f"PLXP magic must be 0x504C5850 'PLXP' (got 0x{plxp_magic:08X})")
+    check(cpp_const(spec_text, "kPlxpCtrlOff") == 0x130,
+          "PLXP ctrl doorbell offset must be 0x130")
+    check(cpp_const(spec_text, "kPlxpPathOff") == 0x138,
+          "PLXP path doorbell offset must be 0x138")
+    # RTL must use MAGIC_P and doorbell+0x130 path publish (product path).
+    check("MAGIC_P" in ddr_fs or "504C_5850" in ddr_fs or "504C5850" in ddr_fs,
+          "ddr_frame_store.sv must define PLXP MAGIC_P (0x504C5850)")
+    check("130" in ddr_fs and ("PATH_CTRL" in ddr_fs or "path_busy" in ddr_fs),
+          "ddr_frame_store.sv must publish PLXP path (PATH_CTRL / path_busy)")
+    # CONF_STR F1 must advertise mpx (3-char) for local path stubs.
+    plex_sv = read(ROOT / "fpga" / "Plex_MiSTer" / "Plex.sv")
+    check("F1,mpx," in plex_sv,
+          "Plex.sv CONF_STR F1 must be F1,mpx,... for OSD local play stubs")
+    check("F3,264," in plex_sv,
+          "Plex.sv CONF_STR must keep F3,264 annex-B test slot")
 
     # Verify PLXD bit-field positions in the spec are what the RTL packs.
     check(cpp_const(spec_text, "kPlxdFreeBankMaskBit") == 0,

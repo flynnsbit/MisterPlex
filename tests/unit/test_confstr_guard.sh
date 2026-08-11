@@ -10,11 +10,19 @@ from pathlib import Path
 src = Path(__import__("sys").argv[1])
 dst = Path(__import__("sys").argv[2])
 text = src.read_text()
+# Corrupt F1 extension field (must stay 3-char chunks: mpx).
 bad = text.replace(
-    '"F1,raw,RGB565 frame (320x240);"',
-    '"F1,raw,RBS,565, fr,ame (320x240);"',
+    '"F1,mpx,Play local (daemon);"',
+    '"F1,mp4,Play local (daemon);"',
     1,
 )
+if bad == text:
+    # Fallback: inject comma garble
+    bad = text.replace(
+        '"F1,mpx,Play local (daemon);"',
+        '"F1,m,p,x,Play local (daemon);"',
+        1,
+    )
 if bad == text:
     raise SystemExit("failed to inject malformed CONF_STR")
 dst.write_text(bad)
@@ -24,11 +32,12 @@ if python3 "$ROOT/scripts/check_confstr_guard.py" "$BAD" >"$WORK/red.out" 2>"$WO
   echo "FAIL: malformed CONF_STR unexpectedly passed" >&2
   exit 1
 fi
-grep -q "fixed 3-character chunks" "$WORK/red.err" || {
-  echo "FAIL: malformed CONF_STR error did not explain field/chunk guard" >&2
+# Either 3-char chunk error (mp4) or field-count error
+if ! grep -Eqi "3-character|malformed extension|mpx" "$WORK/red.err"; then
+  echo "FAIL: malformed CONF_STR error did not explain extension guard" >&2
   cat "$WORK/red.err" >&2
   exit 1
-}
+fi
 echo "RED OK: malformed CONF_STR rejected"
 cat "$WORK/red.err"
 

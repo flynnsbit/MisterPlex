@@ -47,6 +47,11 @@ module ddr_frame_store #(
 	input  wire [15:0] status_osd,
 	input  wire        input_cmd_valid,
 	input  wire  [7:0] input_cmd,
+	// OSD F1 .mpx path stub → PLXP (doorbell+0x130) + path bytes (doorbell+0x138).
+	input  wire        path_req,
+	input  wire  [7:0] path_len,
+	input  wire [2047:0] path_bytes,
+	output reg         path_ack,
 	input  wire  [3:0] sdram_test_state,
 	input  wire  [3:0] sdram_size_code,
 	input  wire [15:0] sdram_error_count,
@@ -98,6 +103,11 @@ module ddr_frame_store #(
 	localparam [28:0] SDRAM_MAILBOX_W = SDRAM_MAILBOX_PHYS[31:3];
 	localparam [28:0] FRAME_MAILBOX_W = FRAME_MAILBOX_PHYS[31:3];
 	localparam [28:0] BANK_MAILBOX_W  = BANK_MAILBOX_PHYS[31:3];
+	// Path play: always relative to the live doorbell (720/480 product maps).
+	localparam [31:0] PATH_CTRL_PHYS = DOORBELL_PHYS + 32'h130;
+	localparam [31:0] PATH_BUF_PHYS  = DOORBELL_PHYS + 32'h138;
+	localparam [28:0] PATH_CTRL_W    = PATH_CTRL_PHYS[31:3];
+	localparam [28:0] PATH_BUF_W     = PATH_BUF_PHYS[31:3];
 	localparam [28:0] Y_PLANE_QWORDS = 29'((CODED_W * CODED_H) / 8);
 	localparam [28:0] C_PLANE_QWORDS = 29'((CODED_W * CODED_H) / 32);
 	localparam [28:0] U_PLANE_BASE = Y_PLANE_QWORDS;
@@ -111,6 +121,7 @@ module ddr_frame_store #(
 	localparam [31:0] MAGIC_M = 32'h504C_584D;
 	localparam [31:0] MAGIC_F = 32'h504C_5846;
 	localparam [31:0] MAGIC_D = 32'h504C_5844; // PLXD bank-release (Display-bank)
+	localparam [31:0] MAGIC_P = 32'h504C_5850; // PLXP path-play request
 	localparam [1:0] DOORBELL_FORMAT_YUV420P = 2'd1;
 	localparam [7:0] DEBUG_FORMAT_ERROR = 8'hE1; // PLXF frame-debug: rejected non-YUV doorbell
 
@@ -630,6 +641,14 @@ module ddr_frame_store #(
 	reg [Y_QW_AW:0] qwords_remaining;
 	reg [7:0] imbox_cmd_seq;
 	reg [15:0] imbox_seq;
+	// Path publish (clk_ddr): multi-qword path buffer then PLXP ctrl.
+	reg        path_req_s1, path_req_s2;
+	reg        path_busy;
+	reg        path_done_hold; // path_ack until path_req drops
+	reg  [5:0] path_qw;        // 0..31 data qwords, 32 = write ctrl
+	reg  [7:0] path_len_lat;
+	reg [2047:0] path_bytes_lat;
+	reg [15:0] path_seq;
 	wire [28:0] fill_bank_base = fill_bank ? BASE_W1 : BASE_W0;
 	wire [28:0] fill_y_qword = {{(29-Y_W){1'b0}}, fill_y} * Y_LINE_QWORDS_W;
 `ifdef DDR_FRAME_STORE_FAULT_CHROMA_LUMA_STRIDE
@@ -763,6 +782,15 @@ module ddr_frame_store #(
 			sched_idx <= '0;
 			imbox_seq <= 16'd0;
 			imbox_cmd_seq <= 8'd0;
+			path_req_s1 <= 1'b0;
+			path_req_s2 <= 1'b0;
+			path_busy <= 1'b0;
+			path_done_hold <= 1'b0;
+			path_qw <= 6'd0;
+			path_len_lat <= 8'd0;
+			path_bytes_lat <= 2048'd0;
+			path_seq <= 16'd0;
+			path_ack <= 1'b0;
 			fill_qword <= '0;
 			burst_left <= '0;
 			qwords_remaining <= '0;
@@ -777,6 +805,19 @@ module ddr_frame_store #(
 			u_wr <= '0;
 			v_wr <= '0;
 			cmd_pop <= 1'b0;
+
+			// CDC + latch path request (path_bytes held stable while path_req).
+			path_req_s1 <= path_req;
+			path_req_s2 <= path_req_s1;
+			path_ack <= path_done_hold;
+			if (!path_req_s2)
+				path_done_hold <= 1'b0;
+			else if (path_req_s2 && !path_busy && !path_done_hold && path_len != 8'd0) begin
+				path_busy <= 1'b1;
+				path_qw <= 6'd0;
+				path_len_lat <= path_len;
+				path_bytes_lat <= path_bytes;
+			end
 
 			disp_bank_d1 <= disp_bank;
 			disp_bank_d2 <= disp_bank_d1;
@@ -972,6 +1013,25 @@ module ddr_frame_store #(
 						DDRAM_RD <= 1'b1;
 						poll_pending <= 1'b1;
 						state_ddr <= S_POLL_WAIT;
+					end else if (path_busy && poll_div[7:0] == 8'd48 && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+						// Publish path qwords 0..31 then PLXP ctrl (qw==32).
+						if (path_qw < 6'd32) begin
+							DDRAM_ADDR <= PATH_BUF_W + {23'd0, path_qw};
+							DDRAM_BURSTCNT <= 8'd1;
+							DDRAM_DIN <= path_bytes_lat[path_qw*64 +: 64];
+							DDRAM_WE <= 1'b1;
+							path_qw <= path_qw + 6'd1;
+							state_ddr <= S_WRITE_WAIT;
+						end else begin
+							DDRAM_ADDR <= PATH_CTRL_W;
+							DDRAM_BURSTCNT <= 8'd1;
+							DDRAM_DIN <= {path_seq + 16'd1, 8'd0, path_len_lat, MAGIC_P};
+							DDRAM_WE <= 1'b1;
+							path_seq <= path_seq + 16'd1;
+							path_busy <= 1'b0;
+							path_done_hold <= 1'b1;
+							state_ddr <= S_WRITE_WAIT;
+						end
 					end else if (!cmd_empty && poll_div[7:0] == 8'd64 && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						DDRAM_ADDR <= INPUT_MAILBOX_W;
 						DDRAM_BURSTCNT <= 8'd1;

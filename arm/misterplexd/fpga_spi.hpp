@@ -11,6 +11,7 @@
 #include "libmisterplex/ddr_frame_layout.hpp"
 #include "libmisterplex/ddr_bitstream_ring.hpp"
 #include "libmisterplex/input_mailbox.hpp"
+#include "libmisterplex/path_mailbox.hpp"
 #include "libmisterplex/spi_ack_wait.hpp"
 
 namespace misterplex {
@@ -165,6 +166,10 @@ public:
     // DDR-only and never falls back to the HPS<->FPGA SPI bus.
     bool readInputMailbox(PlaybackCommand& command);
 
+    // Read one edge-detected local path from PLXP (OSD F1 .mpx stub). DDR-only.
+    // On true, `path` is an absolute filesystem path for MediaPlayer::play().
+    bool readPathPlay(std::string& path);
+
     // Push raw s16le stereo PCM chunk to audio_fifo (F2 / index 2). Appends.
     bool sendPcmChunk(const uint8_t* pcm, size_t len, uint8_t index = 2);
 
@@ -307,6 +312,7 @@ private:
     uint16_t mboxSeq_ = 0;
     double mboxSeqMs_ = 0.0;
     InputMailboxEdgeDetector inputMboxEdge_;
+    PathMailboxEdgeDetector pathMboxEdge_;
     int ddrKickMode_ = 0; // 0=unknown, 1=doorbell, 2=SPI kick, -1=fail
     double ddrKickFailMs_ = -1.0; // steady_clock timestamp of last ddrKickMode_ = -1
     // beginDdrBankIngest / commitDdrBankIngest pairing state
@@ -334,6 +340,12 @@ private:
     }
     uint32_t ddrInputMailboxPhys() const {
         return ddrLayout_.doorbell_phys + (kInputMailboxPhys - kDdrDoorbellPhys);
+    }
+    uint32_t ddrPathMailboxPhys() const {
+        return ddrLayout_.doorbell_phys + kPathMailboxCtrlOff;
+    }
+    uint32_t ddrPathBufferPhys() const {
+        return ddrLayout_.doorbell_phys + kPathMailboxPathOff;
     }
     static constexpr uint32_t kMgrBase = 0xFF706000;
     static constexpr uint32_t kMapBase = 0xFF000000;

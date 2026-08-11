@@ -81,6 +81,26 @@ constexpr unsigned kPlxdSwapPendingBit = 3;   // bit [35] → bit 3 of upper wor
 constexpr unsigned kPlxdFramesDoneBit = 16;   // bits [63:48] → [31:16] of upper word
 constexpr unsigned kPlxdFramesDoneWidth = 16;
 
+// PLXP — Path play request (FPGA→ARM). OSD F1 .mpx stub → daemon local play.
+// Product addresses are doorbell-relative (same rule as PLXD/PLXF):
+//   CTRL  = doorbell_phys + 0x130
+//   PATH  = doorbell_phys + 0x138  (up to 256 bytes, zero-padded)
+// Absolute constants below are the 480-era reference base (doorbell 0x3007F000).
+//
+// CTRL layout (64-bit LE):
+//   [31:0]   magic 0x504C5850 "PLXP"
+//   [39:32]  path_len (1..255; 0 = invalid)
+//   [47:40]  reserved 0
+//   [63:48]  seq (monotonic; edge-detect on host)
+// PATH buffer: raw UTF-8/ASCII path bytes, no trailing NUL required (host uses len).
+constexpr uint32_t kPlxpAddr     = 0x3007F130u;
+constexpr uint32_t kPlxpMagic    = 0x504C5850u; // "PLXP"
+constexpr uint32_t kPlxpPathAddr = 0x3007F138u;
+constexpr unsigned kPlxpPathMax  = 255;
+// Offsets from doorbell (authoritative for 720/480 product maps):
+constexpr unsigned kPlxpCtrlOff  = 0x130u;
+constexpr unsigned kPlxpPathOff  = 0x138u;
+
 // ---- Bitstream ring mailboxes (ddr_bitstream_reader) ----
 
 // PLXB — Ring CTRL (ARM→FPGA). Bitstream ring control word.
@@ -94,19 +114,21 @@ struct MagicEntry {
     uint32_t magic;
 };
 
-constexpr std::array<MagicEntry, 7> kAllMagics = {{
+constexpr std::array<MagicEntry, 8> kAllMagics = {{
     {"PLXK", kPlxkMagic},
     {"PLXS", kPlxsMagic},
     {"PLXI", kPlxiMagic},
     {"PLXM", kPlxmMagic},
     {"PLXF", kPlxfMagic},
     {"PLXD", kPlxdMagic},
+    {"PLXP", kPlxpMagic},
     {"PLXB", kPlxbMagic},
 }};
 
 // ---- All addressed mailboxes (for address-collision detection) ----
 // Every occupied DDR mailbox slot. Gate rejects overlapping addresses.
-constexpr std::array<MailboxEntry, 8> kAllMailboxes = {{
+// PLXP CTRL is 8 bytes; the 256-byte path buffer is payload, not a second magic.
+constexpr std::array<MailboxEntry, 9> kAllMailboxes = {{
     {"PLXK", kPlxkAddr,     kPlxkMagic,     8, "arm_to_fpga",  true},
     {"PLXS", kPlxsAddr,     kPlxsMagic,     8, "fpga_to_arm",  true},
     {"PLXI", kPlxiAddr,     kPlxiMagic,     8, "fpga_to_arm",  true},
@@ -114,6 +136,7 @@ constexpr std::array<MailboxEntry, 8> kAllMailboxes = {{
     {"PLXF", kPlxfAddr,     kPlxfMagic,     8, "fpga_to_arm",  true},
     {"DIAG", kSdramDiagAddr, 0,             8, "fpga_to_arm",  false},
     {"PLXD", kPlxdAddr,     kPlxdMagic,     8, "fpga_to_arm",  true},
+    {"PLXP", kPlxpAddr,     kPlxpMagic,     8, "fpga_to_arm",  true},
     {"PLXB", kPlxbAddr,     kPlxbMagic,     8, "arm_to_fpga",  true},
 }};
 

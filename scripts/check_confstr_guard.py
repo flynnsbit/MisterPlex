@@ -146,13 +146,23 @@ def validate(entries: list[str]) -> None:
         else:
             fail(f"unrecognised entry `{entry}`")
 
+    # v10+: F1=mpx local-play stubs, F3=264 annex-B test (F2 raw PCM dropped).
     # v8+: O[5:4] content resolution (240p/480p/720p). Accept legacy O[4] too.
-    required = ["F1", "F2", "F3", "O[9:6]", "O[15:14]", "J1", "v"]
+    required = ["F1", "F3", "O[9:6]", "O[15:14]", "J1", "v"]
     for req in required:
         if req not in seen:
             fail(f"required CONF_STR entry `{req}` is missing")
     if "O[5:4]" not in seen and "O[4]" not in seen:
         fail("required CONF_STR entry `O[5:4]` (or legacy `O[4]`) is missing")
+    # File slot extensions: F1 must be mpx (daemon path stubs); F3 must include 264.
+    f1 = next((e for e in entries if e.startswith("F1,")), "")
+    f3 = next((e for e in entries if e.startswith("F3,")), "")
+    if ",mpx," not in f1:
+        fail(f"F1 must use mpx stubs for local daemon play (got `{f1}`)")
+    if ",264," not in f3 and not f3.startswith("F3,264"):
+        # F3,264,label — validate_file already checked 3-char chunks
+        if "264" not in f3.split(",")[1] if f3 else True:
+            fail(f"F3 must advertise 264 annex-B test (got `{f3}`)")
     print("PASS CONF_STR guard: structure, field counts, file slots and status bits are sane")
 
 

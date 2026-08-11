@@ -109,6 +109,10 @@ module present_core #(
 	input  wire [15:0] ddr_status_osd,
 	input  wire        ddr_input_cmd_valid,
 	input  wire  [7:0] ddr_input_cmd,
+	input  wire        ddr_path_req,
+	input  wire  [7:0] ddr_path_len,
+	input  wire [2047:0] ddr_path_bytes,
+	output wire        ddr_path_ack,
 	input  wire  [3:0] ddr_sdram_test_state,
 	input  wire  [3:0] ddr_sdram_size_code,
 	input  wire [15:0] ddr_sdram_error_count,
@@ -603,6 +607,10 @@ module present_core #(
 		.status_osd(ddr_status_osd),
 		.input_cmd_valid(ddr_input_cmd_valid),
 		.input_cmd(ddr_input_cmd),
+		.path_req(ddr_path_req),
+		.path_len(ddr_path_len),
+		.path_bytes(ddr_path_bytes),
+		.path_ack(ddr_path_ack),
 		.sdram_test_state(ddr_sdram_test_state),
 		.sdram_size_code(ddr_sdram_size_code),
 		.sdram_error_count(ddr_sdram_error_count),
@@ -625,6 +633,7 @@ module present_core #(
 		.debug_state(frame_sdram_state)
 	);
 `else
+	assign ddr_path_ack = 1'b0;
 	frame_store #(
 		.FRAME_W(FRAME_W),
 		.FRAME_H(FRAME_H),

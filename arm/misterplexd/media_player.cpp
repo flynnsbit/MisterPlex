@@ -565,12 +565,16 @@ void MediaPlayer::startInputPoll() {
         pthread_setname_np(pthread_self(), "mpx-input");
 #endif
         bool logged = false;
+        bool pathLogged = false;
         while (inputRun_.load()) {
             PlaybackCommand command = PlaybackCommand::None;
             bool got = false;
+            std::string pathPlay;
+            bool gotPath = false;
             {
                 std::lock_guard<std::mutex> lk(presentMu_);
                 got = fpga_.readInputMailbox(command);
+                gotPath = fpga_.readPathPlay(pathPlay);
             }
             if (got) {
                 if (!logged) {
@@ -578,6 +582,15 @@ void MediaPlayer::startInputPoll() {
                     log("media: playback input via DDR mailbox (no SPI)");
                 }
                 dispatchPlaybackInput(command);
+            }
+            if (gotPath && !pathPlay.empty()) {
+                if (!pathLogged) {
+                    pathLogged = true;
+                    log("media: local path play via PLXP (OSD F1 .mpx)");
+                }
+                log(std::string("media: OSD local play path=") + pathPlay);
+                // Same product path as curl /play or --play-file (outside presentMu_).
+                (void)play(pathPlay, 0, {}, 0);
             }
             for (int slept = 0; slept < 50 && inputRun_.load(); slept += 10)
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
