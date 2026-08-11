@@ -413,8 +413,9 @@ private:
     static void drawIcon(Target& t, PlaybackOverlayState state, int cx, int cy, int alpha) {
         constexpr Color amber{255, 178, 32};
         if (state == PlaybackOverlayState::Playing) {
+            // Point right: wide base on the left, tip on the right (play).
             for (int x = 0; x < 16; ++x) {
-                const int half = x / 2;
+                const int half = (15 - x) / 2;
                 fillRect(t, cx - 5 + x, cy - half, 1, half * 2 + 1, amber, alpha);
             }
         } else if (state == PlaybackOverlayState::Paused) {
