@@ -364,7 +364,17 @@ module ddr_bitstream_reader #(
 				empty_seen <= 1'b0;
 			end
 
-			if (avail > RING_BYTES_W && !overrun_sticky) begin
+			// o103: host write_count lagging consumer (new STREAM after plant residual,
+			// or flush without epoch edge) makes unsigned avail wrap > RING_BYTES and
+			// permanent overrun_sticky → ring_has_data=0 (o102 SOAK sticky 0x48 while
+			// plxb climbs to 0x4002a). Soft-snap read to write instead of freeze.
+			// True ring overrun still sticky when write-read > capacity with write>=read.
+			if (have_ctrl && (write_count < read_count)) begin
+				read_count <= write_count;
+				fpga_read_count <= write_count;
+				overrun_sticky <= 1'b0;
+				arm_publish();
+			end else if (avail > RING_BYTES_W && !overrun_sticky) begin
 				overrun_sticky <= 1'b1;
 				if (overrun_count != 16'hFFFF)
 					overrun_count <= overrun_count + 16'd1;
