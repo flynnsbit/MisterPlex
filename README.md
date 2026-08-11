@@ -14,7 +14,7 @@ The release tarball includes everything else (daemon, FPGA core, `ffmpeg`).
 ## Install
 
 1. Download the [latest release](https://github.com/flynnsbit/MisterPlex/releases) and extract it.
-2. Copy to the MiSTer (example with SSH; password is often `1`):
+2. Copy to the MiSTer (example with SSH):
 
 ```bash
 tar xzf misterplex-*.tar.gz && cd misterplex-*
