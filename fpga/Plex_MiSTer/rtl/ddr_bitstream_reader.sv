@@ -169,15 +169,24 @@ module ddr_bitstream_reader #(
 	wire [31:0] consume_count_w =
 		(avail < bytes_to_qword_end) ? avail : bytes_to_qword_end;
 	wire [3:0] consume_count = consume_count_w[3:0];
-	// Until first PLXB: level (survives m1 busy CDC). After: 1-cyc/64 like o44.
-	// Until first PLXB: level want_poll. After: 1-cyc/64.
-	// o88: soft hold — suppress DATA want_read only while publish_pending so
-	// the 9-step WE can finish after a beat. Do NOT gate want_poll (o86 hard
-	// hold on poll+read + WE-before-RD regressed wipe to PUBLISH_DEAD).
-	// o87 kept LIVE wipe + R3 no beat-end publish; plant still cons=0/telem freeze.
-	wire want_poll = enable && (!have_ctrl || (poll_div == {POLL_DIV_BITS{1'b0}}));
-	wire want_read = enable && !publish_pending && ring_has_data && (beat_left == 4'd0);
+	// Until first PLXB: level want_poll (survives m1 busy CDC).
+	// o99: after have_ctrl, level-poll whenever avail==0 so host write_count
+	// growth is re-sampled without relying on 1-cyc/64 under publish pressure
+	// (o98 STREAM1: plant 0→0x40 one-shot; CONT 0x40→0x80 / STREAM stuck).
+	// While ring_has_data: 1-cyc/64 refresh only (avoid CTRL spam mid-drain).
+	// o88 soft hold removed from want_read — IDLE priority finishes mid-lite
+	// (publish_step!=0) then prefers DATA over optional HB/surface publish.
+	wire want_poll = enable && (
+		!have_ctrl ||
+		(avail == 32'd0) ||
+		(poll_div == {POLL_DIV_BITS{1'b0}})
+	);
+	// o99: no o88 soft-hold on want_read. Pending publish is handled in IDLE
+	// priority (mid-lite / step0 surface) so DATA can chain between records.
+	wire want_read = enable && ring_has_data && (beat_left == 4'd0);
 	wire want_pub = enable && publish_pending;
+	// Mid-lite PLXE must complete (o96/o97). Step0 pending = surface PLXR next.
+	wire pub_must = publish_pending && (publish_step != 4'd0);
 	wire can_consume = (mode != MODE_PAYLOAD) || !out_full;
 	wire [15:0] state_flags = {4'd0, fatal_sticky, desync_sticky, paused, active,
 	                           overrun_sticky, underrun_sticky, mode, state};
@@ -368,50 +377,52 @@ module ddr_bitstream_reader #(
 				end
 
 				ST_IDLE: begin
-					// o72: publish MUST beat poll. o79: after DEAD0003 CONSUME timeout we
-					// land here with beat_left>0 — publish/poll first, then resume
-					// CONSUME (want_read alone cannot, it requires beat_left==0).
-					// o96: issue PLXR then enter ST_PUBLISH for PLXE — do not stay in
-					// IDLE between steps (want_poll level pre-have_ctrl can race the
-					// post-WE dead cycle; o95 step-preserve still wiped PLXE=0).
-					if (publish_pending && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+					// o99 continuous drain (STREAM1: o98 plant 0→0x40 one-shot only):
+					//  1) mid-lite PLXE (publish_step!=0) — o96/o97 must finish
+					//  2) resume partial beat before new CMD (o79)
+					//  3) step0 publish_pending — record-boundary / HB / underrun
+					//     surface (NOT per-8B; o91 empty-beat publish removed)
+					//  4) DATA when ring_has_data — chain beats between surfaces
+					//  5) CTRL poll — level when avail==0 (o99), pulse while draining
+					// Between records want_read is free (no soft-hold, no per-beat WE).
+					if (pub_must && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+						// Recover mid-lite (step1) if re-entered IDLE without ST_PUBLISH.
 						DDRAM_BURSTCNT <= 8'd1;
-						if (publish_step == 4'd0) begin
-							DDRAM_ADDR <= READ_W;
-							DDRAM_DIN <= {read_count, MAGIC_READ};
-							DDRAM_WE <= 1'b1;
-							publish_step <= 4'd1;
-							// ≥16 cyc: grant + 2FF ack_s2 + margin before second WE
-							pub_gap <= 5'd16;
-							poll_wait <= 16'd0;
-							state <= ST_PUBLISH;
-						end else begin
-							// Recover mid-lite (step1) if re-entered IDLE without ST_PUBLISH.
-							DDRAM_ADDR <= ERR_W;
-							DDRAM_DIN <= {overrun_count[7:0], underrun_count[7:0],
-							              active, overrun_sticky, underrun_sticky, 5'd0,
-							              telem_seq + 8'd1, MAGIC_ERR};
-							DDRAM_WE <= 1'b1;
-							telem_seq <= telem_seq + 8'd1;
-							publish_step <= 4'd0;
-							publish_pending <= 1'b0;
-					end
-					end else if (want_poll && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
-						DDRAM_ADDR <= CTRL_W;
-						DDRAM_BURSTCNT <= 8'd1;
-						DDRAM_RD <= 1'b1;
+						DDRAM_ADDR <= ERR_W;
+						DDRAM_DIN <= {overrun_count[7:0], underrun_count[7:0],
+						              active, overrun_sticky, underrun_sticky, 5'd0,
+						              telem_seq + 8'd1, MAGIC_ERR};
+						DDRAM_WE <= 1'b1;
+						telem_seq <= telem_seq + 8'd1;
+						publish_step <= 4'd0;
+						publish_pending <= 1'b0;
+					end else if (beat_left != 4'd0) begin
+						// o79: resume partial beat after publish/poll/timeout window
+						state <= ST_CONSUME;
 						poll_wait <= 16'd0;
-						state <= ST_POLL;
+					end else if (publish_pending && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+						// step0 lite: PLXR then ST_PUBLISH for PLXE (record/HB/empty).
+						DDRAM_BURSTCNT <= 8'd1;
+						DDRAM_ADDR <= READ_W;
+						DDRAM_DIN <= {read_count, MAGIC_READ};
+						DDRAM_WE <= 1'b1;
+						publish_step <= 4'd1;
+						// ≥16 cyc: grant + 2FF ack_s2 + margin before second WE
+						pub_gap <= 5'd16;
+						poll_wait <= 16'd0;
+						state <= ST_PUBLISH;
 					end else if (want_read && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						DDRAM_ADDR <= DATA_W + read_qword_offset;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_RD <= 1'b1;
 						byte_idx <= read_byte_index;
 						state <= ST_READ_WAIT;
-					end else if (beat_left != 4'd0) begin
-						// o79: resume partial beat after publish/poll window
-						state <= ST_CONSUME;
+					end else if (want_poll && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+						DDRAM_ADDR <= CTRL_W;
+						DDRAM_BURSTCNT <= 8'd1;
+						DDRAM_RD <= 1'b1;
 						poll_wait <= 16'd0;
+						state <= ST_POLL;
 					end
 				end
 
@@ -507,19 +518,18 @@ module ddr_bitstream_reader #(
 					// o74: mirror ST_POLL timeout — DATA RD with no DOUT left BSR
 					// stuck out of IDLE (no publish, cons=0) after have_ctrl.
 					// o83: accept without rd_inflight (o80).
-					// o98: drop o94 abandon-on-publish_pending. o97 pub_gap fixed
-					// wipe LIVE (PLXE moving telem_u=32) but plant cons_max=0 —
-					// HB/publish re-arm during READ_WAIT cancelled DATA DOUT so
-					// CONSUME never advanced read_count. Finish DATA beat first;
-					// publish after DOUT (keep post-DOUT arm) or timeout.
+					// o98: drop o94 abandon-on-publish_pending — finish DATA beat.
+					// o99: DOUT → ST_CONSUME directly (no IDLE publish detour).
+					// o94/o98 post-DOUT arm_publish + IDLE made every 8B take a
+					// full lite PLXR→PLXE before CONSUME; combined with soft
+					// want_read hold, CONT/STREAM after first 64B never re-armed
+					// DATA while host write_count climbed. Record-boundary + HB
+					// publish still surface cons (header arm_publish / o80 HB).
 					if (DDRAM_DOUT_READY) begin
 						beat_q <= DDRAM_DOUT;
 						beat_left <= consume_count;
 						poll_wait <= 16'd0;
-						// o94/o98: surface after DATA beat; then ST_IDLE publishes
-						// (pending) and resumes CONSUME via beat_left.
-						arm_publish();
-						state <= ST_IDLE;
+						state <= ST_CONSUME;
 					end else if (poll_wait == 16'hFFFF) begin
 						last_bad_seq <= 32'hDEAD0002; // data RD timeout
 						arm_publish();
@@ -641,17 +651,15 @@ module ddr_bitstream_reader #(
 						end
 
 						// o91: do NOT jump IDLE on beat_left==1 same cycle as last byte
-						// (o90 did; fit STA_RED setup g2 -0.159 / hold g0 -0.246 — no deploy).
-						// After last byte, nonblocking beat_left→0; next cycle empty branch
-						// arms lite publish + IDLE. Same host cadence as o90 (RD→CONSUME→
-						// 2WE→RD) with less combo on the consume path for STA.
+						// (o90 did; fit STA_RED). After last byte, nonblocking beat_left→0;
+						// next cycle empty branch returns IDLE (o99: no per-beat publish).
 						poll_wait <= 16'd0;
 					end else if (beat_left == 4'd0) begin
-						// o91: every completed DATA beat → lite publish (PLXR+PLXE).
-						// o89 never armed here → plant cons=0 after DATA; o84 per-byte
-						// reached 0x20. Empty-entry publish restores beat surface.
+						// o99: beat done → IDLE only. Per-beat arm_publish (o91) forced
+						// lite 2WE between every 8B and soft-held want_read; plant still
+						// reached 0x40 via header arm_publish, but CONT/STREAM stalled.
+						// Surface cons on record boundary (above) / HB / empty underrun.
 						state <= ST_IDLE;
-						arm_publish();
 						poll_wait <= 16'd0;
 					end else if (poll_wait == 16'hFFFF) begin
 						// o74: out_full (or other) stall — return to IDLE so
