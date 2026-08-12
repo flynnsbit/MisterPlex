@@ -45,7 +45,10 @@ module true480_present_tb (
 	output wire        hook_y_hit,
 	output wire        hook_c_hit,
 	output wire        hook_miss,
-	output wire        hook_soft_c_fallback
+	output wire        hook_soft_c_fallback,
+	output wire        cfg_active_config,
+	output wire        cfg_native_beam_source,
+	output wire [7:0]  cfg_y_fill_stride
 );
 	wire fs_wr_ready;
 	wire sdram_sel;
@@ -64,12 +67,26 @@ module true480_present_tb (
 	wire [31:0] stat_display_index, stat_content_index, stat_wr_count;
 	wire stat_advance, stat_has_audio, stat_audio_underrun, stat_swap_pending;
 	wire [7:0] stat_frame_sdram_state;
+`ifdef PLEX_PRESENT_TRUE_480P
+	assign cfg_active_config = 1'b1;
+	assign cfg_native_beam_source = 1'b1;
+	assign cfg_y_fill_stride = 8'd1;
+`else
+	assign cfg_active_config = 1'b0;
+	assign cfg_native_beam_source = 1'b0;
+	assign cfg_y_fill_stride = 8'd0;
+`endif
 
 	present_core #(
 		.FRAME_W(640),
 		.FRAME_H(480),
 		.FRAME_STRIDE(640),
+`ifdef PLEX_PRESENT_TRUE_480P
+		.FRAME_LINE_COUNT(8),
+		.FRAME_Y_FILL_STRIDE(1)
+`else
 		.FRAME_LINE_COUNT(8)
+`endif
 	) dut (
 		.clk(clk),
 		.clk_sdram(clk),

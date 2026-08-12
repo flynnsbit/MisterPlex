@@ -457,11 +457,37 @@ std::string scenarioFromArgs(int argc, char** argv) {
     return scenario;
 }
 
+bool requireActiveConfigFromArgs(int argc, char** argv) {
+    for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]) == "--require-active-config")
+            return true;
+    }
+    return false;
+}
+
+int checkActiveConfig(bool required) {
+    Vtrue480_i420_tb top;
+    top.eval();
+    const bool active = top.cfg_active_config;
+    const int stride = top.cfg_y_fill_stride;
+    std::cout << "TRUE480_BUILD_CONFIG active_define=" << active
+              << " y_fill_stride=" << stride
+              << " required=" << required << "\n";
+    if (required && (!active || stride != 1)) {
+        std::cerr << "FAIL true480 active configuration disappeared: "
+                     "PLEX_PRESENT_TRUE_480P=0 or Y_FILL_STRIDE!=1\n";
+        return 1;
+    }
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
     try {
+        if (checkActiveConfig(requireActiveConfigFromArgs(argc, argv)) != 0)
+            return 1;
         const std::string scenario = scenarioFromArgs(argc, argv);
         if (scenario == "good")
             return runGood(false, true);

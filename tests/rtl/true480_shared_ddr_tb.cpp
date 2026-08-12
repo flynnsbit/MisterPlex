@@ -454,7 +454,7 @@ int checkResourceContract(const Vtrue480_shared_ddr_tb& top) {
     return ok ? 0 : 1;
 }
 
-int runProof(bool idealModel, bool resourceOnly) {
+int runProof(bool idealModel, bool resourceOnly, bool requireActiveConfig) {
     ModelConfig cfg;
     if (idealModel) {
         cfg.ideal = true;
@@ -466,6 +466,20 @@ int runProof(bool idealModel, bool resourceOnly) {
         cfg.beatGapCycles = 0;
     }
     Sim sim(cfg);
+    sim.top.eval();
+    const bool activeConfig = sim.top.cfg_active_config;
+    const bool nativeBeam = sim.top.cfg_native_beam_source;
+    const int fillStride = sim.top.cfg_y_fill_stride;
+    std::cout << "TRUE480_SHARED_BUILD_CONFIG active_define=" << activeConfig
+              << " native_beam_source=" << nativeBeam
+              << " y_fill_stride=" << fillStride
+              << " required=" << requireActiveConfig << "\n";
+    if (requireActiveConfig &&
+        (!activeConfig || !nativeBeam || fillStride != 1)) {
+        std::cerr << "FAIL true480 shared active configuration disappeared: "
+                     "define/native beam/fill stride contract is not active\n";
+        return 1;
+    }
     const int resourceRc = checkResourceContract(sim.top);
     if (resourceOnly)
         return resourceRc;
@@ -649,19 +663,22 @@ int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
     bool ideal = false;
     bool resourceOnly = false;
+    bool requireActiveConfig = false;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--ideal-ddr")
             ideal = true;
         else if (arg == "--resource-only")
             resourceOnly = true;
+        else if (arg == "--require-active-config")
+            requireActiveConfig = true;
         else {
             std::cerr << "unknown argument: " << arg << "\n";
             return 2;
         }
     }
     try {
-        return runProof(ideal, resourceOnly);
+        return runProof(ideal, resourceOnly, requireActiveConfig);
     } catch (const std::exception& e) {
         std::cerr << "FAIL true480 shared exception: " << e.what() << "\n";
         return 1;

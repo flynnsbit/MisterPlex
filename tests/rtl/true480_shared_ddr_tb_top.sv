@@ -35,6 +35,9 @@ module true480_shared_ddr_tb #(
 	output wire [7:0]  cfg_line_count,
 	output wire [31:0] cfg_linebuf_bits,
 	output wire [15:0] cfg_m10k_estimate,
+	output wire        cfg_active_config,
+	output wire        cfg_native_beam_source,
+	output wire [7:0]  cfg_y_fill_stride,
 	output wire [7:0]  store_debug_state,
 	output wire        store_m0_rd,
 	output wire        store_m0_we,
@@ -68,6 +71,38 @@ module true480_shared_ddr_tb #(
 	assign cfg_linebuf_bits = 32'(LINEBUF_BITS);
 	assign cfg_m10k_estimate = 16'(M10K_ESTIMATE);
 
+	wire pixel_step_i;
+	wire [9:0] beam_x_i;
+	wire [8:0] beam_y_i;
+	wire beam_active_i;
+	wire frame_start_i;
+`ifdef PLEX_PRESENT_TRUE_480P
+	wire native_hblank;
+	wire native_hsync;
+	wire native_vblank;
+	wire native_vsync;
+	wire [10:0] native_hc;
+	wire [10:0] native_vc;
+	present_beam_true_480p native_beam (
+		.clk(clk_sys),
+		.reset(reset),
+		.ce_pix(pixel_step_i),
+		.HBlank(native_hblank),
+		.HSync(native_hsync),
+		.VBlank(native_vblank),
+		.VSync(native_vsync),
+		.frame_start(frame_start_i),
+		.hc_out(native_hc),
+		.vc_out(native_vc)
+	);
+	assign beam_x_i = native_hc[9:0];
+	assign beam_y_i = native_vc[8:0];
+	assign beam_active_i = !native_hblank && !native_vblank;
+	assign cfg_active_config = 1'b1;
+	assign cfg_native_beam_source = 1'b1;
+	assign cfg_y_fill_stride = 8'd1;
+	wire _unused_native_sync = native_hsync | native_vsync;
+`else
 	reg ce_div;
 	reg [9:0] beam_x_r;
 	reg [8:0] beam_y_r;
@@ -95,14 +130,23 @@ module true480_shared_ddr_tb #(
 			end
 		end
 	end
-	assign pixel_step = ce_div;
-	assign beam_x = beam_x_r;
-	assign beam_y = beam_y_r;
-	assign beam_active = (beam_x_r < 10'd640) && (beam_y_r < 9'd480);
-	assign beam_frame_start = frame_start_r;
+	assign pixel_step_i = ce_div;
+	assign beam_x_i = beam_x_r;
+	assign beam_y_i = beam_y_r;
+	assign beam_active_i = (beam_x_r < 10'd640) && (beam_y_r < 9'd480);
+	assign frame_start_i = frame_start_r;
+	assign cfg_active_config = 1'b0;
+	assign cfg_native_beam_source = 1'b0;
+	assign cfg_y_fill_stride = 8'd0;
+`endif
+	assign pixel_step = pixel_step_i;
+	assign beam_x = beam_x_i;
+	assign beam_y = beam_y_i;
+	assign beam_active = beam_active_i;
+	assign beam_frame_start = frame_start_i;
 
-	wire [9:0] store_rd_x = (beam_x_r < 10'd640) ? beam_x_r : 10'd639;
-	wire [8:0] store_rd_y = (beam_y_r < 9'd480) ? beam_y_r : 9'd479;
+	wire [9:0] store_rd_x = (beam_x_i < 10'd640) ? beam_x_i : 10'd639;
+	wire [8:0] store_rd_y = (beam_y_i < 9'd480) ? beam_y_i : 9'd479;
 
 	wire m0_busy;
 	wire [7:0] m0_burstcnt;
@@ -134,6 +178,9 @@ module true480_shared_ddr_tb #(
 		.PRESENT_X(11),
 		.PRESENT_Y(0),
 		.LINE_COUNT(LINE_COUNT),
+`ifdef PLEX_PRESENT_TRUE_480P
+		.Y_FILL_STRIDE(1),
+`endif
 		.PHYS_BASE(32'h3000_0000),
 		.HPS_BANK_STRIDE_BYTES(32'h0008_0000),
 		.DOORBELL_PHYS(32'h300f_f000),
@@ -144,7 +191,7 @@ module true480_shared_ddr_tb #(
 		.reset(reset),
 		.rd_x(store_rd_x),
 		.rd_y(store_rd_y),
-		.rd_active(beam_active),
+		.rd_active(beam_active_i),
 		.rd_r(rd_r),
 		.rd_g(rd_g),
 		.rd_b(rd_b),
@@ -166,7 +213,7 @@ module true480_shared_ddr_tb #(
 		.DDRAM_DIN(m0_din),
 		.DDRAM_BE(m0_be),
 		.DDRAM_WE(m0_we),
-		.vsync_pulse(frame_start_r),
+		.vsync_pulse(frame_start_i),
 		.has_frame(has_frame),
 		.swap_pending(swap_pending),
 		.underrun_count(underrun_count),

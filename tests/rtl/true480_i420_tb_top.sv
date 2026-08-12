@@ -37,7 +37,9 @@ module true480_i420_tb #(
 	output wire [7:0]  obs_y,
 	output wire [7:0]  obs_u,
 	output wire [7:0]  obs_v,
-	output wire        obs_disp_bank
+	output wire        obs_disp_bank,
+	output wire        cfg_active_config,
+	output wire [7:0]  cfg_y_fill_stride
 );
 	localparam int PRESENT_X_P = (GEOMETRY_FAULT == 1) ? 10 : 11;
 	localparam int CROP_LEFT_P = (GEOMETRY_FAULT == 2) ? 1 : 0;
@@ -45,6 +47,13 @@ module true480_i420_tb #(
 	wire [7:0] DDRAM_BE;
 	wire swap_pending;
 	wire [7:0] debug_state;
+`ifdef PLEX_PRESENT_TRUE_480P
+	assign cfg_active_config = 1'b1;
+	assign cfg_y_fill_stride = 8'd1;
+`else
+	assign cfg_active_config = 1'b0;
+	assign cfg_y_fill_stride = 8'd0;
+`endif
 
 	ddr_frame_store #(
 		.FRAME_W(640),
@@ -59,6 +68,9 @@ module true480_i420_tb #(
 		.PRESENT_X(PRESENT_X_P),
 		.PRESENT_Y(0),
 		.LINE_COUNT(8),
+`ifdef PLEX_PRESENT_TRUE_480P
+		.Y_FILL_STRIDE(1),
+`endif
 		.PHYS_BASE(32'h3000_0000),
 		.HPS_BANK_STRIDE_BYTES(32'h0008_0000),
 		.DOORBELL_PHYS(32'h300f_f000),
