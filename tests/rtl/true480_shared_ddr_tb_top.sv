@@ -1,0 +1,313 @@
+`default_nettype none
+
+module true480_shared_ddr_tb #(
+	parameter int LINE_COUNT = 8,
+	parameter int M1_GAP_SYS_CYCLES = 8,
+	parameter bit M1_TRAFFIC_ENABLE = 1'b1
+)(
+	input  wire        clk_sys,
+	input  wire        clk_ddr,
+	input  wire        reset,
+	input  wire        m1_run,
+	output wire        pixel_step,
+	output wire [9:0]  beam_x,
+	output wire [8:0]  beam_y,
+	output wire        beam_active,
+	output wire        beam_frame_start,
+	output wire [7:0]  rd_r,
+	output wire [7:0]  rd_g,
+	output wire [7:0]  rd_b,
+	output wire        has_frame,
+	output wire [15:0] underrun_count,
+	output wire [15:0] frames_done,
+	output wire        doorbell_ok,
+	output wire        obs_visible_now,
+	output wire [9:0]  obs_src_x_now,
+	output wire [8:0]  obs_src_y_now,
+	output wire        obs_visible_pipe,
+	output wire        obs_y_hit,
+	output wire        obs_c_hit,
+	output wire        obs_miss,
+	output reg  [31:0] m1_want_cycles,
+	output reg  [31:0] m1_reads_issued,
+	output reg  [31:0] m1_responses_seen,
+	output reg  [31:0] m1_protocol_errors,
+	output wire [7:0]  cfg_line_count,
+	output wire [31:0] cfg_linebuf_bits,
+	output wire [15:0] cfg_m10k_estimate,
+	output wire [7:0]  store_debug_state,
+	output wire        store_m0_rd,
+	output wire        store_m0_we,
+	output wire        store_m0_busy,
+	output wire        test_m1_want,
+	output wire        test_m1_busy,
+	output wire        test_m1_rd,
+	output wire        test_m1_we,
+	output wire [1:0]  test_m1_state,
+	input  wire        DDRAM_BUSY,
+	input  wire [63:0] DDRAM_DOUT,
+	input  wire        DDRAM_DOUT_READY,
+	output wire [7:0]  DDRAM_BURSTCNT,
+	output wire [28:0] DDRAM_ADDR,
+	output wire        DDRAM_RD,
+	output wire [63:0] DDRAM_DIN,
+	output wire [7:0]  DDRAM_BE,
+	output wire        DDRAM_WE
+);
+	localparam int CODED_W = 624;
+	localparam int CODED_H = 480;
+	localparam int Y_LINE_QWORDS = CODED_W / 8;
+	localparam int C_LINE_QWORDS = CODED_W / 16;
+	localparam int LINE_SLOTS = LINE_COUNT * 2;
+	localparam int LINEBUF_BITS = LINE_SLOTS * (Y_LINE_QWORDS + 2 * C_LINE_QWORDS) * 64;
+	// Cyclone V M10K simple/dual-port width is at most 40 bits. Each 64-bit
+	// Y/U/V line RAM therefore consumes two blocks per slot.
+	localparam int M10K_ESTIMATE = LINE_SLOTS * 3 * 2;
+
+	assign cfg_line_count = 8'(LINE_COUNT);
+	assign cfg_linebuf_bits = 32'(LINEBUF_BITS);
+	assign cfg_m10k_estimate = 16'(M10K_ESTIMATE);
+
+	reg ce_div;
+	reg [9:0] beam_x_r;
+	reg [8:0] beam_y_r;
+	reg frame_start_r;
+	always @(posedge clk_sys) begin
+		frame_start_r <= 1'b0;
+		if (reset) begin
+			ce_div <= 1'b0;
+			beam_x_r <= 10'd0;
+			beam_y_r <= 9'd0;
+		end else begin
+			ce_div <= ~ce_div;
+			if (ce_div) begin
+				if (beam_x_r == 10'd671) begin
+					beam_x_r <= 10'd0;
+					if (beam_y_r == 9'd495) begin
+						beam_y_r <= 9'd0;
+						frame_start_r <= 1'b1;
+					end else begin
+						beam_y_r <= beam_y_r + 9'd1;
+					end
+				end else begin
+					beam_x_r <= beam_x_r + 10'd1;
+				end
+			end
+		end
+	end
+	assign pixel_step = ce_div;
+	assign beam_x = beam_x_r;
+	assign beam_y = beam_y_r;
+	assign beam_active = (beam_x_r < 10'd640) && (beam_y_r < 9'd480);
+	assign beam_frame_start = frame_start_r;
+
+	wire [9:0] store_rd_x = (beam_x_r < 10'd640) ? beam_x_r : 10'd639;
+	wire [8:0] store_rd_y = (beam_y_r < 9'd480) ? beam_y_r : 9'd479;
+
+	wire m0_busy;
+	wire [7:0] m0_burstcnt;
+	wire [28:0] m0_addr;
+	wire [63:0] m0_dout;
+	wire m0_dout_ready;
+	wire m0_rd;
+	wire [63:0] m0_din;
+	wire [7:0] m0_be;
+	wire m0_we;
+	wire m0_clk;
+	wire swap_pending;
+	wire [7:0] debug_state;
+	assign store_debug_state = debug_state;
+	assign store_m0_rd = m0_rd;
+	assign store_m0_we = m0_we;
+	assign store_m0_busy = m0_busy;
+
+	ddr_frame_store #(
+		.FRAME_W(640),
+		.FRAME_H(480),
+		.FRAME_STRIDE(640),
+		.CODED_W(CODED_W),
+		.CODED_H(CODED_H),
+		.DISPLAY_W(618),
+		.DISPLAY_H(480),
+		.CROP_LEFT(0),
+		.CROP_TOP(0),
+		.PRESENT_X(11),
+		.PRESENT_Y(0),
+		.LINE_COUNT(LINE_COUNT),
+		.PHYS_BASE(32'h3000_0000),
+		.HPS_BANK_STRIDE_BYTES(32'h0008_0000),
+		.DOORBELL_PHYS(32'h300f_f000),
+		.STALE_DOORBELL_FALLBACK_POLLS(256)
+	) store (
+		.clk(clk_sys),
+		.clk_ddr(clk_ddr),
+		.reset(reset),
+		.rd_x(store_rd_x),
+		.rd_y(store_rd_y),
+		.rd_active(beam_active),
+		.rd_r(rd_r),
+		.rd_g(rd_g),
+		.rd_b(rd_b),
+		.start_req(1'b0),
+		.bank_sel(1'b0),
+		.status_osd(16'd0),
+		.input_cmd_valid(1'b0),
+		.input_cmd(8'd0),
+		.sdram_test_state(4'd0),
+		.sdram_size_code(4'd0),
+		.sdram_error_count(16'd0),
+		.DDRAM_CLK(m0_clk),
+		.DDRAM_BUSY(m0_busy),
+		.DDRAM_BURSTCNT(m0_burstcnt),
+		.DDRAM_ADDR(m0_addr),
+		.DDRAM_DOUT(m0_dout),
+		.DDRAM_DOUT_READY(m0_dout_ready),
+		.DDRAM_RD(m0_rd),
+		.DDRAM_DIN(m0_din),
+		.DDRAM_BE(m0_be),
+		.DDRAM_WE(m0_we),
+		.vsync_pulse(frame_start_r),
+		.has_frame(has_frame),
+		.swap_pending(swap_pending),
+		.underrun_count(underrun_count),
+		.frames_done(frames_done),
+		.doorbell_ok(doorbell_ok),
+		.debug_state(debug_state)
+	);
+
+	assign obs_visible_now = store.rd_visible;
+	assign obs_src_x_now = store.src_x;
+	assign obs_src_y_now = store.src_y;
+	assign obs_visible_pipe = store.rd_visible_d;
+	assign obs_y_hit = store.y_hit_r;
+	assign obs_c_hit = store.c_hit_r;
+	assign obs_miss = store.miss_d;
+
+	wire m1_busy;
+	reg [7:0] m1_burstcnt;
+	reg [28:0] m1_addr;
+	wire [63:0] m1_dout;
+	wire m1_dout_ready;
+	reg m1_rd;
+	reg [63:0] m1_din;
+	reg [7:0] m1_be;
+	reg m1_we;
+	reg m1_want;
+	reg [15:0] m1_gap;
+	reg [1:0] m1_state;
+	assign test_m1_want = m1_want;
+	assign test_m1_busy = m1_busy;
+	assign test_m1_rd = m1_rd;
+	assign test_m1_we = m1_we;
+	assign test_m1_state = m1_state;
+	localparam [1:0] M1_GAP = 2'd0;
+	localparam [1:0] M1_WAIT_GRANT = 2'd1;
+	localparam [1:0] M1_ISSUE = 2'd2;
+	localparam [1:0] M1_WAIT_RESPONSE = 2'd3;
+
+	always @(posedge clk_sys) begin
+		m1_rd <= 1'b0;
+		m1_we <= 1'b0;
+		if (reset) begin
+			m1_burstcnt <= 8'd1;
+			m1_addr <= 29'(32'h3010_0000 >> 3);
+			m1_din <= 64'd0;
+			m1_be <= 8'hff;
+			m1_want <= 1'b0;
+			m1_gap <= 16'd0;
+			m1_state <= M1_GAP;
+			m1_want_cycles <= 32'd0;
+			m1_reads_issued <= 32'd0;
+			m1_responses_seen <= 32'd0;
+			m1_protocol_errors <= 32'd0;
+		end else begin
+			if (m1_want)
+				m1_want_cycles <= m1_want_cycles + 32'd1;
+			if (m1_dout_ready)
+				m1_responses_seen <= m1_responses_seen + 32'd1;
+
+			if (!M1_TRAFFIC_ENABLE || !m1_run) begin
+				m1_want <= 1'b0;
+				if (m1_state != M1_WAIT_RESPONSE)
+					m1_state <= M1_GAP;
+			end else begin
+				case (m1_state)
+				M1_GAP: begin
+					m1_want <= 1'b0;
+					if (m1_gap == 16'd0) begin
+						m1_want <= 1'b1;
+						m1_state <= M1_WAIT_GRANT;
+					end else begin
+						m1_gap <= m1_gap - 16'd1;
+					end
+				end
+				M1_WAIT_GRANT: begin
+					m1_want <= 1'b1;
+					if (!m1_busy) begin
+						m1_rd <= 1'b1;
+						m1_reads_issued <= m1_reads_issued + 32'd1;
+						m1_state <= M1_ISSUE;
+					end
+				end
+				M1_ISSUE: begin
+					m1_want <= 1'b1;
+					m1_rd <= 1'b1;
+					if (m1_busy)
+						m1_state <= M1_WAIT_RESPONSE;
+				end
+				M1_WAIT_RESPONSE: begin
+					m1_want <= 1'b1;
+					if (m1_dout_ready) begin
+						m1_want <= 1'b0;
+						if (m1_addr == 29'((32'h3011_0000 >> 3) - 1))
+							m1_addr <= 29'(32'h3010_0000 >> 3);
+						else
+							m1_addr <= m1_addr + 29'd1;
+						m1_gap <= 16'(M1_GAP_SYS_CYCLES);
+						m1_state <= M1_GAP;
+					end
+				end
+				default: m1_state <= M1_GAP;
+				endcase
+			end
+			if (m1_responses_seen > m1_reads_issued)
+				m1_protocol_errors <= m1_protocol_errors + 32'd1;
+		end
+	end
+
+	ddr_bus_arbiter arb (
+		.clk(clk_ddr),
+		.clk_m1(clk_sys),
+		.reset(reset),
+		.m1_want(m1_want),
+		.m0_busy(m0_busy),
+		.m0_burstcnt(m0_burstcnt),
+		.m0_addr(m0_addr),
+		.m0_dout(m0_dout),
+		.m0_dout_ready(m0_dout_ready),
+		.m0_rd(m0_rd),
+		.m0_din(m0_din),
+		.m0_be(m0_be),
+		.m0_we(m0_we),
+		.m1_busy(m1_busy),
+		.m1_burstcnt(m1_burstcnt),
+		.m1_addr(m1_addr),
+		.m1_dout(m1_dout),
+		.m1_dout_ready(m1_dout_ready),
+		.m1_rd(m1_rd),
+		.m1_din(m1_din),
+		.m1_be(m1_be),
+		.m1_we(m1_we),
+		.DDRAM_BUSY(DDRAM_BUSY),
+		.DDRAM_BURSTCNT(DDRAM_BURSTCNT),
+		.DDRAM_ADDR(DDRAM_ADDR),
+		.DDRAM_DOUT(DDRAM_DOUT),
+		.DDRAM_DOUT_READY(DDRAM_DOUT_READY),
+		.DDRAM_RD(DDRAM_RD),
+		.DDRAM_DIN(DDRAM_DIN),
+		.DDRAM_BE(DDRAM_BE),
+		.DDRAM_WE(DDRAM_WE)
+	);
+endmodule
+
+`default_nettype wire

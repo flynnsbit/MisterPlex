@@ -122,6 +122,11 @@ run_red() {
 
 echo "RTL SIM: $VERILATOR_VERSION"
 echo "TRUE480_RTL_DIR=$RTL"
+if [[ "$MODE" == "--calibrate-keepv22" || "$MODE" == "--calibrate-keepv27" ]]; then
+  PRESENT="$(build_present)"
+  run_pass "snapshot_${MODE#--calibrate-}" "$PRESENT" "$MODE"
+  exit 0
+fi
 NORMAL="$(build_variant normal 0)"
 
 run_pass "settled_full_frame_smoke" "$NORMAL" --scenario smoke
@@ -141,7 +146,7 @@ if [[ "$MODE" == "--controls-only" ]]; then
   exit 0
 fi
 if [[ "$MODE" != "--gate" ]]; then
-  echo "usage: $0 [--gate|--controls-only]" >&2
+  echo "usage: $0 [--gate|--controls-only|--calibrate-keepv22|--calibrate-keepv27]" >&2
   exit 2
 fi
 
