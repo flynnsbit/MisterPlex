@@ -2545,6 +2545,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         const size_t frameBytes = rawVideoFrameBytes(videoFmt, rawW, rawH);
         std::vector<uint8_t> frame(frameBytes);
         std::vector<uint8_t> fbOverlayBackup;
+        I420DirtyBackup i420OverlayBackup;
         // Program DDR geometry before direct bank ingest (pipe→bank).
         if (useDdrF1_ && wantFpgaFrameStore && videoFmt == RawVideoFormat::Yuv420p) {
             if (!fpga_.setDdrFrameLayout(ddrGeometry, DdrFrameFormat::Yuv420p))
@@ -2681,6 +2682,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 overlay_.renderBgra32(data, rawW, rawH);
                 break;
             case RawVideoFormat::Yuv420p:
+                overlay_.renderI420(data, rawW, rawH);
                 break;
             case RawVideoFormat::Rgb24:
             default:
@@ -2691,11 +2693,14 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
 
         auto backupOverlayDirty = [&](uint8_t* cleanFrame, const OverlayRect& dirty) {
             fbOverlayBackup.clear();
+            i420OverlayBackup.clear();
             if (dirty.empty())
-                return;
+                return true;
+            if (videoFmt == RawVideoFormat::Yuv420p)
+                return i420OverlayBackup.capture(cleanFrame, rawW, rawH, dirty);
             const size_t bpp = rawVideoPackedBytesPerPixel(videoFmt);
             if (bpp == 0)
-                return;
+                return false;
             const size_t rowBytes = static_cast<size_t>(dirty.w) * bpp;
             fbOverlayBackup.resize(rowBytes * static_cast<size_t>(dirty.h));
             for (int yy = 0; yy < dirty.h; ++yy) {
@@ -2704,10 +2709,17 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 std::memcpy(fbOverlayBackup.data() + rowBytes * static_cast<size_t>(yy),
                             cleanFrame + src, rowBytes);
             }
+            return true;
         };
 
         auto restoreOverlayDirty = [&](uint8_t* cleanFrame, const OverlayRect& dirty) {
-            if (dirty.empty() || fbOverlayBackup.empty())
+            if (dirty.empty())
+                return;
+            if (videoFmt == RawVideoFormat::Yuv420p) {
+                (void)i420OverlayBackup.restore(cleanFrame, rawW, rawH);
+                return;
+            }
+            if (fbOverlayBackup.empty())
                 return;
             const size_t bpp = rawVideoPackedBytesPerPixel(videoFmt);
             if (bpp == 0)
@@ -2723,9 +2735,12 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         };
 
         auto presentCleanFrame = [&](uint8_t* cleanFrame, bool countPresent) {
-            const OverlayRect dirty = overlay_.dirtyBounds(rawW, rawH);
-            backupOverlayDirty(cleanFrame, dirty);
-            if (!dirty.empty()) {
+            const OverlayRect dirty =
+                videoFmt == RawVideoFormat::Yuv420p
+                    ? overlay_.dirtyBoundsI420(rawW, rawH)
+                    : overlay_.dirtyBounds(rawW, rawH);
+            const bool overlayBackedUp = backupOverlayDirty(cleanFrame, dirty);
+            if (!dirty.empty() && overlayBackedUp) {
                 if (profilePresent) {
                     const auto overlay0 = std::chrono::steady_clock::now();
                     const int64_t overlayCpu0 = threadCpuMicros();
@@ -2765,12 +2780,6 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 if (useDdrF1_) {
                     const int64_t ddrCpu0 = profilePresent ? threadCpuMicros() : 0;
                     if (videoFmt == RawVideoFormat::Yuv420p) {
-                        // Mutable bias on the clean/present buffer (post-overlay backup path
-                        // already owns this frame). Counters fluorescent green U-low.
-                        if (uvUBias_ != 0 || uvVBias_ != 0) {
-                            applyYuv420pUvBias(const_cast<uint8_t*>(txFrame), outW_, outH_,
-                                               uvUBias_, uvVBias_);
-                        }
                         ok = fpga_.sendYuv420pFrameDdr(txFrame, txBytes, ddrGeometry, ddrBank_);
                     } else {
                         ok = false;
@@ -2828,7 +2837,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 }
             }
 
-            restoreOverlayDirty(cleanFrame, dirty);
+            if (overlayBackedUp)
+                restoreOverlayDirty(cleanFrame, dirty);
         };
 
         if (onProgress_)
@@ -2869,6 +2879,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             int fullCount = 0;
             int readSlot = 0;
             int presentSlot = 0;
+            int lastPresentedSlot = -1;
+            bool lastPresentedHadOverlay = false;
             std::atomic<bool> readerEof{false};
             int localBank = ddrBank_;
             auto lastPipeLog = t0;
@@ -2897,15 +2909,23 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                         }
                         slot = presentSlot;
                     }
+                    bool overlayDrawn = false;
                     {
                         std::lock_guard<std::mutex> plk(presentMu_);
                         uint8_t* slotFrame = ring[static_cast<size_t>(slot)].data();
                         clearYuv420pCropPadding(slotFrame, ddrGeometry);
                         if (uvUBias_ != 0 || uvVBias_ != 0) {
-                            applyYuv420pUvBias(slotFrame, outW_, outH_, uvUBias_, uvVBias_);
+                            applyYuv420pUvBias(slotFrame, rawW, rawH, uvUBias_, uvVBias_);
                         }
+                        const OverlayRect dirty = overlay_.dirtyBoundsI420(rawW, rawH);
+                        const bool overlayBackedUp = backupOverlayDirty(slotFrame, dirty);
+                        overlayDrawn = !dirty.empty() && overlayBackedUp;
+                        if (overlayDrawn)
+                            renderOverlay(slotFrame);
                         const bool ok = fpga_.sendYuv420pFrameDdr(
                             slotFrame, frameBytes, ddrGeometry, localBank);
+                        if (overlayBackedUp)
+                            restoreOverlayDirty(slotFrame, dirty);
                         if (ok) {
                             localBank ^= 1;
                             ++presentCount_;
@@ -2927,6 +2947,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     }
                     {
                         std::lock_guard<std::mutex> lk(ringMu);
+                        lastPresentedSlot = slot;
+                        lastPresentedHadOverlay = overlayDrawn;
                         presentSlot = (presentSlot + 1) % 2;
                         --fullCount;
                     }
@@ -2941,7 +2963,36 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     break;
                 }
                 if (paused_.load()) {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                    const bool overlayNow = overlay_.visible();
+                    int pausedSlot = -1;
+                    bool pausedFrameHadOverlay = false;
+                    {
+                        std::lock_guard<std::mutex> lk(ringMu);
+                        if (fullCount == 0) {
+                            pausedSlot = lastPresentedSlot;
+                            pausedFrameHadOverlay = lastPresentedHadOverlay;
+                        }
+                    }
+                    if ((overlayNow || pausedFrameHadOverlay) && pausedSlot >= 0) {
+                        std::lock_guard<std::mutex> plk(presentMu_);
+                        uint8_t* slotFrame = ring[static_cast<size_t>(pausedSlot)].data();
+                        const OverlayRect dirty = overlay_.dirtyBoundsI420(rawW, rawH);
+                        const bool overlayBackedUp = backupOverlayDirty(slotFrame, dirty);
+                        const bool overlayDrawn = !dirty.empty() && overlayBackedUp;
+                        if (overlayDrawn)
+                            renderOverlay(slotFrame);
+                        const bool ok = fpga_.sendYuv420pFrameDdr(
+                            slotFrame, frameBytes, ddrGeometry, localBank);
+                        if (overlayBackedUp)
+                            restoreOverlayDirty(slotFrame, dirty);
+                        if (ok)
+                            localBank ^= 1;
+                        {
+                            std::lock_guard<std::mutex> lk(ringMu);
+                            lastPresentedHadOverlay = overlayDrawn;
+                        }
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
                     continue;
                 }
                 {
@@ -3212,12 +3263,16 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     const auto pix0 = std::chrono::steady_clock::now();
                     const int64_t pixCpu0 = threadCpuMicros();
                     clearYuv420pCropPadding(readDst, ddrGeometry);
+                    if (uvUBias_ != 0 || uvVBias_ != 0)
+                        applyYuv420pUvBias(readDst, rawW, rawH, uvUBias_, uvVBias_);
                     const int64_t pixCpu1 = threadCpuMicros();
                     const auto pix1 = std::chrono::steady_clock::now();
                     prof.pixelUs += microsBetween(pix0, pix1);
                     prof.pixelCpuUs += pixCpu1 - pixCpu0;
                 } else {
                     clearYuv420pCropPadding(readDst, ddrGeometry);
+                    if (uvUBias_ != 0 || uvVBias_ != 0)
+                        applyYuv420pUvBias(readDst, rawW, rawH, uvUBias_, uvVBias_);
                 }
             }
             // Release present lock during A/V pacing; re-acquire only to commit.
