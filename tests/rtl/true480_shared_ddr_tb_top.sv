@@ -3,7 +3,8 @@
 module true480_shared_ddr_tb #(
 	parameter int LINE_COUNT = 8,
 	parameter int M1_GAP_SYS_CYCLES = 8,
-	parameter bit M1_TRAFFIC_ENABLE = 1'b1
+	parameter bit M1_TRAFFIC_ENABLE = 1'b1,
+	parameter int STALE_DOORBELL_FALLBACK_POLLS = 4096
 )(
 	input  wire        clk_sys,
 	input  wire        clk_ddr,
@@ -38,6 +39,7 @@ module true480_shared_ddr_tb #(
 	output wire        cfg_active_config,
 	output wire        cfg_native_beam_source,
 	output wire [7:0]  cfg_y_fill_stride,
+	output wire [31:0] cfg_stale_doorbell_fallback_polls,
 	output wire        cfg_refill_telemetry,
 	output wire        telem_fill_issue,
 	output wire        telem_fill_complete,
@@ -89,6 +91,8 @@ module true480_shared_ddr_tb #(
 	assign cfg_line_count = 8'(LINE_COUNT);
 	assign cfg_linebuf_bits = 32'(LINEBUF_BITS);
 	assign cfg_m10k_estimate = 16'(M10K_ESTIMATE);
+	assign cfg_stale_doorbell_fallback_polls =
+	    32'(STALE_DOORBELL_FALLBACK_POLLS);
 
 	wire pixel_step_i;
 	wire [9:0] beam_x_i;
@@ -203,7 +207,7 @@ module true480_shared_ddr_tb #(
 		.PHYS_BASE(32'h3000_0000),
 		.HPS_BANK_STRIDE_BYTES(32'h0008_0000),
 		.DOORBELL_PHYS(32'h300f_f000),
-		.STALE_DOORBELL_FALLBACK_POLLS(256)
+		.STALE_DOORBELL_FALLBACK_POLLS(STALE_DOORBELL_FALLBACK_POLLS)
 	) store (
 		.clk(clk_sys),
 		.clk_ddr(clk_ddr),

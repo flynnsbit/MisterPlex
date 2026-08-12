@@ -56,6 +56,13 @@ require("cfg_native_beam_source" in PRESENT_TOP,
         "present wrapper lacks native-beam configuration marker")
 require("present_beam_true_480p native_beam" in SHARED_TOP,
         "shared active wrapper does not use the product native beam")
+require("parameter int STALE_DOORBELL_FALLBACK_POLLS = 4096" in SHARED_TOP and
+        "cfg_stale_doorbell_fallback_polls" in SHARED_TOP,
+        "shared active wrapper does not expose the product fallback")
+require("kProductStaleDoorbellFallbackPolls = 4096" in SHARED_CPP,
+        "shared executable does not enforce the product fallback")
+require(".STALE_DOORBELL_FALLBACK_POLLS(" not in I420_TOP,
+        "active I420 wrapper overrides the product fallback")
 
 for name, cpp in (
     ("I420", I420_CPP),

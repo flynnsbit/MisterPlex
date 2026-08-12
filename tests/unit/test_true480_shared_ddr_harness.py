@@ -11,6 +11,14 @@ SCRIPT = (ROOT / "tests/unit/test_true480_shared_ddr_rtl_sim.sh").read_text()
 PRESENT_CPP = (ROOT / "tests/rtl/true480_present_tb.cpp").read_text()
 PRESENT_SCRIPT = (ROOT / "tests/unit/test_true480_i420_rtl_sim.sh").read_text()
 MAKE = (ROOT / "Makefile").read_text()
+PRODUCT_STORE = (ROOT / "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv").read_text()
+PRESENT_CORE = (ROOT / "fpga/Plex_MiSTer/rtl/present_core.sv").read_text()
+WARM_RESET_SCRIPT = (
+    ROOT / "tests/unit/test_ddr_frame_store_warm_reset.sh"
+).read_text()
+WARM_RESET_CPP = (
+    ROOT / "tests/rtl/ddr_frame_store_warm_reset_tb.cpp"
+).read_text()
 
 
 def require(condition: bool, message: str) -> None:
@@ -60,9 +68,9 @@ for contract in (
     "kCalibratedM1ReadsMax = 30000",
     "kCalibratedM1WantMin = 400000",
     "kCalibratedM1WantMax = 520000",
-    "kCleanReferenceM1Reads = 25674",
-    "kCleanReferenceM1WantCycles = 435552",
-    "m1_band=CALIBRATED_CLEAN_31EE409D",
+    "kCleanReferenceM1Reads = 25665",
+    "kCleanReferenceM1WantCycles = 435636",
+    "m1_band=CALIBRATED_CLEAN_4C4667CA_PRODUCT4096",
     "kExactLinebufBits = 159744",
     "kExactM10Ks = 96",
     "lc8_contract=EXACT",
@@ -82,6 +90,29 @@ require("settled_unique_m0_issues" in CPP and
         "settled_unique_m0_completions" in CPP and
         "settled_refill_window" in CPP,
         "unique payload is not tied to a settled issue/completion window")
+
+require("parameter int STALE_DOORBELL_FALLBACK_POLLS = 4096" in TOP,
+        "active shared top does not default to the product fallback")
+require(".STALE_DOORBELL_FALLBACK_POLLS(STALE_DOORBELL_FALLBACK_POLLS)" in TOP,
+        "active shared top hardcodes or drops the fallback parameter")
+require("cfg_stale_doorbell_fallback_polls" in TOP and
+        "kProductStaleDoorbellFallbackPolls = 4096" in CPP,
+        "active shared binary cannot verify the elaborated product fallback")
+require("PRODUCT_FALLBACK_POLLS=4096" in SCRIPT and
+        "DRIFT_FAULT_FALLBACK_POLLS=4095" in SCRIPT and
+        "product_fallback_drift" in SCRIPT,
+        "active shared gate lacks its 4096 binding or fallback-drift red twin")
+require("STALE_DOORBELL_FALLBACK_POLLS=256" not in SCRIPT and
+        ".STALE_DOORBELL_FALLBACK_POLLS(256)" not in TOP,
+        "accelerated fallback leaked into the active shared gate")
+require("parameter int STALE_DOORBELL_FALLBACK_POLLS = 4096" in PRODUCT_STORE,
+        "product frame-store default drifted from 4096")
+require(".STALE_DOORBELL_FALLBACK_POLLS(" not in PRESENT_CORE,
+        "present_core overrides the product frame-store fallback")
+require("-GSTALE_DOORBELL_FALLBACK_POLLS=256" in WARM_RESET_SCRIPT,
+        "dedicated warm-reset test lost its accelerated fallback")
+require("runEqualTokenRefreshAfterAccept" in WARM_RESET_CPP,
+        "accelerated warm-reset test lost equal-token refresh coverage")
 
 for red_twin in (
     "idealized_DDR",

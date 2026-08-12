@@ -73,8 +73,7 @@ module true480_i420_tb #(
 `endif
 		.PHYS_BASE(32'h3000_0000),
 		.HPS_BANK_STRIDE_BYTES(32'h0008_0000),
-		.DOORBELL_PHYS(32'h300f_f000),
-		.STALE_DOORBELL_FALLBACK_POLLS(256)
+		.DOORBELL_PHYS(32'h300f_f000)
 	) dut (
 		.clk(clk),
 		.clk_ddr(clk_ddr),
