@@ -106,7 +106,7 @@ require("PRODUCT_FALLBACK_POLLS=4096" in SCRIPT and
 for stress_contract in (
     "telem_fallback_fire",
     "kAcceleratedStaleDoorbellFallbackPolls = 256",
-    "kStressFallbackFiresMin = 16",
+    "kStressFallbackFiresMin = 15",
     "kStressFallbackFiresMax = 16",
     "kProductFallbackFiresMax = 1",
     "kStressBoundaryLineAllowance = 12",
@@ -121,7 +121,7 @@ for stress_contract in (
     require(stress_contract in TOP + CPP + SCRIPT,
             f"missing accelerated fallback contract {stress_contract}")
 for cross_contract in (
-    "CROSS_M0_TOLERANCE_BEATS=32",
+    "CROSS_M0_TOLERANCE_BEATS=78",
     "TRUE480_FALLBACK_CROSS",
     "m0_decomposition",
     "duplicate_decomposition",

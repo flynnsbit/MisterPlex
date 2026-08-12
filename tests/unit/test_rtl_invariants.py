@@ -463,6 +463,26 @@ def check_frame_store_cdc_contract() -> None:
             ".rd_clk(clk),.rd_addr(y_rd_addr)",
             "frame line-buffer RAM reads must remain in clk",
         ),
+        (
+            "doorbell_word_r<=DDRAM_DOUT;doorbell_word_valid_r<=poll_pending&&DDRAM_DOUT_READY;",
+            "HPS doorbell data must enter a coherent unconditional clk_ddr staging register",
+        ),
+        (
+            "doorbell_was_primed_r<=doorbell_primed;",
+            "staged first-response handling must retain the pre-response primed state",
+        ),
+        (
+            "wiredb_magic_ok=doorbell_word_valid_r&&(doorbell_word_r[31:0]==MAGIC);wire[31:0]db_token=doorbell_word_r[63:32];",
+            "doorbell validation and token capture must use the same staged response word",
+        ),
+        (
+            "!IGNORE_STALE_DOORBELL_AFTER_RESET||doorbell_was_primed_r",
+            "staged doorbell processing must not accept the stale reset-time sample",
+        ),
+        (
+            "pending_bank_ddr<=db_token[31];",
+            "accepted doorbell bank selection must come from the staged token",
+        ),
     ]
     for needle, msg in requirements:
         check(needle in nft, f"ddr_frame_store CDC contract: {msg}")
@@ -480,6 +500,10 @@ def check_frame_store_cdc_contract() -> None:
             re.I,
         ),
         "SDC must not hide frame-store/DDR/arbiter timing with false or multicycle paths",
+    )
+    check(
+        "wire[31:0]db_token=DDRAM_DOUT[63:32]" not in nft,
+        "doorbell token must not bypass the clk_ddr staging register",
     )
     print("PASS frame-store CDC contract (clk/clk_ddr crossings and DDR timing constraints)")
 
@@ -1480,8 +1504,8 @@ def check_ddr_bank_handoff_contract() -> None:
             ),
             (
                 rtl_norm,
-                "db_token=DDRAM_DOUT[63:32]",
-                "frame-store reader must capture bank/format/seq as one 32-bit token from one DDR read",
+                "db_token=doorbell_word_r[63:32]",
+                "frame-store reader must capture bank/format/seq from one coherent staged DDR word",
             ),
             (
                 rtl_norm,
@@ -1495,8 +1519,8 @@ def check_ddr_bank_handoff_contract() -> None:
             ),
             (
                 rtl_norm,
-                "pending_bank_ddr<=DDRAM_DOUT[63];",
-                "frame-store reader must latch the bank bit from the same DDR word that supplied seq",
+                "pending_bank_ddr<=db_token[31];",
+                "frame-store reader must latch the bank bit from the same staged token that supplied seq",
             ),
             (
                 rtl_norm,

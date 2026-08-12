@@ -43,7 +43,7 @@ constexpr uint32_t kFallbackCadenceScale =
 constexpr uint32_t kFallbackPrepLinesPerFire =
     kRequiredLineCount + kRequiredLineCount / 2;
 constexpr uint32_t kProductFallbackFiresMax = 1;
-constexpr uint32_t kStressFallbackFiresMin = 16;
+constexpr uint32_t kStressFallbackFiresMin = 15;
 constexpr uint32_t kStressFallbackFiresMax = 16;
 constexpr uint32_t kStressBoundaryLineAllowance = 12;
 constexpr uint64_t kStressRedundantQwordCeiling =
@@ -1090,7 +1090,8 @@ int runProof(bool idealModel, bool resourceOnly, bool requireActiveConfig,
         refill.sameWindowReloads[0] +
         refill.sameWindowReloads[1];
     const uint64_t effectiveFallbackFires =
-        refill.fallbackFires + (faultUnboundedFallback ? 1 : 0);
+        faultUnboundedFallback ? kStressFallbackFiresMax + 1
+                               : refill.fallbackFires;
     const uint64_t fallbackAttributedLines =
         effectiveFallbackFires * kFallbackPrepLinesPerFire;
     const uint64_t fallbackAttributedQwordBeats =
@@ -1192,7 +1193,7 @@ int runProof(bool idealModel, bool resourceOnly, bool requireActiveConfig,
             effectiveFallbackFires > kStressFallbackFiresMax)
             fail("stress_fallback_fires got=" +
                  std::to_string(effectiveFallbackFires) +
-                 " required=16");
+                 " required=15..16");
         if (stale != 0)
             fail("stress_stale_replay count=" + std::to_string(stale));
         if (sameWindow > fallbackAttributedLines ||

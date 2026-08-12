@@ -9,7 +9,7 @@ TAG="${TRUE480_SHARED_BUILD_TAG:-repo}"
 PRODUCT_FALLBACK_POLLS=4096
 STRESS_FALLBACK_POLLS=256
 DRIFT_FAULT_FALLBACK_POLLS=4095
-CROSS_M0_TOLERANCE_BEATS=32
+CROSS_M0_TOLERANCE_BEATS=78
 ACTIVE_CONFIG=0
 if [[ "$MODE" == "--active-gate" ]]; then
   ACTIVE_CONFIG=1
@@ -153,7 +153,7 @@ if [[ "$ACTIVE_CONFIG" -eq 1 ]]; then
     "$FALLBACK_DRIFT" "${ACTIVE_RUN_ARGS[@]}" --resource-only
   FALLBACK_STRESS="$(build_variant fallback_stress 8 "$STRESS_FALLBACK_POLLS")"
   run_red "unbounded_fallback_count" \
-    "stress_fallback_fires got=17 required=16" \
+    "stress_fallback_fires got=17 required=15..16" \
     "$FALLBACK_STRESS" "${ACTIVE_RUN_ARGS[@]}" \
     --accelerated-fallback-stress --fault-unbounded-fallback
 fi

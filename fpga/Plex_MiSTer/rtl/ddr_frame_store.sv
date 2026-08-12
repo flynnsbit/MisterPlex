@@ -519,6 +519,9 @@ module ddr_frame_store #(
 	reg poll_pending;
 	localparam int STALE_DB_POLL_MAX = (STALE_DOORBELL_FALLBACK_POLLS < 1) ? 1 : STALE_DOORBELL_FALLBACK_POLLS;
 	localparam int STALE_DB_POLL_W = $clog2(STALE_DB_POLL_MAX + 1);
+	reg [63:0] doorbell_word_r;
+	reg doorbell_word_valid_r;
+	reg doorbell_was_primed_r;
 	reg [31:0] last_seq;
 	reg have_seq;
 	reg doorbell_primed;
@@ -908,8 +911,8 @@ module ddr_frame_store #(
 	reg [7:0]  burst_this_r;
 	reg [Y_QW_AW:0] burst_cap_r;
 `endif
-	wire db_magic_ok = poll_pending && DDRAM_DOUT_READY && (DDRAM_DOUT[31:0] == MAGIC);
-	wire [31:0] db_token = DDRAM_DOUT[63:32];
+	wire db_magic_ok = doorbell_word_valid_r && (doorbell_word_r[31:0] == MAGIC);
+	wire [31:0] db_token = doorbell_word_r[63:32];
 	wire [1:0] db_format = db_token[30:29];
 	wire db_format_ok = (db_format == DOORBELL_FORMAT_YUV420P) || !STRICT_YUV_DOORBELL;
 	wire db_bad_format = db_magic_ok && !db_format_ok;
@@ -919,7 +922,8 @@ module ddr_frame_store #(
 	wire db_stale_fallback = db_token_same && IGNORE_STALE_DOORBELL_AFTER_RESET &&
 	                         doorbell_primed &&
 	                         (stale_db_polls == STALE_DB_POLL_W'(STALE_DB_POLL_MAX));
-	wire db_new_seq = (db_token_new && (!IGNORE_STALE_DOORBELL_AFTER_RESET || doorbell_primed)) ||
+	wire db_new_seq = (db_token_new &&
+	                  (!IGNORE_STALE_DOORBELL_AFTER_RESET || doorbell_was_primed_r)) ||
 	                  db_stale_fallback;
 	wire spi_edge_ddr = start_d2 != start_seen;
 
@@ -987,6 +991,9 @@ module ddr_frame_store #(
 			swap_req_t_ddr <= 1'b0;
 			poll_div <= 16'd0;
 			poll_pending <= 1'b0;
+			doorbell_word_r <= 64'd0;
+			doorbell_word_valid_r <= 1'b0;
+			doorbell_was_primed_r <= 1'b0;
 			last_seq <= 32'd0;
 			have_seq <= 1'b0;
 			doorbell_primed <= 1'b0;
@@ -1054,6 +1061,11 @@ module ddr_frame_store #(
 			u_wr <= '0;
 			v_wr <= '0;
 			cmd_pop <= 1'b0;
+			// Capture every cycle through a plain data input. The valid bit
+			// qualifies the coherent word one cycle after a doorbell response.
+			doorbell_word_r <= DDRAM_DOUT;
+			doorbell_word_valid_r <= poll_pending && DDRAM_DOUT_READY;
+			doorbell_was_primed_r <= doorbell_primed;
 
 			disp_bank_d1 <= disp_bank;
 			disp_bank_d2 <= disp_bank_d1;
@@ -1155,7 +1167,7 @@ module ddr_frame_store #(
 			if (db_token_new)
 				stale_db_polls <= '0;
 			if (db_new_seq) begin
-				pending_bank_ddr <= DDRAM_DOUT[63];
+				pending_bank_ddr <= db_token[31];
 				swap_req_t_ddr <= ~swap_req_t_ddr;
 				doorbell_ok <= 1'b1;
 				stale_db_polls <= '0;
