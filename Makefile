@@ -57,6 +57,7 @@ unit-unlocked: preflight $(ROOT)/build/test_gdm_filter $(ROOT)/build/test_spi_tx
 	bash $(ROOT)/tests/unit/test_annexb_rbsp_exp_golomb_rtl_sim.sh
 	$(ROOT)/build/test_cadence
 	$(ROOT)/build/test_avclock
+	python3 $(ROOT)/tests/unit/test_fixed30_cadence.py
 	$(ROOT)/build/test_mraudio_status
 	$(ROOT)/build/test_osd_menu
 	$(ROOT)/build/test_playback_overlay
