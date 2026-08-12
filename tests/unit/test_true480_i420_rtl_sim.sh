@@ -15,6 +15,14 @@ fi
 ACTIVE_VERILATOR_ARGS=()
 ACTIVE_RUN_ARGS=()
 PRESENT_EXTRA_SOURCES=()
+PRESENT_CORE_SUPPORT=()
+
+for source in present_npx_path.sv present_beam_ppc.sv present_content_window.sv \
+              frame_store.sv present_beam_content_de.sv; do
+  if [[ -f "$RTL/$source" ]]; then
+    PRESENT_CORE_SUPPORT+=("$RTL/$source")
+  fi
+done
 
 set +e
 VERILATOR_VERSION="$("$RUN_VERILATOR" --version 2>&1)"
@@ -100,6 +108,7 @@ build_present() {
     -CFLAGS "-std=c++17 -O2 -I$ROOT/host -I$ROOT/tests/rtl" \
     "$ROOT/tests/rtl/true480_present_tb_top.sv" \
     "$RTL/present_core.sv" \
+    "${PRESENT_CORE_SUPPORT[@]}" \
     "$RTL/present_cadence.sv" \
     "$RTL/present_video_timing_720p.sv" \
     "$RTL/present_video_timing_960.sv" \

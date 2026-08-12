@@ -166,10 +166,10 @@ rtl-sim:
 	$(ROOT)/tests/unit/test_p3_inter_stream_path_rtl_sim.sh
 
 true480-i420:
-	$(ROOT)/tests/unit/test_true480_i420_rtl_sim.sh --gate
+	$(ROOT)/tests/unit/test_true480_i420_rtl_sim.sh --active-gate
 
 true480-shared-ddr:
-	$(ROOT)/tests/unit/test_true480_shared_ddr_rtl_sim.sh --gate
+	$(ROOT)/tests/unit/test_true480_shared_ddr_rtl_sim.sh --active-gate
 
 rtl-lint:
 	$(ROOT)/scripts/rtl_lint.py
