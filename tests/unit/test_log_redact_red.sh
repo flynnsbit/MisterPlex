@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # EXPECTED_RED mutation: if redactSensitive becomes a no-op, green checks must FAIL.
+# Binary lives under build/log-redact-red/ — never overwrites green build/test_log_redact.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 BUILD="$ROOT/build/log-redact-red"
@@ -12,6 +13,13 @@ if [[ -n "${CXXFLAGS:-}" ]]; then
 else
   CXX_FLAGS=(-std=c++17 -O2 -Wall -Wextra)
 fi
+# Drop a polluted -DLOG_REDACT_FAULT_IDENTITY from env, then add it once explicitly.
+FILTERED=()
+for f in "${CXX_FLAGS[@]}"; do
+  [[ "$f" == "-DLOG_REDACT_FAULT_IDENTITY" || "$f" == "-DLOG_REDACT_FAULT_IDENTITY=1" ]] && continue
+  FILTERED+=("$f")
+done
+CXX_FLAGS=("${FILTERED[@]}")
 
 "$CXX_BIN" "${CXX_FLAGS[@]}" -I"$ROOT/arm/misterplexd" -DLOG_REDACT_FAULT_IDENTITY \
   -o "$BUILD/test_log_redact_identity_fault" \
@@ -21,7 +29,10 @@ set +e
 OUT="$("$BUILD/test_log_redact_identity_fault" 2>&1)"
 RC=$?
 set -e
-printf '%s\n' "$OUT"
+# Prefix so make-unit greps for bare green FAILs do not treat the twin as product red.
+while IFS= read -r line; do
+  printf 'EXPECTED_RED_LOG_REDACT_TWIN %s\n' "$line"
+done <<<"$OUT"
 
 if [[ "$RC" -eq 0 ]]; then
   echo "FAIL: log_redact identity fault unexpectedly passed" >&2
