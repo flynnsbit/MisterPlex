@@ -2673,7 +2673,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 log("media: blit failed fmt=" + std::string(ffmpegPixFmt(videoFmt)));
         };
 
-        auto renderOverlay = [&](uint8_t* data) {
+        auto renderPackedOverlay = [&](uint8_t* data) {
             switch (videoFmt) {
             case RawVideoFormat::Rgb565Le:
                 overlay_.renderRgb565Le(data, rawW, rawH);
@@ -2682,7 +2682,6 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 overlay_.renderBgra32(data, rawW, rawH);
                 break;
             case RawVideoFormat::Yuv420p:
-                overlay_.renderI420(data, rawW, rawH);
                 break;
             case RawVideoFormat::Rgb24:
             default:
@@ -2693,11 +2692,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
 
         auto backupOverlayDirty = [&](uint8_t* cleanFrame, const OverlayRect& dirty) {
             fbOverlayBackup.clear();
-            i420OverlayBackup.clear();
             if (dirty.empty())
                 return true;
-            if (videoFmt == RawVideoFormat::Yuv420p)
-                return i420OverlayBackup.capture(cleanFrame, rawW, rawH, dirty);
             const size_t bpp = rawVideoPackedBytesPerPixel(videoFmt);
             if (bpp == 0)
                 return false;
@@ -2735,22 +2731,40 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         };
 
         auto presentCleanFrame = [&](uint8_t* cleanFrame, bool countPresent) {
-            const OverlayRect dirty =
-                videoFmt == RawVideoFormat::Yuv420p
-                    ? overlay_.dirtyBoundsI420(rawW, rawH)
-                    : overlay_.dirtyBounds(rawW, rawH);
-            const bool overlayBackedUp = backupOverlayDirty(cleanFrame, dirty);
-            if (!dirty.empty() && overlayBackedUp) {
+            OverlayRect dirty{};
+            bool overlayBackedUp = false;
+            if (videoFmt == RawVideoFormat::Yuv420p) {
                 if (profilePresent) {
                     const auto overlay0 = std::chrono::steady_clock::now();
                     const int64_t overlayCpu0 = threadCpuMicros();
-                    renderOverlay(cleanFrame);
+                    overlayBackedUp = overlay_.renderI420WithBackup(
+                        cleanFrame, rawW, rawH, i420OverlayBackup);
                     const int64_t overlayCpu1 = threadCpuMicros();
                     const auto overlay1 = std::chrono::steady_clock::now();
-                    prof.overlayUs += microsBetween(overlay0, overlay1);
-                    prof.overlayCpuUs += overlayCpu1 - overlayCpu0;
+                    if (overlayBackedUp) {
+                        prof.overlayUs += microsBetween(overlay0, overlay1);
+                        prof.overlayCpuUs += overlayCpu1 - overlayCpu0;
+                    }
                 } else {
-                    renderOverlay(cleanFrame);
+                    overlayBackedUp = overlay_.renderI420WithBackup(
+                        cleanFrame, rawW, rawH, i420OverlayBackup);
+                }
+                dirty = i420OverlayBackup.rect;
+            } else {
+                dirty = overlay_.dirtyBounds(rawW, rawH);
+                overlayBackedUp = backupOverlayDirty(cleanFrame, dirty);
+                if (!dirty.empty() && overlayBackedUp) {
+                    if (profilePresent) {
+                        const auto overlay0 = std::chrono::steady_clock::now();
+                        const int64_t overlayCpu0 = threadCpuMicros();
+                        renderPackedOverlay(cleanFrame);
+                        const int64_t overlayCpu1 = threadCpuMicros();
+                        const auto overlay1 = std::chrono::steady_clock::now();
+                        prof.overlayUs += microsBetween(overlay0, overlay1);
+                        prof.overlayCpuUs += overlayCpu1 - overlayCpu0;
+                    } else {
+                        renderPackedOverlay(cleanFrame);
+                    }
                 }
             }
 
@@ -2917,14 +2931,12 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                         if (uvUBias_ != 0 || uvVBias_ != 0) {
                             applyYuv420pUvBias(slotFrame, rawW, rawH, uvUBias_, uvVBias_);
                         }
-                        const OverlayRect dirty = overlay_.dirtyBoundsI420(rawW, rawH);
-                        const bool overlayBackedUp = backupOverlayDirty(slotFrame, dirty);
-                        overlayDrawn = !dirty.empty() && overlayBackedUp;
-                        if (overlayDrawn)
-                            renderOverlay(slotFrame);
+                        overlayDrawn = overlay_.renderI420WithBackup(
+                            slotFrame, rawW, rawH, i420OverlayBackup);
+                        const OverlayRect dirty = i420OverlayBackup.rect;
                         const bool ok = fpga_.sendYuv420pFrameDdr(
                             slotFrame, frameBytes, ddrGeometry, localBank);
-                        if (overlayBackedUp)
+                        if (overlayDrawn)
                             restoreOverlayDirty(slotFrame, dirty);
                         if (ok) {
                             localBank ^= 1;
@@ -2976,14 +2988,12 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     if ((overlayNow || pausedFrameHadOverlay) && pausedSlot >= 0) {
                         std::lock_guard<std::mutex> plk(presentMu_);
                         uint8_t* slotFrame = ring[static_cast<size_t>(pausedSlot)].data();
-                        const OverlayRect dirty = overlay_.dirtyBoundsI420(rawW, rawH);
-                        const bool overlayBackedUp = backupOverlayDirty(slotFrame, dirty);
-                        const bool overlayDrawn = !dirty.empty() && overlayBackedUp;
-                        if (overlayDrawn)
-                            renderOverlay(slotFrame);
+                        const bool overlayDrawn = overlay_.renderI420WithBackup(
+                            slotFrame, rawW, rawH, i420OverlayBackup);
+                        const OverlayRect dirty = i420OverlayBackup.rect;
                         const bool ok = fpga_.sendYuv420pFrameDdr(
                             slotFrame, frameBytes, ddrGeometry, localBank);
-                        if (overlayBackedUp)
+                        if (overlayDrawn)
                             restoreOverlayDirty(slotFrame, dirty);
                         if (ok)
                             localBank ^= 1;

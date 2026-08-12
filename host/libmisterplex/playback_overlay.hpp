@@ -276,10 +276,27 @@ public:
             alignI420DirtyRect(dirtyBoundsFor(s, w, h, nowMs), w, h);
         if (dirty.empty())
             return false;
-        std::lock_guard<std::mutex> renderLock(i420RenderMu_);
-        I420LayerTarget target{w, h, dirty, i420Scratch_};
-        render(target, s, w, h, nowMs);
-        target.composite(i420);
+        compositeI420Snapshot(i420, w, h, nowMs, s, dirty);
+        return true;
+    }
+
+    bool renderI420WithBackup(uint8_t* i420, int w, int h,
+                              I420DirtyBackup& backup) const {
+        return renderI420WithBackupAt(i420, w, h, monotonicMs(), backup);
+    }
+
+    // Freeze state/time once so backup.rect is exactly the region this call can paint.
+    bool renderI420WithBackupAt(uint8_t* i420, int w, int h, int64_t nowMs,
+                                I420DirtyBackup& backup) const {
+        backup.clear();
+        if (!i420 || w <= 0 || h <= 0 || (w & 1) || (h & 1))
+            return false;
+        const Snapshot s = snapshot();
+        const OverlayRect dirty =
+            alignI420DirtyRect(dirtyBoundsFor(s, w, h, nowMs), w, h);
+        if (dirty.empty() || !backup.capture(i420, w, h, dirty))
+            return false;
+        compositeI420Snapshot(i420, w, h, nowMs, s, dirty);
         return true;
     }
 
@@ -531,6 +548,14 @@ private:
                 (src * alpha + dst * (255 - alpha) + 127) / 255);
         }
     };
+
+    void compositeI420Snapshot(uint8_t* i420, int w, int h, int64_t nowMs,
+                               const Snapshot& s, OverlayRect dirty) const {
+        std::lock_guard<std::mutex> renderLock(i420RenderMu_);
+        I420LayerTarget target{w, h, dirty, i420Scratch_};
+        render(target, s, w, h, nowMs);
+        target.composite(i420);
+    }
 
     static int64_t clampNonNegative(int64_t v) { return v < 0 ? 0 : v; }
 

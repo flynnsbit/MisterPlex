@@ -184,6 +184,10 @@ bool inside(const misterplex::OverlayRect& r, int x, int y) {
     return x >= r.x && y >= r.y && x < r.x + r.w && y < r.y + r.h;
 }
 
+bool sameRect(const misterplex::OverlayRect& a, const misterplex::OverlayRect& b) {
+    return a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h;
+}
+
 size_t i420Bytes(int w, int h) {
     return static_cast<size_t>(w) * static_cast<size_t>(h) * 3 / 2;
 }
@@ -274,6 +278,30 @@ void checkI420OutsideDirtyUnchanged(const std::vector<uint8_t>& before,
             }
         }
     }
+}
+
+bool i420ChangedOutsideDirty(const std::vector<uint8_t>& before,
+                             const std::vector<uint8_t>& after, int w, int h,
+                             const misterplex::OverlayRect& dirty) {
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            if (!inside(dirty, x, y) &&
+                i420At(before, w, h, 'Y', x, y) != i420At(after, w, h, 'Y', x, y))
+                return true;
+        }
+    }
+    const misterplex::OverlayRect chroma{dirty.x / 2, dirty.y / 2, dirty.w / 2, dirty.h / 2};
+    for (char plane : {'U', 'V'}) {
+        for (int y = 0; y < h / 2; ++y) {
+            for (int x = 0; x < w / 2; ++x) {
+                if (!inside(chroma, x, y) &&
+                    i420At(before, w, h, plane, x, y) !=
+                        i420At(after, w, h, plane, x, y))
+                    return true;
+            }
+        }
+    }
+    return false;
 }
 
 void checkI420Golden(const I420Golden& golden, const std::vector<uint8_t>& frame, int w,
@@ -682,6 +710,38 @@ int main() {
         I420DirtyBackup oddReject;
         CHECK(!oddReject.capture(clean.data(), W - 1, H, planarDirty));
         CHECK(!backup.restore(painted.data(), W * 2, H));
+    }
+
+    // 8. Transactional I420 rendering freezes one state/time for dirty backup and paint.
+    {
+        constexpr int64_t kNow = 70000;
+        const OverlayRect panelDirty{10, 170, 300, 60};
+        const OverlayRect panelAndSkipDirty{10, 90, 300, 140};
+        PlaybackOverlay transactional;
+        transactional.showAt(PlaybackOverlayState::Playing, 61000, 2732000, kNow);
+        const std::vector<uint8_t> clean = syntheticI420(W, H);
+
+        // Negative control: the reviewed two-call sequence leaves skip residue.
+        std::vector<uint8_t> stalePaint = clean;
+        const OverlayRect staleDirty = transactional.dirtyBoundsI420At(W, H, kNow);
+        CHECK(sameRect(staleDirty, panelDirty));
+        I420DirtyBackup staleBackup;
+        CHECK(staleBackup.capture(stalePaint.data(), W, H, staleDirty));
+        transactional.flashSkipAt(30000, 61000, 2732000, kNow);
+        CHECK(transactional.renderI420At(stalePaint.data(), W, H, kNow));
+        CHECK(i420ChangedOutsideDirty(clean, stalePaint, W, H, staleBackup.rect));
+        CHECK(staleBackup.restore(stalePaint.data(), W, H));
+        CHECK(stalePaint != clean);
+
+        // The one-call API backs up the expanded state it actually composites.
+        std::vector<uint8_t> painted = clean;
+        I420DirtyBackup transactionBackup;
+        CHECK(transactional.renderI420WithBackupAt(painted.data(), W, H, kNow,
+                                                   transactionBackup));
+        CHECK(sameRect(transactionBackup.rect, panelAndSkipDirty));
+        CHECK(!i420ChangedOutsideDirty(clean, painted, W, H, transactionBackup.rect));
+        CHECK(transactionBackup.restore(painted.data(), W, H));
+        CHECK(painted == clean);
     }
 
     if (fails) {
