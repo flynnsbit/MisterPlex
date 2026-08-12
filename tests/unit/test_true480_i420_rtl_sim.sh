@@ -1,0 +1,171 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+RUN_VERILATOR="$ROOT/scripts/run_verilator.sh"
+RTL="${TRUE480_RTL_DIR:-$ROOT/fpga/Plex_MiSTer/rtl}"
+MODE="${1:---gate}"
+TAG="${TRUE480_BUILD_TAG:-repo}"
+
+set +e
+VERILATOR_VERSION="$("$RUN_VERILATOR" --version 2>&1)"
+VERILATOR_RC=$?
+set -e
+if [[ "$VERILATOR_RC" -eq 127 ]]; then
+  echo "RTL SIM ERROR: Verilator not found; true480 I420 proof was NOT run." >&2
+  exit 3
+elif [[ "$VERILATOR_RC" -ne 0 ]]; then
+  printf '%s\n' "$VERILATOR_VERSION" >&2
+  exit "$VERILATOR_RC"
+fi
+if [[ ! -f "$RTL/ddr_frame_store.sv" ]]; then
+  echo "RTL SIM ERROR: TRUE480_RTL_DIR has no ddr_frame_store.sv: $RTL" >&2
+  exit 2
+fi
+
+build_variant() {
+  local name="$1"
+  local fault="$2"
+  local build="$ROOT/build/verilator/true480_i420_${TAG}_${name}"
+  mkdir -p "$build"
+  set +e
+  "$RUN_VERILATOR" --cc --exe --build \
+    --Mdir "$build" \
+    --top-module true480_i420_tb \
+    -GGEOMETRY_FAULT="$fault" \
+    -I"$RTL" \
+    -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-SELRANGE -Wno-UNSIGNED \
+    -CFLAGS "-std=c++17 -O2 -I$ROOT/host -I$ROOT/tests/rtl" \
+    "$ROOT/tests/rtl/true480_i420_tb_top.sv" \
+    "$RTL/ddr_frame_store.sv" \
+    "$RTL/line_buf_ram.sv" \
+    "$RTL/async_fifo.sv" \
+    "$ROOT/tests/rtl/true480_i420_tb.cpp" >"$build/build.log" 2>&1
+  local rc=$?
+  set -e
+  echo "build_${name} true rc=$rc" >&2
+  if [[ "$rc" -ne 0 ]]; then
+    tail -120 "$build/build.log" >&2
+    exit "$rc"
+  fi
+  printf '%s\n' "$build/Vtrue480_i420_tb"
+}
+
+build_present() {
+  local build="$ROOT/build/verilator/true480_present_${TAG}"
+  mkdir -p "$build"
+  set +e
+  "$RUN_VERILATOR" --cc --exe --build \
+    --Mdir "$build" \
+    --top-module true480_present_tb \
+    +define+DDR_FRAME_STORE \
+    -I"$RTL" \
+    -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-SELRANGE -Wno-UNSIGNED \
+    -CFLAGS "-std=c++17 -O2 -I$ROOT/host -I$ROOT/tests/rtl" \
+    "$ROOT/tests/rtl/true480_present_tb_top.sv" \
+    "$RTL/present_core.sv" \
+    "$RTL/present_cadence.sv" \
+    "$RTL/present_video_timing_720p.sv" \
+    "$RTL/present_video_timing_960.sv" \
+    "$RTL/colorbars.sv" \
+    "$RTL/ddr_frame_store.sv" \
+    "$RTL/line_buf_ram.sv" \
+    "$RTL/async_fifo.sv" \
+    "$RTL/audio_tone.sv" \
+    "$RTL/audio_fifo.sv" \
+    "$ROOT/tests/rtl/true480_present_tb.cpp" >"$build/build.log" 2>&1
+  local rc=$?
+  set -e
+  echo "build_present true rc=$rc" >&2
+  if [[ "$rc" -ne 0 ]]; then
+    tail -120 "$build/build.log" >&2
+    exit "$rc"
+  fi
+  printf '%s\n' "$build/Vtrue480_present_tb"
+}
+
+run_pass() {
+  local label="$1"
+  shift
+  set +e
+  "$@"
+  local rc=$?
+  set -e
+  echo "$label true rc=$rc"
+  if [[ "$rc" -ne 0 ]]; then
+    echo "FAIL true480 control unexpectedly red: $label" >&2
+    exit "$rc"
+  fi
+}
+
+run_red() {
+  local label="$1"
+  local needle="$2"
+  shift 2
+  set +e
+  local out
+  out="$("$@" 2>&1)"
+  local rc=$?
+  set -e
+  printf '%s\n' "$out"
+  echo "$label true rc=$rc"
+  if [[ "$rc" -eq 0 ]]; then
+    echo "FAIL true480 red twin unexpectedly passed: $label" >&2
+    exit 1
+  fi
+  if ! grep -Fq "$needle" <<<"$out"; then
+    echo "FAIL true480 red twin lacked diagnostic '$needle': $label" >&2
+    exit 1
+  fi
+  echo "PASS true480 red twin rejected: $label"
+}
+
+echo "RTL SIM: $VERILATOR_VERSION"
+echo "TRUE480_RTL_DIR=$RTL"
+NORMAL="$(build_variant normal 0)"
+
+run_pass "settled_full_frame_smoke" "$NORMAL" --scenario smoke
+run_pass "force_y_miss_black" "$NORMAL" --scenario y-miss
+run_pass "force_bad_bank_black" "$NORMAL" --scenario bad-bank
+run_pass "force_c_miss_stimulus" "$NORMAL" --scenario c-miss-observe
+run_red "legacy_store_y_2py" "row_identity unique_rows=240" \
+  "$NORMAL" --scenario legacy
+
+PILLAR="$(build_variant wrong_pillar 1)"
+run_red "wrong_pillar" "exact_crop_pillars" "$PILLAR" --scenario good
+CROP="$(build_variant wrong_crop 2)"
+run_red "wrong_crop" "exact_crop_pillars" "$CROP" --scenario good
+
+if [[ "$MODE" == "--controls-only" ]]; then
+  echo "PASS true480 controls-only: fixture/DDR/Y-miss/bank/legacy/crop/pillar controls green"
+  exit 0
+fi
+if [[ "$MODE" != "--gate" ]]; then
+  echo "usage: $0 [--gate|--controls-only]" >&2
+  exit 2
+fi
+
+set +e
+C_MISS_OUT="$("$NORMAL" --scenario c-miss 2>&1)"
+C_MISS_RC=$?
+set -e
+printf '%s\n' "$C_MISS_OUT"
+echo "force_c_miss_neutral_gray true rc=$C_MISS_RC"
+if [[ "$C_MISS_RC" -ne 0 ]]; then
+  if grep -Fq "required RTL behavior is hard-miss-on-Y only" <<<"$C_MISS_OUT"; then
+    echo "BLOCKED true480 gate: RTL lacks soft-C neutral fallback (explicit Y/C hook proved the miss)" >&2
+  fi
+  exit "$C_MISS_RC"
+fi
+PRESENT="$(build_present)"
+set +e
+PRESENT_OUT="$("$PRESENT" 2>&1)"
+PRESENT_RC=$?
+set -e
+printf '%s\n' "$PRESENT_OUT"
+echo "present_full_frame_real_rate true rc=$PRESENT_RC"
+if [[ "$PRESENT_RC" -ne 0 ]]; then
+  echo "BLOCKED true480 gate: present_core is not native full-row 640x480 yet" >&2
+  exit "$PRESENT_RC"
+fi
+echo "PASS true480 I420 RTL gate"
