@@ -17,6 +17,21 @@ namespace {
 
 constexpr uint32_t kM1BasePhys = 0x30100000u;
 constexpr uint32_t kModelBytes = 0x00200000u;
+constexpr uint64_t kYLineQwords = true480::kCodedW / 8;
+constexpr uint64_t kCLineQwords = 2 * (true480::kCodedW / 16);
+constexpr uint64_t kExactUniqueM0Payload =
+    true480::kCodedH * kYLineQwords +
+    (true480::kCodedH / 2) * kCLineQwords;
+constexpr uint64_t kPhaseTolerantM0Floor = 54912;
+constexpr uint64_t kM0PayloadCeiling = 70000;
+constexpr uint64_t kHarnessSharedPayloadCeiling = 100000;
+constexpr uint32_t kProvisionalM1ReadsMin = 20000;
+constexpr uint32_t kProvisionalM1ReadsMax = 30000;
+constexpr uint32_t kProvisionalM1WantMin = 400000;
+constexpr uint32_t kProvisionalM1WantMax = 520000;
+
+static_assert(kYLineQwords == 78 && kCLineQwords == 78);
+static_assert(kExactUniqueM0Payload == 56160);
 
 struct ModelConfig {
     int baseLatency = 24;
@@ -108,12 +123,19 @@ RefillCounters subtract(const RefillCounters& after,
 struct RefillLineStats {
     uint64_t issues = 0;
     uint64_t completions = 0;
+    uint64_t firstFills = 0;
     uint64_t residentDuplicates = 0;
     uint64_t inflightDuplicates = 0;
     uint64_t stalePipelineReplays = 0;
     uint64_t sameWindowReloads = 0;
     uint64_t legitimateSlidingReloads = 0;
     uint64_t notNeeded = 0;
+};
+
+struct RefillCoverage {
+    uint64_t yLines = 0;
+    uint64_t cLines = 0;
+    uint64_t payloadBeats = 0;
 };
 
 struct RefillLineState {
@@ -153,6 +175,25 @@ public:
     void endDetailWindow() { detailActive = false; }
 
     const RefillCounters& getCounters() const { return counters; }
+
+    RefillCoverage detailCoverage() const {
+        RefillCoverage coverage;
+        for (size_t i = 0; i < detailLines.size(); ++i) {
+            const int group = static_cast<int>(i / kLinesPerGroup);
+            const bool chroma = (group & 1) != 0;
+            const auto& line = detailLines[i];
+            if (line.firstFills || line.legitimateSlidingReloads) {
+                if (chroma)
+                    ++coverage.cLines;
+                else
+                    ++coverage.yLines;
+            }
+        }
+        coverage.payloadBeats =
+            coverage.yLines * kYLineQwords +
+            coverage.cLines * kCLineQwords;
+        return coverage;
+    }
 
     void printDetail(size_t limitPerPlane = 8) const {
         for (int wantedPlane = 0; wantedPlane < 2; ++wantedPlane) {
@@ -382,6 +423,8 @@ private:
             classification = "NOT_NEEDED";
         } else if (!seenCompleted) {
             ++counters.firstFills[plane];
+            if (detailActive)
+                ++detail.firstFills;
             classification = "FIRST_FILL";
         } else if (legitimateReload) {
             ++counters.legitimateSlidingReloads[plane];
@@ -946,6 +989,7 @@ int runProof(bool idealModel, bool resourceOnly, bool requireActiveConfig) {
     const uint32_t m1WantCycles = m.m1WantAfter - m.m1WantBefore;
     const RefillCounters refill =
         subtract(m.refillAfter, m.refillBefore);
+    const RefillCoverage refillCoverage = sim.refill.detailCoverage();
 
     bool ok = true;
     auto fail = [&ok](const std::string& what) {
@@ -984,23 +1028,36 @@ int runProof(bool idealModel, bool resourceOnly, bool requireActiveConfig) {
         fail("orange_on_dark orange=" + std::to_string(m.orange) +
              " dark=" + std::to_string(m.dark) +
              " black=" + std::to_string(m.black));
-    if (m1Reads < 10000 || m1Responses + 1 < m1Reads ||
-        m1Beats < 10000 || m1WantCycles < 10000)
+    if (m1Reads < kProvisionalM1ReadsMin ||
+        m1Reads > kProvisionalM1ReadsMax ||
+        m1Responses + 1 < m1Reads ||
+        m1Beats < kProvisionalM1ReadsMin ||
+        m1Beats > kProvisionalM1ReadsMax ||
+        m1WantCycles < kProvisionalM1WantMin ||
+        m1WantCycles > kProvisionalM1WantMax)
         fail("m1_stream_service reads=" + std::to_string(m1Reads) +
              " responses=" + std::to_string(m1Responses) +
              " physical_beats=" + std::to_string(m1Beats) +
-             " want_cycles=" + std::to_string(m1WantCycles));
+             " want_cycles=" + std::to_string(m1WantCycles) +
+             " provisional_bands=reads/beats:20000..30000,"
+             "want:400000..520000");
     if (sim.top.m1_reads_issued != sim.top.m1_responses_seen ||
         sim.top.m1_protocol_errors != 0)
         fail("m1_beat_conservation issued=" +
              std::to_string(sim.top.m1_reads_issued) + " seen=" +
              std::to_string(sim.top.m1_responses_seen) + " errors=" +
              std::to_string(sim.top.m1_protocol_errors));
-    if (m0Beats < 50000 || m0Beats > 70000 ||
-        m0Beats + m1Beats > 100000 || m.ddrAfter.maxBurst < 39)
+    if (m0Beats < kPhaseTolerantM0Floor ||
+        m0Beats > kM0PayloadCeiling || m.ddrAfter.maxBurst < 39)
         fail("m0_burst_traffic beats=" + std::to_string(m0Beats) +
-             " shared_beats=" + std::to_string(m0Beats + m1Beats) +
+             " phase_floor=" + std::to_string(kPhaseTolerantM0Floor) +
+             " ceiling=" + std::to_string(kM0PayloadCeiling) +
              " max_burst=" + std::to_string(m.ddrAfter.maxBurst));
+    if (m0Beats + m1Beats > kHarnessSharedPayloadCeiling)
+        fail("harness_shared_payload_ceiling shared_beats=" +
+             std::to_string(m0Beats + m1Beats) +
+             " harness_only_ceiling=" +
+             std::to_string(kHarnessSharedPayloadCeiling));
     if (refreshCycles < 1000 || gapCycles < 1000)
         fail("nonideal_stalls refresh_cycles=" +
              std::to_string(refreshCycles) +
@@ -1026,6 +1083,15 @@ int runProof(bool idealModel, bool resourceOnly, bool requireActiveConfig) {
              std::to_string(sim.ddr.getStats().m1ExpectedBeats) +
              " m1_seen=" + std::to_string(sim.ddr.getStats().m1Beats));
     if (activeConfig) {
+        if (refillCoverage.yLines != 480 ||
+            refillCoverage.cLines != 240 ||
+            refillCoverage.payloadBeats != kExactUniqueM0Payload)
+            fail("unique_m0_payload y_lines=" +
+                 std::to_string(refillCoverage.yLines) +
+                 " c_lines=" + std::to_string(refillCoverage.cLines) +
+                 " beats=" +
+                 std::to_string(refillCoverage.payloadBeats) +
+                 " expected=480/240/56160");
         for (int plane = 0; plane < 2; ++plane) {
             const uint64_t classified =
                 refill.firstFills[plane] +
@@ -1075,6 +1141,9 @@ int runProof(bool idealModel, bool resourceOnly, bool requireActiveConfig) {
             << "TRUE480_REFILL_TELEMETRY"
             << " total_issues=" << totalIssues
             << " legitimate=" << legitimate
+            << " unique_y_lines=" << refillCoverage.yLines
+            << " unique_c_lines=" << refillCoverage.cLines
+            << " unique_payload_beats=" << refillCoverage.payloadBeats
             << " redundant=" << redundant
             << " redundant_permille="
             << (totalIssues ? redundant * 1000 / totalIssues : 0)
@@ -1134,6 +1203,11 @@ int runProof(bool idealModel, bool resourceOnly, bool requireActiveConfig) {
         << " m0_beats=" << m0Beats << " m1_reads=" << m1Reads
         << " m1_responses=" << m1Responses << " m1_beats=" << m1Beats
         << " m1_want_cycles=" << m1WantCycles
+        << " m1_band=PROVISIONAL_UNTIL_FIRST_CLEAN"
+        << " m0_phase_floor=" << kPhaseTolerantM0Floor
+        << " m0_ceiling=" << kM0PayloadCeiling
+        << " shared_ceiling=" << kHarnessSharedPayloadCeiling
+        << " shared_ceiling_scope=HARNESS_ONLY"
         << " refresh_stall_cycles=" << refreshCycles
         << " burst_gap_cycles=" << gapCycles
         << " latency_min=" << m.ddrAfter.minObservedLatency
