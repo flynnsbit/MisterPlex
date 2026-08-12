@@ -1884,13 +1884,26 @@ def check_present_geometry_stride_contract() -> None:
             and ".CODED_W(FS_CODED_W)" in p_nt
             and ".HPS_BANK_STRIDE_BYTES(FS_BANK_STRIDE)" in p_nt
         )
-        return direct or fs_bind
+        # integ/720p-compose: ddr_frame_abi_select + FS_* ternary (480p or 720p ABI).
+        fs_bind_shared = (
+            ".FRAME_W(FRAME_W)" in p_nt
+            and ".FRAME_H(FRAME_H)" in p_nt
+            and 'include"ddr_frame_abi_select.svh"' in p_nt
+            and "DDR_FS_USE_720P_ABI" in p_nt
+            and "FS_CODED_W=" in p_nt
+            and "FS_BANK_STRIDE=" in p_nt
+            and "FS_DOORBELL=" in p_nt
+            and ".CODED_W(FS_CODED_W)" in p_nt
+            and ".DISPLAY_W(FS_DISPLAY_W)" in p_nt
+            and ".PRESENT_X(FS_PRESENT_X)" in p_nt
+            and ".HPS_BANK_STRIDE_BYTES(FS_BANK_STRIDE)" in p_nt
+            and ".DOORBELL_PHYS(FS_DOORBELL)" in p_nt
+        )
+        return direct or fs_bind or fs_bind_shared
 
     check(
         present_ddr_wiring_ok(present_nt),
-        "present_core must instantiate ddr_frame_store from the shared layout params: "
-        "FRAME_W=1280 scanout, CODED_W=DDR_FRAME_CODED_WIDTH, DISPLAY_W identity, "
-        "PRESENT_X=DDR_FRAME_PILLARBOX_LEFT (0 for 720p).",
+        "present_core must instantiate ddr_frame_store from shared layout params (direct DDR_FRAME_*, FS_* binds, or ddr_frame_abi_select FS_* path) with FRAME_W=1280 scanout / 720p identity pillar.",
     )
     # L4 consumer wiring (must not leave 720p constants unreferenced).
     # Read RAW module text (comments only stripped) — strip_inactive_preprocessor
@@ -1905,21 +1918,23 @@ def check_present_geometry_stride_contract() -> None:
             flags=re.S,
         )
     )
-    l4_720_bind = (
+    # 720p store ABI: shared select (L4 *or* MULTI via FRAME 1280×720) or legacy L4 binds.
+    legacy_l4_720_bind = (
         "FS_CODED_W=DDR_FRAME_720P_CODED_WIDTH" in present_raw
         and "FS_CODED_H=DDR_FRAME_720P_CODED_HEIGHT" in present_raw
-        and "FS_DISPLAY_W=DDR_FRAME_720P_DISPLAY_WIDTH" in present_raw
-        and "FS_DISPLAY_H=DDR_FRAME_720P_DISPLAY_HEIGHT" in present_raw
-        and "FS_PRESENT_X=DDR_FRAME_720P_PILLARBOX_LEFT" in present_raw
         and "FS_BANK_STRIDE=DDR_FRAME_720P_YUV420P_BANK_STRIDE" in present_raw
-        and "FS_DOORBELL=DDR_FRAME_720P_YUV420P_DOORBELL_PHYS" in present_raw
-        and "FS_PHYS_BASE=DDR_FRAME_720P_PHYS_BASE" in present_raw
         and "ifdefPLEX_PRESENT_720P_L4" in present_raw
     )
+    shared_720_abi = (
+        'include"ddr_frame_abi_select.svh"' in present_raw
+        and "DDR_FS_USE_720P_ABI" in present_raw
+        and "FS_CODED_W=" in present_raw
+        and "FS_BANK_STRIDE=" in present_raw
+    )
     check(
-        l4_720_bind,
-        "present_core L4 arm must wire DDR_FRAME_720P_* into ddr_frame_store "
-        "(coded/display/pillar/stride/doorbell/phys_base) behind PLEX_PRESENT_720P_L4.",
+        legacy_l4_720_bind or shared_720_abi,
+        "present_core must wire 720p DDR ABI via ddr_frame_abi_select (shared) "
+        "or legacy L4 DDR_FRAME_720P_* binds.",
     )
     check(
         'set_global_assignment-nameVERILOG_MACRO"DDR_FRAME_STORE=1"' in qsf_nt

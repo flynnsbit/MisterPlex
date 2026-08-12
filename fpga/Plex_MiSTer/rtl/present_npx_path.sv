@@ -4,7 +4,7 @@
 //   Old design serialised PPC lanes on clk_sys *before* the FIFO (1 + PPC sys
 //   cycles/group) → peak Mpix/s = F_sys * PPC/(1+PPC).
 //   At F_sys=20 MHz, PPC=2: 20*2/3 = **13.33 Mpix/s** << 29.7 needed for
-//   CEA 720p24.
+//   compact 720p24 (H1650@29.7; not VIC60).
 //
 //   This revision crosses **whole groups** on the async_fifo (1 write/group).
 //   Peak Mpix/s = F_sys*PPC (40 @20/PPC2 ≥ 29.7). Unpack on clk_pix.
@@ -42,11 +42,13 @@ module present_npx_path #(
 	input  wire [PX_PER_CLK*8-1:0] in_g,
 	input  wire [PX_PER_CLK*8-1:0] in_b,
 	input  wire [PX_PER_CLK-1:0]   in_lane_valid,
-	input  wire                 in_hblank = 1'b0,
-	input  wire                 in_hsync  = 1'b0,
-	input  wire                 in_vblank = 1'b0,
-	input  wire                 in_vsync  = 1'b0,
-	input  wire                 in_fstart = 1'b0,
+	// Quartus 17.0 rejects SV-2012 port defaults (Error 10231: assign-to-input).
+	// Callers must drive these explicitly (present_core MULTI path always does).
+	input  wire                 in_hblank,
+	input  wire                 in_hsync,
+	input  wire                 in_vblank,
+	input  wire                 in_vsync,
+	input  wire                 in_fstart,
 	output wire                 in_ready,
 
 	output reg                  out_ce,

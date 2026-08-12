@@ -198,26 +198,32 @@ def main(argv: list[str]) -> int:
             failures.append(f"{role}: baseline missing match")
             continue
 
-        for section, ref_key, max_reg in (
-            ("Setup", "setup_ns", max_setup_reg),
-            ("Hold", "hold_ns", max_hold_reg),
+        require_present = bool(spec.get("require_present", False))
+
+        for section, ref_key, max_reg, min_key in (
+            ("Setup", "setup_ns", max_setup_reg, "min_setup_ns"),
+            ("Hold", "hold_ns", max_hold_reg, "min_hold_ns"),
         ):
             ref = spec.get(ref_key)
-            if ref is None:
+            min_abs = spec.get(min_key)
+            # Presence-only (no regression ref): still demand the clock when require_present
+            if ref is None and min_abs is None and not (require_present and section == "Setup"):
                 continue
-            ref_f = float(ref)
+
             row = find_row(rows, section, match)
             if row is None:
-                msg = f"{role}/{section}: tracked clock not in STA: {match}"
+                if ref is None and min_abs is None and require_present and section == "Setup":
+                    msg = f"{role}/{section}: require_present clock missing from STA: {match}"
+                else:
+                    msg = f"{role}/{section}: tracked clock not in STA: {match}"
                 failures.append(msg)
+                ref_disp = "—" if ref is None else f"{float(ref):g}"
                 print(
-                    f"| `{match}` | {role} | {section} | {ref_f:g} | — | — | — | — | MISSING |"
+                    f"| `{match}` | {role} | {section} | {ref_disp} | — | — | — | — | MISSING |"
                 )
                 continue
 
             actual = row.slack
-            delta = actual - ref_f  # negative => erosion
-            floor = ref_f - max_reg
             status = "ok"
             if actual < 0 or row.tns < 0:
                 status = "NEG_SLACK"
@@ -227,16 +233,33 @@ def main(argv: list[str]) -> int:
             elif require_tns_zero and row.tns != 0:
                 status = "TNS_NONZERO"
                 failures.append(f"{role}/{section}: TNS={row.tns:g} want 0")
-            elif actual + 1e-12 < floor:
-                status = "REGRESSED"
+            elif min_abs is not None and actual + 1e-12 < float(min_abs):
+                status = "BELOW_MIN"
                 failures.append(
-                    f"{role}/{section}: actual={actual:g} < floor={floor:g} "
-                    f"(ref={ref_f:g} max_regression={max_reg:g} delta={delta:g})"
+                    f"{role}/{section}: actual={actual:g} < min={float(min_abs):g}"
                 )
-            print(
-                f"| `{row.clock}` | {role} | {section} | {ref_f:g} | {actual:g} | "
-                f"{delta:g} | {floor:g} | {row.tns:g} | {status} |"
-            )
+
+            if ref is not None:
+                ref_f = float(ref)
+                delta = actual - ref_f  # negative => erosion
+                floor = ref_f - max_reg
+                if status == "ok" and actual + 1e-12 < floor:
+                    status = "REGRESSED"
+                    failures.append(
+                        f"{role}/{section}: actual={actual:g} < floor={floor:g} "
+                        f"(ref={ref_f:g} max_regression={max_reg:g} delta={delta:g})"
+                    )
+                print(
+                    f"| `{row.clock}` | {role} | {section} | {ref_f:g} | {actual:g} | "
+                    f"{delta:g} | {floor:g} | {row.tns:g} | {status} |"
+                )
+            else:
+                # Presence / absolute-min only (clk_pix first fit: no regression baseline yet)
+                min_disp = "—" if min_abs is None else f"{float(min_abs):g}"
+                print(
+                    f"| `{row.clock}` | {role} | {section} | present | {actual:g} | "
+                    f"— | {min_disp} | {row.tns:g} | {status} |"
+                )
 
     print("TIMING_MARGIN_TABLE_END")
 
@@ -260,7 +283,7 @@ def main(argv: list[str]) -> int:
             print(f"  {f}", file=sys.stderr)
         return 1
 
-    print("PASS timing_margin: tracked clocks within wtime4 regression budget")
+    print(f"PASS timing_margin: tracked clocks within budget ({baseline.get('name', args.baseline.name)})")
     return 0
 
 

@@ -44,9 +44,16 @@ def main() -> int:
     plex = PLEX.read_text(encoding="utf-8", errors="replace")
     store = STORE.read_text(encoding="utf-8", errors="replace")
 
-    need('VERILOG_MACRO "FRAME_W=1280"' in qsf, "QSF FRAME_W must be 1280")
-    need('VERILOG_MACRO "FRAME_H=720"' in qsf, "QSF FRAME_H must be 720")
-    need('VERILOG_MACRO "FRAME_W=640"' not in qsf, "QSF still has FRAME_W=640")
+    # Active (non-#-commented) VERILOG_MACRO only — commented 640 recipe is OK.
+    act = re.findall(
+        r'^\s*set_global_assignment\s+-name\s+VERILOG_MACRO\s+"([^"]+)"',
+        qsf,
+        flags=re.M,
+    )
+    need(any(m == "FRAME_W=1280" for m in act), "QSF active FRAME_W must be 1280")
+    need(any(m == "FRAME_H=720" for m in act), "QSF active FRAME_H must be 720")
+    need(not any(m == "FRAME_W=640" for m in act), "QSF active FRAME_W=640 must be absent")
+    need(not any(m == "FRAME_H=480" for m in act), "QSF active FRAME_H=480 must be absent")
 
     def svh_int(name: str) -> int:
         m = re.search(rf"localparam int {name} = ([^;]+);", svh)

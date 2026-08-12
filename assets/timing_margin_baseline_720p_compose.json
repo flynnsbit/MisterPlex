@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "name": "720p-compose-clk-pix",
+  "description": "integ/720p-compose fit: retain wtime4 clk_ddr setup + clk_sys hold floors, and REQUIRE clk_pix/general[3] Setup presence with non-negative slack. No clk_pix setup_ns regression ref until first measured fit (rd-duck gap).",
+  "clocks": {
+    "clk_ddr": {
+      "match": "emu|pll|pll_inst|altera_pll_i|general[2].gpll~PLL_OUTPUT_COUNTER|divclk",
+      "setup_ns": 0.284,
+      "hold_ns": null,
+      "note": "90 MHz DDR; wtime4 binding setup; watch +0.311 post-strip budget"
+    },
+    "clk_sys": {
+      "match": "emu|pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk",
+      "setup_ns": null,
+      "hold_ns": 0.244,
+      "note": "System/decode domain; wtime4 worst hold"
+    },
+    "clk_pix": {
+      "match": "emu|pll|pll_inst|altera_pll_i|general[3].gpll~PLL_OUTPUT_COUNTER|divclk",
+      "require_present": true,
+      "setup_ns": null,
+      "hold_ns": null,
+      "min_setup_ns": 0.0,
+      "note": "PRESENT_CLK_PIX_PLL general[3] @29.7 MHz; presence+non-neg until first fit measures ref"
+    }
+  },
+  "require_tns_zero": true,
+  "max_setup_regression_ns": 0.05,
+  "max_hold_regression_ns": 0.05,
+  "source": "wtime4 + rd-duck clk_pix gate gap 2026-08-04; setup_ns for clk_pix UNKNOWN pre-fit"
+}

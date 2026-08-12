@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+# shellcheck source=tests/unit/lib_expected_red.sh
+. "$ROOT/tests/unit/lib_expected_red.sh"
 BUILD="$ROOT/build/osd-menu-red"
 mkdir -p "$BUILD"
 
@@ -11,6 +13,7 @@ if [[ -n "${CXXFLAGS:-}" ]]; then
 else
   CXX_FLAGS=(-std=c++17 -O2 -Wall -Wextra -I"$ROOT/host")
 fi
+echo "=== test_osd_menu_red EXECUTED (fault builds only; not green) ==="
 "$CXX_BIN" "${CXX_FLAGS[@]}" -I"$ROOT/host" -DOSD_MENU_FAULT_SKIP_INITIAL_IDLE \
   -o "$BUILD/test_osd_menu_fault" "$ROOT/tests/unit/test_osd_menu.cpp"
 
@@ -18,7 +21,7 @@ set +e
 OUT="$("$BUILD/test_osd_menu_fault" 2>&1)"
 RC=$?
 set -e
-printf '%s\n' "$OUT"
+emit_expected_red_block "$OUT"
 if [[ "$RC" -eq 0 ]]; then
   echo "FAIL: OSD idle skip-initial fault unexpectedly passed" >&2
   exit 1
@@ -42,7 +45,7 @@ set +e
 OUT="$("$BUILD/test_osd_menu_fallback_bitrate_fault" 2>&1)"
 RC=$?
 set -e
-printf '%s\n' "$OUT"
+emit_expected_red_block "$OUT"
 if [[ "$RC" -eq 0 ]]; then
   echo "FAIL: OSD 480p fallback bitrate fault unexpectedly passed" >&2
   exit 1

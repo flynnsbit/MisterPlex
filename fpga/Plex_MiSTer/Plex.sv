@@ -42,8 +42,15 @@ assign BUTTONS = 0;
 //////////////////////////////////////////////////////////////////
 
 wire [1:0] ar = status[122:121];
-assign VIDEO_ARX = (!ar) ? 12'd4 : (ar - 1'd1);
-assign VIDEO_ARY = (!ar) ? 12'd3 : 12'd0;
+// Aspect tracks content FRAME_W:H (QSF). 1280x720 → 16:9.
+`ifndef FRAME_W
+`define FRAME_W 320
+`endif
+`ifndef FRAME_H
+`define FRAME_H 240
+`endif
+assign VIDEO_ARX = (!ar) ? 12'(`FRAME_W) : (ar - 1'd1);
+assign VIDEO_ARY = (!ar) ? 12'(`FRAME_H) : 12'd0;
 
 `include "build_id.v"
 localparam CONF_STR = {
@@ -226,10 +233,54 @@ pll pll
 
 wire reset = RESET | status[0] | buttons[1];
 
+// Fabric clock kit stamp (w-clock): noprune constants for post-fit hierarchy.
+wire [31:0] clkstat_sys_hz, clkstat_pix_hz, clkstat_cea_pf, clkstat_l4_pf;
+wire [7:0]  clkstat_ppc;
+wire        clkstat_cea_fast, clkstat_l4_fast, clkstat_valid;
+wire [15:0] clkstat_peak_x10;
+plex_clk_status u_plex_clk_status (
+	.clk(clk_sys),
+	.reset(reset),
+	.clk_sys_hz(clkstat_sys_hz),
+	.clk_pix_hz(clkstat_pix_hz),
+	.present_ppc(clkstat_ppc),
+	.cea_pix_frame(clkstat_cea_pf),
+	.l4_pix_frame(clkstat_l4_pf),
+	.cea_24_needs_faster_pix(clkstat_cea_fast),
+	.l4_24_needs_faster_sys(clkstat_l4_fast),
+	.peak_mpix_s_x10(clkstat_peak_x10),
+	.kit_id_valid(clkstat_valid)
+);
+wire _unused_clkstat = |{clkstat_sys_hz, clkstat_pix_hz, clkstat_ppc, clkstat_cea_pf,
+	clkstat_l4_pf, clkstat_cea_fast, clkstat_l4_fast, clkstat_peak_x10, clkstat_valid};
+
+// Fabric BW contract stamp (w-clock): 33.1776 MB/s/dir SoT.
+wire [31:0] bwstat_dir_bps;
+wire [17:0] bwstat_beats;
+wire [18:0] bwstat_rw;
+wire [7:0]  bwstat_ppc;
+wire        bwstat_nack_de;
+wire [15:0] bwstat_tcopy;
+wire [15:0] bwstat_budget;
+plex_bw_status u_plex_bw_status (
+	.clk(clk_sys),
+	.bw_dir_b_per_s(bwstat_dir_bps),
+	.bw_beats_per_frame(bwstat_beats),
+	.bw_beats_rw_pair(bwstat_rw),
+	.bw_product_ppc(bwstat_ppc),
+	.bw_nack_de_peak_is_not_ddr(bwstat_nack_de),
+	.bw_t_copy_arm_us(bwstat_tcopy),
+	.bw_frame_budget_us(bwstat_budget)
+);
+wire _unused_bwstat = |{bwstat_dir_bps, bwstat_beats, bwstat_rw, bwstat_ppc, bwstat_nack_de,
+	bwstat_tcopy, bwstat_budget};
+
 // O[5:4] content-resolution selector (see p720 scope). Product elaborate-time
 // FRAME_W/H are the silicon canvas; these wires are status/OSD hints only.
 // Width must be ≥11 bits: 1280 does not fit in [9:0] (max 1023).
+// content_res_640x480 kept for L4 geom mux (ifdef off on product MULTI path).
 wire [1:0]  content_res_sel     = status[5:4];
+wire        content_res_640x480 = (content_res_sel == 2'b01);
 wire [10:0] content_width =
 	(content_res_sel == 2'b10) ? 11'd1280 :
 	(content_res_sel == 2'b01) ? 11'd640  : 11'd320;
@@ -1005,7 +1056,12 @@ ddr_bus_arbiter ddr_arb (
 );
 `endif
 
+// CLK_VIDEO must match CE_PIXEL/VGA_* domain. MULTI+clk_pix emits on clk_pix.
+`ifdef PRESENT_CLK_PIX_PLL
+assign CLK_VIDEO = clk_pix_pll;
+`else
 assign CLK_VIDEO = clk_sys;
+`endif
 assign CE_PIXEL  = ce_pix;
 assign VGA_DE = ~(HBlank | VBlank);
 assign VGA_HS = HSync;
@@ -1046,14 +1102,58 @@ assign LED_USER = has_stream ? (act_cnt[20] ^ nalu_count[0] ^ last_nal_type[0])
 //   [119:112] recon_sig        (3.3l-2 XOR recon Y[0:15]; MB0 block0 golden 0x3b)
 //   [127:120] p3_recon_dbg     (coeff/dequant/idct/recon non-zero flags for silicon RCA)
 //   [122:121] forced from status (Aspect ratio) — overlaps stream debug only
-// Product cfg stamp (w-nostub): fabric-visible PRODUCT_NO_STUB / DDR_FRAME_STORE.
-// Folded into _unused keep-chain so Quartus cannot strip the constants.
+// Product cfg stamp (w-nostub): fabric-visible PRODUCT_NO_STUB / DDR_FRAME_STORE /
+// FABRIC_FRAME_DMA. Folded into _unused keep-chain so Quartus cannot strip them.
 wire product_cfg_no_stub;
 wire product_cfg_ddr_fs;
+wire product_cfg_fabric_dma;
 plex_product_cfg u_product_cfg (
 	.product_no_stub(product_cfg_no_stub),
-	.ddr_frame_store_en(product_cfg_ddr_fs)
+	.ddr_frame_store_en(product_cfg_ddr_fs),
+	.fabric_frame_dma_en(product_cfg_fabric_dma)
 );
+
+// Fabric DMA hierarchy (integ/720p-compose). start tied 0 until ARM handover
+// wires kick — pays bounce M10K + ALM in the fit without contending the live
+// f2sdram port (DDRAM_* held local). w-mem owns full bus mux (arbiter3) next.
+`ifdef FABRIC_FRAME_DMA
+wire        fdma_busy, fdma_done, fdma_err;
+wire [31:0] fdma_rd_beats, fdma_wr_beats, fdma_last_fb;
+wire  [7:0] fdma_bcnt, fdma_be;
+wire [28:0] fdma_addr;
+wire [63:0] fdma_din;
+wire        fdma_rd, fdma_we;
+(* noprune *) ddr_frame_dma #(
+	.BOUNCE_DEPTH(128),
+	.DEFAULT_FRAME_BYTES(1_382_400)
+) u_fabric_frame_dma (
+	.clk(clk_ddr),
+	.reset(reset),
+	.start(1'b0),
+	.src_phys(32'h0),
+	.bank_phys(32'h0),
+	.frame_bytes(32'd0),
+	.busy(fdma_busy),
+	.done(fdma_done),
+	.err_align(fdma_err),
+	.rd_beats(fdma_rd_beats),
+	.wr_beats(fdma_wr_beats),
+	.last_frame_bytes(fdma_last_fb),
+	.DDRAM_BUSY(1'b1),
+	.DDRAM_BURSTCNT(fdma_bcnt),
+	.DDRAM_ADDR(fdma_addr),
+	.DDRAM_DOUT(64'd0),
+	.DDRAM_DOUT_READY(1'b0),
+	.DDRAM_RD(fdma_rd),
+	.DDRAM_DIN(fdma_din),
+	.DDRAM_BE(fdma_be),
+	.DDRAM_WE(fdma_we)
+);
+wire _unused_fdma = |{fdma_busy, fdma_done, fdma_err, fdma_rd_beats, fdma_wr_beats,
+	fdma_last_fb, fdma_bcnt, fdma_addr, fdma_din, fdma_rd, fdma_we, fdma_be};
+`else
+wire _unused_fdma = 1'b0;
+`endif
 
 wire [7:0] telem_flags = {
 	pps_valid, sps_valid, stub_busy, has_idr,
@@ -1235,6 +1335,7 @@ wire _unused = |{disp_i, cont_i, advance, ingest_pixels, ingest_dl, af_active, i
 	stream_ddr_fpga_read, stream_ddr_bus_want, stream_ddr_burstcnt, stream_ddr_addr,
 	stream_ddr_rd, stream_ddr_din, stream_ddr_be, stream_ddr_we, _host_wr_unused,
 	rbf_stamp_alive, rbf_build_id_valid, rbf_build_id_observe_r,
-	product_cfg_no_stub, product_cfg_ddr_fs};
+	product_cfg_no_stub, product_cfg_ddr_fs, product_cfg_fabric_dma,
+	_unused_clkstat, _unused_bwstat, _unused_fdma};
 
 endmodule

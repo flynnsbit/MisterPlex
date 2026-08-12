@@ -47,19 +47,27 @@ def main() -> int:
     fails: list[str] = []
 
     act = active_macros(qsf)
+    multi_on = any(m.startswith("PRESENT_MULTI_PIXEL") for m in act)
+    l4_on = any(m.startswith("PLEX_PRESENT_720P_L4") for m in act)
+    # L4 must stay OFF when MULTI integ is the fit recipe (mutually exclusive).
+    if multi_on and l4_on:
+        fails.append("INTEG: L4 and MULTI both active")
     for m in act:
         if m.startswith("PLEX_PRESENT_720P_L4") or m.startswith("FABRIC_NATIVE_720P_GEOM"):
             fails.append(f"DEFAULT_OFF=no active QSF macro {m}")
-    if not any("FRAME_W=1280" in m for m in act):
+    # Product / integ canvas is 1280×720 (main #16 + integ ENABLED).
+    if not any(m == "FRAME_W=1280" for m in act):
         fails.append("DEFAULT product FRAME_W=1280 missing from active QSF")
-    if not any("FRAME_H=720" in m for m in act):
+    if not any(m == "FRAME_H=720" for m in act):
         fails.append("DEFAULT product FRAME_H=720 missing from active QSF")
-    if any("FRAME_W=640" in m for m in act) or any("FRAME_H=480" in m for m in act):
+    if any(m == "FRAME_W=640" for m in act) or any(m == "FRAME_H=480" for m in act):
         fails.append("legacy FRAME 640x480 must not be active product QSF (use 1280x720)")
-    if not any("PLEX_PRESENT_720P_L4" in line and line.strip().startswith("#") for line in qsf.splitlines()):
-        fails.append("QSF missing commented PLEX_PRESENT_720P_L4 enable recipe")
-    if not any("FABRIC_NATIVE_720P_GEOM" in line and line.strip().startswith("#") for line in qsf.splitlines()):
-        fails.append("QSF missing commented FABRIC_NATIVE_720P_GEOM recipe")
+    if multi_on:
+        print("OK INTEG_ON: L4 remains off; MULTI owns 1280x720")
+    if not any("PLEX_PRESENT_720P_L4" in line for line in qsf.splitlines()):
+        fails.append("QSF missing PLEX_PRESENT_720P_L4 recipe (commented or active)")
+    if not any("FABRIC_NATIVE_720P_GEOM" in line for line in qsf.splitlines()):
+        fails.append("QSF missing FABRIC_NATIVE_720P_GEOM recipe")
 
     # Instantiation intent (ifdef bodies)
     checks = [

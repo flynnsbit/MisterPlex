@@ -3,6 +3,8 @@
 # is restored as a C++ constexpr (not a macro). #if defined() is inert for that.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+# shellcheck source=tests/unit/lib_expected_red.sh
+. "$ROOT/tests/unit/lib_expected_red.sh"
 HDR="$ROOT/host/libmisterplex/av_phase_rtl_quanta.hpp"
 TEST_CPP="$ROOT/tests/unit/test_av_phase_rtl_quanta.cpp"
 OUT="$ROOT/build/av_phase_rtl_quanta_guard_red"
@@ -77,6 +79,8 @@ if ! grep -q 'kParentClusterSepMsX100\|RETRACTED_OLD_ARGV' "$OUT/red_build.txt";
   sed 's/^/  | /' "$OUT/red_build.txt" | tail -40 >&2
   exit 2
 fi
+# Intentional compile-fail log — not a green unit FAIL.
+emit_expected_red_block "$(tail -20 "$OUT/red_build.txt")"
 echo "PASS GUARD_RED restored constexpr fails compile rc=$RED_RC"
 
 # --- GREEN: real header, normal make target path ---

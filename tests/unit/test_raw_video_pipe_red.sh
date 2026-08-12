@@ -4,6 +4,8 @@
 # Red-before-green AND green-before-red — no vacuous "mutation detectable".
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+# shellcheck source=tests/unit/lib_expected_red.sh
+. "$ROOT/tests/unit/lib_expected_red.sh"
 MP="$ROOT/arm/misterplexd/media_player.cpp"
 MAIN="$ROOT/arm/misterplexd/main.cpp"
 HPP_LIB="$ROOT/host/libmisterplex/raw_video_pipe.hpp"
@@ -32,6 +34,7 @@ green_checks() {
   return 0
 }
 
+echo "=== test_raw_video_pipe_red EXECUTED ==="
 if ! green_checks "$MP" "$MAIN" "$HPP_LIB"; then
   echo "FAIL: green raw_video_pipe wiring checks failed on tip sources" >&2
   exit 1
@@ -105,7 +108,7 @@ set +e
 FAULT_OUT="$("$WORK/test_raw_video_pipe_fault" 2>&1)"
 FAULT_RC=$?
 set -e
-printf '%s\n' "$FAULT_OUT"
+emit_expected_red_block "$FAULT_OUT"
 echo "raw_video_pipe_fault true rc=$FAULT_RC"
 if [[ "$FAULT_RC" -eq 0 ]]; then
   echo "FAIL: RAW_PIPE_FAULT_NO_SET binary unexpectedly passed (vacuous green)" >&2

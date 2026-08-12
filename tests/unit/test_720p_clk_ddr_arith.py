@@ -67,20 +67,43 @@ def main() -> int:
         "product else-branch number_of_clocks(3)",
     )
 
-    # QSF: PRESENT_CLK_PIX_PLL must be commented (default OFF)
+    # QSF: integ/720p-compose ENABLES PRESENT_CLK_PIX_PLL (29.7 MHz → 24 Hz).
+    # Without it, CEA 1650×750 @ clk_sys 20 MHz is ~16.16 Hz (timing pack hazard).
     qsf = read(ROOT / "fpga/Plex_MiSTer/Plex.qsf")
     active_pix = [
         ln
         for ln in qsf.splitlines()
         if "PRESENT_CLK_PIX_PLL" in ln and not ln.strip().startswith("#")
     ]
-    check(not active_pix, "QSF PRESENT_CLK_PIX_PLL not active (default OFF)")
+    check(bool(active_pix), "QSF PRESENT_CLK_PIX_PLL active (integ 24 Hz path ON)")
+    check(
+        any("PRESENT_CLK_PIX_PLL=1" in ln or 'PRESENT_CLK_PIX_PLL"' in ln for ln in active_pix)
+        or any("PRESENT_CLK_PIX_PLL" in ln for ln in active_pix),
+        "QSF PRESENT_CLK_PIX_PLL assignment present un-commented",
+    )
     check("Plex_clk_pix.sdc" in qsf, "QSF mentions Plex_clk_pix.sdc recipe")
+    # Frame geometry must be 1280×720 when PLL is on for this integ candidate.
+    active_fw = [
+        ln
+        for ln in qsf.splitlines()
+        if "FRAME_W=" in ln and not ln.strip().startswith("#")
+    ]
+    active_fh = [
+        ln
+        for ln in qsf.splitlines()
+        if "FRAME_H=" in ln and not ln.strip().startswith("#")
+    ]
+    check(any("FRAME_W=1280" in ln for ln in active_fw), "QSF active FRAME_W=1280")
+    check(any("FRAME_H=720" in ln for ln in active_fh), "QSF active FRAME_H=720")
+    check(not any("FRAME_W=640" in ln for ln in active_fw), "QSF hollow FRAME_W=640 absent")
+    check(not any("FRAME_H=480" in ln for ln in active_fh), "QSF hollow FRAME_H=480 absent")
 
-    # Plex.sv wires clk_pix from PLL only under ifdef
+    # Plex.sv wires clk_pix from PLL under ifdef; else still ties clk_sys
     plex = read(ROOT / "fpga/Plex_MiSTer/Plex.sv")
     check("clk_pix_pll" in plex, "Plex.sv declares clk_pix_pll under flag path")
     check(".clk_pix(clk_sys)" in plex, "product .clk_pix(clk_sys) still present")
+    check(".clk_pix(clk_pix_pll)" in plex, "integ .clk_pix(clk_pix_pll) present")
+    check("assign CLK_VIDEO = clk_pix_pll" in plex, "CLK_VIDEO follows clk_pix_pll under PLL")
 
     # present_video_timing pack constants
     tim = read(ROOT / "fpga/Plex_MiSTer/rtl/present_video_timing_720p.sv")
@@ -135,6 +158,29 @@ def main() -> int:
     check("set_clock_groups -asynchronous" in sdc, "SDC async groups clk_pix")
     check("residual" not in sdc.lower() or "Do NOT" in sdc, "SDC does not silence residual")
     check("general[3]" in sdc, "SDC names general[3] clk_pix")
+
+    # CLK_PIX_SDC_GROUPING (rd-duck): ONE async command; pix alone; sys+ddr together.
+    # NEGATIVE: two pairwise commands or one-group form that can cut sys↔ddr.
+    cmds = re.findall(
+        r"set_clock_groups\s+-asynchronous\s*((?:\\?\s*-group\s+\[[^\]]+\]\s*)+)",
+        sdc,
+    )
+    # Fallback: count directives (continuation-aware already flattened poorly) —
+    # require exactly one set_clock_groups -asynchronous directive.
+    n_async = len(re.findall(r"(?m)^\s*set_clock_groups\s+-asynchronous\b", sdc))
+    check(n_async == 1, f"exactly one async clock_groups (got {n_async}) — not pairwise")
+    check("list $plex_clk_sys $plex_clk_ddr" in sdc or
+          "list $plex_clk_ddr $plex_clk_sys" in sdc,
+          "sys+ddr must share one -group via [list ...]")
+    check(re.search(r"-group\s+\[get_clocks\s+\$plex_clk_pix\]", sdc) is not None,
+          "pix alone in its -group")
+    # Forbidden: separate sys-vs-pix and ddr-vs-pix pair commands
+    check(not (
+        re.search(r"-group\s+\[get_clocks\s+\$plex_clk_sys\]\s*\\\s*"
+                  r"-group\s+\[get_clocks\s+\$plex_clk_pix\]", sdc)
+        and re.search(r"-group\s+\[get_clocks\s+\$plex_clk_ddr\]", sdc)
+        and n_async >= 2
+    ), "FORBIDDEN pairwise sys/pix + ddr/pix async commands")
 
     if fails:
         print("FAIL test_720p_clk_ddr_arith:", file=sys.stderr)

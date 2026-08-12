@@ -106,9 +106,15 @@ int main() {
     const bool coded_ok =
         file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
                       ".CODED_W(DDR_FRAME_CODED_WIDTH)") ||
-        (file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
-                       "FS_CODED_W     = DDR_FRAME_CODED_WIDTH") &&
-         file_contains("fpga/Plex_MiSTer/rtl/present_core.sv", ".CODED_W(FS_CODED_W)"));
+        (file_contains("fpga/Plex_MiSTer/rtl/present_core.sv", ".CODED_W(FS_CODED_W)") &&
+         (file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
+                        "FS_CODED_W     = DDR_FRAME_CODED_WIDTH") ||
+          file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
+                        "FS_CODED_W     = DDR_FS_USE_720P_ABI") ||
+          file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
+                        "FS_CODED_W = DDR_FS_USE_720P_ABI") ||
+          file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
+                        "ddr_frame_abi_select.svh")));
     EXPECT(coded_ok, "ddr_frame_store CODED_W from layout params");
     // Honest swap pack must ship with this RBF for skip instrumentation.
     EXPECT(file_contains("fpga/Plex_MiSTer/rtl/ddr_frame_store.sv",

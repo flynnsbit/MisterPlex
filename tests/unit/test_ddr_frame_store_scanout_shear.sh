@@ -43,11 +43,13 @@ mkdir -p "$BUILD"
 echo "RTL SIM: using $VERILATOR_VERSION" >&2
 
 "$RUN_VERILATOR" --cc --exe --build --top-module ddr_frame_store_scanout_shear_tb \
+  -I"$ROOT/fpga/Plex_MiSTer/rtl" \
   -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-SELRANGE -Wno-UNSIGNED \
   -CFLAGS "-std=c++17 -O2" \
   --Mdir "$BUILD" \
   "$ROOT/tests/rtl/ddr_frame_store_scanout_shear_tb_top.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_base_mux.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_ram.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/async_fifo.sv" \
   "$ROOT/tests/rtl/ddr_frame_store_scanout_shear_tb.cpp"

@@ -4,16 +4,19 @@
 //   long-term: enables/s = F_PIX_HZ / PX_PER_CLK
 //              pixels/s  = F_PIX_HZ
 //
-// Product (PRESENT_CLK_PIX_PLL) sets F_PIX_HZ slightly *above* nominal clk_pix
+// Product (PRESENT_CLK_PIX_PLL) may set F_PIX_HZ slightly *above* nominal clk_pix
 // (producer lead, ~1000 ppm) so the CDC FIFO runs against backpressure rather
 // than exact equality. Overflow throttles via in_ready; underflow cannot.
-// See present_core MP_PROD_LEAD_PPM / CLK_PIX_PLL_PLAN.md.
+// Defaults come from misterplex_clk_hz.svh (sys) and CEA 720p24 (pix).
 //
-// Default product path does not instantiate this (PRESENT_CLK_PIX_PLL off).
+// Live MULTI path may use FIFO backpressure alone; this module is also kept
+// noprune in present_core for hierarchy + rate arithmetic proof.
+
+`include "misterplex_clk_hz.svh"
 
 module present_pix_rate_match #(
-	parameter int F_SYS_HZ   = 20_000_000,
-	parameter int F_PIX_HZ   = 29_700_000,
+	parameter int F_SYS_HZ   = `MISTERPLEX_CLK_SYS_HZ,
+	parameter int F_PIX_HZ   = `MISTERPLEX_CEA720_F24_HZ,
 	parameter int PX_PER_CLK = 2
 )(
 	input  wire clk,

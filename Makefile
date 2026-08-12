@@ -5,7 +5,7 @@ CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -I$(ROOT)/host
 FFMPEG_CFLAGS := $(shell pkg-config --cflags libavformat libavcodec libavutil 2>/dev/null)
 FFMPEG_LIBS   := $(shell pkg-config --libs libavformat libavcodec libavutil 2>/dev/null)
 
-.PHONY: all preflight unit unit-unlocked unit-rollcall rtl-sim rtl-sim-unlocked rtl-lint verilator-elab quartus-sv-subset define-parity pre-synth-gates prefit-reachability prefit-reachability-selftest rbf-provenance rbf-provenance-selftest rbf-what-built post-fit-hierarchy post-fit-timing post-fit-timing-margin timing-exclusion pms-baseline-check pms-baseline-live pms-nal-stats arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools check-core-conf-geometry arm-pl330-bench
+.PHONY: all preflight unit unit-unlocked unit-rollcall rtl-sim rtl-sim-unlocked rtl-lint verilator-elab quartus-sv-subset define-parity pre-synth-gates prefit-reachability prefit-reachability-selftest rbf-provenance rbf-provenance-selftest rbf-what-built post-fit-hierarchy post-fit-timing post-fit-timing-clk-pix post-fit-timing-margin timing-exclusion raster-clock-consistency decoder-conformance decoder-conformance-selftest pms-baseline-check pms-baseline-live pms-nal-stats arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools check-core-conf-geometry arm-pl330-bench
 
 all: unit
 
@@ -23,6 +23,10 @@ help:
 	@echo "  make post-fit-hierarchy FIT_RPT=... [MAP_RPT=...] [COMPILE_LOG=...] - critical fitted-module guard"
 	@echo "  make post-fit-timing STA_RPT=... - fail negative Quartus timing slack"
 	@echo "  make post-fit-timing-margin STA_RPT=... - fail STA margin regression vs wtime4 baseline"
+	@echo "  make post-fit-timing-clk-pix STA_RPT=... - require general[3]/clk_pix + Fmax>=29.7 (PLL fit)"
+	@echo "  make decoder-conformance - fabric H.264 conformance harness (coverage+reach+corpus)"
+	@echo "  make decoder-conformance-selftest - POS/NEG harness controls"
+	@echo "  make raster-clock-consistency - 720p24 SoT/stale/arith/PLL/rate-band pre-fit gate"
 	@echo "  make timing-exclusion [STA_RPT=...] - detect timing closed by exclusion not design"
 	@echo "  make pms-baseline-check - live PMS delivered-SPS guard (requires PLEX_BASE/TOKEN/KEY)"
 	@echo "  make pms-baseline-live - secret-safe live PMS Baseline gate; prompts for token"
@@ -207,6 +211,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_pl330_encode $(ROOT)/b
 	$(ROOT)/tests/unit/test_resource_preflight.sh
 	$(ROOT)/tests/unit/test_mister_soft_bounce_lock.sh
 	$(ROOT)/scripts/check_define_parity.py
+	python3 $(ROOT)/tests/unit/test_define_parity_comment_scan.py
 	python3 $(ROOT)/tests/unit/test_hw_visual_compare.py
 	$(ROOT)/tests/unit/test_decode_throughput_gate.sh
 	$(ROOT)/tests/unit/test_rtl_invariants.sh
@@ -215,6 +220,9 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_pl330_encode $(ROOT)/b
 	$(ROOT)/tests/unit/test_core_conf_geometry_gate.sh
 	$(ROOT)/tests/unit/test_video_regression_liveness.sh
 	$(ROOT)/tests/unit/test_timing_margin_gate.sh
+	$(ROOT)/tests/unit/test_quartus_timing_clk_pix_gate.sh
+	$(ROOT)/tests/unit/test_raster_clock_consistency_gate.sh
+	$(ROOT)/tests/unit/test_decoder_conformance_harness.sh
 	$(ROOT)/tests/unit/test_release_rbf_hash.sh
 	$(ROOT)/tests/unit/test_release_pair_gate.sh
 	$(ROOT)/tests/unit/test_package_validated_pair.sh
@@ -298,6 +306,20 @@ quartus-sv-subset:
 
 define-parity:
 	$(ROOT)/scripts/check_define_parity.py
+	python3 $(ROOT)/tests/unit/test_define_parity_comment_scan.py
+
+
+# Pre-fit (REQUIRED before exclusive fit once product claims exact-24 28.8/1600):
+# recipe SoT, no retired 29.7/H1650@24 product, H*V*FPS==Hz, PLL realisable, rate band.
+# Unit runs --self-test only; this target scans the live tree (rc=1 until w-clock lands).
+raster-clock-consistency:
+	$(ROOT)/scripts/check_raster_clock_consistency.py
+
+decoder-conformance:
+	python3 $(ROOT)/scripts/check_decoder_conformance.py --gate --root $(ROOT)
+
+decoder-conformance-selftest:
+	python3 $(ROOT)/scripts/check_decoder_conformance.py --self-test --root $(ROOT)
 
 pre-synth-gates: define-parity quartus-sv-subset prefit-reachability
 
@@ -326,11 +348,21 @@ post-fit-timing:
 	@if [ -z "$(STA_RPT)" ]; then echo "STA_RPT is required" >&2; exit 2; fi
 	$(ROOT)/scripts/check_quartus_timing.py --sta-rpt "$(STA_RPT)"
 
+# PRESENT_CLK_PIX_PLL fit recipe: empty STA is FAIL; require general[3] Setup row
+# and Fmax(general[3]) >= CLK_PIX_MIN_FMAX_MHZ (default 29.7). Soft-skip ≠ PASS.
+post-fit-timing-clk-pix:
+	@if [ -z "$(STA_RPT)" ]; then echo "STA_RPT is required" >&2; exit 2; fi
+	$(ROOT)/scripts/sta_onepass_interrogation.sh "$(STA_RPT)" $(if $(STA_OUT),$(STA_OUT),)
+
 # Margin vs wtime4 (assets/timing_margin_baseline.json). Positive slack that
 # silently eats the budget is a hard fail. ABSENT/malformed STA => rc=77.
+# For clk_pix PLL fits prefer: make post-fit-timing-margin STA_RPT=... \
+#   BASELINE=assets/timing_margin_baseline_720p_compose.json
+# (or make post-fit-timing-clk-pix which runs both gates).
 post-fit-timing-margin:
 	@if [ -z "$(STA_RPT)" ]; then echo "STA_RPT is required" >&2; exit 2; fi
-	$(ROOT)/scripts/check_timing_margin.py --sta-rpt "$(STA_RPT)"
+	$(ROOT)/scripts/check_timing_margin.py --sta-rpt "$(STA_RPT)" \
+		$(if $(BASELINE),--baseline "$(BASELINE)",)
 
 timing-exclusion:
 	$(ROOT)/scripts/check_timing_exclusions.py $(if $(STA_RPT),--sta-rpt "$(STA_RPT)",)

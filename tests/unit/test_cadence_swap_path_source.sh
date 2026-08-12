@@ -39,9 +39,16 @@ check "advance is only stat_advance assign" \
 check "ddr swap condition" \
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv" \
   'vsync_pulse && swap_pending && pending_ready_s2'
-check "vsync_pulse from fstart" \
-  "$ROOT/fpga/Plex_MiSTer/rtl/present_core.sv" \
-  'vsync_pulse\(fstart\)'
+# Template path: vsync_pulse(fstart). MULTI path: .vsync_pulse(fs_vsync_w)
+# with fs_vsync_w = fstart or mp_fstart (clock integ).
+if grep -nE 'vsync_pulse\(fstart\)' "$ROOT/fpga/Plex_MiSTer/rtl/present_core.sv" >/dev/null \
+  || { grep -nE '\.vsync_pulse\(fs_vsync_w\)' "$ROOT/fpga/Plex_MiSTer/rtl/present_core.sv" >/dev/null \
+       && grep -nE 'assign[[:space:]]+fs_vsync_w[[:space:]]*=' "$ROOT/fpga/Plex_MiSTer/rtl/present_core.sv" >/dev/null; }; then
+  echo "OK C1: vsync_pulse from fstart/fs_vsync_w (MULTI-aware)"
+else
+  echo "FAIL C1: vsync_pulse source not fstart or fs_vsync_w" >&2
+  FAIL=1
+fi
 check "advance tied unused at top" \
   "$ROOT/fpga/Plex_MiSTer/Plex.sv" \
   '_unused = \|\{[^}]*advance'

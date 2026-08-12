@@ -1,0 +1,118 @@
+{
+  "schema": "misterplex.decoder_coverage.v1",
+  "description": "Per-stage H.264 fabric decode coverage. claimed_complete requires every feature proven with evidence and rtl_modules named for REACHABILITY. Empty completeness is honest while modules are teeth_non_reachable.",
+  "stages": {
+    "cavlc": {
+      "claimed_complete": false,
+      "claim_delivered": false,
+      "rtl_modules": [],
+      "features": {
+        "coeff_token": {
+          "capability": "CAVLC coeff_token / TotalCoeff decode",
+          "status": "unproven",
+          "evidence": ""
+        },
+        "level_prefix": {
+          "capability": "CAVLC level_prefix/suffix residual levels",
+          "status": "unproven",
+          "evidence": ""
+        },
+        "total_zeros_run_before": {
+          "capability": "CAVLC total_zeros and run_before tables",
+          "status": "unproven",
+          "evidence": ""
+        }
+      }
+    },
+    "iq_idct": {
+      "claimed_complete": false,
+      "claim_delivered": false,
+      "rtl_modules": [],
+      "features": {
+        "iq_4x4": {
+          "capability": "4x4 inverse quantisation",
+          "status": "unproven",
+          "evidence": ""
+        },
+        "idct_4x4": {
+          "capability": "4x4 integer inverse transform",
+          "status": "unproven",
+          "evidence": ""
+        }
+      }
+    },
+    "intra": {
+      "claimed_complete": false,
+      "claim_delivered": false,
+      "rtl_modules": [],
+      "features": {
+        "intra_4x4_modes": {
+          "capability": "Intra_4x4 prediction modes + neighbour availability",
+          "status": "unproven",
+          "evidence": ""
+        },
+        "intra_16x16_modes": {
+          "capability": "Intra_16x16 prediction modes",
+          "status": "unproven",
+          "evidence": ""
+        }
+      }
+    },
+    "inter_mc": {
+      "claimed_complete": false,
+      "claim_delivered": false,
+      "rtl_modules": [],
+      "features": {
+        "part_16x16": {
+          "capability": "Inter 16x16 partition motion compensation",
+          "status": "unproven",
+          "evidence": ""
+        },
+        "luma_qpel": {
+          "capability": "Luma quarter-pel MC positions",
+          "status": "unproven",
+          "evidence": ""
+        },
+        "chroma_epel": {
+          "capability": "Chroma eighth-pel MC",
+          "status": "unproven",
+          "evidence": ""
+        }
+      }
+    },
+    "deblock": {
+      "claimed_complete": false,
+      "claim_delivered": false,
+      "rtl_modules": [],
+      "features": {
+        "boundary_strength": {
+          "capability": "Deblocking boundary strength derivation",
+          "status": "unproven",
+          "evidence": ""
+        },
+        "edge_filter": {
+          "capability": "In-loop deblock edge filter",
+          "status": "unproven",
+          "evidence": ""
+        }
+      }
+    },
+    "dpb": {
+      "claimed_complete": false,
+      "claim_delivered": false,
+      "rtl_modules": [],
+      "features": {
+        "ref_window": {
+          "capability": "DDR-resident DPB reference window cache",
+          "status": "unproven",
+          "evidence": ""
+        }
+      }
+    }
+  },
+  "notes": [
+    "When a lane claims a stage complete: set claimed_complete=true, fill evidence on every feature, list rtl_modules, and ensure prefit teeth promote those modules to expect_reachable.",
+    "GOLDEN-CHANGE: regenerating goldens to match broken fabric output requires an explicit GOLDEN-CHANGE commit note and semantic diff review.",
+    "Exit 77 / UNSCORED is never completeness."
+  ]
+}

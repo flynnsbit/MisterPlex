@@ -1,0 +1,52 @@
+{
+  "schema": "misterplex.decoder_corpus.v1",
+  "description": "Pool of H.264 / plane subjects for fabric decoder conformance. Selection is runtime+seeded; dev_fixture_ids must not be the sole subjects when a stage claims complete.",
+  "dev_fixture_ids": [
+    "baseline_idr_320x240_1f"
+  ],
+  "min_non_dev_when_claiming": 1,
+  "pool": [
+    {
+      "id": "baseline_idr_320x240_1f",
+      "path": "tests/fixtures/p3_host_recon/plex_real_baseline_320x240_1f.264",
+      "kind": "annexb",
+      "tags": ["I", "intra", "baseline", "dev"],
+      "width": 320,
+      "height": 240,
+      "notes": "Development pilot IDR — must not be the only subject under completeness claims"
+    },
+    {
+      "id": "inter_p16_320x240_12f",
+      "path": "tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_320x240_12f.264",
+      "kind": "annexb",
+      "tags": ["P", "inter", "p16"],
+      "width": 320,
+      "height": 240
+    },
+    {
+      "id": "inter_p16_624x480_12f",
+      "path": "tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_624x480_12f.264",
+      "kind": "annexb",
+      "tags": ["P", "inter", "p16", "sd"],
+      "width": 624,
+      "height": 480
+    },
+    {
+      "id": "inter_p16_320x240_i420_planes",
+      "path": "tests/fixtures/p3_frame_planes/plex_inter_p16_320x240_12f_i420.yuv",
+      "kind": "i420",
+      "tags": ["i420", "oracle_plane"],
+      "width": 320,
+      "height": 240,
+      "notes": "ARM/FFmpeg plane dump for bit-exact frame compare"
+    },
+    {
+      "id": "inter_p16_624x480_i420_planes",
+      "path": "tests/fixtures/p3_frame_planes/plex_inter_p16_624x480_12f_i420.yuv",
+      "kind": "i420",
+      "tags": ["i420", "oracle_plane", "sd"],
+      "width": 624,
+      "height": 480
+    }
+  ]
+}

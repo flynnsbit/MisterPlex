@@ -201,10 +201,12 @@ module ddr_bitstream_reader #(
 	input  wire        out_full,
 
 	// Optional integrated RBSP bit feed (ENABLE_BIT_FEED=1).
-	// Default bit_ready=1 so legacy stream_path instances (unconnected) stay X-clean.
+	// Quartus 17.0 rejects SV-2012 port defaults (Error 10231). Callers must
+	// drive bit_ready explicitly — stream_path ties .bit_ready(1'b1) on the
+	// legacy ENABLE_BIT_FEED=0 path so the input never floats (X-clean).
 	output wire        bit_valid,
 	output wire        bit_value,
-	input  wire        bit_ready = 1'b1,
+	input  wire        bit_ready,
 	output wire        bit_nal_last,
 	output wire [15:0] bit_epb_removed,
 	output wire [15:0] bit_rbsp_bytes,
