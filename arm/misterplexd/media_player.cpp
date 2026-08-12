@@ -2882,12 +2882,16 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         const bool pipelineDdr = useDdrF1_ && wantFpgaFrameStore &&
                                  videoFmt == RawVideoFormat::Yuv420p &&
                                  presentMode_ == "fpga";
+        const bool true480Pipeline =
+            pipelineDdr && isPlex480pDdrFrameGeometry(ddrGeometry);
         if (pipelineDdr) {
             log("media: present_pipeline=2slot_cached_ring frame_bytes=" +
-                std::to_string(frameBytes));
+                std::to_string(frameBytes) +
+                " true480_exact_gate=" + (true480Pipeline ? "1" : "0"));
             std::array<std::vector<uint8_t>, 2> ring;
             ring[0].assign(frameBytes, 0);
             ring[1].assign(frameBytes, 0);
+            std::array<int64_t, 2> ringFrameIndex{0, 0};
             std::mutex ringMu;
             std::condition_variable ringCv;
             int fullCount = 0;
@@ -2896,6 +2900,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             int lastPresentedSlot = -1;
             bool lastPresentedHadOverlay = false;
             std::atomic<bool> readerEof{false};
+            std::atomic<bool> pipelineFatal{false};
+            std::atomic<int64_t> pipelinePresentCount{0};
             int localBank = ddrBank_;
             auto lastPipeLog = t0;
 
@@ -2909,8 +2915,10 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     (void)::pthread_setaffinity_np(::pthread_self(), sizeof(cpus), &cpus);
                     (void)::setpriority(PRIO_PROCESS, 0, -10);
                 }
+                int pipelineFailCount = 0;
                 while (true) {
                     int slot = -1;
+                    int64_t slotFrameIndex = 0;
                     {
                         std::unique_lock<std::mutex> lk(ringMu);
                         ringCv.wait(lk, [&] {
@@ -2922,9 +2930,64 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                             continue;
                         }
                         slot = presentSlot;
+                        slotFrameIndex = ringFrameIndex[static_cast<size_t>(slot)];
                     }
                     bool overlayDrawn = false;
-                    {
+                    bool framePresented = false;
+                    bool presentFrame = true;
+                    if (true480Pipeline) {
+                        const int64_t frameUs =
+                            frameContentUs(slotFrameIndex, fpsNum, fpsDen) +
+                            avOffsetMs_.load() * 1000LL;
+                        for (;;) {
+                            if (stop_.load()) {
+                                presentFrame = false;
+                                break;
+                            }
+                            if (paused_.load()) {
+                                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                                continue;
+                            }
+                            const int64_t clockUs =
+                                (wantAudio && audioActive_.load())
+                                    ? audibleClockUs(audioBytes_.load(),
+                                                     audioQueuedBytes_.load())
+                                    : std::chrono::duration_cast<std::chrono::microseconds>(
+                                          std::chrono::steady_clock::now() - t0)
+                                          .count();
+                            const int64_t driftUs = clockUs - frameUs;
+                            avDriftMs_.store(driftUs / 1000);
+                            const AvAction action =
+                                avDecide(driftUs, leadMs * 1000LL, dropMs * 1000LL,
+                                         dropRun);
+                            if (action == AvAction::Hold) {
+                                const int64_t remainUs = -(driftUs + leadMs * 1000LL);
+                                const int64_t sleepUs =
+                                    std::max<int64_t>(100, std::min<int64_t>(remainUs, 2000));
+                                std::this_thread::sleep_for(
+                                    std::chrono::microseconds(sleepUs));
+                                continue;
+                            }
+                            if (action == AvAction::Drop) {
+                                presentFrame = false;
+                                ++dropRun;
+                                droppedFrames_.fetch_add(1);
+                                if ((droppedFrames_.load() % 24) == 1) {
+                                    log("media: DDR_PIPE A/V resync drop frame=" +
+                                        std::to_string(slotFrameIndex) +
+                                        " drift_ms=" +
+                                        std::to_string(avDriftMs_.load()) +
+                                        " drops=" +
+                                        std::to_string(droppedFrames_.load()));
+                                }
+                            } else {
+                                dropRun = 0;
+                            }
+                            break;
+                        }
+                    }
+                    if (presentFrame) {
+                        bool fatalPresent = false;
                         std::lock_guard<std::mutex> plk(presentMu_);
                         uint8_t* slotFrame = ring[static_cast<size_t>(slot)].data();
                         clearYuv420pCropPadding(slotFrame, ddrGeometry);
@@ -2935,17 +2998,22 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                             slotFrame, rawW, rawH, i420OverlayBackup);
                         const OverlayRect dirty = i420OverlayBackup.rect;
                         const bool ok = fpga_.sendYuv420pFrameDdr(
-                            slotFrame, frameBytes, ddrGeometry, localBank);
+                            slotFrame, frameBytes, ddrGeometry, localBank,
+                            true480Pipeline ? DdrBankWritePolicy::RequireReleased
+                                            : DdrBankWritePolicy::BestEffort);
                         if (overlayDrawn)
                             restoreOverlayDirty(slotFrame, dirty);
                         if (ok) {
+                            framePresented = true;
                             localBank ^= 1;
-                            ++presentCount_;
-                            if ((presentCount_ % 48) == 0) {
+                            pipelineFailCount = 0;
+                            const int64_t presented = pipelinePresentCount.fetch_add(1) + 1;
+                            presentCount_ = presented;
+                            if ((presented % 48) == 0) {
                                 const auto dt = fpga_.lastDdrTiming();
                                 log(std::string("media: fpga frame_tx ok via DDR_PIPE") +
-                                    " presents=" + std::to_string(presentCount_) +
-                                    " frames=" + std::to_string(frameIndex) +
+                                    " presents=" + std::to_string(presented) +
+                                    " frames=" + std::to_string(slotFrameIndex) +
                                     " ms=" +
                                     std::to_string(static_cast<int>(fpga_.lastPushMs())) +
                                     " prep_us=" + std::to_string(dt.prep_wait_us) +
@@ -2953,22 +3021,35 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                                     " plxd_us=" + std::to_string(dt.plxa_poll_us) +
                                     " total_us=" + std::to_string(dt.total_us));
                             }
-                        } else if ((frameIndex % 60) == 0) {
-                            log("media: DDR_PIPE present fail: " + fpga_.lastError());
+                        } else {
+                            ++pipelineFailCount;
+                            if (pipelineFailCount == 1 || (pipelineFailCount % 60) == 0) {
+                                log("media: DDR_PIPE present fail frame=" +
+                                    std::to_string(slotFrameIndex) + ": " +
+                                    fpga_.lastError());
+                            }
+                            fatalPresent = true480Pipeline;
+                        }
+                        if (fatalPresent) {
+                            pipelineFatal.store(true);
                         }
                     }
                     {
                         std::lock_guard<std::mutex> lk(ringMu);
-                        lastPresentedSlot = slot;
-                        lastPresentedHadOverlay = overlayDrawn;
+                        if (framePresented) {
+                            lastPresentedSlot = slot;
+                            lastPresentedHadOverlay = overlayDrawn;
+                        }
                         presentSlot = (presentSlot + 1) % 2;
                         --fullCount;
                     }
                     ringCv.notify_all();
+                    if (pipelineFatal.load())
+                        break;
                 }
             });
 
-            while (!stop_.load()) {
+            while (!stop_.load() && !pipelineFatal.load()) {
                 int64_t seekTo = seekReqMs_.exchange(-1);
                 if (seekTo >= 0) {
                     log("media: seek requested " + std::to_string(seekTo));
@@ -2992,14 +3073,19 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                             slotFrame, rawW, rawH, i420OverlayBackup);
                         const OverlayRect dirty = i420OverlayBackup.rect;
                         const bool ok = fpga_.sendYuv420pFrameDdr(
-                            slotFrame, frameBytes, ddrGeometry, localBank);
+                            slotFrame, frameBytes, ddrGeometry, localBank,
+                            true480Pipeline ? DdrBankWritePolicy::RequireReleased
+                                            : DdrBankWritePolicy::BestEffort);
                         if (overlayDrawn)
                             restoreOverlayDirty(slotFrame, dirty);
-                        if (ok)
+                        if (ok) {
                             localBank ^= 1;
-                        {
                             std::lock_guard<std::mutex> lk(ringMu);
                             lastPresentedHadOverlay = overlayDrawn;
+                        } else if (true480Pipeline) {
+                            log("media: DDR_PIPE paused present fail: " +
+                                fpga_.lastError());
+                            pipelineFatal.store(true);
                         }
                     }
                     std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -3007,14 +3093,16 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 }
                 {
                     std::unique_lock<std::mutex> lk(ringMu);
-                    ringCv.wait(lk, [&] { return fullCount < 2 || stop_.load(); });
-                    if (stop_.load())
+                    ringCv.wait(lk, [&] {
+                        return fullCount < 2 || stop_.load() || pipelineFatal.load();
+                    });
+                    if (stop_.load() || pipelineFatal.load())
                         break;
                 }
                 size_t got = 0;
                 uint8_t* dst = ring[static_cast<size_t>(readSlot)].data();
                 auto lastWaitProgress = std::chrono::steady_clock::now();
-                while (got < frameBytes && !stop_.load()) {
+                while (got < frameBytes && !stop_.load() && !pipelineFatal.load()) {
                     // Poll so video-only casts can advance the scrubber while
                     // ffmpeg is still buffering the first full YUV frame.
                     fd_set rfds;
@@ -3058,6 +3146,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     got += static_cast<size_t>(n);
                     totalBytes += static_cast<size_t>(n);
                 }
+                if (pipelineFatal.load())
+                    break;
                 if (got < frameBytes) {
                     shortRead = true;
                     shortReadGot = got;
@@ -3066,8 +3156,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                         std::to_string(frameBytes));
                     break;
                 }
-                // Soft wall-clock pace only when ahead (no audio). When behind, push.
-                if (!wantAudio || !audioActive_.load()) {
+                // Legacy/720 pipeline behaviour is unchanged. True-480 is paced
+                // in the present thread from the exact audible/wall clock.
+                if (!true480Pipeline && (!wantAudio || !audioActive_.load())) {
                     const int64_t frameMs =
                         frameContentMs(frameIndex + 1, fpsNum, fpsDen) + avOffsetMs_.load();
                     const int64_t clockMs = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -3085,6 +3176,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 ++frameIndex;
                 {
                     std::lock_guard<std::mutex> lk(ringMu);
+                    ringFrameIndex[static_cast<size_t>(readSlot)] = frameIndex;
                     readSlot = (readSlot + 1) % 2;
                     ++fullCount;
                 }
@@ -3101,7 +3193,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                                      static_cast<double>(wall2))
                                   : 0.0;
                     const double pfps =
-                        wall2 > 0 ? (1000.0 * static_cast<double>(presentCount_) /
+                        wall2 > 0 ? (1000.0 * static_cast<double>(
+                                                   pipelinePresentCount.load()) /
                                      static_cast<double>(wall2))
                                   : 0.0;
                     const int64_t abytes = audioBytes_.load();
@@ -3130,6 +3223,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             ringCv.notify_all();
             if (presentThr.joinable())
                 presentThr.join();
+            presentCount_ = pipelinePresentCount.load();
             ddrBank_ = localBank;
             if (rfd >= 0) {
                 ::close(rfd);

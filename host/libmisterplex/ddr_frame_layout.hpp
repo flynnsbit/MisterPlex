@@ -312,6 +312,21 @@ inline DdrFrameGeometry plex480pDdrFrameGeometry() {
     return g;
 }
 
+inline bool isPlex480pDdrFrameGeometry(const DdrFrameGeometry& g) {
+    return g.coded_width == kPlex480pCodedWidth &&
+           g.coded_height == kPlex480pCodedHeight &&
+           g.display_width == kPlex480pDisplayWidth &&
+           g.display_height == kPlex480pDisplayHeight &&
+           g.presented_width == kPlex480pPresentedWidth &&
+           g.presented_height == kPlex480pPresentedHeight &&
+           g.crop_left == kPlex480pCropLeft &&
+           g.crop_right == kPlex480pCropRight &&
+           g.crop_top == kPlex480pCropTop &&
+           g.crop_bottom == kPlex480pCropBottom &&
+           g.present_x == kPlex480pPillarboxLeft &&
+           g.present_y == 0;
+}
+
 inline DdrFrameGeometry ddrFrameGeometryForPresentedSize(int width, int height) {
     if (width == kPlex480pPresentedWidth && height == kPlex480pPresentedHeight)
         return plex480pDdrFrameGeometry();

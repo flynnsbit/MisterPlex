@@ -332,7 +332,8 @@ $(ROOT)/build/test_avclock: $(ROOT)/tests/unit/test_avclock.cpp \
 
 $(ROOT)/build/test_fixed30_host_pacing: $(ROOT)/tests/unit/test_fixed30_host_pacing.cpp \
 		$(ROOT)/host/libmisterplex/av_clock.hpp \
-		$(ROOT)/host/libmisterplex/mraudio_status.hpp
+		$(ROOT)/host/libmisterplex/mraudio_status.hpp \
+		$(ROOT)/host/libmisterplex/input_mailbox.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_fixed30_host_pacing.cpp
 

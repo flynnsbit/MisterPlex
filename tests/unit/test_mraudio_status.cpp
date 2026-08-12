@@ -58,6 +58,12 @@ int main() {
     // Never negative, even if the queue somehow exceeds what we think we wrote.
     CHECK(audibleClockMs(kSec, kSec * 2) == 0);
     CHECK(audibleClockMs(0, 0) == 0);
+    CHECK(audibleClockUs(kSec, 0) == 1000000);
+    CHECK(audibleClockUs(kSec, kSec / 2) == 500000);
+    CHECK(audibleClockUs(kSec, kSec) == 0);
+    CHECK(audibleClockUs(kSec, -1) == 1000000);
+    CHECK(audibleClockUs(kSec, kSec * 2) == 0);
+    CHECK(audibleClockUs(192, 0) == 1000);
 
     // The correction is exactly the queue depth, so a deeper ring means a
     // proportionally earlier playback position.
@@ -72,12 +78,15 @@ int main() {
     for (const int64_t depth : depths) {
         const int64_t written = kSec * 4 + depth;
         CHECK(audibleClockMs(written, depth) == ((written - depth) * 1000LL) / kSec);
+        CHECK(audibleClockUs(written, depth) == ((written - depth) * 1000000LL) / kSec);
     }
 
     // Moving equal bytes into both counters changes queue occupancy but not what
     // has reached the speakers.
     CHECK(audibleClockMs(3 * kSec + 4096, kSec + 4096) ==
           audibleClockMs(3 * kSec, kSec));
+    CHECK(audibleClockUs(3 * kSec + 4096, kSec + 4096) ==
+          audibleClockUs(3 * kSec, kSec));
 
     // At fixed submitted bytes, a deeper queue can never advance the audible
     // position. Check the full useful range at sub-ms and multi-ms boundaries.

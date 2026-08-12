@@ -327,6 +327,22 @@ int main() {
         CHECK(br.freeBank() == -1);
         CHECK(br.swap_pending);
 
+        // Legacy/720 best-effort remains unchanged: if PLXD has no release,
+        // callers may use the non-display bank. Exact true480 must instead
+        // wait, preventing a second queued frame from replacing the pending one.
+        DdrBankWriteDecision decision =
+            decideDdrBankWrite(br, DdrBankWritePolicy::BestEffort);
+        CHECK(decision.ready);
+        CHECK(decision.bank == 0);
+        decision = decideDdrBankWrite(br, DdrBankWritePolicy::RequireReleased);
+        CHECK(!decision.ready);
+        CHECK(decision.bank == -1);
+
+        CHECK(decodeBankReleaseWord(w2, br));
+        decision = decideDdrBankWrite(br, DdrBankWritePolicy::RequireReleased);
+        CHECK(decision.ready);
+        CHECK(decision.bank == 1);
+
         // Bad magic
         CHECK(!decodeBankReleaseWord(0xDEADBEEFu, br));
 

@@ -98,9 +98,11 @@ public:
                            DdrFrameFormat format = DdrFrameFormat::Yuv420p);
     DdrFrameLayout ddrFrameLayout() const { return ddrLayout_; }
     bool sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len,
-                             const DdrFrameGeometry& geometry, int bank = 0);
+                             const DdrFrameGeometry& geometry, int bank = 0,
+                             DdrBankWritePolicy policy = DdrBankWritePolicy::BestEffort);
     bool sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len, int width, int height,
-                             int bank = 0);
+                             int bank = 0,
+                             DdrBankWritePolicy policy = DdrBankWritePolicy::BestEffort);
     // Zero-intermediate-buffer present: PLXD bank select + mapped write pointer.
     // Caller fills outLen bytes at the returned pointer, then commitDdrBankIngest.
     // Returns nullptr on failure (lastError set). outBank is the bank actually selected.
@@ -281,7 +283,8 @@ private:
     // Caller holds SpiExclusive + user mode.
     bool writeStatusWordRaw(const uint8_t word[16]);
     bool readStatusRaw(uint8_t out[16]);
-    bool sendDdrFrame(const uint8_t* payload, size_t len, int bank);
+    bool sendDdrFrame(const uint8_t* payload, size_t len, int bank,
+                      DdrBankWritePolicy policy);
 
     int fd_ = -1;
     volatile uint32_t* map_ = nullptr;

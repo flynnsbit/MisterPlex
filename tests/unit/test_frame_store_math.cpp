@@ -180,6 +180,10 @@ int main() {
     CHECK(p480.crop_right == 6);
     CHECK(p480.present_x == 11);
     CHECK(p480.placement == misterplex::DdrFramePlacement::Pillarbox);
+    CHECK(misterplex::isPlex480pDdrFrameGeometry(p480));
+    auto almostP480 = p480;
+    almostP480.present_x += 1;
+    CHECK(!misterplex::isPlex480pDdrFrameGeometry(almostP480));
     checkLayout(p480, 449280, 0x80000, 0x300FF000, 78,
                 misterplex::DdrFrameFormat::Yuv420p, 39);
     const auto yuv480 =

@@ -1327,7 +1327,8 @@ bool FpgaSpi::sendRgb565Frame(const uint16_t* rgb, int w, int h, uint8_t index) 
     return sendFileTx(packed.data(), packed.size(), index);
 }
 
-bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
+bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank,
+                           DdrBankWritePolicy policy) {
     if (!payload || len != ddrLayout_.frame_bytes) {
         setErr("sendDdrFrame: frame size does not match DDR geometry");
         return false;
@@ -1361,8 +1362,8 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
 
     // --- Bank selection via PLXD bank-release ACK ---
     // If the FPGA publishes a valid PLXD mailbox, use it to determine which
-    // bank is free instead of relying on fixed delays.  Fall back to the old
-    // timing-based mitigation only when PLXD is absent (pre-PLXD RBF).
+    // bank is free instead of relying on fixed delays. Best-effort callers keep
+    // the legacy absent/pending fallbacks; strict true480 callers fail closed.
     //
     // PLXD semantics (w-a3 b187df5):
     //   free_bank_mask != 0 → at least one bank is safe to write
@@ -1371,36 +1372,55 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
     bool plxdUsed = false;
     {
         BankReleaseStatus brs;
-        // Cap PLXD wait: 120-iter poll was ~20ms/present (12 pfps); 4-iter ~2ms
-        // (15→20.7 with direct ingest). At 20.7 we still miss 24 — zero poll:
-        // free bank if available else non-display immediately (tear ≪ rate miss).
-        constexpr int kPlxdPollMaxIters = 0;
         int plxdIters = 0;
-        if (readBankRelease(brs)) {
-            // PLXD present — use it for bank selection.
-            if (brs.anyFree()) {
-                bank = brs.freeBank();
-                plxdUsed = true;
-            } else {
-                // Both banks in use (swap pending). Optional brief poll then non-display.
-                for (int i = 0; i < kPlxdPollMaxIters; ++i) {
-                    usleep(500);
-                    ++plxdIters;
-                    if (readBankRelease(brs) && brs.anyFree()) {
-                        bank = brs.freeBank();
+        bool sawPlxd = false;
+        if (policy == DdrBankWritePolicy::RequireReleased) {
+            // True-480 product pipeline: never overwrite a bank while a prior
+            // frame is pending. Existing PLXD is the required acknowledgement;
+            // absence/timeout fails closed before the payload copy.
+            constexpr int kPlxdWaitMaxUs = 50000;
+            const auto deadline =
+                tPrep0 + std::chrono::microseconds(kPlxdWaitMaxUs);
+            for (;;) {
+                if (readBankRelease(brs)) {
+                    sawPlxd = true;
+                    const DdrBankWriteDecision decision =
+                        decideDdrBankWrite(brs, policy);
+                    if (decision.ready) {
+                        bank = decision.bank;
                         plxdUsed = true;
                         break;
                     }
                 }
-                if (!plxdUsed) {
-                    // Best-effort: non-display bank (may tear once; beats stall).
-                    bank = brs.disp_bank ^ 1;
-                }
+                if (std::chrono::steady_clock::now() >= deadline)
+                    break;
+                usleep(1000);
+                ++plxdIters;
             }
             auto tPlxd1 = std::chrono::steady_clock::now();
             timing.plxa_poll_us = elapsedUs(tPrep0, tPlxd1);
             timing.plxa_poll_iters = plxdIters;
-            timing.plxa_used = plxdUsed || (!plxdUsed && plxdIters > 0);
+            timing.plxa_used = plxdUsed;
+            if (!plxdUsed) {
+                timing.prep_wait_us = timing.plxa_poll_us;
+                timing.total_us = timing.plxa_poll_us;
+                lastDdrTiming_ = timing;
+                setErr(sawPlxd
+                           ? "sendDdrFrame: PLXD timeout waiting for a released bank"
+                           : "sendDdrFrame: PLXD acknowledgement required but unavailable");
+                return false;
+            }
+        } else if (readBankRelease(brs)) {
+            // Legacy/diagnostic/720 behaviour is unchanged: use a released bank
+            // when available, otherwise reuse the non-display bank immediately.
+            const DdrBankWriteDecision decision =
+                decideDdrBankWrite(brs, policy);
+            bank = decision.bank;
+            plxdUsed = brs.anyFree();
+            auto tPlxd1 = std::chrono::steady_clock::now();
+            timing.plxa_poll_us = elapsedUs(tPrep0, tPlxd1);
+            timing.plxa_poll_iters = 0;
+            timing.plxa_used = plxdUsed;
         } else {
             // PLXD absent — pre-PLXD RBF or mailbox not yet written.
             // Fall back to the old timing-based mitigation: brief yield for
@@ -1826,7 +1846,8 @@ bool FpgaSpi::readBankRelease(BankReleaseStatus& out) {
 }
 
 bool FpgaSpi::sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len,
-                                  const DdrFrameGeometry& geometry, int bank) {
+                                  const DdrFrameGeometry& geometry, int bank,
+                                  DdrBankWritePolicy policy) {
     if (!yuv420p || geometry.coded_width <= 0 || geometry.coded_height <= 0 ||
         (geometry.coded_width & 1) || (geometry.coded_height & 1)) {
         setErr("sendYuv420pFrameDdr: bad YUV420p frame");
@@ -1845,12 +1866,13 @@ bool FpgaSpi::sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len,
         if (!setDdrFrameLayout(geometry, DdrFrameFormat::Yuv420p))
             return false;
     }
-    return sendDdrFrame(yuv420p, len, bank);
+    return sendDdrFrame(yuv420p, len, bank, policy);
 }
 
 bool FpgaSpi::sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len, int width, int height,
-                                  int bank) {
-    return sendYuv420pFrameDdr(yuv420p, len, makeDdrFrameGeometry(width, height), bank);
+                                  int bank, DdrBankWritePolicy policy) {
+    return sendYuv420pFrameDdr(yuv420p, len, makeDdrFrameGeometry(width, height), bank,
+                               policy);
 }
 
 bool FpgaSpi::sendPcmChunk(const uint8_t* pcm, size_t len, uint8_t index) {

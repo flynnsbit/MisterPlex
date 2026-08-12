@@ -11,20 +11,41 @@ true-480 is:
 
 One beam frame is exactly 666,624 system-clock cycles or 33.3312 ms.
 
-## Current presentation contracts
+## Actual product path
 
-- `frameContentMs()` schedules decoded frames from the exact source rational,
-  but returns integer milliseconds.
-- Video pacing uses `audibleClockMs()`, which subtracts the measured MrAudio
-  queue from submitted bytes. A stable queue therefore changes fixed offset,
-  not clock rate.
-- `avDecide()` presents inside the 40 ms lead window and drops only when a
-  frame is over 80 ms late. Recovery is capped at one consecutive host drop.
-- A host frame-store request becomes visible on `frame_start`/VSync. The
-  legacy integer `present_cadence` result animates generated bars and does not
-  gate product frame-store swaps.
+True-480 product playback uses `pipelineDdr`: FFmpeg writes YUV420p frames to a
+large pipe, a reader fills a two-slot cached ring, and a presentation thread
+copies a slot to DDR and rings the doorbell. With audio active, the reader does
+not use `frameContentMs()` pacing. `audioPump()` wall-paces 48 kHz audio and its
+backpressure normally rate-limits FFmpeg, but buffered video and the two slots
+still permit decoded-frame bursts.
 
-## Ideal exact-rational beam cadence
+The previous source-only audit incorrectly treated the integer-millisecond
+reader schedule as the product gate. The real pre-fix hazard was independent:
+`sendDdrFrame()` polled PLXD zero times and, while `swap_pending`, immediately
+selected `disp_bank ^ 1`. That is the pending bank. A second buffered frame
+could therefore replace a frame before VSync.
+
+## Source-side guarantee
+
+Exact true-480 geometry now enables two coupled gates:
+
+1. Each ring slot carries its CFR frame index. The presentation thread releases
+   it from `frameContentUs(index, fpsNum, fpsDen)` against
+   `audibleClockUs(written, queued)` (or a monotonic microsecond wall clock when
+   audio is unavailable). The existing 40 ms lead, 80 ms late-drop threshold,
+   and maximum one consecutive recovery drop are unchanged.
+2. `DdrBankWritePolicy::RequireReleased` requires a valid PLXD
+   `free_bank_mask` before any DDR payload copy or doorbell. It waits at most
+   50 ms. Missing PLXD or a timeout aborts the true-480 pipeline instead of
+   reusing the pending bank. Legacy, diagnostic, and 720 paths retain their
+   prior best-effort behavior.
+
+Thus a buffered burst cannot bypass source-rate eligibility, and an eligible
+catch-up frame cannot supersede a still-pending frame. A product RBF must
+publish the existing PLXD bank-release mailbox; absence fails closed.
+
+## Exact-rational beam cadence
 
 | Source | Unique source frames | Beam ticks | Repeats | Beam drops | Exact cycle |
 |---|---:|---:|---:|---:|---:|
@@ -34,50 +55,29 @@ One beam frame is exactly 666,624 system-clock cycles or 33.3312 ms.
 | 30000/1001 | 17,856 | 17,875 | 19 | 0 | 595.7952 s |
 | 30 | 15,624 | 15,625 | 1 | 0 | 520.8 s |
 
-For exact release times, all sources are slower than the beam, so the beam only
-holds/repeats frames. Phase error is a bounded sawtooth below one beam period;
-it does not accumulate against the audible clock.
+Every required source is slower than the beam. Exact eligibility therefore
+produces only one- or two-beam-tick holds: no two source frames target the same
+beam tick. Microsecond timestamp truncation stays below 1 us and forms a
+bounded sawtooth rather than monotonic drift. A stable MrAudio queue depth
+changes fixed A/V offset, not rate, because the audible clock subtracts the
+queued byte count.
 
-## Current integer-millisecond host schedule
+`test_fixed30_host_pacing` explicitly proves:
 
-`test_fixed30_host_pacing` uses the production clock helpers and maps each host
-frame's earliest eligible integer-millisecond release to the first native-beam
-VSync. Runtime 2 ms polling and scheduler/copy jitter can rotate or perturb the
-pattern; this model tests whether the host timing contract guarantees one
-source frame per VSync opportunity. At beam phase zero:
-
-| Source | Host schedule cycle | Duration | Same-tick source frames | Two-tick gaps | Net duplicates |
-|---|---:|---:|---:|---:|---:|
-| 24000/1001 | 71,424 frames | 2,978.976 s | 0 | 17,951 | 17,951 |
-| 24 | 62,496 frames | 2,604 s | 0 | 15,629 | 15,629 |
-| 25 | 2,604 frames | 104.16 s | 0 | 521 | 521 |
-| 30000/1001 | 89,280 frames | 2,978.976 s | 563 | 658 | 95 |
-| 30 | 15,624 frames | 520.8 s | 103 | 104 | 1 |
-
-The near-30 rates expose a pre-fit risk hidden by average-rate accounting.
-Integer-millisecond timestamps contain 33 ms intervals, shorter than the
-33.3312 ms beam. Two host frames can therefore target the same VSync, followed
-later by a two-tick gap. Several deterministic beam-phase probes retain this
-collision class. `avDecide()` reports these frames as normal `Present`, not
-recovery `Drop`; whether the first pending frame is superseded depends on the
-frame-store/doorbell timing. The opportunities are clustered rather than
-uniform: phase zero groups the 30000/1001 events into 95 correction clusters
-over 2,978.976 s (about 31.36 s apart), while 30 fps puts its 103/104
-same-/two-tick pairs into one roughly 10.2 s cluster per 520.8 s cycle.
-
-This is a blocker for claiming clean 30000/1001 or 30 fps glass cadence from
-source inspection alone. Resolving it requires either finer-than-millisecond
-host release timing or a proven one-pending-frame/VSync acknowledgement policy,
-then external capture. This audit does not change production timing.
+- the old unpaced/best-effort two-slot sequence permits a pending-bank
+  supersede (RED);
+- exact eligibility holds the second burst frame;
+- strict PLXD refuses it while no bank is free and accepts it after release;
+- all five rational rates have the exact repeat counts above; and
+- sustained late recovery never drops two consecutive frames.
 
 ## 24p-class verdict
 
-Both 24000/1001 and 24 fps avoid the same-VSync collision in the deterministic
-model and remain bounded to the audible clock. They still alternate one- and
-two-beam-tick holds (33.3312/66.6624 ms): fixed 30.0019 Hz cannot provide smooth
-native 24p motion. It can remain free of monotonic audio drift only because the
-host follows the exact rational schedule and inserts the long-run correction
-repeats. A source-matched beam/runtime PLXG is required for uniform 24p motion.
+`24000/1001` and 24 fps can remain bounded to the audible clock without
+long-run A/V rate drift. They cannot have uniform motion on a fixed
+30.001920 Hz beam: the unavoidable one-/two-tick hold pattern is
+33.3312/66.6624 ms judder. Runtime PLXG or another source-matched display rate
+is still required for smooth native 24p motion.
 
 ## Gates and remaining evidence
 
@@ -88,10 +88,14 @@ python3 tests/unit/test_fixed30_cadence.py
 build/test_fixed30_host_pacing
 build/test_avclock
 build/test_mraudio_status
+build/test_input_mailbox
+python3 tests/unit/test_av_logging_contract.py
 make unit
+make arm-plexd
 ```
 
 Hardware remains parent-only. A product claim still requires a fitted RBF that
-proves the 20 MHz divide-by-two, 672x496 timing and a paired HDMI-video/USB-audio
-capture with provenance-bearing adapter-offset calibration. Missing audio is
-BLOCKED, never PASS.
+proves the 20 MHz divide-by-two, 672x496 timing and functioning PLXD release,
+then a paired HDMI-video/USB-audio capture with provenance-bearing
+adapter-offset calibration. Missing audio or PLXD acknowledgement is BLOCKED,
+never PASS.

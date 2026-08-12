@@ -82,6 +82,15 @@ inline int64_t audibleClockMs(int64_t writtenBytes, int64_t queuedBytes) {
     return (played * 1000LL) / kMrAudioBytesPerSec;
 }
 
+inline int64_t audibleClockUs(int64_t writtenBytes, int64_t queuedBytes) {
+    int64_t played = writtenBytes;
+    if (queuedBytes >= 0)
+        played -= queuedBytes;
+    if (played <= 0)
+        return 0;
+    return (played * 1000000LL) / kMrAudioBytesPerSec;
+}
+
 // ---------------------------------------------------------------------------
 // Feed-rate servo
 // ---------------------------------------------------------------------------

@@ -1661,7 +1661,7 @@ def check_yuv_ddr_writer_contract() -> None:
             ),
             (
                 fpga_norm,
-                "returnsendDdrFrame(yuv420p,len,bank)",
+                "returnsendDdrFrame(yuv420p,len,bank,policy)",
                 "sendYuv420pFrameDdr must forward the yuv420p pointer to the DDR copier unchanged",
             ),
             (
