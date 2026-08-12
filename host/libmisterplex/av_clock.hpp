@@ -63,6 +63,22 @@ enum class AvAction {
     Drop,    // skip presenting, we are too far behind to catch up by waiting
 };
 
+enum class PlaybackTerminalState {
+    None,    // explicit stop teardown already owns the terminal report
+    Ended,   // natural EOF with delivered content; auto-next is allowed
+    Stopped, // empty or failed session; never auto-next
+};
+
+inline PlaybackTerminalState classifyPlaybackTerminalState(bool stopRequested,
+                                                            bool pipelineAborted,
+                                                            bool hadContent) {
+    if (stopRequested)
+        return PlaybackTerminalState::None;
+    if (pipelineAborted || !hadContent)
+        return PlaybackTerminalState::Stopped;
+    return PlaybackTerminalState::Ended;
+}
+
 // Decide what to do with the frame we just decoded.
 //   leadMs      small allowed video lead so the vsync path is never starved
 //   dropMs      drift past which a late frame is dropped (0 disables dropping)

@@ -49,6 +49,10 @@ Exact true-480 geometry now enables two coupled gates:
    baseline. Legacy, diagnostic, and 720 paths retain their prior best-effort
    behavior.
 
+A strict-send failure aborts true480 presentation and is carried through
+teardown as a distinct pipeline failure. It reports `stopped`, never natural
+`ended`, so a mid-title PLXD failure cannot silently trigger auto-next.
+
 Thus a buffered burst cannot bypass source-rate eligibility, and an eligible
 catch-up frame cannot supersede a still-pending frame. A product RBF must
 publish the existing PLXD bank-release mailbox; absence fails closed.

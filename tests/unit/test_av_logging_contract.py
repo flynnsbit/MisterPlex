@@ -115,6 +115,21 @@ def main() -> int:
         ) is not None,
         "strict PLXD baseline must clear on reset, reprobe, and DDR remap/layout change",
     )
+    require(
+        "true480PipelineAborted = pipelineFatal.load()" in MEDIA
+        and "lastSummary_.true480PipelineAborted = true480PipelineAborted" in MEDIA
+        and re.search(
+            r"classifyPlaybackTerminalState\(\s*stop_\.load\(\),\s*"
+            r"true480PipelineAborted,\s*hadContent\)",
+            MEDIA,
+        ) is not None
+        and 'terminal == PlaybackTerminalState::Stopped' in MEDIA,
+        "strict true480 pipeline abort must survive teardown as stopped/non-auto-next",
+    )
+    require(
+        re.search(r'if\s*\(hadContent\)\s*onProgress_\("ended"', MEDIA) is None,
+        "hadContent alone must never classify a failed true480 pipeline as ended",
+    )
     print("test_av_logging_contract: OK")
     return 0
 
