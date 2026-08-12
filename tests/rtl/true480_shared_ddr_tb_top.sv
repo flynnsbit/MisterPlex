@@ -43,6 +43,7 @@ module true480_shared_ddr_tb #(
 	output wire        cfg_refill_telemetry,
 	output wire        telem_fill_issue,
 	output wire        telem_fill_complete,
+	output wire        telem_fallback_fire,
 	output wire        telem_fill_chroma,
 	output wire        telem_fill_bank,
 	output wire [8:0]  telem_fill_line,
@@ -256,6 +257,7 @@ module true480_shared_ddr_tb #(
 `ifdef PLEX_PRESENT_TRUE_480P
 	reg telem_fill_issue_r;
 	reg telem_fill_complete_r;
+	reg telem_fallback_fire_r;
 	reg telem_fill_chroma_r;
 	reg telem_fill_bank_r;
 	reg [8:0] telem_fill_line_r;
@@ -341,6 +343,7 @@ module true480_shared_ddr_tb #(
 		telem_fill_issue_r <= 1'b0;
 		telem_fill_complete_r <= 1'b0;
 		if (reset) begin
+			telem_fallback_fire_r <= 1'b0;
 			telem_fill_chroma_r <= 1'b0;
 			telem_fill_bank_r <= 1'b0;
 			telem_fill_line_r <= 9'd0;
@@ -356,6 +359,7 @@ module true480_shared_ddr_tb #(
 			telem_prev_sched_valid <= 1'b0;
 			telem_prev_sched_for_pending <= 1'b0;
 		end else begin
+			telem_fallback_fire_r <= store.db_stale_fallback;
 			if (telem_prev_state == 4'd0 && store.state_ddr == 4'd5) begin
 				telem_fill_issue_r <= 1'b1;
 				telem_fill_chroma_r <= store.fill_is_chroma;
@@ -388,6 +392,7 @@ module true480_shared_ddr_tb #(
 	assign cfg_refill_telemetry = 1'b1;
 	assign telem_fill_issue = telem_fill_issue_r;
 	assign telem_fill_complete = telem_fill_complete_r;
+	assign telem_fallback_fire = telem_fallback_fire_r;
 	assign telem_fill_chroma = telem_fill_chroma_r;
 	assign telem_fill_bank = telem_fill_bank_r;
 	assign telem_fill_line = telem_fill_line_r;
@@ -408,6 +413,7 @@ module true480_shared_ddr_tb #(
 	assign cfg_refill_telemetry = 1'b0;
 	assign telem_fill_issue = 1'b0;
 	assign telem_fill_complete = 1'b0;
+	assign telem_fallback_fire = 1'b0;
 	assign telem_fill_chroma = 1'b0;
 	assign telem_fill_bank = 1'b0;
 	assign telem_fill_line = 9'd0;

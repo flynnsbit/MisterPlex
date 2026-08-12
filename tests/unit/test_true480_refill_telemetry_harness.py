@@ -17,6 +17,7 @@ def require(condition: bool, message: str) -> None:
 for signal in (
     "telem_fill_issue",
     "telem_fill_complete",
+    "telem_fallback_fire",
     "telem_fill_chroma",
     "telem_fill_bank",
     "telem_fill_line",
@@ -32,6 +33,8 @@ for signal in (
 require("store.state_ddr" in TOP and "store.fill_y" in TOP and
         "store.fill_cy" in TOP,
         "telemetry does not observe real fill state/IDs")
+require("telem_fallback_fire_r <= store.db_stale_fallback" in TOP,
+        "fallback-fire telemetry is not captured directly at the DDR edge")
 require("store.y_valid" in TOP and "store.c_valid" in TOP,
         "resident-duplicate check does not inspect live tags")
 require("store.desired_y_r" in TOP and "store.need_y_cur_c" in TOP,

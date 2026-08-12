@@ -1,7 +1,8 @@
 `default_nettype none
 
 module true480_i420_tb #(
-	parameter int GEOMETRY_FAULT = 0
+	parameter int GEOMETRY_FAULT = 0,
+	parameter int STALE_DOORBELL_FALLBACK_POLLS = 4096
 )(
 	input  wire        clk,
 	input  wire        clk_ddr,
@@ -39,7 +40,8 @@ module true480_i420_tb #(
 	output wire [7:0]  obs_v,
 	output wire        obs_disp_bank,
 	output wire        cfg_active_config,
-	output wire [7:0]  cfg_y_fill_stride
+	output wire [7:0]  cfg_y_fill_stride,
+	output wire [31:0] cfg_stale_doorbell_fallback_polls
 );
 	localparam int PRESENT_X_P = (GEOMETRY_FAULT == 1) ? 10 : 11;
 	localparam int CROP_LEFT_P = (GEOMETRY_FAULT == 2) ? 1 : 0;
@@ -54,6 +56,8 @@ module true480_i420_tb #(
 	assign cfg_active_config = 1'b0;
 	assign cfg_y_fill_stride = 8'd0;
 `endif
+	assign cfg_stale_doorbell_fallback_polls =
+	    32'(STALE_DOORBELL_FALLBACK_POLLS);
 
 	ddr_frame_store #(
 		.FRAME_W(640),
@@ -73,7 +77,8 @@ module true480_i420_tb #(
 `endif
 		.PHYS_BASE(32'h3000_0000),
 		.HPS_BANK_STRIDE_BYTES(32'h0008_0000),
-		.DOORBELL_PHYS(32'h300f_f000)
+		.DOORBELL_PHYS(32'h300f_f000),
+		.STALE_DOORBELL_FALLBACK_POLLS(STALE_DOORBELL_FALLBACK_POLLS)
 	) dut (
 		.clk(clk),
 		.clk_ddr(clk_ddr),

@@ -6,6 +6,7 @@ RUN_VERILATOR="$ROOT/scripts/run_verilator.sh"
 RTL="${TRUE480_RTL_DIR:-$ROOT/fpga/Plex_MiSTer/rtl}"
 MODE="${1:---gate}"
 TAG="${TRUE480_BUILD_TAG:-repo}"
+PRODUCT_FALLBACK_POLLS=4096
 ACTIVE_CONFIG=0
 if [[ "$MODE" == "--active-gate" ]]; then
   ACTIVE_CONFIG=1
@@ -65,6 +66,7 @@ build_variant() {
     --Mdir "$build" \
     --top-module true480_i420_tb \
     -GGEOMETRY_FAULT="$fault" \
+    -GSTALE_DOORBELL_FALLBACK_POLLS="$PRODUCT_FALLBACK_POLLS" \
     "${ACTIVE_VERILATOR_ARGS[@]}" \
     -I"$RTL" \
     -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-SELRANGE -Wno-UNSIGNED \
