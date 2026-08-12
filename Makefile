@@ -96,6 +96,7 @@ unit-unlocked: preflight $(ROOT)/build/test_gdm_filter $(ROOT)/build/test_spi_tx
 	python3 $(ROOT)/tests/unit/test_present_geom_params_static.py
 	python3 $(ROOT)/tests/unit/test_true480_i420_harness.py
 	python3 $(ROOT)/tests/unit/test_true480_shared_ddr_harness.py
+	python3 $(ROOT)/tests/unit/test_true480_active_config_harness.py
 	$(ROOT)/tests/unit/test_present_geom_params_rtl_sim.sh
 	python3 $(ROOT)/tests/unit/test_present_720p_store_wire_static.py
 	$(ROOT)/tests/unit/test_present_720p_store_wire_rtl_sim.sh

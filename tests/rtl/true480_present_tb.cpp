@@ -118,20 +118,25 @@ public:
                     break;
             if (top.ce_pix) {
                 const int hc = top.obs_hc;
-                const int py = top.obs_py;
+                const int outputY =
+                    top.cfg_active_config ? top.obs_vc : top.obs_py;
+                const int visibleX =
+                    top.cfg_active_config ? top.obs_store_x : hc;
+                const int visibleY =
+                    top.cfg_active_config ? top.obs_store_y : top.obs_py;
                 if (top.obs_in_content) {
-                    m.outputRows.insert(py);
+                    m.outputRows.insert(outputY);
                     m.storeRows.insert(top.obs_store_y);
                 }
                 if (top.obs_visible_now) {
                     m.sourceRows.insert(top.obs_src_y_now);
-                    m.minVisibleX = std::min(m.minVisibleX, hc);
-                    m.maxVisibleX = std::max(m.maxVisibleX, hc);
-                    m.minVisibleY = std::min(m.minVisibleY, py);
-                    m.maxVisibleY = std::max(m.maxVisibleY, py);
-                    if (hc < true480::kPillarLeft)
+                    m.minVisibleX = std::min(m.minVisibleX, visibleX);
+                    m.maxVisibleX = std::max(m.maxVisibleX, visibleX);
+                    m.minVisibleY = std::min(m.minVisibleY, visibleY);
+                    m.maxVisibleY = std::max(m.maxVisibleY, visibleY);
+                    if (visibleX < true480::kPillarLeft)
                         ++m.leftPillar;
-                    if (hc >= true480::kPillarLeft + true480::kDisplayW)
+                    if (visibleX >= true480::kPillarLeft + true480::kDisplayW)
                         ++m.rightPillar;
                 }
                 if (top.obs_visible_pipe) {
@@ -179,12 +184,15 @@ private:
 int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
     std::string calibration;
+    bool requireActiveConfig = false;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--calibrate-keepv22")
             calibration = "keepv22";
         else if (arg == "--calibrate-keepv27")
             calibration = "keepv27";
+        else if (arg == "--require-active-config")
+            requireActiveConfig = true;
         else {
             std::cerr << "unknown argument: " << arg << "\n";
             return 2;
@@ -192,6 +200,25 @@ int main(int argc, char** argv) {
     }
     try {
         Sim sim;
+        sim.top.eval();
+        const bool activeConfig = sim.top.cfg_active_config;
+        const bool nativeBeam = sim.top.cfg_native_beam_source;
+        const int fillStride = sim.top.cfg_y_fill_stride;
+        std::cout << "TRUE480_PRESENT_BUILD_CONFIG active_define="
+                  << activeConfig << " native_beam_source=" << nativeBeam
+                  << " y_fill_stride=" << fillStride
+                  << " required=" << requireActiveConfig << "\n";
+        if (requireActiveConfig &&
+            (!activeConfig || !nativeBeam || fillStride != 1)) {
+            std::cerr << "FAIL true480 present active configuration disappeared: "
+                         "define/native beam/fill stride contract is not active\n";
+            return 1;
+        }
+        if (!calibration.empty() && activeConfig) {
+            std::cerr << "FAIL true480 snapshot calibration must remain "
+                         "PLEX_PRESENT_TRUE_480P macro-OFF\n";
+            return 1;
+        }
         const auto frame = true480::makeIdleI420();
         sim.ddr.loadBank(0, frame);
         sim.ddr.loadBank(1, frame);

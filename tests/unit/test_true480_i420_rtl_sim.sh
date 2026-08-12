@@ -6,6 +6,14 @@ RUN_VERILATOR="$ROOT/scripts/run_verilator.sh"
 RTL="${TRUE480_RTL_DIR:-$ROOT/fpga/Plex_MiSTer/rtl}"
 MODE="${1:---gate}"
 TAG="${TRUE480_BUILD_TAG:-repo}"
+ACTIVE_CONFIG=0
+if [[ "$MODE" == "--active-gate" ]]; then
+  ACTIVE_CONFIG=1
+  TAG="${TAG}_active"
+fi
+ACTIVE_VERILATOR_ARGS=()
+ACTIVE_RUN_ARGS=()
+PRESENT_EXTRA_SOURCES=()
 
 set +e
 VERILATOR_VERSION="$("$RUN_VERILATOR" --version 2>&1)"
@@ -22,6 +30,30 @@ if [[ ! -f "$RTL/ddr_frame_store.sv" ]]; then
   echo "RTL SIM ERROR: TRUE480_RTL_DIR has no ddr_frame_store.sv: $RTL" >&2
   exit 2
 fi
+if [[ "$ACTIVE_CONFIG" -eq 0 && "$MODE" == "--gate" &&
+      -f "$RTL/present_beam_true_480p.sv" ]]; then
+  echo "RTL SIM ERROR: refusing macro-OFF gate for active-capable RTL; use --active-gate" >&2
+  exit 2
+fi
+if [[ "$ACTIVE_CONFIG" -eq 1 ]]; then
+  for source in present_core.sv present_beam_true_480p.sv; do
+    if [[ ! -f "$RTL/$source" ]]; then
+      echo "RTL SIM ERROR: active true480 config requires $source: $RTL" >&2
+      exit 2
+    fi
+  done
+  if ! grep -Fq 'parameter int Y_FILL_STRIDE = 1' "$RTL/ddr_frame_store.sv"; then
+    echo "RTL SIM ERROR: active true480 store lacks Y_FILL_STRIDE parameter: $RTL" >&2
+    exit 2
+  fi
+  if ! grep -Fq '`ifdef PLEX_PRESENT_TRUE_480P' "$RTL/present_core.sv"; then
+    echo "RTL SIM ERROR: active true480 present_core lacks product branch: $RTL" >&2
+    exit 2
+  fi
+  ACTIVE_VERILATOR_ARGS=(+define+PLEX_PRESENT_TRUE_480P)
+  ACTIVE_RUN_ARGS=(--require-active-config)
+  PRESENT_EXTRA_SOURCES=("$RTL/present_beam_true_480p.sv")
+fi
 
 build_variant() {
   local name="$1"
@@ -33,6 +65,7 @@ build_variant() {
     --Mdir "$build" \
     --top-module true480_i420_tb \
     -GGEOMETRY_FAULT="$fault" \
+    "${ACTIVE_VERILATOR_ARGS[@]}" \
     -I"$RTL" \
     -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-SELRANGE -Wno-UNSIGNED \
     -CFLAGS "-std=c++17 -O2 -I$ROOT/host -I$ROOT/tests/rtl" \
@@ -59,6 +92,7 @@ build_present() {
     --Mdir "$build" \
     --top-module true480_present_tb \
     +define+DDR_FRAME_STORE \
+    "${ACTIVE_VERILATOR_ARGS[@]}" \
     -I"$RTL" \
     -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-SELRANGE -Wno-UNSIGNED \
     -CFLAGS "-std=c++17 -O2 -I$ROOT/host -I$ROOT/tests/rtl" \
@@ -67,6 +101,7 @@ build_present() {
     "$RTL/present_cadence.sv" \
     "$RTL/present_video_timing_720p.sv" \
     "$RTL/present_video_timing_960.sv" \
+    "${PRESENT_EXTRA_SOURCES[@]}" \
     "$RTL/colorbars.sv" \
     "$RTL/ddr_frame_store.sv" \
     "$RTL/line_buf_ram.sv" \
@@ -122,6 +157,10 @@ run_red() {
 
 echo "RTL SIM: $VERILATOR_VERSION"
 echo "TRUE480_RTL_DIR=$RTL"
+echo "TRUE480_CONFIG=$([[ "$ACTIVE_CONFIG" -eq 1 ]] && echo active || echo legacy)"
+if RTL_HEAD="$(git -C "$RTL" rev-parse HEAD 2>/dev/null)"; then
+  echo "TRUE480_RTL_HEAD=$RTL_HEAD"
+fi
 if [[ "$MODE" == "--calibrate-keepv22" || "$MODE" == "--calibrate-keepv27" ]]; then
   PRESENT="$(build_present)"
   run_pass "snapshot_${MODE#--calibrate-}" "$PRESENT" "$MODE"
@@ -129,29 +168,39 @@ if [[ "$MODE" == "--calibrate-keepv22" || "$MODE" == "--calibrate-keepv27" ]]; t
 fi
 NORMAL="$(build_variant normal 0)"
 
-run_pass "settled_full_frame_smoke" "$NORMAL" --scenario smoke
-run_pass "force_y_miss_black" "$NORMAL" --scenario y-miss
-run_pass "force_bad_bank_black" "$NORMAL" --scenario bad-bank
-run_pass "force_c_miss_stimulus" "$NORMAL" --scenario c-miss-observe
+run_pass "settled_full_frame_smoke" "$NORMAL" \
+  "${ACTIVE_RUN_ARGS[@]}" --scenario smoke
+run_pass "force_y_miss_black" "$NORMAL" \
+  "${ACTIVE_RUN_ARGS[@]}" --scenario y-miss
+run_pass "force_bad_bank_black" "$NORMAL" \
+  "${ACTIVE_RUN_ARGS[@]}" --scenario bad-bank
+run_pass "force_c_miss_stimulus" "$NORMAL" \
+  "${ACTIVE_RUN_ARGS[@]}" --scenario c-miss-observe
 run_red "legacy_store_y_2py" "row_identity unique_rows=240" \
-  "$NORMAL" --scenario legacy
+  "$NORMAL" "${ACTIVE_RUN_ARGS[@]}" --scenario legacy
 
 PILLAR="$(build_variant wrong_pillar 1)"
-run_red "wrong_pillar" "exact_crop_pillars" "$PILLAR" --scenario good
+PILLAR_NEEDLE="exact_crop_pillars"
+if [[ "$ACTIVE_CONFIG" -eq 1 ]]; then
+  PILLAR_NEEDLE="true480 store contract mismatch"
+fi
+run_red "wrong_pillar" "$PILLAR_NEEDLE" \
+  "$PILLAR" "${ACTIVE_RUN_ARGS[@]}" --scenario good
 CROP="$(build_variant wrong_crop 2)"
-run_red "wrong_crop" "exact_crop_pillars" "$CROP" --scenario good
+run_red "wrong_crop" "exact_crop_pillars" \
+  "$CROP" "${ACTIVE_RUN_ARGS[@]}" --scenario good
 
 if [[ "$MODE" == "--controls-only" ]]; then
   echo "PASS true480 controls-only: fixture/DDR/Y-miss/bank/legacy/crop/pillar controls green"
   exit 0
 fi
-if [[ "$MODE" != "--gate" ]]; then
-  echo "usage: $0 [--gate|--controls-only|--calibrate-keepv22|--calibrate-keepv27]" >&2
+if [[ "$MODE" != "--gate" && "$MODE" != "--active-gate" ]]; then
+  echo "usage: $0 [--gate|--active-gate|--controls-only|--calibrate-keepv22|--calibrate-keepv27]" >&2
   exit 2
 fi
 
 set +e
-C_MISS_OUT="$("$NORMAL" --scenario c-miss 2>&1)"
+C_MISS_OUT="$("$NORMAL" "${ACTIVE_RUN_ARGS[@]}" --scenario c-miss 2>&1)"
 C_MISS_RC=$?
 set -e
 printf '%s\n' "$C_MISS_OUT"
@@ -164,7 +213,7 @@ if [[ "$C_MISS_RC" -ne 0 ]]; then
 fi
 PRESENT="$(build_present)"
 set +e
-PRESENT_OUT="$("$PRESENT" 2>&1)"
+PRESENT_OUT="$("$PRESENT" "${ACTIVE_RUN_ARGS[@]}" 2>&1)"
 PRESENT_RC=$?
 set -e
 printf '%s\n' "$PRESENT_OUT"
