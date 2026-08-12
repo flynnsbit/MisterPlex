@@ -29,12 +29,13 @@ constexpr uint32_t kCalibratedM1ReadsMin = 20000;
 constexpr uint32_t kCalibratedM1ReadsMax = 30000;
 constexpr uint32_t kCalibratedM1WantMin = 400000;
 constexpr uint32_t kCalibratedM1WantMax = 520000;
-// Frozen from the first clean active shared run against FPGA 31ee409d.
-constexpr uint32_t kCleanReferenceM1Reads = 25674;
-constexpr uint32_t kCleanReferenceM1WantCycles = 435552;
+// Frozen from the first clean product-fallback run against FPGA 4c4667ca.
+constexpr uint32_t kCleanReferenceM1Reads = 25665;
+constexpr uint32_t kCleanReferenceM1WantCycles = 435636;
 constexpr uint32_t kRequiredLineCount = 8;
 constexpr uint32_t kExactLinebufBits = 159744;
 constexpr uint32_t kExactM10Ks = 96;
+constexpr uint32_t kProductStaleDoorbellFallbackPolls = 4096;
 
 static_assert(kYLineQwords == 78 && kCLineQwords == 78);
 static_assert(kExactUniqueM0Payload == 56160);
@@ -946,10 +947,13 @@ int runProof(bool idealModel, bool resourceOnly, bool requireActiveConfig) {
     const bool activeConfig = sim.top.cfg_active_config;
     const bool nativeBeam = sim.top.cfg_native_beam_source;
     const int fillStride = sim.top.cfg_y_fill_stride;
+    const uint32_t fallbackPolls =
+        sim.top.cfg_stale_doorbell_fallback_polls;
     const bool refillTelemetry = sim.top.cfg_refill_telemetry;
     std::cout << "TRUE480_SHARED_BUILD_CONFIG active_define=" << activeConfig
               << " native_beam_source=" << nativeBeam
               << " y_fill_stride=" << fillStride
+              << " stale_doorbell_fallback_polls=" << fallbackPolls
               << " refill_telemetry=" << refillTelemetry
               << " required=" << requireActiveConfig << "\n";
     if (requireActiveConfig &&
@@ -958,6 +962,13 @@ int runProof(bool idealModel, bool resourceOnly, bool requireActiveConfig) {
         std::cerr << "FAIL true480 shared active configuration disappeared: "
                      "define/native beam/fill stride/telemetry contract "
                      "is not active\n";
+        return 1;
+    }
+    if (requireActiveConfig &&
+        fallbackPolls != kProductStaleDoorbellFallbackPolls) {
+        std::cerr << "FAIL true480 shared product fallback polls="
+                  << fallbackPolls << " required="
+                  << kProductStaleDoorbellFallbackPolls << "\n";
         return 1;
     }
     const int resourceRc = checkResourceContract(sim.top);
@@ -1276,7 +1287,7 @@ int runProof(bool idealModel, bool resourceOnly, bool requireActiveConfig) {
         << " m0_beats=" << m0Beats << " m1_reads=" << m1Reads
         << " m1_responses=" << m1Responses << " m1_beats=" << m1Beats
         << " m1_want_cycles=" << m1WantCycles
-        << " m1_band=CALIBRATED_CLEAN_31EE409D"
+        << " m1_band=CALIBRATED_CLEAN_4C4667CA_PRODUCT4096"
         << " m1_reference_reads=" << kCleanReferenceM1Reads
         << " m1_reference_want_cycles=" << kCleanReferenceM1WantCycles
         << " m0_phase_floor=" << kPhaseTolerantM0Floor

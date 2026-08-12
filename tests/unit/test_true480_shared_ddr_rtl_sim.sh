@@ -6,6 +6,8 @@ RUN_VERILATOR="$ROOT/scripts/run_verilator.sh"
 RTL="${TRUE480_SHARED_RTL_DIR:-${TRUE480_RTL_DIR:-$ROOT/fpga/Plex_MiSTer/rtl}}"
 MODE="${1:---gate}"
 TAG="${TRUE480_SHARED_BUILD_TAG:-repo}"
+PRODUCT_FALLBACK_POLLS=4096
+DRIFT_FAULT_FALLBACK_POLLS=4095
 ACTIVE_CONFIG=0
 if [[ "$MODE" == "--active-gate" ]]; then
   ACTIVE_CONFIG=1
@@ -58,6 +60,7 @@ fi
 build_variant() {
   local name="$1"
   local lines="$2"
+  local fallback_polls="${3:-$PRODUCT_FALLBACK_POLLS}"
   local build="$ROOT/build/verilator/true480_shared_${TAG}_${name}"
   mkdir -p "$build"
   set +e
@@ -65,6 +68,7 @@ build_variant() {
     --Mdir "$build" \
     --top-module true480_shared_ddr_tb \
     -GLINE_COUNT="$lines" \
+    -GSTALE_DOORBELL_FALLBACK_POLLS="$fallback_polls" \
     "${ACTIVE_VERILATOR_ARGS[@]}" \
     -I"$RTL" \
     -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-SELRANGE -Wno-UNSIGNED \
@@ -111,6 +115,7 @@ run_red() {
 echo "RTL SIM: $VERILATOR_VERSION"
 echo "TRUE480_SHARED_RTL_DIR=$RTL"
 echo "TRUE480_SHARED_CONFIG=$([[ "$ACTIVE_CONFIG" -eq 1 ]] && echo active || echo legacy)"
+echo "TRUE480_SHARED_FALLBACK_POLLS=$PRODUCT_FALLBACK_POLLS"
 if RTL_GIT_TOP="$(git -C "$RTL" rev-parse --show-toplevel 2>/dev/null)" &&
    [[ "$(realpath "$RTL")" == "$(realpath "$RTL_GIT_TOP/fpga/Plex_MiSTer/rtl")" ]]; then
   echo "TRUE480_SHARED_RTL_HEAD=$(git -C "$RTL_GIT_TOP" rev-parse HEAD)"
@@ -118,6 +123,13 @@ fi
 NORMAL="$(build_variant normal 8)"
 run_red "idealized_DDR" "idealized_DDR_refused" \
   "$NORMAL" "${ACTIVE_RUN_ARGS[@]}" --ideal-ddr
+
+if [[ "$ACTIVE_CONFIG" -eq 1 ]]; then
+  FALLBACK_DRIFT="$(build_variant fallback_drift 8 "$DRIFT_FAULT_FALLBACK_POLLS")"
+  run_red "product_fallback_drift" \
+    "product fallback polls=$DRIFT_FAULT_FALLBACK_POLLS required=$PRODUCT_FALLBACK_POLLS" \
+    "$FALLBACK_DRIFT" "${ACTIVE_RUN_ARGS[@]}" --resource-only
+fi
 
 LINE4="$(build_variant line4 4)"
 run_red "insufficient_line_depth" "M10K_depth line_count=4" \
