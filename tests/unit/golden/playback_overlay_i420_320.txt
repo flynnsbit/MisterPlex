@@ -1,0 +1,6 @@
+fnv64 0xd4e22ac7771608e2
+dirty 10 170 300 60
+pixel Y 10 170 79
+pixel Y 32 190 175
+pixel U 16 95 53
+pixel V 16 95 172
