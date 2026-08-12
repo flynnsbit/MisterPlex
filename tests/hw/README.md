@@ -2,6 +2,14 @@
 
 Require a live MiSTer (`MISTER_HOST`, default `192.168.1.183`).
 
+## External HDMI/USB A/V authority
+
+For cadence and lip-sync verification, use
+[`external_av_sync.py`](EXTERNAL_AV_SYNC.md). It requires an explicit V4L2
+endpoint plus the ALSA capture endpoint on the same USB adapter, refuses an
+already-owned preview device, retains lossless evidence, and treats absent
+audio as BLOCKED.
+
 ## HDMI capture (lab MacroSilicon)
 
 Capture card: `/dev/video4` (UVC `534d:2109`), MJPG/YUYV **800×600**.

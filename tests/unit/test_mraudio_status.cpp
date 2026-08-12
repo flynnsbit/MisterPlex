@@ -62,6 +62,31 @@ int main() {
     // The correction is exactly the queue depth, so a deeper ring means a
     // proportionally earlier playback position.
     CHECK(audibleClockMs(2 * kSec, kSec / 4) == 1750);
+    CHECK(audibleClockMs(kSec + 188456, 188456) == 1000);
+    CHECK(audibleClockMs(kSec + 20616, 20616) == 1000);
+
+    // For every valid depth, the audible clock must equal the submitted clock
+    // after subtracting the queue. This catches accidentally adding latency or
+    // applying the correction twice.
+    const int64_t depths[] = {0, 1, 191, 192, 19199, 19200, 188456, kMrAudioRingBytes - 1};
+    for (const int64_t depth : depths) {
+        const int64_t written = kSec * 4 + depth;
+        CHECK(audibleClockMs(written, depth) == ((written - depth) * 1000LL) / kSec);
+    }
+
+    // Moving equal bytes into both counters changes queue occupancy but not what
+    // has reached the speakers.
+    CHECK(audibleClockMs(3 * kSec + 4096, kSec + 4096) ==
+          audibleClockMs(3 * kSec, kSec));
+
+    // At fixed submitted bytes, a deeper queue can never advance the audible
+    // position. Check the full useful range at sub-ms and multi-ms boundaries.
+    int64_t previous = audibleClockMs(4 * kSec, 0);
+    for (int64_t depth = 1; depth < kMrAudioRingBytes; depth += 191) {
+        const int64_t now = audibleClockMs(4 * kSec, depth);
+        CHECK(now <= previous);
+        previous = now;
+    }
 
     // --- feed-rate servo ---
     const double nom = 48000.0 * 4.0; // 192000 B/s nominal

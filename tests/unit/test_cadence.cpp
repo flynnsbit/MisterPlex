@@ -20,6 +20,35 @@ int main() {
     using misterplex::should_advance_unique;
     using misterplex::unique_frames_in;
 
+    // Runtime source pacing is exact rational math in av_clock.hpp. The current
+    // fixed-display RTL cadence remains intentionally bucketed until PLXG lands:
+    // fractional NTSC rates use the same 24/30 display density without turning
+    // into 60 unique frames.
+    struct SourceRate {
+        int num;
+        int den;
+        int cadence_bucket;
+        int expected_unique_at_60;
+        const char* label;
+    };
+    const SourceRate required[] = {
+        {24000, 1001, 24, 24, "24000/1001"},
+        {24, 1, 24, 24, "24/1"},
+        {25, 1, 25, 25, "25/1"},
+        {30000, 1001, 30, 30, "30000/1001"},
+        {30, 1, 30, 30, "30/1"},
+    };
+    for (const auto& rate : required) {
+        (void)rate.num;
+        (void)rate.den;
+        const int got = unique_frames_in(60, rate.cadence_bucket, 60);
+        if (got != rate.expected_unique_at_60) {
+            std::fprintf(stderr, "FAIL: %s cadence bucket produced %d unique frames\n",
+                         rate.label, got);
+            ++fails;
+        }
+    }
+
     // 60 content on 60 display: always advance
     EXPECT(should_advance_unique(0, 60, 60), "60@60 tick0 advance");
     EXPECT(unique_frames_in(60, 60, 60) == 60, "60@60 → 60 unique/sec");
