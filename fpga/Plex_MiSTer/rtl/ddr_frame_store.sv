@@ -177,7 +177,13 @@ module ddr_frame_store #(
 	wire [X_W-1:0] display_x = rd_x - PRESENT_X_L;
 	wire [Y_W-1:0] display_y = rd_y - PRESENT_Y_L;
 	wire [CODED_X_W-1:0] src_x = rd_visible ? (display_x + CROP_LEFT_L) : '0;
+`ifdef PLEX_PRESENT_TRUE_480P
+	// Keep the row stable across horizontal pillars so hit lookup and prefetch
+	// do not snap back to line zero between visible spans.
+	wire [CODED_Y_W-1:0] src_y = rd_y_visible ? (display_y + CROP_TOP_L) : '0;
+`else
 	wire [CODED_Y_W-1:0] src_y = rd_visible ? (display_y + CROP_TOP_L) : '0;
+`endif
 	wire [Y_QW_AW-1:0] y_rd_addr = src_x[CODED_X_W-1:3];
 	wire [C_QW_AW-1:0] c_rd_addr = src_x[CODED_X_W-1:4];
 
@@ -438,7 +444,11 @@ module ddr_frame_store #(
 				c_line_v2[vi] <= c_line_v1[vi];
 			end
 
+`ifdef PLEX_PRESENT_TRUE_480P
+			if (rd_active && rd_y_visible && (Y_W'(src_y) != want_y_sys))
+`else
 			if (Y_W'(src_y) != want_y_sys)
+`endif
 				want_y_sys <= Y_W'(src_y);
 			want_y_gray <= y_bin2gray(want_y_sys);
 
@@ -801,6 +811,17 @@ module ddr_frame_store #(
 	end
 `endif
 
+`ifdef PLEX_PRESENT_TRUE_480P
+	// The registered current-tag window can still describe the cycle before a
+	// completed fill. Recheck the captured slot against live tags before launch
+	// so that one stale scheduler entry cannot reread an already resident line.
+	wire sched_line_live = sched_is_y
+	    ? (y_valid[sched_idx] && (y_bank[sched_idx] == sched_bank)
+	       && (y_line[sched_idx] == sched_y))
+	    : (c_valid[sched_idx] && (c_bank[sched_idx] == sched_bank)
+	       && (c_line[sched_idx] == sched_cy));
+`endif
+
 
 	reg fill_bank, fill_is_chroma, fill_plane_v;
 	reg [Y_W-1:0] fill_y;
@@ -1146,9 +1167,12 @@ module ddr_frame_store #(
 				// half even when bank+line tags match an older generation.
 				// The displayed half remains valid until each replacement line
 				// completes; only the non-visible preparation half is cleared.
-				for (ti = 0; ti < LINE_COUNT; ti = ti + 1) begin
-					y_valid[(disp_buf_d2 ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]] <= 1'b0;
-					c_valid[(disp_buf_d2 ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]] <= 1'b0;
+				// A same-token post-reset fallback is not a new generation.
+				if (db_token_new) begin
+					for (ti = 0; ti < LINE_COUNT; ti = ti + 1) begin
+						y_valid[(disp_buf_d2 ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]] <= 1'b0;
+						c_valid[(disp_buf_d2 ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]] <= 1'b0;
+					end
 				end
 `endif
 			end
@@ -1206,6 +1230,10 @@ module ddr_frame_store #(
 					// KEEP_VALID_UNTIL_FILL_DONE: do NOT clear y_valid/c_valid or
 					// retag bank at arm/issue. Tag+valid commit only when full
 					// line lands (S_LINE_WAIT done) — anti-shear keepv.
+					end else if (PIPELINE_REFILL_SCHEDULER && sched_valid && sched_line_live) begin
+						// Consume the stale entry without immediately
+						// re-enqueuing from the same stale tag snapshot.
+						sched_valid <= 1'b0;
 `endif
 					end else if (PIPELINE_REFILL_SCHEDULER && sched_valid) begin
 						fill_bank <= sched_bank;
