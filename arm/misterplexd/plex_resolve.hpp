@@ -121,6 +121,9 @@ struct WeakLadder {
 
 // Guard rails for built-in and configured ladders.
 bool validateWeakLadder(const WeakLadder& weak, std::string* why = nullptr);
+// Fit the PMS transcode raster inside the configured ladder without adding bars.
+// The host expands this anamorphically to the FPGA bank and MiSTer restores DAR.
+WeakLadder fitWeakLadderToAspect(const WeakLadder& weak, const SourceAspect& aspect);
 std::string plexClientProfileExtra(const WeakLadder& weak);
 std::string plexClientCapabilities(const WeakLadder& weak);
 std::string buildUniversalTranscodeUrl(const std::string& base,

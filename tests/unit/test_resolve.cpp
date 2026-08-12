@@ -140,6 +140,10 @@ int main() {
     CHECK(w480.h264Level == 30);
     CHECK(w480.clientProfileName == "MiSTerPlex");
     CHECK(validateWeakLadder(w480));
+    CHECK(fitWeakLadderToAspect(w480, {16, 9, true}).videoResolution == "640x360");
+    CHECK(fitWeakLadderToAspect(w480, {4, 3, true}).videoResolution == "640x480");
+    CHECK(fitWeakLadderToAspect(w480, {1, 1, true}).videoResolution == "480x480");
+    CHECK(fitWeakLadderToAspect(w480, {}).videoResolution == "640x480");
     // Resolution alias selects the 480p profile too.
     WeakLadder byRes;
     CHECK(applyPlexTranscodeProfile("640x480", byRes));

@@ -731,6 +731,35 @@ SourceAspect sourceAspectFromPlexMetadata(const std::string& xml,
                                     codedHeight, squarePixelsKnown);
 }
 
+WeakLadder fitWeakLadderToAspect(const WeakLadder& weak,
+                                 const SourceAspect& aspect) {
+    WeakLadder fitted = weak;
+    if (!aspect.valid || aspect.x == 0 || aspect.y == 0)
+        return fitted;
+
+    int maxW = 0;
+    int maxH = 0;
+    if (std::sscanf(weak.videoResolution.c_str(), "%dx%d", &maxW, &maxH) != 2 ||
+        maxW < 2 || maxH < 2) {
+        return fitted;
+    }
+
+    int width = maxW;
+    int height = maxH;
+    if (static_cast<int64_t>(aspect.x) * maxH >=
+        static_cast<int64_t>(aspect.y) * maxW) {
+        height = static_cast<int>(
+            (static_cast<int64_t>(maxW) * aspect.y) / aspect.x);
+    } else {
+        width = static_cast<int>(
+            (static_cast<int64_t>(maxH) * aspect.x) / aspect.y);
+    }
+    width = std::max(2, width & ~1);
+    height = std::max(2, height & ~1);
+    fitted.videoResolution = std::to_string(width) + "x" + std::to_string(height);
+    return fitted;
+}
+
 ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::string& plexBase,
                                 const std::string& token, int64_t offsetMs, bool weakAlways,
                                 const WeakLadder& weak, bool preferDirectH264, int decodeW,
@@ -1001,15 +1030,19 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
 
     // Prefer weak universal for dual A9 (STREAM=0 cast path / non-H.264 STREAM)
     if (weakAlways && key.rfind("/library", 0) == 0) {
+        const WeakLadder transcodeWeak =
+            fitWeakLadderToAspect(weak, r.sourceAspect);
         const std::string session = makeSessionId();
         const std::string start = buildUniversalTranscodeUrl(plexBase, key, token, session,
-                                                             offsetMs > 0 ? offsetMs : 0, weak);
-        if (ensureUniversalDecision(start, session, token, weak)) {
+                                                             offsetMs > 0 ? offsetMs : 0,
+                                                             transcodeWeak);
+        if (ensureUniversalDecision(start, session, token, transcodeWeak)) {
             r.ok = true;
             r.transcoded = true;
             r.playable = start;
-            r.httpHeaders = plexFfmpegHeaders(session, token, weak);
-            r.detail = "PMS universal " + weak.profileName + " " + weak.videoResolution + " " + key;
+            r.httpHeaders = plexFfmpegHeaders(session, token, transcodeWeak);
+            r.detail = "PMS universal " + transcodeWeak.profileName + " " +
+                       transcodeWeak.videoResolution + " " + key;
             // STREAM preferDirect fallthrough: operator can see why recon may hit CABAC.
             if (preferDirectH264) {
                 if (!metaOk)
