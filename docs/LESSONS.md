@@ -399,3 +399,17 @@ cadence **1s**. Port of `eeae7943` + plant-ahead `0abee0b6` + L40.
 
 **Evidence:** Lab cast rk=143 — companion time 2s→11s; `pms timeline: update ok http=200`
 with advancing `time=`; PMS `/status/sessions` `viewOffset` matches player.
+
+## L42 — A false swap can hide a real frame-wrap refill miss
+
+The true480 shared-DDR gate was green only because unrestricted same-token fallback
+requested another swap every threshold. Removing those false idle swaps exposed the real
+steady defect: `soft_c=195`, five luma misses, and 12 underruns per frame. The old fallback
+prepared the inactive half and swapped it at VSync, accidentally supplying rows 0–6.
+
+The actual scheduler saturated its eight-line lookahead at row 479. At frame wrap, the
+active half therefore had to fetch rows 0–6 after scanout had already restarted. True480
+lookahead must wrap modulo `FRAME_H`; legacy modes retain their clamp. The active shared-DDR
+gate requires `fallback_fires=0`, `soft_c=0`, and `underrun_delta=0`, and its clamped-
+lookahead red twin proves the old behavior fails. Never preserve an invalid control event
+because it masks a data-path timing hole; remove it, then fix the newly exposed hole.

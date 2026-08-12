@@ -480,6 +480,14 @@ def check_frame_store_cdc_contract() -> None:
             "staged doorbell processing must not accept the stale reset-time sample",
         ),
         (
+            "db_token_same&&IGNORE_STALE_DOORBELL_AFTER_RESET&&doorbell_primed&&stale_db_recovery_pending&&",
+            "same-token fallback must be limited to one pending reset recovery",
+        ),
+        (
+            "stale_db_recovery_pending<=1'b0;stale_db_polls<='0;",
+            "an accepted reset recovery must disable repeated unchanged-token swaps",
+        ),
+        (
             "pending_bank_ddr<=db_token[31];",
             "accepted doorbell bank selection must come from the staged token",
         ),
@@ -587,6 +595,25 @@ def check_mailboxes() -> None:
           f"PLXD bank-release address must be 0x3007F128 (got 0x{plxd_addr:08X})")
     check(plxd_magic == 0x504C5844,
           f"PLXD bank-release magic must be 0x504C5844 'PLXD' (got 0x{plxd_magic:08X})")
+
+    ddr_fs_nt = norm(ddr_fs)
+    for parameter, offset in (
+        ("MAILBOX_PHYS", "100"),
+        ("INPUT_MAILBOX_PHYS", "108"),
+        ("SDRAM_MAILBOX_PHYS", "110"),
+        ("FRAME_MAILBOX_PHYS", "118"),
+        ("BANK_MAILBOX_PHYS", "128"),
+    ):
+        check(
+            f"parameter[31:0]{parameter}=DOORBELL_PHYS+32'h{offset}" in ddr_fs_nt,
+            f"ddr_frame_store {parameter} must follow the selected doorbell by +0x{offset}",
+        )
+    check(
+        "returnddrLayout_.doorbell_phys+(kDdrMailboxPhys-kDdrDoorbellPhys);" in norm(fpga_spi)
+        and "constuint32_tplxfPhys=ddrLayout_.doorbell_phys+0x118u;" in norm(read(FPGA_SPI_CPP))
+        and "constuint32_tplxdPhys=ddrLayout_.doorbell_phys+0x128u;" in norm(read(FPGA_SPI_CPP)),
+        "ARM PLXS/PLXF/PLXD readers must use the same doorbell-relative mailbox offsets",
+    )
 
     # Verify PLXD bit-field positions in the spec are what the RTL packs.
     check(cpp_const(spec_text, "kPlxdFreeBankMaskBit") == 0,
@@ -704,7 +731,17 @@ def check_mailbox_map_collisions() -> None:
                 rtl_src,
             )
             if m:
-                ra = parse_num(m.group(1))
+                expr = m.group(1)
+                ra = parse_num(expr)
+                if "DOORBELL_PHYS" in expr:
+                    check(
+                        mb.get("relative_to") == "DOORBELL_PHYS"
+                        and int(mb.get("offset", "0"), 16) == ra,
+                        f"Mailbox map {name} must record its DOORBELL_PHYS-relative offset",
+                    )
+                    # The registry address is the legacy mailbox ABI reference.
+                    # ddr_frame_store follows its selected frame-layout doorbell.
+                    ra = expected_addr
                 break
 
         check(

@@ -63,7 +63,12 @@ build_variant() {
   local name="$1"
   local lines="$2"
   local fallback_polls="${3:-$PRODUCT_FALLBACK_POLLS}"
+  local extra_define="${4:-}"
   local build="$ROOT/build/verilator/true480_shared_${TAG}_${name}"
+  local variant_args=()
+  if [[ -n "$extra_define" ]]; then
+    variant_args=("$extra_define")
+  fi
   mkdir -p "$build"
   set +e
   "$RUN_VERILATOR" --cc --exe --build \
@@ -72,6 +77,7 @@ build_variant() {
     -GLINE_COUNT="$lines" \
     -GSTALE_DOORBELL_FALLBACK_POLLS="$fallback_polls" \
     "${ACTIVE_VERILATOR_ARGS[@]}" \
+    "${variant_args[@]}" \
     -I"$RTL" \
     -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-SELRANGE -Wno-UNSIGNED \
     -CFLAGS "-std=c++17 -O2 -I$ROOT/host -I$ROOT/tests/rtl" \
@@ -152,10 +158,14 @@ if [[ "$ACTIVE_CONFIG" -eq 1 ]]; then
     "product fallback polls=$DRIFT_FAULT_FALLBACK_POLLS required=$PRODUCT_FALLBACK_POLLS" \
     "$FALLBACK_DRIFT" "${ACTIVE_RUN_ARGS[@]}" --resource-only
   FALLBACK_STRESS="$(build_variant fallback_stress 8 "$STRESS_FALLBACK_POLLS")"
-  run_red "unbounded_fallback_count" \
-    "stress_fallback_fires got=17 required=15..16" \
+  run_red "repeated_fallback_count" \
+    "stress_unchanged_token_fallback got=1 required=0" \
     "$FALLBACK_STRESS" "${ACTIVE_RUN_ARGS[@]}" \
-    --accelerated-fallback-stress --fault-unbounded-fallback
+    --accelerated-fallback-stress --fault-repeated-fallback
+  CLAMPED_LOOKAHEAD="$(build_variant clamped_lookahead 8 "$PRODUCT_FALLBACK_POLLS" \
+    +define+DDR_FRAME_STORE_FAULT_CLAMP_LOOKAHEAD)"
+  run_red "clamped_frame_lookahead" "settled_visible_soft_c_fallback" \
+    "$CLAMPED_LOOKAHEAD" "${ACTIVE_RUN_ARGS[@]}"
 fi
 
 LINE4="$(build_variant line4 4)"
@@ -217,33 +227,26 @@ if [[ "$ACTIVE_CONFIG" -eq 1 ]]; then
   FALLBACK_LINES="$(extract_metric "$STRESS_OUT" TRUE480_REFILL_TELEMETRY fallback_attributed_lines)"
   FALLBACK_QWORDS="$(extract_metric "$STRESS_OUT" TRUE480_REFILL_TELEMETRY fallback_attributed_qword_beats)"
 
-  DIFFERENTIAL_FIRES=$((FALLBACK_FIRES - PRODUCT_FIRES))
-  DIFFERENTIAL_LINES=$((DIFFERENTIAL_FIRES * 12))
-  DIFFERENTIAL_QWORDS=$((DIFFERENTIAL_LINES * 78))
-  if (( DIFFERENTIAL_FIRES <= 0 )); then
-    echo "FAIL true480 fallback cross-run no accelerated fallback delta product_fires=$PRODUCT_FIRES stress_fires=$FALLBACK_FIRES" >&2
+  if (( PRODUCT_FIRES != 0 || FALLBACK_FIRES != 0 )); then
+    echo "FAIL true480 fallback cross-run unchanged token fired product_fires=$PRODUCT_FIRES stress_fires=$FALLBACK_FIRES" >&2
     exit 1
   fi
-  ADJUSTED_STRESS_M0=$((STRESS_M0 - DIFFERENTIAL_QWORDS))
-  M0_DELTA=$((ADJUSTED_STRESS_M0 - PRODUCT_M0))
+  M0_DELTA=$((STRESS_M0 - PRODUCT_M0))
   if (( M0_DELTA < 0 )); then
     M0_ABS_DELTA=$((-M0_DELTA))
   else
     M0_ABS_DELTA=$M0_DELTA
   fi
-  RESIDUAL_SAME=$((STRESS_SAME - DIFFERENTIAL_LINES))
-  RESIDUAL_REDUNDANT_QWORDS=$((STRESS_REDUNDANT_QWORDS - DIFFERENTIAL_QWORDS))
-
   if (( M0_ABS_DELTA > CROSS_M0_TOLERANCE_BEATS )); then
-    echo "FAIL true480 fallback cross-run m0_decomposition product=$PRODUCT_M0 stress=$STRESS_M0 product_fires=$PRODUCT_FIRES stress_fires=$FALLBACK_FIRES differential_qwords=$DIFFERENTIAL_QWORDS adjusted=$ADJUSTED_STRESS_M0 delta=$M0_DELTA tolerance=$CROSS_M0_TOLERANCE_BEATS" >&2
+    echo "FAIL true480 fallback cross-run m0_decomposition product=$PRODUCT_M0 stress=$STRESS_M0 product_fires=$PRODUCT_FIRES stress_fires=$FALLBACK_FIRES delta=$M0_DELTA tolerance=$CROSS_M0_TOLERANCE_BEATS" >&2
     exit 1
   fi
-  if (( RESIDUAL_SAME != PRODUCT_SAME ||
-        RESIDUAL_REDUNDANT_QWORDS != PRODUCT_REDUNDANT_QWORDS )); then
-    echo "FAIL true480 fallback cross-run duplicate_decomposition product_same=$PRODUCT_SAME residual_same=$RESIDUAL_SAME product_redundant_qwords=$PRODUCT_REDUNDANT_QWORDS residual_redundant_qwords=$RESIDUAL_REDUNDANT_QWORDS fallback_fires=$FALLBACK_FIRES" >&2
+  if (( STRESS_SAME != PRODUCT_SAME ||
+        STRESS_REDUNDANT_QWORDS != PRODUCT_REDUNDANT_QWORDS )); then
+    echo "FAIL true480 fallback cross-run duplicate_decomposition product_same=$PRODUCT_SAME stress_same=$STRESS_SAME product_redundant_qwords=$PRODUCT_REDUNDANT_QWORDS stress_redundant_qwords=$STRESS_REDUNDANT_QWORDS fallback_fires=$FALLBACK_FIRES" >&2
     exit 1
   fi
-  echo "TRUE480_FALLBACK_CROSS product_m0=$PRODUCT_M0 stress_m0=$STRESS_M0 product_fallback_fires=$PRODUCT_FIRES stress_fallback_fires=$FALLBACK_FIRES differential_fallback_fires=$DIFFERENTIAL_FIRES differential_fallback_lines=$DIFFERENTIAL_LINES differential_fallback_qword_beats=$DIFFERENTIAL_QWORDS stress_total_fallback_lines=$FALLBACK_LINES stress_total_fallback_qword_beats=$FALLBACK_QWORDS adjusted_stress_m0=$ADJUSTED_STRESS_M0 m0_delta=$M0_DELTA tolerance=$CROSS_M0_TOLERANCE_BEATS product_same_window=$PRODUCT_SAME stress_same_window=$STRESS_SAME residual_same_window=$RESIDUAL_SAME product_redundant_qword_beats=$PRODUCT_REDUNDANT_QWORDS stress_redundant_qword_beats=$STRESS_REDUNDANT_QWORDS residual_redundant_qword_beats=$RESIDUAL_REDUNDANT_QWORDS"
+  echo "TRUE480_FALLBACK_CROSS product_m0=$PRODUCT_M0 stress_m0=$STRESS_M0 product_fallback_fires=$PRODUCT_FIRES stress_fallback_fires=$FALLBACK_FIRES stress_total_fallback_lines=$FALLBACK_LINES stress_total_fallback_qword_beats=$FALLBACK_QWORDS m0_delta=$M0_DELTA tolerance=$CROSS_M0_TOLERANCE_BEATS product_same_window=$PRODUCT_SAME stress_same_window=$STRESS_SAME product_redundant_qword_beats=$PRODUCT_REDUNDANT_QWORDS stress_redundant_qword_beats=$STRESS_REDUNDANT_QWORDS"
 fi
 
 echo "PASS true480 shared-DDR product and accelerated-fallback simulations"

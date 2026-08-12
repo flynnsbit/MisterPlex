@@ -276,6 +276,22 @@ public:
         return false;
     }
 
+    bool holdFrameCountStatic(int cycles) {
+        const int startFrames = top.frames_done;
+        top.rd_active = 0;
+        top.rd_x = 0;
+        top.rd_y = 0;
+        for (int i = 0; i < cycles; ++i) {
+            if ((i % 97) == 0)
+                pulseVsync();
+            else
+                tick();
+            if (top.frames_done != startFrames || top.swap_pending)
+                return false;
+        }
+        return true;
+    }
+
     uint8_t sample(int x, int y) {
         const int saveX = scanX;
         const int saveY = scanY;
@@ -655,10 +671,20 @@ bool runEqualTokenFallback() {
         throw std::runtime_error("equal-token fallback did not recover");
     expectFreshSample("equal-token fallback", sim, 212);
 
+    const int recoveredFrames = sim.top.frames_done;
+    if (!sim.holdFrameCountStatic(200000)) {
+        std::cerr << "FAIL ddr_frame_store warm-reset: equal-token recovery repeated"
+                  << " recovered_frames=" << recoveredFrames
+                  << " frames=" << sim.top.frames_done
+                  << " swap_pending=" << int(sim.top.swap_pending)
+                  << " cycle=" << sim.cycle << "\n";
+        std::exit(1);
+    }
+
     std::cout << "ddr_frame_store warm-reset raw: equal_token_fallback stale_seq=5 fresh_seq=5"
               << " stale_bank=0 fresh_bank=0 no_frame_cycles=25000 frames="
               << sim.top.frames_done << " sample_r=212 underruns=" << sim.top.underrun_count
-              << " cycles=" << sim.cycle << "\n";
+              << " repeat_guard_cycles=200000 cycles=" << sim.cycle << "\n";
     return sim.schedulerProven();
 }
 
@@ -692,7 +718,7 @@ bool runLiveValidYuvResetPrimedDoorbell() {
     return sim.schedulerProven();
 }
 
-bool runEqualTokenRefreshAfterAccept() {
+bool runEqualTokenStableAfterAccept() {
     Sim sim;
     sim.fillFrame(0, 96);
     sim.resetCore();
@@ -704,22 +730,26 @@ bool runEqualTokenRefreshAfterAccept() {
     expectFreshSample("equal-token refresh initial", sim, 96);
 
     const int prevFrames = sim.top.frames_done;
-    sim.fillFrame(0, 217);
     sim.ringDoorbell(0, 13);
-    if (!sim.waitForFrameCountStatic(prevFrames + 1, 800000)) {
-        std::cerr << "FAIL ddr_frame_store warm-reset: equal-token refresh after accept did not present"
+    if (!sim.holdFrameCountStatic(200000)) {
+        std::cerr << "FAIL ddr_frame_store warm-reset: accepted unchanged token after normal present"
                   << " prev_frames=" << prevFrames << " frames=" << sim.top.frames_done
                   << " has_frame=" << int(sim.top.has_frame)
                   << " swap_pending=" << int(sim.top.swap_pending)
                   << " doorbell_ok=" << int(sim.top.doorbell_ok)
                   << " debug=0x" << std::hex << int(sim.top.debug_state) << std::dec
                   << " cycle=" << sim.cycle << "\n";
-        throw std::runtime_error("equal-token refresh after accept did not present");
+        std::exit(1);
     }
-    expectFreshSample("equal-token refresh after accept", sim, 217);
 
-    std::cout << "ddr_frame_store warm-reset raw: equal_token_refresh_after_accept"
-              << " seq=13 bank=0 prev_frames=" << prevFrames
+    sim.fillFrame(1, 217);
+    sim.ringDoorbell(1, 14);
+    if (!sim.waitForFrameCountStatic(prevFrames + 1, 800000))
+        throw std::runtime_error("fresh token after unchanged-token guard did not present");
+    expectFreshSample("fresh token after unchanged-token guard", sim, 217);
+
+    std::cout << "ddr_frame_store warm-reset raw: equal_token_stable_after_accept"
+              << " stale_seq=13 fresh_seq=14 stable_cycles=200000 prev_frames=" << prevFrames
               << " frames=" << sim.top.frames_done << " sample_r=217 underruns="
               << sim.top.underrun_count << " cycles=" << sim.cycle << "\n";
     return sim.schedulerProven();
@@ -741,12 +771,12 @@ void run() {
     schedulerSeen |= runFrameMailboxStallsWithHungLineRead();
     schedulerSeen |= runEqualTokenFallback();
     schedulerSeen |= runLiveValidYuvResetPrimedDoorbell();
-    schedulerSeen |= runEqualTokenRefreshAfterAccept();
+    schedulerSeen |= runEqualTokenStableAfterAccept();
     if (!schedulerSeen) {
         std::cerr << "FAIL ddr_frame_store warm-reset: refill scheduler pipeline not observed\n";
         std::exit(1);
     }
-    std::cout << "OK ddr_frame_store warm-reset: stale doorbell ignored until fresh frame; refill scheduler pipelined\n";
+    std::cout << "OK ddr_frame_store warm-reset: stale doorbell one-shot recovery; unchanged tokens stay idle; refill scheduler pipelined\n";
 }
 } // namespace
 

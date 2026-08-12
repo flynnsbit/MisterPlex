@@ -106,17 +106,14 @@ require("PRODUCT_FALLBACK_POLLS=4096" in SCRIPT and
 for stress_contract in (
     "telem_fallback_fire",
     "kAcceleratedStaleDoorbellFallbackPolls = 256",
-    "kStressFallbackFiresMin = 15",
-    "kStressFallbackFiresMax = 16",
-    "kProductFallbackFiresMax = 1",
-    "kStressBoundaryLineAllowance = 12",
-    "kStressRedundantQwordCeiling",
+    "kExpectedFallbackFires = 0",
     "stress_stale_replay",
-    "stress_scaled_m0",
-    "stress_scaled_shared",
+    "stress_unchanged_token_fallback",
     "--accelerated-fallback-stress",
-    "--fault-unbounded-fallback",
-    "unbounded_fallback_count",
+    "--fault-repeated-fallback",
+    "repeated_fallback_count",
+    "DDR_FRAME_STORE_FAULT_CLAMP_LOOKAHEAD",
+    "clamped_frame_lookahead",
 ):
     require(stress_contract in TOP + CPP + SCRIPT,
             f"missing accelerated fallback contract {stress_contract}")
@@ -131,12 +128,16 @@ for cross_contract in (
             f"missing cross-run fallback contract {cross_contract}")
 require("parameter int STALE_DOORBELL_FALLBACK_POLLS = 4096" in PRODUCT_STORE,
         "product frame-store default drifted from 4096")
+require("desired_y_r[ti] <= wrap_ahead(" in PRODUCT_STORE and
+        "sum - FRAME_H" in PRODUCT_STORE,
+        "true480 refill lookahead no longer wraps rows 0..6 before frame start")
 require(".STALE_DOORBELL_FALLBACK_POLLS(" not in PRESENT_CORE,
         "present_core overrides the product frame-store fallback")
 require("-GSTALE_DOORBELL_FALLBACK_POLLS=256" in WARM_RESET_SCRIPT,
         "dedicated warm-reset test lost its accelerated fallback")
-require("runEqualTokenRefreshAfterAccept" in WARM_RESET_CPP,
-        "accelerated warm-reset test lost equal-token refresh coverage")
+require("runEqualTokenStableAfterAccept" in WARM_RESET_CPP and
+        "repeat_guard_cycles=200000" in WARM_RESET_CPP,
+        "accelerated warm-reset test lost one-shot equal-token recovery coverage")
 
 for red_twin in (
     "idealized_DDR",

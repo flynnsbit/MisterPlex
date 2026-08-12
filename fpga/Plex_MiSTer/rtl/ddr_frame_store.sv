@@ -23,11 +23,11 @@ module ddr_frame_store #(
 	parameter [31:0] PHYS_BASE = 32'h3000_0000,
 	parameter int HPS_BANK_STRIDE_BYTES = 524288,
 	parameter [31:0] DOORBELL_PHYS = PHYS_BASE + (2 * HPS_BANK_STRIDE_BYTES) - 32'h1000,
-	parameter [31:0] MAILBOX_PHYS  = 32'h3007_F100,
-	parameter [31:0] INPUT_MAILBOX_PHYS = 32'h3007_F108,
-	parameter [31:0] SDRAM_MAILBOX_PHYS = 32'h3007_F110,
-	parameter [31:0] FRAME_MAILBOX_PHYS = 32'h3007_F118,
-	parameter [31:0] BANK_MAILBOX_PHYS  = 32'h3007_F128,
+	parameter [31:0] MAILBOX_PHYS  = DOORBELL_PHYS + 32'h100,
+	parameter [31:0] INPUT_MAILBOX_PHYS = DOORBELL_PHYS + 32'h108,
+	parameter [31:0] SDRAM_MAILBOX_PHYS = DOORBELL_PHYS + 32'h110,
+	parameter [31:0] FRAME_MAILBOX_PHYS = DOORBELL_PHYS + 32'h118,
+	parameter [31:0] BANK_MAILBOX_PHYS  = DOORBELL_PHYS + 32'h128,
 	parameter int DDR_BURST_MAX = 128,
 	parameter bit IGNORE_STALE_DOORBELL_AFTER_RESET = 1'b1,
 	parameter int STALE_DOORBELL_FALLBACK_POLLS = 4096,
@@ -525,6 +525,7 @@ module ddr_frame_store #(
 	reg [31:0] last_seq;
 	reg have_seq;
 	reg doorbell_primed;
+	reg stale_db_recovery_pending;
 	reg format_error;
 	reg [STALE_DB_POLL_W-1:0] stale_db_polls;
 	reg [15:0] mbox_seq, mbox_last;
@@ -569,6 +570,14 @@ module ddr_frame_store #(
 	endfunction
 
 `ifdef PLEX_PRESENT_TRUE_480P
+	function automatic [Y_W-1:0] wrap_ahead(input [Y_W-1:0] base, input integer ahead);
+		integer sum;
+		begin
+			sum = {{(32-Y_W){1'b0}}, base} + ahead;
+			wrap_ahead = (sum >= FRAME_H) ? Y_W'(sum - FRAME_H) : sum[Y_W-1:0];
+		end
+	endfunction
+
 	// Y_HOME_SLOT / C_HOME_SLOT (keepv Track A2): stable home idx =
 	// half_base + (line % LINE_COUNT). Free-list put line L in arbitrary free
 	// slot → pitch-LINE_COUNT missblack. LINE_COUNT product power-of-2 (8) →
@@ -920,7 +929,7 @@ module ddr_frame_store #(
 	wire db_token_new = db_valid_token && (!have_seq || (db_token != last_seq));
 	wire db_token_same = db_valid_token && have_seq && (db_token == last_seq);
 	wire db_stale_fallback = db_token_same && IGNORE_STALE_DOORBELL_AFTER_RESET &&
-	                         doorbell_primed &&
+	                         doorbell_primed && stale_db_recovery_pending &&
 	                         (stale_db_polls == STALE_DB_POLL_W'(STALE_DB_POLL_MAX));
 	wire db_new_seq = (db_token_new &&
 	                  (!IGNORE_STALE_DOORBELL_AFTER_RESET || doorbell_was_primed_r)) ||
@@ -997,6 +1006,7 @@ module ddr_frame_store #(
 			last_seq <= 32'd0;
 			have_seq <= 1'b0;
 			doorbell_primed <= 1'b0;
+			stale_db_recovery_pending <= 1'b0;
 			format_error <= 1'b0;
 			stale_db_polls <= '0;
 			doorbell_ok <= 1'b0;
@@ -1098,10 +1108,14 @@ module ddr_frame_store #(
 			want_y_gray_s1 <= want_y_gray;
 			want_y_gray_s2 <= want_y_gray_s1;
 `ifdef PLEX_PRESENT_TRUE_480P
-			// Stride-aware fill: ahead = ti * Y_FILL_STRIDE (see module param).
-			// Y_FILL_STRIDE==1 is bit-identical to prior consecutive window.
+			// Wrap the lookahead window so the inactive bottom-line slots can
+			// fetch rows 0..6 before the next frame starts.
 			for (ti = 0; ti < LINE_COUNT; ti = ti + 1)
+`ifdef DDR_FRAME_STORE_FAULT_CLAMP_LOOKAHEAD
 				desired_y_r[ti] <= clamp_ahead(y_gray2bin(want_y_gray_s2), ti * Y_FILL_STRIDE);
+`else
+				desired_y_r[ti] <= wrap_ahead(y_gray2bin(want_y_gray_s2), ti * Y_FILL_STRIDE);
+`endif
 `else
 			for (ti = 0; ti < LINE_COUNT; ti = ti + 1)
 				desired_y_r[ti] <= clamp_ahead(y_gray2bin(want_y_gray_s2), ti);
@@ -1158,6 +1172,8 @@ module ddr_frame_store #(
 			if (db_token_new) begin
 				last_seq <= db_token;
 				have_seq <= 1'b1;
+				stale_db_recovery_pending <=
+				    IGNORE_STALE_DOORBELL_AFTER_RESET && !doorbell_was_primed_r;
 				format_error <= 1'b0;
 			end
 			if (db_magic_ok && doorbell_primed && !db_token_new && !db_stale_fallback) begin
@@ -1170,6 +1186,7 @@ module ddr_frame_store #(
 				pending_bank_ddr <= db_token[31];
 				swap_req_t_ddr <= ~swap_req_t_ddr;
 				doorbell_ok <= 1'b1;
+				stale_db_recovery_pending <= 1'b0;
 				stale_db_polls <= '0;
 `ifdef PLEX_PRESENT_TRUE_480P
 				// A newly accepted frame generation must refill the inactive
