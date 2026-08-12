@@ -1,4 +1,5 @@
 #include "Vh264_sps_geometry_tb_top.h"
+#include "libmisterplex/ddr_frame_layout.hpp"
 #include "libmisterplex/h264_sps.hpp"
 #include "verilated.h"
 #include <cstdint>
@@ -72,7 +73,8 @@ static void expect(bool cond, const std::string& msg) {
 }
 
 static void checkCase(Vh264_sps_geometry_tb_top& dut, const char* name, const std::vector<uint8_t>& rbsp,
-                      int codedW, int codedH, int displayW, int displayH, int cropRight) {
+                      int codedW, int codedH, int displayW, int displayH, int cropRightUnits,
+                      bool matchesPlex480) {
     auto host = misterplex::parseSpsRbsp(rbsp.data(), rbsp.size());
     bool ok = feed(dut, rbsp);
     expect(ok, std::string(name) + " parser did not become valid");
@@ -83,19 +85,42 @@ static void checkCase(Vh264_sps_geometry_tb_top& dut, const char* name, const st
     expect(dut.coded_width == codedW && dut.coded_height == codedH, std::string(name) + " coded geometry mismatch");
     expect(dut.display_width == displayW && dut.display_height == displayH, std::string(name) + " display geometry mismatch");
     expect(host.width == displayW && host.height == displayH, std::string(name) + " host display geometry mismatch");
-    expect(dut.crop_right == cropRight, std::string(name) + " crop_right mismatch");
+    expect(host.coded_width == codedW && host.coded_height == codedH,
+           std::string(name) + " host coded geometry mismatch");
+    expect(dut.crop_right == cropRightUnits, std::string(name) + " crop_right units mismatch");
+    expect(host.crop_right_units == cropRightUnits,
+           std::string(name) + " host crop_right units mismatch");
+    expect(host.crop_right_pixels == cropRightUnits * 2,
+           std::string(name) + " host crop_right pixels mismatch");
+    const auto expected = misterplex::plex480pDdrFrameGeometry();
+    const bool contractMatch = misterplex::ddrFrameGeometryMatchesDelivered(
+        expected, host.coded_width, host.coded_height, host.display_width, host.display_height,
+        host.crop_left_pixels, host.crop_right_pixels, host.crop_top_pixels,
+        host.crop_bottom_pixels);
+    expect(contractMatch == matchesPlex480, std::string(name) + " Plex 480p match verdict mismatch");
 }
 
 int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
     Vh264_sps_geometry_tb_top dut;
     reset(dut);
-    checkCase(dut, "baseline_320x240", makeSps(20, 15, false, 0), 320, 240, 320, 240, 0);
-    checkCase(dut, "cropped_624_to_618", makeSps(39, 30, true, 3), 624, 480, 618, 480, 3);
+    checkCase(dut, "baseline_320x240", makeSps(20, 15, false, 0), 320, 240, 320, 240,
+              0, false);
+    checkCase(dut, "cropped_624_to_618", makeSps(39, 30, true, 3), 624, 480, 618,
+              480, 3, true);
+    checkCase(dut, "red_coded_640_same_display", makeSps(40, 30, true, 11), 640, 480,
+              618, 480, 11, false);
+    checkCase(dut, "red_pillar_10_display_620", makeSps(39, 30, true, 2), 624, 480,
+              620, 480, 2, false);
+    checkCase(dut, "red_pillar_12_display_616", makeSps(39, 30, true, 4), 624, 480,
+              616, 480, 4, false);
+    checkCase(dut, "red_height_464_loses_row_479", makeSps(39, 29, true, 3), 624, 464,
+              618, 464, 3, false);
     if (failures) {
         std::cerr << "h264 SPS geometry RTL check FAILED: " << failures << " failures\n";
         return 1;
     }
-    std::cout << "h264 SPS geometry RTL check PASS: baseline_320x240 and cropped coded=624x480 display=618x480 crop_right=3 log2_frame_num=7 poc_type=2\n";
+    std::cout << "h264 SPS geometry RTL check PASS: coded=624x480 display=618x480 "
+                 "crop_right=3 units/6px; coded640, pillar10/12, height464 rejected\n";
     return 0;
 }

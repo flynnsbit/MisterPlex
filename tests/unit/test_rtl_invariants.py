@@ -951,6 +951,95 @@ def check_ddr_frame_layout_contract() -> None:
             "ARM writer and RTL reader must agree on coded/display/presented geometry, "
             "burst qwords, bank stride, and doorbell addresses.",
         )
+
+    values = {
+        "coded_w": cpp_const(host, "kPlex480pCodedWidth"),
+        "coded_h": cpp_const(host, "kPlex480pCodedHeight"),
+        "display_w": cpp_const(host, "kPlex480pDisplayWidth"),
+        "display_h": cpp_const(host, "kPlex480pDisplayHeight"),
+        "presented_w": cpp_const(host, "kPlex480pPresentedWidth"),
+        "presented_h": cpp_const(host, "kPlex480pPresentedHeight"),
+        "crop_left": cpp_const(host, "kPlex480pCropLeft"),
+        "crop_right": cpp_const(host, "kPlex480pCropRight"),
+        "crop_top": cpp_const(host, "kPlex480pCropTop"),
+        "crop_bottom": cpp_const(host, "kPlex480pCropBottom"),
+        "pillar_left": cpp_const(host, "kPlex480pPillarboxLeft"),
+        "pillar_right": cpp_const(host, "kPlex480pPillarboxRight"),
+        "y_qwords": cpp_const(host, "kPlex480pYuvLumaLineQwords"),
+        "c_qwords": cpp_const(host, "kPlex480pYuvChromaLineQwords"),
+        "frame_bytes": cpp_const(host, "kPlex480pYuv420pBytes"),
+        "y_offset": cpp_const(host, "kPlex480pYPlaneOffset"),
+        "u_offset": cpp_const(host, "kPlex480pUPlaneOffset"),
+        "v_offset": cpp_const(host, "kPlex480pVPlaneOffset"),
+        "y_stride": cpp_const(host, "kPlex480pYStrideBytes"),
+        "c_stride": cpp_const(host, "kPlex480pChromaStrideBytes"),
+        "bank_stride": cpp_const(host, "kPlex480pYuv420pBankStride"),
+        "doorbell": cpp_const(host, "kPlex480pYuv420pDoorbellPhys"),
+        "phys_base": cpp_const(host, "kDdrFramePhysBase"),
+    }
+
+    def geometry_errors(v: dict[str, int]) -> list[str]:
+        errors: list[str] = []
+        if (v["coded_w"], v["coded_h"], v["display_w"], v["display_h"]) != (
+            624,
+            480,
+            618,
+            480,
+        ):
+            errors.append("coded/display geometry")
+        if v["coded_w"] != 39 * 16 or v["coded_h"] != 30 * 16:
+            errors.append("macroblock grid")
+        if v["crop_left"] + v["display_w"] + v["crop_right"] != v["coded_w"]:
+            errors.append("horizontal crop")
+        if v["crop_top"] + v["display_h"] + v["crop_bottom"] != v["coded_h"]:
+            errors.append("vertical crop")
+        if v["pillar_left"] + v["display_w"] + v["pillar_right"] != v["presented_w"]:
+            errors.append("pillar sum")
+        if (v["pillar_left"], v["pillar_right"]) != (11, 11):
+            errors.append("pillar symmetry")
+        y_bytes = v["coded_w"] * v["coded_h"]
+        c_bytes = (v["coded_w"] // 2) * (v["coded_h"] // 2)
+        if (v["y_offset"], v["u_offset"], v["v_offset"]) != (
+            0,
+            y_bytes,
+            y_bytes + c_bytes,
+        ):
+            errors.append("plane offsets")
+        if (v["y_stride"], v["c_stride"], v["y_qwords"], v["c_qwords"]) != (
+            v["coded_w"],
+            v["coded_w"] // 2,
+            v["coded_w"] // 8,
+            v["coded_w"] // 16,
+        ):
+            errors.append("plane strides")
+        if v["frame_bytes"] != y_bytes + 2 * c_bytes:
+            errors.append("frame bytes")
+        if v["doorbell"] != v["phys_base"] + 2 * v["bank_stride"] - 0x1000:
+            errors.append("doorbell page")
+        if v["phys_base"] + v["bank_stride"] != 0x30080000:
+            errors.append("bank1 base")
+        return errors
+
+    check(
+        not geometry_errors(values),
+        "480p DDR geometry derived invariants failed: " + ", ".join(geometry_errors(values)),
+    )
+
+    red_twins = [
+        ("coded640", {"coded_w": 640}, "coded/display geometry"),
+        ("pillar10", {"pillar_left": 10}, "pillar sum"),
+        ("pillar12", {"pillar_left": 12}, "pillar sum"),
+        ("u-plane+8", {"u_offset": values["u_offset"] + 8}, "plane offsets"),
+        ("y-stride640", {"y_stride": 640}, "plane strides"),
+        ("doorbell-4k", {"doorbell": values["doorbell"] - 0x1000}, "doorbell page"),
+    ]
+    for name, mutations, expected_error in red_twins:
+        bad = {**values, **mutations}
+        errors = geometry_errors(bad)
+        check(
+            expected_error in errors,
+            f"DDR geometry red twin {name} did not trip {expected_error}: {errors}",
+        )
     check(
         cpp_const(host, "kPlex480pPillarboxLeft")
         + cpp_const(host, "kPlex480pDisplayWidth")
@@ -958,7 +1047,11 @@ def check_ddr_frame_layout_contract() -> None:
         == cpp_const(host, "kPlex480pPresentedWidth"),
         "480p pillarbox math no longer lands display width exactly in presented width",
     )
-    print("PASS DDR frame layout ARM/RTL contract")
+    print(
+        "PASS DDR frame layout ARM/RTL contract "
+        "(624 coded / 618 display / 640 present; coded640, pillar10/12, plane/stride/"
+        "doorbell red twins trip)"
+    )
 
 
 def check_ddr_frame_store_yuv_read_contract() -> None:
