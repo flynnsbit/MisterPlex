@@ -91,6 +91,25 @@ struct BankReleaseStatus {
     }
 };
 
+enum class DdrBankWritePolicy {
+    BestEffort,      // legacy/diagnostic paths may reuse the non-display bank
+    RequireReleased, // exact true480 product path must wait for PLXD release
+};
+
+struct DdrBankWriteDecision {
+    bool ready = false;
+    int bank = -1;
+};
+
+inline DdrBankWriteDecision decideDdrBankWrite(const BankReleaseStatus& status,
+                                                DdrBankWritePolicy policy) {
+    if (status.anyFree())
+        return {true, status.freeBank()};
+    if (policy == DdrBankWritePolicy::RequireReleased)
+        return {false, -1};
+    return {true, status.disp_bank ^ 1};
+}
+
 inline bool decodeBankReleaseWord(uint64_t word, BankReleaseStatus& out) {
     if (static_cast<uint32_t>(word) != kBankReleaseMailboxMagic)
         return false;

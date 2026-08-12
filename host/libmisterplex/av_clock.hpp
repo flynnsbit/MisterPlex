@@ -27,11 +27,29 @@ inline int64_t frameContentMs(int64_t frameIndex, int num, int den) {
     return (frameIndex * 1000LL * static_cast<int64_t>(den)) / static_cast<int64_t>(num);
 }
 
+// Microsecond form for paths whose display period is too close to the source
+// period for integer milliseconds to preserve one-frame-per-VSync eligibility.
+// Truncation remains bounded below 1 us and never accumulates.
+inline int64_t frameContentUs(int64_t frameIndex, int num, int den) {
+    if (num <= 0 || den <= 0) {
+        num = kDefaultFpsNum;
+        den = kDefaultFpsDen;
+    }
+    return (frameIndex * 1000000LL * static_cast<int64_t>(den)) /
+           static_cast<int64_t>(num);
+}
+
 // Audio master clock (ms) from bytes handed to MrAudio (s16le stereo @ 48 kHz).
 inline int64_t audioClockMs(int64_t audioBytes) {
     if (audioBytes <= 0)
         return 0;
     return (audioBytes * 1000LL) / (48000LL * 4LL);
+}
+
+inline int64_t audioClockUs(int64_t audioBytes) {
+    if (audioBytes <= 0)
+        return 0;
+    return (audioBytes * 1000000LL) / (48000LL * 4LL);
 }
 
 // drift = audio clock − content time of the frame about to be shown.

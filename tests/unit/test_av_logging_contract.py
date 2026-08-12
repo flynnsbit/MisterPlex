@@ -9,6 +9,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 MEDIA = (ROOT / "arm" / "misterplexd" / "media_player.cpp").read_text()
 MAIN = (ROOT / "arm" / "misterplexd" / "main.cpp").read_text()
+FPGA = (ROOT / "arm" / "misterplexd" / "fpga_spi.cpp").read_text()
+LAYOUT = (ROOT / "host" / "libmisterplex" / "ddr_frame_layout.hpp").read_text()
 
 
 def require(condition: bool, message: str) -> None:
@@ -59,6 +61,30 @@ def main() -> int:
     require(
         '"fps=" + std::to_string(fpsNum_) + "/" + std::to_string(fpsDen_) + ","' in MEDIA,
         "FFmpeg CFR filter must receive the exact rational source rate",
+    )
+    require(
+        "isPlex480pDdrFrameGeometry" in LAYOUT and
+        "true480Pipeline" in MEDIA and
+        "DdrBankWritePolicy::RequireReleased" in MEDIA,
+        "strict bank-release policy must be geometry-gated to exact true480",
+    )
+    require(
+        re.search(
+            r"frameContentUs\(slotFrameIndex,\s*fpsNum,\s*fpsDen\)",
+            MEDIA,
+        ) is not None
+        and re.search(
+            r"audibleClockUs\(audioBytes_\.load\(\),\s*"
+            r"audioQueuedBytes_\.load\(\)\)",
+            MEDIA,
+        ) is not None,
+        "true480 pipeline must use exact-rate microsecond audible-clock eligibility",
+    )
+    require(
+        "kPlxdWaitMaxUs = 50000" in FPGA
+        and "PLXD timeout waiting for a released bank" in FPGA
+        and "PLXD acknowledgement required but unavailable" in FPGA,
+        "strict PLXD path must wait boundedly and fail closed before DDR writes",
     )
     print("test_av_logging_contract: OK")
     return 0

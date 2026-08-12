@@ -26,6 +26,9 @@ int main() {
     CHECK(frameContentMs(0, 24, 1) == 0);
     CHECK(frameContentMs(24, 24, 1) == 1000);
     CHECK(frameContentMs(24000, 24000, 1001) == 1001000);
+    CHECK(frameContentUs(0, 24, 1) == 0);
+    CHECK(frameContentUs(24, 24, 1) == 1000000);
+    CHECK(frameContentUs(24000, 24000, 1001) == 1001000000);
 
     struct RateCase {
         int num;
@@ -45,6 +48,8 @@ int main() {
     for (const auto& rate : rates) {
         CHECK(frameContentMs(rate.frames_per_marker, rate.num, rate.den) ==
               rate.marker_period_ms);
+        CHECK(frameContentUs(rate.frames_per_marker, rate.num, rate.den) ==
+              static_cast<int64_t>(rate.marker_period_ms) * 1000);
 
         // Exercise a non-round frame index after many hours. Integer truncation
         // may move within [0,1) ms but must never accumulate.
@@ -54,6 +59,13 @@ int main() {
         CHECK(static_cast<long double>(got) <= exact);
         CHECK(exact - static_cast<long double>(got) < 1.0L);
         CHECK(frameContentMs(n + 1, rate.num, rate.den) > got);
+
+        const long double exactUs =
+            static_cast<long double>(n) * 1000000.0L * rate.den / rate.num;
+        const int64_t gotUs = frameContentUs(n, rate.num, rate.den);
+        CHECK(static_cast<long double>(gotUs) <= exactUs);
+        CHECK(exactUs - static_cast<long double>(gotUs) < 1.0L);
+        CHECK(frameContentUs(n + 1, rate.num, rate.den) > gotUs);
 
         // Fractional-frame rounding error is a bounded sawtooth, not evidence
         // of monotonic clock drift. Pin both directions so a future test cannot
@@ -89,11 +101,16 @@ int main() {
     // Bad rates fall back to the 24/1 default rather than dividing by zero.
     CHECK(frameContentMs(24, 0, 1) == frameContentMs(24, kDefaultFpsNum, kDefaultFpsDen));
     CHECK(frameContentMs(24, 24, 0) == frameContentMs(24, kDefaultFpsNum, kDefaultFpsDen));
+    CHECK(frameContentUs(24, 0, 1) == frameContentUs(24, kDefaultFpsNum, kDefaultFpsDen));
+    CHECK(frameContentUs(24, 24, 0) == frameContentUs(24, kDefaultFpsNum, kDefaultFpsDen));
 
     // --- audio master clock (48 kHz stereo s16le = 192 000 B/s) ---
     CHECK(audioClockMs(0) == 0);
     CHECK(audioClockMs(192000) == 1000);
     CHECK(audioClockMs(192000LL * 3600) == 3600000);
+    CHECK(audioClockUs(0) == 0);
+    CHECK(audioClockUs(192) == 1000);
+    CHECK(audioClockUs(192000) == 1000000);
 
     // --- drift polarity ---
     // drift > 0 means the master clock is past this frame's content time → video behind.
