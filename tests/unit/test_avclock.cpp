@@ -133,6 +133,21 @@ int main() {
     CHECK(avDecide(200, lead, drop, 1) == AvAction::Present);
     CHECK(avDecide(200, lead, drop, 3) == AvAction::Present);
 
+    // --- terminal-state classification ---
+    // Only natural EOF with content is success-shaped "ended"/auto-next.
+    CHECK(classifyPlaybackTerminalState(false, false, true) ==
+          PlaybackTerminalState::Ended);
+    CHECK(classifyPlaybackTerminalState(false, false, false) ==
+          PlaybackTerminalState::Stopped);
+    // A strict true480 send failure after many decoded frames must remain a
+    // failure and never become natural EOF merely because hadContent is true.
+    CHECK(classifyPlaybackTerminalState(false, true, true) ==
+          PlaybackTerminalState::Stopped);
+    CHECK(classifyPlaybackTerminalState(false, true, false) ==
+          PlaybackTerminalState::Stopped);
+    CHECK(classifyPlaybackTerminalState(true, true, true) ==
+          PlaybackTerminalState::None);
+
     // Sustained lateness must alternate drop/present, never produce a burst.
     for (const auto& rate : rates) {
         (void)rate;

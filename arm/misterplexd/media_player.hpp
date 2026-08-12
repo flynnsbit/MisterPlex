@@ -32,6 +32,7 @@ struct PlaybackSummary {
     bool skipRgb = false;
     bool shortRead = false;
     bool videoEof = false;
+    bool true480PipelineAborted = false;
     size_t shortReadGot = 0;
     size_t shortReadWant = 0;
 

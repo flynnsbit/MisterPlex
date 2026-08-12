@@ -2164,6 +2164,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     bool usedRawVideo = false;
     bool videoEof = false;
     bool shortRead = false;
+    bool true480PipelineAborted = false;
     size_t shortReadGot = 0;
     size_t shortReadWant = 0;
 
@@ -3223,6 +3224,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             ringCv.notify_all();
             if (presentThr.joinable())
                 presentThr.join();
+            true480PipelineAborted = pipelineFatal.load();
+            if (true480PipelineAborted)
+                log("ERROR media: true480 DDR pipeline aborted; suppressing natural EOF");
             presentCount_ = pipelinePresentCount.load();
             ddrBank_ = localBank;
             if (rfd >= 0) {
@@ -3606,17 +3610,24 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         lastSummary_.skipRgb = skipRgb;
         lastSummary_.shortRead = shortRead;
         lastSummary_.videoEof = videoEof;
+        lastSummary_.true480PipelineAborted = true480PipelineAborted;
         lastSummary_.shortReadGot = shortReadGot;
         lastSummary_.shortReadWant = shortReadWant;
     }
-    // Natural EOF (not user stop / seek restart) → "ended" so main can auto-next.
-    if (!stop_.load() && onProgress_) {
+    // Only natural EOF with content may report "ended" and trigger auto-next.
+    // A strict true480 transport failure is success-shaped without this guard:
+    // frameIndex>0 survives teardown even though presentation aborted mid-title.
+    if (onProgress_) {
         const bool hadContent = usedRawVideo ? (frameIndex > 0) : (reconFrames_.load() > 0 ||
                                                                    positionMs_.load() > startMs + 500);
-        if (hadContent)
+        const PlaybackTerminalState terminal = classifyPlaybackTerminalState(
+            stop_.load(), true480PipelineAborted, hadContent);
+        if (terminal == PlaybackTerminalState::Ended) {
             onProgress_("ended", positionMs_.load(), durationMs);
-        else
-            onProgress_("stopped", 0, durationMs);
+        } else if (terminal == PlaybackTerminalState::Stopped) {
+            const int64_t stoppedAt = true480PipelineAborted ? positionMs_.load() : 0;
+            onProgress_("stopped", stoppedAt, durationMs);
+        }
     }
     // The frame store latches the last frame written; without this the final frame
     // of the video stays on screen until something else paints over it.
@@ -3628,6 +3639,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         " cabac=" + (cabacSkip_.load() ? "1" : "0") +
         " stream=" + (streamEnabled_ ? "on" : "off") +
         " rawvideo=" + (usedRawVideo ? "on" : "off") +
+        " true480_pipeline_aborted=" + (true480PipelineAborted ? "1" : "0") +
         " present=" + presentMode_ +
         " skip_rgb=" + (skipRgb ? "1" : "0"));
 }
