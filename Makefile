@@ -101,7 +101,7 @@ unit-unlocked: preflight $(ROOT)/build/test_gdm_filter $(ROOT)/build/test_spi_tx
 	python3 $(ROOT)/tests/unit/test_h264_intra_nb_ctx_verilator.py
 	python3 $(ROOT)/tests/unit/test_p3_idct_rtl_model.py
 	python3 $(ROOT)/tests/unit/test_p3_intra_frame_verilator.py
-	@chmod +x $(ROOT)/tests/unit/*.sh $(ROOT)/tests/unit/*.py $(ROOT)/tests/hw/*.sh 2>/dev/null || true
+	@chmod +x $(ROOT)/tests/unit/*.sh $(ROOT)/tests/unit/*.py $(ROOT)/tests/hw/*.sh $(ROOT)/tests/hw/*.py 2>/dev/null || true
 	$(ROOT)/tests/unit/test_p3_inter_rtl_sim.sh
 	$(ROOT)/tests/unit/test_p3_dpb_mc_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_p_slice_modes_rtl_sim.sh
@@ -111,6 +111,8 @@ unit-unlocked: preflight $(ROOT)/build/test_gdm_filter $(ROOT)/build/test_spi_tx
 	$(ROOT)/tests/unit/test_play_file_delivery.sh
 	$(ROOT)/tests/unit/test_no_private_data.sh
 	$(ROOT)/tests/unit/test_capture_rig.sh
+	python3 $(ROOT)/tests/unit/test_av_logging_contract.py
+	python3 $(ROOT)/tests/unit/test_external_av_sync.py
 	$(ROOT)/tests/unit/test_resource_preflight.sh
 	$(ROOT)/scripts/check_define_parity.py
 	python3 $(ROOT)/tests/unit/test_hw_visual_compare.py
@@ -565,4 +567,3 @@ $(ROOT)/build/test_pl330_encode: $(ROOT)/tests/unit/test_pl330_encode.cpp \
 		$(ROOT)/host/libmisterplex/ddr_zero_copy_ingest.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_pl330_encode.cpp
-

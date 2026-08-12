@@ -1,0 +1,55 @@
+{
+  "schema": "misterplex.external-av.synthetic-events.v1",
+  "cases": [
+    {
+      "name": "calibrated-zero-offset",
+      "duration_s": 12.0,
+      "expected_period_ms": 1000.0,
+      "adapter_offset_ms": 10.0,
+      "min_markers_per_window": 3,
+      "video_events_s": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+      "audio_events_s": [1.01, 2.01, 3.01, 4.01, 5.01, 6.01, 7.01, 8.01, 9.01, 10.01, 11.01],
+      "expected_status": "PASS"
+    },
+    {
+      "name": "nonmonotonic-within-gate",
+      "duration_s": 12.0,
+      "expected_period_ms": 1000.0,
+      "adapter_offset_ms": 10.0,
+      "min_markers_per_window": 3,
+      "video_events_s": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+      "audio_events_s": [1.02, 2.02, 3.02, 4.0, 5.0, 6.0, 7.0, 8.015, 9.015, 10.015, 11.015],
+      "expected_status": "PASS"
+    },
+    {
+      "name": "middle-excursion-endpoints-look-flat",
+      "duration_s": 12.0,
+      "expected_period_ms": 1000.0,
+      "adapter_offset_ms": 10.0,
+      "min_markers_per_window": 3,
+      "video_events_s": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+      "audio_events_s": [1.01, 2.01, 3.01, 4.09, 5.09, 6.09, 7.09, 8.01, 9.01, 10.01, 11.01],
+      "expected_status": "FAIL"
+    },
+    {
+      "name": "insufficient-markers",
+      "duration_s": 12.0,
+      "expected_period_ms": 1000.0,
+      "adapter_offset_ms": 0.0,
+      "min_markers_per_window": 3,
+      "video_events_s": [1, 2, 5, 6, 9, 10],
+      "audio_events_s": [1, 2, 5, 6, 9, 10],
+      "expected_status": "FAIL"
+    },
+    {
+      "name": "missing-audio-is-blocked",
+      "duration_s": 12.0,
+      "expected_period_ms": 1000.0,
+      "adapter_offset_ms": 0.0,
+      "min_markers_per_window": 3,
+      "video_events_s": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+      "audio_events_s": null,
+      "expected_status": "BLOCKED"
+    }
+  ]
+}
