@@ -267,7 +267,9 @@ $(ROOT)/build/test_cavlc_dc: $(ROOT)/tests/unit/test_cavlc_dc.cpp \
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_cavlc_dc.cpp
 
-$(ROOT)/build/test_sps_parse: $(ROOT)/tests/unit/test_sps_parse.cpp $(ROOT)/host/libmisterplex/h264_sps.hpp
+$(ROOT)/build/test_sps_parse: $(ROOT)/tests/unit/test_sps_parse.cpp \
+		$(ROOT)/host/libmisterplex/h264_sps.hpp \
+		$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_sps_parse.cpp
 

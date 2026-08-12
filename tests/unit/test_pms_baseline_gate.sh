@@ -52,7 +52,8 @@ def nal(nal_type: int, payload: bytes, nal_ref_idc: int = 3) -> bytes:
     return b"\x00\x00\x00\x01" + bytes([(nal_ref_idc << 5) | nal_type]) + epb(payload)
 
 
-def sps(profile: int = 66, max_refs: int = 1) -> bytes:
+def sps(profile: int = 66, max_refs: int = 1, width_mbs: int = 39,
+        height_map_units: int = 30, crop_right_units: int = 3) -> bytes:
     b = ""
     b += bits_u(profile, 8)
     b += bits_u(0xC0 if profile == 66 else 0, 8)
@@ -68,12 +69,13 @@ def sps(profile: int = 66, max_refs: int = 1) -> bytes:
     b += bits_ue(2)  # pic_order_cnt_type
     b += bits_ue(max_refs)
     b += bits_u(0, 1)  # gaps_in_frame_num_value_allowed_flag
-    b += bits_ue(38)  # pic_width_in_mbs_minus1 -> 39 mbs = 624px
-    b += bits_ue(29)  # pic_height_in_map_units_minus1 -> 30 mbs = 480px
+    b += bits_ue(width_mbs - 1)
+    b += bits_ue(height_map_units - 1)
     b += bits_u(1, 1)  # frame_mbs_only_flag
     b += bits_u(1, 1)  # direct_8x8_inference_flag
-    b += bits_u(1, 1)  # frame_cropping_flag
-    b += bits_ue(0) + bits_ue(3) + bits_ue(0) + bits_ue(0)  # display 618x480
+    b += bits_u(1 if crop_right_units else 0, 1)
+    if crop_right_units:
+        b += bits_ue(0) + bits_ue(crop_right_units) + bits_ue(0) + bits_ue(0)
     b += bits_u(0, 1)  # vui_parameters_present_flag
     return rbsp(b)
 
@@ -115,9 +117,12 @@ def slice_rbsp(slice_type: int = 2, idr: bool = True) -> bytes:
 
 
 def stream(path: str, *, profile: int = 66, cabac: int = 0, max_refs: int = 1,
-           b_slice: bool = False) -> None:
+           b_slice: bool = False, width_mbs: int = 39, height_map_units: int = 30,
+           crop_right_units: int = 3) -> None:
     data = bytearray()
-    data += nal(7, sps(profile=profile, max_refs=max_refs))
+    data += nal(7, sps(profile=profile, max_refs=max_refs, width_mbs=width_mbs,
+                       height_map_units=height_map_units,
+                       crop_right_units=crop_right_units))
     data += nal(8, pps(cabac=cabac))
     if b_slice:
         data += nal(1, slice_rbsp(slice_type=1, idr=False), nal_ref_idc=2)
@@ -132,6 +137,10 @@ stream("bad_profile_high.264", profile=100)
 stream("bad_cabac.264", cabac=1)
 stream("bad_max_ref.264", max_refs=4)
 stream("bad_b_slice.264", b_slice=True)
+stream("bad_coded_640.264", width_mbs=40, crop_right_units=11)
+stream("bad_pillar_10.264", crop_right_units=2)
+stream("bad_pillar_12.264", crop_right_units=4)
+stream("bad_height_464.264", height_map_units=29)
 PY
 
 run_green() {
@@ -166,6 +175,10 @@ run_red bad_profile_high.264 "profile_idc=100, expected 66"
 run_red bad_cabac.264 "entropy_cabac=1, expected 0"
 run_red bad_max_ref.264 "max_num_ref_frames=4, expected 1"
 run_red bad_b_slice.264 "b_slices=1, expected 0"
+run_red bad_coded_640.264 "coded=640x480, expected 624x480"
+run_red bad_pillar_10.264 "display=620x480, expected 618x480"
+run_red bad_pillar_12.264 "display=616x480, expected 618x480"
+run_red bad_height_464.264 "coded=624x464, expected 624x480"
 
 set +e
 missing_out="$(env -u PLEX_BASE -u PLEX_TOKEN -u MISTERPLEX_BASELINE_KEY -u PLEX_KEY \
@@ -179,4 +192,4 @@ if [[ $missing_rc -ne 77 || "$missing_out" != *"SKIP-NOT-PASS"* ]]; then
   exit 1
 fi
 
-echo "test_pms_baseline_gate: OK green plus red proofs for profile/cabac/ref/B and absent deps"
+echo "test_pms_baseline_gate: OK green plus red proofs for profile/cabac/ref/B, coded640, pillar10/12, height464, and absent deps"
