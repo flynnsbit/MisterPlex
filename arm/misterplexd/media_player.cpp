@@ -921,12 +921,13 @@ bool MediaPlayer::setSourceAspect(const SourceAspect& aspect) {
         log("ERROR media: refusing playback with unknown source display aspect");
         return false;
     }
+    std::lock_guard<std::mutex> present(presentMu_);
+    sourceAspect_ = aspect;
     if (presentMode_ != "fpga" && presentMode_ != "both") {
         log("media: source aspect=" + std::to_string(aspect.x) + ":" +
             std::to_string(aspect.y) + " owner=host_present no_fpga_transport");
         return true;
     }
-    std::lock_guard<std::mutex> present(presentMu_);
     if (!fpga_.setDdrFrameLayout(ddrFrameGeometryForPresentedSize(outW_, outH_),
                                  DdrFrameFormat::Yuv420p)) {
         log("ERROR media: source aspect DDR layout failed: " + fpga_.lastError());
@@ -2263,6 +2264,18 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     const bool urlIsLocalFile =
         !url.empty() && url[0] == '/' && url.rfind("http", 0) != 0 && url != "testsrc" &&
         url.rfind("lavfi", 0) != 0;
+    const bool cropPmsBars =
+        nativeScalerPresent && sourceAspect_.valid &&
+        url.find("/transcode/universal/") != std::string::npos;
+    if (cropPmsBars) {
+        const std::string dar = std::to_string(sourceAspect_.x) + "/" +
+                                std::to_string(sourceAspect_.y);
+        vf += "crop=trunc(min(iw\\,ih*" + dar +
+              ")/2)*2:trunc(min(ih\\,iw/(" + dar + "))/2)*2,";
+        log("media: PMS canvas crop to source DAR=" +
+            std::to_string(sourceAspect_.x) + ":" +
+            std::to_string(sourceAspect_.y));
+    }
     const bool identityLocalFile =
         nativeScalerPresent && urlIsLocalFile && !forceExact &&
         rawDisplayW == rawW && rawDisplayH == rawH && outW_ == rawW && outH_ == rawH;
@@ -2271,7 +2284,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         sourceMediaW_ > 0 && sourceMediaH_ > 0 &&
         sourceMediaW_ == outW_ && sourceMediaH_ == outH_ &&
         rawDisplayW == rawW && rawDisplayH == rawH && outW_ == rawW && outH_ == rawH;
-    const bool skipScale = skipScaleFlag || identityLocalFile || pmsSourceMatchesBank;
+    const bool skipScale =
+        !cropPmsBars && (skipScaleFlag || identityLocalFile || pmsSourceMatchesBank);
     // skip|none|off|identity are NOT valid libswscale flag names — if 480p (or any
     // non-identity geom) still needs scaling, fall back to bicubic.
     if (skipScaleFlag && !(skipScale && rawDisplayW == rawW && rawDisplayH == rawH)) {

@@ -261,6 +261,7 @@ private:
     int uvVBias_ = 0;
     int sourceMediaW_ = 0;
     int sourceMediaH_ = 0;
+    SourceAspect sourceAspect_{};
     bool sourceHasAudio_ = true; // fail-open until resolve says otherwise
     std::string audioDev_ = "/dev/MrAudio";
     std::string presentMode_ = "fb0"; // "fb0", "fpga", "both"
