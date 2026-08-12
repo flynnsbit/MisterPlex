@@ -38,6 +38,25 @@ module true480_shared_ddr_tb #(
 	output wire        cfg_active_config,
 	output wire        cfg_native_beam_source,
 	output wire [7:0]  cfg_y_fill_stride,
+	output wire        cfg_refill_telemetry,
+	output wire        telem_fill_issue,
+	output wire        telem_fill_complete,
+	output wire        telem_fill_chroma,
+	output wire        telem_fill_bank,
+	output wire [8:0]  telem_fill_line,
+	output wire [7:0]  telem_fill_slot,
+	output wire        telem_issue_resident,
+	output wire        telem_issue_any_resident,
+	output wire        telem_issue_needed_current,
+	output wire        telem_issue_needed_pending,
+	output wire        telem_issue_need_combo,
+	output wire        telem_issue_sched_replay,
+	output wire        telem_issue_for_pending,
+	output wire [8:0]  telem_desired_y0,
+	output wire [8:0]  telem_desired_y7,
+	output wire        telem_disp_bank,
+	output wire        telem_swap_pending,
+	output wire        telem_pending_bank,
 	output wire [7:0]  store_debug_state,
 	output wire        store_m0_rd,
 	output wire        store_m0_we,
@@ -229,6 +248,179 @@ module true480_shared_ddr_tb #(
 	assign obs_y_hit = store.y_hit_r;
 	assign obs_c_hit = store.c_hit_r;
 	assign obs_miss = store.miss_d;
+
+`ifdef PLEX_PRESENT_TRUE_480P
+	reg telem_fill_issue_r;
+	reg telem_fill_complete_r;
+	reg telem_fill_chroma_r;
+	reg telem_fill_bank_r;
+	reg [8:0] telem_fill_line_r;
+	reg [7:0] telem_fill_slot_r;
+	reg telem_issue_resident_r;
+	reg telem_issue_any_resident_r;
+	reg telem_issue_needed_current_r;
+	reg telem_issue_needed_pending_r;
+	reg telem_issue_need_combo_r;
+	reg telem_issue_sched_replay_r;
+	reg telem_issue_for_pending_r;
+	reg [3:0] telem_prev_state;
+	reg telem_prev_sched_valid;
+	reg telem_prev_sched_for_pending;
+	reg telem_resident_now;
+	reg telem_any_resident_now;
+	reg telem_needed_current_now;
+	reg telem_needed_pending_now;
+	reg telem_need_combo_now;
+	integer telem_i;
+
+	always @* begin
+		telem_resident_now = 1'b0;
+		telem_any_resident_now = 1'b0;
+		telem_needed_current_now = 1'b0;
+		telem_needed_pending_now = 1'b0;
+		telem_need_combo_now = 1'b0;
+		for (telem_i = 0; telem_i < LINE_SLOTS; telem_i = telem_i + 1) begin
+			if (store.fill_is_chroma) begin
+				if (store.c_valid[telem_i] &&
+				    store.c_bank[telem_i] == store.fill_bank &&
+				    store.c_line[telem_i] == store.fill_cy)
+					telem_any_resident_now = 1'b1;
+			end else begin
+				if (store.y_valid[telem_i] &&
+				    store.y_bank[telem_i] == store.fill_bank &&
+				    store.y_line[telem_i] == store.fill_y)
+					telem_any_resident_now = 1'b1;
+			end
+		end
+		if (store.fill_is_chroma) begin
+			telem_resident_now =
+			    store.c_valid[store.fill_idx] &&
+			    store.c_bank[store.fill_idx] == store.fill_bank &&
+			    store.c_line[store.fill_idx] == store.fill_cy;
+		end else begin
+			telem_resident_now =
+			    store.y_valid[store.fill_idx] &&
+			    store.y_bank[store.fill_idx] == store.fill_bank &&
+			    store.y_line[store.fill_idx] == store.fill_y;
+		end
+		for (telem_i = 0; telem_i < LINE_COUNT; telem_i = telem_i + 1) begin
+			if (store.fill_bank == store.disp_bank_d2) begin
+				if (store.fill_is_chroma) begin
+					if (store.fill_cy == store.desired_y_r[telem_i][8:1])
+						telem_needed_current_now = 1'b1;
+				end else if (store.fill_y == store.desired_y_r[telem_i]) begin
+					telem_needed_current_now = 1'b1;
+				end
+			end
+			if (store.swap_pending_d2 &&
+			    store.fill_bank == store.pending_bank_d2) begin
+				if (store.fill_is_chroma) begin
+					if (store.fill_cy == telem_i[8:1])
+						telem_needed_pending_now = 1'b1;
+				end else if (store.fill_y == telem_i[8:0]) begin
+					telem_needed_pending_now = 1'b1;
+				end
+			end
+		end
+		if (telem_prev_sched_for_pending) begin
+			telem_need_combo_now = store.fill_is_chroma
+			    ? (store.need_c_prep_c && store.target_c_prep_c == store.fill_cy)
+			    : (store.need_y_prep_c && store.target_y_prep_c == store.fill_y);
+		end else begin
+			telem_need_combo_now = store.fill_is_chroma
+			    ? (store.need_c_cur_c && store.target_c_cur_c == store.fill_cy)
+			    : (store.need_y_cur_c && store.target_y_cur_c == store.fill_y);
+		end
+	end
+
+	always @(posedge clk_ddr) begin
+		telem_fill_issue_r <= 1'b0;
+		telem_fill_complete_r <= 1'b0;
+		if (reset) begin
+			telem_fill_chroma_r <= 1'b0;
+			telem_fill_bank_r <= 1'b0;
+			telem_fill_line_r <= 9'd0;
+			telem_fill_slot_r <= 8'd0;
+			telem_issue_resident_r <= 1'b0;
+			telem_issue_any_resident_r <= 1'b0;
+			telem_issue_needed_current_r <= 1'b0;
+			telem_issue_needed_pending_r <= 1'b0;
+			telem_issue_need_combo_r <= 1'b0;
+			telem_issue_sched_replay_r <= 1'b0;
+			telem_issue_for_pending_r <= 1'b0;
+			telem_prev_state <= 4'd0;
+			telem_prev_sched_valid <= 1'b0;
+			telem_prev_sched_for_pending <= 1'b0;
+		end else begin
+			if (telem_prev_state == 4'd0 && store.state_ddr == 4'd5) begin
+				telem_fill_issue_r <= 1'b1;
+				telem_fill_chroma_r <= store.fill_is_chroma;
+				telem_fill_bank_r <= store.fill_bank;
+				telem_fill_line_r <= store.fill_is_chroma
+				    ? {1'b0, store.fill_cy} : store.fill_y;
+				telem_fill_slot_r <= 8'(store.fill_idx);
+				telem_issue_resident_r <= telem_resident_now;
+				telem_issue_any_resident_r <= telem_any_resident_now;
+				telem_issue_needed_current_r <= telem_needed_current_now;
+				telem_issue_needed_pending_r <= telem_needed_pending_now;
+				telem_issue_need_combo_r <= telem_need_combo_now;
+				telem_issue_sched_replay_r <= telem_prev_sched_valid;
+				telem_issue_for_pending_r <= telem_prev_sched_for_pending;
+			end
+			if (telem_prev_state == 4'd2 && store.state_ddr == 4'd0) begin
+				telem_fill_complete_r <= 1'b1;
+				telem_fill_chroma_r <= store.fill_is_chroma;
+				telem_fill_bank_r <= store.fill_bank;
+				telem_fill_line_r <= store.fill_is_chroma
+				    ? {1'b0, store.fill_cy} : store.fill_y;
+				telem_fill_slot_r <= 8'(store.fill_idx);
+			end
+			telem_prev_state <= store.state_ddr;
+			telem_prev_sched_valid <= store.sched_valid;
+			telem_prev_sched_for_pending <= store.sched_for_pending;
+		end
+	end
+
+	assign cfg_refill_telemetry = 1'b1;
+	assign telem_fill_issue = telem_fill_issue_r;
+	assign telem_fill_complete = telem_fill_complete_r;
+	assign telem_fill_chroma = telem_fill_chroma_r;
+	assign telem_fill_bank = telem_fill_bank_r;
+	assign telem_fill_line = telem_fill_line_r;
+	assign telem_fill_slot = telem_fill_slot_r;
+	assign telem_issue_resident = telem_issue_resident_r;
+	assign telem_issue_any_resident = telem_issue_any_resident_r;
+	assign telem_issue_needed_current = telem_issue_needed_current_r;
+	assign telem_issue_needed_pending = telem_issue_needed_pending_r;
+	assign telem_issue_need_combo = telem_issue_need_combo_r;
+	assign telem_issue_sched_replay = telem_issue_sched_replay_r;
+	assign telem_issue_for_pending = telem_issue_for_pending_r;
+	assign telem_desired_y0 = store.desired_y_r[0];
+	assign telem_desired_y7 = store.desired_y_r[LINE_COUNT-1];
+	assign telem_disp_bank = store.disp_bank_d2;
+	assign telem_swap_pending = store.swap_pending_d2;
+	assign telem_pending_bank = store.pending_bank_d2;
+`else
+	assign cfg_refill_telemetry = 1'b0;
+	assign telem_fill_issue = 1'b0;
+	assign telem_fill_complete = 1'b0;
+	assign telem_fill_chroma = 1'b0;
+	assign telem_fill_bank = 1'b0;
+	assign telem_fill_line = 9'd0;
+	assign telem_fill_slot = 8'd0;
+	assign telem_issue_resident = 1'b0;
+	assign telem_issue_any_resident = 1'b0;
+	assign telem_issue_needed_current = 1'b0;
+	assign telem_issue_needed_pending = 1'b0;
+	assign telem_issue_need_combo = 1'b0;
+	assign telem_issue_sched_replay = 1'b0;
+	assign telem_issue_for_pending = 1'b0;
+	assign telem_desired_y0 = 9'd0;
+	assign telem_desired_y7 = 9'd0;
+	assign telem_disp_bank = 1'b0;
+	assign telem_swap_pending = 1'b0;
+	assign telem_pending_bank = 1'b0;
+`endif
 
 	wire m1_busy;
 	reg [7:0] m1_burstcnt;

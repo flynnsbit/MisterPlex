@@ -111,8 +111,9 @@ run_red() {
 echo "RTL SIM: $VERILATOR_VERSION"
 echo "TRUE480_SHARED_RTL_DIR=$RTL"
 echo "TRUE480_SHARED_CONFIG=$([[ "$ACTIVE_CONFIG" -eq 1 ]] && echo active || echo legacy)"
-if RTL_HEAD="$(git -C "$RTL" rev-parse HEAD 2>/dev/null)"; then
-  echo "TRUE480_SHARED_RTL_HEAD=$RTL_HEAD"
+if RTL_GIT_TOP="$(git -C "$RTL" rev-parse --show-toplevel 2>/dev/null)" &&
+   [[ "$(realpath "$RTL")" == "$(realpath "$RTL_GIT_TOP/fpga/Plex_MiSTer/rtl")" ]]; then
+  echo "TRUE480_SHARED_RTL_HEAD=$(git -C "$RTL_GIT_TOP" rev-parse HEAD)"
 fi
 NORMAL="$(build_variant normal 8)"
 run_red "idealized_DDR" "idealized_DDR_refused" \
