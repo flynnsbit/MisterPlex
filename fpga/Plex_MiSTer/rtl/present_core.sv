@@ -184,6 +184,9 @@ module present_core #(
 
 	localparam int FRAME_X_W = $clog2(FRAME_W);
 	localparam int FRAME_Y_W = $clog2(FRAME_H);
+`ifdef PLEX_PRESENT_TRUE_480P
+	localparam int TRUE480_SCAN_Y_STEP = 1;
+`endif
 
 	// synthesis translate_off
 	initial begin
@@ -191,8 +194,8 @@ module present_core #(
 		if (FRAME_W != 640 || FRAME_H != 480)
 			$error("PLEX_PRESENT_TRUE_480P requires FRAME_W=640 FRAME_H=480 (got %0d x %0d)",
 				FRAME_W, FRAME_H);
-		if (FRAME_Y_FILL_STRIDE != 1)
-			$error("PLEX_PRESENT_TRUE_480P requires FRAME_Y_FILL_STRIDE=1 (got %0d)",
+		if (FRAME_Y_FILL_STRIDE != TRUE480_SCAN_Y_STEP)
+			$error("PLEX_PRESENT_TRUE_480P fill-step must equal scan-step=1 (got %0d)",
 				FRAME_Y_FILL_STRIDE);
 `ifdef PLEX_PRESENT_720P_L4
 		$error("PLEX_PRESENT_TRUE_480P and PLEX_PRESENT_720P_L4 are mutually exclusive");
@@ -206,6 +209,17 @@ module present_core #(
 `endif
 	end
 	// synthesis translate_on
+
+`ifdef PLEX_PRESENT_TRUE_480P
+	// Synthesis-visible red contract. The simulation assertion above provides
+	// the matching diagnostic; this branch prevents a wrong override from
+	// silently elaborating in Quartus.
+	generate
+		if (FRAME_Y_FILL_STRIDE != TRUE480_SCAN_Y_STEP) begin : g_true480_bad_fill_step
+			PLEX_PRESENT_TRUE_480P_REQUIRES_FILL_STEP_EQ_SCAN_STEP u_contract_error();
+		end
+	endgenerate
+`endif
 
 `ifdef PRESENT_MULTI_PIXEL
 	localparam int PRESENT_PPC = `PRESENT_PX_PER_CLK;
@@ -471,7 +485,14 @@ module present_core #(
 	localparam H_DE    = 10'(TPL_H_DE);
 	localparam V_STORE = 10'(TPL_V_STORE);
 	localparam int STORE_X_SCALE = (FRAME_W * TPL_STORE_X_MUL) / TPL_SCALE_REF_W;
-	localparam int STORE_Y_SCALE = (FRAME_H * 65536) / TPL_SCALE_REF_H;
+`ifdef PLEX_PRESENT_TRUE_480P
+	// B1: remove the dormant 480/240=2 coupling even though native mapping
+	// bypasses Template scaling. Native scan and fill both advance one row.
+	localparam int STORE_Y_SCALE_REF_H = FRAME_H;
+`else
+	localparam int STORE_Y_SCALE_REF_H = TPL_SCALE_REF_H;
+`endif
+	localparam int STORE_Y_SCALE = (FRAME_H * 65536) / STORE_Y_SCALE_REF_H;
 	// Exact clone of colorbars in_content (full DE paint region).
 	wire [9:0] py = scandouble ? (vc >> 1) : vc;
 `ifdef PLEX_PRESENT_TRUE_480P
@@ -649,7 +670,12 @@ module present_core #(
 		.PRESENT_X(FS_PRESENT_X),
 		.PRESENT_Y(FS_PRESENT_Y),
 		.LINE_COUNT(FRAME_LINE_COUNT),
+`ifdef PLEX_PRESENT_TRUE_480P
+		// Hard-set the production store to the native identity scan step.
+		.Y_FILL_STRIDE(TRUE480_SCAN_Y_STEP),
+`else
 		.Y_FILL_STRIDE(FRAME_Y_FILL_STRIDE),
+`endif
 		.PHYS_BASE(FS_PHYS_BASE),
 		.HPS_BANK_STRIDE_BYTES(FS_BANK_STRIDE),
 		.DOORBELL_PHYS(FS_DOORBELL)

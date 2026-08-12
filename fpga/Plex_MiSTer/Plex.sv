@@ -868,6 +868,11 @@ present_core #(
 	.FRAME_W(FRAME_W),
 	.FRAME_H(FRAME_H),
 	.FRAME_STRIDE(FRAME_STRIDE),
+`ifdef PLEX_PRESENT_TRUE_480P
+	// B1 contract: native scan step is one row, so fill step is explicit and
+	// cannot inherit the legacy FRAME_H/TPL_SCALE_REF_H ratio.
+	.FRAME_Y_FILL_STRIDE(1),
+`endif
 	.SDRAM_REFRESH_CYCLES(SDRAM_REFRESH_CYCLES)
 ) present (
 	.clk(clk_sys),
