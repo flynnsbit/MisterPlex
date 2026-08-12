@@ -330,18 +330,72 @@ int main() {
         // Legacy/720 best-effort remains unchanged: if PLXD has no release,
         // callers may use the non-display bank. Exact true480 must instead
         // wait, preventing a second queued frame from replacing the pending one.
+        DdrStrictReleaseState strictState;
         DdrBankWriteDecision decision =
-            decideDdrBankWrite(br, DdrBankWritePolicy::BestEffort);
+            decideDdrBankWrite(br, DdrBankWritePolicy::BestEffort, strictState);
         CHECK(decision.ready);
         CHECK(decision.bank == 0);
-        decision = decideDdrBankWrite(br, DdrBankWritePolicy::RequireReleased);
+        decision =
+            decideDdrBankWrite(br, DdrBankWritePolicy::RequireReleased, strictState);
         CHECK(!decision.ready);
         CHECK(decision.bank == -1);
 
+        // First strict write may use the current free status.
         CHECK(decodeBankReleaseWord(w2, br));
-        decision = decideDdrBankWrite(br, DdrBankWritePolicy::RequireReleased);
+        decision =
+            decideDdrBankWrite(br, DdrBankWritePolicy::RequireReleased, strictState);
         CHECK(decision.ready);
         CHECK(decision.bank == 1);
+        strictState.beginWrite();
+        CHECK(strictState.baseline_pending);
+
+        // RED: even a changed value observed before the post-kick baseline is
+        // captured may be a VSync that happened during the payload copy, before
+        // the doorbell. An unknown baseline authorizes no next write.
+        CHECK(decodeBankReleaseWord(plxd(0x02, 0, false, 1001), br));
+        decision = decideDdrBankWrite(br, DdrBankWritePolicy::BestEffort, strictState);
+        CHECK(decision.ready); // strict state never changes legacy/720 policy
+        decision =
+            decideDdrBankWrite(br, DdrBankWritePolicy::RequireReleased, strictState);
+        CHECK(!decision.ready);
+        CHECK(decision.bank == -1);
+        strictState.noteWrite(br);
+        CHECK(!strictState.baseline_pending);
+
+        // RED: a stable stale mailbox may still advertise a free bank after the
+        // immediately prior doorbell. Unchanged post-kick frames_done must not
+        // authorize another payload copy or doorbell decision.
+        decision =
+            decideDdrBankWrite(br, DdrBankWritePolicy::RequireReleased, strictState);
+        CHECK(!decision.ready);
+        CHECK(decision.bank == -1);
+
+        // GREEN: only a different frames_done plus anyFree acknowledges the
+        // prior strict write. Difference naturally includes 16-bit wrap.
+        const uint64_t w2Advanced = plxd(0x02, 0, false, 1002);
+        CHECK(decodeBankReleaseWord(w2Advanced, br));
+        decision =
+            decideDdrBankWrite(br, DdrBankWritePolicy::RequireReleased, strictState);
+        CHECK(decision.ready);
+        CHECK(decision.bank == 1);
+
+        const uint64_t advancedButBusy = plxd(0x00, 1, true, 1002);
+        CHECK(decodeBankReleaseWord(advancedButBusy, br));
+        decision =
+            decideDdrBankWrite(br, DdrBankWritePolicy::RequireReleased, strictState);
+        CHECK(!decision.ready);
+
+        strictState.noteWrite({0x01, 1, false, 0xffff});
+        CHECK(decodeBankReleaseWord(plxd(0x01, 1, false, 0), br));
+        decision =
+            decideDdrBankWrite(br, DdrBankWritePolicy::RequireReleased, strictState);
+        CHECK(decision.ready);
+        strictState.reset();
+        CHECK(!strictState.baseline_valid);
+        CHECK(!strictState.baseline_pending);
+        decision =
+            decideDdrBankWrite(br, DdrBankWritePolicy::RequireReleased, strictState);
+        CHECK(decision.ready);
 
         // Bad magic
         CHECK(!decodeBankReleaseWord(0xDEADBEEFu, br));

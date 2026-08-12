@@ -151,8 +151,9 @@ int main() {
         pending.free_bank_mask = 0;
         pending.disp_bank = 0;
         pending.swap_pending = true;
+        DdrStrictReleaseState strictState;
         const DdrBankWriteDecision red =
-            decideDdrBankWrite(pending, DdrBankWritePolicy::BestEffort);
+            decideDdrBankWrite(pending, DdrBankWritePolicy::BestEffort, strictState);
         CHECK(red.ready);
         CHECK(red.bank == 1);
 
@@ -165,7 +166,7 @@ int main() {
         CHECK(avDecide(firstEligibilityUs - frame2Us, kPresentLeadUs, kDropUs, 0) ==
               AvAction::Hold);
         const DdrBankWriteDecision wait =
-            decideDdrBankWrite(pending, DdrBankWritePolicy::RequireReleased);
+            decideDdrBankWrite(pending, DdrBankWritePolicy::RequireReleased, strictState);
         CHECK(!wait.ready);
         CHECK(wait.bank == -1);
 
@@ -173,10 +174,31 @@ int main() {
         released.free_bank_mask = 0x02;
         released.disp_bank = 0;
         released.swap_pending = false;
-        const DdrBankWriteDecision green =
-            decideDdrBankWrite(released, DdrBankWritePolicy::RequireReleased);
-        CHECK(green.ready);
-        CHECK(green.bank == 1);
+        released.frames_done = 100;
+        const DdrBankWriteDecision firstGreen =
+            decideDdrBankWrite(released, DdrBankWritePolicy::RequireReleased, strictState);
+        CHECK(firstGreen.ready);
+        CHECK(firstGreen.bank == 1);
+        strictState.beginWrite();
+
+        // A VSync observed during the payload copy but before the doorbell is
+        // not its acknowledgement. Block until a post-kick baseline is captured.
+        released.frames_done = 101;
+        const DdrBankWriteDecision preKickAdvanceRed =
+            decideDdrBankWrite(released, DdrBankWritePolicy::RequireReleased, strictState);
+        CHECK(!preKickAdvanceRed.ready);
+        strictState.noteWrite(released);
+
+        // A stable-but-stale PLXD free mask is not proof that the immediately
+        // prior doorbell crossed VSync. Require frames_done to advance first.
+        const DdrBankWriteDecision staleRed =
+            decideDdrBankWrite(released, DdrBankWritePolicy::RequireReleased, strictState);
+        CHECK(!staleRed.ready);
+        released.frames_done = 102;
+        const DdrBankWriteDecision ackGreen =
+            decideDdrBankWrite(released, DdrBankWritePolicy::RequireReleased, strictState);
+        CHECK(ackGreen.ready);
+        CHECK(ackGreen.bank == 1);
 
         // Recovery remains a separate late-frame mechanism and may never
         // produce two consecutive drops.
@@ -196,7 +218,8 @@ int main() {
 
         std::printf(
             "%s: exact_eligible source=%lld beam=%lld repeats=%lld "
-            "supersede_red=1 strict_pending_green=1 recovery_drop_run=%d\n",
+            "supersede_red=1 pre_kick_advance_red=1 stale_ack_red=1 "
+            "frames_done_green=1 recovery_drop_run=%d\n",
             rate.label, static_cast<long long>(rate.cycle_frames),
             static_cast<long long>(rate.beam_ticks),
             static_cast<long long>(twoTick), maxDropRun);

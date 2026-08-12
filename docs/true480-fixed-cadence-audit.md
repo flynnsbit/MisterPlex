@@ -36,10 +36,18 @@ Exact true-480 geometry now enables two coupled gates:
    audio is unavailable). The existing 40 ms lead, 80 ms late-drop threshold,
    and maximum one consecutive recovery drop are unchanged.
 2. `DdrBankWritePolicy::RequireReleased` requires a valid PLXD
-   `free_bank_mask` before any DDR payload copy or doorbell. It waits at most
-   50 ms. Missing PLXD or a timeout aborts the true-480 pipeline instead of
-   reusing the pending bank. Legacy, diagnostic, and 720 paths retain their
-   prior best-effort behavior.
+   `free_bank_mask` before the first DDR payload copy. Immediately after its
+   kick, the host captures a stable 16-bit `frames_done` baseline; while that
+   post-kick baseline is unknown, no further strict write is eligible. Every
+   later strict write requires both a free bank and a different `frames_done`
+   value, including a wrapped value, proving the immediately prior doorbell
+   crossed VSync rather than trusting a stale free mask. Sampling after the
+   kick also prevents a VSync during the payload copy from being misclassified
+   as its acknowledgement. It waits at most 50 ms. Missing/stale PLXD or a
+   timeout aborts the true-480 pipeline instead of reusing the pending bank.
+   Reset, DDR reprobe, and layout/remap changes clear the per-instance
+   baseline. Legacy, diagnostic, and 720 paths retain their prior best-effort
+   behavior.
 
 Thus a buffered burst cannot bypass source-rate eligibility, and an eligible
 catch-up frame cannot supersede a still-pending frame. A product RBF must
@@ -67,7 +75,8 @@ queued byte count.
 - the old unpaced/best-effort two-slot sequence permits a pending-bank
   supersede (RED);
 - exact eligibility holds the second burst frame;
-- strict PLXD refuses it while no bank is free and accepts it after release;
+- strict PLXD refuses both a busy mailbox and a stale unchanged-`frames_done`
+  free mask, then accepts only after `frames_done` advances with a free bank;
 - all five rational rates have the exact repeat counts above; and
 - sustained late recovery never drops two consecutive frames.
 
