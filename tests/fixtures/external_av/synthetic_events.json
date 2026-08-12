@@ -42,6 +42,36 @@
       "expected_status": "FAIL"
     },
     {
+      "name": "missing-marker-median-still-nominal",
+      "duration_s": 12.0,
+      "expected_period_ms": 1000.0,
+      "adapter_offset_ms": 0.0,
+      "min_markers_per_window": 3,
+      "video_events_s": [1, 2, 3, 4, 5, 7, 8, 9, 10, 11],
+      "audio_events_s": [1, 2, 3, 4, 5, 7, 8, 9, 10, 11],
+      "expected_status": "FAIL"
+    },
+    {
+      "name": "short-long-intervals-median-still-nominal",
+      "duration_s": 12.0,
+      "expected_period_ms": 1000.0,
+      "adapter_offset_ms": 0.0,
+      "min_markers_per_window": 3,
+      "video_events_s": [1, 2, 3, 4, 5, 5.5, 7, 8, 9, 10, 11],
+      "audio_events_s": [1, 2, 3, 4, 5, 5.5, 7, 8, 9, 10, 11],
+      "expected_status": "FAIL"
+    },
+    {
+      "name": "offset-outlier-hidden-by-three-marker-median",
+      "duration_s": 12.0,
+      "expected_period_ms": 1000.0,
+      "adapter_offset_ms": 0.0,
+      "min_markers_per_window": 3,
+      "video_events_s": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+      "audio_events_s": [1, 2, 3.06, 4, 5, 6, 7, 8, 9, 10, 11],
+      "expected_status": "FAIL"
+    },
+    {
       "name": "missing-audio-is-blocked",
       "duration_s": 12.0,
       "expected_period_ms": 1000.0,
