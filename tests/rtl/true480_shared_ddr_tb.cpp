@@ -36,6 +36,19 @@ constexpr uint32_t kRequiredLineCount = 8;
 constexpr uint32_t kExactLinebufBits = 159744;
 constexpr uint32_t kExactM10Ks = 96;
 constexpr uint32_t kProductStaleDoorbellFallbackPolls = 4096;
+constexpr uint32_t kAcceleratedStaleDoorbellFallbackPolls = 256;
+constexpr uint32_t kFallbackCadenceScale =
+    kProductStaleDoorbellFallbackPolls /
+    kAcceleratedStaleDoorbellFallbackPolls;
+constexpr uint32_t kFallbackPrepLinesPerFire =
+    kRequiredLineCount + kRequiredLineCount / 2;
+constexpr uint32_t kProductFallbackFiresMax = 1;
+constexpr uint32_t kStressFallbackFiresMin = 16;
+constexpr uint32_t kStressFallbackFiresMax = 16;
+constexpr uint32_t kStressBoundaryLineAllowance = 12;
+constexpr uint64_t kStressRedundantQwordCeiling =
+    kStressFallbackFiresMax * kFallbackPrepLinesPerFire *
+    kYLineQwords;
 
 static_assert(kYLineQwords == 78 && kCLineQwords == 78);
 static_assert(kExactUniqueM0Payload == 56160);
@@ -44,6 +57,9 @@ static_assert(kCleanReferenceM1Reads >= kCalibratedM1ReadsMin &&
 static_assert(kCleanReferenceM1WantCycles >= kCalibratedM1WantMin &&
               kCleanReferenceM1WantCycles <= kCalibratedM1WantMax);
 static_assert(kExactLinebufBits == 159744 && kExactM10Ks == 96);
+static_assert(kFallbackCadenceScale == 16);
+static_assert(kFallbackPrepLinesPerFire == 12);
+static_assert(kStressRedundantQwordCeiling == 14976);
 
 struct ModelConfig {
     int baseLatency = 24;
@@ -96,6 +112,7 @@ struct RefillCounters {
     std::array<uint64_t, 2> currentIssues{};
     std::array<uint64_t, 2> pendingIssues{};
     std::array<uint64_t, 2> scheduledForPending{};
+    uint64_t fallbackFires = 0;
     uint64_t completionWithoutInflight = 0;
     uint64_t wrapperNeedMismatch = 0;
     uint64_t invalidLineId = 0;
@@ -124,6 +141,7 @@ RefillCounters subtract(const RefillCounters& after,
         REFILL_SUB(scheduledForPending);
 #undef REFILL_SUB
     }
+    result.fallbackFires = after.fallbackFires - before.fallbackFires;
     result.completionWithoutInflight =
         after.completionWithoutInflight - before.completionWithoutInflight;
     result.wrapperNeedMismatch =
@@ -184,6 +202,8 @@ public:
             if (top.telem_swap_pending)
                 ++detailSwapPendingSamples;
         }
+        if (top.telem_fallback_fire)
+            ++counters.fallbackFires;
         if (top.telem_fill_issue)
             recordIssue(top);
         if (top.telem_fill_complete)
@@ -931,7 +951,9 @@ int checkResourceContract(const Vtrue480_shared_ddr_tb& top) {
     return ok ? 0 : 1;
 }
 
-int runProof(bool idealModel, bool resourceOnly, bool requireActiveConfig) {
+int runProof(bool idealModel, bool resourceOnly, bool requireActiveConfig,
+             bool acceleratedFallbackStress,
+             bool faultUnboundedFallback) {
     ModelConfig cfg;
     if (idealModel) {
         cfg.ideal = true;
@@ -950,10 +972,15 @@ int runProof(bool idealModel, bool resourceOnly, bool requireActiveConfig) {
     const uint32_t fallbackPolls =
         sim.top.cfg_stale_doorbell_fallback_polls;
     const bool refillTelemetry = sim.top.cfg_refill_telemetry;
+    const uint32_t requiredFallbackPolls = acceleratedFallbackStress
+        ? kAcceleratedStaleDoorbellFallbackPolls
+        : kProductStaleDoorbellFallbackPolls;
     std::cout << "TRUE480_SHARED_BUILD_CONFIG active_define=" << activeConfig
               << " native_beam_source=" << nativeBeam
               << " y_fill_stride=" << fillStride
               << " stale_doorbell_fallback_polls=" << fallbackPolls
+              << " proof_mode="
+              << (acceleratedFallbackStress ? "fallback_stress" : "product")
               << " refill_telemetry=" << refillTelemetry
               << " required=" << requireActiveConfig << "\n";
     if (requireActiveConfig &&
@@ -965,10 +992,12 @@ int runProof(bool idealModel, bool resourceOnly, bool requireActiveConfig) {
         return 1;
     }
     if (requireActiveConfig &&
-        fallbackPolls != kProductStaleDoorbellFallbackPolls) {
-        std::cerr << "FAIL true480 shared product fallback polls="
+        fallbackPolls != requiredFallbackPolls) {
+        std::cerr << "FAIL true480 shared "
+                  << (acceleratedFallbackStress ? "stress" : "product")
+                  << " fallback polls="
                   << fallbackPolls << " required="
-                  << kProductStaleDoorbellFallbackPolls << "\n";
+                  << requiredFallbackPolls << "\n";
         return 1;
     }
     const int resourceRc = checkResourceContract(sim.top);
@@ -1046,6 +1075,41 @@ int runProof(bool idealModel, bool resourceOnly, bool requireActiveConfig) {
     const RefillCounters refill =
         subtract(m.refillAfter, m.refillBefore);
     const RefillCoverage refillCoverage = sim.refill.detailCoverage();
+    const uint64_t totalIssues =
+        refill.issues[0] + refill.issues[1];
+    const uint64_t legitimate =
+        refill.legitimateSlidingReloads[0] +
+        refill.legitimateSlidingReloads[1] +
+        refill.firstFills[0] + refill.firstFills[1];
+    const uint64_t redundant =
+        refill.notNewlyNeeded[0] + refill.notNewlyNeeded[1];
+    const uint64_t stale =
+        refill.stalePipelineReplays[0] +
+        refill.stalePipelineReplays[1];
+    const uint64_t sameWindow =
+        refill.sameWindowReloads[0] +
+        refill.sameWindowReloads[1];
+    const uint64_t effectiveFallbackFires =
+        refill.fallbackFires + (faultUnboundedFallback ? 1 : 0);
+    const uint64_t fallbackAttributedLines =
+        effectiveFallbackFires * kFallbackPrepLinesPerFire;
+    const uint64_t fallbackAttributedQwordBeats =
+        fallbackAttributedLines * kYLineQwords;
+    const uint64_t scaledFallbackQwordBeats =
+        (fallbackAttributedQwordBeats + kFallbackCadenceScale - 1) /
+        kFallbackCadenceScale;
+    const uint64_t scaledM0Beats =
+        acceleratedFallbackStress &&
+                m0Beats >= fallbackAttributedQwordBeats
+            ? m0Beats - fallbackAttributedQwordBeats +
+                  scaledFallbackQwordBeats
+            : m0Beats;
+    const uint64_t scaledSharedBeats =
+        acceleratedFallbackStress &&
+                m0Beats + m1Beats >= fallbackAttributedQwordBeats
+            ? m0Beats + m1Beats - fallbackAttributedQwordBeats +
+                  scaledFallbackQwordBeats
+            : m0Beats + m1Beats;
 
     bool ok = true;
     auto fail = [&ok](const std::string& what) {
@@ -1103,17 +1167,67 @@ int runProof(bool idealModel, bool resourceOnly, bool requireActiveConfig) {
              std::to_string(sim.top.m1_reads_issued) + " seen=" +
              std::to_string(sim.top.m1_responses_seen) + " errors=" +
              std::to_string(sim.top.m1_protocol_errors));
-    if (m0Beats < kPhaseTolerantM0Floor ||
-        m0Beats > kM0PayloadCeiling || m.ddrAfter.maxBurst < 39)
-        fail("m0_burst_traffic beats=" + std::to_string(m0Beats) +
-             " phase_floor=" + std::to_string(kPhaseTolerantM0Floor) +
-             " ceiling=" + std::to_string(kM0PayloadCeiling) +
-             " max_burst=" + std::to_string(m.ddrAfter.maxBurst));
-    if (m0Beats + m1Beats > kHarnessSharedPayloadCeiling)
-        fail("harness_shared_payload_ceiling shared_beats=" +
-             std::to_string(m0Beats + m1Beats) +
-             " harness_only_ceiling=" +
-             std::to_string(kHarnessSharedPayloadCeiling));
+    if (!acceleratedFallbackStress) {
+        if (m0Beats < kPhaseTolerantM0Floor ||
+            m0Beats > kM0PayloadCeiling || m.ddrAfter.maxBurst < 39)
+            fail("m0_burst_traffic beats=" + std::to_string(m0Beats) +
+                 " phase_floor=" +
+                 std::to_string(kPhaseTolerantM0Floor) +
+                 " ceiling=" + std::to_string(kM0PayloadCeiling) +
+                 " max_burst=" + std::to_string(m.ddrAfter.maxBurst));
+        if (m0Beats + m1Beats > kHarnessSharedPayloadCeiling)
+            fail("harness_shared_payload_ceiling shared_beats=" +
+                 std::to_string(m0Beats + m1Beats) +
+                 " harness_only_ceiling=" +
+                 std::to_string(kHarnessSharedPayloadCeiling));
+        if (refill.fallbackFires > kProductFallbackFiresMax)
+            fail("product_fallback_fires got=" +
+                 std::to_string(refill.fallbackFires) +
+                 " ceiling=1");
+    } else {
+        if (m.ddrAfter.maxBurst < 39)
+            fail("stress_m0_burst max_burst=" +
+                 std::to_string(m.ddrAfter.maxBurst));
+        if (effectiveFallbackFires < kStressFallbackFiresMin ||
+            effectiveFallbackFires > kStressFallbackFiresMax)
+            fail("stress_fallback_fires got=" +
+                 std::to_string(effectiveFallbackFires) +
+                 " required=16");
+        if (stale != 0)
+            fail("stress_stale_replay count=" + std::to_string(stale));
+        if (sameWindow > fallbackAttributedLines ||
+            fallbackAttributedLines - sameWindow >
+                kStressBoundaryLineAllowance ||
+            redundant != sameWindow)
+            fail("stress_redundant_decomposition fallback_fires=" +
+                 std::to_string(effectiveFallbackFires) +
+                 " fallback_lines=" +
+                 std::to_string(fallbackAttributedLines) +
+                 " same_window=" + std::to_string(sameWindow) +
+                 " redundant=" + std::to_string(redundant));
+        if (redundant * kYLineQwords >
+            kStressRedundantQwordCeiling)
+            fail("stress_redundant_qword_beats got=" +
+                 std::to_string(redundant * kYLineQwords) +
+                 " ceiling=" +
+                 std::to_string(kStressRedundantQwordCeiling));
+        if (m0Beats < fallbackAttributedQwordBeats ||
+            scaledM0Beats < kPhaseTolerantM0Floor ||
+            scaledM0Beats > kM0PayloadCeiling)
+            fail("stress_scaled_m0 raw=" + std::to_string(m0Beats) +
+                 " fallback_attributed=" +
+                 std::to_string(fallbackAttributedQwordBeats) +
+                 " scaled=" + std::to_string(scaledM0Beats) +
+                 " bounds=54912..70000");
+        if (m0Beats + m1Beats < fallbackAttributedQwordBeats ||
+            scaledSharedBeats > kHarnessSharedPayloadCeiling)
+            fail("stress_scaled_shared raw=" +
+                 std::to_string(m0Beats + m1Beats) +
+                 " fallback_attributed=" +
+                 std::to_string(fallbackAttributedQwordBeats) +
+                 " scaled=" + std::to_string(scaledSharedBeats) +
+                 " ceiling=100000");
+    }
     if (refreshCycles < 1000 || gapCycles < 1000)
         fail("nonideal_stalls refresh_cycles=" +
              std::to_string(refreshCycles) +
@@ -1199,22 +1313,16 @@ int runProof(bool idealModel, bool resourceOnly, bool requireActiveConfig) {
     }
 
     if (activeConfig) {
-        const uint64_t totalIssues =
-            refill.issues[0] + refill.issues[1];
-        const uint64_t legitimate =
-            refill.legitimateSlidingReloads[0] +
-            refill.legitimateSlidingReloads[1] +
-            refill.firstFills[0] + refill.firstFills[1];
-        const uint64_t redundant =
-            refill.notNewlyNeeded[0] + refill.notNewlyNeeded[1];
-        const uint64_t stale =
-            refill.stalePipelineReplays[0] +
-            refill.stalePipelineReplays[1];
-        const uint64_t sameWindow =
-            refill.sameWindowReloads[0] +
-            refill.sameWindowReloads[1];
         std::cout
             << "TRUE480_REFILL_TELEMETRY"
+            << " proof_mode="
+            << (acceleratedFallbackStress ? "fallback_stress" : "product")
+            << " fallback_fires=" << refill.fallbackFires
+            << " effective_fallback_fires=" << effectiveFallbackFires
+            << " fault_unbounded_fallback=" << faultUnboundedFallback
+            << " fallback_attributed_lines=" << fallbackAttributedLines
+            << " fallback_attributed_qword_beats="
+            << fallbackAttributedQwordBeats
             << " total_issues=" << totalIssues
             << " legitimate=" << legitimate
             << " unique_y_issued=" << refillCoverage.issuedYLines
@@ -1297,6 +1405,13 @@ int runProof(bool idealModel, bool resourceOnly, bool requireActiveConfig) {
                 ? m0Beats - kExactUniqueM0Payload
                 : 0)
         << " shared_beats=" << m0Beats + m1Beats
+        << " proof_mode="
+        << (acceleratedFallbackStress ? "fallback_stress" : "product")
+        << " fallback_fires=" << refill.fallbackFires
+        << " fallback_attributed_qword_beats="
+        << fallbackAttributedQwordBeats
+        << " scaled_m0_beats=" << scaledM0Beats
+        << " scaled_shared_beats=" << scaledSharedBeats
         << " shared_ceiling=" << kHarnessSharedPayloadCeiling
         << " shared_ceiling_scope=HARNESS_ONLY"
         << " lc8_contract=EXACT"
@@ -1318,6 +1433,8 @@ int main(int argc, char** argv) {
     bool ideal = false;
     bool resourceOnly = false;
     bool requireActiveConfig = false;
+    bool acceleratedFallbackStress = false;
+    bool faultUnboundedFallback = false;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--ideal-ddr")
@@ -1326,13 +1443,27 @@ int main(int argc, char** argv) {
             resourceOnly = true;
         else if (arg == "--require-active-config")
             requireActiveConfig = true;
+        else if (arg == "--accelerated-fallback-stress")
+            acceleratedFallbackStress = true;
+        else if (arg == "--fault-unbounded-fallback")
+            faultUnboundedFallback = true;
         else {
             std::cerr << "unknown argument: " << arg << "\n";
             return 2;
         }
     }
+    if (acceleratedFallbackStress && !requireActiveConfig) {
+        std::cerr << "accelerated fallback stress requires active config\n";
+        return 2;
+    }
+    if (faultUnboundedFallback && !acceleratedFallbackStress) {
+        std::cerr << "unbounded fallback fault requires stress mode\n";
+        return 2;
+    }
     try {
-        return runProof(ideal, resourceOnly, requireActiveConfig);
+        return runProof(ideal, resourceOnly, requireActiveConfig,
+                        acceleratedFallbackStress,
+                        faultUnboundedFallback);
     } catch (const std::exception& e) {
         std::cerr << "FAIL true480 shared exception: " << e.what() << "\n";
         return 1;

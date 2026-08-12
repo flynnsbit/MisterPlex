@@ -61,8 +61,13 @@ require("parameter int STALE_DOORBELL_FALLBACK_POLLS = 4096" in SHARED_TOP and
         "shared active wrapper does not expose the product fallback")
 require("kProductStaleDoorbellFallbackPolls = 4096" in SHARED_CPP,
         "shared executable does not enforce the product fallback")
-require(".STALE_DOORBELL_FALLBACK_POLLS(" not in I420_TOP,
-        "active I420 wrapper overrides the product fallback")
+require("parameter int STALE_DOORBELL_FALLBACK_POLLS = 4096" in I420_TOP and
+        ".STALE_DOORBELL_FALLBACK_POLLS(STALE_DOORBELL_FALLBACK_POLLS)" in I420_TOP and
+        "cfg_stale_doorbell_fallback_polls" in I420_TOP,
+        "active I420 wrapper does not expose one explicit fallback parameter")
+require("-GSTALE_DOORBELL_FALLBACK_POLLS=\"$PRODUCT_FALLBACK_POLLS\"" in
+        I420_SCRIPT and "PRODUCT_FALLBACK_POLLS=4096" in I420_SCRIPT,
+        "active I420 build does not bind the product fallback")
 
 for name, cpp in (
     ("I420", I420_CPP),

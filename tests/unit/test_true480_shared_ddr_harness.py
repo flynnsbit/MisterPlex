@@ -99,12 +99,36 @@ require("cfg_stale_doorbell_fallback_polls" in TOP and
         "kProductStaleDoorbellFallbackPolls = 4096" in CPP,
         "active shared binary cannot verify the elaborated product fallback")
 require("PRODUCT_FALLBACK_POLLS=4096" in SCRIPT and
+        "STRESS_FALLBACK_POLLS=256" in SCRIPT and
         "DRIFT_FAULT_FALLBACK_POLLS=4095" in SCRIPT and
         "product_fallback_drift" in SCRIPT,
-        "active shared gate lacks its 4096 binding or fallback-drift red twin")
-require("STALE_DOORBELL_FALLBACK_POLLS=256" not in SCRIPT and
-        ".STALE_DOORBELL_FALLBACK_POLLS(256)" not in TOP,
-        "accelerated fallback leaked into the active shared gate")
+        "shared gate lacks product, stress, or fallback-drift configurations")
+for stress_contract in (
+    "telem_fallback_fire",
+    "kAcceleratedStaleDoorbellFallbackPolls = 256",
+    "kStressFallbackFiresMin = 16",
+    "kStressFallbackFiresMax = 16",
+    "kProductFallbackFiresMax = 1",
+    "kStressBoundaryLineAllowance = 12",
+    "kStressRedundantQwordCeiling",
+    "stress_stale_replay",
+    "stress_scaled_m0",
+    "stress_scaled_shared",
+    "--accelerated-fallback-stress",
+    "--fault-unbounded-fallback",
+    "unbounded_fallback_count",
+):
+    require(stress_contract in TOP + CPP + SCRIPT,
+            f"missing accelerated fallback contract {stress_contract}")
+for cross_contract in (
+    "CROSS_M0_TOLERANCE_BEATS=32",
+    "TRUE480_FALLBACK_CROSS",
+    "m0_decomposition",
+    "duplicate_decomposition",
+    "fallback_attributed_qword_beats",
+):
+    require(cross_contract in SCRIPT + CPP,
+            f"missing cross-run fallback contract {cross_contract}")
 require("parameter int STALE_DOORBELL_FALLBACK_POLLS = 4096" in PRODUCT_STORE,
         "product frame-store default drifted from 4096")
 require(".STALE_DOORBELL_FALLBACK_POLLS(" not in PRESENT_CORE,

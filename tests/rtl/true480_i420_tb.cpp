@@ -470,12 +470,16 @@ int checkActiveConfig(bool required) {
     top.eval();
     const bool active = top.cfg_active_config;
     const int stride = top.cfg_y_fill_stride;
+    const uint32_t fallbackPolls =
+        top.cfg_stale_doorbell_fallback_polls;
     std::cout << "TRUE480_BUILD_CONFIG active_define=" << active
               << " y_fill_stride=" << stride
+              << " stale_doorbell_fallback_polls=" << fallbackPolls
               << " required=" << required << "\n";
-    if (required && (!active || stride != 1)) {
+    if (required && (!active || stride != 1 || fallbackPolls != 4096)) {
         std::cerr << "FAIL true480 active configuration disappeared: "
-                     "PLEX_PRESENT_TRUE_480P=0 or Y_FILL_STRIDE!=1\n";
+                    "PLEX_PRESENT_TRUE_480P=0, Y_FILL_STRIDE!=1, or "
+                    "STALE_DOORBELL_FALLBACK_POLLS!=4096\n";
         return 1;
     }
     return 0;
