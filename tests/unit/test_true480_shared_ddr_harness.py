@@ -56,21 +56,32 @@ for contract in (
     "kM0PayloadCeiling = 70000",
     "kHarnessSharedPayloadCeiling = 100000",
     "shared_ceiling_scope=HARNESS_ONLY",
-    "kProvisionalM1ReadsMin = 20000",
-    "kProvisionalM1ReadsMax = 30000",
-    "kProvisionalM1WantMin = 400000",
-    "kProvisionalM1WantMax = 520000",
-    "PROVISIONAL_UNTIL_FIRST_CLEAN",
+    "kCalibratedM1ReadsMin = 20000",
+    "kCalibratedM1ReadsMax = 30000",
+    "kCalibratedM1WantMin = 400000",
+    "kCalibratedM1WantMax = 520000",
+    "kCleanReferenceM1Reads = 25674",
+    "kCleanReferenceM1WantCycles = 435552",
+    "m1_band=CALIBRATED_CLEAN_31EE409D",
+    "kExactLinebufBits = 159744",
+    "kExactM10Ks = 96",
+    "lc8_contract=EXACT",
 ):
     require(contract in CPP, f"missing calibrated bandwidth contract {contract}")
 require("m0Beats < 50000" not in CPP and "m1Reads < 10000" not in CPP,
         "obsolete false-green bandwidth floors remain")
+require("PROVISIONAL_UNTIL_FIRST_CLEAN" not in CPP,
+        "m1 bands were not frozen after the first clean active run")
 require("m.softC != 0" in CPP and "m.underrunAfter != m.underrunBefore" in CPP,
         "missing soft-C and steady-underrun gates")
 require("m.rows.size() != 480" in CPP and "m.visibleXs.size() != 618" in CPP,
         "missing exact 480-row/618-column geometry gate")
 require("159744" in CPP and "M10K_budget" in CPP,
         "missing stride-1 LINE_COUNT=8 M10K contract")
+require("settled_unique_m0_issues" in CPP and
+        "settled_unique_m0_completions" in CPP and
+        "settled_refill_window" in CPP,
+        "unique payload is not tied to a settled issue/completion window")
 
 for red_twin in (
     "idealized_DDR",

@@ -25,13 +25,24 @@ constexpr uint64_t kExactUniqueM0Payload =
 constexpr uint64_t kPhaseTolerantM0Floor = 54912;
 constexpr uint64_t kM0PayloadCeiling = 70000;
 constexpr uint64_t kHarnessSharedPayloadCeiling = 100000;
-constexpr uint32_t kProvisionalM1ReadsMin = 20000;
-constexpr uint32_t kProvisionalM1ReadsMax = 30000;
-constexpr uint32_t kProvisionalM1WantMin = 400000;
-constexpr uint32_t kProvisionalM1WantMax = 520000;
+constexpr uint32_t kCalibratedM1ReadsMin = 20000;
+constexpr uint32_t kCalibratedM1ReadsMax = 30000;
+constexpr uint32_t kCalibratedM1WantMin = 400000;
+constexpr uint32_t kCalibratedM1WantMax = 520000;
+// Frozen from the first clean active shared run against FPGA 31ee409d.
+constexpr uint32_t kCleanReferenceM1Reads = 25674;
+constexpr uint32_t kCleanReferenceM1WantCycles = 435552;
+constexpr uint32_t kRequiredLineCount = 8;
+constexpr uint32_t kExactLinebufBits = 159744;
+constexpr uint32_t kExactM10Ks = 96;
 
 static_assert(kYLineQwords == 78 && kCLineQwords == 78);
 static_assert(kExactUniqueM0Payload == 56160);
+static_assert(kCleanReferenceM1Reads >= kCalibratedM1ReadsMin &&
+              kCleanReferenceM1Reads <= kCalibratedM1ReadsMax);
+static_assert(kCleanReferenceM1WantCycles >= kCalibratedM1WantMin &&
+              kCleanReferenceM1WantCycles <= kCalibratedM1WantMax);
+static_assert(kExactLinebufBits == 159744 && kExactM10Ks == 96);
 
 struct ModelConfig {
     int baseLatency = 24;
@@ -133,9 +144,15 @@ struct RefillLineStats {
 };
 
 struct RefillCoverage {
+    uint64_t issuedYLines = 0;
+    uint64_t issuedCLines = 0;
+    uint64_t issuedPayloadBeats = 0;
     uint64_t yLines = 0;
     uint64_t cLines = 0;
     uint64_t payloadBeats = 0;
+    uint64_t displayBanks = 0;
+    uint64_t swapPendingSamples = 0;
+    uint64_t settledSamples = 0;
 };
 
 struct RefillLineState {
@@ -160,6 +177,12 @@ class RefillTracker {
 public:
     void observe(const Vtrue480_shared_ddr_tb& top) {
         updateDemand(top);
+        if (detailActive) {
+            detailDisplayBanks[top.telem_disp_bank ? 1 : 0] = true;
+            ++detailSettledSamples;
+            if (top.telem_swap_pending)
+                ++detailSwapPendingSamples;
+        }
         if (top.telem_fill_issue)
             recordIssue(top);
         if (top.telem_fill_complete)
@@ -170,6 +193,9 @@ public:
         detailActive = true;
         detailEvents.clear();
         detailLines.fill(RefillLineStats{});
+        detailDisplayBanks.fill(false);
+        detailSwapPendingSamples = 0;
+        detailSettledSamples = 0;
     }
 
     void endDetailWindow() { detailActive = false; }
@@ -182,7 +208,13 @@ public:
             const int group = static_cast<int>(i / kLinesPerGroup);
             const bool chroma = (group & 1) != 0;
             const auto& line = detailLines[i];
-            if (line.firstFills || line.legitimateSlidingReloads) {
+            if (line.issues) {
+                if (chroma)
+                    ++coverage.issuedCLines;
+                else
+                    ++coverage.issuedYLines;
+            }
+            if (line.completions) {
                 if (chroma)
                     ++coverage.cLines;
                 else
@@ -192,6 +224,14 @@ public:
         coverage.payloadBeats =
             coverage.yLines * kYLineQwords +
             coverage.cLines * kCLineQwords;
+        coverage.issuedPayloadBeats =
+            coverage.issuedYLines * kYLineQwords +
+            coverage.issuedCLines * kCLineQwords;
+        coverage.displayBanks =
+            static_cast<uint64_t>(detailDisplayBanks[0]) +
+            static_cast<uint64_t>(detailDisplayBanks[1]);
+        coverage.swapPendingSamples = detailSwapPendingSamples;
+        coverage.settledSamples = detailSettledSamples;
         return coverage;
     }
 
@@ -260,10 +300,13 @@ private:
     static constexpr size_t kStateCount = kLinesPerGroup * kGroups;
     std::array<RefillLineState, kStateCount> states{};
     std::array<RefillLineStats, kStateCount> detailLines{};
+    std::array<bool, 2> detailDisplayBanks{};
     RefillCounters counters;
     std::vector<RefillEvent> detailEvents;
     bool demandValid = false;
     bool detailActive = false;
+    uint64_t detailSwapPendingSamples = 0;
+    uint64_t detailSettledSamples = 0;
     uint16_t lastDesiredY0 = 0;
     uint16_t lastDesiredY7 = 0;
     bool lastDispBank = false;
@@ -865,21 +908,23 @@ private:
 
 int checkResourceContract(const Vtrue480_shared_ddr_tb& top) {
     bool ok = true;
-    if (top.cfg_line_count != 8) {
+    if (top.cfg_line_count != kRequiredLineCount) {
         std::cerr << "FAIL true480 shared M10K_depth line_count="
                   << static_cast<int>(top.cfg_line_count)
-                  << " required=8 (four lines cannot cover modeled stalls; "
+                  << " required=" << kRequiredLineCount
+                  << " (four lines cannot cover modeled stalls; "
                      "sixteen exceeds the product budget)\n";
         ok = false;
     }
-    if (top.cfg_linebuf_bits != 159744) {
+    if (top.cfg_linebuf_bits != kExactLinebufBits) {
         std::cerr << "FAIL true480 shared M10K_bits got=" << top.cfg_linebuf_bits
-                  << " required=159744\n";
+                  << " required=" << kExactLinebufBits << "\n";
         ok = false;
     }
-    if (top.cfg_m10k_estimate > 96 || top.cfg_m10k_estimate != 96) {
+    if (top.cfg_m10k_estimate != kExactM10Ks) {
         std::cerr << "FAIL true480 shared M10K_budget estimate="
-                  << top.cfg_m10k_estimate << " required=96 maximum=96\n";
+                  << top.cfg_m10k_estimate << " required=" << kExactM10Ks
+                  << " maximum=" << kExactM10Ks << "\n";
         ok = false;
     }
     return ok ? 0 : 1;
@@ -1028,18 +1073,18 @@ int runProof(bool idealModel, bool resourceOnly, bool requireActiveConfig) {
         fail("orange_on_dark orange=" + std::to_string(m.orange) +
              " dark=" + std::to_string(m.dark) +
              " black=" + std::to_string(m.black));
-    if (m1Reads < kProvisionalM1ReadsMin ||
-        m1Reads > kProvisionalM1ReadsMax ||
+    if (m1Reads < kCalibratedM1ReadsMin ||
+        m1Reads > kCalibratedM1ReadsMax ||
         m1Responses + 1 < m1Reads ||
-        m1Beats < kProvisionalM1ReadsMin ||
-        m1Beats > kProvisionalM1ReadsMax ||
-        m1WantCycles < kProvisionalM1WantMin ||
-        m1WantCycles > kProvisionalM1WantMax)
+        m1Beats < kCalibratedM1ReadsMin ||
+        m1Beats > kCalibratedM1ReadsMax ||
+        m1WantCycles < kCalibratedM1WantMin ||
+        m1WantCycles > kCalibratedM1WantMax)
         fail("m1_stream_service reads=" + std::to_string(m1Reads) +
              " responses=" + std::to_string(m1Responses) +
              " physical_beats=" + std::to_string(m1Beats) +
              " want_cycles=" + std::to_string(m1WantCycles) +
-             " provisional_bands=reads/beats:20000..30000,"
+             " calibrated_bands=reads/beats:20000..30000,"
              "want:400000..520000");
     if (sim.top.m1_reads_issued != sim.top.m1_responses_seen ||
         sim.top.m1_protocol_errors != 0)
@@ -1083,15 +1128,35 @@ int runProof(bool idealModel, bool resourceOnly, bool requireActiveConfig) {
              std::to_string(sim.ddr.getStats().m1ExpectedBeats) +
              " m1_seen=" + std::to_string(sim.ddr.getStats().m1Beats));
     if (activeConfig) {
+        if (refillCoverage.issuedYLines != 480 ||
+            refillCoverage.issuedCLines != 240 ||
+            refillCoverage.issuedPayloadBeats != kExactUniqueM0Payload)
+            fail("settled_unique_m0_issues y_lines=" +
+                 std::to_string(refillCoverage.issuedYLines) +
+                 " c_lines=" +
+                 std::to_string(refillCoverage.issuedCLines) +
+                 " beats=" +
+                 std::to_string(refillCoverage.issuedPayloadBeats) +
+                 " expected=480/240/56160");
         if (refillCoverage.yLines != 480 ||
             refillCoverage.cLines != 240 ||
             refillCoverage.payloadBeats != kExactUniqueM0Payload)
-            fail("unique_m0_payload y_lines=" +
+            fail("settled_unique_m0_completions y_lines=" +
                  std::to_string(refillCoverage.yLines) +
                  " c_lines=" + std::to_string(refillCoverage.cLines) +
                  " beats=" +
                  std::to_string(refillCoverage.payloadBeats) +
                  " expected=480/240/56160");
+        // swap_pending remains asserted during same-token preparation. A
+        // stable display bank, not the pending level, defines this window.
+        if (refillCoverage.displayBanks != 1 ||
+            refillCoverage.settledSamples == 0)
+            fail("settled_refill_window display_banks=" +
+                 std::to_string(refillCoverage.displayBanks) +
+                 " swap_pending_samples=" +
+                 std::to_string(refillCoverage.swapPendingSamples) +
+                 " samples=" +
+                 std::to_string(refillCoverage.settledSamples));
         for (int plane = 0; plane < 2; ++plane) {
             const uint64_t classified =
                 refill.firstFills[plane] +
@@ -1141,9 +1206,17 @@ int runProof(bool idealModel, bool resourceOnly, bool requireActiveConfig) {
             << "TRUE480_REFILL_TELEMETRY"
             << " total_issues=" << totalIssues
             << " legitimate=" << legitimate
+            << " unique_y_issued=" << refillCoverage.issuedYLines
+            << " unique_c_issued=" << refillCoverage.issuedCLines
+            << " unique_issued_payload_beats="
+            << refillCoverage.issuedPayloadBeats
             << " unique_y_lines=" << refillCoverage.yLines
             << " unique_c_lines=" << refillCoverage.cLines
             << " unique_payload_beats=" << refillCoverage.payloadBeats
+            << " settled_display_banks=" << refillCoverage.displayBanks
+            << " settled_swap_pending_samples="
+            << refillCoverage.swapPendingSamples
+            << " settled_samples=" << refillCoverage.settledSamples
             << " redundant=" << redundant
             << " redundant_permille="
             << (totalIssues ? redundant * 1000 / totalIssues : 0)
@@ -1203,11 +1276,19 @@ int runProof(bool idealModel, bool resourceOnly, bool requireActiveConfig) {
         << " m0_beats=" << m0Beats << " m1_reads=" << m1Reads
         << " m1_responses=" << m1Responses << " m1_beats=" << m1Beats
         << " m1_want_cycles=" << m1WantCycles
-        << " m1_band=PROVISIONAL_UNTIL_FIRST_CLEAN"
+        << " m1_band=CALIBRATED_CLEAN_31EE409D"
+        << " m1_reference_reads=" << kCleanReferenceM1Reads
+        << " m1_reference_want_cycles=" << kCleanReferenceM1WantCycles
         << " m0_phase_floor=" << kPhaseTolerantM0Floor
         << " m0_ceiling=" << kM0PayloadCeiling
+        << " m0_payload_overhead="
+        << (m0Beats >= kExactUniqueM0Payload
+                ? m0Beats - kExactUniqueM0Payload
+                : 0)
+        << " shared_beats=" << m0Beats + m1Beats
         << " shared_ceiling=" << kHarnessSharedPayloadCeiling
         << " shared_ceiling_scope=HARNESS_ONLY"
+        << " lc8_contract=EXACT"
         << " refresh_stall_cycles=" << refreshCycles
         << " burst_gap_cycles=" << gapCycles
         << " latency_min=" << m.ddrAfter.minObservedLatency
