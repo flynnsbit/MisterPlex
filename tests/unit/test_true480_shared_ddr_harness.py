@@ -50,8 +50,21 @@ require("beatGapPeriod = 17" in CPP and "burstGapCycles" in CPP,
 require("m1_beat_conservation" in CPP and
         "physical_burst_conservation" in CPP,
         "missing STREAM/full-burst response conservation gates")
-require("m0Beats > 70000" in CPP and "m0Beats + m1Beats > 100000" in CPP,
-        "missing shared-bandwidth ceiling")
+for contract in (
+    "kExactUniqueM0Payload == 56160",
+    "kPhaseTolerantM0Floor = 54912",
+    "kM0PayloadCeiling = 70000",
+    "kHarnessSharedPayloadCeiling = 100000",
+    "shared_ceiling_scope=HARNESS_ONLY",
+    "kProvisionalM1ReadsMin = 20000",
+    "kProvisionalM1ReadsMax = 30000",
+    "kProvisionalM1WantMin = 400000",
+    "kProvisionalM1WantMax = 520000",
+    "PROVISIONAL_UNTIL_FIRST_CLEAN",
+):
+    require(contract in CPP, f"missing calibrated bandwidth contract {contract}")
+require("m0Beats < 50000" not in CPP and "m1Reads < 10000" not in CPP,
+        "obsolete false-green bandwidth floors remain")
 require("m.softC != 0" in CPP and "m.underrunAfter != m.underrunBefore" in CPP,
         "missing soft-C and steady-underrun gates")
 require("m.rows.size() != 480" in CPP and "m.visibleXs.size() != 618" in CPP,
