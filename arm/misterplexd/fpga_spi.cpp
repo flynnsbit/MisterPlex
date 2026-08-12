@@ -721,6 +721,7 @@ void FpgaSpi::setDdrMemSync(bool on) {
 }
 
 void FpgaSpi::releaseDdrMap() {
+    strictDdrRelease_.reset();
     mboxInit_ = false;
     mboxAlive_ = false;
     inputMboxEdge_.reset();
@@ -1135,7 +1136,9 @@ bool FpgaSpi::setStatusWord(const uint8_t word[16]) {
         return false;
     }
     err_.clear();
-    writeStatusWordRaw(word);
+    const bool wrote = writeStatusWordRaw(word);
+    if (wrote && (word[0] & 0x01u))
+        strictDdrRelease_.reset();
     return err_.empty();
 }
 
@@ -1351,6 +1354,7 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank,
             return false;
         }
         ddrKickMode_ = 0;
+        strictDdrRelease_.reset();
     }
     if (!ok() && !open())
         return false;
@@ -1370,14 +1374,16 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank,
     //   free_bank_mask == 0 → swap pending, both banks in use; poll or timeout
     auto tPrep0 = std::chrono::steady_clock::now();
     bool plxdUsed = false;
+    bool strictWriteAuthorized = false;
     {
         BankReleaseStatus brs;
         int plxdIters = 0;
         bool sawPlxd = false;
         if (policy == DdrBankWritePolicy::RequireReleased) {
             // True-480 product pipeline: never overwrite a bank while a prior
-            // frame is pending. Existing PLXD is the required acknowledgement;
-            // absence/timeout fails closed before the payload copy.
+            // frame is pending. After the first write, both anyFree and a
+            // changed/wrapped frames_done are required; absence, stale data, or
+            // timeout fails closed before the payload copy.
             constexpr int kPlxdWaitMaxUs = 50000;
             const auto deadline =
                 tPrep0 + std::chrono::microseconds(kPlxdWaitMaxUs);
@@ -1385,9 +1391,10 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank,
                 if (readBankRelease(brs)) {
                     sawPlxd = true;
                     const DdrBankWriteDecision decision =
-                        decideDdrBankWrite(brs, policy);
+                        decideDdrBankWrite(brs, policy, strictDdrRelease_);
                     if (decision.ready) {
                         bank = decision.bank;
+                        strictWriteAuthorized = true;
                         plxdUsed = true;
                         break;
                     }
@@ -1406,7 +1413,8 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank,
                 timing.total_us = timing.plxa_poll_us;
                 lastDdrTiming_ = timing;
                 setErr(sawPlxd
-                           ? "sendDdrFrame: PLXD timeout waiting for a released bank"
+                           ? "sendDdrFrame: PLXD timeout waiting for frames_done advance "
+                             "and a released bank"
                            : "sendDdrFrame: PLXD acknowledgement required but unavailable");
                 return false;
             }
@@ -1414,7 +1422,7 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank,
             // Legacy/diagnostic/720 behaviour is unchanged: use a released bank
             // when available, otherwise reuse the non-display bank immediately.
             const DdrBankWriteDecision decision =
-                decideDdrBankWrite(brs, policy);
+                decideDdrBankWrite(brs, policy, strictDdrRelease_);
             bank = decision.bank;
             plxdUsed = brs.anyFree();
             auto tPlxd1 = std::chrono::steady_clock::now();
@@ -1460,6 +1468,17 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank,
         __sync_synchronize();
         auto tFlush1 = std::chrono::steady_clock::now();
         timing.flush_us = elapsedUs(tFlush0, tFlush1);
+    }
+
+    if (policy == DdrBankWritePolicy::RequireReleased) {
+        if (!strictWriteAuthorized) {
+            setErr("sendDdrFrame: strict PLXD write missing release sample");
+            return false;
+        }
+        // From this point until a stable post-kick sample is captured, no retry
+        // may trust PLXD. A kick may have escaped even if later verification
+        // fails, so only reset/reprobe can recover from an unknown baseline.
+        strictDdrRelease_.beginWrite();
     }
 
     bool saw_busy = false;
@@ -1519,8 +1538,15 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank,
         }
     }
     if (!kicked && (ddrKickMode_ == 2 || ddrKickMode_ == 0)) {
-        if (!kickDdrSpi(bank, first, saw_busy, saw_kick, saw_frame))
+        if (!kickDdrSpi(bank, first, saw_busy, saw_kick, saw_frame)) {
+            if (policy == DdrBankWritePolicy::RequireReleased) {
+                ddrKickMode_ = -1;
+                ddrKickFailMs_ = std::chrono::duration<double, std::milli>(
+                                     std::chrono::steady_clock::now().time_since_epoch())
+                                     .count();
+            }
             return false;
+        }
         if (first) {
             const bool ok = saw_busy || (saw_kick && saw_frame) || saw_frame;
             if (!ok) {
@@ -1544,6 +1570,21 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank,
                              .count();
         setErr("sendDdrFrame: could not kick DDR path" + frameStoreStatusSuffix());
         return false;
+    }
+    if (policy == DdrBankWritePolicy::RequireReleased) {
+        // Sample after the kick, not before the ~14 ms payload copy: a VSync can
+        // occur during that copy and must not be mistaken for acknowledgement
+        // of the doorbell we just emitted.
+        BankReleaseStatus postKickStatus{};
+        if (!readBankRelease(postKickStatus)) {
+            ddrKickMode_ = -1;
+            ddrKickFailMs_ = std::chrono::duration<double, std::milli>(
+                                 std::chrono::steady_clock::now().time_since_epoch())
+                                 .count();
+            setErr("sendDdrFrame: strict PLXD post-kick frames_done unavailable");
+            return false;
+        }
+        strictDdrRelease_.noteWrite(postKickStatus);
     }
     lastDdrBankDoorbellMs_[bank] = std::chrono::duration<double, std::milli>(
                                        std::chrono::steady_clock::now().time_since_epoch())
@@ -1581,6 +1622,7 @@ uint8_t* FpgaSpi::beginDdrBankIngest(size_t expectLen, int preferredBank, int& o
             return nullptr;
         }
         ddrKickMode_ = 0;
+        strictDdrRelease_.reset();
     }
     if (!ok() && !open())
         return nullptr;

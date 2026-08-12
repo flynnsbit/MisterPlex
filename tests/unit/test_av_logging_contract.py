@@ -11,6 +11,7 @@ MEDIA = (ROOT / "arm" / "misterplexd" / "media_player.cpp").read_text()
 MAIN = (ROOT / "arm" / "misterplexd" / "main.cpp").read_text()
 FPGA = (ROOT / "arm" / "misterplexd" / "fpga_spi.cpp").read_text()
 LAYOUT = (ROOT / "host" / "libmisterplex" / "ddr_frame_layout.hpp").read_text()
+MAILBOX = (ROOT / "host" / "libmisterplex" / "input_mailbox.hpp").read_text()
 
 
 def require(condition: bool, message: str) -> None:
@@ -82,9 +83,37 @@ def main() -> int:
     )
     require(
         "kPlxdWaitMaxUs = 50000" in FPGA
-        and "PLXD timeout waiting for a released bank" in FPGA
+        and "PLXD timeout waiting for frames_done advance" in FPGA
         and "PLXD acknowledgement required but unavailable" in FPGA,
         "strict PLXD path must wait boundedly and fail closed before DDR writes",
+    )
+    require(
+        "status.frames_done != frames_done" in MAILBOX
+        and "decideDdrBankWrite(brs, policy, strictDdrRelease_)" in FPGA
+        and "strictDdrRelease_.beginWrite()" in FPGA
+        and "strictDdrRelease_.noteWrite(postKickStatus)" in FPGA
+        and "strict PLXD post-kick frames_done unavailable" in FPGA,
+        "strict PLXD writes must reject stale free masks until frames_done advances",
+    )
+    require(
+        FPGA.index("strictDdrRelease_.beginWrite()")
+        < FPGA.index("kickDdrDoorbell(bank)")
+        < FPGA.index("strictDdrRelease_.noteWrite(postKickStatus)"),
+        "strict frames_done baseline must be captured after the doorbell, not before copy/kick",
+    )
+    require(
+        FPGA.count("strictDdrRelease_.reset()") >= 4
+        and re.search(
+            r"void FpgaSpi::releaseDdrMap\(\).*?strictDdrRelease_\.reset\(\)",
+            FPGA,
+            re.S,
+        ) is not None
+        and re.search(
+            r"wrote && \(word\[0\] & 0x01u\).*?strictDdrRelease_\.reset\(\)",
+            FPGA,
+            re.S,
+        ) is not None,
+        "strict PLXD baseline must clear on reset, reprobe, and DDR remap/layout change",
     )
     print("test_av_logging_contract: OK")
     return 0

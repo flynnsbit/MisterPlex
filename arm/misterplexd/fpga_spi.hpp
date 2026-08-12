@@ -305,6 +305,7 @@ private:
     DdrFrameLayout ddrLayout_ = makeDdrFrameLayout(320, 240);
     uint32_t doorbellSeq_ = 0;
     double lastDdrBankDoorbellMs_[2] = {-1.0, -1.0};
+    DdrStrictReleaseState strictDdrRelease_{};
     bool mboxInit_ = false;
     bool mboxAlive_ = false;
     uint16_t mboxSeq_ = 0;
