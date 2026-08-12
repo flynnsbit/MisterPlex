@@ -5,7 +5,7 @@ CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -I$(ROOT)/host
 FFMPEG_CFLAGS := $(shell pkg-config --cflags libavformat libavcodec libavutil 2>/dev/null)
 FFMPEG_LIBS   := $(shell pkg-config --libs libavformat libavcodec libavutil 2>/dev/null)
 
-.PHONY: all preflight unit unit-unlocked rtl-sim rtl-lint quartus-sv-subset define-parity post-fit-hierarchy post-fit-timing timing-exclusion pms-baseline-check pms-nal-stats arm-plexd arm-ddr-bench arm-pl330-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools
+.PHONY: all preflight unit unit-unlocked rtl-sim true480-i420 rtl-lint quartus-sv-subset define-parity post-fit-hierarchy post-fit-timing timing-exclusion pms-baseline-check pms-nal-stats arm-plexd arm-ddr-bench arm-pl330-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools
 
 all: unit
 
@@ -13,6 +13,7 @@ help:
 	@echo "Targets:"
 	@echo "  make unit       - serialized host unit tests with resource backoff (cadence, resolve, companion HTTP)"
 	@echo "  make rtl-sim    - run real Verilator RTL simulations if Verilator is installed"
+	@echo "  make true480-i420 - full-frame 640x480 DDR/I420 red-twin gate"
 	@echo "  make rtl-lint   - run Verilator parse/lint width/implicit regression gate (not Quartus synthesis)"
 	@echo "  make quartus-sv-subset - curated Quartus SV subset guard with toolchain presence probe"
 	@echo "  make define-parity - verify Quartus product macros match Verilator/lint macros"
@@ -92,6 +93,7 @@ unit-unlocked: preflight $(ROOT)/build/test_gdm_filter $(ROOT)/build/test_spi_tx
 	python3 $(ROOT)/tests/unit/test_present_720p_land_static.py
 	python3 $(ROOT)/tests/unit/test_present_720p_l4_static.py
 	python3 $(ROOT)/tests/unit/test_present_geom_params_static.py
+	python3 $(ROOT)/tests/unit/test_true480_i420_harness.py
 	$(ROOT)/tests/unit/test_present_geom_params_rtl_sim.sh
 	python3 $(ROOT)/tests/unit/test_present_720p_store_wire_static.py
 	$(ROOT)/tests/unit/test_present_720p_store_wire_rtl_sim.sh
@@ -156,6 +158,9 @@ rtl-sim:
 	$(ROOT)/tests/unit/test_p3_inter_rtl_sim.sh
 	$(ROOT)/tests/unit/test_p3_dpb_mc_rtl_sim.sh
 	$(ROOT)/tests/unit/test_p3_inter_stream_path_rtl_sim.sh
+
+true480-i420:
+	$(ROOT)/tests/unit/test_true480_i420_rtl_sim.sh --gate
 
 rtl-lint:
 	$(ROOT)/scripts/rtl_lint.py
