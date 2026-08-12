@@ -5,9 +5,11 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdlib>
 #include <iostream>
 #include <set>
 #include <stdexcept>
+#include <string>
 
 namespace {
 
@@ -19,6 +21,8 @@ struct Metrics {
     uint64_t misses = 0;
     uint64_t orange = 0;
     uint64_t dark = 0;
+    uint64_t neutralGray = 0;
+    uint64_t black = 0;
     uint64_t longestBothRun = 0;
     uint16_t underrunBefore = 0;
     uint16_t underrunAfter = 0;
@@ -75,16 +79,23 @@ public:
             tick();
     }
 
-    void presentFrame() {
+    bool presentFrame(bool requireSwap = true) {
         resetCore();
         for (int i = 0; i < 3000; ++i)
             tick();
         ddr.ringDoorbell(0, 1);
         const uint64_t deadline = cycle + 4ull * 638 * 524;
-        while (!top.has_frame && cycle < deadline)
+        while (!top.has_frame && cycle < deadline) {
+            if (top.ce_pix && top.obs_in_content) {
+                ++noSwapSamples;
+                if (top.r <= 2 && top.g <= 2 && top.b <= 2)
+                    ++noSwapBlack;
+            }
             tick();
-        if (!top.has_frame)
+        }
+        if (!top.has_frame && requireSwap)
             throw std::runtime_error("present_core never swapped the I420 frame");
+        return top.has_frame;
     }
 
     void waitFrameStart() {
@@ -142,6 +153,10 @@ public:
                     const true480::Rgb p{top.r, top.g, top.b};
                     m.orange += true480::isOrange(p);
                     m.dark += true480::isDark(p);
+                    m.neutralGray +=
+                        std::abs(static_cast<int>(p.r) - static_cast<int>(p.g)) <= 2 &&
+                        std::abs(static_cast<int>(p.g) - static_cast<int>(p.b)) <= 2;
+                    m.black += p.r <= 2 && p.g <= 2 && p.b <= 2;
                 }
             }
             tick();
@@ -150,23 +165,87 @@ public:
         return m;
     }
 
+    uint64_t noSwapSampleCount() const { return noSwapSamples; }
+    uint64_t noSwapBlackCount() const { return noSwapBlack; }
+
 private:
     uint64_t cycle = 0;
+    uint64_t noSwapSamples = 0;
+    uint64_t noSwapBlack = 0;
 };
 
 } // namespace
 
 int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
+    std::string calibration;
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i];
+        if (arg == "--calibrate-keepv22")
+            calibration = "keepv22";
+        else if (arg == "--calibrate-keepv27")
+            calibration = "keepv27";
+        else {
+            std::cerr << "unknown argument: " << arg << "\n";
+            return 2;
+        }
+    }
     try {
         Sim sim;
         const auto frame = true480::makeIdleI420();
         sim.ddr.loadBank(0, frame);
         sim.ddr.loadBank(1, frame);
-        sim.presentFrame();
+        const bool swapped = sim.presentFrame(calibration != "keepv27");
+        if (calibration == "keepv27") {
+            const uint64_t samples = sim.noSwapSampleCount();
+            const uint64_t black = sim.noSwapBlackCount();
+            const bool ok = !swapped && samples > 100000 &&
+                            black >= samples * 99 / 100;
+            std::cout << "TRUE480_CAL_KEEPV27 has_frame=" << swapped
+                      << " active_samples=" << samples
+                      << " black_samples=" << black
+                      << " phenotype=BLACK_NO_SWAP\n";
+            if (!ok) {
+                std::cerr << "FAIL keepv27 calibration: expected unchanged "
+                             "real path to remain black with no frame swap\n";
+                return 1;
+            }
+            std::cout << "PASS keepv27 calibrated black/no-swap without forced misses\n";
+            return 0;
+        }
         sim.captureOneFrame();
         sim.captureOneFrame();
         const Metrics m = sim.captureOneFrame();
+
+        if (calibration == "keepv22") {
+            const bool ok =
+                swapped && m.outputRows.size() == 240 &&
+                m.storeRows.size() == 240 && m.sourceRows.size() == 240 &&
+                m.yHits > 100000 && m.cHits > 10000 &&
+                m.cHits < m.yHits / 3 && m.softC > 100000 &&
+                m.orange == 0 && m.neutralGray > 100000 &&
+                m.underrunAfter == m.underrunBefore;
+            std::cout << "TRUE480_CAL_KEEPV22 has_frame=" << swapped
+                      << " output_rows=" << m.outputRows.size()
+                      << " store_rows=" << m.storeRows.size()
+                      << " source_rows=" << m.sourceRows.size()
+                      << " y_hits=" << m.yHits << " c_hits=" << m.cHits
+                      << " soft_c=" << m.softC
+                      << " neutral_gray=" << m.neutralGray
+                      << " orange=" << m.orange
+                      << " black=" << m.black
+                      << " underrun_delta="
+                      << (m.underrunAfter - m.underrunBefore)
+                      << " phenotype=NEUTRAL_GRAY_C_STARVATION\n";
+            if (!ok) {
+                std::cerr << "FAIL keepv22 calibration: expected unchanged "
+                             "240-row neutral-gray/C-starvation phenotype\n";
+                return 1;
+            }
+            std::cout << "PASS keepv22 calibrated neutral gray/C starvation "
+                         "without forced misses\n";
+            return 0;
+        }
 
         bool ok = true;
         if (m.outputRows.size() != true480::kOutH ||
@@ -217,7 +296,9 @@ int main(int argc, char** argv) {
                   << " y_hits=" << m.yHits << " c_hits=" << m.cHits
                   << " soft_c=" << m.softC
                   << " underrun_delta=" << (m.underrunAfter - m.underrunBefore)
-                  << " orange=" << m.orange << " dark=" << m.dark << "\n";
+                  << " orange=" << m.orange << " dark=" << m.dark
+                  << " neutral_gray=" << m.neutralGray
+                  << " black=" << m.black << "\n";
         return ok ? 0 : 1;
     } catch (const std::exception& e) {
         std::cerr << "FAIL true480_present_tb: " << e.what() << "\n";
