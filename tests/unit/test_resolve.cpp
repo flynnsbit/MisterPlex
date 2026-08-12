@@ -88,6 +88,12 @@ int main() {
         "pixelAspectRatio=\"8:9\"/></Part></Media></Video></MediaContainer>",
         720, 480);
     CHECK(xmlWide.valid && xmlWide.x == 16 && xmlWide.y == 9);
+    const auto xmlMediaWide = sourceAspectFromPlexMetadata(
+        "<MediaContainer><Video ratingKey=\"143\"><Media width=\"1280\" "
+        "height=\"720\" aspectRatio=\"1.78\" videoCodec=\"h264\"/></Video>"
+        "</MediaContainer>",
+        1280, 720);
+    CHECK(xmlMediaWide.valid && xmlMediaWide.x == 16 && xmlMediaWide.y == 9);
     const auto xmlSar = sourceAspectFromPlexMetadata(
         "<MediaContainer><Video><Media width=\"720\" height=\"480\">"
         "<Part><Stream streamType=\"1\" anamorphic=\"true\" "

@@ -104,7 +104,16 @@ bool isUnreachableHost(const std::string& hostOrUrl) {
 std::string attr(const std::string& xml, const char* tag, const char* name) {
     // First occurrence of <tag ... name="..."
     const std::string open = std::string("<") + tag;
-    auto tpos = xml.find(open);
+    size_t tpos = 0;
+    while ((tpos = xml.find(open, tpos)) != std::string::npos) {
+        const size_t boundary = tpos + open.size();
+        if (boundary >= xml.size() ||
+            std::isspace(static_cast<unsigned char>(xml[boundary])) ||
+            xml[boundary] == '>' || xml[boundary] == '/') {
+            break;
+        }
+        tpos = boundary;
+    }
     if (tpos == std::string::npos)
         return {};
     auto end = xml.find('>', tpos);
