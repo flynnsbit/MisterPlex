@@ -50,10 +50,14 @@ require("TRUE480_REFILL_TELEMETRY" in CPP,
         "quantitative refill summary is not emitted")
 require("TRUE480_REFILL_TOP" in CPP and "TRUE480_REFILL_EVENT" in CPP,
         "line-ID records/top offenders are not emitted")
-require("detailCoverage" in CPP and "unique_payload_beats=" in CPP,
-        "unique Y/C line payload accounting is missing")
+require("detailCoverage" in CPP and "unique_payload_beats=" in CPP and
+        "unique_issued_payload_beats=" in CPP,
+        "unique Y/C issue/completion payload accounting is missing")
 require("expected=480/240/56160" in CPP,
         "exact unique m0 payload contract is missing")
+require("settled_display_banks=" in CPP and
+        "settled_swap_pending_samples=" in CPP,
+        "unique payload is not constrained to a settled display-bank window")
 require("cfg_refill_telemetry" in TOP and "refill_telemetry=" in CPP,
         "active gate cannot assert telemetry elaboration")
 require("test_true480_refill_telemetry_harness.py" in MAKE,
