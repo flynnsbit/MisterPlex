@@ -14,6 +14,13 @@ from pathlib import Path
 
 SAMPLE_RATE = 48_000
 SUPPORTED_RATES = ("24000/1001", "24", "25", "30000/1001", "30")
+SUPPORTED_RATE_VALUES = {
+    (24000, 1001),
+    (24, 1),
+    (25, 1),
+    (30000, 1001),
+    (30, 1),
+}
 
 
 @dataclass(frozen=True)
@@ -43,6 +50,20 @@ class Rate:
         return numerator // self.num
 
 
+def validate_rate(rate: Rate) -> None:
+    if (
+        isinstance(rate.num, bool)
+        or isinstance(rate.den, bool)
+        or not isinstance(rate.num, int)
+        or not isinstance(rate.den, int)
+        or rate.num <= 0
+        or rate.den <= 0
+    ):
+        raise ValueError("source rate numerator and denominator must be positive integers")
+    if (rate.num, rate.den) not in SUPPORTED_RATE_VALUES:
+        raise ValueError(f"unsupported source rate {rate.num}/{rate.den}")
+
+
 def parse_rate(text: str) -> Rate:
     aliases = {
         "24": Rate(24, 1),
@@ -69,6 +90,8 @@ def parse_offset_profile(text: str) -> tuple[float, float, float]:
         raise argparse.ArgumentTypeError("offset profile must be three comma-separated ms values") from exc
     if len(values) != 3:
         raise argparse.ArgumentTypeError("offset profile must contain start,middle,end")
+    if not all(math.isfinite(value) for value in values):
+        raise argparse.ArgumentTypeError("offset profile values must be finite")
     return values  # type: ignore[return-value]
 
 
@@ -79,6 +102,13 @@ def marker_schedule(
     tail_intervals: int,
     offset_profile_ms: tuple[float, float, float],
 ) -> tuple[int, int, list[dict[str, int | float]]]:
+    validate_rate(rate)
+    if marker_count < 1:
+        raise ValueError("marker count must be positive")
+    if lead_intervals < 0 or tail_intervals < 0:
+        raise ValueError("lead and tail intervals must be non-negative")
+    if not all(math.isfinite(value) for value in offset_profile_ms):
+        raise ValueError("synthetic offset profile values must be finite")
     period_frames = rate.marker_period_frames
     total_frames = (lead_intervals + marker_count + tail_intervals) * period_frames
     total_sample_num = total_frames * rate.den * SAMPLE_RATE
@@ -170,6 +200,7 @@ def generate(
     offset_profile_ms: tuple[float, float, float],
     force: bool,
 ) -> Path:
+    validate_rate(rate)
     if width < 64 or height < 64 or width % 2 or height % 2:
         raise ValueError("width and height must be even and at least 64")
     if marker_count < 9:
@@ -298,7 +329,7 @@ def generate(
         "file": output.name,
         "ffprobe": probe(output),
     }
-    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+    manifest_path.write_text(json.dumps(manifest, indent=2, allow_nan=False) + "\n")
     return manifest_path
 
 

@@ -57,8 +57,9 @@ Example schema (replace every measured/identity value):
 ```
 
 Identity fields are optional, but when present must match the selected video
-device. `--adapter-offset-ms` is available for synthetic/offline work; hardware
-runs should use the provenance-bearing file.
+device. Hardware capture requires non-empty `measured_at` and `method` fields
+and accepts **only** `--adapter-offset-file`. `--adapter-offset-ms` is reserved
+for synthetic/offline analysis and is rejected before hardware setup.
 
 ## Capture and measure
 
@@ -81,8 +82,23 @@ preview race.
 
 The report independently gates marker offsets in the start, middle, and end
 thirds. Endpoint slope is diagnostic only: equal start/end values cannot hide a
-middle excursion. Defaults are three paired markers per third, ±42 ms corrected
-offset, ≤42 ms three-window span, and ±25 ms marker-period error.
+middle excursion. Median values are diagnostic, not sufficient for PASS. The
+default hard gates require:
+
+- at least three paired markers per third;
+- every corrected marker within ±42 ms;
+- no adjacent corrected-offset step over 42 ms;
+- at least 95% pairing coverage between detected video/audio markers;
+- median marker-period error within 25 ms; and
+- every individual marker interval within 75 ms of the fixture period.
+
+Thus a missed marker, compensating short/long intervals, or one outlier hidden
+by a three-marker median fails closed.
+
+All numeric CLI, calibration, manifest, timestamp, rate, duration, and threshold
+values must be finite. Durations, rates, and thresholds must be positive;
+pairing coverage must be in `(0, 1]`. The manifest period must exactly match its
+declared required source rate.
 
 ## Persistent evidence
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -35,6 +36,73 @@ class BlockedError(RuntimeError):
     pass
 
 
+def finite_number(value: Any, name: str) -> float:
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be numeric")
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be numeric") from exc
+    if not math.isfinite(number):
+        raise ValueError(f"{name} must be finite")
+    return number
+
+
+def positive_number(value: Any, name: str) -> float:
+    number = finite_number(value, name)
+    if number <= 0:
+        raise ValueError(f"{name} must be positive")
+    return number
+
+
+def positive_int(value: Any, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"{name} must be a positive integer")
+    return value
+
+
+def reject_nonfinite_numbers(value: Any, name: str) -> None:
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ValueError(f"{name} contains a non-finite number")
+    if isinstance(value, dict):
+        for key, child in value.items():
+            reject_nonfinite_numbers(child, f"{name}.{key}")
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            reject_nonfinite_numbers(child, f"{name}[{index}]")
+
+
+def finite_float_arg(text: str) -> float:
+    try:
+        return finite_number(text, "value")
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
+def positive_float_arg(text: str) -> float:
+    try:
+        return positive_number(text, "value")
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
+def positive_int_arg(text: str) -> int:
+    try:
+        value = int(text)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("value must be a positive integer") from exc
+    if value <= 0:
+        raise argparse.ArgumentTypeError("value must be a positive integer")
+    return value
+
+
+def coverage_arg(text: str) -> float:
+    value = positive_float_arg(text)
+    if value > 1.0:
+        raise argparse.ArgumentTypeError("coverage must be in (0, 1]")
+    return value
+
+
 def read_text(path: Path) -> str:
     try:
         return path.read_text().strip()
@@ -43,7 +111,7 @@ def read_text(path: Path) -> str:
 
 
 def write_json(path: Path, value: Any) -> None:
-    path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
+    path.write_text(json.dumps(value, indent=2, sort_keys=True, allow_nan=False) + "\n")
 
 
 def sha256_file(path: Path) -> str:
@@ -293,45 +361,85 @@ def owners_of_device(device: Path) -> tuple[list[dict[str, Any]], bool]:
 
 def load_manifest(path: Path) -> dict[str, Any]:
     manifest = json.loads(path.read_text())
+    reject_nonfinite_numbers(manifest, "fixture manifest")
     if manifest.get("schema") != "misterplex.external-av.fixture.v1":
         raise ValueError("fixture manifest has an unsupported schema")
     source = manifest.get("source_rate", {})
-    rate = (int(source.get("num", 0)), int(source.get("den", 0)))
+    rate = (
+        positive_int(source.get("num"), "fixture source numerator"),
+        positive_int(source.get("den"), "fixture source denominator"),
+    )
     if rate not in SUPPORTED_RATES:
         raise ValueError(f"fixture rate {rate[0]}/{rate[1]} is not in the required source-rate set")
-    period = float(manifest.get("schedule", {}).get("marker_period_ms", 0.0))
-    if period <= 0:
-        raise ValueError("fixture manifest has no marker period")
+    schedule = manifest.get("schedule")
+    if not isinstance(schedule, dict):
+        raise ValueError("fixture manifest has no schedule")
+    period = positive_number(schedule.get("marker_period_ms"), "fixture marker_period_ms")
+    expected_period = 1001.0 if rate[1] == 1001 else 1000.0
+    if abs(period - expected_period) > 1e-6:
+        raise ValueError(
+            f"fixture marker_period_ms={period} does not match rate "
+            f"{rate[0]}/{rate[1]} ({expected_period} ms)"
+        )
+    expected_frames = rate[0] // 1000 if rate[1] == 1001 else rate[0]
+    expected_samples = 48048 if rate[1] == 1001 else 48000
+    if positive_int(schedule.get("marker_period_frames"), "fixture marker_period_frames") != expected_frames:
+        raise ValueError("fixture marker_period_frames does not match its source rate")
+    if positive_int(schedule.get("marker_period_samples"), "fixture marker_period_samples") != expected_samples:
+        raise ValueError("fixture marker_period_samples does not match its source rate")
+    markers = schedule.get("markers")
+    if not isinstance(markers, list) or len(markers) < 9:
+        raise ValueError("fixture manifest must describe at least 9 markers")
     return manifest
 
 
 def load_calibration(
-    offset_file: Path | None, offset_ms: float | None, video: dict[str, Any] | None = None
+    offset_file: Path | None,
+    offset_ms: float | None,
+    video: dict[str, Any] | None = None,
+    *,
+    require_provenance: bool = False,
 ) -> dict[str, Any]:
     if (offset_file is None) == (offset_ms is None):
         raise ValueError("provide exactly one of --adapter-offset-file or --adapter-offset-ms")
     if offset_file is not None:
         calibration = json.loads(offset_file.read_text())
+        reject_nonfinite_numbers(calibration, "adapter calibration")
         if calibration.get("schema") != "misterplex.external-av.adapter-offset.v1":
             raise ValueError("adapter offset file has an unsupported schema")
         if "audio_minus_video_ms" not in calibration:
             raise ValueError("adapter offset file lacks audio_minus_video_ms")
-        calibration["audio_minus_video_ms"] = float(calibration["audio_minus_video_ms"])
+        calibration["audio_minus_video_ms"] = finite_number(
+            calibration["audio_minus_video_ms"], "adapter audio_minus_video_ms"
+        )
+        if require_provenance:
+            for field in ("measured_at", "method"):
+                value = calibration.get(field)
+                if not isinstance(value, str) or not value.strip():
+                    raise ValueError(
+                        f"hardware capture adapter offset file requires non-empty {field}"
+                    )
     else:
         calibration = {
             "schema": "misterplex.external-av.adapter-offset.v1",
-            "audio_minus_video_ms": float(offset_ms),
+            "audio_minus_video_ms": finite_number(offset_ms, "adapter offset"),
             "source": "explicit command-line value",
         }
     if video is not None:
-        for key in ("usb_vendor_id", "usb_product_id", "usb_serial"):
-            expected = calibration.get(key)
-            actual = video.get(key)
-            if expected not in (None, "") and expected != actual:
-                raise BlockedError(
-                    f"adapter calibration {key}={expected!r} does not match selected device {actual!r}"
-                )
+        validate_calibration_identity(calibration, video)
     return calibration
+
+
+def validate_calibration_identity(
+    calibration: dict[str, Any], video: dict[str, Any]
+) -> None:
+    for key in ("usb_vendor_id", "usb_product_id", "usb_serial"):
+        expected = calibration.get(key)
+        actual = video.get(key)
+        if expected not in (None, "") and expected != actual:
+            raise BlockedError(
+                f"adapter calibration {key}={expected!r} does not match selected device {actual!r}"
+            )
 
 
 def ffprobe_json(capture: Path) -> dict[str, Any]:
@@ -378,7 +486,7 @@ def first_packet_pts(capture: Path, stream: str) -> float:
     )
     packets = json.loads(result.stdout).get("packets", [])
     if packets and packets[0].get("pts_time") not in (None, "N/A"):
-        return float(packets[0]["pts_time"])
+        return finite_number(packets[0]["pts_time"], f"{stream} first packet PTS")
     return 0.0
 
 
@@ -435,16 +543,16 @@ def video_luma(capture: Path, stream_info: dict[str, Any]) -> tuple[np.ndarray, 
     for line in pts_result.stdout.splitlines():
         value = line.strip().rstrip(",")
         try:
-            times.append(float(value))
+            times.append(finite_number(value, "video frame PTS"))
         except ValueError:
-            continue
+            raise RuntimeError(f"capture contains an invalid video frame PTS: {value!r}")
     if not times:
         rate_text = stream_info.get("avg_frame_rate") or stream_info.get("r_frame_rate") or "0/1"
         num_text, den_text = rate_text.split("/", 1)
-        fps = float(num_text) / float(den_text) if float(den_text) else 0.0
-        if fps <= 0:
-            raise RuntimeError("capture has no usable video timestamps or frame rate")
-        start = float(stream_info.get("start_time") or 0.0)
+        numerator = positive_number(num_text, "capture video frame-rate numerator")
+        denominator = positive_number(den_text, "capture video frame-rate denominator")
+        fps = positive_number(numerator / denominator, "capture video frame rate")
+        start = finite_number(stream_info.get("start_time") or 0.0, "capture video start time")
         times = [start + i / fps for i in range(frame_count)]
     count = min(frame_count, len(times))
     return luma[:count], np.asarray(times[:count], dtype=float)
@@ -543,16 +651,38 @@ def median(values: list[float]) -> float:
     return float(np.median(np.asarray(values, dtype=float)))
 
 
+def validate_event_times(events: list[float], name: str) -> list[float]:
+    validated = [finite_number(value, f"{name} event time") for value in events]
+    for index in range(1, len(validated)):
+        if validated[index] <= validated[index - 1]:
+            raise ValueError(f"{name} event times must be strictly increasing")
+    return validated
+
+
 def period_summary(events: list[float], expected_ms: float) -> dict[str, Any]:
+    events = validate_event_times(events, "period")
+    expected_ms = positive_number(expected_ms, "expected marker period")
     periods = [(events[i] - events[i - 1]) * 1000.0 for i in range(1, len(events))]
     if not periods:
-        return {"count": 0, "median_ms": None, "error_ms": None, "mad_ms": None}
+        return {
+            "count": 0,
+            "median_ms": None,
+            "error_ms": None,
+            "mad_ms": None,
+            "min_ms": None,
+            "max_ms": None,
+            "max_abs_error_ms": None,
+        }
     med = median(periods)
+    errors = [value - expected_ms for value in periods]
     return {
         "count": len(periods),
         "median_ms": round(med, 3),
         "error_ms": round(med - expected_ms, 3),
         "mad_ms": round(median([abs(value - med) for value in periods]), 3),
+        "min_ms": round(min(periods), 3),
+        "max_ms": round(max(periods), 3),
+        "max_abs_error_ms": round(max(abs(value) for value in errors), 3),
     }
 
 
@@ -569,7 +699,34 @@ def evaluate_markers(
     max_abs_offset_ms: float,
     max_window_span_ms: float,
     max_period_error_ms: float,
+    max_interval_error_ms: float,
+    max_offset_step_ms: float,
+    min_paired_coverage: float,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    video_events = validate_event_times(video_events, "video")
+    audio_events = validate_event_times(audio_events, "audio")
+    capture_start_s = finite_number(capture_start_s, "capture start")
+    duration_s = positive_number(duration_s, "capture duration")
+    adapter_offset_ms = finite_number(adapter_offset_ms, "adapter offset")
+    expected_period_ms = positive_number(expected_period_ms, "expected marker period")
+    pair_window_ms = positive_number(pair_window_ms, "pair window")
+    max_abs_offset_ms = positive_number(max_abs_offset_ms, "maximum marker offset")
+    max_window_span_ms = positive_number(max_window_span_ms, "maximum window span")
+    max_period_error_ms = positive_number(max_period_error_ms, "maximum median period error")
+    max_interval_error_ms = positive_number(
+        max_interval_error_ms, "maximum individual interval error"
+    )
+    max_offset_step_ms = positive_number(max_offset_step_ms, "maximum offset step")
+    min_paired_coverage = positive_number(min_paired_coverage, "minimum paired coverage")
+    if min_paired_coverage > 1.0:
+        raise ValueError("minimum paired coverage must be in (0, 1]")
+    if (
+        isinstance(min_markers_per_window, bool)
+        or not isinstance(min_markers_per_window, int)
+        or min_markers_per_window < 1
+    ):
+        raise ValueError("minimum markers per window must be a positive integer")
+
     pairs = pair_events(video_events, audio_events, pair_window_ms)
     for pair in pairs:
         pair["corrected_audio_minus_video_ms"] = (
@@ -599,6 +756,9 @@ def evaluate_markers(
             "markers": len(selected),
             "raw_median_ms": round(median(raw), 3) if raw else None,
             "corrected_median_ms": round(median(corrected), 3) if corrected else None,
+            "max_abs_corrected_ms": (
+                round(max(abs(value) for value in corrected), 3) if corrected else None
+            ),
             "corrected_mad_ms": (
                 round(median([abs(value - median(corrected)) for value in corrected]), 3)
                 if corrected
@@ -610,10 +770,10 @@ def evaluate_markers(
             failures.append(
                 f"{label} window has {len(selected)} markers; need {min_markers_per_window}"
             )
-        elif abs(float(window["corrected_median_ms"])) > max_abs_offset_ms:
+        elif float(window["max_abs_corrected_ms"]) > max_abs_offset_ms:
             failures.append(
-                f"{label} corrected offset {window['corrected_median_ms']} ms exceeds "
-                f"{max_abs_offset_ms} ms"
+                f"{label} marker offset {window['max_abs_corrected_ms']} ms exceeds "
+                f"{max_abs_offset_ms} ms; median={window['corrected_median_ms']} ms"
             )
         if window["corrected_median_ms"] is not None:
             medians.append(float(window["corrected_median_ms"]))
@@ -624,6 +784,24 @@ def evaluate_markers(
             f"{max_window_span_ms} ms"
         )
 
+    paired_denominator = max(len(video_events), len(audio_events))
+    paired_coverage = len(pairs) / paired_denominator if paired_denominator else 0.0
+    if paired_coverage < min_paired_coverage:
+        failures.append(
+            f"paired marker coverage {paired_coverage:.3f} is below {min_paired_coverage:.3f}"
+        )
+
+    corrected_offsets = [float(pair["corrected_audio_minus_video_ms"]) for pair in pairs]
+    offset_steps = [
+        abs(corrected_offsets[index] - corrected_offsets[index - 1])
+        for index in range(1, len(corrected_offsets))
+    ]
+    max_offset_step = max(offset_steps, default=0.0)
+    if max_offset_step > max_offset_step_ms:
+        failures.append(
+            f"marker offset step {max_offset_step:.3f} ms exceeds {max_offset_step_ms} ms"
+        )
+
     video_period = period_summary(video_events, expected_period_ms)
     audio_period = period_summary(audio_events, expected_period_ms)
     for label, summary in (("video", video_period), ("audio", audio_period)):
@@ -631,6 +809,12 @@ def evaluate_markers(
         if error is None or abs(float(error)) > max_period_error_ms:
             failures.append(
                 f"{label} marker period error {error} ms exceeds {max_period_error_ms} ms"
+            )
+        interval_error = summary.get("max_abs_error_ms")
+        if interval_error is None or float(interval_error) > max_interval_error_ms:
+            failures.append(
+                f"{label} maximum marker interval error {interval_error} ms exceeds "
+                f"{max_interval_error_ms} ms"
             )
 
     endpoint_slope = None
@@ -651,15 +835,19 @@ def evaluate_markers(
             "video_flashes": len(video_events),
             "audio_clicks": len(audio_events),
             "paired_markers": len(pairs),
+            "paired_coverage": round(paired_coverage, 6),
         },
         "windows": windows,
         "periods": {"video": video_period, "audio": audio_period},
+        "continuity": {
+            "max_offset_step_ms": round(max_offset_step, 3),
+        },
         "endpoint_slope_ms_per_min_diagnostic_only": (
             round(endpoint_slope, 3) if endpoint_slope is not None else None
         ),
         "gate_note": (
-            "Each start/middle/end window is gated independently; endpoint slope is not "
-            "used to assume monotonic drift."
+            "Every marker, interval, adjacent offset step, pairing coverage, and each "
+            "start/middle/end window are gated; medians and endpoint slope are diagnostic only."
         ),
         "failures": failures,
     }
@@ -682,15 +870,18 @@ def analyse_capture(
     if not audio_streams:
         raise BlockedError("capture has no audio stream; external A/V verification is BLOCKED")
 
-    duration = float(probe.get("format", {}).get("duration") or 0.0)
-    if duration <= 0:
+    duration_value = probe.get("format", {}).get("duration")
+    duration = 0.0
+    if duration_value not in (None, "N/A", ""):
+        duration = positive_number(duration_value, "capture format duration")
+    if duration == 0.0:
         durations = [
-            float(stream["duration"])
+            positive_number(stream["duration"], "capture stream duration")
             for stream in probe.get("streams", [])
             if stream.get("duration") not in (None, "N/A")
         ]
         duration = max(durations, default=0.0)
-    if duration <= 0:
+    if not math.isfinite(duration) or duration <= 0:
         raise RuntimeError("capture duration is unavailable")
 
     luma, video_times = video_luma(capture, video_streams[0])
@@ -718,6 +909,9 @@ def analyse_capture(
         max_abs_offset_ms=args.max_abs_offset_ms,
         max_window_span_ms=args.max_window_span_ms,
         max_period_error_ms=args.max_period_error_ms,
+        max_interval_error_ms=args.max_interval_error_ms,
+        max_offset_step_ms=args.max_offset_step_ms,
+        min_paired_coverage=args.min_paired_coverage,
     )
     markers = {
         "schema": "misterplex.external-av.markers.v1",
@@ -744,6 +938,9 @@ def analyse_capture(
                 "max_abs_offset_ms": args.max_abs_offset_ms,
                 "max_window_span_ms": args.max_window_span_ms,
                 "max_period_error_ms": args.max_period_error_ms,
+                "max_interval_error_ms": args.max_interval_error_ms,
+                "max_offset_step_ms": args.max_offset_step_ms,
+                "min_paired_coverage": args.min_paired_coverage,
             },
         }
     )
@@ -837,12 +1034,17 @@ def capture_command(args: argparse.Namespace, capture: Path) -> list[str]:
 
 def run_capture(args: argparse.Namespace) -> int:
     prepare_out_dir(args.out_dir)
-    inventory = enumerate_inventory()
-    write_json(args.out_dir / "inventory.json", inventory)
     try:
         manifest = load_manifest(args.fixture_manifest)
+        calibration = load_calibration(
+            args.adapter_offset_file,
+            args.adapter_offset_ms,
+            require_provenance=True,
+        )
+        inventory = enumerate_inventory()
+        write_json(args.out_dir / "inventory.json", inventory)
         video, audio = validate_pair(inventory, args.video_device, args.audio_device)
-        calibration = load_calibration(args.adapter_offset_file, args.adapter_offset_ms, video)
+        validate_calibration_identity(calibration, video)
         write_json(args.out_dir / "fixture_manifest.json", manifest)
         write_json(args.out_dir / "adapter_offset.json", calibration)
         write_json(args.out_dir / "binding.json", {"video": video, "audio": audio})
@@ -950,6 +1152,9 @@ def run_self_test() -> int:
                 max_abs_offset_ms=42.0,
                 max_window_span_ms=42.0,
                 max_period_error_ms=25.0,
+                max_interval_error_ms=75.0,
+                max_offset_step_ms=42.0,
+                min_paired_coverage=0.95,
             )
             got = report["status"]
         if got != expected_status:
@@ -973,20 +1178,23 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--out-dir", type=Path)
     parser.add_argument("--fixture-manifest", type=Path)
     parser.add_argument("--adapter-offset-file", type=Path)
-    parser.add_argument("--adapter-offset-ms", type=float)
+    parser.add_argument("--adapter-offset-ms", type=finite_float_arg)
     parser.add_argument("--video-device")
     parser.add_argument("--audio-device")
     parser.add_argument("--input-format", default="mjpeg")
     parser.add_argument("--video-size", default="1280x720")
-    parser.add_argument("--framerate", type=float, default=60.0)
-    parser.add_argument("--audio-rate", type=int, default=48_000)
-    parser.add_argument("--audio-channels", type=int, default=2)
-    parser.add_argument("--duration", type=float, default=36.0)
-    parser.add_argument("--min-markers-per-window", type=int, default=3)
-    parser.add_argument("--pair-window-ms", type=float, default=250.0)
-    parser.add_argument("--max-abs-offset-ms", type=float, default=42.0)
-    parser.add_argument("--max-window-span-ms", type=float, default=42.0)
-    parser.add_argument("--max-period-error-ms", type=float, default=25.0)
+    parser.add_argument("--framerate", type=positive_float_arg, default=60.0)
+    parser.add_argument("--audio-rate", type=positive_int_arg, default=48_000)
+    parser.add_argument("--audio-channels", type=positive_int_arg, default=2)
+    parser.add_argument("--duration", type=positive_float_arg, default=36.0)
+    parser.add_argument("--min-markers-per-window", type=positive_int_arg, default=3)
+    parser.add_argument("--pair-window-ms", type=positive_float_arg, default=250.0)
+    parser.add_argument("--max-abs-offset-ms", type=positive_float_arg, default=42.0)
+    parser.add_argument("--max-window-span-ms", type=positive_float_arg, default=42.0)
+    parser.add_argument("--max-period-error-ms", type=positive_float_arg, default=25.0)
+    parser.add_argument("--max-interval-error-ms", type=positive_float_arg, default=75.0)
+    parser.add_argument("--max-offset-step-ms", type=positive_float_arg, default=42.0)
+    parser.add_argument("--min-paired-coverage", type=coverage_arg, default=0.95)
     return parser
 
 
@@ -1002,10 +1210,14 @@ def main() -> int:
         parser.error("--out-dir and --fixture-manifest are required")
     if args.capture and (not args.video_device or not args.audio_device):
         parser.error("--capture requires explicit --video-device and --audio-device")
-    if args.duration <= 0:
-        parser.error("--duration must be positive")
-    if args.min_markers_per_window < 1:
-        parser.error("--min-markers-per-window must be positive")
+    if args.capture:
+        if args.adapter_offset_file is None or args.adapter_offset_ms is not None:
+            parser.error(
+                "--capture requires --adapter-offset-file; "
+                "--adapter-offset-ms is offline analysis only"
+            )
+    elif (args.adapter_offset_file is None) == (args.adapter_offset_ms is None):
+        parser.error("provide exactly one of --adapter-offset-file or --adapter-offset-ms")
     try:
         if args.capture:
             return run_capture(args)

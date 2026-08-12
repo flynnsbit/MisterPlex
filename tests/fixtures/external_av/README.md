@@ -41,7 +41,8 @@ python3 tests/fixtures/external_av/generate_av_marker.py \
 ```
 
 `--synthetic-offset-profile-ms START,MIDDLE,END` is fault injection for parser
-self-tests. Product fixtures must use the default `0,0,0`.
+self-tests. Product fixtures must use the default `0,0,0`. Non-finite offsets,
+unsupported/non-positive rates, and invalid marker geometry are rejected.
 
 The generator creates scratch audio beside the requested output and removes it
 after muxing. It does not use a system temporary directory.
