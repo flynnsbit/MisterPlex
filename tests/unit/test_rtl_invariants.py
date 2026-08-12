@@ -426,6 +426,13 @@ def check_source_aspect_contract() -> None:
         "resolved source DAR must be published before playback starts",
     )
     check(
+        "sourceAspectPublished=player.setSourceAspect(resolved.sourceAspect)" in main_cpp
+        and "if(!sourceAspectPublished&&(displayRes.width!=contentRes.width||"
+        "displayRes.height!=contentRes.height))" in main_cpp
+        and "player.setDecodeSize(contentRes.width,contentRes.height)" in main_cpp,
+        "an unsupported display mailbox must retry the content layout before rejecting play",
+    )
+    check(
         'presentMode_!="fpga"&&presentMode_!="both"' in media
         and "fpga_.sendSourceAspect(aspect)" in media,
         "PLXJ acknowledgement must gate FPGA presentation without requiring FPGA hardware "

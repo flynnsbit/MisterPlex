@@ -845,6 +845,56 @@ int main(int argc, char** argv) {
                              resolved.sourceAspect.x, resolved.sourceAspect.y);
             }
         }
+
+        // Plex Web may send only containerKey=/playQueues/N. A ratingKey is not a
+        // playQueueItemID; inventing one makes the controller index a nonexistent
+        // queue row and discard otherwise advancing timeline polls.
+        std::string resolvedPlayQueueItemId = req.playQueueItemId;
+        std::string resolvedPlayQueueId = req.playQueueId;
+        std::string resolvedPlayQueueVersion = req.playQueueVersion;
+        std::string resolvedContainerKey = req.containerKey;
+        if (resolvedPlayQueueItemId.empty()) {
+            std::string queueRef = req.containerKey;
+            if (queueRef.empty() && !req.playQueueId.empty())
+                queueRef = "/playQueues/" + req.playQueueId;
+            std::string queueToken = req.token;
+            if (queueToken.empty() && req.address.empty())
+                queueToken = confToken;
+            if (!queueRef.empty() && queueRef.find("/playQueues/") != std::string::npos) {
+                const auto queue =
+                    misterplex::fetchPlayQueue(queueRef, base, queueToken, req.key, {});
+                if (queue.ok && queue.currentIndex >= 0 &&
+                    static_cast<size_t>(queue.currentIndex) < queue.items.size()) {
+                    const auto& item = queue.items[static_cast<size_t>(queue.currentIndex)];
+                    const bool keyMatches =
+                        item.key == req.key ||
+                        (!item.ratingKey.empty() &&
+                         (item.ratingKey == resolved.ratingKey ||
+                          req.key.find(item.ratingKey) != std::string::npos));
+                    if (keyMatches && !item.playQueueItemId.empty()) {
+                        resolvedPlayQueueItemId = item.playQueueItemId;
+                        if (!queue.playQueueId.empty())
+                            resolvedPlayQueueId = queue.playQueueId;
+                        if (!queue.playQueueVersion.empty())
+                            resolvedPlayQueueVersion = queue.playQueueVersion;
+                        if (!queue.containerKey.empty())
+                            resolvedContainerKey = queue.containerKey + "?own=1";
+                        std::fprintf(stderr,
+                                     "misterplexd: play queue bound id=%s item=%s version=%s\n",
+                                     resolvedPlayQueueId.c_str(),
+                                     resolvedPlayQueueItemId.c_str(),
+                                     resolvedPlayQueueVersion.empty()
+                                         ? "-"
+                                         : resolvedPlayQueueVersion.c_str());
+                    }
+                } else {
+                    std::fprintf(stderr,
+                                 "misterplexd: play queue identity unavailable: %s\n",
+                                 queue.detail.c_str());
+                }
+            }
+        }
+
         handoff = std::unique_lock<std::mutex>(playHandoffMu);
         if (gen != playGen.load() || !comp.acceptsPlayRequest(req)) {
             std::fprintf(stderr,
@@ -857,7 +907,18 @@ int main(int argc, char** argv) {
         // Present/DDR bank follows display; PMS ladder follows content.
         player.setDecodeSize(displayRes.width, displayRes.height);
         player.setContentFpsRational(resolvedFpsNum, resolvedFpsDen);
-        if (!player.setSourceAspect(resolved.sourceAspect)) {
+        bool sourceAspectPublished = player.setSourceAspect(resolved.sourceAspect);
+        if (!sourceAspectPublished &&
+            (displayRes.width != contentRes.width || displayRes.height != contentRes.height)) {
+            std::fprintf(
+                stderr,
+                "misterplexd: source aspect display layout ACK failed; retrying content "
+                "layout %dx%d\n",
+                contentRes.width, contentRes.height);
+            player.setDecodeSize(contentRes.width, contentRes.height);
+            sourceAspectPublished = player.setSourceAspect(resolved.sourceAspect);
+        }
+        if (!sourceAspectPublished) {
             std::fprintf(stderr,
                          "misterplexd: PLAY rejected: source aspect unknown or FPGA ACK "
                          "did not match\n");
@@ -894,6 +955,14 @@ int main(int argc, char** argv) {
         misterplex::PlayRequest bound = req;
         if (bound.ratingKey.empty())
             bound.ratingKey = resolved.ratingKey;
+        if (bound.playQueueItemId.empty())
+            bound.playQueueItemId = resolvedPlayQueueItemId;
+        if (bound.playQueueId.empty())
+            bound.playQueueId = resolvedPlayQueueId;
+        if (bound.playQueueVersion.empty())
+            bound.playQueueVersion = resolvedPlayQueueVersion;
+        if (bound.containerKey.empty())
+            bound.containerKey = resolvedContainerKey;
         if (bound.address.empty() && !base.empty()) {
             auto hostport = base;
             auto p = hostport.find("://");

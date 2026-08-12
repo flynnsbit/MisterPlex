@@ -70,6 +70,7 @@ unit-unlocked: preflight $(ROOT)/build/test_gdm_filter $(ROOT)/build/test_spi_tx
 	$(ROOT)/build/test_resolve
 	$(ROOT)/build/test_pms_timeline
 	$(ROOT)/build/test_companion_plant_seek
+	$(ROOT)/build/test_companion_subscription
 	$(ROOT)/tests/unit/test_pms_baseline_gate.sh
 	$(ROOT)/build/test_h264_bitstream_source
 	$(ROOT)/build/test_frame_store_math
@@ -415,6 +416,15 @@ $(ROOT)/build/test_companion_plant_seek: $(ROOT)/tests/unit/test_companion_plant
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -I$(ROOT)/arm/misterplexd -I$(ROOT)/host -pthread -o $@ \
 		$(ROOT)/tests/unit/test_companion_plant_seek.cpp $(ROOT)/arm/misterplexd/companion.cpp
+
+$(ROOT)/build/test_companion_subscription: \
+		$(ROOT)/tests/unit/test_companion_subscription.cpp \
+		$(ROOT)/arm/misterplexd/companion.cpp \
+		$(ROOT)/arm/misterplexd/companion.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -I$(ROOT)/arm/misterplexd -I$(ROOT)/host -pthread -o $@ \
+		$(ROOT)/tests/unit/test_companion_subscription.cpp \
+		$(ROOT)/arm/misterplexd/companion.cpp
 
 $(ROOT)/build/test_h264_bitstream_source: $(ROOT)/tests/unit/test_h264_bitstream_source.cpp \
 		$(ROOT)/host/libmisterplex/h264_bitstream_transport.hpp \

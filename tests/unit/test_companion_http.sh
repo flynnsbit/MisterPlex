@@ -92,7 +92,8 @@ echo "$POLL" | grep -Eq 'state="(buffering|playing|paused)"'
 
 # ratingKey derived from key path when omitted
 echo "$POLL" | grep -q 'ratingKey="1"' || fail "missing derived ratingKey from key: $POLL"
-echo "$POLL" | grep -q 'playQueueItemID="1"' || fail "missing pqItem fallback from ratingKey: $POLL"
+echo "$POLL" | grep -qv 'playQueueItemID=' ||
+  fail "invented playQueueItemID from ratingKey: $POLL"
 
 # pause / play / stop control paths
 curl -fsS "http://127.0.0.1:${PORT}/player/playback/pause?commandID=3" | grep -q Timeline

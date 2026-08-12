@@ -413,3 +413,20 @@ lookahead must wrap modulo `FRAME_H`; legacy modes retain their clamp. The activ
 gate requires `fallback_fires=0`, `soft_c=0`, and `underrun_delta=0`, and its clamped-
 lookahead red twin proves the old behavior fails. Never preserve an invalid control event
 because it masks a data-path timing hole; remove it, then fix the newly exposed hole.
+
+## L43 — PMS-proxied Companion responses require player identity
+
+**Symptom:** `/player/timeline/poll` contains advancing `time=`, the Docker PMS
+`CompanionProxy` forwards every poll with HTTP 200, and Plex Web shows the target as
+playing, but its elapsed time remains at `0:00`.
+
+**Cause:** Plex Web 4.160.0 accepts a proxied poll only when the response header
+`X-Plex-Client-Identifier` matches the selected player's machine identifier. A direct
+player URL bypasses that comparison, which made direct Companion tests false-green.
+Commit `07935567` supplied the header, but a later merge restored an older `sendHttp`
+implementation and silently removed it.
+
+**Fix:** Every Companion HTTP response includes
+`X-Plex-Client-Identifier: <player-id>` and exposes that header through CORS. The
+subscription regression test checks the raw poll response header. Verify through the
+real PMS proxy, not only by curling port 3005 directly.

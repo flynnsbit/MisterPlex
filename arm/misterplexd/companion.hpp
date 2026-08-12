@@ -4,11 +4,13 @@
 // async playMedia ACK, viewOffset ms, resume-dialog hold after stop.
 
 #include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <functional>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace misterplex {
 
@@ -105,8 +107,35 @@ public:
     }
 
 private:
+    struct TimelineSubscriber {
+        std::string id;
+        std::string host;
+        std::string protocol;
+        std::string commandId;
+        uint16_t port = 0;
+        unsigned failures = 0;
+    };
+
+    struct ControllerCommand {
+        std::string id;
+        std::string host;
+        std::string commandId;
+    };
+
     void gdmLoop();
     void httpLoop();
+    void timelinePushLoop();
+    void requestTimelinePush(bool immediate);
+    void subscribeTimeline(const std::string& id, const std::string& host,
+                           const std::string& protocol, uint16_t port,
+                           const std::string& commandId);
+    void updateTimelineCommand(const std::string& id, const std::string& host,
+                               const std::string& commandId);
+    std::string timelineCommandFor(const std::string& id, const std::string& host,
+                                   const std::string& commandId);
+    bool unsubscribeTimeline(const std::string& id, const std::string& host);
+    bool postTimeline(const TimelineSubscriber& subscriber,
+                      const std::string& xml) const;
     std::string gdmPayload() const;
     std::string resourcesXml() const;
     std::string timelineXml(const std::string& commandId) const;
@@ -132,6 +161,15 @@ private:
     std::atomic<bool> running_{false};
     std::thread gdmThr_;
     std::thread httpThr_;
+    std::thread timelinePushThr_;
+
+    std::mutex subscriberMu_;
+    std::vector<TimelineSubscriber> subscribers_;
+    std::vector<ControllerCommand> controllerCommands_;
+    std::mutex timelinePushMu_;
+    std::condition_variable timelinePushCv_;
+    bool timelinePushPending_ = false;
+    bool timelinePushImmediate_ = false;
 
     mutable std::mutex mu_;
     std::string state_ = "stopped";
