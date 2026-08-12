@@ -158,8 +158,9 @@ run_red() {
 echo "RTL SIM: $VERILATOR_VERSION"
 echo "TRUE480_RTL_DIR=$RTL"
 echo "TRUE480_CONFIG=$([[ "$ACTIVE_CONFIG" -eq 1 ]] && echo active || echo legacy)"
-if RTL_HEAD="$(git -C "$RTL" rev-parse HEAD 2>/dev/null)"; then
-  echo "TRUE480_RTL_HEAD=$RTL_HEAD"
+if RTL_GIT_TOP="$(git -C "$RTL" rev-parse --show-toplevel 2>/dev/null)" &&
+   [[ "$(realpath "$RTL")" == "$(realpath "$RTL_GIT_TOP/fpga/Plex_MiSTer/rtl")" ]]; then
+  echo "TRUE480_RTL_HEAD=$(git -C "$RTL_GIT_TOP" rev-parse HEAD)"
 fi
 if [[ "$MODE" == "--calibrate-keepv22" || "$MODE" == "--calibrate-keepv27" ]]; then
   PRESENT="$(build_present)"

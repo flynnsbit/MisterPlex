@@ -4,6 +4,7 @@
 #include "true480_i420_test_support.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
@@ -49,6 +50,382 @@ struct DdrStats {
     uint32_t maxBurst = 0;
     uint32_t minObservedLatency = UINT32_MAX;
     uint32_t maxObservedLatency = 0;
+};
+
+struct RefillCounters {
+    std::array<uint64_t, 2> issues{};
+    std::array<uint64_t, 2> completions{};
+    std::array<uint64_t, 2> firstFills{};
+    std::array<uint64_t, 2> residentDuplicates{};
+    std::array<uint64_t, 2> otherSlotCopies{};
+    std::array<uint64_t, 2> inflightDuplicates{};
+    std::array<uint64_t, 2> notNeeded{};
+    std::array<uint64_t, 2> notNewlyNeeded{};
+    std::array<uint64_t, 2> stalePipelineReplays{};
+    std::array<uint64_t, 2> sameWindowReloads{};
+    std::array<uint64_t, 2> legitimateSlidingReloads{};
+    std::array<uint64_t, 2> schedReplayIssues{};
+    std::array<uint64_t, 2> comboStillNeeded{};
+    std::array<uint64_t, 2> currentIssues{};
+    std::array<uint64_t, 2> pendingIssues{};
+    std::array<uint64_t, 2> scheduledForPending{};
+    uint64_t completionWithoutInflight = 0;
+    uint64_t wrapperNeedMismatch = 0;
+    uint64_t invalidLineId = 0;
+};
+
+RefillCounters subtract(const RefillCounters& after,
+                        const RefillCounters& before) {
+    RefillCounters result;
+    for (int p = 0; p < 2; ++p) {
+#define REFILL_SUB(field) result.field[p] = after.field[p] - before.field[p]
+        REFILL_SUB(issues);
+        REFILL_SUB(completions);
+        REFILL_SUB(firstFills);
+        REFILL_SUB(residentDuplicates);
+        REFILL_SUB(otherSlotCopies);
+        REFILL_SUB(inflightDuplicates);
+        REFILL_SUB(notNeeded);
+        REFILL_SUB(notNewlyNeeded);
+        REFILL_SUB(stalePipelineReplays);
+        REFILL_SUB(sameWindowReloads);
+        REFILL_SUB(legitimateSlidingReloads);
+        REFILL_SUB(schedReplayIssues);
+        REFILL_SUB(comboStillNeeded);
+        REFILL_SUB(currentIssues);
+        REFILL_SUB(pendingIssues);
+        REFILL_SUB(scheduledForPending);
+#undef REFILL_SUB
+    }
+    result.completionWithoutInflight =
+        after.completionWithoutInflight - before.completionWithoutInflight;
+    result.wrapperNeedMismatch =
+        after.wrapperNeedMismatch - before.wrapperNeedMismatch;
+    result.invalidLineId = after.invalidLineId - before.invalidLineId;
+    return result;
+}
+
+struct RefillLineStats {
+    uint64_t issues = 0;
+    uint64_t completions = 0;
+    uint64_t residentDuplicates = 0;
+    uint64_t inflightDuplicates = 0;
+    uint64_t stalePipelineReplays = 0;
+    uint64_t sameWindowReloads = 0;
+    uint64_t legitimateSlidingReloads = 0;
+    uint64_t notNeeded = 0;
+};
+
+struct RefillLineState {
+    bool needed = false;
+    bool inflight = false;
+    uint64_t needEpoch = 0;
+    uint64_t completions = 0;
+    uint64_t lastCompletionNeedEpoch = 0;
+};
+
+struct RefillEvent {
+    uint64_t sequence = 0;
+    bool issue = false;
+    bool bank = false;
+    bool chroma = false;
+    uint16_t line = 0;
+    uint8_t slot = 0;
+    std::string classification;
+};
+
+class RefillTracker {
+public:
+    void observe(const Vtrue480_shared_ddr_tb& top) {
+        updateDemand(top);
+        if (top.telem_fill_issue)
+            recordIssue(top);
+        if (top.telem_fill_complete)
+            recordCompletion(top);
+    }
+
+    void beginDetailWindow() {
+        detailActive = true;
+        detailEvents.clear();
+        detailLines.fill(RefillLineStats{});
+    }
+
+    void endDetailWindow() { detailActive = false; }
+
+    const RefillCounters& getCounters() const { return counters; }
+
+    void printDetail(size_t limitPerPlane = 8) const {
+        for (int wantedPlane = 0; wantedPlane < 2; ++wantedPlane) {
+            std::vector<size_t> order;
+            for (size_t i = 0; i < detailLines.size(); ++i) {
+                const int group = static_cast<int>(i / kLinesPerGroup);
+                const auto& line = detailLines[i];
+                if ((group & 1) == wantedPlane &&
+                    (line.issues || line.completions))
+                    order.push_back(i);
+            }
+            std::sort(order.begin(), order.end(), [this](size_t a, size_t b) {
+                const auto score = [](const RefillLineStats& line) {
+                    return line.residentDuplicates +
+                           line.inflightDuplicates +
+                           line.sameWindowReloads + line.notNeeded;
+                };
+                const uint64_t sa = score(detailLines[a]);
+                const uint64_t sb = score(detailLines[b]);
+                if (sa != sb)
+                    return sa > sb;
+                if (detailLines[a].issues != detailLines[b].issues)
+                    return detailLines[a].issues > detailLines[b].issues;
+                return a < b;
+            });
+            for (size_t rank = 0;
+                 rank < std::min(limitPerPlane, order.size()); ++rank) {
+                const size_t lineKey = order[rank];
+                const auto& line = detailLines[lineKey];
+                const int group =
+                    static_cast<int>(lineKey / kLinesPerGroup);
+                const int lineId =
+                    static_cast<int>(lineKey % kLinesPerGroup);
+                std::cout << "TRUE480_REFILL_TOP rank=" << rank + 1
+                          << " bank=" << group / 2
+                          << " plane=" << (wantedPlane ? "C" : "Y")
+                          << " line=" << lineId
+                          << " issues=" << line.issues
+                          << " completions=" << line.completions
+                          << " resident_dup=" << line.residentDuplicates
+                          << " inflight_dup=" << line.inflightDuplicates
+                          << " stale_replay=" << line.stalePipelineReplays
+                          << " same_window_reload="
+                          << line.sameWindowReloads
+                          << " legit_sliding_reload="
+                          << line.legitimateSlidingReloads
+                          << " not_needed=" << line.notNeeded << "\n";
+            }
+        }
+        for (const auto& event : detailEvents) {
+            std::cout << "TRUE480_REFILL_EVENT seq=" << event.sequence
+                      << " kind=" << (event.issue ? "ISSUE" : "COMPLETE")
+                      << " bank=" << event.bank
+                      << " plane=" << (event.chroma ? "C" : "Y")
+                      << " line=" << event.line
+                      << " slot=" << static_cast<int>(event.slot)
+                      << " class=" << event.classification << "\n";
+        }
+    }
+
+private:
+    static constexpr size_t kLinesPerGroup = 480;
+    static constexpr size_t kGroups = 4;
+    static constexpr size_t kStateCount = kLinesPerGroup * kGroups;
+    std::array<RefillLineState, kStateCount> states{};
+    std::array<RefillLineStats, kStateCount> detailLines{};
+    RefillCounters counters;
+    std::vector<RefillEvent> detailEvents;
+    bool demandValid = false;
+    bool detailActive = false;
+    uint16_t lastDesiredY0 = 0;
+    uint16_t lastDesiredY7 = 0;
+    bool lastDispBank = false;
+    bool lastSwapPending = false;
+    bool lastPendingBank = false;
+    uint64_t eventSequence = 0;
+
+    static size_t key(bool bank, bool chroma, uint16_t line) {
+        return (static_cast<size_t>(bank) * 2 +
+                static_cast<size_t>(chroma)) *
+                   kLinesPerGroup +
+               line;
+    }
+
+    bool neededFor(const Vtrue480_shared_ddr_tb& top, bool bank,
+                   bool chroma, uint16_t line) const {
+        const uint16_t y0 = top.telem_desired_y0;
+        const uint16_t y7 = top.telem_desired_y7;
+        bool needed = false;
+        if (bank == static_cast<bool>(top.telem_disp_bank)) {
+            if (chroma)
+                needed = line >= y0 / 2 && line <= y7 / 2;
+            else
+                needed = line >= y0 && line <= y7;
+        }
+        if (top.telem_swap_pending &&
+            bank == static_cast<bool>(top.telem_pending_bank)) {
+            if (chroma)
+                needed = needed || line <= 3;
+            else
+                needed = needed || line <= 7;
+        }
+        return needed;
+    }
+
+    void updateDemand(const Vtrue480_shared_ddr_tb& top) {
+        const uint16_t y0 = top.telem_desired_y0;
+        const uint16_t y7 = top.telem_desired_y7;
+        const bool dispBank = top.telem_disp_bank;
+        const bool swapPending = top.telem_swap_pending;
+        const bool pendingBank = top.telem_pending_bank;
+        if (demandValid && y0 == lastDesiredY0 && y7 == lastDesiredY7 &&
+            dispBank == lastDispBank && swapPending == lastSwapPending &&
+            pendingBank == lastPendingBank)
+            return;
+        for (bool bank : {false, true}) {
+            for (bool chroma : {false, true}) {
+                const uint16_t lineLimit = chroma ? 240 : 480;
+                for (uint16_t line = 0; line < lineLimit; ++line) {
+                    auto& state = states[key(bank, chroma, line)];
+                    const bool now = neededFor(top, bank, chroma, line);
+                    if (!state.needed && now)
+                        ++state.needEpoch;
+                    state.needed = now;
+                }
+            }
+        }
+        demandValid = true;
+        lastDesiredY0 = y0;
+        lastDesiredY7 = y7;
+        lastDispBank = dispBank;
+        lastSwapPending = swapPending;
+        lastPendingBank = pendingBank;
+    }
+
+    bool validLine(bool chroma, uint16_t line) const {
+        return line < (chroma ? 240 : 480);
+    }
+
+    void rememberEvent(bool issue, bool bank, bool chroma, uint16_t line,
+                       uint8_t slot, const std::string& classification) {
+        if (!detailActive || detailEvents.size() >= 24)
+            return;
+        detailEvents.push_back(
+            {eventSequence, issue, bank, chroma, line, slot, classification});
+    }
+
+    void recordIssue(const Vtrue480_shared_ddr_tb& top) {
+        ++eventSequence;
+        const bool bank = top.telem_fill_bank;
+        const bool chroma = top.telem_fill_chroma;
+        const uint16_t line = top.telem_fill_line;
+        const int plane = chroma ? 1 : 0;
+        if (!validLine(chroma, line)) {
+            ++counters.invalidLineId;
+            rememberEvent(true, bank, chroma, line, top.telem_fill_slot,
+                          "INVALID_LINE");
+            return;
+        }
+        auto& state = states[key(bank, chroma, line)];
+        auto& detail = detailLines[key(bank, chroma, line)];
+        const bool resident = top.telem_issue_resident;
+        const bool anyResident = top.telem_issue_any_resident;
+        const bool inflight = state.inflight;
+        const bool needed =
+            top.telem_issue_needed_current || top.telem_issue_needed_pending;
+        const bool trackerNeeded = state.needed;
+        const bool seenCompleted = state.completions != 0;
+        const bool demandAdvanced =
+            seenCompleted &&
+            state.needEpoch > state.lastCompletionNeedEpoch;
+        const bool issuedEarlierThisWindow =
+            detailActive && detail.issues != 0;
+        const bool staleReplay =
+            resident && top.telem_issue_sched_replay;
+        const bool sameWindowReload =
+            !resident && !inflight && needed && seenCompleted &&
+            (detailActive ? issuedEarlierThisWindow : !demandAdvanced);
+        const bool legitimateReload =
+            !resident && !inflight && needed && seenCompleted &&
+            (detailActive ? !issuedEarlierThisWindow : demandAdvanced);
+        const bool notNewlyNeeded =
+            !needed || resident || inflight || sameWindowReload;
+        std::string classification;
+
+        ++counters.issues[plane];
+        if (detailActive)
+            ++detail.issues;
+        if (top.telem_issue_sched_replay)
+            ++counters.schedReplayIssues[plane];
+        if (top.telem_issue_need_combo)
+            ++counters.comboStillNeeded[plane];
+        if (top.telem_issue_needed_current)
+            ++counters.currentIssues[plane];
+        if (top.telem_issue_needed_pending)
+            ++counters.pendingIssues[plane];
+        if (top.telem_issue_for_pending)
+            ++counters.scheduledForPending[plane];
+        if (anyResident && !resident)
+            ++counters.otherSlotCopies[plane];
+        if (needed != trackerNeeded)
+            ++counters.wrapperNeedMismatch;
+        if (notNewlyNeeded)
+            ++counters.notNewlyNeeded[plane];
+
+        if (inflight) {
+            ++counters.inflightDuplicates[plane];
+            if (detailActive)
+                ++detail.inflightDuplicates;
+            classification = "INFLIGHT_DUP";
+        } else if (resident) {
+            ++counters.residentDuplicates[plane];
+            if (detailActive)
+                ++detail.residentDuplicates;
+            if (staleReplay) {
+                ++counters.stalePipelineReplays[plane];
+                if (detailActive)
+                    ++detail.stalePipelineReplays;
+                classification = "STALE_PIPELINE_REPLAY";
+            } else {
+                classification = "RESIDENT_DUP";
+            }
+        } else if (!needed) {
+            ++counters.notNeeded[plane];
+            if (detailActive)
+                ++detail.notNeeded;
+            classification = "NOT_NEEDED";
+        } else if (!seenCompleted) {
+            ++counters.firstFills[plane];
+            classification = "FIRST_FILL";
+        } else if (legitimateReload) {
+            ++counters.legitimateSlidingReloads[plane];
+            if (detailActive)
+                ++detail.legitimateSlidingReloads;
+            classification = "LEGIT_SLIDING_RELOAD";
+        } else if (sameWindowReload) {
+            ++counters.sameWindowReloads[plane];
+            if (detailActive)
+                ++detail.sameWindowReloads;
+            classification = "SAME_WINDOW_RELOAD";
+        } else {
+            classification = "UNCLASSIFIED";
+        }
+        state.inflight = true;
+        rememberEvent(true, bank, chroma, line, top.telem_fill_slot,
+                      classification);
+    }
+
+    void recordCompletion(const Vtrue480_shared_ddr_tb& top) {
+        ++eventSequence;
+        const bool bank = top.telem_fill_bank;
+        const bool chroma = top.telem_fill_chroma;
+        const uint16_t line = top.telem_fill_line;
+        const int plane = chroma ? 1 : 0;
+        if (!validLine(chroma, line)) {
+            ++counters.invalidLineId;
+            rememberEvent(false, bank, chroma, line, top.telem_fill_slot,
+                          "INVALID_LINE");
+            return;
+        }
+        auto& state = states[key(bank, chroma, line)];
+        auto& detail = detailLines[key(bank, chroma, line)];
+        ++counters.completions[plane];
+        if (detailActive)
+            ++detail.completions;
+        if (!state.inflight)
+            ++counters.completionWithoutInflight;
+        state.inflight = false;
+        ++state.completions;
+        state.lastCompletionNeedEpoch = state.needEpoch;
+        rememberEvent(false, bank, chroma, line, top.telem_fill_slot,
+                      "COMPLETE");
+    }
 };
 
 class SharedDdrModel {
@@ -278,6 +655,8 @@ struct FrameMetrics {
     uint32_t m1WantAfter = 0;
     DdrStats ddrBefore;
     DdrStats ddrAfter;
+    RefillCounters refillBefore;
+    RefillCounters refillAfter;
 };
 
 class Sim {
@@ -330,14 +709,17 @@ public:
         return false;
     }
 
-    FrameMetrics captureFrame() {
+    FrameMetrics captureFrame(bool recordRefillDetails = false) {
         runUntilFrameStart();
+        if (recordRefillDetails)
+            refill.beginDetailWindow();
         FrameMetrics m;
         m.underrunBefore = top.underrun_count;
         m.m1ReadsBefore = top.m1_reads_issued;
         m.m1ResponsesBefore = top.m1_responses_seen;
         m.m1WantBefore = top.m1_want_cycles;
         m.ddrBefore = ddr.getStats();
+        m.refillBefore = refill.getCounters();
         bool leftStart = false;
         const uint64_t start = sysPosedges;
         while (sysPosedges - start < 800000) {
@@ -382,6 +764,9 @@ public:
         m.m1ResponsesAfter = top.m1_responses_seen;
         m.m1WantAfter = top.m1_want_cycles;
         m.ddrAfter = ddr.getStats();
+        m.refillAfter = refill.getCounters();
+        if (recordRefillDetails)
+            refill.endDetailWindow();
         return m;
     }
 
@@ -396,6 +781,7 @@ public:
 
     Vtrue480_shared_ddr_tb top{};
     SharedDdrModel ddr;
+    RefillTracker refill;
 
 private:
     uint64_t now = 0;
@@ -426,6 +812,8 @@ private:
             nextSysEdge += 9;
         }
         top.eval();
+        if (ddrRise)
+            refill.observe(top);
         if (sysRise)
             ++sysPosedges;
         lastSysPosedge = sysRise;
@@ -470,14 +858,18 @@ int runProof(bool idealModel, bool resourceOnly, bool requireActiveConfig) {
     const bool activeConfig = sim.top.cfg_active_config;
     const bool nativeBeam = sim.top.cfg_native_beam_source;
     const int fillStride = sim.top.cfg_y_fill_stride;
+    const bool refillTelemetry = sim.top.cfg_refill_telemetry;
     std::cout << "TRUE480_SHARED_BUILD_CONFIG active_define=" << activeConfig
               << " native_beam_source=" << nativeBeam
               << " y_fill_stride=" << fillStride
+              << " refill_telemetry=" << refillTelemetry
               << " required=" << requireActiveConfig << "\n";
     if (requireActiveConfig &&
-        (!activeConfig || !nativeBeam || fillStride != 1)) {
+        (!activeConfig || !nativeBeam || fillStride != 1 ||
+         !refillTelemetry)) {
         std::cerr << "FAIL true480 shared active configuration disappeared: "
-                     "define/native beam/fill stride contract is not active\n";
+                     "define/native beam/fill stride/telemetry contract "
+                     "is not active\n";
         return 1;
     }
     const int resourceRc = checkResourceContract(sim.top);
@@ -535,7 +927,7 @@ int runProof(bool idealModel, bool resourceOnly, bool requireActiveConfig) {
     }
     for (int i = 0; i < 3; ++i)
         sim.captureFrame();
-    const FrameMetrics m = sim.captureFrame();
+    const FrameMetrics m = sim.captureFrame(true);
     sim.stopM1AndDrain();
 
     const uint64_t expectedActive =
@@ -552,6 +944,8 @@ int runProof(bool idealModel, bool resourceOnly, bool requireActiveConfig) {
     const uint32_t m1Responses =
         m.m1ResponsesAfter - m.m1ResponsesBefore;
     const uint32_t m1WantCycles = m.m1WantAfter - m.m1WantBefore;
+    const RefillCounters refill =
+        subtract(m.refillAfter, m.refillBefore);
 
     bool ok = true;
     auto fail = [&ok](const std::string& what) {
@@ -631,6 +1025,100 @@ int runProof(bool idealModel, bool resourceOnly, bool requireActiveConfig) {
              " m1_expected=" +
              std::to_string(sim.ddr.getStats().m1ExpectedBeats) +
              " m1_seen=" + std::to_string(sim.ddr.getStats().m1Beats));
+    if (activeConfig) {
+        for (int plane = 0; plane < 2; ++plane) {
+            const uint64_t classified =
+                refill.firstFills[plane] +
+                refill.residentDuplicates[plane] +
+                refill.inflightDuplicates[plane] +
+                refill.notNeeded[plane] +
+                refill.sameWindowReloads[plane] +
+                refill.legitimateSlidingReloads[plane];
+            const uint64_t issueCompleteDelta =
+                refill.issues[plane] > refill.completions[plane]
+                    ? refill.issues[plane] - refill.completions[plane]
+                    : refill.completions[plane] - refill.issues[plane];
+            if (refill.issues[plane] == 0 ||
+                classified != refill.issues[plane] ||
+                issueCompleteDelta > 1)
+                fail(std::string("refill_telemetry plane=") +
+                     (plane ? "C" : "Y") +
+                     " issues=" + std::to_string(refill.issues[plane]) +
+                     " completions=" +
+                     std::to_string(refill.completions[plane]) +
+                     " classified=" + std::to_string(classified));
+        }
+        if (refill.invalidLineId != 0 ||
+            refill.completionWithoutInflight != 0)
+            fail("refill_telemetry_protocol invalid_line=" +
+                 std::to_string(refill.invalidLineId) +
+                 " completion_without_inflight=" +
+                 std::to_string(refill.completionWithoutInflight));
+    }
+
+    if (activeConfig) {
+        const uint64_t totalIssues =
+            refill.issues[0] + refill.issues[1];
+        const uint64_t legitimate =
+            refill.legitimateSlidingReloads[0] +
+            refill.legitimateSlidingReloads[1] +
+            refill.firstFills[0] + refill.firstFills[1];
+        const uint64_t redundant =
+            refill.notNewlyNeeded[0] + refill.notNewlyNeeded[1];
+        const uint64_t stale =
+            refill.stalePipelineReplays[0] +
+            refill.stalePipelineReplays[1];
+        const uint64_t sameWindow =
+            refill.sameWindowReloads[0] +
+            refill.sameWindowReloads[1];
+        std::cout
+            << "TRUE480_REFILL_TELEMETRY"
+            << " total_issues=" << totalIssues
+            << " legitimate=" << legitimate
+            << " redundant=" << redundant
+            << " redundant_permille="
+            << (totalIssues ? redundant * 1000 / totalIssues : 0)
+            << " redundant_qword_beats=" << redundant * 78
+            << " stale_total=" << stale
+            << " same_window_total=" << sameWindow
+            << " y_issues=" << refill.issues[0]
+            << " y_completions=" << refill.completions[0]
+            << " c_issues=" << refill.issues[1]
+            << " c_completions=" << refill.completions[1]
+            << " y_first=" << refill.firstFills[0]
+            << " c_first=" << refill.firstFills[1]
+            << " y_resident_dup=" << refill.residentDuplicates[0]
+            << " c_resident_dup=" << refill.residentDuplicates[1]
+            << " y_other_slot_copy=" << refill.otherSlotCopies[0]
+            << " c_other_slot_copy=" << refill.otherSlotCopies[1]
+            << " y_inflight_dup=" << refill.inflightDuplicates[0]
+            << " c_inflight_dup=" << refill.inflightDuplicates[1]
+            << " y_not_needed=" << refill.notNeeded[0]
+            << " c_not_needed=" << refill.notNeeded[1]
+            << " y_not_newly_needed=" << refill.notNewlyNeeded[0]
+            << " c_not_newly_needed=" << refill.notNewlyNeeded[1]
+            << " y_stale_replay=" << refill.stalePipelineReplays[0]
+            << " c_stale_replay=" << refill.stalePipelineReplays[1]
+            << " y_same_window_reload=" << refill.sameWindowReloads[0]
+            << " c_same_window_reload=" << refill.sameWindowReloads[1]
+            << " y_legit_sliding_reload="
+            << refill.legitimateSlidingReloads[0]
+            << " c_legit_sliding_reload="
+            << refill.legitimateSlidingReloads[1]
+            << " y_sched_replay=" << refill.schedReplayIssues[0]
+            << " c_sched_replay=" << refill.schedReplayIssues[1]
+            << " y_combo_need=" << refill.comboStillNeeded[0]
+            << " c_combo_need=" << refill.comboStillNeeded[1]
+            << " y_current=" << refill.currentIssues[0]
+            << " c_current=" << refill.currentIssues[1]
+            << " y_pending=" << refill.pendingIssues[0]
+            << " c_pending=" << refill.pendingIssues[1]
+            << " y_sched_for_pending=" << refill.scheduledForPending[0]
+            << " c_sched_for_pending=" << refill.scheduledForPending[1]
+            << " need_snapshot_mismatch=" << refill.wrapperNeedMismatch
+            << "\n";
+        sim.refill.printDetail();
+    }
 
     std::cout
         << "TRUE480_SHARED_DDR line_count="
