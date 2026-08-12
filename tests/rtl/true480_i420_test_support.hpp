@@ -40,7 +40,8 @@ inline uint64_t pack8(const uint8_t* p) {
 inline std::vector<uint8_t> makeIdleI420() {
     std::vector<uint8_t> frame(kFrameBytes);
     if (!misterplex::renderIdleYuv420p(
-            frame.data(), kCodedW, kCodedH, misterplex::IdleMode::Logo, 0))
+            frame.data(), kCodedW, kCodedH, misterplex::IdleMode::Logo, 0,
+            0, kDisplayW))
         throw std::runtime_error("daemon idle I420 generator rejected 624x480");
     return frame;
 }

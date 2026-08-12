@@ -6,6 +6,7 @@
 #include "libmisterplex/idle_screen.hpp"
 #include "libmisterplex/osd_menu.hpp"
 
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <string>
@@ -240,6 +241,69 @@ int main() {
     expectI420Sample(yuv, bgX0, bgY0, kBgY, kBgU, kBgV);
     expectI420Sample(yuv2, fgX1, fgY1, kFgY, kFgU, kFgV);
     CHECK(fgX0 != fgX1 || fgY0 != fgY1);
+
+    // Center the painted glyph, not its wider design box. True480 must center
+    // against the 618 visible source pixels; the final 6 coded pixels are cropped.
+    {
+        auto solidRgbBounds = [](const std::vector<uint8_t>& frame, int rw, int rh,
+                                 int& minX, int& maxX, int& minY, int& maxY) {
+            minX = rw;
+            maxX = -1;
+            minY = rh;
+            maxY = -1;
+            for (int y = 0; y < rh; ++y) {
+                for (int x = 0; x < rw; ++x) {
+                    const size_t i = (static_cast<size_t>(y) * rw + x) * 3u;
+                    if (frame[i] != kIdleFgR || frame[i + 1] != kIdleFgG ||
+                        frame[i + 2] != kIdleFgB)
+                        continue;
+                    minX = std::min(minX, x);
+                    maxX = std::max(maxX, x);
+                    minY = std::min(minY, y);
+                    maxY = std::max(maxY, y);
+                }
+            }
+        };
+
+        int minX = 0, maxX = 0, minY = 0, maxY = 0;
+        renderIdleRgb24(buf.data(), w, h, IdleMode::Logo, 0);
+        solidRgbBounds(buf, w, h, minX, maxX, minY, maxY);
+        CHECK(maxX >= minX && maxY >= minY);
+        CHECK(std::abs((minX + maxX) - (w - 1)) <= 1);
+        CHECK(std::abs((minY + maxY) - (h - 1)) <= 1);
+
+        constexpr int codedW = 624;
+        constexpr int codedH = 480;
+        constexpr int displayW = 618;
+        constexpr int pillarLeft = 11;
+        std::vector<uint8_t> true480(
+            static_cast<size_t>(codedW) * codedH * 3u / 2u);
+        CHECK(renderIdleYuv420p(true480.data(), codedW, codedH, IdleMode::Logo, 0,
+                                0, displayW));
+        minX = codedW;
+        maxX = -1;
+        minY = codedH;
+        maxY = -1;
+        for (int y = 0; y < codedH; ++y) {
+            for (int x = 0; x < codedW; ++x) {
+                if (true480[static_cast<size_t>(y) * codedW + x] != kFgY)
+                    continue;
+                minX = std::min(minX, x);
+                maxX = std::max(maxX, x);
+                minY = std::min(minY, y);
+                maxY = std::max(maxY, y);
+            }
+        }
+        CHECK(maxX >= minX && maxY >= minY);
+        CHECK(minX + maxX == displayW - 1);
+        CHECK(minY + maxY == codedH - 1);
+        CHECK((minX + pillarLeft) + (maxX + pillarLeft) == 640 - 1);
+        for (int y = 0; y < codedH; ++y)
+            for (int x = displayW; x < codedW; ++x)
+                CHECK(true480[static_cast<size_t>(y) * codedW + x] != kFgY);
+        std::printf("chevron_center true480 source=%d..%d output=%d..%d center=319.5\n",
+                    minX, maxX, minX + pillarLeft, maxX + pillarLeft);
+    }
 
     if (fails) {
         std::fprintf(stderr, "test_osd_menu: %d failure(s)\n", fails);

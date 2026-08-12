@@ -827,7 +827,7 @@ void MediaPlayer::paintIdle() {
             std::vector<uint8_t> yuv(layout.frame_bytes);
             if (layout.frame_bytes > 0 &&
                 renderIdleYuv420p(yuv.data(), g.coded_width, g.coded_height, m,
-                                  idlePhase_.load())) {
+                                  idlePhase_.load(), g.crop_left, g.display_width)) {
                 // Paint BOTH banks identically. A single-bank idle leave the other
                 // bank stale; any later swap (or free-bank thrash) flashes the
                 // silhouette. Dual paint keeps glass stable after one idle tick.
