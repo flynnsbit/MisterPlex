@@ -11,6 +11,7 @@
 #include "libmisterplex/ddr_frame_layout.hpp"
 #include "libmisterplex/ddr_bitstream_ring.hpp"
 #include "libmisterplex/input_mailbox.hpp"
+#include "libmisterplex/source_aspect.hpp"
 #include "libmisterplex/spi_ack_wait.hpp"
 
 namespace misterplex {
@@ -137,6 +138,7 @@ public:
     bool readDdrDoorbellStatus(DdrDoorbellStatus& status);
     bool readFrameStoreStatus(FrameStoreStatus& status);
     bool readBankRelease(BankReleaseStatus& status);
+    bool readSourceAspectAck(SourceAspectAck& status);
     // Physical base used by core ddram_frame_rd (must match RTL PHYS_BASE).
     static constexpr uint32_t kDdrFrameBase = 0x30000000u;
     static constexpr uint32_t kDdrFrameStride = 0x40000u; // 256 KiB
@@ -172,6 +174,9 @@ public:
 
     // Push elementary bitstream (H.264 annex-B) to F3 bitstream_fifo. Appends.
     bool sendBitstreamChunk(const uint8_t* data, size_t len, uint8_t index = 3);
+    // Publish the source display aspect to hidden ioctl index 4. The core uses
+    // it for VIDEO_ARX/VIDEO_ARY when the OSD Aspect ratio is "Original".
+    bool sendSourceAspect(const SourceAspect& aspect);
     // Product path: copy complete Annex-B NAL records into the HPS DDR ring.
     // pushBitstreamNal() copies before returning, so the caller may immediately
     // reuse/free Nal::annexb. Full is transient; Desync/Fatal require a session
@@ -304,6 +309,7 @@ private:
     DdrTiming lastDdrTiming_{};
     DdrFrameLayout ddrLayout_ = makeDdrFrameLayout(320, 240);
     uint32_t doorbellSeq_ = 0;
+    uint8_t sourceAspectToken_ = 0;
     double lastDdrBankDoorbellMs_[2] = {-1.0, -1.0};
     DdrStrictReleaseState strictDdrRelease_{};
     bool mboxInit_ = false;

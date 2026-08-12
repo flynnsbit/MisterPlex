@@ -327,6 +327,23 @@ inline bool isPlex480pDdrFrameGeometry(const DdrFrameGeometry& g) {
            g.present_y == 0;
 }
 
+inline bool isPlex720pDdrFrameGeometry(const DdrFrameGeometry& g) {
+    return g.coded_width == kPlex720pCodedWidth &&
+           g.coded_height == kPlex720pCodedHeight &&
+           g.display_width == kPlex720pDisplayWidth &&
+           g.display_height == kPlex720pDisplayHeight &&
+           g.presented_width == kPlex720pPresentedWidth &&
+           g.presented_height == kPlex720pPresentedHeight &&
+           g.crop_left == 0 && g.crop_right == 0 &&
+           g.crop_top == 0 && g.crop_bottom == 0 &&
+           g.present_x == 0 && g.present_y == 0;
+}
+
+inline uint32_t ddrFramePhysBaseForGeometry(const DdrFrameGeometry& g) {
+    return isPlex720pDdrFrameGeometry(g) ? kPlex720pDdrFramePhysBase
+                                        : kDdrFramePhysBase;
+}
+
 inline DdrFrameGeometry ddrFrameGeometryForPresentedSize(int width, int height) {
     if (width == kPlex480pPresentedWidth && height == kPlex480pPresentedHeight)
         return plex480pDdrFrameGeometry();

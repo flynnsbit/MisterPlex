@@ -21,7 +21,9 @@ module ddr_frame_store_spi_kick_tb (
 	output wire        has_frame,
 	output wire        swap_pending,
 	output wire [15:0] frames_done,
-	output wire        doorbell_ok
+	output wire        doorbell_ok,
+	output wire        obs_swap_req_new,
+	output wire        obs_pending_ready
 );
 	ddr_frame_store #(
 		.FRAME_W(80),
@@ -52,6 +54,11 @@ module ddr_frame_store_spi_kick_tb (
 		.sdram_test_state(4'd0),
 		.sdram_size_code(4'd0),
 		.sdram_error_count(16'd0),
+		.source_aspect_valid(1'b0),
+		.source_aspect_x(12'd0),
+		.source_aspect_y(12'd0),
+		.source_aspect_token(8'd0),
+		.source_aspect_commit(1'b0),
 		.DDRAM_CLK(),
 		.DDRAM_BUSY(DDRAM_BUSY),
 		.DDRAM_BURSTCNT(DDRAM_BURSTCNT),
@@ -70,4 +77,6 @@ module ddr_frame_store_spi_kick_tb (
 		.doorbell_ok(doorbell_ok),
 		.debug_state()
 	);
+	assign obs_swap_req_new = dut.swap_req_new;
+	assign obs_pending_ready = dut.pending_ready_s2;
 endmodule

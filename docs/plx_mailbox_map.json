@@ -119,6 +119,25 @@
       "_note": "ARM constants pending w-osd commit alignment to PLXD"
     },
     {
+      "name": "PLXJ",
+      "purpose": "Source-aspect commit ACK (core to HPS)",
+      "address": "0x3007F130",
+      "relative_to": "DOORBELL_PHYS",
+      "offset": "0x130",
+      "magic": "0x504C584A",
+      "rtl_file": "rtl/ddr_frame_store.sv",
+      "rtl_addr_param": "ASPECT_MAILBOX_PHYS",
+      "rtl_magic_param": "MAGIC_J",
+      "arm_addr_const": "kPlxjAddr",
+      "arm_magic_const": "kPlxjMagic",
+      "layout": {
+        "31:0": "magic",
+        "43:32": "committed DAR X",
+        "55:44": "committed DAR Y",
+        "63:56": "PLXA packet token"
+      }
+    },
+    {
       "name": "PLXK",
       "purpose": "DDR doorbell (HPS\u2192core)",
       "address": "0x300FF000",

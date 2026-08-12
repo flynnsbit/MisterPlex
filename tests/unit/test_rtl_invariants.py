@@ -26,6 +26,17 @@ DDR_FRAME_LAYOUT_SVH = Path(
 DDR_FRAME_STORE = Path(
     os.environ.get("DDR_FRAME_STORE", ROOT / "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv")
 )
+SOURCE_ASPECT_RTL = Path(
+    os.environ.get(
+        "SOURCE_ASPECT_RTL", ROOT / "fpga/Plex_MiSTer/rtl/source_aspect_ingest.sv"
+    )
+)
+SOURCE_ASPECT_HPP = Path(
+    os.environ.get(
+        "SOURCE_ASPECT_HPP", ROOT / "host/libmisterplex/source_aspect.hpp"
+    )
+)
+PLEX_QIP = Path(os.environ.get("PLEX_QIP", ROOT / "fpga/Plex_MiSTer/files.qip"))
 H264_DEBLOCK = Path(
     os.environ.get("H264_DEBLOCK", ROOT / "fpga/Plex_MiSTer/rtl/h264_deblock.sv")
 )
@@ -366,6 +377,104 @@ def check_plex_reset_domains() -> None:
     print("PASS Plex.sv DDR presenter reset is not held behind SDRAM startup")
 
 
+def check_source_aspect_contract() -> None:
+    plex = norm(strip_comments(read(PLEX_SV)))
+    aspect_rtl = norm(strip_comments(read(SOURCE_ASPECT_RTL)))
+    aspect_host = norm(strip_comments(read(SOURCE_ASPECT_HPP)))
+    fpga_cpp = norm(strip_comments(read(FPGA_SPI_CPP)))
+    media = norm(strip_comments(read(MEDIA_PLAYER_CPP)))
+    media_hpp = norm(strip_comments(read(ROOT / "arm/misterplexd/media_player.hpp")))
+    main_cpp = norm(strip_comments(read(MISTERPLEXD_MAIN_CPP)))
+    qip = read(PLEX_QIP)
+
+    check(
+        "rtl/source_aspect_ingest.sv" in qip,
+        "source-aspect ingest is absent from files.qip and would be pruned from the RBF",
+    )
+    check(
+        "localparam[31:0]MAGIC_A=32'h4158_4C50" in aspect_rtl
+        and "bytes_seen==9'h1FF" in aspect_rtl
+        and "packet_x[11:0]!=12'd0" in aspect_rtl
+        and "packet_y[11:0]!=12'd0" in aspect_rtl
+        and "aspect_commit<=1'b1" in aspect_rtl,
+        "source-aspect RTL must atomically validate a complete PLXA packet before promotion",
+    )
+    check(
+        "source_aspect_ingestaspect_inst" in plex
+        and "assignVIDEO_ARX=(!ar)?original_arx" in plex
+        and "assignVIDEO_ARY=(!ar)?original_ary" in plex,
+        "OSD Original must route the published DAR into MiSTer VIDEO_ARX/VIDEO_ARY",
+    )
+    check(
+        "kSourceAspectIoctlIndex=4" in aspect_host
+        and "kSourceAspectPacketMagic=0x41584C50u" in aspect_host
+        and "sendFileTx(packet.data(),packet.size(),kSourceAspectIoctlIndex)" in fpga_cpp,
+        "daemon and RTL source-aspect packet ABI are not wired end-to-end",
+    )
+    check(
+        "source_aspect_mbox_req" in norm(read(DDR_FRAME_STORE))
+        and "constuint32_tplxjPhys=ddrLayout_.doorbell_phys+0x130u" in fpga_cpp
+        and "ddrFramePhysBaseForGeometry(geometry)" in fpga_cpp
+        and "ack.token==token" in fpga_cpp
+        and "ack.aspect.x==aspect.x" in fpga_cpp
+        and "ack.aspect.y==aspect.y" in fpga_cpp,
+        "playback must require a layout-relative matching PLXJ token and DAR acknowledgement",
+    )
+    check(
+        "player.setSourceAspect(resolved.sourceAspect)" in main_cpp
+        and "owner=MiSTer_native_scaler" in media,
+        "resolved source DAR must be published before playback starts",
+    )
+    check(
+        'presentMode_!="fpga"&&presentMode_!="both"' in media
+        and "fpga_.sendSourceAspect(aspect)" in media,
+        "PLXJ acknowledgement must gate FPGA presentation without requiring FPGA hardware "
+        "for fb0/none presentation",
+    )
+    check(
+        "elseif(nativeScalerPresent){vf+=std::string(\"scale=\")+scale+\":flags=\"+swsFlags;}"
+        in media
+        and "force_original_aspect_ratio=decrease:flags=" in media,
+        "FPGA presentation must fill the raster for MiSTer scaling while fb0/none "
+        "preserves aspect on the host",
+    )
+    check(
+        "std::mutexplayHandoffMu" in main_cpp
+        and "player.stop();FpgaWorkerHandofffpgaWorkers(player);player.setDecodeSize"
+        in main_cpp
+        and "comp.acceptsPlayRequest(req)" in main_cpp
+        and "PLAYsupersededbeforeaspectcommit" in main_cpp,
+        "playback handoff must stop the active presenter and reject stale generations "
+        "before remapping DDR or publishing DAR",
+    )
+    check(
+        "player_.suspendFpgaWorkers()" in main_cpp
+        and "player_.resumeFpgaWorkers(true)" in main_cpp
+        and "player_.resumeFpgaWorkers(false)" in main_cpp
+        and "std::lock_guard<std::mutex>present(presentMu_)" in media,
+        "DDR layout/DAR commits must retire background FPGA users and share presentMu",
+    )
+    check(
+        "std::atomic<int64_t>presentCount_{0}" in media_hpp
+        and "hwPresentTotal+=frameCounterDelta" in media,
+        "PLXD telemetry counters must be wrap-safe and atomic on ARM32",
+    )
+    check(
+        "pr.dispatchGeneration=onPlayQueued_()" in norm(read(ROOT / "arm/misterplexd/companion.cpp"))
+        and "uint64_tgen=req.dispatchGeneration" in main_cpp
+        and "PLAYsupersededbeforeresolve" in main_cpp,
+        "detached playMedia handlers must retain their request generation so an older "
+        "thread cannot supersede a newer cast",
+    )
+    check(
+        "::poll(&pfd,1,timeoutMs)" in media
+        and "::kill(pid,SIGTERM)" in media
+        and "::kill(pid,SIGKILL)" in media,
+        "FFmpeg source-aspect probing must have a bounded process timeout",
+    )
+    print("PASS source DAR is atomically published and owned by MiSTer's native scaler")
+
+
 def check_quartus_syntax_tripwires() -> None:
     deblock = strip_comments(read(H264_DEBLOCK))
     dpb = strip_comments(read(H264_DPB))
@@ -538,6 +647,7 @@ def check_mailboxes() -> None:
         "PLXF": ("kPlxfAddr", "kPlxfMagic", 0x3007F118, 0x504C5846),
         "DIAG": ("kSdramDiagAddr", None, 0x3007F120, None),
         "PLXD": ("kPlxdAddr", "kPlxdMagic", 0x3007F128, 0x504C5844),
+        "PLXJ": ("kPlxjAddr", "kPlxjMagic", 0x3007F130, 0x504C584A),
         "PLXB": ("kPlxbAddr", "kPlxbMagic", 0x30140000, 0x504C5842),
     }
     for name, (addr_sym, magic_sym, exp_addr, exp_magic) in spec_entries.items():
@@ -603,6 +713,7 @@ def check_mailboxes() -> None:
         ("SDRAM_MAILBOX_PHYS", "110"),
         ("FRAME_MAILBOX_PHYS", "118"),
         ("BANK_MAILBOX_PHYS", "128"),
+        ("ASPECT_MAILBOX_PHYS", "130"),
     ):
         check(
             f"parameter[31:0]{parameter}=DOORBELL_PHYS+32'h{offset}" in ddr_fs_nt,
@@ -611,8 +722,9 @@ def check_mailboxes() -> None:
     check(
         "returnddrLayout_.doorbell_phys+(kDdrMailboxPhys-kDdrDoorbellPhys);" in norm(fpga_spi)
         and "constuint32_tplxfPhys=ddrLayout_.doorbell_phys+0x118u;" in norm(read(FPGA_SPI_CPP))
-        and "constuint32_tplxdPhys=ddrLayout_.doorbell_phys+0x128u;" in norm(read(FPGA_SPI_CPP)),
-        "ARM PLXS/PLXF/PLXD readers must use the same doorbell-relative mailbox offsets",
+        and "constuint32_tplxdPhys=ddrLayout_.doorbell_phys+0x128u;" in norm(read(FPGA_SPI_CPP))
+        and "constuint32_tplxjPhys=ddrLayout_.doorbell_phys+0x130u;" in norm(read(FPGA_SPI_CPP)),
+        "ARM PLXS/PLXF/PLXD/PLXJ readers must use matching doorbell-relative offsets",
     )
 
     # Verify PLXD bit-field positions in the spec are what the RTL packs.
@@ -1331,8 +1443,8 @@ def check_present_geometry_stride_contract() -> None:
             ),
             (
                 media_norm,
-                'vf+=std::string("scale=")+displayScale+":force_original_aspect_ratio=decrease:flags="+swsFlags+",pad="+scale+":"+std::to_string(ddrGeometry.crop_left)+":"+std::to_string(ddrGeometry.crop_top)+":color=black";',
-                "FFmpeg must scale into display geometry then pad once into the coded 624-pixel stride",
+                'vf+=std::string("scale=")+displayScale+":flags="+swsFlags+",pad="+scale+":"+std::to_string(ddrGeometry.crop_left)+":"+std::to_string(ddrGeometry.crop_top)+":color=black";',
+                "FFmpeg must fill the display raster and only pad coded crop pixels; MiSTer owns source aspect",
             ),
             (
                 media_norm,
@@ -1458,6 +1570,12 @@ def check_present_geometry_stride_contract() -> None:
     )
     if not missing_stride_requirements(host_nt, bad_media_display_stride, frame_nt):
         fail("deliberately changed FFmpeg raw stride 624→618 did not make the geometry gate red")
+    bad_media_host_letterbox = media_nt.replace(
+        'vf+=std::string("scale=")+displayScale+":flags="+swsFlags+",pad="+scale+":"+std::to_string(ddrGeometry.crop_left)+":"+std::to_string(ddrGeometry.crop_top)+":color=black";',
+        'vf+=std::string("scale=")+displayScale+":force_original_aspect_ratio=decrease:flags="+swsFlags+",pad="+scale+":0:0:color=black";',
+    )
+    if not missing_stride_requirements(host_nt, bad_media_host_letterbox, frame_nt):
+        fail("deliberately restored host-side letterboxing did not make the geometry gate red")
     bad_chroma_stride = frame_nt.replace("C_LINE_QWORDS=CODED_W/16", "C_LINE_QWORDS=FRAME_W/16")
     if not missing_stride_requirements(host_nt, media_nt, bad_chroma_stride):
         fail("deliberately changed RTL chroma stride 312→320 did not make the geometry gate red")
@@ -2169,6 +2287,7 @@ def main() -> int:
     check_present_core()
     check_phase_a_surface()
     check_plex_reset_domains()
+    check_source_aspect_contract()
     check_quartus_syntax_tripwires()
     check_async_fifo_write_full_no_comb_loop()
     check_frame_store_cdc_contract()

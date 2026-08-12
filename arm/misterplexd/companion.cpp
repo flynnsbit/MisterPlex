@@ -838,6 +838,17 @@ void Companion::httpLoop() {
                 PlayRequest pr = parsePlayRequest(req);
                 if (pr.key.empty())
                     pr.key = "(no-key)";
+                // Serialize generation assignment before publishing this request
+                // as pending. The callback shares the player's handoff mutex, so
+                // an older handler either finishes first or sees this generation;
+                // it can never publish stale DAR after the new request is staged.
+                if (onPlayQueued_) {
+                    try {
+                        pr.dispatchGeneration = onPlayQueued_();
+                    } catch (...) {
+                        log("playQueued handler exception");
+                    }
+                }
                 {
                     std::lock_guard<std::mutex> lock(mu_);
                     wantPlay_ = true;
@@ -887,16 +898,6 @@ void Companion::httpLoop() {
                 sendHttp(c, 200, "application/xml", timelineXml(cid));
                 close(c);
                 log("playMedia ACK key=" + pr.key + " offMs=" + std::to_string(ackOff));
-                // Invalidate in-flight resolve *before* spawning onPlay_ so a
-                // concurrent doPlay cannot bind/setState over this plant while
-                // the new play thread is still scheduling (P4-SCRUB cast race).
-                if (onPlayQueued_) {
-                    try {
-                        onPlayQueued_();
-                    } catch (...) {
-                        log("playQueued handler exception");
-                    }
-                }
                 if (onPlay_) {
                     std::thread([this, pr]() {
                         try {

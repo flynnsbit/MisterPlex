@@ -93,6 +93,31 @@ struct BankReleaseStatus {
     }
 };
 
+inline uint16_t frameCounterDelta(uint16_t newer, uint16_t older) {
+    return static_cast<uint16_t>(newer - older);
+}
+
+inline bool hardwarePresentCountMatches(uint16_t startFrames, uint16_t endFrames,
+                                        int64_t startArmPresents,
+                                        int64_t endArmPresents,
+                                        int64_t tolerance = 2) {
+    const int64_t hardware = frameCounterDelta(endFrames, startFrames);
+    const int64_t arm = endArmPresents - startArmPresents;
+    const int64_t difference = hardware > arm ? hardware - arm : arm - hardware;
+    return arm >= 0 && tolerance >= 0 && difference <= tolerance;
+}
+
+inline bool hardwarePresentTotalsMatch(uint64_t hardwarePresents,
+                                       int64_t armPresents,
+                                       int64_t tolerance = 2) {
+    if (armPresents < 0 || tolerance < 0)
+        return false;
+    const uint64_t arm = static_cast<uint64_t>(armPresents);
+    const uint64_t difference =
+        hardwarePresents > arm ? hardwarePresents - arm : arm - hardwarePresents;
+    return difference <= static_cast<uint64_t>(tolerance);
+}
+
 enum class DdrBankWritePolicy {
     BestEffort,      // legacy/diagnostic paths may reuse the non-display bank
     RequireReleased, // true480 waits for free bank + prior frames_done advance

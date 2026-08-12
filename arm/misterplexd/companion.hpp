@@ -26,12 +26,14 @@ struct PlayRequest {
     std::string serverMachineId;
     int64_t offsetMs = 0;
     bool offsetPresent = false;
+    uint64_t dispatchGeneration = 0;
 };
 
 class Companion {
 public:
     using LogFn = std::function<void(const std::string&)>;
     using PlayFn = std::function<void(const PlayRequest&)>;
+    using PlayQueuedFn = std::function<uint64_t()>;
     using CtrlFn = std::function<void()>;
     using SeekFn = std::function<void(int64_t ms)>;
     using StepFn = std::function<void(int64_t deltaMs)>;
@@ -42,8 +44,9 @@ public:
     void setLog(LogFn f) { log_ = std::move(f); }
     void setPlay(PlayFn f) { onPlay_ = std::move(f); }
     // Fired on the HTTP thread as soon as playMedia plants scrubber state (before
-    // the async onPlay_ thread). Used to ++playGen and kill in-flight resolve.
-    void setPlayQueued(CtrlFn f) { onPlayQueued_ = std::move(f); }
+    // the async onPlay_ thread). Its generation follows that exact request into
+    // the detached handler so an older thread can never promote itself later.
+    void setPlayQueued(PlayQueuedFn f) { onPlayQueued_ = std::move(f); }
     // Cast may present a fresher X-Plex-Token / token= on later player requests
     // (seek, second playMedia, some polls). Forward to PMS timeline session.
     using TokenFn = std::function<void(const std::string& token)>;
@@ -88,6 +91,12 @@ public:
         return wantPlay_;
     }
 
+    bool acceptsPlayRequest(const PlayRequest& req) const {
+        std::lock_guard<std::mutex> lock(mu_);
+        return wantPlay_ &&
+               (pendingKey_.empty() || req.key.empty() || pendingKey_ == req.key);
+    }
+
     // Current scrubber timeline position (ms). Used by doPlay to honor seeks
     // that happen while async resolve is still in flight.
     int64_t timelineTimeMs() const {
@@ -110,7 +119,7 @@ private:
     uint16_t port_ = 3005;
     LogFn log_;
     PlayFn onPlay_;
-    CtrlFn onPlayQueued_;
+    PlayQueuedFn onPlayQueued_;
     TokenFn onTokenUpdate_;
     CtrlFn onPause_;
     CtrlFn onResume_;

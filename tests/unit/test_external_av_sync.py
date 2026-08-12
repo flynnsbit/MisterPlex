@@ -162,6 +162,18 @@ def main() -> int:
         raise AssertionError("unpaired ALSA endpoint was accepted")
     print("PASS explicit V4L2/ALSA binding rejects a different USB adapter")
 
+    require_raises(
+        harness.BlockedError,
+        lambda: harness.validate_audio_capture_samples(
+            harness.np.asarray([0, 6096, 6096, 6096], dtype=harness.np.int16)
+        ),
+        "two-value DC capture was accepted as program audio",
+    )
+    harness.validate_audio_capture_samples(
+        harness.np.asarray([0, -100, 100, -200, 200], dtype=harness.np.int16)
+    )
+    print("PASS degenerate HDMI audio is BLOCKED as invalid capture evidence")
+
     result = run_harness("--self-test")
     require(
         result.returncode == 0,

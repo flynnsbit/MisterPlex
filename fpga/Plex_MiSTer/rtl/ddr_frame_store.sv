@@ -28,6 +28,7 @@ module ddr_frame_store #(
 	parameter [31:0] SDRAM_MAILBOX_PHYS = DOORBELL_PHYS + 32'h110,
 	parameter [31:0] FRAME_MAILBOX_PHYS = DOORBELL_PHYS + 32'h118,
 	parameter [31:0] BANK_MAILBOX_PHYS  = DOORBELL_PHYS + 32'h128,
+	parameter [31:0] ASPECT_MAILBOX_PHYS = DOORBELL_PHYS + 32'h130,
 	parameter int DDR_BURST_MAX = 128,
 	parameter bit IGNORE_STALE_DOORBELL_AFTER_RESET = 1'b1,
 	parameter int STALE_DOORBELL_FALLBACK_POLLS = 4096,
@@ -53,6 +54,11 @@ module ddr_frame_store #(
 	input  wire  [3:0] sdram_test_state,
 	input  wire  [3:0] sdram_size_code,
 	input  wire [15:0] sdram_error_count,
+	input  wire        source_aspect_valid,
+	input  wire [11:0] source_aspect_x,
+	input  wire [11:0] source_aspect_y,
+	input  wire  [7:0] source_aspect_token,
+	input  wire        source_aspect_commit,
 
 	output wire        DDRAM_CLK,
 	input  wire        DDRAM_BUSY,
@@ -102,6 +108,7 @@ module ddr_frame_store #(
 	localparam [28:0] SDRAM_MAILBOX_W = SDRAM_MAILBOX_PHYS[31:3];
 	localparam [28:0] FRAME_MAILBOX_W = FRAME_MAILBOX_PHYS[31:3];
 	localparam [28:0] BANK_MAILBOX_W  = BANK_MAILBOX_PHYS[31:3];
+	localparam [28:0] ASPECT_MAILBOX_W = ASPECT_MAILBOX_PHYS[31:3];
 	localparam [28:0] Y_PLANE_QWORDS = 29'((CODED_W * CODED_H) / 8);
 	localparam [28:0] C_PLANE_QWORDS = 29'((CODED_W * CODED_H) / 32);
 	localparam [28:0] U_PLANE_BASE = Y_PLANE_QWORDS;
@@ -115,6 +122,7 @@ module ddr_frame_store #(
 	localparam [31:0] MAGIC_M = 32'h504C_584D;
 	localparam [31:0] MAGIC_F = 32'h504C_5846;
 	localparam [31:0] MAGIC_D = 32'h504C_5844; // PLXD bank-release (Display-bank)
+	localparam [31:0] MAGIC_J = 32'h504C_584A; // PLXJ source-aspect ACK
 	localparam [1:0] DOORBELL_FORMAT_YUV420P = 2'd1;
 	localparam [7:0] DEBUG_FORMAT_ERROR = 8'hE1; // PLXF frame-debug: rejected non-YUV doorbell
 
@@ -217,6 +225,8 @@ module ddr_frame_store #(
 	reg swap_done_toggle;
 	reg reset_ddr_s1, reset_ddr_s2;
 	wire reset_ddr = reset_ddr_s2;
+	wire swap_req_new = swap_req_s2 != swap_req_seen;
+	wire swap_complete = vsync_pulse && swap_pending && pending_ready_s2;
 
 	always @(posedge clk_ddr) begin
 		if (reset) begin
@@ -252,17 +262,20 @@ module ddr_frame_store #(
 			pending_ready_s1 <= pending_ready_ddr;
 			pending_ready_s2 <= pending_ready_s1;
 
-			if (swap_req_s2 != swap_req_seen) begin
+			if (swap_req_new) begin
 				swap_req_seen <= swap_req_s2;
 				pending_bank <= pending_bank_s2;
 				swap_pending <= 1'b1;
 			end
 
-			if (vsync_pulse && swap_pending && pending_ready_s2) begin
+			if (swap_complete) begin
 				disp_bank <= pending_bank;
 				disp_buf <= ~disp_buf;
 				has_frame <= 1'b1;
-				swap_pending <= 1'b0;
+				// A new request can arrive on the same edge that consumes the
+				// prior one. Keep that request pending instead of letting this
+				// later assignment silently clear it.
+				swap_pending <= swap_req_new;
 				frames_done <= frames_done + 16'd1;
 				swap_done_toggle <= ~swap_done_toggle;
 			end
@@ -307,6 +320,8 @@ module ddr_frame_store #(
 	reg        status_osd_toggle;
 	reg [23:0] sdram_status_hold;
 	reg        sdram_status_toggle;
+	reg [31:0] source_aspect_hold;
+	reg        source_aspect_toggle;
 
 	reg rd_active_r, rd_active_d, rd_visible_r, rd_visible_d, miss_d;
 	reg y_hit_r, c_hit_r;
@@ -412,6 +427,8 @@ module ddr_frame_store #(
 			status_osd_toggle <= 1'b0;
 			sdram_status_hold <= 24'd0;
 			sdram_status_toggle <= 1'b0;
+			source_aspect_hold <= 32'd0;
+			source_aspect_toggle <= 1'b0;
 			y_valid_v1 <= '0;
 			y_valid_v2 <= '0;
 			c_valid_v1 <= '0;
@@ -460,6 +477,12 @@ module ddr_frame_store #(
 			if ({sdram_error_count, sdram_size_code, sdram_test_state} != sdram_status_hold) begin
 				sdram_status_hold <= {sdram_error_count, sdram_size_code, sdram_test_state};
 				sdram_status_toggle <= ~sdram_status_toggle;
+			end
+			if (source_aspect_commit && source_aspect_valid) begin
+				source_aspect_hold <= {
+					source_aspect_token, source_aspect_y, source_aspect_x
+				};
+				source_aspect_toggle <= ~source_aspect_toggle;
 			end
 
 			rd_active_r <= rd_active;
@@ -549,6 +572,9 @@ module ddr_frame_store #(
 	reg [15:0] status_osd_safe;
 	reg        sdram_status_tog_s1, sdram_status_tog_s2, sdram_status_tog_seen;
 	reg [23:0] sdram_status_safe;
+	reg        source_aspect_tog_s1, source_aspect_tog_s2, source_aspect_tog_seen;
+	reg [31:0] source_aspect_safe;
+	reg        source_aspect_mbox_req;
 
 	wire cmd_empty;
 	wire [7:0] cmd_rdata;
@@ -1023,6 +1049,11 @@ module ddr_frame_store #(
 			sdram_status_tog_s2 <= 1'b0;
 			sdram_status_tog_seen <= 1'b0;
 			sdram_status_safe <= 24'd0;
+			source_aspect_tog_s1 <= 1'b0;
+			source_aspect_tog_s2 <= 1'b0;
+			source_aspect_tog_seen <= 1'b0;
+			source_aspect_safe <= 32'd0;
+			source_aspect_mbox_req <= 1'b0;
 			mbox_seq <= 16'd0;
 			mbox_last <= 16'd0;
 			mbox_req <= 1'b1;
@@ -1141,6 +1172,13 @@ module ddr_frame_store #(
 				sdram_status_safe <= sdram_status_hold;
 				sdram_status_tog_seen <= sdram_status_tog_s2;
 			end
+			source_aspect_tog_s1 <= source_aspect_toggle;
+			source_aspect_tog_s2 <= source_aspect_tog_s1;
+			if (source_aspect_tog_s2 != source_aspect_tog_seen) begin
+				source_aspect_safe <= source_aspect_hold;
+				source_aspect_tog_seen <= source_aspect_tog_s2;
+				source_aspect_mbox_req <= 1'b1;
+			end
 
 			mbox_hb <= mbox_hb + 18'd1;
 			if (!mbox_valid || (status_osd_safe != mbox_last) || (mbox_hb == 18'd0))
@@ -1218,7 +1256,14 @@ module ddr_frame_store #(
 					pending_ready_ddr <= swap_pending_d2 &&
 					                     (sched_valid ? (sched_for_pending && sched_pending_ready) : pending_ready_c);
 					poll_div <= poll_div + 16'd1;
-					if (frame_mbox_req && (!frame_mbox_valid || poll_div[7:0] == 8'd224)
+					if (source_aspect_mbox_req && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+						DDRAM_ADDR <= ASPECT_MAILBOX_W;
+						DDRAM_BURSTCNT <= 8'd1;
+						DDRAM_DIN <= {source_aspect_safe, MAGIC_J};
+						DDRAM_WE <= 1'b1;
+						source_aspect_mbox_req <= 1'b0;
+						state_ddr <= S_WRITE_WAIT;
+					end else if (frame_mbox_req && (!frame_mbox_valid || poll_div[7:0] == 8'd224)
 					    && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						DDRAM_ADDR <= FRAME_MAILBOX_W;
 						DDRAM_BURSTCNT <= 8'd1;

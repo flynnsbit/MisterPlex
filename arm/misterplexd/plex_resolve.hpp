@@ -7,6 +7,8 @@
 #include <utility>
 #include <vector>
 
+#include "libmisterplex/source_aspect.hpp"
+
 namespace misterplex {
 
 struct ResolveResult {
@@ -37,6 +39,9 @@ struct ResolveResult {
     // (no metadata) stays true so product audio is not suppressed by accident.
     // FFmpeg dual-out aborts the whole process if pipe:3 is opened with no audio.
     bool hasAudio = true;
+    // Original display aspect sent to MiSTer's native scaler. Invalid means the
+    // caller must probe the actual stream before starting playback.
+    SourceAspect sourceAspect{};
 };
 
 struct QueueItem {
@@ -127,6 +132,12 @@ std::string buildUniversalTranscodeUrl(const std::string& base,
 
 // True when metadata Media@videoCodec looks like H.264/AVC (direct Part friendly for STREAM).
 bool mediaVideoIsH264(const std::string& plexMetadataXml);
+
+// Derive display aspect from PMS metadata. Explicit display/DAR metadata wins;
+// otherwise coded dimensions are combined with explicit sample/pixel aspect.
+// Coded dimensions alone are used only when PMS explicitly marks non-anamorphic.
+SourceAspect sourceAspectFromPlexMetadata(const std::string& plexMetadataXml,
+                                         int codedWidth, int codedHeight);
 
 // Resolve a playMedia key against PMS, or pass through local/http paths.
 // weakAlways: always request PMS universal H.264 ladder (recommended on dual A9 / STREAM=0).

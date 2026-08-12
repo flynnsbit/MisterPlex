@@ -163,6 +163,11 @@ public:
     void setSkipDeltasMs(int64_t forwardMs, int64_t backMs);
     void startInputPoll();
     void stopInputPoll();
+    // Layout/DAR commits can replace the shared DDR mapping. Retire every
+    // background FPGA user before the commit, then resume pollers after the new
+    // playback starts (or restore idle on a failed handoff).
+    void suspendFpgaWorkers();
+    void resumeFpgaWorkers(bool restoreIdle);
     uint16_t lastOsdWord() const { return lastOsd_.load(); }
     // Paint one idle frame right now (used at session end).
     void paintIdle();
@@ -171,6 +176,9 @@ public:
     int64_t avDriftMs() const { return avDriftMs_.load(); }
     int64_t droppedFrames() const { return droppedFrames_.load(); }
     void setDecodeSize(int w, int h);
+    SourceAspect probeSourceAspect(const std::string& urlOrPath,
+                                   const std::string& httpHeaders = {}) const;
+    bool setSourceAspect(const SourceAspect& aspect);
     // PMS Media/Stream coded size for this session (0 = unknown / local file).
     // When source covers DECODE bank size, skip ffmpeg scale/pad on HTTP paths.
     void setSourceMediaSize(int w, int h) {
@@ -290,9 +298,9 @@ private:
     std::mutex osdMu_; // same for osdThr_ // serialises idleThr_ create/join (play thread vs companion)
     std::mutex presentMu_;
     void applyOsd(uint16_t word);
-    // Snapshot the MrAudio ring occupancy. Returns bytes queued, or -1 if the
-    // driver does not expose it. Cheap: one open/read/close, no allocation.
-    int64_t readMrAudioQueuedBytes();
+    // Snapshot the MrAudio ring pointers and occupancy. Cheap: one
+    // open/read/close, no allocation.
+    MrAudioStatus readMrAudioStatus();
 
     static std::string hex16(uint16_t v);
 
@@ -330,7 +338,7 @@ private:
     std::atomic<int64_t> avDriftMs_{0};
     std::atomic<int64_t> droppedFrames_{0};
     // FPGA presents this session (wall-clock capped)
-    int64_t presentCount_ = 0;
+    std::atomic<int64_t> presentCount_{0};
     mutable std::mutex mu_;
     mutable std::mutex summaryMu_;
     PlaybackSummary lastSummary_;

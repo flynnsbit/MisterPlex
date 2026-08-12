@@ -194,6 +194,63 @@ int main(int argc, char** argv) {
                 plxd_fd, fd);
     return 1;
   }
+
+  // A second kick synchronized onto the exact VSync edge that consumes the
+  // first must remain pending. The old two independent nonblocking assignments
+  // cleared it and silently lost one frame.
+  t->reset = 1;
+  for (int i = 0; i < 20; ++i) { service_ddr(); tick(t); }
+  t->reset = 0;
+  t->vsync_pulse = 0;
+  auto arm_spi = [&](int bank) {
+    t->bank_sel = bank & 1;
+    t->start_req = !t->start_req;
+  };
+  arm_spi(0);
+  int guard = 200000;
+  while (!(t->swap_pending && t->obs_pending_ready) && --guard > 0) {
+    service_ddr();
+    tick(t);
+  }
+  if (guard == 0) {
+    std::printf("FAIL same-edge: first frame never became pending-ready\n");
+    return 1;
+  }
+  arm_spi(1);
+  guard = 100;
+  while (!t->obs_swap_req_new && --guard > 0) {
+    service_ddr();
+    tick(t);
+  }
+  if (guard == 0) {
+    std::printf("FAIL same-edge: second request never reached system domain\n");
+    return 1;
+  }
+  t->vsync_pulse = 1;
+  service_ddr();
+  tick(t);
+  t->vsync_pulse = 0;
+  if (t->frames_done != 1 || !t->swap_pending) {
+    std::printf("FAIL same-edge: second request lost frames_done=%u pending=%u\n",
+                (unsigned)t->frames_done, (unsigned)t->swap_pending);
+    return 1;
+  }
+  guard = 200000;
+  while (!t->obs_pending_ready && --guard > 0) {
+    service_ddr();
+    tick(t);
+  }
+  t->vsync_pulse = 1;
+  service_ddr();
+  tick(t);
+  t->vsync_pulse = 0;
+  if (guard == 0 || t->frames_done != 2) {
+    std::printf("FAIL same-edge: retained request did not present frames_done=%u\n",
+                (unsigned)t->frames_done);
+    return 1;
+  }
+  std::printf("PASS same-edge kick retained frames_done=2\n");
+
   std::printf("PASS spi_kick: SPI-only multi-present fd=%u plxd_fd=%u wr=%llu\n",
               fd, plxd_fd, (unsigned long long)plxd_wr);
   return 0;

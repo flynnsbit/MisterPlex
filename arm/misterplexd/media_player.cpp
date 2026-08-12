@@ -20,6 +20,7 @@
 #include <vector>
 
 #include <fcntl.h>
+#include <poll.h>
 #include <sched.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
@@ -303,6 +304,148 @@ bool ffmpegHasAudioStream(const std::string& ffmpeg, const std::string& url,
     }
     return WIFEXITED(st) && WEXITSTATUS(st) == 0;
 }
+
+SourceAspect ffmpegSourceAspect(const std::string& ffmpeg, const std::string& url,
+                                const std::string& headers) {
+    int stderrPipe[2]{-1, -1};
+#if defined(__linux__)
+    if (pipe2(stderrPipe, O_CLOEXEC) != 0)
+        return {};
+#else
+    if (pipe(stderrPipe) != 0)
+        return {};
+#endif
+
+    std::vector<std::string> args = {
+        ffmpeg, "-hide_banner", "-loglevel", "info", "-nostdin",
+    };
+    if (!headers.empty()) {
+        std::string h = headers;
+        if (h.size() < 2 || h[h.size() - 1] != '\n')
+            h += "\r\n";
+        args.push_back("-headers");
+        args.push_back(h);
+    }
+    if (url.rfind("http", 0) == 0) {
+        args.push_back("-rw_timeout");
+        args.push_back("4000000");
+    }
+    args.insert(args.end(), {
+        "-i", url, "-map", "0:v:0", "-frames:v", "0",
+        "-an", "-sn", "-dn", "-f", "null", "-",
+    });
+
+    const pid_t pid = fork();
+    if (pid < 0) {
+        ::close(stderrPipe[0]);
+        ::close(stderrPipe[1]);
+        return {};
+    }
+    if (pid == 0) {
+        ::close(stderrPipe[0]);
+        const int devnull = ::open("/dev/null", O_WRONLY);
+        if (devnull >= 0)
+            dup2(devnull, STDOUT_FILENO);
+        dup2(stderrPipe[1], STDERR_FILENO);
+        if (devnull > STDERR_FILENO)
+            ::close(devnull);
+        if (stderrPipe[1] > STDERR_FILENO)
+            ::close(stderrPipe[1]);
+        for (int fd = 3; fd < 256; ++fd)
+            ::close(fd);
+        std::vector<char*> argv;
+        argv.reserve(args.size() + 1);
+        for (const auto& s : args)
+            argv.push_back(const_cast<char*>(s.c_str()));
+        argv.push_back(nullptr);
+        execv(args[0].c_str(), argv.data());
+        _exit(127);
+    }
+
+    ::close(stderrPipe[1]);
+    std::string output;
+    std::array<char, 4096> buffer{};
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    bool timedOut = false;
+    bool pipeClosed = false;
+    while (!pipeClosed) {
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= deadline) {
+            timedOut = true;
+            break;
+        }
+        const int timeoutMs = std::max(
+            1, static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                    deadline - now)
+                                    .count()));
+        pollfd pfd{stderrPipe[0], POLLIN | POLLHUP, 0};
+        const int ready = ::poll(&pfd, 1, timeoutMs);
+        if (ready < 0) {
+            if (errno == EINTR)
+                continue;
+            pipeClosed = true;
+            break;
+        }
+        if (ready == 0) {
+            timedOut = true;
+            break;
+        }
+        if (pfd.revents & (POLLIN | POLLHUP)) {
+            const ssize_t n = ::read(stderrPipe[0], buffer.data(), buffer.size());
+            if (n > 0) {
+                if (output.size() < 65536) {
+                    const size_t keep =
+                        std::min(static_cast<size_t>(n), 65536u - output.size());
+                    output.append(buffer.data(), keep);
+                }
+            } else if (n == 0) {
+                pipeClosed = true;
+            } else if (errno != EINTR) {
+                pipeClosed = true;
+            }
+        } else if (pfd.revents & (POLLERR | POLLNVAL)) {
+            pipeClosed = true;
+        }
+    }
+    ::close(stderrPipe[0]);
+    int st = 0;
+    bool reaped = false;
+    while (!timedOut && std::chrono::steady_clock::now() < deadline) {
+        const pid_t waited = waitpid(pid, &st, WNOHANG);
+        if (waited == pid) {
+            reaped = true;
+            break;
+        }
+        if (waited < 0 && errno != EINTR) {
+            reaped = true;
+            break;
+        }
+        usleep(10000);
+    }
+    if (!reaped) {
+        timedOut = true;
+        ::kill(pid, SIGTERM);
+        for (int i = 0; i < 20; ++i) {
+            if (waitpid(pid, &st, WNOHANG) == pid) {
+                reaped = true;
+                break;
+            }
+            usleep(10000);
+        }
+        if (!reaped) {
+            ::kill(pid, SIGKILL);
+            while (waitpid(pid, &st, 0) < 0 && errno == EINTR) {
+            }
+        }
+    }
+    if (timedOut)
+        return {};
+    // A damaged stream can still have an authoritative DAR in its parsed
+    // header. Preserve that fact so playback reaches the independent
+    // zero-frame/short-read guard instead of misclassifying it as unknown DAR.
+    return sourceAspectFromFfmpegProbeText(output);
+}
+
 class FpgaBitstreamProducer final : public h264stream::IBitstreamProducer {
 public:
     explicit FpgaBitstreamProducer(FpgaSpi& fpga) : fpga_(fpga) {}
@@ -592,6 +735,21 @@ void MediaPlayer::stopInputPoll() {
         inputThr_.join();
 }
 
+void MediaPlayer::suspendFpgaWorkers() {
+    stopInputPoll();
+    stopOsdPoll();
+    stopIdle();
+}
+
+void MediaPlayer::resumeFpgaWorkers(bool restoreIdle) {
+    if (restoreIdle) {
+        paintIdle();
+        startIdle();
+    }
+    startInputPoll();
+    startOsdPoll();
+}
+
 void MediaPlayer::dispatchPlaybackInput(PlaybackCommand command) {
     const PlaybackTransportState state{playing_.load(), paused_.load(), positionMs_.load(),
                                        durationMs()};
@@ -751,6 +909,36 @@ void MediaPlayer::setDecodeSize(int w, int h) {
         h = 720;
     outW_ = w;
     outH_ = h;
+}
+
+SourceAspect MediaPlayer::probeSourceAspect(const std::string& urlOrPath,
+                                            const std::string& httpHeaders) const {
+    return ffmpegSourceAspect(ffmpeg_, urlOrPath, httpHeaders);
+}
+
+bool MediaPlayer::setSourceAspect(const SourceAspect& aspect) {
+    if (!aspect.valid) {
+        log("ERROR media: refusing playback with unknown source display aspect");
+        return false;
+    }
+    if (presentMode_ != "fpga" && presentMode_ != "both") {
+        log("media: source aspect=" + std::to_string(aspect.x) + ":" +
+            std::to_string(aspect.y) + " owner=host_present no_fpga_transport");
+        return true;
+    }
+    std::lock_guard<std::mutex> present(presentMu_);
+    if (!fpga_.setDdrFrameLayout(ddrFrameGeometryForPresentedSize(outW_, outH_),
+                                 DdrFrameFormat::Yuv420p)) {
+        log("ERROR media: source aspect DDR layout failed: " + fpga_.lastError());
+        return false;
+    }
+    if (!fpga_.sendSourceAspect(aspect)) {
+        log("ERROR media: source aspect publish failed: " + fpga_.lastError());
+        return false;
+    }
+    log("media: source aspect=" + std::to_string(aspect.x) + ":" +
+        std::to_string(aspect.y) + " owner=MiSTer_native_scaler ack=matched");
+    return true;
 }
 
 std::string MediaPlayer::lastError() const {
@@ -1777,16 +1965,16 @@ void MediaPlayer::streamPump(int sfd, bool allowF1Present) {
         " present=" + std::to_string(reconFrames_.load()));
 }
 
-int64_t MediaPlayer::readMrAudioQueuedBytes() {
+MrAudioStatus MediaPlayer::readMrAudioStatus() {
     const int fd = ::open(audioDev_.c_str(), O_RDONLY);
     if (fd < 0)
-        return -1;
+        return {};
     char buf[128];
     const ssize_t n = ::read(fd, buf, sizeof(buf));
     ::close(fd);
     if (n <= 0)
-        return -1;
-    return misterplex::parseMrAudioQueuedBytes(buf, n);
+        return {};
+    return misterplex::parseMrAudioStatus(buf, n);
 }
 
 void MediaPlayer::audioPump(int afd) {
@@ -1928,8 +2116,9 @@ void MediaPlayer::audioPump(int afd) {
             // servo's 8 s time constant; polling harder buys nothing but
             // syscalls.
             if ((chunkIndex++ % 4) == 0) {
-                const int64_t q = readMrAudioQueuedBytes();
-                if (q < 0) {
+                const MrAudioStatus status = readMrAudioStatus();
+                const int64_t q = status.queuedBytes;
+                if (!status.valid()) {
                     audioQueuedBytes_.store(-1);
                 } else {
                     // Low-pass the depth. The servo holds the true depth
@@ -1951,7 +2140,9 @@ void MediaPlayer::audioPump(int afd) {
                     if (lastLatLog < 0 || nowMs - lastLatLog >= 5000) {
                         lastLatLog = nowMs;
                         log("media: audio latency " + std::to_string(latMs) + "ms queued=" +
-                            std::to_string(queuedEma) + "B");
+                            std::to_string(queuedEma) + "B rptr=" +
+                            std::to_string(status.readPointer) + " wptr=" +
+                            std::to_string(status.writePointer));
                     }
                     // The ring has no backpressure: writing past the read pointer
                     // silently destroys unplayed audio. Nothing else reports this.
@@ -2020,10 +2211,11 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     if (onProgress_)
         onProgress_("buffering", startMs, durationMs);
 
-    const bool fpgaOnlyPresent = (presentMode_ == "fpga");
+    const bool nativeScalerPresent =
+        presentMode_ == "fpga" || presentMode_ == "both";
     const DdrFrameGeometry ddrGeometry =
-        fpgaOnlyPresent ? ddrFrameGeometryForPresentedSize(outW_, outH_)
-                        : makeDdrFrameGeometry(outW_, outH_);
+        nativeScalerPresent ? ddrFrameGeometryForPresentedSize(outW_, outH_)
+                            : makeDdrFrameGeometry(outW_, outH_);
     const int rawW = ddrGeometry.coded_width;
     const int rawH = ddrGeometry.coded_height;
     const int rawDisplayW = ddrGeometry.display_width;
@@ -2040,8 +2232,11 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         vf = "fps=" + std::to_string(fpsNum_) + "/" + std::to_string(fpsDen_) + ",";
     }
     // Scale filter: default bicubic avoids fast_bilinear vertical banding on
-    // 480p-anamorphic→720 skies (BBB). Light present-rate ladder:
-    //   fast_bilinear|neighbor — FOAR+pad (aspect-safe)
+    // 480p-anamorphic→720 skies (BBB). MiSTer's native scaler owns display
+    // aspect, so product frames fill the complete visible raster without
+    // host-side letterbox bars.
+    // Light present-rate ladder:
+    //   fast_bilinear|neighbor — full-raster anamorphic scale
     //   exact / exact_fast_bilinear / exact_neighbor — force coded WxH, no foar/pad
     //   skip|none|off|identity — omit scale (size trust; may desync rawvideo)
     std::string swsFlags = swsFlags_;
@@ -2069,19 +2264,20 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         !url.empty() && url[0] == '/' && url.rfind("http", 0) != 0 && url != "testsrc" &&
         url.rfind("lavfi", 0) != 0;
     const bool identityLocalFile =
-        urlIsLocalFile && !forceExact && rawDisplayW == rawW && rawDisplayH == rawH &&
-        outW_ == rawW && outH_ == rawH;
+        nativeScalerPresent && urlIsLocalFile && !forceExact &&
+        rawDisplayW == rawW && rawDisplayH == rawH && outW_ == rawW && outH_ == rawH;
     const bool pmsSourceMatchesBank =
-        !forceExact && !urlIsLocalFile && sourceMediaW_ > 0 && sourceMediaH_ > 0 &&
-        sourceMediaW_ == outW_ && sourceMediaH_ == outH_ && rawDisplayW == rawW &&
-        rawDisplayH == rawH && outW_ == rawW && outH_ == rawH;
+        nativeScalerPresent && !forceExact && !urlIsLocalFile &&
+        sourceMediaW_ > 0 && sourceMediaH_ > 0 &&
+        sourceMediaW_ == outW_ && sourceMediaH_ == outH_ &&
+        rawDisplayW == rawW && rawDisplayH == rawH && outW_ == rawW && outH_ == rawH;
     const bool skipScale = skipScaleFlag || identityLocalFile || pmsSourceMatchesBank;
     // skip|none|off|identity are NOT valid libswscale flag names — if 480p (or any
-    // non-identity geom) still needs FOAR+pad, fall back to bicubic.
+    // non-identity geom) still needs scaling, fall back to bicubic.
     if (skipScaleFlag && !(skipScale && rawDisplayW == rawW && rawDisplayH == rawH)) {
         swsFlags = "bicubic";
         log("media: FFMPEG_SWS_FLAGS=" + swsFlags_ +
-            " ignored for non-identity geom; using bicubic FOAR+pad");
+            " ignored for non-identity geom; using bicubic native-aspect scale");
     }
     if (skipScale && rawDisplayW == rawW && rawDisplayH == rawH) {
         // Explicit lab skip, local identity, or PMS source exact DECODE match.
@@ -2107,18 +2303,21 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     } else if (rawDisplayW != rawW || rawDisplayH != rawH) {
         char displayScale[64];
         std::snprintf(displayScale, sizeof(displayScale), "%d:%d", rawDisplayW, rawDisplayH);
-        vf += std::string("scale=") + displayScale +
-              ":force_original_aspect_ratio=decrease:flags=" + swsFlags + ",pad=" + scale + ":" +
-              std::to_string(ddrGeometry.crop_left) + ":" +
+        vf += std::string("scale=") + displayScale + ":flags=" + swsFlags + ",pad=" + scale +
+              ":" + std::to_string(ddrGeometry.crop_left) + ":" +
               std::to_string(ddrGeometry.crop_top) + ":color=black";
-        log("media: FOAR+pad coded=" + std::to_string(rawW) + "x" + std::to_string(rawH) +
+        log("media: native-aspect scale+crop-pad coded=" + std::to_string(rawW) + "x" +
+            std::to_string(rawH) +
             " display=" + std::to_string(rawDisplayW) + "x" + std::to_string(rawDisplayH) +
             " present=" + std::to_string(outW_) + "x" + std::to_string(outH_) +
             " flags=" + swsFlags);
+    } else if (nativeScalerPresent) {
+        vf += std::string("scale=") + scale + ":flags=" + swsFlags;
     } else {
         vf += std::string("scale=") + scale +
-              ":force_original_aspect_ratio=decrease:flags=" + swsFlags + ",pad=" + scale +
-              ":(ow-iw)/2:(oh-ih)/2";
+              ":force_original_aspect_ratio=decrease:flags=" + swsFlags +
+              ",pad=" + scale + ":(ow-iw)/2:(oh-ih)/2:color=black";
+        log("media: host aspect preservation enabled (PRESENT=" + presentMode_ + ")");
     }
 
     const bool testPattern = (url == "testsrc" || url.rfind("lavfi", 0) == 0);
@@ -2340,6 +2539,47 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         usedRawVideo = true;
         presentCount_ = 0;
         audioBytes_.store(0);
+        BankReleaseStatus hwPresentBaseline;
+        bool hwPresentBaselineValid = fpga_.readBankRelease(hwPresentBaseline);
+        int64_t hwPresentArmBaseline = 0;
+        uint16_t hwPresentLastFrames = hwPresentBaseline.frames_done;
+        uint64_t hwPresentTotal = 0;
+        auto hwPresentTimeBaseline = std::chrono::steady_clock::now();
+        auto hardwarePresentTelemetry = [&]() {
+            BankReleaseStatus current;
+            if (!fpga_.readBankRelease(current))
+                return std::string(" hw_presents=unavailable hw_presents_src=plxd_swap_count");
+            const auto now = std::chrono::steady_clock::now();
+            if (!hwPresentBaselineValid) {
+                hwPresentBaseline = current;
+                hwPresentArmBaseline = presentCount_;
+                hwPresentLastFrames = current.frames_done;
+                hwPresentTotal = 0;
+                hwPresentTimeBaseline = now;
+                hwPresentBaselineValid = true;
+            } else {
+                hwPresentTotal += frameCounterDelta(current.frames_done, hwPresentLastFrames);
+                hwPresentLastFrames = current.frames_done;
+            }
+            const int64_t armDelta = presentCount_ - hwPresentArmBaseline;
+            const int64_t windowMs =
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    now - hwPresentTimeBaseline)
+                    .count();
+            const double hardwareFps =
+                windowMs > 0 ? 1000.0 * static_cast<double>(hwPresentTotal) /
+                                   static_cast<double>(windowMs)
+                             : 0.0;
+            return std::string(" hw_presents=") + std::to_string(hwPresentTotal) +
+                   " hw_arm_delta=" + std::to_string(armDelta) +
+                   " hw_fps=" + std::to_string(hardwareFps).substr(0, 5) +
+                   " hw_window_ms=" + std::to_string(windowMs) +
+                   " hw_match=" +
+                   (hardwarePresentTotalsMatch(hwPresentTotal, armDelta)
+                        ? "1"
+                        : "0") +
+                   " hw_presents_src=plxd_swap_count";
+        };
         std::vector<std::string> args;
         args.push_back(ffmpeg_);
         args.push_back("-hide_banner");
@@ -3264,6 +3504,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                         " clock=av-lock" +
                         " av_drift_ms=" + std::to_string(avDriftMs_.load()) +
                         " drops=" + std::to_string(droppedFrames_.load()) +
+                        hardwarePresentTelemetry() +
                         " fps=" + std::to_string(fpsNum) + "/" + std::to_string(fpsDen) +
                         " decode=" + std::to_string(outW_) + "x" + std::to_string(outH_) +
                         " pipe=1");
@@ -3600,6 +3841,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     " clock=av-lock" +
                     " av_drift_ms=" + std::to_string(avDriftMs_.load()) +
                     " drops=" + std::to_string(droppedFrames_.load()) +
+                    hardwarePresentTelemetry() +
                     " fps=" + std::to_string(fpsNum) + "/" + std::to_string(fpsDen) +
                     " decode=" + std::to_string(outW_) + "x" + std::to_string(outH_));
             }

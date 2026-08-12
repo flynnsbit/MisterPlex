@@ -44,6 +44,11 @@ public:
         top.rd_y = 0;
         top.rd_active = 0;
         top.vsync_pulse = 0;
+        top.source_aspect_valid = 0;
+        top.source_aspect_x = 0;
+        top.source_aspect_y = 0;
+        top.source_aspect_token = 0;
+        top.source_aspect_commit = 0;
         top.DDRAM_BUSY = 0;
         top.DDRAM_DOUT = 0;
         top.DDRAM_DOUT_READY = 0;
@@ -229,6 +234,33 @@ private:
     int scanX = 0;
     int scanY = 0;
 };
+
+int runAspectAck() {
+    Sim sim;
+    sim.resetCore();
+    sim.top.source_aspect_valid = 1;
+    sim.top.source_aspect_x = 16;
+    sim.top.source_aspect_y = 9;
+    sim.top.source_aspect_token = 0x5a;
+    sim.top.source_aspect_commit = 1;
+    sim.tick();
+    sim.top.source_aspect_commit = 0;
+
+    constexpr uint32_t kAspectAckPhys = true480::kDoorbellPhys + 0x130u;
+    constexpr uint64_t kExpected =
+        (static_cast<uint64_t>(0x5a) << 56) |
+        (static_cast<uint64_t>(9) << 44) |
+        (static_cast<uint64_t>(16) << 32) |
+        0x504C584Au;
+    for (int i = 0; i < 2000; ++i) {
+        sim.tick();
+        if (sim.ddr.readPhys(kAspectAckPhys) == kExpected) {
+            std::cout << "source_aspect_ack token=90 dar=16:9 mailbox=PLXJ\n";
+            return 0;
+        }
+    }
+    throw std::runtime_error("source aspect commit did not publish matching PLXJ ACK");
+}
 
 void printRgb(const char* label, Rgb p) {
     std::cout << label << "=" << static_cast<int>(p.r) << ","
@@ -507,6 +539,8 @@ int main(int argc, char** argv) {
             return runYMiss();
         if (scenario == "bad-bank")
             return runBadBank();
+        if (scenario == "aspect-ack")
+            return runAspectAck();
         std::cerr << "unknown --scenario " << scenario << "\n";
         return 2;
     } catch (const std::exception& e) {

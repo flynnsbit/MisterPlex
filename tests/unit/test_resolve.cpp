@@ -42,6 +42,70 @@ int main() {
     CHECK(t.ok && t.playable == "testsrc");
     CHECK(t.sourceFpsHint == 30 && t.fpsNum == 30 && t.fpsDen == 1);
 
+    const auto wide = sourceAspectFromMetadata("1.777778", "", 0, 0, false);
+    CHECK(wide.valid && wide.x == 16 && wide.y == 9);
+    const auto fourThree = sourceAspectFromMetadata("", "", 1440, 1080, true);
+    CHECK(fourThree.valid && fourThree.x == 4 && fourThree.y == 3);
+    const auto custom = sourceAspectFromMetadata("1.6", "", 0, 0, false);
+    CHECK(custom.valid && custom.x == 8 && custom.y == 5);
+    const auto anamorphicWide =
+        sourceAspectFromMetadata("", "32:27", 720, 480, false);
+    CHECK(anamorphicWide.valid && anamorphicWide.x == 16 && anamorphicWide.y == 9);
+    const auto unknownAnamorphic =
+        sourceAspectFromMetadata("", "", 720, 480, false);
+    CHECK(!unknownAnamorphic.valid);
+    const auto implausible = sourceAspectFromMetadata("20.0", "", 0, 0, false);
+    CHECK(!implausible.valid);
+    CHECK(sourceAspectFromText("47:20").valid);
+    CHECK(sourceAspectFromText("16/9").x == 16);
+    CHECK(sourceAspectFromFfmpegProbeText(
+              "Stream #0:0: Video: h264, yuv420p, 720x480 [SAR 32:27 DAR 16:9]")
+              .x == 16);
+    const auto aspectPacket = encodeSourceAspectPacket(wide, 0x5a);
+    CHECK(aspectPacket[0] == 'P' && aspectPacket[1] == 'L' &&
+          aspectPacket[2] == 'X' && aspectPacket[3] == 'A');
+    CHECK(aspectPacket[4] == 16 && aspectPacket[5] == 0 &&
+          aspectPacket[6] == 9 && aspectPacket[7] == 0);
+    CHECK(aspectPacket[8] == 0x5a);
+    SourceAspectAck decodedAck;
+    const uint64_t ackWord =
+        (static_cast<uint64_t>(0x5a) << 56) |
+        (static_cast<uint64_t>(9) << 44) |
+        (static_cast<uint64_t>(16) << 32) |
+        mailbox_abi::kPlxjMagic;
+    CHECK(decodeSourceAspectAckWord(ackWord, decodedAck));
+    CHECK(decodedAck.aspect.valid && decodedAck.aspect.x == 16 &&
+          decodedAck.aspect.y == 9 && decodedAck.token == 0x5a);
+    SourceAspectAck tornAck;
+    CHECK(!decodeStableSourceAspectAck(
+        static_cast<uint32_t>(ackWord), static_cast<uint32_t>(ackWord >> 32),
+        static_cast<uint32_t>(ackWord), static_cast<uint32_t>(ackWord >> 32) ^ 1u,
+        tornAck));
+
+    const auto xmlWide = sourceAspectFromPlexMetadata(
+        "<MediaContainer><Video aspectRatio=\"1.78\"><Media width=\"720\" "
+        "height=\"480\"><Part><Stream streamType=\"1\" anamorphic=\"true\" "
+        "pixelAspectRatio=\"8:9\"/></Part></Media></Video></MediaContainer>",
+        720, 480);
+    CHECK(xmlWide.valid && xmlWide.x == 16 && xmlWide.y == 9);
+    const auto xmlSar = sourceAspectFromPlexMetadata(
+        "<MediaContainer><Video><Media width=\"720\" height=\"480\">"
+        "<Part><Stream streamType=\"1\" anamorphic=\"true\" "
+        "sampleAspectRatio=\"32:27\"/></Part></Media></Video></MediaContainer>",
+        720, 480);
+    CHECK(xmlSar.valid && xmlSar.x == 16 && xmlSar.y == 9);
+    const auto xmlSquare = sourceAspectFromPlexMetadata(
+        "<MediaContainer><Video><Media width=\"1440\" height=\"1080\">"
+        "<Part><Stream streamType=\"1\" anamorphic=\"false\"/></Part>"
+        "</Media></Video></MediaContainer>",
+        1440, 1080);
+    CHECK(xmlSquare.valid && xmlSquare.x == 4 && xmlSquare.y == 3);
+    const auto xmlUnknown = sourceAspectFromPlexMetadata(
+        "<MediaContainer><Video><Media width=\"720\" height=\"480\">"
+        "<Part><Stream streamType=\"1\"/></Part></Media></Video></MediaContainer>",
+        720, 480);
+    CHECK(!xmlUnknown.valid);
+
     auto h = plexFfmpegHeaders("sess1", "tok");
     CHECK(h.find("X-Plex-Session-Identifier: sess1") != std::string::npos);
     CHECK(h.find("X-Plex-Token: tok") != std::string::npos);

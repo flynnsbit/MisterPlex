@@ -673,6 +673,55 @@ bool mediaVideoIsH264(const std::string& plexMetadataXml) {
     return videoCodecIsH264(attr(plexMetadataXml, "Media", "videoCodec"));
 }
 
+SourceAspect sourceAspectFromPlexMetadata(const std::string& xml,
+                                         int codedWidth, int codedHeight) {
+    std::string displayAspect = attr(xml, "Video", "displayAspectRatio");
+    if (displayAspect.empty())
+        displayAspect = attr(xml, "Video", "aspectRatio");
+    if (displayAspect.empty())
+        displayAspect = attr(xml, "Media", "displayAspectRatio");
+    if (displayAspect.empty())
+        displayAspect = attr(xml, "Media", "aspectRatio");
+
+    std::string sampleAspect = attr(xml, "Media", "sampleAspectRatio");
+    if (sampleAspect.empty())
+        sampleAspect = attr(xml, "Media", "pixelAspectRatio");
+    std::string anamorphic = attr(xml, "Media", "anamorphic");
+
+    size_t sp = 0;
+    while ((sp = xml.find("<Stream", sp)) != std::string::npos) {
+        const auto end = xml.find('>', sp);
+        if (end == std::string::npos)
+            break;
+        const std::string slice = xml.substr(sp, end - sp);
+        const bool isVideo = slice.find("streamType=\"1\"") != std::string::npos ||
+                             slice.find("type=\"video\"") != std::string::npos;
+        if (isVideo) {
+            if (displayAspect.empty())
+                displayAspect = attrIn(slice, "displayAspectRatio");
+            if (displayAspect.empty())
+                displayAspect = attrIn(slice, "aspectRatio");
+            if (sampleAspect.empty())
+                sampleAspect = attrIn(slice, "sampleAspectRatio");
+            if (sampleAspect.empty())
+                sampleAspect = attrIn(slice, "pixelAspectRatio");
+            if (sampleAspect.empty())
+                sampleAspect = attrIn(slice, "sar");
+            if (anamorphic.empty())
+                anamorphic = attrIn(slice, "anamorphic");
+            break;
+        }
+        sp = end + 1;
+    }
+
+    const std::string normalizedAnamorphic = lowerCopy(anamorphic);
+    const bool squarePixelsKnown =
+        normalizedAnamorphic == "0" || normalizedAnamorphic == "false" ||
+        normalizedAnamorphic == "no";
+    return sourceAspectFromMetadata(displayAspect, sampleAspect, codedWidth,
+                                    codedHeight, squarePixelsKnown);
+}
+
 ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::string& plexBase,
                                 const std::string& token, int64_t offsetMs, bool weakAlways,
                                 const WeakLadder& weak, bool preferDirectH264, int decodeW,
@@ -687,6 +736,7 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
         r.sourceFpsHint = 30;
         r.fpsNum = 30;
         r.fpsDen = 1;
+        r.sourceAspect = {4, 3, true};
         return r;
     }
 
@@ -826,6 +876,9 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
             r.mediaWidth = mw > 0 ? mw : 0;
             r.mediaHeight = mh > 0 ? mh : 0;
         }
+
+        r.sourceAspect =
+            sourceAspectFromPlexMetadata(xml, r.mediaWidth, r.mediaHeight);
 
         // Audio presence: dual-output ffmpeg (pipe:1 video + pipe:3 audio) aborts
         // with "Output file does not contain any stream" when the source has no

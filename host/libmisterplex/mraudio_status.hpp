@@ -32,41 +32,66 @@ constexpr int64_t kMrAudioBytesPerSec = 48000LL * 4LL;
 // nonsense and means we misparsed.
 constexpr int64_t kMrAudioRingBytes = 512LL * 1024LL;
 
-// Pull the `len:` field out of the driver's status line.
-// Returns bytes queued, or -1 if the line is absent/malformed/out of range.
-// Deliberately hand-rolled: this parses a kernel string on a hot path and must
-// not throw, allocate, or depend on locale.
-inline int64_t parseMrAudioQueuedBytes(const char* s, int64_t n) {
-    if (!s || n <= 0)
+struct MrAudioStatus {
+    int64_t readPointer = -1;
+    int64_t writePointer = -1;
+    int64_t queuedBytes = -1;
+
+    bool valid() const {
+        return readPointer >= 0 && writePointer >= 0 && queuedBytes >= 0;
+    }
+};
+
+inline int64_t parseMrAudioUnsignedField(const char* s, int64_t n,
+                                         const char* key, int64_t keyLen,
+                                         bool allowRingEnd) {
+    if (!s || !key || n <= 0 || keyLen <= 0)
         return -1;
-    static const char kKey[] = "len:";
-    constexpr int64_t kKeyLen = 4;
-    for (int64_t i = 0; i + kKeyLen <= n; ++i) {
+    for (int64_t i = 0; i + keyLen <= n; ++i) {
         bool hit = true;
-        for (int64_t k = 0; k < kKeyLen; ++k) {
-            if (s[i + k] != kKey[k]) {
+        for (int64_t k = 0; k < keyLen; ++k) {
+            if (s[i + k] != key[k]) {
                 hit = false;
                 break;
             }
         }
         if (!hit)
             continue;
-        int64_t j = i + kKeyLen;
+        int64_t j = i + keyLen;
         while (j < n && (s[j] == ' ' || s[j] == '\t'))
             ++j;
-        // The field is unsigned in the driver; a '-' means we are misreading.
         if (j >= n || s[j] < '0' || s[j] > '9')
             return -1;
-        int64_t v = 0;
+        int64_t value = 0;
         while (j < n && s[j] >= '0' && s[j] <= '9') {
-            v = v * 10 + (s[j] - '0');
-            if (v > kMrAudioRingBytes)
+            value = value * 10 + (s[j] - '0');
+            if (value > kMrAudioRingBytes)
                 return -1;
             ++j;
         }
-        return v >= kMrAudioRingBytes ? -1 : v;
+        if (allowRingEnd ? value > kMrAudioRingBytes : value >= kMrAudioRingBytes)
+            return -1;
+        return value;
     }
     return -1;
+}
+
+inline MrAudioStatus parseMrAudioStatus(const char* s, int64_t n) {
+    MrAudioStatus out;
+    out.readPointer = parseMrAudioUnsignedField(s, n, "rptr:", 5, true);
+    out.writePointer = parseMrAudioUnsignedField(s, n, "wptr:", 5, true);
+    out.queuedBytes = parseMrAudioUnsignedField(s, n, "len:", 4, false);
+    if (!out.valid())
+        return {};
+    return out;
+}
+
+// Pull the `len:` field out of the driver's status line.
+// Returns bytes queued, or -1 if the line is absent/malformed/out of range.
+// Deliberately hand-rolled: this parses a kernel string on a hot path and must
+// not throw, allocate, or depend on locale.
+inline int64_t parseMrAudioQueuedBytes(const char* s, int64_t n) {
+    return parseMrAudioUnsignedField(s, n, "len:", 4, false);
 }
 
 // Audible playback position (ms) = what we handed the driver, minus what is

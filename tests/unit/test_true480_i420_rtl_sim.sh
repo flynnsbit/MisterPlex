@@ -186,6 +186,8 @@ run_pass "force_y_miss_black" "$NORMAL" \
   "${ACTIVE_RUN_ARGS[@]}" --scenario y-miss
 run_pass "force_bad_bank_black" "$NORMAL" \
   "${ACTIVE_RUN_ARGS[@]}" --scenario bad-bank
+run_pass "source_aspect_plxj_ack" "$NORMAL" \
+  "${ACTIVE_RUN_ARGS[@]}" --scenario aspect-ack
 run_pass "force_c_miss_stimulus" "$NORMAL" \
   "${ACTIVE_RUN_ARGS[@]}" --scenario c-miss-observe
 run_red "legacy_store_y_2py" "row_identity unique_rows=240" \

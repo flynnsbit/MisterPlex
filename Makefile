@@ -55,6 +55,7 @@ unit-unlocked: preflight $(ROOT)/build/test_gdm_filter $(ROOT)/build/test_spi_tx
 	bash $(ROOT)/tests/unit/test_bitstream_bit_feeder_rtl_sim.sh
 	bash $(ROOT)/tests/unit/test_bitstream_to_exp_golomb_rtl_sim.sh
 	bash $(ROOT)/tests/unit/test_annexb_rbsp_exp_golomb_rtl_sim.sh
+	bash $(ROOT)/tests/unit/test_source_aspect_ingest.sh
 	$(ROOT)/build/test_cadence
 	$(ROOT)/build/test_avclock
 	python3 $(ROOT)/tests/unit/test_fixed30_cadence.py
@@ -373,7 +374,8 @@ $(ROOT)/build/test_pixel_format: $(ROOT)/tests/unit/test_pixel_format.cpp \
 
 $(ROOT)/build/test_resolve: $(ROOT)/tests/unit/test_resolve.cpp \
 		$(ROOT)/arm/misterplexd/plex_resolve.cpp \
-		$(ROOT)/arm/misterplexd/plex_resolve.hpp
+		$(ROOT)/arm/misterplexd/plex_resolve.hpp \
+		$(ROOT)/host/libmisterplex/source_aspect.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -I$(ROOT)/arm/misterplexd -o $@ \
 		$(ROOT)/tests/unit/test_resolve.cpp $(ROOT)/arm/misterplexd/plex_resolve.cpp

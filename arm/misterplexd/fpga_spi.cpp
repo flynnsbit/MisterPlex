@@ -681,13 +681,14 @@ bool FpgaSpi::ensureDdrMap() {
 }
 
 bool FpgaSpi::setDdrFrameLayout(const DdrFrameGeometry& geometry, DdrFrameFormat format) {
-    DdrFrameLayout next =
-        makeDdrFrameLayout(geometry, kDdrFrameBase, kDdrFrameStrideAlign, format);
+    DdrFrameLayout next = makeDdrFrameLayout(
+        geometry, ddrFramePhysBaseForGeometry(geometry), kDdrFrameStrideAlign, format);
     if (!ddrFrameLayoutValid(next)) {
         setErr("setDdrFrameLayout: invalid DDR frame layout");
         return false;
     }
-    if (next.coded_width == ddrLayout_.coded_width &&
+    if (next.phys_base == ddrLayout_.phys_base &&
+        next.coded_width == ddrLayout_.coded_width &&
         next.coded_height == ddrLayout_.coded_height &&
         next.display_width == ddrLayout_.display_width &&
         next.display_height == ddrLayout_.display_height &&
@@ -1881,6 +1882,42 @@ bool FpgaSpi::readBankRelease(BankReleaseStatus& out) {
     return false;
 }
 
+bool FpgaSpi::readSourceAspectAck(SourceAspectAck& out) {
+    if (!ok() && !open())
+        return false;
+    if (!ensureDdrMap())
+        return false;
+    if (ddrLayout_.doorbell_phys < ddrLayout_.phys_base) {
+        setErr("readSourceAspectAck: invalid doorbell_phys");
+        return false;
+    }
+    const uint32_t plxjPhys = ddrLayout_.doorbell_phys + 0x130u;
+    if (plxjPhys < ddrLayout_.phys_base) {
+        setErr("readSourceAspectAck: PLXJ mailbox is outside DDR frame window");
+        return false;
+    }
+    const size_t off = static_cast<size_t>(plxjPhys - ddrLayout_.phys_base);
+    if (off + 8 > ddrMapLen_) {
+        setErr("readSourceAspectAck: PLXJ mailbox is outside mapped DDR frame window");
+        return false;
+    }
+    volatile uint32_t* mw = reinterpret_cast<volatile uint32_t*>(ddrMap_ + off);
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        const uint32_t lo0 = mw[0];
+        const uint32_t hi0 = mw[1];
+        __sync_synchronize();
+        const uint32_t lo1 = mw[0];
+        const uint32_t hi1 = mw[1];
+        if (decodeStableSourceAspectAck(lo0, hi0, lo1, hi1, out)) {
+            clearErr();
+            return true;
+        }
+        usleep(200);
+    }
+    setErr("readSourceAspectAck: PLXJ mailbox absent or unstable");
+    return false;
+}
+
 bool FpgaSpi::sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len,
                                   const DdrFrameGeometry& geometry, int bank,
                                   DdrBankWritePolicy policy) {
@@ -1929,6 +1966,44 @@ bool FpgaSpi::sendBitstreamChunk(const uint8_t* data, size_t len, uint8_t index)
         return false;
     }
     return sendFileTx(data, len, index);
+}
+
+bool FpgaSpi::sendSourceAspect(const SourceAspect& aspect) {
+    if (!aspect.valid) {
+        setErr("sendSourceAspect: invalid source aspect");
+        return false;
+    }
+
+    SourceAspectAck baseline;
+    uint8_t token = static_cast<uint8_t>(sourceAspectToken_ + 1u);
+    if (readSourceAspectAck(baseline))
+        token = static_cast<uint8_t>(baseline.token + 1u);
+    sourceAspectToken_ = token;
+
+    const auto packet = encodeSourceAspectPacket(aspect, token);
+    if (!sendFileTx(packet.data(), packet.size(), kSourceAspectIoctlIndex))
+        return false;
+
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::milliseconds(250);
+    SourceAspectAck ack;
+    do {
+        if (readSourceAspectAck(ack) && ack.token == token &&
+            ack.aspect.x == aspect.x && ack.aspect.y == aspect.y) {
+            clearErr();
+            return true;
+        }
+        usleep(1000);
+    } while (std::chrono::steady_clock::now() < deadline);
+
+    char buf[192]{};
+    std::snprintf(buf, sizeof(buf),
+                  "sendSourceAspect: PLXJ ACK timeout want=%u:%u token=%u "
+                  "last=%u:%u token=%u",
+                  aspect.x, aspect.y, token,
+                  ack.aspect.x, ack.aspect.y, ack.token);
+    setErr(buf);
+    return false;
 }
 
 bool FpgaSpi::flushBitstreamDdr() {

@@ -42,8 +42,15 @@ assign BUTTONS = 0;
 //////////////////////////////////////////////////////////////////
 
 wire [1:0] ar = status[122:121];
-assign VIDEO_ARX = (!ar) ? 12'd4 : (ar - 1'd1);
-assign VIDEO_ARY = (!ar) ? 12'd3 : 12'd0;
+wire       source_aspect_valid;
+wire [11:0] source_aspect_x;
+wire [11:0] source_aspect_y;
+wire  [7:0] source_aspect_token;
+wire        source_aspect_commit;
+wire [12:0] original_arx = source_aspect_valid ? {1'b0, source_aspect_x} : 13'd4;
+wire [12:0] original_ary = source_aspect_valid ? {1'b0, source_aspect_y} : 13'd3;
+assign VIDEO_ARX = (!ar) ? original_arx : {11'd0, (ar - 1'd1)};
+assign VIDEO_ARY = (!ar) ? original_ary : 13'd0;
 
 `include "build_id.v"
 localparam CONF_STR = {
@@ -591,9 +598,26 @@ wire present_reset = reset | sdram_startup_busy;
 
 wire [7:0] display_hz = status[2] ? 8'd50 : 8'd60; // PAL/NTSC family
 
-// F1 = frame (1), F2 = audio (2), F3 = elementary bitstream (3)
+// F1 = frame (1), F2 = audio (2), F3 = elementary bitstream (3).
+// Index 4 is a hidden daemon→core source-aspect control packet.
 wire is_audio_dl = (ioctl_index[5:0] == 6'd2);
 wire is_stream_dl = (ioctl_index[5:0] == 6'd3);
+wire is_aspect_dl = (ioctl_index[5:0] == 6'd4);
+
+source_aspect_ingest aspect_inst (
+	.clk(clk_sys),
+	.reset(reset),
+	.ioctl_download(ioctl_download),
+	.ioctl_wr(ioctl_wr),
+	.ioctl_dout(ioctl_dout),
+	.ioctl_addr(ioctl_addr),
+	.enable(is_aspect_dl),
+	.aspect_valid(source_aspect_valid),
+	.aspect_x(source_aspect_x),
+	.aspect_y(source_aspect_y),
+	.aspect_token(source_aspect_token),
+	.aspect_commit(source_aspect_commit)
+);
 
 // Frame ingest from F1
 wire        f1_wr_en;
@@ -930,6 +954,11 @@ present_core #(
 	.ddr_sdram_test_state(sdram_test_state),
 	.ddr_sdram_size_code(sdram_size_code),
 	.ddr_sdram_error_count(sdram_error_count),
+	.ddr_source_aspect_valid(source_aspect_valid),
+	.ddr_source_aspect_x(source_aspect_x),
+	.ddr_source_aspect_y(source_aspect_y),
+	.ddr_source_aspect_token(source_aspect_token),
+	.ddr_source_aspect_commit(source_aspect_commit),
 	.clk_ddr(clk_ddr),
 	.DDRAM_CLK(DDRAM_CLK),
 	.DDRAM_BUSY(present_ddr_busy),

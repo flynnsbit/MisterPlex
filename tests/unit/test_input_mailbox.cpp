@@ -405,6 +405,15 @@ int main() {
 
         // Torn read
         CHECK(!decodeStableBankRelease(lo(w1), hi(w1), lo(w2), hi(w2), br));
+
+        CHECK(frameCounterDelta(48, 0) == 48);
+        CHECK(frameCounterDelta(0, 0xffff) == 1);
+        CHECK(hardwarePresentCountMatches(1000, 1048, 0, 48));
+        CHECK(hardwarePresentCountMatches(1000, 1047, 0, 48));
+        CHECK(!hardwarePresentCountMatches(1000, 1024, 0, 48));
+        CHECK(hardwarePresentTotalsMatch(65584, 65584));
+        CHECK(hardwarePresentTotalsMatch(131120, 131119));
+        CHECK(!hardwarePresentTotalsMatch(131120, 65584));
     }
 
     if (fails) {

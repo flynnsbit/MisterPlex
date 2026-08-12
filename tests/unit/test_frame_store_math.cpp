@@ -216,6 +216,20 @@ int main() {
                                                         coded640.display_width,
                                                         coded640.display_height, 0, 0, 0, 0));
     checkTrue480CoordinateMap(p480, yuv480);
+    CHECK(misterplex::ddrFramePhysBaseForGeometry(p480) ==
+          misterplex::kDdrFramePhysBase);
+
+    const auto p720 = misterplex::makeDdrFrameGeometry(
+        misterplex::kPlex720pPresentedWidth, misterplex::kPlex720pPresentedHeight);
+    CHECK(misterplex::isPlex720pDdrFrameGeometry(p720));
+    const auto yuv720 = misterplex::makeDdrFrameLayout(
+        p720, misterplex::ddrFramePhysBaseForGeometry(p720),
+        misterplex::kDdrFrameStrideAlign, misterplex::DdrFrameFormat::Yuv420p);
+    CHECK(misterplex::ddrFrameLayoutValid(yuv720));
+    CHECK(yuv720.phys_base == misterplex::kPlex720pDdrFramePhysBase);
+    CHECK(yuv720.bank_stride == misterplex::kPlex720pYuv420pBankStride);
+    CHECK(yuv720.doorbell_phys == misterplex::kPlex720pYuv420pDoorbellPhys);
+    CHECK(yuv720.doorbell_phys + 0x130u == 0x3047F130u);
 
     auto drift = yuv480;
     drift.u_offset += 8;

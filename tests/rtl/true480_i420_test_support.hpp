@@ -120,6 +120,10 @@ public:
             kDoorbellMagic;
     }
 
+    uint64_t readPhys(uint32_t phys) const {
+        return readQword(phys / 8u);
+    }
+
     void setHangY(bool value) { hangY = value; }
     void setHangC(bool value) { hangC = value; }
     bool sawHungYRead() const { return sawHangY; }

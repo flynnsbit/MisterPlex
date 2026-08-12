@@ -558,6 +558,19 @@ def video_luma(capture: Path, stream_info: dict[str, Any]) -> tuple[np.ndarray, 
     return luma[:count], np.asarray(times[:count], dtype=float)
 
 
+def validate_audio_capture_samples(samples: np.ndarray) -> None:
+    if samples.size == 0:
+        raise BlockedError("capture audio stream contains no samples")
+    unique_count = int(np.unique(samples).size)
+    variance = float(np.var(samples.astype(np.float64)))
+    if unique_count <= 2 or variance < 1.0:
+        raise BlockedError(
+            "capture audio is degenerate "
+            f"(unique_samples={unique_count} variance={variance:.3f}); "
+            "power-cycle or replace the HDMI-to-USB adapter before grading A/V"
+        )
+
+
 def audio_envelope(capture: Path, sample_rate: int = 48_000) -> tuple[np.ndarray, np.ndarray]:
     origin = first_packet_pts(capture, "a:0")
     raw = subprocess.run(
@@ -583,7 +596,9 @@ def audio_envelope(capture: Path, sample_rate: int = 48_000) -> tuple[np.ndarray
         capture_output=True,
         timeout=300,
     ).stdout
-    samples = np.frombuffer(raw, dtype=np.int16).astype(np.float64)
+    raw_samples = np.frombuffer(raw, dtype=np.int16)
+    validate_audio_capture_samples(raw_samples)
+    samples = raw_samples.astype(np.float64)
     window = sample_rate // 1000
     count = samples.size // window
     if count == 0:

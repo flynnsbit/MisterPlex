@@ -29,6 +29,18 @@ int main() {
     CHECK(parse("rptr: 234576, wptr: 234576, len:      0, comp: 0\n") == 0);
     CHECK(parse("rptr: 238120, wptr: 426576, len: 188456, comp: 4\n") == 188456);
     CHECK(parse("rptr: 405960, wptr: 426576, len:  20616, comp: 2\n") == 20616);
+    {
+        const char* line = "rptr: 238120, wptr: 426576, len: 188456, comp: 4\n";
+        const auto status = parseMrAudioStatus(line, std::strlen(line));
+        CHECK(status.valid());
+        CHECK(status.readPointer == 238120);
+        CHECK(status.writePointer == 426576);
+        CHECK(status.queuedBytes == 188456);
+    }
+    {
+        const char* line = "rptr: 1, wptr: 2\n";
+        CHECK(!parseMrAudioStatus(line, std::strlen(line)).valid());
+    }
 
     // --- malformed / hostile input must report "unknown", never a wrong number ---
     CHECK(parse("") == -1);

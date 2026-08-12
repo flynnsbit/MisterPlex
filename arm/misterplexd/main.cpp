@@ -27,6 +27,28 @@ namespace {
 std::atomic<bool> g_stop{false};
 void on_signal(int) { g_stop.store(true); }
 
+class FpgaWorkerHandoff {
+public:
+    explicit FpgaWorkerHandoff(misterplex::MediaPlayer& player) : player_(player) {
+        player_.suspendFpgaWorkers();
+    }
+    ~FpgaWorkerHandoff() {
+        if (!completed_)
+            player_.resumeFpgaWorkers(true);
+    }
+    FpgaWorkerHandoff(const FpgaWorkerHandoff&) = delete;
+    FpgaWorkerHandoff& operator=(const FpgaWorkerHandoff&) = delete;
+
+    void completePlayback() {
+        player_.resumeFpgaWorkers(false);
+        completed_ = true;
+    }
+
+private:
+    misterplex::MediaPlayer& player_;
+    bool completed_ = false;
+};
+
 std::string loadConf(const std::string& path, const char* key) {
     std::ifstream in(path);
     if (!in)
@@ -575,6 +597,12 @@ int main(int argc, char** argv) {
     if (!playFile.empty()) {
         std::fprintf(stderr, "misterplexd: LAB play-file=%s seconds=%d\n", playFile.c_str(),
                      playSeconds);
+        const auto sourceAspect = player.probeSourceAspect(playFile);
+        if (!sourceAspect.valid || !player.setSourceAspect(sourceAspect)) {
+            std::fprintf(stderr,
+                         "misterplexd: play-file failed: source display aspect unavailable\n");
+            return 1;
+        }
         if (!player.play(playFile, 0, {}, playSeconds * 1000LL)) {
             std::fprintf(stderr, "misterplexd: play-file failed\n");
             return 1;
@@ -634,6 +662,9 @@ int main(int argc, char** argv) {
     // Monotonic play generation: supersede in-flight async resolve when a newer
     // playMedia/auto-next arrives (P4-SCRUB out-of-order bind race).
     std::atomic<uint64_t> playGen{0};
+    // Serializes stop -> layout/DAR commit -> demux start. FpgaSpi layout changes
+    // remap shared DDR and must never race an active presenter or a newer request.
+    std::mutex playHandoffMu;
 
     auto contentResolutionForNextPlay = [&]() -> misterplex::ContentResolution {
         if (osdControl)
@@ -719,12 +750,19 @@ int main(int argc, char** argv) {
     };
 
     auto doPlay = [&](const misterplex::PlayRequest& req) {
-        const uint64_t gen = ++playGen;
+        uint64_t gen = req.dispatchGeneration;
+        if (gen == 0) {
+            std::lock_guard<std::mutex> handoff(playHandoffMu);
+            gen = ++playGen;
+        }
+        if (gen != playGen.load()) {
+            std::fprintf(stderr, "misterplexd: PLAY superseded before resolve key=%s\n",
+                         req.key.c_str());
+            return;
+        }
         int64_t off = req.offsetMs;
         const auto contentRes = contentResolutionForNextPlay();
         const auto displayRes = displayResolutionForNextPlay();
-        // Present/DDR bank follows display; PMS ladder follows content (may differ).
-        player.setDecodeSize(displayRes.width, displayRes.height);
         const auto weakForPlay = weakForContentResolution(
             weak, contentRes, weakBitrateExplicit, weakQualityExplicit, weakH264ProfileExplicit);
         std::fprintf(stderr,
@@ -754,6 +792,7 @@ int main(int argc, char** argv) {
             resolved.sourceFpsHint = 30; // testsrc default
             resolved.fpsNum = 30;
             resolved.fpsDen = 1;
+            resolved.sourceAspect = {4, 3, true};
         } else {
             std::fprintf(stderr, "misterplexd: resolved %s title=%s dur=%lld transcode=%d base=%s\n",
                          resolved.detail.c_str(), resolved.title.c_str(),
@@ -761,59 +800,85 @@ int main(int argc, char** argv) {
                          resolved.transcoded ? 1 : 0, base.c_str());
         }
 
+        int resolvedFpsNum = resolved.fpsNum;
+        int resolvedFpsDen = resolved.fpsDen;
+        std::unique_lock<std::mutex> handoff;
         // Wire SOURCE_FPS / MATCH_SOURCE_HZ into play path (software Content FPS hint).
-        {
-            const int effective =
-                misterplex::applySourceFpsConf(sourceFpsConf, resolved.sourceFpsHint);
-            if (effective > 0) {
-                std::fprintf(stderr,
-                             "misterplexd: Content FPS hint=%d (SOURCE_FPS=%s pms_vfr=%s "
-                             "frameRate=%s resolved=%d) — exact pacing uses resolved rate; "
-                             "switchres TODO\n",
-                             effective, sourceFpsConf.c_str(),
-                             resolved.videoFrameRate.empty() ? "-" : resolved.videoFrameRate.c_str(),
-                             resolved.frameRate.empty() ? "-" : resolved.frameRate.c_str(),
-                             resolved.sourceFpsHint);
-            } else {
-                std::fprintf(stderr,
-                             "misterplexd: Content FPS hint unknown (SOURCE_FPS=%s)\n",
-                             sourceFpsConf.c_str());
-            }
-            if (confTruthy(matchSourceHz) || matchSourceHz == "on" || matchSourceHz == "1") {
-                std::fprintf(stderr,
-                             "misterplexd: match-source-Hz ON target≈%dHz — switchres not "
-                             "wired (cadence path active; see docs/match-source-hz.md)\n",
-                             effective > 0 ? effective : 0);
-            }
-
-            // Exact rational rate for A/V pacing. This is deliberately NOT the bucketed
-            // hint above: PMS reports Media@videoFrameRate="24p" for 23.976 content, and
-            // pacing that at 24 costs ~1 ms/s of lipsync drift.
-            int fnum = resolved.fpsNum;
-            int fden = resolved.fpsDen;
-            misterplex::applyContentFpsConf(loadConf(confPath, "AV_CONTENT_FPS"), fnum, fden);
-            player.setContentFpsRational(fnum, fden);
-            std::fprintf(stderr, "misterplexd: content fps exact=%d/%d (pms frameRate=%s vfr=%s)\n",
-                         fnum, fden,
+        const int effective =
+            misterplex::applySourceFpsConf(sourceFpsConf, resolved.sourceFpsHint);
+        if (effective > 0) {
+            std::fprintf(stderr,
+                         "misterplexd: Content FPS hint=%d (SOURCE_FPS=%s pms_vfr=%s "
+                         "frameRate=%s resolved=%d) — exact pacing uses resolved rate; "
+                         "switchres TODO\n",
+                         effective, sourceFpsConf.c_str(),
+                         resolved.videoFrameRate.empty() ? "-" : resolved.videoFrameRate.c_str(),
                          resolved.frameRate.empty() ? "-" : resolved.frameRate.c_str(),
-                         resolved.videoFrameRate.empty() ? "-" : resolved.videoFrameRate.c_str());
-            player.setSourceMediaSize(resolved.mediaWidth, resolved.mediaHeight);
-            player.setSourceHasAudio(resolved.hasAudio);
-            if (resolved.mediaWidth > 0 && resolved.mediaHeight > 0) {
+                         resolved.sourceFpsHint);
+        } else {
+            std::fprintf(stderr,
+                         "misterplexd: Content FPS hint unknown (SOURCE_FPS=%s)\n",
+                         sourceFpsConf.c_str());
+        }
+        if (confTruthy(matchSourceHz) || matchSourceHz == "on" || matchSourceHz == "1") {
+            std::fprintf(stderr,
+                         "misterplexd: match-source-Hz ON target≈%dHz — switchres not "
+                         "wired (cadence path active; see docs/match-source-hz.md)\n",
+                         effective > 0 ? effective : 0);
+        }
+
+        // Exact rational rate for A/V pacing. This is deliberately NOT the bucketed
+        // hint above: PMS reports Media@videoFrameRate="24p" for 23.976 content, and
+        // pacing that at 24 costs ~1 ms/s of lipsync drift.
+        misterplex::applyContentFpsConf(loadConf(confPath, "AV_CONTENT_FPS"),
+                                        resolvedFpsNum, resolvedFpsDen);
+        std::fprintf(stderr, "misterplexd: content fps exact=%d/%d (pms frameRate=%s vfr=%s)\n",
+                     resolvedFpsNum, resolvedFpsDen,
+                     resolved.frameRate.empty() ? "-" : resolved.frameRate.c_str(),
+                     resolved.videoFrameRate.empty() ? "-" : resolved.videoFrameRate.c_str());
+        if (!resolved.sourceAspect.valid) {
+            resolved.sourceAspect =
+                player.probeSourceAspect(resolved.playable, resolved.httpHeaders);
+            if (resolved.sourceAspect.valid) {
                 std::fprintf(stderr,
-                             "misterplexd: pms source media=%dx%d decode=%dx%d scale=%s "
-                             "hasAudio=%d\n",
-                             resolved.mediaWidth, resolved.mediaHeight, player.decodeW(),
-                             player.decodeH(),
-                             (resolved.mediaWidth == player.decodeW() &&
-                              resolved.mediaHeight == player.decodeH())
-                                 ? "identity_match_bank"
-                                 : "scale_or_pad",
-                             resolved.hasAudio ? 1 : 0);
-            } else {
-                std::fprintf(stderr, "misterplexd: pms hasAudio=%d\n",
-                             resolved.hasAudio ? 1 : 0);
+                             "misterplexd: source aspect probed from stream=%u:%u\n",
+                             resolved.sourceAspect.x, resolved.sourceAspect.y);
             }
+        }
+        handoff = std::unique_lock<std::mutex>(playHandoffMu);
+        if (gen != playGen.load() || !comp.acceptsPlayRequest(req)) {
+            std::fprintf(stderr,
+                         "misterplexd: PLAY superseded before aspect commit key=%s\n",
+                         req.key.c_str());
+            return;
+        }
+        player.stop();
+        FpgaWorkerHandoff fpgaWorkers(player);
+        // Present/DDR bank follows display; PMS ladder follows content.
+        player.setDecodeSize(displayRes.width, displayRes.height);
+        player.setContentFpsRational(resolvedFpsNum, resolvedFpsDen);
+        if (!player.setSourceAspect(resolved.sourceAspect)) {
+            std::fprintf(stderr,
+                         "misterplexd: PLAY rejected: source aspect unknown or FPGA ACK "
+                         "did not match\n");
+            return;
+        }
+        player.setSourceMediaSize(resolved.mediaWidth, resolved.mediaHeight);
+        player.setSourceHasAudio(resolved.hasAudio);
+        if (resolved.mediaWidth > 0 && resolved.mediaHeight > 0) {
+            std::fprintf(stderr,
+                         "misterplexd: pms source media=%dx%d decode=%dx%d scale=%s "
+                         "hasAudio=%d\n",
+                         resolved.mediaWidth, resolved.mediaHeight, player.decodeW(),
+                         player.decodeH(),
+                         (resolved.mediaWidth == player.decodeW() &&
+                          resolved.mediaHeight == player.decodeH())
+                             ? "identity_match_bank"
+                             : "scale_or_pad",
+                         resolved.hasAudio ? 1 : 0);
+        } else {
+            std::fprintf(stderr, "misterplexd: pms hasAudio=%d\n",
+                         resolved.hasAudio ? 1 : 0);
         }
 
         if (!req.offsetPresent && resolved.viewOffsetMs > 0) {
@@ -953,7 +1018,13 @@ int main(int argc, char** argv) {
 
         std::fprintf(stderr, "misterplexd: PLAY %s off=%lld dur=%lld\n", resolved.playable.c_str(),
                      static_cast<long long>(startAt), static_cast<long long>(resolved.durationMs));
-        player.play(resolved.playable, startAt, resolved.httpHeaders, resolved.durationMs);
+        if (!player.play(resolved.playable, startAt, resolved.httpHeaders,
+                         resolved.durationMs)) {
+            std::fprintf(stderr, "misterplexd: PLAY failed to start demux key=%s\n",
+                         bound.key.c_str());
+            return;
+        }
+        fpgaWorkers.completePlayback();
     };
 
     // Live content/display-res change (OSD O[5:4] / O[15:14]): sync conf, retarget
@@ -967,7 +1038,6 @@ int main(int argc, char** argv) {
                          "PMS ladder + conf sync (PRESENT=fpga DDR path)\n",
                          cr.label, cr.width, cr.height, displayRes.label, playingNow ? 1 : 0);
             persistOsdResToConf(cr, displayRes);
-            player.setDecodeSize(displayRes.width, displayRes.height);
             if (!playingNow)
                 return;
             misterplex::PlayRequest cur;
@@ -983,6 +1053,7 @@ int main(int argc, char** argv) {
             const int64_t pos = player.positionMs();
             cur.offsetMs = pos > 0 ? pos : cur.offsetMs;
             cur.offsetPresent = true;
+            cur.dispatchGeneration = 0;
             std::fprintf(stderr,
                          "misterplexd: content_res live restart key=%s offset_ms=%lld → "
                          "content=%s display=%s\n",
@@ -1040,6 +1111,7 @@ int main(int argc, char** argv) {
         n.offsetMs = 0;
         n.offsetPresent = true; // do not apply continue-watching on queue step
         n.token = token;
+        n.dispatchGeneration = 0;
         std::fprintf(stderr, "misterplexd: %s → %s title=%s pqItem=%s\n", tag, n.key.c_str(),
                      item.title.c_str(), n.playQueueItemId.c_str());
         // Stage scrubber key before resolve so bindMedia key-match accepts this
@@ -1094,7 +1166,10 @@ int main(int argc, char** argv) {
 
     // playMedia HTTP thread: bump playGen immediately so in-flight doPlay aborts
     // before the new onPlay_ thread even schedules (cast A→B race).
-    comp.setPlayQueued([&]() { ++playGen; });
+    comp.setPlayQueued([&]() {
+        std::lock_guard<std::mutex> handoff(playHandoffMu);
+        return ++playGen;
+    });
 
     // Keep PMS /:/timeline auth in lock-step with cast-supplied tokens.
     comp.setTokenUpdate([&](const std::string& tok) {
@@ -1131,8 +1206,11 @@ int main(int argc, char** argv) {
         // Invalidate in-flight doPlay (resolve/bind/player.play) so a late
         // playMedia cannot restart demux after stop. clearMedia already cleared
         // wantPlay_; bindMedia and wantPlay re-checks will also abort.
-        ++playGen;
-        player.stop();
+        {
+            std::lock_guard<std::mutex> handoff(playHandoffMu);
+            ++playGen;
+            player.stop();
+        }
         // Drop session bind so a post-stop skip cannot fetch the old play-queue.
         {
             std::lock_guard<std::mutex> lock(sessionMu);
@@ -1167,6 +1245,7 @@ int main(int argc, char** argv) {
                 if (libraryKey) {
                     cur.offsetMs = ms < 0 ? 0 : ms;
                     cur.offsetPresent = true;
+                    cur.dispatchGeneration = 0;
                     std::fprintf(stderr,
                                  "misterplexd: seek re-resolve key=%s offMs=%lld\n",
                                  cur.key.c_str(), static_cast<long long>(cur.offsetMs));

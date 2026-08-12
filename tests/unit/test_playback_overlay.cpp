@@ -744,6 +744,48 @@ int main() {
         CHECK(painted == clean);
     }
 
+    // 9. Product true480 pause repaint uses coded 624x480 and sends one clean
+    // frame after the overlay expires.
+    {
+        constexpr int kCodedW = 624;
+        constexpr int kCodedH = 480;
+        constexpr int64_t kNow = 80000;
+        PlaybackOverlay paused;
+        paused.showAt(PlaybackOverlayState::Paused, 61000, 2732000, kNow);
+
+        const std::vector<uint8_t> clean = syntheticI420(kCodedW, kCodedH);
+        std::vector<uint8_t> lastPresentedFrame = clean;
+        I420DirtyBackup backup;
+        const bool overlayDrawn = paused.renderI420WithBackupAt(
+            lastPresentedFrame.data(), kCodedW, kCodedH, kNow, backup);
+        CHECK(overlayDrawn);
+        CHECK((backup.rect.x & 1) == 0);
+        CHECK((backup.rect.y & 1) == 0);
+        CHECK((backup.rect.w & 1) == 0);
+        CHECK((backup.rect.h & 1) == 0);
+        CHECK(backup.y.size() ==
+              static_cast<size_t>(backup.rect.w) * backup.rect.h);
+        CHECK(backup.u.size() ==
+              static_cast<size_t>(backup.rect.w / 2) * (backup.rect.h / 2));
+        CHECK(backup.v.size() == backup.u.size());
+        CHECK(lastPresentedFrame != clean);
+        checkI420OutsideDirtyUnchanged(
+            clean, lastPresentedFrame, kCodedW, kCodedH, backup.rect);
+
+        const std::vector<uint8_t> outgoingOverlay = lastPresentedFrame;
+        CHECK(backup.restore(lastPresentedFrame.data(), kCodedW, kCodedH));
+        CHECK(lastPresentedFrame == clean);
+        CHECK(outgoingOverlay != clean);
+
+        const int64_t expiredAt = kNow + PlaybackOverlay::kVisibleMs;
+        CHECK(!paused.visibleAt(expiredAt));
+        const bool expiredOverlayDrawn = paused.renderI420WithBackupAt(
+            lastPresentedFrame.data(), kCodedW, kCodedH, expiredAt, backup);
+        CHECK(!expiredOverlayDrawn);
+        CHECK(backup.rect.empty());
+        CHECK(lastPresentedFrame == clean);
+    }
+
     if (fails) {
         std::fprintf(stderr, "test_playback_overlay: %d failure(s)\n", fails);
         return 1;
