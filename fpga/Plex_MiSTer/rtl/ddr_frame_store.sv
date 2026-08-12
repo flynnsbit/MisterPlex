@@ -17,6 +17,9 @@ module ddr_frame_store #(
 	parameter int PRESENT_X = 0,
 	parameter int PRESENT_Y = 0,
 	parameter int LINE_COUNT = 8,
+	// Native true480 prefetch step in coded lines. The dedicated mode requires
+	// identity rows/stride 1; macro-off legacy modes retain their prior policy.
+	parameter int Y_FILL_STRIDE = 1,
 	parameter [31:0] PHYS_BASE = 32'h3000_0000,
 	parameter int HPS_BANK_STRIDE_BYTES = 524288,
 	parameter [31:0] DOORBELL_PHYS = PHYS_BASE + (2 * HPS_BANK_STRIDE_BYTES) - 32'h1000,
@@ -80,6 +83,7 @@ module ddr_frame_store #(
 	localparam int C_QW_AW = $clog2(C_LINE_QWORDS);
 	localparam int LINE_SLOTS = LINE_COUNT * 2;
 	localparam int SLOT_W = $clog2(LINE_SLOTS);
+	localparam int HOME_W = (LINE_COUNT <= 1) ? 1 : $clog2(LINE_COUNT);
 	localparam [SLOT_W-1:0] SECOND_SET_BASE = SLOT_W'(LINE_COUNT);
 	localparam [X_W-1:0] LAST_X = X_W'(FRAME_W - 1);
 	localparam [Y_W-1:0] LAST_Y = Y_W'(FRAME_H - 1);
@@ -113,6 +117,21 @@ module ddr_frame_store #(
 	localparam [31:0] MAGIC_D = 32'h504C_5844; // PLXD bank-release (Display-bank)
 	localparam [1:0] DOORBELL_FORMAT_YUV420P = 2'd1;
 	localparam [7:0] DEBUG_FORMAT_ERROR = 8'hE1; // PLXF frame-debug: rejected non-YUV doorbell
+
+	// synthesis translate_off
+	initial begin
+		if (Y_FILL_STRIDE < 1)
+			$error("ddr_frame_store Y_FILL_STRIDE must be >=1 (got %0d)", Y_FILL_STRIDE);
+`ifdef PLEX_PRESENT_TRUE_480P
+		if (FRAME_W != 640 || FRAME_H != 480 || CODED_W != 624 ||
+		    CODED_H != 480 || DISPLAY_W != 618 || DISPLAY_H != 480 ||
+		    PRESENT_X != 11 || PRESENT_Y != 0 || Y_FILL_STRIDE != 1)
+			$error("true480 store contract mismatch: frame=%0dx%0d coded=%0dx%0d display=%0dx%0d present=%0d,%0d stride=%0d",
+				FRAME_W, FRAME_H, CODED_W, CODED_H, DISPLAY_W, DISPLAY_H,
+				PRESENT_X, PRESENT_Y, Y_FILL_STRIDE);
+`endif
+	end
+	// synthesis translate_on
 
 	// Gray-code conversions for safe multi-bit CDC (want_y crossing)
 	function automatic [Y_W-1:0] y_bin2gray(input [Y_W-1:0] b);
@@ -308,6 +327,24 @@ module ddr_frame_store #(
 		selected_y_q = 64'd0;
 		selected_u_q = 64'd0;
 		selected_v_q = 64'd0;
+`ifdef PLEX_PRESENT_TRUE_480P
+		// keepv22: Y/C home probe first (matches Y_HOME/C_HOME fill), then
+		// scan the active half.
+		video_slot = (disp_buf ? SECOND_SET_BASE : '0)
+		    + SLOT_W'(Y_W'(src_y) % LINE_COUNT);
+		if (y_valid_v2[video_slot] && (y_bank_v2[video_slot] == disp_bank)
+		    && (y_line_v2[video_slot] == Y_W'(src_y))) begin
+			y_hit_now = 1'b1;
+			y_hit_idx_now = video_slot;
+		end
+		video_slot = (disp_buf ? SECOND_SET_BASE : '0)
+		    + SLOT_W'((Y_W-1)'(rd_cy) % LINE_COUNT);
+		if (c_valid_v2[video_slot] && (c_bank_v2[video_slot] == disp_bank)
+		    && (c_line_v2[video_slot] == (Y_W-1)'(rd_cy))) begin
+			c_hit_now = 1'b1;
+			c_hit_idx_now = video_slot;
+		end
+`endif
 		for (vi = 0; vi < LINE_COUNT; vi = vi + 1) begin
 			video_slot = (disp_buf ? SECOND_SET_BASE : '0) + vi[SLOT_W-1:0];
 			if (y_valid_v2[video_slot] && (y_bank_v2[video_slot] == disp_bank)
@@ -328,14 +365,27 @@ module ddr_frame_store #(
 			end
 		end
 	end
+`ifdef PLEX_PRESENT_TRUE_480P
+	// Hard miss only when Y under the beam is missing (keepv SOFT_C).
+	wire rd_miss_now = rd_active && rd_visible && has_frame && !y_hit_now;
+`else
 	wire rd_miss_now = rd_active && rd_visible && has_frame && (!y_hit_now || !c_hit_now);
+`endif
 
 	wire [7:0] y_pix = pick_byte(selected_y_q, y_sel_r);
 	wire [7:0] u_pix = pick_byte(selected_u_q, c_sel_r);
 	wire [7:0] v_pix = pick_byte(selected_v_q, c_sel_r);
+`ifdef PLEX_PRESENT_TRUE_480P
+	// C lag: keep luma, neutral chroma (no full-pixel black / hold streaks).
+	wire [7:0] u_eff = c_hit_r ? u_pix : 8'd128;
+	wire [7:0] v_eff = c_hit_r ? v_pix : 8'd128;
+`else
+	wire [7:0] u_eff = u_pix;
+	wire [7:0] v_eff = v_pix;
+`endif
 	wire signed [11:0] y_s = {4'd0, y_pix};
-	wire signed [11:0] u_s = {4'd0, u_pix} - 12'sd128;
-	wire signed [11:0] v_s = {4'd0, v_pix} - 12'sd128;
+	wire signed [11:0] u_s = {4'd0, u_eff} - 12'sd128;
+	wire signed [11:0] v_s = {4'd0, v_eff} - 12'sd128;
 	wire signed [20:0] y_ext = {{9{y_s[11]}}, y_s};
 	wire signed [20:0] r_calc_w = (y_ext <<< 8) + (21'sd359 * v_s);
 	wire signed [20:0] g_calc_w = (y_ext <<< 8) - (21'sd88 * u_s) - (21'sd183 * v_s);
@@ -418,7 +468,13 @@ module ddr_frame_store #(
 			if (miss_d && underrun_count != 16'hFFFF)
 				underrun_count <= underrun_count + 16'd1;
 
-			if ((rd_active_d || !rd_active) && rd_visible_d && has_frame && !miss_d && y_hit_r && c_hit_r) begin
+`ifdef PLEX_PRESENT_TRUE_480P
+			// keepv: paint when Y hits (C soft via neutral UV). Black only on Y miss.
+			if ((rd_active_d || !rd_active) && rd_visible_d && has_frame && !miss_d && y_hit_r) begin
+`else
+			if ((rd_active_d || !rd_active) && rd_visible_d && has_frame &&
+			    !miss_d && y_hit_r && c_hit_r) begin
+`endif
 				rd_r <= sat8(r_calc);
 				rd_g <= sat8(g_calc);
 				rd_b <= sat8(b_calc);
@@ -435,6 +491,9 @@ module ddr_frame_store #(
 	localparam [3:0] S_LINE_WAIT  = 4'd2;
 	localparam [3:0] S_POLL_WAIT  = 4'd3;
 	localparam [3:0] S_WRITE_WAIT = 4'd4;
+`ifdef PLEX_PRESENT_TRUE_480P
+	localparam [3:0] S_LINE_PREP  = 4'd5; // keepv21: sample line_addr → S_LINE_ISSUE
+`endif
 
 	reg [3:0] state_ddr;
 	reg [LINE_SLOTS-1:0] y_valid, c_valid;
@@ -498,6 +557,118 @@ module ddr_frame_store #(
 		end
 	endfunction
 
+`ifdef PLEX_PRESENT_TRUE_480P
+	// Y_HOME_SLOT / C_HOME_SLOT (keepv Track A2): stable home idx =
+	// half_base + (line % LINE_COUNT). Free-list put line L in arbitrary free
+	// slot → pitch-LINE_COUNT missblack. LINE_COUNT product power-of-2 (8) →
+	// % is low bits. C uses the same home for chroma line id (cy).
+	function automatic [HOME_W-1:0] y_home_off(input [Y_W-1:0] line_y);
+		y_home_off = HOME_W'(line_y % LINE_COUNT);
+	endfunction
+	function automatic [HOME_W-1:0] c_home_off(input [Y_W-2:0] line_cy);
+		c_home_off = HOME_W'(line_cy % LINE_COUNT);
+	endfunction
+
+	// CUR_TAG_WINDOW_R: registered flat LINE_COUNT CUR tags so O(n²) schedule
+	// scan does not mux through disp_buf_d2→array address (H-R1e Path#1 family).
+	// Sample on clk_ddr; combo need/target use only *_cur_r / base_r.
+	reg [SLOT_W-1:0] cur_base_idx_r, prep_base_idx_r;
+	reg              disp_bank_cur_r, pending_bank_prep_r;
+	reg [LINE_COUNT-1:0] y_valid_cur_r, c_valid_cur_r;
+	reg [LINE_COUNT-1:0] y_bank_cur_r, c_bank_cur_r;
+	reg [Y_W-1:0]        y_line_cur_r [0:LINE_COUNT-1];
+	reg [Y_W-2:0]        c_line_cur_r [0:LINE_COUNT-1];
+
+
+	integer ti, tj;
+	reg need_y_cur_c, need_c_cur_c, need_y_prep_c, need_c_prep_c, pending_ready_c;
+	reg [Y_W-1:0] target_y_cur_c, target_y_prep_c;
+	reg [Y_W-2:0] target_c_cur_c, target_c_prep_c;
+	reg [SLOT_W-1:0] target_y_idx_cur_c, target_y_idx_prep_c, target_c_idx_cur_c, target_c_idx_prep_c;
+	reg found_line;
+	reg [Y_W-1:0] desired_y;
+	reg [Y_W-2:0] desired_c;
+	reg [SLOT_W-1:0] cur_base_idx, prep_base_idx;
+	reg [HOME_W-1:0] yh, ch;
+	reg sched_valid, sched_is_y, sched_for_pending;
+	reg sched_bank, sched_pending_ready;
+	reg [Y_W-1:0] sched_y;
+	reg [Y_W-2:0] sched_cy;
+	reg [SLOT_W-1:0] sched_idx;
+	always @* begin
+		// Absolute bases still needed for absolute fill indices / prep live scan.
+		cur_base_idx = cur_base_idx_r;
+		prep_base_idx = prep_base_idx_r;
+		need_y_cur_c = 1'b0;
+		need_c_cur_c = 1'b0;
+		need_y_prep_c = 1'b0;
+		need_c_prep_c = 1'b0;
+		target_y_cur_c = desired_y_r[0];
+		target_y_prep_c = '0;
+		target_c_cur_c = desired_y_r[0][Y_W-1:1];
+		target_c_prep_c = '0;
+		// Y/C always target home slot (not free-list first hole).
+		target_y_idx_cur_c = cur_base_idx_r + y_home_off(desired_y_r[0]);
+		target_y_idx_prep_c = prep_base_idx_r + y_home_off(Y_W'(0));
+		target_c_idx_cur_c = cur_base_idx_r + c_home_off(desired_y_r[0][Y_W-1:1]);
+		target_c_idx_prep_c = prep_base_idx_r + c_home_off((Y_W-1)'(0));
+		pending_ready_c = 1'b1;
+
+		// CUR Y + C: O(1) home-slot probe (keepv19 C_HOME closes O(n²) free-list
+		// that sat on the general[2] STA cone with Y_HOME alone).
+		for (ti = 0; ti < LINE_COUNT; ti = ti + 1) begin
+			desired_y = desired_y_r[ti];
+			desired_c = desired_y_r[ti][Y_W-1:1];
+			yh = y_home_off(desired_y);
+			found_line = y_valid_cur_r[yh] && (y_bank_cur_r[yh] == disp_bank_cur_r)
+			    && (y_line_cur_r[yh] == desired_y);
+			if (!found_line && !need_y_cur_c) begin
+				need_y_cur_c = 1'b1;
+				target_y_cur_c = desired_y;
+				target_y_idx_cur_c = cur_base_idx_r + yh;
+			end
+
+			ch = c_home_off(desired_c);
+			found_line = c_valid_cur_r[ch] && (c_bank_cur_r[ch] == disp_bank_cur_r)
+			    && (c_line_cur_r[ch] == desired_c);
+			if (!found_line && !need_c_cur_c) begin
+				need_c_cur_c = 1'b1;
+				target_c_cur_c = desired_c;
+				target_c_idx_cur_c = cur_base_idx_r + ch;
+			end
+
+			// PREP still gated; O(1) home probes (swap-only, not idle critical).
+			if (swap_pending_d2) begin
+				yh = y_home_off(ti[Y_W-1:0]);
+				found_line = y_valid[prep_base_idx_r + yh]
+				    && (y_bank[prep_base_idx_r + yh] == pending_bank_prep_r)
+				    && (y_line[prep_base_idx_r + yh] == ti[Y_W-1:0]);
+				if (!found_line) begin
+					pending_ready_c = 1'b0;
+					if (!need_y_prep_c) begin
+						need_y_prep_c = 1'b1;
+						target_y_prep_c = ti[Y_W-1:0];
+						target_y_idx_prep_c = prep_base_idx_r + yh;
+					end
+				end
+
+				ch = c_home_off(ti[Y_W-1:1]);
+				found_line = c_valid[prep_base_idx_r + ch]
+				    && (c_bank[prep_base_idx_r + ch] == pending_bank_prep_r)
+				    && (c_line[prep_base_idx_r + ch] == ti[Y_W-1:1]);
+				if (!found_line) begin
+					pending_ready_c = 1'b0;
+					if (!need_c_prep_c) begin
+						need_c_prep_c = 1'b1;
+						target_c_prep_c = ti[Y_W-1:1];
+						target_c_idx_prep_c = prep_base_idx_r + ch;
+					end
+				end
+			end
+		end
+	end
+
+`else
 	integer ti, tj, tk;
 	reg need_y_cur_c, need_c_cur_c, need_y_prep_c, need_c_prep_c, pending_ready_c;
 	reg [Y_W-1:0] target_y_cur_c, target_y_prep_c;
@@ -538,8 +709,9 @@ module ddr_frame_store #(
 			desired_c = desired_y_r[ti][Y_W-1:1];
 			found_line = 1'b0;
 			for (tj = 0; tj < LINE_COUNT; tj = tj + 1) begin
-				if (y_valid[cur_base_idx + tj[SLOT_W-1:0]] && (y_bank[cur_base_idx + tj[SLOT_W-1:0]] == disp_bank_d2)
-				    && (y_line[cur_base_idx + tj[SLOT_W-1:0]] == desired_y))
+				if (y_valid[cur_base_idx + tj[SLOT_W-1:0]] &&
+				    (y_bank[cur_base_idx + tj[SLOT_W-1:0]] == disp_bank_d2) &&
+				    (y_line[cur_base_idx + tj[SLOT_W-1:0]] == desired_y))
 					found_line = 1'b1;
 			end
 			if (!found_line && !need_y_cur_c) begin
@@ -549,8 +721,9 @@ module ddr_frame_store #(
 
 			found_line = 1'b0;
 			for (tj = 0; tj < LINE_COUNT; tj = tj + 1) begin
-				if (c_valid[cur_base_idx + tj[SLOT_W-1:0]] && (c_bank[cur_base_idx + tj[SLOT_W-1:0]] == disp_bank_d2)
-				    && (c_line[cur_base_idx + tj[SLOT_W-1:0]] == desired_c))
+				if (c_valid[cur_base_idx + tj[SLOT_W-1:0]] &&
+				    (c_bank[cur_base_idx + tj[SLOT_W-1:0]] == disp_bank_d2) &&
+				    (c_line[cur_base_idx + tj[SLOT_W-1:0]] == desired_c))
 					found_line = 1'b1;
 			end
 			if (!found_line && !need_c_cur_c) begin
@@ -560,8 +733,9 @@ module ddr_frame_store #(
 
 			found_line = 1'b0;
 			for (tj = 0; tj < LINE_COUNT; tj = tj + 1) begin
-				if (y_valid[prep_base_idx + tj[SLOT_W-1:0]] && (y_bank[prep_base_idx + tj[SLOT_W-1:0]] == pending_bank_d2)
-				    && (y_line[prep_base_idx + tj[SLOT_W-1:0]] == ti[Y_W-1:0]))
+				if (y_valid[prep_base_idx + tj[SLOT_W-1:0]] &&
+				    (y_bank[prep_base_idx + tj[SLOT_W-1:0]] == pending_bank_d2) &&
+				    (y_line[prep_base_idx + tj[SLOT_W-1:0]] == ti[Y_W-1:0]))
 					found_line = 1'b1;
 			end
 			if (swap_pending_d2 && !found_line) begin
@@ -574,8 +748,9 @@ module ddr_frame_store #(
 
 			found_line = 1'b0;
 			for (tj = 0; tj < LINE_COUNT; tj = tj + 1) begin
-				if (c_valid[prep_base_idx + tj[SLOT_W-1:0]] && (c_bank[prep_base_idx + tj[SLOT_W-1:0]] == pending_bank_d2)
-				    && (c_line[prep_base_idx + tj[SLOT_W-1:0]] == ti[Y_W-1:1]))
+				if (c_valid[prep_base_idx + tj[SLOT_W-1:0]] &&
+				    (c_bank[prep_base_idx + tj[SLOT_W-1:0]] == pending_bank_d2) &&
+				    (c_line[prep_base_idx + tj[SLOT_W-1:0]] == ti[Y_W-1:1]))
 					found_line = 1'b1;
 			end
 			if (swap_pending_d2 && !found_line) begin
@@ -590,36 +765,42 @@ module ddr_frame_store #(
 		for (tj = 0; tj < LINE_COUNT; tj = tj + 1) begin
 			slot_keep = 1'b0;
 			for (tk = 0; tk < LINE_COUNT; tk = tk + 1) begin
-				if (y_valid[cur_base_idx + tj[SLOT_W-1:0]] && (y_bank[cur_base_idx + tj[SLOT_W-1:0]] == disp_bank_d2)
-				    && (y_line[cur_base_idx + tj[SLOT_W-1:0]] == desired_y_r[tk]))
+				if (y_valid[cur_base_idx + tj[SLOT_W-1:0]] &&
+				    (y_bank[cur_base_idx + tj[SLOT_W-1:0]] == disp_bank_d2) &&
+				    (y_line[cur_base_idx + tj[SLOT_W-1:0]] == desired_y_r[tk]))
 					slot_keep = 1'b1;
 			end
-			if ((!y_valid[cur_base_idx + tj[SLOT_W-1:0]] || !slot_keep) && !found_slot_y_cur) begin
+			if ((!y_valid[cur_base_idx + tj[SLOT_W-1:0]] || !slot_keep) &&
+			    !found_slot_y_cur) begin
 				found_slot_y_cur = 1'b1;
 				target_y_idx_cur_c = cur_base_idx + tj[SLOT_W-1:0];
 			end
 
 			slot_keep = 1'b0;
 			for (tk = 0; tk < LINE_COUNT; tk = tk + 1) begin
-				if (c_valid[cur_base_idx + tj[SLOT_W-1:0]] && (c_bank[cur_base_idx + tj[SLOT_W-1:0]] == disp_bank_d2)
-				    && (c_line[cur_base_idx + tj[SLOT_W-1:0]] == desired_y_r[tk][Y_W-1:1]))
+				if (c_valid[cur_base_idx + tj[SLOT_W-1:0]] &&
+				    (c_bank[cur_base_idx + tj[SLOT_W-1:0]] == disp_bank_d2) &&
+				    (c_line[cur_base_idx + tj[SLOT_W-1:0]] == desired_y_r[tk][Y_W-1:1]))
 					slot_keep = 1'b1;
 			end
-			if ((!c_valid[cur_base_idx + tj[SLOT_W-1:0]] || !slot_keep) && !found_slot_c_cur) begin
+			if ((!c_valid[cur_base_idx + tj[SLOT_W-1:0]] || !slot_keep) &&
+			    !found_slot_c_cur) begin
 				found_slot_c_cur = 1'b1;
 				target_c_idx_cur_c = cur_base_idx + tj[SLOT_W-1:0];
 			end
 
-			if ((!y_valid[prep_base_idx + tj[SLOT_W-1:0]]) && !found_slot_y_prep) begin
+			if (!y_valid[prep_base_idx + tj[SLOT_W-1:0]] && !found_slot_y_prep) begin
 				found_slot_y_prep = 1'b1;
 				target_y_idx_prep_c = prep_base_idx + tj[SLOT_W-1:0];
 			end
-			if ((!c_valid[prep_base_idx + tj[SLOT_W-1:0]]) && !found_slot_c_prep) begin
+			if (!c_valid[prep_base_idx + tj[SLOT_W-1:0]] && !found_slot_c_prep) begin
 				found_slot_c_prep = 1'b1;
 				target_c_idx_prep_c = prep_base_idx + tj[SLOT_W-1:0];
 			end
 		end
 	end
+`endif
+
 
 	reg fill_bank, fill_is_chroma, fill_plane_v;
 	reg [Y_W-1:0] fill_y;
@@ -631,11 +812,63 @@ module ddr_frame_store #(
 	reg [7:0] imbox_cmd_seq;
 	reg [15:0] imbox_seq;
 	wire [28:0] fill_bank_base = fill_bank ? BASE_W1 : BASE_W0;
+`ifdef PLEX_PRESENT_TRUE_480P
+	// Strength-reduce line_idx * LINE_QWORDS (keepv20). keepv19 fit packed
+	// fill_y into Mult4~mac on the general[2] cone; FOAR 624→78 / 39 are
+	// shift-add friendly so the DSP MAC leaves the path.
+	wire [28:0] fill_y_ext = {{(29-Y_W){1'b0}}, fill_y};
+	wire [28:0] fill_cy_ext = {{(30-Y_W){1'b0}}, fill_cy};
+	wire [28:0] fill_y_qword;
+	wire [28:0] fill_cy_qword;
+	generate
+		if (Y_LINE_QWORDS == 78) begin : g_yq_foar624
+			// 78 = 64+8+4+2
+			assign fill_y_qword = (fill_y_ext << 6) + (fill_y_ext << 3)
+			                   + (fill_y_ext << 2) + (fill_y_ext << 1);
+		end else if (Y_LINE_QWORDS == 80) begin : g_yq_640
+			// 80 = 64+16
+			assign fill_y_qword = (fill_y_ext << 6) + (fill_y_ext << 4);
+		end else if (Y_LINE_QWORDS == 160) begin : g_yq_1280
+			// 160 = 128+32
+			assign fill_y_qword = (fill_y_ext << 7) + (fill_y_ext << 5);
+		end else begin : g_yq_generic
+			assign fill_y_qword = fill_y_ext * Y_LINE_QWORDS_W;
+		end
+`ifdef DDR_FRAME_STORE_FAULT_CHROMA_LUMA_STRIDE
+		if (Y_LINE_QWORDS == 78) begin : g_cyq_fault_foar
+			assign fill_cy_qword = (fill_cy_ext << 6) + (fill_cy_ext << 3)
+			                    + (fill_cy_ext << 2) + (fill_cy_ext << 1);
+		end else if (Y_LINE_QWORDS == 80) begin : g_cyq_fault_640
+			assign fill_cy_qword = (fill_cy_ext << 6) + (fill_cy_ext << 4);
+		end else if (Y_LINE_QWORDS == 160) begin : g_cyq_fault_1280
+			assign fill_cy_qword = (fill_cy_ext << 7) + (fill_cy_ext << 5);
+		end else begin : g_cyq_fault_generic
+			assign fill_cy_qword = fill_cy_ext * Y_LINE_QWORDS_W;
+		end
+`else
+		if (C_LINE_QWORDS == 39) begin : g_cyq_foar624
+			// 39 = 32+4+2+1
+			assign fill_cy_qword = (fill_cy_ext << 5) + (fill_cy_ext << 2)
+			                    + (fill_cy_ext << 1) + fill_cy_ext;
+		end else if (C_LINE_QWORDS == 40) begin : g_cyq_640
+			// 40 = 32+8
+			assign fill_cy_qword = (fill_cy_ext << 5) + (fill_cy_ext << 3);
+		end else if (C_LINE_QWORDS == 80) begin : g_cyq_1280
+			// 80 = 64+16
+			assign fill_cy_qword = (fill_cy_ext << 6) + (fill_cy_ext << 4);
+		end else begin : g_cyq_generic
+			assign fill_cy_qword =
+				{{(30-Y_W){1'b0}}, fill_cy} * C_LINE_QWORDS_W;
+		end
+`endif
+	endgenerate
+`else
 	wire [28:0] fill_y_qword = {{(29-Y_W){1'b0}}, fill_y} * Y_LINE_QWORDS_W;
 `ifdef DDR_FRAME_STORE_FAULT_CHROMA_LUMA_STRIDE
 	wire [28:0] fill_cy_qword = {{(30-Y_W){1'b0}}, fill_cy} * Y_LINE_QWORDS_W;
 `else
 	wire [28:0] fill_cy_qword = {{(30-Y_W){1'b0}}, fill_cy} * C_LINE_QWORDS_W;
+`endif
 `endif
 	wire [28:0] fill_qword_y = {{(29-Y_QW_AW){1'b0}}, fill_qword[Y_QW_AW-1:0]};
 	wire [28:0] fill_qword_c = {{(29-C_QW_AW){1'b0}}, fill_qword[C_QW_AW-1:0]};
@@ -650,6 +883,13 @@ module ddr_frame_store #(
 	wire [28:0] line_addr = fill_is_chroma ? chroma_addr : y_addr;
 	wire [Y_QW_AW:0] burst_cap = (qwords_remaining > DDR_BURST_MAX_QWORDS) ? DDR_BURST_MAX_QWORDS : qwords_remaining;
 	wire [7:0] burst_this = burst_cap[7:0];
+`ifdef PLEX_PRESENT_TRUE_480P
+	// keepv21: register address/burst for S_LINE_ISSUE D-side (+1 clk_ddr).
+	// Breaks fill_y/shift-add/base → DDRAM_ADDR setup cone on general[2].
+	reg [28:0] line_addr_r;
+	reg [7:0]  burst_this_r;
+	reg [Y_QW_AW:0] burst_cap_r;
+`endif
 	wire db_magic_ok = poll_pending && DDRAM_DOUT_READY && (DDRAM_DOUT[31:0] == MAGIC);
 	wire [31:0] db_token = DDRAM_DOUT[63:32];
 	wire [1:0] db_format = db_token[30:29];
@@ -675,6 +915,11 @@ module ddr_frame_store #(
 			DDRAM_ADDR <= 29'd0;
 			DDRAM_BURSTCNT <= 8'd1;
 			DDRAM_DIN <= 64'd0;
+`ifdef PLEX_PRESENT_TRUE_480P
+			line_addr_r <= 29'd0;
+			burst_this_r <= 8'd1;
+			burst_cap_r <= '0;
+`endif
 			y_wr <= '0;
 			u_wr <= '0;
 			v_wr <= '0;
@@ -701,6 +946,20 @@ module ddr_frame_store #(
 			swap_pending_d2 <= 1'b0;
 			pending_bank_d1 <= 1'b0;
 			pending_bank_d2 <= 1'b0;
+`ifdef PLEX_PRESENT_TRUE_480P
+			cur_base_idx_r <= '0;
+			prep_base_idx_r <= '0;
+			disp_bank_cur_r <= 1'b0;
+			pending_bank_prep_r <= 1'b0;
+			y_valid_cur_r <= '0;
+			c_valid_cur_r <= '0;
+			y_bank_cur_r <= '0;
+			c_bank_cur_r <= '0;
+			for (ti = 0; ti < LINE_COUNT; ti = ti + 1) begin
+				y_line_cur_r[ti] <= '0;
+				c_line_cur_r[ti] <= '0;
+			end
+`endif
 			want_y_gray_s1 <= '0;
 			want_y_gray_s2 <= '0;
 			for (ti = 0; ti < LINE_COUNT; ti = ti + 1)
@@ -789,11 +1048,34 @@ module ddr_frame_store #(
 			pending_bank_d1 <= pending_bank;
 			pending_bank_d2 <= pending_bank_d1;
 
+`ifdef PLEX_PRESENT_TRUE_480P
+			// CUR_TAG_WINDOW sample: base/bank mux only into these Ds.
+			cur_base_idx_r <= disp_buf_d2 ? SECOND_SET_BASE : '0;
+			prep_base_idx_r <= disp_buf_d2 ? '0 : SECOND_SET_BASE;
+			disp_bank_cur_r <= disp_bank_d2;
+			pending_bank_prep_r <= pending_bank_d2;
+			for (ti = 0; ti < LINE_COUNT; ti = ti + 1) begin
+				y_valid_cur_r[ti] <= y_valid[(disp_buf_d2 ? SECOND_SET_BASE : '0) + ti[SLOT_W-1:0]];
+				c_valid_cur_r[ti] <= c_valid[(disp_buf_d2 ? SECOND_SET_BASE : '0) + ti[SLOT_W-1:0]];
+				y_bank_cur_r[ti]  <= y_bank[(disp_buf_d2 ? SECOND_SET_BASE : '0) + ti[SLOT_W-1:0]];
+				c_bank_cur_r[ti]  <= c_bank[(disp_buf_d2 ? SECOND_SET_BASE : '0) + ti[SLOT_W-1:0]];
+				y_line_cur_r[ti]  <= y_line[(disp_buf_d2 ? SECOND_SET_BASE : '0) + ti[SLOT_W-1:0]];
+				c_line_cur_r[ti]  <= c_line[(disp_buf_d2 ? SECOND_SET_BASE : '0) + ti[SLOT_W-1:0]];
+			end
+`endif
+
 			// want_y: Gray-coded 2-FF sync (crossing #13)
 			want_y_gray_s1 <= want_y_gray;
 			want_y_gray_s2 <= want_y_gray_s1;
+`ifdef PLEX_PRESENT_TRUE_480P
+			// Stride-aware fill: ahead = ti * Y_FILL_STRIDE (see module param).
+			// Y_FILL_STRIDE==1 is bit-identical to prior consecutive window.
+			for (ti = 0; ti < LINE_COUNT; ti = ti + 1)
+				desired_y_r[ti] <= clamp_ahead(y_gray2bin(want_y_gray_s2), ti * Y_FILL_STRIDE);
+`else
 			for (ti = 0; ti < LINE_COUNT; ti = ti + 1)
 				desired_y_r[ti] <= clamp_ahead(y_gray2bin(want_y_gray_s2), ti);
+`endif
 
 			start_d1 <= start_req;
 			start_d2 <= start_d1;
@@ -859,12 +1141,28 @@ module ddr_frame_store #(
 				swap_req_t_ddr <= ~swap_req_t_ddr;
 				doorbell_ok <= 1'b1;
 				stale_db_polls <= '0;
+`ifdef PLEX_PRESENT_TRUE_480P
+				// A newly accepted frame generation must refill the inactive
+				// half even when bank+line tags match an older generation.
+				// The displayed half remains valid until each replacement line
+				// completes; only the non-visible preparation half is cleared.
+				for (ti = 0; ti < LINE_COUNT; ti = ti + 1) begin
+					y_valid[(disp_buf_d2 ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]] <= 1'b0;
+					c_valid[(disp_buf_d2 ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]] <= 1'b0;
+				end
+`endif
 			end
 			if (spi_edge_ddr) begin
 				start_seen <= start_d2;
 				if (!STRICT_YUV_DOORBELL || (have_seq && !format_error)) begin
 					pending_bank_ddr <= bank_sel_d2;
 					swap_req_t_ddr <= ~swap_req_t_ddr;
+`ifdef PLEX_PRESENT_TRUE_480P
+					for (ti = 0; ti < LINE_COUNT; ti = ti + 1) begin
+						y_valid[(disp_buf_d2 ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]] <= 1'b0;
+						c_valid[(disp_buf_d2 ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]] <= 1'b0;
+					end
+`endif
 				end
 			end
 
@@ -904,6 +1202,11 @@ module ddr_frame_store #(
 						bank_mbox_req <= 1'b0;
 						bank_mbox_hb <= 18'd0;
 						state_ddr <= S_WRITE_WAIT;
+`ifdef PLEX_PRESENT_TRUE_480P
+					// KEEP_VALID_UNTIL_FILL_DONE: do NOT clear y_valid/c_valid or
+					// retag bank at arm/issue. Tag+valid commit only when full
+					// line lands (S_LINE_WAIT done) — anti-shear keepv.
+`endif
 					end else if (PIPELINE_REFILL_SCHEDULER && sched_valid) begin
 						fill_bank <= sched_bank;
 						fill_idx <= sched_idx;
@@ -912,18 +1215,29 @@ module ddr_frame_store #(
 						sched_valid <= 1'b0;
 						if (sched_is_y) begin
 							fill_y <= sched_y;
+`ifndef PLEX_PRESENT_TRUE_480P
 							y_valid[sched_idx] <= 1'b0;
 							y_bank[sched_idx] <= sched_bank;
+`endif
 							qwords_remaining <= Y_LINE_QWORDS[Y_QW_AW:0];
 							fill_is_chroma <= 1'b0;
 						end else begin
 							fill_cy <= sched_cy;
+`ifndef PLEX_PRESENT_TRUE_480P
 							c_valid[sched_idx] <= 1'b0;
 							c_bank[sched_idx] <= sched_bank;
+`endif
 							qwords_remaining <= C_LINE_QWORDS[Y_QW_AW:0];
 							fill_is_chroma <= 1'b1;
 						end
+`ifdef PLEX_PRESENT_TRUE_480P
+						state_ddr <= S_LINE_PREP;
+`else
 						state_ddr <= S_LINE_ISSUE;
+`endif
+`ifdef PLEX_PRESENT_TRUE_480P
+					// keepv2 tip: S_IDLE from combo need_*_c (lite sample STA-regressed).
+`endif
 					end else if ((swap_pending_d2 && need_y_prep_c) || (has_frame_d2 && need_y_cur_c)) begin
 						if (PIPELINE_REFILL_SCHEDULER) begin
 							sched_valid <= 1'b1;
@@ -937,15 +1251,28 @@ module ddr_frame_store #(
 							fill_bank <= (swap_pending_d2 && need_y_prep_c) ? pending_bank_d2 : disp_bank_d2;
 							fill_y <= (swap_pending_d2 && need_y_prep_c) ? target_y_prep_c : target_y_cur_c;
 							fill_idx <= (swap_pending_d2 && need_y_prep_c) ? target_y_idx_prep_c : target_y_idx_cur_c;
+`ifndef PLEX_PRESENT_TRUE_480P
 							y_valid[(swap_pending_d2 && need_y_prep_c) ? target_y_idx_prep_c : target_y_idx_cur_c] <= 1'b0;
-							y_bank[(swap_pending_d2 && need_y_prep_c) ? target_y_idx_prep_c : target_y_idx_cur_c] <= (swap_pending_d2 && need_y_prep_c) ? pending_bank_d2 : disp_bank_d2;
+							y_bank[(swap_pending_d2 && need_y_prep_c) ? target_y_idx_prep_c : target_y_idx_cur_c] <=
+								(swap_pending_d2 && need_y_prep_c) ? pending_bank_d2 : disp_bank_d2;
+`endif
 							fill_is_chroma <= 1'b0;
 							fill_plane_v <= 1'b0;
 							fill_qword <= '0;
 							qwords_remaining <= Y_LINE_QWORDS[Y_QW_AW:0];
+`ifdef PLEX_PRESENT_TRUE_480P
+							state_ddr <= S_LINE_PREP;
+`else
 							state_ddr <= S_LINE_ISSUE;
+`endif
 						end
+`ifdef PLEX_PRESENT_TRUE_480P
+					// SOFT_C_Y_BEFORE_C: starve all C arms while need_y_cur.
+					end else if (((swap_pending_d2 && need_c_prep_c) || (has_frame_d2 && need_c_cur_c))
+					            && !(has_frame_d2 && need_y_cur_c)) begin
+`else
 					end else if ((swap_pending_d2 && need_c_prep_c) || (has_frame_d2 && need_c_cur_c)) begin
+`endif
 						if (PIPELINE_REFILL_SCHEDULER) begin
 							sched_valid <= 1'b1;
 							sched_is_y <= 1'b0;
@@ -958,13 +1285,20 @@ module ddr_frame_store #(
 							fill_bank <= (swap_pending_d2 && need_c_prep_c) ? pending_bank_d2 : disp_bank_d2;
 							fill_cy <= (swap_pending_d2 && need_c_prep_c) ? target_c_prep_c : target_c_cur_c;
 							fill_idx <= (swap_pending_d2 && need_c_prep_c) ? target_c_idx_prep_c : target_c_idx_cur_c;
+`ifndef PLEX_PRESENT_TRUE_480P
 							c_valid[(swap_pending_d2 && need_c_prep_c) ? target_c_idx_prep_c : target_c_idx_cur_c] <= 1'b0;
-							c_bank[(swap_pending_d2 && need_c_prep_c) ? target_c_idx_prep_c : target_c_idx_cur_c] <= (swap_pending_d2 && need_c_prep_c) ? pending_bank_d2 : disp_bank_d2;
+							c_bank[(swap_pending_d2 && need_c_prep_c) ? target_c_idx_prep_c : target_c_idx_cur_c] <=
+								(swap_pending_d2 && need_c_prep_c) ? pending_bank_d2 : disp_bank_d2;
+`endif
 							fill_is_chroma <= 1'b1;
 							fill_plane_v <= 1'b0;
 							fill_qword <= '0;
 							qwords_remaining <= C_LINE_QWORDS[Y_QW_AW:0];
+`ifdef PLEX_PRESENT_TRUE_480P
+							state_ddr <= S_LINE_PREP;
+`else
 							state_ddr <= S_LINE_ISSUE;
+`endif
 						end
 					end else if (!poll_pending && poll_div[7:0] == 8'd0 && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						DDRAM_ADDR <= DOORBELL_W;
@@ -1004,12 +1338,29 @@ module ddr_frame_store #(
 					end
 				end
 
+`ifdef PLEX_PRESENT_TRUE_480P
+				// keepv21: sample combo line_addr/burst, then issue (STA cut).
+				S_LINE_PREP: begin
+					line_addr_r <= line_addr;
+					burst_this_r <= burst_this;
+					burst_cap_r <= burst_cap;
+					state_ddr <= S_LINE_ISSUE;
+				end
+`endif
+
 				S_LINE_ISSUE: begin
 					if (!DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+`ifdef PLEX_PRESENT_TRUE_480P
+						DDRAM_ADDR <= line_addr_r;
+						DDRAM_BURSTCNT <= burst_this_r;
+						DDRAM_RD <= 1'b1;
+						burst_left <= burst_cap_r;
+`else
 						DDRAM_ADDR <= line_addr;
 						DDRAM_BURSTCNT <= burst_this;
 						DDRAM_RD <= 1'b1;
 						burst_left <= burst_cap;
+`endif
 						state_ddr <= S_LINE_WAIT;
 					end
 				end
@@ -1038,7 +1389,11 @@ module ddr_frame_store #(
 								fill_plane_v <= 1'b1;
 								fill_qword <= '0;
 								qwords_remaining <= C_LINE_QWORDS[Y_QW_AW:0];
+`ifdef PLEX_PRESENT_TRUE_480P
+								state_ddr <= S_LINE_PREP;
+`else
 								state_ddr <= S_LINE_ISSUE;
+`endif
 							end else begin
 								if (fill_is_chroma) begin
 									c_line[fill_idx] <= fill_cy;
@@ -1052,7 +1407,11 @@ module ddr_frame_store #(
 								state_ddr <= S_IDLE;
 							end
 						end else if (burst_left == 1) begin
+`ifdef PLEX_PRESENT_TRUE_480P
+							state_ddr <= S_LINE_PREP;
+`else
 							state_ddr <= S_LINE_ISSUE;
+`endif
 						end
 					end
 				end

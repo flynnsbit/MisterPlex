@@ -83,6 +83,10 @@ set_global_assignment -name VERILOG_MACRO "DDR_FRAME_STORE=1"
 set_global_assignment -name VERILOG_MACRO "FRAME_W=640"
 set_global_assignment -name VERILOG_MACRO "FRAME_H=480"
 set_global_assignment -name VERILOG_MACRO "FRAME_LINES_8=1"
+# Fixed native 480p product path: 640x480 active at 30.0019 Hz (CE/2 from
+# 20 MHz), identity rows, and the shared 624-coded / 618-visible /
+# 11+618+11 DDR layout contract.
+set_global_assignment -name VERILOG_MACRO "PLEX_PRESENT_TRUE_480P=1"
 # 720p / ascal-native present path — DEFAULT OFF (v0.3.0 baseline must not change).
 # Parent enables in a granted fit QSF only.
 #
@@ -94,7 +98,8 @@ set_global_assignment -name VERILOG_MACRO "FRAME_LINES_8=1"
 #set_global_assignment -name VERILOG_MACRO "FABRIC_NATIVE_720P_GEOM=1"
 #set_global_assignment -name VERILOG_MACRO "FRAME_W=1280"
 #set_global_assignment -name VERILOG_MACRO "FRAME_H=720"
-# (comment out the FRAME_W=640 / FRAME_H=480 lines above when enabling L4)
+# (comment out FRAME_W=640 / FRAME_H=480 and PLEX_PRESENT_TRUE_480P above
+# when enabling L4)
 #
 # --- Alternate tiers (mutually exclusive with L4) ---
 #set_global_assignment -name VERILOG_MACRO "PRESENT_BEAM_960=1"
