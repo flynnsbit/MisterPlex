@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Exact cadence audit for the true-480 fixed native beam.
+"""Exact rational cadence audit for the true-480 fixed native beam.
 
-The candidate beam is 10 MHz / (672 * 496) = 78125/2604 Hz.  Video frames
-remain host-paced from the exact rational source clock; the FPGA frame store
-only makes a pending frame visible on a beam boundary.  This model therefore
-checks sample-and-hold cadence, not the legacy integer present_cadence bucket.
+The native path divides 20 MHz by two pixel clocks, then uses 672 * 496 total
+pixels: 20 MHz / (2 * 672 * 496) = 78125/2604 Hz. Video frames remain
+host-paced from the source clock; the FPGA frame store only makes a pending
+frame visible on a beam boundary. This model checks ideal exact-rational
+sample-and-hold cadence. test_fixed30_host_pacing.cpp separately audits the
+current host's integer-millisecond release schedule.
 
 No device and no floating-point timing decisions are used.
 """
@@ -15,7 +17,11 @@ from collections import Counter
 from fractions import Fraction
 
 
-BEAM_HZ = Fraction(10_000_000, 672 * 496)
+SYSTEM_CLOCK_HZ = 20_000_000
+PIXEL_CLOCK_DIV = 2
+H_TOTAL = 672
+V_TOTAL = 496
+BEAM_HZ = Fraction(SYSTEM_CLOCK_HZ, PIXEL_CLOCK_DIV * H_TOTAL * V_TOTAL)
 BEAM_PERIOD = 1 / BEAM_HZ
 DEFAULT_PRESENT_LEAD = Fraction(40, 1000)
 
@@ -87,6 +93,10 @@ def main() -> int:
         if not condition:
             failures.append(message)
 
+    check(
+        Fraction(SYSTEM_CLOCK_HZ, PIXEL_CLOCK_DIV) == 10_000_000,
+        "20 MHz divide-by-two pixel clock must be exactly 10 MHz",
+    )
     check(BEAM_HZ == Fraction(78_125, 2_604), "beam rate must reduce exactly")
     check(BEAM_HZ > 30, "beam must be slightly faster than 30 Hz")
     check(BEAM_PERIOD == Fraction(20_832, 625_000), "beam period must be 33.3312 ms")
