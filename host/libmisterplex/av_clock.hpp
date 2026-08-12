@@ -39,6 +39,15 @@ inline int64_t frameContentUs(int64_t frameIndex, int num, int den) {
            static_cast<int64_t>(num);
 }
 
+// Wall-clock playback time excluding time intentionally spent paused.
+inline int64_t activePlaybackClockUs(int64_t wallUs, int64_t pausedUs) {
+    if (wallUs <= 0)
+        return 0;
+    if (pausedUs <= 0)
+        return wallUs;
+    return pausedUs >= wallUs ? 0 : wallUs - pausedUs;
+}
+
 // Audio master clock (ms) from bytes handed to MrAudio (s16le stereo @ 48 kHz).
 inline int64_t audioClockMs(int64_t audioBytes) {
     if (audioBytes <= 0)

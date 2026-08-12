@@ -1,6 +1,6 @@
-// SPI-only multi-bank present: NO PLXK doorbell ever.
-// Pre-reg: PASS with STRICT_YUV_DOORBELL=1 after have_seq gate removed.
-// Negative: zero start_req edges → frames_done stays 0.
+// SPI-only multi-bank present: NO PLXK doorbell ever. STRICT_YUV_DOORBELL is
+// disabled in this bench so it isolates the legacy SPI kick and PLXD swap ACK.
+// Negative: idle VSyncs without start_req edges keep frames_done at zero.
 #include "Vddr_frame_store_spi_kick_tb.h"
 #include "verilated.h"
 #include <cstdint>
@@ -120,7 +120,8 @@ int main(int argc, char** argv) {
     }
   };
 
-  std::printf("PRE-REGISTER: SPI-only multi-kick PASS frames_done>=4; neg no-kick fd=0\n");
+  std::printf("PRE-REGISTER: SPI-only multi-kick PASS frames_done>=4; "
+              "neg idle VSync PLXD fd=0\n");
 
   // NEGATIVE: many frames, no SPI kick
   uint16_t fd0 = 0;
@@ -130,7 +131,26 @@ int main(int argc, char** argv) {
     std::printf("FAIL neg: frames_done=%u without SPI (expected 0)\n", fd0);
     return 1;
   }
-  std::printf("NEG OK: no SPI → frames_done=0\n");
+  uint64_t idle_plxd_wr = 0, idle_last = 0;
+  for (int i = 0; i < 5000; i++) {
+    service_ddr();
+    tick(t);
+    if (t->DDRAM_WE && !t->DDRAM_BUSY) {
+      uint32_t phys = ((uint32_t)t->DDRAM_ADDR) << 3;
+      if (phys == kPlxd && (uint32_t)(t->DDRAM_DIN & 0xffffffffu) == kMagicD) {
+        idle_plxd_wr++;
+        idle_last = t->DDRAM_DIN;
+      }
+    }
+  }
+  const uint16_t idle_plxd_fd = (uint16_t)((idle_last >> 48) & 0xffff);
+  if (idle_plxd_wr == 0 || idle_plxd_fd != 0) {
+    std::printf("FAIL neg: idle VSync advanced PLXD frames_done=%u writes=%llu\n",
+                idle_plxd_fd, (unsigned long long)idle_plxd_wr);
+    return 1;
+  }
+  std::printf("NEG OK: idle VSync keeps core/PLXD frames_done=0 writes=%llu\n",
+              (unsigned long long)idle_plxd_wr);
 
   // POSITIVE: alternate banks via SPI only
   for (int f = 0; f < 12; f++) {
@@ -169,8 +189,9 @@ int main(int argc, char** argv) {
     return 1;
   }
   uint16_t plxd_fd = (uint16_t)((last >> 48) & 0xffff);
-  if (plxd_fd == 0) {
-    std::printf("FAIL spi_kick: PLXD frames_done field still 0\n");
+  if (plxd_fd != fd) {
+    std::printf("FAIL spi_kick: PLXD frames_done=%u does not match core=%u\n",
+                plxd_fd, fd);
     return 1;
   }
   std::printf("PASS spi_kick: SPI-only multi-present fd=%u plxd_fd=%u wr=%llu\n",

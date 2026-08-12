@@ -163,13 +163,13 @@ STA_EXCL_GREEN="$FAULT_DIR/fake_timing_excl_green.sta.rpt"
 cat >"$STA_EXCL_GREEN" <<'RPT'
 ; Setup Summary ;
 ; Clock ; Slack ; End Point TNS ;
-; general[0].gpll ; 0.245 ; 0.000 ;
-; general[2].gpll ; 0.100 ; 0.000 ;
+; emu|pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk ; 0.245 ; 0.000 ;
+; emu|pll|pll_inst|altera_pll_i|general[2].gpll~PLL_OUTPUT_COUNTER|divclk ; 0.100 ; 0.000 ;
 ;
 ; Hold Summary ;
 ; Clock ; Slack ; End Point TNS ;
-; general[0].gpll ; 0.125 ; 0.000 ;
-; general[2].gpll ; 0.200 ; 0.000 ;
+; emu|pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk ; 0.125 ; 0.000 ;
+; emu|pll|pll_inst|altera_pll_i|general[2].gpll~PLL_OUTPUT_COUNTER|divclk ; 0.200 ; 0.000 ;
 RPT
 
 EXCL_EVIL_SDC="$FAULT_DIR/evil_async.sdc"
@@ -207,11 +207,11 @@ STA_MISSING_CLK="$FAULT_DIR/sta_missing_clock.rpt"
 cat >"$STA_MISSING_CLK" <<'RPT'
 ; Setup Summary ;
 ; Clock ; Slack ; End Point TNS ;
-; general[0].gpll ; 0.245 ; 0.000 ;
+; emu|pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk ; 0.245 ; 0.000 ;
 ;
 ; Hold Summary ;
 ; Clock ; Slack ; End Point TNS ;
-; general[0].gpll ; 0.125 ; 0.000 ;
+; emu|pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk ; 0.125 ; 0.000 ;
 RPT
 if "$ROOT/scripts/check_timing_exclusions.py" --sta-rpt "$STA_MISSING_CLK" \
      >"$FAULT_DIR/excl_missing.out" 2>"$FAULT_DIR/excl_missing.err"; then

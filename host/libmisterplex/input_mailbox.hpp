@@ -71,9 +71,10 @@ inline const char* frameStoreStatusUnavailableDescription() {
 //
 // ARM protocol:
 //   1. First strict write may use the current free_bank_mask.
-//   2. Capture a stable frames_done immediately after its PLXK kick.
+//   2. Retain the swap counter from the release sample that authorized the
+//      payload copy, then publish it as the baseline only after PLXK succeeds.
 //   3. Before each later strict write, require anyFree and frames_done != the
-//      post-kick baseline; poll at 1ms intervals up to 50ms.
+//      pre-kick release baseline; poll at 1ms intervals up to 50ms.
 //   4. If timeout: log STALL loudly. Do NOT silently fall back to a delay.
 struct BankReleaseStatus {
     uint8_t free_bank_mask = 0; // bit 0 = bank 0 free, bit 1 = bank 1 free

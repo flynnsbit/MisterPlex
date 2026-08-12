@@ -11,6 +11,7 @@
 #include "libmisterplex/playback_overlay.hpp"
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <mutex>
@@ -222,10 +223,13 @@ public:
 private:
     void threadMain(std::string url, int64_t startMs, std::string headers, int64_t durationMs);
     void audioPump(int afd);
-    void streamPump(int sfd);
+    void streamPump(int sfd, bool allowF1Present);
     void killChildren();
     void signalChildren(int sig);
     void dispatchPlaybackInput(PlaybackCommand command);
+    void resetPlaybackPauseClock();
+    void transitionPlaybackPause(bool paused, std::chrono::steady_clock::time_point now);
+    int64_t playbackPausedUs(std::chrono::steady_clock::time_point now) const;
     // true when STREAM product path may omit heavy RGB video decode (audio + demux only)
     bool wantSkipRgbVideo() const;
     pid_t spawnFfmpeg(const std::vector<std::string>& args, int vWriteFd, int aWriteFd);
@@ -339,6 +343,11 @@ private:
     std::atomic<bool> paused_{false};
     std::atomic<bool> audioActive_{false};
     std::atomic<bool> streamActive_{false};
+    std::mutex pauseControlMu_;
+    mutable std::mutex pauseClockMu_;
+    int64_t pauseClockAccumulatedUs_ = 0;
+    bool pauseClockHeld_ = false;
+    std::chrono::steady_clock::time_point pauseClockStarted_{};
     std::atomic<int64_t> reconFrames_{0};
     std::atomic<bool> reconPresentOk_{false}; // at least one recon → F1/fb0 this session
     // Sticky: PPS entropy_coding_mode=1 or recon fail_reason=cabac; cleared only on

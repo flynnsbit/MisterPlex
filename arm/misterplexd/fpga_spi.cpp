@@ -1375,6 +1375,7 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank,
     auto tPrep0 = std::chrono::steady_clock::now();
     bool plxdUsed = false;
     bool strictWriteAuthorized = false;
+    BankReleaseStatus strictReleaseSample{};
     {
         BankReleaseStatus brs;
         int plxdIters = 0;
@@ -1395,6 +1396,7 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank,
                     if (decision.ready) {
                         bank = decision.bank;
                         strictWriteAuthorized = true;
+                        strictReleaseSample = brs;
                         plxdUsed = true;
                         break;
                     }
@@ -1572,19 +1574,11 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank,
         return false;
     }
     if (policy == DdrBankWritePolicy::RequireReleased) {
-        // Sample after the kick, not before the ~14 ms payload copy: a VSync can
-        // occur during that copy and must not be mistaken for acknowledgement
-        // of the doorbell we just emitted.
-        BankReleaseStatus postKickStatus{};
-        if (!readBankRelease(postKickStatus)) {
-            ddrKickMode_ = -1;
-            ddrKickFailMs_ = std::chrono::duration<double, std::milli>(
-                                 std::chrono::steady_clock::now().time_since_epoch())
-                                 .count();
-            setErr("sendDdrFrame: strict PLXD post-kick frames_done unavailable");
-            return false;
-        }
-        strictDdrRelease_.noteWrite(postKickStatus);
+        // frames_done counts swaps only. Retain the release sample from before
+        // this payload and publish it only after the kick succeeds. If the swap
+        // completes before this point, the next call still observes a different
+        // counter and may proceed instead of waiting for an impossible extra swap.
+        strictDdrRelease_.noteWrite(strictReleaseSample);
     }
     lastDdrBankDoorbellMs_[bank] = std::chrono::duration<double, std::milli>(
                                        std::chrono::steady_clock::now().time_since_epoch())

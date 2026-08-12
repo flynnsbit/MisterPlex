@@ -91,15 +91,88 @@ def main() -> int:
         "status.frames_done != frames_done" in MAILBOX
         and "decideDdrBankWrite(brs, policy, strictDdrRelease_)" in FPGA
         and "strictDdrRelease_.beginWrite()" in FPGA
-        and "strictDdrRelease_.noteWrite(postKickStatus)" in FPGA
-        and "strict PLXD post-kick frames_done unavailable" in FPGA,
+        and "strictReleaseSample = brs" in FPGA
+        and "strictDdrRelease_.noteWrite(strictReleaseSample)" in FPGA,
         "strict PLXD writes must reject stale free masks until frames_done advances",
     )
     require(
-        FPGA.index("strictDdrRelease_.beginWrite()")
+        FPGA.index("strictReleaseSample = brs")
+        < FPGA.index("strictDdrRelease_.beginWrite()")
         < FPGA.index("kickDdrDoorbell(bank)")
-        < FPGA.index("strictDdrRelease_.noteWrite(postKickStatus)"),
-        "strict frames_done baseline must be captured after the doorbell, not before copy/kick",
+        < FPGA.index("strictDdrRelease_.noteWrite(strictReleaseSample)"),
+        "strict swap baseline must come from the release sample and publish after kick",
+    )
+    require(
+        "lastPresentedFrame(frameBytes, 0)" in MEDIA
+        and "std::memcpy(lastPresentedFrame.data(), slotFrame, frameBytes)" in MEDIA
+        and re.search(
+            r"if\s*\(lastPresentedFrameValid\s*&&\s*"
+            r"\(overlayNow\s*\|\|\s*lastPresentedHadOverlay\)\)",
+            MEDIA,
+        ) is not None,
+        "paused overlay repaint must use a clean successful-present snapshot, not ring occupancy",
+    )
+    require(
+        "transitionPlaybackPause(true, std::chrono::steady_clock::now())" in MEDIA
+        and "transitionPlaybackPause(false, std::chrono::steady_clock::now())" in MEDIA
+        and re.search(
+            r"transitionPlaybackPause\(.*?lock_guard<std::mutex> lk\(pauseClockMu_\);"
+            r".*?paused_\.store\(paused\)",
+            MEDIA,
+            re.S,
+        ) is not None
+        and "pipelinePauseBaselineUs = playbackPausedUs(t0)" in MEDIA
+        and "playbackPausedUs(now) -" in MEDIA
+        and "activePlaybackClockUs(wallUs, pausedUs)" in MEDIA
+        and "pipelineElapsedUs(std::chrono::steady_clock::now())" in MEDIA,
+        "true480 wall fallback must timestamp and exclude transport pause duration",
+    )
+    require(
+        re.search(
+            r"void MediaPlayer::pause\(\).*?pauseControlMu_.*?"
+            r"transitionPlaybackPause\(true.*?signalChildren\(SIGSTOP\).*?"
+            r"onProgress_",
+            MEDIA,
+            re.S,
+        ) is not None
+        and re.search(
+            r"void MediaPlayer::resume\(\).*?pauseControlMu_.*?"
+            r"transitionPlaybackPause\(false.*?signalChildren\(SIGCONT\).*?"
+            r"onProgress_",
+            MEDIA,
+            re.S,
+        ) is not None,
+        "pause/resume state, child signal, overlay, and progress effects must stay ordered",
+    )
+    require(
+        "void MediaPlayer::streamPump(int sfd, bool allowF1Present)" in MEDIA
+        and "allowF1Present && fpga_.ok()" in MEDIA
+        and "allowF1Present = skipRgb" in MEDIA,
+        "continuous rawvideo and sparse STREAM reconstruction must never share F1",
+    )
+    require(
+        MEDIA.count("if (servicePipelinePause())") >= 3
+        and re.search(
+            r"while \(got < frameBytes.*?\{\s*"
+            r"if \(servicePipelinePause\(\)\)",
+            MEDIA,
+            re.S,
+        ) is not None,
+        "partial pipeline reads must service pause clock and cached overlay repaint",
+    )
+    require(
+        "ringCv.wait_for(lk, std::chrono::milliseconds(50)" in MEDIA
+        and "fullCount < 2 || paused_.load()" in MEDIA,
+        "a full pipeline ring must wake periodically to service paused repaint",
+    )
+    require(
+        "stop_.load() || pipelineFatal.load()" in MEDIA
+        and re.search(
+            r"ringCv\.wait\(lk,.*?pipelineFatal\.load\(\)",
+            MEDIA,
+            re.S,
+        ) is not None,
+        "paused repaint failure must wake and terminate the presenter",
     )
     require(
         FPGA.count("strictDdrRelease_.reset()") >= 4

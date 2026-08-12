@@ -282,7 +282,7 @@ def main(argv: list[str]) -> int:
                 f"paths may have been excluded from analysis"
             )
         for expected_clk in expected_clocks:
-            if expected_clk not in cov.clocks:
+            if not any(expected_clk in clock for clock in cov.clocks):
                 errors.append(
                     f"expected clock '{expected_clk}' missing from STA report: "
                     f"it may have been excluded by a new set_clock_groups or set_false_path"

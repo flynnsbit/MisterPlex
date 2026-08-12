@@ -214,7 +214,7 @@ module ddr_frame_store #(
 	reg pending_ready_s1, pending_ready_s2;
 	reg pending_ready_ddr;
 	reg swap_req_t_ddr;
-	reg vsync_toggle;
+	reg swap_done_toggle;
 	reg reset_ddr_s1, reset_ddr_s2;
 	wire reset_ddr = reset_ddr_s2;
 
@@ -236,7 +236,7 @@ module ddr_frame_store #(
 			has_frame <= 1'b0;
 			swap_pending <= 1'b0;
 			frames_done <= 16'd0;
-			vsync_toggle <= 1'b0;
+			swap_done_toggle <= 1'b0;
 			swap_req_s1 <= 1'b0;
 			swap_req_s2 <= 1'b0;
 			swap_req_seen <= 1'b0;
@@ -264,9 +264,7 @@ module ddr_frame_store #(
 				has_frame <= 1'b1;
 				swap_pending <= 1'b0;
 				frames_done <= frames_done + 16'd1;
-				vsync_toggle <= ~vsync_toggle;
-			end else if (vsync_pulse) begin
-				vsync_toggle <= ~vsync_toggle;
+				swap_done_toggle <= ~swap_done_toggle;
 			end
 		end
 	end
@@ -537,8 +535,8 @@ module ddr_frame_store #(
 	reg bank_mbox_req, bank_mbox_valid;
 	reg [17:0] bank_mbox_hb;
 	reg [7:0] bank_mbox_seq;
-	reg [15:0] bank_vsync_count;
-	reg vsync_t_d1, vsync_t_d2, vsync_t_seen;
+	reg [15:0] bank_swap_count;
+	reg swap_done_t_d1, swap_done_t_d2, swap_done_t_seen;
 	reg start_d1, start_d2, start_seen;
 	reg bank_sel_d1, bank_sel_d2;
 
@@ -1027,10 +1025,10 @@ module ddr_frame_store #(
 			bank_mbox_valid <= 1'b0;
 			bank_mbox_hb <= 18'd0;
 			bank_mbox_seq <= 8'd0;
-			bank_vsync_count <= 16'd0;
-			vsync_t_d1 <= 1'b0;
-			vsync_t_d2 <= 1'b0;
-			vsync_t_seen <= 1'b0;
+			bank_swap_count <= 16'd0;
+			swap_done_t_d1 <= 1'b0;
+			swap_done_t_d2 <= 1'b0;
+			swap_done_t_seen <= 1'b0;
 			cmd_pop <= 1'b0;
 			sched_valid <= 1'b0;
 			sched_is_y <= 1'b0;
@@ -1128,12 +1126,12 @@ module ddr_frame_store #(
 			if (!frame_mbox_valid || ({underrun_count, debug_state} != frame_mbox_last) || (frame_mbox_hb == 18'd0))
 				frame_mbox_req <= 1'b1;
 
-			// PLXD bank-release: vsync toggle sync and heartbeat
-			vsync_t_d1 <= vsync_toggle;
-			vsync_t_d2 <= vsync_t_d1;
-			if (vsync_t_d2 != vsync_t_seen) begin
-				vsync_t_seen <= vsync_t_d2;
-				bank_vsync_count <= bank_vsync_count + 16'd1;
+			// PLXD bank-release: synchronize completed swaps, not idle VSyncs.
+			swap_done_t_d1 <= swap_done_toggle;
+			swap_done_t_d2 <= swap_done_t_d1;
+			if (swap_done_t_d2 != swap_done_t_seen) begin
+				swap_done_t_seen <= swap_done_t_d2;
+				bank_swap_count <= bank_swap_count + 16'd1;
 				bank_mbox_req <= 1'b1;
 			end
 			bank_mbox_hb <= bank_mbox_hb + 18'd1;
@@ -1209,7 +1207,7 @@ module ddr_frame_store #(
 						//   [34] disp_bank, [33:32] free_bank_mask, [31:0] magic
 						DDRAM_ADDR <= BANK_MAILBOX_W;
 						DDRAM_BURSTCNT <= 8'd1;
-						DDRAM_DIN <= {bank_vsync_count,                    // [63:48] frames_done
+						DDRAM_DIN <= {bank_swap_count,                     // [63:48] frames_done
 						              12'd0,                                // [47:36] reserved
 						              swap_pending_d2,                      // [35]
 						              disp_bank_d2,                         // [34]

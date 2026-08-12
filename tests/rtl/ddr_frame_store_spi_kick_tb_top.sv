@@ -41,11 +41,7 @@ module ddr_frame_store_spi_kick_tb (
 		.BANK_MAILBOX_PHYS(32'h3001_F128),
 		.DDR_BURST_MAX(8),
 		.PIPELINE_REFILL_SCHEDULER(1'b1),
-		.STRICT_YUV_DOORBELL(1'b1),
-		.WANT_Y_LINE_ONLY(1'b1),
-		.PENDING_READY_STICKY_PREP(1'b1),
-		.PREP_SLOT_RECYCLE(1'b1),
-		.SWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC(1'b1)
+		.STRICT_YUV_DOORBELL(1'b0)
 	) dut (
 		.clk(clk), .clk_ddr(clk_ddr), .reset(reset),
 		.rd_x(rd_x), .rd_y(rd_y), .rd_active(rd_active),

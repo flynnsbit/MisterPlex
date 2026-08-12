@@ -341,17 +341,17 @@ int main() {
         CHECK(decision.bank == -1);
 
         // First strict write may use the current free status.
-        CHECK(decodeBankReleaseWord(w2, br));
+        CHECK(decodeBankReleaseWord(plxd(0x02, 0, false, 1000), br));
         decision =
             decideDdrBankWrite(br, DdrBankWritePolicy::RequireReleased, strictState);
         CHECK(decision.ready);
         CHECK(decision.bank == 1);
+        const BankReleaseStatus releaseSample = br;
         strictState.beginWrite();
         CHECK(strictState.baseline_pending);
 
-        // RED: even a changed value observed before the post-kick baseline is
-        // captured may be a VSync that happened during the payload copy, before
-        // the doorbell. An unknown baseline authorizes no next write.
+        // RED: no concurrent strict write is authorized while payload/kick is
+        // in flight, even if a newer mailbox sample becomes visible.
         CHECK(decodeBankReleaseWord(plxd(0x02, 0, false, 1001), br));
         decision = decideDdrBankWrite(br, DdrBankWritePolicy::BestEffort, strictState);
         CHECK(decision.ready); // strict state never changes legacy/720 policy
@@ -359,27 +359,26 @@ int main() {
             decideDdrBankWrite(br, DdrBankWritePolicy::RequireReleased, strictState);
         CHECK(!decision.ready);
         CHECK(decision.bank == -1);
-        strictState.noteWrite(br);
+        strictState.noteWrite(releaseSample);
         CHECK(!strictState.baseline_pending);
 
-        // RED: a stable stale mailbox may still advertise a free bank after the
-        // immediately prior doorbell. Unchanged post-kick frames_done must not
-        // authorize another payload copy or doorbell decision.
-        decision =
-            decideDdrBankWrite(br, DdrBankWritePolicy::RequireReleased, strictState);
-        CHECK(!decision.ready);
-        CHECK(decision.bank == -1);
-
-        // GREEN: only a different frames_done plus anyFree acknowledges the
-        // prior strict write. Difference naturally includes 16-bit wrap.
-        const uint64_t w2Advanced = plxd(0x02, 0, false, 1002);
-        CHECK(decodeBankReleaseWord(w2Advanced, br));
+        // GREEN: if the swap completed before the kick path records its
+        // baseline, comparison against the pre-kick release sample still sees
+        // the acknowledgement immediately.
         decision =
             decideDdrBankWrite(br, DdrBankWritePolicy::RequireReleased, strictState);
         CHECK(decision.ready);
         CHECK(decision.bank == 1);
 
-        const uint64_t advancedButBusy = plxd(0x00, 1, true, 1002);
+        // RED: a stable stale mailbox still needs a swap-counter advance.
+        CHECK(decodeBankReleaseWord(
+            plxd(0x02, 0, false, releaseSample.frames_done), br));
+        decision =
+            decideDdrBankWrite(br, DdrBankWritePolicy::RequireReleased, strictState);
+        CHECK(!decision.ready);
+        CHECK(decision.bank == -1);
+
+        const uint64_t advancedButBusy = plxd(0x00, 1, true, 1001);
         CHECK(decodeBankReleaseWord(advancedButBusy, br));
         decision =
             decideDdrBankWrite(br, DdrBankWritePolicy::RequireReleased, strictState);

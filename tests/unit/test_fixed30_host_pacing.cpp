@@ -144,6 +144,17 @@ int main() {
         CHECK(previousTick - firstTick == rate.beam_ticks);
         CHECK(phaseRose && phaseFell);
 
+        const int64_t oneSecondFrameUs = frameContentUs(rate.num / rate.den, rate.num,
+                                                        rate.den);
+        const int64_t wallAfterPauseUs = oneSecondFrameUs + 5'000'000;
+        const int64_t activeAfterPauseUs =
+            activePlaybackClockUs(wallAfterPauseUs, 5'000'000);
+        CHECK(activeAfterPauseUs == oneSecondFrameUs);
+        CHECK(avDecide(wallAfterPauseUs - oneSecondFrameUs, kPresentLeadUs, kDropUs, 0) ==
+              AvAction::Drop);
+        CHECK(avDecide(activeAfterPauseUs - oneSecondFrameUs, kPresentLeadUs, kDropUs, 0) ==
+              AvAction::Present);
+
         // RED: pipelineDdr can have two decoded frames ready before one VSync.
         // With no eligibility gate and best-effort PLXD, the second frame is
         // immediately allowed to overwrite the non-display/pending bank.
@@ -179,22 +190,29 @@ int main() {
             decideDdrBankWrite(released, DdrBankWritePolicy::RequireReleased, strictState);
         CHECK(firstGreen.ready);
         CHECK(firstGreen.bank == 1);
+        const BankReleaseStatus releaseSample = released;
         strictState.beginWrite();
 
-        // A VSync observed during the payload copy but before the doorbell is
-        // not its acknowledgement. Block until a post-kick baseline is captured.
+        // No concurrent call may proceed while the current payload/doorbell is
+        // in flight, even if a newer mailbox sample is already visible.
         released.frames_done = 101;
-        const DdrBankWriteDecision preKickAdvanceRed =
+        const DdrBankWriteDecision inFlightRed =
             decideDdrBankWrite(released, DdrBankWritePolicy::RequireReleased, strictState);
-        CHECK(!preKickAdvanceRed.ready);
-        strictState.noteWrite(released);
+        CHECK(!inFlightRed.ready);
 
-        // A stable-but-stale PLXD free mask is not proof that the immediately
-        // prior doorbell crossed VSync. Require frames_done to advance first.
+        // Publish the pre-kick release counter only after the kick succeeds.
+        // If its swap already completed, the newer sample immediately ACKs it.
+        strictState.noteWrite(releaseSample);
+        const DdrBankWriteDecision immediateAckGreen =
+            decideDdrBankWrite(released, DdrBankWritePolicy::RequireReleased, strictState);
+        CHECK(immediateAckGreen.ready);
+        CHECK(immediateAckGreen.bank == 1);
+
+        released.frames_done = releaseSample.frames_done;
         const DdrBankWriteDecision staleRed =
             decideDdrBankWrite(released, DdrBankWritePolicy::RequireReleased, strictState);
         CHECK(!staleRed.ready);
-        released.frames_done = 102;
+        released.frames_done = 101;
         const DdrBankWriteDecision ackGreen =
             decideDdrBankWrite(released, DdrBankWritePolicy::RequireReleased, strictState);
         CHECK(ackGreen.ready);
@@ -218,8 +236,9 @@ int main() {
 
         std::printf(
             "%s: exact_eligible source=%lld beam=%lld repeats=%lld "
-            "supersede_red=1 pre_kick_advance_red=1 stale_ack_red=1 "
-            "frames_done_green=1 recovery_drop_run=%d\n",
+            "supersede_red=1 inflight_red=1 stale_ack_red=1 "
+            "immediate_ack_green=1 pause_clock_green=1 frames_done_green=1 "
+            "recovery_drop_run=%d\n",
             rate.label, static_cast<long long>(rate.cycle_frames),
             static_cast<long long>(rate.beam_ticks),
             static_cast<long long>(twoTick), maxDropRun);

@@ -169,6 +169,7 @@ true480-i420:
 	$(ROOT)/tests/unit/test_true480_i420_rtl_sim.sh --active-gate
 
 true480-shared-ddr:
+	$(ROOT)/tests/unit/test_ddr_frame_store_spi_kick.sh
 	$(ROOT)/tests/unit/test_true480_shared_ddr_rtl_sim.sh --active-gate
 
 rtl-lint:
