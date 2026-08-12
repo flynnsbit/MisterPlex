@@ -756,6 +756,22 @@ WeakLadder fitWeakLadderToAspect(const WeakLadder& weak,
     }
     width = std::max(2, width & ~1);
     height = std::max(2, height & ~1);
+
+    // The dual-A9 path is proven realtime near 640x384, while 640x480 24p
+    // transcodes fall below rate once AAC, scaling, and DDR presentation run
+    // together. Keep the 480p ladder inside that pixel budget; MiSTer still
+    // receives the full 640x480 presentation bank.
+    constexpr int64_t kTrue480DecodePixelBudget = 640LL * 384LL;
+    if (maxW <= 640 && maxH <= 480 &&
+        static_cast<int64_t>(width) * height > kTrue480DecodePixelBudget) {
+        const double dar = static_cast<double>(aspect.x) / aspect.y;
+        width = static_cast<int>(
+                    std::sqrt(static_cast<double>(kTrue480DecodePixelBudget) * dar)) &
+                ~1;
+        height = static_cast<int>(width / dar) & ~1;
+        width = std::max(2, width);
+        height = std::max(2, height);
+    }
     fitted.videoResolution = std::to_string(width) + "x" + std::to_string(height);
     return fitted;
 }
