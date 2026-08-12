@@ -415,6 +415,15 @@ localparam int SDRAM_REFRESH_CYCLES = 780;
 `endif
 localparam int FRAME_W = `FRAME_W;
 localparam int FRAME_H = `FRAME_H;
+`ifdef PLEX_PRESENT_TRUE_480P
+// Synthesis-visible contract guard: a wrong product frame size must fail
+// elaboration rather than silently falling back to Template scaling.
+generate
+	if ((FRAME_W != 640) || (FRAME_H != 480)) begin : g_true480_bad_frame_contract
+		PLEX_PRESENT_TRUE_480P_REQUIRES_FRAME_640X480 u_contract_error();
+	end
+endgenerate
+`endif
 `ifdef FRAME_STRIDE
 localparam int FRAME_STRIDE = `FRAME_STRIDE;
 `else
@@ -707,7 +716,8 @@ wire [15:0] stream_ddr_underruns;
 wire [15:0] stream_ddr_overruns;
 wire [31:0] stream_ddr_host_write;
 wire [31:0] stream_ddr_fpga_read;
-wire        stream_ddr_bus_want;
+wire        stream_ddr_bus_want_raw;
+reg         stream_ddr_bus_want;
 wire        stream_ddr_busy;
 wire  [7:0] stream_ddr_burstcnt;
 wire [28:0] stream_ddr_addr;
@@ -741,7 +751,7 @@ stream_path #(
 	.enable(is_stream_dl),
 	.flush(status[11]),
 	.ddr_stream_enable(stream_ddr_enable),
-	.ddr_bus_want(stream_ddr_bus_want),
+	.ddr_bus_want(stream_ddr_bus_want_raw),
 	.ddr_busy(stream_ddr_busy),
 	.ddr_burstcnt(stream_ddr_burstcnt),
 	.ddr_addr(stream_ddr_addr),
@@ -800,6 +810,16 @@ stream_path #(
 	.fs_wr_reset(stub_wr_reset),
 	.fs_swap(stub_swap)
 );
+
+// keepv22 timing cut: register the clk_sys request before the arbiter's
+// clk_ddr 2-FF synchronizer. This removes stream read/write counters from the
+// m1_want_s1 setup cone without changing the reader's local state decisions.
+always @(posedge clk_sys) begin
+	if (reset)
+		stream_ddr_bus_want <= 1'b0;
+	else
+		stream_ddr_bus_want <= stream_ddr_bus_want_raw;
+end
 
 // Phase 3.3j / 3.1b hybrid present:
 //   Host F1 SPI or DDR bulk owns product frame_store once any host frame has

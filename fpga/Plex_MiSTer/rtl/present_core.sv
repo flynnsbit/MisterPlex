@@ -13,8 +13,10 @@
 //   `define PRESENT_PX_PER_CLK N — 1|2|4 with MULTI_PIXEL (product land uses 1 until
 //                                  ddr_frame_store grows N-wide RGB ports)
 //   `define PRESENT_CLK_PIX_PLL  — separate clk_pix + rate-match (optional)
+//   `define PLEX_PRESENT_TRUE_480P — fixed 640x480 progressive product path:
+//       true 640x480 DE, identity store y=0..479, and 11+618+11 presentation.
 // Macros off → bit-identical Template H_DE=529 / DE_LAG=3 path (v0.3.0 baseline).
-// Mutually exclusive: L4 vs BEAM_960 vs MULTI_PIXEL. Parent enables in fit QSF only.
+// Mutually exclusive: TRUE_480P vs L4 vs BEAM_960 vs MULTI_PIXEL.
 
 `ifdef PRESENT_MULTI_PIXEL
 	`ifndef PRESENT_PX_PER_CLK
@@ -54,16 +56,17 @@ module present_core #(
 	parameter int FRAME_CMD_FIFO_AW = 5,
 `endif
 `ifdef FRAME_LINES_1
-	parameter int FRAME_LINE_COUNT = 1
+	parameter int FRAME_LINE_COUNT = 1,
 `elsif FRAME_LINES_4
-	parameter int FRAME_LINE_COUNT = 4
+	parameter int FRAME_LINE_COUNT = 4,
 `elsif FRAME_LINES_8
-	parameter int FRAME_LINE_COUNT = 8
+	parameter int FRAME_LINE_COUNT = 8,
 `elsif FRAME_LINES_16
-	parameter int FRAME_LINE_COUNT = 16
+	parameter int FRAME_LINE_COUNT = 16,
 `else
-	parameter int FRAME_LINE_COUNT = 4
+	parameter int FRAME_LINE_COUNT = 4,
 `endif
+	parameter int FRAME_Y_FILL_STRIDE = 1
 )(
 	input  wire        clk,
 	input  wire        clk_sdram,
@@ -182,6 +185,28 @@ module present_core #(
 	localparam int FRAME_X_W = $clog2(FRAME_W);
 	localparam int FRAME_Y_W = $clog2(FRAME_H);
 
+	// synthesis translate_off
+	initial begin
+`ifdef PLEX_PRESENT_TRUE_480P
+		if (FRAME_W != 640 || FRAME_H != 480)
+			$error("PLEX_PRESENT_TRUE_480P requires FRAME_W=640 FRAME_H=480 (got %0d x %0d)",
+				FRAME_W, FRAME_H);
+		if (FRAME_Y_FILL_STRIDE != 1)
+			$error("PLEX_PRESENT_TRUE_480P requires FRAME_Y_FILL_STRIDE=1 (got %0d)",
+				FRAME_Y_FILL_STRIDE);
+`ifdef PLEX_PRESENT_720P_L4
+		$error("PLEX_PRESENT_TRUE_480P and PLEX_PRESENT_720P_L4 are mutually exclusive");
+`endif
+`ifdef PRESENT_BEAM_960
+		$error("PLEX_PRESENT_TRUE_480P and PRESENT_BEAM_960 are mutually exclusive");
+`endif
+`ifdef PRESENT_MULTI_PIXEL
+		$error("PLEX_PRESENT_TRUE_480P and PRESENT_MULTI_PIXEL are mutually exclusive");
+`endif
+`endif
+	end
+	// synthesis translate_on
+
 `ifdef PRESENT_MULTI_PIXEL
 	localparam int PRESENT_PPC = `PRESENT_PX_PER_CLK;
 `else
@@ -233,7 +258,36 @@ module present_core #(
 		.needs_wide_fifo(keep_960_wide_fifo)
 	);
 
-`ifdef PLEX_PRESENT_720P_L4
+`ifdef PLEX_PRESENT_TRUE_480P
+	// =====================================================================
+	// Fixed native 640x480 progressive beam. Runtime cadence/PLXG is
+	// deliberately absent from this first visual-recovery implementation.
+	// The pixel enable divides clk_sys by two, matching the legacy Template
+	// pixel cadence: 10 MHz / (672*496) = 30.0019 Hz. This keeps FRAME_LINES_8
+	// inside the existing 480-row DDR prefetch budget while retaining all
+	// 480 active rows.
+	// =====================================================================
+	wire [10:0] hc11, vc11;
+	present_beam_true_480p u_beam_true_480p (
+		.clk(clk),
+		.reset(reset),
+		.ce_pix(ce_pix_i),
+		.HBlank(hb),
+		.HSync(hs),
+		.VBlank(vb),
+		.VSync(vs),
+		.frame_start(fstart),
+		.hc_out(hc11),
+		.vc_out(vc11)
+	);
+	assign hc = hc11[9:0];
+	assign vc = vc11[9:0];
+	assign br = 8'd0;
+	assign bg = 8'd0;
+	assign bb = 8'd0;
+	wire _unused_true480_beam = scandouble | pal | (|eff_pattern);
+
+`elsif PLEX_PRESENT_720P_L4
 	// =====================================================================
 	// L4 720p24 true-DE beam (DEFAULT OFF). w-clock: H=1312 V=762 @ 24 MHz
 	// → 24.006 Hz (1:1 with measured PMS 24/1 asset; no pulldown).
@@ -420,7 +474,17 @@ module present_core #(
 	localparam int STORE_Y_SCALE = (FRAME_H * 65536) / TPL_SCALE_REF_H;
 	// Exact clone of colorbars in_content (full DE paint region).
 	wire [9:0] py = scandouble ? (vc >> 1) : vc;
-`ifdef PLEX_PRESENT_720P_L4
+`ifdef PLEX_PRESENT_TRUE_480P
+	// Native 480p: every active beam coordinate addresses the same store row
+	// and column. The DDR store applies the 11-pixel pillars and 618-pixel
+	// visible window; no Template scaling or even-row mapping exists here.
+	wire in_content = ~hb & ~vb & (hc11 < 11'd640) & (vc11 < 11'd480);
+	wire       past_last_row = (vc11 >= 11'd480);
+	wire [FRAME_X_W-1:0] store_x_clamped =
+		(hc11 >= 11'd640) ? FRAME_LAST_X : FRAME_X_W'(hc11);
+	wire [FRAME_Y_W-1:0] store_y_addr =
+		(vc11 >= 11'd480) ? FRAME_LAST_Y : FRAME_Y_W'(vc11);
+`elsif PLEX_PRESENT_720P_L4
 	// L4: present_content_window owns store map (identity when content==DE).
 	// STORE domain tracks FRAME_* so QSF 1280×720 cannot disagree with 480p-era 1280/720 literals.
 	wire in_content_l4 = ~hb & ~vb & (hc11 < hde_act11) & (vc11 < vact_act11);
@@ -585,6 +649,7 @@ module present_core #(
 		.PRESENT_X(FS_PRESENT_X),
 		.PRESENT_Y(FS_PRESENT_Y),
 		.LINE_COUNT(FRAME_LINE_COUNT),
+		.Y_FILL_STRIDE(FRAME_Y_FILL_STRIDE),
 		.PHYS_BASE(FS_PHYS_BASE),
 		.HPS_BANK_STRIDE_BYTES(FS_BANK_STRIDE),
 		.DOORBELL_PHYS(FS_DOORBELL)

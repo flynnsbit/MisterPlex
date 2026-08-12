@@ -3,6 +3,7 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_cadence.sv
 # Modules must stay in QIP or Quartus never sees them (orphan-class defect).
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_video_timing_720p.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_video_timing_960.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_beam_true_480p.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_beam_content_de.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_beam_ppc.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_npx_path.sv
