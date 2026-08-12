@@ -811,6 +811,16 @@ module ddr_frame_store #(
 	end
 `endif
 
+`ifdef PLEX_PRESENT_TRUE_480P
+	// CUR_TAG_WINDOW is one completion behind the live arrays. Reject a
+	// captured replay when its destination already holds the requested tag.
+	wire sched_line_live = sched_is_y
+	    ? (y_valid[sched_idx] && (y_bank[sched_idx] == sched_bank)
+	       && (y_line[sched_idx] == sched_y))
+	    : (c_valid[sched_idx] && (c_bank[sched_idx] == sched_bank)
+	       && (c_line[sched_idx] == sched_cy));
+`endif
+
 
 	reg fill_bank, fill_is_chroma, fill_plane_v;
 	reg [Y_W-1:0] fill_y;
@@ -1216,6 +1226,8 @@ module ddr_frame_store #(
 					// KEEP_VALID_UNTIL_FILL_DONE: do NOT clear y_valid/c_valid or
 					// retag bank at arm/issue. Tag+valid commit only when full
 					// line lands (S_LINE_WAIT done) — anti-shear keepv.
+					end else if (PIPELINE_REFILL_SCHEDULER && sched_valid && sched_line_live) begin
+						sched_valid <= 1'b0;
 `endif
 					end else if (PIPELINE_REFILL_SCHEDULER && sched_valid) begin
 						fill_bank <= sched_bank;
