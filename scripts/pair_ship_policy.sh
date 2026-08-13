@@ -63,6 +63,9 @@ PAIR_MATRIX_ROWS=(
   "${RBF_PIN_DDR_CANDIDATE_FULL}|${DAEMON_PIN_DDR_EDC3_FULL}|${DEVICE_CORE_PRODUCT}|ddr|ddr-c5382bee-edc3a46b|ddr|${PAIR_BANK1_DDR}"
   # Default lab ship: stamped ba2ec313 (git_rev=ba2ec3139133); has measured=/desync_risk=.
   "${RBF_PIN_DDR_CANDIDATE_FULL}|${DAEMON_PIN_DDR_509B0C75_FULL}|${DEVICE_CORE_PRODUCT}|ddr|ddr-c5382bee-509b0c75|ddr|${PAIR_BANK1_DDR}"
+  # Published v0.4.1 true480 pair. User verified 240p/480p playback and both
+  # loopback/LAN Plex Web timelines; 720p remains explicitly alpha.
+  "07f54d9f8f0eda2fe75d9cc314f6de54|f44c0dc1610561a8278e8fd4ece9aa53|${DEVICE_CORE_PRODUCT}|ddr|true480-v0.4.1|ddr|${PAIR_BANK1_DDR}"
   # HISTORICAL — parent HW 2026-08-02: e9f79de2 regresses 480p (624x350 delivery); keep for id lookup only.
   "${RBF_PIN_DDR_CANDIDATE_FULL}|${DAEMON_PIN_DDR_E9F79DE2_FULL}|${DEVICE_CORE_PRODUCT}|ddr|ddr-c5382bee-e9f79de2|ddr|${PAIR_BANK1_DDR}"
 )

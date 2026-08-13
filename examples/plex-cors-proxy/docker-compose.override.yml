@@ -1,0 +1,18 @@
+services:
+  plex-cors-proxy:
+    build: ./plex-cors-proxy
+    container_name: plex-cors-proxy
+    restart: unless-stopped
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+    environment:
+      PMS_LAN_IP: ${PMS_LAN_IP:?Set PMS_LAN_IP to the Docker host LAN address}
+      PROXY_PORT: 32402
+    depends_on:
+      - plex
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:32402/identity"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

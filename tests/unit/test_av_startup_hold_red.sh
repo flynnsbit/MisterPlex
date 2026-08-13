@@ -73,8 +73,8 @@ cp "$MP" "$WORK/media_player.cpp"
 python3 - <<'PY'
 from pathlib import Path
 p=Path("build/av-startup-hold-unit/media_player.cpp"); t=p.read_text()
-old="void MediaPlayer::pause() {\n    paused_.store(true);"
-new="void MediaPlayer::pause() {\n    audioStartGate_.store(false);\n    paused_.store(true);"
+old="void MediaPlayer::pause() {\n"
+new="void MediaPlayer::pause() {\n    audioStartGate_.store(false);\n"
 assert old in t; p.write_text(t.replace(old,new,1))
 PY
 set +e; green_checks "$WORK/media_player.cpp" "$AV" "$HPP" "$MAIN"; RED_C=$?; set -e

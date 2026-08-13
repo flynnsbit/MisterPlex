@@ -22,14 +22,16 @@ static int fails = 0;
 static void checkProfileMatchesContentResolution(const char* path,
                                                  const misterplex::WeakLadder& weak,
                                                  const misterplex::ContentResolution& content) {
-    const bool same = weak.videoResolution == content.label &&
+    const std::string expectedResolution =
+        std::to_string(content.width.get()) + "x" + std::to_string(content.height.get());
+    const bool same = weak.videoResolution == expectedResolution &&
                       weak.maxVideoBitrateKbps == content.weakBitrateKbps;
     if (!same) {
         std::fprintf(stderr,
                      "FAIL transcode profile path divergence: %s weak=%s bitrate=%d "
-                     "content=%dx%d/%s bitrate=%d\n",
+                     "content=%s/%s bitrate=%d\n",
                      path, weak.videoResolution.c_str(), weak.maxVideoBitrateKbps,
-                     content.width.get(), content.height.get(), content.label, content.weakBitrateKbps);
+                     expectedResolution.c_str(), content.label, content.weakBitrateKbps);
         ++fails;
     }
 }
@@ -60,15 +62,110 @@ int main() {
     CHECK(t.ok && t.playable == "testsrc");
     CHECK(t.sourceFpsHint == 30 && t.fpsNum == 30 && t.fpsDen == 1);
 
+    const auto wide = sourceAspectFromMetadata("1.777778", "", 0, 0, false);
+    CHECK(wide.valid && wide.x == 16 && wide.y == 9);
+    const auto fourThree = sourceAspectFromMetadata("", "", 1440, 1080, true);
+    CHECK(fourThree.valid && fourThree.x == 4 && fourThree.y == 3);
+    const auto custom = sourceAspectFromMetadata("1.6", "", 0, 0, false);
+    CHECK(custom.valid && custom.x == 8 && custom.y == 5);
+    const auto anamorphicWide =
+        sourceAspectFromMetadata("", "32:27", 720, 480, false);
+    CHECK(anamorphicWide.valid && anamorphicWide.x == 16 && anamorphicWide.y == 9);
+    const auto unknownAnamorphic =
+        sourceAspectFromMetadata("", "", 720, 480, false);
+    CHECK(!unknownAnamorphic.valid);
+    const auto implausible = sourceAspectFromMetadata("20.0", "", 0, 0, false);
+    CHECK(!implausible.valid);
+    const auto scalerOwned = sourceAspectForPresentation(wide, 1280, 720, false);
+    CHECK(scalerOwned.valid && scalerOwned.x == 16 && scalerOwned.y == 9);
+    const auto hostFramed = sourceAspectForPresentation(fourThree, 1280, 720, true);
+    CHECK(hostFramed.valid && hostFramed.x == 16 && hostFramed.y == 9);
+    const auto hostFramed480 = sourceAspectForPresentation(wide, 640, 480, true);
+    CHECK(hostFramed480.valid && hostFramed480.x == 4 && hostFramed480.y == 3);
+    CHECK(sourceAspectFromText("47:20").valid);
+    CHECK(sourceAspectFromText("16/9").x == 16);
+    CHECK(sourceAspectFromFfmpegProbeText(
+              "Stream #0:0: Video: h264, yuv420p, 720x480 [SAR 32:27 DAR 16:9]")
+              .x == 16);
+    const auto aspectPacket = encodeSourceAspectPacket(wide, 0x5a);
+    CHECK(aspectPacket[0] == 'P' && aspectPacket[1] == 'L' &&
+          aspectPacket[2] == 'X' && aspectPacket[3] == 'A');
+    CHECK(aspectPacket[4] == 16 && aspectPacket[5] == 0 &&
+          aspectPacket[6] == 9 && aspectPacket[7] == 0);
+    CHECK(aspectPacket[8] == 0x5a);
+    SourceAspectAck decodedAck;
+    const uint64_t ackWord =
+        (static_cast<uint64_t>(0x5a) << 56) |
+        (static_cast<uint64_t>(9) << 44) |
+        (static_cast<uint64_t>(16) << 32) |
+        mailbox_abi::kPlxjMagic;
+    CHECK(decodeSourceAspectAckWord(ackWord, decodedAck));
+    CHECK(decodedAck.aspect.valid && decodedAck.aspect.x == 16 &&
+          decodedAck.aspect.y == 9 && decodedAck.token == 0x5a);
+    SourceAspectAck tornAck;
+    CHECK(!decodeStableSourceAspectAck(
+        static_cast<uint32_t>(ackWord), static_cast<uint32_t>(ackWord >> 32),
+        static_cast<uint32_t>(ackWord), static_cast<uint32_t>(ackWord >> 32) ^ 1u,
+        tornAck));
+
+    const auto xmlWide = sourceAspectFromPlexMetadata(
+        "<MediaContainer><Video aspectRatio=\"1.78\"><Media width=\"720\" "
+        "height=\"480\"><Part><Stream streamType=\"1\" anamorphic=\"true\" "
+        "pixelAspectRatio=\"8:9\"/></Part></Media></Video></MediaContainer>",
+        720, 480);
+    CHECK(xmlWide.valid && xmlWide.x == 16 && xmlWide.y == 9);
+    const auto xmlMediaWide = sourceAspectFromPlexMetadata(
+        "<MediaContainer><Video ratingKey=\"143\"><Media width=\"1280\" "
+        "height=\"720\" aspectRatio=\"1.78\" videoCodec=\"h264\"/></Video>"
+        "</MediaContainer>",
+        1280, 720);
+    CHECK(xmlMediaWide.valid && xmlMediaWide.x == 16 && xmlMediaWide.y == 9);
+    const auto xmlSar = sourceAspectFromPlexMetadata(
+        "<MediaContainer><Video><Media width=\"720\" height=\"480\">"
+        "<Part><Stream streamType=\"1\" anamorphic=\"true\" "
+        "sampleAspectRatio=\"32:27\"/></Part></Media></Video></MediaContainer>",
+        720, 480);
+    CHECK(xmlSar.valid && xmlSar.x == 16 && xmlSar.y == 9);
+    const auto xmlSquare = sourceAspectFromPlexMetadata(
+        "<MediaContainer><Video><Media width=\"1440\" height=\"1080\">"
+        "<Part><Stream streamType=\"1\" anamorphic=\"false\"/></Part>"
+        "</Media></Video></MediaContainer>",
+        1440, 1080);
+    CHECK(xmlSquare.valid && xmlSquare.x == 4 && xmlSquare.y == 3);
+    const auto xmlUnknown = sourceAspectFromPlexMetadata(
+        "<MediaContainer><Video><Media width=\"720\" height=\"480\">"
+        "<Part><Stream streamType=\"1\"/></Part></Media></Video></MediaContainer>",
+        720, 480);
+    CHECK(!xmlUnknown.valid);
+
     auto h = plexFfmpegHeaders("sess1", "tok");
     CHECK(h.find("X-Plex-Session-Identifier: sess1") != std::string::npos);
     CHECK(h.find("X-Plex-Token: tok") != std::string::npos);
 
-    // --- PMS universal transcode profile table / 480p guard ---
+    // --- PMS universal transcode profile table (240p/480p/720p) ---
     const auto& profiles = plexTranscodeProfiles();
-    CHECK(profiles.size() == 2);
+    CHECK(profiles.size() == 3);
     const auto osd240 = contentResolutionFromOsdWord(0);
     const auto osd480 = contentResolutionFromOsdWord(1u << 4);
+    const auto osd720 = contentResolutionFromOsdWord(2u << 4);
+    CHECK(profiles[0].name == "240p");
+    CHECK(profiles[0].videoResolution == "320x240");
+    CHECK(profiles[0].maxVideoBitrateKbps == 1000);
+    CHECK(profiles[0].videoQuality == 40);
+    CHECK(profiles[0].h264Profile == "baseline");
+    CHECK(profiles[0].h264Level == 30);
+    CHECK(profiles[1].name == "480p");
+    CHECK(profiles[1].videoResolution == "640x480");
+    CHECK(profiles[1].maxVideoBitrateKbps == 2000);
+    CHECK(profiles[1].videoQuality == 60);
+    CHECK(profiles[1].h264Profile == "baseline");
+    CHECK(profiles[1].h264Level == 30);
+    CHECK(profiles[2].name == "720p");
+    CHECK(profiles[2].videoResolution == "1280x720");
+    CHECK(profiles[2].maxVideoBitrateKbps == 20000);
+    CHECK(profiles[2].videoQuality == 100);
+    CHECK(profiles[2].h264Profile == "main");
+    CHECK(profiles[2].h264Level == 31);
     WeakLadder w240;
     CHECK(applyPlexTranscodeProfile("240p", w240));
     CHECK(w240.profileName == "240p");
@@ -76,6 +173,10 @@ int main() {
     CHECK(w240.h264Profile == "baseline");
     CHECK(w240.h264Level == 30);
     CHECK(validateWeakLadder(w240));
+    CHECK(fitWeakLadderToAspect(w240, {16, 9, true}).videoResolution == "320x180");
+    CHECK(fitWeakLadderToAspect(w240, {4, 3, true}).videoResolution == "320x240");
+    CHECK(fitWeakLadderToAspect(w240, {1, 1, true}).videoResolution == "240x240");
+    CHECK(fitWeakLadderToAspect(w240, {}).videoResolution == "320x240");
 
     WeakLadder w480;
     CHECK(applyPlexTranscodeProfile("480p", w480));
@@ -88,6 +189,10 @@ int main() {
     CHECK(w480.h264Level == 30);
     CHECK(w480.clientProfileName == "MiSTerPlex");
     CHECK(validateWeakLadder(w480));
+    CHECK(fitWeakLadderToAspect(w480, {16, 9, true}).videoResolution == "640x360");
+    CHECK(fitWeakLadderToAspect(w480, {4, 3, true}).videoResolution == "572x428");
+    CHECK(fitWeakLadderToAspect(w480, {1, 1, true}).videoResolution == "480x480");
+    CHECK(fitWeakLadderToAspect(w480, {}).videoResolution == "640x480");
     // Resolution alias selects the 480p profile too.
     WeakLadder byRes;
     CHECK(applyPlexTranscodeProfile(osd480.label, byRes));
@@ -113,11 +218,28 @@ int main() {
         checkProfileMatchesContentResolution("content-tier reapply 480p", play480, osd480);
     }
 
+    WeakLadder w720;
+    CHECK(applyPlexTranscodeProfile("720p", w720));
+    CHECK(w720.profileName == "720p");
+    CHECK(w720.videoResolution == "1280x720");
+    CHECK(w720.maxVideoBitrateKbps == 20000);
+    CHECK(w720.h264Profile == "main");
+    CHECK(w720.h264Level == 31);
+    CHECK(validateWeakLadder(w720));
+    checkProfileMatchesContentResolution("built-in profile 720p", w720, osd720);
+    CHECK(fitWeakLadderToAspect(w720, {16, 9, true}).videoResolution == "1280x720");
+    CHECK(fitWeakLadderToAspect(w720, {4, 3, true}).videoResolution == "960x720");
+    CHECK(fitWeakLadderToAspect(w720, {1, 1, true}).videoResolution == "720x720");
+    CHECK(fitWeakLadderToAspect(w720, {}).videoResolution == "1280x720");
+    WeakLadder by720;
+    CHECK(applyPlexTranscodeProfile("1280x720", by720));
+    CHECK(by720.profileName == "720p");
+
     const auto start480 =
         buildUniversalTranscodeUrl("http://pms.example:32400", "/library/metadata/3", "tok",
                                    "sess480", 1500, w480);
     CHECK(start480.find("/video/:/transcode/universal/start.mp4") != std::string::npos);
-    CHECK(start480.find(std::string("videoResolution=") + osd480.label) != std::string::npos);
+    CHECK(start480.find("videoResolution=640x480") != std::string::npos);
     CHECK(start480.find("maxVideoBitrate=" + std::to_string(osd480.weakBitrateKbps)) !=
           std::string::npos);
     CHECK(start480.find("videoQuality=60") != std::string::npos);
@@ -185,8 +307,8 @@ int main() {
     CHECK(extra480.find("name=video.height&value=" + std::to_string(osd480.height.get())) !=
           std::string::npos);
     const auto caps480 = plexClientCapabilities(w480);
-    CHECK(caps480.find(std::string("videoDecoders=h264{profile:baseline&resolution:") +
-                        osd480.label + "&level:30}") != std::string::npos);
+    CHECK(caps480.find("videoDecoders=h264{profile:baseline&resolution:640x480&level:30}") !=
+          std::string::npos);
     const auto headers480 = plexFfmpegHeaders("sess480", "tok", w480);
     CHECK(headers480.find("X-Plex-Client-Profile-Name: MiSTerPlex") != std::string::npos);
     CHECK(headers480.find("X-Plex-Client-Profile-Name: Generic") == std::string::npos);

@@ -1,8 +1,9 @@
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_cadence.sv
-// 720p / ascal-native present path (default OFF via QSF macros — see present_core.sv).
-// Modules must stay in QIP or Quartus never sees them (orphan-class defect).
+# 720p / ascal-native present path (default OFF via QSF macros — see present_core.sv).
+# Modules must stay in QIP or Quartus never sees them (orphan-class defect).
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_video_timing_720p.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_video_timing_960.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_beam_true_480p.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_beam_content_de.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_beam_ppc.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_npx_path.sv
@@ -17,6 +18,7 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio_tone.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio_fifo.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/async_fifo.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio_ingest.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/source_aspect_ingest.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/line_buf_ram.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/frame_store.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_frame_store.sv

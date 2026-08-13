@@ -86,6 +86,10 @@ set_global_assignment -name VERILOG_MACRO "PRODUCT_NO_STUB=1"
 set_global_assignment -name VERILOG_MACRO "FRAME_W=1280"
 set_global_assignment -name VERILOG_MACRO "FRAME_H=720"
 set_global_assignment -name VERILOG_MACRO "FRAME_LINES_8=1"
+# Fixed native 480p path: enable only in an explicit 640x480 fit QSF. The
+# default product canvas above is 1280x720 and the elaboration guard rejects
+# combining that canvas with PLEX_PRESENT_TRUE_480P.
+#set_global_assignment -name VERILOG_MACRO "PLEX_PRESENT_TRUE_480P=1"
 # 720p / ascal-native present path — DEFAULT OFF (v0.3.0 baseline must not change).
 # Parent enables in a granted fit QSF only.
 #
@@ -97,7 +101,8 @@ set_global_assignment -name VERILOG_MACRO "FRAME_LINES_8=1"
 #set_global_assignment -name VERILOG_MACRO "FABRIC_NATIVE_720P_GEOM=1"
 #set_global_assignment -name VERILOG_MACRO "FRAME_W=1280"
 #set_global_assignment -name VERILOG_MACRO "FRAME_H=720"
-# (comment out the FRAME_W=640 / FRAME_H=480 lines above when enabling L4)
+# (comment out FRAME_W=640 / FRAME_H=480 and PLEX_PRESENT_TRUE_480P above
+# when enabling L4)
 #
 # --- Alternate tiers (mutually exclusive with L4) ---
 #set_global_assignment -name VERILOG_MACRO "PRESENT_BEAM_960=1"

@@ -96,10 +96,12 @@ inline const char* frameStoreStatusUnavailableDescription() {
 // Layout: see mailbox_abi_spec.hpp (SINGLE SOURCE OF TRUTH).
 //
 // ARM protocol:
-//   1. Read PLXD. If free_bank_mask has a set bit, write to that bank.
-//   2. If free_bank_mask == 0, poll at 1ms intervals up to 50ms (~3 vsyncs).
-//   3. If timeout: log STALL loudly. Do NOT silently fall back to a delay.
-//   4. Ring PLXK doorbell with the bank just written.
+//   1. First strict write may use the current free_bank_mask.
+//   2. Retain the swap counter from the release sample that authorized the
+//      payload copy, then publish it as the baseline only after PLXK succeeds.
+//   3. Before each later strict write, require anyFree and frames_done != the
+//      pre-kick release baseline; poll at 1ms intervals up to 50ms.
+//   4. If timeout: log STALL loudly. Do NOT silently fall back to a delay.
 struct BankReleaseStatus {
     uint8_t free_bank_mask = 0; // bit 0 = bank 0 free, bit 1 = bank 1 free
     uint8_t disp_bank = 0;     // 0 or 1
@@ -116,6 +118,81 @@ struct BankReleaseStatus {
         return -1;
     }
 };
+
+inline uint16_t frameCounterDelta(uint16_t newer, uint16_t older) {
+    return static_cast<uint16_t>(newer - older);
+}
+
+inline bool hardwarePresentCountMatches(uint16_t startFrames, uint16_t endFrames,
+                                        int64_t startArmPresents,
+                                        int64_t endArmPresents,
+                                        int64_t tolerance = 2) {
+    const int64_t hardware = frameCounterDelta(endFrames, startFrames);
+    const int64_t arm = endArmPresents - startArmPresents;
+    const int64_t difference = hardware > arm ? hardware - arm : arm - hardware;
+    return arm >= 0 && tolerance >= 0 && difference <= tolerance;
+}
+
+inline bool hardwarePresentTotalsMatch(uint64_t hardwarePresents,
+                                       int64_t armPresents,
+                                       int64_t tolerance = 2) {
+    if (armPresents < 0 || tolerance < 0)
+        return false;
+    const uint64_t arm = static_cast<uint64_t>(armPresents);
+    const uint64_t difference =
+        hardwarePresents > arm ? hardwarePresents - arm : arm - hardwarePresents;
+    return difference <= static_cast<uint64_t>(tolerance);
+}
+
+enum class DdrBankWritePolicy {
+    BestEffort,      // legacy/diagnostic paths may reuse the non-display bank
+    RequireReleased, // true480 waits for free bank + prior frames_done advance
+};
+
+struct DdrBankWriteDecision {
+    bool ready = false;
+    int bank = -1;
+};
+
+struct DdrStrictReleaseState {
+    bool baseline_valid = false;
+    bool baseline_pending = false;
+    uint16_t frames_done = 0;
+
+    void reset() {
+        baseline_valid = false;
+        baseline_pending = false;
+        frames_done = 0;
+    }
+
+    void beginWrite() { baseline_pending = true; }
+
+    void noteWrite(const BankReleaseStatus& status) {
+        baseline_valid = true;
+        baseline_pending = false;
+        frames_done = status.frames_done;
+    }
+
+    bool acknowledgesPreviousWrite(const BankReleaseStatus& status) const {
+        // frames_done is 16-bit. Any different value is a newer acknowledgement,
+        // including 0 after 0xffff wrap; equality is the stale-mailbox case.
+        return !baseline_pending && (!baseline_valid || status.frames_done != frames_done);
+    }
+};
+
+inline DdrBankWriteDecision decideDdrBankWrite(const BankReleaseStatus& status,
+                                                DdrBankWritePolicy policy,
+                                                const DdrStrictReleaseState& strictState) {
+    if (status.anyFree()) {
+        if (policy == DdrBankWritePolicy::RequireReleased &&
+            !strictState.acknowledgesPreviousWrite(status))
+            return {false, -1};
+        return {true, status.freeBank()};
+    }
+    if (policy == DdrBankWritePolicy::RequireReleased)
+        return {false, -1};
+    return {true, status.disp_bank ^ 1};
+}
 
 inline bool decodeBankReleaseWord(uint64_t word, BankReleaseStatus& out) {
     if (static_cast<uint32_t>(word) != kBankReleaseMailboxMagic)

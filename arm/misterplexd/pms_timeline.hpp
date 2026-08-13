@@ -18,6 +18,7 @@ struct PmsTimelineSession {
     std::string token;
     std::string key;
     std::string ratingKey;
+    std::string serverMachineIdentifier;
     std::string playQueueItemId;
     std::string containerKey;
     std::string clientIdentifier = "misterplex";
@@ -31,16 +32,42 @@ struct PmsTimelineHttpRequest {
     std::vector<std::pair<std::string, std::string>> headers;
 };
 
+// Sink result: ok must reflect real HTTP 2xx (not body non-empty).
+struct PmsTimelineSinkResult {
+    bool ok = false;
+    int httpStatus = 0; // 0 = transport/unknown; else HTTP status
+};
+
 bool buildPmsTimelineHttpRequest(const PmsTimelineSession& session, const std::string& state,
                                  int64_t timeMs, int64_t durationMs,
                                  PmsTimelineHttpRequest& out);
 
+inline bool pmsTimelineIdentityMatches(
+    const std::string& expectedBaseUrl,
+    const std::string& expectedServerMachineIdentifier,
+    const std::string& activeBaseUrl,
+    const std::string& activeServerMachineIdentifier) {
+    bool matched = false;
+    if (!expectedBaseUrl.empty()) {
+        if (expectedBaseUrl != activeBaseUrl)
+            return false;
+        matched = true;
+    }
+    if (!expectedServerMachineIdentifier.empty()) {
+        if (expectedServerMachineIdentifier != activeServerMachineIdentifier)
+            return false;
+        matched = true;
+    }
+    return matched;
+}
+
 class PmsTimelineReporter {
 public:
-    using HttpSink = std::function<bool(const PmsTimelineHttpRequest&)>;
+    using HttpSink = std::function<PmsTimelineSinkResult(const PmsTimelineHttpRequest&)>;
     using LogFn = std::function<void(const std::string&)>;
 
-    static constexpr std::chrono::seconds kPlayingCadence{10};
+    // 1s cadence so Plex Web scrubber (PMS-bound) tracks companion progress.
+    static constexpr std::chrono::seconds kPlayingCadence{1};
 
     explicit PmsTimelineReporter(HttpSink sink = {}, bool async = true);
     ~PmsTimelineReporter();
@@ -53,16 +80,21 @@ public:
     void beginSession(const PmsTimelineSession& session, int64_t timeMs, int64_t durationMs);
     void reportState(const std::string& state, int64_t timeMs, int64_t durationMs);
     void endSession(int64_t timeMs, int64_t durationMs);
+    // Refresh auth only when the control request identifies the active PMS.
+    // This prevents late controls from crossing tokens during server handoff.
+    bool updateToken(const std::string& token, const std::string& expectedBaseUrl,
+                     const std::string& expectedServerMachineIdentifier);
     void stopAndFlush();
 
 private:
     struct Pending {
         PmsTimelineHttpRequest request;
         std::string state;
+        uint64_t sessionGeneration = 0;
     };
 
     bool shouldSendLocked(const std::string& state);
-    void enqueue(PmsTimelineHttpRequest request, const std::string& state);
+    void enqueueLocked(Pending pending);
     void workerLoop();
     bool send(const Pending& pending);
 
@@ -78,6 +110,7 @@ private:
     std::thread worker_;
 
     bool active_ = false;
+    uint64_t sessionGeneration_ = 0;
     PmsTimelineSession session_;
     std::string lastSentState_;
     std::chrono::steady_clock::time_point lastPlayingSent_{};

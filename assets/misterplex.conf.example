@@ -27,20 +27,24 @@
 # Static ARM ffmpeg. Default probes bin/ffmpeg here, then mistercast-linux.
 # FFMPEG=/media/fat/misterplex/bin/ffmpeg
 DECODE=320x240
-# DECODE is the coded decode bank (product default 320x240). Lab 624x480 needs
-# DECODE_ALLOW_LAB_480P=1 (order of the two keys does not matter). 640x480 is
-# presented scanout only and is always rejected.
+# Safe startup bank. In the matching v0.4.1 core, F12 Content resolution selects
+# production 240p/480p modes; 720p is alpha and may miss realtime frame rate.
+# Direct conf overrides above 320x240 remain lab-only: 624x480 needs
+# DECODE_ALLOW_LAB_480P=1 (order of the two keys does not matter), while 640x480
+# is presented scanout rather than a coded-bank value.
 # DECODE_ALLOW_LAB_480P=0
 #
 # TRANSCODE_PROFILE names a PMS ladder entry (bitrate/quality/H.264 caps + a
 # default videoResolution). It is NOT "delivered geometry by itself". Each play
-# sets videoResolution= from the content tier (OSD O[4] when OSD_CONTROL=1, else
-# DECODE). Startup banner prints pms_request_geometry= and decode_bank= separately
-# so profile_name=480p never looks like a second geometry next to decode=320x240.
+# sets videoResolution= from the content tier (OSD O[5:4] on the v0.4.1 core,
+# else DECODE). Startup prints pms_request_geometry= and decode_bank= separately
+# so a profile label never looks like a second coded-bank geometry.
 # 240p → 320x240 @ ~1000 kbps. 480p → coded 624x480 @ 2000 kbps (not 640x480).
+# 720p → 1280x720 alpha path; not recommended for normal viewing.
 # Leave unset to follow DECODE / OSD.
 # TRANSCODE_PROFILE=240p
 # TRANSCODE_PROFILE=480p
+# TRANSCODE_PROFILE=720p
 # Legacy per-field overrides (kept for lab experiments):
 # WEAK_RES=320x240
 # WEAK_BITRATE=1000
@@ -61,6 +65,13 @@ DECODE=320x240
 # PRESENT=fb0 alone freezes the idle screen on the last latched core frame
 # (daemon still opens FPGA for idle when conf says fb0, but prefer fpga).
 PRESENT=fpga
+# PRESENT_MEM: present backend memory policy (v0.4.0+).
+#   auto — use HPS DDR frame store; optional SDRAM stick never required
+#   ddr  — force DDR path (no-stick / stick-fail safe; shipping default behavior)
+# External SDRAM stick is optional acceleration only; shipping RBF always keeps
+# ddr_frame_store so users without a stick still get 240p/480p/720p (720p may be
+# ≤24 fps until publish-path work lands).
+# PRESENT_MEM=auto
 # STREAM=1  # annex-B → host I-recon F1 + F3 (Phase 3.3i product path)
 # Prefer direct H.264 Part when STREAM=1 (avoids High/CABAC universal for recon).
 # High/CABAC: sticky skip from PPS entropy flag (no residual walk per IDR).
@@ -146,7 +157,7 @@ AUDIO_CLOCK_PPM=-638
 # SKIP_FORWARD_MS=30000
 # SKIP_BACK_MS=10000
 
-# --- OSD menu controls (Plex core CONF_STR v3) --------------------------------
+# --- OSD menu controls (Plex core CONF_STR v8) --------------------------------
 #
 # OSD_CONTROL: how the daemon treats F12 menu bits (status[15:0]).
 #   auto  (default) — read live CONF_STR via UIO_GET_STRING. Apply F12 Idle / A/V /
@@ -158,6 +169,11 @@ AUDIO_CLOCK_PPM=-638
 #                     pre-v3 CONF_STR where the same bits mean Pattern/Content FPS.
 #   off / 0         — never apply; F12 Idle Screen is inert; IDLE_SCREEN conf only.
 # When F12 is inert the daemon flashes "F12 Idle: use conf" on the idle HDMI frame.
+# On the matching v0.4.1 core, auto enables A/V, idle, and Content resolution
+# controls (O[5:4]: 240p/480p/720p). The daemon polls read-only; Main_MiSTer owns
+# and persists the OSD word.
+# Content-res changes while playing restart the session at the same offset so
+# PMS re-encodes to the new weak ladder (no on-device scale when sizes match).
 OSD_CONTROL=auto
 #
 # AV_OFFSET_MS: constant audio-vs-video trim applied inside the pacing loop (NOT

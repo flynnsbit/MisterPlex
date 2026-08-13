@@ -29,6 +29,18 @@ int main() {
     CHECK(parse("rptr: 234576, wptr: 234576, len:      0, comp: 0\n") == 0);
     CHECK(parse("rptr: 238120, wptr: 426576, len: 188456, comp: 4\n") == 188456);
     CHECK(parse("rptr: 405960, wptr: 426576, len:  20616, comp: 2\n") == 20616);
+    {
+        const char* line = "rptr: 238120, wptr: 426576, len: 188456, comp: 4\n";
+        const auto status = parseMrAudioStatus(line, std::strlen(line));
+        CHECK(status.valid());
+        CHECK(status.readPointer == 238120);
+        CHECK(status.writePointer == 426576);
+        CHECK(status.queuedBytes == 188456);
+    }
+    {
+        const char* line = "rptr: 1, wptr: 2\n";
+        CHECK(!parseMrAudioStatus(line, std::strlen(line)).valid());
+    }
 
     // --- malformed / hostile input must report "unknown", never a wrong number ---
     CHECK(parse("") == -1);
@@ -58,10 +70,44 @@ int main() {
     // Never negative, even if the queue somehow exceeds what we think we wrote.
     CHECK(audibleClockMs(kSec, kSec * 2) == 0);
     CHECK(audibleClockMs(0, 0) == 0);
+    CHECK(audibleClockUs(kSec, 0) == 1000000);
+    CHECK(audibleClockUs(kSec, kSec / 2) == 500000);
+    CHECK(audibleClockUs(kSec, kSec) == 0);
+    CHECK(audibleClockUs(kSec, -1) == 1000000);
+    CHECK(audibleClockUs(kSec, kSec * 2) == 0);
+    CHECK(audibleClockUs(192, 0) == 1000);
 
     // The correction is exactly the queue depth, so a deeper ring means a
     // proportionally earlier playback position.
     CHECK(audibleClockMs(2 * kSec, kSec / 4) == 1750);
+    CHECK(audibleClockMs(kSec + 188456, 188456) == 1000);
+    CHECK(audibleClockMs(kSec + 20616, 20616) == 1000);
+
+    // For every valid depth, the audible clock must equal the submitted clock
+    // after subtracting the queue. This catches accidentally adding latency or
+    // applying the correction twice.
+    const int64_t depths[] = {0, 1, 191, 192, 19199, 19200, 188456, kMrAudioRingBytes - 1};
+    for (const int64_t depth : depths) {
+        const int64_t written = kSec * 4 + depth;
+        CHECK(audibleClockMs(written, depth) == ((written - depth) * 1000LL) / kSec);
+        CHECK(audibleClockUs(written, depth) == ((written - depth) * 1000000LL) / kSec);
+    }
+
+    // Moving equal bytes into both counters changes queue occupancy but not what
+    // has reached the speakers.
+    CHECK(audibleClockMs(3 * kSec + 4096, kSec + 4096) ==
+          audibleClockMs(3 * kSec, kSec));
+    CHECK(audibleClockUs(3 * kSec + 4096, kSec + 4096) ==
+          audibleClockUs(3 * kSec, kSec));
+
+    // At fixed submitted bytes, a deeper queue can never advance the audible
+    // position. Check the full useful range at sub-ms and multi-ms boundaries.
+    int64_t previous = audibleClockMs(4 * kSec, 0);
+    for (int64_t depth = 1; depth < kMrAudioRingBytes; depth += 191) {
+        const int64_t now = audibleClockMs(4 * kSec, depth);
+        CHECK(now <= previous);
+        previous = now;
+    }
 
     // --- feed-rate servo ---
     const double nom = 48000.0 * 4.0; // 192000 B/s nominal

@@ -11,13 +11,13 @@
 # Provide a local source via FFMPEG_ARMHF or --from PATH.
 #
 # Pinned build: John Van Sickle FFmpeg 7.0.2 static armhf
-#   md5 6493ebc2a1c1732ce4d52a969e162578  (measured parent lab host)
+#   md5 6493ebc2449955c5c9825bd040aa5d4d  (published v0.4.1 package)
 #   bytes 31793580
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DEST_DIR="${DEST_DIR:-$ROOT/release_artifacts/ffmpeg-armhf}"
 DEST="$DEST_DIR/ffmpeg"
-EXPECT_MD5="${FFMPEG_EXPECT_MD5:-6493ebc2a1c1732ce4d52a969e162578}"
+EXPECT_MD5="${FFMPEG_EXPECT_MD5:-6493ebc2449955c5c9825bd040aa5d4d}"
 EXPECT_BYTES="${FFMPEG_EXPECT_BYTES:-31793580}"
 FROM="${FFMPEG_ARMHF:-}"
 

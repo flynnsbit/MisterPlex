@@ -5,15 +5,21 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <iomanip>
 #include <sstream>
+#include <unistd.h>
 #include <vector>
 
 namespace misterplex {
 namespace {
+
+constexpr const char* kClientIdentifier = "misterplex-dev";
+constexpr const char* kProduct = "MiSTerPlex";
+constexpr const char* kVersion = "0.4.1";
 
 std::string shellQuote(const std::string& s) {
     std::string o = "'";
@@ -34,13 +40,12 @@ std::string httpGet(const std::string& url, int timeoutSec = 15,
     cmd << "curl -sS -g -k -L --http1.1 --connect-timeout 6 --max-time " << timeoutSec
         << " -H 'Accept: application/xml'";
     if (defaultIdentity) {
-        cmd << " -H 'X-Plex-Client-Identifier: misterplex'"
-            << " -H 'X-Plex-Product: Plex Web'"
-            << " -H 'X-Plex-Version: 4.125.0'"
-            << " -H 'X-Plex-Platform: Chrome'"
-            << " -H 'X-Plex-Platform-Version: 120.0'"
+        cmd << " -H 'X-Plex-Client-Identifier: " << kClientIdentifier << "'"
+            << " -H 'X-Plex-Product: " << kProduct << "'"
+            << " -H 'X-Plex-Version: " << kVersion << "'"
+            << " -H 'X-Plex-Platform: Linux'"
             << " -H 'X-Plex-Device: Linux'"
-            << " -H 'X-Plex-Device-Name: Chrome'"
+            << " -H 'X-Plex-Device-Name: MiSTerPlex'"
             << " -H 'X-Plex-Client-Profile-Name: MiSTerPlex'"
             << " -H 'X-Plex-Model: bundled'"
             << " -H 'X-Plex-Provides: player'";
@@ -69,17 +74,13 @@ std::string curlHeaderArgs(const std::vector<std::pair<std::string, std::string>
     return args.str();
 }
 
-bool hasHeader(const std::vector<std::pair<std::string, std::string>>& headers,
-               const char* name) {
-    for (const auto& h : headers) {
-        if (h.first == name)
-            return true;
-    }
-    return false;
-}
-
 std::string makeSessionId() {
-    static std::atomic<uint32_t> n{1};
+    // Seed from time so the first cast after every daemon restart is not always
+    // mplex-9e3779b1 (n=1 * golden). PMS keeps per-session transcoder state;
+    // reusing that id after a restart stalls ffmpeg on /universal/start.
+    static std::atomic<uint32_t> n{static_cast<uint32_t>(
+        std::chrono::steady_clock::now().time_since_epoch().count() ^
+        (static_cast<uint64_t>(::getpid()) * 0x9E3779B9u))};
     std::ostringstream o;
     o << "mplex-" << std::hex << (n.fetch_add(1) * 2654435761u);
     return o.str();
@@ -110,7 +111,16 @@ bool isUnreachableHost(const std::string& hostOrUrl) {
 std::string attr(const std::string& xml, const char* tag, const char* name) {
     // First occurrence of <tag ... name="..."
     const std::string open = std::string("<") + tag;
-    auto tpos = xml.find(open);
+    size_t tpos = 0;
+    while ((tpos = xml.find(open, tpos)) != std::string::npos) {
+        const size_t boundary = tpos + open.size();
+        if (boundary >= xml.size() ||
+            std::isspace(static_cast<unsigned char>(xml[boundary])) ||
+            xml[boundary] == '>' || xml[boundary] == '/') {
+            break;
+        }
+        tpos = boundary;
+    }
     if (tpos == std::string::npos)
         return {};
     auto end = xml.find('>', tpos);
@@ -163,8 +173,13 @@ const std::vector<PlexTranscodeProfile>& plexTranscodeProfiles() {
         const auto p240 = contentResolutionFor240p();
         const auto p480 = contentResolutionFor480p();
         return std::vector<PlexTranscodeProfile>{
-            {"240p", p240.label, p240.weakBitrateKbps, 40, "baseline", 30},
-            {"480p", p480.label, p480.weakBitrateKbps, 60, "baseline", 30},
+            {"240p",
+             std::to_string(p240.width.get()) + "x" + std::to_string(p240.height.get()),
+             p240.weakBitrateKbps, 40, "baseline", 30},
+            {"480p",
+             std::to_string(p480.width.get()) + "x" + std::to_string(p480.height.get()),
+             p480.weakBitrateKbps, 60, "baseline", 30},
+            {"720p", "1280x720", 20000, 100, "main", 31},
         };
     }();
     return profiles;
@@ -326,20 +341,24 @@ bool validateWeakLadder(const WeakLadder& weak, std::string* why) {
         return fail("videoCodec must be h264");
     if (weak.audioCodec != "aac")
         return fail("audioCodec must be aac");
-    if (weak.h264Profile != "baseline")
-        return fail("H.264 profile must be baseline for the current decoder");
-    if (weak.h264Level > 30)
-        return fail("H.264 level must not exceed 3.0 for the current decoder");
-    if (w >= kPlex480pCodedWidth.get() || h >= kPlex480pCodedHeight.get()) {
-        if (w > kDdrFrameStoreMaxWidth.get() || h > kDdrFrameStoreMaxHeight.get())
-            return fail("current built-in profiles stop at " +
-                        std::to_string(kDdrFrameStoreMaxWidth.get()) + "x" +
-                        std::to_string(kDdrFrameStoreMaxHeight.get()));
-        // Bitrate floors are NOT decoder contracts (see recommendedMinVideoBitrateKbps).
-        // A hard 2000 kbps reject forced PMS requests above slow links and silently
-        // fell the ladder back to 240p — parent-proven 480p drop root cause.
-        // Decoder contracts remain: h264 baseline + level ≤ 3.0 above.
+    if (weak.h264Profile != "baseline" && weak.h264Profile != "main")
+        return fail("H.264 profile must be baseline or main");
+    if (w >= 1280 || h >= 720) {
+        if (w > 1280 || h > 720)
+            return fail("current built-in profiles stop at 1280x720");
+        if (weak.h264Level > 31)
+            return fail("H.264 level must not exceed 3.1 for 720p ARM decode path");
+        if (weak.h264Level < 31)
+            return fail("720p requires H.264 level 3.1 (level 3.0 MaxFS is insufficient)");
+    } else if (weak.h264Profile != "baseline") {
+        return fail("H.264 profile must be baseline for ≤480p profiles");
+    } else if (weak.h264Level > 30) {
+        return fail("H.264 level must not exceed 3.0 for 240p/480p profiles");
+    } else if (w > 640 || h > 480) {
+        return fail("use 720p profile for resolutions above 640x480");
     }
+    // Bitrate floors are quality/link heuristics, not decoder contracts.
+    // Explicit low-bitrate ladders are accepted and diagnosed separately.
     if (weak.videoQuality <= 0 || weak.maxVideoBitrateKbps <= 0)
         return fail("videoQuality and maxVideoBitrate must be positive");
     return true;
@@ -497,13 +516,12 @@ std::string plexFfmpegHeaders(const std::string& sessionId, const std::string& t
 std::string plexFfmpegHeaders(const std::string& sessionId, const std::string& token,
                               const WeakLadder& weak) {
     std::ostringstream o;
-    o << "X-Plex-Client-Identifier: misterplex\r\n"
-      << "X-Plex-Product: Plex Web\r\n"
-      << "X-Plex-Version: 4.125.0\r\n"
-      << "X-Plex-Platform: Chrome\r\n"
-      << "X-Plex-Platform-Version: 120.0\r\n"
+    o << "X-Plex-Client-Identifier: " << kClientIdentifier << "\r\n"
+      << "X-Plex-Product: " << kProduct << "\r\n"
+      << "X-Plex-Version: " << kVersion << "\r\n"
+      << "X-Plex-Platform: Linux\r\n"
       << "X-Plex-Device: Linux\r\n"
-      << "X-Plex-Device-Name: Chrome\r\n"
+      << "X-Plex-Device-Name: MiSTerPlex\r\n"
       << "X-Plex-Client-Profile-Name: " << weak.clientProfileName << "\r\n"
       << "X-Plex-Model: bundled\r\n"
       << "X-Plex-Provides: player\r\n";
@@ -520,12 +538,89 @@ std::string plexFfmpegHeaders(const std::string& sessionId, const std::string& t
     return o.str();
 }
 
+bool hasHeader(const std::vector<std::pair<std::string, std::string>>& headers,
+               const char* name) {
+    const std::string wanted = lowerCopy(name ? name : "");
+    for (const auto& h : headers) {
+        if (lowerCopy(h.first) == wanted)
+            return true;
+    }
+    return false;
+}
+
+bool plexHttpStatusOk(int httpStatus) {
+    return httpStatus >= 200 && httpStatus < 300;
+}
+
+int parseCurlHttpCode(const std::string& curlWriteOut) {
+    std::string out = curlWriteOut;
+    while (!out.empty() &&
+           (out.back() == '\n' || out.back() == '\r' || out.back() == ' ' || out.back() == '\t'))
+        out.pop_back();
+    size_t start = 0;
+    while (start < out.size() &&
+           (out[start] == ' ' || out[start] == '\t' || out[start] == '\n' || out[start] == '\r'))
+        ++start;
+    if (out.size() - start < 3)
+        return 0;
+    // Take the last 3 digits if curl appended noise; prefer exact 3-char body.
+    std::string code = (out.size() - start == 3) ? out.substr(start) : out.substr(out.size() - 3);
+    if (code.size() != 3)
+        return 0;
+    for (char c : code) {
+        if (c < '0' || c > '9')
+            return 0;
+    }
+    return (code[0] - '0') * 100 + (code[1] - '0') * 10 + (code[2] - '0');
+}
+
+PlexHttpNoBodyResult plexHttpGetNoBodyResult(
+    const std::string& url, const std::vector<std::pair<std::string, std::string>>& headers,
+    int timeoutSec) {
+    // Prefer curl HTTP status over body non-empty: /:/timeline may return empty 200,
+    // and 401 Unauthorized is a 91-byte HTML body — !body.empty() false-OKed auth fails
+    // (docs/evidence/timeline-stuck-20260730T173000Z).
+    PlexHttpNoBodyResult r;
+    std::ostringstream cmd;
+    cmd << "curl -sS -g -k -L --http1.1 --connect-timeout 6 --max-time " << timeoutSec
+        << " -o /dev/null -w '%{http_code}' -H 'Accept: application/xml'";
+    if (!hasHeader(headers, "X-Plex-Client-Identifier"))
+        cmd << " -H 'X-Plex-Client-Identifier: " << kClientIdentifier << "'";
+    if (!hasHeader(headers, "X-Plex-Product"))
+        cmd << " -H 'X-Plex-Product: " << kProduct << "'";
+    if (!hasHeader(headers, "X-Plex-Version"))
+        cmd << " -H 'X-Plex-Version: " << kVersion << "'";
+    if (!hasHeader(headers, "X-Plex-Platform"))
+        cmd << " -H 'X-Plex-Platform: Linux'";
+    if (!hasHeader(headers, "X-Plex-Device"))
+        cmd << " -H 'X-Plex-Device: Linux'";
+    if (!hasHeader(headers, "X-Plex-Device-Name"))
+        cmd << " -H 'X-Plex-Device-Name: MiSTerPlex'";
+    if (!hasHeader(headers, "X-Plex-Client-Profile-Name"))
+        cmd << " -H 'X-Plex-Client-Profile-Name: MiSTerPlex'";
+    if (!hasHeader(headers, "X-Plex-Model"))
+        cmd << " -H 'X-Plex-Model: bundled'";
+    if (!hasHeader(headers, "X-Plex-Provides"))
+        cmd << " -H 'X-Plex-Provides: player'";
+    cmd << curlHeaderArgs(headers) << " " << shellQuote(url) << " 2>/dev/null";
+    FILE* p = popen(cmd.str().c_str(), "r");
+    if (!p)
+        return r;
+    std::string out;
+    char buf[64];
+    while (fgets(buf, sizeof(buf), p))
+        out += buf;
+    (void)pclose(p);
+    r.httpStatus = parseCurlHttpCode(out);
+    // curl may exit non-zero on 404 with -f; we do not use -f, so status is authoritative.
+    r.ok = plexHttpStatusOk(r.httpStatus);
+    return r;
+}
+
 bool plexHttpGetNoBody(const std::string& url,
                        const std::vector<std::pair<std::string, std::string>>& headers,
                        int timeoutSec) {
-    const bool defaultIdentity = !hasHeader(headers, "X-Plex-Client-Identifier");
-    const std::string body = httpGet(url, timeoutSec, curlHeaderArgs(headers), defaultIdentity);
-    return !body.empty();
+    return plexHttpGetNoBodyResult(url, headers, timeoutSec).ok;
 }
 
 std::string buildPlexBase(const std::string& protocol, const std::string& address,
@@ -662,9 +757,104 @@ bool mediaVideoIsH264(const std::string& plexMetadataXml) {
     return videoCodecIsH264(attr(plexMetadataXml, "Media", "videoCodec"));
 }
 
+SourceAspect sourceAspectFromPlexMetadata(const std::string& xml,
+                                         int codedWidth, int codedHeight) {
+    std::string displayAspect = attr(xml, "Video", "displayAspectRatio");
+    if (displayAspect.empty())
+        displayAspect = attr(xml, "Video", "aspectRatio");
+    if (displayAspect.empty())
+        displayAspect = attr(xml, "Media", "displayAspectRatio");
+    if (displayAspect.empty())
+        displayAspect = attr(xml, "Media", "aspectRatio");
+
+    std::string sampleAspect = attr(xml, "Media", "sampleAspectRatio");
+    if (sampleAspect.empty())
+        sampleAspect = attr(xml, "Media", "pixelAspectRatio");
+    std::string anamorphic = attr(xml, "Media", "anamorphic");
+
+    size_t sp = 0;
+    while ((sp = xml.find("<Stream", sp)) != std::string::npos) {
+        const auto end = xml.find('>', sp);
+        if (end == std::string::npos)
+            break;
+        const std::string slice = xml.substr(sp, end - sp);
+        const bool isVideo = slice.find("streamType=\"1\"") != std::string::npos ||
+                             slice.find("type=\"video\"") != std::string::npos;
+        if (isVideo) {
+            if (displayAspect.empty())
+                displayAspect = attrIn(slice, "displayAspectRatio");
+            if (displayAspect.empty())
+                displayAspect = attrIn(slice, "aspectRatio");
+            if (sampleAspect.empty())
+                sampleAspect = attrIn(slice, "sampleAspectRatio");
+            if (sampleAspect.empty())
+                sampleAspect = attrIn(slice, "pixelAspectRatio");
+            if (sampleAspect.empty())
+                sampleAspect = attrIn(slice, "sar");
+            if (anamorphic.empty())
+                anamorphic = attrIn(slice, "anamorphic");
+            break;
+        }
+        sp = end + 1;
+    }
+
+    const std::string normalizedAnamorphic = lowerCopy(anamorphic);
+    const bool squarePixelsKnown =
+        normalizedAnamorphic == "0" || normalizedAnamorphic == "false" ||
+        normalizedAnamorphic == "no";
+    return sourceAspectFromMetadata(displayAspect, sampleAspect, codedWidth,
+                                    codedHeight, squarePixelsKnown);
+}
+
+WeakLadder fitWeakLadderToAspect(const WeakLadder& weak,
+                                 const SourceAspect& aspect) {
+    WeakLadder fitted = weak;
+    if (!aspect.valid || aspect.x == 0 || aspect.y == 0)
+        return fitted;
+
+    int maxW = 0;
+    int maxH = 0;
+    if (std::sscanf(weak.videoResolution.c_str(), "%dx%d", &maxW, &maxH) != 2 ||
+        maxW < 2 || maxH < 2) {
+        return fitted;
+    }
+
+    int width = maxW;
+    int height = maxH;
+    if (static_cast<int64_t>(aspect.x) * maxH >=
+        static_cast<int64_t>(aspect.y) * maxW) {
+        height = static_cast<int>(
+            (static_cast<int64_t>(maxW) * aspect.y) / aspect.x);
+    } else {
+        width = static_cast<int>(
+            (static_cast<int64_t>(maxH) * aspect.x) / aspect.y);
+    }
+    width = std::max(2, width & ~1);
+    height = std::max(2, height & ~1);
+
+    // The dual-A9 path is proven realtime near 640x384, while 640x480 24p
+    // transcodes fall below rate once AAC, scaling, and DDR presentation run
+    // together. Keep the 480p ladder inside that pixel budget; MiSTer still
+    // receives the full 640x480 presentation bank.
+    constexpr int64_t kTrue480DecodePixelBudget = 640LL * 384LL;
+    if (maxW <= 640 && maxH <= 480 &&
+        static_cast<int64_t>(width) * height > kTrue480DecodePixelBudget) {
+        const double dar = static_cast<double>(aspect.x) / aspect.y;
+        width = static_cast<int>(
+                    std::sqrt(static_cast<double>(kTrue480DecodePixelBudget) * dar)) &
+                ~1;
+        height = static_cast<int>(width / dar) & ~1;
+        width = std::max(2, width);
+        height = std::max(2, height);
+    }
+    fitted.videoResolution = std::to_string(width) + "x" + std::to_string(height);
+    return fitted;
+}
+
 ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::string& plexBase,
                                 const std::string& token, int64_t offsetMs, bool weakAlways,
-                                const WeakLadder& weak, bool preferDirectH264) {
+                                const WeakLadder& weak, bool preferDirectH264, int decodeW,
+                                int decodeH) {
     ResolveResult r;
     std::string key = urlDecode(rawKeyOrPath);
     if (key.empty() || key == "test" || key == "testsrc") {
@@ -675,6 +865,7 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
         r.sourceFpsHint = 30;
         r.fpsNum = 30;
         r.fpsDen = 1;
+        r.sourceAspect = {4, 3, true};
         return r;
     }
 
@@ -774,77 +965,74 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
         }
         r.sourceFpsHint = contentFpsHint(r.videoFrameRate, r.frameRate);
         parseExactFps(r.videoFrameRate, r.frameRate, r.fpsNum, r.fpsDen);
-        // Source asset geometry (library), for direct-play identity-scale + GEOM logs.
-        // Also capture DAR/SAR — universal videoResolution is a ceiling; PMS
-        // square-pixel aspect-fit uses display aspect (see pms_delivery_geom.hpp).
+        // Source coded size, aspect metadata, and audio presence. Prefer the exact
+        // video Stream tag; Media@ is only a fallback because mixed Stream lists
+        // commonly put audio first.
         {
-            auto mw = attr(xml, "Media", "width");
-            auto mh = attr(xml, "Media", "height");
-            if (!mw.empty() && !mh.empty()) {
-                r.mediaWidth = std::atoi(mw.c_str());
-                r.mediaHeight = std::atoi(mh.c_str());
-            }
+            int mw = 0, mh = 0;
+            bool sawStream = false;
+            bool foundAudio = false;
             r.mediaAspectRatio = attr(xml, "Media", "aspectRatio");
-            if (r.mediaWidth <= 0 || r.mediaHeight <= 0) {
-                size_t sp = 0;
-                while ((sp = xml.find("<Stream", sp)) != std::string::npos) {
-                    auto end = xml.find('>', sp);
-                    if (end == std::string::npos)
-                        break;
-                    const std::string slice = xml.substr(sp, end - sp);
-                    const bool isVideo = slice.find("streamType=\"1\"") != std::string::npos ||
-                                         slice.find("type=\"video\"") != std::string::npos;
-                    if (isVideo) {
-                        auto sw = attrIn(slice, "width");
-                        auto sh = attrIn(slice, "height");
-                        if (!sw.empty() && !sh.empty()) {
-                            r.mediaWidth = std::atoi(sw.c_str());
-                            r.mediaHeight = std::atoi(sh.c_str());
-                        }
-                        auto sar = attrIn(slice, "pixelAspectRatio");
-                        if (!sar.empty())
-                            r.pixelAspectRatio = sar;
-                        if (r.mediaAspectRatio.empty()) {
-                            auto ar = attrIn(slice, "aspectRatio");
-                            if (!ar.empty())
-                                r.mediaAspectRatio = ar;
-                        }
-                        break;
+            size_t sp = 0;
+            while ((sp = xml.find("<Stream", sp)) != std::string::npos) {
+                auto end = xml.find('>', sp);
+                if (end == std::string::npos)
+                    break;
+                sawStream = true;
+                const std::string slice = xml.substr(sp, end - sp);
+                const bool isVideo = slice.find("streamType=\"1\"") != std::string::npos ||
+                                     slice.find("type=\"video\"") != std::string::npos;
+                if (isVideo) {
+                    auto w = attrIn(slice, "width");
+                    auto h = attrIn(slice, "height");
+                    if (w.empty())
+                        w = attrIn(slice, "codedWidth");
+                    if (h.empty())
+                        h = attrIn(slice, "codedHeight");
+                    if (!w.empty() && !h.empty()) {
+                        mw = static_cast<int>(std::strtol(w.c_str(), nullptr, 10));
+                        mh = static_cast<int>(std::strtol(h.c_str(), nullptr, 10));
                     }
-                    sp = end + 1;
+                    r.pixelAspectRatio = attrIn(slice, "pixelAspectRatio");
+                    if (r.pixelAspectRatio.empty())
+                        r.pixelAspectRatio = attrIn(slice, "sampleAspectRatio");
+                    if (r.mediaAspectRatio.empty())
+                        r.mediaAspectRatio = attrIn(slice, "aspectRatio");
+                } else if (slice.find("streamType=\"2\"") != std::string::npos ||
+                           slice.find("type=\"audio\"") != std::string::npos) {
+                    foundAudio = true;
                 }
-            } else {
-                // Width/height from Media — still scan video Stream for SAR.
-                size_t sp = 0;
-                while ((sp = xml.find("<Stream", sp)) != std::string::npos) {
-                    auto end = xml.find('>', sp);
-                    if (end == std::string::npos)
-                        break;
-                    const std::string slice = xml.substr(sp, end - sp);
-                    const bool isVideo = slice.find("streamType=\"1\"") != std::string::npos ||
-                                         slice.find("type=\"video\"") != std::string::npos;
-                    if (isVideo) {
-                        auto sar = attrIn(slice, "pixelAspectRatio");
-                        if (!sar.empty())
-                            r.pixelAspectRatio = sar;
-                        break;
-                    }
-                    sp = end + 1;
+                sp = end + 1;
+            }
+            if (mw <= 0 || mh <= 0) {
+                auto w = attr(xml, "Media", "width");
+                auto h = attr(xml, "Media", "height");
+                if (!w.empty() && !h.empty()) {
+                    mw = static_cast<int>(std::strtol(w.c_str(), nullptr, 10));
+                    mh = static_cast<int>(std::strtol(h.c_str(), nullptr, 10));
                 }
             }
-            if (r.mediaWidth < 0)
-                r.mediaWidth = 0;
-            if (r.mediaHeight < 0)
-                r.mediaHeight = 0;
+            r.mediaWidth = mw > 0 ? mw : 0;
+            r.mediaHeight = mh > 0 ? mh : 0;
+            // Only force false when we successfully parsed Stream tags at all.
+            // Empty/malformed metadata keeps hasAudio=true (fail open).
+            if (sawStream)
+                r.hasAudio = foundAudio;
         }
+        r.sourceAspect =
+            sourceAspectFromPlexMetadata(xml, r.mediaWidth, r.mediaHeight);
     }
 
     // STREAM product path: prefer direct H.264 Part (elementary after demux) so host
     // CAVLC recon can work on Baseline/Main. PMS Chrome universal often emits High/CABAC.
+    // STREAM=0 rate path: direct only when source Media *exactly matches* DECODE bank
+    // (true 720 into 720 — skip PMS re-transcode). Do NOT treat FOAR 720×480 as covering
+    // 640×480/320×240: that skipped the weak ladder and broke G0b (mode→PMS encode).
+    // Never direct FOAR 720x480 into HD either (not an exact match).
     const bool metaOk = metaFound;
     const bool isH264 = metaOk && mediaVideoIsH264(xml);
-    const bool wantDirect = preferDirectH264 && key.rfind("/library", 0) == 0;
-    const bool directH264 = wantDirect && isH264;
+    const bool mediaMatchesDecode = decodeW > 0 && decodeH > 0 && r.mediaWidth == decodeW &&
+                                    r.mediaHeight == decodeH;
     // Optional profile tag for operator logs (High often implies CABAC sticky skip).
     auto videoProfileNote = [&]() -> std::string {
         if (!metaOk)
@@ -873,6 +1061,24 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
             p = attr(xml, "Media", "videoCodec");
         return p;
     };
+    // STREAM=0 rate: direct Part only when Media exactly matches DECODE *and* profile
+    // is baseline/main. High@L4 Grid720 measured ~17 pfps direct vs ~18.6 via Main
+    // universal + scale bypass — keep weak ladder for High.
+    const std::string srcProfEarly = videoProfileNote();
+    auto profLower = srcProfEarly;
+    for (char& c : profLower) {
+        if (c >= 'A' && c <= 'Z')
+            c = static_cast<char>(c - 'A' + 'a');
+    }
+    const bool lightDirectProfile =
+        profLower.find("baseline") != std::string::npos ||
+        profLower == "main" || profLower.find("constrained baseline") != std::string::npos ||
+        (profLower.find("main") != std::string::npos &&
+         profLower.find("high") == std::string::npos);
+    const bool wantDirect =
+        key.rfind("/library", 0) == 0 &&
+        (preferDirectH264 || (mediaMatchesDecode && lightDirectProfile));
+    const bool directH264 = wantDirect && isH264;
     if (directH264) {
         const std::string prof = videoProfileNote();
         const std::string profSuffix = prof.empty() ? "" : (" profile=" + prof);
@@ -886,7 +1092,8 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
                               std::string("X-Plex-Token=") + urlEncodeQuery(token);
             r.ok = true;
             r.transcoded = false;
-            r.detail = "direct H.264 Part (STREAM" + profSuffix + ")";
+            r.detail = std::string("direct H.264 Part (") +
+                       (preferDirectH264 ? "STREAM" : "media_covers_decode") + profSuffix + ")";
             return r;
         }
         auto file = attr(xml, "Part", "file");
@@ -894,7 +1101,8 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
             r.playable = urlDecode(file);
             r.ok = true;
             r.transcoded = false;
-            r.detail = "direct H.264 Part file (STREAM" + profSuffix + ")";
+            r.detail = std::string("direct H.264 Part file (") +
+                       (preferDirectH264 ? "STREAM" : "media_covers_decode") + profSuffix + ")";
             return r;
         }
         // Fall through to universal if Part missing
@@ -902,15 +1110,19 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
 
     // Prefer weak universal for dual A9 (STREAM=0 cast path / non-H.264 STREAM)
     if (weakAlways && key.rfind("/library", 0) == 0) {
+        const WeakLadder transcodeWeak =
+            fitWeakLadderToAspect(weak, r.sourceAspect);
         const std::string session = makeSessionId();
         const std::string start = buildUniversalTranscodeUrl(plexBase, key, token, session,
-                                                             offsetMs > 0 ? offsetMs : 0, weak);
-        if (ensureUniversalDecision(start, session, token, weak)) {
+                                                             offsetMs > 0 ? offsetMs : 0,
+                                                             transcodeWeak);
+        if (ensureUniversalDecision(start, session, token, transcodeWeak)) {
             r.ok = true;
             r.transcoded = true;
             r.playable = start;
-            r.httpHeaders = plexFfmpegHeaders(session, token, weak);
-            r.detail = "PMS universal " + weak.profileName + " " + weak.videoResolution + " " + key;
+            r.httpHeaders = plexFfmpegHeaders(session, token, transcodeWeak);
+            r.detail = "PMS universal " + transcodeWeak.profileName + " " +
+                       transcodeWeak.videoResolution + " " + key;
             // STREAM preferDirect fallthrough: operator can see why recon may hit CABAC.
             if (preferDirectH264) {
                 if (!metaOk)

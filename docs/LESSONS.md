@@ -290,6 +290,43 @@ contains. And prefer explicit paths over `git add -A` in any shared tree.
 
 ---
 
+## L38 — Never trust PMS `videoResolution` as the coded frame size
+
+Auto `pms_match_decode` scale bypass assumed weak-ladder `videoResolution=1280x720`
+meant the HTTP body was already 1280×720 I420. Host probe of the same FOAR URL
+proved PMS delivered **h264 720×480**. Skipping swscale packed SD stride into a HD
+bank → rainbow banding. push_frame and local play-file stayed PASS, so the core was
+blamed first.
+
+**Rule:** only skip scale for (1) explicit lab `FFMPEG_SWS_FLAGS=skip|none|off|identity`,
+(2) a **local** file already at DECODE bank size, or (3) PMS **Media/Stream coded size
+exactly matches DECODE** (`width==outW && height==outH`) — never `videoResolution`
+alone, and never “source ≥ bank” (that skipped the weak ladder for FOAR into 240/480
+and broke content-mode→PMS encode). FOAR (rk139) is 720×480 → FOAR+pad at 1280×720;
+Grid720 (rk143) is true 1280×720 → `pms_source_matches_bank` bypass is safe. Prove with
+metadata + HDMI-USB (`/dev/video0`), not DDR dumps alone.
+
+**Rate (v0.4.0 ladder):** 1280×720 glass is **possible**. Product 24 fps is still open:
+identity play-file ~21 pfps (historical pipeline peak 25.8 with free A9); true-720 PMS
+~18 pfps after scale skip; FOAR@720 bank ~9–10. Bottleneck = uncached bank memcpy
+(~14 ms) + decode contention. Path to 24 = KernelDma/WC, not more RBF thrash.
+See `Memory/lab/status/SCORE_v040_720_RATE_LADDER.txt`.
+
+## L39 — Dual-out FFmpeg aborts when the source has no audio
+
+With `AUDIO=on`, single-process spawn opens `pipe:1` (rawvideo) + `pipe:3` (s16le).
+Grid720 freckle map has **no** `streamType=2` audio. FFmpeg still builds the second
+output; optional `-map 0:a:0?` leaves it empty → `Output file does not contain any
+stream` → process exit → `pipeline short read got=0` and idle chevron while timeline
+claims playing. Global `-an` before a later audio map makes the same class of failure
+worse.
+
+**Rule:** parse PMS metadata for audio (`hasAudio`); if false, spawn **video-only**
+(`-an`, no pipe:3). Never open an empty audio output. Probe local files the same way.
+FOAR (AAC) keeps dual-out. HDMI-USB + `ffmpeg.err` on USB lab path are the glass proof.
+
+---
+
 ## Incident index
 
 | # | Wrong conclusion | Reality |
@@ -319,6 +356,9 @@ contains. And prefer explicit paths over `git add -A` in any shared tree.
 | — | The tool had positive controls | They existed only in the **docstring**. No `assert` was in the code |
 | — | The h264 back end already ships, so its area is paid | `git show <deployed>:files.qip \| grep -c h264` → **0**. The shipping RBF contains no H.264 at all |
 | — | …therefore nothing was ever fitted | Also wrong. Six candidate fit reports contain fitted `h264_*` hierarchy. Correct: shipping RBF has none; candidate fits have a **partial diagnostic** one |
+| — | softc24 / daemon glass dead (PMS FOAR rainbow) | PMS returned **720×480**; `pms_match_decode` scale bypass desynced rawvideo. Fix: never auto-skip scale on HTTP |
+| — | Web cast frames=0 with AUDIO=on | Grid720 has **no audio**; dual pipe:3 aborted ffmpeg (L39) |
+| — | 240/480 mode skipped PMS encode | “covers bank” direct Part on FOAR; need **exact** bank match (L38) |
 
 Full narrative for each: `Memory/lab/parent/misterplex-parent-720p-decode-verdict.txt`.
 
@@ -374,3 +414,97 @@ Check `git rev-parse --abbrev-ref HEAD` (it prints `HEAD` when detached) and
 Advancing was safe only because the unique-commit count was zero; the one dirty file turned
 out to be an uncompilable half-edit (three accessors whose members it had deleted) that
 `main` already superseded, so it was stashed rather than discarded.
+
+> **Numbering provenance:** the main and true480 branches assigned L38–L40 independently. Their original identifiers are retained here rather than renumbering historical lessons.
+
+## Scheduler /loop: do not cancel before PASS (2026-08-07)
+
+Parent cancelled a "until 24 fps" loop after conf knobs were exhausted, without
+user request and without PASS. User rejected that. Rule: never `scheduler_delete`
+a pass-gated loop unless PASS is proven or the user cancels. Pivot the prompt
+to architecture work instead. Lab note:
+`Memory/lab/status/LESSON_DO_NOT_CANCEL_LOOP_BEFORE_PASS.txt`.
+
+## L40 — DDR 2-slot ring must call onProgress (Web scrubber freeze)
+
+**Symptom:** Plex Web / companion timeline stuck at plant offset (e.g. `time=3000`) while
+`frames`/`pfps`/`audio_s` advance and HDMI shows content.
+
+**Cause:** `PRESENT=fpga` uses `present_pipeline=2slot_cached_ring`. That path stored
+`positionMs_` on the 1 Hz log tick but **never called `onProgress_`**. Companion only
+received the initial `playing@startMs` plant → scrubber freeze. Separate from the older
+plant-hold bug (`0abee0b6` far-ahead release + `seedPlaybackPosition`).
+
+**Fix:** Call `onProgress_("playing", startMs+wall, dur)` alongside `positionMs_.store` in
+the DDR pipe loop. Keep `0abee0b6` plant-ahead release + `seedPlaybackPosition` in
+companion. Unit: `tests/unit/test_companion_plant_seek.cpp`.
+
+**Evidence:** SCORE_v040_MATRIX_WEB_TIMELINE.txt — timeline advances on 240/480/720 after fix.
+
+## L41 — PMS `/:/timeline` must be HTTP 2xx + cast token (Web 0:00)
+
+**Symptom:** Companion `/player/timeline/poll` advances, media plays, but Plex Web scrubber
+stays at **0:00**. User cast often uses `*.plex.direct` (different machine id than conf
+`PLEX_BASE`).
+
+**Cause (device evidence `timeline-stuck-20260730T173000Z` / commits `eeae7943`, `0abee0b6`):**
+1. `plexHttpGetNoBody` treated **non-empty body as OK** — 401 HTML (91 B) logged as success.
+2. Timeline session mixed **cast host** with **conf `PLEX_TOKEN`** from another PMS → silent 401.
+3. Playing cadence was 10s; Web-bound “Now Playing” needs ~1s updates.
+
+**Fix:** `plexHttpGetNoBodyResult` uses curl `%{http_code}` (2xx only); cast token preferred
+(conf token only when cast did not pin a host); `updateToken` from later `/player/` requests;
+`type=video` on `/:/timeline`; `clientIdentifier` = player id; log `http=N` always; playing
+cadence **1s**. Port of `eeae7943` + plant-ahead `0abee0b6` + L40.
+
+**Evidence:** Lab cast rk=143 — companion time 2s→11s; `pms timeline: update ok http=200`
+with advancing `time=`; PMS `/status/sessions` `viewOffset` matches player.
+
+## L42 — A false swap can hide a real frame-wrap refill miss
+
+The true480 shared-DDR gate was green only because unrestricted same-token fallback
+requested another swap every threshold. Removing those false idle swaps exposed the real
+steady defect: `soft_c=195`, five luma misses, and 12 underruns per frame. The old fallback
+prepared the inactive half and swapped it at VSync, accidentally supplying rows 0–6.
+
+The actual scheduler saturated its eight-line lookahead at row 479. At frame wrap, the
+active half therefore had to fetch rows 0–6 after scanout had already restarted. True480
+lookahead must wrap modulo `FRAME_H`; legacy modes retain their clamp. The active shared-DDR
+gate requires `fallback_fires=0`, `soft_c=0`, and `underrun_delta=0`, and its clamped-
+lookahead red twin proves the old behavior fails. Never preserve an invalid control event
+because it masks a data-path timing hole; remove it, then fix the newly exposed hole.
+
+## L43 — PMS-proxied Companion identity is also a browser-origin contract
+
+**Symptom:** `/player/timeline/poll` contains advancing `time=`, the Docker PMS
+`CompanionProxy` forwards every poll with HTTP 200, and Plex Web shows the target as
+playing, but its elapsed time remains at `0:00`.
+
+**Cause:** Plex Web 4.160.0 accepts a proxied poll only when JavaScript can read a
+response `X-Plex-Client-Identifier` matching the selected player's machine identifier.
+There are two independent failure modes:
+
+1. The Companion response omits the header. Commit `07935567` supplied it, but a later
+   merge restored an older `sendHttp` implementation and silently removed it.
+2. Plex Web loads from the PMS LAN URL while its server connection proxies Companion
+   polls through `127.0.0.1`. PMS forwards the identity header but replaces
+   `Access-Control-Expose-Headers` with `Location, Date`. The cross-origin XHR therefore
+   cannot read the identity, and Plex Web discards an otherwise valid advancing timeline.
+
+**Fix:** Every Companion HTTP response includes
+`X-Plex-Client-Identifier: <player-id>` and exposes that header through CORS. A
+same-host immediate workaround is to open `http://127.0.0.1:32400/web`. The permanent
+Docker fix keeps PMS in host networking for GDM discovery and places the
+`examples/plex-cors-proxy/` sidecar on the HTTP boundary. Its narrow NAT rules send
+loopback and LAN port 32400 through Nginx, which replaces PMS's expose list with
+`Location, Date, X-Plex-Client-Identifier`; upstream PMS remains reachable at
+`127.0.0.2:32400` without a redirect loop.
+
+**Evidence:** A real Chromium trace showed page origin `http://PMS_LAN_HOST:32400`,
+poll origin `http://127.0.0.1:32400`, raw identity `misterplex-dev`, exposed headers
+`Location, Date`, advancing poll time, and rendered `0:00`. Reopening the same cast at
+the loopback Web origin rendered `0:06` after the first advancing polls and continued
+progressing. A curl that merely sees the raw identity header is false-green because curl
+does not enforce the browser's CORS visibility rules. With the host-network proxy active,
+the user confirmed both loopback and LAN Plex Web URLs advance while **MiSTerPlex**
+remains discoverable.

@@ -20,10 +20,38 @@ inline int64_t frameContentMs(int64_t frameIndex, int num, int den) {
     return (frameIndex * 1000LL * static_cast<int64_t>(den)) / static_cast<int64_t>(num);
 }
 
+// Microsecond form for paths whose display period is too close to the source
+// period for integer milliseconds to preserve one-frame-per-VSync eligibility.
+// Truncation remains bounded below 1 us and never accumulates.
+inline int64_t frameContentUs(int64_t frameIndex, int num, int den) {
+    if (num <= 0 || den <= 0) {
+        num = kDefaultFpsNum;
+        den = kDefaultFpsDen;
+    }
+    return (frameIndex * 1000000LL * static_cast<int64_t>(den)) /
+           static_cast<int64_t>(num);
+}
+
+// Wall-clock playback time excluding time intentionally spent paused.
+inline int64_t activePlaybackClockUs(int64_t wallUs, int64_t pausedUs) {
+    if (wallUs <= 0)
+        return 0;
+    if (pausedUs <= 0)
+        return wallUs;
+    return pausedUs >= wallUs ? 0 : wallUs - pausedUs;
+}
+
+// Audio master clock (ms) from bytes handed to MrAudio (s16le stereo @ 48 kHz).
 inline int64_t audioClockMs(int64_t audioBytes) {
     if (audioBytes <= 0)
         return 0;
     return (audioBytes * 1000LL) / (48000LL * 4LL);
+}
+
+inline int64_t audioClockUs(int64_t audioBytes) {
+    if (audioBytes <= 0)
+        return 0;
+    return (audioBytes * 1000000LL) / (48000LL * 4LL);
 }
 
 // drift = audio clock − content time of the frame about to be shown.
@@ -266,6 +294,32 @@ inline int64_t holdRingAppendDropHead(int64_t curBytes, int64_t addBytes, int64_
 
 enum class AvAction { Present, Hold, Drop };
 
+enum class PlaybackTerminalState {
+    None,    // explicit stop teardown already owns the terminal report
+    Ended,   // natural EOF with delivered content; auto-next is allowed
+    Stopped, // empty or failed session; never auto-next
+};
+
+inline PlaybackTerminalState classifyPlaybackTerminalState(bool stopRequested,
+                                                            bool pipelineAborted,
+                                                            bool hadContent) {
+    if (stopRequested)
+        return PlaybackTerminalState::None;
+    if (pipelineAborted || !hadContent)
+        return PlaybackTerminalState::Stopped;
+    return PlaybackTerminalState::Ended;
+}
+
+// Decide what to do with the frame we just decoded.
+//   leadMs      small allowed video lead so the vsync path is never starved
+//   dropMs      drift past which a late frame is dropped (0 disables dropping)
+//   dropRun     how many frames we have dropped back-to-back
+//   maxDropRun  cap on consecutive drops so a stall cannot shred the picture
+//
+// Dropping is only safe because the FFmpeg chain is forced to CFR at this same
+// rate: supply then matches the schedule, so drift can only come from a real
+// decode/transport stall, never from a rate mismatch. Without forced CFR a
+// too-fast assumed rate would make this drop frames forever.
 inline AvAction avDecide(int64_t driftMs, int64_t leadMs, int64_t dropMs, int dropRun,
                          int maxDropRun = 1) {
     if (dropMs > 0 && driftMs > dropMs && dropRun < maxDropRun)

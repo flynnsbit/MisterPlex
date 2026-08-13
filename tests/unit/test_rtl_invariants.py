@@ -27,6 +27,17 @@ DDR_FRAME_LAYOUT_SVH = Path(
 DDR_FRAME_STORE = Path(
     os.environ.get("DDR_FRAME_STORE", ROOT / "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv")
 )
+SOURCE_ASPECT_RTL = Path(
+    os.environ.get(
+        "SOURCE_ASPECT_RTL", ROOT / "fpga/Plex_MiSTer/rtl/source_aspect_ingest.sv"
+    )
+)
+SOURCE_ASPECT_HPP = Path(
+    os.environ.get(
+        "SOURCE_ASPECT_HPP", ROOT / "host/libmisterplex/source_aspect.hpp"
+    )
+)
+PLEX_QIP = Path(os.environ.get("PLEX_QIP", ROOT / "fpga/Plex_MiSTer/files.qip"))
 H264_DEBLOCK = Path(
     os.environ.get("H264_DEBLOCK", ROOT / "fpga/Plex_MiSTer/rtl/h264_deblock.sv")
 )
@@ -334,12 +345,18 @@ def phase_a_menu_violations(src: str) -> list[str]:
                 f"Plex.sv CONF_STR missing `{entry}`. That drops a Phase A shipping file slot; "
                 "restore F1 raw frame, F2 raw audio, and F3 H.264 annex-B menu entries."
             )
-    if "O[15:14],Idle screen,Plex logo,Black,Screensaver,Last frame;" not in strings:
+    if "O[5:4],Content resolution,240p,480p,720p,720p;" not in strings:
         violations.append(
-            "Plex.sv CONF_STR idle-screen field drifted. The daemon decodes status[15:14] "
-            "with option order Logo/Black/Screensaver/LastFrame; update "
-            "libmisterplex/osd_menu.hpp and its red-check if the CONF_STR layout "
-            "intentionally changes."
+            "Plex.sv CONF_STR content-resolution field drifted. O[5:4] must retain "
+            "240p/480p/720p/720p so v7 bit4 remains compatible and tier 2/3 are safe 720p."
+        )
+    if (
+        "O[15:14],Display resolution,Follow content,240p,480p,720p;" not in strings
+        or "v,9;" not in strings
+    ):
+        violations.append(
+            "Plex.sv CONF_STR display-resolution field drifted. O[15:14] must be "
+            "Follow content/240p/480p/720p under config v9; idle mode is conf-only."
         )
     for label in ("Play/Pause", "Stop", "Skip Fwd", "Skip Back"):
         if not (label in strings and "J1," in strings):
@@ -665,6 +682,144 @@ def check_plex_reset_domains() -> None:
     print("PASS Plex.sv DDR presenter reset is not held behind SDRAM startup")
 
 
+def check_source_aspect_contract() -> None:
+    plex = norm(strip_comments(read(PLEX_SV)))
+    aspect_rtl = norm(strip_comments(read(SOURCE_ASPECT_RTL)))
+    aspect_host = norm(strip_comments(read(SOURCE_ASPECT_HPP)))
+    fpga_cpp = norm(strip_comments(read(FPGA_SPI_CPP)))
+    media = norm(strip_comments(read(MEDIA_PLAYER_CPP)))
+    media_hpp = norm(strip_comments(read(ROOT / "arm/misterplexd/media_player.hpp")))
+    main_cpp = norm(strip_comments(read(MISTERPLEXD_MAIN_CPP)))
+    ffmpeg_vf = norm(strip_comments(read(ROOT / "host/libmisterplex/ffmpeg_vf.hpp")))
+    qip = read(PLEX_QIP)
+
+    check(
+        "rtl/source_aspect_ingest.sv" in qip,
+        "source-aspect ingest is absent from files.qip and would be pruned from the RBF",
+    )
+    check(
+        "localparam[31:0]MAGIC_A=32'h4158_4C50" in aspect_rtl
+        and "bytes_seen==9'h1FF" in aspect_rtl
+        and "packet_x[11:0]!=12'd0" in aspect_rtl
+        and "packet_y[11:0]!=12'd0" in aspect_rtl
+        and "aspect_commit<=1'b1" in aspect_rtl,
+        "source-aspect RTL must atomically validate a complete PLXA packet before promotion",
+    )
+    check(
+        "source_aspect_ingestaspect_inst" in plex
+        and "assignVIDEO_ARX=(!ar)?original_arx" in plex
+        and "assignVIDEO_ARY=(!ar)?original_ary" in plex,
+        "OSD Original must route the published DAR into MiSTer VIDEO_ARX/VIDEO_ARY",
+    )
+    check(
+        "kSourceAspectIoctlIndex=4" in aspect_host
+        and "kSourceAspectPacketMagic=0x41584C50u" in aspect_host
+        and "sendFileTx(packet.data(),packet.size(),kSourceAspectIoctlIndex)" in fpga_cpp,
+        "daemon and RTL source-aspect packet ABI are not wired end-to-end",
+    )
+    check(
+        "source_aspect_mbox_req" in norm(read(DDR_FRAME_STORE))
+        and "constuint32_tplxjPhys=ddrLayout_.doorbell_phys+0x130u" in fpga_cpp
+        and "plxjPhys-ddrLayout_.phys_base" in fpga_cpp
+        and "off+8>ddrMapLen_" in fpga_cpp
+        and "ack.token==token" in fpga_cpp
+        and "ack.aspect.x==aspect.x" in fpga_cpp
+        and "ack.aspect.y==aspect.y" in fpga_cpp,
+        "playback must require a layout-relative matching PLXJ token and DAR acknowledgement",
+    )
+    check(
+        "sourceAspectForPresentation(" in main_cpp
+        and "player.setSourceAspect(resolved.sourceAspect,presentationAspect)" in main_cpp
+        and "sourceAspect_=sourceAspect" in media
+        and "owner=MiSTer_native_scaler" in media,
+        "playback must retain source DAR while publishing the selected aspect owner",
+    )
+    check(
+        "sourceAspectPublished=player.setSourceAspect(resolved.sourceAspect,"
+        "presentationAspect)" in main_cpp
+        and "if(!sourceAspectPublished&&(displayW!=contentW||displayH!=contentH))" in main_cpp
+        and "player.setDecodeSize(misterplex::CodedSize{misterplex::CodedWidth{contentW},"
+        "misterplex::CodedHeight{contentH}})" in main_cpp,
+        "an unsupported display mailbox must retry the content layout before rejecting play",
+    )
+    check(
+        'presentMode_!="fpga"&&presentMode_!="both"' in media
+        and "fpga_.sendSourceAspect(presentationAspect)" in media,
+        "PLXJ acknowledgement must gate FPGA presentation without requiring FPGA hardware "
+        "for fb0/none presentation",
+    )
+    check(
+        "vfReq.coded_w=rawW" in media
+        and "vfReq.display_w=rawDisplayW" in media
+        and "constFfmpegVfPlanvfPlan=buildFfmpegVideoFilter(vfReq)" in media
+        and "append(buildScalePadCentered(req.coded_w,req.coded_h,flags))"
+        in ffmpeg_vf,
+        "FPGA presentation must route typed coded/display geometry through the central "
+        "scale/pad planner and fill the coded raster without bypassing source-aspect policy",
+    )
+    check(
+        "std::mutexplayHandoffMu" in main_cpp
+        and "player.stop();activePlaybackGeneration.store(0);"
+        "FpgaWorkerHandofffpgaWorkers(player);player.setDecodeSize"
+        in main_cpp
+        and "comp.acceptsPlayRequest(req)" in main_cpp
+        and "PLAYsupersededbeforeaspectcommit" in main_cpp,
+        "playback handoff must stop the active presenter and reject stale generations "
+        "before remapping DDR or publishing DAR",
+    )
+    check(
+        "player_.suspendFpgaWorkers()" in main_cpp
+        and "player_.resumeFpgaWorkers(true)" in main_cpp
+        and "player_.resumeFpgaWorkers(false)" in main_cpp
+        and "std::lock_guard<std::mutex>present(presentMu_)" in media,
+        "DDR layout/DAR commits must retire background FPGA users and share presentMu",
+    )
+    check(
+        "std::atomic<int64_t>presentCount_{0}" in media_hpp
+        and "hwPresentTotal+=frameCounterDelta" in media,
+        "PLXD telemetry counters must be wrap-safe and atomic on ARM32",
+    )
+    check(
+        "pr.dispatchGeneration=onPlayQueued_(pr)"
+        in norm(read(ROOT / "arm/misterplexd/companion.cpp"))
+        and "lastPlay.dispatchGeneration=generation" in main_cpp
+        and "lastPlay.dispatchGeneration==gen&&!lastToken.empty()" in main_cpp
+        and "uint64_tgen=req.dispatchGeneration" in main_cpp
+        and "PLAYsupersededbeforeresolve" in main_cpp,
+        "detached playMedia handlers must retain their request generation so an older "
+        "thread cannot supersede a newer cast",
+    )
+    check(
+        "parentDispatchGeneration" in main_cpp
+        and "prepareGeneratedPlay" in main_cpp
+        and "lastPlay.dispatchGeneration!=parent" in main_cpp
+        and "comp.noteDispatchGeneration(gen)" in main_cpp
+        and "activePlaybackGeneration.load()" in main_cpp
+        and "eventGeneration!=playGen.load()" in main_cpp
+        and "if(!comp.stagePlay(n))" in main_cpp,
+        "generated restarts and player callbacks must retain their parent/active "
+        "generation and fail closed across newer playMedia or stop",
+    )
+    check(
+        "comp.endMediaSessionIfGeneration(eventGeneration,t,d)" in main_cpp
+        and "comp.setStateIfGeneration(eventGeneration,st,t,d)" in main_cpp
+        and 'comp.setStateIfGeneration(eventGeneration,"buffering",t,d)'
+        in main_cpp
+        and 'tryQueueStep(+1,"skipNext",commandGeneration)' in main_cpp
+        and 'tryQueueStep(-1,"skipPrevious",commandGeneration)' in main_cpp
+        and "seekAsync(0,commandGeneration)" in main_cpp,
+        "terminal cleanup and detached skip controls must remain bound to the "
+        "generation that emitted the event or command",
+    )
+    check(
+        "::poll(&pfd,1,timeoutMs)" in media
+        and "::kill(pid,SIGTERM)" in media
+        and "::kill(pid,SIGKILL)" in media,
+        "FFmpeg source-aspect probing must have a bounded process timeout",
+    )
+    print("PASS source DAR is retained and exactly one host/scaler aspect owner is published")
+
+
 def check_quartus_syntax_tripwires() -> None:
     deblock = strip_comments(read(H264_DEBLOCK))
     dpb = strip_comments(read(H264_DPB))
@@ -762,6 +917,34 @@ def check_frame_store_cdc_contract() -> None:
             ".rd_clk(clk),.rd_addr(y_rd_addr)",
             "frame line-buffer RAM reads must remain in clk",
         ),
+        (
+            "doorbell_word_r<=DDRAM_DOUT;doorbell_word_valid_r<=poll_pending&&DDRAM_DOUT_READY;",
+            "HPS doorbell data must enter a coherent unconditional clk_ddr staging register",
+        ),
+        (
+            "doorbell_was_primed_r<=doorbell_primed;",
+            "staged first-response handling must retain the pre-response primed state",
+        ),
+        (
+            "wiredb_magic_ok=doorbell_word_valid_r&&(doorbell_word_r[31:0]==MAGIC);wire[31:0]db_token=doorbell_word_r[63:32];",
+            "doorbell validation and token capture must use the same staged response word",
+        ),
+        (
+            "!IGNORE_STALE_DOORBELL_AFTER_RESET||doorbell_was_primed_r",
+            "staged doorbell processing must not accept the stale reset-time sample",
+        ),
+        (
+            "db_token_same&&IGNORE_STALE_DOORBELL_AFTER_RESET&&doorbell_primed&&stale_db_recovery_pending&&",
+            "same-token fallback must be limited to one pending reset recovery",
+        ),
+        (
+            "stale_db_recovery_pending<=1'b0;stale_db_polls<='0;",
+            "an accepted reset recovery must disable repeated unchanged-token swaps",
+        ),
+        (
+            "pending_bank_ddr<=db_token[31];",
+            "accepted doorbell bank selection must come from the staged token",
+        ),
     ]
     for needle, msg in requirements:
         check(needle in nft, f"ddr_frame_store CDC contract: {msg}")
@@ -779,6 +962,10 @@ def check_frame_store_cdc_contract() -> None:
             re.I,
         ),
         "SDC must not hide frame-store/DDR/arbiter timing with false or multicycle paths",
+    )
+    check(
+        "wire[31:0]db_token=DDRAM_DOUT[63:32]" not in nft,
+        "doorbell token must not bypass the clk_ddr staging register",
     )
     print("PASS frame-store CDC contract (clk/clk_ddr crossings and DDR timing constraints)")
 
@@ -805,6 +992,7 @@ def check_mailboxes() -> None:
         "PLXF": ("kPlxfAddr", "kPlxfMagic", 0x3007F118, 0x504C5846),
         "DIAG": ("kSdramDiagAddr", None, 0x3007F120, None),
         "PLXD": ("kPlxdAddr", "kPlxdMagic", 0x3007F128, 0x504C5844),
+        "PLXJ": ("kPlxjAddr", "kPlxjMagic", 0x3007F130, 0x504C584A),
         "PLXB": ("kPlxbAddr", "kPlxbMagic", 0x30140000, 0x504C5842),
     }
     for name, (addr_sym, magic_sym, exp_addr, exp_magic) in spec_entries.items():
@@ -900,6 +1088,29 @@ def check_mailboxes() -> None:
           "fpga_spi readBankRelease must use bankReleaseMailboxPhys(doorbell)")
     check("kBankReleaseMailboxPhys - ddrLayout_.phys_base" not in spi,
           "fpga_spi must not map PLXD via legacy absolute kBankReleaseMailboxPhys")
+
+    ddr_fs_nt = norm(ddr_fs)
+    for parameter, offset in (
+        ("MAILBOX_PHYS", "100"),
+        ("INPUT_MAILBOX_PHYS", "108"),
+        ("SDRAM_MAILBOX_PHYS", "110"),
+        ("FRAME_MAILBOX_PHYS", "118"),
+        ("BANK_MAILBOX_PHYS", "128"),
+        ("ASPECT_MAILBOX_PHYS", "130"),
+    ):
+        check(
+            f"parameter[31:0]{parameter}=DOORBELL_PHYS+32'h{offset}" in ddr_fs_nt,
+            f"ddr_frame_store {parameter} must follow the selected doorbell by +0x{offset}",
+        )
+    check(
+        "returnddrLayout_.doorbell_phys+(kDdrMailboxPhys-kDdrDoorbellPhys);" in norm(fpga_spi)
+        and "constuint32_tplxfPhys=underrunMailboxPhys(ddrLayout_.doorbell_phys);"
+        in norm(read(FPGA_SPI_CPP))
+        and "constuint32_tplxdPhys=bankReleaseMailboxPhys(ddrLayout_.doorbell_phys);"
+        in norm(read(FPGA_SPI_CPP))
+        and "constuint32_tplxjPhys=ddrLayout_.doorbell_phys+0x130u;" in norm(read(FPGA_SPI_CPP)),
+        "ARM PLXS/PLXF/PLXD/PLXJ readers must use matching doorbell-relative offsets",
+    )
 
     # Verify PLXD bit-field positions in the spec are what the RTL packs.
     check(cpp_const(spec_text, "kPlxdFreeBankMaskBit") == 0,
@@ -1039,6 +1250,15 @@ def check_mailbox_map_collisions() -> None:
             if m:
                 ra_expr = m.group(1).strip()
                 ra = parse_num(ra_expr)
+                if "DOORBELL_PHYS" in ra_expr:
+                    check(
+                        mb.get("relative_to") == "DOORBELL_PHYS"
+                        and int(mb.get("offset", "0"), 16) == ra,
+                        f"Mailbox map {name} must record its DOORBELL_PHYS-relative offset",
+                    )
+                    # The registry address is the legacy mailbox ABI reference.
+                    # ddr_frame_store follows its selected frame-layout doorbell.
+                    ra = expected_addr
                 break
 
         check(
@@ -1314,6 +1534,95 @@ def check_ddr_frame_layout_contract() -> None:
             "ARM writer and RTL reader must agree on coded/display/presented geometry, "
             "burst qwords, bank stride, and doorbell addresses.",
         )
+
+    values = {
+        "coded_w": cpp_const(host, "kPlex480pCodedWidth"),
+        "coded_h": cpp_const(host, "kPlex480pCodedHeight"),
+        "display_w": cpp_const(host, "kPlex480pDisplayWidth"),
+        "display_h": cpp_const(host, "kPlex480pDisplayHeight"),
+        "presented_w": cpp_const(host, "kPlex480pPresentedWidth"),
+        "presented_h": cpp_const(host, "kPlex480pPresentedHeight"),
+        "crop_left": cpp_const(host, "kPlex480pCropLeft"),
+        "crop_right": cpp_const(host, "kPlex480pCropRight"),
+        "crop_top": cpp_const(host, "kPlex480pCropTop"),
+        "crop_bottom": cpp_const(host, "kPlex480pCropBottom"),
+        "pillar_left": cpp_const(host, "kPlex480pPillarboxLeft"),
+        "pillar_right": cpp_const(host, "kPlex480pPillarboxRight"),
+        "y_qwords": cpp_const(host, "kPlex480pYuvLumaLineQwords"),
+        "c_qwords": cpp_const(host, "kPlex480pYuvChromaLineQwords"),
+        "frame_bytes": cpp_const(host, "kPlex480pYuv420pBytes"),
+        "y_offset": cpp_const(host, "kPlex480pYPlaneOffset"),
+        "u_offset": cpp_const(host, "kPlex480pUPlaneOffset"),
+        "v_offset": cpp_const(host, "kPlex480pVPlaneOffset"),
+        "y_stride": cpp_const(host, "kPlex480pYStrideBytes"),
+        "c_stride": cpp_const(host, "kPlex480pChromaStrideBytes"),
+        "bank_stride": cpp_const(host, "kPlex480pYuv420pBankStride"),
+        "doorbell": cpp_const(host, "kPlex480pYuv420pDoorbellPhys"),
+        "phys_base": cpp_const(host, "kDdrFramePhysBase"),
+    }
+
+    def geometry_errors(v: dict[str, int]) -> list[str]:
+        errors: list[str] = []
+        if (v["coded_w"], v["coded_h"], v["display_w"], v["display_h"]) != (
+            624,
+            480,
+            618,
+            480,
+        ):
+            errors.append("coded/display geometry")
+        if v["coded_w"] != 39 * 16 or v["coded_h"] != 30 * 16:
+            errors.append("macroblock grid")
+        if v["crop_left"] + v["display_w"] + v["crop_right"] != v["coded_w"]:
+            errors.append("horizontal crop")
+        if v["crop_top"] + v["display_h"] + v["crop_bottom"] != v["coded_h"]:
+            errors.append("vertical crop")
+        if v["pillar_left"] + v["display_w"] + v["pillar_right"] != v["presented_w"]:
+            errors.append("pillar sum")
+        if (v["pillar_left"], v["pillar_right"]) != (11, 11):
+            errors.append("pillar symmetry")
+        y_bytes = v["coded_w"] * v["coded_h"]
+        c_bytes = (v["coded_w"] // 2) * (v["coded_h"] // 2)
+        if (v["y_offset"], v["u_offset"], v["v_offset"]) != (
+            0,
+            y_bytes,
+            y_bytes + c_bytes,
+        ):
+            errors.append("plane offsets")
+        if (v["y_stride"], v["c_stride"], v["y_qwords"], v["c_qwords"]) != (
+            v["coded_w"],
+            v["coded_w"] // 2,
+            v["coded_w"] // 8,
+            v["coded_w"] // 16,
+        ):
+            errors.append("plane strides")
+        if v["frame_bytes"] != y_bytes + 2 * c_bytes:
+            errors.append("frame bytes")
+        if v["doorbell"] != v["phys_base"] + 2 * v["bank_stride"] - 0x1000:
+            errors.append("doorbell page")
+        if v["phys_base"] + v["bank_stride"] != 0x30080000:
+            errors.append("bank1 base")
+        return errors
+
+    check(
+        not geometry_errors(values),
+        "480p DDR geometry derived invariants failed: " + ", ".join(geometry_errors(values)),
+    )
+
+    red_twins = [
+        ("coded640", {"coded_w": 640}, "coded/display geometry"),
+        ("pillar10", {"pillar_left": 10}, "pillar sum"),
+        ("pillar12", {"pillar_left": 12}, "pillar sum"),
+        ("u-plane+8", {"u_offset": values["u_offset"] + 8}, "plane offsets"),
+        ("y-stride640", {"y_stride": 640}, "plane strides"),
+        ("doorbell-4k", {"doorbell": values["doorbell"] - 0x1000}, "doorbell page"),
+    ]
+    for name, mutations, expected_error in red_twins:
+        bad = {**values, **mutations}
+        errors = geometry_errors(bad)
+        check(
+            expected_error in errors,
+            f"DDR geometry red twin {name} did not trip {expected_error}: {errors}",
+        )
     check(
         cpp_const(host, "kPlex720pPillarboxLeft")
         + cpp_const(host, "kPlex720pDisplayWidth")
@@ -1359,6 +1668,11 @@ def check_ddr_frame_layout_contract() -> None:
     print("PASS DDR frame layout ARM/RTL contract")
     print(
         "PASS DDR stride parity red-check: RTL CODED_WIDTH/Y_STRIDE 1280→320 diverges from host"
+    )
+    print(
+        "PASS DDR frame layout typed geometry/red twins "
+        "(240p identity, 624/618/640 true480, 1280x720 product; coded640, "
+        "pillar10/12, plane/stride/doorbell red twins trip)"
     )
 
 
@@ -1673,7 +1987,7 @@ def check_present_geometry_stride_contract() -> None:
     fb_nt = norm(fb_present)
     frame_nt = norm(frame_store)
     present_nt = norm(present_core)
-    qsf_nt = norm(qsf)
+    qsf_nt = norm(strip_hash_comments(qsf))
 
     # Product silicon: native 720p identity.
     coded_w = cpp_const(host, "kPlex720pCodedWidth")
@@ -1764,7 +2078,7 @@ def check_present_geometry_stride_contract() -> None:
             (
                 media_norm,
                 "wantFpgaDdrCanvas?ddrFrameGeometryForFpgaPresent(outW_,outH_)",
-                "PRESENT=fpga|both must select silicon canvas geometry, never identity-320 from DECODE",
+                "PRESENT=fpga|both must use the compile-time product silicon geometry",
             ),
             (
                 media_norm,
@@ -1774,7 +2088,7 @@ def check_present_geometry_stride_contract() -> None:
             (
                 media_norm,
                 "constintrawDisplayW=ddrGeometry.display_width.get();",
-                "FFmpeg visible scale width must be the display width (1280 identity)",
+                "FFmpeg visible scale width must come from the typed display geometry",
             ),
             (
                 media_norm,
@@ -1786,11 +2100,11 @@ def check_present_geometry_stride_contract() -> None:
                 # Center inside the display window (crop_left/top is display origin in coded,
                 # not a left/top-align of the scaled picture). Matches packYuv origin policy.
                 'returnscaleFilterGeom(displayScale,sws_flags)+":force_original_aspect_ratio=decrease,pad="+scale+":"+padX+":"+padY+":color=black";',
-                "FFmpeg must scale into display geometry then center-pad into the coded 1280-pixel stride",
+                "FFmpeg scale/pad helper must center inside display geometry without losing coded padding",
             ),
             (
                 media_norm,
-                "clearYuv420pCropPadding(frame.data(),ddrGeometry)",
+                "clearYuv420pCropPadding(slotFrame,ddrGeometry)",
                 "rawvideo DDR frames must blacken coded crop padding before the frame-store reads them",
             ),
             (
@@ -1924,9 +2238,10 @@ def check_present_geometry_stride_contract() -> None:
     check(
         'set_global_assignment-nameVERILOG_MACRO"DDR_FRAME_STORE=1"' in qsf_nt
         and 'set_global_assignment-nameVERILOG_MACRO"FRAME_W=1280"' in qsf_nt
-        and 'set_global_assignment-nameVERILOG_MACRO"FRAME_H=720"' in qsf_nt,
+        and 'set_global_assignment-nameVERILOG_MACRO"FRAME_H=720"' in qsf_nt
+        and 'set_global_assignment-nameVERILOG_MACRO"PLEX_PRESENT_TRUE_480P=1"' not in qsf_nt,
         "Quartus build must declare DDR_FRAME_STORE with 1280x720 presented scanout. "
-        "A missing/changed FRAME_W silently changes the frame-store scanout geometry.",
+        "The fixed true480 macro must not be active with that canvas.",
     )
     check(
         "uPlane=yPlane+static_cast<size_t>(w)*static_cast<size_t>(h)" in fb_nt
@@ -2050,8 +2365,9 @@ def check_ddr_bank_handoff_contract() -> None:
         required = [
             (
                 cpp_norm,
-                "constexprintkDdrBankReuseMinUs=40000;",
-                "ARM DDR writer must enforce a same-bank reuse floor of at least two vsyncs",
+                "constexprintkDdrBankReuseMinUs=16000;",
+                "ARM DDR writer must enforce a same-bank reuse floor of at least one 60Hz vsync "
+                "(16ms; 40ms half-rates 24fps and is banned on the product rate path)",
             ),
             (
                 h_norm,
@@ -2106,8 +2422,8 @@ def check_ddr_bank_handoff_contract() -> None:
             ),
             (
                 rtl_norm,
-                "db_token=DDRAM_DOUT[63:32]",
-                "frame-store reader must capture bank/format/seq as one 32-bit token from one DDR read",
+                "db_token=doorbell_word_r[63:32]",
+                "frame-store reader must capture bank/format/seq from one coherent staged DDR word",
             ),
             (
                 rtl_norm,
@@ -2121,8 +2437,8 @@ def check_ddr_bank_handoff_contract() -> None:
             ),
             (
                 rtl_norm,
-                "pending_bank_ddr<=DDRAM_DOUT[63];",
-                "frame-store reader must latch the bank bit from the same DDR word that supplied seq",
+                "pending_bank_ddr<=db_token[31];",
+                "frame-store reader must latch the bank bit from the same staged token that supplied seq",
             ),
             (
                 rtl_norm,
@@ -2276,8 +2592,8 @@ def check_yuv_ddr_writer_contract() -> None:
             ),
             (
                 media_norm,
-                "n=::read(rfd,frame.data()+got,frameBytes-got);",
-                "decoded rawvideo bytes must be read contiguously into frame.data()",
+                "n=::read(rfd,dst+got,frameBytes-got);",
+                "decoded rawvideo bytes must be read contiguously into the frame/DDR destination",
             ),
             (
                 media_norm,
@@ -2321,8 +2637,13 @@ def check_yuv_ddr_writer_contract() -> None:
             ),
             (
                 fpga_norm,
-                "DdrPublishFrameframe{yuv420p,len,geometry,DdrFrameFormat::Yuv420p};returnpublishDdrFrame(frame,bank)",
-                "sendYuv420pFrameDdr must wrap the yuv420p pointer and geometry without plane remap",
+                "DdrPublishFrameframe{yuv420p,len,geometry,DdrFrameFormat::Yuv420p}",
+                "sendYuv420pFrameDdr must wrap the yuv420p pointer and typed geometry without plane remap",
+            ),
+            (
+                fpga_norm,
+                "returnsendDdrFrame(frame,plan,policy)",
+                "sendYuv420pFrameDdr must forward the planned frame and write policy unchanged",
             ),
             (
                 fpga_norm,
@@ -2387,8 +2708,8 @@ def check_yuv_ddr_writer_contract() -> None:
     if not missing_arm_yuv_requirements(swapped_media, fb_nt, fpga_nt, recon_nt):
         fail("deliberately swapped ARM U/V staging did not make the YUV420 DDR plane gate red")
     remapped_fpga = fpga_nt.replace(
-        "returnsendDdrFrame(yuv420p,len,bank)",
-        "returnsendDdrFrame(remapYuv420pForDdr(yuv420p),len,bank)",
+        "DdrPublishFrameframe{yuv420p,len,geometry,DdrFrameFormat::Yuv420p}",
+        "DdrPublishFrameframe{remapYuv420pForDdr(yuv420p),len,geometry,DdrFrameFormat::Yuv420p}",
     ).replace(
         "std::memcpy(ddrMap_+bankOff,payload,len)",
         "copyYv12PlanesToDdr(ddrMap_+bankOff,payload,len)",
@@ -2541,8 +2862,12 @@ def check_yuv_ddr_writer_contract() -> None:
         "output_files",
         "db",
         "incremental_db",
+        # Accidental nested worktree checkouts inside the primary clone.
+        "MisterPlex-wt-path-land",
+        "MisterPlex-wt-main-pin",
+        "MisterPlex-wt-clock-pin-035fae51",
+        "MisterPlex-wt-plxd-audit",
     }
-
     def forbidden_ddr_rgb_offenders() -> list[str]:
         # Source-text sweep only. Binary assets under tools/ (e.g. .npz digit
         # templates) are tracked product files but must not be UTF-8-decoded —
@@ -2558,7 +2883,7 @@ def check_yuv_ddr_writer_contract() -> None:
             rel = path.relative_to(ROOT)
             if rel in allowed_paths:
                 continue
-            if any(part in skip_parts for part in rel.parts):
+            if any(part in skip_parts or part.startswith("MisterPlex-wt-") for part in rel.parts):
                 continue
             if path.suffix.lower() not in text_suffixes:
                 continue
@@ -2826,6 +3151,7 @@ def main() -> int:
     check_present_core()
     check_phase_a_surface()
     check_plex_reset_domains()
+    check_source_aspect_contract()
     check_quartus_syntax_tripwires()
     check_async_fifo_write_full_no_comb_loop()
     check_frame_store_cdc_contract()

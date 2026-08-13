@@ -339,6 +339,75 @@ int main() {
         CHECK(br.freeBank() == -1);
         CHECK(br.swap_pending);
 
+        // Legacy/720 best-effort remains unchanged: if PLXD has no release,
+        // callers may use the non-display bank. Exact true480 must instead
+        // wait, preventing a second queued frame from replacing the pending one.
+        DdrStrictReleaseState strictState;
+        DdrBankWriteDecision decision =
+            decideDdrBankWrite(br, DdrBankWritePolicy::BestEffort, strictState);
+        CHECK(decision.ready);
+        CHECK(decision.bank == 0);
+        decision =
+            decideDdrBankWrite(br, DdrBankWritePolicy::RequireReleased, strictState);
+        CHECK(!decision.ready);
+        CHECK(decision.bank == -1);
+
+        // First strict write may use the current free status.
+        CHECK(decodeBankReleaseWord(plxd(0x02, 0, false, 1000), br));
+        decision =
+            decideDdrBankWrite(br, DdrBankWritePolicy::RequireReleased, strictState);
+        CHECK(decision.ready);
+        CHECK(decision.bank == 1);
+        const BankReleaseStatus releaseSample = br;
+        strictState.beginWrite();
+        CHECK(strictState.baseline_pending);
+
+        // RED: no concurrent strict write is authorized while payload/kick is
+        // in flight, even if a newer mailbox sample becomes visible.
+        CHECK(decodeBankReleaseWord(plxd(0x02, 0, false, 1001), br));
+        decision = decideDdrBankWrite(br, DdrBankWritePolicy::BestEffort, strictState);
+        CHECK(decision.ready); // strict state never changes legacy/720 policy
+        decision =
+            decideDdrBankWrite(br, DdrBankWritePolicy::RequireReleased, strictState);
+        CHECK(!decision.ready);
+        CHECK(decision.bank == -1);
+        strictState.noteWrite(releaseSample);
+        CHECK(!strictState.baseline_pending);
+
+        // GREEN: if the swap completed before the kick path records its
+        // baseline, comparison against the pre-kick release sample still sees
+        // the acknowledgement immediately.
+        decision =
+            decideDdrBankWrite(br, DdrBankWritePolicy::RequireReleased, strictState);
+        CHECK(decision.ready);
+        CHECK(decision.bank == 1);
+
+        // RED: a stable stale mailbox still needs a swap-counter advance.
+        CHECK(decodeBankReleaseWord(
+            plxd(0x02, 0, false, releaseSample.frames_done), br));
+        decision =
+            decideDdrBankWrite(br, DdrBankWritePolicy::RequireReleased, strictState);
+        CHECK(!decision.ready);
+        CHECK(decision.bank == -1);
+
+        const uint64_t advancedButBusy = plxd(0x00, 1, true, 1001);
+        CHECK(decodeBankReleaseWord(advancedButBusy, br));
+        decision =
+            decideDdrBankWrite(br, DdrBankWritePolicy::RequireReleased, strictState);
+        CHECK(!decision.ready);
+
+        strictState.noteWrite({0x01, 1, false, 0xffff});
+        CHECK(decodeBankReleaseWord(plxd(0x01, 1, false, 0), br));
+        decision =
+            decideDdrBankWrite(br, DdrBankWritePolicy::RequireReleased, strictState);
+        CHECK(decision.ready);
+        strictState.reset();
+        CHECK(!strictState.baseline_valid);
+        CHECK(!strictState.baseline_pending);
+        decision =
+            decideDdrBankWrite(br, DdrBankWritePolicy::RequireReleased, strictState);
+        CHECK(decision.ready);
+
         // Bad magic
         CHECK(!decodeBankReleaseWord(0xDEADBEEFu, br));
 
@@ -406,6 +475,16 @@ int main() {
         CHECK(br.disp_bank == 0);
         CHECK(!br.swap_pending);
         CHECK(br.frames_done == 0xFFFF);
+
+        // Frame-counter helpers use the same wrapping 16-bit PLXD counter.
+        CHECK(frameCounterDelta(48, 0) == 48);
+        CHECK(frameCounterDelta(0, 0xffff) == 1);
+        CHECK(hardwarePresentCountMatches(1000, 1048, 0, 48));
+        CHECK(hardwarePresentCountMatches(1000, 1047, 0, 48));
+        CHECK(!hardwarePresentCountMatches(1000, 1024, 0, 48));
+        CHECK(hardwarePresentTotalsMatch(65584, 65584));
+        CHECK(hardwarePresentTotalsMatch(131120, 131119));
+        CHECK(!hardwarePresentTotalsMatch(131120, 65584));
     }
 
     if (fails) {

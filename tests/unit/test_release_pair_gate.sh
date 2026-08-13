@@ -16,6 +16,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 POLICY="$ROOT/scripts/pair_ship_policy.sh"
 PKG="$ROOT/scripts/package_release.sh"
+MAKEFILE="$ROOT/Makefile"
 fails=0
 pass() { echo "PASS $*"; }
 fail() { echo "FAIL $*"; fails=$((fails + 1)); }
@@ -89,12 +90,39 @@ else
   fail "package_release.sh cannot ship a validated daemon; it can never satisfy the matrix"
 fi
 
-# 8) a core that is not the static pin must be authorised by the PAIR policy,
-#    never blanket-accepted.
-if awk '/RBF_MD5_ACTUAL" != "\$RBF_MD5_EXPECTED/,/^fi$/' "$PKG" | grep -q 'pair_ship_policy.sh" check'; then
-  pass "non-pin cores are authorised via the pair policy, not blanket-accepted"
+# 8) a custom release must require both explicit artifacts, then flow through
+#    the same staged-byte pair gate checked above. Custom versions intentionally
+#    set their expected core hash from RBF_PATH, so the old mismatch-block shape
+#    no longer identifies this path.
+custom_case=$(awk '/^  \*\)/,/^    ;;/ { print }' "$PKG")
+if printf '%s\n' "$custom_case" | grep -q 'RBF_PATH' &&
+   printf '%s\n' "$custom_case" | grep -q 'DAEMON_PATH' &&
+   grep -q 'pair_core_md5=.*STAGE/cores/Plex.rbf' "$PKG" &&
+   grep -q 'pair_daemon_md5=.*STAGE/bin/misterplexd' "$PKG"; then
+  pass "custom pairs require explicit artifacts and staged bytes reach the pair policy"
 else
-  fail "non-pin core path does not consult the pair policy"
+  fail "custom pair path can avoid explicit artifacts or the staged-byte pair policy"
+fi
+
+# 9) Version matching must not let v0.4.10 impersonate immutable v0.4.1.
+set +e
+bad_version_out="$(VERSION=v0.4.10 "$PKG" 2>&1)"
+bad_version_rc=$?
+set -e
+if [ "$bad_version_rc" -eq 1 ] &&
+   printf '%s\n' "$bad_version_out" | grep -q 'unsupported release VERSION=v0.4.10'; then
+  pass "v0.4.10 cannot select the immutable v0.4.1 pair by prefix"
+else
+  fail "version prefix collision selected v0.4.1 artifacts for v0.4.10 (rc=$bad_version_rc)"
+fi
+
+# 10) Plain make package must propagate one version to package and artifact gates.
+if grep -Fq 'VERSION="$(VERSION)" $(ROOT)/scripts/package_release.sh' "$MAKEFILE" &&
+   grep -Fq 'VERSION="$(VERSION)" REQUIRE_ARTIFACT=1 $(ROOT)/tests/unit/test_no_private_data.sh' "$MAKEFILE" &&
+   grep -Fq 'VERSION="$(VERSION)" REQUIRE_ARTIFACT=1 $(ROOT)/tests/unit/test_release_rbf_hash.sh' "$MAKEFILE"; then
+  pass "make package propagates one VERSION through packaging and verification"
+else
+  fail "make package does not propagate VERSION consistently"
 fi
 
 if [ "$fails" -eq 0 ]; then

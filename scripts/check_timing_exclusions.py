@@ -174,6 +174,22 @@ def parse_sta_clocks(path: Path) -> StaCoverage:
     return cov
 
 
+def clock_name_matches(expected: str, actual: str) -> bool:
+    if expected == actual:
+        return True
+    start = 0
+    while True:
+        start = actual.find(expected, start)
+        if start < 0:
+            return False
+        end = start + len(expected)
+        left_ok = start == 0 or actual[start - 1] in "|/:"
+        right_ok = end == len(actual) or actual[end] in "|/~:"
+        if left_ok and right_ok:
+            return True
+        start += 1
+
+
 def format_exclusion_table(exclusions: list[Exclusion], baseline_fps: dict[str, str]) -> str:
     lines = [
         "| # | file | line | kind | fingerprint | baseline | risk |",
@@ -290,7 +306,7 @@ def main(argv: list[str]) -> int:
                 f"paths may have been excluded from analysis"
             )
         for expected_clk in expected_clocks:
-            if not any(expected_clk == clock or expected_clk in clock for clock in cov.clocks):
+            if not any(clock_name_matches(expected_clk, clock) for clock in cov.clocks):
                 errors.append(
                     f"expected clock '{expected_clk}' missing from STA report: "
                     f"it may have been excluded by a new set_clock_groups or set_false_path"

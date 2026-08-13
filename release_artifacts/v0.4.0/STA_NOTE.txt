@@ -1,0 +1,1 @@
+SEED2 general[2] setup slack -0.027 ns (accept-ambiguous); holds OK; md5 1c6ed06fe832fb54259d4f4ce504ccae

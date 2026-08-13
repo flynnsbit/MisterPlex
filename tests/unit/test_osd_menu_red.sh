@@ -11,7 +11,7 @@ if [[ -n "${CXXFLAGS:-}" ]]; then
 else
   CXX_FLAGS=(-std=c++17 -O2 -Wall -Wextra -I"$ROOT/host")
 fi
-"$CXX_BIN" "${CXX_FLAGS[@]}" -I"$ROOT/host" -DOSD_MENU_FAULT_SKIP_INITIAL_IDLE \
+"$CXX_BIN" "${CXX_FLAGS[@]}" -I"$ROOT/host" -DOSD_MENU_FAULT_APPLY_IDLE_BITS \
   -o "$BUILD/test_osd_menu_fault" "$ROOT/tests/unit/test_osd_menu.cpp"
 
 set +e
@@ -20,14 +20,14 @@ RC=$?
 set -e
 printf '%s\n' "$OUT"
 if [[ "$RC" -eq 0 ]]; then
-  echo "FAIL: OSD idle skip-initial fault unexpectedly passed" >&2
+  echo "FAIL: retired OSD idle-bit fault unexpectedly passed" >&2
   exit 1
 fi
 grep -q "shouldApplyOsdIdle(false, 0x0000, 0x4000)" <<<"$OUT" || {
-  echo "FAIL: OSD idle red-check did not hit first-word apply guard" >&2
+  echo "FAIL: OSD idle red-check did not hit the conf-only guard" >&2
   exit 1
 }
-echo "RED OK: skip-initial-idle mutant fails first-word persisted apply"
+echo "RED OK: treating v9 display bits as idle mode fails the conf-only guard"
 
 rm -f "$BUILD/test_osd_menu_fallback_bitrate_fault"
 "$CXX_BIN" "${CXX_FLAGS[@]}" -I"$ROOT/host" -DOSD_MENU_FAULT_FALLBACK_624_BITRATE \

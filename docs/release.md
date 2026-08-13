@@ -52,13 +52,25 @@ Typical tarball `dist/misterplex-<git-desc>.tar.gz` expands to `misterplex-<git-
 | Path | Purpose |
 |------|---------|
 | `bin/misterplexd` | Static ARM companion + media daemon (GDM + HTTP `:3005`) |
+| `bin/misterplexd_supervise.sh` | Single-instance respawn supervisor with exit/death breadcrumbs |
+| `bin/misterplex_core_watch.sh` | Optional Plex-core load watcher |
 | `bin/ffmpeg` | Bundled static ARM FFmpeg 7.0.2; no external ffmpeg install required |
 | `bin/push_frame` | Optional SPI frame / bitstream push tool (Phase 3) |
 | `bin/set_status` | Lab tool: drive Plex OSD CONF_STR bits (pattern / force-bars / TV / FPS / audio / AR) via SPI |
 | `conf/misterplex.conf.example` | Conf template |
-| `cores/Plex.rbf` | Verified v0.3.0 Phase A playback-controls core; MD5 `41adb98c7a630b541091c22ce291be68` |
+| `cores/Plex.rbf` | Verified v0.4.1 true480 native-aspect core; MD5 `07f54d9f8f0eda2fe75d9cc314f6de54` |
 | `licenses/ffmpeg/` | GPLv3 text, build provenance, and source pointers for the bundled FFmpeg |
 | `docs/` | INSTALL path notes, display/output resolution, release notes, match-source-Hz, CRT/LCD matrix |
+| `examples/plex-cors-proxy/` | Docker PMS host-network fix for Plex Web timeline progress on loopback and LAN URLs |
+
+The published v0.4.1 RBF is immutable at
+`release_artifacts/v0.4.1/Plex.rbf`, MD5
+`07f54d9f8f0eda2fe75d9cc314f6de54`. This merge packages that frozen binary;
+it does not rebuild it from, or attribute it to, the merged source tree.
+The matching published daemon is likewise frozen as
+`release_artifacts/v0.4.1/misterplexd.gz` (payload SHA-256
+`646645ca2fb276c8266ee360a9df67b1dfefe91f67241e71f12b9ebfb880f6c8`);
+tagged v0.4.1 packaging uses that exact payload rather than newer `main` source.
 
 ## Install on MiSTer SD
 
@@ -138,11 +150,12 @@ do not make `make unit` depend on live PMS credentials.
 Startup hook (idempotent via deploy script):
 
 ```bash
-/media/fat/misterplex/bin/misterplexd \
-  --name MiSTerPlex --id misterplex-dev --port 3005 \
-  --conf /media/fat/misterplex/misterplex.conf \
-  >>/media/fat/misterplex/misterplexd.log 2>&1 &
+nohup /media/fat/misterplex/bin/misterplexd_supervise.sh \
+  >>/media/fat/misterplex/misterplexd_supervise.log 2>&1 &
 ```
+
+The supervisor derives the live root from its own installed path, enforces one
+supervisor instance, and preserves daemon exit/death evidence before respawn.
 
 Verify:
 
@@ -162,6 +175,19 @@ Display output mode is **not** a `misterplex.conf` key; set `[Plex] video_mode` 
 | `PLEX_BASE` | `http://YOUR-PLEX-SERVER:32400` | Default PMS URL for resolve; set this to your Plex Media Server |
 | `PLEX_HOST` | `YOUR-PLEX-SERVER` | Alternate host; builds `http://HOST:32400` (overrides base host) |
 | `PLEX_TOKEN` | *(optional)* | Static token; cast usually supplies transient `X-Plex-Token` |
+| `FFMPEG` | `/media/fat/misterplex/bin/ffmpeg` | FFmpeg binary; defaults to the bundled release copy |
+| `DECODE` | `320x240` | RGB decode size (`WxH`) |
+| `TRANSCODE_PROFILE` | `240p` \| `480p` \| `720p` | PMS universal profile. 240p is 320x240@1000k compatibility/performance; 480p is the recommended true480 mode (coded 624x480@2000k for 640x480 presentation); 720p is alpha and can have frame-rate/audio drift. |
+| `WEAK_RES` | `320x240` | Legacy PMS universal ladder resolution override |
+| `WEAK_BITRATE` | ladder default (240p=`1000`, 480p=`2000`) | Explicit PMS `maxVideoBitrate` override. **Wins over** the recommended floor (advisory only). On slow links set ≤ path capacity (e.g. `900`–`1000`) or 480p@2000 starves — see `supply_ratio` / `supply_class` on `media:` lines. Leave the 720p alpha ladder at its release default unless testing. |
+| `AUTO_LADDER_STEPDOWN` | `0` | When `1`, sustained `supply_class=STARVED` applies the next lower bitrate step (2000→1500→…→400) and restarts the same title at the current position. **Geometry unchanged.** Default off = log-only `LADDER_STEPDOWN_RECOMMENDED`. |
+| `LINK_CAPACITY_KBIT` | unset/`0` | Optional **measured** path capacity in kbit/s (parent greedy goodput). When set, clamps `maxVideoBitrate` to `capacity × HEADROOM/100` before the PMS URL. **Unset = no clamp** (never invents a link speed). Not a second hardcoded floor. |
+| `LINK_CAPACITY_HEADROOM_PCT` | `85` | Percent of `LINK_CAPACITY_KBIT` used as the clamp ceiling (1–100). |
+| **`PRESENT`** | `fb0` \| `fpga` \| `both` | Where RGB lands |
+| **`STREAM`** | `0` \| `1` | Annex-B → host I-recon F1 + F3 |
+| `STREAM_SKIP_RGB` | `auto` | `auto`: skip heavy RGB when `PRESENT=fpga` (keep audio); `0` always RGB |
+| `MATCH_SOURCE_HZ` | `off` | `on` logs target Hz; cadence-only until switchres |
+| `SOURCE_FPS` | `auto` | `auto`\|`12`\|`24`\|`30`\|`60`\|`off` — Content FPS hint from PMS |
 
 ### Plex token safety (logs)
 
@@ -179,19 +205,6 @@ from a build before this redaction, rotate the Plex token:**
    fresh token and replace that value; restart `misterplexd`.
 3. Do not paste full log files into public issues/chat — prefer redacted snippets
    (`X-Plex-Token=REDACTED`).
-| `FFMPEG` | `/media/fat/misterplex/bin/ffmpeg` | FFmpeg binary; defaults to the bundled release copy |
-| `DECODE` | `320x240` | RGB decode size (`WxH`) |
-| `TRANSCODE_PROFILE` | `240p` \| `480p` | PMS universal profile. `240p` = 320x240@1000k; `480p` = coded 624x480@2000k for 640x480 presented scanout. Both request H.264 Baseline Level 3.0. |
-| `WEAK_RES` | `320x240` | Legacy PMS universal ladder resolution override |
-| `WEAK_BITRATE` | ladder default (240p=`1000`, 480p=`2000`) | Explicit PMS `maxVideoBitrate` override. **Wins over** the recommended floor (advisory only). On slow links set ≤ path capacity (e.g. `900`–`1000`) or 480p@2000 starves — see `supply_ratio` / `supply_class` on `media:` lines. |
-| `AUTO_LADDER_STEPDOWN` | `0` | When `1`, sustained `supply_class=STARVED` applies the next lower bitrate step (2000→1500→…→400) and restarts the same title at the current position. **Geometry unchanged.** Default off = log-only `LADDER_STEPDOWN_RECOMMENDED`. |
-| `LINK_CAPACITY_KBIT` | unset/`0` | Optional **measured** path capacity in kbit/s (parent greedy goodput). When set, clamps `maxVideoBitrate` to `capacity × HEADROOM/100` before the PMS URL. **Unset = no clamp** (never invents a link speed). Not a second hardcoded floor. |
-| `LINK_CAPACITY_HEADROOM_PCT` | `85` | Percent of `LINK_CAPACITY_KBIT` used as the clamp ceiling (1–100). |
-| **`PRESENT`** | `fb0` \| `fpga` \| `both` | Where RGB lands |
-| **`STREAM`** | `0` \| `1` | Annex-B → host I-recon F1 + F3 |
-| `STREAM_SKIP_RGB` | `auto` | `auto`: skip heavy RGB when `PRESENT=fpga` (keep audio); `0` always RGB |
-| `MATCH_SOURCE_HZ` | `off` | `on` logs target Hz; cadence-only until switchres |
-| `SOURCE_FPS` | `auto` | `auto`\|`12`\|`24`\|`30`\|`60`\|`off` — Content FPS hint from PMS |
 
 Restart after edits: `killall misterplexd` then re-run deploy or the startup line.
 
@@ -217,7 +230,7 @@ Restart after edits: `killall misterplexd` then re-run deploy or the startup lin
 
 | Where | Path |
 |-------|------|
-| Monorepo release copy | `release_artifacts/v0.3.0/Plex.rbf` |
+| Monorepo release copy | `release_artifacts/v0.4.1/Plex.rbf` |
 | Explicit override | `RBF_PATH=/path/to/Plex.rbf make package` (must match the pinned MD5) |
 | Package | `misterplex-<version>/cores/Plex.rbf` |
 | MiSTer SD (lab) | `/media/fat/_Utility/Plex.rbf` (deploy + HW tests) |
@@ -226,9 +239,11 @@ Restart after edits: `killall misterplexd` then re-run deploy or the startup lin
 Phase 2 **fb0 / MrAudio** works with MiSTer’s normal video path (ascal/fb) even without Plex core loaded. Phase 3 **FPGA present / STREAM** requires `Plex.rbf` and OSD **Video source = Frame store** where applicable.
 
 Release packages do not silently select local Quartus outputs. `make package`
-uses the tracked `release_artifacts/v0.3.0/Plex.rbf` by default, or an explicit
+uses the tracked release RBF selected by `VERSION` (v0.4.1:
+`release_artifacts/v0.4.1/Plex.rbf`), or an explicit
 `RBF_PATH`, and refuses to package it unless the MD5 is
-`41adb98c7a630b541091c22ce291be68`.
+the pinned value for that release (`07f54d9f8f0eda2fe75d9cc314f6de54`
+for v0.4.1).
 
 ## Lab stable pair (v0.3.0) — 2am card
 
@@ -419,7 +434,7 @@ Not a separate product path — same companion/media code. Document latency/stab
 | Match source Hz | **Cadence + OSD Content FPS only**; no `CmdSwitchres` yet — [match-source-hz.md](match-source-hz.md) | product |
 | CRT 15 kHz | MiSTer video options / fixed modelines; [crt-lcd-matrix.md](crt-lcd-matrix.md) — no automated CRT golden | lab |
 | Wi-Fi vs Ethernet | Soak net hooks only; eth comparison not measured (no carrier) | lab |
-| Resolution | Output signal modes through 1920×1080@60/50 are supported via MiSTer.ini/ascal; native content defaults to 320×240. OSD 640×480 is for 480p test builds only: fits and closes timing / within modelled bandwidth, not hardware-validated. | product |
+| Resolution | 240p and true480 are production content modes. 720p is alpha: current dual-A9 playback can miss source frame rate and let audio drift. Output signal modes remain controlled by MiSTer.ini/ascal. | product |
 | Scrubber | Play-queue bind + seek/step clamp + stop/async race harden (P4-SCRUB E-P4h: playQueued cast invalidate, async seek/step, scrub plant hold, same-pos demux no-op); skipPrevious=Plex-style (restart@0 if >3s else queue prev); live Web eyes-on optional | UX |
 | Audio | FFmpeg → MrAudio @ 48 kHz stereo; F2 FIFO best-effort (off if FPGA leaves user mode) | product |
 | Auth | Static `PLEX_TOKEN` optional; prefer cast-supplied tokens | ops |
@@ -427,7 +442,7 @@ Not a separate product path — same companion/media code. Document latency/stab
 | SPI under STREAM soak | Concurrent F1/F2/F3 → daemon death; **fixed** recursive mutex, no `system()`, thread-safe `lastError` | fixed |
 | F2 under PRESENT=both | F2 only when `PRESENT=fpga` (both uses MrAudio alone) | fixed |
 | PMS thin library | Lab may expose one episode + local `test.mp4`; soak uses onDeck/recentlyAdded | lab |
-| Package | `make package` **requires** the pinned v0.3.0 `Plex.rbf` MD5; daemon-only packages are disabled for release builds | ops |
+| Package | `make package` selects only v0.3.0/v0.4.0/v0.4.1 frozen artifacts, requires each release's pinned MD5, and rejects unknown versions, daemon-only packages, or mismatched daemon/RBF pairs | ops |
 
 ## Version stamp
 

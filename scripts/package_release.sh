@@ -2,15 +2,56 @@
 # Package misterplexd ARM binary + conf example + Plex.rbf + docs for SD deploy.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-VERSION="${VERSION:-$(git -C "$ROOT" describe --tags --always --dirty 2>/dev/null || echo dev)}"
+# Plain `make package` builds the current published release. Development/lab
+# pair wrappers pass an explicit VERSION plus exact RBF_PATH and DAEMON_PATH.
+VERSION="${VERSION:-v0.4.1}"
 OUT_DIR="${OUT_DIR:-$ROOT/dist}"
 STAGE="$OUT_DIR/stage-misterplex"
 TAR="$OUT_DIR/misterplex-${VERSION}.tar.gz"
 
 ARM_BIN="$ROOT/build/arm/misterplexd"
-RBF_MD5_EXPECTED="41adb98c7a630b541091c22ce291be68"
-RBF_DEFAULT="$ROOT/release_artifacts/v0.3.0/Plex.rbf"
+DAEMON_MD5_PINNED=""
+DAEMON_SHA256_PINNED=""
+DAEMON_GZ_DEFAULT=""
+# Each published release line uses its own immutable, hardware-validated RBF.
+# RBF_PATH may point at a byte-identical copy; the per-version MD5 cannot be
+# overridden. Packaging never rebuilds or reattributes these frozen artifacts.
+case "$VERSION" in
+  v0.4.1|0.4.1|v0.4.1-*|0.4.1-*|v0.4.1+*|0.4.1+*)
+    # Already-published true480 artifact; immutable across source merges.
+    RBF_MD5_PINNED="07f54d9f8f0eda2fe75d9cc314f6de54"
+    RBF_DEFAULT="$ROOT/release_artifacts/v0.4.1/Plex.rbf"
+    DAEMON_MD5_PINNED="f44c0dc1610561a8278e8fd4ece9aa53"
+    DAEMON_SHA256_PINNED="646645ca2fb276c8266ee360a9df67b1dfefe91f67241e71f12b9ebfb880f6c8"
+    DAEMON_GZ_DEFAULT="$ROOT/release_artifacts/v0.4.1/misterplexd.gz"
+    ;;
+  v0.4.0|0.4.0|v0.4.0-*|0.4.0-*|v0.4.0+*|0.4.0+*)
+    # softc24 HOLD=2 + CONF_STR v9 Content O[5:4] + Display O[15:14] Follow
+    RBF_MD5_PINNED="1c6ed06fe832fb54259d4f4ce504ccae"
+    RBF_DEFAULT="$ROOT/release_artifacts/v0.4.0/Plex.rbf"
+    ;;
+  v0.3.0|0.3.0|v0.3.0-*|0.3.0-*|v0.3.0+*|0.3.0+*)
+    RBF_MD5_PINNED="41adb98c7a630b541091c22ce291be68"
+    RBF_DEFAULT="$ROOT/release_artifacts/v0.3.0/Plex.rbf"
+    ;;
+  *)
+    if [[ -z "${RBF_PATH:-}" || -z "${DAEMON_PATH:-}" ]]; then
+      echo "ERROR: unsupported release VERSION=$VERSION without an explicit validated pair." >&2
+      echo "       Set both RBF_PATH and DAEMON_PATH; pair_ship_policy still gates them." >&2
+      exit 1
+    fi
+    RBF_DEFAULT="$RBF_PATH"
+    RBF_MD5_PINNED="$(md5sum "$RBF_PATH" | awk '{print $1}')"
+    ;;
+esac
+if [[ -n "${RBF_MD5_EXPECTED:-}" && "$RBF_MD5_EXPECTED" != "$RBF_MD5_PINNED" ]]; then
+  echo "ERROR: refusing RBF_MD5_EXPECTED override for immutable $VERSION artifact." >&2
+  echo "       pinned md5: $RBF_MD5_PINNED" >&2
+  exit 1
+fi
+RBF_MD5_EXPECTED="$RBF_MD5_PINNED"
 RBF_SRC="${RBF_PATH:-$RBF_DEFAULT}"
+RBF_REL="${RBF_DEFAULT#"$ROOT/"}"
 CONF_EX="$ROOT/assets/misterplex.conf.example"
 # Static armhf ffmpeg to bundle so the package is self-contained. Override with
 # FFMPEG_ARMHF=/path/to/ffmpeg. It is GPLv3, so its licence and provenance ship
@@ -44,9 +85,31 @@ export PATH="${PATH}:${ARM_TOOLCHAIN_BIN:-$HOME/Projects/mistercast-linux/third_
 # satisfied, so `make package` refused unconditionally. A gate that can only
 # ever say no is not a shipping path.
 DAEMON_SRC="${DAEMON_PATH:-}"
+if [[ -z "$DAEMON_SRC" && -n "$DAEMON_GZ_DEFAULT" ]]; then
+  [[ -f "$DAEMON_GZ_DEFAULT" ]] || {
+    echo "ERROR: frozen release daemon missing: $DAEMON_GZ_DEFAULT" >&2
+    exit 1
+  }
+  DAEMON_SRC="$ROOT/build/release-daemon/${VERSION}/misterplexd"
+  mkdir -p "$(dirname "$DAEMON_SRC")"
+  gzip -cd "$DAEMON_GZ_DEFAULT" >"$DAEMON_SRC"
+  chmod +x "$DAEMON_SRC"
+fi
 if [[ -n "$DAEMON_SRC" ]]; then
   [[ -f "$DAEMON_SRC" ]] || { echo "ERROR: DAEMON_PATH not found: $DAEMON_SRC" >&2; exit 1; }
-  echo "Using pre-validated daemon: $DAEMON_SRC (md5=$(md5sum "$DAEMON_SRC" | awk '{print $1}'))"
+  daemon_md5="$(md5sum "$DAEMON_SRC" | awk '{print $1}')"
+  daemon_sha256="$(sha256sum "$DAEMON_SRC" | awk '{print $1}')"
+  if [[ -n "$DAEMON_MD5_PINNED" && "$daemon_md5" != "$DAEMON_MD5_PINNED" ]]; then
+    echo "ERROR: immutable $VERSION daemon MD5 mismatch." >&2
+    echo "       expected $DAEMON_MD5_PINNED actual $daemon_md5" >&2
+    exit 1
+  fi
+  if [[ -n "$DAEMON_SHA256_PINNED" && "$daemon_sha256" != "$DAEMON_SHA256_PINNED" ]]; then
+    echo "ERROR: immutable $VERSION daemon SHA-256 mismatch." >&2
+    echo "       expected $DAEMON_SHA256_PINNED actual $daemon_sha256" >&2
+    exit 1
+  fi
+  echo "Using pre-validated daemon: $DAEMON_SRC (md5=$daemon_md5 sha256=$daemon_sha256)"
   ARM_BIN="$DAEMON_SRC"
 else
   make -C "$ROOT" arm-plexd
@@ -132,51 +195,52 @@ fi
 # indistinguishable by path and have already nearly shipped once. Operators may
 # pass RBF_PATH=/path/to/Plex.rbf, but every candidate is gated by this MD5.
 if [[ -n "${PACKAGE_ALLOW_NO_RBF:-}" || -n "${PACKAGE_DAEMON_ONLY:-}" ]]; then
-  echo "ERROR: daemon-only packages are disabled for release builds; v0.3.0 must ship a verified Plex.rbf." >&2
+  echo "ERROR: daemon-only packages are disabled for release builds; $VERSION must ship a verified Plex.rbf." >&2
+  exit 1
+fi
+if [[ "$RBF_MD5_EXPECTED" == "REPLACE_AT_FREEZE" ]]; then
+  echo "ERROR: RBF_MD5_EXPECTED still REPLACE_AT_FREEZE for $VERSION." >&2
+  echo "       Freeze a LOCK_OK core into release_artifacts/ and set RBF_MD5_EXPECTED=<md5>." >&2
   exit 1
 fi
 if [[ ! -f "$RBF_SRC" ]]; then
   echo "ERROR: verified release core missing: $RBF_SRC" >&2
-  echo "       Use the tracked release_artifacts/v0.3.0/Plex.rbf, or set RBF_PATH to a core with MD5 $RBF_MD5_EXPECTED." >&2
+  echo "       Use release_artifacts for $VERSION, or set RBF_PATH to a core with MD5 $RBF_MD5_EXPECTED." >&2
   exit 1
 fi
 RBF_MD5_ACTUAL="$(md5sum "$RBF_SRC" | awk '{print $1}')"
 if [[ "$RBF_MD5_ACTUAL" != "$RBF_MD5_EXPECTED" ]]; then
-  # Not the historical v0.3.0 pin. Authorised ONLY if this exact (core, daemon)
-  # combination is a hardware-validated row in the pair matrix -- which is a
-  # stronger statement than the single-core pin, because it is the PAIRING that
-  # black-screened the device, not either artifact alone. Fail-closed: anything
-  # the matrix does not know about is still refused, and the authoritative pair
-  # gate below re-checks the staged bytes.
-  _cand_daemon_md5="$(md5sum "$ARM_BIN" | awk '{print $1}')"
-  if _pair_ok="$("$ROOT/scripts/pair_ship_policy.sh" check "$RBF_MD5_ACTUAL" "$_cand_daemon_md5" 2>&1)"; then
-    echo "Core $RBF_MD5_ACTUAL is not the v0.3.0 pin but the pair is validated — $_pair_ok"
-  else
-    echo "ERROR: refusing to package unverified Plex.rbf: $RBF_SRC" >&2
-    echo "       expected md5: $RBF_MD5_EXPECTED (v0.3.0 pin)" >&2
-    echo "       actual md5:   $RBF_MD5_ACTUAL" >&2
-    echo "       daemon md5:   $_cand_daemon_md5" >&2
-    echo "       and the pair policy does not validate this combination:" >&2
-    echo "       $_pair_ok" >&2
-    echo "       Ship a hardware-validated pair: set RBF_PATH and DAEMON_PATH to a" >&2
-    echo "       row in scripts/pair_ship_policy.sh (PAIR_MATRIX_ROWS)." >&2
-    exit 1
-  fi
+  echo "ERROR: refusing to package unverified Plex.rbf: $RBF_SRC" >&2
+  echo "       expected md5: $RBF_MD5_EXPECTED" >&2
+  echo "       actual md5:   $RBF_MD5_ACTUAL" >&2
+  echo "       $VERSION ships only a hardware-validated core (see docs/release-notes-${VERSION#v}.md)." >&2
+  exit 1
 fi
 cp -a "$RBF_SRC" "$STAGE/cores/Plex.rbf"
 echo "Included verified cores/Plex.rbf from $RBF_SRC ($(wc -c <"$STAGE/cores/Plex.rbf") bytes, md5=$RBF_MD5_ACTUAL)"
+echo "Frozen release artifact only; current merged source did not build this RBF."
 
 # Operator docs
-for doc in release.md release-notes-v0.3.0.md display-resolution.md match-source-hz.md crt-lcd-matrix.md architecture.md subtitles-burnin.md; do
+for doc in release.md release-notes-v0.3.0.md release-notes-v0.4.0.md release-notes-v0.4.1.md display-resolution.md match-source-hz.md crt-lcd-matrix.md architecture.md subtitles-burnin.md; do
   if [[ -f "$ROOT/docs/$doc" ]]; then
     cp -a "$ROOT/docs/$doc" "$STAGE/docs/"
   fi
 done
+if [[ -d "$ROOT/examples/plex-cors-proxy" ]]; then
+  mkdir -p "$STAGE/examples"
+  cp -a "$ROOT/examples/plex-cors-proxy" "$STAGE/examples/"
+fi
 mkdir -p "$STAGE/scripts"
-for scr in plex_browse.sh plex_menu.sh; do
+for scr in plex_browse.sh plex_menu.sh misterplexd_supervise.sh misterplex_core_watch.sh; do
   if [[ -f "$ROOT/scripts/$scr" ]]; then
     cp -a "$ROOT/scripts/$scr" "$STAGE/scripts/"
     chmod +x "$STAGE/scripts/$scr"
+  fi
+done
+# Boot helpers also under bin/ so _user-startup paths stay short.
+for scr in misterplexd_supervise.sh misterplex_core_watch.sh; do
+  if [[ -f "$STAGE/scripts/$scr" ]]; then
+    cp -a "$STAGE/scripts/$scr" "$STAGE/bin/$scr"
   fi
 done
 
@@ -187,16 +251,20 @@ version: ${VERSION}
 
 Contents
 --------
-  bin/misterplexd          static ARM companion + media daemon
-  bin/ffmpeg               static armhf FFmpeg 7.0.2 (GPLv3 — see licenses/ffmpeg)
-  bin/push_frame           optional SPI frame/bitstream tool
-  bin/set_status           optional OSD status RMW tool (pattern/TV/FPS/…)
+  bin/misterplexd               static ARM companion + media daemon
+  bin/misterplex_core_watch.sh  optional core-load watcher
+  bin/misterplexd_supervise.sh  respawn misterplexd on crash
+  bin/ffmpeg                    static armhf FFmpeg 7.0.2 (GPLv3 — see licenses/ffmpeg)
+  bin/push_frame                optional SPI frame/bitstream tool
+  bin/set_status                optional OSD status RMW tool (pattern/TV/FPS/…)
   conf/misterplex.conf.example
-  cores/Plex.rbf           Phase A playback-controls core (MD5 41adb98c7a630b541091c22ce291be68)
-  scripts/plex_browse.sh   list library + play/status/stop via misterplexd
-  scripts/plex_menu.sh     interactive on-device menu (sections → playMedia)
-  licenses/ffmpeg/         GPLv3 text, build provenance, source pointers
-  docs/                    install/release, display resolution, match-source-Hz, subtitles
+  cores/Plex.rbf                hardware-validated core (MD5 ${RBF_MD5_ACTUAL})
+                                frozen from ${RBF_REL}; not built by current source
+  scripts/plex_browse.sh        list library + play/status/stop via misterplexd
+  scripts/plex_menu.sh          interactive on-device menu (sections → playMedia)
+  examples/plex-cors-proxy/     Docker PMS dual-origin timeline fix
+  licenses/ffmpeg/              GPLv3 text, build provenance, source pointers
+  docs/                         install/release, display resolution, match-source-Hz, subtitles
 
 Quick install from this extracted directory
 -------------------------------------------
@@ -211,7 +279,7 @@ Install on MiSTer SD
   /media/fat/misterplex/bin/ffmpeg        # bundled static armhf FFmpeg (GPLv3)
   /media/fat/misterplex/misterplex.conf   # copy from conf example; set PLEX_* / DECODE / PRESENT
   /media/fat/linux/_user-startup.sh      # start daemon (see scripts/deploy_misterplexd.sh)
-  /media/fat/_Utility/Plex.rbf           # verified v0.3.0 core; md5 41adb98c7a630b541091c22ce291be68
+  /media/fat/_Utility/Plex.rbf           # verified ${VERSION} core; md5 ${RBF_MD5_ACTUAL}
 
 Configure Plex server and credentials
 -------------------------------------
@@ -226,30 +294,30 @@ Configure Plex server and credentials
 
 Start on boot
 -------------
-  Append this to /media/fat/linux/_user-startup.sh:
+  The FPGA RBF cannot start Linux processes. Use the single-instance supervisor:
 
-    /media/fat/misterplex/bin/misterplexd \\
-      --name MiSTerPlex --id misterplex --port 3005 \\
-      --conf /media/fat/misterplex/misterplex.conf \\
-      >>/media/fat/misterplex/misterplexd.log 2>&1 &
+    bin/misterplexd_supervise.sh   # respawns misterplexd; records exit/death evidence
+    bin/misterplex_core_watch.sh   # optional Plex-core load watcher
 
-  Then reboot, or run that command once over SSH for a first test.
+  Append this to /media/fat/linux/_user-startup.sh (deploy_misterplexd.sh does it):
+
+    nohup /media/fat/misterplex/bin/misterplexd_supervise.sh \\
+      >>/media/fat/misterplex/misterplexd_supervise.log 2>&1 &
 
 Launch the core
 ---------------
-  On MiSTer, open the OSD with F12 and load Plex from _Utility. After the daemon
-  is running, Plex apps on the same network should offer MiSTerPlex as a cast
-  target. Verify with:
+  On MiSTer, open the OSD with F12 and load Plex from _Utility. Plex apps on the
+  same network should offer MiSTerPlex as a cast target:
 
     curl http://<mister-ip>:3005/resources
 
 Plex.rbf locations (release / device)
 -------------------------------------
-  In this monorepo for v0.3.0 packaging:
-    release_artifacts/v0.3.0/Plex.rbf          # tracked, MD5-gated release core
+  In this monorepo packaging lane:
+    ${RBF_REL}      # tracked, MD5-gated release core
 
-  Override only with an explicitly validated core:
-    RBF_PATH=/path/to/Plex.rbf make package    # must md5 to 41adb98c7a630b541091c22ce291be68
+  Override the path only with a byte-identical copy of that release artifact:
+    RBF_PATH=/path/to/Plex.rbf make package
 
   On MiSTer (lab canonical):
     /media/fat/_Utility/Plex.rbf
@@ -326,23 +394,23 @@ if [[ -f "$STAGE/cores/Plex.rbf" ]]; then
       echo "       daemon = $pair_daemon_md5 ($STAGE/bin/misterplexd)"
       echo "       A mixed core/daemon pair black-screens the device; this was"
       echo "       reproduced on hardware, so it is not a theoretical risk."
-      echo "       Fix the pairing instead of bypassing: point RBF_PATH at the core"
-      echo "       that matches this daemon, or hardware-validate the pair and add a"
-      echo "       row to scripts/pair_ship_policy.sh (PAIR_MATRIX_ROWS)."
+      echo "       Keep the immutable release RBF. Supply its matching validated daemon"
+      echo "       via DAEMON_PATH, or hardware-validate the pair and add a row to"
+      echo "       scripts/pair_ship_policy.sh (PAIR_MATRIX_ROWS)."
     } >&2
     exit 6
   fi
 fi
 
-# Behavioural vf delivery gate (parent hardware 2026-08-02, adversarial redesign):
-# packaged daemon's vf policy must pin OUTPUT I420 to coded-bank bytes for real
-# PMS deliveries including non-bank-exact 624x350, with non-dead chroma.
-# Artifact-only (not device state). No content-md5 allow/deny. Exit 7 refuse.
-# Scope: ARM producer only — not DDR/scanout (gate output states this).
+# Supplemental vf delivery gate. The pair policy above is the artifact-behavior
+# authority: it binds exact daemon/core hashes to hardware validation. This gate
+# classifies the staged daemon's policy vocabulary, then exercises the current
+# checkout's reference planner for real PMS deliveries including 624x350.
+# It does not execute the static ARM artifact on the packaging host.
 if [[ -f "$STAGE/bin/misterplexd" ]]; then
   if ! vf_verdict="$("$ROOT/scripts/vf_delivery_behaviour_check.sh" "$STAGE/bin/misterplexd" 2>&1)"; then
     {
-      echo "ERROR: refusing to package a daemon whose vf policy fails delivery behaviour."
+      echo "ERROR: refusing package: staged policy classification or reference vf plan failed."
       echo "$vf_verdict"
       echo "       Real PMS 624x350 into identity/unverified skip desyncs the raw pipe"
       echo "       (green field / zero frames). Rebuild misterplexd with product FOAR"
@@ -350,7 +418,7 @@ if [[ -f "$STAGE/bin/misterplexd" ]]; then
     } >&2
     exit 7
   fi
-  echo "package_release: vf delivery behaviour OK — $(printf '%s\n' "$vf_verdict" | grep 'VF_DELIVERY_OK' | tail -1)"
+  echo "package_release: vf policy/reference OK — $(printf '%s\n' "$vf_verdict" | grep 'VF_DELIVERY_OK' | tail -1)"
 fi
 
 mkdir -p "$OUT_DIR"

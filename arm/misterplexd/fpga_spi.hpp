@@ -3,6 +3,7 @@
 // Mirrors Main_MiSTer FIO_FILE_* protocol. Shares GPO/GPI with Main — short
 // transfers only; optional flock reduces races.
 
+#include <chrono>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -13,6 +14,7 @@
 #include "libmisterplex/ddr_present_bank.hpp"
 #include "libmisterplex/input_mailbox.hpp"
 #include "libmisterplex/plxd_liveness.hpp"
+#include "libmisterplex/source_aspect.hpp"
 #include "libmisterplex/spi_ack_wait.hpp"
 
 namespace misterplex {
@@ -100,13 +102,24 @@ public:
                            DdrFrameFormat format = DdrFrameFormat::Yuv420p);
     DdrFrameLayout ddrFrameLayout() const { return ddrLayout_; }
     bool sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len,
-                             const DdrFrameGeometry& geometry, int bank = 0);
+                             const DdrFrameGeometry& geometry, int bank = 0,
+                             DdrBankWritePolicy policy = DdrBankWritePolicy::BestEffort);
     bool sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len, int width, int height,
-                             int bank = 0);
+                             int bank = 0,
+                             DdrBankWritePolicy policy = DdrBankWritePolicy::BestEffort);
     // bank is a hint; PLXD may select the free bank. lastPublishedBank() is the
     // bank that was actually written + doorbelled on the last successful publish.
     bool publishDdrFrame(const DdrPublishFrame& frame, int bank = 0);
     int lastPublishedBank() const { return lastPublishedBank_; }
+    // Zero-intermediate-buffer present: PLXD bank select + mapped write pointer.
+    // Caller fills outLen bytes at the returned pointer, then commitDdrBankIngest.
+    // Returns nullptr on failure (lastError set). outBank is the bank actually selected.
+    uint8_t* beginDdrBankIngest(size_t expectLen, int preferredBank, int& outBank);
+    // Fence/flush + doorbell after beginDdrBankIngest payload write. copy_us=0 (ingest
+    // cost is attributed by the caller as pipe-read into the bank).
+    bool commitDdrBankIngest(int bank, size_t len);
+    // Abandon an uncommitted reservation without ringing the doorbell.
+    void cancelDdrBankIngest();
     // DDR frame mmap policy. Default true keeps the proven strongly-ordered/device
     // mapping; false is a lab knob for write-combine/cacheable /dev/mem tests.
     // If a lab proves the no-sync mapping is cacheable, enable flush so the FPGA
@@ -178,6 +191,7 @@ public:
     };
     PlxdDiag diagnosePlxdProvenance();
 
+    bool readSourceAspectAck(SourceAspectAck& status);
     // Physical base used by core ddram_frame_rd (must match RTL PHYS_BASE).
     static constexpr uint32_t kDdrFrameBase = 0x30000000u;
     static constexpr uint32_t kDdrDoorbellPhys = mailbox_abi::kPlxkAddr;
@@ -211,6 +225,9 @@ public:
 
     // Push elementary bitstream (H.264 annex-B) to F3 bitstream_fifo. Appends.
     bool sendBitstreamChunk(const uint8_t* data, size_t len, uint8_t index = 3);
+    // Publish the source display aspect to hidden ioctl index 4. The core uses
+    // it for VIDEO_ARX/VIDEO_ARY when the OSD Aspect ratio is "Original".
+    bool sendSourceAspect(const SourceAspect& aspect);
     // Product path: copy complete Annex-B NAL records into the HPS DDR ring.
     // pushBitstreamNal() copies before returning, so the caller may immediately
     // reuse/free Nal::annexb. Full is transient; Desync/Fatal require a session
@@ -329,6 +346,10 @@ private:
     bool writeStatusWordRaw(const uint8_t word[16]);
     bool readStatusRaw(uint8_t out[16]);
     bool sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& plan);
+    bool sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& plan,
+                      DdrBankWritePolicy policy);
+    bool sendDdrFrame(const uint8_t* payload, size_t len, int bank,
+                      DdrBankWritePolicy policy);
 
     int fd_ = -1;
     volatile uint32_t* map_ = nullptr;
@@ -352,9 +373,11 @@ private:
     // leave the doorbell/stride at the packed-320 layout or the first frame shears.
     DdrFrameLayout ddrLayout_ = makeDdrFrameLayout(productDdrFrameStoreGeometry());
     uint32_t doorbellSeq_ = 0;
+    uint8_t sourceAspectToken_ = 0;
     double lastDdrBankDoorbellMs_[2] = {-1.0, -1.0};
     int lastPublishedBank_ = 0;
     DdrBankSelectState ddrBankSelect_{};
+    DdrStrictReleaseState strictDdrRelease_{};
     bool mboxInit_ = false;
     bool mboxAlive_ = false;
     uint16_t mboxSeq_ = 0;
@@ -367,6 +390,12 @@ private:
     // Names kept for rtl_invariants / diagnostics (mirrors plxdLive_).
     int plxdStaleCount_ = 0;
     bool plxdLivenessProven_ = false;
+    // beginDdrBankIngest / commitDdrBankIngest pairing state
+    std::chrono::steady_clock::time_point ingestT0_{};
+    int ingestBank_ = -1;
+    BankReleaseStatus ingestReleaseSample_{};
+    bool ingestReleaseSampleValid_ = false;
+    DdrStrictReleaseState ingestPriorStrictState_{};
     bool ensureDdrMap();
     void releaseDdrMap();
     bool ensureBitstreamDdrMap();

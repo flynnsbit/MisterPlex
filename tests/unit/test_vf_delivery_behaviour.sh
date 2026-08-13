@@ -3,14 +3,15 @@
 #
 # OBSERVED DEFECT: packaged release vf policy desynced on real PMS 624x350
 # delivery → green field on glass. Gate must be behavioural (bytes + chroma),
-# artifact-only, and must FAIL the historical release daemon binary without
-# hardcoding its md5 as an allow/deny key.
+# artifact policy classification plus current-source reference behavior, and
+# must FAIL the historical release daemon class without a local md5 deny key.
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 GATE="$ROOT/scripts/vf_delivery_behaviour_check.sh"
 PAIR_DAEMON="$ROOT/release_artifacts/ddr-c5382bee-e9f79de2/misterplexd"
 PIN_DAEMON="$ROOT/artifacts/daemon-pins/misterplexd.e9f79de2"
 HOST_DAEMON="$ROOT/build/misterplexd"
+V041_DAEMON_GZ="$ROOT/release_artifacts/v0.4.1/misterplexd.gz"
 fails=0
 applied=0
 pass() { echo "PASS $*"; applied=$((applied + 1)); }
@@ -20,11 +21,12 @@ fail() { echo "FAIL $*"; fails=$((fails + 1)); applied=$((applied + 1)); }
 [ -f "$GATE" ] || { echo "FAIL missing $GATE"; exit 1; }
 
 # --- structural: scope honesty + no md5 deny-list of known builds ----------
-if grep -q 'arm_producer_only=1' "$GATE" \
+if grep -q 'artifact_execution=0' "$GATE" \
+  && grep -q 'reference_planner=current_checkout' "$GATE" \
   && grep -q 'NOT a hardware pass' "$GATE"; then
-  pass "gate states ARM-producer-only gap (not hardware pass)"
+  pass "gate states artifact non-execution and current-source reference scope"
 else
-  fail "gate must state ARM-only scope / not hardware pass"
+  fail "gate must disclose artifact non-execution, reference source, and hardware gap"
 fi
 if grep -qE 'e9f79de2|ea643e99' "$GATE"; then
   # Mentions in comments about the defect are OK; hard-coded deny of those
@@ -57,6 +59,33 @@ if [ -n "$hist" ]; then
     pass "historical release daemon FAILS behavioural gate (rc=2) applied-match"
   else
     fail "historical release daemon must FAIL rc=2 behavioural; rc=$rc"
+  fi
+
+  # --- published v0.4.1 policy vocabulary must pass -------------------------
+  # v0.4.1 predates the later GEOM_GUARD marker names, but its binary records
+  # the actual coded-bank scale and native-aspect scale+pad decisions. The
+  # historical e9f daemon above has neither marker, so this remains a behavioral
+  # capability distinction rather than an artifact hash allowlist.
+  if [ -f "$V041_DAEMON_GZ" ]; then
+    v041="$ROOT/build/test-v041-vf-daemon"
+    gzip -cd "$V041_DAEMON_GZ" >"$v041"
+    chmod +x "$v041"
+    set +e
+    v041_out=$("$GATE" "$v041" 2>&1)
+    v041_rc=$?
+    set -e
+    echo "v041_daemon true rc=$v041_rc"
+    if [ "$v041_rc" -eq 0 ] \
+      && printf '%s\n' "$v041_out" | grep -q 'VF_DELIVERY_POLICY class=product_foar_coded' \
+      && printf '%s\n' "$v041_out" | grep -q 'VF_DELIVERY_OK'; then
+      pass "published v0.4.1 vocabulary selects the green reference policy"
+    else
+      fail "published v0.4.1 vocabulary must select the green reference policy; rc=$v041_rc"
+      printf '%s\n' "$v041_out" | tail -n 30
+    fi
+    rm -f "$v041"
+  else
+    fail "NO-DATA: frozen v0.4.1 daemon missing at $V041_DAEMON_GZ"
   fi
 else
   fail "NO-DATA: no historical release daemon at pair or pins path"
@@ -219,7 +248,7 @@ else
   fail "vf gate must run before tar (gate=$cap_line tar=$tar_line)"
 fi
 
-# --- the vf gate actually EXECUTES in the package path (behavioural) -------
+# --- the vf reference gate actually EXECUTES in the package path -----------
 # Parent 2026-08-02: mutation testing showed the historical-pair e2e below does
 # NOT cover the vf gate at all — the daemon md5 pin refuses that pair first
 # (rc=2, zero VF_ lines emitted), so disabling BOTH vf gate call sites left the
