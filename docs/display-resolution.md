@@ -4,8 +4,8 @@ MiSTerPlex has two separate resolutions:
 
 - **Output resolution** — the HDMI/VGA signal MiSTer sends to your display. This is controlled by
   MiSTer's scaler (`ascal`) and `/media/fat/MiSTer.ini`.
-- **Content/native resolution** — the picture MiSTerPlex decodes and presents internally. Today that
-  remains **320×240** by default.
+- **Content/native resolution** — the picture MiSTerPlex decodes and presents internally. 240p and
+  true480 are production choices; 720p is an alpha path.
 
 Raising the output mode gives a higher-resolution **signal**, not a higher-resolution decoded picture.
 For example, `video_mode=8` gives a 1920×1080@60 HDMI signal, but the current MiSTerPlex content path is
@@ -125,7 +125,7 @@ This is deliberately separate from `video_mode`. For example:
   scaled by MiSTer.
 - `video_mode=8` + `Content resolution=480p` = 1080p output carrying the 640×480 bank /
   624-coded path.
-- `video_mode=8` + `Content resolution=720p` = 1080p output carrying 1280×720 DDR present.
+- `video_mode=8` + `Content resolution=720p` = 1080p output carrying the alpha 1280×720 DDR path.
 
 The selector is one core, not separate RBFs per tier. Default power-on is **240p** (`O[5:4]=0`).
 The ARM daemon reads the same OSD status word (`O[5:4]`; v7 cores only drove `O[4]` → 240p/480p)
@@ -151,9 +151,10 @@ All three tiers share the DDR-backed YUV420p path:
 **480p geometry contract:** coded **624×480**, display crop **618×480**, present pillarbox
 **640×480**. Lab FOAR+pad log must show that triple when DECODE=640x480.
 
-**720p rate honesty:** product PMS cast on dual-A9 is often **below 24 fps** until KernelDma /
-write-combine publish lands; local identity play-file can exceed 20 pfps. Ship notes must not
-claim 24 fps without SCORE evidence. DDR path remains the no-stick backup even at ≤24 fps.
+**720p alpha honesty:** product PMS cast on dual-A9 is often **below source frame rate**, and
+audio can fall progressively behind. Until the decode/publish path has more realtime margin,
+720p is for development and visual testing rather than normal viewing. Ship notes must not
+claim stable 24 fps or A/V lock without new glass evidence.
 
 #### DDR frame-store bandwidth model
 

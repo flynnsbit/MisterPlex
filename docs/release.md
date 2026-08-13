@@ -13,9 +13,10 @@ Typical tarball `dist/misterplex-<git-desc>.tar.gz` expands to `misterplex-<git-
 | `bin/push_frame` | Optional SPI frame / bitstream push tool (Phase 3) |
 | `bin/set_status` | Lab tool: drive Plex OSD CONF_STR bits (pattern / force-bars / TV / FPS / audio / AR) via SPI |
 | `conf/misterplex.conf.example` | Conf template |
-| `cores/Plex.rbf` | Verified v0.3.0 Phase A playback-controls core; MD5 `41adb98c7a630b541091c22ce291be68` |
+| `cores/Plex.rbf` | Verified v0.4.1 true480 native-aspect core; MD5 `07f54d9f8f0eda2fe75d9cc314f6de54` |
 | `licenses/ffmpeg/` | GPLv3 text, build provenance, and source pointers for the bundled FFmpeg |
 | `docs/` | INSTALL path notes, display/output resolution, release notes, match-source-Hz, CRT/LCD matrix |
+| `examples/plex-cors-proxy/` | Docker PMS host-network fix for Plex Web timeline progress on loopback and LAN URLs |
 
 ## Install on MiSTer SD
 
@@ -85,7 +86,7 @@ Display output mode is **not** a `misterplex.conf` key; set `[Plex] video_mode` 
 | `PLEX_TOKEN` | *(optional)* | Static token; cast usually supplies transient `X-Plex-Token` |
 | `FFMPEG` | `/media/fat/misterplex/bin/ffmpeg` | FFmpeg binary; defaults to the bundled release copy |
 | `DECODE` | `320x240` | RGB decode size (`WxH`) |
-| `TRANSCODE_PROFILE` | `240p` \| `480p` | PMS universal profile. `240p` = 320x240@1000k; `480p` = 640x480@2500k. Both request H.264 Baseline Level 3.0. |
+| `TRANSCODE_PROFILE` | `240p` \| `480p` \| `720p` | PMS universal profile. 240p is the compatibility/performance mode; 480p is the recommended true480 quality mode; 720p is alpha and can have frame-rate/audio drift. |
 | `WEAK_RES` | `320x240` | Legacy PMS universal ladder resolution override |
 | `WEAK_BITRATE` | `1000` | Legacy ladder max video kbps override |
 | **`PRESENT`** | `fb0` \| `fpga` \| `both` | Where RGB lands |
@@ -118,7 +119,7 @@ Restart after edits: `killall misterplexd` then re-run deploy or the startup lin
 
 | Where | Path |
 |-------|------|
-| Monorepo release copy | `release_artifacts/v0.3.0/Plex.rbf` |
+| Monorepo release copy | `release_artifacts/v0.4.1/Plex.rbf` |
 | Explicit override | `RBF_PATH=/path/to/Plex.rbf make package` (must match the pinned MD5) |
 | Package | `misterplex-<version>/cores/Plex.rbf` |
 | MiSTer SD (lab) | `/media/fat/_Utility/Plex.rbf` (deploy + HW tests) |
@@ -127,9 +128,11 @@ Restart after edits: `killall misterplexd` then re-run deploy or the startup lin
 Phase 2 **fb0 / MrAudio** works with MiSTer’s normal video path (ascal/fb) even without Plex core loaded. Phase 3 **FPGA present / STREAM** requires `Plex.rbf` and OSD **Video source = Frame store** where applicable.
 
 Release packages do not silently select local Quartus outputs. `make package`
-uses the tracked `release_artifacts/v0.3.0/Plex.rbf` by default, or an explicit
+uses the tracked release RBF selected by `VERSION` (v0.4.1:
+`release_artifacts/v0.4.1/Plex.rbf`), or an explicit
 `RBF_PATH`, and refuses to package it unless the MD5 is
-`41adb98c7a630b541091c22ce291be68`.
+the pinned value for that release (`07f54d9f8f0eda2fe75d9cc314f6de54`
+for v0.4.1).
 
 ## Smoke tests
 
@@ -170,7 +173,7 @@ Not a separate product path — same companion/media code. Document latency/stab
 | Match source Hz | **Cadence + OSD Content FPS only**; no `CmdSwitchres` yet — [match-source-hz.md](match-source-hz.md) | product |
 | CRT 15 kHz | MiSTer video options / fixed modelines; [crt-lcd-matrix.md](crt-lcd-matrix.md) — no automated CRT golden | lab |
 | Wi-Fi vs Ethernet | Soak net hooks only; eth comparison not measured (no carrier) | lab |
-| Resolution | Output signal modes through 1920×1080@60/50 are supported via MiSTer.ini/ascal; native content defaults to 320×240. OSD 640×480 is for 480p test builds only: fits and closes timing / within modelled bandwidth, not hardware-validated. | product |
+| Resolution | 240p and true480 are production content modes. 720p is alpha: current dual-A9 playback can miss source frame rate and let audio drift. Output signal modes remain controlled by MiSTer.ini/ascal. | product |
 | Scrubber | Play-queue bind + seek/step clamp + stop/async race harden (P4-SCRUB E-P4h: playQueued cast invalidate, async seek/step, scrub plant hold, same-pos demux no-op); skipPrevious=Plex-style (restart@0 if >3s else queue prev); live Web eyes-on optional | UX |
 | Audio | FFmpeg → MrAudio @ 48 kHz stereo; F2 FIFO best-effort (off if FPGA leaves user mode) | product |
 | Auth | Static `PLEX_TOKEN` optional; prefer cast-supplied tokens | ops |

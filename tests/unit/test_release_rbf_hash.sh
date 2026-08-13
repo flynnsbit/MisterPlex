@@ -1,13 +1,10 @@
 #!/usr/bin/env bash
-# Guard: release packages must carry the exact hardware-validated v0.3.0 core.
+# Guard: release packages must carry the exact hardware-validated core for
+# their version line.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
-
-EXPECTED="41adb98c7a630b541091c22ce291be68"
-SOURCE_RBF="${RELEASE_RBF_PATH:-release_artifacts/v0.3.0/Plex.rbf}"
-status=0
 
 # dist/ accumulates tarballs from older releases, which legitimately carry a
 # different core than the current pinned one. Checking them unconditionally
@@ -16,6 +13,23 @@ status=0
 # checks every artifact and is what `make package` uses, so the package that
 # actually ships is always verified.
 version="${VERSION:-$(git -C "$ROOT" describe --tags --always --dirty 2>/dev/null || echo dev)}"
+case "$version" in
+  v0.4.1*|0.4.1*)
+    EXPECTED="07f54d9f8f0eda2fe75d9cc314f6de54"
+    default_source="release_artifacts/v0.4.1/Plex.rbf"
+    ;;
+  v0.4.0*|0.4.0*)
+    EXPECTED="1c6ed06fe832fb54259d4f4ce504ccae"
+    default_source="release_artifacts/v0.4.0/Plex.rbf"
+    ;;
+  *)
+    EXPECTED="41adb98c7a630b541091c22ce291be68"
+    default_source="release_artifacts/v0.3.0/Plex.rbf"
+    ;;
+esac
+SOURCE_RBF="${RELEASE_RBF_PATH:-$default_source}"
+status=0
+
 scan_all="${SCAN_ARTIFACTS:-0}"
 scanned_artifact=0
 

@@ -1078,7 +1078,7 @@ int main(int argc, char** argv) {
         timelineSession.containerKey = bound.containerKey;
         timelineSession.clientIdentifier = machineId;
         timelineSession.product = "MiSTerPlex";
-        timelineSession.version = "0.4.0";
+        timelineSession.version = "0.4.1";
         timelineSession.deviceName = name;
         std::fprintf(stderr,
                      "misterplexd: pms timeline session base=%s token_src=%s ratingKey=%s\n",

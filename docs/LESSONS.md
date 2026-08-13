@@ -414,19 +414,37 @@ gate requires `fallback_fires=0`, `soft_c=0`, and `underrun_delta=0`, and its cl
 lookahead red twin proves the old behavior fails. Never preserve an invalid control event
 because it masks a data-path timing hole; remove it, then fix the newly exposed hole.
 
-## L43 — PMS-proxied Companion responses require player identity
+## L43 — PMS-proxied Companion identity is also a browser-origin contract
 
 **Symptom:** `/player/timeline/poll` contains advancing `time=`, the Docker PMS
 `CompanionProxy` forwards every poll with HTTP 200, and Plex Web shows the target as
 playing, but its elapsed time remains at `0:00`.
 
-**Cause:** Plex Web 4.160.0 accepts a proxied poll only when the response header
-`X-Plex-Client-Identifier` matches the selected player's machine identifier. A direct
-player URL bypasses that comparison, which made direct Companion tests false-green.
-Commit `07935567` supplied the header, but a later merge restored an older `sendHttp`
-implementation and silently removed it.
+**Cause:** Plex Web 4.160.0 accepts a proxied poll only when JavaScript can read a
+response `X-Plex-Client-Identifier` matching the selected player's machine identifier.
+There are two independent failure modes:
+
+1. The Companion response omits the header. Commit `07935567` supplied it, but a later
+   merge restored an older `sendHttp` implementation and silently removed it.
+2. Plex Web loads from the PMS LAN URL while its server connection proxies Companion
+   polls through `127.0.0.1`. PMS forwards the identity header but replaces
+   `Access-Control-Expose-Headers` with `Location, Date`. The cross-origin XHR therefore
+   cannot read the identity, and Plex Web discards an otherwise valid advancing timeline.
 
 **Fix:** Every Companion HTTP response includes
-`X-Plex-Client-Identifier: <player-id>` and exposes that header through CORS. The
-subscription regression test checks the raw poll response header. Verify through the
-real PMS proxy, not only by curling port 3005 directly.
+`X-Plex-Client-Identifier: <player-id>` and exposes that header through CORS. A
+same-host immediate workaround is to open `http://127.0.0.1:32400/web`. The permanent
+Docker fix keeps PMS in host networking for GDM discovery and places the
+`examples/plex-cors-proxy/` sidecar on the HTTP boundary. Its narrow NAT rules send
+loopback and LAN port 32400 through Nginx, which replaces PMS's expose list with
+`Location, Date, X-Plex-Client-Identifier`; upstream PMS remains reachable at
+`127.0.0.2:32400` without a redirect loop.
+
+**Evidence:** A real Chromium trace showed page origin `http://PMS_LAN_HOST:32400`,
+poll origin `http://127.0.0.1:32400`, raw identity `misterplex-dev`, exposed headers
+`Location, Date`, advancing poll time, and rendered `0:00`. Reopening the same cast at
+the loopback Web origin rendered `0:06` after the first advancing polls and continued
+progressing. A curl that merely sees the raw identity header is false-green because curl
+does not enforce the browser's CORS visibility rules. With the host-network proxy active,
+the user confirmed both loopback and LAN Plex Web URLs advance while **MiSTerPlex**
+remains discoverable.

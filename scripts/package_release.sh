@@ -8,9 +8,14 @@ STAGE="$OUT_DIR/stage-misterplex"
 TAR="$OUT_DIR/misterplex-${VERSION}.tar.gz"
 
 ARM_BIN="$ROOT/build/arm/misterplexd"
-# Dual-gate: v0.4.0+ uses its own pinned RBF; legacy v0.3.0 keeps 41adb98c…
+# Each release line uses its own hardware-validated RBF.
 # Override either path or md5 via RBF_PATH / RBF_MD5_EXPECTED for lab freezes.
 case "$VERSION" in
+  v0.4.1*|0.4.1*)
+    # true480 native-aspect pair, centered chevron, positive post-fit timing
+    RBF_MD5_EXPECTED="${RBF_MD5_EXPECTED:-07f54d9f8f0eda2fe75d9cc314f6de54}"
+    RBF_DEFAULT="$ROOT/release_artifacts/v0.4.1/Plex.rbf"
+    ;;
   v0.4.0*|0.4.0*)
     # softc24 HOLD=2 + CONF_STR v9 Content O[5:4] + Display O[15:14] Follow
     RBF_MD5_EXPECTED="${RBF_MD5_EXPECTED:-1c6ed06fe832fb54259d4f4ce504ccae}"
@@ -143,11 +148,15 @@ cp -a "$RBF_SRC" "$STAGE/cores/Plex.rbf"
 echo "Included verified cores/Plex.rbf from $RBF_SRC ($(wc -c <"$STAGE/cores/Plex.rbf") bytes, md5=$RBF_MD5_ACTUAL)"
 
 # Operator docs
-for doc in release.md release-notes-v0.3.0.md release-notes-v0.4.0.md display-resolution.md match-source-hz.md crt-lcd-matrix.md architecture.md subtitles-burnin.md; do
+for doc in release.md release-notes-v0.3.0.md release-notes-v0.4.0.md release-notes-v0.4.1.md display-resolution.md match-source-hz.md crt-lcd-matrix.md architecture.md subtitles-burnin.md; do
   if [[ -f "$ROOT/docs/$doc" ]]; then
     cp -a "$ROOT/docs/$doc" "$STAGE/docs/"
   fi
 done
+if [[ -d "$ROOT/examples/plex-cors-proxy" ]]; then
+  mkdir -p "$STAGE/examples"
+  cp -a "$ROOT/examples/plex-cors-proxy" "$STAGE/examples/"
+fi
 mkdir -p "$STAGE/scripts"
 for scr in plex_browse.sh plex_menu.sh misterplexd_supervise.sh misterplex_core_watch.sh; do
   if [[ -f "$ROOT/scripts/$scr" ]]; then
@@ -179,6 +188,7 @@ Contents
   cores/Plex.rbf                hardware-validated core (MD5 ${RBF_MD5_ACTUAL})
   scripts/plex_browse.sh        list library + play/status/stop via misterplexd
   scripts/plex_menu.sh          interactive on-device menu (sections → playMedia)
+  examples/plex-cors-proxy/     Docker PMS dual-origin timeline fix
   licenses/ffmpeg/              GPLv3 text, build provenance, source pointers
   docs/                         install/release, display resolution, match-source-Hz, subtitles
 

@@ -379,7 +379,7 @@ std::string Companion::gdmPayload() const {
       << "Name: " << name_ << "\r\n"
       << "Port: " << port_ << "\r\n"
       << "Product: MiSTerPlex\r\n"
-      << "Version: 0.4.0\r\n"
+      << "Version: 0.4.1\r\n"
       << "Protocol: plex\r\n"
       << "Protocol-Version: 1\r\n"
       << "Protocol-Capabilities: timeline,playback,navigation,mirror,playqueues\r\n"
@@ -397,7 +397,7 @@ std::string Companion::resourcesXml() const {
       << "protocol=\"plex\" protocolVersion=\"1\" "
       << "protocolCapabilities=\"timeline,playback,navigation,mirror,playqueues\" "
       << "deviceClass=\"stb\" machineIdentifier=\"" << xmlEsc(machineId_) << "\" "
-      << "version=\"0.4.0\"/>"
+      << "version=\"0.4.1\"/>"
       << "</MediaContainer>";
     return o.str();
 }
