@@ -498,7 +498,7 @@ git **docs HEAD `3c43a66`**; **FPGA committed `7bee0a6`**; R-csum6 claim freeze 
 
 | P3-SPI | SPI F1 only ~9fps — retired; product F1 is DDR YUV420p-only | DONE | |
 | P3-TRUE480 | Production 240p/480p glass (v0.4.1) | **DONE** (eyes-on) | Branch `480p` @ `a6ba15d`; RBF md5 `07f54d9f`. 624/618/640 + native DAR + `RequireReleased` + 640×384 decode budget. Lessons **L44–L50**. Do not thrash this pair to chase 720p. |
-| P3-720P24 | Stable 1280×720 @ 24 unique fps + A/V lock | **BLOCKED** on host publish + pix clock | Phase 0 T_copy **PASS** uncontended 2026-08-12 `/tmp/misterplex-agent-L-copy.txt`: 1,382,400 B @ `0x30600000` no-sync **14.977 ms** (Sweep9 14.978). Live RBF `07f54d9f` MATCH; daemon down. Phase 1 next: KernelDma/WC (userspace PL330 is lab-only; unbind hung SoC). Not an RBF-first item (L46). |
+| P3-720P24 | Stable 1280×720 @ 24 unique fps + A/V lock | **BLOCKED** on host publish + pix clock | Phase 0 T_copy 2026-08-12: 1,382,400 B @ `0x30600000`, RBF `07f54d9f`, daemon down. no-sync **14.977 ms** (n=40) / **15.470 ms** (n=200). Sweep9 pin 14.978. `/tmp/misterplex-agent-L-copy.txt`. Next: KernelDma/WC. |
 
 ## Phase 4 (UX)
 | ID | Item | Status | Notes |
@@ -632,7 +632,7 @@ git **docs HEAD `3c43a66`**; **FPGA committed `7bee0a6`**; R-csum6 claim freeze 
 21. ~~**J-backlog16..65**~~ — DONE prior; this is **J-backlog66 REFRESH_DONE**
 22. **G-fpga** — **WAIT** (no FPGA commit of thrash/DIAG; after hard green + intentional product SRC@fit match LOCK_OK)
 23. ~~**R-csum6-midfit***~~ — **DONE** mid-fit DRIFT_OK / SRC_DRIFT NO through terminal
-24. **P3-720P24** — **BLOCKED** on host publish (`T_copy_arm` ≈ 15 ms) + `clk_pix` ≥ 29.70 MHz. Do **not** open exclusive Quartus until Phase 0 is measured on the v0.4.1 pair. Lessons L44–L50. 240p/480p production pair stays frozen.
+24. **P3-720P24** — **BLOCKED** on host publish (`T_copy_arm` ≈ 15 ms) + `clk_pix` ≥ 29.70 MHz. Do **not** open exclusive Quartus. Lessons L44–L50.
 
 ## Non-RBF always available
 - (done **C-unit14..28 + C-unit-sf2**) unit GREEN host 0x14 — **C-unit28 PASS** (`/tmp/misterplex-agent-C-unit28.txt`) + **C-unit27 PASS** + **C-unit-sf2 PASS** + **C-unit26 PASS**; **host GREEN ≠ lab hard residual PASS**; soft-skip ≠ PASS
