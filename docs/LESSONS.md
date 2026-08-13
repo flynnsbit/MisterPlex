@@ -540,3 +540,12 @@ Heap-only pipe+copy is 20.74 fps. 4 Mbps is already decode-bound (~21 fps
 null). The old 20 Mbps / q100 720p ladder cannot make 20 unique fps on the
 dual-A9. Product 720p ladder is 1500 kbps / q70 / Main@L3.1. 24 fps still
 needs WC/DMA. Evidence: `/tmp/misterplex-agent-P720-20.txt`.
+
+## L52 — 720p24 is a QSF fork, not a clk_sys change on the 480p RBF
+
+true480 glass is `clk_sys=20 MHz`, CE/2, 672×496 → 30.0019 Hz. The L4 720p beam
+is 1312×762. At 20 MHz that is **20.005 Hz**, not 24. 24.006 Hz needs
+`clk_sys=24 MHz` (`PLEX_CLK_SYS_24`). Changing `clk_sys` on `Plex.qsf` would
+break the proven 480p pair. Fit `Plex_720p24.qsf` as a sibling RBF; keep
+`07f54d9f` for 240/480. Host: 1500k ladder, `RequireReleased` on the 720p
+bank, nice `MiSTer` 19 during 720p play. See `docs/720p24-rbf.md`.

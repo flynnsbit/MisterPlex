@@ -1,6 +1,7 @@
 #include <pthread.h>
 #include "media_player.hpp"
 
+#include "libmisterplex/ddr_frame_layout.hpp"
 #include "libmisterplex/av_clock.hpp"
 #include "libmisterplex/idle_screen.hpp"
 #include "libmisterplex/osd_menu.hpp"
@@ -19,6 +20,7 @@
 #include <time.h>
 #include <vector>
 
+#include <dirent.h>
 #include <fcntl.h>
 #include <poll.h>
 #include <sched.h>
@@ -37,6 +39,70 @@ inline bool isUniversalTranscodeUrl(const std::string& url) {
     return url.find("transcode/universal") != std::string::npos ||
            url.find("/video/:/transcode/") != std::string::npos;
 }
+
+#if defined(__linux__)
+pid_t findCommPid(const char* name) {
+    DIR* dir = ::opendir("/proc");
+    if (!dir)
+        return -1;
+    pid_t found = -1;
+    while (dirent* ent = ::readdir(dir)) {
+        if (ent->d_name[0] < '1' || ent->d_name[0] > '9')
+            continue;
+        char path[64];
+        std::snprintf(path, sizeof(path), "/proc/%s/comm", ent->d_name);
+        FILE* f = std::fopen(path, "r");
+        if (!f)
+            continue;
+        char comm[32] = {};
+        const bool ok = std::fgets(comm, sizeof(comm), f) != nullptr;
+        std::fclose(f);
+        if (!ok)
+            continue;
+        char* nl = std::strchr(comm, '\n');
+        if (nl)
+            *nl = 0;
+        if (std::strcmp(comm, name) == 0) {
+            found = static_cast<pid_t>(std::atoi(ent->d_name));
+            break;
+        }
+    }
+    ::closedir(dir);
+    return found;
+}
+
+bool g_misterNiced = false;
+int g_misterNiceSaved = 0;
+
+void setMisterNice(int niceVal, const MediaPlayer::LogFn& log) {
+    const pid_t pid = findCommPid("MiSTer");
+    if (pid <= 0)
+        return;
+    errno = 0;
+    const int cur = ::getpriority(PRIO_PROCESS, pid);
+    if (errno != 0)
+        return;
+    if (!g_misterNiced) {
+        g_misterNiceSaved = cur;
+        g_misterNiced = true;
+    }
+    if (::setpriority(PRIO_PROCESS, pid, niceVal) == 0 && log) {
+        log("media: MiSTer pid=" + std::to_string(pid) + " nice=" +
+            std::to_string(niceVal) + " (was " + std::to_string(cur) + ")");
+    }
+}
+
+void restoreMisterNice(const MediaPlayer::LogFn& log) {
+    if (!g_misterNiced)
+        return;
+    const pid_t pid = findCommPid("MiSTer");
+    if (pid > 0)
+        (void)::setpriority(PRIO_PROCESS, pid, g_misterNiceSaved);
+    if (log)
+        log("media: MiSTer nice restored");
+    g_misterNiced = false;
+}
+#endif
 
 inline bool urlHasUniversalOffset(const std::string& url) {
     if (!isUniversalTranscodeUrl(url))
@@ -1107,6 +1173,9 @@ void MediaPlayer::stop() {
         finalDur = durationMs_;
     }
     playing_.store(false);
+#if defined(__linux__)
+    restoreMisterNice(log_);
+#endif
     resetPlaybackPauseClock();
     if (onProgress_)
         onProgress_("stopped", finalPos, finalDur);
@@ -1288,6 +1357,8 @@ bool MediaPlayer::play(const std::string& urlOrPath, int64_t startOffsetMs,
             // Prefer present over decode when the scheduler must choose.
             (void)::setpriority(PRIO_PROCESS, 0, -5);
         }
+        if (outW_ == kPlex720pPresentedWidth && outH_ == kPlex720pPresentedHeight)
+            setMisterNice(19, log_);
 #endif
             try {
                 threadMain(urlOrPath, startOffsetMs, httpHeaders, durationMs);
@@ -3186,10 +3257,14 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                                  presentMode_ == "fpga";
         const bool true480Pipeline =
             pipelineDdr && isPlex480pDdrFrameGeometry(ddrGeometry);
+        const bool strictDdrPipeline =
+            true480Pipeline ||
+            (pipelineDdr && isPlex720pDdrFrameGeometry(ddrGeometry));
         if (pipelineDdr) {
             log("media: present_pipeline=2slot_cached_ring frame_bytes=" +
                 std::to_string(frameBytes) +
-                " true480_exact_gate=" + (true480Pipeline ? "1" : "0"));
+                " true480_exact_gate=" + (true480Pipeline ? "1" : "0") +
+                " strict_ddr_gate=" + (strictDdrPipeline ? "1" : "0"));
             std::array<std::vector<uint8_t>, 2> ring;
             ring[0].assign(frameBytes, 0);
             ring[1].assign(frameBytes, 0);
@@ -3231,14 +3306,14 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                         const OverlayRect dirty = i420OverlayBackup.rect;
                         const bool ok = fpga_.sendYuv420pFrameDdr(
                             slotFrame, frameBytes, ddrGeometry, localBank,
-                            true480Pipeline ? DdrBankWritePolicy::RequireReleased
+                            strictDdrPipeline ? DdrBankWritePolicy::RequireReleased
                                             : DdrBankWritePolicy::BestEffort);
                         if (overlayDrawn)
                             restoreOverlayDirty(slotFrame, dirty);
                         if (ok) {
                             localBank ^= 1;
                             lastPresentedHadOverlay = overlayDrawn;
-                        } else if (true480Pipeline) {
+                        } else if (strictDdrPipeline) {
                             log("media: DDR_PIPE paused present fail: " +
                                 fpga_.lastError());
                             pipelineFatal.store(true);
@@ -3280,7 +3355,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     }
                     bool overlayDrawn = false;
                     bool presentFrame = true;
-                    if (true480Pipeline) {
+                    if (strictDdrPipeline) {
                         const int64_t frameUs =
                             frameContentUs(slotFrameIndex, fpsNum, fpsDen) +
                             avOffsetMs_.load() * 1000LL;
@@ -3342,7 +3417,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                         const OverlayRect dirty = i420OverlayBackup.rect;
                         const bool ok = fpga_.sendYuv420pFrameDdr(
                             slotFrame, frameBytes, ddrGeometry, localBank,
-                            true480Pipeline ? DdrBankWritePolicy::RequireReleased
+                            strictDdrPipeline ? DdrBankWritePolicy::RequireReleased
                                             : DdrBankWritePolicy::BestEffort);
                         if (overlayDrawn)
                             restoreOverlayDirty(slotFrame, dirty);
@@ -3373,7 +3448,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                                     std::to_string(slotFrameIndex) + ": " +
                                     fpga_.lastError());
                             }
-                            fatalPresent = true480Pipeline;
+                            fatalPresent = strictDdrPipeline;
                         }
                         if (fatalPresent) {
                             pipelineFatal.store(true);
@@ -3468,9 +3543,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                         std::to_string(frameBytes));
                     break;
                 }
-                // Legacy/720 pipeline behaviour is unchanged. True-480 is paced
-                // in the present thread from the exact audible/wall clock.
-                if (!true480Pipeline && (!wantAudio || !audioActive_.load())) {
+                // Legacy pipeline only. true480 and 720p strict present are paced
+                // in the present thread from the audible/wall clock.
+                if (!strictDdrPipeline && (!wantAudio || !audioActive_.load())) {
                     const int64_t frameMs =
                         frameContentMs(frameIndex + 1, fpsNum, fpsDen) + avOffsetMs_.load();
                     const int64_t clockMs = std::chrono::duration_cast<std::chrono::milliseconds>(

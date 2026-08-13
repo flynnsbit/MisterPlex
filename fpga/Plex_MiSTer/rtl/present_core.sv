@@ -308,8 +308,10 @@ module present_core #(
 
 `elsif PLEX_PRESENT_720P_L4
 	// =====================================================================
-	// L4 720p24 true-DE beam (DEFAULT OFF). w-clock: H=1312 V=762 @ 24 MHz
-	// → 24.006 Hz (1:1 with measured PMS 24/1 asset; no pulldown).
+	// L4 720p24 true-DE beam (DEFAULT OFF). w-clock: H=1312 V=762.
+	// Product 480p RBF keeps clk_sys=20 MHz → this beam is 20.005 Hz.
+	// 720p24 RBF sets PLEX_CLK_SYS_24 (clk_sys=24 MHz) → 24.006 Hz, 1:1
+	// with 24/1 content, no pulldown. Do not change clk_sys on the 480p QSF.
 	// =====================================================================
 	// synthesis translate_off
 	initial begin
