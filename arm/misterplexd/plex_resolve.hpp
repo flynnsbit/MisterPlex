@@ -7,6 +7,8 @@
 #include <utility>
 #include <vector>
 
+#include "libmisterplex/source_aspect.hpp"
+
 namespace misterplex {
 
 struct ResolveResult {
@@ -37,6 +39,14 @@ struct ResolveResult {
     // RK6: coded 624x480 + SAR 160:117 ⇒ DAR 16:9 ⇒ universal fit 624x350.
     std::string mediaAspectRatio;
     std::string pixelAspectRatio;
+    // True when metadata lists an audio Stream (streamType=2). False when metadata
+    // was parsed and only video is present (e.g. Grid720 freckle map). Unknown
+    // (no metadata) stays true so product audio is not suppressed by accident.
+    // FFmpeg dual-out aborts the whole process if pipe:3 is opened with no audio.
+    bool hasAudio = true;
+    // Original display aspect sent to MiSTer's native scaler. Invalid means the
+    // caller must probe the actual stream before starting playback.
+    SourceAspect sourceAspect{};
 };
 
 struct QueueItem {
@@ -148,6 +158,9 @@ inline constexpr int kLinkCapacityHeadroomPctDefault = 85;
 int applyLinkCapacityCapKbps(int requestedKbps, int capacityKbps,
                              int headroomPct = kLinkCapacityHeadroomPctDefault);
 
+// Fit the PMS transcode raster inside the configured ladder without adding bars.
+// The host expands this anamorphically to the FPGA bank and MiSTer restores DAR.
+WeakLadder fitWeakLadderToAspect(const WeakLadder& weak, const SourceAspect& aspect);
 std::string plexClientProfileExtra(const WeakLadder& weak);
 std::string plexClientCapabilities(const WeakLadder& weak);
 std::string buildUniversalTranscodeUrl(const std::string& base,
@@ -160,15 +173,25 @@ std::string buildUniversalTranscodeUrl(const std::string& base,
 // True when metadata Media@videoCodec looks like H.264/AVC (direct Part friendly for STREAM).
 bool mediaVideoIsH264(const std::string& plexMetadataXml);
 
+// Derive display aspect from PMS metadata. Explicit display/DAR metadata wins;
+// otherwise coded dimensions are combined with explicit sample/pixel aspect.
+// Coded dimensions alone are used only when PMS explicitly marks non-anamorphic.
+SourceAspect sourceAspectFromPlexMetadata(const std::string& plexMetadataXml,
+                                         int codedWidth, int codedHeight);
+
 // Resolve a playMedia key against PMS, or pass through local/http paths.
 // weakAlways: always request PMS universal H.264 ladder (recommended on dual A9 / STREAM=0).
 // preferDirectH264: when true (STREAM=1 product path), use direct Part stream if source is
 // already H.264 so host CAVLC recon can run on Baseline/Main without High/CABAC remux.
 // Non-H.264 still falls through to the weak universal ladder.
+// decodeW/H: when >0 and Media size exactly matches the bank, prefer direct Part on
+// STREAM=0 (skip PMS re-encode for true-720→720). Larger sources into smaller banks
+// must use the weak ladder so content mode reaches PMS encode (G0b).
 ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::string& plexBase,
                                 const std::string& token, int64_t offsetMs = 0,
                                 bool weakAlways = true, const WeakLadder& weak = {},
-                                bool preferDirectH264 = false);
+                                bool preferDirectH264 = false, int decodeW = 0,
+                                int decodeH = 0);
 
 // Fetch /playQueues/{id} for next-episode / skipNext. currentKey or playQueueItemId
 // selects currentIndex when present.
@@ -191,6 +214,22 @@ std::string plexFfmpegHeaders(const std::string& sessionId, const std::string& t
 
 // Best-effort PMS GET using the same curl-based Plex client identity as resolve.
 // Headers are name/value pairs; response body is discarded by callers.
+// Success is HTTP 2xx only — a non-empty 401 HTML body is a failure (not "ok").
+struct PlexHttpNoBodyResult {
+    bool ok = false;
+    int httpStatus = 0; // 0 = transport/parse failure; otherwise curl %{http_code}
+};
+
+// True iff status is an HTTP success (2xx). status<=0 is never ok.
+bool plexHttpStatusOk(int httpStatus);
+
+// Parse curl -w '%{http_code}' output (trims whitespace). Returns 0 if not a 3-digit code.
+int parseCurlHttpCode(const std::string& curlWriteOut);
+
+PlexHttpNoBodyResult plexHttpGetNoBodyResult(
+    const std::string& url, const std::vector<std::pair<std::string, std::string>>& headers = {},
+    int timeoutSec = 4);
+
 bool plexHttpGetNoBody(const std::string& url,
                        const std::vector<std::pair<std::string, std::string>>& headers = {},
                        int timeoutSec = 4);

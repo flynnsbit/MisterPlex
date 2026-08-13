@@ -95,6 +95,24 @@ int main() {
     require(has(empty, "key=\"/library/metadata/3\""),
             "empty stopped@0 lost scrubber key: " + empty);
 
+    misterplex::Companion generationGuard;
+    generationGuard.setMachineId("misterplex-dev");
+    misterplex::PlayRequest oldEpisode = episodeRequest();
+    oldEpisode.dispatchGeneration = 10;
+    require(generationGuard.stagePlay(oldEpisode), "stage old generated episode");
+    misterplex::PlayRequest newEpisode = oldEpisode;
+    newEpisode.key = "/library/metadata/4";
+    newEpisode.ratingKey = "4";
+    newEpisode.dispatchGeneration = 11;
+    require(generationGuard.stagePlay(newEpisode), "stage newer generated episode");
+    require(!generationGuard.setStateIfGeneration(10, "playing", 1500, 2000),
+            "stale progress updated newer generated episode");
+    require(!generationGuard.endMediaSessionIfGeneration(10, 1000, 2000),
+            "stale EOF cleared newer generated episode");
+    const std::string guarded = generationGuard.timelineXml("guarded");
+    require(has(guarded, "key=\"/library/metadata/4\""),
+            "stale EOF removed newer media identity: " + guarded);
+
     std::cout << "test_companion_eof: OK\n";
     return 0;
 }

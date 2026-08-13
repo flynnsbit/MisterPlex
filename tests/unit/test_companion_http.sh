@@ -22,9 +22,17 @@ else:
 PY
 )
 echo "test_companion_http: using PORT=$PORT"
-"$BIN" --name MiSTerPlexTest --port "$PORT" &
+# This is a host-only HTTP contract test. Avoid making async bindMedia depend on
+# an unavailable MiSTer FPGA source-aspect ACK.
+CONF=$(mktemp)
+printf 'PRESENT=none\n' >"$CONF"
+"$BIN" --name MiSTerPlexTest --port "$PORT" --conf "$CONF" &
 PID=$!
-cleanup() { kill "$PID" 2>/dev/null || true; wait "$PID" 2>/dev/null || true; }
+cleanup() {
+  kill "$PID" 2>/dev/null || true
+  wait "$PID" 2>/dev/null || true
+  rm -f "$CONF"
+}
 trap cleanup EXIT
 # Wait until HTTP is up (bind can lag slightly after process start).
 ok=0
@@ -92,7 +100,8 @@ echo "$POLL" | grep -Eq 'state="(buffering|playing|paused)"'
 
 # ratingKey derived from key path when omitted
 echo "$POLL" | grep -q 'ratingKey="1"' || fail "missing derived ratingKey from key: $POLL"
-echo "$POLL" | grep -q 'playQueueItemID="1"' || fail "missing pqItem fallback from ratingKey: $POLL"
+echo "$POLL" | grep -qv 'playQueueItemID=' ||
+  fail "invented playQueueItemID from ratingKey: $POLL"
 
 # pause / play / stop control paths
 curl -fsS "http://127.0.0.1:${PORT}/player/playback/pause?commandID=3" | grep -q Timeline

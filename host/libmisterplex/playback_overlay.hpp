@@ -9,8 +9,8 @@
 //     Show transient skip feedback ("30s >>" or "<< 30s") and refresh the
 //     overlay timeout. Transport dispatch owns the actual seek/skip.
 //
-// The renderer is deliberately buffer-format agnostic. It can draw into RGB24
-// or packed little-endian RGB565 and only touches the overlay dirty region; when
+// The renderer is buffer-format agnostic. It draws into packed RGB formats or
+// directly into planar I420 and only touches the overlay dirty region; when
 // hidden, render*() returns false without scanning the frame.
 
 #include <algorithm>
@@ -21,6 +21,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
+#include <vector>
 
 namespace misterplex {
 
@@ -37,6 +38,120 @@ struct OverlayRect {
     int h = 0;
 
     bool empty() const { return w <= 0 || h <= 0; }
+};
+
+inline OverlayRect alignI420DirtyRect(OverlayRect r, int w, int h) {
+    if (r.empty() || w <= 0 || h <= 0)
+        return {};
+    int x0 = std::max(0, std::min(w, r.x));
+    int y0 = std::max(0, std::min(h, r.y));
+    int x1 = std::max(0, std::min(w, r.x + r.w));
+    int y1 = std::max(0, std::min(h, r.y + r.h));
+    x0 &= ~1;
+    y0 &= ~1;
+    x1 = std::min(w, (x1 + 1) & ~1);
+    y1 = std::min(h, (y1 + 1) & ~1);
+    if (x1 <= x0 || y1 <= y0)
+        return {};
+    return OverlayRect{x0, y0, x1 - x0, y1 - y0};
+}
+
+struct I420DirtyBackup {
+    OverlayRect rect;
+    int frameWidth = 0;
+    int frameHeight = 0;
+    std::vector<uint8_t> y;
+    std::vector<uint8_t> u;
+    std::vector<uint8_t> v;
+
+    void clear() {
+        rect = {};
+        frameWidth = 0;
+        frameHeight = 0;
+        y.clear();
+        u.clear();
+        v.clear();
+    }
+
+    bool empty() const { return rect.empty(); }
+
+    bool capture(const uint8_t* i420, int w, int h, OverlayRect requested) {
+        clear();
+        if (!i420 || w <= 0 || h <= 0 || (w & 1) || (h & 1))
+            return false;
+        rect = alignI420DirtyRect(requested, w, h);
+        frameWidth = w;
+        frameHeight = h;
+        if (rect.empty())
+            return true;
+
+        const size_t yRowBytes = static_cast<size_t>(rect.w);
+        const size_t cRowBytes = static_cast<size_t>(rect.w / 2);
+        y.resize(yRowBytes * static_cast<size_t>(rect.h));
+        u.resize(cRowBytes * static_cast<size_t>(rect.h / 2));
+        v.resize(cRowBytes * static_cast<size_t>(rect.h / 2));
+
+        const size_t yPlaneBytes = static_cast<size_t>(w) * static_cast<size_t>(h);
+        const size_t cPlaneBytes = static_cast<size_t>(w / 2) * static_cast<size_t>(h / 2);
+        const uint8_t* yPlane = i420;
+        const uint8_t* uPlane = yPlane + yPlaneBytes;
+        const uint8_t* vPlane = uPlane + cPlaneBytes;
+        for (int yy = 0; yy < rect.h; ++yy) {
+            const size_t src =
+                static_cast<size_t>(rect.y + yy) * static_cast<size_t>(w) + rect.x;
+            std::memcpy(y.data() + static_cast<size_t>(yy) * yRowBytes, yPlane + src,
+                        yRowBytes);
+        }
+        const int cStride = w / 2;
+        const int cx = rect.x / 2;
+        const int cy = rect.y / 2;
+        for (int yy = 0; yy < rect.h / 2; ++yy) {
+            const size_t src =
+                static_cast<size_t>(cy + yy) * static_cast<size_t>(cStride) + cx;
+            const size_t dst = static_cast<size_t>(yy) * cRowBytes;
+            std::memcpy(u.data() + dst, uPlane + src, cRowBytes);
+            std::memcpy(v.data() + dst, vPlane + src, cRowBytes);
+        }
+        return true;
+    }
+
+    bool restore(uint8_t* i420, int w, int h) const {
+        if (!i420 || w != frameWidth || h != frameHeight || w <= 0 || h <= 0 ||
+            (w & 1) || (h & 1))
+            return false;
+        if (rect.empty())
+            return y.empty() && u.empty() && v.empty();
+
+        const size_t yRowBytes = static_cast<size_t>(rect.w);
+        const size_t cRowBytes = static_cast<size_t>(rect.w / 2);
+        if (y.size() != yRowBytes * static_cast<size_t>(rect.h) ||
+            u.size() != cRowBytes * static_cast<size_t>(rect.h / 2) ||
+            v.size() != cRowBytes * static_cast<size_t>(rect.h / 2))
+            return false;
+
+        const size_t yPlaneBytes = static_cast<size_t>(w) * static_cast<size_t>(h);
+        const size_t cPlaneBytes = static_cast<size_t>(w / 2) * static_cast<size_t>(h / 2);
+        uint8_t* yPlane = i420;
+        uint8_t* uPlane = yPlane + yPlaneBytes;
+        uint8_t* vPlane = uPlane + cPlaneBytes;
+        for (int yy = 0; yy < rect.h; ++yy) {
+            const size_t dst =
+                static_cast<size_t>(rect.y + yy) * static_cast<size_t>(w) + rect.x;
+            std::memcpy(yPlane + dst, y.data() + static_cast<size_t>(yy) * yRowBytes,
+                        yRowBytes);
+        }
+        const int cStride = w / 2;
+        const int cx = rect.x / 2;
+        const int cy = rect.y / 2;
+        for (int yy = 0; yy < rect.h / 2; ++yy) {
+            const size_t dst =
+                static_cast<size_t>(cy + yy) * static_cast<size_t>(cStride) + cx;
+            const size_t src = static_cast<size_t>(yy) * cRowBytes;
+            std::memcpy(uPlane + dst, u.data() + src, cRowBytes);
+            std::memcpy(vPlane + dst, v.data() + src, cRowBytes);
+        }
+        return true;
+    }
 };
 
 class PlaybackOverlay {
@@ -107,6 +222,16 @@ public:
         return dirtyBoundsFor(s, w, h, nowMs);
     }
 
+    OverlayRect dirtyBoundsI420(int w, int h) const {
+        return dirtyBoundsI420At(w, h, monotonicMs());
+    }
+
+    OverlayRect dirtyBoundsI420At(int w, int h, int64_t nowMs) const {
+        if ((w & 1) || (h & 1))
+            return {};
+        return alignI420DirtyRect(dirtyBoundsAt(w, h, nowMs), w, h);
+    }
+
     bool renderRgb24(uint8_t* rgb, int w, int h) const {
         return renderRgb24At(rgb, w, h, monotonicMs());
     }
@@ -155,6 +280,42 @@ public:
         return true;
     }
 
+    bool renderI420(uint8_t* i420, int w, int h) const {
+        return renderI420At(i420, w, h, monotonicMs());
+    }
+
+    bool renderI420At(uint8_t* i420, int w, int h, int64_t nowMs) const {
+        if (!i420 || w <= 0 || h <= 0 || (w & 1) || (h & 1))
+            return false;
+        Snapshot s = snapshot();
+        const OverlayRect dirty =
+            alignI420DirtyRect(dirtyBoundsFor(s, w, h, nowMs), w, h);
+        if (dirty.empty())
+            return false;
+        compositeI420Snapshot(i420, w, h, nowMs, s, dirty);
+        return true;
+    }
+
+    bool renderI420WithBackup(uint8_t* i420, int w, int h,
+                              I420DirtyBackup& backup) const {
+        return renderI420WithBackupAt(i420, w, h, monotonicMs(), backup);
+    }
+
+    // Freeze state/time once so backup.rect is exactly the region this call can paint.
+    bool renderI420WithBackupAt(uint8_t* i420, int w, int h, int64_t nowMs,
+                                I420DirtyBackup& backup) const {
+        backup.clear();
+        if (!i420 || w <= 0 || h <= 0 || (w & 1) || (h & 1))
+            return false;
+        const Snapshot s = snapshot();
+        const OverlayRect dirty =
+            alignI420DirtyRect(dirtyBoundsFor(s, w, h, nowMs), w, h);
+        if (dirty.empty() || !backup.capture(i420, w, h, dirty))
+            return false;
+        compositeI420Snapshot(i420, w, h, nowMs, s, dirty);
+        return true;
+    }
+
 private:
     struct Color {
         uint8_t r;
@@ -189,6 +350,18 @@ private:
             p[i + 1] = c.g;
             p[i + 2] = c.b;
         }
+
+        void blend(int x, int y, Color c, int alpha) {
+            if (alpha >= 255) {
+                set(x, y, c);
+                return;
+            }
+            const Color d = get(x, y);
+            const int inv = 255 - alpha;
+            set(x, y, Color{static_cast<uint8_t>((c.r * alpha + d.r * inv) / 255),
+                            static_cast<uint8_t>((c.g * alpha + d.g * inv) / 255),
+                            static_cast<uint8_t>((c.b * alpha + d.b * inv) / 255)});
+        }
     };
 
     struct Rgb565LeTarget {
@@ -214,6 +387,18 @@ private:
             p[i] = static_cast<uint8_t>(v & 0xff);
             p[i + 1] = static_cast<uint8_t>(v >> 8);
         }
+
+        void blend(int x, int y, Color c, int alpha) {
+            if (alpha >= 255) {
+                set(x, y, c);
+                return;
+            }
+            const Color d = get(x, y);
+            const int inv = 255 - alpha;
+            set(x, y, Color{static_cast<uint8_t>((c.r * alpha + d.r * inv) / 255),
+                            static_cast<uint8_t>((c.g * alpha + d.g * inv) / 255),
+                            static_cast<uint8_t>((c.b * alpha + d.b * inv) / 255)});
+        }
     };
 
     struct Bgra32Target {
@@ -233,7 +418,162 @@ private:
             p[i + 2] = c.r;
             p[i + 3] = 0xff;
         }
+
+        void blend(int x, int y, Color c, int alpha) {
+            if (alpha >= 255) {
+                set(x, y, c);
+                return;
+            }
+            const Color d = get(x, y);
+            const int inv = 255 - alpha;
+            set(x, y, Color{static_cast<uint8_t>((c.r * alpha + d.r * inv) / 255),
+                            static_cast<uint8_t>((c.g * alpha + d.g * inv) / 255),
+                            static_cast<uint8_t>((c.b * alpha + d.b * inv) / 255)});
+        }
     };
+
+    struct I420LayerTarget {
+        struct Pixel {
+            uint16_t r = 0;
+            uint16_t g = 0;
+            uint16_t b = 0;
+            uint16_t a = 0;
+        };
+
+        int w;
+        int h;
+        OverlayRect dirty;
+        std::vector<Pixel>& pixels;
+
+        I420LayerTarget(int width, int height, OverlayRect bounds, std::vector<Pixel>& scratch)
+            : w(width), h(height), dirty(bounds), pixels(scratch) {
+            pixels.assign(static_cast<size_t>(bounds.w) * static_cast<size_t>(bounds.h),
+                          Pixel{});
+        }
+
+        void blend(int x, int y, Color c, int alpha) {
+            if (x < dirty.x || y < dirty.y || x >= dirty.x + dirty.w ||
+                y >= dirty.y + dirty.h)
+                return;
+            Pixel& d = at(x, y);
+            if (alpha >= 255) {
+                d.r = static_cast<uint16_t>(c.r * 255);
+                d.g = static_cast<uint16_t>(c.g * 255);
+                d.b = static_cast<uint16_t>(c.b * 255);
+                d.a = 255;
+                return;
+            }
+            const int inv = 255 - alpha;
+            d.r = static_cast<uint16_t>(c.r * alpha + (d.r * inv + 127) / 255);
+            d.g = static_cast<uint16_t>(c.g * alpha + (d.g * inv + 127) / 255);
+            d.b = static_cast<uint16_t>(c.b * alpha + (d.b * inv + 127) / 255);
+            d.a = static_cast<uint16_t>(alpha + (d.a * inv + 127) / 255);
+        }
+
+        void composite(uint8_t* i420) const {
+            const size_t yPlaneBytes = static_cast<size_t>(w) * static_cast<size_t>(h);
+            const size_t cPlaneBytes = static_cast<size_t>(w / 2) * static_cast<size_t>(h / 2);
+            uint8_t* yPlane = i420;
+            uint8_t* uPlane = yPlane + yPlaneBytes;
+            uint8_t* vPlane = uPlane + cPlaneBytes;
+
+            for (int yy = dirty.y; yy < dirty.y + dirty.h; ++yy) {
+                for (int xx = dirty.x; xx < dirty.x + dirty.w; ++xx) {
+                    const Pixel& p = at(xx, yy);
+                    if (p.a == 0)
+                        continue;
+                    const Color c = straight(p);
+                    const size_t i =
+                        static_cast<size_t>(yy) * static_cast<size_t>(w) + xx;
+                    yPlane[i] = blendSample(yPlane[i], rgbToY(c), p.a);
+                }
+            }
+
+            const int cStride = w / 2;
+            // I420 shares one chroma sample per 2x2 luma cell. Fold the four
+            // independently composited pixels into one coverage-weighted write.
+            for (int yy = dirty.y; yy < dirty.y + dirty.h; yy += 2) {
+                for (int xx = dirty.x; xx < dirty.x + dirty.w; xx += 2) {
+                    int sumAlpha = 0;
+                    int sumU = 0;
+                    int sumV = 0;
+                    for (int dy = 0; dy < 2; ++dy) {
+                        for (int dx = 0; dx < 2; ++dx) {
+                            const Pixel& p = at(xx + dx, yy + dy);
+                            if (p.a == 0)
+                                continue;
+                            const Color c = straight(p);
+                            sumAlpha += p.a;
+                            sumU += rgbToU(c) * p.a;
+                            sumV += rgbToV(c) * p.a;
+                        }
+                    }
+                    if (sumAlpha == 0)
+                        continue;
+                    constexpr int kCellAlpha = 4 * 255;
+                    const size_t ci = static_cast<size_t>(yy / 2) *
+                                          static_cast<size_t>(cStride) +
+                                      xx / 2;
+                    uPlane[ci] = static_cast<uint8_t>(
+                        (sumU + uPlane[ci] * (kCellAlpha - sumAlpha) +
+                         kCellAlpha / 2) /
+                        kCellAlpha);
+                    vPlane[ci] = static_cast<uint8_t>(
+                        (sumV + vPlane[ci] * (kCellAlpha - sumAlpha) +
+                         kCellAlpha / 2) /
+                        kCellAlpha);
+                }
+            }
+        }
+
+    private:
+        Pixel& at(int x, int y) {
+            return pixels[static_cast<size_t>(y - dirty.y) *
+                              static_cast<size_t>(dirty.w) +
+                          static_cast<size_t>(x - dirty.x)];
+        }
+
+        const Pixel& at(int x, int y) const {
+            return pixels[static_cast<size_t>(y - dirty.y) *
+                              static_cast<size_t>(dirty.w) +
+                          static_cast<size_t>(x - dirty.x)];
+        }
+
+        static uint8_t clamp8(int v) {
+            return static_cast<uint8_t>(v < 0 ? 0 : (v > 255 ? 255 : v));
+        }
+
+        static uint8_t rgbToY(Color c) {
+            return clamp8(((66 * c.r + 129 * c.g + 25 * c.b + 128) >> 8) + 16);
+        }
+
+        static uint8_t rgbToU(Color c) {
+            return clamp8(((-38 * c.r - 74 * c.g + 112 * c.b + 128) >> 8) + 128);
+        }
+
+        static uint8_t rgbToV(Color c) {
+            return clamp8(((112 * c.r - 94 * c.g - 18 * c.b + 128) >> 8) + 128);
+        }
+
+        static Color straight(const Pixel& p) {
+            return Color{static_cast<uint8_t>((p.r + p.a / 2) / p.a),
+                         static_cast<uint8_t>((p.g + p.a / 2) / p.a),
+                         static_cast<uint8_t>((p.b + p.a / 2) / p.a)};
+        }
+
+        static uint8_t blendSample(uint8_t dst, uint8_t src, int alpha) {
+            return static_cast<uint8_t>(
+                (src * alpha + dst * (255 - alpha) + 127) / 255);
+        }
+    };
+
+    void compositeI420Snapshot(uint8_t* i420, int w, int h, int64_t nowMs,
+                               const Snapshot& s, OverlayRect dirty) const {
+        std::lock_guard<std::mutex> renderLock(i420RenderMu_);
+        I420LayerTarget target{w, h, dirty, i420Scratch_};
+        render(target, s, w, h, nowMs);
+        target.composite(i420);
+    }
 
     static int64_t clampNonNegative(int64_t v) { return v < 0 ? 0 : v; }
 
@@ -279,10 +619,44 @@ private:
         return std::max<int>(1, static_cast<int>(((kNoticeVisibleMs - age) * 255) / kFadeMs));
     }
 
+    static int geometryScale(int h) {
+        return std::max(1, h / 240);
+    }
+
     static OverlayRect panelBounds(int w, int h) {
-        const int margin = std::max(8, w / 32);
-        const int ph = std::min(72, std::max(54, h / 4));
+        const int scale = geometryScale(h);
+        const int margin = 10 * scale;
+        const int ph = 60 * scale;
         return OverlayRect{margin, h - ph - margin, w - margin * 2, ph};
+    }
+
+    static void formatSkipText(const Snapshot& s, char (&text)[24]) {
+        const int64_t sec =
+            std::min<int64_t>(9999, std::max<int64_t>(1, std::llabs(s.skipDeltaMs) / 1000));
+        if (s.skipDeltaMs >= 0)
+            std::snprintf(text, sizeof(text), "%lldS >>", static_cast<long long>(sec));
+        else
+            std::snprintf(text, sizeof(text), "<< %lldS", static_cast<long long>(sec));
+    }
+
+    static OverlayRect skipBounds(const Snapshot& s, int w, int h) {
+        const int scale = geometryScale(h);
+        char text[24];
+        formatSkipText(s, text);
+        const int textScale = 2 * scale;
+        const int tw = static_cast<int>(std::strlen(text)) * 6 * textScale - textScale;
+        const int boxW = std::min(w - 16 * scale, std::max(76 * scale, tw + 24 * scale));
+        return OverlayRect{(w - boxW) / 2, std::max(8 * scale, h / 2 - 30 * scale),
+                           boxW, 28 * scale};
+    }
+
+    static OverlayRect noticeBounds(const Snapshot& s, int w, int h) {
+        const int scale = geometryScale(h);
+        const int textScale = 2 * scale;
+        const int tw = textWidth(s.noticeText, textScale);
+        const int boxW = std::min(w - 16 * scale, std::max(76 * scale, tw + 24 * scale));
+        return OverlayRect{(w - boxW) / 2, std::max(8 * scale, h / 5),
+                           boxW, 28 * scale};
     }
 
     static OverlayRect dirtyBoundsFor(const Snapshot& s, int w, int h, int64_t nowMs) {
@@ -291,19 +665,10 @@ private:
         OverlayRect out{};
         if (alphaFor(s, nowMs) > 0)
             out = panelBounds(w, h);
-        if (skipAlphaFor(s, nowMs) > 0) {
-            const int sw = std::min(w - 16, 116);
-            const int sh = 28;
-            OverlayRect skip{(w - sw) / 2, std::max(8, h / 2 - 30), sw, sh};
-            out = unionRect(out, skip);
-        }
-        if (noticeAlphaFor(s, nowMs) > 0) {
-            const int tw = textWidth(s.noticeText, 2);
-            const int boxW = std::min(w - 16, std::max(76, tw + 24));
-            const int sh = 28;
-            OverlayRect notice{(w - boxW) / 2, std::max(8, h / 5), boxW, sh};
-            out = unionRect(out, notice);
-        }
+        if (skipAlphaFor(s, nowMs) > 0)
+            out = unionRect(out, skipBounds(s, w, h));
+        if (noticeAlphaFor(s, nowMs) > 0)
+            out = unionRect(out, noticeBounds(s, w, h));
         return out;
     }
 
@@ -323,15 +688,7 @@ private:
     static void blendPixel(Target& t, int x, int y, Color c, int alpha) {
         if (x < 0 || y < 0 || x >= t.w || y >= t.h || alpha <= 0)
             return;
-        if (alpha >= 255) {
-            t.set(x, y, c);
-            return;
-        }
-        const Color d = t.get(x, y);
-        const int inv = 255 - alpha;
-        t.set(x, y, Color{static_cast<uint8_t>((c.r * alpha + d.r * inv) / 255),
-                          static_cast<uint8_t>((c.g * alpha + d.g * inv) / 255),
-                          static_cast<uint8_t>((c.b * alpha + d.b * inv) / 255)});
+        t.blend(x, y, c, alpha);
     }
 
     template <typename Target>
@@ -346,11 +703,12 @@ private:
     }
 
     template <typename Target>
-    static void strokeRect(Target& t, int x, int y, int w, int h, Color c, int alpha) {
-        fillRect(t, x, y, w, 1, c, alpha);
-        fillRect(t, x, y + h - 1, w, 1, c, alpha);
-        fillRect(t, x, y, 1, h, c, alpha);
-        fillRect(t, x + w - 1, y, 1, h, c, alpha);
+    static void strokeRect(Target& t, int x, int y, int w, int h, Color c, int alpha,
+                           int thickness) {
+        fillRect(t, x, y, w, thickness, c, alpha);
+        fillRect(t, x, y + h - thickness, w, thickness, c, alpha);
+        fillRect(t, x, y, thickness, h, c, alpha);
+        fillRect(t, x + w - thickness, y, thickness, h, c, alpha);
     }
 
     static const uint8_t* glyph(char ch) {
@@ -449,19 +807,24 @@ private:
     }
 
     template <typename Target>
-    static void drawIcon(Target& t, PlaybackOverlayState state, int cx, int cy, int alpha) {
+    static void drawIcon(Target& t, PlaybackOverlayState state, int cx, int cy, int scale,
+                         int alpha) {
         constexpr Color amber{255, 178, 32};
         if (state == PlaybackOverlayState::Playing) {
             // Point right: wide base on the left, tip on the right (play).
             for (int x = 0; x < 16; ++x) {
                 const int half = (15 - x) / 2;
-                fillRect(t, cx - 5 + x, cy - half, 1, half * 2 + 1, amber, alpha);
+                fillRect(t, cx + (-5 + x) * scale, cy - half * scale, scale,
+                         (half * 2 + 1) * scale, amber, alpha);
             }
         } else if (state == PlaybackOverlayState::Paused) {
-            fillRect(t, cx - 9, cy - 10, 6, 20, amber, alpha);
-            fillRect(t, cx + 3, cy - 10, 6, 20, amber, alpha);
+            fillRect(t, cx - 9 * scale, cy - 10 * scale, 6 * scale, 20 * scale, amber,
+                     alpha);
+            fillRect(t, cx + 3 * scale, cy - 10 * scale, 6 * scale, 20 * scale, amber,
+                     alpha);
         } else {
-            fillRect(t, cx - 9, cy - 9, 18, 18, amber, alpha);
+            fillRect(t, cx - 9 * scale, cy - 9 * scale, 18 * scale, 18 * scale, amber,
+                     alpha);
         }
     }
 
@@ -477,6 +840,7 @@ private:
     template <typename Target>
     static void render(Target& t, const Snapshot& s, int w, int h, int64_t nowMs) {
         const int alpha = alphaFor(s, nowMs);
+        const int scale = geometryScale(h);
         constexpr Color black{0, 0, 0};
         constexpr Color panelEdge{70, 74, 82};
         constexpr Color white{235, 238, 244};
@@ -486,64 +850,67 @@ private:
         if (alpha > 0) {
             const OverlayRect p = panelBounds(w, h);
             fillRect(t, p.x, p.y, p.w, p.h, black, (170 * alpha) / 255);
-            strokeRect(t, p.x, p.y, p.w, p.h, panelEdge, (150 * alpha) / 255);
+            strokeRect(t, p.x, p.y, p.w, p.h, panelEdge, (150 * alpha) / 255, scale);
 
-            const int iconX = p.x + 22;
-            const int labelY = p.y + 10;
-            drawIcon(t, s.state, iconX, p.y + 20, alpha);
-            drawText(t, iconX + 24, labelY, stateLabel(s.state), 1, white, alpha);
+            const int iconX = p.x + 22 * scale;
+            const int labelY = p.y + 10 * scale;
+            drawIcon(t, s.state, iconX, p.y + 20 * scale, scale, alpha);
+            drawText(t, iconX + 24 * scale, labelY, stateLabel(s.state), scale, white,
+                     alpha);
 
             char elapsed[32];
             char total[32];
             formatTime(s.positionMs, elapsed);
             formatTime(s.durationMs, total);
-            drawText(t, p.x + 16, p.y + 34, elapsed, 1, white, alpha);
-            const int totalW = textWidth(total, 1);
-            drawText(t, p.x + p.w - 16 - totalW, p.y + 34, total, 1, muted, alpha);
+            drawText(t, p.x + 16 * scale, p.y + 34 * scale, elapsed, scale, white, alpha);
+            const int totalW = textWidth(total, scale);
+            drawText(t, p.x + p.w - 16 * scale - totalW, p.y + 34 * scale, total, scale,
+                     muted, alpha);
 
-            const int barX = p.x + 16;
-            const int barY = p.y + p.h - 18;
-            const int barW = p.w - 32;
-            fillRect(t, barX, barY, barW, 6, Color{58, 63, 72}, (220 * alpha) / 255);
+            const int barX = p.x + 16 * scale;
+            const int barY = p.y + p.h - 18 * scale;
+            const int barW = p.w - 32 * scale;
+            fillRect(t, barX, barY, barW, 6 * scale, Color{58, 63, 72},
+                     (220 * alpha) / 255);
             int fillW = 0;
-            if (s.durationMs > 0)
-                fillW = static_cast<int>((static_cast<long long>(barW) *
-                                          std::min(s.positionMs, s.durationMs)) /
-                                         s.durationMs);
+            if (s.durationMs > 0) {
+                const int logicalBarW = barW / scale;
+                fillW =
+                    static_cast<int>((static_cast<long long>(logicalBarW) *
+                                      std::min(s.positionMs, s.durationMs)) /
+                                     s.durationMs) *
+                    scale;
+            }
             fillW = std::max(0, std::min(barW, fillW));
             if (fillW > 0)
-                fillRect(t, barX, barY, fillW, 6, amber, alpha);
+                fillRect(t, barX, barY, fillW, 6 * scale, amber, alpha);
             const int knobX = barX + fillW;
-            fillRect(t, knobX - 2, barY - 2, 5, 10, white, alpha);
+            fillRect(t, knobX - 2 * scale, barY - 2 * scale, 5 * scale, 10 * scale,
+                     white, alpha);
         }
 
         const int skipAlpha = skipAlphaFor(s, nowMs);
         if (skipAlpha > 0) {
             char text[24];
-            const int64_t sec = std::min<int64_t>(
-                9999, std::max<int64_t>(1, std::llabs(s.skipDeltaMs) / 1000));
-            if (s.skipDeltaMs >= 0)
-                std::snprintf(text, sizeof(text), "%lldS >>", static_cast<long long>(sec));
-            else
-                std::snprintf(text, sizeof(text), "<< %lldS", static_cast<long long>(sec));
-            const int tw = textWidth(text, 2);
-            const int boxW = std::min(w - 16, std::max(76, tw + 24));
-            const int boxX = (w - boxW) / 2;
-            const int boxY = std::max(8, h / 2 - 30);
-            fillRect(t, boxX, boxY, boxW, 28, black, (190 * skipAlpha) / 255);
-            strokeRect(t, boxX, boxY, boxW, 28, amber, skipAlpha);
-            drawText(t, boxX + (boxW - tw) / 2, boxY + 7, text, 2, white, skipAlpha);
+            formatSkipText(s, text);
+            const int textScale = 2 * scale;
+            const int tw = textWidth(text, textScale);
+            const OverlayRect box = skipBounds(s, w, h);
+            fillRect(t, box.x, box.y, box.w, box.h, black, (190 * skipAlpha) / 255);
+            strokeRect(t, box.x, box.y, box.w, box.h, amber, skipAlpha, scale);
+            drawText(t, box.x + (box.w - tw) / 2, box.y + 7 * scale, text, textScale,
+                     white, skipAlpha);
         }
 
         const int noticeAlpha = noticeAlphaFor(s, nowMs);
         if (noticeAlpha > 0 && s.noticeText[0] != '\0') {
-            const int tw = textWidth(s.noticeText, 2);
-            const int boxW = std::min(w - 16, std::max(76, tw + 24));
-            const int boxX = (w - boxW) / 2;
-            const int boxY = std::max(8, h / 5);
-            fillRect(t, boxX, boxY, boxW, 28, black, (200 * noticeAlpha) / 255);
-            strokeRect(t, boxX, boxY, boxW, 28, amber, noticeAlpha);
-            drawText(t, boxX + (boxW - tw) / 2, boxY + 7, s.noticeText, 2, white, noticeAlpha);
+            const int textScale = 2 * scale;
+            const int tw = textWidth(s.noticeText, textScale);
+            const OverlayRect box = noticeBounds(s, w, h);
+            fillRect(t, box.x, box.y, box.w, box.h, black, (200 * noticeAlpha) / 255);
+            strokeRect(t, box.x, box.y, box.w, box.h, amber, noticeAlpha, scale);
+            drawText(t, box.x + (box.w - tw) / 2, box.y + 7 * scale,
+                     s.noticeText, textScale, white, noticeAlpha);
         }
     }
 
@@ -556,6 +923,8 @@ private:
     int64_t skipDeltaMs_ = 0;
     int64_t noticeAtMs_ = -kNoticeVisibleMs;
     char noticeText_[32]{};
+    mutable std::mutex i420RenderMu_;
+    mutable std::vector<I420LayerTarget::Pixel> i420Scratch_;
 };
 
 } // namespace misterplex

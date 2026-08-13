@@ -42,8 +42,15 @@ assign BUTTONS = 0;
 //////////////////////////////////////////////////////////////////
 
 wire [1:0] ar = status[122:121];
-assign VIDEO_ARX = (!ar) ? 12'd4 : (ar - 1'd1);
-assign VIDEO_ARY = (!ar) ? 12'd3 : 12'd0;
+wire       source_aspect_valid;
+wire [11:0] source_aspect_x;
+wire [11:0] source_aspect_y;
+wire  [7:0] source_aspect_token;
+wire        source_aspect_commit;
+wire [12:0] original_arx = source_aspect_valid ? {1'b0, source_aspect_x} : 13'd4;
+wire [12:0] original_ary = source_aspect_valid ? {1'b0, source_aspect_y} : 13'd3;
+assign VIDEO_ARX = (!ar) ? original_arx : {11'd0, (ar - 1'd1)};
+assign VIDEO_ARY = (!ar) ? original_ary : 13'd0;
 
 `include "build_id.v"
 localparam CONF_STR = {
@@ -56,11 +63,12 @@ localparam CONF_STR = {
 	"O[122:121],Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
 	// Default first option = NTSC (status[2]=0). Bump v, so saved PAL is cleared.
 	"O[2],TV Mode,NTSC,PAL;",
-	// O[5:4] Content FPS is written by misterplexd from the exact PMS frame rate,
-	// so it is intentionally NOT a menu item. O[4] is now the single source of
-	// truth for native content resolution; misterplexd reads the same OSD word
-	// through the DDR mailbox before each play.
-	"O[4],Content resolution,320x240,640x480;",
+	// O[5:4] CONTENT resolution → PMS weak ladder / DECODE (misterplexd).
+	// O[15:14] DISPLAY resolution → FPGA present bank (may differ for lab A/V).
+	// 0=240p (320x240), 1=480p (640x480 bank), 2/3=720p (1280x720).
+	"O[5:4],Content resolution,240p,480p,720p,720p;",
+	// 0=Follow content (v8-safe default); 1/2/3 force present bank independent of PMS.
+	"O[15:14],Display resolution,Follow content,240p,480p,720p;",
 	"-;",
 	// misterplexd reads these back over UIO and applies them live (no restart).
 	// Positive = hold the frame back = video LATER. Raise it when audio sounds
@@ -70,7 +78,8 @@ localparam CONF_STR = {
 	"O[9:6],Video delay,0ms,+20ms,+40ms,+60ms,+80ms,+100ms,+120ms,+140ms,-160ms,-140ms,-120ms,-100ms,-80ms,-60ms,-40ms,-20ms;",
 	"O[1],A/V auto resync,On,Off;",
 	"O[3],Audio clock trim,On,Off;",
-	"O[15:14],Idle screen,Plex logo,Black,Screensaver,Last frame;",
+	// Idle screen is conf IDLE_SCREEN= (logo/black/screensaver/last) — bits freed
+	// for Display resolution above so users can A/B content vs glass bank.
 	"-;",
 	"T[10],Flush audio FIFO;",
 	"T[11],Flush bitstream FIFO;",
@@ -79,7 +88,7 @@ localparam CONF_STR = {
 	"R[0],Reset and close OSD;",
 	// J1 maps to joystick_0 bits 4..7; names feed MiSTer's controller mapper.
 	"J1,Play/Pause,Stop,Skip Fwd,Skip Back;",
-	"v,7;", // reset OSD: v7 clears stale pre-480p status[4] before content-res owns it
+	"v,9;", // reset OSD: v9 O[15:14]=Display res (was Idle); Content still O[5:4]
 	"V,v",`BUILD_DATE
 };
 
@@ -226,16 +235,26 @@ pll pll
 
 wire reset = RESET | status[0] | buttons[1];
 
-// O[5:4] content-resolution selector (see p720 scope). Product elaborate-time
-// FRAME_W/H are the silicon canvas; these wires are status/OSD hints only.
-// Width must be ≥11 bits: 1280 does not fit in [9:0] (max 1023).
+// O[5:4] CONTENT (PMS/DECODE) — misterplexd OSD mailbox.
+// O[15:14] DISPLAY present bank (v9+). Glass geometry follows display; content
+// may differ for lab A/B. Softc FRAME_W/H may still be 1280x720 compile-time;
+// runtime DDR layout comes from SPI. L4 mux still uses content 480p bit for the
+// 320/640 ladder when PLXG is idle (720p via FABRIC_NATIVE / PLXG). Geometry
+// widths stay 11-bit because 1280 cannot be represented in ten bits.
 wire [1:0]  content_res_sel     = status[5:4];
-wire [10:0] content_width =
-	(content_res_sel == 2'b10) ? 11'd1280 :
-	(content_res_sel == 2'b01) ? 11'd640  : 11'd320;
-wire [10:0] content_height =
-	(content_res_sel == 2'b10) ? 11'd720  :
-	(content_res_sel == 2'b01) ? 11'd480  : 11'd240;
+// Display: 0=follow content, 1=240p, 2=480p, 3=720p
+wire [1:0]  display_res_menu    = status[15:14];
+wire [1:0]  display_res_sel     = (display_res_menu == 2'd0) ? content_res_sel :
+                                  (display_res_menu == 2'd1) ? 2'd0 :
+                                  (display_res_menu == 2'd2) ? 2'd1 : 2'd2;
+wire        content_res_640x480 = (content_res_sel == 2'd1);
+wire        content_res_720p    = (content_res_sel >= 2'd2);
+wire        display_res_640x480 = (display_res_sel == 2'd1);
+wire        display_res_720p    = (display_res_sel >= 2'd2);
+wire [10:0] content_width       = display_res_720p ? 11'd1280 :
+                                  (display_res_640x480 ? 11'd640 : 11'd320);
+wire [10:0] content_height      = display_res_720p ? 11'd720 :
+                                  (display_res_640x480 ? 11'd480 : 11'd240);
 
 // ---------------------------------------------------------------------------
 // L4 720p present geom hierarchy (DEFAULT OFF via PLEX_PRESENT_720P_L4).
@@ -404,6 +423,15 @@ localparam int SDRAM_REFRESH_CYCLES = 780;
 `endif
 localparam int FRAME_W = `FRAME_W;
 localparam int FRAME_H = `FRAME_H;
+`ifdef PLEX_PRESENT_TRUE_480P
+// Synthesis-visible contract guard: a wrong product frame size must fail
+// elaboration rather than silently falling back to Template scaling.
+generate
+	if ((FRAME_W != 640) || (FRAME_H != 480)) begin : g_true480_bad_frame_contract
+		PLEX_PRESENT_TRUE_480P_REQUIRES_FRAME_640X480 u_contract_error();
+	end
+endgenerate
+`endif
 `ifdef FRAME_STRIDE
 localparam int FRAME_STRIDE = `FRAME_STRIDE;
 `else
@@ -575,9 +603,26 @@ wire present_reset = reset | sdram_startup_busy;
 
 wire [7:0] display_hz = status[2] ? 8'd50 : 8'd60; // PAL/NTSC family
 
-// F1 = frame (1), F2 = audio (2), F3 = elementary bitstream (3)
+// F1 = frame (1), F2 = audio (2), F3 = elementary bitstream (3).
+// Index 4 is a hidden daemon→core source-aspect control packet.
 wire is_audio_dl = (ioctl_index[5:0] == 6'd2);
 wire is_stream_dl = (ioctl_index[5:0] == 6'd3);
+wire is_aspect_dl = (ioctl_index[5:0] == 6'd4);
+
+source_aspect_ingest aspect_inst (
+	.clk(clk_sys),
+	.reset(reset),
+	.ioctl_download(ioctl_download),
+	.ioctl_wr(ioctl_wr),
+	.ioctl_dout(ioctl_dout),
+	.ioctl_addr(ioctl_addr),
+	.enable(is_aspect_dl),
+	.aspect_valid(source_aspect_valid),
+	.aspect_x(source_aspect_x),
+	.aspect_y(source_aspect_y),
+	.aspect_token(source_aspect_token),
+	.aspect_commit(source_aspect_commit)
+);
 
 // Frame ingest from F1
 wire        f1_wr_en;
@@ -700,7 +745,8 @@ wire [15:0] stream_ddr_underruns;
 wire [15:0] stream_ddr_overruns;
 wire [31:0] stream_ddr_host_write;
 wire [31:0] stream_ddr_fpga_read;
-wire        stream_ddr_bus_want;
+wire        stream_ddr_bus_want_raw;
+reg         stream_ddr_bus_want;
 wire        stream_ddr_busy;
 wire  [7:0] stream_ddr_burstcnt;
 wire [28:0] stream_ddr_addr;
@@ -744,7 +790,7 @@ stream_path #(
 	.enable(is_stream_dl),
 	.flush(status[11]),
 	.ddr_stream_enable(stream_ddr_enable),
-	.ddr_bus_want(stream_ddr_bus_want),
+	.ddr_bus_want(stream_ddr_bus_want_raw),
 	.ddr_busy(stream_ddr_busy),
 	.ddr_burstcnt(stream_ddr_burstcnt),
 	.ddr_addr(stream_ddr_addr),
@@ -816,6 +862,16 @@ stream_path #(
 	.fs_swap(stub_swap)
 );
 
+// keepv22 timing cut: register the clk_sys request before the arbiter's
+// clk_ddr 2-FF synchronizer. This removes stream read/write counters from the
+// m1_want_s1 setup cone without changing the reader's local state decisions.
+always @(posedge clk_sys) begin
+	if (reset)
+		stream_ddr_bus_want <= 1'b0;
+	else
+		stream_ddr_bus_want <= stream_ddr_bus_want_raw;
+end
+
 // Phase 3.3j / 3.1b hybrid present:
 //   Host F1 SPI or DDR bulk owns product frame_store once any host frame has
 //   swapped. decode_stub F3 diagnostic paint is suppressed after that.
@@ -872,6 +928,11 @@ present_core #(
 	.FRAME_W(FRAME_W),
 	.FRAME_H(FRAME_H),
 	.FRAME_STRIDE(FRAME_STRIDE),
+`ifdef PLEX_PRESENT_TRUE_480P
+	// B1 contract: native scan step is one row, so fill step is explicit and
+	// cannot inherit the legacy FRAME_H/TPL_SCALE_REF_H ratio.
+	.FRAME_Y_FILL_STRIDE(1),
+`endif
 	.SDRAM_REFRESH_CYCLES(SDRAM_REFRESH_CYCLES)
 ) present (
 	.clk(clk_sys),
@@ -929,6 +990,11 @@ present_core #(
 	.ddr_sdram_test_state(sdram_test_state),
 	.ddr_sdram_size_code(sdram_size_code),
 	.ddr_sdram_error_count(sdram_error_count),
+	.ddr_source_aspect_valid(source_aspect_valid),
+	.ddr_source_aspect_x(source_aspect_x),
+	.ddr_source_aspect_y(source_aspect_y),
+	.ddr_source_aspect_token(source_aspect_token),
+	.ddr_source_aspect_commit(source_aspect_commit),
 	.clk_ddr(clk_ddr),
 	.DDRAM_CLK(DDRAM_CLK),
 	.DDRAM_BUSY(present_ddr_busy),

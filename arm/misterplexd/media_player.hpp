@@ -16,6 +16,7 @@
 #include "libmisterplex/publish_swap_delta_ledger.hpp"
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <mutex>
@@ -39,6 +40,7 @@ struct PlaybackSummary {
     bool videoEof = false;
     bool pipeDesync = false;
     bool pipeByteMisaligned = false;
+    bool true480PipelineAborted = false;
     size_t shortReadGot = 0;
     size_t shortReadWant = 0;
     int measuredW = 0;
@@ -55,10 +57,31 @@ public:
 
     using LogFn = std::function<void(const std::string&)>;
     using ProgressFn = std::function<void(const std::string& state, int64_t timeMs, int64_t durMs)>;
+    // Fired when OSD content-resolution bits change (O[5:4]). Main uses this to
+    // re-resolve the PMS weak ladder / restart the session at the same offset.
+    using ContentResFn = std::function<void(const ContentResolution& res, bool playing)>;
 
     void setLog(LogFn f) { log_ = std::move(f); }
     void setProgress(ProgressFn f) { onProgress_ = std::move(f); }
+    void setOnContentResolutionChanged(ContentResFn f) { onContentRes_ = std::move(f); }
     void setFfmpegPath(std::string p) { ffmpeg_ = std::move(p); }
+    // Conf FFMPEG_SWS_FLAGS: bicubic (quality) | fast_bilinear (rate ladder) | neighbor |
+    // skip|none|off|identity (omit scale) | exact[_fast_bilinear|_neighbor] (force WxH,
+    // no foar/pad — size contract for DDR I420 without dual-pass scale+pad).
+    // Conf FFMPEG_FPS_FILTER=off: omit fps= filter when content is already CFR at
+    // the paced rate (saves dual-A9 filtergraph cost). Default on (safe for VFR).
+    void setFfmpegFpsFilter(bool on) { fpsFilter_ = on; }
+    // Conf UV_U_BIAS / UV_V_BIAS: add to every chroma sample before DDR present.
+    // Lab HDMI@B6 showed systematic U≈−8 vs source (fluorescent green L/R foliage).
+    // Positive U bias pulls green toward neutral. Range clamped ±32.
+    void setUvBias(int uBias, int vBias) {
+        if (uBias < -32) uBias = -32;
+        if (uBias > 32) uBias = 32;
+        if (vBias < -32) vBias = -32;
+        if (vBias > 32) vBias = 32;
+        uvUBias_ = uBias;
+        uvVBias_ = vBias;
+    }
     void setAudioPath(std::string p) { audioDev_ = std::move(p); }
     void setAudioEnabled(bool on) { audioEnabled_ = on; }
     // present: "fb0" (default) and/or "fpga" (DDR YUV420p → frame_store)
@@ -191,6 +214,11 @@ public:
     void setSkipDeltasMs(int64_t forwardMs, int64_t backMs);
     void startInputPoll();
     void stopInputPoll();
+    // Layout/DAR commits can replace the shared DDR mapping. Retire every
+    // background FPGA user before the commit, then resume pollers after the new
+    // playback starts (or restore idle on a failed handoff).
+    void suspendFpgaWorkers();
+    void resumeFpgaWorkers(bool restoreIdle);
     uint16_t lastOsdWord() const { return lastOsd_.load(); }
     // Paint one idle frame right now (used at session end).
     void paintIdle();
@@ -201,7 +229,7 @@ public:
     // Failed DDR/FPGA publishes this stream (not A/V-pacer drops).
     int64_t publishMisses() const { return publishMisses_.load(); }
     // Successful FPGA presents this stream (resets every demux with drops).
-    int64_t presentCount() const { return presentCount_; }
+    int64_t presentCount() const { return presentCount_.load(); }
     // Coded payload only. Bare ints / PresentedWidth do not bind (conf seal).
     // Proofs: geometry_type_mismatch_set_decode_*.cpp + MediaPlayer mutant in
     // test_geometry_type_safety.sh. Conf/argv must use adoptExternalCodedSize.
@@ -220,6 +248,22 @@ public:
     int takeLadderStepdownKbps() {
         return ladderStepdownKbps_.exchange(0, std::memory_order_relaxed);
     }
+    SourceAspect probeSourceAspect(const std::string& urlOrPath,
+                                   const std::string& httpHeaders = {}) const;
+    bool setSourceAspect(const SourceAspect& aspect);
+    bool setSourceAspect(const SourceAspect& sourceAspect,
+                         const SourceAspect& presentationAspect);
+    // PMS Media/Stream coded size for this session (0 = unknown / local file).
+    // When source covers DECODE bank size, skip ffmpeg scale/pad on HTTP paths.
+    void setSourceMediaSize(int w, int h) {
+        sourceMediaW_ = w > 0 ? w : 0;
+        sourceMediaH_ = h > 0 ? h : 0;
+    }
+    // When false, do not open ffmpeg pipe:3 (source has no audio stream).
+    void setSourceHasAudio(bool v) { sourceHasAudio_ = v; }
+    bool sourceHasAudio() const { return sourceHasAudio_; }
+    int sourceMediaW() const { return sourceMediaW_; }
+    int sourceMediaH() const { return sourceMediaH_; }
     // Host recon frames presented this session (I/IDR only)
     int64_t reconFrames() const { return reconFrames_.load(); }
     bool reconPresentOk() const { return reconPresentOk_.load(); }
@@ -275,10 +319,13 @@ public:
 private:
     void threadMain(std::string url, int64_t startMs, std::string headers, int64_t durationMs);
     void audioPump(int afd);
-    void streamPump(int sfd);
+    void streamPump(int sfd, bool allowF1Present);
     void killChildren();
     void signalChildren(int sig);
     void dispatchPlaybackInput(PlaybackCommand command);
+    void resetPlaybackPauseClock();
+    void transitionPlaybackPause(bool paused, std::chrono::steady_clock::time_point now);
+    int64_t playbackPausedUs(std::chrono::steady_clock::time_point now) const;
     // true when STREAM product path may omit heavy RGB video decode (audio + demux only)
     bool wantSkipRgbVideo() const;
     bool publishDdrFrame(const DdrPublishFrame& frame, const char* context,
@@ -296,7 +343,20 @@ private:
 
     LogFn log_;
     ProgressFn onProgress_;
+    ContentResFn onContentRes_;
+    ContentResolution lastContentRes_{};
+    ContentResolution lastDisplayRes_{};
     std::string ffmpeg_ = "/media/fat/mistercast/bin/ffmpeg";
+    // Default bicubic: soft 480p→720 skies without vertical banding (see SCORE_BANDING_FIX).
+    // Light present-rate ladder overrides via setFfmpegSwsFlags / FFMPEG_SWS_FLAGS.
+    std::string swsFlags_ = "bicubic";
+    bool fpsFilter_ = true;
+    int uvUBias_ = 0;
+    int uvVBias_ = 0;
+    int sourceMediaW_ = 0;
+    int sourceMediaH_ = 0;
+    SourceAspect sourceAspect_{};
+    bool sourceHasAudio_ = true; // fail-open until resolve says otherwise
     std::string audioDev_ = "/dev/MrAudio";
     std::string presentMode_ = "fpga"; // "fb0", "fpga", "both", "none"
     bool audioEnabled_ = true;
@@ -355,6 +415,7 @@ private:
     std::mutex osdMu_; // same for osdThr_ // serialises idleThr_ create/join (play thread vs companion)
     std::mutex presentMu_;
     void applyOsd(uint16_t word, bool applyIdle);
+    void applyOsd(uint16_t word) { applyOsd(word, false); }
     // Snapshot the MrAudio ring occupancy. Returns bytes queued, or -1 if the
     // driver does not expose it. Cheap: one open/read/close, no allocation.
     int64_t readMrAudioQueuedBytes();
@@ -362,6 +423,9 @@ private:
     // Log full ring snap + optional PLXD frames_done at a named handoff point.
     // Observability ends at MrAudio status; frames_done is VIDEO swap count only.
     void logMrAudioHandoffAt(const char* where);
+    // Snapshot the MrAudio ring pointers and occupancy. Cheap: one
+    // open/read/close, no allocation.
+    MrAudioStatus readMrAudioStatus();
 
     static std::string hex16(uint16_t v);
 
@@ -426,7 +490,7 @@ private:
     std::atomic<uint64_t> processEpoch_{0}; // set once: daemon start identity
     std::atomic<uint64_t> streamSeq_{0};    // bumped at each stream START
     // FPGA presents this session (wall-clock capped)
-    int64_t presentCount_ = 0;
+    std::atomic<int64_t> presentCount_{0};
     // PLXD bank-identity samples vs presents (parent: first cast after load_core).
     FpgaScanoutHealth scanoutHealth_{};
     mutable std::mutex mu_;
@@ -468,6 +532,11 @@ private:
     // fallback window). -1 until observed. Field 6 of cluster FPGA instrument.
     std::atomic<int64_t> firstAudioQueuedGe0MonoMs_{-1};
     std::atomic<bool> streamActive_{false};
+    std::mutex pauseControlMu_;
+    mutable std::mutex pauseClockMu_;
+    int64_t pauseClockAccumulatedUs_ = 0;
+    bool pauseClockHeld_ = false;
+    std::chrono::steady_clock::time_point pauseClockStarted_{};
     std::atomic<int64_t> reconFrames_{0};
     std::atomic<bool> reconPresentOk_{false}; // at least one recon → F1/fb0 this session
     // Sticky: PPS entropy_coding_mode=1 or recon fail_reason=cabac; cleared only on

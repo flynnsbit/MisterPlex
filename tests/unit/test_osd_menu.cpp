@@ -6,6 +6,7 @@
 #include "libmisterplex/idle_screen.hpp"
 #include "libmisterplex/osd_menu.hpp"
 
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <string>
@@ -50,42 +51,49 @@ int main() {
         CHECK(d.idleMode == 0);
         CHECK(d.contentResolution.width == 320);
         CHECK(d.contentResolution.height == 240);
-        CHECK(std::string(d.contentResolution.label) == "320x240");
+        CHECK(std::string(d.contentResolution.label) == "240p");
+        CHECK(std::string(d.contentResolution.userLabel) == "240p");
+        CHECK(d.contentResolution.weakBitrateKbps == kPlex240pWeakBitrateKbps);
         CHECK(d.contentResolution.presentPolicy == ContentPresentPolicy::NativeCanvas);
-        CHECK(std::string(d.contentResolution.userLabel) == "320x240");
+        CHECK(d.displayResolution.width == 320);
+        CHECK(std::string(d.displayResolution.label) == "240p");
         CHECK(osdContentTierFromWord(0x0000) == 0u);
     }
     CHECK(decodeOsdWord(1u << 1).resyncEnabled == false);   // O[1] A/V auto resync
     CHECK(!decodeOsdWord(1u << 3).audioClockTrimEnabled); // O[3] Audio clock trim
-    // O[5:4]=01 — 480p path (v7-compatible: bit4 only)
+    // O[5:4] content resolution: 0=240p, 1=480p, 2|3=720p (v7 O[4]-only still 240/480)
     const auto osd480 = decodeOsdWord(1u << 4).contentResolution;
     CHECK(osdContentTierFromWord(1u << 4) == 1u);
-    CHECK(osd480.width == kPlex480pCodedWidth);
-    CHECK(osd480.height == kPlex480pCodedHeight);
-    CHECK(std::string(osd480.label) == "624x480");
-    CHECK(std::string(osd480.userLabel) == "624x480");
+    CHECK(osd480.width == kPlex480pPresentedWidth.get());
+    CHECK(osd480.height == kPlex480pPresentedHeight.get());
+    CHECK(std::string(osd480.label) == "480p");
+    CHECK(std::string(osd480.userLabel) == "480p");
     CHECK(osd480.weakBitrateKbps == kPlex480pWeakBitrateKbps);
     CHECK(osd480.presentPolicy == ContentPresentPolicy::NativeCanvas);
-    // O[5:4]=10 — 16:9-framed 480p canvas (same coded geometry; NOT 720p)
-    const auto osdWs = decodeOsdWord(2u << 4).contentResolution;
+    const auto osd720 = decodeOsdWord(2u << 4).contentResolution;
     CHECK(osdContentTierFromWord(2u << 4) == 2u);
-    CHECK(osdWs.width == kPlex480pCodedWidth);
-    CHECK(osdWs.height == kPlex480pCodedHeight);
-    CHECK(std::string(osdWs.label) == "624x480"); // PMS ladder stays WxH
-    CHECK(std::string(osdWs.userLabel) == "16:9-framed 480p");
-    CHECK(osdWs.presentPolicy == ContentPresentPolicy::Widescreen480pCanvas);
-    CHECK(osdWs.weakBitrateKbps == kPlex480pWeakBitrateKbps);
-    // O[5:4]=11 reserved → safe 480p canvas, never native 720p
-    const auto osdRsvd = decodeOsdWord(3u << 4).contentResolution;
+    CHECK(osd720.width == kPlex720pCodedWidth);
+    CHECK(osd720.height == kPlex720pCodedHeight);
+    CHECK(std::string(osd720.label) == "720p");
+    CHECK(std::string(osd720.userLabel) == "720p");
+    CHECK(osd720.weakBitrateKbps == kPlex720pWeakBitrateKbps);
+    const auto osdTier3 = decodeOsdWord(3u << 4).contentResolution;
     CHECK(osdContentTierFromWord(3u << 4) == 3u);
-    CHECK(osdRsvd.width == kPlex480pCodedWidth);
-    CHECK(osdRsvd.presentPolicy == ContentPresentPolicy::NativeCanvas);
+    CHECK(osdTier3.width == kPlex720pCodedWidth);
+    CHECK(std::string(osdTier3.label) == "720p");
     CHECK(kOsdContentTierMask == 0x0030);
     CHECK(kOsdOwnedMask == 0xC3FA);
     CHECK(decodeOsdWord(0xFu << 6).avOffsetMs == kOsdAvOffsetDefaultMs - 20); // O[9:6] idx 15
     CHECK(decodeOsdWord(8u << 6).avOffsetMs == kOsdAvOffsetDefaultMs - 160); // O[9:6] idx 8
-    CHECK(decodeOsdWord(3u << 14).idleMode == 3);           // O[15:14] Idle screen
-    // Core-owned bits must not leak into user settings (bit5 is tier-owned now).
+    // v9: O[15:14] Display — 0=follow content, 1=240p, 2=480p, 3=720p.
+    CHECK(decodeOsdWord(0u).displayResolution.width == 320); // follow 240p content
+    CHECK(decodeOsdWord(2u << 4).displayResolution.width == 1280); // follow 720p content
+    CHECK(decodeOsdWord((2u << 4) | (1u << 14)).displayResolution.width == 320); // force 240p
+    CHECK(std::string(decodeOsdWord((2u << 4) | (1u << 14)).displayResolution.label) == "240p");
+    CHECK(decodeOsdWord((0u << 4) | (2u << 14)).displayResolution.width == 640);
+    CHECK(decodeOsdWord((0u << 4) | (3u << 14)).displayResolution.width == 1280);
+    CHECK(decodeOsdWord(3u << 14).idleMode == 0); // idle conf-only
+    // Core-owned bits must not leak into user settings (O[5] is content-res high).
     for (int bit : {0, 2, 10, 11, 12, 13}) {
         const OsdSettings d = decodeOsdWord(static_cast<uint16_t>(1u << bit));
         CHECK(d.avOffsetMs == kOsdAvOffsetDefaultMs);
@@ -94,24 +102,33 @@ int main() {
         CHECK(d.idleMode == 0);
         CHECK(d.contentResolution.width == 320);
     }
+    // Alone, O[5]=1 with O[4]=0 is code 2 → 720p (not a leak).
+    CHECK(decodeOsdWord(1u << 5).contentResolution.width == 1280);
     CHECK(contentResolutionFromSize(320, 240).width == 320);
+    CHECK(std::string(contentResolutionFromSize(320, 240).label) == "240p");
     const auto fallback480 =
         contentResolutionFromCodedSize(kPlex480pCodedWidth, kPlex480pCodedHeight);
     CHECK(fallback480.width == osd480.width);
     CHECK(fallback480.height == osd480.height);
     CHECK(std::string(fallback480.label) == osd480.label);
     CHECK(fallback480.weakBitrateKbps == osd480.weakBitrateKbps);
+    CHECK(std::string(plex480pCodedResolutionLabel()) == "624x480");
     CHECK(weakBitrateKbpsForCodedSize(kPlex480pCodedWidth, kPlex480pCodedHeight) ==
           osd480.weakBitrateKbps);
-    CHECK(contentResolutionFromSize(640, 480).width == kPlex480pCodedWidth);
+    CHECK(contentResolutionFromSize(640, 480).width == kPlex480pPresentedWidth.get());
+    CHECK(std::string(contentResolutionFromSize(640, 480).label) == "480p");
     CHECK(contentResolutionFromSize(640, 480).weakBitrateKbps == kPlex480pWeakBitrateKbps);
     CHECK(weakBitrateKbpsForCodedSize(480, 360) == kPlex360pWeakBitrateKbps);
-    // Conf DECODE=1280x720 must not invent a native-720p host ladder.
     const auto conf720 =
         contentResolutionFromCodedSize(CodedWidth{1280}, CodedHeight{720});
-    CHECK(conf720.width == kPlex480pCodedWidth);
+    CHECK(conf720.width == kPlex720pCodedWidth);
+    CHECK(conf720.height == kPlex720pCodedHeight);
+    CHECK(std::string(conf720.label) == "720p");
+    CHECK(std::string(conf720.userLabel) == "720p");
+    CHECK(conf720.weakBitrateKbps == kPlex720pWeakBitrateKbps);
     CHECK(conf720.presentPolicy == ContentPresentPolicy::NativeCanvas);
-    CHECK(std::string(conf720.userLabel).find("720") == std::string::npos);
+    CHECK(contentResolutionFromSize(1280, 720).width == 1280);
+    CHECK(std::string(contentResolutionFromSize(1280, 720).label) == "720p");
 
     // --- change detection ignores core traffic ---
     // [10]/[11] flush pulses and [12]/[13] DDR kick/bank toggle constantly during
@@ -121,13 +138,13 @@ int main() {
     for (int bit : {1, 3, 4, 5, 6, 7, 8, 9, 14, 15})
         CHECK(osdChanged(0, static_cast<uint16_t>(1u << bit)));
 
-    // First OSD word = Main's persisted F12 Idle Screen (Plex_v*.CFG). Apply it
-    // so menu idle survives daemon restart. Later: idle bits only on change.
-    CHECK(shouldApplyOsdIdle(false, 0x0000, 0x4000));  // startup apply Black
+    // O[15:14] is display resolution in v9. Idle is conf-only, so OSD words
+    // must never be reinterpreted as Logo/Black/Screensaver/LastFrame.
+    CHECK(!shouldApplyOsdIdle(false, 0x0000, 0x4000));
     CHECK(!shouldApplyOsdIdle(true, 0x4000, 0x4000));  // unchanged
     CHECK(!shouldApplyOsdIdle(true, 0x4000, 0x4040));  // video-delay-only change
-    CHECK(shouldApplyOsdIdle(true, 0x0000, 0x4000));   // live Logo -> Black
-    CHECK(shouldApplyOsdIdle(true, 0x4000, 0x8000));   // live Black -> Screensaver
+    CHECK(!shouldApplyOsdIdle(true, 0x0000, 0x4000));
+    CHECK(!shouldApplyOsdIdle(true, 0x4000, 0x8000));
     CHECK(kOsdIdleMask == 0xC000);
 
     // --- idle mode bits match CONF_STR order ---
@@ -175,11 +192,13 @@ int main() {
         else
             ++other;
     }
-    CHECK(other == 0);
+    // AA skirt may blend FG/BG (other > 0); solid FG and BG must still dominate.
     CHECK(fg > 0);
     CHECK(bg > fg);
+    CHECK(other < fg); // feather is a thin edge, not a third palette
 
-    // The screensaver must never render into the overscan margin, at any phase.
+    // Solid FG must stay inside overscan margin. AA skirt may extend 1–3 px
+    // outside the hit box but never invents solid FG outside the box.
     for (int p = 0; p < kIdlePhasePeriod; p += 7) {
         std::fill(buf.begin(), buf.end(), 0);
         renderIdleRgb24(buf.data(), w, h, IdleMode::Screensaver, p);
@@ -269,6 +288,69 @@ int main() {
     expectI420Sample(yuv, bgX0, bgY0, kBgY, kBgU, kBgV);
     expectI420Sample(yuv2, fgX1, fgY1, kFgY, kFgU, kFgV);
     CHECK(fgX0 != fgX1 || fgY0 != fgY1);
+
+    // Center the painted glyph, not its wider design box. True480 must center
+    // against the 618 visible source pixels; the final 6 coded pixels are cropped.
+    {
+        auto solidRgbBounds = [](const std::vector<uint8_t>& frame, int rw, int rh,
+                                 int& minX, int& maxX, int& minY, int& maxY) {
+            minX = rw;
+            maxX = -1;
+            minY = rh;
+            maxY = -1;
+            for (int y = 0; y < rh; ++y) {
+                for (int x = 0; x < rw; ++x) {
+                    const size_t i = (static_cast<size_t>(y) * rw + x) * 3u;
+                    if (frame[i] != kIdleFgR || frame[i + 1] != kIdleFgG ||
+                        frame[i + 2] != kIdleFgB)
+                        continue;
+                    minX = std::min(minX, x);
+                    maxX = std::max(maxX, x);
+                    minY = std::min(minY, y);
+                    maxY = std::max(maxY, y);
+                }
+            }
+        };
+
+        int minX = 0, maxX = 0, minY = 0, maxY = 0;
+        renderIdleRgb24(buf.data(), w, h, IdleMode::Logo, 0);
+        solidRgbBounds(buf, w, h, minX, maxX, minY, maxY);
+        CHECK(maxX >= minX && maxY >= minY);
+        CHECK(std::abs((minX + maxX) - (w - 1)) <= 1);
+        CHECK(std::abs((minY + maxY) - (h - 1)) <= 1);
+
+        constexpr int codedW = 624;
+        constexpr int codedH = 480;
+        constexpr int displayW = 618;
+        constexpr int pillarLeft = 11;
+        std::vector<uint8_t> true480(
+            static_cast<size_t>(codedW) * codedH * 3u / 2u);
+        CHECK(renderIdleYuv420p(true480.data(), codedW, codedH, IdleMode::Logo, 0,
+                                0, displayW));
+        minX = codedW;
+        maxX = -1;
+        minY = codedH;
+        maxY = -1;
+        for (int y = 0; y < codedH; ++y) {
+            for (int x = 0; x < codedW; ++x) {
+                if (true480[static_cast<size_t>(y) * codedW + x] != kFgY)
+                    continue;
+                minX = std::min(minX, x);
+                maxX = std::max(maxX, x);
+                minY = std::min(minY, y);
+                maxY = std::max(maxY, y);
+            }
+        }
+        CHECK(maxX >= minX && maxY >= minY);
+        CHECK(minX + maxX == displayW - 1);
+        CHECK(minY + maxY == codedH - 1);
+        CHECK((minX + pillarLeft) + (maxX + pillarLeft) == 640 - 1);
+        for (int y = 0; y < codedH; ++y)
+            for (int x = displayW; x < codedW; ++x)
+                CHECK(true480[static_cast<size_t>(y) * codedW + x] != kFgY);
+        std::printf("chevron_center true480 source=%d..%d output=%d..%d center=319.5\n",
+                    minX, maxX, minX + pillarLeft, maxX + pillarLeft);
+    }
 
     if (fails) {
         std::fprintf(stderr, "test_osd_menu: %d failure(s)\n", fails);

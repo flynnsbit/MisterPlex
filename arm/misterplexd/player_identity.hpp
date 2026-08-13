@@ -14,7 +14,7 @@
 namespace misterplex {
 
 inline constexpr const char kPlayerProduct[] = "MiSTerPlex";
-inline constexpr const char kPlayerVersion[] = "0.2.0";
+inline constexpr const char kPlayerVersion[] = "0.4.1";
 inline constexpr const char kPlayerProtocol[] = "plex";
 inline constexpr const char kPlayerProtocolVersion[] = "1";
 // Comma-separated, no spaces — matches historical GDM /resources /clients shape.

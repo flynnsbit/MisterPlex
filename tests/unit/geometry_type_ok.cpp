@@ -53,8 +53,11 @@ int main() {
 
     CHECK(weakBitrateKbpsForCodedSize(kPlex480pCodedWidth, kPlex480pCodedHeight) ==
           kPlex480pWeakBitrateKbps);
-    CHECK(std::string_view(contentResolutionFor480p().label) == "624x480");
-    CHECK(contentResolutionFor480p().width == kPlex480pCodedWidth);
+    // PMS requests the numeric 640x480 bounding box; delivered storage is
+    // independently normalized to the 624-coded DDR contract above.
+    CHECK(std::string_view(contentResolutionFor480p().label) == "480p");
+    CHECK(contentResolutionFor480p().width.get() == kPlex480pPresentedWidth.get());
+    CHECK(std::string_view(plex480pCodedResolutionLabel()) == "624x480");
 
     // Product doorbell/bank from 720p layout; legacy 480p helper keeps its own map.
     const auto productLayout = makeDdrFrameLayout(productDdrFrameStoreGeometry());

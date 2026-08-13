@@ -5,8 +5,8 @@
 #include "libmisterplex/gdm_filter.hpp"
 
 #include <arpa/inet.h>
-#include <cctype>
 #include <cerrno>
+#include <cctype>
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
@@ -16,6 +16,7 @@
 
 #include <chrono>
 #include <cstdio>
+#include <algorithm>
 #include <sstream>
 #include <string>
 #include <pthread.h>
@@ -38,13 +39,35 @@ void setCloexec(int fd) {
 }
 
 std::string queryParam(const std::string& req, const char* key) {
-    const std::string k = std::string(key) + "=";
-    auto pos = req.find(k);
-    if (pos == std::string::npos)
+    const auto lineEnd = req.find("\r\n");
+    const auto targetStart = req.find(' ');
+    if (targetStart == std::string::npos ||
+        (lineEnd != std::string::npos && targetStart >= lineEnd)) {
         return {};
-    pos += k.size();
-    auto end = req.find_first_of(" &\r\n", pos);
-    return req.substr(pos, end == std::string::npos ? std::string::npos : end - pos);
+    }
+    const auto targetEnd = req.find(' ', targetStart + 1);
+    if (targetEnd == std::string::npos ||
+        (lineEnd != std::string::npos && targetEnd > lineEnd)) {
+        return {};
+    }
+    const std::string target = req.substr(targetStart + 1, targetEnd - targetStart - 1);
+    const auto queryStart = target.find('?');
+    if (queryStart == std::string::npos)
+        return {};
+    size_t pos = queryStart + 1;
+    while (pos <= target.size()) {
+        const auto end = target.find('&', pos);
+        const auto eq = target.find('=', pos);
+        const size_t itemEnd = end == std::string::npos ? target.size() : end;
+        if (eq != std::string::npos && eq < itemEnd &&
+            target.compare(pos, eq - pos, key) == 0) {
+            return target.substr(eq + 1, itemEnd - eq - 1);
+        }
+        if (end == std::string::npos)
+            break;
+        pos = end + 1;
+    }
+    return {};
 }
 
 std::string pctDecode(const std::string& in) {
@@ -65,16 +88,11 @@ std::string pctDecode(const std::string& in) {
     return out;
 }
 
-std::string headerValue(const std::string& req, const char* name) {
-    std::string key = std::string(name) + ":";
-    auto pos = req.find(key);
-    if (pos == std::string::npos)
-        return {};
-    pos += key.size();
-    while (pos < req.size() && (req[pos] == ' ' || req[pos] == '\t'))
-        ++pos;
-    auto end = req.find("\r\n", pos);
-    return req.substr(pos, end == std::string::npos ? std::string::npos : end - pos);
+std::string asciiLower(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return value;
 }
 
 std::string requestLine(const std::string& req) {
@@ -90,20 +108,185 @@ std::string timelineBrief(const std::string& xml) {
     return xml.substr(p, e == std::string::npos ? 240 : std::min<size_t>(e + 2 - p, 240));
 }
 
-void sendHttp(int fd, int code, const char* ctype, const std::string& body) {
-    char hdr[320];
-    const char* status = (code == 200) ? "OK" : "Not Found";
-    std::snprintf(hdr, sizeof(hdr),
-                  "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: %zu\r\n"
-                  "Connection: close\r\nAccess-Control-Allow-Origin: *\r\n"
-                  "Access-Control-Allow-Headers: *\r\nAccess-Control-Allow-Methods: *\r\n\r\n",
-                  code, status, ctype, body.size());
-    // MSG_NOSIGNAL: a client that hangs up before we flush (Plex's long-poll
-    // timeline, or any timed-out request) would otherwise raise SIGPIPE, whose
-    // default action kills the daemon silently — no log line, no dmesg entry.
-    (void)::send(fd, hdr, std::strlen(hdr), MSG_NOSIGNAL);
-    if (!body.empty())
-        (void)::send(fd, body.data(), body.size(), MSG_NOSIGNAL);
+std::string trimOws(const std::string& value) {
+    size_t begin = 0;
+    while (begin < value.size() && (value[begin] == ' ' || value[begin] == '\t'))
+        ++begin;
+    size_t end = value.size();
+    while (end > begin && (value[end - 1] == ' ' || value[end - 1] == '\t'))
+        --end;
+    return value.substr(begin, end - begin);
+}
+
+std::string headerValue(const std::string& req, const char* name) {
+    const std::string wanted = asciiLower(name);
+    auto line = req.find("\r\n");
+    if (line == std::string::npos)
+        return {};
+    line += 2;
+    while (line < req.size()) {
+        const auto end = req.find("\r\n", line);
+        if (end == std::string::npos || end == line)
+            return {};
+        const auto colon = req.find(':', line);
+        if (colon != std::string::npos && colon < end &&
+            asciiLower(req.substr(line, colon - line)) == wanted) {
+            return trimOws(req.substr(colon + 1, end - colon - 1));
+        }
+        line = end + 2;
+    }
+    return {};
+}
+
+std::string controllerId(const std::string& req) {
+    std::string id = pctDecode(queryParam(req, "X-Plex-Client-Identifier"));
+    if (id.empty())
+        id = pctDecode(queryParam(req, "clientIdentifier"));
+    if (id.empty())
+        id = pctDecode(headerValue(req, "X-Plex-Client-Identifier"));
+    return id;
+}
+
+uint16_t callbackPort(const std::string& req) {
+    const std::string raw = queryParam(req, "port");
+    if (raw.empty())
+        return 0;
+    char* end = nullptr;
+    const unsigned long value = std::strtoul(raw.c_str(), &end, 10);
+    if (!end || *end != '\0' || value == 0 || value > 65535)
+        return 0;
+    return static_cast<uint16_t>(value);
+}
+
+bool sendAll(int fd, const std::string& bytes) {
+    size_t sent = 0;
+    while (sent < bytes.size()) {
+        const ssize_t n =
+            ::send(fd, bytes.data() + sent, bytes.size() - sent, MSG_NOSIGNAL);
+        if (n > 0) {
+            sent += static_cast<size_t>(n);
+            continue;
+        }
+        if (n < 0 && errno == EINTR)
+            continue;
+        return false;
+    }
+    return true;
+}
+
+bool decimalCommandId(const std::string& value) {
+    return !value.empty() &&
+           std::all_of(value.begin(), value.end(), [](unsigned char ch) {
+               return std::isdigit(ch) != 0;
+           });
+}
+
+std::string normalizedDecimal(const std::string& value) {
+    const auto first = value.find_first_not_of('0');
+    return first == std::string::npos ? "0" : value.substr(first);
+}
+
+bool commandIsNewerOrEqual(const std::string& candidate, const std::string& current) {
+    if (current.empty())
+        return true;
+    if (!decimalCommandId(candidate) || !decimalCommandId(current))
+        return true;
+    const std::string left = normalizedDecimal(candidate);
+    const std::string right = normalizedDecimal(current);
+    if (left.size() != right.size())
+        return left.size() > right.size();
+    return left >= right;
+}
+
+void sendHttp(int fd, const std::string& clientIdentifier, int code, const char* ctype,
+              const std::string& body,
+              const std::string& allowHeaders = std::string()) {
+    const char* status = "Error";
+    switch (code) {
+    case 200:
+        status = "OK";
+        break;
+    case 400:
+        status = "Bad Request";
+        break;
+    case 404:
+        status = "Not Found";
+        break;
+    case 408:
+        status = "Request Timeout";
+        break;
+    case 413:
+        status = "Payload Too Large";
+        break;
+    }
+    std::ostringstream response;
+    response << "HTTP/1.1 " << code << " " << status << "\r\n"
+             << "Content-Type: " << ctype << "\r\n"
+             << "Content-Length: " << body.size() << "\r\n"
+             << "Connection: close\r\n"
+             << "X-Plex-Client-Identifier: " << clientIdentifier << "\r\n"
+             << "Access-Control-Allow-Origin: *\r\n"
+             << "Access-Control-Allow-Headers: "
+             << (allowHeaders.empty()
+                     ? "X-Plex-Token, X-Plex-Client-Identifier, "
+                       "X-Plex-Target-Client-Identifier, X-Plex-Session-Identifier, "
+                       "X-Plex-Product, X-Plex-Version, X-Plex-Device, "
+                       "X-Plex-Device-Name, X-Plex-Platform, "
+                       "X-Plex-Platform-Version, X-Plex-Model, "
+                       "X-Plex-Provider-Version, X-Plex-Text-Format, "
+                       "X-Plex-Language, X-Plex-Features, X-Plex-Drm, "
+                       "Content-Type, Accept"
+                     : allowHeaders)
+             << "\r\n"
+             << "Access-Control-Allow-Methods: GET, POST, PUT, OPTIONS\r\n"
+             << "Access-Control-Expose-Headers: X-Plex-Client-Identifier\r\n"
+             << "Access-Control-Max-Age: 600\r\n\r\n"
+             << body;
+    (void)sendAll(fd, response.str());
+}
+
+enum class HttpHeaderRead { Ok, Timeout, TooLarge, Closed, Error };
+
+HttpHeaderRead recvHttpHeaders(int fd, std::string& out, size_t maxBytes = 16384,
+                               int timeoutMs = 5000) {
+    out.clear();
+    char chunk[2048];
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+    while (out.find("\r\n\r\n") == std::string::npos) {
+        if (out.size() >= maxBytes)
+            return HttpHeaderRead::TooLarge;
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= deadline)
+            return HttpHeaderRead::Timeout;
+        const auto remaining =
+            std::chrono::duration_cast<std::chrono::microseconds>(deadline - now);
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        FD_SET(fd, &rfds);
+        timeval timeout{};
+        timeout.tv_sec = static_cast<time_t>(remaining.count() / 1000000);
+        timeout.tv_usec = static_cast<suseconds_t>(remaining.count() % 1000000);
+        const int selected = select(fd + 1, &rfds, nullptr, nullptr, &timeout);
+        if (selected == 0)
+            return HttpHeaderRead::Timeout;
+        if (selected < 0) {
+            if (errno == EINTR)
+                continue;
+            return HttpHeaderRead::Error;
+        }
+        const size_t available = maxBytes - out.size();
+        const ssize_t n = recv(fd, chunk, std::min(available, sizeof(chunk)), 0);
+        if (n < 0) {
+            if (errno == EINTR)
+                continue;
+            return HttpHeaderRead::Error;
+        }
+        if (n == 0)
+            return HttpHeaderRead::Closed;
+        out.append(chunk, static_cast<size_t>(n));
+    }
+    return HttpHeaderRead::Ok;
 }
 
 // Companion offset/viewOffset are milliseconds (PMS universal offset= is seconds).
@@ -145,17 +328,16 @@ PlayRequest parsePlayRequest(const std::string& req) {
     pr.ratingKey = queryParam(req, "ratingKey");
     if (pr.ratingKey.empty())
         pr.ratingKey = ratingKeyFromKey(pr.key);
-    // Web indexes cast queue by playQueueItemID; fall back to ratingKey so scrubber opens.
-    if (pr.playQueueItemId.empty() && !pr.ratingKey.empty())
-        pr.playQueueItemId = pr.ratingKey;
     pr.address = pctDecode(queryParam(req, "address"));
     pr.protocol = queryParam(req, "protocol");
     pr.port = queryParam(req, "port");
-    pr.token = queryParam(req, "token");
+    // Prefer lowercase token= (Plex Web cast). Do not substring-match inside
+    // other keys. Always percent-decode — cast tokens may be URL-encoded.
+    pr.token = pctDecode(queryParam(req, "token"));
     if (pr.token.empty())
-        pr.token = queryParam(req, "X-Plex-Token");
+        pr.token = pctDecode(queryParam(req, "X-Plex-Token"));
     if (pr.token.empty())
-        pr.token = headerValue(req, "X-Plex-Token");
+        pr.token = pctDecode(headerValue(req, "X-Plex-Token"));
     pr.serverMachineId = queryParam(req, "machineIdentifier");
     pr.offsetMs = parseOffsetMs(req, &pr.offsetPresent);
     if (pr.containerKey.find("/playQueues/") != std::string::npos) {
@@ -287,6 +469,7 @@ std::string Companion::resourcesXml() const {
 
 std::string Companion::timelineXml(const std::string& commandId) const {
     std::lock_guard<std::mutex> lock(mu_);
+    const std::string effectiveCommandId = commandId.empty() ? "0" : commandId;
 
     std::string videoState = state_;
     const bool holdIdle =
@@ -327,7 +510,7 @@ std::string Companion::timelineXml(const std::string& commandId) const {
     std::ostringstream b;
     b << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
       << "<MediaContainer machineIdentifier=\"" << xmlEsc(machineId_) << "\" size=\"1\" commandID=\""
-      << xmlEsc(commandId) << "\" location=\"" << videoLoc << "\">";
+      << xmlEsc(effectiveCommandId) << "\" location=\"" << videoLoc << "\">";
 
     b << "<Timeline type=\"video\" state=\"" << videoState << "\" time=\"" << reportMs
       << "\" duration=\"" << dur << "\" ";
@@ -370,13 +553,32 @@ void Companion::setState(const std::string& state, int64_t timeMs, int64_t durat
     setStateLocked(state, timeMs, durationMs, false);
 }
 
+bool Companion::setStateIfGeneration(uint64_t generation, const std::string& state,
+                                     int64_t timeMs, int64_t durationMs) {
+    std::lock_guard<std::mutex> lock(mu_);
+    if (generation == 0 || generation != dispatchGeneration_)
+        return false;
+    setStateLocked(state, timeMs, durationMs, false);
+    return true;
+}
+
 void Companion::endMediaSession(int64_t timeMs, int64_t durationMs) {
     std::lock_guard<std::mutex> lock(mu_);
     setStateLocked("stopped", timeMs, durationMs, true);
 }
 
+bool Companion::endMediaSessionIfGeneration(uint64_t generation, int64_t timeMs,
+                                            int64_t durationMs) {
+    std::lock_guard<std::mutex> lock(mu_);
+    if (generation == 0 || generation != dispatchGeneration_)
+        return false;
+    setStateLocked("stopped", timeMs, durationMs, true);
+    return true;
+}
+
 void Companion::setStateLocked(const std::string& state, int64_t timeMs, int64_t durationMs,
                                bool terminalSession) {
+    const std::string previousState = state_;
     // After stop clearMedia(), prePlayHold_ is set while wantPlay_ is false. Ignore
     // late media-thread progress so async teardown cannot re-arm fullScreenVideo.
     if (!wantPlay_ && prePlayHold_ &&
@@ -400,6 +602,7 @@ void Companion::setStateLocked(const std::string& state, int64_t timeMs, int64_t
         state_ = state;
         if (durationMs > 0)
             durationMs_ = durationMs;
+        requestTimelinePush(previousState != state_);
         return;
     }
     // Scrubber bounds on incoming time before plant-hold compare.
@@ -418,7 +621,12 @@ void Companion::setStateLocked(const std::string& state, int64_t timeMs, int64_t
     // Rules while scrubTargetMs_ >= 0:
     //  - buffering: pin time to the plant (companion plants via buffering@target);
     //    never release — plant call itself must not clear the hold.
-    //  - playing/paused/ended far from plant: reflect transport state only.
+    //  - playing/paused far *behind* plant (seek demux restart@0): keep plant time
+    //    and transport state so the Web thumb does not rewind.
+    //  - playing/paused far *ahead* of plant (stale plant 0 + viewOffset start, or
+    //    first progress jump): release hold and adopt live time. The old symmetric
+    //    "far = pin forever" rule froze Plex Web at 0:00 while PMS /:/timeline still
+    //    advanced from the media thread (fix 0abee0b6).
     //  - playing/paused at plant pulse (near, not advanced): apply time, keep hold
     //    so late restart@0 / short-read cannot free-run after the pulse.
     //  - playing/paused advanced past plant by kScrubAdvanceMs: release + apply.
@@ -436,21 +644,26 @@ void Companion::setStateLocked(const std::string& state, int64_t timeMs, int64_t
             // Pin thumb to plant (not demux startMs of a superseded seek).
             timeMs_ = scrubTargetMs_;
             wantPlay_ = true;
+            requestTimelinePush(previousState != state_);
             return;
         }
         if (delta > kScrubCatchupMs) {
-            if (durationMs > 0)
-                durationMs_ = durationMs;
-            // Reflect live transport but keep the planted scrubber time.
-            if (state == "playing" || state == "paused")
-                state_ = state;
-            wantPlay_ = true;
-            return;
-        }
-        // Near plant: release only after demux advances past plant, or on ended.
-        if (state == "ended" ||
-            ((state == "playing" || state == "paused") &&
-             timeMs >= scrubTargetMs_ + kScrubAdvanceMs)) {
+            // Only suppress rewinds. Demux well ahead of plant is live truth.
+            if (timeMs + kScrubCatchupMs < scrubTargetMs_) {
+                if (durationMs > 0)
+                    durationMs_ = durationMs;
+                if (state == "playing" || state == "paused")
+                    state_ = state;
+                wantPlay_ = true;
+                requestTimelinePush(previousState != state_);
+                return;
+            }
+            scrubTargetMs_ = -1;
+            // fall through: adopt live timeMs
+        } else if (state == "ended" ||
+                   ((state == "playing" || state == "paused") &&
+                    timeMs >= scrubTargetMs_ + kScrubAdvanceMs)) {
+            // Near plant: release only after demux advances past plant, or on ended.
             scrubTargetMs_ = -1;
         }
         // else playing@plant pulse: fall through apply time, keep hold
@@ -468,6 +681,7 @@ void Companion::setStateLocked(const std::string& state, int64_t timeMs, int64_t
     // Player progress "stopped" (EOF) must not drop scrubber bind fields.
     if (state == "playing" || state == "paused" || state == "buffering")
         wantPlay_ = true;
+    requestTimelinePush(previousState != state_);
 }
 
 bool Companion::bindMedia(const PlayRequest& req, int64_t durationMs) {
@@ -513,13 +727,37 @@ bool Companion::bindMedia(const PlayRequest& req, int64_t durationMs) {
     }
     wantPlay_ = true;
     prePlayHold_ = false;
+    requestTimelinePush(true);
     return true;
 }
 
-void Companion::stagePlay(const PlayRequest& req) {
+void Companion::seedPlaybackPosition(int64_t timeMs, int64_t durationMs) {
+    std::lock_guard<std::mutex> lock(mu_);
+    if (timeMs < 0)
+        timeMs = 0;
+    if (durationMs > 0) {
+        durationMs_ = durationMs;
+        if (timeMs > durationMs_)
+            timeMs = durationMs_;
+    } else if (durationMs_ > 0 && timeMs > durationMs_) {
+        timeMs = durationMs_;
+    }
+    timeMs_ = timeMs;
+    // Re-base hold on the real start. Without this, playMedia plant@0 + PMS
+    // viewOffset demux start left Web polls frozen at 0 while media ran ahead.
+    scrubTargetMs_ = timeMs;
+    if (wantPlay_ && (state_ == "stopped" || state_.empty()))
+        state_ = "buffering";
+    requestTimelinePush(true);
+}
+
+bool Companion::stagePlay(const PlayRequest& req) {
     // Plant scrubber identity for skipNext/auto-next before async resolve so
     // bindMedia key-match accepts this title and Web sees the advance early.
     std::lock_guard<std::mutex> lock(mu_);
+    if (req.dispatchGeneration < dispatchGeneration_)
+        return false;
+    dispatchGeneration_ = req.dispatchGeneration;
     wantPlay_ = true;
     prePlayHold_ = false;
     castBound_ = true;
@@ -544,6 +782,14 @@ void Companion::stagePlay(const PlayRequest& req) {
         serverPort_ = req.port;
     if (!req.serverMachineId.empty())
         serverMachineId_ = req.serverMachineId;
+    requestTimelinePush(true);
+    return true;
+}
+
+void Companion::noteDispatchGeneration(uint64_t generation) {
+    std::lock_guard<std::mutex> lock(mu_);
+    if (generation > dispatchGeneration_)
+        dispatchGeneration_ = generation;
 }
 
 void Companion::clearMediaLocked() {
@@ -555,6 +801,8 @@ void Companion::clearMediaLocked() {
     pendingPlayQueueItemId_.clear();
     pendingPlayQueueVersion_.clear();
     pendingRatingKey_.clear();
+    playControllerId_.clear();
+    playCommandId_.clear();
     wantPlay_ = false;
     state_ = "stopped";
     timeMs_ = 0;
@@ -564,6 +812,246 @@ void Companion::clearMediaLocked() {
     // fresh mirror. Pure stopped polls idle the dialog — keep buffering@navigation.
     if (castBound_)
         prePlayHold_ = true;
+    requestTimelinePush(true);
+}
+
+void Companion::requestTimelinePush(bool immediate) {
+    {
+        std::lock_guard<std::mutex> lock(timelinePushMu_);
+        timelinePushPending_ = true;
+        timelinePushImmediate_ = timelinePushImmediate_ || immediate;
+    }
+    timelinePushCv_.notify_one();
+}
+
+void Companion::subscribeTimeline(const std::string& id, const std::string& host,
+                                  const std::string& protocol, uint16_t port,
+                                  const std::string& commandId) {
+    TimelineSubscriber subscriber;
+    subscriber.id = id.empty() ? host + ":" + std::to_string(port) : id;
+    subscriber.host = host;
+    subscriber.protocol = protocol;
+    subscriber.port = port;
+    subscriber.commandId = commandId.empty() ? "0" : commandId;
+
+    size_t count = 0;
+    {
+        std::lock_guard<std::mutex> lock(subscriberMu_);
+        auto it = std::find_if(
+            subscribers_.begin(), subscribers_.end(),
+            [&](const TimelineSubscriber& current) { return current.id == subscriber.id; });
+        if (it != subscribers_.end()) {
+            *it = subscriber;
+        } else {
+            constexpr size_t kMaxSubscribers = 8;
+            if (subscribers_.size() >= kMaxSubscribers)
+                subscribers_.erase(subscribers_.begin());
+            subscribers_.push_back(std::move(subscriber));
+        }
+        count = subscribers_.size();
+    }
+    log("timeline: subscriber registered peer=" + host + ":" + std::to_string(port) +
+        " count=" + std::to_string(count));
+    requestTimelinePush(true);
+}
+
+void Companion::updateTimelineCommand(const std::string& id, const std::string& host,
+                                      const std::string& commandId) {
+    if (commandId.empty())
+        return;
+    std::lock_guard<std::mutex> lock(subscriberMu_);
+    auto controller = std::find_if(
+        controllerCommands_.begin(), controllerCommands_.end(),
+        [&](const ControllerCommand& current) {
+            return !id.empty() ? current.id == id
+                               : current.id.empty() && current.host == host;
+        });
+    std::string effectiveCommandId = commandId;
+    if (controller != controllerCommands_.end()) {
+        if (commandIsNewerOrEqual(commandId, controller->commandId))
+            controller->commandId = commandId;
+        effectiveCommandId = controller->commandId;
+    } else {
+        constexpr size_t kMaxControllers = 16;
+        if (controllerCommands_.size() >= kMaxControllers)
+            controllerCommands_.erase(controllerCommands_.begin());
+        controllerCommands_.push_back(ControllerCommand{id, host, commandId});
+    }
+    for (auto& subscriber : subscribers_) {
+        if ((!id.empty() && subscriber.id == id) || (id.empty() && subscriber.host == host))
+            subscriber.commandId = effectiveCommandId;
+    }
+}
+
+std::string Companion::timelineCommandFor(const std::string& id, const std::string& host,
+                                          const std::string& commandId) {
+    updateTimelineCommand(id, host, commandId);
+    std::lock_guard<std::mutex> lock(subscriberMu_);
+    const auto controller = std::find_if(
+        controllerCommands_.begin(), controllerCommands_.end(),
+        [&](const ControllerCommand& current) {
+            return !id.empty() ? current.id == id
+                               : current.id.empty() && current.host == host;
+        });
+    return controller == controllerCommands_.end() ? "0" : controller->commandId;
+}
+
+bool Companion::unsubscribeTimeline(const std::string& id, const std::string& host) {
+    size_t removed = 0;
+    size_t remaining = 0;
+    {
+        std::lock_guard<std::mutex> lock(subscriberMu_);
+        const auto before = subscribers_.size();
+        subscribers_.erase(
+            std::remove_if(subscribers_.begin(), subscribers_.end(),
+                           [&](const TimelineSubscriber& subscriber) {
+                               return !id.empty() ? subscriber.id == id
+                                                  : subscriber.host == host;
+                           }),
+            subscribers_.end());
+        removed = before - subscribers_.size();
+        remaining = subscribers_.size();
+    }
+    if (removed > 0) {
+        log("timeline: subscriber removed peer=" + host +
+            " remaining=" + std::to_string(remaining));
+    }
+    return remaining == 0;
+}
+
+bool Companion::postTimeline(const TimelineSubscriber& subscriber,
+                             const std::string& xml) const {
+    if (subscriber.protocol != "http")
+        return false;
+
+    sockaddr_in peer{};
+    peer.sin_family = AF_INET;
+    peer.sin_port = htons(subscriber.port);
+    if (inet_pton(AF_INET, subscriber.host.c_str(), &peer.sin_addr) != 1)
+        return false;
+
+    const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0)
+        return false;
+    setCloexec(fd);
+
+    const int oldFlags = fcntl(fd, F_GETFL, 0);
+    if (oldFlags >= 0)
+        fcntl(fd, F_SETFL, oldFlags | O_NONBLOCK);
+    int rc = connect(fd, reinterpret_cast<sockaddr*>(&peer), sizeof(peer));
+    if (rc != 0 && errno == EINPROGRESS) {
+        fd_set wfds;
+        FD_ZERO(&wfds);
+        FD_SET(fd, &wfds);
+        timeval timeout{1, 0};
+        rc = select(fd + 1, nullptr, &wfds, nullptr, &timeout);
+        if (rc > 0) {
+            int socketError = 0;
+            socklen_t errorLen = sizeof(socketError);
+            if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &socketError, &errorLen) != 0 ||
+                socketError != 0) {
+                rc = -1;
+            } else {
+                rc = 0;
+            }
+        } else {
+            rc = -1;
+        }
+    }
+    if (rc != 0) {
+        close(fd);
+        return false;
+    }
+    if (oldFlags >= 0)
+        fcntl(fd, F_SETFL, oldFlags);
+
+    timeval ioTimeout{1, 0};
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &ioTimeout, sizeof(ioTimeout));
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &ioTimeout, sizeof(ioTimeout));
+
+    std::ostringstream request;
+    request << "POST /:/timeline HTTP/1.1\r\n"
+            << "Host: " << subscriber.host << ":" << subscriber.port << "\r\n"
+            << "Content-Type: application/xml\r\n"
+            << "Content-Length: " << xml.size() << "\r\n"
+            << "X-Plex-Client-Identifier: " << machineId_ << "\r\n"
+            << "Connection: close\r\n\r\n"
+            << xml;
+    if (!sendAll(fd, request.str())) {
+        close(fd);
+        return false;
+    }
+
+    std::string response;
+    const auto readResult = recvHttpHeaders(fd, response, 4096, 1000);
+    close(fd);
+    if (readResult != HttpHeaderRead::Ok)
+        return false;
+    const auto lineEnd = response.find("\r\n");
+    const auto space = response.find(' ');
+    if (space == std::string::npos ||
+        (lineEnd != std::string::npos && space >= lineEnd) ||
+        response.size() - space < 4)
+        return false;
+    const int status = std::atoi(response.c_str() + space + 1);
+    return status >= 200 && status < 300;
+}
+
+void Companion::timelinePushLoop() {
+    auto nextPeriodic = std::chrono::steady_clock::now();
+    while (running_.load()) {
+        {
+            std::unique_lock<std::mutex> lock(timelinePushMu_);
+            timelinePushCv_.wait(lock, [&] {
+                return !running_.load() || timelinePushPending_;
+            });
+            if (!running_.load())
+                break;
+
+            while (!timelinePushImmediate_ &&
+                   std::chrono::steady_clock::now() < nextPeriodic) {
+                timelinePushCv_.wait_until(lock, nextPeriodic, [&] {
+                    return !running_.load() || timelinePushImmediate_;
+                });
+                if (!running_.load())
+                    return;
+            }
+            timelinePushPending_ = false;
+            timelinePushImmediate_ = false;
+        }
+
+        std::vector<TimelineSubscriber> subscribers;
+        {
+            std::lock_guard<std::mutex> lock(subscriberMu_);
+            subscribers = subscribers_;
+        }
+        for (const auto& subscriber : subscribers) {
+            const bool ok = postTimeline(subscriber, timelineXml(subscriber.commandId));
+            bool removed = false;
+            {
+                std::lock_guard<std::mutex> lock(subscriberMu_);
+                auto it = std::find_if(
+                    subscribers_.begin(), subscribers_.end(),
+                    [&](const TimelineSubscriber& current) {
+                        return current.id == subscriber.id && current.host == subscriber.host &&
+                               current.port == subscriber.port;
+                    });
+                if (it == subscribers_.end())
+                    continue;
+                if (ok) {
+                    it->failures = 0;
+                } else if (++it->failures >= 3) {
+                    subscribers_.erase(it);
+                    removed = true;
+                }
+            }
+            if (removed) {
+                log("timeline: subscriber dropped after callback failures peer=" +
+                    subscriber.host + ":" + std::to_string(subscriber.port));
+            }
+        }
+        nextPeriodic = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    }
 }
 
 void Companion::clearMedia() {
@@ -586,6 +1074,12 @@ bool Companion::start() {
 #endif
         httpLoop();
     });
+    timelinePushThr_ = std::thread([this] {
+#if defined(__linux__)
+        pthread_setname_np(pthread_self(), "mpx-comp-push");
+#endif
+        timelinePushLoop();
+    });
     log("companion: GDM + HTTP :" + std::to_string(port_) + " name=" + name_);
     return true;
 }
@@ -593,6 +1087,7 @@ bool Companion::start() {
 void Companion::stop() {
     if (!running_.exchange(false))
         return;
+    timelinePushCv_.notify_all();
     int fd = ::socket(AF_INET, SOCK_STREAM, 0);
     if (fd >= 0) {
         sockaddr_in a{};
@@ -606,6 +1101,8 @@ void Companion::stop() {
         gdmThr_.join();
     if (httpThr_.joinable())
         httpThr_.join();
+    if (timelinePushThr_.joinable())
+        timelinePushThr_.join();
     log("companion: stopped");
 }
 
@@ -716,20 +1213,112 @@ void Companion::httpLoop() {
         timeval tv{0, 200000};
         if (select(fd + 1, &rfds, nullptr, nullptr, &tv) <= 0)
             continue;
-        int c = accept(fd, nullptr, nullptr);
+        sockaddr_in peer{};
+        socklen_t peerLen = sizeof(peer);
+        int c = accept(fd, reinterpret_cast<sockaddr*>(&peer), &peerLen);
         if (c < 0)
             continue;
-        char buf[16384];
-        ssize_t n = recv(c, buf, sizeof(buf) - 1, 0);
-        if (n <= 0) {
+        char peerAddressBuf[INET_ADDRSTRLEN]{};
+        const char* peerAddressText =
+            inet_ntop(AF_INET, &peer.sin_addr, peerAddressBuf, sizeof(peerAddressBuf));
+        const std::string peerAddress = peerAddressText ? peerAddressText : "";
+        std::string req;
+        const HttpHeaderRead headerRead = recvHttpHeaders(c, req);
+        if (headerRead != HttpHeaderRead::Ok) {
+            if (headerRead == HttpHeaderRead::Timeout) {
+                log("HTTP: header read timeout");
+                sendHttp(c, machineId_, 408, "text/plain", "header timeout\n");
+            } else if (headerRead == HttpHeaderRead::TooLarge) {
+                log("HTTP: header block exceeds cap");
+                sendHttp(c, machineId_, 413, "text/plain", "headers too large\n");
+            } else if (headerRead == HttpHeaderRead::Error) {
+                log("HTTP: header read error");
+            }
             close(c);
             continue;
         }
-        buf[n] = 0;
-        std::string req(buf, static_cast<size_t>(n));
-        if (req.find("/player/") != std::string::npos || req.find("/resources") != std::string::npos)
+        const std::string requestControllerId = controllerId(req);
+        const std::string requestCommandId =
+            timelineCommandFor(requestControllerId, peerAddress,
+                               queryParam(req, "commandID"));
+        if (req.find("/player/") != std::string::npos ||
+            req.find("/resources") != std::string::npos) {
             // Request line may carry ?X-Plex-Token=...; Companion::log redacts at sink.
             log("HTTP IN " + requestLine(req));
+        }
+
+        // Refresh PMS timeline auth only from cast *control* requests that carry the
+        // playing server's token (seek/playback/*). A new playMedia token belongs to
+        // the next session and must not rewrite the previous server's queued updates.
+        // Do NOT take tokens from
+        // timeline poll/subscribe: Plex Web long-polls with the *controller* PMS token
+        // (often local 192.168.x) while playMedia used a remote plex.direct transient
+        // token — overwriting it yields /:/timeline HTTP 401 and Web scrubber stuck
+        // at 0:00 (L41 follow-up; user rk 154219/154269 on machine 1cdd…).
+        if (onTokenUpdate_ && req.find("/player/") != std::string::npos) {
+            const bool isPlayMedia =
+                req.find("/player/playback/playMedia") != std::string::npos;
+            const bool castControl =
+                (!isPlayMedia && req.find("/player/playback/") != std::string::npos) ||
+                req.find("/player/timeline/seekTo") != std::string::npos ||
+                req.find("seekTo") != std::string::npos ||
+                req.find("/player/command") != std::string::npos;
+            const bool isPoll =
+                req.find("/player/timeline/poll") != std::string::npos ||
+                req.find("/player/timeline/subscribe") != std::string::npos ||
+                req.find("/player/timeline/unsubscribe") != std::string::npos ||
+                req.find("/player/proxy/timeline") != std::string::npos;
+            if (castControl && !isPoll) {
+                std::string tok = pctDecode(queryParam(req, "token"));
+                if (tok.empty())
+                    tok = pctDecode(queryParam(req, "X-Plex-Token"));
+                if (tok.empty())
+                    tok = pctDecode(headerValue(req, "X-Plex-Token"));
+                if (!tok.empty()) {
+                    const PlayRequest tokenRequest = parsePlayRequest(req);
+                    if (tokenRequest.address.empty() &&
+                        tokenRequest.serverMachineId.empty()) {
+                        log("token update ignored — control omitted PMS identity");
+                    } else {
+                        const std::string controlCommandId =
+                            queryParam(req, "commandID");
+                        bool currentPlayCommand = false;
+                        {
+                            std::lock_guard<std::mutex> lock(mu_);
+                            const bool sameController =
+                                playControllerId_.empty()
+                                    ? requestControllerId.empty()
+                                    : requestControllerId == playControllerId_;
+                            const bool orderedCommand =
+                                !controlCommandId.empty() &&
+                                !playCommandId_.empty() &&
+                                ((decimalCommandId(controlCommandId) &&
+                                  decimalCommandId(playCommandId_) &&
+                                  commandIsNewerOrEqual(controlCommandId,
+                                                        playCommandId_)) ||
+                                 controlCommandId == playCommandId_);
+                            currentPlayCommand =
+                                wantPlay_ && sameController && orderedCommand;
+                        }
+                        if (!currentPlayCommand) {
+                            log("token update ignored — control is not bound to current play");
+                        } else {
+                            try {
+                                onTokenUpdate_(TokenUpdate{
+                                    tok,
+                                    tokenRequest.address,
+                                    tokenRequest.protocol,
+                                    tokenRequest.port,
+                                    tokenRequest.serverMachineId,
+                                });
+                            } catch (...) {
+                                log("token update handler exception");
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         {
             std::lock_guard<std::mutex> lock(mu_);
@@ -738,37 +1327,57 @@ void Companion::httpLoop() {
         }
 
         if (req.find("OPTIONS") == 0) {
-            sendHttp(c, 200, "text/plain", "");
+            sendHttp(c, machineId_, 200, "text/plain", "",
+                     headerValue(req, "Access-Control-Request-Headers"));
             close(c);
             continue;
         }
 
         if (req.find("GET /resources") != std::string::npos ||
             req.find("GET /identity") != std::string::npos) {
-            sendHttp(c, 200, "application/xml", resourcesXml());
+            sendHttp(c, machineId_, 200, "application/xml", resourcesXml());
+            close(c);
+            continue;
+        }
+
+        if (req.find("/player/timeline/subscribe") != std::string::npos) {
+            std::string protocol = queryParam(req, "protocol");
+            if (protocol.empty())
+                protocol = "http";
+            std::transform(protocol.begin(), protocol.end(), protocol.begin(),
+                           [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+            const uint16_t subscriberPort = callbackPort(req);
+            if (protocol == "http" && subscriberPort != 0 && !peerAddress.empty()) {
+                subscribeTimeline(requestControllerId, peerAddress, protocol, subscriberPort,
+                                  requestCommandId);
+            } else {
+                log("timeline: rejected invalid subscriber endpoint");
+            }
+            sendHttp(c, machineId_, 200, "application/xml",
+                     timelineXml(requestCommandId));
             close(c);
             continue;
         }
 
         // Unsubscribe: drop cast-bound hold so idle polls can go pure stopped.
         if (req.find("/player/timeline/unsubscribe") != std::string::npos) {
+            const bool noSubscribers =
+                unsubscribeTimeline(requestControllerId, peerAddress);
             {
                 std::lock_guard<std::mutex> lock(mu_);
-                castBound_ = false;
-                if (!wantPlay_)
+                if (noSubscribers)
+                    castBound_ = false;
+                if (noSubscribers && !wantPlay_)
                     prePlayHold_ = false;
             }
-            auto cid = queryParam(req, "commandID");
-            if (cid.empty())
-                cid = "0";
-            sendHttp(c, 200, "application/xml", timelineXml(cid));
+            sendHttp(c, machineId_, 200, "application/xml",
+                     timelineXml(requestCommandId));
             close(c);
             continue;
         }
 
-        // Timeline poll / subscribe / proxy alias — never auto-start media from poll.
+        // Timeline poll / proxy alias — never auto-start media from poll.
         if (req.find("/player/timeline/poll") != std::string::npos ||
-            req.find("/player/timeline/subscribe") != std::string::npos ||
             req.find("/player/proxy/timeline") != std::string::npos ||
             (req.find("/timeline") != std::string::npos && req.find("playMedia") == std::string::npos &&
              req.find("mirror") == std::string::npos && req.find("unsubscribe") == std::string::npos)) {
@@ -779,13 +1388,10 @@ void Companion::httpLoop() {
                 if (!wantPlay_ && !prePlayHold_)
                     prePlayHold_ = true;
             }
-            auto cid = queryParam(req, "commandID");
-            if (cid.empty())
-                cid = "0";
             if (queryParam(req, "wait") == "1")
                 std::this_thread::sleep_for(std::chrono::milliseconds(400));
-            auto body = timelineXml(cid);
-            sendHttp(c, 200, "application/xml", body);
+            const auto body = timelineXml(requestCommandId);
+            sendHttp(c, machineId_, 200, "application/xml", body);
             log("HTTP OUT 200 timeline " + timelineBrief(body));
             close(c);
             continue;
@@ -833,7 +1439,9 @@ void Companion::httpLoop() {
                 }
                 // else: leave live timeline alone (Web mirror after playMedia must not idle)
             }
-            sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
+            requestTimelinePush(true);
+            sendHttp(c, machineId_, 200, "application/xml",
+                     timelineXml(requestCommandId));
             log("mirror staged key=" + pr.key);
             close(c);
             continue;
@@ -866,8 +1474,21 @@ void Companion::httpLoop() {
                 PlayRequest pr = parsePlayRequest(req);
                 if (pr.key.empty())
                     pr.key = "(no-key)";
+                // Serialize generation assignment before publishing this request
+                // as pending. The callback shares the player's handoff mutex, so
+                // an older handler either finishes first or sees this generation;
+                // it can never publish stale DAR after the new request is staged.
+                if (onPlayQueued_) {
+                    try {
+                        pr.dispatchGeneration = onPlayQueued_(pr);
+                    } catch (...) {
+                        log("playQueued handler exception");
+                    }
+                }
                 {
                     std::lock_guard<std::mutex> lock(mu_);
+                    if (pr.dispatchGeneration > dispatchGeneration_)
+                        dispatchGeneration_ = pr.dispatchGeneration;
                     wantPlay_ = true;
                     prePlayHold_ = false;
                     castBound_ = true;
@@ -905,28 +1526,20 @@ void Companion::httpLoop() {
                         serverPort_ = pr.port;
                     if (!pr.serverMachineId.empty())
                         serverMachineId_ = pr.serverMachineId;
+                    playControllerId_ = requestControllerId;
+                    playCommandId_ = queryParam(req, "commandID");
                 }
-                auto cid = queryParam(req, "commandID");
+                requestTimelinePush(true);
                 int64_t ackOff = 0;
                 {
                     std::lock_guard<std::mutex> lock(mu_);
                     ackOff = timeMs_;
                 }
-                auto body = timelineXml(cid);
-                sendHttp(c, 200, "application/xml", body);
+                const auto body = timelineXml(requestCommandId);
+                sendHttp(c, machineId_, 200, "application/xml", body);
                 close(c);
                 log("HTTP OUT 200 playMedia " + timelineBrief(body));
                 log("playMedia ACK key=" + pr.key + " offMs=" + std::to_string(ackOff));
-                // Invalidate in-flight resolve *before* spawning onPlay_ so a
-                // concurrent doPlay cannot bind/setState over this plant while
-                // the new play thread is still scheduling (P4-SCRUB cast race).
-                if (onPlayQueued_) {
-                    try {
-                        onPlayQueued_();
-                    } catch (...) {
-                        log("playQueued handler exception");
-                    }
-                }
                 if (onPlay_) {
                     std::thread([this, pr]() {
                         try {
@@ -952,7 +1565,8 @@ void Companion::httpLoop() {
                 // and fullScreenVideo without a media key (scrubber ghost after stop).
                 if (active)
                     setState("paused", t, d);
-                sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
+                sendHttp(c, machineId_, 200, "application/xml",
+                         timelineXml(requestCommandId));
                 if (active && onPause_)
                     onPause_();
                 close(c);
@@ -970,21 +1584,23 @@ void Companion::httpLoop() {
                 // Idle: ACK only — do not re-arm wantPlay via setState("playing").
                 if (active)
                     setState("playing", t, d);
-                sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
+                sendHttp(c, machineId_, 200, "application/xml",
+                         timelineXml(requestCommandId));
                 if (active && onResume_)
                     onResume_();
                 close(c);
                 continue;
             }
             if (isStop) {
-                // Drop bind first so stop ACK is buffering@navigation without keys
-                // (video/stopped+key idles Web and freezes scrubber / Resume dialog).
-                // clearMedia before player.stop so late progress cannot re-arm wantPlay
-                // (setState ignores progress while prePlayHold && !wantPlay).
-                clearMedia();
+                // Publish the main-loop stop generation before the final clear.
+                // A generated queue step that was already in flight is then
+                // rejected by the generation high-water, and the clear removes
+                // any plant accepted just before that barrier.
                 if (onStop_)
                     onStop_();
-                sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
+                clearMedia();
+                sendHttp(c, machineId_, 200, "application/xml",
+                         timelineXml(requestCommandId));
                 close(c);
                 continue;
             }
@@ -1024,7 +1640,8 @@ void Companion::httpLoop() {
                         wantPlay_ = true;
                     }
                 }
-                sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
+                sendHttp(c, machineId_, 200, "application/xml",
+                         timelineXml(requestCommandId));
                 if (active && moved && onSeek_)
                     onSeek_(ms);
                 close(c);
@@ -1070,7 +1687,8 @@ void Companion::httpLoop() {
                         wantPlay_ = true;
                     }
                 }
-                sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
+                sendHttp(c, machineId_, 200, "application/xml",
+                         timelineXml(requestCommandId));
                 // Prefer absolute seek when available so player lands on clamped target
                 // even if positionMs lags companion timeMs_ (progress race).
                 if (active && applied != 0) {
@@ -1088,7 +1706,8 @@ void Companion::httpLoop() {
                     std::lock_guard<std::mutex> lock(mu_);
                     active = wantPlay_;
                 }
-                sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
+                sendHttp(c, machineId_, 200, "application/xml",
+                         timelineXml(requestCommandId));
                 // Empty session / unbound queue: ACK only (tryAutoNext no-ops).
                 if (active && onSkipNext_)
                     onSkipNext_();
@@ -1124,17 +1743,19 @@ void Companion::httpLoop() {
                         wantPlay_ = true;
                     }
                 }
-                sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
+                sendHttp(c, machineId_, 200, "application/xml",
+                         timelineXml(requestCommandId));
                 close(c);
                 continue;
             }
 
-            sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
+            sendHttp(c, machineId_, 200, "application/xml",
+                     timelineXml(requestCommandId));
             close(c);
             continue;
         }
 
-        sendHttp(c, 404, "text/plain", "not found");
+        sendHttp(c, machineId_, 404, "text/plain", "not found");
         close(c);
     }
     close(fd);

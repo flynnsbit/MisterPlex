@@ -3,8 +3,10 @@
 #include "plex_resolve.hpp"
 
 #include <cstdio>
+#include <chrono>
 #include <map>
 #include <string>
+#include <thread>
 #include <vector>
 
 static int fails = 0;
@@ -47,11 +49,56 @@ static std::string header(const misterplex::PmsTimelineHttpRequest& req,
 int main() {
     using namespace misterplex;
 
+    // FIX A: non-2xx must never count as success (401 HTML body was the old trap).
+    CHECK(!plexHttpStatusOk(0));
+    CHECK(!plexHttpStatusOk(401));
+    CHECK(!plexHttpStatusOk(403));
+    CHECK(!plexHttpStatusOk(404));
+    CHECK(!plexHttpStatusOk(500));
+    CHECK(!plexHttpStatusOk(199));
+    CHECK(plexHttpStatusOk(200));
+    CHECK(plexHttpStatusOk(204));
+    CHECK(plexHttpStatusOk(299));
+    CHECK(parseCurlHttpCode("401\n") == 401);
+    CHECK(parseCurlHttpCode("200") == 200);
+    CHECK(parseCurlHttpCode("  204  ") == 204);
+    CHECK(parseCurlHttpCode("") == 0);
+    CHECK(parseCurlHttpCode("ok") == 0);
+    // Simulated sink: 401 body would be non-empty but must report failed.
+    {
+        std::vector<std::string> logs;
+        std::vector<PmsTimelineHttpRequest> sent401;
+        PmsTimelineReporter badSink(
+            [&](const PmsTimelineHttpRequest& req) {
+                sent401.push_back(req);
+                // Mirror measured device fact: 401 Unauthorized HTML is non-empty.
+                const std::string fakeBody =
+                    "<html><head><title>Unauthorized</title></head><body>"
+                    "<h1>401 Unauthorized</h1></body></html>";
+                CHECK(!fakeBody.empty());
+                // Correct sink: status drives ok, not body.
+                return PmsTimelineSinkResult{plexHttpStatusOk(401), 401};
+            },
+            false);
+        badSink.setLog([&](const std::string& line) { logs.push_back(line); });
+        PmsTimelineSession s401;
+        s401.baseUrl = "https://cast-host.example:32400";
+        s401.token = "cast-session-token";
+        s401.ratingKey = "40868";
+        s401.key = "/library/metadata/40868";
+        badSink.beginSession(s401, 0, 1000);
+        CHECK(sent401.size() == 1);
+        CHECK(!logs.empty());
+        CHECK(logs[0].find("update failed") != std::string::npos);
+        CHECK(logs[0].find("http=401") != std::string::npos);
+        CHECK(logs[0].find("cast-session-token") == std::string::npos); // redacted
+    }
+
     std::vector<PmsTimelineHttpRequest> sent;
     PmsTimelineReporter reporter(
         [&](const PmsTimelineHttpRequest& req) {
             sent.push_back(req);
-            return true;
+            return PmsTimelineSinkResult{true, 200};
         },
         false);
 
@@ -59,9 +106,15 @@ int main() {
     s.baseUrl = "http://pms.local:32400/";
     s.token = "unit-token";
     s.ratingKey = "123";
+    s.serverMachineIdentifier = "pms-a";
     s.key = "/library/metadata/123";
     s.playQueueItemId = "456";
     s.containerKey = "/playQueues/99?own=1";
+    CHECK(pmsTimelineIdentityMatches("http://pms.local:32400", "pms-a",
+                                     "http://pms.local:32400", "pms-a"));
+    CHECK(!pmsTimelineIdentityMatches("http://pms-b.local:32400", "pms-b",
+                                      "http://pms.local:32400", "pms-a"));
+    CHECK(!pmsTimelineIdentityMatches("", "", "http://pms.local:32400", "pms-a"));
 
     reporter.beginSession(s, 1000, 90000);
     CHECK(sent.size() == 1);
@@ -72,6 +125,7 @@ int main() {
     CHECK(p["state"] == "buffering");
     CHECK(p["time"] == "1000");
     CHECK(p["duration"] == "90000");
+    CHECK(p["type"] == "video");
     CHECK(p["identifier"] == "com.plexapp.plugins.library");
     CHECK(p["playQueueItemID"] == "456");
     CHECK(p["containerKey"] == "/playQueues/99?own=1");
@@ -84,7 +138,7 @@ int main() {
     reporter.reportState("buffering", 1500, 90000); // unchanged state: skipped
     CHECK(sent.size() == 1);
     reporter.reportState("playing", 2000, 90000); // state transition: sent immediately
-    reporter.reportState("playing", 2500, 90000); // under 10s cadence: skipped
+    reporter.reportState("playing", 2500, 90000); // under 1s cadence: skipped
     reporter.reportState("paused", 3000, 90000);
     reporter.reportState("playing", 3500, 90000); // state transition: sent immediately
     reporter.endSession(45000, 90000);
@@ -97,6 +151,60 @@ int main() {
     CHECK(queryParams(sent[3].url)["time"] == "3500");
     CHECK(queryParams(sent[4].url)["state"] == "stopped");
     CHECK(queryParams(sent[4].url)["time"] == "45000");
+
+    // Token refresh must apply to subsequent reports (mid-session cast token rotate).
+    sent.clear();
+    reporter.beginSession(s, 0, 90000);
+    CHECK(!reporter.updateToken("wrong-server-token", "http://pms-b.local:32400", "pms-b"));
+    CHECK(reporter.updateToken("refreshed-token", "http://pms.local:32400", "pms-a"));
+    reporter.reportState("playing", 5000, 90000);
+    CHECK(sent.size() == 2);
+    CHECK(header(sent[1], "X-Plex-Token") == "refreshed-token");
+
+    // A B-session refresh must not rewrite queued A-session requests.
+    {
+        std::vector<PmsTimelineHttpRequest> asyncSent;
+        PmsTimelineReporter asyncReporter(
+            [&](const PmsTimelineHttpRequest& req) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                asyncSent.push_back(req);
+                return PmsTimelineSinkResult{true, 200};
+            },
+            true);
+        PmsTimelineSession a = s;
+        a.token = "token-a";
+        a.ratingKey = "a";
+        a.key = "/library/metadata/a";
+        a.serverMachineIdentifier = "pms-a";
+        asyncReporter.beginSession(a, 0, 90000);
+        asyncReporter.reportState("playing", 1000, 90000);
+
+        PmsTimelineSession b = s;
+        b.baseUrl = "http://pms-b.local:32400";
+        b.token = "token-b";
+        b.ratingKey = "b";
+        b.key = "/library/metadata/b";
+        b.serverMachineIdentifier = "pms-b";
+        asyncReporter.beginSession(b, 0, 90000);
+        CHECK(asyncReporter.updateToken("token-b-new", b.baseUrl, "pms-b"));
+        asyncReporter.stopAndFlush();
+
+        bool sawAPlaying = false;
+        bool sawB = false;
+        for (const auto& request : asyncSent) {
+            const auto params = queryParams(request.url);
+            if (params.at("ratingKey") == "a" && params.at("state") == "playing") {
+                sawAPlaying = true;
+                CHECK(header(request, "X-Plex-Token") == "token-a");
+            }
+            if (params.at("ratingKey") == "b") {
+                sawB = true;
+                CHECK(header(request, "X-Plex-Token") == "token-b-new");
+            }
+        }
+        CHECK(sawAPlaying);
+        CHECK(sawB);
+    }
 
     sent.clear();
     reporter.beginSession(s, 0, 0);
@@ -128,6 +236,7 @@ int main() {
     CHECK(np["key"] == "/library/metadata/123");
     CHECK(np["time"] == "0");
     CHECK(np["duration"] == "0");
+    CHECK(np["type"] == "video");
 
     if (fails) {
         std::fprintf(stderr, "test_pms_timeline: %d failures\n", fails);

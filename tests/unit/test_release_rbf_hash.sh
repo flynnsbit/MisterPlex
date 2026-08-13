@@ -1,13 +1,10 @@
 #!/usr/bin/env bash
-# Guard: release packages must carry the exact hardware-validated v0.3.0 core.
+# Guard: release packages must carry the exact hardware-validated core and,
+# where frozen, daemon for their version line.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
-
-EXPECTED="41adb98c7a630b541091c22ce291be68"
-SOURCE_RBF="${RELEASE_RBF_PATH:-release_artifacts/v0.3.0/Plex.rbf}"
-status=0
 
 # dist/ accumulates tarballs from older releases, which legitimately carry a
 # different core than the current pinned one. Checking them unconditionally
@@ -16,6 +13,29 @@ status=0
 # checks every artifact and is what `make package` uses, so the package that
 # actually ships is always verified.
 version="${VERSION:-$(git -C "$ROOT" describe --tags --always --dirty 2>/dev/null || echo dev)}"
+case "$version" in
+  v0.4.1|0.4.1|v0.4.1-*|0.4.1-*|v0.4.1+*|0.4.1+*)
+    EXPECTED="07f54d9f8f0eda2fe75d9cc314f6de54"
+    default_source="release_artifacts/v0.4.1/Plex.rbf"
+    EXPECTED_DAEMON="f44c0dc1610561a8278e8fd4ece9aa53"
+    default_daemon_gz="release_artifacts/v0.4.1/misterplexd.gz"
+    ;;
+  v0.4.0|0.4.0|v0.4.0-*|0.4.0-*|v0.4.0+*|0.4.0+*)
+    EXPECTED="1c6ed06fe832fb54259d4f4ce504ccae"
+    default_source="release_artifacts/v0.4.0/Plex.rbf"
+    EXPECTED_DAEMON=""
+    default_daemon_gz=""
+    ;;
+  *)
+    EXPECTED="41adb98c7a630b541091c22ce291be68"
+    default_source="release_artifacts/v0.3.0/Plex.rbf"
+    EXPECTED_DAEMON=""
+    default_daemon_gz=""
+    ;;
+esac
+SOURCE_RBF="${RELEASE_RBF_PATH:-$default_source}"
+status=0
+
 scan_all="${SCAN_ARTIFACTS:-0}"
 scanned_artifact=0
 
@@ -32,9 +52,9 @@ report() {
 }
 
 check_hash() {
-  local label="$1" actual="$2"
-  if [[ "$actual" != "$EXPECTED" ]]; then
-    report "$label md5 mismatch; expected $EXPECTED actual $actual"
+  local label="$1" actual="$2" expected="${3:-$EXPECTED}"
+  if [[ "$actual" != "$expected" ]]; then
+    report "$label md5 mismatch; expected $expected actual $actual"
   else
     echo "test_release_rbf_hash: OK $label md5=$actual"
   fi
@@ -44,6 +64,15 @@ if [[ ! -f "$SOURCE_RBF" ]]; then
   report "release source core missing: $SOURCE_RBF"
 else
   check_hash "$SOURCE_RBF" "$(md5sum "$SOURCE_RBF" | awk '{print $1}')"
+fi
+if [[ -n "$EXPECTED_DAEMON" ]]; then
+  if [[ ! -f "$default_daemon_gz" ]]; then
+    report "frozen release daemon missing: $default_daemon_gz"
+  else
+    check_hash "$default_daemon_gz payload" \
+      "$(gzip -cd "$default_daemon_gz" | md5sum | awk '{print $1}')" \
+      "$EXPECTED_DAEMON"
+  fi
 fi
 
 if compgen -G "dist/misterplex-*.tar.gz" >/dev/null; then
@@ -60,6 +89,10 @@ if compgen -G "dist/misterplex-*.tar.gz" >/dev/null; then
     fi
     actual="$(tar --wildcards -xOzf "$tarball" '*/cores/Plex.rbf' | md5sum | awk '{print $1}')"
     check_hash "$tarball cores/Plex.rbf" "$actual"
+    if [[ -n "$EXPECTED_DAEMON" ]]; then
+      actual_daemon="$(tar --wildcards -xOzf "$tarball" '*/bin/misterplexd' | md5sum | awk '{print $1}')"
+      check_hash "$tarball bin/misterplexd" "$actual_daemon" "$EXPECTED_DAEMON"
+    fi
     scanned_artifact=1
   done
 fi
@@ -72,6 +105,15 @@ if [[ "$scan_all" == "1" || "$scanned_artifact" == "1" ]] && [[ -d dist/stage-mi
   else
     check_hash "dist/stage-misterplex/cores/Plex.rbf" \
       "$(md5sum dist/stage-misterplex/cores/Plex.rbf | awk '{print $1}')"
+  fi
+  if [[ -n "$EXPECTED_DAEMON" ]]; then
+    if [[ ! -f dist/stage-misterplex/bin/misterplexd ]]; then
+      report "dist/stage-misterplex exists but bin/misterplexd is missing"
+    else
+      check_hash "dist/stage-misterplex/bin/misterplexd" \
+        "$(md5sum dist/stage-misterplex/bin/misterplexd | awk '{print $1}')" \
+        "$EXPECTED_DAEMON"
+    fi
   fi
 elif [[ -d dist/stage-misterplex ]]; then
   echo "test_release_rbf_hash: skipping stale dist/stage-misterplex (no $version tarball to date it against); SCAN_ARTIFACTS=1 to include it"

@@ -111,6 +111,15 @@ constexpr unsigned kPlxdSwapPendingBit = 3;   // bit [35] → bit 3 of upper wor
 constexpr unsigned kPlxdFramesDoneBit = 16;   // bits [63:48] → [31:16] of upper word
 constexpr unsigned kPlxdFramesDoneWidth = 16;
 
+// PLXJ — Source-aspect commit acknowledgement (FPGA→ARM).
+// Layout (64-bit, little-endian):
+//   [31:0]   magic 0x504C584A "PLXJ"
+//   [43:32]  committed DAR X
+//   [55:44]  committed DAR Y
+//   [63:56]  packet token echoed from PLXA
+constexpr uint32_t kPlxjAddr  = 0x3007F130u;
+constexpr uint32_t kPlxjMagic = 0x504C584Au; // "PLXJ"
+
 // ---- Bitstream ring mailboxes (ddr_bitstream_reader) ----
 
 // PLXB — Ring CTRL (ARM→FPGA). Bitstream ring control word.
@@ -128,19 +137,20 @@ struct MagicEntry {
     uint32_t magic;
 };
 
-constexpr std::array<MagicEntry, 7> kAllMagics = {{
+constexpr std::array<MagicEntry, 8> kAllMagics = {{
     {"PLXK", kPlxkMagic},
     {"PLXS", kPlxsMagic},
     {"PLXI", kPlxiMagic},
     {"PLXM", kPlxmMagic},
     {"PLXF", kPlxfMagic},
     {"PLXD", kPlxdMagic},
+    {"PLXJ", kPlxjMagic},
     {"PLXB", kPlxbMagic},
 }};
 
 // ---- All addressed mailboxes (for address-collision detection) ----
 // Every occupied DDR mailbox slot. Gate rejects overlapping addresses.
-constexpr std::array<MailboxEntry, 8> kAllMailboxes = {{
+constexpr std::array<MailboxEntry, 9> kAllMailboxes = {{
     {"PLXK", kPlxkAddr,     kPlxkMagic,     8, "arm_to_fpga",  true},
     {"PLXS", kPlxsAddr,     kPlxsMagic,     8, "fpga_to_arm",  true},
     {"PLXI", kPlxiAddr,     kPlxiMagic,     8, "fpga_to_arm",  true},
@@ -148,6 +158,7 @@ constexpr std::array<MailboxEntry, 8> kAllMailboxes = {{
     {"PLXF", kPlxfAddr,     kPlxfMagic,     8, "fpga_to_arm",  true},
     {"DIAG", kSdramDiagAddr, 0,             8, "fpga_to_arm",  false},
     {"PLXD", kPlxdAddr,     kPlxdMagic,     8, "fpga_to_arm",  true},
+    {"PLXJ", kPlxjAddr,     kPlxjMagic,     8, "fpga_to_arm",  true},
     {"PLXB", kPlxbAddr,     kPlxbMagic,     8, "arm_to_fpga",  true},
 }};
 

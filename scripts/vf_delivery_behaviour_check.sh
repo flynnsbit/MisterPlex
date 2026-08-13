@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Artifact-only POSITIVE capability gate: product vf policy must pin OUTPUT I420
-# to the coded bank for arbitrary real-world delivered geometries — not only a
+# Reference POSITIVE capability gate: product vf policy must pin OUTPUT I420 to
+# the coded bank for arbitrary real-world delivered geometries — not only a
 # bank-exact fixture (rd-review B6 residual).
 #
 # OBSERVED DEFECT (parent, viewed pixels 2026-08-02):
@@ -9,10 +9,10 @@
 #   240p always rescales into bank (desync impossible by construction).
 #   480p identity_skip emits PMS delivery into 449280-byte reader.
 #
-# THIS GATE (behavioural — NOT device state, NOT md5 allow/deny):
-#   1. Resolve policy from the daemon artifact (GEOM_GUARD / force_scale → product;
-#      else legacy identity).
-#   2. For each delivered geometry, drive the daemon's planner
+# THIS GATE (reference behaviour — NOT artifact execution or device state):
+#   1. Classify policy vocabulary from the daemon artifact
+#      (GEOM_GUARD / force_scale → product; else legacy identity).
+#   2. For each delivered geometry, drive the current checkout's planner
 #      (buildFfmpegVideoFilter via test_vf_plan_emit) under product Always +
 #      unverified source, OR empty vf under legacy_identity.
 #   3. Run host ffmpeg; assert on packed I420:
@@ -27,7 +27,12 @@
 #   1280x720 half-HD ceiling tier
 #   624x480  bank-exact control
 #
-# NOT tested: DDR bank write, FPGA scanout, HDMI glass.
+# The target daemon is a static ARM binary and is not executed on the packaging
+# host. Exact artifact behavior provenance comes from pair_ship_policy's
+# hardware-validated daemon/core hash. This script separately prevents policy
+# vocabulary and the current source planner from regressing.
+#
+# NOT tested: target daemon execution, DDR bank write, FPGA scanout, HDMI glass.
 #
 # Usage:
 #   vf_delivery_behaviour_check.sh <path-to-misterplexd>
@@ -98,7 +103,9 @@ resolve_policy() {
   fi
   if grep -aFq 'GEOM_GUARD refused identity_skip' "$bin" 2>/dev/null \
     || grep -aFq 'yuv_ddr_force_scale' "$bin" 2>/dev/null \
-    || grep -aFq 'force_unverified_claim_scale_pad_coded' "$bin" 2>/dev/null; then
+    || grep -aFq 'force_unverified_claim_scale_pad_coded' "$bin" 2>/dev/null \
+    || grep -aFq 'media: force exact scale=' "$bin" 2>/dev/null \
+    || grep -aFq 'media: native-aspect scale+crop-pad coded=' "$bin" 2>/dev/null; then
     printf '%s\n' 'product_foar_coded'
     return 0
   fi
@@ -108,9 +115,10 @@ resolve_policy() {
 policy=$(resolve_policy "${daemon:-}")
 
 echo "VF_DELIVERY_BEGIN"
-echo "VF_DELIVERY_SCOPE arm_producer_only=1 ddr_bank=NOT_TESTED scanout=NOT_TESTED"
+echo "VF_DELIVERY_SCOPE artifact_execution=0 artifact_policy_classification=1 reference_planner=current_checkout"
+echo "VF_DELIVERY_SCOPE arm_producer_reference=1 ddr_bank=NOT_TESTED scanout=NOT_TESTED"
 echo "VF_DELIVERY_SCOPE_NOTE A green result is NOT a hardware pass. This gate only"
-echo "VF_DELIVERY_SCOPE_NOTE checks the ARM ffmpeg vf policy output bytes+chroma."
+echo "VF_DELIVERY_SCOPE_NOTE classifies artifact vocabulary and checks current-source planner bytes+chroma."
 echo "VF_DELIVERY_DAEMON path=${daemon:-"(policy override)"}"
 if [ -n "${daemon:-}" ] && [ -f "$daemon" ]; then
   echo "VF_DELIVERY_DAEMON md5=$(md5sum "$daemon" | awk '{print $1}') bytes=$(wc -c <"$daemon" | tr -d ' ')"

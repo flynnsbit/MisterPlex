@@ -56,6 +56,8 @@ int main() {
                   "2:(oh-ih)/2",
                   "240p centre pad historical string");
         expect_eq(p.reason, "scale_pad_center", "reason center");
+        expect(ffmpegFilterFramesSourceAspect(p),
+               "FOAR+pad makes the host canvas the aspect owner");
     }
 
     // --- shipping Always @ 624x480: FOAR into CODED bank (not display 618) ---
@@ -147,6 +149,8 @@ int main() {
         expect(p.identity_skip, "identity_skip flag");
         expect(p.vf.empty(), "vf empty without fps");
         expect_eq(p.reason, "identity_skip_crop_pad_clear", "crop clear reason");
+        expect(!ffmpegFilterFramesSourceAspect(p),
+               "identity leaves source DAR ownership with the scaler");
     }
 
     // --- RED class: numeric match WITHOUT verification must NOT identity-skip ---

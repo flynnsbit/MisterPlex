@@ -13,8 +13,10 @@
 //   `define PRESENT_PX_PER_CLK N — 1|2|4 with MULTI_PIXEL (product land uses 1 until
 //                                  ddr_frame_store grows N-wide RGB ports)
 //   `define PRESENT_CLK_PIX_PLL  — separate clk_pix + rate-match (optional)
+//   `define PLEX_PRESENT_TRUE_480P — fixed 640x480 progressive product path:
+//       true 640x480 DE, identity store y=0..479, and 11+618+11 presentation.
 // Macros off → bit-identical Template H_DE=529 / DE_LAG=3 path (v0.3.0 baseline).
-// Mutually exclusive: L4 vs BEAM_960 vs MULTI_PIXEL. Parent enables in fit QSF only.
+// Mutually exclusive: TRUE_480P vs L4 vs BEAM_960 vs MULTI_PIXEL.
 
 `ifdef PRESENT_MULTI_PIXEL
 	`ifndef PRESENT_PX_PER_CLK
@@ -54,16 +56,17 @@ module present_core #(
 	parameter int FRAME_CMD_FIFO_AW = 5,
 `endif
 `ifdef FRAME_LINES_1
-	parameter int FRAME_LINE_COUNT = 1
+	parameter int FRAME_LINE_COUNT = 1,
 `elsif FRAME_LINES_4
-	parameter int FRAME_LINE_COUNT = 4
+	parameter int FRAME_LINE_COUNT = 4,
 `elsif FRAME_LINES_8
-	parameter int FRAME_LINE_COUNT = 8
+	parameter int FRAME_LINE_COUNT = 8,
 `elsif FRAME_LINES_16
-	parameter int FRAME_LINE_COUNT = 16
+	parameter int FRAME_LINE_COUNT = 16,
 `else
-	parameter int FRAME_LINE_COUNT = 4
+	parameter int FRAME_LINE_COUNT = 4,
 `endif
+	parameter int FRAME_Y_FILL_STRIDE = 1
 )(
 	input  wire        clk,
 	input  wire        clk_sdram,
@@ -112,6 +115,11 @@ module present_core #(
 	input  wire  [3:0] ddr_sdram_test_state,
 	input  wire  [3:0] ddr_sdram_size_code,
 	input  wire [15:0] ddr_sdram_error_count,
+	input  wire        ddr_source_aspect_valid,
+	input  wire [11:0] ddr_source_aspect_x,
+	input  wire [11:0] ddr_source_aspect_y,
+	input  wire  [7:0] ddr_source_aspect_token,
+	input  wire        ddr_source_aspect_commit,
 	input  wire        clk_ddr,
 	output wire        DDRAM_CLK,
 	input  wire        DDRAM_BUSY,
@@ -181,6 +189,42 @@ module present_core #(
 
 	localparam int FRAME_X_W = $clog2(FRAME_W);
 	localparam int FRAME_Y_W = $clog2(FRAME_H);
+`ifdef PLEX_PRESENT_TRUE_480P
+	localparam int TRUE480_SCAN_Y_STEP = 1;
+`endif
+
+	// synthesis translate_off
+	initial begin
+`ifdef PLEX_PRESENT_TRUE_480P
+		if (FRAME_W != 640 || FRAME_H != 480)
+			$error("PLEX_PRESENT_TRUE_480P requires FRAME_W=640 FRAME_H=480 (got %0d x %0d)",
+				FRAME_W, FRAME_H);
+		if (FRAME_Y_FILL_STRIDE != TRUE480_SCAN_Y_STEP)
+			$error("PLEX_PRESENT_TRUE_480P fill-step must equal scan-step=1 (got %0d)",
+				FRAME_Y_FILL_STRIDE);
+`ifdef PLEX_PRESENT_720P_L4
+		$error("PLEX_PRESENT_TRUE_480P and PLEX_PRESENT_720P_L4 are mutually exclusive");
+`endif
+`ifdef PRESENT_BEAM_960
+		$error("PLEX_PRESENT_TRUE_480P and PRESENT_BEAM_960 are mutually exclusive");
+`endif
+`ifdef PRESENT_MULTI_PIXEL
+		$error("PLEX_PRESENT_TRUE_480P and PRESENT_MULTI_PIXEL are mutually exclusive");
+`endif
+`endif
+	end
+	// synthesis translate_on
+
+`ifdef PLEX_PRESENT_TRUE_480P
+	// Synthesis-visible red contract. The simulation assertion above provides
+	// the matching diagnostic; this branch prevents a wrong override from
+	// silently elaborating in Quartus.
+	generate
+		if (FRAME_Y_FILL_STRIDE != TRUE480_SCAN_Y_STEP) begin : g_true480_bad_fill_step
+			PLEX_PRESENT_TRUE_480P_REQUIRES_FILL_STEP_EQ_SCAN_STEP u_contract_error();
+		end
+	endgenerate
+`endif
 
 `ifdef PRESENT_MULTI_PIXEL
 	localparam int PRESENT_PPC = `PRESENT_PX_PER_CLK;
@@ -233,7 +277,36 @@ module present_core #(
 		.needs_wide_fifo(keep_960_wide_fifo)
 	);
 
-`ifdef PLEX_PRESENT_720P_L4
+`ifdef PLEX_PRESENT_TRUE_480P
+	// =====================================================================
+	// Fixed native 640x480 progressive beam. Runtime cadence/PLXG is
+	// deliberately absent from this first visual-recovery implementation.
+	// The pixel enable divides clk_sys by two, matching the legacy Template
+	// pixel cadence: 10 MHz / (672*496) = 30.0019 Hz. This keeps FRAME_LINES_8
+	// inside the existing 480-row DDR prefetch budget while retaining all
+	// 480 active rows.
+	// =====================================================================
+	wire [10:0] hc11, vc11;
+	present_beam_true_480p u_beam_true_480p (
+		.clk(clk),
+		.reset(reset),
+		.ce_pix(ce_pix_i),
+		.HBlank(hb),
+		.HSync(hs),
+		.VBlank(vb),
+		.VSync(vs),
+		.frame_start(fstart),
+		.hc_out(hc11),
+		.vc_out(vc11)
+	);
+	assign hc = hc11[9:0];
+	assign vc = vc11[9:0];
+	assign br = 8'd0;
+	assign bg = 8'd0;
+	assign bb = 8'd0;
+	wire _unused_true480_beam = scandouble | pal | (|eff_pattern);
+
+`elsif PLEX_PRESENT_720P_L4
 	// =====================================================================
 	// L4 720p24 true-DE beam (DEFAULT OFF). w-clock: H=1312 V=762 @ 24 MHz
 	// → 24.006 Hz (1:1 with measured PMS 24/1 asset; no pulldown).
@@ -423,7 +496,17 @@ module present_core #(
 	localparam int STORE_Y_SCALE = (FRAME_H * 65536) / V_STORE_I;
 	// Beam Y: native canvas uses full vc; legacy 240 halves when scandoubled.
 	wire [9:0] py = NATIVE_V_1TO1 ? vc : (scandouble ? (vc >> 1) : vc);
-`ifdef PLEX_PRESENT_720P_L4
+`ifdef PLEX_PRESENT_TRUE_480P
+	// Native 480p: every active beam coordinate addresses the same store row
+	// and column. The DDR store applies the 11-pixel pillars and 618-pixel
+	// visible window; no Template scaling or even-row mapping exists here.
+	wire in_content = ~hb & ~vb & (hc11 < 11'd640) & (vc11 < 11'd480);
+	wire       past_last_row = (vc11 >= 11'd480);
+	wire [FRAME_X_W-1:0] store_x_clamped =
+		(hc11 >= 11'd640) ? FRAME_LAST_X : FRAME_X_W'(hc11);
+	wire [FRAME_Y_W-1:0] store_y_addr =
+		(vc11 >= 11'd480) ? FRAME_LAST_Y : FRAME_Y_W'(vc11);
+`elsif PLEX_PRESENT_720P_L4
 	// L4: present_content_window owns store map (identity when content==DE).
 	wire in_content_l4 = ~hb & ~vb & (hc11 < hde_act11) & (vc11 < vact_act11);
 	wire past_last_row; // driven by content_window
@@ -527,11 +610,22 @@ module present_core #(
 
 `include "ddr_frame_layout_params.svh"
 
-	// Active DDR reader geometry. Default = 480p layout (coded 624 / display
-	// 618 / pillar 11 / stride 0x80000). L4 selects the 720p block from the
-	// same svh — without this, FRAME_W/H=1280x720 still fed 624x480 into the
-	// store and visibility ended at x≈628 y=479 (reviewer point 5).
-`ifdef PLEX_PRESENT_720P_L4
+	// Active DDR reader geometry. The shared include follows main's product
+	// 1280x720 canvas, so true480 pins its independent v0.4.x bank contract
+	// here: coded 624, visible 618, centered 11+618+11 pillars.
+`ifdef PLEX_PRESENT_TRUE_480P
+	localparam int FS_CODED_W     = 624;
+	localparam int FS_CODED_H     = 480;
+	localparam int FS_DISPLAY_W   = 618;
+	localparam int FS_DISPLAY_H   = 480;
+	localparam int FS_CROP_LEFT   = 0;
+	localparam int FS_CROP_TOP    = 0;
+	localparam int FS_PRESENT_X   = 11;
+	localparam int FS_PRESENT_Y   = 0;
+	localparam [31:0] FS_PHYS_BASE = 32'h3000_0000;
+	localparam int FS_BANK_STRIDE = 32'h0008_0000;
+	localparam [31:0] FS_DOORBELL = 32'h300F_F000;
+`elsif PLEX_PRESENT_720P_L4
 	localparam int FS_CODED_W     = DDR_FRAME_720P_CODED_WIDTH;
 	localparam int FS_CODED_H     = DDR_FRAME_720P_CODED_HEIGHT;
 	localparam int FS_DISPLAY_W   = DDR_FRAME_720P_DISPLAY_WIDTH;
@@ -570,6 +664,12 @@ module present_core #(
 		.PRESENT_X(FS_PRESENT_X),
 		.PRESENT_Y(FS_PRESENT_Y),
 		.LINE_COUNT(FRAME_LINE_COUNT),
+`ifdef PLEX_PRESENT_TRUE_480P
+		// Hard-set the production store to the native identity scan step.
+		.Y_FILL_STRIDE(TRUE480_SCAN_Y_STEP),
+`else
+		.Y_FILL_STRIDE(FRAME_Y_FILL_STRIDE),
+`endif
 		.PHYS_BASE(FS_PHYS_BASE),
 		.HPS_BANK_STRIDE_BYTES(FS_BANK_STRIDE),
 		.DOORBELL_PHYS(FS_DOORBELL)
@@ -591,6 +691,11 @@ module present_core #(
 		.sdram_test_state(ddr_sdram_test_state),
 		.sdram_size_code(ddr_sdram_size_code),
 		.sdram_error_count(ddr_sdram_error_count),
+		.source_aspect_valid(ddr_source_aspect_valid),
+		.source_aspect_x(ddr_source_aspect_x),
+		.source_aspect_y(ddr_source_aspect_y),
+		.source_aspect_token(ddr_source_aspect_token),
+		.source_aspect_commit(ddr_source_aspect_commit),
 		.DDRAM_CLK(DDRAM_CLK),
 		.DDRAM_BUSY(DDRAM_BUSY),
 		.DDRAM_BURSTCNT(DDRAM_BURSTCNT),

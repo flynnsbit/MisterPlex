@@ -1,0 +1,7 @@
+fnv64 0x406099a6cf210b90
+dirty 20 340 600 120
+pixel Y 20 340 77
+pixel Y 54 366 175
+pixel Y 112 360 220
+pixel U 27 183 53
+pixel V 27 183 172

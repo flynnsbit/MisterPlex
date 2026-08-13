@@ -99,6 +99,11 @@ struct FfmpegVfPlan {
     std::string reason;      // short machine token for logs
 };
 
+inline bool ffmpegFilterFramesSourceAspect(const FfmpegVfPlan& plan) {
+    return plan.vf.find("force_original_aspect_ratio=decrease") != std::string::npos ||
+           plan.vf.find("pad=") != std::string::npos;
+}
+
 // Build scale=WxH with optional :flags= after the geometry token and before
 // force_original_aspect_ratio (ffmpeg accepts both orders; keep flags early).
 inline std::string scaleFilterGeom(const std::string& wh, const std::string& sws_flags) {

@@ -32,10 +32,20 @@ constexpr int64_t kMrAudioBytesPerSec = 48000LL * 4LL;
 // nonsense and means we misparsed.
 constexpr int64_t kMrAudioRingBytes = 512LL * 1024LL;
 
+struct MrAudioStatus {
+    int64_t readPointer = -1;
+    int64_t writePointer = -1;
+    int64_t queuedBytes = -1;
+
+    bool valid() const {
+        return readPointer >= 0 && writePointer >= 0 && queuedBytes >= 0;
+    }
+};
+
 // Pull an unsigned decimal field after `key` (e.g. "len:", "rptr:").
-// Returns value, or -1 if absent/malformed. Caps at `maxInclusive` (use ring
-// size for len; large for pointers).
-inline int64_t parseMrAudioUField(const char* s, int64_t n, const char* key, int64_t maxInclusive) {
+// Returns value, or -1 if absent/malformed. Caps at `maxInclusive`.
+inline int64_t parseMrAudioUField(const char* s, int64_t n, const char* key,
+                                  int64_t maxInclusive) {
     if (!s || n <= 0 || !key || maxInclusive < 0)
         return -1;
     int64_t keyLen = 0;
@@ -58,16 +68,43 @@ inline int64_t parseMrAudioUField(const char* s, int64_t n, const char* key, int
             ++j;
         if (j >= n || s[j] < '0' || s[j] > '9')
             return -1;
-        int64_t v = 0;
+        int64_t value = 0;
         while (j < n && s[j] >= '0' && s[j] <= '9') {
-            v = v * 10 + (s[j] - '0');
-            if (v > maxInclusive)
+            const int digit = s[j] - '0';
+            if (value > (maxInclusive - digit) / 10)
                 return -1;
+            value = value * 10 + digit;
             ++j;
         }
-        return v;
+        return value;
     }
     return -1;
+}
+
+inline int64_t parseMrAudioUnsignedField(const char* s, int64_t n,
+                                         const char* key, int64_t keyLen,
+                                         bool allowRingEnd) {
+    if (!key || keyLen <= 0)
+        return -1;
+    int64_t actualKeyLen = 0;
+    while (key[actualKeyLen] != '\0')
+        ++actualKeyLen;
+    if (actualKeyLen != keyLen)
+        return -1;
+    const int64_t value = parseMrAudioUField(s, n, key, kMrAudioRingBytes);
+    if (value < 0)
+        return -1;
+    return allowRingEnd ? value : (value < kMrAudioRingBytes ? value : -1);
+}
+
+inline MrAudioStatus parseMrAudioStatus(const char* s, int64_t n) {
+    MrAudioStatus out;
+    out.readPointer = parseMrAudioUnsignedField(s, n, "rptr:", 5, true);
+    out.writePointer = parseMrAudioUnsignedField(s, n, "wptr:", 5, true);
+    out.queuedBytes = parseMrAudioUnsignedField(s, n, "len:", 4, false);
+    if (!out.valid())
+        return {};
+    return out;
 }
 
 // Pull the `len:` field out of the driver's status line.
@@ -115,6 +152,15 @@ inline int64_t audibleClockMs(int64_t writtenBytes, int64_t queuedBytes) {
     if (played <= 0)
         return 0;
     return (played * 1000LL) / kMrAudioBytesPerSec;
+}
+
+inline int64_t audibleClockUs(int64_t writtenBytes, int64_t queuedBytes) {
+    int64_t played = writtenBytes;
+    if (queuedBytes >= 0)
+        played -= queuedBytes;
+    if (played <= 0)
+        return 0;
+    return (played * 1000000LL) / kMrAudioBytesPerSec;
 }
 
 // ---------------------------------------------------------------------------

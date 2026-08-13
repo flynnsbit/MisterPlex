@@ -17,8 +17,10 @@ bool validState(const std::string& state) {
            state == "buffering";
 }
 
-bool defaultSink(const PmsTimelineHttpRequest& req) {
-    return plexHttpGetNoBody(req.url, req.headers, 4);
+PmsTimelineSinkResult defaultSink(const PmsTimelineHttpRequest& req) {
+    // GET is the Plex client convention for /:/timeline (query carries state/time).
+    const auto r = plexHttpGetNoBodyResult(req.url, req.headers, 4);
+    return PmsTimelineSinkResult{r.ok, r.httpStatus};
 }
 
 } // namespace
@@ -45,11 +47,12 @@ bool buildPmsTimelineHttpRequest(const PmsTimelineSession& session, const std::s
     if (key.empty())
         key = "/library/metadata/" + session.ratingKey;
 
+    // type=video matches Plex Web cast playMedia and common player clients.
     out.url = base + "/:/timeline?ratingKey=" + urlEncodeQuery(session.ratingKey) +
               "&key=" + urlEncodeQuery(key) + "&state=" + urlEncodeQuery(state) +
               "&time=" + urlEncodeQuery(std::to_string(timeMs)) +
               "&duration=" + urlEncodeQuery(std::to_string(durationMs)) +
-              "&identifier=com.plexapp.plugins.library";
+              "&type=video&identifier=com.plexapp.plugins.library";
     if (!session.playQueueItemId.empty())
         out.url += "&playQueueItemID=" + urlEncodeQuery(session.playQueueItemId);
     if (!session.containerKey.empty())
@@ -89,20 +92,43 @@ PmsTimelineReporter::~PmsTimelineReporter() { stopAndFlush(); }
 void PmsTimelineReporter::beginSession(const PmsTimelineSession& session, int64_t timeMs,
                                        int64_t durationMs) {
     PmsTimelineHttpRequest req;
+    Pending pending;
+    bool queued = false;
     {
         std::lock_guard<std::mutex> lock(mu_);
+        ++sessionGeneration_;
         active_ = true;
         session_ = session;
         lastSentState_.clear();
         lastPlayingSent_ = {};
         if (!buildPmsTimelineHttpRequest(session_, "buffering", timeMs, durationMs, req)) {
             active_ = false;
+            if (log_) {
+                const char* why = "unknown";
+                if (session.token.empty())
+                    why = "empty token";
+                else if (session.ratingKey.empty())
+                    why = "empty ratingKey";
+                else if (normalizePlexBase(session.baseUrl).empty())
+                    why = "empty/invalid baseUrl";
+                log_(redactSensitive(std::string("pms timeline: beginSession skipped (") + why +
+                                     ") base=" + session.baseUrl +
+                                     " ratingKey=" + session.ratingKey));
+            }
             return;
         }
         lastSentState_ = "buffering";
         lastPlayingSent_ = {};
+        pending = Pending{std::move(req), "buffering", sessionGeneration_};
+        if (async_) {
+            enqueueLocked(std::move(pending));
+            queued = true;
+        }
     }
-    enqueue(std::move(req), "buffering");
+    if (queued)
+        cv_.notify_one();
+    else
+        send(pending);
 }
 
 bool PmsTimelineReporter::shouldSendLocked(const std::string& state) {
@@ -125,6 +151,8 @@ void PmsTimelineReporter::reportState(const std::string& state, int64_t timeMs,
         return;
     }
     PmsTimelineHttpRequest req;
+    Pending pending;
+    bool queued = false;
     {
         std::lock_guard<std::mutex> lock(mu_);
         if (!active_ || !shouldSendLocked(state))
@@ -134,12 +162,22 @@ void PmsTimelineReporter::reportState(const std::string& state, int64_t timeMs,
         lastSentState_ = state;
         if (state == "playing")
             lastPlayingSent_ = std::chrono::steady_clock::now();
+        pending = Pending{std::move(req), state, sessionGeneration_};
+        if (async_) {
+            enqueueLocked(std::move(pending));
+            queued = true;
+        }
     }
-    enqueue(std::move(req), state);
+    if (queued)
+        cv_.notify_one();
+    else
+        send(pending);
 }
 
 void PmsTimelineReporter::endSession(int64_t timeMs, int64_t durationMs) {
     PmsTimelineHttpRequest req;
+    Pending pending;
+    bool queued = false;
     {
         std::lock_guard<std::mutex> lock(mu_);
         if (!active_)
@@ -150,45 +188,80 @@ void PmsTimelineReporter::endSession(int64_t timeMs, int64_t durationMs) {
         }
         lastSentState_ = "stopped";
         active_ = false;
+        pending = Pending{std::move(req), "stopped", sessionGeneration_};
+        if (async_) {
+            enqueueLocked(std::move(pending));
+            queued = true;
+        }
     }
-    enqueue(std::move(req), "stopped");
+    if (queued)
+        cv_.notify_one();
+    else
+        send(pending);
 }
 
-void PmsTimelineReporter::enqueue(PmsTimelineHttpRequest request, const std::string& state) {
-    Pending pending{std::move(request), state};
-    if (!async_) {
-        send(pending);
-        return;
+void PmsTimelineReporter::enqueueLocked(Pending pending) {
+    if (queue_.size() >= kMaxQueue) {
+        auto it = std::find_if(queue_.begin(), queue_.end(),
+                               [](const Pending& p) { return p.state != "stopped"; });
+        if (it != queue_.end())
+            queue_.erase(it);
+        else
+            queue_.pop_front();
     }
+    queue_.push_back(std::move(pending));
+}
 
-    {
-        std::lock_guard<std::mutex> lock(mu_);
-        if (queue_.size() >= kMaxQueue) {
-            auto it = std::find_if(queue_.begin(), queue_.end(),
-                                   [](const Pending& p) { return p.state != "stopped"; });
-            if (it != queue_.end())
-                queue_.erase(it);
-            else
-                queue_.pop_front();
-        }
-        queue_.push_back(std::move(pending));
+bool PmsTimelineReporter::updateToken(
+    const std::string& token,
+    const std::string& expectedBaseUrl,
+    const std::string& expectedServerMachineIdentifier) {
+    if (token.empty())
+        return false;
+    std::lock_guard<std::mutex> lock(mu_);
+    if (!active_)
+        return false;
+    const std::string expectedBase = normalizePlexBase(expectedBaseUrl);
+    const std::string activeBase = normalizePlexBase(session_.baseUrl);
+    if (!pmsTimelineIdentityMatches(expectedBase,
+                                    expectedServerMachineIdentifier,
+                                    activeBase,
+                                    session_.serverMachineIdentifier)) {
+        if (log_)
+            log_("pms timeline: token refresh ignored (PMS identity mismatch)");
+        return false;
     }
-    cv_.notify_one();
+    if (session_.token == token)
+        return true;
+    session_.token = token;
+    for (auto& pending : queue_) {
+        if (pending.sessionGeneration != sessionGeneration_)
+            continue;
+        for (auto& header : pending.request.headers) {
+            if (header.first == "X-Plex-Token")
+                header.second = token;
+        }
+    }
+    if (log_)
+        log_("pms timeline: session token refreshed");
+    return true;
 }
 
 bool PmsTimelineReporter::send(const Pending& pending) {
-    bool ok = false;
+    PmsTimelineSinkResult result;
     try {
-        ok = sink_(pending.request);
+        result = sink_(pending.request);
     } catch (...) {
-        ok = false;
+        result = {};
     }
     if (log_) {
-        // redactSensitive at the sink boundary; request.url stays real for HTTP.
-        log_(redactSensitive(std::string("pms timeline: update ") + (ok ? "ok" : "failed") +
+        // Always log outcome + http status. Non-2xx must read as failed (FIX A).
+        log_(redactSensitive(std::string("pms timeline: update ") +
+                             (result.ok ? "ok" : "failed") +
+                             " http=" + std::to_string(result.httpStatus) +
                              " state=" + pending.state + " url=" + pending.request.url));
     }
-    return ok;
+    return result.ok;
 }
 
 void PmsTimelineReporter::workerLoop() {

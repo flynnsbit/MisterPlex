@@ -9,6 +9,21 @@ struct SpsInfo {
     bool valid = false;
     uint8_t profile_idc = 0;
     uint8_t level_idc = 0;
+    uint8_t crop_unit_x = 1;
+    uint8_t crop_unit_y = 1;
+    uint16_t coded_width = 0;
+    uint16_t coded_height = 0;
+    uint16_t display_width = 0;
+    uint16_t display_height = 0;
+    uint16_t crop_left_units = 0;
+    uint16_t crop_right_units = 0;
+    uint16_t crop_top_units = 0;
+    uint16_t crop_bottom_units = 0;
+    uint16_t crop_left_pixels = 0;
+    uint16_t crop_right_pixels = 0;
+    uint16_t crop_top_pixels = 0;
+    uint16_t crop_bottom_pixels = 0;
+    // Compatibility aliases used by the decoder/reconstruction code.
     uint16_t width = 0;
     uint16_t height = 0;
 };
@@ -92,12 +107,18 @@ inline SpsInfo parseSpsRbsp(const uint8_t* payload, size_t len) {
     out.level_idc = static_cast<uint8_t>(br.u(8));
     br.ue(); // seq_parameter_set_id
 
+    uint32_t chroma = 1; // Baseline/Main default: 4:2:0
+    bool separateColourPlane = false;
     const uint8_t p = out.profile_idc;
     if (p == 100 || p == 110 || p == 122 || p == 244 || p == 44 || p == 83 || p == 86 || p == 118 ||
         p == 128 || p == 138 || p == 139 || p == 134 || p == 135) {
-        uint32_t chroma = br.ue();
+        chroma = br.ue();
+        if (chroma > 3) {
+            br.ok = false;
+            return out;
+        }
         if (chroma == 3)
-            br.u(1);
+            separateColourPlane = br.u(1) != 0;
         br.ue();
         br.ue();
         br.u(1);
@@ -142,18 +163,53 @@ inline SpsInfo parseSpsRbsp(const uint8_t* payload, size_t len) {
         br.u(1);
     br.u(1); // direct_8x8_inference_flag
     uint32_t crop = br.u(1);
-    uint32_t w = w_mbs * 16;
-    uint32_t h = h_map * 16 * (frame_mbs_only ? 1u : 2u);
+    uint32_t l = 0, r = 0, t = 0, b = 0;
     if (crop) {
-        uint32_t l = br.ue(), r = br.ue(), t = br.ue(), b = br.ue();
-        // chroma 4:2:0 crop units
-        w -= (l + r) * 2;
-        h -= (t + b) * 2;
+        l = br.ue();
+        r = br.ue();
+        t = br.ue();
+        b = br.ue();
     }
-    if (!br.ok || w == 0 || h == 0 || w > 4096 || h > 2160)
+    const uint32_t chromaArrayType = separateColourPlane ? 0u : chroma;
+    uint32_t cropUnitX = 1;
+    uint32_t cropUnitY = 2u - frame_mbs_only;
+    if (chromaArrayType == 1) {
+        cropUnitX = 2;
+        cropUnitY = 2u * (2u - frame_mbs_only);
+    } else if (chromaArrayType == 2) {
+        cropUnitX = 2;
+        cropUnitY = 2u - frame_mbs_only;
+    } else if (chromaArrayType == 3) {
+        cropUnitX = 1;
+        cropUnitY = 2u - frame_mbs_only;
+    }
+    const uint32_t codedW = w_mbs * 16;
+    const uint32_t codedH = h_map * 16 * (frame_mbs_only ? 1u : 2u);
+    const uint64_t cropXPixels = static_cast<uint64_t>(l + r) * cropUnitX;
+    const uint64_t cropYPixels = static_cast<uint64_t>(t + b) * cropUnitY;
+    if (!br.ok || codedW == 0 || codedH == 0 || cropXPixels >= codedW ||
+        cropYPixels >= codedH)
         return out;
-    out.width = static_cast<uint16_t>(w);
-    out.height = static_cast<uint16_t>(h);
+    const uint32_t displayW = codedW - static_cast<uint32_t>(cropXPixels);
+    const uint32_t displayH = codedH - static_cast<uint32_t>(cropYPixels);
+    if (codedW > 4096 || codedH > 2160 || displayW == 0 || displayH == 0)
+        return out;
+    out.crop_unit_x = static_cast<uint8_t>(cropUnitX);
+    out.crop_unit_y = static_cast<uint8_t>(cropUnitY);
+    out.coded_width = static_cast<uint16_t>(codedW);
+    out.coded_height = static_cast<uint16_t>(codedH);
+    out.display_width = static_cast<uint16_t>(displayW);
+    out.display_height = static_cast<uint16_t>(displayH);
+    out.crop_left_units = static_cast<uint16_t>(l);
+    out.crop_right_units = static_cast<uint16_t>(r);
+    out.crop_top_units = static_cast<uint16_t>(t);
+    out.crop_bottom_units = static_cast<uint16_t>(b);
+    out.crop_left_pixels = static_cast<uint16_t>(l * cropUnitX);
+    out.crop_right_pixels = static_cast<uint16_t>(r * cropUnitX);
+    out.crop_top_pixels = static_cast<uint16_t>(t * cropUnitY);
+    out.crop_bottom_pixels = static_cast<uint16_t>(b * cropUnitY);
+    out.width = out.display_width;
+    out.height = out.display_height;
     out.valid = true;
     return out;
 }

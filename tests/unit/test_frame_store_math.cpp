@@ -23,15 +23,13 @@ static uint16_t rgb565(unsigned r, unsigned g, unsigned b) {
     return static_cast<uint16_t>(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
 }
 
-static void checkLayout(const misterplex::DdrFrameGeometry& g, size_t bytes, int lineQwords,
+static void checkLayout(const misterplex::DdrFrameGeometry& g, size_t bytes, uint32_t stride,
+                        uint32_t doorbell, int lineQwords,
                         misterplex::DdrFrameFormat fmt = misterplex::DdrFrameFormat::Yuv420p,
                         int chromaLineQwords = 0) {
     constexpr uint32_t physBase = 0x30000000u;
     constexpr uint32_t strideAlign = 0x40000u;
     const auto l = misterplex::makeDdrFrameLayout(g, physBase, strideAlign, fmt);
-    const uint32_t derivedStride =
-        misterplex::alignUpU32(static_cast<uint32_t>(bytes), strideAlign);
-    const uint32_t derivedDoorbell = physBase + derivedStride * 2u - 0x1000u;
     CHECK(misterplex::ddrFrameLayoutValid(l));
     CHECK(l.frame_bytes == bytes);
     CHECK(l.width == g.coded_width.get());
@@ -50,18 +48,12 @@ static void checkLayout(const misterplex::DdrFrameGeometry& g, size_t bytes, int
     CHECK(l.v_offset == static_cast<uint32_t>(
                             misterplex::codedPixelCount(g.coded_width, g.coded_height) +
                             (g.coded_width.get() / 2) * (g.coded_height.get() / 2)));
-    CHECK(l.bank_stride == derivedStride);
+    CHECK(l.bank_stride == stride);
     CHECK(l.phys_base + l.bank_stride >= l.phys_base + l.frame_bytes);
     CHECK(l.phys_base + l.bank_stride + l.frame_bytes <= l.doorbell_phys);
-    CHECK(l.doorbell_phys == derivedDoorbell);
+    CHECK(l.doorbell_phys == doorbell);
     CHECK(l.map_bytes == l.bank_stride * 2u);
     CHECK(l.doorbell_format == misterplex::ddrFrameFormatCode(fmt));
-}
-
-static void checkLayout(int w, int h, size_t bytes, int lineQwords,
-                        misterplex::DdrFrameFormat fmt = misterplex::DdrFrameFormat::Yuv420p,
-                        int chromaLineQwords = 0) {
-    checkLayout(misterplex::makeDdrFrameGeometry(w, h), bytes, lineQwords, fmt, chromaLineQwords);
 }
 
 static std::string seqString(const std::vector<int>& seq) {
@@ -252,14 +244,108 @@ static void checkConversion(int w, int h) {
     }
 }
 
+static void checkTrue480CoordinateMap(const misterplex::DdrFrameGeometry& g,
+                                      const misterplex::DdrFrameLayout& l) {
+    uint64_t checked = 0;
+    uint64_t content = 0;
+    uint64_t border = 0;
+    uint64_t mapMismatches = 0;
+    uint64_t sampleMismatches = 0;
+    std::array<int, misterplex::kPlex480pPresentedHeight.get()> sourceRowHits{};
+    for (int y = 0; y < misterplex::kPlex480pPresentedHeight; ++y) {
+        for (int x = 0; x < misterplex::kPlex480pPresentedWidth; ++x) {
+            const bool wantContent =
+                x >= misterplex::kPlex480pPillarboxLeft &&
+                x < misterplex::kPlex480pPillarboxLeft +
+                        misterplex::kPlex480pDisplayWidth.get();
+            const auto map = misterplex::mapDdrFramePresentedPixel(g, x, y);
+            if (wantContent) {
+                ++content;
+                const int wantX = x - misterplex::kPlex480pPillarboxLeft;
+                if (map.region != misterplex::DdrFramePixelRegion::Content ||
+                    map.coded_x != wantX || map.coded_y != y) {
+                    ++mapMismatches;
+                } else {
+                    ++sourceRowHits[static_cast<size_t>(map.coded_y)];
+                }
+                const auto sample = misterplex::ddrFramePresentedSampleOffsets(l, x, y);
+                const uint32_t wantY =
+                    static_cast<uint32_t>(y * misterplex::kPlex480pYStrideBytes + wantX);
+                const uint32_t chromaIndex =
+                    static_cast<uint32_t>((y / 2) * misterplex::kPlex480pChromaStrideBytes +
+                                          (wantX / 2));
+                if (!sample.valid || sample.y != wantY ||
+                    sample.u != misterplex::kPlex480pUPlaneOffset + chromaIndex ||
+                    sample.v != misterplex::kPlex480pVPlaneOffset + chromaIndex)
+                    ++sampleMismatches;
+            } else {
+                ++border;
+                if (map.region != misterplex::DdrFramePixelRegion::Border || map.coded_x != -1 ||
+                    map.coded_y != -1 ||
+                    misterplex::ddrFramePresentedSampleOffsets(l, x, y).valid)
+                    ++mapMismatches;
+            }
+            ++checked;
+        }
+    }
+    CHECK(checked == 640u * 480u);
+    CHECK(content == 618u * 480u);
+    CHECK(border == 22u * 480u);
+    CHECK(mapMismatches == 0);
+    CHECK(sampleMismatches == 0);
+    for (int y = 0; y < misterplex::kPlex480pPresentedHeight; ++y)
+        CHECK(sourceRowHits[static_cast<size_t>(y)] ==
+              misterplex::kPlex480pDisplayWidth.get());
+
+    const auto first = misterplex::mapDdrFramePresentedPixel(g, 11, 0);
+    const auto last = misterplex::mapDdrFramePresentedPixel(g, 628, 479);
+    CHECK(first.region == misterplex::DdrFramePixelRegion::Content);
+    CHECK(first.coded_x == 0 && first.coded_y == 0);
+    CHECK(last.region == misterplex::DdrFramePixelRegion::Content);
+    CHECK(last.coded_x == 617 && last.coded_y == 479);
+    CHECK(misterplex::mapDdrFramePresentedPixel(g, 10, 0).region ==
+          misterplex::DdrFramePixelRegion::Border);
+    CHECK(misterplex::mapDdrFramePresentedPixel(g, 629, 479).region ==
+          misterplex::DdrFramePixelRegion::Border);
+    CHECK(misterplex::mapDdrFramePresentedPixel(g, 640, 479).region ==
+          misterplex::DdrFramePixelRegion::Outside);
+    CHECK(misterplex::mapDdrFramePresentedPixel(g, 11, 480).region ==
+          misterplex::DdrFramePixelRegion::Outside);
+
+    const auto lastSample = misterplex::ddrFramePresentedSampleOffsets(l, 628, 479);
+    CHECK(lastSample.valid);
+    CHECK(lastSample.y == 299513u);
+    CHECK(lastSample.u == 374396u);
+    CHECK(lastSample.v == 449276u);
+    CHECK(lastSample.y + 6u == misterplex::kPlex480pUPlaneOffset - 1u);
+    CHECK(lastSample.u + 3u == misterplex::kPlex480pVPlaneOffset - 1u);
+    CHECK(lastSample.v + 3u == misterplex::kPlex480pYuv420pBytes - 1u);
+
+    uint64_t legacyEvenRowMismatches = 0;
+    for (int y = 0; y < misterplex::kPlex480pPresentedHeight; ++y) {
+        const int legacyY = (y >> 1) << 1;
+        if (legacyY != y)
+            ++legacyEvenRowMismatches;
+    }
+    CHECK(legacyEvenRowMismatches == 240);
+    CHECK(((479 >> 1) << 1) == 478);
+}
+
 int main() {
     constexpr int W = 320, H = 240;
     constexpr int PIXELS = W * H;
     constexpr int BYTES = PIXELS * 3 / 2;
     CHECK(PIXELS == 76800);
     CHECK(BYTES == 115200);
-    checkLayout(320, 240, 115200, 40, misterplex::DdrFrameFormat::Yuv420p, 20);
-    checkLayout(640, 480, 460800, 80, misterplex::DdrFrameFormat::Yuv420p, 40);
+    const auto p240 = misterplex::ddrFrameGeometryForPresentedSize(
+        misterplex::PresentedWidth{320}, misterplex::PresentedHeight{240});
+    checkLayout(p240, 115200, 0x40000, 0x3007F000, 40,
+                misterplex::DdrFrameFormat::Yuv420p, 20);
+    CHECK(p240.coded_width == misterplex::CodedWidth{320});
+    CHECK(p240.presented_width == misterplex::PresentedWidth{320});
+    const auto coded640 = misterplex::makeDdrFrameGeometry(640, 480);
+    checkLayout(coded640, 460800, 0x80000, 0x300FF000, 80,
+                misterplex::DdrFrameFormat::Yuv420p, 40);
     const auto p480 = misterplex::plex480pDdrFrameGeometry();
     CHECK(p480.coded_width == 624);
     CHECK(p480.display_width == 618);
@@ -267,7 +353,12 @@ int main() {
     CHECK(p480.crop_right == 6);
     CHECK(p480.present_x == 11);
     CHECK(p480.placement == misterplex::DdrFramePlacement::Pillarbox);
-    checkLayout(p480, 449280, 78, misterplex::DdrFrameFormat::Yuv420p, 39);
+    CHECK(misterplex::isPlex480pDdrFrameGeometry(p480));
+    auto almostP480 = p480;
+    almostP480.present_x += 1;
+    CHECK(!misterplex::isPlex480pDdrFrameGeometry(almostP480));
+    checkLayout(p480, 449280, 0x80000, 0x300FF000, 78,
+                misterplex::DdrFrameFormat::Yuv420p, 39);
     const auto yuv480 =
         misterplex::makeDdrFrameLayout(p480, 0x30000000u, 0x40000u,
                                        misterplex::DdrFrameFormat::Yuv420p);
@@ -276,6 +367,81 @@ int main() {
     CHECK(yuv480.v_offset == misterplex::kPlex480pVPlaneOffset);
     CHECK(yuv480.line_bytes == misterplex::kPlex480pYStrideBytes);
     CHECK(yuv480.chroma_line_bytes == misterplex::kPlex480pChromaStrideBytes);
+    CHECK(yuv480.phys_base == 0x30000000u);
+    CHECK(yuv480.phys_base + yuv480.bank_stride == 0x30080000u);
+    CHECK(yuv480.phys_base + yuv480.frame_bytes == 0x3006DB00u);
+    CHECK(yuv480.phys_base + yuv480.bank_stride + yuv480.frame_bytes == 0x300EDB00u);
+    CHECK(yuv480.doorbell_phys == 0x300FF000u);
+    CHECK(yuv480.phys_base + yuv480.map_bytes == 0x30100000u);
+    CHECK(yuv480.doorbell_phys + 0x1000u == yuv480.phys_base + yuv480.map_bytes);
+    CHECK(misterplex::ddrFrameGeometryMatchesDelivered(p480, 624, 480, 618, 480, 0, 6,
+                                                       0, 0));
+    CHECK(!misterplex::ddrFrameGeometryMatchesDelivered(p480, 640, 480, 618, 480, 0, 22,
+                                                        0, 0));
+    CHECK(!misterplex::ddrFrameGeometryMatchesDelivered(p480, 624, 480, 620, 480, 0, 4,
+                                                        0, 0));
+    CHECK(!misterplex::ddrFrameGeometryMatchesDelivered(p480, 624, 480, 616, 480, 0, 8,
+                                                        0, 0));
+    CHECK(!misterplex::ddrFrameGeometryMatchesDelivered(p480, 624, 464, 618, 464, 0, 6,
+                                                        0, 0));
+    CHECK(!misterplex::ddrFrameGeometryMatchesDelivered(
+        p480, coded640.coded_width.get(), coded640.coded_height.get(),
+        coded640.display_width.get(), coded640.display_height.get(), 0, 0, 0, 0));
+    checkTrue480CoordinateMap(p480, yuv480);
+    CHECK(misterplex::ddrFramePhysBaseForGeometry(p480) ==
+          misterplex::kDdrFramePhysBase);
+
+    const auto p720 = misterplex::ddrFrameGeometryForPresentedSize(
+        misterplex::kPlex720pPresentedWidth, misterplex::kPlex720pPresentedHeight);
+    CHECK(misterplex::isPlex720pDdrFrameGeometry(p720));
+    checkLayout(p720, 1382400, 0x180000, 0x302FF000, 160,
+                misterplex::DdrFrameFormat::Yuv420p, 80);
+    auto almostP720 = p720;
+    almostP720.crop_right = 2;
+    CHECK(!misterplex::isPlex720pDdrFrameGeometry(almostP720));
+    const auto yuv720 = misterplex::makeDdrFrameLayout(
+        p720, misterplex::ddrFramePhysBaseForGeometry(p720),
+        misterplex::kDdrFrameStrideAlign, misterplex::DdrFrameFormat::Yuv420p);
+    CHECK(misterplex::ddrFrameLayoutValid(yuv720));
+    CHECK(yuv720.phys_base == misterplex::kPlex720pDdrFramePhysBase);
+    CHECK(yuv720.bank_stride == misterplex::kPlex720pYuv420pBankStride);
+    CHECK(yuv720.doorbell_phys == misterplex::kPlex720pOptionCDoorbellPhys);
+    CHECK(yuv720.doorbell_phys + 0x130u == 0x3047F130u);
+
+    auto drift = yuv480;
+    drift.u_offset += 8;
+    CHECK(!misterplex::ddrFrameLayoutValid(drift));
+    drift = yuv480;
+    drift.v_offset -= 8;
+    CHECK(!misterplex::ddrFrameLayoutValid(drift));
+    drift = yuv480;
+    drift.line_bytes = 640;
+    CHECK(!misterplex::ddrFrameLayoutValid(drift));
+    drift = yuv480;
+    drift.chroma_line_bytes = 320;
+    CHECK(!misterplex::ddrFrameLayoutValid(drift));
+    drift = yuv480;
+    drift.bank_stride += 0x40000u;
+    CHECK(!misterplex::ddrFrameLayoutValid(drift));
+    drift = yuv480;
+    drift.doorbell_phys -= 0x1000u;
+    CHECK(!misterplex::ddrFrameLayoutValid(drift));
+
+    auto badGeometry = p480;
+    badGeometry.present_x = 10;
+    CHECK(misterplex::ddrFrameGeometryValid(badGeometry));
+    CHECK(misterplex::mapDdrFramePresentedPixel(badGeometry, 10, 0).region ==
+          misterplex::DdrFramePixelRegion::Content);
+    CHECK(misterplex::mapDdrFramePresentedPixel(p480, 10, 0).region ==
+          misterplex::DdrFramePixelRegion::Border);
+    badGeometry = p480;
+    badGeometry.present_x = 12;
+    CHECK(misterplex::ddrFrameGeometryValid(badGeometry));
+    CHECK(misterplex::mapDdrFramePresentedPixel(badGeometry, 11, 0).region ==
+          misterplex::DdrFramePixelRegion::Border);
+    badGeometry = p480;
+    badGeometry.crop_right = -1;
+    CHECK(!misterplex::ddrFrameGeometryValid(badGeometry));
     CHECK(misterplex::kYuv420BlackY == 16);
     CHECK(misterplex::kYuv420BlackU == 128);
     CHECK(misterplex::kYuv420BlackV == 128);

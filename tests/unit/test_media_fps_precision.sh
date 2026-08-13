@@ -21,14 +21,16 @@ if grep -nE 'to_string\((vfps|pfps)\)\.substr\(' "$MP" >/dev/null; then
   grep -nE 'to_string\((vfps|pfps)\)\.substr\(' "$MP" || true
   FAIL=$((FAIL + 1))
 fi
-# Exactly one vfps= emission site, and it must use fmtFpsRate (not bare to_string).
+# Every vfps= emission site must use fmtFpsRate (not bare to_string). Product
+# and true480 pipeline paths have separate telemetry loops after integration.
 vfps_sites=$(grep -cE '" vfps="' "$MP" || true)
-[ "$vfps_sites" -eq 1 ] || { echo "FAIL expected 1 vfps= site, got $vfps_sites"; FAIL=$((FAIL + 1)); }
-grep -nE '" vfps="' "$MP" | grep -q 'fmtFpsRate' || {
-  echo "FAIL vfps= site does not use fmtFpsRate"
-  grep -nE '" vfps="' "$MP" || true
+[ "$vfps_sites" -ge 1 ] || { echo "FAIL expected at least 1 vfps= site"; FAIL=$((FAIL + 1)); }
+bad_vfps_sites=$(grep -nE '" vfps="' "$MP" | grep -v 'fmtFpsRate' || true)
+if [ -n "$bad_vfps_sites" ]; then
+  echo "FAIL vfps= site does not use fmtFpsRate:"
+  printf '%s\n' "$bad_vfps_sites"
   FAIL=$((FAIL + 1))
-}
+fi
 
 # Required: fmtFpsRate / %.4f path
 grep -q 'fmtFpsRate' "$MP" || { echo "FAIL missing fmtFpsRate helper"; FAIL=$((FAIL + 1)); }
