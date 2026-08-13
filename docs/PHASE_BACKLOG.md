@@ -498,7 +498,7 @@ git **docs HEAD `3c43a66`**; **FPGA committed `7bee0a6`**; R-csum6 claim freeze 
 
 | P3-SPI | SPI F1 only ~9fps — retired; product F1 is DDR YUV420p-only | DONE | |
 | P3-TRUE480 | Production 240p/480p glass (v0.4.1) | **DONE** (eyes-on) | Branch `480p` @ `a6ba15d`; RBF md5 `07f54d9f`. 624/618/640 + native DAR + `RequireReleased` + 640×384 decode budget. Lessons **L44–L50**. Do not thrash this pair to chase 720p. |
-| P3-720P24 | Stable 1280×720 @ 24 unique fps | **RTL/host READY; RBF not fitted** | Host: 1500k + `RequireReleased` + MiSTer nice 19 (23.54 fps uncached). RBF: sibling `Plex_720p24.qsf` (L4, `PLEX_CLK_SYS_24`, 16-line, phys `0x30180000`). Do **not** change product `Plex.qsf` clk_sys (L52). Exclusive fit not started. Doc: `docs/720p24-rbf.md`. |
+| P3-720P24 | Stable 1280×720 @ 24 unique fps | **TIMING_FAIL slot720p24; not deployed** | Fit 993 s Full Comp 0e. RBF `e494a767` **STA Fmax clk_sys 13.77 MHz** (ask 24), ddr 75.66 (ask 90). Hierarchy PASS. **Did not deploy** (L53). Next: `clk_pix` domain, not another `clk_sys` raise. Product 480p RBF stays `07f54d9f`. |
 
 ## Phase 4 (UX)
 | ID | Item | Status | Notes |

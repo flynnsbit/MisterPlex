@@ -549,3 +549,13 @@ is 1312×762. At 20 MHz that is **20.005 Hz**, not 24. 24.006 Hz needs
 break the proven 480p pair. Fit `Plex_720p24.qsf` as a sibling RBF; keep
 `07f54d9f` for 240/480. Host: 1500k ladder, `RequireReleased` on the 720p
 bank, nice `MiSTer` 19 during 720p play. See `docs/720p24-rbf.md`.
+
+## L53 — Chip Fmax ≠ this netlist's Fmax
+
+slot720p24 compiled clean (993 s) and produced RBF `e494a767`. STA: clk_sys
+Fmax **13.77 MHz** vs 24 MHz ask (slack −30.956). Other MiSTer cores run
+90–150 MHz because **those paths are pipelined and on their own PLL**.
+ao486's 90 MHz is the DDR bridge, not a 1280-wide YUV+decode cone on
+`clk_sys`. Do not deploy a TIMING_FAIL RBF. Do not raise `clk_sys` to buy
+24 Hz. Next: separate `clk_pix` for the 720p beam; leave 480p `clk_sys` at
+20 MHz.
