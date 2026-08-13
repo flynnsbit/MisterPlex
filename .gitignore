@@ -65,6 +65,9 @@ tests/hw/e2e/node_modules/
 Memory
 Memory/
 
+# HDMI Preview exports are local lab captures, not shareable source.
+lab/captures/
+
 # Agent scratch/build logs: never belongs in the repo (parent swept 7398 lines
 # into a mislabeled commit via `git add -A`, 2026-08-04). Both forms: dir and symlink.
 .agent-work

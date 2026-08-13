@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=HDMI Preview
+Comment=Live MiSTer HDMI capture with pause + red-line annotations
+Exec=@HDMI_PREVIEW_EXEC@
+Icon=camera-video
+Terminal=false
+Categories=AudioVideo;Video;Utility;
+StartupNotify=true
