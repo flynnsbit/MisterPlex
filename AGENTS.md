@@ -94,6 +94,7 @@ values are redacted from every text file that is.
 - **[`docs/LESSONS.md`](docs/LESSONS.md) — accumulated case law under rule 0. Read this
   before reasoning about a build, a gate, a device symptom, or an area budget. Every rule
   in it was paid for with a real wrong conclusion in this project.**
+- **True480 / 720p24:** `docs/LESSONS.md` **L44–L50**, [`docs/true480-fixed-cadence-audit.md`](docs/true480-fixed-cadence-audit.md), [`docs/display-resolution.md`](docs/display-resolution.md). Product 240p/480p is a matched present contract (624/618/640, native DAR, `RequireReleased`, 640×384 decode budget). 720p is alpha; 24 fps is blocked on host publish (`T_copy_arm`) + real `clk_pix` ≥ 29.70 MHz, not another exclusive decode fit.
 - `docs/phase3-decode.md`, `docs/phase3-3l-idct.md` — decode path  
 - `docs/p3-wide-rca.md` — full-width / pillar  
 - `docs/crt-lcd-lab-checklist.md` — CRT/LCD lab  
