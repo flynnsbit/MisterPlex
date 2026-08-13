@@ -68,10 +68,18 @@ void usage(const char* argv0) {
         "Usage: %s [--sync|--no-sync] [--flush] [--host-copy]\n"
         "          [--format yuv420p] [--geometry auto|exact|plex480p]\n"
         "          [--width W --height H | --len BYTES]\n"
-        "          [--loops N] [--bank 0|1]\n"
+        "          [--phys HEX|DEC] [--loops N] [--bank 0|1]\n"
         "Writes a DDR frame window only; it does not touch SPI or kick the frame reader.\n"
-        "--host-copy avoids /dev/mem and measures memcpy scaling on the build host.\n",
-        argv0);
+        "--host-copy avoids /dev/mem and measures memcpy scaling on the build host.\n"
+        "--phys mmap physical base (HEX or DEC). Default 0x%08X (kDdrFrameBase).\n"
+        "--width 1280 --height 720 does not retarget --phys; old sweeps stay comparable.\n"
+        "Phase 0 T_copy into reserved PL330 window (do not clobber live banks):\n"
+        "  %s --phys 0x%08X --len %d   # kDdrPl330ScratchPhys / kPl330AbiRegionPhys\n"
+        "Live 480p banks=0x%08X  720p Option-C banks=0x%08X\n"
+        "Product DMA staging example: kPl330StagingPhys=0x%08X (scratch+4KiB).\n",
+        argv0, kDdrFrameBase, argv0, misterplex::kDdrPl330ScratchPhys,
+        misterplex::kPlex720pYuv420pBytes, misterplex::kDdrFramePhysBase,
+        misterplex::kPlex720pPhysBase, misterplex::kPl330StagingPhys);
 }
 
 } // namespace
@@ -85,6 +93,7 @@ int main(int argc, char** argv) {
     int bank = 0;
     int width = 320;
     int height = 240;
+    uint32_t physBase = kDdrFrameBase;
     bool lenSet = false;
     std::string geometryMode = "auto";
     misterplex::DdrFrameFormat format = misterplex::DdrFrameFormat::Yuv420p;
@@ -129,6 +138,15 @@ int main(int argc, char** argv) {
         } else if (a == "--len" && i + 1 < argc) {
             len = static_cast<size_t>(std::strtoull(argv[++i], nullptr, 0));
             lenSet = true;
+        } else if (a == "--phys" && i + 1 < argc) {
+            char* end = nullptr;
+            errno = 0;
+            const unsigned long v = std::strtoul(argv[++i], &end, 0);
+            if (errno != 0 || end == argv[i] || *end != '\0' || v > 0xFFFFFFFFul) {
+                std::fprintf(stderr, "bad --phys: %s (want HEX|DEC)\n", argv[i]);
+                return 2;
+            }
+            physBase = static_cast<uint32_t>(v);
         } else if (a == "--bank" && i + 1 < argc) {
             bank = std::atoi(argv[++i]);
         } else if (a == "-h" || a == "--help") {
@@ -150,8 +168,8 @@ int main(int argc, char** argv) {
                          : misterplex::makeDdrFrameGeometry(width, height);
     misterplex::DdrFrameLayout layout =
         lenSet ? misterplex::makeDdrFrameLayout(320, static_cast<int>(len / (320 * 2)),
-                                                kDdrFrameBase)
-               : misterplex::makeDdrFrameLayout(geometry, kDdrFrameBase, 0x40000u, format);
+                                                physBase)
+               : misterplex::makeDdrFrameLayout(geometry, physBase, 0x40000u, format);
     if (lenSet) {
         layout.width = 0;
         layout.height = 0;
@@ -161,8 +179,9 @@ int main(int argc, char** argv) {
         layout.chroma_line_qwords = 0;
         layout.frame_bytes = len;
         layout.format = format;
+        layout.phys_base = physBase;
         layout.bank_stride = misterplex::alignUpU32(static_cast<uint32_t>(len), 0x40000u);
-        layout.doorbell_phys = kDdrFrameBase + layout.bank_stride * 2u - 0x1000u;
+        layout.doorbell_phys = physBase + layout.bank_stride * 2u - 0x1000u;
         layout.map_bytes = layout.bank_stride * 2u;
     } else {
         len = layout.frame_bytes;
@@ -188,13 +207,14 @@ int main(int argc, char** argv) {
         const double frameMs = (wallSec * 1000.0) / static_cast<double>(loops);
         const double frameCpuMs = (cpuSec * 1000.0) / static_cast<double>(loops);
         std::printf("ddr_write_bench host_copy=%d sync=%d flush=%d loops=%d len=%zu bank=%d "
-                    "format=%s coded=%dx%d display=%dx%d presented=%dx%d "
+                    "phys=0x%08X format=%s coded=%dx%d display=%dx%d presented=%dx%d "
                     "present_x=%d present_y=%d line_bytes=%d line_qwords=%d "
                     "chroma_line_bytes=%d chroma_line_qwords=%d bank_stride=0x%X "
                     "map_bytes=0x%X seconds=%.6f cpu_seconds=%.6f MiB=%.3f MiBps=%.3f "
                     "frame_ms=%.3f frame_cpu_ms=%.3f fps30_budget_pct=%.1f "
                     "fps60_budget_pct=%.1f\n",
                     hostCopy ? 1 : 0, useSync ? 1 : 0, flush ? 1 : 0, loops, len, bank,
+                    physBase,
                     formatName(layout.format), layout.coded_width, layout.coded_height,
                     layout.display_width, layout.display_height, layout.presented_width,
                     layout.presented_height, layout.present_x, layout.present_y,
@@ -242,7 +262,7 @@ int main(int argc, char** argv) {
     }
 
     void* map = mmap(nullptr, layout.map_bytes, PROT_READ | PROT_WRITE, MAP_SHARED, fd,
-                     kDdrFrameBase);
+                     static_cast<off_t>(physBase));
     if (map == MAP_FAILED) {
         std::perror("mmap");
         ::close(fd);
