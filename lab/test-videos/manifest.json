@@ -1,0 +1,3576 @@
+{
+  "schema_version": 1,
+  "corpus": "MiSTerPlex PMS test-video library",
+  "file_count": 143,
+  "total_size_bytes": 8563774346,
+  "files": [
+    {
+      "filename": "MiSTerPlex AdvReal 624x352 24fps 500kbit ref1 300s (2026).mp4",
+      "size_bytes": 20668427,
+      "sha256": "1fc4d8235676f00f4565c780f7cea364821748bba3c30ffbb3a335b4a0fff81d",
+      "duration_seconds": 300.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 352,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 1,
+          "channel_layout": "mono"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex AdvReal 624x480 24fps 1200kbit ref1 300s (2026).mp4",
+      "size_bytes": 46757137,
+      "sha256": "b76116ad893b4abfff89255a206a3da383b2fbf36b00eac92e39d8c15772a861",
+      "duration_seconds": 300.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 1,
+          "channel_layout": "mono"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex AdvReal 624x480 24fps 1800kbit ref1 300s (2026).mp4",
+      "size_bytes": 69117598,
+      "sha256": "e5fbc9b7b083e5ae5038b90848af0a1e91c9bca41c7e77216d0668ad3717304f",
+      "duration_seconds": 300.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 1,
+          "channel_layout": "mono"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex AdvReal 624x480 24fps 400kbit ref1 300s (2026).mp4",
+      "size_bytes": 16879419,
+      "sha256": "007c44ab84449183dcd4d63f58ac8181de8805b2e224e2b7c0c9a7bce3e1d694",
+      "duration_seconds": 300.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 1,
+          "channel_layout": "mono"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex AdvReal 624x480 24fps 500kbit ref1 300s (2026).mp4",
+      "size_bytes": 20615981,
+      "sha256": "46b3e03ba11358f9c2e7343848342fb0e109af322de9c89ae15f40994fc77fc1",
+      "duration_seconds": 300.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 1,
+          "channel_layout": "mono"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex AdvReal 624x480 24fps 500kbit ref1 900s (2026).mp4",
+      "size_bytes": 61718668,
+      "sha256": "620894f5c6733644d37401428fd11b8c6fff0fe0b16cd7db316cd434fb033c15",
+      "duration_seconds": 900.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 1,
+          "channel_layout": "mono"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex AdvReal 624x480 24fps 500kbit ref3 300s (2026).mp4",
+      "size_bytes": 20557853,
+      "sha256": "6a813437e7911d6abdaa0477321867086c46e14c24ba6b1122f39a110930b78c",
+      "duration_seconds": 300.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 1,
+          "channel_layout": "mono"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex AdvReal 624x480 24fps 800kbit ref1 300s (2026).mp4",
+      "size_bytes": 31813607,
+      "sha256": "456d9abc69ae4c78fcadc91c12e8e4860a314029b5831c8d06e6be58d6f39867",
+      "duration_seconds": 300.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 1,
+          "channel_layout": "mono"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex AdvReal 640x480 24fps 500kbit ref1 300s (2026).mp4",
+      "size_bytes": 20608913,
+      "sha256": "827b073f8965752e28fa600e93fde0bc395c2dc62880d37cee78688cb73d0a90",
+      "duration_seconds": 300.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 640,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 1,
+          "channel_layout": "mono"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex AdvReal 704x396 24fps 500kbit ref1 300s (2026).mp4",
+      "size_bytes": 20647077,
+      "sha256": "a17c98c90f25efa60f840fe7cbf0ec0cf1d4d02eaa5dd001b07fd2c1c351b6bb",
+      "duration_seconds": 300.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 704,
+        "height": 396,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 1,
+          "channel_layout": "mono"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex AdvReal 720x480 24fps 500kbit ref1 300s (2026).mp4",
+      "size_bytes": 20606745,
+      "sha256": "2c71c1946aa474281f3f7faeda47a0724f8ab25627e61de9220e7424c80545d1",
+      "duration_seconds": 300.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 720,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 1,
+          "channel_layout": "mono"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex AudioID Glass 480p 24fps 1800s (2026).mp4",
+      "size_bytes": 103067703,
+      "sha256": "e0399d93862a1815b06f20a5b7f182f9f655345a5cb6cf52e3b05a4549b60f09",
+      "duration_seconds": 1800.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex AudioID Glass 480p 24fps 60s (2026).mp4",
+      "size_bytes": 3425781,
+      "sha256": "7863b28f8755b3ee216b3cbde8ea4aaad23792d53d8ba13118da5aedd0603545",
+      "duration_seconds": 60.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex AudioID Glass 480p 24fps 60s audioPlus100ms (2026).mp4",
+      "size_bytes": 3424806,
+      "sha256": "d11b3bd61bb011df8b8bd3c1e893ca47d7c0763a5ab77a55527ffabdc53833be",
+      "duration_seconds": 60.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex AVSync Glass 480p 24fps 600s (2026).mp4",
+      "size_bytes": 28075629,
+      "sha256": "b60c9e049af9c2e9be45e3a18764b01d7a8b538d01233e7a42c3b41492a32e69",
+      "duration_seconds": 600.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex AVSync Glass 480p 24fps 600s audioPlus100ms (2026).mp4",
+      "size_bytes": 28067830,
+      "sha256": "3a43544a39d3974320a55e626d83979ec41ab66f7a84aa205c6654b9dec567cb",
+      "duration_seconds": 600.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex B6 RealGlass 624x352 23976fps 300s (2026).mp4",
+      "size_bytes": 80580887,
+      "sha256": "ca5253f2bdeb732c59ad95dea27b584cd812606a611c5a9ae79d10ab02de3125",
+      "duration_seconds": 300.008042,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 352,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24000/1001"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex B6 RealGlass 624x352 24fps 300s (2026).mp4",
+      "size_bytes": 80677366,
+      "sha256": "b8f64aebdaf0dd7f7996524099636cbd6014d98800f0b47160a731dc46420fc9",
+      "duration_seconds": 300.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 352,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex B6 RealGlass 640x480 23976fps 300s (2026).mp4",
+      "size_bytes": 80261479,
+      "sha256": "cc3781dd6bed992fe7e20d2385298db21dc67247b72a7971ed80dc468fdbeab8",
+      "duration_seconds": 300.008042,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 640,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24000/1001"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex B6 RealGlass 640x480 24fps 300s (2026).mp4",
+      "size_bytes": 80324161,
+      "sha256": "c04dd08ba397f5fee66a7b94a7661a86197389817c359cbcf8bfaec307a67318",
+      "duration_seconds": 300.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 640,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex B6 RealGlass 704x396 23976fps 300s (2026).mp4",
+      "size_bytes": 80547488,
+      "sha256": "1b80639dce00d1614ccaf4ef0af826ef1e832c566268aaee7b09375a63787055",
+      "duration_seconds": 300.008042,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 704,
+        "height": 396,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24000/1001"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex B6 RealGlass 704x396 24fps 300s (2026).mp4",
+      "size_bytes": 80620727,
+      "sha256": "88f808964ab110d6e29303b429b7af9499e8d76a403ebac17db8065042e5e20a",
+      "duration_seconds": 300.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 704,
+        "height": 396,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex B6 RealGlass 720x480 23976fps 300s (2026).mp4",
+      "size_bytes": 80317677,
+      "sha256": "c7c288f2f1444473aaf385c64fe522b16a7f7b5d9382b3204ac6cda5250b23cb",
+      "duration_seconds": 300.008042,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 720,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24000/1001"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex B6 RealGlass 720x480 24fps 300s (2026).mp4",
+      "size_bytes": 80415113,
+      "sha256": "99125721cee2f3577ec3d6e0d3a8db40ab5687b7f446572f303c6d51f596f7c2",
+      "duration_seconds": 300.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 720,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex Bank480 FullBleed VRes AV 624x480 24fps 1200s (2026).mp4",
+      "size_bytes": 68434328,
+      "sha256": "63225838cd1b3294679c793225e0c4f24651181f7adae68aa9a1b7e1ad1bfdce",
+      "duration_seconds": 1200.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex BitrateLadder 624x352 24fps 700kbit ref1 600s (2026).mp4",
+      "size_bytes": 56465574,
+      "sha256": "3162291292f6ac7d31a484698981155cfd9e8174e3eecee7dbc009f1ad4ddab3",
+      "duration_seconds": 600.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 352,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 1,
+          "channel_layout": "mono"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex BitrateLadder 624x480 24fps 1000kbit ref1 600s (2026).mp4",
+      "size_bytes": 78889567,
+      "sha256": "dbd1470ea53ba380b36ab4bf6aac0edb82e1279500f93036cc90057790c85cfb",
+      "duration_seconds": 600.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 1,
+          "channel_layout": "mono"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex BitrateLadder 624x480 24fps 1400kbit ref1 600s (2026).mp4",
+      "size_bytes": 108922279,
+      "sha256": "0d31504b8ed3fc9f441d438b5ea2fdde591d526b510f000de8750659ffbb0738",
+      "duration_seconds": 600.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 1,
+          "channel_layout": "mono"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex BitrateLadder 624x480 24fps 1800kbit ref1 600s (2026).mp4",
+      "size_bytes": 138789137,
+      "sha256": "53951d1606c19eb6e213f36225f4062ec264738ce594712a82b016914a303281",
+      "duration_seconds": 600.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 1,
+          "channel_layout": "mono"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex BitrateLadder 624x480 24fps 2200kbit ref1 600s (2026).mp4",
+      "size_bytes": 168787540,
+      "sha256": "c3a7b9856e297acf699bfe3f9867f404b76da85f4bae55f17cefb483fd5b2f4d",
+      "duration_seconds": 600.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 1,
+          "channel_layout": "mono"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex BitrateLadder 624x480 24fps 2600kbit ref1 600s (2026).mp4",
+      "size_bytes": 198857857,
+      "sha256": "28c7a7b3616d722f887bcb3c8addf1e6dd8fc8da7112ef1489db922f23ae6f4b",
+      "duration_seconds": 600.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 1,
+          "channel_layout": "mono"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex BitrateLadder 624x480 24fps 400kbit ref1 600s (2026).mp4",
+      "size_bytes": 33934564,
+      "sha256": "a4c22b59033ff00b5ae90ed0a3509bed963b0f9600dd4fc0ae00d2f360b53c2e",
+      "duration_seconds": 600.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 1,
+          "channel_layout": "mono"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex BitrateLadder 624x480 24fps 700kbit ref1 600s (2026).mp4",
+      "size_bytes": 56407141,
+      "sha256": "92c84f7c29a52e4f81fa6e6da907d438175886adde4bf4307483783e8756cc53",
+      "duration_seconds": 600.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 1,
+          "channel_layout": "mono"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex BitrateLadder 624x480 24fps 700kbit ref3 600s (2026).mp4",
+      "size_bytes": 55077429,
+      "sha256": "0d3490a5950292e115d40de465097e2ff23208b636f0b64e3223b4fc22a09b60",
+      "duration_seconds": 600.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 1,
+          "channel_layout": "mono"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex Cadence 320x240 24fps control_d0 300s (2026).mp4",
+      "size_bytes": 45248557,
+      "sha256": "3d97ceca6caf8f427c95f00da957398bc8b9fe9608987a07be1d5feb95b8c8fc",
+      "duration_seconds": 300.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 320,
+        "height": 240,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 1,
+          "channel_layout": "mono"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex Cadence 320x240 24fps drop1 300s (2026).mp4",
+      "size_bytes": 45277129,
+      "sha256": "013247ee90003b8c2cc33bd6cf22af4cf654f581f1b1fd26be82304482ae3368",
+      "duration_seconds": 299.958333,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 320,
+        "height": 240,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 1,
+          "channel_layout": "mono"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex Cadence 320x240 24fps drop20 299s (2026).mp4",
+      "size_bytes": 45139702,
+      "sha256": "6b0c914c8fb2c2e1bac2dab10f88a48f5b05fd24d177fcf4f617cff89d8e384b",
+      "duration_seconds": 299.166667,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 320,
+        "height": 240,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 1,
+          "channel_layout": "mono"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex Cadence 320x240 24fps drop5 300s (2026).mp4",
+      "size_bytes": 45234765,
+      "sha256": "43947131b8374a798bec9746e213c0ccb0c3915a7886901db8c9b5a911a9a33c",
+      "duration_seconds": 299.791667,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 320,
+        "height": 240,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 1,
+          "channel_layout": "mono"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex Cadence 320x240 24fps dup1 300s (2026).mp4",
+      "size_bytes": 45256839,
+      "sha256": "23c1b199a6444ca929ede37d51142e58030ad6926a6f3d0e9b6f658d872e65b9",
+      "duration_seconds": 300.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 320,
+        "height": 240,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 1,
+          "channel_layout": "mono"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex Cadence 320x240 24fps dup20 300s (2026).mp4",
+      "size_bytes": 45282905,
+      "sha256": "97c095561f318e62d3aa1402cbaf7002c868bad87b7fdbf21e2d15cfa07b9bf3",
+      "duration_seconds": 300.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 320,
+        "height": 240,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 1,
+          "channel_layout": "mono"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex Cadence 320x240 24fps dup5 300s (2026).mp4",
+      "size_bytes": 45279808,
+      "sha256": "268902bd02d53b50b33899b8f759dd9115d8b2f7418c7e33463e25342d7fd132",
+      "duration_seconds": 300.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 320,
+        "height": 240,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 1,
+          "channel_layout": "mono"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex Cadence 320x240 24fps periodic_hold_every24 300s (2026).mp4",
+      "size_bytes": 45259496,
+      "sha256": "27247a90c3d0fea9f4ae2c78a1f525c2b7129f095c9858638d2c4fc3b952931b",
+      "duration_seconds": 300.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 320,
+        "height": 240,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 1,
+          "channel_layout": "mono"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex Cadence 624x480 24fps control_d0 300s (2026).mp4",
+      "size_bytes": 90566262,
+      "sha256": "8f68882883fa040992f92b68f44d333621b85b7fd75b2a71e598cb46813c986e",
+      "duration_seconds": 300.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 1,
+          "channel_layout": "mono"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex Cadence 624x480 24fps drop1 300s (2026).mp4",
+      "size_bytes": 90621317,
+      "sha256": "bffb398764b120fdb8595828b4766fa691adfc9b96291c24492c3adc9c67aa06",
+      "duration_seconds": 299.958333,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 1,
+          "channel_layout": "mono"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex Cadence 624x480 24fps drop20 299s (2026).mp4",
+      "size_bytes": 93030001,
+      "sha256": "d178f5a9e00da88dabc24fe48df3c6797faac4233d3f47d06982a77071d5dc40",
+      "duration_seconds": 299.166667,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 1,
+          "channel_layout": "mono"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex Cadence 624x480 24fps drop5 300s (2026).mp4",
+      "size_bytes": 92533167,
+      "sha256": "17aad3c3db9ebba8b5a96290139e1fa131e63fbf3ed54f56556e510ca3a3ea7d",
+      "duration_seconds": 299.791667,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 1,
+          "channel_layout": "mono"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex Cadence 624x480 24fps dup1 300s (2026).mp4",
+      "size_bytes": 90647644,
+      "sha256": "5734c665f6c70df8379efad9b6781c1fafbf6d423597c7384896fd2c5c9ef67c",
+      "duration_seconds": 300.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 1,
+          "channel_layout": "mono"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex Cadence 624x480 24fps dup20 300s (2026).mp4",
+      "size_bytes": 93233122,
+      "sha256": "2047bb48503bd5f282ec7b39a32ab7b19d498edc1457ed1f0ccaa5269f026fe0",
+      "duration_seconds": 300.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 1,
+          "channel_layout": "mono"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex Cadence 624x480 24fps dup5 300s (2026).mp4",
+      "size_bytes": 92436185,
+      "sha256": "1132bb9379fe3bf2f55740742f149bca58b36e854f074f4fbff9ca6780f55814",
+      "duration_seconds": 300.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 1,
+          "channel_layout": "mono"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex Cadence 624x480 24fps periodic_hold_every24 300s (2026).mp4",
+      "size_bytes": 93234628,
+      "sha256": "c29cad0548e1479a1ef79de389b633c3e1535e70d3ace106712e18c0e91c8c69",
+      "duration_seconds": 300.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 1,
+          "channel_layout": "mono"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex CBR-DP 624x480 24fps 1200kbit 180s (2026).mp4",
+      "size_bytes": 29992916,
+      "sha256": "64e072857b0b8502840d8c238c6903fe544451f3b770bf4b6d596efa929ac4b7",
+      "duration_seconds": 180.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex CBR-DP 624x480 24fps 1600kbit 180s (2026).mp4",
+      "size_bytes": 39040838,
+      "sha256": "775d8964040f8c1495a4d97f6e388e20e5ae076326fea304acc8f59909475511",
+      "duration_seconds": 180.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex CBR-DP 624x480 24fps 2000kbit 180s (2026).mp4",
+      "size_bytes": 48087454,
+      "sha256": "fe52ca8dd026509ea63db72e1eb56ad3dc11313d3c901c5529632163962a698e",
+      "duration_seconds": 180.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex CBR-DP 624x480 24fps 400kbit 180s (2026).mp4",
+      "size_bytes": 11978107,
+      "sha256": "11f431c33f2579534a0ead25f55b79d805c6f7deeb159276426e81cab72bdb47",
+      "duration_seconds": 180.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex CBR-DP 624x480 24fps 800kbit 180s (2026).mp4",
+      "size_bytes": 20985991,
+      "sha256": "961b8cbfa4cc2c83274a19f7071f8ce48c93da774269e022ade2432435675422",
+      "duration_seconds": 180.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex CBR-DP 640x480 24fps 1200kbit 180s (2026).mp4",
+      "size_bytes": 29995905,
+      "sha256": "f7f303f281bb3a87aad528d651d665c028df7e53ceaa504c021b727c440b27c7",
+      "duration_seconds": 180.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 640,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex DecLoad cb_deblock_off 624x480 24fps 800k 180s (2026).mp4",
+      "size_bytes": 20816362,
+      "sha256": "0bfadffcebd9d810833208587d7117666bae7314391b65ccf432a0a896e535c2",
+      "duration_seconds": 180.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex DecLoad cb_deblock_strong 624x480 24fps 800k 180s (2026).mp4",
+      "size_bytes": 20807250,
+      "sha256": "3f6a935be5f7a66d57bc75b114b6e0afd2fddcb5961060f412bdff4ce518e7d2",
+      "duration_seconds": 180.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex DecLoad cb_gop240 624x480 24fps 800k 180s (2026).mp4",
+      "size_bytes": 20711831,
+      "sha256": "118c4161af2cd50f27f6890130c9150fece1b8f25528d95afd76a20f87c42115",
+      "duration_seconds": 180.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex DecLoad cb_gop24 624x480 24fps 800k 180s (2026).mp4",
+      "size_bytes": 21062190,
+      "sha256": "b7bc0d5059a645536b44ccd289601af3425dc15ba22d1ea88e94f8232d837dea",
+      "duration_seconds": 180.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex DecLoad cb_noise_dense 624x480 24fps 800k 180s (2026).mp4",
+      "size_bytes": 20908278,
+      "sha256": "6efacda8007299e32982c738d1cd3d623e823222d2280efaa894d2bd2f0beb6e",
+      "duration_seconds": 180.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex DecLoad cb_ref1_cavlc 624x480 24fps 800k 180s (2026).mp4",
+      "size_bytes": 20820350,
+      "sha256": "27bd24e7f6bc783302910cbba15aaa9d820addd5195ddb111243ac8253eb3bc5",
+      "duration_seconds": 180.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex DecLoad cb_ref3_cavlc 624x480 24fps 800k 180s (2026).mp4",
+      "size_bytes": 20669883,
+      "sha256": "495882d1c202938adb86bf86a4ed59bc4cf8e89e30dc05d780e3c675a5400f62",
+      "duration_seconds": 180.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex DecLoad cb_ref5_cavlc 624x480 24fps 800k 180s (2026).mp4",
+      "size_bytes": 20666031,
+      "sha256": "662bf4984501a6ed75dfc2bf4936a1127efe1269e04467ce1075f391534b2725",
+      "duration_seconds": 180.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex DecLoad cb_slices4 624x480 24fps 800k 180s (2026).mp4",
+      "size_bytes": 20712330,
+      "sha256": "3b6fa2a28532883ce7b6bdc59b99606368aed20fd5760ee27347f45f799a631b",
+      "duration_seconds": 180.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex DecLoad cb_slices8 624x480 24fps 800k 180s (2026).mp4",
+      "size_bytes": 20740795,
+      "sha256": "91f23323df1dc8153eaf8bc6d8e8ff7224005e175618b521ce73f371f795433d",
+      "duration_seconds": 180.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex DecLoad high_cabac_ref1 624x480 24fps 800k 180s (2026).mp4",
+      "size_bytes": 20821745,
+      "sha256": "7df1aebd18d7e0c490208d7d2ad031283b606ab723f5f0d313c8e5e77127db68",
+      "duration_seconds": 180.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "High",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex DecLoad main_bf2_cavlc 624x480 24fps 800k 180s (2026).mp4",
+      "size_bytes": 20208436,
+      "sha256": "11e2fa14d69fc425b259d2542501092f94bd2ec47bb72649cb63945e52b0e6c1",
+      "duration_seconds": 180.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Main",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex DeliveryGeom 426x240 24fps 90s (2026).mp4",
+      "size_bytes": 2817297,
+      "sha256": "e2ecec96b6f914ce895d9f1934ad9c949b678a3a575a13186683d593a6740458",
+      "duration_seconds": 90.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 426,
+        "height": 240,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex DeliveryGeom 426x240 30fps 90s (2026).mp4",
+      "size_bytes": 3335586,
+      "sha256": "56c871cca83870ee8b9596682834c9ea70ac66dcdf6d2e1e922358a74ad32ba0",
+      "duration_seconds": 90.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 426,
+        "height": 240,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "30/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex DeliveryGeom 624x350 24fps 90s (2026).mp4",
+      "size_bytes": 3781537,
+      "sha256": "ddd2d485cc39c6d13eb39886e6e7cb52fac8e1458b8388c1a14b6f45570c6883",
+      "duration_seconds": 90.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 350,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex DeliveryGeom 624x350 30fps 90s (2026).mp4",
+      "size_bytes": 4437954,
+      "sha256": "1f4bbc064ec26cf4093444acab513394a92e0f21a4d59cf424c7a95c7849302f",
+      "duration_seconds": 90.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 350,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "30/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex DeliveryGeom 624x352 24fps 90s (2026).mp4",
+      "size_bytes": 3771678,
+      "sha256": "220f8fc817da231bbb77abd6ac211400e9f55df8804fbfaa3afbab425fff5aea",
+      "duration_seconds": 90.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 352,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex DeliveryGeom 624x352 30fps 90s (2026).mp4",
+      "size_bytes": 4425809,
+      "sha256": "642b6e401aad74e93f4c18cdbf51678708c4ed6d7d408a5c05ebbc87865c2ab0",
+      "duration_seconds": 90.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 352,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "30/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex DeliveryGeom 624x480 24fps 90s (2026).mp4",
+      "size_bytes": 3737521,
+      "sha256": "7c03b7fc9f8698853944ac78fd0a3592e726b137a3082b282dab86d8d52aa983",
+      "duration_seconds": 90.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex DeliveryGeom 624x480 30fps 90s (2026).mp4",
+      "size_bytes": 4667191,
+      "sha256": "81772ff9dc8fc01033c4e26fdd065178377d522926859d21f34066a276342a06",
+      "duration_seconds": 90.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "30/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex DeliveryGeom 640x480 24fps 90s (2026).mp4",
+      "size_bytes": 3923280,
+      "sha256": "e430e04b456b3d9a58cbda37f908a3064b8c90bd86fd91134b815502f717e921",
+      "duration_seconds": 90.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 640,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex DeliveryGeom 640x480 30fps 90s (2026).mp4",
+      "size_bytes": 4900795,
+      "sha256": "13327c6c318e69fc0fdcab6d968d4c019acaf84238f97a2a76e9adf4e778f048",
+      "duration_seconds": 90.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 640,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "30/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex DeliveryGeom 720x480 24fps 90s (2026).mp4",
+      "size_bytes": 4079990,
+      "sha256": "7ab61882c70ff7d7a987cdd436ded2b0dd2fec1563f3546fb5df464381f1781a",
+      "duration_seconds": 90.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 720,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex DeliveryGeom 720x480 30fps 90s (2026).mp4",
+      "size_bytes": 5076048,
+      "sha256": "883eefbf54a69a53b03c05693b02f6d18729b65d51521fc6a4b68e9e6f061b79",
+      "duration_seconds": 90.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 720,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "30/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex Disc Nyquist 240p 320x240 (2026).mp4",
+      "size_bytes": 709928,
+      "sha256": "43b98be9c318ee4e441820b38efee5b548551c50a8dfcd76bc5fb83da8a72b10",
+      "duration_seconds": 30.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 320,
+        "height": 240,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex Disc Nyquist 480p 624x480 (2026).mp4",
+      "size_bytes": 1411618,
+      "sha256": "c92fd84639f823070beb10175d8c02bdb0d2bea620963076866c8a45a79e84d6",
+      "duration_seconds": 30.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex DP-Control 624x480 24fps 400kbit ref1 300s (2026).mp4",
+      "size_bytes": 19763030,
+      "sha256": "40165128eebb2264e44d88c263ce40917bd1f9c758354d5c6a8c489a8479bd5c",
+      "duration_seconds": 300.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex Glass Ledger 480p 24fps 360s (2026).mp4",
+      "size_bytes": 16261571,
+      "sha256": "970a59ce8e4e1915fda4017d7cf740c87c792eafc69010130c075f47a0b2cfce",
+      "duration_seconds": 360.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex Glass OCRProof 240p 24fps 600s (2026).mp4",
+      "size_bytes": 15958494,
+      "sha256": "ed256bbea0347c36a914dfd2e043bdb6b4ad17328f17b58a5f0aecb6920c1c68",
+      "duration_seconds": 600.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 320,
+        "height": 240,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex Glass OCRProof 480p 24fps 600s (2026).mp4",
+      "size_bytes": 29707317,
+      "sha256": "b65a746f966413d91218fa611d8a64a7516a64fc2bd0271238a1f87a0c51d1fc",
+      "duration_seconds": 600.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex Glass OCRProof 624x352 24fps 180s (2026).mp4",
+      "size_bytes": 9914267,
+      "sha256": "8903208c2155da3d6c582e2a006f068897fcd4e6a21c2ec388fd2c6cb4e33c63",
+      "duration_seconds": 180.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 352,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex Glass OCRProof 624x480 30fps 120s (2026).mp4",
+      "size_bytes": 7556359,
+      "sha256": "237d27f637db338ead3279305ebe1b44d9404c9fae59b0a01a411f9834356a9e",
+      "duration_seconds": 120.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "30/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex Glass OCRProof 624x480 60fps 120s (2026).mp4",
+      "size_bytes": 14053246,
+      "sha256": "35e90a5b364255fb38dbc589d3cbd6108f032233ad095c32b231ce7e8049de15",
+      "duration_seconds": 120.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "60/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex Glass OCRProof 640x480 24fps 180s (2026).mp4",
+      "size_bytes": 8956133,
+      "sha256": "c43da4bce4813195ee58418866b19600e3f2ed24591c60db0064b6795bf17870",
+      "duration_seconds": 180.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 640,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex Glass OCRProof 720x480 24fps 180s (2026).mp4",
+      "size_bytes": 10148235,
+      "sha256": "9161ddb056958577c1f0f0a7ea01938d93c86308ed64cd6b538bf918a563b3f8",
+      "duration_seconds": 180.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 720,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex Grid720 FreckleMap A1-Z15 30fps 90s (2026).mp4",
+      "size_bytes": 17843899,
+      "sha256": "30cc61667a2afc4ab1d2e6b07da73082f3abddfbaab286be3c6934535b3bb02b",
+      "duration_seconds": 90.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "High",
+        "width": 1280,
+        "height": 720,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "30/1"
+      },
+      "audio": [],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex PromoScoreable 1440x1080 24fps 600s (2026).mp4",
+      "size_bytes": 439473085,
+      "sha256": "515c68634a121e1bd104ea6eed603f7140d9f15e7129faab84091378003de7af",
+      "duration_seconds": 600.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 1440,
+        "height": 1080,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex PromoScoreable 624x352 24fps 600s (2026).mp4",
+      "size_bytes": 174816550,
+      "sha256": "b205e4a02f34631bac24caa097febe5ab6e0feeefca0261f15eb25b91285d907",
+      "duration_seconds": 600.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 352,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex PromoScoreable 624x480 24fps 600s (2026).mp4",
+      "size_bytes": 196560248,
+      "sha256": "3e66ab0c24cd7ca4096c8d3bc08caf44260fadd6aef29f826b6e9faef05fee91",
+      "duration_seconds": 600.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex PromoScoreable 624x480 24fps 600s audioPlus100ms (2026).mp4",
+      "size_bytes": 196574746,
+      "sha256": "9d897056869c174b49f939b76c1b6ffdc1d5e42fe99b51f505c32793a6128c34",
+      "duration_seconds": 600.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex PromoScoreable 640x480 24fps 600s (2026).mp4",
+      "size_bytes": 196536442,
+      "sha256": "756ff5fa5b9877964d97a5a3b77dc5dfc18eb6561051ee4c9301e35bca833706",
+      "duration_seconds": 600.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 640,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex PromoScoreable 720x404 24fps 600s (2026).mp4",
+      "size_bytes": 196616114,
+      "sha256": "7b2494486be88fa2051c77a297d4cbc29817b681c94c42990eee35e67532ef88",
+      "duration_seconds": 600.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 720,
+        "height": 404,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex PromoScoreable 720x480 24fps 600s (2026).mp4",
+      "size_bytes": 218435860,
+      "sha256": "608f836dfce389a02201d511890b9df66e9e66a95b0131d0a5875f07c10803af",
+      "duration_seconds": 600.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 720,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex Real BBB 624x352 24fps 360s (2026).mp4",
+      "size_bytes": 96917758,
+      "sha256": "c3f8d9c26c3373ac6f4f25678cfadedff9cb012d2d52de1147acda2467c2cf06",
+      "duration_seconds": 360.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 352,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex Real BBB 720x480 24fps (2026).mp4",
+      "size_bytes": 196495833,
+      "sha256": "ba07858750c00b25c5803092991d92728a544fb57c5cf5de173db23c0926c9fd",
+      "duration_seconds": 596.497000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 720,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex Real BBB GlassAV 1440x1080 24fps 90s (2026).mp4",
+      "size_bytes": 56332526,
+      "sha256": "a2547e563cff703817a873daad38f6b8b714aded26a3b36c6edca16525c79e2a",
+      "duration_seconds": 90.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 1440,
+        "height": 1080,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex Real BBB GlassAV 426x240 24fps 180s (2026).mp4",
+      "size_bytes": 30526719,
+      "sha256": "d8447286268ae347fa70f2ffc796167b5ecfde7793033eca9f4200ba73afcf92",
+      "duration_seconds": 180.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 426,
+        "height": 240,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex Real BBB GlassAV 426x240 24fps 180s audioPlus100ms (2026).mp4",
+      "size_bytes": 30525392,
+      "sha256": "10a0cca90103707a590a412ad0a3cd8a7eb60137426afb023c3d9b94ed68e4e3",
+      "duration_seconds": 180.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 426,
+        "height": 240,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex Real BBB GlassAV 624x352 24fps 180s (2026).mp4",
+      "size_bytes": 48348728,
+      "sha256": "14df3ea77154d72c711dafb2fcbe789f706399f12840e400c5bdfe82767dc72e",
+      "duration_seconds": 180.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 352,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex Real BBB GlassAV 624x352 24fps 180s audioPlus100ms (2026).mp4",
+      "size_bytes": 48336721,
+      "sha256": "5c2598d752ef4a1a1d6c00962de84148cbf8964c0aa864f02cb234403f041db4",
+      "duration_seconds": 180.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 352,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex Real BBB GlassAV 624x352 24fps 90s (2026).mp4",
+      "size_bytes": 29587348,
+      "sha256": "9890fa192c2af757b93f759156e657b0017105b0e22dffeed53c91c6759e44fd",
+      "duration_seconds": 90.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 352,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex Real BBB GlassAV 624x480 24fps 1200s (2026).mp4",
+      "size_bytes": 393168786,
+      "sha256": "55c1c9f91f1c455694ce93c10dd65f1ca8c8bbf13cc346ce3d586f76d16ef1b8",
+      "duration_seconds": 1200.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex Real BBB GlassAV 624x480 24fps 600s (2026).mp4",
+      "size_bytes": 196707445,
+      "sha256": "0eacfe7a4bac655767a387d2275d15ffd460d911f280550e38891fa5803df574",
+      "duration_seconds": 600.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex Real BBB GlassAV 624x480 24fps 600s audioPlus100ms (2026).mp4",
+      "size_bytes": 196691829,
+      "sha256": "c24fe68c8a7ab8396b53b07ff4b97f23ff31d09c5dc0f979d12dd2a1891ab6c8",
+      "duration_seconds": 600.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex Real BBB GlassAV 640x480 24fps 180s (2026).mp4",
+      "size_bytes": 59087991,
+      "sha256": "7c9721e31638db6fd0d7ff41cdf70fa577f069ae3537b275dabbc03e6deb613f",
+      "duration_seconds": 180.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 640,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex Real BBB GlassAV 640x480 24fps 180s audioPlus100ms (2026).mp4",
+      "size_bytes": 59065005,
+      "sha256": "b45ca0eac21460ade896d3ee73f35366e5d5f9a61b99bdf8bfd55410c4a8738e",
+      "duration_seconds": 180.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 640,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex Real BBB GlassAV 640x480 24fps 90s (2026).mp4",
+      "size_bytes": 29467121,
+      "sha256": "4af774045bb6baf13f8b438b51a9dfb685bafcb8f4f10a5bb0b69d818c40b2b8",
+      "duration_seconds": 90.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 640,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex Real BBB GlassAV 720x480 24fps 180s (2026).mp4",
+      "size_bytes": 65843964,
+      "sha256": "550d1220b7ca3153de5e05b42f9e3ff7e9534e1d5cd68710b9acc84b1026d0a7",
+      "duration_seconds": 180.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 720,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex Real BBB GlassAV 720x480 24fps 180s audioPlus100ms (2026).mp4",
+      "size_bytes": 65832087,
+      "sha256": "29279faa159475c5f557a8a19aae3c2f172b22cc9723bba313e2434c7bba5df1",
+      "duration_seconds": 180.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 720,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex Real BBB GlassAV 720x480 24fps 90s (2026).mp4",
+      "size_bytes": 29534741,
+      "sha256": "072db390f077b1c82781313d728a6e4cdccae89aa7e7180d4383ad2f86f27b7a",
+      "duration_seconds": 90.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 720,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex Real BBB GlassID 624x352 24fps 360s (2026).mp4",
+      "size_bytes": 117540874,
+      "sha256": "c42156f62ee5fa7e1180ea283722e15cacb041bd33492d88c4b03ba5c6936b5f",
+      "duration_seconds": 360.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 352,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex Real BBB GlassID 720x480 24fps (2026).mp4",
+      "size_bytes": 193795283,
+      "sha256": "9f6521f4d300ab21d28d96b58279b64d4865cf399d898ed9eb40704e32b4cad2",
+      "duration_seconds": 596.458333,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 720,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex ResKnee 320x240 24fps src400k CB ref1 90s (2026).mp4",
+      "size_bytes": 5974666,
+      "sha256": "96d4bad4df72a3de2c13a930707a7c9c3bb07920b3ae4fdbabd2e95b4ad368e9",
+      "duration_seconds": 90.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 320,
+        "height": 240,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex ResKnee 624x352 24fps src800k CB ref1 90s (2026).mp4",
+      "size_bytes": 10397405,
+      "sha256": "82ecfafcd573cbf50555d5c04e0628c94e6e93f4327f733fd328ad37e081be82",
+      "duration_seconds": 90.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 352,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex ResKnee 624x480 24fps src1200k CB ref1 90s (2026).mp4",
+      "size_bytes": 14750894,
+      "sha256": "f4212da0b81efc1c2eebb1f957740ae11f8fba259a96c6255794ed5293408441",
+      "duration_seconds": 90.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex ResKnee 624x480 24fps src1600k CB ref1 90s (2026).mp4",
+      "size_bytes": 19173165,
+      "sha256": "80823fc9e5d0ae125e48d9b3d7bcfe5c1654367e532d7073bc76d58e02d7a90f",
+      "duration_seconds": 90.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex ResKnee 624x480 24fps src2000k CB ref1 90s (2026).mp4",
+      "size_bytes": 23579402,
+      "sha256": "efd7ccd90372471dca0e35e079aa9d7ff84f61ed5a96f6715e7344477ded4437",
+      "duration_seconds": 90.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex ResKnee 624x480 24fps src2500k CB ref1 90s (2026).mp4",
+      "size_bytes": 29065445,
+      "sha256": "4ab930b8da844891d772d1558080a2439e2678ee6b3bb1bcc6448563203e03d5",
+      "duration_seconds": 90.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex ResKnee 624x480 24fps src400k CB ref1 90s (2026).mp4",
+      "size_bytes": 5898556,
+      "sha256": "29e09502af4260bd416a50199ed979a0915597abea38c0cfd221d3b2cb650804",
+      "duration_seconds": 90.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex ResKnee 624x480 24fps src800k CB ref1 90s (2026).mp4",
+      "size_bytes": 10347394,
+      "sha256": "8428e2152e3f58977aec7f3f2cba4cd365ae388ec4dd6a6a07356d394e06687a",
+      "duration_seconds": 90.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex Rowcount Vernier 624x480 24fps 120s (2026).mp4",
+      "size_bytes": 6146502,
+      "sha256": "1e5bce87629b827334076f08259d6ebc9e3b1132f91be9ce8a35fcb6b516cca1",
+      "duration_seconds": 120.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex S5 RealGlass 720x480 23976fps 1200s (2026).mp4",
+      "size_bytes": 393930676,
+      "sha256": "9063db03b2aee153bc2848fc9a9f9bdb64b6baa282178964c2147de4dfcae6a7",
+      "duration_seconds": 1200.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 720,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24000/1001"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex S5 RealGlass 720x480 24fps 1200s (2026).mp4",
+      "size_bytes": 393912477,
+      "sha256": "4ecbdc67423f41be9624fe51a714eb558bd96e8adb18e39e61e402b19b103003",
+      "duration_seconds": 1200.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 720,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "Big Buck Bunny derivative",
+      "source_url": "https://archive.org/details/BigBuckBunny_124",
+      "license": "CC BY 3.0"
+    },
+    {
+      "filename": "MiSTerPlex Soak 240p 23976fps (2026).mp4",
+      "size_bytes": 6515205,
+      "sha256": "1533e82b35ad312bc36f4d39fd20bae3e8047fba526da824f052861808fdaf06",
+      "duration_seconds": 360.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 320,
+        "height": 240,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24000/1001"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex Soak 480p 24fps (2026).mp4",
+      "size_bytes": 10953711,
+      "sha256": "51a1fe3dbddec6534e6ac2e6c37ebfd19b7e5e3cdc3aabbc34a544d217f09605",
+      "duration_seconds": 360.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex Soak 480p 24fps RAMP (2026).mp4",
+      "size_bytes": 16442312,
+      "sha256": "88fe33275bfdc24a526028090972feef65b0e32c80d373644a73bf3032c52ad5",
+      "duration_seconds": 360.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex Test 1080p (2026).mp4",
+      "size_bytes": 2426148,
+      "sha256": "7c27a2e2d62e7e05dcf1afe890e73dd9fa81a849ff3415fbb23923e307cc3a45",
+      "duration_seconds": 30.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 1920,
+        "height": 1080,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex Test 1080p2997 (2026).mp4",
+      "size_bytes": 4728339,
+      "sha256": "ee8a3e6328e22da8b9e1650f16df5dba62489889ac267d72b34d6d55ae58a395",
+      "duration_seconds": 12.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 1920,
+        "height": 1080,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "30000/1001"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 1,
+          "channel_layout": "mono"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex Test 240p (2026).mp4",
+      "size_bytes": 477560,
+      "sha256": "a703cebc08e10e50dcb1231e39a8d30b244bb0a75c519e56c8b11943bbd2479b",
+      "duration_seconds": 30.016000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 320,
+        "height": 240,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex Test 240p 30fps (2026).mp4",
+      "size_bytes": 415568,
+      "sha256": "4a6337a6a06a33b69a74bc88673a2338ff8ad61cd55e5f5441f523f9ac3b1856",
+      "duration_seconds": 30.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 320,
+        "height": 240,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "30/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 1,
+          "channel_layout": "mono"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex Test 240p 60fps (2026).mp4",
+      "size_bytes": 510396,
+      "sha256": "401f7e488337b294ddd3257150830cde382f7e14c30defb04186837e6218df70",
+      "duration_seconds": 30.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 320,
+        "height": 240,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "60/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 1,
+          "channel_layout": "mono"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex Test 480p (2026).mp4",
+      "size_bytes": 1019184,
+      "sha256": "ada7fe601c289e0edcb179b1c8f1a4f5a0e2e2e2360074074603db46425319c3",
+      "duration_seconds": 30.016000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex Test 720p (2026).mp4",
+      "size_bytes": 1905005,
+      "sha256": "1a9a68f26601e81f5a3dc7c868b80b2a8c5586f723b7d4ad6e992c38d36eef10",
+      "duration_seconds": 30.016000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 1280,
+        "height": 720,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex VBRStair 624x480 24fps cbrLow400k 360s (2026).mp4",
+      "size_bytes": 22514015,
+      "sha256": "c0c8cabc5ef2c6a7828535da7ec4229bb6882b6ddae8c50118e9e33fe055ba58",
+      "duration_seconds": 360.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex VBRStair 624x480 24fps cbrMean1137k 360s (2026).mp4",
+      "size_bytes": 55689959,
+      "sha256": "76b9bd69e24af883642bb39d20a2204527f8abc1b556e4df5b41734bce513737",
+      "duration_seconds": 360.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex VBRStair 624x480 24fps stairVBR_max2000 360s (2026).mp4",
+      "size_bytes": 55643660,
+      "sha256": "1409b239eb281f078461d2ca502234f0121ebf9f3ca44ca15ce65bf7a4c86db3",
+      "duration_seconds": 360.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    },
+    {
+      "filename": "MiSTerPlex VBRStair 640x480 24fps stairVBR_max2000 360s (2026).mp4",
+      "size_bytes": 55627016,
+      "sha256": "cc868a22c51b0df26d1c82a0aa303c03037ad418aba1022b9c31ea8f19deb54b",
+      "duration_seconds": 360.000000,
+      "video": {
+        "codec": "h264",
+        "profile": "Constrained Baseline",
+        "width": 640,
+        "height": 480,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "24/1"
+      },
+      "audio": [
+        {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      ],
+      "provenance": "MiSTerPlex synthetic test fixture",
+      "source_url": "",
+      "license": "Project-authored fixture"
+    }
+  ]
+}
