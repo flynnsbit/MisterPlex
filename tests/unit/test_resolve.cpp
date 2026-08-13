@@ -153,7 +153,8 @@ int main() {
     CHECK(applyPlexTranscodeProfile("720p", w720));
     CHECK(w720.profileName == "720p");
     CHECK(w720.videoResolution == "1280x720");
-    CHECK(w720.maxVideoBitrateKbps == 20000);
+    CHECK(w720.maxVideoBitrateKbps == 1500);
+    CHECK(w720.videoQuality == 70);
     CHECK(w720.h264Profile == "main");
     CHECK(w720.h264Level == 31);
     CHECK(validateWeakLadder(w720));

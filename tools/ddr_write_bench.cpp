@@ -65,7 +65,7 @@ void fillPattern(uint8_t* buf, size_t len) {
 
 void usage(const char* argv0) {
     std::printf(
-        "Usage: %s [--sync|--no-sync] [--flush] [--host-copy]\n"
+        "Usage: %s [--sync|--no-sync] [--flush] [--host-copy] [--stdin]\n"
         "          [--format yuv420p] [--geometry auto|exact|plex480p]\n"
         "          [--width W --height H | --len BYTES]\n"
         "          [--phys HEX|DEC] [--loops N] [--bank 0|1]\n"
@@ -88,6 +88,7 @@ int main(int argc, char** argv) {
     bool useSync = true;
     bool flush = false;
     bool hostCopy = false;
+    bool stdinFrames = false;
     int loops = 1000;
     size_t len = kDefaultFrameBytes;
     int bank = 0;
@@ -108,6 +109,8 @@ int main(int argc, char** argv) {
             flush = true;
         } else if (a == "--host-copy") {
             hostCopy = true;
+        } else if (a == "--stdin") {
+            stdinFrames = true;
         } else if (a == "--width" && i + 1 < argc) {
             width = std::atoi(argv[++i]);
         } else if (a == "--height" && i + 1 < argc) {
@@ -271,6 +274,49 @@ int main(int argc, char** argv) {
     }
 
     uint8_t* dst = static_cast<uint8_t*>(map) + static_cast<size_t>(bank) * layout.bank_stride;
+    auto readFull = [&](uint8_t* buf, size_t want) -> bool {
+        size_t got = 0;
+        while (got < want) {
+            const ssize_t n = ::read(STDIN_FILENO, buf + got, want - got);
+            if (n == 0)
+                return false;
+            if (n < 0) {
+                if (errno == EINTR)
+                    continue;
+                return false;
+            }
+            got += static_cast<size_t>(n);
+        }
+        return true;
+    };
+    if (stdinFrames) {
+        int frames = 0;
+        const double t0 = nowSec();
+        const double c0 = threadCpuSec();
+        while (frames < loops) {
+            if (!readFull(src, len))
+                break;
+            std::memcpy(dst, src, len);
+            __sync_synchronize();
+            if (flush && !cleanDcacheRange(dst, len)) {
+                std::perror("cacheflush");
+                break;
+            }
+            ++frames;
+        }
+        const double c1 = threadCpuSec();
+        const double t1 = nowSec();
+        const double wall = t1 - t0;
+        const double fps = (wall > 0.0) ? static_cast<double>(frames) / wall : 0.0;
+        std::printf("ddr_stdin_copy phys=0x%08X len=%zu frames=%d loops=%d sync=%d flush=%d "
+                    "seconds=%.6f cpu_seconds=%.6f fps=%.3f frame_ms=%.3f\n",
+                    physBase, len, frames, loops, useSync ? 1 : 0, flush ? 1 : 0, wall, c1 - c0,
+                    fps, frames ? (wall * 1000.0) / frames : 0.0);
+        munmap(map, layout.map_bytes);
+        ::close(fd);
+        std::free(srcRaw);
+        return frames > 0 ? 0 : 1;
+    }
     std::memcpy(dst, src, len);
     __sync_synchronize();
     if (flush && !cleanDcacheRange(dst, len)) {

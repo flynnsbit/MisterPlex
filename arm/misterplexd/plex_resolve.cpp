@@ -166,10 +166,10 @@ const std::vector<PlexTranscodeProfile>& plexTranscodeProfiles() {
         {"240p", "320x240", 1000, 40, "baseline", 30},
         {"480p", "640x480", 2500, 60, "baseline", 30},
         // Level 3.1 required for 1280x720 (level 3.0 MaxFS is too small).
-        // Host ffmpeg I420 path (PRESENT=fpga) can take Main; baseline@q70
-        // showed full-frame vertical H.264 banding on BBB (76_bbb_banding).
-        // Main@q100/20M kills MB stripes while fabric flat remains center_std=0.
-        {"720p", "1280x720", 20000, 100, "main", 31},
+        // 20 Mbps @ q100 was for banding, not dual-A9 rate. Phase 0 copy is
+        // ~15 ms; 1280×720 @ 1.5–2.5 Mbps CBP decodes ~28 fps uncontended, so
+        // 20 unique fps at full 720p is the dual-A9 target. Keep Main@L3.1.
+        {"720p", "1280x720", 1500, 70, "main", 31},
     };
     return profiles;
 }
@@ -341,7 +341,7 @@ bool validateWeakLadder(const WeakLadder& weak, std::string* why) {
             return fail("H.264 level must not exceed 3.1 for 720p ARM decode path");
         if (weak.h264Level < 31)
             return fail("720p requires H.264 level 3.1 (level 3.0 MaxFS is insufficient)");
-        if (weak.maxVideoBitrateKbps < 3000)
+        if (weak.maxVideoBitrateKbps < 1500)
             return fail("720p profile bitrate is too low");
     } else if (weak.h264Profile != "baseline") {
         return fail("H.264 profile must be baseline for ≤480p profiles");

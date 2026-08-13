@@ -530,3 +530,13 @@ True480 24p is unique frames A/V-locked to the audible clock on a **fixed
 motion. Smooth 24p needs a 24 Hz beam or match-source-Hz (`docs/match-source-hz.md`).
 Do not call judder a rate fail, and do not call 3:2 on 60 Hz “stable 24 fps
 motion.”
+
+## L51 — 720p unique rate is bitrate + spinner, not 20 Mbps
+
+1280×720 CBP @ 1.5 Mbps decodes ~29 fps uncontended. Publishing those frames
+through uncached `/dev/mem` drops the pipeline to **18.95 fps**. The same
+path hits **23.54 fps** when `MiSTer` is niced to 19 (L36; restore after).
+Heap-only pipe+copy is 20.74 fps. 4 Mbps is already decode-bound (~21 fps
+null). The old 20 Mbps / q100 720p ladder cannot make 20 unique fps on the
+dual-A9. Product 720p ladder is 1500 kbps / q70 / Main@L3.1. 24 fps still
+needs WC/DMA. Evidence: `/tmp/misterplex-agent-P720-20.txt`.

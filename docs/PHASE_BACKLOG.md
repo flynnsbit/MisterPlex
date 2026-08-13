@@ -498,7 +498,7 @@ git **docs HEAD `3c43a66`**; **FPGA committed `7bee0a6`**; R-csum6 claim freeze 
 
 | P3-SPI | SPI F1 only ~9fps — retired; product F1 is DDR YUV420p-only | DONE | |
 | P3-TRUE480 | Production 240p/480p glass (v0.4.1) | **DONE** (eyes-on) | Branch `480p` @ `a6ba15d`; RBF md5 `07f54d9f`. 624/618/640 + native DAR + `RequireReleased` + 640×384 decode budget. Lessons **L44–L50**. Do not thrash this pair to chase 720p. |
-| P3-720P24 | Stable 1280×720 @ 24 unique fps + A/V lock | **BLOCKED** on host publish + pix clock | Phase 0 T_copy 2026-08-12: 1,382,400 B @ `0x30600000`, RBF `07f54d9f`, daemon down. no-sync **14.977 ms** (n=40) / **15.470 ms** (n=200). Sweep9 pin 14.978. `/tmp/misterplex-agent-L-copy.txt`. Next: KernelDma/WC. |
+| P3-720P24 | Stable 1280×720 unique present | **20 fps PARTIAL** / 24 fps still **BLOCKED** | 2026-08-12 RBF `07f54d9f`, daemon down, 1280×720 CBP samples. Decode-null 240f: 1500k **28.7 fps**, 2500k 27.6, 4000k 20.8. Heap pipe+copy 1500k **20.74 fps**. Uncached publish @ `0x30600000`: 1500k **18.95 fps**; **23.54 fps** with MiSTer nice 19 (restored). Ladder now 1500k/q70/Main@L3.1 (was 20 Mbps). 24 fps still needs WC/DMA. Logs: `/media/fat/misterplex/profile/p720_20fps_bench.log`, `p720_20fps_copy.log`, `p720_20fps_ddrcopy.log`. |
 
 ## Phase 4 (UX)
 | ID | Item | Status | Notes |
