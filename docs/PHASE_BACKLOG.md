@@ -498,7 +498,7 @@ git **docs HEAD `3c43a66`**; **FPGA committed `7bee0a6`**; R-csum6 claim freeze 
 
 | P3-SPI | SPI F1 only ~9fps — retired; product F1 is DDR YUV420p-only | DONE | |
 | P3-TRUE480 | Production 240p/480p glass (v0.4.1) | **DONE** (eyes-on) | Branch `480p` @ `a6ba15d`; RBF md5 `07f54d9f`. 624/618/640 + native DAR + `RequireReleased` + 640×384 decode budget. Lessons **L44–L50**. Do not thrash this pair to chase 720p. |
-| P3-720P24 | Stable 1280×720 @ 24 unique fps + A/V lock | **BLOCKED** on host publish + pix clock | Not an RBF-first item (L46). Phase 0: re-measure `T_copy_arm` / pfps on v0.4.1 pair (L26). Phase 1: WC/Kernel DMA/PL330 @ `0x30600000`, target copy ≤ ~4 ms. Phase 2: promote 720 from best-effort to `RequireReleased` (L48). Phase 3: DAR-fit 24 fps ladder + pixel budget from data (L45/L49). Phase 4: exclusive `clk_pix` ≥ 29.70 MHz so 1650×750 is 24 Hz, not 16.16 Hz (L47). Phase 5: FPGA decode is a later offload. Soft-skip ≠ PASS; geometry ≠ refresh (L50). |
+| P3-720P24 | Stable 1280×720 @ 24 unique fps + A/V lock | **BLOCKED** on host publish + pix clock | Phase 0 T_copy **PASS** uncontended 2026-08-12 `/tmp/misterplex-agent-L-copy.txt`: 1,382,400 B @ `0x30600000` no-sync **14.977 ms** (Sweep9 14.978). Live RBF `07f54d9f` MATCH; daemon down. Phase 1 next: KernelDma/WC (userspace PL330 is lab-only; unbind hung SoC). Not an RBF-first item (L46). |
 
 ## Phase 4 (UX)
 | ID | Item | Status | Notes |
