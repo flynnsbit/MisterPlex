@@ -90,6 +90,33 @@ def main() -> int:
     shutil.rmtree(WORK, ignore_errors=True)
     WORK.mkdir(parents=True)
 
+    # Official HDMI captures emit side-data after best_effort_timestamp_time.
+    parsed = harness.parse_ffprobe_pts_lines(
+        "0.000000,H.26[45] User Data Unregistered SEI message\n"
+        "0.000000,00:00:00:00,AVPanScan,GOP timecode,00:00:00:00\n"
+        "1.234000,\n"
+    )
+    require(
+        parsed == [0.0, 0.0, float("1.234000")],
+        f"side-data PTS parse: {parsed}",
+    )
+    require(
+        harness.parse_ffprobe_pts_lines("") == []
+        and harness.parse_ffprobe_pts_lines("\n,\nH.264 side data only\nN/A\n") == [],
+        "empty/non-numeric ffprobe lines must be dropped so avg_frame_rate can fall back",
+    )
+    require_raises(
+        RuntimeError,
+        lambda: harness.parse_ffprobe_pts_lines("nan"),
+        "non-finite PTS first field was accepted",
+    )
+    require_raises(
+        RuntimeError,
+        lambda: harness.parse_ffprobe_pts_lines("inf,GOP timecode"),
+        "non-finite PTS with trailing side-data was accepted",
+    )
+    print("PASS ffprobe CSV PTS parser keeps the first field and ignores side-data")
+
     # Every required source rate has an exactly sample-aligned marker period.
     expected = {
         "24000/1001": 1001.0,

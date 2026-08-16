@@ -11,6 +11,11 @@ ARM_BIN="$ROOT/build/arm/misterplexd"
 # Each release line uses its own hardware-validated RBF.
 # Override either path or md5 via RBF_PATH / RBF_MD5_EXPECTED for lab freezes.
 case "$VERSION" in
+  v0.5.0*|0.5.0*)
+    # 720p24 freddo L4 V_TOTAL 750 — unique24 on 1280×720 @ 24.07 Hz
+    RBF_MD5_EXPECTED="${RBF_MD5_EXPECTED:-03f1b95ac67a568f24193234ea8cb072}"
+    RBF_DEFAULT="$ROOT/release_artifacts/v0.5.0/Plex.rbf"
+    ;;
   v0.4.1*|0.4.1*)
     # true480 native-aspect pair, centered chevron, positive post-fit timing
     RBF_MD5_EXPECTED="${RBF_MD5_EXPECTED:-07f54d9f8f0eda2fe75d9cc314f6de54}"

@@ -3,11 +3,37 @@
 // Transitional ARM decode; FPGA owns scanout (MiSTer_fb) + SPI audio (MrAudio).
 // STREAM=1: annex-B demux → host I-slice recon → F1 + F3; optional RGB skip.
 
+#include "libmisterplex/osd_menu.hpp"
+#include "libmisterplex/present_bank.hpp"
+
+namespace misterplex {
+
+// Content owns DECODE/PMS; Display owns video_mode only (RASTER-CMD).
+// persist/doPlay/osdRetarget use GLASS-MAX(content), not Display geom.
+// true480 never grows to 1280×720. L4 never shrinks below 1280×720 except
+// the P3/P5 960×540 bank (MPX_BUDGET_960, content already 960×540, or a
+// PRESENT_BEAM_960 prefix8 — do not snap those stores up to 1280).
+inline bool osdRetargetDecodeSizeFromPresented(int& outW, int& outH,
+                                               const ContentResolution& content,
+                                               LiveGlass glass,
+                                               const std::string& prefix8 = std::string()) {
+    const ContentResolution bank = glassMax(content.width, content.height, glass, prefix8);
+    if (outW == bank.width && outH == bank.height)
+        return false;
+    outW = bank.width;
+    outH = bank.height;
+    return true;
+}
+
+} // namespace misterplex
+
+#ifndef MPX_OSD_DECODE_SIZE_ONLY
+
 #include "fb_present.hpp"
 #include "fpga_spi.hpp"
+#include "libmisterplex/cached_src_phys.hpp"
 #include "libmisterplex/idle_screen.hpp"
 #include "libmisterplex/mraudio_status.hpp"
-#include "libmisterplex/osd_menu.hpp"
 #include "libmisterplex/playback_overlay.hpp"
 
 #include <atomic>
@@ -51,10 +77,14 @@ public:
     // Fired when OSD content-resolution bits change (O[5:4]). Main uses this to
     // re-resolve the PMS weak ladder / restart the session at the same offset.
     using ContentResFn = std::function<void(const ContentResolution& res, bool playing)>;
+    // Fired when resolved Display row changes (O[15:14], or Follow + content).
+    // video_mode is written in applyOsd; this is DISPLAY_RES= label only.
+    using DisplayResFn = std::function<void(const ContentResolution& res)>;
 
     void setLog(LogFn f) { log_ = std::move(f); }
     void setProgress(ProgressFn f) { onProgress_ = std::move(f); }
     void setOnContentResolutionChanged(ContentResFn f) { onContentRes_ = std::move(f); }
+    void setOnDisplayResolutionChanged(DisplayResFn f) { onDisplayRes_ = std::move(f); }
     void setFfmpegPath(std::string p) { ffmpeg_ = std::move(p); }
     // Conf FFMPEG_SWS_FLAGS: bicubic (quality) | fast_bilinear (rate ladder) | neighbor |
     // skip|none|off|identity (omit scale) | exact[_fast_bilinear|_neighbor] (force WxH,
@@ -131,8 +161,14 @@ public:
     int contentFpsDen() const { return fpsDen_; }
     // Present lead (ms) so the vsync path is not starved. Conf AV_PRESENT_LEAD_MS.
     void setPresentLeadMs(int ms) { presentLeadMs_ = ms < 0 ? 0 : ms; }
+    // After the first 720p video kick, wait this many ms before the first
+    // MrAudio write. Lab d30e7461 + MS2109 @100 ms: HDMI median a−v ≈ +12 ms.
+    // Auto 100 on native 1280 inproc only. Conf AV_HDMI_AUDIO_LAG_MS.
+    void setAvHdmiAudioLagMs(int ms) { avHdmiAudioLagMs_ = ms; }
+    int avHdmiAudioLagMs() const { return avHdmiAudioLagMs_; }
     // Drift (ms) past which a late frame is dropped to re-converge. Conf AV_RESYNC_DROP_MS.
-    // 0 disables dropping (hold-only pacing).
+    // 0 disables dropping (hold-only pacing). 720p L4 ignores this and presents
+    // every decoded frame; FPGA NACK is a send failure, not an A/V drop.
     void setResyncDropMs(int ms) { resyncDropMs_ = ms < 0 ? 0 : ms; }
     static constexpr int kDefaultResyncDropMs = 80;
     // Signed live A/V trim (ms), applied in the pacing loop rather than via an
@@ -176,11 +212,17 @@ public:
     int64_t avDriftMs() const { return avDriftMs_.load(); }
     int64_t droppedFrames() const { return droppedFrames_.load(); }
     void setDecodeSize(int w, int h);
+    void setLiveGlass(LiveGlass glass) { liveGlass_ = glass; }
+    void setRbfPrefix8(std::string prefix8) { rbfPrefix8_ = std::move(prefix8); }
+    LiveGlass liveGlass() const { return liveGlass_; }
     SourceAspect probeSourceAspect(const std::string& urlOrPath,
-                                   const std::string& httpHeaders = {}) const;
+                                   const std::string& httpHeaders = {},
+                                   std::string* failDetail = nullptr,
+                                   int* codedW = nullptr,
+                                   int* codedH = nullptr) const;
     bool setSourceAspect(const SourceAspect& aspect);
-    // PMS Media/Stream coded size for this session (0 = unknown / local file).
-    // When source covers DECODE bank size, skip ffmpeg scale/pad on HTTP paths.
+    // PMS Media/Stream or local-file coded size (0 = unknown).
+    // Identity skip requires probed source == DECODE bank (not bank==coded).
     void setSourceMediaSize(int w, int h) {
         sourceMediaW_ = w > 0 ? w : 0;
         sourceMediaH_ = h > 0 ? h : 0;
@@ -250,8 +292,13 @@ private:
     LogFn log_;
     ProgressFn onProgress_;
     ContentResFn onContentRes_;
+    DisplayResFn onDisplayRes_;
     ContentResolution lastContentRes_{};
     ContentResolution lastDisplayRes_{};
+    bool osdResSeeded_ = false;
+    LiveGlass liveGlass_ = LiveGlass::True480;
+    std::string rbfPrefix8_;
+    std::string lastVideoModeCmd_;
     std::string ffmpeg_ = "/media/fat/mistercast/bin/ffmpeg";
     // Default bicubic: soft 480p→720 skies without vertical banding (see SCORE_BANDING_FIX).
     // Light present-rate ladder overrides via setFfmpegSwsFlags / FFMPEG_SWS_FLAGS.
@@ -299,6 +346,9 @@ private:
     std::mutex osdMu_; // same for osdThr_ // serialises idleThr_ create/join (play thread vs companion)
     std::mutex presentMu_;
     void applyOsd(uint16_t word);
+    void applyDisplayRaster(const ContentResolution& display, bool force = false);
+    // L4 glass always requests the 720p CEA row; else the OSD Display label.
+    void applyLiveDisplayRaster(const ContentResolution& osdDisplay, bool force = false);
     // Snapshot the MrAudio ring pointers and occupancy. Cheap: one
     // open/read/close, no allocation.
     MrAudioStatus readMrAudioStatus();
@@ -321,10 +371,13 @@ private:
     int fpsNum_ = 0;
     int fpsDen_ = 0;
     int presentLeadMs_ = 40;
+    int avHdmiAudioLagMs_ = -1;
     int resyncDropMs_ = 80;
 
     FbPresent fb_;
     FpgaSpi fpga_;
+    // 720p idle: process-lifetime fabric-direct arena (flag-on). Heap yuv is STUB.
+    FabricDirectAlloc idleFabric_{};
     DdrFrameFormat ddrFrameFormat_ = DdrFrameFormat::Yuv420p;
     bool presentProfile_ = false;
     bool useDdrF1_ = true; // F1 product presentation attempts DDR YUV420p only.
@@ -351,6 +404,10 @@ private:
     std::atomic<bool> playing_{false};
     std::atomic<bool> paused_{false};
     std::atomic<bool> audioActive_{false};
+    // 720p: MrAudio stays closed-loop silent until warmup decode finishes, then
+    // the HDMI lag hold lets it run. Default true so 480p is unchanged.
+    std::atomic<bool> audioFeedRelease_{true};
+    std::atomic<int> audioAfterVideoMs_{0};
     std::atomic<bool> streamActive_{false};
     std::mutex pauseControlMu_;
     mutable std::mutex pauseClockMu_;
@@ -366,6 +423,7 @@ private:
     std::atomic<int64_t> positionMs_{0};
     PlaybackOverlay overlay_;
     std::atomic<pid_t> childPid_{-1};
+    std::atomic<pid_t> audioPid_{-1};
     std::atomic<pid_t> streamPid_{-1};
     std::string lastError_;
     std::string currentUrl_;
@@ -376,3 +434,5 @@ private:
 };
 
 } // namespace misterplex
+
+#endif // MPX_OSD_DECODE_SIZE_ONLY
