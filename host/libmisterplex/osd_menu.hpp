@@ -33,6 +33,7 @@
 // adding J1 names does not change this v7 bit layout.
 
 #include <cstdint>
+#include <cstring>
 
 namespace misterplex {
 
@@ -103,6 +104,14 @@ inline ContentResolution contentResolutionFromOsdWord(uint16_t word) {
     default:
         return {320, 240, "240p", 1000};
     }
+}
+
+inline ContentResolution resolutionFromLabel(const char* label) {
+    if (label && std::strcmp(label, "720p") == 0)
+        return {1280, 720, "720p", 20000};
+    if (label && std::strcmp(label, "480p") == 0)
+        return {640, 480, "480p", 2500};
+    return {320, 240, "240p", 1000};
 }
 
 inline ContentResolution contentResolutionFromSize(int w, int h) {

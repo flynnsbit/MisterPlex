@@ -64,7 +64,12 @@ module  pll_0002(
 		.reference_clock_frequency("50.0 MHz"),
 		.operation_mode("direct"),
 		.number_of_clocks(4),
+`ifdef PLEX_CLK_SYS_24
+		.output_clock_frequency0("24.000000 MHz"),
+`else
 		.output_clock_frequency0("20.000000 MHz"),
+`endif
+
 		.phase_shift0("0 ps"),
 		.duty_cycle0(50),
 		.output_clock_frequency1(`MISTERPLEX_SDRAM_PLL_FREQ),
@@ -134,7 +139,12 @@ module  pll_0002(
 		.reference_clock_frequency("50.0 MHz"),
 		.operation_mode("direct"),
 		.number_of_clocks(3),
+`ifdef PLEX_CLK_SYS_24
+		.output_clock_frequency0("24.000000 MHz"),
+`else
 		.output_clock_frequency0("20.000000 MHz"),
+`endif
+
 		.phase_shift0("0 ps"),
 		.duty_cycle0(50),
 		.output_clock_frequency1(`MISTERPLEX_SDRAM_PLL_FREQ),

@@ -473,6 +473,8 @@ git **docs HEAD `3c43a66`**; **FPGA committed `7bee0a6`**; R-csum6 claim freeze 
 - [x] `make package` — **PACKAGE_OK** embeds **`94bbfe43`** (**F-prep-rcsum6** `/tmp/misterplex-agent-F-prep-rcsum6.txt`). Prior **ec21e133** / **8832824e** packages historical. Product tear RBF also in `releases/Plex_vsync_tear_1441d409.rbf`. Package ≠ WIDE PASS.
 - [x] misterplexd soak — **D-soak3/4/5 PASS** ok=6 (re-soak optional after next RBF)
 - [x] Safe deploy only — **H-deploy-rcsum6 PROMOTE_OK|DEPLOY_OK** lab **LOADED `94bbfe43`** ONE menu (`/tmp/misterplex-agent-H-deploy-rcsum6.txt`). Prior **H-deploy-qsf2** **`ec21e133`** / **H-deploy-rcsum5** **`8832824e`**. Product present deploy **`1441d409`**. **Do not thrash-redeploy `8832824e`/`75da8bb1`/`4d6ee356` or second-menu `94bbfe43`.** Residual hard **PASS** via **H-gate-rcsum6** (separate).
+- [x] **Product 240p/480p glass (true480)** — **DONE** v0.4.1 pair `480p` @ `a6ba15d` RBF `07f54d9f`; eyes-on right resolution + framerate. Lessons L44–L50. Do not thrash this pair.
+- [ ] **Stable 720p24** — **BLOCKED** on host publish (`T_copy_arm`) + `clk_pix` ≥ 29.70 MHz. Not an exclusive-decode item. See P3-720P24.
 
 ## Phase 3 (decode / present)
 | ID | Item | Status | Notes |
@@ -495,6 +497,8 @@ git **docs HEAD `3c43a66`**; **FPGA committed `7bee0a6`**; R-csum6 claim freeze 
 
 
 | P3-SPI | SPI F1 only ~9fps — retired; product F1 is DDR YUV420p-only | DONE | |
+| P3-TRUE480 | Production 240p/480p glass (v0.4.1) | **DONE** (eyes-on) | Branch `480p` @ `a6ba15d`; RBF md5 `07f54d9f`. 624/618/640 + native DAR + `RequireReleased` + 640×384 decode budget. Lessons **L44–L50**. Do not thrash this pair to chase 720p. |
+| P3-720P24 | Stable 1280×720 @ 24 unique fps | **TIMING_FAIL slot720p24; not deployed** | Fit 993 s Full Comp 0e. RBF `e494a767` **STA Fmax clk_sys 13.77 MHz** (ask 24), ddr 75.66 (ask 90). Hierarchy PASS. **Did not deploy** (L53). Next: `clk_pix` domain, not another `clk_sys` raise. Product 480p RBF stays `07f54d9f`. |
 
 ## Phase 4 (UX)
 | ID | Item | Status | Notes |
@@ -628,6 +632,7 @@ git **docs HEAD `3c43a66`**; **FPGA committed `7bee0a6`**; R-csum6 claim freeze 
 21. ~~**J-backlog16..65**~~ — DONE prior; this is **J-backlog66 REFRESH_DONE**
 22. **G-fpga** — **WAIT** (no FPGA commit of thrash/DIAG; after hard green + intentional product SRC@fit match LOCK_OK)
 23. ~~**R-csum6-midfit***~~ — **DONE** mid-fit DRIFT_OK / SRC_DRIFT NO through terminal
+24. **P3-720P24** — **BLOCKED** on host publish (`T_copy_arm` ≈ 15 ms) + `clk_pix` ≥ 29.70 MHz. Do **not** open exclusive Quartus. Lessons L44–L50.
 
 ## Non-RBF always available
 - (done **C-unit14..28 + C-unit-sf2**) unit GREEN host 0x14 — **C-unit28 PASS** (`/tmp/misterplex-agent-C-unit28.txt`) + **C-unit27 PASS** + **C-unit-sf2 PASS** + **C-unit26 PASS**; **host GREEN ≠ lab hard residual PASS**; soft-skip ≠ PASS

@@ -224,4 +224,8 @@ bool parseExactFps(const std::string& videoFrameRate, const std::string& frameRa
 // Returns true when num/den were set from the conf (including the "off" case).
 bool applyContentFpsConf(const std::string& conf, int& num, int& den);
 
+// Cap unique present rate at maxHz (product: 30). 60→30, 60000/1001→30000/1001.
+// 23.976 / 24 / 25 / 29.97 stay themselves. Returns true if num/den changed.
+bool capExactFpsToMaxHz(int& num, int& den, double maxHz = 30.0);
+
 } // namespace misterplex

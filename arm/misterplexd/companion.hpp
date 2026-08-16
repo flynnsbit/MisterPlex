@@ -61,6 +61,13 @@ public:
     void setStep(StepFn f) { onStep_ = std::move(f); }
     void setSkipNext(CtrlFn f) { onSkipNext_ = std::move(f); }
     void setSkipPrevious(CtrlFn f) { onSkipPrevious_ = std::move(f); }
+    void setPlexTvEnabled(bool) {}
+    void setPlexTvToken(const std::string&) {}
+    void setPlexTvLinkPath(const std::string&) {}
+    void setPlexTvPersist(std::function<void(const std::string&)>) {}
+    void closedStop(int64_t timeMs, int64_t durationMs) {
+        setState("stopped", timeMs, durationMs);
+    }
 
     bool start();
     void stop();

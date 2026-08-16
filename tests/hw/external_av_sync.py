@@ -462,6 +462,24 @@ def ffprobe_json(capture: Path) -> dict[str, Any]:
     return json.loads(result.stdout)
 
 
+def parse_ffprobe_pts_lines(text: str) -> list[float]:
+    # ffprobe csv=p=0 can append side-data after best_effort_timestamp_time.
+    times: list[float] = []
+    for raw_line in text.splitlines():
+        first = raw_line.strip().split(",", 1)[0].strip()
+        if not first:
+            continue
+        try:
+            candidate = float(first)
+        except ValueError:
+            continue
+        try:
+            times.append(finite_number(candidate, "video frame PTS"))
+        except ValueError:
+            raise RuntimeError(f"capture contains an invalid video frame PTS: {first!r}")
+    return times
+
+
 def first_packet_pts(capture: Path, stream: str) -> float:
     result = subprocess.run(
         [
@@ -539,13 +557,7 @@ def video_luma(capture: Path, stream_info: dict[str, Any]) -> tuple[np.ndarray, 
         text=True,
         timeout=300,
     )
-    times = []
-    for line in pts_result.stdout.splitlines():
-        value = line.strip().rstrip(",")
-        try:
-            times.append(finite_number(value, "video frame PTS"))
-        except ValueError:
-            raise RuntimeError(f"capture contains an invalid video frame PTS: {value!r}")
+    times = parse_ffprobe_pts_lines(pts_result.stdout)
     if not times:
         rate_text = stream_info.get("avg_frame_rate") or stream_info.get("r_frame_rate") or "0/1"
         num_text, den_text = rate_text.split("/", 1)

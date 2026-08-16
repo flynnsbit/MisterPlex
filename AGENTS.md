@@ -94,6 +94,7 @@ values are redacted from every text file that is.
 - **[`docs/LESSONS.md`](docs/LESSONS.md) — accumulated case law under rule 0. Read this
   before reasoning about a build, a gate, a device symptom, or an area budget. Every rule
   in it was paid for with a real wrong conclusion in this project.**
+- **True480 / 720p24:** `docs/LESSONS.md` **L44–L52**, [`docs/720p24-rbf.md`](docs/720p24-rbf.md). 240/480 stay on `Plex.qsf` / `07f54d9f`. 720p24 is a sibling fit (`Plex_720p24.qsf`, clk_sys 24 MHz). Do not raise clk_sys on the product QSF.
 - `docs/phase3-decode.md`, `docs/phase3-3l-idct.md` — decode path  
 - `docs/p3-wide-rca.md` — full-width / pillar  
 - `docs/crt-lcd-lab-checklist.md` — CRT/LCD lab  

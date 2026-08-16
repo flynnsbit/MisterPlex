@@ -79,26 +79,17 @@ set_global_assignment -name VERILOG_MACRO "SDRAM_CL3=1"
 # Disable ALSA audio output to save some resources
 #set_global_assignment -name VERILOG_MACRO "MISTER_DISABLE_ALSA=1"
 
+# 720p24 exclusive fit, forked from the v0.4.1 true480 product QSF.
+# Do NOT use this file for 240p/480p glass — keep Plex.qsf / RBF 07f54d9f.
+# clk_sys=24 MHz so L4 beam 1312×762 is 24.006 Hz. clk_ddr stays 90 MHz.
+# 16-line prefetch: 720p24 blackout model (8-line is the 480p@30 rung).
 set_global_assignment -name VERILOG_MACRO "DDR_FRAME_STORE=1"
-set_global_assignment -name VERILOG_MACRO "FRAME_W=640"
-set_global_assignment -name VERILOG_MACRO "FRAME_H=480"
-set_global_assignment -name VERILOG_MACRO "FRAME_LINES_8=1"
-# Fixed native 480p product path: 640x480 active at 30.0019 Hz (CE/2 from
-# 20 MHz), identity rows, and the shared 624-coded / 618-visible /
-# 11+618+11 DDR layout contract.
-set_global_assignment -name VERILOG_MACRO "PLEX_PRESENT_TRUE_480P=1"
-# 720p / ascal-native present path — DEFAULT OFF (v0.3.0 baseline must not change).
-# Parent enables in a granted fit QSF only.
-#
-# --- L4 720p24 product path ---
-# Do not enable here. Sibling recipe: Plex_720p24.qsf (clk_sys 24 MHz).
-# Raising clk_sys on this file breaks true480 30.0019 Hz (L52).
-#set_global_assignment -name VERILOG_MACRO "PLEX_PRESENT_720P_L4=1"
-#set_global_assignment -name VERILOG_MACRO "FABRIC_NATIVE_720P_GEOM=1"
-#set_global_assignment -name VERILOG_MACRO "FRAME_W=1280"
-#set_global_assignment -name VERILOG_MACRO "FRAME_H=720"
-# (comment out FRAME_W=640 / FRAME_H=480 and PLEX_PRESENT_TRUE_480P above
-# when enabling L4)
+set_global_assignment -name VERILOG_MACRO "PLEX_CLK_SYS_24=1"
+set_global_assignment -name VERILOG_MACRO "PLEX_PRESENT_720P_L4=1"
+set_global_assignment -name VERILOG_MACRO "FABRIC_NATIVE_720P_GEOM=1"
+set_global_assignment -name VERILOG_MACRO "FRAME_W=1280"
+set_global_assignment -name VERILOG_MACRO "FRAME_H=720"
+set_global_assignment -name VERILOG_MACRO "FRAME_LINES_16=1"
 #
 # --- Alternate tiers (mutually exclusive with L4) ---
 #set_global_assignment -name VERILOG_MACRO "PRESENT_BEAM_960=1"

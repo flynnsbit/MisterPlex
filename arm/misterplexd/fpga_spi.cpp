@@ -1,5 +1,6 @@
 #include "fpga_spi.hpp"
 
+#include "libmisterplex/cached_src_phys.hpp"
 #include "libmisterplex/status_telemetry.hpp"
 #include "libmisterplex/pixel_format.hpp"
 #include "libmisterplex/spi_ack_wait.hpp"
@@ -28,6 +29,11 @@
 #include <time.h>
 
 namespace misterplex {
+
+uint32_t FpgaSpi::resolveCachedSrcPhys(const void* virt, size_t len) {
+    return resolveCachedSrcPhysFromPagemap(virt, len);
+}
+
 namespace {
 
 constexpr uint8_t FIO_FILE_TX = 0x53;
@@ -1918,9 +1924,20 @@ bool FpgaSpi::readSourceAspectAck(SourceAspectAck& out) {
     return false;
 }
 
+uint8_t* FpgaSpi::ddrBankVirt(int bank) {
+    if (bank < 0 || bank > 1)
+        return nullptr;
+    if (!ensureDdrMap() || !ddrMap_)
+        return nullptr;
+    const size_t off = static_cast<size_t>(bank) * ddrLayout_.bank_stride;
+    if (off + ddrLayout_.frame_bytes > ddrMapLen_)
+        return nullptr;
+    return ddrMap_ + off;
+}
+
 bool FpgaSpi::sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len,
                                   const DdrFrameGeometry& geometry, int bank,
-                                  DdrBankWritePolicy policy) {
+                                  DdrBankWritePolicy policy, uint32_t /*srcPhys*/) {
     if (!yuv420p || geometry.coded_width <= 0 || geometry.coded_height <= 0 ||
         (geometry.coded_width & 1) || (geometry.coded_height & 1)) {
         setErr("sendYuv420pFrameDdr: bad YUV420p frame");

@@ -354,6 +354,10 @@ FOAR (AAC) keeps dual-out. HDMI-USB + `ffmpeg.err` on USB lab path are the glass
 | — | softc24 / daemon glass dead (PMS FOAR rainbow) | PMS returned **720×480**; `pms_match_decode` scale bypass desynced rawvideo. Fix: never auto-skip scale on HTTP |
 | — | Web cast frames=0 with AUDIO=on | Grid720 has **no audio**; dual pipe:3 aborted ffmpeg (L39) |
 | — | 240/480 mode skipped PMS encode | “covers bank” direct Part on FOAR; need **exact** bank match (L38) |
+| — | 720p24 is an RBF / FPGA-decode problem | `T_copy_arm` ≈ 15 ms + decode contention; path is DMA/WC (L46) |
+| — | 1280×720 DE at 20 MHz is 24 Hz | 16.16 Hz; need `clk_pix` ≥ 29.70 MHz (L47) |
+| — | 480p 24p means a 24 Hz modeline | Unique frames on a 30.0019 Hz beam with 3:2-class holds (L50) |
+| — | 640×480 24p transcode is the 480p ladder | Dual-A9 budget is ~640×384 pixels; bank stays 640×480 (L44/L45) |
 
 Full narrative for each: `Memory/lab/parent/misterplex-parent-720p-decode-verdict.txt`.
 
@@ -448,3 +452,110 @@ progressing. A curl that merely sees the raw identity header is false-green beca
 does not enforce the browser's CORS visibility rules. With the host-network proxy active,
 the user confirmed both loopback and LAN Plex Web URLs advance while **MiSTerPlex**
 remains discoverable.
+
+---
+
+## 7. True480 product path / 720p24 (v0.4.1 glass)
+
+These are the reasons 240p/480p lock resolution and framerate on glass, and why
+720p is still alpha. Source: branch `480p` @ `a6ba15d` (v0.4.1 pair). Do not
+apply them to a different tree without re-measuring (L2/L3).
+
+## L44 — Product 240/480 is a matched present contract, not “bigger pixels”
+
+True480 is coded **624×480**, visible **618×480**, presented **640×480** with
+11+11 scanout pillars. Crop and pillar happen in the reader, not as stored
+RGB. Source DAR is published to the core (`PLXJ` / ioctl 4 → `VIDEO_ARX/ARY`)
+so MiSTer’s scaler owns widescreen vs 4:3. Exact true480 present is
+`RequireReleased` plus an advancing PLXD `frames_done` after each doorbell;
+missing/stale PLXD aborts as `stopped`, never natural `ended`. The dual-A9
+480p ladder is capped to a **640×384** decode pixel budget (4:3 becomes
+572×428) and expanded anamorphically into the 640×480 bank.
+
+**Rule:** freeze 624/618/640 + native DAR + `RequireReleased` + 640×384 budget.
+Do not “simplify” 480p to stored 640×480 RGB to help 720p. Test only a
+**matched** RBF+daemon pair (L1). v0.4.1 pair: RBF md5 `07f54d9f8f0eda2fe75d9cc314f6de54`.
+
+## L45 — Dual-A9 realtime is a pixel budget, not a profile name
+
+480p 24p is stable because the transcode raster was shrunk until decode + AAC
++ present fit the dual-A9. The profile name “480p” still presents a 640×480
+bank. Asking PMS for 1280×720 @ 20 Mbps Main@L3.1 will miss rate even if the
+core can scan 1280×720. Measure the coded raster and pfps; do not assume the
+OSD label is the decode load.
+
+## L46 — `T_copy_arm` is the 720p rate wall; do not thrash RBF to buy fps
+
+Contract (`rtl/plex_720p_bw_contract.svh`): 1,382,400 B I420 via `/dev/mem` is
+**14.978 ms/frame**. At 24 fps the frame is 41.667 ms, so memcpy is ~36%
+before decode. Uncontended native 720p decode is **1.31× (~32 fps)** with the
+daemon stopped (L26); product path is ~21 pfps identity, ~18 true-720 PMS,
+~9–10 FOAR padded into a 720 bank. FPGA DDR read at 90 MHz is not the wall
+(33.2 MB/s each way at 24 fps).
+
+**Rule:** next lever is write-combine / Kernel DMA / PL330 at reserved
+`0x30600000` (after 3×720p banks @ `0x30180000`). Target `T_copy` ≤ ~4 ms.
+FPGA decode is a later offload. More exclusive fits will not create 24 fps.
+
+## L47 — Geometry is not refresh
+
+1280×720 DE at `clk_pix` = 20 MHz and CEA totals 1650×750 is
+**20e6 / 1,237,500 ≈ 16.16 Hz**. Real 24 Hz needs `clk_pix` ≥ **29.70 MHz**
+(or an equivalent exact beam such as 24 MHz / 1312×762). `PX_PER_CLK=2`
+raises fabric group rate into the FIFO; it does not raise HDMI sample rate
+while CE_PIXEL is one RGB sample per `clk_pix`. `cea_24_needs_faster_pix`
+already exists. Do not claim 24 Hz from geometry-only 20 MHz silicon.
+
+## L48 — 720p must not stay best-effort once it is a rate target
+
+v0.4.1 keeps 720 writes best-effort so a slow ARM path does not fail-closed.
+That is correct while memcpy is 15 ms. Once 720p is a 24 fps product target,
+copy true480: rational `frameContentUs` vs audible clock (`written − queued`)
+**and** PLXD `free_bank` + advancing `frames_done`, 50 ms fail-closed →
+`stopped`. Promote only after DMA (or equivalent) leaves slack for the wait.
+A 50 ms wait on a 15 ms copy path will look like a present bug.
+
+## L49 — Do not bake display policy into the encoder
+
+`fitWeakLadderToAspect` asks PMS for a bar-free raster inside the ladder.
+FFmpeg crops leftover PMS canvas bars. DAR is handed to MiSTer. Bars in the
+bitstream waste decode pixels (L45) and fight the scaler. Never treat PMS
+`videoResolution` as coded size (L38).
+
+## L50 — 24p-on-30 Hz beam ≠ smooth 24p motion
+
+True480 24p is unique frames A/V-locked to the audible clock on a **fixed
+30.0019 Hz** beam (`clk_sys/2`, 672×496). The hold pattern is 33.3/66.7 ms
+(3:2-class judder). That is a successful **rate** lock, not native 24 Hz
+motion. Smooth 24p needs a 24 Hz beam or match-source-Hz (`docs/match-source-hz.md`).
+Do not call judder a rate fail, and do not call 3:2 on 60 Hz “stable 24 fps
+motion.”
+
+## L51 — 720p unique rate is bitrate + spinner, not 20 Mbps
+
+1280×720 CBP @ 1.5 Mbps decodes ~29 fps uncontended. Publishing those frames
+through uncached `/dev/mem` drops the pipeline to **18.95 fps**. The same
+path hits **23.54 fps** when `MiSTer` is niced to 19 (L36; restore after).
+Heap-only pipe+copy is 20.74 fps. 4 Mbps is already decode-bound (~21 fps
+null). The old 20 Mbps / q100 720p ladder cannot make 20 unique fps on the
+dual-A9. Product 720p ladder is 1500 kbps / q70 / Main@L3.1. 24 fps still
+needs WC/DMA. Evidence: `/tmp/misterplex-agent-P720-20.txt`.
+
+## L52 — 720p24 is a QSF fork, not a clk_sys change on the 480p RBF
+
+true480 glass is `clk_sys=20 MHz`, CE/2, 672×496 → 30.0019 Hz. The L4 720p beam
+is 1312×762. At 20 MHz that is **20.005 Hz**, not 24. 24.006 Hz needs
+`clk_sys=24 MHz` (`PLEX_CLK_SYS_24`). Changing `clk_sys` on `Plex.qsf` would
+break the proven 480p pair. Fit `Plex_720p24.qsf` as a sibling RBF; keep
+`07f54d9f` for 240/480. Host: 1500k ladder, `RequireReleased` on the 720p
+bank, nice `MiSTer` 19 during 720p play. See `docs/720p24-rbf.md`.
+
+## L53 — Chip Fmax ≠ this netlist's Fmax
+
+slot720p24 compiled clean (993 s) and produced RBF `e494a767`. STA: clk_sys
+Fmax **13.77 MHz** vs 24 MHz ask (slack −30.956). Other MiSTer cores run
+90–150 MHz because **those paths are pipelined and on their own PLL**.
+ao486's 90 MHz is the DDR bridge, not a 1280-wide YUV+decode cone on
+`clk_sys`. Do not deploy a TIMING_FAIL RBF. Do not raise `clk_sys` to buy
+24 Hz. Next: separate `clk_pix` for the 720p beam; leave 480p `clk_sys` at
+20 MHz.

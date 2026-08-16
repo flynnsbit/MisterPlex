@@ -11,6 +11,16 @@ ARM_BIN="$ROOT/build/arm/misterplexd"
 # Each release line uses its own hardware-validated RBF.
 # Override either path or md5 via RBF_PATH / RBF_MD5_EXPECTED for lab freezes.
 case "$VERSION" in
+  v0.6.0*|0.6.0*)
+    # Same 720p24 L4 silicon as v0.5.0; new companion (display latch + auto delay)
+    RBF_MD5_EXPECTED="${RBF_MD5_EXPECTED:-03f1b95ac67a568f24193234ea8cb072}"
+    RBF_DEFAULT="$ROOT/release_artifacts/v0.6.0/Plex.rbf"
+    ;;
+  v0.5.0*|0.5.0*)
+    # 720p24 freddo L4 V_TOTAL 750 — unique24 on 1280×720 @ 24.07 Hz
+    RBF_MD5_EXPECTED="${RBF_MD5_EXPECTED:-03f1b95ac67a568f24193234ea8cb072}"
+    RBF_DEFAULT="$ROOT/release_artifacts/v0.5.0/Plex.rbf"
+    ;;
   v0.4.1*|0.4.1*)
     # true480 native-aspect pair, centered chevron, positive post-fit timing
     RBF_MD5_EXPECTED="${RBF_MD5_EXPECTED:-07f54d9f8f0eda2fe75d9cc314f6de54}"
@@ -148,7 +158,7 @@ cp -a "$RBF_SRC" "$STAGE/cores/Plex.rbf"
 echo "Included verified cores/Plex.rbf from $RBF_SRC ($(wc -c <"$STAGE/cores/Plex.rbf") bytes, md5=$RBF_MD5_ACTUAL)"
 
 # Operator docs
-for doc in release.md release-notes-v0.3.0.md release-notes-v0.4.0.md release-notes-v0.4.1.md display-resolution.md match-source-hz.md crt-lcd-matrix.md architecture.md subtitles-burnin.md; do
+for doc in release.md release-notes-v0.3.0.md release-notes-v0.4.0.md release-notes-v0.4.1.md release-notes-v0.5.0.md release-notes-v0.6.0.md display-resolution.md match-source-hz.md crt-lcd-matrix.md architecture.md subtitles-burnin.md; do
   if [[ -f "$ROOT/docs/$doc" ]]; then
     cp -a "$ROOT/docs/$doc" "$STAGE/docs/"
   fi

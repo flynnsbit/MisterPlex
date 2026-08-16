@@ -138,6 +138,17 @@ def gen_one(
         print("OK", out, out.stat().st_size, flush=True)
 
 
+def default_vbitrate(width: int, height: int) -> str:
+    pixels = width * height
+    if pixels <= 320 * 240:
+        return "500k"
+    if pixels <= 640 * 480:
+        return "1500k"
+    if pixels <= 1280 * 720:
+        return "3000k"
+    return "8000k"
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--out-dir", type=Path, default=ROOT / "assets" / "avsync")
@@ -147,9 +158,38 @@ def main() -> int:
         choices=("all", "product", "trekmatch", "24", "30", "60", "2397"),
         default="all",
     )
+    ap.add_argument("--width", type=int, default=None, help="single-file mode (requires --out)")
+    ap.add_argument("--height", type=int, default=None, help="single-file mode (requires --out)")
+    ap.add_argument("--label", type=str, default=None, help="on-screen label for --out")
+    ap.add_argument("--out", type=Path, default=None, help="write one fixture instead of the stock set")
+    ap.add_argument("--fps", default=None, help="single-file fps (int or num/den); default 24")
+    ap.add_argument("--vbitrate", type=str, default=None, help="single-file video bitrate, e.g. 1500k")
+    ap.add_argument("--audio-bitrate", type=str, default=None, help="single-file audio bitrate, e.g. 96k")
     args = ap.parse_args()
     d = args.duration
     od = args.out_dir
+    if args.out is not None or args.width is not None or args.height is not None or args.label is not None:
+        if args.out is None:
+            ap.error("--width/--height/--label require --out")
+        width = 320 if args.width is None else args.width
+        height = 240 if args.height is None else args.height
+        if width < 16 or height < 16 or width % 2 or height % 2:
+            ap.error("--width and --height must be even and at least 16")
+        label = args.label if args.label else "PLEX24"
+        fps = args.fps if args.fps is not None else 24
+        vbitrate = args.vbitrate if args.vbitrate else default_vbitrate(width, height)
+        audio_bitrate = args.audio_bitrate if args.audio_bitrate else "96k"
+        gen_one(
+            args.out,
+            width=width,
+            height=height,
+            fps=fps,
+            duration_s=d,
+            vbitrate=vbitrate,
+            audio_bitrate=audio_bitrate,
+            label=label,
+        )
+        return 0
     jobs = []
     if args.only in ("all", "product", "24"):
         jobs.append(
