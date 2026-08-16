@@ -1,0 +1,9 @@
+{
+  "name": "MisterPlex Quartus 17.0.2",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": "."
+  },
+  "user": "ubuntu",
+  "install": "./scripts/cloud-agent-install.sh"
+}
