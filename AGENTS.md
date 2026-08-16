@@ -35,7 +35,7 @@ Host: `MISTER_HOST` (default `192.168.1.183`), `MISTER_PASS` (default `1`).
 | Post-fit hierarchy | `make post-fit-hierarchy FIT_RPT=...` — critical modules must survive fitting |
 | Post-fit timing | `make post-fit-timing STA_RPT=...` — negative STA slack is a hard fail |
 | RBF (sole) | Project Quartus via `misterfpga-dev` / `scripts/build_rbf.sh` — **one at a time** |
-| Cloud RBF | Cursor env `.cursor/environment.json` boots `ghcr.io/raetro/quartus:mister`. Install only probes the toolchain. Fit: `cd fpga/Plex_MiSTer && quartus_sh --flow compile Plex.qpf`. Keep `NUM_PARALLEL_PROCESSORS=2`. Cloud BUILD_OK ≠ lab deploy. |
+| Cloud RBF | Cursor env copies Quartus 17.0.2 from `ghcr.io/raetro/quartus:mister` onto Ubuntu 24.04. Install only probes the toolchain. Fit: `cd fpga/Plex_MiSTer && quartus_sh --flow compile Plex.qpf`. Keep `NUM_PARALLEL_PROCESSORS=2`. Cloud BUILD_OK ≠ lab deploy. |
 | Unit | `make unit` |
 | Package | `make package` / `scripts/package_release.sh` |
 | FBAR | `tests/hw/test_fbar_fast.sh` |
@@ -84,10 +84,12 @@ values are redacted from every text file that is.
 
 ## Cloud Agent Quartus
 
-A revision that contains `.cursor/environment.json` boots
-`ghcr.io/raetro/quartus:mister` (Quartus Prime Lite 17.0.2), the same image the
-lab farm uses. `scripts/cloud-agent-install.sh` only checks `quartus_sh` and
-runs `make define-parity` / `make quartus-sv-subset`. It must not start a fit.
+A revision that contains `.cursor/environment.json` builds Ubuntu 24.04 and
+copies Quartus Prime Lite 17.0.2 out of `ghcr.io/raetro/quartus:mister` (the
+same bits the lab farm uses). Do not boot the Stretch image itself: Cursor's
+helper needs a modern `curl`. `scripts/cloud-agent-install.sh` only checks
+`quartus_sh` and runs `make define-parity` / `make quartus-sv-subset`. It must
+not start a fit.
 
 This current default-image agent cannot switch into that image. Start a **new**
 Cloud Agent from the revision that has the environment file.
@@ -95,8 +97,7 @@ Cloud Agent from the revision that has the environment file.
 Cloud fits still follow the exclusive-slot rules. Do not change
 `NUM_PARALLEL_PROCESSORS`. After a compile, run the post-fit hierarchy and
 timing guards on the reports. A cloud RBF is not a lab `DEPLOY_OK`: this
-network cannot reach the DE10-Nano. Host `make unit` is not the job of this
-Stretch-based image.
+network cannot reach the DE10-Nano.
 
 ## Hard rules (lab)
 
