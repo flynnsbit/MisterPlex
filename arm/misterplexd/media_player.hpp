@@ -219,7 +219,9 @@ public:
                                    const std::string& httpHeaders = {},
                                    std::string* failDetail = nullptr,
                                    int* codedW = nullptr,
-                                   int* codedH = nullptr) const;
+                                   int* codedH = nullptr,
+                                   int* fpsNum = nullptr,
+                                   int* fpsDen = nullptr) const;
     bool setSourceAspect(const SourceAspect& aspect);
     // PMS Media/Stream or local-file coded size (0 = unknown).
     // Identity skip requires probed source == DECODE bank (not bank==coded).
@@ -287,6 +289,8 @@ private:
                            int writeFd);
     pid_t spawnAudioOnly(const std::string& url, const std::string& headers, int64_t startMs,
                          int aWriteFd);
+    pid_t spawnHttpRemuxMpegts(const std::string& url, const std::string& headers, int64_t startMs,
+                               const std::string& fifoPath);
     void log(const std::string& s) const;
 
     LogFn log_;
@@ -370,7 +374,7 @@ private:
     // Exact rational content rate; 0/0 → treat as 24/1 when pacing with audio.
     int fpsNum_ = 0;
     int fpsDen_ = 0;
-    int presentLeadMs_ = 40;
+    int presentLeadMs_ = 0;
     int avHdmiAudioLagMs_ = -1;
     int resyncDropMs_ = 80;
 

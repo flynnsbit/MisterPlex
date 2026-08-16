@@ -9,6 +9,7 @@ Clips with a **white flash** and a **1 kHz beep** every 1.0 s (aligned in the fi
 | `sync_60fps_blip.mp4` | product | 320×240 | 60 | |
 | `sync_trekmatch_1080p24_blip.mp4` | **source / Trek-class** | 1920×1080 | 24 | ~8 Mbps H.264 + AAC; PMS weak → 320×240 |
 | `sync_trekmatch_320x240_24_blip.mp4` | product twin | 320×240 | 24 | ~1.5 Mbps; same flash/beep timeline |
+| `trek_blip_720p23976.mp4` | **L4 film rate** | 1280×720 | 24000/1001 | Tune HDMI lipsync at delay 0 |
 
 Regenerate:
 

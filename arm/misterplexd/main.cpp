@@ -754,12 +754,21 @@ int main(int argc, char** argv) {
         }
         std::string probeFail;
         int srcW = 0, srcH = 0;
+        int srcFpsN = 0, srcFpsD = 0;
         const auto sourceAspect =
-            player.probeSourceAspect(playFile, {}, &probeFail, &srcW, &srcH);
+            player.probeSourceAspect(playFile, {}, &probeFail, &srcW, &srcH,
+                                     &srcFpsN, &srcFpsD);
         if (srcW > 0 && srcH > 0) {
             player.setSourceMediaSize(srcW, srcH);
             std::fprintf(stderr, "misterplexd: play-file source_coded=%dx%d\n", srcW,
                          srcH);
+        }
+        if (srcFpsN > 0 && srcFpsD > 0) {
+            misterplex::capExactFpsToMaxHz(srcFpsN, srcFpsD, 30.0);
+            player.setContentFpsRational(srcFpsN, srcFpsD);
+            std::fprintf(stderr,
+                         "misterplexd: play-file content fps=%d/%d (match cap 30Hz)\n",
+                         srcFpsN, srcFpsD);
         }
         if (!sourceAspect.valid || !player.setSourceAspect(sourceAspect)) {
             if (!sourceAspect.valid) {
@@ -842,6 +851,10 @@ int main(int argc, char** argv) {
     std::mutex playHandoffMu;
 
     auto contentResolutionForNextPlay = [&]() -> misterplex::ContentResolution {
+        // L4 glass is 1280×720. OSD 0 (unread) and OSD 240p must not pin PMS
+        // to 320x180 — that is the Trek/movie lipsync fail (pipe-scale 180→720).
+        if (player.liveGlass() == misterplex::LiveGlass::L4)
+            return {1280, 720, "720p", 20000};
         if (osdControl)
             return misterplex::contentResolutionFromOsdWord(player.lastOsdWord());
         return misterplex::contentResolutionFromSize(decodeW, decodeH);
@@ -1033,7 +1046,11 @@ int main(int argc, char** argv) {
         // pacing that at 24 costs ~1 ms/s of lipsync drift.
         misterplex::applyContentFpsConf(loadConf(confPath, "AV_CONTENT_FPS"),
                                         resolvedFpsNum, resolvedFpsDen);
-        std::fprintf(stderr, "misterplexd: content fps exact=%d/%d (pms frameRate=%s vfr=%s)\n",
+        if (resolvedFpsNum > 0 && resolvedFpsDen > 0)
+            misterplex::capExactFpsToMaxHz(resolvedFpsNum, resolvedFpsDen, 30.0);
+        std::fprintf(stderr,
+                     "misterplexd: content fps exact=%d/%d (pms frameRate=%s vfr=%s "
+                     "match_cap=30Hz)\n",
                      resolvedFpsNum, resolvedFpsDen,
                      resolved.frameRate.empty() ? "-" : resolved.frameRate.c_str(),
                      resolved.videoFrameRate.empty() ? "-" : resolved.videoFrameRate.c_str());

@@ -188,6 +188,15 @@ int main(int argc, char** argv) {
                                                   4, 4, out.size()));
         CHECK(!misterplex::inprocDecodeSizeOk(640, 480));
         CHECK(!misterplex::inprocDecodeSizeOk(320, 240));
+
+        misterplex::AvInprocDecoder net;
+        std::string nerr;
+        CHECK(!net.open("rtmp://127.0.0.1/app/stream", {kW, kH, 2}, nerr));
+        CHECK(nerr.find("network protocols disabled") != std::string::npos);
+        nerr.clear();
+        // Static ARM cannot NSS/getaddrinfo. HTTP PMS is remuxed to a fifo first.
+        CHECK(!net.open("http://127.0.0.1:1/no-listener", {kW, kH, 2}, nerr));
+        CHECK(nerr.find("network protocols disabled") != std::string::npos);
     }
 
     const char* clip = "/tmp/real720p_1500k_av.mp4";

@@ -6,11 +6,13 @@
 
 #include <cerrno>
 #include <cstring>
+#include <sys/stat.h>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libavutil/avutil.h>
+#include <libavutil/dict.h>
 #include <libavutil/error.h>
 #include <libavutil/mathematics.h>
 #include <libavutil/pixfmt.h>
@@ -25,6 +27,18 @@ std::string avErr(int ret) {
     if (av_strerror(ret, buf, sizeof(buf)) == 0)
         return std::string(buf);
     return "av error " + std::to_string(ret);
+}
+
+bool looksHttpUrl(const std::string& path) {
+    size_t i = 0;
+    while (i < path.size() &&
+           (path[i] == ' ' || path[i] == '\t' || path[i] == '\r' || path[i] == '\n'))
+        ++i;
+    if (path.compare(i, 7, "http://") == 0 || path.compare(i, 7, "HTTP://") == 0)
+        return true;
+    if (path.compare(i, 8, "https://") == 0 || path.compare(i, 8, "HTTPS://") == 0)
+        return true;
+    return false;
 }
 
 bool looksNetworkUrl(const std::string& path) {
@@ -118,8 +132,10 @@ bool AvInprocDecoder::open(const std::string& pathOrUrl, const AvInprocOpenOpts&
         err = "empty path";
         return false;
     }
+    // Static ARM binary cannot call getaddrinfo (glibc NSS abort). HTTP PMS
+    // is remuxed to a local fifo by media_player; this decoder is file-only.
     if (looksNetworkUrl(pathOrUrl)) {
-        err = "network protocols disabled";
+        err = "network protocols disabled prefix=" + pathOrUrl.substr(0, 24);
         return false;
     }
     if (o.expectW <= 0 || o.expectH <= 0 || (o.expectW & 1) || (o.expectH & 1)) {
@@ -136,7 +152,15 @@ bool AvInprocDecoder::open(const std::string& pathOrUrl, const AvInprocOpenOpts&
     impl_ = new Impl();
     av_log_set_level(AV_LOG_ERROR);
 
-    int ret = avformat_open_input(&impl_->fmt, pathOrUrl.c_str(), nullptr, nullptr);
+    AVDictionary* opts = nullptr;
+    if (!o.headers.empty()) {
+        std::string h = o.headers;
+        if (h.size() < 2 || h.back() != '\n')
+            h += "\r\n";
+        av_dict_set(&opts, "headers", h.c_str(), 0);
+    }
+    int ret = avformat_open_input(&impl_->fmt, pathOrUrl.c_str(), nullptr, &opts);
+    av_dict_free(&opts);
     if (ret < 0) {
         err = "avformat_open_input: " + avErr(ret);
         close();
@@ -225,15 +249,20 @@ bool AvInprocDecoder::open(const std::string& pathOrUrl, const AvInprocOpenOpts&
     }
 
     if (o.startMs > 0) {
-        const int64_t ts =
-            av_rescale_q(o.startMs, AVRational{1, 1000}, st->time_base);
-        ret = av_seek_frame(impl_->fmt, impl_->vidx, ts, AVSEEK_FLAG_BACKWARD);
-        if (ret < 0) {
-            err = "av_seek_frame: " + avErr(ret);
-            close();
-            return false;
+        struct stat stbuf {};
+        const bool fifo =
+            ::stat(pathOrUrl.c_str(), &stbuf) == 0 && S_ISFIFO(stbuf.st_mode);
+        if (!fifo) {
+            const int64_t ts =
+                av_rescale_q(o.startMs, AVRational{1, 1000}, st->time_base);
+            ret = av_seek_frame(impl_->fmt, impl_->vidx, ts, AVSEEK_FLAG_BACKWARD);
+            if (ret < 0) {
+                err = "av_seek_frame: " + avErr(ret);
+                close();
+                return false;
+            }
+            avcodec_flush_buffers(impl_->codec);
         }
-        avcodec_flush_buffers(impl_->codec);
     }
 
     int srcW = 0;

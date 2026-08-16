@@ -58,9 +58,37 @@ int main() {
     CHECK(!implausible.valid);
     CHECK(sourceAspectFromText("47:20").valid);
     CHECK(sourceAspectFromText("16/9").x == 16);
+    CHECK(bankIsHdmi720pClass(1280, 720));
+    CHECK(bankIsHdmi720pClass(960, 540));
+    CHECK(!bankIsHdmi720pClass(640, 480));
+    CHECK(!bankIsHdmi720pClass(320, 240));
+    CHECK(defaultSourceAspectForBank(1280, 720).x == 16);
+    CHECK(defaultSourceAspectForBank(1280, 720).y == 9);
+    CHECK(defaultSourceAspectForBank(960, 540).valid);
+    CHECK(defaultSourceAspectForBank(640, 480).x == 4);
+    CHECK(defaultSourceAspectForBank(640, 480).y == 3);
     CHECK(sourceAspectFromFfmpegProbeText(
               "Stream #0:0: Video: h264, yuv420p, 720x480 [SAR 32:27 DAR 16:9]")
               .x == 16);
+    {
+        int cw = 0, ch = 0;
+        CHECK(codedSizeFromFfmpegProbeText(
+            "Stream #0:0: Video: h264 (High) (avc1 / 0x31637661), yuv420p, "
+            "1280x720 [SAR 1:1 DAR 16:9]",
+            cw, ch));
+        CHECK(cw == 1280 && ch == 720);
+        CHECK(codedSizeFromFfmpegProbeText(
+            "Stream #0:0: Video: h264, yuv420p, 960x540 [SAR 1:1 DAR 16:9]", cw,
+            ch));
+        CHECK(cw == 960 && ch == 540);
+        std::string tok;
+        CHECK(fpsTokenFromFfmpegProbeText(
+            "Stream #0:0: Video: h264, yuv420p, 1920x1080, 23.98 fps, 23.98 tbr",
+            tok) && tok == "23.98");
+        CHECK(fpsTokenFromFfmpegProbeText(
+            "Stream #0:0: Video: h264, yuv420p, 1280x720, 24000/1001 fps",
+            tok) && tok == "24000/1001");
+    }
     const auto aspectPacket = encodeSourceAspectPacket(wide, 0x5a);
     CHECK(aspectPacket[0] == 'P' && aspectPacket[1] == 'L' &&
           aspectPacket[2] == 'X' && aspectPacket[3] == 'A');
@@ -144,6 +172,22 @@ int main() {
     CHECK(fitWeakLadderToAspect(w480, {4, 3, true}).videoResolution == "572x428");
     CHECK(fitWeakLadderToAspect(w480, {1, 1, true}).videoResolution == "480x480");
     CHECK(fitWeakLadderToAspect(w480, {}).videoResolution == "640x480");
+    // Geometric 4:3 of a 720-high box is 960x720 (L49 / Farpoint 1440x1080).
+    // L4 skip is maxW>=1280 && maxH>=720, so drop maxW just under 1280.
+    WeakLadder w720geo;
+    CHECK(applyPlexTranscodeProfile("720p", w720geo));
+    CHECK(w720geo.videoResolution == "1280x720");
+    w720geo.videoResolution = "1278x720";
+    CHECK(fitWeakLadderToAspect(w720geo, {4, 3, true}).videoResolution == "960x720");
+    CHECK(fitWeakLadderToAspect(w720geo, fourThree).videoResolution == "960x720");
+    // L4 720p product ladder skips the fit (19dc): keep 1280x720.
+    WeakLadder w720fit;
+    CHECK(applyPlexTranscodeProfile("720p", w720fit));
+    CHECK(w720fit.videoResolution == "1280x720");
+    CHECK(fitWeakLadderToAspect(w720fit, {4, 3, true}).videoResolution == "1280x720");
+    CHECK(fitWeakLadderToAspect(w720fit, fourThree).videoResolution == "1280x720");
+    CHECK(fitWeakLadderToAspect(w720fit, {16, 9, true}).videoResolution == "1280x720");
+    CHECK(fitWeakLadderToAspect(w720fit, {}).videoResolution == "1280x720");
     // Resolution alias selects the 480p profile too.
     WeakLadder byRes;
     CHECK(applyPlexTranscodeProfile("640x480", byRes));
@@ -174,6 +218,8 @@ int main() {
     CHECK(start480.find("videoProfile=baseline") != std::string::npos);
     CHECK(start480.find("videoLevel=30") != std::string::npos);
     CHECK(start480.find("offset=2") != std::string::npos);
+    CHECK(start480.find("fastSeek=0") != std::string::npos);
+    CHECK(start480.find("fastSeek=1") == std::string::npos);
 
     const auto extra480 = plexClientProfileExtra(w480);
     CHECK(extra480.find("container=mpegts") != std::string::npos);
@@ -335,8 +381,13 @@ int main() {
         n = d = 0;
         CHECK(parseExactFps("NTSC", "", n, d) && n == 30000 && d == 1001);
         n = d = 0;
-        // Fall back to the videoFrameRate bucket only when Stream@frameRate is absent.
-        CHECK(parseExactFps("24p", "", n, d) && n == 24 && d == 1);
+        // PMS 24p without Stream@frameRate is NTSC film (Trek). True 24.000
+        // still comes from a numeric frameRate ("24" / "24.000").
+        CHECK(parseExactFps("24p", "", n, d) && n == 24000 && d == 1001);
+        n = d = 0;
+        CHECK(parseExactFps("30p", "", n, d) && n == 30000 && d == 1001);
+        n = d = 0;
+        CHECK(parseExactFps("24p", "24.000", n, d) && n == 24 && d == 1);
         n = d = 0;
         CHECK(parseExactFps("", "", n, d) == false && n == 0 && d == 0);
         n = d = 0;
@@ -355,6 +406,22 @@ int main() {
         CHECK(applyContentFpsConf("29.97", n, d) && n == 30000 && d == 1001);
         n = 24; d = 1;
         CHECK(applyContentFpsConf("junk", n, d) == false && n == 24 && d == 1);
+    }
+    {
+        int n = 24000, d = 1001;
+        CHECK(capExactFpsToMaxHz(n, d, 30.0) == false && n == 24000 && d == 1001);
+        n = 24; d = 1;
+        CHECK(capExactFpsToMaxHz(n, d, 30.0) == false && n == 24 && d == 1);
+        n = 30; d = 1;
+        CHECK(capExactFpsToMaxHz(n, d, 30.0) == false && n == 30 && d == 1);
+        n = 30000; d = 1001;
+        CHECK(capExactFpsToMaxHz(n, d, 30.0) == false && n == 30000 && d == 1001);
+        n = 60; d = 1;
+        CHECK(capExactFpsToMaxHz(n, d, 30.0) && n == 30 && d == 1);
+        n = 60000; d = 1001;
+        CHECK(capExactFpsToMaxHz(n, d, 30.0) && n == 30000 && d == 1001);
+        n = 50; d = 1;
+        CHECK(capExactFpsToMaxHz(n, d, 30.0) && n == 25 && d == 1);
     }
 
     if (fails) {

@@ -13,6 +13,7 @@
 #include "libmisterplex/h264_recon.hpp"
 #include "libmisterplex/av_inproc_decode.hpp"
 #include "libmisterplex/source_aspect.hpp"
+#include "plex_resolve.hpp"
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -439,7 +440,9 @@ SourceAspect ffmpegSourceAspect(const std::string& ffmpeg, const std::string& ur
                                 const std::string& headers,
                                 std::string* failDetail = nullptr,
                                 int* codedW = nullptr,
-                                int* codedH = nullptr) {
+                                int* codedH = nullptr,
+                                int* fpsNum = nullptr,
+                                int* fpsDen = nullptr) {
     int stderrPipe[2]{-1, -1};
 #if defined(__linux__)
     if (pipe2(stderrPipe, O_CLOEXEC) != 0) {
@@ -597,6 +600,17 @@ SourceAspect ffmpegSourceAspect(const std::string& ffmpeg, const std::string& ur
                 *codedW = pw;
             if (codedH)
                 *codedH = ph;
+        }
+    }
+    if (fpsNum || fpsDen) {
+        std::string tok;
+        int pn = 0, pd = 0;
+        if (fpsTokenFromFfmpegProbeText(output, tok) &&
+            parseExactFps("", tok, pn, pd) && pn > 0 && pd > 0) {
+            if (fpsNum)
+                *fpsNum = pn;
+            if (fpsDen)
+                *fpsDen = pd;
         }
     }
     return parsed;
@@ -1158,9 +1172,11 @@ SourceAspect MediaPlayer::probeSourceAspect(const std::string& urlOrPath,
                                             const std::string& httpHeaders,
                                             std::string* failDetail,
                                             int* codedW,
-                                            int* codedH) const {
+                                            int* codedH,
+                                            int* fpsNum,
+                                            int* fpsDen) const {
     return ffmpegSourceAspect(ffmpeg_, urlOrPath, httpHeaders, failDetail, codedW,
-                              codedH);
+                              codedH, fpsNum, fpsDen);
 }
 
 bool MediaPlayer::setSourceAspect(const SourceAspect& aspect) {
@@ -1357,6 +1373,8 @@ void MediaPlayer::killChildren() {
     }
     audioActive_.store(false);
     streamActive_.store(false);
+    ::unlink("/tmp/mplex-inproc.ts");
+    ::unlink("/tmp/mplex-inproc.h264");
 }
 
 void MediaPlayer::shutdown() {
@@ -1730,6 +1748,51 @@ pid_t MediaPlayer::spawnStreamDemux(const std::string& url, const std::string& h
     args.push_back("h264");
     args.push_back("pipe:1");
     return spawnFfmpeg(args, writeFd, -1);
+}
+
+pid_t MediaPlayer::spawnHttpRemuxMpegts(const std::string& url, const std::string& headers,
+                                        int64_t startMs, const std::string& fifoPath) {
+    // Box ffmpeg has HTTP. ARM inproc libav is file+mpegts only (or HTTP that
+    // still trips the old network guard). Remux is copy-only — decode stays inproc.
+    std::vector<std::string> args;
+    args.push_back(ffmpeg_);
+    args.push_back("-hide_banner");
+    args.push_back("-loglevel");
+    args.push_back("error");
+    args.push_back("-nostdin");
+    if (startMs > 0 && !urlHasUniversalOffset(url)) {
+        char ss[32];
+        std::snprintf(ss, sizeof(ss), "%.3f", startMs / 1000.0);
+        args.push_back("-ss");
+        args.push_back(ss);
+    }
+    if (!headers.empty()) {
+        std::string h = headers;
+        if (h.size() < 2 || h[h.size() - 1] != '\n')
+            h += "\r\n";
+        args.push_back("-headers");
+        args.push_back(h);
+        args.push_back("-reconnect");
+        args.push_back("1");
+        args.push_back("-reconnect_streamed");
+        args.push_back("1");
+        args.push_back("-reconnect_delay_max");
+        args.push_back("5");
+    }
+    args.push_back("-i");
+    args.push_back(url);
+    args.push_back("-map");
+    args.push_back("0:v:0");
+    args.push_back("-an");
+    args.push_back("-c:v");
+    args.push_back("copy");
+    args.push_back("-bsf:v");
+    args.push_back("h264_mp4toannexb");
+    args.push_back("-f");
+    args.push_back("h264");
+    args.push_back("-y");
+    args.push_back(fifoPath);
+    return spawnFfmpeg(args, -1, -1);
 }
 
 pid_t MediaPlayer::spawnAudioOnly(const std::string& url, const std::string& headers, int64_t startMs,
@@ -2428,6 +2491,25 @@ void MediaPlayer::audioPump(int afd) {
                 off += static_cast<size_t>(w);
             }
             audioBytes_.fetch_add(static_cast<size_t>(n));
+
+            // Hold heard audio to presented pictures. 720p PMS often produces
+            // ~19 fps; wall-48 kHz audio then leads by seconds (Trek).
+            if (fpsNum_ > 0 && fpsDen_ > 0) {
+                const double audioSec =
+                    static_cast<double>(audioBytes_.load()) / (48000.0 * 4.0);
+                for (;;) {
+                    const int64_t pres =
+                        presentCount_.load(std::memory_order_relaxed);
+                    if (pres <= 0 || stop_.load())
+                        break;
+                    const double videoSec = static_cast<double>(pres) *
+                                            static_cast<double>(fpsDen_) /
+                                            static_cast<double>(fpsNum_);
+                    if (audioSec <= videoSec + 0.080)
+                        break;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(4));
+                }
+            }
 
             // Anchor on the first chunk, biased one target-depth into the past so
             // the pump runs flat out just long enough to prefill the ring to the
@@ -3158,6 +3240,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             AvInprocOpenOpts iopts;
             iopts.threads = 2;
             iopts.startMs = startMs;
+            iopts.headers = headers;
             if (isPlex960BankSize(outW_, outH_) || isPlex960BankSize(rawW, rawH)) {
                 if (sourceMediaW_ == kInproc960W && sourceMediaH_ == kInproc960H) {
                     iopts.expectW = kInproc960W;
@@ -3174,7 +3257,39 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 iopts.expectH = rawH;
             }
             std::string ierr;
-            if (!inprocDec.open(url, iopts, ierr)) {
+            std::string inprocUrl = url;
+            const bool httpSrc = (url.compare(0, 7, "http://") == 0 ||
+                                  url.compare(0, 8, "https://") == 0);
+            if (httpSrc) {
+                const char* fifo = "/tmp/mplex-inproc.h264";
+                ::unlink(fifo);
+                if (mkfifo(fifo, 0644) == 0) {
+#ifdef F_SETPIPE_SZ
+                    const int pfd = ::open(fifo, O_RDWR | O_NONBLOCK);
+                    if (pfd >= 0) {
+                        (void)::fcntl(pfd, F_SETPIPE_SZ, 1048576);
+                        ::close(pfd);
+                    }
+#endif
+                    const pid_t rpid =
+                        spawnHttpRemuxMpegts(url, headers, startMs, fifo);
+                    if (rpid > 0) {
+                        streamPid_.store(rpid);
+                        inprocUrl = fifo;
+                        // Offset is already in the universal URL / remux -ss.
+                        // Fifo is not seekable — av_seek_frame fails and
+                        // drops us onto the slow pipe (audio then runs ahead).
+                        iopts.startMs = 0;
+                        log("media: inproc_decode remux fifo http→annexb");
+                    } else {
+                        log("media: inproc_decode remux spawn failed — pipe");
+                    }
+                } else {
+                    log(std::string("media: inproc_decode mkfifo failed errno=") +
+                        std::to_string(errno) + " — pipe");
+                }
+            }
+            if (!inprocDec.open(inprocUrl, iopts, ierr)) {
                 // Pixfmt/codec/etc. 240/480 YUV420P now nearest-scales in-process.
                 log("media: inproc_decode open failed: " + ierr +
                     " — pipe fallback");
@@ -3323,7 +3438,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             audioFeedRelease_.store(!warmup720Inproc);
             if (native1280Inproc) {
                 const int afterMs =
-                    (avHdmiAudioLagMs_ >= 0) ? avHdmiAudioLagMs_ : 100;
+                    (avHdmiAudioLagMs_ >= 0) ? avHdmiAudioLagMs_ : 0;
                 audioAfterVideoMs_.store(afterMs);
                 log("media: hdmi_audio_lag gate MrAudio until first kick "
                     "after_video_ms=" +

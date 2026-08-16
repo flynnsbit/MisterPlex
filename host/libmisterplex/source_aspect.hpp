@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cctype>
 #include <cerrno>
 #include <cmath>
 #include <cstdint>
@@ -23,6 +24,18 @@ struct SourceAspect {
     uint16_t y = 3;
     bool valid = false;
 };
+
+// 720p HDMI product is 16:9 (1280×720 leftover and 960×540 Track B).
+// 240p/480p stay 4:3 until a stream publishes another DAR.
+inline bool bankIsHdmi720pClass(int w, int h) {
+    return (w >= 1280 && h >= 720) || (w == 960 && h == 540);
+}
+
+inline SourceAspect defaultSourceAspectForBank(int w, int h) {
+    if (bankIsHdmi720pClass(w, h))
+        return {16, 9, true};
+    return {4, 3, true};
+}
 
 struct SourceAspectAck {
     SourceAspect aspect{};
@@ -148,6 +161,55 @@ inline SourceAspect sourceAspectFromFfmpegProbeText(const std::string& text) {
             return parsed;
     }
     return {};
+}
+
+// First Video: WxH (skips fourcc 0x........). P5: file==bank for identity skip.
+// First "N fps" or "N/M fps" on the Video: line (tbr is fallback).
+inline bool fpsTokenFromFfmpegProbeText(const std::string& text, std::string& token) {
+    token.clear();
+    const size_t video = text.find("Video:");
+    const std::string body =
+        video == std::string::npos ? text : text.substr(video);
+    const char* keys[] = {" fps", " tbr"};
+    for (const char* key : keys) {
+        size_t pos = 0;
+        while ((pos = body.find(key, pos)) != std::string::npos) {
+            size_t b = pos;
+            while (b > 0 && (std::isdigit(static_cast<unsigned char>(body[b - 1])) ||
+                             body[b - 1] == '.' || body[b - 1] == '/'))
+                --b;
+            if (b < pos) {
+                token = body.substr(b, pos - b);
+                return !token.empty();
+            }
+            pos += 4;
+        }
+    }
+    return false;
+}
+
+inline bool codedSizeFromFfmpegProbeText(const std::string& text, int& w, int& h) {
+    w = 0;
+    h = 0;
+    const size_t video = text.find("Video:");
+    const char* s = text.c_str() + (video == std::string::npos ? 0 : video);
+    const char* end = text.c_str() + text.size();
+    for (const char* p = s; p + 3 < end; ++p) {
+        if (!std::isdigit(static_cast<unsigned char>(*p)))
+            continue;
+        char* endx = nullptr;
+        const long ww = std::strtol(p, &endx, 10);
+        if (!endx || endx == p || *endx != 'x' || ww < 16 || ww > 4096)
+            continue;
+        char* endy = nullptr;
+        const long hh = std::strtol(endx + 1, &endy, 10);
+        if (!endy || endy == endx + 1 || hh < 16 || hh > 4096)
+            continue;
+        w = static_cast<int>(ww);
+        h = static_cast<int>(hh);
+        return true;
+    }
+    return false;
 }
 
 inline std::array<uint8_t, 9> encodeSourceAspectPacket(const SourceAspect& aspect,

@@ -413,7 +413,7 @@ std::string buildUniversalTranscodeUrl(const std::string& base,
       << "?hasMDE=1"
       << "&path=" << urlEncodeQuery(metadataKey)
       << "&mediaIndex=0&partIndex=0"
-      << "&protocol=http&fastSeek=1"
+      << "&protocol=http&fastSeek=0"
       << "&directPlay=0&directStream=0"
       << "&subtitleSize=100&audioBoost=100&location=lan&copyts=1"
       << "&session=" << urlEncodeQuery(session)
@@ -629,7 +629,7 @@ bool ensureUniversalDecision(const std::string& startUrl, const std::string& ses
 
     std::ostringstream decisionUrl;
     decisionUrl << base << "/video/:/transcode/universal/decision?hasMDE=1&path=" << path
-                << "&mediaIndex=0&partIndex=0&protocol=http&fastSeek=1&directPlay=0&directStream=0"
+                << "&mediaIndex=0&partIndex=0&protocol=http&fastSeek=0&directPlay=0&directStream=0"
                 << "&location=lan&session=" << urlEncodeQuery(sessionId)
                 << "&videoQuality=" << vq << "&videoResolution=" << vres
                 << "&maxVideoBitrate=" << br
@@ -743,6 +743,11 @@ WeakLadder fitWeakLadderToAspect(const WeakLadder& weak,
         maxW < 2 || maxH < 2) {
         return fitted;
     }
+
+    // L4 1280×720 HDMI is 16:9. Fitting 4:3 Trek to 960×720 then nearest-up
+    // to the bank costs ~2 Hz (21.7 vs unique24). Keep the 1280×720 request.
+    if (maxW >= 1280 && maxH >= 720)
+        return fitted;
 
     int width = maxW;
     int height = maxH;
@@ -1381,9 +1386,16 @@ bool parseExactFps(const std::string& videoFrameRate, const std::string& frameRa
         den = 1;
         return true;
     }
+    // PMS Media@videoFrameRate="24p" is NTSC film on Trek/Blu-ray (23.976).
+    // True 24.000 still wins when Stream@frameRate is "24" / "24.000".
     if (s == "film" || s == "24p") {
-        num = 24;
-        den = 1;
+        num = 24000;
+        den = 1001;
+        return true;
+    }
+    if (s == "30p") {
+        num = 30000;
+        den = 1001;
         return true;
     }
     // Strip a trailing progressive/interlaced marker ("24p", "60i").
@@ -1394,6 +1406,39 @@ bool parseExactFps(const std::string& videoFrameRate, const std::string& frameRa
     if (end != s.c_str() && v > 0.0)
         return snapStdFps(v, num, den);
     return false;
+}
+
+bool capExactFpsToMaxHz(int& num, int& den, double maxHz) {
+    if (num <= 0 || den <= 0 || !(maxHz > 0.0))
+        return false;
+    const double v = static_cast<double>(num) / static_cast<double>(den);
+    if (v <= maxHz + 0.010)
+        return false;
+    if (num == 60 && den == 1 && maxHz >= 30.0 - 0.010) {
+        num = 30;
+        den = 1;
+        return true;
+    }
+    if (num == 60000 && den == 1001 && maxHz >= 30000.0 / 1001.0 - 0.010) {
+        num = 30000;
+        den = 1001;
+        return true;
+    }
+    if (num == 50 && den == 1 && maxHz >= 25.0 - 0.010) {
+        num = 25;
+        den = 1;
+        return true;
+    }
+    if (num == 48 && den == 1 && maxHz >= 24.0 - 0.010) {
+        num = 24;
+        den = 1;
+        return true;
+    }
+    num = static_cast<int>(maxHz);
+    den = 1;
+    if (num < 1)
+        num = 1;
+    return true;
 }
 
 bool applyContentFpsConf(const std::string& conf, int& num, int& den) {

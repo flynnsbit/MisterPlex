@@ -325,6 +325,8 @@ struct AvInprocOpenOpts {
     // 0 → same as expect (bank). Source may differ; readI420 nearest-scales.
     int outW = 0;
     int outH = 0;
+    // FFmpeg-style header block (CRLF). PMS universal needs X-Plex-Token etc.
+    std::string headers;
 };
 
 class AvInprocDecoder {
