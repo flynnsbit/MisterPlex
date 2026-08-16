@@ -87,9 +87,12 @@ values are redacted from every text file that is.
 A revision that contains `.cursor/environment.json` builds Ubuntu 24.04 and
 copies Quartus Prime Lite 17.0.2 out of `ghcr.io/raetro/quartus:mister` (the
 same bits the lab farm uses). Do not boot the Stretch image itself: Cursor's
-helper needs a modern `curl`. `scripts/cloud-agent-install.sh` only checks
-`quartus_sh` and runs `make define-parity` / `make quartus-sv-subset`. It must
-not start a fit.
+helper needs a modern `curl`. Cloud Agent overwrites the image `PATH` and
+drops Quartus bindirs; `scripts/cloud-agent-install.sh` sources
+`scripts/cloud-agent-quartus-env.sh` to prepend `$QUARTUS_ROOTDIR/bin` before
+probing `quartus_sh`, then runs `make define-parity` / `make quartus-sv-subset`.
+It must not start a fit. Source the same env file before calling `quartus_sh`
+from an agent shell.
 
 This current default-image agent cannot switch into that image. Start a **new**
 Cloud Agent from the revision that has the environment file.
