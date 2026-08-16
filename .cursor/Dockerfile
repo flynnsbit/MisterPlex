@@ -37,7 +37,19 @@ RUN apt-get update \
       locales \
  && rm -rf /var/lib/apt/lists/* \
  && sed -i 's/^# *en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen \
- && locale-gen en_US.UTF-8
+ && locale-gen en_US.UTF-8 \
+ && printf '%s\n' \
+      '# Quartus 17.0.2 bindirs. Cloud Agent overwrites image PATH; login shells still need this.' \
+      'export QUARTUS_PATH="${QUARTUS_PATH:-/opt/intelFPGA}"' \
+      'export QUARTUS_ROOTDIR="${QUARTUS_ROOTDIR:-/opt/intelFPGA/quartus}"' \
+      'export SOPC_KIT_NIOS2="${SOPC_KIT_NIOS2:-/opt/intelFPGA/nios2eds}"' \
+      'for _qdir in "$QUARTUS_ROOTDIR/sopc_builder/bin" "$QUARTUS_ROOTDIR/linux64/gnu" "$QUARTUS_ROOTDIR/bin"; do' \
+      '  case ":$PATH:" in *":${_qdir}:"*) ;; *) PATH="${_qdir}${PATH:+:$PATH}" ;; esac' \
+      'done' \
+      'unset _qdir' \
+      'export PATH' \
+      > /etc/profile.d/quartus.sh \
+ && chmod 0644 /etc/profile.d/quartus.sh
 
 COPY --from=quartus /opt/intelFPGA /opt/intelFPGA
 COPY --from=quartus /export-libs/ /usr/lib/x86_64-linux-gnu/

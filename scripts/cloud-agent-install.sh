@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
 # Idempotent Cloud Agent bootstrap for the raetro Quartus 17.0.2 image.
-# Proves the toolchain is on PATH. Does not run a Quartus fit or produce an RBF.
+# Proves the toolchain is reachable. Does not run a Quartus fit or produce an RBF.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+# Cloud Agent replaces the Dockerfile PATH and drops Quartus bindirs.
+# shellcheck source=scripts/cloud-agent-quartus-env.sh
+. "$ROOT/scripts/cloud-agent-quartus-env.sh"
+
 if ! command -v quartus_sh >/dev/null 2>&1; then
-  echo "quartus_sh not on PATH" >&2
+  echo "quartus_sh not on PATH after Quartus env restore" >&2
   echo "PATH=$PATH" >&2
+  echo "QUARTUS_ROOTDIR=$QUARTUS_ROOTDIR" >&2
   exit 1
 fi
 

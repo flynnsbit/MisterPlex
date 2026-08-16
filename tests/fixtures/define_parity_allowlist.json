@@ -11,6 +11,7 @@
     "FAULT_NB_CTX_NO_GEOM_REJECT": "Injected nb_ctx expected-red fault: swallow sticky geom_reject to prove silent-corruption path is gated.",
     "H264_DEBLOCK_FAULT_MB_COMMIT_EARLY": "Injected deblock/DPB seam expected-red fault.",
     "H264_DEBLOCK_FAULT_REF_READY_EARLY": "Injected deblock/DPB seam expected-red fault.",
+    "MPX_HAVE_LIBAV": "Host/ARM libav compile flag for in-process decode; not a Quartus/Verilator product macro.",
     "P3_INTRA_FRAME_RARE_NEGATIVE_TEST": "Injected intra-frame expected-red fault.",
     "P3_INTRA_NEGATIVE_TEST": "Injected intra-MB0 expected-red fault."
   },
