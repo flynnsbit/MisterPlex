@@ -5,6 +5,7 @@
 
 #include "libmisterplex/osd_menu.hpp"
 #include "libmisterplex/present_bank.hpp"
+#include "libmisterplex/fabric_direct.hpp"
 
 namespace misterplex {
 
@@ -78,13 +79,16 @@ public:
     // re-resolve the PMS weak ladder / restart the session at the same offset.
     using ContentResFn = std::function<void(const ContentResolution& res, bool playing)>;
     // Fired when resolved Display row changes (O[15:14], or Follow + content).
-    // video_mode is written in applyOsd; this is DISPLAY_RES= label only.
+    // Live OSD Display only persists DISPLAY_RES. video_mode is latched at
+    // daemon start / core reset (latchAndApplyDisplayRaster).
     using DisplayResFn = std::function<void(const ContentResolution& res)>;
 
     void setLog(LogFn f) { log_ = std::move(f); }
     void setProgress(ProgressFn f) { onProgress_ = std::move(f); }
     void setOnContentResolutionChanged(ContentResFn f) { onContentRes_ = std::move(f); }
     void setOnDisplayResolutionChanged(DisplayResFn f) { onDisplayRes_ = std::move(f); }
+    // Core reset / daemon start: latch Display and write video_mode once.
+    void latchAndApplyDisplayRaster(const ContentResolution& display);
     void setFfmpegPath(std::string p) { ffmpeg_ = std::move(p); }
     // Conf FFMPEG_SWS_FLAGS: bicubic (quality) | fast_bilinear (rate ladder) | neighbor |
     // skip|none|off|identity (omit scale) | exact[_fast_bilinear|_neighbor] (force WxH,
@@ -299,6 +303,8 @@ private:
     DisplayResFn onDisplayRes_;
     ContentResolution lastContentRes_{};
     ContentResolution lastDisplayRes_{};
+    ContentResolution latchedDisplayRes_{1280, 720, "720p", 20000};
+    bool displayRasterLatched_ = false;
     bool osdResSeeded_ = false;
     LiveGlass liveGlass_ = LiveGlass::True480;
     std::string rbfPrefix8_;
@@ -351,7 +357,6 @@ private:
     std::mutex presentMu_;
     void applyOsd(uint16_t word);
     void applyDisplayRaster(const ContentResolution& display, bool force = false);
-    // L4 glass always requests the 720p CEA row; else the OSD Display label.
     void applyLiveDisplayRaster(const ContentResolution& osdDisplay, bool force = false);
     // Snapshot the MrAudio ring pointers and occupancy. Cheap: one
     // open/read/close, no allocation.
@@ -412,6 +417,9 @@ private:
     // the HDMI lag hold lets it run. Default true so 480p is unchanged.
     std::atomic<bool> audioFeedRelease_{true};
     std::atomic<int> audioAfterVideoMs_{0};
+    // Extra audio slack vs presented frames (seconds). Native 1280: +0.080.
+    // Scaled 240/480: -0.200 so HDMI pictures (later by ~200 ms) meet beeps.
+    std::atomic<int> audioHoldSlackMs_{80};
     std::atomic<bool> streamActive_{false};
     std::mutex pauseControlMu_;
     mutable std::mutex pauseClockMu_;

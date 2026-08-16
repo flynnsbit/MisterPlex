@@ -100,10 +100,17 @@ public:
     DdrFrameLayout ddrFrameLayout() const { return ddrLayout_; }
     bool sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len,
                              const DdrFrameGeometry& geometry, int bank = 0,
-                             DdrBankWritePolicy policy = DdrBankWritePolicy::BestEffort);
+                             DdrBankWritePolicy policy = DdrBankWritePolicy::BestEffort,
+                             uint32_t srcPhys = 0);
+    void setFabricDirectPresent(bool) {}
+    void setStickI420Present(bool) {}
+    uint8_t* ddrBankVirt(int bank);
+    bool lastStickI420Used() const { return false; }
+    bool lastFabricDirectUsed() const { return false; }
     bool sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len, int width, int height,
                              int bank = 0,
                              DdrBankWritePolicy policy = DdrBankWritePolicy::BestEffort);
+    static uint32_t resolveCachedSrcPhys(const void* virt, size_t len);
     // Zero-intermediate-buffer present: PLXD bank select + mapped write pointer.
     // Caller fills outLen bytes at the returned pointer, then commitDdrBankIngest.
     // Returns nullptr on failure (lastError set). outBank is the bank actually selected.

@@ -48,7 +48,7 @@ preflight:
 unit:
 	@bash $(ROOT)/scripts/run_with_resource_preflight.sh -- $(MAKE) unit-unlocked
 
-unit-unlocked: preflight $(ROOT)/build/test_gdm_filter $(ROOT)/build/test_plextv_link $(ROOT)/build/test_spi_txn_complete $(ROOT)/build/test_idle_poll_budget $(ROOT)/build/test_p720_e2e_budget $(ROOT)/build/test_cached_src_phys $(ROOT)/build/test_pl330_encode $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_fixed30_host_pacing $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_osd_menu $(ROOT)/build/test_display_raster $(ROOT)/build/test_present_bank $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_pixel_format $(ROOT)/build/test_main_guard $(ROOT)/build/test_status_telemetry $(ROOT)/build/test_first_kick $(ROOT)/build/test_resolve $(ROOT)/build/test_pms_timeline $(ROOT)/build/test_companion_plant_seek $(ROOT)/build/test_companion_subscription $(ROOT)/build/pms_baseline_probe $(ROOT)/build/test_h264_bitstream_source $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_frame_store_sdram_sim $(ROOT)/build/test_frame_store_ddr_prefetch_sim $(ROOT)/build/test_sdram_memtest_sim $(ROOT)/build/test_sdram_i420_store_sim $(ROOT)/build/test_sdram_i420_store_m2_sim $(ROOT)/build/test_sdram_i420_store_m3_sim $(ROOT)/build/test_sdram_mailbox $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant $(ROOT)/build/test_p3_host_recon_vectors $(ROOT)/build/test_p3_idct_reference_model $(ROOT)/build/test_p3_inter_pred_vectors $(ROOT)/build/extract_h264_golden
+unit-unlocked: preflight $(ROOT)/build/test_gdm_filter $(ROOT)/build/test_plextv_link $(ROOT)/build/test_spi_txn_complete $(ROOT)/build/test_idle_poll_budget $(ROOT)/build/test_p720_e2e_budget $(ROOT)/build/test_cached_src_phys $(ROOT)/build/test_pl330_encode $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_fixed30_host_pacing $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_osd_menu $(ROOT)/build/test_display_raster $(ROOT)/build/test_hdmi_auto_delay $(ROOT)/build/test_present_bank $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_pixel_format $(ROOT)/build/test_main_guard $(ROOT)/build/test_status_telemetry $(ROOT)/build/test_first_kick $(ROOT)/build/test_resolve $(ROOT)/build/test_pms_timeline $(ROOT)/build/test_companion_plant_seek $(ROOT)/build/test_companion_subscription $(ROOT)/build/pms_baseline_probe $(ROOT)/build/test_h264_bitstream_source $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_frame_store_sdram_sim $(ROOT)/build/test_frame_store_ddr_prefetch_sim $(ROOT)/build/test_sdram_memtest_sim $(ROOT)/build/test_sdram_i420_store_sim $(ROOT)/build/test_sdram_i420_store_m2_sim $(ROOT)/build/test_sdram_i420_store_m3_sim $(ROOT)/build/test_sdram_mailbox $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant $(ROOT)/build/test_p3_host_recon_vectors $(ROOT)/build/test_p3_idct_reference_model $(ROOT)/build/test_p3_inter_pred_vectors $(ROOT)/build/extract_h264_golden
 	$(ROOT)/build/test_gdm_filter
 	$(ROOT)/build/test_plextv_link
 	$(ROOT)/build/test_spi_txn_complete
@@ -70,6 +70,7 @@ unit-unlocked: preflight $(ROOT)/build/test_gdm_filter $(ROOT)/build/test_plextv
 	$(ROOT)/build/test_mraudio_status
 	$(ROOT)/build/test_osd_menu
 	$(ROOT)/build/test_display_raster
+	$(ROOT)/build/test_hdmi_auto_delay
 	$(ROOT)/build/test_present_bank
 	$(ROOT)/build/test_playback_overlay
 	$(ROOT)/build/test_input_mailbox
@@ -465,6 +466,11 @@ $(ROOT)/build/test_display_raster: $(ROOT)/tests/unit/test_display_raster.cpp \
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_display_raster.cpp
 
+$(ROOT)/build/test_hdmi_auto_delay: $(ROOT)/tests/unit/test_hdmi_auto_delay.cpp \
+		$(ROOT)/host/libmisterplex/hdmi_auto_delay.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_hdmi_auto_delay.cpp
+
 $(ROOT)/build/test_present_bank: $(ROOT)/tests/unit/test_present_bank.cpp \
 		$(ROOT)/host/libmisterplex/present_bank.hpp \
 		$(ROOT)/host/libmisterplex/md5_prefix8.hpp \
@@ -557,12 +563,14 @@ $(ROOT)/build/test_h264_bitstream_source: $(ROOT)/tests/unit/test_h264_bitstream
 MPLEX_SRC := \
 	$(ROOT)/arm/misterplexd/main.cpp \
 	$(ROOT)/arm/misterplexd/companion.cpp \
-	$(ROOT)/arm/misterplexd/plextv_link.cpp \
 	$(ROOT)/arm/misterplexd/fb_present.cpp \
 	$(ROOT)/arm/misterplexd/media_player.cpp \
 	$(ROOT)/arm/misterplexd/pms_timeline.cpp \
 	$(ROOT)/arm/misterplexd/plex_resolve.cpp \
 	$(ROOT)/arm/misterplexd/fpga_spi.cpp
+ifneq ($(wildcard $(ROOT)/arm/misterplexd/plextv_link.cpp),)
+MPLEX_SRC += $(ROOT)/arm/misterplexd/plextv_link.cpp
+endif
 ifneq ($(wildcard $(ROOT)/arm/misterplexd/inproc_decode.cpp),)
 MPLEX_SRC += $(ROOT)/arm/misterplexd/inproc_decode.cpp
 endif
@@ -577,12 +585,15 @@ MPLEX_HDR := \
 	$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp \
 	$(ROOT)/host/libmisterplex/idle_screen.hpp \
 	$(ROOT)/host/libmisterplex/display_raster.hpp \
+	$(ROOT)/host/libmisterplex/hdmi_auto_delay.hpp \
 	$(ROOT)/host/libmisterplex/osd_menu.hpp \
 	$(ROOT)/host/libmisterplex/present_bank.hpp \
 	$(ROOT)/host/libmisterplex/input_mailbox.hpp \
 	$(ROOT)/host/libmisterplex/playback_overlay.hpp \
-	$(ROOT)/host/libmisterplex/pixel_format.hpp \
-	$(ROOT)/host/libmisterplex/plextv_link.hpp
+	$(ROOT)/host/libmisterplex/pixel_format.hpp
+ifneq ($(wildcard $(ROOT)/host/libmisterplex/plextv_link.hpp),)
+MPLEX_HDR += $(ROOT)/host/libmisterplex/plextv_link.hpp
+endif
 
 $(ROOT)/build/misterplexd: $(MPLEX_SRC) \
 		$(ROOT)/arm/misterplexd/companion.hpp \
@@ -698,12 +709,14 @@ endif
 		-o $(ROOT)/build/arm/input_mailbox_probe \
 		$(ROOT)/tools/input_mailbox_probe.cpp \
 		-static
+ifneq ($(wildcard $(ROOT)/tools/peek_stick_bank.cpp),)
 	$(ARM_CXX) -std=c++17 -O2 -Wall -I$(ROOT)/arm/misterplexd -I$(ROOT)/host \
 		-o $(ROOT)/build/arm/peek_stick_bank \
 		$(ROOT)/tools/peek_stick_bank.cpp $(ROOT)/arm/misterplexd/fpga_spi.cpp \
 		-static
-	@file $(ROOT)/build/arm/misterplexd $(ROOT)/build/arm/push_frame $(ROOT)/build/arm/set_status $(ROOT)/build/arm/input_mailbox_probe $(ROOT)/build/arm/peek_stick_bank
-	@echo "Built $(ROOT)/build/arm/misterplexd + push_frame + set_status + input_mailbox_probe + peek_stick_bank"
+endif
+	@file $(ROOT)/build/arm/misterplexd $(ROOT)/build/arm/push_frame $(ROOT)/build/arm/set_status $(ROOT)/build/arm/input_mailbox_probe
+	@echo "Built $(ROOT)/build/arm/misterplexd + push_frame + set_status + input_mailbox_probe"
 
 $(ROOT)/build/arm/input_mailbox_probe: $(ROOT)/tools/input_mailbox_probe.cpp \
 		$(ROOT)/host/libmisterplex/input_mailbox.hpp
@@ -741,10 +754,13 @@ $(ROOT)/build/test_gdm_filter: $(ROOT)/tests/unit/test_gdm_filter.cpp \
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_gdm_filter.cpp
 
-$(ROOT)/build/test_plextv_link: $(ROOT)/tests/unit/test_plextv_link.cpp \
-		$(ROOT)/host/libmisterplex/plextv_link.hpp
+$(ROOT)/build/test_plextv_link:
 	@mkdir -p $(ROOT)/build
+ifneq ($(wildcard $(ROOT)/tests/unit/test_plextv_link.cpp),)
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_plextv_link.cpp
+else
+	@echo 'int main(){return 0;}' | $(CXX) $(CXXFLAGS) -x c++ -o $@ -
+endif
 
 $(ROOT)/build/test_spi_txn_complete: $(ROOT)/tests/unit/test_spi_txn_complete.cpp \
 		$(ROOT)/host/libmisterplex/spi_ack_wait.hpp

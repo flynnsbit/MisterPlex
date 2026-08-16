@@ -8,6 +8,7 @@
 #include "libmisterplex/idle_screen.hpp"
 #include "libmisterplex/osd_menu.hpp"
 #include "libmisterplex/display_raster.hpp"
+#include "libmisterplex/hdmi_auto_delay.hpp"
 #include "libmisterplex/stick_bank_score.hpp"
 #include "libmisterplex/h264_nal_dispatch.hpp"
 #include "libmisterplex/h264_recon.hpp"
@@ -954,9 +955,8 @@ void MediaPlayer::applyOsd(uint16_t word) {
         setDecodeSize(nextW, nextH);
     if ((idleChanged || retargeted) && !playing_.load())
         paintIdle();
-    // L4 720p cores: saved OSD 480p used to emit preset "video_mode 5"
-    // (Main drops indexes). Glass L4 owns the 720p CEA row.
-    applyLiveDisplayRaster(dr, false);
+    // Display O[15:14]: persist only. video_mode is latched at daemon start /
+    // core reset — do not poke /dev/MiSTer_cmd while the user flips F12.
     const bool contentChanged =
         osdResSeeded_ &&
         (lastContentRes_.width != cr.width || lastContentRes_.height != cr.height);
@@ -983,9 +983,20 @@ void MediaPlayer::applyOsd(uint16_t word) {
         " decode=" + std::to_string(outW_) + "x" + std::to_string(outH_));
 }
 
+void MediaPlayer::latchAndApplyDisplayRaster(const ContentResolution& display) {
+    latchedDisplayRes_ = display;
+    displayRasterLatched_ = true;
+    lastDisplayRes_ = display;
+    applyDisplayRaster(display, /*force=*/true);
+    if (!playing_.load())
+        paintIdle();
+}
+
 void MediaPlayer::applyLiveDisplayRaster(const ContentResolution& osdDisplay, bool force) {
-    if (liveGlass_ == LiveGlass::L4)
-        applyDisplayRaster(resolutionFromLabel("720p"), force);
+    // Re-arm the *latched* row only (Main vid_changed). Ignore a live OSD
+    // Display that has not been reset into the latch.
+    if (displayRasterLatched_)
+        applyDisplayRaster(latchedDisplayRes_, force);
     else
         applyDisplayRaster(osdDisplay, force);
 }
@@ -1015,10 +1026,17 @@ void MediaPlayer::paintIdle() {
     const IdleMode m = idleMode();
     if (m == IdleMode::LastFrame)
         return;
-    // Idle canvas must match DECODE / content bank (outW_/outH_), not a hardcoded
-    // 240/480 geometry. A 1280x720 core + 624x480 idle paint is the yellow/static class.
+    // Bank is DECODE (L4 1280 store). Chevron *design* follows latched Display
+    // so 240p/480p reset makes a chunkier mark; nearest-scale into the bank
+    // (do not paint a 624x480 payload into a 1280 store — yellow/static).
     const int w = outW_ > 0 ? outW_ : 320;
     const int h = outH_ > 0 ? outH_ : 240;
+    const int designW = (displayRasterLatched_ && latchedDisplayRes_.width > 0)
+                            ? latchedDisplayRes_.width
+                            : w;
+    const int designH = (displayRasterLatched_ && latchedDisplayRes_.height > 0)
+                            ? latchedDisplayRes_.height
+                            : h;
     std::vector<uint8_t> buf(static_cast<size_t>(w) * h * 3);
     renderIdleRgb24(buf.data(), w, h, m, idlePhase_.load());
 
@@ -1036,9 +1054,32 @@ void MediaPlayer::paintIdle() {
                 makeDdrFrameLayout(g, kDdrFramePhysBase, kDdrFrameStrideAlign,
                                    DdrFrameFormat::Yuv420p);
             std::vector<uint8_t> yuv(layout.frame_bytes);
-            if (layout.frame_bytes > 0 &&
-                renderIdleYuv420p(yuv.data(), g.coded_width, g.coded_height, m,
-                                  idlePhase_.load(), g.crop_left, g.display_width)) {
+            bool painted = false;
+            if (layout.frame_bytes > 0 && designW > 0 && designH > 0 &&
+                (designW & 1) == 0 && (designH & 1) == 0 &&
+                (designW != g.coded_width || designH != g.coded_height)) {
+                const size_t ysz =
+                    static_cast<size_t>(designW) * static_cast<size_t>(designH);
+                const size_t csz = ysz / 4;
+                std::vector<uint8_t> src(ysz + 2 * csz);
+                if (renderIdleYuv420p(src.data(), designW, designH, m, idlePhase_.load(),
+                                      0, designW) &&
+                    scaleI420NearestPlanes(src.data(), designW, src.data() + ysz,
+                                           designW / 2, src.data() + ysz + csz,
+                                           designW / 2, designW, designH, yuv.data(),
+                                           g.coded_width, g.coded_height,
+                                           layout.frame_bytes)) {
+                    painted = true;
+                    log(std::string("media: idle chevron design=") +
+                        std::to_string(designW) + "x" + std::to_string(designH) +
+                        " bank=" + std::to_string(g.coded_width) + "x" +
+                        std::to_string(g.coded_height));
+                }
+            }
+            if (!painted && layout.frame_bytes > 0)
+                painted = renderIdleYuv420p(yuv.data(), g.coded_width, g.coded_height, m,
+                                            idlePhase_.load(), g.crop_left, g.display_width);
+            if (painted) {
                 // 480p: paint both banks so a later swap cannot flash a stale
                 // silhouette. 720p24 L4 (5a7c5085): the second idle doorbell
                 // leaves PLXD free=0 pending=1 frames_done=2; RequireReleased
@@ -1598,10 +1639,10 @@ bool MediaPlayer::play(const std::string& urlOrPath, int64_t startOffsetMs,
         // poll playing() cannot race stop() before threadMain runs and wipe the
         // session at frames=0 / audio_s=0.
         playing_.store(true);
-        // Stock Main reloads [Plex] video_mode on vid_changed. Re-poke the
-        // custom modeline after the session is live (write ≠ PHY PASS).
-        if (liveGlass_ == LiveGlass::L4 || osdResSeeded_)
-            applyLiveDisplayRaster(lastDisplayRes_, true);
+        // Re-poke the reset-latched Display row only. Live F12 Display must
+        // not change the raster until the next daemon start / core reset.
+        if (displayRasterLatched_)
+            applyDisplayRaster(latchedDisplayRes_, true);
         showPlaybackOverlay(PlaybackOverlayState::Playing, startOffsetMs, durationMs);
         thr_ = std::thread([this, urlOrPath, startOffsetMs, httpHeaders, durationMs] {
 #if defined(__linux__)
@@ -2505,7 +2546,9 @@ void MediaPlayer::audioPump(int afd) {
                     const double videoSec = static_cast<double>(pres) *
                                             static_cast<double>(fpsDen_) /
                                             static_cast<double>(fpsNum_);
-                    if (audioSec <= videoSec + 0.080)
+                    const double slackSec =
+                        static_cast<double>(audioHoldSlackMs_.load()) / 1000.0;
+                    if (audioSec <= videoSec + slackSec)
                         break;
                     std::this_thread::sleep_for(std::chrono::milliseconds(4));
                 }
@@ -3436,17 +3479,24 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 warmup720Inproc && sourceMediaW_ == kInproc720W &&
                 sourceMediaH_ == kInproc720H;
             audioFeedRelease_.store(!warmup720Inproc);
-            if (native1280Inproc) {
-                const int afterMs =
-                    (avHdmiAudioLagMs_ >= 0) ? avHdmiAudioLagMs_ : 0;
+            // Per-raster / per-source-class bake. AUDIO_DELAY_MS stays the
+            // user adelay knob. Conf AV_HDMI_AUDIO_LAG_MS>0 overrides after_ms.
+            const char* dlab = (displayRasterLatched_ && latchedDisplayRes_.label)
+                                   ? latchedDisplayRes_.label
+                                   : "720p";
+            const HdmiAutoDelay baked =
+                hdmiAutoDelayForPlay(dlab, sourceMediaW_, sourceMediaH_);
+            if (native1280Inproc || warmup720Inproc) {
+                const int afterMs = hdmiAutoAfterVideoMs(baked, avHdmiAudioLagMs_);
                 audioAfterVideoMs_.store(afterMs);
+                audioHoldSlackMs_.store(baked.holdSlackMs);
                 log("media: hdmi_audio_lag gate MrAudio until first kick "
                     "after_video_ms=" +
-                    std::to_string(afterMs) + " path=native1280");
-            } else if (warmup720Inproc) {
-                audioAfterVideoMs_.store(0);
-                log("media: hdmi_audio_lag gate MrAudio until first kick "
-                    "after_video_ms=0 path=scaled_inproc");
+                    std::to_string(afterMs) + " slack_ms=" +
+                    std::to_string(baked.holdSlackMs) + " path=" + baked.path +
+                    " display=" + dlab + " src=" +
+                    std::to_string(sourceMediaW_) + "x" +
+                    std::to_string(sourceMediaH_));
             } else {
                 audioAfterVideoMs_.store(0);
                 log("media: hdmi_audio_lag path=pipe after_video_ms=0");
@@ -3979,12 +4029,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     std::to_string(audioAfterVideoMs_.load()));
             };
             int localBank = ddrBank_;
-            const int nBanks =
-                (isPlex720pDdrFrameGeometry(ddrGeometry) ||
-                 isPlex960BankSize(rawW, rawH) ||
-                 isPlex960DdrFrameGeometry(ddrGeometry))
-                    ? 3
-                    : 2;
+            // This tree's DDR map is 2 banks + doorbell. Bank 2 is rejected
+            // by sendDdrFrame/kickDdrDoorbell (map_bytes = 2*stride).
+            const int nBanks = 2;
             auto nextBank = [nBanks](int b) {
                 if (nBanks <= 1)
                     return 0;

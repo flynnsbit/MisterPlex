@@ -6,6 +6,7 @@
 #include "media_player.hpp"
 #include "pms_timeline.hpp"
 #include "plex_resolve.hpp"
+#include "libmisterplex/display_raster.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -635,6 +636,20 @@ int main(int argc, char** argv) {
         decodeH = bank.height;
     }
     player.setDecodeSize(decodeW, decodeH);
+    {
+        // Display raster latches here (daemon start = core reset). Live F12
+        // Display only upserts DISPLAY_RES; next start applies it.
+        const auto dlab = loadConf(confPath, "DISPLAY_RES");
+        const misterplex::ContentResolution dr = misterplex::resolutionFromLabel(
+            dlab.empty() ? "720p" : dlab.c_str());
+        if (misterplex::displayRasterApplyOnStartup()) {
+            player.latchAndApplyDisplayRaster(dr);
+            std::fprintf(stderr,
+                         "misterplexd: DISPLAY_RES=%s latched at start "
+                         "(video_mode; F12 Display waits for reset)\n",
+                         dr.label);
+        }
+    }
     player.setPresentMode(presentMode);
     player.setDdrFrameFormat(ddrFrameFormat);
     player.setDdrMemSync(ddrMemSync);
@@ -1333,7 +1348,8 @@ int main(int argc, char** argv) {
                 std::fprintf(stderr, "misterplexd: conf upsert DISPLAY_RES failed\n");
             else
                 std::fprintf(stderr,
-                             "misterplexd: DISPLAY_RES=%s (video_mode only; DECODE unchanged)\n",
+                             "misterplexd: DISPLAY_RES=%s saved (applies on reset; "
+                             "raster unchanged until then)\n",
                              dr.label);
         });
     player.setOnContentResolutionChanged(

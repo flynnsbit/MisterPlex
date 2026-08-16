@@ -20,6 +20,9 @@
 # With OSD_CONTROL=1 the core menu O[5:4] (240p/480p/720p) wins per play and can
 # live-retarget the PMS weak ladder mid-session (stop → re-resolve → resume).
 DECODE=1280x720
+# Display raster (HDMI/VGA video_mode). Latched when misterplexd starts.
+# OSD Display 240p/480p/720p is saved here and applied on the next reset.
+# DISPLAY_RES=720p
 # PMS universal transcode profile names match product labels:
 # TRANSCODE_PROFILE=240p   # 320x240 baseline @1M
 # TRANSCODE_PROFILE=480p   # 640x480 baseline @2.5M
@@ -62,12 +65,11 @@ SUBTITLES=off
 MATCH_SOURCE_HZ=off
 SOURCE_FPS=auto
 
-# --- A/V lipsync (post vsync present) ---
-# FFmpeg adelay (ms) on the product dual-pipe path. Default 0 = no intentional lag.
-# Positive delays audio content vs video (voice-ahead / lips-late → try 20–60 eyes-on).
-# Measure: cast Sync Trekmatch blip (PMS 9/10); eyes-on Trek S1E1 @ ~3:54 after seek.
-# Baseline HDMI flash↔beep @ 0: median ~−54…−60 ms (audio early). See MILESTONE_AVSYNC_SEEK.md.
+# --- A/V lipsync ---
+# AUDIO_DELAY_MS is the user adelay knob (default 0). Raise it if voice is early.
 # AUDIO_DELAY_MS=0
+# HDMI start-hold. 0/unset = auto per Display raster. Set only to override.
+# AV_HDMI_AUDIO_LAG_MS=0
 
 # --- A/V pacing (present loop) ---
 # Video is paced against the audio master clock using the EXACT content rate parsed
