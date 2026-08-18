@@ -577,6 +577,7 @@ module present_core #(
 `ifdef PLEX_PRESENT_480I
 	// 15 kHz weave: identity x=hc; y={vc, field_odd} on the 640x480 store.
 	// field_odd=0 even/top 2*vc; field_odd=1 odd/bot 2*vc+1. Clamp 640x480.
+	// present_15k_store_map.sv is the same formula; do not instantiate here.
 	wire [10:0] weave_y = {vc11[9:0], field_odd};
 	wire in_content = ~hb & ~vb & (hc11 < 11'd640) & (vc11 < 11'd240);
 	wire       past_last_row = (vc11 >= 11'd240);
