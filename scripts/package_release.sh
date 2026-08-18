@@ -167,19 +167,29 @@ if [[ -d "$ROOT/examples/plex-cors-proxy" ]]; then
   mkdir -p "$STAGE/examples"
   cp -a "$ROOT/examples/plex-cors-proxy" "$STAGE/examples/"
 fi
-mkdir -p "$STAGE/scripts"
-for scr in plex_browse.sh plex_menu.sh misterplexd_supervise.sh misterplex_core_watch.sh; do
+mkdir -p "$STAGE/scripts" "$STAGE/scripts/lib" "$STAGE/lib"
+for scr in plex_browse.sh plex_menu.sh misterplexd_supervise.sh misterplex_core_watch.sh rbf_daemon_pairs.txt; do
   if [[ -f "$ROOT/scripts/$scr" ]]; then
     cp -a "$ROOT/scripts/$scr" "$STAGE/scripts/"
-    chmod +x "$STAGE/scripts/$scr"
+    if [[ "$scr" == *.sh ]]; then
+      chmod +x "$STAGE/scripts/$scr"
+    fi
   fi
 done
+if [[ -f "$ROOT/scripts/lib/rbf_pair.sh" ]]; then
+  cp -a "$ROOT/scripts/lib/rbf_pair.sh" "$STAGE/scripts/lib/rbf_pair.sh"
+  cp -a "$ROOT/scripts/lib/rbf_pair.sh" "$STAGE/lib/rbf_pair.sh"
+  cp -a "$ROOT/scripts/lib/rbf_pair.sh" "$STAGE/bin/rbf_pair.sh"
+fi
 # Boot helpers also under bin/ so _user-startup paths stay short.
 for scr in misterplexd_supervise.sh misterplex_core_watch.sh; do
   if [[ -f "$STAGE/scripts/$scr" ]]; then
     cp -a "$STAGE/scripts/$scr" "$STAGE/bin/$scr"
   fi
 done
+if [[ -f "$STAGE/scripts/rbf_daemon_pairs.txt" ]]; then
+  cp -a "$STAGE/scripts/rbf_daemon_pairs.txt" "$STAGE/rbf_daemon_pairs.txt"
+fi
 
 # Path notes for operators (also docs/INSTALL.txt)
 cat >"$STAGE/README.txt" <<EOF

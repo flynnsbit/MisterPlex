@@ -36,9 +36,10 @@ sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no "$USER@$HOST" \
 sshpass -p "$PASS" scp -o StrictHostKeyChecking=no "$BIN" "$USER@$HOST:/media/fat/misterplex/bin/misterplexd"
 # On-device browse / menu + core-load autostart helpers
 SCP_SCRIPTS=()
-for s in plex_browse.sh plex_menu.sh misterplexd_supervise.sh misterplex_core_watch.sh; do
+for s in plex_browse.sh plex_menu.sh misterplexd_supervise.sh misterplex_core_watch.sh rbf_daemon_pairs.txt; do
   [[ -f "$ROOT/scripts/$s" ]] && SCP_SCRIPTS+=("$ROOT/scripts/$s")
 done
+[[ -f "$ROOT/scripts/lib/rbf_pair.sh" ]] && SCP_SCRIPTS+=("$ROOT/scripts/lib/rbf_pair.sh")
 if ((${#SCP_SCRIPTS[@]})); then
   sshpass -p "$PASS" scp -o StrictHostKeyChecking=no \
     "${SCP_SCRIPTS[@]}" \
@@ -48,11 +49,19 @@ sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no "$USER@$HOST" \
   "PLAYER_ID='$PLAYER_ID' PMS_URL='$PMS_URL' bash -s" <<'REMOTE'
 set -e
 # Helpers live in bin/ for boot path simplicity; scripts/ keeps copies for package layout.
-for s in misterplexd_supervise.sh misterplex_core_watch.sh; do
+for s in misterplexd_supervise.sh misterplex_core_watch.sh rbf_pair.sh rbf_daemon_pairs.txt; do
   if [ -f "/media/fat/misterplex/scripts/$s" ]; then
-    cp -f "/media/fat/misterplex/scripts/$s" "/media/fat/misterplex/bin/$s"
+    if [ "$s" = "rbf_daemon_pairs.txt" ]; then
+      cp -f "/media/fat/misterplex/scripts/$s" "/media/fat/misterplex/$s"
+    else
+      cp -f "/media/fat/misterplex/scripts/$s" "/media/fat/misterplex/bin/$s"
+    fi
   fi
 done
+mkdir -p /media/fat/misterplex/lib
+if [ -f /media/fat/misterplex/bin/rbf_pair.sh ]; then
+  cp -f /media/fat/misterplex/bin/rbf_pair.sh /media/fat/misterplex/lib/rbf_pair.sh
+fi
 chmod +x /media/fat/misterplex/bin/misterplexd
 chmod +x /media/fat/misterplex/bin/misterplexd_supervise.sh \
          /media/fat/misterplex/bin/misterplex_core_watch.sh 2>/dev/null || true

@@ -1,0 +1,18 @@
+# Live Plex.rbf md5 → daemon bin → optional glass tag.
+#
+# Columns (whitespace-separated):
+#   <md5>  <daemon-bin>  [glass]
+#
+# glass (3rd, optional): true480 | l4 | crt240p15 | crt480i
+#   l4 aliases: L4, 720p24
+#   true480 aliases: 480p
+# Two-column lines stay valid (v0.7.0). Missing or unknown tag → true480.
+# The shipping 720p24 md5 (03f1b95a…) still pins l4 when the 3rd field is
+# omitted, so field 2-col pairs keep HDMI 720p24.
+#
+# Do not invent CRT md5s. Add a crt240p15 / crt480i row only after BUILD_OK
+# of that sibling RBF. Watch selects by md5, never by filename date.
+#
+# Digital v0.7.0 pairs — do not change these md5↔bin mappings:
+07f54d9f8f0eda2fe75d9cc314f6de54 /media/fat/misterplex/bin/misterplexd.480p
+03f1b95ac67a568f24193234ea8cb072 /media/fat/misterplex/bin/misterplexd.720p24 l4
