@@ -111,6 +111,8 @@ inline ContentResolution resolutionFromLabel(const char* label) {
         return {1280, 720, "720p", 20000};
     if (label && std::strcmp(label, "480p") == 0)
         return {640, 480, "480p", 2500};
+    if (label && std::strcmp(label, "480i") == 0)
+        return {640, 480, "480i", 2500};
     return {320, 240, "240p", 1000};
 }
 

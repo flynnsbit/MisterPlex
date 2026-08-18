@@ -462,6 +462,7 @@ $(ROOT)/build/test_osd_menu: $(ROOT)/tests/unit/test_osd_menu.cpp \
 
 $(ROOT)/build/test_display_raster: $(ROOT)/tests/unit/test_display_raster.cpp \
 		$(ROOT)/host/libmisterplex/display_raster.hpp \
+		$(ROOT)/host/libmisterplex/present_bank.hpp \
 		$(ROOT)/host/libmisterplex/osd_menu.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_display_raster.cpp
@@ -473,10 +474,8 @@ $(ROOT)/build/test_hdmi_auto_delay: $(ROOT)/tests/unit/test_hdmi_auto_delay.cpp 
 
 $(ROOT)/build/test_present_bank: $(ROOT)/tests/unit/test_present_bank.cpp \
 		$(ROOT)/host/libmisterplex/present_bank.hpp \
-		$(ROOT)/host/libmisterplex/md5_prefix8.hpp \
 		$(ROOT)/host/libmisterplex/osd_menu.hpp \
 		$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp \
-		$(ROOT)/host/libmisterplex/input_mailbox.hpp \
 		$(ROOT)/host/libmisterplex/mailbox_abi_spec.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_present_bank.cpp

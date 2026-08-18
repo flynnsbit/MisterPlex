@@ -1,0 +1,5 @@
+# RBF md5 → daemon pair. Fill the 15k line after Plex_15k BUILD_OK (md5 unknown until fit).
+# Pair daemon may be a copy of misterplexd.480p until a new binary is required.
+# Digital 24 fps (07f54d9f): Display 240p on that daemon is the dead 320×240 doorbell.
+# crt15 store stays 640×480 @ 0x300FF000. Display 240p = 15 kHz bob; 720p → 480i weave.
+# <md5 after BUILD_OK> /media/fat/misterplex/bin/misterplexd.15k

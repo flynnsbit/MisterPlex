@@ -14,6 +14,8 @@ namespace misterplex {
 // true480 never grows to 1280×720. L4 never shrinks below 1280×720 except
 // the P3/P5 960×540 bank (MPX_BUDGET_960, content already 960×540, or a
 // PRESENT_BEAM_960 prefix8 — do not snap those stores up to 1280).
+// crt15 glassMax is always 640×480 @ 0x300FF000; Display 240p keeps label
+// 240p (15 kHz bob); Display 720p clamps to 480i; never 320×240 doorbell.
 inline bool osdRetargetDecodeSizeFromPresented(int& outW, int& outH,
                                                const ContentResolution& content,
                                                LiveGlass glass,

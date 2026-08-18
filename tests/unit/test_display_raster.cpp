@@ -23,10 +23,23 @@ int main() {
     CHECK(displayRasterApplyOnStartup());
 
     CHECK(std::strcmp(videoModeCmdForDisplayLabel("240p"), kVideoModeCmd240p) == 0);
+    CHECK(std::strcmp(videoModeCmdForDisplayLabel("240p", LiveGlass::True480),
+                      kVideoModeCmd240p) == 0);
     CHECK(std::strcmp(videoModeCmdForDisplayLabel("480p"), kVideoModeCmd480p) == 0);
     CHECK(std::strcmp(videoModeCmdForDisplayLabel("720p"), kVideoModeCmd720p) == 0);
     CHECK(videoModeCmdForDisplayLabel("Follow") == nullptr);
     CHECK(videoModeCmdForDisplayLabel(nullptr) == nullptr);
+
+    // crt15: FPGA beam owns 15 kHz. ascal 15 kHz video_mode is RED — skip.
+    // Digital True480 240p must still write VESA 640×480@59.94.
+    CHECK(videoModeCmdForDisplayLabel("240p", LiveGlass::Crt15) == nullptr);
+    CHECK(videoModeCmdForDisplayLabel("480i", LiveGlass::Crt15) == nullptr);
+    CHECK(videoModeCmdForDisplayLabel("720p", LiveGlass::Crt15) == nullptr);
+    CHECK(std::strcmp(videoModeCmdForDisplayLabel("480p", LiveGlass::Crt15),
+                      kVideoModeCmd480p) == 0);
+    CHECK(crt15SkipVideoModeLabel("240p"));
+    CHECK(crt15SkipVideoModeLabel("480i"));
+    CHECK(!crt15SkipVideoModeLabel("480p"));
 
     CHECK(videoModePixelKhz(kVideoModeCmd240p) == 25175);
     CHECK(videoModePixelKhz(kVideoModeCmd480p) == 40000);
@@ -46,6 +59,9 @@ int main() {
     CHECK(resolutionFromLabel("240p").width == 320);
     CHECK(resolutionFromLabel("480p").width == 640);
     CHECK(resolutionFromLabel("720p").width == 1280);
+    CHECK(std::string(resolutionFromLabel("480i").label) == "480i");
+    CHECK(resolutionFromLabel("480i").width == 640);
+    CHECK(resolutionFromLabel("480i").height == 480);
 
     char tmpl[] = "/tmp/misterplex-cmd-XXXXXX";
     const int fd = ::mkstemp(tmpl);

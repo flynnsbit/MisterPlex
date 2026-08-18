@@ -1,6 +1,9 @@
 #pragma once
 // MIX-GLASS-MAX: present bank is glass-capped content, never Display.
 // true480 never 1280×720. L4 never shrinks below 1280×720 except 960 bank.
+// crt15 store is always 640×480 @ 0x300FF000 (same doorbell as true480 480p).
+// Pin: /tmp/misterplex-glass or /tmp/misterplex-live-glass =
+// crt15|crt240p15|crt480i, or RBFNAME Plex_15k / Plex_240p15 / Plex_480i.
 
 #include "libmisterplex/ddr_frame_layout.hpp"
 #include "libmisterplex/mailbox_abi_spec.hpp"
@@ -20,10 +23,17 @@
 
 namespace misterplex {
 
-enum class LiveGlass { True480, L4 };
+enum class LiveGlass { True480, L4, Crt15 };
 
 inline const char* liveGlassLabel(LiveGlass glass) {
-    return glass == LiveGlass::L4 ? "L4" : "true480";
+    switch (glass) {
+    case LiveGlass::L4:
+        return "L4";
+    case LiveGlass::Crt15:
+        return "crt15";
+    default:
+        return "true480";
+    }
 }
 
 inline LiveGlass classifyLiveGlass(uint32_t plxjWord) {
@@ -34,6 +44,7 @@ struct LiveGlassPin {
     std::string prefix8;
     std::string core;
     std::string rbfname;
+    std::string glass;
 };
 
 inline std::string trimPinText(std::string s) {
@@ -78,12 +89,87 @@ inline std::string md5Prefix8OfFile(const char* /*path*/) { return {}; }
 
 inline LiveGlassPin readLiveGlassPin(const char* plexRbfPath = "/media/fat/Plex.rbf",
                                      const char* corePath = "/tmp/CORENAME",
-                                     const char* rbfNamePath = "/tmp/RBFNAME") {
+                                     const char* rbfNamePath = "/tmp/RBFNAME",
+                                     const char* glassPath = "/tmp/misterplex-glass",
+                                     const char* liveGlassPath = "/tmp/misterplex-live-glass") {
     LiveGlassPin p;
     p.prefix8 = md5Prefix8OfFile(plexRbfPath);
     p.core = readTrimPinFile(corePath);
     p.rbfname = rbfPinBasename(readTrimPinFile(rbfNamePath));
+    p.glass = readTrimPinFile(glassPath);
+    if (p.glass.empty())
+        p.glass = readTrimPinFile(liveGlassPath);
     return p;
+}
+
+inline char pinAsciiLower(char c) {
+    return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c;
+}
+
+inline bool pinTextEquals(const std::string& s, const char* lit) {
+    if (!lit)
+        return false;
+    size_t n = 0;
+    while (lit[n])
+        ++n;
+    if (s.size() != n)
+        return false;
+    for (size_t i = 0; i < n; ++i) {
+        if (pinAsciiLower(s[i]) != pinAsciiLower(lit[i]))
+            return false;
+    }
+    return true;
+}
+
+inline bool pinTextHasToken(const std::string& s, const char* tok) {
+    if (!tok || !tok[0] || s.empty())
+        return false;
+    size_t n = 0;
+    while (tok[n])
+        ++n;
+    if (s.size() < n)
+        return false;
+    for (size_t i = 0; i + n <= s.size(); ++i) {
+        bool ok = true;
+        for (size_t j = 0; j < n; ++j) {
+            if (pinAsciiLower(s[i + j]) != pinAsciiLower(tok[j])) {
+                ok = false;
+                break;
+            }
+        }
+        if (ok)
+            return true;
+    }
+    return false;
+}
+
+inline bool pinTextLooksCrt15(const std::string& s) {
+    if (s.empty())
+        return false;
+    if (pinTextEquals(s, "crt15") || pinTextEquals(s, "crt240p15") ||
+        pinTextEquals(s, "crt480i"))
+        return true;
+    // Sibling CORENAME/RBFNAME: Plex_240p15, Plex_480i, Plex_15k.
+    return pinTextHasToken(s, "crt15") || pinTextHasToken(s, "15k") ||
+           pinTextHasToken(s, "240p15") || pinTextHasToken(s, "480i") ||
+           pinTextHasToken(s, "crt240p15") || pinTextHasToken(s, "crt480i");
+}
+
+inline bool pinLooksCrt15(const LiveGlassPin& pin) {
+    return pinTextLooksCrt15(pin.glass) || pinTextLooksCrt15(pin.rbfname) ||
+           pinTextLooksCrt15(pin.core);
+}
+
+inline LiveGlass classifyLiveGlassPin(const LiveGlassPin& pin) {
+    if (pinLooksCrt15(pin))
+        return LiveGlass::Crt15;
+    if (pinTextEquals(pin.glass, "L4") || pinTextEquals(pin.glass, "l4"))
+        return LiveGlass::L4;
+    if (pin.core == "Plex" && pin.rbfname.find("720") != std::string::npos)
+        return LiveGlass::L4;
+    if (pinTextEquals(pin.glass, "true480"))
+        return LiveGlass::True480;
+    return LiveGlass::True480;
 }
 
 inline bool envFlagWanted(const char* name) {
@@ -121,6 +207,8 @@ inline bool rbfPrefix8IsKnown960Store(const std::string& /*prefix8*/) { return f
 
 inline ContentResolution glassMax(int contentW, int contentH, LiveGlass glass,
                                   const std::string& prefix8 = std::string()) {
+    if (glass == LiveGlass::Crt15)
+        return {640, 480, "480p", 2500};
     if (glass == LiveGlass::L4) {
         if (budget960Wanted() || isPlex960BankSize(contentW, contentH) ||
             rbfPrefix8IsKnown960Store(prefix8))
@@ -132,6 +220,23 @@ inline ContentResolution glassMax(int contentW, int contentH, LiveGlass glass,
     if (contentW >= 640 || contentH >= 480)
         return {contentW, contentH, "480p", 2500};
     return {contentW, contentH, "240p", 1000};
+}
+
+// Display label vs store. crt15: 240p stays 240p (15 kHz bob); 720p→480i weave.
+// Bank is always 640×480 @ 0x300FF000 — never the dead 320×240 doorbell 0x3007F000.
+inline ContentResolution clampDisplayToLiveGlass(const ContentResolution& display,
+                                                 LiveGlass glass) {
+    if (glass != LiveGlass::Crt15)
+        return display;
+    const char* lab = display.label ? display.label : "";
+    if (std::strcmp(lab, "240p") == 0)
+        return {640, 480, "240p", 1000};
+    if (std::strcmp(lab, "720p") == 0 || std::strcmp(lab, "480i") == 0 ||
+        display.width >= 1280 || display.height >= 720)
+        return {640, 480, "480i", 2500};
+    if (std::strcmp(lab, "480p") == 0)
+        return {640, 480, "480p", 2500};
+    return {640, 480, lab[0] ? lab : "480p", 2500};
 }
 
 inline uint32_t presentBankDoorbell(int bankW, int bankH) {
@@ -188,13 +293,19 @@ inline LiveGlass probeLiveGlass(const char* memPath = "/dev/mem") {
     return classifyLiveGlass(t480);
 }
 
+inline LiveGlass corroborateLiveGlass(LiveGlass probed, const LiveGlassPin& pin) {
+    if (probed == LiveGlass::L4)
+        return LiveGlass::L4;
+    const LiveGlass fromPin = classifyLiveGlassPin(pin);
+    if (fromPin == LiveGlass::Crt15)
+        return LiveGlass::Crt15;
+    if (fromPin == LiveGlass::L4)
+        return LiveGlass::L4;
+    return probed;
+}
+
 inline LiveGlass corroborateLiveGlass(uint32_t plxjWord, const LiveGlassPin& pin) {
-    const LiveGlass magic = classifyLiveGlass(plxjWord);
-    if (magic == LiveGlass::L4)
-        return LiveGlass::L4;
-    if (pin.core == "Plex" && pin.rbfname.find("720") != std::string::npos)
-        return LiveGlass::L4;
-    return LiveGlass::True480;
+    return corroborateLiveGlass(classifyLiveGlass(plxjWord), pin);
 }
 
 } // namespace misterplex

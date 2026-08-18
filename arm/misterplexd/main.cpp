@@ -614,9 +614,11 @@ int main(int argc, char** argv) {
     }
     // MIX-GLASS-MAX: probe live doorbell page once. true480 never 1280x720.
     // Pin 960-store prefix8 so OSD Content 720p cannot snap idle back to 1280.
+    // crt15 shares the 640×480 doorbell with true480 — pin file / RBFNAME wins.
     {
         const auto pin = misterplex::readLiveGlassPin();
-        const auto glass = misterplex::probeLiveGlass();
+        const auto glass =
+            misterplex::corroborateLiveGlass(misterplex::probeLiveGlass(), pin);
         player.setLiveGlass(glass);
         player.setRbfPrefix8(pin.prefix8);
         const auto bank = misterplex::glassMax(decodeW, decodeH, glass, pin.prefix8);
@@ -640,8 +642,10 @@ int main(int argc, char** argv) {
         // Display raster latches here (daemon start = core reset). Live F12
         // Display only upserts DISPLAY_RES; next start applies it.
         const auto dlab = loadConf(confPath, "DISPLAY_RES");
-        const misterplex::ContentResolution dr = misterplex::resolutionFromLabel(
+        const misterplex::ContentResolution drRaw = misterplex::resolutionFromLabel(
             dlab.empty() ? "720p" : dlab.c_str());
+        const misterplex::ContentResolution dr =
+            misterplex::clampDisplayToLiveGlass(drRaw, player.liveGlass());
         if (misterplex::displayRasterApplyOnStartup()) {
             player.latchAndApplyDisplayRaster(dr);
             std::fprintf(stderr,
@@ -877,17 +881,21 @@ int main(int argc, char** argv) {
     // O[15:14] → HDMI/VGA raster (RASTER-CMD), not present bank.
     // May differ from content/PMS ladder (Display owns video_mode only).
     auto displayResolutionForNextPlay = [&]() -> misterplex::ContentResolution {
+        misterplex::ContentResolution dr;
         if (osdControl) {
             const auto content = misterplex::contentResolutionFromOsdWord(player.lastOsdWord());
-            return misterplex::displayResolutionFromOsdWord(player.lastOsdWord(), content);
+            dr = misterplex::displayResolutionFromOsdWord(player.lastOsdWord(), content);
+        } else {
+            dr = misterplex::contentResolutionFromSize(decodeW, decodeH);
         }
-        return misterplex::contentResolutionFromSize(decodeW, decodeH);
+        return misterplex::clampDisplayToLiveGlass(dr, player.liveGlass());
     };
     auto persistOsdResToConf = [&](const misterplex::ContentResolution& content,
                                    const misterplex::ContentResolution& display) {
         // DECODE= glass-capped bank. TRANSCODE_PROFILE stays content (PMS).
         const auto bank =
             misterplex::glassMax(content.width, content.height, player.liveGlass());
+        const auto disp = misterplex::clampDisplayToLiveGlass(display, player.liveGlass());
         const std::string cGeom =
             std::to_string(bank.width) + "x" + std::to_string(bank.height);
         if (!upsertConfKey(confPath, "DECODE", cGeom))
@@ -895,7 +903,7 @@ int main(int argc, char** argv) {
                          confPath.c_str());
         if (!upsertConfKey(confPath, "TRANSCODE_PROFILE", content.label))
             std::fprintf(stderr, "misterplexd: conf upsert TRANSCODE_PROFILE failed\n");
-        if (!upsertConfKey(confPath, "DISPLAY_RES", display.label))
+        if (!upsertConfKey(confPath, "DISPLAY_RES", disp.label))
             std::fprintf(stderr, "misterplexd: conf upsert DISPLAY_RES failed\n");
         if (!upsertConfKey(confPath, "CONTENT_RES", content.label))
             std::fprintf(stderr, "misterplexd: conf upsert CONTENT_RES failed\n");
@@ -904,7 +912,7 @@ int main(int argc, char** argv) {
         std::fprintf(stderr,
                      "misterplexd: conf synced from OSD content=%s display=%s DECODE=%s "
                      "TRANSCODE_PROFILE=%s glass=%s bank=%dx%d\n",
-                     content.label, display.label, cGeom.c_str(), content.label,
+                     content.label, disp.label, cGeom.c_str(), content.label,
                      misterplex::liveGlassLabel(player.liveGlass()), bank.width, bank.height);
     };
 
@@ -1344,13 +1352,15 @@ int main(int argc, char** argv) {
     // applyOsd and only upserts DISPLAY_RES here — no DECODE / play restart.
     player.setOnDisplayResolutionChanged(
         [&](const misterplex::ContentResolution& dr) {
-            if (!upsertConfKey(confPath, "DISPLAY_RES", dr.label))
+            const auto clamped =
+                misterplex::clampDisplayToLiveGlass(dr, player.liveGlass());
+            if (!upsertConfKey(confPath, "DISPLAY_RES", clamped.label))
                 std::fprintf(stderr, "misterplexd: conf upsert DISPLAY_RES failed\n");
             else
                 std::fprintf(stderr,
                              "misterplexd: DISPLAY_RES=%s saved (applies on reset; "
                              "raster unchanged until then)\n",
-                             dr.label);
+                             clamped.label);
         });
     player.setOnContentResolutionChanged(
         [&](const misterplex::ContentResolution& cr, bool playingNow) {

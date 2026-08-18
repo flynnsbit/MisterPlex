@@ -984,10 +984,11 @@ void MediaPlayer::applyOsd(uint16_t word) {
 }
 
 void MediaPlayer::latchAndApplyDisplayRaster(const ContentResolution& display) {
-    latchedDisplayRes_ = display;
+    const ContentResolution clamped = clampDisplayToLiveGlass(display, liveGlass_);
+    latchedDisplayRes_ = clamped;
     displayRasterLatched_ = true;
-    lastDisplayRes_ = display;
-    applyDisplayRaster(display, /*force=*/true);
+    lastDisplayRes_ = clamped;
+    applyDisplayRaster(clamped, /*force=*/true);
     if (!playing_.load())
         paintIdle();
 }
@@ -1002,10 +1003,18 @@ void MediaPlayer::applyLiveDisplayRaster(const ContentResolution& osdDisplay, bo
 }
 
 void MediaPlayer::applyDisplayRaster(const ContentResolution& display, bool force) {
-    const char* cmd = videoModeCmdForDisplayLabel(display.label);
+    const ContentResolution clamped = clampDisplayToLiveGlass(display, liveGlass_);
+    const char* cmd = videoModeCmdForDisplayLabel(clamped.label, liveGlass_);
     // 112bb + CEA 720p24 HDMI (30000 kHz) wrote and HURT: 14.5/12.31 vs
     // 15.4/12.87 at 720p60. ascal 60→24 is not the unique24 closer. L4 stays
     // on 720p60. kVideoModeCmd720p24 remains a legal cmd for a later design.
+    // crt15 240p/480i: cmd is null — FPGA beam owns 15 kHz; do not poke ascal.
+    if (liveGlass_ == LiveGlass::Crt15 && !cmd) {
+        log(std::string("media: crt15 display ") +
+            (clamped.label ? clamped.label : "?") +
+            " skip video_mode (FPGA beam owns 15 kHz)");
+        return;
+    }
     const char* next = force ? (videoModeCmdIsSafe(cmd) ? cmd : nullptr)
                              : videoModeCmdIfChanged(cmd, lastVideoModeCmd_.c_str());
     if (!next)

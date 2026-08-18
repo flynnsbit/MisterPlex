@@ -1,8 +1,12 @@
 #pragma once
 // F12 Display → /dev/MiSTer_cmd video_mode. Unknown label = no write.
 // L4 product stays on CEA 720p60. kVideoModeCmd720p24 is legal, unused.
+// crt15: Display 240p/480i do NOT write ascal 15 kHz (that path is RED).
+// Skip video_mode so the FPGA beam owns 15 kHz; VGA follows core analog.
+// 480p on crt15 may still write 800×600 HDMI for the lab grabber.
 
 #include "libmisterplex/osd_menu.hpp"
+#include "libmisterplex/present_bank.hpp"
 
 #include <cstdio>
 #include <cstring>
@@ -29,8 +33,22 @@ static_assert(sizeof("video_mode 1280,110,40,220,720,5,5,20,74250\n") < kMisterC
 static_assert(sizeof("video_mode 1280,110,40,220,720,5,5,28,30000\n") < kMisterCmdBuf,
               "CEA 720p24 cmd + NL must fit kMisterCmdBuf");
 
-inline const char* videoModeCmdForDisplayLabel(const char* label) {
+inline bool crt15SkipVideoModeLabel(const char* label) {
     if (!label || !label[0])
+        return false;
+    return std::strcmp(label, "240p") == 0 || std::strcmp(label, "480i") == 0;
+}
+
+inline const char* videoModeCmdForDisplayLabel(const char* label,
+                                               LiveGlass glass = LiveGlass::True480) {
+    if (!label || !label[0])
+        return nullptr;
+    // crt15 15 kHz is the FPGA analog beam. ascal 15 kHz (~6.5 MHz) is RED.
+    // Skip 240p/480i so Main does not retune HDMI/VGA off the core raster.
+    // 480p may keep 800×600 HDMI for the lab grabber; VGA still follows analog.
+    if (glass == LiveGlass::Crt15 && crt15SkipVideoModeLabel(label))
+        return nullptr;
+    if (glass == LiveGlass::Crt15 && std::strcmp(label, "720p") == 0)
         return nullptr;
     if (std::strcmp(label, "240p") == 0)
         return kVideoModeCmd240p;
@@ -41,22 +59,25 @@ inline const char* videoModeCmdForDisplayLabel(const char* label) {
     return nullptr;
 }
 
-inline const char* videoModeCmdForDisplaySel(unsigned displaySel, const char* contentLabel) {
+inline const char* videoModeCmdForDisplaySel(unsigned displaySel, const char* contentLabel,
+                                             LiveGlass glass = LiveGlass::True480) {
     switch (displaySel & 3u) {
     case 1:
-        return videoModeCmdForDisplayLabel("240p");
+        return videoModeCmdForDisplayLabel("240p", glass);
     case 2:
-        return videoModeCmdForDisplayLabel("480p");
+        return videoModeCmdForDisplayLabel("480p", glass);
     case 3:
-        return videoModeCmdForDisplayLabel("720p");
+        return videoModeCmdForDisplayLabel("720p", glass);
     default:
-        return videoModeCmdForDisplayLabel(contentLabel);
+        return videoModeCmdForDisplayLabel(contentLabel, glass);
     }
 }
 
-inline const char* videoModeCmdForOsdWord(uint16_t word) {
+inline const char* videoModeCmdForOsdWord(uint16_t word,
+                                          LiveGlass glass = LiveGlass::True480) {
     const OsdSettings s = decodeOsdWord(word);
-    return videoModeCmdForDisplayLabel(s.displayResolution.label);
+    const ContentResolution d = clampDisplayToLiveGlass(s.displayResolution, glass);
+    return videoModeCmdForDisplayLabel(d.label, glass);
 }
 
 inline bool videoModeCmdIsSafe(const char* cmd) {
