@@ -15,8 +15,15 @@
 //   `define PRESENT_CLK_PIX_PLL  — separate clk_pix + rate-match (optional)
 //   `define PLEX_PRESENT_TRUE_480P — fixed 640x480 progressive product path:
 //       true 640x480 DE, identity store y=0..479, and 11+618+11 presentation.
+//   `define PLEX_PRESENT_480I — sibling 15 kHz 480i weave (requires TRUE_480P):
+//       present_beam_480i CE 2/3, 849x262/field, 640x240 DE; store y={vc,field_odd}.
+//       Mutually exclusive with 240P15 and 720P_L4. Enable only in Plex_480i.qsf (L52).
+//   `define PLEX_PRESENT_240P15 — sibling 15 kHz 240p bob (requires TRUE_480P):
+//       present_beam_240p15 CE/3, 424x262, 320x240 DE; store bob even x/y.
+//       clk_sys stays 20 MHz. Enable only in Plex_240p15.qsf (L52).
 // Macros off → bit-identical Template H_DE=529 / DE_LAG=3 path (v0.3.0 baseline).
 // Mutually exclusive: TRUE_480P vs L4 vs BEAM_960 vs MULTI_PIXEL.
+// 480I and 240P15 are TRUE_480P siblings; they exclude each other and L4.
 
 `ifdef PRESENT_MULTI_PIXEL
 	`ifndef PRESENT_PX_PER_CLK
@@ -212,6 +219,25 @@ module present_core #(
 		$error("PLEX_PRESENT_TRUE_480P and PRESENT_MULTI_PIXEL are mutually exclusive");
 `endif
 `endif
+`ifdef PLEX_PRESENT_480I
+`ifndef PLEX_PRESENT_TRUE_480P
+		$error("PLEX_PRESENT_480I requires PLEX_PRESENT_TRUE_480P");
+`endif
+`ifdef PLEX_PRESENT_240P15
+		$error("PLEX_PRESENT_480I and PLEX_PRESENT_240P15 are mutually exclusive");
+`endif
+`ifdef PLEX_PRESENT_720P_L4
+		$error("PLEX_PRESENT_480I and PLEX_PRESENT_720P_L4 are mutually exclusive");
+`endif
+`endif
+`ifdef PLEX_PRESENT_240P15
+`ifndef PLEX_PRESENT_TRUE_480P
+		$error("PLEX_PRESENT_240P15 requires PLEX_PRESENT_TRUE_480P");
+`endif
+`ifdef PLEX_PRESENT_720P_L4
+		$error("PLEX_PRESENT_240P15 and PLEX_PRESENT_720P_L4 are mutually exclusive");
+`endif
+`endif
 	end
 	// synthesis translate_on
 
@@ -224,6 +250,20 @@ module present_core #(
 			PLEX_PRESENT_TRUE_480P_REQUIRES_FILL_STEP_EQ_SCAN_STEP u_contract_error();
 		end
 	endgenerate
+`endif
+
+	// 480I without TRUE_480P (or with 240P15 / L4) would otherwise silently
+	// take the Template or L4 beam. Undeclared modules fail Quartus map.
+`ifdef PLEX_PRESENT_480I
+`ifndef PLEX_PRESENT_TRUE_480P
+	PLEX_PRESENT_480I_REQUIRES_TRUE_480P u_480i_requires_true480();
+`endif
+`ifdef PLEX_PRESENT_240P15
+	PLEX_PRESENT_480I_EXCLUDES_240P15 u_480i_excl_240p15();
+`endif
+`ifdef PLEX_PRESENT_720P_L4
+	PLEX_PRESENT_480I_EXCLUDES_720P_L4 u_480i_excl_l4();
+`endif
 `endif
 
 `ifdef PRESENT_MULTI_PIXEL
@@ -279,14 +319,43 @@ module present_core #(
 
 `ifdef PLEX_PRESENT_TRUE_480P
 	// =====================================================================
-	// Fixed native 640x480 progressive beam. Runtime cadence/PLXG is
-	// deliberately absent from this first visual-recovery implementation.
-	// The pixel enable divides clk_sys by two, matching the legacy Template
-	// pixel cadence: 10 MHz / (672*496) = 30.0019 Hz. This keeps FRAME_LINES_8
-	// inside the existing 480-row DDR prefetch budget while retaining all
-	// 480 active rows.
+	// Fixed native 640x480 store. Product beam is 672x496 CE/2 -> 30.0019 Hz.
+	// PLEX_PRESENT_480I (sibling QSF only) replaces the beam with 849x262
+	// CE 2/3 -> 15704.750687 Hz / 59.94179652 Hz field and weaves y={vc,field_odd}.
+	// PLEX_PRESENT_240P15 (sibling QSF only) replaces the beam with 424x262
+	// CE/3 -> ~15.723 kHz / ~60.012 Hz and bobs even store x/y.
 	// =====================================================================
 	wire [10:0] hc11, vc11;
+`ifdef PLEX_PRESENT_480I
+	wire field_odd;
+	present_beam_480i u_beam_480i (
+		.clk(clk),
+		.reset(reset),
+		.ce_pix(ce_pix_i),
+		.HBlank(hb),
+		.HSync(hs),
+		.VBlank(vb),
+		.VSync(vs),
+		.frame_start(fstart),
+		.hc_out(hc11),
+		.vc_out(vc11),
+		.field_odd(field_odd)
+	);
+`else
+`ifdef PLEX_PRESENT_240P15
+	present_beam_240p15 u_beam_240p15 (
+		.clk(clk),
+		.reset(reset),
+		.ce_pix(ce_pix_i),
+		.HBlank(hb),
+		.HSync(hs),
+		.VBlank(vb),
+		.VSync(vs),
+		.frame_start(fstart),
+		.hc_out(hc11),
+		.vc_out(vc11)
+	);
+`else
 	present_beam_true_480p u_beam_true_480p (
 		.clk(clk),
 		.reset(reset),
@@ -299,6 +368,8 @@ module present_core #(
 		.hc_out(hc11),
 		.vc_out(vc11)
 	);
+`endif
+`endif
 	assign hc = hc11[9:0];
 	assign vc = vc11[9:0];
 	assign br = 8'd0;
@@ -503,6 +574,27 @@ module present_core #(
 	// Exact clone of colorbars in_content (full DE paint region).
 	wire [9:0] py = scandouble ? (vc >> 1) : vc;
 `ifdef PLEX_PRESENT_TRUE_480P
+`ifdef PLEX_PRESENT_480I
+	// 15 kHz weave: identity x=hc; y={vc, field_odd} on the 640x480 store.
+	// field_odd=0 even/top 2*vc; field_odd=1 odd/bot 2*vc+1. Clamp 640x480.
+	wire [10:0] weave_y = {vc11[9:0], field_odd};
+	wire in_content = ~hb & ~vb & (hc11 < 11'd640) & (vc11 < 11'd240);
+	wire       past_last_row = (vc11 >= 11'd240);
+	wire [FRAME_X_W-1:0] store_x_clamped =
+		(hc11 >= 11'd640) ? FRAME_LAST_X : FRAME_X_W'(hc11);
+	wire [FRAME_Y_W-1:0] store_y_addr =
+		(weave_y >= 11'd480) ? FRAME_LAST_Y : FRAME_Y_W'(weave_y);
+`elsif PLEX_PRESENT_240P15
+	// 15 kHz bob: 320x240 beam reads even columns/rows of the 640x480 store.
+	wire [10:0] bob_x = {hc11[9:0], 1'b0};
+	wire [10:0] bob_y = {vc11[9:0], 1'b0};
+	wire in_content = ~hb & ~vb & (hc11 < 11'd320) & (vc11 < 11'd240);
+	wire       past_last_row = (vc11 >= 11'd240);
+	wire [FRAME_X_W-1:0] store_x_clamped =
+		(bob_x >= 11'd640) ? FRAME_LAST_X : FRAME_X_W'(bob_x);
+	wire [FRAME_Y_W-1:0] store_y_addr =
+		(bob_y >= 11'd480) ? FRAME_LAST_Y : FRAME_Y_W'(bob_y);
+`else
 	// Native 480p: every active beam coordinate addresses the same store row
 	// and column. The DDR store applies the 11-pixel pillars and 618-pixel
 	// visible window; no Template scaling or even-row mapping exists here.
@@ -512,6 +604,7 @@ module present_core #(
 		(hc11 >= 11'd640) ? FRAME_LAST_X : FRAME_X_W'(hc11);
 	wire [FRAME_Y_W-1:0] store_y_addr =
 		(vc11 >= 11'd480) ? FRAME_LAST_Y : FRAME_Y_W'(vc11);
+`endif
 `elsif PLEX_PRESENT_720P_L4
 	// L4: present_content_window owns store map (identity when content==DE).
 	// STORE domain tracks FRAME_* so QSF 1280×720 cannot disagree with 480p-era 1280/720 literals.
