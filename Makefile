@@ -66,6 +66,7 @@ unit-unlocked: preflight $(ROOT)/build/test_gdm_filter $(ROOT)/build/test_plextv
 	$(ROOT)/build/test_cadence
 	$(ROOT)/build/test_avclock
 	python3 $(ROOT)/tests/unit/test_fixed30_cadence.py
+	python3 $(ROOT)/tests/unit/test_480i_cadence.py
 	$(ROOT)/build/test_fixed30_host_pacing
 	$(ROOT)/build/test_mraudio_status
 	$(ROOT)/build/test_osd_menu

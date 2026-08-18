@@ -1,0 +1,19 @@
+// Locked 480i weave constants (CE 2/3, clk_sys 20 MHz).
+// SoT for test_480i_cadence.py when present_beam_480i.sv is not in-tree.
+// H = 40e6/(3*849) = 40000000/2547 Hz
+// field = 20e6/333657 Hz
+// frame = 10e6/333657 Hz
+localparam [10:0] H_DE     = 11'd640;
+localparam [10:0] V_ACTIVE = 11'd240;
+localparam [10:0] H_TOTAL  = 11'd849;
+localparam [10:0] V_TOTAL  = 11'd262;
+localparam [10:0] H_SYNC_S = 11'd660;
+localparam [10:0] H_SYNC_E = 11'd723;
+localparam [10:0] V_SYNC_S = 11'd243;
+localparam [10:0] V_SYNC_E = 11'd246;
+localparam int    FRAME_LINES = 524;
+localparam bit    FIRST_ODD   = 1'b1;
+localparam bit    HALFLINE    = 1'b0;
+localparam int    CE_NUM      = 2;
+localparam int    CE_DEN      = 3;
+// CE 2/3: fire 2 of every 3 clk_sys (pattern 1,1,0)
