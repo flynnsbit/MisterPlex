@@ -1,0 +1,6 @@
+# md5(live Plex*.rbf) → daemon. CRT hashes TBD until BUILD_OK.
+# Digital 24 fps GOLD (v0.7.0) — do not thrash.
+07f54d9f8f0eda2fe75d9cc314f6de54 /media/fat/misterplex/bin/misterplexd.480p
+03f1b95ac67a568f24193234ea8cb072 /media/fat/misterplex/bin/misterplexd.720p24
+# TBD /media/fat/misterplex/bin/misterplexd.240p15
+# TBD /media/fat/misterplex/bin/misterplexd.480i

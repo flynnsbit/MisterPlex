@@ -1,0 +1,13 @@
+# rbf_daemon_pairs.txt — md5(live Plex*.rbf) → daemon path
+# Watcher: scripts/misterplex_core_watch.sh (MISTERPLEX_PAIRS)
+# Format: <32-hex-md5> /media/fat/misterplex/bin/misterplexd.<tag>
+#
+# Digital 24 fps GOLD (v0.7.0) — do not delete these mappings on the box.
+# CRT install merges; it must not wipe them.
+# 07f54d9f8f0eda2fe75d9cc314f6de54 /media/fat/misterplex/bin/misterplexd.480p
+# 03f1b95ac67a568f24193234ea8cb072 /media/fat/misterplex/bin/misterplexd.720p24
+#
+# CRT 15 kHz siblings — hashes TBD until BUILD_OK (no RBF yet).
+# Watcher awk matches $1 == md5; TBD never matches.
+# TBD /media/fat/misterplex/bin/misterplexd.240p15
+# TBD /media/fat/misterplex/bin/misterplexd.480i
