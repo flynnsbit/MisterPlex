@@ -88,6 +88,35 @@ inline bool waitPidMs(pid_t pid, int timeoutMs, int* statusOut) {
     }
 }
 
+// stop() must not wait forever: Play holds playHandoffMu across this join.
+bool joinThreadMs(std::thread& t, int timeoutMs, const char* name) {
+    if (!t.joinable())
+        return true;
+#if defined(__linux__)
+    struct timespec ts {};
+    if (::clock_gettime(CLOCK_REALTIME, &ts) != 0) {
+        t.join();
+        return true;
+    }
+    ts.tv_sec += timeoutMs / 1000;
+    ts.tv_nsec += static_cast<long>(timeoutMs % 1000) * 1000000L;
+    if (ts.tv_nsec >= 1000000000L) {
+        ts.tv_sec += 1;
+        ts.tv_nsec -= 1000000000L;
+    }
+    const int rc = ::pthread_timedjoin_np(t.native_handle(), nullptr, &ts);
+    t.detach();
+    if (rc != 0)
+        std::fprintf(stderr, "misterplexd: %s join timeout rc=%d — detach\n", name, rc);
+    return rc == 0;
+#else
+    (void)timeoutMs;
+    (void)name;
+    t.join();
+    return true;
+#endif
+}
+
 // Branch B: compile-time MPX_FABRIC_DIRECT=1 or env MPX_FABRIC_DIRECT=1.
 // Default OFF — 480p / 07f54d9f still use sendDdrFrame memcpy.
 inline bool fabricDirectWanted() {
@@ -1567,44 +1596,43 @@ void MediaPlayer::signalChildren(int sig) {
 
 void MediaPlayer::killChildren() {
     signalChildren(SIGTERM);
-    for (int i = 0; i < 20; ++i) {
-        pid_t p = childPid_.load();
-        pid_t ap = audioPid_.load();
-        pid_t sp = streamPid_.load();
-        if (p <= 0 && ap <= 0 && sp <= 0)
-            break;
-        int st = 0;
-        if (p > 0 && waitpid(p, &st, WNOHANG) == p)
-            childPid_.store(-1);
-        if (ap > 0 && waitpid(ap, &st, WNOHANG) == ap)
-            audioPid_.store(-1);
-        if (sp > 0 && waitpid(sp, &st, WNOHANG) == sp)
-            streamPid_.store(-1);
-        std::this_thread::sleep_for(std::chrono::milliseconds(25));
-    }
-    signalChildren(SIGKILL);
-    pid_t p = childPid_.exchange(-1);
-    if (p > 0) {
-        int st = 0;
-        waitpid(p, &st, 0);
-    }
-    pid_t ap = audioPid_.exchange(-1);
-    if (ap > 0) {
-        int st = 0;
-        waitpid(ap, &st, 0);
-    }
-    pid_t sp = streamPid_.exchange(-1);
-    if (sp > 0) {
-        int st = 0;
-        waitpid(sp, &st, 0);
-    }
-    audioActive_.store(false);
-    streamActive_.store(false);
+    // Close PCM fds before any wait: O_RDWR self-writer / blocking waitpid
+    // used to leave audioPump in pipe_read and freeze Play.
     {
         int hold = remuxPcmHoldFd_.exchange(-1);
         if (hold >= 0)
             ::close(hold);
+        int rd = remuxPcmReadFd_.exchange(-1);
+        if (rd >= 0)
+            ::close(rd);
     }
+    auto reap = [](std::atomic<pid_t>& slot) {
+        pid_t x = slot.load();
+        if (x <= 0)
+            return;
+        int st = 0;
+        if (::waitpid(x, &st, WNOHANG) == x)
+            slot.store(-1);
+    };
+    for (int i = 0; i < 20; ++i) {
+        reap(childPid_);
+        reap(audioPid_);
+        reap(streamPid_);
+        if (childPid_.load() <= 0 && audioPid_.load() <= 0 && streamPid_.load() <= 0)
+            break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    }
+    signalChildren(SIGKILL);
+    for (int i = 0; i < 8; ++i) {
+        reap(childPid_);
+        reap(audioPid_);
+        reap(streamPid_);
+        if (childPid_.load() <= 0 && audioPid_.load() <= 0 && streamPid_.load() <= 0)
+            break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    }
+    audioActive_.store(false);
+    streamActive_.store(false);
     ::unlink("/tmp/mplex-inproc.ts");
     ::unlink("/tmp/mplex-inproc.h264");
     ::unlink("/tmp/mplex-inproc.pcm");
@@ -1625,13 +1653,13 @@ void MediaPlayer::shutdown() {
 #endif
         killChildren();
         if (thr_.joinable())
-            thr_.join();
+            (void)joinThreadMs(thr_, 2500, "play");
         // threadMain normally joins these at session end, but it may never have
         // run (or may have been torn down mid-session), so sweep them here too.
         if (audioThr_.joinable())
-            audioThr_.join();
+            (void)joinThreadMs(audioThr_, 1500, "audioPump");
         if (streamThr_.joinable())
-            streamThr_.join();
+            (void)joinThreadMs(streamThr_, 1500, "stream");
         playing_.store(false);
         resetPlaybackPauseClock();
     }
@@ -1652,9 +1680,15 @@ void MediaPlayer::stop() {
     // Joining helpers from both thr_ and stop() races and can hang the companion HTTP thread.
     std::lock_guard<std::mutex> life(lifeMu_);
     stop_.store(true);
+#ifdef MPX_HAVE_LIBAV
+    if (inprocPcm_)
+        inprocPcm_->requestStop();
+#endif
     killChildren();
-    if (thr_.joinable())
-        thr_.join();
+    if (thr_.joinable()) {
+        if (!joinThreadMs(thr_, 2500, "play"))
+            log("media: play join timeout — detach (Play must not hang HTTP)");
+    }
     const int64_t finalPos = positionMs_.load();
     int64_t finalDur = 0;
     {
@@ -2737,7 +2771,10 @@ void MediaPlayer::audioPump(int afd) {
     };
 #endif
     auto pcmClose = [&]() {
-        if (afd >= 0)
+        if (afd < 0)
+            return;
+        int cur = afd;
+        if (remuxPcmReadFd_.compare_exchange_strong(cur, -1))
             ::close(afd);
     };
     const bool wantMr = audioEnabled_ && (::access(audioDev_.c_str(), W_OK) == 0);
@@ -2748,11 +2785,15 @@ void MediaPlayer::audioPump(int afd) {
         out = ::open(audioDev_.c_str(), O_WRONLY);
         if (out < 0)
             log("media: open " + audioDev_ + " failed errno=" + std::to_string(errno));
-        else
+        else {
+            int fl = ::fcntl(out, F_GETFL, 0);
+            if (fl >= 0)
+                (void)::fcntl(out, F_SETFL, fl | O_NONBLOCK);
             log("media: MrAudio open — software-paced 48kHz delay_ms=" +
                 std::to_string(audioDelayMs_) +
                 " clock_ppm=" + std::to_string(audioClockPpm_) +
                 (afd < 0 ? " src=same_demux" : " (adelay in ffmpeg if >0)"));
+        }
     }
     if (out < 0 && !wantF2) {
         char buf[4096];
@@ -2936,6 +2977,8 @@ void MediaPlayer::audioPump(int afd) {
                 if (w < 0) {
                     if (errno == EINTR)
                         continue;
+                    if (errno == EAGAIN || errno == EWOULDBLOCK)
+                        break;
                     log("media: MrAudio write err errno=" + std::to_string(errno));
                     break;
                 }
@@ -3752,9 +3795,20 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         auto abortInprocSession = [&](const std::string& why) {
             log(why);
             playing_.store(false);
+            stop_.store(true);
+#ifdef MPX_HAVE_LIBAV
+            inprocDec.requestStop();
+#endif
             killChildren();
-            if (streamThr_.joinable())
-                streamThr_.join();
+            if (audioThr_.joinable() &&
+                !joinThreadMs(audioThr_, 1500, "audioPump"))
+                log("media: audioPump join timeout on abort — detach");
+            if (streamThr_.joinable() &&
+                !joinThreadMs(streamThr_, 1500, "stream"))
+                log("media: stream join timeout on abort — detach");
+#ifdef MPX_HAVE_LIBAV
+            inprocPcm_ = nullptr;
+#endif
         };
         if (wantInproc) {
 #ifndef MPX_HAVE_LIBAV
@@ -3853,6 +3907,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                             ::close(remuxPcmFd);
                             remuxPcmFd = -1;
                         }
+                        int hold = remuxPcmHoldFd_.exchange(-1);
+                        if (hold >= 0)
+                            ::close(hold);
                     }
                 } else {
                     log(std::string("media: inproc_decode mkfifo failed errno=") +
@@ -3867,9 +3924,13 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 holdAudioToPictures_.store(false);
                 const int pfd = remuxPcmFd;
                 remuxPcmFd = -1;
+                remuxPcmReadFd_.store(pfd);
                 audioThr_ = std::thread([this, pfd] { audioPump(pfd); });
                 remuxPcmPumpEarly = true;
             }
+#ifdef MPX_HAVE_LIBAV
+            inprocPcm_ = &inprocDec;
+#endif
             const bool inprocOpened = inprocDec.open(inprocUrl, iopts, ierr);
             if (inprocOpened && remuxPcmPumpEarly)
                 audioFeedRelease_.store(true);
@@ -5901,13 +5962,13 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     if (inprocPcm_)
         inprocPcm_->requestStop();
 #endif
-    if (audioThr_.joinable())
-        audioThr_.join();
+    if (audioThr_.joinable() && !joinThreadMs(audioThr_, 1500, "audioPump"))
+        log("media: audioPump join timeout — detach");
 #ifdef MPX_HAVE_LIBAV
     inprocPcm_ = nullptr;
 #endif
-    if (streamThr_.joinable())
-        streamThr_.join();
+    if (streamThr_.joinable() && !joinThreadMs(streamThr_, 1500, "stream"))
+        log("media: stream join timeout — detach");
 
     if (streamEnabled_ && frameIndex == 0) {
         FpgaSpi::BitstreamStatus st;

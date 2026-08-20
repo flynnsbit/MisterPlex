@@ -447,6 +447,7 @@ private:
     // Writer-hold on /tmp/mplex-inproc.pcm so ffmpeg can open. Must not be the
     // pump read fd: O_RDWR on the reader hides EOF when remux exits (HTTP spinner).
     std::atomic<int> remuxPcmHoldFd_{-1};
+    std::atomic<int> remuxPcmReadFd_{-1};
     // 720p pipe: drain ffmpeg audio while unique warms, then start MrAudio at
     // presentCount content time. 0 = 480p / combined 720p (start with video).
     std::atomic<int> audioReleaseAfterPresents_{0};

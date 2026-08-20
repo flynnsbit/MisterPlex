@@ -6,6 +6,7 @@
 #include <cstring>
 
 #ifdef MPX_HAVE_LIBAV
+#include <atomic>
 #include <string>
 #endif
 
@@ -346,7 +347,7 @@ public:
     int drainPcm(uint8_t* dst, size_t n);
     bool hasAudio() const;
     bool audioEof() const;
-    // Unblock drainPcm waiters without deleting the impl (join audio first).
+    // Unblock drainPcm waiters and libav fifo open/read (join audio first).
     void requestStop();
     void close();
     ~AvInprocDecoder() { close(); }
@@ -360,8 +361,10 @@ public:
     AvInprocDecoder& operator=(const AvInprocDecoder&) = delete;
 
 private:
+    static int interruptThunk(void* p);
     struct Impl;
     Impl* impl_ = nullptr;
+    std::atomic<int> abort_{0};
 };
 
 #endif // MPX_HAVE_LIBAV

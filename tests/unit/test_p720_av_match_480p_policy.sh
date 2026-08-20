@@ -117,6 +117,13 @@ if grep -n 'open(afifo, O_RDWR)' "$MP" | grep -v NONBLOCK >/dev/null; then
 fi
 grep -q 'Must not take playHandoffMu here' "$ROOT/arm/misterplexd/main.cpp" || \
   fail "playMedia HTTP must not wait on playHandoffMu (stop-join hang)"
+grep -q 'interrupt_callback' "$ROOT/arm/misterplexd/av_inproc_decode.cpp" || \
+  fail "libav fifo open/read must install interrupt_callback (stop during avformat_open)"
+grep -q 'pthread_timedjoin_np' "$MP" || \
+  fail "stop() must timed-join play thread so Play cannot hang forever"
+if awk '/void MediaPlayer::killChildren/,/^}/' "$MP" | grep -q 'waitpid(.*0)'; then
+  fail "killChildren must not blocking-waitpid (D-state remux froze Play)"
+fi
 grep -q 'inproc_audio=abort remux_pcm fd missing' "$MP" || \
   fail "720p inproc must abort if remux PCM fd missing (no spawnAudioOnly)"
 grep -q 'prefetched=0' "$MP" || fail "want_inproc log must pin prefetched=0"

@@ -5,6 +5,7 @@
 #include "libmisterplex/av_inproc_decode.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <cmath>
@@ -227,7 +228,13 @@ struct AvInprocDecoder::Impl {
     }
 };
 
+int AvInprocDecoder::interruptThunk(void* p) {
+    auto* d = static_cast<AvInprocDecoder*>(p);
+    return (d && d->abort_.load(std::memory_order_relaxed)) ? 1 : 0;
+}
+
 void AvInprocDecoder::requestStop() {
+    abort_.store(1, std::memory_order_relaxed);
     if (!impl_)
         return;
     std::lock_guard<std::mutex> lk(impl_->pcmMu);
@@ -298,6 +305,7 @@ bool AvInprocDecoder::open(const std::string& pathOrUrl, const AvInprocOpenOpts&
         return false;
     }
 
+    abort_.store(0, std::memory_order_relaxed);
     impl_ = new Impl();
     av_log_set_level(AV_LOG_ERROR);
 
@@ -320,6 +328,15 @@ bool AvInprocDecoder::open(const std::string& pathOrUrl, const AvInprocOpenOpts&
         av_dict_set(&opts, "probesize", "32768", 0);
         av_dict_set(&opts, "analyzeduration", "0", 0);
     }
+    impl_->fmt = avformat_alloc_context();
+    if (!impl_->fmt) {
+        av_dict_free(&opts);
+        err = "avformat_alloc_context failed";
+        close();
+        return false;
+    }
+    impl_->fmt->interrupt_callback.callback = interruptThunk;
+    impl_->fmt->interrupt_callback.opaque = this;
     int ret = avformat_open_input(&impl_->fmt, pathOrUrl.c_str(), ifmt, &opts);
     av_dict_free(&opts);
     if (ret < 0) {
