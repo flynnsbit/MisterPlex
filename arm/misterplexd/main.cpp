@@ -945,6 +945,26 @@ int main(int argc, char** argv) {
                                                  matchH);
         };
 
+        // 720p24: Plex Web pins address=LAN PMS. That 401s the conf token and
+        // skips the host 9324 proxy (x86 1280x720 baseline @ 24p). Cast then
+        // played testsrc (120s) or PMS HEVC→720 (~13 unique). Prefer proxy.
+        if (player.liveGlass() == misterplex::LiveGlass::L4 &&
+            preferredBase.find("127.0.0.1:9324") != std::string::npos) {
+            std::string t = token;
+            if (t.empty())
+                t = confToken;
+            auto proxied = misterplex::resolvePlayTarget(
+                req.key, preferredBase, t, off, /*weakAlways=*/true, weakForPlay,
+                /*preferDirectH264=*/streamEnabled, matchW, matchH);
+            if (proxied.ok) {
+                std::fprintf(stderr,
+                             "misterplexd: 720p24 PLEX_BASE proxy %s (cast address=%s)\n",
+                             preferredBase.c_str(),
+                             req.address.empty() ? "-" : req.address.c_str());
+                return {proxied, preferredBase};
+            }
+        }
+
         auto resolved = tryBase(selected);
         if (resolved.ok)
             return {resolved, selected};

@@ -88,34 +88,10 @@ inline bool waitPidMs(pid_t pid, int timeoutMs, int* statusOut) {
     }
 }
 
-// stop() must not wait forever: Play holds playHandoffMu across this join.
-bool joinThreadMs(std::thread& t, int timeoutMs, const char* name) {
-    if (!t.joinable())
-        return true;
-#if defined(__linux__)
-    struct timespec ts {};
-    if (::clock_gettime(CLOCK_REALTIME, &ts) != 0) {
-        t.join();
-        return true;
-    }
-    ts.tv_sec += timeoutMs / 1000;
-    ts.tv_nsec += static_cast<long>(timeoutMs % 1000) * 1000000L;
-    if (ts.tv_nsec >= 1000000000L) {
-        ts.tv_sec += 1;
-        ts.tv_nsec -= 1000000000L;
-    }
-    const int rc = ::pthread_timedjoin_np(t.native_handle(), nullptr, &ts);
-    t.detach();
-    if (rc != 0)
-        std::fprintf(stderr, "misterplexd: %s join timeout rc=%d — detach\n", name, rc);
-    return rc == 0;
-#else
-    (void)timeoutMs;
-    (void)name;
-    t.join();
-    return true;
-#endif
-}
+// Never mix pthread_timedjoin_np with std::thread: a successful native join
+// leaves the C++ object joinable, and detach() then throws system_error
+// "No such process" — terminate, Play spinner, last frame stuck. Interrupt
+// + close PCM fds + WNOHANG reap make a normal join return.
 
 // Branch B: compile-time MPX_FABRIC_DIRECT=1 or env MPX_FABRIC_DIRECT=1.
 // Default OFF — 480p / 07f54d9f still use sendDdrFrame memcpy.
@@ -1653,13 +1629,13 @@ void MediaPlayer::shutdown() {
 #endif
         killChildren();
         if (thr_.joinable())
-            (void)joinThreadMs(thr_, 2500, "play");
+            thr_.join();
         // threadMain normally joins these at session end, but it may never have
         // run (or may have been torn down mid-session), so sweep them here too.
         if (audioThr_.joinable())
-            (void)joinThreadMs(audioThr_, 1500, "audioPump");
+            audioThr_.join();
         if (streamThr_.joinable())
-            (void)joinThreadMs(streamThr_, 1500, "stream");
+            streamThr_.join();
         playing_.store(false);
         resetPlaybackPauseClock();
     }
@@ -1685,10 +1661,8 @@ void MediaPlayer::stop() {
         inprocPcm_->requestStop();
 #endif
     killChildren();
-    if (thr_.joinable()) {
-        if (!joinThreadMs(thr_, 2500, "play"))
-            log("media: play join timeout — detach (Play must not hang HTTP)");
-    }
+    if (thr_.joinable())
+        thr_.join();
     const int64_t finalPos = positionMs_.load();
     int64_t finalDur = 0;
     {
@@ -3800,12 +3774,10 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             inprocDec.requestStop();
 #endif
             killChildren();
-            if (audioThr_.joinable() &&
-                !joinThreadMs(audioThr_, 1500, "audioPump"))
-                log("media: audioPump join timeout on abort — detach");
-            if (streamThr_.joinable() &&
-                !joinThreadMs(streamThr_, 1500, "stream"))
-                log("media: stream join timeout on abort — detach");
+            if (audioThr_.joinable())
+                audioThr_.join();
+            if (streamThr_.joinable())
+                streamThr_.join();
 #ifdef MPX_HAVE_LIBAV
             inprocPcm_ = nullptr;
 #endif
@@ -5962,13 +5934,13 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     if (inprocPcm_)
         inprocPcm_->requestStop();
 #endif
-    if (audioThr_.joinable() && !joinThreadMs(audioThr_, 1500, "audioPump"))
-        log("media: audioPump join timeout — detach");
+    if (audioThr_.joinable())
+        audioThr_.join();
 #ifdef MPX_HAVE_LIBAV
     inprocPcm_ = nullptr;
 #endif
-    if (streamThr_.joinable() && !joinThreadMs(streamThr_, 1500, "stream"))
-        log("media: stream join timeout — detach");
+    if (streamThr_.joinable())
+        streamThr_.join();
 
     if (streamEnabled_ && frameIndex == 0) {
         FpgaSpi::BitstreamStatus st;

@@ -119,9 +119,12 @@ grep -q 'Must not take playHandoffMu here' "$ROOT/arm/misterplexd/main.cpp" || \
   fail "playMedia HTTP must not wait on playHandoffMu (stop-join hang)"
 grep -q 'interrupt_callback' "$ROOT/arm/misterplexd/av_inproc_decode.cpp" || \
   fail "libav fifo open/read must install interrupt_callback (stop during avformat_open)"
-grep -q 'pthread_timedjoin_np' "$MP" || \
-  fail "stop() must timed-join play thread so Play cannot hang forever"
-if awk '/void MediaPlayer::killChildren/,/^}/' "$MP" | grep -q 'waitpid(.*0)'; then
+if grep -E '^[^/]*pthread_timedjoin_np' "$MP"; then
+  fail "pthread_timedjoin_np + std::thread detach throws No such process (daemon terminate)"
+fi
+grep -q '720p24 PLEX_BASE proxy' "$ROOT/arm/misterplexd/main.cpp" || \
+  fail "720p24 must prefer conf 9324 proxy over cast LAN address (Web play testsrc/401)"
+if awk '/void MediaPlayer::killChildren/,/^}/' "$MP" | grep -qE 'waitpid\([^)]*,[^)]*,[[:space:]]*0\)'; then
   fail "killChildren must not blocking-waitpid (D-state remux froze Play)"
 fi
 grep -q 'inproc_audio=abort remux_pcm fd missing' "$MP" || \
