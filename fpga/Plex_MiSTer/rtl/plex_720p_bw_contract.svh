@@ -13,6 +13,7 @@ localparam int P720_Y_LINE_BYTES      = 1280;
 localparam int P720_Y_LINE_QWORDS     = 160;
 localparam int P720_C_LINE_QWORDS     = 80;
 localparam int P720_BANK_STRIDE       = 32'h0018_0000;
+localparam int P720_PHYS_BASE         = 32'h3000_0000;
 localparam int P720_DOORBELL_PHYS     = 32'h3047_F000;
 localparam int P720_FPS               = 24;
 localparam int P720_CLK_SYS_HZ        = 20_000_000;

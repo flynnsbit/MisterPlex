@@ -67,6 +67,21 @@ int main() {
     // Advertise shape really contains "plex" (guard against a hollow fixture).
     CHECK(std::strstr(kGdmAdvertiseShape, "plex") != nullptr);
 
+    // --- HTTP-ready gate (Cast picker vanish class) --------------------------
+    // Chevron / process-up is not enough. Mute GDM until HTTP is listening.
+    CHECK(!gdmMayAdvertise(false));
+    CHECK(gdmMayAdvertise(true));
+    CHECK(!gdmMayReply(false, msearch, std::strlen(msearch)));
+    CHECK(gdmMayReply(true, msearch, std::strlen(msearch)));
+    CHECK(!gdmMayReply(true, kGdmAdvertiseShape, std::strlen(kGdmAdvertiseShape)));
+    CHECK(!gdmMayReply(false, kGdmAdvertiseShape, std::strlen(kGdmAdvertiseShape)));
+    CHECK(!gdmMayReply(true, plexOnly, std::strlen(plexOnly)));
+
+    // RED twin: legacy companion advertised even with HTTP down.
+    CHECK(legacyGdmAdvertiseRegardlessOfHttp(false));
+    CHECK(legacyGdmAdvertiseRegardlessOfHttp(false) != gdmMayAdvertise(false));
+    CHECK(legacyGdmAdvertiseRegardlessOfHttp(true) == gdmMayAdvertise(true));
+
     if (fails) {
         std::fprintf(stderr, "test_gdm_filter: %d failure(s)\n", fails);
         return 1;

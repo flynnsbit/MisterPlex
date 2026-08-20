@@ -58,6 +58,20 @@ inline bool gdmShouldReplyCStr(const char* buf) {
     return gdmShouldReply(buf, std::strlen(buf));
 }
 
+// Cast picker must not see us unless HTTP :port is listening.
+// Chevron (FPGA idle) is not enough — Plex Web talks HTTP after GDM.
+// RED twin: the gold/legacy companion advertised GDM as soon as gdmLoop
+// started, even when bind :3005 had already failed (picker vanish).
+inline bool gdmMayAdvertise(bool httpReady) { return httpReady; }
+
+inline bool gdmMayReply(bool httpReady, const char* buf, size_t len) {
+    return httpReady && gdmShouldReply(buf, len);
+}
+
+// Exact pre-fix advertise policy (HTTP readiness ignored). Tests pin that
+// the new gate disagrees with this when httpReady is false.
+inline bool legacyGdmAdvertiseRegardlessOfHttp(bool /*httpReady*/) { return true; }
+
 // Negative oracle used by tests: a body that is our advertise shape must NOT
 // match. Kept as a pure string so the test does not need Companion.
 inline constexpr const char* kGdmAdvertiseShape =

@@ -237,10 +237,17 @@ if [[ "$COPY_BACK" == "1" ]]; then
   rsync -a "$HOST:$REMOTE_SLOT/build_remote/compile.log" "$LOCAL_OUT/"
   rsync -a "$HOST:$REMOTE_SLOT/build_remote/summary.txt" "$LOCAL_OUT/"
   rsync -a "$HOST:$REMOTE_SLOT/build_remote/docker_stats.tsv" "$LOCAL_OUT/"
+  HIER_EXTRA=()
+  if grep -E '^[[:space:]]*set_global_assignment[[:space:]]+-name[[:space:]]+VERILOG_MACRO[[:space:]]+"PLEX_PRESENT_720P_L4=1"' \
+      "$PROJECT/Plex.qsf" >/dev/null 2>&1; then
+    # L4 720p present stubs fabric H.264 (clk_sys Fmax / 291 M10K).
+    HIER_EXTRA=(--allow-missing stream_path --allow-missing ddr_bitstream_reader)
+  fi
   "$ROOT/scripts/check_quartus_fit_hierarchy.py" \
     --fit-rpt "$LOCAL_OUT/Plex.fit.rpt" \
     --map-rpt "$LOCAL_OUT/Plex.map.rpt" \
-    --log "$LOCAL_OUT/compile.log"
+    --log "$LOCAL_OUT/compile.log" \
+    "${HIER_EXTRA[@]}"
   "$ROOT/scripts/check_quartus_timing.py" --sta-rpt "$LOCAL_OUT/Plex.sta.rpt"
   "$ROOT/scripts/check_timing_exclusions.py" --sta-rpt "$LOCAL_OUT/Plex.sta.rpt"
   RBF="$LOCAL_OUT/Plex.rbf"

@@ -1,5 +1,10 @@
 # MiSTerPlex release notes (Phase 5)
 
+Current pre-release: **v0.9.0-pre** — named gold pairs `Plex_480p` /
+`Plex_240p15` / `Plex_480i` plus lab `Plex_720p24`. See
+[`release-notes-v0.9.0-pre.md`](release-notes-v0.9.0-pre.md). There is no
+generic `Plex.rbf`.
+
 Install, configure, and verify a lab or SD deploy. For packaging from source, see `make package` / [`scripts/package_release.sh`](../scripts/package_release.sh).
 
 ## Package contents

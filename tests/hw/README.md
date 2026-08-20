@@ -27,10 +27,29 @@ the marker push, then `--previous` for the graded capture). Its `--source file`
 and `--source synthetic` modes exercise the same grading/staleness logic without
 opening the hardware grabber.
 
+## Glass baseline floor (v0.2.0 pair)
+
+**Floor pair** for eyes-on HDMI (not the product tip): RBF `dfebf2bf` + daemon `7cd10b4d` @ `DECODE=320x240`.  
+Policy: `tests/fixtures/glass_baseline/pair.json` · docs: `docs/glass-baseline-pair.md` · artifacts: `release_artifacts/v0.2.0-glass-baseline/`.
+
+```bash
+# Offline md5/policy
+make glass-baseline-policy
+
+# Pin floor pair + idle chevron + B6 play (USB grabber)
+MISTER_HOST=192.168.1.183 MISTER_PASS=1 make glass-baseline
+
+# Prove a *new* misterplexd+Plex.rbf pair matches the floor (no pin)
+GLASS_CANDIDATE=1 make glass-baseline
+```
+
+New pairs need **not** reuse the floor md5s; they **must** pass the same behavioral gates (or better) before replacing the lab default.
+
 ## Phase 1 / 2 (misterplexd)
 
 | Script | What |
 |--------|------|
+| `test_glass_baseline_pair.sh` | HDMI glass floor (pair pin + chevron + B6) |
 | `test_media_fb.sh` | play/pause/resume/stop via companion |
 | `test_playqueue_bind.sh` | scrubber play-queue fields |
 | `test_audio_mraudio.sh` | `/dev/MrAudio` PCM path |

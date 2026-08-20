@@ -1,4 +1,5 @@
 #include "plex_resolve.hpp"
+#include "libmisterplex/p720_transcode_vf.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -104,7 +105,16 @@ bool isUnreachableHost(const std::string& hostOrUrl) {
 std::string attr(const std::string& xml, const char* tag, const char* name) {
     // First occurrence of <tag ... name="..."
     const std::string open = std::string("<") + tag;
-    auto tpos = xml.find(open);
+    size_t tpos = 0;
+    while ((tpos = xml.find(open, tpos)) != std::string::npos) {
+        const size_t boundary = tpos + open.size();
+        if (boundary >= xml.size() ||
+            std::isspace(static_cast<unsigned char>(xml[boundary])) ||
+            xml[boundary] == '>' || xml[boundary] == '/') {
+            break;
+        }
+        tpos = boundary;
+    }
     if (tpos == std::string::npos)
         return {};
     auto end = xml.find('>', tpos);
@@ -152,15 +162,36 @@ bool videoCodecIsH264(const std::string& codecRaw) {
 
 } // namespace
 
+std::string plexHttpGet(const std::string& url, int timeoutSec,
+                        const std::string& extraHeaders) {
+    std::ostringstream cmd;
+    cmd << "curl -sS -g -k -L --http1.1 --connect-timeout 6 --max-time " << timeoutSec
+        << " -H 'Accept: application/xml'"
+        << " -H 'X-Plex-Product: MiSTerPlex'"
+        << " -H 'X-Plex-Provides: player'";
+    if (!extraHeaders.empty())
+        cmd << extraHeaders;
+    cmd << " '" << url << "' 2>/dev/null";
+    FILE* p = popen(cmd.str().c_str(), "r");
+    if (!p)
+        return {};
+    std::string out;
+    char buf[4096];
+    while (fgets(buf, sizeof(buf), p))
+        out += buf;
+    pclose(p);
+    return out;
+}
+
 const std::vector<PlexTranscodeProfile>& plexTranscodeProfiles() {
     static const std::vector<PlexTranscodeProfile> profiles = {
         {"240p", "320x240", 1000, 40, "baseline", 30},
         {"480p", "640x480", 2500, 60, "baseline", 30},
         // Level 3.1 required for 1280x720 (level 3.0 MaxFS is too small).
-        // Host ffmpeg I420 path (PRESENT=fpga) can take Main; baseline@q70
-        // showed full-frame vertical H.264 banding on BBB (76_bbb_banding).
-        // Main@q100/20M kills MB stripes while fabric flat remains center_std=0.
-        {"720p", "1280x720", 20000, 100, "main", 31},
+        // 20 Mbps @ q100 was for banding, not dual-A9 rate. Phase 0 copy is
+        // ~15 ms; 1280×720 @ 1.5–2.5 Mbps CBP decodes ~28 fps uncontended, so
+        // 20 unique fps at full 720p is the dual-A9 target. Keep Main@L3.1.
+        {"720p", "1280x720", 8000, 100, "main", 31},
     };
     return profiles;
 }
@@ -332,7 +363,7 @@ bool validateWeakLadder(const WeakLadder& weak, std::string* why) {
             return fail("H.264 level must not exceed 3.1 for 720p ARM decode path");
         if (weak.h264Level < 31)
             return fail("720p requires H.264 level 3.1 (level 3.0 MaxFS is insufficient)");
-        if (weak.maxVideoBitrateKbps < 3000)
+        if (weak.maxVideoBitrateKbps < 1500)
             return fail("720p profile bitrate is too low");
     } else if (weak.h264Profile != "baseline") {
         return fail("H.264 profile must be baseline for ≤480p profiles");
@@ -404,9 +435,10 @@ std::string buildUniversalTranscodeUrl(const std::string& base,
       << "?hasMDE=1"
       << "&path=" << urlEncodeQuery(metadataKey)
       << "&mediaIndex=0&partIndex=0"
-      << "&protocol=http&fastSeek=1"
+      << "&protocol=http&fastSeek=0"
       << "&directPlay=0&directStream=0"
       << "&subtitleSize=100&audioBoost=100&location=lan&copyts=1"
+      << "&autoAdjustQuality=0"
       << "&session=" << urlEncodeQuery(session)
       << "&videoQuality=" << weak.videoQuality
       << "&videoResolution=" << urlEncodeQuery(weak.videoResolution)
@@ -447,10 +479,9 @@ std::string plexFfmpegHeaders(const std::string& sessionId, const std::string& t
       << "X-Plex-Client-Profile-Name: " << weak.clientProfileName << "\r\n"
       << "X-Plex-Model: bundled\r\n"
       << "X-Plex-Provides: player\r\n";
-    // With the server-side MiSTerPlex.xml profile installed, Profile-Extra is
-    // counterproductive: it overrides the XML transcode target and drops the
-    // VideoEncodeFlags that force Baseline/CAVLC/ref=1.
-    if (weak.clientProfileName != "MiSTerPlex") {
+    // 480p gold: MiSTerPlex.xml owns the target; Extra fights Baseline/CAVLC.
+    // 720p: send caps so a generic PMS actually emits 1280x720 (not 640x480).
+    if (plexSendClientLadderCaps(weak)) {
         o << "X-Plex-Client-Capabilities: " << plexClientCapabilities(weak) << "\r\n"
           << "X-Plex-Client-Profile-Extra: " << plexClientProfileExtra(weak) << "\r\n";
     }
@@ -620,7 +651,7 @@ bool ensureUniversalDecision(const std::string& startUrl, const std::string& ses
 
     std::ostringstream decisionUrl;
     decisionUrl << base << "/video/:/transcode/universal/decision?hasMDE=1&path=" << path
-                << "&mediaIndex=0&partIndex=0&protocol=http&fastSeek=1&directPlay=0&directStream=0"
+                << "&mediaIndex=0&partIndex=0&protocol=http&fastSeek=0&directPlay=0&directStream=0"
                 << "&location=lan&session=" << urlEncodeQuery(sessionId)
                 << "&videoQuality=" << vq << "&videoResolution=" << vres
                 << "&maxVideoBitrate=" << br
@@ -633,7 +664,7 @@ bool ensureUniversalDecision(const std::string& startUrl, const std::string& ses
         {"X-Plex-Session-Identifier", sessionId},
         {"X-Plex-Client-Profile-Name", weak.clientProfileName},
     };
-    if (weak.clientProfileName != "MiSTerPlex") {
+    if (plexSendClientLadderCaps(weak)) {
         decisionHeaders.push_back({"X-Plex-Client-Capabilities", plexClientCapabilities(weak)});
         decisionHeaders.push_back({"X-Plex-Client-Profile-Extra", plexClientProfileExtra(weak)});
     }
@@ -673,6 +704,105 @@ bool mediaVideoIsH264(const std::string& plexMetadataXml) {
     return videoCodecIsH264(attr(plexMetadataXml, "Media", "videoCodec"));
 }
 
+SourceAspect sourceAspectFromPlexMetadata(const std::string& xml,
+                                         int codedWidth, int codedHeight) {
+    std::string displayAspect = attr(xml, "Video", "displayAspectRatio");
+    if (displayAspect.empty())
+        displayAspect = attr(xml, "Video", "aspectRatio");
+    if (displayAspect.empty())
+        displayAspect = attr(xml, "Media", "displayAspectRatio");
+    if (displayAspect.empty())
+        displayAspect = attr(xml, "Media", "aspectRatio");
+
+    std::string sampleAspect = attr(xml, "Media", "sampleAspectRatio");
+    if (sampleAspect.empty())
+        sampleAspect = attr(xml, "Media", "pixelAspectRatio");
+    std::string anamorphic = attr(xml, "Media", "anamorphic");
+
+    size_t sp = 0;
+    while ((sp = xml.find("<Stream", sp)) != std::string::npos) {
+        const auto end = xml.find('>', sp);
+        if (end == std::string::npos)
+            break;
+        const std::string slice = xml.substr(sp, end - sp);
+        const bool isVideo = slice.find("streamType=\"1\"") != std::string::npos ||
+                             slice.find("type=\"video\"") != std::string::npos;
+        if (isVideo) {
+            if (displayAspect.empty())
+                displayAspect = attrIn(slice, "displayAspectRatio");
+            if (displayAspect.empty())
+                displayAspect = attrIn(slice, "aspectRatio");
+            if (sampleAspect.empty())
+                sampleAspect = attrIn(slice, "sampleAspectRatio");
+            if (sampleAspect.empty())
+                sampleAspect = attrIn(slice, "pixelAspectRatio");
+            if (sampleAspect.empty())
+                sampleAspect = attrIn(slice, "sar");
+            if (anamorphic.empty())
+                anamorphic = attrIn(slice, "anamorphic");
+            break;
+        }
+        sp = end + 1;
+    }
+
+    const std::string normalizedAnamorphic = lowerCopy(anamorphic);
+    const bool squarePixelsKnown =
+        normalizedAnamorphic == "0" || normalizedAnamorphic == "false" ||
+        normalizedAnamorphic == "no";
+    return sourceAspectFromMetadata(displayAspect, sampleAspect, codedWidth,
+                                    codedHeight, squarePixelsKnown);
+}
+
+WeakLadder fitWeakLadderToAspect(const WeakLadder& weak,
+                                 const SourceAspect& aspect) {
+    WeakLadder fitted = weak;
+    if (!aspect.valid || aspect.x == 0 || aspect.y == 0)
+        return fitted;
+
+    int maxW = 0;
+    int maxH = 0;
+    if (std::sscanf(weak.videoResolution.c_str(), "%dx%d", &maxW, &maxH) != 2 ||
+        maxW < 2 || maxH < 2) {
+        return fitted;
+    }
+
+    // L4 1280×720 HDMI is 16:9. Fitting 4:3 Trek to 960×720 then nearest-up
+    // to the bank costs ~2 Hz (21.7 vs unique24). Keep the 1280×720 request.
+    if (maxW >= 1280 && maxH >= 720)
+        return fitted;
+
+    int width = maxW;
+    int height = maxH;
+    if (static_cast<int64_t>(aspect.x) * maxH >=
+        static_cast<int64_t>(aspect.y) * maxW) {
+        height = static_cast<int>(
+            (static_cast<int64_t>(maxW) * aspect.y) / aspect.x);
+    } else {
+        width = static_cast<int>(
+            (static_cast<int64_t>(maxH) * aspect.x) / aspect.y);
+    }
+    width = std::max(2, width & ~1);
+    height = std::max(2, height & ~1);
+
+    // The dual-A9 path is proven realtime near 640x384, while 640x480 24p
+    // transcodes fall below rate once AAC, scaling, and DDR presentation run
+    // together. Keep the 480p ladder inside that pixel budget; MiSTer still
+    // receives the full 640x480 presentation bank.
+    constexpr int64_t kTrue480DecodePixelBudget = 640LL * 384LL;
+    if (maxW <= 640 && maxH <= 480 &&
+        static_cast<int64_t>(width) * height > kTrue480DecodePixelBudget) {
+        const double dar = static_cast<double>(aspect.x) / aspect.y;
+        width = static_cast<int>(
+                    std::sqrt(static_cast<double>(kTrue480DecodePixelBudget) * dar)) &
+                ~1;
+        height = static_cast<int>(width / dar) & ~1;
+        width = std::max(2, width);
+        height = std::max(2, height);
+    }
+    fitted.videoResolution = std::to_string(width) + "x" + std::to_string(height);
+    return fitted;
+}
+
 ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::string& plexBase,
                                 const std::string& token, int64_t offsetMs, bool weakAlways,
                                 const WeakLadder& weak, bool preferDirectH264, int decodeW,
@@ -687,8 +817,18 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
         r.sourceFpsHint = 30;
         r.fpsNum = 30;
         r.fpsDen = 1;
+        r.sourceAspect = {4, 3, true};
         return r;
     }
+
+    if (playableIsFarpointIdentityCache(key)) {
+        r.detail = "refusing farpoint_1280x720.mp4 cache bypass";
+        return r;
+    }
+    // playMedia 40868 / ratingKey 40868 must never take the local-path
+    // identify branch (that is the farpoint_1280x720.mp4 cache soak).
+    if (key == "40868")
+        key = "/library/metadata/40868";
 
     // Direct http(s) or absolute non-library path
     if (key.rfind("http://", 0) == 0 || key.rfind("https://", 0) == 0) {
@@ -697,11 +837,48 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
         r.detail = "direct URL";
         return r;
     }
-    if (!key.empty() && key[0] == '/' && key.rfind("/library", 0) != 0 &&
+    if (!metadataKeyIsFarpoint40868(key) && !key.empty() && key[0] == '/' &&
+        key.rfind("/library", 0) != 0 &&
         key.rfind("/playQueues", 0) != 0) {
         r.ok = true;
         r.playable = key;
         r.detail = "local path";
+        if (playableIsFarpointIdentityCache(key)) {
+            r.ok = false;
+            r.playable.clear();
+            r.detail = "refusing farpoint_1280x720.mp4 cache bypass";
+            return r;
+        }
+        // Local files must publish DAR + 24000/1001 or PLAY is rejected / paced
+        // at 24/1. Library rk 40868 must use PMS universal, not this path.
+        const char* ff = "/media/fat/misterplex/bin/ffmpeg";
+        if (::access(ff, X_OK) != 0)
+            ff = "ffmpeg";
+        std::string cmd = std::string(ff) + " -hide_banner -nostdin -i " + shellQuote(key) +
+                          " -f null -t 0 - 2>&1";
+        FILE* p = ::popen(cmd.c_str(), "r");
+        std::string ident;
+        if (p) {
+            char buf[512];
+            while (std::fgets(buf, sizeof(buf), p))
+                ident.append(buf);
+            ::pclose(p);
+        }
+        int w = 0, h = 0, n = 0, d = 0, ax = 0, ay = 0;
+        if (parseFfmpegIdentify(ident.c_str(), w, h, n, d, ax, ay)) {
+            r.mediaWidth = w;
+            r.mediaHeight = h;
+            r.fpsNum = n;
+            r.fpsDen = d;
+            r.sourceFpsHint = (n > 0 && d > 0) ? (n + d / 2) / d : 0;
+            if (ax > 0 && ay > 0)
+                r.sourceAspect = {static_cast<uint16_t>(ax), static_cast<uint16_t>(ay), true};
+            else if (w == 1280 && h == 720)
+                r.sourceAspect = {16, 9, true};
+            r.detail = localFileIsTrue720p24(w, h) ? "local path 1280x720" : "local path";
+        } else if (r.sourceAspect.valid == false) {
+            r.sourceAspect = defaultSourceAspectForBank(1280, 720);
+        }
         return r;
     }
 
@@ -710,6 +887,11 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
         // sometimes "library/metadata/N"
         if (key[0] != '/')
             key = "/" + key;
+    }
+
+    if (playableIsFarpointIdentityCache(key)) {
+        r.detail = "refusing farpoint_1280x720.mp4 cache bypass";
+        return r;
     }
 
     if (plexBase.empty()) {
@@ -827,6 +1009,9 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
             r.mediaHeight = mh > 0 ? mh : 0;
         }
 
+        r.sourceAspect =
+            sourceAspectFromPlexMetadata(xml, r.mediaWidth, r.mediaHeight);
+
         // Audio presence: dual-output ffmpeg (pipe:1 video + pipe:3 audio) aborts
         // with "Output file does not contain any stream" when the source has no
         // audio track (Grid720). Detect streamType=2 / type=audio up front.
@@ -928,6 +1113,13 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
         auto file = attr(xml, "Part", "file");
         if (!file.empty()) {
             r.playable = urlDecode(file);
+            if (libraryKeyMustNotSpawnLocalFile(key, r.playable)) {
+                r.ok = false;
+                r.playable.clear();
+                r.transcoded = false;
+                r.detail = "refusing farpoint_1280x720.mp4 cache bypass";
+                return r;
+            }
             r.ok = true;
             r.transcoded = false;
             r.detail = std::string("direct H.264 Part file (") +
@@ -939,15 +1131,27 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
 
     // Prefer weak universal for dual A9 (STREAM=0 cast path / non-H.264 STREAM)
     if (weakAlways && key.rfind("/library", 0) == 0) {
+        const WeakLadder transcodeWeak =
+            fitWeakLadderToAspect(weak, r.sourceAspect);
         const std::string session = makeSessionId();
         const std::string start = buildUniversalTranscodeUrl(plexBase, key, token, session,
-                                                             offsetMs > 0 ? offsetMs : 0, weak);
-        if (ensureUniversalDecision(start, session, token, weak)) {
+                                                             offsetMs > 0 ? offsetMs : 0,
+                                                             transcodeWeak);
+        if (ensureUniversalDecision(start, session, token, transcodeWeak)) {
             r.ok = true;
             r.transcoded = true;
             r.playable = start;
-            r.httpHeaders = plexFfmpegHeaders(session, token, weak);
-            r.detail = "PMS universal " + weak.profileName + " " + weak.videoResolution + " " + key;
+            r.httpHeaders = plexFfmpegHeaders(session, token, transcodeWeak);
+            r.detail = "PMS universal " + transcodeWeak.profileName + " " +
+                       transcodeWeak.videoResolution + " " + key;
+            if (playableIsFarpointIdentityCache(r.playable) ||
+                libraryKeyMustNotSpawnLocalFile(key, r.playable)) {
+                r.ok = false;
+                r.playable.clear();
+                r.transcoded = false;
+                r.detail = "refusing farpoint_1280x720.mp4 cache bypass";
+                return r;
+            }
             // STREAM preferDirect fallthrough: operator can see why recon may hit CABAC.
             if (preferDirectH264) {
                 if (!metaOk)
@@ -1270,9 +1474,16 @@ bool parseExactFps(const std::string& videoFrameRate, const std::string& frameRa
         den = 1;
         return true;
     }
+    // PMS Media@videoFrameRate="24p" is NTSC film on Trek/Blu-ray (23.976).
+    // True 24.000 still wins when Stream@frameRate is "24" / "24.000".
     if (s == "film" || s == "24p") {
-        num = 24;
-        den = 1;
+        num = 24000;
+        den = 1001;
+        return true;
+    }
+    if (s == "30p") {
+        num = 30000;
+        den = 1001;
         return true;
     }
     // Strip a trailing progressive/interlaced marker ("24p", "60i").
@@ -1283,6 +1494,39 @@ bool parseExactFps(const std::string& videoFrameRate, const std::string& frameRa
     if (end != s.c_str() && v > 0.0)
         return snapStdFps(v, num, den);
     return false;
+}
+
+bool capExactFpsToMaxHz(int& num, int& den, double maxHz) {
+    if (num <= 0 || den <= 0 || !(maxHz > 0.0))
+        return false;
+    const double v = static_cast<double>(num) / static_cast<double>(den);
+    if (v <= maxHz + 0.010)
+        return false;
+    if (num == 60 && den == 1 && maxHz >= 30.0 - 0.010) {
+        num = 30;
+        den = 1;
+        return true;
+    }
+    if (num == 60000 && den == 1001 && maxHz >= 30000.0 / 1001.0 - 0.010) {
+        num = 30000;
+        den = 1001;
+        return true;
+    }
+    if (num == 50 && den == 1 && maxHz >= 25.0 - 0.010) {
+        num = 25;
+        den = 1;
+        return true;
+    }
+    if (num == 48 && den == 1 && maxHz >= 24.0 - 0.010) {
+        num = 24;
+        den = 1;
+        return true;
+    }
+    num = static_cast<int>(maxHz);
+    den = 1;
+    if (num < 1)
+        num = 1;
+    return true;
 }
 
 bool applyContentFpsConf(const std::string& conf, int& num, int& den) {

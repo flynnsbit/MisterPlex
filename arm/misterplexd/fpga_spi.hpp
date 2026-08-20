@@ -11,6 +11,7 @@
 #include "libmisterplex/ddr_frame_layout.hpp"
 #include "libmisterplex/ddr_bitstream_ring.hpp"
 #include "libmisterplex/input_mailbox.hpp"
+#include "libmisterplex/source_aspect.hpp"
 #include "libmisterplex/spi_ack_wait.hpp"
 
 namespace misterplex {
@@ -98,9 +99,20 @@ public:
                            DdrFrameFormat format = DdrFrameFormat::Yuv420p);
     DdrFrameLayout ddrFrameLayout() const { return ddrLayout_; }
     bool sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len,
-                             const DdrFrameGeometry& geometry, int bank = 0);
+                             const DdrFrameGeometry& geometry, int bank = 0,
+                             DdrBankWritePolicy policy = DdrBankWritePolicy::BestEffort,
+                             uint32_t srcPhys = 0);
+    void setFabricDirectPresent(bool) {}
+    void setStickI420Present(bool) {}
+    uint8_t* ddrBankVirt(int bank);
+    bool lastStickI420Used() const { return false; }
+    bool lastFabricDirectUsed() const { return ddrMapViaMplex_; }
+    bool lastDdrMapViaMplex() const { return ddrMapViaMplex_; }
+    const char* lastDdrPublishHow() const { return lastPublishHow_; }
     bool sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len, int width, int height,
-                             int bank = 0);
+                             int bank = 0,
+                             DdrBankWritePolicy policy = DdrBankWritePolicy::BestEffort);
+    static uint32_t resolveCachedSrcPhys(const void* virt, size_t len);
     // Zero-intermediate-buffer present: PLXD bank select + mapped write pointer.
     // Caller fills outLen bytes at the returned pointer, then commitDdrBankIngest.
     // Returns nullptr on failure (lastError set). outBank is the bank actually selected.
@@ -114,6 +126,12 @@ public:
     // sees all stores before the DDR doorbell is signalled.
     void setDdrMemSync(bool on);
     void setDdrMemFlush(bool on) { ddrMemFlush_ = on; }
+    // Next sendDdrFrame re-probes doorbell vs SPI. Leftover has_frame after a
+    // prior swap must not lock doorbell-only mode (cast then stays on chevron).
+    void reprobeDdrKick() {
+        ddrKickMode_ = 0;
+        ddrKickFailMs_ = -1.0;
+    }
     struct DdrTiming {
         int64_t prep_wait_us = 0;
         int64_t copy_us = 0;
@@ -125,6 +143,7 @@ public:
         int64_t plxa_poll_us = 0;     // PLXA bank-release poll time (0 = fallback)
         int plxa_poll_iters = 0;      // number of PLXA poll iterations
         bool plxa_used = false;       // true if PLXA drove bank selection
+        const char* publish_how = "memcpy"; // wc | memcpy | pl330_contig | pl330_pages
     };
     DdrTiming lastDdrTiming() const { return lastDdrTiming_; }
     struct DdrDoorbellStatus {
@@ -135,6 +154,9 @@ public:
     bool readDdrDoorbellStatus(DdrDoorbellStatus& status);
     bool readFrameStoreStatus(FrameStoreStatus& status);
     bool readBankRelease(BankReleaseStatus& status);
+    // Overwrite the bank the core is scanning (no swap). Used for on-glass overlay.
+    bool blitDisplayedBank(const uint8_t* payload, size_t len);
+    bool readSourceAspectAck(SourceAspectAck& status);
     // Physical base used by core ddram_frame_rd (must match RTL PHYS_BASE).
     static constexpr uint32_t kDdrFrameBase = 0x30000000u;
     static constexpr uint32_t kDdrFrameStride = 0x40000u; // 256 KiB
@@ -170,6 +192,9 @@ public:
 
     // Push elementary bitstream (H.264 annex-B) to F3 bitstream_fifo. Appends.
     bool sendBitstreamChunk(const uint8_t* data, size_t len, uint8_t index = 3);
+    // Publish the source display aspect to hidden ioctl index 4. The core uses
+    // it for VIDEO_ARX/VIDEO_ARY when the OSD Aspect ratio is "Original".
+    bool sendSourceAspect(const SourceAspect& aspect);
     // Product path: copy complete Annex-B NAL records into the HPS DDR ring.
     // pushBitstreamNal() copies before returning, so the caller may immediately
     // reuse/free Nal::annexb. Full is transient; Desync/Fatal require a session
@@ -190,7 +215,7 @@ public:
     bool sendBitstreamChunkDdr(const uint8_t* data, size_t len);
     bool flushBitstreamDdr();
 
-    // Pulse status bit 10 to flush present-domain audio FIFO.
+    // Pulse status bit 16 to flush present-domain audio FIFO (not T[10]).
     bool flushAudioFifo();
 
     // Pulse status bit 11 to flush bitstream FIFO / NAL scanner.
@@ -281,7 +306,8 @@ private:
     // Caller holds SpiExclusive + user mode.
     bool writeStatusWordRaw(const uint8_t word[16]);
     bool readStatusRaw(uint8_t out[16]);
-    bool sendDdrFrame(const uint8_t* payload, size_t len, int bank);
+    bool sendDdrFrame(const uint8_t* payload, size_t len, int bank,
+                      DdrBankWritePolicy policy);
 
     int fd_ = -1;
     volatile uint32_t* map_ = nullptr;
@@ -296,12 +322,22 @@ private:
     int ddrMemFd_ = -1;
     uint8_t* ddrMap_ = nullptr;
     size_t ddrMapLen_ = 0;
+    uint8_t* ddrMapBase_ = nullptr;
+    size_t ddrMapBaseLen_ = 0;
+    bool ddrMapViaMplex_ = false;
+    const char* lastPublishHow_ = "memcpy";
+    int ddrMboxFd_ = -1;
+    uint8_t* ddrMboxMap_ = nullptr;
+    uint32_t ddrMboxPagePhys_ = 0;
     bool ddrMemSync_ = true;
     bool ddrMemFlush_ = false;
     DdrTiming lastDdrTiming_{};
     DdrFrameLayout ddrLayout_ = makeDdrFrameLayout(320, 240);
     uint32_t doorbellSeq_ = 0;
+    uint32_t doorbellDynPhys_ = 0;
+    uint8_t sourceAspectToken_ = 0;
     double lastDdrBankDoorbellMs_[2] = {-1.0, -1.0};
+    DdrStrictReleaseState strictDdrRelease_{};
     bool mboxInit_ = false;
     bool mboxAlive_ = false;
     uint16_t mboxSeq_ = 0;
@@ -313,6 +349,9 @@ private:
     std::chrono::steady_clock::time_point ingestT0_{};
     int ingestBank_ = -1;
     bool ensureDdrMap();
+    bool ensureDdrMailboxMap();
+    volatile uint32_t* ddrMailboxWord(uint32_t phys);
+    bool waitPlxdHeardKick(const BankReleaseStatus& pre, int timeoutUs);
     void releaseDdrMap();
     bool ensureBitstreamDdrMap();
     void releaseBitstreamDdrMap();

@@ -95,7 +95,9 @@ done
 
 # 1. Private-range PMS addresses. Loopback is fine (test servers), and the
 #    documented MiSTer host default is not a Plex credential.
-hits="$(grep -a -nE '(10\.[0-9]+\.[0-9]+\.[0-9]+|192\.168\.[0-9]+\.[0-9]+|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]+\.[0-9]+):32400' "${files[@]}" 2>/dev/null || true)"
+# -I skips ELF/RBF frozen binaries (old lab daemons may contain a compiled-in
+# PMS URL). Source and docs stay in scope.
+hits="$(grep -I -nE '(10\.[0-9]+\.[0-9]+\.[0-9]+|192\.168\.[0-9]+\.[0-9]+|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]+\.[0-9]+):32400' "${files[@]}" 2>/dev/null || true)"
 if [[ -n "$hits" ]]; then
   report "hardcoded private Plex server address found; use a PMS_URL env var or a YOUR-PLEX-SERVER placeholder"
   printf '%s\n' "$hits" >&2

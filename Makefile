@@ -5,7 +5,7 @@ CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -I$(ROOT)/host
 FFMPEG_CFLAGS := $(shell pkg-config --cflags libavformat libavcodec libavutil 2>/dev/null)
 FFMPEG_LIBS   := $(shell pkg-config --libs libavformat libavcodec libavutil 2>/dev/null)
 
-.PHONY: all preflight unit unit-unlocked rtl-sim rtl-lint quartus-sv-subset define-parity post-fit-hierarchy post-fit-timing timing-exclusion pms-baseline-check pms-nal-stats arm-plexd arm-ddr-bench arm-pl330-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools
+.PHONY: all preflight unit unit-unlocked rtl-sim rtl-lint quartus-sv-subset define-parity post-fit-hierarchy post-fit-timing timing-exclusion pms-baseline-check pms-nal-stats arm-plexd arm-ddr-bench arm-pl330-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools glass-baseline glass-baseline-policy v3-stable-320 v3-stable-320-policy
 
 all: unit
 
@@ -21,11 +21,15 @@ help:
 	@echo "  make timing-exclusion [STA_RPT=...] - detect timing closed by exclusion not design"
 	@echo "  make pms-baseline-check - live PMS delivered-SPS guard (requires PLEX_BASE/TOKEN/KEY)"
 	@echo "  make pms-nal-stats      - live PMS NAL size/jitter probe (requires PLEX_BASE/TOKEN/KEY)"
+	@echo "  make glass-baseline-policy - offline glass floor pair.json + artifact md5s"
+	@echo "  make glass-baseline - live HDMI floor (pin v0.2.0 pair unless GLASS_CANDIDATE=1)"
+	@echo "  make v3-stable-320-policy - offline v0.3 lab-stable pair freeze"
+	@echo "  make v3-stable-320 - isolated v0.3@320 deploy + chevron/B6 (not product H5)"
 	@echo "  make h264-golden-tools - build shared H.264 golden fixture extractor"
 	@echo "  make arm-plexd  - cross-build ARM misterplexd (if toolchain present)"
 	@echo "  make build-rbf  - build Plex.rbf via misterfpga-dev (long)"
 	@echo "  make test       - alias for unit"
-	@echo "  make package    - dist tarball (ARM + conf + docs + Plex.rbf if present)"
+	@echo "  make package    - dist tarball (ARM + conf + docs + named RBF pairs)"
 	@echo "  make arm-ddr-bench - cross-build DDR write microbenchmark"
 	@echo "  make arm-pl330-bench - cross-build PL330 ingest bench (lab DMA diag)"
 	@echo "  make arm-profile-tools - cross-build ARM decode/profile probes"
@@ -41,11 +45,16 @@ preflight:
 unit:
 	@bash $(ROOT)/scripts/run_with_resource_preflight.sh -- $(MAKE) unit-unlocked
 
-unit-unlocked: preflight $(ROOT)/build/test_gdm_filter $(ROOT)/build/test_spi_txn_complete $(ROOT)/build/test_idle_poll_budget $(ROOT)/build/test_p720_e2e_budget $(ROOT)/build/test_pl330_encode $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_osd_menu $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_pixel_format $(ROOT)/build/test_main_guard $(ROOT)/build/test_status_telemetry $(ROOT)/build/test_resolve $(ROOT)/build/test_pms_timeline $(ROOT)/build/test_companion_plant_seek $(ROOT)/build/pms_baseline_probe $(ROOT)/build/test_h264_bitstream_source $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_frame_store_sdram_sim $(ROOT)/build/test_frame_store_ddr_prefetch_sim $(ROOT)/build/test_sdram_memtest_sim $(ROOT)/build/test_sdram_mailbox $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant $(ROOT)/build/test_p3_host_recon_vectors $(ROOT)/build/test_p3_idct_reference_model $(ROOT)/build/test_p3_inter_pred_vectors $(ROOT)/build/extract_h264_golden
+unit-unlocked: preflight $(ROOT)/build/test_gdm_filter $(ROOT)/build/test_cast_av_480p_policy $(ROOT)/build/test_p720_audio_keepup $(ROOT)/build/test_p720_transcode_vf $(ROOT)/build/test_spi_txn_complete $(ROOT)/build/test_idle_poll_budget $(ROOT)/build/test_p720_e2e_budget $(ROOT)/build/test_pl330_encode $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_osd_menu $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_pixel_format $(ROOT)/build/test_main_guard $(ROOT)/build/test_status_telemetry $(ROOT)/build/test_resolve $(ROOT)/build/test_pms_timeline $(ROOT)/build/test_companion_plant_seek $(ROOT)/build/pms_baseline_probe $(ROOT)/build/test_h264_bitstream_source $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_frame_store_sdram_sim $(ROOT)/build/test_frame_store_ddr_prefetch_sim $(ROOT)/build/test_sdram_memtest_sim $(ROOT)/build/test_sdram_mailbox $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant $(ROOT)/build/test_p3_host_recon_vectors $(ROOT)/build/test_p3_idct_reference_model $(ROOT)/build/test_p3_inter_pred_vectors $(ROOT)/build/extract_h264_golden
 	$(ROOT)/build/test_gdm_filter
+	$(ROOT)/tests/unit/test_cast_http_ready_policy.sh
 	$(ROOT)/build/test_spi_txn_complete
 	$(ROOT)/build/test_idle_poll_budget
 	$(ROOT)/build/test_p720_e2e_budget
+	$(ROOT)/build/test_p720_audio_keepup
+	bash $(ROOT)/tests/unit/test_p720_av_match_480p_policy.sh
+	$(ROOT)/build/test_p720_transcode_vf
+	bash $(ROOT)/tests/unit/test_pair_conf_policy.sh
 	$(ROOT)/build/test_pl330_encode
 	python3 $(ROOT)/tests/unit/test_p720_shared_bw_contract.py
 	bash $(ROOT)/tests/unit/test_idle_thread_budget_gate.sh
@@ -55,6 +64,8 @@ unit-unlocked: preflight $(ROOT)/build/test_gdm_filter $(ROOT)/build/test_spi_tx
 	bash $(ROOT)/tests/unit/test_annexb_rbsp_exp_golomb_rtl_sim.sh
 	$(ROOT)/build/test_cadence
 	$(ROOT)/build/test_avclock
+	$(ROOT)/build/test_cast_av_480p_policy
+	bash $(ROOT)/tests/unit/test_cast_av_480p_policy.sh
 	$(ROOT)/build/test_mraudio_status
 	$(ROOT)/build/test_osd_menu
 	$(ROOT)/build/test_playback_overlay
@@ -119,6 +130,8 @@ unit-unlocked: preflight $(ROOT)/build/test_gdm_filter $(ROOT)/build/test_spi_tx
 	$(ROOT)/tests/unit/test_mister_ini_plex_guard.sh
 	$(ROOT)/tests/unit/test_confstr_guard.sh
 	$(ROOT)/tests/unit/test_release_rbf_hash.sh
+	$(ROOT)/tests/unit/test_glass_baseline_pair_policy.sh
+	$(ROOT)/tests/unit/test_v030_lab_stable_policy.sh
 	$(ROOT)/tests/unit/test_sdram_startup_verilator.sh
 	$(ROOT)/tests/unit/test_sdram_dq_turnaround_verilator.sh
 	$(ROOT)/tests/unit/test_h264_cavlc_residual_verilator.sh
@@ -312,6 +325,24 @@ $(ROOT)/build/test_avclock: $(ROOT)/tests/unit/test_avclock.cpp \
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_avclock.cpp
 
+$(ROOT)/build/test_p720_audio_keepup: $(ROOT)/tests/unit/test_p720_audio_keepup.cpp \
+		$(ROOT)/host/libmisterplex/p720_audio_keepup.hpp \
+		$(ROOT)/host/libmisterplex/mraudio_status.hpp \
+		$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp \
+		$(ROOT)/host/libmisterplex/present_bank.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_p720_audio_keepup.cpp
+
+$(ROOT)/build/test_p720_transcode_vf: $(ROOT)/tests/unit/test_p720_transcode_vf.cpp \
+		$(ROOT)/host/libmisterplex/p720_transcode_vf.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_p720_transcode_vf.cpp
+
+$(ROOT)/build/test_cast_av_480p_policy: $(ROOT)/tests/unit/test_cast_av_480p_policy.cpp \
+		$(ROOT)/host/libmisterplex/av_clock.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_cast_av_480p_policy.cpp
+
 $(ROOT)/build/test_main_guard: $(ROOT)/tests/unit/test_main_guard.cpp \
 		$(ROOT)/arm/misterplexd/fpga_spi.cpp $(ROOT)/arm/misterplexd/fpga_spi.hpp \
 		$(ROOT)/host/libmisterplex/pixel_format.hpp
@@ -413,6 +444,10 @@ MPLEX_HDR := \
 	$(ROOT)/host/libmisterplex/h264_nal.hpp \
 	$(ROOT)/host/libmisterplex/h264_sps.hpp \
 	$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp \
+	$(ROOT)/host/libmisterplex/p720_audio_keepup.hpp \
+	$(ROOT)/host/libmisterplex/p720_transcode_vf.hpp \
+	$(ROOT)/host/libmisterplex/present_bank.hpp \
+	$(ROOT)/host/libmisterplex/fabric_direct.hpp \
 	$(ROOT)/host/libmisterplex/idle_screen.hpp \
 	$(ROOT)/host/libmisterplex/input_mailbox.hpp \
 	$(ROOT)/host/libmisterplex/playback_overlay.hpp \
@@ -464,6 +499,13 @@ ARM_CXX ?= $(shell command -v arm-none-linux-gnueabihf-g++ 2>/dev/null || comman
 
 # Fully static: MiSTer glibc is 2.31; modern toolchains need 2.32+ for dynamic.
 # whole-archive pthread required for std::thread under -static.
+# ARM libav (parent-built FFmpeg 8.1.2 static): misterplexd link only.
+ARM_FFMPEG_PREFIX ?= /tmp/ffmpeg-arm-u1/prefix
+ARM_FFMPEG_CFLAGS ?= -I$(ARM_FFMPEG_PREFIX)/include
+ARM_FFMPEG_LIBS   ?= -L$(ARM_FFMPEG_PREFIX)/lib -Wl,--start-group -lavformat -lavcodec -lavutil -Wl,--end-group -pthread -lm -latomic
+MPX_LIBAV_PREFIX ?= $(ARM_FFMPEG_PREFIX)
+MPX_LIBAV_HAVE := $(and $(wildcard $(ARM_FFMPEG_PREFIX)/lib/libavcodec.a),$(wildcard $(ARM_FFMPEG_PREFIX)/lib/libavformat.a),$(wildcard $(ARM_FFMPEG_PREFIX)/lib/libavutil.a))
+
 arm-ddr-bench:
 	@if [ -z "$(ARM_CXX)" ]; then echo "No armhf g++ found"; exit 1; fi
 	@mkdir -p $(ROOT)/build/arm
@@ -497,12 +539,28 @@ arm-profile-tools: arm-ddr-bench arm-pl330-bench
 		-static
 	@file $(ROOT)/build/arm/ffmpeg_cpu_probe $(ROOT)/build/arm/present_loop_harness
 
+KDIR_MISTER ?= /data/misterplex/kernel/Linux-Kernel_MiSTer
+ARM_CROSS ?= arm-none-linux-gnueabihf-
+arm-kmod:
+	$(MAKE) -C $(ROOT)/kmod/mplex_ddr KDIR=$(KDIR_MISTER) CROSS_COMPILE=$(ARM_CROSS) ARCH=arm
+	@file $(ROOT)/kmod/mplex_ddr/mplex_ddr.ko
+
 arm-plexd: $(MPLEX_HDR) arm-ddr-bench
 	@if [ -z "$(ARM_CXX)" ]; then echo "No armhf g++ found"; exit 1; fi
 	@mkdir -p $(ROOT)/build/arm
+ifneq ($(MPX_LIBAV_HAVE),)
+	$(ARM_CXX) -std=c++17 -O2 -Wall -static $(MPLEX_INC) -DMPX_HAVE_LIBAV $(ARM_FFMPEG_CFLAGS) \
+		-o $(ROOT)/build/arm/misterplexd $(MPLEX_SRC) \
+		$(ROOT)/arm/misterplexd/av_inproc_decode.cpp \
+		$(ARM_FFMPEG_LIBS) \
+		-Wl,--whole-archive -lpthread -Wl,--no-whole-archive
+	@echo MPX_HAVE_LIBAV=YES prefix=$(ARM_FFMPEG_PREFIX)
+else
+	@echo MPX_HAVE_LIBAV=NO prefix=$(ARM_FFMPEG_PREFIX)
 	$(ARM_CXX) -std=c++17 -O2 -Wall $(MPLEX_INC) \
 		-o $(ROOT)/build/arm/misterplexd $(MPLEX_SRC) \
 		-static -Wl,--whole-archive -lpthread -Wl,--no-whole-archive
+endif
 	$(ARM_CXX) -std=c++17 -O2 -Wall -I$(ROOT)/arm/misterplexd -I$(ROOT)/host \
 		-o $(ROOT)/build/arm/push_frame \
 		$(ROOT)/tools/push_frame.cpp $(ROOT)/arm/misterplexd/fpga_spi.cpp \
@@ -564,3 +622,17 @@ $(ROOT)/build/test_pl330_encode: $(ROOT)/tests/unit/test_pl330_encode.cpp \
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_pl330_encode.cpp
 
+
+# HDMI glass regression floor (v0.2.0 pair) — see docs/glass-baseline-pair.md
+glass-baseline-policy:
+	bash $(ROOT)/tests/unit/test_glass_baseline_pair_policy.sh
+
+glass-baseline: glass-baseline-policy
+	bash $(ROOT)/tests/hw/test_glass_baseline_pair.sh
+
+# v0.3.0 lab-stable @320 — isolated from product H5 (docs/v3-stable-320-loop.md)
+v3-stable-320-policy:
+	bash $(ROOT)/tests/unit/test_v030_lab_stable_policy.sh
+
+v3-stable-320: v3-stable-320-policy
+	bash $(ROOT)/scripts/v3_stable_320_loop.sh

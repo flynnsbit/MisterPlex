@@ -7,6 +7,8 @@
 #include <utility>
 #include <vector>
 
+#include "libmisterplex/source_aspect.hpp"
+
 namespace misterplex {
 
 struct ResolveResult {
@@ -37,6 +39,9 @@ struct ResolveResult {
     // (no metadata) stays true so product audio is not suppressed by accident.
     // FFmpeg dual-out aborts the whole process if pipe:3 is opened with no audio.
     bool hasAudio = true;
+    // Original display aspect sent to MiSTer's native scaler. Invalid means the
+    // caller must probe the actual stream before starting playback.
+    SourceAspect sourceAspect{};
 };
 
 struct QueueItem {
@@ -58,6 +63,8 @@ struct PlayQueue {
 };
 
 std::string urlDecode(const std::string& in);
+std::string plexHttpGet(const std::string& url, int timeoutSec = 15,
+                        const std::string& extraHeaders = {});
 std::string urlEncodeQuery(const std::string& s);
 
 // Normalize a PMS base: trim, strip trailing slash, add http:// if bare host[:port].
@@ -116,8 +123,18 @@ struct WeakLadder {
 
 // Guard rails for built-in and configured ladders.
 bool validateWeakLadder(const WeakLadder& weak, std::string* why = nullptr);
+// Fit the PMS transcode raster inside the configured ladder without adding bars.
+// The host expands this anamorphically to the FPGA bank and MiSTer restores DAR.
+WeakLadder fitWeakLadderToAspect(const WeakLadder& weak, const SourceAspect& aspect);
 std::string plexClientProfileExtra(const WeakLadder& weak);
 std::string plexClientCapabilities(const WeakLadder& weak);
+// 480p gold: omit caps when Profile-Name is MiSTerPlex (XML on that PMS).
+// 720p: remote PMS has no MiSTerPlex.xml and emits 640x480 unless we advertise
+// 1280x720 (40868 probe=640x480 → unique ~15).
+inline bool plexSendClientLadderCaps(const WeakLadder& weak) {
+    return weak.clientProfileName != "MiSTerPlex" ||
+           weak.videoResolution == "1280x720";
+}
 std::string buildUniversalTranscodeUrl(const std::string& base,
                                        const std::string& metadataKey,
                                        const std::string& token,
@@ -127,6 +144,12 @@ std::string buildUniversalTranscodeUrl(const std::string& base,
 
 // True when metadata Media@videoCodec looks like H.264/AVC (direct Part friendly for STREAM).
 bool mediaVideoIsH264(const std::string& plexMetadataXml);
+
+// Derive display aspect from PMS metadata. Explicit display/DAR metadata wins;
+// otherwise coded dimensions are combined with explicit sample/pixel aspect.
+// Coded dimensions alone are used only when PMS explicitly marks non-anamorphic.
+SourceAspect sourceAspectFromPlexMetadata(const std::string& plexMetadataXml,
+                                         int codedWidth, int codedHeight);
 
 // Resolve a playMedia key against PMS, or pass through local/http paths.
 // weakAlways: always request PMS universal H.264 ladder (recommended on dual A9 / STREAM=0).
@@ -209,5 +232,9 @@ bool parseExactFps(const std::string& videoFrameRate, const std::string& frameRa
 // "auto"/empty keeps the resolved rate; "off" forces unknown (0/0).
 // Returns true when num/den were set from the conf (including the "off" case).
 bool applyContentFpsConf(const std::string& conf, int& num, int& den);
+
+// Cap unique present rate at maxHz (product: 30). 60→30, 60000/1001→30000/1001.
+// 23.976 / 24 / 25 / 29.97 stay themselves. Returns true if num/den changed.
+bool capExactFpsToMaxHz(int& num, int& den, double maxHz = 30.0);
 
 } // namespace misterplex

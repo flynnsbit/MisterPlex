@@ -66,6 +66,22 @@ def main() -> int:
         is not None,
         "product else-branch number_of_clocks(3)",
     )
+    # L4 QSF enables PLEX_CLK_SYS_24 but leaves PRESENT_CLK_PIX_PLL OFF, so the
+    # 3-clock else branch is what actually elaborates. A 4-clock-only ifdef
+    # leaves out0 hardcoded 20 MHz (TimeQuest ÷18) → HDMI ~20 Hz, not 24.
+    n_clk24 = len(re.findall(r"`ifdef\s+PLEX_CLK_SYS_24", pll))
+    check(n_clk24 >= 2, f"PLEX_CLK_SYS_24 wraps BOTH altera_pll out0 (count={n_clk24})")
+    m3 = re.search(
+        r"number_of_clocks\(3\),\s*(.*?)\.output_clock_frequency0\(\"([^\"]+)\"\)",
+        pll,
+        re.S,
+    )
+    check(m3 is not None, "found 3-clock out0")
+    if m3 is not None:
+        check(
+            "`ifdef PLEX_CLK_SYS_24" in m3.group(1),
+            "3-clock PLL out0 under PLEX_CLK_SYS_24 (hardcoded 20 MHz → ~20 Hz HDMI)",
+        )
 
     # QSF: PRESENT_CLK_PIX_PLL must be commented (default OFF)
     qsf = read(ROOT / "fpga/Plex_MiSTer/Plex.qsf")

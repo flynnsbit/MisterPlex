@@ -1,5 +1,6 @@
 // Unit tests for slim plex_resolve (no network required for pure helpers).
 #include "plex_resolve.hpp"
+#include "libmisterplex/p720_transcode_vf.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -37,6 +38,19 @@ int main() {
     auto r = resolvePlayTarget("/media/fat/mistercast/test.mp4", "", "", 0, true);
     CHECK(r.ok);
     CHECK(r.playable == "/media/fat/mistercast/test.mp4");
+
+    // rk 40868 must not short-circuit to the identity cache file.
+    auto fp = resolvePlayTarget("/media/fat/misterplex/cache/farpoint_1280x720.mp4",
+                                "http://127.0.0.1:32400", "tok", 0, true);
+    CHECK(!fp.ok);
+    CHECK(fp.playable.empty());
+    CHECK(fp.transcoded == false);
+    CHECK(std::string(fp.detail).find("farpoint_1280x720.mp4") != std::string::npos);
+    CHECK(misterplex::libraryKeyMustNotSpawnLocalFile(
+        "/library/metadata/40868", "/media/fat/misterplex/cache/farpoint_1280x720.mp4"));
+    CHECK(!misterplex::libraryKeyMustNotSpawnLocalFile(
+        "/library/metadata/40868",
+        "http://127.0.0.1:9324/video/:/transcode/universal/start.mp4?videoResolution=1280x720"));
 
     auto t = resolvePlayTarget("testsrc", "", "", 0, true);
     CHECK(t.ok && t.playable == "testsrc");
@@ -79,7 +93,7 @@ int main() {
     CHECK(applyPlexTranscodeProfile("720p", w720));
     CHECK(w720.profileName == "720p");
     CHECK(w720.videoResolution == "1280x720");
-    CHECK(w720.maxVideoBitrateKbps == 20000);
+    CHECK(w720.maxVideoBitrateKbps == 8000);
     CHECK(w720.h264Profile == "main");
     CHECK(w720.h264Level == 31);
     CHECK(validateWeakLadder(w720));
@@ -93,6 +107,7 @@ int main() {
     CHECK(start480.find("/video/:/transcode/universal/start.mp4") != std::string::npos);
     CHECK(start480.find("videoResolution=640x480") != std::string::npos);
     CHECK(start480.find("maxVideoBitrate=2500") != std::string::npos);
+    CHECK(start480.find("autoAdjustQuality=0") != std::string::npos);
     CHECK(start480.find("videoQuality=60") != std::string::npos);
     CHECK(start480.find("videoCodec=h264") != std::string::npos);
     CHECK(start480.find("audioCodec=aac") != std::string::npos);
@@ -118,6 +133,15 @@ int main() {
     CHECK(headers480.find("X-Plex-Client-Profile-Name: Chrome") == std::string::npos);
     CHECK(headers480.find("X-Plex-Client-Capabilities: ") == std::string::npos);
     CHECK(headers480.find("X-Plex-Client-Profile-Extra: ") == std::string::npos);
+    CHECK(!plexSendClientLadderCaps(w480));
+    WeakLadder w720caps;
+    CHECK(applyPlexTranscodeProfile("720p", w720caps));
+    CHECK(plexSendClientLadderCaps(w720caps));
+    const auto headers720 = plexFfmpegHeaders("sess720", "tok", w720caps);
+    CHECK(headers720.find("X-Plex-Client-Capabilities: ") != std::string::npos);
+    CHECK(headers720.find("resolution:1280x720") != std::string::npos);
+    CHECK(headers720.find("X-Plex-Client-Profile-Extra: ") != std::string::npos);
+    CHECK(headers720.find("name=video.width&value=1280") != std::string::npos);
 
     w480.clientProfileName = "Generic";
     const auto genericHeaders480 = plexFfmpegHeaders("sess480", "tok", w480);

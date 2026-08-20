@@ -178,6 +178,12 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--map-rpt", type=Path)
     ap.add_argument("--log", type=Path, help="Quartus compile log to scan for removal/tie-off warnings")
     ap.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    ap.add_argument(
+        "--allow-missing",
+        action="append",
+        default=[],
+        help="Module names that may be absent (L4 720p present stubs stream_path)",
+    )
     args = ap.parse_args(argv[1:])
 
     try:
@@ -195,9 +201,12 @@ def main(argv: list[str]) -> int:
     print("FIT_HIERARCHY_TABLE_END")
 
     errors: list[str] = []
+    allow_missing = set(args.allow_missing)
     for spec, row in found:
         name = str(spec.get("name"))
         if not row:
+            if name in allow_missing:
+                continue
             errors.append(f"{name}: missing from Quartus fitted hierarchy")
             continue
         checks = [

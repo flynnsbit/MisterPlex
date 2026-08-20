@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Package misterplexd ARM binary + conf example + Plex.rbf + docs for SD deploy.
+# Package misterplexd ARM binary + conf example + named RBF pairs + docs.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VERSION="${VERSION:-$(git -C "$ROOT" describe --tags --always --dirty 2>/dev/null || echo dev)}"
@@ -8,9 +8,24 @@ STAGE="$OUT_DIR/stage-misterplex"
 TAR="$OUT_DIR/misterplex-${VERSION}.tar.gz"
 
 ARM_BIN="$ROOT/build/arm/misterplexd"
-# Dual-gate: v0.4.0+ uses its own pinned RBF; legacy v0.3.0 keeps 41adb98c…
+PAIRED=0
+PAIR_ART="$ROOT/release_artifacts/v0.9.0-pre-paired"
+
+# Dual-gate: v0.9.0-pre ships named gold pairs; older lines keep one Plex.rbf.
 # Override either path or md5 via RBF_PATH / RBF_MD5_EXPECTED for lab freezes.
+MD5_480P_RBF="07f54d9f8f0eda2fe75d9cc314f6de54"
+MD5_240P15_RBF="4d6efef954acf7b33747f35ac2878c1b"
+MD5_480I_RBF="61db00e7d54efad7c1a456b127b798bd"
+MD5_720P24_RBF="0eea3580a5a0dacf60bf65c50499bcc9"
+MD5_480P_DAEMON="5f1c861486844f4c83bf32a2112cfbb6"
+MD5_720P24_DAEMON="0ffc1483677ef5733971d4f18e4624e4"
+
 case "$VERSION" in
+  v0.9.0-pre*|0.9.0-pre*)
+    PAIRED=1
+    RBF_MD5_EXPECTED="${RBF_MD5_EXPECTED:-$MD5_480P_RBF}"
+    RBF_DEFAULT="$PAIR_ART/cores/Plex_480p.rbf"
+    ;;
   v0.4.0*|0.4.0*)
     # softc24 HOLD=2 + CONF_STR v9 Content O[5:4] + Display O[15:14] Follow
     RBF_MD5_EXPECTED="${RBF_MD5_EXPECTED:-1c6ed06fe832fb54259d4f4ce504ccae}"
@@ -27,8 +42,34 @@ CONF_EX="$ROOT/assets/misterplex.conf.example"
 # FFMPEG_ARMHF=/path/to/ffmpeg. It is GPLv3, so its licence and provenance ship
 # alongside it (see the licenses/ffmpeg staging below).
 FFMPEG_ARMHF="${FFMPEG_ARMHF:-$HOME/Projects/mistercast-linux/third_party/ffmpeg-armhf/ffmpeg}"
+if [[ ! -f "$FFMPEG_ARMHF" ]]; then
+  for cand in \
+    "$PAIR_ART/bin/ffmpeg" \
+    "$ROOT/release_artifacts/v0.9.0-pre-paired/bin/ffmpeg"; do
+    if [[ -f "$cand" ]]; then
+      FFMPEG_ARMHF="$cand"
+      break
+    fi
+  done
+fi
 
-echo "=== package_release $VERSION ==="
+copy_gated_md5() {
+  local src=$1 dest=$2 expect=$3
+  [[ -f "$src" ]] || { echo "ERROR: missing $src" >&2; exit 1; }
+  local actual
+  actual="$(md5sum "$src" | awk '{print $1}')"
+  if [[ "$actual" != "$expect" ]]; then
+    echo "ERROR: refusing unverified $(basename "$src"): $src" >&2
+    echo "       expected md5: $expect" >&2
+    echo "       actual md5:   $actual" >&2
+    exit 1
+  fi
+  mkdir -p "$(dirname "$dest")"
+  cp -a "$src" "$dest"
+  echo "Included $(basename "$dest") from $src ($(wc -c <"$dest") bytes, md5=$actual)"
+}
+
+echo "=== package_release $VERSION paired=$PAIRED ==="
 
 # Always rebuild rather than reusing whatever happens to sit in build/arm.
 # A stale binary here silently shipped a pre-cleanup daemon that still carried
@@ -44,7 +85,22 @@ make -C "$ROOT" arm-plexd
 rm -rf "$STAGE"
 mkdir -p "$STAGE/bin" "$STAGE/conf" "$STAGE/docs" "$STAGE/cores"
 
-cp -a "$ARM_BIN" "$STAGE/bin/misterplexd"
+if [[ "$PAIRED" == "1" ]]; then
+  copy_gated_md5 "$PAIR_ART/bin/misterplexd.480p" "$STAGE/bin/misterplexd.480p" "$MD5_480P_DAEMON"
+  copy_gated_md5 "$PAIR_ART/bin/misterplexd.720p24" "$STAGE/bin/misterplexd.720p24" "$MD5_720P24_DAEMON"
+  cp -a "$STAGE/bin/misterplexd.480p" "$STAGE/bin/misterplexd.240p15"
+  cp -a "$STAGE/bin/misterplexd.480p" "$STAGE/bin/misterplexd.480i"
+  # Direct-run default is the 480p gold daemon. Current-tree rebuild is
+  # recorded next to it; do not overwrite the frozen pair.
+  cp -a "$STAGE/bin/misterplexd.480p" "$STAGE/bin/misterplexd"
+  SRC_MD5="$(md5sum "$ARM_BIN" | awk '{print $1}')"
+  echo "Source-tree arm misterplexd md5=$SRC_MD5 (not shipped as a pair; freeze 480p=$MD5_480P_DAEMON 720p24=$MD5_720P24_DAEMON)"
+  cp -a "$ARM_BIN" "$STAGE/bin/misterplexd.src-built"
+  chmod +x "$STAGE/bin/misterplexd.src-built"
+else
+  cp -a "$ARM_BIN" "$STAGE/bin/misterplexd"
+  chmod +x "$STAGE/bin/misterplexd"
+fi
 chmod +x "$STAGE/bin/misterplexd"
 if [[ -f "$ROOT/build/arm/push_frame" ]]; then
   cp -a "$ROOT/build/arm/push_frame" "$STAGE/bin/push_frame"
@@ -126,44 +182,91 @@ if [[ "$RBF_MD5_EXPECTED" == "REPLACE_AT_FREEZE" ]]; then
   echo "       Freeze a LOCK_OK core into release_artifacts/ and set RBF_MD5_EXPECTED=<md5>." >&2
   exit 1
 fi
-if [[ ! -f "$RBF_SRC" ]]; then
-  echo "ERROR: verified release core missing: $RBF_SRC" >&2
-  echo "       Use release_artifacts for $VERSION, or set RBF_PATH to a core with MD5 $RBF_MD5_EXPECTED." >&2
-  exit 1
+
+RBF_MD5_ACTUAL=""
+if [[ "$PAIRED" == "1" ]]; then
+  copy_gated_md5 "$PAIR_ART/cores/Plex_480p.rbf" "$STAGE/cores/Plex_480p.rbf" "$MD5_480P_RBF"
+  copy_gated_md5 "$PAIR_ART/cores/Plex_240p15.rbf" "$STAGE/cores/Plex_240p15.rbf" "$MD5_240P15_RBF"
+  copy_gated_md5 "$PAIR_ART/cores/Plex_480i.rbf" "$STAGE/cores/Plex_480i.rbf" "$MD5_480I_RBF"
+  copy_gated_md5 "$PAIR_ART/cores/Plex_720p24.rbf" "$STAGE/cores/Plex_720p24.rbf" "$MD5_720P24_RBF"
+  RBF_MD5_ACTUAL="$MD5_480P_RBF"
+  cp -a "$PAIR_ART/rbf_daemon_pairs.txt" "$STAGE/rbf_daemon_pairs.txt"
+  cp -a "$PAIR_ART/Plex_README.txt" "$STAGE/Plex_README.txt"
+  cp -a "$PAIR_ART/README.md" "$STAGE/README.md"
+  # No generic Plex.rbf — every sibling reports CORENAME=Plex.
+else
+  if [[ ! -f "$RBF_SRC" ]]; then
+    echo "ERROR: verified release core missing: $RBF_SRC" >&2
+    echo "       Use release_artifacts for $VERSION, or set RBF_PATH to a core with MD5 $RBF_MD5_EXPECTED." >&2
+    exit 1
+  fi
+  RBF_MD5_ACTUAL="$(md5sum "$RBF_SRC" | awk '{print $1}')"
+  if [[ "$RBF_MD5_ACTUAL" != "$RBF_MD5_EXPECTED" ]]; then
+    echo "ERROR: refusing to package unverified Plex.rbf: $RBF_SRC" >&2
+    echo "       expected md5: $RBF_MD5_EXPECTED" >&2
+    echo "       actual md5:   $RBF_MD5_ACTUAL" >&2
+    echo "       $VERSION ships only a hardware-validated core (see docs/release-notes-${VERSION#v}.md)." >&2
+    exit 1
+  fi
+  cp -a "$RBF_SRC" "$STAGE/cores/Plex.rbf"
+  echo "Included verified cores/Plex.rbf from $RBF_SRC ($(wc -c <"$STAGE/cores/Plex.rbf") bytes, md5=$RBF_MD5_ACTUAL)"
 fi
-RBF_MD5_ACTUAL="$(md5sum "$RBF_SRC" | awk '{print $1}')"
-if [[ "$RBF_MD5_ACTUAL" != "$RBF_MD5_EXPECTED" ]]; then
-  echo "ERROR: refusing to package unverified Plex.rbf: $RBF_SRC" >&2
-  echo "       expected md5: $RBF_MD5_EXPECTED" >&2
-  echo "       actual md5:   $RBF_MD5_ACTUAL" >&2
-  echo "       $VERSION ships only a hardware-validated core (see docs/release-notes-${VERSION#v}.md)." >&2
-  exit 1
-fi
-cp -a "$RBF_SRC" "$STAGE/cores/Plex.rbf"
-echo "Included verified cores/Plex.rbf from $RBF_SRC ($(wc -c <"$STAGE/cores/Plex.rbf") bytes, md5=$RBF_MD5_ACTUAL)"
 
 # Operator docs
-for doc in release.md release-notes-v0.3.0.md release-notes-v0.4.0.md display-resolution.md match-source-hz.md crt-lcd-matrix.md architecture.md subtitles-burnin.md; do
+for doc in release.md release-notes-v0.3.0.md release-notes-v0.4.0.md release-notes-v0.9.0-pre.md display-resolution.md match-source-hz.md crt-lcd-matrix.md architecture.md subtitles-burnin.md glass-baseline-pair.md; do
   if [[ -f "$ROOT/docs/$doc" ]]; then
     cp -a "$ROOT/docs/$doc" "$STAGE/docs/"
   fi
 done
 mkdir -p "$STAGE/scripts"
-for scr in plex_browse.sh plex_menu.sh misterplexd_supervise.sh misterplex_core_watch.sh; do
+for scr in plex_browse.sh plex_menu.sh misterplexd_supervise.sh misterplex_core_watch.sh misterplex_cast_ready.sh misterplex_pair_conf.sh misterplex_named_rbf.sh install_paired_all.sh pms_720p_proxy.py; do
   if [[ -f "$ROOT/scripts/$scr" ]]; then
     cp -a "$ROOT/scripts/$scr" "$STAGE/scripts/"
     chmod +x "$STAGE/scripts/$scr"
   fi
 done
 # Boot helpers also under bin/ so _user-startup paths stay short.
-for scr in misterplexd_supervise.sh misterplex_core_watch.sh; do
+for scr in misterplexd_supervise.sh misterplex_core_watch.sh misterplex_cast_ready.sh misterplex_pair_conf.sh misterplex_named_rbf.sh; do
   if [[ -f "$STAGE/scripts/$scr" ]]; then
     cp -a "$STAGE/scripts/$scr" "$STAGE/bin/$scr"
   fi
 done
 
+if [[ -d "$ROOT/kmod/mplex_ddr" ]]; then
+  mkdir -p "$STAGE/kmod/mplex_ddr"
+  cp -a "$ROOT/kmod/mplex_ddr/mplex_ddr.c" "$ROOT/kmod/mplex_ddr/Makefile" "$STAGE/kmod/mplex_ddr/"
+fi
+
 # Path notes for operators (also docs/INSTALL.txt)
-cat >"$STAGE/README.txt" <<EOF
+if [[ "$PAIRED" == "1" ]]; then
+  cat >"$STAGE/README.txt" <<EOF
+MiSTerPlex pre-release package
+version: ${VERSION}
+
+Named cores (pick ONE from _Utility — no generic Plex.rbf)
+----------------------------------------------------------
+  cores/Plex_480p.rbf     HDMI 240p/480p  md5 ${MD5_480P_RBF}
+  cores/Plex_240p15.rbf   15 kHz 240p CRT md5 ${MD5_240P15_RBF}
+  cores/Plex_480i.rbf     15 kHz 480i CRT md5 ${MD5_480I_RBF}
+  cores/Plex_720p24.rbf   HDMI 720p24 lab md5 ${MD5_720P24_RBF}
+
+  bin/misterplexd.480p    gold daemon (also .240p15 / .480i)
+  bin/misterplexd.720p24  lab 720p remux-PCM daemon
+  bin/misterplexd         copy of .480p (direct-run default)
+  rbf_daemon_pairs.txt    watcher map
+
+Install
+-------
+  ./scripts/install_paired_all.sh
+
+Or from the repo freeze:
+  REL=release_artifacts/v0.9.0-pre-paired ./scripts/install_paired_all.sh
+
+Set PLEX_BASE in /media/fat/misterplex/misterplex.conf.
+See docs/release-notes-v0.9.0-pre.md for 720p findings.
+EOF
+else
+  cat >"$STAGE/README.txt" <<EOF
 MiSTerPlex release package
 version: ${VERSION}
 
@@ -188,92 +291,8 @@ Quick install from this extracted directory
   scp -r bin scripts docs licenses root@<mister-ip>:/media/fat/misterplex/
   scp conf/misterplex.conf.example root@<mister-ip>:/media/fat/misterplex/misterplex.conf
   scp cores/Plex.rbf root@<mister-ip>:/media/fat/_Utility/Plex.rbf
-
-Install on MiSTer SD
---------------------
-  /media/fat/misterplex/bin/misterplexd
-  /media/fat/misterplex/bin/ffmpeg        # bundled static armhf FFmpeg (GPLv3)
-  /media/fat/misterplex/misterplex.conf   # copy from conf example; set PLEX_* / DECODE / PRESENT
-  /media/fat/linux/_user-startup.sh      # start daemon (see scripts/deploy_misterplexd.sh)
-  /media/fat/_Utility/Plex.rbf           # verified ${VERSION} core; md5 ${RBF_MD5_ACTUAL}
-
-Configure Plex server and credentials
--------------------------------------
-  Edit /media/fat/misterplex/misterplex.conf:
-    PLEX_BASE=http://YOUR-PLEX-SERVER:32400
-    PLEX_TOKEN=<optional-token>
-
-  PLEX_BASE points at your Plex Media Server. Cast sessions usually supply a
-  transient X-Plex-Token, so PLEX_TOKEN is optional for casting. Set PLEX_TOKEN
-  if you want on-device library browsing via scripts/plex_browse.sh or
-  scripts/plex_menu.sh.
-
-Start on boot + when Plex core loads
-------------------------------------
-  The FPGA RBF cannot start Linux processes. Ship ARM helpers instead:
-
-    bin/misterplex_core_watch.sh   # watches /tmp/CORENAME; starts daemon if down
-    bin/misterplexd_supervise.sh   # respawns misterplexd on crash
-
-  Append this to /media/fat/linux/_user-startup.sh (deploy_misterplexd.sh does it):
-
-    nohup /media/fat/misterplex/bin/misterplex_core_watch.sh \\
-      >>/media/fat/misterplex/misterplex_core_watch.log 2>&1 &
-
-  The watch script also ensures the daemon at boot (cast discovery) and again
-  whenever Main loads Plex (CORENAME=Plex).
-
-Launch the core
----------------
-  On MiSTer, open the OSD with F12 and load Plex from _Utility. If the core-watch
-  helper is installed, misterplexd starts automatically when the core loads.
-  Plex apps on the same network should offer MiSTerPlex as a cast target:
-
-    curl http://<mister-ip>:3005/resources
-
-Plex.rbf locations (release / device)
--------------------------------------
-  In this monorepo packaging lane:
-    release_artifacts/${VERSION}/Plex.rbf      # tracked, MD5-gated release core
-
-  Override only with an explicitly validated core:
-    RBF_PATH=/path/to/Plex.rbf RBF_MD5_EXPECTED=<md5> make package
-
-  On MiSTer (lab canonical):
-    /media/fat/_Utility/Plex.rbf
-  Alternates (OSD folders):
-    /media/fat/_Arcade/Plex.rbf   or
-    /media/fat/games/Plex/Plex.rbf
-  Load core from OSD; misterplexd is independent of which core is running
-  for Phase 2 fb0/MrAudio, but Phase 3 STREAM/FPGA present needs Plex.rbf.
-
-PRESENT / STREAM (conf)
------------------------
-  PRESENT=fb0|fpga|both     default fb0 (Phase 2 cast path)
-  STREAM=0|1                annex-B → host I-recon F1 + F3 (STREAM hybrid 3.3k)
-  Host recon owns present until FPGA 3.3l mae-competitive. See docs/release.md.
-  Lab: bin/set_status --pattern grid --force-bars 1 --raw
-
-Deploy helper (from dev host)
------------------------------
-  ./scripts/deploy_misterplexd.sh
-  ./scripts/deploy_plex_core.sh     # copies RBF when built
-  make package                      # this tarball
-
-Phase notes
------------
-  Phase 2: companion :3005 + FFmpeg → fb0 + MrAudio
-  Phase 3: FPGA decode (in progress) — does not block cast UX
-  Phase 4: multi-server, browse/menu UX, Content FPS hint, scrubber steps, auto-next
-  Phase 5: release docs, CRT/LCD matrix, hardened multi-title soak
-  Full docs: docs/release.md docs/crt-lcd-matrix.md docs/match-source-hz.md docs/subtitles-burnin.md
-
-On-device play (no cast phone)
------------------------------
-  /media/fat/misterplex/scripts/plex_browse.sh play <ratingKey>
-  /media/fat/misterplex/scripts/plex_menu.sh
-  # needs PLEX_TOKEN in misterplex.conf for library list; play hits :3005
 EOF
+fi
 cp -a "$STAGE/README.txt" "$STAGE/docs/INSTALL.txt"
 
 # Checksums for every shipped payload file. The manifest necessarily excludes
@@ -293,10 +312,24 @@ tar -C "$STAGE/.." --transform="s|^$(basename "$STAGE")|misterplex-${VERSION}|" 
   -czf "$TAR" "$(basename "$STAGE")"
 ls -la "$TAR"
 echo "Packaged → $TAR"
-echo "RBF: present ($(wc -c <"$STAGE/cores/Plex.rbf") bytes, md5=$(md5sum "$STAGE/cores/Plex.rbf" | awk '{print $1}'))"
+if [[ "$PAIRED" == "1" ]]; then
+  echo "RBFs: Plex_480p/240p15/480i/720p24 (named; no generic Plex.rbf)"
+else
+  echo "RBF: present ($(wc -c <"$STAGE/cores/Plex.rbf") bytes, md5=$(md5sum "$STAGE/cores/Plex.rbf" | awk '{print $1}'))"
+fi
 file "$STAGE/bin/misterplexd" || true
 # Fail soft-list of expected docs
 for need in docs/release.md docs/INSTALL.txt conf/misterplex.conf.example bin/misterplexd; do
   [[ -e "$STAGE/$need" ]] || { echo "ERROR: missing $need in stage"; exit 1; }
 done
+if [[ "$PAIRED" == "1" ]]; then
+  for need in cores/Plex_480p.rbf cores/Plex_240p15.rbf cores/Plex_480i.rbf cores/Plex_720p24.rbf \
+              bin/misterplexd.480p bin/misterplexd.720p24 rbf_daemon_pairs.txt; do
+    [[ -e "$STAGE/$need" ]] || { echo "ERROR: missing $need in stage"; exit 1; }
+  done
+  if [[ -e "$STAGE/cores/Plex.rbf" ]]; then
+    echo "ERROR: generic cores/Plex.rbf must not ship in paired $VERSION" >&2
+    exit 1
+  fi
+fi
 echo "package_release: OK"

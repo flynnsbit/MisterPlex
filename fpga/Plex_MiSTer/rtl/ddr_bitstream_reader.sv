@@ -421,12 +421,17 @@ module ddr_bitstream_reader #(
 		end
 	endtask
 
+	// Combo want for local ST_IDLE decisions; registered for CDC into
+	// ddr_bus_arbiter m1_want 2FF (keepv22). Pathdump keepv21 Path#1 was
+	// read_count/write_count → m1_want_s1 (general[0]→general[2], −0.619)
+	// through this combo cone — register breaks that STA path to pure FF-CDC.
+	reg bus_want_c;
 	always @(*) begin
-		bus_want = 1'b0;
+		bus_want_c = 1'b0;
 		case (state)
-			ST_IDLE: bus_want = want_poll || want_read || want_pub;
-			ST_POLL, ST_READ_WAIT: bus_want = 1'b1;
-			default: bus_want = 1'b0;
+			ST_IDLE: bus_want_c = want_poll || want_read || want_pub;
+			ST_POLL, ST_READ_WAIT: bus_want_c = 1'b1;
+			default: bus_want_c = 1'b0;
 		endcase
 	end
 
@@ -444,6 +449,7 @@ module ddr_bitstream_reader #(
 		end
 
 		if (reset) begin
+			bus_want <= 1'b0;
 			state <= ST_RESET;
 			mode <= MODE_HEADER;
 			poll_div <= '0;
@@ -495,6 +501,7 @@ module ddr_bitstream_reader #(
 			bit_feed_soft_clear <= 1'b1;
 			reset_parser();
 		end else begin
+			bus_want <= bus_want_c;
 			poll_div <= poll_div + 1'd1;
 
 			if (flush) begin

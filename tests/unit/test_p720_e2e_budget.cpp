@@ -34,6 +34,8 @@ int main() {
 
     // Primary: serial CPU path does NOT meet 24 fps with measured pins.
     CHECK(!kSerialSweep116Meets24, "serial Sweep116+copy must NOT meet 24fps");
+    CHECK(kWcSweep116Meets24, "WC /dev/mplex_ddr copy_us=1.917 + Sweep116 meets 24");
+    CHECK(kWcCopyMsPerFrame < 3.0, "WC copy is not Sweep-9 15ms /dev/mem");
     CHECK(serial > kDeadline24Ms, "serial sum exceeds deadline");
     CHECK(kCopyExceedsSweep116Headroom, "copy exceeds decode-only headroom");
 

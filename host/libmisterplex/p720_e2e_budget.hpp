@@ -91,6 +91,11 @@ inline constexpr bool copyExceedsDecodeHeadroom(double decode_ms, double copy_ms
 inline constexpr bool kSerialSweep116Meets24 =
     serialCpuPathMeets24(kDecodeOnlyMsPerFrameSweep116, kCpuCopyMsPerFrame);
 
+// Product 720p publish: /dev/mplex_ddr WC copy_us≈1917 (not Sweep-9 14.978).
+inline constexpr double kWcCopyMsPerFrame = 1.917;
+inline constexpr bool kWcSweep116Meets24 =
+    serialCpuPathMeets24(kDecodeOnlyMsPerFrameSweep116, kWcCopyMsPerFrame);
+
 inline constexpr bool kCopyExceedsSweep116Headroom =
     copyExceedsDecodeHeadroom(kDecodeOnlyMsPerFrameSweep116, kCpuCopyMsPerFrame);
 

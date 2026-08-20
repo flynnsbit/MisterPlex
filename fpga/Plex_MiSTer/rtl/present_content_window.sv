@@ -126,8 +126,27 @@ module present_content_window #(
 	// ceil(a/b) = (a + b - 1) / b for a>=0,b>0
 	wire [31:0] sx_num_ceil = sx_num_gen + {21'd0, hd_m1} - 32'd1;
 	wire [31:0] sy_num_ceil = sy_num_gen + {21'd0, vd_m1} - 32'd1;
-wire [19:0] sx_win_true = 20'(sx_num_ceil / {21'd0, hd_m1});
-	wire [19:0] sy_win_true = 20'(sy_num_ceil / {21'd0, vd_m1});
+	// Combo / from live hde_act is STA-red at 24 MHz (l4-dyn3 Fmax 13.8).
+	// Identity 65536 greys chroma on glass (e7097c6c). Latch DE/content
+	// then divide from those regs so hde_act is not in the Div0 cone.
+	reg [10:0] hd_m1_r, vd_m1_r, cw_m1_r, ch_m1_r;
+	always @(posedge clk) begin
+		if (reset) begin
+			hd_m1_r <= 11'd1;
+			vd_m1_r <= 11'd1;
+			cw_m1_r <= 11'd0;
+			ch_m1_r <= 11'd0;
+		end else begin
+			hd_m1_r <= hd_m1;
+			vd_m1_r <= vd_m1;
+			cw_m1_r <= cw_m1;
+			ch_m1_r <= ch_m1;
+		end
+	end
+	wire [31:0] sx_num_ceil_r = {21'd0, cw_m1_r} * 32'd65536 + {21'd0, hd_m1_r} - 32'd1;
+	wire [31:0] sy_num_ceil_r = {21'd0, ch_m1_r} * 32'd65536 + {21'd0, vd_m1_r} - 32'd1;
+	wire [19:0] sx_win_true = 20'(sx_num_ceil_r / {21'd0, hd_m1_r});
+	wire [19:0] sy_win_true = 20'(sy_num_ceil_r / {21'd0, vd_m1_r});
 	// FAULT twins (sim-only +define) — green must be capable of going red:
 	//   IDENTITY_SCALE — sx=sy=65536 (midpoint fails on 720→1280)
 	//   FLOOR_SCALE    — floor Q16 instead of ceil (last DE pixel undershoots)

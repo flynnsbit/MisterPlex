@@ -36,7 +36,7 @@ sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no "$USER@$HOST" \
 sshpass -p "$PASS" scp -o StrictHostKeyChecking=no "$BIN" "$USER@$HOST:/media/fat/misterplex/bin/misterplexd"
 # On-device browse / menu + core-load autostart helpers
 SCP_SCRIPTS=()
-for s in plex_browse.sh plex_menu.sh misterplexd_supervise.sh misterplex_core_watch.sh; do
+for s in plex_browse.sh plex_menu.sh misterplexd_supervise.sh misterplex_core_watch.sh misterplex_cast_ready.sh; do
   [[ -f "$ROOT/scripts/$s" ]] && SCP_SCRIPTS+=("$ROOT/scripts/$s")
 done
 if ((${#SCP_SCRIPTS[@]})); then
@@ -48,14 +48,15 @@ sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no "$USER@$HOST" \
   "PLAYER_ID='$PLAYER_ID' PMS_URL='$PMS_URL' bash -s" <<'REMOTE'
 set -e
 # Helpers live in bin/ for boot path simplicity; scripts/ keeps copies for package layout.
-for s in misterplexd_supervise.sh misterplex_core_watch.sh; do
+for s in misterplexd_supervise.sh misterplex_core_watch.sh misterplex_cast_ready.sh; do
   if [ -f "/media/fat/misterplex/scripts/$s" ]; then
     cp -f "/media/fat/misterplex/scripts/$s" "/media/fat/misterplex/bin/$s"
   fi
 done
 chmod +x /media/fat/misterplex/bin/misterplexd
 chmod +x /media/fat/misterplex/bin/misterplexd_supervise.sh \
-         /media/fat/misterplex/bin/misterplex_core_watch.sh 2>/dev/null || true
+         /media/fat/misterplex/bin/misterplex_core_watch.sh \
+         /media/fat/misterplex/bin/misterplex_cast_ready.sh 2>/dev/null || true
 chmod +x /media/fat/misterplex/scripts/*.sh 2>/dev/null || true
 
 # Startup hook (idempotent): core watch starts/respawns daemon when Plex loads

@@ -1,0 +1,2 @@
+41adb98c7a630b541091c22ce291be68  /home/flynnsbit/Projects/MisterPlex/dist/stage-misterplex-v0.3.0/cores/Plex.rbf
+06c5735a2f85114688f0ff2ac36e4fd4  /home/flynnsbit/Projects/MisterPlex/dist/stage-misterplex-v0.3.0/bin/misterplexd

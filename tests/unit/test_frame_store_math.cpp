@@ -108,6 +108,14 @@ int main() {
     CHECK(misterplex::kYuv420BlackU == 128);
     CHECK(misterplex::kYuv420BlackV == 128);
     CHECK(misterplex::ddrFrameFormatCode(misterplex::DdrFrameFormat::Yuv420p) == 1);
+    CHECK(misterplex::ddrDoorbellDynWord(0) == 0);
+    CHECK(misterplex::ddrDoorbellDynWord(1) == 0); // not 8-byte aligned
+    CHECK(misterplex::ddrDoorbellDynWord(0x30180000u) == (0x80000000u | (0x30180000u >> 3)));
+    CHECK(misterplex::ddrDoorbellDynWord(0x30300000u) == (0x80000000u | (0x30300000u >> 3)));
+    CHECK(misterplex::ddrDoorbellDynValid(misterplex::ddrDoorbellDynWord(0x30180000u)));
+    CHECK(misterplex::ddrDoorbellDynPhys(misterplex::ddrDoorbellDynWord(0x30180000u)) ==
+          0x30180000u);
+    CHECK(!misterplex::ddrDoorbellDynValid(0));
     CHECK(misterplex::ddrDoorbellHi(0x1234, 0, misterplex::DdrFrameFormat::Yuv420p) ==
           0x20001234u);
     CHECK(misterplex::ddrDoorbellHi(0x1234, 1, misterplex::DdrFrameFormat::Yuv420p) ==

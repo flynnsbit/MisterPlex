@@ -20,6 +20,9 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio_ingest.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/line_buf_ram.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/frame_store.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_frame_store.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/mplex_hold_lcell.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_frame_base_mux.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/source_aspect_ack.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/frame_ingest.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddram_frame_rd.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/sdram.sv

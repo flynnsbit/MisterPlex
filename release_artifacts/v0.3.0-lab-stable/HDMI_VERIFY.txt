@@ -1,0 +1,15 @@
+MiSTerPlex v0.3.0 SHIP-READY (HDMI-USB 2026-08-11)
+pair: RBF 41adb98c + daemon 06c5735a
+conf: PRESENT=both DECODE=320x240 STREAM=0 OSD_CONTROL=1 IDLE_SCREEN=logo
+package: dist/misterplex-v0.3.0.tar.gz
+
+GATES
+- idle chevron PASS ORANGE_PX=16403
+- B6 content PASS (BBB bird + OCR) unique/motion PASS
+- A/V capture 12s: SMOOTH_VIDEO unique=55/60 motion~16.6; AUDIO_OK rms~6060 active=1.0
+- protocol pfps~10.4 frame_tx ok DDR drops present but picture continuous
+
+SHIP CONF note: PRESENT=fb0 alone FAIL_PLAY; PRESENT=both PASS
+
+GitHub: no prior v0.3.0 release existed; this package is the first ship-ready 3.0 asset.
+Separate from v0.4 multi-res track.

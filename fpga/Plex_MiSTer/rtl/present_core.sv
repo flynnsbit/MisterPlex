@@ -54,16 +54,24 @@ module present_core #(
 	parameter int FRAME_CMD_FIFO_AW = 5,
 `endif
 `ifdef FRAME_LINES_1
-	parameter int FRAME_LINE_COUNT = 1
+	parameter int FRAME_LINE_COUNT = 1,
 `elsif FRAME_LINES_4
-	parameter int FRAME_LINE_COUNT = 4
+	parameter int FRAME_LINE_COUNT = 4,
 `elsif FRAME_LINES_8
-	parameter int FRAME_LINE_COUNT = 8
+	parameter int FRAME_LINE_COUNT = 8,
 `elsif FRAME_LINES_16
-	parameter int FRAME_LINE_COUNT = 16
+	parameter int FRAME_LINE_COUNT = 16,
 `else
-	parameter int FRAME_LINE_COUNT = 4
+	parameter int FRAME_LINE_COUNT = 4,
 `endif
+	// Match ddr_frame_store desired_y fill to Template→store_y scale:
+	// store_y ≈ py * (FRAME_H / TPL_SCALE_REF_H). When that ratio is an
+	// integer ≥1, stock only scanned coded lines (product480 FOAR: 480/240=2).
+	// Keeps LINE_COUNT=8 while covering the beam set without FRAME_LINES_16.
+	parameter int FRAME_Y_FILL_STRIDE =
+		((TPL_SCALE_REF_H > 0) && ((FRAME_H % TPL_SCALE_REF_H) == 0) &&
+		 ((FRAME_H / TPL_SCALE_REF_H) >= 1))
+			? (FRAME_H / TPL_SCALE_REF_H) : 1
 )(
 	input  wire        clk,
 	input  wire        clk_sdram,
@@ -109,6 +117,10 @@ module present_core #(
 	input  wire [15:0] ddr_status_osd,
 	input  wire        ddr_input_cmd_valid,
 	input  wire  [7:0] ddr_input_cmd,
+	input  wire        ioctl_download,
+	input  wire        ioctl_wr,
+	input  wire [7:0]  ioctl_dout,
+	input  wire [15:0] ioctl_index,
 	input  wire  [3:0] ddr_sdram_test_state,
 	input  wire  [3:0] ddr_sdram_size_code,
 	input  wire [15:0] ddr_sdram_error_count,
@@ -585,9 +597,26 @@ module present_core #(
 		.PRESENT_X(FS_PRESENT_X),
 		.PRESENT_Y(FS_PRESENT_Y),
 		.LINE_COUNT(FRAME_LINE_COUNT),
+`ifdef PLEX_PRESENT_720P_L4
+		.Y_FILL_STRIDE(1),
+		.C_INTERLEAVE_ON_Y_BEAM(1'b1),
+`else
+		.Y_FILL_STRIDE(FRAME_Y_FILL_STRIDE),
+`endif
 		.PHYS_BASE(FS_PHYS_BASE),
 		.HPS_BANK_STRIDE_BYTES(FS_BANK_STRIDE),
-		.DOORBELL_PHYS(FS_DOORBELL)
+		.DOORBELL_PHYS(FS_DOORBELL),
+`ifdef PLEX_PRESENT_720P_L4
+		.MAILBOX_PHYS(FS_DOORBELL + 32'h100),
+		.INPUT_MAILBOX_PHYS(FS_DOORBELL + 32'h108),
+		.SDRAM_MAILBOX_PHYS(FS_DOORBELL + 32'h110),
+		.FRAME_MAILBOX_PHYS(FS_DOORBELL + 32'h118),
+		.BANK_MAILBOX_PHYS(FS_DOORBELL + 32'h128),
+		.ASPECT_ACK_PHYS(FS_DOORBELL + 32'h130),
+		.DYN_BASE_EN(1'b1)
+`else
+		.DYN_BASE_EN(1'b0)
+`endif
 	) fstore (
 		.clk(clk),
 		.clk_ddr(clk_ddr),
@@ -603,6 +632,10 @@ module present_core #(
 		.status_osd(ddr_status_osd),
 		.input_cmd_valid(ddr_input_cmd_valid),
 		.input_cmd(ddr_input_cmd),
+		.ioctl_download(ioctl_download),
+		.ioctl_wr(ioctl_wr),
+		.ioctl_dout(ioctl_dout),
+		.ioctl_index(ioctl_index),
 		.sdram_test_state(ddr_sdram_test_state),
 		.sdram_size_code(ddr_sdram_size_code),
 		.sdram_error_count(ddr_sdram_error_count),

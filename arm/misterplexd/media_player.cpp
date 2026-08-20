@@ -1,15 +1,28 @@
 #include <pthread.h>
 #include "media_player.hpp"
 
+#include "libmisterplex/cached_src_phys.hpp"
+#include "libmisterplex/ddr_frame_layout.hpp"
+#include "libmisterplex/input_mailbox.hpp"
 #include "libmisterplex/av_clock.hpp"
 #include "libmisterplex/idle_screen.hpp"
 #include "libmisterplex/osd_menu.hpp"
+#include "libmisterplex/display_raster.hpp"
+#include "libmisterplex/hdmi_auto_delay.hpp"
+#include "libmisterplex/stick_bank_score.hpp"
 #include "libmisterplex/h264_nal_dispatch.hpp"
 #include "libmisterplex/h264_recon.hpp"
+#include "libmisterplex/av_inproc_decode.hpp"
+#include "libmisterplex/p720_transcode_vf.hpp"
+#include "libmisterplex/p720_audio_keepup.hpp"
+#include "libmisterplex/present_bank.hpp"
+#include "libmisterplex/source_aspect.hpp"
+#include "plex_resolve.hpp"
 #include <algorithm>
 #include <array>
 #include <cctype>
 #include <cerrno>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <chrono>
@@ -19,13 +32,30 @@
 #include <time.h>
 #include <vector>
 
+#include <cstdlib>
+#include <dirent.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <sched.h>
+#include <sys/mman.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#ifdef __linux__
+#include <sys/syscall.h>
+#endif
+
+#ifndef MAP_HUGETLB
+#define MAP_HUGETLB 0x40000
+#endif
+#ifndef MPX_FABRIC_DIRECT
+#define MPX_FABRIC_DIRECT 0
+#endif
+#ifndef MPX_STICK_I420
+#define MPX_STICK_I420 0
+#endif
 
 namespace misterplex {
 namespace {
@@ -36,6 +66,111 @@ inline bool isUniversalTranscodeUrl(const std::string& url) {
     return url.find("transcode/universal") != std::string::npos ||
            url.find("/video/:/transcode/") != std::string::npos;
 }
+
+inline bool waitPidMs(pid_t pid, int timeoutMs, int* statusOut) {
+    if (pid <= 0)
+        return false;
+    const auto t0 = std::chrono::steady_clock::now();
+    for (;;) {
+        int st = 0;
+        const pid_t w = ::waitpid(pid, &st, WNOHANG);
+        if (w == pid) {
+            if (statusOut)
+                *statusOut = st;
+            return true;
+        }
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - t0)
+                            .count();
+        if (ms >= timeoutMs)
+            return false;
+        ::usleep(20000);
+    }
+}
+
+// Branch B: compile-time MPX_FABRIC_DIRECT=1 or env MPX_FABRIC_DIRECT=1.
+// Default OFF — 480p / 07f54d9f still use sendDdrFrame memcpy.
+inline bool fabricDirectWanted() {
+    const char* e = std::getenv("MPX_FABRIC_DIRECT");
+    if (e && *e) {
+        const char c = e[0];
+        if (c == '0' || c == 'n' || c == 'N' || c == 'f' || c == 'F' || c == 'o' ||
+            c == 'O')
+            return false;
+        return true;
+    }
+#if MPX_FABRIC_DIRECT
+    return true;
+#else
+    // 720p call sites also require L4 geometry. Cached contig slots + PL330
+    // retire uncached memcpy; 480p still memcpy (geometry gate).
+    return true;
+#endif
+}
+
+#if defined(__linux__)
+pid_t findCommPid(const char* name) {
+    DIR* dir = ::opendir("/proc");
+    if (!dir)
+        return -1;
+    pid_t found = -1;
+    while (dirent* ent = ::readdir(dir)) {
+        if (ent->d_name[0] < '1' || ent->d_name[0] > '9')
+            continue;
+        char path[64];
+        std::snprintf(path, sizeof(path), "/proc/%s/comm", ent->d_name);
+        FILE* f = std::fopen(path, "r");
+        if (!f)
+            continue;
+        char comm[32] = {};
+        const bool ok = std::fgets(comm, sizeof(comm), f) != nullptr;
+        std::fclose(f);
+        if (!ok)
+            continue;
+        char* nl = std::strchr(comm, '\n');
+        if (nl)
+            *nl = 0;
+        if (std::strcmp(comm, name) == 0) {
+            found = static_cast<pid_t>(std::atoi(ent->d_name));
+            break;
+        }
+    }
+    ::closedir(dir);
+    return found;
+}
+
+bool g_misterNiced = false;
+int g_misterNiceSaved = 0;
+
+void setMisterNice(int niceVal, const MediaPlayer::LogFn& log) {
+    const pid_t pid = findCommPid("MiSTer");
+    if (pid <= 0)
+        return;
+    errno = 0;
+    const int cur = ::getpriority(PRIO_PROCESS, pid);
+    if (errno != 0)
+        return;
+    if (!g_misterNiced) {
+        g_misterNiceSaved = cur;
+        g_misterNiced = true;
+    }
+    if (::setpriority(PRIO_PROCESS, pid, niceVal) == 0 && log) {
+        log("media: MiSTer pid=" + std::to_string(pid) + " nice=" +
+            std::to_string(niceVal) + " (was " + std::to_string(cur) + ")");
+    }
+}
+
+void restoreMisterNice(const MediaPlayer::LogFn& log) {
+    if (!g_misterNiced)
+        return;
+    const pid_t pid = findCommPid("MiSTer");
+    if (pid > 0)
+        (void)::setpriority(PRIO_PROCESS, pid, g_misterNiceSaved);
+    if (log)
+        log("media: MiSTer nice restored");
+    g_misterNiced = false;
+}
+#endif
 
 inline bool urlHasUniversalOffset(const std::string& url) {
     if (!isUniversalTranscodeUrl(url))
@@ -303,6 +438,200 @@ bool ffmpegHasAudioStream(const std::string& ffmpeg, const std::string& url,
     }
     return WIFEXITED(st) && WEXITSTATUS(st) == 0;
 }
+
+void setSourceAspectProbeFail(std::string* dest, const char* why,
+                              size_t stderrBytes = 0) {
+    if (!dest)
+        return;
+    if (std::strcmp(why, "timeout") == 0 || std::strcmp(why, "empty_dar") == 0) {
+        char buf[96];
+        std::snprintf(buf, sizeof(buf), "%s stderr_b=%zu", why, stderrBytes);
+        *dest = buf;
+        return;
+    }
+    *dest = why;
+}
+
+SourceAspect ffmpegSourceAspect(const std::string& ffmpeg, const std::string& url,
+                                const std::string& headers,
+                                std::string* failDetail = nullptr,
+                                int* codedW = nullptr,
+                                int* codedH = nullptr,
+                                int* fpsNum = nullptr,
+                                int* fpsDen = nullptr) {
+    int stderrPipe[2]{-1, -1};
+#if defined(__linux__)
+    if (pipe2(stderrPipe, O_CLOEXEC) != 0) {
+        setSourceAspectProbeFail(failDetail, "pipe");
+        return {};
+    }
+#else
+    if (pipe(stderrPipe) != 0) {
+        setSourceAspectProbeFail(failDetail, "pipe");
+        return {};
+    }
+#endif
+
+    std::vector<std::string> args = {
+        ffmpeg, "-hide_banner", "-loglevel", "info", "-nostdin",
+    };
+    if (!headers.empty()) {
+        std::string h = headers;
+        if (h.size() < 2 || h[h.size() - 1] != '\n')
+            h += "\r\n";
+        args.push_back("-headers");
+        args.push_back(h);
+    }
+    if (url.rfind("http", 0) == 0) {
+        args.push_back("-rw_timeout");
+        args.push_back("4000000");
+    }
+    args.insert(args.end(), {
+        "-i", url, "-map", "0:v:0", "-frames:v", "0",
+        "-an", "-sn", "-dn", "-f", "null", "-",
+    });
+
+    const pid_t pid = fork();
+    if (pid < 0) {
+        ::close(stderrPipe[0]);
+        ::close(stderrPipe[1]);
+        setSourceAspectProbeFail(failDetail, "fork");
+        return {};
+    }
+    if (pid == 0) {
+        ::close(stderrPipe[0]);
+        const int devnull = ::open("/dev/null", O_WRONLY);
+        if (devnull >= 0)
+            dup2(devnull, STDOUT_FILENO);
+        dup2(stderrPipe[1], STDERR_FILENO);
+        if (devnull > STDERR_FILENO)
+            ::close(devnull);
+        if (stderrPipe[1] > STDERR_FILENO)
+            ::close(stderrPipe[1]);
+        for (int fd = 3; fd < 256; ++fd)
+            ::close(fd);
+        std::vector<char*> argv;
+        argv.reserve(args.size() + 1);
+        for (const auto& s : args)
+            argv.push_back(const_cast<char*>(s.c_str()));
+        argv.push_back(nullptr);
+        execv(args[0].c_str(), argv.data());
+        _exit(127);
+    }
+
+    ::close(stderrPipe[1]);
+    std::string output;
+    std::array<char, 4096> buffer{};
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    bool timedOut = false;
+    bool pipeClosed = false;
+    while (!pipeClosed) {
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= deadline) {
+            timedOut = true;
+            break;
+        }
+        const int timeoutMs = std::max(
+            1, static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                    deadline - now)
+                                    .count()));
+        pollfd pfd{stderrPipe[0], POLLIN | POLLHUP, 0};
+        const int ready = ::poll(&pfd, 1, timeoutMs);
+        if (ready < 0) {
+            if (errno == EINTR)
+                continue;
+            pipeClosed = true;
+            break;
+        }
+        if (ready == 0) {
+            timedOut = true;
+            break;
+        }
+        if (pfd.revents & (POLLIN | POLLHUP)) {
+            const ssize_t n = ::read(stderrPipe[0], buffer.data(), buffer.size());
+            if (n > 0) {
+                if (output.size() < 65536) {
+                    const size_t keep =
+                        std::min(static_cast<size_t>(n), 65536u - output.size());
+                    output.append(buffer.data(), keep);
+                }
+            } else if (n == 0) {
+                pipeClosed = true;
+            } else if (errno != EINTR) {
+                pipeClosed = true;
+            }
+        } else if (pfd.revents & (POLLERR | POLLNVAL)) {
+            pipeClosed = true;
+        }
+    }
+    ::close(stderrPipe[0]);
+    int st = 0;
+    bool reaped = false;
+    while (!timedOut && std::chrono::steady_clock::now() < deadline) {
+        const pid_t waited = waitpid(pid, &st, WNOHANG);
+        if (waited == pid) {
+            reaped = true;
+            break;
+        }
+        if (waited < 0 && errno != EINTR) {
+            reaped = true;
+            break;
+        }
+        usleep(10000);
+    }
+    if (!reaped) {
+        timedOut = true;
+        ::kill(pid, SIGTERM);
+        for (int i = 0; i < 20; ++i) {
+            if (waitpid(pid, &st, WNOHANG) == pid) {
+                reaped = true;
+                break;
+            }
+            usleep(10000);
+        }
+        if (!reaped) {
+            ::kill(pid, SIGKILL);
+            while (waitpid(pid, &st, 0) < 0 && errno == EINTR) {
+            }
+        }
+    }
+    if (timedOut) {
+        setSourceAspectProbeFail(failDetail, "timeout", output.size());
+        return {};
+    }
+    if (reaped && WIFEXITED(st) && WEXITSTATUS(st) == 127) {
+        setSourceAspectProbeFail(failDetail, "exec");
+        return {};
+    }
+    // A damaged stream can still have an authoritative DAR in its parsed
+    // header. Preserve that fact so playback reaches the independent
+    // zero-frame/short-read guard instead of misclassifying it as unknown DAR.
+    const auto parsed = sourceAspectFromFfmpegProbeText(output);
+    if (!parsed.valid)
+        setSourceAspectProbeFail(failDetail, "empty_dar", output.size());
+    if (codedW || codedH) {
+        int pw = 0, ph = 0;
+        if (codedSizeFromFfmpegProbeText(output, pw, ph)) {
+            if (codedW)
+                *codedW = pw;
+            if (codedH)
+                *codedH = ph;
+        }
+    }
+    if (fpsNum || fpsDen) {
+        std::string tok;
+        int pn = 0, pd = 0;
+        if (fpsTokenFromFfmpegProbeText(output, tok) &&
+            parseExactFps("", tok, pn, pd) && pn > 0 && pd > 0) {
+            if (fpsNum)
+                *fpsNum = pn;
+            if (fpsDen)
+                *fpsDen = pd;
+        }
+    }
+    return parsed;
+}
+
 class FpgaBitstreamProducer final : public h264stream::IBitstreamProducer {
 public:
     explicit FpgaBitstreamProducer(FpgaSpi& fpga) : fpga_(fpga) {}
@@ -524,10 +853,13 @@ void MediaPlayer::startOsdPoll() {
             }
             if (got) {
                 const uint16_t prev = lastOsd_.load();
-                if (!osdSeen_.exchange(true) || osdChanged(prev, word)) {
-                    lastOsd_.store(word);
+                const bool first = !osdSeen_.exchange(true);
+                lastOsd_.store(word);
+                // Log-only leftover: F12 T[10] must not open browse (PLXI cmd=5).
+                if (!first && (word & (1u << 10)) && !(prev & (1u << 10)))
+                    log("media: OSD T[10] leftover ignored (browse is PLXI cmd=5)");
+                if (first || osdChanged(prev, word))
                     applyOsd(word);
-                }
             }
             // The mailbox is free to poll. The SPI fallback is not: it has to
             // park Main for the critical section, so keep that path slow.
@@ -592,7 +924,168 @@ void MediaPlayer::stopInputPoll() {
         inputThr_.join();
 }
 
+void MediaPlayer::suspendFpgaWorkers() {
+    stopInputPoll();
+    stopOsdPoll();
+    stopIdle();
+}
+
+void MediaPlayer::resumeFpgaWorkers(bool restoreIdle) {
+    if (restoreIdle) {
+        paintIdle();
+        startIdle();
+    }
+    startInputPoll();
+    startOsdPoll();
+}
+
+void MediaPlayer::openLibraryBrowser() {
+    if (playing_.load() || shuttingDown_.load()) {
+        log("media: library browse aborted (playing/shutdown)");
+        return;
+    }
+    if (!libraryFetch_) {
+        log("media: library browse needs PLEX_TOKEN / fetch");
+        {
+            std::lock_guard<std::mutex> lk(libraryMu_);
+            library_.show({}, "no plex token");
+        }
+        if (!playing_.load() && !shuttingDown_.load())
+            paintIdle();
+        return;
+    }
+    log("media: library browse open");
+    const std::string xml = libraryFetch_("/library/sections");
+    auto rows = parseLibraryXml(xml);
+    if (playing_.load() || shuttingDown_.load()) {
+        log("media: library browse aborted after fetch (play won)");
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lk(libraryMu_);
+        library_.show(std::move(rows), xml.empty() ? "fetch failed" : "");
+    }
+    if (playing_.load() || shuttingDown_.load()) {
+        std::lock_guard<std::mutex> lk(libraryMu_);
+        library_.hide();
+        log("media: library browse aborted after show (play won)");
+        return;
+    }
+    paintIdle();
+}
+
+void MediaPlayer::requestOpenLibraryBrowser() {
+    log("media: library browse request (always-open)");
+    if (shuttingDown_.load())
+        return;
+    if (playing_.load()) {
+        if (browseOpenBusy_.exchange(true)) {
+            log("media: library browse already in flight");
+            return;
+        }
+        // stop() joins play/OSD/idle — never run on those threads.
+        std::lock_guard<std::mutex> lk(browseThrMu_);
+        if (browseThr_.joinable())
+            browseThr_.join();
+        browseThr_ = std::thread([this] {
+#if defined(__linux__)
+            pthread_setname_np(pthread_self(), "mpx-browse");
+#endif
+            stop();
+            if (!shuttingDown_.load() && !playing_.load())
+                openLibraryBrowser();
+            browseOpenBusy_.store(false);
+        });
+        return;
+    }
+    openLibraryBrowser();
+}
+
+void MediaPlayer::libraryActivate() {
+    LibraryRow row;
+    {
+        std::lock_guard<std::mutex> lk(libraryMu_);
+        const LibraryRow* cur = library_.current();
+        if (!cur)
+            return;
+        row = *cur;
+    }
+    if (row.directory) {
+        if (!libraryFetch_)
+            return;
+        const std::string path = libraryListPath(row);
+        log("media: library enter " + (path.empty() ? row.key : path));
+        const std::string xml = libraryFetch_(path.empty() ? row.key : path);
+        if (playing_.load() || shuttingDown_.load()) {
+            log("media: library enter aborted (play won)");
+            return;
+        }
+        {
+            std::lock_guard<std::mutex> lk(libraryMu_);
+            library_.push(parseLibraryXml(xml));
+        }
+        paintIdle();
+        return;
+    }
+    if (row.ratingKey.empty() || !libraryPlay_)
+        return;
+    {
+        std::lock_guard<std::mutex> lk(libraryMu_);
+        library_.hide();
+    }
+    log("media: library play ratingKey=" + row.ratingKey);
+    libraryPlay_(row.ratingKey);
+}
+
+bool MediaPlayer::libraryHandleInput(PlaybackCommand command) {
+    if (command == PlaybackCommand::Browse) {
+        requestOpenLibraryBrowser();
+        return true;
+    }
+    bool vis = false;
+    {
+        std::lock_guard<std::mutex> lk(libraryMu_);
+        vis = library_.visible;
+    }
+    if (!vis) {
+        if (!playing_.load() && command == PlaybackCommand::Stop) {
+            openLibraryBrowser();
+            return true;
+        }
+        return false;
+    }
+    log(std::string("media: library input cmd=") + std::to_string(static_cast<int>(command)));
+    switch (command) {
+    case PlaybackCommand::PlayPause:
+        libraryActivate();
+        return true;
+    case PlaybackCommand::Stop: {
+        std::lock_guard<std::mutex> lk(libraryMu_);
+        if (!library_.pop())
+            library_.hide();
+        break;
+    }
+    case PlaybackCommand::SkipForward: {
+        std::lock_guard<std::mutex> lk(libraryMu_);
+        library_.move(1);
+        break;
+    }
+    case PlaybackCommand::SkipBack: {
+        std::lock_guard<std::mutex> lk(libraryMu_);
+        library_.move(-1);
+        break;
+    }
+    default:
+        return false;
+    }
+    paintIdle();
+    return true;
+}
+
 void MediaPlayer::dispatchPlaybackInput(PlaybackCommand command) {
+    log(std::string("media: input cmd=") + std::to_string(static_cast<int>(command)));
+    if (libraryHandleInput(command))
+        return;
     const PlaybackTransportState state{playing_.load(), paused_.load(), positionMs_.load(),
                                        durationMs()};
     (void)dispatchPlaybackCommand(command, state, skipForwardMs_, skipBackMs_, steadyMs(),
@@ -612,44 +1105,115 @@ void MediaPlayer::applyOsd(uint16_t word) {
     setIdleMode(im);
     if (idleChanged)
         idleLogged_.store(false);
-    if (idleChanged && !playing_.load())
-        paintIdle();
 
-    // Content (O[5:4]) and Display (O[15:14] v9): notify main so PMS ladder + conf
-    // + present bank retarget. First OSD sample seeds without a spurious restart.
+    // Content (O[5:4]) owns DECODE/PMS. Display (O[15:14]) owns video_mode.
+    // First sample seeds last* (default 240p must not look like 240→720) but
+    // still applies the live Display row to /dev/MiSTer_cmd (daemon start).
     const ContentResolution& cr = s.contentResolution;
     const ContentResolution& dr = s.displayResolution;
-    const bool havePrev = lastContentRes_.width > 0;
+    int nextW = outW_;
+    int nextH = outH_;
+    const bool retargeted =
+        osdRetargetDecodeSizeFromPresented(nextW, nextH, cr, liveGlass_, rbfPrefix8_);
+    if (retargeted)
+        setDecodeSize(nextW, nextH);
+    if ((idleChanged || retargeted) && !playing_.load())
+        paintIdle();
+    // Display O[15:14]: persist only. video_mode is latched at daemon start /
+    // core reset — do not poke /dev/MiSTer_cmd while the user flips F12.
     const bool contentChanged =
-        havePrev && (cr.width != lastContentRes_.width || cr.height != lastContentRes_.height);
-    const bool havePrevDisp = lastDisplayRes_.width > 0;
+        osdResSeeded_ &&
+        (lastContentRes_.width != cr.width || lastContentRes_.height != cr.height);
     const bool displayChanged =
-        havePrevDisp &&
-        (dr.width != lastDisplayRes_.width || dr.height != lastDisplayRes_.height);
+        osdResSeeded_ &&
+        (lastDisplayRes_.width != dr.width || lastDisplayRes_.height != dr.height);
     lastContentRes_ = cr;
     lastDisplayRes_ = dr;
-    if ((contentChanged || displayChanged) && onContentRes_) {
+    osdResSeeded_ = true;
+    if (contentChanged && onContentRes_) {
         const bool nowPlaying = playing_.load();
         log(std::string("media: res change content→") + cr.label + " display→" + dr.label +
             " " + std::to_string(dr.width) + "x" + std::to_string(dr.height) +
             (nowPlaying ? " (live restart)" : " (next play)"));
         onContentRes_(cr, nowPlaying);
     }
+    if (displayChanged && onDisplayRes_)
+        onDisplayRes_(dr);
 
     log("media: OSD word=0x" + hex16(word) + " av_offset_ms=" + std::to_string(s.avOffsetMs) +
         " clock_ppm=" + std::to_string(audioClockPpm_) +
         " resync=" + (s.resyncEnabled ? "on" : "off") +
-        " content_res=" + cr.label + " display_res=" + dr.label);
+        " content_res=" + cr.label + " display_res=" + dr.label +
+        " decode=" + std::to_string(outW_) + "x" + std::to_string(outH_));
+}
+
+void MediaPlayer::latchAndApplyDisplayRaster(const ContentResolution& display) {
+    latchedDisplayRes_ = display;
+    displayRasterLatched_ = true;
+    lastDisplayRes_ = display;
+    // Seed lastVideoModeCmd_ so IfChanged does not rewrite a live CEA 720p60
+    // raster on every daemon start. A same-modeline video_mode poke resets
+    // ddr_frame_store (primed=0, have_seq=0) and freezes glass on the chevron.
+    if (const char* cmd = videoModeCmdForDisplayLabel(display.label))
+        lastVideoModeCmd_ = cmd;
+    applyDisplayRaster(display, /*force=*/false);
+    if (!playing_.load())
+        paintIdle();
+}
+
+void MediaPlayer::applyLiveDisplayRaster(const ContentResolution& osdDisplay, bool force) {
+    // Re-arm the *latched* row only (Main vid_changed). Ignore a live OSD
+    // Display that has not been reset into the latch.
+    if (displayRasterLatched_)
+        applyDisplayRaster(latchedDisplayRes_, force);
+    else
+        applyDisplayRaster(osdDisplay, force);
+}
+
+void MediaPlayer::applyDisplayRaster(const ContentResolution& display, bool force) {
+    const char* cmd = videoModeCmdForDisplayLabel(display.label);
+    // 112bb + CEA 720p24 HDMI (30000 kHz) wrote and HURT: 14.5/12.31 vs
+    // 15.4/12.87 at 720p60. ascal 60→24 is not the unique24 closer. L4 stays
+    // on 720p60. kVideoModeCmd720p24 remains a legal cmd for a later design.
+    const char* next = force ? (videoModeCmdIsSafe(cmd) ? cmd : nullptr)
+                             : videoModeCmdIfChanged(cmd, lastVideoModeCmd_.c_str());
+    if (!next) {
+        log(std::string("media: display raster ") + (display.label ? display.label : "?") +
+            " unchanged (skip video_mode force=" + (force ? "1" : "0") + ")");
+        return;
+    }
+    const int rc = writeMisterCmdLine(kMisterCmdPath, next);
+    if (rc > 0) {
+        lastVideoModeCmd_ = next;
+        log(std::string("media: display raster ") + (display.label ? display.label : "?") +
+            " → " + next);
+        return;
+    }
+    // Fail closed: missing cmd node is not a crash and is not HDMI PASS.
+    log(std::string("media: /dev/MiSTer_cmd missing or unwritable; raster unchanged (") + next +
+        ")");
 }
 
 void MediaPlayer::paintIdle() {
     const IdleMode m = idleMode();
-    if (m == IdleMode::LastFrame)
+    bool libVis = false;
+    {
+        std::lock_guard<std::mutex> lk(libraryMu_);
+        libVis = library_.visible;
+    }
+    if (m == IdleMode::LastFrame && !libVis)
         return;
-    // Idle canvas must match DECODE / content bank (outW_/outH_), not a hardcoded
-    // 240/480 geometry. A 1280x720 core + 624x480 idle paint is the yellow/static class.
+    // Bank is DECODE (L4 1280 store). Chevron *design* follows latched Display
+    // so 240p/480p reset makes a chunkier mark; nearest-scale into the bank
+    // (do not paint a 624x480 payload into a 1280 store — yellow/static).
     const int w = outW_ > 0 ? outW_ : 320;
     const int h = outH_ > 0 ? outH_ : 240;
+    const int designW = (displayRasterLatched_ && latchedDisplayRes_.width > 0)
+                            ? latchedDisplayRes_.width
+                            : w;
+    const int designH = (displayRasterLatched_ && latchedDisplayRes_.height > 0)
+                            ? latchedDisplayRes_.height
+                            : h;
     std::vector<uint8_t> buf(static_cast<size_t>(w) * h * 3);
     renderIdleRgb24(buf.data(), w, h, m, idlePhase_.load());
 
@@ -667,15 +1231,94 @@ void MediaPlayer::paintIdle() {
                 makeDdrFrameLayout(g, kDdrFramePhysBase, kDdrFrameStrideAlign,
                                    DdrFrameFormat::Yuv420p);
             std::vector<uint8_t> yuv(layout.frame_bytes);
-            if (layout.frame_bytes > 0 &&
-                renderIdleYuv420p(yuv.data(), g.coded_width, g.coded_height, m,
-                                  idlePhase_.load())) {
-                // Paint BOTH banks identically. A single-bank idle leave the other
-                // bank stale; any later swap (or free-bank thrash) flashes the
-                // silhouette. Dual paint keeps glass stable after one idle tick.
-                const bool ok0 = fpga_.sendYuv420pFrameDdr(yuv.data(), yuv.size(), g, 0);
-                const bool ok1 = fpga_.sendYuv420pFrameDdr(yuv.data(), yuv.size(), g, 1);
-                ok = ok0 || ok1;
+            bool painted = false;
+            if (layout.frame_bytes > 0 && designW > 0 && designH > 0 &&
+                (designW & 1) == 0 && (designH & 1) == 0 &&
+                (designW != g.coded_width || designH != g.coded_height)) {
+                const size_t ysz =
+                    static_cast<size_t>(designW) * static_cast<size_t>(designH);
+                const size_t csz = ysz / 4;
+                std::vector<uint8_t> src(ysz + 2 * csz);
+                if (renderIdleYuv420p(src.data(), designW, designH, m, idlePhase_.load(),
+                                      0, designW) &&
+                    scaleI420NearestPlanes(src.data(), designW, src.data() + ysz,
+                                           designW / 2, src.data() + ysz + csz,
+                                           designW / 2, designW, designH, yuv.data(),
+                                           g.coded_width, g.coded_height,
+                                           layout.frame_bytes)) {
+                    painted = true;
+                    log(std::string("media: idle chevron design=") +
+                        std::to_string(designW) + "x" + std::to_string(designH) +
+                        " bank=" + std::to_string(g.coded_width) + "x" +
+                        std::to_string(g.coded_height));
+                }
+            }
+            if (!painted && layout.frame_bytes > 0)
+                painted = renderIdleYuv420p(yuv.data(), g.coded_width, g.coded_height, m,
+                                            idlePhase_.load(), g.crop_left, g.display_width);
+            {
+                std::lock_guard<std::mutex> lk(libraryMu_);
+                if (library_.visible && !yuv.empty()) {
+                    renderLibraryI420(yuv.data(), g.coded_width, g.coded_height, library_);
+                    painted = true;
+                }
+            }
+            if (painted) {
+                // 480p: paint both banks so a later swap cannot flash a stale
+                // silhouette. 720p24 L4 (5a7c5085): the second idle doorbell
+                // leaves PLXD free=0 pending=1 frames_done=2; RequireReleased
+                // then cannot retire the next swap (150 ms wait confirmed).
+                const bool wantFabric =
+                    fabricDirectWanted() && isPlex720pDdrFrameGeometry(g);
+                fpga_.setFabricDirectPresent(wantFabric);
+                const bool wantStick =
+                    stickI420Wanted() && isPlex720pDdrFrameGeometry(g);
+                fpga_.setStickI420Present(wantStick);
+                uint32_t idleSrcPhys = 0;
+                const uint8_t* idlePayload = yuv.data();
+                if (wantFabric) {
+                    // Heap std::vector is never 338-page contig → always STUB.
+                    // Reuse process-lifetime idleFabric_ (same allocator as play).
+                    if (idleFabric_.slot[0].phys == 0) {
+                        (void)allocateFabricDirectSlots(idleFabric_, yuv.size(),
+                                                        /*tryCompact=*/true,
+                                                        /*minSlots=*/1);
+                    }
+                    if (idleFabric_.slot[0].phys != 0 && idleFabric_.slot[0].virt) {
+                        std::memcpy(idleFabric_.slot[0].virt, yuv.data(), yuv.size());
+                        idlePayload = idleFabric_.slot[0].virt;
+                        // Keep process-lifetime virt; phys tracks live PFN.
+                        idleSrcPhys = refreshFabricSlotPhys(idleFabric_.slot[0],
+                                                            yuv.size());
+                    } else {
+                        idleSrcPhys = 0;
+                    }
+                    char pbuf[20];
+                    std::snprintf(pbuf, sizeof(pbuf), "0x%08x",
+                                  static_cast<unsigned>(idleSrcPhys));
+                    log(std::string("media: fabric_direct idle src_phys=") +
+                        (idleSrcPhys != 0 ? "REAL" : "STUB") + " slot=" + pbuf +
+                        " how=" + fabricDirectHow(idleFabric_));
+                }
+                {
+                    const auto sc = scoreI420Y(yuv.data(), g.coded_width, g.coded_height, 4);
+                    char sbuf[192];
+                    formatStickBankScore(sbuf, sizeof(sbuf), sc);
+                    log(std::string("media: idle I420 ") + sbuf);
+                }
+                const bool ok0 = fpga_.sendYuv420pFrameDdr(
+                    idlePayload, yuv.size(), g, 0, DdrBankWritePolicy::BestEffort,
+                    idleSrcPhys);
+                const bool ok1 =
+                    (g.presented_height >= kPlex720pPresentedHeight)
+                        ? false
+                        : fpga_.sendYuv420pFrameDdr(
+                              idlePayload, yuv.size(), g, 1,
+                              DdrBankWritePolicy::BestEffort, idleSrcPhys);
+                // 720p paints the free bank then doorbells; if the swap is
+                // stuck, HDMI keeps the old chevron. Overwrite the scanned bank.
+                const bool okDisp = fpga_.blitDisplayedBank(idlePayload, yuv.size());
+                ok = ok0 || ok1 || okDisp;
                 ddrBank_ = 0;
             }
         }
@@ -708,7 +1351,12 @@ void MediaPlayer::startIdle() {
         pthread_setname_np(pthread_self(), "mpx-idle");
 #endif
         while (idleRun_.load()) {
-            if (playing_.load() || idleMode() == IdleMode::LastFrame) {
+            bool libVis = false;
+            {
+                std::lock_guard<std::mutex> lk(libraryMu_);
+                libVis = library_.visible;
+            }
+            if (playing_.load() || (idleMode() == IdleMode::LastFrame && !libVis)) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(200));
                 continue;
             }
@@ -751,6 +1399,45 @@ void MediaPlayer::setDecodeSize(int w, int h) {
         h = 720;
     outW_ = w;
     outH_ = h;
+}
+
+SourceAspect MediaPlayer::probeSourceAspect(const std::string& urlOrPath,
+                                            const std::string& httpHeaders,
+                                            std::string* failDetail,
+                                            int* codedW,
+                                            int* codedH,
+                                            int* fpsNum,
+                                            int* fpsDen) const {
+    return ffmpegSourceAspect(ffmpeg_, urlOrPath, httpHeaders, failDetail, codedW,
+                              codedH, fpsNum, fpsDen);
+}
+
+bool MediaPlayer::setSourceAspect(const SourceAspect& aspect) {
+    if (!aspect.valid) {
+        log("ERROR media: refusing playback with unknown source display aspect");
+        return false;
+    }
+    std::lock_guard<std::mutex> present(presentMu_);
+    sourceAspect_ = aspect;
+    if (presentMode_ != "fpga" && presentMode_ != "both") {
+        log("media: source aspect=" + std::to_string(aspect.x) + ":" +
+            std::to_string(aspect.y) + " owner=host_present no_fpga_transport");
+        return true;
+    }
+    if (!fpga_.setDdrFrameLayout(ddrFrameGeometryForPresentedSize(outW_, outH_),
+                                 DdrFrameFormat::Yuv420p)) {
+        log("ERROR media: source aspect DDR layout failed: " + fpga_.lastError());
+        return false;
+    }
+    if (!fpga_.sendSourceAspect(aspect)) {
+        // PLXJ WE is blank-only. A missing ACK must not CLOSED-STOP a live
+        // cast — Plex Web then shows playing while glass stays on the chevron.
+        log("media: source aspect publish optional-continue: " + fpga_.lastError());
+        return true;
+    }
+    log("media: source aspect=" + std::to_string(aspect.x) + ":" +
+        std::to_string(aspect.y) + " owner=MiSTer_native_scaler ack=matched");
+    return true;
 }
 
 std::string MediaPlayer::lastError() const {
@@ -802,6 +1489,18 @@ bool MediaPlayer::initPresent() {
             useDdrF1_ = true;
             ddrBank_ = 0;
             log("media: FPGA frame path OK (PRESENT=fpga → DDR YUV420p only)");
+            // Env/compile MPX_FABRIC_DIRECT: idle + present share sendDdrFrame.
+            // 720p layout still required inside sendDdrFrame; 480p memcpy unchanged.
+            const bool wantFabric = fabricDirectWanted();
+            fpga_.setFabricDirectPresent(wantFabric);
+            log(std::string("media: fabric_direct=") + (wantFabric ? "1" : "0") +
+                " (MPX_FABRIC_DIRECT env/compile; 720p may poke PLXP)");
+            // PATH_SDRAM stick present. Default OFF — live 480p daemon unchanged.
+            // Cannot detect SDRAM_I420_STORE vs ddr_frame_store safely at runtime.
+            const bool wantStick = stickI420Wanted();
+            fpga_.setStickI420Present(wantStick);
+            log(std::string("media: stick_i420=") + (wantStick ? "1" : "0") +
+                " (MPX_STICK_I420; idle+play memcpy PHYS_BASE 0x30180000)");
             // Legacy (pre-v3) core only: park the debug bits so a stale saved OSD
             // cannot steal cast frames. On a v3 core those same bits ARE the A/V
             // offset menu item, so zeroing them would silently reset the user's
@@ -812,6 +1511,20 @@ bool MediaPlayer::initPresent() {
                     log("media: park OSD (None/tone-off): " + fpga_.lastError());
                 else
                     log("media: park OSD — Pattern=None, audio tone Off, force bars No");
+            }
+            // 720p HDMI product: Original AR is 16:9 even before a play-file.
+            {
+                const SourceAspect idleAr = defaultSourceAspectForBank(outW_, outH_);
+                if (idleAr.valid && idleAr.x == 16 && idleAr.y == 9) {
+                    const char* prev = std::getenv("MPX_ASPECT_ACK_OPTIONAL");
+                    if (!prev)
+                        ::setenv("MPX_ASPECT_ACK_OPTIONAL", "1", 0);
+                    if (setSourceAspect(idleAr))
+                        log("media: HDMI 720p default aspect=16:9");
+                    else
+                        log("media: HDMI 720p default aspect=16:9 publish skipped: " +
+                            fpga_.lastError());
+                }
             }
             any = true;
         } else {
@@ -840,6 +1553,10 @@ void MediaPlayer::signalChildren(int sig) {
     pid_t p = childPid_.load();
     if (p > 0)
         kill(-p, sig);
+    pid_t ap = audioPid_.load();
+    // Split 720p audio-only ffmpeg must pause with video (unlike streamPid_).
+    if (ap > 0)
+        kill(-ap, sig);
     pid_t sp = streamPid_.load();
     // Do not SIGSTOP the H.264 source demux on pause: PMS can tear down an HTTP
     // transcode session that stops being consumed. streamPump keeps reading and
@@ -852,12 +1569,15 @@ void MediaPlayer::killChildren() {
     signalChildren(SIGTERM);
     for (int i = 0; i < 20; ++i) {
         pid_t p = childPid_.load();
+        pid_t ap = audioPid_.load();
         pid_t sp = streamPid_.load();
-        if (p <= 0 && sp <= 0)
+        if (p <= 0 && ap <= 0 && sp <= 0)
             break;
         int st = 0;
         if (p > 0 && waitpid(p, &st, WNOHANG) == p)
             childPid_.store(-1);
+        if (ap > 0 && waitpid(ap, &st, WNOHANG) == ap)
+            audioPid_.store(-1);
         if (sp > 0 && waitpid(sp, &st, WNOHANG) == sp)
             streamPid_.store(-1);
         std::this_thread::sleep_for(std::chrono::milliseconds(25));
@@ -868,6 +1588,11 @@ void MediaPlayer::killChildren() {
         int st = 0;
         waitpid(p, &st, 0);
     }
+    pid_t ap = audioPid_.exchange(-1);
+    if (ap > 0) {
+        int st = 0;
+        waitpid(ap, &st, 0);
+    }
     pid_t sp = streamPid_.exchange(-1);
     if (sp > 0) {
         int st = 0;
@@ -875,6 +1600,8 @@ void MediaPlayer::killChildren() {
     }
     audioActive_.store(false);
     streamActive_.store(false);
+    ::unlink("/tmp/mplex-inproc.ts");
+    ::unlink("/tmp/mplex-inproc.h264");
 }
 
 void MediaPlayer::shutdown() {
@@ -886,6 +1613,10 @@ void MediaPlayer::shutdown() {
     {
         std::lock_guard<std::mutex> life(lifeMu_);
         stop_.store(true);
+#ifdef MPX_HAVE_LIBAV
+        if (inprocPcm_)
+            inprocPcm_->requestStop();
+#endif
         killChildren();
         if (thr_.joinable())
             thr_.join();
@@ -896,11 +1627,18 @@ void MediaPlayer::shutdown() {
         if (streamThr_.joinable())
             streamThr_.join();
         playing_.store(false);
-        paused_.store(false);
+        resetPlaybackPauseClock();
+    }
+    // Join outside lifeMu_: browse worker calls stop() which takes lifeMu_.
+    {
+        std::lock_guard<std::mutex> lk(browseThrMu_);
+        if (browseThr_.joinable())
+            browseThr_.join();
     }
     stopInputPoll();
     stopOsdPoll();
     stopIdle();
+    releaseFabricDirectAlloc(idleFabric_);
 }
 
 void MediaPlayer::stop() {
@@ -918,7 +1656,10 @@ void MediaPlayer::stop() {
         finalDur = durationMs_;
     }
     playing_.store(false);
-    paused_.store(false);
+#if defined(__linux__)
+    restoreMisterNice(log_);
+#endif
+    resetPlaybackPauseClock();
     if (onProgress_)
         onProgress_("stopped", finalPos, finalDur);
     {
@@ -936,6 +1677,7 @@ void MediaPlayer::stop() {
     // flight would then ioctl through an unmapped handle and take the daemon down.
     stopOsdPoll();
     stopIdle();
+    releaseFabricDirectAlloc(idleFabric_);
     if (fb_.ok())
         fb_.clear();
     // Nothing to heal: SPI transactions hand GPO back to Main exactly as they
@@ -947,8 +1689,47 @@ void MediaPlayer::stop() {
     startOsdPoll();
 }
 
+void MediaPlayer::resetPlaybackPauseClock() {
+    std::lock_guard<std::mutex> lk(pauseClockMu_);
+    paused_.store(false);
+    pauseClockAccumulatedUs_ = 0;
+    pauseClockHeld_ = false;
+    pauseClockStarted_ = {};
+}
+
+void MediaPlayer::transitionPlaybackPause(
+    bool paused, std::chrono::steady_clock::time_point now) {
+    std::lock_guard<std::mutex> lk(pauseClockMu_);
+    if (paused_.load() == paused)
+        return;
+    paused_.store(paused);
+    if (paused && !pauseClockHeld_) {
+        pauseClockHeld_ = true;
+        pauseClockStarted_ = now;
+    } else if (!paused && pauseClockHeld_) {
+        pauseClockAccumulatedUs_ +=
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                now - pauseClockStarted_)
+                .count();
+        pauseClockHeld_ = false;
+    }
+}
+
+int64_t MediaPlayer::playbackPausedUs(
+    std::chrono::steady_clock::time_point now) const {
+    std::lock_guard<std::mutex> lk(pauseClockMu_);
+    int64_t pausedUs = pauseClockAccumulatedUs_;
+    if (pauseClockHeld_ && now > pauseClockStarted_) {
+        pausedUs += std::chrono::duration_cast<std::chrono::microseconds>(
+                        now - pauseClockStarted_)
+                        .count();
+    }
+    return pausedUs;
+}
+
 void MediaPlayer::pause() {
-    paused_.store(true);
+    std::lock_guard<std::mutex> control(pauseControlMu_);
+    transitionPlaybackPause(true, std::chrono::steady_clock::now());
     signalChildren(SIGSTOP);
     showPlaybackOverlay(PlaybackOverlayState::Paused, positionMs_.load(), durationMs());
     if (onProgress_)
@@ -956,7 +1737,8 @@ void MediaPlayer::pause() {
 }
 
 void MediaPlayer::resume() {
-    paused_.store(false);
+    std::lock_guard<std::mutex> control(pauseControlMu_);
+    transitionPlaybackPause(false, std::chrono::steady_clock::now());
     signalChildren(SIGCONT);
     showPlaybackOverlay(PlaybackOverlayState::Playing, positionMs_.load(), durationMs());
     if (onProgress_)
@@ -1006,6 +1788,10 @@ void MediaPlayer::seekMs(int64_t ms) {
 
 bool MediaPlayer::play(const std::string& urlOrPath, int64_t startOffsetMs,
                        const std::string& httpHeaders, int64_t durationMs) {
+    {
+        std::lock_guard<std::mutex> lk(libraryMu_);
+        library_.hide();
+    }
     // Idle painter owns fb0/F1 between sessions — retire it before we present.
     stopIdle();
     {
@@ -1024,15 +1810,23 @@ bool MediaPlayer::play(const std::string& urlOrPath, int64_t startOffsetMs,
             currentHeaders_ = httpHeaders;
             durationMs_ = durationMs;
         }
-        // Local / lab play-file: do not inherit PMS Media size from prior cast.
-        // Companion path calls setSourceMediaSize() again after resolve, before play.
+        // Local / lab play-file: drop inherited PMS size unless this call already
+        // probed the file (main --play-file sets sourceMedia via ffmpeg WxH).
+        // Companion HTTP path calls setSourceMediaSize() after resolve, then
+        // play(http) — not this branch.
         if (!urlOrPath.empty() && urlOrPath[0] == '/' && urlOrPath.rfind("http", 0) != 0) {
-            setSourceMediaSize(0, 0);
-            setSourceHasAudio(true); // local probe below decides
+            setSourceHasAudio(true);
+            if (sourceMediaW_ <= 0 || sourceMediaH_ <= 0) {
+                int sw = 0, sh = 0;
+                std::string probeFail;
+                (void)probeSourceAspect(urlOrPath, httpHeaders, &probeFail, &sw, &sh);
+                if (sw > 0 && sh > 0)
+                    setSourceMediaSize(sw, sh);
+            }
         }
 
         stop_.store(false);
-        paused_.store(false);
+        resetPlaybackPauseClock();
         seekReqMs_.store(-1);
         reconFrames_.store(0);
         reconPresentOk_.store(false);
@@ -1045,20 +1839,37 @@ bool MediaPlayer::play(const std::string& urlOrPath, int64_t startOffsetMs,
         // poll playing() cannot race stop() before threadMain runs and wipe the
         // session at frames=0 / audio_s=0.
         playing_.store(true);
+        // Re-arm the latched Display row only if HDMI is not already on it.
+        // force=true rewrites video_mode every cast and renegotiates HDMI
+        // (user-visible res blink) while vsync is down — ddr_frame_store
+        // cannot retire swap_pending, so glass stays on the chevron.
+        fpga_.reprobeDdrKick();
+        if (displayRasterLatched_)
+            applyDisplayRaster(latchedDisplayRes_, /*force=*/kForceDisplayRasterOnPlay);
         showPlaybackOverlay(PlaybackOverlayState::Playing, startOffsetMs, durationMs);
         thr_ = std::thread([this, urlOrPath, startOffsetMs, httpHeaders, durationMs] {
 #if defined(__linux__)
         pthread_setname_np(pthread_self(), "mpx-play");
-        // Dual-A9: pin present/play path to CPU0 so bank memcpy avoids sharing
-        // the same core with ffmpeg decode under 720p concurrent load.
+        // Dual-A9: pin the play/reader thread to CPU0. Isolated ffmpeg needs
+        // ~1.8 cores for 32 fps; under play, read_us=53 ms is the limiter
+        // (present waits ~38 ms). Do not nice the reader above ffmpeg.
+        // In-process libav needs both cores (~1.78 / -threads 2) — do not pin.
+#ifdef MPX_HAVE_LIBAV
+        const bool skipPlayCpu0 =
+            inprocDecodeWanted() && inprocDecodeSizeOk(outW_, outH_) &&
+            presentMode_ == "fpga" &&
+            ddrFrameFormat_ == DdrFrameFormat::Yuv420p;
+        if (!skipPlayCpu0)
+#endif
         {
             cpu_set_t cpus;
             CPU_ZERO(&cpus);
             CPU_SET(0, &cpus);
             (void)pthread_setaffinity_np(pthread_self(), sizeof(cpus), &cpus);
-            // Prefer present over decode when the scheduler must choose.
-            (void)::setpriority(PRIO_PROCESS, 0, -5);
+            (void)::setpriority(PRIO_PROCESS, 0, 0);
         }
+        if (outW_ == kPlex720pPresentedWidth && outH_ == kPlex720pPresentedHeight)
+            setMisterNice(19, log_);
 #endif
             try {
                 threadMain(urlOrPath, startOffsetMs, httpHeaders, durationMs);
@@ -1080,14 +1891,12 @@ pid_t MediaPlayer::spawnFfmpeg(const std::vector<std::string>& args, int vWriteF
         return -1;
     if (pid == 0) {
         setpgid(0, 0);
-        // Prefer present-path CPU over decode when dual-A9 is saturated: uncached
-        // DDR bank memcpy is the 720p present bottleneck under concurrent ffmpeg.
-        // Do NOT pin ffmpeg to a single core — multi-thread decode/scale needs both
-        // A9s (CPU1-only pin regressed 720 to ~0.3 pfps / 32 frames in 55s).
-        // Play thr_ remains on CPU0 with mild priority; ffmpeg is niceness-only.
-        // Mild demote of decode vs present; full nice=0 + 200us EAGAIN spin
-        // regressed 20.7→19.0 (present thr starved producer). Keep light nice.
-        ::setpriority(PRIO_PROCESS, 0, 5);
+        // Do NOT pin ffmpeg to a single core (CPU1-only pin regressed 720p
+        // to ~0.3 pfps). Isolated -threads 2 is 32 fps / 1.78 cores. Play
+        // produce is the limiter (read_us≈53 ms; present idle ~38 ms) — do
+        // not nice decode below present. memcpy 12 ms is not the 16 fps hole
+        // (ac18 copy_us=0 still 15.6; 6ffa quiet-FPGA still 15.9).
+        ::setpriority(PRIO_PROCESS, 0, -5);
         // Video → stdout (pipe:1)
         if (vWriteFd >= 0) {
             dup2(vWriteFd, STDOUT_FILENO);
@@ -1100,6 +1909,10 @@ pid_t MediaPlayer::spawnFfmpeg(const std::vector<std::string>& args, int vWriteF
                 if (aWriteFd != STDOUT_FILENO && aWriteFd != 3)
                     ::close(aWriteFd);
             }
+        } else if (vWriteFd != 3) {
+            // Video-only (720p split / demux): drop inherited fd 3 so this
+            // process cannot hold the sibling audio write end or vpipe read end.
+            ::close(3);
         }
         if (vWriteFd >= 0 && vWriteFd != STDOUT_FILENO && vWriteFd != 3)
             ::close(vWriteFd);
@@ -1181,6 +1994,127 @@ pid_t MediaPlayer::spawnStreamDemux(const std::string& url, const std::string& h
     return spawnFfmpeg(args, writeFd, -1);
 }
 
+pid_t MediaPlayer::spawnHttpRemuxMpegts(const std::string& url, const std::string& headers,
+                                        int64_t startMs, const std::string& fifoPath,
+                                        bool keepAudio, const std::string& audioFifo) {
+    // Box ffmpeg has HTTP. ARM inproc libav is file+h264+mpegts, no HTTP, no AAC
+    // (--disable-network --disable-everything --enable-decoder=h264).
+    // keepAudio: ONE remux writes annex-B + 48k s16le PCM (no spawnAudioOnly
+    // second HTTP; that locked av_drift_ms≈−5000). mpegts+inproc AAC SIGABRT'd.
+    const bool pcmOut = keepAudio && !audioFifo.empty();
+    std::vector<std::string> args;
+    args.push_back(ffmpeg_);
+    args.push_back("-hide_banner");
+    args.push_back("-loglevel");
+    args.push_back("error");
+    args.push_back("-nostdin");
+    args.push_back("-fflags");
+    args.push_back("+nobuffer");
+    args.push_back("-probesize");
+    args.push_back("32768");
+    args.push_back("-analyzeduration");
+    args.push_back("0");
+    if (startMs > 0 && !urlHasUniversalOffset(url)) {
+        char ss[32];
+        std::snprintf(ss, sizeof(ss), "%.3f", startMs / 1000.0);
+        args.push_back("-ss");
+        args.push_back(ss);
+    }
+    if (!headers.empty()) {
+        std::string h = headers;
+        if (h.size() < 2 || h[h.size() - 1] != '\n')
+            h += "\r\n";
+        args.push_back("-headers");
+        args.push_back(h);
+        args.push_back("-reconnect");
+        args.push_back("1");
+        args.push_back("-reconnect_streamed");
+        args.push_back("1");
+        args.push_back("-reconnect_delay_max");
+        args.push_back("5");
+    }
+    args.push_back("-i");
+    args.push_back(url);
+    args.push_back("-map");
+    args.push_back("0:v:0");
+    if (!pcmOut)
+        args.push_back("-an");
+    args.push_back("-c:v");
+    args.push_back("copy");
+    args.push_back("-bsf:v");
+    args.push_back("h264_mp4toannexb");
+    args.push_back("-f");
+    args.push_back("h264");
+    args.push_back("-y");
+    args.push_back(fifoPath);
+    if (pcmOut) {
+        args.push_back("-map");
+        args.push_back("0:a:0?");
+        args.push_back("-vn");
+        args.push_back("-af");
+        if (audioDelayMs_ > 0)
+            args.push_back("aresample=48000,adelay=" + std::to_string(audioDelayMs_) +
+                           ":all=1");
+        else
+            args.push_back("aresample=48000");
+        args.push_back("-f");
+        args.push_back("s16le");
+        args.push_back("-ac");
+        args.push_back("2");
+        args.push_back("-ar");
+        args.push_back("48000");
+        args.push_back("-y");
+        args.push_back(audioFifo);
+    }
+    return spawnFfmpeg(args, -1, -1);
+}
+
+pid_t MediaPlayer::spawnHttpPrefetchTs(const std::string& url, const std::string& headers,
+                                       int64_t startMs, const std::string& destPath) {
+    // Copy A+V to a seekable tmpfs mpegts. Inproc of a complete file is the
+    // local-identity 24 unique path; fifo remux of the same HTTP is 23.5.
+    std::vector<std::string> args;
+    args.push_back(ffmpeg_);
+    args.push_back("-hide_banner");
+    args.push_back("-loglevel");
+    args.push_back("error");
+    args.push_back("-nostdin");
+    if (startMs > 0 && !urlHasUniversalOffset(url)) {
+        char ss[32];
+        std::snprintf(ss, sizeof(ss), "%.3f", startMs / 1000.0);
+        args.push_back("-ss");
+        args.push_back(ss);
+    }
+    if (!headers.empty()) {
+        std::string h = headers;
+        if (h.size() < 2 || h[h.size() - 1] != '\n')
+            h += "\r\n";
+        args.push_back("-headers");
+        args.push_back(h);
+        args.push_back("-reconnect");
+        args.push_back("1");
+        args.push_back("-reconnect_streamed");
+        args.push_back("1");
+        args.push_back("-reconnect_delay_max");
+        args.push_back("5");
+    }
+    args.push_back("-i");
+    args.push_back(url);
+    args.push_back("-c");
+    args.push_back("copy");
+    args.push_back("-muxpreload");
+    args.push_back("0");
+    args.push_back("-muxdelay");
+    args.push_back("0");
+    args.push_back("-f");
+    args.push_back("mp4");
+    args.push_back("-movflags");
+    args.push_back("+faststart");
+    args.push_back("-y");
+    args.push_back(destPath);
+    return spawnFfmpeg(args, -1, -1);
+}
+
 pid_t MediaPlayer::spawnAudioOnly(const std::string& url, const std::string& headers, int64_t startMs,
                                   int aWriteFd) {
     // Audio-only FFmpeg — frees dual-A9 when host recon owns F1 (no RGB scale/decode).
@@ -1190,6 +2124,16 @@ pid_t MediaPlayer::spawnAudioOnly(const std::string& url, const std::string& hea
     args.push_back("-loglevel");
     args.push_back("error");
     args.push_back("-nostdin");
+    // Second HTTP transcode for inproc audio. Default probe waits seconds
+    // (Star Trek av_drift_ms≈−5200). Nobuffer so first PCM matches pictures.
+    args.push_back("-fflags");
+    args.push_back("+nobuffer+genpts");
+    args.push_back("-flags");
+    args.push_back("low_delay");
+    args.push_back("-probesize");
+    args.push_back("32768");
+    args.push_back("-analyzeduration");
+    args.push_back("0");
     if (startMs > 0 && !urlHasUniversalOffset(url)) {
         char ss[32];
         std::snprintf(ss, sizeof(ss), "%.3f", startMs / 1000.0);
@@ -1229,12 +2173,14 @@ pid_t MediaPlayer::spawnAudioOnly(const std::string& url, const std::string& hea
     return spawnFfmpeg(args, /*vWriteFd*/ -1, aWriteFd);
 }
 
-void MediaPlayer::streamPump(int sfd) {
+void MediaPlayer::streamPump(int sfd, bool allowF1Present) {
     // Phase 3.3i/product: demux annex-B → host I-slice recon → YUV420 F1 (+ optional fb0).
     // Also feed the FPGA decoder through the continuous HPS-DDR bitstream ring.
     // Robust multi-IDR: retain last SPS/PPS, recon every I/IDR, sticky CABAC skip.
     const bool wantF3 = fpga_.ok();
-    const bool wantF1 = fpga_.ok() && (presentMode_ == "fpga" || presentMode_ == "both");
+    const bool wantF1 =
+        allowF1Present && fpga_.ok() &&
+        (presentMode_ == "fpga" || presentMode_ == "both");
     // PRESENT=both: FFmpeg owns continuous fb0; recon owns F1 only.
     // PRESENT=fb0 + STREAM: recon I-frames may blit fb0 (sparse keyframe present).
     const bool reconToFb =
@@ -1735,16 +2681,16 @@ void MediaPlayer::streamPump(int sfd) {
         " present=" + std::to_string(reconFrames_.load()));
 }
 
-int64_t MediaPlayer::readMrAudioQueuedBytes() {
+MrAudioStatus MediaPlayer::readMrAudioStatus() {
     const int fd = ::open(audioDev_.c_str(), O_RDONLY);
     if (fd < 0)
-        return -1;
+        return {};
     char buf[128];
     const ssize_t n = ::read(fd, buf, sizeof(buf));
     ::close(fd);
     if (n <= 0)
-        return -1;
-    return misterplex::parseMrAudioQueuedBytes(buf, n);
+        return {};
+    return misterplex::parseMrAudioStatus(buf, n);
 }
 
 void MediaPlayer::audioPump(int afd) {
@@ -1754,6 +2700,40 @@ void MediaPlayer::audioPump(int afd) {
     // F2 SPI skipped when MrAudio works (SPI thrash + no heard benefit).
     // AUDIO_DELAY_MS is applied in FFmpeg (adelay) on the product RGB path so A+V
     // stay on one clock. Pump is pure wall-48k MrAudio (no second delay line).
+    // afd<0: same-demux inproc PCM (no second HTTP audio transcode).
+    {
+        cpu_set_t cpus;
+        CPU_ZERO(&cpus);
+        CPU_SET(0, &cpus);
+        (void)::pthread_setaffinity_np(::pthread_self(), sizeof(cpus), &cpus);
+    }
+#ifdef MPX_HAVE_LIBAV
+    AvInprocDecoder* same = (afd < 0) ? inprocPcm_ : nullptr;
+    auto pcmRead = [&](char* buf, size_t n) -> ssize_t {
+        if (same) {
+            const int g = same->drainPcm(reinterpret_cast<uint8_t*>(buf), n);
+            if (g > 0)
+                return g;
+            if (same->audioEof() || !same->isOpen())
+                return 0;
+            errno = EAGAIN;
+            return -1;
+        }
+        if (afd < 0)
+            return 0;
+        return ::read(afd, buf, n);
+    };
+#else
+    auto pcmRead = [&](char* buf, size_t n) -> ssize_t {
+        if (afd < 0)
+            return 0;
+        return ::read(afd, buf, n);
+    };
+#endif
+    auto pcmClose = [&]() {
+        if (afd >= 0)
+            ::close(afd);
+    };
     const bool wantMr = audioEnabled_ && (::access(audioDev_.c_str(), W_OK) == 0);
     bool wantF2 = fpga_.ok() && presentMode_ == "fpga" && !wantMr;
 
@@ -1765,16 +2745,22 @@ void MediaPlayer::audioPump(int afd) {
         else
             log("media: MrAudio open — software-paced 48kHz delay_ms=" +
                 std::to_string(audioDelayMs_) +
-                " clock_ppm=" + std::to_string(audioClockPpm_) + " (adelay in ffmpeg if >0)");
+                " clock_ppm=" + std::to_string(audioClockPpm_) +
+                (afd < 0 ? " src=same_demux" : " (adelay in ffmpeg if >0)"));
     }
     if (out < 0 && !wantF2) {
         char buf[4096];
         while (!stop_.load()) {
-            ssize_t n = ::read(afd, buf, sizeof(buf));
-            if (n <= 0)
+            ssize_t n = pcmRead(buf, sizeof(buf));
+            if (n < 0) {
+                if (errno == EAGAIN || errno == EINTR)
+                    continue;
+                break;
+            }
+            if (n == 0)
                 break;
         }
-        ::close(afd);
+        pcmClose();
         return;
     }
 
@@ -1783,11 +2769,95 @@ void MediaPlayer::audioPump(int afd) {
         log("media: F2 audio_fifo streaming enabled");
     }
 
-    audioActive_.store(true);
     audioBytes_.store(0);
     audioQueuedBytes_.store(-1);
+    // Do not set audioActive until MrAudio is actually fed. audioActive=1
+    // with audioBytes=0 made avDecide Hold forever (720p trim stall).
+    audioActive_.store(false);
     // 20ms chunks @ 48k stereo s16le
     char buf[3840];
+    std::vector<uint8_t> gatedAudio;
+    gatedAudio.reserve(48000 * 4 * 4);
+    if (!audioFeedRelease_.load())
+        log("media: MrAudio feed gated; draining pipe until release");
+    while (!stop_.load() && !audioFeedRelease_.load()) {
+        ssize_t n = 0;
+        if (afd >= 0) {
+            struct pollfd pfd {};
+            pfd.fd = afd;
+            pfd.events = POLLIN;
+            const int pr = ::poll(&pfd, 1, 20);
+            if (pr < 0) {
+                if (errno == EINTR)
+                    continue;
+                break;
+            }
+            if (pr == 0)
+                continue;
+        }
+        n = pcmRead(buf, sizeof(buf));
+        if (n < 0) {
+            if (errno == EINTR || errno == EAGAIN)
+                continue;
+            break;
+        }
+        if (n == 0)
+            break;
+        gatedAudio.insert(gatedAudio.end(), buf, buf + n);
+        constexpr size_t kMaxGated = 48000u * 4u * 6u;
+        if (gatedAudio.size() > kMaxGated)
+            gatedAudio.erase(gatedAudio.begin(),
+                             gatedAudio.begin() +
+                                 static_cast<std::ptrdiff_t>(gatedAudio.size() - kMaxGated));
+    }
+    if (stop_.load()) {
+        if (out >= 0)
+            ::close(out);
+        pcmClose();
+        audioActive_.store(false);
+        return;
+    }
+    {
+        const int afterMs = audioAfterVideoMs_.load();
+        if (afterMs > 0) {
+            log("media: MrAudio start after_video_ms=" + std::to_string(afterMs));
+            const auto due = std::chrono::steady_clock::now() +
+                             std::chrono::milliseconds(afterMs);
+            while (!stop_.load() && std::chrono::steady_clock::now() < due)
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    }
+    if (stop_.load()) {
+        if (out >= 0)
+            ::close(out);
+        pcmClose();
+        audioActive_.store(false);
+        return;
+    }
+    if (!gatedAudio.empty()) {
+        const int64_t pres = presentCount_.load(std::memory_order_relaxed);
+        const size_t drop = misterplex::p720_av::trimGatedPcmDrop(
+            gatedAudio.size(), pres, fpsNum_, fpsDen_);
+        if (drop > 0)
+            gatedAudio.erase(gatedAudio.begin(),
+                             gatedAudio.begin() + static_cast<std::ptrdiff_t>(drop));
+        // 720p prefetch combined: 40 ms remain left pictures ~90–110 ms
+        // ahead of heard audio (soak J/K). 120 ms matches 480p tens-of-ms.
+        // Keep the START of the gated PCM (same epoch as the first I420).
+        // 120 ms cap discarded ~1.3 s of t=0 audio on live HEVC open and
+        // locked av_drift_ms≈−1100. 2.5 s covers the remux-open gate.
+        const int capMs = 2500;
+        const size_t cap =
+            misterplex::p720_av::capGatedPcmRemain(gatedAudio.size(), capMs);
+        if (cap < gatedAudio.size())
+            gatedAudio.resize(cap);
+        audioBytes_.store(static_cast<int64_t>(drop));
+        log("media: 720p audio_trim presents=" + std::to_string(pres) +
+            " drop_bytes=" + std::to_string(drop) +
+            " remain_bytes=" + std::to_string(gatedAudio.size()) +
+            " cap_ms=" + std::to_string(capMs));
+    }
+    audioActive_.store(true);
     std::vector<uint8_t> f2acc;
     f2acc.reserve(32768);
     size_t total = 0;
@@ -1823,14 +2893,22 @@ void MediaPlayer::audioPump(int afd) {
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
             continue;
         }
-        ssize_t n = ::read(afd, buf, sizeof(buf));
-        if (n < 0) {
-            if (errno == EINTR)
-                continue;
-            break;
+        ssize_t n = 0;
+        if (!gatedAudio.empty()) {
+            n = static_cast<ssize_t>(std::min(sizeof(buf), gatedAudio.size()));
+            std::memcpy(buf, gatedAudio.data(), static_cast<size_t>(n));
+            gatedAudio.erase(gatedAudio.begin(),
+                             gatedAudio.begin() + static_cast<std::ptrdiff_t>(n));
+        } else {
+            n = pcmRead(buf, sizeof(buf));
+            if (n < 0) {
+                if (errno == EINTR || errno == EAGAIN)
+                    continue;
+                break;
+            }
+            if (n == 0)
+                break;
         }
-        if (n == 0)
-            break;
 
         if (out >= 0) {
             size_t off = 0;
@@ -1845,6 +2923,30 @@ void MediaPlayer::audioPump(int afd) {
                 off += static_cast<size_t>(w);
             }
             audioBytes_.fetch_add(static_cast<size_t>(n));
+
+            // Hold heard audio to presented pictures — 480p gold (unique ~24).
+            // 720p inproc + 2-slot prefill deadlocks if this is on: avDecide
+            // Hold waits for audio while this loop waits for presentCount
+            // (Star Trek stuck at time=5000). Combined 720p matches 480p.
+            const bool holdAudioToPictures = holdAudioToPictures_.load();
+            if (holdAudioToPictures && fpsNum_ > 0 && fpsDen_ > 0) {
+                const double audioSec =
+                    static_cast<double>(audioBytes_.load()) / (48000.0 * 4.0);
+                for (;;) {
+                    const int64_t pres =
+                        presentCount_.load(std::memory_order_relaxed);
+                    if (pres <= 0 || stop_.load())
+                        break;
+                    const double videoSec = static_cast<double>(pres) *
+                                            static_cast<double>(fpsDen_) /
+                                            static_cast<double>(fpsNum_);
+                    const double slackSec =
+                        static_cast<double>(audioHoldSlackMs_.load()) / 1000.0;
+                    if (audioSec <= videoSec + slackSec)
+                        break;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(4));
+                }
+            }
 
             // Anchor on the first chunk, biased one target-depth into the past so
             // the pump runs flat out just long enough to prefill the ring to the
@@ -1886,8 +2988,9 @@ void MediaPlayer::audioPump(int afd) {
             // servo's 8 s time constant; polling harder buys nothing but
             // syscalls.
             if ((chunkIndex++ % 4) == 0) {
-                const int64_t q = readMrAudioQueuedBytes();
-                if (q < 0) {
+                const MrAudioStatus status = readMrAudioStatus();
+                const int64_t q = status.queuedBytes;
+                if (!status.valid()) {
                     audioQueuedBytes_.store(-1);
                 } else {
                     // Low-pass the depth. The servo holds the true depth
@@ -1909,7 +3012,9 @@ void MediaPlayer::audioPump(int afd) {
                     if (lastLatLog < 0 || nowMs - lastLatLog >= 5000) {
                         lastLatLog = nowMs;
                         log("media: audio latency " + std::to_string(latMs) + "ms queued=" +
-                            std::to_string(queuedEma) + "B");
+                            std::to_string(queuedEma) + "B rptr=" +
+                            std::to_string(status.readPointer) + " wptr=" +
+                            std::to_string(status.writePointer));
                     }
                     // The ring has no backpressure: writing past the read pointer
                     // silently destroys unplayed audio. Nothing else reports this.
@@ -1965,7 +3070,7 @@ void MediaPlayer::audioPump(int afd) {
 
     if (out >= 0)
         ::close(out);
-    ::close(afd);
+    pcmClose();
     audioActive_.store(false);
     log("media: audio pump end bytes=" + std::to_string(total) +
         " f2=" + std::to_string(f2total));
@@ -1978,14 +3083,20 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     if (onProgress_)
         onProgress_("buffering", startMs, durationMs);
 
-    const bool fpgaOnlyPresent = (presentMode_ == "fpga");
+    const bool nativeScalerPresent =
+        presentMode_ == "fpga" || presentMode_ == "both";
     const DdrFrameGeometry ddrGeometry =
-        fpgaOnlyPresent ? ddrFrameGeometryForPresentedSize(outW_, outH_)
-                        : makeDdrFrameGeometry(outW_, outH_);
+        nativeScalerPresent ? ddrFrameGeometryForPresentedSize(outW_, outH_)
+                            : makeDdrFrameGeometry(outW_, outH_);
     const int rawW = ddrGeometry.coded_width;
     const int rawH = ddrGeometry.coded_height;
     const int rawDisplayW = ddrGeometry.display_width;
     const int rawDisplayH = ddrGeometry.display_height;
+    if (budget960Wanted() && !isPlex960BankSize(rawW, rawH)) {
+        log("ERROR media: P5_960 contract fail bank=" + std::to_string(rawW) + "x" +
+            std::to_string(rawH) + " (refusing 1280 ingest / snap-up)");
+        return;
+    }
 
     char scale[64];
     std::snprintf(scale, sizeof(scale), "%d:%d", rawW, rawH);
@@ -1998,8 +3109,11 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         vf = "fps=" + std::to_string(fpsNum_) + "/" + std::to_string(fpsDen_) + ",";
     }
     // Scale filter: default bicubic avoids fast_bilinear vertical banding on
-    // 480p-anamorphic→720 skies (BBB). Light present-rate ladder:
-    //   fast_bilinear|neighbor — FOAR+pad (aspect-safe)
+    // 480p-anamorphic→720 skies (BBB). MiSTer's native scaler owns display
+    // aspect, so product frames fill the complete visible raster without
+    // host-side letterbox bars.
+    // Light present-rate ladder:
+    //   fast_bilinear|neighbor — full-raster anamorphic scale
     //   exact / exact_fast_bilinear / exact_neighbor — force coded WxH, no foar/pad
     //   skip|none|off|identity — omit scale (size trust; may desync rawvideo)
     std::string swsFlags = swsFlags_;
@@ -2010,6 +3124,13 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     } else if (swsFlags.rfind("exact_", 0) == 0 && swsFlags.size() > 6) {
         forceExact = true;
         swsFlags = swsFlags.substr(6);
+    }
+    if (budget960Wanted()) {
+        forceExact = true;
+        if (swsFlags == "bicubic" && swsFlags_ == "bicubic")
+            swsFlags = "fast_bilinear";
+        log("media: MPX_BUDGET_960 force exact scale to DECODE bank flags=" +
+            swsFlags);
     }
     const bool skipScaleFlag =
         (swsFlags_ == "skip" || swsFlags_ == "none" || swsFlags_ == "off" ||
@@ -2026,27 +3147,82 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     const bool urlIsLocalFile =
         !url.empty() && url[0] == '/' && url.rfind("http", 0) != 0 && url != "testsrc" &&
         url.rfind("lavfi", 0) != 0;
+    // Universal 720p: probe start.mp4 coded WxH. Library 1440x1080 must not
+    // skip (crop+scale of an already-1280x720 transcode is the 14 unique lock).
+    // Probe fail keeps crop/scale so a 640x480 delivery cannot pack the bank.
+    int vfCodedW = sourceMediaW_;
+    int vfCodedH = sourceMediaH_;
+    if (misterplex::isPlex720pBankSize(outW_, outH_) &&
+        misterplex::isUniversalTranscodeUrl(url)) {
+        int probedW = 0, probedH = 0;
+        std::string probeFail;
+        (void)probeSourceAspect(url, headers, &probeFail, &probedW, &probedH);
+        vfCodedW = misterplex::skipVfProbedCodedDim(probedW, sourceMediaW_);
+        vfCodedH = misterplex::skipVfProbedCodedDim(probedH, sourceMediaH_);
+        char pbuf[160];
+        std::snprintf(pbuf, sizeof(pbuf),
+                      "media: transcode coded probe=%dx%d skip_coded=%dx%d library=%dx%d %s",
+                      probedW, probedH, vfCodedW, vfCodedH, sourceMediaW_, sourceMediaH_,
+                      probeFail.empty() ? "ok" : probeFail.c_str());
+        log(pbuf);
+    }
+    const bool skip720pTranscodeVf =
+        misterplex::skipRedundant720pTranscodeVf(url, outW_, outH_, vfCodedW, vfCodedH);
+    const bool padOnly720p =
+        !skip720pTranscodeVf &&
+        misterplex::transcodePadOnly720p(vfCodedW, vfCodedH, outW_, outH_);
+    const bool cropPmsBars =
+        !skip720pTranscodeVf && !padOnly720p && nativeScalerPresent && sourceAspect_.valid &&
+        url.find("/transcode/universal/") != std::string::npos;
+    if (cropPmsBars) {
+        const std::string dar = std::to_string(sourceAspect_.x) + "/" +
+                                std::to_string(sourceAspect_.y);
+        vf += "crop=trunc(min(iw\\,ih*" + dar +
+              ")/2)*2:trunc(min(ih\\,iw/(" + dar + "))/2)*2,";
+        log("media: PMS canvas crop to source DAR=" +
+            std::to_string(sourceAspect_.x) + ":" +
+            std::to_string(sourceAspect_.y));
+    }
+    if (padOnly720p) {
+        vf += "pad=1280:720:(1280-iw)/2:(720-ih)/2:black";
+        log("media: 720p pad-only coded=" + std::to_string(vfCodedW) + "x" +
+            std::to_string(vfCodedH) + " → 1280x720 (no scale)");
+    }
+    // Bank==coded is not file==coded. --decode 960x540 on a 1280x720 local clip
+    // used to skip vf (31b6d70f: scale/pad skipped local_identity_file) and
+    // desync the 777600-byte raw pipe. Require probed source == bank, like PMS.
     const bool identityLocalFile =
-        urlIsLocalFile && !forceExact && rawDisplayW == rawW && rawDisplayH == rawH &&
-        outW_ == rawW && outH_ == rawH;
+        nativeScalerPresent && urlIsLocalFile && !forceExact &&
+        rawDisplayW == rawW && rawDisplayH == rawH && outW_ == rawW && outH_ == rawH &&
+        sourceMediaW_ > 0 && sourceMediaH_ > 0 &&
+        sourceMediaW_ == outW_ && sourceMediaH_ == outH_;
     const bool pmsSourceMatchesBank =
-        !forceExact && !urlIsLocalFile && sourceMediaW_ > 0 && sourceMediaH_ > 0 &&
-        sourceMediaW_ == outW_ && sourceMediaH_ == outH_ && rawDisplayW == rawW &&
-        rawDisplayH == rawH && outW_ == rawW && outH_ == rawH;
-    const bool skipScale = skipScaleFlag || identityLocalFile || pmsSourceMatchesBank;
+        nativeScalerPresent && !forceExact && !urlIsLocalFile &&
+        sourceMediaW_ > 0 && sourceMediaH_ > 0 &&
+        sourceMediaW_ == outW_ && sourceMediaH_ == outH_ &&
+        rawDisplayW == rawW && rawDisplayH == rawH && outW_ == rawW && outH_ == rawH;
+    const bool skipScale =
+        skip720pTranscodeVf || padOnly720p ||
+        (!cropPmsBars && (skipScaleFlag || identityLocalFile || pmsSourceMatchesBank));
+    if (skip720pTranscodeVf)
+        log("media: 720p transcode already bank-sized — skip crop/scale vf");
     // skip|none|off|identity are NOT valid libswscale flag names — if 480p (or any
-    // non-identity geom) still needs FOAR+pad, fall back to bicubic.
+    // non-identity geom) still needs scaling, fall back to bicubic.
     if (skipScaleFlag && !(skipScale && rawDisplayW == rawW && rawDisplayH == rawH)) {
         swsFlags = "bicubic";
         log("media: FFMPEG_SWS_FLAGS=" + swsFlags_ +
-            " ignored for non-identity geom; using bicubic FOAR+pad");
+            " ignored for non-identity geom; using bicubic native-aspect scale");
     }
     if (skipScale && rawDisplayW == rawW && rawDisplayH == rawH) {
         // Explicit lab skip, local identity, or PMS source exact DECODE match.
         if (!vf.empty() && vf.back() == ',')
             vf.pop_back();
         const char* why = "FFMPEG_SWS_FLAGS";
-        if (identityLocalFile && !skipScaleFlag)
+        if (skip720pTranscodeVf)
+            why = "transcode_coded_1280x720";
+        else if (padOnly720p)
+            why = "pad_only_720tall";
+        else if (identityLocalFile && !skipScaleFlag)
             why = "local_identity_file";
         else if (pmsSourceMatchesBank && !skipScaleFlag)
             why = "pms_source_matches_bank";
@@ -2065,18 +3241,21 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     } else if (rawDisplayW != rawW || rawDisplayH != rawH) {
         char displayScale[64];
         std::snprintf(displayScale, sizeof(displayScale), "%d:%d", rawDisplayW, rawDisplayH);
-        vf += std::string("scale=") + displayScale +
-              ":force_original_aspect_ratio=decrease:flags=" + swsFlags + ",pad=" + scale + ":" +
-              std::to_string(ddrGeometry.crop_left) + ":" +
+        vf += std::string("scale=") + displayScale + ":flags=" + swsFlags + ",pad=" + scale +
+              ":" + std::to_string(ddrGeometry.crop_left) + ":" +
               std::to_string(ddrGeometry.crop_top) + ":color=black";
-        log("media: FOAR+pad coded=" + std::to_string(rawW) + "x" + std::to_string(rawH) +
+        log("media: native-aspect scale+crop-pad coded=" + std::to_string(rawW) + "x" +
+            std::to_string(rawH) +
             " display=" + std::to_string(rawDisplayW) + "x" + std::to_string(rawDisplayH) +
             " present=" + std::to_string(outW_) + "x" + std::to_string(outH_) +
             " flags=" + swsFlags);
+    } else if (nativeScalerPresent) {
+        vf += std::string("scale=") + scale + ":flags=" + swsFlags;
     } else {
         vf += std::string("scale=") + scale +
-              ":force_original_aspect_ratio=decrease:flags=" + swsFlags + ",pad=" + scale +
-              ":(ow-iw)/2:(oh-ih)/2";
+              ":force_original_aspect_ratio=decrease:flags=" + swsFlags +
+              ",pad=" + scale + ":(ow-iw)/2:(oh-ih)/2:color=black";
+        log("media: host aspect preservation enabled (PRESENT=" + presentMode_ + ")");
     }
 
     const bool testPattern = (url == "testsrc" || url.rfind("lavfi", 0) == 0);
@@ -2139,7 +3318,12 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             ::close(spipe[1]);
             if (spid > 0) {
                 streamPid_.store(spid);
-                streamThr_ = std::thread([this, sfd = spipe[0]] { streamPump(sfd); });
+                // Only the no-RGB path lets sparse reconstruction own F1.
+                // Otherwise continuous rawvideo is the sole DDR frame writer.
+                streamThr_ =
+                    std::thread([this, sfd = spipe[0], allowF1Present = skipRgb] {
+                        streamPump(sfd, allowF1Present);
+                    });
                 if (looksElementaryH264(url))
                     log("media: STREAM demux elementary H.264 (no mp4toannexb)");
                 else
@@ -2164,6 +3348,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     bool usedRawVideo = false;
     bool videoEof = false;
     bool shortRead = false;
+    bool true480PipelineAborted = false;
     size_t shortReadGot = 0;
     size_t shortReadWant = 0;
 
@@ -2172,7 +3357,17 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     const int fpsNum = fpsNum_ > 0 ? fpsNum_ : kDefaultFpsNum;
     const int fpsDen = fpsNum_ > 0 && fpsDen_ > 0 ? fpsDen_ : kDefaultFpsDen;
     const int64_t leadMs = presentLeadMs_;
-    const int64_t dropMs = resyncDropMs_;
+    // L4 / 720p bank: never 2:1-drop for audio drift. Hold (video ahead) stays.
+    // FPGA NACK is sendYuv420pFrameDdr / commitDdrBankIngest fail, not Drop.
+    // 720p L4 and true480 640×480: never 2:1-drop for wall-clock drift.
+    // Silent Grid720 on the 480 store was presenting 13 pfps / dropping half
+    // (dropMs>0) after glass pinned true480. FPGA already swaps every kick.
+    const bool l4PresentEveryDecoded =
+        liveGlass_ == LiveGlass::L4 || isPlex720pDdrFrameGeometry(ddrGeometry) ||
+        isPlex480pDdrFrameGeometry(ddrGeometry) ||
+        (ddrGeometry.presented_width == 320 && ddrGeometry.presented_height == 240);
+    const int64_t dropMs =
+        avResyncDropMsForPresent(resyncDropMs_, l4PresentEveryDecoded);
     int dropRun = 0;
     avDriftMs_.store(0);
     droppedFrames_.store(0);
@@ -2181,7 +3376,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             std::to_string(kDefaultFpsDen) + " and relying on drift correction");
     else
         log("media: content fps=" + std::to_string(fpsNum) + "/" + std::to_string(fpsDen) +
-            " lead_ms=" + std::to_string(leadMs) + " resync_drop_ms=" + std::to_string(dropMs));
+            " lead_ms=" + std::to_string(leadMs) + " resync_drop_ms=" + std::to_string(dropMs) +
+            (l4PresentEveryDecoded ? " (L4 present-every-decoded; FPGA NACK only)" : ""));
 
     if (skipRgb) {
         // Audio-only FFmpeg + wall-clock position. Host recon owns F1.
@@ -2292,16 +3488,83 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         usedRawVideo = true;
         presentCount_ = 0;
         audioBytes_.store(0);
+        audioFeedRelease_.store(true);
+        audioReleaseAfterPresents_.store(0);
+        audioAfterVideoMs_.store(0);
+        BankReleaseStatus hwPresentBaseline;
+        bool hwPresentBaselineValid = fpga_.readBankRelease(hwPresentBaseline);
+        int64_t hwPresentArmBaseline = 0;
+        uint16_t hwPresentLastFrames = hwPresentBaseline.frames_done;
+        if (hwPresentBaselineValid) {
+            char pbuf[128];
+            std::snprintf(pbuf, sizeof(pbuf),
+                          "media: plxd_play_start frames_done=%u pending=%d disp=%u free=0x%x",
+                          static_cast<unsigned>(hwPresentBaseline.frames_done),
+                          hwPresentBaseline.swap_pending ? 1 : 0,
+                          static_cast<unsigned>(hwPresentBaseline.disp_bank),
+                          static_cast<unsigned>(hwPresentBaseline.free_bank_mask));
+            log(pbuf);
+        } else {
+            log("media: plxd_play_start unavailable: " + fpga_.lastError());
+        }
+        uint64_t hwPresentTotal = 0;
+        auto hwPresentTimeBaseline = std::chrono::steady_clock::now();
+        auto hardwarePresentTelemetry = [&]() {
+            BankReleaseStatus current;
+            if (!fpga_.readBankRelease(current))
+                return std::string(" hw_presents=unavailable hw_presents_src=plxd_swap_count");
+            const auto now = std::chrono::steady_clock::now();
+            if (!hwPresentBaselineValid) {
+                hwPresentBaseline = current;
+                hwPresentArmBaseline = presentCount_;
+                hwPresentLastFrames = current.frames_done;
+                hwPresentTotal = 0;
+                hwPresentTimeBaseline = now;
+                hwPresentBaselineValid = true;
+            } else {
+                hwPresentTotal += frameCounterDelta(current.frames_done, hwPresentLastFrames);
+                hwPresentLastFrames = current.frames_done;
+            }
+            const int64_t armDelta = presentCount_ - hwPresentArmBaseline;
+            const int64_t windowMs =
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    now - hwPresentTimeBaseline)
+                    .count();
+            const double hardwareFps =
+                windowMs > 0 ? 1000.0 * static_cast<double>(hwPresentTotal) /
+                                   static_cast<double>(windowMs)
+                             : 0.0;
+            return std::string(" hw_presents=") + std::to_string(hwPresentTotal) +
+                   " hw_arm_delta=" + std::to_string(armDelta) +
+                   " hw_fps=" + std::to_string(hardwareFps).substr(0, 5) +
+                   " hw_window_ms=" + std::to_string(windowMs) +
+                   " hw_match=" +
+                   (hardwarePresentTotalsMatch(hwPresentTotal, armDelta)
+                        ? "1"
+                        : "0") +
+                   " hw_presents_src=plxd_swap_count";
+        };
+        // Live universal never prefetches to tmpfs (waitPid 20s killed the
+        // 91 min Trek transcode; identity /tmp body is not product).
         std::vector<std::string> args;
         args.push_back(ffmpeg_);
         args.push_back("-hide_banner");
         args.push_back("-loglevel");
         args.push_back("error");
         args.push_back("-nostdin");
-        // Dual-A9: allow both cores for decode/scale. Cap at 2 so ffmpeg cannot
-        // oversubscribe; never pin/thread=1 (CPU1-only pin regressed 720 to ~0.3 pfps).
+        // Dual-A9: isolated 720p Farpoint is ~32 fps at -threads 2. Product
+        // wait_swap sleeps ~41 ms per unique, so both cores can decode during
+        // the blank. -threads 1 + wait_swap was unique 22.9; memcpy-era
+        // thread=1 without wait was 0.3 pfps (15 ms copy).
         args.push_back("-threads");
         args.push_back("2");
+        // Identity 1280×720 baseline: deblock is ~2–4 ms/f on dual-A9 and was
+        // the 21.8 unique lock (host x264 is 9.5× realtime). skip-vf path only.
+        if (skip720pTranscodeVf) {
+            args.push_back("-skip_loop_filter");
+            args.push_back("all");
+            log("media: 720p identity skip_loop_filter=all");
+        }
         // Match scale=...:flags=; omit for skip/none/off/identity (no swscale).
         // exact_* → pass the algorithm only (exact_fast_bilinear → fast_bilinear).
         if (!(swsFlags_ == "skip" || swsFlags_ == "none" || swsFlags_ == "off" ||
@@ -2320,6 +3583,11 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         // bleed on soft edges (user BBB HDMI). Default deblock is worth the dual-A9
         // cost once present is pipelined.
 
+        // 720p product + audio: video ffmpeg is -an; audio is a second process
+        // so MrAudio 48 kHz wall-pace cannot stall I420 produce. 480p and
+        // testPattern stay single-process (pipe:1 + pipe:3).
+        const bool splitAv720 =
+            wantAudio && !testPattern && plex720pClassSplitAv(outW_, outH_);
         if (testPattern) {
             std::string lavfi;
             if (url.rfind("lavfi:", 0) == 0 && url.size() > 6) {
@@ -2400,14 +3668,13 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             args.push_back("-i");
             args.push_back(url);
 
-            // Video output first. Do NOT pass global -an when a second audio
-            // output follows — FFmpeg 6/7 treats -an as disable-all-audio and
-            // then fails pipe:3 ("Output file does not contain any stream"),
-            // which aborts the whole process (pipeline short read 0). Video-only
-            // sessions still use -an so demux does not pull unused audio.
+            // Video output first. Combined A+V must not pass global -an when a
+            // second audio output follows — FFmpeg 6/7 treats -an as
+            // disable-all-audio and then fails pipe:3. Video-only and 720p
+            // split sessions use -an so this process does not pull unused audio.
             args.push_back("-map");
             args.push_back("0:v:0");
-            if (!wantAudio)
+            if (!wantAudio || splitAv720)
                 args.push_back("-an");
             args.push_back("-f");
             args.push_back("rawvideo");
@@ -2420,12 +3687,10 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             }
             args.push_back("pipe:1");
 
-            if (wantAudio) {
-                // Plain 48k stereo — no async stretch. MrAudio wall-pace is the
-                // master clock; FFmpeg back-pressures A+V together (see present loop).
-                // AUDIO_DELAY_MS>0: adelay shifts audio content later (ms) so lipsync
-                // can be corrected from measure evidence. adelay is content-aligned
-                // (unlike a pure wall hold that races during network burst fill).
+            if (wantAudio && !splitAv720) {
+                // 480p combined spawn: MrAudio wall-pace back-pressures A+V
+                // together. 720p uses spawnAudioOnly() instead (below).
+                // AUDIO_DELAY_MS>0: adelay shifts audio content later (ms).
                 args.push_back("-map");
                 args.push_back("0:a:0?");
                 args.push_back("-vn");
@@ -2448,9 +3713,193 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             }
         }
 
+#ifdef MPX_HAVE_LIBAV
+        AvInprocDecoder inprocDec;
+#endif
+        bool useInproc = false;
+        int remuxPcmFd = -1;
+        int remuxHoldV = -1;
+        int remuxHoldA = -1;
+        bool remuxPcmPumpEarly = false;
+        std::string audioUrl = url;
+        std::string audioHeaders = headers;
+        int64_t audioStartMs = startMs;
+        const bool wantInproc =
+            inprocDecodeWanted() && !testPattern &&
+            inprocDecodeSizeOk(outW_, outH_);
+        log(std::string("media: want_inproc=") + (wantInproc ? "1" : "0") +
+            " prefetched=0 url_local=" +
+            (url.rfind("/tmp/", 0) == 0 ? "1" : "0"));
+        auto abortInprocSession = [&](const std::string& why) {
+            log(why);
+            playing_.store(false);
+            killChildren();
+            if (streamThr_.joinable())
+                streamThr_.join();
+        };
+        if (wantInproc) {
+#ifndef MPX_HAVE_LIBAV
+            abortInprocSession(
+                "media: inproc_decode=1 but binary has no libav — abort (no pipe:1)");
+            return;
+#else
+            if (!(wantYuvDdr && presentMode_ == "fpga" &&
+                  videoFmt == RawVideoFormat::Yuv420p)) {
+                abortInprocSession(
+                    "media: inproc_decode=1 needs fpga yuv420p 2-slot — abort (no pipe:1)");
+                return;
+            }
+            AvInprocOpenOpts iopts;
+            iopts.threads = 2;
+            iopts.startMs = startMs;
+            iopts.headers = headers;
+            if (isPlex960BankSize(outW_, outH_) || isPlex960BankSize(rawW, rawH)) {
+                if (sourceMediaW_ == kInproc960W && sourceMediaH_ == kInproc960H) {
+                    iopts.expectW = kInproc960W;
+                    iopts.expectH = kInproc960H;
+                } else {
+                    // Leftover / 1280 clip: decode coded 1280×720, pack 960×540.
+                    iopts.expectW = kInproc720W;
+                    iopts.expectH = kInproc720H;
+                    iopts.outW = kInproc960W;
+                    iopts.outH = kInproc960H;
+                }
+            } else {
+                iopts.expectW = rawW;
+                iopts.expectH = rawH;
+            }
+            std::string ierr;
+            std::string inprocUrl = url;
+            const bool httpSrc = (url.compare(0, 7, "http://") == 0 ||
+                                  url.compare(0, 8, "https://") == 0);
+            const bool remuxCopyAudio = misterplex::p720_av::inprocRemuxMustCopyAudio(
+                isPlex720pDdrFrameGeometry(ddrGeometry) && !isPlex960BankSize(rawW, rawH),
+                true);
+            if (httpSrc && inprocUrl == url) {
+                // ARM libav: file+h264 only (no HTTP, no AAC). Box ffmpeg remuxes
+                // one HTTP into annex-B ± PCM fifos. Direct HTTP open → Protocol
+                // not found; mpegts+AAC inproc SIGABRT'd (dl-call-libc-early-init).
+                // Sole reader on each fifo: a leftover O_RDWR hold stole annex-B
+                // bytes from libav (avcodec_send_packet Invalid data).
+                const char* vfifo = "/tmp/mplex-inproc.h264";
+                const char* afifo = "/tmp/mplex-inproc.pcm";
+                ::unlink(vfifo);
+                if (remuxCopyAudio)
+                    ::unlink(afifo);
+                auto mkSizedFifo = [](const char* path, int bytes) -> bool {
+                    if (mkfifo(path, 0644) != 0)
+                        return false;
+                    const int fd = ::open(path, O_RDWR | O_NONBLOCK);
+                    if (fd < 0)
+                        return false;
+#ifdef F_SETPIPE_SZ
+                    (void)::fcntl(fd, F_SETPIPE_SZ, bytes);
+#else
+                    (void)bytes;
+#endif
+                    ::close(fd);
+                    return true;
+                };
+                const bool vok =
+                    mkSizedFifo(vfifo, remuxCopyAudio ? 4 * 1024 * 1024 : 1048576);
+                const bool aok =
+                    !remuxCopyAudio || mkSizedFifo(afifo, 4 * 1024 * 1024);
+                if (vok && aok) {
+                    if (remuxCopyAudio) {
+                        // Sole PCM reader + keeps the fifo open so ffmpeg's
+                        // audio open does not ENXIO while video rendezvous.
+                        remuxPcmFd = ::open(afifo, O_RDWR);
+                    }
+                    const pid_t rpid = spawnHttpRemuxMpegts(
+                        url, headers, startMs, vfifo, remuxCopyAudio,
+                        remuxCopyAudio ? afifo : "");
+                    if (rpid > 0) {
+                        streamPid_.store(rpid);
+                        inprocUrl = vfifo;
+                        iopts.startMs = 0;
+                        iopts.liveFifo = true;
+                        log(std::string("media: inproc_decode remux fifo http→") +
+                            (remuxCopyAudio ? "annexb+pcm" : "annexb"));
+                    } else {
+                        log("media: inproc_decode remux spawn failed — pipe");
+                        if (remuxPcmFd >= 0) {
+                            ::close(remuxPcmFd);
+                            remuxPcmFd = -1;
+                        }
+                    }
+                } else {
+                    log(std::string("media: inproc_decode mkfifo failed errno=") +
+                        std::to_string(errno) + " — pipe");
+                }
+            }
+            if (remuxPcmFd >= 0) {
+                // Gate MrAudio until the first picture, but drain PCM during
+                // avformat_open so remux cannot fill the fifo and deadlock.
+                audioFeedRelease_.store(false);
+                audioReleaseAfterPresents_.store(0);
+                holdAudioToPictures_.store(false);
+                const int pfd = remuxPcmFd;
+                remuxPcmFd = -1;
+                audioThr_ = std::thread([this, pfd] { audioPump(pfd); });
+                remuxPcmPumpEarly = true;
+            }
+            const bool inprocOpened = inprocDec.open(inprocUrl, iopts, ierr);
+            if (inprocOpened && remuxPcmPumpEarly)
+                audioFeedRelease_.store(true);
+            if (!inprocOpened) {
+                const pid_t rp = streamPid_.exchange(-1);
+                if (rp > 0) {
+                    ::kill(rp, SIGTERM);
+                    ::kill(-rp, SIGTERM);
+                }
+                if (remuxPcmFd >= 0) {
+                    ::close(remuxPcmFd);
+                    remuxPcmFd = -1;
+                }
+                if (isPlex720pDdrFrameGeometry(ddrGeometry) &&
+                    !isPlex960BankSize(rawW, rawH)) {
+                    abortInprocSession("media: inproc_decode open failed: " + ierr +
+                                       " — abort (no spawnAudioOnly pipe)");
+                    return;
+                }
+                log("media: inproc_decode open failed: " + ierr +
+                    " — pipe fallback");
+            } else {
+            useInproc = true;
+            std::string extra;
+            if (inprocDec.width() != iopts.expectW ||
+                inprocDec.height() != iopts.expectH) {
+                extra = " src=" + std::to_string(iopts.expectW) + "x" +
+                        std::to_string(iopts.expectH) + " scale=4/3";
+            } else if (sourceMediaW_ > 0 && sourceMediaH_ > 0 &&
+                       (sourceMediaW_ != inprocDec.width() ||
+                        sourceMediaH_ != inprocDec.height())) {
+                extra = " src=" + std::to_string(sourceMediaW_) + "x" +
+                        std::to_string(sourceMediaH_) + " scale=nearest";
+            }
+            log(std::string("media: inproc_decode=1 libav=") +
+                AvInprocDecoder::libavIdent() + " wxh=" +
+                std::to_string(inprocDec.width()) + "x" +
+                std::to_string(inprocDec.height()) + extra + " pix=yuv420p");
+            }
+#endif
+        }
+
+        const bool sameDemuxAudio =
+            misterplex::p720_av::inprocSameDemuxAudioWanted(
+                useInproc && isPlex720pDdrFrameGeometry(ddrGeometry) &&
+                    !isPlex960BankSize(rawW, rawH),
+                useInproc)
+#ifdef MPX_HAVE_LIBAV
+            && inprocDec.hasAudio()
+#endif
+            ;
+        const bool remuxPcmAudio =
+            remuxPcmPumpEarly || (remuxPcmFd >= 0 && !sameDemuxAudio);
+
         int vpipe[2] = {-1, -1};
         int apipe[2] = {-1, -1};
-        if (pipe(vpipe) != 0) {
+        if (!useInproc && pipe(vpipe) != 0) {
             log("media: video pipe failed");
             playing_.store(false);
             killChildren();
@@ -2468,7 +3917,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
 #ifndef F_GETPIPE_SZ
 #define F_GETPIPE_SZ 1032
 #endif
-        {
+        if (!useInproc) {
             const int wantPipe = 4 * 1024 * 1024; // 4 MiB ≈ 2.9× 720p I420
             int got0 = static_cast<int>(::fcntl(vpipe[0], F_SETPIPE_SZ, wantPipe));
             int got1 = static_cast<int>(::fcntl(vpipe[1], F_SETPIPE_SZ, wantPipe));
@@ -2477,12 +3926,18 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 " set0=" + std::to_string(got0) + " set1=" + std::to_string(got1) +
                 " get=" + std::to_string(sz));
         }
-        if (wantAudio && pipe(apipe) != 0) {
+        if (wantAudio && !sameDemuxAudio && !remuxPcmAudio && pipe(apipe) != 0) {
             log("media: audio pipe failed — video only");
             apipe[0] = apipe[1] = -1;
+        } else if (wantAudio && apipe[0] >= 0) {
+            // Gated trim may pause MrAudio writes ~1–3 s; 1 MiB ≈ 5 s of
+            // 48 kHz s16le stereo so ffmpeg does not stall I420.
+            const int wantA = 1024 * 1024;
+            (void)::fcntl(apipe[0], F_SETPIPE_SZ, wantA);
+            (void)::fcntl(apipe[1], F_SETPIPE_SZ, wantA);
         }
 
-        {
+        if (!useInproc) {
             // Never log raw PMS tokens (X-Plex-Token / query) into misterplexd.log.
             auto redactArg = [](std::string a) {
                 const char* keys[] = {"X-Plex-Token=", "X-Plex-Token%3D", "token="};
@@ -2499,7 +3954,10 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 }
                 return a;
             };
-            std::string joined = "media: spawn single-process";
+            if (splitAv720)
+                log("media: spawn 720p split A/V (video -an + audio-only) — hypothesized audio backpressure relief");
+            std::string joined =
+                splitAv720 ? "media: spawn 720p video" : "media: spawn single-process";
             for (const auto& a : args) {
                 joined += ' ';
                 if (a.find(' ') != std::string::npos || a.find('\r') != std::string::npos)
@@ -2508,43 +3966,165 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     joined += redactArg(a);
             }
             log(joined);
+
+            // Combined 480p: one ffmpeg owns pipe:1 + pipe:3. Split 720p: video
+            // ffmpeg is video-only (no aWriteFd); audio-only is a second process.
+            pid_t pid = spawnFfmpeg(args, vpipe[1],
+                                    (splitAv720 || apipe[1] < 0) ? -1 : apipe[1]);
+            if (pid < 0) {
+                ::close(vpipe[1]);
+                if (apipe[1] >= 0)
+                    ::close(apipe[1]);
+                ::close(vpipe[0]);
+                if (apipe[0] >= 0)
+                    ::close(apipe[0]);
+                log("media: fork failed");
+                playing_.store(false);
+                killChildren();
+                if (streamThr_.joinable())
+                    streamThr_.join();
+                return;
+            }
+            childPid_.store(pid);
         }
 
-        pid_t pid = spawnFfmpeg(args, vpipe[1], apipe[1] >= 0 ? apipe[1] : -1);
-        ::close(vpipe[1]);
-        if (apipe[1] >= 0)
-            ::close(apipe[1]);
-        if (pid < 0) {
-            ::close(vpipe[0]);
-            if (apipe[0] >= 0)
-                ::close(apipe[0]);
-            log("media: fork failed");
+        if (sameDemuxAudio) {
+#ifdef MPX_HAVE_LIBAV
+            inprocPcm_ = &inprocDec;
+            log(std::string("media: inproc_audio=same_demux has_audio=") +
+                (inprocDec.hasAudio() ? "1" : "0"));
+#else
+            log("media: inproc_audio=same_demux has_audio=0");
+#endif
+        } else if (remuxPcmPumpEarly) {
+            log("media: inproc_audio=remux_pcm (one HTTP, no spawnAudioOnly)");
+        } else if (remuxPcmAudio) {
+            apipe[0] = remuxPcmFd;
+            remuxPcmFd = -1;
+            apipe[1] = -1;
+            log("media: inproc_audio=remux_pcm (one HTTP, no spawnAudioOnly)");
+        } else if (useInproc && isPlex720pDdrFrameGeometry(ddrGeometry) &&
+                   !isPlex960BankSize(rawW, rawH)) {
+            log("media: inproc_audio=abort remux_pcm fd missing — no spawnAudioOnly");
             playing_.store(false);
             killChildren();
             if (streamThr_.joinable())
                 streamThr_.join();
             return;
+        } else if (splitAv720 && apipe[1] >= 0) {
+            pid_t apid = spawnAudioOnly(audioUrl, audioHeaders, audioStartMs, apipe[1]);
+            if (apid > 0) {
+                audioPid_.store(apid);
+            } else {
+                log("media: 720p audio-only fork failed — continuing video-only");
+                ::close(apipe[0]);
+                apipe[0] = -1;
+            }
         }
-        childPid_.store(pid);
+
+        if (vpipe[1] >= 0)
+            ::close(vpipe[1]);
+        if (apipe[1] >= 0)
+            ::close(apipe[1]);
         rfd = vpipe[0];
         // Blocking read: present thread sleeps in kernel until ffmpeg produces
         // bytes — frees A9 for decode. Nonblock+EAGAIN sleep fought the producer
         // (200us spin → 19 pfps; 2ms sleep → 20.7). Blocking is the clean yield.
-        // Keep O_NONBLOCK only if we need pause/seek responsiveness mid-read;
-        // pause still works via stop_ checks between frames.
-        {
+        if (rfd >= 0) {
             const int rflags = fcntl(rfd, F_GETFL, 0);
             if (rflags >= 0)
                 fcntl(rfd, F_SETFL, rflags & ~O_NONBLOCK);
         }
 
-        if (apipe[0] >= 0) {
-            audioThr_ = std::thread([this, afd = apipe[0]] { audioPump(afd); });
+        if (!remuxPcmPumpEarly &&
+            (apipe[0] >= 0 || sameDemuxAudio || remuxPcmAudio)) {
+            // Gate MrAudio for every 720p inproc session (60-frame warmup).
+            // Extra after_video_ms=100 is only native 1280 (lands ~+4 ms).
+            // Scaled 240/480: gate until first kick, then 0 ms.
+            const bool warmup720Inproc =
+                useInproc && isPlex720pDdrFrameGeometry(ddrGeometry) &&
+                !isPlex960BankSize(rawW, rawH) &&
+                !isPlex960DdrFrameGeometry(ddrGeometry);
+            const bool native1280Inproc =
+                warmup720Inproc && sourceMediaW_ == kInproc720W &&
+                sourceMediaH_ == kInproc720H;
+            audioFeedRelease_.store(true);
+            // Per-raster / per-source-class bake. AUDIO_DELAY_MS stays the
+            // user adelay knob. Conf AV_HDMI_AUDIO_LAG_MS>0 overrides after_ms.
+            const char* dlab = (displayRasterLatched_ && latchedDisplayRes_.label)
+                                   ? latchedDisplayRes_.label
+                                   : "720p";
+            const HdmiAutoDelay baked =
+                hdmiAutoDelayForPlay(dlab, sourceMediaW_, sourceMediaH_);
+            if (native1280Inproc || warmup720Inproc) {
+                // 480p-class: start MrAudio with video. Gating until first
+                // kick left audio_s/wall≈0.91 at 57 s while unique was 23.7.
+                audioAfterVideoMs_.store(0);
+                audioHoldSlackMs_.store(baked.holdSlackMs);
+                audioReleaseAfterPresents_.store(0);
+                log("media: hdmi_audio_lag path=inproc after_video_ms=0 src=" +
+                    std::to_string(sourceMediaW_) + "x" +
+                    std::to_string(sourceMediaH_));
+            } else {
+                audioAfterVideoMs_.store(0);
+                // 480p gold + combined 720p prefetch: start MrAudio with video.
+                // The 24-present gate left 1 s of silence and audio_s/wall≈0.98
+                // at 40 s (Star Trek stutter). Inproc warmup still gates above.
+                const bool startWithVideo =
+                    misterplex::p720_av::combined720pAudioStartsWithVideo(useInproc);
+                if (startWithVideo) {
+                    audioFeedRelease_.store(true);
+                    audioReleaseAfterPresents_.store(0);
+                    log("media: hdmi_audio_lag path=pipe after_video_ms=0");
+                } else {
+                    audioFeedRelease_.store(false);
+                    audioReleaseAfterPresents_.store(24);
+                    log("media: hdmi_audio_lag path=pipe 720p_trim_after_presents=24");
+                }
+            }
+            holdAudioToPictures_.store(misterplex::p720_av::holdAudioToPicturesWanted(
+                isPlex720pDdrFrameGeometry(ddrGeometry) && !isPlex960BankSize(rawW, rawH),
+                useInproc));
+            log("media: hold_audio_to_pictures=" +
+                std::string(holdAudioToPictures_.load() ? "1" : "0") +
+                " skip_av_hold=" +
+                (misterplex::p720_av::combined720pSkipAvHold(
+                     isPlex720pDdrFrameGeometry(ddrGeometry), useInproc)
+                     ? "1"
+                     : "0"));
+            const int pumpFd = sameDemuxAudio ? -1 : apipe[0];
+            audioThr_ = std::thread([this, pumpFd] { audioPump(pumpFd); });
         }
 
+        auto closeRemuxHolds = [&]() {
+            if (remuxHoldV >= 0) {
+                ::close(remuxHoldV);
+                remuxHoldV = -1;
+            }
+            if (remuxHoldA >= 0) {
+                ::close(remuxHoldA);
+                remuxHoldA = -1;
+            }
+            if (remuxPcmFd >= 0) {
+                ::close(remuxPcmFd);
+                remuxPcmFd = -1;
+            }
+        };
+
         const size_t frameBytes = rawVideoFrameBytes(videoFmt, rawW, rawH);
+        if (budget960Wanted() || isPlex960BankSize(rawW, rawH)) {
+            log("media: P5_960 produce contract bank=" + std::to_string(rawW) + "x" +
+                std::to_string(rawH) + " frame_bytes=" + std::to_string(frameBytes) +
+                " want=" + std::to_string(static_cast<size_t>(kPlex960Yuv420pBytes)) +
+                " src=" + std::to_string(sourceMediaW_) + "x" +
+                std::to_string(sourceMediaH_) +
+                " skip_last_presented=" +
+                (skipLastPresentedWanted() ? "1" : "0") +
+                " split_av=" + (splitAv720 ? "1" : "0"));
+        }
         std::vector<uint8_t> frame(frameBytes);
         std::vector<uint8_t> fbOverlayBackup;
+        I420DirtyBackup i420OverlayBackup;
         // Program DDR geometry before direct bank ingest (pipe→bank).
         if (useDdrF1_ && wantFpgaFrameStore && videoFmt == RawVideoFormat::Yuv420p) {
             if (!fpga_.setDdrFrameLayout(ddrGeometry, DdrFrameFormat::Yuv420p))
@@ -2672,7 +4252,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 log("media: blit failed fmt=" + std::string(ffmpegPixFmt(videoFmt)));
         };
 
-        auto renderOverlay = [&](uint8_t* data) {
+        auto renderPackedOverlay = [&](uint8_t* data) {
             switch (videoFmt) {
             case RawVideoFormat::Rgb565Le:
                 overlay_.renderRgb565Le(data, rawW, rawH);
@@ -2692,10 +4272,10 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         auto backupOverlayDirty = [&](uint8_t* cleanFrame, const OverlayRect& dirty) {
             fbOverlayBackup.clear();
             if (dirty.empty())
-                return;
+                return true;
             const size_t bpp = rawVideoPackedBytesPerPixel(videoFmt);
             if (bpp == 0)
-                return;
+                return false;
             const size_t rowBytes = static_cast<size_t>(dirty.w) * bpp;
             fbOverlayBackup.resize(rowBytes * static_cast<size_t>(dirty.h));
             for (int yy = 0; yy < dirty.h; ++yy) {
@@ -2704,10 +4284,17 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 std::memcpy(fbOverlayBackup.data() + rowBytes * static_cast<size_t>(yy),
                             cleanFrame + src, rowBytes);
             }
+            return true;
         };
 
         auto restoreOverlayDirty = [&](uint8_t* cleanFrame, const OverlayRect& dirty) {
-            if (dirty.empty() || fbOverlayBackup.empty())
+            if (dirty.empty())
+                return;
+            if (videoFmt == RawVideoFormat::Yuv420p) {
+                (void)i420OverlayBackup.restore(cleanFrame, rawW, rawH);
+                return;
+            }
+            if (fbOverlayBackup.empty())
                 return;
             const size_t bpp = rawVideoPackedBytesPerPixel(videoFmt);
             if (bpp == 0)
@@ -2723,19 +4310,40 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         };
 
         auto presentCleanFrame = [&](uint8_t* cleanFrame, bool countPresent) {
-            const OverlayRect dirty = overlay_.dirtyBounds(rawW, rawH);
-            backupOverlayDirty(cleanFrame, dirty);
-            if (!dirty.empty()) {
+            OverlayRect dirty{};
+            bool overlayBackedUp = false;
+            if (videoFmt == RawVideoFormat::Yuv420p) {
                 if (profilePresent) {
                     const auto overlay0 = std::chrono::steady_clock::now();
                     const int64_t overlayCpu0 = threadCpuMicros();
-                    renderOverlay(cleanFrame);
+                    overlayBackedUp = overlay_.renderI420WithBackup(
+                        cleanFrame, rawW, rawH, i420OverlayBackup);
                     const int64_t overlayCpu1 = threadCpuMicros();
                     const auto overlay1 = std::chrono::steady_clock::now();
-                    prof.overlayUs += microsBetween(overlay0, overlay1);
-                    prof.overlayCpuUs += overlayCpu1 - overlayCpu0;
+                    if (overlayBackedUp) {
+                        prof.overlayUs += microsBetween(overlay0, overlay1);
+                        prof.overlayCpuUs += overlayCpu1 - overlayCpu0;
+                    }
                 } else {
-                    renderOverlay(cleanFrame);
+                    overlayBackedUp = overlay_.renderI420WithBackup(
+                        cleanFrame, rawW, rawH, i420OverlayBackup);
+                }
+                dirty = i420OverlayBackup.rect;
+            } else {
+                dirty = overlay_.dirtyBounds(rawW, rawH);
+                overlayBackedUp = backupOverlayDirty(cleanFrame, dirty);
+                if (!dirty.empty() && overlayBackedUp) {
+                    if (profilePresent) {
+                        const auto overlay0 = std::chrono::steady_clock::now();
+                        const int64_t overlayCpu0 = threadCpuMicros();
+                        renderPackedOverlay(cleanFrame);
+                        const int64_t overlayCpu1 = threadCpuMicros();
+                        const auto overlay1 = std::chrono::steady_clock::now();
+                        prof.overlayUs += microsBetween(overlay0, overlay1);
+                        prof.overlayCpuUs += overlayCpu1 - overlayCpu0;
+                    } else {
+                        renderPackedOverlay(cleanFrame);
+                    }
                 }
             }
 
@@ -2765,12 +4373,6 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 if (useDdrF1_) {
                     const int64_t ddrCpu0 = profilePresent ? threadCpuMicros() : 0;
                     if (videoFmt == RawVideoFormat::Yuv420p) {
-                        // Mutable bias on the clean/present buffer (post-overlay backup path
-                        // already owns this frame). Counters fluorescent green U-low.
-                        if (uvUBias_ != 0 || uvVBias_ != 0) {
-                            applyYuv420pUvBias(const_cast<uint8_t*>(txFrame), outW_, outH_,
-                                               uvUBias_, uvVBias_);
-                        }
                         ok = fpga_.sendYuv420pFrameDdr(txFrame, txBytes, ddrGeometry, ddrBank_);
                     } else {
                         ok = false;
@@ -2828,7 +4430,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 }
             }
 
-            restoreOverlayDirty(cleanFrame, dirty);
+            if (overlayBackedUp)
+                restoreOverlayDirty(cleanFrame, dirty);
         };
 
         if (onProgress_)
@@ -2838,7 +4441,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         // switch to the audio clock mid-stream — that step discontinuity randomises the
         // lipsync offset by tens of ms on every play (measured spread ~67 ms across
         // identical runs). Wait for the audio master clock to exist first.
-        if (wantAudio && apipe[0] >= 0) {
+        if (wantAudio && apipe[0] >= 0 && audioFeedRelease_.load()) {
             const auto waitStart = std::chrono::steady_clock::now();
             while (!stop_.load() && !audioActive_.load() &&
                    std::chrono::steady_clock::now() - waitStart < std::chrono::seconds(5)) {
@@ -2852,116 +4455,927 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 " waited_ms=" + std::to_string(waited));
         }
         t0 = std::chrono::steady_clock::now();
+        hwPresentBaselineValid = fpga_.readBankRelease(hwPresentBaseline);
+        hwPresentLastFrames = hwPresentBaseline.frames_done;
+        hwPresentArmBaseline = presentCount_;
+        hwPresentTotal = 0;
+        hwPresentTimeBaseline = t0;
+        log("media: hw_present_t0_rearm after_prefetch=1");
         // Architecture: 2-slot cached ring — reader fills host RAM while present
         // thread does uncached bank memcpy+kick. Overlaps the ~14ms copy with
         // the next pipe read (direct uncached read was ~30ms serial).
+        // Branch B (opt-in MPX_FABRIC_DIRECT): present cache-cleans the slot,
+        // pokes PLXP (src_phys), DSB, existing doorbell — skips uncached memcpy.
+        // PATH_SDRAM: stick DMA is PHYS_BASE. sendDdrFrame memcpy idle+play
+        // into 0x30180000 then doorbell. Do not skip (empty bank = no chevron).
         const bool pipelineDdr = useDdrF1_ && wantFpgaFrameStore &&
                                  videoFmt == RawVideoFormat::Yuv420p &&
                                  presentMode_ == "fpga";
+        const bool true480Pipeline =
+            pipelineDdr && isPlex480pDdrFrameGeometry(ddrGeometry);
+        // 720p L4: RequireReleased waits on PLXD when free=0 and produces ~15
+        // while ffmpeg→/dev/null on the same live core holds 24 fps (480/20s).
+        // Triple-buffer BestEffort writes a free bank (or non-display) without
+        // a 150ms frames_done poll. true480 2-bank stays strict.
+        const bool strictDdrPipeline = true480Pipeline;
+        // 720p matches 480p A/V: audio master (heard/wall 48 kHz), video hold-only.
+        // RequireReleased stays 480p-only (L4 poll produced ~15 unique).
+        const bool avLockPresent =
+            pipelineDdr && (true480Pipeline || isPlex720pDdrFrameGeometry(ddrGeometry));
         if (pipelineDdr) {
-            log("media: present_pipeline=2slot_cached_ring frame_bytes=" +
-                std::to_string(frameBytes));
+            const bool wantStick =
+                stickI420Wanted() &&
+                misterplex::p720_av::plex720pWcBankIngest(
+                    isPlex720pDdrFrameGeometry(ddrGeometry));
+            fpga_.setStickI420Present(wantStick);
+            // Publication offload: pipe/inproc writes WC present bank, present
+            // doorbells. PLXD 150 ms spin on the reader is banned (pipe:3 starve).
+            const bool fabricWant =
+                fabricDirectWanted() && isPlex720pDdrFrameGeometry(ddrGeometry);
+            bool wantStickIngest = misterplex::p720_av::stickIngestWantedOn720pPipe(
+                plex720pStickIngestOverridesFabric(wantStick, fabricWant), useInproc);
+            const bool wantFabric = fabricWant && !wantStickIngest;
+            fpga_.setFabricDirectPresent(wantFabric);
+            log("media: present_pipeline=" +
+                std::string(wantStickIngest ? "2slot_stick_ingest"
+                                            : "2slot_cached_ring") +
+                " frame_bytes=" + std::to_string(frameBytes) +
+                " true480_exact_gate=" + (true480Pipeline ? "1" : "0") +
+                " strict_ddr_gate=" + (strictDdrPipeline ? "1" : "0") +
+                " fabric_direct=" + std::string(wantFabric ? "1" : "0") +
+                " stick_i420=" + std::string(wantStick ? "1" : "0") +
+                " stick_ingest=" + std::string(wantStickIngest ? "1" : "0") +
+                " av_lock=" + (avLockPresent ? "1" : "0"));
             std::array<std::vector<uint8_t>, 2> ring;
-            ring[0].assign(frameBytes, 0);
-            ring[1].assign(frameBytes, 0);
+            std::array<uint8_t*, 2> ringPtr{{nullptr, nullptr}};
+            std::array<uint32_t, 2> ringPhys{{0, 0}};
+            FabricDirectAlloc fabricAlloc{};
+            auto releaseFabricSlots = [&]() { releaseFabricDirectAlloc(fabricAlloc); };
+            bool fabricSlotsReal = false;
+            if (wantFabric) {
+                // R1: hugepage → compact + 2 MiB memalign retries → 16–32 MiB arena.
+                // Full-span pagemap is the only REAL gate. Flag stays default OFF.
+                fabricSlotsReal =
+                    allocateFabricDirectSlots(fabricAlloc, frameBytes, /*tryCompact=*/true) &&
+                    fabricAlloc.real();
+                if (fabricSlotsReal) {
+                    ringPtr[0] = fabricAlloc.slot[0].virt;
+                    ringPtr[1] = fabricAlloc.slot[1].virt;
+                    ringPhys[0] = fabricAlloc.slot[0].phys;
+                    ringPhys[1] = fabricAlloc.slot[1].phys;
+                }
+            }
+            if (!fabricSlotsReal) {
+                ring[0].assign(frameBytes, 0);
+                ring[1].assign(frameBytes, 0);
+                ringPtr[0] = ring[0].data();
+                ringPtr[1] = ring[1].data();
+                if (wantFabric) {
+                    // Heap is almost never 338-page contiguous; both-or-none.
+                    ringPhys[0] = FpgaSpi::resolveCachedSrcPhys(ringPtr[0], frameBytes);
+                    ringPhys[1] = FpgaSpi::resolveCachedSrcPhys(ringPtr[1], frameBytes);
+                    failClosedFabricDirectPhysPair(ringPhys[0], ringPhys[1]);
+                }
+            }
+            {
+                char pbuf[80];
+                std::snprintf(pbuf, sizeof(pbuf), "0x%08x,0x%08x",
+                              static_cast<unsigned>(ringPhys[0]),
+                              static_cast<unsigned>(ringPhys[1]));
+                const bool srcReal = fabricDirectPhysPairReal(ringPhys[0], ringPhys[1]);
+                const char* how = "stub";
+                if (srcReal)
+                    how = fabricSlotsReal ? fabricAlloc.how : "heap";
+                std::string extra;
+                if (wantFabric && !srcReal) {
+                    extra = std::string(" pagemap=") +
+                            pagemapPfnVisName(probePagemapPfnVisibility());
+                    extra += " (need CAP_SYS_ADMIN PFN + contiguous cached System-RAM)";
+                }
+                log(std::string("media: fabric_direct src_phys=") +
+                    (srcReal ? "REAL" : "STUB") + " slots=" + pbuf +
+                    " alloc=" + how + extra);
+            }
+            std::array<int64_t, 2> ringFrameIndex{0, 0};
+            std::array<int, 2> ringIngestBank{{-1, -1}};
+            std::array<bool, 3> bankHeld{{false, false, false}};
             std::mutex ringMu;
             std::condition_variable ringCv;
             int fullCount = 0;
+            auto releaseIngestBank = [&](int slot) {
+                const int b = ringIngestBank[static_cast<size_t>(slot)];
+                if (b >= 0 && b <= 2)
+                    bankHeld[static_cast<size_t>(b)] = false;
+                ringIngestBank[static_cast<size_t>(slot)] = -1;
+            };
+            auto takeIngestBank = [&]() -> int {
+                // One PLXD sample. 150×1 ms spin starved combined pipe:3.
+                std::lock_guard<std::mutex> lk(ringMu);
+                BankReleaseStatus brs{};
+                const bool have = fpga_.readBankRelease(brs);
+                int pick = -1;
+                if (have && brs.anyFree()) {
+                    if ((brs.free_bank_mask & 1u) && !bankHeld[0])
+                        pick = 0;
+                    else if ((brs.free_bank_mask & 2u) && !bankHeld[1])
+                        pick = 1;
+                }
+                if (pick < 0) {
+                    const int fallback = have && brs.disp_bank <= 1
+                                             ? (brs.disp_bank ^ 1)
+                                             : 0;
+                    if (fallback >= 0 && fallback <= 1 &&
+                        !bankHeld[static_cast<size_t>(fallback)])
+                        pick = fallback;
+                    else if (!bankHeld[0])
+                        pick = 0;
+                    else if (!bankHeld[1])
+                        pick = 1;
+                }
+                if (pick >= 0)
+                    bankHeld[static_cast<size_t>(pick)] = true;
+                return pick;
+            };
             int readSlot = 0;
             int presentSlot = 0;
+            const bool skipLastPresented = skipLastPresentedWanted();
+            std::vector<uint8_t> lastPresentedFrame;
+            if (!skipLastPresented)
+                lastPresentedFrame.assign(frameBytes, 0);
+            bool lastPresentedFrameValid = false;
+            bool lastPresentedHadOverlay = false;
+            if (skipLastPresented)
+                log("media: skip lastPresentedFrame snapshot (P5 produce)");
             std::atomic<bool> readerEof{false};
+            std::atomic<bool> pipelineFatal{false};
+            std::atomic<int64_t> pipelinePresentCount{0};
+            std::atomic<int64_t> pipeReadUs{0};
+            std::atomic<int64_t> pipeSlotWaitUs{0};
+            std::atomic<int64_t> pipePresentWaitUs{0};
+            std::atomic<int64_t> pipeSendUs{0};
+            std::atomic<int64_t> pipeCopyUs{0};
+            const bool pipeProfile = presentProfile_;
+            auto pipeUs = [](std::chrono::steady_clock::time_point a,
+                             std::chrono::steady_clock::time_point b) {
+                return std::chrono::duration_cast<std::chrono::microseconds>(b - a).count();
+            };
+            bool hdmiLagArmed = false;
+            auto holdHdmiAudioLag = [&]() {
+                if (hdmiLagArmed)
+                    return;
+                hdmiLagArmed = true;
+                const int need = audioReleaseAfterPresents_.load();
+                if (need > 0) {
+                    log("media: hdmi_audio_lag video_first trim_after_presents=" +
+                        std::to_string(need));
+                    return;
+                }
+                // First video kick now. Audio pump (if gated) starts after
+                // audioAfterVideoMs_ so the HDMI click meets the flash.
+                audioFeedRelease_.store(true);
+                log("media: hdmi_audio_lag video_first after_video_ms=" +
+                    std::to_string(audioAfterVideoMs_.load()));
+            };
             int localBank = ddrBank_;
+            // This tree's DDR map is 2 banks + doorbell. Bank 2 is rejected
+            // by sendDdrFrame/kickDdrDoorbell (map_bytes = 2*stride).
+            const int nBanks = 2;
+            auto nextBank = [nBanks](int b) {
+                if (nBanks <= 1)
+                    return 0;
+                if (b < 0)
+                    return 0;
+                return (b + 1) % nBanks;
+            };
+#ifdef MPX_HAVE_LIBAV
+            // First 3s on leftover 2bbe: hw_match=1 and pfps≈hw (~10). FPGA
+            // already swaps every kick; last-line 19.86 is host warmup inside
+            // the 15s window. Prime both ring slots then re-arm t0/hw baseline.
+            if (useInproc && !strictDdrPipeline &&
+                isPlex720pDdrFrameGeometry(ddrGeometry) &&
+                !isPlex960DdrFrameGeometry(ddrGeometry) &&
+                !isPlex960BankSize(rawW, rawH)) {
+                int primed = 0;
+                for (int i = 0; i < 2 && !stop_.load(); ++i) {
+                    std::string ierr;
+                    uint8_t* dst = ringPtr[static_cast<size_t>(readSlot)];
+                    if (!dst)
+                        break;
+                    const int rc = inprocDec.readI420(dst, frameBytes, ierr);
+                    if (rc != 1) {
+                        log("media: warmup_prefill abort rc=" +
+                            std::to_string(rc) + " " + ierr);
+                        break;
+                    }
+                    ++frameIndex;
+                    ringFrameIndex[static_cast<size_t>(readSlot)] = frameIndex;
+                    readSlot = (readSlot + 1) % 2;
+                    ++fullCount;
+                    ++primed;
+                }
+                t0 = std::chrono::steady_clock::now();
+                hwPresentBaselineValid = fpga_.readBankRelease(hwPresentBaseline);
+                hwPresentLastFrames = hwPresentBaseline.frames_done;
+                hwPresentArmBaseline = 0;
+                hwPresentTotal = 0;
+                hwPresentTimeBaseline = t0;
+                log("media: warmup_prefill n=" + std::to_string(primed) +
+                    " t0_rearm=1");
+            }
+            // 960 leftover: n=2 prefill never ran (1280-only geom). First 4 s
+            // of 620c fair were 6–8 pfps (24 ms uncached memcpy, 2-slot full).
+            // Late is already ~24. Decode 36 frames into cached heap first,
+            // then BestEffort-present them so CATCH has kicks from t0.
+            // Not P1_PREFILL n=2. Not DDR ingest (HURT 12.6/black).
+            if (useInproc && !strictDdrPipeline &&
+                (budget960Wanted() || isPlex960BankSize(rawW, rawH) ||
+                 isPlex960DdrFrameGeometry(ddrGeometry))) {
+                constexpr int kAhead = 48; // 64 WASH 23.42 < 48's 23.68
+                std::vector<std::vector<uint8_t>> ahead;
+                ahead.reserve(static_cast<size_t>(kAhead));
+                for (int i = 0; i < kAhead && !stop_.load(); ++i) {
+                    std::vector<uint8_t> buf(frameBytes);
+                    std::string ierr;
+                    const int rc = inprocDec.readI420(buf.data(), frameBytes, ierr);
+                    if (rc != 1) {
+                        log("media: warmup_ahead abort rc=" + std::to_string(rc) +
+                            " " + ierr);
+                        break;
+                    }
+                    ++frameIndex;
+                    ahead.push_back(std::move(buf));
+                }
+                t0 = std::chrono::steady_clock::now();
+                hwPresentBaselineValid = fpga_.readBankRelease(hwPresentBaseline);
+                hwPresentLastFrames = hwPresentBaseline.frames_done;
+                hwPresentArmBaseline = 0;
+                hwPresentTotal = 0;
+                hwPresentTimeBaseline = t0;
+                int sent = 0;
+                for (auto& buf : ahead) {
+                    if (stop_.load())
+                        break;
+                    BankReleaseStatus pre{};
+                    const bool havePre = fpga_.readBankRelease(pre);
+                    const bool ok = fpga_.sendYuv420pFrameDdr(
+                        buf.data(), frameBytes, ddrGeometry, localBank,
+                        DdrBankWritePolicy::BestEffort, 0);
+                    if (!ok) {
+                        log("media: warmup_ahead send fail: " + fpga_.lastError());
+                        break;
+                    }
+                    localBank = nextBank(localBank);
+                    ++sent;
+                    pipelinePresentCount.fetch_add(1);
+                    // One kick per blank so CATCH keeps the frame (blast
+                    // at memcpy rate overwrote ~half of the 36).
+                    const auto wt0 = std::chrono::steady_clock::now();
+                    while (havePre && !stop_.load()) {
+                        const int64_t waited = pipeUs(
+                            wt0, std::chrono::steady_clock::now());
+                        BankReleaseStatus cur{};
+                        if (fpga_.readBankRelease(cur) &&
+                            frameCounterDelta(cur.frames_done, pre.frames_done) > 0)
+                            break;
+                        if (waited >= 50000)
+                            break;
+                        std::this_thread::sleep_for(std::chrono::microseconds(200));
+                    }
+                }
+                log("media: warmup_ahead n=" + std::to_string(ahead.size()) +
+                    " sent=" + std::to_string(sent) +
+                    " frame_bytes=" + std::to_string(frameBytes));
+            }
+            // True 1280×720 identity only. Scaled 240/480 must not eat 60
+            // source frames or the integer upsample cannot hold 24 fps.
+            if (useInproc && !strictDdrPipeline &&
+                isPlex720pDdrFrameGeometry(ddrGeometry) &&
+                !isPlex960BankSize(rawW, rawH) &&
+                !isPlex960DdrFrameGeometry(ddrGeometry) &&
+                sourceMediaW_ == kInproc720W && sourceMediaH_ == kInproc720H) {
+                constexpr int kAhead720 = 60;
+                std::vector<std::vector<uint8_t>> ahead720;
+                ahead720.reserve(static_cast<size_t>(kAhead720));
+                for (int i = 0; i < kAhead720 && !stop_.load(); ++i) {
+                    std::vector<uint8_t> buf(frameBytes);
+                    std::string ierr;
+                    const int rc = inprocDec.readI420(buf.data(), frameBytes, ierr);
+                    if (rc != 1) {
+                        log("media: warmup_ahead720 abort rc=" + std::to_string(rc) +
+                            " " + ierr);
+                        break;
+                    }
+                    ++frameIndex;
+                    ahead720.push_back(std::move(buf));
+                }
+                t0 = std::chrono::steady_clock::now();
+                hwPresentBaselineValid = fpga_.readBankRelease(hwPresentBaseline);
+                hwPresentLastFrames = hwPresentBaseline.frames_done;
+                hwPresentArmBaseline = 0;
+                hwPresentTotal = 0;
+                hwPresentTimeBaseline = t0;
+                int sent720 = 0;
+                for (auto& buf : ahead720) {
+                    if (stop_.load())
+                        break;
+                    holdHdmiAudioLag();
+                    BankReleaseStatus pre{};
+                    const bool havePre = fpga_.readBankRelease(pre);
+                    const bool ok = fpga_.sendYuv420pFrameDdr(
+                        buf.data(), frameBytes, ddrGeometry, localBank,
+                        DdrBankWritePolicy::BestEffort, 0);
+                    if (!ok) {
+                        log("media: warmup_ahead720 send fail: " + fpga_.lastError());
+                        break;
+                    }
+                    localBank = nextBank(localBank);
+                    ++sent720;
+                    pipelinePresentCount.fetch_add(1);
+                    const auto wt0 = std::chrono::steady_clock::now();
+                    while (havePre && !stop_.load()) {
+                        const int64_t waited = pipeUs(
+                            wt0, std::chrono::steady_clock::now());
+                        BankReleaseStatus cur{};
+                        if (fpga_.readBankRelease(cur) &&
+                            frameCounterDelta(cur.frames_done, pre.frames_done) > 0)
+                            break;
+                        if (waited >= 50000)
+                            break;
+                        std::this_thread::sleep_for(std::chrono::microseconds(200));
+                    }
+                }
+                log("media: warmup_ahead720 n=" + std::to_string(ahead720.size()) +
+                    " sent=" + std::to_string(sent720) +
+                    " frame_bytes=" + std::to_string(frameBytes));
+            }
+#endif
             auto lastPipeLog = t0;
+            const int64_t pipelinePauseBaselineUs = playbackPausedUs(t0);
+            auto pipelineElapsedUs = [&](std::chrono::steady_clock::time_point now) {
+                const int64_t pausedUs = std::max<int64_t>(
+                    0, playbackPausedUs(now) - pipelinePauseBaselineUs);
+                const int64_t wallUs =
+                    std::chrono::duration_cast<std::chrono::microseconds>(now - t0).count();
+                return activePlaybackClockUs(wallUs, pausedUs);
+            };
+            auto servicePipelinePause = [&]() {
+                const bool pipelinePaused = paused_.load();
+                if (!pipelinePaused)
+                    return false;
+
+                const bool overlayNow = overlay_.visible();
+                {
+                    std::lock_guard<std::mutex> plk(presentMu_);
+                    if (lastPresentedFrameValid &&
+                        (overlayNow || lastPresentedHadOverlay)) {
+                        uint8_t* slotFrame = lastPresentedFrame.data();
+                        const bool overlayDrawn = overlay_.renderI420WithBackup(
+                            slotFrame, rawW, rawH, i420OverlayBackup);
+                        const OverlayRect dirty = i420OverlayBackup.rect;
+                        const bool ok = fpga_.sendYuv420pFrameDdr(
+                            slotFrame, frameBytes, ddrGeometry, localBank,
+                            strictDdrPipeline ? DdrBankWritePolicy::RequireReleased
+                                            : DdrBankWritePolicy::BestEffort);
+                        if (overlayDrawn)
+                            restoreOverlayDirty(slotFrame, dirty);
+                        if (ok) {
+                            localBank = nextBank(localBank);
+                            lastPresentedHadOverlay = overlayDrawn;
+                        } else if (strictDdrPipeline) {
+                            log("media: DDR_PIPE paused present fail: " +
+                                fpga_.lastError());
+                            pipelineFatal.store(true);
+                        }
+                    }
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                return true;
+            };
 
             std::thread presentThr([&] {
-                // Pin present (uncached bank memcpy) to CPU1; reader stays on
-                // play thr CPU0 so decode/ffmpeg can share without fighting memcpy.
+                // 720p: pin present to CPU0 with audio so ffmpeg -threads 2
+                // keeps CPU1 (1.8 ms WC copy on CPU1 was the 23.7 unique hole).
+                // 480p stays CPU1 (copy 4.3 ms, unique already ~24).
                 {
                     cpu_set_t cpus;
                     CPU_ZERO(&cpus);
-                    CPU_SET(1, &cpus);
+                    CPU_SET(isPlex720pDdrFrameGeometry(ddrGeometry) ? 0 : 1, &cpus);
                     (void)::pthread_setaffinity_np(::pthread_self(), sizeof(cpus), &cpus);
-                    (void)::setpriority(PRIO_PROCESS, 0, -10);
+                    // Per-thread only. PRIO_PROCESS+pid 0 niced the whole
+                    // daemon (decode+present) and slowed 1280 memcpy/decode.
+#ifdef __linux__
+                    (void)::setpriority(PRIO_PROCESS,
+                                        static_cast<int>(::syscall(SYS_gettid)), 5);
+#else
+                    (void)::setpriority(PRIO_PROCESS, 0, 5);
+#endif
                 }
+                int pipelineFailCount = 0;
+                bool overlapReady = false;
+                int overlapBank = -1;
+                int overlapHits = 0;
+                bool paceHaveLast = false;
+                BankReleaseStatus paceLast{};
+                int64_t lastKickLagUs = 0;
+                int64_t lastPaceWaitUs = 0;
+                auto prefetchOverlap = [&](int curSlot) {
+                    if (overlapReady || wantStickIngest || overlay_.visible())
+                        return;
+                    if (!isPlex720pDdrFrameGeometry(ddrGeometry) ||
+                        isPlex960BankSize(rawW, rawH))
+                        return;
+                    int nextSlot = -1;
+                    {
+                        std::lock_guard<std::mutex> lk(ringMu);
+                        if (fullCount >= 2)
+                            nextSlot = (curSlot + 1) % 2;
+                    }
+                    if (nextSlot < 0)
+                        return;
+                    // Never memcpy the displayed bank. overlap_hide used to
+                    // write localBank (xor ping-pong) during wait_swap — that
+                    // is the scanout bank for ~12 ms of active video and it
+                    // tears VGA and HDMI (vga_scaler copies HDMI).
+                    BankReleaseStatus brs{};
+                    if (!fpga_.readBankRelease(brs) || !brs.anyFree())
+                        return;
+                    const int destBank = brs.freeBank();
+                    if (destBank < 0 || destBank == static_cast<int>(brs.disp_bank))
+                        return;
+                    uint8_t* dst = fpga_.ddrBankVirt(destBank);
+                    if (!dst)
+                        return;
+                    const uint8_t* nf = ringPtr[static_cast<size_t>(nextSlot)];
+                    const auto tc0 = std::chrono::steady_clock::now();
+                    std::memcpy(dst, nf, frameBytes);
+                    clearYuv420pCropPadding(dst, ddrGeometry);
+                    if (uvUBias_ != 0 || uvVBias_ != 0)
+                        applyYuv420pUvBias(dst, rawW, rawH, uvUBias_, uvVBias_);
+                    __sync_synchronize();
+                    if (pipeProfile)
+                        pipeCopyUs.fetch_add(
+                            pipeUs(tc0, std::chrono::steady_clock::now()));
+                    overlapReady = true;
+                    overlapBank = destBank;
+                    localBank = destBank;
+                    static std::atomic<bool> loggedPref{false};
+                    if (!loggedPref.exchange(true)) {
+                        log("media: overlap_free prefetch bank=" +
+                            std::to_string(destBank) +
+                            " disp=" + std::to_string(brs.disp_bank) +
+                            " free=0x" +
+                            std::to_string(brs.free_bank_mask) +
+                            " next_slot=" + std::to_string(nextSlot) +
+                            " copy_us=" +
+                            std::to_string(pipeUs(
+                                tc0, std::chrono::steady_clock::now())));
+                    }
+                };
+                auto stageCurrentToFree = [&](uint8_t* src) {
+                    if (!src || overlapReady || wantStickIngest)
+                        return;
+                    if (!isPlex720pDdrFrameGeometry(ddrGeometry) ||
+                        isPlex960BankSize(rawW, rawH))
+                        return;
+                    BankReleaseStatus brs{};
+                    if (!fpga_.readBankRelease(brs))
+                        return;
+                    int dest = -1;
+                    if (brs.anyFree())
+                        dest = brs.freeBank();
+                    else if (brs.disp_bank <= 1)
+                        dest = static_cast<int>(brs.disp_bank) ^ 1;
+                    if (dest < 0 || dest == static_cast<int>(brs.disp_bank))
+                        return;
+                    uint8_t* dst = fpga_.ddrBankVirt(dest);
+                    if (!dst)
+                        return;
+                    const auto tc0 = std::chrono::steady_clock::now();
+                    std::memcpy(dst, src, frameBytes);
+                    clearYuv420pCropPadding(dst, ddrGeometry);
+                    if (uvUBias_ != 0 || uvVBias_ != 0)
+                        applyYuv420pUvBias(dst, rawW, rawH, uvUBias_, uvVBias_);
+                    __sync_synchronize();
+                    if (pipeProfile)
+                        pipeCopyUs.fetch_add(
+                            pipeUs(tc0, std::chrono::steady_clock::now()));
+                    overlapReady = true;
+                    overlapBank = dest;
+                    localBank = dest;
+                };
                 while (true) {
                     int slot = -1;
+                    int64_t slotFrameIndex = 0;
                     {
                         std::unique_lock<std::mutex> lk(ringMu);
+                        const auto tw0 = std::chrono::steady_clock::now();
                         ringCv.wait(lk, [&] {
-                            return fullCount > 0 || readerEof.load() || stop_.load();
+                            return fullCount > 0 || readerEof.load() ||
+                                   stop_.load() || pipelineFatal.load();
                         });
+                        if (pipeProfile)
+                            pipePresentWaitUs.fetch_add(pipeUs(tw0, std::chrono::steady_clock::now()));
                         if (fullCount == 0) {
-                            if (readerEof.load() || stop_.load())
+                            if (readerEof.load() || stop_.load() ||
+                                pipelineFatal.load())
                                 break;
                             continue;
                         }
                         slot = presentSlot;
+                        slotFrameIndex = ringFrameIndex[static_cast<size_t>(slot)];
                     }
-                    {
+                    bool overlayDrawn = false;
+                    bool presentFrame = true;
+                    if (avLockPresent) {
+                        const int64_t frameUs =
+                            frameContentUs(slotFrameIndex, fpsNum, fpsDen) +
+                            avOffsetMs_.load() * 1000LL;
+                        for (;;) {
+                            if (stop_.load() || pipelineFatal.load()) {
+                                presentFrame = false;
+                                break;
+                            }
+                            if (paused_.load()) {
+                                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                                continue;
+                            }
+                            const int64_t audioB = audioBytes_.load();
+                            const int64_t clockUs =
+                                (wantAudio && audioActive_.load() && audioB > 0)
+                                    ? audibleClockUs(audioB,
+                                                     audioQueuedBytes_.load())
+                                    : pipelineElapsedUs(std::chrono::steady_clock::now());
+                            const int64_t driftUs = clockUs - frameUs;
+                            avDriftMs_.store(driftUs / 1000);
+                            const int leadHoldMs = misterplex::p720_av::holdLeadMsWithQueued(
+                                static_cast<int>(leadMs), audioQueuedBytes_.load());
+                            const AvAction action =
+                                avDecide(driftUs, static_cast<int64_t>(leadHoldMs) * 1000LL,
+                                         dropMs * 1000LL, dropRun);
+                            if (action == AvAction::Hold) {
+                                // Combined 720p: kick-on-swap is the 24.10 Hz
+                                // pace (copy 1.8 ms, kick_lag ~20 us). Hold
+                                // slaved unique to heard clock (pfps 23.5,
+                                // hw_fps 22.8). 480p still Holds.
+                                if (misterplex::p720_av::combined720pSkipAvHold(
+                                        isPlex720pDdrFrameGeometry(ddrGeometry),
+                                        useInproc))
+                                    break;
+                                // 480p gold: skip Hold when the ring has no
+                                // spare so combined pipe:1+pipe:3 cannot
+                                // deadlock (video ahead → Hold → ffmpeg
+                                // stalls audio too). Combined 720p prefetch
+                                // uses that spawn; split A/V keeps Hold.
+                                const bool dualPipe720 =
+                                    wantAudio && splitAv720 &&
+                                    isPlex720pDdrFrameGeometry(ddrGeometry);
+                                if (!dualPipe720) {
+                                    int spare = 0;
+                                    {
+                                        std::lock_guard<std::mutex> lk(ringMu);
+                                        spare = fullCount;
+                                    }
+                                    if (spare < 2)
+                                        break;
+                                }
+                                // Combined A+V: ffmpeg stalls when the video
+                                // pipe fills. Refresh MrAudio queued bytes so
+                                // the heard clock still advances and Hold
+                                // can finish (otherwise soak G hung at 12s).
+                                {
+                                    const MrAudioStatus st = readMrAudioStatus();
+                                    if (st.valid())
+                                        audioQueuedBytes_.store(st.queuedBytes);
+                                }
+                                const int64_t remainUs = -(driftUs + leadMs * 1000LL);
+                                const int64_t sleepUs =
+                                    std::max<int64_t>(100, std::min<int64_t>(remainUs, 2000));
+                                std::this_thread::sleep_for(
+                                    std::chrono::microseconds(sleepUs));
+                                continue;
+                            }
+                            if (action == AvAction::Drop) {
+                                presentFrame = false;
+                                ++dropRun;
+                                droppedFrames_.fetch_add(1);
+                                if ((droppedFrames_.load() % 24) == 1) {
+                                    log("media: DDR_PIPE A/V resync drop frame=" +
+                                        std::to_string(slotFrameIndex) +
+                                        " drift_ms=" +
+                                        std::to_string(avDriftMs_.load()) +
+                                        " drops=" +
+                                        std::to_string(droppedFrames_.load()));
+                                }
+                            } else {
+                                dropRun = 0;
+                            }
+                            break;
+                        }
+                    }
+                    if (presentFrame) {
+                        holdHdmiAudioLag();
+                        bool fatalPresent = false;
                         std::lock_guard<std::mutex> plk(presentMu_);
-                        uint8_t* slotFrame = ring[static_cast<size_t>(slot)].data();
+                        uint8_t* slotFrame = ringPtr[static_cast<size_t>(slot)];
                         clearYuv420pCropPadding(slotFrame, ddrGeometry);
                         if (uvUBias_ != 0 || uvVBias_ != 0) {
-                            applyYuv420pUvBias(slotFrame, outW_, outH_, uvUBias_, uvVBias_);
+                            applyYuv420pUvBias(slotFrame, rawW, rawH, uvUBias_, uvVBias_);
                         }
-                        const bool ok = fpga_.sendYuv420pFrameDdr(
-                            slotFrame, frameBytes, ddrGeometry, localBank);
+                        overlayDrawn = overlay_.renderI420WithBackup(
+                            slotFrame, rawW, rawH, i420OverlayBackup);
+                        const OverlayRect dirty = i420OverlayBackup.rect;
+                        const uint32_t slotPhys =
+                            wantFabric ? ringPhys[static_cast<size_t>(slot)] : 0u;
+                        const int ingestBank = ringIngestBank[static_cast<size_t>(slot)];
+                        bool ok = false;
+                        const bool doBeamPace =
+                            !strictDdrPipeline && pipelineDdr &&
+                            beamPaceWanted(outW_, outH_) &&
+                            isPlex720pDdrFrameGeometry(ddrGeometry);
+                        // Kick-on-swap: wait the PREVIOUS doorbell's blank,
+                        // then copy+kick. Wait-THIS-swap put avDecide/overlay
+                        // after the blank (~2 ms → unique 22.8 vs 24.1).
+                        bool paceSawThis = false;
+                        std::chrono::steady_clock::time_point paceSawAt{};
+                        if (doBeamPace && paceHaveLast) {
+                            constexpr int64_t kSwapWaitUs = 50000;
+                            bool sawSwap = false;
+                            const auto paceT0 = std::chrono::steady_clock::now();
+                            while (!stop_.load() && !pipelineFatal.load()) {
+                                const auto noww = std::chrono::steady_clock::now();
+                                const int64_t waited = pipeUs(paceT0, noww);
+                                BankReleaseStatus cur{};
+                                if (fpga_.readBankRelease(cur) &&
+                                    frameCounterDelta(cur.frames_done,
+                                                      paceLast.frames_done) > 0) {
+                                    sawSwap = true;
+                                    paceSawThis = true;
+                                    paceSawAt = noww;
+                                }
+                                if (sawSwap || waited >= kSwapWaitUs)
+                                    break;
+                                if (!overlapReady)
+                                    stageCurrentToFree(slotFrame);
+                                std::this_thread::sleep_for(
+                                    std::chrono::microseconds(overlapReady ? 10 : 50));
+                            }
+                            if (!overlapReady)
+                                stageCurrentToFree(slotFrame);
+                            lastPaceWaitUs = pipeUs(paceT0, std::chrono::steady_clock::now());
+                            static std::atomic<bool> loggedPace{false};
+                            if (!loggedPace.exchange(true)) {
+                                log("media: beam_pace=kick_on_swap timeout_us=" +
+                                    std::to_string(kSwapWaitUs) +
+                                    " first_wait_us=" +
+                                    std::to_string(lastPaceWaitUs) +
+                                    " saw_swap=" + (sawSwap ? "1" : "0") +
+                                    " overlap=" + (overlapReady ? "1" : "0"));
+                            }
+                        } else if (doBeamPace && !overlapReady) {
+                            stageCurrentToFree(slotFrame);
+                        }
+                        BankReleaseStatus livePre{};
+                        const bool haveLivePre =
+                            !avLockPresent && !doBeamPace && !wantStickIngest &&
+                            isPlex720pDdrFrameGeometry(ddrGeometry) &&
+                            !isPlex960BankSize(rawW, rawH) &&
+                            fpga_.readBankRelease(livePre);
+                        bool usedOverlap = false;
+                        BankReleaseStatus pacePre{};
+                        const bool havePacePre =
+                            doBeamPace && fpga_.readBankRelease(pacePre);
+                        if (wantStickIngest && (ingestBank == 0 || ingestBank == 1)) {
+                            ok = fpga_.commitDdrBankIngest(ingestBank, frameBytes);
+                            if (ok)
+                                localBank = ingestBank ^ 1;
+                            overlapReady = false;
+                            overlapBank = -1;
+                        } else if (overlapReady && overlapBank == localBank) {
+                            ok = fpga_.commitDdrBankIngest(localBank, frameBytes);
+                            usedOverlap = ok;
+                            overlapReady = false;
+                            overlapBank = -1;
+                            if (ok) {
+                                localBank = nextBank(localBank);
+                                ++overlapHits;
+                                static std::atomic<bool> loggedCommit{false};
+                                if (!loggedCommit.exchange(true)) {
+                                    log("media: overlap_hide commit bank=" +
+                                        std::to_string(localBank ^ 1));
+                                }
+                            }
+                        } else {
+                            overlapReady = false;
+                            overlapBank = -1;
+                            ok = fpga_.sendYuv420pFrameDdr(
+                                slotFrame, frameBytes, ddrGeometry, localBank,
+                                strictDdrPipeline ? DdrBankWritePolicy::RequireReleased
+                                                : DdrBankWritePolicy::BestEffort,
+                                slotPhys);
+                            if (ok)
+                                localBank = nextBank(localBank);
+                        }
+                        if (ok && doBeamPace && havePacePre) {
+                            paceLast = pacePre;
+                            paceHaveLast = true;
+                        } else if (ok && doBeamPace) {
+                            paceHaveLast = fpga_.readBankRelease(paceLast);
+                        }
+                        if (ok && doBeamPace && paceSawThis)
+                            lastKickLagUs =
+                                pipeUs(paceSawAt, std::chrono::steady_clock::now());
+                        else if (ok && doBeamPace)
+                            lastKickLagUs = 0;
+                        // 1280 live: wait this kick to swap so CATCH keeps it
+                        // (BestEffort blast overwrote blanks; 960 ahead pace worked).
+                        // Hide the next 1.38 MiB memcpy inside that wait so the
+                        // following kick is not 14 ms late of the blank (23.66).
+                        if (ok && haveLivePre) {
+                            const auto wt0 = std::chrono::steady_clock::now();
+                            prefetchOverlap(slot);
+                            while (!stop_.load() && !pipelineFatal.load()) {
+                                const int64_t waited = pipeUs(
+                                    wt0, std::chrono::steady_clock::now());
+                                BankReleaseStatus cur{};
+                                if (fpga_.readBankRelease(cur) &&
+                                    frameCounterDelta(cur.frames_done,
+                                                      livePre.frames_done) > 0)
+                                    break;
+                                if (waited >= 50000)
+                                    break;
+                                if (!overlapReady)
+                                    prefetchOverlap(slot);
+                                std::this_thread::sleep_for(
+                                    std::chrono::microseconds(overlapReady ? 50 : 200));
+                            }
+                            if (!overlapReady)
+                                prefetchOverlap(slot);
+                        }
+                        if (pipeProfile && ok) {
+                            const auto dt = fpga_.lastDdrTiming();
+                            pipeSendUs.fetch_add(dt.total_us);
+                            pipeCopyUs.fetch_add(dt.copy_us);
+                        }
+                        if (overlayDrawn)
+                            restoreOverlayDirty(slotFrame, dirty);
                         if (ok) {
-                            localBank ^= 1;
-                            ++presentCount_;
-                            if ((presentCount_ % 48) == 0) {
+                            // Pause-OSD snapshot only. Movie frames do not need a
+                            // third 777600/1.38 MiB copy on the same DDR3 as decode.
+                            // P5: MPX_SKIP_LAST_PRESENTED (default on 960) skips it.
+                            if (!skipLastPresented &&
+                                (overlayDrawn || overlay_.visible())) {
+                                std::memcpy(lastPresentedFrame.data(), slotFrame,
+                                            frameBytes);
+                                lastPresentedFrameValid = true;
+                            } else {
+                                lastPresentedFrameValid = false;
+                            }
+                            lastPresentedHadOverlay = overlayDrawn;
+                            pipelineFailCount = 0;
+                            const int64_t presented = pipelinePresentCount.fetch_add(1) + 1;
+                            presentCount_ = presented;
+                            {
+                                const int need = audioReleaseAfterPresents_.load();
+                                if (need > 0 && presented >= need &&
+                                    !audioFeedRelease_.load()) {
+                                    audioFeedRelease_.store(true);
+                                    log("media: 720p audio_release presents=" +
+                                        std::to_string(presented));
+                                }
+                            }
+                            if ((presented % 48) == 0) {
                                 const auto dt = fpga_.lastDdrTiming();
                                 log(std::string("media: fpga frame_tx ok via DDR_PIPE") +
-                                    " presents=" + std::to_string(presentCount_) +
-                                    " frames=" + std::to_string(frameIndex) +
+                                    " presents=" + std::to_string(presented) +
+                                    " frames=" + std::to_string(slotFrameIndex) +
                                     " ms=" +
                                     std::to_string(static_cast<int>(fpga_.lastPushMs())) +
                                     " prep_us=" + std::to_string(dt.prep_wait_us) +
                                     " copy_us=" + std::to_string(dt.copy_us) +
                                     " plxd_us=" + std::to_string(dt.plxa_poll_us) +
-                                    " total_us=" + std::to_string(dt.total_us));
+                                    " total_us=" + std::to_string(dt.total_us) +
+                                    " fabric=" +
+                                    std::string(usedOverlap
+                                                    ? "overlap"
+                                                    : fpga_.lastDdrPublishHow()) +
+                                    " overlap_hits=" +
+                                    std::to_string(overlapHits) +
+                                    " pace_wait_us=" +
+                                    std::to_string(lastPaceWaitUs) +
+                                    " kick_lag_us=" +
+                                    std::to_string(lastKickLagUs));
                             }
-                        } else if ((frameIndex % 60) == 0) {
-                            log("media: DDR_PIPE present fail: " + fpga_.lastError());
+                        } else {
+                            ++pipelineFailCount;
+                            if (pipelineFailCount == 1 || (pipelineFailCount % 60) == 0) {
+                                log("media: DDR_PIPE present fail frame=" +
+                                    std::to_string(slotFrameIndex) + ": " +
+                                    fpga_.lastError());
+                            }
+                            fatalPresent = strictDdrPipeline;
+                        }
+                        if (fatalPresent) {
+                            pipelineFatal.store(true);
                         }
                     }
                     {
                         std::lock_guard<std::mutex> lk(ringMu);
+                        releaseIngestBank(slot);
                         presentSlot = (presentSlot + 1) % 2;
                         --fullCount;
                     }
                     ringCv.notify_all();
+                    if (pipelineFatal.load())
+                        break;
                 }
             });
 
-            while (!stop_.load()) {
+            while (!stop_.load() && !pipelineFatal.load()) {
                 int64_t seekTo = seekReqMs_.exchange(-1);
                 if (seekTo >= 0) {
                     log("media: seek requested " + std::to_string(seekTo));
+#ifdef MPX_HAVE_LIBAV
+                    if (useInproc)
+                        inprocDec.requestStop();
+#endif
                     break;
                 }
-                if (paused_.load()) {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                if (servicePipelinePause())
                     continue;
-                }
                 {
                     std::unique_lock<std::mutex> lk(ringMu);
-                    ringCv.wait(lk, [&] { return fullCount < 2 || stop_.load(); });
-                    if (stop_.load())
+                    const auto tw0 = std::chrono::steady_clock::now();
+                    ringCv.wait_for(lk, std::chrono::milliseconds(50), [&] {
+                        return fullCount < 2 || paused_.load() ||
+                               stop_.load() || pipelineFatal.load();
+                    });
+                    if (pipeProfile)
+                        pipeSlotWaitUs.fetch_add(pipeUs(tw0, std::chrono::steady_clock::now()));
+                    if (stop_.load() || pipelineFatal.load())
                         break;
+                    if (paused_.load() || fullCount >= 2)
+                        continue;
+                }
+                if (wantStickIngest) {
+                    const int ibank = takeIngestBank();
+                    if (ibank < 0) {
+                        // Both banks held — wait for present to release. Do not
+                        // memcpy-fallback (second copy + 150 ms spin was the
+                        // combined-pipe audio starve).
+                        std::this_thread::sleep_for(std::chrono::microseconds(200));
+                        continue;
+                    } else {
+                        uint8_t* bp = fpga_.ddrBankVirt(ibank);
+                        if (!bp) {
+                            {
+                                std::lock_guard<std::mutex> lk(ringMu);
+                                bankHeld[static_cast<size_t>(ibank)] = false;
+                            }
+                            log("media: stick ingest: ddrBankVirt failed: " +
+                                fpga_.lastError());
+                            pipelineFatal.store(true);
+                            break;
+                        }
+                        ringPtr[static_cast<size_t>(readSlot)] = bp;
+                        ringIngestBank[static_cast<size_t>(readSlot)] = ibank;
+                    }
                 }
                 size_t got = 0;
-                uint8_t* dst = ring[static_cast<size_t>(readSlot)].data();
+                uint8_t* dst = ringPtr[static_cast<size_t>(readSlot)];
                 auto lastWaitProgress = std::chrono::steady_clock::now();
-                while (got < frameBytes && !stop_.load()) {
-                    // Poll so video-only casts can advance the scrubber while
-                    // ffmpeg is still buffering the first full YUV frame.
+                const auto tr0 = lastWaitProgress;
+#ifdef MPX_HAVE_LIBAV
+                if (useInproc) {
+                    std::string ierr;
+                    const int rc = inprocDec.readI420(dst, frameBytes, ierr);
+                    if (pipeProfile)
+                        pipeReadUs.fetch_add(
+                            pipeUs(tr0, std::chrono::steady_clock::now()));
+                    if (rc == 1) {
+                        got = frameBytes;
+                        totalBytes += frameBytes;
+                    } else if (rc == 0) {
+                        videoEof = true;
+                    } else {
+                        log("media: inproc_decode read failed: " + ierr);
+                        {
+                            std::lock_guard<std::mutex> lk(ringMu);
+                            releaseIngestBank(readSlot);
+                        }
+                        break;
+                    }
+                } else
+#endif
+                {
+                while (got < frameBytes && !stop_.load() && !pipelineFatal.load()) {
+                    if (servicePipelinePause())
+                        continue;
                     fd_set rfds;
                     FD_ZERO(&rfds);
                     FD_SET(rfd, &rfds);
                     timeval tv{};
                     tv.tv_sec = 0;
-                    tv.tv_usec = 200000; // 200ms
+                    tv.tv_usec = 200000;
                     const int pr = ::select(rfd + 1, &rfds, nullptr, nullptr, &tv);
                     if (pr < 0) {
                         if (errno == EINTR)
@@ -2969,19 +5383,19 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                         log("media: pipeline select err errno=" + std::to_string(errno));
                         break;
                     }
+                    if (servicePipelinePause())
+                        continue;
                     const auto nowWait = std::chrono::steady_clock::now();
                     if (nowWait - lastWaitProgress >= std::chrono::seconds(1)) {
                         lastWaitProgress = nowWait;
-                        const int64_t wallWait =
-                            std::chrono::duration_cast<std::chrono::milliseconds>(nowWait - t0)
-                                .count();
+                        const int64_t wallWait = pipelineElapsedUs(nowWait) / 1000;
                         const int64_t tms = startMs + std::max<int64_t>(0, wallWait);
                         positionMs_.store(tms);
-                        if (onProgress_)
+                        if (!paused_.load() && onProgress_)
                             onProgress_("playing", tms, durationMs);
                     }
                     if (pr == 0)
-                        continue; // timeout — keep waiting for first/next bytes
+                        continue;
                     const ssize_t n =
                         ::read(rfd, dst + got, frameBytes - got);
                     if (n < 0) {
@@ -2997,16 +5411,29 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     got += static_cast<size_t>(n);
                     totalBytes += static_cast<size_t>(n);
                 }
+                if (pipeProfile)
+                    pipeReadUs.fetch_add(pipeUs(tr0, std::chrono::steady_clock::now()));
+                }
+                if (pipelineFatal.load()) {
+                    std::lock_guard<std::mutex> lk(ringMu);
+                    releaseIngestBank(readSlot);
+                    break;
+                }
                 if (got < frameBytes) {
                     shortRead = true;
                     shortReadGot = got;
                     shortReadWant = frameBytes;
                     log("media: pipeline short read got=" + std::to_string(got) + "/" +
                         std::to_string(frameBytes));
+                    {
+                        std::lock_guard<std::mutex> lk(ringMu);
+                        releaseIngestBank(readSlot);
+                    }
                     break;
                 }
-                // Soft wall-clock pace only when ahead (no audio). When behind, push.
-                if (!wantAudio || !audioActive_.load()) {
+                // Legacy pipeline only. true480 and 720p strict present are paced
+                // in the present thread from the audible/wall clock.
+                if (!strictDdrPipeline && (!wantAudio || !audioActive_.load())) {
                     const int64_t frameMs =
                         frameContentMs(frameIndex + 1, fpsNum, fpsDen) + avOffsetMs_.load();
                     const int64_t clockMs = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -3024,6 +5451,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 ++frameIndex;
                 {
                     std::lock_guard<std::mutex> lk(ringMu);
+                    ringFrameIndex[static_cast<size_t>(readSlot)] = frameIndex;
                     readSlot = (readSlot + 1) % 2;
                     ++fullCount;
                 }
@@ -3032,15 +5460,14 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 const auto now = std::chrono::steady_clock::now();
                 if (now - lastPipeLog > std::chrono::seconds(1)) {
                     lastPipeLog = now;
-                    const int64_t wall2 = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                              now - t0)
-                                              .count();
+                    const int64_t wall2 = pipelineElapsedUs(now) / 1000;
                     const double vfps =
                         wall2 > 0 ? (1000.0 * static_cast<double>(frameIndex) /
                                      static_cast<double>(wall2))
                                   : 0.0;
                     const double pfps =
-                        wall2 > 0 ? (1000.0 * static_cast<double>(presentCount_) /
+                        wall2 > 0 ? (1000.0 * static_cast<double>(
+                                                   pipelinePresentCount.load()) /
                                      static_cast<double>(wall2))
                                   : 0.0;
                     const int64_t abytes = audioBytes_.load();
@@ -3054,9 +5481,22 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                         " clock=av-lock" +
                         " av_drift_ms=" + std::to_string(avDriftMs_.load()) +
                         " drops=" + std::to_string(droppedFrames_.load()) +
+                        hardwarePresentTelemetry() +
                         " fps=" + std::to_string(fpsNum) + "/" + std::to_string(fpsDen) +
                         " decode=" + std::to_string(outW_) + "x" + std::to_string(outH_) +
-                        " pipe=1");
+                        (useInproc ? " pipe=inproc" : " pipe=1"));
+                    if (pipeProfile && frameIndex > 0) {
+                        const int64_t n = frameIndex;
+                        const int64_t p = std::max<int64_t>(1, pipelinePresentCount.load());
+                        log("media: pipe_profile n=" + std::to_string(n) +
+                            " p=" + std::to_string(p) +
+                            " read_us_f=" + std::to_string(pipeReadUs.load() / n) +
+                            " slot_wait_us_f=" + std::to_string(pipeSlotWaitUs.load() / n) +
+                            " present_wait_us_p=" +
+                            std::to_string(pipePresentWaitUs.load() / p) +
+                            " send_us_p=" + std::to_string(pipeSendUs.load() / p) +
+                            " copy_us_p=" + std::to_string(pipeCopyUs.load() / p));
+                    }
                     // DDR 2-slot ring never hits the non-pipe progress path (frameIndex%15).
                     // Without this, Companion/Plex Web scrubber freezes at plant offset.
                     const int64_t tms = startMs + wall2;
@@ -3069,6 +5509,23 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             ringCv.notify_all();
             if (presentThr.joinable())
                 presentThr.join();
+            if (pipeProfile && frameIndex > 0) {
+                const int64_t n = frameIndex;
+                const int64_t p = std::max<int64_t>(1, pipelinePresentCount.load());
+                log("media: pipe_profile_end n=" + std::to_string(n) +
+                    " p=" + std::to_string(p) +
+                    " read_us_f=" + std::to_string(pipeReadUs.load() / n) +
+                    " slot_wait_us_f=" + std::to_string(pipeSlotWaitUs.load() / n) +
+                    " present_wait_us_p=" +
+                    std::to_string(pipePresentWaitUs.load() / p) +
+                    " send_us_p=" + std::to_string(pipeSendUs.load() / p) +
+                    " copy_us_p=" + std::to_string(pipeCopyUs.load() / p));
+            }
+            releaseFabricSlots();
+            true480PipelineAborted = pipelineFatal.load();
+            if (true480PipelineAborted)
+                log("ERROR media: true480 DDR pipeline aborted; suppressing natural EOF");
+            presentCount_ = pipelinePresentCount.load();
             ddrBank_ = localBank;
             if (rfd >= 0) {
                 ::close(rfd);
@@ -3212,12 +5669,16 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     const auto pix0 = std::chrono::steady_clock::now();
                     const int64_t pixCpu0 = threadCpuMicros();
                     clearYuv420pCropPadding(readDst, ddrGeometry);
+                    if (uvUBias_ != 0 || uvVBias_ != 0)
+                        applyYuv420pUvBias(readDst, rawW, rawH, uvUBias_, uvVBias_);
                     const int64_t pixCpu1 = threadCpuMicros();
                     const auto pix1 = std::chrono::steady_clock::now();
                     prof.pixelUs += microsBetween(pix0, pix1);
                     prof.pixelCpuUs += pixCpu1 - pixCpu0;
                 } else {
                     clearYuv420pCropPadding(readDst, ddrGeometry);
+                    if (uvUBias_ != 0 || uvVBias_ != 0)
+                        applyYuv420pUvBias(readDst, rawW, rawH, uvUBias_, uvVBias_);
                 }
             }
             // Release present lock during A/V pacing; re-acquire only to commit.
@@ -3382,6 +5843,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     " clock=av-lock" +
                     " av_drift_ms=" + std::to_string(avDriftMs_.load()) +
                     " drops=" + std::to_string(droppedFrames_.load()) +
+                    hardwarePresentTelemetry() +
                     " fps=" + std::to_string(fpsNum) + "/" + std::to_string(fpsDen) +
                     " decode=" + std::to_string(outW_) + "x" + std::to_string(outH_));
             }
@@ -3399,13 +5861,21 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
 
         if (profilePresent)
             logProfile();
+        closeRemuxHolds();
         if (rfd >= 0)
             ::close(rfd);
     }
 
     killChildren();
+#ifdef MPX_HAVE_LIBAV
+    if (inprocPcm_)
+        inprocPcm_->requestStop();
+#endif
     if (audioThr_.joinable())
         audioThr_.join();
+#ifdef MPX_HAVE_LIBAV
+    inprocPcm_ = nullptr;
+#endif
     if (streamThr_.joinable())
         streamThr_.join();
 
@@ -3447,17 +5917,24 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         lastSummary_.skipRgb = skipRgb;
         lastSummary_.shortRead = shortRead;
         lastSummary_.videoEof = videoEof;
+        lastSummary_.true480PipelineAborted = true480PipelineAborted;
         lastSummary_.shortReadGot = shortReadGot;
         lastSummary_.shortReadWant = shortReadWant;
     }
-    // Natural EOF (not user stop / seek restart) → "ended" so main can auto-next.
-    if (!stop_.load() && onProgress_) {
+    // Only natural EOF with content may report "ended" and trigger auto-next.
+    // A strict true480 transport failure is success-shaped without this guard:
+    // frameIndex>0 survives teardown even though presentation aborted mid-title.
+    if (onProgress_) {
         const bool hadContent = usedRawVideo ? (frameIndex > 0) : (reconFrames_.load() > 0 ||
                                                                    positionMs_.load() > startMs + 500);
-        if (hadContent)
+        const PlaybackTerminalState terminal = classifyPlaybackTerminalState(
+            stop_.load(), true480PipelineAborted, hadContent);
+        if (terminal == PlaybackTerminalState::Ended) {
             onProgress_("ended", positionMs_.load(), durationMs);
-        else
-            onProgress_("stopped", 0, durationMs);
+        } else if (terminal == PlaybackTerminalState::Stopped) {
+            const int64_t stoppedAt = true480PipelineAborted ? positionMs_.load() : 0;
+            onProgress_("stopped", stoppedAt, durationMs);
+        }
     }
     // The frame store latches the last frame written; without this the final frame
     // of the video stays on screen until something else paints over it.
@@ -3469,8 +5946,14 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         " cabac=" + (cabacSkip_.load() ? "1" : "0") +
         " stream=" + (streamEnabled_ ? "on" : "off") +
         " rawvideo=" + (usedRawVideo ? "on" : "off") +
+        " true480_pipeline_aborted=" + (true480PipelineAborted ? "1" : "0") +
         " present=" + presentMode_ +
-        " skip_rgb=" + (skipRgb ? "1" : "0"));
+        " skip_rgb=" + (skipRgb ? "1" : "0") +
+        " stop=" + (stop_.load() ? "1" : "0") +
+        " video_eof=" + (videoEof ? "1" : "0") +
+        " short_read=" + (shortRead ? "1" : "0") +
+        " short_got=" + std::to_string(shortReadGot) +
+        " short_want=" + std::to_string(shortReadWant));
 }
 
 } // namespace misterplex

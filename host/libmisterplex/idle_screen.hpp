@@ -50,8 +50,27 @@ inline int idleDrift(int phase, int span) {
     return (tri * span) / half;
 }
 
-// Is (x,y) inside the chevron mark whose bounding box is [ox,oy]+[size,size]?
-// The mark is a ">" stroke: two arms meeting at the right-hand vertex.
+struct IdleChevronExtent {
+    int half = 0;
+    int stroke = 0;
+    int glyphW = 0;
+    int glyphH = 0;
+};
+
+inline IdleChevronExtent idleChevronExtent(int size) {
+    IdleChevronExtent e{};
+    if (size <= 0)
+        return e;
+    e.half = size / 2;
+    e.stroke = size / 5 > 0 ? size / 5 : 1;
+    e.glyphW = e.half + e.stroke;
+    e.glyphH = size;
+    return e;
+}
+
+// Is (x,y) inside the chevron mark whose design box starts at (ox,oy)?
+// The painted ">" is narrower than that box; idleChevronExtent is the shared
+// contract used to center the actual glyph rather than its empty right side.
 inline bool idleChevronHit(int x, int y, int ox, int oy, int size) {
     if (size <= 0)
         return false;
@@ -59,11 +78,10 @@ inline bool idleChevronHit(int x, int y, int ox, int oy, int size) {
     const int ly = y - oy;
     if (lx < 0 || ly < 0 || lx >= size || ly >= size)
         return false;
-    const int half = size / 2;
-    const int stroke = size / 5 > 0 ? size / 5 : 1;
+    const IdleChevronExtent e = idleChevronExtent(size);
     // Distance from the two 45-degree arms, in "diagonal" units.
-    const int d = ly <= half ? (lx - ly) : (lx - (size - 1 - ly));
-    return d >= 0 && d < stroke;
+    const int d = ly <= e.half ? (lx - ly) : (lx - (size - 1 - ly));
+    return d >= 0 && d < e.stroke;
 }
 
 // Coverage 0..256 (8.8 fixed) for anti-aliased chevron stroke.
@@ -81,16 +99,15 @@ inline int idleChevronCover256(int x, int y, int ox, int oy, int size) {
     // Soft skirt just outside the stroke (box ±3). No full coverage out here.
     if (lx < -3 || ly < -3 || lx > size + 2 || ly > size + 2)
         return 0;
-    const int half = size / 2;
-    const int stroke = size / 5 > 0 ? size / 5 : 1;
+    const IdleChevronExtent e = idleChevronExtent(size);
     // Clamp ly into the diagonal domain so out-of-box samples don't fake a hit.
     const int lyC = ly < 0 ? 0 : (ly >= size ? size - 1 : ly);
-    const int d = lyC <= half ? (lx - lyC) : (lx - (size - 1 - lyC));
+    const int d = lyC <= e.half ? (lx - lyC) : (lx - (size - 1 - lyC));
     int outside = 0;
     if (d < 0)
         outside = -d;
-    else if (d >= stroke)
-        outside = d - (stroke - 1);
+    else if (d >= e.stroke)
+        outside = d - (e.stroke - 1);
     // Also push away when outside the box vertically/horizontally.
     if (lx < 0)
         outside += -lx;
@@ -118,22 +135,32 @@ struct IdleRenderState {
     int oy = 0;
 };
 
-inline IdleRenderState idleRenderState(int w, int h, IdleMode mode, int phase) {
+inline IdleRenderState idleRenderState(int w, int h, IdleMode mode, int phase,
+                                       int visibleX, int visibleW) {
     IdleRenderState s{};
+    if (w <= 0 || h <= 0 || visibleX < 0 || visibleW <= 0 || visibleX + visibleW > w) {
+        s.blank = true;
+        return s;
+    }
     s.blank = (mode == IdleMode::Black);
-    s.size = (w < h ? w : h) / 3;
+    s.size = (visibleW < h ? visibleW : h) / 3;
     if (s.size < 4)
         s.size = 4;
-    s.ox = (w - s.size) / 2;
-    s.oy = (h - s.size) / 2;
+    const IdleChevronExtent e = idleChevronExtent(s.size);
+    s.ox = visibleX + (visibleW - e.glyphW) / 2;
+    s.oy = (h - e.glyphH) / 2;
     if (mode == IdleMode::Screensaver) {
-        const int spanX = w - s.size - 2 * kIdleMargin;
-        const int spanY = h - s.size - 2 * kIdleMargin;
-        s.ox = kIdleMargin + idleDrift(phase, spanX);
+        const int spanX = visibleW - e.glyphW - 2 * kIdleMargin;
+        const int spanY = h - e.glyphH - 2 * kIdleMargin;
+        s.ox = visibleX + kIdleMargin + idleDrift(phase, spanX);
         // Quarter-period offset so the drift traces a path, not a diagonal line.
         s.oy = kIdleMargin + idleDrift(phase + kIdlePhasePeriod / 4, spanY);
     }
     return s;
+}
+
+inline IdleRenderState idleRenderState(int w, int h, IdleMode mode, int phase) {
+    return idleRenderState(w, h, mode, phase, 0, w);
 }
 
 inline void idlePixelRgb(int x, int y, const IdleRenderState& s,
@@ -199,11 +226,15 @@ inline void renderIdleRgb24(uint8_t* rgb, int w, int h, IdleMode mode, int phase
 
 // Fill a planar I420/YUV420p buffer with the same idle image. This is the DDR
 // frame-store format used by the C3 core; LastFrame remains a no-op.
-inline bool renderIdleYuv420p(uint8_t* yuv, int w, int h, IdleMode mode, int phase) {
-    if (!yuv || w <= 0 || h <= 0 || (w & 1) || (h & 1) || mode == IdleMode::LastFrame)
+inline bool renderIdleYuv420p(uint8_t* yuv, int w, int h, IdleMode mode, int phase,
+                              int visibleX, int visibleW) {
+    if (!yuv || w <= 0 || h <= 0 || (w & 1) || (h & 1) ||
+        visibleX < 0 || visibleW <= 0 || visibleX + visibleW > w ||
+        mode == IdleMode::LastFrame)
         return false;
 
-    const IdleRenderState state = idleRenderState(w, h, mode, phase);
+    const IdleRenderState state =
+        idleRenderState(w, h, mode, phase, visibleX, visibleW);
     uint8_t* yPlane = yuv;
     uint8_t* uPlane = yPlane + static_cast<size_t>(w) * static_cast<size_t>(h);
     uint8_t* vPlane = uPlane + static_cast<size_t>(w / 2) * static_cast<size_t>(h / 2);
@@ -256,6 +287,10 @@ inline bool renderIdleYuv420p(uint8_t* yuv, int w, int h, IdleMode mode, int pha
         }
     }
     return true;
+}
+
+inline bool renderIdleYuv420p(uint8_t* yuv, int w, int h, IdleMode mode, int phase) {
+    return renderIdleYuv420p(yuv, w, h, mode, phase, 0, w);
 }
 
 } // namespace misterplex

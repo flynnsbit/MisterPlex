@@ -39,6 +39,30 @@ constexpr uint8_t kYuv420BlackY = 16;
 constexpr uint8_t kYuv420BlackU = 128;
 constexpr uint8_t kYuv420BlackV = 128;
 
+static_assert(kPlex480pCodedWidth == 39 * 16, "480p coded width is 39 macroblocks");
+static_assert(kPlex480pCodedHeight == 30 * 16, "480p coded height is 30 macroblocks");
+static_assert(kPlex480pCodedWidth - kPlex480pCropLeft - kPlex480pCropRight ==
+                  kPlex480pDisplayWidth,
+              "480p SPS crop must expose 618 pixels");
+static_assert(kPlex480pPillarboxLeft + kPlex480pDisplayWidth +
+                      kPlex480pPillarboxRight ==
+                  kPlex480pPresentedWidth,
+              "480p pillars must fill the 640-pixel presentation");
+static_assert(kPlex480pYPlaneOffset == 0, "I420 Y starts at bank offset zero");
+static_assert(kPlex480pUPlaneOffset ==
+                  kPlex480pCodedWidth * kPlex480pCodedHeight,
+              "I420 U follows the complete coded Y plane");
+static_assert(kPlex480pVPlaneOffset ==
+                  kPlex480pUPlaneOffset +
+                      (kPlex480pCodedWidth / 2) * (kPlex480pCodedHeight / 2),
+              "I420 V follows the complete coded U plane");
+static_assert(kPlex480pYuv420pBytes ==
+                  kPlex480pCodedWidth * kPlex480pCodedHeight * 3 / 2,
+              "I420 bank payload uses coded, not presented, geometry");
+static_assert(kPlex480pYuv420pDoorbellPhys ==
+                  kDdrFramePhysBase + 2u * kPlex480pYuv420pBankStride - 0x1000u,
+              "480p doorbell occupies the final map page");
+
 // ---- 720p tier (present path land; opt-in RBF macros) ----
 constexpr int kPlex720pCodedWidth = 1280;
 constexpr int kPlex720pCodedHeight = 720;
@@ -68,6 +92,26 @@ constexpr int kPlex960PresentedHeight = 540;
 // Reserved HPS window (parent device: mem=511M memmap=513M$511M).
 constexpr uint32_t kPlexDdrReservedWindowStart = 0x1FF00000u;
 constexpr uint32_t kPlexDdrReservedWindowEnd = 0x40000000u;
+
+// /dev/mplex_ddr write-combine chardev (kmod/mplex_ddr). Must match
+// MPLEX_DDR_PHYS / MPLEX_DDR_SIZE. 4MiB clipped 720p bank 1
+// (0x30300000+1382400 = 0x30451800 > 0x30400000).
+constexpr uint32_t kMplexDdrPhys = 0x30000000u;
+constexpr uint32_t kMplexDdrSize = 0x800000u; // 8MiB
+
+inline constexpr bool mplexDdrCovers(uint32_t phys_base, uint32_t map_bytes) {
+    if (phys_base < kMplexDdrPhys)
+        return false;
+    const uint64_t need =
+        static_cast<uint64_t>(phys_base - kMplexDdrPhys) + static_cast<uint64_t>(map_bytes);
+    return need <= static_cast<uint64_t>(kMplexDdrSize);
+}
+
+static_assert(kMplexDdrSize == 0x800000u, "WC window 8MiB");
+static_assert(mplexDdrCovers(kPlex720pPhysBase, 2u * kPlex720pYuv420pBankStride),
+              "8MiB WC must cover 720p dual-bank map (4MiB clipped bank1)");
+static_assert(mplexDdrCovers(kDdrFramePhysBase, 2u * kPlex480pYuv420pBankStride),
+              "8MiB WC must still cover 480p dual-bank map");
 
 // Option-C triple end = first free byte after 3×720p banks (base+3*stride).
 constexpr uint32_t kPlex720pMapBytes3Bank = 0x00480000u; // 3 * 0x180000
@@ -125,6 +169,25 @@ inline bool pl330AbiOverlapsOptionCBanks(uint32_t phys, uint32_t len) {
 enum class DdrFramePlacement {
     None,
     Pillarbox,
+};
+
+enum class DdrFramePixelRegion {
+    Outside,
+    Border,
+    Content,
+};
+
+struct DdrFramePixelMapping {
+    DdrFramePixelRegion region = DdrFramePixelRegion::Outside;
+    int coded_x = -1;
+    int coded_y = -1;
+};
+
+struct DdrFrameSampleOffsets {
+    bool valid = false;
+    uint32_t y = 0;
+    uint32_t u = 0;
+    uint32_t v = 0;
 };
 
 // HPS DDR frame-store contract shared by misterplexd and RTL:
@@ -211,6 +274,26 @@ inline size_t yuv420pFrameBytes(int width, int height) {
     return static_cast<size_t>(width) * static_cast<size_t>(height) * 3u / 2u;
 }
 
+inline bool ddrFrameGeometryValid(const DdrFrameGeometry& g) {
+    if (g.coded_width <= 0 || g.coded_height <= 0 || g.display_width <= 0 ||
+        g.display_height <= 0 || g.presented_width <= 0 || g.presented_height <= 0)
+        return false;
+    if (g.crop_left < 0 || g.crop_right < 0 || g.crop_top < 0 || g.crop_bottom < 0 ||
+        g.present_x < 0 || g.present_y < 0)
+        return false;
+    if (g.display_width + g.crop_left + g.crop_right != g.coded_width ||
+        g.display_height + g.crop_top + g.crop_bottom != g.coded_height)
+        return false;
+    if (g.present_x + g.display_width > g.presented_width ||
+        g.present_y + g.display_height > g.presented_height)
+        return false;
+    if ((g.coded_width & 15) || (g.coded_height & 1))
+        return false;
+    if ((g.crop_left | g.crop_right | g.crop_top | g.crop_bottom) & 1)
+        return false;
+    return true;
+}
+
 inline DdrFrameGeometry makeDdrFrameGeometry(int codedWidth, int codedHeight,
                                              int displayWidth = 0, int displayHeight = 0,
                                              int presentedWidth = 0, int presentedHeight = 0,
@@ -249,10 +332,76 @@ inline DdrFrameGeometry plex480pDdrFrameGeometry() {
     return g;
 }
 
+inline bool isPlex480pDdrFrameGeometry(const DdrFrameGeometry& g) {
+    return g.coded_width == kPlex480pCodedWidth &&
+           g.coded_height == kPlex480pCodedHeight &&
+           g.display_width == kPlex480pDisplayWidth &&
+           g.display_height == kPlex480pDisplayHeight &&
+           g.presented_width == kPlex480pPresentedWidth &&
+           g.presented_height == kPlex480pPresentedHeight &&
+           g.crop_left == kPlex480pCropLeft &&
+           g.crop_right == kPlex480pCropRight &&
+           g.crop_top == kPlex480pCropTop &&
+           g.crop_bottom == kPlex480pCropBottom &&
+           g.present_x == kPlex480pPillarboxLeft &&
+           g.present_y == 0;
+}
+
+inline bool isPlex720pDdrFrameGeometry(const DdrFrameGeometry& g) {
+    return g.coded_width == kPlex720pCodedWidth &&
+           g.coded_height == kPlex720pCodedHeight &&
+           g.display_width == kPlex720pDisplayWidth &&
+           g.display_height == kPlex720pDisplayHeight &&
+           g.presented_width == kPlex720pPresentedWidth &&
+           g.presented_height == kPlex720pPresentedHeight &&
+           g.crop_left == 0 && g.crop_right == 0 &&
+           g.crop_top == 0 && g.crop_bottom == 0 &&
+           g.present_x == 0 && g.present_y == 0;
+}
+
+inline uint32_t ddrFramePhysBaseForGeometry(const DdrFrameGeometry& g) {
+    return isPlex720pDdrFrameGeometry(g) ? kPlex720pDdrFramePhysBase
+                                        : kDdrFramePhysBase;
+}
+
 inline DdrFrameGeometry ddrFrameGeometryForPresentedSize(int width, int height) {
     if (width == kPlex480pPresentedWidth && height == kPlex480pPresentedHeight)
         return plex480pDdrFrameGeometry();
     return makeDdrFrameGeometry(width, height);
+}
+
+inline DdrFramePixelMapping mapDdrFramePresentedPixel(const DdrFrameGeometry& g, int x, int y) {
+    DdrFramePixelMapping out{};
+    if (!ddrFrameGeometryValid(g) || x < 0 || y < 0 || x >= g.presented_width ||
+        y >= g.presented_height)
+        return out;
+    if (x < g.present_x || x >= g.present_x + g.display_width || y < g.present_y ||
+        y >= g.present_y + g.display_height) {
+        out.region = DdrFramePixelRegion::Border;
+        return out;
+    }
+    out.coded_x = x - g.present_x + g.crop_left;
+    out.coded_y = y - g.present_y + g.crop_top;
+    if (out.coded_x < 0 || out.coded_x >= g.coded_width || out.coded_y < 0 ||
+        out.coded_y >= g.coded_height) {
+        out.coded_x = -1;
+        out.coded_y = -1;
+        return out;
+    }
+    out.region = DdrFramePixelRegion::Content;
+    return out;
+}
+
+inline bool ddrFrameGeometryMatchesDelivered(const DdrFrameGeometry& expected, int codedWidth,
+                                             int codedHeight, int displayWidth,
+                                             int displayHeight, int cropLeftPixels,
+                                             int cropRightPixels, int cropTopPixels,
+                                             int cropBottomPixels) {
+    return ddrFrameGeometryValid(expected) && codedWidth == expected.coded_width &&
+           codedHeight == expected.coded_height && displayWidth == expected.display_width &&
+           displayHeight == expected.display_height && cropLeftPixels == expected.crop_left &&
+           cropRightPixels == expected.crop_right && cropTopPixels == expected.crop_top &&
+           cropBottomPixels == expected.crop_bottom;
 }
 
 inline DdrFrameLayout makeDdrFrameLayout(const DdrFrameGeometry& geom,
@@ -260,23 +409,24 @@ inline DdrFrameLayout makeDdrFrameLayout(const DdrFrameGeometry& geom,
                                          uint32_t strideAlign = kDdrFrameStrideAlign,
                                          DdrFrameFormat format = DdrFrameFormat::Yuv420p) {
     DdrFrameLayout out{};
-    if (geom.coded_width <= 0 || geom.coded_height <= 0 || geom.display_width <= 0 ||
-        geom.display_height <= 0 || geom.presented_width <= 0 || geom.presented_height <= 0)
+    if (!ddrFrameGeometryValid(geom))
         return out;
-    if (geom.display_width + geom.crop_left + geom.crop_right != geom.coded_width)
-        return out;
-    if (geom.display_height + geom.crop_top + geom.crop_bottom != geom.coded_height)
-        return out;
-    if (geom.presented_width < geom.display_width || geom.presented_height < geom.display_height)
-        return out;
-
-    if ((geom.coded_width & 1) || (geom.coded_height & 1))
+    if (strideAlign != 0 && (strideAlign & (strideAlign - 1u)) != 0)
         return out;
     const uint64_t lineBytes = static_cast<uint64_t>(geom.coded_width);
     const uint64_t frameBytes = static_cast<uint64_t>(geom.coded_width) *
                                 static_cast<uint64_t>(geom.coded_height) * 3u / 2u;
     const uint64_t chromaLineBytes = static_cast<uint64_t>(geom.coded_width / 2);
-    if (lineBytes > 0xFFFFFFFFull || frameBytes > 0xFFFFFFFFull)
+    const uint64_t minBankStride = frameBytes + 0x1000u;
+    const uint64_t bankStride =
+        strideAlign == 0
+            ? minBankStride
+            : (minBankStride + strideAlign - 1u) &
+                  ~static_cast<uint64_t>(strideAlign - 1u);
+    const uint64_t mapEnd = static_cast<uint64_t>(physBase) + bankStride * 2u;
+    if (lineBytes > 0xFFFFFFFFull || frameBytes > 0xFFFFFFFFull ||
+        bankStride > 0xFFFFFFFFull || bankStride * 2u > 0xFFFFFFFFull ||
+        mapEnd > 0x100000000ull || bankStride < minBankStride)
         return out;
 
     out.phys_base = physBase;
@@ -307,9 +457,9 @@ inline DdrFrameLayout makeDdrFrameLayout(const DdrFrameGeometry& geom,
     out.y_offset = 0;
     out.u_offset = yBytes;
     out.v_offset = yBytes + cBytes;
-    out.bank_stride = alignUpU32(static_cast<uint32_t>(frameBytes), strideAlign);
-    out.doorbell_phys = physBase + out.bank_stride * 2u - 0x1000u;
-    out.map_bytes = out.bank_stride * 2u;
+    out.bank_stride = static_cast<uint32_t>(bankStride);
+    out.doorbell_phys = static_cast<uint32_t>(mapEnd - 0x1000u);
+    out.map_bytes = static_cast<uint32_t>(bankStride * 2u);
     return out;
 }
 
@@ -323,33 +473,78 @@ inline DdrFrameLayout makeDdrFrameLayout(int width, int height,
 inline bool ddrFrameLayoutValid(const DdrFrameLayout& l) {
     if (l.phys_base == 0 || l.width <= 0 || l.height <= 0 || l.frame_bytes == 0)
         return false;
-    if (l.coded_width != l.width || l.coded_height != l.height)
+    const DdrFrameGeometry g{l.coded_width, l.coded_height, l.display_width, l.display_height,
+                             l.presented_width, l.presented_height, l.crop_left, l.crop_right,
+                             l.crop_top, l.crop_bottom, l.present_x, l.present_y, l.placement};
+    if (!ddrFrameGeometryValid(g) || l.coded_width != l.width || l.coded_height != l.height)
         return false;
-    if (l.display_width <= 0 || l.display_height <= 0 || l.presented_width <= 0 ||
-        l.presented_height <= 0)
+    const uint64_t yBytes = static_cast<uint64_t>(l.coded_width) * l.coded_height;
+    const uint64_t cBytes = yBytes / 4u;
+    const uint64_t frameBytes = yBytes + 2u * cBytes;
+    if (l.line_bytes != l.coded_width || l.chroma_line_bytes != l.coded_width / 2 ||
+        l.line_qwords * 8 != l.line_bytes || l.chroma_line_qwords * 8 != l.chroma_line_bytes ||
+        l.y_offset != 0 || l.u_offset != yBytes || l.v_offset != yBytes + cBytes ||
+        l.frame_bytes != frameBytes || l.doorbell_format != ddrFrameFormatCode(l.format))
         return false;
-    if (l.crop_left + l.display_width + l.crop_right != l.coded_width)
+    if (l.bank_stride < l.frame_bytes ||
+        static_cast<uint64_t>(l.map_bytes) != static_cast<uint64_t>(l.bank_stride) * 2u)
         return false;
-    if (l.crop_top + l.display_height + l.crop_bottom != l.coded_height)
+    const uint64_t mapEnd = static_cast<uint64_t>(l.phys_base) + l.map_bytes;
+    if (mapEnd > 0x100000000ull ||
+        static_cast<uint64_t>(l.doorbell_phys) + 0x1000u != mapEnd)
         return false;
-    if (l.present_x < 0 || l.present_y < 0 ||
-        l.present_x + l.display_width > l.presented_width ||
-        l.present_y + l.display_height > l.presented_height)
-        return false;
-    if (l.bank_stride < l.frame_bytes)
-        return false;
-    if (l.doorbell_phys < l.phys_base)
-        return false;
-    const uint32_t bank1 = l.phys_base + l.bank_stride;
-    const uint32_t bank0End = l.phys_base + static_cast<uint32_t>(l.frame_bytes);
-    const uint32_t bank1End = bank1 + static_cast<uint32_t>(l.frame_bytes);
-    return bank0End <= bank1 && bank1End <= l.doorbell_phys && l.doorbell_phys + 0x1000u <=
-                                                        l.phys_base + l.map_bytes;
+    const uint64_t bank1 = static_cast<uint64_t>(l.phys_base) + l.bank_stride;
+    const uint64_t bank0End = static_cast<uint64_t>(l.phys_base) + l.frame_bytes;
+    const uint64_t bank1End = bank1 + l.frame_bytes;
+    return bank0End <= bank1 && bank1End <= l.doorbell_phys;
+}
+
+inline DdrFrameSampleOffsets ddrFramePresentedSampleOffsets(const DdrFrameLayout& l, int x,
+                                                            int y) {
+    DdrFrameSampleOffsets out{};
+    if (!ddrFrameLayoutValid(l))
+        return out;
+    const DdrFrameGeometry g{l.coded_width, l.coded_height, l.display_width, l.display_height,
+                             l.presented_width, l.presented_height, l.crop_left, l.crop_right,
+                             l.crop_top, l.crop_bottom, l.present_x, l.present_y, l.placement};
+    const DdrFramePixelMapping map = mapDdrFramePresentedPixel(g, x, y);
+    if (map.region != DdrFramePixelRegion::Content)
+        return out;
+    const uint64_t yOff =
+        static_cast<uint64_t>(l.y_offset) + static_cast<uint64_t>(map.coded_y) * l.line_bytes +
+        map.coded_x;
+    const uint64_t cIndex = static_cast<uint64_t>(map.coded_y / 2) * l.chroma_line_bytes +
+                            static_cast<uint64_t>(map.coded_x / 2);
+    const uint64_t uOff = static_cast<uint64_t>(l.u_offset) + cIndex;
+    const uint64_t vOff = static_cast<uint64_t>(l.v_offset) + cIndex;
+    if (yOff >= l.u_offset || uOff >= l.v_offset || vOff >= l.frame_bytes)
+        return out;
+    out.valid = true;
+    out.y = static_cast<uint32_t>(yOff);
+    out.u = static_cast<uint32_t>(uOff);
+    out.v = static_cast<uint32_t>(vOff);
+    return out;
 }
 
 inline uint32_t ddrDoorbellHi(uint32_t seq, int bank, DdrFrameFormat format) {
     return (static_cast<uint32_t>(bank & 1) << 31) |
            ((ddrFrameFormatCode(format) & 0x3u) << 29) | (seq & kDdrFrameDoorbellSeqMask);
+}
+
+// Second doorbell qword (L4 DYN_BASE_EN=1): FPGA reads burst-2.
+// [31]=valid, [28:0]=phys>>3. Live 03f1b95a ignores the extra qword.
+inline uint32_t ddrDoorbellDynWord(uint32_t phys) {
+    if (phys == 0 || (phys & 7u) != 0)
+        return 0;
+    return ((phys >> 3) & 0x1FFFFFFFu) | 0x80000000u;
+}
+
+inline bool ddrDoorbellDynValid(uint32_t word) { return (word & 0x80000000u) != 0; }
+
+inline uint32_t ddrDoorbellDynPhys(uint32_t word) {
+    if (!ddrDoorbellDynValid(word))
+        return 0;
+    return (word & 0x1FFFFFFFu) << 3;
 }
 
 inline bool decodeDdrDoorbell(uint32_t lo, uint32_t hi, DdrFrameFormat expectedFormat,

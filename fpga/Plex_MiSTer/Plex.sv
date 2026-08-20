@@ -729,6 +729,10 @@ assign stream_ddr_dout = 64'd0;
 assign stream_ddr_dout_ready = 1'b0;
 `endif
 
+// L4 720p present is ARM ffmpeg + ddr_frame_store. stream_path is the fabric
+// H.264 decoder (l4-dyn2: 10088 ALUTs / 291 M10K) and holds clk_sys Fmax at
+// 13.99 MHz. Product (macro off) still instantiates it.
+`ifndef PLEX_PRESENT_720P_L4
 stream_path #(
 	.FRAME_W(FRAME_W),
 	.FRAME_H(FRAME_H)
@@ -800,6 +804,68 @@ stream_path #(
 	.fs_wr_reset(stub_wr_reset),
 	.fs_swap(stub_swap)
 );
+`else
+assign has_stream = 1'b0;
+assign nalu_count = 16'd0;
+assign last_nal_type = 8'd0;
+assign stream_bytes_in = 32'd0;
+assign stream_bytes_seen = 32'd0;
+assign stream_fifo_level = 16'd0;
+assign stream_ddr_active = 1'b0;
+assign stream_ddr_bytes_out = 32'd0;
+assign stream_ddr_underruns = 16'd0;
+assign stream_ddr_overruns = 16'd0;
+assign stream_ddr_host_write = 32'd0;
+assign stream_ddr_fpga_read = 32'd0;
+assign stream_ddr_bus_want = 1'b0;
+assign stream_ddr_rd = 1'b0;
+assign stream_ddr_we = 1'b0;
+assign stream_ddr_burstcnt = 8'd0;
+assign stream_ddr_addr = 29'd0;
+assign stream_ddr_din = 64'd0;
+assign stream_ddr_be = 8'd0;
+assign has_idr = 1'b0;
+assign idr_count = 8'd0;
+assign sps_count = 8'd0;
+assign pps_count = 8'd0;
+assign slice_count = 8'd0;
+assign stub_frames = 16'd0;
+assign stub_busy = 1'b0;
+assign sps_valid = 1'b0;
+assign sps_profile = 8'd0;
+assign sps_level = 8'd0;
+assign sps_width = 16'd0;
+assign sps_height = 16'd0;
+assign sps_mb_w = 8'd0;
+assign sps_mb_h = 8'd0;
+assign pps_valid = 1'b0;
+assign slice_valid = 1'b0;
+assign slice_type = 8'd0;
+assign slice_is_i = 1'b0;
+assign first_mb_type = 8'd0;
+assign has_mb_type = 1'b0;
+assign slice_qp = 6'd0;
+assign residual_tc = 5'd0;
+assign residual_t1 = 2'd0;
+assign residual_ok = 1'b0;
+assign residual_dc = 8'sd0;
+assign residual_csum = 8'd0;
+assign residual_place_pulse = 1'b0;
+assign recon_sig = 8'd0;
+assign recon_dbg = 8'd0;
+assign recon_dbg_valid = 1'b0;
+assign recon_valid = 1'b0;
+assign stub_wr_en = 1'b0;
+assign stub_wr_pixel = 16'd0;
+assign stub_wr_reset = 1'b0;
+assign stub_swap = 1'b0;
+genvar sp_i;
+generate
+	for (sp_i = 0; sp_i < 16; sp_i = sp_i + 1) begin : g_l4_res_coeff
+		assign residual_coeff[sp_i] = 16'sd0;
+	end
+endgenerate
+`endif
 
 // Phase 3.3j / 3.1b hybrid present:
 //   Host F1 SPI or DDR bulk owns product frame_store once any host frame has
@@ -861,6 +927,12 @@ present_core #(
 	.clk_pix(clk_sys),
 `endif
 	.reset(present_reset),
+`ifdef DDR_FRAME_STORE
+	.ioctl_download(ioctl_download),
+	.ioctl_wr(ioctl_wr),
+	.ioctl_dout(ioctl_dout),
+	.ioctl_index(ioctl_index),
+`endif
 	.pal(status[2]),
 	.scandouble(forced_scandoubler),
 	.content_fps(content_fps),

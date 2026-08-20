@@ -18,7 +18,7 @@
 //   [5:4]    Content res      PMS ladder / DECODE — 0=240p 1=480p 2|3=720p
 //                             (v7 only drove O[4] → 240p/480p)
 //   [9:6]    A/V offset       4-bit SIGNED, 20 ms/step → -160..+140 ms
-//   [10]     T Flush audio FIFO
+//   [10]     unused (v11 Browse is J1/PS2, not a T[] bit)
 //   [11]     T Flush bitstream FIFO
 //   [12:13]  reserved HPS DDR kick/bank — never reuse
 //   [15:14]  Display res (v9) 0=Follow content, 1=240p, 2=480p, 3=720p
@@ -33,6 +33,7 @@
 // adding J1 names does not change this v7 bit layout.
 
 #include <cstdint>
+#include <cstring>
 
 namespace misterplex {
 
@@ -99,10 +100,22 @@ inline ContentResolution contentResolutionFromOsdWord(uint16_t word) {
         return {640, 480, "480p", 2500};
     case 2:
     case 3:
-        return {1280, 720, "720p", 20000};
+        return {1280, 720, "720p", 1500};
     default:
         return {320, 240, "240p", 1000};
     }
+}
+
+inline ContentResolution resolutionFromLabel(const char* label) {
+    if (label && std::strcmp(label, "720p") == 0)
+        return {1280, 720, "720p", 1500};
+    if (label && std::strcmp(label, "480i") == 0)
+        return {720, 480, "480i", 2500};
+    if (label && std::strcmp(label, "480p") == 0)
+        return {640, 480, "480p", 2500};
+    if (label && std::strcmp(label, "240p_lcd") == 0)
+        return {320, 240, "240p_lcd", 1000};
+    return {320, 240, "240p", 1000};
 }
 
 inline ContentResolution contentResolutionFromSize(int w, int h) {
@@ -110,7 +123,7 @@ inline ContentResolution contentResolutionFromSize(int w, int h) {
     // Prior bug: any w>=640 collapsed to 640x480, so DECODE=1280x720 still played
     // 624x480 into a 1280x720 core → full-field yellow/static on glass.
     if (w >= 1280 || h >= 720)
-        return {1280, 720, "720p", 20000};
+        return {1280, 720, "720p", 1500};
     if (w >= 640 || h >= 480)
         return {640, 480, "480p", 2500};
     return {320, 240, "240p", 1000};
@@ -125,7 +138,7 @@ inline ContentResolution displayResolutionFromOsdWord(uint16_t word,
     case 2:
         return {640, 480, "480p", 2500};
     case 3:
-        return {1280, 720, "720p", 20000};
+        return {1280, 720, "720p", 1500};
     default:
         return content;
     }
@@ -144,13 +157,14 @@ inline OsdSettings decodeOsdWord(uint16_t word) {
 }
 
 // Bits the daemon reacts to. [0] reset, [2] TV mode,
-// [10]/[11] flush triggers and [13:12] DDR kick/bank are not user settings and
+// [11] bitstream flush and [13:12] DDR kick/bank are not user settings and
 // toggle constantly during playback. O[5] is part of content-res (v8).
 //
 // The daemon NEVER writes these bits. Main_MiSTer owns the OSD word (and saves it
 // to config/Plex_v7.CFG); a daemon-side write only fights Main's shadow and makes
 // the value flap between the two.
 // Includes O[5] content-res and O[15:14] display-res so 240↔720 are not ignored.
+// Still ignored: reset[0] TV[2] unused[10] T[11] DDR[13:12].
 constexpr uint16_t kOsdOwnedMask = 0xC3FA;
 
 inline bool osdChanged(uint16_t a, uint16_t b) {
