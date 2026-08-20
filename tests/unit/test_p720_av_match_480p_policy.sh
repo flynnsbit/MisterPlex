@@ -110,6 +110,13 @@ grep -q 'inprocRemuxMustCopyAudio' "$MP" || fail "720p remux must copy audio (no
 grep -q 'annexb+pcm' "$MP" || fail "720p remux must be annex-B + PCM fifos (ARM libav has no AAC)"
 grep -q 'inproc_audio=remux_pcm' "$MP" || fail "720p must log remux_pcm (one HTTP, no spawnAudioOnly)"
 grep -q 'mplex-inproc.pcm' "$MP" || fail "720p remux must write PCM fifo"
+grep -q 'O_RDONLY | O_NONBLOCK' "$MP" || \
+  fail "PCM pump must O_RDONLY|O_NONBLOCK (O_RDWR self-writer hides remux EOF)"
+if grep -n 'open(afifo, O_RDWR)' "$MP" | grep -v NONBLOCK >/dev/null; then
+  fail "PCM pump must not open(afifo, O_RDWR) blocking — EOF hang + HTTP spinner"
+fi
+grep -q 'Must not take playHandoffMu here' "$ROOT/arm/misterplexd/main.cpp" || \
+  fail "playMedia HTTP must not wait on playHandoffMu (stop-join hang)"
 grep -q 'inproc_audio=abort remux_pcm fd missing' "$MP" || \
   fail "720p inproc must abort if remux PCM fd missing (no spawnAudioOnly)"
 grep -q 'prefetched=0' "$MP" || fail "want_inproc log must pin prefetched=0"

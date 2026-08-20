@@ -444,6 +444,9 @@ private:
     // 720p: MrAudio stays closed-loop silent until warmup decode finishes, then
     // the HDMI lag hold lets it run. Default true so 480p is unchanged.
     std::atomic<bool> audioFeedRelease_{true};
+    // Writer-hold on /tmp/mplex-inproc.pcm so ffmpeg can open. Must not be the
+    // pump read fd: O_RDWR on the reader hides EOF when remux exits (HTTP spinner).
+    std::atomic<int> remuxPcmHoldFd_{-1};
     // 720p pipe: drain ffmpeg audio while unique warms, then start MrAudio at
     // presentCount content time. 0 = 480p / combined 720p (start with video).
     std::atomic<int> audioReleaseAfterPresents_{0};

@@ -1533,10 +1533,10 @@ int main(int argc, char** argv) {
 
     // playMedia HTTP thread: bump playGen immediately so in-flight doPlay aborts
     // before the new onPlay_ thread even schedules (cast A→B race).
-    comp.setPlayQueued([&]() {
-        std::lock_guard<std::mutex> handoff(playHandoffMu);
-        return ++playGen;
-    });
+    // Must not take playHandoffMu here — that mutex is held across player.stop().
+    // A 720p remux EOF used to leave audioPump in pipe_read; stop() never
+    // returned; the next Play blocked this lambda and Plex Web spun forever.
+    comp.setPlayQueued([&]() { return ++playGen; });
 
     // Keep PMS /:/timeline auth in lock-step with cast-supplied tokens.
     comp.setTokenUpdate([&](const std::string& tok) {

@@ -1600,8 +1600,14 @@ void MediaPlayer::killChildren() {
     }
     audioActive_.store(false);
     streamActive_.store(false);
+    {
+        int hold = remuxPcmHoldFd_.exchange(-1);
+        if (hold >= 0)
+            ::close(hold);
+    }
     ::unlink("/tmp/mplex-inproc.ts");
     ::unlink("/tmp/mplex-inproc.h264");
+    ::unlink("/tmp/mplex-inproc.pcm");
 }
 
 void MediaPlayer::shutdown() {
@@ -2900,6 +2906,19 @@ void MediaPlayer::audioPump(int afd) {
             gatedAudio.erase(gatedAudio.begin(),
                              gatedAudio.begin() + static_cast<std::ptrdiff_t>(n));
         } else {
+            if (afd >= 0) {
+                struct pollfd pfd {};
+                pfd.fd = afd;
+                pfd.events = POLLIN;
+                const int pr = ::poll(&pfd, 1, 20);
+                if (pr < 0) {
+                    if (errno == EINTR)
+                        continue;
+                    break;
+                }
+                if (pr == 0)
+                    continue;
+            }
             n = pcmRead(buf, sizeof(buf));
             if (n < 0) {
                 if (errno == EINTR || errno == EAGAIN)
@@ -3806,9 +3825,17 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     !remuxCopyAudio || mkSizedFifo(afifo, 4 * 1024 * 1024);
                 if (vok && aok) {
                     if (remuxCopyAudio) {
-                        // Sole PCM reader + keeps the fifo open so ffmpeg's
-                        // audio open does not ENXIO while video rendezvous.
-                        remuxPcmFd = ::open(afifo, O_RDWR);
+                        // Hold is a dummy writer so ffmpeg's PCM open is not
+                        // ENXIO during video rendezvous. Pump reads O_RDONLY:
+                        // sharing O_RDWR with the pump hides EOF when remux
+                        // exits (pipe_read forever → stop() joins forever →
+                        // playMedia HTTP blocks on playHandoffMu → spinner).
+                        int hold = remuxPcmHoldFd_.exchange(-1);
+                        if (hold >= 0)
+                            ::close(hold);
+                        hold = ::open(afifo, O_RDWR | O_NONBLOCK);
+                        remuxPcmHoldFd_.store(hold);
+                        remuxPcmFd = ::open(afifo, O_RDONLY | O_NONBLOCK);
                     }
                     const pid_t rpid = spawnHttpRemuxMpegts(
                         url, headers, startMs, vfifo, remuxCopyAudio,
@@ -4109,6 +4136,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 ::close(remuxPcmFd);
                 remuxPcmFd = -1;
             }
+            int hold = remuxPcmHoldFd_.exchange(-1);
+            if (hold >= 0)
+                ::close(hold);
         };
 
         const size_t frameBytes = rawVideoFrameBytes(videoFmt, rawW, rawH);
