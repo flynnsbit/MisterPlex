@@ -104,7 +104,7 @@ if [[ -n "$hits" ]]; then
 fi
 
 # 2. Literal Plex tokens. Placeholders and redactions are fine.
-tok="$(grep -a -nE 'X-Plex-Token[=:] *[A-Za-z0-9_-]{16,}' "${files[@]}" 2>/dev/null \
+tok="$(grep -I -nE 'X-Plex-Token[=:] *[A-Za-z0-9_-]{16,}' "${files[@]}" 2>/dev/null \
   | grep -viE 'REDACTED|YOUR[_-]?PLEX|PLACEHOLDER|<[^>]*>|\$\{|\$[A-Za-z_]|xxxx|\.\.\.' || true)"
 if [[ -n "$tok" ]]; then
   report "literal X-Plex-Token found"
