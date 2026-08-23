@@ -82,6 +82,8 @@ module present_core #(
 
 	input  wire        pal,
 	input  wire        scandouble,
+	input  wire [1:0]  analog_sel,    // 0=240p15, 1=480p31, 2=480i (Template path)
+	output wire        analog_field,  // VGA_F1; 0 except 480i
 	input  wire [7:0]  content_fps,
 	input  wire [7:0]  display_hz,
 	input  wire [1:0]  pattern,
@@ -321,7 +323,9 @@ module present_core #(
 	assign br = 8'd0;
 	assign bg = 8'd0;
 	assign bb = 8'd0;
-	wire _unused_beam_scandouble = scandouble;
+	wire analog_field_i = 1'b0;
+	wire raster_sd = scandouble;
+	wire _unused_beam_scandouble = scandouble | (|analog_sel);
 	wire _unused_beam_pal = pal;
 	wire _unused_eff_pattern = |eff_pattern;
 	wire _unused_l4_beam = (|vtot_act11) | (|htot_act11) | (|hde_act11) | (|vact_act11);
@@ -388,17 +392,23 @@ module present_core #(
 	assign br = 8'd0;
 	assign bg = 8'd0;
 	assign bb = 8'd0;
-	wire _unused_beam_scandouble = scandouble;
+	wire analog_field_i = 1'b0;
+	wire raster_sd = scandouble;
+	wire _unused_beam_scandouble = scandouble | (|analog_sel);
 	wire _unused_beam_pal = pal;
 	wire _unused_eff_pattern = |eff_pattern;
 
 `else
-	// ---- Legacy Template path: colorbars H_DE=529 (FBAR) — product default ----
-	colorbars bars (
+	// ---- Legacy Template path: analog raster mux (FBAR H_DE=529) ----
+	// Runtime 240p 15 kHz / 480p ~31 kHz / 480i VGA_F1. HDMI ascal is not
+	// driven from this beam.
+	wire analog_field_i;
+	wire raster_sd;
+	analog_raster_mux u_analog (
 		.clk(clk),
 		.reset(reset),
 		.pal(pal),
-		.scandouble(scandouble),
+		.raster_sel(analog_sel),
 		.content_index(cont_i),
 		.pattern(eff_pattern),
 		.ce_pix(ce_pix_i),
@@ -407,13 +417,18 @@ module present_core #(
 		.VBlank(vb),
 		.VSync(vs),
 		.frame_start(fstart),
+		.field_odd(analog_field_i),
+		.scandouble_act(raster_sd),
 		.hc_out(hc),
 		.vc_out(vc),
 		.r(br),
 		.g(bg),
 		.b(bb)
 	);
+	wire _unused_beam_scandouble = scandouble;
 `endif
+
+	assign analog_field = analog_field_i;
 
 	localparam [FRAME_X_W-1:0] FRAME_LAST_X = FRAME_X_W'(FRAME_W - 1);
 	localparam [FRAME_Y_W-1:0] FRAME_LAST_Y = FRAME_Y_W'(FRAME_H - 1);
@@ -431,7 +446,7 @@ module present_core #(
 	localparam int STORE_X_SCALE = (FRAME_W * TPL_STORE_X_MUL) / TPL_SCALE_REF_W;
 	localparam int STORE_Y_SCALE = (FRAME_H * 65536) / TPL_SCALE_REF_H;
 	// Exact clone of colorbars in_content (full DE paint region).
-	wire [9:0] py = scandouble ? (vc >> 1) : vc;
+	wire [9:0] py = raster_sd ? (vc >> 1) : vc;
 `ifdef PLEX_PRESENT_720P_L4
 	// L4: present_content_window owns store map (identity when content==DE).
 	// STORE domain tracks FRAME_* so QSF 1280×720 cannot disagree with 480p-era 1280/720 literals.
@@ -615,6 +630,13 @@ module present_core #(
 		.ASPECT_ACK_PHYS(FS_DOORBELL + 32'h130),
 		.DYN_BASE_EN(1'b1)
 `else
+		// Product 480p mailbox page (gold 5f1c8614 / kPlxjAddr). Not L4 0x3047F130.
+		.MAILBOX_PHYS(32'h3007_F100),
+		.INPUT_MAILBOX_PHYS(32'h3007_F108),
+		.SDRAM_MAILBOX_PHYS(32'h3007_F110),
+		.FRAME_MAILBOX_PHYS(32'h3007_F118),
+		.BANK_MAILBOX_PHYS(32'h3007_F128),
+		.ASPECT_ACK_PHYS(32'h3007_F130),
 		.DYN_BASE_EN(1'b0)
 `endif
 	) fstore (

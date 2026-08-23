@@ -548,6 +548,7 @@ module ddr_frame_store #(
 	reg        plxj_req;
 	reg [11:0] plxj_x, plxj_y;
 	reg [7:0]  plxj_token;
+	reg        rd_act_s1, rd_act_s2; // CDC rd_active → clk_ddr (blank-only PLXJ WE)
 	async_fifo #(.WIDTH(8), .AW(2)) input_fifo (
 		.wr_clk(clk), .wr_reset(reset),
 		.wr_en(input_cmd_valid && (input_cmd != 8'd0)), .wr_data(input_cmd),
@@ -916,6 +917,8 @@ module ddr_frame_store #(
 			plxj_x <= 12'd0;
 			plxj_y <= 12'd0;
 			plxj_token <= 8'd0;
+			rd_act_s1 <= 1'b1;
+			rd_act_s2 <= 1'b1;
 			mbox_seq <= 16'd0;
 			mbox_last <= 16'd0;
 			mbox_req <= 1'b1;
@@ -1021,6 +1024,8 @@ module ddr_frame_store #(
 
 			plxa_tog_s1 <= plxa_toggle;
 			plxa_tog_s2 <= plxa_tog_s1;
+			rd_act_s1 <= rd_active;
+			rd_act_s2 <= rd_act_s1;
 			if (plxa_tog_s2 != plxa_tog_seen) begin
 				plxj_x <= plxa_x;
 				plxj_y <= plxa_y;
@@ -1244,7 +1249,8 @@ module ddr_frame_store #(
 						sdram_mbox_valid <= 1'b1;
 						sdram_mbox_req <= 1'b0;
 						state_ddr <= S_WRITE_WAIT;
-					end else if (plxj_req && poll_div[7:0] == 8'd32 && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+					end else if (plxj_req && !rd_act_s2 && poll_div[7:0] == 8'd32 && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+						// Blank-only WE: never steal active-scan DDR beats for PLXJ ACK.
 						DDRAM_ADDR <= ASPECT_ACK_W;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_DIN <= {plxj_token, plxj_y, plxj_x, MAGIC_J};

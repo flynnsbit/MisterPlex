@@ -27,7 +27,11 @@ assign {SD_SCK, SD_MOSI, SD_CS} = 'Z;
 // DDRAM driven by ddram_frame_rd or the C3 DDR frame store; not tied off.
 
 assign VGA_SL = 0;
-assign VGA_F1 = 0;
+// Analog 480i weave drives VGA_F1. 240p/480p keep field=0.
+// VGA_SCALER=0: analog is the core raster (15 kHz CRT or ~31 kHz scandouble).
+// HDMI ascal modeline is HPS/Main — this RTL never emits a 15 kHz HDMI mode.
+wire analog_field;
+assign VGA_F1 = analog_field;
 assign VGA_SCALER  = 0;
 assign VGA_DISABLE = 0;
 assign HDMI_FREEZE = 0;
@@ -57,11 +61,12 @@ localparam CONF_STR = {
 	// Default first option = NTSC (status[2]=0). Bump v, so saved PAL is cleared.
 	"O[2],TV Mode,NTSC,PAL;",
 	// O[5:4] CONTENT resolution → PMS weak ladder / DECODE (misterplexd).
-	// O[15:14] DISPLAY resolution → FPGA present bank (may differ for lab A/V).
-	// 0=240p (320x240), 1=480p (640x480 bank), 2/3=720p (1280x720).
+	// O[15:14] ANALOG raster (runtime mux). 720p HDMI analog is parked;
+	// menu 3 is 480i 15 kHz weave, not a 1280 bank.
+	// 0=240p (320x240), 1=480p (640x480 bank), 2/3=720p (1280x720) decode only.
 	"O[5:4],Content resolution,240p,480p,720p,720p;",
-	// 0=Follow content (v8-safe default); 1/2/3 force present bank independent of PMS.
-	"O[15:14],Display resolution,Follow content,240p,480p,720p;",
+	// 0=Follow content; 1=240p 15kHz; 2=480p ~31kHz; 3=480i 15kHz VGA_F1.
+	"O[15:14],Analog raster,Follow content,240p 15kHz,480p 31kHz,480i 15kHz;",
 	"-;",
 	// misterplexd reads these back over UIO and applies them live (no restart).
 	// Positive = hold the frame back = video LATER. Raise it when audio sounds
@@ -81,7 +86,7 @@ localparam CONF_STR = {
 	"R[0],Reset and close OSD;",
 	// J1 maps to joystick_0 bits 4..7; names feed MiSTer's controller mapper.
 	"J1,Play/Pause,Stop,Skip Fwd,Skip Back;",
-	"v,9;", // reset OSD: v9 O[15:14]=Display res (was Idle); Content still O[5:4]
+	"v,10;", // reset OSD: v10 O[15:14]=Analog raster (was Display res)
 	"V,v",`BUILD_DATE
 };
 
@@ -229,24 +234,29 @@ pll pll
 wire reset = RESET | status[0] | buttons[1];
 
 // O[5:4] CONTENT (PMS/DECODE) — misterplexd OSD mailbox.
-// O[15:14] DISPLAY present bank (v9+). Glass geometry follows display; content
-// may differ for lab A/B. Softc FRAME_W/H may still be 1280x720 compile-time;
-// runtime DDR layout comes from SPI. L4 mux still uses content 480p bit for the
-// 320/640 ladder when PLXG is idle (720p via FABRIC_NATIVE / PLXG).
+// O[15:14] ANALOG raster (v10). Present bank stays 640×480 on this RBF
+// (L4 720p parked). Follow+720p content → 480p ~31 kHz analog, never 15 kHz HDMI.
 wire [1:0]  content_res_sel     = status[5:4];
-// Display: 0=follow content, 1=240p, 2=480p, 3=720p
-wire [1:0]  display_res_menu    = status[15:14];
-wire [1:0]  display_res_sel     = (display_res_menu == 2'd0) ? content_res_sel :
-                                  (display_res_menu == 2'd1) ? 2'd0 :
-                                  (display_res_menu == 2'd2) ? 2'd1 : 2'd2;
+wire [1:0]  analog_menu         = status[15:14];
+// analog_sel: 0=240p15, 1=480p31, 2=480i. Follow maps 240p content → 15 kHz,
+// anything else (480p/720p) → 31 kHz. forced_scandoubler on Follow = LCD-safe 31 kHz.
+wire [1:0]  analog_from_content = (content_res_sel == 2'd0) ? 2'd0 : 2'd1;
+wire        analog_follow_lcd   = forced_scandoubler && (analog_menu == 2'd0);
+wire [1:0]  analog_sel          = analog_follow_lcd ? 2'd1 :
+                                  (analog_menu == 2'd0) ? analog_from_content :
+                                  (analog_menu == 2'd1) ? 2'd0 :
+                                  (analog_menu == 2'd2) ? 2'd1 : 2'd2;
+// Present-bank decode (L4 ifdef path). Analog 480i is not a 1280 bank.
+wire [1:0]  display_res_sel     = (analog_menu == 2'd0) ? content_res_sel :
+                                  (analog_menu == 2'd1) ? 2'd0 :
+                                  2'd1;
 wire        content_res_640x480 = (content_res_sel == 2'd1);
 wire        content_res_720p    = (content_res_sel >= 2'd2);
 wire        display_res_640x480 = (display_res_sel == 2'd1);
-wire        display_res_720p    = (display_res_sel >= 2'd2);
-wire [10:0] content_width       = display_res_720p ? 11'd1280 :
-                                  (display_res_640x480 ? 11'd640 : 11'd320);
-wire [10:0] content_height      = display_res_720p ? 11'd720 :
-                                  (display_res_640x480 ? 11'd480 : 11'd240);
+wire        display_res_720p    = 1'b0; // parked: analog 480i is not a 1280 bank
+wire [10:0] content_width       = display_res_640x480 ? 11'd640 : 11'd320;
+wire [10:0] content_height      = display_res_640x480 ? 11'd480 : 11'd240;
+wire        _unused_res720      = content_res_720p | display_res_720p;
 
 // ---------------------------------------------------------------------------
 // L4 720p present geom hierarchy (DEFAULT OFF via PLEX_PRESENT_720P_L4).
@@ -935,6 +945,8 @@ present_core #(
 `endif
 	.pal(status[2]),
 	.scandouble(forced_scandoubler),
+	.analog_sel(analog_sel),
+	.analog_field(analog_field),
 	.content_fps(content_fps),
 	.display_hz(display_hz),
 	// v3+ reclaimed the debug bits O[9:6]/O[8]/O[9] for playback controls, so the

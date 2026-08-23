@@ -13,6 +13,7 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_vtotal_bresenham.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/yuv_bt601_npx.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/plex_present_geom_mux.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/colorbars.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/analog_raster_mux.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio_tone.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio_fifo.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/async_fifo.sv
