@@ -8,13 +8,14 @@ Campaign: maximize **240p / 480i / 480p** unique + audio sync, then bitrate / Pl
 
 | | |
 |--|--|
-| **Branch / WT** | `feat/sdfam-integ` (this tree; backlog only). Compose freeze **`b31c5bef`** (FIT_GO slot `sdfam-mux1` — **do not edit compose**). **Never merge to main/ship.** Parent owns the device token. |
+| **Branch / WT** | `feat/sdfam-integ` (this tree; backlog only). Fit freeze **`b31c5bef`** (slot `sdfam-mux1` **DONE / IDLE**). Clock-name checker compose **`c5872756`**. **Do not edit compose.** **Never merge to main/ship.** Parent owns the device token. |
 | **PLEX_BASE** | `http://192.168.2.1:32400` (P2P docker PMS, host-net). **Never** `127.0.0.1`. **Never** the **9324** proxy (720p-only, parked). `scripts/misterplex_pair_conf.sh` does **not** own this key. |
-| **Gold A/B** | RBF **`07f54d9f`** / daemon **`5f1c8614`**. Replace only if same-day unique+sync+tear is **not worse**. Blind current-tree daemon = stall class. |
+| **Gold A/B** | RBF **`07f54d9f`** / daemon **`5f1c8614`**. Gold `Plex_480p` **UNTOUCHED** on card (rollback). Blind current-tree daemon = stall class. Replace gold only if same-day unique+sync+tear is **not worse**. |
+| **On box now** | `_Utility/Plex_SDfamily.rbf` md5 **`1ad892c33c3c35b17a3885482a910f64`**. Main argv **`Plex_SDfamily.rbf`**. **No generic `Plex.rbf`.** Gold daemon **`5f1c8614`** (not replaced). |
 | **24p floor** | unique ≥ **23.5**, tip ~**23.97**. Do not fps-filter Trek to fake 30. **Tear is a gate.** |
 | **Named done** | Plex **Web UI** (LAN) → **cast** → MisterPlex → real library title from docker PMS → HDMI glass is **content** (not idle chevron) while Web shows playing. Companion curl / `--play-file` is not done. |
 | **Score** | 240p15 / 480i with HDMI grabber + daemon logs (physical CRT **not** required for this campaign). |
-| **Status** | **IN_PROGRESS** — FIT **LIVE** exclusive slot `sdfam-mux1` (compose **`b31c5bef`**). **No RBF md5. FIT_OK=not yet. No BUILD_OK.** rk36 Web-cast **EOF** content on glass. **Not soak PASS.** SDF-MUX **OPEN**. SDF-CAST **OPEN**. Soft-skip ≠ PASS. |
+| **Status** | **IN_PROGRESS** — mux RBF **`1ad892c3`** on box as `_Utility/Plex_SDfamily.rbf`. Slot `sdfam-mux1` **IDLE** (fit **DONE**). Quartus Full Comp **0 errors**; setup worst **+0.436**; clk_sys g0 **+0.764**; hold **+0.248**; wall **686s**. Wrapper first **rc=1** TIMING_EXCLUSION (short clock names); after hierarchical expected clocks checker **rc=0** (compose **`c5872756`**). HDMI idle OSD **529×239 15.68 kHz 59.8 Hz**; leftover HDMI **1280×720 74.25 MHz**; idle **black**. **No BUILD_OK. No unique PASS.** SDF-MUX **OPEN** (sim ACK + RBF on box + 15.68 kHz analog measured; jump 240p/480i/480p31 **not yet**). SDF-CAST **OPEN** (rk36 EOF was **gold 480p pair**, not this mux RBF). SDF-720 **PARKED**. Never 127 / never 9324. Soft-skip ≠ PASS. |
 
 ### Unblocked since last card (quoted parent 2026-08-23) — nftables is **not** the CAST blocker
 
@@ -68,17 +69,40 @@ Web from **`http://192.168.2.1:32400/web`** (**not** 127). Gold on box **`07f54d
 | Timeline | `http=200` `time=299913` (duration 300000) then `state=stopped http=200` |
 | HDMI | AdvReal content. Early `hdmi_after_192.png` MEAN=59.2 grass; near EOF `hdmi_rk36_near_eof.png` MEAN=80.4. OSD leftover `640x480 14.88kHz 30Hz` over HDMI `1280x720 74.25MHz 60Hz` (**landmine 6**). |
 
-**Not soak PASS.** leftover 74250; analog mux not on glass; tear unscored (OSD on). Never 127 / never 9324.
+**Not soak PASS.** leftover 74250; analog mux not on glass; tear unscored (OSD on). Never 127 / never 9324. **This EOF was gold 480p pair `07f54d9f` / `5f1c8614`, not mux RBF `1ad892c3`.** SDF-CAST stays **OPEN**.
 
-### FIT LIVE (quoted parent **2026-08-23T23:00Z**) — **not BUILD_OK, no RBF md5**
+### FIT DONE slot `sdfam-mux1` (quoted parent **2026-08-23T23:16Z**; result `Memory/lab/parent/sdfam-mux1-fit.result.txt`) — **not BUILD_OK, not PASS**
+
+Fit freeze SHA **`b31c5bef`** (claim `Memory/lab/parent/sdfam-mux-fit.claim.txt`). Clock-name checker compose **`c5872756`**. **Do not edit compose.**
 
 | Item | Evidence (quoted; **not BUILD_OK**) |
 |------|------------------------------------|
-| Compose union | **`b31c5bef`**: fpga reset-latch **`63c4fff8`** + clock SDC **`eb46f987`**. Duck latch2 **ACK** (sim). |
-| Parent Verilator | GREEN **rc=0**, SWAP_SEL **rc=1**, LIVE_LATCH **rc=1**, shell **0**. |
-| Slot | exclusive remote **`sdfam-mux1`** (`quartus_fit` on `Plex.qpf`). Claim `Memory/lab/parent/sdfam-mux-fit.claim.txt`. **Do not edit compose** (FIT_GO freeze). |
-| Install dest (later) | **`Plex_SDfamily.rbf`**. **NEVER** `cores/Plex.rbf`. Quartus output filename `Plex.rbf` is not the install dest. |
-| Gold on box | **`07f54d9f` / `5f1c8614`** stays until A/B. UNVERIFIED=1 (no reference RBF). |
+| Quartus | Full Compilation **successful 0 errors**; fitter Successful; wall **686s**; docker exit **0**. L4 **commented**. ALM **16544/41910 (39%)**. RAM **453/553 (82%)**. |
+| STA | setup worst **+0.436** (`general[2].gpll` divclk); clk_sys g0 **+0.764**; hold worst **+0.248**. |
+| Wrapper | first **rc=1** `TIMING_EXCLUSION` short clock names (`general[0].gpll` / `general[2].gpll` vs TimeQuest hierarchical column). After hierarchical expected clocks checker **rc=0** (compose **`c5872756`**). |
+| RBF | md5 **`1ad892c33c3c35b17a3885482a910f64`** (3867372 bytes). analog_mux md5 lock **`cf88e6c6`** MATCH freeze. |
+| BUILD_OK | **NOT claimed.** Wrapper first rc=1. Checker later rc=0 is **not** a product BUILD_OK stamp. |
+| Compose union | fit SHA **`b31c5bef`**: fpga reset-latch **`63c4fff8`** + clock SDC **`eb46f987`**. Duck latch2 **ACK** (sim). Parent Verilator GREEN **rc=0**, SWAP_SEL **rc=1**, LIVE_LATCH **rc=1**, shell **0**. |
+| Slot | exclusive remote **`sdfam-mux1`** **DONE / IDLE** (`quartus_fit` on `Plex.qpf`). |
+
+### Install on box (quoted parent **2026-08-23T23:16Z**) — gold **untouched**
+
+| Item | Evidence (quoted; **not PASS**) |
+|------|--------------------------------|
+| Install | `/media/fat/_Utility/Plex_SDfamily.rbf` md5 **`1ad892c33c3c35b17a3885482a910f64`**. **NEVER** generic `cores/Plex.rbf` / `_Utility/Plex.rbf`. Quartus output filename `Plex.rbf` is not the install dest. |
+| Main argv | `/media/fat/_Utility/Plex_SDfamily.rbf` pid 22732 `CORENAME=Plex`. Prove load via argv + md5, not CORENAME. |
+| Gold 480p | **`07f54d9f` UNTOUCHED** still on card as `Plex_480p.rbf` (rollback). |
+| Gold daemon | **`5f1c8614`** pid 22936 — **not replaced**. |
+| PLEX_BASE | `http://192.168.2.1:32400`. **Never** 127 / **never** 9324. |
+
+### HDMI idle on mux RBF (quoted parent) — **not jump PASS**
+
+| Item | Evidence (quoted; **not PASS**) |
+|------|--------------------------------|
+| OSD analog | **529×239 15.68 kHz 59.8 Hz** (240p analog class; Follow+Content **default 240p latched**). |
+| HDMI leftover | 1280×720 **74.25 MHz** 60 Hz (ascal leftover / landmine 6). |
+| Idle picture | **black** (park Pattern=None; **not** gold chevron). Capture `Memory/lab/captures/sdfam/hdmi_sdfam_1ad892c3_idle.png`. |
+| Jump | **240p / 480i / 480p31 not yet** on glass. Default Content 240p latched **15.6 kHz**. Parent next: reset-latch Analog menu **480p 31 kHz** at core load. Do not fps-filter. Gold rollback `Plex_480p` still on card. |
 
 ### Fleet (quoted; gold daemon **not** replaced)
 
@@ -91,9 +115,9 @@ Web from **`http://192.168.2.1:32400/web`** (**not** 127). Gold on box **`07f54d
 
 | Item | Status (quoted; **not PASS**) |
 |------|------------------------------|
-| **SDF-CAST** | **OPEN** — content on glass this title (rk36 EOF). leftover HDMI 74250; **tear unscored**. Keep OPEN until soak ≥ unique 23.5 + tens-of-ms + tear. Never 127 / never 9324. |
-| **SDF-MUX** | **OPEN** — sim duck latch2 **ACK**; parent Verilator GREEN rc=0 / SWAP_SEL rc=1 / LIVE_LATCH rc=1 / shell 0; **fit LIVE**; **no glass mux**. **No BUILD_OK. No RBF md5.** Prior duck **NACK** (`sel_lat` on `fstart`) was on pre-latch compose. |
-| **SDF-PLXJ** | This session live-glass **True480**; leftover L4 + `98f2e125` was the miss. Pair-by-argv on glass **not** a leftover-PLXJ product PASS. |
+| **SDF-CAST** | **OPEN** — rk36 EOF content on glass was **gold 480p pair `07f54d9f` / `5f1c8614`**, **not** mux RBF **`1ad892c3`**. leftover HDMI 74250; **tear unscored**. Keep OPEN until soak ≥ unique 23.5 + tens-of-ms + tear **on the mux pair**. Never 127 / never 9324. |
+| **SDF-MUX** | **OPEN** — sim duck latch2 **ACK**; parent Verilator GREEN rc=0 / SWAP_SEL rc=1 / LIVE_LATCH rc=1 / shell 0; RBF **`1ad892c3`** on box as `Plex_SDfamily.rbf`; analog **15.68 kHz** measured (idle OSD **529×239 59.8 Hz**, 240p class). Jump **240p / 480i / 480p31 not yet** on glass. **No BUILD_OK.** Prior duck **NACK** (`sel_lat` on `fstart`) was on pre-latch compose. |
+| **SDF-PLXJ** | This session live-glass **True480**; leftover L4 + `98f2e125` was the miss. Pair-by-argv on glass **not** a leftover-PLXJ product PASS. Main argv now `Plex_SDfamily.rbf` (prove argv + md5). |
 | **SDF-720** | **PARKED**. |
 
 ### 720p24 — **PARKED**
@@ -107,6 +131,7 @@ Do **not** drive 720p24 unless asked. Last lab RBF was `98f2e125` (dyn13 + `VGA_
 | `Plex_480p.rbf` | `07f54d9f8f0eda2fe75d9cc314f6de54` | `misterplexd.480p` | `5f1c861486844f4c83bf32a2112cfbb6` | ~31 kHz / HDMI ascal 60 |
 | `Plex_240p15.rbf` | `4d6efef954acf7b33747f35ac2878c1b` | `misterplexd.240p15` (same bytes) | same | 15 kHz 240p RGB CRT · `[Plex] vga_scaler=0` |
 | `Plex_480i.rbf` | `61db00e7d54efad7c1a456b127b798bd` | `misterplexd.480i` (same bytes) | same | 15 kHz 480i weave · `[Plex] vga_scaler=0` |
+| Campaign `Plex_SDfamily.rbf` (**not gold**) | `1ad892c33c3c35b17a3885482a910f64` | gold `misterplexd.480p` **not replaced** | `5f1c861486844f4c83bf32a2112cfbb6` | idle analog **15.68 kHz** 240p class (Follow+Content default 240p latched). Jump 240p/480i/480p31 **not yet**. **NEVER** overwrite gold `Plex_480p` **`07f54d9f`**. |
 
 Every sibling reports **`CORENAME=Plex`**. Prove load with Main argv (`ps` shows the named `_Utility/Plex_*.rbf`) + md5, not CORENAME. Last glass at campaign start: **`CORENAME=PSX`**. Watcher overlay (all gold): `AV_PRESENT_LEAD_MS=40` `AV_RESYNC_DROP_MS=0` `FFMPEG_SWS_FLAGS=fast_bilinear` `FFMPEG_FPS_FILTER=off` `OSD_CONTROL=0`.
 
@@ -115,7 +140,8 @@ This-campaign measurements (quote; **not PASS**):
 | Pair | Result | Numbers |
 |------|--------|---------|
 | **480p gold** | Unique+sync from PMS **YES** — **not** a tear PASS (OSD was on; stills only) | Overnight: `pfps=23.9` `hw_fps=23.95` `av_drift_ms=-69…-73` `drops=0` `audio_s=5482` `wall_s=5488` (~91 min). Card: `Memory/lab/status/P480_PMS_SOAK_20260821.txt`. |
-| **480p Web-cast rk36** (gold `5f1c8614` / `07f54d9f`, Web **192.168.2.1**) | AdvReal **content** on glass — **not soak PASS** | Mid: ~40 s `pfps=23.7 av_drift_ms=-71 audio_s=40.32 wall_s=40.74`. **EOF:** `pfps=23.9 hw_fps=23.94 av_drift_ms=-71 drops=0 audio_s=299.3 wall_s=299.9` timeline `http=200 time=299913`. HDMI AdvReal (MEAN 59.2 / 80.4). leftover 74250. Card: `Memory/lab/status/SDFAM_WEBCAST_RK36_20260823.txt`. Prior miss this day: `PLAY testsrc`. |
+| **480p Web-cast rk36** (gold `5f1c8614` / `07f54d9f`, Web **192.168.2.1**) | AdvReal **content** on glass — **not soak PASS**; **not this mux RBF** | Mid: ~40 s `pfps=23.7 av_drift_ms=-71 audio_s=40.32 wall_s=40.74`. **EOF:** `pfps=23.9 hw_fps=23.94 av_drift_ms=-71 drops=0 audio_s=299.3 wall_s=299.9` timeline `http=200 time=299913`. HDMI AdvReal (MEAN 59.2 / 80.4). leftover 74250. Card: `Memory/lab/status/SDFAM_WEBCAST_RK36_20260823.txt`. Prior miss this day: `PLAY testsrc`. SDF-CAST stays **OPEN** (gold pair, not `1ad892c3`). |
+| **SDfamily mux idle** (`1ad892c3` + gold daemon `5f1c8614`) | Analog **15.68 kHz** measured — **not jump PASS, not BUILD_OK** | OSD **529×239 15.68 kHz 59.8 Hz** (240p analog class; Follow+Content default 240p latched). HDMI leftover **1280×720 74.25 MHz**. Idle **black** (Pattern=None; not gold chevron). Capture `Memory/lab/captures/sdfam/hdmi_sdfam_1ad892c3_idle.png`. Main argv `_Utility/Plex_SDfamily.rbf`. Gold `Plex_480p` **`07f54d9f` UNTOUCHED**. Jump 240p/480i/480p31 **not yet** on glass. |
 | **480i** | Played Trek; **sync FAIL** | Named load proven. ~131 s: `pfps=23.2–23.4` `av_drift_ms~685–712`. **Not tens-of-ms.** Card: `Memory/lab/status/P480I_PMS_20260821.txt`. |
 | **240p15** | **No soak** | Resolved `320x240` then **`PLAY rejected: source aspect unknown or FPGA ACK did not match`**. Gold `5f1c8614` hard-fails play without PLXJ ACK; 240p15 fabric does not ACK L4 `PLXJ`. |
 
@@ -130,19 +156,19 @@ Today 240p15 / 480i / 480p are **three named RBFs** with the **same gold daemon 
 | **v1** | **Reset-latched analog mux** | One bitstream muxes **15 kHz 240p bob** / **15 kHz 480i weave** / **~31 kHz 480p**. Select analog at **core reset / daemon start** (same latch class as Display `O[15:14]`, which does **not** poke `video_mode` live). One RBF + one daemon. Prove load via Main argv + md5. | F12 **Content** `O[5:4]` as analog. Live F12 Display `video_mode` poke. ascal 15 kHz. Product `VGA_SCALER=1` / `PLEX_PRESENT_720P_L4`. Generic `Plex.rbf`. Current-tree daemon overwrite of `5f1c8614`. |
 | later | Live analog jump (optional) | Only after v1 unique+sync+tear holds on all three rasters **without** swapping Utility cores. | OSD / bitrate / overlays before v1 holds. Re-enable `OSD_CONTROL=1` before leftover F12 bits are proven not to retarget `DECODE` / `TRANSCODE_PROFILE`. |
 
-Parent 2026-08-23: compose **`b31c5bef`** duck latch2 **ACK** (sim). Parent Verilator GREEN **rc=0**, SWAP_SEL **rc=1**, LIVE_LATCH **rc=1**, shell **0**. FIT **LIVE** slot `sdfam-mux1` — **no RBF md5, no BUILD_OK, no glass mux**. Prior duck **NACK** (`sel_lat` on `fstart`) was on pre-latch compose. SDF-MUX stays **OPEN**. Soft-skip ≠ PASS. Install dest later = **`Plex_SDfamily.rbf` NEVER `cores/Plex.rbf`**.
+Parent 2026-08-23: compose fit SHA **`b31c5bef`** duck latch2 **ACK** (sim). Parent Verilator GREEN **rc=0**, SWAP_SEL **rc=1**, LIVE_LATCH **rc=1**, shell **0**. Slot `sdfam-mux1` **DONE / IDLE**. RBF **`1ad892c33c3c35b17a3885482a910f64`** installed `_Utility/Plex_SDfamily.rbf`. Wrapper first **rc=1** TIMING_EXCLUSION; checker **rc=0** (compose **`c5872756`**). HDMI idle **15.68 kHz** (default Content 240p latched). Jump **240p / 480i / 480p31 not yet** on glass. **No BUILD_OK.** Prior duck **NACK** (`sel_lat` on `fstart`) was on pre-latch compose. SDF-MUX stays **OPEN**. Soft-skip ≠ PASS. Install dest = **`Plex_SDfamily.rbf` NEVER `cores/Plex.rbf`**. Gold `Plex_480p` **`07f54d9f` UNTOUCHED**.
 
 ### Gates (all open — **do not invent PASS**)
 
 | ID | Item | Status | Pass when (unblocked + measured) |
 |----|------|--------|----------------------------------|
-| **SDF-MUX** | Analog mux (reset-latched v1) | **OPEN** (sim ACK, fit LIVE, no glass) | Fabric muxes 15 kHz 240p / 15 kHz 480i / ~31 kHz 480p; latch at reset / daemon start. HDMI + daemon-log score. **Not** F12 Content bank bits. Duck latch2 **ACK** (sim). Parent Verilator GREEN rc=0 / SWAP_SEL rc=1 / LIVE_LATCH rc=1 / shell 0. FIT **LIVE** `sdfam-mux1` compose **`b31c5bef`**. **No RBF md5. No BUILD_OK. No glass mux.** Install dest later **`Plex_SDfamily.rbf` NEVER `cores/Plex.rbf`**. |
+| **SDF-MUX** | Analog mux (reset-latched v1) | **OPEN** (sim ACK + RBF on box + 15.68 kHz analog; jump **not yet**) | Fabric muxes 15 kHz 240p / 15 kHz 480i / ~31 kHz 480p; latch at reset / daemon start. HDMI + daemon-log score. **Not** F12 Content bank bits. Duck latch2 **ACK** (sim). Parent Verilator GREEN rc=0 / SWAP_SEL rc=1 / LIVE_LATCH rc=1 / shell 0. Slot `sdfam-mux1` **DONE / IDLE** fit SHA **`b31c5bef`**. Quartus Full Comp **0 errors**; setup **+0.436**; clk_sys g0 **+0.764**; hold **+0.248**; wall **686s**; ALM **39%** RAM **82%**; L4 commented. Wrapper first **rc=1** TIMING_EXCLUSION; checker **rc=0** (`c5872756`). RBF **`1ad892c33c3c35b17a3885482a910f64`** as `_Utility/Plex_SDfamily.rbf`. Idle OSD **529×239 15.68 kHz 59.8 Hz** (240p class; default Content 240p latched). Jump **240p / 480i / 480p31 not yet** on glass. **No BUILD_OK.** Install dest **`Plex_SDfamily.rbf` NEVER `cores/Plex.rbf`**. Gold `Plex_480p` **`07f54d9f` UNTOUCHED**. |
 | **SDF-PLXJ** | Leftover-PLXJ watcher | **OPEN** | Sticky L4 `PLXJ` magic `0x504C584A` at **`0x3047F130`** with **frozen** `PLXD` must **not** pin 720p daemon + 720p conf on a 480p-class bitstream (`hw_presents=0` class). Pair by the RBF just `load_core`'d, or require **changing** PLXD. `CORENAME=Plex` is not identity. No generic `Plex.rbf`. Miss: `/tmp/misterplex-live-glass` `L4` + pair `98f2e125` 720p24 vs Main argv `Plex_480p.rbf`. Recovery session: live-glass **True480** — **not** a leftover-PLXJ product PASS. |
 | **SDF-240ACK** | 240p15 PLAY ACK | **OPEN** (last: **reject**) | Gold-class play of a real title must not print `PLAY rejected: source aspect unknown or FPGA ACK did not match`. Either CRT siblings ACK aspect (`source_aspect_ack` / PLXJ), or gold daemon treats missing PLXJ as OK on 240p15 — **without** reintroducing leftover-L4 pairing (SDF-PLXJ). |
 | **SDF-480I** | 480i tens-of-ms drift | **OPEN** (last: **~700 ms FAIL**) | `av_drift_ms` tens of ms (480p gold class **−69…−73**), `audio_s≈wall`, `drops=0`, `clock=av-lock`. Last soak **685–712 ms** is FAIL. Unique still ≥23.5. HDMI + logs (CRT not required). |
-| **SDF-JUMP** | One-pair jump | **OPEN** | One RBF + one daemon jumps **240p ↔ 480i ↔ 480p** without swapping Utility cores. **v1 = reset-latched analog** (table above). Unique+sync+tear hold after each jump. |
+| **SDF-JUMP** | One-pair jump | **OPEN** (mux RBF on box; **240p/480i/480p31 not yet** on glass) | One RBF + one daemon jumps **240p ↔ 480i ↔ 480p** without swapping Utility cores. **v1 = reset-latched analog** (table above). Unique+sync+tear hold after each jump. Idle on **`1ad892c3`** is default Content 240p latched **15.68 kHz** only — **not** a three-raster jump. |
 | **SDF-BR** | Bitrate after unique+sync+tear | **OPEN** / **not yet** | Raise bitrate / overlays / OSD **only after** unique ≥23.5 **and** tens-of-ms sync **and** tear gate on the jumped pair. `OSD_CONTROL=0` stays load-bearing until leftover F12 bits do not retarget `DECODE`. |
-| **SDF-CAST** | Web cast from docker PMS `http://192.168.2.1:32400` | **OPEN** (rk36 content on glass; leftover 74250; tear unscored) | User path: Plex Web UI (LAN, not app.plex.tv) → cast icon → MisterPlex → real library title → HDMI glass matches content. **Never** 127 / **never** 9324. Miss (keep): `PLAY testsrc` / plex.direct `http=0`. Recovery then **EOF**: Web `http://192.168.2.1:32400/web`; `pfps=23.9 hw_fps=23.94 av_drift_ms=-71 drops=0 audio_s=299.3 wall_s=299.9` timeline `http=200 time=299913`; HDMI AdvReal. leftover HDMI 74250; **tear unscored**. **Not soak PASS.** Card `SDFAM_WEBCAST_RK36_20260823.txt`. Keep OPEN until soak ≥ unique 23.5 + tens-of-ms + tear. `/40868` still 404. w-arm **`51420024`** rewrites 127/plex.direct/169.254 on current tree; gold daemon on box **not** replaced. |
+| **SDF-CAST** | Web cast from docker PMS `http://192.168.2.1:32400` | **OPEN** (rk36 EOF was **gold 480p pair**, not mux RBF **`1ad892c3`**; leftover 74250; tear unscored) | User path: Plex Web UI (LAN, not app.plex.tv) → cast icon → MisterPlex → real library title → HDMI glass matches content. **Never** 127 / **never** 9324. Miss (keep): `PLAY testsrc` / plex.direct `http=0`. Recovery then **EOF** on gold `07f54d9f` / `5f1c8614`: Web `http://192.168.2.1:32400/web`; `pfps=23.9 hw_fps=23.94 av_drift_ms=-71 drops=0 audio_s=299.3 wall_s=299.9` timeline `http=200 time=299913`; HDMI AdvReal. leftover HDMI 74250; **tear unscored**. **Not soak PASS.** Card `SDFAM_WEBCAST_RK36_20260823.txt`. **Not measured on mux RBF `1ad892c3`.** Keep OPEN until soak ≥ unique 23.5 + tens-of-ms + tear **on the mux pair**. `/40868` still 404. w-arm **`51420024`** rewrites 127/plex.direct/169.254 on current tree; gold daemon on box **not** replaced. |
 | **SDF-720** | 720p24 lab | **PARKED** | Do not drive unless asked. No generic `Plex.rbf`. No tunnels. Not product. 9324 proxy parked. |
 
 ### Landmines (quote; paid for)
@@ -152,16 +178,16 @@ Parent 2026-08-23: compose **`b31c5bef`** duck latch2 **ACK** (sim). Parent Veri
 3. `OSD_CONTROL=0` is load-bearing.
 4. Blind current-tree daemon stall class.
 5. Grabber HPD can retune 640×480 ~100 Hz.
-6. Leftover HDMI 74250 `video_mode` over a 480p core. rk36 EOF still: OSD `640x480 14.88kHz 30Hz` over HDMI `1280x720 74.25MHz 60Hz`. Tear unscored.
+6. Leftover HDMI 74250 `video_mode` over analog cores. rk36 EOF (gold 480p): OSD `640x480 14.88kHz 30Hz` over HDMI `1280x720 74.25MHz 60Hz`. Mux idle (`1ad892c3`): OSD **529×239 15.68 kHz 59.8 Hz** over HDMI leftover **1280×720 74.25 MHz**. Tear unscored.
 7. Never `kill $(ps | awk /misterplexd/)`.
 8. Grey chevron / `testsrc` = abort. Miss: `playMedia ACK` then `resolve failed` → `PLAY testsrc`. Recovery session: `testsrc=0`.
-9. One Quartus fit. Slot **`sdfam-mux1` LIVE** on compose **`b31c5bef`** — **do not mid-fit edit compose**. Product QSF must not enable `PLEX_PRESENT_720P_L4`. **No BUILD_OK. No RBF md5.** Install dest later **`Plex_SDfamily.rbf` NEVER `cores/Plex.rbf`**. Sim ACK ≠ glass mux.
+9. One Quartus fit. Slot **`sdfam-mux1` DONE / IDLE** on fit SHA **`b31c5bef`** — **do not edit compose**. Clock-name checker compose **`c5872756`**. Product QSF must not enable `PLEX_PRESENT_720P_L4`. Quartus Full Comp **0 errors**; setup **+0.436**; clk_sys g0 **+0.764**; hold **+0.248**; wall **686s**; ALM **39%** RAM **82%**; L4 commented. Wrapper first **rc=1** TIMING_EXCLUSION (short clock names); checker **rc=0**. RBF **`1ad892c33c3c35b17a3885482a910f64`** installed `_Utility/Plex_SDfamily.rbf`. **NEVER** generic `Plex.rbf`. Gold `Plex_480p` **`07f54d9f` UNTOUCHED**. **No BUILD_OK.** Sim ACK + 15.68 kHz idle ≠ jump PASS.
 10. **127.0.0.1** and **9324** stuck Plex Web scrubber at **0:00** — `PLEX_BASE` must stay `http://192.168.2.1:32400`. Webcast must not load Web from 127. 9324 is 720p-only and parked. Recovery Web was `http://192.168.2.1:32400/web` (`127.0.0.1=0` `9324=0`).
 11. Conf token must match docker (miss: tails `VxUb` ≠ `sxQn`; recovery: matched; **do not copy tokens**).
 12. Default route miss `169.254.3.155`; recovery `via 192.168.2.1 src 192.168.2.2 metric 50`.
 13. Timeline `*.plex.direct:32400`: miss `http=0` (L41 0:00); recovery/EOF `http=200` (hosts bind = ram, **not product**). w-arm **`51420024`** rewrites 127/plex.direct/169.254 → `http://192.168.2.1:32400` on current tree; gold daemon on box **not** replaced.
 
-Resume / start pack: `Memory/lab/RESUME_SD_FAMILY.md`, `Memory/lab/parent/sd-family-start.md`, `Memory/lab/parent/sd-family-status.txt`, claim `Memory/lab/parent/sdfam-mux-fit.claim.txt`. Worker card: `Memory/lab/agents/w-integ.txt`. **FIT LIVE ≠ BUILD_OK ≠ unique PASS ≠ sync PASS ≠ tear PASS ≠ Web-cast PASS.**
+Resume / start pack: `Memory/lab/RESUME_SD_FAMILY.md`, `Memory/lab/parent/sd-family-start.md`, `Memory/lab/parent/sd-family-status.txt`, claim `Memory/lab/parent/sdfam-mux-fit.claim.txt`, result `Memory/lab/parent/sdfam-mux1-fit.result.txt`. Worker card: `Memory/lab/agents/w-integ.txt`. **FIT DONE ≠ BUILD_OK ≠ unique PASS ≠ sync PASS ≠ tear PASS ≠ Web-cast PASS ≠ jump PASS.** RBF on box + 15.68 kHz analog ≠ SDF-MUX closed.
 
 ---
 
@@ -768,7 +794,7 @@ git **docs HEAD `3c43a66`**; **FPGA committed `7bee0a6`**; R-csum6 claim freeze 
 - Do **not** invent hard-csum PASS / WIDE PASS / Fix-3 PASS / 3l2 UNBLOCK; soft-skip ≠ PASS; **DIAG ≠ product PASS**; **BUILD_OK+DEPLOY+PKG+FBAR ≠ residual PASS ≠ WIDE product PASS**; **3l2 BLOCKED** until sticky 0x14; thrash **`8832824e`/`75da8bb1`/`4d6ee356` FORBIDDEN**; exclusive **FREE**; **H-gate-rcsum6 PENDING**; **WIDE still FAIL open Fix-2**
 
 ## Open (priority next workers)
-0. **SD family (2026-08-23) — ACTIVE / no PASS / no BUILD_OK** — compose freeze **`b31c5bef`** FIT **LIVE** exclusive slot **`sdfam-mux1`** (`quartus_fit` `Plex.qpf`; claim `sdfam-mux-fit.claim.txt`; **do not edit compose**; **no RBF md5**). Duck latch2 **ACK** (sim). Parent Verilator GREEN rc=0 / SWAP_SEL rc=1 / LIVE_LATCH rc=1 / shell 0. **SDF-MUX OPEN** (sim ACK, fit LIVE, **no glass**). Install dest later **`Plex_SDfamily.rbf` NEVER `cores/Plex.rbf`**. Gold on box **`07f54d9f` / `5f1c8614`**. w-arm **`51420024`** 127/plex.direct/169.254→`http://192.168.2.1:32400` (gold daemon **not** replaced). w-test **`d04fd386`** latch GREEN rc=0 (1276/15673 hold) LIVE_LATCH rc=1 PMS rewrite GREEN rc=0. **SDF-CAST OPEN** — rk36 EOF content on glass (`pfps=23.9 hw_fps=23.94 av_drift_ms=-71 drops=0 audio_s=299.3 wall_s=299.9` timeline `http=200 time=299913`; HDMI AdvReal; leftover 74250; **tear unscored**; **not soak PASS**; card `SDFAM_WEBCAST_RK36_20260823.txt`). Miss (keep): `PLAY testsrc` / plex.direct `http=0`. **Never** 127 / **never** 9324. **SDF-720 PARKED.** See **ACTIVE — SD family** at top of this file. **Do not invent PASS / BUILD_OK.**
+0. **SD family (2026-08-23) — ACTIVE / no PASS / no BUILD_OK** — slot **`sdfam-mux1` DONE / IDLE** fit SHA **`b31c5bef`**; clock-name checker compose **`c5872756`** (**do not edit compose**). Quartus Full Comp **0 errors**; setup **+0.436**; clk_sys g0 **+0.764**; hold **+0.248**; wall **686s**; ALM **39%** RAM **82%**; L4 commented. Wrapper first **rc=1** TIMING_EXCLUSION (short clock names); after hierarchical expected clocks checker **rc=0**. RBF **`1ad892c33c3c35b17a3885482a910f64`** installed `_Utility/Plex_SDfamily.rbf`. Main argv **`Plex_SDfamily.rbf`**. **NEVER** generic `Plex.rbf`. Gold `Plex_480p` **`07f54d9f` UNTOUCHED**. Gold daemon **`5f1c8614`**. Duck latch2 **ACK** (sim). HDMI idle OSD **529×239 15.68 kHz 59.8 Hz** (240p analog class; Follow+Content default 240p latched); leftover HDMI **1280×720 74.25 MHz**; idle **black**; capture `hdmi_sdfam_1ad892c3_idle.png`. **SDF-MUX OPEN** (sim ACK + RBF on box + 15.68 kHz analog; jump **240p/480i/480p31 not yet**). **SDF-CAST OPEN** — rk36 EOF was **gold 480p pair** (`pfps=23.9 hw_fps=23.94 av_drift_ms=-71 drops=0 audio_s=299.3 wall_s=299.9` timeline `http=200 time=299913`; leftover 74250; **tear unscored**; **not soak PASS**; **not this mux RBF**). Miss (keep): `PLAY testsrc` / plex.direct `http=0`. **Never** 127 / **never** 9324. **SDF-720 PARKED.** See **ACTIVE — SD family** at top of this file. **Do not invent PASS / BUILD_OK.**
 1. ~~**R-csum6 sole LIVE**~~ — **DONE TERMINAL BUILD_OK** lock **`R-csum6 DONE BUILD_OK 2026-07-24T14:10:26-05:00 NEW_RBF=94bbfe433feb562fabe0798e16b378c5 wall=438s LOCK_OK`**; Full Comp **0e/40w** wall **438s** exit **0**; mon **M-fitmon-rcsum6c BUILD_OK**; claim **MATCH** Rank1+2+3 DIAG=ABSENT md5s **`c7a847f7`/`ca62d02b`/`904e9b2e`**; **SRC_DRIFT: NO**; exclusive **FREE** post-build — **BUILD_OK ≠ residual hard PASS**
 2. ~~**ONE H-deploy-rcsum6**~~ — **DONE PROMOTE_OK|DEPLOY_OK** ONE menu lab **LOADED `94bbfe43`** full `94bbfe433feb562fabe0798e16b378c5` (`/tmp/misterplex-agent-H-deploy-rcsum6.txt`) — **DEPLOY_OK ≠ hard residual PASS** — do **not** invent hard sticky0x14 PASS
 3. **H-gate-rcsum6** hard residual on lab **`94bbfe43`** (sticky0x14 ≥2; reject +0x53; res_dc=-24) — **IN_PROGRESS / PENDING** — **do not invent hard PASS / PACK_PROVEN**. Prior **ec21e133** **H-gate-ec21 HARD_FAIL** MULTI_DRIVE; historical **CLOSED FAIL** **`8832824e`**
