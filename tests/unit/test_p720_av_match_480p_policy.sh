@@ -27,10 +27,17 @@ STORE="$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv"
 grep -q 'u_fill_base_mux' "$STORE" || fail "ddr_frame_store must instantiate ddr_frame_base_mux"
 grep -q 'dyn_base0_r' "$STORE" || fail "ddr_frame_store must latch dyn_base from doorbell burst-2"
 grep -q 'ddrDoorbellDynWord' "$ROOT/arm/misterplexd/fpga_spi.cpp" || fail "kickDdrDoorbell must publish dyn phys"
-if grep -E '^[^#]*PLEX_PRESENT_720P_L4=1' "$ROOT/fpga/Plex_MiSTer/Plex.qsf" >/dev/null; then
+QSF="$ROOT/fpga/Plex_MiSTer/Plex.qsf"
+if grep -E '^[[:space:]]*set_global_assignment[[:space:]]+-name[[:space:]]+VERILOG_MACRO[[:space:]]+"PLEX_PRESENT_720P_L4=1"' "$QSF" >/dev/null; then
+  fail "product QSF must not enable PLEX_PRESENT_720P_L4 (SD-family / 480p gold QSF)"
+fi
+if grep -E '^[^#]*PLEX_PRESENT_720P_L4=1' "$QSF" >/dev/null; then
   fail "product QSF must not enable L4 (480p gold QSF)"
 fi
-ok "product QSF stays 480p; L4 dyn-base is ifdef"
+if ! grep -E '^[[:space:]]*#set_global_assignment.*PLEX_PRESENT_720P_L4=1' "$QSF" >/dev/null; then
+  fail "product QSF must keep PLEX_PRESENT_720P_L4 as a commented enable recipe only"
+fi
+ok "product QSF stays 480p; PLEX_PRESENT_720P_L4 default-off"
 PLEXSV="$ROOT/fpga/Plex_MiSTer/Plex.sv"
 if ! grep -q '`ifndef PLEX_PRESENT_720P_L4' "$PLEXSV"; then
   fail "Plex.sv must gate stream_path behind ifndef PLEX_PRESENT_720P_L4 (l4-dyn2 Fmax 13.99)"

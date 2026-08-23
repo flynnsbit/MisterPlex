@@ -10,6 +10,8 @@
 # then MISTERPLEX_LIVE_RBF. Leftover L4 PLXJ 0x504C584A at 0x3047F130 with
 # frozen PLXD must not pin the 720p daemon on Plex_480p / Plex_240p15 /
 # Plex_480i. A LIVE changing L4 PLXD still classifies L4.
+# Future one-pair: Plex_SDfamily.rbf + misterplexd.480p gold (5f1c8614).
+# Never return generic /Plex.rbf. Gold 480p/240p15/480i stay rollback files.
 
 UTILITY_DIR="${MISTERPLEX_UTILITY:-${UTILITY_DIR:-/media/fat/_Utility}}"
 LIVE_RBF="${MISTERPLEX_LIVE_RBF:-${LIVE_RBF:-$UTILITY_DIR/Plex_480p.rbf}}"
@@ -206,6 +208,10 @@ resolve_loaded_rbf() {
     echo "$named"
     return 0
   fi
+  if [ -f "$ut/Plex_SDfamily.rbf" ]; then
+    echo "$ut/Plex_SDfamily.rbf"
+    return 0
+  fi
   # CORENAME=Plex for every sibling — never hash a generic Plex.rbf.
   # Changing L4 PLXD (not leftover PLXJ) still selects Plex_720p24.
   if live_glass_is_l4 && [ -f "$ut/Plex_720p24.rbf" ]; then
@@ -226,5 +232,12 @@ resolve_loaded_rbf() {
       return 0
     fi
   done
+  # Last resort: named rollback, never generic Plex.rbf.
+  case "$LIVE_RBF" in
+    */[Pp]lex.[Rr][Bb][Ff]|[Pp]lex.[Rr][Bb][Ff])
+      echo "$ut/Plex_480p.rbf"
+      return 0
+      ;;
+  esac
   echo "$LIVE_RBF"
 }

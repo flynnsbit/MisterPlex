@@ -2,9 +2,10 @@
 # Upsert misterplex.conf keys for the live RBF pair.
 # Does not touch PLEX_BASE / PLEX_TOKEN / PLEX_SERVERS.
 #
-# Gold-daemon cores (480p / 240p15 / 480i, bytes acfa03d7):
+# Gold-daemon cores (480p / 240p15 / 480i, md5 5f1c8614; sha256 acfa03d7):
 #   lead 40, drop 0, fast_bilinear, no fps= filter, OSD_CONTROL=0
 #   (leftover 720p OSD was retargeting the 480p ladder).
+# Future Plex_SDfamily.rbf (no invented md5) uses the default 480p overlay.
 # L4 720p24: 720p ladder + OSD_CONTROL=0 (leftover F12 480p bits must not
 # retarget DECODE to 640x480 on this RBF). Same lead/drop (safe). Do not
 # force the 480p transcode profile onto this RBF.
@@ -57,7 +58,7 @@ misterplex_pair_conf_keys() {
       echo "FFMPEG_FPS_FILTER=off"
       ;;
     07f54d9f8f0eda2fe75d9cc314f6de54|*)
-      # Default / Plex_480p gold
+      # Default / Plex_480p gold / future Plex_SDfamily (until a real md5 is frozen)
       echo "CONTENT_RES=480p"
       echo "DISPLAY_RES=480p"
       echo "DECODE=640x480"

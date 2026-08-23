@@ -45,11 +45,7 @@ preflight:
 unit:
 	@bash $(ROOT)/scripts/run_with_resource_preflight.sh -- $(MAKE) unit-unlocked
 
-<<<<<<< HEAD
-unit-unlocked: preflight $(ROOT)/build/test_gdm_filter $(ROOT)/build/test_cast_av_480p_policy $(ROOT)/build/test_display_raster_policy $(ROOT)/build/test_p720_audio_keepup $(ROOT)/build/test_p720_transcode_vf $(ROOT)/build/test_spi_txn_complete $(ROOT)/build/test_idle_poll_budget $(ROOT)/build/test_p720_e2e_budget $(ROOT)/build/test_pl330_encode $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_osd_menu $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_pixel_format $(ROOT)/build/test_main_guard $(ROOT)/build/test_status_telemetry $(ROOT)/build/test_resolve $(ROOT)/build/test_pms_timeline $(ROOT)/build/test_companion_plant_seek $(ROOT)/build/pms_baseline_probe $(ROOT)/build/test_h264_bitstream_source $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_frame_store_sdram_sim $(ROOT)/build/test_frame_store_ddr_prefetch_sim $(ROOT)/build/test_sdram_memtest_sim $(ROOT)/build/test_sdram_mailbox $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant $(ROOT)/build/test_p3_host_recon_vectors $(ROOT)/build/test_p3_idct_reference_model $(ROOT)/build/test_p3_inter_pred_vectors $(ROOT)/build/extract_h264_golden
-=======
-unit-unlocked: preflight $(ROOT)/build/test_gdm_filter $(ROOT)/build/test_cast_av_480p_policy $(ROOT)/build/test_p720_audio_keepup $(ROOT)/build/test_p720_transcode_vf $(ROOT)/build/test_spi_txn_complete $(ROOT)/build/test_idle_poll_budget $(ROOT)/build/test_p720_e2e_budget $(ROOT)/build/test_pl330_encode $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_osd_menu $(ROOT)/build/test_sd_family_leftover_plxj $(ROOT)/build/test_hdmi_lcd_refuse_15k $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_pixel_format $(ROOT)/build/test_main_guard $(ROOT)/build/test_status_telemetry $(ROOT)/build/test_resolve $(ROOT)/build/test_pms_timeline $(ROOT)/build/test_companion_plant_seek $(ROOT)/build/pms_baseline_probe $(ROOT)/build/test_h264_bitstream_source $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_frame_store_sdram_sim $(ROOT)/build/test_frame_store_ddr_prefetch_sim $(ROOT)/build/test_sdram_memtest_sim $(ROOT)/build/test_sdram_mailbox $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant $(ROOT)/build/test_p3_host_recon_vectors $(ROOT)/build/test_p3_idct_reference_model $(ROOT)/build/test_p3_inter_pred_vectors $(ROOT)/build/extract_h264_golden
->>>>>>> feat/sdfam-test
+unit-unlocked: preflight $(ROOT)/build/test_gdm_filter $(ROOT)/build/test_cast_av_480p_policy $(ROOT)/build/test_display_raster_policy $(ROOT)/build/test_p720_audio_keepup $(ROOT)/build/test_p720_transcode_vf $(ROOT)/build/test_spi_txn_complete $(ROOT)/build/test_idle_poll_budget $(ROOT)/build/test_p720_e2e_budget $(ROOT)/build/test_pl330_encode $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_osd_menu $(ROOT)/build/test_sd_family_leftover_plxj $(ROOT)/build/test_hdmi_lcd_refuse_15k $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_pixel_format $(ROOT)/build/test_main_guard $(ROOT)/build/test_status_telemetry $(ROOT)/build/test_resolve $(ROOT)/build/test_pms_timeline $(ROOT)/build/test_companion_plant_seek $(ROOT)/build/pms_baseline_probe $(ROOT)/build/test_h264_bitstream_source $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_frame_store_sdram_sim $(ROOT)/build/test_frame_store_ddr_prefetch_sim $(ROOT)/build/test_sdram_memtest_sim $(ROOT)/build/test_sdram_mailbox $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant $(ROOT)/build/test_p3_host_recon_vectors $(ROOT)/build/test_p3_idct_reference_model $(ROOT)/build/test_p3_inter_pred_vectors $(ROOT)/build/extract_h264_golden
 	$(ROOT)/build/test_gdm_filter
 	$(ROOT)/tests/unit/test_cast_http_ready_policy.sh
 	$(ROOT)/build/test_spi_txn_complete
@@ -59,13 +55,10 @@ unit-unlocked: preflight $(ROOT)/build/test_gdm_filter $(ROOT)/build/test_cast_a
 	bash $(ROOT)/tests/unit/test_p720_av_match_480p_policy.sh
 	$(ROOT)/build/test_p720_transcode_vf
 	bash $(ROOT)/tests/unit/test_pair_conf_policy.sh
-<<<<<<< HEAD
 	bash $(ROOT)/tests/unit/test_named_rbf_policy.sh
-=======
 	$(ROOT)/build/test_sd_family_leftover_plxj
 	$(ROOT)/build/test_hdmi_lcd_refuse_15k
 	bash $(ROOT)/tests/unit/test_sd_family_l8.sh
->>>>>>> feat/sdfam-test
 	$(ROOT)/build/test_pl330_encode
 	python3 $(ROOT)/tests/unit/test_p720_shared_bw_contract.py
 	bash $(ROOT)/tests/unit/test_idle_thread_budget_gate.sh
@@ -143,6 +136,7 @@ unit-unlocked: preflight $(ROOT)/build/test_gdm_filter $(ROOT)/build/test_cast_a
 	$(ROOT)/tests/unit/test_mister_ini_plex_guard.sh
 	$(ROOT)/tests/unit/test_confstr_guard.sh
 	$(ROOT)/tests/unit/test_release_rbf_hash.sh
+	$(ROOT)/tests/unit/test_sd_family_package_policy.sh
 	$(ROOT)/tests/unit/test_glass_baseline_pair_policy.sh
 	$(ROOT)/tests/unit/test_v030_lab_stable_policy.sh
 	$(ROOT)/tests/unit/test_sdram_startup_verilator.sh

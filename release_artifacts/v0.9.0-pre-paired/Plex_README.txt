@@ -19,3 +19,7 @@ Only one core runs. The watcher starts the matching daemon from
 /media/fat/misterplex/rbf_daemon_pairs.txt and writes A/V conf for that
 core (lead 40, drop 0, fast_bilinear, fps filter off, OSD_CONTROL=0).
 Do not restore a generic Plex.rbf.
+
+Future one-pair (not frozen): Plex_SDfamily.rbf + misterplexd.480p
+(gold md5 5f1c861486844f4c83bf32a2112cfbb6). Gold Plex_480p / 240p15 /
+480i stay as rollback. Never install as Plex.rbf.
