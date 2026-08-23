@@ -77,6 +77,11 @@ grep -q 'glass_col' "$ROOT/scripts/misterplex_core_watch.sh" || \
   fail "watch must pin L4 from pairs col3 (28cb5a75 was true480 → 640x480 bank)"
 grep -q '0x3047F12C' "$ROOT/scripts/misterplex_named_rbf.sh" || \
   fail "live_glass_is_l4 must sample L4 PLXD before leftover 480p PLXS"
+grep -q 'main_argv_rbf' "$ROOT/scripts/misterplex_named_rbf.sh" || \
+  fail "named_rbf must pair from Main argv (leftover PLXJ must not pin 720p on 480p)"
+grep -q 'leftoverPlxjMustNotPinL4\|liveGlassIsL4FromDoorbellsAndLoadedRbf' \
+  "$ROOT/host/libmisterplex/p720_audio_keepup.hpp" || \
+  fail "p720_audio_keepup must pin leftover-PLXJ vs loaded-RBF policy"
 ok "plex_resolve refuses farpoint_1280x720.mp4 cache bypass"
 grep -q 'liveUniversalMustStreamHttp' "$ROOT/host/libmisterplex/p720_transcode_vf.hpp" || \
   fail "live universal must stream HTTP (prefetch waitPid 20s short-read 0 frames)"

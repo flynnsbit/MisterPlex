@@ -128,12 +128,39 @@ int main() {
           AvAction::Present);
     CHECK(holdLeadMsWithQueued(40, kMrAudioBytesPerSec) == 240); // cap 200
 
-    // Leftover 480p PLXI + static L4 PLXJ (28cb5a75 live) must classify L4.
-    CHECK(decideLiveGlassFromProbes(true, false, true, false) == LiveGlass::L4);
+    CHECK(nameLooksLikeSdFamilyRbf("/media/fat/_Utility/Plex_480p.rbf"));
+    CHECK(nameLooksLikeSdFamilyRbf("Plex_240p15.rbf"));
+    CHECK(nameLooksLikeSdFamilyRbf("Plex_480i.rbf"));
+    CHECK(!nameLooksLikeSdFamilyRbf("Plex_720p24.rbf"));
+    CHECK(!nameLooksLikeSdFamilyRbf("Plex"));
+    CHECK(nameLooksLikeL4FamilyRbf("Plex_720p24.rbf"));
+    CHECK(classifyLoadedRbfName("/media/fat/_Utility/Plex_480p.rbf") == LoadedRbfClass::SdFamily);
+    CHECK(classifyLoadedRbfName("Plex_240p15") == LoadedRbfClass::SdFamily);
+    CHECK(classifyLoadedRbfName("Plex_480i.rbf") == LoadedRbfClass::SdFamily);
+    CHECK(classifyLoadedRbfName("Plex_720p24.rbf") == LoadedRbfClass::L4);
+    CHECK(classifyLoadedRbfName("Plex") == LoadedRbfClass::Unknown);
+
+    // Leftover L4 PLXJ with frozen PLXD must not pin L4 (CORENAME=Plex landmine).
+    CHECK(decideLiveGlassFromProbes(true, false, true, false) == LiveGlass::True480);
+    CHECK(leftoverPlxjMustNotPinL4(false, false, true));
+    CHECK(leftoverPlxjMustNotPinL4(false, true, false));
+    CHECK(!leftoverPlxjMustNotPinL4(true, false, true));
+    // Loaded SD-family RBF beats leftover PLXJ.
+    CHECK(decideLiveGlassFromProbes(true, false, true, false, LoadedRbfClass::SdFamily) ==
+          LiveGlass::True480);
+    // Negative guard: LIVE changing L4 PLXD still classifies L4.
     CHECK(decideLiveGlassFromProbes(true, true, true, false) == LiveGlass::L4);
+    CHECK(decideLiveGlassFromProbes(true, true, true, false, LoadedRbfClass::SdFamily) ==
+          LiveGlass::L4);
+    CHECK(liveGlassIsL4FromDoorbellsAndLoadedRbf(true, false, true, false));
+    CHECK(!liveGlassIsL4FromDoorbellsAndLoadedRbf(false, true, false, true));
+    CHECK(!liveGlassIsL4FromDoorbellsAndLoadedRbf(false, false, true, false));
+    CHECK(liveGlassIsL4FromDoorbellsAndLoadedRbf(false, false, false, true));
     // Live 480p scanout (PLXD changing) still beats leftover L4 PLXJ.
     CHECK(decideLiveGlassFromProbes(true, false, true, true) == LiveGlass::True480);
     CHECK(decideLiveGlassFromProbes(false, false, true, false) == LiveGlass::True480);
+    CHECK(decideLiveGlassFromProbes(true, false, false, false, LoadedRbfClass::L4) ==
+          LiveGlass::L4);
     CHECK(glassMax(1280, 720, LiveGlass::L4).width == 1280);
     CHECK(glassMax(1280, 720, LiveGlass::True480).width == 640);
 

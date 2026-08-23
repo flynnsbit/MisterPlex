@@ -55,6 +55,7 @@ unit-unlocked: preflight $(ROOT)/build/test_gdm_filter $(ROOT)/build/test_cast_a
 	bash $(ROOT)/tests/unit/test_p720_av_match_480p_policy.sh
 	$(ROOT)/build/test_p720_transcode_vf
 	bash $(ROOT)/tests/unit/test_pair_conf_policy.sh
+	bash $(ROOT)/tests/unit/test_named_rbf_policy.sh
 	$(ROOT)/build/test_pl330_encode
 	python3 $(ROOT)/tests/unit/test_p720_shared_bw_contract.py
 	bash $(ROOT)/tests/unit/test_idle_thread_budget_gate.sh

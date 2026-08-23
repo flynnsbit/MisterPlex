@@ -168,6 +168,8 @@ stop_plex_arm() {
 
 select_bin_for_live_rbf() {
   # Must not run in $() — last_pair_key / SELECTED_BIN live in this shell.
+  # Pair by the loaded RBF (Main argv / RBFNAME Utility path / LIVE_RBF).
+  # Leftover L4 PLXJ 504C584A at 0x3047F130 must not hash Plex_720p24.
   rbf=$(resolve_loaded_rbf)
   SELECTED_BIN="$DEFAULT_BIN"
   sum="missing"

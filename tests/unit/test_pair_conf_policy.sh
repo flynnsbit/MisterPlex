@@ -99,8 +99,10 @@ if grep -A8 'select_bin_for_live_rbf' "$WATCH" | grep -q '03f1b95a.*then'; then
 fi
 grep -q 'glass_col' "$WATCH" || fail "watch must pin live-glass from pairs col3"
 grep -q '0x3047F12C' "$NAMED" || fail "named_rbf must sample L4 PLXD (not leftover 480p PLXS first)"
-grep -q '504C584A' "$NAMED" || fail "named_rbf must treat PLXJ as L4-only leftover discriminator"
-ok "watch pins L4 from pairs col3; named_rbf prefers live L4 PLXD/PLXJ"
+grep -q '504C584A' "$NAMED" || fail "named_rbf must mention leftover PLXJ 504C584A"
+grep -q 'main_argv_rbf' "$NAMED" || fail "named_rbf must pair from Main argv"
+grep -q 'loaded_rbf_from_main_or_rbfname' "$NAMED" || fail "named_rbf must pair by loaded RBF not leftover PLXJ"
+ok "watch pins L4 from pairs col3; named_rbf pairs by loaded RBF (leftover PLXJ must not win)"
 
 if [ "$fails" -ne 0 ]; then
   echo "test_pair_conf_policy: $fails failure(s)" >&2
