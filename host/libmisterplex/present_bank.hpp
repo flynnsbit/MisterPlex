@@ -5,6 +5,7 @@
 #include "libmisterplex/ddr_frame_layout.hpp"
 #include "libmisterplex/mailbox_abi_spec.hpp"
 #include "libmisterplex/osd_menu.hpp"
+#include "libmisterplex/p720_audio_keepup.hpp"
 
 #include <cstdint>
 #include <cstdlib>
@@ -30,24 +31,31 @@ inline LiveGlass classifyLiveGlass(uint32_t plxjWord) {
     return plxjWord == mailbox_abi::kPlxjMagic ? LiveGlass::L4 : LiveGlass::True480;
 }
 
-// Leftover L4 PLXJ in HPS DRAM (survives reboot) must not pin glass=L4 when
+enum class LoadedRbfClass { Unknown, SdFamily, L4 };
+
+inline LoadedRbfClass classifyLoadedRbfName(const char* pathOrName) {
+    if (p720_av::nameLooksLikeL4FamilyRbf(pathOrName))
+        return LoadedRbfClass::L4;
+    if (p720_av::nameLooksLikeSdFamilyRbf(pathOrName))
+        return LoadedRbfClass::SdFamily;
+    return LoadedRbfClass::Unknown;
+}
+
+// Leftover L4 PLXJ in HPS DRAM (survives core swap) must not pin glass=L4 when
 // the live RBF is true480 (PLXI at 0x3007F108, doorbell 0x3007F000). Cast then
 // writes 720p doorbells the fabric never polls — chevron-only, Web still playing.
+// Pair by the loaded RBF (Main argv / RBFNAME / MISTERPLEX_LIVE_RBF). Sticky
+// leftover PLXJ (0x504C584A @ 0x3047F130) is not live glass. Changing L4 PLXD
+// still classifies L4.
 inline LiveGlass decideLiveGlassFromProbes(bool l4PlxjMagic, bool l4Changed,
-                                           bool t480PlxiMagic, bool t480Changed) {
-    if (l4Changed)
+                                           bool t480PlxiMagic, bool t480Changed,
+                                           LoadedRbfClass loaded = LoadedRbfClass::Unknown) {
+    (void)l4PlxjMagic;
+    (void)t480PlxiMagic;
+    const bool sd = loaded == LoadedRbfClass::SdFamily;
+    const bool l4 = loaded == LoadedRbfClass::L4;
+    if (p720_av::liveGlassIsL4FromDoorbellsAndLoadedRbf(l4Changed, t480Changed, sd, l4))
         return LiveGlass::L4;
-    if (t480Changed)
-        return LiveGlass::True480;
-    // Leftover true480 PLXI in HPS DRAM is sticky after an L4 load. Static L4
-    // PLXJ (magic present, not changing in the 40 ms sample) must still win
-    // over that leftover — otherwise 28cb5a75 pins glass=true480 and
-    // GLASS-MAX caps DECODE=1280x720 → bank=640x480. Live 480p still wins
-    // via t480Changed (scanout ticks PLXD).
-    if (l4PlxjMagic)
-        return LiveGlass::L4;
-    if (t480PlxiMagic)
-        return LiveGlass::True480;
     return LiveGlass::True480;
 }
 
@@ -290,16 +298,23 @@ inline LiveGlass probeLiveGlass(const char* memPath = "/dev/mem") {
     ::close(fd);
     const bool l4Changed = (l4Plxj0 != l4Plxj1) || (l4Plxd0 != l4Plxd1);
     const bool t480Changed = (t480Plxi0 != t480Plxi1) || (t480Plxd0 != t480Plxd1);
+    LoadedRbfClass loaded = classifyLoadedRbfName(readTrimPinFile("/tmp/RBFNAME").c_str());
+    if (loaded == LoadedRbfClass::Unknown)
+        loaded = classifyLoadedRbfName(std::getenv("MISTERPLEX_LIVE_RBF"));
     return decideLiveGlassFromProbes(l4Plxj1 == mailbox_abi::kPlxjMagic, l4Changed,
-                                     t480Plxi1 == mailbox_abi::kPlxiMagic, t480Changed);
+                                     t480Plxi1 == mailbox_abi::kPlxiMagic, t480Changed, loaded);
 }
 
 inline LiveGlass corroborateLiveGlass(uint32_t plxjWord, const LiveGlassPin& pin) {
-    const LiveGlass magic = classifyLiveGlass(plxjWord);
-    if (magic == LiveGlass::L4)
+    const LoadedRbfClass loaded = classifyLoadedRbfName(pin.rbfname.c_str());
+    if (loaded == LoadedRbfClass::SdFamily)
+        return LiveGlass::True480;
+    if (loaded == LoadedRbfClass::L4)
         return LiveGlass::L4;
-    if (pin.core == "Plex" && pin.rbfname.find("720") != std::string::npos)
+    if (pin.rbfname.find("720") != std::string::npos)
         return LiveGlass::L4;
+    // Leftover PLXJ 0x504C584A is not live glass.
+    (void)plxjWord;
     return LiveGlass::True480;
 }
 

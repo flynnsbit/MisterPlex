@@ -173,6 +173,56 @@ inline bool plex720pSkipBankMemcpy(std::uint32_t dynPhys, bool dynBaseRbf) {
     return dynBaseRbf && dynPhys != 0u;
 }
 
+// Landmine 2: leftover L4 PLXJ 0x504C584A at 0x3047F130 with frozen PLXD
+// must not pin 720p pairing. Changing 480p PLXD or a loaded SD-family RBF
+// (Plex_480p / Plex_240p15 / Plex_480i) wins. A LIVE changing L4 PLXD still
+// classifies L4 (negative guard — do not regress 720p parked pairing).
+inline bool nameLooksLikeL4FamilyRbf(const char* pathOrName) {
+    if (!pathOrName || !pathOrName[0])
+        return false;
+    const char* base = std::strrchr(pathOrName, '/');
+    base = base ? base + 1 : pathOrName;
+    return std::strstr(base, "720") != nullptr || std::strstr(base, "Plex_720") != nullptr ||
+           std::strstr(base, "plex_720") != nullptr || std::strstr(base, "Plex-720") != nullptr;
+}
+
+inline bool nameLooksLikeSdFamilyRbf(const char* pathOrName) {
+    if (!pathOrName || !pathOrName[0])
+        return false;
+    if (nameLooksLikeL4FamilyRbf(pathOrName))
+        return false;
+    const char* base = std::strrchr(pathOrName, '/');
+    base = base ? base + 1 : pathOrName;
+    return std::strstr(base, "480p") != nullptr || std::strstr(base, "480P") != nullptr ||
+           std::strstr(base, "480i") != nullptr || std::strstr(base, "480I") != nullptr ||
+           std::strstr(base, "240p") != nullptr || std::strstr(base, "240P") != nullptr ||
+           std::strstr(base, "240i") != nullptr || std::strstr(base, "Plex_240") != nullptr ||
+           std::strstr(base, "plex_240") != nullptr;
+}
+
+inline bool leftoverPlxjMustNotPinL4(bool l4PlxdChanging, bool t480PlxdChanging,
+                                     bool loadedSdFamilyRbf) {
+    if (l4PlxdChanging)
+        return false;
+    return t480PlxdChanging || loadedSdFamilyRbf;
+}
+
+// Pair by doorbells + the RBF actually loaded. Sticky leftover PLXJ is not
+// live glass. decideLiveGlassFromProbes in present_bank.hpp calls this.
+inline bool liveGlassIsL4FromDoorbellsAndLoadedRbf(bool l4PlxdChanging, bool t480PlxdChanging,
+                                                   bool loadedSdFamilyRbf,
+                                                   bool loadedL4FamilyRbf) {
+    if (l4PlxdChanging)
+        return true;
+    if (t480PlxdChanging)
+        return false;
+    if (loadedSdFamilyRbf)
+        return false;
+    if (loadedL4FamilyRbf)
+        return true;
+    return false;
+}
+
 // avDecide uses HEARD (written−queued). Target ring depth is ~100 ms, lead
 // is 40 ms → Hold forever at drift≈−100 and unique 23.5. Add queued ms to
 // lead so Hold matches 480p submitted-clock behaviour.
