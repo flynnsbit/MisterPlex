@@ -400,8 +400,9 @@ module present_core #(
 
 `else
 	// ---- Legacy Template path: analog raster mux (FBAR H_DE=529) ----
-	// Runtime 240p 15 kHz / 480p ~31 kHz / 480i VGA_F1. HDMI ascal is not
-	// driven from this beam.
+	// analog_sel is RESET-LATCHED inside analog_raster_mux (v1). Live F12
+	// Analog/Content must not retarget H class. HDMI ascal is not driven
+	// from this beam (VGA_SCALER=0 at parent).
 	wire analog_field_i;
 	wire raster_sd;
 	analog_raster_mux u_analog (

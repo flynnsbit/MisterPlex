@@ -195,3 +195,20 @@ When `PRESENT_CLK_PIX_PLL=1`, `pll_0002` adds `outclk_3` = clk_pix (29.70 MHz de
 | P3 | reset into pix | async | 2FF mp_rst_pix* |
 
 SDC: `Plex_clk_pix.sdc` sets asynchronous clock groups clk_pix ⊥ clk_sys and clk_pix ⊥ clk_ddr. Do not false_path residual_csum.
+
+## Analog raster mux (clk_sys only — w-clock)
+
+`ce_pix` is a **clock-enable** in `clk_sys`, not a CDC and not a generated clock.
+All analog mux / colorbars FFs are `posedge clk`. Analog H-rate 15.674 kHz =
+`20e6/1276` is `Fclk/Hclk`, not a TimeQuest clock. SDC: `Plex_analog_mux.sdc`.
+
+| # | Signal | Dir | Width | Type | Mechanism | Verdict |
+|---|--------|-----|-------|------|-----------|---------|
+| A1 | `ce_pix` | same clk_sys | 1 | clock-enable | registered toggle (240p/480i) or held 1 (480p); consumers `if (ce_pix)` | N/A (not a crossing). Do not `create_generated_clock`. |
+| A2 | `analog_sel` / `sel_lat` | OSD `status[15:14]` → mux | 2 | quasi-static | reset-latch only (`sel_lat` not on `frame_start`; not live F12) | SAFE as run-constant. SDC `set_false_path -to {*sel_lat*}`. |
+| A3 | future HPS analog doorbell | HPS → clk_sys | 1 | pulse/level | **not in tree**. Required: 2FF + reset snapshot into `analog_sel`. | OPEN. Do not time as per-line; do not generate a clock from it. |
+| A4 | `field_odd` (`VGA_F1`) | same clk_sys | 1 | level | toggles on `frame_start` when `sel_lat==2` | N/A (same domain) |
+
+Do not false-path **from** `sel_lat` (scandouble → `ce_pix` is a real `clk_sys` path).
+Do not false-path Content `O[5:4]` here (those bits apply live). HDMI LCD ascal
+`video_mode` is a separate domain (`sys_top.sdc` already false-paths ascal geometry).

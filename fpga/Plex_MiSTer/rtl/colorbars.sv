@@ -16,7 +16,7 @@ module colorbars (
 	input  wire [31:0] content_index, // unique frame number (cadence-advanced)
 	input  wire [1:0]  pattern,       // 0=none(black), 1=bars, 2=bars+block, 3=grid
 
-	output reg         ce_pix,
+	(* direct_enable *) output reg ce_pix, // clk_sys enable, not a generated clock
 	output reg         HBlank,
 	output reg         HSync,
 	output reg         VBlank,
@@ -46,7 +46,9 @@ module colorbars (
 	assign hc_out = hc;
 	assign vc_out = vc;
 
-	// Pixel enable + counters (Template mycore style)
+	// Pixel enable + counters (Template mycore style).
+	// ce_pix toggles when ~scandouble (10 MHz step @ 20 MHz clk) else held 1.
+	// FFs stay posedge clk; STA must not treat ce_pix as create_generated_clock.
 	always @(posedge clk) begin
 		if (scandouble)
 			ce_pix <= 1'b1;

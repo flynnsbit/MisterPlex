@@ -61,8 +61,8 @@ localparam CONF_STR = {
 	// Default first option = NTSC (status[2]=0). Bump v, so saved PAL is cleared.
 	"O[2],TV Mode,NTSC,PAL;",
 	// O[5:4] CONTENT resolution → PMS weak ladder / DECODE (misterplexd).
-	// O[15:14] ANALOG raster (runtime mux). 720p HDMI analog is parked;
-	// menu 3 is 480i 15 kHz weave, not a 1280 bank.
+	// O[15:14] ANALOG raster (reset-latched mux v1). 720p HDMI analog is parked;
+	// menu 3 is 480i 15 kHz weave, not a 1280 bank. Live F12 does not retarget H.
 	// 0=240p (320x240), 1=480p (640x480 bank), 2/3=720p (1280x720) decode only.
 	"O[5:4],Content resolution,240p,480p,720p,720p;",
 	// 0=Follow content; 1=240p 15kHz; 2=480p ~31kHz; 3=480i 15kHz VGA_F1.
@@ -240,6 +240,8 @@ wire [1:0]  content_res_sel     = status[5:4];
 wire [1:0]  analog_menu         = status[15:14];
 // analog_sel: 0=240p15, 1=480p31, 2=480i. Follow maps 240p content → 15 kHz,
 // anything else (480p/720p) → 31 kHz. forced_scandoubler on Follow = LCD-safe 31 kHz.
+// analog_raster_mux RESET-LATCHES analog_sel (v1). Live F12 Analog/Content
+// does not retarget H class. Content O[5:4] is DECODE, not a 15 kHz switch.
 wire [1:0]  analog_from_content = (content_res_sel == 2'd0) ? 2'd0 : 2'd1;
 wire        analog_follow_lcd   = forced_scandoubler && (analog_menu == 2'd0);
 wire [1:0]  analog_sel          = analog_follow_lcd ? 2'd1 :
