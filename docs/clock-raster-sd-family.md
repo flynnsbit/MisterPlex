@@ -41,3 +41,36 @@ OSD Display `O[15:14]` is bank/label, not analog line rate. Latch is reset-only
 
 Policy: `videoModeCmdForScoringPath(label, DisplaySink::HdmiLcd)` in
 `host/libmisterplex/display_raster.hpp`.
+
+## Analog mux `ce_pix` (clock-enable, not a generated clock)
+
+Template analog raster (`analog_raster_mux` → `colorbars`) runs entirely on
+`clk_sys`. `ce_pix` is a **registered clock-enable** (`always @(posedge clk)` +
+`if (ce_pix)`). Nothing in this path is `posedge ce_pix`.
+
+| `analog_sel` | `ce_pix` | Pixel step | H clocks | H-rate @ 20.000 MHz |
+|--------------|----------|------------|----------|---------------------|
+| 0 = 240p | toggle | 10 MHz | 1276 = 638×2 | **15674 Hz** |
+| 1 = 480p | held 1 | 20 MHz | 638 | **31348 Hz** |
+| 2 = 480i | toggle | 10 MHz | 1276 | **15674 Hz** + `VGA_F1` |
+
+Do **not** `create_generated_clock` on `ce_pix` or analog `HSync`. Do **not**
+`derive_clocks`. A future sole fit must keep STA Fmax on `general[0]` 20.000 MHz
+and must not invent a 15.6 kHz fabric clock. Silent multicycle-2 on `ce_pix`-gated
+paths is also banned: `HBlank`/`HSync` sample every `clk_sys` tick.
+
+SDC: `fpga/Plex_MiSTer/Plex_analog_mux.sdc` (product, `files.qip`). Optional
+`Plex_clk_pix.sdc` is a different, default-OFF PLL out3 domain.
+
+## analog_sel CDC (reset-latch, not live F12)
+
+`analog_sel` comes from OSD Display `O[15:14]` (`status[15:14]`) and, later, a
+possible HPS doorbell. **Reset-latch only** (`displayRasterApplyOnOsdChange()==false`;
+`sel_lat` in the mux loads on `reset`, not `frame_start`). SDC false-paths **to**
+`sel_lat` so STA does not treat F12 hops as per-line data. Do not false-path
+**from** `sel_lat` (the scandouble → `ce_pix` mux is a real `clk_sys` path).
+
+Future doorbell: 2FF into `clk_sys`, snapshot at reset into `analog_sel` /
+`sel_lat`. Do not turn the doorbell into a generated clock.
+
+HDMI LCD refuse of ascal 15 kHz is unchanged (`test_hdmi_lcd_refuse_15k`).

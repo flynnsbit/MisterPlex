@@ -102,6 +102,30 @@ int main(int argc, char** argv) {
 		fails++;
 	}
 
+	// Reset-latch: live raster_sel hop must not retune CE (SDC/CDC contract).
+	// Skip when 240p class already failed (FAULT swap-sel red twin).
+	if (c240) {
+		top->raster_sel = 1;
+		int fs_live = 0;
+		for (int c = 0; c < 500000 && fs_live < 2; ++c) {
+			tick(top);
+			if (top->frame_start)
+				fs_live++;
+		}
+		const int p_live = measure_hs_period(top, 4);
+		const int hz_live = hz_from_period(p_live);
+		std::printf("live-hop sel=1 (no reset) period_clk=%d H=%d Hz scandouble=%d fstart=%d\n",
+		            p_live, hz_live, top->scandouble_act ? 1 : 0, fs_live);
+		if (!in_class(hz_live, kHzLo15, kHzHi15)) {
+			std::printf("FAIL live raster_sel hop retuned analog H-rate (sel_lat not reset-only)\n");
+			fails++;
+		}
+		if (top->scandouble_act) {
+			std::printf("FAIL live hop set scandouble_act (sel_lat hopped on fstart)\n");
+			fails++;
+		}
+	}
+
 	// ---- 480p ~31 kHz class ----
 	reset_sel(top, 1);
 	const int p480 = measure_hs_period(top, 6);

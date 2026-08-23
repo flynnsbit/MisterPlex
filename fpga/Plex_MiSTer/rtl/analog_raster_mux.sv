@@ -7,6 +7,13 @@
 //   ce_pix=1 → 20 MHz, H_TOTAL=638 → 20e6/638 = 31.348 kHz
 // sel 2 = 480i 15 kHz class + VGA_F1 field toggle (same H as 240p)
 //
+// ce_pix is a clk_sys clock-enable (colorbars), not a generated clock.
+// STA: fpga/Plex_MiSTer/Plex_analog_mux.sdc — do not create_generated_clock
+// on ce_pix / analog HSync. 15.6 kHz is H-rate; Fmax stays clk_sys 20 MHz.
+//
+// analog_sel / OSD O[15:14] / future HPS doorbell: reset-latch only.
+// sel_lat does not follow live F12. field_odd still toggles on frame_start.
+//
 // HDMI LCD must never take a 15 kHz ascal video_mode from this module.
 // Analog VGA_F1 is the 480i field flag; VGA_SCALER stays 0 at the parent.
 
@@ -68,15 +75,16 @@ module analog_raster_mux (
 	);
 	assign frame_start = fstart;
 
+	// sel_lat is reset-only (Plex_analog_mux.sdc). analog_sel is a run-constant;
+	// live OSD O[15:14] / future doorbell must not retune CE mid-run.
 	always @(posedge clk) begin
 		if (reset) begin
 			sel_lat   <= sel_eff;
 			field_odd <= 1'b0;
 		end else if (fstart) begin
-			sel_lat <= sel_eff;
 			if (FAULT_NO_FIELD)
 				field_odd <= 1'b0;
-			else if (sel_eff == 2'd2)
+			else if (sel_lat == 2'd2)
 				field_odd <= ~field_odd;
 			else
 				field_odd <= 1'b0;
