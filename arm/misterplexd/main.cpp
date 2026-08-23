@@ -945,9 +945,10 @@ int main(int argc, char** argv) {
                                                  matchH);
         };
 
-        // 720p24: Plex Web pins address=LAN PMS. That 401s the conf token and
-        // skips the host 9324 proxy (x86 1280x720 baseline @ 24p). Cast then
-        // played testsrc (120s) or PMS HEVC→720 (~13 unique). Prefer proxy.
+        // 720p24 PARKED: Plex Web pins address=LAN PMS. That 401s the conf token
+        // and skips the host 9324 proxy (x86 1280x720 baseline @ 24p). Cast then
+        // played testsrc (120s) or PMS HEVC→720 (~13 unique). Prefer proxy on L4
+        // only. True480 / 480p / 240p15 / 480i must not take 9324 (Web 0:00).
         if (player.liveGlass() == misterplex::LiveGlass::L4 &&
             preferredBase.find("127.0.0.1:9324") != std::string::npos) {
             std::string t = token;

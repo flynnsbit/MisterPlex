@@ -86,20 +86,17 @@ std::string hostOnly(const std::string& hostOrUrl) {
         h = h.substr(p + 3);
     if (auto p = h.find('/'); p != std::string::npos)
         h = h.substr(0, p);
+    if (!h.empty() && h.front() == '[') {
+        const auto close = h.find(']');
+        if (close != std::string::npos)
+            return h.substr(1, close - 1);
+    }
+    // Bare IPv6 (::1) has two or more colons — do not truncate at the first.
+    if (std::count(h.begin(), h.end(), ':') >= 2)
+        return h;
     if (auto p = h.find(':'); p != std::string::npos)
         h = h.substr(0, p);
     return h;
-}
-
-bool isUnreachableHost(const std::string& hostOrUrl) {
-    const std::string h = hostOnly(hostOrUrl);
-    if (h.rfind("172.17.", 0) == 0 || h.rfind("172.18.", 0) == 0 ||
-        h.rfind("172.20.", 0) == 0 || h.rfind("172.21.", 0) == 0)
-        return true;
-    if (h.find("172-17-") != std::string::npos || h.find("172-18-") != std::string::npos ||
-        h.find("172-20-") != std::string::npos || h.find("172-21-") != std::string::npos)
-        return true;
-    return false;
 }
 
 std::string attr(const std::string& xml, const char* tag, const char* name) {
@@ -161,6 +158,33 @@ bool videoCodecIsH264(const std::string& codecRaw) {
 }
 
 } // namespace
+
+bool isUnreachableHost(const std::string& hostOrUrl) {
+    const std::string h = lowerCopy(hostOnly(hostOrUrl));
+    if (h.empty())
+        return false;
+    // Loopback / resolver aliases. 127/8 covers 127.0.0.1 and friends.
+    if (h == "localhost" || h == "::1" || h == "0:0:0:0:0:0:0:1")
+        return true;
+    if (h.rfind("127.", 0) == 0)
+        return true;
+    // IPv4 link-local. GDM/Web pinning these is the same 0:00 class as 127.
+    if (h.rfind("169.254.", 0) == 0)
+        return true;
+    // *.plex.direct HTTPS relay mixes machine-id + token → Web scrubber 0:00 (L41).
+    constexpr const char kPlexDirect[] = ".plex.direct";
+    constexpr size_t kPdLen = sizeof(kPlexDirect) - 1;
+    if (h == "plex.direct" ||
+        (h.size() >= kPdLen && h.compare(h.size() - kPdLen, kPdLen, kPlexDirect) == 0))
+        return true;
+    if (h.rfind("172.17.", 0) == 0 || h.rfind("172.18.", 0) == 0 ||
+        h.rfind("172.20.", 0) == 0 || h.rfind("172.21.", 0) == 0)
+        return true;
+    if (h.find("172-17-") != std::string::npos || h.find("172-18-") != std::string::npos ||
+        h.find("172-20-") != std::string::npos || h.find("172-21-") != std::string::npos)
+        return true;
+    return false;
+}
 
 std::string plexHttpGet(const std::string& url, int timeoutSec,
                         const std::string& extraHeaders) {
