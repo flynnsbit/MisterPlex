@@ -1,6 +1,11 @@
 // Runtime analog raster mux for the SD-family product RBF.
 // clk_sys = 20 MHz. Integer CE only — no HDMI / ascal modeline.
 //
+// v1 (PHASE_BACKLOG): raster_sel is RESET-LATCHED (core reset / daemon start).
+// Mid-stream F12 Analog O[15:14] or Content O[5:4] Follow must NOT retarget
+// H class until the next reset. Live fstart reload is the RED twin only
+// (ANALOG_RASTER_FAULT_LIVE_LATCH). Content O[5:4] is DECODE, not analog.
+//
 // sel 0 = 240p progressive 15 kHz class (Template colorbars, scandouble=0)
 //   ce_pix toggle → 10 MHz, H_TOTAL=638 → 20e6/1276 = 15.674 kHz
 // sel 1 = 480p scandouble ~31 kHz class
@@ -73,10 +78,13 @@ module analog_raster_mux (
 			sel_lat   <= sel_eff;
 			field_odd <= 1'b0;
 		end else if (fstart) begin
+`ifdef ANALOG_RASTER_FAULT_LIVE_LATCH
+			// RED twin: still live-latches analog H class at every frame_start.
 			sel_lat <= sel_eff;
+`endif
 			if (FAULT_NO_FIELD)
 				field_odd <= 1'b0;
-			else if (sel_eff == 2'd2)
+			else if (sel_lat == 2'd2)
 				field_odd <= ~field_odd;
 			else
 				field_odd <= 1'b0;
