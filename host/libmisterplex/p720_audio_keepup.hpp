@@ -175,7 +175,7 @@ inline bool plex720pSkipBankMemcpy(std::uint32_t dynPhys, bool dynBaseRbf) {
 
 // Landmine 2: leftover L4 PLXJ 0x504C584A at 0x3047F130 with frozen PLXD
 // must not pin 720p pairing. Changing 480p PLXD or a loaded SD-family RBF
-// (Plex_480p / Plex_240p15 / Plex_480i) wins. A LIVE changing L4 PLXD still
+// (Plex_480p / Plex_240p15 / Plex_480i / Plex_SDfamily) wins. A LIVE changing L4 PLXD still
 // classifies L4 (negative guard — do not regress 720p parked pairing).
 inline bool nameLooksLikeL4FamilyRbf(const char* pathOrName) {
     if (!pathOrName || !pathOrName[0])
@@ -197,7 +197,8 @@ inline bool nameLooksLikeSdFamilyRbf(const char* pathOrName) {
            std::strstr(base, "480i") != nullptr || std::strstr(base, "480I") != nullptr ||
            std::strstr(base, "240p") != nullptr || std::strstr(base, "240P") != nullptr ||
            std::strstr(base, "240i") != nullptr || std::strstr(base, "Plex_240") != nullptr ||
-           std::strstr(base, "plex_240") != nullptr;
+           std::strstr(base, "plex_240") != nullptr ||
+           std::strstr(base, "SDfamily") != nullptr || std::strstr(base, "sdfamily") != nullptr;
 }
 
 inline bool leftoverPlxjMustNotPinL4(bool l4PlxdChanging, bool t480PlxdChanging,

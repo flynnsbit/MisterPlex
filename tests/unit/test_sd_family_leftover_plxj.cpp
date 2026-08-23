@@ -1,6 +1,6 @@
 // L8 red twin: leftover L4 PLXJ (0x504C584A @ 0x3047F130) must not pin 720p
-// when the live RBF is Plex_480p / Plex_240p15 / Plex_480i, or when 480p
-// PLXD is changing.
+// when the live RBF is Plex_480p / Plex_240p15 / Plex_480i / Plex_SDfamily,
+// or when 480p PLXD is changing.
 #include "libmisterplex/mailbox_abi_spec.hpp"
 #include "libmisterplex/present_bank.hpp"
 
@@ -30,6 +30,10 @@ int main() {
     CHECK(corroborateLiveGlass(mailbox_abi::kPlxjMagic, pin) == LiveGlass::True480);
     pin.rbfname = "Plex_480i";
     CHECK(corroborateLiveGlass(mailbox_abi::kPlxjMagic, pin) == LiveGlass::True480);
+
+    pin.rbfname = "Plex_SDfamily";
+    CHECK(corroborateLiveGlass(mailbox_abi::kPlxjMagic, pin) == LiveGlass::True480);
+    CHECK(classifyLoadedRbfName("Plex_SDfamily.rbf") == LoadedRbfClass::SdFamily);
 
     pin.rbfname = "Plex_720p24";
     CHECK(corroborateLiveGlass(mailbox_abi::kPlxjMagic, pin) == LiveGlass::L4);

@@ -52,10 +52,21 @@ else
   ok "no set_multicycle_path in analog mux SDC"
 fi
 
-if grep -A40 'else if (fstart)' "$MUX" | grep -q 'sel_lat[[:space:]]*<='; then
+# Product path is reset-only. sel_lat on fstart is the LIVE_LATCH RED twin only.
+mux_prod=$(awk '
+  /`ifdef ANALOG_RASTER_FAULT_LIVE_LATCH/ {skip=1; next}
+  skip && /`endif/ {skip=0; next}
+  !skip {print}
+' "$MUX")
+if printf '%s\n' "$mux_prod" | grep -A40 'else if (fstart)' | grep -q 'sel_lat[[:space:]]*<='; then
   fail "sel_lat hops on frame_start (must be reset-only)"
 else
   ok "sel_lat is not assigned on frame_start"
+fi
+if grep -A20 'ANALOG_RASTER_FAULT_LIVE_LATCH' "$MUX" | grep -q 'sel_lat[[:space:]]*<='; then
+  ok "RED twin: LIVE_LATCH fstart hop is ifdef-gated"
+else
+  fail "ANALOG_RASTER_FAULT_LIVE_LATCH must still live-latch sel_lat (RED twin)"
 fi
 grep -q 'sel_lat[[:space:]]*<=[[:space:]]*sel_eff' "$MUX" \
   || fail "sel_lat reset load missing"

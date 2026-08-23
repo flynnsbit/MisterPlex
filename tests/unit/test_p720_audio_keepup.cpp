@@ -131,6 +131,7 @@ int main() {
     CHECK(nameLooksLikeSdFamilyRbf("/media/fat/_Utility/Plex_480p.rbf"));
     CHECK(nameLooksLikeSdFamilyRbf("Plex_240p15.rbf"));
     CHECK(nameLooksLikeSdFamilyRbf("Plex_480i.rbf"));
+    CHECK(nameLooksLikeSdFamilyRbf("Plex_SDfamily.rbf"));
     CHECK(!nameLooksLikeSdFamilyRbf("Plex_720p24.rbf"));
     CHECK(!nameLooksLikeSdFamilyRbf("Plex"));
     CHECK(nameLooksLikeL4FamilyRbf("Plex_720p24.rbf"));

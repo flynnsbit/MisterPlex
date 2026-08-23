@@ -39,6 +39,7 @@ rbf_family_from_path() {
     *[Pp]lex_240*) echo sd240 ;;
     *[Pp]lex_480i*|*[Pp]lex-480i*) echo sd480i ;;
     *[Pp]lex_480p*|*[Pp]lex-480p*) echo sd480 ;;
+    *[Pp]lex_SDfamily*|*[Pp]lex_sdfamily*|*[Pp]lex-SDfamily*|*[Pp]lex-sdfamily*) echo sdfamily ;;
     [Pp]lex) echo generic ;;
     *) echo other ;;
   esac
@@ -51,7 +52,20 @@ utility_rbf_for_family() {
     sd240) echo "$ut/Plex_240p15.rbf" ;;
     sd480i) echo "$ut/Plex_480i.rbf" ;;
     sd480) echo "$ut/Plex_480p.rbf" ;;
+    sdfamily) echo "$ut/Plex_SDfamily.rbf" ;;
     *) echo "" ;;
+  esac
+}
+
+# Pair daemon by the loaded RBF family. Leftover L4 PLXJ is not an input —
+# sticky 504C584A must not pin misterplexd.720p24 onto Plex_SDfamily.
+pair_daemon_for_loaded_rbf() {
+  rbf=${1:-}
+  root="${MISTERPLEX_ROOT:-/media/fat/misterplex}"
+  fam=$(rbf_family_from_path "$rbf")
+  case "$fam" in
+    l4) echo "$root/bin/misterplexd.720p24" ;;
+    *) echo "$root/bin/misterplexd.480p" ;;
   esac
 }
 
@@ -122,13 +136,17 @@ loaded_rbf_from_main_or_rbfname() {
   if [ -n "$argv" ]; then
     map_named_rbf_if_exists "$argv" && return 0
   fi
-  raw=$(tr -d '\000\r\n' <"$RBFNAME_FILE" 2>/dev/null || true)
-  if [ -n "$raw" ]; then
-    map_named_rbf_if_exists "$raw" && return 0
+  if [ -r "$RBFNAME_FILE" ]; then
+    raw=$(tr -d '\000\r\n' <"$RBFNAME_FILE" 2>/dev/null || true)
+    if [ -n "$raw" ]; then
+      map_named_rbf_if_exists "$raw" && return 0
+    fi
   fi
-  core=$(tr -d '\000\r\n' <"${CORENAME_FILE:-/tmp/CORENAME}" 2>/dev/null || true)
-  if [ -n "$core" ]; then
-    map_named_rbf_if_exists "$core" && return 0
+  if [ -r "${CORENAME_FILE:-/tmp/CORENAME}" ]; then
+    core=$(tr -d '\000\r\n' <"${CORENAME_FILE:-/tmp/CORENAME}" 2>/dev/null || true)
+    if [ -n "$core" ]; then
+      map_named_rbf_if_exists "$core" && return 0
+    fi
   fi
   return 1
 }
@@ -195,7 +213,7 @@ live_glass_is_l4() {
   named=$(loaded_rbf_from_main_or_rbfname) || named=""
   fam=$(rbf_family_from_path "$named")
   case "$fam" in
-    sd480|sd240|sd480i) return 1 ;;
+    sd480|sd240|sd480i|sdfamily) return 1 ;;
     l4) return 0 ;;
   esac
   return 1
@@ -219,8 +237,11 @@ resolve_loaded_rbf() {
     return 0
   fi
   if [ -n "${LIVE_RBF:-}" ] && [ -f "$LIVE_RBF" ]; then
-    echo "$LIVE_RBF"
-    return 0
+    fam=$(rbf_family_from_path "$LIVE_RBF")
+    if [ "$fam" != "generic" ]; then
+      echo "$LIVE_RBF"
+      return 0
+    fi
   fi
   if [ -f "$ut/Plex_480p.rbf" ]; then
     echo "$ut/Plex_480p.rbf"
