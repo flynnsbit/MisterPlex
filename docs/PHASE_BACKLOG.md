@@ -14,7 +14,7 @@ Campaign: maximize **240p / 480i / 480p** unique + audio sync, then bitrate / Pl
 | **24p floor** | unique ≥ **23.5**, tip ~**23.97**. Do not fps-filter Trek to fake 30. **Tear is a gate.** |
 | **Named done** | Plex **Web UI** (LAN) → **cast** → MisterPlex → real library title from docker PMS → HDMI glass is **content** (not idle chevron) while Web shows playing. Companion curl / `--play-file` is not done. |
 | **Score** | 240p15 / 480i with HDMI grabber + daemon logs (physical CRT **not** required for this campaign). |
-| **Status** | **IN_PROGRESS / RED** — nftables CAST row **unblocked**; last Web cast `playMedia ACK` then `resolve failed` → `PLAY testsrc`. Soft-skip ≠ PASS. |
+| **Status** | **IN_PROGRESS** — nftables CAST row **unblocked** **and** Web-cast rk36 AdvReal **content** on glass this session (~40 s). **Not soak. Not PASS.** OSD leftover 74250. SDF-MUX **OPEN**. Soft-skip ≠ PASS. |
 
 ### Unblocked since last card (quoted parent 2026-08-23) — nftables is **not** the CAST blocker
 
@@ -27,17 +27,44 @@ Campaign: maximize **240p / 480i / 480p** unique + audio sync, then bitrate / Pl
 
 `ADVERTISE_IP` + `customConnections` include `http://192.168.2.1:32400/`. Local 24p titles **36/37** exist; Trek `40868` is still absent on this docker. **Do not bring `:9240` (WAN hop) back.** Grey chevron / `testsrc` = abort.
 
-### Still RED / not PASS (quoted parent 2026-08-23)
+### CAST miss (keep) — 127 / plex.direct / bad token → `testsrc` (quoted parent, **not PASS**)
+
+Do **not** delete this miss. It is the 127 / plex.direct / token class that stuck Web at **0:00**.
 
 | Item | Evidence (quoted; **not PASS**) |
 |------|--------------------------------|
-| Last Web cast | `playMedia ACK key=/library/metadata/36` then `resolve failed: no such item on PMS ... bad token — test pattern` then `PLAY testsrc`. |
-| Timeline | `pms timeline session base=https://192-168-2-1.*.plex.direct:32400 token_src=cast` then `update failed http=0` (L41 Web **0:00** class). Companion time on testsrc still advanced; PMS timeline did not. |
+| Web cast (miss) | `playMedia ACK key=/library/metadata/36` then `resolve failed: no such item on PMS ... bad token — test pattern` then `PLAY testsrc`. |
+| Timeline (miss) | `pms timeline session base=https://192-168-2-1.*.plex.direct:32400 token_src=cast` then `update failed http=0` (L41 Web **0:00** class). Companion time on testsrc still advanced; PMS timeline did not. |
 | **127 / 9324** | User 2026-08-23: **127.0.0.1** (and the **9324** proxy) stuck Plex Web scrubber at **0:00** on past builds; **must use 192.168.2.1**. Webcast driver must **not** load Web from 127. `PLEX_BASE` must stay `http://192.168.2.1:32400`. 9324 is 720p-only and **PARKED**. |
-| Token tails | Conf token tail `VxUb` ≠ docker token tail `sxQn` (parent syncing; **do not copy tokens**). |
-| Stale live-glass | `/tmp/misterplex-live-glass` still said `L4` + pair `98f2e125` 720p24 while Main argv is `Plex_480p.rbf` — leftover pairing landmine (**SDF-PLXJ**). |
-| Analog mux | Verilator **GREEN** on compose; **no FIT / no glass mux**. |
-| Default route | MiSTer drifted to `169.254.3.155` (parent restoring `via 192.168.2.1 src 192.168.2.2`). |
+| Token tails (miss) | Conf token tail `VxUb` ≠ docker token tail `sxQn` (later matched; **do not copy tokens**). |
+| Stale live-glass (miss) | `/tmp/misterplex-live-glass` said `L4` + pair `98f2e125` 720p24 while Main argv is `Plex_480p.rbf` — leftover pairing landmine (**SDF-PLXJ**). |
+| Default route (miss) | MiSTer drifted to `169.254.3.155`. |
+
+### CAST recovery (quoted parent **2026-08-23T22:50Z**, gold daemon **`5f1c8614`** / RBF **`07f54d9f`**) — **not soak, not PASS**
+
+Plex Web loaded from **`http://192.168.2.1:32400/web`** (**NOT** `127.0.0.1`). User: 127 stuck scrubber at 0:00 because of the 9324 proxy.
+
+| Item | Evidence (quoted; **not PASS**) |
+|------|--------------------------------|
+| playMedia | `playMedia ACK key=/library/metadata/36` |
+| Resolve | `resolved PMS universal 480p 572x428 /library/metadata/36 title=MiSTerPlex AdvReal 624x480 24fps 400kbit ref1 300s (2026) dur=300000 transcode=1` |
+| PLAY | universal `start.mp4` — **not** testsrc. This session grep `testsrc=0`, `127.0.0.1=0`, `9324=0`. |
+| Timeline | `update ok http=200` with advancing `time=` (**0 → 40749 ms**). Web UI showed **0:12 / 5:00** Casting to MiSTerPlex (**NOT** stuck 0:00). |
+| Timeline URL | still `https://192-168-2-1.*.plex.direct:32400` (gold daemon follows playMedia address). Reachable because parent bind-mounted `/etc/hosts` → `192.168.2.1`. **Do not treat hosts bind as product.** w-arm is rewriting plex.direct/127→`http://192.168.2.1:32400` on current tree so this survives reboot. |
+| media ~40 s | `pfps=23.7 vfps=23.7 hw_fps=23.66 av_drift_ms=-71 drops=0 clock=av-lock audio_s=40.32 wall_s=40.74 fps=24/1 decode=640x480` |
+| HDMI still | `Memory/lab/captures/sdfam/webcast/hdmi_after_192.png` **MEAN=59.2** — AdvReal grass (**not** chevron, **not** SMPTE bars). |
+| OSD leftover | `640x480 14.88kHz 30.0Hz` over HDMI `1280x720 74.25MHz 60.0Hz` (**landmine 6**). |
+| Pairing / net | Conf token now matches docker (tails not copied). `/tmp/misterplex-live-glass` **True480**. Default `via 192.168.2.1 src 192.168.2.2 metric 50`. lanIp `192.168.2.2`. Clients `192.168.2.2:3005`. |
+
+**40 s is not a soak.** unique **23.7** in this window is **not** product PASS. `/40868` still **404**.
+
+### Still OPEN / not PASS (after recovery)
+
+| Item | Status (quoted; **not PASS**) |
+|------|------------------------------|
+| **SDF-CAST soak + tear** | Gate stays **OPEN** until soak ≥ unique **23.5** + tens-of-ms drift + **tear** (OSD leftover 74250). Never 127 / never 9324. |
+| **SDF-MUX** | rd-duck **NACK**: analog mux `sel_lat` still live-latches on `fstart`; Follow still maps analog from F12 Content. Verilator GREEN on compose; **no FIT / no glass mux**. |
+| **SDF-PLXJ** | This session live-glass **True480**; leftover L4 + `98f2e125` was the miss. Pair-by-argv on glass **not** a leftover-PLXJ product PASS. |
 
 ### 720p24 — **PARKED**
 
@@ -58,6 +85,7 @@ This-campaign measurements (quote; **not PASS**):
 | Pair | Result | Numbers |
 |------|--------|---------|
 | **480p gold** | Unique+sync from PMS **YES** — **not** a tear PASS (OSD was on; stills only) | Overnight: `pfps=23.9` `hw_fps=23.95` `av_drift_ms=-69…-73` `drops=0` `audio_s=5482` `wall_s=5488` (~91 min). Card: `Memory/lab/status/P480_PMS_SOAK_20260821.txt`. |
+| **480p Web-cast rk36** (2026-08-23T22:50Z, gold `5f1c8614` / `07f54d9f`) | AdvReal **content** on glass ~40 s — **not soak, not PASS** | `pfps=23.7 vfps=23.7 hw_fps=23.66 av_drift_ms=-71 drops=0 clock=av-lock audio_s=40.32 wall_s=40.74`. HDMI `hdmi_after_192.png` MEAN=59.2 grass. OSD leftover 74250. Prior miss this day: `PLAY testsrc`. |
 | **480i** | Played Trek; **sync FAIL** | Named load proven. ~131 s: `pfps=23.2–23.4` `av_drift_ms~685–712`. **Not tens-of-ms.** Card: `Memory/lab/status/P480I_PMS_20260821.txt`. |
 | **240p15** | **No soak** | Resolved `320x240` then **`PLAY rejected: source aspect unknown or FPGA ACK did not match`**. Gold `5f1c8614` hard-fails play without PLXJ ACK; 240p15 fabric does not ACK L4 `PLXJ`. |
 
@@ -72,36 +100,36 @@ Today 240p15 / 480i / 480p are **three named RBFs** with the **same gold daemon 
 | **v1** | **Reset-latched analog mux** | One bitstream muxes **15 kHz 240p bob** / **15 kHz 480i weave** / **~31 kHz 480p**. Select analog at **core reset / daemon start** (same latch class as Display `O[15:14]`, which does **not** poke `video_mode` live). One RBF + one daemon. Prove load via Main argv + md5. | F12 **Content** `O[5:4]` as analog. Live F12 Display `video_mode` poke. ascal 15 kHz. Product `VGA_SCALER=1` / `PLEX_PRESENT_720P_L4`. Generic `Plex.rbf`. Current-tree daemon overwrite of `5f1c8614`. |
 | later | Live analog jump (optional) | Only after v1 unique+sync+tear holds on all three rasters **without** swapping Utility cores. | OSD / bitrate / overlays before v1 holds. Re-enable `OSD_CONTROL=1` before leftover F12 bits are proven not to retarget `DECODE` / `TRANSCODE_PROFILE`. |
 
-Parent 2026-08-23: analog mux Verilator **GREEN** on compose; **no FIT / no glass mux**. SDF-MUX stays **OPEN**. Soft-skip ≠ PASS.
+Parent 2026-08-23: analog mux Verilator **GREEN** on compose; **no FIT / no glass mux**. rd-duck **NACK**: `sel_lat` still live-latches on `fstart`; Follow still maps analog from F12 Content. SDF-MUX stays **OPEN**. Soft-skip ≠ PASS.
 
 ### Gates (all open — **do not invent PASS**)
 
 | ID | Item | Status | Pass when (unblocked + measured) |
 |----|------|--------|----------------------------------|
-| **SDF-MUX** | Analog mux (reset-latched v1) | **OPEN** (sim only) | Fabric muxes 15 kHz 240p / 15 kHz 480i / ~31 kHz 480p; latch at reset / daemon start. HDMI + daemon-log score. **Not** F12 Content bank bits. Verilator GREEN on compose is **not** FIT and **not** glass. |
-| **SDF-PLXJ** | Leftover-PLXJ watcher | **OPEN** | Sticky L4 `PLXJ` magic `0x504C584A` at **`0x3047F130`** with **frozen** `PLXD` must **not** pin 720p daemon + 720p conf on a 480p-class bitstream (`hw_presents=0` class). Pair by the RBF just `load_core`'d, or require **changing** PLXD. `CORENAME=Plex` is not identity. No generic `Plex.rbf`. Lab leftover: `/tmp/misterplex-live-glass` still said `L4` + pair `98f2e125` 720p24 while Main argv is `Plex_480p.rbf`. |
+| **SDF-MUX** | Analog mux (reset-latched v1) | **OPEN** (sim only) | Fabric muxes 15 kHz 240p / 15 kHz 480i / ~31 kHz 480p; latch at reset / daemon start. HDMI + daemon-log score. **Not** F12 Content bank bits. Verilator GREEN on compose is **not** FIT and **not** glass. rd-duck **NACK**: `sel_lat` still live-latches on `fstart`; Follow still maps analog from F12 Content. |
+| **SDF-PLXJ** | Leftover-PLXJ watcher | **OPEN** | Sticky L4 `PLXJ` magic `0x504C584A` at **`0x3047F130`** with **frozen** `PLXD` must **not** pin 720p daemon + 720p conf on a 480p-class bitstream (`hw_presents=0` class). Pair by the RBF just `load_core`'d, or require **changing** PLXD. `CORENAME=Plex` is not identity. No generic `Plex.rbf`. Miss: `/tmp/misterplex-live-glass` `L4` + pair `98f2e125` 720p24 vs Main argv `Plex_480p.rbf`. Recovery session: live-glass **True480** — **not** a leftover-PLXJ product PASS. |
 | **SDF-240ACK** | 240p15 PLAY ACK | **OPEN** (last: **reject**) | Gold-class play of a real title must not print `PLAY rejected: source aspect unknown or FPGA ACK did not match`. Either CRT siblings ACK aspect (`source_aspect_ack` / PLXJ), or gold daemon treats missing PLXJ as OK on 240p15 — **without** reintroducing leftover-L4 pairing (SDF-PLXJ). |
 | **SDF-480I** | 480i tens-of-ms drift | **OPEN** (last: **~700 ms FAIL**) | `av_drift_ms` tens of ms (480p gold class **−69…−73**), `audio_s≈wall`, `drops=0`, `clock=av-lock`. Last soak **685–712 ms** is FAIL. Unique still ≥23.5. HDMI + logs (CRT not required). |
 | **SDF-JUMP** | One-pair jump | **OPEN** | One RBF + one daemon jumps **240p ↔ 480i ↔ 480p** without swapping Utility cores. **v1 = reset-latched analog** (table above). Unique+sync+tear hold after each jump. |
 | **SDF-BR** | Bitrate after unique+sync+tear | **OPEN** / **not yet** | Raise bitrate / overlays / OSD **only after** unique ≥23.5 **and** tens-of-ms sync **and** tear gate on the jumped pair. `OSD_CONTROL=0` stays load-bearing until leftover F12 bits do not retarget `DECODE`. |
-| **SDF-CAST** | Web cast from docker PMS `http://192.168.2.1:32400` | **OPEN / RED** | User path: Plex Web UI (LAN, not app.plex.tv) → cast icon → MisterPlex → real library title → HDMI glass matches content. **Nftables row is no longer the blocker.** Last: `playMedia ACK key=/library/metadata/36` then `resolve failed: no such item on PMS ... bad token — test pattern` then `PLAY testsrc`. Timeline `https://192-168-2-1.*.plex.direct:32400 token_src=cast` then `update failed http=0` (L41 Web 0:00). Do **not** load Web from 127; `PLEX_BASE` stays `http://192.168.2.1:32400`. Conf token tail `VxUb` ≠ docker `sxQn` (parent syncing). `/40868` still 404; local **36/37** exist. |
+| **SDF-CAST** | Web cast from docker PMS `http://192.168.2.1:32400` | **OPEN** (rk36 content on glass this session; **not soak**) | User path: Plex Web UI (LAN, not app.plex.tv) → cast icon → MisterPlex → real library title → HDMI glass matches content. **Nftables unblocked and** Web-cast of rk36 content on glass this session. Keep **OPEN** until soak ≥ unique **23.5** + tens-of-ms drift + **tear** (OSD leftover 74250). **Never** 127 / **never** 9324. Miss (keep): `playMedia ACK` then `resolve failed` → `PLAY testsrc`; plex.direct timeline `http=0`. Recovery **2026-08-23T22:50Z**: Web from `http://192.168.2.1:32400/web`; `PLAY` start.mp4 **not** testsrc (`testsrc=0` `127.0.0.1=0` `9324=0`); timeline `http=200` time 0→40749 ms; Web **0:12 / 5:00**; ~40 s `pfps=23.7 av_drift_ms=-71`; HDMI MEAN=59.2 grass. plex.direct URL still used (hosts bind = ram, **not product**). unique 23.7 in this window **not** product PASS. `/40868` still 404. |
 | **SDF-720** | 720p24 lab | **PARKED** | Do not drive unless asked. No generic `Plex.rbf`. No tunnels. Not product. 9324 proxy parked. |
 
 ### Landmines (quote; paid for)
 
 1. `CORENAME=Plex` for every sibling — prove Main argv + md5.
-2. Leftover L4 PLXJ at `0x3047F130` must not pin 720p daemon. Stale `/tmp/misterplex-live-glass` `L4` + pair `98f2e125` 720p24 vs Main argv `Plex_480p.rbf`.
+2. Leftover L4 PLXJ at `0x3047F130` must not pin 720p daemon. Miss: `/tmp/misterplex-live-glass` `L4` + pair `98f2e125` 720p24 vs Main argv `Plex_480p.rbf`. Recovery session: live-glass **True480** (not a leftover-PLXJ PASS).
 3. `OSD_CONTROL=0` is load-bearing.
 4. Blind current-tree daemon stall class.
 5. Grabber HPD can retune 640×480 ~100 Hz.
-6. Leftover HDMI 74250 `video_mode` over a 480p core.
+6. Leftover HDMI 74250 `video_mode` over a 480p core. Recovery still: OSD `640x480 14.88kHz 30.0Hz` over HDMI `1280x720 74.25MHz 60.0Hz`. Tear gate stays open.
 7. Never `kill $(ps | awk /misterplexd/)`.
-8. Grey chevron / `testsrc` = abort. Last CAST: `playMedia ACK` then `resolve failed` → `PLAY testsrc`.
-9. One Quartus fit. Product QSF must not enable `PLEX_PRESENT_720P_L4`. Verilator GREEN ≠ FIT ≠ glass mux.
-10. **127.0.0.1** and **9324** stuck Plex Web scrubber at **0:00** — `PLEX_BASE` must stay `http://192.168.2.1:32400`. Webcast must not load Web from 127. 9324 is 720p-only and parked.
-11. Conf token tail `VxUb` ≠ docker token tail `sxQn` (parent syncing; do not copy tokens).
-12. Default route on MiSTer drifted to `169.254.3.155` — restore `via 192.168.2.1 src 192.168.2.2`.
-13. Timeline `*.plex.direct:32400` + `update failed http=0` is L41 Web 0:00 class (companion clock on testsrc is not PMS timeline).
+8. Grey chevron / `testsrc` = abort. Miss: `playMedia ACK` then `resolve failed` → `PLAY testsrc`. Recovery session: `testsrc=0`.
+9. One Quartus fit. Product QSF must not enable `PLEX_PRESENT_720P_L4`. Verilator GREEN ≠ FIT ≠ glass mux. rd-duck NACK on `sel_lat`/`fstart`.
+10. **127.0.0.1** and **9324** stuck Plex Web scrubber at **0:00** — `PLEX_BASE` must stay `http://192.168.2.1:32400`. Webcast must not load Web from 127. 9324 is 720p-only and parked. Recovery Web was `http://192.168.2.1:32400/web` (`127.0.0.1=0` `9324=0`).
+11. Conf token must match docker (miss: tails `VxUb` ≠ `sxQn`; recovery: matched; **do not copy tokens**).
+12. Default route miss `169.254.3.155`; recovery `via 192.168.2.1 src 192.168.2.2 metric 50`.
+13. Timeline `*.plex.direct:32400`: miss `http=0` (L41 0:00); recovery `http=200` time 0→40749 ms because parent `/etc/hosts` bind → `192.168.2.1`. Hosts bind is ram, **not product**. Gold daemon follows playMedia address.
 
 Resume / start pack: `Memory/lab/RESUME_SD_FAMILY.md`, `Memory/lab/parent/sd-family-start.md`, `Memory/lab/parent/sd-family-status.txt`. Worker card: `Memory/lab/agents/w-integ.txt`. **BUILD_OK + unit green ≠ unique PASS ≠ sync PASS ≠ tear PASS ≠ Web-cast PASS.**
 
@@ -710,7 +738,7 @@ git **docs HEAD `3c43a66`**; **FPGA committed `7bee0a6`**; R-csum6 claim freeze 
 - Do **not** invent hard-csum PASS / WIDE PASS / Fix-3 PASS / 3l2 UNBLOCK; soft-skip ≠ PASS; **DIAG ≠ product PASS**; **BUILD_OK+DEPLOY+PKG+FBAR ≠ residual PASS ≠ WIDE product PASS**; **3l2 BLOCKED** until sticky 0x14; thrash **`8832824e`/`75da8bb1`/`4d6ee356` FORBIDDEN**; exclusive **FREE**; **H-gate-rcsum6 PENDING**; **WIDE still FAIL open Fix-2**
 
 ## Open (priority next workers)
-0. **SD family (2026-08-23) — ACTIVE / RED / no PASS** — analog mux v1 (reset-latched analog, **not** F12 Content bank bits; Verilator GREEN on compose, **no FIT / no glass mux**); leftover-PLXJ watcher (stale `/tmp/misterplex-live-glass` `L4` + `98f2e125` vs Main argv `Plex_480p.rbf`); 240p15 PLAY ACK; 480i tens-of-ms drift; one-pair jump; bitrate **after** unique+sync+tear; Web cast from docker PMS `http://192.168.2.1:32400` (**never** 127 / **never** 9324). **720p24 PARKED.** **Nftables CAST row unblocked** (`ufw allow from 192.168.2.0/24`; identity HTTP 200; `/clients` `192.168.2.2:3005`; rk **36/37** HTTP 200, **40868** still 404). **SDF-CAST still RED:** `playMedia ACK` then `resolve failed` → `PLAY testsrc`; plex.direct timeline `http=0`; token tails `VxUb` ≠ `sxQn`. See **ACTIVE — SD family** at top of this file. **Do not invent PASS.**
+0. **SD family (2026-08-23) — ACTIVE / no PASS** — analog mux v1 (reset-latched analog, **not** F12 Content bank bits; Verilator GREEN on compose, **no FIT / no glass mux**; rd-duck **NACK** `sel_lat` live-latches on `fstart`); leftover-PLXJ watcher (miss: stale live-glass `L4` + `98f2e125`; recovery: **True480**); 240p15 PLAY ACK; 480i tens-of-ms drift; one-pair jump; bitrate **after** unique+sync+tear; Web cast from docker PMS `http://192.168.2.1:32400` (**never** 127 / **never** 9324). **720p24 PARKED.** **Nftables unblocked** and **SDF-CAST recovery** **2026-08-23T22:50Z**: Web `http://192.168.2.1:32400/web`; rk36 AdvReal content on glass ~40 s (`pfps=23.7 av_drift_ms=-71`; HDMI MEAN=59.2 grass; timeline `http=200` 0→40749 ms; Web **0:12 / 5:00**; `testsrc=0`). **Keep CAST OPEN** until soak ≥ unique 23.5 + tens-of-ms + tear (OSD leftover 74250). **40 s is not a soak.** unique 23.7 this window **not** product PASS. Miss (keep): `PLAY testsrc` / plex.direct `http=0`. `/40868` still 404. plex.direct URL still used (hosts bind **not** product). See **ACTIVE — SD family** at top of this file. **Do not invent PASS.**
 1. ~~**R-csum6 sole LIVE**~~ — **DONE TERMINAL BUILD_OK** lock **`R-csum6 DONE BUILD_OK 2026-07-24T14:10:26-05:00 NEW_RBF=94bbfe433feb562fabe0798e16b378c5 wall=438s LOCK_OK`**; Full Comp **0e/40w** wall **438s** exit **0**; mon **M-fitmon-rcsum6c BUILD_OK**; claim **MATCH** Rank1+2+3 DIAG=ABSENT md5s **`c7a847f7`/`ca62d02b`/`904e9b2e`**; **SRC_DRIFT: NO**; exclusive **FREE** post-build — **BUILD_OK ≠ residual hard PASS**
 2. ~~**ONE H-deploy-rcsum6**~~ — **DONE PROMOTE_OK|DEPLOY_OK** ONE menu lab **LOADED `94bbfe43`** full `94bbfe433feb562fabe0798e16b378c5` (`/tmp/misterplex-agent-H-deploy-rcsum6.txt`) — **DEPLOY_OK ≠ hard residual PASS** — do **not** invent hard sticky0x14 PASS
 3. **H-gate-rcsum6** hard residual on lab **`94bbfe43`** (sticky0x14 ≥2; reject +0x53; res_dc=-24) — **IN_PROGRESS / PENDING** — **do not invent hard PASS / PACK_PROVEN**. Prior **ec21e133** **H-gate-ec21 HARD_FAIL** MULTI_DRIVE; historical **CLOSED FAIL** **`8832824e`**
