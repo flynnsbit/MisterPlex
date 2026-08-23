@@ -188,6 +188,10 @@ inline bool videoModeForbiddenOnHdmiLcd(const char* cmd) {
     return khz > 0 && khz < kVgaMinPixelKhz;
 }
 
+inline bool videoModeCmdIsHdmiLcdSafe(const char* cmd) {
+    return cmd && cmd[0] && !videoModeForbiddenOnHdmiLcd(cmd);
+}
+
 // HDMI-LCD scoring: Display "240p" → 640×480@60 ascal, never 15 kHz 240p.
 // 480i is CRT-only (nullptr, no HDMI poke). 24 Hz HDMI is never selected.
 inline const char* videoModeCmdForScoringPath(const char* label, DisplaySink sink) {
