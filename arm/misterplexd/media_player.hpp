@@ -34,6 +34,7 @@ inline bool osdRetargetDecodeSizeFromPresented(int& outW, int& outH,
 #include "fb_present.hpp"
 #include "fpga_spi.hpp"
 #include "libmisterplex/cached_src_phys.hpp"
+#include "libmisterplex/display_raster.hpp"
 #include "libmisterplex/idle_screen.hpp"
 #include "libmisterplex/mraudio_status.hpp"
 #include "libmisterplex/playback_overlay.hpp"
@@ -229,6 +230,10 @@ public:
     void setLiveGlass(LiveGlass glass) { liveGlass_ = glass; }
     void setRbfPrefix8(std::string prefix8) { rbfPrefix8_ = std::move(prefix8); }
     LiveGlass liveGlass() const { return liveGlass_; }
+    // Lab / HDMI grabber scoring defaults to HdmiLcd (≥31 kHz ascal). CRT analog
+    // 15 kHz video_mode is DisplaySink::Crt15k only.
+    void setDisplaySink(DisplaySink sink) { displaySink_ = sink; }
+    DisplaySink displaySink() const { return displaySink_; }
     SourceAspect probeSourceAspect(const std::string& urlOrPath,
                                    const std::string& httpHeaders = {},
                                    std::string* failDetail = nullptr,
@@ -330,6 +335,7 @@ private:
     ContentResolution latchedDisplayRes_{1280, 720, "720p", 1500};
     bool displayRasterLatched_ = false;
     bool osdResSeeded_ = false;
+    DisplaySink displaySink_ = DisplaySink::HdmiLcd;
     LiveGlass liveGlass_ = LiveGlass::True480;
     std::string rbfPrefix8_;
     std::string lastVideoModeCmd_;
