@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Install every verified RBF+daemon pair onto the MiSTer.
 # Does not load_core / menu-bounce. Does not start a second watcher.
+#
+# Named Utility cores only. Future one-pair is Plex_SDfamily.rbf (never
+# generic Plex.rbf) + misterplexd.480p gold bytes 5f1c8614. Gold Plex_480p /
+# 240p15 / 480i stay as rollback rows. Do not invent an SDfamily RBF md5.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 if [ -z "${REL:-}" ]; then
@@ -23,9 +27,12 @@ need "$REL/bin/misterplexd.480p"
 need "$REL/rbf_daemon_pairs.txt"
 need "$REL/Plex_README.txt"
 
-# 720p24 lab pair is required for this pre-release pack.
+# 720p24 lab pair is required for this pre-release pack (parked, not SD-family product).
 need "$REL/cores/Plex_720p24.rbf"
 need "$REL/bin/misterplexd.720p24"
+
+# Future one-pair: copy only if the freeze actually has it. Never as Plex.rbf.
+SDFAM="$REL/cores/Plex_SDfamily.rbf"
 
 bin_of() {
   local name=$1
@@ -66,6 +73,9 @@ fi
   "$REL/cores/Plex_240p15.rbf" "$REL/cores/Plex_480i.rbf" \
   "$REL/Plex_README.txt" \
   root@"$HOST":/media/fat/_Utility/
+if [[ -f "$SDFAM" ]]; then
+  "${SCP[@]}" "$SDFAM" root@"$HOST":/media/fat/_Utility/Plex_SDfamily.rbf
+fi
 "${SCP[@]}" \
   "$DAE_480P" "$REL/bin/misterplexd.720p24" \
   "$WATCH" "$SUP" "$CAST" "$PAIRCONF" "$NAMED" \
@@ -100,6 +110,9 @@ echo REMOVED_GENERIC_Plex.rbf
 echo === rbf ===
 md5sum /media/fat/_Utility/Plex_480p.rbf /media/fat/_Utility/Plex_720p24.rbf \
   /media/fat/_Utility/Plex_240p15.rbf /media/fat/_Utility/Plex_480i.rbf
+if [ -f /media/fat/_Utility/Plex_SDfamily.rbf ]; then
+  md5sum /media/fat/_Utility/Plex_SDfamily.rbf
+fi
 echo === daemons ===
 md5sum /media/fat/misterplex/bin/misterplexd.480p \
   /media/fat/misterplex/bin/misterplexd.720p24 \

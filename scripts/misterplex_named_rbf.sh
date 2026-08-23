@@ -5,6 +5,9 @@
 # Every Plex_* sibling reports CORENAME/RBFNAME=Plex. A generic Plex.rbf
 # (root or _Utility) therefore always hashes as whichever copy was last
 # dropped there — 480p daemon on 720p24 fabric = no chevron, no play.
+# Future one-pair Utility core: Plex_SDfamily.rbf + misterplexd.480p gold
+# (5f1c8614). Never return /Plex.rbf. Gold Plex_480p / 240p15 / 480i stay
+# as named rollback files.
 
 UTILITY_DIR="${MISTERPLEX_UTILITY:-${UTILITY_DIR:-/media/fat/_Utility}}"
 LIVE_RBF="${MISTERPLEX_LIVE_RBF:-${LIVE_RBF:-$UTILITY_DIR/Plex_480p.rbf}}"
@@ -70,6 +73,9 @@ resolve_loaded_rbf() {
   [ -n "$base" ] || base=Plex
   ut="$UTILITY_DIR"
   case "$base" in
+    *[Pp]lex_[Ss][Dd]family*|*[Pp]lex-[Ss][Dd]family*)
+      if [ -f "$ut/Plex_SDfamily.rbf" ]; then echo "$ut/Plex_SDfamily.rbf"; return 0; fi
+      ;;
     *[Pp]lex_720*|*[Pp]lex-720*)
       if [ -f "$ut/Plex_720p24.rbf" ]; then echo "$ut/Plex_720p24.rbf"; return 0; fi
       ;;
@@ -84,6 +90,12 @@ resolve_loaded_rbf() {
       ;;
   esac
   # CORENAME=Plex for every sibling — never hash a generic Plex.rbf.
+  # Prefer Plex_SDfamily (future one-pair + gold 480p daemon) over leftover
+  # L4 PLXJ at 0x3047F130, which would otherwise pin the 720p daemon.
+  if [ -f "$ut/Plex_SDfamily.rbf" ]; then
+    echo "$ut/Plex_SDfamily.rbf"
+    return 0
+  fi
   if live_glass_is_l4 && [ -f "$ut/Plex_720p24.rbf" ]; then
     echo "$ut/Plex_720p24.rbf"
     return 0
@@ -98,5 +110,12 @@ resolve_loaded_rbf() {
       return 0
     fi
   done
+  # Last resort: named rollback, never generic Plex.rbf.
+  case "$LIVE_RBF" in
+    */[Pp]lex.[Rr][Bb][Ff]|[Pp]lex.[Rr][Bb][Ff])
+      echo "$ut/Plex_480p.rbf"
+      return 0
+      ;;
+  esac
   echo "$LIVE_RBF"
 }

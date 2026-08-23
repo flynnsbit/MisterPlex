@@ -1,5 +1,12 @@
 # md5  daemon  glass
-# v0.9.0-pre gold triples + 720p24 lab
+# v0.9.0-pre gold triples + 720p24 lab (parked)
+#
+# Future one-pair Utility core (not frozen — do not invent an RBF md5):
+#   Plex_SDfamily.rbf  +  /media/fat/misterplex/bin/misterplexd.480p
+#   gold daemon bytes 5f1c861486844f4c83bf32a2112cfbb6
+#   NEVER generic Plex.rbf (every sibling reports CORENAME=Plex).
+# Add a data row only after a hardware-validated bitstream exists.
+# Gold Plex_480p / Plex_240p15 / Plex_480i remain rollback rows.
 07f54d9f8f0eda2fe75d9cc314f6de54 /media/fat/misterplex/bin/misterplexd.480p true480
 4d6efef954acf7b33747f35ac2878c1b /media/fat/misterplex/bin/misterplexd.240p15 crt240p15
 61db00e7d54efad7c1a456b127b798bd /media/fat/misterplex/bin/misterplexd.480i crt480i

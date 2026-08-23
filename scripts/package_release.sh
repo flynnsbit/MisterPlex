@@ -13,12 +13,16 @@ PAIR_ART="$ROOT/release_artifacts/v0.9.0-pre-paired"
 
 # Dual-gate: v0.9.0-pre ships named gold pairs; older lines keep one Plex.rbf.
 # Override either path or md5 via RBF_PATH / RBF_MD5_EXPECTED for lab freezes.
+# Future one-pair Utility core is Plex_SDfamily.rbf (NEVER generic Plex.rbf)
+# + misterplexd.480p gold bytes 5f1c8614. Gold Plex_480p / 240p15 / 480i stay
+# as rollback rows. Do not invent MD5_SDFAMILY_RBF.
 MD5_480P_RBF="07f54d9f8f0eda2fe75d9cc314f6de54"
 MD5_240P15_RBF="4d6efef954acf7b33747f35ac2878c1b"
 MD5_480I_RBF="61db00e7d54efad7c1a456b127b798bd"
 MD5_720P24_RBF="0eea3580a5a0dacf60bf65c50499bcc9"
 MD5_480P_DAEMON="5f1c861486844f4c83bf32a2112cfbb6"
 MD5_720P24_DAEMON="0ffc1483677ef5733971d4f18e4624e4"
+MD5_SDFAMILY_RBF="${MD5_SDFAMILY_RBF:-}"
 
 case "$VERSION" in
   v0.9.0-pre*|0.9.0-pre*)
@@ -189,8 +193,22 @@ if [[ "$PAIRED" == "1" ]]; then
   copy_gated_md5 "$PAIR_ART/cores/Plex_240p15.rbf" "$STAGE/cores/Plex_240p15.rbf" "$MD5_240P15_RBF"
   copy_gated_md5 "$PAIR_ART/cores/Plex_480i.rbf" "$STAGE/cores/Plex_480i.rbf" "$MD5_480I_RBF"
   copy_gated_md5 "$PAIR_ART/cores/Plex_720p24.rbf" "$STAGE/cores/Plex_720p24.rbf" "$MD5_720P24_RBF"
+  # One-pair Plex_SDfamily.rbf: copy only with a hardware-validated md5.
+  if [[ -n "$MD5_SDFAMILY_RBF" ]]; then
+    if [[ ! "$MD5_SDFAMILY_RBF" =~ ^[0-9a-f]{32}$ ]]; then
+      echo "ERROR: MD5_SDFAMILY_RBF must be a real 32-hex md5 (not invented)." >&2
+      exit 1
+    fi
+    copy_gated_md5 "$PAIR_ART/cores/Plex_SDfamily.rbf" "$STAGE/cores/Plex_SDfamily.rbf" "$MD5_SDFAMILY_RBF"
+  elif [[ -f "$PAIR_ART/cores/Plex_SDfamily.rbf" ]]; then
+    echo "ERROR: $PAIR_ART/cores/Plex_SDfamily.rbf present but MD5_SDFAMILY_RBF unset." >&2
+    echo "       Refusing to ship an ungated / invented SDfamily md5." >&2
+    exit 1
+  fi
   RBF_MD5_ACTUAL="$MD5_480P_RBF"
-  cp -a "$PAIR_ART/rbf_daemon_pairs.txt" "$STAGE/rbf_daemon_pairs.txt"
+  PAIRS_SRC="$ROOT/assets/rbf_daemon_pairs.txt"
+  [[ -f "$PAIRS_SRC" ]] || PAIRS_SRC="$PAIR_ART/rbf_daemon_pairs.txt"
+  cp -a "$PAIRS_SRC" "$STAGE/rbf_daemon_pairs.txt"
   cp -a "$PAIR_ART/Plex_README.txt" "$STAGE/Plex_README.txt"
   cp -a "$PAIR_ART/README.md" "$STAGE/README.md"
   # No generic Plex.rbf — every sibling reports CORENAME=Plex.
@@ -245,15 +263,20 @@ version: ${VERSION}
 
 Named cores (pick ONE from _Utility — no generic Plex.rbf)
 ----------------------------------------------------------
-  cores/Plex_480p.rbf     HDMI 240p/480p  md5 ${MD5_480P_RBF}
-  cores/Plex_240p15.rbf   15 kHz 240p CRT md5 ${MD5_240P15_RBF}
-  cores/Plex_480i.rbf     15 kHz 480i CRT md5 ${MD5_480I_RBF}
-  cores/Plex_720p24.rbf   HDMI 720p24 lab md5 ${MD5_720P24_RBF}
+  cores/Plex_480p.rbf     HDMI 240p/480p  md5 ${MD5_480P_RBF}  (rollback)
+  cores/Plex_240p15.rbf   15 kHz 240p CRT md5 ${MD5_240P15_RBF}  (rollback)
+  cores/Plex_480i.rbf     15 kHz 480i CRT md5 ${MD5_480I_RBF}  (rollback)
+  cores/Plex_720p24.rbf   HDMI 720p24 lab md5 ${MD5_720P24_RBF}  (parked)
+
+  Future one-pair (not frozen; do not invent an RBF md5):
+  cores/Plex_SDfamily.rbf  240p ↔ 480i ↔ 480p runtime raster
+                           + bin/misterplexd.480p (gold ${MD5_480P_DAEMON})
+                           NEVER install as Plex.rbf.
 
   bin/misterplexd.480p    gold daemon (also .240p15 / .480i)
   bin/misterplexd.720p24  lab 720p remux-PCM daemon
   bin/misterplexd         copy of .480p (direct-run default)
-  rbf_daemon_pairs.txt    watcher map
+  rbf_daemon_pairs.txt    watcher map (gold rollback rows kept)
 
 Install
 -------
@@ -313,7 +336,7 @@ tar -C "$STAGE/.." --transform="s|^$(basename "$STAGE")|misterplex-${VERSION}|" 
 ls -la "$TAR"
 echo "Packaged → $TAR"
 if [[ "$PAIRED" == "1" ]]; then
-  echo "RBFs: Plex_480p/240p15/480i/720p24 (named; no generic Plex.rbf)"
+  echo "RBFs: Plex_480p/240p15/480i/720p24 named rollback+lab; future Plex_SDfamily.rbf; no generic Plex.rbf"
 else
   echo "RBF: present ($(wc -c <"$STAGE/cores/Plex.rbf") bytes, md5=$(md5sum "$STAGE/cores/Plex.rbf" | awk '{print $1}'))"
 fi
@@ -327,6 +350,9 @@ if [[ "$PAIRED" == "1" ]]; then
               bin/misterplexd.480p bin/misterplexd.720p24 rbf_daemon_pairs.txt; do
     [[ -e "$STAGE/$need" ]] || { echo "ERROR: missing $need in stage"; exit 1; }
   done
+  if [[ -n "$MD5_SDFAMILY_RBF" ]]; then
+    [[ -e "$STAGE/cores/Plex_SDfamily.rbf" ]] || { echo "ERROR: missing cores/Plex_SDfamily.rbf in stage"; exit 1; }
+  fi
   if [[ -e "$STAGE/cores/Plex.rbf" ]]; then
     echo "ERROR: generic cores/Plex.rbf must not ship in paired $VERSION" >&2
     exit 1

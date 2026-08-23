@@ -70,6 +70,22 @@ if [[ -d "$PAIR_ART" ]]; then
       check_hash "$f" "$(md5sum "$f" | awk '{print $1}')" "$expect"
     fi
   done
+  if [[ -f "$PAIR_ART/cores/Plex.rbf" ]]; then
+    report "paired freeze must not contain generic cores/Plex.rbf"
+  fi
+  # Future one-pair Plex_SDfamily.rbf is not frozen; do not invent an md5.
+  if [[ -f "$PAIR_ART/cores/Plex_SDfamily.rbf" ]]; then
+    report "Plex_SDfamily.rbf in freeze without a gated gold md5 (do not invent)"
+  fi
+  for pairs in "$ROOT/assets/rbf_daemon_pairs.txt" "$PAIR_ART/rbf_daemon_pairs.txt"; do
+    [[ -f "$pairs" ]] || { report "missing pairs file $pairs"; continue; }
+    grep -q "^${MD5_480P_RBF} .*misterplexd.480p" "$pairs" || \
+      report "$pairs missing Plex_480p gold rollback row"
+    grep -q "^${MD5_240P15_RBF} .*misterplexd.240p15" "$pairs" || \
+      report "$pairs missing Plex_240p15 gold rollback row"
+    grep -q "^${MD5_480I_RBF} .*misterplexd.480i" "$pairs" || \
+      report "$pairs missing Plex_480i gold rollback row"
+  done
 fi
 
 check_paired_listing() {
@@ -82,6 +98,9 @@ check_paired_listing() {
   done
   if grep -Eq '/cores/Plex\.rbf$' <<<"$listing"; then
     report "$tarball must not contain generic cores/Plex.rbf"
+  fi
+  if grep -Eq '/cores/Plex_SDfamily\.rbf$' <<<"$listing"; then
+    report "$tarball must not contain ungated cores/Plex_SDfamily.rbf"
   fi
   check_hash "$tarball cores/Plex_480p.rbf" \
     "$(tar --wildcards -xOzf "$tarball" '*/cores/Plex_480p.rbf' | md5sum | awk '{print $1}')" \

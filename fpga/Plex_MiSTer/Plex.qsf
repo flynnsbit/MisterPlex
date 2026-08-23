@@ -89,7 +89,8 @@ set_global_assignment -name VERILOG_MACRO "FRAME_H=480"
 # 720p / ascal-native present path — DEFAULT OFF (v0.3.0 baseline must not change).
 # Parent enables in a granted fit QSF only.
 #
-# --- L4 720p24 product path (preferred first glass) ---
+# --- L4 720p24 lab path (DEFAULT OFF; parked, not SD-family product) ---
+# SD-family / 480p gold product QSF must not enable PLEX_PRESENT_720P_L4.
 # Measured PMS asset: 1280x720 @ 24/1. w-clock beam: H=1312 V=762.
 # At clk_sys=24 MHz → 24.006 Hz (1:1, no pulldown). Default product clk_sys is
 # still 20 MHz until fit grants 24 MHz PLL — beam math is correct either way.
