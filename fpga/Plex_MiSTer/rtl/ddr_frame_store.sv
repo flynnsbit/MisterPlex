@@ -22,6 +22,9 @@ module ddr_frame_store #(
 	// coded lines (stride 2). Consecutive fill wastes ~half of LINE_COUNT on
 	// never-hit odds → underrun class (prefetch_sim LC=8@60). Stride-matched
 	// fill keeps LINE_COUNT=8 but stocks scanned lines only (STA-safer than L16).
+	// 480i weave: same stride 2; present_core ORs analog_field into rd_y so
+	// want_y is odd on the odd field. Fill window becomes 1,3,.. with no extra
+	// LINE_COUNT / M10K. Do not live-mux this param from F12 Content.
 	parameter int Y_FILL_STRIDE = 1,
 	parameter [31:0] PHYS_BASE = 32'h3000_0000,
 	parameter int HPS_BANK_STRIDE_BYTES = 524288,
@@ -574,6 +577,8 @@ module ddr_frame_store #(
 	// sticky → soft-C starves chroma → gray glass (keepv22/25/26 STA0).
 	// keepv27: pure wire home for LC=8 stride=2: (line>>1)&7 = line[3:1]
 	// (no divide / modulo — keepv23/24 hold-red on arithmetic home).
+	// Weave odd rows 1,3,5,… share those same homes (line[3:1] of 1 == 0).
+	// Field cut overwrites the 8 Y slots; 420 chroma tags still hit (cy=y/2).
 	function automatic [SLOT_W-1:0] y_home_off(input [Y_W-1:0] line_y);
 		if ((Y_FILL_STRIDE == 2) && (LINE_COUNT == 8))
 			y_home_off = SLOT_W'(line_y[3:1]);

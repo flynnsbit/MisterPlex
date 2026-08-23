@@ -32,6 +32,15 @@ localparam int DDR_FRAME_YUV_BLACK_Y = 16;
 localparam int DDR_FRAME_YUV_BLACK_U = 128;
 localparam int DDR_FRAME_YUV_BLACK_V = 128;
 
+// SD-family analog (L4 off) on this 640×480 present bank — w-mem budget:
+// Dual-bank I420 already holds all 480 coded Y rows (DDR_FRAME_YUV420P_BYTES).
+// LINE_COUNT=8, LINE_SLOTS=16, Y 78×64 / C 39×64. Compile-time Y_FILL_STRIDE=2.
+// 240p bob + 480p FOAR-scandouble + 480i weave share that window (weave = field
+// OR into store_y, not a stride mux). True 480-row progressive @~60 Hz is
+// Y_FILL_STRIDE=1 and is the prefetch_sim LC=8@60 underrun class; do not grow
+// FRAME_LINES_16 on this RBF. If a stride mux is ever added, reset-latch it
+// with analog_sel (not live F12 Content).
+
 // ---- Aggressive 720p tier (opt-in present path; geom/PLXG handshake) ----
 // Landed for product QIP/hierarchy. Default present path still uses 480p constants
 // above. Do not retarget PRESENTED_* here — dual-header maps those to kPlex480p*.

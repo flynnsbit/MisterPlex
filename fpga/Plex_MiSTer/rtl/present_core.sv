@@ -68,6 +68,8 @@ module present_core #(
 	// store_y ≈ py * (FRAME_H / TPL_SCALE_REF_H). When that ratio is an
 	// integer ≥1, stock only scanned coded lines (product480 FOAR: 480/240=2).
 	// Keeps LINE_COUNT=8 while covering the beam set without FRAME_LINES_16.
+	// SD-family: compile-time 2 for 240p bob, 480p FOAR, and 480i weave
+	// (weave ORs analog_field into store_y; do not live-mux this from F12).
 	parameter int FRAME_Y_FILL_STRIDE =
 		((TPL_SCALE_REF_H > 0) && ((FRAME_H % TPL_SCALE_REF_H) == 0) &&
 		 ((FRAME_H / TPL_SCALE_REF_H) >= 1))
@@ -529,8 +531,14 @@ module present_core #(
 		past_last_row ? 10'(TPL_V_STORE > 0 ? TPL_V_STORE - 1 : 0) : py;
 	wire [31:0] store_y_prod = store_y_clamped * STORE_Y_SCALE;
 	wire [15:0] store_y_comb = store_y_prod[31:16];
-	wire [FRAME_Y_W-1:0] store_y_addr =
+	wire [FRAME_Y_W-1:0] store_y_even =
 		(store_y_comb > FRAME_LAST_Y_16) ? FRAME_LAST_Y : store_y_comb[FRAME_Y_W-1:0];
+	// 480i weave: analog_field (VGA_F1) selects odd coded rows. 240p bob and
+	// 480p FOAR keep field=0 so this is a no-op. Compile-time Y_FILL_STRIDE=2
+	// still stocks the scanned parity; fill follows rd_y. Not a live F12
+	// Content stride mux (analog_sel stays reset-latched).
+	wire [FRAME_Y_W-1:0] store_y_addr =
+		store_y_even | {{(FRAME_Y_W-1){1'b0}}, analog_field_i};
 `endif
 
 	reg [FRAME_X_W-1:0] store_x;
