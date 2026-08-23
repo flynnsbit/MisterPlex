@@ -34,6 +34,36 @@ int main() {
     auto rewritten = buildPlexBase("http", "172-17-0-1.abc.plex.direct", "32400", "pms.lan");
     CHECK(rewritten.find("pms.lan") != std::string::npos);
 
+    // SD-family: loopback / 9324 proxy / LAN plex.direct must rewrite to conf PLEX_BASE.
+    // Mixing *.plex.direct with the wrong token freezes Plex Web at 0:00 (L41).
+    const std::string sdLan = "http://192.168.2.1:32400";
+    {
+        const auto pd =
+            buildPlexBase("https", "192-168-2-1.abc.plex.direct", "32400", sdLan);
+        if (pd != sdLan) {
+            std::fprintf(stderr,
+                         "FAIL SD plex.direct rewrite: got [%s] want [%s]\n", pd.c_str(),
+                         sdLan.c_str());
+            ++fails;
+        }
+        const auto loop =
+            buildPlexBase("http", "127.0.0.1", "32400", sdLan);
+        if (loop != sdLan) {
+            std::fprintf(stderr,
+                         "FAIL SD 127.0.0.1 rewrite: got [%s] want [%s]\n", loop.c_str(),
+                         sdLan.c_str());
+            ++fails;
+        }
+        const auto proxy =
+            buildPlexBase("http", "127.0.0.1", "9324", sdLan);
+        if (proxy != sdLan) {
+            std::fprintf(stderr,
+                         "FAIL SD 127.0.0.1:9324 rewrite: got [%s] want [%s]\n",
+                         proxy.c_str(), sdLan.c_str());
+            ++fails;
+        }
+    }
+
     // Local path resolve (no network)
     auto r = resolvePlayTarget("/media/fat/mistercast/test.mp4", "", "", 0, true);
     CHECK(r.ok);
@@ -284,8 +314,9 @@ int main() {
         n = d = 0;
         CHECK(parseExactFps("NTSC", "", n, d) && n == 30000 && d == 1001);
         n = d = 0;
-        // Fall back to the videoFrameRate bucket only when Stream@frameRate is absent.
-        CHECK(parseExactFps("24p", "", n, d) && n == 24 && d == 1);
+        // Fall back to the videoFrameRate token when Stream@frameRate is absent.
+        // "24p" is NTSC film (24000/1001), not integer 24 — see parseExactFps.
+        CHECK(parseExactFps("24p", "", n, d) && n == 24000 && d == 1001);
         n = d = 0;
         CHECK(parseExactFps("", "", n, d) == false && n == 0 && d == 0);
         n = d = 0;

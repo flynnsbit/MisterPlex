@@ -1,6 +1,7 @@
 #include "companion.hpp"
 
 #include "libmisterplex/gdm_filter.hpp"
+#include "libmisterplex/lan_advertise_ip.hpp"
 
 #include <arpa/inet.h>
 #include <cerrno>
@@ -8,6 +9,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
+#include <ifaddrs.h>
+#include <net/if.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -352,24 +355,43 @@ std::string Companion::xmlEsc(const std::string& s) {
 }
 
 std::string Companion::lanIp() const {
+    // connect(1.1.1.1)+getsockname is only a route hint. Failure (or a
+    // 127/169.254 src) must not win when a 192.168.2.x / RFC1918 iface exists;
+    // otherwise GDM logs loopback and Plex Web can pin 127 / :9324 (0:00).
+    std::string hint;
     int fd = ::socket(AF_INET, SOCK_DGRAM, 0);
-    if (fd < 0)
-        return "127.0.0.1";
-    sockaddr_in a{};
-    a.sin_family = AF_INET;
-    a.sin_port = htons(53);
-    inet_pton(AF_INET, "1.1.1.1", &a.sin_addr);
-    if (connect(fd, reinterpret_cast<sockaddr*>(&a), sizeof(a)) != 0) {
+    if (fd >= 0) {
+        sockaddr_in a{};
+        a.sin_family = AF_INET;
+        a.sin_port = htons(53);
+        inet_pton(AF_INET, "1.1.1.1", &a.sin_addr);
+        if (connect(fd, reinterpret_cast<sockaddr*>(&a), sizeof(a)) == 0) {
+            sockaddr_in local{};
+            socklen_t len = sizeof(local);
+            if (getsockname(fd, reinterpret_cast<sockaddr*>(&local), &len) == 0) {
+                char buf[INET_ADDRSTRLEN] = {};
+                if (inet_ntop(AF_INET, &local.sin_addr, buf, sizeof(buf)))
+                    hint = buf;
+            }
+        }
         close(fd);
-        return "127.0.0.1";
     }
-    sockaddr_in local{};
-    socklen_t len = sizeof(local);
-    getsockname(fd, reinterpret_cast<sockaddr*>(&local), &len);
-    close(fd);
-    char buf[64];
-    inet_ntop(AF_INET, &local.sin_addr, buf, sizeof(buf));
-    return buf;
+    std::vector<std::string> ifaces;
+    ifaddrs* head = nullptr;
+    if (getifaddrs(&head) == 0) {
+        for (ifaddrs* p = head; p != nullptr; p = p->ifa_next) {
+            if (!p->ifa_addr || p->ifa_addr->sa_family != AF_INET)
+                continue;
+            if (p->ifa_flags & IFF_LOOPBACK)
+                continue;
+            char buf[INET_ADDRSTRLEN] = {};
+            const auto* sin = reinterpret_cast<sockaddr_in*>(p->ifa_addr);
+            if (inet_ntop(AF_INET, &sin->sin_addr, buf, sizeof(buf)))
+                ifaces.emplace_back(buf);
+        }
+        freeifaddrs(head);
+    }
+    return pickLanAdvertiseIp(hint, ifaces);
 }
 
 std::string Companion::gdmPayload() const {

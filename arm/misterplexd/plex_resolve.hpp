@@ -78,8 +78,13 @@ std::vector<std::string> parsePlexServerList(const std::string& csvOrSingle);
 std::vector<std::string> mergePlexServers(const std::string& serversCsv,
                                           const std::vector<std::string>& baseLines);
 
-// Build http(s)://host:port base. Rewrites Docker-bridge plex.direct to empty
-// (caller should supply LAN fallback).
+// True when the PMS host cannot be used for resolve/timeline on this device.
+// Docker-bridge, loopback, IPv4 link-local, and *.plex.direct (HTTPS relay)
+// rewrite to lanFallback / conf PLEX_BASE so Plex Web does not freeze at 0:00.
+bool isUnreachableHost(const std::string& hostOrUrl);
+
+// Build http(s)://host:port base. Unreachable hosts (docker-bridge, loopback,
+// 169.254, *.plex.direct) rewrite to lanFallback (conf PLEX_BASE).
 std::string buildPlexBase(const std::string& protocol, const std::string& address,
                           const std::string& port, const std::string& lanFallback = {});
 
