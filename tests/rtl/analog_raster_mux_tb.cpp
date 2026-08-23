@@ -1,5 +1,8 @@
 // Analog raster mux: 240p ~15.6 kHz vs 480p ~31 kHz vs 480i field toggle.
-// RED twin: ANALOG_RASTER_FAULT_SWAP_SEL must fail these class checks.
+// v1 reset-latch: after reset sel=0, live raster_sel=1 must keep 15.6 kHz.
+// RED twins:
+//   ANALOG_RASTER_FAULT_SWAP_SEL  — 240p/480p class swap must fail
+//   ANALOG_RASTER_FAULT_LIVE_LATCH — live fstart latch must fail reset-hold
 //
 // clk_sys = 20 MHz (TB period 1 tick = 1 clk). colorbars Template H_TOTAL=638.
 
@@ -102,6 +105,44 @@ int main(int argc, char** argv) {
 		fails++;
 	}
 
+	// ---- v1 reset-latch: live OSD Analog must not retarget H class ----
+	// After reset sel=0 (15.6 kHz), flip raster_sel to 1 with no reset.
+	// GREEN: H stays 15.6 kHz. RED LIVE_LATCH: H jumps to ~31 kHz.
+	top->raster_sel = 1;
+	int latch_fstart = 0;
+	const int max_latch = 900000;
+	for (int c = 0; c < max_latch && latch_fstart < 2; ++c) {
+		tick(top);
+		if (top->frame_start)
+			latch_fstart++;
+	}
+	std::printf("reset-latch wait fstart=%d (flipped raster_sel=1, no reset)\n",
+	            latch_fstart);
+	if (latch_fstart < 2) {
+		std::printf("FAIL reset-latch: need 2 frame_starts to prove hold (saw %d)\n",
+		            latch_fstart);
+		fails++;
+	}
+	const int p_lat = measure_hs_period(top, 6);
+	const int hz_lat = hz_from_period(p_lat);
+	const bool c_lat15 = in_class(hz_lat, kHzLo15, kHzHi15);
+	const bool c_lat31 = in_class(hz_lat, kHzLo31, kHzHi33);
+	std::printf("reset-latch after live sel=1 period_clk=%d H=%d Hz class15=%d class31=%d scandouble_act=%d\n",
+	            p_lat, hz_lat, c_lat15 ? 1 : 0, c_lat31 ? 1 : 0,
+	            top->scandouble_act ? 1 : 0);
+	if (!c_lat15) {
+		std::printf("FAIL reset-latch: mid-stream sel=1 retargeted H class (must stay 15.6 kHz until reset)\n");
+		fails++;
+	}
+	if (c_lat31) {
+		std::printf("FAIL reset-latch: H class jumped to ~31 kHz without reset\n");
+		fails++;
+	}
+	if (top->scandouble_act) {
+		std::printf("FAIL reset-latch: scandouble_act went 1 without reset\n");
+		fails++;
+	}
+
 	// ---- 480p ~31 kHz class ----
 	reset_sel(top, 1);
 	const int p480 = measure_hs_period(top, 6);
@@ -156,7 +197,7 @@ int main(int argc, char** argv) {
 		delete top;
 		return 1;
 	}
-	std::printf("OK analog_raster_mux: 240p~15.6kHz 480p~31kHz 480i field toggle\n");
+	std::printf("OK analog_raster_mux: 240p~15.6kHz 480p~31kHz 480i field toggle reset-latch\n");
 	delete top;
 	return 0;
 }

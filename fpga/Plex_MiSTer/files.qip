@@ -48,4 +48,6 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/decode_stub.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/stream_path.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_core.sv
 set_global_assignment -name SDC_FILE Plex.sdc
+# Analog mux: ce_pix is a clk_sys clock-enable (not a generated 15.6 kHz clock).
+set_global_assignment -name SDC_FILE Plex_analog_mux.sdc
 set_global_assignment -name SYSTEMVERILOG_FILE Plex.sv
