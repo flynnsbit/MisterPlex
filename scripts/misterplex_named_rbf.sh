@@ -115,6 +115,21 @@ map_named_rbf_if_exists() {
   return 1
 }
 
+is_generic_plex_rbf() {
+  n=$(echo "$1" | sed 's|.*/||')
+  case "$n" in
+    [Pp]lex.[Rr][Bb][Ff]) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+read_name_file() {
+  f=$1
+  if [ -r "$f" ]; then
+    tr -d '\000\r\n' <"$f" 2>/dev/null || true
+  fi
+}
+
 # Identity of the RBF Main actually loaded. Does not consult LIVE_RBF or
 # leftover mailbox magics (CORENAME=Plex for every sibling).
 loaded_rbf_from_main_or_rbfname() {
@@ -122,11 +137,11 @@ loaded_rbf_from_main_or_rbfname() {
   if [ -n "$argv" ]; then
     map_named_rbf_if_exists "$argv" && return 0
   fi
-  raw=$(tr -d '\000\r\n' <"$RBFNAME_FILE" 2>/dev/null || true)
+  raw=$(read_name_file "$RBFNAME_FILE")
   if [ -n "$raw" ]; then
     map_named_rbf_if_exists "$raw" && return 0
   fi
-  core=$(tr -d '\000\r\n' <"${CORENAME_FILE:-/tmp/CORENAME}" 2>/dev/null || true)
+  core=$(read_name_file "${CORENAME_FILE:-/tmp/CORENAME}")
   if [ -n "$core" ]; then
     map_named_rbf_if_exists "$core" && return 0
   fi
@@ -218,7 +233,9 @@ resolve_loaded_rbf() {
     echo "$ut/Plex_720p24.rbf"
     return 0
   fi
-  if [ -n "${LIVE_RBF:-}" ] && [ -f "$LIVE_RBF" ]; then
+  # Named LIVE_RBF only. Generic Plex.rbf always hashes the last drop
+  # (CORENAME=Plex for every sibling) — never pair from that path.
+  if [ -n "${LIVE_RBF:-}" ] && [ -f "$LIVE_RBF" ] && ! is_generic_plex_rbf "$LIVE_RBF"; then
     echo "$LIVE_RBF"
     return 0
   fi
@@ -232,12 +249,6 @@ resolve_loaded_rbf() {
       return 0
     fi
   done
-  # Last resort: named rollback, never generic Plex.rbf.
-  case "$LIVE_RBF" in
-    */[Pp]lex.[Rr][Bb][Ff]|[Pp]lex.[Rr][Bb][Ff])
-      echo "$ut/Plex_480p.rbf"
-      return 0
-      ;;
-  esac
-  echo "$LIVE_RBF"
+  # Last resort: named rollback, never generic Plex.rbf (even if missing).
+  echo "$ut/Plex_480p.rbf"
 }

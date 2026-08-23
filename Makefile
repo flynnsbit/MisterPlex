@@ -137,6 +137,7 @@ unit-unlocked: preflight $(ROOT)/build/test_gdm_filter $(ROOT)/build/test_cast_a
 	$(ROOT)/tests/unit/test_confstr_guard.sh
 	$(ROOT)/tests/unit/test_release_rbf_hash.sh
 	$(ROOT)/tests/unit/test_sd_family_package_policy.sh
+	$(ROOT)/tests/unit/test_sd_family_prefit_gate.sh
 	$(ROOT)/tests/unit/test_glass_baseline_pair_policy.sh
 	$(ROOT)/tests/unit/test_v030_lab_stable_policy.sh
 	$(ROOT)/tests/unit/test_sdram_startup_verilator.sh
