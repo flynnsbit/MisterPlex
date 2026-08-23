@@ -30,6 +30,10 @@ int main() {
     CHECK(corroborateLiveGlass(mailbox_abi::kPlxjMagic, pin) == LiveGlass::True480);
     pin.rbfname = "Plex_480i";
     CHECK(corroborateLiveGlass(mailbox_abi::kPlxjMagic, pin) == LiveGlass::True480);
+    pin.rbfname = "Plex_SDfamily";
+    CHECK(corroborateLiveGlass(mailbox_abi::kPlxjMagic, pin) == LiveGlass::True480);
+    CHECK(classifyLoadedRbfName("Plex_SDfamily.rbf") == LoadedRbfClass::SdFamily);
+    CHECK(p720_av::nameLooksLikeSdFamilyRbf("Plex_SDfamily.rbf"));
 
     pin.rbfname = "Plex_720p24";
     CHECK(corroborateLiveGlass(mailbox_abi::kPlxjMagic, pin) == LiveGlass::L4);

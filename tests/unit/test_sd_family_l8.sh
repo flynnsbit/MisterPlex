@@ -62,6 +62,7 @@ setup_mock() {
   : >"$mock/utility/Plex_240p15.rbf"
   : >"$mock/utility/Plex_480i.rbf"
   : >"$mock/utility/Plex_720p24.rbf"
+  : >"$mock/utility/Plex_SDfamily.rbf"
   cat >"$mock/bin/devmem" <<'EOF'
 #!/bin/sh
 addr=$(printf '%s' "$1" | tr 'A-F' 'a-f')
@@ -139,6 +140,10 @@ assert_not_720 "$got" "leftover PLXJ + RBFNAME=Plex_240p15 must not resolve 720p
 
 got=$(run_named Plex_480i 0 resolve)
 assert_not_720 "$got" "leftover PLXJ + RBFNAME=Plex_480i must not resolve 720p24"
+
+got=$(run_named Plex_SDfamily 0 resolve)
+assert_not_720 "$got" "leftover PLXJ + RBFNAME=Plex_SDfamily must not resolve 720p24"
+[[ "$got" == *Plex_SDfamily.rbf ]] || fail "leftover PLXJ + SDfamily must resolve Plex_SDfamily (got $got)"
 
 got=$(run_named Plex 0 resolve)
 assert_not_720 "$got" "leftover PLXJ 504C584A + RBFNAME=Plex must not select 720p daemon"

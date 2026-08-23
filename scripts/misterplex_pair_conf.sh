@@ -5,7 +5,9 @@
 # Gold-daemon cores (480p / 240p15 / 480i, md5 5f1c8614; sha256 acfa03d7):
 #   lead 40, drop 0, fast_bilinear, no fps= filter, OSD_CONTROL=0
 #   (leftover 720p OSD was retargeting the 480p ladder).
-# Future Plex_SDfamily.rbf (no invented md5) uses the default 480p overlay.
+# Future Plex_SDfamily.rbf (no invented md5) uses the default 480p overlay
+# plus ANALOG_RASTER=480p31 (reset-latched O[15:14]; daemon pulses status[0]).
+# Does not own PLEX_BASE. OSD_CONTROL=0 is load-bearing.
 # L4 720p24: 720p ladder + OSD_CONTROL=0 (leftover F12 480p bits must not
 # retarget DECODE to 640x480 on this RBF). Same lead/drop (safe). Do not
 # force the 480p transcode profile onto this RBF.
@@ -64,6 +66,7 @@ misterplex_pair_conf_keys() {
       echo "DECODE=640x480"
       echo "TRANSCODE_PROFILE=480p"
       echo "OSD_CONTROL=0"
+      echo "ANALOG_RASTER=480p31"
       echo "IDLE_SCREEN=logo"
       echo "AV_PRESENT_LEAD_MS=40"
       echo "AV_RESYNC_DROP_MS=0"

@@ -7,6 +7,7 @@
 #include "pms_timeline.hpp"
 #include "plex_resolve.hpp"
 #include "libmisterplex/display_raster.hpp"
+#include "libmisterplex/analog_raster.hpp"
 #include "libmisterplex/av_clock.hpp"
 
 #include <algorithm>
@@ -749,6 +750,20 @@ int main(int argc, char** argv) {
     if (!player.initPresent()) {
         std::fprintf(stderr, "misterplexd: WARNING no present path — companion only\n");
     } else {
+        // v1 analog mux: ANALOG_RASTER → O[15:14] then pulse status[0] once
+        // before idle paint so the mux latches under reset. Not live OSD poll.
+        // OSD_CONTROL stays 0. Skip L4 (parked).
+        if (misterplex::analogRasterApplyOnStart()) {
+            const auto analog = loadConf(confPath, "ANALOG_RASTER");
+            player.applyAnalogRasterOnStart(analog);
+            std::fprintf(stderr,
+                         "misterplexd: ANALOG_RASTER=%s bits15:14=%u pulse_reset=%s "
+                         "live=%s OSD_CONTROL stays 0\n",
+                         analog.empty() ? "follow(default)" : analog.c_str(),
+                         misterplex::analogRasterMenuBitsFromConf(analog.c_str()),
+                         misterplex::analogRasterPulseResetOnStart() ? "1" : "0",
+                         misterplex::analogRasterApplyOnOsdChange() ? "1" : "0");
+        }
         // Paint the idle screen at boot so the core never shows a stale frame store.
         player.startIdle();
         player.startOsdPoll();

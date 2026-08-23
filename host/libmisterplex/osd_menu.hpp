@@ -21,10 +21,10 @@
 //   [10]     unused (v11 Browse is J1/PS2, not a T[] bit)
 //   [11]     T Flush bitstream FIFO
 //   [12:13]  reserved HPS DDR kick/bank — never reuse
-//   [15:14]  Display res (v9) 0=Follow content, 1=240p, 2=480p, 3=720p
-//                             Default 0 keeps v8 cores safe (those bits were Idle
-//                             logo=0) so PMS 720p is not forced to 240p present.
-//                             Idle screen is conf IDLE_SCREEN= only from v9.
+//   [15:14]  v9 Display res 0=Follow, 1=240p, 2=480p, 3=720p (ascal video_mode).
+//            v10 SD-family Analog raster 0=Follow, 1=240p15, 2=480p31, 3=480i.
+//            analogRasterApplyOnStart writes these bits then pulses status[0].
+//            Do not live-rewrite (OSD_CONTROL=0). See analog_raster.hpp.
 //
 // Pure decode so it can be unit-tested without an FPGA.
 //

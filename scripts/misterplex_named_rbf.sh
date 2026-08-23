@@ -36,6 +36,7 @@ rbf_family_from_path() {
   n=$(echo "$1" | sed 's|.*/||; s|\.rbf$||; s|\.RBF$||')
   case "$n" in
     *[Pp]lex_720*|*[Pp]lex-720*) echo l4 ;;
+    *[Pp]lex_[Ss][Dd][Ff]amily*) echo sdfam ;;
     *[Pp]lex_240*) echo sd240 ;;
     *[Pp]lex_480i*|*[Pp]lex-480i*) echo sd480i ;;
     *[Pp]lex_480p*|*[Pp]lex-480p*) echo sd480 ;;
@@ -48,6 +49,7 @@ utility_rbf_for_family() {
   ut="${UTILITY_DIR:-/media/fat/_Utility}"
   case "$1" in
     l4) echo "$ut/Plex_720p24.rbf" ;;
+    sdfam) echo "$ut/Plex_SDfamily.rbf" ;;
     sd240) echo "$ut/Plex_240p15.rbf" ;;
     sd480i) echo "$ut/Plex_480i.rbf" ;;
     sd480) echo "$ut/Plex_480p.rbf" ;;
@@ -122,13 +124,18 @@ loaded_rbf_from_main_or_rbfname() {
   if [ -n "$argv" ]; then
     map_named_rbf_if_exists "$argv" && return 0
   fi
-  raw=$(tr -d '\000\r\n' <"$RBFNAME_FILE" 2>/dev/null || true)
-  if [ -n "$raw" ]; then
-    map_named_rbf_if_exists "$raw" && return 0
+  if [ -r "$RBFNAME_FILE" ]; then
+    raw=$(tr -d '\000\r\n' <"$RBFNAME_FILE" 2>/dev/null || true)
+    if [ -n "$raw" ]; then
+      map_named_rbf_if_exists "$raw" && return 0
+    fi
   fi
-  core=$(tr -d '\000\r\n' <"${CORENAME_FILE:-/tmp/CORENAME}" 2>/dev/null || true)
-  if [ -n "$core" ]; then
-    map_named_rbf_if_exists "$core" && return 0
+  cfile="${CORENAME_FILE:-/tmp/CORENAME}"
+  if [ -r "$cfile" ]; then
+    core=$(tr -d '\000\r\n' <"$cfile" 2>/dev/null || true)
+    if [ -n "$core" ]; then
+      map_named_rbf_if_exists "$core" && return 0
+    fi
   fi
   return 1
 }
@@ -195,7 +202,7 @@ live_glass_is_l4() {
   named=$(loaded_rbf_from_main_or_rbfname) || named=""
   fam=$(rbf_family_from_path "$named")
   case "$fam" in
-    sd480|sd240|sd480i) return 1 ;;
+    sd480|sd240|sd480i|sdfam) return 1 ;;
     l4) return 0 ;;
   esac
   return 1
@@ -219,8 +226,13 @@ resolve_loaded_rbf() {
     return 0
   fi
   if [ -n "${LIVE_RBF:-}" ] && [ -f "$LIVE_RBF" ]; then
-    echo "$LIVE_RBF"
-    return 0
+    case "$LIVE_RBF" in
+      */[Pp]lex.[Rr][Bb][Ff]|[Pp]lex.[Rr][Bb][Ff]) ;;
+      *)
+        echo "$LIVE_RBF"
+        return 0
+        ;;
+    esac
   fi
   if [ -f "$ut/Plex_480p.rbf" ]; then
     echo "$ut/Plex_480p.rbf"
@@ -240,4 +252,59 @@ resolve_loaded_rbf() {
       ;;
   esac
   echo "$LIVE_RBF"
+}
+
+# Pair daemon + glass tag from the loaded RBF path. Plex_SDfamily.rbf has no
+# frozen md5 — pair gold misterplexd.480p. Leftover L4 PLXJ / a 720p24 pairs
+# row must not win on an SD-family name.
+pair_bin_glass_for_loaded_rbf() {
+  rbf=$1
+  root="${MISTERPLEX_ROOT:-/media/fat/misterplex}"
+  default="${MISTERPLEXD_BIN:-$root/bin/misterplexd}"
+  bin="$default"
+  glass=true480
+  from_pairs=0
+  sum=missing
+  if [ -f "$rbf" ]; then
+    sum=$(md5sum "$rbf" | awk '{print $1}')
+  fi
+  pairs="${MISTERPLEX_PAIRS:-${PAIRS:-}}"
+  if [ -n "$pairs" ] && [ -f "$pairs" ] && [ "$sum" != missing ]; then
+    p=$(awk -v s="$sum" '$1==s && $1 !~ /^#/ {print $2; exit}' "$pairs")
+    g=$(awk -v s="$sum" '$1==s && $1 !~ /^#/ {print tolower($3); exit}' "$pairs")
+    if [ -n "$p" ]; then
+      bin=$p
+      from_pairs=1
+      if [ -n "$g" ]; then
+        glass=$g
+      fi
+    fi
+  fi
+  fam=$(rbf_family_from_path "$rbf")
+  case "$fam" in
+    sdfam|sd480|sd240|sd480i)
+      case "$glass:$bin" in
+        l4:*|*720p24*|*misterplexd.720*)
+          from_pairs=0
+          bin="$default"
+          glass=true480
+          ;;
+      esac
+      if [ "$from_pairs" -eq 0 ]; then
+        case "$fam" in
+          sdfam|sd480) bin="$root/bin/misterplexd.480p" ;;
+          sd240) bin="$root/bin/misterplexd.240p15" ;;
+          sd480i) bin="$root/bin/misterplexd.480i" ;;
+        esac
+        glass=true480
+      fi
+      ;;
+    l4)
+      if [ "$from_pairs" -eq 0 ]; then
+        bin="$root/bin/misterplexd.720p24"
+        glass=l4
+      fi
+      ;;
+  esac
+  printf '%s %s\n' "$bin" "$glass"
 }

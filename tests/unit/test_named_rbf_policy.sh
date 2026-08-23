@@ -194,6 +194,20 @@ export FAKE_L4_PLXD_A=0x504C5844
 export FAKE_L4_PLXD_B=0x504C5844
 export FAKE_T480_PLXS=0x00000000
 
+# --- 7b. Plex_SDfamily beats leftover PLXJ (pairs 480p-class, not 720p24) ---
+: >"$ut/Plex_SDfamily.rbf"
+reset_stub
+export MISTERPLEX_MAIN_ARGV="/media/fat/MiSTer /media/fat/_Utility/Plex_SDfamily.rbf"
+echo Plex >"$RBFNAME_FILE"
+rbf=$(resolve_loaded_rbf)
+want_rbf "$rbf" "Plex_SDfamily.rbf" "Main argv Plex_SDfamily leftover PLXJ"
+if live_glass_is_l4; then
+  fail "leftover PLXJ + loaded Plex_SDfamily must not classify L4"
+else
+  ok "live_glass not L4 for loaded Plex_SDfamily leftover PLXJ"
+fi
+rm -f "$ut/Plex_SDfamily.rbf"
+
 # --- 8. Named 720p24 file still pairs L4 even with leftover 480p magics frozen ---
 reset_stub
 export MISTERPLEX_MAIN_ARGV="/media/fat/MiSTer /media/fat/_Utility/Plex_720p24.rbf"

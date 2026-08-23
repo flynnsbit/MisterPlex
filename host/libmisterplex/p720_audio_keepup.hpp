@@ -197,7 +197,9 @@ inline bool nameLooksLikeSdFamilyRbf(const char* pathOrName) {
            std::strstr(base, "480i") != nullptr || std::strstr(base, "480I") != nullptr ||
            std::strstr(base, "240p") != nullptr || std::strstr(base, "240P") != nullptr ||
            std::strstr(base, "240i") != nullptr || std::strstr(base, "Plex_240") != nullptr ||
-           std::strstr(base, "plex_240") != nullptr;
+           std::strstr(base, "plex_240") != nullptr ||
+           std::strstr(base, "SDfamily") != nullptr || std::strstr(base, "sdfamily") != nullptr ||
+           std::strstr(base, "SDFamily") != nullptr || std::strstr(base, "SdFamily") != nullptr;
 }
 
 inline bool leftoverPlxjMustNotPinL4(bool l4PlxdChanging, bool t480PlxdChanging,

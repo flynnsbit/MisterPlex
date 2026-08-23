@@ -8,6 +8,7 @@
 #include "libmisterplex/idle_screen.hpp"
 #include "libmisterplex/osd_menu.hpp"
 #include "libmisterplex/display_raster.hpp"
+#include "libmisterplex/analog_raster.hpp"
 #include "libmisterplex/hdmi_auto_delay.hpp"
 #include "libmisterplex/stick_bank_score.hpp"
 #include "libmisterplex/h264_nal_dispatch.hpp"
@@ -1126,6 +1127,8 @@ void MediaPlayer::applyOsd(uint16_t word) {
         paintIdle();
     // Display O[15:14]: persist only. video_mode is latched at daemon start /
     // core reset — do not poke /dev/MiSTer_cmd while the user flips F12.
+    // Analog raster (v10 O[15:14] on SDfamily) is reset-latched in
+    // applyAnalogRasterOnStart — analogRasterApplyOnOsdChange() is false.
     const bool contentChanged =
         osdResSeeded_ &&
         (lastContentRes_.width != cr.width || lastContentRes_.height != cr.height);
@@ -1150,6 +1153,27 @@ void MediaPlayer::applyOsd(uint16_t word) {
         " resync=" + (s.resyncEnabled ? "on" : "off") +
         " content_res=" + cr.label + " display_res=" + dr.label +
         " decode=" + std::to_string(outW_) + "x" + std::to_string(outH_));
+}
+
+void MediaPlayer::applyAnalogRasterOnStart(const std::string& analogRasterConf) {
+    if (!analogRasterApplyOnStart())
+        return;
+    if (liveGlass_ == LiveGlass::L4) {
+        log("media: analog raster skip (L4 parked)");
+        return;
+    }
+    if (!fpga_.ok()) {
+        log("media: analog raster skip (no FPGA SPI)");
+        return;
+    }
+    const AnalogRasterStartPlan plan = analogRasterStartPlan(analogRasterConf.c_str());
+    if (!fpga_.setStatusBits(plan.pairs, plan.nPairs)) {
+        log("media: analog raster setStatusBits failed: " + fpga_.lastError());
+        return;
+    }
+    log(std::string("media: ANALOG_RASTER bits15:14=") + std::to_string(plan.bits15_14) +
+        " pulse_reset=" + (plan.pulseReset ? "1" : "0") +
+        " live=" + (plan.applyLive ? "1" : "0"));
 }
 
 void MediaPlayer::latchAndApplyDisplayRaster(const ContentResolution& display) {
@@ -1177,6 +1201,8 @@ void MediaPlayer::applyLiveDisplayRaster(const ContentResolution& osdDisplay, bo
 
 void MediaPlayer::applyDisplayRaster(const ContentResolution& display, bool force) {
     const char* cmd = videoModeCmdForScoringPath(display.label, displaySink_);
+    if (displaySink_ == DisplaySink::HdmiLcd && !videoModeCmdIsHdmiLcdSafe(cmd))
+        cmd = nullptr;
     // 112bb + CEA 720p24 HDMI (30000 kHz) wrote and HURT: 14.5/12.31 vs
     // 15.4/12.87 at 720p60. ascal 60→24 is not the unique24 closer. L4 stays
     // on 720p60. kVideoModeCmd720p24 remains a legal cmd for a later design.

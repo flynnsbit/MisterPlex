@@ -171,42 +171,35 @@ stop_plex_arm() {
 select_bin_for_live_rbf() {
   # Must not run in $() — last_pair_key / SELECTED_BIN live in this shell.
   # Pair by the loaded RBF (Main argv / RBFNAME Utility path / LIVE_RBF).
-  # Leftover L4 PLXJ 504C584A at 0x3047F130 must not hash Plex_720p24.
+  # Plex_SDfamily.rbf (no frozen md5) → misterplexd.480p gold. Leftover L4
+  # PLXJ 504C584A at 0x3047F130 must not hash Plex_720p24.
   rbf=$(resolve_loaded_rbf)
   SELECTED_BIN="$DEFAULT_BIN"
   sum="missing"
-  if [ -f "$rbf" ]; then
-    sum=$(md5sum "$rbf" | awk '{print $1}')
-    if [ -f "$PAIRS" ]; then
-      pair=$(awk -v s="$sum" '$1==s && $1 !~ /^#/ {print $2; exit}' "$PAIRS")
-      if [ -n "${pair:-}" ] && [ -x "$pair" ]; then
-        SELECTED_BIN="$pair"
-        # Pairs col3 is l4/true480. Only hashing 03f1b95a as L4 pinned
-        # 28cb5a75 (and every later 720p24 RBF) glass=true480 so the daemon
-        # GLASS-MAX'd DECODE=1280x720 → bank=640x480.
-        glass_col=$(awk -v s="$sum" '$1==s && $1 !~ /^#/ {print tolower($3); exit}' "$PAIRS")
-        if [ "$glass_col" = "l4" ]; then
-          echo L4 > /tmp/misterplex-live-glass
-        else
-          echo true480 > /tmp/misterplex-live-glass
-        fi
-        pair_key="$sum $SELECTED_BIN"
-        if [ "$pair_key" != "$last_pair_key" ]; then
-          log "PAIR_OK file=$rbf rbf=$sum bin=$SELECTED_BIN glass=$(cat /tmp/misterplex-live-glass)"
-          last_pair_key=$pair_key
-          printf '%s\n' "$pair_key" >"$PAIR_KEY_FILE"
-          if [ -n "${PAIR_CONF_LIB:-}" ]; then
-            misterplex_apply_pair_conf "$sum" "$CONF"
-            pair_conf_dirty=1
-            log "PAIR_CONF $CONF rbf=$sum"
-          fi
-        fi
-        return 0
-      fi
-    fi
-    log "PAIR_DEFAULT file=$rbf rbf=$sum bin=$SELECTED_BIN"
+  [ -f "$rbf" ] && sum=$(md5sum "$rbf" | awk '{print $1}')
+  out=$(pair_bin_glass_for_loaded_rbf "$rbf") || out=""
+  bin=$(printf '%s\n' "$out" | awk '{print $1}')
+  glass_col=$(printf '%s\n' "$out" | awk '{print $2}')
+  [ -n "$bin" ] && SELECTED_BIN=$bin
+  if [ "$glass_col" = "l4" ] || [ "$glass_col" = "L4" ]; then
+    echo L4 > /tmp/misterplex-live-glass
   else
-    log "PAIR_DEFAULT no live rbf bin=$SELECTED_BIN"
+    echo true480 > /tmp/misterplex-live-glass
+  fi
+  pair_key="$sum $SELECTED_BIN"
+  if [ "$pair_key" != "$last_pair_key" ]; then
+    if [ -f "$rbf" ]; then
+      log "PAIR_OK file=$rbf rbf=$sum bin=$SELECTED_BIN glass=$(cat /tmp/misterplex-live-glass)"
+    else
+      log "PAIR_DEFAULT no live rbf bin=$SELECTED_BIN"
+    fi
+    last_pair_key=$pair_key
+    printf '%s\n' "$pair_key" >"$PAIR_KEY_FILE"
+    if [ -n "${PAIR_CONF_LIB:-}" ] && [ -f "$PAIR_CONF_LIB" ]; then
+      misterplex_apply_pair_conf "$sum" "$CONF"
+      pair_conf_dirty=1
+      log "PAIR_CONF $CONF rbf=$sum"
+    fi
   fi
 }
 

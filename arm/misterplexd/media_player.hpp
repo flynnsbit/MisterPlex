@@ -4,6 +4,7 @@
 // STREAM=1: annex-B demux → host I-slice recon → F1 + F3; optional RGB skip.
 
 #include "libmisterplex/osd_menu.hpp"
+#include "libmisterplex/analog_raster.hpp"
 #include "libmisterplex/present_bank.hpp"
 #include "libmisterplex/fabric_direct.hpp"
 #include "libmisterplex/library_browser.hpp"
@@ -100,6 +101,9 @@ public:
     void openLibraryBrowser();
     // Core reset / daemon start: latch Display and write video_mode once.
     void latchAndApplyDisplayRaster(const ContentResolution& display);
+    // v1 analog mux: write O[15:14] from ANALOG_RASTER then pulse status[0].
+    // True480 / SD-family only. Not live OSD poll. OSD_CONTROL stays 0.
+    void applyAnalogRasterOnStart(const std::string& analogRasterConf);
     void setFfmpegPath(std::string p) { ffmpeg_ = std::move(p); }
     // Conf FFMPEG_SWS_FLAGS: bicubic (quality) | fast_bilinear (rate ladder) | neighbor |
     // skip|none|off|identity (omit scale) | exact[_fast_bilinear|_neighbor] (force WxH,

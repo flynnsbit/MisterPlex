@@ -22,7 +22,11 @@ grep -q 'AV_RESYNC_DROP_MS=0' "$tmp" || fail "480p missing drop 0"
 grep -q 'FFMPEG_SWS_FLAGS=fast_bilinear' "$tmp" || fail "480p missing fast_bilinear"
 grep -q 'FFMPEG_FPS_FILTER=off' "$tmp" || fail "480p missing fps filter off"
 grep -q 'OSD_CONTROL=0' "$tmp" || fail "480p should pin OSD_CONTROL=0"
+grep -q 'ANALOG_RASTER=480p31' "$tmp" || fail "480p/SDfamily overlay missing ANALOG_RASTER=480p31"
 grep -q 'TRANSCODE_PROFILE=480p' "$tmp" || fail "480p profile"
+if grep -q '^PLEX_BASE=' <<<"$(misterplex_pair_conf_keys 07f54d9f8f0eda2fe75d9cc314f6de54)"; then
+  fail "pair_conf_keys must not own PLEX_BASE"
+fi
 ok "480p gold overlay"
 
 misterplex_apply_pair_conf "03f1b95ac67a568f24193234ea8cb072" "$tmp"
@@ -92,6 +96,13 @@ if grep -q 'DECODE=1280x720' "$tmp"; then
   fail "unlisted l4-dyn1 md5 2372248a must not get L4 keys (STA-red, 20 MHz PLL)"
 fi
 ok "unknown md5 is 480p fallthrough (list new L4 md5 before play)"
+grep -q 'ANALOG_RASTER=480p31' "$tmp" || fail "unknown/SDfamily md5 must echo ANALOG_RASTER=480p31"
+keys_l4=$(misterplex_pair_conf_keys 0eea3580a5a0dacf60bf65c50499bcc9)
+if echo "$keys_l4" | grep -q 'ANALOG_RASTER='; then
+  fail "L4 pair_conf_keys must not own ANALOG_RASTER"
+else
+  ok "L4 does not own ANALOG_RASTER"
+fi
 
 grep -q 'misterplex_pair_conf.sh' "$ROOT/scripts/misterplex_core_watch.sh" || \
   fail "watch does not source pair_conf"

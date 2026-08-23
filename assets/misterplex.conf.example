@@ -129,7 +129,15 @@ AUDIO_CLOCK_PPM=-638
 #
 # REQUIRES a v3+ Plex.rbf for A/V knobs; content-res 720p rung needs v8 CONF_STR
 # (O[5:4]). v7 O[4]-only still maps 240p/480p. Set OSD_CONTROL=0 on pre-v3 cores.
+# SD-family pair_conf pins OSD_CONTROL=0 (load-bearing until leftover F12 bits
+# do not retarget DECODE). analogRasterApplyOnStart writes ANALOG_RASTER into
+# O[15:14] then pulses status[0] once at daemon start — not live OSD poll.
 OSD_CONTROL=1
+#
+# ANALOG_RASTER: reset-latched analog mux on Plex_SDfamily (O[15:14]).
+#   follow | 240p15 | 480p31 | 480i
+# 480p31 is the HDMI-safe default. Live F12 Analog is forbidden (v1).
+# ANALOG_RASTER=480p31
 #
 # AV_OFFSET_MS: constant audio-vs-video trim applied inside the pacing loop (NOT
 # an ffmpeg adelay), so the OSD can change it mid-playback. Positive = present
