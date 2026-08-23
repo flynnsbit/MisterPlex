@@ -69,11 +69,18 @@ misterplex_apply_pair_conf "4d6efef954acf7b33747f35ac2878c1b" "$tmp"
 grep -q 'TRANSCODE_PROFILE=240p' "$tmp" || fail "240p15 profile"
 grep -q 'DECODE=320x240' "$tmp" || fail "240p15 decode"
 grep -q 'OSD_CONTROL=0' "$tmp" || fail "240p15 OSD_CONTROL=0"
+grep -q 'AV_PRESENT_LEAD_MS=40' "$tmp" || fail "240p15 lead 40"
+grep -q 'AV_RESYNC_DROP_MS=0' "$tmp" || fail "240p15 drop 0"
+grep -q 'PLEX_BASE=http://127.0.0.1:32400' "$tmp" || fail "240p15 clobbered PLEX_BASE"
 ok "240p15 overlay"
 
 misterplex_apply_pair_conf "61db00e7d54efad7c1a456b127b798bd" "$tmp"
 grep -q 'TRANSCODE_PROFILE=480p' "$tmp" || fail "480i profile"
 grep -q 'FFMPEG_SWS_FLAGS=fast_bilinear' "$tmp" || fail "480i sws"
+grep -q 'OSD_CONTROL=0' "$tmp" || fail "480i OSD_CONTROL=0"
+grep -q 'AV_PRESENT_LEAD_MS=40' "$tmp" || fail "480i lead 40"
+grep -q 'AV_RESYNC_DROP_MS=0' "$tmp" || fail "480i drop 0"
+grep -q 'PLEX_BASE=http://127.0.0.1:32400' "$tmp" || fail "480i clobbered PLEX_BASE"
 ok "480i overlay"
 
 # Unknown RBF md5 currently falls through to 480p DECODE=640x480. A new L4
