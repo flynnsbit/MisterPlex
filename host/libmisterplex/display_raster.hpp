@@ -1,6 +1,7 @@
 #pragma once
 // F12 Display → /dev/MiSTer_cmd video_mode. Unknown label = no write.
 // L4 product stays on CEA 720p60. kVideoModeCmd720p24 is legal, unused.
+// HDMI-LCD scoring must not emit 15 kHz ascal (kVideoModeCmd240p / 480i).
 
 #include "libmisterplex/osd_menu.hpp"
 
@@ -112,9 +113,103 @@ inline int videoModePixelKhz(const char* cmd) {
 // 31 kHz LCD/VGA floor. 15 kHz CRT modes (240p 6.5 MHz, 480i 13.5 MHz) are
 // legal and listed in videoModeCmdIsSafe; they are below this floor on purpose.
 inline constexpr int kVgaMinPixelKhz = 25175;
+inline constexpr int kHdmiLcdMinLineHz = 31000;
 inline bool videoModeIsCrt15k(const char* cmd) {
     return cmd && (std::strcmp(cmd, kVideoModeCmd240p) == 0 ||
                    std::strcmp(cmd, kVideoModeCmd480i) == 0);
+}
+
+enum class DisplaySink {
+    HdmiLcd, // ascal HDMI / ≥31 kHz VGA monitor (800×600@60 or 640×480@60)
+    Crt15k,  // analog 15 kHz RGB CRT (VGA DAC, vga_scaler=0)
+};
+
+// video_mode hact,hfp,hs,hbp,vact,vfp,vs,vbp,Fpix_kHz
+inline bool videoModeParseFields(const char* cmd, int out[9]) {
+    if (!cmd || !out)
+        return false;
+    const char* p = cmd;
+    if (std::strncmp(p, "video_mode ", 11) == 0)
+        p += 11;
+    else
+        return false;
+    for (int i = 0; i < 9; ++i) {
+        if (*p < '0' || *p > '9')
+            return false;
+        int v = 0;
+        while (*p >= '0' && *p <= '9') {
+            v = v * 10 + (*p - '0');
+            ++p;
+        }
+        out[i] = v;
+        if (i < 8) {
+            if (*p != ',')
+                return false;
+            ++p;
+        }
+    }
+    return true;
+}
+
+inline int videoModeHtotal(const char* cmd) {
+    int f[9] = {};
+    if (!videoModeParseFields(cmd, f))
+        return 0;
+    return f[0] + f[1] + f[2] + f[3];
+}
+
+inline int videoModeVtotal(const char* cmd) {
+    int f[9] = {};
+    if (!videoModeParseFields(cmd, f))
+        return 0;
+    return f[4] + f[5] + f[6] + f[7];
+}
+
+// Analog / ascal horizontal rate. Not clk_sys (fabric PLL 20/24 MHz).
+inline int videoModeLineHz(const char* cmd) {
+    const int htot = videoModeHtotal(cmd);
+    const int khz = videoModePixelKhz(cmd);
+    if (htot <= 0 || khz <= 0)
+        return 0;
+    return static_cast<int>((static_cast<long long>(khz) * 1000LL) / htot);
+}
+
+inline bool videoModeForbiddenOnHdmiLcd(const char* cmd) {
+    if (!cmd || !cmd[0])
+        return false;
+    if (videoModeIsCrt15k(cmd))
+        return true;
+    if (std::strcmp(cmd, kVideoModeCmd720p24) == 0)
+        return true;
+    const int lineHz = videoModeLineHz(cmd);
+    if (lineHz > 0 && lineHz < kHdmiLcdMinLineHz)
+        return true;
+    const int khz = videoModePixelKhz(cmd);
+    return khz > 0 && khz < kVgaMinPixelKhz;
+}
+
+// HDMI-LCD scoring: Display "240p" → 640×480@60 ascal, never 15 kHz 240p.
+// 480i is CRT-only (nullptr, no HDMI poke). 24 Hz HDMI is never selected.
+inline const char* videoModeCmdForScoringPath(const char* label, DisplaySink sink) {
+    if (sink == DisplaySink::HdmiLcd) {
+        if (!label || !label[0])
+            return nullptr;
+        if (std::strcmp(label, "240p") == 0 || std::strcmp(label, "240p_lcd") == 0)
+            return kVideoModeCmd240pLcd;
+        if (std::strcmp(label, "480p") == 0)
+            return kVideoModeCmd480p;
+        if (std::strcmp(label, "480i") == 0)
+            return nullptr;
+        if (std::strcmp(label, "720p") == 0)
+            return kVideoModeCmd720p;
+        return nullptr;
+    }
+    return videoModeCmdForDisplayLabel(label);
+}
+
+inline const char* videoModeCmdForOsdWordOnSink(uint16_t word, DisplaySink sink) {
+    const OsdSettings s = decodeOsdWord(word);
+    return videoModeCmdForScoringPath(s.displayResolution.label, sink);
 }
 
 inline int writeMisterCmdLine(const char* path, const char* line) {

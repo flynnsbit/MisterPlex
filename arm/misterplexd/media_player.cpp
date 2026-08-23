@@ -1159,7 +1159,7 @@ void MediaPlayer::latchAndApplyDisplayRaster(const ContentResolution& display) {
     // Seed lastVideoModeCmd_ so IfChanged does not rewrite a live CEA 720p60
     // raster on every daemon start. A same-modeline video_mode poke resets
     // ddr_frame_store (primed=0, have_seq=0) and freezes glass on the chevron.
-    if (const char* cmd = videoModeCmdForDisplayLabel(display.label))
+    if (const char* cmd = videoModeCmdForScoringPath(display.label, displaySink_))
         lastVideoModeCmd_ = cmd;
     applyDisplayRaster(display, /*force=*/false);
     if (!playing_.load())
@@ -1176,7 +1176,7 @@ void MediaPlayer::applyLiveDisplayRaster(const ContentResolution& osdDisplay, bo
 }
 
 void MediaPlayer::applyDisplayRaster(const ContentResolution& display, bool force) {
-    const char* cmd = videoModeCmdForDisplayLabel(display.label);
+    const char* cmd = videoModeCmdForScoringPath(display.label, displaySink_);
     // 112bb + CEA 720p24 HDMI (30000 kHz) wrote and HURT: 14.5/12.31 vs
     // 15.4/12.87 at 720p60. ascal 60→24 is not the unique24 closer. L4 stays
     // on 720p60. kVideoModeCmd720p24 remains a legal cmd for a later design.
