@@ -58,3 +58,8 @@ to 1280×720; exclusive path is live PMS universal, not a local 720p file.
 | `Plex_720p24.rbf` | `0eea3580a5a0dacf60bf65c50499bcc9` |
 | `misterplexd.480p` / `.240p15` / `.480i` | `5f1c861486844f4c83bf32a2112cfbb6` |
 | `misterplexd.720p24` | `0ffc1483677ef5733971d4f18e4624e4` |
+
+Lab `Plex_SDfamily.rbf` md5 `1ad892c33c3c35b17a3885482a910f64` pairs with
+`misterplexd.480p`. It is **NOT gold / NOT rollback** until parent marks
+unique+sync+tear. Dest `_Utility/Plex_SDfamily.rbf`. Not in this freeze.
+NEVER generic `Plex.rbf`.

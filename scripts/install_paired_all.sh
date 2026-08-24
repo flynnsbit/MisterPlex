@@ -2,9 +2,11 @@
 # Install every verified RBF+daemon pair onto the MiSTer.
 # Does not load_core / menu-bounce. Does not start a second watcher.
 #
-# Named Utility cores only. Future one-pair is Plex_SDfamily.rbf (never
-# generic Plex.rbf) + misterplexd.480p gold bytes 5f1c8614. Gold Plex_480p /
-# 240p15 / 480i stay as rollback rows. Do not invent an SDfamily RBF md5.
+# Named Utility cores only. Lab one-pair is Plex_SDfamily.rbf (never
+# generic Plex.rbf) + misterplexd.480p gold bytes 5f1c8614. Dest is
+# _Utility/Plex_SDfamily.rbf. Lab md5 1ad892c33c3c35b17a3885482a910f64 is
+# NOT gold / NOT rollback until parent marks unique+sync+tear.
+# Gold Plex_480p / 240p15 / 480i stay as rollback rows.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 if [ -z "${REL:-}" ]; then
@@ -31,7 +33,8 @@ need "$REL/Plex_README.txt"
 need "$REL/cores/Plex_720p24.rbf"
 need "$REL/bin/misterplexd.720p24"
 
-# Future one-pair: copy only if the freeze actually has it. Never as Plex.rbf.
+# Lab one-pair: copy only if the freeze actually has it. Never as Plex.rbf.
+# Install dest is _Utility/Plex_SDfamily.rbf (NOT rollback until unique+sync+tear).
 SDFAM="$REL/cores/Plex_SDfamily.rbf"
 
 bin_of() {

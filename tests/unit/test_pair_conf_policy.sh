@@ -25,6 +25,15 @@ grep -q 'OSD_CONTROL=0' "$tmp" || fail "480p should pin OSD_CONTROL=0"
 grep -q 'TRANSCODE_PROFILE=480p' "$tmp" || fail "480p profile"
 ok "480p gold overlay"
 
+misterplex_apply_pair_conf "1ad892c33c3c35b17a3885482a910f64" "$tmp"
+grep -q 'PLEX_BASE=http://127.0.0.1:32400' "$tmp" || fail "lab SDfamily clobbered PLEX_BASE"
+grep -q 'DECODE=640x480' "$tmp" || fail "lab SDfamily missing 480p decode"
+grep -q 'TRANSCODE_PROFILE=480p' "$tmp" || fail "lab SDfamily profile"
+if grep -q 'DECODE=1280x720' "$tmp"; then
+  fail "lab SDfamily must not get L4 720p keys"
+fi
+ok "lab SDfamily 1ad892c3 uses 480p overlay (not gold rollback row)"
+
 misterplex_apply_pair_conf "03f1b95ac67a568f24193234ea8cb072" "$tmp"
 grep -q 'PLEX_BASE=http://127.0.0.1:32400' "$tmp" || fail "L4 clobbered PLEX_BASE"
 grep -q 'DECODE=1280x720' "$tmp" || fail "L4 decode bank"

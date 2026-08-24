@@ -13,15 +13,19 @@ PAIR_ART="$ROOT/release_artifacts/v0.9.0-pre-paired"
 
 # Dual-gate: v0.9.0-pre ships named gold pairs; older lines keep one Plex.rbf.
 # Override either path or md5 via RBF_PATH / RBF_MD5_EXPECTED for lab freezes.
-# Future one-pair Utility core is Plex_SDfamily.rbf (NEVER generic Plex.rbf)
+# Lab one-pair Utility core is Plex_SDfamily.rbf (NEVER generic Plex.rbf)
 # + misterplexd.480p gold bytes 5f1c8614. Gold Plex_480p / 240p15 / 480i stay
-# as rollback rows. Do not invent MD5_SDFAMILY_RBF.
+# as rollback rows. Lab bitstream is NOT gold / NOT rollback until parent
+# marks unique+sync+tear. Dest: _Utility/Plex_SDfamily.rbf.
 MD5_480P_RBF="07f54d9f8f0eda2fe75d9cc314f6de54"
 MD5_240P15_RBF="4d6efef954acf7b33747f35ac2878c1b"
 MD5_480I_RBF="61db00e7d54efad7c1a456b127b798bd"
 MD5_720P24_RBF="0eea3580a5a0dacf60bf65c50499bcc9"
 MD5_480P_DAEMON="5f1c861486844f4c83bf32a2112cfbb6"
 MD5_720P24_DAEMON="0ffc1483677ef5733971d4f18e4624e4"
+# Parent-measured lab RBF (Quartus Full Compilation 0 errors). Not freeze.
+MD5_SDFAMILY_LAB="1ad892c33c3c35b17a3885482a910f64"
+# Empty until parent gold-gates unique+sync+tear. Do not default to lab md5.
 MD5_SDFAMILY_RBF="${MD5_SDFAMILY_RBF:-}"
 
 case "$VERSION" in
@@ -193,8 +197,13 @@ if [[ "$PAIRED" == "1" ]]; then
   copy_gated_md5 "$PAIR_ART/cores/Plex_240p15.rbf" "$STAGE/cores/Plex_240p15.rbf" "$MD5_240P15_RBF"
   copy_gated_md5 "$PAIR_ART/cores/Plex_480i.rbf" "$STAGE/cores/Plex_480i.rbf" "$MD5_480I_RBF"
   copy_gated_md5 "$PAIR_ART/cores/Plex_720p24.rbf" "$STAGE/cores/Plex_720p24.rbf" "$MD5_720P24_RBF"
-  # One-pair Plex_SDfamily.rbf: copy only with a hardware-validated md5.
+  # One-pair Plex_SDfamily.rbf: freeze-copy only after parent gold-gates.
+  # Lab md5 1ad892c3 is NOT rollback; unique+sync+tear A/B not done.
   if [[ -n "$MD5_SDFAMILY_RBF" ]]; then
+    if [[ "$MD5_SDFAMILY_RBF" == "$MD5_SDFAMILY_LAB" ]]; then
+      echo "ERROR: refusing lab md5 $MD5_SDFAMILY_LAB as freeze/rollback (unique+sync+tear not marked)." >&2
+      exit 1
+    fi
     if [[ ! "$MD5_SDFAMILY_RBF" =~ ^[0-9a-f]{32}$ ]]; then
       echo "ERROR: MD5_SDFAMILY_RBF must be a real 32-hex md5 (not invented)." >&2
       exit 1
@@ -268,15 +277,16 @@ Named cores (pick ONE from _Utility — no generic Plex.rbf)
   cores/Plex_480i.rbf     15 kHz 480i CRT md5 ${MD5_480I_RBF}  (rollback)
   cores/Plex_720p24.rbf   HDMI 720p24 lab md5 ${MD5_720P24_RBF}  (parked)
 
-  Future one-pair (not frozen; do not invent an RBF md5):
-  cores/Plex_SDfamily.rbf  240p ↔ 480i ↔ 480p runtime raster
+  Lab one-pair (NOT gold / NOT rollback; unique+sync+tear A/B not done):
+  cores/Plex_SDfamily.rbf  240p ↔ 480i ↔ 480p reset-latched analog
+                           lab md5 ${MD5_SDFAMILY_LAB} (not in this freeze)
                            + bin/misterplexd.480p (gold ${MD5_480P_DAEMON})
-                           NEVER install as Plex.rbf.
+                           dest _Utility/Plex_SDfamily.rbf  NEVER Plex.rbf.
 
   bin/misterplexd.480p    gold daemon (also .240p15 / .480i)
   bin/misterplexd.720p24  lab 720p remux-PCM daemon
   bin/misterplexd         copy of .480p (direct-run default)
-  rbf_daemon_pairs.txt    watcher map (gold rollback rows kept)
+  rbf_daemon_pairs.txt    watcher map (gold rollback rows kept; SDfamily lab row)
 
 Install
 -------
@@ -336,7 +346,7 @@ tar -C "$STAGE/.." --transform="s|^$(basename "$STAGE")|misterplex-${VERSION}|" 
 ls -la "$TAR"
 echo "Packaged → $TAR"
 if [[ "$PAIRED" == "1" ]]; then
-  echo "RBFs: Plex_480p/240p15/480i/720p24 named rollback+lab; future Plex_SDfamily.rbf; no generic Plex.rbf"
+  echo "RBFs: Plex_480p/240p15/480i rollback + 720p24 parked lab; Plex_SDfamily lab ${MD5_SDFAMILY_LAB} not gold; no generic Plex.rbf"
 else
   echo "RBF: present ($(wc -c <"$STAGE/cores/Plex.rbf") bytes, md5=$(md5sum "$STAGE/cores/Plex.rbf" | awk '{print $1}'))"
 fi

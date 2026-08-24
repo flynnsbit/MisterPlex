@@ -73,10 +73,11 @@ if [[ -d "$PAIR_ART" ]]; then
   if [[ -f "$PAIR_ART/cores/Plex.rbf" ]]; then
     report "paired freeze must not contain generic cores/Plex.rbf"
   fi
-  # Future one-pair Plex_SDfamily.rbf is not frozen; do not invent an md5.
+  # Lab Plex_SDfamily.rbf md5 1ad892c3 is not gold; freeze must not contain it.
   if [[ -f "$PAIR_ART/cores/Plex_SDfamily.rbf" ]]; then
-    report "Plex_SDfamily.rbf in freeze without a gated gold md5 (do not invent)"
+    report "Plex_SDfamily.rbf in freeze without a gated gold md5 (lab is not rollback)"
   fi
+  MD5_SDFAMILY_LAB="1ad892c33c3c35b17a3885482a910f64"
   for pairs in "$ROOT/assets/rbf_daemon_pairs.txt" "$PAIR_ART/rbf_daemon_pairs.txt"; do
     [[ -f "$pairs" ]] || { report "missing pairs file $pairs"; continue; }
     grep -q "^${MD5_480P_RBF} .*misterplexd.480p" "$pairs" || \
@@ -85,6 +86,12 @@ if [[ -d "$PAIR_ART" ]]; then
       report "$pairs missing Plex_240p15 gold rollback row"
     grep -q "^${MD5_480I_RBF} .*misterplexd.480i" "$pairs" || \
       report "$pairs missing Plex_480i gold rollback row"
+    grep -q "^${MD5_SDFAMILY_LAB} .*misterplexd.480p" "$pairs" || \
+      report "$pairs missing lab Plex_SDfamily row"
+    grep -qiE 'NOT gold|not gold' "$pairs" || \
+      report "$pairs must say lab SDfamily is NOT gold"
+    grep -qF 'unique+sync+tear' "$pairs" || \
+      report "$pairs must refuse rollback until unique+sync+tear"
   done
 fi
 

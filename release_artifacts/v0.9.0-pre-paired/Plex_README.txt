@@ -20,6 +20,8 @@ Only one core runs. The watcher starts the matching daemon from
 core (lead 40, drop 0, fast_bilinear, fps filter off, OSD_CONTROL=0).
 Do not restore a generic Plex.rbf.
 
-Future one-pair (not frozen): Plex_SDfamily.rbf + misterplexd.480p
-(gold md5 5f1c861486844f4c83bf32a2112cfbb6). Gold Plex_480p / 240p15 /
-480i stay as rollback. Never install as Plex.rbf.
+Lab one-pair (NOT gold, NOT rollback): Plex_SDfamily.rbf md5
+1ad892c33c3c35b17a3885482a910f64 + misterplexd.480p (gold md5
+5f1c861486844f4c83bf32a2112cfbb6). Dest _Utility/Plex_SDfamily.rbf.
+unique+sync+tear A/B not done — not a rollback row. Gold Plex_480p /
+240p15 / 480i stay as rollback. Never install as Plex.rbf.

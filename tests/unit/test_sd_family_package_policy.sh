@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # SD-family package / SD layout policy.
-# Future one-pair Utility core: Plex_SDfamily.rbf (NEVER Plex.rbf)
-# + misterplexd.480p gold bytes 5f1c8614. Gold 480p / 240p15 / 480i stay
-# as rollback rows. Do not invent an RBF md5. Product QSF must not enable
-# PLEX_PRESENT_720P_L4.
+# Lab one-pair Utility core: Plex_SDfamily.rbf (NEVER Plex.rbf)
+# + misterplexd.480p gold bytes 5f1c8614. Lab RBF md5 1ad892c3 is NOT gold
+# / NOT rollback until parent marks unique+sync+tear. Gold 480p / 240p15 /
+# 480i stay as rollback rows. Product QSF must not enable PLEX_PRESENT_720P_L4.
 set -u
 set -o pipefail
 
@@ -21,7 +21,8 @@ MD5_240P15_RBF="4d6efef954acf7b33747f35ac2878c1b"
 MD5_480I_RBF="61db00e7d54efad7c1a456b127b798bd"
 MD5_720P24_RBF="0eea3580a5a0dacf60bf65c50499bcc9"
 MD5_480P_DAEMON="5f1c861486844f4c83bf32a2112cfbb6"
-ALLOWED_RBF_MD5="${MD5_480P_RBF} ${MD5_240P15_RBF} ${MD5_480I_RBF} ${MD5_720P24_RBF}"
+MD5_SDFAMILY_LAB="1ad892c33c3c35b17a3885482a910f64"
+ALLOWED_RBF_MD5="${MD5_480P_RBF} ${MD5_240P15_RBF} ${MD5_480I_RBF} ${MD5_720P24_RBF} ${MD5_SDFAMILY_LAB}"
 
 fails=0
 fail() { echo "FAIL: $*" >&2; fails=$((fails + 1)); }
@@ -51,25 +52,34 @@ else
 fi
 rm -f "$qsf_red"
 
-# --- pairs files: gold rollback rows; no invented SDfamily md5 ---
+# --- pairs files: gold rollback rows unchanged; lab SDfamily not rollback ---
 check_pairs() {
-  local f=$1
+  local f=$1 lab_glass gold_glass
   [[ -f "$f" ]] || { fail "missing $f"; return; }
-  grep -q 'Plex_SDfamily.rbf' "$f" || fail "$f must name future Plex_SDfamily.rbf"
+  grep -q 'Plex_SDfamily.rbf' "$f" || fail "$f must name Plex_SDfamily.rbf"
   grep -q 'NEVER generic Plex.rbf' "$f" || fail "$f must forbid generic Plex.rbf"
   grep -q '5f1c861486844f4c83bf32a2112cfbb6' "$f" || fail "$f must pin gold daemon 5f1c8614"
+  grep -qiE 'NOT gold|not gold' "$f" || fail "$f must say lab SDfamily is NOT gold"
+  grep -qiE 'NOT rollback|not rollback' "$f" || fail "$f must refuse lab SDfamily as rollback"
+  grep -qF 'unique+sync+tear' "$f" || fail "$f must require unique+sync+tear before rollback"
   grep -q "^${MD5_480P_RBF} .*misterplexd.480p" "$f" || fail "$f missing Plex_480p rollback row"
   grep -q "^${MD5_240P15_RBF} .*misterplexd.240p15" "$f" || fail "$f missing Plex_240p15 rollback row"
   grep -q "^${MD5_480I_RBF} .*misterplexd.480i" "$f" || fail "$f missing Plex_480i rollback row"
+  grep -q "^${MD5_SDFAMILY_LAB} .*misterplexd.480p" "$f" || fail "$f missing lab Plex_SDfamily row"
+  gold_glass=$(awk -v s="$MD5_480P_RBF" '$1==s {print $3; exit}' "$f")
+  [[ "$gold_glass" == "true480" ]] || fail "$f gold 480p rollback glass tag changed ($gold_glass)"
+  lab_glass=$(awk -v s="$MD5_SDFAMILY_LAB" '$1==s {print tolower($3); exit}' "$f")
+  [[ "$lab_glass" == "sdfamily_lab" ]] || fail "$f lab glass must be sdfamily_lab not gold rollback (got $lab_glass)"
+  [[ "$lab_glass" != "l4" ]] || fail "$f lab SDfamily must not pin l4 glass"
   # RED: a data row whose md5 is not a known gold/lab hash is invented.
   while read -r md5 rest; do
     [[ -z "${md5:-}" || "$md5" == \#* ]] && continue
     case " $ALLOWED_RBF_MD5 " in
       *" $md5 "*) ;;
-      *) fail "$f invented RBF md5 $md5 (no SDfamily freeze yet)" ;;
+      *) fail "$f invented RBF md5 $md5" ;;
     esac
   done <"$f"
-  ok "$(basename "$(dirname "$f")")/$(basename "$f") rollback rows; no invented md5"
+  ok "$(basename "$(dirname "$f")")/$(basename "$f") gold rollback + lab SDfamily row"
 }
 check_pairs "$PAIRS_ASSETS"
 check_pairs "$PAIRS_FREEZE"
@@ -93,6 +103,22 @@ else
   fail "RED twin did not flag invented SDfamily md5"
 fi
 
+# RED twin: swapping gold 480p rollback for the lab md5 must be rejected.
+red_rb=$(mktemp)
+awk -v g="$MD5_480P_RBF" -v lab="$MD5_SDFAMILY_LAB" '
+  $1==g { $1=lab; $3="true480"; print; next }
+  $1==lab { next }
+  { print }
+' "$PAIRS_ASSETS" >"$red_rb"
+if grep -q "^${MD5_480P_RBF} .*misterplexd.480p" "$red_rb"; then
+  fail "RED twin setup still has gold 480p row"
+elif grep -q "^${MD5_SDFAMILY_LAB} .* true480" "$red_rb"; then
+  ok "RED twin: lab md5 as true480 rollback is detected (gold 07f54d9f missing)"
+else
+  fail "RED twin did not model lab-as-rollback swap"
+fi
+rm -f "$red_rb"
+
 # --- freeze binaries: gold daemon; no generic Plex.rbf; no ungated SDfamily ---
 if [[ -f "$PAIR_ART/bin/misterplexd.480p" ]]; then
   act=$(md5sum "$PAIR_ART/bin/misterplexd.480p" | awk '{print $1}')
@@ -110,25 +136,30 @@ else
   ok "freeze has no generic cores/Plex.rbf"
 fi
 if [[ -f "$PAIR_ART/cores/Plex_SDfamily.rbf" ]]; then
-  fail "Plex_SDfamily.rbf in freeze without a gated md5 (do not invent)"
+  fail "Plex_SDfamily.rbf in freeze — lab 1ad892c3 is not gold/rollback (unique+sync+tear not marked)"
 else
-  ok "Plex_SDfamily.rbf not in freeze (bitstream not frozen)"
+  ok "Plex_SDfamily.rbf not in freeze (lab not gold)"
 fi
 if [[ -f "$ROOT/assets/Plex.rbf" || -f "$ROOT/cores/Plex.rbf" ]]; then
   fail "generic Plex.rbf must not sit in assets/ or repo cores/"
 fi
 
-# --- package_release: named dest only; no invented SDfamily md5 default ---
-grep -q 'Plex_SDfamily.rbf' "$PKG" || fail "package_release must name future Plex_SDfamily.rbf"
+# --- package_release: named dest only; lab md5 not freeze/rollback default ---
+grep -q 'Plex_SDfamily.rbf' "$PKG" || fail "package_release must name Plex_SDfamily.rbf"
 grep -q 'MD5_480P_DAEMON="5f1c861486844f4c83bf32a2112cfbb6"' "$PKG" || \
   fail "package_release must freeze gold daemon 5f1c8614"
+grep -q "MD5_SDFAMILY_LAB=\"${MD5_SDFAMILY_LAB}\"" "$PKG" || \
+  fail "package_release must pin lab SDfamily md5 1ad892c3"
 grep -q 'generic cores/Plex.rbf must not ship' "$PKG" || \
   fail "package_release must refuse generic Plex.rbf in paired builds"
-if grep 'MD5_SDFAMILY_RBF=' "$PKG" | grep -E '[0-9a-f]{32}' >/dev/null; then
-  fail "RED: package_release invented a default MD5_SDFAMILY_RBF"
+grep -qF 'unique+sync+tear' "$PKG" || fail "package_release must refuse lab as rollback until unique+sync+tear"
+if grep '^MD5_SDFAMILY_RBF=' "$PKG" | grep -E '[0-9a-f]{32}' >/dev/null; then
+  fail "RED: package_release defaulted MD5_SDFAMILY_RBF to a 32-hex (lab is not gold)"
 else
-  ok "MD5_SDFAMILY_RBF has no invented default"
+  ok "MD5_SDFAMILY_RBF has empty default (lab not freeze)"
 fi
+grep -q 'MD5_SDFAMILY_RBF" == "$MD5_SDFAMILY_LAB"' "$PKG" || \
+  fail "package_release must refuse lab md5 as freeze/rollback"
 # copy_gated_md5 is paired-only and must never target generic Plex.rbf.
 if grep copy_gated_md5 "$PKG" | grep -q 'cores/Plex.rbf'; then
   fail "copy_gated_md5 must not target generic cores/Plex.rbf"
@@ -141,10 +172,12 @@ grep -q 'need "$REL/cores/Plex_480p.rbf"' "$INST" || fail "install must require 
 grep -q 'need "$REL/cores/Plex_240p15.rbf"' "$INST" || fail "install must require Plex_240p15 rollback"
 grep -q 'need "$REL/cores/Plex_480i.rbf"' "$INST" || fail "install must require Plex_480i rollback"
 grep -q 'Plex_SDfamily.rbf' "$INST" || fail "install must name optional Plex_SDfamily.rbf"
+grep -q '/media/fat/_Utility/Plex_SDfamily.rbf' "$INST" || \
+  fail "install dest must be _Utility/Plex_SDfamily.rbf"
 if grep -n '_Utility/Plex.rbf' "$INST" | grep -v 'rm -f'; then
   fail "install_paired_all must not copy to _Utility/Plex.rbf (rm-only)"
 else
-  ok "install dest never generic Plex.rbf (rm-only)"
+  ok "install dest never generic Plex.rbf (rm-only); SDfamily dest is Plex_SDfamily.rbf"
 fi
 if [[ -x "$INST" || -f "$INST" ]]; then
   if INSTALL_DRY=1 REL="$PAIR_ART" bash "$INST"; then

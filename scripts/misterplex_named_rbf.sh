@@ -10,7 +10,8 @@
 # then MISTERPLEX_LIVE_RBF. Leftover L4 PLXJ 0x504C584A at 0x3047F130 with
 # frozen PLXD must not pin the 720p daemon on Plex_480p / Plex_240p15 /
 # Plex_480i. A LIVE changing L4 PLXD still classifies L4.
-# Future one-pair: Plex_SDfamily.rbf + misterplexd.480p gold (5f1c8614).
+# Lab one-pair: Plex_SDfamily.rbf md5 1ad892c3 + misterplexd.480p gold (5f1c8614).
+# NOT gold / NOT rollback until parent marks unique+sync+tear.
 # Never return generic /Plex.rbf. Gold 480p/240p15/480i stay rollback files.
 
 UTILITY_DIR="${MISTERPLEX_UTILITY:-${UTILITY_DIR:-/media/fat/_Utility}}"
