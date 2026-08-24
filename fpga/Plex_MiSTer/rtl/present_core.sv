@@ -191,7 +191,21 @@ module present_core #(
 
 	// Pattern encoding (status[7:6]): 0=None, 1=Bars, 2=Bars+Block, 3=Grid.
 	// O[9] Force bars=Yes → always Bars (1), never None.
-	wire [1:0] eff_pattern = use_frame_store ? 2'd1 : pattern;
+	// Idle/template: Pattern=None used to paint black (glass idle black).
+	// Remap None→Bars so analog_raster_mux RGB is a picture when no DDR
+	// frame. OSD_CONTROL stays 0. Force bars still Bars.
+	wire [1:0] eff_pattern = use_frame_store ? 2'd1 :
+	                         (pattern == 2'd0) ? 2'd1 : pattern;
+
+	// PLXH analog doorbell (clk_ddr). analog_raster_mux 2FF + reset snapshot.
+	// Product address 0x3007F138 — not leftover L4 0x3047F130.
+`ifdef DDR_FRAME_STORE
+	wire [1:0] analog_db_sel;
+	wire       analog_db_valid;
+`else
+	wire [1:0] analog_db_sel = 2'd0;
+	wire       analog_db_valid = 1'b0;
+`endif
 
 	localparam int FRAME_X_W = $clog2(FRAME_W);
 	localparam int FRAME_Y_W = $clog2(FRAME_H);
@@ -329,6 +343,7 @@ module present_core #(
 	wire _unused_beam_pal = pal;
 	wire _unused_eff_pattern = |eff_pattern;
 	wire _unused_l4_beam = (|vtot_act11) | (|htot_act11) | (|hde_act11) | (|vact_act11);
+	wire _unused_analog_db = |analog_db_sel | analog_db_valid;
 
 `elsif PRESENT_BEAM_960
 	// =====================================================================
@@ -397,12 +412,15 @@ module present_core #(
 	wire _unused_beam_scandouble = scandouble | (|analog_sel);
 	wire _unused_beam_pal = pal;
 	wire _unused_eff_pattern = |eff_pattern;
+	wire _unused_analog_db = |analog_db_sel | analog_db_valid;
 
 `else
 	// ---- Legacy Template path: analog raster mux (FBAR H_DE=529) ----
-	// analog_sel is RESET-LATCHED inside analog_raster_mux (v1). Live F12
-	// Analog/Content must not retarget H class. HDMI ascal is not driven
-	// from this beam (VGA_SCALER=0 at parent).
+	// analog_sel / PLXH doorbell are RESET-LATCHED inside analog_raster_mux
+	// (2FF then snapshot). Live F12 Analog/Content / live doorbell hop must
+	// not retarget H class. HDMI ascal is not driven from this beam
+	// (VGA_SCALER=0 at parent). analog_raster_mux is in files.qip and RGB
+	// is wired; present_core used to drop it when Pattern=None (idle black).
 	wire analog_field_i;
 	wire raster_sd;
 	analog_raster_mux u_analog (
@@ -410,6 +428,8 @@ module present_core #(
 		.reset(reset),
 		.pal(pal),
 		.raster_sel(analog_sel),
+		.doorbell_sel(analog_db_sel),
+		.doorbell_valid(analog_db_valid),
 		.content_index(cont_i),
 		.pattern(eff_pattern),
 		.ce_pix(ce_pix_i),
@@ -629,6 +649,8 @@ module present_core #(
 		.FRAME_MAILBOX_PHYS(FS_DOORBELL + 32'h118),
 		.BANK_MAILBOX_PHYS(FS_DOORBELL + 32'h128),
 		.ASPECT_ACK_PHYS(FS_DOORBELL + 32'h130),
+		// Analog H-class doorbell stays on the 480p page (not leftover L4 0x3047F130).
+		.ANALOG_DOORBELL_PHYS(32'h3007_F138),
 		.DYN_BASE_EN(1'b1)
 `else
 		// Product 480p mailbox page (gold 5f1c8614 / kPlxjAddr). Not L4 0x3047F130.
@@ -638,6 +660,7 @@ module present_core #(
 		.FRAME_MAILBOX_PHYS(32'h3007_F118),
 		.BANK_MAILBOX_PHYS(32'h3007_F128),
 		.ASPECT_ACK_PHYS(32'h3007_F130),
+		.ANALOG_DOORBELL_PHYS(32'h3007_F138),
 		.DYN_BASE_EN(1'b0)
 `endif
 	) fstore (
@@ -678,7 +701,9 @@ module present_core #(
 		.underrun_count(frame_underruns),
 		.frames_done(ddr_frames_done),
 		.doorbell_ok(ddr_doorbell_ok),
-		.debug_state(frame_sdram_state)
+		.debug_state(frame_sdram_state),
+		.analog_db_sel(analog_db_sel),
+		.analog_db_valid(analog_db_valid)
 	);
 `else
 	frame_store #(
@@ -726,9 +751,9 @@ module present_core #(
 
 	// Product: once a frame is ingested, always show frame_store unless O[9] Force bars.
 	// Pattern no longer steals cast (old pattern!=0 force caused bars/grid under video).
-	// Pattern=None (0) + no frame → black (nothing “runs” behind cast).
+	// No DDR frame → analog_raster_mux RGB (idle/template colorbars). QIP already
+	// instantiates the mux; Pattern=None used to zero VGA here (idle black).
 	wire use_ext = has_frame && !use_frame_store;
-	wire show_pattern = !use_ext && (use_frame_store || (pattern != 2'd0));
 	// --- Align sync/blank to the pixel pipeline -------------------------------
 	// hc -> fr costs 5 clk: store_x registers on ce_pix (2 clk) then frame_store
 	// does rd_addr_r -> rd_q -> rd_r (3 clk). hc -> hb/hs costs only 1 clk. So the
@@ -764,9 +789,9 @@ module present_core #(
 
 	// Gate the frame pixels with EXACTLY the delayed signal that drives VGA_DE.
 	wire de_out = ~hb_d & ~vb_d;
-	wire [7:0] leg_r = use_ext ? (de_out ? fr : 8'd0) : (show_pattern ? br : 8'd0);
-	wire [7:0] leg_g = use_ext ? (de_out ? fg : 8'd0) : (show_pattern ? bg : 8'd0);
-	wire [7:0] leg_b = use_ext ? (de_out ? fb : 8'd0) : (show_pattern ? bb : 8'd0);
+	wire [7:0] leg_r = use_ext ? (de_out ? fr : 8'd0) : br;
+	wire [7:0] leg_g = use_ext ? (de_out ? fg : 8'd0) : bg;
+	wire [7:0] leg_b = use_ext ? (de_out ? fb : 8'd0) : bb;
 
 `ifdef PRESENT_MULTI_PIXEL
 	// ------------------------------------------------------------------

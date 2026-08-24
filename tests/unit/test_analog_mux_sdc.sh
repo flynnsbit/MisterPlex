@@ -52,13 +52,40 @@ else
   ok "no set_multicycle_path in analog mux SDC"
 fi
 
-if grep -A40 'else if (fstart)' "$MUX" | grep -q 'sel_lat[[:space:]]*<='; then
-  fail "sel_lat hops on frame_start (must be reset-only)"
+# Product sel_lat must not hop on fstart. RED LIVE_* ifdefs are twins.
+if python3 - "$MUX" <<'PY'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+in_fault = 0
+in_fstart = False
+for line in text.splitlines():
+    if "`ifdef" in line and "ANALOG_RASTER_FAULT" in line:
+        in_fault += 1
+        continue
+    if in_fault:
+        if "`endif" in line:
+            in_fault -= 1
+        continue
+    if "if (fstart)" in line:
+        in_fstart = True
+    if in_fstart and "sel_lat" in line and "<=" in line:
+        sys.exit(1)
+sys.exit(0)
+PY
+then
+  ok "sel_lat is not assigned on frame_start (product path)"
 else
-  ok "sel_lat is not assigned on frame_start"
+  fail "sel_lat hops on frame_start (must be reset-only)"
 fi
-grep -q 'sel_lat[[:space:]]*<=[[:space:]]*sel_eff' "$MUX" \
-  || fail "sel_lat reset load missing"
+grep -q 'sel_lat[[:space:]]*<=[[:space:]]*db_or_osd' "$MUX" \
+  || fail "sel_lat reset load missing (doorbell 2FF snapshot)"
+grep -q 'db_sel_s1' "$MUX" || fail "analog doorbell 2FF db_sel_s1 missing"
+grep -q '0x3007F138' "$MUX" || fail "PLXH analog doorbell address 0x3007F138 missing"
+if grep -q '3047F130' "$MUX"; then
+  grep -qi 'NOT leftover L4' "$MUX" || fail "must not use leftover L4 0x3047F130 as analog doorbell"
+fi
+grep -q 'db_sel_s1' "$SDC" || fail "Plex_analog_mux.sdc missing doorbell 2FF false_path"
 
 # HDMI LCD 15 kHz refuse must stay GREEN — do not touch the twin.
 grep -q 'videoModeCmdIsHdmiLcdSafe' "$HDR" \

@@ -32,6 +32,9 @@ module ddr_frame_store #(
 	parameter [31:0] FRAME_MAILBOX_PHYS = 32'h3007_F118,
 	parameter [31:0] BANK_MAILBOX_PHYS  = 32'h3007_F128,
 	parameter [31:0] ASPECT_ACK_PHYS    = 32'h3007_F130,
+	// PLXH analog H-class doorbell (ARM→FPGA). Always the 480p mailbox page.
+	// NOT leftover L4 PLXJ 0x3047F130. 2FF + reset snapshot is in analog_raster_mux.
+	parameter [31:0] ANALOG_DOORBELL_PHYS = 32'h3007_F138,
 	parameter int DDR_BURST_MAX = 128,
 	parameter bit IGNORE_STALE_DOORBELL_AFTER_RESET = 1'b1,
 	parameter int STALE_DOORBELL_FALLBACK_POLLS = 4096,
@@ -85,7 +88,11 @@ module ddr_frame_store #(
 	output reg  [15:0] underrun_count,
 	output reg  [15:0] frames_done,
 	output reg         doorbell_ok,
-	output wire  [7:0] debug_state
+	output wire  [7:0] debug_state,
+	// Last polled PLXH analog class. Persist across core reset so analog_raster_mux
+	// can snapshot at reset. clk_ddr domain; 2FF is in analog_raster_mux.
+	output wire [1:0]  analog_db_sel,
+	output wire        analog_db_valid
 );
 	localparam int X_W = $clog2(FRAME_W);
 	localparam int Y_W = $clog2(FRAME_H);
@@ -116,6 +123,7 @@ module ddr_frame_store #(
 	localparam [28:0] FRAME_MAILBOX_W = FRAME_MAILBOX_PHYS[31:3];
 	localparam [28:0] BANK_MAILBOX_W  = BANK_MAILBOX_PHYS[31:3];
 	localparam [28:0] ASPECT_ACK_W    = ASPECT_ACK_PHYS[31:3];
+	localparam [28:0] ANALOG_DOORBELL_W = ANALOG_DOORBELL_PHYS[31:3];
 	localparam [28:0] Y_PLANE_QWORDS = 29'((CODED_W * CODED_H) / 8);
 	localparam [28:0] C_PLANE_QWORDS = 29'((CODED_W * CODED_H) / 32);
 	localparam [28:0] U_PLANE_BASE = Y_PLANE_QWORDS;
@@ -130,6 +138,7 @@ module ddr_frame_store #(
 	localparam [31:0] MAGIC_F = 32'h504C_5846;
 	localparam [31:0] MAGIC_D = 32'h504C_5844; // PLXD bank-release (Display-bank)
 	localparam [31:0] MAGIC_J = 32'h504C_584A; // PLXJ source-aspect ACK
+	localparam [31:0] MAGIC_H = 32'h504C_5848; // PLXH analog H-class doorbell
 	localparam [1:0] DOORBELL_FORMAT_YUV420P = 2'd1;
 	localparam [7:0] DEBUG_FORMAT_ERROR = 8'hE1; // PLXF frame-debug: rejected non-YUV doorbell
 
@@ -491,7 +500,13 @@ module ddr_frame_store #(
 	reg [Y_W-1:0] desired_y_r [0:LINE_COUNT-1];
 	reg [15:0] poll_div;
 	reg poll_pending;
+	reg analog_poll_pending;
 	reg poll_beat;
+	// Persist across reset_ddr: analog_raster_mux snapshots these at reset.
+	reg [1:0] analog_db_sel_r = 2'd0;
+	reg       analog_db_valid_r = 1'b0;
+	assign analog_db_sel = analog_db_sel_r;
+	assign analog_db_valid = analog_db_valid_r;
 	reg [1:0] c_rr_r;
 	reg [28:0] dyn_base0_r, dyn_base1_r;
 	reg dyn_valid0_r, dyn_valid1_r;
@@ -808,8 +823,8 @@ module ddr_frame_store #(
 	reg [28:0] line_addr_r;
 	reg [7:0]  burst_this_r;
 	reg [Y_QW_AW:0] burst_cap_r;
-	wire db_magic_ok = poll_pending && DDRAM_DOUT_READY && (poll_beat == 1'b0) &&
-	                   (DDRAM_DOUT[31:0] == MAGIC);
+	wire db_magic_ok = poll_pending && !analog_poll_pending && DDRAM_DOUT_READY &&
+	                   (poll_beat == 1'b0) && (DDRAM_DOUT[31:0] == MAGIC);
 	wire [31:0] db_token = DDRAM_DOUT[63:32];
 	wire [1:0] db_format = db_token[30:29];
 	wire db_format_ok = (db_format == DOORBELL_FORMAT_YUV420P) || !STRICT_YUV_DOORBELL;
@@ -884,6 +899,7 @@ module ddr_frame_store #(
 			swap_req_t_ddr <= 1'b0;
 			poll_div <= 16'd0;
 			poll_pending <= 1'b0;
+			analog_poll_pending <= 1'b0;
 			poll_beat <= 1'b0;
 			c_rr_r <= 2'd0;
 			dyn_base0_r <= 29'd0;
@@ -917,8 +933,10 @@ module ddr_frame_store #(
 			plxj_x <= 12'd0;
 			plxj_y <= 12'd0;
 			plxj_token <= 8'd0;
-			rd_act_s1 <= 1'b1;
-			rd_act_s2 <= 1'b1;
+			// Optimistic blank: analog Template de_r starts 0. Init-1 blocked
+			// blank-only ACK until the first 0→1→0 of rd_active.
+			rd_act_s1 <= 1'b0;
+			rd_act_s2 <= 1'b0;
 			mbox_seq <= 16'd0;
 			mbox_last <= 16'd0;
 			mbox_req <= 1'b1;
@@ -1091,7 +1109,20 @@ module ddr_frame_store #(
 					pending_ready_ddr <= swap_pending_d2 &&
 					                     (sched_valid ? (sched_for_pending && sched_pending_ready) : pending_ready_c);
 					poll_div <= poll_div + 16'd1;
-					if (frame_mbox_req && (!frame_mbox_valid || poll_div[7:0] == 8'd224)
+					// PLXJ FIRST. compose ae26f31e put ACK before doorbell but
+					// still after fills/mbox. Leftover PLXK → has_frame/swap_pending
+					// keeps need_y_cur_c=1 on analog Template; fills stole every
+					// S_IDLE beat (ca4ca655 still token 4 vs leftover 3). Gold
+					// 5f1c8614 waits 250 ms. Pre-play / idle has_frame=0: ACK even
+					// mid-scan (nothing to tear). Once a frame is up, blank-only.
+					if (plxj_req && (!rd_act_s2 || !has_frame_d2) && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+						DDRAM_ADDR <= ASPECT_ACK_W;
+						DDRAM_BURSTCNT <= 8'd1;
+						DDRAM_DIN <= {plxj_token, plxj_y, plxj_x, MAGIC_J};
+						DDRAM_WE <= 1'b1;
+						plxj_req <= 1'b0;
+						state_ddr <= S_WRITE_WAIT;
+					end else if (frame_mbox_req && (!frame_mbox_valid || poll_div[7:0] == 8'd224)
 					    && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						DDRAM_ADDR <= FRAME_MAILBOX_W;
 						DDRAM_BURSTCNT <= 8'd1;
@@ -1213,18 +1244,6 @@ module ddr_frame_store #(
 							qwords_remaining <= C_LINE_QWORDS[Y_QW_AW:0];
 							state_ddr <= S_LINE_PREP;
 						end
-					end else if (plxj_req && (!rd_act_s2 || !has_frame_d2) && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
-						// Aspect ACK must beat doorbell poll. Gold 5f1c8614 waits
-						// 250 ms; mux analog beam keeps rd_active high during DE, and
-						// poll_div==0 doorbell RD starved PLXJ (token 4 vs leftover 3
-						// on 1ad892c3 / 682eb537). Idle / pre-play has_frame=0: ACK
-						// even mid-scan (nothing to tear). Once a frame is up, blank-only.
-						DDRAM_ADDR <= ASPECT_ACK_W;
-						DDRAM_BURSTCNT <= 8'd1;
-						DDRAM_DIN <= {plxj_token, plxj_y, plxj_x, MAGIC_J};
-						DDRAM_WE <= 1'b1;
-						plxj_req <= 1'b0;
-						state_ddr <= S_WRITE_WAIT;
 					end else if (!poll_pending && poll_div[7:0] == 8'd0 && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						DDRAM_ADDR <= DOORBELL_W;
 						DDRAM_BURSTCNT <= DYN_BASE_EN ? 8'd2 : 8'd1;
@@ -1261,6 +1280,16 @@ module ddr_frame_store #(
 						sdram_mbox_valid <= 1'b1;
 						sdram_mbox_req <= 1'b0;
 						state_ddr <= S_WRITE_WAIT;
+					end else if (!poll_pending && poll_div[7:0] == 8'd96 && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+						// Idle PLXH analog doorbell poll (after fills / ACK).
+						// Capture persists across reset; analog_raster_mux snapshots on reset.
+						DDRAM_ADDR <= ANALOG_DOORBELL_W;
+						DDRAM_BURSTCNT <= 8'd1;
+						DDRAM_RD <= 1'b1;
+						poll_pending <= 1'b1;
+						analog_poll_pending <= 1'b1;
+						poll_beat <= 1'b0;
+						state_ddr <= S_POLL_WAIT;
 					end
 				end
 
@@ -1327,7 +1356,14 @@ module ddr_frame_store #(
 
 				S_POLL_WAIT: begin
 					if (DDRAM_DOUT_READY) begin
-						if (!DYN_BASE_EN || poll_beat == 1'b0) begin
+						if (analog_poll_pending) begin
+							analog_db_valid_r <= (DDRAM_DOUT[31:0] == MAGIC_H);
+							if (DDRAM_DOUT[31:0] == MAGIC_H)
+								analog_db_sel_r <= DDRAM_DOUT[33:32];
+							analog_poll_pending <= 1'b0;
+							poll_pending <= 1'b0;
+							state_ddr <= S_IDLE;
+						end else if (!DYN_BASE_EN || poll_beat == 1'b0) begin
 							doorbell_primed <= 1'b1;
 							kick_bank_r <= DDRAM_DOUT[63];
 							if (DYN_BASE_EN) begin

@@ -26,7 +26,8 @@ $RUN -sv -cc --exe --build -Mdir "$BUILD" \
   -Wno-WIDTH -Wno-SELRANGE -Wno-CASEINCOMPLETE -Wno-UNOPTFLAT -Wno-UNSIGNED \
   -I"$RTL" --top-module ddr_frame_store_spi_kick_tb \
   "$TB/ddr_frame_store_spi_kick_tb_top.sv" \
-  "$RTL/ddr_frame_store.sv" "$RTL/async_fifo.sv" "$RTL/line_buf_ram.sv" \
+  "$RTL/ddr_frame_store.sv" "$RTL/source_aspect_ack.sv" "$RTL/ddr_frame_base_mux.sv" \
+  "$RTL/async_fifo.sv" "$RTL/line_buf_ram.sv" \
   "$TB/ddr_frame_store_spi_kick_tb.cpp" -o Vddr_frame_store_spi_kick_tb
 set +e; OUT="$("$BUILD/Vddr_frame_store_spi_kick_tb" 2>&1)"; RC=$?; set -e
 printf '%s\n' "$OUT"

@@ -37,6 +37,8 @@ echo "RTL SIM: using $VERILATOR_VERSION" >&2
   -CFLAGS "-std=c++17 -O2" \
   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb_top.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/source_aspect_ack.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_base_mux.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_ram.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/async_fifo.sv" \
   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb.cpp"
@@ -48,6 +50,8 @@ echo "RTL SIM: using $VERILATOR_VERSION" >&2
   -CFLAGS "-std=c++17 -O2" \
   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb_top.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/source_aspect_ack.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_base_mux.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_ram.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/async_fifo.sv" \
   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb.cpp"
@@ -72,6 +76,8 @@ echo "OK ddr_frame_store warm-reset red-check: stale-doorbell fault failed"
   -CFLAGS "-std=c++17 -O2" \
   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb_top.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/source_aspect_ack.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_base_mux.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_ram.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/async_fifo.sv" \
   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb.cpp"
@@ -96,6 +102,8 @@ echo "OK ddr_frame_store warm-reset red-check: non-YUV doorbell fault failed"
   -CFLAGS "-std=c++17 -O2" \
   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb_top.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/source_aspect_ack.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_base_mux.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_ram.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/async_fifo.sv" \
   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb.cpp"
@@ -120,6 +128,8 @@ echo "OK ddr_frame_store warm-reset red-check: U/V read-swap fault failed"
   -CFLAGS "-std=c++17 -O2" \
   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb_top.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/source_aspect_ack.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_base_mux.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_ram.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/async_fifo.sv" \
   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb.cpp"
@@ -144,6 +154,8 @@ echo "OK ddr_frame_store warm-reset red-check: chroma vertical full-res fault fa
   -CFLAGS "-std=c++17 -O2" \
   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb_top.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/source_aspect_ack.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_base_mux.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_ram.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/async_fifo.sv" \
   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb.cpp"
@@ -168,6 +180,8 @@ echo "OK ddr_frame_store warm-reset red-check: chroma luma-stride fault failed"
   -CFLAGS "-std=c++17 -O2" \
   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb_top.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/source_aspect_ack.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_base_mux.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_ram.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/async_fifo.sv" \
   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb.cpp"
