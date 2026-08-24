@@ -1213,6 +1213,18 @@ module ddr_frame_store #(
 							qwords_remaining <= C_LINE_QWORDS[Y_QW_AW:0];
 							state_ddr <= S_LINE_PREP;
 						end
+					end else if (plxj_req && (!rd_act_s2 || !has_frame_d2) && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+						// Aspect ACK must beat doorbell poll. Gold 5f1c8614 waits
+						// 250 ms; mux analog beam keeps rd_active high during DE, and
+						// poll_div==0 doorbell RD starved PLXJ (token 4 vs leftover 3
+						// on 1ad892c3 / 682eb537). Idle / pre-play has_frame=0: ACK
+						// even mid-scan (nothing to tear). Once a frame is up, blank-only.
+						DDRAM_ADDR <= ASPECT_ACK_W;
+						DDRAM_BURSTCNT <= 8'd1;
+						DDRAM_DIN <= {plxj_token, plxj_y, plxj_x, MAGIC_J};
+						DDRAM_WE <= 1'b1;
+						plxj_req <= 1'b0;
+						state_ddr <= S_WRITE_WAIT;
 					end else if (!poll_pending && poll_div[7:0] == 8'd0 && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						DDRAM_ADDR <= DOORBELL_W;
 						DDRAM_BURSTCNT <= DYN_BASE_EN ? 8'd2 : 8'd1;
@@ -1248,18 +1260,6 @@ module ddr_frame_store #(
 						sdram_mbox_last <= sdram_status_safe;
 						sdram_mbox_valid <= 1'b1;
 						sdram_mbox_req <= 1'b0;
-						state_ddr <= S_WRITE_WAIT;
-					end else if (plxj_req && !rd_act_s2 && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
-						// Blank-only WE: analog_raster_mux keeps a continuous beam, so
-						// HBlank/VBlank windows are short. Do not also require
-						// poll_div==32 (that missed gold 5f1c8614's 250 ms ACK
-						// window on Plex_SDfamily 1ad892c3: token 4 vs leftover 3).
-						// Still never steal active-scan DDR (!rd_act_s2).
-						DDRAM_ADDR <= ASPECT_ACK_W;
-						DDRAM_BURSTCNT <= 8'd1;
-						DDRAM_DIN <= {plxj_token, plxj_y, plxj_x, MAGIC_J};
-						DDRAM_WE <= 1'b1;
-						plxj_req <= 1'b0;
 						state_ddr <= S_WRITE_WAIT;
 					end
 				end
