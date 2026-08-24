@@ -82,6 +82,14 @@
       ]
     },
     {
+      "id": "h264_cabac_mb_syntax_force_skip",
+      "owner": "tests/unit/test_h264_cabac_mb_syntax_rtl_sim.sh",
+      "why": "Forcing mb_skip_flag=1 must drop P-slice mb_type/CBP/mvd so skip cannot score as coded syntax.",
+      "required_substrings": [
+        "FAIL h264_cabac_mb_syntax force-skip: mb stayed skip"
+      ]
+    },
+    {
       "id": "h264_cabac_residual_force_cbf0",
       "owner": "tests/unit/test_h264_cabac_residual_rtl_sim.sh",
       "why": "Forcing coded_block_flag=0 must drop a coded 4x4 so zero residual cannot score as CABAC residual-block decode.",

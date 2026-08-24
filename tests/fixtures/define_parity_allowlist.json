@@ -25,6 +25,7 @@
     "H264_CABAC_FAULT_SKIP_RENORM": "Injected CABAC skip-renormalize expected-red fault.",
     "H264_CABAC_FAULT_TIE_DEC_REQ": "Injected decode-core CABAC dec_req-tied-off expected-red fault.",
     "H264_CABAC_RES_FAULT_FORCE_CBF0": "Injected CABAC residual-block coded_block_flag=0 expected-red fault.",
+    "H264_CABAC_SYN_FAULT_FORCE_SKIP": "Injected CABAC mb_skip_flag=1 expected-red fault.",
     "H264_INTER_RECON_FAULT_DROP_RESIDUAL": "Injected inter residual-add drop expected-red fault.",
     "H264_DEBLOCK_FAULT_MB_COMMIT_EARLY": "Injected deblock/DPB seam expected-red fault.",
     "H264_DEBLOCK_FAULT_REF_READY_EARLY": "Injected deblock/DPB seam expected-red fault.",

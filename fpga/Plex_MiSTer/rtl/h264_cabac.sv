@@ -754,4 +754,287 @@ module h264_cabac_residual_4x4 (
 	end
 endmodule
 
+// P-slice CABAC mb syntax: mb_skip_flag, mb_type, CBP, mb_qp_delta, mvd_l0.
+// FAULT_FORCE_SKIP: treat mb_skip_flag as 1 after the bin is consumed.
+module h264_cabac_mb_syntax (
+	input  wire        clk,
+	input  wire        reset,
+	input  wire        start,
+	input  wire        nA_coded,   // neighbour A not skip (unavailable → 0)
+	input  wire        nB_coded,
+
+	output reg         dec_req,
+	output reg  [8:0]  ctx_idx,
+	output reg         bypass,
+	output reg         terminate,
+	input  wire        dec_valid,
+	input  wire        dec_bin,
+	input  wire        primed,
+	input  wire        init_busy,
+
+	output wire        busy,
+	output reg         done,
+	output reg         ok,
+	output reg         mb_skip,
+	output reg  [4:0]  mb_type,      // 0=P16x16 1=P16x8 2=P8x16 3=P8x8
+	output reg  [3:0]  cbp_luma,
+	output reg  [1:0]  cbp_chroma,
+	output reg  signed [5:0] qp_delta,
+	output reg  signed [15:0] mvd_x,
+	output reg  signed [15:0] mvd_y
+);
+	localparam [3:0]
+		S_IDLE  = 4'd0,
+		S_SKIP  = 4'd1,
+		S_T0    = 4'd2,
+		S_T1    = 4'd3,
+		S_T2    = 4'd4,
+		S_CBP   = 4'd5,
+		S_CH0   = 4'd6,
+		S_CH1   = 4'd7,
+		S_DQP0  = 4'd8,
+		S_DQP1  = 4'd9,
+		S_MV0   = 4'd10,
+		S_MV1   = 4'd11,
+		S_MVGT  = 4'd12,
+		S_MVUEG = 4'd13,
+		S_MVS   = 4'd14,
+		S_NEXTV = 4'd15;
+
+	reg [3:0]  st;
+	reg        want_bin;
+	reg        nA_r, nB_r;
+	reg [1:0]  cbp_i;
+	reg [4:0]  dqp_n;
+	reg        mv_is_y;
+	reg [4:0]  mv_abs;
+	reg [4:0]  ueg_j;
+	reg [4:0]  ueg_left;
+	reg [15:0] mv_acc;
+
+	wire hold_req = want_bin && primed && !init_busy && !reset;
+	assign busy = (st != S_IDLE);
+
+	wire [8:0] skip_ctx = 9'd11 + {8'd0, nA_r} + {8'd0, nB_r};
+	wire [8:0] mv_base = mv_is_y ? 9'd47 : 9'd40;
+
+	always @* begin
+		dec_req = 1'b0;
+		ctx_idx = 9'd0;
+		bypass = 1'b0;
+		terminate = 1'b0;
+		if (hold_req && !dec_valid) begin
+			dec_req = 1'b1;
+			case (st)
+			S_SKIP: ctx_idx = skip_ctx;
+			S_T0:   ctx_idx = 9'd14;
+			S_T1:   ctx_idx = 9'd15;
+			S_T2:   ctx_idx = 9'd16;
+			S_CBP:  ctx_idx = 9'd73 + {7'd0, cbp_i};
+			S_CH0:  ctx_idx = 9'd77;
+			S_CH1:  ctx_idx = 9'd78;
+			S_DQP0: ctx_idx = 9'd60;
+			S_DQP1: ctx_idx = (dqp_n <= 5'd1) ? 9'd61 : 9'd62;
+			S_MV0:  ctx_idx = mv_base;
+			S_MV1:  ctx_idx = mv_base + 9'd1;
+			S_MVGT: ctx_idx = mv_base + 9'd2;
+			S_MVUEG, S_MVS: bypass = 1'b1;
+			default: dec_req = 1'b0;
+			endcase
+		end
+	end
+
+	function automatic signed [5:0] dqp_map;
+		input [4:0] n;
+		reg [5:0] mag;
+		begin
+			mag = {1'b0, n} + 6'd1;
+			mag = mag >> 1;
+			if (n[0])
+				dqp_map = $signed(mag);
+			else
+				dqp_map = -$signed(mag);
+		end
+	endfunction
+
+	always @(posedge clk) begin
+		done <= 1'b0;
+		if (reset) begin
+			st <= S_IDLE;
+			ok <= 1'b0;
+			want_bin <= 1'b0;
+			mb_skip <= 1'b0;
+			mb_type <= 5'd0;
+			cbp_luma <= 4'd0;
+			cbp_chroma <= 2'd0;
+			qp_delta <= 6'sd0;
+			mvd_x <= 16'sd0;
+			mvd_y <= 16'sd0;
+			nA_r <= 1'b0;
+			nB_r <= 1'b0;
+			cbp_i <= 2'd0;
+			dqp_n <= 5'd0;
+			mv_is_y <= 1'b0;
+			mv_abs <= 5'd0;
+			ueg_j <= 5'd0;
+			ueg_left <= 5'd0;
+			mv_acc <= 16'd0;
+		end else if (start) begin
+			st <= S_SKIP;
+			ok <= 1'b0;
+			want_bin <= 1'b1;
+			mb_skip <= 1'b0;
+			mb_type <= 5'd0;
+			cbp_luma <= 4'd0;
+			cbp_chroma <= 2'd0;
+			qp_delta <= 6'sd0;
+			mvd_x <= 16'sd0;
+			mvd_y <= 16'sd0;
+			nA_r <= nA_coded;
+			nB_r <= nB_coded;
+			cbp_i <= 2'd0;
+			dqp_n <= 5'd0;
+			mv_is_y <= 1'b0;
+			mv_abs <= 5'd0;
+			ueg_j <= 5'd0;
+			ueg_left <= 5'd0;
+			mv_acc <= 16'd0;
+		end else if (st == S_NEXTV) begin
+			if (!mv_is_y) begin
+				mv_is_y <= 1'b1;
+				st <= S_MV0;
+				want_bin <= 1'b1;
+			end else begin
+				st <= S_IDLE;
+				done <= 1'b1;
+				ok <= 1'b1;
+				want_bin <= 1'b0;
+			end
+		end else if (dec_valid && want_bin) begin
+			case (st)
+			S_SKIP: begin
+`ifdef H264_CABAC_SYN_FAULT_FORCE_SKIP
+				mb_skip <= 1'b1;
+				st <= S_IDLE;
+				done <= 1'b1;
+				ok <= 1'b1;
+				want_bin <= 1'b0;
+`else
+				if (dec_bin) begin
+					mb_skip <= 1'b1;
+					st <= S_IDLE;
+					done <= 1'b1;
+					ok <= 1'b1;
+					want_bin <= 1'b0;
+				end else
+					st <= S_T0;
+`endif
+			end
+			S_T0: begin
+				if (!dec_bin) begin
+					mb_type <= 5'd0;
+					st <= S_CBP;
+					cbp_i <= 2'd0;
+				end else
+					st <= S_T1;
+			end
+			S_T1: begin
+				if (dec_bin) begin
+					mb_type <= 5'd3;
+					st <= S_CBP;
+					cbp_i <= 2'd0;
+				end else
+					st <= S_T2;
+			end
+			S_T2: begin
+				mb_type <= dec_bin ? 5'd2 : 5'd1;
+				st <= S_CBP;
+				cbp_i <= 2'd0;
+			end
+			S_CBP: begin
+				cbp_luma[cbp_i] <= dec_bin;
+				if (cbp_i == 2'd3)
+					st <= S_CH0;
+				else
+					cbp_i <= cbp_i + 2'd1;
+			end
+			S_CH0: begin
+				if (!dec_bin) begin
+					cbp_chroma <= 2'd0;
+					if (cbp_luma != 4'd0)
+						st <= S_DQP0;
+					else begin
+						st <= S_MV0;
+						mv_is_y <= 1'b0;
+					end
+				end else
+					st <= S_CH1;
+			end
+			S_CH1: begin
+				cbp_chroma <= dec_bin ? 2'd2 : 2'd1;
+				st <= S_DQP0;
+			end
+			S_DQP0: begin
+				if (!dec_bin) begin
+					qp_delta <= 6'sd0;
+					st <= S_MV0;
+					mv_is_y <= 1'b0;
+				end else begin
+					dqp_n <= 5'd1;
+					st <= S_DQP1;
+				end
+			end
+			S_DQP1: begin
+				if (!dec_bin || dqp_n >= 5'd31) begin
+					qp_delta <= dqp_map(dqp_n);
+					st <= S_MV0;
+					mv_is_y <= 1'b0;
+				end else
+					dqp_n <= dqp_n + 5'd1;
+			end
+			S_MV0: begin
+				if (!dec_bin) begin
+					if (!mv_is_y) mvd_x <= 16'sd0;
+					else mvd_y <= 16'sd0;
+					st <= S_NEXTV;
+					want_bin <= 1'b0;
+				end else
+					st <= S_MV1;
+			end
+			S_MV1: begin
+				if (!dec_bin) begin
+					mv_abs <= 5'd1;
+					st <= S_MVS;
+				end else begin
+					mv_abs <= 5'd2;
+					st <= S_MVGT;
+				end
+			end
+			S_MVGT: begin
+				if (!dec_bin) begin
+					st <= S_MVS;
+				end else if (mv_abs >= 5'd7) begin
+					mv_abs <= mv_abs + 5'd1;
+					st <= S_MVS;
+				end else
+					mv_abs <= mv_abs + 5'd1;
+			end
+			S_MVS: begin
+				if (dec_bin) begin
+					if (!mv_is_y) mvd_x <= -$signed({11'd0, mv_abs});
+					else mvd_y <= -$signed({11'd0, mv_abs});
+				end else begin
+					if (!mv_is_y) mvd_x <= $signed({11'd0, mv_abs});
+					else mvd_y <= $signed({11'd0, mv_abs});
+				end
+				st <= S_NEXTV;
+				want_bin <= 1'b0;
+			end
+			default: begin
+			end
+			endcase
+		end
+	end
+endmodule
+
 `default_nettype wire
