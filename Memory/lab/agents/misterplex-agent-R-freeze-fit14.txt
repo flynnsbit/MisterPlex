@@ -1,0 +1,47 @@
+# misterplex agent R-freeze-fit14
+Date: 2026-08-24T23:27:19Z
+Worker: R-freeze
+Slot: present-gate rematch (phase1a-fit14)
+Mode: READ_ONLY reconfirm
+EDITED: NO
+QUARTUS: ZERO
+LAB_SSH: NEVER
+PHASE_BACKLOG: not written
+Memory/lab/status/*.md: not written
+
+CoS: /tmp/misterplex-agent-CoS-fitgo-fit14.txt
+CoS_STATUS: FIT_GO
+FIT_GO: present-gate rematch only (phase1a-fit14)
+
+HEAD: b0ce7004bbf715b25dccaf99e904557766567cfe
+BRANCH: wip/phase1a-320-fit13-lessons
+BRANCH_OK: YES
+
+## Verdict
+MATCH. Live present-gate freeze md5s equal CoS FIT_GO lock target. Branch is
+wip/phase1a-320-fit13-lessons. HEAD b0ce7004bbf715b25dccaf99e904557766567cfe.
+No fpga/Plex_MiSTer edits. No Quartus.
+
+## Freeze md5s (live vs CoS / expected)
+
+file                    live                              expected                           cmp
+Plex.sv                 320c1b555d910a018fe8d05a50097f82  320c1b555d910a018fe8d05a50097f82  MATCH
+h264_mb_ctrl.sv         544e4944c20633e6cf0ba3b9c8f6ce89  544e4944c20633e6cf0ba3b9c8f6ce89  MATCH
+stream_path.sv          cf9259082a0ba4c46c1b9a1f271e053d  cf9259082a0ba4c46c1b9a1f271e053d  MATCH
+ddr_frame_store.sv      6732f9460057b21e19e62ef78aa1ec50  6732f9460057b21e19e62ef78aa1ec50  MATCH
+present_core.sv         e0c0b7f9be71d87bdaeb89b1cd75f5ac  e0c0b7f9be71d87bdaeb89b1cd75f5ac  MATCH
+
+STATUS=MATCH
+DRIFT_CRITICAL=NO
+
+## git
+git -C /home/shawn/Projects/MisterPlex rev-parse HEAD
+  b0ce7004bbf715b25dccaf99e904557766567cfe
+git -C /home/shawn/Projects/MisterPlex rev-parse --abbrev-ref HEAD
+  wip/phase1a-320-fit13-lessons
+git status --short (five freeze files): clean (no short-status lines)
+
+## Constraints obeyed
+- No file under fpga/Plex_MiSTer modified by this worker
+- No Quartus / docker fit
+- Evidence only

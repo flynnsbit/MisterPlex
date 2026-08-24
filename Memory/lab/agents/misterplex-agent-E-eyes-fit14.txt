@@ -1,0 +1,23 @@
+# misterplex agent E-eyes-fit14
+Date: 2026-08-24T23:56:30Z
+Worker: E-eyes-fit14 (parent)
+Status: FAIL
+
+## Constraints obeyed
+- L58: grabbed /dev/video0 myself. Did not ask Shawn to look.
+- Discarded e74e3559 ss1/ss2 (7401 B)
+- No second menu. No second Quartus.
+
+## Evidence
+- CORENAME=Plex after ONE menu. SD md5 de1847f3
+- GOP12 SPI: has_stream=1 has_idr=1 nalu=15 sps=320x240
+- HDMI ss3–ss8 ~27 kB, md5s vary (not false-black)
+- I SAW fit14-ss8.jpg: orange idle chevron, OSD 529x239 15.68 kHz 59.8 Hz over 1280x720 74.25 MHz 60.0 Hz, left black / right dark gray
+- meanRGB ~26.4 unique~6900 center (106,40,0)
+
+## Verdict
+GLASS_PASS=NO. Chevron ≠ GOP12 pixels. nalu=15 ≠ glass PASS.
+BUILD_OK+DEPLOY_OK+SPI ≠ product glass PASS.
+
+## Next
+host_owns_fs / idle frame_store still showing chevron. Named next: FPGA recon owns frame_store.

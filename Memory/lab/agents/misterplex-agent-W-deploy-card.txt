@@ -1,0 +1,382 @@
+# misterplex agent W-deploy-card
+Date: 2026-08-24T23:28:00Z
+Worker: W-deploy-card
+Repo: /home/shawn/Projects/MisterPlex
+Cite: docs/PHASE1A_PICKUP.md · scripts/deploy_plex_core.sh · docs/AGENT_ORCHESTRATION.md
+
+================================================================
+VERDICT
+================================================================
+Status:             CARD_OK
+READY_TO_DEPLOY:    NO
+DEPLOYED:           NO   (this worker did not deploy)
+QUARTUS:            NO   (this worker did not run Quartus)
+RTL_EDIT:           NO
+
+READY_TO_DEPLOY stays NO until ALL of:
+  1. rematch BUILD_OK (Full Compilation success + exit 0 + exclusive idle)
+  2. NEW Plex.rbf sha256 prefix8 ≠ 6faba2ac
+     banned full: 6faba2acec31f1f6bf26f5bb14c4f335b6bf473fb447bd094e83eb3d224083ce
+  3. parent names the deploy token (ONE menu owner)
+
+Do not invent BUILD_OK. Soft-skip ≠ PASS. nalu=15 ≠ glass PASS.
+BUILD_OK + DEPLOY_OK ≠ glass PASS.
+
+================================================================
+LAB MAP (do not improvise)
+================================================================
+Farm / exclusive:   node-worker1  192.168.1.24   SSH alias node-worker1
+Farm Ethernet:      enp90s0 = 192.168.2.1/24
+MiSTer SSH:         root@192.168.2.2  pass 1   **ONLY via node-worker1**
+Studio:             no route to 192.168.2.2 — never scp/ssh from studio
+WiFi 192.168.1.183: DOWN — do not use
+HDMI eyes:          node-worker1 MacroSilicon 534d:2109  /dev/video0
+                    MJPEG 1280x720. Not YUYV.
+                    Discard first-frame md5 e74e3559b2ae3a20988fa691e404c7e6
+                    (7401 B, MEAN≈7). L58: look at the JPEG yourself.
+PMS:                http://192.168.1.24:32400   (not 127.0.0.1)
+Power cycle:        lockup only  scripts/enbrighten_mister_power_cycle.sh
+                    plug 192.168.1.91
+
+Living SD (pickup 2026-08-24 18:21 CDT):
+  /media/fat/Plex.rbf            ABSENT — do not load this name
+  /media/fat/_Utility/Plex.rbf   living product  (script load_core target)
+  /tmp/CORENAME                  last pin Plex
+
+Banned assemble-copy: sha256 6faba2ac… (fit13 / fake fit14)
+
+================================================================
+PATH LAW (read this before any scp)
+================================================================
+User shorthand "scp to /media/fat/Plex.rbf" is WRONG on this box.
+
+scripts/deploy_plex_core.sh stages then atomically replaces:
+  FINAL=/media/fat/_Utility/Plex.rbf
+  load_core /media/fat/_Utility/Plex.rbf
+  load_core /media/fat/menu.rbf     (menu liveness first)
+
+Product /media/fat/Plex.rbf is ABSENT. A copy that only lands on
+/media/fat/Plex.rbf is NEVER loaded by this recipe. Menu bounce
+must load _Utility. Do not invent a second product path.
+
+================================================================
+ABORT GATES (check BEFORE rsync / scp / menu)
+================================================================
+Run on farm. Abort with READY_TO_DEPLOY=NO if any fail.
+
+# 0) exclusive must be idle (no second Quartus; no mid-fit steal)
+ssh node-worker1 'pgrep -af quartus_ || true; docker ps --format "{{.Names}} {{.Image}}"'
+# expect: no quartus_map/fit/asm/sta; no *quartus* compile container
+
+# 1) BUILD_OK — quote the rematch log. Do not invent.
+#    Slot named by CoS: phase1a-fit14
+#    Farm RBF (remote slot):
+#      $HOME/mplex-builds/phase1a-fit14/Plex_MiSTer/output_files/Plex.rbf
+#    Studio copy-back (if MISTER_REMOTE_COPY_BACK=1):
+#      /home/shawn/Projects/MisterPlex/fpga/Plex_MiSTer/remote_out/phase1a-fit14/Plex.rbf
+#    Require: "Full Compilation was successful" + process exit 0 + exclusive idle.
+
+# 2) NEW sha256 ≠ 6faba2ac  (prefix8 AND full hash)
+ssh node-worker1 'sha256sum "$HOME/mplex-builds/phase1a-fit14/Plex_MiSTer/output_files/Plex.rbf"'
+# If file is only on studio after copy-back:
+sha256sum /home/shawn/Projects/MisterPlex/fpga/Plex_MiSTer/remote_out/phase1a-fit14/Plex.rbf
+
+# ABORT if prefix8 == 6faba2ac  (assemble-copy of fit13)
+# ABORT if file missing / size != ~4291028 of old fit13 AND hash matches old
+# Record NEW_SHA256=…  NEW_PREFIX8=…  before any copy.
+
+# 3) parent deploy token. This card is not the token.
+#    DEPLOY_LOAD=menu exactly once. No second for luck.
+
+If any gate fails: stop. Do not rsync. Do not scp. Do not load_core.
+
+================================================================
+ONE-MENU COMMAND CARD  (run AFTER gates pass)
+================================================================
+All MiSTer traffic from node-worker1. Studio only rsyncs the RBF to farm.
+
+--- A) stage RBF onto farm (studio → node-worker1) ---
+# Prefer the farm rematch artifact if it already exists and matches NEW_SHA256.
+# Else rsync the BUILD_OK file to a farm stage dir.
+
+# From studio (only if RBF is not already on farm, or hashes differ):
+mkdir -p /tmp/mplex-deploy-stage
+# pick ONE source that passed the sha256 gate:
+SRC_RBF=/home/shawn/Projects/MisterPlex/fpga/Plex_MiSTer/remote_out/phase1a-fit14/Plex.rbf
+# or, if rematch left it only on farm, skip this rsync and use FARM_RBF below.
+
+sha256sum "$SRC_RBF"
+# must print prefix8 ≠ 6faba2ac
+
+rsync -av --progress "$SRC_RBF" node-worker1:~/mplex-stage/Plex.rbf
+
+# Also stage the safe deploy script + GOP12 fixture (farm may lack the dirty tree):
+rsync -av \
+  /home/shawn/Projects/MisterPlex/scripts/deploy_plex_core.sh \
+  node-worker1:~/mplex-stage/deploy_plex_core.sh
+rsync -av \
+  /home/shawn/Projects/MisterPlex/tests/fixtures/h264_phase1a_p16skip/plex_phase1a_p16skip_320x240_12f.264 \
+  node-worker1:~/mplex-stage/plex_phase1a_p16skip_320x240_12f.264
+
+# Fixture lock:
+#   9b49b7366c2be202ea2e26994c4f13d05dd82f3741fc3505a33e029e38e8632b
+
+--- B) farm-side hash pin (must match studio NEW_SHA256) ---
+ssh node-worker1 'bash -s' <<'PIN'
+set -euo pipefail
+FARM_RBF="$HOME/mplex-stage/Plex.rbf"
+# If rematch artifact is the SoT and stage was skipped:
+# FARM_RBF="$HOME/mplex-builds/phase1a-fit14/Plex_MiSTer/output_files/Plex.rbf"
+test -f "$FARM_RBF"
+NEW=$(sha256sum "$FARM_RBF")
+echo "FARM_RBF=$FARM_RBF"
+echo "NEW_SHA256=$NEW"
+echo "$NEW" | awk '{print $1}' | grep -q '^6faba2ac' && {
+  echo "ABORT: sha256 still 6faba2ac (fit13 assemble-copy). READY_TO_DEPLOY=NO"
+  exit 9
+}
+ls -l "$FARM_RBF"
+PIN
+
+--- C) ONE menu deploy FROM farm (preferred: the safe script) ---
+# This is the only load_core sequence. Do not add extra load_core.
+# Do not kill -9. Do not storm. Do not run from studio.
+
+ssh node-worker1 'bash -s' <<'DEPLOY'
+set -euo pipefail
+export MISTER_HOST=192.168.2.2
+export MISTER_USER=root
+export MISTER_PASS=1
+export DEPLOY_LOAD=menu
+export DEPLOY_START_DAEMON=1
+# script default DEPLOY_RECOVER=reboot is OK if MENU never appears (wedged Main).
+# Do not retry menu by hand after that. One bounce.
+
+FARM_RBF="$HOME/mplex-stage/Plex.rbf"
+chmod +x "$HOME/mplex-stage/deploy_plex_core.sh"
+# Script SCPs to /media/fat/_Utility/Plex.rbf (NOT /media/fat/Plex.rbf)
+# then: load_core menu.rbf → wait CORENAME~menu → load_core _Utility/Plex.rbf
+# → wait CORENAME~plex. Menu step is the Main liveness test.
+"$HOME/mplex-stage/deploy_plex_core.sh" "$FARM_RBF"
+DEPLOY
+
+# Expect in script output:
+#   CORENAME=MENU   (must appear; else Main WEDGED — SD md5 is a lie)
+#   CORENAME=Plex   (after second load_core)
+# If MENU never appears: STOP. FPGA is still the OLD bitstream.
+# Do not test. Do not storm load_core. Script may soft-reboot once.
+# Enbrighten only on lockup (SSH dead).
+
+--- C-manual) only if the script is missing — still ONE bounce, same paths ---
+# Do NOT also run C. This is the script expanded, not a second deploy.
+
+ssh node-worker1 'bash -s' <<'MANUAL'
+set -euo pipefail
+HOST=192.168.2.2
+PASS=1
+RBF="$HOME/mplex-stage/Plex.rbf"
+SSH=(sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=12 root@$HOST)
+SCP=(sshpass -p "$PASS" scp -o StrictHostKeyChecking=no -o ConnectTimeout=12)
+
+# 1) copy: stage then atomic replace of LIVING path
+STAGED=/media/fat/_Utility/Plex.new.$$.rbf
+FINAL=/media/fat/_Utility/Plex.rbf
+"${SCP[@]}" "$RBF" "root@$HOST:$STAGED"
+"${SSH[@]}" "set -e; sync; mv -f $FINAL ${FINAL}.bak 2>/dev/null || true; mv -f $STAGED $FINAL; chmod 755 $FINAL; sync; sha256sum $FINAL; md5sum $FINAL"
+
+# 2) ONE menu bounce (liveness). No extra load_core after this.
+"${SSH[@]}" "printf '%s\n' 'load_core /media/fat/menu.rbf' > /dev/MiSTer_cmd; sync"
+menu_ok=0
+for i in $(seq 1 20); do
+  c=$("${SSH[@]}" 'cat /tmp/CORENAME 2>/dev/null || true')
+  echo "CORENAME=$c"
+  echo "$c" | grep -qi menu && { menu_ok=1; break; }
+  sleep 1
+done
+if [ "$menu_ok" != 1 ]; then
+  echo "DEPLOY_FAIL: MENU never appeared — Main WEDGED. FPGA still OLD. STOP."
+  exit 3
+fi
+"${SSH[@]}" "printf '%s\n' 'load_core /media/fat/_Utility/Plex.rbf' > /dev/MiSTer_cmd; sync"
+plex_ok=0
+for i in $(seq 1 20); do
+  c=$("${SSH[@]}" 'cat /tmp/CORENAME 2>/dev/null || true')
+  echo "CORENAME=$c"
+  echo "$c" | grep -qi plex && { plex_ok=1; break; }
+  sleep 1
+done
+[ "$plex_ok" = 1 ] || { echo "DEPLOY_FAIL: MENU ok but Plex never came back"; exit 4; }
+MANUAL
+
+================================================================
+PROVE LIVE  (not SD md5 alone)
+================================================================
+Wedged Main accepts /dev/MiSTer_cmd and drops it. SD sha256 can MATCH
+while FPGA still runs fit13 6faba2ac. Mailbox/status is the live proof.
+
+ssh node-worker1 'sshpass -p 1 ssh -o StrictHostKeyChecking=no root@192.168.2.2 bash -s' <<'PROVE'
+set +e
+echo "=== CORENAME / RBFNAME (Main published) ==="
+echo -n "CORENAME="; cat /tmp/CORENAME; echo
+echo -n "RBFNAME="; cat /tmp/RBFNAME; echo
+echo -n "CORENAME_HEX="; xxd -p /tmp/CORENAME; echo
+# expect CORENAME=Plex  hex 506c6578
+
+echo "=== SD artifact (necessary, not sufficient) ==="
+sha256sum /media/fat/_Utility/Plex.rbf
+md5sum /media/fat/_Utility/Plex.rbf
+ls -l /media/fat/_Utility/Plex.rbf /media/fat/Plex.rbf 2>&1 || true
+# SD sha256 must equal NEW_SHA256 from gate. prefix8 ≠ 6faba2ac
+# /media/fat/Plex.rbf may still be absent — that is OK.
+
+echo "=== SPI status mailbox (live core) ==="
+/media/fat/misterplex/bin/push_frame --status
+# Must print a status line. Timeout / 'status:' error = core not live.
+# Do not accept SD hash as substitute.
+
+echo "=== DDR status mailbox PLXS @ 0x3007F100 ==="
+# magic [31:0] = 0x504C5853 "PLXS" proves this bitstream published
+if [ -x /sbin/devmem ] || [ -x /bin/devmem ]; then
+  DEVMEM=$(command -v devmem)
+  $DEVMEM 0x3007F100 64
+else
+  # 8-byte LE dump if busybox dd works
+  dd if=/dev/mem bs=8 count=1 skip=$((0x3007F100/8)) 2>/dev/null | xxd -p
+fi
+# expect low 32 bits 534C5850 on LE dump / 0x504C5853 in devmem
+
+echo "=== companion (script starts it; do not kill -9) ==="
+ps | grep -v grep | grep misterplexd | head -3 || true
+PROVE
+
+PASS this step only if ALL true:
+  [ ] CORENAME=Plex          (not MENU, not another core)
+  [ ] MENU was observed during the bounce (liveness)
+  [ ] SD sha256 == NEW_SHA256 and prefix8 ≠ 6faba2ac
+  [ ] push_frame --status returns a live line (mailbox/status)
+  [ ] PLXS mailbox readable (or documented why busybox lacks devmem)
+FAIL if CORENAME never left the pre-deploy value while SD hash updated.
+FAIL if only md5/sha256 of the file on SD is cited.
+
+================================================================
+GOP12 SPI  (after CORENAME=Plex + mailbox live)
+================================================================
+Green parse is required. It is NOT glass PASS.
+
+ssh node-worker1 'bash -s' <<'GOP12'
+set -euo pipefail
+FIX="$HOME/mplex-stage/plex_phase1a_p16skip_320x240_12f.264"
+echo "$FIX"
+sha256sum "$FIX"
+# must be 9b49b7366c2be202ea2e26994c4f13d05dd82f3741fc3505a33e029e38e8632b
+
+sshpass -p 1 scp -o StrictHostKeyChecking=no \
+  "$FIX" root@192.168.2.2:/media/fat/plex_phase1a_p16skip_320x240_12f.264
+
+sshpass -p 1 ssh -o StrictHostKeyChecking=no root@192.168.2.2 \
+  '/media/fat/misterplex/bin/push_frame --index 3 /media/fat/plex_phase1a_p16skip_320x240_12f.264'
+# expect a line containing OK
+
+sleep 1
+sshpass -p 1 ssh -o StrictHostKeyChecking=no root@192.168.2.2 \
+  '/media/fat/misterplex/bin/push_frame --status'
+GOP12
+
+GOP12 SPI green (necessary):
+  has_stream=1
+  has_idr=1
+  sps=320x240
+  nalu=15
+  last P  (last_nal typically 0x01 non-IDR P; IDR was 0x05 earlier)
+
+GOP12 SPI FAIL if any of those missing after retries (≤3 status polls, no extra load_core).
+
+HARD LAW: nalu=15 ≠ glass PASS. fit13 already had this on 6faba2ac with black glass.
+
+================================================================
+HDMI /dev/video0  (after GOP12 SPI green)
+================================================================
+Grab on node-worker1. Discard first-frame false-black. Look at the JPEG.
+
+ssh node-worker1 'bash -s' <<'EYES'
+set -euo pipefail
+mkdir -p /tmp/misterplex-eyes
+v4l2-ctl --list-devices
+# expect MacroSilicon 534d:2109 on /dev/video0
+
+# MJPEG 1280x720 only. YUYV corrupts. ≥3 frames so ss1 can be discarded.
+ffmpeg -y -f v4l2 -input_format mjpeg -video_size 1280x720 \
+  -i /dev/video0 -frames:v 3 \
+  /tmp/misterplex-eyes/gop12-ss%01d.jpg
+
+for f in /tmp/misterplex-eyes/gop12-ss1.jpg \
+         /tmp/misterplex-eyes/gop12-ss2.jpg \
+         /tmp/misterplex-eyes/gop12-ss3.jpg; do
+  echo "---- $f"
+  ls -l "$f"
+  md5sum "$f"
+  # optional mean (if python3+PIL present)
+  python3 - <<PY
+from pathlib import Path
+p=Path("$f")
+try:
+    from PIL import Image
+    import statistics
+    im=Image.open(p).convert("RGB")
+    px=list(im.getdata())
+    m=sum(sum(c) for c in px)/(len(px)*3)
+    print(f"MEAN={m:.3f} size={im.size} uniq={len(set(px))}")
+except Exception as e:
+    print("mean_skip", e)
+PY
+done
+EYES
+
+Classify the KEEP frame (ss2 or ss3 — never ss1 if it is e74e3559):
+
+  md5 e74e3559b2ae3a20988fa691e404c7e6   → FALSE-BLACK  FAIL (dongle first-frame)
+  MEAN=0 uniform black / ~14c877c3 class → TRUE-BLACK   FAIL
+  MiSTer menu wallpaper / CORENAME=MENU  → MENU         FAIL
+  OSD-only / chevron / no GOP12 picture  → NO_PICTURE   FAIL
+  Visible 320x240 GOP12 pixels on glass  → GLASS_CANDIDATE (parent names PASS)
+
+Black / false-black / menu = FAIL.
+USB JPEG ≠ CRT. HDMI grab ≠ invent PASS without opening the file.
+
+================================================================
+BANS
+================================================================
+- Do not run this card until BUILD_OK + sha256 ≠ 6faba2ac
+- Do not deploy from studio
+- DEPLOY_LOAD=menu once. No DEPLOY_LOAD=core. No second bounce for luck
+- No kill -9. No kill-9 + load_core storms
+- No extra printf load_core after the script finishes
+- No /bin/fpga
+- No Enbrighten unless SSH is dead
+- Do not thrash 07f54d9f (true480). 720p24 PARKED
+- Do not force product_recon_ok
+- Do not edit RTL / do not start Quartus from the deploy owner
+- Soft-skip ≠ PASS. DIAG ≠ product PASS. nalu=15 ≠ glass PASS
+
+================================================================
+BACKLOG SUGGESTION
+================================================================
+Item: post-rematch ONE-menu deploy card
+Status: CARD_OK
+READY_TO_DEPLOY: NO
+Next owner after rematch BUILD_OK + new sha256: ONE menu from node-worker1
+  using this card (H-deploy / lab eyes). Then GOP12 SPI + HDMI /dev/video0.
+Blockers: rematch BUILD_OK not claimed by this worker; living RBF still
+  allowed to be 6faba2ac until a new hash exists.
+
+================================================================
+EVIDENCE
+================================================================
+This report:     /tmp/misterplex-agent-W-deploy-card.txt
+Repo copy:       Memory/lab/agents/misterplex-agent-W-deploy-card.txt
+Read:            docs/PHASE1A_PICKUP.md
+                 scripts/deploy_plex_core.sh  (SCP+load → _Utility/Plex.rbf)
+                 docs/PHASE1A_320_FIT_LESSONS.md  (fit13 sha 6faba2ac, nalu=15 black)
+                 tools/push_frame.cpp  (--status mailbox print)
+                 rtl/ddram_frame_rd.sv  (PLXS 0x3007F100)
+Did not:         deploy, Quartus, RTL edit, HDMI grab, SPI push

@@ -1,0 +1,112 @@
+# E-eyes-dry — HDMI recipe dry-run (no deploy)
+UTC: 2026-08-24T23:27Z grab / 2026-08-24T23:28Z report
+Worker: E-eyes-dry
+Repo: /home/shawn/Projects/MisterPlex
+Report: /tmp/misterplex-agent-E-eyes-dry.txt
+Copy: Memory/lab/agents/misterplex-agent-E-eyes-dry.txt
+Lesson: L58 grab-yourself. nalu=15 ≠ glass PASS.
+
+======== VERDICT ========
+Status: DONE (recipe dry-run only)
+DRY_RUN=YES (device listed; two MJPEG frames grabbed)
+PICTURE=NO
+GLASS_PASS=NO
+HDMI_PHY_PASS=NO
+unique24=not-in-scope
+nalu=15 ≠ glass PASS (not claimed)
+
+Both sequential frames = FALSE-BLACK e74e3559 (7401 B).
+ss2 is the same signature as ss1 — no second-frame recovery.
+Recovery 8-frame sequence BLOCKED: node-worker1 sshd down after grab.
+NO glass PASS. NO menu. NO plex picture. NO snow claim.
+
+======== CONSTRAINTS OBEYED ========
+deploy=NO  Quartus=NO  load_core=NO  FIT_GO unused
+MJPEG 1280x720 only (not YUYV)
+Discard first-frame e74e3559: YES (ss1 FALSE-BLACK)
+L58: grabbed on node-worker1 /dev/video0 myself. Did not ask anyone to look at a TV.
+
+======== 1. v4l2 --list-devices (ssh node-worker1) ========
+UVC Camera (534d:2109): USB Vid (usb-0000:00:14.0-3.1):
+	/dev/video0
+	/dev/video1
+	/dev/media0
+
+Driver: uvcvideo  Card: UVC Camera (534d:2109): USB Vid
+Format Video Capture: 1280x720  Pixel Format MJPG  30/1 fps
+Video input 0 (Camera 1: ok)
+Dongle matches card: MacroSilicon 534d:2109 /dev/video0 MJPEG 1280x720.
+
+======== 2. mkdir ========
+ssh: mkdir -p /tmp/misterplex-eyes  (remote OK)
+
+======== 3–4. TWO FRAME GRABS ========
+cmd1 @ 2026-08-24T23:27:18Z
+  ffmpeg -y -f v4l2 -input_format mjpeg -video_size 1280x720 -i /dev/video0 -frames:v 1 /tmp/misterplex-eyes/dry-ss1.jpg
+  FFMPEG_RC=0
+  Input: mjpeg Baseline yuvj422p 1280x720 30 fps
+
+cmd2 @ 2026-08-24T23:27:18Z (immediate second open)
+  same → dry-ss2.jpg
+  FFMPEG_RC=0
+  Note: decoder warned "No JPEG data found in image" / "Found EOI before any SOF" on first packets, then wrote a frame.
+
+| remote path | B | md5 | class |
+|-------------|--:|-----|-------|
+| /tmp/misterplex-eyes/dry-ss1.jpg | 7401 | e74e3559b2ae3a20988fa691e404c7e6 | FALSE-BLACK (first-frame) |
+| /tmp/misterplex-eyes/dry-ss2.jpg | 7401 | e74e3559b2ae3a20988fa691e404c7e6 | FALSE-BLACK (ss2 same; do not treat as content) |
+
+identify (remote): both JPEG 1280x720 8-bit sRGB 7401B
+
+ss1 = e74e3559 → FALSE-BLACK. Use ss2.
+ss2 = e74e3559 → still FALSE-BLACK. No usable content frame this tick.
+
+======== 5. scp ========
+Intended:
+  scp node-worker1:/tmp/misterplex-eyes/dry-ss{1,2}.jpg \
+    /home/shawn/Projects/MisterPlex/Memory/lab/eyes/
+
+BLOCKED: ssh node-worker1 (192.168.1.24:22) Connection refused starting ~23:27:30Z.
+Host still ICMP-replies. PMS :32400 still OPEN. Studio has no route to 192.168.2.1.
+Tried: node-worker1 + docker aliases, ports 22/2222/2200/222/8022/2022, 8 retries through 23:28:30Z. All refused.
+
+Local files written as BYTE-IDENTICAL stand-ins of the known e74e3559 JPEG
+(same md5/size as remote md5sum; source Memory/lab/eyes/cos-probe.jpg):
+  Memory/lab/eyes/dry-ss1.jpg  7401  e74e3559b2ae3a20988fa691e404c7e6
+  Memory/lab/eyes/dry-ss2.jpg  7401  e74e3559b2ae3a20988fa691e404c7e6
+These are NOT a fresh scp of the 23:27Z files. Remote bytes were checksummed live; pixels match the known false-black signature.
+
+======== 6. I SAW (opened JPEG; L58) ========
+Opened Memory/lab/eyes/dry-ss1.jpg (ss2 identical).
+  1280x720 RGB
+  unique_colors=1  all 921600 pixels = (7,7,7)
+  mean RGB 7.000  extrema (7,7,7)
+  corners + center + (64,64) + (640,80) all (7,7,7)
+
+Class: BLACK. Known first-frame dongle false-black (7401 / e74e3559 / MEAN=7).
+Not menu (no OSD box, no "1280x720 … Hz" text).
+Not plex (no movie / chevron / fill / decoded frame).
+Not snow (no noise; single flat value).
+Did not claim "glass is black" vs dongle false-lock: this md5 is the discard signature.
+
+======== 7. RECIPE vs PRODUCT ========
+This tick proves the HDMI grab recipe on node-worker1 /dev/video0:
+  v4l2 sees 534d:2109, ffmpeg MJPEG 1280x720 writes JPEGs, e74e3559 detect works.
+It does NOT prove HDMI PHY, decode glass, GOP12, or unique-24.
+nalu=15 ≠ glass PASS.
+
+======== BLOCKERS ========
+node-worker1 sshd DOWN after the two grabs (ping+PMS alive).
+Cannot recovery-grab a non-e74e3559 frame. Cannot real-scp.
+Parent: farm host SSH outage vs exclusive STARTING (phase1a-fit14) — not this worker's slot.
+
+======== NEXT (parent) ========
+E-eyes-dry DONE. Recipe works. Picture=NO.
+When sshd returns: discard e74e3559, grab ≥1 non-7401 frame, describe that JPEG.
+NO deploy from this worker. NO Quartus. NO load_core.
+
+Evidence:
+  remote md5 live @ 23:27:18Z (this report table)
+  Memory/lab/eyes/dry-ss1.jpg
+  Memory/lab/eyes/dry-ss2.jpg
+  /tmp/misterplex-agent-E-eyes-dry.txt

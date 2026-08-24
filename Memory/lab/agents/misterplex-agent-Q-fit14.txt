@@ -1,0 +1,26 @@
+# misterplex agent Q-fit14
+Date: 2026-08-24T23:55:19Z
+Worker: Q-fit14 (FPGA Developer / parent-launched)
+Status: BUILD_OK
+
+## Constraints obeyed
+- One exclusive rematch after CoS FIT_GO
+- No assemble-copy of fit13
+- MISTER_REMOTE_ALLOW_UNVERIFIED=1 (new bitstream expected)
+
+## Evidence
+- Image: ghcr.io/raetro/quartus:mister
+- Full Compilation was successful. 0 errors, 254 warnings
+- exit_code=0 wall_seconds=1157 peak_docker_mem_mb=1528
+- Logic utilization: 36455 / 41910 ALMs (87%)
+- Negative-slack rows: 2 (do not invent TIMING_OK)
+- Plex.rbf md5 de1847f3db60d35e7005f7f188a09bb2
+- sha256 718fddae13c15db9f4f1176b7ce17459791346aad3b222e87e7f12369ff4004b
+- ≠ banned fit13 sha256 6faba2ac…
+- Artifacts: fpga/Plex_MiSTer/remote_out/phase1a-fit14/ and farm mplex-builds/phase1a-fit14
+
+## Verdict
+BUILD_OK. NEW_RBF=718fddae. READY_TO_DEPLOY after parent token. BUILD_OK ≠ glass PASS.
+
+## Next
+ONE DEPLOY_LOAD=menu from node-worker1 to root@192.168.2.2

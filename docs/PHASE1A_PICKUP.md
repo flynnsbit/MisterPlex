@@ -40,14 +40,18 @@ Branch: `wip/phase1a-320-fit13-lessons`.
 
 ## What is left (ordered)
 
-1. **Rematch** present-gate tree. New RBF sha256 **must differ** from `6faba2ac`.
-2. **ONE** `DEPLOY_LOAD=menu` via node-worker1 → `root@192.168.2.2`.
-3. Prove CORE=Plex + mailbox/status (not SD md5 alone).
-4. GOP12 SPI still green, then **HDMI JPEG** on node-worker1 `/dev/video0`.
-   Black / false-black (`e74e3559`) / menu wallpaper = FAIL.
-   `nalu=15` ≠ glass PASS.
-5. Only then name the next exclusive (FPGA recon → `frame_store` without host F1
-   owning the bank). Later: HEVC, 720p24 (parked).
+1. ~~**Rematch** present-gate tree.~~ **DONE 2026-08-24 18:55 CDT** `phase1a-fit14`
+   BUILD_OK wall 1157s. sha256 `718fddae…` md5 `de1847f3` ≠ `6faba2ac`.
+   ALMs 36455/41910 (87%). Neg-slack rows=2 — do **not** invent TIMING_OK.
+2. ~~**ONE** menu deploy.~~ **DONE** CORENAME Menu→Plex. SD `_Utility/Plex.rbf` md5 `de1847f3`.
+3. ~~GOP12 SPI.~~ **DONE** `has_stream=1 has_idr=1 sps=320x240 nalu=15`.
+4. **HDMI GOP12 pixels.** **FAIL this tick.** Eyes `fit14-ss8.jpg` I SAW orange
+   **idle chevron** + OSD `529x239 15.68kHz 59.8Hz` over `1280x720 74.25/60`.
+   Not false-black. Not menu wallpaper. **Chevron ≠ GOP12 pixels.**
+   `nalu=15` ≠ glass PASS. `has_frame=1` before push — host still owns
+   `frame_store` (`host_owns_fs`).
+5. **Next exclusive (named):** FPGA recon → `frame_store` without host F1/DDR
+   owning the bank. Then HEVC / 720p24 (parked).
 
 ## Lab map (pinned 2026-08-24 18:21 CDT)
 

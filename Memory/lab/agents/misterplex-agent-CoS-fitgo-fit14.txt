@@ -1,0 +1,31 @@
+# misterplex agent CoS-fitgo-fit14
+Date: 2026-08-24T23:26:00Z
+Worker: CoS (parent)
+Status: FIT_GO
+
+## Constraints obeyed
+- Exclusive FREE (no quartus docker on node-worker1)
+- One rematch only; no assemble-copy
+- product_recon_ok never forced
+- 720p24 PARKED
+
+## Freeze md5s (LOCK target)
+- Plex.sv 320c1b555d910a018fe8d05a50097f82
+- h264_mb_ctrl.sv 544e4944c20633e6cf0ba3b9c8f6ce89
+- stream_path.sv cf9259082a0ba4c46c1b9a1f271e053d
+- ddr_frame_store.sv 6732f9460057b21e19e62ef78aa1ec50
+- present_core.sv e0c0b7f9be71d87bdaeb89b1cd75f5ac
+
+## Claim
+FIT_GO=YES for present-gate rematch only (phase1a-fit14).
+New RBF sha256 must differ from 6faba2ac.
+Banned assemble-copy of fit13.
+
+## Lab
+- node-worker1 Quartus
+- MiSTer 192.168.2.2 via farm
+- HDMI /dev/video0
+- PMS http://192.168.1.24:32400
+
+## Next
+FPGA Developer exclusive rematch. ZERO second Quartus.

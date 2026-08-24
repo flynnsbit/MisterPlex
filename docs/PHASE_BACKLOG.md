@@ -9,9 +9,9 @@ Branch `wip/phase1a-320-fit13-lessons`. **720p24 PARKED.** Do not thrash `07f54d
 
 | | |
 |--|--|
-| **Status** | **IN_PROGRESS** — fit13 parsed GOP12 on silicon; glass black; present-gate RTL on disk; first fit14 was an assemble-copy of fit13 (sha256 `6faba2ac`). **Rematch required.** Soft-skip ≠ PASS. |
-| **Next** | CoS `FIT_GO=YES` rematch only → one node-worker1 Quartus → ONE menu → HDMI `/dev/video0` GOP12 pixels. `nalu=15` ≠ glass PASS. New RBF sha256 must differ from `6faba2ac`. |
-| **Lab** | MiSTer **192.168.2.2** via node-worker1. HDMI `/dev/video0`. PMS `http://192.168.1.24:32400`. Exclusive **FREE** at 2026-08-24 18:21 CDT pin. |
+| **Status** | **IN_PROGRESS** — rematch **BUILD_OK** `718fddae` / md5 `de1847f3` (≠ `6faba2ac`). ONE menu **DEPLOY_OK**. GOP12 SPI `nalu=15 sps=320x240`. Glass **FAIL**: HDMI I SAW idle **chevron** (`Memory/lab/eyes/fit14-ss8.jpg`). Chevron ≠ GOP12 pixels. Soft-skip ≠ PASS. |
+| **Next** | FPGA recon → `frame_store` without host F1 owning the bank (`host_owns_fs`). No second rematch for luck. `nalu=15` ≠ glass PASS. |
+| **Lab** | MiSTer **192.168.2.2** via node-worker1. HDMI `/dev/video0`. PMS `http://192.168.1.24:32400`. Exclusive **FREE** after fit14. Living `_Utility/Plex.rbf` md5 `de1847f3`. |
 | **Fixture** | `tests/fixtures/h264_phase1a_p16skip/plex_phase1a_p16skip_320x240_12f.264` |
 
 ## PRODUCT MILESTONE — VSync present / product A/V cast (**DONE** 2026-07-25)

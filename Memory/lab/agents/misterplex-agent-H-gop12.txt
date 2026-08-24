@@ -1,0 +1,55 @@
+H-gop12  2026-08-24T23:27:45Z..23:27:53Z
+worker=H-gop12  repo=/home/shawn/Projects/MisterPlex
+goal=reconfirm Phase 1a GOP12 Verilator vs gold
+exclusive=LIVE phase1a-fit14 rematch (untouched; ZERO Quartus / deploy / RTL edits)
+
+## Verdict
+VERILATOR_RECONFIRM=OK (measured this run). NOT product PASS.
+FIT_GO=NO (TB prints FIT_GO=NO; exclusive rematch still LIVE).
+Soft-skip ≠ PASS. No soft-skip path used.
+Exit 0 is TB `return 0` after dump/compare — not a product gate.
+product_recon_ok=0 during MAE compare (HW/TB default). COMPARE_LATCH then
+pokes clip_gold_match after I420 byte-match → product_recon_ok=1. That poke
+is TB-only; silicon stays 0 unless poked.
+
+## Fixture (official Phase 1a)
+stream=tests/fixtures/h264_phase1a_p16skip/plex_phase1a_p16skip_320x240_12f.264
+  sha256=9b49b7366c2be202ea2e26994c4f13d05dd82f3741fc3505a33e029e38e8632b
+  MATCH docs/PHASE1A_320_FIT_LESSONS.md (9b49b736…)
+gold=tests/fixtures/h264_phase1a_p16skip/gold_12f_320x240.yuv
+  sha256=ba3dea60d1b06c13073c9a893d62d27135eadc5c02bb736bc6f840d87f251f98
+  MATCH docs (ba3dea60…)  bytes=1382400
+
+## Command
+tests/unit/run_gop12_fpga_sim.sh  (exists, safe: exec prebuilt Vstream_path only)
+BIN=build/verilator/gop12/Vstream_path
+  mtime=2026-08-24 03:16:09 -0500  size=820216
+  sha256=0b3182200a3a50a30f50dbca8157027839fa7405976a4c5449e669de152aec6d
+  not rebuilt this worker
+LOG=build/verilator/gop12/gop12.log  (+ /tmp/h-gop12/stdout.log)
+time-box=8min  actual=8s  (first attempt died: /usr/bin/time missing; reran)
+
+## Measured MAE (this run — not invented)
+F0     maeY=0.000000  frames=0..0   ncmp=76800   product_recon_ok=0
+F1-11  maeY=0.000000  frames=1..11  ncmp=844800  product_recon_ok=0
+ALL    maeY=0.000000  frames=0..11  ncmp=921600  product_recon_ok=0
+F0..F11 MAE_I420=0.000000  chroma_zero=0  first_miss=-1  FIT_GO=NO
+SNAP f=11 frames_out=12 cycle=3830778 maeY=0.000000
+  Y(0,0)=160 Y(16,0)=80 Y(2,10)=160 Y(0,32)=160 Y(16,32)=80 (gold match)
+DUMP snaps=12 cycles=3907643 product_recon_ok=0 FIT_GO=NO
+WROTE_DUMP path=build/verilator/gop12/dumped_12f_320x240.yuv bytes=1382400
+dump sha256=ba3dea60d1b06c13073c9a893d62d27135eadc5c02bb736bc6f840d87f251f98
+DUMP_EQ_GOLD=yes
+COMPARE_LATCH i420_ok=1 product_recon_ok=1 FIT_GO=NO
+
+MAE_Y=0.000000
+MAE_I420=0.000000
+exit=0
+
+## Constraints kept
+- No Quartus. No deploy. No fpga/Plex_MiSTer source edits.
+- Official 12f fixture only. Did not invent MAE=0 (measured + dump==gold).
+- Soft-skip unused. FIT_GO remains NO.
+
+## Next (not this worker)
+Rematch BUILD_OK then ONE menu then GOP12 glass. Verilator reconfirm ≠ glass PASS.

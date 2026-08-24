@@ -1,0 +1,50 @@
+# misterplex agent M-fitmon-fit14
+Date: 2026-08-24T23:30:30Z
+Worker: M-fitmon
+Slot: phase1a-fit14
+Status: BLOCKED (exclusive NOT LIVE)
+
+VERDICT: BLOCKED — rematch never started; farm sshd flapped (Connection refused)
+BUILD_OK: NO
+Status: NOT LIVE
+Soft-skip ≠ PASS
+
+## Goal
+Monitor LIVE exclusive rematch phase1a-fit14 on node-worker1. Evidence only. Do not invent BUILD_OK.
+
+## Constraints
+- ZERO Quartus / ZERO deploy / ZERO RTL edits
+- Did not start a second fit
+- Stopped SSH on parent STOP (no further retries)
+
+## Commands (this worker)
+1. ssh node-worker1 snapshot @ 23:27:08Z and 23:27:16Z — SUCCESS
+2. ssh retry @ 23:27:41Z+ — Connection refused (host ping OK, port 22 closed)
+3. nc 192.168.1.24:22 @ 23:30:13Z — SYN succeeded then ssh still Connection refused
+4. Parent STOP — no further SSH
+
+## Evidence
+Last successful farm snapshot (23:27:16Z UTC):
+- /home/flynnsbit/mplex-builds/phase1a-fit14/Plex_MiSTer source tree PRESENT (staged)
+- build_remote/: ABSENT
+- compile.log: ABSENT
+- docker mplex-fit-*: NONE
+- pgrep quartus_*: NONE
+- no map/fit/asm/sta lines (no log)
+
+After that:
+- ping 192.168.1.24 OK
+- sshd flap: Connection refused ~23:27:41Z through 23:30:13Z
+- local /tmp/plex_quartus.lock present (FIT_GO=YES slot=phase1a-fit14 host=node-worker1 2026-08-24T18:26:15-05:00) — lock ≠ LIVE compile
+- local wrapper / quartus / Q-fit14 report: NONE
+- local remote_out/phase1a-fit14/: ABSENT
+- Full Compilation: NOT SEEN
+- RBF sha256: NOT READ (no new RBF; must not reuse 6faba2ac)
+
+Parent bucket said "LIVE phase1a-fit14"; farm evidence does not support LIVE.
+
+## Verdict
+BLOCKED. Exclusive is NOT LIVE. Rematch never started (no compile.log, no mplex-fit docker, no quartus_). Farm sshd flapped after the staged-tree snapshot. BUILD_OK=NO.
+
+## Next
+Parent: do not treat lock as LIVE. Re-establish farm SSH before any rematch. Do not invent BUILD_OK. This worker did not start a fit.
