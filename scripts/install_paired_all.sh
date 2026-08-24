@@ -4,7 +4,7 @@
 #
 # Named Utility cores only. Lab one-pair is Plex_SDfamily.rbf (never
 # generic Plex.rbf) + misterplexd.480p gold bytes 5f1c8614. Dest is
-# _Utility/Plex_SDfamily.rbf. Lab md5 1ad892c33c3c35b17a3885482a910f64 is
+# _Utility/Plex_SDfamily.rbf. Lab md5 1e77c26d5ade4bdb5081aa7dbc90d1d0 (mux6) is
 # NOT gold / NOT rollback until parent marks unique+sync+tear.
 # Gold Plex_480p / 240p15 / 480i stay as rollback rows.
 set -euo pipefail

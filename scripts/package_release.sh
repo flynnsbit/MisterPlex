@@ -23,10 +23,41 @@ MD5_480I_RBF="61db00e7d54efad7c1a456b127b798bd"
 MD5_720P24_RBF="0eea3580a5a0dacf60bf65c50499bcc9"
 MD5_480P_DAEMON="5f1c861486844f4c83bf32a2112cfbb6"
 MD5_720P24_DAEMON="0ffc1483677ef5733971d4f18e4624e4"
-# Parent-measured lab RBF (Quartus Full Compilation 0 errors). Not freeze.
-MD5_SDFAMILY_LAB="1ad892c33c3c35b17a3885482a910f64"
+# Parent-measured mux6 lab RBF (Quartus Full Compilation 0 errors). Not freeze.
+MD5_SDFAMILY_LAB="1e77c26d5ade4bdb5081aa7dbc90d1d0"
 # Empty until parent gold-gates unique+sync+tear. Do not default to lab md5.
 MD5_SDFAMILY_RBF="${MD5_SDFAMILY_RBF:-}"
+# Device dest for the lab one-pair. NEVER /media/fat/_Utility/Plex.rbf.
+SDFAMILY_UTILITY_DEST="${SDFAMILY_UTILITY_DEST:-/media/fat/_Utility/Plex_SDfamily.rbf}"
+
+# $1 dest path  $2 optional payload md5
+# Refuses generic Utility Plex.rbf and clobber of gold 480p 07f54d9f.
+misterplex_package_rbf_dest_ok() {
+  local dest=$1 expect=${2:-} dest_lc base_lc
+  dest_lc=$(printf '%s' "$dest" | tr 'A-Z' 'a-z')
+  base_lc=$(printf '%s' "$(basename "$dest")" | tr 'A-Z' 'a-z')
+  case "$dest_lc" in
+    /media/fat/_utility/plex.rbf|/media/fat/plex.rbf|*/_utility/plex.rbf)
+      echo "ERROR: refusing generic dest $dest (use _Utility/Plex_SDfamily.rbf; never Plex.rbf)" >&2
+      return 1
+      ;;
+  esac
+  case "$base_lc" in
+    plex_480p.rbf)
+      if [[ -n "$expect" && "$expect" != "$MD5_480P_RBF" ]]; then
+        echo "ERROR: refusing clobber of gold 480p $MD5_480P_RBF dest=$dest md5=$expect" >&2
+        return 1
+      fi
+      ;;
+  esac
+  return 0
+}
+
+misterplex_package_rbf_dest_ok "$SDFAMILY_UTILITY_DEST" || exit 1
+if [[ -n "${PACKAGE_DEST_CHECK:-}" ]]; then
+  misterplex_package_rbf_dest_ok "$PACKAGE_DEST_CHECK" "${PACKAGE_DEST_MD5:-}"
+  exit $?
+fi
 
 case "$VERSION" in
   v0.9.0-pre*|0.9.0-pre*)
@@ -63,6 +94,7 @@ fi
 
 copy_gated_md5() {
   local src=$1 dest=$2 expect=$3
+  misterplex_package_rbf_dest_ok "$dest" "$expect" || exit 1
   [[ -f "$src" ]] || { echo "ERROR: missing $src" >&2; exit 1; }
   local actual
   actual="$(md5sum "$src" | awk '{print $1}')"
@@ -198,7 +230,7 @@ if [[ "$PAIRED" == "1" ]]; then
   copy_gated_md5 "$PAIR_ART/cores/Plex_480i.rbf" "$STAGE/cores/Plex_480i.rbf" "$MD5_480I_RBF"
   copy_gated_md5 "$PAIR_ART/cores/Plex_720p24.rbf" "$STAGE/cores/Plex_720p24.rbf" "$MD5_720P24_RBF"
   # One-pair Plex_SDfamily.rbf: freeze-copy only after parent gold-gates.
-  # Lab md5 1ad892c3 is NOT rollback; unique+sync+tear A/B not done.
+  # Lab mux6 md5 1e77c26d is NOT rollback; unique+sync+tear A/B not done.
   if [[ -n "$MD5_SDFAMILY_RBF" ]]; then
     if [[ "$MD5_SDFAMILY_RBF" == "$MD5_SDFAMILY_LAB" ]]; then
       echo "ERROR: refusing lab md5 $MD5_SDFAMILY_LAB as freeze/rollback (unique+sync+tear not marked)." >&2

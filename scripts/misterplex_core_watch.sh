@@ -23,7 +23,7 @@ LOCKDIR="${MISTERPLEX_WATCH_LOCK:-/tmp/misterplex-watch.lock}"
 # Named Utility cores only. Generic Plex.rbf is forbidden: every sibling
 # reports CORENAME/RBFNAME=Plex, so hashing _Utility/Plex.rbf mis-pairs
 # Plex_720p24 onto the 480p daemon (colorbars/black, no chevron, no play).
-# Lab one-pair: Plex_SDfamily.rbf md5 1ad892c3 + misterplexd.480p gold 5f1c8614.
+# Lab one-pair: Plex_SDfamily.rbf md5 1e77c26d (mux6) + misterplexd.480p gold 5f1c8614.
 # NOT gold / NOT rollback until parent marks unique+sync+tear.
 # Default LIVE_RBF stays Plex_480p until SDfamily exists on the card.
 # Dest _Utility/Plex_SDfamily.rbf — NEVER generic Plex.rbf.

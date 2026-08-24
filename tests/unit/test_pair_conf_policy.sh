@@ -25,14 +25,22 @@ grep -q 'OSD_CONTROL=0' "$tmp" || fail "480p should pin OSD_CONTROL=0"
 grep -q 'TRANSCODE_PROFILE=480p' "$tmp" || fail "480p profile"
 ok "480p gold overlay"
 
-misterplex_apply_pair_conf "1ad892c33c3c35b17a3885482a910f64" "$tmp"
+misterplex_apply_pair_conf "1e77c26d5ade4bdb5081aa7dbc90d1d0" "$tmp"
 grep -q 'PLEX_BASE=http://127.0.0.1:32400' "$tmp" || fail "lab SDfamily clobbered PLEX_BASE"
 grep -q 'DECODE=640x480' "$tmp" || fail "lab SDfamily missing 480p decode"
 grep -q 'TRANSCODE_PROFILE=480p' "$tmp" || fail "lab SDfamily profile"
+grep -q 'OSD_CONTROL=0' "$tmp" || fail "lab SDfamily OSD_CONTROL=0"
+grep -q 'AV_PRESENT_LEAD_MS=40' "$tmp" || fail "lab SDfamily lead 40"
+grep -q 'AV_RESYNC_DROP_MS=0' "$tmp" || fail "lab SDfamily drop 0"
 if grep -q 'DECODE=1280x720' "$tmp"; then
   fail "lab SDfamily must not get L4 720p keys"
 fi
-ok "lab SDfamily 1ad892c3 uses 480p overlay (not gold rollback row)"
+ok "lab SDfamily mux6 1e77c26d uses 480p overlay (not gold rollback row)"
+
+# Historical mux1 overlay still 480p if an old card is loaded; not gold.
+misterplex_apply_pair_conf "1ad892c33c3c35b17a3885482a910f64" "$tmp"
+grep -q 'TRANSCODE_PROFILE=480p' "$tmp" || fail "historical mux1 missing 480p overlay"
+ok "historical mux1 1ad892c3 overlay is 480p (not gold)"
 
 misterplex_apply_pair_conf "03f1b95ac67a568f24193234ea8cb072" "$tmp"
 grep -q 'PLEX_BASE=http://127.0.0.1:32400' "$tmp" || fail "L4 clobbered PLEX_BASE"
@@ -119,6 +127,54 @@ grep -q '504C584A' "$NAMED" || fail "named_rbf must mention leftover PLXJ 504C58
 grep -q 'main_argv_rbf' "$NAMED" || fail "named_rbf must pair from Main argv"
 grep -q 'loaded_rbf_from_main_or_rbfname' "$NAMED" || fail "named_rbf must pair by loaded RBF not leftover PLXJ"
 ok "watch pins L4 from pairs col3; named_rbf pairs by loaded RBF (leftover PLXJ must not win)"
+
+# GREEN: named Plex_SDfamily dest + gold 480p row untouched.
+PAIRS="$ROOT/assets/rbf_daemon_pairs.txt"
+PKG="$ROOT/scripts/package_release.sh"
+GOLD_480P=07f54d9f8f0eda2fe75d9cc314f6de54
+MUX6=1e77c26d5ade4bdb5081aa7dbc90d1d0
+grep -q "^${GOLD_480P} /media/fat/misterplex/bin/misterplexd.480p true480" "$PAIRS" || \
+  fail "gold 480p row 07f54d9f must stay untouched"
+grep -q "^${MUX6} /media/fat/misterplex/bin/misterplexd.480p sdfamily_lab" "$PAIRS" || \
+  fail "lab SDfamily row must be mux6 1e77c26d + misterplexd.480p"
+grep -q '_Utility/Plex_SDfamily.rbf' "$PAIRS" || fail "pairs must name dest Plex_SDfamily.rbf"
+if grep -E '^[^#]*_Utility/Plex\.rbf' "$PAIRS" >/dev/null; then
+  fail "pairs must not dest generic Plex.rbf"
+fi
+rc=0
+PACKAGE_DEST_CHECK=/media/fat/_Utility/Plex_SDfamily.rbf PACKAGE_DEST_MD5="$MUX6" \
+  bash "$PKG" >/dev/null 2>&1 || rc=$?
+if [[ "$rc" -eq 0 ]]; then
+  ok "GREEN: named Plex_SDfamily dest rc=0 (gold 480p row untouched)"
+else
+  fail "GREEN named Plex_SDfamily dest rc=$rc"
+fi
+rc=0
+PACKAGE_DEST_CHECK=/tmp/stage/cores/Plex_480p.rbf PACKAGE_DEST_MD5="$GOLD_480P" \
+  bash "$PKG" >/dev/null 2>&1 || rc=$?
+if [[ "$rc" -eq 0 ]]; then
+  ok "GREEN: gold 480p dest with 07f54d9f rc=0"
+else
+  fail "GREEN gold 480p dest rc=$rc"
+fi
+
+# RED: generic Plex.rbf dest or clobbering gold 07f54d9f must fail (true rc).
+rc=0
+PACKAGE_DEST_CHECK=/media/fat/_Utility/Plex.rbf \
+  bash "$PKG" >/dev/null 2>&1 || rc=$?
+if [[ "$rc" -eq 0 ]]; then
+  fail "RED: generic /media/fat/_Utility/Plex.rbf dest must fail"
+else
+  ok "RED: generic Plex.rbf dest rc=$rc"
+fi
+rc=0
+PACKAGE_DEST_CHECK=/media/fat/_Utility/Plex_480p.rbf PACKAGE_DEST_MD5="$MUX6" \
+  bash "$PKG" >/dev/null 2>&1 || rc=$?
+if [[ "$rc" -eq 0 ]]; then
+  fail "RED: clobber gold 07f54d9f with mux6 must fail"
+else
+  ok "RED: clobber gold 07f54d9f dest rc=$rc"
+fi
 
 if [ "$fails" -ne 0 ]; then
   echo "test_pair_conf_policy: $fails failure(s)" >&2

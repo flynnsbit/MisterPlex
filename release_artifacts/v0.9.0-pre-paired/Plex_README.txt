@@ -21,7 +21,8 @@ core (lead 40, drop 0, fast_bilinear, fps filter off, OSD_CONTROL=0).
 Do not restore a generic Plex.rbf.
 
 Lab one-pair (NOT gold, NOT rollback): Plex_SDfamily.rbf md5
-1ad892c33c3c35b17a3885482a910f64 + misterplexd.480p (gold md5
+1e77c26d5ade4bdb5081aa7dbc90d1d0 (mux6) + misterplexd.480p (gold md5
 5f1c861486844f4c83bf32a2112cfbb6). Dest _Utility/Plex_SDfamily.rbf.
+mux1–3 1ad892c3/682eb537/ca4ca655 are historical and must not become gold.
 unique+sync+tear A/B not done — not a rollback row. Gold Plex_480p /
 240p15 / 480i stay as rollback. Never install as Plex.rbf.

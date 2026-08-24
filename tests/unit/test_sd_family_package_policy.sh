@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # SD-family package / SD layout policy.
 # Lab one-pair Utility core: Plex_SDfamily.rbf (NEVER Plex.rbf)
-# + misterplexd.480p gold bytes 5f1c8614. Lab RBF md5 1ad892c3 is NOT gold
-# / NOT rollback until parent marks unique+sync+tear. Gold 480p / 240p15 /
-# 480i stay as rollback rows. Product QSF must not enable PLEX_PRESENT_720P_L4.
+# + misterplexd.480p gold bytes 5f1c8614. Lab RBF md5 1e77c26d (mux6) is NOT
+# gold / NOT rollback until parent marks unique+sync+tear. mux1–3 1ad892c3 /
+# 682eb537 / ca4ca655 must not become gold. Gold 480p / 240p15 / 480i stay
+# as rollback rows. Product QSF must not enable PLEX_PRESENT_720P_L4.
 set -u
 set -o pipefail
 
@@ -21,7 +22,10 @@ MD5_240P15_RBF="4d6efef954acf7b33747f35ac2878c1b"
 MD5_480I_RBF="61db00e7d54efad7c1a456b127b798bd"
 MD5_720P24_RBF="0eea3580a5a0dacf60bf65c50499bcc9"
 MD5_480P_DAEMON="5f1c861486844f4c83bf32a2112cfbb6"
-MD5_SDFAMILY_LAB="1ad892c33c3c35b17a3885482a910f64"
+MD5_SDFAMILY_LAB="1e77c26d5ade4bdb5081aa7dbc90d1d0"
+MD5_SDFAMILY_MUX1="1ad892c33c3c35b17a3885482a910f64"
+MD5_SDFAMILY_MUX2="682eb537c8386b973936199b8e883dab"
+MD5_SDFAMILY_MUX3="ca4ca655c277ea88d5420d7ba104a947"
 ALLOWED_RBF_MD5="${MD5_480P_RBF} ${MD5_240P15_RBF} ${MD5_480I_RBF} ${MD5_720P24_RBF} ${MD5_SDFAMILY_LAB}"
 
 fails=0
@@ -65,12 +69,22 @@ check_pairs() {
   grep -q "^${MD5_480P_RBF} .*misterplexd.480p" "$f" || fail "$f missing Plex_480p rollback row"
   grep -q "^${MD5_240P15_RBF} .*misterplexd.240p15" "$f" || fail "$f missing Plex_240p15 rollback row"
   grep -q "^${MD5_480I_RBF} .*misterplexd.480i" "$f" || fail "$f missing Plex_480i rollback row"
-  grep -q "^${MD5_SDFAMILY_LAB} .*misterplexd.480p" "$f" || fail "$f missing lab Plex_SDfamily row"
+  grep -q "^${MD5_SDFAMILY_LAB} .*misterplexd.480p" "$f" || fail "$f missing lab Plex_SDfamily mux6 row"
+  grep -q '_Utility/Plex_SDfamily.rbf' "$f" || fail "$f must dest Plex_SDfamily.rbf"
+  grep -qiE 'must not become gold' "$f" || fail "$f must say mux1–3 must not become gold"
+  grep -q "$MD5_SDFAMILY_MUX1" "$f" || fail "$f must comment historical mux1 1ad892c3"
+  grep -q "$MD5_SDFAMILY_MUX2" "$f" || fail "$f must comment historical mux2 682eb537"
+  grep -q "$MD5_SDFAMILY_MUX3" "$f" || fail "$f must comment historical mux3 ca4ca655"
   gold_glass=$(awk -v s="$MD5_480P_RBF" '$1==s {print $3; exit}' "$f")
   [[ "$gold_glass" == "true480" ]] || fail "$f gold 480p rollback glass tag changed ($gold_glass)"
   lab_glass=$(awk -v s="$MD5_SDFAMILY_LAB" '$1==s {print tolower($3); exit}' "$f")
   [[ "$lab_glass" == "sdfamily_lab" ]] || fail "$f lab glass must be sdfamily_lab not gold rollback (got $lab_glass)"
   [[ "$lab_glass" != "l4" ]] || fail "$f lab SDfamily must not pin l4 glass"
+  for hist in "$MD5_SDFAMILY_MUX1" "$MD5_SDFAMILY_MUX2" "$MD5_SDFAMILY_MUX3"; do
+    if grep -q "^${hist} " "$f"; then
+      fail "$f historical $hist must not be a data row (must not become gold)"
+    fi
+  done
   # RED: a data row whose md5 is not a known gold/lab hash is invented.
   while read -r md5 rest; do
     [[ -z "${md5:-}" || "$md5" == \#* ]] && continue
@@ -136,7 +150,7 @@ else
   ok "freeze has no generic cores/Plex.rbf"
 fi
 if [[ -f "$PAIR_ART/cores/Plex_SDfamily.rbf" ]]; then
-  fail "Plex_SDfamily.rbf in freeze — lab 1ad892c3 is not gold/rollback (unique+sync+tear not marked)"
+  fail "Plex_SDfamily.rbf in freeze — lab mux6 1e77c26d is not gold/rollback (unique+sync+tear not marked)"
 else
   ok "Plex_SDfamily.rbf not in freeze (lab not gold)"
 fi
@@ -149,7 +163,11 @@ grep -q 'Plex_SDfamily.rbf' "$PKG" || fail "package_release must name Plex_SDfam
 grep -q 'MD5_480P_DAEMON="5f1c861486844f4c83bf32a2112cfbb6"' "$PKG" || \
   fail "package_release must freeze gold daemon 5f1c8614"
 grep -q "MD5_SDFAMILY_LAB=\"${MD5_SDFAMILY_LAB}\"" "$PKG" || \
-  fail "package_release must pin lab SDfamily md5 1ad892c3"
+  fail "package_release must pin lab SDfamily md5 1e77c26d"
+grep -q 'misterplex_package_rbf_dest_ok' "$PKG" || \
+  fail "package_release must define dest-ok (refuse /media/fat/_Utility/Plex.rbf)"
+grep -q '/media/fat/_Utility/Plex.rbf' "$PKG" || \
+  fail "package_release must name refused dest /media/fat/_Utility/Plex.rbf"
 grep -q 'generic cores/Plex.rbf must not ship' "$PKG" || \
   fail "package_release must refuse generic Plex.rbf in paired builds"
 grep -qF 'unique+sync+tear' "$PKG" || fail "package_release must refuse lab as rollback until unique+sync+tear"
@@ -165,6 +183,37 @@ if grep copy_gated_md5 "$PKG" | grep -q 'cores/Plex.rbf'; then
   fail "copy_gated_md5 must not target generic cores/Plex.rbf"
 else
   ok "paired copy_gated_md5 dests are named siblings"
+fi
+
+# Runtime dest-ok (PACKAGE_DEST_CHECK): GREEN named dest; RED generic / gold clobber.
+pkg_dest() {
+  local dest=$1 md5=${2:-} rc=0
+  PACKAGE_DEST_CHECK="$dest" PACKAGE_DEST_MD5="$md5" bash "$PKG" >/dev/null 2>&1 || rc=$?
+  echo "$rc"
+}
+g_rc=$(pkg_dest /media/fat/_Utility/Plex_SDfamily.rbf "$MD5_SDFAMILY_LAB")
+if [[ "$g_rc" -eq 0 ]]; then
+  ok "GREEN: package dest Plex_SDfamily.rbf rc=0"
+else
+  fail "GREEN named Plex_SDfamily dest rc=$g_rc"
+fi
+g_gold=$(pkg_dest /tmp/stage/cores/Plex_480p.rbf "$MD5_480P_RBF")
+if [[ "$g_gold" -eq 0 ]]; then
+  ok "GREEN: gold 480p dest 07f54d9f rc=0 (untouched)"
+else
+  fail "GREEN gold 480p dest rc=$g_gold"
+fi
+r_gen=$(pkg_dest /media/fat/_Utility/Plex.rbf)
+if [[ "$r_gen" -eq 0 ]]; then
+  fail "RED: package wrote /media/fat/_Utility/Plex.rbf (rc=0)"
+else
+  ok "RED: refuse /media/fat/_Utility/Plex.rbf rc=$r_gen"
+fi
+r_clob=$(pkg_dest /media/fat/_Utility/Plex_480p.rbf "$MD5_SDFAMILY_LAB")
+if [[ "$r_clob" -eq 0 ]]; then
+  fail "RED: clobber gold 07f54d9f rc=0"
+else
+  ok "RED: refuse clobber gold 07f54d9f rc=$r_clob"
 fi
 
 # --- install_paired_all: rollback cores required; generic Plex.rbf only rm ---

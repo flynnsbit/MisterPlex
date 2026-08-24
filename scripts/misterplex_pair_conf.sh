@@ -5,8 +5,9 @@
 # Gold-daemon cores (480p / 240p15 / 480i, md5 5f1c8614; sha256 acfa03d7):
 #   lead 40, drop 0, fast_bilinear, no fps= filter, OSD_CONTROL=0
 #   (leftover 720p OSD was retargeting the 480p ladder).
-# Lab Plex_SDfamily.rbf md5 1ad892c3 uses the 480p overlay. NOT gold/rollback
-# until parent marks unique+sync+tear. NEVER pair generic Plex.rbf.
+# Lab Plex_SDfamily.rbf md5 1e77c26d (mux6) uses the 480p overlay. NOT gold/
+# rollback until parent marks unique+sync+tear. NEVER pair generic Plex.rbf.
+# Historical mux1–3 1ad892c3/682eb537/ca4ca655 must not become gold.
 # L4 720p24: 720p ladder + OSD_CONTROL=0 (leftover F12 480p bits must not
 # retarget DECODE to 640x480 on this RBF). Same lead/drop (safe). Do not
 # force the 480p transcode profile onto this RBF.
@@ -58,8 +59,9 @@ misterplex_pair_conf_keys() {
       echo "FFMPEG_SWS_FLAGS=fast_bilinear"
       echo "FFMPEG_FPS_FILTER=off"
       ;;
-    07f54d9f8f0eda2fe75d9cc314f6de54|1ad892c33c3c35b17a3885482a910f64|*)
-      # Default / Plex_480p gold rollback / lab Plex_SDfamily (NOT rollback)
+    07f54d9f8f0eda2fe75d9cc314f6de54|1e77c26d5ade4bdb5081aa7dbc90d1d0|1ad892c33c3c35b17a3885482a910f64|682eb537c8386b973936199b8e883dab|ca4ca655c277ea88d5420d7ba104a947|*)
+      # Default / Plex_480p gold rollback / lab mux6 SDfamily (NOT rollback).
+      # mux1–3 hashes keep the 480p overlay if an old card is still loaded.
       echo "CONTENT_RES=480p"
       echo "DISPLAY_RES=480p"
       echo "DECODE=640x480"

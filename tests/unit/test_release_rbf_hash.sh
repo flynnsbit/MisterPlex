@@ -73,11 +73,11 @@ if [[ -d "$PAIR_ART" ]]; then
   if [[ -f "$PAIR_ART/cores/Plex.rbf" ]]; then
     report "paired freeze must not contain generic cores/Plex.rbf"
   fi
-  # Lab Plex_SDfamily.rbf md5 1ad892c3 is not gold; freeze must not contain it.
+  # Lab Plex_SDfamily.rbf md5 1e77c26d (mux6) is not gold; freeze must not contain it.
   if [[ -f "$PAIR_ART/cores/Plex_SDfamily.rbf" ]]; then
     report "Plex_SDfamily.rbf in freeze without a gated gold md5 (lab is not rollback)"
   fi
-  MD5_SDFAMILY_LAB="1ad892c33c3c35b17a3885482a910f64"
+  MD5_SDFAMILY_LAB="1e77c26d5ade4bdb5081aa7dbc90d1d0"
   for pairs in "$ROOT/assets/rbf_daemon_pairs.txt" "$PAIR_ART/rbf_daemon_pairs.txt"; do
     [[ -f "$pairs" ]] || { report "missing pairs file $pairs"; continue; }
     grep -q "^${MD5_480P_RBF} .*misterplexd.480p" "$pairs" || \

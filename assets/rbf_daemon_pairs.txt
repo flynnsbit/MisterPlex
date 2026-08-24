@@ -3,14 +3,18 @@
 #
 # Lab one-pair Utility core (NOT gold, NOT rollback):
 #   Plex_SDfamily.rbf  +  /media/fat/misterplex/bin/misterplexd.480p
-#   lab RBF md5 1ad892c33c3c35b17a3885482a910f64 (parent-measured)
+#   lab RBF md5 1e77c26d5ade4bdb5081aa7dbc90d1d0 (mux6, parent-measured)
 #   gold daemon bytes 5f1c861486844f4c83bf32a2112cfbb6
 #   dest _Utility/Plex_SDfamily.rbf
 #   NEVER generic Plex.rbf (every sibling reports CORENAME=Plex).
 # unique+sync+tear A/B not done — parent must mark before this becomes rollback.
 # Gold Plex_480p / Plex_240p15 / Plex_480i remain rollback rows.
+# Historical mux1–3 (NOT gold, must not become gold/rollback):
+#   1ad892c33c3c35b17a3885482a910f64 mux1
+#   682eb537c8386b973936199b8e883dab mux2
+#   ca4ca655c277ea88d5420d7ba104a947 mux3
 07f54d9f8f0eda2fe75d9cc314f6de54 /media/fat/misterplex/bin/misterplexd.480p true480
 4d6efef954acf7b33747f35ac2878c1b /media/fat/misterplex/bin/misterplexd.240p15 crt240p15
 61db00e7d54efad7c1a456b127b798bd /media/fat/misterplex/bin/misterplexd.480i crt480i
 0eea3580a5a0dacf60bf65c50499bcc9 /media/fat/misterplex/bin/misterplexd.720p24 l4
-1ad892c33c3c35b17a3885482a910f64 /media/fat/misterplex/bin/misterplexd.480p sdfamily_lab
+1e77c26d5ade4bdb5081aa7dbc90d1d0 /media/fat/misterplex/bin/misterplexd.480p sdfamily_lab
