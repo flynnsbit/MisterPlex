@@ -1134,7 +1134,10 @@ module ddr_frame_store #(
 					// after timeout — nomerge we_go missed the !BUSY beat.
 					// Park every other S_IDLE arm while plxj_req, including
 					// analog Template rd_active. Sample here; WE in S_PLXJ_ISSUE.
-					if (plxj_req && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+					// mux11: mux10 still late ACK. Present analog scanout can
+					// hold DDRAM_RD during the whole 250 ms. Mailbox WE is not
+					// a line fill — wait !BUSY/!WE only (not !RD).
+					if (plxj_req && !DDRAM_BUSY && !DDRAM_WE) begin
 						plxj_addr_r <= ASPECT_ACK_W;
 						plxj_din_r <= {plxj_token, plxj_y, plxj_x, MAGIC_J};
 						plxj_req <= 1'b0;
@@ -1323,7 +1326,7 @@ module ddr_frame_store #(
 
 				// mux5 hold: DDRAM_WE from registered PLXJ sample, not S_IDLE combo.
 				S_PLXJ_ISSUE: begin
-					if (!DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+					if (!DDRAM_BUSY && !DDRAM_WE) begin
 						DDRAM_ADDR <= plxj_addr_r;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_DIN <= plxj_din_r;

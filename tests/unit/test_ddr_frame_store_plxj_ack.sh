@@ -29,7 +29,7 @@ grep -q '#set_global_assignment -name VERILOG_MACRO "PLEX_PRESENT_720P_L4=1"' "$
 awk '
   /case \(state_ddr\)/ {in_case=1}
   in_case && /S_IDLE: begin/ {in_idle=1}
-  in_idle && /if \(plxj_req && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE\)/ {print "PLXJ_FIRST"; exit 0}
+  in_idle && /if \(plxj_req && !DDRAM_BUSY && !DDRAM_WE\)/ {print "PLXJ_FIRST"; exit 0}
   in_idle && /frame_mbox_req/ {print "MBOX_BEFORE_PLXJ"; exit 1}
 ' "$STORE" | grep -q PLXJ_FIRST \
   || { echo "FAIL PLXJ ACK is not first S_IDLE arm (fills will starve analog Template)" >&2; exit 1; }
