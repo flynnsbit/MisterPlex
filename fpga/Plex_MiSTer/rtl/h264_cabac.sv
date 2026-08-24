@@ -37,7 +37,7 @@ module h264_cabac (
 	localparam [8:0] RANGE_INIT = 9'd510; // 0x1FE
 
 	reg [8:0] range_r;
-	reg [8:0] offset_r;
+	reg [9:0] offset_r; // 10-bit: bypass may exceed 9 bits before the next regular renorm
 	reg [15:0] fifo_r;
 	reg [4:0]  fifo_n_r;
 	reg        primed_r; // 9-bit offset loaded
@@ -261,12 +261,32 @@ module h264_cabac (
 		end
 	endfunction
 
-	wire fifo_room = (fifo_n_r < 5'd16);
-	assign bit_ready = fifo_room;
-	wire bits_ok = (fifo_n_r >= 5'd8);
-	assign dec_stall = dec_req && primed_r && !bits_ok;
+	// Combinational FIFO: push first, then prime/decode consume the new count.
+	wire do_push = bit_valid && (fifo_n_r < 5'd16) && !reset && !slice_start;
+	wire [15:0] fifo_pushed = do_push ? {fifo_r[14:0], bit_in} : fifo_r;
+	wire [4:0] n_pushed = do_push ? (fifo_n_r + 5'd1) : fifo_n_r;
+
+	function automatic [8:0] fifo_msbs;
+		input [15:0] f;
+		input [4:0] n;
+		input [3:0] s;
+		reg [15:0] sh;
+		begin
+			if ((s == 4'd0) || (n < {1'b0, s}))
+				fifo_msbs = 9'd0;
+			else begin
+				sh = f >> (n - {1'b0, s});
+				fifo_msbs = sh[8:0] & 9'(((16'd1 << s) - 16'd1));
+			end
+		end
+	endfunction
+
+	wire [8:0] prime9 = fifo_msbs(fifo_pushed, n_pushed, 4'd9);
+	wire       bypass_bit = fifo_msbs(fifo_pushed, n_pushed, 4'd1)[0];
+
+	assign bit_ready = (fifo_n_r < 5'd16);
 	assign dbg_range = range_r;
-	assign dbg_offset = offset_r;
+	assign dbg_offset = offset_r[8:0];
 	assign dbg_fifo_count = fifo_n_r;
 
 	wire [6:0] ctx_pack = ctx_r[ctx_idx];
@@ -276,43 +296,53 @@ module h264_cabac (
 	wire [8:0]  r_lps = {1'b0, range_lps(pstate, rq)};
 	wire [8:0]  r_mps = range_r - r_lps;
 	wire [8:0]  r_term_mps = range_r - 9'd2;
+	wire [9:0]  range10 = {1'b0, range_r};
+	wire [9:0]  r_mps10 = {1'b0, r_mps};
+	wire [9:0]  r_term10 = {1'b0, r_term_mps};
 
-	wire bin_reg_ctx = terminate ? (offset_r >= r_term_mps) :
-	                   (offset_r >= r_mps) ? ~val_mps : val_mps;
-	wire [8:0] r_after = terminate ? ((offset_r >= r_term_mps) ? 9'd2 : r_term_mps) :
+	// ITU-T H.264 9.3.3.2.3 DecodeBypass: shift 1 bit first, then compare.
+	wire [10:0] byp_acc = {offset_r, bypass_bit};
+	wire        byp_ge = (byp_acc >= {1'b0, range10});
+	wire        bin_byp = byp_ge;
+	wire [9:0]  off_byp = byp_ge ? (byp_acc[9:0] - range10) : byp_acc[9:0];
+
+	wire        term_ge = (offset_r >= r_term10);
+	wire        reg_lps = (offset_r >= r_mps10);
+	wire        bin_reg = terminate ? term_ge :
+	                      bypass ? bin_byp :
+	                      (reg_lps ? ~val_mps : val_mps);
+	wire [8:0] r_after = terminate ? (term_ge ? 9'd2 : r_term_mps) :
 	                     bypass ? range_r :
-	                     (offset_r >= r_mps) ? r_lps : r_mps;
-	wire [8:0] off_after = terminate ? ((offset_r >= r_term_mps) ? (offset_r - r_term_mps) : offset_r) :
-	                       bypass ? offset_r :
-	                       (offset_r >= r_mps) ? (offset_r - r_mps) : offset_r;
-	wire lps_hit = !bypass && !terminate && (offset_r >= r_mps);
+	                     (reg_lps ? r_lps : r_mps);
+	wire [9:0] off_after = terminate ? (term_ge ? (offset_r - r_term10) : offset_r) :
+	                       bypass ? off_byp :
+	                       (reg_lps ? (offset_r - r_mps10) : offset_r);
+	wire lps_hit = !bypass && !terminate && reg_lps;
 
 	wire [3:0] renorm_s =
+		bypass ? 4'd1 :
 `ifdef H264_CABAC_FAULT_SKIP_RENORM
 		4'd0;
 `else
-		bypass ? 4'd1 : lz9(r_after);
+		lz9(r_after);
 `endif
-	wire [4:0] take_shift = (fifo_n_r >= {1'b0, renorm_s}) ? (fifo_n_r - {1'b0, renorm_s}) : 5'd0;
-	wire [15:0] taken16 = fifo_r >> take_shift;
-	wire [8:0] taken_mask = (renorm_s == 4'd0) ? 9'd0 :
-	                       (9'd1 << renorm_s) - 9'd1;
-	wire [8:0] off_shifted = shl9(off_after, renorm_s) | (taken16[8:0] & taken_mask);
-	wire bin_bypass = (off_shifted >= range_r);
-	wire [8:0] off_n = bypass ? (bin_bypass ? (off_shifted - range_r) : off_shifted) : off_shifted;
 	wire [8:0] range_n = bypass ? range_r : shl9(r_after, renorm_s);
-	wire bin_reg = bypass ? bin_bypass : bin_reg_ctx;
+	wire [8:0] taken = fifo_msbs(fifo_pushed, n_pushed, renorm_s);
+	wire [17:0] off_ren = ({8'd0, off_after} << renorm_s) | {9'd0, taken};
+	wire [9:0] off_n = bypass ? off_byp : off_ren[9:0];
+	wire [4:0] n_after_dec = (n_pushed >= {1'b0, renorm_s}) ?
+	                         (n_pushed - {1'b0, renorm_s}) : 5'd0;
+	wire bits_ok = bypass ? (n_pushed >= 5'd1) : (n_pushed >= 5'd8);
+	assign dec_stall = dec_req && primed_r && !init_busy && !bits_ok;
 
 	integer ci;
-	reg [4:0] fifo_n_n;
 
 	always @(posedge clk) begin
 		dec_valid <= 1'b0;
 		init_done <= 1'b0;
-		fifo_n_n = fifo_n_r;
 		if (reset) begin
 			range_r <= RANGE_INIT;
-			offset_r <= 9'd0;
+			offset_r <= 10'd0;
 			fifo_r <= 16'd0;
 			fifo_n_r <= 5'd0;
 			primed_r <= 1'b0;
@@ -322,17 +352,15 @@ module h264_cabac (
 				ctx_r[ci] <= 7'd0;
 		end else if (slice_start) begin
 			range_r <= RANGE_INIT;
-			offset_r <= 9'd0;
+			offset_r <= 10'd0;
 			fifo_r <= 16'd0;
 			fifo_n_r <= 5'd0;
 			primed_r <= 1'b0;
 			init_busy <= 1'b1;
 			ctx_i <= 9'd0;
 		end else begin
-			if (bit_valid && fifo_room) begin
-				fifo_r <= {fifo_r[14:0], bit_in};
-				fifo_n_n = fifo_n_n + 5'd1;
-			end
+			fifo_r <= fifo_pushed;
+			fifo_n_r <= n_pushed;
 			if (init_busy) begin
 				ctx_r[ctx_i] <= ctx_init_pack(ctx_i, slice_qp_y, slice_type, cabac_init_idc);
 				if (ctx_i == 9'd459) begin
@@ -340,14 +368,14 @@ module h264_cabac (
 					init_done <= 1'b1;
 				end else
 					ctx_i <= ctx_i + 9'd1;
-			end else if (!primed_r && (fifo_n_r >= 5'd9)) begin
-				offset_r <= fifo_r[(fifo_n_r - 5'd1) -: 9];
-				fifo_n_n = fifo_n_n - 5'd9;
+			end else if (!primed_r && (n_pushed >= 5'd9)) begin
+				offset_r <= {1'b0, prime9};
+				fifo_n_r <= n_pushed - 5'd9;
 				primed_r <= 1'b1;
-			end else if (dec_req && primed_r && (fifo_n_r >= 5'd8)) begin
+			end else if (dec_req && primed_r && bits_ok) begin
 				range_r <= range_n;
 				offset_r <= off_n;
-				fifo_n_n = fifo_n_n - {1'b0, renorm_s};
+				fifo_n_r <= n_after_dec;
 				if (!bypass && !terminate) begin
 					if (lps_hit)
 						ctx_r[ctx_idx] <= {((pstate == 6'd0) ? ~val_mps : val_mps), trans_lps(pstate)};
@@ -357,7 +385,6 @@ module h264_cabac (
 				dec_valid <= 1'b1;
 				dec_bin <= bin_reg;
 			end
-			fifo_n_r <= fifo_n_n;
 		end
 	end
 endmodule

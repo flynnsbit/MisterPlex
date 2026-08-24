@@ -897,7 +897,8 @@ module stream_path #(
 		.FRAME_W(CORE_FRAME_W),
 		.FRAME_H(CORE_FRAME_H),
 		.MB_COORD_EXTERNAL(1'b1),
-		.ENABLE_INTER(1'b0)
+		.ENABLE_INTER(1'b0),
+		.ENABLE_CABAC(1'b1)
 	) product_decode_core (
 		.clk(clk),
 		.reset(reset | flush),

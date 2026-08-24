@@ -70,6 +70,7 @@ module h264_decode_core_wb_tb #(
 		.mb_width(MB_WIDTH_PARAM),
 		.mb_height(MB_HEIGHT_PARAM),
 		.pps_chroma_qp_index_offset(5'sd0),
+		.pps_entropy_cabac(1'b0),
 		.rbsp_byte(rbsp_byte),
 		.rbsp_window_base(16'd0),
 		.rbsp_window_valid(1'b1),

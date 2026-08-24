@@ -89,10 +89,10 @@ struct Soft {
     }
     int decode(int ctxIdx, bool bypass, bool terminate) {
         int bin = 0;
-        int rAfter = range;
-        int offAfter = offset;
         if (terminate) {
             const int mpsR = range - 2;
+            int rAfter = range;
+            int offAfter = offset;
             if (offset >= mpsR) {
                 bin = 1;
                 offAfter = offset - mpsR;
@@ -101,32 +101,47 @@ struct Soft {
                 bin = 0;
                 rAfter = mpsR;
             }
-        } else if (bypass) {
-            const int b = takeBit();
-            int off = (offset << 1) | b;
+            int s = 0;
+            int r = rAfter;
+            if (!skipRenorm) {
+                while (r < 256 && s < 8) {
+                    r <<= 1;
+                    ++s;
+                }
+            }
+            int off = offAfter << s;
+            for (int i = 0; i < s; ++i) off |= takeBit() << (s - 1 - i);
+            range = r;
+            offset = off;
+            return bin;
+        }
+        if (bypass) {
+            // 9.3.3.2.3: shift 1 bit first, then compare against range.
+            const int off = (offset << 1) | takeBit();
             if (off >= range) {
                 bin = 1;
-                off -= range;
+                offset = off - range;
             } else {
                 bin = 0;
+                offset = off;
             }
-            offset = off & 511;
             return bin;
+        }
+        Ctx& c = ctx.at(static_cast<std::size_t>(ctxIdx));
+        const int rlps = rangeLps(c.pstate, (range >> 6) & 3);
+        const int rmps = range - rlps;
+        int rAfter = range;
+        int offAfter = offset;
+        if (offset >= rmps) {
+            bin = c.mps ^ 1;
+            offAfter = offset - rmps;
+            rAfter = rlps;
+            if (c.pstate == 0) c.mps ^= 1;
+            c.pstate = static_cast<uint8_t>(transLps(c.pstate));
         } else {
-            Ctx& c = ctx.at(static_cast<std::size_t>(ctxIdx));
-            const int rlps = rangeLps(c.pstate, (range >> 6) & 3);
-            const int rmps = range - rlps;
-            if (offset >= rmps) {
-                bin = c.mps ^ 1;
-                offAfter = offset - rmps;
-                rAfter = rlps;
-                if (c.pstate == 0) c.mps ^= 1;
-                c.pstate = static_cast<uint8_t>(transLps(c.pstate));
-            } else {
-                bin = c.mps;
-                rAfter = rmps;
-                c.pstate = static_cast<uint8_t>(transMps(c.pstate));
-            }
+            bin = c.mps;
+            rAfter = rmps;
+            c.pstate = static_cast<uint8_t>(transMps(c.pstate));
         }
         int s = 0;
         int r = rAfter;
@@ -138,9 +153,8 @@ struct Soft {
         }
         int off = offAfter << s;
         for (int i = 0; i < s; ++i) off |= takeBit() << (s - 1 - i);
-        // takeBit order: first bit is MSB of the s-bit field = bit s-1
         range = r;
-        offset = off & 511;
+        offset = off;
         return bin;
     }
 };
@@ -176,12 +190,13 @@ void reset(Sim& s) {
     s.tick();
 }
 
-void pushBit(Sim& s, int b) {
-    s.top.bit_valid = 1;
-    s.top.bit_in = b ? 1 : 0;
-    s.tick();
-    s.top.bit_valid = 0;
-}
+#ifdef H264_CABAC_FAULT_SKIP_RENORM
+const char* kMismatchTag = "skip-renorm";
+#elif defined(H264_CABAC_FAULT_BAD_INIT)
+const char* kMismatchTag = "bad-init";
+#else
+const char* kMismatchTag = "bin";
+#endif
 
 } // namespace
 
@@ -210,13 +225,32 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    auto feedWhileReady = [&](int bit) {
-        if (s.top.bit_ready) pushBit(s, bit);
+    std::vector<int> bits;
+    bits.reserve(1024);
+    uint32_t lfsr = 0xBEEFu;
+    for (int i = 0; i < 1024; ++i) {
+        bits.push_back(static_cast<int>(lfsr & 1u));
+        const uint32_t lsb = lfsr & 1u;
+        lfsr >>= 1;
+        if (lsb) lfsr ^= 0xACE1u;
+    }
+
+    std::size_t hwBit = 0;
+    auto feedIfReady = [&]() {
+        if (s.top.bit_ready && hwBit < bits.size()) {
+            s.top.bit_valid = 1;
+            s.top.bit_in = bits[hwBit] ? 1 : 0;
+            ++hwBit;
+        } else {
+            s.top.bit_valid = 0;
+            s.top.bit_in = 0;
+        }
     };
-    // 9 ones so offset primes to 0x1FF and LPS/renorm are actually exercised.
-    for (int i = 0; i < 9; ++i) feedWhileReady(1);
-    for (int i = 0; i < 24; ++i) feedWhileReady(0);
-    for (int i = 0; i < 8; ++i) s.tick();
+
+    for (int i = 0; i < 24; ++i) {
+        feedIfReady();
+        s.tick();
+    }
 
     Soft soft;
 #ifdef H264_CABAC_FAULT_BAD_INIT
@@ -224,49 +258,56 @@ int main(int argc, char** argv) {
 #else
     const bool badInit = false;
 #endif
-#ifdef H264_CABAC_FAULT_SKIP_RENORM
-    soft.skipRenorm = true;
-#endif
-    for (int i = 0; i < kCtxN; ++i) soft.ctx.at(static_cast<std::size_t>(i)) = initCtx(i, kQp, 0, 0, badInit);
-    soft.bits.assign(4096, 0);
-    for (int i = 0; i < 9; ++i) soft.bits.at(static_cast<std::size_t>(i)) = 1;
+    (void)badInit;
+    // Golden software never takes the RTL fault macros.
+    for (int i = 0; i < kCtxN; ++i)
+        soft.ctx.at(static_cast<std::size_t>(i)) = initCtx(i, kQp, 0, 0, false);
+    soft.bits = bits;
     soft.prime();
 
     std::vector<int> want;
     want.reserve(kBins);
     for (int i = 0; i < kBins; ++i) want.push_back(soft.decode(i % 16, i == 40, i == 47));
+    int wantOnes = 0;
+    for (int b : want) wantOnes += b;
+    if (wantOnes < 2 || wantOnes > (kBins - 2)) {
+        std::cerr << "FAIL h264_cabac: vacuous golden bins ones=" << wantOnes << " n=" << kBins << "\n";
+        return 1;
+    }
 
-    uint64_t decCycles = 0;
-    int gotN = 0;
     std::vector<int> got;
-    const uint64_t t0 = s.cycles;
-    while (gotN < kBins && decCycles < 10000) {
-        const bool canDec = s.top.dbg_fifo_count >= 8;
-        if (canDec) {
-            s.top.bit_valid = 0;
-            s.top.dec_req = 1;
-        } else if (s.top.bit_ready) {
-            s.top.bit_valid = 1;
-            s.top.bit_in = 0; // payload after the 9-bit offset is zeros
-            s.top.dec_req = 0;
-        } else {
-            s.top.bit_valid = 0;
-            s.top.dec_req = 0;
-        }
+    got.reserve(kBins);
+    int gotN = 0;
+    int consec = 0;
+    int maxConsec = 0;
+    uint64_t decodeTicks = 0;
+    bool primedSeen = false;
+    while (gotN < kBins && decodeTicks < 10000) {
+        s.top.dec_req = 1;
         s.top.ctx_idx = static_cast<uint16_t>(gotN % 16);
         s.top.bypass = (gotN == 40) ? 1 : 0;
         s.top.terminate = (gotN == 47) ? 1 : 0;
+        feedIfReady();
         s.tick();
-        ++decCycles;
-        s.top.bit_valid = 0;
+        ++decodeTicks;
         if (s.top.dec_valid) {
+            primedSeen = true;
             got.push_back(static_cast<int>(s.top.dec_bin));
             ++gotN;
+            ++consec;
+            if (consec > maxConsec) maxConsec = consec;
+        } else {
+            if (primedSeen && static_cast<int>(s.top.dbg_fifo_count) >= 8) {
+                std::cerr << "FAIL h264_cabac: not 1 bin/cycle at bin " << gotN
+                          << " fifo=" << int(s.top.dbg_fifo_count)
+                          << " stall=" << int(s.top.dec_stall) << "\n";
+                return 1;
+            }
+            consec = 0;
         }
-        s.top.dec_req = 0;
     }
     s.top.dec_req = 0;
-    const uint64_t t1 = s.cycles;
+    s.top.bit_valid = 0;
 
     if (static_cast<int>(got.size()) != kBins) {
         std::cerr << "FAIL h264_cabac: decoded " << got.size() << " bins want=" << kBins
@@ -275,20 +316,24 @@ int main(int argc, char** argv) {
     }
     for (int i = 0; i < kBins; ++i) {
         if (got.at(static_cast<std::size_t>(i)) != want.at(static_cast<std::size_t>(i))) {
-            std::cerr << "FAIL h264_cabac bin " << i << " got=" << got.at(static_cast<std::size_t>(i))
+            std::cerr << "FAIL h264_cabac " << kMismatchTag << " mismatch at " << i
+                      << " got=" << got.at(static_cast<std::size_t>(i))
                       << " want=" << want.at(static_cast<std::size_t>(i))
                       << " range=" << int(s.top.dbg_range) << " offset=" << int(s.top.dbg_offset) << "\n";
             return 1;
         }
     }
-    const double cycPerBin = static_cast<double>(t1 - t0) / kBins;
+    if (maxConsec < 8) {
+        std::cerr << "FAIL h264_cabac: never held 8 consecutive 1-bin/cycle bins maxConsec="
+                  << maxConsec << " decode_ticks=" << decodeTicks << "\n";
+        return 1;
+    }
+    const double cycPerBin = static_cast<double>(decodeTicks) / kBins;
     const double mbin = 20.0 / cycPerBin;
     std::cout << "OK h264_cabac: " << kBins << " bins (regular+bypass+terminate) matched software model; "
-              << "init_cycles=" << waitInit << " decode_cycles=" << (t1 - t0)
-              << " cyc/bin=" << cycPerBin << " implied_Mbin_s_at_20MHz=" << mbin
-              << " vs_planning_8.775 (NOT a real-time PASS unless cyc/bin==1 with no stalls)\n";
-    if (cycPerBin > 1.01) {
-        std::cout << "NOTE h264_cabac: not 1 bin/cycle on this run (prefill/handshake included)\n";
-    }
+              << "init_cycles=" << waitInit << " decode_ticks=" << decodeTicks
+              << " max_consec_1bin=" << maxConsec << " cyc/bin=" << cycPerBin
+              << " implied_Mbin_s_at_20MHz=" << mbin
+              << " vs_planning_8.775 (1 bin/cycle when fifo>=8; NOT a product CABAC syntax PASS)\n";
     return 0;
 }

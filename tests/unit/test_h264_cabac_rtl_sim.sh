@@ -51,7 +51,7 @@ echo "RTL SIM: using $VERILATOR_VERSION (h264_cabac)" >&2
   --Mdir "$BUILD_RENORM" \
   --top-module h264_cabac_tb -Wno-fatal \
   +define+H264_CABAC_FAULT_SKIP_RENORM \
-  -CFLAGS "-std=c++17 -O2" \
+  -CFLAGS "-std=c++17 -O2 -DH264_CABAC_FAULT_SKIP_RENORM" \
   "$TOP" "$RTL" "$TB"
 set +e
 RENORM_OUT="$($BUILD_RENORM/Vh264_cabac_tb 2>&1)"
@@ -68,7 +68,7 @@ printf '%s\n' "$RED_CHECK"
   --Mdir "$BUILD_INIT" \
   --top-module h264_cabac_tb -Wno-fatal \
   +define+H264_CABAC_FAULT_BAD_INIT \
-  -CFLAGS "-std=c++17 -O2" \
+  -CFLAGS "-std=c++17 -O2 -DH264_CABAC_FAULT_BAD_INIT" \
   "$TOP" "$RTL" "$TB"
 set +e
 INIT_OUT="$($BUILD_INIT/Vh264_cabac_tb 2>&1)"

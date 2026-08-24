@@ -85,6 +85,7 @@ module h264_decode_core_p16z_tb #(
 		.mb_width(MB_WIDTH_PARAM),
 		.mb_height(MB_HEIGHT_PARAM),
 		.pps_chroma_qp_index_offset(5'sd0),
+		.pps_entropy_cabac(1'b0),
 		.rbsp_byte(rbsp_byte_in),
 		.rbsp_window_base(rbsp_window_base),
 		.rbsp_window_valid(rbsp_window_valid),

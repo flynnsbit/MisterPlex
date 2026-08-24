@@ -1118,17 +1118,38 @@ module h264_decode_core #(
         end
     endgenerate
     wire cabac_init_busy, cabac_init_done, cabac_bit_ready, cabac_dec_valid, cabac_dec_bin, cabac_dec_stall;
+    wire [8:0] cabac_dbg_range, cabac_dbg_offset;
+    wire [4:0] cabac_dbg_fifo;
+    wire [4:0] cabac_ueg0_ones;
+    wire cabac_ueg0_zero;
     generate
     if (ENABLE_CABAC) begin : g_cabac
+        // Serial RBSP feed into the 16-bit CABAC bit FIFO (MSB first per byte).
+        // Syntax walker (dec_req) is still tied off; init + prime is the product hook.
+        reg [9:0] cabac_bitn;
+        wire cabac_slice = slice_start && pps_entropy_cabac;
+        wire cabac_feed = pps_entropy_cabac && rbsp_window_valid && cabac_bit_ready &&
+                          !cabac_slice && (cabac_bitn < 10'd512);
+        wire [5:0] cabac_byte_i = cabac_bitn[8:3];
+        wire [2:0] cabac_bit_i = cabac_bitn[2:0];
+        wire cabac_bit_in = rbsp_byte[cabac_byte_i][3'd7 - cabac_bit_i];
+        always @(posedge clk) begin
+            if (reset)
+                cabac_bitn <= 10'd0;
+            else if (cabac_slice)
+                cabac_bitn <= 10'd0;
+            else if (cabac_feed)
+                cabac_bitn <= cabac_bitn + 10'd1;
+        end
         h264_cabac u_cabac (
             .clk(clk),
             .reset(reset),
-            .slice_start(slice_start && pps_entropy_cabac),
+            .slice_start(cabac_slice),
             .slice_type(slice_is_i ? 2'd0 : 2'd1),
             .cabac_init_idc(2'd0),
             .slice_qp_y(slice_qp_y),
-            .bit_valid(1'b0),
-            .bit_in(1'b0),
+            .bit_valid(cabac_feed),
+            .bit_in(cabac_bit_in),
             .bit_ready(cabac_bit_ready),
             .init_busy(cabac_init_busy),
             .init_done(cabac_init_done),
@@ -1139,9 +1160,14 @@ module h264_decode_core #(
             .dec_valid(cabac_dec_valid),
             .dec_bin(cabac_dec_bin),
             .dec_stall(cabac_dec_stall),
-            .dbg_range(),
-            .dbg_offset(),
-            .dbg_fifo_count()
+            .dbg_range(cabac_dbg_range),
+            .dbg_offset(cabac_dbg_offset),
+            .dbg_fifo_count(cabac_dbg_fifo)
+        );
+        h264_cabac_ueg0_pref u_cabac_ueg0 (
+            .abs_m1(cabac_dbg_fifo),
+            .pref_ones(cabac_ueg0_ones),
+            .pref_zero(cabac_ueg0_zero)
         );
     end else begin : g_cabac_off
         assign cabac_bit_ready = 1'b0;
@@ -1150,6 +1176,11 @@ module h264_decode_core #(
         assign cabac_dec_valid = 1'b0;
         assign cabac_dec_bin = 1'b0;
         assign cabac_dec_stall = 1'b0;
+        assign cabac_dbg_range = 9'd0;
+        assign cabac_dbg_offset = 9'd0;
+        assign cabac_dbg_fifo = 5'd0;
+        assign cabac_ueg0_ones = 5'd0;
+        assign cabac_ueg0_zero = 1'b0;
     end
     endgenerate
     // P16 residual CAVLC/IDCT only when ENABLE_INTER=1 (~2k+0.9k ALM).
@@ -2249,6 +2280,8 @@ module h264_decode_core #(
         |part_mode | |part_idx | cavlc_busy | |cavlc_bit_offset_end |
         pps_entropy_cabac | cabac_init_busy | cabac_init_done | cabac_bit_ready |
         cabac_dec_valid | cabac_dec_bin | cabac_dec_stall |
+        |cabac_dbg_range | |cabac_dbg_offset | |cabac_dbg_fifo |
+        |cabac_ueg0_ones | cabac_ueg0_zero |
         |part_sub_mb_types | |part_ref_idx_l0 | |part_mvd_valid |
         |part_mvd_x[0] | |part_mvd_y[0] | |mb_route_part_mode |
         part_geo_valid | |part_geo_mask | part_shape_override | part_busy |

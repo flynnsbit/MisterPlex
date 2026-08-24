@@ -70,7 +70,7 @@
       "owner": "tests/unit/test_h264_cabac_rtl_sim.sh",
       "why": "Skipping CABAC renormalize must diverge from the software arithmetic model.",
       "required_substrings": [
-        "FAIL h264_cabac bin"
+        "FAIL h264_cabac skip-renorm mismatch"
       ]
     },
     {
@@ -78,7 +78,7 @@
       "owner": "tests/unit/test_h264_cabac_rtl_sim.sh",
       "why": "Inverting valMPS at context init must change decoded bins versus the good-init model.",
       "required_substrings": [
-        "FAIL h264_cabac bin"
+        "FAIL h264_cabac bad-init mismatch"
       ]
     },
     {

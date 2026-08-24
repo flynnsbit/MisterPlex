@@ -102,6 +102,8 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_p3_inter_rtl_sim.sh
 	$(ROOT)/tests/unit/test_p3_dpb_mc_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_decode_core_writeback_rtl_sim.sh
+	$(ROOT)/tests/unit/test_h264_cabac_rtl_sim.sh
+	$(ROOT)/tests/unit/test_h264_inter_recon_add_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_decode_core_p16z_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_decode_core_real_slice_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_p_slice_modes_rtl_sim.sh
@@ -163,6 +165,8 @@ rtl-sim-unlocked:
 	$(ROOT)/tests/unit/test_h264_baseline_syntax_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_p_slice_modes_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_decode_core_writeback_rtl_sim.sh
+	$(ROOT)/tests/unit/test_h264_cabac_rtl_sim.sh
+	$(ROOT)/tests/unit/test_h264_inter_recon_add_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_decode_core_p16z_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_decode_core_real_slice_rtl_sim.sh
 	$(ROOT)/tests/unit/test_p3_inter_rtl_sim.sh
