@@ -22,6 +22,7 @@ module source_aspect_ack (
 	localparam [31:0] MAGIC_A = 32'h4158_4C50; // "PLXA" LE
 	reg        was_dl;
 	reg        saw_plxa;
+	reg        committed; // 1 after 9th-byte toggle this download
 	reg [3:0]  idx;
 	reg [7:0]  b0, b1, b2, b3, b4, b5, b6, b7, b8;
 
@@ -39,6 +40,7 @@ module source_aspect_ack (
 		if (reset) begin
 			was_dl <= 1'b0;
 			saw_plxa <= 1'b0;
+			committed <= 1'b0;
 			idx <= 4'd0;
 			ack_toggle <= 1'b0;
 			ack_x <= 12'd0;
@@ -50,6 +52,7 @@ module source_aspect_ack (
 			if (ioctl_download && !was_dl) begin
 				idx <= 4'd0;
 				saw_plxa <= index_ok;
+				committed <= 1'b0;
 				if (index_ok && ioctl_wr) begin
 					b0 <= ioctl_dout;
 					idx <= 4'd1;
@@ -74,8 +77,22 @@ module source_aspect_ack (
 					ack_y <= {b7[3:0], b6};
 					ack_token <= ioctl_dout;
 					ack_toggle <= ~ack_toggle;
+					committed <= 1'b1;
 				end
 				idx <= idx + 4'd1;
+			end else if (saw_plxa && was_dl && !ioctl_download) begin
+				// mux10: mux6–9 glass wrote PLXJ *after* gold 250 ms.
+				// S_IDLE was emptied (mux9) and still late → ioctl commit
+				// missed. Gold 480p ACK used download falling edge. If the
+				// 9th-byte beat dropped, fall here with latched bytes.
+				if (!committed && magic_ok && (idx >= 4'd8)) begin
+					ack_x <= {b5[3:0], b4};
+					ack_y <= {b7[3:0], b6};
+					ack_token <= b8;
+					ack_toggle <= ~ack_toggle;
+				end
+				saw_plxa <= 1'b0;
+				committed <= 1'b0;
 			end
 			was_dl <= ioctl_download;
 		end
