@@ -570,6 +570,7 @@ module ddr_frame_store #(
 	reg        plxj_req;
 	reg        plxj_acked; // 0 until first PLXJ WE of this load
 	reg        plxj_mirror; // 1: second WE to 0x300FF130 after 0x3007F130
+	reg        plxk_seed_req; // publish PLXK at 0x3007F000 so gold binds that page
 	reg [11:0] plxj_x, plxj_y;
 	reg [7:0]  plxj_token;
 	reg        rd_act_s1, rd_act_s2; // CDC rd_active → clk_ddr (status only)
@@ -953,6 +954,7 @@ module ddr_frame_store #(
 			plxj_req <= 1'b0;
 			plxj_acked <= 1'b0;
 			plxj_mirror <= 1'b0;
+			plxk_seed_req <= 1'b1;
 			plxj_x <= 12'd0;
 			plxj_y <= 12'd0;
 			plxj_token <= 8'd0;
@@ -1154,6 +1156,19 @@ module ddr_frame_store #(
 						state_ddr <= S_PLXJ_ISSUE;
 					end else if (plxj_req) begin
 						state_ddr <= S_IDLE;
+					end else if (plxk_seed_req && !DDRAM_BUSY && !DDRAM_WE) begin
+						// mux14: mux13 PLAY ack=matched then true480 pipeline
+						// aborted frames=3 hw_presents=0. Gold doorbells
+						// doorbell_phys; analog idle 0x3007F000 is poison so
+						// ARM writes 0x300FF000 while FPGA polls 0x3007F000.
+						// Seed PLXK YUV seq=0 at 0x3007F000 (swap still gated
+						// until plxj_acked).
+						DDRAM_ADDR <= DOORBELL_W;
+						DDRAM_BURSTCNT <= 8'd1;
+						DDRAM_DIN <= {1'b0, DOORBELL_FORMAT_YUV420P, 29'd0, MAGIC};
+						DDRAM_WE <= 1'b1;
+						plxk_seed_req <= 1'b0;
+						state_ddr <= S_WRITE_WAIT;
 					end else if (!plxj_acked) begin
 						// mux9: mux8 still timed out want token=6 last=5 then
 						// mailbox token=6 after 250 ms with fills/poll gated
