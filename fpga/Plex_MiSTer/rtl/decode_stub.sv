@@ -38,6 +38,9 @@ module decode_stub #(
 	input  wire        residual_valid,
 	input  wire [5:0]  slice_qp,
 	input  wire signed [15:0] residual_coeff [0:15],
+	// First-MB luma 4x4 CAVLC coeffs (scan order) for inter residual-add.
+	input  wire        luma4x4_present,
+	input  wire signed [15:0] luma4x4_coeff [0:15][0:15],
 
 	output reg  [7:0]  recon_sig,
 	output reg  [7:0]  recon_dbg,
@@ -67,6 +70,9 @@ module decode_stub #(
 	localparam [2:0] PH_PAINT = 3'd2;
 	localparam [2:0] PH_FETCH = 3'd3;
 	localparam [2:0] PH_DPB_FILL = 3'd4;
+	localparam [2:0] PH_RES_START = 3'd5;
+	localparam [2:0] PH_RES_WAIT = 3'd6;
+	localparam [2:0] PH_RES_COMMIT = 3'd7;
 	reg            is_idr_frame;
 	reg            is_i_frame;
 	reg [7:0]      lat_type;
@@ -92,6 +98,7 @@ module decode_stub #(
 	reg            lat_inter_recon_ok;
 	reg [15:0]     lat_p_mb_addr;
 	reg            inter_capture_valid;
+	reg            inter_capture_pend;
 	reg            p_fetch_advance;
 	reg            p_fetch_launch_pending;
 	reg            p_candidate_seen;
@@ -103,7 +110,18 @@ module decode_stub #(
 	reg [2:0]      pending_p_part_count;
 	reg            pending_p_uses_sub_mb;
 	reg            pending_p_intra;
+	reg            luma4x4_present_r;
+	reg signed [15:0] lat_luma4x4 [0:15][0:15];
+	reg [15:0]     lat_slice_first_mb;
+	reg [3:0]      res_blk_r;
+	reg            inter_iq_start_r;
+	reg signed [15:0] lat_inter_res_y [0:255];
+	reg [7:0]      inter_recon_y [0:255];
+	reg [7:0]      inter_recon_u [0:63];
+	reg [7:0]      inter_recon_v [0:63];
 	integer        coeff_i;
+	integer        luma4_i;
+	integer        luma4_j;
 
 	wire [9:0] width_w  = WIDTH[9:0];
 	wire [9:0] height_w = HEIGHT[9:0];
@@ -530,6 +548,82 @@ module decode_stub #(
 		.pred_u(dpb_pred_u), .pred_u_valid(dpb_pred_u_valid),
 		.pred_v(dpb_pred_v), .pred_v_valid(dpb_pred_v_valid)
 	);
+
+	// Inter residual-add: IQ/IDCT of first-MB luma 4x4 coeffs onto MC pred.
+	function automatic [7:0] luma4x4_index_stub;
+		input [3:0] block;
+		input [3:0] sample;
+		begin
+			luma4x4_index_stub = {block[3:2], sample[3:2], block[1:0], sample[1:0]};
+		end
+	endfunction
+	function automatic signed [15:0] sat16_res;
+		input signed [28:0] v;
+		begin
+			if (v > 29'sd32767) sat16_res = 16'sd32767;
+			else if (v < -29'sd32768) sat16_res = -16'sd32768;
+			else sat16_res = v[15:0];
+		end
+	endfunction
+	wire signed [15:0] inter_iq_coeff [0:15];
+	wire signed [28:0] inter_iq_residual [0:15];
+	wire               inter_iq_done;
+	genvar iq_gi;
+	generate
+		for (iq_gi = 0; iq_gi < 16; iq_gi = iq_gi + 1) begin : gen_inter_iq_c
+			assign inter_iq_coeff[iq_gi] = lat_luma4x4[res_blk_r][iq_gi];
+		end
+	endgenerate
+	generate
+		if (ENABLE_DPB_REF_SEAM) begin : gen_inter_res_iq
+			h264_iq_idct_seq u_inter_iq (
+				.clk(clk),
+				.reset(reset),
+				.start(inter_iq_start_r),
+				.coeff(inter_iq_coeff),
+				.qp(lat_qp),
+				.max_coeff(5'd16),
+				.skip_dc(1'b0),
+				.dc_override(1'b0),
+				.dc_value(29'sd0),
+				.residual(inter_iq_residual),
+				.done(inter_iq_done)
+			);
+		end else begin : gen_inter_res_iq_stub
+			assign inter_iq_done = 1'b0;
+			for (iq_gi = 0; iq_gi < 16; iq_gi = iq_gi + 1) begin : g_z
+				assign inter_iq_residual[iq_gi] = 29'sd0;
+			end
+		end
+	endgenerate
+	wire apply_inter_residual = ENABLE_DPB_REF_SEAM && lat_p_inter && !lat_p_skip &&
+	                            luma4x4_present_r && (lat_p_mb_addr == lat_slice_first_mb);
+	wire [7:0] inter_recon_y_comb [0:255];
+	wire [7:0] inter_recon_u_comb [0:63];
+	wire [7:0] inter_recon_v_comb [0:63];
+	generate
+		if (ENABLE_DPB_REF_SEAM) begin : gen_inter_recon_add
+			for (iq_gi = 0; iq_gi < 256; iq_gi = iq_gi + 1) begin : g_y
+				h264_inter_recon_add u_y (
+					.pred(dpb_pred_y[iq_gi]),
+					.residual(lat_inter_res_y[iq_gi]),
+					.recon(inter_recon_y_comb[iq_gi])
+				);
+			end
+			for (iq_gi = 0; iq_gi < 64; iq_gi = iq_gi + 1) begin : g_c
+				assign inter_recon_u_comb[iq_gi] = dpb_pred_u[iq_gi];
+				assign inter_recon_v_comb[iq_gi] = dpb_pred_v[iq_gi];
+			end
+		end else begin : gen_inter_recon_pred
+			for (iq_gi = 0; iq_gi < 256; iq_gi = iq_gi + 1) begin : g_y
+				assign inter_recon_y_comb[iq_gi] = dpb_pred_y[iq_gi];
+			end
+			for (iq_gi = 0; iq_gi < 64; iq_gi = iq_gi + 1) begin : g_c
+				assign inter_recon_u_comb[iq_gi] = dpb_pred_u[iq_gi];
+				assign inter_recon_v_comb[iq_gi] = dpb_pred_v[iq_gi];
+			end
+		end
+	endgenerate
 	(* keep = 1 *) wire _keep_dpb_mc = dpb_fetch_busy | dpb_mem_we | |dpb_mem_waddr |
 	                                   |dpb_mem_wdata | |dpb_luma_origin_x |
 	                                   |dpb_luma_origin_y | |dpb_chroma_origin_x |
@@ -545,7 +639,9 @@ module decode_stub #(
 
 	// Latch on the producer's explicit place-time pulse; residual_ok/coefficients
 	// are sticky payload, not a safe valid edge.
-	wire wait_done  = residual_valid | (wait_cnt == 12'd0);
+	// Coded P: wait for the 16-block luma residual walk, not only the first 4x4 probe.
+	wire wait_done  = ((residual_valid | (wait_cnt == 12'd0)) &&
+	                   (slice_is_i || first_mb_p_skip || luma4x4_present || (wait_cnt == 12'd0)));
 	(* keep = 1 *) wire _slice_valid_observe = slice_valid;
 
 	always @(posedge clk) begin
@@ -555,6 +651,11 @@ module decode_stub #(
 		dpb_fetch_start <= 1'b0;
 		dpb_frame_done_pulse <= 1'b0;
 		inter_capture_valid <= 1'b0;
+		inter_iq_start_r <= 1'b0;
+		if (inter_capture_pend) begin
+			inter_capture_valid <= 1'b1;
+			inter_capture_pend <= 1'b0;
+		end
 		// Read data is combinational off the registered address, so rvalid must
 		// lag mem_rd by exactly one cycle to stay aligned with h264_dpb's
 		// pending_valid_d1 capture window.
@@ -613,6 +714,7 @@ module decode_stub #(
 			lat_inter_recon_ok <= 0;
 			lat_p_mb_addr <= 0;
 			inter_capture_valid <= 0;
+			inter_capture_pend <= 0;
 			p_fetch_advance <= 0;
 			p_fetch_launch_pending <= 0;
 			p_candidate_seen <= 0;
@@ -624,6 +726,21 @@ module decode_stub #(
 			pending_p_part_count <= 0;
 			pending_p_uses_sub_mb <= 0;
 			pending_p_intra <= 0;
+			luma4x4_present_r <= 0;
+			lat_slice_first_mb <= 0;
+			res_blk_r <= 0;
+			inter_iq_start_r <= 0;
+			for (luma4_i = 0; luma4_i < 16; luma4_i = luma4_i + 1)
+				for (luma4_j = 0; luma4_j < 16; luma4_j = luma4_j + 1)
+					lat_luma4x4[luma4_i][luma4_j] <= 16'sd0;
+			for (luma4_i = 0; luma4_i < 256; luma4_i = luma4_i + 1) begin
+				lat_inter_res_y[luma4_i] <= 16'sd0;
+				inter_recon_y[luma4_i] <= 8'd0;
+			end
+			for (luma4_i = 0; luma4_i < 64; luma4_i = luma4_i + 1) begin
+				inter_recon_u[luma4_i] <= 8'd0;
+				inter_recon_v[luma4_i] <= 8'd0;
+			end
 			dpb_fetch_start <= 0;
 			dpb_frame_done_pulse <= 0;
 			dpb_fill_mb_addr <= '0;
@@ -724,6 +841,11 @@ module decode_stub #(
 				lat_p_part_count <= first_mb_part_count;
 				lat_p_uses_sub_mb <= first_mb_uses_sub_mb;
 				lat_p_intra  <= first_mb_intra;
+				lat_slice_first_mb <= first_mb_addr;
+				luma4x4_present_r <= luma4x4_present;
+				for (luma4_i = 0; luma4_i < 16; luma4_i = luma4_i + 1)
+					for (luma4_j = 0; luma4_j < 16; luma4_j = luma4_j + 1)
+						lat_luma4x4[luma4_i][luma4_j] <= luma4x4_coeff[luma4_i][luma4_j];
 				if ((lat_type[4:0] == 5'd5) && ENABLE_DPB_REF_SEAM) begin
 					dpb_fill_mb_addr <= '0;
 					dpb_fill_sample_idx <= 9'd0;
@@ -750,10 +872,58 @@ module decode_stub #(
 			if (p_fetch_launch_pending && !dpb_fetch_done) begin
 				p_fetch_launch_pending <= 1'b0;
 			end else if (!p_fetch_launch_pending && dpb_fetch_done) begin
-				inter_capture_valid <= dpb_inter_ok;
+				if (apply_inter_residual) begin
+					for (luma4_i = 0; luma4_i < 256; luma4_i = luma4_i + 1)
+						lat_inter_res_y[luma4_i] <= 16'sd0;
+					res_blk_r <= 4'd0;
+					phase <= PH_RES_START;
+				end else begin
+					for (luma4_i = 0; luma4_i < 256; luma4_i = luma4_i + 1)
+						inter_recon_y[luma4_i] <= dpb_pred_y[luma4_i];
+					for (luma4_i = 0; luma4_i < 64; luma4_i = luma4_i + 1) begin
+						inter_recon_u[luma4_i] <= dpb_pred_u[luma4_i];
+						inter_recon_v[luma4_i] <= dpb_pred_v[luma4_i];
+					end
+					inter_capture_pend <= dpb_inter_ok;
+					lat_inter_recon_ok <= lat_inter_recon_ok | dpb_inter_ok;
+					if (lat_p_inter && (lat_p_next_mb_addr <= DPB_LAST_MB_ADDR)) begin
+						p_fetch_advance <= 1'b1;
+					end else begin
+						phase <= PH_PAINT;
+						pix_i <= 0;
+						x <= 0;
+						y <= 0;
+						wr_reset_ptr <= 1'b1;
+					end
+				end
+			end
+			end else if (phase == PH_RES_START) begin
+				inter_iq_start_r <= 1'b1;
+				phase <= PH_RES_WAIT;
+			end else if (phase == PH_RES_WAIT) begin
+				if (inter_iq_done) begin
+					for (luma4_i = 0; luma4_i < 16; luma4_i = luma4_i + 1)
+						lat_inter_res_y[luma4x4_index_stub(res_blk_r, luma4_i[3:0])] <=
+							sat16_res(inter_iq_residual[luma4_i]);
+					if (res_blk_r == 4'd15)
+						phase <= PH_RES_COMMIT;
+					else begin
+						res_blk_r <= res_blk_r + 4'd1;
+						phase <= PH_RES_START;
+					end
+				end
+			end else if (phase == PH_RES_COMMIT) begin
+				for (luma4_i = 0; luma4_i < 256; luma4_i = luma4_i + 1)
+					inter_recon_y[luma4_i] <= inter_recon_y_comb[luma4_i];
+				for (luma4_i = 0; luma4_i < 64; luma4_i = luma4_i + 1) begin
+					inter_recon_u[luma4_i] <= inter_recon_u_comb[luma4_i];
+					inter_recon_v[luma4_i] <= inter_recon_v_comb[luma4_i];
+				end
+				inter_capture_pend <= dpb_inter_ok;
 				lat_inter_recon_ok <= lat_inter_recon_ok | dpb_inter_ok;
 				if (lat_p_inter && (lat_p_next_mb_addr <= DPB_LAST_MB_ADDR)) begin
 					p_fetch_advance <= 1'b1;
+					phase <= PH_FETCH;
 				end else begin
 					phase <= PH_PAINT;
 					pix_i <= 0;
@@ -761,7 +931,6 @@ module decode_stub #(
 					y <= 0;
 					wr_reset_ptr <= 1'b1;
 				end
-			end
 			end else if (phase == PH_DPB_FILL) begin
 			if (dpb_fill_sample_idx < 9'd384) begin
 				dpb_fill_sample_idx <= dpb_fill_sample_idx + 9'd1;

@@ -111,7 +111,8 @@ module stream_path_full_frame_tb #(
 
 	stream_path #(
 		.FRAME_W(FRAME_W),
-		.FRAME_H(FRAME_H)
+		.FRAME_H(FRAME_H),
+		.STUB_DPB_SEAM(1'b1)
 	) dut (
 		.clk(clk),
 		.reset(reset),
@@ -218,14 +219,14 @@ module stream_path_full_frame_tb #(
 	genvar native_y_i;
 	generate
 		for (native_y_i = 0; native_y_i < 256; native_y_i = native_y_i + 1) begin : gen_native_y
-			assign native_inter_pred_y[native_y_i] = dut.gen_decode_stub.stub.dpb_pred_y[native_y_i];
+			assign native_inter_pred_y[native_y_i] = dut.gen_decode_stub.stub.inter_recon_y[native_y_i];
 		end
 	endgenerate
 	genvar native_c_i;
 	generate
 		for (native_c_i = 0; native_c_i < 64; native_c_i = native_c_i + 1) begin : gen_native_c
-			assign native_inter_pred_u[native_c_i] = dut.gen_decode_stub.stub.dpb_pred_u[native_c_i];
-			assign native_inter_pred_v[native_c_i] = dut.gen_decode_stub.stub.dpb_pred_v[native_c_i];
+			assign native_inter_pred_u[native_c_i] = dut.gen_decode_stub.stub.inter_recon_u[native_c_i];
+			assign native_inter_pred_v[native_c_i] = dut.gen_decode_stub.stub.inter_recon_v[native_c_i];
 		end
 	endgenerate
 
@@ -243,7 +244,7 @@ module stream_path_full_frame_tb #(
 	// fetches see real data instead of synthetic patterns.
 	always @(posedge clk) begin
 		if (dpb_prefill_en)
-			dut.gen_decode_stub.stub.dpb_mem[dpb_prefill_addr[17:0]] <= dpb_prefill_data;
+			dut.gen_decode_stub.stub.gen_diag_dpb_mem.mem[dpb_prefill_addr[17:0]] <= dpb_prefill_data;
 	end
 endmodule
 

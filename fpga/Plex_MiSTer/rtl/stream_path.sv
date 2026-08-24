@@ -9,7 +9,9 @@ module stream_path #(
 	parameter int FRAME_W = 320,
 	parameter int FRAME_H = 240,
 	parameter int CODED_W = FRAME_W,
-	parameter int CODED_H = FRAME_H
+	parameter int CODED_H = FRAME_H,
+	// Native-inter benches set this so DPB SRAM + residual-add exist.
+	parameter bit STUB_DPB_SEAM = 1'b0
 )(
 	input  wire        clk,
 	input  wire        reset,
@@ -1025,13 +1027,11 @@ module stream_path #(
 `else
 	// Diagnostic painter only when DDR_FRAME_STORE is off.
 	generate
-		begin : gen_diagnostic_present
+		begin : gen_decode_stub
 		decode_stub #(
 			.WIDTH(FRAME_W),
 			.HEIGHT(FRAME_H),
-			// Product decode owns DPB via DDR writeback + stream DDR read FSM.
-			// Keep stub as painter only; disable its diagnostic DPB seam.
-			.ENABLE_DPB_REF_SEAM(1'b0)
+			.ENABLE_DPB_REF_SEAM(STUB_DPB_SEAM)
 		) stub (
 			.clk(clk), .reset(reset | flush),
 			.vcl_pulse(vcl_pulse),
@@ -1058,6 +1058,8 @@ module stream_path #(
 			.residual_valid(residual_place_pulse),
 			.slice_qp(sl_place_qp),
 			.residual_coeff(sl_place_coeff),
+			.luma4x4_present(sl_luma4x4_blocks_present),
+			.luma4x4_coeff(sl_luma4x4_coeff),
 			.recon_sig(recon_sig),
 			.recon_dbg(recon_dbg),
 			.recon_dbg_valid(recon_dbg_valid),

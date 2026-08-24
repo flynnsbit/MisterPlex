@@ -63,6 +63,7 @@ PRODUCT_RTL=(
   slice_hdr_parser.sv
   h264_iq_idct_4x4.sv
   h264_iq_idct_seq.sv
+  h264_inter_recon_add.sv
   h264_inter_pred.sv
   h264_intra_pred.sv
   h264_intra_nb_ctx.sv
@@ -70,6 +71,10 @@ PRODUCT_RTL=(
   h264_dpb.sv
   h264_decode_top.sv
   h264_decode_core.sv
+  h264_mb_recon_route.sv
+  h264_inter_part.sv
+  h264_pskip_mv.sv
+  h264_intra16_dc.sv
   h264_rbsp_window.sv
   h264_i_mb_feed.sv
   h264_feed_chroma.sv
@@ -294,7 +299,7 @@ candidate = meta.get("candidate", {})
 expected = {
     "colorspace": "I420_NATIVE",
     "h264_loop_filter": "disabled",
-    "reconstruction_stage": "mc_prediction_only_pre_deblock_no_residual_add",
+    "reconstruction_stage": "mc_pred_plus_cavlc_iq_idct_residual_pre_deblock",
     "reference_picture_state": "testbench_prefilled_previous_golden_no_deblock_reference",
     "reference_picture_source": "golden_i420_previous_frame_injected_into_dpb_bank0",
 }

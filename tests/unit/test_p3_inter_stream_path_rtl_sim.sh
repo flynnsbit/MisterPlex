@@ -44,6 +44,7 @@ PRODUCT_RTL=(
   slice_hdr_parser.sv
   h264_iq_idct_4x4.sv
   h264_iq_idct_seq.sv
+  h264_inter_recon_add.sv
   h264_inter_pred.sv
   h264_intra_pred.sv
   h264_intra_nb_ctx.sv
@@ -51,6 +52,10 @@ PRODUCT_RTL=(
   h264_dpb.sv
   h264_decode_top.sv
   h264_decode_core.sv
+  h264_mb_recon_route.sv
+  h264_inter_part.sv
+  h264_pskip_mv.sv
+  h264_intra16_dc.sv
   h264_rbsp_window.sv
   h264_i_mb_feed.sv
   h264_feed_chroma.sv

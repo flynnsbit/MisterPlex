@@ -1201,7 +1201,9 @@ module slice_hdr_parser (
 			end
 			ST_MBQP: begin
 				// se(mb_qp_delta) consumed; start coeff_token nC=0
-				if (intra_mbt == 8'd0)
+				// I_NxN (intra_mbt==0) and coded P MBs (intra_mbt==8'hFF) both
+				// have CBP-gated luma 4x4 residual after qpδ.
+				if (intra_mbt == 8'd0 || intra_mbt == 8'hFF)
 					full_start_req <= 1'b1;
 				full_start_bit <= cur_bit_offset();
 				tcode <= 0;

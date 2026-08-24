@@ -66,6 +66,14 @@
       ]
     },
     {
+      "id": "h264_inter_recon_add_drop_residual",
+      "owner": "tests/unit/test_h264_inter_recon_add_rtl_sim.sh",
+      "why": "Dropping residual-add after MC must fail clip(pred+res) so pred-only cannot score as reconstruction.",
+      "required_substrings": [
+        "FAIL h264_inter_recon_add drop-residual: recon stayed pred-only got=73 want=92 pred=73 residual=19"
+      ]
+    },
+    {
       "id": "h264_decode_core_p16z_drop_pred",
       "owner": "tests/unit/test_h264_decode_core_p16z_rtl_sim.sh",
       "why": "Dropping prediction must fail the exact P16x16 real-P pred+residual reconstruction scoreboard.",

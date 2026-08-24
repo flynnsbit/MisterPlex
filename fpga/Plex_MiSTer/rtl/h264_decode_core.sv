@@ -370,6 +370,9 @@ module h264_decode_core #(
     reg        p16_rbsp_ready_r;
     reg        cavlc_start_r;
     reg        p16_iq_start_r;
+    // Latched CBP: uncoded 8x8 groups must not consume CAVLC bits.
+    reg [3:0]  p16_cbp_l_r;
+    reg [1:0]  p16_cbp_c_r;
 
     // --- nC predictor for CAVLC coeff_token table selection ---
     // Luma: 4x4 TotalCoeff cache in 4x4-block scan order (0..15).
@@ -446,6 +449,12 @@ module h264_decode_core #(
     wire [2:0] p16_coeff_token_table = (p16_nC < 5'd2) ? 3'd0 :
                                        (p16_nC < 5'd4) ? 3'd1 :
                                        (p16_nC < 5'd8) ? 3'd2 : 3'd3;
+    // Luma CBP is one bit per 8x8 (scan idx[3:2]). Chroma AC 4x4 walk is
+    // only present when cbp_chroma==2; cbp==0/1 skip those 8 blocks (DC-only
+    // chroma is not reconstructed on this path yet).
+    wire p16_luma_block_coded = p16_res_is_luma && p16_cbp_l_r[p16_res_block_idx[3:2]];
+    wire p16_chroma_block_coded = !p16_res_is_luma && (p16_cbp_c_r == 2'd2);
+    wire p16_res_block_coded = p16_luma_block_coded || p16_chroma_block_coded;
 
     reg [15:0] syntax_mb_addr_r;
     reg [15:0] rbsp_request_offset_r;
@@ -1622,6 +1631,8 @@ module h264_decode_core #(
             p16_tap_row_r <= 4'd0;
             p16_res_bit_offset_r <= 10'd0;
             p16_res_block_idx <= 5'd0;
+            p16_cbp_l_r <= 4'h0;
+            p16_cbp_c_r <= 2'd0;
             p16_rbsp_ready_r <= 1'b0;
             cavlc_start_r <= 1'b0;
             p16_iq_start_r <= 1'b0;
@@ -1767,6 +1778,8 @@ module h264_decode_core #(
                     p16_ref_idx_l0_r <= ref_idx_l0;
                     p16_res_bit_offset_r <= launch_residual_rel_bit_offset[9:0];
                     p16_res_block_idx <= 5'd0;
+                    p16_cbp_l_r <= cbp_luma;
+                    p16_cbp_c_r <= cbp_chroma;
                     wb_idx <= 9'd0;
                     p16_tap_idx <= 7'd0;
                     p16_tap_col_r <= 4'd0;
@@ -1941,8 +1954,42 @@ module h264_decode_core #(
             end
             ST_P16_RES_START: begin
                 if (p16_rbsp_ready_r || p16_rbsp_window_match) begin
-                    cavlc_start_r <= 1'b1;
-                    wb_state <= ST_P16_RES_WAIT;
+                    if (!p16_res_block_coded) begin
+                        // Uncoded 4x4: residual already 0 from launch; nC=0.
+                        if (p16_res_is_luma)
+                            p16_tc_cache[p16_res_block_idx[3:0]] <= 5'd0;
+                        else if (p16_res_is_chr_u)
+                            p16_tc_chr_u[p16_chr_blk] <= 5'd0;
+                        else
+                            p16_tc_chr_v[p16_chr_blk] <= 5'd0;
+                        if (p16_res_block_idx == (P16_RES_BLOCKS - 5'd1)) begin
+                            p16_tc_above[0] <= p16_tc_cache[4'd10];
+                            p16_tc_above[1] <= p16_tc_cache[4'd11];
+                            p16_tc_above[2] <= p16_tc_cache[4'd14];
+                            p16_tc_above[3] <= p16_tc_cache[4'd15];
+                            p16_tc_left[0]  <= p16_tc_cache[4'd5];
+                            p16_tc_left[1]  <= p16_tc_cache[4'd7];
+                            p16_tc_left[2]  <= p16_tc_cache[4'd13];
+                            p16_tc_left[3]  <= p16_tc_cache[4'd15];
+                            p16_tc_above_valid <= 1'b1;
+                            p16_tc_left_valid  <= 1'b1;
+                            p16_tc_chr_u_above[0] <= p16_tc_chr_u[2'd2];
+                            p16_tc_chr_u_above[1] <= p16_tc_chr_u[2'd3];
+                            p16_tc_chr_u_left[0]  <= p16_tc_chr_u[2'd1];
+                            p16_tc_chr_u_left[1]  <= p16_tc_chr_u[2'd3];
+                            p16_tc_chr_v_above[0] <= p16_tc_chr_v[2'd2];
+                            p16_tc_chr_v_above[1] <= 5'd0;
+                            p16_tc_chr_v_left[0]  <= p16_tc_chr_v[2'd1];
+                            p16_tc_chr_v_left[1]  <= 5'd0;
+                            p16_tc_chr_above_valid <= 1'b1;
+                            p16_tc_chr_left_valid  <= 1'b1;
+                            wb_state <= ST_P16_TAP_REQ;
+                        end else
+                            p16_res_block_idx <= p16_res_block_idx + 5'd1;
+                    end else begin
+                        cavlc_start_r <= 1'b1;
+                        wb_state <= ST_P16_RES_WAIT;
+                    end
                 end
             end
             ST_P16_RES_WAIT: begin
