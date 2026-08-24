@@ -30,7 +30,12 @@ module ddr_frame_store #(
 	parameter [31:0] INPUT_MAILBOX_PHYS = 32'h3007_F108,
 	parameter [31:0] SDRAM_MAILBOX_PHYS = 32'h3007_F110,
 	parameter [31:0] FRAME_MAILBOX_PHYS = 32'h3007_F118,
-	parameter [31:0] BANK_MAILBOX_PHYS  = 32'h3007_F128,
+	// Gold 5f1c8614 reads PLXD as doorbell_phys+0x128. This store's
+	// doorbell is PHYS_BASE+2*stride-0x1000 = 0x300FF000, so PLXD must
+	// live at 0x300FF128 (mux14: ARM PLXK at 0x300FF000, FPGA PLXD was
+	// still 0x3007F128 → hw_presents=0 abort). Hardcoded 0x3007F128 is
+	// the spec 480p page; analog mux pair uses the 2-bank doorbell page.
+	parameter [31:0] BANK_MAILBOX_PHYS  = DOORBELL_PHYS + 32'h128,
 	parameter [31:0] ASPECT_ACK_PHYS    = 32'h3007_F130,
 	// Gold 5f1c8614 reads PLXJ as doorbell_phys+0x130. Analog mux idle
 	// has no PLXK at 0x3007F000 (peek 0x5ad65ad6), so the daemon binds
